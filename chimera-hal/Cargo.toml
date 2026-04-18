@@ -1,0 +1,7 @@
+[package]
+name = "chimera-hal"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+embedded-graphics-core = "0.4"
