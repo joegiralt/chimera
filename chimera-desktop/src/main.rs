@@ -1,3 +1,4 @@
+mod audio;
 mod controls;
 mod display;
 
@@ -15,11 +16,34 @@ fn main() {
     let mut controls = DesktopControls::new();
 
     let text_style = MonoTextStyle::new(&FONT_6X10, Rgb565::WHITE);
+    let audio = audio::DesktopAudio::new();
     let mut enc_accum = [0i32; 7];
+    let mut current_note = String::from("--");
 
     while display.is_open() {
         let keys = display.get_keys();
         controls.update(&keys);
+
+        // Piano keys: Z=C4, X=D4, C=E4, V=F4, B=G4
+        if keys.contains(&minifb::Key::Z) {
+            audio.set_frequency(261.63);
+            current_note = String::from("C4");
+        } else if keys.contains(&minifb::Key::X) {
+            audio.set_frequency(293.66);
+            current_note = String::from("D4");
+        } else if keys.contains(&minifb::Key::C) {
+            audio.set_frequency(329.63);
+            current_note = String::from("E4");
+        } else if keys.contains(&minifb::Key::V) {
+            audio.set_frequency(349.23);
+            current_note = String::from("F4");
+        } else if keys.contains(&minifb::Key::B) {
+            audio.set_frequency(392.00);
+            current_note = String::from("G4");
+        } else {
+            audio.set_frequency(0.0);
+            current_note = String::from("--");
+        }
 
         // Accumulate encoder deltas
         for i in 0..7 {
@@ -84,7 +108,19 @@ fn main() {
         Text::new("Q/A W/S E/D R/F T/G Y/H=enc", Point::new(10, 166), help_style)
             .draw(&mut display)
             .unwrap();
-        Text::new("Space=MIX  M=Menu  Z/X=note", Point::new(10, 182), help_style)
+        // Current note
+        let note_display = format!("Note: {}", current_note);
+        let note_color = if current_note != "--" {
+            Rgb565::CSS_LIME_GREEN
+        } else {
+            Rgb565::CSS_DARK_GRAY
+        };
+        let note_style = MonoTextStyle::new(&FONT_6X10, note_color);
+        Text::new(&note_display, Point::new(10, 210), note_style)
+            .draw(&mut display)
+            .unwrap();
+
+        Text::new("Z/X/C/V/B = C D E F G", Point::new(10, 182), help_style)
             .draw(&mut display)
             .unwrap();
 
