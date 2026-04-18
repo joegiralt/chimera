@@ -7,6 +7,12 @@ pub struct SineOsc {
     phase_inc: f32,
 }
 
+impl Default for SineOsc {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SineOsc {
     pub fn new() -> Self {
         Self {

@@ -6,17 +6,19 @@ members = [
     "chimera-stm32",
     "chimera-desktop",
 ]
+default-members = [
+    "chimera-core",
+    "chimera-hal",
+    "chimera-desktop",
+]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
 
-# Release profile: panic=abort needed for no_std targets
+# Release profile for firmware (panic=abort needed for no_std)
 [profile.release]
 panic = "abort"
 opt-level = "s"
 lto = true
-
-[profile.dev]
-panic = "abort"
