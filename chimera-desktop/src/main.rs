@@ -27,10 +27,11 @@ fn main() {
         let keys = display.get_keys();
         controls.update(&keys);
 
-        // Piano keys -> FM engine
+        // Piano keys
         let note = piano_note(&keys);
         if note != current_note {
             if let Some(n) = note {
+                eprintln!("NOTE ON: {} engine={:?}", n, ui.params.engine);
                 audio.note_on(n, 100);
             } else {
                 audio.note_off();

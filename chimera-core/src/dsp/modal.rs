@@ -204,29 +204,33 @@ impl KsString {
         }
     }
 
-    fn set_freq(&mut self, freq: f32, sample_rate: u32, decay: f32, brightness: f32) {
+    fn set_freq(&mut self, freq: f32, sample_rate: u32, decay: f32, _brightness: f32) {
         let period = sample_rate as f32 / freq;
         self.delay_len = (period as usize).min(MAX_DELAY - 1).max(2);
         let frac = period - self.delay_len as f32;
-        // Allpass interpolation coefficient for fractional delay
         self.frac_coeff = (1.0 - frac) / (1.0 + frac);
-        // Decay: longer delay = need higher coefficient to maintain same RT60
-        self.decay = 0.995 + decay * 0.00499;
-        self.decay *= 0.5 + brightness * 0.5; // brightness reduces damping
+        // Decay coefficient: applied once per sample in the feedback loop.
+        // The 2-point average already provides damping. This controls how
+        // quickly the overall energy decays.
+        // decay=0 → 0.998 (short pluck, ~1s ring)
+        // decay=1 → 0.99998 (very long sustain, ~30s)
+        self.decay = 0.998 + decay * 0.00198;
     }
 
     /// Fill the delay line with filtered noise (pluck excitation).
     fn pluck(&mut self, amplitude: f32, brightness: f32) {
         let mut noise_state = 0x87654321_u32;
         let mut lp = 0.0_f32;
-        let cutoff = 0.2 + brightness * 0.7; // lowpass on the noise
+        let cutoff = 0.3 + brightness * 0.6;
+        // Scale up amplitude — the feedback loop will bring it down
+        let amp = amplitude * 2.0;
 
         for i in 0..self.delay_len {
             noise_state ^= noise_state << 13;
             noise_state ^= noise_state >> 17;
             noise_state ^= noise_state << 5;
             let noise = (noise_state as i32) as f32 / i32::MAX as f32;
-            lp += cutoff * (noise * amplitude - lp);
+            lp += cutoff * (noise * amp - lp);
             self.buffer[i] = lp;
         }
         self.write_pos = self.delay_len; // so first read starts at buffer[0]
@@ -459,9 +463,8 @@ impl ModalEngine {
                 i += 2;
             }
 
-            // Rings outputs odd and even separately (stereo). We sum to mono.
-            // Soft-limit to prevent clipping at high Q.
-            *s = libm::tanhf((odd + even) * 0.5) * 2.0;
+            // Sum to mono, scale up, soft-limit
+            *s = libm::tanhf(odd + even) * 2.0;
             *max_level = max_level.max(libm::fabsf(*s));
         }
     }
@@ -474,25 +477,27 @@ impl ModalEngine {
     }
 
     fn render_bowed(&mut self, output: &mut [f32; BLOCK_SIZE], params: &ModalParams, max_level: &mut f32) {
-        let bow_vel = params.bow_velocity;
-        let bow_force = self.exciter_amp;
+        let bow_vel = params.bow_velocity * 0.3;
+        let bow_force = self.exciter_amp * 4.0;
 
         for s in output.iter_mut() {
-            // Read current string velocity from delay line
+            // Read from delay line
             let read_pos = (self.string.write_pos + MAX_DELAY - self.string.delay_len) % MAX_DELAY;
             let string_vel = self.string.buffer[read_pos];
 
-            // Bow interaction: friction model
-            // velocity difference between bow and string
+            // Bow friction: stick-slip model.
+            // When |delta_v| is small, bow sticks (high friction → energy in).
+            // When |delta_v| is large, bow slips (low friction → string rings free).
             let delta_v = bow_vel - string_vel;
-            // Nonlinear friction (simplified bow table from Elements)
-            let friction = bow_force * delta_v * libm::expf(-4.0 * delta_v * delta_v);
+            let friction = bow_force * libm::tanhf(delta_v * 8.0);
 
-            // Inject friction force into the delay line
-            let damped = (string_vel + friction + self.string.damp_state) * 0.5 * self.string.decay;
-            self.string.damp_state = string_vel + friction;
+            // The string feedback: almost unity gain + friction injection.
+            let feedback = string_vel * 0.9995 + friction * 0.4;
 
-            self.string.buffer[self.string.write_pos] = damped;
+            // Soft-limit to prevent blowup
+            let clamped = libm::tanhf(feedback);
+
+            self.string.buffer[self.string.write_pos] = clamped;
             self.string.write_pos = (self.string.write_pos + 1) % MAX_DELAY;
 
             *s = string_vel;

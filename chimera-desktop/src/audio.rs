@@ -53,6 +53,8 @@ impl DesktopAudio {
                     if cmd & NOTE_ON_FLAG != 0 {
                         let note = cmd & 0x7F;
                         let vel = shared_clone.velocity.load(Ordering::Relaxed);
+                        eprintln!("[audio] note_on {} vel={} engine={:?} modal_mode={}",
+                            note, vel, params.engine, params.modal.mode);
                         voice.note_on(note, vel, params, sample_rate);
                     } else if cmd > 0 {
                         voice.note_off();
@@ -60,10 +62,22 @@ impl DesktopAudio {
 
                     let mut block = [0.0f32; chimera_hal::BLOCK_SIZE];
                     let mut block_pos = chimera_hal::BLOCK_SIZE;
+                    static mut DBG_COUNT: u32 = 0;
 
                     for sample in data.iter_mut() {
                         if block_pos >= chimera_hal::BLOCK_SIZE {
                             voice.render(&mut block, params, sample_rate);
+                            // SAFETY: single-threaded audio callback
+                            unsafe {
+                                DBG_COUNT += 1;
+                                if DBG_COUNT % 100 == 0 {
+                                    let max = block.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+                                    if max > 0.0001 || DBG_COUNT % 1000 == 0 {
+                                        eprintln!("[audio] block max={:.6} engine={:?} active={}",
+                                            max, params.engine, voice.is_active());
+                                    }
+                                }
+                            }
                             block_pos = 0;
                         }
                         *sample = block[block_pos] * 0.5;
