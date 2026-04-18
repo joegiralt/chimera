@@ -278,7 +278,7 @@ impl PageId {
             PageId::EngineFmA => ["ALGO", "FDBK", "RAT C", "WAV C", "LVL C", "DTN C"],
             PageId::EngineFmB => ["RAT M", "WAV M", "LVL M", "DTN M", "RAT 2", "LVL 2"],
             PageId::EngineFmC => ["RAT 3", "WAV 3", "LVL 3", "WAV 2", "WAV 4", "DTN 4"],
-            PageId::EngineModal => ["EXCITE", "DECAY", "DAMP", "PITCH", "BRIGHT", "POS"],
+            PageId::EngineModal => ["EXCITE", "DECAY", "DAMP", "INHARM", "BRIGHT", "POS"],
             PageId::EngineVa => ["WAVE", "PW", "SYNC", "SUB", "DETUNE", "MIX"],
             PageId::Filter => ["CUTOFF", "RESO", "DRIVE", "FM", "ENV", "TRACK"],
             PageId::Folder => ["FOLD", "SYM", "MIX", "--", "--", "--"],
@@ -380,6 +380,14 @@ impl PageId {
                 params.envelopes[1].attack.normalized(),
                 params.envelopes[1].decay.normalized(),
             ],
+            PageId::EngineModal => [
+                params.modal.excite,
+                params.modal.decay,
+                params.modal.damping,
+                params.modal.inharm,
+                params.modal.brightness,
+                params.modal.position,
+            ],
             _ => [0.5; 6], // placeholder pages
         }
     }
@@ -391,6 +399,7 @@ impl PageId {
             PageId::EngineFmA => { apply_fm_a_encoder(idx, delta, &mut params.fm); return; }
             PageId::EngineFmB => { apply_fm_b_encoder(idx, delta, &mut params.fm); return; }
             PageId::EngineFmC => { apply_fm_c_encoder(idx, delta, &mut params.fm); return; }
+            PageId::EngineModal => { apply_modal_encoder(idx, delta, &mut params.modal); return; }
             _ => {}
         }
         if let Some(param) = self.resolve_param_mut(idx, params) {
@@ -472,6 +481,19 @@ impl PageId {
             },
             _ => None,
         }
+    }
+}
+
+fn apply_modal_encoder(idx: usize, delta: i8, modal: &mut crate::dsp::modal::ModalParams) {
+    let step = 1.0 / 128.0;
+    match idx {
+        0 => nudge_float(&mut modal.excite, delta, step),
+        1 => nudge_float(&mut modal.decay, delta, step),
+        2 => nudge_float(&mut modal.damping, delta, step),
+        3 => nudge_float(&mut modal.inharm, delta, step),
+        4 => nudge_float(&mut modal.brightness, delta, step),
+        5 => nudge_float(&mut modal.position, delta, step),
+        _ => {}
     }
 }
 
