@@ -11,39 +11,22 @@ use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{PrimitiveStyle, Rectangle};
 use embedded_graphics::text::Text;
 
+/// Convert MIDI note number to frequency
+fn note_to_freq(note: u8) -> f32 {
+    440.0 * libm::powf(2.0, (note as f32 - 69.0) / 12.0)
+}
+
 fn main() {
     let mut display = DesktopDisplay::new();
     let mut controls = DesktopControls::new();
-
-    let text_style = MonoTextStyle::new(&FONT_6X10, Rgb565::WHITE);
     let audio = audio::DesktopAudio::new();
+
     let mut enc_accum = [0i32; 7];
-    let mut current_note = String::from("--");
+    let mut current_note: Option<(&str, u8)> = None;
 
     while display.is_open() {
         let keys = display.get_keys();
         controls.update(&keys);
-
-        // Piano keys: Z=C4, X=D4, C=E4, V=F4, B=G4
-        if keys.contains(&minifb::Key::Z) {
-            audio.set_frequency(261.63);
-            current_note = String::from("C4");
-        } else if keys.contains(&minifb::Key::X) {
-            audio.set_frequency(293.66);
-            current_note = String::from("D4");
-        } else if keys.contains(&minifb::Key::C) {
-            audio.set_frequency(329.63);
-            current_note = String::from("E4");
-        } else if keys.contains(&minifb::Key::V) {
-            audio.set_frequency(349.23);
-            current_note = String::from("F4");
-        } else if keys.contains(&minifb::Key::B) {
-            audio.set_frequency(392.00);
-            current_note = String::from("G4");
-        } else {
-            audio.set_frequency(0.0);
-            current_note = String::from("--");
-        }
 
         // Accumulate encoder deltas
         for i in 0..7 {
@@ -59,23 +42,65 @@ fn main() {
             enc_accum[i] += controls.encoder_delta(id) as i32;
         }
 
+        // Piano keys -> MIDI notes
+        current_note = if keys.contains(&minifb::Key::Z) {
+            Some(("C4", 60))
+        } else if keys.contains(&minifb::Key::S) {
+            Some(("C#4", 61))
+        } else if keys.contains(&minifb::Key::X) {
+            Some(("D4", 62))
+        } else if keys.contains(&minifb::Key::D) {
+            Some(("D#4", 63))
+        } else if keys.contains(&minifb::Key::C) {
+            Some(("E4", 64))
+        } else if keys.contains(&minifb::Key::V) {
+            Some(("F4", 65))
+        } else if keys.contains(&minifb::Key::G) {
+            Some(("F#4", 66))
+        } else if keys.contains(&minifb::Key::B) {
+            Some(("G4", 67))
+        } else if keys.contains(&minifb::Key::H) {
+            Some(("G#4", 68))
+        } else if keys.contains(&minifb::Key::N) {
+            Some(("A4", 69))
+        } else {
+            None
+        };
+
+        if let Some((_, note)) = current_note {
+            audio.set_frequency(note_to_freq(note));
+        } else {
+            audio.set_frequency(0.0);
+        }
+
+        // === RENDER ===
+
         // Clear screen
         Rectangle::new(Point::zero(), Size::new(240, 320))
             .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
             .draw(&mut display)
             .unwrap();
 
+        let text_style = MonoTextStyle::new(&FONT_6X10, Rgb565::WHITE);
+        let dim_style = MonoTextStyle::new(&FONT_6X10, Rgb565::CSS_DARK_GRAY);
+
         // Title
         Text::new("CHIMERA v0.1.0", Point::new(10, 16), text_style)
             .draw(&mut display)
             .unwrap();
 
+        // Separator
+        Rectangle::new(Point::new(0, 22), Size::new(240, 1))
+            .into_styled(PrimitiveStyle::with_fill(Rgb565::CSS_DARK_GRAY))
+            .draw(&mut display)
+            .unwrap();
+
         // Encoder values
-        let enc_names = ["A", "B", "C", "D", "E", "F", "Main"];
+        let enc_names = ["A", "B", "C", "D", "E", "F", "Mn"];
         for (i, name) in enc_names.iter().enumerate() {
-            let s = format!("{}: {}", name, enc_accum[i]);
+            let s = format!("{}:{:3}", name, enc_accum[i]);
             let x = 10 + (i % 4) as i32 * 58;
-            let y = 40 + (i / 4) as i32 * 16;
+            let y = 40 + (i / 4) as i32 * 14;
             Text::new(&s, Point::new(x, y), text_style)
                 .draw(&mut display)
                 .unwrap();
@@ -94,33 +119,42 @@ fn main() {
             };
             let style = MonoTextStyle::new(&FONT_6X10, color);
             let x = 10 + (i % 6) as i32 * 38;
-            let y = 90 + (i / 6) as i32 * 20;
+            let y = 85 + (i / 6) as i32 * 18;
             Text::new(name, Point::new(x, y), style)
                 .draw(&mut display)
                 .unwrap();
         }
 
-        // Key help
-        let help_style = MonoTextStyle::new(&FONT_6X10, Rgb565::CSS_DARK_GRAY);
-        Text::new("Keys: 1-6=chains  arrows=nav", Point::new(10, 150), help_style)
-            .draw(&mut display)
-            .unwrap();
-        Text::new("Q/A W/S E/D R/F T/G Y/H=enc", Point::new(10, 166), help_style)
-            .draw(&mut display)
-            .unwrap();
-        // Current note
-        let note_display = format!("Note: {}", current_note);
-        let note_color = if current_note != "--" {
-            Rgb565::CSS_LIME_GREEN
+        // Current note display
+        let (note_text, note_color) = if let Some((name, _)) = current_note {
+            (format!("Note: {}", name), Rgb565::CSS_LIME_GREEN)
         } else {
-            Rgb565::CSS_DARK_GRAY
+            (String::from("Note: --"), Rgb565::CSS_DARK_GRAY)
         };
         let note_style = MonoTextStyle::new(&FONT_6X10, note_color);
-        Text::new(&note_display, Point::new(10, 210), note_style)
+        Text::new(&note_text, Point::new(10, 140), note_style)
             .draw(&mut display)
             .unwrap();
 
-        Text::new("Z/X/C/V/B = C D E F G", Point::new(10, 182), help_style)
+        // Dungeon map placeholder (bottom zone)
+        Rectangle::new(Point::new(0, 213), Size::new(240, 1))
+            .into_styled(PrimitiveStyle::with_fill(Rgb565::CSS_DARK_GRAY))
+            .draw(&mut display)
+            .unwrap();
+
+        let chain_text = "[ENG]--[DRV]--[FLT]--[FLD]--[VCA]";
+        Text::new(chain_text, Point::new(10, 240), dim_style)
+            .draw(&mut display)
+            .unwrap();
+        Text::new("  ^", Point::new(10, 254), MonoTextStyle::new(&FONT_6X10, Rgb565::CSS_LIME_GREEN))
+            .draw(&mut display)
+            .unwrap();
+
+        // Help text
+        Text::new("Z S X D C V G B H N = piano", Point::new(10, 290), dim_style)
+            .draw(&mut display)
+            .unwrap();
+        Text::new("Q/A..Y/H = encoders  1-6=nav", Point::new(10, 304), dim_style)
             .draw(&mut display)
             .unwrap();
 

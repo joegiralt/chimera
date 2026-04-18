@@ -182,6 +182,7 @@ dependencies = [
  "cpal",
  "embedded-graphics",
  "embedded-graphics-core",
+ "libm",
  "midir",
  "minifb",
 ]
