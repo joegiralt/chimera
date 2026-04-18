@@ -42,8 +42,8 @@ fn main() {
         ui.handle_input(&controls);
         ui.update();
 
-        // Push FM params to audio thread
-        audio.update_params(&ui.params.fm);
+        // Push full param snapshot to audio thread
+        audio.update_params(&ui.params);
 
         // Measure render time
         let render_start = Instant::now();
