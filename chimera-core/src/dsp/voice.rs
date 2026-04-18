@@ -106,20 +106,29 @@ impl Voice {
         // 4. Wavefolder
         self.folder.process(output, &params.folder);
 
-        // 5. VCA
+        // 5. VCA — engine-dependent envelope behavior
         let volume = params.volume.value;
-        for sample in output.iter_mut() {
-            let env = self.amp_env.process(&params.envelopes[0], sample_rate);
-            *sample *= env * volume;
+        match self.active_engine {
+            EngineType::Fm | EngineType::Va => {
+                // FM/VA: amp envelope shapes the sound
+                for sample in output.iter_mut() {
+                    let env = self.amp_env.process(&params.envelopes[0], sample_rate);
+                    *sample *= env * volume;
+                }
+            }
+            EngineType::Modal => {
+                // Modal: modes have natural decay. Amp envelope acts as a gate —
+                // just apply volume, let the resonator handle the rest.
+                for sample in output.iter_mut() {
+                    *sample *= volume;
+                }
+            }
         }
 
         // Check if done
-        let engine_done = match self.active_engine {
-            EngineType::Fm | EngineType::Va => !self.fm.is_active(),
-            EngineType::Modal => !self.modal.is_active(),
+        self.active = match self.active_engine {
+            EngineType::Fm | EngineType::Va => self.fm.is_active() || self.amp_env.is_active(),
+            EngineType::Modal => self.modal.is_active(),
         };
-        if engine_done && !self.amp_env.is_active() {
-            self.active = false;
-        }
     }
 }

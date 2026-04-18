@@ -174,9 +174,10 @@ impl ModalEngine {
         let num = (params.num_modes as usize).min(MAX_MODES);
         let sr = sample_rate as f32;
 
-        // Base decay: R must be very close to 1 for audible ringing.
-        // decay 0..1 maps to R = 0.9995..0.99999 (short ping → long sustain)
-        let base_r = 0.9995 + params.decay * 0.00049;
+        // Base decay: R controls ring time.
+        // decay 0 → R=0.999 (~140ms at 48kHz, short ping)
+        // decay 1 → R=0.99995 (~14 seconds, long sustain)
+        let base_r = 0.999 + params.decay * 0.00095;
 
         // Brightness: amplitude rolloff exponent (higher = darker)
         let rolloff = 1.0 + (1.0 - params.brightness) * 2.0;
@@ -214,10 +215,11 @@ impl ModalEngine {
                 continue;
             }
 
-            // Per-mode decay: higher modes decay faster.
-            // Damping reduces R slightly per harmonic — must stay very close to 1.
-            let damping_per_mode = params.damping * 0.00002 * harmonic;
-            let mode_r = (base_r - damping_per_mode).max(0.999).min(0.99999);
+            // Per-mode decay: higher modes decay faster (material damping).
+            // This is what makes a string sound different from a bell —
+            // strings lose highs quickly, bells ring bright for a long time.
+            let damping_per_mode = params.damping * 0.0003 * harmonic;
+            let mode_r = (base_r - damping_per_mode).max(0.99).min(0.99999);
 
             // Amplitude: 1/n^rolloff, weighted by position
             let base_amp = 1.0 / libm::powf(harmonic, rolloff);
