@@ -16,6 +16,12 @@ pub struct Envelope {
     velocity: f32,
 }
 
+impl Default for Envelope {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Envelope {
     pub fn new() -> Self {
         Self {

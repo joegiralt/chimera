@@ -35,6 +35,38 @@ impl Param {
     pub fn normalized(&self) -> f32 {
         (self.value - self.min) / (self.max - self.min)
     }
+
+    /// Set from normalized 0.0..1.0
+    pub fn set_normalized(&mut self, n: f32) {
+        self.set(self.min + n * (self.max - self.min));
+    }
+
+    /// Snap to next coarse point in the given direction.
+    /// `snap_points` are in normalized space (0..1), must be sorted ascending.
+    pub fn snap_to(&mut self, delta: i8, snap_points: &[f32]) {
+        let n = self.normalized();
+        if delta > 0 {
+            // Find first snap point above current (with small epsilon)
+            for &sp in snap_points {
+                if sp > n + 0.005 {
+                    self.set_normalized(sp);
+                    return;
+                }
+            }
+            // Already at or above max snap point
+            self.set_normalized(1.0);
+        } else {
+            // Find last snap point below current
+            for &sp in snap_points.iter().rev() {
+                if sp < n - 0.005 {
+                    self.set_normalized(sp);
+                    return;
+                }
+            }
+            // Already at or below min snap point
+            self.set_normalized(0.0);
+        }
+    }
 }
 
 /// Parameters for one voice's filter
@@ -87,10 +119,48 @@ impl Default for EnvParams {
     }
 }
 
+/// Parameters for pre-filter drive stage
+#[derive(Clone, Copy, Debug)]
+pub struct DriveParams {
+    pub drive: Param,
+    pub tone: Param,
+    pub mix: Param,
+}
+
+impl Default for DriveParams {
+    fn default() -> Self {
+        Self {
+            drive: Param::new(0.0, 1.0, 0.0),
+            tone: Param::new(0.0, 1.0, 0.5),
+            mix: Param::new(0.0, 1.0, 1.0),
+        }
+    }
+}
+
+/// Parameters for post-filter wavefolder
+#[derive(Clone, Copy, Debug)]
+pub struct FolderParams {
+    pub fold: Param,
+    pub symmetry: Param,
+    pub mix: Param,
+}
+
+impl Default for FolderParams {
+    fn default() -> Self {
+        Self {
+            fold: Param::new(0.0, 1.0, 0.0),
+            symmetry: Param::new(0.0, 1.0, 0.5),
+            mix: Param::new(0.0, 1.0, 0.5),
+        }
+    }
+}
+
 /// Full snapshot of all parameters for one part
 #[derive(Clone, Debug)]
 pub struct ParamSnapshot {
     pub filter: FilterParams,
+    pub drive: DriveParams,
+    pub folder: FolderParams,
     pub envelopes: [EnvParams; 3],
     pub volume: Param,
     pub pan: Param,
@@ -100,6 +170,8 @@ impl Default for ParamSnapshot {
     fn default() -> Self {
         Self {
             filter: FilterParams::default(),
+            drive: DriveParams::default(),
+            folder: FolderParams::default(),
             envelopes: [EnvParams::default(); 3],
             volume: Param::new(0.0, 1.0, 0.8),
             pan: Param::new(-1.0, 1.0, 0.0),

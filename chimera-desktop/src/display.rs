@@ -6,6 +6,8 @@ use embedded_graphics_core::pixelcolor::Rgb565;
 use embedded_graphics_core::Pixel;
 use minifb::{Key, Window, WindowOptions};
 
+const SCALE: usize = 2;
+
 pub struct DesktopDisplay {
     window: Window,
     fb: Vec<u16>,
@@ -16,8 +18,8 @@ impl DesktopDisplay {
     pub fn new() -> Self {
         let window = Window::new(
             "Chimera",
-            SCREEN_WIDTH as usize,
-            SCREEN_HEIGHT as usize,
+            SCREEN_WIDTH as usize * SCALE,
+            SCREEN_HEIGHT as usize * SCALE,
             WindowOptions::default(),
         )
         .expect("failed to create window");
@@ -25,7 +27,7 @@ impl DesktopDisplay {
         Self {
             window,
             fb: vec![0u16; FB_SIZE],
-            window_buf: vec![0u32; FB_SIZE],
+            window_buf: vec![0u32; FB_SIZE * SCALE * SCALE],
         }
     }
 
@@ -37,13 +39,23 @@ impl DesktopDisplay {
         self.window.get_keys()
     }
 
-    /// Convert RGB565 framebuffer to RGB888 for minifb
+    /// Convert RGB565 framebuffer to scaled RGB888 for minifb
     fn convert_fb(&mut self) {
-        for (i, &pixel) in self.fb.iter().enumerate() {
-            let r = ((pixel >> 11) & 0x1F) as u32;
-            let g = ((pixel >> 5) & 0x3F) as u32;
-            let b = (pixel & 0x1F) as u32;
-            self.window_buf[i] = (r << 19) | (g << 10) | (b << 3);
+        let w = SCREEN_WIDTH as usize;
+        let sw = w * SCALE;
+        for y in 0..SCREEN_HEIGHT as usize {
+            for x in 0..w {
+                let pixel = self.fb[y * w + x];
+                let r = ((pixel >> 11) & 0x1F) as u32;
+                let g = ((pixel >> 5) & 0x3F) as u32;
+                let b = (pixel & 0x1F) as u32;
+                let rgb = (r << 19) | (g << 10) | (b << 3);
+                for dy in 0..SCALE {
+                    for dx in 0..SCALE {
+                        self.window_buf[(y * SCALE + dy) * sw + x * SCALE + dx] = rgb;
+                    }
+                }
+            }
         }
     }
 }
@@ -80,8 +92,8 @@ impl ChimeraDisplay for DesktopDisplay {
         self.window
             .update_with_buffer(
                 &self.window_buf,
-                SCREEN_WIDTH as usize,
-                SCREEN_HEIGHT as usize,
+                SCREEN_WIDTH as usize * SCALE,
+                SCREEN_HEIGHT as usize * SCALE,
             )
             .expect("failed to update window");
     }

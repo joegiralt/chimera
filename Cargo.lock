@@ -170,6 +170,8 @@ name = "chimera-core"
 version = "0.1.0"
 dependencies = [
  "chimera-hal",
+ "embedded-graphics",
+ "embedded-graphics-core",
  "libm",
 ]
 
