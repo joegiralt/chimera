@@ -6,7 +6,7 @@ desktop:
 
 # Build STM32 firmware (release)
 firmware:
-    cargo build --release -p chimera-stm32
+    cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf
 
 # Build all (desktop targets only)
 build:
@@ -26,6 +26,6 @@ clippy:
 
 # Flash firmware to PreenFM3 via DFU
 flash:
-    cargo build --release -p chimera-stm32
-    arm-none-eabi-objcopy -O binary target/thumbv7em-none-eabihf/release/chimera-stm32 chimera.bin
+    cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf
+    objcopy -O binary target/thumbv7em-none-eabihf/release/chimera-stm32 chimera.bin
     dfu-util -a0 -d 0x0483:0xdf11 -D chimera.bin -s 0x8020000
