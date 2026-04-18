@@ -59,7 +59,6 @@ impl Renderer {
         display: &mut D,
         nav: &ChainNav,
         page: PageId,
-        _params: &ParamSnapshot,
         perf: &PerfStats,
     ) where
         D: DrawTarget<Color = Rgb565>,

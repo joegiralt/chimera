@@ -284,39 +284,9 @@ impl PageId {
                 params.filter.env_amount.normalized(),
                 params.filter.key_track.normalized(),
             ],
-            PageId::EnvAmp | PageId::Vca => {
-                let e = &params.envelopes[0];
-                [
-                    e.attack.normalized(),
-                    e.decay.normalized(),
-                    e.sustain.normalized(),
-                    e.release.normalized(),
-                    e.level.normalized(),
-                    e.vel_sens.normalized(),
-                ]
-            }
-            PageId::EnvFilter => {
-                let e = &params.envelopes[1];
-                [
-                    e.attack.normalized(),
-                    e.decay.normalized(),
-                    e.sustain.normalized(),
-                    e.release.normalized(),
-                    e.level.normalized(),
-                    e.vel_sens.normalized(),
-                ]
-            }
-            PageId::EnvAux => {
-                let e = &params.envelopes[2];
-                [
-                    e.attack.normalized(),
-                    e.decay.normalized(),
-                    e.sustain.normalized(),
-                    e.release.normalized(),
-                    e.level.normalized(),
-                    e.vel_sens.normalized(),
-                ]
-            }
+            PageId::EnvAmp | PageId::Vca => read_env_values(&params.envelopes[0]),
+            PageId::EnvFilter => read_env_values(&params.envelopes[1]),
+            PageId::EnvAux => read_env_values(&params.envelopes[2]),
             PageId::Mixer => [
                 params.volume.normalized(),
                 params.pan.normalized(),
@@ -363,68 +333,11 @@ impl PageId {
         }
     }
 
-    /// Apply an encoder delta to the appropriate parameter.
-    /// Each encoder tick = 1/128 of the parameter range.
+    /// Apply an encoder delta. Each tick = 1/128 of the parameter range.
     pub fn apply_encoder(&self, idx: usize, delta: i8, params: &mut ParamSnapshot) {
-        match self {
-            PageId::Filter => {
-                let param = match idx {
-                    0 => &mut params.filter.cutoff,
-                    1 => &mut params.filter.resonance,
-                    2 => &mut params.filter.drive,
-                    3 => &mut params.filter.fm_amount,
-                    4 => &mut params.filter.env_amount,
-                    5 => &mut params.filter.key_track,
-                    _ => return,
-                };
-                let step = (param.max - param.min) / 128.0;
-                param.nudge(delta as f32 * step);
-            }
-            PageId::EnvAmp | PageId::Vca => {
-                apply_env_encoder(&mut params.envelopes[0], idx, delta);
-            }
-            PageId::EnvFilter => {
-                apply_env_encoder(&mut params.envelopes[1], idx, delta);
-            }
-            PageId::EnvAux => {
-                apply_env_encoder(&mut params.envelopes[2], idx, delta);
-            }
-            PageId::Mixer => {
-                let param = match idx {
-                    0 => &mut params.volume,
-                    1 => &mut params.pan,
-                    _ => return,
-                };
-                let step = (param.max - param.min) / 128.0;
-                param.nudge(delta as f32 * step);
-            }
-            PageId::Drive => {
-                let param = match idx {
-                    0 => &mut params.drive.drive,
-                    1 => &mut params.drive.tone,
-                    2 => &mut params.drive.mix,
-                    _ => return,
-                };
-                let step = (param.max - param.min) / 128.0;
-                param.nudge(delta as f32 * step);
-            }
-            PageId::Folder => {
-                let param = match idx {
-                    0 => &mut params.folder.fold,
-                    1 => &mut params.folder.symmetry,
-                    2 => &mut params.folder.mix,
-                    _ => return,
-                };
-                let step = (param.max - param.min) / 128.0;
-                param.nudge(delta as f32 * step);
-            }
-            // Demo + remaining pages: use resolve_param_mut
-            _ => {
-                if let Some(param) = self.resolve_param_mut(idx, params) {
-                    let step = (param.max - param.min) / 128.0;
-                    param.nudge(delta as f32 * step);
-                }
-            }
+        if let Some(param) = self.resolve_param_mut(idx, params) {
+            let step = (param.max - param.min) / 128.0;
+            param.nudge(delta as f32 * step);
         }
     }
 
@@ -504,6 +417,17 @@ impl PageId {
     }
 }
 
+fn read_env_values(e: &crate::params::EnvParams) -> [f32; 6] {
+    [
+        e.attack.normalized(),
+        e.decay.normalized(),
+        e.sustain.normalized(),
+        e.release.normalized(),
+        e.level.normalized(),
+        e.vel_sens.normalized(),
+    ]
+}
+
 fn resolve_env_param(
     env: &mut crate::params::EnvParams,
     idx: usize,
@@ -519,16 +443,3 @@ fn resolve_env_param(
     }
 }
 
-fn apply_env_encoder(env: &mut crate::params::EnvParams, idx: usize, delta: i8) {
-    let param = match idx {
-        0 => &mut env.attack,
-        1 => &mut env.decay,
-        2 => &mut env.sustain,
-        3 => &mut env.release,
-        4 => &mut env.level,
-        5 => &mut env.vel_sens,
-        _ => return,
-    };
-    let step = (param.max - param.min) / 128.0;
-    param.nudge(delta as f32 * step);
-}
