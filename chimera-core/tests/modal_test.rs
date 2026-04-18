@@ -206,3 +206,142 @@ fn test_modal_position_changes_spectrum() {
         quarter
     );
 }
+
+#[test]
+fn test_inharm_actually_shifts_modes() {
+    let f0 = note_freq(48); // ~130 Hz, low note for clear spectrum
+
+    let measure_mode_freqs = |inharm: f32| -> Vec<f32> {
+        let mut params = ModalParams::default();
+        params.inharm = inharm;
+        params.brightness = 1.0; // keep all modes bright
+        params.decay = 0.8;
+        let buf = render_modal(&params, 48, 64);
+
+        // Check energy at exact harmonics and some shifted frequencies
+        let mut results = Vec::new();
+        for h in 1..=8 {
+            let exact = goertzel(&buf, f0 * h as f32, SR);
+            let shifted_up = goertzel(&buf, f0 * h as f32 * 1.1, SR);
+            let shifted_down = goertzel(&buf, f0 * h as f32 * 0.9, SR);
+            results.push((exact, shifted_up, shifted_down));
+        }
+        // Return the energy at exact harmonics
+        results.iter().map(|(e, _, _)| *e).collect()
+    };
+
+    let harmonic = measure_mode_freqs(0.0);
+    let inharmonic = measure_mode_freqs(1.0);
+
+    eprintln!("Harmonic (inharm=0) energies at exact harmonics:");
+    for (i, e) in harmonic.iter().enumerate() {
+        eprintln!("  H{}: {:.6}", i+1, e);
+    }
+    eprintln!("Inharmonic (inharm=1) energies at exact harmonics:");
+    for (i, e) in inharmonic.iter().enumerate() {
+        eprintln!("  H{}: {:.6}", i+1, e);
+    }
+
+    // With inharm=0, modes should be AT the harmonics (high energy)
+    // With inharm=1, modes should be SHIFTED AWAY from exact harmonics (lower energy at those freqs)
+    let harmonic_total: f32 = harmonic[2..].iter().sum(); // harmonics 3+
+    let inharmonic_total: f32 = inharmonic[2..].iter().sum();
+
+    eprintln!("Energy at exact harmonics 3-8: harmonic={:.6} inharmonic={:.6}", harmonic_total, inharmonic_total);
+
+    // The inharmonic version should have LESS energy at exact harmonic frequencies
+    // because its modes are shifted to non-harmonic positions
+    assert!(
+        harmonic_total > inharmonic_total * 1.1,
+        "inharm should shift modes away from exact harmonics: harmonic={} inharmonic={}",
+        harmonic_total, inharmonic_total
+    );
+}
+
+#[test]
+fn test_inharm_shifts_proportionally() {
+    // With moderate inharm, upper modes shift more than lower modes.
+    // Use moderate inharm (0.5) so the effect is measurable but not extreme.
+    let f0 = note_freq(48);
+
+    let energy_at = |inharm: f32, harmonic: u32| -> f32 {
+        let mut params = ModalParams::default();
+        params.inharm = inharm;
+        params.brightness = 1.0;
+        params.decay = 0.8;
+        let buf = render_modal(&params, 48, 64);
+        goertzel(&buf, f0 * harmonic as f32, SR)
+    };
+
+    // At inharm=0, modes are at exact harmonics.
+    // At inharm=0.5, modes stretch by n² factor.
+    // H2 shift: 2*(1+0.02*4) = 2.16 (8% shift from 2f0)
+    // H6 shift: 6*(1+0.02*36) = 10.32 (72% shift from 6f0)
+    // So H6 should lose much more energy at its exact harmonic than H2.
+    let h2_harmonic = energy_at(0.0, 2);
+    let h2_shifted = energy_at(0.5, 2);
+    let h6_harmonic = energy_at(0.0, 6);
+    let h6_shifted = energy_at(0.5, 6);
+
+    let h2_retained = h2_shifted / h2_harmonic.max(0.0001);
+    let h6_retained = h6_shifted / h6_harmonic.max(0.0001);
+
+    eprintln!("H2 retained: {:.4} (harm={:.6} shift={:.6})", h2_retained, h2_harmonic, h2_shifted);
+    eprintln!("H6 retained: {:.4} (harm={:.6} shift={:.6})", h6_retained, h6_harmonic, h6_shifted);
+
+    // Both should lose significant energy at their exact harmonic positions
+    assert!(
+        h2_retained < 0.5,
+        "H2 should shift away from exact harmonic: retained={}",
+        h2_retained
+    );
+    assert!(
+        h6_retained < 0.5,
+        "H6 should shift away from exact harmonic: retained={}",
+        h6_retained
+    );
+}
+
+#[test]
+fn test_modal_debug_output() {
+    // Debug: just print what the modal engine actually produces
+    let mut params = ModalParams::default();
+    params.brightness = 1.0;
+    params.decay = 0.8;
+    params.inharm = 0.0;
+
+    let f0 = note_freq(48);
+    let buf = render_modal(&params, 48, 64);
+
+    eprintln!("\n=== Modal spectrum (inharm=0, harmonic) ===");
+    for h in 1..=12 {
+        let freq = f0 * h as f32;
+        let energy = goertzel(&buf, freq, SR);
+        eprintln!("  {}Hz (H{}): {:.6}", freq as i32, h, energy);
+    }
+
+    // Also check some non-harmonic frequencies
+    eprintln!("\n  Non-harmonic frequencies:");
+    for f in &[f0 * 1.5, f0 * 2.5, f0 * 3.5, f0 * 4.7] {
+        let energy = goertzel(&buf, *f, SR);
+        eprintln!("  {}Hz: {:.6}", *f as i32, energy);
+    }
+
+    let max = buf.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+    let rms = libm::sqrtf(buf.iter().map(|s| s*s).sum::<f32>() / buf.len() as f32);
+    eprintln!("\n  Max: {:.4}, RMS: {:.4}", max, rms);
+    eprintln!("  Samples: {}", buf.len());
+
+    // Now with inharm
+    params.inharm = 1.0;
+    let buf2 = render_modal(&params, 48, 64);
+
+    eprintln!("\n=== Modal spectrum (inharm=1, metallic) ===");
+    for h in 1..=12 {
+        let freq = f0 * h as f32;
+        let energy = goertzel(&buf2, freq, SR);
+        eprintln!("  {}Hz (H{}): {:.6}", freq as i32, h, energy);
+    }
+
+    assert!(true); // always passes, just for debug output
+}

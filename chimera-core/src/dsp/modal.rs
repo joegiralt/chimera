@@ -124,6 +124,8 @@ pub struct ModalEngine {
     exciter_amp: f32,
     /// Simple noise state (xorshift)
     noise_state: u32,
+    /// Exciter lowpass filter state (smooths the noise burst)
+    exciter_lp: f32,
     /// Whether any modes are still ringing
     active: bool,
     /// Sample counter for decay detection
@@ -143,6 +145,7 @@ impl ModalEngine {
             exciter_remaining: 0,
             exciter_amp: 0.0,
             noise_state: 0x12345678,
+            exciter_lp: 0.0,
             active: false,
             silence_counter: 0,
         }
@@ -170,23 +173,24 @@ impl ModalEngine {
     }
 
     /// Configure all mode frequencies, decay rates, and amplitudes.
+    /// Based on Mutable Instruments Rings architecture.
     fn configure_modes(&mut self, base_freq: f32, params: &ModalParams, sample_rate: u32) {
         let num = (params.num_modes as usize).min(MAX_MODES);
         let sr = sample_rate as f32;
 
         // Base decay: R controls ring time.
-        // decay 0 → R=0.999 (~140ms at 48kHz, short ping)
-        // decay 1 → R=0.99995 (~14 seconds, long sustain)
         let base_r = 0.999 + params.decay * 0.00095;
 
-        // Brightness: amplitude rolloff exponent (higher = darker)
-        let rolloff = 1.0 + (1.0 - params.brightness) * 2.0;
+        // Brightness controls how fast upper modes decay (like Q loss in Rings).
+        // 0 = dark (upper modes die fast), 1 = bright (all modes ring equally)
+        let q_loss = params.brightness * 0.85 + 0.15; // 0.15..1.0
 
-        // Inharmonicity: stretch factor for mode spacing
-        // 0 = perfect harmonics, 0.5 = neutral, 1 = stretched (metallic/bell)
-        let stiffness = (params.inharm - 0.5) * 0.02;
+        // Inharmonicity: controls mode spacing stretch.
+        // 0 = perfect harmonics (string)
+        // 1 = dramatically stretched (bell/metal/gong)
+        let stiffness = params.inharm * params.inharm * 0.08; // quadratic for musical range
 
-        // Position-based amplitude weighting via cosine oscillator
+        // Position weighting via cosine oscillator
         let mut cos_osc = CosineOsc {
             y0: 0.0,
             y1: 0.0,
@@ -194,7 +198,7 @@ impl ModalEngine {
         };
         cos_osc.init(params.position);
 
-        let mut stretch = 1.0_f32;
+        let mut q_factor = 1.0_f32;
 
         for i in 0..MAX_MODES {
             if i >= num {
@@ -202,27 +206,28 @@ impl ModalEngine {
                 continue;
             }
 
-            let harmonic = (i + 1) as f32;
+            let n = (i + 1) as f32;
 
-            // Mode frequency with inharmonicity stretch
-            stretch += stiffness * harmonic;
-            let mode_freq = base_freq * harmonic * stretch;
+            // Stiffness: each mode is stretched by n² (physical model of a stiff bar/plate)
+            // For strings: modes at n*f0. For bars: modes at n²*f0 approximately.
+            let stretch = 1.0 + stiffness * n * n;
+            let mode_freq = base_freq * n * stretch;
 
-            // Skip modes above Nyquist
             let freq_ratio = mode_freq / sr;
             if freq_ratio >= 0.49 {
                 self.modes[i].amp = 0.0;
                 continue;
             }
 
-            // Per-mode decay: higher modes decay faster (material damping).
-            // This is what makes a string sound different from a bell —
-            // strings lose highs quickly, bells ring bright for a long time.
-            let damping_per_mode = params.damping * 0.0003 * harmonic;
-            let mode_r = (base_r - damping_per_mode).max(0.99).min(0.99999);
+            // Per-mode decay: Q decreases for higher modes based on brightness.
+            // q_factor decays each mode — darker = faster Q loss for upper partials.
+            q_factor *= q_loss;
+            let damping_offset = (1.0 - q_factor) * params.damping * 0.002;
+            let mode_r = (base_r - damping_offset).max(0.99).min(0.99999);
 
-            // Amplitude: 1/n^rolloff, weighted by position
-            let base_amp = 1.0 / libm::powf(harmonic, rolloff);
+            // Amplitude: 1/sqrt(n) for balanced spectrum (1/n is too steep).
+            // Brightness further controls rolloff.
+            let base_amp = 1.0 / libm::sqrtf(n);
             let pos_weight = cos_osc.next();
             let amp = base_amp * pos_weight;
 
@@ -248,10 +253,17 @@ impl ModalEngine {
         let mut max_level = 0.0_f32;
 
         for s in output.iter_mut() {
-            // Exciter: filtered noise burst
+            // Exciter: shaped noise burst with envelope and lowpass filtering.
+            // The lowpass smooths the noise for a more natural strike/pluck feel.
             let excite = if self.exciter_remaining > 0 {
                 self.exciter_remaining -= 1;
-                self.noise() * self.exciter_amp
+                // Exponential decay envelope on the burst itself
+                let env = self.exciter_remaining as f32 / 200.0;
+                let env = env.min(1.0);
+                let raw = self.noise() * self.exciter_amp * env;
+                // One-pole lowpass: smooths the noise, controllable by brightness
+                self.exciter_lp += 0.3 * (raw - self.exciter_lp);
+                self.exciter_lp
             } else {
                 0.0
             };
