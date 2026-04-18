@@ -229,6 +229,7 @@ impl KsString {
             lp += cutoff * (noise * amplitude - lp);
             self.buffer[i] = lp;
         }
+        self.write_pos = self.delay_len; // so first read starts at buffer[0]
         self.damp_state = 0.0;
         self.frac_state = 0.0;
     }
@@ -349,10 +350,8 @@ impl ModalEngine {
         let num = (params.num_modes as usize).min(MAX_MODES) & !1;
         self.resolution = num;
 
-        // Q from decay. Rings uses enormous Q values (up to 5M) but its SVF
-        // handles them via lookup tables. Our float SVF can't handle Q > ~1000
-        // without numerical issues. Map decay to a practical range.
-        let mut q = 100.0 + params.decay * params.decay * 900.0; // 100..1000
+        // Q from decay. Higher Q = longer ring.
+        let mut q = 200.0 + params.decay * params.decay * 1800.0; // 200..2000
 
         // Stiffness from structure/inharm
         let mut stiffness = stiffness_from_structure(params.inharm);
@@ -441,8 +440,9 @@ impl ModalEngine {
                 0.0
             };
 
-            // Input scaled by 0.125 (matching Rings)
-            let input = excite * 0.125;
+            // Rings scales external audio input by 0.125. Our internal exciter
+            // is already at the right level — no additional scaling needed.
+            let input = excite;
 
             let mut odd = 0.0_f32;
             let mut even = 0.0_f32;
@@ -456,7 +456,8 @@ impl ModalEngine {
             }
 
             // Rings outputs odd and even separately (stereo). We sum to mono.
-            *s = odd + even;
+            // Soft-limit to prevent clipping at high Q.
+            *s = libm::tanhf((odd + even) * 0.5) * 2.0;
             *max_level = max_level.max(libm::fabsf(*s));
         }
     }
