@@ -9,15 +9,10 @@ use controls::DesktopControls;
 use display::DesktopDisplay;
 use std::time::Instant;
 
-/// Convert MIDI note number to frequency
-fn note_to_freq(note: u8) -> f32 {
-    440.0 * libm::powf(2.0, (note as f32 - 69.0) / 12.0)
-}
-
 fn main() {
     let mut display = DesktopDisplay::new();
     let mut controls = DesktopControls::new();
-    let audio = audio::DesktopAudio::new();
+    let mut audio = audio::DesktopAudio::new();
 
     let mut ui = UiState::new();
     let mut perf = PerfTracker::new();
@@ -32,16 +27,23 @@ fn main() {
         let keys = display.get_keys();
         controls.update(&keys);
 
-        // Piano keys -> audio
+        // Piano keys -> FM engine
         let note = piano_note(&keys);
         if note != current_note {
+            if let Some(n) = note {
+                audio.note_on(n, 100);
+            } else {
+                audio.note_off();
+            }
             current_note = note;
-            audio.set_frequency(note.map(note_to_freq).unwrap_or(0.0));
         }
 
         // UI framework handles navigation + encoder -> param binding
         ui.handle_input(&controls);
         ui.update();
+
+        // Push FM params to audio thread
+        audio.update_params(&ui.params.fm);
 
         // Measure render time
         let render_start = Instant::now();

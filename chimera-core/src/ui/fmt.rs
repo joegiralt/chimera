@@ -28,19 +28,30 @@ impl FmtBuf {
     }
 }
 
-/// Format a normalized 0..1 value as MIDI (0-127 or -64..+63).
-pub fn fmt_midi_val(buf: &mut FmtBuf, val: f32, bipolar: bool) {
+use crate::ui::page::ValFmt;
+
+/// Format a normalized 0..1 value for display.
+pub fn fmt_val(buf: &mut FmtBuf, val: f32, fmt: ValFmt) {
     use core::fmt::Write;
-    let midi = (val * 127.0 + 0.5) as i32; // round, not truncate
-    if bipolar {
-        let v = midi - 64;
-        if v > 0 {
-            let _ = write!(buf, "+{}", v);
-        } else {
+    match fmt {
+        ValFmt::Uni => {
+            let midi = (val * 127.0 + 0.5) as i32;
+            let _ = write!(buf, "{}", midi);
+        }
+        ValFmt::Bi => {
+            let midi = (val * 127.0 + 0.5) as i32;
+            let v = midi - 64;
+            if v > 0 {
+                let _ = write!(buf, "+{}", v);
+            } else {
+                let _ = write!(buf, "{}", v);
+            }
+        }
+        ValFmt::Int(max) => {
+            let v = (val * max as f32 + 0.5) as u8;
+            let v = if v > max { max } else { v };
             let _ = write!(buf, "{}", v);
         }
-    } else {
-        let _ = write!(buf, "{}", midi);
     }
 }
 

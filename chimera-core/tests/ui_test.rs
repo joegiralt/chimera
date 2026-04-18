@@ -1,6 +1,6 @@
 use chimera_core::ui::animation::AnimatedValue;
 use chimera_core::ui::chain::ChainNav;
-use chimera_core::ui::fmt::{fmt_midi_val, FmtBuf};
+use chimera_core::ui::fmt::{fmt_val, FmtBuf};
 use chimera_core::ui::page::{PageId, PageLayout, ValFmt};
 
 // ── ValFmt ──────────────────────────────────────────────────────────
@@ -18,69 +18,89 @@ fn test_uni_snap_points() {
 fn test_bi_snap_points() {
     let snaps = ValFmt::Bi.snap_points();
     assert_eq!(snaps.len(), 5);
-    assert!((snaps[0] - 0.0).abs() < 0.001); // -64
-    assert!((snaps[2] - 64.0 / 127.0).abs() < 0.001); // 0
-    assert!((snaps[4] - 1.0).abs() < 0.001); // +63
+    assert!((snaps[0] - 0.0).abs() < 0.001);
+    assert!((snaps[2] - 64.0 / 127.0).abs() < 0.001);
+    assert!((snaps[4] - 1.0).abs() < 0.001);
 }
 
 #[test]
 fn test_valfmt_is_bipolar() {
     assert!(!ValFmt::Uni.is_bipolar());
     assert!(ValFmt::Bi.is_bipolar());
+    assert!(!ValFmt::Int(7).is_bipolar());
 }
 
-// ── fmt_midi_val ────────────────────────────────────────────────────
+// ── fmt_val ─────────────────────────────────────────────────────────
 
 #[test]
 fn test_fmt_unipolar_zero() {
     let mut buf = FmtBuf::new();
-    fmt_midi_val(&mut buf, 0.0, false);
+    fmt_val(&mut buf, 0.0, ValFmt::Uni);
     assert_eq!(buf.as_str(), "0");
 }
 
 #[test]
 fn test_fmt_unipolar_max() {
     let mut buf = FmtBuf::new();
-    fmt_midi_val(&mut buf, 1.0, false);
+    fmt_val(&mut buf, 1.0, ValFmt::Uni);
     assert_eq!(buf.as_str(), "127");
 }
 
 #[test]
 fn test_fmt_unipolar_mid_rounds() {
-    // 0.5 * 127 = 63.5, should round to 64
     let mut buf = FmtBuf::new();
-    fmt_midi_val(&mut buf, 0.5, false);
+    fmt_val(&mut buf, 0.5, ValFmt::Uni);
     assert_eq!(buf.as_str(), "64");
 }
 
 #[test]
 fn test_fmt_bipolar_center() {
-    // 0.5 normalized = MIDI 64 = bipolar 0
     let mut buf = FmtBuf::new();
-    fmt_midi_val(&mut buf, 0.5, true);
+    fmt_val(&mut buf, 0.5, ValFmt::Bi);
     assert_eq!(buf.as_str(), "0");
 }
 
 #[test]
 fn test_fmt_bipolar_min() {
     let mut buf = FmtBuf::new();
-    fmt_midi_val(&mut buf, 0.0, true);
+    fmt_val(&mut buf, 0.0, ValFmt::Bi);
     assert_eq!(buf.as_str(), "-64");
 }
 
 #[test]
 fn test_fmt_bipolar_max() {
     let mut buf = FmtBuf::new();
-    fmt_midi_val(&mut buf, 1.0, true);
+    fmt_val(&mut buf, 1.0, ValFmt::Bi);
     assert_eq!(buf.as_str(), "+63");
 }
 
 #[test]
 fn test_fmt_bipolar_positive_has_plus() {
     let mut buf = FmtBuf::new();
-    fmt_midi_val(&mut buf, 0.75, true);
+    fmt_val(&mut buf, 0.75, ValFmt::Bi);
     let s = buf.as_str();
     assert!(s.starts_with('+'), "positive bipolar should have + prefix: {}", s);
+}
+
+#[test]
+fn test_fmt_int_zero() {
+    let mut buf = FmtBuf::new();
+    fmt_val(&mut buf, 0.0, ValFmt::Int(7));
+    assert_eq!(buf.as_str(), "0");
+}
+
+#[test]
+fn test_fmt_int_max() {
+    let mut buf = FmtBuf::new();
+    fmt_val(&mut buf, 1.0, ValFmt::Int(7));
+    assert_eq!(buf.as_str(), "7");
+}
+
+#[test]
+fn test_fmt_int_clamps() {
+    let mut buf = FmtBuf::new();
+    fmt_val(&mut buf, 1.5, ValFmt::Int(7));
+    assert_eq!(buf.as_str(), "7");
 }
 
 // ── Animation ───────────────────────────────────────────────────────
@@ -125,17 +145,21 @@ fn test_chain_nav_starts_at_voice_engine() {
     assert_eq!(nav.chain, 0);
     assert_eq!(nav.node, 0);
     assert_eq!(nav.sub_page, 0);
-    assert_eq!(PageId::from_nav(&nav), PageId::EngineFm);
+    assert_eq!(PageId::from_nav(&nav), PageId::EngineFmA);
 }
 
 #[test]
 fn test_page_from_nav_voice_chain() {
     let mut nav = ChainNav::new();
     nav.node = 0;
-    assert_eq!(PageId::from_nav(&nav), PageId::EngineFm);
+    assert_eq!(PageId::from_nav(&nav), PageId::EngineFmA);
     nav.sub_page = 1;
-    assert_eq!(PageId::from_nav(&nav), PageId::EngineModal);
+    assert_eq!(PageId::from_nav(&nav), PageId::EngineFmB);
     nav.sub_page = 2;
+    assert_eq!(PageId::from_nav(&nav), PageId::EngineFmC);
+    nav.sub_page = 3;
+    assert_eq!(PageId::from_nav(&nav), PageId::EngineModal);
+    nav.sub_page = 4;
     assert_eq!(PageId::from_nav(&nav), PageId::EngineVa);
     nav.sub_page = 0;
     nav.node = 1;
@@ -168,7 +192,7 @@ fn test_page_from_nav_envelope_chain() {
 fn test_big_viz_pages() {
     assert_eq!(PageId::Filter.layout(), PageLayout::BigViz);
     assert_eq!(PageId::EnvAmp.layout(), PageLayout::BigViz);
-    assert_eq!(PageId::EngineFm.layout(), PageLayout::BigViz);
+    assert_eq!(PageId::EngineFmA.layout(), PageLayout::BigViz);
     assert_eq!(PageId::Compressor.layout(), PageLayout::BigViz);
 }
 

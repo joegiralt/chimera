@@ -162,6 +162,7 @@ pub struct ParamSnapshot {
     pub drive: DriveParams,
     pub folder: FolderParams,
     pub envelopes: [EnvParams; 3],
+    pub fm: crate::dsp::fm::FmParams,
     pub volume: Param,
     pub pan: Param,
 }
@@ -173,6 +174,7 @@ impl Default for ParamSnapshot {
             drive: DriveParams::default(),
             folder: FolderParams::default(),
             envelopes: [EnvParams::default(); 3],
+            fm: crate::dsp::fm::FmParams::default(),
             volume: Param::new(0.0, 1.0, 0.8),
             pan: Param::new(-1.0, 1.0, 0.0),
         }
