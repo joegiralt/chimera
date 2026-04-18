@@ -1,0 +1,9 @@
+[package]
+name = "chimera-core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+chimera-hal = { path = "../chimera-hal" }
+
+[dev-dependencies]
