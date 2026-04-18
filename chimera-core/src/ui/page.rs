@@ -262,7 +262,7 @@ impl PageId {
             // Mix bipolar
             PageId::EngineVa => [Uni, Uni, Uni, Uni, Uni, Bi],
             PageId::EngineModal1 => [Int(2), Uni, Uni, Uni, Uni, Uni],
-            PageId::EngineModal2 => [Uni, Uni, Uni, Uni, Uni, Uni],
+            PageId::EngineModal2 => [Int(3), Uni, Uni, Uni, Uni, Uni],
             PageId::DemoWaves => [Uni, Uni, Uni, Uni, Bi, Bi],
             PageId::DemoShapes => [Uni, Uni, Bi, Bi, Uni, Uni],
             PageId::DemoMotion => [Uni, Uni, Uni, Uni, Bi, Uni],
@@ -282,8 +282,8 @@ impl PageId {
             PageId::EngineFmA => ["ALGO", "FDBK", "RAT C", "WAV C", "LVL C", "DTN C"],
             PageId::EngineFmB => ["RAT M", "WAV M", "LVL M", "DTN M", "RAT 2", "LVL 2"],
             PageId::EngineFmC => ["RAT 3", "WAV 3", "LVL 3", "WAV 2", "WAV 4", "DTN 4"],
-            PageId::EngineModal1 => ["MODE", "EXCITE", "DECAY", "INHARM", "BRIGHT", "POS"],
-            PageId::EngineModal2 => ["DISP", "BOW VL", "BOW FR", "--", "--", "--"],
+            PageId::EngineModal1 => ["MODE", "EXCITE", "DECAY", "BRIGHT", "POS", "INHARM"],
+            PageId::EngineModal2 => ["EXC", "COLOR", "BODY", "STIFF", "FDBK", "ENS"],
             PageId::EngineVa => ["WAVE", "PW", "SYNC", "SUB", "DETUNE", "MIX"],
             PageId::Filter => ["CUTOFF", "RESO", "DRIVE", "FM", "ENV", "TRACK"],
             PageId::Folder => ["FOLD", "SYM", "MIX", "--", "--", "--"],
@@ -389,15 +389,17 @@ impl PageId {
                 params.modal.mode as f32 / 2.0,
                 params.modal.excite,
                 params.modal.decay,
-                params.modal.inharm,
                 params.modal.brightness,
                 params.modal.position,
+                params.modal.inharm,
             ],
             PageId::EngineModal2 => [
-                params.modal.dispersion,
-                params.modal.bow_velocity,
-                params.modal.bow_force,
-                0.0, 0.0, 0.0,
+                params.modal.ks_excitation as f32 / 3.0,
+                params.modal.ks_color,
+                params.modal.ks_body,
+                params.modal.ks_stiffness,
+                params.modal.ks_feedback,
+                params.modal.ks_ens_mix,
             ],
             _ => [0.5; 6], // placeholder pages
         }
@@ -502,9 +504,9 @@ fn apply_modal1_encoder(idx: usize, delta: i8, modal: &mut crate::dsp::modal::Mo
         0 => nudge_u8(&mut modal.mode, delta, 2),
         1 => nudge_float(&mut modal.excite, delta, step),
         2 => nudge_float(&mut modal.decay, delta, step),
-        3 => nudge_float(&mut modal.inharm, delta, step),
-        4 => nudge_float(&mut modal.brightness, delta, step),
-        5 => nudge_float(&mut modal.position, delta, step),
+        3 => nudge_float(&mut modal.brightness, delta, step),
+        4 => nudge_float(&mut modal.position, delta, step),
+        5 => nudge_float(&mut modal.inharm, delta, step),
         _ => {}
     }
 }
@@ -512,9 +514,12 @@ fn apply_modal1_encoder(idx: usize, delta: i8, modal: &mut crate::dsp::modal::Mo
 fn apply_modal2_encoder(idx: usize, delta: i8, modal: &mut crate::dsp::modal::ModalParams) {
     let step = 1.0 / 128.0;
     match idx {
-        0 => nudge_float(&mut modal.dispersion, delta, step),
-        1 => nudge_float(&mut modal.bow_velocity, delta, step),
-        2 => nudge_float(&mut modal.bow_force, delta, step),
+        0 => nudge_u8(&mut modal.ks_excitation, delta, 3),
+        1 => nudge_float(&mut modal.ks_color, delta, step),
+        2 => nudge_float(&mut modal.ks_body, delta, step),
+        3 => nudge_float(&mut modal.ks_stiffness, delta, step),
+        4 => nudge_float(&mut modal.ks_feedback, delta, step),
+        5 => nudge_float(&mut modal.ks_ens_mix, delta, step),
         _ => {}
     }
 }

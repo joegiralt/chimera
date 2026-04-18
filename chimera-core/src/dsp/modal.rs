@@ -119,16 +119,16 @@ fn stiffness_from_structure(structure: f32) -> f32 {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum ResonatorMode {
-    Modal = 0,
-    String = 1,
-    Bowed = 2,
+    String = 0,   // Ambika KS+ (body, stiffness, position, ensemble)
+    Modal = 1,    // SVF bandpass bank (Rings-style)
+    Bowed = 2,    // Sustained bow friction
 }
 
 impl ResonatorMode {
     pub fn from_u8(v: u8) -> Self {
         match v % 3 {
-            0 => ResonatorMode::Modal,
-            1 => ResonatorMode::String,
+            0 => ResonatorMode::String,
+            1 => ResonatorMode::Modal,
             _ => ResonatorMode::Bowed,
         }
     }
@@ -136,36 +136,47 @@ impl ResonatorMode {
 
 #[derive(Clone, Copy, Debug)]
 pub struct ModalParams {
-    /// Resonator model: Modal / String / Bowed
-    pub mode: u8, // 0-2
+    pub mode: u8, // 0=String(KS+), 1=Modal, 2=Bowed
     pub excite: f32,
     pub decay: f32,
     pub brightness: f32,
-    pub inharm: f32,
-    pub position: f32,
+    pub inharm: f32,       // Modal: stiffness. String: not used.
+    pub position: f32,     // Modal: excitation position. String: pluck position.
     pub note: f32,
     pub num_modes: u8,
-    // Per-mode params (page 2)
-    /// String: dispersion (allpass detuning)
-    pub dispersion: f32,
-    /// Bowed: bow velocity
+    // String (KS+) params
+    pub ks_excitation: u8, // 0=noise, 1=click, 2=bright, 3=dark
+    pub ks_color: f32,     // excitation brightness
+    pub ks_body: f32,      // body resonance (half-delay comb)
+    pub ks_stiffness: f32, // allpass dispersion (bell character)
+    pub ks_feedback: f32,  // sustain boost
+    pub ks_ens_rate: f32,  // ensemble LFO rate
+    pub ks_ens_depth: f32, // ensemble detuning depth
+    pub ks_ens_mix: f32,   // ensemble dry/wet
+    // Bowed params
     pub bow_velocity: f32,
-    /// Bowed: bow force/pressure
     pub bow_force: f32,
 }
 
 impl Default for ModalParams {
     fn default() -> Self {
         Self {
-            mode: 0,
+            mode: 0, // String (KS+) by default
             excite: 0.8,
-            decay: 0.5,
+            decay: 0.3,
             brightness: 0.7,
             inharm: 0.25,
-            position: 0.25,
+            position: 0.0, // bridge position
             note: 60.0,
             num_modes: 32,
-            dispersion: 0.0,
+            ks_excitation: 0, // noise
+            ks_color: 0.8,
+            ks_body: 0.3,
+            ks_stiffness: 0.0,
+            ks_feedback: 0.2,
+            ks_ens_rate: 0.3,
+            ks_ens_depth: 0.0,
+            ks_ens_mix: 0.0,
             bow_velocity: 0.5,
             bow_force: 0.5,
         }
@@ -174,21 +185,16 @@ impl Default for ModalParams {
 
 // ── Modal Engine ────────────────────────────────────────────────────
 
-// ── Karplus-Strong delay line ────────────────────────────────────────
+// ── Karplus-Strong delay line (ported from Ambika custom firmware) ───
 
-const MAX_DELAY: usize = 2048; // supports down to ~23Hz at 48kHz
+const MAX_DELAY: usize = 2048;
 
 struct KsString {
     buffer: [f32; MAX_DELAY],
     write_pos: usize,
     delay_len: usize,
-    /// Fractional delay allpass coefficient
-    frac_coeff: f32,
-    frac_state: f32,
-    /// Damping filter state (2-point average)
-    damp_state: f32,
-    /// Decay coefficient
-    decay: f32,
+    ens_lfo_phase: u32,
+    noise_state: u32,
 }
 
 impl KsString {
@@ -197,67 +203,162 @@ impl KsString {
             buffer: [0.0; MAX_DELAY],
             write_pos: 0,
             delay_len: 100,
-            frac_coeff: 0.0,
-            frac_state: 0.0,
-            damp_state: 0.0,
-            decay: 0.999,
+            ens_lfo_phase: 0,
+            noise_state: 0x87654321,
         }
     }
 
-    fn set_freq(&mut self, freq: f32, sample_rate: u32, decay: f32, _brightness: f32) {
+    fn set_freq(&mut self, freq: f32, sample_rate: u32) {
         let period = sample_rate as f32 / freq;
         self.delay_len = (period as usize).min(MAX_DELAY - 1).max(2);
-        let frac = period - self.delay_len as f32;
-        self.frac_coeff = (1.0 - frac) / (1.0 + frac);
-        // Decay coefficient: applied once per sample in the feedback loop.
-        // The 2-point average already provides damping. This controls how
-        // quickly the overall energy decays.
-        // decay=0 → 0.998 (short pluck, ~1s ring)
-        // decay=1 → 0.99998 (very long sustain, ~30s)
-        self.decay = 0.998 + decay * 0.00198;
     }
 
-    /// Fill the delay line with filtered noise (pluck excitation).
-    fn pluck(&mut self, amplitude: f32, brightness: f32) {
-        let mut noise_state = 0x87654321_u32;
-        let mut lp = 0.0_f32;
-        let cutoff = 0.3 + brightness * 0.6;
-        // Scale up amplitude — the feedback loop will bring it down
-        let amp = amplitude * 2.0;
+    fn noise(&mut self) -> f32 {
+        self.noise_state ^= self.noise_state << 13;
+        self.noise_state ^= self.noise_state >> 17;
+        self.noise_state ^= self.noise_state << 5;
+        (self.noise_state as i32) as f32 / i32::MAX as f32
+    }
 
+    /// Excite the string (ported from Ambika Trigger).
+    /// excitation: 0=noise, 1=click, 2=bright, 3=dark
+    fn trigger(&mut self, amplitude: f32, excitation: u8, color: f32, position: f32) {
+        // Fill delay line based on excitation type
+        let mut prev = 0.0_f32;
         for i in 0..self.delay_len {
-            noise_state ^= noise_state << 13;
-            noise_state ^= noise_state >> 17;
-            noise_state ^= noise_state << 5;
-            let noise = (noise_state as i32) as f32 / i32::MAX as f32;
-            lp += cutoff * (noise * amp - lp);
-            self.buffer[i] = lp;
+            let sample = match excitation % 4 {
+                1 => {
+                    // Click: short impulse
+                    if i < 4 { amplitude } else { 0.0 }
+                }
+                2 => {
+                    // Bright noise
+                    let n1 = self.noise();
+                    let n2 = self.noise();
+                    (n1 * 0.5 + n2 * 0.25) * amplitude
+                }
+                3 => {
+                    // Dark noise: average with previous
+                    let n = self.noise() * amplitude;
+                    prev = (n + prev) * 0.5;
+                    prev
+                }
+                _ => {
+                    // White noise
+                    self.noise() * amplitude
+                }
+            };
+            self.buffer[i] = sample;
         }
-        self.write_pos = self.delay_len; // so first read starts at buffer[0]
-        self.damp_state = 0.0;
-        self.frac_state = 0.0;
+
+        // Pluck position: comb notch at position harmonics
+        if position > 0.03 {
+            let notch_period = ((self.delay_len as f32 * position) as usize).max(2);
+            if notch_period < self.delay_len {
+                for i in 0..self.delay_len - notch_period {
+                    self.buffer[i] = (self.buffer[i] + self.buffer[i + notch_period]) * 0.5;
+                }
+            }
+        }
+
+        // Excitation color: low-pass filter passes (lower color = darker)
+        let filter_passes = ((1.0 - color) * 7.0) as usize;
+        for _ in 0..filter_passes {
+            for i in 1..self.delay_len {
+                self.buffer[i] = (self.buffer[i] + self.buffer[i - 1]) * 0.5;
+            }
+        }
+
+        self.write_pos = 0;
+        self.ens_lfo_phase = 0;
     }
 
-    /// Process one sample.
+    /// Full render with all Ambika KS features.
+    /// damping: 0..1 (lowpass coefficient)
+    /// decay: 0..1 (AC attenuation rate)
+    /// body: 0..1 (half-delay comb resonance)
+    /// stiffness: 0..1 (allpass dispersion for bell character)
+    /// feedback: 0..1 (sustain boost)
+    /// ens_rate/depth/spread/mix: ensemble chorus parameters
     #[inline]
-    fn tick(&mut self) -> f32 {
-        // Read from delay line
-        let read_pos = (self.write_pos + MAX_DELAY - self.delay_len) % MAX_DELAY;
-        let sample = self.buffer[read_pos];
+    fn tick_full(
+        &mut self,
+        damping: f32,
+        decay: f32,
+        body: f32,
+        stiffness: f32,
+        feedback: f32,
+        ens_rate: f32,
+        ens_depth: f32,
+        ens_spread: f32,
+        ens_mix: f32,
+    ) -> f32 {
+        // Read position: one ahead of write
+        let read_pos = (self.write_pos + 1) % self.delay_len;
+        let current = self.buffer[read_pos];
+        let next = self.buffer[(read_pos + 1) % self.delay_len];
 
-        // Fractional delay via allpass interpolation
-        let allpass_out = self.frac_coeff * (sample - self.frac_state) + self.buffer[(read_pos + 1) % MAX_DELAY];
-        self.frac_state = allpass_out;
+        // KS low-pass averaging (damping controls blend between current and next)
+        let coeff = 0.25 + damping * 0.5; // 0.25..0.75
+        let mut filtered = current * (1.0 - coeff) + next * coeff;
 
-        // Damping filter: 2-point average (Karplus-Strong classic)
-        let damped = (allpass_out + self.damp_state) * 0.5 * self.decay;
-        self.damp_state = allpass_out;
+        // Stiffness: mix with a sample from +7 offset (allpass-like dispersion)
+        if stiffness > 0.01 {
+            let stiff_pos = (read_pos + 7) % self.delay_len;
+            let stiff_sample = self.buffer[stiff_pos];
+            filtered = filtered * (1.0 - stiffness) + stiff_sample * stiffness;
+        }
+
+        // Decay: attenuate AC component (keeps DC stable)
+        if decay > 0.01 {
+            let decay_amount = decay * 0.12; // max ~12% attenuation per sample
+            filtered -= filtered * decay_amount;
+        }
+
+        // Body resonance: comb filter at half-delay
+        if body > 0.03 {
+            let body_pos = (read_pos + self.delay_len / 2) % self.delay_len;
+            let body_sample = self.buffer[body_pos];
+            filtered = filtered * (1.0 - body) + body_sample * body;
+        }
+
+        // Feedback boost for sustain
+        if feedback > 0.01 {
+            filtered += filtered * feedback * 0.5;
+            filtered = filtered.clamp(-1.0, 1.0);
+        }
 
         // Write back
-        self.buffer[self.write_pos] = damped;
-        self.write_pos = (self.write_pos + 1) % MAX_DELAY;
+        self.buffer[read_pos] = filtered;
+        self.write_pos = read_pos;
 
-        sample
+        // Ensemble: three read heads with LFO detuning
+        let mut output = filtered;
+        if ens_mix > 0.01 && ens_depth > 0.01 {
+            let lfo_inc = ((ens_rate + 0.01) * 1000.0) as u32;
+            self.ens_lfo_phase = self.ens_lfo_phase.wrapping_add(lfo_inc);
+
+            // Triangle LFO: 0..1..0..-1..0
+            let lfo_raw = (self.ens_lfo_phase >> 16) as i16;
+            let lfo_val = if self.ens_lfo_phase & 0x80000000 != 0 {
+                -(lfo_raw as f32 / 32768.0)
+            } else {
+                lfo_raw as f32 / 32768.0
+            };
+
+            let offset2 = (lfo_val * ens_depth * self.delay_len as f32 * 0.05) as i32;
+            let offset3 = -offset2 + (ens_spread * self.delay_len as f32 * 0.02) as i32;
+
+            let p2 = ((read_pos as i32 + offset2).rem_euclid(self.delay_len as i32)) as usize;
+            let p3 = ((read_pos as i32 + offset3).rem_euclid(self.delay_len as i32)) as usize;
+
+            let head2 = self.buffer[p2];
+            let head3 = self.buffer[p3];
+
+            output = filtered * (1.0 - ens_mix) + (head2 + head3) * 0.5 * ens_mix;
+        }
+
+        output
     }
 }
 
@@ -323,13 +424,16 @@ impl ModalEngine {
                 self.exciter_lp = 0.0;
             }
             ResonatorMode::String => {
-                self.string.set_freq(freq, sample_rate, params.decay, params.brightness);
-                self.string.pluck(vel * params.excite, params.brightness);
+                self.string.set_freq(freq, sample_rate);
+                self.string.trigger(
+                    vel * params.excite,
+                    params.ks_excitation,
+                    params.ks_color,
+                    params.position,
+                );
             }
             ResonatorMode::Bowed => {
-                // Bowed: set up string for continuous excitation
-                self.string.set_freq(freq, sample_rate, params.decay, params.brightness);
-                // Fill with silence — bow will drive it continuously
+                self.string.set_freq(freq, sample_rate);
                 for s in self.string.buffer.iter_mut() {
                     *s = 0.0;
                 }
@@ -420,8 +524,8 @@ impl ModalEngine {
         }
 
         match self.active_mode {
+            ResonatorMode::String => self.render_string(output, params, &mut max_level),
             ResonatorMode::Modal => self.render_modal(output, &mut max_level),
-            ResonatorMode::String => self.render_string(output, &mut max_level),
             ResonatorMode::Bowed => self.render_bowed(output, params, &mut max_level),
         }
 
@@ -469,9 +573,19 @@ impl ModalEngine {
         }
     }
 
-    fn render_string(&mut self, output: &mut [f32; BLOCK_SIZE], max_level: &mut f32) {
+    fn render_string(&mut self, output: &mut [f32; BLOCK_SIZE], params: &ModalParams, max_level: &mut f32) {
         for s in output.iter_mut() {
-            *s = self.string.tick();
+            *s = self.string.tick_full(
+                params.brightness,     // damping
+                params.decay,          // decay
+                params.ks_body,        // body resonance
+                params.ks_stiffness,   // inharmonicity
+                params.ks_feedback,    // sustain boost
+                params.ks_ens_rate,    // ensemble rate
+                params.ks_ens_depth,   // ensemble depth
+                0.3,                   // ensemble spread (fixed for now)
+                params.ks_ens_mix,     // ensemble mix
+            );
             *max_level = max_level.max(libm::fabsf(*s));
         }
     }

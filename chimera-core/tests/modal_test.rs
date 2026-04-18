@@ -18,6 +18,12 @@ fn goertzel(buf: &[f32], target_freq: f32, sample_rate: u32) -> f32 {
     libm::sqrtf(power.abs()) / n
 }
 
+fn modal_params() -> ModalParams {
+    let mut p = modal_params();
+    p.mode = 1; // Modal resonator (SVF bank)
+    p
+}
+
 fn render_modal(params: &ModalParams, note: u8, blocks: usize) -> Vec<f32> {
     let mut engine = ModalEngine::new();
     engine.note_on(note, 100, params, SR);
@@ -36,7 +42,7 @@ fn note_freq(note: u8) -> f32 {
 
 #[test]
 fn test_modal_produces_sound() {
-    let params = ModalParams::default();
+    let params = modal_params();
     let buf = render_modal(&params, 60, 16);
     let max = buf.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
     assert!(max > 0.001, "modal should produce sound, got max={}", max);
@@ -44,7 +50,7 @@ fn test_modal_produces_sound() {
 
 #[test]
 fn test_modal_has_fundamental() {
-    let params = ModalParams::default();
+    let params = modal_params();
     let buf = render_modal(&params, 48, 64); // lower note, longer render
     let f0 = note_freq(48);
     let fund = goertzel(&buf, f0, SR);
@@ -54,7 +60,7 @@ fn test_modal_has_fundamental() {
 
 #[test]
 fn test_modal_has_harmonics() {
-    let params = ModalParams::default();
+    let params = modal_params();
     let buf = render_modal(&params, 48, 64);
     let f0 = note_freq(48);
 
@@ -68,7 +74,7 @@ fn test_modal_has_harmonics() {
 
 #[test]
 fn test_modal_decays() {
-    let params = ModalParams::default();
+    let params = modal_params();
     let mut engine = ModalEngine::new();
     engine.note_on(60, 100, &params, SR);
 
@@ -95,7 +101,7 @@ fn test_modal_decays() {
 
 #[test]
 fn test_modal_silent_when_idle() {
-    let params = ModalParams::default();
+    let params = modal_params();
     let mut engine = ModalEngine::new();
     let mut block = [0.0f32; 128];
     engine.render(&mut block, &params, SR);
@@ -105,7 +111,7 @@ fn test_modal_silent_when_idle() {
 
 #[test]
 fn test_modal_output_bounded() {
-    let mut params = ModalParams::default();
+    let mut params = modal_params();
     params.excite = 1.0;
     params.decay = 1.0;
     params.brightness = 1.0;
@@ -119,7 +125,7 @@ fn test_modal_inharm_changes_spectrum() {
     let f0 = note_freq(48);
 
     let spectrum = |inharm: f32| -> f32 {
-        let mut params = ModalParams::default();
+        let mut params = modal_params();
         params.inharm = inharm;
         let buf = render_modal(&params, 48, 32);
         // Measure energy at exact harmonics — inharmonic modes will miss these
@@ -146,7 +152,7 @@ fn test_modal_brightness_changes_spectrum() {
     let f0 = note_freq(48);
 
     let high_harmonic_energy = |brightness: f32| -> f32 {
-        let mut params = ModalParams::default();
+        let mut params = modal_params();
         params.brightness = brightness;
         let buf = render_modal(&params, 48, 16);
         // Energy in harmonics 4-8 only (high partials)
@@ -167,7 +173,7 @@ fn test_modal_brightness_changes_spectrum() {
 #[test]
 fn test_modal_resonator_rings_at_pitch() {
     // The strongest spectral peak should be near the fundamental
-    let params = ModalParams::default();
+    let params = modal_params();
     let buf = render_modal(&params, 60, 32);
     let f0 = note_freq(60);
 
@@ -188,7 +194,7 @@ fn test_modal_position_changes_spectrum() {
     let f0 = note_freq(48);
 
     let second_harmonic = |pos: f32| -> f32 {
-        let mut params = ModalParams::default();
+        let mut params = modal_params();
         params.position = pos;
         let buf = render_modal(&params, 48, 16);
         goertzel(&buf, f0 * 2.0, SR)
@@ -214,7 +220,7 @@ fn test_inharm_actually_shifts_modes() {
     let f0 = note_freq(48); // ~130 Hz, low note for clear spectrum
 
     let measure_mode_freqs = |inharm: f32| -> Vec<f32> {
-        let mut params = ModalParams::default();
+        let mut params = modal_params();
         params.inharm = inharm;
         params.brightness = 1.0; // keep all modes bright
         params.decay = 0.8;
@@ -266,7 +272,7 @@ fn test_inharm_spreads_spectrum() {
     let f0 = note_freq(48);
 
     let non_harmonic_energy = |inharm: f32| -> f32 {
-        let mut params = ModalParams::default();
+        let mut params = modal_params();
         params.inharm = inharm;
         params.brightness = 1.0;
         params.decay = 0.8;
@@ -296,7 +302,7 @@ fn test_inharm_spreads_spectrum() {
 #[test]
 fn test_modal_debug_output() {
     // Debug: just print what the modal engine actually produces
-    let mut params = ModalParams::default();
+    let mut params = modal_params();
     params.brightness = 1.0;
     params.decay = 0.8;
     params.inharm = 0.0;
