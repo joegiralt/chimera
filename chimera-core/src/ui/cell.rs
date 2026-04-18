@@ -780,7 +780,7 @@ where
 
         for row in 0..fill_h {
             // t = how far up the cube we are (0 = bottom, 1 = top)
-            let t = row as f32 / cube_h as f32;
+            let _t = row as f32 / cube_h as f32;
 
             // Front edge X at this height (straight vertical, so always cx)
             let front_x = bf.0;
