@@ -135,7 +135,7 @@ impl Renderer {
         D: DrawTarget<Color = Rgb565>,
     {
         match page {
-            PageId::EngineFm => self.draw_fm_viz(display),
+            PageId::EngineFmA | PageId::EngineFmB | PageId::EngineFmC => self.draw_fm_viz(display),
             PageId::EngineModal => self.draw_modal_viz(display),
             PageId::EngineVa => self.draw_va_viz(display),
             PageId::Drive => self.draw_drive_viz(display),
@@ -837,7 +837,7 @@ impl Renderer {
 
             // Numeric value (MIDI: 0-127 or -64..+63)
             let mut buf = FmtBuf::new();
-            fmt::fmt_midi_val(&mut buf, val, fmts[i].is_bipolar());
+            fmt::fmt_val(&mut buf, val, fmts[i]);
             let label_end = x + label.len() as i32 * 6 + 4;
             let _ = Text::new(buf.as_str(), Point::new(label_end, y + 10), value_style)
                 .draw(display);

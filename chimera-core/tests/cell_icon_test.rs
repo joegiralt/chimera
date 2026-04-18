@@ -60,7 +60,7 @@ fn test_big_viz_pages_dont_need_icons() {
         PageId::EnvFilter,
         PageId::EnvAux,
         PageId::Vca,
-        PageId::EngineFm,
+        PageId::EngineFmA,
         PageId::Routing,
         PageId::Compressor,
     ];
@@ -119,7 +119,8 @@ fn test_demo_storybook_covers_all_icons() {
 #[test]
 fn test_all_pages_have_6_labels() {
     let all_pages = [
-        PageId::EngineFm, PageId::EngineModal, PageId::EngineVa,
+        PageId::EngineFmA, PageId::EngineFmB, PageId::EngineFmC,
+        PageId::EngineModal, PageId::EngineVa,
         PageId::Drive, PageId::Filter, PageId::Folder,
         PageId::Vca, PageId::Efx, PageId::Mixer,
         PageId::Routing, PageId::Compressor, PageId::GlobalEfx,

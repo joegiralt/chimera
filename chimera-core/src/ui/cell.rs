@@ -69,7 +69,7 @@ pub fn draw_cell<D>(
     let _ = Text::new(label, Point::new(cx + 4, text_y), label_style).draw(display);
 
     let mut buf = FmtBuf::new();
-    fmt::fmt_midi_val(&mut buf, value, val_fmt.is_bipolar());
+    fmt::fmt_val(&mut buf, value, val_fmt);
     let label_end = cx + 4 + label.len() as i32 * 6 + 4;
     let _ = Text::new(buf.as_str(), Point::new(label_end, text_y), value_style).draw(display);
 

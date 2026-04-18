@@ -8,21 +8,32 @@ pub enum ValFmt {
     Uni,
     /// Bipolar: -64 to +63. Snaps: -64, -44, 0, +43, +63.
     Bi,
+    /// Discrete integer 0..N. N is stored in the variant.
+    /// Display shows the integer directly. Snaps at each integer.
+    Int(u8),
 }
 
 impl ValFmt {
     /// Coarse snap points in normalized 0..1 space.
     pub fn snap_points(self) -> &'static [f32] {
         match self {
-            // 0, 100, 127
             ValFmt::Uni => &[0.0, 100.0 / 127.0, 1.0],
-            // -64, -44, 0, +43, +63 → midi 0, 20, 64, 107, 127
             ValFmt::Bi => &[0.0, 20.0 / 127.0, 64.0 / 127.0, 107.0 / 127.0, 1.0],
+            // Discrete: shift-encoder jumps to 0 or max
+            ValFmt::Int(_) => &[0.0, 1.0],
         }
     }
 
     pub fn is_bipolar(self) -> bool {
         matches!(self, ValFmt::Bi)
+    }
+
+    /// Max integer value (only meaningful for Int variant).
+    pub fn max_int(self) -> u8 {
+        match self {
+            ValFmt::Int(n) => n,
+            _ => 127,
+        }
     }
 }
 
@@ -81,7 +92,9 @@ pub enum CellIcon {
 /// Identifies which page is active, derived from chain position.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PageId {
-    EngineFm,
+    EngineFmA,
+    EngineFmB,
+    EngineFmC,
     EngineModal,
     EngineVa,
     Drive,
@@ -107,9 +120,11 @@ impl PageId {
         match nav.chain {
             0 => match nav.node {
                 0 => match nav.sub_page {
-                    1 => PageId::EngineModal,
-                    2 => PageId::EngineVa,
-                    _ => PageId::EngineFm,
+                    1 => PageId::EngineFmB,
+                    2 => PageId::EngineFmC,
+                    3 => PageId::EngineModal,
+                    4 => PageId::EngineVa,
+                    _ => PageId::EngineFmA,
                 },
                 1 => PageId::Drive,
                 2 => PageId::Filter,
@@ -134,7 +149,7 @@ impl PageId {
                 1 => PageId::DemoShapes,
                 _ => PageId::DemoMotion,
             },
-            _ => PageId::EngineFm,
+            _ => PageId::EngineFmA,
         }
     }
 
@@ -143,7 +158,8 @@ impl PageId {
         match self {
             // Big viz: pages with a single unified visualization
             PageId::Filter | PageId::EnvAmp | PageId::EnvFilter | PageId::EnvAux
-            | PageId::Vca | PageId::EngineFm | PageId::Routing | PageId::Compressor => {
+            | PageId::Vca | PageId::EngineFmA | PageId::EngineFmB | PageId::EngineFmC
+            | PageId::Routing | PageId::Compressor => {
                 PageLayout::BigViz
             }
             // Demo + everything else: cell grid
@@ -246,6 +262,12 @@ impl PageId {
             PageId::DemoWaves => [Uni, Uni, Uni, Uni, Bi, Bi],
             PageId::DemoShapes => [Uni, Uni, Bi, Bi, Uni, Uni],
             PageId::DemoMotion => [Uni, Uni, Uni, Uni, Bi, Uni],
+            // FM-A: algo(0-7), fdbk, op1 ratio, op1 wave(0-7), op1 level, op1 detune(bi)
+            PageId::EngineFmA => [Int(7), Uni, Uni, Int(7), Uni, Bi],
+            // FM-B: op2 ratio, op2 wave, op2 level, op2 detune, op2>op1 depth, --
+            PageId::EngineFmB => [Uni, Int(7), Uni, Bi, Uni, Uni],
+            // FM-C: op3 ratio, op3 wave, op3 level, op4 ratio, op4 wave, op4 level
+            PageId::EngineFmC => [Uni, Int(7), Uni, Uni, Int(7), Uni],
             _ => [Uni; 6],
         }
     }
@@ -253,7 +275,9 @@ impl PageId {
     /// 6 encoder labels for this page (3x2 grid: a-f).
     pub fn encoder_labels(&self) -> [&'static str; 6] {
         match self {
-            PageId::EngineFm => ["ALGO", "RATIO", "WAVE", "FDBK", "DEPTH", "DETUNE"],
+            PageId::EngineFmA => ["ALGO", "FDBK", "RATIO1", "WAVE1", "LVL 1", "DTN 1"],
+            PageId::EngineFmB => ["RAT 2", "WAV 2", "LVL 2", "DTN 2", "DEPTH", "--"],
+            PageId::EngineFmC => ["RAT 3", "WAV 3", "LVL 3", "RAT 4", "WAV 4", "LVL 4"],
             PageId::EngineModal => ["EXCITE", "DECAY", "DAMP", "PITCH", "BRIGHT", "POS"],
             PageId::EngineVa => ["WAVE", "PW", "SYNC", "SUB", "DETUNE", "MIX"],
             PageId::Filter => ["CUTOFF", "RESO", "DRIVE", "FM", "ENV", "TRACK"],
@@ -276,6 +300,30 @@ impl PageId {
     /// Read 6 normalized (0..1) encoder values from params for this page.
     pub fn read_values(&self, params: &ParamSnapshot) -> [f32; 6] {
         match self {
+            PageId::EngineFmA => [
+                params.fm.algorithm as f32 / 7.0,
+                params.fm.feedback,
+                params.fm.op_ratio[0],
+                params.fm.op_waveform[0] as f32 / 7.0,
+                params.fm.op_level[0],
+                params.fm.op_detune[0],
+            ],
+            PageId::EngineFmB => [
+                params.fm.op_ratio[1],
+                params.fm.op_waveform[1] as f32 / 7.0,
+                params.fm.op_level[1],
+                params.fm.op_detune[1],
+                params.fm.op_level[3], // op4 depth (modulator level)
+                0.0,
+            ],
+            PageId::EngineFmC => [
+                params.fm.op_ratio[2],
+                params.fm.op_waveform[2] as f32 / 7.0,
+                params.fm.op_level[2],
+                params.fm.op_ratio[3],
+                params.fm.op_waveform[3] as f32 / 7.0,
+                params.fm.op_level[3],
+            ],
             PageId::Filter => [
                 params.filter.cutoff.normalized(),
                 params.filter.resonance.normalized(),
@@ -335,6 +383,13 @@ impl PageId {
 
     /// Apply an encoder delta. Each tick = 1/128 of the parameter range.
     pub fn apply_encoder(&self, idx: usize, delta: i8, params: &mut ParamSnapshot) {
+        // FM pages: direct float manipulation (not Param structs)
+        match self {
+            PageId::EngineFmA => { apply_fm_a_encoder(idx, delta, &mut params.fm); return; }
+            PageId::EngineFmB => { apply_fm_b_encoder(idx, delta, &mut params.fm); return; }
+            PageId::EngineFmC => { apply_fm_c_encoder(idx, delta, &mut params.fm); return; }
+            _ => {}
+        }
         if let Some(param) = self.resolve_param_mut(idx, params) {
             let step = (param.max - param.min) / 128.0;
             param.nudge(delta as f32 * step);
@@ -426,6 +481,53 @@ fn read_env_values(e: &crate::params::EnvParams) -> [f32; 6] {
         e.level.normalized(),
         e.vel_sens.normalized(),
     ]
+}
+
+fn nudge_float(v: &mut f32, delta: i8, step: f32) {
+    *v = (*v + delta as f32 * step).clamp(0.0, 1.0);
+}
+
+fn nudge_u8(v: &mut u8, delta: i8, max: u8) {
+    let n = *v as i8 + delta;
+    *v = n.clamp(0, max as i8) as u8;
+}
+
+// FM-A: ALGO, FDBK, op1 ratio/wave/level/detune
+fn apply_fm_a_encoder(idx: usize, delta: i8, fm: &mut crate::dsp::fm::FmParams) {
+    match idx {
+        0 => nudge_u8(&mut fm.algorithm, delta, 7),
+        1 => nudge_float(&mut fm.feedback, delta, 1.0 / 128.0),
+        2 => nudge_float(&mut fm.op_ratio[0], delta, 1.0 / 16.0),
+        3 => nudge_u8(&mut fm.op_waveform[0], delta, 7),
+        4 => nudge_float(&mut fm.op_level[0], delta, 1.0 / 128.0),
+        5 => nudge_float(&mut fm.op_detune[0], delta, 1.0 / 128.0),
+        _ => {}
+    }
+}
+
+// FM-B: op2 ratio/wave/level/detune, modulator depth
+fn apply_fm_b_encoder(idx: usize, delta: i8, fm: &mut crate::dsp::fm::FmParams) {
+    match idx {
+        0 => nudge_float(&mut fm.op_ratio[1], delta, 1.0 / 16.0),
+        1 => nudge_u8(&mut fm.op_waveform[1], delta, 7),
+        2 => nudge_float(&mut fm.op_level[1], delta, 1.0 / 128.0),
+        3 => nudge_float(&mut fm.op_detune[1], delta, 1.0 / 128.0),
+        4 => nudge_float(&mut fm.op_level[3], delta, 1.0 / 128.0), // op4 depth
+        _ => {}
+    }
+}
+
+// FM-C: op3 ratio/wave/level, op4 ratio/wave/level
+fn apply_fm_c_encoder(idx: usize, delta: i8, fm: &mut crate::dsp::fm::FmParams) {
+    match idx {
+        0 => nudge_float(&mut fm.op_ratio[2], delta, 1.0 / 16.0),
+        1 => nudge_u8(&mut fm.op_waveform[2], delta, 7),
+        2 => nudge_float(&mut fm.op_level[2], delta, 1.0 / 128.0),
+        3 => nudge_float(&mut fm.op_ratio[3], delta, 1.0 / 16.0),
+        4 => nudge_u8(&mut fm.op_waveform[3], delta, 7),
+        5 => nudge_float(&mut fm.op_level[3], delta, 1.0 / 128.0),
+        _ => {}
+    }
 }
 
 fn resolve_env_param(
