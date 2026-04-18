@@ -108,39 +108,159 @@ fn stiffness_from_structure(structure: f32) -> f32 {
 
 // ── Modal Params ────────────────────────────────────────────────────
 
+/// Resonator model selection.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ResonatorMode {
+    Modal = 0,
+    String = 1,
+    Bowed = 2,
+}
+
+impl ResonatorMode {
+    pub fn from_u8(v: u8) -> Self {
+        match v % 3 {
+            0 => ResonatorMode::Modal,
+            1 => ResonatorMode::String,
+            _ => ResonatorMode::Bowed,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct ModalParams {
+    /// Resonator model: Modal / String / Bowed
+    pub mode: u8, // 0-2
     pub excite: f32,
-    pub decay: f32,       // 0..1 → maps to Q
-    pub damping: f32,     // 0..1 (unused name kept for UI compat — this is "structure")
-    pub note: f32,
+    pub decay: f32,
     pub brightness: f32,
+    pub inharm: f32,
     pub position: f32,
-    pub inharm: f32,      // 0..1 → structure (stiffness)
+    pub note: f32,
     pub num_modes: u8,
+    // Per-mode params (page 2)
+    /// String: dispersion (allpass detuning)
+    pub dispersion: f32,
+    /// Bowed: bow velocity
+    pub bow_velocity: f32,
+    /// Bowed: bow force/pressure
+    pub bow_force: f32,
 }
 
 impl Default for ModalParams {
     fn default() -> Self {
         Self {
+            mode: 0,
             excite: 0.8,
             decay: 0.5,
-            damping: 0.3,
-            note: 60.0,
             brightness: 0.7,
+            inharm: 0.25,
             position: 0.25,
-            inharm: 0.25, // harmonic by default (maps to stiffness ≈ 0)
+            note: 60.0,
             num_modes: 32,
+            dispersion: 0.0,
+            bow_velocity: 0.5,
+            bow_force: 0.5,
         }
     }
 }
 
 // ── Modal Engine ────────────────────────────────────────────────────
 
+// ── Karplus-Strong delay line ────────────────────────────────────────
+
+const MAX_DELAY: usize = 2048; // supports down to ~23Hz at 48kHz
+
+struct KsString {
+    buffer: [f32; MAX_DELAY],
+    write_pos: usize,
+    delay_len: usize,
+    /// Fractional delay allpass coefficient
+    frac_coeff: f32,
+    frac_state: f32,
+    /// Damping filter state (2-point average)
+    damp_state: f32,
+    /// Decay coefficient
+    decay: f32,
+}
+
+impl KsString {
+    fn new() -> Self {
+        Self {
+            buffer: [0.0; MAX_DELAY],
+            write_pos: 0,
+            delay_len: 100,
+            frac_coeff: 0.0,
+            frac_state: 0.0,
+            damp_state: 0.0,
+            decay: 0.999,
+        }
+    }
+
+    fn set_freq(&mut self, freq: f32, sample_rate: u32, decay: f32, brightness: f32) {
+        let period = sample_rate as f32 / freq;
+        self.delay_len = (period as usize).min(MAX_DELAY - 1).max(2);
+        let frac = period - self.delay_len as f32;
+        // Allpass interpolation coefficient for fractional delay
+        self.frac_coeff = (1.0 - frac) / (1.0 + frac);
+        // Decay: longer delay = need higher coefficient to maintain same RT60
+        self.decay = 0.995 + decay * 0.00499;
+        self.decay *= 0.5 + brightness * 0.5; // brightness reduces damping
+    }
+
+    /// Fill the delay line with filtered noise (pluck excitation).
+    fn pluck(&mut self, amplitude: f32, brightness: f32) {
+        let mut noise_state = 0x87654321_u32;
+        let mut lp = 0.0_f32;
+        let cutoff = 0.2 + brightness * 0.7; // lowpass on the noise
+
+        for i in 0..self.delay_len {
+            noise_state ^= noise_state << 13;
+            noise_state ^= noise_state >> 17;
+            noise_state ^= noise_state << 5;
+            let noise = (noise_state as i32) as f32 / i32::MAX as f32;
+            lp += cutoff * (noise * amplitude - lp);
+            self.buffer[i] = lp;
+        }
+        self.damp_state = 0.0;
+        self.frac_state = 0.0;
+    }
+
+    /// Process one sample.
+    #[inline]
+    fn tick(&mut self) -> f32 {
+        // Read from delay line
+        let read_pos = (self.write_pos + MAX_DELAY - self.delay_len) % MAX_DELAY;
+        let sample = self.buffer[read_pos];
+
+        // Fractional delay via allpass interpolation
+        let allpass_out = self.frac_coeff * (sample - self.frac_state) + self.buffer[(read_pos + 1) % MAX_DELAY];
+        self.frac_state = allpass_out;
+
+        // Damping filter: 2-point average (Karplus-Strong classic)
+        let damped = (allpass_out + self.damp_state) * 0.5 * self.decay;
+        self.damp_state = allpass_out;
+
+        // Write back
+        self.buffer[self.write_pos] = damped;
+        self.write_pos = (self.write_pos + 1) % MAX_DELAY;
+
+        sample
+    }
+}
+
+// ── Modal Engine (with String and Bowed modes) ──────────────────────
+
 pub struct ModalEngine {
     filters: [Svf; MAX_MODES],
     cos_osc: CosineOsc,
     resolution: usize,
+    // String model
+    string: KsString,
+    // Bowed model state
+    bow_state: f32,
+    // Shared
+    active_mode: ResonatorMode,
     exciter_remaining: usize,
     exciter_amp: f32,
     noise_state: u32,
@@ -161,6 +281,9 @@ impl ModalEngine {
             filters: core::array::from_fn(|_| Svf::new()),
             cos_osc: CosineOsc::new(),
             resolution: 0,
+            string: KsString::new(),
+            bow_state: 0.0,
+            active_mode: ResonatorMode::Modal,
             exciter_remaining: 0,
             exciter_amp: 0.0,
             noise_state: 0x12345678,
@@ -171,13 +294,35 @@ impl ModalEngine {
     }
 
     pub fn note_on(&mut self, note: u8, velocity: u8, params: &ModalParams, sample_rate: u32) {
-        self.compute_filters(note, params, sample_rate);
-        self.cos_osc.init(params.position);
+        self.active_mode = ResonatorMode::from_u8(params.mode);
+        let vel = velocity as f32 / 127.0;
+        let freq = note_to_freq(note);
 
-        let burst_ms = 2.0 + params.excite * 4.0;
-        self.exciter_remaining = (burst_ms * sample_rate as f32 / 1000.0) as usize;
-        self.exciter_amp = velocity as f32 / 127.0 * params.excite;
-        self.exciter_lp = 0.0;
+        match self.active_mode {
+            ResonatorMode::Modal => {
+                self.compute_filters(note, params, sample_rate);
+                self.cos_osc.init(params.position);
+                let burst_ms = 2.0 + params.excite * 4.0;
+                self.exciter_remaining = (burst_ms * sample_rate as f32 / 1000.0) as usize;
+                self.exciter_amp = vel * params.excite;
+                self.exciter_lp = 0.0;
+            }
+            ResonatorMode::String => {
+                self.string.set_freq(freq, sample_rate, params.decay, params.brightness);
+                self.string.pluck(vel * params.excite, params.brightness);
+            }
+            ResonatorMode::Bowed => {
+                // Bowed: set up string for continuous excitation
+                self.string.set_freq(freq, sample_rate, params.decay, params.brightness);
+                // Fill with silence — bow will drive it continuously
+                for s in self.string.buffer.iter_mut() {
+                    *s = 0.0;
+                }
+                self.bow_state = 0.0;
+                self.exciter_amp = vel * params.bow_force;
+            }
+        }
+
         self.active = true;
         self.silence_counter = 0;
     }
@@ -252,11 +397,27 @@ impl ModalEngine {
             return;
         }
 
-        let num = self.resolution;
         let mut max_level = 0.0_f32;
 
+        match self.active_mode {
+            ResonatorMode::Modal => self.render_modal(output, &mut max_level),
+            ResonatorMode::String => self.render_string(output, &mut max_level),
+            ResonatorMode::Bowed => self.render_bowed(output, params, &mut max_level),
+        }
+
+        if max_level < 0.0001 && self.exciter_remaining == 0 {
+            self.silence_counter += 1;
+            if self.silence_counter > 10 {
+                self.active = false;
+            }
+        } else {
+            self.silence_counter = 0;
+        }
+    }
+
+    fn render_modal(&mut self, output: &mut [f32; BLOCK_SIZE], max_level: &mut f32) {
+        let num = self.resolution;
         for s in output.iter_mut() {
-            // Exciter: shaped noise burst
             let excite = if self.exciter_remaining > 0 {
                 self.exciter_remaining -= 1;
                 let env = (self.exciter_remaining as f32 / 200.0).min(1.0);
@@ -267,37 +428,53 @@ impl ModalEngine {
                 0.0
             };
 
-            // Input scaling — Rings uses 0.125 but with a full-range audio input.
-            // Our exciter is weaker, so scale up.
-            let input = excite;
-
-            // Process all modes in pairs: odd modes → out, even modes → aux
-            // (We sum both to mono for now)
             let mut odd = 0.0_f32;
             let mut even = 0.0_f32;
-
             self.cos_osc.start();
 
             let mut i = 0;
             while i + 1 < num {
-                let amp_odd = self.cos_osc.next();
-                odd += amp_odd * self.filters[i].process_bp(input);
-                let amp_even = self.cos_osc.next();
-                even += amp_even * self.filters[i + 1].process_bp(input);
+                odd += self.cos_osc.next() * self.filters[i].process_bp(excite);
+                even += self.cos_osc.next() * self.filters[i + 1].process_bp(excite);
                 i += 2;
             }
 
             *s = (odd + even) * 0.25;
-            max_level = max_level.max(libm::fabsf(*s));
+            *max_level = max_level.max(libm::fabsf(*s));
         }
+    }
 
-        if max_level < 0.0001 && self.exciter_remaining == 0 {
-            self.silence_counter += 1;
-            if self.silence_counter > 10 {
-                self.active = false;
-            }
-        } else {
-            self.silence_counter = 0;
+    fn render_string(&mut self, output: &mut [f32; BLOCK_SIZE], max_level: &mut f32) {
+        for s in output.iter_mut() {
+            *s = self.string.tick();
+            *max_level = max_level.max(libm::fabsf(*s));
+        }
+    }
+
+    fn render_bowed(&mut self, output: &mut [f32; BLOCK_SIZE], params: &ModalParams, max_level: &mut f32) {
+        let bow_vel = params.bow_velocity;
+        let bow_force = self.exciter_amp;
+
+        for s in output.iter_mut() {
+            // Read current string velocity from delay line
+            let read_pos = (self.string.write_pos + MAX_DELAY - self.string.delay_len) % MAX_DELAY;
+            let string_vel = self.string.buffer[read_pos];
+
+            // Bow interaction: friction model
+            // velocity difference between bow and string
+            let delta_v = bow_vel - string_vel;
+            // Nonlinear friction (simplified bow table from Elements)
+            let friction = bow_force * delta_v * libm::expf(-4.0 * delta_v * delta_v);
+
+            // Inject friction force into the delay line
+            let damped = (string_vel + friction + self.string.damp_state) * 0.5 * self.string.decay;
+            self.string.damp_state = string_vel + friction;
+
+            self.string.buffer[self.string.write_pos] = damped;
+            self.string.write_pos = (self.string.write_pos + 1) % MAX_DELAY;
+
+            *s = string_vel;
+            *max_level = max_level.max(libm::fabsf(*s));
         }
     }
 

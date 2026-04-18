@@ -24,7 +24,7 @@ fn test_cell_grid_pages_have_icons() {
         PageId::Drive,
         PageId::Folder,
         PageId::EngineVa,
-        PageId::EngineModal,
+        PageId::EngineModal1,
         PageId::Mixer,
         PageId::Efx,
         PageId::GlobalEfx,
@@ -120,7 +120,7 @@ fn test_demo_storybook_covers_all_icons() {
 fn test_all_pages_have_6_labels() {
     let all_pages = [
         PageId::EngineFmA, PageId::EngineFmB, PageId::EngineFmC,
-        PageId::EngineModal, PageId::EngineVa,
+        PageId::EngineModal1, PageId::EngineVa,
         PageId::Drive, PageId::Filter, PageId::Folder,
         PageId::Vca, PageId::Efx, PageId::Mixer,
         PageId::Routing, PageId::Compressor, PageId::GlobalEfx,

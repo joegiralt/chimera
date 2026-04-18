@@ -136,7 +136,7 @@ impl Renderer {
     {
         match page {
             PageId::EngineFmA | PageId::EngineFmB | PageId::EngineFmC => self.draw_fm_viz(display),
-            PageId::EngineModal => self.draw_modal_viz(display),
+            PageId::EngineModal1 | PageId::EngineModal2 => self.draw_modal_viz(display),
             PageId::EngineVa => self.draw_va_viz(display),
             PageId::Drive => self.draw_drive_viz(display),
             PageId::Filter => self.draw_filter_viz(display),
