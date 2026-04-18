@@ -1,101 +1,122 @@
 use chimera_hal::BLOCK_SIZE;
 
-/// Maximum number of resonant modes.
-const MAX_MODES: usize = 24;
+const MAX_MODES: usize = 48;
 
-/// A single resonant mode — 2nd order bandpass (complex resonator).
-/// Uses the efficient form: y[n] = 2*R*cos(w)*y[n-1] - R²*y[n-2] + x[n]
-/// Cost: 2 multiplies + 2 adds per sample.
+// ── SVF Bandpass (ZDF topology, matching Rings/stmlib) ──────────────
+
 #[derive(Clone, Debug)]
-struct Mode {
-    /// Filter state
-    y1: f32,
-    y2: f32,
-    /// Coefficients
-    coeff: f32, // 2 * R * cos(w)
-    r_sq: f32,  // R²
-    /// Amplitude (includes position weighting)
-    amp: f32,
+struct Svf {
+    state_1: f32,
+    state_2: f32,
+    g: f32, // tan(pi * f)
+    r: f32, // 1/Q
+    h: f32, // 1 / (1 + r*g + g*g)
 }
 
-impl Mode {
+impl Svf {
     fn new() -> Self {
-        Self {
-            y1: 0.0,
-            y2: 0.0,
-            coeff: 0.0,
-            r_sq: 0.0,
-            amp: 0.0,
-        }
+        Self { state_1: 0.0, state_2: 0.0, g: 0.0, r: 1.0, h: 1.0 }
     }
 
-    /// Set mode frequency and decay.
-    /// `freq`: mode frequency as fraction of sample rate (0..0.5)
-    /// `decay`: R value (0..1), higher = longer ring
-    fn set(&mut self, freq: f32, decay: f32, amplitude: f32) {
-        let w = 2.0 * core::f32::consts::PI * freq;
-        self.coeff = 2.0 * decay * libm::cosf(w);
-        self.r_sq = decay * decay;
-        self.amp = amplitude;
+    /// Configure filter. `freq` = normalized frequency (Hz/sr), `resonance` = Q.
+    fn set(&mut self, freq: f32, resonance: f32) {
+        self.g = tan_approx(freq);
+        self.r = 1.0 / resonance.max(0.5);
+        self.h = 1.0 / (1.0 + self.r * self.g + self.g * self.g);
     }
 
-    /// Process one sample. Returns the mode's contribution.
+    /// Process one sample, return bandpass output.
     #[inline]
-    fn tick(&mut self, input: f32) -> f32 {
-        let y0 = input + self.coeff * self.y1 - self.r_sq * self.y2;
-        self.y2 = self.y1;
-        self.y1 = y0;
-        y0 * self.amp
+    fn process_bp(&mut self, input: f32) -> f32 {
+        let hp = (input - self.r * self.state_1 - self.g * self.state_1 - self.state_2) * self.h;
+        let bp = self.g * hp + self.state_1;
+        self.state_1 = self.g * hp + bp;
+        let lp = self.g * bp + self.state_2;
+        self.state_2 = self.g * bp + lp;
+        bp
     }
 }
 
-/// Cheap recursive cosine oscillator for position weighting.
-/// Produces cos(n * w) for successive n without per-mode trig.
+/// Fast tangent approximation (matches Rings' FREQUENCY_FAST).
+fn tan_approx(f: f32) -> f32 {
+    let pi = core::f32::consts::PI;
+    let f2 = f * f;
+    f * (pi + f2 * (0.326 * pi * pi * pi + 0.1823 * pi * pi * pi * pi * pi * f2))
+}
+
+// ── Cosine Oscillator (position weighting, matching Rings) ──────────
+
 struct CosineOsc {
     y0: f32,
     y1: f32,
-    coeff: f32,
+    iir_coefficient: f32,
+    initial_amplitude: f32,
 }
 
 impl CosineOsc {
-    /// Initialize for a given position (0..1 along the string/surface).
-    fn init(&mut self, position: f32) {
-        let w = core::f32::consts::PI * position;
-        self.coeff = 2.0 * libm::cosf(w);
-        self.y0 = 1.0; // cos(0)
-        self.y1 = libm::cosf(w); // cos(w)
+    fn new() -> Self {
+        Self { y0: 0.0, y1: 0.0, iir_coefficient: 0.0, initial_amplitude: 0.0 }
     }
 
-    /// Get the next cosine value: cos(n*w) for successive n.
+    /// Initialize with position (0..1).
+    fn init(&mut self, position: f32) {
+        let mut sign = 16.0_f32;
+        let mut freq = position - 0.25;
+        if freq < 0.0 {
+            freq = -freq;
+        } else if freq > 0.5 {
+            freq -= 0.5;
+        } else {
+            sign = -16.0;
+        }
+        self.iir_coefficient = sign * freq * (1.0 - 2.0 * freq);
+        self.initial_amplitude = self.iir_coefficient * 0.25;
+    }
+
+    /// Reset to start of sequence.
+    fn start(&mut self) {
+        self.y1 = self.initial_amplitude;
+        self.y0 = 0.5;
+    }
+
+    /// Get next amplitude weight (call once per mode).
     #[inline]
     fn next(&mut self) -> f32 {
-        let val = self.y0;
-        let y_new = self.coeff * self.y0 - self.y1;
-        self.y1 = self.y0;
-        self.y0 = y_new;
-        // Return absolute value — we want amplitude, not phase
-        libm::fabsf(val)
+        let temp = self.y0;
+        self.y0 = self.iir_coefficient * self.y0 - self.y1;
+        self.y1 = temp;
+        temp + 0.5 // shift to [0, 1]
     }
 }
 
-/// Modal synthesis parameters.
+// ── Stiffness lookup table ──────────────────────────────────────────
+// Maps structure (0..1) to stiffness coefficient.
+// 0.0 → -0.0625 (compressed, tube-like)
+// ~0.25 → 0.0 (perfect harmonics)
+// 1.0 → 2.0 (very stretched, metallic)
+
+fn stiffness_from_structure(structure: f32) -> f32 {
+    if structure < 0.24 {
+        -0.02 * (1.0 - structure / 0.24)
+    } else if structure < 0.3 {
+        0.0 // harmonic plateau
+    } else {
+        let t = (structure - 0.3) / 0.7;
+        t * t * 0.15 // max stiffness 0.15 — enough for bell-like spread
+    }
+}
+
+// ── Modal Params ────────────────────────────────────────────────────
+
 #[derive(Clone, Copy, Debug)]
 pub struct ModalParams {
-    /// Exciter amount / velocity sensitivity (0..1)
     pub excite: f32,
-    /// Global decay time (0..1, maps to R = 0.99..0.99999)
-    pub decay: f32,
-    /// High-frequency damping (0..1, 0=bright, 1=very damped)
-    pub damping: f32,
-    /// Base pitch as MIDI note (set by note_on)
+    pub decay: f32,       // 0..1 → maps to Q
+    pub damping: f32,     // 0..1 (unused name kept for UI compat — this is "structure")
     pub note: f32,
-    /// Brightness: amplitude rolloff of higher modes (0..1)
     pub brightness: f32,
-    /// Excitation position along the string/surface (0..1)
     pub position: f32,
-    /// Structure: inharmonicity (0=harmonic, 0.5=neutral, 1=metallic)
-    pub inharm: f32,
-    /// Number of active modes (4..24)
+    pub inharm: f32,      // 0..1 → structure (stiffness)
     pub num_modes: u8,
 }
 
@@ -103,32 +124,28 @@ impl Default for ModalParams {
     fn default() -> Self {
         Self {
             excite: 0.8,
-            decay: 0.6,
+            decay: 0.5,
             damping: 0.3,
             note: 60.0,
-            brightness: 0.5,
-            position: 0.25, // 1/4 position — natural pluck point
-            inharm: 0.0,    // harmonic
-            num_modes: 16,
+            brightness: 0.7,
+            position: 0.25,
+            inharm: 0.25, // harmonic by default (maps to stiffness ≈ 0)
+            num_modes: 32,
         }
     }
 }
 
-/// Modal resonator engine — bank of resonant bandpass filters.
-/// Inspired by Mutable Instruments Rings.
+// ── Modal Engine ────────────────────────────────────────────────────
+
 pub struct ModalEngine {
-    modes: [Mode; MAX_MODES],
-    /// Exciter: remaining samples of noise burst
+    filters: [Svf; MAX_MODES],
+    cos_osc: CosineOsc,
+    resolution: usize,
     exciter_remaining: usize,
-    /// Exciter amplitude
     exciter_amp: f32,
-    /// Simple noise state (xorshift)
     noise_state: u32,
-    /// Exciter lowpass filter state (smooths the noise burst)
     exciter_lp: f32,
-    /// Whether any modes are still ringing
     active: bool,
-    /// Sample counter for decay detection
     silence_counter: u32,
 }
 
@@ -141,7 +158,9 @@ impl Default for ModalEngine {
 impl ModalEngine {
     pub fn new() -> Self {
         Self {
-            modes: core::array::from_fn(|_| Mode::new()),
+            filters: core::array::from_fn(|_| Svf::new()),
+            cos_osc: CosineOsc::new(),
+            resolution: 0,
             exciter_remaining: 0,
             exciter_amp: 0.0,
             noise_state: 0x12345678,
@@ -152,90 +171,74 @@ impl ModalEngine {
     }
 
     pub fn note_on(&mut self, note: u8, velocity: u8, params: &ModalParams, sample_rate: u32) {
-        let freq = note_to_freq(note);
-        self.configure_modes(freq, params, sample_rate);
+        self.compute_filters(note, params, sample_rate);
+        self.cos_osc.init(params.position);
 
-        // Start noise burst exciter (2-5ms depending on excite parameter)
-        let burst_ms = 2.0 + params.excite * 3.0;
+        let burst_ms = 2.0 + params.excite * 4.0;
         self.exciter_remaining = (burst_ms * sample_rate as f32 / 1000.0) as usize;
-        self.exciter_amp = velocity as f32 / 127.0 * params.excite * 0.5;
+        self.exciter_amp = velocity as f32 / 127.0 * params.excite;
+        self.exciter_lp = 0.0;
         self.active = true;
         self.silence_counter = 0;
     }
 
-    pub fn note_off(&mut self) {
-        // Modal sounds decay naturally — note_off just lets them ring out.
-        // Could optionally apply extra damping here.
-    }
+    pub fn note_off(&mut self) {}
 
     pub fn is_active(&self) -> bool {
         self.active
     }
 
-    /// Configure all mode frequencies, decay rates, and amplitudes.
-    /// Based on Mutable Instruments Rings architecture.
-    fn configure_modes(&mut self, base_freq: f32, params: &ModalParams, sample_rate: u32) {
+    /// Configure filters (called once per note, matching Rings' ComputeFilters).
+    fn compute_filters(&mut self, note: u8, params: &ModalParams, sample_rate: u32) {
+        let frequency = note_to_freq(note) / sample_rate as f32; // normalized
         let num = (params.num_modes as usize).min(MAX_MODES);
-        let sr = sample_rate as f32;
+        // Force even for odd/even splitting
+        let num = num & !1;
+        self.resolution = num;
 
-        // Base decay: R controls ring time.
-        let base_r = 0.999 + params.decay * 0.00095;
+        // Q from damping (Rings: 500 * lut_4_decades[damping])
+        // Map decay 0..1 logarithmically: Q from 50 to 50000
+        let q = 50.0 * libm::powf(10.0, params.decay * 3.0);
 
-        // Brightness controls how fast upper modes decay (like Q loss in Rings).
-        // 0 = dark (upper modes die fast), 1 = bright (all modes ring equally)
-        let q_loss = params.brightness * 0.85 + 0.15; // 0.15..1.0
+        // Stiffness from structure/inharm
+        let mut stiffness = stiffness_from_structure(params.inharm);
 
-        // Inharmonicity: controls mode spacing stretch.
-        // 0 = perfect harmonics (string)
-        // 1 = dramatically stretched (bell/metal/gong)
-        let stiffness = params.inharm * params.inharm * 0.08; // quadratic for musical range
-
-        // Position weighting via cosine oscillator
-        let mut cos_osc = CosineOsc {
-            y0: 0.0,
-            y1: 0.0,
-            coeff: 0.0,
+        // Brightness → q_loss per mode
+        let structure = params.inharm;
+        let bright_atten = {
+            let x = 1.0 - structure;
+            let x2 = x * x;
+            x2 * x2 * x2 * x2 // (1-structure)^8
         };
-        cos_osc.init(params.position);
+        let brightness = params.brightness * (1.0 - 0.2 * bright_atten);
+        let mut q_loss = brightness * (2.0 - brightness) * 0.85 + 0.15;
+        let q_loss_damping_rate = structure * (2.0 - structure) * 0.1;
 
-        let mut q_factor = 1.0_f32;
+        let mut harmonic = frequency;
+        let mut stretch_factor = 1.0_f32;
 
-        for i in 0..MAX_MODES {
-            if i >= num {
-                self.modes[i].amp = 0.0;
-                continue;
+        for i in 0..num {
+            let partial_freq = (harmonic * stretch_factor).min(0.49);
+
+            // Per-mode Q: increases with frequency (higher partials ring longer)
+            let mode_q = 1.0 + partial_freq * q;
+            self.filters[i].set(partial_freq, mode_q * q_loss);
+
+            // Accumulate stiffness
+            stretch_factor += stiffness;
+            if stiffness < 0.0 {
+                stiffness *= 0.93;
+            } else {
+                stiffness *= 0.98;
             }
 
-            let n = (i + 1) as f32;
+            // Q loss for next mode
+            q_loss += q_loss_damping_rate * (1.0 - q_loss);
 
-            // Stiffness: each mode is stretched by n² (physical model of a stiff bar/plate)
-            // For strings: modes at n*f0. For bars: modes at n²*f0 approximately.
-            let stretch = 1.0 + stiffness * n * n;
-            let mode_freq = base_freq * n * stretch;
-
-            let freq_ratio = mode_freq / sr;
-            if freq_ratio >= 0.49 {
-                self.modes[i].amp = 0.0;
-                continue;
-            }
-
-            // Per-mode decay: Q decreases for higher modes based on brightness.
-            // q_factor decays each mode — darker = faster Q loss for upper partials.
-            q_factor *= q_loss;
-            let damping_offset = (1.0 - q_factor) * params.damping * 0.002;
-            let mode_r = (base_r - damping_offset).max(0.99).min(0.99999);
-
-            // Amplitude: 1/sqrt(n) for balanced spectrum (1/n is too steep).
-            // Brightness further controls rolloff.
-            let base_amp = 1.0 / libm::sqrtf(n);
-            let pos_weight = cos_osc.next();
-            let amp = base_amp * pos_weight;
-
-            self.modes[i].set(freq_ratio, mode_r, amp);
+            harmonic += frequency;
         }
     }
 
-    /// Render a block of audio.
     pub fn render(
         &mut self,
         output: &mut [f32; BLOCK_SIZE],
@@ -249,40 +252,45 @@ impl ModalEngine {
             return;
         }
 
-        let num = (params.num_modes as usize).min(MAX_MODES);
+        let num = self.resolution;
         let mut max_level = 0.0_f32;
 
         for s in output.iter_mut() {
-            // Exciter: shaped noise burst with envelope and lowpass filtering.
-            // The lowpass smooths the noise for a more natural strike/pluck feel.
+            // Exciter: shaped noise burst
             let excite = if self.exciter_remaining > 0 {
                 self.exciter_remaining -= 1;
-                // Exponential decay envelope on the burst itself
-                let env = self.exciter_remaining as f32 / 200.0;
-                let env = env.min(1.0);
+                let env = (self.exciter_remaining as f32 / 200.0).min(1.0);
                 let raw = self.noise() * self.exciter_amp * env;
-                // One-pole lowpass: smooths the noise, controllable by brightness
-                self.exciter_lp += 0.3 * (raw - self.exciter_lp);
+                self.exciter_lp += 0.4 * (raw - self.exciter_lp);
                 self.exciter_lp
             } else {
                 0.0
             };
 
-            // Sum all mode outputs
-            let mut sum = 0.0;
-            for mode in &mut self.modes[..num] {
-                if mode.amp > 0.0001 {
-                    sum += mode.tick(excite);
-                }
+            // Input scaling — Rings uses 0.125 but with a full-range audio input.
+            // Our exciter is weaker, so scale up.
+            let input = excite;
+
+            // Process all modes in pairs: odd modes → out, even modes → aux
+            // (We sum both to mono for now)
+            let mut odd = 0.0_f32;
+            let mut even = 0.0_f32;
+
+            self.cos_osc.start();
+
+            let mut i = 0;
+            while i + 1 < num {
+                let amp_odd = self.cos_osc.next();
+                odd += amp_odd * self.filters[i].process_bp(input);
+                let amp_even = self.cos_osc.next();
+                even += amp_even * self.filters[i + 1].process_bp(input);
+                i += 2;
             }
 
-            // Scale and soft-limit to prevent harsh digital clipping
-            let scaled = sum / (num as f32).max(1.0);
-            *s = libm::tanhf(scaled * 2.0) * 0.5;
+            *s = (odd + even) * 0.25;
             max_level = max_level.max(libm::fabsf(*s));
         }
 
-        // Detect silence (all modes decayed)
         if max_level < 0.0001 && self.exciter_remaining == 0 {
             self.silence_counter += 1;
             if self.silence_counter > 10 {
@@ -293,13 +301,11 @@ impl ModalEngine {
         }
     }
 
-    /// Fast xorshift noise generator.
     #[inline]
     fn noise(&mut self) -> f32 {
         self.noise_state ^= self.noise_state << 13;
         self.noise_state ^= self.noise_state >> 17;
         self.noise_state ^= self.noise_state << 5;
-        // Convert to float in -1..1
         (self.noise_state as i32) as f32 / i32::MAX as f32
     }
 }
