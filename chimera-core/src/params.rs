@@ -155,14 +155,26 @@ impl Default for FolderParams {
     }
 }
 
-/// Full snapshot of all parameters for one part
+/// Which synthesis engine is active.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Default)]
+pub enum EngineType {
+    #[default]
+    Fm = 0,
+    Modal = 1,
+    Va = 2,
+}
+
+
 #[derive(Clone, Debug)]
 pub struct ParamSnapshot {
+    pub engine: EngineType,
     pub filter: FilterParams,
     pub drive: DriveParams,
     pub folder: FolderParams,
     pub envelopes: [EnvParams; 3],
     pub fm: crate::dsp::fm::FmParams,
+    pub modal: crate::dsp::modal::ModalParams,
     pub volume: Param,
     pub pan: Param,
 }
@@ -170,11 +182,13 @@ pub struct ParamSnapshot {
 impl Default for ParamSnapshot {
     fn default() -> Self {
         Self {
+            engine: EngineType::default(),
             filter: FilterParams::default(),
             drive: DriveParams::default(),
             folder: FolderParams::default(),
             envelopes: [EnvParams::default(); 3],
             fm: crate::dsp::fm::FmParams::default(),
+            modal: crate::dsp::modal::ModalParams::default(),
             volume: Param::new(0.0, 1.0, 0.8),
             pan: Param::new(-1.0, 1.0, 0.0),
         }
