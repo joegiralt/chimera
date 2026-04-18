@@ -99,6 +99,6 @@ impl UiState {
         D: embedded_graphics::draw_target::DrawTarget<Color = embedded_graphics::pixelcolor::Rgb565>,
     {
         self.renderer
-            .draw(display, &self.nav, self.page, &self.params, perf);
+            .draw(display, &self.nav, self.page, perf);
     }
 }

@@ -52,14 +52,14 @@ pub fn draw_cell<D>(
         display,
     );
 
-    // Icon area — 16 discrete frames (128 MIDI steps / 8 = 16 frames)
+    // Icon area — quantize to 16 discrete frames (128 MIDI steps / 8)
     let ix = cx + 4;
     let iy = cy + ICON_TOP;
     let iw = CELL_W - CELL_PAD - 8;
     let ih = ICON_H;
 
-    let frame = (value * 15.0) as u8; // 0..15
-    draw_icon(display, icon, ix, iy, iw, ih, frame);
+    let quantized = libm::floorf(value * 16.0) / 16.0;
+    draw_icon(display, icon, ix, iy, iw, ih, quantized);
 
     // Label + value below icon
     let text_y = cy + ICON_TOP + ICON_H + 8;
@@ -93,15 +93,11 @@ pub fn draw_cell<D>(
 }
 
 /// Draw a mini icon within the given bounds.
-/// `frame` is 0-15 (16 discrete visual states).
-fn draw_icon<D>(display: &mut D, icon: CellIcon, x: i32, y: i32, w: i32, h: i32, frame: u8)
+/// `val` is pre-quantized to 16 discrete steps.
+fn draw_icon<D>(display: &mut D, icon: CellIcon, x: i32, y: i32, w: i32, h: i32, val: f32)
 where
     D: DrawTarget<Color = Rgb565>,
 {
-    // Convert frame to normalized 0..1 for drawing functions
-    // Each frame is a distinct step: 0/15, 1/15, 2/15, ... 15/15
-    let val = frame as f32 / 15.0;
-
     match icon {
         CellIcon::None => {}
         CellIcon::WaveClip => draw_icon_waveclip(display, x, y, w, h, val),
@@ -311,41 +307,38 @@ where
     let cy = y + h / 2;
     let r = (w.min(h) / 2 - 4) as f32;
 
-    // Draw arc as line segments (270° sweep, from 135° to 405°)
-    let start_angle = 135.0_f32 * core::f32::consts::PI / 180.0;
-    let sweep = 270.0_f32 * core::f32::consts::PI / 180.0;
+    // 16-segment arc, 270° sweep from 135° to 405°.
+    // Precomputed cos/sin for each of 17 arc vertices.
+    const ARC_N: usize = 16;
+    static ARC_COS: [f32; 17] = [
+        -0.707, -0.924, -1.000, -0.924, -0.707, -0.383, 0.000, 0.383,
+         0.707,  0.924,  1.000,  0.924,  0.707,  0.383, 0.000, -0.383,
+        -0.707,
+    ];
+    static ARC_SIN: [f32; 17] = [
+         0.707,  0.383,  0.000, -0.383, -0.707, -0.924, -1.000, -0.924,
+        -0.707, -0.383,  0.000,  0.383,  0.707,  0.924,  1.000,  0.924,
+         0.707,
+    ];
 
-    // Background arc (dim)
-    let bg_segments = 16;
     let bg_stroke = PrimitiveStyle::with_stroke(theme::PARAM_BAR_BG, 2);
-    for i in 0..bg_segments {
-        let a1 = start_angle + sweep * (i as f32 / bg_segments as f32);
-        let a2 = start_angle + sweep * ((i + 1) as f32 / bg_segments as f32);
-        let _ = Line::new(
-            Point::new(cx + (r * libm::cosf(a1)) as i32, cy + (r * libm::sinf(a1)) as i32),
-            Point::new(cx + (r * libm::cosf(a2)) as i32, cy + (r * libm::sinf(a2)) as i32),
-        )
-        .draw_styled(&bg_stroke, display);
-    }
-
-    // Active arc (bright)
-    let active_segments = (bg_segments as f32 * val) as i32;
     let fg_stroke = PrimitiveStyle::with_stroke(theme::VIZ_LINE, 2);
-    for i in 0..active_segments {
-        let a1 = start_angle + sweep * (i as f32 / bg_segments as f32);
-        let a2 = start_angle + sweep * ((i + 1) as f32 / bg_segments as f32);
-        let _ = Line::new(
-            Point::new(cx + (r * libm::cosf(a1)) as i32, cy + (r * libm::sinf(a1)) as i32),
-            Point::new(cx + (r * libm::cosf(a2)) as i32, cy + (r * libm::sinf(a2)) as i32),
-        )
-        .draw_styled(&fg_stroke, display);
+    let active_segments = (ARC_N as f32 * val) as usize;
+
+    for i in 0..ARC_N {
+        let x0 = cx + (r * ARC_COS[i]) as i32;
+        let y0 = cy + (r * ARC_SIN[i]) as i32;
+        let x1 = cx + (r * ARC_COS[i + 1]) as i32;
+        let y1 = cy + (r * ARC_SIN[i + 1]) as i32;
+        let style = if i < active_segments { &fg_stroke } else { &bg_stroke };
+        let _ = Line::new(Point::new(x0, y0), Point::new(x1, y1))
+            .draw_styled(style, display);
     }
 
     // End dot
-    if val > 0.01 {
-        let end_a = start_angle + sweep * val;
-        let dx = cx + (r * libm::cosf(end_a)) as i32;
-        let dy = cy + (r * libm::sinf(end_a)) as i32;
+    if active_segments > 0 {
+        let dx = cx + (r * ARC_COS[active_segments]) as i32;
+        let dy = cy + (r * ARC_SIN[active_segments]) as i32;
         let _ = Rectangle::new(Point::new(dx - 1, dy - 1), Size::new(3, 3))
             .draw_styled(&PrimitiveStyle::with_fill(theme::ACCENT_BRIGHT), display);
     }
@@ -478,21 +471,35 @@ where
 
 // ── Helper: draw a circle from line segments ────────────────────────
 
+/// Precomputed sin/cos for 12-segment polygon (circle approximation).
+/// Covers 0°, 30°, 60°, ... 330°, and wraps to 360° = 0°.
+const RING_SEGMENTS: usize = 12;
+static RING_COS: [f32; 13] = [
+    1.0, 0.866, 0.5, 0.0, -0.5, -0.866, -1.0, -0.866, -0.5, 0.0, 0.5, 0.866, 1.0,
+];
+static RING_SIN: [f32; 13] = [
+    0.0, 0.5, 0.866, 1.0, 0.866, 0.5, 0.0, -0.5, -0.866, -1.0, -0.866, -0.5, 0.0,
+];
+
+fn draw_ellipse<D>(display: &mut D, cx: i32, cy: i32, rx: f32, ry: f32, color: Rgb565)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let stroke = PrimitiveStyle::with_stroke(color, 1);
+    for i in 0..RING_SEGMENTS {
+        let _ = Line::new(
+            Point::new(cx + (rx * RING_COS[i]) as i32, cy + (ry * RING_SIN[i]) as i32),
+            Point::new(cx + (rx * RING_COS[i + 1]) as i32, cy + (ry * RING_SIN[i + 1]) as i32),
+        )
+        .draw_styled(&stroke, display);
+    }
+}
+
 fn draw_ring<D>(display: &mut D, cx: i32, cy: i32, r: i32, color: Rgb565)
 where
     D: DrawTarget<Color = Rgb565>,
 {
-    let segments = 12;
-    let stroke = PrimitiveStyle::with_stroke(color, 1);
-    for i in 0..segments {
-        let a1 = core::f32::consts::PI * 2.0 * i as f32 / segments as f32;
-        let a2 = core::f32::consts::PI * 2.0 * (i + 1) as f32 / segments as f32;
-        let _ = Line::new(
-            Point::new(cx + (r as f32 * libm::cosf(a1)) as i32, cy + (r as f32 * libm::sinf(a1)) as i32),
-            Point::new(cx + (r as f32 * libm::cosf(a2)) as i32, cy + (r as f32 * libm::sinf(a2)) as i32),
-        )
-        .draw_styled(&stroke, display);
-    }
+    draw_ellipse(display, cx, cy, r as f32, r as f32, color);
 }
 
 // ── Ripple: concentric circles expanding from center ────────────────
@@ -780,7 +787,6 @@ where
 
         for row in 0..fill_h {
             // t = how far up the cube we are (0 = bottom, 1 = top)
-            let _t = row as f32 / cube_h as f32;
 
             // Front edge X at this height (straight vertical, so always cx)
             let front_x = bf.0;
@@ -922,26 +928,8 @@ where
         }
     }
 
-    // Draw ellipse (ball)
-    let segments = 16;
-    let stroke = PrimitiveStyle::with_stroke(theme::VIZ_LINE, 1);
     let by = ball_y as i32;
-
-    for i in 0..segments {
-        let a1 = core::f32::consts::PI * 2.0 * i as f32 / segments as f32;
-        let a2 = core::f32::consts::PI * 2.0 * (i + 1) as f32 / segments as f32;
-        let _ = Line::new(
-            Point::new(
-                cx + (rx * libm::cosf(a1)) as i32,
-                by + (ry * libm::sinf(a1)) as i32,
-            ),
-            Point::new(
-                cx + (rx * libm::cosf(a2)) as i32,
-                by + (ry * libm::sinf(a2)) as i32,
-            ),
-        )
-        .draw_styled(&stroke, display);
-    }
+    draw_ellipse(display, cx, by, rx, ry, theme::VIZ_LINE);
 
     // Highlight dot at ball center
     let _ = Rectangle::new(Point::new(cx - 1, by - 1), Size::new(3, 3))
