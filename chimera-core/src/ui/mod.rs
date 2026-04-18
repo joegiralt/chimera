@@ -63,7 +63,7 @@ impl UiState {
             // Switch engine type based on which engine sub-page is active
             self.params.engine = match self.page {
                 PageId::EngineFmA | PageId::EngineFmB | PageId::EngineFmC => EngineType::Fm,
-                PageId::EngineModal => EngineType::Modal,
+                PageId::EngineModal1 | PageId::EngineModal2 => EngineType::Modal,
                 PageId::EngineVa => EngineType::Va,
                 _ => self.params.engine, // keep current
             };

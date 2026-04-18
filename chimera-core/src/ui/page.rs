@@ -95,7 +95,8 @@ pub enum PageId {
     EngineFmA,
     EngineFmB,
     EngineFmC,
-    EngineModal,
+    EngineModal1,
+    EngineModal2,
     EngineVa,
     Drive,
     Filter,
@@ -122,8 +123,9 @@ impl PageId {
                 0 => match nav.sub_page {
                     1 => PageId::EngineFmB,
                     2 => PageId::EngineFmC,
-                    3 => PageId::EngineModal,
-                    4 => PageId::EngineVa,
+                    3 => PageId::EngineModal1,
+                    4 => PageId::EngineModal2,
+                    5 => PageId::EngineVa,
                     _ => PageId::EngineFmA,
                 },
                 1 => PageId::Drive,
@@ -194,7 +196,7 @@ impl PageId {
                 CellIcon::Arc,       // DETUNE
                 CellIcon::DryWet,    // MIX
             ],
-            PageId::EngineModal => [
+            PageId::EngineModal1 => [
                 CellIcon::Arc,       // EXCITE
                 CellIcon::Arc,       // DECAY
                 CellIcon::Arc,       // DAMP
@@ -259,6 +261,8 @@ impl PageId {
             PageId::Folder => [Uni, Bi, Bi, Uni, Uni, Uni],
             // Mix bipolar
             PageId::EngineVa => [Uni, Uni, Uni, Uni, Uni, Bi],
+            PageId::EngineModal1 => [Int(2), Uni, Uni, Uni, Uni, Uni],
+            PageId::EngineModal2 => [Uni, Uni, Uni, Uni, Uni, Uni],
             PageId::DemoWaves => [Uni, Uni, Uni, Uni, Bi, Bi],
             PageId::DemoShapes => [Uni, Uni, Bi, Bi, Uni, Uni],
             PageId::DemoMotion => [Uni, Uni, Uni, Uni, Bi, Uni],
@@ -278,7 +282,8 @@ impl PageId {
             PageId::EngineFmA => ["ALGO", "FDBK", "RAT C", "WAV C", "LVL C", "DTN C"],
             PageId::EngineFmB => ["RAT M", "WAV M", "LVL M", "DTN M", "RAT 2", "LVL 2"],
             PageId::EngineFmC => ["RAT 3", "WAV 3", "LVL 3", "WAV 2", "WAV 4", "DTN 4"],
-            PageId::EngineModal => ["EXCITE", "DECAY", "DAMP", "INHARM", "BRIGHT", "POS"],
+            PageId::EngineModal1 => ["MODE", "EXCITE", "DECAY", "INHARM", "BRIGHT", "POS"],
+            PageId::EngineModal2 => ["DISP", "BOW VL", "BOW FR", "--", "--", "--"],
             PageId::EngineVa => ["WAVE", "PW", "SYNC", "SUB", "DETUNE", "MIX"],
             PageId::Filter => ["CUTOFF", "RESO", "DRIVE", "FM", "ENV", "TRACK"],
             PageId::Folder => ["FOLD", "SYM", "MIX", "--", "--", "--"],
@@ -380,13 +385,19 @@ impl PageId {
                 params.envelopes[1].attack.normalized(),
                 params.envelopes[1].decay.normalized(),
             ],
-            PageId::EngineModal => [
+            PageId::EngineModal1 => [
+                params.modal.mode as f32 / 2.0,
                 params.modal.excite,
                 params.modal.decay,
-                params.modal.damping,
                 params.modal.inharm,
                 params.modal.brightness,
                 params.modal.position,
+            ],
+            PageId::EngineModal2 => [
+                params.modal.dispersion,
+                params.modal.bow_velocity,
+                params.modal.bow_force,
+                0.0, 0.0, 0.0,
             ],
             _ => [0.5; 6], // placeholder pages
         }
@@ -399,7 +410,8 @@ impl PageId {
             PageId::EngineFmA => { apply_fm_a_encoder(idx, delta, &mut params.fm); return; }
             PageId::EngineFmB => { apply_fm_b_encoder(idx, delta, &mut params.fm); return; }
             PageId::EngineFmC => { apply_fm_c_encoder(idx, delta, &mut params.fm); return; }
-            PageId::EngineModal => { apply_modal_encoder(idx, delta, &mut params.modal); return; }
+            PageId::EngineModal1 => { apply_modal1_encoder(idx, delta, &mut params.modal); return; }
+            PageId::EngineModal2 => { apply_modal2_encoder(idx, delta, &mut params.modal); return; }
             _ => {}
         }
         if let Some(param) = self.resolve_param_mut(idx, params) {
@@ -484,15 +496,25 @@ impl PageId {
     }
 }
 
-fn apply_modal_encoder(idx: usize, delta: i8, modal: &mut crate::dsp::modal::ModalParams) {
+fn apply_modal1_encoder(idx: usize, delta: i8, modal: &mut crate::dsp::modal::ModalParams) {
     let step = 1.0 / 128.0;
     match idx {
-        0 => nudge_float(&mut modal.excite, delta, step),
-        1 => nudge_float(&mut modal.decay, delta, step),
-        2 => nudge_float(&mut modal.damping, delta, step),
+        0 => nudge_u8(&mut modal.mode, delta, 2),
+        1 => nudge_float(&mut modal.excite, delta, step),
+        2 => nudge_float(&mut modal.decay, delta, step),
         3 => nudge_float(&mut modal.inharm, delta, step),
         4 => nudge_float(&mut modal.brightness, delta, step),
         5 => nudge_float(&mut modal.position, delta, step),
+        _ => {}
+    }
+}
+
+fn apply_modal2_encoder(idx: usize, delta: i8, modal: &mut crate::dsp::modal::ModalParams) {
+    let step = 1.0 / 128.0;
+    match idx {
+        0 => nudge_float(&mut modal.dispersion, delta, step),
+        1 => nudge_float(&mut modal.bow_velocity, delta, step),
+        2 => nudge_float(&mut modal.bow_force, delta, step),
         _ => {}
     }
 }

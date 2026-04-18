@@ -26,7 +26,7 @@ pub static VOICE_CHAIN: ChainDef = ChainDef {
         NodeDef {
             name: "Engine",
             short: "ENG",
-            sub_pages: &["FM-A", "FM-B", "FM-C", "MODAL", "VA"],
+            sub_pages: &["FM-A", "FM-B", "FM-C", "MOD-1", "MOD-2", "VA"],
         },
         NodeDef {
             name: "Drive",

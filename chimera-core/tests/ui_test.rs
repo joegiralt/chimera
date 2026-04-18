@@ -158,8 +158,10 @@ fn test_page_from_nav_voice_chain() {
     nav.sub_page = 2;
     assert_eq!(PageId::from_nav(&nav), PageId::EngineFmC);
     nav.sub_page = 3;
-    assert_eq!(PageId::from_nav(&nav), PageId::EngineModal);
+    assert_eq!(PageId::from_nav(&nav), PageId::EngineModal1);
     nav.sub_page = 4;
+    assert_eq!(PageId::from_nav(&nav), PageId::EngineModal2);
+    nav.sub_page = 5;
     assert_eq!(PageId::from_nav(&nav), PageId::EngineVa);
     nav.sub_page = 0;
     nav.node = 1;
