@@ -244,7 +244,7 @@ fn test_different_ratios_change_pitch() {
 
     let mut peak_freq = |ratio_norm: f32| -> usize {
         let mut engine = FmEngine::new();
-        params.op_ratio[0] = ratio_norm;
+        params.op_ratio[3] = ratio_norm; // op4 is the carrier
         engine.update_params(&params, 48000);
         engine.note_on(60, 100, 48000);
         let mut output = [0.0f32; 128];
@@ -302,6 +302,7 @@ fn test_fm_params_default_is_sane() {
     let p = FmParams::default();
     assert_eq!(p.algorithm, 0);
     assert_eq!(p.feedback, 0.0);
-    assert_eq!(p.op_waveform, [0, 0, 0, 0]); // all sine
-    assert!(p.op_level[0] > 0.0, "carrier should have nonzero level");
+    assert_eq!(p.op_waveform, [0, 0, 0, 0]);
+    assert!(p.op_level[3] > 0.0, "carrier (op4) should have nonzero level");
+    assert_eq!(p.op_level[0], 0.0, "modulator (op1) should start silent");
 }

@@ -195,28 +195,36 @@ impl FmOperator {
     }
 }
 
-// ── FM Algorithm ────────────────────────────────────────────────────
+// ── FM Algorithm (TX81Z / YM2414 correct routing) ───────────────────
+//
+// TX81Z operator numbering: Op1 has feedback, Op4 is typically the carrier.
+// Evaluation order: Op1 first (feedback), then forward through the chain.
+//
+//   Algo 1: [1]→[2]→[3]→[4]*          Serial. One carrier.
+//   Algo 2: [1]→[3]→[4]*  [2]→[3]     Two mods into op3. One carrier.
+//   Algo 3: [1]→[2]→[4]*  [3]→[4]     Two mods into op4. One carrier.
+//   Algo 4: [1]→[2]→[4]*  [3]→[4]     Same as 3 but op1 also→4. One carrier.
+//           [1]──────→[4]
+//   Algo 5: [1]→[2]*  [3]→[4]*        Two parallel stacks. Two carriers.
+//   Algo 6: [1]→[2]*  [1]→[3]*        Op1 fans out. Three carriers.
+//                      [1]→[4]*
+//   Algo 7: [1]→[2]*  [3]*  [4]*      Op1 mods op2, rest free. Three carriers.
+//   Algo 8: [1]*  [2]*  [3]*  [4]*    All carriers. Additive.
 
-/// Which operators are carriers (output to audio) for each algorithm.
-/// Bit flags: bit 0 = op1, bit 1 = op2, bit 2 = op3, bit 3 = op4.
+/// Carrier masks per algorithm. bit0=op1, bit1=op2, bit2=op3, bit3=op4.
 const CARRIER_MASK: [u8; 8] = [
-    0b0001, // Algo 1: op1 carrier
-    0b1001, // Algo 2: op1, op4 carriers
-    0b0011, // Algo 3: op1, op2 carriers
-    0b1001, // Algo 4: op1, op4 carriers
-    0b0101, // Algo 5: op1, op3 carriers
-    0b0111, // Algo 6: op1, op2, op3 carriers
-    0b0111, // Algo 7: op1, op2, op3 carriers
-    0b1111, // Algo 8: all carriers (additive)
+    0b1000, // Algo 1: op4
+    0b1000, // Algo 2: op4
+    0b1000, // Algo 3: op4
+    0b1000, // Algo 4: op4
+    0b1010, // Algo 5: op2, op4
+    0b1110, // Algo 6: op2, op3, op4
+    0b1110, // Algo 7: op2, op3, op4
+    0b1111, // Algo 8: all
 ];
 
-/// Evaluate the 4 operators for one sample according to the algorithm.
-/// Returns the mixed output sample.
-/// `ops`: mutable array of 4 operators.
-/// `algo`: algorithm index 0-7.
-/// `feedback`: feedback amount for op4.
-/// `env_params`: per-operator envelope parameters.
-/// `sample_rate`: audio sample rate.
+/// Evaluate the 4 operators for one sample.
+/// Feedback is always on Op1 (TX81Z convention).
 pub fn fm_algorithm_tick(
     ops: &mut [FmOperator; 4],
     algo: u8,
@@ -224,65 +232,65 @@ pub fn fm_algorithm_tick(
     env_params: &[EnvParams; 4],
     sample_rate: u32,
 ) -> f32 {
-    // Evaluate in modulator-first order.
-    // op4 always evaluates first (it has feedback and is always a modulator or carrier).
-    let op4 = ops[3].tick(0.0, feedback, &env_params[3], sample_rate);
-    let op3;
+    // Op1 always evaluates first — it has the feedback loop.
+    let op1 = ops[0].tick(0.0, feedback, &env_params[0], sample_rate);
+
     let op2;
-    let op1;
+    let op3;
+    let op4;
 
     match algo {
         0 => {
-            // Algo 1: 4→3→2→1*
-            op3 = ops[2].tick(op4, 0.0, &env_params[2], sample_rate);
-            op2 = ops[1].tick(op3, 0.0, &env_params[1], sample_rate);
-            op1 = ops[0].tick(op2, 0.0, &env_params[0], sample_rate);
+            // Algo 1: 1→2→3→4*  (serial chain)
+            op2 = ops[1].tick(op1, 0.0, &env_params[1], sample_rate);
+            op3 = ops[2].tick(op2, 0.0, &env_params[2], sample_rate);
+            op4 = ops[3].tick(op3, 0.0, &env_params[3], sample_rate);
         }
         1 => {
-            // Algo 2: 3→2→1*, 4* independent
-            op3 = ops[2].tick(0.0, 0.0, &env_params[2], sample_rate);
-            op2 = ops[1].tick(op3, 0.0, &env_params[1], sample_rate);
-            op1 = ops[0].tick(op2, 0.0, &env_params[0], sample_rate);
+            // Algo 2: 1→3, 2→3, 3→4*  (two mods into op3)
+            op2 = ops[1].tick(0.0, 0.0, &env_params[1], sample_rate);
+            op3 = ops[2].tick(op1 + op2, 0.0, &env_params[2], sample_rate);
+            op4 = ops[3].tick(op3, 0.0, &env_params[3], sample_rate);
         }
         2 => {
-            // Algo 3: 4→3→1*, 4→3→2*  (op3 feeds both op1 and op2)
-            op3 = ops[2].tick(op4, 0.0, &env_params[2], sample_rate);
-            op2 = ops[1].tick(op3, 0.0, &env_params[1], sample_rate);
-            op1 = ops[0].tick(op3, 0.0, &env_params[0], sample_rate);
+            // Algo 3: 1→2→4, 3→4*  (two paths into carrier)
+            op2 = ops[1].tick(op1, 0.0, &env_params[1], sample_rate);
+            op3 = ops[2].tick(0.0, 0.0, &env_params[2], sample_rate);
+            op4 = ops[3].tick(op2 + op3, 0.0, &env_params[3], sample_rate);
         }
         3 => {
-            // Algo 4: 4→3→2→1*, 4* also carrier
-            op3 = ops[2].tick(op4, 0.0, &env_params[2], sample_rate);
-            op2 = ops[1].tick(op3, 0.0, &env_params[1], sample_rate);
-            op1 = ops[0].tick(op2, 0.0, &env_params[0], sample_rate);
+            // Algo 4: 1→2→4, 3→4, 1→4*  (three mods into carrier)
+            op2 = ops[1].tick(op1, 0.0, &env_params[1], sample_rate);
+            op3 = ops[2].tick(0.0, 0.0, &env_params[2], sample_rate);
+            op4 = ops[3].tick(op1 + op2 + op3, 0.0, &env_params[3], sample_rate);
         }
         4 => {
-            // Algo 5: 4→3*, 2→1* (two independent stacks)
-            op3 = ops[2].tick(op4, 0.0, &env_params[2], sample_rate);
-            op2 = ops[1].tick(0.0, 0.0, &env_params[1], sample_rate);
-            op1 = ops[0].tick(op2, 0.0, &env_params[0], sample_rate);
+            // Algo 5: 1→2*, 3→4*  (two parallel stacks)
+            op2 = ops[1].tick(op1, 0.0, &env_params[1], sample_rate);
+            op3 = ops[2].tick(0.0, 0.0, &env_params[2], sample_rate);
+            op4 = ops[3].tick(op3, 0.0, &env_params[3], sample_rate);
         }
         5 => {
-            // Algo 6: 4→(1+2+3)* (one mod feeds three carriers)
-            op3 = ops[2].tick(op4, 0.0, &env_params[2], sample_rate);
-            op2 = ops[1].tick(op4, 0.0, &env_params[1], sample_rate);
-            op1 = ops[0].tick(op4, 0.0, &env_params[0], sample_rate);
+            // Algo 6: 1→2*, 1→3*, 1→4*  (one mod fans to three carriers)
+            op2 = ops[1].tick(op1, 0.0, &env_params[1], sample_rate);
+            op3 = ops[2].tick(op1, 0.0, &env_params[2], sample_rate);
+            op4 = ops[3].tick(op1, 0.0, &env_params[3], sample_rate);
         }
         6 => {
-            // Algo 7: 4→3*, 2*, 1* (op4 mods op3, rest free)
-            op3 = ops[2].tick(op4, 0.0, &env_params[2], sample_rate);
-            op2 = ops[1].tick(0.0, 0.0, &env_params[1], sample_rate);
-            op1 = ops[0].tick(0.0, 0.0, &env_params[0], sample_rate);
+            // Algo 7: 1→2*, 3*, 4*  (op1 mods op2, rest independent)
+            op2 = ops[1].tick(op1, 0.0, &env_params[1], sample_rate);
+            op3 = ops[2].tick(0.0, 0.0, &env_params[2], sample_rate);
+            op4 = ops[3].tick(0.0, 0.0, &env_params[3], sample_rate);
         }
         _ => {
-            // Algo 8: all carriers, no modulation (additive)
-            op3 = ops[2].tick(0.0, 0.0, &env_params[2], sample_rate);
+            // Algo 8: 1*, 2*, 3*, 4*  (all carriers, additive)
             op2 = ops[1].tick(0.0, 0.0, &env_params[1], sample_rate);
-            op1 = ops[0].tick(0.0, 0.0, &env_params[0], sample_rate);
+            op3 = ops[2].tick(0.0, 0.0, &env_params[2], sample_rate);
+            op4 = ops[3].tick(0.0, 0.0, &env_params[3], sample_rate);
         }
     }
 
-    // Sum carriers based on algorithm mask
+    // Sum carriers
     let mask = CARRIER_MASK[algo.min(7) as usize];
     let mut out = 0.0;
     if mask & 0b0001 != 0 { out += op1; }
@@ -290,7 +298,6 @@ pub fn fm_algorithm_tick(
     if mask & 0b0100 != 0 { out += op3; }
     if mask & 0b1000 != 0 { out += op4; }
 
-    // Normalize by carrier count to keep consistent volume
     let carrier_count = mask.count_ones() as f32;
     out / carrier_count
 }
@@ -432,14 +439,14 @@ impl Default for FmParams {
             algorithm: 0,
             feedback: 0.0,
             op_ratio: [
-                0.2,  // op1: 1.0x (fundamental, carrier)
+                0.2,  // op1: 1.0x (modulator with feedback)
                 0.2,  // op2: 1.0x
-                0.27, // op3: 2.0x (octave)
-                0.27, // op4: 2.0x (modulator, octave above)
+                0.2,  // op3: 1.0x
+                0.2,  // op4: 1.0x (carrier)
             ],
-            op_detune: [0.5; 4], // center = no detune
-            op_waveform: [0; 4], // all sine
-            op_level: [1.0, 0.0, 0.0, 0.0], // only carrier audible by default
+            op_detune: [0.5; 4],
+            op_waveform: [0; 4],
+            op_level: [0.0, 0.0, 0.0, 1.0], // only op4 (carrier) audible by default
             op_env: [EnvParams::default(); 4],
         }
     }
