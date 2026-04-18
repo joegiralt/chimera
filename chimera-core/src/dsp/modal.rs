@@ -95,14 +95,21 @@ impl CosineOsc {
 // ~0.25 → 0.0 (perfect harmonics)
 // 1.0 → 2.0 (very stretched, metallic)
 
+/// Approximate lut_stiffness: structure (0..1) → stiffness coefficient.
+/// Rings: ranges from -0.0625 to +2.0 with a zero plateau at ~0.25.
 fn stiffness_from_structure(structure: f32) -> f32 {
     if structure < 0.24 {
-        -0.02 * (1.0 - structure / 0.24)
+        // Negative stiffness (compressed partials, tube-like)
+        -0.0625 * (1.0 - structure / 0.24)
     } else if structure < 0.3 {
-        0.0 // harmonic plateau
+        // Harmonic plateau (perfect string)
+        0.0
     } else {
+        // Stretch ramp: 0 to 0.5 (with stiffness decay in the loop,
+        // this produces moderate to heavy inharmonicity without
+        // pushing all modes past Nyquist)
         let t = (structure - 0.3) / 0.7;
-        t * t * 0.15 // max stiffness 0.15 — enough for bell-like spread
+        t * t * 0.5
     }
 }
 
@@ -260,6 +267,7 @@ pub struct ModalEngine {
     // Bowed model state
     bow_state: f32,
     // Shared
+    frequency: f32, // normalized: Hz / sample_rate
     active_mode: ResonatorMode,
     exciter_remaining: usize,
     exciter_amp: f32,
@@ -283,6 +291,7 @@ impl ModalEngine {
             resolution: 0,
             string: KsString::new(),
             bow_state: 0.0,
+            frequency: 220.0 / 48000.0,
             active_mode: ResonatorMode::Modal,
             exciter_remaining: 0,
             exciter_amp: 0.0,
@@ -297,10 +306,11 @@ impl ModalEngine {
         self.active_mode = ResonatorMode::from_u8(params.mode);
         let vel = velocity as f32 / 127.0;
         let freq = note_to_freq(note);
+        self.frequency = freq / sample_rate as f32;
 
         match self.active_mode {
             ResonatorMode::Modal => {
-                self.compute_filters(note, params, sample_rate);
+                self.compute_filters(params, self.frequency);
                 self.cos_osc.init(params.position);
                 let burst_ms = 2.0 + params.excite * 4.0;
                 self.exciter_remaining = (burst_ms * sample_rate as f32 / 1000.0) as usize;
@@ -333,27 +343,26 @@ impl ModalEngine {
         self.active
     }
 
-    /// Configure filters (called once per note, matching Rings' ComputeFilters).
-    fn compute_filters(&mut self, note: u8, params: &ModalParams, sample_rate: u32) {
-        let frequency = note_to_freq(note) / sample_rate as f32; // normalized
-        let num = (params.num_modes as usize).min(MAX_MODES);
-        // Force even for odd/even splitting
-        let num = num & !1;
+    /// Configure filters — called every render block (not just note_on).
+    /// Matches Rings' ComputeFilters().
+    fn compute_filters(&mut self, params: &ModalParams, frequency: f32) {
+        let num = (params.num_modes as usize).min(MAX_MODES) & !1;
         self.resolution = num;
 
-        // Q from damping (Rings: 500 * lut_4_decades[damping])
-        // Map decay 0..1 logarithmically: Q from 50 to 50000
-        let q = 50.0 * libm::powf(10.0, params.decay * 3.0);
+        // Q from decay. Rings uses enormous Q values (up to 5M) but its SVF
+        // handles them via lookup tables. Our float SVF can't handle Q > ~1000
+        // without numerical issues. Map decay to a practical range.
+        let mut q = 100.0 + params.decay * params.decay * 900.0; // 100..1000
 
         // Stiffness from structure/inharm
         let mut stiffness = stiffness_from_structure(params.inharm);
 
-        // Brightness → q_loss per mode
+        // Brightness → q_loss per mode (Rings formula)
         let structure = params.inharm;
         let bright_atten = {
             let x = 1.0 - structure;
             let x2 = x * x;
-            x2 * x2 * x2 * x2 // (1-structure)^8
+            x2 * x2 * x2 * x2
         };
         let brightness = params.brightness * (1.0 - 0.2 * bright_atten);
         let mut q_loss = brightness * (2.0 - brightness) * 0.85 + 0.15;
@@ -365,19 +374,17 @@ impl ModalEngine {
         for i in 0..num {
             let partial_freq = (harmonic * stretch_factor).min(0.49);
 
-            // Per-mode Q: increases with frequency (higher partials ring longer)
+            // Per-mode Q (Rings: 1.0 + partial_freq * q)
             let mode_q = 1.0 + partial_freq * q;
-            self.filters[i].set(partial_freq, mode_q * q_loss);
+            self.filters[i].set(partial_freq, mode_q);
 
-            // Accumulate stiffness
+            // Accumulate stiffness with decay for negative values
             stretch_factor += stiffness;
-            if stiffness < 0.0 {
-                stiffness *= 0.93;
-            } else {
-                stiffness *= 0.98;
-            }
+            if stretch_factor < 0.1 { stretch_factor = 0.1; } // never go negative
+            if stiffness < 0.0 { stiffness *= 0.93; } // decay negative stiffness
 
-            // Q loss for next mode
+            // Q decays across modes (Rings: q *= q_loss)
+            q *= q_loss;
             q_loss += q_loss_damping_rate * (1.0 - q_loss);
 
             harmonic += frequency;
@@ -398,6 +405,12 @@ impl ModalEngine {
         }
 
         let mut max_level = 0.0_f32;
+
+        // Recompute filters every block (Rings does this — allows live parameter changes)
+        if self.active_mode == ResonatorMode::Modal {
+            self.compute_filters(params, self.frequency);
+            self.cos_osc.init(params.position);
+        }
 
         match self.active_mode {
             ResonatorMode::Modal => self.render_modal(output, &mut max_level),
@@ -428,18 +441,22 @@ impl ModalEngine {
                 0.0
             };
 
+            // Input scaled by 0.125 (matching Rings)
+            let input = excite * 0.125;
+
             let mut odd = 0.0_f32;
             let mut even = 0.0_f32;
             self.cos_osc.start();
 
             let mut i = 0;
             while i + 1 < num {
-                odd += self.cos_osc.next() * self.filters[i].process_bp(excite);
-                even += self.cos_osc.next() * self.filters[i + 1].process_bp(excite);
+                odd += self.cos_osc.next() * self.filters[i].process_bp(input);
+                even += self.cos_osc.next() * self.filters[i + 1].process_bp(input);
                 i += 2;
             }
 
-            *s = (odd + even) * 0.25;
+            // Rings outputs odd and even separately (stereo). We sum to mono.
+            *s = odd + even;
             *max_level = max_level.max(libm::fabsf(*s));
         }
     }
