@@ -350,8 +350,12 @@ impl ModalEngine {
         let num = (params.num_modes as usize).min(MAX_MODES) & !1;
         self.resolution = num;
 
-        // Q from decay. Higher Q = longer ring.
-        let mut q = 200.0 + params.decay * params.decay * 1800.0; // 200..2000
+        // Q from decay (Rings-style range).
+        // At partial_freq=0.003 (130Hz): mode_q = 1 + 0.003 * q
+        //   decay=0:   q=500,    mode_q=2.5  (short ping)
+        //   decay=0.5: q=50000,  mode_q=151  (nice ring)
+        //   decay=1:   q=500000, mode_q=1501 (long sustain)
+        let mut q = 500.0 * libm::powf(10.0, params.decay * 3.0); // 500..500,000
 
         // Stiffness from structure/inharm
         let mut stiffness = stiffness_from_structure(params.inharm);
