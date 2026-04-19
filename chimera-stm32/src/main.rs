@@ -24,17 +24,13 @@ fn SysTick() {
 
 #[entry]
 fn main() -> ! {
-    // Point VTOR to our vector table (firmware starts at 0x08020000, not 0x08000000)
-    // SAFETY: SCB VTOR register, must be set before enabling any interrupts
     unsafe {
         core::ptr::write_volatile(0xE000_ED08 as *mut u32, 0x0802_0000);
     }
 
     let dp = pac::Peripherals::take().unwrap();
-
     let pwr = dp.PWR.constrain();
     let pwrcfg = pwr.freeze();
-
     let rcc = dp.RCC.constrain();
     let ccdr = rcc
         .use_hse(8.MHz())
@@ -49,8 +45,6 @@ fn main() -> ! {
     let gpioa = dp.GPIOA.split(ccdr.peripheral.GPIOA);
     let gpiod = dp.GPIOD.split(ccdr.peripheral.GPIOD);
     let gpioe = dp.GPIOE.split(ccdr.peripheral.GPIOE);
-
-    // HC165 pins — configure GPIO but ISR reads registers directly
     let gpiof = dp.GPIOF.split(ccdr.peripheral.GPIOF);
     let _hc_data = gpiof.pf2.into_floating_input();
     let _hc_load = gpiof.pf1.into_push_pull_output();
@@ -58,16 +52,14 @@ fn main() -> ! {
 
     let mut led = gpioe.pe1.into_push_pull_output();
     let mut backlight = gpioe.pe11.into_push_pull_output();
+    backlight.set_high();
+    led.set_high();
 
     let sck = gpioa.pa5.into_push_pull_output();
     let mosi = gpioa.pa7.into_push_pull_output();
     let dc = gpiod.pd8.into_push_pull_output();
     let reset = gpiod.pd9.into_push_pull_output();
     let cs = gpiod.pd10.into_push_pull_output();
-
-    backlight.set_high();
-    led.set_high();
-
     let spi = BitBangSpi::new(sck, mosi, 0x5802_0000, 5, 7);
     let mut display = Stm32Display::new(spi, dc, reset, cs);
     display.init();
@@ -76,7 +68,6 @@ fn main() -> ! {
     let mut ui = UiState::new();
     let perf = PerfTracker::new();
 
-    // Start SysTick at 500Hz for control scanning
     controls::start_systick(200_000_000);
     controls::enable();
 
@@ -84,6 +75,7 @@ fn main() -> ! {
     ui.update();
     ui.render(&mut display, &perf.stats);
     display.flush();
+    ui.prime_regions(&perf.stats);
     led.set_low();
 
     loop {
@@ -94,20 +86,14 @@ fn main() -> ! {
             ui.handle_input(&controls);
         }
 
-        ui.update(); // always tick animations
+        ui.update();
 
         let flush_list = ui.render_dirty(&mut display, &perf.stats);
 
-        let mut any_flushed = false;
         for &(ys, ye) in &flush_list {
             if ys != ye {
                 display.flush_region(ys, ye);
-                any_flushed = true;
             }
-        }
-
-        if !has_input && !any_flushed {
-            cortex_m::asm::wfi(); // sleep until next SysTick
         }
     }
 }
