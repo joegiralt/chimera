@@ -272,6 +272,7 @@ impl PageId {
             PageId::EngineVa => [Uni, Uni, Uni, Uni, Uni, Bi],
             PageId::EngineModal1 => [Int(3), Uni, Uni, Uni, Uni, Uni],
             PageId::EngineModal2 => [Int(3), Uni, Uni, Uni, Uni, Uni],
+            PageId::Efx | PageId::GlobalEfx => [Int(2), Uni, Uni, Uni, Uni, Uni],
             PageId::DemoWaves => [Uni, Uni, Uni, Uni, Bi, Bi],
             PageId::DemoShapes => [Uni, Uni, Bi, Bi, Uni, Uni],
             PageId::DemoMotion => [Uni, Uni, Uni, Uni, Bi, Uni],
@@ -302,7 +303,10 @@ impl PageId {
             PageId::EnvAux => ["ATK", "DEC", "SUS", "REL", "LEVEL", "VEL"],
             PageId::Mixer => ["VOL", "PAN", "VOICES", "MIDI", "PITCH", "GLIDE"],
             PageId::Drive => ["DRIVE", "TONE", "MIX", "--", "--", "--"],
-            PageId::Routing | PageId::Compressor | PageId::GlobalEfx | PageId::Efx => {
+            PageId::Efx | PageId::GlobalEfx => {
+                ["TYPE", "TIME", "DAMP", "SIZE", "MIX", "--"]
+            }
+            PageId::Routing | PageId::Compressor => {
                 ["--", "--", "--", "--", "--", "--"]
             }
             PageId::DemoWaves => ["CLIP", "WAVE", "PW", "FOLD", "TILT", "SYM"],
@@ -417,6 +421,14 @@ impl PageId {
                 params.modal.ks_ens_rate,
                 params.modal.ks_ens_mix,
             ],
+            PageId::Efx | PageId::GlobalEfx => [
+                params.reverb.reverb_type as f32 / 2.0,
+                params.reverb.time,
+                params.reverb.damping,
+                params.reverb.size,
+                params.reverb.mix,
+                0.0,
+            ],
             _ => [0.5; 6], // placeholder pages
         }
     }
@@ -443,6 +455,10 @@ impl PageId {
             }
             PageId::EngineModal2 => {
                 apply_modal2_encoder(idx, delta, &mut params.modal);
+                return;
+            }
+            PageId::Efx | PageId::GlobalEfx => {
+                apply_reverb_encoder(idx, delta, &mut params.reverb);
                 return;
             }
             _ => {}
@@ -551,6 +567,22 @@ fn apply_modal2_encoder(idx: usize, delta: i8, modal: &mut crate::dsp::modal::Mo
         3 => nudge_float(&mut modal.ks_ens_depth, delta, step),
         4 => nudge_float(&mut modal.ks_ens_rate, delta, step),
         5 => nudge_float(&mut modal.ks_ens_mix, delta, step),
+        _ => {}
+    }
+}
+
+fn apply_reverb_encoder(
+    idx: usize,
+    delta: i8,
+    reverb: &mut crate::dsp::reverb::ReverbParams,
+) {
+    let step = 1.0 / 128.0;
+    match idx {
+        0 => nudge_u8(&mut reverb.reverb_type, delta, 2),
+        1 => nudge_float(&mut reverb.time, delta, step),
+        2 => nudge_float(&mut reverb.damping, delta, step),
+        3 => nudge_float(&mut reverb.size, delta, step),
+        4 => nudge_float(&mut reverb.mix, delta, step),
         _ => {}
     }
 }
