@@ -119,17 +119,19 @@ fn stiffness_from_structure(structure: f32) -> f32 {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum ResonatorMode {
-    String = 0,   // Ambika KS+ (body, stiffness, position, ensemble)
-    Modal = 1,    // SVF bandpass bank (Rings-style)
-    Bowed = 2,    // Sustained bow friction
+    String = 0,      // Ambika KS+ (body, stiffness, position, ensemble)
+    Modal = 1,       // SVF bandpass bank (Rings-style)
+    Bowed = 2,       // Sustained bow friction
+    Sympathetic = 3, // Multiple resonating strings (Rings-style)
 }
 
 impl ResonatorMode {
     pub fn from_u8(v: u8) -> Self {
-        match v % 3 {
+        match v % 4 {
             0 => ResonatorMode::String,
             1 => ResonatorMode::Modal,
-            _ => ResonatorMode::Bowed,
+            2 => ResonatorMode::Bowed,
+            _ => ResonatorMode::Sympathetic,
         }
     }
 }
@@ -369,12 +371,16 @@ impl KsString {
 
 // ── Modal Engine (with String and Bowed modes) ──────────────────────
 
+const NUM_SYMPATHETIC: usize = 7;
+
 pub struct ModalEngine {
     filters: [Svf; MAX_MODES],
     cos_osc: CosineOsc,
     resolution: usize,
-    // String model
+    // String model (main)
     string: KsString,
+    // Sympathetic strings (7 additional resonators)
+    sym_strings: [KsString; NUM_SYMPATHETIC],
     // Bowed model state
     bow_state: f32,
     // Shared
@@ -402,6 +408,7 @@ impl ModalEngine {
             cos_osc: CosineOsc::new(),
             resolution: 0,
             string: KsString::new(),
+            sym_strings: core::array::from_fn(|_| KsString::new()),
             bow_state: 0.0,
             frequency: 220.0 / 48000.0,
             active_mode: ResonatorMode::Modal,
@@ -447,6 +454,29 @@ impl ModalEngine {
                 self.bow_state = 0.0;
                 self.exciter_amp = vel * params.bow_force;
             }
+            ResonatorMode::Sympathetic => {
+                // Main string gets excitation
+                self.string.set_freq(freq, sample_rate);
+                self.string.trigger(
+                    vel * params.excite,
+                    params.ks_excitation,
+                    params.ks_color,
+                    params.position,
+                );
+                // Sympathetic strings tuned to harmonics/intervals
+                // inharm controls spread: 0=unison, 1=wide harmonic series
+                let intervals = [0.0, 12.0, 7.02, 12.0, 19.02, 24.0, 7.02];
+                for (i, sym) in self.sym_strings.iter_mut().enumerate() {
+                    let detune = intervals[i] * params.inharm;
+                    let sym_freq = freq * semitones_to_ratio(detune);
+                    sym.set_freq(sym_freq, sample_rate);
+                    // Sympathetic strings start silent — energy comes from main
+                    for s in sym.buffer[..sym.delay_len].iter_mut() {
+                        *s = 0.0;
+                    }
+                    sym.write_pos = 0;
+                }
+            }
         }
 
         self.active = true;
@@ -475,6 +505,16 @@ impl ModalEngine {
                 }
             }
             ResonatorMode::Modal => {}
+            ResonatorMode::Sympathetic => {
+                for i in 0..self.string.delay_len {
+                    self.string.buffer[i] *= 0.2;
+                }
+                for sym in &mut self.sym_strings {
+                    for i in 0..sym.delay_len {
+                        sym.buffer[i] *= 0.2;
+                    }
+                }
+            }
         }
     }
 
@@ -557,6 +597,7 @@ impl ModalEngine {
             ResonatorMode::String => self.render_string(output, params, &mut max_level),
             ResonatorMode::Modal => self.render_modal(output, &mut max_level),
             ResonatorMode::Bowed => self.render_bowed(output, params, &mut max_level),
+            ResonatorMode::Sympathetic => self.render_sympathetic(output, params, &mut max_level),
         }
 
         if max_level < 0.001 && self.exciter_remaining == 0 {
@@ -655,6 +696,51 @@ impl ModalEngine {
         }
     }
 
+    fn render_sympathetic(&mut self, output: &mut [f32; BLOCK_SIZE], params: &ModalParams, max_level: &mut f32) {
+        let released = self.released;
+        let (fb, body, stiff) = if released {
+            (0.0, 0.0, 0.0)
+        } else {
+            (params.ks_feedback, params.ks_body, params.ks_stiffness)
+        };
+        let decay = if released { 0.8_f32.max(params.decay) } else { params.decay };
+
+        // Coupling gain: how much main string feeds into sympathetic
+        let coupling = 0.025; // Rings uses 0.2 / num_strings
+
+        for s in output.iter_mut() {
+            // 1. Main string tick
+            let main_out = self.string.tick_full(
+                params.brightness, decay, body, stiff, fb,
+                params.ks_ens_rate, params.ks_ens_depth, 0.3, params.ks_ens_mix,
+            );
+
+            // 2. Couple main string output into sympathetic strings
+            let sym_input = main_out * coupling;
+
+            // 3. Tick all sympathetic strings, sum their output
+            let mut sym_sum = 0.0_f32;
+            for sym in &mut self.sym_strings {
+                // Inject coupled energy from main string into delay line
+                let wp = sym.write_pos;
+                sym.buffer[wp] += sym_input;
+                // Tick the sympathetic string (with gentler damping)
+                let sym_out = sym.tick_full(
+                    params.brightness * 0.7, // darker
+                    decay * 0.5,             // slower decay
+                    0.0, 0.0, 0.0,           // no body/stiff/feedback
+                    0.0, 0.0, 0.0, 0.0,      // no ensemble
+                );
+                sym_sum += sym_out;
+            }
+
+            // 4. Mix: main + sympathetic
+            let mixed = main_out + sym_sum * 0.15;
+            *s = libm::tanhf(mixed);
+            *max_level = max_level.max(libm::fabsf(*s));
+        }
+    }
+
     #[inline]
     fn noise(&mut self) -> f32 {
         self.noise_state ^= self.noise_state << 13;
@@ -666,4 +752,8 @@ impl ModalEngine {
 
 fn note_to_freq(note: u8) -> f32 {
     440.0 * libm::powf(2.0, (note as f32 - 69.0) / 12.0)
+}
+
+fn semitones_to_ratio(semitones: f32) -> f32 {
+    libm::powf(2.0, semitones / 12.0)
 }
