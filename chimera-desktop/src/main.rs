@@ -40,7 +40,6 @@ fn main() {
         let note = piano_note(&keys).map(|n| (n as i8 + octave * 12).clamp(0, 127) as u8);
         if note != current_note {
             if let Some(n) = note {
-                eprintln!("NOTE ON: {} engine={:?}", n, ui.params.engine);
                 audio.note_on(n, 100);
             } else {
                 audio.note_off();

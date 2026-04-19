@@ -175,6 +175,7 @@ pub struct ParamSnapshot {
     pub envelopes: [EnvParams; 3],
     pub fm: crate::dsp::fm::FmParams,
     pub modal: crate::dsp::modal::ModalParams,
+    pub reverb: crate::dsp::reverb::ReverbParams,
     pub volume: Param,
     pub pan: Param,
 }
@@ -189,6 +190,7 @@ impl Default for ParamSnapshot {
             envelopes: [EnvParams::default(); 3],
             fm: crate::dsp::fm::FmParams::default(),
             modal: crate::dsp::modal::ModalParams::default(),
+            reverb: crate::dsp::reverb::ReverbParams::default(),
             volume: Param::new(0.0, 1.0, 0.8),
             pan: Param::new(-1.0, 1.0, 0.0),
         }

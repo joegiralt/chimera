@@ -4,5 +4,6 @@ pub mod filter;
 pub mod fm;
 pub mod modal;
 pub mod oscillator;
+pub mod reverb;
 pub mod voice;
 pub mod wavefolder;
