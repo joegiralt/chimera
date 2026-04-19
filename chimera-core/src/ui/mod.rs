@@ -113,6 +113,32 @@ impl UiState {
         self.renderer.draw(display, &self.nav, self.page, perf);
     }
 
+    /// Prime the region set after an initial full render, so render_dirty
+    /// won't redundantly redraw everything on the first call.
+    pub fn prime_regions(&mut self, perf: &PerfStats) {
+        use region::{RegionData, RegionKind};
+
+        let layout = self.page.layout();
+        self.region_set.set_layout(layout);
+        let qvalues = region::quantize_values(&self.renderer.anim);
+
+        for r in self.region_set.active_regions_mut() {
+            r.prev_data = match r.kind {
+                RegionKind::Header => RegionData::header(
+                    self.nav.chain as u8, self.nav.node as u8,
+                    self.nav.sub_page as u8, perf.render_us,
+                ),
+                RegionKind::Viz => RegionData::viz(self.page, qvalues),
+                RegionKind::Params => RegionData::params(self.page, qvalues),
+                RegionKind::Cells => RegionData::cells(self.page, qvalues),
+                RegionKind::Nav => RegionData::nav(
+                    self.nav.chain as u8, self.nav.node as u8,
+                    self.nav.sub_page as u8,
+                ),
+            };
+        }
+    }
+
     /// Render only dirty regions. Returns list of (y_start, y_end) pairs to flush.
     /// Slots with (0, 0) are unused.
     pub fn render_dirty<D>(
