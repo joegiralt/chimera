@@ -39,8 +39,10 @@ impl DesktopAudio {
         });
         let shared_clone = Arc::clone(&shared);
 
-        let mut voice = Voice::new();
-        let mut reverb = Reverb::new();
+        let mut voice = Box::new(Voice::new());
+        let mut reverb = Box::new(Reverb::new());
+        let mut block = [0.0f32; chimera_hal::BLOCK_SIZE];
+        let mut block_pos: usize = chimera_hal::BLOCK_SIZE;
 
         let stream = device
             .build_output_stream(
@@ -60,16 +62,13 @@ impl DesktopAudio {
                         voice.note_off();
                     }
 
-                    let mut block = [0.0f32; chimera_hal::BLOCK_SIZE];
-                    let mut block_pos = chimera_hal::BLOCK_SIZE;
-
                     for sample in data.iter_mut() {
                         if block_pos >= chimera_hal::BLOCK_SIZE {
                             voice.render(&mut block, params, sample_rate);
                             reverb.process(&mut block, &params.reverb);
                             block_pos = 0;
                         }
-                        *sample = block[block_pos] * 0.5;
+                        *sample = libm::tanhf(block[block_pos] * 0.4);
                         block_pos += 1;
                     }
                 },
