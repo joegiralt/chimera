@@ -204,6 +204,8 @@ dependencies = [
  "chimera-hal",
  "cortex-m",
  "cortex-m-rt",
+ "embedded-graphics",
+ "embedded-graphics-core",
  "panic-halt",
  "stm32h7xx-hal",
 ]
