@@ -182,13 +182,23 @@ impl Default for ParamSnapshot {
     fn default() -> Self {
         Self {
             engine: EngineType::default(),
-            filter: FilterParams::default(),
+            filter: {
+                let mut f = FilterParams::default();
+                f.cutoff = Param::new(20.0, 20000.0, 20000.0); // fully open
+                f
+            },
             drive: DriveParams::default(),
             folder: FolderParams::default(),
             envelopes: [EnvParams::default(); 3],
             fm: crate::dsp::fm::FmParams::default(),
             modal: crate::dsp::modal::ModalParams::default(),
-            reverb: crate::dsp::reverb::ReverbParams::default(),
+            reverb: crate::dsp::reverb::ReverbParams {
+                reverb_type: 0,
+                time: 0.5,
+                damping: 0.3,
+                size: 0.5,
+                mix: 0.0, // effects off by default
+            },
             volume: Param::new(0.0, 1.0, 0.8),
             pan: Param::new(-1.0, 1.0, 0.0),
         }

@@ -68,7 +68,7 @@ impl DesktopAudio {
                             reverb.process(&mut block, &params.reverb);
                             block_pos = 0;
                         }
-                        *sample = libm::tanhf(block[block_pos] * 0.4);
+                        *sample = libm::tanhf(block[block_pos] * 0.7);
                         block_pos += 1;
                     }
                 },
