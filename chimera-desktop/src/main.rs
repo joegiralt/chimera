@@ -17,6 +17,7 @@ fn main() {
     let mut ui = UiState::new();
     let mut perf = PerfTracker::new();
     let mut current_note: Option<u8> = None;
+    let mut octave: i8 = 0; // -2 to +2
     let mut frame_start = Instant::now();
 
     while display.is_open() {
@@ -27,8 +28,16 @@ fn main() {
         let keys = display.get_keys();
         controls.update(&keys);
 
+        // Octave shift: [ and ]
+        if keys.contains(&minifb::Key::LeftBracket) {
+            octave = (octave - 1).max(-2);
+        }
+        if keys.contains(&minifb::Key::RightBracket) {
+            octave = (octave + 1).min(2);
+        }
+
         // Piano keys
-        let note = piano_note(&keys);
+        let note = piano_note(&keys).map(|n| (n as i8 + octave * 12).clamp(0, 127) as u8);
         if note != current_note {
             if let Some(n) = note {
                 eprintln!("NOTE ON: {} engine={:?}", n, ui.params.engine);
