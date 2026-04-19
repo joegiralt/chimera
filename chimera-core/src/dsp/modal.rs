@@ -298,9 +298,11 @@ impl KsString {
         let current = self.buffer[read_pos];
         let next = self.buffer[(read_pos + 1) % self.delay_len];
 
-        // KS low-pass averaging (damping controls blend between current and next)
-        // This is the primary pitch-stable decay mechanism.
-        let coeff = 0.125 + damping * 0.375; // 0.125..0.5
+        // KS low-pass averaging: blend between current and next sample.
+        // Higher coeff = more averaging = darker sound.
+        // damping=0 (bright): coeff=0.05 (barely any filtering)
+        // damping=1 (dark): coeff=0.5 (heavy filtering, fast decay)
+        let coeff = 0.05 + damping * 0.45;
         let mut filtered = current * (1.0 - coeff) + next * coeff;
 
         // The 2-point average inherently decays the signal.
@@ -376,8 +378,9 @@ pub struct ModalEngine {
     // Bowed model state
     bow_state: f32,
     // Shared
-    frequency: f32, // normalized: Hz / sample_rate
+    frequency: f32,
     active_mode: ResonatorMode,
+    released: bool, // true after note_off
     exciter_remaining: usize,
     exciter_amp: f32,
     noise_state: u32,
@@ -402,6 +405,7 @@ impl ModalEngine {
             bow_state: 0.0,
             frequency: 220.0 / 48000.0,
             active_mode: ResonatorMode::Modal,
+            released: false,
             exciter_remaining: 0,
             exciter_amp: 0.0,
             noise_state: 0x12345678,
@@ -446,23 +450,31 @@ impl ModalEngine {
         }
 
         self.active = true;
+        self.released = false;
         self.silence_counter = 0;
     }
 
     pub fn note_off(&mut self) {
-        // For String/Bowed: dampen the delay line to stop the sound
+        self.released = true;
         match self.active_mode {
-            ResonatorMode::String | ResonatorMode::Bowed => {
-                // Quick fade: multiply entire buffer by 0.5 a few times
+            ResonatorMode::String => {
+                // Dampen the buffer heavily
                 for _ in 0..3 {
                     for i in 0..self.string.delay_len {
-                        self.string.buffer[i] *= 0.3;
+                        self.string.buffer[i] *= 0.2;
                     }
                 }
             }
-            ResonatorMode::Modal => {
-                // Modal decays naturally — could zero the filters for instant stop
+            ResonatorMode::Bowed => {
+                // Stop the bow — zero exciter, heavily dampen string
+                self.exciter_amp = 0.0;
+                for _ in 0..5 {
+                    for i in 0..self.string.delay_len {
+                        self.string.buffer[i] *= 0.2;
+                    }
+                }
             }
+            ResonatorMode::Modal => {}
         }
     }
 
@@ -547,7 +559,7 @@ impl ModalEngine {
             ResonatorMode::Bowed => self.render_bowed(output, params, &mut max_level),
         }
 
-        if max_level < 0.0001 && self.exciter_remaining == 0 {
+        if max_level < 0.001 && self.exciter_remaining == 0 {
             self.silence_counter += 1;
             if self.silence_counter > 10 {
                 self.active = false;
@@ -592,13 +604,18 @@ impl ModalEngine {
     }
 
     fn render_string(&mut self, output: &mut [f32; BLOCK_SIZE], params: &ModalParams, max_level: &mut f32) {
+        let (fb, body, stiff, decay) = if self.released {
+            (0.0, 0.0, 0.0, 0.8_f32.max(params.decay)) // fast decay on release
+        } else {
+            (params.ks_feedback, params.ks_body, params.ks_stiffness, params.decay)
+        };
         for s in output.iter_mut() {
             *s = self.string.tick_full(
-                params.brightness,     // damping
-                params.decay,          // decay
-                params.ks_body,        // body resonance
-                params.ks_stiffness,   // inharmonicity
-                params.ks_feedback,    // sustain boost
+                params.brightness,
+                decay,
+                body,
+                stiff,
+                fb,
                 params.ks_ens_rate,    // ensemble rate
                 params.ks_ens_depth,   // ensemble depth
                 0.3,                   // ensemble spread (fixed for now)
@@ -609,8 +626,10 @@ impl ModalEngine {
     }
 
     fn render_bowed(&mut self, output: &mut [f32; BLOCK_SIZE], params: &ModalParams, max_level: &mut f32) {
-        let bow_vel = params.bow_velocity * 0.3;
+        let bow_vel = if self.exciter_amp > 0.001 { params.bow_velocity * 0.3 } else { 0.0 };
         let bow_force = self.exciter_amp * 4.0;
+        // When bow is released, apply decay
+        let release_decay = if self.exciter_amp < 0.001 { 0.995 } else { 1.0 };
 
         for s in output.iter_mut() {
             // Read from delay line
@@ -623,8 +642,7 @@ impl ModalEngine {
             let delta_v = bow_vel - string_vel;
             let friction = bow_force * libm::tanhf(delta_v * 8.0);
 
-            // The string feedback: almost unity gain + friction injection.
-            let feedback = string_vel * 0.9995 + friction * 0.4;
+            let feedback = string_vel * 0.9995 * release_decay + friction * 0.4;
 
             // Soft-limit to prevent blowup
             let clamped = libm::tanhf(feedback);
