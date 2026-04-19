@@ -5,6 +5,7 @@ pub mod dungeon_map;
 pub mod fmt;
 pub mod page;
 pub mod perf;
+pub mod region;
 pub mod renderer;
 pub mod theme;
 
