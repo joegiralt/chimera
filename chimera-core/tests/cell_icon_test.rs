@@ -34,7 +34,12 @@ fn test_cell_grid_pages_have_icons() {
     ];
 
     for page in &cell_pages {
-        assert_eq!(page.layout(), PageLayout::CellGrid, "{:?} should be CellGrid", page);
+        assert_eq!(
+            page.layout(),
+            PageLayout::CellGrid,
+            "{:?} should be CellGrid",
+            page
+        );
         let icons = page.cell_icons();
         let labels = page.encoder_labels();
 
@@ -45,7 +50,9 @@ fn test_cell_grid_pages_have_icons() {
                     icons[i],
                     CellIcon::None,
                     "{:?} encoder {} ({}) has no icon",
-                    page, i, label
+                    page,
+                    i,
+                    label
                 );
             }
         }
@@ -66,7 +73,12 @@ fn test_big_viz_pages_dont_need_icons() {
     ];
 
     for page in &viz_pages {
-        assert_eq!(page.layout(), PageLayout::BigViz, "{:?} should be BigViz", page);
+        assert_eq!(
+            page.layout(),
+            PageLayout::BigViz,
+            "{:?} should be BigViz",
+            page
+        );
     }
 }
 
@@ -74,14 +86,10 @@ fn test_big_viz_pages_dont_need_icons() {
 
 #[test]
 fn test_demo_storybook_covers_all_icons() {
-    let all_demo_icons: Vec<CellIcon> = [
-        PageId::DemoWaves,
-        PageId::DemoShapes,
-        PageId::DemoMotion,
-    ]
-    .iter()
-    .flat_map(|p| p.cell_icons().to_vec())
-    .collect();
+    let all_demo_icons: Vec<CellIcon> = [PageId::DemoWaves, PageId::DemoShapes, PageId::DemoMotion]
+        .iter()
+        .flat_map(|p| p.cell_icons().to_vec())
+        .collect();
 
     // Every icon type (except None) should appear at least once in the demo
     let icon_types = [
@@ -119,13 +127,26 @@ fn test_demo_storybook_covers_all_icons() {
 #[test]
 fn test_all_pages_have_6_labels() {
     let all_pages = [
-        PageId::EngineFmA, PageId::EngineFmB, PageId::EngineFmC,
-        PageId::EngineModal1, PageId::EngineVa,
-        PageId::Drive, PageId::Filter, PageId::Folder,
-        PageId::Vca, PageId::Efx, PageId::Mixer,
-        PageId::Routing, PageId::Compressor, PageId::GlobalEfx,
-        PageId::EnvAmp, PageId::EnvFilter, PageId::EnvAux,
-        PageId::DemoWaves, PageId::DemoShapes, PageId::DemoMotion,
+        PageId::EngineFmA,
+        PageId::EngineFmB,
+        PageId::EngineFmC,
+        PageId::EngineModal1,
+        PageId::EngineVa,
+        PageId::Drive,
+        PageId::Filter,
+        PageId::Folder,
+        PageId::Vca,
+        PageId::Efx,
+        PageId::Mixer,
+        PageId::Routing,
+        PageId::Compressor,
+        PageId::GlobalEfx,
+        PageId::EnvAmp,
+        PageId::EnvFilter,
+        PageId::EnvAux,
+        PageId::DemoWaves,
+        PageId::DemoShapes,
+        PageId::DemoMotion,
     ];
 
     for page in &all_pages {
@@ -145,7 +166,10 @@ fn test_bipolar_params_use_bipolar_snaps() {
 
     // Center snap should be at MIDI 64 (normalized ~0.504)
     let center = snaps[2];
-    assert!((center - 64.0 / 127.0).abs() < 0.01, "bipolar center should be at MIDI 64");
+    assert!(
+        (center - 64.0 / 127.0).abs() < 0.01,
+        "bipolar center should be at MIDI 64"
+    );
 }
 
 #[test]
@@ -174,7 +198,8 @@ fn test_bipolar_snaps_are_symmetric() {
     assert!(
         (low_dist - high_dist).abs() < 0.02,
         "bipolar snaps should be roughly symmetric: low={} high={}",
-        low_dist, high_dist
+        low_dist,
+        high_dist
     );
 }
 
@@ -192,9 +217,9 @@ fn test_drive_page_has_correct_setup() {
     assert_eq!(labels[3], "--");
 
     let fmts = page.val_formats();
-    assert_eq!(fmts[0], ValFmt::Uni);  // DRIVE is unipolar
-    assert_eq!(fmts[1], ValFmt::Bi);   // TONE is bipolar
-    assert_eq!(fmts[2], ValFmt::Bi);   // MIX is bipolar
+    assert_eq!(fmts[0], ValFmt::Uni); // DRIVE is unipolar
+    assert_eq!(fmts[1], ValFmt::Bi); // TONE is bipolar
+    assert_eq!(fmts[2], ValFmt::Bi); // MIX is bipolar
 
     let icons = page.cell_icons();
     assert_eq!(icons[0], CellIcon::WaveClip);
@@ -213,9 +238,9 @@ fn test_folder_page_has_correct_setup() {
     assert_eq!(labels[2], "MIX");
 
     let fmts = page.val_formats();
-    assert_eq!(fmts[0], ValFmt::Uni);  // FOLD
-    assert_eq!(fmts[1], ValFmt::Bi);   // SYM bipolar
-    assert_eq!(fmts[2], ValFmt::Bi);   // MIX bipolar
+    assert_eq!(fmts[0], ValFmt::Uni); // FOLD
+    assert_eq!(fmts[1], ValFmt::Bi); // SYM bipolar
+    assert_eq!(fmts[2], ValFmt::Bi); // MIX bipolar
 
     let icons = page.cell_icons();
     assert_eq!(icons[0], CellIcon::WaveFold);
@@ -245,7 +270,11 @@ fn test_fold_wave_reflects() {
     assert!((v - 0.0).abs() < 0.01, "2.0 should fold to 0.0, got {}", v);
 
     let v = fold_wave(-1.5);
-    assert!((v - (-0.5)).abs() < 0.01, "-1.5 should fold to -0.5, got {}", v);
+    assert!(
+        (v - (-0.5)).abs() < 0.01,
+        "-1.5 should fold to -0.5, got {}",
+        v
+    );
 }
 
 #[test]
@@ -258,7 +287,8 @@ fn test_fold_wave_stays_bounded() {
         assert!(
             output >= -1.0 && output <= 1.0,
             "fold_wave({}) = {} is out of range",
-            input, output
+            input,
+            output
         );
     }
 }

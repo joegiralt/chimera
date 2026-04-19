@@ -44,7 +44,11 @@ fn waveform(w: Waveform, theta: f32) -> f32 {
         Waveform::Sine => s,
         // W2: sin(θ) for 0≤θ<π, 0 for π≤θ<2π
         Waveform::HalfSine => {
-            if theta < PI { s } else { 0.0 }
+            if theta < PI {
+                s
+            } else {
+                0.0
+            }
         }
         // W3: |sin(θ)| (rectified)
         Waveform::FullSine => libm::fabsf(s),
@@ -55,7 +59,11 @@ fn waveform(w: Waveform, theta: f32) -> f32 {
         }
         // W5: sin(2θ) for 0≤θ<π, 0 for π≤θ<2π
         Waveform::HalfDouble => {
-            if theta < PI { libm::sinf(theta * 2.0) } else { 0.0 }
+            if theta < PI {
+                libm::sinf(theta * 2.0)
+            } else {
+                0.0
+            }
         }
         // W6: |sin(2θ)| (rectified double-speed)
         Waveform::FullDouble => libm::fabsf(libm::sinf(theta * 2.0)),
@@ -78,8 +86,7 @@ fn waveform(w: Waveform, theta: f32) -> f32 {
 /// Coarse ratios that snap to harmonic values.
 /// Encoder steps through this array — every position is musical.
 pub static HARMONIC_RATIOS: &[f32] = &[
-    0.125, 0.25, 0.5, 1.0, 2.0, 3.0, 4.0, 5.0,
-    6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 16.0,
+    0.125, 0.25, 0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 16.0,
 ];
 
 /// Map a normalized 0..1 value to a harmonic ratio.
@@ -145,7 +152,13 @@ impl FmOperator {
     /// Compute one sample. `modulation` is added to phase before waveform lookup.
     /// Modulation is pre-scaled by MOD_DEPTH so level 0..1 maps to useful FM indices.
     /// `feedback` is the feedback amount (0..1) — only used for self-modulating op4.
-    pub fn tick(&mut self, modulation: f32, feedback: f32, env_params: &EnvParams, sample_rate: u32) -> f32 {
+    pub fn tick(
+        &mut self,
+        modulation: f32,
+        feedback: f32,
+        env_params: &EnvParams,
+        sample_rate: u32,
+    ) -> f32 {
         // Feedback: average of last 2 outputs, scaled
         let fb_mod = if feedback > 0.0 {
             feedback * (self.fb_history[0] + self.fb_history[1]) * 0.5
@@ -293,10 +306,18 @@ pub fn fm_algorithm_tick(
     // Sum carriers
     let mask = CARRIER_MASK[algo.min(7) as usize];
     let mut out = 0.0;
-    if mask & 0b0001 != 0 { out += op1; }
-    if mask & 0b0010 != 0 { out += op2; }
-    if mask & 0b0100 != 0 { out += op3; }
-    if mask & 0b1000 != 0 { out += op4; }
+    if mask & 0b0001 != 0 {
+        out += op1;
+    }
+    if mask & 0b0010 != 0 {
+        out += op2;
+    }
+    if mask & 0b0100 != 0 {
+        out += op3;
+    }
+    if mask & 0b1000 != 0 {
+        out += op4;
+    }
 
     let carrier_count = mask.count_ones() as f32;
     out / carrier_count
@@ -378,13 +399,7 @@ impl FmEngine {
         let fb = self.feedback * 4.0 * PI;
 
         for s in output.iter_mut() {
-            *s = fm_algorithm_tick(
-                &mut self.ops,
-                self.algorithm,
-                fb,
-                env_params,
-                sample_rate,
-            );
+            *s = fm_algorithm_tick(&mut self.ops, self.algorithm, fb, env_params, sample_rate);
         }
 
         // Check if all operators have finished their envelopes
@@ -439,10 +454,10 @@ impl Default for FmParams {
             algorithm: 0,
             feedback: 0.0,
             op_ratio: [
-                0.2,  // op1: 1.0x (modulator with feedback)
-                0.2,  // op2: 1.0x
-                0.2,  // op3: 1.0x
-                0.2,  // op4: 1.0x (carrier)
+                0.2, // op1: 1.0x (modulator with feedback)
+                0.2, // op2: 1.0x
+                0.2, // op3: 1.0x
+                0.2, // op4: 1.0x (carrier)
             ],
             op_detune: [0.5; 4],
             op_waveform: [0; 4],

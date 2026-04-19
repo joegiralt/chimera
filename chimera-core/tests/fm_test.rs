@@ -1,5 +1,5 @@
 use chimera_core::dsp::fm::{
-    ratio_from_normalized, FmEngine, FmOperator, FmParams, Waveform, HARMONIC_RATIOS,
+    FmEngine, FmOperator, FmParams, HARMONIC_RATIOS, Waveform, ratio_from_normalized,
 };
 use chimera_core::params::EnvParams;
 
@@ -122,7 +122,11 @@ fn test_engine_produces_sound() {
     }
 
     let max = output.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
-    assert!(max > 0.01, "engine should produce sound after note_on, got max={}", max);
+    assert!(
+        max > 0.01,
+        "engine should produce sound after note_on, got max={}",
+        max
+    );
 }
 
 #[test]
@@ -165,7 +169,11 @@ fn test_default_is_clean_sine() {
         }
     }
     // Middle C at 48kHz: ~261 Hz, 128 samples ≈ 2.67ms ≈ 0.7 cycles ≈ 1-2 zero crossings
-    assert!(zero_crossings <= 4, "default should be clean sine, got {} zero crossings", zero_crossings);
+    assert!(
+        zero_crossings <= 4,
+        "default should be clean sine, got {} zero crossings",
+        zero_crossings
+    );
 }
 
 #[test]
@@ -196,7 +204,9 @@ fn test_modulation_depth_changes_timbre() {
 
     // Count zero crossings — FM should have more (higher harmonics)
     let zc = |buf: &[f32]| -> usize {
-        buf.windows(2).filter(|w| (w[0] >= 0.0) != (w[1] >= 0.0)).count()
+        buf.windows(2)
+            .filter(|w| (w[0] >= 0.0) != (w[1] >= 0.0))
+            .count()
     };
 
     let zc_quiet = zc(&out_quiet);
@@ -204,7 +214,8 @@ fn test_modulation_depth_changes_timbre() {
     assert!(
         zc_loud > zc_quiet,
         "high modulation should produce more harmonics: quiet={} loud={}",
-        zc_quiet, zc_loud
+        zc_quiet,
+        zc_loud
     );
 }
 
@@ -234,7 +245,8 @@ fn test_algorithms_sound_different() {
     assert!(
         (rms_serial - rms_additive).abs() > 0.01,
         "different algorithms should produce different RMS: serial={} additive={}",
-        rms_serial, rms_additive
+        rms_serial,
+        rms_additive
     );
 }
 
@@ -252,15 +264,19 @@ fn test_different_ratios_change_pitch() {
             engine.render(&mut output, &params.op_env, 48000);
         }
         // Count zero crossings as proxy for frequency
-        output.windows(2).filter(|w| (w[0] >= 0.0) != (w[1] >= 0.0)).count()
+        output
+            .windows(2)
+            .filter(|w| (w[0] >= 0.0) != (w[1] >= 0.0))
+            .count()
     };
 
-    let zc_low = peak_freq(0.2);  // ratio 1.0 (fundamental)
+    let zc_low = peak_freq(0.2); // ratio 1.0 (fundamental)
     let zc_high = peak_freq(0.4); // ratio ~3.0 (higher)
     assert!(
         zc_high > zc_low,
         "higher ratio should produce higher frequency: low={} high={}",
-        zc_low, zc_high
+        zc_low,
+        zc_high
     );
 }
 
@@ -303,6 +319,9 @@ fn test_fm_params_default_is_sane() {
     assert_eq!(p.algorithm, 0);
     assert_eq!(p.feedback, 0.0);
     assert_eq!(p.op_waveform, [0, 0, 0, 0]);
-    assert!(p.op_level[3] > 0.0, "carrier (op4) should have nonzero level");
+    assert!(
+        p.op_level[3] > 0.0,
+        "carrier (op4) should have nonzero level"
+    );
     assert_eq!(p.op_level[0], 0.0, "modulator (op1) should start silent");
 }

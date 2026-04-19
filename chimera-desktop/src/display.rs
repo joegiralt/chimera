@@ -1,9 +1,9 @@
-use chimera_hal::{ChimeraDisplay, SCREEN_WIDTH, SCREEN_HEIGHT, FB_SIZE};
+use chimera_hal::{ChimeraDisplay, FB_SIZE, SCREEN_HEIGHT, SCREEN_WIDTH};
+use embedded_graphics_core::Pixel;
 use embedded_graphics_core::draw_target::DrawTarget;
 use embedded_graphics_core::geometry::{OriginDimensions, Size};
-use embedded_graphics_core::pixelcolor::raw::{RawData, RawU16};
 use embedded_graphics_core::pixelcolor::Rgb565;
-use embedded_graphics_core::Pixel;
+use embedded_graphics_core::pixelcolor::raw::{RawData, RawU16};
 use minifb::{Key, Window, WindowOptions};
 
 const SCALE: usize = 2;

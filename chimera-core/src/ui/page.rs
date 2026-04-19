@@ -159,11 +159,16 @@ impl PageId {
     pub fn layout(&self) -> PageLayout {
         match self {
             // Big viz: pages with a single unified visualization
-            PageId::Filter | PageId::EnvAmp | PageId::EnvFilter | PageId::EnvAux
-            | PageId::Vca | PageId::EngineFmA | PageId::EngineFmB | PageId::EngineFmC
-            | PageId::Routing | PageId::Compressor => {
-                PageLayout::BigViz
-            }
+            PageId::Filter
+            | PageId::EnvAmp
+            | PageId::EnvFilter
+            | PageId::EnvAux
+            | PageId::Vca
+            | PageId::EngineFmA
+            | PageId::EngineFmB
+            | PageId::EngineFmC
+            | PageId::Routing
+            | PageId::Compressor => PageLayout::BigViz,
             // Demo + everything else: cell grid
             _ => PageLayout::CellGrid,
         }
@@ -173,48 +178,52 @@ impl PageId {
     pub fn cell_icons(&self) -> [CellIcon; 6] {
         match self {
             PageId::Drive => [
-                CellIcon::WaveClip,  // DRIVE — sine morphs to square
-                CellIcon::ToneTilt,  // TONE — EQ tilt
-                CellIcon::DryWet,    // MIX — blend arc
+                CellIcon::WaveClip, // DRIVE — sine morphs to square
+                CellIcon::ToneTilt, // TONE — EQ tilt
+                CellIcon::DryWet,   // MIX — blend arc
                 CellIcon::None,
                 CellIcon::None,
                 CellIcon::None,
             ],
             PageId::Folder => [
-                CellIcon::WaveFold,  // FOLD — sine getting folded
-                CellIcon::Symmetry,  // SYM — bias indicator
-                CellIcon::DryWet,    // MIX — blend arc
+                CellIcon::WaveFold, // FOLD — sine getting folded
+                CellIcon::Symmetry, // SYM — bias indicator
+                CellIcon::DryWet,   // MIX — blend arc
                 CellIcon::None,
                 CellIcon::None,
                 CellIcon::None,
             ],
             PageId::EngineVa => [
-                CellIcon::WaveShape, // WAVE — saw/square/tri
-                CellIcon::PulseWidth,// PW — pulse width
-                CellIcon::Arc,       // SYNC
-                CellIcon::Arc,       // SUB
-                CellIcon::Arc,       // DETUNE
-                CellIcon::DryWet,    // MIX
+                CellIcon::WaveShape,  // WAVE — saw/square/tri
+                CellIcon::PulseWidth, // PW — pulse width
+                CellIcon::Arc,        // SYNC
+                CellIcon::Arc,        // SUB
+                CellIcon::Arc,        // DETUNE
+                CellIcon::DryWet,     // MIX
             ],
             PageId::EngineModal1 => [
-                CellIcon::Arc,       // EXCITE
-                CellIcon::Arc,       // DECAY
-                CellIcon::Arc,       // DAMP
-                CellIcon::Arc,       // PITCH
-                CellIcon::Arc,       // BRIGHT
-                CellIcon::Arc,       // POS
+                CellIcon::Arc, // EXCITE
+                CellIcon::Arc, // DECAY
+                CellIcon::Arc, // DAMP
+                CellIcon::Arc, // PITCH
+                CellIcon::Arc, // BRIGHT
+                CellIcon::Arc, // POS
             ],
             PageId::Mixer => [
-                CellIcon::LevelBar,  // VOL
-                CellIcon::PanDot,    // PAN
-                CellIcon::Arc,       // VOICES
-                CellIcon::Arc,       // MIDI
-                CellIcon::Arc,       // PITCH
-                CellIcon::Arc,       // GLIDE
+                CellIcon::LevelBar, // VOL
+                CellIcon::PanDot,   // PAN
+                CellIcon::Arc,      // VOICES
+                CellIcon::Arc,      // MIDI
+                CellIcon::Arc,      // PITCH
+                CellIcon::Arc,      // GLIDE
             ],
             PageId::Efx | PageId::GlobalEfx => [
-                CellIcon::Arc, CellIcon::Arc, CellIcon::Arc,
-                CellIcon::Arc, CellIcon::Arc, CellIcon::Arc,
+                CellIcon::Arc,
+                CellIcon::Arc,
+                CellIcon::Arc,
+                CellIcon::Arc,
+                CellIcon::Arc,
+                CellIcon::Arc,
             ],
             // Demo storybook: page 1 — waveform icons
             PageId::DemoWaves => [
@@ -309,19 +318,19 @@ impl PageId {
             PageId::EngineFmA => [
                 params.fm.algorithm as f32 / 7.0,
                 params.fm.feedback,
-                params.fm.op_ratio[3],           // carrier ratio
+                params.fm.op_ratio[3],                 // carrier ratio
                 params.fm.op_waveform[3] as f32 / 7.0, // carrier wave
-                params.fm.op_level[3],           // carrier level
-                params.fm.op_detune[3],          // carrier detune
+                params.fm.op_level[3],                 // carrier level
+                params.fm.op_detune[3],                // carrier detune
             ],
             // FM-B: modulator (op1) + op2
             PageId::EngineFmB => [
-                params.fm.op_ratio[0],           // modulator ratio
+                params.fm.op_ratio[0], // modulator ratio
                 params.fm.op_waveform[0] as f32 / 7.0,
-                params.fm.op_level[0],           // modulator depth!
+                params.fm.op_level[0], // modulator depth!
                 params.fm.op_detune[0],
-                params.fm.op_ratio[1],           // op2 ratio
-                params.fm.op_level[1],           // op2 level
+                params.fm.op_ratio[1], // op2 ratio
+                params.fm.op_level[1], // op2 level
             ],
             // FM-C: op3 + op2/op4 waveforms + op4 detune
             PageId::EngineFmC => [
@@ -346,19 +355,26 @@ impl PageId {
             PageId::Mixer => [
                 params.volume.normalized(),
                 params.pan.normalized(),
-                0.5, 0.0, 0.5, 0.0, // placeholders
+                0.5,
+                0.0,
+                0.5,
+                0.0, // placeholders
             ],
             PageId::Drive => [
                 params.drive.drive.normalized(),
                 params.drive.tone.normalized(),
                 params.drive.mix.normalized(),
-                0.0, 0.0, 0.0,
+                0.0,
+                0.0,
+                0.0,
             ],
             PageId::Folder => [
                 params.folder.fold.normalized(),
                 params.folder.symmetry.normalized(),
                 params.folder.mix.normalized(),
-                0.0, 0.0, 0.0,
+                0.0,
+                0.0,
+                0.0,
             ],
             // Demo pages reuse filter + envelope params for tweaking
             PageId::DemoWaves => [
@@ -409,11 +425,26 @@ impl PageId {
     pub fn apply_encoder(&self, idx: usize, delta: i8, params: &mut ParamSnapshot) {
         // FM pages: direct float manipulation (not Param structs)
         match self {
-            PageId::EngineFmA => { apply_fm_a_encoder(idx, delta, &mut params.fm); return; }
-            PageId::EngineFmB => { apply_fm_b_encoder(idx, delta, &mut params.fm); return; }
-            PageId::EngineFmC => { apply_fm_c_encoder(idx, delta, &mut params.fm); return; }
-            PageId::EngineModal1 => { apply_modal1_encoder(idx, delta, &mut params.modal); return; }
-            PageId::EngineModal2 => { apply_modal2_encoder(idx, delta, &mut params.modal); return; }
+            PageId::EngineFmA => {
+                apply_fm_a_encoder(idx, delta, &mut params.fm);
+                return;
+            }
+            PageId::EngineFmB => {
+                apply_fm_b_encoder(idx, delta, &mut params.fm);
+                return;
+            }
+            PageId::EngineFmC => {
+                apply_fm_c_encoder(idx, delta, &mut params.fm);
+                return;
+            }
+            PageId::EngineModal1 => {
+                apply_modal1_encoder(idx, delta, &mut params.modal);
+                return;
+            }
+            PageId::EngineModal2 => {
+                apply_modal2_encoder(idx, delta, &mut params.modal);
+                return;
+            }
             _ => {}
         }
         if let Some(param) = self.resolve_param_mut(idx, params) {
@@ -549,7 +580,7 @@ fn apply_fm_a_encoder(idx: usize, delta: i8, fm: &mut crate::dsp::fm::FmParams) 
     match idx {
         0 => nudge_u8(&mut fm.algorithm, delta, 7),
         1 => nudge_float(&mut fm.feedback, delta, 1.0 / 128.0),
-        2 => nudge_float(&mut fm.op_ratio[3], delta, 1.0 / 16.0),   // carrier
+        2 => nudge_float(&mut fm.op_ratio[3], delta, 1.0 / 16.0), // carrier
         3 => nudge_u8(&mut fm.op_waveform[3], delta, 7),
         4 => nudge_float(&mut fm.op_level[3], delta, 1.0 / 128.0),
         5 => nudge_float(&mut fm.op_detune[3], delta, 1.0 / 128.0),
@@ -560,11 +591,11 @@ fn apply_fm_a_encoder(idx: usize, delta: i8, fm: &mut crate::dsp::fm::FmParams) 
 // FM-B: modulator (op1) + op2
 fn apply_fm_b_encoder(idx: usize, delta: i8, fm: &mut crate::dsp::fm::FmParams) {
     match idx {
-        0 => nudge_float(&mut fm.op_ratio[0], delta, 1.0 / 16.0),   // modulator
+        0 => nudge_float(&mut fm.op_ratio[0], delta, 1.0 / 16.0), // modulator
         1 => nudge_u8(&mut fm.op_waveform[0], delta, 7),
-        2 => nudge_float(&mut fm.op_level[0], delta, 1.0 / 128.0),  // mod depth!
+        2 => nudge_float(&mut fm.op_level[0], delta, 1.0 / 128.0), // mod depth!
         3 => nudge_float(&mut fm.op_detune[0], delta, 1.0 / 128.0),
-        4 => nudge_float(&mut fm.op_ratio[1], delta, 1.0 / 16.0),   // op2
+        4 => nudge_float(&mut fm.op_ratio[1], delta, 1.0 / 16.0), // op2
         5 => nudge_float(&mut fm.op_level[1], delta, 1.0 / 128.0),
         _ => {}
     }
@@ -576,9 +607,9 @@ fn apply_fm_c_encoder(idx: usize, delta: i8, fm: &mut crate::dsp::fm::FmParams) 
         0 => nudge_float(&mut fm.op_ratio[2], delta, 1.0 / 16.0),
         1 => nudge_u8(&mut fm.op_waveform[2], delta, 7),
         2 => nudge_float(&mut fm.op_level[2], delta, 1.0 / 128.0),
-        3 => nudge_u8(&mut fm.op_waveform[1], delta, 7),             // op2 wave
-        4 => nudge_u8(&mut fm.op_waveform[3], delta, 7),             // op4 wave
-        5 => nudge_float(&mut fm.op_detune[3], delta, 1.0 / 128.0),  // carrier detune
+        3 => nudge_u8(&mut fm.op_waveform[1], delta, 7), // op2 wave
+        4 => nudge_u8(&mut fm.op_waveform[3], delta, 7), // op4 wave
+        5 => nudge_float(&mut fm.op_detune[3], delta, 1.0 / 128.0), // carrier detune
         _ => {}
     }
 }
@@ -597,4 +628,3 @@ fn resolve_env_param(
         _ => None,
     }
 }
-

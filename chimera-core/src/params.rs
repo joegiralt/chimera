@@ -156,15 +156,13 @@ impl Default for FolderParams {
 }
 
 /// Which synthesis engine is active.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum EngineType {
     #[default]
     Fm = 0,
     Modal = 1,
     Va = 2,
 }
-
 
 #[derive(Clone, Debug)]
 pub struct ParamSnapshot {

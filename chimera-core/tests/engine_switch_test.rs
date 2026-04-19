@@ -25,22 +25,34 @@ fn test_fm_and_modal_produce_different_output() {
     let modal_buf = render_voice(EngineType::Modal, 60, 16);
 
     let fm_rms: f32 = libm::sqrtf(fm_buf.iter().map(|s| s * s).sum::<f32>() / fm_buf.len() as f32);
-    let modal_rms: f32 = libm::sqrtf(modal_buf.iter().map(|s| s * s).sum::<f32>() / modal_buf.len() as f32);
+    let modal_rms: f32 =
+        libm::sqrtf(modal_buf.iter().map(|s| s * s).sum::<f32>() / modal_buf.len() as f32);
 
     eprintln!("FM RMS: {}", fm_rms);
     eprintln!("Modal RMS: {}", modal_rms);
 
     // Both should produce sound
     assert!(fm_rms > 0.001, "FM should produce sound: {}", fm_rms);
-    assert!(modal_rms > 0.001, "Modal should produce sound: {}", modal_rms);
+    assert!(
+        modal_rms > 0.001,
+        "Modal should produce sound: {}",
+        modal_rms
+    );
 
     // They should sound DIFFERENT — compare sample-by-sample
-    let diff: f32 = fm_buf.iter().zip(modal_buf.iter())
+    let diff: f32 = fm_buf
+        .iter()
+        .zip(modal_buf.iter())
         .map(|(a, b)| (a - b).abs())
-        .sum::<f32>() / fm_buf.len() as f32;
+        .sum::<f32>()
+        / fm_buf.len() as f32;
 
     eprintln!("Average sample difference: {}", diff);
-    assert!(diff > 0.001, "FM and Modal should produce different output, diff={}", diff);
+    assert!(
+        diff > 0.001,
+        "FM and Modal should produce different output, diff={}",
+        diff
+    );
 }
 
 #[test]
@@ -72,7 +84,8 @@ fn test_engine_type_is_respected() {
     assert!(
         (fm_sample - modal_sample).abs() > 0.0001,
         "different engines should produce different samples: fm={} modal={}",
-        fm_sample, modal_sample
+        fm_sample,
+        modal_sample
     );
 }
 
@@ -88,7 +101,7 @@ fn test_modal_has_percussive_character() {
     };
 
     let late_rms: f32 = {
-        let slice = &buf[buf.len()-1000..];
+        let slice = &buf[buf.len() - 1000..];
         libm::sqrtf(slice.iter().map(|s| s * s).sum::<f32>() / slice.len() as f32)
     };
 
@@ -99,7 +112,8 @@ fn test_modal_has_percussive_character() {
     assert!(
         early_rms > 0.001 || late_rms > 0.001,
         "modal should produce sound: early={} late={}",
-        early_rms, late_rms
+        early_rms,
+        late_rms
     );
 }
 
@@ -126,6 +140,7 @@ fn test_fm_sustains_while_modal_decays() {
     assert!(
         (fm_late - modal_late).abs() > 0.01,
         "FM and Modal should differ: fm_late={} modal_late={}",
-        fm_late, modal_late
+        fm_late,
+        modal_late
     );
 }

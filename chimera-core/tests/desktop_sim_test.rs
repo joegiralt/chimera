@@ -13,11 +13,7 @@ use chimera_core::ui::UiState;
 const SR: u32 = 48000;
 
 /// Simulate: create UiState, set engine, modify params, render through Voice.
-fn sim_render(
-    setup_ui: impl FnOnce(&mut UiState),
-    note: u8,
-    blocks: usize,
-) -> Vec<f32> {
+fn sim_render(setup_ui: impl FnOnce(&mut UiState), note: u8, blocks: usize) -> Vec<f32> {
     let mut ui = UiState::new();
     setup_ui(&mut ui);
 
@@ -57,170 +53,282 @@ fn goertzel(buf: &[f32], target_freq: f32) -> f32 {
 
 #[test]
 fn test_desktop_fm_produces_sound() {
-    let buf = sim_render(|ui| {
-        ui.params.engine = EngineType::Fm;
-    }, 60, 8);
+    let buf = sim_render(
+        |ui| {
+            ui.params.engine = EngineType::Fm;
+        },
+        60,
+        8,
+    );
     assert!(rms(&buf) > 0.01, "FM through UiState should produce sound");
 }
 
 #[test]
 fn test_desktop_fm_modulation_works() {
-    let clean = sim_render(|ui| {
-        ui.params.engine = EngineType::Fm;
-        // Default: modulators at 0
-    }, 60, 16);
+    let clean = sim_render(
+        |ui| {
+            ui.params.engine = EngineType::Fm;
+            // Default: modulators at 0
+        },
+        60,
+        16,
+    );
 
-    let modulated = sim_render(|ui| {
-        ui.params.engine = EngineType::Fm;
-        ui.params.fm.algorithm = 4; // 1→2*
-        ui.params.fm.op_level[0] = 0.6;
-        ui.params.fm.op_level[1] = 1.0;
-    }, 60, 16);
+    let modulated = sim_render(
+        |ui| {
+            ui.params.engine = EngineType::Fm;
+            ui.params.fm.algorithm = 4; // 1→2*
+            ui.params.fm.op_level[0] = 0.6;
+            ui.params.fm.op_level[1] = 1.0;
+        },
+        60,
+        16,
+    );
 
     let f0 = 261.6;
     let h_clean: f32 = (2..=6).map(|h| goertzel(&clean, f0 * h as f32)).sum();
     let h_mod: f32 = (2..=6).map(|h| goertzel(&modulated, f0 * h as f32)).sum();
 
-    assert!(h_mod > h_clean, "FM modulation through UiState: clean={} mod={}", h_clean, h_mod);
+    assert!(
+        h_mod > h_clean,
+        "FM modulation through UiState: clean={} mod={}",
+        h_clean,
+        h_mod
+    );
 }
 
 // ── KS+ String through UiState ─────────────────────────────────────
 
 #[test]
 fn test_desktop_ks_produces_sound() {
-    let buf = sim_render(|ui| {
-        ui.params.engine = EngineType::Modal;
-        ui.params.modal.mode = 0;
-    }, 60, 16);
-    assert!(rms(&buf) > 0.005, "KS+ through UiState should produce sound, rms={}", rms(&buf));
+    let buf = sim_render(
+        |ui| {
+            ui.params.engine = EngineType::Modal;
+            ui.params.modal.mode = 0;
+        },
+        60,
+        16,
+    );
+    assert!(
+        rms(&buf) > 0.005,
+        "KS+ through UiState should produce sound, rms={}",
+        rms(&buf)
+    );
 }
 
 #[test]
 fn test_desktop_ks_body_resonance_changes_sound() {
-    let no_body = sim_render(|ui| {
-        ui.params.engine = EngineType::Modal;
-        ui.params.modal.mode = 0;
-        ui.params.modal.ks_body = 0.0;
-    }, 60, 16);
+    let no_body = sim_render(
+        |ui| {
+            ui.params.engine = EngineType::Modal;
+            ui.params.modal.mode = 0;
+            ui.params.modal.ks_body = 0.0;
+        },
+        60,
+        16,
+    );
 
-    let with_body = sim_render(|ui| {
-        ui.params.engine = EngineType::Modal;
-        ui.params.modal.mode = 0;
-        ui.params.modal.ks_body = 0.8;
-    }, 60, 16);
+    let with_body = sim_render(
+        |ui| {
+            ui.params.engine = EngineType::Modal;
+            ui.params.modal.mode = 0;
+            ui.params.modal.ks_body = 0.8;
+        },
+        60,
+        16,
+    );
 
-    let diff: f32 = no_body.iter().zip(with_body.iter())
-        .map(|(a, b)| (a - b).abs()).sum::<f32>() / no_body.len() as f32;
-    assert!(diff > 0.001, "body resonance should change sound: diff={}", diff);
+    let diff: f32 = no_body
+        .iter()
+        .zip(with_body.iter())
+        .map(|(a, b)| (a - b).abs())
+        .sum::<f32>()
+        / no_body.len() as f32;
+    assert!(
+        diff > 0.001,
+        "body resonance should change sound: diff={}",
+        diff
+    );
 }
 
 #[test]
 fn test_desktop_ks_stiffness_changes_sound() {
-    let no_stiff = sim_render(|ui| {
-        ui.params.engine = EngineType::Modal;
-        ui.params.modal.mode = 0;
-        ui.params.modal.ks_stiffness = 0.0;
-    }, 60, 16);
+    let no_stiff = sim_render(
+        |ui| {
+            ui.params.engine = EngineType::Modal;
+            ui.params.modal.mode = 0;
+            ui.params.modal.ks_stiffness = 0.0;
+        },
+        60,
+        16,
+    );
 
-    let with_stiff = sim_render(|ui| {
-        ui.params.engine = EngineType::Modal;
-        ui.params.modal.mode = 0;
-        ui.params.modal.ks_stiffness = 0.7;
-    }, 60, 16);
+    let with_stiff = sim_render(
+        |ui| {
+            ui.params.engine = EngineType::Modal;
+            ui.params.modal.mode = 0;
+            ui.params.modal.ks_stiffness = 0.7;
+        },
+        60,
+        16,
+    );
 
-    let diff: f32 = no_stiff.iter().zip(with_stiff.iter())
-        .map(|(a, b)| (a - b).abs()).sum::<f32>() / no_stiff.len() as f32;
+    let diff: f32 = no_stiff
+        .iter()
+        .zip(with_stiff.iter())
+        .map(|(a, b)| (a - b).abs())
+        .sum::<f32>()
+        / no_stiff.len() as f32;
     assert!(diff > 0.001, "stiffness should change sound: diff={}", diff);
 }
 
 #[test]
 fn test_desktop_ks_excitation_types_differ() {
-    let noise = sim_render(|ui| {
-        ui.params.engine = EngineType::Modal;
-        ui.params.modal.mode = 0;
-        ui.params.modal.ks_excitation = 0;
-    }, 60, 8);
+    let noise = sim_render(
+        |ui| {
+            ui.params.engine = EngineType::Modal;
+            ui.params.modal.mode = 0;
+            ui.params.modal.ks_excitation = 0;
+        },
+        60,
+        8,
+    );
 
-    let click = sim_render(|ui| {
-        ui.params.engine = EngineType::Modal;
-        ui.params.modal.mode = 0;
-        ui.params.modal.ks_excitation = 1;
-    }, 60, 8);
+    let click = sim_render(
+        |ui| {
+            ui.params.engine = EngineType::Modal;
+            ui.params.modal.mode = 0;
+            ui.params.modal.ks_excitation = 1;
+        },
+        60,
+        8,
+    );
 
-    let diff: f32 = noise.iter().zip(click.iter())
-        .map(|(a, b)| (a - b).abs()).sum::<f32>() / noise.len() as f32;
-    assert!(diff > 0.001, "different excitation types should sound different: diff={}", diff);
+    let diff: f32 = noise
+        .iter()
+        .zip(click.iter())
+        .map(|(a, b)| (a - b).abs())
+        .sum::<f32>()
+        / noise.len() as f32;
+    assert!(
+        diff > 0.001,
+        "different excitation types should sound different: diff={}",
+        diff
+    );
 }
 
 // ── Modal through UiState ───────────────────────────────────────────
 
 #[test]
 fn test_desktop_modal_produces_sound() {
-    let buf = sim_render(|ui| {
-        ui.params.engine = EngineType::Modal;
-        ui.params.modal.mode = 1;
-    }, 60, 16);
-    assert!(rms(&buf) > 0.001, "Modal through UiState should produce sound, rms={}", rms(&buf));
+    let buf = sim_render(
+        |ui| {
+            ui.params.engine = EngineType::Modal;
+            ui.params.modal.mode = 1;
+        },
+        60,
+        16,
+    );
+    assert!(
+        rms(&buf) > 0.001,
+        "Modal through UiState should produce sound, rms={}",
+        rms(&buf)
+    );
 }
 
 // ── Signal chain through UiState ────────────────────────────────────
 
 #[test]
 fn test_desktop_filter_affects_output() {
-    let open = sim_render(|ui| {
-        ui.params.engine = EngineType::Fm;
-        ui.params.fm.op_level = [0.5, 0.0, 0.0, 1.0];
-        ui.params.filter.cutoff.set(15000.0);
-    }, 60, 16);
+    let open = sim_render(
+        |ui| {
+            ui.params.engine = EngineType::Fm;
+            ui.params.fm.op_level = [0.5, 0.0, 0.0, 1.0];
+            ui.params.filter.cutoff.set(15000.0);
+        },
+        60,
+        16,
+    );
 
-    let closed = sim_render(|ui| {
-        ui.params.engine = EngineType::Fm;
-        ui.params.fm.op_level = [0.5, 0.0, 0.0, 1.0];
-        ui.params.filter.cutoff.set(200.0);
-        ui.params.filter.mode = 2;
-    }, 60, 16);
+    let closed = sim_render(
+        |ui| {
+            ui.params.engine = EngineType::Fm;
+            ui.params.fm.op_level = [0.5, 0.0, 0.0, 1.0];
+            ui.params.filter.cutoff.set(200.0);
+            ui.params.filter.mode = 2;
+        },
+        60,
+        16,
+    );
 
     assert!(
         rms(&open) > rms(&closed) * 1.5,
-        "filter should reduce level: open={} closed={}", rms(&open), rms(&closed)
+        "filter should reduce level: open={} closed={}",
+        rms(&open),
+        rms(&closed)
     );
 }
 
 #[test]
 fn test_desktop_drive_affects_output() {
-    let clean = sim_render(|ui| {
-        ui.params.engine = EngineType::Fm;
-    }, 60, 16);
+    let clean = sim_render(
+        |ui| {
+            ui.params.engine = EngineType::Fm;
+        },
+        60,
+        16,
+    );
 
-    let driven = sim_render(|ui| {
-        ui.params.engine = EngineType::Fm;
-        ui.params.drive.drive.set(0.9);
-        ui.params.drive.mix.set(1.0);
-    }, 60, 16);
+    let driven = sim_render(
+        |ui| {
+            ui.params.engine = EngineType::Fm;
+            ui.params.drive.drive.set(0.9);
+            ui.params.drive.mix.set(1.0);
+        },
+        60,
+        16,
+    );
 
     let f0 = 261.6;
     let h_clean: f32 = (2..=6).map(|h| goertzel(&clean, f0 * h as f32)).sum();
     let h_driven: f32 = (2..=6).map(|h| goertzel(&driven, f0 * h as f32)).sum();
-    assert!(h_driven > h_clean, "drive should add harmonics: clean={} driven={}", h_clean, h_driven);
+    assert!(
+        h_driven > h_clean,
+        "drive should add harmonics: clean={} driven={}",
+        h_clean,
+        h_driven
+    );
 }
 
 // ── Engine switching through UiState ────────────────────────────────
 
 #[test]
 fn test_desktop_engine_switch() {
-    let fm = sim_render(|ui| {
-        ui.params.engine = EngineType::Fm;
-    }, 60, 16);
+    let fm = sim_render(
+        |ui| {
+            ui.params.engine = EngineType::Fm;
+        },
+        60,
+        16,
+    );
 
-    let modal = sim_render(|ui| {
-        ui.params.engine = EngineType::Modal;
-        ui.params.modal.mode = 1;
-    }, 60, 16);
+    let modal = sim_render(
+        |ui| {
+            ui.params.engine = EngineType::Modal;
+            ui.params.modal.mode = 1;
+        },
+        60,
+        16,
+    );
 
-    let ks = sim_render(|ui| {
-        ui.params.engine = EngineType::Modal;
-        ui.params.modal.mode = 0;
-    }, 60, 16);
+    let ks = sim_render(
+        |ui| {
+            ui.params.engine = EngineType::Modal;
+            ui.params.modal.mode = 0;
+        },
+        60,
+        16,
+    );
 
     // All three should produce sound
     assert!(rms(&fm) > 0.01, "FM should produce sound");
@@ -228,12 +336,24 @@ fn test_desktop_engine_switch() {
     assert!(rms(&ks) > 0.005, "KS should produce sound");
 
     // All three should be different from each other
-    let fm_vs_modal: f32 = fm.iter().zip(modal.iter())
-        .map(|(a, b)| (a - b).abs()).sum::<f32>() / fm.len() as f32;
-    let fm_vs_ks: f32 = fm.iter().zip(ks.iter())
-        .map(|(a, b)| (a - b).abs()).sum::<f32>() / fm.len() as f32;
+    let fm_vs_modal: f32 = fm
+        .iter()
+        .zip(modal.iter())
+        .map(|(a, b)| (a - b).abs())
+        .sum::<f32>()
+        / fm.len() as f32;
+    let fm_vs_ks: f32 = fm
+        .iter()
+        .zip(ks.iter())
+        .map(|(a, b)| (a - b).abs())
+        .sum::<f32>()
+        / fm.len() as f32;
 
-    assert!(fm_vs_modal > 0.01, "FM vs Modal should differ: {}", fm_vs_modal);
+    assert!(
+        fm_vs_modal > 0.01,
+        "FM vs Modal should differ: {}",
+        fm_vs_modal
+    );
     assert!(fm_vs_ks > 0.01, "FM vs KS should differ: {}", fm_vs_ks);
 }
 
@@ -270,6 +390,7 @@ fn test_desktop_mid_note_filter_sweep() {
     assert!(
         after_energy < before_energy * 0.3,
         "closing filter mid-note should reduce energy: before={} after={}",
-        before_energy, after_energy
+        before_energy,
+        after_energy
     );
 }

@@ -49,7 +49,8 @@ impl Voice {
                 self.fm.note_on(note, velocity, sample_rate);
             }
             EngineType::Modal => {
-                self.modal.note_on(note, velocity, &params.modal, sample_rate);
+                self.modal
+                    .note_on(note, velocity, &params.modal, sample_rate);
             }
             EngineType::Va => {
                 // VA engine not yet implemented — fall back to FM

@@ -1,3 +1,5 @@
+#![allow(clippy::needless_range_loop, clippy::manual_clamp)]
+
 use chimera_hal::BLOCK_SIZE;
 
 // ── Shared delay line infrastructure ────────────────────────────────
@@ -29,6 +31,7 @@ impl<const N: usize> DelayLine<N> {
 
     /// Interpolated read for modulated delays.
     #[inline]
+    #[allow(dead_code)] // Will be used when LFO modulation is implemented
     fn read_interp(&self, delay: f32) -> f32 {
         let d = delay as usize;
         let frac = delay - d as f32;
@@ -54,7 +57,9 @@ struct OnePole {
 }
 
 impl OnePole {
-    const fn new() -> Self { Self { state: 0.0 } }
+    const fn new() -> Self {
+        Self { state: 0.0 }
+    }
 
     #[inline]
     fn process(&mut self, input: f32, coeff: f32) -> f32 {
@@ -83,16 +88,26 @@ const AP_IN_LENS: [usize; 4] = [113, 162, 241, 399];
 const AP_TANK_LENS: [usize; 4] = [1653, 2038, 1913, 1663];
 const DEL_TANK_LENS: [usize; 2] = [3411, 4782];
 
+impl Default for PlateReverb {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PlateReverb {
     pub fn new() -> Self {
         Self {
             ap_in: [
-                DelayLine::new(), DelayLine::new(),
-                DelayLine::new(), DelayLine::new(),
+                DelayLine::new(),
+                DelayLine::new(),
+                DelayLine::new(),
+                DelayLine::new(),
             ],
             ap_tank: [
-                DelayLine::new(), DelayLine::new(),
-                DelayLine::new(), DelayLine::new(),
+                DelayLine::new(),
+                DelayLine::new(),
+                DelayLine::new(),
+                DelayLine::new(),
             ],
             del_tank: [DelayLine::new(), DelayLine::new()],
             lp: [OnePole::new(), OnePole::new()],
@@ -145,7 +160,9 @@ impl PlateReverb {
 
             // LFO modulation on branch B delay
             self.lfo_phase[1] += lfo_inc[1];
-            if self.lfo_phase[1] >= 1.0 { self.lfo_phase[1] -= 1.0; }
+            if self.lfo_phase[1] >= 1.0 {
+                self.lfo_phase[1] -= 1.0;
+            }
             let mod_offset = libm::sinf(self.lfo_phase[1] * 2.0 * core::f32::consts::PI) * 50.0;
             let _ = mod_offset; // TODO: apply to interpolated read
             self.del_tank[1].write(b);
@@ -173,14 +190,27 @@ pub struct FdnReverb {
 // Mutually prime delay lengths for dense, non-repeating reflections
 const FDN_LENS: [usize; 4] = [601, 773, 947, 1123];
 
+impl Default for FdnReverb {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FdnReverb {
     pub fn new() -> Self {
         Self {
             lines: [
-                DelayLine::new(), DelayLine::new(),
-                DelayLine::new(), DelayLine::new(),
+                DelayLine::new(),
+                DelayLine::new(),
+                DelayLine::new(),
+                DelayLine::new(),
             ],
-            lp: [OnePole::new(), OnePole::new(), OnePole::new(), OnePole::new()],
+            lp: [
+                OnePole::new(),
+                OnePole::new(),
+                OnePole::new(),
+                OnePole::new(),
+            ],
         }
     }
 
@@ -259,20 +289,33 @@ const MV_NET_A_LENS: [usize; 4] = [412, 558, 674, 830];
 // Network B allpass lengths
 const MV_NET_B_LENS: [usize; 4] = [450, 620, 742, 910];
 
+impl Default for MidiVerbReverb {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MidiVerbReverb {
     pub fn new() -> Self {
         Self {
             ap_diff: [
-                DelayLine::new(), DelayLine::new(), DelayLine::new(),
-                DelayLine::new(), DelayLine::new(),
+                DelayLine::new(),
+                DelayLine::new(),
+                DelayLine::new(),
+                DelayLine::new(),
+                DelayLine::new(),
             ],
             ap_net_a: [
-                DelayLine::new(), DelayLine::new(),
-                DelayLine::new(), DelayLine::new(),
+                DelayLine::new(),
+                DelayLine::new(),
+                DelayLine::new(),
+                DelayLine::new(),
             ],
             ap_net_b: [
-                DelayLine::new(), DelayLine::new(),
-                DelayLine::new(), DelayLine::new(),
+                DelayLine::new(),
+                DelayLine::new(),
+                DelayLine::new(),
+                DelayLine::new(),
             ],
             recirc_a: 0.0,
             recirc_b: 0.0,
@@ -334,7 +377,7 @@ impl MidiVerbReverb {
 pub enum ReverbType {
     Plate = 0,    // MI Clouds / Dattorro
     Fdn = 1,      // Metallic / Romb-style
-    MidiVerb = 2,  // Alesis MidiVerb II lo-fi
+    MidiVerb = 2, // Alesis MidiVerb II lo-fi
 }
 
 impl ReverbType {
@@ -350,11 +393,11 @@ impl ReverbType {
 /// Parameters for the reverb effect.
 #[derive(Clone, Copy, Debug)]
 pub struct ReverbParams {
-    pub reverb_type: u8,  // 0-2
-    pub time: f32,        // 0..1 reverb time
-    pub damping: f32,     // 0..1 high-freq damping
-    pub size: f32,        // 0..1 room size / diffusion
-    pub mix: f32,         // 0..1 dry/wet
+    pub reverb_type: u8, // 0-2
+    pub time: f32,       // 0..1 reverb time
+    pub damping: f32,    // 0..1 high-freq damping
+    pub size: f32,       // 0..1 room size / diffusion
+    pub mix: f32,        // 0..1 dry/wet
 }
 
 impl Default for ReverbParams {
@@ -397,13 +440,16 @@ impl Reverb {
         }
         match ReverbType::from_u8(params.reverb_type) {
             ReverbType::Plate => {
-                self.plate.process(buf, params.time, params.size, params.damping, params.mix);
+                self.plate
+                    .process(buf, params.time, params.size, params.damping, params.mix);
             }
             ReverbType::Fdn => {
-                self.fdn.process(buf, params.time, params.damping, params.size, params.mix);
+                self.fdn
+                    .process(buf, params.time, params.damping, params.size, params.mix);
             }
             ReverbType::MidiVerb => {
-                self.midiverb.process(buf, params.time, params.damping, params.size, params.mix);
+                self.midiverb
+                    .process(buf, params.time, params.damping, params.size, params.mix);
             }
         }
     }

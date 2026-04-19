@@ -87,8 +87,7 @@ impl UiState {
             let delta = controls.encoder_delta(enc);
             if delta != 0 {
                 if shift {
-                    self.page
-                        .snap_encoder(i, delta, &mut self.params);
+                    self.page.snap_encoder(i, delta, &mut self.params);
                 } else {
                     self.page.apply_encoder(i, delta, &mut self.params);
                 }
@@ -104,9 +103,10 @@ impl UiState {
     /// Render full screen to a display.
     pub fn render<D>(&self, display: &mut D, perf: &PerfStats)
     where
-        D: embedded_graphics::draw_target::DrawTarget<Color = embedded_graphics::pixelcolor::Rgb565>,
+        D: embedded_graphics::draw_target::DrawTarget<
+                Color = embedded_graphics::pixelcolor::Rgb565,
+            >,
     {
-        self.renderer
-            .draw(display, &self.nav, self.page, perf);
+        self.renderer.draw(display, &self.nav, self.page, perf);
     }
 }

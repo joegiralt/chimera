@@ -112,7 +112,11 @@ fn test_filter_output_stable() {
     for _ in 0..10 {
         filter.process(&mut buf, &params, 48000);
         let max = buf.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
-        assert!(max < 100.0, "filter should not explode at high resonance, got {}", max);
+        assert!(
+            max < 100.0,
+            "filter should not explode at high resonance, got {}",
+            max
+        );
     }
 }
 
@@ -208,7 +212,11 @@ fn test_voice_produces_sound() {
     }
 
     let max = output.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
-    assert!(max > 0.01, "voice should produce sound after note_on, got {}", max);
+    assert!(
+        max > 0.01,
+        "voice should produce sound after note_on, got {}",
+        max
+    );
 }
 
 #[test]

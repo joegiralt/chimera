@@ -161,11 +161,7 @@ fn test_ratio_2_produces_even_harmonics() {
     let h3 = goertzel(&buf, f0 * 3.0, SR);
 
     // With mod ratio 2:1, sidebands at f0 ± 2f0 = -f0, 3f0
-    assert!(
-        h3 > 0.001,
-        "ratio 2:1 should produce 3rd harmonic: {}",
-        h3
-    );
+    assert!(h3 > 0.001, "ratio 2:1 should produce 3rd harmonic: {}", h3);
 }
 
 #[test]
@@ -202,9 +198,7 @@ fn test_serial_vs_parallel_different_spectrum() {
         params.algorithm = algo;
         params.op_level = [0.5, 0.5, 0.5, 1.0]; // all ops active
         let buf = render_fm(&params, 60);
-        (1..=8)
-            .map(|h| goertzel(&buf, f0 * h as f32, SR))
-            .collect()
+        (1..=8).map(|h| goertzel(&buf, f0 * h as f32, SR)).collect()
     };
 
     let serial = spectrum_for_algo(0);

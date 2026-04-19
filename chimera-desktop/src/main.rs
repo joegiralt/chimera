@@ -2,8 +2,8 @@ mod audio;
 mod controls;
 mod display;
 
-use chimera_core::ui::perf::PerfTracker;
 use chimera_core::ui::UiState;
+use chimera_core::ui::perf::PerfTracker;
 use chimera_hal::ChimeraDisplay;
 use controls::DesktopControls;
 use display::DesktopDisplay;

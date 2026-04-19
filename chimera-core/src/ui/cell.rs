@@ -1,11 +1,11 @@
+use embedded_graphics::Drawable;
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::geometry::{Point, Size};
-use embedded_graphics::mono_font::ascii::FONT_6X10;
 use embedded_graphics::mono_font::MonoTextStyle;
+use embedded_graphics::mono_font::ascii::FONT_6X10;
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::primitives::{Line, PrimitiveStyle, Rectangle, StyledDrawable};
 use embedded_graphics::text::Text;
-use embedded_graphics::Drawable;
 
 use crate::ui::fmt::{self, FmtBuf};
 use crate::ui::page::{CellIcon, ValFmt};
@@ -47,10 +47,7 @@ pub fn draw_cell<D>(
         Point::new(cx, cy),
         Size::new((CELL_W - CELL_PAD) as u32, (CELL_H - CELL_PAD) as u32),
     )
-    .draw_styled(
-        &PrimitiveStyle::with_stroke(theme::SEPARATOR, 1),
-        display,
-    );
+    .draw_styled(&PrimitiveStyle::with_stroke(theme::SEPARATOR, 1), display);
 
     // Icon area — quantize to 16 discrete frames (128 MIDI steps / 8)
     let ix = cx + 4;
@@ -242,8 +239,11 @@ where
 
     if val < 0.33 {
         // Sawtooth
-        let _ = Line::new(Point::new(x, mid_y + amp as i32), Point::new(x + pw, mid_y - amp as i32))
-            .draw_styled(&stroke, display);
+        let _ = Line::new(
+            Point::new(x, mid_y + amp as i32),
+            Point::new(x + pw, mid_y - amp as i32),
+        )
+        .draw_styled(&stroke, display);
         let _ = Line::new(
             Point::new(x + pw, mid_y - amp as i32),
             Point::new(x + pw, mid_y + amp as i32),
@@ -252,21 +252,36 @@ where
     } else if val < 0.66 {
         // Square
         let half = pw / 2;
-        let _ = Line::new(Point::new(x, mid_y - amp as i32), Point::new(x + half, mid_y - amp as i32))
-            .draw_styled(&stroke, display);
-        let _ = Line::new(Point::new(x + half, mid_y - amp as i32), Point::new(x + half, mid_y + amp as i32))
-            .draw_styled(&stroke, display);
-        let _ = Line::new(Point::new(x + half, mid_y + amp as i32), Point::new(x + pw, mid_y + amp as i32))
-            .draw_styled(&stroke, display);
+        let _ = Line::new(
+            Point::new(x, mid_y - amp as i32),
+            Point::new(x + half, mid_y - amp as i32),
+        )
+        .draw_styled(&stroke, display);
+        let _ = Line::new(
+            Point::new(x + half, mid_y - amp as i32),
+            Point::new(x + half, mid_y + amp as i32),
+        )
+        .draw_styled(&stroke, display);
+        let _ = Line::new(
+            Point::new(x + half, mid_y + amp as i32),
+            Point::new(x + pw, mid_y + amp as i32),
+        )
+        .draw_styled(&stroke, display);
     } else {
         // Triangle
         let q = pw / 4;
         let _ = Line::new(Point::new(x, mid_y), Point::new(x + q, mid_y - amp as i32))
             .draw_styled(&stroke, display);
-        let _ = Line::new(Point::new(x + q, mid_y - amp as i32), Point::new(x + 3 * q, mid_y + amp as i32))
-            .draw_styled(&stroke, display);
-        let _ = Line::new(Point::new(x + 3 * q, mid_y + amp as i32), Point::new(x + pw, mid_y))
-            .draw_styled(&stroke, display);
+        let _ = Line::new(
+            Point::new(x + q, mid_y - amp as i32),
+            Point::new(x + 3 * q, mid_y + amp as i32),
+        )
+        .draw_styled(&stroke, display);
+        let _ = Line::new(
+            Point::new(x + 3 * q, mid_y + amp as i32),
+            Point::new(x + pw, mid_y),
+        )
+        .draw_styled(&stroke, display);
     }
 }
 
@@ -281,21 +296,39 @@ where
     let stroke = PrimitiveStyle::with_stroke(theme::VIZ_LINE, 1);
 
     // Up edge
-    let _ = Line::new(Point::new(x, mid_y + amp as i32), Point::new(x, mid_y - amp as i32))
-        .draw_styled(&stroke, display);
+    let _ = Line::new(
+        Point::new(x, mid_y + amp as i32),
+        Point::new(x, mid_y - amp as i32),
+    )
+    .draw_styled(&stroke, display);
     // High
-    let _ = Line::new(Point::new(x, mid_y - amp as i32), Point::new(x + duty, mid_y - amp as i32))
-        .draw_styled(&stroke, display);
+    let _ = Line::new(
+        Point::new(x, mid_y - amp as i32),
+        Point::new(x + duty, mid_y - amp as i32),
+    )
+    .draw_styled(&stroke, display);
     // Down edge
-    let _ = Line::new(Point::new(x + duty, mid_y - amp as i32), Point::new(x + duty, mid_y + amp as i32))
-        .draw_styled(&stroke, display);
+    let _ = Line::new(
+        Point::new(x + duty, mid_y - amp as i32),
+        Point::new(x + duty, mid_y + amp as i32),
+    )
+    .draw_styled(&stroke, display);
     // Low
-    let _ = Line::new(Point::new(x + duty, mid_y + amp as i32), Point::new(x + w, mid_y + amp as i32))
-        .draw_styled(&stroke, display);
+    let _ = Line::new(
+        Point::new(x + duty, mid_y + amp as i32),
+        Point::new(x + w, mid_y + amp as i32),
+    )
+    .draw_styled(&stroke, display);
 
     // Duty marker line
-    let _ = Line::new(Point::new(x + duty, mid_y - amp as i32 - 4), Point::new(x + duty, mid_y - amp as i32 - 4))
-        .draw_styled(&PrimitiveStyle::with_stroke(theme::ACCENT_BRIGHT, 1), display);
+    let _ = Line::new(
+        Point::new(x + duty, mid_y - amp as i32 - 4),
+        Point::new(x + duty, mid_y - amp as i32 - 4),
+    )
+    .draw_styled(
+        &PrimitiveStyle::with_stroke(theme::ACCENT_BRIGHT, 1),
+        display,
+    );
 }
 
 /// Arc/knob indicator: partial circle fill.
@@ -311,14 +344,12 @@ where
     // Precomputed cos/sin for each of 17 arc vertices.
     const ARC_N: usize = 16;
     static ARC_COS: [f32; 17] = [
-        -0.707, -0.924, -1.000, -0.924, -0.707, -0.383, 0.000, 0.383,
-         0.707,  0.924,  1.000,  0.924,  0.707,  0.383, 0.000, -0.383,
-        -0.707,
+        -0.707, -0.924, -1.000, -0.924, -0.707, -0.383, 0.000, 0.383, 0.707, 0.924, 1.000, 0.924,
+        0.707, 0.383, 0.000, -0.383, -0.707,
     ];
     static ARC_SIN: [f32; 17] = [
-         0.707,  0.383,  0.000, -0.383, -0.707, -0.924, -1.000, -0.924,
-        -0.707, -0.383,  0.000,  0.383,  0.707,  0.924,  1.000,  0.924,
-         0.707,
+        0.707, 0.383, 0.000, -0.383, -0.707, -0.924, -1.000, -0.924, -0.707, -0.383, 0.000, 0.383,
+        0.707, 0.924, 1.000, 0.924, 0.707,
     ];
 
     let bg_stroke = PrimitiveStyle::with_stroke(theme::PARAM_BAR_BG, 2);
@@ -330,9 +361,12 @@ where
         let y0 = cy + (r * ARC_SIN[i]) as i32;
         let x1 = cx + (r * ARC_COS[i + 1]) as i32;
         let y1 = cy + (r * ARC_SIN[i + 1]) as i32;
-        let style = if i < active_segments { &fg_stroke } else { &bg_stroke };
-        let _ = Line::new(Point::new(x0, y0), Point::new(x1, y1))
-            .draw_styled(style, display);
+        let style = if i < active_segments {
+            &fg_stroke
+        } else {
+            &bg_stroke
+        };
+        let _ = Line::new(Point::new(x0, y0), Point::new(x1, y1)).draw_styled(style, display);
     }
 
     // End dot
@@ -379,8 +413,10 @@ where
     let rx = x + w - 6;
 
     // L-R line
-    let _ = Line::new(Point::new(lx, mid_y), Point::new(rx, mid_y))
-        .draw_styled(&PrimitiveStyle::with_stroke(theme::PARAM_BAR_BG, 1), display);
+    let _ = Line::new(Point::new(lx, mid_y), Point::new(rx, mid_y)).draw_styled(
+        &PrimitiveStyle::with_stroke(theme::PARAM_BAR_BG, 1),
+        display,
+    );
 
     // Center tick
     let cx = (lx + rx) / 2;
@@ -456,16 +492,10 @@ where
     if (val - 0.5).abs() > 0.05 {
         let arrow_x = x + w / 2;
         let _ = Line::new(Point::new(arrow_x, mid_y), Point::new(arrow_x, biased_mid))
-            .draw_styled(
-                &PrimitiveStyle::with_stroke(theme::ACCENT_DIM, 1),
-                display,
-            );
+            .draw_styled(&PrimitiveStyle::with_stroke(theme::ACCENT_DIM, 1), display);
         // Arrowhead
-        let _ = Rectangle::new(
-            Point::new(arrow_x - 1, biased_mid - 1),
-            Size::new(3, 3),
-        )
-        .draw_styled(&PrimitiveStyle::with_fill(theme::ACCENT_BRIGHT), display);
+        let _ = Rectangle::new(Point::new(arrow_x - 1, biased_mid - 1), Size::new(3, 3))
+            .draw_styled(&PrimitiveStyle::with_fill(theme::ACCENT_BRIGHT), display);
     }
 }
 
@@ -488,8 +518,14 @@ where
     let stroke = PrimitiveStyle::with_stroke(color, 1);
     for i in 0..RING_SEGMENTS {
         let _ = Line::new(
-            Point::new(cx + (rx * RING_COS[i]) as i32, cy + (ry * RING_SIN[i]) as i32),
-            Point::new(cx + (rx * RING_COS[i + 1]) as i32, cy + (ry * RING_SIN[i + 1]) as i32),
+            Point::new(
+                cx + (rx * RING_COS[i]) as i32,
+                cy + (ry * RING_SIN[i]) as i32,
+            ),
+            Point::new(
+                cx + (rx * RING_COS[i + 1]) as i32,
+                cy + (ry * RING_SIN[i + 1]) as i32,
+            ),
         )
         .draw_styled(&stroke, display);
     }
@@ -773,8 +809,8 @@ where
             let y0 = bf.1 + (ry as f32 * t) as i32;
             let x1 = bl.0 + (rx as f32 * t) as i32;
             let y1 = bl.1 + (ry as f32 * t) as i32;
-            let _ = Line::new(Point::new(x0, y0), Point::new(x1, y1))
-                .draw_styled(&bot_stroke, display);
+            let _ =
+                Line::new(Point::new(x0, y0), Point::new(x1, y1)).draw_styled(&bot_stroke, display);
         }
     }
 
@@ -804,18 +840,12 @@ where
             let right_y = br.1 - row;
 
             // Left face: line from front to left at this height
-            let _ = Line::new(
-                Point::new(front_x, front_y),
-                Point::new(left_x, left_y),
-            )
-            .draw_styled(&fill_stroke, display);
+            let _ = Line::new(Point::new(front_x, front_y), Point::new(left_x, left_y))
+                .draw_styled(&fill_stroke, display);
 
             // Right face: line from front to right at this height
-            let _ = Line::new(
-                Point::new(front_x, front_y),
-                Point::new(right_x, right_y),
-            )
-            .draw_styled(&fill_stroke, display);
+            let _ = Line::new(Point::new(front_x, front_y), Point::new(right_x, right_y))
+                .draw_styled(&fill_stroke, display);
         }
 
         // Liquid surface line (bright accent)
@@ -841,8 +871,8 @@ where
             let y0 = tf.1 + i;
             let x1 = tr.0 + (lx as f32 * t) as i32;
             let y1 = tr.1 + i;
-            let _ = Line::new(Point::new(x0, y0), Point::new(x1, y1))
-                .draw_styled(&top_stroke, display);
+            let _ =
+                Line::new(Point::new(x0, y0), Point::new(x1, y1)).draw_styled(&top_stroke, display);
         }
     }
 
@@ -851,18 +881,23 @@ where
     let wire_dim = PrimitiveStyle::with_stroke(theme::NODE_INACTIVE_BORDER, 1);
 
     // Bottom edges (front two visible)
-    let _ = Line::new(Point::new(bf.0, bf.1), Point::new(br.0, br.1)).draw_styled(&wire_dim, display);
-    let _ = Line::new(Point::new(bf.0, bf.1), Point::new(bl.0, bl.1)).draw_styled(&wire_dim, display);
+    let _ =
+        Line::new(Point::new(bf.0, bf.1), Point::new(br.0, br.1)).draw_styled(&wire_dim, display);
+    let _ =
+        Line::new(Point::new(bf.0, bf.1), Point::new(bl.0, bl.1)).draw_styled(&wire_dim, display);
 
     // Back bottom edges (dim)
-    let _ = Line::new(Point::new(bl.0, bl.1), Point::new(bk.0, bk.1)).draw_styled(&wire_dim, display);
-    let _ = Line::new(Point::new(br.0, br.1), Point::new(bk.0, bk.1)).draw_styled(&wire_dim, display);
+    let _ =
+        Line::new(Point::new(bl.0, bl.1), Point::new(bk.0, bk.1)).draw_styled(&wire_dim, display);
+    let _ =
+        Line::new(Point::new(br.0, br.1), Point::new(bk.0, bk.1)).draw_styled(&wire_dim, display);
 
     // Vertical edges
     let _ = Line::new(Point::new(bf.0, bf.1), Point::new(tf.0, tf.1)).draw_styled(&wire, display);
     let _ = Line::new(Point::new(br.0, br.1), Point::new(tr.0, tr.1)).draw_styled(&wire, display);
     let _ = Line::new(Point::new(bl.0, bl.1), Point::new(tl.0, tl.1)).draw_styled(&wire, display);
-    let _ = Line::new(Point::new(bk.0, bk.1), Point::new(tk.0, tk.1)).draw_styled(&wire_dim, display);
+    let _ =
+        Line::new(Point::new(bk.0, bk.1), Point::new(tk.0, tk.1)).draw_styled(&wire_dim, display);
 
     // Top edges
     let _ = Line::new(Point::new(tf.0, tf.1), Point::new(tr.0, tr.1)).draw_styled(&wire, display);
@@ -895,8 +930,8 @@ where
     let squeeze = dist * dist; // quadratic for smooth feel
 
     // Ellipse radii
-    let rx = base_r * (1.0 + squeeze * 0.8);  // wider when squashed
-    let ry = base_r * (1.0 - squeeze * 0.6);  // shorter when squashed
+    let rx = base_r * (1.0 + squeeze * 0.8); // wider when squashed
+    let ry = base_r * (1.0 - squeeze * 0.6); // shorter when squashed
     let ry = if ry < 3.0 { 3.0 } else { ry };
 
     // Floor line
@@ -941,9 +976,5 @@ pub fn fold_wave(x: f32) -> f32 {
     let x = x + 1.0;
     let period = 4.0;
     let t = x - libm::floorf(x / period) * period;
-    if t < 2.0 {
-        t - 1.0
-    } else {
-        3.0 - t
-    }
+    if t < 2.0 { t - 1.0 } else { 3.0 - t }
 }

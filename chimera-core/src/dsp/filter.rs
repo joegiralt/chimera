@@ -123,13 +123,7 @@ impl SvfFilter {
     /// SVF with nonlinear saturation in the feedback path.
     /// The tanh inside the loop is what gives it analog character —
     /// resonance builds up but saturates naturally instead of exploding.
-    fn tick_svf_nonlinear(
-        &mut self,
-        input: f32,
-        g: f32,
-        k: f32,
-        stage: usize,
-    ) -> (f32, f32, f32) {
+    fn tick_svf_nonlinear(&mut self, input: f32, g: f32, k: f32, stage: usize) -> (f32, f32, f32) {
         // Saturate the integrator states — this is the "analog" part.
         // The nonlinearity inside the loop means the filter self-limits
         // at high resonance instead of blowing up. It also creates

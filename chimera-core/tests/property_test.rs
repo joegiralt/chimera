@@ -9,7 +9,9 @@ const SR: u32 = 48000;
 struct Rng(u64);
 
 impl Rng {
-    fn new(seed: u64) -> Self { Self(seed) }
+    fn new(seed: u64) -> Self {
+        Self(seed)
+    }
 
     fn next_u64(&mut self) -> u64 {
         self.0 ^= self.0 << 13;
@@ -40,7 +42,11 @@ fn random_params(rng: &mut Rng) -> ParamSnapshot {
 
     // Engine type
     let engine = rng.u8(1); // 0=Fm, 1=Modal (skip Va for now)
-    p.engine = if engine == 0 { EngineType::Fm } else { EngineType::Modal };
+    p.engine = if engine == 0 {
+        EngineType::Fm
+    } else {
+        EngineType::Modal
+    };
 
     // FM params
     p.fm.algorithm = rng.u8(7);
@@ -111,7 +117,11 @@ fn prop_output_always_finite() {
                 assert!(
                     s.is_finite(),
                     "trial {}: output[{}] is not finite ({}) with engine={:?} note={}",
-                    trial, i, s, params.engine, note
+                    trial,
+                    i,
+                    s,
+                    params.engine,
+                    note
                 );
             }
         }
@@ -139,7 +149,10 @@ fn prop_output_bounded() {
             assert!(
                 max < 20.0,
                 "trial {}: output max {} is too large with engine={:?} note={}",
-                trial, max, params.engine, note
+                trial,
+                max,
+                params.engine,
+                note
             );
         }
     }
@@ -170,7 +183,11 @@ fn prop_note_on_produces_sound() {
         assert!(
             total_max > 0.0001,
             "trial {}: note_on should produce sound, max={} engine={:?} modal_mode={} note={}",
-            trial, total_max, params.engine, params.modal.mode, note
+            trial,
+            total_max,
+            params.engine,
+            params.modal.mode,
+            note
         );
     }
 }
@@ -191,7 +208,10 @@ fn prop_param_change_changes_output() {
         // Randomly tweak one parameter
         let tweak = rng.u8(5);
         match tweak {
-            0 => params_b.filter.cutoff.set(params_a.filter.cutoff.value * 0.1 + 100.0),
+            0 => params_b
+                .filter
+                .cutoff
+                .set(params_a.filter.cutoff.value * 0.1 + 100.0),
             1 => params_b.drive.drive.set(1.0 - params_a.drive.drive.value),
             2 => params_b.folder.fold.set(1.0 - params_a.folder.fold.value),
             3 => params_b.volume.set(params_a.volume.value * 0.2),
@@ -204,16 +224,24 @@ fn prop_param_change_changes_output() {
         let mut voice_a = Voice::new();
         voice_a.note_on(note, 100, &params_a, SR);
         let mut buf_a = [0.0f32; 128];
-        for _ in 0..8 { voice_a.render(&mut buf_a, &params_a, SR); }
+        for _ in 0..8 {
+            voice_a.render(&mut buf_a, &params_a, SR);
+        }
 
         // Render B
         let mut voice_b = Voice::new();
         voice_b.note_on(note, 100, &params_b, SR);
         let mut buf_b = [0.0f32; 128];
-        for _ in 0..8 { voice_b.render(&mut buf_b, &params_b, SR); }
+        for _ in 0..8 {
+            voice_b.render(&mut buf_b, &params_b, SR);
+        }
 
-        let diff: f32 = buf_a.iter().zip(buf_b.iter())
-            .map(|(a, b)| (a - b).abs()).sum::<f32>() / 128.0;
+        let diff: f32 = buf_a
+            .iter()
+            .zip(buf_b.iter())
+            .map(|(a, b)| (a - b).abs())
+            .sum::<f32>()
+            / 128.0;
 
         total += 1;
         if diff > 0.001 {
@@ -225,7 +253,8 @@ fn prop_param_change_changes_output() {
     assert!(
         changed > total * 4 / 5,
         "param changes should affect output: {}/{} changed",
-        changed, total
+        changed,
+        total
     );
 }
 
@@ -240,7 +269,10 @@ fn prop_note_off_eventually_silences() {
         // Tame params so note actually decays
         params.modal.ks_feedback = params.modal.ks_feedback * 0.3;
         params.modal.decay = params.modal.decay * 0.5;
-        params.filter.resonance.set(params.filter.resonance.value * 0.5); // prevent self-oscillation
+        params
+            .filter
+            .resonance
+            .set(params.filter.resonance.value * 0.5); // prevent self-oscillation
         params.folder.fold.set(0.0); // disable folder feedback path
         let note = rng.note();
 
@@ -316,7 +348,10 @@ fn verify_full_sweep(
     assert!(
         changes >= total / 2,
         "{}: only {}/{} steps ({:.0}%) produced change — knob has dead zones",
-        name, changes, total, pct
+        name,
+        changes,
+        total,
+        pct
     );
 }
 
@@ -324,8 +359,14 @@ fn verify_full_sweep(
 fn prop_fm_feedback_full_sweep() {
     verify_full_sweep(
         "FM feedback",
-        |p| { p.engine = EngineType::Fm; p.fm.algorithm = 7; p.fm.op_level = [1.0, 0.0, 0.0, 1.0]; },
-        |p, v| { p.fm.feedback = v; },
+        |p| {
+            p.engine = EngineType::Fm;
+            p.fm.algorithm = 7;
+            p.fm.op_level = [1.0, 0.0, 0.0, 1.0];
+        },
+        |p, v| {
+            p.fm.feedback = v;
+        },
         16,
     );
 }
@@ -334,8 +375,14 @@ fn prop_fm_feedback_full_sweep() {
 fn prop_filter_cutoff_full_sweep() {
     verify_full_sweep(
         "Filter cutoff",
-        |p| { p.engine = EngineType::Fm; p.fm.op_level = [0.5, 0.0, 0.0, 1.0]; p.filter.mode = 2; },
-        |p, v| { p.filter.cutoff.set(20.0 + v * 19980.0); },
+        |p| {
+            p.engine = EngineType::Fm;
+            p.fm.op_level = [0.5, 0.0, 0.0, 1.0];
+            p.filter.mode = 2;
+        },
+        |p, v| {
+            p.filter.cutoff.set(20.0 + v * 19980.0);
+        },
         16,
     );
 }
@@ -344,8 +391,15 @@ fn prop_filter_cutoff_full_sweep() {
 fn prop_filter_resonance_full_sweep() {
     verify_full_sweep(
         "Filter resonance",
-        |p| { p.engine = EngineType::Fm; p.fm.op_level = [0.5, 0.0, 0.0, 1.0]; p.filter.cutoff.set(1000.0); p.filter.mode = 1; },
-        |p, v| { p.filter.resonance.set(v); },
+        |p| {
+            p.engine = EngineType::Fm;
+            p.fm.op_level = [0.5, 0.0, 0.0, 1.0];
+            p.filter.cutoff.set(1000.0);
+            p.filter.mode = 1;
+        },
+        |p, v| {
+            p.filter.resonance.set(v);
+        },
         16,
     );
 }
@@ -354,8 +408,13 @@ fn prop_filter_resonance_full_sweep() {
 fn prop_drive_full_sweep() {
     verify_full_sweep(
         "Drive",
-        |p| { p.engine = EngineType::Fm; p.drive.mix.set(1.0); },
-        |p, v| { p.drive.drive.set(v); },
+        |p| {
+            p.engine = EngineType::Fm;
+            p.drive.mix.set(1.0);
+        },
+        |p, v| {
+            p.drive.drive.set(v);
+        },
         16,
     );
 }
@@ -364,8 +423,13 @@ fn prop_drive_full_sweep() {
 fn prop_folder_full_sweep() {
     verify_full_sweep(
         "Wavefolder",
-        |p| { p.engine = EngineType::Fm; p.folder.mix.set(1.0); },
-        |p, v| { p.folder.fold.set(v); },
+        |p| {
+            p.engine = EngineType::Fm;
+            p.folder.mix.set(1.0);
+        },
+        |p, v| {
+            p.folder.fold.set(v);
+        },
         16,
     );
 }
@@ -374,8 +438,12 @@ fn prop_folder_full_sweep() {
 fn prop_volume_full_sweep() {
     verify_full_sweep(
         "Volume",
-        |p| { p.engine = EngineType::Fm; },
-        |p, v| { p.volume.set(v); },
+        |p| {
+            p.engine = EngineType::Fm;
+        },
+        |p, v| {
+            p.volume.set(v);
+        },
         16,
     );
 }
@@ -384,8 +452,13 @@ fn prop_volume_full_sweep() {
 fn prop_ks_body_full_sweep() {
     verify_full_sweep(
         "KS body",
-        |p| { p.engine = EngineType::Modal; p.modal.mode = 0; },
-        |p, v| { p.modal.ks_body = v; },
+        |p| {
+            p.engine = EngineType::Modal;
+            p.modal.mode = 0;
+        },
+        |p, v| {
+            p.modal.ks_body = v;
+        },
         16,
     );
 }
@@ -394,8 +467,13 @@ fn prop_ks_body_full_sweep() {
 fn prop_ks_stiffness_full_sweep() {
     verify_full_sweep(
         "KS stiffness",
-        |p| { p.engine = EngineType::Modal; p.modal.mode = 0; },
-        |p, v| { p.modal.ks_stiffness = v; },
+        |p| {
+            p.engine = EngineType::Modal;
+            p.modal.mode = 0;
+        },
+        |p, v| {
+            p.modal.ks_stiffness = v;
+        },
         16,
     );
 }
@@ -404,8 +482,13 @@ fn prop_ks_stiffness_full_sweep() {
 fn prop_ks_brightness_full_sweep() {
     verify_full_sweep(
         "KS brightness",
-        |p| { p.engine = EngineType::Modal; p.modal.mode = 0; },
-        |p, v| { p.modal.brightness = v; },
+        |p| {
+            p.engine = EngineType::Modal;
+            p.modal.mode = 0;
+        },
+        |p, v| {
+            p.modal.brightness = v;
+        },
         16,
     );
 }
@@ -414,8 +497,13 @@ fn prop_ks_brightness_full_sweep() {
 fn prop_modal_decay_full_sweep() {
     verify_full_sweep(
         "Modal decay",
-        |p| { p.engine = EngineType::Modal; p.modal.mode = 1; },
-        |p, v| { p.modal.decay = v; },
+        |p| {
+            p.engine = EngineType::Modal;
+            p.modal.mode = 1;
+        },
+        |p, v| {
+            p.modal.decay = v;
+        },
         16,
     );
 }
@@ -424,8 +512,13 @@ fn prop_modal_decay_full_sweep() {
 fn prop_modal_brightness_full_sweep() {
     verify_full_sweep(
         "Modal brightness",
-        |p| { p.engine = EngineType::Modal; p.modal.mode = 1; },
-        |p, v| { p.modal.brightness = v; },
+        |p| {
+            p.engine = EngineType::Modal;
+            p.modal.mode = 1;
+        },
+        |p, v| {
+            p.modal.brightness = v;
+        },
         16,
     );
 }

@@ -1,7 +1,7 @@
 #![no_std]
 
-use embedded_graphics_core::pixelcolor::Rgb565;
 use embedded_graphics_core::draw_target::DrawTarget;
+use embedded_graphics_core::pixelcolor::Rgb565;
 
 pub const BLOCK_SIZE: usize = 128;
 pub const SCREEN_WIDTH: u16 = 240;
