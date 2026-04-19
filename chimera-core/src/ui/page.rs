@@ -261,7 +261,7 @@ impl PageId {
             PageId::Folder => [Uni, Bi, Bi, Uni, Uni, Uni],
             // Mix bipolar
             PageId::EngineVa => [Uni, Uni, Uni, Uni, Uni, Bi],
-            PageId::EngineModal1 => [Int(2), Uni, Uni, Uni, Uni, Uni],
+            PageId::EngineModal1 => [Int(3), Uni, Uni, Uni, Uni, Uni],
             PageId::EngineModal2 => [Int(3), Uni, Uni, Uni, Uni, Uni],
             PageId::DemoWaves => [Uni, Uni, Uni, Uni, Bi, Bi],
             PageId::DemoShapes => [Uni, Uni, Bi, Bi, Uni, Uni],
