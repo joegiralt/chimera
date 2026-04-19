@@ -492,3 +492,98 @@ fn test_reverb_type_switch_e2e() {
         "plate vs MidiVerb should differ"
     );
 }
+
+// ── MidiVerb II faithful emulation tests ────────────────────────────
+
+#[test]
+fn test_midiverb_ii_all_programs_produce_output() {
+    use chimera_core::dsp::midiverb::{MidiVerbII, MvProgram};
+
+    for prog_idx in 0..8 {
+        let prog = MvProgram::from_u8(prog_idx);
+        let mut mv = MidiVerbII::new();
+        let mut block = [0.0f32; 128];
+        block[0] = 1.0; // impulse
+
+        mv.process(&mut block, prog, 1.0);
+
+        // Render enough blocks for long-delay programs (reverse needs 8000+ samples)
+        let mut total_energy = 0.0f32;
+        for _ in 0..128 {
+            let mut b = [0.0f32; 128];
+            mv.process(&mut b, prog, 1.0);
+            total_energy += b.iter().map(|s| s * s).sum::<f32>();
+        }
+
+        assert!(
+            total_energy > 0.0001,
+            "MidiVerb II program {:?} should produce output, energy={}",
+            prog, total_energy
+        );
+    }
+}
+
+#[test]
+fn test_midiverb_ii_programs_sound_different() {
+    use chimera_core::dsp::midiverb::{MidiVerbII, MvProgram};
+
+    let render_program = |prog: MvProgram| -> Vec<f32> {
+        let mut mv = MidiVerbII::new();
+        let mut all = Vec::new();
+        let mut block = [0.0f32; 128];
+        block[0] = 1.0;
+        mv.process(&mut block, prog, 1.0);
+        all.extend_from_slice(&block);
+        for _ in 0..16 {
+            let mut b = [0.0f32; 128];
+            mv.process(&mut b, prog, 1.0);
+            all.extend_from_slice(&b);
+        }
+        all
+    };
+
+    let small = render_program(MvProgram::SmallBright);
+    let large = render_program(MvProgram::LargeBright);
+
+    let diff: f32 = small.iter().zip(large.iter())
+        .map(|(a, b)| (a - b).abs()).sum::<f32>() / small.len() as f32;
+
+    assert!(diff > 0.001, "Small vs Large should sound different: diff={}", diff);
+}
+
+#[test]
+fn test_midiverb_ii_output_bounded() {
+    use chimera_core::dsp::midiverb::{MidiVerbII, MvProgram};
+
+    for prog_idx in 0..8 {
+        let prog = MvProgram::from_u8(prog_idx);
+        let mut mv = MidiVerbII::new();
+
+        for _ in 0..64 {
+            let mut block = [0.0f32; 128];
+            block[0] = 1.0;
+            mv.process(&mut block, prog, 1.0);
+            let max = block.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+            assert!(max < 20.0, "MidiVerb II {:?} output too hot: max={}", prog, max);
+        }
+    }
+}
+
+#[test]
+fn test_midiverb_ii_output_finite() {
+    use chimera_core::dsp::midiverb::{MidiVerbII, MvProgram};
+
+    for prog_idx in 0..8 {
+        let prog = MvProgram::from_u8(prog_idx);
+        let mut mv = MidiVerbII::new();
+
+        for _ in 0..32 {
+            let mut block = [0.0f32; 128];
+            block[0] = 0.5;
+            mv.process(&mut block, prog, 1.0);
+            for &s in &block {
+                assert!(s.is_finite(), "MidiVerb II {:?} produced non-finite output", prog);
+            }
+        }
+    }
+}
