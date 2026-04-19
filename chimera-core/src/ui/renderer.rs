@@ -15,6 +15,7 @@ use crate::ui::dungeon_map;
 use crate::ui::fmt::{self, FmtBuf};
 use crate::ui::page::{PageId, PageLayout};
 use crate::ui::perf::PerfStats;
+use crate::ui::region::RegionKind;
 use crate::ui::theme;
 
 use core::fmt::Write;
@@ -878,6 +879,59 @@ impl Renderer {
             let col = (i % 3) as i32;
             let row = (i / 3) as i32;
             cell::draw_cell(display, col, row, label, self.anim[i].current(), icon, vf);
+        }
+    }
+
+    // ── Dirty region helpers ─────────────────────────────────────────
+
+    /// Clear a screen region by direct framebuffer fill. Much faster than draw_iter.
+    pub fn clear_region_fb(fb: &mut [u16], y_start: u16, y_end: u16) {
+        let start = y_start as usize * 240;
+        let end = y_end as usize * 240;
+        for px in &mut fb[start..end] {
+            *px = 0; // theme::BG is black = 0x0000
+        }
+    }
+
+    /// Draw a single region by kind. The caller has already cleared the region.
+    pub fn draw_region<D>(
+        &self,
+        display: &mut D,
+        kind: RegionKind,
+        nav: &ChainNav,
+        page: PageId,
+        perf: &PerfStats,
+    )
+    where
+        D: DrawTarget<Color = Rgb565>,
+    {
+        match kind {
+            RegionKind::Header => {
+                self.draw_header(display, nav);
+                self.draw_perf(display, perf);
+            }
+            RegionKind::Viz => {
+                self.draw_visualization(display, page);
+            }
+            RegionKind::Params => {
+                self.draw_params(display, page);
+                let _ = Line::new(
+                    Point::new(0, theme::ENCODER_ZONE_BOTTOM),
+                    Point::new(theme::SCREEN_W - 1, theme::ENCODER_ZONE_BOTTOM),
+                )
+                .draw_styled(&PrimitiveStyle::with_stroke(theme::SEPARATOR, 1), display);
+            }
+            RegionKind::Cells => {
+                self.draw_cell_grid(display, page);
+                let _ = Line::new(
+                    Point::new(0, theme::ENCODER_ZONE_BOTTOM),
+                    Point::new(theme::SCREEN_W - 1, theme::ENCODER_ZONE_BOTTOM),
+                )
+                .draw_styled(&PrimitiveStyle::with_stroke(theme::SEPARATOR, 1), display);
+            }
+            RegionKind::Nav => {
+                dungeon_map::draw(display, nav);
+            }
         }
     }
 

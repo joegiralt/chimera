@@ -24,6 +24,7 @@ pub struct UiState {
     pub params: ParamSnapshot,
     pub renderer: Renderer,
     page: PageId,
+    region_set: region::RegionSet,
 }
 
 impl Default for UiState {
@@ -45,6 +46,7 @@ impl UiState {
             params,
             renderer,
             page,
+            region_set: region::RegionSet::new(),
         }
     }
 
@@ -109,5 +111,64 @@ impl UiState {
             >,
     {
         self.renderer.draw(display, &self.nav, self.page, perf);
+    }
+
+    /// Render only dirty regions. Returns list of (y_start, y_end) pairs to flush.
+    /// Slots with (0, 0) are unused.
+    pub fn render_dirty<D>(
+        &mut self,
+        display: &mut D,
+        perf: &PerfStats,
+    ) -> [(u16, u16); region::MAX_REGIONS]
+    where
+        D: embedded_graphics::draw_target::DrawTarget<Color = embedded_graphics::pixelcolor::Rgb565>
+            + chimera_hal::ChimeraDisplay,
+    {
+        use region::{RegionData, RegionKind};
+
+        let layout = self.page.layout();
+        let mut flush_list = [(0u16, 0u16); region::MAX_REGIONS];
+        let mut flush_count = 0;
+
+        // Rebuild regions if layout changed
+        if self.region_set.prev_layout != Some(layout) {
+            self.region_set.set_layout(layout);
+        }
+
+        let qvalues = region::quantize_values(&self.renderer.anim);
+
+        for r in self.region_set.active_regions_mut() {
+            let current_data = match r.kind {
+                RegionKind::Header => RegionData::header(
+                    self.nav.chain as u8,
+                    self.nav.node as u8,
+                    self.nav.sub_page as u8,
+                    perf.render_us,
+                ),
+                RegionKind::Viz => RegionData::viz(self.page, qvalues),
+                RegionKind::Params => RegionData::params(self.page, qvalues),
+                RegionKind::Cells => RegionData::cells(self.page, qvalues),
+                RegionKind::Nav => RegionData::nav(
+                    self.nav.chain as u8,
+                    self.nav.node as u8,
+                    self.nav.sub_page as u8,
+                ),
+            };
+
+            if current_data != r.prev_data {
+                // Clear region via direct fb access
+                let fb = display.pixel_buffer();
+                renderer::Renderer::clear_region_fb(fb, r.y_start, r.y_end);
+
+                // Draw region
+                self.renderer.draw_region(display, r.kind, &self.nav, self.page, perf);
+
+                r.prev_data = current_data;
+                flush_list[flush_count] = (r.y_start, r.y_end);
+                flush_count += 1;
+            }
+        }
+
+        flush_list
     }
 }
