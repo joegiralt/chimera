@@ -80,8 +80,6 @@ pub struct PlateReverb {
     del_tank: [DelayLine<8192>; 2],
     // Damping
     lp: [OnePole; 2],
-    // Modulation LFO
-    lfo_phase: [f32; 2],
 }
 
 const AP_IN_LENS: [usize; 4] = [113, 162, 241, 399];
@@ -111,7 +109,6 @@ impl PlateReverb {
             ],
             del_tank: [DelayLine::new(), DelayLine::new()],
             lp: [OnePole::new(), OnePole::new()],
-            lfo_phase: [0.0; 2],
         }
     }
 
@@ -128,9 +125,6 @@ impl PlateReverb {
         let krt = time; // feedback coefficient
         let kap = 0.3 + diffusion * 0.4; // allpass coefficient 0.3..0.7
         let klp = 0.3 + damping * 0.6; // lowpass coefficient
-
-        // LFO rates
-        let lfo_inc = [0.5 / 48000.0, 0.3 / 48000.0];
 
         for s in buf.iter_mut() {
             let dry = *s;
@@ -158,13 +152,6 @@ impl PlateReverb {
             b = self.ap_tank[3].allpass(b, AP_TANK_LENS[3], kap);
             b = self.lp[1].process(b, klp);
 
-            // LFO modulation on branch B delay
-            self.lfo_phase[1] += lfo_inc[1];
-            if self.lfo_phase[1] >= 1.0 {
-                self.lfo_phase[1] -= 1.0;
-            }
-            let mod_offset = libm::sinf(self.lfo_phase[1] * 2.0 * core::f32::consts::PI) * 50.0;
-            let _ = mod_offset; // TODO: apply to interpolated read
             self.del_tank[1].write(b);
 
             // Output: multi-tap from both branches

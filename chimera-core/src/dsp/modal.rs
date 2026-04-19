@@ -226,13 +226,6 @@ impl KsString {
         self.delay_len = (period as usize).clamp(2, MAX_DELAY - 1);
     }
 
-    fn noise(&mut self) -> f32 {
-        self.noise_state ^= self.noise_state << 13;
-        self.noise_state ^= self.noise_state >> 17;
-        self.noise_state ^= self.noise_state << 5;
-        (self.noise_state as i32) as f32 / i32::MAX as f32
-    }
-
     /// Excite the string (ported from Ambika Trigger).
     /// excitation: 0=noise, 1=click, 2=bright, 3=dark
     fn trigger(&mut self, amplitude: f32, excitation: u8, color: f32, position: f32) {
@@ -246,19 +239,19 @@ impl KsString {
                 }
                 2 => {
                     // Bright noise
-                    let n1 = self.noise();
-                    let n2 = self.noise();
+                    let n1 = xorshift_noise(&mut self.noise_state);
+                    let n2 = xorshift_noise(&mut self.noise_state);
                     (n1 * 0.5 + n2 * 0.25) * amplitude
                 }
                 3 => {
                     // Dark noise: average with previous
-                    let n = self.noise() * amplitude;
+                    let n = xorshift_noise(&mut self.noise_state) * amplitude;
                     prev = (n + prev) * 0.5;
                     prev
                 }
                 _ => {
                     // White noise
-                    self.noise() * amplitude
+                    xorshift_noise(&mut self.noise_state) * amplitude
                 }
             };
             self.buffer[i] = sample;
@@ -632,7 +625,7 @@ impl ModalEngine {
             let excite = if self.exciter_remaining > 0 {
                 self.exciter_remaining -= 1;
                 let env = (self.exciter_remaining as f32 / 200.0).min(1.0);
-                let raw = self.noise() * self.exciter_amp * env;
+                let raw = xorshift_noise(&mut self.noise_state) * self.exciter_amp * env;
                 self.exciter_lp += 0.4 * (raw - self.exciter_lp);
                 self.exciter_lp
             } else {
@@ -797,17 +790,16 @@ impl ModalEngine {
         }
     }
 
-    #[inline]
-    fn noise(&mut self) -> f32 {
-        self.noise_state ^= self.noise_state << 13;
-        self.noise_state ^= self.noise_state >> 17;
-        self.noise_state ^= self.noise_state << 5;
-        (self.noise_state as i32) as f32 / i32::MAX as f32
-    }
 }
 
-fn note_to_freq(note: u8) -> f32 {
-    440.0 * libm::powf(2.0, (note as f32 - 69.0) / 12.0)
+use super::note_to_freq;
+
+#[inline]
+fn xorshift_noise(state: &mut u32) -> f32 {
+    *state ^= *state << 13;
+    *state ^= *state >> 17;
+    *state ^= *state << 5;
+    (*state as i32) as f32 / i32::MAX as f32
 }
 
 fn semitones_to_ratio(semitones: f32) -> f32 {
