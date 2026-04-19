@@ -1,3 +1,5 @@
+use chimera_core::dsp::chorus::JunoChorus;
+use chimera_core::dsp::delay::TapeDelay;
 use chimera_core::dsp::reverb::Reverb;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::params::ParamSnapshot;
@@ -40,6 +42,8 @@ impl DesktopAudio {
         let shared_clone = Arc::clone(&shared);
 
         let mut voice = Box::new(Voice::new());
+        let mut chorus = Box::new(JunoChorus::new());
+        let mut delay = Box::new(TapeDelay::new());
         let mut reverb = Box::new(Reverb::new());
         let mut block = [0.0f32; chimera_hal::BLOCK_SIZE];
         let mut block_pos: usize = chimera_hal::BLOCK_SIZE;
@@ -65,6 +69,9 @@ impl DesktopAudio {
                     for sample in data.iter_mut() {
                         if block_pos >= chimera_hal::BLOCK_SIZE {
                             voice.render(&mut block, params, sample_rate);
+                            // Effects chain: chorus → delay → reverb (Digitone II style)
+                            chorus.process(&mut block, &params.chorus, sample_rate);
+                            delay.process(&mut block, &params.delay, sample_rate);
                             reverb.process(&mut block, &params.reverb);
                             block_pos = 0;
                         }
