@@ -198,3 +198,185 @@ fn test_reverb_time_full_sweep() {
         );
     }
 }
+
+// ── Live parameter change tests ─────────────────────────────────────
+
+fn render_reverb_with_change(
+    rt: u8,
+    setup: impl FnOnce(&mut ReverbParams),
+    tweak: impl FnOnce(&mut ReverbParams),
+    blocks_before: usize,
+    blocks_after: usize,
+) -> (f32, f32) {
+    let mut reverb = Reverb::new();
+    let mut params = ReverbParams { reverb_type: rt, time: 0.5, damping: 0.3, size: 0.5, mix: 1.0 };
+    setup(&mut params);
+
+    // Feed impulse and render "before"
+    let mut block = impulse_block();
+    reverb.process(&mut block, &params);
+    for _ in 1..blocks_before {
+        let mut block = [0.0f32; 128];
+        reverb.process(&mut block, &params);
+    }
+    let mut before_block = [0.0f32; 128];
+    reverb.process(&mut before_block, &params);
+    let before_rms = rms(&before_block);
+
+    // Tweak parameter
+    tweak(&mut params);
+
+    // Render "after"
+    for _ in 0..blocks_after {
+        let mut block = [0.0f32; 128];
+        reverb.process(&mut block, &params);
+    }
+    let mut after_block = [0.0f32; 128];
+    reverb.process(&mut after_block, &params);
+    let after_rms = rms(&after_block);
+
+    (before_rms, after_rms)
+}
+
+#[test]
+fn test_plate_time_mid_reverb() {
+    let (before, after) = render_reverb_with_change(0,
+        |p| { p.time = 0.9; },
+        |p| { p.time = 0.1; },
+        64, 32,
+    );
+    assert!((before - after).abs() > 0.0001 || after < before,
+        "plate time should change tail: before={} after={}", before, after);
+}
+
+#[test]
+fn test_fdn_time_mid_reverb() {
+    let (before, after) = render_reverb_with_change(1,
+        |p| { p.time = 0.9; },
+        |p| { p.time = 0.1; },
+        16, 16,
+    );
+    assert!((before - after).abs() > 0.0001 || after < before,
+        "FDN time should change tail: before={} after={}", before, after);
+}
+
+#[test]
+fn test_midiverb_time_mid_reverb() {
+    let (before, after) = render_reverb_with_change(2,
+        |p| { p.time = 0.9; },
+        |p| { p.time = 0.1; },
+        16, 16,
+    );
+    assert!((before - after).abs() > 0.0001 || after < before,
+        "MidiVerb time should change tail: before={} after={}", before, after);
+}
+
+#[test]
+fn test_plate_mix_mid_reverb() {
+    let (before, after) = render_reverb_with_change(0,
+        |p| { p.mix = 1.0; },
+        |p| { p.mix = 0.0; },
+        64, 8,
+    );
+    assert!(after < before * 0.1 || after < 0.001,
+        "plate mix=0 should be dry: before={} after={}", before, after);
+}
+
+#[test]
+fn test_fdn_damping_mid_reverb() {
+    let (before, after) = render_reverb_with_change(1,
+        |p| { p.damping = 0.1; },
+        |p| { p.damping = 0.9; },
+        16, 16,
+    );
+    assert!((before - after).abs() > 0.00001,
+        "FDN damping should change character: before={} after={}", before, after);
+}
+
+#[test]
+fn test_fdn_size_mid_reverb() {
+    let (before, after) = render_reverb_with_change(1,
+        |p| { p.size = 0.2; },
+        |p| { p.size = 0.9; },
+        16, 16,
+    );
+    assert!((before - after).abs() > 0.0001,
+        "FDN size should change character: before={} after={}", before, after);
+}
+
+// ── E2E: reverb through voice chain ─────────────────────────────────
+
+#[test]
+fn test_reverb_through_voice_produces_tail() {
+    use chimera_core::dsp::voice::Voice;
+    use chimera_core::params::{EngineType, ParamSnapshot};
+
+    let mut voice = Voice::new();
+    let mut reverb = Reverb::new();
+    let mut params = ParamSnapshot::default();
+    params.engine = EngineType::Fm;
+    params.reverb.mix = 0.5;
+    params.reverb.time = 0.7;
+
+    voice.note_on(60, 100, &params, 48000);
+
+    // Render a few blocks with note
+    let mut block = [0.0f32; 128];
+    for _ in 0..8 {
+        voice.render(&mut block, &params, 48000);
+        reverb.process(&mut block, &params.reverb);
+    }
+
+    // Note off
+    voice.note_off();
+
+    // Render more — reverb tail should persist after note ends
+    let mut tail_energy = 0.0f32;
+    for _ in 0..64 {
+        voice.render(&mut block, &params, 48000);
+        reverb.process(&mut block, &params.reverb);
+        tail_energy += block.iter().map(|s| s * s).sum::<f32>();
+    }
+
+    assert!(tail_energy > 0.01, "reverb should produce tail after note off: energy={}", tail_energy);
+}
+
+#[test]
+fn test_reverb_type_switch_e2e() {
+    use chimera_core::dsp::voice::Voice;
+    use chimera_core::params::{EngineType, ParamSnapshot};
+
+    let render_with_reverb = |rt: u8| -> f32 {
+        let mut voice = Voice::new();
+        let mut reverb = Reverb::new();
+        let mut params = ParamSnapshot::default();
+        params.engine = EngineType::Fm;
+        params.reverb.reverb_type = rt;
+        params.reverb.mix = 0.8;
+        params.reverb.time = 0.6;
+
+        voice.note_on(60, 100, &params, 48000);
+
+        let mut block = [0.0f32; 128];
+        let mut total = 0.0f32;
+        for _ in 0..32 {
+            voice.render(&mut block, &params, 48000);
+            reverb.process(&mut block, &params.reverb);
+            total += block.iter().map(|s| s * s).sum::<f32>();
+        }
+        total
+    };
+
+    let plate = render_with_reverb(0);
+    let fdn = render_with_reverb(1);
+    let midiverb = render_with_reverb(2);
+
+    // All should produce energy
+    assert!(plate > 0.1, "plate should produce sound: {}", plate);
+    assert!(fdn > 0.1, "FDN should produce sound: {}", fdn);
+    assert!(midiverb > 0.1, "MidiVerb should produce sound: {}", midiverb);
+
+    // They should differ
+    assert!((plate - fdn).abs() > 0.01, "plate vs FDN should differ");
+    assert!((plate - midiverb).abs() > 0.01, "plate vs MidiVerb should differ");
+}
