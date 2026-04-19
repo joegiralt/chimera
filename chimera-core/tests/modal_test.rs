@@ -19,7 +19,7 @@ fn goertzel(buf: &[f32], target_freq: f32, sample_rate: u32) -> f32 {
 }
 
 fn modal_params() -> ModalParams {
-    let mut p = modal_params();
+    let mut p = ModalParams::default();
     p.mode = 1; // Modal resonator (SVF bank)
     p
 }
