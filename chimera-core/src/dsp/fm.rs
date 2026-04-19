@@ -194,7 +194,8 @@ impl FmOperator {
     }
 
     pub fn note_on(&mut self, velocity: f32) {
-        self.phase = 0.0;
+        // Don't reset phase — free-running prevents click on retrigger.
+        // Only reset feedback history to avoid artifacts from previous note.
         self.fb_history = [0.0; 2];
         self.envelope.note_on(velocity);
     }
