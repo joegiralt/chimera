@@ -283,7 +283,7 @@ impl PageId {
             PageId::EngineFmB => ["RAT M", "WAV M", "LVL M", "DTN M", "RAT 2", "LVL 2"],
             PageId::EngineFmC => ["RAT 3", "WAV 3", "LVL 3", "WAV 2", "WAV 4", "DTN 4"],
             PageId::EngineModal1 => ["MODE", "EXCITE", "DECAY", "BRIGHT", "POS", "INHARM"],
-            PageId::EngineModal2 => ["EXC", "COLOR", "BODY", "STIFF", "FDBK", "ENS"],
+            PageId::EngineModal2 => ["BODY", "STIFF", "FDBK", "E.DPT", "E.RAT", "E.MIX"],
             PageId::EngineVa => ["WAVE", "PW", "SYNC", "SUB", "DETUNE", "MIX"],
             PageId::Filter => ["CUTOFF", "RESO", "DRIVE", "FM", "ENV", "TRACK"],
             PageId::Folder => ["FOLD", "SYM", "MIX", "--", "--", "--"],
@@ -394,11 +394,11 @@ impl PageId {
                 params.modal.inharm,
             ],
             PageId::EngineModal2 => [
-                params.modal.ks_excitation as f32 / 3.0,
-                params.modal.ks_color,
                 params.modal.ks_body,
                 params.modal.ks_stiffness,
                 params.modal.ks_feedback,
+                params.modal.ks_ens_depth,
+                params.modal.ks_ens_rate,
                 params.modal.ks_ens_mix,
             ],
             _ => [0.5; 6], // placeholder pages
@@ -514,11 +514,11 @@ fn apply_modal1_encoder(idx: usize, delta: i8, modal: &mut crate::dsp::modal::Mo
 fn apply_modal2_encoder(idx: usize, delta: i8, modal: &mut crate::dsp::modal::ModalParams) {
     let step = 1.0 / 128.0;
     match idx {
-        0 => nudge_u8(&mut modal.ks_excitation, delta, 3),
-        1 => nudge_float(&mut modal.ks_color, delta, step),
-        2 => nudge_float(&mut modal.ks_body, delta, step),
-        3 => nudge_float(&mut modal.ks_stiffness, delta, step),
-        4 => nudge_float(&mut modal.ks_feedback, delta, step),
+        0 => nudge_float(&mut modal.ks_body, delta, step),
+        1 => nudge_float(&mut modal.ks_stiffness, delta, step),
+        2 => nudge_float(&mut modal.ks_feedback, delta, step),
+        3 => nudge_float(&mut modal.ks_ens_depth, delta, step),
+        4 => nudge_float(&mut modal.ks_ens_rate, delta, step),
         5 => nudge_float(&mut modal.ks_ens_mix, delta, step),
         _ => {}
     }

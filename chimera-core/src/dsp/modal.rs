@@ -299,8 +299,16 @@ impl KsString {
         let next = self.buffer[(read_pos + 1) % self.delay_len];
 
         // KS low-pass averaging (damping controls blend between current and next)
-        let coeff = 0.25 + damping * 0.5; // 0.25..0.75
+        // This is the primary pitch-stable decay mechanism.
+        let coeff = 0.125 + damping * 0.375; // 0.125..0.5
         let mut filtered = current * (1.0 - coeff) + next * coeff;
+
+        // The 2-point average inherently decays the signal.
+        // Apply a per-sample gain < 1.0 to control decay time.
+        // decay=0 → gain=0.9990 (very long ring, ~7 seconds)
+        // decay=1 → gain=0.9900 (short pluck, ~100ms)
+        let gain = 0.999 - decay * 0.009;
+        filtered *= gain;
 
         // Stiffness: mix with a sample from +7 offset (allpass-like dispersion)
         if stiffness > 0.01 {
@@ -309,23 +317,18 @@ impl KsString {
             filtered = filtered * (1.0 - stiffness) + stiff_sample * stiffness;
         }
 
-        // Decay: attenuate AC component (keeps DC stable)
-        if decay > 0.01 {
-            let decay_amount = decay * 0.12; // max ~12% attenuation per sample
-            filtered -= filtered * decay_amount;
-        }
-
         // Body resonance: comb filter at half-delay
         if body > 0.03 {
             let body_pos = (read_pos + self.delay_len / 2) % self.delay_len;
             let body_sample = self.buffer[body_pos];
-            filtered = filtered * (1.0 - body) + body_sample * body;
+            filtered = filtered * (1.0 - body * 0.5) + body_sample * body * 0.5;
         }
 
-        // Feedback boost for sustain
+        // Feedback boost for sustain (adds energy back, fights decay)
+        // Only at high values does it approach infinite sustain.
         if feedback > 0.01 {
-            filtered += filtered * feedback * 0.5;
-            filtered = filtered.clamp(-1.0, 1.0);
+            filtered += filtered * feedback * 0.3;
+            filtered = filtered.clamp(-1.5, 1.5);
         }
 
         // Write back
@@ -446,7 +449,22 @@ impl ModalEngine {
         self.silence_counter = 0;
     }
 
-    pub fn note_off(&mut self) {}
+    pub fn note_off(&mut self) {
+        // For String/Bowed: dampen the delay line to stop the sound
+        match self.active_mode {
+            ResonatorMode::String | ResonatorMode::Bowed => {
+                // Quick fade: multiply entire buffer by 0.5 a few times
+                for _ in 0..3 {
+                    for i in 0..self.string.delay_len {
+                        self.string.buffer[i] *= 0.3;
+                    }
+                }
+            }
+            ResonatorMode::Modal => {
+                // Modal decays naturally — could zero the filters for instant stop
+            }
+        }
+    }
 
     pub fn is_active(&self) -> bool {
         self.active
