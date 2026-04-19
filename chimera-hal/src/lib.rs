@@ -90,6 +90,9 @@ pub trait ChimeraDisplay: DrawTarget<Color = Rgb565> {
     /// Push framebuffer to hardware
     fn flush(&mut self);
 
+    /// Push a horizontal band of the framebuffer (y_start inclusive, y_end exclusive)
+    fn flush_region(&mut self, y_start: u16, y_end: u16);
+
     /// Raw pixel access for custom rendering
     fn pixel_buffer(&mut self) -> &mut [u16];
 }
