@@ -122,3 +122,108 @@ fn cell_grid_region_kinds() {
     let kinds: Vec<RegionKind> = rs.active_regions().iter().map(|r| r.kind).collect();
     assert_eq!(kinds, vec![RegionKind::Header, RegionKind::Cells, RegionKind::Nav]);
 }
+
+#[test]
+fn encoder_only_dirties_params_not_header() {
+    let mut rs = RegionSet::new();
+    rs.set_layout(PageLayout::BigViz);
+
+    let page = PageId::Filter;
+    let values_a = [500u16; 6];
+    let values_b = [501, 500, 500, 500, 500, 500];
+
+    rs.regions[0].prev_data = RegionData::header(0, 0, 0, 0);
+    rs.regions[1].prev_data = RegionData::viz(page, values_a);
+    rs.regions[2].prev_data = RegionData::params(page, values_a);
+    rs.regions[3].prev_data = RegionData::nav(0, 0, 0);
+
+    let current = [
+        RegionData::header(0, 0, 0, 0),
+        RegionData::viz(page, values_b),
+        RegionData::params(page, values_b),
+        RegionData::nav(0, 0, 0),
+    ];
+
+    let dirty: Vec<bool> = rs.active_regions().iter().zip(current.iter())
+        .map(|(r, c)| r.prev_data != *c)
+        .collect();
+
+    assert_eq!(dirty, vec![false, true, true, false]);
+}
+
+#[test]
+fn nav_change_dirties_header_and_nav() {
+    let mut rs = RegionSet::new();
+    rs.set_layout(PageLayout::BigViz);
+
+    let page = PageId::Filter;
+    let values = [500u16; 6];
+
+    rs.regions[0].prev_data = RegionData::header(0, 0, 0, 0);
+    rs.regions[1].prev_data = RegionData::viz(page, values);
+    rs.regions[2].prev_data = RegionData::params(page, values);
+    rs.regions[3].prev_data = RegionData::nav(0, 0, 0);
+
+    let current = [
+        RegionData::header(0, 1, 0, 0),
+        RegionData::viz(page, values),
+        RegionData::params(page, values),
+        RegionData::nav(0, 1, 0),
+    ];
+
+    let dirty: Vec<bool> = rs.active_regions().iter().zip(current.iter())
+        .map(|(r, c)| r.prev_data != *c)
+        .collect();
+
+    assert_eq!(dirty, vec![true, false, false, true]);
+}
+
+#[test]
+fn no_change_means_no_dirty() {
+    let mut rs = RegionSet::new();
+    rs.set_layout(PageLayout::BigViz);
+
+    let page = PageId::Filter;
+    let values = [500u16; 6];
+
+    rs.regions[0].prev_data = RegionData::header(0, 0, 0, 0);
+    rs.regions[1].prev_data = RegionData::viz(page, values);
+    rs.regions[2].prev_data = RegionData::params(page, values);
+    rs.regions[3].prev_data = RegionData::nav(0, 0, 0);
+
+    let current = [
+        RegionData::header(0, 0, 0, 0),
+        RegionData::viz(page, values),
+        RegionData::params(page, values),
+        RegionData::nav(0, 0, 0),
+    ];
+
+    let any_dirty = rs.active_regions().iter().zip(current.iter())
+        .any(|(r, c)| r.prev_data != *c);
+
+    assert!(!any_dirty);
+}
+
+#[test]
+fn animation_settling_produces_dirty_then_clean() {
+    let mut anim = [AnimatedValue::new(0.5); 6];
+    anim[0].set_target(0.8);
+
+    anim[0].update();
+    let v1 = quantize_values(&anim);
+
+    anim[0].update();
+    let v2 = quantize_values(&anim);
+
+    assert_ne!(v1, v2, "animation should produce different quantized values");
+
+    for _ in 0..100 {
+        anim[0].update();
+    }
+    let settled_a = quantize_values(&anim);
+
+    anim[0].update();
+    let settled_b = quantize_values(&anim);
+
+    assert_eq!(settled_a, settled_b, "settled animation should produce stable values");
+}
