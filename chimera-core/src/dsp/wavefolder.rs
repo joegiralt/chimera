@@ -49,9 +49,5 @@ fn fold_wave(x: f32) -> f32 {
     let x = x + 1.0;
     let period = 4.0;
     let t = x - libm::floorf(x / period) * period;
-    if t < 2.0 {
-        t - 1.0
-    } else {
-        3.0 - t
-    }
+    if t < 2.0 { t - 1.0 } else { 3.0 - t }
 }

@@ -15,7 +15,13 @@ struct Svf {
 
 impl Svf {
     fn new() -> Self {
-        Self { state_1: 0.0, state_2: 0.0, g: 0.0, r: 1.0, h: 1.0 }
+        Self {
+            state_1: 0.0,
+            state_2: 0.0,
+            g: 0.0,
+            r: 1.0,
+            h: 1.0,
+        }
     }
 
     /// Configure filter. `freq` = normalized frequency (Hz/sr), `resonance` = Q.
@@ -55,7 +61,12 @@ struct CosineOsc {
 
 impl CosineOsc {
     fn new() -> Self {
-        Self { y0: 0.0, y1: 0.0, iir_coefficient: 0.0, initial_amplitude: 0.0 }
+        Self {
+            y0: 0.0,
+            y1: 0.0,
+            iir_coefficient: 0.0,
+            initial_amplitude: 0.0,
+        }
     }
 
     /// Initialize with position (0..1).
@@ -142,8 +153,8 @@ pub struct ModalParams {
     pub excite: f32,
     pub decay: f32,
     pub brightness: f32,
-    pub inharm: f32,       // Modal: stiffness. String: not used.
-    pub position: f32,     // Modal: excitation position. String: pluck position.
+    pub inharm: f32,   // Modal: stiffness. String: not used.
+    pub position: f32, // Modal: excitation position. String: pluck position.
     pub note: f32,
     pub num_modes: u8,
     // String (KS+) params
@@ -212,7 +223,7 @@ impl KsString {
 
     fn set_freq(&mut self, freq: f32, sample_rate: u32) {
         let period = sample_rate as f32 / freq;
-        self.delay_len = (period as usize).min(MAX_DELAY - 1).max(2);
+        self.delay_len = (period as usize).clamp(2, MAX_DELAY - 1);
     }
 
     fn noise(&mut self) -> f32 {
@@ -283,6 +294,7 @@ impl KsString {
     /// feedback: 0..1 (sustain boost)
     /// ens_rate/depth/spread/mix: ensemble chorus parameters
     #[inline]
+    #[allow(clippy::too_many_arguments)]
     fn tick_full(
         &mut self,
         damping: f32,
@@ -561,8 +573,12 @@ impl ModalEngine {
 
             // Accumulate stiffness with decay for negative values
             stretch_factor += stiffness;
-            if stretch_factor < 0.1 { stretch_factor = 0.1; } // never go negative
-            if stiffness < 0.0 { stiffness *= 0.93; } // decay negative stiffness
+            if stretch_factor < 0.1 {
+                stretch_factor = 0.1;
+            } // never go negative
+            if stiffness < 0.0 {
+                stiffness *= 0.93;
+            } // decay negative stiffness
 
             // Q decays across modes (Rings: q *= q_loss)
             q *= q_loss;
@@ -644,11 +660,21 @@ impl ModalEngine {
         }
     }
 
-    fn render_string(&mut self, output: &mut [f32; BLOCK_SIZE], params: &ModalParams, max_level: &mut f32) {
+    fn render_string(
+        &mut self,
+        output: &mut [f32; BLOCK_SIZE],
+        params: &ModalParams,
+        max_level: &mut f32,
+    ) {
         let (fb, body, stiff, decay) = if self.released {
             (0.0, 0.0, 0.0, 0.8_f32.max(params.decay)) // fast decay on release
         } else {
-            (params.ks_feedback, params.ks_body, params.ks_stiffness, params.decay)
+            (
+                params.ks_feedback,
+                params.ks_body,
+                params.ks_stiffness,
+                params.decay,
+            )
         };
         for s in output.iter_mut() {
             *s = self.string.tick_full(
@@ -657,17 +683,26 @@ impl ModalEngine {
                 body,
                 stiff,
                 fb,
-                params.ks_ens_rate,    // ensemble rate
-                params.ks_ens_depth,   // ensemble depth
-                0.3,                   // ensemble spread (fixed for now)
-                params.ks_ens_mix,     // ensemble mix
+                params.ks_ens_rate,  // ensemble rate
+                params.ks_ens_depth, // ensemble depth
+                0.3,                 // ensemble spread (fixed for now)
+                params.ks_ens_mix,   // ensemble mix
             );
             *max_level = max_level.max(libm::fabsf(*s));
         }
     }
 
-    fn render_bowed(&mut self, output: &mut [f32; BLOCK_SIZE], params: &ModalParams, max_level: &mut f32) {
-        let bow_vel = if self.exciter_amp > 0.001 { params.bow_velocity * 0.3 } else { 0.0 };
+    fn render_bowed(
+        &mut self,
+        output: &mut [f32; BLOCK_SIZE],
+        params: &ModalParams,
+        max_level: &mut f32,
+    ) {
+        let bow_vel = if self.exciter_amp > 0.001 {
+            params.bow_velocity * 0.3
+        } else {
+            0.0
+        };
         let bow_force = self.exciter_amp * 4.0;
         // When bow is released, apply decay
         let release_decay = if self.exciter_amp < 0.001 { 0.995 } else { 1.0 };
@@ -696,14 +731,23 @@ impl ModalEngine {
         }
     }
 
-    fn render_sympathetic(&mut self, output: &mut [f32; BLOCK_SIZE], params: &ModalParams, max_level: &mut f32) {
+    fn render_sympathetic(
+        &mut self,
+        output: &mut [f32; BLOCK_SIZE],
+        params: &ModalParams,
+        max_level: &mut f32,
+    ) {
         let released = self.released;
         let (fb, body, stiff) = if released {
             (0.0, 0.0, 0.0)
         } else {
             (params.ks_feedback, params.ks_body, params.ks_stiffness)
         };
-        let decay = if released { 0.8_f32.max(params.decay) } else { params.decay };
+        let decay = if released {
+            0.8_f32.max(params.decay)
+        } else {
+            params.decay
+        };
 
         // Coupling gain: how much main string feeds into sympathetic
         let coupling = 0.025; // Rings uses 0.2 / num_strings
@@ -711,8 +755,15 @@ impl ModalEngine {
         for s in output.iter_mut() {
             // 1. Main string tick
             let main_out = self.string.tick_full(
-                params.brightness, decay, body, stiff, fb,
-                params.ks_ens_rate, params.ks_ens_depth, 0.3, params.ks_ens_mix,
+                params.brightness,
+                decay,
+                body,
+                stiff,
+                fb,
+                params.ks_ens_rate,
+                params.ks_ens_depth,
+                0.3,
+                params.ks_ens_mix,
             );
 
             // 2. Couple main string output into sympathetic strings
@@ -728,8 +779,13 @@ impl ModalEngine {
                 let sym_out = sym.tick_full(
                     params.brightness * 0.7, // darker
                     decay * 0.5,             // slower decay
-                    0.0, 0.0, 0.0,           // no body/stiff/feedback
-                    0.0, 0.0, 0.0, 0.0,      // no ensemble
+                    0.0,
+                    0.0,
+                    0.0, // no body/stiff/feedback
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0, // no ensemble
                 );
                 sym_sum += sym_out;
             }

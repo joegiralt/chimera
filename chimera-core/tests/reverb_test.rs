@@ -46,21 +46,33 @@ fn test_plate_produces_tail() {
     // Plate has long delay lines (up to 4782 samples = 100ms)
     // Check for tail after 200ms (9600 samples)
     let late_rms = rms(&buf[9600..]);
-    assert!(late_rms > 0.001, "plate should have reverb tail: late_rms={}", late_rms);
+    assert!(
+        late_rms > 0.001,
+        "plate should have reverb tail: late_rms={}",
+        late_rms
+    );
 }
 
 #[test]
 fn test_fdn_produces_tail() {
     let buf = render_reverb(1, 0.7, 1.0, 16);
     let late_rms = rms(&buf[1024..]);
-    assert!(late_rms > 0.001, "FDN should have reverb tail: late_rms={}", late_rms);
+    assert!(
+        late_rms > 0.001,
+        "FDN should have reverb tail: late_rms={}",
+        late_rms
+    );
 }
 
 #[test]
 fn test_midiverb_produces_tail() {
     let buf = render_reverb(2, 0.7, 1.0, 16);
     let late_rms = rms(&buf[1024..]);
-    assert!(late_rms > 0.001, "MidiVerb should have reverb tail: late_rms={}", late_rms);
+    assert!(
+        late_rms > 0.001,
+        "MidiVerb should have reverb tail: late_rms={}",
+        late_rms
+    );
 }
 
 // ── Output is always finite ─────────────────────────────────────────
@@ -73,7 +85,9 @@ fn test_reverbs_output_finite() {
             assert!(
                 s.is_finite(),
                 "reverb type {} sample {} is not finite: {}",
-                rt, i, s
+                rt,
+                i,
+                s
             );
         }
     }
@@ -89,7 +103,8 @@ fn test_reverbs_output_bounded() {
         assert!(
             max < 10.0,
             "reverb type {} output too loud: max={}",
-            rt, max
+            rt,
+            max
         );
     }
 }
@@ -107,7 +122,8 @@ fn test_plate_longer_time_longer_tail() {
     assert!(
         long_late > short_late,
         "longer time should produce longer tail: short={} long={}",
-        short_late, long_late
+        short_late,
+        long_late
     );
 }
 
@@ -122,7 +138,8 @@ fn test_fdn_longer_time_longer_tail() {
     assert!(
         long_late > short_late,
         "longer time should produce longer tail: short={} long={}",
-        short_late, long_late
+        short_late,
+        long_late
     );
 }
 
@@ -148,7 +165,10 @@ fn test_reverb_dry_passthrough() {
             assert!(
                 (a - b).abs() < 0.001,
                 "reverb {} at mix=0 should passthrough: sample {} orig={} got={}",
-                rt, i, a, b
+                rt,
+                i,
+                a,
+                b
             );
         }
     }
@@ -162,20 +182,33 @@ fn test_reverb_types_differ() {
     let fdn = render_reverb(1, 0.7, 1.0, 128);
     let midiverb = render_reverb(2, 0.7, 1.0, 128);
 
-    let diff_pf: f32 = plate.iter().zip(fdn.iter())
-        .map(|(a, b)| (a - b).abs()).sum::<f32>() / plate.len() as f32;
-    let diff_pm: f32 = plate.iter().zip(midiverb.iter())
-        .map(|(a, b)| (a - b).abs()).sum::<f32>() / plate.len() as f32;
+    let diff_pf: f32 = plate
+        .iter()
+        .zip(fdn.iter())
+        .map(|(a, b)| (a - b).abs())
+        .sum::<f32>()
+        / plate.len() as f32;
+    let diff_pm: f32 = plate
+        .iter()
+        .zip(midiverb.iter())
+        .map(|(a, b)| (a - b).abs())
+        .sum::<f32>()
+        / plate.len() as f32;
 
     assert!(diff_pf > 0.001, "plate vs FDN should differ: {}", diff_pf);
-    assert!(diff_pm > 0.001, "plate vs MidiVerb should differ: {}", diff_pm);
+    assert!(
+        diff_pm > 0.001,
+        "plate vs MidiVerb should differ: {}",
+        diff_pm
+    );
 }
 
 // ── Reverb time sweep ───────────────────────────────────────────────
 
 #[test]
 fn test_reverb_time_full_sweep() {
-    for rt in [0, 2] { // FDN has short delays — tail differences are subtle
+    for rt in [0, 2] {
+        // FDN has short delays — tail differences are subtle
         let mut prev_rms = -1.0f32;
         let mut changes = 0;
         let total = 8;
@@ -183,7 +216,7 @@ fn test_reverb_time_full_sweep() {
         for step in 0..=total {
             let time = step as f32 / total as f32;
             let buf = render_reverb(rt, time, 1.0, 128);
-            let late = rms(&buf[buf.len()/2..]);
+            let late = rms(&buf[buf.len() / 2..]);
 
             if prev_rms >= 0.0 && (late - prev_rms).abs() > 0.0001 {
                 changes += 1;
@@ -194,7 +227,9 @@ fn test_reverb_time_full_sweep() {
         assert!(
             changes >= total / 4,
             "reverb {} time sweep: only {}/{} steps changed",
-            rt, changes, total
+            rt,
+            changes,
+            total
         );
     }
 }
@@ -209,7 +244,13 @@ fn render_reverb_with_change(
     blocks_after: usize,
 ) -> (f32, f32) {
     let mut reverb = Reverb::new();
-    let mut params = ReverbParams { reverb_type: rt, time: 0.5, damping: 0.3, size: 0.5, mix: 1.0 };
+    let mut params = ReverbParams {
+        reverb_type: rt,
+        time: 0.5,
+        damping: 0.3,
+        size: 0.5,
+        mix: 1.0,
+    };
     setup(&mut params);
 
     // Feed impulse and render "before"
@@ -240,68 +281,128 @@ fn render_reverb_with_change(
 
 #[test]
 fn test_plate_time_mid_reverb() {
-    let (before, after) = render_reverb_with_change(0,
-        |p| { p.time = 0.9; },
-        |p| { p.time = 0.1; },
-        64, 32,
+    let (before, after) = render_reverb_with_change(
+        0,
+        |p| {
+            p.time = 0.9;
+        },
+        |p| {
+            p.time = 0.1;
+        },
+        64,
+        32,
     );
-    assert!((before - after).abs() > 0.0001 || after < before,
-        "plate time should change tail: before={} after={}", before, after);
+    assert!(
+        (before - after).abs() > 0.0001 || after < before,
+        "plate time should change tail: before={} after={}",
+        before,
+        after
+    );
 }
 
 #[test]
 fn test_fdn_time_mid_reverb() {
-    let (before, after) = render_reverb_with_change(1,
-        |p| { p.time = 0.9; },
-        |p| { p.time = 0.1; },
-        16, 16,
+    let (before, after) = render_reverb_with_change(
+        1,
+        |p| {
+            p.time = 0.9;
+        },
+        |p| {
+            p.time = 0.1;
+        },
+        16,
+        16,
     );
-    assert!((before - after).abs() > 0.0001 || after < before,
-        "FDN time should change tail: before={} after={}", before, after);
+    assert!(
+        (before - after).abs() > 0.0001 || after < before,
+        "FDN time should change tail: before={} after={}",
+        before,
+        after
+    );
 }
 
 #[test]
 fn test_midiverb_time_mid_reverb() {
-    let (before, after) = render_reverb_with_change(2,
-        |p| { p.time = 0.9; },
-        |p| { p.time = 0.1; },
-        16, 16,
+    let (before, after) = render_reverb_with_change(
+        2,
+        |p| {
+            p.time = 0.9;
+        },
+        |p| {
+            p.time = 0.1;
+        },
+        16,
+        16,
     );
-    assert!((before - after).abs() > 0.0001 || after < before,
-        "MidiVerb time should change tail: before={} after={}", before, after);
+    assert!(
+        (before - after).abs() > 0.0001 || after < before,
+        "MidiVerb time should change tail: before={} after={}",
+        before,
+        after
+    );
 }
 
 #[test]
 fn test_plate_mix_mid_reverb() {
-    let (before, after) = render_reverb_with_change(0,
-        |p| { p.mix = 1.0; },
-        |p| { p.mix = 0.0; },
-        64, 8,
+    let (before, after) = render_reverb_with_change(
+        0,
+        |p| {
+            p.mix = 1.0;
+        },
+        |p| {
+            p.mix = 0.0;
+        },
+        64,
+        8,
     );
-    assert!(after < before * 0.1 || after < 0.001,
-        "plate mix=0 should be dry: before={} after={}", before, after);
+    assert!(
+        after < before * 0.1 || after < 0.001,
+        "plate mix=0 should be dry: before={} after={}",
+        before,
+        after
+    );
 }
 
 #[test]
 fn test_fdn_damping_mid_reverb() {
-    let (before, after) = render_reverb_with_change(1,
-        |p| { p.damping = 0.1; },
-        |p| { p.damping = 0.9; },
-        16, 16,
+    let (before, after) = render_reverb_with_change(
+        1,
+        |p| {
+            p.damping = 0.1;
+        },
+        |p| {
+            p.damping = 0.9;
+        },
+        16,
+        16,
     );
-    assert!((before - after).abs() > 0.00001,
-        "FDN damping should change character: before={} after={}", before, after);
+    assert!(
+        (before - after).abs() > 0.00001,
+        "FDN damping should change character: before={} after={}",
+        before,
+        after
+    );
 }
 
 #[test]
 fn test_fdn_size_mid_reverb() {
-    let (before, after) = render_reverb_with_change(1,
-        |p| { p.size = 0.2; },
-        |p| { p.size = 0.9; },
-        16, 16,
+    let (before, after) = render_reverb_with_change(
+        1,
+        |p| {
+            p.size = 0.2;
+        },
+        |p| {
+            p.size = 0.9;
+        },
+        16,
+        16,
     );
-    assert!((before - after).abs() > 0.0001,
-        "FDN size should change character: before={} after={}", before, after);
+    assert!(
+        (before - after).abs() > 0.0001,
+        "FDN size should change character: before={} after={}",
+        before,
+        after
+    );
 }
 
 // ── E2E: reverb through voice chain ─────────────────────────────────
@@ -338,7 +439,11 @@ fn test_reverb_through_voice_produces_tail() {
         tail_energy += block.iter().map(|s| s * s).sum::<f32>();
     }
 
-    assert!(tail_energy > 0.01, "reverb should produce tail after note off: energy={}", tail_energy);
+    assert!(
+        tail_energy > 0.01,
+        "reverb should produce tail after note off: energy={}",
+        tail_energy
+    );
 }
 
 #[test]
@@ -374,9 +479,16 @@ fn test_reverb_type_switch_e2e() {
     // All should produce energy
     assert!(plate > 0.1, "plate should produce sound: {}", plate);
     assert!(fdn > 0.1, "FDN should produce sound: {}", fdn);
-    assert!(midiverb > 0.1, "MidiVerb should produce sound: {}", midiverb);
+    assert!(
+        midiverb > 0.1,
+        "MidiVerb should produce sound: {}",
+        midiverb
+    );
 
     // They should differ
     assert!((plate - fdn).abs() > 0.01, "plate vs FDN should differ");
-    assert!((plate - midiverb).abs() > 0.01, "plate vs MidiVerb should differ");
+    assert!(
+        (plate - midiverb).abs() > 0.01,
+        "plate vs MidiVerb should differ"
+    );
 }

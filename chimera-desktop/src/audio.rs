@@ -1,10 +1,10 @@
 use chimera_core::dsp::reverb::Reverb;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::params::ParamSnapshot;
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::Stream;
-use std::sync::atomic::{AtomicPtr, AtomicU8, Ordering};
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicPtr, AtomicU8, Ordering};
 
 const NOTE_NONE: u8 = 0;
 const NOTE_ON_FLAG: u8 = 0x80;
@@ -67,17 +67,6 @@ impl DesktopAudio {
                         if block_pos >= chimera_hal::BLOCK_SIZE {
                             voice.render(&mut block, params, sample_rate);
                             reverb.process(&mut block, &params.reverb);
-                            // SAFETY: single-threaded audio callback
-                            unsafe {
-                                DBG_COUNT += 1;
-                                if DBG_COUNT % 100 == 0 {
-                                    let max = block.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
-                                    if max > 0.0001 || DBG_COUNT % 1000 == 0 {
-                                        eprintln!("[audio] block max={:.6} engine={:?} active={}",
-                                            max, params.engine, voice.is_active());
-                                    }
-                                }
-                            }
                             block_pos = 0;
                         }
                         *sample = block[block_pos] * 0.5;

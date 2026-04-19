@@ -1,11 +1,11 @@
+use embedded_graphics::Drawable;
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::geometry::{Point, Size};
-use embedded_graphics::mono_font::ascii::FONT_6X10;
 use embedded_graphics::mono_font::MonoTextStyle;
+use embedded_graphics::mono_font::ascii::FONT_6X10;
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::primitives::{Line, PrimitiveStyle, Rectangle, StyledDrawable};
 use embedded_graphics::text::Text;
-use embedded_graphics::Drawable;
 
 use crate::ui::chain::{ChainDef, ChainNav};
 use crate::ui::theme;

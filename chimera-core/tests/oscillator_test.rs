@@ -10,7 +10,11 @@ fn test_sine_osc_440hz() {
 
     let max = buf.iter().copied().fold(0.0f32, f32::max);
     let min = buf.iter().copied().fold(0.0f32, f32::min);
-    assert!(max > 0.3, "sine should have positive peaks, got max {}", max);
+    assert!(
+        max > 0.3,
+        "sine should have positive peaks, got max {}",
+        max
+    );
     assert!(
         min < -0.3,
         "sine should have negative peaks, got min {}",

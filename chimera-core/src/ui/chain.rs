@@ -172,8 +172,7 @@ impl ChainNav {
 
     /// Get the current node definition.
     pub fn node_def(&self) -> Option<&'static NodeDef> {
-        self.chain_def()
-            .and_then(|c| c.nodes.get(self.node))
+        self.chain_def().and_then(|c| c.nodes.get(self.node))
     }
 
     /// Process control input and update navigation state.
@@ -192,42 +191,44 @@ impl ChainNav {
         ];
         for (i, &btn) in chain_buttons.iter().enumerate() {
             if controls.button_state(btn) == ButtonState::Pressed
-                && let Some(Some(_)) = CHAINS.get(i) {
-                    if self.chain == i {
-                        // Same button = snap home
-                        self.node = 0;
-                        self.sub_page = 0;
-                    } else {
-                        self.chain = i;
-                        self.node = 0;
-                        self.sub_page = 0;
-                    }
+                && let Some(Some(_)) = CHAINS.get(i)
+            {
+                if self.chain == i {
+                    // Same button = snap home
+                    self.node = 0;
+                    self.sub_page = 0;
+                } else {
+                    self.chain = i;
+                    self.node = 0;
+                    self.sub_page = 0;
                 }
+            }
         }
 
         // Left/Right: horizontal navigation
-        if controls.button_state(ButtonId::Minus) == ButtonState::Pressed
-            && self.node > 0 {
-                self.node -= 1;
-                self.sub_page = 0;
-            }
+        if controls.button_state(ButtonId::Minus) == ButtonState::Pressed && self.node > 0 {
+            self.node -= 1;
+            self.sub_page = 0;
+        }
         if controls.button_state(ButtonId::Plus) == ButtonState::Pressed
             && let Some(chain) = self.chain_def()
-                && self.node + 1 < chain.nodes.len() {
-                    self.node += 1;
-                    self.sub_page = 0;
-                }
+            && self.node + 1 < chain.nodes.len()
+        {
+            self.node += 1;
+            self.sub_page = 0;
+        }
 
         // Up/Down: vertical sub-page navigation
-        if controls.button_state(ButtonId::Seq) == ButtonState::Pressed
-            && self.sub_page > 0 {
-                self.sub_page -= 1;
-            }
+        if controls.button_state(ButtonId::Seq) == ButtonState::Pressed && self.sub_page > 0 {
+            self.sub_page -= 1;
+        }
         if controls.button_state(ButtonId::Edit) == ButtonState::Pressed
             && let Some(node) = self.node_def()
-                && !node.sub_pages.is_empty() && self.sub_page + 1 < node.sub_pages.len() {
-                    self.sub_page += 1;
-                }
+            && !node.sub_pages.is_empty()
+            && self.sub_page + 1 < node.sub_pages.len()
+        {
+            self.sub_page += 1;
+        }
 
         // Return whether position changed
         self.chain != prev.chain || self.node != prev.node || self.sub_page != prev.sub_page

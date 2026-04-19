@@ -27,7 +27,12 @@ fn test_modal_through_voice_produces_sound() {
         voice.render(&mut output, &params, SR);
         let block_max = output.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
         total_max = total_max.max(block_max);
-        eprintln!("Block {}: max={:.6}, active={}", i, block_max, voice.is_active());
+        eprintln!(
+            "Block {}: max={:.6}, active={}",
+            i,
+            block_max,
+            voice.is_active()
+        );
     }
 
     assert!(
@@ -119,9 +124,12 @@ fn test_modal_different_from_fm_through_voice() {
     assert!(modal_max > 0.001, "Modal should produce sound");
 
     // They should be different
-    let diff: f32 = fm.iter().zip(modal.iter())
+    let diff: f32 = fm
+        .iter()
+        .zip(modal.iter())
         .map(|(a, b)| (a - b).abs())
-        .sum::<f32>() / fm.len() as f32;
+        .sum::<f32>()
+        / fm.len() as f32;
 
     eprintln!("Avg difference: {}", diff);
     assert!(diff > 0.001, "FM and Modal should differ, diff={}", diff);
@@ -163,6 +171,7 @@ fn test_modal_signal_chain_affects_output() {
     assert!(
         energy_open > energy_closed || energy_open < 0.0001,
         "filter should affect modal: open={} closed={}",
-        energy_open, energy_closed
+        energy_open,
+        energy_closed
     );
 }

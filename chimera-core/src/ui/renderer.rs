@@ -1,11 +1,11 @@
+use embedded_graphics::Drawable;
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::geometry::{Point, Size};
-use embedded_graphics::mono_font::ascii::FONT_6X10;
 use embedded_graphics::mono_font::MonoTextStyle;
+use embedded_graphics::mono_font::ascii::FONT_6X10;
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::primitives::{Line, PrimitiveStyle, Rectangle, StyledDrawable};
 use embedded_graphics::text::Text;
-use embedded_graphics::Drawable;
 
 use crate::params::ParamSnapshot;
 use crate::ui::animation::AnimatedValue;
@@ -54,13 +54,8 @@ impl Renderer {
     }
 
     /// Render full screen.
-    pub fn draw<D>(
-        &self,
-        display: &mut D,
-        nav: &ChainNav,
-        page: PageId,
-        perf: &PerfStats,
-    ) where
+    pub fn draw<D>(&self, display: &mut D, nav: &ChainNav, page: PageId, perf: &PerfStats)
+    where
         D: DrawTarget<Color = Rgb565>,
     {
         // Clear
@@ -121,11 +116,12 @@ impl Renderer {
         x += node.name.len() as i32 * 6;
 
         if !node.sub_pages.is_empty()
-            && let Some(&sub_name) = node.sub_pages.get(nav.sub_page) {
-                let _ = Text::new(" > ", Point::new(x, y), dim).draw(display);
-                x += 18;
-                let _ = Text::new(sub_name, Point::new(x, y), accent).draw(display);
-            }
+            && let Some(&sub_name) = node.sub_pages.get(nav.sub_page)
+        {
+            let _ = Text::new(" > ", Point::new(x, y), dim).draw(display);
+            x += 18;
+            let _ = Text::new(sub_name, Point::new(x, y), accent).draw(display);
+        }
     }
 
     // ── Visualization dispatch ──────────────────────────────────────
@@ -174,29 +170,38 @@ impl Renderer {
         let (positions, connections): ([Point; 4], &[(usize, usize)]) = if algo < 0.33 {
             // Serial chain
             let x0 = cx - (box_w as i32 * 2 + gap);
-            ([
-                Point::new(x0, cy - 8),
-                Point::new(x0 + box_w as i32 + gap, cy - 8),
-                Point::new(x0 + (box_w as i32 + gap) * 2, cy - 8),
-                Point::new(x0 + (box_w as i32 + gap) * 3, cy - 8),
-            ], &[(3, 2), (2, 1), (1, 0)])
+            (
+                [
+                    Point::new(x0, cy - 8),
+                    Point::new(x0 + box_w as i32 + gap, cy - 8),
+                    Point::new(x0 + (box_w as i32 + gap) * 2, cy - 8),
+                    Point::new(x0 + (box_w as i32 + gap) * 3, cy - 8),
+                ],
+                &[(3, 2), (2, 1), (1, 0)],
+            )
         } else if algo < 0.66 {
             // Branch: 3->1, 4->2, 1+2 out
-            ([
-                Point::new(cx - 36, cy + 10),
-                Point::new(cx + 8, cy + 10),
-                Point::new(cx - 36, cy - 24),
-                Point::new(cx + 8, cy - 24),
-            ], &[(2, 0), (3, 1)])
+            (
+                [
+                    Point::new(cx - 36, cy + 10),
+                    Point::new(cx + 8, cy + 10),
+                    Point::new(cx - 36, cy - 24),
+                    Point::new(cx + 8, cy - 24),
+                ],
+                &[(2, 0), (3, 1)],
+            )
         } else {
             // Parallel — all output
             let x0 = cx - (box_w as i32 * 2 + gap);
-            ([
-                Point::new(x0, cy - 8),
-                Point::new(x0 + box_w as i32 + gap, cy - 8),
-                Point::new(x0 + (box_w as i32 + gap) * 2, cy - 8),
-                Point::new(x0 + (box_w as i32 + gap) * 3, cy - 8),
-            ], &[])
+            (
+                [
+                    Point::new(x0, cy - 8),
+                    Point::new(x0 + box_w as i32 + gap, cy - 8),
+                    Point::new(x0 + (box_w as i32 + gap) * 2, cy - 8),
+                    Point::new(x0 + (box_w as i32 + gap) * 3, cy - 8),
+                ],
+                &[],
+            )
         };
 
         let labels = ["OP1", "OP2", "OP3", "OP4"];
@@ -208,21 +213,26 @@ impl Renderer {
                 positions[from].x + box_w as i32 / 2,
                 positions[from].y + box_h as i32,
             );
-            let tp = Point::new(
-                positions[to].x + box_w as i32 / 2,
-                positions[to].y,
-            );
+            let tp = Point::new(positions[to].x + box_w as i32 / 2, positions[to].y);
             let _ = Line::new(fp, tp).draw_styled(&conn_style, display);
         }
 
         // Draw operator boxes
         for (i, &pos) in positions.iter().enumerate() {
             let is_carrier = match connections.len() {
-                0 => true,                           // parallel: all are carriers
+                0 => true,                                      // parallel: all are carriers
                 _ => !connections.iter().any(|&(f, _)| f == i), // not a source = carrier
             };
-            let border = if is_carrier { theme::ACCENT } else { theme::NODE_INACTIVE_BORDER };
-            let text_c = if is_carrier { theme::TEXT } else { theme::TEXT_DIM };
+            let border = if is_carrier {
+                theme::ACCENT
+            } else {
+                theme::NODE_INACTIVE_BORDER
+            };
+            let text_c = if is_carrier {
+                theme::TEXT
+            } else {
+                theme::TEXT_DIM
+            };
 
             let _ = Rectangle::new(pos, Size::new(box_w, box_h))
                 .draw_styled(&PrimitiveStyle::with_stroke(border, 1), display);
@@ -272,7 +282,8 @@ impl Renderer {
 
         for mode in 0..num_modes {
             let mode_x = x0 + (w * (mode + 1)) / (num_modes + 1);
-            let peak_h = (h as f32 * 0.4 * excite * (1.0 - mode as f32 * decay * 0.1).max(0.1)) as i32;
+            let peak_h =
+                (h as f32 * 0.4 * excite * (1.0 - mode as f32 * decay * 0.1).max(0.1)) as i32;
 
             // Draw a peak shape: 3 line segments
             let pw = 8 + (4.0 * (1.0 - bright)) as i32; // peak width
@@ -316,7 +327,7 @@ impl Renderer {
             .draw_styled(&PrimitiveStyle::with_stroke(theme::VIZ_GRID, 1), display);
 
         let wave = self.anim[0].current(); // wave shape: 0=saw, 0.5=square, 1=tri
-        let pw = self.anim[1].current();   // pulse width
+        let pw = self.anim[1].current(); // pulse width
 
         let stroke = PrimitiveStyle::with_stroke(theme::VIZ_LINE, 2);
         let periods = 2;
@@ -341,11 +352,8 @@ impl Renderer {
             } else if wave < 0.66 {
                 // Square/pulse with variable width
                 let duty = (period_w as f32 * (0.2 + pw * 0.6)) as i32;
-                let _ = Line::new(
-                    Point::new(px, mid_y + h / 3),
-                    Point::new(px, mid_y - h / 3),
-                )
-                .draw_styled(&stroke, display);
+                let _ = Line::new(Point::new(px, mid_y + h / 3), Point::new(px, mid_y - h / 3))
+                    .draw_styled(&stroke, display);
                 let _ = Line::new(
                     Point::new(px, mid_y - h / 3),
                     Point::new(px + duty, mid_y - h / 3),
@@ -364,11 +372,8 @@ impl Renderer {
             } else {
                 // Triangle
                 let half = period_w / 2;
-                let _ = Line::new(
-                    Point::new(px, mid_y),
-                    Point::new(px + half, mid_y - h / 3),
-                )
-                .draw_styled(&stroke, display);
+                let _ = Line::new(Point::new(px, mid_y), Point::new(px + half, mid_y - h / 3))
+                    .draw_styled(&stroke, display);
                 let _ = Line::new(
                     Point::new(px + half, mid_y - h / 3),
                     Point::new(px + period_w, mid_y),
@@ -495,10 +500,7 @@ impl Renderer {
 
         // Cutoff marker
         let _ = Line::new(Point::new(cx, y0), Point::new(cx, y1))
-            .draw_styled(
-                &PrimitiveStyle::with_stroke(theme::ACCENT_DIM, 1),
-                display,
-            );
+            .draw_styled(&PrimitiveStyle::with_stroke(theme::ACCENT_DIM, 1), display);
     }
 
     // ── Wavefolder ──────────────────────────────────────────────────
@@ -605,12 +607,19 @@ impl Renderer {
         // Stage labels (tiny, below baseline)
         let dim = MonoTextStyle::new(&FONT_6X10, theme::TEXT_DIM);
         let _ = Text::new("A", Point::new(x0 + atk_w / 2 - 3, y1 + 12), dim).draw(display);
-        let _ = Text::new("D", Point::new(x0 + atk_w + dec_w / 2 - 3, y1 + 12), dim)
-            .draw(display);
-        let _ = Text::new("S", Point::new(x0 + atk_w + dec_w + sus_w / 2 - 3, y1 + 12), dim)
-            .draw(display);
-        let _ = Text::new("R", Point::new(x0 + atk_w + dec_w + sus_w + rel_w / 2 - 3, y1 + 12), dim)
-            .draw(display);
+        let _ = Text::new("D", Point::new(x0 + atk_w + dec_w / 2 - 3, y1 + 12), dim).draw(display);
+        let _ = Text::new(
+            "S",
+            Point::new(x0 + atk_w + dec_w + sus_w / 2 - 3, y1 + 12),
+            dim,
+        )
+        .draw(display);
+        let _ = Text::new(
+            "R",
+            Point::new(x0 + atk_w + dec_w + sus_w + rel_w / 2 - 3, y1 + 12),
+            dim,
+        )
+        .draw(display);
     }
 
     // ── Effects ─────────────────────────────────────────────────────
@@ -679,11 +688,8 @@ impl Renderer {
             let bx = x0 + i as i32 * (bar_w + bar_gap);
 
             // Bar background
-            let _ = Rectangle::new(
-                Point::new(bx, y0),
-                Size::new(bar_w as u32, h as u32),
-            )
-            .draw_styled(&bar_bg, display);
+            let _ = Rectangle::new(Point::new(bx, y0), Size::new(bar_w as u32, h as u32))
+                .draw_styled(&bar_bg, display);
 
             // Fill level — ch1 uses vol param, others are at 50%
             let level = if i == 0 { vol } else { 0.5 };
@@ -742,12 +748,7 @@ impl Renderer {
         // Matrix box
         let _ = Rectangle::new(Point::new(cx - 20, cy - 34), Size::new(40, 68))
             .draw_styled(&border, display);
-        let _ = Text::new(
-            "MTX",
-            Point::new(cx - 10, cy + 4),
-            dim,
-        )
-        .draw(display);
+        let _ = Text::new("MTX", Point::new(cx - 10, cy + 4), dim).draw(display);
 
         // Output column
         for (i, &name) in outputs.iter().enumerate() {
@@ -839,8 +840,8 @@ impl Renderer {
             let mut buf = FmtBuf::new();
             fmt::fmt_val(&mut buf, val, fmts[i]);
             let label_end = x + label.len() as i32 * 6 + 4;
-            let _ = Text::new(buf.as_str(), Point::new(label_end, y + 10), value_style)
-                .draw(display);
+            let _ =
+                Text::new(buf.as_str(), Point::new(label_end, y + 10), value_style).draw(display);
 
             // Value bar below
             let bar_y = y + 15;
@@ -871,7 +872,9 @@ impl Renderer {
         let icons = page.cell_icons();
         let fmts = page.val_formats();
 
-        for (i, ((label, &icon), &vf)) in labels.iter().zip(icons.iter()).zip(fmts.iter()).enumerate() {
+        for (i, ((label, &icon), &vf)) in
+            labels.iter().zip(icons.iter()).zip(fmts.iter()).enumerate()
+        {
             let col = (i % 3) as i32;
             let row = (i / 3) as i32;
             cell::draw_cell(display, col, row, label, self.anim[i].current(), icon, vf);
@@ -891,8 +894,12 @@ impl Renderer {
         let mut buf = FmtBuf::new();
         let _ = write!(buf, "{}us", perf.render_us);
         let text_w = buf.as_str().len() as i32 * 6;
-        let _ = Text::new(buf.as_str(), Point::new(theme::SCREEN_W - text_w - 4, y), dim)
-            .draw(display);
+        let _ = Text::new(
+            buf.as_str(),
+            Point::new(theme::SCREEN_W - text_w - 4, y),
+            dim,
+        )
+        .draw(display);
 
         // Audio load — below render time (if measured)
         if perf.audio_load_pct > 0 {
@@ -918,4 +925,3 @@ impl Renderer {
         }
     }
 }
-

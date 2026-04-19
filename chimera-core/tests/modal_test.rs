@@ -55,7 +55,12 @@ fn test_modal_has_fundamental() {
     let f0 = note_freq(48);
     let fund = goertzel(&buf, f0, SR);
     // Rings-style: fundamental may be quieter than upper modes at default Q
-    assert!(fund > 0.0001, "modal should have fundamental at {}Hz: energy={}", f0, fund);
+    assert!(
+        fund > 0.0001,
+        "modal should have fundamental at {}Hz: energy={}",
+        f0,
+        fund
+    );
 }
 
 #[test]
@@ -69,7 +74,11 @@ fn test_modal_has_harmonics() {
     for h in 1..=12 {
         total_harmonic_energy += goertzel(&buf, f0 * h as f32, SR);
     }
-    assert!(total_harmonic_energy > 0.001, "should have harmonic energy: {}", total_harmonic_energy);
+    assert!(
+        total_harmonic_energy > 0.001,
+        "should have harmonic energy: {}",
+        total_harmonic_energy
+    );
 }
 
 #[test]
@@ -117,7 +126,11 @@ fn test_modal_output_bounded() {
     params.brightness = 1.0;
     let buf = render_modal(&params, 60, 32);
     let max = buf.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
-    assert!(max < 10.0, "modal output should be bounded, got max={}", max);
+    assert!(
+        max < 10.0,
+        "modal output should be bounded, got max={}",
+        max
+    );
 }
 
 #[test]
@@ -185,7 +198,9 @@ fn test_modal_resonator_rings_at_pitch() {
     assert!(
         fund > off1 && fund > off2,
         "fundamental should be stronger than non-harmonic freqs: fund={} off1={} off2={}",
-        fund, off1, off2
+        fund,
+        off1,
+        off2
     );
 }
 
@@ -211,7 +226,9 @@ fn test_modal_position_changes_spectrum() {
     assert!(
         (center - edge).abs() > 0.000001 || (quarter - edge).abs() > 0.000001,
         "position should affect harmonics: center={} quarter={} edge={}",
-        center, quarter, edge
+        center,
+        quarter,
+        edge
     );
 }
 
@@ -243,11 +260,11 @@ fn test_inharm_actually_shifts_modes() {
 
     eprintln!("Harmonic (inharm=0) energies at exact harmonics:");
     for (i, e) in harmonic.iter().enumerate() {
-        eprintln!("  H{}: {:.6}", i+1, e);
+        eprintln!("  H{}: {:.6}", i + 1, e);
     }
     eprintln!("Inharmonic (inharm=1) energies at exact harmonics:");
     for (i, e) in inharmonic.iter().enumerate() {
-        eprintln!("  H{}: {:.6}", i+1, e);
+        eprintln!("  H{}: {:.6}", i + 1, e);
     }
 
     // With inharm=0, modes should be AT the harmonics (high energy)
@@ -255,14 +272,18 @@ fn test_inharm_actually_shifts_modes() {
     let harmonic_total: f32 = harmonic[2..].iter().sum(); // harmonics 3+
     let inharmonic_total: f32 = inharmonic[2..].iter().sum();
 
-    eprintln!("Energy at exact harmonics 3-8: harmonic={:.6} inharmonic={:.6}", harmonic_total, inharmonic_total);
+    eprintln!(
+        "Energy at exact harmonics 3-8: harmonic={:.6} inharmonic={:.6}",
+        harmonic_total, inharmonic_total
+    );
 
     // The inharmonic version should have LESS energy at exact harmonic frequencies
     // because its modes are shifted to non-harmonic positions
     assert!(
         harmonic_total > inharmonic_total * 1.1,
         "inharm should shift modes away from exact harmonics: harmonic={} inharmonic={}",
-        harmonic_total, inharmonic_total
+        harmonic_total,
+        inharmonic_total
     );
 }
 
@@ -288,14 +309,17 @@ fn test_inharm_spreads_spectrum() {
     let harmonic_between = non_harmonic_energy(0.25); // harmonic plateau
     let inharmonic_between = non_harmonic_energy(1.0); // stretched
 
-    eprintln!("Energy between harmonics: harmonic={:.6} inharmonic={:.6}",
-        harmonic_between, inharmonic_between);
+    eprintln!(
+        "Energy between harmonics: harmonic={:.6} inharmonic={:.6}",
+        harmonic_between, inharmonic_between
+    );
 
     // Inharm should change the spectral distribution measurably
     assert!(
         (harmonic_between - inharmonic_between).abs() > 0.0001,
         "inharm should change energy between harmonics: h={} ih={}",
-        harmonic_between, inharmonic_between
+        harmonic_between,
+        inharmonic_between
     );
 }
 
@@ -325,7 +349,7 @@ fn test_modal_debug_output() {
     }
 
     let max = buf.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
-    let rms = libm::sqrtf(buf.iter().map(|s| s*s).sum::<f32>() / buf.len() as f32);
+    let rms = libm::sqrtf(buf.iter().map(|s| s * s).sum::<f32>() / buf.len() as f32);
     eprintln!("\n  Max: {:.4}, RMS: {:.4}", max, rms);
     eprintln!("  Samples: {}", buf.len());
 

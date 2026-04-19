@@ -1,6 +1,6 @@
 use chimera_core::ui::animation::AnimatedValue;
 use chimera_core::ui::chain::ChainNav;
-use chimera_core::ui::fmt::{fmt_val, FmtBuf};
+use chimera_core::ui::fmt::{FmtBuf, fmt_val};
 use chimera_core::ui::page::{PageId, PageLayout, ValFmt};
 
 // ── ValFmt ──────────────────────────────────────────────────────────
@@ -79,7 +79,11 @@ fn test_fmt_bipolar_positive_has_plus() {
     let mut buf = FmtBuf::new();
     fmt_val(&mut buf, 0.75, ValFmt::Bi);
     let s = buf.as_str();
-    assert!(s.starts_with('+'), "positive bipolar should have + prefix: {}", s);
+    assert!(
+        s.starts_with('+'),
+        "positive bipolar should have + prefix: {}",
+        s
+    );
 }
 
 #[test]
@@ -212,8 +216,8 @@ fn test_cell_grid_pages() {
 fn test_drive_tone_and_mix_are_bipolar() {
     let fmts = PageId::Drive.val_formats();
     assert_eq!(fmts[0], ValFmt::Uni); // DRIVE
-    assert_eq!(fmts[1], ValFmt::Bi);  // TONE
-    assert_eq!(fmts[2], ValFmt::Bi);  // MIX
+    assert_eq!(fmts[1], ValFmt::Bi); // TONE
+    assert_eq!(fmts[2], ValFmt::Bi); // MIX
 }
 
 #[test]

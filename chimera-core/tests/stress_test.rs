@@ -165,10 +165,15 @@ fn stress_worst_case() {
 #[test]
 fn stress_summary() {
     eprintln!("\n=== STRESS TEST SUMMARY ===");
-    eprintln!("{:30} {:>12} {:>10}", "Configuration", "us/block", "us/sample");
+    eprintln!(
+        "{:30} {:>12} {:>10}",
+        "Configuration", "us/block", "us/sample"
+    );
     eprintln!("{}", "-".repeat(55));
 
-    bench_render("FM basic", |p| { p.engine = EngineType::Fm; });
+    bench_render("FM basic", |p| {
+        p.engine = EngineType::Fm;
+    });
     bench_render("FM full 4-op", |p| {
         p.engine = EngineType::Fm;
         p.fm.op_level = [0.8, 0.6, 0.6, 1.0];

@@ -109,8 +109,18 @@ fn test_drive_more_drive_more_harmonics() {
     let mid = measure(0.5);
     let high = measure(0.9);
 
-    assert!(mid > low, "more drive = more harmonics: low={} mid={}", low, mid);
-    assert!(high > mid, "more drive = more harmonics: mid={} high={}", mid, high);
+    assert!(
+        mid > low,
+        "more drive = more harmonics: low={} mid={}",
+        low,
+        mid
+    );
+    assert!(
+        high > mid,
+        "more drive = more harmonics: mid={} high={}",
+        mid,
+        high
+    );
 }
 
 #[test]
