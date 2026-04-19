@@ -1,3 +1,4 @@
+use chimera_core::dsp::reverb::Reverb;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::params::ParamSnapshot;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -39,6 +40,7 @@ impl DesktopAudio {
         let shared_clone = Arc::clone(&shared);
 
         let mut voice = Voice::new();
+        let mut reverb = Reverb::new();
 
         let stream = device
             .build_output_stream(
@@ -53,8 +55,6 @@ impl DesktopAudio {
                     if cmd & NOTE_ON_FLAG != 0 {
                         let note = cmd & 0x7F;
                         let vel = shared_clone.velocity.load(Ordering::Relaxed);
-                        eprintln!("[audio] note_on {} vel={} engine={:?} modal_mode={}",
-                            note, vel, params.engine, params.modal.mode);
                         voice.note_on(note, vel, params, sample_rate);
                     } else if cmd > 0 {
                         voice.note_off();
@@ -62,11 +62,11 @@ impl DesktopAudio {
 
                     let mut block = [0.0f32; chimera_hal::BLOCK_SIZE];
                     let mut block_pos = chimera_hal::BLOCK_SIZE;
-                    static mut DBG_COUNT: u32 = 0;
 
                     for sample in data.iter_mut() {
                         if block_pos >= chimera_hal::BLOCK_SIZE {
                             voice.render(&mut block, params, sample_rate);
+                            reverb.process(&mut block, &params.reverb);
                             // SAFETY: single-threaded audio callback
                             unsafe {
                                 DBG_COUNT += 1;
