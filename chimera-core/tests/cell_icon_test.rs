@@ -27,7 +27,7 @@ fn test_cell_grid_pages_have_icons() {
         PageId::EngineModal1,
         PageId::Mixer,
         PageId::Efx,
-        PageId::GlobalEfx,
+        PageId::MixReverb,
         PageId::DemoWaves,
         PageId::DemoShapes,
         PageId::DemoMotion,
@@ -68,8 +68,6 @@ fn test_big_viz_pages_dont_need_icons() {
         PageId::EnvAux,
         PageId::Vca,
         PageId::EngineFmA,
-        PageId::Routing,
-        PageId::Compressor,
     ];
 
     for page in &viz_pages {
@@ -138,9 +136,9 @@ fn test_all_pages_have_6_labels() {
         PageId::Vca,
         PageId::Efx,
         PageId::Mixer,
-        PageId::Routing,
-        PageId::Compressor,
-        PageId::GlobalEfx,
+        PageId::Chorus,
+        PageId::Delay,
+        PageId::MixReverb,
         PageId::EnvAmp,
         PageId::EnvFilter,
         PageId::EnvAux,

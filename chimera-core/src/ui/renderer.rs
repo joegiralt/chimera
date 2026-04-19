@@ -140,10 +140,10 @@ impl Renderer {
             PageId::Vca | PageId::EnvAmp | PageId::EnvFilter | PageId::EnvAux => {
                 self.draw_envelope_viz(display)
             }
-            PageId::Efx | PageId::GlobalEfx => self.draw_efx_viz(display),
+            PageId::Efx | PageId::MixReverb => self.draw_efx_viz(display),
             PageId::Mixer => self.draw_mixer_viz(display),
-            PageId::Routing => self.draw_routing_viz(display),
-            PageId::Compressor => self.draw_comp_viz(display),
+            PageId::Chorus => self.draw_routing_viz(display),
+            PageId::Delay => self.draw_comp_viz(display),
             _ => {} // CellGrid pages don't use this path
         }
     }

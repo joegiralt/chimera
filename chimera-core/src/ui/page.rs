@@ -104,9 +104,10 @@ pub enum PageId {
     Vca,
     Efx,
     Mixer,
-    Routing,
-    Compressor,
-    GlobalEfx,
+    Chorus,
+    Delay,
+    MixReverb,
+    Master,
     EnvAmp,
     EnvFilter,
     EnvAux,
@@ -136,10 +137,10 @@ impl PageId {
             },
             1 => match nav.node {
                 0 => PageId::Mixer,
-                1 => PageId::Routing,
-                2 => PageId::Drive,
-                3 => PageId::Compressor,
-                _ => PageId::GlobalEfx,
+                1 => PageId::Chorus,
+                2 => PageId::Delay,
+                3 => PageId::MixReverb,
+                _ => PageId::Master,
             },
             2 => match nav.node {
                 0 => PageId::EnvAmp,
@@ -167,8 +168,8 @@ impl PageId {
             | PageId::EngineFmA
             | PageId::EngineFmB
             | PageId::EngineFmC
-            | PageId::Routing
-            | PageId::Compressor => PageLayout::BigViz,
+            | PageId::Master
+            | PageId::Master => PageLayout::BigViz,
             // Demo + everything else: cell grid
             _ => PageLayout::CellGrid,
         }
@@ -217,7 +218,7 @@ impl PageId {
                 CellIcon::Arc,      // PITCH
                 CellIcon::Arc,      // GLIDE
             ],
-            PageId::Efx | PageId::GlobalEfx => [
+            PageId::Efx | PageId::MixReverb => [
                 CellIcon::Arc,
                 CellIcon::Arc,
                 CellIcon::Arc,
@@ -272,7 +273,10 @@ impl PageId {
             PageId::EngineVa => [Uni, Uni, Uni, Uni, Uni, Bi],
             PageId::EngineModal1 => [Int(3), Uni, Uni, Uni, Uni, Uni],
             PageId::EngineModal2 => [Int(3), Uni, Uni, Uni, Uni, Uni],
-            PageId::Efx | PageId::GlobalEfx => [Int(2), Uni, Uni, Uni, Uni, Uni],
+            PageId::Chorus => [Int(3), Uni, Uni, Uni, Uni, Uni],
+            PageId::Delay => [Uni, Uni, Uni, Uni, Uni, Uni],
+            PageId::Efx | PageId::MixReverb => [Int(2), Uni, Uni, Uni, Uni, Uni],
+            PageId::Master => [Uni, Bi, Uni, Uni, Uni, Uni],
             PageId::DemoWaves => [Uni, Uni, Uni, Uni, Bi, Bi],
             PageId::DemoShapes => [Uni, Uni, Bi, Bi, Uni, Uni],
             PageId::DemoMotion => [Uni, Uni, Uni, Uni, Bi, Uni],
@@ -303,12 +307,10 @@ impl PageId {
             PageId::EnvAux => ["ATK", "DEC", "SUS", "REL", "LEVEL", "VEL"],
             PageId::Mixer => ["VOL", "PAN", "VOICES", "MIDI", "PITCH", "GLIDE"],
             PageId::Drive => ["DRIVE", "TONE", "MIX", "--", "--", "--"],
-            PageId::Efx | PageId::GlobalEfx => {
-                ["TYPE", "TIME", "DAMP", "SIZE", "MIX", "--"]
-            }
-            PageId::Routing | PageId::Compressor => {
-                ["--", "--", "--", "--", "--", "--"]
-            }
+            PageId::Chorus => ["MODE", "RATE", "DEPTH", "MIX", "--", "--"],
+            PageId::Delay => ["TIME", "FDBK", "WOW", "SAT", "TONE", "MIX"],
+            PageId::Efx | PageId::MixReverb => ["TYPE", "TIME", "DAMP", "SIZE", "MIX", "--"],
+            PageId::Master => ["VOL", "PAN", "--", "--", "--", "--"],
             PageId::DemoWaves => ["CLIP", "WAVE", "PW", "FOLD", "TILT", "SYM"],
             PageId::DemoShapes => ["ARC", "LEVEL", "PAN", "D/W", "CUBE", "STACK"],
             PageId::DemoMotion => ["RIPPL", "BURST", "ORBIT", "SCATR", "BOUNC", "PULSE"],
@@ -421,13 +423,34 @@ impl PageId {
                 params.modal.ks_ens_rate,
                 params.modal.ks_ens_mix,
             ],
-            PageId::Efx | PageId::GlobalEfx => [
+            PageId::Chorus => [
+                params.chorus.mode as f32 / 3.0,
+                params.chorus.rate,
+                params.chorus.depth,
+                params.chorus.mix,
+                0.0,
+                0.0,
+            ],
+            PageId::Delay => [
+                params.delay.time_ms / 1000.0,
+                params.delay.feedback,
+                params.delay.wow_flutter,
+                params.delay.saturation,
+                params.delay.tone,
+                params.delay.mix,
+            ],
+            PageId::Efx | PageId::MixReverb => [
                 params.reverb.reverb_type as f32 / 2.0,
                 params.reverb.time,
                 params.reverb.damping,
                 params.reverb.size,
                 params.reverb.mix,
                 0.0,
+            ],
+            PageId::Master => [
+                params.volume.normalized(),
+                params.pan.normalized(),
+                0.0, 0.0, 0.0, 0.0,
             ],
             _ => [0.5; 6], // placeholder pages
         }
@@ -457,7 +480,15 @@ impl PageId {
                 apply_modal2_encoder(idx, delta, &mut params.modal);
                 return;
             }
-            PageId::Efx | PageId::GlobalEfx => {
+            PageId::Chorus => {
+                apply_chorus_encoder(idx, delta, &mut params.chorus);
+                return;
+            }
+            PageId::Delay => {
+                apply_delay_encoder(idx, delta, &mut params.delay);
+                return;
+            }
+            PageId::Efx | PageId::MixReverb => {
                 apply_reverb_encoder(idx, delta, &mut params.reverb);
                 return;
             }
@@ -567,6 +598,40 @@ fn apply_modal2_encoder(idx: usize, delta: i8, modal: &mut crate::dsp::modal::Mo
         3 => nudge_float(&mut modal.ks_ens_depth, delta, step),
         4 => nudge_float(&mut modal.ks_ens_rate, delta, step),
         5 => nudge_float(&mut modal.ks_ens_mix, delta, step),
+        _ => {}
+    }
+}
+
+fn apply_chorus_encoder(
+    idx: usize,
+    delta: i8,
+    chorus: &mut crate::dsp::chorus::ChorusParams,
+) {
+    let step = 1.0 / 128.0;
+    match idx {
+        0 => nudge_u8(&mut chorus.mode, delta, 3),
+        1 => nudge_float(&mut chorus.rate, delta, step),
+        2 => nudge_float(&mut chorus.depth, delta, step),
+        3 => nudge_float(&mut chorus.mix, delta, step),
+        _ => {}
+    }
+}
+
+fn apply_delay_encoder(
+    idx: usize,
+    delta: i8,
+    delay: &mut crate::dsp::delay::DelayParams,
+) {
+    match idx {
+        0 => {
+            // TIME: 10ms to 1000ms, logarithmic feel
+            delay.time_ms = (delay.time_ms + delta as f32 * 8.0).clamp(10.0, 1000.0);
+        }
+        1 => nudge_float(&mut delay.feedback, delta, 1.0 / 128.0),
+        2 => nudge_float(&mut delay.wow_flutter, delta, 1.0 / 128.0),
+        3 => nudge_float(&mut delay.saturation, delta, 1.0 / 128.0),
+        4 => nudge_float(&mut delay.tone, delta, 1.0 / 128.0),
+        5 => nudge_float(&mut delay.mix, delta, 1.0 / 128.0),
         _ => {}
     }
 }

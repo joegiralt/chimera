@@ -199,7 +199,7 @@ fn test_big_viz_pages() {
     assert_eq!(PageId::Filter.layout(), PageLayout::BigViz);
     assert_eq!(PageId::EnvAmp.layout(), PageLayout::BigViz);
     assert_eq!(PageId::EngineFmA.layout(), PageLayout::BigViz);
-    assert_eq!(PageId::Compressor.layout(), PageLayout::BigViz);
+    // Delay and Chorus are CellGrid, not BigViz
 }
 
 #[test]

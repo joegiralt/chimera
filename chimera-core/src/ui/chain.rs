@@ -62,26 +62,26 @@ pub static MIX_CHAIN: ChainDef = ChainDef {
         NodeDef {
             name: "Mixer",
             short: "MIX",
-            sub_pages: &["CH 1", "CH 2", "CH 3", "CH 4"],
-        },
-        NodeDef {
-            name: "Routing",
-            short: "RTG",
             sub_pages: &[],
         },
         NodeDef {
-            name: "Drive",
-            short: "DRV",
+            name: "Chorus",
+            short: "CHR",
             sub_pages: &[],
         },
         NodeDef {
-            name: "Comp",
-            short: "CMP",
+            name: "Delay",
+            short: "DLY",
             sub_pages: &[],
         },
         NodeDef {
-            name: "Global FX",
-            short: "GFX",
+            name: "Reverb",
+            short: "REV",
+            sub_pages: &[],
+        },
+        NodeDef {
+            name: "Master",
+            short: "MST",
             sub_pages: &[],
         },
     ],
