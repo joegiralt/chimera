@@ -4,6 +4,7 @@ pub fn note_to_freq(note: u8) -> f32 {
 }
 
 pub mod drive;
+pub mod midiverb;
 pub mod envelope;
 pub mod filter;
 pub mod fm;
