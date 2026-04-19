@@ -17,8 +17,8 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT"
 
-# Release profile for firmware (panic=abort needed for no_std)
+# Release profile for firmware
 [profile.release]
 panic = "abort"
 opt-level = "s"
-lto = true
+lto = false

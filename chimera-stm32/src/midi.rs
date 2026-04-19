@@ -1,86 +1,57 @@
 //! MIDI input via USART1 at 31250 baud.
+//! This module is not directly used in main.rs — MIDI rx is split
+//! from the serial peripheral and polled directly.
+//! This file provides the MIDI parser for future use.
 
-use chimera_hal::{MidiIn, MidiMessage};
-use stm32h7xx_hal::serial::Serial;
+use chimera_hal::MidiMessage;
 
-type SerialType = Serial<stm32h7xx_hal::pac::USART1>;
-
-pub struct Stm32Midi {
-    serial: SerialType,
-    state: MidiParseState,
+pub struct MidiParser {
     running_status: u8,
     data: [u8; 2],
     data_idx: usize,
 }
 
-#[derive(Clone, Copy)]
-enum MidiParseState {
-    WaitingStatus,
-    WaitingData,
-}
-
-impl Stm32Midi {
-    pub fn new(serial: SerialType) -> Self {
+impl MidiParser {
+    pub fn new() -> Self {
         Self {
-            serial,
-            state: MidiParseState::WaitingStatus,
             running_status: 0,
             data: [0; 2],
             data_idx: 0,
         }
     }
 
-    fn parse_byte(&mut self, byte: u8) -> Option<MidiMessage> {
+    /// Feed a byte from the UART. Returns a message when complete.
+    pub fn feed(&mut self, byte: u8) -> Option<MidiMessage> {
+        if byte >= 0xF8 {
+            return None; // Real-time — ignore
+        }
+
         if byte >= 0x80 {
             // Status byte
-            if byte >= 0xF8 {
-                // Real-time messages — ignore for now
-                return None;
-            }
             self.running_status = byte;
             self.data_idx = 0;
-            self.state = MidiParseState::WaitingData;
             return None;
         }
 
         // Data byte
-        match self.state {
-            MidiParseState::WaitingStatus => {
-                // Running status
-                if self.running_status >= 0x80 {
-                    self.data_idx = 0;
-                    self.state = MidiParseState::WaitingData;
-                    self.data[0] = byte;
-                    self.data_idx = 1;
-
-                    let expected = Self::data_bytes_for_status(self.running_status);
-                    if self.data_idx >= expected {
-                        self.state = MidiParseState::WaitingStatus;
-                        return self.make_message();
-                    }
-                }
-                None
-            }
-            MidiParseState::WaitingData => {
-                self.data[self.data_idx] = byte;
-                self.data_idx += 1;
-
-                let expected = Self::data_bytes_for_status(self.running_status);
-                if self.data_idx >= expected {
-                    self.state = MidiParseState::WaitingStatus;
-                    return self.make_message();
-                }
-                None
-            }
+        if self.running_status < 0x80 {
+            return None; // No status yet
         }
-    }
 
-    fn data_bytes_for_status(status: u8) -> usize {
-        match status & 0xF0 {
-            0x80 | 0x90 | 0xA0 | 0xB0 | 0xE0 => 2,
+        self.data[self.data_idx] = byte;
+        self.data_idx += 1;
+
+        let expected = match self.running_status & 0xF0 {
             0xC0 | 0xD0 => 1,
             _ => 2,
+        };
+
+        if self.data_idx >= expected {
+            self.data_idx = 0;
+            return self.make_message();
         }
+
+        None
     }
 
     fn make_message(&self) -> Option<MidiMessage> {
@@ -88,7 +59,6 @@ impl Stm32Midi {
         match self.running_status & 0xF0 {
             0x90 => {
                 if self.data[1] == 0 {
-                    // Note on with velocity 0 = note off
                     Some(MidiMessage::NoteOff {
                         channel,
                         note: self.data[0],
@@ -117,17 +87,6 @@ impl Stm32Midi {
                 value: ((self.data[1] as i16) << 7 | self.data[0] as i16) - 8192,
             }),
             _ => None,
-        }
-    }
-}
-
-impl MidiIn for Stm32Midi {
-    fn read(&mut self) -> Option<MidiMessage> {
-        // Try to read available bytes from UART
-        // The stm32h7xx-hal serial read is non-blocking
-        match self.serial.read() {
-            Ok(byte) => self.parse_byte(byte),
-            Err(_) => None,
         }
     }
 }
