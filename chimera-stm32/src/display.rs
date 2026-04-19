@@ -153,7 +153,34 @@ where
         let _ = self.cs.set_high();
     }
 
+    fn flush_region(&mut self, y_start: u16, y_end: u16) {
+        // Column address: 0-239
+        self.cmd_data(0x2A, &[0x00, 0x00, 0x00, 0xEF]);
+        // Row address: y_start to y_end-1
+        let ys = y_start.to_be_bytes();
+        let ye = (y_end - 1).to_be_bytes();
+        self.cmd_data(0x2B, &[ys[0], ys[1], ye[0], ye[1]]);
+        self.cmd(0x2C); // RAMWR
+
+        let _ = self.dc.set_high();
+        let _ = self.cs.set_low();
+
+        let start = y_start as usize * SCREEN_WIDTH as usize;
+        let end = y_end as usize * SCREEN_WIDTH as usize;
+        let mut bytes = [0u8; 512];
+        for chunk in self.fb[start..end].chunks(256) {
+            for (i, &pixel) in chunk.iter().enumerate() {
+                bytes[i * 2] = (pixel >> 8) as u8;
+                bytes[i * 2 + 1] = pixel as u8;
+            }
+            let _ = self.spi.write(&bytes[..chunk.len() * 2]);
+        }
+
+        let _ = self.cs.set_high();
+    }
+
     fn pixel_buffer(&mut self) -> &mut [u16] {
         &mut self.fb
     }
 }
+

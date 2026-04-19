@@ -98,6 +98,32 @@ impl ChimeraDisplay for DesktopDisplay {
             .expect("failed to update window");
     }
 
+    fn flush_region(&mut self, y_start: u16, y_end: u16) {
+        let w = SCREEN_WIDTH as usize;
+        let sw = w * SCALE;
+        for y in y_start as usize..y_end as usize {
+            for x in 0..w {
+                let pixel = self.fb[y * w + x];
+                let r = ((pixel >> 11) & 0x1F) as u32;
+                let g = ((pixel >> 5) & 0x3F) as u32;
+                let b = (pixel & 0x1F) as u32;
+                let rgb = (r << 19) | (g << 10) | (b << 3);
+                for dy in 0..SCALE {
+                    for dx in 0..SCALE {
+                        self.window_buf[(y * SCALE + dy) * sw + x * SCALE + dx] = rgb;
+                    }
+                }
+            }
+        }
+        self.window
+            .update_with_buffer(
+                &self.window_buf,
+                SCREEN_WIDTH as usize * SCALE,
+                SCREEN_HEIGHT as usize * SCALE,
+            )
+            .expect("failed to update window");
+    }
+
     fn pixel_buffer(&mut self) -> &mut [u16] {
         &mut self.fb
     }
