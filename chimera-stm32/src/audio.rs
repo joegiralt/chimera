@@ -1,36 +1,121 @@
-//! SAI audio output via DMA.
+//! SAI1 Block A audio output — test tone bringup.
 //!
-//! SAI1 Block A: master TX, 48kHz 32-bit I2S, circular DMA
-//! Half-transfer ISR renders 128 samples (BLOCK_SIZE) from chimera-core.
+//! Configures PLL3 for ~48kHz audio clock, sets up SAI1_A as I2S master TX,
+//! and provides FIFO polling + data write helpers.
 //!
-//! TODO: This module is a placeholder. Full DMA circular buffer setup
-//! requires unsafe static buffers and interrupt handlers which need
-//! careful implementation. For initial bringup, audio is rendered
-//! in the main loop.
+//! PLL3: HSE 8MHz / M=1 * N=46 / P=3 = 122.67 MHz SAI kernel clock
+//! SAI1_A: MCKDIV=5 → MCLK=12.27MHz → FS=47917Hz
 
-use chimera_hal::BLOCK_SIZE;
+use stm32h7xx_hal::pac;
 
-/// Audio DMA buffer — double-buffered, placed in D2 SRAM for DMA access.
-/// Each half = BLOCK_SIZE stereo samples = 128 * 2 * 4 bytes = 1024 bytes.
-#[repr(align(4))]
-pub struct AudioBuffer {
-    pub data: [i32; BLOCK_SIZE * 2 * 2], // double-buffer, stereo, 32-bit
+// SAI1 Block A CR1 register address for raw bit manipulation (MCKEN bit 27)
+const SAI1_CHA_CR1: *mut u32 = 0x4001_5804 as *mut u32;
+
+/// Configure PLL3 to produce the SAI audio clock.
+/// Must be called after rcc.freeze() — uses read-modify-write to preserve PLL1/PLL2.
+///
+/// # Safety
+/// Modifies shared RCC registers. Call once during init, before SAI is enabled.
+pub fn init_pll3() {
+    // SAFETY: single-threaded init, no interrupts access RCC at this point
+    let rcc = unsafe { &*pac::RCC::ptr() };
+
+    // 1. Enable SAI1 peripheral clock
+    rcc.apb2enr.modify(|_, w| w.sai1en().enabled());
+    cortex_m::asm::delay(100);
+
+    // 2. Disable PLL3
+    rcc.cr.modify(|_, w| w.pll3on().off());
+    while rcc.cr.read().pll3rdy().is_ready() {}
+
+    // 3. Set PLL3 input divider: DIVM3 = 1 (preserve DIVM1/DIVM2)
+    rcc.pllckselr.modify(|_, w| unsafe { w.divm3().bits(1) });
+
+    // 4. Set PLL3 multiplier and dividers: N=46 (val 45), P=3 (val 2)
+    rcc.pll3divr.write(|w| unsafe {
+        w.divn3().bits(45)  // N-1
+         .divp3().bits(2)   // P-1
+         .divq3().bits(1)   // Q not used, but must be valid
+         .divr3().bits(1)   // R not used, but must be valid
+    });
+
+    // 5. Configure PLL3: wide VCO range (192-836 MHz), input range 8-16 MHz, enable P output
+    rcc.pllcfgr.modify(|_, w| {
+        w.pll3vcosel().wide_vco()
+         .pll3rge().range8()
+         .divp3en().enabled()
+    });
+
+    // 6. Enable PLL3
+    rcc.cr.modify(|_, w| w.pll3on().on());
+    while !rcc.cr.read().pll3rdy().is_ready() {}
+
+    // 7. Set SAI1 clock source to PLL3_P (0b001)
+    rcc.d2ccip1r.modify(|_, w| unsafe { w.sai1sel().bits(0b001) });
 }
 
-impl AudioBuffer {
-    pub const fn new() -> Self {
-        Self {
-            data: [0; BLOCK_SIZE * 2 * 2],
-        }
+/// Configure SAI1 Block A as I2S master TX.
+/// Call after init_pll3() and after SAI1 pins are configured as AF6.
+pub fn init_sai1a() {
+    let sai1 = unsafe { &*pac::SAI1::ptr() };
+    let cha = sai1.cha();
+
+    // Disable SAI before configuration
+    cha.cr1.modify(|_, w| w.saien().clear_bit());
+    while cha.cr1.read().saien().bit_is_set() {}
+
+    // CR1: Master TX, Free I2S, 32-bit, MCKDIV=5
+    cha.cr1.write(|w| unsafe {
+        w.mode().bits(0b00)      // Master TX
+         .prtcfg().bits(0b00)    // Free protocol (I2S)
+         .ds().bits(0b110)       // 32-bit data
+         .mckdiv().bits(5)       // MCLK divider
+    });
+
+    // Set MCKEN (bit 27) via raw register — not in PAC
+    // SAFETY: single-threaded init, SAI is disabled
+    unsafe {
+        let cr1 = core::ptr::read_volatile(SAI1_CHA_CR1);
+        core::ptr::write_volatile(SAI1_CHA_CR1, cr1 | (1 << 27));
     }
+
+    // CR2: FIFO threshold 1/4, flush FIFO
+    cha.cr2.write(|w| unsafe {
+        w.fth().bits(0b001)      // FIFO threshold = 1/4
+         .fflush().set_bit()     // Flush FIFO
+    });
+
+    // FRCR: 64-bit frame, FS active 32 bits, channel ID, active low, offset 1
+    cha.frcr.write(|w| unsafe {
+        w.frl().bits(63)         // Frame length = 64 bits
+         .fsall().bits(31)       // FS active for 32 bits
+         .fsdef().set_bit()      // FS is channel identification
+         .fspol().clear_bit()    // FS active low
+         .fsoff().set_bit()      // FS one bit before first data
+    });
+
+    // SLOTR: 2 slots, both active, 32-bit slot size
+    cha.slotr.write(|w| unsafe {
+        w.nbslot().bits(1)       // 2 slots (N-1)
+         .sloten().bits(0b0011)  // Slots 0 and 1 active
+         .slotsz().bits(0b10)    // 32-bit slot size
+    });
+
+    // Enable SAI
+    cha.cr1.modify(|_, w| w.saien().set_bit());
 }
 
-/// Convert f32 audio samples to i32 for the SAI DAC.
-/// The CS4344 expects 32-bit I2S (left-justified).
-pub fn f32_to_i32_stereo(input: &[f32; BLOCK_SIZE], output: &mut [i32], offset: usize) {
-    for i in 0..BLOCK_SIZE {
-        let sample = (input[i] * 0.7 * (i32::MAX as f32)) as i32;
-        output[offset + i * 2] = sample; // Left
-        output[offset + i * 2 + 1] = sample; // Right (mono for now)
-    }
+/// Check if the SAI1_A FIFO has room for more data.
+#[inline]
+pub fn sai_fifo_has_room() -> bool {
+    let sai1 = unsafe { &*pac::SAI1::ptr() };
+    sai1.cha().sr.read().flvl().bits() < 4
+}
+
+/// Write a 32-bit sample to the SAI1_A FIFO.
+/// Call twice per stereo sample (left then right).
+#[inline]
+pub fn write_sai_data(sample: i32) {
+    let sai1 = unsafe { &*pac::SAI1::ptr() };
+    sai1.cha().dr.write(|w| unsafe { w.data().bits(sample as u32) });
 }
