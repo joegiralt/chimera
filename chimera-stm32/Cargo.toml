@@ -12,3 +12,4 @@ stm32h7xx-hal = { version = "0.16", features = ["stm32h750", "rt"] }
 embedded-graphics = "0.8"
 embedded-graphics-core = "0.4"
 panic-halt = "1.0"
+libm = "0.2"
