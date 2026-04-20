@@ -74,9 +74,8 @@ fn main() -> ! {
     let mut ui = UiState::new();
     let perf = PerfTracker::new();
 
-    // SysTick disabled for audio test — its ISR causes FIFO underruns
-    // controls::start_systick(200_000_000);
-    // controls::enable();
+    controls::start_systick(200_000_000);
+    controls::enable();
 
     // Audio init
     audio::init_pll3();
@@ -120,17 +119,35 @@ fn main() -> ! {
     // Phase increment for 440 Hz at 47917 Hz sample rate
     let phase_inc: u32 = 39_472_883;
 
-    // 440 Hz sine via lookup table, 16-bit
     let mut phase_acc: u32 = 0;
     let phase_inc: u32 = 39_472_883; // 440 Hz at 47917 Hz
 
     loop {
-        if audio::sai_fifo_has_room() {
+        // Feed SAI FIFO — runs every loop iteration
+        while audio::sai_fifo_has_room() {
             let idx = (phase_acc >> 24) as usize;
-            let sample = (SINE_TABLE[idx] >> 16) as i16; // scale i32 table to i16
-            audio::write_sai_data(sample); // left
-            audio::write_sai_data(sample); // right
+            let sample = (SINE_TABLE[idx] >> 16) as i16;
+            audio::write_sai_data(sample);
+            audio::write_sai_data(sample);
             phase_acc = phase_acc.wrapping_add(phase_inc);
+        }
+
+        // Controls + display
+        controls.snapshot();
+        let has_input = controls.has_activity();
+
+        if has_input {
+            ui.handle_input(&controls);
+        }
+
+        ui.update();
+
+        let flush_list = ui.render_dirty(&mut display, &perf.stats);
+
+        for &(ys, ye) in &flush_list {
+            if ys != ye {
+                display.flush_region(ys, ye);
+            }
         }
     }
 }
