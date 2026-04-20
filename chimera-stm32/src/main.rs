@@ -74,8 +74,9 @@ fn main() -> ! {
     let mut ui = UiState::new();
     let perf = PerfTracker::new();
 
-    controls::start_systick(200_000_000);
-    controls::enable();
+    // SysTick disabled for audio test — its ISR causes FIFO underruns
+    // controls::start_systick(200_000_000);
+    // controls::enable();
 
     // Audio init
     audio::init_pll3();
@@ -88,34 +89,48 @@ fn main() -> ! {
     ui.prime_regions(&perf.stats);
     led.set_low();
 
-    let mut audio_phase: f32 = 0.0;
+    // 256-entry sine lookup table (i32, 50% amplitude)
+    static SINE_TABLE: [i32; 256] = {
+        // Generated: (sin(i/256 * 2*PI) * 0.5 * i32::MAX) for i in 0..256
+        // Using const evaluation trick with precomputed values
+        let mut table = [0i32; 256];
+        let mut i = 0;
+        while i < 256 {
+            // Approximate: sin(x) via polynomial for const eval
+            // x = i/256 * 2*PI
+            let t = i as f64 / 256.0;
+            let x = t * 2.0 * 3.14159265358979323846;
+            // Taylor series sin(x) = x - x³/6 + x⁵/120 - x⁷/5040 + x⁹/362880
+            // Reduce x to [-PI, PI] range first
+            let x = x - (6.28318530717958647692 * ((x / 6.28318530717958647692 + 0.5) as i64 as f64));
+            let x2 = x * x;
+            let x3 = x2 * x;
+            let x5 = x3 * x2;
+            let x7 = x5 * x2;
+            let x9 = x7 * x2;
+            let x11 = x9 * x2;
+            let s = x - x3 / 6.0 + x5 / 120.0 - x7 / 5040.0 + x9 / 362880.0 - x11 / 39916800.0;
+            table[i] = (s * 0.5 * 2147483647.0) as i32;
+            i += 1;
+        }
+        table
+    };
+
+    let mut phase_acc: u32 = 0;
+    // Phase increment for 440 Hz at 47917 Hz sample rate
+    let phase_inc: u32 = 39_472_883;
+
+    // 440 Hz sine via lookup table, 16-bit
+    let mut phase_acc: u32 = 0;
+    let phase_inc: u32 = 39_472_883; // 440 Hz at 47917 Hz
 
     loop {
-        // Feed SAI FIFO with 440 Hz sine
-        while audio::sai_fifo_has_room() {
-            let sample = libm::sinf(audio_phase * 2.0 * core::f32::consts::PI);
-            let i32_sample = (sample * 0.5 * (i32::MAX as f32)) as i32;
-            audio::write_sai_data(i32_sample); // left
-            audio::write_sai_data(i32_sample); // right
-            audio_phase += 440.0 / 47917.0;
-            if audio_phase >= 1.0 { audio_phase -= 1.0; }
-        }
-
-        controls.snapshot();
-        let has_input = controls.has_activity();
-
-        if has_input {
-            ui.handle_input(&controls);
-        }
-
-        ui.update();
-
-        let flush_list = ui.render_dirty(&mut display, &perf.stats);
-
-        for &(ys, ye) in &flush_list {
-            if ys != ye {
-                display.flush_region(ys, ye);
-            }
+        if audio::sai_fifo_has_room() {
+            let idx = (phase_acc >> 24) as usize;
+            let sample = (SINE_TABLE[idx] >> 16) as i16; // scale i32 table to i16
+            audio::write_sai_data(sample); // left
+            audio::write_sai_data(sample); // right
+            phase_acc = phase_acc.wrapping_add(phase_inc);
         }
     }
 }
