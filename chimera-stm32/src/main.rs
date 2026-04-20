@@ -53,6 +53,12 @@ fn main() -> ! {
     let mut led = gpioe.pe1.into_push_pull_output();
     let mut backlight = gpioe.pe11.into_push_pull_output();
     backlight.set_high();
+
+    // SAI1 pins (AF6) for audio DAC 1
+    let _sai_mclk = gpioe.pe2.into_alternate::<6>();
+    let _sai_fs = gpioe.pe4.into_alternate::<6>();
+    let _sai_sck = gpioe.pe5.into_alternate::<6>();
+    let _sai_sd_a = gpioe.pe6.into_alternate::<6>();
     led.set_high();
 
     let sck = gpioa.pa5.into_push_pull_output();
@@ -71,6 +77,10 @@ fn main() -> ! {
     controls::start_systick(200_000_000);
     controls::enable();
 
+    // Audio init
+    audio::init_pll3();
+    audio::init_sai1a();
+
     // Initial render
     ui.update();
     ui.render(&mut display, &perf.stats);
@@ -78,7 +88,19 @@ fn main() -> ! {
     ui.prime_regions(&perf.stats);
     led.set_low();
 
+    let mut audio_phase: f32 = 0.0;
+
     loop {
+        // Feed SAI FIFO with 440 Hz sine
+        while audio::sai_fifo_has_room() {
+            let sample = libm::sinf(audio_phase * 2.0 * core::f32::consts::PI);
+            let i32_sample = (sample * 0.5 * (i32::MAX as f32)) as i32;
+            audio::write_sai_data(i32_sample); // left
+            audio::write_sai_data(i32_sample); // right
+            audio_phase += 440.0 / 47917.0;
+            if audio_phase >= 1.0 { audio_phase -= 1.0; }
+        }
+
         controls.snapshot();
         let has_input = controls.has_activity();
 
