@@ -48,11 +48,11 @@ pub fn draw_cell_with_mod<D>(
     icon: CellIcon,
     val_fmt: ValFmt,
     focused: bool,
-    mod_amount: f32,  // -1.0 to +1.0, 0.0 = no modulation or not a mod dest
+    mod_info: Option<f32>,  // None = not a mod dest, Some(amount) = show mod bar
 ) where
     D: DrawTarget<Color = Rgb565>,
 {
-    draw_cell_inner(display, col, row, label, value, icon, val_fmt, focused, mod_amount);
+    draw_cell_inner(display, col, row, label, value, icon, val_fmt, focused, mod_info);
 }
 
 /// Draw a single encoder cell, optionally with focus highlight.
@@ -68,7 +68,7 @@ pub fn draw_cell_focused<D>(
 ) where
     D: DrawTarget<Color = Rgb565>,
 {
-    draw_cell_inner(display, col, row, label, value, icon, val_fmt, focused, 0.0);
+    draw_cell_inner(display, col, row, label, value, icon, val_fmt, focused, None);
 }
 
 fn draw_cell_inner<D>(
@@ -80,7 +80,7 @@ fn draw_cell_inner<D>(
     icon: CellIcon,
     val_fmt: ValFmt,
     focused: bool,
-    mod_amount: f32,
+    mod_info: Option<f32>,
 ) where
     D: DrawTarget<Color = Rgb565>,
 {
@@ -139,7 +139,7 @@ fn draw_cell_inner<D>(
     }
 
     // Modulation bar — shown below value bar when param is a mod destination
-    if mod_amount != 0.0 {
+    if let Some(mod_amount) = mod_info {
         let mod_bar_y = bar_y + theme::BAR_HEIGHT + 2;
         let mid_x = cx + 4 + bar_w / 2;
 
