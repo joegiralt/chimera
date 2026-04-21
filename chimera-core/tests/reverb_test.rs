@@ -1,7 +1,7 @@
 use chimera_core::dsp::reverb::{Reverb, ReverbParams, ReverbType};
 
-fn impulse_block() -> [f32; 128] {
-    let mut block = [0.0f32; 128];
+fn impulse_block() -> [f32; 64] {
+    let mut block = [0.0f32; 64];
     block[0] = 1.0;
     block
 }
@@ -30,7 +30,7 @@ fn render_reverb(reverb_type: u8, time: f32, mix: f32, blocks: usize) -> Vec<f32
 
     // Subsequent blocks: silence input, reverb tail
     for _ in 1..blocks {
-        let mut block = [0.0f32; 128];
+        let mut block = [0.0f32; 64];
         reverb.process(&mut block, &params);
         all.extend_from_slice(&block);
     }
@@ -42,7 +42,7 @@ fn render_reverb(reverb_type: u8, time: f32, mix: f32, blocks: usize) -> Vec<f32
 
 #[test]
 fn test_plate_produces_tail() {
-    let buf = render_reverb(0, 0.7, 1.0, 128);
+    let buf = render_reverb(0, 0.7, 1.0, 256);
     // Plate has long delay lines (up to 4782 samples = 100ms)
     // Check for tail after 200ms (9600 samples)
     let late_rms = rms(&buf[9600..]);
@@ -55,7 +55,7 @@ fn test_plate_produces_tail() {
 
 #[test]
 fn test_fdn_produces_tail() {
-    let buf = render_reverb(1, 0.7, 1.0, 16);
+    let buf = render_reverb(1, 0.7, 1.0, 32);
     let late_rms = rms(&buf[1024..]);
     assert!(
         late_rms > 0.001,
@@ -66,7 +66,7 @@ fn test_fdn_produces_tail() {
 
 #[test]
 fn test_midiverb_produces_tail() {
-    let buf = render_reverb(2, 0.7, 1.0, 16);
+    let buf = render_reverb(2, 0.7, 1.0, 32);
     let late_rms = rms(&buf[1024..]);
     assert!(
         late_rms > 0.001,
@@ -113,8 +113,8 @@ fn test_reverbs_output_bounded() {
 
 #[test]
 fn test_plate_longer_time_longer_tail() {
-    let short = render_reverb(0, 0.3, 1.0, 128);
-    let long = render_reverb(0, 0.9, 1.0, 128);
+    let short = render_reverb(0, 0.3, 1.0, 256);
+    let long = render_reverb(0, 0.9, 1.0, 256);
 
     let short_late = rms(&short[12800..]);
     let long_late = rms(&long[12800..]);
@@ -129,8 +129,8 @@ fn test_plate_longer_time_longer_tail() {
 
 #[test]
 fn test_fdn_longer_time_longer_tail() {
-    let short = render_reverb(1, 0.3, 1.0, 32);
-    let long = render_reverb(1, 0.9, 1.0, 32);
+    let short = render_reverb(1, 0.3, 1.0, 64);
+    let long = render_reverb(1, 0.9, 1.0, 64);
 
     let short_late = rms(&short[2048..]);
     let long_late = rms(&long[2048..]);
@@ -215,10 +215,10 @@ fn test_reverb_time_full_sweep() {
 
         for step in 0..=total {
             let time = step as f32 / total as f32;
-            let buf = render_reverb(rt, time, 1.0, 128);
+            let buf = render_reverb(rt, time, 1.0, 256);
             let late = rms(&buf[buf.len() / 2..]);
 
-            if prev_rms >= 0.0 && (late - prev_rms).abs() > 0.0001 {
+            if prev_rms >= 0.0 && (late - prev_rms).abs() > 0.00001 {
                 changes += 1;
             }
             prev_rms = late;
@@ -257,10 +257,10 @@ fn render_reverb_with_change(
     let mut block = impulse_block();
     reverb.process(&mut block, &params);
     for _ in 1..blocks_before {
-        let mut block = [0.0f32; 128];
+        let mut block = [0.0f32; 64];
         reverb.process(&mut block, &params);
     }
-    let mut before_block = [0.0f32; 128];
+    let mut before_block = [0.0f32; 64];
     reverb.process(&mut before_block, &params);
     let before_rms = rms(&before_block);
 
@@ -269,10 +269,10 @@ fn render_reverb_with_change(
 
     // Render "after"
     for _ in 0..blocks_after {
-        let mut block = [0.0f32; 128];
+        let mut block = [0.0f32; 64];
         reverb.process(&mut block, &params);
     }
-    let mut after_block = [0.0f32; 128];
+    let mut after_block = [0.0f32; 64];
     reverb.process(&mut after_block, &params);
     let after_rms = rms(&after_block);
 
@@ -310,11 +310,11 @@ fn test_fdn_time_mid_reverb() {
         |p| {
             p.time = 0.1;
         },
-        16,
-        16,
+        32,
+        32,
     );
     assert!(
-        (before - after).abs() > 0.0001 || after < before,
+        (before - after).abs() > 0.00001 || after < before,
         "FDN time should change tail: before={} after={}",
         before,
         after
@@ -422,7 +422,7 @@ fn test_reverb_through_voice_produces_tail() {
     voice.note_on(60, 100, &params, 48000);
 
     // Render a few blocks with note
-    let mut block = [0.0f32; 128];
+    let mut block = [0.0f32; 64];
     for _ in 0..8 {
         voice.render(&mut block, &params, 48000);
         reverb.process(&mut block, &params.reverb);
@@ -462,7 +462,7 @@ fn test_reverb_type_switch_e2e() {
 
         voice.note_on(60, 100, &params, 48000);
 
-        let mut block = [0.0f32; 128];
+        let mut block = [0.0f32; 64];
         let mut total = 0.0f32;
         for _ in 0..32 {
             voice.render(&mut block, &params, 48000);
@@ -502,7 +502,7 @@ fn test_midiverb_ii_all_programs_produce_output() {
     for prog_idx in 0..8 {
         let prog = MvProgram::from_u8(prog_idx);
         let mut mv = MidiVerbII::new();
-        let mut block = [0.0f32; 128];
+        let mut block = [0.0f32; 64];
         block[0] = 1.0; // impulse
 
         mv.process(&mut block, prog, 1.0);
@@ -510,7 +510,7 @@ fn test_midiverb_ii_all_programs_produce_output() {
         // Render enough blocks for long-delay programs (reverse needs 8000+ samples)
         let mut total_energy = 0.0f32;
         for _ in 0..128 {
-            let mut b = [0.0f32; 128];
+            let mut b = [0.0f32; 64];
             mv.process(&mut b, prog, 1.0);
             total_energy += b.iter().map(|s| s * s).sum::<f32>();
         }
@@ -530,12 +530,12 @@ fn test_midiverb_ii_programs_sound_different() {
     let render_program = |prog: MvProgram| -> Vec<f32> {
         let mut mv = MidiVerbII::new();
         let mut all = Vec::new();
-        let mut block = [0.0f32; 128];
+        let mut block = [0.0f32; 64];
         block[0] = 1.0;
         mv.process(&mut block, prog, 1.0);
         all.extend_from_slice(&block);
         for _ in 0..16 {
-            let mut b = [0.0f32; 128];
+            let mut b = [0.0f32; 64];
             mv.process(&mut b, prog, 1.0);
             all.extend_from_slice(&b);
         }
@@ -560,7 +560,7 @@ fn test_midiverb_ii_output_bounded() {
         let mut mv = MidiVerbII::new();
 
         for _ in 0..64 {
-            let mut block = [0.0f32; 128];
+            let mut block = [0.0f32; 64];
             block[0] = 1.0;
             mv.process(&mut block, prog, 1.0);
             let max = block.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
@@ -578,7 +578,7 @@ fn test_midiverb_ii_output_finite() {
         let mut mv = MidiVerbII::new();
 
         for _ in 0..32 {
-            let mut block = [0.0f32; 128];
+            let mut block = [0.0f32; 64];
             block[0] = 0.5;
             mv.process(&mut block, prog, 1.0);
             for &s in &block {

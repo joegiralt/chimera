@@ -28,7 +28,7 @@ fn render_modal(params: &ModalParams, note: u8, blocks: usize) -> Vec<f32> {
     let mut engine = ModalEngine::new();
     engine.note_on(note, 100, params, SR);
     let mut all = Vec::new();
-    let mut block = [0.0f32; 128];
+    let mut block = [0.0f32; 64];
     for _ in 0..blocks {
         engine.render(&mut block, params, SR);
         all.extend_from_slice(&block);
@@ -87,7 +87,7 @@ fn test_modal_decays() {
     let mut engine = ModalEngine::new();
     engine.note_on(60, 100, &params, SR);
 
-    let mut block = [0.0f32; 128];
+    let mut block = [0.0f32; 64];
 
     // Measure energy in early block
     engine.render(&mut block, &params, SR);
@@ -112,7 +112,7 @@ fn test_modal_decays() {
 fn test_modal_silent_when_idle() {
     let params = modal_params();
     let mut engine = ModalEngine::new();
-    let mut block = [0.0f32; 128];
+    let mut block = [0.0f32; 64];
     engine.render(&mut block, &params, SR);
     let max = block.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
     assert!(max < 0.001, "idle modal should be silent");

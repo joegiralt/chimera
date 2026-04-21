@@ -109,7 +109,7 @@ fn prop_output_always_finite() {
         let mut voice = Voice::new();
         voice.note_on(note, 100, &params, SR);
 
-        let mut block = [0.0f32; 128];
+        let mut block = [0.0f32; 64];
         for _ in 0..8 {
             voice.render(&mut block, &params, SR);
 
@@ -141,7 +141,7 @@ fn prop_output_bounded() {
         let mut voice = Voice::new();
         voice.note_on(note, 127, &params, SR);
 
-        let mut block = [0.0f32; 128];
+        let mut block = [0.0f32; 64];
         for _ in 0..16 {
             voice.render(&mut block, &params, SR);
 
@@ -171,7 +171,7 @@ fn prop_note_on_produces_sound() {
         let mut voice = Voice::new();
         voice.note_on(note, 100, &params, SR);
 
-        let mut block = [0.0f32; 128];
+        let mut block = [0.0f32; 64];
         let mut total_max = 0.0f32;
 
         for _ in 0..16 {
@@ -223,7 +223,7 @@ fn prop_param_change_changes_output() {
         // Render A
         let mut voice_a = Voice::new();
         voice_a.note_on(note, 100, &params_a, SR);
-        let mut buf_a = [0.0f32; 128];
+        let mut buf_a = [0.0f32; 64];
         for _ in 0..8 {
             voice_a.render(&mut buf_a, &params_a, SR);
         }
@@ -231,7 +231,7 @@ fn prop_param_change_changes_output() {
         // Render B
         let mut voice_b = Voice::new();
         voice_b.note_on(note, 100, &params_b, SR);
-        let mut buf_b = [0.0f32; 128];
+        let mut buf_b = [0.0f32; 64];
         for _ in 0..8 {
             voice_b.render(&mut buf_b, &params_b, SR);
         }
@@ -279,7 +279,7 @@ fn prop_note_off_eventually_silences() {
         let mut voice = Voice::new();
         voice.note_on(note, 100, &params, SR);
 
-        let mut block = [0.0f32; 128];
+        let mut block = [0.0f32; 64];
         // Play for a bit
         for _ in 0..4 {
             voice.render(&mut block, &params, SR);
@@ -287,12 +287,12 @@ fn prop_note_off_eventually_silences() {
         // Note off
         voice.note_off();
 
-        // Render until silent or max 500 blocks (~1.3s)
+        // Render until silent or max 1000 blocks (~2.6s)
         let mut silent = false;
-        for _ in 0..500 {
+        for _ in 0..1000 {
             voice.render(&mut block, &params, SR);
             let max = block.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
-            if max < 0.01 || !voice.is_active() {
+            if max < 0.005 || !voice.is_active() {
                 silent = true;
                 break;
             }
@@ -328,7 +328,7 @@ fn verify_full_sweep(
 
         let mut voice = Voice::new();
         voice.note_on(60, 100, &params, SR);
-        let mut block = [0.0f32; 128];
+        let mut block = [0.0f32; 64];
         // Render enough blocks for damping/decay differences to manifest
         for _ in 0..32 {
             voice.render(&mut block, &params, SR);

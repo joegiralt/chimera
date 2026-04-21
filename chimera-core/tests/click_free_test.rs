@@ -5,9 +5,9 @@
 use chimera_core::dsp::reverb::Reverb;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::params::{EngineType, ParamSnapshot};
+use chimera_hal::BLOCK_SIZE;
 
 const SR: u32 = 48000;
-const BLOCK_SIZE: usize = 128;
 
 /// Simulate the audio callback: render blocks, scatter to output buffer,
 /// check for discontinuities (clicks) in the output stream.

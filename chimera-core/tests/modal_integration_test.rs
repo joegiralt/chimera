@@ -20,7 +20,7 @@ fn test_modal_through_voice_produces_sound() {
 
     voice.note_on(60, 100, &params, SR);
 
-    let mut output = [0.0f32; 128];
+    let mut output = [0.0f32; 64];
     let mut total_max = 0.0f32;
 
     for i in 0..16 {
@@ -51,7 +51,7 @@ fn test_modal_string_through_voice() {
 
     voice.note_on(60, 100, &params, SR);
 
-    let mut output = [0.0f32; 128];
+    let mut output = [0.0f32; 64];
     let mut total_max = 0.0f32;
 
     for i in 0..16 {
@@ -77,7 +77,7 @@ fn test_modal_bowed_through_voice() {
 
     voice.note_on(60, 100, &params, SR);
 
-    let mut output = [0.0f32; 128];
+    let mut output = [0.0f32; 64];
     let mut total_max = 0.0f32;
 
     for i in 0..16 {
@@ -102,7 +102,7 @@ fn test_modal_different_from_fm_through_voice() {
         params.engine = engine;
         voice.note_on(60, 100, &params, SR);
         let mut all = Vec::new();
-        let mut block = [0.0f32; 128];
+        let mut block = [0.0f32; 64];
         for _ in 0..16 {
             voice.render(&mut block, &params, SR);
             all.extend_from_slice(&block);
@@ -153,8 +153,8 @@ fn test_modal_signal_chain_affects_output() {
     voice_open.note_on(60, 100, &params_open, SR);
     voice_closed.note_on(60, 100, &params_closed, SR);
 
-    let mut out_open = [0.0f32; 128];
-    let mut out_closed = [0.0f32; 128];
+    let mut out_open = [0.0f32; 64];
+    let mut out_closed = [0.0f32; 64];
 
     for _ in 0..8 {
         voice_open.render(&mut out_open, &params_open, SR);

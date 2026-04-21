@@ -100,7 +100,7 @@ fn test_operator_goes_silent_after_note_off() {
 #[test]
 fn test_engine_silent_when_no_note() {
     let mut engine = FmEngine::new();
-    let mut output = [0.0f32; 128];
+    let mut output = [0.0f32; 64];
     let env = [EnvParams::default(); 4];
     engine.render(&mut output, &env, 48000);
 
@@ -113,7 +113,7 @@ fn test_engine_produces_sound() {
     let mut engine = FmEngine::new();
     engine.note_on(60, 100, 48000); // Middle C
 
-    let mut output = [0.0f32; 128];
+    let mut output = [0.0f32; 64];
     let env = [EnvParams::default(); 4];
 
     // Render a few blocks to let attack develop
@@ -135,7 +135,7 @@ fn test_engine_algorithm_8_is_additive() {
     engine.algorithm = 7; // Algo 8 (0-indexed)
     engine.note_on(60, 100, 48000);
 
-    let mut output = [0.0f32; 128];
+    let mut output = [0.0f32; 64];
     let env = [EnvParams::default(); 4];
     for _ in 0..4 {
         engine.render(&mut output, &env, 48000);
@@ -154,7 +154,7 @@ fn test_default_is_clean_sine() {
     engine.update_params(&params, 48000);
     engine.note_on(60, 100, 48000);
 
-    let mut output = [0.0f32; 128];
+    let mut output = [0.0f32; 64];
     // Let attack develop
     for _ in 0..8 {
         engine.render(&mut output, &params.op_env, 48000);
@@ -163,14 +163,14 @@ fn test_default_is_clean_sine() {
     // Should be a clean sine — check that there are zero crossings
     // and the waveform is smooth (no high-frequency FM artifacts)
     let mut zero_crossings = 0;
-    for i in 1..128 {
+    for i in 1..output.len() {
         if (output[i] >= 0.0) != (output[i - 1] >= 0.0) {
             zero_crossings += 1;
         }
     }
-    // Middle C at 48kHz: ~261 Hz, 128 samples ≈ 2.67ms ≈ 0.7 cycles ≈ 1-2 zero crossings
+    // Middle C at 48kHz: ~261 Hz, 64 samples ≈ 1.33ms ≈ 0.35 cycles ≈ 0-1 zero crossings
     assert!(
-        zero_crossings <= 4,
+        zero_crossings <= 2,
         "default should be clean sine, got {} zero crossings",
         zero_crossings
     );
@@ -194,8 +194,8 @@ fn test_modulation_depth_changes_timbre() {
     engine_quiet.note_on(60, 100, 48000);
     engine_loud.note_on(60, 100, 48000);
 
-    let mut out_quiet = [0.0f32; 128];
-    let mut out_loud = [0.0f32; 128];
+    let mut out_quiet = [0.0f32; 64];
+    let mut out_loud = [0.0f32; 64];
 
     for _ in 0..8 {
         engine_quiet.render(&mut out_quiet, &params_quiet.op_env, 48000);
@@ -231,7 +231,7 @@ fn test_algorithms_sound_different() {
         p.algorithm = algo;
         engine.update_params(&p, 48000);
         engine.note_on(60, 100, 48000);
-        let mut output = [0.0f32; 128];
+        let mut output = [0.0f32; 64];
         for _ in 0..8 {
             engine.render(&mut output, &p.op_env, 48000);
         }
@@ -259,7 +259,7 @@ fn test_different_ratios_change_pitch() {
         params.op_ratio[3] = ratio_norm; // op4 is the carrier
         engine.update_params(&params, 48000);
         engine.note_on(60, 100, 48000);
-        let mut output = [0.0f32; 128];
+        let mut output = [0.0f32; 64];
         for _ in 0..8 {
             engine.render(&mut output, &params.op_env, 48000);
         }
@@ -287,7 +287,7 @@ fn test_engine_output_bounded() {
     engine.note_on(60, 127, 48000);
 
     let env = [EnvParams::default(); 4];
-    let mut output = [0.0f32; 128];
+    let mut output = [0.0f32; 64];
 
     for _ in 0..20 {
         engine.render(&mut output, &env, 48000);

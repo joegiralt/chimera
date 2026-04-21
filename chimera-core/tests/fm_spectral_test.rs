@@ -32,7 +32,7 @@ fn render_fm(params: &FmParams, note: u8) -> Vec<f32> {
     engine.note_on(note, 100, SR);
 
     let mut all = Vec::new();
-    let mut block = [0.0f32; 128];
+    let mut block = [0.0f32; 64];
 
     for _ in 0..ANALYSIS_BLOCKS {
         engine.render(&mut block, &params.op_env, SR);

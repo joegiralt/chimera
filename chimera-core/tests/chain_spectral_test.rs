@@ -405,7 +405,7 @@ fn test_voice_filter_sweep_audible() {
         voice.note_on(60, 100, &params, SR);
 
         let mut all = Vec::new();
-        let mut block = [0.0f32; 128];
+        let mut block = [0.0f32; 64];
         for _ in 0..32 {
             voice.render(&mut block, &params, SR);
             all.extend_from_slice(&block);
@@ -437,7 +437,7 @@ fn test_voice_drive_adds_grit() {
         voice.note_on(60, 100, &params, SR);
 
         let mut all = Vec::new();
-        let mut block = [0.0f32; 128];
+        let mut block = [0.0f32; 64];
         for _ in 0..32 {
             voice.render(&mut block, &params, SR);
             all.extend_from_slice(&block);
