@@ -584,10 +584,19 @@ pub static DEMO_MOTION: BlockDef = BlockDef {
     ],
 };
 
-static DEMO_BLOCKS: [ChainBlock; 3] = [
+pub static DEMO_MATRIX: BlockDef = BlockDef {
+    name: "Matrix",
+    short: "MTX",
+    layout: PageLayout::BigViz,
+    viz: VizType::RoutingMatrix,
+    params: [EMPTY; 6],
+};
+
+static DEMO_BLOCKS: [ChainBlock; 4] = [
     ChainBlock { def: &DEMO_WAVES,  sub_pages: &[] },
     ChainBlock { def: &DEMO_SHAPES, sub_pages: &[] },
     ChainBlock { def: &DEMO_MOTION, sub_pages: &[] },
+    ChainBlock { def: &DEMO_MATRIX, sub_pages: &[] },
 ];
 
 pub static DEMO_CHAIN: ChainDef2 = ChainDef2 {

@@ -698,7 +698,10 @@ impl Renderer {
             VizType::Adsr => self.draw_envelope_viz(display),
             VizType::EffectsFlow => self.draw_efx_viz(display),
             VizType::MixerLevels => self.draw_mixer_viz(display),
-            VizType::RoutingMatrix => self.draw_routing_viz(display),
+            VizType::RoutingMatrix => {
+                // Mod matrix grid — takes the full content zone
+                crate::ui::mod_grid::draw_grid(display, 0, 2, 5);
+            }
             VizType::CompressorCurve => self.draw_comp_viz(display),
             VizType::None | VizType::EqResponse | VizType::LpgResponse | VizType::Logo => {}
         }
@@ -720,7 +723,10 @@ impl Renderer {
         match def.layout {
             PageLayout::BigViz => {
                 self.draw_viz_from_type(display, def.viz);
-                self.draw_params_from_def(display, def);
+                // RoutingMatrix takes the full content zone — skip params
+                if def.viz != VizType::RoutingMatrix {
+                    self.draw_params_from_def(display, def);
+                }
             }
             PageLayout::CellGrid => {
                 self.draw_cell_grid_from_def(display, def);
