@@ -672,9 +672,9 @@ impl Renderer {
                 .draw_styled(&PrimitiveStyle::with_fill(theme::PARAM_BAR_FG), display);
             }
 
-            // Mod bar — bipolar, below value bar
-            let mod_amount = matrix_state.total_mod_for_param(block_idx as u8, i as u8);
-            if mod_amount != 0.0 {
+            // Mod bar — bipolar, below value bar. Shows when param is a mod destination.
+            let mod_info = matrix_state.mod_info_for_param(block_idx as u8, i as u8);
+            if let Some(mod_amount) = mod_info {
                 let mod_bar_y = bar_y + theme::BAR_HEIGHT + 2;
                 let mid_x = x + theme::BAR_WIDTH / 2;
                 // Background
@@ -724,7 +724,7 @@ impl Renderer {
         for (i, slot) in def.params.iter().enumerate() {
             let col = (i % 3) as i32;
             let row = (i / 3) as i32;
-            let mod_amount = matrix_state.total_mod_for_param(block_idx as u8, i as u8);
+            let mod_info = matrix_state.mod_info_for_param(block_idx as u8, i as u8);
             cell::draw_cell_with_mod(
                 display,
                 col,
@@ -734,7 +734,7 @@ impl Renderer {
                 slot.icon,
                 slot.format,
                 i == self.focused,
-                mod_amount,
+                mod_info,
             );
         }
     }

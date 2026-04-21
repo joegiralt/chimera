@@ -181,11 +181,13 @@ impl MatrixState {
         self.amounts[self.sel_row][self.sel_col]
     }
 
-    /// Get the total modulation amount for a block param (sum of all sources).
-    /// Returns 0.0 if param is not a mod destination.
-    pub fn total_mod_for_param(&self, block_idx: u8, param_idx: u8) -> f32 {
+    /// Check if a param is a mod destination and get its total modulation amount.
+    /// Returns None if not a mod destination.
+    /// Returns Some(0.0) if enabled but no amounts set.
+    /// Returns Some(amount) if modulation is active.
+    pub fn mod_info_for_param(&self, block_idx: u8, param_idx: u8) -> Option<f32> {
         if !self.is_mod_enabled(block_idx, param_idx) {
-            return 0.0;
+            return None;
         }
         // Find which dest index this block/param maps to
         for di in 0..self.num_dests {
@@ -196,18 +198,32 @@ impl MatrixState {
                     for si in 0..self.num_sources {
                         total += self.amounts[si][di] as i16;
                     }
-                    return (total as f32 / 127.0).clamp(-1.0, 1.0);
+                    return Some((total as f32 / 127.0).clamp(-1.0, 1.0));
                 }
             }
         }
-        0.0
+        // Enabled but not yet in dests list (rebuild pending)
+        Some(0.0)
     }
 
     /// Adjust the amount at the current cursor position.
+    /// If setting a non-zero amount on an unconnected cell, auto-enables the destination.
+    /// If zeroing out the last amount for a destination, auto-disables it.
     pub fn adjust_amount(&mut self, delta: i8) {
         let current = self.amounts[self.sel_row][self.sel_col] as i16;
         let new = (current + delta as i16).clamp(-127, 127) as i8;
         self.amounts[self.sel_row][self.sel_col] = new;
+
+        // Auto-enable dest if amount becomes non-zero
+        if let Some(dest) = &self.dests[self.sel_col] {
+            let bi = dest.block_idx;
+            let pi = dest.param_idx;
+            if new != 0 && !self.is_mod_enabled(bi, pi) {
+                let bit = bi as u64 * 6 + pi as u64;
+                self.mod_enabled |= 1 << bit;
+                // Note: rebuild_dests_from_chain should be called by the caller
+            }
+        }
     }
 
     pub fn move_row(&mut self, delta: i8) {
