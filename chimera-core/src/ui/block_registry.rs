@@ -412,3 +412,217 @@ pub static ENVELOPE_CHAIN: ChainDef2 = ChainDef2 {
     name: "Envelopes",
     blocks: &ENVELOPE_BLOCKS,
 };
+
+// ---------------------------------------------------------------------------
+// Mixer channel strip
+// ---------------------------------------------------------------------------
+
+pub static CHANNEL: BlockDef = BlockDef {
+    name: "Channel",
+    short: "CH",
+    layout: PageLayout::CellGrid,
+    viz: VizType::MixerLevels,
+    params: [
+        ParamSlot { label: "VOL",    format: ValFmt::Uni,     icon: CellIcon::LevelBar },
+        ParamSlot { label: "PAN",    format: ValFmt::Bi,      icon: CellIcon::PanDot   },
+        ParamSlot { label: "OUT",    format: ValFmt::Int(2),  icon: CellIcon::Arc      },
+        ParamSlot { label: "VOICES", format: ValFmt::Int(5),  icon: CellIcon::Arc      },
+        ParamSlot { label: "MODE",   format: ValFmt::Int(2),  icon: CellIcon::Arc      },
+        ParamSlot { label: "GLIDE",  format: ValFmt::Uni,     icon: CellIcon::Arc      },
+    ],
+};
+
+pub static MIDI_CFG: BlockDef = BlockDef {
+    name: "MIDI",
+    short: "MID",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot { label: "CH",     format: ValFmt::Int(16), icon: CellIcon::Arc },
+        ParamSlot { label: "PGM",    format: ValFmt::Int(1),  icon: CellIcon::Arc },
+        ParamSlot { label: "CC.RX",  format: ValFmt::Int(1),  icon: CellIcon::Arc },
+        ParamSlot { label: "BEND",   format: ValFmt::Int(12), icon: CellIcon::Arc },
+        ParamSlot { label: "TRNS",   format: ValFmt::Bi,      icon: CellIcon::Arc },
+        EMPTY,
+    ],
+};
+
+pub static EQ: BlockDef = BlockDef {
+    name: "EQ",
+    short: "EQ",
+    layout: PageLayout::BigViz,
+    viz: VizType::EqResponse,
+    params: [
+        ParamSlot { label: "LOW",   format: ValFmt::Bi,  icon: CellIcon::None },
+        ParamSlot { label: "L.FRQ", format: ValFmt::Uni, icon: CellIcon::None },
+        ParamSlot { label: "MID",   format: ValFmt::Bi,  icon: CellIcon::None },
+        ParamSlot { label: "M.FRQ", format: ValFmt::Uni, icon: CellIcon::None },
+        ParamSlot { label: "HIGH",  format: ValFmt::Bi,  icon: CellIcon::None },
+        ParamSlot { label: "H.FRQ", format: ValFmt::Uni, icon: CellIcon::None },
+    ],
+};
+
+pub static SENDS: BlockDef = BlockDef {
+    name: "Sends",
+    short: "SND",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot { label: "REV", format: ValFmt::Uni, icon: CellIcon::Arc },
+        ParamSlot { label: "DLY", format: ValFmt::Uni, icon: CellIcon::Arc },
+        ParamSlot { label: "CHR", format: ValFmt::Uni, icon: CellIcon::Arc },
+        ParamSlot { label: "S4",  format: ValFmt::Uni, icon: CellIcon::Arc },
+        EMPTY,
+        EMPTY,
+    ],
+};
+
+static MIXER_CHANNEL_BLOCKS: [ChainBlock; 4] = [
+    ChainBlock { def: &CHANNEL,  sub_pages: &[] },
+    ChainBlock { def: &MIDI_CFG, sub_pages: &[] },
+    ChainBlock { def: &EQ,       sub_pages: &[] },
+    ChainBlock { def: &SENDS,    sub_pages: &[] },
+];
+
+pub static MIXER_CHANNEL_CHAIN: ChainDef2 = ChainDef2 {
+    name: "Mixer",
+    blocks: &MIXER_CHANNEL_BLOCKS,
+};
+
+// ---------------------------------------------------------------------------
+// System chain
+// ---------------------------------------------------------------------------
+
+pub static SYS_MIDI: BlockDef = BlockDef {
+    name: "MIDI Setup",
+    short: "MID",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot { label: "P1 CH", format: ValFmt::Int(16), icon: CellIcon::Arc },
+        ParamSlot { label: "P2 CH", format: ValFmt::Int(16), icon: CellIcon::Arc },
+        ParamSlot { label: "P3 CH", format: ValFmt::Int(16), icon: CellIcon::Arc },
+        ParamSlot { label: "P4 CH", format: ValFmt::Int(16), icon: CellIcon::Arc },
+        ParamSlot { label: "P5 CH", format: ValFmt::Int(16), icon: CellIcon::Arc },
+        ParamSlot { label: "P6 CH", format: ValFmt::Int(16), icon: CellIcon::Arc },
+    ],
+};
+
+pub static SYS_TUNING: BlockDef = BlockDef {
+    name: "Tuning",
+    short: "TUN",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot { label: "TUNE",  format: ValFmt::Bi,     icon: CellIcon::Arc },
+        ParamSlot { label: "SCALE", format: ValFmt::Int(2), icon: CellIcon::Arc },
+        EMPTY,
+        EMPTY,
+        EMPTY,
+        EMPTY,
+    ],
+};
+
+pub static SYS_THEME: BlockDef = BlockDef {
+    name: "Theme",
+    short: "THM",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot { label: "BRIGHT",  format: ValFmt::Uni,    icon: CellIcon::Arc },
+        ParamSlot { label: "ACCENT",  format: ValFmt::Int(4), icon: CellIcon::Arc },
+        EMPTY,
+        EMPTY,
+        EMPTY,
+        EMPTY,
+    ],
+};
+
+pub static SYS_UPDATES: BlockDef = BlockDef {
+    name: "Updates",
+    short: "UPD",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY],
+};
+
+pub static SYS_ABOUT: BlockDef = BlockDef {
+    name: "About",
+    short: "ABT",
+    layout: PageLayout::BigViz,
+    viz: VizType::Logo,
+    params: [EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY],
+};
+
+static SYSTEM_BLOCKS: [ChainBlock; 5] = [
+    ChainBlock { def: &SYS_MIDI,    sub_pages: &[] },
+    ChainBlock { def: &SYS_TUNING,  sub_pages: &[] },
+    ChainBlock { def: &SYS_THEME,   sub_pages: &[] },
+    ChainBlock { def: &SYS_UPDATES, sub_pages: &[] },
+    ChainBlock { def: &SYS_ABOUT,   sub_pages: &[] },
+];
+
+pub static SYSTEM_CHAIN: ChainDef2 = ChainDef2 {
+    name: "System",
+    blocks: &SYSTEM_BLOCKS,
+};
+
+// ---------------------------------------------------------------------------
+// Demo chain (UI component storyboard)
+// ---------------------------------------------------------------------------
+
+pub static DEMO_WAVES: BlockDef = BlockDef {
+    name: "Waves",
+    short: "WAV",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot { label: "CLIP", format: ValFmt::Uni, icon: CellIcon::WaveClip   },
+        ParamSlot { label: "WAVE", format: ValFmt::Uni, icon: CellIcon::WaveShape  },
+        ParamSlot { label: "PW",   format: ValFmt::Uni, icon: CellIcon::PulseWidth },
+        ParamSlot { label: "FOLD", format: ValFmt::Uni, icon: CellIcon::WaveFold   },
+        ParamSlot { label: "TILT", format: ValFmt::Bi,  icon: CellIcon::ToneTilt   },
+        ParamSlot { label: "SYM",  format: ValFmt::Bi,  icon: CellIcon::Symmetry   },
+    ],
+};
+
+pub static DEMO_SHAPES: BlockDef = BlockDef {
+    name: "Shapes",
+    short: "SHP",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot { label: "ARC",   format: ValFmt::Uni, icon: CellIcon::Arc      },
+        ParamSlot { label: "LEVEL", format: ValFmt::Uni, icon: CellIcon::LevelBar },
+        ParamSlot { label: "PAN",   format: ValFmt::Bi,  icon: CellIcon::PanDot   },
+        ParamSlot { label: "D/W",   format: ValFmt::Bi,  icon: CellIcon::DryWet   },
+        ParamSlot { label: "CUBE",  format: ValFmt::Uni, icon: CellIcon::Cube     },
+        ParamSlot { label: "STACK", format: ValFmt::Uni, icon: CellIcon::Stack    },
+    ],
+};
+
+pub static DEMO_MOTION: BlockDef = BlockDef {
+    name: "Motion",
+    short: "MOT",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot { label: "RIPPL", format: ValFmt::Uni, icon: CellIcon::Ripple  },
+        ParamSlot { label: "BURST", format: ValFmt::Uni, icon: CellIcon::Burst   },
+        ParamSlot { label: "ORBIT", format: ValFmt::Uni, icon: CellIcon::Orbit   },
+        ParamSlot { label: "SCATR", format: ValFmt::Uni, icon: CellIcon::Scatter },
+        ParamSlot { label: "BOUNC", format: ValFmt::Bi,  icon: CellIcon::Bounce  },
+        ParamSlot { label: "PULSE", format: ValFmt::Uni, icon: CellIcon::Breathe },
+    ],
+};
+
+static DEMO_BLOCKS: [ChainBlock; 3] = [
+    ChainBlock { def: &DEMO_WAVES,  sub_pages: &[] },
+    ChainBlock { def: &DEMO_SHAPES, sub_pages: &[] },
+    ChainBlock { def: &DEMO_MOTION, sub_pages: &[] },
+];
+
+pub static DEMO_CHAIN: ChainDef2 = ChainDef2 {
+    name: "Demo",
+    blocks: &DEMO_BLOCKS,
+};
