@@ -206,6 +206,7 @@ dependencies = [
  "cortex-m-rt",
  "embedded-graphics",
  "embedded-graphics-core",
+ "libm",
  "panic-halt",
  "stm32h7xx-hal",
 ]

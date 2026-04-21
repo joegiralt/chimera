@@ -1,5 +1,6 @@
 use chimera_hal::BLOCK_SIZE;
 
+use crate::dsp::{fast_sin, fast_sin_abs};
 use crate::dsp::envelope::Envelope;
 use crate::params::EnvParams;
 
@@ -38,7 +39,7 @@ impl Waveform {
 
 /// Evaluate a TX81Z waveform at phase `theta` (0..2π).
 fn waveform(w: Waveform, theta: f32) -> f32 {
-    let s = libm::sinf(theta);
+    let s = fast_sin(theta);
     match w {
         // W1: sin(θ)
         Waveform::Sine => s,
@@ -51,22 +52,22 @@ fn waveform(w: Waveform, theta: f32) -> f32 {
             }
         }
         // W3: |sin(θ)| (rectified)
-        Waveform::FullSine => libm::fabsf(s),
+        Waveform::FullSine => fast_sin_abs(theta),
         // W4: sin(θ) for 0≤θ<π/2, 0 otherwise (per half-cycle)
         Waveform::QuarterSine => {
             let t = theta % PI;
-            if t < PI * 0.5 { libm::sinf(t) } else { 0.0 }
+            if t < PI * 0.5 { fast_sin(t) } else { 0.0 }
         }
         // W5: sin(2θ) for 0≤θ<π, 0 for π≤θ<2π
         Waveform::HalfDouble => {
             if theta < PI {
-                libm::sinf(theta * 2.0)
+                fast_sin(theta * 2.0)
             } else {
                 0.0
             }
         }
         // W6: |sin(2θ)| (rectified double-speed)
-        Waveform::FullDouble => libm::fabsf(libm::sinf(theta * 2.0)),
+        Waveform::FullDouble => fast_sin_abs(theta * 2.0),
         // W7: narrow resonance pulse (sin^4 approximation)
         Waveform::ResPulse1 => {
             let s2 = s * s;

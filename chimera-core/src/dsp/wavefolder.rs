@@ -48,6 +48,7 @@ impl Wavefolder {
 fn fold_wave(x: f32) -> f32 {
     let x = x + 1.0;
     let period = 4.0;
-    let t = x - libm::floorf(x / period) * period;
+    let d = x / period;
+    let t = x - (if d >= 0.0 { d as i32 as f32 } else { (d as i32 - 1) as f32 }) * period;
     if t < 2.0 { t - 1.0 } else { 3.0 - t }
 }

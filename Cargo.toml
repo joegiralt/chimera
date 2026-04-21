@@ -17,8 +17,18 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT"
 
+# Optimize all firmware dependencies in dev builds
+[profile.dev.package.chimera-stm32]
+opt-level = 2
+[profile.dev.package.stm32h7xx-hal]
+opt-level = 2
+[profile.dev.package.stm32h750]
+opt-level = 2
+[profile.dev.package.cortex-m]
+opt-level = 2
+
 # Release profile for firmware
 [profile.release]
 panic = "abort"
-opt-level = "s"
-lto = false
+opt-level = 2
+lto = "thin"

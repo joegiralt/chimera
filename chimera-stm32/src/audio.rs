@@ -63,6 +63,8 @@ fn render_block(offset: usize) {
         };
 
         let work = &mut *addr_of_mut!(WORK_BUF);
+
+        // Render full Voice signal chain: Engine → Drive → Filter → Wavefolder → VCA
         voice.render(work, params, chimera_hal::SAMPLE_RATE);
 
         // Convert f32 mono → i16 stereo
