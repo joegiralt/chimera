@@ -20,19 +20,24 @@ fn render_voice(engine: EngineType, note: u8, blocks: usize) -> Vec<f32> {
 }
 
 #[test]
-fn test_fm_and_modal_produce_different_output() {
-    let fm_buf = render_voice(EngineType::Fm, 60, 16);
+fn test_pizza_and_modal_produce_different_output() {
+    let pizza_buf = render_voice(EngineType::Pizza, 60, 16);
     let modal_buf = render_voice(EngineType::Modal, 60, 16);
 
-    let fm_rms: f32 = libm::sqrtf(fm_buf.iter().map(|s| s * s).sum::<f32>() / fm_buf.len() as f32);
+    let pizza_rms: f32 =
+        libm::sqrtf(pizza_buf.iter().map(|s| s * s).sum::<f32>() / pizza_buf.len() as f32);
     let modal_rms: f32 =
         libm::sqrtf(modal_buf.iter().map(|s| s * s).sum::<f32>() / modal_buf.len() as f32);
 
-    eprintln!("FM RMS: {}", fm_rms);
+    eprintln!("Pizza RMS: {}", pizza_rms);
     eprintln!("Modal RMS: {}", modal_rms);
 
     // Both should produce sound
-    assert!(fm_rms > 0.001, "FM should produce sound: {}", fm_rms);
+    assert!(
+        pizza_rms > 0.001,
+        "Pizza should produce sound: {}",
+        pizza_rms
+    );
     assert!(
         modal_rms > 0.001,
         "Modal should produce sound: {}",
@@ -40,17 +45,17 @@ fn test_fm_and_modal_produce_different_output() {
     );
 
     // They should sound DIFFERENT — compare sample-by-sample
-    let diff: f32 = fm_buf
+    let diff: f32 = pizza_buf
         .iter()
         .zip(modal_buf.iter())
         .map(|(a, b)| (a - b).abs())
         .sum::<f32>()
-        / fm_buf.len() as f32;
+        / pizza_buf.len() as f32;
 
     eprintln!("Average sample difference: {}", diff);
     assert!(
         diff > 0.001,
-        "FM and Modal should produce different output, diff={}",
+        "Pizza and Modal should produce different output, diff={}",
         diff
     );
 }
@@ -60,13 +65,13 @@ fn test_engine_type_is_respected() {
     let mut voice = Voice::new();
     let mut params = ParamSnapshot::default();
 
-    // Start with FM
-    params.engine = EngineType::Fm;
+    // Start with Pizza
+    params.engine = EngineType::Pizza;
     voice.note_on(60, 100, &params, SR);
 
     let mut block = [0.0f32; 64];
     voice.render(&mut block, &params, SR);
-    let fm_sample = block[32];
+    let pizza_sample = block[32];
 
     // Now switch to Modal
     let mut voice2 = Voice::new();
@@ -77,14 +82,14 @@ fn test_engine_type_is_respected() {
     voice2.render(&mut block2, &params, SR);
     let modal_sample = block2[32];
 
-    eprintln!("FM sample[32]: {}", fm_sample);
+    eprintln!("Pizza sample[32]: {}", pizza_sample);
     eprintln!("Modal sample[32]: {}", modal_sample);
 
     // At the very least, they shouldn't be identical
     assert!(
-        (fm_sample - modal_sample).abs() > 0.0001,
-        "different engines should produce different samples: fm={} modal={}",
-        fm_sample,
+        (pizza_sample - modal_sample).abs() > 0.0001,
+        "different engines should produce different samples: pizza={} modal={}",
+        pizza_sample,
         modal_sample
     );
 }
@@ -118,9 +123,9 @@ fn test_modal_has_percussive_character() {
 }
 
 #[test]
-fn test_fm_sustains_while_modal_decays() {
-    // FM with default envelope should sustain, Modal should decay
-    let fm_buf = render_voice(EngineType::Fm, 60, 64);
+fn test_pizza_sustains_while_modal_decays() {
+    // Pizza with default envelope should sustain, Modal should decay
+    let pizza_buf = render_voice(EngineType::Pizza, 60, 64);
     let modal_buf = render_voice(EngineType::Modal, 60, 64);
 
     // Measure energy in last quarter of each
@@ -130,17 +135,16 @@ fn test_fm_sustains_while_modal_decays() {
         libm::sqrtf(slice.iter().map(|s| s * s).sum::<f32>() / slice.len() as f32)
     };
 
-    let fm_late = last_quarter(&fm_buf);
+    let pizza_late = last_quarter(&pizza_buf);
     let modal_late = last_quarter(&modal_buf);
 
-    eprintln!("FM late RMS: {}", fm_late);
+    eprintln!("Pizza late RMS: {}", pizza_late);
     eprintln!("Modal late RMS: {}", modal_late);
 
-    // KS+ can sustain with feedback — just verify they're different
+    // Pizza should sustain (it has an amp envelope)
     assert!(
-        (fm_late - modal_late).abs() > 0.005,
-        "FM and Modal should differ: fm_late={} modal_late={}",
-        fm_late,
-        modal_late
+        pizza_late > 0.01,
+        "Pizza should sustain: pizza_late={}",
+        pizza_late,
     );
 }

@@ -55,7 +55,7 @@ fn goertzel(buf: &[f32], target_freq: f32) -> f32 {
 fn test_desktop_fm_produces_sound() {
     let buf = sim_render(
         |ui| {
-            ui.params.engine = EngineType::Fm;
+            ui.params.engine = EngineType::Pizza;
         },
         60,
         8,
@@ -67,7 +67,7 @@ fn test_desktop_fm_produces_sound() {
 fn test_desktop_fm_modulation_works() {
     let clean = sim_render(
         |ui| {
-            ui.params.engine = EngineType::Fm;
+            ui.params.engine = EngineType::Pizza;
             // Default: modulators at 0
         },
         60,
@@ -76,10 +76,8 @@ fn test_desktop_fm_modulation_works() {
 
     let modulated = sim_render(
         |ui| {
-            ui.params.engine = EngineType::Fm;
-            ui.params.fm.algorithm = 4; // 1→2*
-            ui.params.fm.op_level[0] = 0.6;
-            ui.params.fm.op_level[1] = 1.0;
+            ui.params.engine = EngineType::Pizza;
+            ui.params.pizza.crush = 0.7;
         },
         60,
         16,
@@ -242,8 +240,8 @@ fn test_desktop_modal_produces_sound() {
 fn test_desktop_filter_affects_output() {
     let open = sim_render(
         |ui| {
-            ui.params.engine = EngineType::Fm;
-            ui.params.fm.op_level = [0.5, 0.0, 0.0, 1.0];
+            ui.params.engine = EngineType::Pizza;
+            
             ui.params.filter.cutoff.set(15000.0);
         },
         60,
@@ -252,8 +250,8 @@ fn test_desktop_filter_affects_output() {
 
     let closed = sim_render(
         |ui| {
-            ui.params.engine = EngineType::Fm;
-            ui.params.fm.op_level = [0.5, 0.0, 0.0, 1.0];
+            ui.params.engine = EngineType::Pizza;
+            
             ui.params.filter.cutoff.set(200.0);
             ui.params.filter.mode = 2;
         },
@@ -273,7 +271,7 @@ fn test_desktop_filter_affects_output() {
 fn test_desktop_drive_affects_output() {
     let clean = sim_render(
         |ui| {
-            ui.params.engine = EngineType::Fm;
+            ui.params.engine = EngineType::Pizza;
         },
         60,
         16,
@@ -281,7 +279,7 @@ fn test_desktop_drive_affects_output() {
 
     let driven = sim_render(
         |ui| {
-            ui.params.engine = EngineType::Fm;
+            ui.params.engine = EngineType::Pizza;
             ui.params.drive.drive.set(0.9);
             ui.params.drive.mix.set(1.0);
         },
@@ -306,7 +304,7 @@ fn test_desktop_drive_affects_output() {
 fn test_desktop_engine_switch() {
     let fm = sim_render(
         |ui| {
-            ui.params.engine = EngineType::Fm;
+            ui.params.engine = EngineType::Pizza;
         },
         60,
         16,
@@ -362,8 +360,8 @@ fn test_desktop_engine_switch() {
 #[test]
 fn test_desktop_mid_note_filter_sweep() {
     let mut ui = UiState::new();
-    ui.params.engine = EngineType::Fm;
-    ui.params.fm.op_level = [0.5, 0.0, 0.0, 1.0];
+    ui.params.engine = EngineType::Pizza;
+    
     ui.params.filter.cutoff.set(10000.0);
     ui.params.filter.mode = 2;
 

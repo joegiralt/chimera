@@ -55,112 +55,6 @@ impl Renderer {
         }
     }
 
-    // ── FM Engine ───────────────────────────────────────────────────
-
-    fn draw_fm_viz<D>(&self, display: &mut D)
-    where
-        D: DrawTarget<Color = Rgb565>,
-    {
-        let cx = theme::SCREEN_W / 2;
-        let cy = (theme::VIZ_TOP + theme::VIZ_BOTTOM) / 2;
-        let algo = self.anim[0].current(); // normalized algo selection
-
-        // 4 operator boxes — layout shifts with algorithm
-        let box_w: u32 = 28;
-        let box_h: u32 = 16;
-        let gap: i32 = 8;
-
-        // Simple algorithm visualization: stack vs parallel vs mixed
-        // algo < 0.33: serial (1->2->3->4)
-        // algo < 0.66: branch (1->2, 3->4)
-        // else: parallel
-        let (positions, connections): ([Point; 4], &[(usize, usize)]) = if algo < 0.33 {
-            // Serial chain
-            let x0 = cx - (box_w as i32 * 2 + gap);
-            (
-                [
-                    Point::new(x0, cy - 8),
-                    Point::new(x0 + box_w as i32 + gap, cy - 8),
-                    Point::new(x0 + (box_w as i32 + gap) * 2, cy - 8),
-                    Point::new(x0 + (box_w as i32 + gap) * 3, cy - 8),
-                ],
-                &[(3, 2), (2, 1), (1, 0)],
-            )
-        } else if algo < 0.66 {
-            // Branch: 3->1, 4->2, 1+2 out
-            (
-                [
-                    Point::new(cx - 36, cy + 10),
-                    Point::new(cx + 8, cy + 10),
-                    Point::new(cx - 36, cy - 24),
-                    Point::new(cx + 8, cy - 24),
-                ],
-                &[(2, 0), (3, 1)],
-            )
-        } else {
-            // Parallel — all output
-            let x0 = cx - (box_w as i32 * 2 + gap);
-            (
-                [
-                    Point::new(x0, cy - 8),
-                    Point::new(x0 + box_w as i32 + gap, cy - 8),
-                    Point::new(x0 + (box_w as i32 + gap) * 2, cy - 8),
-                    Point::new(x0 + (box_w as i32 + gap) * 3, cy - 8),
-                ],
-                &[],
-            )
-        };
-
-        let labels = ["OP1", "OP2", "OP3", "OP4"];
-
-        // Draw connections first (behind boxes)
-        let conn_style = PrimitiveStyle::with_stroke(theme::NODE_CONNECTOR, 1);
-        for &(from, to) in connections {
-            let fp = Point::new(
-                positions[from].x + box_w as i32 / 2,
-                positions[from].y + box_h as i32,
-            );
-            let tp = Point::new(positions[to].x + box_w as i32 / 2, positions[to].y);
-            let _ = Line::new(fp, tp).draw_styled(&conn_style, display);
-        }
-
-        // Draw operator boxes
-        for (i, &pos) in positions.iter().enumerate() {
-            let is_carrier = match connections.len() {
-                0 => true,                                      // parallel: all are carriers
-                _ => !connections.iter().any(|&(f, _)| f == i), // not a source = carrier
-            };
-            let border = if is_carrier {
-                theme::ACCENT
-            } else {
-                theme::NODE_INACTIVE_BORDER
-            };
-            let text_c = if is_carrier {
-                theme::TEXT
-            } else {
-                theme::TEXT_DIM
-            };
-
-            let _ = Rectangle::new(pos, Size::new(box_w, box_h))
-                .draw_styled(&PrimitiveStyle::with_stroke(border, 1), display);
-            let _ = Text::new(
-                labels[i],
-                Point::new(pos.x + 5, pos.y + 12),
-                MonoTextStyle::new(&FONT_6X10, text_c),
-            )
-            .draw(display);
-        }
-
-        // Output arrow below carriers
-        let out_y = cy + 28;
-        let _ = Text::new(
-            "OUT",
-            Point::new(cx - 9, out_y + 10),
-            MonoTextStyle::new(&FONT_6X10, theme::TEXT_DIM),
-        )
-        .draw(display);
-    }
-
     // ── Modal / Physical Modeling ───────────────────────────────────
 
     fn draw_modal_viz<D>(&self, display: &mut D)
@@ -795,7 +689,7 @@ impl Renderer {
         D: DrawTarget<Color = Rgb565>,
     {
         match viz {
-            VizType::AlgorithmDiagram => self.draw_fm_viz(display),
+            VizType::AlgorithmDiagram => { /* FM removed */ }
             VizType::ModalPeaks => self.draw_modal_viz(display),
             VizType::WaveformPreview => self.draw_va_viz(display),
             VizType::DriveClip => self.draw_drive_viz(display),

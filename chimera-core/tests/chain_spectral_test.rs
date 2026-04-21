@@ -398,7 +398,7 @@ fn test_voice_filter_sweep_audible() {
     let measure = |cutoff: f32| -> f32 {
         let mut voice = Voice::new();
         let mut params = ParamSnapshot::default();
-        params.fm.op_level = [0.3, 0.0, 0.0, 1.0]; // some FM
+        // Pizza produces harmonics by default
         params.filter.cutoff.set(cutoff);
         params.filter.mode = 2; // LP4
 

@@ -201,8 +201,7 @@ fn test_voice_silent_when_idle() {
 fn test_voice_produces_sound() {
     let mut voice = Voice::new();
     let mut params = ParamSnapshot::default();
-    // Set modulator level so FM produces harmonics
-    params.fm.op_level = [1.0, 0.3, 0.3, 0.3];
+    // Pizza produces sound by default
 
     voice.note_on(60, 100, &params, 48000);
 
@@ -226,9 +225,7 @@ fn test_voice_filter_shapes_sound() {
     let mut params_open = ParamSnapshot::default();
     let mut params_closed = ParamSnapshot::default();
 
-    // Both with active FM
-    params_open.fm.op_level = [1.0, 0.5, 0.5, 0.5];
-    params_closed.fm.op_level = [1.0, 0.5, 0.5, 0.5];
+    // Both with active Pizza
 
     // One with open filter, one with very closed filter
     params_open.filter.cutoff.set(15000.0);
@@ -262,8 +259,7 @@ fn test_voice_filter_shapes_sound() {
 fn test_voice_output_bounded() {
     let mut voice = Voice::new();
     let mut params = ParamSnapshot::default();
-    params.fm.op_level = [1.0, 1.0, 1.0, 1.0];
-    params.fm.feedback = 0.5;
+    params.pizza.crush = 0.7;
     params.drive.drive.set(1.0);
     params.drive.mix.set(1.0);
     params.folder.fold.set(0.5);

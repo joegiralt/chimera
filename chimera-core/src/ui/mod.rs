@@ -13,7 +13,7 @@ pub mod theme;
 
 use chimera_hal::{ButtonId, ButtonState, Controls, EncoderId};
 
-use crate::params::{EngineType, ParamSnapshot};
+use crate::params::ParamSnapshot;
 use chain::ChainNav;
 use page::PageId;
 use perf::PerfStats;
@@ -65,20 +65,8 @@ impl UiState {
             self.page = PageId::from_nav(&self.nav);
             self.renderer.snap_to_current(self.page, &self.params);
 
-            // Switch engine type based on which block is active
-            let def = self.nav.active_block_def();
-            if core::ptr::eq(def, &block_registry::FM_A)
-                || core::ptr::eq(def, &block_registry::FM_B)
-                || core::ptr::eq(def, &block_registry::FM_C)
-            {
-                self.params.engine = EngineType::Fm;
-            } else if core::ptr::eq(def, &block_registry::MODAL_1)
-                || core::ptr::eq(def, &block_registry::MODAL_2)
-            {
-                self.params.engine = EngineType::Modal;
-            } else if core::ptr::eq(def, &block_registry::VA) {
-                self.params.engine = EngineType::Va;
-            }
+            // Engine type is set by the Part's chain, not by page navigation.
+            // For now, keep whatever engine was set at init (Pizza by default).
         }
 
         // Encoder deltas -> parameter changes

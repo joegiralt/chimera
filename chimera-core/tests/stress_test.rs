@@ -39,29 +39,28 @@ fn bench_render(name: &str, setup: impl FnOnce(&mut ParamSnapshot)) -> f64 {
 }
 
 #[test]
-fn stress_fm_basic() {
-    let t = bench_render("FM basic (sine carrier)", |p| {
-        p.engine = EngineType::Fm;
+fn stress_pizza_basic() {
+    let t = bench_render("Pizza basic (triangle)", |p| {
+        p.engine = EngineType::Pizza;
     });
-    assert!(t < 5000.0, "FM basic too slow: {} us/block", t);
+    assert!(t < 5000.0, "Pizza basic too slow: {} us/block", t);
 }
 
 #[test]
-fn stress_fm_full() {
-    let t = bench_render("FM full (4 ops, feedback)", |p| {
-        p.engine = EngineType::Fm;
-        p.fm.algorithm = 0;
-        p.fm.feedback = 0.5;
-        p.fm.op_level = [0.8, 0.6, 0.6, 1.0];
+fn stress_pizza_crushed() {
+    let t = bench_render("Pizza crushed", |p| {
+        p.engine = EngineType::Pizza;
+        p.pizza.crush = 0.7;
+        p.pizza.shape = 0.8;
     });
-    assert!(t < 5000.0, "FM full too slow: {} us/block", t);
+    assert!(t < 5000.0, "Pizza crushed too slow: {} us/block", t);
 }
 
 #[test]
-fn stress_fm_full_with_chain() {
-    let t = bench_render("FM + drive + filter + folder", |p| {
-        p.engine = EngineType::Fm;
-        p.fm.op_level = [0.8, 0.6, 0.6, 1.0];
+fn stress_pizza_full_with_chain() {
+    let t = bench_render("Pizza + drive + filter + folder", |p| {
+        p.engine = EngineType::Pizza;
+        p.pizza.crush = 0.5;
         p.drive.drive.set(0.5);
         p.drive.mix.set(1.0);
         p.filter.cutoff.set(2000.0);
@@ -70,7 +69,7 @@ fn stress_fm_full_with_chain() {
         p.folder.fold.set(0.5);
         p.folder.mix.set(1.0);
     });
-    assert!(t < 5000.0, "FM + chain too slow: {} us/block", t);
+    assert!(t < 5000.0, "Pizza + chain too slow: {} us/block", t);
 }
 
 #[test]
@@ -171,13 +170,13 @@ fn stress_summary() {
     );
     eprintln!("{}", "-".repeat(55));
 
-    bench_render("FM basic", |p| {
-        p.engine = EngineType::Fm;
+    bench_render("Pizza basic", |p| {
+        p.engine = EngineType::Pizza;
     });
-    bench_render("FM full 4-op", |p| {
-        p.engine = EngineType::Fm;
-        p.fm.op_level = [0.8, 0.6, 0.6, 1.0];
-        p.fm.feedback = 0.5;
+    bench_render("Pizza crushed", |p| {
+        p.engine = EngineType::Pizza;
+        p.pizza.crush = 0.7;
+        p.pizza.shape = 0.8;
     });
     bench_render("KS+ string", |p| {
         p.engine = EngineType::Modal;
@@ -215,17 +214,17 @@ fn stress_summary() {
         p.modal.mode = 3;
     });
     bench_render("+ Drive", |p| {
-        p.engine = EngineType::Fm;
+        p.engine = EngineType::Pizza;
         p.drive.drive.set(0.8);
         p.drive.mix.set(1.0);
     });
     bench_render("+ Filter LP4", |p| {
-        p.engine = EngineType::Fm;
+        p.engine = EngineType::Pizza;
         p.filter.cutoff.set(2000.0);
         p.filter.mode = 2;
     });
     bench_render("+ Wavefolder", |p| {
-        p.engine = EngineType::Fm;
+        p.engine = EngineType::Pizza;
         p.folder.fold.set(0.8);
         p.folder.mix.set(1.0);
     });

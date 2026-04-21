@@ -35,9 +35,9 @@ impl ChainNav {
     /// Get the chain definition for the current ChainId.
     pub fn active_chain(&self) -> &'static ChainDef2 {
         match self.chain_id {
-            // All parts currently default to FM_POLY_CHAIN.
+            // All parts currently default to PIZZA_POLY_CHAIN.
             // In the future each Part will have its own chain.
-            ChainId::Part(_) => &block_registry::FM_POLY_CHAIN,
+            ChainId::Part(_) => &block_registry::PIZZA_POLY_CHAIN,
             ChainId::Mixer(_) => &block_registry::MIXER_CHANNEL_CHAIN,
             ChainId::System => &block_registry::SYSTEM_CHAIN,
             ChainId::Demo => &block_registry::DEMO_CHAIN,

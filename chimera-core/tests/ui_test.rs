@@ -149,25 +149,14 @@ fn test_chain_nav_starts_at_part0_engine() {
     assert_eq!(nav.chain_id, ChainId::Part(0));
     assert_eq!(nav.node, 0);
     assert_eq!(nav.sub_page, 0);
-    assert_eq!(PageId::from_nav(&nav), PageId::EngineFmA);
+    assert_eq!(PageId::from_nav(&nav), PageId::Pizza);
 }
 
 #[test]
 fn test_page_from_nav_part_chain() {
     let mut nav = ChainNav::new();
     nav.node = 0;
-    assert_eq!(PageId::from_nav(&nav), PageId::EngineFmA);
-    nav.sub_page = 1;
-    assert_eq!(PageId::from_nav(&nav), PageId::EngineFmB);
-    nav.sub_page = 2;
-    assert_eq!(PageId::from_nav(&nav), PageId::EngineFmC);
-    nav.sub_page = 3;
-    assert_eq!(PageId::from_nav(&nav), PageId::EngineModal1);
-    nav.sub_page = 4;
-    assert_eq!(PageId::from_nav(&nav), PageId::EngineModal2);
-    nav.sub_page = 5;
-    assert_eq!(PageId::from_nav(&nav), PageId::EngineVa);
-    nav.sub_page = 0;
+    assert_eq!(PageId::from_nav(&nav), PageId::Pizza);
     nav.node = 1;
     assert_eq!(PageId::from_nav(&nav), PageId::Drive);
     nav.node = 2;
