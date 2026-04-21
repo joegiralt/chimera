@@ -114,16 +114,18 @@ impl ChainNav {
             }
         }
 
-        // Left/Right: horizontal navigation
-        if controls.button_state(ButtonId::Minus) == ButtonState::Pressed && self.node > 0 {
-            self.node -= 1;
-            self.sub_page = 0;
-        }
-        if controls.button_state(ButtonId::Plus) == ButtonState::Pressed {
-            let chain = self.active_chain();
-            if self.node + 1 < chain.len() {
-                self.node += 1;
+        // Left/Right: horizontal navigation (only when MIX is not held)
+        if !mix_held {
+            if controls.button_state(ButtonId::Minus) == ButtonState::Pressed && self.node > 0 {
+                self.node -= 1;
                 self.sub_page = 0;
+            }
+            if controls.button_state(ButtonId::Plus) == ButtonState::Pressed {
+                let chain = self.active_chain();
+                if self.node + 1 < chain.len() {
+                    self.node += 1;
+                    self.sub_page = 0;
+                }
             }
         }
 

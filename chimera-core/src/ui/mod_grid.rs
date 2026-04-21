@@ -203,6 +203,28 @@ impl MatrixState {
         self.amounts[self.sel_row][self.sel_col]
     }
 
+    /// Get the total modulation amount for a block param (sum of all sources).
+    /// Returns 0.0 if param is not a mod destination.
+    pub fn total_mod_for_param(&self, block_idx: u8, param_idx: u8) -> f32 {
+        if !self.is_mod_enabled(block_idx, param_idx) {
+            return 0.0;
+        }
+        // Find which dest index this block/param maps to
+        for di in 0..self.num_dests {
+            if let Some(dest) = &self.dests[di] {
+                if dest.block_idx == block_idx && dest.param_idx == param_idx {
+                    // Sum all source amounts for this dest
+                    let mut total: i16 = 0;
+                    for si in 0..self.num_rows {
+                        total += self.amounts[si][di] as i16;
+                    }
+                    return (total as f32 / 127.0).clamp(-1.0, 1.0);
+                }
+            }
+        }
+        0.0
+    }
+
     /// Adjust the amount at the current cursor position.
     pub fn adjust_amount(&mut self, delta: i8) {
         let current = self.amounts[self.sel_row][self.sel_col] as i16;
