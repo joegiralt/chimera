@@ -12,21 +12,8 @@ use embedded_graphics::text::Text;
 
 use crate::ui::theme;
 
-/// Demo source labels (Y-axis rows)
-const SOURCES: &[&str] = &[
-    "LFO 1",
-    "LFO 2",
-    "Env 1",
-    "Env 2",
-    "Vel",
-    "MW",
-    "Note",
-    "Rand",
-    "AT",
-    "Env 3",
-    "LFO 3",
-    "Expr",
-];
+/// Fallback source label if none provided
+const NO_SOURCES: &[&str] = &[];
 
 /// Demo destination labels (X-axis columns) — two lines: block short + param
 const DESTS: &[(&str, &str)] = &[
@@ -42,20 +29,10 @@ const DESTS: &[(&str, &str)] = &[
     ("VCA", "LVL"),
 ];
 
-/// Demo amounts — sparse. [source_idx][dest_idx], 0 = empty.
+/// Demo amounts — only Env 1 routes for now.
 const DEMO_AMOUNTS: &[(usize, usize, i8)] = &[
-    (0, 5, 64),   // LFO 1 → FLT.CUT +64
-    (0, 7, 32),   // LFO 1 → FLD.FLD +32
-    (2, 5, -40),  // Env 1 → FLT.CUT -40
-    (2, 9, 100),  // Env 1 → VCA.LVL +100
-    (3, 3, 50),   // Env 2 → DRV.AMT +50
-    (4, 6, 80),   // Vel → FLT.RES +80
-    (5, 5, 48),   // MW → FLT.CUT +48
-    (6, 0, -20),  // Note → PIZ.SHP -20
-    (7, 1, 30),   // Rand → PIZ.CRS +30
-    (8, 4, -60),  // AT → DRV.TON -60
-    (9, 8, 44),   // Env 3 → FLD.SYM +44
-    (10, 2, 70),  // LFO 3 → PIZ.LVL +70
+    (0, 5, 64),   // Env 1 → FLT.CUT +64
+    (0, 9, 100),  // Env 1 → VCA.LVL +100
 ];
 
 /// Grid geometry
@@ -89,14 +66,19 @@ pub struct ModDest {
     pub param_label: &'static str,
 }
 
-/// State for the mod matrix grid — cursor, scroll, mutable amounts, and enabled destinations.
+/// A source in the mod matrix — one per modulator sub-page.
+#[derive(Clone, Copy, Debug)]
+pub struct ModSource {
+    pub name: &'static str,
+}
+
+/// State for the mod matrix grid — cursor, scroll, mutable amounts, sources, and destinations.
 #[derive(Clone, Debug)]
 pub struct MatrixState {
     pub sel_row: usize,
     pub sel_col: usize,
     pub scroll_x: usize,
     pub scroll_y: usize,
-    pub num_rows: usize,
     /// Modulation amounts: [source][dest_idx], -127 to +127. 0 = no connection.
     pub amounts: [[i8; MAX_DESTS]; MAX_SOURCES],
     /// Which block params are enabled as mod destinations.
@@ -105,6 +87,9 @@ pub struct MatrixState {
     /// Cached destination list, rebuilt when mod_enabled changes.
     pub dests: [Option<ModDest>; MAX_DESTS],
     pub num_dests: usize,
+    /// Source list — built from mod matrix sub-pages.
+    pub sources: [Option<ModSource>; MAX_SOURCES],
+    pub num_sources: usize,
 }
 
 impl MatrixState {
@@ -114,32 +99,42 @@ impl MatrixState {
             sel_col: 0,
             scroll_x: 0,
             scroll_y: 0,
-            num_rows: SOURCES.len(),
             amounts: [[0; MAX_DESTS]; MAX_SOURCES],
             mod_enabled: 0,
             dests: [None; MAX_DESTS],
             num_dests: 0,
+            sources: [None; MAX_SOURCES],
+            num_sources: 0,
         };
-        // Pre-fill with demo data: enable some destinations and set amounts
-        // Enable: PIZ.SHP(0,0), PIZ.CRS(0,1), PIZ.LVL(0,2), DRV.AMT(1,0), DRV.TON(1,1),
-        //         FLT.CUT(2,0), FLT.RES(2,1), FLD.FLD(3,0), FLD.SYM(3,1), VCA.LVL(4,0)
+        // Pre-fill demo destinations
         let demo_dests: &[(u8, u8)] = &[
             (0, 0), (0, 1), (0, 2),  // Pizza: shape, crush, level
             (1, 0), (1, 1),          // Drive: drive, tone
             (2, 0), (2, 1),          // Filter: cutoff, reso
             (3, 0), (3, 1),          // Folder: fold, sym
-            (4, 4),                  // VCA: level (encoder E)
         ];
         for &(block, param) in demo_dests {
             state.set_mod_enabled(block, param, true);
         }
-        // Pre-fill some amounts
+        // Pre-fill demo amounts
         for &(src, dst, amt) in DEMO_AMOUNTS {
             if src < MAX_SOURCES && dst < MAX_DESTS {
                 state.amounts[src][dst] = amt;
             }
         }
         state
+    }
+
+    /// Rebuild the source list from the mod matrix block's sub-pages.
+    /// Call this when the chain changes or at init.
+    pub fn rebuild_sources(&mut self, sub_pages: &[&'static crate::ui::block_def::BlockDef]) {
+        self.num_sources = 0;
+        for def in sub_pages {
+            if self.num_sources < MAX_SOURCES {
+                self.sources[self.num_sources] = Some(ModSource { name: def.name });
+                self.num_sources += 1;
+            }
+        }
     }
 
     /// Check if a block param is enabled as a mod destination.
@@ -215,7 +210,7 @@ impl MatrixState {
                 if dest.block_idx == block_idx && dest.param_idx == param_idx {
                     // Sum all source amounts for this dest
                     let mut total: i16 = 0;
-                    for si in 0..self.num_rows {
+                    for si in 0..self.num_sources {
                         total += self.amounts[si][di] as i16;
                     }
                     return (total as f32 / 127.0).clamp(-1.0, 1.0);
@@ -234,7 +229,7 @@ impl MatrixState {
 
     pub fn move_row(&mut self, delta: i8) {
         let new = self.sel_row as i32 + delta as i32;
-        self.sel_row = new.clamp(0, self.num_rows as i32 - 1) as usize;
+        self.sel_row = new.clamp(0, self.num_sources as i32 - 1) as usize;
         // Auto-scroll to keep cursor visible
         let vis = self.visible_rows();
         if self.sel_row < self.scroll_y {
@@ -258,8 +253,8 @@ impl MatrixState {
     }
 
     pub fn scroll_v(&mut self, delta: i8) {
-        let max = if self.num_rows > self.visible_rows() {
-            self.num_rows - self.visible_rows()
+        let max = if self.num_sources > self.visible_rows() {
+            self.num_sources - self.visible_rows()
         } else {
             0
         };
@@ -328,12 +323,16 @@ pub fn draw_grid<D>(
 
     for vi in 0..visible_rows {
         let ri = vi + scroll_y;
-        if ri >= SOURCES.len() { break; }
+        if ri >= state.num_sources { break; }
         let y = GRID_TOP + COL_HEADER_H + vi as i32 * CELL_H;
 
-        // Row label
+        // Row label from source list
         let label_style = if ri == sel_row { accent } else { dim };
-        let label = if SOURCES[ri].len() > 5 { &SOURCES[ri][..5] } else { SOURCES[ri] };
+        let source_name = match &state.sources[ri] {
+            Some(s) => s.name,
+            None => "?",
+        };
+        let label = if source_name.len() > 5 { &source_name[..5] } else { source_name };
         let _ = Text::new(label, Point::new(GRID_LEFT + 2, y + 10), label_style).draw(display);
 
         // Cells
@@ -406,7 +405,7 @@ pub fn draw_grid<D>(
 
     // ── Stats line ──
     let mut stats_buf = [0u8; 32];
-    let stats = format_stats(SOURCES.len(), num_dests, visible_rows, visible_cols, &mut stats_buf);
+    let stats = format_stats(state.num_sources, num_dests, visible_rows, visible_cols, &mut stats_buf);
     let _ = Text::new(stats, Point::new(4, GRID_BOTTOM - 2), dim).draw(display);
 }
 
