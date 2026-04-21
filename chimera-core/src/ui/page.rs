@@ -111,6 +111,7 @@ pub enum PageId {
     DemoWaves,
     DemoShapes,
     DemoMotion,
+    DemoMatrix,
 }
 
 impl PageId {
@@ -137,7 +138,8 @@ impl PageId {
             ChainId::Demo => match nav.node {
                 0 => PageId::DemoWaves,
                 1 => PageId::DemoShapes,
-                _ => PageId::DemoMotion,
+                2 => PageId::DemoMotion,
+                _ => PageId::DemoMatrix,
             },
         }
     }
@@ -212,6 +214,14 @@ impl PageId {
                 params.envelopes[0].release.normalized(),
                 params.envelopes[1].attack.normalized(),
                 params.envelopes[1].decay.normalized(),
+            ],
+            PageId::DemoMatrix => [
+                params.drive.drive.normalized(),     // cursor row
+                params.drive.tone.normalized(),      // cursor col
+                params.drive.mix.normalized(),       // scroll V
+                params.folder.fold.normalized(),     // scroll H
+                params.filter.env_amount.normalized(), // amount (bipolar)
+                0.0,
             ],
             PageId::EngineModal1 => [
                 params.modal.mode as f32 / 2.0,
@@ -366,6 +376,14 @@ impl PageId {
                 3 => Some(&mut params.envelopes[0].release),
                 4 => Some(&mut params.envelopes[1].attack),
                 5 => Some(&mut params.envelopes[1].decay),
+                _ => None,
+            },
+            PageId::DemoMatrix => match idx {
+                0 => Some(&mut params.drive.drive),       // cursor row
+                1 => Some(&mut params.drive.tone),        // cursor col
+                2 => Some(&mut params.drive.mix),         // scroll V
+                3 => Some(&mut params.folder.fold),       // scroll H
+                4 => Some(&mut params.filter.env_amount), // amount
                 _ => None,
             },
             _ => None,

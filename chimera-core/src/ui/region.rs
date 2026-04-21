@@ -148,15 +148,15 @@ impl RegionSet {
                     prev_data: RegionData::sentinel_header(),
                 };
                 self.regions[1] = Region {
-                    kind: RegionKind::Viz, y_start: 28, y_end: 144,
+                    kind: RegionKind::Viz, y_start: 28, y_end: 170,
                     prev_data: RegionData::sentinel_viz(),
                 };
                 self.regions[2] = Region {
-                    kind: RegionKind::Params, y_start: 144, y_end: 214,
+                    kind: RegionKind::Params, y_start: 170, y_end: 266,
                     prev_data: RegionData::sentinel_params(),
                 };
                 self.regions[3] = Region {
-                    kind: RegionKind::Nav, y_start: 214, y_end: 320,
+                    kind: RegionKind::Nav, y_start: 266, y_end: 320,
                     prev_data: RegionData::sentinel_nav(),
                 };
             }
@@ -167,11 +167,11 @@ impl RegionSet {
                     prev_data: RegionData::sentinel_header(),
                 };
                 self.regions[1] = Region {
-                    kind: RegionKind::Cells, y_start: 28, y_end: 214,
+                    kind: RegionKind::Cells, y_start: 28, y_end: 266,
                     prev_data: RegionData::sentinel_cells(),
                 };
                 self.regions[2] = Region {
-                    kind: RegionKind::Nav, y_start: 214, y_end: 320,
+                    kind: RegionKind::Nav, y_start: 266, y_end: 320,
                     prev_data: RegionData::sentinel_nav(),
                 };
             }

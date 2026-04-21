@@ -587,9 +587,16 @@ pub static DEMO_MOTION: BlockDef = BlockDef {
 pub static DEMO_MATRIX: BlockDef = BlockDef {
     name: "Matrix",
     short: "MTX",
-    layout: PageLayout::BigViz,
+    layout: PageLayout::CellGrid,
     viz: VizType::RoutingMatrix,
-    params: [EMPTY; 6],
+    params: [
+        ParamSlot { label: "ROW",   format: ValFmt::Uni, icon: CellIcon::None },
+        ParamSlot { label: "COL",   format: ValFmt::Uni, icon: CellIcon::None },
+        ParamSlot { label: "SCR.V", format: ValFmt::Uni, icon: CellIcon::None },
+        ParamSlot { label: "SCR.H", format: ValFmt::Uni, icon: CellIcon::None },
+        ParamSlot { label: "AMT",   format: ValFmt::Bi,  icon: CellIcon::None },
+        EMPTY,
+    ],
 };
 
 static DEMO_BLOCKS: [ChainBlock; 4] = [
