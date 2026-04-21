@@ -26,10 +26,12 @@ This document specifies the complete UI system for Chimera. Everything the user 
 └──────────────────────────────────────┘
 ```
 
-- **6 parameter encoders (A-F):** Edit the 6 parameters shown on the current page. Always 6. Every page shows exactly 6 values.
-- **1 main encoder:** Selects the active Part (1-4).
-- **6 parameter buttons (B1-B6):** Select pages within the current Part's chain.
-- **6 navigation buttons:** Context switching and chain traversal.
+- **6 encoders (A-F):** Edit the 6 parameters shown on the current page. Always 6. Every page shows exactly 6 values.
+- **6 Part buttons (B1-B6):** Select Part/chain. B1 = Part 1's chain, B2 = Part 2's chain, etc. Up to 6 Parts.
+- **Minus/Plus:** Navigate left/right through blocks in the selected chain.
+- **Seq/Edit:** Navigate up/down through sub-pages at the current block.
+- **MIX (hold):** Shift modifier. MIX + encoder = coarse snap. MIX + B1 = mixer page. MIX + B2-B6 = reserved for future functions.
+- **MENU:** System/global settings page.
 
 ## Screen Layout
 
@@ -156,39 +158,28 @@ Pages come in two kinds:
 
 Each block in a chain becomes one or more pages. B1-B6 buttons map to pages sequentially. The mod matrix is always the last page.
 
-**Example: "FM Poly" chain**
+**Example: "FM Poly" chain on Part 1 (B1)**
 
 ```
-Chain blocks: [FM Osc] → [Drive] → [Filter] → [Wavefolder] → [VCA]
-                 │
-                 ├── sub-page 0: FM-A (algorithm, feedback, carrier)
-                 ├── sub-page 1: FM-B (modulator, op2)
-                 └── sub-page 2: FM-C (op3, op4)
+Press B1 → enter Part 1's chain.
+Navigate with Minus/Plus:
 
-Button mapping:
-  B1 → FM Osc (3 sub-pages via Seq/Edit)
-  B2 → Drive
-  B3 → Filter
-  B4 → Wavefolder
-  B5 → VCA
-  B6 → Mod Matrix (sub-page 0: grid, sub-pages 1+: modulators)
+  [FM Osc] → [Drive] → [Filter] → [Wavefolder] → [VCA] → [Mod Matrix]
+     │
+     ├── sub-page 0: FM-A (algorithm, feedback, carrier)   ← Seq/Edit to move
+     ├── sub-page 1: FM-B (modulator, op2)
+     └── sub-page 2: FM-C (op3, op4)
 ```
 
-**Example: "Kick" chain**
+**Example: "Kick" chain on Part 4 (B4)**
 
 ```
-Chain blocks: [Noise Exciter] → [Tuned Resonator] → [Low Pass Gate]
+Press B4 → enter Part 4's chain.
 
-Button mapping:
-  B1 → Noise Exciter
-  B2 → Tuned Resonator
-  B3 → Low Pass Gate
-  B4 → Mod Matrix
-  B5 → (unused)
-  B6 → (unused)
+  [Noise Exciter] → [Tuned Resonator] → [Low Pass Gate] → [Mod Matrix]
 ```
 
-When a chain has fewer than 5 blocks + mod matrix, the remaining buttons are inactive (dimmed in dungeon map). When a chain has more than 5 blocks, Minus/Plus scroll through additional blocks with the mod matrix always accessible on B6.
+Pressing a Part button always lands on the first block (leftmost). Minus/Plus traverses the chain. The mod matrix is always the last node.
 
 ### Page Definitions for All Block Types
 
@@ -451,18 +442,20 @@ Shows all Parts with levels, pans, output assignments, and send levels.
 ┌────────────────────────────────┐
 │ MIXER                          │
 │                                │
-│ P1 [FM Poly]  ████░░  L  DAC1 │
-│   S1:40  S2:0                  │
-│                                │
-│ P2 [Kick]     ███░░░  C  DAC2 │
-│   S1:0   S2:0                  │
-│                                │
-│ P3 [Pluck]    █████░  R  DAC3 │
-│   S1:60  S2:30                 │
+│ P1 [FM Poly]  ████░░  DAC1    │
+│ P2 [Kick]     ███░░░  DAC2    │
+│ P3 [Pluck]    █████░  DAC3    │
+│ P4 [Snare]    ██░░░░  DAC2    │
+│ P5 [--]       ░░░░░░  --      │
+│ P6 [--]       ░░░░░░  --      │
 │                                │
 │ Master:       ████████░  -2dB  │
 └────────────────────────────────┘
 ```
+
+Sub-pages (Seq/Edit):
+
+**Sub-page 0: Parts 1-3 volume + master**
 
 | Encoder | Label | Parameter |
 |---------|-------|-----------|
@@ -470,13 +463,30 @@ Shows all Parts with levels, pans, output assignments, and send levels.
 | B | P2 VOL | Part 2 volume |
 | C | P3 VOL | Part 3 volume |
 | D | MASTER | Master volume |
-| E | SEND 1 | Selected Part → Send 1 level |
-| F | SEND 2 | Selected Part → Send 2 level |
+| E | SEND 1 | Last-selected Part → Send 1 level |
+| F | SEND 2 | Last-selected Part → Send 2 level |
 
-Sub-pages (Seq/Edit):
-- Sub-page 0: Volume + sends (above)
-- Sub-page 1: Pan + output assignment per Part
-- Sub-page 2: Send effect parameters (reverb type/time/damping/mix, delay time/feedback)
+**Sub-page 1: Parts 4-6 volume + output**
+
+| Encoder | Label | Parameter |
+|---------|-------|-----------|
+| A | P4 VOL | Part 4 volume |
+| B | P5 VOL | Part 5 volume |
+| C | P6 VOL | Part 6 volume |
+| D | OUTPUT | Last-selected Part → DAC assignment |
+| E | PAN | Last-selected Part → Pan |
+| F | — | — |
+
+**Sub-page 2: Send effect parameters**
+
+| Encoder | Label | Parameter |
+|---------|-------|-----------|
+| A | R.TYPE | Reverb type (Plate/FDN/MidiVerb) |
+| B | R.TIME | Reverb time |
+| C | R.DAMP | Reverb damping |
+| D | R.MIX | Reverb mix |
+| E | D.TIME | Delay time |
+| F | D.FDBK | Delay feedback |
 
 Layout: **CellGrid**
 
@@ -517,7 +527,7 @@ System settings, MIDI configuration, tuning.
 
 Sub-pages:
 
-**Sub-page 0: MIDI Config**
+**Sub-page 0: MIDI Config (Parts 1-3)**
 
 | Encoder | Label | Parameter |
 |---------|-------|-----------|
@@ -525,7 +535,18 @@ Sub-pages:
 | B | P2 CH | Part 2 MIDI channel (1-16, OFF) |
 | C | P3 CH | Part 3 MIDI channel (1-16, OFF) |
 | D | P4 CH | Part 4 MIDI channel (1-16, OFF) |
-| E | CLOCK | Clock source (Int / Ext MIDI) |
+| E | P5 CH | Part 5 MIDI channel (1-16, OFF) |
+| F | P6 CH | Part 6 MIDI channel (1-16, OFF) |
+
+**Sub-page 1: MIDI Global**
+
+| Encoder | Label | Parameter |
+|---------|-------|-----------|
+| A | CLOCK | Clock source (Int / Ext MIDI) |
+| B | — | — |
+| C | — | — |
+| D | — | — |
+| E | — | — |
 | F | — | — |
 
 **Sub-page 1: Tuning**
@@ -560,16 +581,15 @@ Layout: **CellGrid**
 
 ```rust
 struct NavigationState {
-    part: usize,           // 0-3 (active Part, selected by main encoder)
-    context: Context,      // Chain or Menu
+    part: usize,           // 0-5 (active Part, selected by B1-B6)
+    context: Context,      // Chain, Mixer, or System
     chain_node: usize,     // horizontal position in chain
     sub_page: usize,       // vertical sub-page at current node
 }
 
 enum Context {
-    Chain,                 // Editing a Part's chain (B1-B6 = block pages)
-    Mixer,                 // MIX button
-    Patch,                 // EDIT button
+    Chain,                 // Editing a Part's chain
+    Mixer,                 // MIX + B1
     System,                // MENU button
 }
 ```
@@ -578,25 +598,24 @@ enum Context {
 
 | Input | Current State | Action |
 |-------|---------------|--------|
-| **Main encoder turn** | Any | Change active Part (1-4). If in Chain context, pages update to new Part's chain. |
-| **B1-B6 pressed** | Any | Switch to Chain context. Jump to block page N in active Part's chain. If already on that page, snap to sub-page 0. |
-| **MIX pressed** | Any | Switch to Mixer context. |
-| **EDIT pressed** | Any | Switch to Patch context. |
-| **MENU pressed** | Any | Switch to System context. |
-| **Minus pressed** | Chain | Move left one node in chain (decrement chain_node). Reset sub_page to 0. |
-| **Plus pressed** | Chain | Move right one node in chain (increment chain_node). Reset sub_page to 0. |
-| **Seq pressed** | Chain/Menu | Move up one sub-page (decrement sub_page). |
-| **Edit pressed** | Chain (on node with sub-pages) | Move down one sub-page (increment sub_page). |
+| **B1-B6 pressed** | Any | Switch to Chain context for that Part. If already on that Part's chain, snap to first block (node 0, sub_page 0). |
+| **Minus pressed** | Chain | Move left one node (decrement chain_node). Reset sub_page to 0. |
+| **Plus pressed** | Chain | Move right one node (increment chain_node). Reset sub_page to 0. |
+| **Seq pressed** | Any with sub-pages | Move up one sub-page (decrement sub_page). |
+| **Edit pressed** | Any with sub-pages | Move down one sub-page (increment sub_page). |
 | **Encoder A-F turn** | Any | Apply delta to parameter at encoder index on current page. |
-| **MIX + Encoder** | Any | Shift mode: coarse snap instead of fine adjustment. |
+| **MIX (hold) + Encoder** | Any | Shift mode: coarse snap instead of fine adjustment. |
+| **MIX + B1** | Any | Switch to Mixer context. |
+| **MIX + B2-B6** | Any | Reserved for future functions. |
+| **MENU pressed** | Any | Switch to System context. |
 
 ### Key Invariants
 
-1. **Main encoder always selects Part.** No exceptions. No modal override.
-2. **B1-B6 always jump to chain pages.** Even from Mixer/Patch/System — pressing B3 takes you to block 3 of the active Part's chain.
-3. **Only one page is active at a time.** No overlays, no popups, no modal dialogs.
-4. **Page labels update when Part changes.** Switching from Part 1 (FM Poly) to Part 2 (Kick) changes what B1-B6 labels mean.
-5. **The dungeon map is always visible.** It shows the chain topology regardless of whether you're in Chain, Mixer, Patch, or System context. In non-Chain contexts, no node is highlighted.
+1. **B1-B6 always select a Part's chain.** Pressing B3 takes you to Part 3's chain, first block. Even from Mixer or System pages.
+2. **Only one page is active at a time.** No overlays, no popups, no modal dialogs.
+3. **The dungeon map is always visible.** It shows the active Part's chain topology. In Mixer/System contexts, the chain is still shown (dimmed, no active node).
+4. **Pressing the same Part button again snaps home.** If you're on Part 2, block 3, pressing B2 takes you back to Part 2, block 0.
+5. **MIX is only a modifier.** It does nothing on its own. Hold it + press/turn something else.
 
 ---
 
@@ -677,7 +696,7 @@ Each block type defines its visualization for BigViz layout. CellGrid pages use 
 
 ## Chain Editor (Power User)
 
-Accessed via: **Hold EDIT + press MENU** (deliberate 2-button combo).
+Accessed via: **MIX + MENU** (deliberate shift combo).
 
 Shows the full chain as an editable list of blocks:
 
@@ -764,7 +783,7 @@ The current codebase has a hardcoded `PageId` enum with 21 variants and hardcode
 
 2. **Chain definitions are per-Part, not global constants.** Each Part owns a chain (list of blocks). The dungeon map renders from the Part's chain, not from `static VOICE_CHAIN`.
 
-3. **Navigation is Part-aware.** Switching Parts changes the chain topology, which changes what B1-B6 mean, which changes the dungeon map.
+3. **Navigation is Part-aware.** B1-B6 select Parts directly (like Digitone T1-T4). Switching Parts changes the chain topology shown in the dungeon map. Minus/Plus navigate within the chain.
 
 4. **The mod matrix page is auto-generated from the chain.** Its routing grid columns come from the chain's blocks. Adding or removing a block updates the grid.
 
