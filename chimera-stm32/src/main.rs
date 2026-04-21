@@ -82,8 +82,8 @@ fn main() -> ! {
     audio::init_sai1a();      // Configures SAI but does NOT enable it
 
     // Connect voice to UI params and trigger test note
-    // SAFETY: ui.params lives in main's stack frame which never returns (-> !)
-    unsafe { audio::init_voice(&ui.params as *const _); }
+    // SAFETY: ui.params and ui.mod_state live in main's stack frame which never returns (-> !)
+    unsafe { audio::init_voice(&ui.params as *const _, &ui.mod_state as *const _); }
     audio::trigger_note(69, 100);  // A4, velocity 100
 
     audio::prefill_buffer();   // Fill buffer with first rendered audio

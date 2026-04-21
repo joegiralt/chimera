@@ -14,6 +14,7 @@ pub mod theme;
 
 use chimera_hal::{ButtonId, ButtonState, Controls, EncoderId};
 
+use crate::modulation::ModState;
 use crate::params::ParamSnapshot;
 use chain::ChainNav;
 use mod_grid::MatrixState;
@@ -28,6 +29,7 @@ pub struct UiState {
     pub params: ParamSnapshot,
     pub renderer: Renderer,
     pub matrix_state: MatrixState,
+    pub mod_state: ModState,
     page: PageId,
     region_set: region::RegionSet,
     /// Last encoder touched (0-5) — used to identify focused param for MIX+Plus/Minus
@@ -61,6 +63,7 @@ impl UiState {
             params,
             renderer,
             matrix_state,
+            mod_state: ModState::new(),
             page,
             region_set: region::RegionSet::new(),
             last_encoder: 0,
@@ -108,7 +111,10 @@ impl UiState {
                         1 => self.matrix_state.move_col(delta),
                         2 => self.matrix_state.scroll_v(delta),
                         3 => self.matrix_state.scroll_h(delta),
-                        4 => self.matrix_state.adjust_amount(delta),
+                        4 => {
+                            self.matrix_state.adjust_amount(delta);
+                            self.mod_state.sync_from_matrix(&self.matrix_state);
+                        }
                         _ => {}
                     }
                 }
@@ -136,10 +142,12 @@ impl UiState {
                 if controls.button_state(ButtonId::Plus) == ButtonState::Pressed {
                     self.matrix_state.set_mod_enabled(block_idx, param_idx, true);
                     self.matrix_state.rebuild_dests_from_chain(chain.blocks);
+                    self.mod_state.sync_from_matrix(&self.matrix_state);
                 }
                 if controls.button_state(ButtonId::Minus) == ButtonState::Pressed {
                     self.matrix_state.set_mod_enabled(block_idx, param_idx, false);
                     self.matrix_state.rebuild_dests_from_chain(chain.blocks);
+                    self.mod_state.sync_from_matrix(&self.matrix_state);
                 }
             }
         }
