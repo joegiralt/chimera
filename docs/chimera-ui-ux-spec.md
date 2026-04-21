@@ -8,6 +8,112 @@
 4. **B1-B6 select context.** Normally = Part chains. MIX + B1-B6 = mixer channel chains. MENU = system chain.
 5. **One interaction model everywhere.** Learn one pattern, use it for everything — sound design, mixing, MIDI config, effects, system settings.
 6. **Complexity is hidden, not absent.** Factory defaults work immediately. Chain structure is invisible to casual users. Power users can edit chains.
+7. **Componentize everything.** A small set of reusable UI components renders all pages. Blocks declare what to show, not how to draw it. No bespoke page rendering. No per-page shift+encoder behavior.
+
+---
+
+## Component Architecture
+
+The UI is built from a small number of reusable components. Blocks don't draw themselves — they declare their content, and the component system renders it. This means:
+
+- Adding a new block type requires zero new rendering code (just a declaration)
+- Every page looks and behaves consistently
+- Refactoring a component improves every page at once
+- No per-page special cases, no per-page shift+encoder overrides
+
+### Components
+
+| Component | What It Renders | Used By |
+|-----------|----------------|---------|
+| **ParamCell** | Label + numeric value + horizontal bar + optional mini icon | Every page |
+| **ParamGrid** | 3×2 layout of ParamCells | CellGrid pages |
+| **VizPanel** | A visualization from a fixed set of viz types | BigViz pages |
+| **VizParamGrid** | Viz (top) + 3×2 ParamGrid (bottom) | BigViz pages |
+| **RoutingGrid** | Toggleable source × destination matrix | Mod matrix page |
+| **HeaderBar** | Context > Block > Sub-page + perf stats | Every page |
+| **DungeonMap** | Chain topology with active node highlight | Every page |
+
+There are no other components. Every screen in the entire instrument is composed from these 7 pieces.
+
+### Block Definition (Declarative)
+
+A block does not contain rendering logic. It is a data declaration:
+
+```rust
+struct BlockDef {
+    name: &'static str,               // "Filter"
+    short: &'static str,              // "FLT" (for dungeon map)
+    layout: PageLayout,               // BigViz or CellGrid
+    viz: VizType,                     // FilterResponse, AlgorithmDiagram, Adsr, None
+    params: [ParamSlot; 6],           // 6 parameter definitions
+    sub_pages: &'static [BlockDef],   // sub-pages (e.g., FM-A/B/C)
+}
+
+struct ParamSlot {
+    label: &'static str,              // "CUTOFF"
+    format: ValFmt,                   // Uni, Bi, Int(7)
+    icon: CellIcon,                   // Arc, WaveClip, None, etc.
+    // read/write resolved by parameter binding at runtime
+}
+```
+
+The renderer receives a `BlockDef` and renders it using the standard components. It doesn't know what a filter is, what FM synthesis is, or what a mixer channel is. It just renders:
+- A HeaderBar with `name`
+- Either a VizPanel + ParamGrid (BigViz) or a ParamGrid with icons (CellGrid)
+- A DungeonMap showing the chain
+
+### Visualization Types (Fixed Set)
+
+Visualizations are not per-block custom code. They are a small enum of reusable viz renderers:
+
+```rust
+enum VizType {
+    None,                  // No visualization (CellGrid only)
+    FilterResponse,        // Frequency response curve from cutoff/reso/mode
+    Adsr,                  // Envelope breakpoint diagram from A/D/S/R
+    AlgorithmDiagram,      // FM operator routing boxes
+    EqResponse,            // 3-band EQ curve
+    LpgResponse,           // Combined filter + VCA decay curve
+    WaveformPreview,       // Waveform display (drive clipping, fold shape)
+    Logo,                  // Chimera logo (About page)
+}
+```
+
+Each VizType is a function that takes 6 normalized values and draws into the viz area. No block-specific knowledge. The same `FilterResponse` viz works for the main filter block, a hypothetical second filter in a custom chain, or the mixer EQ block.
+
+### No Per-Page Special Cases
+
+These rules have no exceptions:
+
+- **MIX + encoder = coarse snap.** Always. On every page. No page overrides this.
+- **Encoders A-F map to parameter slots 0-5.** Always. The mapping is defined by the BlockDef, not by per-page code.
+- **Minus/Plus = chain traversal.** Always. No page captures these for "scroll within page" behavior.
+- **Seq/Edit = sub-page navigation.** Always. No page repurposes these buttons.
+
+If a page needs more than 6 parameters, it uses sub-pages (like FM Osc with FM-A/B/C). It does not add shift+encoder combos or repurpose nav buttons.
+
+### Parameter Binding
+
+Each ParamSlot in a BlockDef binds to a parameter in the state at runtime. The binding resolves:
+
+- **Read:** Extract normalized 0.0-1.0 value for display and animation
+- **Write:** Apply encoder delta to the underlying parameter
+- **Snap:** Apply coarse snap points based on ValFmt
+
+The binding is the only part that knows about the parameter's actual storage (which field in which struct). Everything above — rendering, animation, dirty detection — works on normalized values.
+
+```
+User turns encoder B
+    → NavigationState says we're on Part 1, block 2 (Filter), sub-page 0
+    → BlockDef for Filter says slot 1 = { label: "RESO", format: Uni }
+    → Parameter binding resolves slot 1 → &mut part1.filter.resonance
+    → Nudge applied: resonance += delta * step
+    → AnimatedValue[1] target updated
+    → Dirty detection triggers Params region redraw
+    → ParamCell component renders new value + bar
+```
+
+No code in this pipeline knows it's editing a filter's resonance. It's all generic: slot index → binding → nudge → animate → render.
 
 ---
 
