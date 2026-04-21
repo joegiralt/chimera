@@ -17,18 +17,14 @@ const NO_SOURCES: &[&str] = &[];
 
 // Destination labels are now dynamic — read from chain BlockDefs via MatrixState.dests[]
 
-/// Demo amounts — only Env 1 routes for now.
-const DEMO_AMOUNTS: &[(usize, usize, i8)] = &[
-    (0, 5, 64),   // Env 1 → FLT.CUT +64
-    (0, 9, 100),  // Env 1 → VCA.LVL +100
-];
+// No demo amounts — matrix starts empty. Users set amounts via Encoder E on the grid.
 
 /// Grid geometry
 const GRID_TOP: i32 = 28;        // below header
 const GRID_LEFT: i32 = 0;        // left edge
 const ROW_LABEL_W: i32 = 36;     // width for source labels
 const COL_HEADER_H: i32 = 22;    // height for dest column headers (2 lines)
-const CELL_W: i32 = 28;          // width per cell
+const CELL_W: i32 = 32;          // width per cell (fits 4 chars + padding)
 const CELL_H: i32 = 14;          // height per cell
 const GRID_BOTTOM: i32 = 265;    // above dungeon map
 
@@ -94,22 +90,8 @@ impl MatrixState {
             sources: [None; MAX_SOURCES],
             num_sources: 0,
         };
-        // Pre-fill demo destinations
-        let demo_dests: &[(u8, u8)] = &[
-            (0, 0), (0, 1), (0, 2),  // Pizza: shape, crush, level
-            (1, 0), (1, 1),          // Drive: drive, tone
-            (2, 0), (2, 1),          // Filter: cutoff, reso
-            (3, 0), (3, 1),          // Folder: fold, sym
-        ];
-        for &(block, param) in demo_dests {
-            state.set_mod_enabled(block, param, true);
-        }
-        // Pre-fill demo amounts
-        for &(src, dst, amt) in DEMO_AMOUNTS {
-            if src < MAX_SOURCES && dst < MAX_DESTS {
-                state.amounts[src][dst] = amt;
-            }
-        }
+        // Matrix starts empty — no destinations enabled, no amounts set.
+        // Users enable params with MIX+Plus on block pages, set amounts in grid.
         state
     }
 
@@ -316,8 +298,11 @@ pub fn draw_grid<D>(
         let y = GRID_TOP;
 
         let style = if di == sel_col { accent } else { dim };
-        let _ = Text::new(dest.block_short, Point::new(x, y + 10), style).draw(display);
-        let _ = Text::new(dest.param_label, Point::new(x, y + 20), style).draw(display);
+        // Truncate labels to fit cell width
+        let blk = if dest.block_short.len() > 4 { &dest.block_short[..4] } else { dest.block_short };
+        let prm = if dest.param_label.len() > 4 { &dest.param_label[..4] } else { dest.param_label };
+        let _ = Text::new(blk, Point::new(x, y + 10), style).draw(display);
+        let _ = Text::new(prm, Point::new(x, y + 20), style).draw(display);
     }
 
     // ── Row labels + cells ──
