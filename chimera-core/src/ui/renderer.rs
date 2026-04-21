@@ -886,25 +886,31 @@ impl Renderer {
         }
     }
 
-    /// Header that uses `def.name` instead of chain/node nav lookups.
-    /// Falls back to the old nav-based header breadcrumb but includes the
-    /// BlockDef name as the node label.
+    /// Header showing ChainId context and BlockDef name.
+    /// Format: "Context > BlockName"
     fn draw_header_with_def<D>(&self, display: &mut D, nav: &ChainNav, def: &BlockDef)
     where
         D: DrawTarget<Color = Rgb565>,
     {
-        let chain = match nav.chain_def() {
-            Some(c) => c,
-            None => return,
-        };
+        use crate::ui::chain::ChainId;
+        use crate::ui::fmt::FmtBuf;
+        use core::fmt::Write;
 
         let dim = MonoTextStyle::new(&FONT_6X10, theme::HEADER_LABEL);
         let bright = MonoTextStyle::new(&FONT_6X10, theme::TEXT);
         let y = theme::HEADER_Y + 10;
 
+        let mut context_buf = FmtBuf::new();
+        match nav.chain_id {
+            ChainId::Part(n) => { let _ = write!(context_buf, "Part {}", n + 1); }
+            ChainId::Mixer(n) => { let _ = write!(context_buf, "Mix CH{}", n + 1); }
+            ChainId::System => { let _ = write!(context_buf, "System"); }
+            ChainId::Demo => { let _ = write!(context_buf, "Demo"); }
+        }
+
         let mut x = 8;
-        let _ = Text::new(chain.name, Point::new(x, y), dim).draw(display);
-        x += chain.name.len() as i32 * 6;
+        let _ = Text::new(context_buf.as_str(), Point::new(x, y), dim).draw(display);
+        x += context_buf.as_str().len() as i32 * 6;
 
         let _ = Text::new(" > ", Point::new(x, y), dim).draw(display);
         x += 18;

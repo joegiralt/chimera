@@ -14,7 +14,6 @@ pub mod theme;
 use chimera_hal::{ButtonId, ButtonState, Controls, EncoderId};
 
 use crate::params::{EngineType, ParamSnapshot};
-use block_def::{BlockDef, ChainDef2};
 use chain::ChainNav;
 use page::PageId;
 use perf::PerfStats;
@@ -58,20 +57,6 @@ impl UiState {
         self.page
     }
 
-    /// Look up the active `BlockDef` from the block registry based on
-    /// current navigation position (chain, node, sub_page).
-    fn active_block_def(&self) -> &'static BlockDef {
-        let chain: &ChainDef2 = match self.nav.chain {
-            0 => &block_registry::FM_POLY_CHAIN,
-            1 => &block_registry::MIX_CHAIN,
-            2 => &block_registry::ENVELOPE_CHAIN,
-            _ => &block_registry::FM_POLY_CHAIN,
-        };
-        chain
-            .active_def(self.nav.node, self.nav.sub_page)
-            .unwrap_or(block_registry::FM_POLY_CHAIN.blocks[0].def)
-    }
-
     /// Process one frame of input: navigation + encoder deltas.
     pub fn handle_input(&mut self, controls: &impl Controls) {
         // Navigation
@@ -80,13 +65,20 @@ impl UiState {
             self.page = PageId::from_nav(&self.nav);
             self.renderer.snap_to_current(self.page, &self.params);
 
-            // Switch engine type based on which engine sub-page is active
-            self.params.engine = match self.page {
-                PageId::EngineFmA | PageId::EngineFmB | PageId::EngineFmC => EngineType::Fm,
-                PageId::EngineModal1 | PageId::EngineModal2 => EngineType::Modal,
-                PageId::EngineVa => EngineType::Va,
-                _ => self.params.engine, // keep current
-            };
+            // Switch engine type based on which block is active
+            let def = self.nav.active_block_def();
+            if core::ptr::eq(def, &block_registry::FM_A)
+                || core::ptr::eq(def, &block_registry::FM_B)
+                || core::ptr::eq(def, &block_registry::FM_C)
+            {
+                self.params.engine = EngineType::Fm;
+            } else if core::ptr::eq(def, &block_registry::MODAL_1)
+                || core::ptr::eq(def, &block_registry::MODAL_2)
+            {
+                self.params.engine = EngineType::Modal;
+            } else if core::ptr::eq(def, &block_registry::VA) {
+                self.params.engine = EngineType::Va;
+            }
         }
 
         // Encoder deltas -> parameter changes
@@ -103,7 +95,7 @@ impl UiState {
             EncoderId::E,
             EncoderId::F,
         ];
-        let def = self.active_block_def();
+        let def = self.nav.active_block_def();
         for (i, &enc) in encoder_ids.iter().enumerate() {
             let delta = controls.encoder_delta(enc);
             if delta != 0 {
@@ -129,7 +121,7 @@ impl UiState {
                 Color = embedded_graphics::pixelcolor::Rgb565,
             >,
     {
-        let def = self.active_block_def();
+        let def = self.nav.active_block_def();
         self.renderer.draw_with_def(display, &self.nav, def, perf);
     }
 
@@ -138,24 +130,21 @@ impl UiState {
     pub fn prime_regions(&mut self, perf: &PerfStats) {
         use region::{RegionData, RegionKind};
 
-        let def = self.active_block_def();
+        let def = self.nav.active_block_def();
         let layout = def.layout;
         self.region_set.set_layout(layout);
         let qvalues = region::quantize_values(&self.renderer.anim);
+        let nav_tag = nav_tag(&self.nav);
 
         for r in self.region_set.active_regions_mut() {
             r.prev_data = match r.kind {
                 RegionKind::Header => RegionData::header(
-                    self.nav.chain as u8, self.nav.node as u8,
-                    self.nav.sub_page as u8, perf.render_us,
+                    nav_tag.0, nav_tag.1, nav_tag.2, perf.render_us,
                 ),
                 RegionKind::Viz => RegionData::viz(self.page, qvalues),
                 RegionKind::Params => RegionData::params(self.page, qvalues),
                 RegionKind::Cells => RegionData::cells(self.page, qvalues),
-                RegionKind::Nav => RegionData::nav(
-                    self.nav.chain as u8, self.nav.node as u8,
-                    self.nav.sub_page as u8,
-                ),
+                RegionKind::Nav => RegionData::nav(nav_tag.0, nav_tag.1, nav_tag.2),
             };
         }
     }
@@ -173,7 +162,7 @@ impl UiState {
     {
         use region::{RegionData, RegionKind};
 
-        let def = self.active_block_def();
+        let def = self.nav.active_block_def();
         let layout = def.layout;
         let mut flush_list = [(0u16, 0u16); region::MAX_REGIONS];
         let mut flush_count = 0;
@@ -184,23 +173,17 @@ impl UiState {
         }
 
         let qvalues = region::quantize_values(&self.renderer.anim);
+        let nav_tag = nav_tag(&self.nav);
 
         for r in self.region_set.active_regions_mut() {
             let current_data = match r.kind {
                 RegionKind::Header => RegionData::header(
-                    self.nav.chain as u8,
-                    self.nav.node as u8,
-                    self.nav.sub_page as u8,
-                    perf.render_us,
+                    nav_tag.0, nav_tag.1, nav_tag.2, perf.render_us,
                 ),
                 RegionKind::Viz => RegionData::viz(self.page, qvalues),
                 RegionKind::Params => RegionData::params(self.page, qvalues),
                 RegionKind::Cells => RegionData::cells(self.page, qvalues),
-                RegionKind::Nav => RegionData::nav(
-                    self.nav.chain as u8,
-                    self.nav.node as u8,
-                    self.nav.sub_page as u8,
-                ),
+                RegionKind::Nav => RegionData::nav(nav_tag.0, nav_tag.1, nav_tag.2),
             };
 
             if current_data != r.prev_data {
@@ -219,4 +202,17 @@ impl UiState {
 
         flush_list
     }
+}
+
+/// Encode ChainId + node + sub_page into (u8, u8, u8) for region snapshot.
+/// The chain_idx byte encodes ChainId discriminant + index.
+fn nav_tag(nav: &ChainNav) -> (u8, u8, u8) {
+    use chain::ChainId;
+    let chain_byte = match nav.chain_id {
+        ChainId::Part(i) => i as u8,          // 0-5
+        ChainId::Mixer(i) => 10 + i as u8,    // 10-15
+        ChainId::System => 20,
+        ChainId::Demo => 21,
+    };
+    (chain_byte, nav.node as u8, nav.sub_page as u8)
 }

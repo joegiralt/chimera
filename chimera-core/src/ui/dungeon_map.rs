@@ -7,7 +7,7 @@ use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::primitives::{Line, PrimitiveStyle, Rectangle, StyledDrawable};
 use embedded_graphics::text::Text;
 
-use crate::ui::chain::{ChainDef, ChainNav};
+use crate::ui::chain::ChainNav;
 use crate::ui::theme;
 
 /// Render the dungeon map in the bottom zone of the screen.
@@ -16,10 +16,7 @@ pub fn draw<D>(display: &mut D, nav: &ChainNav)
 where
     D: DrawTarget<Color = Rgb565>,
 {
-    let chain = match nav.chain_def() {
-        Some(c) => c,
-        None => return,
-    };
+    let chain = nav.active_chain();
 
     // Separator line
     let _ = Line::new(
@@ -37,19 +34,20 @@ where
 }
 
 /// Draw the horizontal row of node boxes with connectors.
-fn draw_nodes<D>(display: &mut D, chain: &ChainDef, nav: &ChainNav)
+fn draw_nodes<D>(display: &mut D, chain: &crate::ui::block_def::ChainDef2, nav: &ChainNav)
 where
     D: DrawTarget<Color = Rgb565>,
 {
-    let node_count = chain.nodes.len();
+    let node_count = chain.blocks.len();
     let total_width =
         node_count as i32 * theme::NODE_WIDTH + (node_count as i32 - 1) * theme::NODE_GAP;
     let start_x = (theme::SCREEN_W - total_width) / 2;
     let y = theme::NODE_ROW_Y;
 
-    for (i, node) in chain.nodes.iter().enumerate() {
+    for (i, block) in chain.blocks.iter().enumerate() {
         let x = start_x + i as i32 * (theme::NODE_WIDTH + theme::NODE_GAP);
         let is_active = i == nav.node;
+        let short = block.def.short;
 
         // Connector line to next node
         if i + 1 < node_count {
@@ -75,9 +73,9 @@ where
             let _ = rect.draw_styled(&PrimitiveStyle::with_fill(theme::NODE_ACTIVE_BG), display);
             // Label inside, dark on bright
             let text_style = MonoTextStyle::new(&FONT_6X10, theme::NODE_ACTIVE_TEXT);
-            let tx = x + (theme::NODE_WIDTH - node.short.len() as i32 * 6) / 2;
+            let tx = x + (theme::NODE_WIDTH - short.len() as i32 * 6) / 2;
             let ty = y + 11;
-            let _ = Text::new(node.short, Point::new(tx, ty), text_style).draw(display);
+            let _ = Text::new(short, Point::new(tx, ty), text_style).draw(display);
         } else {
             // Outline only
             let _ = rect.draw_styled(
@@ -85,13 +83,13 @@ where
                 display,
             );
             let text_style = MonoTextStyle::new(&FONT_6X10, theme::NODE_INACTIVE_TEXT);
-            let tx = x + (theme::NODE_WIDTH - node.short.len() as i32 * 6) / 2;
+            let tx = x + (theme::NODE_WIDTH - short.len() as i32 * 6) / 2;
             let ty = y + 11;
-            let _ = Text::new(node.short, Point::new(tx, ty), text_style).draw(display);
+            let _ = Text::new(short, Point::new(tx, ty), text_style).draw(display);
         }
 
         // Sub-page dot indicator below active node
-        if is_active && !node.sub_pages.is_empty() {
+        if is_active && !block.sub_pages.is_empty() {
             // Small tick mark below active node
             let tick_x = x + theme::NODE_WIDTH / 2;
             let _ = Line::new(
@@ -111,24 +109,34 @@ fn draw_branches<D>(display: &mut D, nav: &ChainNav)
 where
     D: DrawTarget<Color = Rgb565>,
 {
-    let node = match nav.node_def() {
-        Some(n) => n,
+    let block = match nav.active_chain_block() {
+        Some(b) => b,
         None => return,
     };
 
-    if node.sub_pages.is_empty() {
+    if block.sub_pages.is_empty() {
         return;
     }
 
-    let chain = nav.chain_def().unwrap();
-    let node_count = chain.nodes.len();
+    let chain = nav.active_chain();
+    let node_count = chain.blocks.len();
     let total_width =
         node_count as i32 * theme::NODE_WIDTH + (node_count as i32 - 1) * theme::NODE_GAP;
     let start_x = (theme::SCREEN_W - total_width) / 2;
     let node_x = start_x + nav.node as i32 * (theme::NODE_WIDTH + theme::NODE_GAP);
     let branch_x = node_x + 4;
 
-    for (i, &name) in node.sub_pages.iter().enumerate() {
+    // Build label list: first entry is the block's own def (sub_page 0),
+    // then each sub_page def.
+    // Total count = 1 + sub_pages.len()
+    let count = block.sub_page_count();
+    for i in 0..count {
+        let label = if i == 0 {
+            block.def.short
+        } else {
+            block.sub_pages[i - 1].short
+        };
+
         let y = theme::BRANCH_START_Y + i as i32 * theme::BRANCH_LINE_HEIGHT;
         let is_active = i == nav.sub_page;
 
@@ -140,9 +148,6 @@ where
         };
 
         // Vertical line segment
-        if i == 0 {
-            // First branch: connects from node
-        }
         let _ = Line::new(Point::new(branch_x, y), Point::new(branch_x, y + 10))
             .draw_styled(&PrimitiveStyle::with_stroke(connector_color, 1), display);
 
@@ -163,6 +168,6 @@ where
                 .draw_styled(&PrimitiveStyle::with_fill(theme::BRANCH_MARKER), display);
         }
 
-        let _ = Text::new(name, Point::new(branch_x + 14, y + 9), style).draw(display);
+        let _ = Text::new(label, Point::new(branch_x + 14, y + 9), style).draw(display);
     }
 }
