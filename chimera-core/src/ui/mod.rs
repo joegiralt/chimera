@@ -159,26 +159,27 @@ impl UiState {
 
     /// Advance animations. Call at 30fps.
     pub fn update(&mut self) {
-        // Tick the display-side LFO for visual modulation feedback.
-        // LFO.process() advances phase by: rate / sample_rate * BLOCK_SIZE
-        // We want phase to advance by: rate / ui_fps per call.
-        // So: rate / sample_rate * BLOCK_SIZE = rate / ui_fps
-        //     sample_rate = BLOCK_SIZE * ui_fps
-        // Display-side LFO: advance phase by rate/fps per frame.
-        // The audio LFO.process() uses rate/sample_rate*BLOCK_SIZE internally.
-        // For the display we call once per UI frame. To get the same real-time rate,
-        // pass sample_rate such that: rate/sr * BLOCK_SIZE = rate/fps
-        // sr = BLOCK_SIZE * fps. At variable fps, assume ~30.
-        // If animations look too slow/fast, this constant needs tuning.
-        const UI_FPS: u32 = 20; // tuned to match audio-side LFO rate
-        let lfo_val = self.display_lfo.process(&self.params.lfo, chimera_hal::BLOCK_SIZE as u32 * UI_FPS);
-
         // Read base param values
         let mut values = self.page.read_values(&self.params);
 
-        // Apply mod offsets for display — makes bars and vizzes animate with modulation
-        let block_idx = self.nav.node as u8;
+        // Apply mod offsets for display — makes bars and vizzes animate with modulation.
+        // Skip the LFO tick entirely when no modulation is active.
         if self.mod_state.num_dests > 0 {
+            // Tick the display-side LFO for visual modulation feedback.
+            // LFO.process() advances phase by: rate / sample_rate * BLOCK_SIZE
+            // We want phase to advance by: rate / ui_fps per call.
+            // So: rate / sample_rate * BLOCK_SIZE = rate / ui_fps
+            //     sample_rate = BLOCK_SIZE * ui_fps
+            // Display-side LFO: advance phase by rate/fps per frame.
+            // The audio LFO.process() uses rate/sample_rate*BLOCK_SIZE internally.
+            // For the display we call once per UI frame. To get the same real-time rate,
+            // pass sample_rate such that: rate/sr * BLOCK_SIZE = rate/fps
+            // sr = BLOCK_SIZE * fps. At variable fps, assume ~30.
+            // If animations look too slow/fast, this constant needs tuning.
+            const UI_FPS: u32 = 20; // tuned to match audio-side LFO rate
+            let lfo_val = self.display_lfo.process(&self.params.lfo, chimera_hal::BLOCK_SIZE as u32 * UI_FPS);
+
+            let block_idx = self.nav.node as u8;
             let mut mod_sources = [0.0f32; MAX_MOD_SOURCES];
             // Source 0 = Envelope (use sustain level as approximation for display)
             if self.mod_state.num_sources > 0 {

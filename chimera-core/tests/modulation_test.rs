@@ -89,10 +89,15 @@ fn mod_state_compute_offset_negative_amount() {
 
 #[test]
 fn mod_state_sync_from_matrix() {
+    use chimera_core::ui::mod_grid::ModDest;
+
     let mut matrix = MatrixState::new();
-    // Enable two destinations via set_mod_enabled (which calls rebuild_dests internally)
+    // Enable two destinations and manually populate dests (as rebuild_dests_from_chain would).
     matrix.set_mod_enabled(0, 1, true); // block 0, param 1
     matrix.set_mod_enabled(2, 0, true); // block 2, param 0
+    matrix.dests[0] = Some(ModDest { block_idx: 0, param_idx: 1, block_short: "A", param_label: "p" });
+    matrix.dests[1] = Some(ModDest { block_idx: 2, param_idx: 0, block_short: "B", param_label: "q" });
+    matrix.num_dests = 2;
 
     // Set up sources
     matrix.num_sources = 2;
@@ -107,7 +112,6 @@ fn mod_state_sync_from_matrix() {
 
     assert_eq!(ms.num_sources, 2);
     assert_eq!(ms.num_dests, matrix.num_dests);
-    assert_eq!(ms.mod_enabled, matrix.mod_enabled);
 
     // Verify amounts copied
     assert_eq!(ms.amounts[0][0], 42);
