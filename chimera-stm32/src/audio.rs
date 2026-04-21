@@ -6,9 +6,15 @@
 //! PLL3: HSE 8MHz / M=1 * N=46 / P=3 = 122.67 MHz SAI kernel clock
 //! SAI1_A: MCKDIV=5 → MCLK=12.27MHz → FS=47917Hz
 
+use core::ptr::addr_of_mut;
+
 use stm32h7xx_hal::pac;
 use cortex_m::peripheral::NVIC;
 use stm32h7xx_hal::pac::interrupt;
+
+use chimera_core::dsp::voice::Voice;
+use chimera_core::params::ParamSnapshot;
+use chimera_hal::BLOCK_SIZE;
 
 // SAI1 Block A CR1 register address for raw bit manipulation (MCKEN bit 27)
 const SAI1_CHA_CR1: *mut u32 = 0x4001_5804 as *mut u32;
@@ -23,49 +29,79 @@ const SAI1_CHA_DR: u32 = 0x4001_5820;
 #[unsafe(link_section = ".ram_d2")]
 static mut AUDIO_BUF: [i16; 256] = [0; 256];
 
-/// Phase accumulator for sine generation — only accessed from DMA ISR.
-static mut SINE_PHASE: u32 = 0;
+/// f32 work buffer for Voice rendering.
+static mut WORK_BUF: [f32; BLOCK_SIZE] = [0.0; BLOCK_SIZE];
 
-/// 256-entry sine lookup table (i32, 50% amplitude).
-static SINE_TABLE: [i32; 256] = {
-    let mut table = [0i32; 256];
-    let mut i = 0;
-    while i < 256 {
-        let t = i as f64 / 256.0;
-        let x = t * 2.0 * 3.14159265358979323846;
-        let x = x - (6.28318530717958647692 * ((x / 6.28318530717958647692 + 0.5) as i64 as f64));
-        let x2 = x * x;
-        let x3 = x2 * x;
-        let x5 = x3 * x2;
-        let x7 = x5 * x2;
-        let x9 = x7 * x2;
-        let x11 = x9 * x2;
-        let s = x - x3 / 6.0 + x5 / 120.0 - x7 / 5040.0 + x9 / 362880.0 - x11 / 39916800.0;
-        table[i] = (s * 0.5 * 2147483647.0) as i32;
-        i += 1;
-    }
-    table
-};
+/// Single voice instance — only accessed from DMA ISR.
+static mut VOICE: Option<Voice> = None;
 
-/// Fill 128 i16 samples (64 stereo pairs) starting at `offset` in AUDIO_BUF.
-fn fill_sine_buffer(offset: usize) {
-    // SAFETY: only accessed from single non-reentrant ISR (and prefill before DMA starts)
+/// Parameter snapshot pointer — UI thread writes, ISR reads.
+static mut PARAMS: Option<*const ParamSnapshot> = None;
+
+/// Render one block of audio from the Voice into the DMA buffer at `offset`.
+fn render_block(offset: usize) {
+    // SAFETY: only called from single non-reentrant ISR (and prefill during init).
+    // No other code accesses these statics concurrently.
     unsafe {
-        let phase_inc: u32 = 39_472_883; // 440 Hz at 47917 Hz
-        for i in (0..128).step_by(2) {
-            let idx = (SINE_PHASE >> 24) as usize;
-            let sample = (SINE_TABLE[idx] >> 16) as i16;
-            AUDIO_BUF[offset + i] = sample;     // left
-            AUDIO_BUF[offset + i + 1] = sample; // right
-            SINE_PHASE = SINE_PHASE.wrapping_add(phase_inc);
+        let voice_ptr = addr_of_mut!(VOICE);
+        let voice = match (*voice_ptr).as_mut() {
+            Some(v) => v,
+            None => {
+                let buf = &mut *addr_of_mut!(AUDIO_BUF);
+                for i in 0..(BLOCK_SIZE * 2) { buf[offset + i] = 0; }
+                return;
+            }
+        };
+        let params_ptr = addr_of_mut!(PARAMS);
+        let params = match *params_ptr {
+            Some(p) => &*p,
+            None => {
+                let buf = &mut *addr_of_mut!(AUDIO_BUF);
+                for i in 0..(BLOCK_SIZE * 2) { buf[offset + i] = 0; }
+                return;
+            }
+        };
+
+        let work = &mut *addr_of_mut!(WORK_BUF);
+        voice.render(work, params, chimera_hal::SAMPLE_RATE);
+
+        // Convert f32 mono → i16 stereo
+        let buf = &mut *addr_of_mut!(AUDIO_BUF);
+        for i in 0..BLOCK_SIZE {
+            let sample = (work[i].clamp(-1.0, 1.0) * 32767.0) as i16;
+            buf[offset + i * 2] = sample;     // left
+            buf[offset + i * 2 + 1] = sample; // right
         }
     }
 }
 
 /// Pre-fill the entire AUDIO_BUF before DMA starts.
 pub fn prefill_buffer() {
-    fill_sine_buffer(0);
-    fill_sine_buffer(128);
+    render_block(0);
+    render_block(128);
+}
+
+/// Initialize the voice and connect to parameter snapshot.
+/// # Safety
+/// `params_ptr` must point to a ParamSnapshot that outlives the audio system.
+pub unsafe fn init_voice(params_ptr: *const ParamSnapshot) {
+    // SAFETY: called once during single-threaded init before ISR is active
+    unsafe {
+        addr_of_mut!(VOICE).write(Some(Voice::new()));
+        addr_of_mut!(PARAMS).write(Some(params_ptr));
+    }
+}
+
+/// Trigger a note on the voice.
+pub fn trigger_note(note: u8, velocity: u8) {
+    // SAFETY: called during init before ISR is active
+    unsafe {
+        let voice_ptr = addr_of_mut!(VOICE);
+        let params_ptr = addr_of_mut!(PARAMS);
+        if let (Some(voice), Some(p)) = ((*voice_ptr).as_mut(), *params_ptr) {
+            voice.note_on(note, velocity, &*p, chimera_hal::SAMPLE_RATE);
+        }
+    }
 }
 
 /// Configure PLL3 to produce the SAI audio clock.
@@ -213,7 +249,7 @@ pub fn init_dma() {
     });
 
     // SAFETY: DMA1_STR0 ISR is defined in this module; buffer is pre-filled;
-    // unmasking is safe because the ISR only touches AUDIO_BUF and SINE_PHASE.
+    // unmasking is safe because the ISR only touches AUDIO_BUF, WORK_BUF, VOICE, and PARAMS.
     unsafe {
         let mut core = cortex_m::Peripherals::steal();
         core.NVIC.set_priority(pac::Interrupt::DMA1_STR0, 3);
@@ -227,16 +263,16 @@ pub fn init_dma() {
 #[interrupt]
 fn DMA1_STR0() {
     // SAFETY: ISR has exclusive access to DMA1 status/clear registers;
-    // fill_sine_buffer only touches AUDIO_BUF and SINE_PHASE from this single ISR
+    // render_block only touches AUDIO_BUF, WORK_BUF, VOICE, and PARAMS from this single ISR
     let dma1 = unsafe { &*pac::DMA1::ptr() };
 
     if dma1.lisr.read().htif0().is_half() {
         dma1.lifcr.write(|w| w.chtif0().clear());
-        fill_sine_buffer(0);
+        render_block(0);
     }
 
     if dma1.lisr.read().tcif0().is_complete() {
         dma1.lifcr.write(|w| w.ctcif0().clear());
-        fill_sine_buffer(128);
+        render_block(128);
     }
 }
