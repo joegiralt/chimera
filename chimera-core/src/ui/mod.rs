@@ -170,7 +170,7 @@ impl UiState {
         // pass sample_rate such that: rate/sr * BLOCK_SIZE = rate/fps
         // sr = BLOCK_SIZE * fps. At variable fps, assume ~30.
         // If animations look too slow/fast, this constant needs tuning.
-        const UI_FPS: u32 = 25; // conservative estimate
+        const UI_FPS: u32 = 20; // tuned to match audio-side LFO rate
         let lfo_val = self.display_lfo.process(&self.params.lfo, chimera_hal::BLOCK_SIZE as u32 * UI_FPS);
 
         // Read base param values
