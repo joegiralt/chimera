@@ -103,11 +103,13 @@ impl UiState {
             EncoderId::E,
             EncoderId::F,
         ];
+        let def = self.active_block_def();
         for (i, &enc) in encoder_ids.iter().enumerate() {
             let delta = controls.encoder_delta(enc);
             if delta != 0 {
                 if shift {
-                    self.page.snap_encoder(i, delta, &mut self.params);
+                    let fmt = def.params[i].format;
+                    self.page.snap_encoder(i, delta, fmt, &mut self.params);
                 } else {
                     self.page.apply_encoder(i, delta, &mut self.params);
                 }
