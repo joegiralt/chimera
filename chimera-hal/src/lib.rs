@@ -3,7 +3,7 @@
 use embedded_graphics_core::draw_target::DrawTarget;
 use embedded_graphics_core::pixelcolor::Rgb565;
 
-pub const BLOCK_SIZE: usize = 128;
+pub const BLOCK_SIZE: usize = 64;
 pub const SCREEN_WIDTH: u16 = 240;
 pub const SCREEN_HEIGHT: u16 = 320;
 pub const SAMPLE_RATE: u32 = 48_000;
