@@ -66,9 +66,10 @@ impl DesktopAudio {
                         voice.note_off();
                     }
 
+                    let empty_mod = chimera_core::modulation::ModState::new();
                     for sample in data.iter_mut() {
                         if block_pos >= chimera_hal::BLOCK_SIZE {
-                            voice.render(&mut block, params, sample_rate);
+                            voice.render(&mut block, params, &empty_mod, sample_rate);
                             // Effects chain: chorus → delay → reverb (Digitone II style)
                             chorus.process(&mut block, &params.chorus, sample_rate);
                             delay.process(&mut block, &params.delay, sample_rate);

@@ -13,6 +13,7 @@ use cortex_m::peripheral::NVIC;
 use stm32h7xx_hal::pac::interrupt;
 
 use chimera_core::dsp::voice::Voice;
+use chimera_core::modulation::ModState;
 use chimera_core::params::ParamSnapshot;
 use chimera_hal::BLOCK_SIZE;
 
@@ -37,6 +38,12 @@ static mut VOICE: Option<Voice> = None;
 
 /// Parameter snapshot pointer — UI thread writes, ISR reads.
 static mut PARAMS: Option<*const ParamSnapshot> = None;
+
+/// ModState pointer — UI thread writes, ISR reads.
+static mut MOD_STATE_PTR: Option<*const ModState> = None;
+
+/// Default empty ModState for when no pointer is set.
+static DEFAULT_MOD_STATE: ModState = ModState::new();
 
 /// Render one block of audio from the Voice into the DMA buffer at `offset`.
 fn render_block(offset: usize) {
@@ -64,8 +71,15 @@ fn render_block(offset: usize) {
 
         let work = &mut *addr_of_mut!(WORK_BUF);
 
+        // SAFETY: MOD_STATE_PTR is only written during single-threaded init
+        let mod_ptr = addr_of_mut!(MOD_STATE_PTR);
+        let mod_state = match *mod_ptr {
+            Some(p) => &*p,
+            None => &DEFAULT_MOD_STATE,
+        };
+
         // Render full Voice signal chain: Engine → Drive → Filter → Wavefolder → VCA
-        voice.render(work, params, chimera_hal::SAMPLE_RATE);
+        voice.render(work, params, mod_state, chimera_hal::SAMPLE_RATE);
 
         // Convert f32 mono → i16 stereo
         let buf = &mut *addr_of_mut!(AUDIO_BUF);
@@ -83,14 +97,16 @@ pub fn prefill_buffer() {
     render_block(128);
 }
 
-/// Initialize the voice and connect to parameter snapshot.
+/// Initialize the voice and connect to parameter snapshot + mod state.
 /// # Safety
 /// `params_ptr` must point to a ParamSnapshot that outlives the audio system.
-pub unsafe fn init_voice(params_ptr: *const ParamSnapshot) {
+/// `mod_ptr` must point to a ModState that outlives the audio system.
+pub unsafe fn init_voice(params_ptr: *const ParamSnapshot, mod_ptr: *const ModState) {
     // SAFETY: called once during single-threaded init before ISR is active
     unsafe {
         addr_of_mut!(VOICE).write(Some(Voice::new()));
         addr_of_mut!(PARAMS).write(Some(params_ptr));
+        addr_of_mut!(MOD_STATE_PTR).write(Some(mod_ptr));
     }
 }
 
