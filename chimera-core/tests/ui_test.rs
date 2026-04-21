@@ -164,9 +164,11 @@ fn test_page_from_nav_part_chain() {
     nav.node = 3;
     assert_eq!(PageId::from_nav(&nav), PageId::Folder);
     nav.node = 4;
-    assert_eq!(PageId::from_nav(&nav), PageId::Vca);
-    nav.node = 5;
-    assert_eq!(PageId::from_nav(&nav), PageId::Efx);
+    assert_eq!(PageId::from_nav(&nav), PageId::DemoMatrix); // Mod matrix grid at sub_page 0
+    nav.sub_page = 1;
+    assert_eq!(PageId::from_nav(&nav), PageId::Vca); // Envelope at sub_page 1
+    nav.sub_page = 2;
+    assert_eq!(PageId::from_nav(&nav), PageId::Lfo); // LFO at sub_page 2
 }
 
 #[test]

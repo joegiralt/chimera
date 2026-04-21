@@ -3,6 +3,7 @@ use chimera_hal::BLOCK_SIZE;
 use crate::dsp::drive::Drive;
 use crate::dsp::envelope::Envelope;
 use crate::dsp::filter::SvfFilter;
+use crate::dsp::lfo::Lfo;
 use crate::dsp::modal::ModalEngine;
 use crate::dsp::pizza::PizzaOsc;
 use crate::dsp::wavefolder::Wavefolder;
@@ -10,7 +11,8 @@ use crate::modulation::{ModState, MAX_MOD_SOURCES};
 use crate::params::{EngineType, ParamSnapshot};
 
 /// Complete voice signal chain:
-/// [Engine (Pizza/Modal)] → [Drive] → [Filter] → [Wavefolder] → [VCA]
+/// [Engine (Pizza/Modal)] → [Drive] → [Filter] → [Wavefolder]
+/// Modulators: Envelope + LFO
 pub struct Voice {
     pub pizza: PizzaOsc,
     pub modal: ModalEngine,
@@ -18,6 +20,7 @@ pub struct Voice {
     filter: SvfFilter,
     folder: Wavefolder,
     amp_env: Envelope,
+    pub lfo: Lfo,
     active_engine: EngineType,
     active: bool,
 }
@@ -37,6 +40,7 @@ impl Voice {
             filter: SvfFilter::new(),
             folder: Wavefolder::new(),
             amp_env: Envelope::new(),
+            lfo: Lfo::new(),
             active_engine: EngineType::Pizza,
             active: false,
         }
@@ -90,8 +94,13 @@ impl Voice {
 
         // Compute modulator source values
         let mut mod_values = [0.0f32; MAX_MOD_SOURCES];
+        // Source 0 = Envelope
         if mod_state.num_sources > 0 {
-            mod_values[0] = self.amp_env.current_level(); // Env 1 output
+            mod_values[0] = self.amp_env.current_level();
+        }
+        // Source 1 = LFO
+        if mod_state.num_sources > 1 {
+            mod_values[1] = self.lfo.process(&params.lfo, sample_rate);
         }
 
         // Modulated param copies

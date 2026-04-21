@@ -110,6 +110,7 @@ pub enum PageId {
     EnvAmp,
     EnvFilter,
     EnvAux,
+    Lfo,
     DemoWaves,
     DemoShapes,
     DemoMotion,
@@ -127,8 +128,9 @@ impl PageId {
                 2 => PageId::Filter,
                 3 => PageId::Folder,
                 4 => match nav.sub_page {
-                    0 => PageId::DemoMatrix, // Mod matrix grid (no param editing)
-                    _ => PageId::Vca,        // Envelope sub-page (ADSR params)
+                    0 => PageId::DemoMatrix, // Mod matrix grid
+                    1 => PageId::Vca,        // Envelope (ADSR)
+                    _ => PageId::Lfo,        // LFO
                 },
                 _ => PageId::Efx,
             },
@@ -220,6 +222,14 @@ impl PageId {
                 params.envelopes[1].attack.normalized(),
                 params.envelopes[1].decay.normalized(),
             ],
+            PageId::Lfo => [
+                params.lfo.rate / 20.0,           // normalized 0-1 (0-20 Hz)
+                params.lfo.shape as f32 / 4.0,    // 0-4 shapes
+                params.lfo.sync as f32,            // 0 or 1
+                params.lfo.phase_offset,           // 0-1
+                params.lfo.depth,                  // 0-1
+                (params.lfo.offset + 1.0) / 2.0,  // -1..1 → 0..1 for display
+            ],
             PageId::DemoMatrix => [0.0; 6],
             PageId::EngineModal1 => [
                 params.modal.mode as f32 / 2.0,
@@ -275,6 +285,10 @@ impl PageId {
         match self {
             PageId::Pizza => {
                 apply_pizza_encoder(idx, delta, &mut params.pizza);
+                return;
+            }
+            PageId::Lfo => {
+                apply_lfo_encoder(idx, delta, &mut params.lfo);
                 return;
             }
             PageId::EngineModal1 => {
@@ -376,6 +390,7 @@ impl PageId {
                 5 => Some(&mut params.envelopes[1].decay),
                 _ => None,
             },
+            PageId::Lfo => None, // handled by apply_encoder special case
             PageId::DemoMatrix => None,
             _ => None,
         }
@@ -484,6 +499,25 @@ fn apply_pizza_encoder(idx: usize, delta: i8, pizza: &mut crate::dsp::pizza::Piz
         0 => nudge_float(&mut pizza.shape, delta, step),
         1 => nudge_float(&mut pizza.crush, delta, step),
         2 => nudge_float(&mut pizza.level, delta, step),
+        _ => {}
+    }
+}
+
+fn apply_lfo_encoder(idx: usize, delta: i8, lfo: &mut crate::dsp::lfo::LfoParams) {
+    let step = 1.0 / 128.0;
+    match idx {
+        0 => {
+            // Rate: 0.01 to 20 Hz, logarithmic feel
+            lfo.rate = (lfo.rate + delta as f32 * 0.15).clamp(0.01, 20.0);
+        }
+        1 => nudge_u8(&mut lfo.shape, delta, 4),    // 5 shapes (0-4)
+        2 => nudge_u8(&mut lfo.sync, delta, 1),     // free/sync
+        3 => nudge_float(&mut lfo.phase_offset, delta, step),
+        4 => nudge_float(&mut lfo.depth, delta, step),
+        5 => {
+            // Offset: -1.0 to +1.0
+            lfo.offset = (lfo.offset + delta as f32 * step * 2.0).clamp(-1.0, 1.0);
+        }
         _ => {}
     }
 }
