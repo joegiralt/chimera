@@ -131,12 +131,14 @@ pub static FILTER: BlockDef = BlockDef {
 };
 
 // ---------------------------------------------------------------------------
-// VCA / Envelopes
+// Modulators — envelopes, LFOs, etc.
 // ---------------------------------------------------------------------------
 
-pub static VCA: BlockDef = BlockDef {
-    name: "VCA",
-    short: "VCA",
+/// ADSR Envelope modulator — the template for all envelope modulators.
+/// Not an audio block — it's a modulation source that appears in the mod matrix Y-axis.
+pub static ENVELOPE: BlockDef = BlockDef {
+    name: "Envelope",
+    short: "ENV",
     layout: PageLayout::BigViz,
     viz: VizType::Adsr,
     params: [
@@ -144,7 +146,7 @@ pub static VCA: BlockDef = BlockDef {
         ParamSlot { label: "DEC",   format: ValFmt::Uni, icon: CellIcon::None },
         ParamSlot { label: "SUS",   format: ValFmt::Uni, icon: CellIcon::None },
         ParamSlot { label: "REL",   format: ValFmt::Uni, icon: CellIcon::None },
-        ParamSlot { label: "LEVEL", format: ValFmt::Uni, icon: CellIcon::None },
+        ParamSlot { label: "DEPTH", format: ValFmt::Uni, icon: CellIcon::None },
         ParamSlot { label: "VEL",   format: ValFmt::Uni, icon: CellIcon::None },
     ],
 };
@@ -315,7 +317,7 @@ static PIZZA_POLY_BLOCKS: [ChainBlock; 6] = [
     ChainBlock { def: &DRIVE,      sub_pages: &[] },
     ChainBlock { def: &FILTER,     sub_pages: &[] },
     ChainBlock { def: &FOLDER,     sub_pages: &[] },
-    ChainBlock { def: &VCA,        sub_pages: &[] },
+    ChainBlock { def: &ENVELOPE,   sub_pages: &[] },
     ChainBlock { def: &MOD_MATRIX, sub_pages: &[] },
 ];
 
@@ -327,7 +329,7 @@ pub static PIZZA_POLY_CHAIN: ChainDef2 = ChainDef2 {
 static KICK_BLOCKS: [ChainBlock; 4] = [
     ChainBlock { def: &NOISE,      sub_pages: &[] },
     ChainBlock { def: &FILTER,     sub_pages: &[] },
-    ChainBlock { def: &VCA,        sub_pages: &[] },
+    ChainBlock { def: &ENVELOPE,   sub_pages: &[] },
     ChainBlock { def: &MOD_MATRIX, sub_pages: &[] },
 ];
 
@@ -341,7 +343,7 @@ static MODAL_SUB_PAGES: [&BlockDef; 1] = [&MODAL_2];
 static MODAL_PLUCK_BLOCKS: [ChainBlock; 4] = [
     ChainBlock { def: &MODAL_1,    sub_pages: &MODAL_SUB_PAGES },
     ChainBlock { def: &FILTER,     sub_pages: &[] },
-    ChainBlock { def: &VCA,        sub_pages: &[] },
+    ChainBlock { def: &ENVELOPE,   sub_pages: &[] },
     ChainBlock { def: &MOD_MATRIX, sub_pages: &[] },
 ];
 
