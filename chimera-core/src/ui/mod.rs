@@ -1,4 +1,6 @@
 pub mod animation;
+pub mod block_def;
+pub mod block_registry;
 pub mod cell;
 pub mod chain;
 pub mod dungeon_map;
