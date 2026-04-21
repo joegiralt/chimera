@@ -97,7 +97,7 @@ impl UiState {
                         1 => self.matrix_state.move_col(delta),
                         2 => self.matrix_state.scroll_v(delta),
                         3 => self.matrix_state.scroll_h(delta),
-                        4 => { /* amount — todo */ }
+                        4 => self.matrix_state.adjust_amount(delta),
                         _ => {}
                     }
                 }
@@ -153,11 +153,12 @@ impl UiState {
                 RegionKind::Params => RegionData::params(self.page, qvalues),
                 RegionKind::Cells => RegionData::cells(self.page, qvalues),
                 RegionKind::Nav => RegionData::nav(nav_tag.0, nav_tag.1, nav_tag.2),
-                RegionKind::Grid => RegionData::grid(
+                RegionKind::Grid => RegionData::grid_with_amount(
                     self.matrix_state.sel_row as u8,
                     self.matrix_state.sel_col as u8,
                     self.matrix_state.scroll_x as u8,
                     self.matrix_state.scroll_y as u8,
+                    self.matrix_state.current_amount(),
                 ),
             };
         }
@@ -198,11 +199,12 @@ impl UiState {
                 RegionKind::Params => RegionData::params(self.page, qvalues),
                 RegionKind::Cells => RegionData::cells(self.page, qvalues),
                 RegionKind::Nav => RegionData::nav(nav_tag.0, nav_tag.1, nav_tag.2),
-                RegionKind::Grid => RegionData::grid(
+                RegionKind::Grid => RegionData::grid_with_amount(
                     self.matrix_state.sel_row as u8,
                     self.matrix_state.sel_col as u8,
                     self.matrix_state.scroll_x as u8,
                     self.matrix_state.scroll_y as u8,
+                    self.matrix_state.current_amount(),
                 ),
             };
 

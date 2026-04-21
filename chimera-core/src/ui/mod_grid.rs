@@ -71,7 +71,11 @@ const GRID_BOTTOM: i32 = 265;    // above dungeon map
 const VISIBLE_COLS: usize = ((240 - ROW_LABEL_W) / CELL_W) as usize;
 const VISIBLE_ROWS: usize = ((GRID_BOTTOM - GRID_TOP - COL_HEADER_H) / CELL_H) as usize;
 
-/// State for the mod matrix grid cursor and scroll.
+/// Max sources and destinations for the amounts grid.
+pub const MAX_SOURCES: usize = 16;
+pub const MAX_DESTS: usize = 16;
+
+/// State for the mod matrix grid — cursor, scroll, and mutable amounts.
 #[derive(Clone, Debug)]
 pub struct MatrixState {
     pub sel_row: usize,
@@ -80,18 +84,40 @@ pub struct MatrixState {
     pub scroll_y: usize,
     pub num_rows: usize,
     pub num_cols: usize,
+    /// Modulation amounts: [source][dest], -127 to +127. 0 = no connection.
+    pub amounts: [[i8; MAX_DESTS]; MAX_SOURCES],
 }
 
 impl MatrixState {
     pub fn new() -> Self {
-        Self {
+        let mut state = Self {
             sel_row: 0,
             sel_col: 0,
             scroll_x: 0,
             scroll_y: 0,
             num_rows: SOURCES.len(),
             num_cols: DESTS.len(),
+            amounts: [[0; MAX_DESTS]; MAX_SOURCES],
+        };
+        // Pre-fill with demo data
+        for &(src, dst, amt) in DEMO_AMOUNTS {
+            if src < MAX_SOURCES && dst < MAX_DESTS {
+                state.amounts[src][dst] = amt;
+            }
         }
+        state
+    }
+
+    /// Get the amount at the current cursor position.
+    pub fn current_amount(&self) -> i8 {
+        self.amounts[self.sel_row][self.sel_col]
+    }
+
+    /// Adjust the amount at the current cursor position.
+    pub fn adjust_amount(&mut self, delta: i8) {
+        let current = self.amounts[self.sel_row][self.sel_col] as i16;
+        let new = (current + delta as i16).clamp(-127, 127) as i8;
+        self.amounts[self.sel_row][self.sel_col] = new;
     }
 
     pub fn move_row(&mut self, delta: i8) {
@@ -201,10 +227,9 @@ pub fn draw_grid<D>(
 
             let is_selected = ri == sel_row && di == sel_col;
 
-            // Find amount for this cell
-            let amount = DEMO_AMOUNTS.iter()
-                .find(|&&(s, d, _)| s == ri && d == di)
-                .map(|&(_, _, a)| a);
+            // Read amount from mutable state
+            let amt = state.amounts[ri][di];
+            let amount = if amt != 0 { Some(amt) } else { None };
 
             // Cell background for selected
             if is_selected {
