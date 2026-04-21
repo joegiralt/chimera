@@ -5,6 +5,7 @@ mod audio;
 mod bitbang_spi;
 mod controls;
 mod display;
+mod hw_spi;
 mod midi;
 
 use bitbang_spi::BitBangSpi;
@@ -15,7 +16,7 @@ use controls::Stm32Controls;
 use cortex_m_rt::{entry, exception};
 use display::Stm32Display;
 use panic_halt as _;
-use stm32h7xx_hal::{pac, prelude::*};
+use stm32h7xx_hal::{pac, prelude::*, spi};
 
 #[exception]
 fn SysTick() {
@@ -40,6 +41,7 @@ fn main() -> ! {
         .pclk2(100.MHz())
         .pclk3(100.MHz())
         .pclk4(100.MHz())
+        .pll1_q_ck(200.MHz())  // Enable PLL1_Q for SPI1 kernel clock
         .freeze(pwrcfg, &dp.SYSCFG);
 
     let gpioa = dp.GPIOA.split(ccdr.peripheral.GPIOA);
@@ -61,12 +63,18 @@ fn main() -> ! {
     let _sai_sd_a = gpioe.pe6.into_alternate::<6>();
     led.set_high();
 
-    let sck = gpioa.pa5.into_push_pull_output();
-    let mosi = gpioa.pa7.into_push_pull_output();
+    let sck = gpioa.pa5.into_alternate::<5>();
+    let mosi = gpioa.pa7.into_alternate::<5>();
     let dc = gpiod.pd8.into_push_pull_output();
     let reset = gpiod.pd9.into_push_pull_output();
     let cs = gpiod.pd10.into_push_pull_output();
-    let spi = BitBangSpi::new(sck, mosi, 0x5802_0000, 5, 7);
+    let spi = dp.SPI1.spi(
+        (sck, spi::NoMiso, mosi),
+        spi::Config::new(spi::MODE_0),
+        25.MHz(),
+        ccdr.peripheral.SPI1,
+        &ccdr.clocks,
+    );
     let mut display = Stm32Display::new(spi, dc, reset, cs);
     display.init();
 
