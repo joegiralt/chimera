@@ -434,59 +434,118 @@ Layout: **BigViz** — ADSR envelope visualization.
 
 Accessed via navigation buttons. Not part of any chain.
 
-#### Mixer Page (MIX button)
+#### Mixer Page (MIX + B1)
 
-Shows all Parts with levels, pans, output assignments, and send levels.
+The mixer is a fixed global page — not a chain. It shows 6 channels (one per Part), a main bus, and send effect routing. For now the mixer is not configurable — it's a fixed topology:
+
+```
+Signal Flow:
+
+  Part 1 ──┬──► Main Bus ──► [Compressor] ──► [Limiter] ──► DAC1 (Main Stereo)
+  Part 2 ──┤       ▲
+  Part 3 ──┤       │
+  Part 4 ──┤   Send Returns
+  Part 5 ──┤       ▲
+  Part 6 ──┘       │
+            │   ┌───┴────┐
+            ├──►│ Send 1  │  Reverb
+            ├──►│ Send 2  │  Delay
+            ├──►│ Send 3  │  Chorus
+            └──►│ Send 4  │  (spare / future)
+                └─────────┘
+```
+
+Each Part channel has: volume, pan, output assignment (DAC1/2/3), and 4 send levels.
+Parts assigned to DAC2/DAC3 go direct (bypass main bus processing).
+
+**Display:**
 
 ```
 ┌────────────────────────────────┐
 │ MIXER                          │
 │                                │
-│ P1 [FM Poly]  ████░░  DAC1    │
-│ P2 [Kick]     ███░░░  DAC2    │
-│ P3 [Pluck]    █████░  DAC3    │
-│ P4 [Snare]    ██░░░░  DAC2    │
-│ P5 [--]       ░░░░░░  --      │
-│ P6 [--]       ░░░░░░  --      │
+│ P1 [FM Poly]  ████░░  L  DAC1 │
+│ P2 [Kick]     ███░░░  C  DAC2 │
+│ P3 [Pluck]    █████░  R  DAC3 │
+│ P4 [Snare]    ██░░░░  C  DAC2 │
+│ P5 [--]       ░░░░░░     --   │
+│ P6 [--]       ░░░░░░     --   │
 │                                │
-│ Master:       ████████░  -2dB  │
+│ Main:         ████████░  -2dB  │
 └────────────────────────────────┘
 ```
 
 Sub-pages (Seq/Edit):
 
-**Sub-page 0: Parts 1-3 volume + master**
+**Sub-page 0: Channel Levels**
 
 | Encoder | Label | Parameter |
 |---------|-------|-----------|
 | A | P1 VOL | Part 1 volume |
 | B | P2 VOL | Part 2 volume |
 | C | P3 VOL | Part 3 volume |
-| D | MASTER | Master volume |
-| E | SEND 1 | Last-selected Part → Send 1 level |
-| F | SEND 2 | Last-selected Part → Send 2 level |
+| D | P4 VOL | Part 4 volume |
+| E | P5 VOL | Part 5 volume |
+| F | P6 VOL | Part 6 volume |
 
-**Sub-page 1: Parts 4-6 volume + output**
-
-| Encoder | Label | Parameter |
-|---------|-------|-----------|
-| A | P4 VOL | Part 4 volume |
-| B | P5 VOL | Part 5 volume |
-| C | P6 VOL | Part 6 volume |
-| D | OUTPUT | Last-selected Part → DAC assignment |
-| E | PAN | Last-selected Part → Pan |
-| F | — | — |
-
-**Sub-page 2: Send effect parameters**
+**Sub-page 1: Pan + Output**
 
 | Encoder | Label | Parameter |
 |---------|-------|-----------|
-| A | R.TYPE | Reverb type (Plate/FDN/MidiVerb) |
-| B | R.TIME | Reverb time |
+| A | P1 PAN | Part 1 pan |
+| B | P2 PAN | Part 2 pan |
+| C | P3 PAN | Part 3 pan |
+| D | P4 PAN | Part 4 pan |
+| E | P5 PAN | Part 5 pan |
+| F | P6 PAN | Part 6 pan |
+
+MIX + encoder = change output assignment (DAC1/2/3) instead of pan.
+
+**Sub-page 2: Send 1 + Send 2 Levels**
+
+| Encoder | Label | Parameter |
+|---------|-------|-----------|
+| A | P1 S1 | Part 1 → Send 1 (reverb) |
+| B | P2 S1 | Part 2 → Send 1 |
+| C | P3 S1 | Part 3 → Send 1 |
+| D | P1 S2 | Part 1 → Send 2 (delay) |
+| E | P2 S2 | Part 2 → Send 2 |
+| F | P3 S2 | Part 3 → Send 2 |
+
+**Sub-page 3: Send 3 + Send 4 Levels**
+
+| Encoder | Label | Parameter |
+|---------|-------|-----------|
+| A | P1 S3 | Part 1 → Send 3 (chorus) |
+| B | P2 S3 | Part 2 → Send 3 |
+| C | P3 S3 | Part 3 → Send 3 |
+| D | P1 S4 | Part 1 → Send 4 (spare) |
+| E | P2 S4 | Part 2 → Send 4 |
+| F | P3 S4 | Part 3 → Send 4 |
+
+Note: Send pages show Parts 1-3. For Parts 4-6 sends, Minus/Plus scrolls to additional sub-pages (same layout, different Parts).
+
+**Sub-page 4: Send Effect Parameters**
+
+| Encoder | Label | Parameter |
+|---------|-------|-----------|
+| A | R.TYPE | Reverb algorithm (Plate/FDN/MidiVerb) |
+| B | R.TIME | Reverb decay time |
 | C | R.DAMP | Reverb damping |
-| D | R.MIX | Reverb mix |
-| E | D.TIME | Delay time |
-| F | D.FDBK | Delay feedback |
+| D | D.TIME | Delay time |
+| E | D.FDBK | Delay feedback |
+| F | D.MIX | Delay wet/dry |
+
+**Sub-page 5: More Send Effects + Master**
+
+| Encoder | Label | Parameter |
+|---------|-------|-----------|
+| A | C.MODE | Chorus mode (I/II/I+II) |
+| B | C.RATE | Chorus rate |
+| C | C.MIX | Chorus mix |
+| D | M.VOL | Master volume |
+| E | M.COMP | Master compressor threshold |
+| F | M.LIMIT | Master limiter ceiling |
 
 Layout: **CellGrid**
 

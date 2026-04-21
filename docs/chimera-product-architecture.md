@@ -337,19 +337,23 @@ Each Part sums its active voices into a stereo bus. The Part bus applies:
 ### Send Effects (Global)
 
 ```
-Send 1: [Reverb]        → returns to Main Bus
-Send 2: [Delay/Chorus]  → returns to Main Bus
+Send 1: [Reverb]   → returns to Main Bus
+Send 2: [Delay]    → returns to Main Bus
+Send 3: [Chorus]   → returns to Main Bus
+Send 4: [Spare]    → returns to Main Bus (future use)
 ```
 
-Two global send effects, shared across all Parts. Each Part has independent send levels. Effect returns are summed into the main stereo bus (DAC1).
+Four global send effects, shared across all 6 Parts. Each Part has independent send levels per send. Effect returns are summed into the main stereo bus (DAC1).
 
-**Why sends, not inserts?** Insert effects per Part would cost 3× the CPU (one reverb per Part). Send effects cost 1× regardless of Part count. At our DSP budget, sends are the only honest option.
+**Why sends, not inserts?** Insert effects per Part would cost 6× the CPU (one reverb per Part). Send effects cost 1× regardless of Part count. At our DSP budget, sends are the only honest option.
 
-**Effect selection:**
+**Effect assignment:**
 - Send 1: Reverb (plate, FDN, or MidiVerb II — user selectable). All three algorithms already exist.
-- Send 2: Switchable between tape delay and Juno chorus. Both already exist.
+- Send 2: Tape delay. Already exists.
+- Send 3: Juno chorus. Already exists.
+- Send 4: Reserved for future effects.
 
-**Budget:** Plate reverb ~200 cycles, tape delay ~100 cycles, chorus ~80 cycles. Two sends = ~300 cycles max = 3% CPU. Affordable.
+**Budget:** Plate reverb ~200 cycles, tape delay ~100 cycles, chorus ~80 cycles. Three active sends = ~380 cycles max = 4% CPU. Affordable.
 
 ### Master Bus
 
