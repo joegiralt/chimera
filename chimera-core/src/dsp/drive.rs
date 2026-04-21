@@ -41,7 +41,7 @@ impl Drive {
             let driven = dry * gain * pre_bright;
 
             // Soft clip via tanh
-            let clipped = libm::tanhf(driven) * post_dark;
+            let clipped = crate::dsp::fast_tanh(driven) * post_dark;
 
             // Dry/wet mix
             *sample = dry * (1.0 - mix) + clipped * mix;

@@ -59,7 +59,7 @@ impl SvfFilter {
         let drive = params.drive.value;
 
         let fc = cutoff.min(sample_rate as f32 * 0.49);
-        let g = libm::tanf(core::f32::consts::PI * fc / sample_rate as f32);
+        let g = crate::dsp::fast_tan(core::f32::consts::PI * fc / sample_rate as f32);
 
         // Resonance: full range. k=2 (none) to k=0.01 (screaming self-osc).
         // Let it go all the way — the nonlinear feedback keeps it stable.

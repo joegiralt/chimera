@@ -1,0 +1,4 @@
+- [PreenFM3 firmware architecture](reference_preenfm3_firmware.md) — Pin map, DMA, clock tree, audio/display/controls from Ixox/preenfm3 C firmware
+- [Encoder acceleration curve](feedback_encoder_accel.md) — Approved curve 1,2,4,5,10; accel in main thread not ISR; N24 table; debounce in ISR
+- [Debugging lessons](feedback_debugging.md) — panic_halt is silent; use LED checkpoints; verify build target; framebuffer must be static
+- [Working SAI audio config](reference_audio_config.md) — 16-bit I2S (not 32-bit!), PLL3 dividers, SAI1SEL=0b010, MCKEN via raw write
