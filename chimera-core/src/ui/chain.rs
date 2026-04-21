@@ -1,152 +1,19 @@
 use chimera_hal::{ButtonId, ButtonState, Controls};
+use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2};
+use crate::ui::block_registry;
 
-/// A node in a chain (horizontal position).
-#[derive(Clone, Copy, Debug)]
-pub struct NodeDef {
-    /// Full name shown in header
-    pub name: &'static str,
-    /// 3-char abbreviation for dungeon map
-    pub short: &'static str,
-    /// Vertical sub-pages at this node (empty = no branches)
-    pub sub_pages: &'static [&'static str],
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChainId {
+    Part(usize),    // 0-5 (B1-B6)
+    Mixer(usize),   // 0-5 (MIX + B1-B6, but MIX+B6 = Demo)
+    System,         // MENU
+    Demo,           // MIX + B6
 }
 
-/// A chain definition (one per button 1-6).
-#[derive(Clone, Copy, Debug)]
-pub struct ChainDef {
-    pub name: &'static str,
-    pub nodes: &'static [NodeDef],
-}
-
-// --- Chain definitions matching design spec ---
-
-pub static VOICE_CHAIN: ChainDef = ChainDef {
-    name: "VOICE",
-    nodes: &[
-        NodeDef {
-            name: "Engine",
-            short: "ENG",
-            sub_pages: &["FM-A", "FM-B", "FM-C", "MOD-1", "MOD-2", "VA"],
-        },
-        NodeDef {
-            name: "Drive",
-            short: "DRV",
-            sub_pages: &[],
-        },
-        NodeDef {
-            name: "Filter",
-            short: "FLT",
-            sub_pages: &[],
-        },
-        NodeDef {
-            name: "Folder",
-            short: "FLD",
-            sub_pages: &[],
-        },
-        NodeDef {
-            name: "VCA",
-            short: "VCA",
-            sub_pages: &[],
-        },
-        NodeDef {
-            name: "Effects",
-            short: "EFX",
-            sub_pages: &[],
-        },
-    ],
-};
-
-pub static MIX_CHAIN: ChainDef = ChainDef {
-    name: "MIX",
-    nodes: &[
-        NodeDef {
-            name: "Mixer",
-            short: "MIX",
-            sub_pages: &[],
-        },
-        NodeDef {
-            name: "Chorus",
-            short: "CHR",
-            sub_pages: &[],
-        },
-        NodeDef {
-            name: "Delay",
-            short: "DLY",
-            sub_pages: &[],
-        },
-        NodeDef {
-            name: "Reverb",
-            short: "REV",
-            sub_pages: &[],
-        },
-        NodeDef {
-            name: "Master",
-            short: "MST",
-            sub_pages: &[],
-        },
-    ],
-};
-
-pub static ENVELOPE_CHAIN: ChainDef = ChainDef {
-    name: "ENV",
-    nodes: &[
-        NodeDef {
-            name: "Amp",
-            short: "AMP",
-            sub_pages: &[],
-        },
-        NodeDef {
-            name: "Filter",
-            short: "FLT",
-            sub_pages: &[],
-        },
-        NodeDef {
-            name: "Aux",
-            short: "AUX",
-            sub_pages: &[],
-        },
-    ],
-};
-
-pub static DEMO_CHAIN: ChainDef = ChainDef {
-    name: "DEMO",
-    nodes: &[
-        NodeDef {
-            name: "Waves",
-            short: "WAV",
-            sub_pages: &[],
-        },
-        NodeDef {
-            name: "Shapes",
-            short: "SHP",
-            sub_pages: &[],
-        },
-        NodeDef {
-            name: "Motion",
-            short: "MOT",
-            sub_pages: &[],
-        },
-    ],
-};
-
-/// All defined chains, indexed by button number (0-based).
-pub static CHAINS: [Option<&ChainDef>; 6] = [
-    Some(&VOICE_CHAIN),
-    Some(&MIX_CHAIN),
-    Some(&ENVELOPE_CHAIN),
-    None,
-    None,
-    Some(&DEMO_CHAIN),
-];
-
-/// 2D navigation position within the chain system.
 #[derive(Clone, Copy, Debug)]
 pub struct ChainNav {
-    /// Which chain (0-5, maps to buttons 1-6)
-    pub chain: usize,
-    /// Horizontal position within chain
+    pub chain_id: ChainId,
     pub node: usize,
-    /// Vertical sub-page at current node
     pub sub_page: usize,
 }
 
@@ -159,28 +26,62 @@ impl Default for ChainNav {
 impl ChainNav {
     pub const fn new() -> Self {
         Self {
-            chain: 0,
+            chain_id: ChainId::Part(0),
             node: 0,
             sub_page: 0,
         }
     }
 
-    /// Get the current chain definition, if it exists.
-    pub fn chain_def(&self) -> Option<&'static ChainDef> {
-        CHAINS.get(self.chain).copied().flatten()
+    /// Get the chain definition for the current ChainId.
+    pub fn active_chain(&self) -> &'static ChainDef2 {
+        match self.chain_id {
+            // All parts currently default to FM_POLY_CHAIN.
+            // In the future each Part will have its own chain.
+            ChainId::Part(_) => &block_registry::FM_POLY_CHAIN,
+            ChainId::Mixer(_) => &block_registry::MIXER_CHANNEL_CHAIN,
+            ChainId::System => &block_registry::SYSTEM_CHAIN,
+            ChainId::Demo => &block_registry::DEMO_CHAIN,
+        }
     }
 
-    /// Get the current node definition.
-    pub fn node_def(&self) -> Option<&'static NodeDef> {
-        self.chain_def().and_then(|c| c.nodes.get(self.node))
+    /// Resolve the full position (chain + node + sub_page) to a BlockDef.
+    pub fn active_block_def(&self) -> &'static BlockDef {
+        let chain = self.active_chain();
+        chain
+            .active_def(self.node, self.sub_page)
+            .unwrap_or(chain.blocks[0].def)
+    }
+
+    /// Get the current ChainBlock (node with sub-page info).
+    pub fn active_chain_block(&self) -> Option<&'static ChainBlock> {
+        self.active_chain().block_at(self.node)
     }
 
     /// Process control input and update navigation state.
     /// Returns true if position changed.
     pub fn handle_input(&mut self, controls: &impl Controls) -> bool {
-        let prev = *self;
+        let prev_chain_id = self.chain_id;
+        let prev_node = self.node;
+        let prev_sub = self.sub_page;
 
-        // Button 1-6: jump to chain head
+        let mix_held = matches!(
+            controls.button_state(ButtonId::Mix),
+            ButtonState::Pressed | ButtonState::Held
+        );
+
+        // MENU = System
+        if controls.button_state(ButtonId::Menu) == ButtonState::Pressed {
+            if self.chain_id == ChainId::System {
+                self.node = 0;
+                self.sub_page = 0;
+            } else {
+                self.chain_id = ChainId::System;
+                self.node = 0;
+                self.sub_page = 0;
+            }
+        }
+
+        // B1-B6: Part or Mixer depending on MIX modifier
         let chain_buttons = [
             ButtonId::B1,
             ButtonId::B2,
@@ -190,15 +91,23 @@ impl ChainNav {
             ButtonId::B6,
         ];
         for (i, &btn) in chain_buttons.iter().enumerate() {
-            if controls.button_state(btn) == ButtonState::Pressed
-                && let Some(Some(_)) = CHAINS.get(i)
-            {
-                if self.chain == i {
-                    // Same button = snap home
+            if controls.button_state(btn) == ButtonState::Pressed {
+                let target = if mix_held {
+                    if i == 5 {
+                        ChainId::Demo
+                    } else {
+                        ChainId::Mixer(i)
+                    }
+                } else {
+                    ChainId::Part(i)
+                };
+
+                if self.chain_id == target {
+                    // Same chain pressed again = snap home
                     self.node = 0;
                     self.sub_page = 0;
                 } else {
-                    self.chain = i;
+                    self.chain_id = target;
                     self.node = 0;
                     self.sub_page = 0;
                 }
@@ -210,27 +119,30 @@ impl ChainNav {
             self.node -= 1;
             self.sub_page = 0;
         }
-        if controls.button_state(ButtonId::Plus) == ButtonState::Pressed
-            && let Some(chain) = self.chain_def()
-            && self.node + 1 < chain.nodes.len()
-        {
-            self.node += 1;
-            self.sub_page = 0;
+        if controls.button_state(ButtonId::Plus) == ButtonState::Pressed {
+            let chain = self.active_chain();
+            if self.node + 1 < chain.len() {
+                self.node += 1;
+                self.sub_page = 0;
+            }
         }
 
         // Up/Down: vertical sub-page navigation
         if controls.button_state(ButtonId::Seq) == ButtonState::Pressed && self.sub_page > 0 {
             self.sub_page -= 1;
         }
-        if controls.button_state(ButtonId::Edit) == ButtonState::Pressed
-            && let Some(node) = self.node_def()
-            && !node.sub_pages.is_empty()
-            && self.sub_page + 1 < node.sub_pages.len()
-        {
-            self.sub_page += 1;
+        if controls.button_state(ButtonId::Edit) == ButtonState::Pressed {
+            if let Some(block) = self.active_chain_block() {
+                let count = block.sub_page_count();
+                if count > 0 && self.sub_page + 1 < count {
+                    self.sub_page += 1;
+                }
+            }
         }
 
         // Return whether position changed
-        self.chain != prev.chain || self.node != prev.node || self.sub_page != prev.sub_page
+        self.chain_id != prev_chain_id
+            || self.node != prev_node
+            || self.sub_page != prev_sub
     }
 }

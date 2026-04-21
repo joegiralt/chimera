@@ -1,9 +1,9 @@
 use chimera_core::ui::animation::AnimatedValue;
-use chimera_core::ui::chain::ChainNav;
+use chimera_core::ui::chain::{ChainId, ChainNav};
 use chimera_core::ui::fmt::{FmtBuf, fmt_val};
 use chimera_core::ui::page::{PageId, ValFmt};
 
-// ── ValFmt ──────────────────────────────────────────────────────────
+// -- ValFmt --
 
 #[test]
 fn test_uni_snap_points() {
@@ -30,7 +30,7 @@ fn test_valfmt_is_bipolar() {
     assert!(!ValFmt::Int(7).is_bipolar());
 }
 
-// ── fmt_val ─────────────────────────────────────────────────────────
+// -- fmt_val --
 
 #[test]
 fn test_fmt_unipolar_zero() {
@@ -107,7 +107,7 @@ fn test_fmt_int_clamps() {
     assert_eq!(buf.as_str(), "7");
 }
 
-// ── Animation ───────────────────────────────────────────────────────
+// -- Animation --
 
 #[test]
 fn test_animated_value_snap() {
@@ -141,19 +141,19 @@ fn test_animated_value_moves_toward_target() {
     assert!(av.current() < 1.0, "should not overshoot");
 }
 
-// ── Chain navigation ────────────────────────────────────────────────
+// -- Chain navigation --
 
 #[test]
-fn test_chain_nav_starts_at_voice_engine() {
+fn test_chain_nav_starts_at_part0_engine() {
     let nav = ChainNav::new();
-    assert_eq!(nav.chain, 0);
+    assert_eq!(nav.chain_id, ChainId::Part(0));
     assert_eq!(nav.node, 0);
     assert_eq!(nav.sub_page, 0);
     assert_eq!(PageId::from_nav(&nav), PageId::EngineFmA);
 }
 
 #[test]
-fn test_page_from_nav_voice_chain() {
+fn test_page_from_nav_part_chain() {
     let mut nav = ChainNav::new();
     nav.node = 0;
     assert_eq!(PageId::from_nav(&nav), PageId::EngineFmA);
@@ -181,21 +181,18 @@ fn test_page_from_nav_voice_chain() {
 }
 
 #[test]
-fn test_page_from_nav_envelope_chain() {
+fn test_page_from_nav_demo_chain() {
     let mut nav = ChainNav::new();
-    nav.chain = 2;
+    nav.chain_id = ChainId::Demo;
     nav.node = 0;
-    assert_eq!(PageId::from_nav(&nav), PageId::EnvAmp);
+    assert_eq!(PageId::from_nav(&nav), PageId::DemoWaves);
     nav.node = 1;
-    assert_eq!(PageId::from_nav(&nav), PageId::EnvFilter);
+    assert_eq!(PageId::from_nav(&nav), PageId::DemoShapes);
     nav.node = 2;
-    assert_eq!(PageId::from_nav(&nav), PageId::EnvAux);
+    assert_eq!(PageId::from_nav(&nav), PageId::DemoMotion);
 }
 
-// ── BlockDef registry: format coverage ─────────────────────────────
-// Layout, icons, labels, and formats are now defined in block_registry.rs.
-// Spot-checks below verify the registry has correct format data for
-// bipolar params (previously tested via val_formats on PageId).
+// -- BlockDef registry: format coverage --
 
 #[test]
 fn test_drive_block_formats_in_registry() {

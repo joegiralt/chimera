@@ -119,8 +119,9 @@ pub enum PageId {
 impl PageId {
     /// Resolve which page is active from current navigation position.
     pub fn from_nav(nav: &ChainNav) -> Self {
-        match nav.chain {
-            0 => match nav.node {
+        use crate::ui::chain::ChainId;
+        match nav.chain_id {
+            ChainId::Part(_) => match nav.node {
                 0 => match nav.sub_page {
                     1 => PageId::EngineFmB,
                     2 => PageId::EngineFmC,
@@ -135,24 +136,19 @@ impl PageId {
                 4 => PageId::Vca,
                 _ => PageId::Efx,
             },
-            1 => match nav.node {
+            ChainId::Mixer(_) => match nav.node {
                 0 => PageId::Mixer,
                 1 => PageId::Chorus,
                 2 => PageId::Delay,
                 3 => PageId::MixReverb,
                 _ => PageId::Master,
             },
-            2 => match nav.node {
-                0 => PageId::EnvAmp,
-                1 => PageId::EnvFilter,
-                _ => PageId::EnvAux,
-            },
-            5 => match nav.node {
+            ChainId::System => PageId::EngineFmA, // no param editing yet
+            ChainId::Demo => match nav.node {
                 0 => PageId::DemoWaves,
                 1 => PageId::DemoShapes,
                 _ => PageId::DemoMotion,
             },
-            _ => PageId::EngineFmA,
         }
     }
 
