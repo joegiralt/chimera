@@ -65,19 +65,27 @@ const ROW_LABEL_W: i32 = 36;     // width for source labels
 const COL_HEADER_H: i32 = 22;    // height for dest column headers (2 lines)
 const CELL_W: i32 = 28;          // width per cell
 const CELL_H: i32 = 14;          // height per cell
-const GRID_BOTTOM: i32 = 213;    // above dungeon map
+const GRID_BOTTOM: i32 = 265;    // above dungeon map
 
 /// Draw the mod matrix grid in the content zone.
-/// `scroll_x`: column offset for horizontal scrolling
-/// `sel_row`, `sel_col`: currently selected cell
+/// `anim` values map to:
+///   [0] = cursor row (A encoder)
+///   [1] = cursor col (B encoder)
+///   [2] = scroll vertical (C encoder)
+///   [3] = scroll horizontal (D encoder)
+///   [4] = amount at cursor (E encoder)
+///   [5] = unused
 pub fn draw_grid<D>(
     display: &mut D,
-    scroll_x: usize,
-    sel_row: usize,
-    sel_col: usize,
+    anim: &[f32; 6],
 ) where
     D: DrawTarget<Color = Rgb565>,
 {
+    // Derive grid state from encoder values
+    let sel_row = (anim[0] * (SOURCES.len() - 1) as f32) as usize;
+    let sel_col = (anim[1] * (DESTS.len() - 1) as f32) as usize;
+    let scroll_y = (anim[2] * SOURCES.len() as f32) as usize;
+    let scroll_x = (anim[3] * DESTS.len() as f32) as usize;
     let dim = MonoTextStyle::new(&FONT_6X10, theme::TEXT_DIM);
     let mid = MonoTextStyle::new(&FONT_6X10, theme::TEXT_MID);
     let bright = MonoTextStyle::new(&FONT_6X10, theme::PARAM_VALUE);
@@ -104,9 +112,13 @@ pub fn draw_grid<D>(
     }
 
     // ── Row labels + cells ──
-    for ri in 0..visible_rows {
+    let max_row_scroll = if SOURCES.len() > visible_rows { SOURCES.len() - visible_rows } else { 0 };
+    let scroll_y = scroll_y.min(max_row_scroll);
+
+    for vi in 0..visible_rows {
+        let ri = vi + scroll_y;
         if ri >= SOURCES.len() { break; }
-        let y = GRID_TOP + COL_HEADER_H + ri as i32 * CELL_H;
+        let y = GRID_TOP + COL_HEADER_H + vi as i32 * CELL_H;
 
         // Row label
         let label_style = if ri == sel_row { accent } else { dim };

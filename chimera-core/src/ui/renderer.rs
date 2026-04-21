@@ -700,7 +700,15 @@ impl Renderer {
             VizType::MixerLevels => self.draw_mixer_viz(display),
             VizType::RoutingMatrix => {
                 // Mod matrix grid — takes the full content zone
-                crate::ui::mod_grid::draw_grid(display, 0, 2, 5);
+                let anim_vals = [
+                    self.anim[0].current(),
+                    self.anim[1].current(),
+                    self.anim[2].current(),
+                    self.anim[3].current(),
+                    self.anim[4].current(),
+                    self.anim[5].current(),
+                ];
+                crate::ui::mod_grid::draw_grid(display, &anim_vals);
             }
             VizType::CompressorCurve => self.draw_comp_viz(display),
             VizType::None | VizType::EqResponse | VizType::LpgResponse | VizType::Logo => {}
@@ -729,7 +737,11 @@ impl Renderer {
                 }
             }
             PageLayout::CellGrid => {
-                self.draw_cell_grid_from_def(display, def);
+                if def.viz == VizType::RoutingMatrix {
+                    self.draw_viz_from_type(display, def.viz);
+                } else {
+                    self.draw_cell_grid_from_def(display, def);
+                }
             }
         }
 
@@ -765,15 +777,22 @@ impl Renderer {
                 self.draw_viz_from_type(display, def.viz);
             }
             RegionKind::Params => {
-                self.draw_params_from_def(display, def);
-                let _ = Line::new(
-                    Point::new(0, theme::ENCODER_ZONE_BOTTOM),
-                    Point::new(theme::SCREEN_W - 1, theme::ENCODER_ZONE_BOTTOM),
-                )
-                .draw_styled(&PrimitiveStyle::with_stroke(theme::SEPARATOR, 1), display);
+                // RoutingMatrix takes the full content zone — skip params
+                if def.viz != VizType::RoutingMatrix {
+                    self.draw_params_from_def(display, def);
+                    let _ = Line::new(
+                        Point::new(0, theme::ENCODER_ZONE_BOTTOM),
+                        Point::new(theme::SCREEN_W - 1, theme::ENCODER_ZONE_BOTTOM),
+                    )
+                    .draw_styled(&PrimitiveStyle::with_stroke(theme::SEPARATOR, 1), display);
+                }
             }
             RegionKind::Cells => {
-                self.draw_cell_grid_from_def(display, def);
+                if def.viz == VizType::RoutingMatrix {
+                    self.draw_viz_from_type(display, def.viz);
+                } else {
+                    self.draw_cell_grid_from_def(display, def);
+                }
                 let _ = Line::new(
                     Point::new(0, theme::ENCODER_ZONE_BOTTOM),
                     Point::new(theme::SCREEN_W - 1, theme::ENCODER_ZONE_BOTTOM),

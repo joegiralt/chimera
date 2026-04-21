@@ -40,34 +40,34 @@ pub const HEADER_LABEL: Rgb565 = Rgb565::new(14, 28, 14);
 
 // --- Layout (240x320 screen) ---
 
-/// Encoder zone: top 2/3
-pub const ENCODER_ZONE_BOTTOM: i32 = 213;
+/// Content zone: header + content + compact map
+pub const ENCODER_ZONE_BOTTOM: i32 = 265;
 
-/// Dungeon map: bottom 1/3
-pub const MAP_TOP: i32 = 214;
+/// Dungeon map: compact bottom strip
+pub const MAP_TOP: i32 = 266;
 
 /// Header
 pub const HEADER_Y: i32 = 6;
 
-/// Visualization area — generous center space
+/// Visualization area — expanded with smaller map
 pub const VIZ_TOP: i32 = 28;
-pub const VIZ_BOTTOM: i32 = 144;
+pub const VIZ_BOTTOM: i32 = 170;
 pub const VIZ_LEFT: i32 = 12;
 pub const VIZ_RIGHT: i32 = 228;
 
-/// Parameter display (3x2 grid, bottom of encoder zone)
-pub const PARAM_TOP: i32 = 152;
+/// Parameter display (3x2 grid, bottom of content zone)
+pub const PARAM_TOP: i32 = 178;
 pub const PARAM_ROW_HEIGHT: i32 = 30;
 pub const PARAM_COL_WIDTH: i32 = 74; // 3 columns with margins
 pub const PARAM_LEFT: i32 = 10; // left margin
 
-/// Dungeon map node geometry
+/// Dungeon map node geometry — compact single row
 pub const NODE_WIDTH: i32 = 30;
 pub const NODE_HEIGHT: i32 = 14;
 pub const NODE_GAP: i32 = 6;
-pub const NODE_ROW_Y: i32 = 228;
-pub const BRANCH_START_Y: i32 = 248;
-pub const BRANCH_LINE_HEIGHT: i32 = 14;
+pub const NODE_ROW_Y: i32 = 278;
+pub const BRANCH_START_Y: i32 = 296;
+pub const BRANCH_LINE_HEIGHT: i32 = 12;
 
 /// Screen
 pub const SCREEN_W: i32 = 240;
