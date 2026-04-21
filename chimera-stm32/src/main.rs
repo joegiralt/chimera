@@ -63,15 +63,17 @@ fn main() -> ! {
     let _sai_sd_a = gpioe.pe6.into_alternate::<6>();
     led.set_high();
 
-    let sck = gpioa.pa5.into_alternate::<5>();
-    let mosi = gpioa.pa7.into_alternate::<5>();
+    let mut sck = gpioa.pa5.into_alternate::<5>();
+    let mut mosi = gpioa.pa7.into_alternate::<5>();
+    sck.set_speed(stm32h7xx_hal::gpio::Speed::High);
+    mosi.set_speed(stm32h7xx_hal::gpio::Speed::High);
     let dc = gpiod.pd8.into_push_pull_output();
     let reset = gpiod.pd9.into_push_pull_output();
     let cs = gpiod.pd10.into_push_pull_output();
     let spi = dp.SPI1.spi(
         (sck, spi::NoMiso, mosi),
         spi::Config::new(spi::MODE_0),
-        25.MHz(),
+        50.MHz(),
         ccdr.peripheral.SPI1,
         &ccdr.clocks,
     );
