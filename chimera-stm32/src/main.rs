@@ -80,7 +80,13 @@ fn main() -> ! {
     // Audio init — DMA-driven, main loop has no audio responsibilities
     audio::init_pll3();
     audio::init_sai1a();      // Configures SAI but does NOT enable it
-    audio::prefill_buffer();   // Fill entire buffer before DMA starts
+
+    // Connect voice to UI params and trigger test note
+    // SAFETY: ui.params lives in main's stack frame which never returns (-> !)
+    unsafe { audio::init_voice(&ui.params as *const _); }
+    audio::trigger_note(69, 100);  // A4, velocity 100
+
+    audio::prefill_buffer();   // Fill buffer with first rendered audio
     audio::init_dma();         // Configure + enable DMA1_Stream0
     audio::enable_sai();       // Now enable SAI — DMA begins transferring
 
