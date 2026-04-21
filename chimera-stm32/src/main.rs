@@ -2,13 +2,12 @@
 #![no_main]
 
 mod audio;
-mod bitbang_spi;
+
 mod controls;
 mod display;
 mod hw_spi;
 mod midi;
 
-use bitbang_spi::BitBangSpi;
 use chimera_core::ui::UiState;
 use chimera_core::ui::perf::PerfTracker;
 use chimera_hal::{ChimeraDisplay, Controls};
