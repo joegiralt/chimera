@@ -1,3 +1,4 @@
+use chimera_core::modulation::ModState;
 use chimera_core::dsp::drive::Drive;
 use chimera_core::dsp::filter::SvfFilter;
 use chimera_core::dsp::voice::Voice;
@@ -189,16 +190,18 @@ fn test_folder_adds_harmonics() {
 
 #[test]
 fn test_voice_silent_when_idle() {
+    let empty_mod = ModState::new();
     let mut voice = Voice::new();
     let params = ParamSnapshot::default();
     let mut output = [0.0f32; 64];
-    voice.render(&mut output, &params, 48000);
+    voice.render(&mut output, &params, &empty_mod, 48000);
     let max = output.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
     assert!(max < 0.001, "idle voice should be silent");
 }
 
 #[test]
 fn test_voice_produces_sound() {
+    let empty_mod = ModState::new();
     let mut voice = Voice::new();
     let mut params = ParamSnapshot::default();
     // Pizza produces sound by default
@@ -207,7 +210,7 @@ fn test_voice_produces_sound() {
 
     let mut output = [0.0f32; 64];
     for _ in 0..4 {
-        voice.render(&mut output, &params, 48000);
+        voice.render(&mut output, &params, &empty_mod, 48000);
     }
 
     let max = output.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
@@ -220,6 +223,7 @@ fn test_voice_produces_sound() {
 
 #[test]
 fn test_voice_filter_shapes_sound() {
+    let empty_mod = ModState::new();
     let mut voice_open = Voice::new();
     let mut voice_closed = Voice::new();
     let mut params_open = ParamSnapshot::default();
@@ -239,8 +243,8 @@ fn test_voice_filter_shapes_sound() {
     let mut out_closed = [0.0f32; 64];
 
     for _ in 0..8 {
-        voice_open.render(&mut out_open, &params_open, 48000);
-        voice_closed.render(&mut out_closed, &params_closed, 48000);
+        voice_open.render(&mut out_open, &params_open, &empty_mod, 48000);
+        voice_closed.render(&mut out_closed, &params_closed, &empty_mod, 48000);
     }
 
     // Closed filter should have less energy (high frequencies removed)
@@ -257,6 +261,7 @@ fn test_voice_filter_shapes_sound() {
 
 #[test]
 fn test_voice_output_bounded() {
+    let empty_mod = ModState::new();
     let mut voice = Voice::new();
     let mut params = ParamSnapshot::default();
     params.pizza.crush = 0.7;
@@ -269,7 +274,7 @@ fn test_voice_output_bounded() {
 
     let mut output = [0.0f32; 64];
     for _ in 0..20 {
-        voice.render(&mut output, &params, 48000);
+        voice.render(&mut output, &params, &empty_mod, 48000);
         let max = output.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
         assert!(max < 10.0, "voice output should stay bounded, got {}", max);
     }

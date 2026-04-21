@@ -6,6 +6,7 @@ use crate::dsp::filter::SvfFilter;
 use crate::dsp::modal::ModalEngine;
 use crate::dsp::pizza::PizzaOsc;
 use crate::dsp::wavefolder::Wavefolder;
+use crate::modulation::{ModState, MAX_MOD_SOURCES};
 use crate::params::{EngineType, ParamSnapshot};
 
 /// Complete voice signal chain:
@@ -77,6 +78,7 @@ impl Voice {
         &mut self,
         output: &mut [f32; BLOCK_SIZE],
         params: &ParamSnapshot,
+        mod_state: &ModState,
         sample_rate: u32,
     ) {
         if !self.active {
@@ -86,10 +88,52 @@ impl Voice {
             return;
         }
 
+        // Compute modulator source values
+        let mut mod_values = [0.0f32; MAX_MOD_SOURCES];
+        if mod_state.num_sources > 0 {
+            mod_values[0] = self.amp_env.current_level(); // Env 1 output
+        }
+
+        // Modulated param copies
+        let mut mod_pizza = params.pizza;
+        let mut mod_drive = params.drive;
+        let mut mod_filter = params.filter;
+        let mut mod_folder = params.folder;
+
+        // Apply mod offsets — block indices match the chain: 0=Pizza, 1=Drive, 2=Filter, 3=Folder
+        // Pizza params are raw f32 (0.0-1.0)
+        mod_pizza.shape = (mod_pizza.shape + mod_state.compute_offset(&mod_values, 0, 0)).clamp(0.0, 1.0);
+        mod_pizza.crush = (mod_pizza.crush + mod_state.compute_offset(&mod_values, 0, 1)).clamp(0.0, 1.0);
+        mod_pizza.level = (mod_pizza.level + mod_state.compute_offset(&mod_values, 0, 2)).clamp(0.0, 1.0);
+
+        // Drive params use Param structs — offset scaled by range
+        let offset = mod_state.compute_offset(&mod_values, 1, 0);
+        mod_drive.drive.value = (mod_drive.drive.value + offset * (mod_drive.drive.max - mod_drive.drive.min))
+            .clamp(mod_drive.drive.min, mod_drive.drive.max);
+        let offset = mod_state.compute_offset(&mod_values, 1, 1);
+        mod_drive.tone.value = (mod_drive.tone.value + offset * (mod_drive.tone.max - mod_drive.tone.min))
+            .clamp(mod_drive.tone.min, mod_drive.tone.max);
+
+        // Filter
+        let offset = mod_state.compute_offset(&mod_values, 2, 0);
+        mod_filter.cutoff.value = (mod_filter.cutoff.value + offset * (mod_filter.cutoff.max - mod_filter.cutoff.min))
+            .clamp(mod_filter.cutoff.min, mod_filter.cutoff.max);
+        let offset = mod_state.compute_offset(&mod_values, 2, 1);
+        mod_filter.resonance.value = (mod_filter.resonance.value + offset * (mod_filter.resonance.max - mod_filter.resonance.min))
+            .clamp(mod_filter.resonance.min, mod_filter.resonance.max);
+
+        // Folder
+        let offset = mod_state.compute_offset(&mod_values, 3, 0);
+        mod_folder.fold.value = (mod_folder.fold.value + offset * (mod_folder.fold.max - mod_folder.fold.min))
+            .clamp(mod_folder.fold.min, mod_folder.fold.max);
+        let offset = mod_state.compute_offset(&mod_values, 3, 1);
+        mod_folder.symmetry.value = (mod_folder.symmetry.value + offset * (mod_folder.symmetry.max - mod_folder.symmetry.min))
+            .clamp(mod_folder.symmetry.min, mod_folder.symmetry.max);
+
         // 1. Engine → raw oscillator output
         match self.active_engine {
             EngineType::Pizza => {
-                self.pizza.render(output, &params.pizza, sample_rate);
+                self.pizza.render(output, &mod_pizza, sample_rate);
             }
             EngineType::Fm | EngineType::Va => {
                 // FM/VA removed — render silence
@@ -103,13 +147,13 @@ impl Voice {
         }
 
         // 2. Drive
-        self.drive.process(output, &params.drive);
+        self.drive.process(output, &mod_drive);
 
         // 3. Filter
-        self.filter.process(output, &params.filter, sample_rate);
+        self.filter.process(output, &mod_filter, sample_rate);
 
         // 4. Wavefolder
-        self.folder.process(output, &params.folder);
+        self.folder.process(output, &mod_folder);
 
         // 5. VCA — amp envelope shapes the sound
         let volume = params.volume.value;

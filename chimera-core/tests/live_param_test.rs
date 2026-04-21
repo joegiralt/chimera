@@ -1,3 +1,4 @@
+use chimera_core::modulation::ModState;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::params::{EngineType, ParamSnapshot};
 
@@ -11,6 +12,7 @@ fn render_with_param_change(
     blocks_before: usize,
     blocks_after: usize,
 ) -> (f32, f32, Vec<f32>, Vec<f32>) {
+    let empty_mod = ModState::new();
     let mut voice = Voice::new();
     let mut params = ParamSnapshot::default();
     setup(&mut params);
@@ -21,7 +23,7 @@ fn render_with_param_change(
     let mut before_buf = Vec::new();
     let mut block = [0.0f32; 64];
     for _ in 0..blocks_before {
-        voice.render(&mut block, &params, SR);
+        voice.render(&mut block, &params, &empty_mod, SR);
         before_buf.extend_from_slice(&block);
     }
 
@@ -31,7 +33,7 @@ fn render_with_param_change(
     // Render "after" blocks
     let mut after_buf = Vec::new();
     for _ in 0..blocks_after {
-        voice.render(&mut block, &params, SR);
+        voice.render(&mut block, &params, &empty_mod, SR);
         after_buf.extend_from_slice(&block);
     }
 

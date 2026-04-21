@@ -1,9 +1,11 @@
+use chimera_core::modulation::ModState;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::params::{EngineType, ParamSnapshot};
 
 const SR: u32 = 48000;
 
 fn render_voice(engine: EngineType, note: u8, blocks: usize) -> Vec<f32> {
+    let empty_mod = ModState::new();
     let mut voice = Voice::new();
     let mut params = ParamSnapshot::default();
     params.engine = engine;
@@ -13,7 +15,7 @@ fn render_voice(engine: EngineType, note: u8, blocks: usize) -> Vec<f32> {
     let mut all = Vec::new();
     let mut block = [0.0f32; 64];
     for _ in 0..blocks {
-        voice.render(&mut block, &params, SR);
+        voice.render(&mut block, &params, &empty_mod, SR);
         all.extend_from_slice(&block);
     }
     all
@@ -62,6 +64,7 @@ fn test_pizza_and_modal_produce_different_output() {
 
 #[test]
 fn test_engine_type_is_respected() {
+    let empty_mod = ModState::new();
     let mut voice = Voice::new();
     let mut params = ParamSnapshot::default();
 
@@ -70,7 +73,7 @@ fn test_engine_type_is_respected() {
     voice.note_on(60, 100, &params, SR);
 
     let mut block = [0.0f32; 64];
-    voice.render(&mut block, &params, SR);
+    voice.render(&mut block, &params, &empty_mod, SR);
     let pizza_sample = block[32];
 
     // Now switch to Modal
@@ -79,7 +82,7 @@ fn test_engine_type_is_respected() {
     voice2.note_on(60, 100, &params, SR);
 
     let mut block2 = [0.0f32; 64];
-    voice2.render(&mut block2, &params, SR);
+    voice2.render(&mut block2, &params, &empty_mod, SR);
     let modal_sample = block2[32];
 
     eprintln!("Pizza sample[32]: {}", pizza_sample);

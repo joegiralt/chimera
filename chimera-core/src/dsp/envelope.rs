@@ -46,6 +46,11 @@ impl Envelope {
         self.stage != Stage::Idle
     }
 
+    /// Current envelope level (pre-VCA snapshot for mod sources).
+    pub fn current_level(&self) -> f32 {
+        self.level * self.velocity
+    }
+
     /// Process one sample. Returns envelope level 0.0..1.0.
     pub fn process(&mut self, params: &EnvParams, sample_rate: u32) -> f32 {
         let sr = sample_rate as f32;

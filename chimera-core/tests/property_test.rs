@@ -1,6 +1,7 @@
 //! Property-based tests: verify invariants hold for random parameter combinations.
 //! Uses a simple xorshift PRNG instead of proptest (no_std compatible).
 
+use chimera_core::modulation::ModState;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::params::{EngineType, ParamSnapshot};
 
@@ -95,6 +96,7 @@ fn random_params(rng: &mut Rng) -> ParamSnapshot {
 
 #[test]
 fn prop_output_always_finite() {
+    let empty_mod = ModState::new();
     let mut rng = Rng::new(12345);
 
     for trial in 0..100 {
@@ -106,7 +108,7 @@ fn prop_output_always_finite() {
 
         let mut block = [0.0f32; 64];
         for _ in 0..8 {
-            voice.render(&mut block, &params, SR);
+            voice.render(&mut block, &params, &empty_mod, SR);
 
             for (i, &s) in block.iter().enumerate() {
                 assert!(
@@ -127,6 +129,7 @@ fn prop_output_always_finite() {
 
 #[test]
 fn prop_output_bounded() {
+    let empty_mod = ModState::new();
     let mut rng = Rng::new(67890);
 
     for trial in 0..100 {
@@ -138,7 +141,7 @@ fn prop_output_bounded() {
 
         let mut block = [0.0f32; 64];
         for _ in 0..16 {
-            voice.render(&mut block, &params, SR);
+            voice.render(&mut block, &params, &empty_mod, SR);
 
             let max = block.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
             assert!(
@@ -157,6 +160,7 @@ fn prop_output_bounded() {
 
 #[test]
 fn prop_note_on_produces_sound() {
+    let empty_mod = ModState::new();
     let mut rng = Rng::new(11111);
 
     for trial in 0..50 {
@@ -170,7 +174,7 @@ fn prop_note_on_produces_sound() {
         let mut total_max = 0.0f32;
 
         for _ in 0..16 {
-            voice.render(&mut block, &params, SR);
+            voice.render(&mut block, &params, &empty_mod, SR);
             let max = block.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
             total_max = total_max.max(max);
         }
@@ -191,6 +195,7 @@ fn prop_note_on_produces_sound() {
 
 #[test]
 fn prop_param_change_changes_output() {
+    let empty_mod = ModState::new();
     let mut rng = Rng::new(22222);
 
     let mut changed = 0;
@@ -220,7 +225,7 @@ fn prop_param_change_changes_output() {
         voice_a.note_on(note, 100, &params_a, SR);
         let mut buf_a = [0.0f32; 64];
         for _ in 0..8 {
-            voice_a.render(&mut buf_a, &params_a, SR);
+            voice_a.render(&mut buf_a, &params_a, &empty_mod, SR);
         }
 
         // Render B
@@ -228,7 +233,7 @@ fn prop_param_change_changes_output() {
         voice_b.note_on(note, 100, &params_b, SR);
         let mut buf_b = [0.0f32; 64];
         for _ in 0..8 {
-            voice_b.render(&mut buf_b, &params_b, SR);
+            voice_b.render(&mut buf_b, &params_b, &empty_mod, SR);
         }
 
         let diff: f32 = buf_a
@@ -257,6 +262,7 @@ fn prop_param_change_changes_output() {
 
 #[test]
 fn prop_note_off_eventually_silences() {
+    let empty_mod = ModState::new();
     let mut rng = Rng::new(33333);
 
     for trial in 0..50 {
@@ -281,7 +287,7 @@ fn prop_note_off_eventually_silences() {
         let mut block = [0.0f32; 64];
         // Play for a bit
         for _ in 0..4 {
-            voice.render(&mut block, &params, SR);
+            voice.render(&mut block, &params, &empty_mod, SR);
         }
         // Note off
         voice.note_off();
@@ -289,7 +295,7 @@ fn prop_note_off_eventually_silences() {
         // Render until silent or max 1000 blocks (~2.6s)
         let mut silent = false;
         for _ in 0..1000 {
-            voice.render(&mut block, &params, SR);
+            voice.render(&mut block, &params, &empty_mod, SR);
             let max = block.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
             if max < 0.005 || !voice.is_active() {
                 silent = true;
@@ -315,6 +321,7 @@ fn verify_full_sweep(
     sweep: impl Fn(&mut ParamSnapshot, f32),
     steps: usize,
 ) {
+    let empty_mod = ModState::new();
     let mut prev_rms = -1.0f32;
     let mut changes = 0;
     let mut total = 0;
@@ -330,7 +337,7 @@ fn verify_full_sweep(
         let mut block = [0.0f32; 64];
         // Render enough blocks for damping/decay differences to manifest
         for _ in 0..32 {
-            voice.render(&mut block, &params, SR);
+            voice.render(&mut block, &params, &empty_mod, SR);
         }
         let rms = libm::sqrtf(block.iter().map(|s| s * s).sum::<f32>() / 128.0);
 

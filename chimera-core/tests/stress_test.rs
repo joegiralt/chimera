@@ -2,6 +2,7 @@
 //! STM32H750 @ 480MHz, 48kHz, BLOCK_SIZE=128 = 10,000 cycles/sample.
 //! We measure wall-clock time on desktop and flag anything too slow.
 
+use chimera_core::modulation::ModState;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::params::{EngineType, ParamSnapshot};
 use std::time::Instant;
@@ -11,6 +12,7 @@ const BLOCKS: usize = 100;
 
 /// Measure average render time per block for a given configuration.
 fn bench_render(name: &str, setup: impl FnOnce(&mut ParamSnapshot)) -> f64 {
+    let empty_mod = ModState::new();
     let mut params = ParamSnapshot::default();
     setup(&mut params);
 
@@ -20,12 +22,12 @@ fn bench_render(name: &str, setup: impl FnOnce(&mut ParamSnapshot)) -> f64 {
     let mut block = [0.0f32; 64];
     // Warmup
     for _ in 0..10 {
-        voice.render(&mut block, &params, SR);
+        voice.render(&mut block, &params, &empty_mod, SR);
     }
 
     let start = Instant::now();
     for _ in 0..BLOCKS {
-        voice.render(&mut block, &params, SR);
+        voice.render(&mut block, &params, &empty_mod, SR);
     }
     let elapsed = start.elapsed();
 
