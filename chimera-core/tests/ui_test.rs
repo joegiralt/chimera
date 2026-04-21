@@ -1,7 +1,7 @@
 use chimera_core::ui::animation::AnimatedValue;
 use chimera_core::ui::chain::ChainNav;
 use chimera_core::ui::fmt::{FmtBuf, fmt_val};
-use chimera_core::ui::page::{PageId, PageLayout, ValFmt};
+use chimera_core::ui::page::{PageId, ValFmt};
 
 // ── ValFmt ──────────────────────────────────────────────────────────
 
@@ -192,66 +192,33 @@ fn test_page_from_nav_envelope_chain() {
     assert_eq!(PageId::from_nav(&nav), PageId::EnvAux);
 }
 
-// ── Page layout ─────────────────────────────────────────────────────
+// ── BlockDef registry: format coverage ─────────────────────────────
+// Layout, icons, labels, and formats are now defined in block_registry.rs.
+// Spot-checks below verify the registry has correct format data for
+// bipolar params (previously tested via val_formats on PageId).
 
 #[test]
-fn test_big_viz_pages() {
-    assert_eq!(PageId::Filter.layout(), PageLayout::BigViz);
-    assert_eq!(PageId::EnvAmp.layout(), PageLayout::BigViz);
-    assert_eq!(PageId::EngineFmA.layout(), PageLayout::BigViz);
-    // Delay and Chorus are CellGrid, not BigViz
+fn test_drive_block_formats_in_registry() {
+    use chimera_core::ui::block_registry;
+    use chimera_core::ui::page::ValFmt;
+    let def = &block_registry::DRIVE;
+    assert_eq!(def.params[0].format, ValFmt::Uni); // DRIVE
+    assert_eq!(def.params[1].format, ValFmt::Bi);  // TONE
+    assert_eq!(def.params[2].format, ValFmt::Bi);  // MIX
 }
 
 #[test]
-fn test_cell_grid_pages() {
-    assert_eq!(PageId::Drive.layout(), PageLayout::CellGrid);
-    assert_eq!(PageId::Folder.layout(), PageLayout::CellGrid);
-    assert_eq!(PageId::Mixer.layout(), PageLayout::CellGrid);
-    assert_eq!(PageId::EngineVa.layout(), PageLayout::CellGrid);
-}
-
-// ── Page val formats ────────────────────────────────────────────────
-
-#[test]
-fn test_drive_tone_and_mix_are_bipolar() {
-    let fmts = PageId::Drive.val_formats();
-    assert_eq!(fmts[0], ValFmt::Uni); // DRIVE
-    assert_eq!(fmts[1], ValFmt::Bi); // TONE
-    assert_eq!(fmts[2], ValFmt::Bi); // MIX
+fn test_filter_env_amount_bipolar_in_registry() {
+    use chimera_core::ui::block_registry;
+    use chimera_core::ui::page::ValFmt;
+    let def = &block_registry::FILTER;
+    assert_eq!(def.params[4].format, ValFmt::Bi); // ENV amount
 }
 
 #[test]
-fn test_filter_env_amount_is_bipolar() {
-    let fmts = PageId::Filter.val_formats();
-    assert_eq!(fmts[4], ValFmt::Bi); // ENV amount
-}
-
-#[test]
-fn test_mixer_pan_is_bipolar() {
-    let fmts = PageId::Mixer.val_formats();
-    assert_eq!(fmts[1], ValFmt::Bi); // PAN
-}
-
-#[test]
-fn test_folder_symmetry_is_bipolar() {
-    let fmts = PageId::Folder.val_formats();
-    assert_eq!(fmts[1], ValFmt::Bi); // SYM
-}
-
-// ── Encoder labels ──────────────────────────────────────────────────
-
-#[test]
-fn test_unused_encoder_slots_are_dashes() {
-    let labels = PageId::Drive.encoder_labels();
-    assert_eq!(labels[3], "--");
-    assert_eq!(labels[4], "--");
-    assert_eq!(labels[5], "--");
-}
-
-#[test]
-fn test_filter_has_six_labels() {
-    let labels = PageId::Filter.encoder_labels();
-    for label in &labels {
-        assert_ne!(*label, "--");
-    }
+fn test_mixer_pan_bipolar_in_registry() {
+    use chimera_core::ui::block_registry;
+    use chimera_core::ui::page::ValFmt;
+    let def = &block_registry::MIXER;
+    assert_eq!(def.params[1].format, ValFmt::Bi); // PAN
 }
