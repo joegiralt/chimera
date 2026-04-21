@@ -109,13 +109,13 @@ impl MatrixState {
 
     /// Check if a block param is enabled as a mod destination.
     pub fn is_mod_enabled(&self, block_idx: u8, param_idx: u8) -> bool {
-        let bit = block_idx as u64 * 6 + param_idx as u64;
+        let bit = block_idx as u64 * MAX_PARAMS as u64 + param_idx as u64;
         (self.mod_enabled >> bit) & 1 != 0
     }
 
     /// Enable or disable a block param as a mod destination.
     pub fn set_mod_enabled(&mut self, block_idx: u8, param_idx: u8, enabled: bool) {
-        let bit = block_idx as u64 * 6 + param_idx as u64;
+        let bit = block_idx as u64 * MAX_PARAMS as u64 + param_idx as u64;
         if enabled {
             self.mod_enabled |= 1 << bit;
         } else {
@@ -153,27 +153,9 @@ impl MatrixState {
     }
 
     /// Backward compat — rebuild without chain access (clears dests).
+    /// The caller is expected to follow up with rebuild_dests_from_chain.
     fn rebuild_dests(&mut self) {
-        // Without chain data, we can't build labels. Clear the list.
-        // This gets called from set_mod_enabled — the caller should
-        // follow up with rebuild_dests_from_chain.
         self.num_dests = 0;
-        // Scan enabled bits and create entries with placeholder labels
-        for bit in 0..48u64 {
-            if (self.mod_enabled >> bit) & 1 != 0 {
-                let bi = (bit / 6) as u8;
-                let pi = (bit % 6) as u8;
-                if (self.num_dests) < MAX_DESTS {
-                    self.dests[self.num_dests] = Some(ModDest {
-                        block_idx: bi,
-                        param_idx: pi,
-                        block_short: "?",
-                        param_label: "?",
-                    });
-                    self.num_dests += 1;
-                }
-            }
-        }
     }
 
     /// Get the amount at the current cursor position.
@@ -219,7 +201,7 @@ impl MatrixState {
             let bi = dest.block_idx;
             let pi = dest.param_idx;
             if new != 0 && !self.is_mod_enabled(bi, pi) {
-                let bit = bi as u64 * 6 + pi as u64;
+                let bit = bi as u64 * MAX_PARAMS as u64 + pi as u64;
                 self.mod_enabled |= 1 << bit;
                 // Note: rebuild_dests_from_chain should be called by the caller
             }

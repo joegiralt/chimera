@@ -116,28 +116,16 @@ impl Voice {
         mod_pizza.level = (mod_pizza.level + mod_state.compute_offset(&mod_values, 0, 2)).clamp(0.0, 1.0);
 
         // Drive params use Param structs — offset scaled by range
-        let offset = mod_state.compute_offset(&mod_values, 1, 0);
-        mod_drive.drive.value = (mod_drive.drive.value + offset * (mod_drive.drive.max - mod_drive.drive.min))
-            .clamp(mod_drive.drive.min, mod_drive.drive.max);
-        let offset = mod_state.compute_offset(&mod_values, 1, 1);
-        mod_drive.tone.value = (mod_drive.tone.value + offset * (mod_drive.tone.max - mod_drive.tone.min))
-            .clamp(mod_drive.tone.min, mod_drive.tone.max);
+        mod_drive.drive.apply_mod_offset(mod_state.compute_offset(&mod_values, 1, 0));
+        mod_drive.tone.apply_mod_offset(mod_state.compute_offset(&mod_values, 1, 1));
 
         // Filter
-        let offset = mod_state.compute_offset(&mod_values, 2, 0);
-        mod_filter.cutoff.value = (mod_filter.cutoff.value + offset * (mod_filter.cutoff.max - mod_filter.cutoff.min))
-            .clamp(mod_filter.cutoff.min, mod_filter.cutoff.max);
-        let offset = mod_state.compute_offset(&mod_values, 2, 1);
-        mod_filter.resonance.value = (mod_filter.resonance.value + offset * (mod_filter.resonance.max - mod_filter.resonance.min))
-            .clamp(mod_filter.resonance.min, mod_filter.resonance.max);
+        mod_filter.cutoff.apply_mod_offset(mod_state.compute_offset(&mod_values, 2, 0));
+        mod_filter.resonance.apply_mod_offset(mod_state.compute_offset(&mod_values, 2, 1));
 
         // Folder
-        let offset = mod_state.compute_offset(&mod_values, 3, 0);
-        mod_folder.fold.value = (mod_folder.fold.value + offset * (mod_folder.fold.max - mod_folder.fold.min))
-            .clamp(mod_folder.fold.min, mod_folder.fold.max);
-        let offset = mod_state.compute_offset(&mod_values, 3, 1);
-        mod_folder.symmetry.value = (mod_folder.symmetry.value + offset * (mod_folder.symmetry.max - mod_folder.symmetry.min))
-            .clamp(mod_folder.symmetry.min, mod_folder.symmetry.max);
+        mod_folder.fold.apply_mod_offset(mod_state.compute_offset(&mod_values, 3, 0));
+        mod_folder.symmetry.apply_mod_offset(mod_state.compute_offset(&mod_values, 3, 1));
 
         // 1. Engine → raw oscillator output
         match self.active_engine {

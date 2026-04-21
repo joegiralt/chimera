@@ -95,11 +95,21 @@ fn mod_bar_shows_when_enabled() {
 
 #[test]
 fn mod_bar_amount_reflects_matrix() {
+    use chimera_core::ui::mod_grid::ModDest;
+
     let mut matrix = MatrixState::new();
     matrix.num_sources = 2;
 
-    // Enable a destination
+    // Enable a destination and manually populate dests (as rebuild_dests_from_chain would).
     matrix.set_mod_enabled(0, 1, true);
+    // set_mod_enabled clears num_dests; populate the dest entry manually.
+    matrix.dests[0] = Some(ModDest {
+        block_idx: 0,
+        param_idx: 1,
+        block_short: "TST",
+        param_label: "Prm",
+    });
+    matrix.num_dests = 1;
 
     // Set amounts from two sources
     matrix.amounts[0][0] = 64;
@@ -204,10 +214,12 @@ fn matrix_state_rebuild_dests_from_chain() {
         ChainBlock { def: &FILTER_DEF, sub_pages: &[] },
     ];
 
+    use chimera_core::ui::mod_grid::MAX_PARAMS;
+
     let mut matrix = MatrixState::new();
     // Enable pizza shape (block 0, param 0) and filter freq (block 1, param 0)
-    matrix.mod_enabled |= 1 << (0 * 6 + 0); // block 0, param 0
-    matrix.mod_enabled |= 1 << (1 * 6 + 0); // block 1, param 0
+    matrix.mod_enabled |= 1 << (0 * MAX_PARAMS + 0); // block 0, param 0
+    matrix.mod_enabled |= 1 << (1 * MAX_PARAMS + 0); // block 1, param 0
 
     matrix.rebuild_dests_from_chain(&chain);
 

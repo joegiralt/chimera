@@ -17,7 +17,6 @@ pub struct ModState {
     pub dests: [(u8, u8); MAX_MOD_DESTS],
     /// amounts[source][dest], -127 to +127
     pub amounts: [[i8; MAX_MOD_DESTS]; MAX_MOD_SOURCES],
-    pub mod_enabled: u64,
 }
 
 impl ModState {
@@ -27,7 +26,6 @@ impl ModState {
             num_dests: 0,
             dests: [(0, 0); MAX_MOD_DESTS],
             amounts: [[0; MAX_MOD_DESTS]; MAX_MOD_SOURCES],
-            mod_enabled: 0,
         }
     }
 
@@ -58,7 +56,6 @@ impl ModState {
 
     /// Copy modulation routing from the UI's MatrixState into this compact form.
     pub fn sync_from_matrix(&mut self, matrix: &MatrixState) {
-        self.mod_enabled = matrix.mod_enabled;
         self.num_sources = matrix.num_sources;
         self.num_dests = matrix.num_dests;
 

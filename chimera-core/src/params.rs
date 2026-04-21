@@ -41,6 +41,12 @@ impl Param {
         self.set(self.min + n * (self.max - self.min));
     }
 
+    /// Apply a modulation offset scaled by the param's range.
+    pub fn apply_mod_offset(&mut self, offset: f32) {
+        self.value = (self.value + offset * (self.max - self.min))
+            .clamp(self.min, self.max);
+    }
+
     /// Snap to next coarse point in the given direction.
     /// `snap_points` are in normalized space (0..1), must be sorted ascending.
     pub fn snap_to(&mut self, delta: i8, snap_points: &[f32]) {

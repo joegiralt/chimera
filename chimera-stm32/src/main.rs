@@ -5,7 +5,6 @@ mod audio;
 
 mod controls;
 mod display;
-mod hw_spi;
 mod midi;
 
 use chimera_core::ui::UiState;
