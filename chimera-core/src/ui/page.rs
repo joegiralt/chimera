@@ -126,7 +126,10 @@ impl PageId {
                 1 => PageId::Drive,
                 2 => PageId::Filter,
                 3 => PageId::Folder,
-                4 => PageId::Vca,
+                4 => match nav.sub_page {
+                    0 => PageId::DemoMatrix, // Mod matrix grid (no param editing)
+                    _ => PageId::Vca,        // Envelope sub-page (ADSR params)
+                },
                 _ => PageId::Efx,
             },
             ChainId::Mixer(_) => match nav.node {
