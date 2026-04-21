@@ -9,6 +9,7 @@ use embedded_graphics::text::Text;
 
 use crate::params::ParamSnapshot;
 use crate::ui::animation::AnimatedValue;
+use crate::ui::block_def::{BlockDef, VizType};
 use crate::ui::cell;
 use crate::ui::chain::ChainNav;
 use crate::ui::dungeon_map;
@@ -879,6 +880,99 @@ impl Renderer {
             let col = (i % 3) as i32;
             let row = (i / 3) as i32;
             cell::draw_cell(display, col, row, label, self.anim[i].current(), icon, vf);
+        }
+    }
+
+    // ── BlockDef-based rendering ─────────────────────────────────────
+
+    /// Render the parameter grid from a `BlockDef` instead of a `PageId`.
+    pub fn draw_params_from_def<D>(&self, display: &mut D, def: &BlockDef)
+    where
+        D: DrawTarget<Color = Rgb565>,
+    {
+        let label_style = MonoTextStyle::new(&FONT_6X10, theme::PARAM_LABEL);
+        let value_style = MonoTextStyle::new(&FONT_6X10, theme::PARAM_VALUE);
+
+        for (i, slot) in def.params.iter().enumerate() {
+            let label = slot.label;
+            if label == "--" {
+                continue;
+            }
+
+            let col = i % 3;
+            let row = i / 3;
+            let x = theme::PARAM_LEFT + col as i32 * theme::PARAM_COL_WIDTH;
+            let y = theme::PARAM_TOP + row as i32 * theme::PARAM_ROW_HEIGHT;
+
+            let val = self.anim[i].current();
+
+            // Label (dim)
+            let _ = Text::new(label, Point::new(x, y + 10), label_style).draw(display);
+
+            // Numeric value
+            let mut buf = FmtBuf::new();
+            fmt::fmt_val(&mut buf, val, slot.format);
+            let label_end = x + label.len() as i32 * 6 + 4;
+            let _ =
+                Text::new(buf.as_str(), Point::new(label_end, y + 10), value_style).draw(display);
+
+            // Value bar below
+            let bar_y = y + 15;
+            let _ = Rectangle::new(
+                Point::new(x, bar_y),
+                Size::new(theme::BAR_WIDTH as u32, theme::BAR_HEIGHT as u32),
+            )
+            .draw_styled(&PrimitiveStyle::with_fill(theme::PARAM_BAR_BG), display);
+
+            let fill_w = (theme::BAR_WIDTH as f32 * val) as i32;
+            if fill_w > 0 {
+                let _ = Rectangle::new(
+                    Point::new(x, bar_y),
+                    Size::new(fill_w as u32, theme::BAR_HEIGHT as u32),
+                )
+                .draw_styled(&PrimitiveStyle::with_fill(theme::PARAM_BAR_FG), display);
+            }
+        }
+    }
+
+    /// Render the cell grid from a `BlockDef` instead of a `PageId`.
+    pub fn draw_cell_grid_from_def<D>(&self, display: &mut D, def: &BlockDef)
+    where
+        D: DrawTarget<Color = Rgb565>,
+    {
+        for (i, slot) in def.params.iter().enumerate() {
+            let col = (i % 3) as i32;
+            let row = (i / 3) as i32;
+            cell::draw_cell(
+                display,
+                col,
+                row,
+                slot.label,
+                self.anim[i].current(),
+                slot.icon,
+                slot.format,
+            );
+        }
+    }
+
+    /// Dispatch to the appropriate visualization method based on `VizType`.
+    pub fn draw_viz_from_type<D>(&self, display: &mut D, viz: VizType)
+    where
+        D: DrawTarget<Color = Rgb565>,
+    {
+        match viz {
+            VizType::AlgorithmDiagram => self.draw_fm_viz(display),
+            VizType::ModalPeaks => self.draw_modal_viz(display),
+            VizType::WaveformPreview => self.draw_va_viz(display),
+            VizType::DriveClip => self.draw_drive_viz(display),
+            VizType::FilterResponse => self.draw_filter_viz(display),
+            VizType::WaveFold => self.draw_folder_viz(display),
+            VizType::Adsr => self.draw_envelope_viz(display),
+            VizType::EffectsFlow => self.draw_efx_viz(display),
+            VizType::MixerLevels => self.draw_mixer_viz(display),
+            VizType::RoutingMatrix => self.draw_routing_viz(display),
+            VizType::CompressorCurve => self.draw_comp_viz(display),
+            VizType::None | VizType::EqResponse | VizType::LpgResponse | VizType::Logo => {}
         }
     }
 
