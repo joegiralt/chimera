@@ -48,11 +48,18 @@ impl UiState {
         let mut renderer = Renderer::new();
         renderer.snap_to_current(page, &params);
 
+        let mut matrix_state = MatrixState::new();
+        // Build source list from the mod matrix block's sub-pages
+        let chain = nav.active_chain();
+        if let Some(last_block) = chain.blocks.last() {
+            matrix_state.rebuild_sources(last_block.sub_pages);
+        }
+
         Self {
             nav,
             params,
             renderer,
-            matrix_state: MatrixState::new(),
+            matrix_state,
             page,
             region_set: region::RegionSet::new(),
             last_encoder: 0,
