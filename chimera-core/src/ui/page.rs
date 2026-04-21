@@ -44,6 +44,8 @@ pub enum PageLayout {
     BigViz,
     /// 3x2 grid of independent cells, each with its own mini icon.
     CellGrid,
+    /// Mod matrix grid — source×destination routing table.
+    Matrix,
 }
 
 /// What mini icon to draw in a cell (CellGrid mode).
@@ -215,14 +217,7 @@ impl PageId {
                 params.envelopes[1].attack.normalized(),
                 params.envelopes[1].decay.normalized(),
             ],
-            PageId::DemoMatrix => [
-                params.drive.drive.normalized(),     // cursor row
-                params.drive.tone.normalized(),      // cursor col
-                params.drive.mix.normalized(),       // scroll V
-                params.folder.fold.normalized(),     // scroll H
-                params.filter.env_amount.normalized(), // amount (bipolar)
-                0.0,
-            ],
+            PageId::DemoMatrix => [0.0; 6],
             PageId::EngineModal1 => [
                 params.modal.mode as f32 / 2.0,
                 params.modal.excite,
@@ -378,14 +373,7 @@ impl PageId {
                 5 => Some(&mut params.envelopes[1].decay),
                 _ => None,
             },
-            PageId::DemoMatrix => match idx {
-                0 => Some(&mut params.drive.drive),       // cursor row
-                1 => Some(&mut params.drive.tone),        // cursor col
-                2 => Some(&mut params.drive.mix),         // scroll V
-                3 => Some(&mut params.folder.fold),       // scroll H
-                4 => Some(&mut params.filter.env_amount), // amount
-                _ => None,
-            },
+            PageId::DemoMatrix => None,
             _ => None,
         }
     }

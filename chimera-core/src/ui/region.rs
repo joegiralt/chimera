@@ -52,6 +52,12 @@ pub enum RegionData {
         node_idx: u8,
         sub_page: u8,
     },
+    Grid {
+        sel_row: u8,
+        sel_col: u8,
+        scroll_x: u8,
+        scroll_y: u8,
+    },
 }
 
 impl RegionData {
@@ -94,6 +100,14 @@ impl RegionData {
     pub fn sentinel_nav() -> Self {
         Self::Nav { chain_idx: 255, node_idx: 255, sub_page: 255 }
     }
+
+    pub fn grid(sel_row: u8, sel_col: u8, scroll_x: u8, scroll_y: u8) -> Self {
+        Self::Grid { sel_row, sel_col, scroll_x, scroll_y }
+    }
+
+    pub fn sentinel_grid() -> Self {
+        Self::Grid { sel_row: 255, sel_col: 255, scroll_x: 255, scroll_y: 255 }
+    }
 }
 
 /// Which draw method to dispatch for a region.
@@ -104,6 +118,7 @@ pub enum RegionKind {
     Params,
     Cells,
     Nav,
+    Grid,
 }
 
 /// A screen region with Y bounds and cached data.
@@ -171,6 +186,17 @@ impl RegionSet {
                     prev_data: RegionData::sentinel_cells(),
                 };
                 self.regions[2] = Region {
+                    kind: RegionKind::Nav, y_start: 266, y_end: 320,
+                    prev_data: RegionData::sentinel_nav(),
+                };
+            }
+            PageLayout::Matrix => {
+                self.count = 2;
+                self.regions[0] = Region {
+                    kind: RegionKind::Grid, y_start: 0, y_end: 266,
+                    prev_data: RegionData::sentinel_grid(),
+                };
+                self.regions[1] = Region {
                     kind: RegionKind::Nav, y_start: 266, y_end: 320,
                     prev_data: RegionData::sentinel_nav(),
                 };

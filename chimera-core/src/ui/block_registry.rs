@@ -299,16 +299,9 @@ pub static NOISE: BlockDef = BlockDef {
 pub static MOD_MATRIX: BlockDef = BlockDef {
     name: "Mod Matrix",
     short: "MOD",
-    layout: PageLayout::CellGrid,
+    layout: PageLayout::Matrix,
     viz: VizType::RoutingMatrix,
-    params: [
-        ParamSlot { label: "SRC1", format: ValFmt::Uni, icon: CellIcon::Arc },
-        ParamSlot { label: "DST1", format: ValFmt::Uni, icon: CellIcon::Arc },
-        ParamSlot { label: "AMT1", format: ValFmt::Bi,  icon: CellIcon::Arc },
-        ParamSlot { label: "SRC2", format: ValFmt::Uni, icon: CellIcon::Arc },
-        ParamSlot { label: "DST2", format: ValFmt::Uni, icon: CellIcon::Arc },
-        ParamSlot { label: "AMT2", format: ValFmt::Bi,  icon: CellIcon::Arc },
-    ],
+    params: [EMPTY; 6],
 };
 
 // ---------------------------------------------------------------------------
@@ -587,16 +580,9 @@ pub static DEMO_MOTION: BlockDef = BlockDef {
 pub static DEMO_MATRIX: BlockDef = BlockDef {
     name: "Matrix",
     short: "MTX",
-    layout: PageLayout::CellGrid,
+    layout: PageLayout::Matrix,
     viz: VizType::RoutingMatrix,
-    params: [
-        ParamSlot { label: "ROW",   format: ValFmt::Uni, icon: CellIcon::None },
-        ParamSlot { label: "COL",   format: ValFmt::Uni, icon: CellIcon::None },
-        ParamSlot { label: "SCR.V", format: ValFmt::Uni, icon: CellIcon::None },
-        ParamSlot { label: "SCR.H", format: ValFmt::Uni, icon: CellIcon::None },
-        ParamSlot { label: "AMT",   format: ValFmt::Bi,  icon: CellIcon::None },
-        EMPTY,
-    ],
+    params: [EMPTY; 6],
 };
 
 static DEMO_BLOCKS: [ChainBlock; 4] = [

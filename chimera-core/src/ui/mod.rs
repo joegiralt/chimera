@@ -16,7 +16,8 @@ use chimera_hal::{ButtonId, ButtonState, Controls, EncoderId};
 
 use crate::params::ParamSnapshot;
 use chain::ChainNav;
-use page::PageId;
+use mod_grid::MatrixState;
+use page::{PageId, PageLayout};
 use perf::PerfStats;
 use renderer::Renderer;
 
@@ -26,6 +27,7 @@ pub struct UiState {
     pub nav: ChainNav,
     pub params: ParamSnapshot,
     pub renderer: Renderer,
+    pub matrix_state: MatrixState,
     page: PageId,
     region_set: region::RegionSet,
 }
@@ -48,6 +50,7 @@ impl UiState {
             nav,
             params,
             renderer,
+            matrix_state: MatrixState::new(),
             page,
             region_set: region::RegionSet::new(),
         }
@@ -85,14 +88,30 @@ impl UiState {
             EncoderId::F,
         ];
         let def = self.nav.active_block_def();
-        for (i, &enc) in encoder_ids.iter().enumerate() {
-            let delta = controls.encoder_delta(enc);
-            if delta != 0 {
-                if shift {
-                    let fmt = def.params[i].format;
-                    self.page.snap_encoder(i, delta, fmt, &mut self.params);
-                } else {
-                    self.page.apply_encoder(i, delta, &mut self.params);
+        if def.layout == PageLayout::Matrix {
+            for (i, &enc) in encoder_ids.iter().enumerate() {
+                let delta = controls.encoder_delta(enc);
+                if delta != 0 {
+                    match i {
+                        0 => self.matrix_state.move_row(delta),
+                        1 => self.matrix_state.move_col(delta),
+                        2 => self.matrix_state.scroll_v(delta),
+                        3 => self.matrix_state.scroll_h(delta),
+                        4 => { /* amount — todo */ }
+                        _ => {}
+                    }
+                }
+            }
+        } else {
+            for (i, &enc) in encoder_ids.iter().enumerate() {
+                let delta = controls.encoder_delta(enc);
+                if delta != 0 {
+                    if shift {
+                        let fmt = def.params[i].format;
+                        self.page.snap_encoder(i, delta, fmt, &mut self.params);
+                    } else {
+                        self.page.apply_encoder(i, delta, &mut self.params);
+                    }
                 }
             }
         }
@@ -111,7 +130,7 @@ impl UiState {
             >,
     {
         let def = self.nav.active_block_def();
-        self.renderer.draw_with_def(display, &self.nav, def, perf);
+        self.renderer.draw_with_def(display, &self.nav, def, perf, &self.matrix_state);
     }
 
     /// Prime the region set after an initial full render, so render_dirty
@@ -134,6 +153,12 @@ impl UiState {
                 RegionKind::Params => RegionData::params(self.page, qvalues),
                 RegionKind::Cells => RegionData::cells(self.page, qvalues),
                 RegionKind::Nav => RegionData::nav(nav_tag.0, nav_tag.1, nav_tag.2),
+                RegionKind::Grid => RegionData::grid(
+                    self.matrix_state.sel_row as u8,
+                    self.matrix_state.sel_col as u8,
+                    self.matrix_state.scroll_x as u8,
+                    self.matrix_state.scroll_y as u8,
+                ),
             };
         }
     }
@@ -173,6 +198,12 @@ impl UiState {
                 RegionKind::Params => RegionData::params(self.page, qvalues),
                 RegionKind::Cells => RegionData::cells(self.page, qvalues),
                 RegionKind::Nav => RegionData::nav(nav_tag.0, nav_tag.1, nav_tag.2),
+                RegionKind::Grid => RegionData::grid(
+                    self.matrix_state.sel_row as u8,
+                    self.matrix_state.sel_col as u8,
+                    self.matrix_state.scroll_x as u8,
+                    self.matrix_state.scroll_y as u8,
+                ),
             };
 
             if current_data != r.prev_data {
@@ -181,7 +212,7 @@ impl UiState {
                 renderer::Renderer::clear_region_fb(fb, r.y_start, r.y_end);
 
                 // Draw region using BlockDef
-                self.renderer.draw_region_with_def(display, r.kind, &self.nav, def, perf);
+                self.renderer.draw_region_with_def(display, r.kind, &self.nav, def, perf, &self.matrix_state);
 
                 r.prev_data = current_data;
                 flush_list[flush_count] = (r.y_start, r.y_end);

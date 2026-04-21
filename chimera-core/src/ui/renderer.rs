@@ -12,6 +12,7 @@ use crate::ui::animation::AnimatedValue;
 use crate::ui::block_def::{BlockDef, VizType};
 use crate::ui::cell;
 use crate::ui::chain::ChainNav;
+use crate::ui::mod_grid::MatrixState;
 use crate::ui::dungeon_map;
 use crate::ui::fmt::{self, FmtBuf};
 use crate::ui::page::{PageId, PageLayout};
@@ -699,16 +700,9 @@ impl Renderer {
             VizType::EffectsFlow => self.draw_efx_viz(display),
             VizType::MixerLevels => self.draw_mixer_viz(display),
             VizType::RoutingMatrix => {
-                // Mod matrix grid — takes the full content zone
-                let anim_vals = [
-                    self.anim[0].current(),
-                    self.anim[1].current(),
-                    self.anim[2].current(),
-                    self.anim[3].current(),
-                    self.anim[4].current(),
-                    self.anim[5].current(),
-                ];
-                crate::ui::mod_grid::draw_grid(display, &anim_vals);
+                // Handled by PageLayout::Matrix path — draw_grid called with MatrixState directly.
+                // draw_viz_from_type is only called from BigViz, so this is a no-op.
+                self.draw_routing_viz(display);
             }
             VizType::CompressorCurve => self.draw_comp_viz(display),
             VizType::None | VizType::EqResponse | VizType::LpgResponse | VizType::Logo => {}
@@ -718,7 +712,7 @@ impl Renderer {
     // ── BlockDef-based full render ─────────────────────────────────────
 
     /// Render full screen using a `BlockDef` for layout, viz, and params.
-    pub fn draw_with_def<D>(&self, display: &mut D, nav: &ChainNav, def: &BlockDef, perf: &PerfStats)
+    pub fn draw_with_def<D>(&self, display: &mut D, nav: &ChainNav, def: &BlockDef, perf: &PerfStats, matrix_state: &MatrixState)
     where
         D: DrawTarget<Color = Rgb565>,
     {
@@ -731,17 +725,13 @@ impl Renderer {
         match def.layout {
             PageLayout::BigViz => {
                 self.draw_viz_from_type(display, def.viz);
-                // RoutingMatrix takes the full content zone — skip params
-                if def.viz != VizType::RoutingMatrix {
-                    self.draw_params_from_def(display, def);
-                }
+                self.draw_params_from_def(display, def);
             }
             PageLayout::CellGrid => {
-                if def.viz == VizType::RoutingMatrix {
-                    self.draw_viz_from_type(display, def.viz);
-                } else {
-                    self.draw_cell_grid_from_def(display, def);
-                }
+                self.draw_cell_grid_from_def(display, def);
+            }
+            PageLayout::Matrix => {
+                crate::ui::mod_grid::draw_grid(display, matrix_state);
             }
         }
 
@@ -764,6 +754,7 @@ impl Renderer {
         nav: &ChainNav,
         def: &BlockDef,
         perf: &PerfStats,
+        matrix_state: &MatrixState,
     )
     where
         D: DrawTarget<Color = Rgb565>,
@@ -777,22 +768,25 @@ impl Renderer {
                 self.draw_viz_from_type(display, def.viz);
             }
             RegionKind::Params => {
-                // RoutingMatrix takes the full content zone — skip params
-                if def.viz != VizType::RoutingMatrix {
-                    self.draw_params_from_def(display, def);
-                    let _ = Line::new(
-                        Point::new(0, theme::ENCODER_ZONE_BOTTOM),
-                        Point::new(theme::SCREEN_W - 1, theme::ENCODER_ZONE_BOTTOM),
-                    )
-                    .draw_styled(&PrimitiveStyle::with_stroke(theme::SEPARATOR, 1), display);
-                }
+                self.draw_params_from_def(display, def);
+                let _ = Line::new(
+                    Point::new(0, theme::ENCODER_ZONE_BOTTOM),
+                    Point::new(theme::SCREEN_W - 1, theme::ENCODER_ZONE_BOTTOM),
+                )
+                .draw_styled(&PrimitiveStyle::with_stroke(theme::SEPARATOR, 1), display);
             }
             RegionKind::Cells => {
-                if def.viz == VizType::RoutingMatrix {
-                    self.draw_viz_from_type(display, def.viz);
-                } else {
-                    self.draw_cell_grid_from_def(display, def);
-                }
+                self.draw_cell_grid_from_def(display, def);
+                let _ = Line::new(
+                    Point::new(0, theme::ENCODER_ZONE_BOTTOM),
+                    Point::new(theme::SCREEN_W - 1, theme::ENCODER_ZONE_BOTTOM),
+                )
+                .draw_styled(&PrimitiveStyle::with_stroke(theme::SEPARATOR, 1), display);
+            }
+            RegionKind::Grid => {
+                self.draw_header_with_def(display, nav, def);
+                self.draw_perf(display, perf);
+                crate::ui::mod_grid::draw_grid(display, matrix_state);
                 let _ = Line::new(
                     Point::new(0, theme::ENCODER_ZONE_BOTTOM),
                     Point::new(theme::SCREEN_W - 1, theme::ENCODER_ZONE_BOTTOM),
