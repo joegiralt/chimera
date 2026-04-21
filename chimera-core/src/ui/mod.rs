@@ -49,11 +49,12 @@ impl UiState {
         renderer.snap_to_current(page, &params);
 
         let mut matrix_state = MatrixState::new();
-        // Build source list from the mod matrix block's sub-pages
+        // Build source + dest lists from the chain
         let chain = nav.active_chain();
         if let Some(last_block) = chain.blocks.last() {
             matrix_state.rebuild_sources(last_block.sub_pages);
         }
+        matrix_state.rebuild_dests_from_chain(chain.blocks);
 
         Self {
             nav,
@@ -131,11 +132,14 @@ impl UiState {
             if shift {
                 let block_idx = self.nav.node as u8;
                 let param_idx = self.last_encoder as u8;
+                let chain = self.nav.active_chain();
                 if controls.button_state(ButtonId::Plus) == ButtonState::Pressed {
                     self.matrix_state.set_mod_enabled(block_idx, param_idx, true);
+                    self.matrix_state.rebuild_dests_from_chain(chain.blocks);
                 }
                 if controls.button_state(ButtonId::Minus) == ButtonState::Pressed {
                     self.matrix_state.set_mod_enabled(block_idx, param_idx, false);
+                    self.matrix_state.rebuild_dests_from_chain(chain.blocks);
                 }
             }
         }
