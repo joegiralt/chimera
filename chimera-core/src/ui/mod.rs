@@ -14,6 +14,7 @@ pub mod theme;
 use chimera_hal::{ButtonId, ButtonState, Controls, EncoderId};
 
 use crate::params::{EngineType, ParamSnapshot};
+use block_def::{BlockDef, ChainDef2};
 use chain::ChainNav;
 use page::PageId;
 use perf::PerfStats;
@@ -55,6 +56,20 @@ impl UiState {
     /// Current page id.
     pub fn page(&self) -> PageId {
         self.page
+    }
+
+    /// Look up the active `BlockDef` from the block registry based on
+    /// current navigation position (chain, node, sub_page).
+    fn active_block_def(&self) -> &'static BlockDef {
+        let chain: &ChainDef2 = match self.nav.chain {
+            0 => &block_registry::FM_POLY_CHAIN,
+            1 => &block_registry::MIX_CHAIN,
+            2 => &block_registry::ENVELOPE_CHAIN,
+            _ => &block_registry::FM_POLY_CHAIN,
+        };
+        chain
+            .active_def(self.nav.node, self.nav.sub_page)
+            .unwrap_or(block_registry::FM_POLY_CHAIN.blocks[0].def)
     }
 
     /// Process one frame of input: navigation + encoder deltas.
@@ -112,7 +127,8 @@ impl UiState {
                 Color = embedded_graphics::pixelcolor::Rgb565,
             >,
     {
-        self.renderer.draw(display, &self.nav, self.page, perf);
+        let def = self.active_block_def();
+        self.renderer.draw_with_def(display, &self.nav, def, perf);
     }
 
     /// Prime the region set after an initial full render, so render_dirty
@@ -120,7 +136,8 @@ impl UiState {
     pub fn prime_regions(&mut self, perf: &PerfStats) {
         use region::{RegionData, RegionKind};
 
-        let layout = self.page.layout();
+        let def = self.active_block_def();
+        let layout = def.layout;
         self.region_set.set_layout(layout);
         let qvalues = region::quantize_values(&self.renderer.anim);
 
@@ -154,7 +171,8 @@ impl UiState {
     {
         use region::{RegionData, RegionKind};
 
-        let layout = self.page.layout();
+        let def = self.active_block_def();
+        let layout = def.layout;
         let mut flush_list = [(0u16, 0u16); region::MAX_REGIONS];
         let mut flush_count = 0;
 
@@ -188,8 +206,8 @@ impl UiState {
                 let fb = display.pixel_buffer();
                 renderer::Renderer::clear_region_fb(fb, r.y_start, r.y_end);
 
-                // Draw region
-                self.renderer.draw_region(display, r.kind, &self.nav, self.page, perf);
+                // Draw region using BlockDef
+                self.renderer.draw_region_with_def(display, r.kind, &self.nav, def, perf);
 
                 r.prev_data = current_data;
                 flush_list[flush_count] = (r.y_start, r.y_end);

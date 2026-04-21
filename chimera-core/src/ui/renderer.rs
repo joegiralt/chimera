@@ -976,6 +976,108 @@ impl Renderer {
         }
     }
 
+    // ── BlockDef-based full render ─────────────────────────────────────
+
+    /// Render full screen using a `BlockDef` for layout, viz, and params.
+    pub fn draw_with_def<D>(&self, display: &mut D, nav: &ChainNav, def: &BlockDef, perf: &PerfStats)
+    where
+        D: DrawTarget<Color = Rgb565>,
+    {
+        // Clear
+        let _ = Rectangle::new(Point::zero(), Size::new(240, 320))
+            .draw_styled(&PrimitiveStyle::with_fill(theme::BG), display);
+
+        self.draw_header_with_def(display, nav, def);
+
+        match def.layout {
+            PageLayout::BigViz => {
+                self.draw_viz_from_type(display, def.viz);
+                self.draw_params_from_def(display, def);
+            }
+            PageLayout::CellGrid => {
+                self.draw_cell_grid_from_def(display, def);
+            }
+        }
+
+        // Separator
+        let _ = Line::new(
+            Point::new(0, theme::ENCODER_ZONE_BOTTOM),
+            Point::new(theme::SCREEN_W - 1, theme::ENCODER_ZONE_BOTTOM),
+        )
+        .draw_styled(&PrimitiveStyle::with_stroke(theme::SEPARATOR, 1), display);
+
+        dungeon_map::draw(display, nav);
+        self.draw_perf(display, perf);
+    }
+
+    /// Draw a single region using BlockDef. The caller has already cleared the region.
+    pub fn draw_region_with_def<D>(
+        &self,
+        display: &mut D,
+        kind: RegionKind,
+        nav: &ChainNav,
+        def: &BlockDef,
+        perf: &PerfStats,
+    )
+    where
+        D: DrawTarget<Color = Rgb565>,
+    {
+        match kind {
+            RegionKind::Header => {
+                self.draw_header_with_def(display, nav, def);
+                self.draw_perf(display, perf);
+            }
+            RegionKind::Viz => {
+                self.draw_viz_from_type(display, def.viz);
+            }
+            RegionKind::Params => {
+                self.draw_params_from_def(display, def);
+                let _ = Line::new(
+                    Point::new(0, theme::ENCODER_ZONE_BOTTOM),
+                    Point::new(theme::SCREEN_W - 1, theme::ENCODER_ZONE_BOTTOM),
+                )
+                .draw_styled(&PrimitiveStyle::with_stroke(theme::SEPARATOR, 1), display);
+            }
+            RegionKind::Cells => {
+                self.draw_cell_grid_from_def(display, def);
+                let _ = Line::new(
+                    Point::new(0, theme::ENCODER_ZONE_BOTTOM),
+                    Point::new(theme::SCREEN_W - 1, theme::ENCODER_ZONE_BOTTOM),
+                )
+                .draw_styled(&PrimitiveStyle::with_stroke(theme::SEPARATOR, 1), display);
+            }
+            RegionKind::Nav => {
+                dungeon_map::draw(display, nav);
+            }
+        }
+    }
+
+    /// Header that uses `def.name` instead of chain/node nav lookups.
+    /// Falls back to the old nav-based header breadcrumb but includes the
+    /// BlockDef name as the node label.
+    fn draw_header_with_def<D>(&self, display: &mut D, nav: &ChainNav, def: &BlockDef)
+    where
+        D: DrawTarget<Color = Rgb565>,
+    {
+        let chain = match nav.chain_def() {
+            Some(c) => c,
+            None => return,
+        };
+
+        let dim = MonoTextStyle::new(&FONT_6X10, theme::HEADER_LABEL);
+        let bright = MonoTextStyle::new(&FONT_6X10, theme::TEXT);
+        let y = theme::HEADER_Y + 10;
+
+        let mut x = 8;
+        let _ = Text::new(chain.name, Point::new(x, y), dim).draw(display);
+        x += chain.name.len() as i32 * 6;
+
+        let _ = Text::new(" > ", Point::new(x, y), dim).draw(display);
+        x += 18;
+
+        let _ = Text::new(def.name, Point::new(x, y), bright).draw(display);
+    }
+
     // ── Dirty region helpers ─────────────────────────────────────────
 
     /// Clear a screen region by direct framebuffer fill. Much faster than draw_iter.
