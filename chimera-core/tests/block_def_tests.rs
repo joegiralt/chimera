@@ -59,3 +59,29 @@ fn mix_chain_has_5_blocks() {
     assert_eq!(chain.blocks[0].def.name, "Mixer");
     assert_eq!(chain.blocks[4].def.name, "Master");
 }
+
+#[test]
+fn mixer_channel_strip_chain() {
+    let chain = &block_registry::MIXER_CHANNEL_CHAIN;
+    assert_eq!(chain.blocks[0].def.name, "Channel");
+    assert_eq!(chain.blocks[1].def.name, "MIDI");
+    assert_eq!(chain.blocks[2].def.name, "EQ");
+    assert_eq!(chain.blocks[3].def.name, "Sends");
+    assert_eq!(chain.len(), 4);
+}
+
+#[test]
+fn system_chain_has_5_blocks() {
+    let chain = &block_registry::SYSTEM_CHAIN;
+    assert_eq!(chain.blocks[0].def.name, "MIDI Setup");
+    assert_eq!(chain.blocks[4].def.name, "About");
+    assert_eq!(chain.len(), 5);
+}
+
+#[test]
+fn demo_chain_has_3_blocks() {
+    let chain = &block_registry::DEMO_CHAIN;
+    assert_eq!(chain.blocks[0].def.name, "Waves");
+    assert_eq!(chain.blocks[2].def.name, "Motion");
+    assert_eq!(chain.len(), 3);
+}
