@@ -77,9 +77,12 @@ fn main() -> ! {
     controls::start_systick(200_000_000);
     controls::enable();
 
-    // Audio init
+    // Audio init — DMA-driven, main loop has no audio responsibilities
     audio::init_pll3();
-    audio::init_sai1a();
+    audio::init_sai1a();      // Configures SAI but does NOT enable it
+    audio::prefill_buffer();   // Fill entire buffer before DMA starts
+    audio::init_dma();         // Configure + enable DMA1_Stream0
+    audio::enable_sai();       // Now enable SAI — DMA begins transferring
 
     // Initial render
     ui.update();
@@ -88,50 +91,7 @@ fn main() -> ! {
     ui.prime_regions(&perf.stats);
     led.set_low();
 
-    // 256-entry sine lookup table (i32, 50% amplitude)
-    static SINE_TABLE: [i32; 256] = {
-        // Generated: (sin(i/256 * 2*PI) * 0.5 * i32::MAX) for i in 0..256
-        // Using const evaluation trick with precomputed values
-        let mut table = [0i32; 256];
-        let mut i = 0;
-        while i < 256 {
-            // Approximate: sin(x) via polynomial for const eval
-            // x = i/256 * 2*PI
-            let t = i as f64 / 256.0;
-            let x = t * 2.0 * 3.14159265358979323846;
-            // Taylor series sin(x) = x - x³/6 + x⁵/120 - x⁷/5040 + x⁹/362880
-            // Reduce x to [-PI, PI] range first
-            let x = x - (6.28318530717958647692 * ((x / 6.28318530717958647692 + 0.5) as i64 as f64));
-            let x2 = x * x;
-            let x3 = x2 * x;
-            let x5 = x3 * x2;
-            let x7 = x5 * x2;
-            let x9 = x7 * x2;
-            let x11 = x9 * x2;
-            let s = x - x3 / 6.0 + x5 / 120.0 - x7 / 5040.0 + x9 / 362880.0 - x11 / 39916800.0;
-            table[i] = (s * 0.5 * 2147483647.0) as i32;
-            i += 1;
-        }
-        table
-    };
-
-    let mut phase_acc: u32 = 0;
-    // Phase increment for 440 Hz at 47917 Hz sample rate
-    let phase_inc: u32 = 39_472_883;
-
-    let mut phase_acc: u32 = 0;
-    let phase_inc: u32 = 39_472_883; // 440 Hz at 47917 Hz
-
     loop {
-        // Feed SAI FIFO — runs every loop iteration
-        while audio::sai_fifo_has_room() {
-            let idx = (phase_acc >> 24) as usize;
-            let sample = (SINE_TABLE[idx] >> 16) as i16;
-            audio::write_sai_data(sample);
-            audio::write_sai_data(sample);
-            phase_acc = phase_acc.wrapping_add(phase_inc);
-        }
-
         // Controls + display
         controls.snapshot();
         let has_input = controls.has_activity();
