@@ -15,19 +15,7 @@ use crate::ui::theme;
 /// Fallback source label if none provided
 const NO_SOURCES: &[&str] = &[];
 
-/// Demo destination labels (X-axis columns) — two lines: block short + param
-const DESTS: &[(&str, &str)] = &[
-    ("PIZ", "SHP"),
-    ("PIZ", "CRS"),
-    ("PIZ", "LVL"),
-    ("DRV", "AMT"),
-    ("DRV", "TON"),
-    ("FLT", "CUT"),
-    ("FLT", "RES"),
-    ("FLD", "FLD"),
-    ("FLD", "SYM"),
-    ("VCA", "LVL"),
-];
+// Destination labels are now dynamic — read from chain BlockDefs via MatrixState.dests[]
 
 /// Demo amounts — only Env 1 routes for now.
 const DEMO_AMOUNTS: &[(usize, usize, i8)] = &[
@@ -160,34 +148,47 @@ impl MatrixState {
         self.set_mod_enabled(block_idx, param_idx, !currently);
     }
 
-    /// Rebuild the destination list from mod_enabled bits and the current chain.
-    /// For now uses the hardcoded DESTS labels. Later this reads from the chain's BlockDefs.
-    fn rebuild_dests(&mut self) {
+    /// Rebuild the destination list from mod_enabled bits.
+    /// Call with the chain's blocks so we can read labels from BlockDefs.
+    pub fn rebuild_dests_from_chain(&mut self, blocks: &[crate::ui::block_def::ChainBlock]) {
         self.num_dests = 0;
-        // Map bit positions to DESTS entries
-        // For demo: block 0 = Pizza (params 0-2), block 1 = Drive (0-1),
-        //           block 2 = Filter (0-1), block 3 = Folder (0-1), block 4 = VCA (4=level)
-        let block_map: &[(u8, &[(u8, usize)])] = &[
-            (0, &[(0, 0), (1, 1), (2, 2)]),     // Pizza: shape=0, crush=1, level=2 → DESTS 0,1,2
-            (1, &[(0, 3), (1, 4)]),               // Drive: drive=3, tone=4 → DESTS 3,4
-            (2, &[(0, 5), (1, 6)]),               // Filter: cutoff=5, reso=6 → DESTS 5,6
-            (3, &[(0, 7), (1, 8)]),               // Folder: fold=7, sym=8 → DESTS 7,8
-            (4, &[(4, 9)]),                        // VCA: level=9 → DESTS 9
-        ];
-
-        for &(block_idx, params) in block_map {
-            for &(param_idx, dest_idx) in params {
-                if self.is_mod_enabled(block_idx, param_idx) && dest_idx < DESTS.len() {
+        for (bi, block) in blocks.iter().enumerate() {
+            for (pi, slot) in block.def.params.iter().enumerate() {
+                if slot.label == "--" { continue; }
+                if self.is_mod_enabled(bi as u8, pi as u8) {
                     if self.num_dests < MAX_DESTS {
-                        let (blk, prm) = DESTS[dest_idx];
                         self.dests[self.num_dests] = Some(ModDest {
-                            block_idx,
-                            param_idx,
-                            block_short: blk,
-                            param_label: prm,
+                            block_idx: bi as u8,
+                            param_idx: pi as u8,
+                            block_short: block.def.short,
+                            param_label: slot.label,
                         });
                         self.num_dests += 1;
                     }
+                }
+            }
+        }
+    }
+
+    /// Backward compat — rebuild without chain access (clears dests).
+    fn rebuild_dests(&mut self) {
+        // Without chain data, we can't build labels. Clear the list.
+        // This gets called from set_mod_enabled — the caller should
+        // follow up with rebuild_dests_from_chain.
+        self.num_dests = 0;
+        // Scan enabled bits and create entries with placeholder labels
+        for bit in 0..48u64 {
+            if (self.mod_enabled >> bit) & 1 != 0 {
+                let bi = (bit / 6) as u8;
+                let pi = (bit % 6) as u8;
+                if (self.num_dests) < MAX_DESTS {
+                    self.dests[self.num_dests] = Some(ModDest {
+                        block_idx: bi,
+                        param_idx: pi,
+                        block_short: "?",
+                        param_label: "?",
+                    });
+                    self.num_dests += 1;
                 }
             }
         }
