@@ -67,36 +67,105 @@ const CELL_W: i32 = 28;          // width per cell
 const CELL_H: i32 = 14;          // height per cell
 const GRID_BOTTOM: i32 = 265;    // above dungeon map
 
+/// Calculated visible dimensions
+const VISIBLE_COLS: usize = ((240 - ROW_LABEL_W) / CELL_W) as usize;
+const VISIBLE_ROWS: usize = ((GRID_BOTTOM - GRID_TOP - COL_HEADER_H) / CELL_H) as usize;
+
+/// State for the mod matrix grid cursor and scroll.
+#[derive(Clone, Debug)]
+pub struct MatrixState {
+    pub sel_row: usize,
+    pub sel_col: usize,
+    pub scroll_x: usize,
+    pub scroll_y: usize,
+    pub num_rows: usize,
+    pub num_cols: usize,
+}
+
+impl MatrixState {
+    pub fn new() -> Self {
+        Self {
+            sel_row: 0,
+            sel_col: 0,
+            scroll_x: 0,
+            scroll_y: 0,
+            num_rows: SOURCES.len(),
+            num_cols: DESTS.len(),
+        }
+    }
+
+    pub fn move_row(&mut self, delta: i8) {
+        let new = self.sel_row as i32 + delta as i32;
+        self.sel_row = new.clamp(0, self.num_rows as i32 - 1) as usize;
+        // Auto-scroll to keep cursor visible
+        let vis = self.visible_rows();
+        if self.sel_row < self.scroll_y {
+            self.scroll_y = self.sel_row;
+        } else if self.sel_row >= self.scroll_y + vis {
+            self.scroll_y = self.sel_row + 1 - vis;
+        }
+    }
+
+    pub fn move_col(&mut self, delta: i8) {
+        let new = self.sel_col as i32 + delta as i32;
+        self.sel_col = new.clamp(0, self.num_cols as i32 - 1) as usize;
+        // Auto-scroll to keep cursor visible
+        let vis = self.visible_cols();
+        if self.sel_col < self.scroll_x {
+            self.scroll_x = self.sel_col;
+        } else if self.sel_col >= self.scroll_x + vis {
+            self.scroll_x = self.sel_col + 1 - vis;
+        }
+    }
+
+    pub fn scroll_v(&mut self, delta: i8) {
+        let max = if self.num_rows > self.visible_rows() {
+            self.num_rows - self.visible_rows()
+        } else {
+            0
+        };
+        let new = self.scroll_y as i32 + delta as i32;
+        self.scroll_y = new.clamp(0, max as i32) as usize;
+    }
+
+    pub fn scroll_h(&mut self, delta: i8) {
+        let max = if self.num_cols > self.visible_cols() {
+            self.num_cols - self.visible_cols()
+        } else {
+            0
+        };
+        let new = self.scroll_x as i32 + delta as i32;
+        self.scroll_x = new.clamp(0, max as i32) as usize;
+    }
+
+    pub fn visible_rows(&self) -> usize {
+        VISIBLE_ROWS
+    }
+
+    pub fn visible_cols(&self) -> usize {
+        VISIBLE_COLS
+    }
+}
+
 /// Draw the mod matrix grid in the content zone.
-/// `anim` values map to:
-///   [0] = cursor row (A encoder)
-///   [1] = cursor col (B encoder)
-///   [2] = scroll vertical (C encoder)
-///   [3] = scroll horizontal (D encoder)
-///   [4] = amount at cursor (E encoder)
-///   [5] = unused
+/// Reads cursor position and scroll from `MatrixState`.
 pub fn draw_grid<D>(
     display: &mut D,
-    anim: &[f32; 6],
+    state: &MatrixState,
 ) where
     D: DrawTarget<Color = Rgb565>,
 {
-    // Derive grid state from encoder values
-    let sel_row = (anim[0] * (SOURCES.len() - 1) as f32) as usize;
-    let sel_col = (anim[1] * (DESTS.len() - 1) as f32) as usize;
-    let scroll_y = (anim[2] * SOURCES.len() as f32) as usize;
-    let scroll_x = (anim[3] * DESTS.len() as f32) as usize;
+    let sel_row = state.sel_row;
+    let sel_col = state.sel_col;
+    let scroll_y = state.scroll_y;
+    let scroll_x = state.scroll_x;
     let dim = MonoTextStyle::new(&FONT_6X10, theme::TEXT_DIM);
     let mid = MonoTextStyle::new(&FONT_6X10, theme::TEXT_MID);
     let bright = MonoTextStyle::new(&FONT_6X10, theme::PARAM_VALUE);
     let accent = MonoTextStyle::new(&FONT_6X10, theme::ACCENT);
 
-    // How many columns fit?
-    let visible_cols = ((240 - ROW_LABEL_W) / CELL_W) as usize; // ~7
-    let visible_rows = ((GRID_BOTTOM - GRID_TOP - COL_HEADER_H) / CELL_H) as usize; // ~11
-
-    let max_col_scroll = if DESTS.len() > visible_cols { DESTS.len() - visible_cols } else { 0 };
-    let scroll_x = scroll_x.min(max_col_scroll);
+    let visible_cols = state.visible_cols();
+    let visible_rows = state.visible_rows();
 
     // ── Column headers (2-line: block short + param) ──
     for ci in 0..visible_cols {
@@ -112,8 +181,6 @@ pub fn draw_grid<D>(
     }
 
     // ── Row labels + cells ──
-    let max_row_scroll = if SOURCES.len() > visible_rows { SOURCES.len() - visible_rows } else { 0 };
-    let scroll_y = scroll_y.min(max_row_scroll);
 
     for vi in 0..visible_rows {
         let ri = vi + scroll_y;
@@ -184,6 +251,7 @@ pub fn draw_grid<D>(
     .draw_styled(&grid_style, display);
 
     // ── Scroll indicator ──
+    let max_col_scroll = if DESTS.len() > visible_cols { DESTS.len() - visible_cols } else { 0 };
     if max_col_scroll > 0 {
         let indicator_style = MonoTextStyle::new(&FONT_6X10, theme::TEXT_DIM);
         if scroll_x > 0 {
