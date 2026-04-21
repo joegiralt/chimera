@@ -1,3 +1,4 @@
+use chimera_core::modulation::ModState;
 use chimera_core::dsp::drive::Drive;
 use chimera_core::dsp::filter::SvfFilter;
 use chimera_core::dsp::voice::Voice;
@@ -392,6 +393,7 @@ fn test_folder_more_fold_more_harmonics() {
 
 #[test]
 fn test_voice_filter_sweep_audible() {
+    let empty_mod = ModState::new();
     let freq = 261.6; // middle C
     let f0 = freq;
 
@@ -407,7 +409,7 @@ fn test_voice_filter_sweep_audible() {
         let mut all = Vec::new();
         let mut block = [0.0f32; 64];
         for _ in 0..32 {
-            voice.render(&mut block, &params, SR);
+            voice.render(&mut block, &params, &empty_mod, SR);
             all.extend_from_slice(&block);
         }
         harmonic_energy(&all, f0)
@@ -426,6 +428,7 @@ fn test_voice_filter_sweep_audible() {
 
 #[test]
 fn test_voice_drive_adds_grit() {
+    let empty_mod = ModState::new();
     let freq = 261.6;
 
     let measure = |drive_amount: f32| -> f32 {
@@ -439,7 +442,7 @@ fn test_voice_drive_adds_grit() {
         let mut all = Vec::new();
         let mut block = [0.0f32; 64];
         for _ in 0..32 {
-            voice.render(&mut block, &params, SR);
+            voice.render(&mut block, &params, &empty_mod, SR);
             all.extend_from_slice(&block);
         }
         harmonic_energy(&all, freq)

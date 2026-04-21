@@ -6,6 +6,7 @@
 //! without threads). It verifies that UiState.params flows
 //! correctly through Voice.render().
 
+use chimera_core::modulation::ModState;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::ui::UiState;
@@ -14,6 +15,7 @@ const SR: u32 = 48000;
 
 /// Simulate: create UiState, set engine, modify params, render through Voice.
 fn sim_render(setup_ui: impl FnOnce(&mut UiState), note: u8, blocks: usize) -> Vec<f32> {
+    let empty_mod = ModState::new();
     let mut ui = UiState::new();
     setup_ui(&mut ui);
 
@@ -24,7 +26,7 @@ fn sim_render(setup_ui: impl FnOnce(&mut UiState), note: u8, blocks: usize) -> V
     let mut all = Vec::new();
     let mut block = [0.0f32; 64];
     for _ in 0..blocks {
-        voice.render(&mut block, &ui.params, SR);
+        voice.render(&mut block, &ui.params, &empty_mod, SR);
         all.extend_from_slice(&block);
     }
     all
@@ -359,6 +361,7 @@ fn test_desktop_engine_switch() {
 
 #[test]
 fn test_desktop_mid_note_filter_sweep() {
+    let empty_mod = ModState::new();
     let mut ui = UiState::new();
     ui.params.engine = EngineType::Pizza;
     
@@ -372,7 +375,7 @@ fn test_desktop_mid_note_filter_sweep() {
     let mut block = [0.0f32; 64];
     let mut before_energy = 0.0f32;
     for _ in 0..16 {
-        voice.render(&mut block, &ui.params, SR);
+        voice.render(&mut block, &ui.params, &empty_mod, SR);
         before_energy += block.iter().map(|s| s * s).sum::<f32>();
     }
 
@@ -381,7 +384,7 @@ fn test_desktop_mid_note_filter_sweep() {
 
     let mut after_energy = 0.0f32;
     for _ in 0..16 {
-        voice.render(&mut block, &ui.params, SR);
+        voice.render(&mut block, &ui.params, &empty_mod, SR);
         after_energy += block.iter().map(|s| s * s).sum::<f32>();
     }
 

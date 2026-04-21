@@ -1,3 +1,4 @@
+use chimera_core::modulation::ModState;
 use chimera_core::dsp::reverb::{Reverb, ReverbParams, ReverbType};
 
 fn impulse_block() -> [f32; 64] {
@@ -412,6 +413,7 @@ fn test_reverb_through_voice_produces_tail() {
     use chimera_core::dsp::voice::Voice;
     use chimera_core::params::{EngineType, ParamSnapshot};
 
+    let empty_mod = ModState::new();
     let mut voice = Voice::new();
     let mut reverb = Reverb::new();
     let mut params = ParamSnapshot::default();
@@ -424,7 +426,7 @@ fn test_reverb_through_voice_produces_tail() {
     // Render a few blocks with note
     let mut block = [0.0f32; 64];
     for _ in 0..8 {
-        voice.render(&mut block, &params, 48000);
+        voice.render(&mut block, &params, &empty_mod, 48000);
         reverb.process(&mut block, &params.reverb);
     }
 
@@ -434,7 +436,7 @@ fn test_reverb_through_voice_produces_tail() {
     // Render more — reverb tail should persist after note ends
     let mut tail_energy = 0.0f32;
     for _ in 0..64 {
-        voice.render(&mut block, &params, 48000);
+        voice.render(&mut block, &params, &empty_mod, 48000);
         reverb.process(&mut block, &params.reverb);
         tail_energy += block.iter().map(|s| s * s).sum::<f32>();
     }
@@ -451,6 +453,7 @@ fn test_reverb_type_switch_e2e() {
     use chimera_core::dsp::voice::Voice;
     use chimera_core::params::{EngineType, ParamSnapshot};
 
+    let empty_mod = ModState::new();
     let render_with_reverb = |rt: u8| -> f32 {
         let mut voice = Voice::new();
         let mut reverb = Reverb::new();
@@ -465,7 +468,7 @@ fn test_reverb_type_switch_e2e() {
         let mut block = [0.0f32; 64];
         let mut total = 0.0f32;
         for _ in 0..32 {
-            voice.render(&mut block, &params, 48000);
+            voice.render(&mut block, &params, &empty_mod, 48000);
             reverb.process(&mut block, &params.reverb);
             total += block.iter().map(|s| s * s).sum::<f32>();
         }

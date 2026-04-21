@@ -2,6 +2,7 @@
 //! Simulates the desktop audio callback pattern: rendering blocks
 //! and scattering to variable-size output buffers.
 
+use chimera_core::modulation::ModState;
 use chimera_core::dsp::reverb::Reverb;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::params::{EngineType, ParamSnapshot};
@@ -16,6 +17,7 @@ fn check_no_clicks(
     setup: impl FnOnce(&mut ParamSnapshot),
     callback_sizes: &[usize], // simulate varying cpal buffer sizes
 ) {
+    let empty_mod = ModState::new();
     let mut voice = Voice::new();
     let mut reverb = Reverb::new();
     let mut params = ParamSnapshot::default();
@@ -32,7 +34,7 @@ fn check_no_clicks(
     for &cb_size in callback_sizes {
         for _ in 0..cb_size {
             if block_pos >= BLOCK_SIZE {
-                voice.render(&mut block, &params, SR);
+                voice.render(&mut block, &params, &empty_mod, SR);
                 reverb.process(&mut block, &params.reverb);
                 block_pos = 0;
             }
@@ -149,6 +151,7 @@ fn test_no_clicks_modal() {
     // Modal resonator produces rapid oscillations from 32 SVF filters —
     // these are the character of struck metal, not clicks.
     // Use a higher threshold than other engines.
+    let empty_mod = ModState::new();
     let mut voice = Voice::new();
     let mut reverb = Reverb::new();
     let mut params = ParamSnapshot::default();
@@ -163,7 +166,7 @@ fn test_no_clicks_modal() {
     for &cb_size in &[256, 256, 256, 256, 256, 256, 256, 256] {
         for _ in 0..cb_size {
             if block_pos >= BLOCK_SIZE {
-                voice.render(&mut block, &params, SR);
+                voice.render(&mut block, &params, &empty_mod, SR);
                 reverb.process(&mut block, &params.reverb);
                 block_pos = 0;
             }
