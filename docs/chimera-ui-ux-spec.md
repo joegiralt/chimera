@@ -475,77 +475,20 @@ Parts assigned to DAC2/DAC3 go direct (bypass main bus processing).
 └────────────────────────────────┘
 ```
 
-Sub-pages (Seq/Edit):
+Sub-pages (Seq/Edit): One sub-page per channel. Each channel sub-page shows everything for that Part's mix in one place.
 
-**Sub-page 0: Channel Levels**
+**Sub-page 0: CH 1 (Part 1)**
 
-| Encoder | Label | Parameter |
-|---------|-------|-----------|
-| A | P1 VOL | Part 1 volume |
-| B | P2 VOL | Part 2 volume |
-| C | P3 VOL | Part 3 volume |
-| D | P4 VOL | Part 4 volume |
-| E | P5 VOL | Part 5 volume |
-| F | P6 VOL | Part 6 volume |
+| Encoder | Label | Format | Parameter |
+|---------|-------|--------|-----------|
+| A | VOL | Uni | Part 1 volume |
+| B | PAN | Bi | Part 1 pan |
+| C | OUT | Int(2) | Output assignment (DAC1 / DAC2 / DAC3) |
+| D | S1 | Uni | Send 1 level (reverb) |
+| E | S2 | Uni | Send 2 level (delay) |
+| F | S3 | Uni | Send 3 level (chorus) |
 
-**Sub-page 1: Pan + Output**
-
-| Encoder | Label | Parameter |
-|---------|-------|-----------|
-| A | P1 PAN | Part 1 pan |
-| B | P2 PAN | Part 2 pan |
-| C | P3 PAN | Part 3 pan |
-| D | P4 PAN | Part 4 pan |
-| E | P5 PAN | Part 5 pan |
-| F | P6 PAN | Part 6 pan |
-
-MIX + encoder = change output assignment (DAC1/2/3) instead of pan.
-
-**Sub-page 2: Send 1 + Send 2 Levels**
-
-| Encoder | Label | Parameter |
-|---------|-------|-----------|
-| A | P1 S1 | Part 1 → Send 1 (reverb) |
-| B | P2 S1 | Part 2 → Send 1 |
-| C | P3 S1 | Part 3 → Send 1 |
-| D | P1 S2 | Part 1 → Send 2 (delay) |
-| E | P2 S2 | Part 2 → Send 2 |
-| F | P3 S2 | Part 3 → Send 2 |
-
-**Sub-page 3: Send 3 + Send 4 Levels**
-
-| Encoder | Label | Parameter |
-|---------|-------|-----------|
-| A | P1 S3 | Part 1 → Send 3 (chorus) |
-| B | P2 S3 | Part 2 → Send 3 |
-| C | P3 S3 | Part 3 → Send 3 |
-| D | P1 S4 | Part 1 → Send 4 (spare) |
-| E | P2 S4 | Part 2 → Send 4 |
-| F | P3 S4 | Part 3 → Send 4 |
-
-Note: Send pages show Parts 1-3. For Parts 4-6 sends, Minus/Plus scrolls to additional sub-pages (same layout, different Parts).
-
-**Sub-page 4: Send Effect Parameters**
-
-| Encoder | Label | Parameter |
-|---------|-------|-----------|
-| A | R.TYPE | Reverb algorithm (Plate/FDN/MidiVerb) |
-| B | R.TIME | Reverb decay time |
-| C | R.DAMP | Reverb damping |
-| D | D.TIME | Delay time |
-| E | D.FDBK | Delay feedback |
-| F | D.MIX | Delay wet/dry |
-
-**Sub-page 5: More Send Effects + Master**
-
-| Encoder | Label | Parameter |
-|---------|-------|-----------|
-| A | C.MODE | Chorus mode (I/II/I+II) |
-| B | C.RATE | Chorus rate |
-| C | C.MIX | Chorus mix |
-| D | M.VOL | Master volume |
-| E | M.COMP | Master compressor threshold |
-| F | M.LIMIT | Master limiter ceiling |
+**Sub-pages 1-5: CH 2 through CH 6** — identical layout, different Part.
 
 Layout: **CellGrid**
 
