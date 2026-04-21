@@ -151,6 +151,22 @@ pub static ENVELOPE: BlockDef = BlockDef {
     ],
 };
 
+/// LFO modulator — cyclical modulation source.
+pub static LFO: BlockDef = BlockDef {
+    name: "LFO",
+    short: "LFO",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot { label: "RATE",  format: ValFmt::Uni,    icon: CellIcon::Orbit },
+        ParamSlot { label: "SHAPE", format: ValFmt::Int(4), icon: CellIcon::WaveShape },
+        ParamSlot { label: "SYNC",  format: ValFmt::Int(1), icon: CellIcon::Arc },
+        ParamSlot { label: "PHASE", format: ValFmt::Uni,    icon: CellIcon::Arc },
+        ParamSlot { label: "DEPTH", format: ValFmt::Uni,    icon: CellIcon::Breathe },
+        ParamSlot { label: "OFST",  format: ValFmt::Bi,     icon: CellIcon::Arc },
+    ],
+};
+
 pub static ENV_AMP: BlockDef = BlockDef {
     name: "Env Amp",
     short: "ENV",
@@ -312,7 +328,7 @@ pub static MOD_MATRIX: BlockDef = BlockDef {
 
 static PIZZA_BLOCK: ChainBlock = ChainBlock { def: &PIZZA, sub_pages: &[] };
 
-static MOD_MATRIX_SUB_PAGES: [&BlockDef; 1] = [&ENVELOPE];
+static MOD_MATRIX_SUB_PAGES: [&BlockDef; 2] = [&ENVELOPE, &LFO];
 
 static PIZZA_POLY_BLOCKS: [ChainBlock; 5] = [
     PIZZA_BLOCK,

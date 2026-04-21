@@ -177,6 +177,7 @@ pub struct ParamSnapshot {
     pub reverb: crate::dsp::reverb::ReverbParams,
     pub delay: crate::dsp::delay::DelayParams,
     pub chorus: crate::dsp::chorus::ChorusParams,
+    pub lfo: crate::dsp::lfo::LfoParams,
     pub volume: Param,
     pub pan: Param,
 }
@@ -202,8 +203,9 @@ impl Default for ParamSnapshot {
                 time: 0.5,
                 damping: 0.3,
                 size: 0.5,
-                mix: 0.0, // effects off by default
+                mix: 0.0,
             },
+            lfo: crate::dsp::lfo::LfoParams::default(),
             volume: Param::new(0.0, 1.0, 0.8),
             pan: Param::new(-1.0, 1.0, 0.0),
         }

@@ -3,12 +3,16 @@ use chimera_core::ui::block_registry;
 use chimera_core::ui::page::PageLayout;
 
 #[test]
-fn pizza_poly_chain_has_6_blocks() {
+fn pizza_poly_chain_has_5_blocks() {
     let chain = &block_registry::PIZZA_POLY_CHAIN;
-    assert_eq!(chain.len(), 6);
+    assert_eq!(chain.len(), 5);
     assert_eq!(chain.blocks[0].def.name, "Pizza");
     assert_eq!(chain.blocks[2].def.name, "Filter");
-    assert_eq!(chain.blocks[5].def.name, "Mod Matrix");
+    assert_eq!(chain.blocks[4].def.name, "Mod Matrix");
+    // Mod matrix has 2 sub-pages: Envelope + LFO
+    assert_eq!(chain.blocks[4].sub_pages.len(), 2);
+    assert_eq!(chain.blocks[4].sub_pages[0].name, "Envelope");
+    assert_eq!(chain.blocks[4].sub_pages[1].name, "LFO");
 }
 
 #[test]
@@ -20,9 +24,9 @@ fn filter_block_params() {
 }
 
 #[test]
-fn kick_chain_has_4_blocks() {
+fn kick_chain_has_3_blocks() {
     let chain = &block_registry::KICK_CHAIN;
-    assert_eq!(chain.len(), 4);
+    assert_eq!(chain.len(), 3);
     assert_eq!(chain.blocks[0].def.name, "Noise");
 }
 

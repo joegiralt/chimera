@@ -84,6 +84,7 @@ pub mod drive;
 pub mod midiverb;
 pub mod envelope;
 pub mod filter;
+pub mod lfo;
 pub mod modal;
 pub mod oscillator;
 pub mod pizza;
