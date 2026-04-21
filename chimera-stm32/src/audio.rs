@@ -1,7 +1,7 @@
-//! SAI1 Block A audio output — test tone bringup.
+//! SAI1 Block A audio output — DMA-driven double-buffer.
 //!
 //! Configures PLL3 for ~48kHz audio clock, sets up SAI1_A as I2S master TX,
-//! and provides FIFO polling + data write helpers.
+//! and drives output via DMA1_Stream0 circular buffer with half/full ISR refill.
 //!
 //! PLL3: HSE 8MHz / M=1 * N=46 / P=3 = 122.67 MHz SAI kernel clock
 //! SAI1_A: MCKDIV=5 → MCLK=12.27MHz → FS=47917Hz
@@ -154,20 +154,6 @@ pub fn init_sai1a() {
     // Enable DMA request (DMAEN in CR1) — but do NOT enable SAI yet.
     // SAI will be enabled after DMA is configured and buffer is pre-filled.
     cha.cr1.modify(|_, w| w.dmaen().set_bit());
-}
-
-/// Check if the SAI1_A FIFO has room for more data.
-#[inline]
-pub fn sai_fifo_has_room() -> bool {
-    let sai1 = unsafe { &*pac::SAI1::ptr() };
-    sai1.cha().sr.read().flvl().bits() < 4
-}
-
-/// Write a 16-bit sample to the SAI1_A FIFO (packed in lower 16 bits of u32).
-#[inline]
-pub fn write_sai_data(sample: i16) {
-    let sai1 = unsafe { &*pac::SAI1::ptr() };
-    sai1.cha().dr.write(|w| unsafe { w.data().bits(sample as u16 as u32) });
 }
 
 /// Enable SAI1_A — call after DMA is configured and buffer is pre-filled.
