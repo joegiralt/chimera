@@ -237,3 +237,20 @@ pub fn init_dma() {
     // Enable DMA stream
     dma1.st[0].cr.modify(|_, w| w.en().enabled());
 }
+
+#[interrupt]
+fn DMA1_STR0() {
+    // SAFETY: ISR has exclusive access to DMA1 status/clear registers;
+    // fill_sine_buffer only touches AUDIO_BUF and SINE_PHASE from this single ISR
+    let dma1 = unsafe { &*pac::DMA1::ptr() };
+
+    if dma1.lisr.read().htif0().is_half() {
+        dma1.lifcr.write(|w| w.chtif0().clear());
+        fill_sine_buffer(0);
+    }
+
+    if dma1.lisr.read().tcif0().is_complete() {
+        dma1.lifcr.write(|w| w.ctcif0().clear());
+        fill_sine_buffer(128);
+    }
+}
