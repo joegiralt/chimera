@@ -151,8 +151,9 @@ pub fn init_sai1a() {
          .slotsz().bits(0b01)    // 16-bit slot size
     });
 
-    // Enable SAI
-    cha.cr1.modify(|_, w| w.saien().set_bit());
+    // Enable DMA request (DMAEN in CR1) — but do NOT enable SAI yet.
+    // SAI will be enabled after DMA is configured and buffer is pre-filled.
+    cha.cr1.modify(|_, w| w.dmaen().set_bit());
 }
 
 /// Check if the SAI1_A FIFO has room for more data.
@@ -167,4 +168,72 @@ pub fn sai_fifo_has_room() -> bool {
 pub fn write_sai_data(sample: i16) {
     let sai1 = unsafe { &*pac::SAI1::ptr() };
     sai1.cha().dr.write(|w| unsafe { w.data().bits(sample as u16 as u32) });
+}
+
+/// Enable SAI1_A — call after DMA is configured and buffer is pre-filled.
+pub fn enable_sai() {
+    // SAFETY: single-threaded init, SAI1 peripheral access
+    let sai1 = unsafe { &*pac::SAI1::ptr() };
+    sai1.cha().cr1.modify(|_, w| w.saien().set_bit());
+}
+
+/// Configure DMA1_Stream0 for circular transfer from AUDIO_BUF to SAI1_A.
+///
+/// Must be called after `init_sai1a()` and `prefill_buffer()`, before `enable_sai()`.
+pub fn init_dma() {
+    // SAFETY: single-threaded init, peripheral register access before interrupts are unmasked
+    let rcc = unsafe { &*pac::RCC::ptr() };
+    let dma1 = unsafe { &*pac::DMA1::ptr() };
+    let dmamux = unsafe { &*pac::DMAMUX1::ptr() };
+
+    // Enable DMA1 clock
+    rcc.ahb1enr.modify(|_, w| w.dma1en().set_bit());
+    cortex_m::asm::delay(100);
+
+    // Disable stream before configuration
+    dma1.st[0].cr.modify(|_, w| w.en().disabled());
+    while dma1.st[0].cr.read().en().is_enabled() {}
+
+    // Clear all interrupt flags for stream 0
+    dma1.lifcr.write(|w| {
+        w.ctcif0().clear()
+         .chtif0().clear()
+         .cteif0().clear()
+         .cdmeif0().clear()
+         .cfeif0().clear()
+    });
+
+    // SAFETY: 87 is the valid DMAMUX request ID for SAI1_A (RM0433 Table 121)
+    dmamux.ccr[0].modify(|_, w| unsafe { w.dmareq_id().bits(87) });
+
+    // SAFETY: writing valid peripheral/memory addresses and transfer count
+    dma1.st[0].par.write(|w| unsafe { w.pa().bits(SAI1_CHA_DR) });
+    dma1.st[0].m0ar.write(|w| unsafe {
+        // SAFETY: AUDIO_BUF is static, address stable for lifetime of program
+        w.m0a().bits(core::ptr::addr_of!(AUDIO_BUF) as u32)
+    });
+    dma1.st[0].ndtr.write(|w| w.ndt().bits(256));
+
+    dma1.st[0].cr.write(|w| {
+        w.dir().memory_to_peripheral()
+         .circ().enabled()
+         .minc().incremented()
+         .pinc().fixed()
+         .msize().bits16()
+         .psize().bits16()
+         .pl().very_high()
+         .htie().enabled()
+         .tcie().enabled()
+    });
+
+    // SAFETY: DMA1_STR0 ISR is defined in this module; buffer is pre-filled;
+    // unmasking is safe because the ISR only touches AUDIO_BUF and SINE_PHASE.
+    unsafe {
+        let mut core = cortex_m::Peripherals::steal();
+        core.NVIC.set_priority(pac::Interrupt::DMA1_STR0, 3);
+        NVIC::unmask(pac::Interrupt::DMA1_STR0);
+    }
+
+    // Enable DMA stream
+    dma1.st[0].cr.modify(|_, w| w.en().enabled());
 }
