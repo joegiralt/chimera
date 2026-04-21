@@ -26,6 +26,8 @@ use core::fmt::Write;
 pub struct Renderer {
     /// Animated display values for the 6 encoders (normalized 0..1).
     pub anim: [AnimatedValue; 6],
+    /// Last-touched encoder index (0-5) — shown with focus indicator.
+    pub focused: usize,
 }
 
 impl Default for Renderer {
@@ -38,6 +40,7 @@ impl Renderer {
     pub fn new() -> Self {
         Self {
             anim: [AnimatedValue::new(0.5); 6],
+            focused: 0,
         }
     }
 
@@ -665,14 +668,21 @@ impl Renderer {
     }
 
     /// Render the cell grid from a `BlockDef` instead of a `PageId`.
-    pub fn draw_cell_grid_from_def<D>(&self, display: &mut D, def: &BlockDef)
+    pub fn draw_cell_grid_from_def<D>(
+        &self,
+        display: &mut D,
+        def: &BlockDef,
+        block_idx: usize,
+        matrix_state: &crate::ui::mod_grid::MatrixState,
+    )
     where
         D: DrawTarget<Color = Rgb565>,
     {
         for (i, slot) in def.params.iter().enumerate() {
             let col = (i % 3) as i32;
             let row = (i / 3) as i32;
-            cell::draw_cell(
+            let mod_amount = matrix_state.total_mod_for_param(block_idx as u8, i as u8);
+            cell::draw_cell_with_mod(
                 display,
                 col,
                 row,
@@ -680,6 +690,8 @@ impl Renderer {
                 self.anim[i].current(),
                 slot.icon,
                 slot.format,
+                i == self.focused,
+                mod_amount,
             );
         }
     }
@@ -728,7 +740,7 @@ impl Renderer {
                 self.draw_params_from_def(display, def);
             }
             PageLayout::CellGrid => {
-                self.draw_cell_grid_from_def(display, def);
+                self.draw_cell_grid_from_def(display, def, nav.node, matrix_state);
             }
             PageLayout::Matrix => {
                 crate::ui::mod_grid::draw_grid(display, matrix_state);
@@ -776,7 +788,7 @@ impl Renderer {
                 .draw_styled(&PrimitiveStyle::with_stroke(theme::SEPARATOR, 1), display);
             }
             RegionKind::Cells => {
-                self.draw_cell_grid_from_def(display, def);
+                self.draw_cell_grid_from_def(display, def, nav.node, matrix_state);
                 let _ = Line::new(
                     Point::new(0, theme::ENCODER_ZONE_BOTTOM),
                     Point::new(theme::SCREEN_W - 1, theme::ENCODER_ZONE_BOTTOM),

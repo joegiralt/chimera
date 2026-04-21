@@ -16,7 +16,7 @@ use crate::ui::theme;
 const CELL_W: i32 = 76;
 const CELL_H: i32 = 92;
 const CELL_LEFT: i32 = 6;
-const CELL_TOP: i32 = 22;
+const CELL_TOP: i32 = 29;
 const CELL_PAD: i32 = 4;
 
 /// Icon area within a cell.
@@ -35,6 +35,55 @@ pub fn draw_cell<D>(
 ) where
     D: DrawTarget<Color = Rgb565>,
 {
+    draw_cell_focused(display, col, row, label, value, icon, val_fmt, false);
+}
+
+/// Draw a single encoder cell with modulation bar.
+pub fn draw_cell_with_mod<D>(
+    display: &mut D,
+    col: i32,
+    row: i32,
+    label: &str,
+    value: f32,
+    icon: CellIcon,
+    val_fmt: ValFmt,
+    focused: bool,
+    mod_amount: f32,  // -1.0 to +1.0, 0.0 = no modulation or not a mod dest
+) where
+    D: DrawTarget<Color = Rgb565>,
+{
+    draw_cell_inner(display, col, row, label, value, icon, val_fmt, focused, mod_amount);
+}
+
+/// Draw a single encoder cell, optionally with focus highlight.
+pub fn draw_cell_focused<D>(
+    display: &mut D,
+    col: i32,
+    row: i32,
+    label: &str,
+    value: f32,
+    icon: CellIcon,
+    val_fmt: ValFmt,
+    focused: bool,
+) where
+    D: DrawTarget<Color = Rgb565>,
+{
+    draw_cell_inner(display, col, row, label, value, icon, val_fmt, focused, 0.0);
+}
+
+fn draw_cell_inner<D>(
+    display: &mut D,
+    col: i32,
+    row: i32,
+    label: &str,
+    value: f32,
+    icon: CellIcon,
+    val_fmt: ValFmt,
+    focused: bool,
+    mod_amount: f32,
+) where
+    D: DrawTarget<Color = Rgb565>,
+{
     if label == "--" {
         return;
     }
@@ -42,12 +91,13 @@ pub fn draw_cell<D>(
     let cx = CELL_LEFT + col * CELL_W;
     let cy = CELL_TOP + row * CELL_H;
 
-    // Cell border (subtle)
+    // Cell border — brighter when focused
+    let border_color = if focused { theme::ACCENT } else { theme::SEPARATOR };
     let _ = Rectangle::new(
         Point::new(cx, cy),
         Size::new((CELL_W - CELL_PAD) as u32, (CELL_H - CELL_PAD) as u32),
     )
-    .draw_styled(&PrimitiveStyle::with_stroke(theme::SEPARATOR, 1), display);
+    .draw_styled(&PrimitiveStyle::with_stroke(border_color, 1), display);
 
     // Icon area — quantize to 16 discrete frames (128 MIDI steps / 8)
     let ix = cx + 4;
@@ -86,6 +136,47 @@ pub fn draw_cell<D>(
             Size::new(fill_w as u32, theme::BAR_HEIGHT as u32),
         )
         .draw_styled(&PrimitiveStyle::with_fill(theme::PARAM_BAR_FG), display);
+    }
+
+    // Modulation bar — shown below value bar when param is a mod destination
+    if mod_amount != 0.0 {
+        let mod_bar_y = bar_y + theme::BAR_HEIGHT + 2;
+        let mid_x = cx + 4 + bar_w / 2;
+
+        // Background
+        let _ = Rectangle::new(
+            Point::new(cx + 4, mod_bar_y),
+            Size::new(bar_w as u32, theme::BAR_HEIGHT as u32),
+        )
+        .draw_styled(&PrimitiveStyle::with_fill(theme::PARAM_BAR_BG), display);
+
+        // Center mark
+        let _ = embedded_graphics::primitives::Line::new(
+            Point::new(mid_x, mod_bar_y),
+            Point::new(mid_x, mod_bar_y + theme::BAR_HEIGHT - 1),
+        )
+        .draw_styled(
+            &PrimitiveStyle::with_stroke(theme::TEXT_DIM, 1),
+            display,
+        );
+
+        // Bipolar fill from center
+        let mod_color = Rgb565::new(20, 40, 20); // muted green for mod
+        let fill = (mod_amount.clamp(-1.0, 1.0) * (bar_w / 2) as f32) as i32;
+        if fill > 0 {
+            let _ = Rectangle::new(
+                Point::new(mid_x, mod_bar_y),
+                Size::new(fill as u32, theme::BAR_HEIGHT as u32),
+            )
+            .draw_styled(&PrimitiveStyle::with_fill(mod_color), display);
+        } else if fill < 0 {
+            let abs_fill = (-fill) as u32;
+            let _ = Rectangle::new(
+                Point::new(mid_x - abs_fill as i32, mod_bar_y),
+                Size::new(abs_fill, theme::BAR_HEIGHT as u32),
+            )
+            .draw_styled(&PrimitiveStyle::with_fill(mod_color), display);
+        }
     }
 }
 

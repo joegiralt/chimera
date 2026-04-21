@@ -110,6 +110,7 @@ impl UiState {
                 let delta = controls.encoder_delta(enc);
                 if delta != 0 {
                     self.last_encoder = i;
+                    self.renderer.focused = i;
                     if shift {
                         let fmt = def.params[i].format;
                         self.page.snap_encoder(i, delta, fmt, &mut self.params);
@@ -167,7 +168,7 @@ impl UiState {
                 ),
                 RegionKind::Viz => RegionData::viz(self.page, qvalues),
                 RegionKind::Params => RegionData::params(self.page, qvalues),
-                RegionKind::Cells => RegionData::cells(self.page, qvalues),
+                RegionKind::Cells => RegionData::cells(self.page, qvalues, self.matrix_state.mod_enabled),
                 RegionKind::Nav => RegionData::nav(nav_tag.0, nav_tag.1, nav_tag.2),
                 RegionKind::Grid => RegionData::grid_with_amount(
                     self.matrix_state.sel_row as u8,
@@ -213,7 +214,7 @@ impl UiState {
                 ),
                 RegionKind::Viz => RegionData::viz(self.page, qvalues),
                 RegionKind::Params => RegionData::params(self.page, qvalues),
-                RegionKind::Cells => RegionData::cells(self.page, qvalues),
+                RegionKind::Cells => RegionData::cells(self.page, qvalues, self.matrix_state.mod_enabled),
                 RegionKind::Nav => RegionData::nav(nav_tag.0, nav_tag.1, nav_tag.2),
                 RegionKind::Grid => RegionData::grid_with_amount(
                     self.matrix_state.sel_row as u8,
