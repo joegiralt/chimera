@@ -153,23 +153,174 @@ Voice count adapts to engine: 8 FM, 6 mixed, 4 Modal. Pool resizes when engine c
 
 ---
 
-## 4. Signal Chain Proposal
+## 4. Chain Architecture
 
-### Per-Voice Processing
+### Core Concept: Chains, Not Fixed Signal Paths
+
+A **chain** is an ordered sequence of DSP blocks. Audio flows in one direction — a pipe, not a graph. No splits, no parallel paths, no feedback routing between blocks. Each block processes a buffer in-place and passes it to the next.
+
+A **project** is a collection of chains and how they route to the mixer. That's it.
+
+Different chains can have completely different compositions. An FM pad chain looks nothing like a kick drum chain:
 
 ```
-[Engine: FM / Modal] → [Drive] → [Filter] → [Wavefolder] → [VCA × Amp Envelope]
+FM Poly:    [FM Osc] → [Drive] → [Filter] → [Wavefolder] → [VCA]
+Kick:       [Noise Exciter] → [Tuned Resonator] → [Low Pass Gate]
+Pluck:      [Modal Resonator] → [Filter] → [VCA]
+Pad:        [FM Osc] → [Filter] → [VCA]
+Bass:       [FM Osc] → [Drive] → [Filter] → [VCA]
+Snare:      [Noise] → [Tuned Resonator] → [Filter] → [VCA]
 ```
 
-This chain already exists in `chimera-core`. The ordering is correct:
+This is not a modular system exposed to the user. Factory chains ship as complete instruments with tasteful defaults. Most users never see or modify the chain structure — they just see pages of parameters. Power users can edit chains; everyone else doesn't know chains exist.
 
-- **Engine** produces raw harmonics. FM: 4-op synthesis with 8 algorithms. Modal: physical modeling with multiple resonator types.
-- **Drive** is pre-filter saturation. Pushes harmonics into the filter. tanh soft clip with tone tilt. Correct placement — drive before filter is the analog synth standard.
-- **Filter** is a 2-pole SVF with 8 modes and nonlinear feedback. Self-oscillating at high resonance. This shapes the spectral content after drive adds harmonics.
-- **Wavefolder** is post-filter. This is deliberate: folding after filtering means the folder acts on a shaped signal, producing more musical results than folding raw oscillator output. The folder adds upper harmonics that the filter has already removed — a West Coast / Buchla-adjacent effect.
-- **VCA** applies the amplitude envelope. For FM voices, the envelope shapes the output. For Modal voices, the envelope acts as a gate (the resonator handles natural decay).
+### Blocks
 
-**Should filter come before or after waveshaping?** The current order (filter → wavefolder) is correct for this product. Filter-before-fold gives more controllable results. The alternative (fold → filter) would be appropriate for a dedicated West Coast synth, but Chimera's identity is closer to East Coast with West Coast seasoning. Keep it.
+A block is a self-contained DSP unit with:
+- A `process(buf: &mut [f32; BLOCK_SIZE])` method that modifies audio in-place
+- Its own parameters (visible as a page in the UI)
+- Its own modulation depth controls (env_amount, lfo_amount, velocity_amount, etc.)
+- Its own output attenuation — every block controls its own output level
+
+No separate VCA block is needed between stages unless the chain design explicitly includes one. Each block is responsible for its own output gain.
+
+**Block vocabulary (MVP):**
+
+| Block | Description | CPU (cycles/sample) |
+|---|---|---|
+| FM Osc | 4-operator FM synthesis, 8 algorithms | ~200 |
+| Modal Resonator | Physical modeling (string, modal, bowed, sympathetic) | ~600 |
+| Noise | White/pink/filtered noise source | ~10 |
+| Drive | Pre-filter saturation, tanh soft clip with tone tilt | ~20 |
+| Filter | 2-pole SVF, 8 modes, nonlinear feedback, self-oscillating | ~80 |
+| Wavefolder | Triangle fold with symmetry and bias | ~40 |
+| Low Pass Gate | Combined filter + VCA with vactrol-style response | ~60 |
+| VCA | Amplitude envelope (ADSR) | ~50 |
+
+Future blocks: VA oscillator, ring modulator, comb filter, bitcrusher, tuned resonator bank.
+
+### Implementation
+
+The chain is a fixed-size array of block enums. No heap allocation. No interpreter overhead.
+
+```rust
+enum Block {
+    FmOsc(FmEngine),
+    ModalResonator(ModalEngine),
+    Noise(NoiseGen),
+    Drive(Drive),
+    Filter(SvfFilter),
+    Wavefolder(Wavefolder),
+    LowPassGate(Lpg),
+    Vca(Vca),
+}
+
+struct Chain {
+    blocks: [Option<Block>; MAX_BLOCKS],  // e.g., MAX_BLOCKS = 8
+    count: usize,
+}
+
+fn render(&mut self, buf: &mut [f32; BLOCK_SIZE], params: &ChainParams) {
+    for block in &mut self.blocks[..self.count] {
+        block.process(buf, params);
+    }
+}
+```
+
+The cost of this abstraction over a hardcoded chain is one enum match per block per render call — effectively zero. The DSP math inside each block is identical whether the chain is hardcoded or configurable.
+
+### CPU Budget Reality
+
+At 480 MHz / 48 kHz = ~10,000 cycles per sample:
+
+```
+6-voice FM Poly chain (FM Osc + Drive + Filter + Wavefolder + VCA):
+  Per voice: 200 + 20 + 80 + 40 + 50 = 390 cycles
+  × 6 voices = 2,340 cycles (23%)
+
+6-voice FM Poly + 2 LFOs + 2 envelopes per voice:
+  Modulators: 6 × (5 + 5 + 50 + 50) = 660 cycles (7%)
+
+2 send effects (reverb + delay):
+  300 cycles (3%)
+
+Mixing + output conversion + overhead:
+  ~500 cycles (5%)
+
+Total: ~3,800 cycles (38%)
+Remaining: 62% — comfortable headroom
+```
+
+A simpler chain (kick: 3 blocks, 1 voice) costs ~270 cycles total. A denser chain (6 blocks × 4 Modal voices) costs ~4,800 cycles (48%). The system has real room.
+
+### Modulation in the Chain Architecture
+
+Modulation has three layers, each with a clear job:
+
+**Layer 1: Modulator definitions (what the modulators do)**
+
+Each chain has a pool of modulators — LFOs, envelopes, velocity, aftertouch, mod wheel, note number, random. The number of modulators is determined by the chain template (factory chains have pre-set modulator counts tested within budget; custom chains can add modulators until CPU budget runs out).
+
+Each modulator gets its own page in the UI:
+- LFO page: Rate, Shape, Sync, Free/Triggered
+- Envelope page: Attack, Decay, Sustain, Release, Velocity sensitivity
+
+**Layer 2: Mod matrix grid (what's connected to what)**
+
+The first page of the mod section is a grid showing all legal source → destination connections for this specific chain. If the chain has no wavefolder block, there's no wavefolder column. The grid is auto-generated from the chain's actual blocks.
+
+```
+              Filter  Drive  WaveFold  VCA   FM.Op1  FM.Op2
+             Cutoff   Amt    Amount    Level  Level   Level
+LFO 1       [  X  ] [     ] [      ] [     ] [     ] [     ]
+LFO 2       [     ] [     ] [      ] [     ] [  X  ] [     ]
+Env 1       [  X  ] [     ] [      ] [  X  ] [     ] [     ]
+Env 2       [     ] [     ] [      ] [     ] [     ] [  X  ]
+Velocity    [     ] [  X  ] [      ] [     ] [     ] [     ]
+Mod Wheel   [  X  ] [     ] [      ] [     ] [     ] [     ]
+```
+
+Toggle cells on/off. The grid defines routing — which source connects to which destination.
+
+**Layer 3: Depth controls (how much modulation affects each destination)**
+
+The depth/amount for each modulation connection lives on the destination block's own page. When the user edits the Filter page, they see:
+
+```
+Cutoff    Resonance    Env Amt    LFO Amt    Key Track    Drive
+```
+
+Everything about the filter — including how much modulation affects it — is on one page. The user doesn't need to visit the mod matrix to understand what's modulating the filter. The page is complete.
+
+This three-layer separation means:
+- Block pages are self-contained (all parameters + modulation depths)
+- The mod matrix grid is an overview/routing tool
+- Modulator pages define modulator behavior independent of routing
+
+### Factory Chain Templates
+
+The product ships with 8-10 factory chains. These are pre-configured with tested block sequences, modulator assignments, and mod matrix routings. The user selects a chain template and sees familiar pages — not a block editor.
+
+| Template | Blocks | Modulators | Character |
+|---|---|---|---|
+| **FM Poly** | FM Osc → Drive → Filter → Wavefolder → VCA | 2 LFO, 2 Env | Classic FM with analog-style shaping |
+| **FM Keys** | FM Osc → Filter → VCA | 1 LFO, 2 Env | Clean electric piano / organ |
+| **Modal Pluck** | Modal Resonator → Filter → VCA | 1 LFO, 1 Env | Plucked strings, metallic percussion |
+| **Modal Bow** | Modal Resonator → Drive → VCA | 1 LFO, 1 Env | Bowed strings, drones |
+| **Kick** | Noise Exciter → Tuned Resonator → Low Pass Gate | 1 Env | Analog-style kick drum |
+| **Snare** | Noise → Filter → VCA | 2 Env | Tuned or noise snare |
+| **Hat** | Noise → Filter → VCA | 1 Env | Hi-hats, cymbals |
+| **Bass** | FM Osc → Drive → Filter → VCA | 1 LFO, 2 Env | Aggressive bass |
+| **Pad** | FM Osc → Filter → VCA | 2 LFO, 1 Env | Slow-attack pads |
+| **Lead** | FM Osc → Drive → Filter → Wavefolder → VCA | 2 LFO, 2 Env | Expressive mono lead |
+
+### The UX Boundary
+
+**What most users see:** Pages. A "Kick" preset has a SOUND page (exciter controls), a FILTER page (resonator tuning), an AMP page (decay shape). These feel like pages of a dedicated kick drum synth. The user doesn't know they're editing blocks in a chain.
+
+**What power users can access:** The chain editor. Accessed via a deliberate action (e.g., hold Edit + press a specific button). Shows the block sequence, allows inserting, removing, and reordering blocks. This is the "dungeon map" — a visual representation of the chain that the user can modify.
+
+**The Percussa lesson:** Percussa exposed the modular graph to everyone and it was overwhelming. Chimera hides the graph behind instrument-like pages. The chain editor exists but is never required. A user who never opens it has a fully functional, deep synthesizer.
 
 ### Per-Part Processing
 
@@ -182,8 +333,6 @@ Each Part sums its active voices into a stereo bus. The Part bus applies:
 - **Pan**: Stereo position
 - **Send levels**: How much of this Part goes to each send effect (0-100%)
 - **Output assignment**: Which DAC pair this Part routes to
-
-Per-Part EQ or compression would be nice but is a CPU luxury. Cut for MVP.
 
 ### Send Effects (Global)
 
@@ -208,15 +357,12 @@ Two global send effects, shared across all Parts. Each Part has independent send
 [Part Buses + Effect Returns] → [Master Compressor] → [Limiter] → DAC1 (Main Stereo)
 ```
 
-The master bus sums:
-- All Parts routed to the main output
-- Both send effect returns
+The master bus sums all Parts routed to the main output plus both send effect returns.
 
-Master processing:
-- **Compressor**: Optional, gentle bus compression. Glues the mix.
-- **Limiter**: Always on. Prevents clipping. Simple soft-clip or lookahead limiter.
+- **Compressor**: Optional, gentle bus compression.
+- **Limiter**: Always on. Prevents clipping.
 
-**DAC2 and DAC3** receive their assigned Part buses directly, bypassing master processing. This is intentional — individual outputs should be clean for external mixing.
+**DAC2 and DAC3** receive their assigned Part buses directly, bypassing master processing. Individual outputs should be clean for external mixing.
 
 ### Complete Signal Flow
 
@@ -224,7 +370,8 @@ Master processing:
                     ┌──────────────────────────────────────────┐
                     │  VOICE POOL (6 voices)                   │
                     │  ┌─────────────────────────────────────┐ │
-                    │  │ Engine → Drive → Filter → Fold → VCA│ │
+                    │  │  Chain: [Block] → [Block] → [Block] │ │
+                    │  │  (configurable per Part)             │ │
                     │  └─────────────────────────────────────┘ │
                     └──────────┬───────────────────────────────┘
                                │ (voices assigned to Parts)
@@ -242,7 +389,6 @@ Master processing:
               ▼   ▼   ▼
          ┌──────────────┐
          │ Output Router │
-         │               │
          │ Part→DAC map  │
          └──┬─────┬────┬─┘
             │     │    │         ┌─────────┐
@@ -254,7 +400,7 @@ Master processing:
          │Main ││Aux1││Aux2│││  │ Dly/Chr │  │
          └──┬──┘└────┘└────┘││  └─────────┘  │
             │               ││                │
-            │◄───���──────────┘│                │
+            │◄──────────────┘│                │
             │◄───────────────┘                │
             │◄────────────────────────────────┘
             ▼
@@ -270,38 +416,38 @@ Master processing:
 
 ## 5. Engine Strategy
 
-### Recommendation: Shared Architecture with Swappable Source
+### Engines Are Blocks, Not a Separate Layer
 
-The engine is not a monolithic block. It's a two-layer design:
+In the chain architecture, "engines" are just source blocks — the first block in the chain that generates audio. There is no separate engine layer or engine selection concept. The chain template determines which source block is used.
 
-**Layer 1: Sound Source (per-engine, swappable)**
-- FM: 4-operator with 8 algorithms, TX81Z waveforms, per-operator envelopes
-- Modal: Physical modeling with 4 resonator types (string, modal, bowed, sympathetic)
-- VA: (Future) Virtual analog — saw/pulse/triangle with unison, PWM, sync
+**Source blocks:**
+- **FM Osc**: 4-operator FM synthesis, 8 algorithms, TX81Z waveforms
+- **Modal Resonator**: Physical modeling with 4 resonator types
+- **Noise**: White/pink/filtered noise (excitation source for percussion)
+- **VA Osc** (future): Virtual analog with saw/pulse/triangle, sync, PWM
 
-**Layer 2: Shared Signal Chain (identical across all engines)**
-- Drive → Filter → Wavefolder → VCA/Envelope
-- Modulation routing
-- Part assignment, output routing, send levels
+**Processing blocks:**
+- **Drive**, **Filter**, **Wavefolder**, **Low Pass Gate**, **VCA**
+- These are engine-agnostic. A filter is a filter regardless of what source precedes it.
 
-This is already how `chimera-core` is structured. Each Voice holds both an FmEngine and a ModalEngine, switching at runtime via `active_engine`. The shared chain (Drive, SvfFilter, Wavefolder, Envelope) is engine-agnostic.
+### Why This Is Better Than Swappable Engines
 
-### Why Not One Unified Engine?
+The previous architecture had "engines" as a special first stage with a shared fixed chain after it. The chain architecture eliminates this distinction:
 
-A single engine with "modes" would mean compromising every mode. FM needs operator routing and harmonic ratios. Modal needs delay lines and excitation models. These are fundamentally different DSP architectures. Pretending they're modes of one engine would produce a worse version of each.
+- A kick drum doesn't need a traditional "engine" — its source is a noise exciter, not an oscillator.
+- A Modal pluck doesn't need a wavefolder — removing it saves CPU for more voices.
+- An FM pad might want two filters in series — the chain allows it.
 
-### Why Not Fully Independent Engines?
+The engine concept was a constraint disguised as a feature. Chains are more honest: every sound is a sequence of blocks. Some sequences start with FM. Some start with noise. The architecture doesn't care.
 
-Fully independent engines (each with their own filter, envelope, effects) would waste memory and CPU on duplicated infrastructure. The shared chain means FM and Modal voices sound "related" — they share the same filter character, the same drive, the same spatial behavior. This is what makes the product feel like one instrument instead of two instruments crammed into one box.
+### Chain Selection Is Per Part
 
-### Engine Selection Granularity
-
-Engine is selected **per Part**, not per voice and not globally. All voices in a Part use the same engine. This means:
-- Part 1 can be FM (4 voices, poly)
-- Part 2 can be Modal (2 voices, mono + release tail)
+Each Part has a chain. All voices in a Part use the same chain. This means:
+- Part 1 can use the "FM Poly" chain (5 blocks, 4 voices)
+- Part 2 can use the "Kick" chain (3 blocks, 1 voice, monophonic)
 - Both share the voice pool, output routing, and send effects
 
-This is the right granularity. Per-voice engine selection would be confusing. Global engine selection would waste the multitimbral architecture.
+Changing a Part's chain is equivalent to loading a different instrument. The UI presents it as selecting a sound type, not as "configuring a DSP graph."
 
 ---
 
@@ -333,22 +479,37 @@ This is a screen-driven instrument. The screen does all the heavy lifting. The e
 - **Parameter buttons = page selection.** The 6 parameter buttons (B1-B6) select pages within the current context.
 - **Nav buttons = context switching.** Menu, Mix, Edit navigate between top-level modes.
 
-### Page Structure
+### Page Structure — Chain-Driven
 
+Pages are generated from the chain. Each block in the chain becomes a page. The mod matrix is always the last page. The user sees instrument pages, not DSP blocks.
+
+**Example: "FM Poly" chain (FM Osc → Drive → Filter → Wavefolder → VCA)**
 ```
 [PART SELECT]  ← Main encoder selects active Part (1-4)
      │
-     ├── [PLAY]     (B1) Performance view: voice activity, levels, meters
-     ├── [SOUND]    (B2) Engine parameters: oscillator/operator config
-     ├── [FILTER]   (B3) Drive + Filter + Wavefolder parameters
-     ├── [AMP]      (B4) Envelope + VCA + volume + pan
-     ├── [MOD]      (B5) Modulation matrix: sources → destinations
-     └── [FX]       (B6) Send levels + effect parameters
+     ├── (B1) [FM OSC]      Operator config: algorithm, ratios, levels, waveforms
+     ├── (B2) [DRIVE]       Drive amount, tone, mix, env amt, lfo amt
+     ├── (B3) [FILTER]      Cutoff, resonance, mode, env amt, lfo amt, key track
+     ├── (B4) [WAVEFOLD]    Fold amount, symmetry, mix, env amt, lfo amt
+     ├── (B5) [VCA]         Volume, pan, env ADSR, velocity sensitivity
+     └── (B6) [MOD]         Mod matrix grid (page 1) + modulator settings (pages 2+)
 ```
+
+**Example: "Kick" chain (Noise Exciter → Tuned Resonator → Low Pass Gate)**
+```
+     ├── (B1) [EXCITER]     Noise type, pitch sweep, sweep time
+     ├── (B2) [RESONATOR]   Tuning, decay, tone
+     ├── (B3) [LPG]         Cutoff, response, decay
+     ├── (B4) [MOD]         Mod matrix grid + modulators
+     ├── (B5) —             (unused — fewer blocks = fewer pages)
+     └── (B6) —
+```
+
+The page labels change depending on the chain. A user on the "Kick" preset sees Exciter / Resonator / LPG / Mod. A user on "FM Poly" sees FM Osc / Drive / Filter / Wavefold / VCA / Mod. Each page is complete — all parameters for that block, including modulation depth controls.
 
 **Global pages** (accessed via nav buttons):
 ```
-[MIX]    ← Mixer: Part levels, pans, output assignments
+[MIX]    ← Mixer: Part levels, pans, output assignments, send levels
 [EDIT]   ← Patch management: save, load, copy, init
 [MENU]   ← System: MIDI config, tuning, calibration, about
 ```
@@ -356,40 +517,46 @@ This is a screen-driven instrument. The screen does all the heavy lifting. The e
 ### Navigation Model
 
 1. **Main encoder** always selects the active Part (top-level context).
-2. **B1-B6** select pages within the Part.
+2. **B1-B6** select block pages within the chain (auto-mapped to the chain's blocks + mod matrix).
 3. **Param encoders (A-F)** edit the 6 parameters shown on the current page.
-4. **Minus/Plus** scroll sub-pages when a page has more than 6 parameters (e.g., FM operator editing has 4 operators × multiple params).
-5. **Mix button** jumps to the mixer view (Part levels, output routing).
+4. **Minus/Plus** scroll sub-pages when a block has more than 6 parameters (e.g., FM operator editing has 4 operators).
+5. **Mix button** jumps to the mixer view.
 
 ### Multi-Part Workflow
 
-Switching Parts is one turn of the main encoder. The selected Part is always visible at the top of the screen. All B1-B6 pages are scoped to the selected Part. This means:
-- Turn main encoder to Part 2
-- Press B2 (SOUND) to edit Part 2's engine params
-- Turn main encoder to Part 1
-- You're now on Part 1's SOUND page
+Switching Parts is one turn of the main encoder. The selected Part is always visible at the top of the screen. All B1-B6 pages are scoped to the selected Part — and the page labels update to reflect that Part's chain.
+
+- Turn main encoder to Part 1 (FM Poly) → B1 shows "FM OSC"
+- Turn main encoder to Part 2 (Kick) → B1 shows "EXCITER"
 
 No mode switching. No "enter Part edit mode." Just select and edit.
 
-### Sound Design Workflow (SOUND Page)
+### Block Pages Are Complete
 
-The SOUND page adapts to the active engine:
+Each block page shows everything about that block. For a Filter block:
 
-**FM Engine:**
 ```
-[SOUND] Sub-pages (Minus/Plus to navigate):
-  Page 1: Algorithm, Feedback, Op1 Ratio, Op1 Level, Op1 Detune, Op1 Waveform
-  Page 2: Op2 Ratio, Op2 Level, Op2 Detune, Op2 Waveform, Op2 Env Atk, Op2 Env Dec
-  Page 3: Op3 ...
-  Page 4: Op4 ...
+┌─────────────────────────┐
+│ Part 1 > FILTER         │
+│                         │
+│ A: Cutoff        72     │
+│ B: Resonance     45     │
+│ C: Mode          LP4    │
+│ D: Env Amount   +64     │  ← modulation depth: how much Env 1 affects cutoff
+│ E: LFO Amount   +20     │  ← modulation depth: how much LFO 1 affects cutoff
+│ F: Key Track     50     │
+└─────────────────────────┘
 ```
 
-**Modal Engine:**
-```
-[SOUND] Sub-pages:
-  Page 1: Mode, Excite, Decay, Brightness, Inharm, Position
-  Page 2: (mode-specific params)
-```
+The user never needs to visit the mod matrix to understand what's modulating the filter. The depth controls are right here. The mod matrix exists as an overview and routing tool — it shows which sources are connected to which destinations — but the amounts are set on the block pages.
+
+### Mod Matrix Page
+
+Always the last page in the chain. Two sub-page levels:
+
+**Sub-page 1: Routing grid.** A grid of all legal source → destination connections for this chain. Toggle cells on/off. The grid auto-generates from the chain's blocks — if there's no wavefolder in the chain, there's no wavefolder column.
+
+**Sub-pages 2+: Modulator settings.** One sub-page per modulator (LFO 1, LFO 2, Env 1, Env 2, etc.). Each shows the modulator's own parameters — rate, shape, ADSR, sync — independent of where it's routed.
 
 ### Mixer Page (MIX Button)
 
@@ -397,45 +564,30 @@ The SOUND page adapts to the active engine:
 ┌─────────────────────────┐
 │ MIXER                   │
 │                         │
-│ Part 1 [FM]   ████░░ L  │  ← Level bar + pan indicator
-│   Out: DAC1   S1:40 S2:0│  ← Output assignment + send levels
+│ Part 1 [FM Poly] ████░ L│
+│   Out: DAC1  S1:40 S2:0 │
 │                         │
-│ Part 2 [Modal] ███░░░ R │
-│   Out: DAC2   S1:60 S2:30│
+│ Part 2 [Kick]  ███░░░ C │
+│   Out: DAC2  S1:0  S2:0 │
 │                         │
-│ Part 3 [FM]   █████░ C  │
-│   Out: DAC3   S1:20 S2:50│
+│ Part 3 [Pluck] █████░ R │
+│   Out: DAC3  S1:60 S2:30│
 │                         │
 │ Master: ████████░░  -2dB│
 └─────────────────────────┘
 ```
 
-6 encoders on this page:
-- A: Part 1 volume
-- B: Part 2 volume  
-- C: Part 3 volume
-- D: Master volume
-- E: (selected Part send 1)
-- F: (selected Part send 2)
+6 encoders: Part 1/2/3 volume, Master volume, selected Part send 1, selected Part send 2.
 
-### Modulation Architecture
+### Chain Editor (Power Users Only)
 
-Each Part has a modulation matrix with 4-8 slots:
+Accessed via a deliberate action (e.g., hold Edit + Menu). Shows the dungeon map — a visual representation of the block sequence. The user can:
+- Insert a block at any position
+- Remove a block
+- Reorder blocks (move up/down)
+- See CPU budget remaining
 
-```
-Source          → Destination       Amount
-─────────────────────────────────────────
-LFO 1          → Filter Cutoff     +64
-Velocity        → Drive Amount      +32
-Mod Wheel       → Vibrato Depth     +48
-Envelope 2      → Op2 Level         -20
-```
-
-**Sources:** 2 LFOs, 3 Envelopes (amp, filter, aux), Velocity, Aftertouch, Mod Wheel, Note Number, Random.
-
-**Destinations:** Any per-voice parameter (filter cutoff, resonance, drive, fold amount, operator levels, pan, etc.)
-
-**UX:** The MOD page (B5) shows the matrix. Encoders A-F edit source, destination, and amount for two slots at a time. Minus/Plus pages through slots.
+Most users never open this. The factory chain templates + parameter editing covers 95% of use cases.
 
 ---
 
@@ -449,8 +601,8 @@ Be ruthless. Here's what ships first.
 |---|---|
 | **Voice count** | 6 |
 | **Parts** | Up to 4 (configurable 1-4) |
-| **Engines** | FM (4-op) + Modal |
-| **Per-voice chain** | Engine → Drive → Filter → Wavefolder → VCA |
+| **Block vocabulary** | FM Osc, Modal Resonator, Noise, Drive, Filter, Wavefolder, Low Pass Gate, VCA |
+| **Factory chains** | 8-10 templates (FM Poly, FM Keys, Modal Pluck, Kick, Snare, Hat, Bass, Pad, Lead) |
 | **Effects** | 1 send effect: Reverb (plate algorithm only) |
 | **Outputs** | 3 stereo DAC pairs with per-Part assignment |
 | **MIDI** | USART1 hardware MIDI in. 1 channel per Part. Note on/off, CC, pitch bend. |
