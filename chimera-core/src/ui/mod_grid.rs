@@ -75,7 +75,21 @@ const VISIBLE_ROWS: usize = ((GRID_BOTTOM - GRID_TOP - COL_HEADER_H) / CELL_H) a
 pub const MAX_SOURCES: usize = 16;
 pub const MAX_DESTS: usize = 16;
 
-/// State for the mod matrix grid — cursor, scroll, and mutable amounts.
+/// Max blocks in a chain
+pub const MAX_BLOCKS: usize = 8;
+/// Max params per block
+pub const MAX_PARAMS: usize = 6;
+
+/// A destination in the mod matrix — identifies a block param that's been enabled.
+#[derive(Clone, Copy, Debug)]
+pub struct ModDest {
+    pub block_idx: u8,
+    pub param_idx: u8,
+    pub block_short: &'static str,
+    pub param_label: &'static str,
+}
+
+/// State for the mod matrix grid — cursor, scroll, mutable amounts, and enabled destinations.
 #[derive(Clone, Debug)]
 pub struct MatrixState {
     pub sel_row: usize,
@@ -83,9 +97,14 @@ pub struct MatrixState {
     pub scroll_x: usize,
     pub scroll_y: usize,
     pub num_rows: usize,
-    pub num_cols: usize,
-    /// Modulation amounts: [source][dest], -127 to +127. 0 = no connection.
+    /// Modulation amounts: [source][dest_idx], -127 to +127. 0 = no connection.
     pub amounts: [[i8; MAX_DESTS]; MAX_SOURCES],
+    /// Which block params are enabled as mod destinations.
+    /// Bit = block_idx * 6 + param_idx. If set, the param appears in the matrix.
+    pub mod_enabled: u64,
+    /// Cached destination list, rebuilt when mod_enabled changes.
+    pub dests: [Option<ModDest>; MAX_DESTS],
+    pub num_dests: usize,
 }
 
 impl MatrixState {
@@ -96,16 +115,87 @@ impl MatrixState {
             scroll_x: 0,
             scroll_y: 0,
             num_rows: SOURCES.len(),
-            num_cols: DESTS.len(),
             amounts: [[0; MAX_DESTS]; MAX_SOURCES],
+            mod_enabled: 0,
+            dests: [None; MAX_DESTS],
+            num_dests: 0,
         };
-        // Pre-fill with demo data
+        // Pre-fill with demo data: enable some destinations and set amounts
+        // Enable: PIZ.SHP(0,0), PIZ.CRS(0,1), PIZ.LVL(0,2), DRV.AMT(1,0), DRV.TON(1,1),
+        //         FLT.CUT(2,0), FLT.RES(2,1), FLD.FLD(3,0), FLD.SYM(3,1), VCA.LVL(4,0)
+        let demo_dests: &[(u8, u8)] = &[
+            (0, 0), (0, 1), (0, 2),  // Pizza: shape, crush, level
+            (1, 0), (1, 1),          // Drive: drive, tone
+            (2, 0), (2, 1),          // Filter: cutoff, reso
+            (3, 0), (3, 1),          // Folder: fold, sym
+            (4, 4),                  // VCA: level (encoder E)
+        ];
+        for &(block, param) in demo_dests {
+            state.set_mod_enabled(block, param, true);
+        }
+        // Pre-fill some amounts
         for &(src, dst, amt) in DEMO_AMOUNTS {
             if src < MAX_SOURCES && dst < MAX_DESTS {
                 state.amounts[src][dst] = amt;
             }
         }
         state
+    }
+
+    /// Check if a block param is enabled as a mod destination.
+    pub fn is_mod_enabled(&self, block_idx: u8, param_idx: u8) -> bool {
+        let bit = block_idx as u64 * 6 + param_idx as u64;
+        (self.mod_enabled >> bit) & 1 != 0
+    }
+
+    /// Enable or disable a block param as a mod destination.
+    pub fn set_mod_enabled(&mut self, block_idx: u8, param_idx: u8, enabled: bool) {
+        let bit = block_idx as u64 * 6 + param_idx as u64;
+        if enabled {
+            self.mod_enabled |= 1 << bit;
+        } else {
+            self.mod_enabled &= !(1 << bit);
+        }
+        self.rebuild_dests();
+    }
+
+    /// Toggle a block param's mod enabled state.
+    pub fn toggle_mod_enabled(&mut self, block_idx: u8, param_idx: u8) {
+        let currently = self.is_mod_enabled(block_idx, param_idx);
+        self.set_mod_enabled(block_idx, param_idx, !currently);
+    }
+
+    /// Rebuild the destination list from mod_enabled bits and the current chain.
+    /// For now uses the hardcoded DESTS labels. Later this reads from the chain's BlockDefs.
+    fn rebuild_dests(&mut self) {
+        self.num_dests = 0;
+        // Map bit positions to DESTS entries
+        // For demo: block 0 = Pizza (params 0-2), block 1 = Drive (0-1),
+        //           block 2 = Filter (0-1), block 3 = Folder (0-1), block 4 = VCA (4=level)
+        let block_map: &[(u8, &[(u8, usize)])] = &[
+            (0, &[(0, 0), (1, 1), (2, 2)]),     // Pizza: shape=0, crush=1, level=2 → DESTS 0,1,2
+            (1, &[(0, 3), (1, 4)]),               // Drive: drive=3, tone=4 → DESTS 3,4
+            (2, &[(0, 5), (1, 6)]),               // Filter: cutoff=5, reso=6 → DESTS 5,6
+            (3, &[(0, 7), (1, 8)]),               // Folder: fold=7, sym=8 → DESTS 7,8
+            (4, &[(4, 9)]),                        // VCA: level=9 → DESTS 9
+        ];
+
+        for &(block_idx, params) in block_map {
+            for &(param_idx, dest_idx) in params {
+                if self.is_mod_enabled(block_idx, param_idx) && dest_idx < DESTS.len() {
+                    if self.num_dests < MAX_DESTS {
+                        let (blk, prm) = DESTS[dest_idx];
+                        self.dests[self.num_dests] = Some(ModDest {
+                            block_idx,
+                            param_idx,
+                            block_short: blk,
+                            param_label: prm,
+                        });
+                        self.num_dests += 1;
+                    }
+                }
+            }
+        }
     }
 
     /// Get the amount at the current cursor position.
@@ -133,8 +223,9 @@ impl MatrixState {
     }
 
     pub fn move_col(&mut self, delta: i8) {
+        let max = if self.num_dests > 0 { self.num_dests - 1 } else { 0 };
         let new = self.sel_col as i32 + delta as i32;
-        self.sel_col = new.clamp(0, self.num_cols as i32 - 1) as usize;
+        self.sel_col = new.clamp(0, max as i32) as usize;
         // Auto-scroll to keep cursor visible
         let vis = self.visible_cols();
         if self.sel_col < self.scroll_x {
@@ -155,8 +246,8 @@ impl MatrixState {
     }
 
     pub fn scroll_h(&mut self, delta: i8) {
-        let max = if self.num_cols > self.visible_cols() {
-            self.num_cols - self.visible_cols()
+        let max = if self.num_dests > self.visible_cols() {
+            self.num_dests - self.visible_cols()
         } else {
             0
         };
@@ -193,17 +284,22 @@ pub fn draw_grid<D>(
     let visible_cols = state.visible_cols();
     let visible_rows = state.visible_rows();
 
-    // ── Column headers (2-line: block short + param) ──
+    let num_dests = state.num_dests;
+
+    // ── Column headers (2-line: block short + param) — from enabled destinations ──
     for ci in 0..visible_cols {
         let di = ci + scroll_x;
-        if di >= DESTS.len() { break; }
-        let (block, param) = DESTS[di];
+        if di >= num_dests { break; }
+        let dest = match &state.dests[di] {
+            Some(d) => d,
+            None => break,
+        };
         let x = ROW_LABEL_W + ci as i32 * CELL_W + 2;
         let y = GRID_TOP;
 
         let style = if di == sel_col { accent } else { dim };
-        let _ = Text::new(block, Point::new(x, y + 10), style).draw(display);
-        let _ = Text::new(param, Point::new(x, y + 20), style).draw(display);
+        let _ = Text::new(dest.block_short, Point::new(x, y + 10), style).draw(display);
+        let _ = Text::new(dest.param_label, Point::new(x, y + 20), style).draw(display);
     }
 
     // ── Row labels + cells ──
@@ -215,14 +311,13 @@ pub fn draw_grid<D>(
 
         // Row label
         let label_style = if ri == sel_row { accent } else { dim };
-        // Truncate label to 5 chars
         let label = if SOURCES[ri].len() > 5 { &SOURCES[ri][..5] } else { SOURCES[ri] };
         let _ = Text::new(label, Point::new(GRID_LEFT + 2, y + 10), label_style).draw(display);
 
         // Cells
         for ci in 0..visible_cols {
             let di = ci + scroll_x;
-            if di >= DESTS.len() { break; }
+            if di >= num_dests { break; }
             let x = ROW_LABEL_W + ci as i32 * CELL_W;
 
             let is_selected = ri == sel_row && di == sel_col;
@@ -276,7 +371,7 @@ pub fn draw_grid<D>(
     .draw_styled(&grid_style, display);
 
     // ── Scroll indicator ──
-    let max_col_scroll = if DESTS.len() > visible_cols { DESTS.len() - visible_cols } else { 0 };
+    let max_col_scroll = if num_dests > visible_cols { num_dests - visible_cols } else { 0 };
     if max_col_scroll > 0 {
         let indicator_style = MonoTextStyle::new(&FONT_6X10, theme::TEXT_DIM);
         if scroll_x > 0 {
@@ -289,7 +384,7 @@ pub fn draw_grid<D>(
 
     // ── Stats line ──
     let mut stats_buf = [0u8; 32];
-    let stats = format_stats(SOURCES.len(), DESTS.len(), visible_rows, visible_cols, &mut stats_buf);
+    let stats = format_stats(SOURCES.len(), num_dests, visible_rows, visible_cols, &mut stats_buf);
     let _ = Text::new(stats, Point::new(4, GRID_BOTTOM - 2), dim).draw(display);
 }
 

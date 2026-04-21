@@ -30,6 +30,8 @@ pub struct UiState {
     pub matrix_state: MatrixState,
     page: PageId,
     region_set: region::RegionSet,
+    /// Last encoder touched (0-5) — used to identify focused param for MIX+Plus/Minus
+    last_encoder: usize,
 }
 
 impl Default for UiState {
@@ -53,6 +55,7 @@ impl UiState {
             matrix_state: MatrixState::new(),
             page,
             region_set: region::RegionSet::new(),
+            last_encoder: 0,
         }
     }
 
@@ -106,12 +109,25 @@ impl UiState {
             for (i, &enc) in encoder_ids.iter().enumerate() {
                 let delta = controls.encoder_delta(enc);
                 if delta != 0 {
+                    self.last_encoder = i;
                     if shift {
                         let fmt = def.params[i].format;
                         self.page.snap_encoder(i, delta, fmt, &mut self.params);
                     } else {
                         self.page.apply_encoder(i, delta, &mut self.params);
                     }
+                }
+            }
+
+            // MIX + Plus/Minus: toggle mod destination for last-touched encoder param
+            if shift {
+                let block_idx = self.nav.node as u8;
+                let param_idx = self.last_encoder as u8;
+                if controls.button_state(ButtonId::Plus) == ButtonState::Pressed {
+                    self.matrix_state.set_mod_enabled(block_idx, param_idx, true);
+                }
+                if controls.button_state(ButtonId::Minus) == ButtonState::Pressed {
+                    self.matrix_state.set_mod_enabled(block_idx, param_idx, false);
                 }
             }
         }
