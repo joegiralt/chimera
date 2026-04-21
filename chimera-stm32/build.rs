@@ -17,7 +17,7 @@ SECTIONS {
         . = ALIGN(4);
     } > RAM_D2
 }
-INSERT AFTER .bss;
+INSERT AFTER .uninit;
 "#,
     )
     .unwrap();
