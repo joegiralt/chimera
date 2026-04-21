@@ -312,13 +312,14 @@ pub static MOD_MATRIX: BlockDef = BlockDef {
 
 static PIZZA_BLOCK: ChainBlock = ChainBlock { def: &PIZZA, sub_pages: &[] };
 
-static PIZZA_POLY_BLOCKS: [ChainBlock; 6] = [
+static MOD_MATRIX_SUB_PAGES: [&BlockDef; 1] = [&ENVELOPE];
+
+static PIZZA_POLY_BLOCKS: [ChainBlock; 5] = [
     PIZZA_BLOCK,
     ChainBlock { def: &DRIVE,      sub_pages: &[] },
     ChainBlock { def: &FILTER,     sub_pages: &[] },
     ChainBlock { def: &FOLDER,     sub_pages: &[] },
-    ChainBlock { def: &ENVELOPE,   sub_pages: &[] },
-    ChainBlock { def: &MOD_MATRIX, sub_pages: &[] },
+    ChainBlock { def: &MOD_MATRIX, sub_pages: &MOD_MATRIX_SUB_PAGES },
 ];
 
 pub static PIZZA_POLY_CHAIN: ChainDef2 = ChainDef2 {
@@ -326,11 +327,10 @@ pub static PIZZA_POLY_CHAIN: ChainDef2 = ChainDef2 {
     blocks: &PIZZA_POLY_BLOCKS,
 };
 
-static KICK_BLOCKS: [ChainBlock; 4] = [
+static KICK_BLOCKS: [ChainBlock; 3] = [
     ChainBlock { def: &NOISE,      sub_pages: &[] },
     ChainBlock { def: &FILTER,     sub_pages: &[] },
-    ChainBlock { def: &ENVELOPE,   sub_pages: &[] },
-    ChainBlock { def: &MOD_MATRIX, sub_pages: &[] },
+    ChainBlock { def: &MOD_MATRIX, sub_pages: &MOD_MATRIX_SUB_PAGES },
 ];
 
 pub static KICK_CHAIN: ChainDef2 = ChainDef2 {
@@ -340,11 +340,10 @@ pub static KICK_CHAIN: ChainDef2 = ChainDef2 {
 
 static MODAL_SUB_PAGES: [&BlockDef; 1] = [&MODAL_2];
 
-static MODAL_PLUCK_BLOCKS: [ChainBlock; 4] = [
+static MODAL_PLUCK_BLOCKS: [ChainBlock; 3] = [
     ChainBlock { def: &MODAL_1,    sub_pages: &MODAL_SUB_PAGES },
     ChainBlock { def: &FILTER,     sub_pages: &[] },
-    ChainBlock { def: &ENVELOPE,   sub_pages: &[] },
-    ChainBlock { def: &MOD_MATRIX, sub_pages: &[] },
+    ChainBlock { def: &MOD_MATRIX, sub_pages: &MOD_MATRIX_SUB_PAGES },
 ];
 
 pub static MODAL_PLUCK_CHAIN: ChainDef2 = ChainDef2 {
