@@ -19,7 +19,7 @@ fn render_with_param_change(
 
     // Render "before" blocks
     let mut before_buf = Vec::new();
-    let mut block = [0.0f32; 128];
+    let mut block = [0.0f32; 64];
     for _ in 0..blocks_before {
         voice.render(&mut block, &params, SR);
         before_buf.extend_from_slice(&block);
@@ -147,11 +147,11 @@ fn test_filter_cutoff_sweep_mid_note() {
         |p| {
             p.filter.cutoff.set(200.0);
         }, // close the filter
-        8,
-        8,
+        16,
+        16,
     );
     assert!(
-        after_rms < before_rms * 0.5,
+        after_rms < before_rms * 0.4,
         "closing filter should reduce level: before={} after={}",
         before_rms,
         after_rms

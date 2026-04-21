@@ -56,7 +56,7 @@ fn test_filter_lowpass_attenuates_high_freq() {
     params.mode = 2; // LP4
 
     // Generate a high-frequency signal (5kHz at 48kHz = fast oscillation)
-    let mut buf = [0.0f32; 128];
+    let mut buf = [0.0f32; 64];
     for (i, s) in buf.iter_mut().enumerate() {
         *s = if i % 5 < 3 { 1.0 } else { -1.0 };
     }
@@ -81,7 +81,7 @@ fn test_filter_passes_low_freq() {
     params.mode = 2; // LP4
 
     // Low frequency signal: one cycle over 128 samples ≈ 375Hz at 48kHz
-    let mut buf = [0.0f32; 128];
+    let mut buf = [0.0f32; 64];
     for (i, s) in buf.iter_mut().enumerate() {
         *s = libm::sinf(i as f32 * 2.0 * core::f32::consts::PI / 128.0);
     }
@@ -106,7 +106,7 @@ fn test_filter_output_stable() {
     params.cutoff.set(1000.0);
     params.mode = 2; // LP4
 
-    let mut buf = [0.0f32; 128];
+    let mut buf = [0.0f32; 64];
     buf[0] = 1.0; // impulse
 
     for _ in 0..10 {
@@ -160,7 +160,7 @@ fn test_folder_adds_harmonics() {
     params.mix.set(1.0);
 
     // Sine wave
-    let mut buf = [0.0f32; 128];
+    let mut buf = [0.0f32; 64];
     for (i, s) in buf.iter_mut().enumerate() {
         *s = libm::sinf(i as f32 * 2.0 * core::f32::consts::PI / 32.0);
     }
@@ -191,7 +191,7 @@ fn test_folder_adds_harmonics() {
 fn test_voice_silent_when_idle() {
     let mut voice = Voice::new();
     let params = ParamSnapshot::default();
-    let mut output = [0.0f32; 128];
+    let mut output = [0.0f32; 64];
     voice.render(&mut output, &params, 48000);
     let max = output.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
     assert!(max < 0.001, "idle voice should be silent");
@@ -206,7 +206,7 @@ fn test_voice_produces_sound() {
 
     voice.note_on(60, 100, &params, 48000);
 
-    let mut output = [0.0f32; 128];
+    let mut output = [0.0f32; 64];
     for _ in 0..4 {
         voice.render(&mut output, &params, 48000);
     }
@@ -238,8 +238,8 @@ fn test_voice_filter_shapes_sound() {
     voice_open.note_on(60, 100, &params_open, 48000);
     voice_closed.note_on(60, 100, &params_closed, 48000);
 
-    let mut out_open = [0.0f32; 128];
-    let mut out_closed = [0.0f32; 128];
+    let mut out_open = [0.0f32; 64];
+    let mut out_closed = [0.0f32; 64];
 
     for _ in 0..8 {
         voice_open.render(&mut out_open, &params_open, 48000);
@@ -271,7 +271,7 @@ fn test_voice_output_bounded() {
 
     voice.note_on(60, 127, &params, 48000);
 
-    let mut output = [0.0f32; 128];
+    let mut output = [0.0f32; 64];
     for _ in 0..20 {
         voice.render(&mut output, &params, 48000);
         let max = output.iter().map(|s| s.abs()).fold(0.0f32, f32::max);

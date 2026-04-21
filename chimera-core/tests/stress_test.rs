@@ -17,7 +17,7 @@ fn bench_render(name: &str, setup: impl FnOnce(&mut ParamSnapshot)) -> f64 {
     let mut voice = Voice::new();
     voice.note_on(60, 100, &params, SR);
 
-    let mut block = [0.0f32; 128];
+    let mut block = [0.0f32; 64];
     // Warmup
     for _ in 0..10 {
         voice.render(&mut block, &params, SR);

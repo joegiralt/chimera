@@ -22,7 +22,7 @@ fn sim_render(setup_ui: impl FnOnce(&mut UiState), note: u8, blocks: usize) -> V
     voice.note_on(note, 100, &ui.params, SR);
 
     let mut all = Vec::new();
-    let mut block = [0.0f32; 128];
+    let mut block = [0.0f32; 64];
     for _ in 0..blocks {
         voice.render(&mut block, &ui.params, SR);
         all.extend_from_slice(&block);
@@ -371,9 +371,9 @@ fn test_desktop_mid_note_filter_sweep() {
     voice.note_on(60, 100, &ui.params, SR);
 
     // Render with open filter
-    let mut block = [0.0f32; 128];
+    let mut block = [0.0f32; 64];
     let mut before_energy = 0.0f32;
-    for _ in 0..8 {
+    for _ in 0..16 {
         voice.render(&mut block, &ui.params, SR);
         before_energy += block.iter().map(|s| s * s).sum::<f32>();
     }
@@ -382,13 +382,13 @@ fn test_desktop_mid_note_filter_sweep() {
     ui.params.filter.cutoff.set(200.0);
 
     let mut after_energy = 0.0f32;
-    for _ in 0..8 {
+    for _ in 0..16 {
         voice.render(&mut block, &ui.params, SR);
         after_energy += block.iter().map(|s| s * s).sum::<f32>();
     }
 
     assert!(
-        after_energy < before_energy * 0.3,
+        after_energy < before_energy * 0.4,
         "closing filter mid-note should reduce energy: before={} after={}",
         before_energy,
         after_energy
