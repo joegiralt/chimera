@@ -521,57 +521,73 @@ Main encoder scrolls through patches for preview. B1-B4 buttons trigger Save/Loa
 
 Layout: **CellGrid** (custom rendering)
 
-#### System Page (MENU button)
+#### System Chain (MENU button)
 
-System settings, MIDI configuration, tuning.
+MENU enters a fixed system chain. Same navigation as Part chains — Minus/Plus to traverse blocks, Seq/Edit for sub-pages. The dungeon map shows:
 
-Sub-pages:
+```
+MENU: [MIDI] → [Tuning] → [Theme] → [Updates] → [About]
+```
 
-**Sub-page 0: MIDI Config (Parts 1-3)**
+**MIDI Block (sub-page 0: Channel Assignment)**
 
-| Encoder | Label | Parameter |
-|---------|-------|-----------|
-| A | P1 CH | Part 1 MIDI channel (1-16) |
-| B | P2 CH | Part 2 MIDI channel (1-16, OFF) |
-| C | P3 CH | Part 3 MIDI channel (1-16, OFF) |
-| D | P4 CH | Part 4 MIDI channel (1-16, OFF) |
-| E | P5 CH | Part 5 MIDI channel (1-16, OFF) |
-| F | P6 CH | Part 6 MIDI channel (1-16, OFF) |
+| Encoder | Label | Format | Parameter |
+|---------|-------|--------|-----------|
+| A | P1 CH | Int(16) | Part 1 MIDI channel (1-16) |
+| B | P2 CH | Int(16) | Part 2 MIDI channel (1-16, OFF) |
+| C | P3 CH | Int(16) | Part 3 MIDI channel (1-16, OFF) |
+| D | P4 CH | Int(16) | Part 4 MIDI channel (1-16, OFF) |
+| E | P5 CH | Int(16) | Part 5 MIDI channel (1-16, OFF) |
+| F | P6 CH | Int(16) | Part 6 MIDI channel (1-16, OFF) |
 
-**Sub-page 1: MIDI Global**
+**MIDI Block (sub-page 1: Global MIDI)**
 
-| Encoder | Label | Parameter |
-|---------|-------|-----------|
-| A | CLOCK | Clock source (Int / Ext MIDI) |
-| B | — | — |
-| C | — | — |
-| D | — | — |
-| E | — | — |
-| F | — | — |
-
-**Sub-page 1: Tuning**
-
-| Encoder | Label | Parameter |
-|---------|-------|-----------|
-| A | TUNE | Master tuning (A=435-445 Hz) |
-| B | SCALE | Scale (Equal / Just / Pythagorean) |
-| C | — | — |
-| D | — | — |
-| E | — | — |
-| F | — | — |
-
-**Sub-page 2: System**
-
-| Encoder | Label | Parameter |
-|---------|-------|-----------|
-| A | BRIGHT | Screen brightness |
-| B | — | — |
-| C | — | — |
-| D | — | — |
-| E | — | — |
-| F | ABOUT | Show firmware version |
+| Encoder | Label | Format | Parameter |
+|---------|-------|--------|-----------|
+| A | CLOCK | Int(1) | Clock source (Int / Ext MIDI) |
+| B | PGM.CH | Int(1) | Program change receive (On / Off) |
+| C | CC.RX | Int(1) | CC receive (On / Off) |
+| D | — | — | — |
+| E | — | — | — |
+| F | — | — | — |
 
 Layout: **CellGrid**
+
+**Tuning Block**
+
+| Encoder | Label | Format | Parameter |
+|---------|-------|--------|-----------|
+| A | TUNE | Bi | Master tuning (A=435-445 Hz) |
+| B | SCALE | Int(2) | Scale (Equal / Just / Pythagorean) |
+| C | — | — | — |
+| D | — | — | — |
+| E | — | — | — |
+| F | — | — | — |
+
+Layout: **CellGrid**
+
+**Theme Block**
+
+| Encoder | Label | Format | Parameter |
+|---------|-------|--------|-----------|
+| A | BRIGHT | Uni | Screen brightness |
+| B | ACCENT | Int(4) | Accent color preset |
+| C | — | — | — |
+| D | — | — | — |
+| E | — | — | — |
+| F | — | — | — |
+
+Layout: **CellGrid**
+
+**Updates Block**
+
+Informational — shows current firmware version, SD card status. No editable parameters.
+
+Layout: **CellGrid**
+
+**About Block**
+
+Layout: **BigViz** — visualization shows Chimera logo + credits. No editable parameters.
 
 ---
 
@@ -581,16 +597,15 @@ Layout: **CellGrid**
 
 ```rust
 struct NavigationState {
-    part: usize,           // 0-5 (active Part, selected by B1-B6)
-    context: Context,      // Chain, Mixer, or System
-    chain_node: usize,     // horizontal position in chain
-    sub_page: usize,       // vertical sub-page at current node
+    chain: ChainId,        // Which chain is active
+    chain_node: usize,     // Horizontal position in chain
+    sub_page: usize,       // Vertical sub-page at current node
 }
 
-enum Context {
-    Chain,                 // Editing a Part's chain
-    Mixer,                 // MIX + B1
-    System,                // MENU button
+enum ChainId {
+    Part(usize),           // 0-5 (B1-B6)
+    Menu,                  // MENU button
+    Mixer,                 // MIX + B1 (special — single page, not a chain)
 }
 ```
 
@@ -598,24 +613,26 @@ enum Context {
 
 | Input | Current State | Action |
 |-------|---------------|--------|
-| **B1-B6 pressed** | Any | Switch to Chain context for that Part. If already on that Part's chain, snap to first block (node 0, sub_page 0). |
-| **Minus pressed** | Chain | Move left one node (decrement chain_node). Reset sub_page to 0. |
-| **Plus pressed** | Chain | Move right one node (increment chain_node). Reset sub_page to 0. |
-| **Seq pressed** | Any with sub-pages | Move up one sub-page (decrement sub_page). |
-| **Edit pressed** | Any with sub-pages | Move down one sub-page (increment sub_page). |
+| **B1-B6 pressed** | Any | Switch to that Part's chain, first block. If already on that Part, snap home (node 0, sub_page 0). |
+| **MENU pressed** | Any | Switch to system chain, first block. If already on system chain, snap home. |
+| **MIX + B1** | Any | Switch to Mixer page. |
+| **MIX + B2-B6** | Any | Reserved for future functions. |
+| **Minus pressed** | Any chain | Move left one node (decrement chain_node). Reset sub_page to 0. |
+| **Plus pressed** | Any chain | Move right one node (increment chain_node). Reset sub_page to 0. |
+| **Seq pressed** | Node with sub-pages | Move up one sub-page (decrement sub_page). |
+| **Edit pressed** | Node with sub-pages | Move down one sub-page (increment sub_page). |
 | **Encoder A-F turn** | Any | Apply delta to parameter at encoder index on current page. |
 | **MIX (hold) + Encoder** | Any | Shift mode: coarse snap instead of fine adjustment. |
-| **MIX + B1** | Any | Switch to Mixer context. |
-| **MIX + B2-B6** | Any | Reserved for future functions. |
-| **MENU pressed** | Any | Switch to System context. |
 
 ### Key Invariants
 
-1. **B1-B6 always select a Part's chain.** Pressing B3 takes you to Part 3's chain, first block. Even from Mixer or System pages.
-2. **Only one page is active at a time.** No overlays, no popups, no modal dialogs.
-3. **The dungeon map is always visible.** It shows the active Part's chain topology. In Mixer/System contexts, the chain is still shown (dimmed, no active node).
-4. **Pressing the same Part button again snaps home.** If you're on Part 2, block 3, pressing B2 takes you back to Part 2, block 0.
-5. **MIX is only a modifier.** It does nothing on its own. Hold it + press/turn something else.
+1. **B1-B6 always select a Part's chain.** Pressing B3 takes you to Part 3's chain, first block. Even from Mixer or Menu.
+2. **MENU always enters the system chain.** Same navigation model as Part chains — Minus/Plus to traverse, Seq/Edit for sub-pages.
+3. **Everything is a chain except the mixer.** The mixer is the one global page (with sub-pages) accessed via MIX + B1.
+4. **Only one page is active at a time.** No overlays, no popups, no modal dialogs.
+5. **The dungeon map always shows the active chain.** Part chain, system chain, or dimmed when on the mixer.
+6. **Pressing the same button again snaps home.** B2 while on Part 2 = back to node 0. MENU while on system chain = back to MIDI block.
+7. **MIX is only a modifier.** It does nothing on its own.
 
 ---
 
