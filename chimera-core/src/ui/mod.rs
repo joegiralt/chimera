@@ -5,6 +5,7 @@ pub mod cell;
 pub mod chain;
 pub mod dungeon_map;
 pub mod fmt;
+pub mod mod_grid;
 pub mod page;
 pub mod perf;
 pub mod region;
