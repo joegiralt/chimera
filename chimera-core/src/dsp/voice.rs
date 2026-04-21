@@ -3,15 +3,15 @@ use chimera_hal::BLOCK_SIZE;
 use crate::dsp::drive::Drive;
 use crate::dsp::envelope::Envelope;
 use crate::dsp::filter::SvfFilter;
-use crate::dsp::fm::FmEngine;
 use crate::dsp::modal::ModalEngine;
+use crate::dsp::pizza::PizzaOsc;
 use crate::dsp::wavefolder::Wavefolder;
 use crate::params::{EngineType, ParamSnapshot};
 
 /// Complete voice signal chain:
-/// [Engine (FM/Modal/VA)] → [Drive] → [Filter] → [Wavefolder] → [VCA]
+/// [Engine (Pizza/Modal)] → [Drive] → [Filter] → [Wavefolder] → [VCA]
 pub struct Voice {
-    pub fm: FmEngine,
+    pub pizza: PizzaOsc,
     pub modal: ModalEngine,
     drive: Drive,
     filter: SvfFilter,
@@ -30,32 +30,30 @@ impl Default for Voice {
 impl Voice {
     pub fn new() -> Self {
         Self {
-            fm: FmEngine::new(),
+            pizza: PizzaOsc::new(),
             modal: ModalEngine::new(),
             drive: Drive::new(),
             filter: SvfFilter::new(),
             folder: Wavefolder::new(),
             amp_env: Envelope::new(),
-            active_engine: EngineType::Fm,
+            active_engine: EngineType::Pizza,
             active: false,
         }
     }
 
     pub fn note_on(&mut self, note: u8, velocity: u8, params: &ParamSnapshot, sample_rate: u32) {
         self.active_engine = params.engine;
+        let freq = crate::dsp::note_to_freq(note);
         match self.active_engine {
-            EngineType::Fm => {
-                self.fm.update_params(&params.fm, sample_rate);
-                self.fm.note_on(note, velocity, sample_rate);
+            EngineType::Pizza => {
+                self.pizza.note_on(freq, sample_rate);
+            }
+            EngineType::Fm | EngineType::Va => {
+                // FM/VA removed — silence placeholder
             }
             EngineType::Modal => {
                 self.modal
                     .note_on(note, velocity, &params.modal, sample_rate);
-            }
-            EngineType::Va => {
-                // VA engine not yet implemented — fall back to FM
-                self.fm.update_params(&params.fm, sample_rate);
-                self.fm.note_on(note, velocity, sample_rate);
             }
         }
         self.amp_env.note_on(velocity as f32 / 127.0);
@@ -64,7 +62,8 @@ impl Voice {
 
     pub fn note_off(&mut self) {
         match self.active_engine {
-            EngineType::Fm | EngineType::Va => self.fm.note_off(),
+            EngineType::Pizza => self.pizza.note_off(),
+            EngineType::Fm | EngineType::Va => { /* FM/VA removed */ }
             EngineType::Modal => self.modal.note_off(),
         }
         self.amp_env.note_off();
@@ -89,9 +88,14 @@ impl Voice {
 
         // 1. Engine → raw oscillator output
         match self.active_engine {
+            EngineType::Pizza => {
+                self.pizza.render(output, &params.pizza, sample_rate);
+            }
             EngineType::Fm | EngineType::Va => {
-                self.fm.update_params(&params.fm, sample_rate);
-                self.fm.render(output, &params.fm.op_env, sample_rate);
+                // FM/VA removed — render silence
+                for s in output.iter_mut() {
+                    *s = 0.0;
+                }
             }
             EngineType::Modal => {
                 self.modal.render(output, &params.modal, sample_rate);
@@ -107,28 +111,28 @@ impl Voice {
         // 4. Wavefolder
         self.folder.process(output, &params.folder);
 
-        // 5. VCA — engine-dependent envelope behavior
+        // 5. VCA — amp envelope shapes the sound
         let volume = params.volume.value;
         match self.active_engine {
-            EngineType::Fm | EngineType::Va => {
-                // FM/VA: amp envelope shapes the sound
+            EngineType::Modal => {
+                // Modal: modes have natural decay. Just apply volume.
+                for sample in output.iter_mut() {
+                    *sample *= volume;
+                }
+            }
+            _ => {
+                // Pizza/FM/VA: amp envelope shapes the sound
                 for sample in output.iter_mut() {
                     let env = self.amp_env.process(&params.envelopes[0], sample_rate);
                     *sample *= env * volume;
-                }
-            }
-            EngineType::Modal => {
-                // Modal: modes have natural decay. Amp envelope acts as a gate —
-                // just apply volume, let the resonator handle the rest.
-                for sample in output.iter_mut() {
-                    *sample *= volume;
                 }
             }
         }
 
         // Check if done
         self.active = match self.active_engine {
-            EngineType::Fm | EngineType::Va => self.fm.is_active() || self.amp_env.is_active(),
+            EngineType::Pizza => self.amp_env.is_active(),
+            EngineType::Fm | EngineType::Va => false, // FM/VA removed
             EngineType::Modal => self.modal.is_active(),
         };
     }

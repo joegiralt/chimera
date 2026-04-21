@@ -92,12 +92,9 @@ pub enum CellIcon {
 /// Identifies which page is active, derived from chain position.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PageId {
-    EngineFmA,
-    EngineFmB,
-    EngineFmC,
+    Pizza,
     EngineModal1,
     EngineModal2,
-    EngineVa,
     Drive,
     Filter,
     Folder,
@@ -122,14 +119,7 @@ impl PageId {
         use crate::ui::chain::ChainId;
         match nav.chain_id {
             ChainId::Part(_) => match nav.node {
-                0 => match nav.sub_page {
-                    1 => PageId::EngineFmB,
-                    2 => PageId::EngineFmC,
-                    3 => PageId::EngineModal1,
-                    4 => PageId::EngineModal2,
-                    5 => PageId::EngineVa,
-                    _ => PageId::EngineFmA,
-                },
+                0 => PageId::Pizza,
                 1 => PageId::Drive,
                 2 => PageId::Filter,
                 3 => PageId::Folder,
@@ -143,7 +133,7 @@ impl PageId {
                 3 => PageId::MixReverb,
                 _ => PageId::Master,
             },
-            ChainId::System => PageId::EngineFmA, // no param editing yet
+            ChainId::System => PageId::Pizza, // no param editing yet
             ChainId::Demo => match nav.node {
                 0 => PageId::DemoWaves,
                 1 => PageId::DemoShapes,
@@ -155,32 +145,13 @@ impl PageId {
     /// Read 6 normalized (0..1) encoder values from params for this page.
     pub fn read_values(&self, params: &ParamSnapshot) -> [f32; 6] {
         match self {
-            // FM-A: algo, feedback, carrier (op4)
-            PageId::EngineFmA => [
-                params.fm.algorithm as f32 / 7.0,
-                params.fm.feedback,
-                params.fm.op_ratio[3],                 // carrier ratio
-                params.fm.op_waveform[3] as f32 / 7.0, // carrier wave
-                params.fm.op_level[3],                 // carrier level
-                params.fm.op_detune[3],                // carrier detune
-            ],
-            // FM-B: modulator (op1) + op2
-            PageId::EngineFmB => [
-                params.fm.op_ratio[0], // modulator ratio
-                params.fm.op_waveform[0] as f32 / 7.0,
-                params.fm.op_level[0], // modulator depth!
-                params.fm.op_detune[0],
-                params.fm.op_ratio[1], // op2 ratio
-                params.fm.op_level[1], // op2 level
-            ],
-            // FM-C: op3 + op2/op4 waveforms + op4 detune
-            PageId::EngineFmC => [
-                params.fm.op_ratio[2],
-                params.fm.op_waveform[2] as f32 / 7.0,
-                params.fm.op_level[2],
-                params.fm.op_waveform[1] as f32 / 7.0, // op2 wave
-                params.fm.op_waveform[3] as f32 / 7.0, // op4 wave (dup for access)
-                params.fm.op_detune[3],
+            PageId::Pizza => [
+                params.pizza.shape,
+                params.pizza.crush,
+                params.pizza.level,
+                0.0,
+                0.0,
+                0.0,
             ],
             PageId::Filter => [
                 params.filter.cutoff.normalized(),
@@ -287,24 +258,15 @@ impl PageId {
                 params.pan.normalized(),
                 0.0, 0.0, 0.0, 0.0,
             ],
-            _ => [0.5; 6], // placeholder pages
         }
     }
 
     /// Apply an encoder delta. Each tick = 1/128 of the parameter range.
     pub fn apply_encoder(&self, idx: usize, delta: i8, params: &mut ParamSnapshot) {
-        // FM pages: direct float manipulation (not Param structs)
+        // Direct float manipulation (not Param structs)
         match self {
-            PageId::EngineFmA => {
-                apply_fm_a_encoder(idx, delta, &mut params.fm);
-                return;
-            }
-            PageId::EngineFmB => {
-                apply_fm_b_encoder(idx, delta, &mut params.fm);
-                return;
-            }
-            PageId::EngineFmC => {
-                apply_fm_c_encoder(idx, delta, &mut params.fm);
+            PageId::Pizza => {
+                apply_pizza_encoder(idx, delta, &mut params.pizza);
                 return;
             }
             PageId::EngineModal1 => {
@@ -507,41 +469,12 @@ fn nudge_u8(v: &mut u8, delta: i8, max: u8) {
     *v = n.clamp(0, max as i8) as u8;
 }
 
-// FM-A: algo, feedback, carrier (op4) ratio/wave/level/detune
-fn apply_fm_a_encoder(idx: usize, delta: i8, fm: &mut crate::dsp::fm::FmParams) {
+fn apply_pizza_encoder(idx: usize, delta: i8, pizza: &mut crate::dsp::pizza::PizzaParams) {
+    let step = 1.0 / 128.0;
     match idx {
-        0 => nudge_u8(&mut fm.algorithm, delta, 7),
-        1 => nudge_float(&mut fm.feedback, delta, 1.0 / 128.0),
-        2 => nudge_float(&mut fm.op_ratio[3], delta, 1.0 / 16.0), // carrier
-        3 => nudge_u8(&mut fm.op_waveform[3], delta, 7),
-        4 => nudge_float(&mut fm.op_level[3], delta, 1.0 / 128.0),
-        5 => nudge_float(&mut fm.op_detune[3], delta, 1.0 / 128.0),
-        _ => {}
-    }
-}
-
-// FM-B: modulator (op1) + op2
-fn apply_fm_b_encoder(idx: usize, delta: i8, fm: &mut crate::dsp::fm::FmParams) {
-    match idx {
-        0 => nudge_float(&mut fm.op_ratio[0], delta, 1.0 / 16.0), // modulator
-        1 => nudge_u8(&mut fm.op_waveform[0], delta, 7),
-        2 => nudge_float(&mut fm.op_level[0], delta, 1.0 / 128.0), // mod depth!
-        3 => nudge_float(&mut fm.op_detune[0], delta, 1.0 / 128.0),
-        4 => nudge_float(&mut fm.op_ratio[1], delta, 1.0 / 16.0), // op2
-        5 => nudge_float(&mut fm.op_level[1], delta, 1.0 / 128.0),
-        _ => {}
-    }
-}
-
-// FM-C: op3 + remaining waveforms + op4 detune
-fn apply_fm_c_encoder(idx: usize, delta: i8, fm: &mut crate::dsp::fm::FmParams) {
-    match idx {
-        0 => nudge_float(&mut fm.op_ratio[2], delta, 1.0 / 16.0),
-        1 => nudge_u8(&mut fm.op_waveform[2], delta, 7),
-        2 => nudge_float(&mut fm.op_level[2], delta, 1.0 / 128.0),
-        3 => nudge_u8(&mut fm.op_waveform[1], delta, 7), // op2 wave
-        4 => nudge_u8(&mut fm.op_waveform[3], delta, 7), // op4 wave
-        5 => nudge_float(&mut fm.op_detune[3], delta, 1.0 / 128.0), // carrier detune
+        0 => nudge_float(&mut pizza.shape, delta, step),
+        1 => nudge_float(&mut pizza.crush, delta, step),
+        2 => nudge_float(&mut pizza.level, delta, step),
         _ => {}
     }
 }

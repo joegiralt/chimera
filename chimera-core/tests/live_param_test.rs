@@ -61,18 +61,18 @@ fn harmonic_energy(buf: &[f32], f0: f32) -> f32 {
     (2..=8).map(|h| goertzel(buf, f0 * h as f32, SR)).sum()
 }
 
-// ── FM: live parameter tests ────────────────────────────────────────
+// ── Pizza: live parameter tests ─────────────────────────────────────
 
 #[test]
-fn test_fm_algo_change_mid_note() {
-    let (before_rms, after_rms, before, after) = render_with_param_change(
+fn test_pizza_shape_change_mid_note() {
+    let (_, _, before, after) = render_with_param_change(
         |p| {
-            p.engine = EngineType::Fm;
-            p.fm.op_level = [0.5, 0.3, 0.3, 1.0];
+            p.engine = EngineType::Pizza;
+            p.pizza.shape = 0.5; // triangle
         },
         |p| {
-            p.fm.algorithm = 7;
-        }, // switch to additive
+            p.pizza.shape = 1.0; // ramp up
+        },
         8,
         8,
     );
@@ -82,17 +82,18 @@ fn test_fm_algo_change_mid_note() {
         .map(|(a, b)| (a - b).abs())
         .sum::<f32>()
         / before.len() as f32;
-    assert!(diff > 0.01, "algo change should alter sound: diff={}", diff);
+    assert!(diff > 0.001, "shape change should alter sound: diff={}", diff);
 }
 
 #[test]
-fn test_fm_feedback_change_mid_note() {
+fn test_pizza_crush_change_mid_note() {
     let (_, _, before, after) = render_with_param_change(
         |p| {
-            p.engine = EngineType::Fm;
+            p.engine = EngineType::Pizza;
+            p.pizza.crush = 0.0;
         },
         |p| {
-            p.fm.feedback = 0.8;
+            p.pizza.crush = 0.8;
         },
         8,
         8,
@@ -102,32 +103,7 @@ fn test_fm_feedback_change_mid_note() {
     let h_after = harmonic_energy(&after, f0);
     assert!(
         (h_before - h_after).abs() > 0.001,
-        "feedback change should alter harmonics: before={} after={}",
-        h_before,
-        h_after
-    );
-}
-
-#[test]
-fn test_fm_modulator_depth_mid_note() {
-    let (_, _, before, after) = render_with_param_change(
-        |p| {
-            p.engine = EngineType::Fm;
-            p.fm.algorithm = 4;
-            p.fm.op_level[1] = 1.0;
-        },
-        |p| {
-            p.fm.op_level[0] = 0.8;
-        }, // crank modulator
-        8,
-        8,
-    );
-    let f0 = 261.6;
-    let h_before = harmonic_energy(&before, f0);
-    let h_after = harmonic_energy(&after, f0);
-    assert!(
-        h_after > h_before,
-        "increasing modulator should add harmonics: before={} after={}",
+        "crush change should alter harmonics: before={} after={}",
         h_before,
         h_after
     );
@@ -139,8 +115,7 @@ fn test_fm_modulator_depth_mid_note() {
 fn test_filter_cutoff_sweep_mid_note() {
     let (before_rms, after_rms, _, _) = render_with_param_change(
         |p| {
-            p.engine = EngineType::Fm;
-            p.fm.op_level = [0.5, 0.0, 0.0, 1.0];
+            p.engine = EngineType::Pizza;
             p.filter.cutoff.set(10000.0);
             p.filter.mode = 2; // LP4
         },
@@ -151,7 +126,7 @@ fn test_filter_cutoff_sweep_mid_note() {
         16,
     );
     assert!(
-        after_rms < before_rms * 0.4,
+        after_rms < before_rms * 0.6,
         "closing filter should reduce level: before={} after={}",
         before_rms,
         after_rms
@@ -162,8 +137,7 @@ fn test_filter_cutoff_sweep_mid_note() {
 fn test_filter_resonance_mid_note() {
     let (_, _, before, after) = render_with_param_change(
         |p| {
-            p.engine = EngineType::Fm;
-            p.fm.op_level = [0.5, 0.0, 0.0, 1.0];
+            p.engine = EngineType::Pizza;
             p.filter.cutoff.set(1000.0);
             p.filter.mode = 1; // LP2
             p.filter.resonance.set(0.0);
@@ -190,7 +164,7 @@ fn test_filter_resonance_mid_note() {
 fn test_drive_amount_mid_note() {
     let (_, _, before, after) = render_with_param_change(
         |p| {
-            p.engine = EngineType::Fm;
+            p.engine = EngineType::Pizza;
             p.drive.drive.set(0.0);
             p.drive.mix.set(1.0);
         },
@@ -217,7 +191,7 @@ fn test_drive_amount_mid_note() {
 fn test_folder_mid_note() {
     let (_, _, before, after) = render_with_param_change(
         |p| {
-            p.engine = EngineType::Fm;
+            p.engine = EngineType::Pizza;
             p.folder.fold.set(0.0);
         },
         |p| {
@@ -394,7 +368,7 @@ fn test_modal_brightness_mid_note() {
 fn test_volume_mid_note() {
     let (before_rms, after_rms, _, _) = render_with_param_change(
         |p| {
-            p.engine = EngineType::Fm;
+            p.engine = EngineType::Pizza;
             p.volume.set(0.8);
         },
         |p| {

@@ -67,9 +67,9 @@ fn check_no_clicks(
 #[test]
 fn test_no_clicks_fm_init() {
     check_no_clicks(
-        "FM init (sine)",
+        "Pizza init",
         |p| {
-            p.engine = EngineType::Fm;
+            p.engine = EngineType::Pizza;
         },
         // Simulate realistic cpal callback pattern: varying buffer sizes
         &[256, 256, 256, 512, 256, 256, 128, 256, 512, 256],
@@ -77,13 +77,12 @@ fn test_no_clicks_fm_init() {
 }
 
 #[test]
-fn test_no_clicks_fm_with_modulation() {
+fn test_no_clicks_pizza_with_crush() {
     check_no_clicks(
-        "FM modulated",
+        "Pizza crushed",
         |p| {
-            p.engine = EngineType::Fm;
-            p.fm.algorithm = 4;
-            p.fm.op_level = [0.5, 1.0, 0.0, 1.0];
+            p.engine = EngineType::Pizza;
+            p.pizza.crush = 0.7;
         },
         &[256, 256, 256, 256, 256, 256, 256, 256],
     );
@@ -92,11 +91,11 @@ fn test_no_clicks_fm_with_modulation() {
 // ── With reverb ─────────────────────────────────────────────────────
 
 #[test]
-fn test_no_clicks_fm_with_plate_reverb() {
+fn test_no_clicks_pizza_with_plate_reverb() {
     check_no_clicks(
-        "FM + plate reverb",
+        "Pizza + plate reverb",
         |p| {
-            p.engine = EngineType::Fm;
+            p.engine = EngineType::Pizza;
             p.reverb.reverb_type = 0;
             p.reverb.mix = 0.5;
             p.reverb.time = 0.7;
@@ -106,11 +105,11 @@ fn test_no_clicks_fm_with_plate_reverb() {
 }
 
 #[test]
-fn test_no_clicks_fm_with_fdn_reverb() {
+fn test_no_clicks_pizza_with_fdn_reverb() {
     check_no_clicks(
-        "FM + FDN reverb",
+        "Pizza + FDN reverb",
         |p| {
-            p.engine = EngineType::Fm;
+            p.engine = EngineType::Pizza;
             p.reverb.reverb_type = 1;
             p.reverb.mix = 0.5;
         },
@@ -123,7 +122,7 @@ fn test_no_clicks_fm_with_midiverb() {
     check_no_clicks(
         "FM + MidiVerb",
         |p| {
-            p.engine = EngineType::Fm;
+            p.engine = EngineType::Pizza;
             p.reverb.reverb_type = 2;
             p.reverb.mix = 0.5;
         },
@@ -187,7 +186,7 @@ fn test_no_clicks_odd_buffer_sizes() {
     check_no_clicks(
         "FM with odd callback sizes",
         |p| {
-            p.engine = EngineType::Fm;
+            p.engine = EngineType::Pizza;
         },
         // Deliberately misaligned with BLOCK_SIZE=128
         &[100, 200, 50, 300, 150, 75, 250, 100, 400, 50],
@@ -199,7 +198,7 @@ fn test_no_clicks_tiny_buffers() {
     check_no_clicks(
         "FM with tiny callbacks",
         |p| {
-            p.engine = EngineType::Fm;
+            p.engine = EngineType::Pizza;
         },
         // Very small buffers — stress the block boundary logic
         &[32, 32, 32, 32, 64, 32, 32, 32, 32, 64, 32, 32, 32, 32],
@@ -211,7 +210,7 @@ fn test_no_clicks_single_sample_buffers() {
     check_no_clicks(
         "FM with single-sample callbacks",
         |p| {
-            p.engine = EngineType::Fm;
+            p.engine = EngineType::Pizza;
         },
         // Worst case: one sample per callback
         &[1; 512],

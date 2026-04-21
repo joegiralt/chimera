@@ -159,9 +159,10 @@ impl Default for FolderParams {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum EngineType {
     #[default]
-    Fm = 0,
-    Modal = 1,
-    Va = 2,
+    Pizza = 0,
+    Fm = 1,
+    Modal = 2,
+    Va = 3,
 }
 
 #[derive(Clone, Debug)]
@@ -171,7 +172,7 @@ pub struct ParamSnapshot {
     pub drive: DriveParams,
     pub folder: FolderParams,
     pub envelopes: [EnvParams; 3],
-    pub fm: crate::dsp::fm::FmParams,
+    pub pizza: crate::dsp::pizza::PizzaParams,
     pub modal: crate::dsp::modal::ModalParams,
     pub reverb: crate::dsp::reverb::ReverbParams,
     pub delay: crate::dsp::delay::DelayParams,
@@ -192,7 +193,7 @@ impl Default for ParamSnapshot {
             drive: DriveParams::default(),
             folder: FolderParams::default(),
             envelopes: [EnvParams::default(); 3],
-            fm: crate::dsp::fm::FmParams::default(),
+            pizza: crate::dsp::pizza::PizzaParams::default(),
             modal: crate::dsp::modal::ModalParams::default(),
             delay: crate::dsp::delay::DelayParams::default(),
             chorus: crate::dsp::chorus::ChorusParams::default(),

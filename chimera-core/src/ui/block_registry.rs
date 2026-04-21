@@ -8,51 +8,19 @@ const EMPTY: ParamSlot = ParamSlot {
 };
 
 // ---------------------------------------------------------------------------
-// FM engine pages
+// Pizza engine
 // ---------------------------------------------------------------------------
 
-pub static FM_A: BlockDef = BlockDef {
-    name: "FM Osc",
-    short: "FM-A",
-    layout: PageLayout::BigViz,
-    viz: VizType::AlgorithmDiagram,
+pub static PIZZA: BlockDef = BlockDef {
+    name: "Pizza",
+    short: "PIZ",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
     params: [
-        ParamSlot { label: "ALGO",  format: ValFmt::Int(7), icon: CellIcon::None },
-        ParamSlot { label: "FDBK",  format: ValFmt::Uni,    icon: CellIcon::None },
-        ParamSlot { label: "RAT C", format: ValFmt::Uni,    icon: CellIcon::None },
-        ParamSlot { label: "WAV C", format: ValFmt::Int(7), icon: CellIcon::None },
-        ParamSlot { label: "LVL C", format: ValFmt::Uni,    icon: CellIcon::None },
-        ParamSlot { label: "DTN C", format: ValFmt::Bi,     icon: CellIcon::None },
-    ],
-};
-
-pub static FM_B: BlockDef = BlockDef {
-    name: "FM-B",
-    short: "FM-B",
-    layout: PageLayout::BigViz,
-    viz: VizType::AlgorithmDiagram,
-    params: [
-        ParamSlot { label: "RAT M", format: ValFmt::Uni,    icon: CellIcon::None },
-        ParamSlot { label: "WAV M", format: ValFmt::Int(7), icon: CellIcon::None },
-        ParamSlot { label: "LVL M", format: ValFmt::Uni,    icon: CellIcon::None },
-        ParamSlot { label: "DTN M", format: ValFmt::Bi,     icon: CellIcon::None },
-        ParamSlot { label: "RAT 2", format: ValFmt::Uni,    icon: CellIcon::None },
-        ParamSlot { label: "LVL 2", format: ValFmt::Uni,    icon: CellIcon::None },
-    ],
-};
-
-pub static FM_C: BlockDef = BlockDef {
-    name: "FM-C",
-    short: "FM-C",
-    layout: PageLayout::BigViz,
-    viz: VizType::AlgorithmDiagram,
-    params: [
-        ParamSlot { label: "RAT 3", format: ValFmt::Uni,    icon: CellIcon::None },
-        ParamSlot { label: "WAV 3", format: ValFmt::Int(7), icon: CellIcon::None },
-        ParamSlot { label: "LVL 3", format: ValFmt::Uni,    icon: CellIcon::None },
-        ParamSlot { label: "WAV 2", format: ValFmt::Uni,    icon: CellIcon::None },
-        ParamSlot { label: "WAV 4", format: ValFmt::Int(7), icon: CellIcon::None },
-        ParamSlot { label: "DTN 4", format: ValFmt::Uni,    icon: CellIcon::None },
+        ParamSlot { label: "SHAPE", format: ValFmt::Uni, icon: CellIcon::WaveShape },
+        ParamSlot { label: "CRUSH", format: ValFmt::Uni, icon: CellIcon::WaveClip },
+        ParamSlot { label: "LEVEL", format: ValFmt::Uni, icon: CellIcon::LevelBar },
+        EMPTY, EMPTY, EMPTY,
     ],
 };
 
@@ -347,10 +315,10 @@ pub static MOD_MATRIX: BlockDef = BlockDef {
 // Chain templates
 // ---------------------------------------------------------------------------
 
-static FM_OSC_SUB_PAGES: [&BlockDef; 2] = [&FM_B, &FM_C];
+static PIZZA_BLOCK: ChainBlock = ChainBlock { def: &PIZZA, sub_pages: &[] };
 
-static FM_POLY_BLOCKS: [ChainBlock; 6] = [
-    ChainBlock { def: &FM_A,       sub_pages: &FM_OSC_SUB_PAGES },
+static PIZZA_POLY_BLOCKS: [ChainBlock; 6] = [
+    PIZZA_BLOCK,
     ChainBlock { def: &DRIVE,      sub_pages: &[] },
     ChainBlock { def: &FILTER,     sub_pages: &[] },
     ChainBlock { def: &FOLDER,     sub_pages: &[] },
@@ -358,9 +326,9 @@ static FM_POLY_BLOCKS: [ChainBlock; 6] = [
     ChainBlock { def: &MOD_MATRIX, sub_pages: &[] },
 ];
 
-pub static FM_POLY_CHAIN: ChainDef2 = ChainDef2 {
-    name: "FM Poly",
-    blocks: &FM_POLY_BLOCKS,
+pub static PIZZA_POLY_CHAIN: ChainDef2 = ChainDef2 {
+    name: "Pizza",
+    blocks: &PIZZA_POLY_BLOCKS,
 };
 
 static KICK_BLOCKS: [ChainBlock; 4] = [

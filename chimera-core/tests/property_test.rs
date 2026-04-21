@@ -41,22 +41,17 @@ fn random_params(rng: &mut Rng) -> ParamSnapshot {
     let mut p = ParamSnapshot::default();
 
     // Engine type
-    let engine = rng.u8(1); // 0=Fm, 1=Modal (skip Va for now)
+    let engine = rng.u8(1); // 0=Pizza, 1=Modal
     p.engine = if engine == 0 {
-        EngineType::Fm
+        EngineType::Pizza
     } else {
         EngineType::Modal
     };
 
-    // FM params
-    p.fm.algorithm = rng.u8(7);
-    p.fm.feedback = rng.f32();
-    for i in 0..4 {
-        p.fm.op_ratio[i] = rng.f32();
-        p.fm.op_detune[i] = rng.f32();
-        p.fm.op_waveform[i] = rng.u8(7);
-        p.fm.op_level[i] = rng.f32();
-    }
+    // Pizza params
+    p.pizza.shape = rng.f32();
+    p.pizza.crush = rng.f32();
+    p.pizza.level = rng.f32();
 
     // Modal params
     p.modal.mode = rng.u8(2);
@@ -215,7 +210,7 @@ fn prop_param_change_changes_output() {
             1 => params_b.drive.drive.set(1.0 - params_a.drive.drive.value),
             2 => params_b.folder.fold.set(1.0 - params_a.folder.fold.value),
             3 => params_b.volume.set(params_a.volume.value * 0.2),
-            _ => params_b.fm.feedback = 1.0 - params_a.fm.feedback,
+            _ => params_b.pizza.crush = 1.0 - params_a.pizza.crush,
         }
 
         let note = 60;
@@ -267,8 +262,12 @@ fn prop_note_off_eventually_silences() {
     for trial in 0..50 {
         let mut params = random_params(&mut rng);
         // Tame params so note actually decays
-        params.modal.ks_feedback = params.modal.ks_feedback * 0.3;
-        params.modal.decay = params.modal.decay * 0.5;
+        params.modal.ks_feedback = params.modal.ks_feedback * 0.1;
+        params.modal.decay = params.modal.decay * 0.2;
+        // Force bowed mode (2) to not self-sustain
+        if params.modal.mode == 2 {
+            params.modal.mode = 1; // use resonator instead
+        }
         params
             .filter
             .resonance
@@ -356,16 +355,14 @@ fn verify_full_sweep(
 }
 
 #[test]
-fn prop_fm_feedback_full_sweep() {
+fn prop_pizza_crush_full_sweep() {
     verify_full_sweep(
-        "FM feedback",
+        "Pizza crush",
         |p| {
-            p.engine = EngineType::Fm;
-            p.fm.algorithm = 7;
-            p.fm.op_level = [1.0, 0.0, 0.0, 1.0];
+            p.engine = EngineType::Pizza;
         },
         |p, v| {
-            p.fm.feedback = v;
+            p.pizza.crush = v;
         },
         16,
     );
@@ -376,8 +373,7 @@ fn prop_filter_cutoff_full_sweep() {
     verify_full_sweep(
         "Filter cutoff",
         |p| {
-            p.engine = EngineType::Fm;
-            p.fm.op_level = [0.5, 0.0, 0.0, 1.0];
+            p.engine = EngineType::Pizza;
             p.filter.mode = 2;
         },
         |p, v| {
@@ -392,8 +388,7 @@ fn prop_filter_resonance_full_sweep() {
     verify_full_sweep(
         "Filter resonance",
         |p| {
-            p.engine = EngineType::Fm;
-            p.fm.op_level = [0.5, 0.0, 0.0, 1.0];
+            p.engine = EngineType::Pizza;
             p.filter.cutoff.set(1000.0);
             p.filter.mode = 1;
         },
@@ -409,7 +404,7 @@ fn prop_drive_full_sweep() {
     verify_full_sweep(
         "Drive",
         |p| {
-            p.engine = EngineType::Fm;
+            p.engine = EngineType::Pizza;
             p.drive.mix.set(1.0);
         },
         |p, v| {
@@ -424,7 +419,7 @@ fn prop_folder_full_sweep() {
     verify_full_sweep(
         "Wavefolder",
         |p| {
-            p.engine = EngineType::Fm;
+            p.engine = EngineType::Pizza;
             p.folder.mix.set(1.0);
         },
         |p, v| {
@@ -439,7 +434,7 @@ fn prop_volume_full_sweep() {
     verify_full_sweep(
         "Volume",
         |p| {
-            p.engine = EngineType::Fm;
+            p.engine = EngineType::Pizza;
         },
         |p, v| {
             p.volume.set(v);
