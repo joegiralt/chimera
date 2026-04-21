@@ -618,7 +618,13 @@ impl Renderer {
     // ── BlockDef-based rendering ─────────────────────────────────────
 
     /// Render the parameter grid from a `BlockDef` instead of a `PageId`.
-    pub fn draw_params_from_def<D>(&self, display: &mut D, def: &BlockDef)
+    pub fn draw_params_from_def<D>(
+        &self,
+        display: &mut D,
+        def: &BlockDef,
+        block_idx: usize,
+        matrix_state: &crate::ui::mod_grid::MatrixState,
+    )
     where
         D: DrawTarget<Color = Rgb565>,
     {
@@ -638,8 +644,9 @@ impl Renderer {
 
             let val = self.anim[i].current();
 
-            // Label (dim)
-            let _ = Text::new(label, Point::new(x, y + 10), label_style).draw(display);
+            // Label — accent if focused
+            let lbl_style = if i == self.focused { MonoTextStyle::new(&FONT_6X10, theme::ACCENT) } else { label_style };
+            let _ = Text::new(label, Point::new(x, y + 10), lbl_style).draw(display);
 
             // Numeric value
             let mut buf = FmtBuf::new();
@@ -663,6 +670,42 @@ impl Renderer {
                     Size::new(fill_w as u32, theme::BAR_HEIGHT as u32),
                 )
                 .draw_styled(&PrimitiveStyle::with_fill(theme::PARAM_BAR_FG), display);
+            }
+
+            // Mod bar — bipolar, below value bar
+            let mod_amount = matrix_state.total_mod_for_param(block_idx as u8, i as u8);
+            if mod_amount != 0.0 {
+                let mod_bar_y = bar_y + theme::BAR_HEIGHT + 2;
+                let mid_x = x + theme::BAR_WIDTH / 2;
+                // Background
+                let _ = Rectangle::new(
+                    Point::new(x, mod_bar_y),
+                    Size::new(theme::BAR_WIDTH as u32, theme::BAR_HEIGHT as u32),
+                )
+                .draw_styled(&PrimitiveStyle::with_fill(theme::PARAM_BAR_BG), display);
+                // Center mark
+                let _ = Line::new(
+                    Point::new(mid_x, mod_bar_y),
+                    Point::new(mid_x, mod_bar_y + theme::BAR_HEIGHT - 1),
+                )
+                .draw_styled(&PrimitiveStyle::with_stroke(theme::TEXT_DIM, 1), display);
+                // Bipolar fill
+                let mod_color = Rgb565::new(20, 40, 20);
+                let fill = (mod_amount.clamp(-1.0, 1.0) * (theme::BAR_WIDTH / 2) as f32) as i32;
+                if fill > 0 {
+                    let _ = Rectangle::new(
+                        Point::new(mid_x, mod_bar_y),
+                        Size::new(fill as u32, theme::BAR_HEIGHT as u32),
+                    )
+                    .draw_styled(&PrimitiveStyle::with_fill(mod_color), display);
+                } else if fill < 0 {
+                    let abs_fill = (-fill) as u32;
+                    let _ = Rectangle::new(
+                        Point::new(mid_x - abs_fill as i32, mod_bar_y),
+                        Size::new(abs_fill, theme::BAR_HEIGHT as u32),
+                    )
+                    .draw_styled(&PrimitiveStyle::with_fill(mod_color), display);
+                }
             }
         }
     }
@@ -737,7 +780,7 @@ impl Renderer {
         match def.layout {
             PageLayout::BigViz => {
                 self.draw_viz_from_type(display, def.viz);
-                self.draw_params_from_def(display, def);
+                self.draw_params_from_def(display, def, nav.node, matrix_state);
             }
             PageLayout::CellGrid => {
                 self.draw_cell_grid_from_def(display, def, nav.node, matrix_state);
@@ -780,7 +823,7 @@ impl Renderer {
                 self.draw_viz_from_type(display, def.viz);
             }
             RegionKind::Params => {
-                self.draw_params_from_def(display, def);
+                self.draw_params_from_def(display, def, nav.node, matrix_state);
                 let _ = Line::new(
                     Point::new(0, theme::ENCODER_ZONE_BOTTOM),
                     Point::new(theme::SCREEN_W - 1, theme::ENCODER_ZONE_BOTTOM),
