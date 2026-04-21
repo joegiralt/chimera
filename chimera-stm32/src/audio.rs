@@ -7,9 +7,66 @@
 //! SAI1_A: MCKDIV=5 → MCLK=12.27MHz → FS=47917Hz
 
 use stm32h7xx_hal::pac;
+use cortex_m::peripheral::NVIC;
+use stm32h7xx_hal::pac::interrupt;
 
 // SAI1 Block A CR1 register address for raw bit manipulation (MCKEN bit 27)
 const SAI1_CHA_CR1: *mut u32 = 0x4001_5804 as *mut u32;
+
+// SAI1 Block A data register address: base 0x40015800 + CHA offset 0x04 + DR offset 0x1C
+const SAI1_CHA_DR: u32 = 0x4001_5820;
+
+/// DMA audio buffer in RAM_D2 — 256 × i16 = 128 stereo pairs.
+/// DMA reads one half while ISR fills the other.
+/// Note: RAM_D2 is NOLOAD, so this initializer is not applied by startup code.
+/// `prefill_buffer()` must be called before DMA starts.
+#[unsafe(link_section = ".ram_d2")]
+static mut AUDIO_BUF: [i16; 256] = [0; 256];
+
+/// Phase accumulator for sine generation — only accessed from DMA ISR.
+static mut SINE_PHASE: u32 = 0;
+
+/// 256-entry sine lookup table (i32, 50% amplitude).
+static SINE_TABLE: [i32; 256] = {
+    let mut table = [0i32; 256];
+    let mut i = 0;
+    while i < 256 {
+        let t = i as f64 / 256.0;
+        let x = t * 2.0 * 3.14159265358979323846;
+        let x = x - (6.28318530717958647692 * ((x / 6.28318530717958647692 + 0.5) as i64 as f64));
+        let x2 = x * x;
+        let x3 = x2 * x;
+        let x5 = x3 * x2;
+        let x7 = x5 * x2;
+        let x9 = x7 * x2;
+        let x11 = x9 * x2;
+        let s = x - x3 / 6.0 + x5 / 120.0 - x7 / 5040.0 + x9 / 362880.0 - x11 / 39916800.0;
+        table[i] = (s * 0.5 * 2147483647.0) as i32;
+        i += 1;
+    }
+    table
+};
+
+/// Fill 128 i16 samples (64 stereo pairs) starting at `offset` in AUDIO_BUF.
+fn fill_sine_buffer(offset: usize) {
+    // SAFETY: only accessed from single non-reentrant ISR (and prefill before DMA starts)
+    unsafe {
+        let phase_inc: u32 = 39_472_883; // 440 Hz at 47917 Hz
+        for i in (0..128).step_by(2) {
+            let idx = (SINE_PHASE >> 24) as usize;
+            let sample = (SINE_TABLE[idx] >> 16) as i16;
+            AUDIO_BUF[offset + i] = sample;     // left
+            AUDIO_BUF[offset + i + 1] = sample; // right
+            SINE_PHASE = SINE_PHASE.wrapping_add(phase_inc);
+        }
+    }
+}
+
+/// Pre-fill the entire AUDIO_BUF before DMA starts.
+pub fn prefill_buffer() {
+    fill_sine_buffer(0);
+    fill_sine_buffer(128);
+}
 
 /// Configure PLL3 to produce the SAI audio clock.
 pub fn init_pll3() {
