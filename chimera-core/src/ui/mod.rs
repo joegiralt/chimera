@@ -14,7 +14,8 @@ pub mod theme;
 
 use chimera_hal::{ButtonId, ButtonState, Controls, EncoderId};
 
-use crate::modulation::ModState;
+use crate::dsp::lfo::Lfo;
+use crate::modulation::{ModState, MAX_MOD_SOURCES};
 use crate::params::ParamSnapshot;
 use chain::ChainNav;
 use mod_grid::MatrixState;
@@ -34,6 +35,8 @@ pub struct UiState {
     region_set: region::RegionSet,
     /// Last encoder touched (0-5) — used to identify focused param for MIX+Plus/Minus
     last_encoder: usize,
+    /// Display-side LFO for animating modulated parameters
+    display_lfo: Lfo,
 }
 
 impl Default for UiState {
@@ -67,6 +70,7 @@ impl UiState {
             page,
             region_set: region::RegionSet::new(),
             last_encoder: 0,
+            display_lfo: Lfo::new(),
         }
     }
 
@@ -155,7 +159,42 @@ impl UiState {
 
     /// Advance animations. Call at 30fps.
     pub fn update(&mut self) {
-        self.renderer.update(self.page, &self.params);
+        // Tick the display-side LFO for visual modulation feedback
+        // Use a fake sample rate of 30 (UI frame rate) — the LFO process
+        // already accounts for BLOCK_SIZE internally, but for display we
+        // just want one tick per UI frame at the correct frequency.
+        let lfo_val = self.display_lfo.process(&self.params.lfo, 30 * chimera_hal::BLOCK_SIZE as u32);
+
+        // Read base param values
+        let mut values = self.page.read_values(&self.params);
+
+        // Apply mod offsets for display — makes bars and vizzes animate with modulation
+        let block_idx = self.nav.node as u8;
+        if self.mod_state.num_dests > 0 {
+            let mut mod_sources = [0.0f32; MAX_MOD_SOURCES];
+            // Source 0 = Envelope (use sustain level as approximation for display)
+            if self.mod_state.num_sources > 0 {
+                mod_sources[0] = self.params.envelopes[0].sustain.normalized();
+            }
+            // Source 1 = LFO
+            if self.mod_state.num_sources > 1 {
+                mod_sources[1] = lfo_val;
+            }
+
+            // Apply offsets to the 6 display values
+            for i in 0..6 {
+                let offset = self.mod_state.compute_offset(&mod_sources, block_idx, i as u8);
+                if offset != 0.0 {
+                    values[i] = (values[i] + offset).clamp(0.0, 1.0);
+                }
+            }
+        }
+
+        // Feed modulated values to the animator
+        for (a, &v) in self.renderer.anim.iter_mut().zip(values.iter()) {
+            a.set_target(v);
+            a.update();
+        }
     }
 
     /// Render full screen to a display.
