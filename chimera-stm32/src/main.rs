@@ -76,6 +76,8 @@ fn main() -> ! {
         &ccdr.clocks,
     );
     let mut display = Stm32Display::new(spi, dc, reset, cs);
+    // Wait for ILI9341 power-on — hardware SPI is fast enough to outrun the display
+    cortex_m::asm::delay(100_000_000); // ~250ms at 400MHz
     display.init();
 
     let mut controls = Stm32Controls::new();
