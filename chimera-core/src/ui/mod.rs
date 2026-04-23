@@ -24,6 +24,16 @@ use page::{PageId, PageLayout};
 use perf::PerfStats;
 use renderer::Renderer;
 
+/// UI mode — Normal chain navigation vs overlay screens.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UiMode {
+    Normal,
+    PatchBrowser { track: usize, cursor: usize, scroll: usize },
+}
+
+/// Double-tap detection window in frames (~300ms at 20 FPS).
+const DOUBLE_TAP_FRAMES: u32 = 6;
+
 /// Top-level UI state. Owns navigation, parameters, and display animation.
 /// Portable across desktop and hardware — only depends on HAL traits.
 pub struct UiState {
@@ -32,12 +42,17 @@ pub struct UiState {
     pub active_track: usize,
     pub renderer: Renderer,
     pub matrix_state: MatrixState,
+    pub ui_mode: UiMode,
     page: PageId,
     region_set: region::RegionSet,
     /// Last encoder touched (0-5) — used to identify focused param for MIX+Plus/Minus
     last_encoder: usize,
     /// Display-side LFO for animating modulated parameters
     display_lfo: Lfo,
+    /// Frame counter incremented each update() call — used for double-tap timing
+    frame_count: u32,
+    /// Frame of last B1-B6 press per button — for double-tap detection
+    last_b_press: [u32; 6],
 }
 
 impl Default for UiState {
@@ -68,10 +83,14 @@ impl UiState {
             active_track: 0,
             renderer,
             matrix_state,
+            ui_mode: UiMode::Normal,
             page,
             region_set: region::RegionSet::new(),
             last_encoder: 0,
             display_lfo: Lfo::new(),
+            frame_count: 0,
+            // Initialize to u32::MAX so first press is never detected as double-tap
+            last_b_press: [u32::MAX; 6],
         }
     }
 
@@ -102,6 +121,29 @@ impl UiState {
 
     /// Process one frame of input: navigation + encoder deltas.
     pub fn handle_input(&mut self, controls: &impl Controls) {
+        // Double-tap detection for B1-B6: check *before* nav consumes the press
+        let b_buttons = [
+            ButtonId::B1,
+            ButtonId::B2,
+            ButtonId::B3,
+            ButtonId::B4,
+            ButtonId::B5,
+            ButtonId::B6,
+        ];
+        for (i, &btn) in b_buttons.iter().enumerate() {
+            if controls.button_state(btn) == ButtonState::Pressed {
+                let prev = self.last_b_press[i];
+                if self.frame_count.wrapping_sub(prev) <= DOUBLE_TAP_FRAMES {
+                    // Double-tap detected — open patch browser for this track
+                    self.ui_mode = UiMode::PatchBrowser { track: i, cursor: 0, scroll: 0 };
+                    // Reset so a third tap doesn't re-trigger
+                    self.last_b_press[i] = u32::MAX;
+                } else {
+                    self.last_b_press[i] = self.frame_count;
+                }
+            }
+        }
+
         // Navigation
         let nav_changed = self.nav.handle_input(controls);
         if nav_changed {
@@ -183,8 +225,10 @@ impl UiState {
         }
     }
 
-    /// Advance animations. Call at 30fps.
+    /// Advance animations. Call at UI_FPS (~20fps).
     pub fn update(&mut self) {
+        self.frame_count = self.frame_count.wrapping_add(1);
+
         let at = self.active_track;
         let patch = &self.project.tracks[at].patch;
 
