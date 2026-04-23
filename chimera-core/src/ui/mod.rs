@@ -17,7 +17,8 @@ use chimera_hal::{ButtonId, ButtonState, Controls, EncoderId};
 use crate::dsp::lfo::Lfo;
 use crate::modulation::{ModState, MAX_MOD_SOURCES};
 use crate::params::ParamSnapshot;
-use chain::ChainNav;
+use crate::preset::Project;
+use chain::{ChainId, ChainNav};
 use mod_grid::MatrixState;
 use page::{PageId, PageLayout};
 use perf::PerfStats;
@@ -27,10 +28,10 @@ use renderer::Renderer;
 /// Portable across desktop and hardware — only depends on HAL traits.
 pub struct UiState {
     pub nav: ChainNav,
-    pub params: ParamSnapshot,
+    pub project: Project,
+    pub active_track: usize,
     pub renderer: Renderer,
     pub matrix_state: MatrixState,
-    pub mod_state: ModState,
     page: PageId,
     region_set: region::RegionSet,
     /// Last encoder touched (0-5) — used to identify focused param for MIX+Plus/Minus
@@ -48,10 +49,10 @@ impl Default for UiState {
 impl UiState {
     pub fn new() -> Self {
         let nav = ChainNav::new();
-        let params = ParamSnapshot::default();
+        let project = Project::new();
         let page = PageId::from_nav(&nav);
         let mut renderer = Renderer::new();
-        renderer.snap_to_current(page, &params);
+        renderer.snap_to_current(page, &project.tracks[0].patch.params);
 
         let mut matrix_state = MatrixState::new();
         // Build source + dest lists from the chain
@@ -63,15 +64,35 @@ impl UiState {
 
         Self {
             nav,
-            params,
+            project,
+            active_track: 0,
             renderer,
             matrix_state,
-            mod_state: ModState::new(),
             page,
             region_set: region::RegionSet::new(),
             last_encoder: 0,
             display_lfo: Lfo::new(),
         }
+    }
+
+    /// Returns a reference to the active track's params.
+    pub fn params(&self) -> &ParamSnapshot {
+        &self.project.tracks[self.active_track].patch.params
+    }
+
+    /// Returns a mutable reference to the active track's params.
+    pub fn params_mut(&mut self) -> &mut ParamSnapshot {
+        &mut self.project.tracks[self.active_track].patch.params
+    }
+
+    /// Returns a reference to the active track's mod state.
+    pub fn mod_state(&self) -> &ModState {
+        &self.project.tracks[self.active_track].patch.mod_state
+    }
+
+    /// Returns a mutable reference to the active track's mod state.
+    pub fn mod_state_mut(&mut self) -> &mut ModState {
+        &mut self.project.tracks[self.active_track].patch.mod_state
     }
 
     /// Current page id.
@@ -84,11 +105,13 @@ impl UiState {
         // Navigation
         let nav_changed = self.nav.handle_input(controls);
         if nav_changed {
+            // Update active_track when navigating to a Part
+            if let ChainId::Part(i) = self.nav.chain_id {
+                self.active_track = i;
+                self.nav.chain_type = self.project.tracks[i].patch.chain_type;
+            }
             self.page = PageId::from_nav(&self.nav);
-            self.renderer.snap_to_current(self.page, &self.params);
-
-            // Engine type is set by the Part's chain, not by page navigation.
-            // For now, keep whatever engine was set at init (Pizza by default).
+            self.renderer.snap_to_current(self.page, &self.project.tracks[self.active_track].patch.params);
         }
 
         // Encoder deltas -> parameter changes
@@ -117,13 +140,15 @@ impl UiState {
                         3 => self.matrix_state.scroll_h(delta),
                         4 => {
                             self.matrix_state.adjust_amount(delta);
-                            self.mod_state.sync_from_matrix(&self.matrix_state);
+                            self.project.tracks[self.active_track].patch.mod_state.sync_from_matrix(&self.matrix_state);
                         }
                         _ => {}
                     }
                 }
             }
         } else {
+            let page = self.page;
+            let at = self.active_track;
             for (i, &enc) in encoder_ids.iter().enumerate() {
                 let delta = controls.encoder_delta(enc);
                 if delta != 0 {
@@ -131,9 +156,9 @@ impl UiState {
                     self.renderer.focused = i;
                     if shift {
                         let fmt = def.params[i].format;
-                        self.page.snap_encoder(i, delta, fmt, &mut self.params);
+                        page.snap_encoder(i, delta, fmt, &mut self.project.tracks[at].patch.params);
                     } else {
-                        self.page.apply_encoder(i, delta, &mut self.params);
+                        page.apply_encoder(i, delta, &mut self.project.tracks[at].patch.params);
                     }
                 }
             }
@@ -143,15 +168,16 @@ impl UiState {
                 let block_idx = self.nav.node as u8;
                 let param_idx = self.last_encoder as u8;
                 let chain = self.nav.active_chain();
+                let at = self.active_track;
                 if controls.button_state(ButtonId::Plus) == ButtonState::Pressed {
                     self.matrix_state.set_mod_enabled(block_idx, param_idx, true);
                     self.matrix_state.rebuild_dests_from_chain(chain.blocks);
-                    self.mod_state.sync_from_matrix(&self.matrix_state);
+                    self.project.tracks[at].patch.mod_state.sync_from_matrix(&self.matrix_state);
                 }
                 if controls.button_state(ButtonId::Minus) == ButtonState::Pressed {
                     self.matrix_state.set_mod_enabled(block_idx, param_idx, false);
                     self.matrix_state.rebuild_dests_from_chain(chain.blocks);
-                    self.mod_state.sync_from_matrix(&self.matrix_state);
+                    self.project.tracks[at].patch.mod_state.sync_from_matrix(&self.matrix_state);
                 }
             }
         }
@@ -159,12 +185,15 @@ impl UiState {
 
     /// Advance animations. Call at 30fps.
     pub fn update(&mut self) {
+        let at = self.active_track;
+        let patch = &self.project.tracks[at].patch;
+
         // Read base param values
-        let mut values = self.page.read_values(&self.params);
+        let mut values = self.page.read_values(&patch.params);
 
         // Apply mod offsets for display — makes bars and vizzes animate with modulation.
         // Skip the LFO tick entirely when no modulation is active.
-        if self.mod_state.num_dests > 0 {
+        if patch.mod_state.num_dests > 0 {
             // Tick the display-side LFO for visual modulation feedback.
             // LFO.process() advances phase by: rate / sample_rate * BLOCK_SIZE
             // We want phase to advance by: rate / ui_fps per call.
@@ -177,22 +206,22 @@ impl UiState {
             // sr = BLOCK_SIZE * fps. At variable fps, assume ~30.
             // If animations look too slow/fast, this constant needs tuning.
             const UI_FPS: u32 = 20; // tuned to match audio-side LFO rate
-            let lfo_val = self.display_lfo.process(&self.params.lfo, chimera_hal::BLOCK_SIZE as u32 * UI_FPS);
+            let lfo_val = self.display_lfo.process(&patch.params.lfo, chimera_hal::BLOCK_SIZE as u32 * UI_FPS);
 
             let block_idx = self.nav.node as u8;
             let mut mod_sources = [0.0f32; MAX_MOD_SOURCES];
             // Source 0 = Envelope (use sustain level as approximation for display)
-            if self.mod_state.num_sources > 0 {
-                mod_sources[0] = self.params.envelopes[0].sustain.normalized();
+            if patch.mod_state.num_sources > 0 {
+                mod_sources[0] = patch.params.envelopes[0].sustain.normalized();
             }
             // Source 1 = LFO
-            if self.mod_state.num_sources > 1 {
+            if patch.mod_state.num_sources > 1 {
                 mod_sources[1] = lfo_val;
             }
 
             // Apply offsets to the 6 display values
             for i in 0..6 {
-                let offset = self.mod_state.compute_offset(&mod_sources, block_idx, i as u8);
+                let offset = patch.mod_state.compute_offset(&mod_sources, block_idx, i as u8);
                 if offset != 0.0 {
                     values[i] = (values[i] + offset).clamp(0.0, 1.0);
                 }
