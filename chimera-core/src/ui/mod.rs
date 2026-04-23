@@ -168,6 +168,18 @@ impl UiState {
                 return;
             }
 
+            // Seq button: save current track's patch into highlighted pool slot
+            if controls.button_state(ButtonId::Seq) == ButtonState::Pressed {
+                let save_cursor = *cursor;
+                let save_track = track;
+                if save_cursor < POOL_SIZE {
+                    let patch = self.project.tracks[save_track].patch.clone();
+                    self.project.pool.store(save_cursor, patch);
+                }
+                // Stay in browser mode so the user can see the saved slot
+                return;
+            }
+
             // Any B-button press: cancel browser
             let b_buttons = [
                 ButtonId::B1, ButtonId::B2, ButtonId::B3,
