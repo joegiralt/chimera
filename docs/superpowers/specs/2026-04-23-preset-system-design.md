@@ -2,7 +2,7 @@
 
 ## Overview
 
-Chimera's preset system follows the Elektron model: a **Project** holds a **Sound Pool** of 32 patch slots in RAM. Six tracks (B1-B6) reference slots in the pool. Multiple tracks can share the same slot — editing the slot affects all tracks that reference it.
+Chimera's preset system follows the Elektron Digitone model: a **Project** holds a **Sound Pool** of 32 patch slots in RAM. Six tracks (B1-B6) each own their own independent parameter state. Loading a patch from the pool **copies** it into the track — edits to a track never modify the pool. The pool is a template library for quick recall.
 
 First iteration: RAM-only (patches lost on power-off). Serialization format is defined for future SD card persistence.
 
@@ -12,8 +12,8 @@ First iteration: RAM-only (patches lost on power-off). Serialization format is d
 - **Modulation block** — lives under the mod matrix. A modulator (LFO, envelope) that can modulate audio block params or other modulator params.
 - **Chain** — a series of configured audio blocks and modulation blocks. Defined by a `ChainType` (e.g., PizzaPoly, Modal, FM).
 - **Patch** — a chain and its parameter state configured a specific way. A saved sound.
-- **Sound Pool** — 32 patch slots held in RAM. The hot-swappable patch bank.
-- **Project** — the full synth state: sound pool, mixer state, and which tracks reference which slots.
+- **Sound Pool** — 32 patch slots held in RAM. A template library for quick recall and future sound locks.
+- **Project** — the full synth state: sound pool, mixer state, and per-track parameter state.
 
 ## Data Model
 
@@ -38,7 +38,20 @@ struct SoundPool {
 }
 ```
 
-32 slots in RAM. `None` = empty slot. On boot, slots default to init patches (chain-specific defaults). ~500 bytes per patch, ~16KB total.
+32 slots in RAM. `None` = empty slot. ~500 bytes per patch, ~16KB total. The pool is a library of sound templates — not live state.
+
+### Track
+
+Each track owns its own independent copy of the sound parameters:
+
+```rust
+struct Track {
+    patch: Patch,              // independent copy, not a reference
+    loaded_from: Option<u8>,   // which pool slot this was loaded from (for UI display)
+}
+```
+
+Loading a patch from the pool copies it into the track. Editing the track modifies only the track's copy. The pool slot is unchanged. The user can save edits back to the pool explicitly.
 
 ### Project
 
@@ -46,12 +59,8 @@ struct SoundPool {
 struct Project {
     name: [u8; 16],
     pool: SoundPool,
-    tracks: [TrackAssignment; 6],  // B1-B6
-    mixer: MixerState,             // levels, pans, sends
-}
-
-struct TrackAssignment {
-    slot: Option<u8>,  // index into pool, None = silent
+    tracks: [Track; 6],       // B1-B6, each owns its params
+    mixer: MixerState,        // levels, pans, sends
 }
 ```
 
@@ -68,31 +77,35 @@ enum ChainType {
 
 Maps to the existing chain definitions in `block_registry.rs`.
 
-## Shared References
+## Copy-on-Load (Digitone Model)
 
-Tracks reference pool slots by index. Multiple tracks can point to the same slot.
+Tracks own independent copies. The pool is a template library.
 
 ```
 Pool:   [0: "Acid Bass"] [1: "Pad Wash"] [2: "Pluck"] [3: (init)] ...
 
-B1 → slot 0  ●
-B2 → slot 1  ●
-B3 → slot 0  ●  ← same as B1, edits affect both
-B4 → slot 2  ●
-B5 → None    (silent)
-B6 → None    (silent)
+Load slot 0 → B1:  B1 gets a COPY of "Acid Bass"
+Load slot 0 → B3:  B3 gets a COPY of "Acid Bass"
+
+Edit B1's filter cutoff → only B1 changes. B3 and pool slot 0 are unaffected.
+Save B1 → slot 0:  explicitly overwrites pool slot with B1's current state.
 ```
 
-When the user edits params on B1, they're editing slot 0. B3 shares slot 0, so B3's sound changes too. This matches the Digitone sound pool model.
+Benefits:
+- Each track is fully independent — no shared mutation
+- Audio thread reads track params directly, no indirection through pool
+- Pool slots are stable templates, not live-edited state
+- Matches existing architecture where each voice has its own `ParamSnapshot`
+- Future sound locks (per-step sound changes) use pool indices naturally
 
 ## Audio Thread Integration
 
 The audio thread currently reads params via `ParamSnapshot` pointer. With the preset system:
 
-1. `Project` owns the `SoundPool` which owns the `Patch` structs.
-2. Each track's voice reads from its assigned patch's `ParamSnapshot`.
-3. When a track's slot assignment changes, the voice's param pointer is updated.
-4. Slot swaps are a pointer change — zero-copy, safe for the audio thread.
+1. Each `Track` owns its `Patch` which contains the `ParamSnapshot`.
+2. The voice reads from its track's `ParamSnapshot` — same as today.
+3. Loading a patch = memcpy from pool slot into track's patch, then update the voice's param pointer.
+4. No lock needed: UI writes to inactive buffer, atomically swaps pointer (existing mechanism).
 
 ## UI Flow
 
@@ -102,15 +115,19 @@ The audio thread currently reads params via `ParamSnapshot` pointer. With the pr
 2. Patch browser opens, showing the 32 pool slots.
 3. Each slot displays: slot number, patch name, chain type.
 4. User scrolls with encoder, selects with press.
-5. B1 now references the selected slot.
+5. Pool slot is **copied** into B1's track. B1 now plays that sound.
 
 ### Edit patch
 
-Normal chain navigation. Editing params modifies the referenced pool slot directly. All tracks sharing that slot hear changes immediately.
+Normal chain navigation. Editing params modifies the track's own copy. Pool is unaffected.
+
+### Save patch to pool
+
+User action (e.g., long-press in patch browser) copies the track's current state back into a pool slot. This overwrites the slot.
 
 ### Init patch
 
-In the patch browser, an "(init)" option writes a fresh default patch (for the selected chain type) into the current slot.
+In the patch browser, an "(init)" option copies a fresh default patch (for the selected chain type) into the track. Every chain type has musically useful init defaults (not zeros).
 
 ## Serialization Format
 
@@ -134,17 +151,20 @@ For the RAM-only first iteration, serialization is not exercised — patches are
 
 ### First iteration (this spec)
 
-- `Patch`, `SoundPool`, `Project`, `TrackAssignment` types in `chimera-core`
-- Track-to-slot assignment and hot-swap
+- `Patch`, `SoundPool`, `Track`, `Project`, `ChainType` types in `chimera-core`
+- Copy-on-load: pool slot → track
+- Save-to-pool: track → pool slot
 - Patch browser UI (double-tap B1-B6)
-- Init patch per chain type
-- Wire audio thread to read from pool slots
+- Init patch per chain type (musically useful defaults)
+- Wire audio thread to read from track-owned params
 - Serialization format defined (structs laid out for `repr(C)` / raw byte access)
 
 ### Future iterations
 
 - SD card driver (SPI2) + FAT filesystem
 - Save/load patches and projects from SD card
+- Sound library on SD (persistent, cross-project, tagged/browsable)
+- Sound locks (per-step sound changes from pool — sequencer feature)
 - Copy/paste patches between slots
 - Factory preset bank
 - Project save/load
