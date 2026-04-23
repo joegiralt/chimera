@@ -41,6 +41,11 @@ impl Param {
         self.set(self.min + n * (self.max - self.min));
     }
 
+    /// Returns the current value.
+    pub fn value(&self) -> f32 {
+        self.value
+    }
+
     /// Apply a modulation offset scaled by the param's range.
     pub fn apply_mod_offset(&mut self, offset: f32) {
         self.value = (self.value + offset * (self.max - self.min))
