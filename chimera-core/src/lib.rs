@@ -3,4 +3,5 @@
 pub mod dsp;
 pub mod modulation;
 pub mod params;
+pub mod preset;
 pub mod ui;

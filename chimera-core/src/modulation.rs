@@ -83,3 +83,9 @@ impl ModState {
         }
     }
 }
+
+impl Default for ModState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
