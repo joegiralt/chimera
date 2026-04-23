@@ -5,6 +5,7 @@ members = [
     "chimera-hal",
     "chimera-stm32",
     "chimera-desktop",
+    "chimera-bootloader",
 ]
 default-members = [
     "chimera-core",

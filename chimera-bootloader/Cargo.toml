@@ -1,0 +1,9 @@
+[package]
+name = "chimera-bootloader"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+cortex-m = "0.7"
+cortex-m-rt = "0.7"
+panic-halt = "1.0"
