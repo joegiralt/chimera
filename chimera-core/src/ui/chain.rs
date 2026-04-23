@@ -1,4 +1,5 @@
 use chimera_hal::{ButtonId, ButtonState, Controls};
+use crate::preset::ChainType;
 use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2};
 use crate::ui::block_registry;
 
@@ -15,6 +16,8 @@ pub struct ChainNav {
     pub chain_id: ChainId,
     pub node: usize,
     pub sub_page: usize,
+    /// Engine/chain type for the active Part (used to resolve ChainId::Part to a chain def).
+    pub chain_type: ChainType,
 }
 
 impl Default for ChainNav {
@@ -29,15 +32,15 @@ impl ChainNav {
             chain_id: ChainId::Part(0),
             node: 0,
             sub_page: 0,
+            chain_type: ChainType::PizzaPoly,
         }
     }
 
     /// Get the chain definition for the current ChainId.
+    /// For `Part(_)`, resolves via the stored `chain_type` (set by UiState from the active track).
     pub fn active_chain(&self) -> &'static ChainDef2 {
         match self.chain_id {
-            // All parts currently default to PIZZA_POLY_CHAIN.
-            // In the future each Part will have its own chain.
-            ChainId::Part(_) => &block_registry::PIZZA_POLY_CHAIN,
+            ChainId::Part(_) => chain_def_for(self.chain_type),
             ChainId::Mixer(_) => &block_registry::MIXER_CHANNEL_CHAIN,
             ChainId::System => &block_registry::SYSTEM_CHAIN,
             ChainId::Demo => &block_registry::DEMO_CHAIN,
@@ -146,5 +149,15 @@ impl ChainNav {
         self.chain_id != prev_chain_id
             || self.node != prev_node
             || self.sub_page != prev_sub
+    }
+}
+
+/// Resolve a `ChainType` to the corresponding static chain definition.
+pub fn chain_def_for(ct: ChainType) -> &'static ChainDef2 {
+    match ct {
+        ChainType::PizzaPoly => &block_registry::PIZZA_POLY_CHAIN,
+        ChainType::Modal => &block_registry::MODAL_PLUCK_CHAIN,
+        // FM chain not yet built — fall back to PizzaPoly for now.
+        ChainType::Fm => &block_registry::PIZZA_POLY_CHAIN,
     }
 }
