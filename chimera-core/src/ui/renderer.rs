@@ -886,6 +886,110 @@ impl Renderer {
         let _ = Text::new(def.name, Point::new(x, y), bright).draw(display);
     }
 
+    // ── Patch Browser ────────────────────────────────────────────────
+
+    /// Number of visible rows in the patch browser list.
+    pub const BROWSER_VISIBLE_ROWS: usize = 10;
+    /// Total entries: 32 pool slots + 1 "(init)" option.
+    pub const BROWSER_TOTAL_ENTRIES: usize = crate::preset::POOL_SIZE + 1;
+
+    /// Draw the full-screen patch browser overlay.
+    pub fn draw_patch_browser<D>(
+        display: &mut D,
+        pool: &crate::preset::SoundPool,
+        track: usize,
+        cursor: usize,
+        scroll: usize,
+    )
+    where
+        D: DrawTarget<Color = Rgb565>,
+    {
+        // Clear screen
+        let _ = Rectangle::new(Point::zero(), Size::new(240, 320))
+            .draw_styled(&PrimitiveStyle::with_fill(theme::BG), display);
+
+        // Title bar: "LOAD PATCH: B[n]"
+        let mut title_buf = FmtBuf::new();
+        let _ = write!(title_buf, "LOAD PATCH: B{}", track + 1);
+        let title_style = MonoTextStyle::new(&FONT_6X10, theme::ACCENT);
+        let _ = Text::new(title_buf.as_str(), Point::new(8, theme::HEADER_Y + 10), title_style)
+            .draw(display);
+
+        // Separator below title
+        let _ = Line::new(
+            Point::new(0, 22),
+            Point::new(theme::SCREEN_W - 1, 22),
+        )
+        .draw_styled(&PrimitiveStyle::with_stroke(theme::SEPARATOR, 1), display);
+
+        // List rows
+        let row_height: i32 = 24;
+        let list_top: i32 = 28;
+        let text_style = MonoTextStyle::new(&FONT_6X10, theme::TEXT);
+        let dim_style = MonoTextStyle::new(&FONT_6X10, theme::TEXT_DIM);
+
+        let visible = Self::BROWSER_VISIBLE_ROWS.min(Self::BROWSER_TOTAL_ENTRIES);
+        for i in 0..visible {
+            let entry_idx = scroll + i;
+            if entry_idx >= Self::BROWSER_TOTAL_ENTRIES {
+                break;
+            }
+
+            let y = list_top + i as i32 * row_height;
+            let is_selected = entry_idx == cursor;
+
+            // Highlight bar for selected row
+            if is_selected {
+                let _ = Rectangle::new(
+                    Point::new(0, y),
+                    Size::new(240, row_height as u32),
+                )
+                .draw_styled(&PrimitiveStyle::with_fill(theme::ACCENT_DIM), display);
+            }
+
+            let text_color = if is_selected { theme::TEXT } else { theme::TEXT_MID };
+            let style = MonoTextStyle::new(&FONT_6X10, text_color);
+
+            if entry_idx < crate::preset::POOL_SIZE {
+                // Pool slot row: "[nn] Name  Type"
+                let mut row_buf = FmtBuf::new();
+                if let Some(patch) = pool.get(entry_idx) {
+                    let _ = write!(row_buf, "{:2} {} {}", entry_idx + 1, patch.name_str(), patch.chain_type.label());
+                } else {
+                    let _ = write!(row_buf, "{:2} (empty)", entry_idx + 1);
+                }
+                let _ = Text::new(row_buf.as_str(), Point::new(8, y + 16), style).draw(display);
+            } else {
+                // Init entry (index == POOL_SIZE)
+                let _ = Text::new("** (init) PizzaPoly", Point::new(8, y + 16), style).draw(display);
+            }
+        }
+
+        // Scroll indicator — show position in list
+        if Self::BROWSER_TOTAL_ENTRIES > visible {
+            let bar_top = list_top;
+            let bar_height = visible as i32 * row_height;
+            let thumb_height = (bar_height * visible as i32 / Self::BROWSER_TOTAL_ENTRIES as i32).max(8);
+            let max_scroll = Self::BROWSER_TOTAL_ENTRIES - visible;
+            let thumb_y = bar_top + if max_scroll > 0 {
+                (bar_height - thumb_height) * scroll as i32 / max_scroll as i32
+            } else {
+                0
+            };
+
+            let _ = Rectangle::new(
+                Point::new(234, thumb_y),
+                Size::new(4, thumb_height as u32),
+            )
+            .draw_styled(&PrimitiveStyle::with_fill(theme::TEXT_DIM), display);
+        }
+
+        // Footer hint
+        let hint_style = MonoTextStyle::new(&FONT_6X10, theme::TEXT_DIM);
+        let _ = Text::new("Turn:scroll  Edit:load  B:cancel", Point::new(8, 306), hint_style)
+            .draw(display);
+    }
+
     // ── Dirty region helpers ─────────────────────────────────────────
 
     /// Clear a screen region by direct framebuffer fill. Much faster than draw_iter.

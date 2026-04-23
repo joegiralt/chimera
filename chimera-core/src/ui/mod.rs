@@ -17,7 +17,7 @@ use chimera_hal::{ButtonId, ButtonState, Controls, EncoderId};
 use crate::dsp::lfo::Lfo;
 use crate::modulation::{ModState, MAX_MOD_SOURCES};
 use crate::params::ParamSnapshot;
-use crate::preset::Project;
+use crate::preset::{ChainType, Project, POOL_SIZE};
 use chain::{ChainId, ChainNav};
 use mod_grid::MatrixState;
 use page::{PageId, PageLayout};
@@ -121,6 +121,80 @@ impl UiState {
 
     /// Process one frame of input: navigation + encoder deltas.
     pub fn handle_input(&mut self, controls: &impl Controls) {
+        // ── Patch Browser mode input ─────────────────────────────────
+        if let UiMode::PatchBrowser { track, ref mut cursor, ref mut scroll } = self.ui_mode {
+            let total = Renderer::BROWSER_TOTAL_ENTRIES;
+            let visible = Renderer::BROWSER_VISIBLE_ROWS.min(total);
+
+            // Encoder A or Main: scroll cursor
+            let delta = controls.encoder_delta(EncoderId::Main)
+                + controls.encoder_delta(EncoderId::A);
+            if delta != 0 {
+                let new_cursor = (*cursor as i32 + delta as i32)
+                    .clamp(0, total as i32 - 1) as usize;
+                *cursor = new_cursor;
+                // Adjust scroll to keep cursor visible
+                if new_cursor < *scroll {
+                    *scroll = new_cursor;
+                } else if new_cursor >= *scroll + visible {
+                    *scroll = new_cursor + 1 - visible;
+                }
+            }
+
+            // Edit button: confirm selection / load
+            if controls.button_state(ButtonId::Edit) == ButtonState::Pressed {
+                let sel_cursor = *cursor;
+                let sel_track = track;
+                if sel_cursor < POOL_SIZE {
+                    // Load from pool — clone patch first to avoid borrow conflict
+                    if let Some(patch) = self.project.pool.get(sel_cursor) {
+                        let loaded = patch.clone();
+                        self.project.tracks[sel_track].patch = loaded;
+                        self.project.tracks[sel_track].loaded_from = Some(sel_cursor as u8);
+                    }
+                } else {
+                    // Init entry: reset track to default PizzaPoly
+                    self.project.tracks[sel_track] = crate::preset::Track::new(ChainType::PizzaPoly);
+                }
+                // Switch to the loaded track and return to normal mode
+                self.active_track = sel_track;
+                self.nav.chain_id = ChainId::Part(sel_track);
+                self.nav.node = 0;
+                self.nav.sub_page = 0;
+                self.nav.chain_type = self.project.tracks[sel_track].patch.chain_type;
+                self.page = PageId::from_nav(&self.nav);
+                self.renderer.snap_to_current(self.page, &self.project.tracks[sel_track].patch.params);
+                self.ui_mode = UiMode::Normal;
+                return;
+            }
+
+            // Any B-button press: cancel browser
+            let b_buttons = [
+                ButtonId::B1, ButtonId::B2, ButtonId::B3,
+                ButtonId::B4, ButtonId::B5, ButtonId::B6,
+            ];
+            for &btn in &b_buttons {
+                if controls.button_state(btn) == ButtonState::Pressed {
+                    self.ui_mode = UiMode::Normal;
+                    // Reset double-tap timers so the cancel press doesn't
+                    // immediately re-trigger a double-tap
+                    self.last_b_press = [u32::MAX; 6];
+                    return;
+                }
+            }
+
+            // Menu button also cancels
+            if controls.button_state(ButtonId::Menu) == ButtonState::Pressed {
+                self.ui_mode = UiMode::Normal;
+                return;
+            }
+
+            // Consume all other input — don't pass to normal handlers
+            return;
+        }
+
+        // ── Normal mode ──────────────────────────────────────────────
+
         // Double-tap detection for B1-B6: check *before* nav consumes the press
         let b_buttons = [
             ButtonId::B1,
@@ -286,6 +360,10 @@ impl UiState {
                 Color = embedded_graphics::pixelcolor::Rgb565,
             >,
     {
+        if let UiMode::PatchBrowser { track, cursor, scroll } = self.ui_mode {
+            Renderer::draw_patch_browser(display, &self.project.pool, track, cursor, scroll);
+            return;
+        }
         let def = self.nav.active_block_def();
         self.renderer.draw_with_def(display, &self.nav, def, perf, &self.matrix_state);
     }
@@ -333,6 +411,18 @@ impl UiState {
             + chimera_hal::ChimeraDisplay,
     {
         use region::{RegionData, RegionKind};
+
+        // Patch browser overlay — always full redraw, single flush region
+        if let UiMode::PatchBrowser { track, cursor, scroll } = self.ui_mode {
+            let fb = display.pixel_buffer();
+            Renderer::clear_region_fb(fb, 0, chimera_hal::SCREEN_HEIGHT);
+            Renderer::draw_patch_browser(display, &self.project.pool, track, cursor, scroll);
+            // Invalidate region set so normal layout forces full rebuild on exit
+            self.region_set.prev_layout = None;
+            let mut flush_list = [(0u16, 0u16); region::MAX_REGIONS];
+            flush_list[0] = (0, chimera_hal::SCREEN_HEIGHT);
+            return flush_list;
+        }
 
         let def = self.nav.active_block_def();
         let layout = def.layout;
