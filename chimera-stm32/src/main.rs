@@ -11,10 +11,17 @@ use chimera_core::ui::UiState;
 use chimera_core::ui::perf::PerfTracker;
 use chimera_hal::{ChimeraDisplay, Controls};
 use controls::Stm32Controls;
-use cortex_m_rt::{entry, exception};
+use cortex_m_rt::{entry, exception, pre_init};
 use display::Stm32Display;
 use panic_halt as _;
 use stm32h7xx_hal::{pac, prelude::*, spi};
+
+/// Set VTOR to our vector table. Our custom bootloader (chimera-bootloader)
+/// provides a clean peripheral state, so no other cleanup is needed.
+#[pre_init]
+unsafe fn before_main() {
+    core::ptr::write_volatile(0xE000_ED08 as *mut u32, 0x0802_0000);
+}
 
 #[exception]
 fn SysTick() {
@@ -23,9 +30,6 @@ fn SysTick() {
 
 #[entry]
 fn main() -> ! {
-    unsafe {
-        core::ptr::write_volatile(0xE000_ED08 as *mut u32, 0x0802_0000);
-    }
 
     let dp = pac::Peripherals::take().unwrap();
     let pwr = dp.PWR.constrain();
@@ -39,7 +43,7 @@ fn main() -> ! {
         .pclk2(100.MHz())
         .pclk3(100.MHz())
         .pclk4(100.MHz())
-        .pll1_q_ck(200.MHz())  // Enable PLL1_Q for SPI1 kernel clock
+        .pll1_q_ck(200.MHz())
         .freeze(pwrcfg, &dp.SYSCFG);
 
     let gpioa = dp.GPIOA.split(ccdr.peripheral.GPIOA);
@@ -61,6 +65,7 @@ fn main() -> ! {
     let _sai_sd_a = gpioe.pe6.into_alternate::<6>();
     led.set_high();
 
+    // SPI1 display pins
     let mut sck = gpioa.pa5.into_alternate::<5>();
     let mut mosi = gpioa.pa7.into_alternate::<5>();
     sck.set_speed(stm32h7xx_hal::gpio::Speed::High);
@@ -68,6 +73,7 @@ fn main() -> ! {
     let dc = gpiod.pd8.into_push_pull_output();
     let reset = gpiod.pd9.into_push_pull_output();
     let cs = gpiod.pd10.into_push_pull_output();
+
     let spi = dp.SPI1.spi(
         (sck, spi::NoMiso, mosi),
         spi::Config::new(spi::MODE_0),
@@ -75,9 +81,9 @@ fn main() -> ! {
         ccdr.peripheral.SPI1,
         &ccdr.clocks,
     );
+
     let mut display = Stm32Display::new(spi, dc, reset, cs);
-    // Wait for ILI9341 power-on — hardware SPI is fast enough to outrun the display
-    cortex_m::asm::delay(100_000_000); // ~250ms at 400MHz
+    cortex_m::asm::delay(100_000_000); // ~250ms power-on delay
     display.init();
 
     let mut controls = Stm32Controls::new();
