@@ -13,6 +13,17 @@ pub enum ChainType {
     Fm = 2,
 }
 
+impl ChainType {
+    /// Short display label for the chain type.
+    pub fn label(self) -> &'static str {
+        match self {
+            ChainType::PizzaPoly => "Pizza",
+            ChainType::Modal => "Modal",
+            ChainType::Fm => "FM",
+        }
+    }
+}
+
 #[derive(Clone)]
 #[repr(C)]
 pub struct Patch {
