@@ -72,3 +72,62 @@ impl SoundPool {
         POOL_SIZE
     }
 }
+
+pub struct Track {
+    pub patch: Patch,
+    pub loaded_from: Option<u8>,
+}
+
+impl Track {
+    pub fn new(chain_type: ChainType) -> Self {
+        Self {
+            patch: Patch::init(chain_type),
+            loaded_from: None,
+        }
+    }
+
+    pub fn load_from_pool(&mut self, pool: &SoundPool, slot: usize) {
+        if let Some(p) = pool.get(slot) {
+            self.patch = p.clone();
+            self.loaded_from = Some(slot as u8);
+        }
+    }
+
+    pub fn save_to_pool(&self, pool: &mut SoundPool, slot: usize) {
+        pool.store(slot, self.patch.clone());
+    }
+}
+
+pub struct MixerState {
+    pub levels: [f32; 6],
+    pub pans: [f32; 6],
+    pub sends: [f32; 6],
+}
+
+impl Default for MixerState {
+    fn default() -> Self {
+        Self {
+            levels: [0.8; 6],
+            pans: [0.0; 6],
+            sends: [0.0; 6],
+        }
+    }
+}
+
+pub struct Project {
+    pub name: [u8; NAME_LEN],
+    pub pool: SoundPool,
+    pub tracks: [Track; 6],
+    pub mixer: MixerState,
+}
+
+impl Project {
+    pub fn new() -> Self {
+        Self {
+            name: *b"New Project\0\0\0\0\0",
+            pool: SoundPool::new(),
+            tracks: core::array::from_fn(|_| Track::new(ChainType::PizzaPoly)),
+            mixer: MixerState::default(),
+        }
+    }
+}
