@@ -15,6 +15,7 @@ pub mod theme;
 use chimera_hal::{ButtonId, ButtonState, Controls, EncoderId};
 
 use crate::dsp::lfo::Lfo;
+use crate::mod_path::ParamPath;
 use crate::modulation::{ModState, MAX_MOD_SOURCES};
 use crate::params::ParamSnapshot;
 use crate::preset::{ChainType, Project, POOL_SIZE};
@@ -347,7 +348,7 @@ impl UiState {
 
             // Apply offsets to the 6 display values
             for i in 0..6 {
-                let offset = patch.mod_state.compute_offset(&mod_sources, block_idx, i as u8);
+                let offset = patch.mod_state.compute_offset(&mod_sources, ParamPath::Block { block: block_idx, param: i as u8 });
                 if offset != 0.0 {
                     values[i] = (values[i] + offset).clamp(0.0, 1.0);
                 }

@@ -1,4 +1,5 @@
 use chimera_core::mod_path::{ModDestRegistry, ParamPath};
+use chimera_core::modulation::ModState;
 
 #[test]
 fn registry_starts_empty() {
@@ -60,4 +61,28 @@ fn registry_max_capacity() {
     // 33rd should be ignored
     reg.add(ParamPath::Block { block: 32, param: 0 }, *b"Over\0\0\0\0");
     assert_eq!(reg.count, 32);
+}
+
+#[test]
+fn mod_state_compute_offset_with_param_path() {
+    let mut ms = ModState::new();
+    ms.num_sources = 1;
+    ms.num_dests = 1;
+    ms.dests[0] = ParamPath::FmOp { op: 0, param: 2 };
+    ms.amounts[0][0] = 127;
+    let sources = [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+    let offset = ms.compute_offset(&sources, ParamPath::FmOp { op: 0, param: 2 });
+    assert!((offset - 1.0).abs() < 0.01);
+}
+
+#[test]
+fn mod_state_different_path_returns_zero() {
+    let mut ms = ModState::new();
+    ms.num_sources = 1;
+    ms.num_dests = 1;
+    ms.dests[0] = ParamPath::FmOp { op: 0, param: 2 };
+    ms.amounts[0][0] = 127;
+    let sources = [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+    let offset = ms.compute_offset(&sources, ParamPath::FmOp { op: 1, param: 2 });
+    assert_eq!(offset, 0.0);
 }

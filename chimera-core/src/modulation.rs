@@ -3,6 +3,7 @@
 //! The UI thread writes mod routes via `sync_from_matrix()`.
 //! The audio ISR reads routes + source values to compute per-param offsets.
 
+use crate::mod_path::ParamPath;
 use crate::ui::mod_grid::MatrixState;
 
 pub const MAX_MOD_SOURCES: usize = 8;
@@ -13,8 +14,8 @@ pub const MAX_MOD_DESTS: usize = 16;
 pub struct ModState {
     pub num_sources: usize,
     pub num_dests: usize,
-    /// (block_idx, param_idx) for each dest slot
-    pub dests: [(u8, u8); MAX_MOD_DESTS],
+    /// ParamPath for each dest slot
+    pub dests: [ParamPath; MAX_MOD_DESTS],
     /// amounts[source][dest], -127 to +127
     pub amounts: [[i8; MAX_MOD_DESTS]; MAX_MOD_SOURCES],
 }
@@ -24,24 +25,22 @@ impl ModState {
         Self {
             num_sources: 0,
             num_dests: 0,
-            dests: [(0, 0); MAX_MOD_DESTS],
+            dests: [ParamPath::Block { block: 0, param: 0 }; MAX_MOD_DESTS],
             amounts: [[0; MAX_MOD_DESTS]; MAX_MOD_SOURCES],
         }
     }
 
-    /// Compute the total modulation offset for a given (block_idx, param_idx) destination.
+    /// Compute the total modulation offset for a given ParamPath destination.
     /// Sums source_value * amount/127 across all sources routed to this dest.
     /// Returns 0.0 if no route exists.
     pub fn compute_offset(
         &self,
         source_values: &[f32; MAX_MOD_SOURCES],
-        block_idx: u8,
-        param_idx: u8,
+        path: ParamPath,
     ) -> f32 {
         let mut total = 0.0f32;
         for di in 0..self.num_dests {
-            let (bi, pi) = self.dests[di];
-            if bi == block_idx && pi == param_idx {
+            if self.dests[di] == path {
                 for si in 0..self.num_sources {
                     let amt = self.amounts[si][di];
                     if amt != 0 {
@@ -62,12 +61,12 @@ impl ModState {
         for di in 0..MAX_MOD_DESTS {
             if di < matrix.num_dests {
                 if let Some(dest) = &matrix.dests[di] {
-                    self.dests[di] = (dest.block_idx, dest.param_idx);
+                    self.dests[di] = ParamPath::Block { block: dest.block_idx, param: dest.param_idx };
                 } else {
-                    self.dests[di] = (0, 0);
+                    self.dests[di] = ParamPath::Block { block: 0, param: 0 };
                 }
             } else {
-                self.dests[di] = (0, 0);
+                self.dests[di] = ParamPath::Block { block: 0, param: 0 };
             }
         }
 
