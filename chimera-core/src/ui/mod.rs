@@ -144,9 +144,16 @@ impl UiState {
                         self.project.tracks[sel_track].loaded_from = Some(sel_cursor as u8);
                     }
                 } else {
-                    // Init entry: reset track to its current chain type
-                    let chain = self.project.tracks[sel_track].patch.chain_type;
-                    self.project.tracks[sel_track] = crate::preset::Track::new(chain);
+                    // Init entries: POOL_SIZE=Pizza, POOL_SIZE+1=Modal, POOL_SIZE+2=FM
+                    let init_types = [
+                        crate::preset::ChainType::PizzaPoly,
+                        crate::preset::ChainType::Modal,
+                        crate::preset::ChainType::Fm,
+                    ];
+                    let init_idx = sel_cursor - POOL_SIZE;
+                    if init_idx < init_types.len() {
+                        self.project.tracks[sel_track] = crate::preset::Track::new(init_types[init_idx]);
+                    }
                 }
                 // Switch to the loaded track and return to normal mode
                 self.active_track = sel_track;
