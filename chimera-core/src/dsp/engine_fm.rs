@@ -5,12 +5,14 @@
 //! path, and envelope generator. The `run` / `run_adding` interface matches
 //! the p81z "internalRun" loop.
 
+use chimera_hal::BLOCK_SIZE;
+
 use crate::dsp::envelope_fm::FmEnvelope;
 use crate::dsp::fm_tables;
 use crate::dsp::fm_waveform;
 
 /// Per-operator settings (matches TX81Z voice parameters).
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct FmOpSettings {
     pub waveform: u8,       // 0-7
     pub coarse: u8,         // 0-63
@@ -25,6 +27,26 @@ pub struct FmOpSettings {
     pub d2r: u8,
     pub rr: u8,
     pub rate_scaling: u8,
+}
+
+impl Default for FmOpSettings {
+    fn default() -> Self {
+        Self {
+            waveform: 0,
+            coarse: 4,       // ratio 1.0
+            fine: 0,
+            level: 99,
+            feedback: 0,
+            detune: 0,
+            velocity_sens: 0,
+            ar: 31,
+            d1r: 0,
+            d1l: 15,
+            d2r: 0,
+            rr: 15,
+            rate_scaling: 0,
+        }
+    }
 }
 
 /// A single FM operator: oscillator + envelope + feedback.
@@ -222,6 +244,165 @@ impl FmOperator {
 
         if self.envelope.is_idle() {
             self.active = false;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// FmEngine — routes 4 operators through 8 TX81Z algorithms
+// ---------------------------------------------------------------------------
+
+/// Four-operator FM engine with 8 TX81Z algorithm topologies.
+///
+/// Uses named operator fields to avoid borrow-checker issues with
+/// simultaneous mutable borrows of array elements.
+pub struct FmEngine {
+    op1: FmOperator,
+    op2: FmOperator,
+    op3: FmOperator,
+    op4: FmOperator,
+    temp: [f32; BLOCK_SIZE],
+    temp2: [f32; BLOCK_SIZE],
+    zeros: [f32; BLOCK_SIZE],
+}
+
+impl Default for FmEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl FmEngine {
+    pub fn new() -> Self {
+        Self {
+            op1: FmOperator::new(),
+            op2: FmOperator::new(),
+            op3: FmOperator::new(),
+            op4: FmOperator::new(),
+            temp: [0.0; BLOCK_SIZE],
+            temp2: [0.0; BLOCK_SIZE],
+            zeros: [0.0; BLOCK_SIZE],
+        }
+    }
+
+    /// Trigger all 4 operators with a MIDI note.
+    pub fn note_on(
+        &mut self,
+        note: u8,
+        velocity: f32,
+        _algorithm: u8,
+        settings: &[FmOpSettings; 4],
+        sample_rate: f32,
+    ) {
+        self.op1.note_on(note, velocity, &settings[0], sample_rate);
+        self.op2.note_on(note, velocity, &settings[1], sample_rate);
+        self.op3.note_on(note, velocity, &settings[2], sample_rate);
+        self.op4.note_on(note, velocity, &settings[3], sample_rate);
+    }
+
+    /// Release all 4 operators.
+    pub fn note_off(&mut self) {
+        self.op1.note_off();
+        self.op2.note_off();
+        self.op3.note_off();
+        self.op4.note_off();
+    }
+
+    /// Returns `true` when all operators have finished sounding.
+    pub fn is_idle(&self) -> bool {
+        self.op1.is_idle() && self.op2.is_idle() && self.op3.is_idle() && self.op4.is_idle()
+    }
+
+    /// Render audio into `output` using the given algorithm routing.
+    ///
+    /// Processes in BLOCK_SIZE chunks. The algorithm index (0-7) selects the
+    /// operator topology, matching p81z `FMArrangement.cpp` exactly.
+    ///
+    /// Where p81z does `op.run(temp, temp)` (read and write same buffer),
+    /// we use `temp2` as an intermediate to satisfy the borrow checker,
+    /// then copy back.
+    pub fn render(&mut self, output: &mut [f32], algorithm: u8, _settings: &[FmOpSettings; 4]) {
+        let total = output.len();
+        let mut pos = 0;
+
+        while pos < total {
+            let n = (total - pos).min(BLOCK_SIZE);
+            let out = &mut output[pos..pos + n];
+
+            // Route operators according to algorithm
+            match algorithm {
+                0 => {
+                    // 4 -> 3 -> 2 -> [1]
+                    self.op4.run(&self.zeros[..n], &mut self.temp[..n]);
+                    // op3.run(temp, temp): read temp as mod, write temp as output
+                    self.op3.run(&self.temp[..n], &mut self.temp2[..n]);
+                    self.temp[..n].copy_from_slice(&self.temp2[..n]);
+                    // op2.run(temp, temp)
+                    self.op2.run(&self.temp[..n], &mut self.temp2[..n]);
+                    self.temp[..n].copy_from_slice(&self.temp2[..n]);
+                    self.op1.run(&self.temp[..n], out);
+                }
+                1 => {
+                    // (3+4) -> 2 -> [1]
+                    self.op3.run(&self.zeros[..n], &mut self.temp[..n]);
+                    self.op4.run_adding(&self.zeros[..n], &mut self.temp[..n]);
+                    // op2.run(temp, temp)
+                    self.op2.run(&self.temp[..n], &mut self.temp2[..n]);
+                    self.temp[..n].copy_from_slice(&self.temp2[..n]);
+                    self.op1.run(&self.temp[..n], out);
+                }
+                2 => {
+                    // 3 -> 2, (2+4) -> [1]
+                    self.op3.run(&self.zeros[..n], &mut self.temp[..n]);
+                    // op2.run(temp, temp)
+                    self.op2.run(&self.temp[..n], &mut self.temp2[..n]);
+                    self.temp[..n].copy_from_slice(&self.temp2[..n]);
+                    self.op4.run_adding(&self.zeros[..n], &mut self.temp[..n]);
+                    self.op1.run(&self.temp[..n], out);
+                }
+                3 => {
+                    // 4 -> 3, (3 + 4->2) -> [1]
+                    self.op4.run(&self.zeros[..n], &mut self.temp[..n]);
+                    // op3.run(temp, temp)
+                    self.op3.run(&self.temp[..n], &mut self.temp2[..n]);
+                    self.temp[..n].copy_from_slice(&self.temp2[..n]);
+                    // op2.run_adding(temp, temp): read temp as mod, add to temp
+                    self.temp2[..n].copy_from_slice(&self.temp[..n]);
+                    self.op2.run_adding(&self.temp[..n], &mut self.temp2[..n]);
+                    self.temp[..n].copy_from_slice(&self.temp2[..n]);
+                    self.op1.run(&self.temp[..n], out);
+                }
+                4 => {
+                    // 2 -> [1], 4 -> [3]
+                    self.op2.run(&self.zeros[..n], &mut self.temp[..n]);
+                    self.op1.run(&self.temp[..n], out);
+                    self.op4.run(&self.zeros[..n], &mut self.temp[..n]);
+                    self.op3.run_adding(&self.temp[..n], out);
+                }
+                5 => {
+                    // 4 -> [1], 4 -> [2], 4 -> [3]
+                    self.op4.run(&self.zeros[..n], &mut self.temp[..n]);
+                    self.op1.run(&self.temp[..n], out);
+                    self.op2.run_adding(&self.temp[..n], out);
+                    self.op3.run_adding(&self.temp[..n], out);
+                }
+                6 => {
+                    // [1], [2], 4 -> [3]
+                    self.op1.run(&self.zeros[..n], out);
+                    self.op2.run_adding(&self.zeros[..n], out);
+                    self.op4.run(&self.zeros[..n], &mut self.temp[..n]);
+                    self.op3.run_adding(&self.temp[..n], out);
+                }
+                7 | _ => {
+                    // [1], [2], [3], [4]
+                    self.op1.run(&self.zeros[..n], out);
+                    self.op2.run_adding(&self.zeros[..n], out);
+                    self.op3.run_adding(&self.zeros[..n], out);
+                    self.op4.run_adding(&self.zeros[..n], out);
+                }
+            }
+
+            pos += n;
         }
     }
 }

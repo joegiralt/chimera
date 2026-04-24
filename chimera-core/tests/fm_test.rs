@@ -1,5 +1,5 @@
 use chimera_core::dsp::envelope_fm::FmEnvelope;
-use chimera_core::dsp::engine_fm::{FmOperator, FmOpSettings};
+use chimera_core::dsp::engine_fm::{FmEngine, FmOperator, FmOpSettings};
 use chimera_core::dsp::fm_tables;
 use chimera_core::dsp::fm_waveform;
 
@@ -210,4 +210,72 @@ fn fm_operator_feedback_adds_harmonics() {
 
     let diff: f32 = clean.iter().zip(fb.iter()).map(|(a, b)| (a - b).abs()).sum::<f32>();
     assert!(diff > 1.0, "feedback should change timbre");
+}
+
+// ---------------------------------------------------------------------------
+// FmEngine tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn fm_engine_produces_sound() {
+    let mut engine = FmEngine::new();
+    let settings = [FmOpSettings::default(); 4];
+    engine.note_on(69, 1.0, 0, &settings, 48000.0);
+    let mut buf = [0.0f32; 1024];
+    engine.render(&mut buf, 0, &settings);
+    let rms = (buf.iter().map(|x| x * x).sum::<f32>() / 1024.0).sqrt();
+    assert!(rms > 0.01, "rms={rms}");
+}
+
+#[test]
+fn fm_engine_note_off_decays() {
+    let mut engine = FmEngine::new();
+    let settings = [FmOpSettings::default(); 4];
+    engine.note_on(69, 1.0, 0, &settings, 48000.0);
+    let mut buf = [0.0f32; 64];
+    engine.render(&mut buf, 0, &settings);
+    engine.note_off();
+    for _ in 0..2000 {
+        engine.render(&mut buf, 0, &settings);
+    }
+    let rms = (buf.iter().map(|x| x * x).sum::<f32>() / 64.0).sqrt();
+    assert!(rms < 0.001, "should be silent, rms={rms}");
+}
+
+#[test]
+fn fm_all_algorithms_produce_different_output() {
+    let mut results = [0.0f32; 8];
+    for alg in 0..8u8 {
+        let mut engine = FmEngine::new();
+        let mut settings = [FmOpSettings::default(); 4];
+        for (i, s) in settings.iter_mut().enumerate() {
+            s.level = 90;
+            s.coarse = (4 + i * 4) as u8;
+        }
+        engine.note_on(69, 1.0, alg, &settings, 48000.0);
+        let mut buf = [0.0f32; 2048];
+        engine.render(&mut buf, alg, &settings);
+        results[alg as usize] = (buf.iter().map(|x| x * x).sum::<f32>() / 2048.0).sqrt();
+    }
+    let first = results[0];
+    assert!(results.iter().any(|&r| (r - first).abs() > 0.001),
+        "all algorithms should not be identical: {:?}", results);
+}
+
+#[test]
+fn fm_output_bounded() {
+    for alg in 0..8u8 {
+        let mut engine = FmEngine::new();
+        let mut settings = [FmOpSettings::default(); 4];
+        for s in settings.iter_mut() {
+            s.level = 99;
+            s.feedback = 7;
+        }
+        engine.note_on(69, 1.0, alg, &settings, 48000.0);
+        let mut buf = [0.0f32; 4096];
+        engine.render(&mut buf, alg, &settings);
+        for &s in &buf {
+            assert!(s.is_finite(), "alg={alg} NaN/Inf");
+        }
+    }
 }
