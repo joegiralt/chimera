@@ -1,0 +1,3 @@
+{"type":"server-started","port":56928,"host":"0.0.0.0","url_host":"localhost","url":"http://localhost:56928","screen_dir":"/home/hermes/dev/chimera/.superpowers/brainstorm/688135-1777052825"}
+{"type":"screen-added","file":"/home/hermes/dev/chimera/.superpowers/brainstorm/688135-1777052825/fm-design.html"}
+{"type":"server-stopped","reason":"idle timeout"}

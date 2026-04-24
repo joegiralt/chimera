@@ -1,0 +1,201 @@
+<h2>4-Operator FM Engine Design</h2>
+<p class="subtitle">TX81Z-faithful FM synthesis for Chimera</p>
+
+<!-- ARCHITECTURE -->
+<div class="section">
+  <h3>1. Engine Architecture</h3>
+  <div class="mockup">
+    <div class="mockup-header">Signal Flow</div>
+    <div class="mockup-body" style="padding: 20px; font-family: monospace; font-size: 13px; line-height: 1.9; color: #ccc;">
+<span style="color:#f5a623;">4opFM Block</span> <span style="color:#666;">(single chain block with sub-pages)</span>
+<br>
+<br>&nbsp;&nbsp;┌─────────────────────────────────────┐
+<br>&nbsp;&nbsp;│&nbsp;&nbsp;<span style="color:#4a9eff;">OP1</span> ─┐&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;│
+<br>&nbsp;&nbsp;│&nbsp;&nbsp;<span style="color:#4a9eff;">OP2</span> ─┤&nbsp;&nbsp;<span style="color:#7ed321;">Algorithm</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;│
+<br>&nbsp;&nbsp;│&nbsp;&nbsp;<span style="color:#4a9eff;">OP3</span> ─┤&nbsp;&nbsp;routing ──→ <span style="color:#f5a623;">mix out</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;│
+<br>&nbsp;&nbsp;│&nbsp;&nbsp;<span style="color:#4a9eff;">OP4</span> ─┘&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;│
+<br>&nbsp;&nbsp;└─────────────────────────────────────┘
+<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;│
+<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;▼
+<br>&nbsp;&nbsp;[Drive] → [Filter] → [Folder] → [Reverb]
+<br>&nbsp;&nbsp;<span style="color:#666;">existing chain blocks — post-FM processing</span>
+    </div>
+  </div>
+</div>
+
+<!-- 8 ALGORITHMS -->
+<div class="section">
+  <h3>2. TX81Z Algorithms (8)</h3>
+  <div class="mockup">
+    <div class="mockup-header">Algorithm Routing Diagrams</div>
+    <div class="mockup-body" style="padding: 20px; font-family: monospace; font-size: 12px; line-height: 1.6; color: #ccc; display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+
+      <div style="background:#1a1a2e; padding:12px; border-radius:6px;">
+        <span style="color:#f5a623;">ALG 1</span> <span style="color:#666;">serial</span><br>
+        4→3→2→<span style="color:#7ed321;">1</span>
+      </div>
+      <div style="background:#1a1a2e; padding:12px; border-radius:6px;">
+        <span style="color:#f5a623;">ALG 2</span><br>
+        (3+4)→2→<span style="color:#7ed321;">1</span>
+      </div>
+      <div style="background:#1a1a2e; padding:12px; border-radius:6px;">
+        <span style="color:#f5a623;">ALG 3</span><br>
+        4→3, 4→2→<span style="color:#7ed321;">1</span>
+      </div>
+      <div style="background:#1a1a2e; padding:12px; border-radius:6px;">
+        <span style="color:#f5a623;">ALG 4</span><br>
+        4→3→<span style="color:#7ed321;">1</span>, 4→<span style="color:#7ed321;">2</span>
+      </div>
+      <div style="background:#1a1a2e; padding:12px; border-radius:6px;">
+        <span style="color:#f5a623;">ALG 5</span><br>
+        4→<span style="color:#7ed321;">3</span>, 4→<span style="color:#7ed321;">2</span>, 4→<span style="color:#7ed321;">1</span>
+      </div>
+      <div style="background:#1a1a2e; padding:12px; border-radius:6px;">
+        <span style="color:#f5a623;">ALG 6</span><br>
+        4→<span style="color:#7ed321;">3</span>, <span style="color:#7ed321;">2</span>, <span style="color:#7ed321;">1</span>
+      </div>
+      <div style="background:#1a1a2e; padding:12px; border-radius:6px;">
+        <span style="color:#f5a623;">ALG 7</span><br>
+        <span style="color:#7ed321;">4</span>, 3→<span style="color:#7ed321;">2</span>, <span style="color:#7ed321;">1</span>
+      </div>
+      <div style="background:#1a1a2e; padding:12px; border-radius:6px;">
+        <span style="color:#f5a623;">ALG 8</span> <span style="color:#666;">parallel</span><br>
+        <span style="color:#7ed321;">4</span>, <span style="color:#7ed321;">3</span>, <span style="color:#7ed321;">2</span>, <span style="color:#7ed321;">1</span>
+      </div>
+
+      <div style="grid-column: 1/3; color:#666; font-size:11px;">
+        <span style="color:#7ed321;">Green</span> = carrier (output to mix).
+        Arrows = phase modulation path. Feedback on any operator.
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- OPERATOR -->
+<div class="section">
+  <h3>3. Per-Operator Parameters</h3>
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+    <div style="background: #1a1a2e; border-radius: 8px; padding: 16px;">
+      <h4 style="color: #4a9eff; margin-top: 0;">Tone (top of sub-page)</h4>
+      <ul style="color: #ccc; line-height: 1.8; list-style: none; padding: 0;">
+        <li><strong>A:</strong> Waveform (8 TX81Z types)</li>
+        <li><strong>B:</strong> Ratio (0.5–16.0)</li>
+        <li><strong>C:</strong> Level (0–99)</li>
+        <li><strong>D:</strong> Feedback (0–7)</li>
+        <li><strong>E:</strong> Detune (-7..+7)</li>
+        <li><strong>F:</strong> Velocity Sens (0–7)</li>
+      </ul>
+    </div>
+    <div style="background: #1a1a2e; border-radius: 8px; padding: 16px;">
+      <h4 style="color: #f5a623; margin-top: 0;">Envelope (shift layer)</h4>
+      <ul style="color: #ccc; line-height: 1.8; list-style: none; padding: 0;">
+        <li><strong>A+Shift:</strong> Attack Rate (0–31)</li>
+        <li><strong>B+Shift:</strong> Decay1 Rate (0–31)</li>
+        <li><strong>C+Shift:</strong> Decay1 Level (0–15)</li>
+        <li><strong>D+Shift:</strong> Decay2 Rate (0–31)</li>
+        <li><strong>E+Shift:</strong> Release Rate (1–15)</li>
+        <li><strong>F+Shift:</strong> Rate Scaling (0–3)</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- UI PAGES -->
+<div class="section">
+  <h3>4. UI Sub-Page Layout</h3>
+  <div style="background: #1a1a2e; border-radius: 8px; padding: 16px; font-family: monospace; font-size: 13px; color: #ccc; line-height: 2;">
+    <span style="color:#f5a623;">FM Block</span> (top-level page)<br>
+    &nbsp;&nbsp;├ <strong>Algorithm</strong> <span style="color:#666;">— alg select (A), feedback op (B), output level (C)</span><br>
+    &nbsp;&nbsp;├ <strong>OP1</strong> <span style="color:#666;">— wave/ratio/level/fb/detune/vel + shift:envelope</span><br>
+    &nbsp;&nbsp;├ <strong>OP2</strong> <span style="color:#666;">— same layout, same encoder positions</span><br>
+    &nbsp;&nbsp;├ <strong>OP3</strong> <span style="color:#666;">— same layout</span><br>
+    &nbsp;&nbsp;└ <strong>OP4</strong> <span style="color:#666;">— same layout</span>
+  </div>
+</div>
+
+<!-- WAVEFORMS -->
+<div class="section">
+  <h3>5. TX81Z Waveforms (8)</h3>
+  <div style="background: #1a1a2e; border-radius: 8px; padding: 16px; font-family: monospace; font-size: 13px; color: #ccc; line-height: 1.8;">
+    W1: Sine <span style="color:#666;">— pure sine</span><br>
+    W2: Sine² <span style="color:#666;">— abs(sin) shaped</span><br>
+    W3: Half-sine <span style="color:#666;">— positive half only</span><br>
+    W4: Half-sine² <span style="color:#666;">— positive half, squared</span><br>
+    W5: Quarter-sine <span style="color:#666;">— first/third quarter</span><br>
+    W6: Quarter-sine² <span style="color:#666;">— squared quarter</span><br>
+    W7: Clipped sine <span style="color:#666;">— +shaped</span><br>
+    W8: Clipped sine² <span style="color:#666;">— +shaped, squared</span><br>
+    <br>
+    <span style="color:#7ed321;">Future:</span> <span style="color:#666;">FS1R formant waveforms bolt on as W9+</span>
+  </div>
+</div>
+
+<!-- ENVELOPE -->
+<div class="section">
+  <h3>6. TX81Z 5-Stage Envelope</h3>
+  <div style="background: #1a1a2e; border-radius: 8px; padding: 16px; font-family: monospace; font-size: 12px; color: #ccc; line-height: 1.6;">
+    <pre style="margin:0;">
+Level
+  │     AR        D1R       D2R       RR
+  │    ╱╲         ╲         ╲
+  │   ╱  ╲         ╲         ╲
+  │  ╱    ╲         ╲         ╲
+  │ ╱      ╲ D1L     ╲         ╲
+  │╱        ╲─────────╲         ╲
+  │                     ╲────────╲──→ 0
+  └──────────────────────────────────→ Time
+    Gate On                    Gate Off
+    </pre>
+  </div>
+  <p style="color:#888; font-size:12px; margin-top:8px;">
+    AR=attack rate, D1R=first decay rate, D1L=first decay level (sustain breakpoint),
+    D2R=second decay rate (slow drift during sustain), RR=release rate.
+  </p>
+</div>
+
+<!-- SCOPE -->
+<div class="section">
+  <h3>7. Scope</h3>
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+    <div style="background: #1a2e1a; border-radius: 8px; padding: 16px;">
+      <h4 style="color: #7ed321; margin-top: 0;">In Scope</h4>
+      <ul style="color: #ccc; line-height: 1.8;">
+        <li>4 operators with phase modulation</li>
+        <li>8 TX81Z algorithms</li>
+        <li>8 TX81Z waveforms</li>
+        <li>5-stage envelope per operator</li>
+        <li>Feedback per operator (0–7)</li>
+        <li>Ratio mode (0.5–16)</li>
+        <li>Detune, velocity sensitivity</li>
+        <li>Rate scaling</li>
+        <li>FM chain + block defs + sub-pages</li>
+        <li>Integration with existing signal chain</li>
+      </ul>
+    </div>
+    <div style="background: #2e1a1a; border-radius: 8px; padding: 16px;">
+      <h4 style="color: #f55; margin-top: 0;">Out of Scope (later)</h4>
+      <ul style="color: #ccc; line-height: 1.8;">
+        <li>Fixed frequency mode</li>
+        <li>FS1R waveforms</li>
+        <li>TX81Z preset import/export</li>
+        <li>LFO → operator modulation</li>
+        <li>Per-operator key scaling</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div class="options" style="margin-top: 24px;">
+  <div class="option" data-choice="approved" onclick="toggleSelect(this)">
+    <div class="letter">✓</div>
+    <div class="content">
+      <h3>Design approved — write the spec</h3>
+    </div>
+  </div>
+  <div class="option" data-choice="changes" onclick="toggleSelect(this)">
+    <div class="letter">✎</div>
+    <div class="content">
+      <h3>Needs changes</h3>
+    </div>
+  </div>
+</div>

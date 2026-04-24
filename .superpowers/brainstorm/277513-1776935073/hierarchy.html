@@ -1,0 +1,67 @@
+<h2>Chimera Preset Hierarchy</h2>
+<p class="subtitle">Confirming the data model — does this match your thinking?</p>
+
+<div class="mockup">
+  <div class="mockup-header">Data Hierarchy</div>
+  <div class="mockup-body" style="padding: 24px; font-family: monospace; font-size: 14px; line-height: 2;">
+    <div style="color: #f5a623;">
+      <strong>PROJECT</strong> <span style="color: #888;">(saved to SD card)</span>
+    </div>
+    <div style="padding-left: 24px; color: #ccc;">
+      ├─ Mixer state <span style="color: #666;">(levels, pans, sends for B1-B6)</span><br>
+      ├─ Track B1 → <span style="color: #7ed321;">Patch</span> <span style="color: #666;">"Acid Bass"</span><br>
+      ├─ Track B2 → <span style="color: #7ed321;">Patch</span> <span style="color: #666;">"Pad Wash"</span><br>
+      ├─ Track B3 → <span style="color: #7ed321;">Patch</span> <span style="color: #666;">"Pluck"</span><br>
+      ├─ Track B4 → <span style="color: #7ed321;">Patch</span> <span style="color: #666;">"(init)"</span><br>
+      ├─ Track B5 → <span style="color: #7ed321;">Patch</span> <span style="color: #666;">"(init)"</span><br>
+      └─ Track B6 → <span style="color: #7ed321;">Patch</span> <span style="color: #666;">"(init)"</span>
+    </div>
+
+    <br>
+
+    <div style="color: #7ed321;">
+      <strong>PATCH</strong> <span style="color: #888;">(saved to SD card, loadable per-track)</span>
+    </div>
+    <div style="padding-left: 24px; color: #ccc;">
+      ├─ Name <span style="color: #666;">"Acid Bass"</span><br>
+      ├─ <span style="color: #4a9eff;">Chain</span> <span style="color: #666;">(which blocks in what order)</span><br>
+      ├─ Audio block params <span style="color: #666;">(osc, filter, drive, folder, reverb, etc.)</span><br>
+      └─ Mod block params <span style="color: #666;">(LFOs, envelopes, mod matrix routing + amounts)</span>
+    </div>
+
+    <br>
+
+    <div style="color: #4a9eff;">
+      <strong>CHAIN</strong> <span style="color: #888;">(the template — which blocks, in what order)</span>
+    </div>
+    <div style="padding-left: 24px; color: #ccc;">
+      ├─ Audio blocks <span style="color: #666;">[Pizza → Drive → Filter → Folder → Reverb]</span><br>
+      └─ Mod blocks <span style="color: #666;">[Env1, Env2, LFO1]</span>
+    </div>
+  </div>
+</div>
+
+<div style="margin-top: 24px;">
+  <h3>UI Flow</h3>
+  <div style="background: #1a1a2e; border-radius: 8px; padding: 16px; font-family: monospace; font-size: 13px; color: #ccc; line-height: 1.8;">
+    <span style="color: #888;">Normal:</span> tap B1 → navigate to B1's chain<br>
+    <span style="color: #f5a623;">Double-tap B1:</span> → open patch browser for B1<br>
+    <span style="color: #888;">Patch browser shows:</span> list of saved patches + "(init)" defaults per chain type<br>
+    <span style="color: #888;">Select patch:</span> → loads chain + params + mods into B1
+  </div>
+</div>
+
+<div class="options" style="margin-top: 24px;">
+  <div class="option" data-choice="correct" onclick="toggleSelect(this)">
+    <div class="letter">✓</div>
+    <div class="content">
+      <h3>This matches my thinking</h3>
+    </div>
+  </div>
+  <div class="option" data-choice="changes" onclick="toggleSelect(this)">
+    <div class="letter">✎</div>
+    <div class="content">
+      <h3>Close but needs changes</h3>
+    </div>
+  </div>
+</div>

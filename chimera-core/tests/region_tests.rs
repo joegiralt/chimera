@@ -135,13 +135,13 @@ fn encoder_only_dirties_params_not_header() {
     rs.regions[0].prev_data = RegionData::header(0, 0, 0, 0);
     rs.regions[1].prev_data = RegionData::viz(page, values_a);
     rs.regions[2].prev_data = RegionData::params(page, values_a);
-    rs.regions[3].prev_data = RegionData::nav(0, 0, 0);
+    rs.regions[3].prev_data = RegionData::nav(0, 0, 0, 0);
 
     let current = [
         RegionData::header(0, 0, 0, 0),
         RegionData::viz(page, values_b),
         RegionData::params(page, values_b),
-        RegionData::nav(0, 0, 0),
+        RegionData::nav(0, 0, 0, 0),
     ];
 
     let dirty: Vec<bool> = rs.active_regions().iter().zip(current.iter())
@@ -162,13 +162,13 @@ fn nav_change_dirties_header_and_nav() {
     rs.regions[0].prev_data = RegionData::header(0, 0, 0, 0);
     rs.regions[1].prev_data = RegionData::viz(page, values);
     rs.regions[2].prev_data = RegionData::params(page, values);
-    rs.regions[3].prev_data = RegionData::nav(0, 0, 0);
+    rs.regions[3].prev_data = RegionData::nav(0, 0, 0, 0);
 
     let current = [
         RegionData::header(0, 1, 0, 0),
         RegionData::viz(page, values),
         RegionData::params(page, values),
-        RegionData::nav(0, 1, 0),
+        RegionData::nav(0, 1, 0, 0),
     ];
 
     let dirty: Vec<bool> = rs.active_regions().iter().zip(current.iter())
@@ -189,13 +189,13 @@ fn no_change_means_no_dirty() {
     rs.regions[0].prev_data = RegionData::header(0, 0, 0, 0);
     rs.regions[1].prev_data = RegionData::viz(page, values);
     rs.regions[2].prev_data = RegionData::params(page, values);
-    rs.regions[3].prev_data = RegionData::nav(0, 0, 0);
+    rs.regions[3].prev_data = RegionData::nav(0, 0, 0, 0);
 
     let current = [
         RegionData::header(0, 0, 0, 0),
         RegionData::viz(page, values),
         RegionData::params(page, values),
-        RegionData::nav(0, 0, 0),
+        RegionData::nav(0, 0, 0, 0),
     ];
 
     let any_dirty = rs.active_regions().iter().zip(current.iter())

@@ -1,0 +1,129 @@
+<h2>Preset System Design</h2>
+<p class="subtitle">Full architecture — review each section</p>
+
+<!-- DATA MODEL -->
+<div class="section">
+  <h3>1. Data Model</h3>
+  <div class="mockup">
+    <div class="mockup-header">Core Types (chimera-core)</div>
+    <div class="mockup-body" style="padding: 20px; font-family: monospace; font-size: 13px; line-height: 1.9; color: #ccc;">
+<span style="color:#4a9eff;">/// A saved sound — chain definition + parameter state + mod routing</span>
+<br><span style="color:#f5a623;">Patch</span> {
+<br>&nbsp;&nbsp;name: [u8; 16],&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:#666;">// ASCII, null-padded</span>
+<br>&nbsp;&nbsp;chain_id: ChainType,&nbsp;&nbsp;&nbsp;<span style="color:#666;">// which chain template (PizzaPoly, Modal, FM...)</span>
+<br>&nbsp;&nbsp;params: ParamSnapshot,&nbsp;<span style="color:#666;">// all audio block params</span>
+<br>&nbsp;&nbsp;mod_state: ModState,&nbsp;&nbsp;&nbsp;<span style="color:#666;">// mod matrix routing + amounts</span>
+<br>}
+<br>
+<br><span style="color:#4a9eff;">/// 32 patch slots in RAM — the sound pool</span>
+<br><span style="color:#f5a623;">SoundPool</span> {
+<br>&nbsp;&nbsp;slots: [Option&lt;Patch&gt;; 32],
+<br>}
+<br>
+<br><span style="color:#4a9eff;">/// Full synth state — references into the sound pool</span>
+<br><span style="color:#f5a623;">Project</span> {
+<br>&nbsp;&nbsp;name: [u8; 16],
+<br>&nbsp;&nbsp;pool: SoundPool,
+<br>&nbsp;&nbsp;tracks: [TrackAssignment; 6],&nbsp;<span style="color:#666;">// B1-B6 → pool slot index</span>
+<br>&nbsp;&nbsp;mixer: MixerState,&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:#666;">// levels, pans, sends</span>
+<br>}
+<br>
+<br><span style="color:#f5a623;">TrackAssignment</span> {
+<br>&nbsp;&nbsp;slot: Option&lt;u8&gt;,&nbsp;&nbsp;<span style="color:#666;">// index into pool (None = silent)</span>
+<br>}
+    </div>
+  </div>
+</div>
+
+<!-- SHARED REFERENCES -->
+<div class="section">
+  <h3>2. Shared References (Digitone Model)</h3>
+  <div style="background: #1a1a2e; border-radius: 8px; padding: 16px; font-family: monospace; font-size: 13px; color: #ccc; line-height: 1.8;">
+    Pool:&nbsp;&nbsp;[0: "Acid Bass"] [1: "Pad Wash"] [2: "Pluck"] [3: (init)] ... [31: (empty)]<br>
+    <br>
+    Track B1 → slot 0 <span style="color: #7ed321;">●</span><br>
+    Track B2 → slot 1 <span style="color: #4a9eff;">●</span><br>
+    Track B3 → slot 0 <span style="color: #7ed321;">●</span> <span style="color:#f5a623;">← same slot as B1, edits affect both</span><br>
+    Track B4 → slot 2 <span style="color: #e86cff;">●</span><br>
+    Track B5 → None <span style="color:#666;">(silent)</span><br>
+    Track B6 → None <span style="color:#666;">(silent)</span>
+  </div>
+</div>
+
+<!-- UI FLOW -->
+<div class="section">
+  <h3>3. UI Flow</h3>
+  <div style="background: #1a1a2e; border-radius: 8px; padding: 16px; font-size: 14px; color: #ccc; line-height: 2.2;">
+    <strong style="color: #f5a623;">Load patch into track:</strong><br>
+    &nbsp;&nbsp;Double-tap B1 → Patch Browser opens for B1<br>
+    &nbsp;&nbsp;Browse pool slots (encoder scroll) → select → B1 now references that slot<br>
+    <br>
+    <strong style="color: #f5a623;">Edit patch (current track):</strong><br>
+    &nbsp;&nbsp;Normal navigation — editing params edits the referenced pool slot<br>
+    &nbsp;&nbsp;All tracks sharing that slot hear changes immediately<br>
+    <br>
+    <strong style="color: #f5a623;">Init patch:</strong><br>
+    &nbsp;&nbsp;In patch browser: select "(init)" → writes fresh default into the slot<br>
+    <br>
+    <strong style="color: #f5a623;">Copy patch to new slot:</strong><br>
+    &nbsp;&nbsp;Future feature — not in first iteration
+  </div>
+</div>
+
+<!-- SERIALIZATION -->
+<div class="section">
+  <h3>4. Serialization Format</h3>
+  <div style="background: #1a1a2e; border-radius: 8px; padding: 16px; font-family: monospace; font-size: 13px; color: #ccc; line-height: 1.8;">
+    <span style="color:#4a9eff;">Patch binary (for future SD card):</span><br>
+    [magic: u32] [version: u8] [chain_type: u8] [name: 16 bytes]<br>
+    [params: ParamSnapshot as raw bytes]<br>
+    [mod_state: ModState as raw bytes]<br>
+    <br>
+    <span style="color:#666;">Version field enables forward-compatible format changes.</span><br>
+    <span style="color:#666;">For RAM-only phase: just use the Patch struct directly, no serialization needed.</span>
+  </div>
+</div>
+
+<!-- SCOPE -->
+<div class="section">
+  <h3>5. First Iteration Scope</h3>
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+    <div style="background: #1a2e1a; border-radius: 8px; padding: 16px;">
+      <h4 style="color: #7ed321; margin-top: 0;">In Scope</h4>
+      <ul style="color: #ccc; line-height: 1.8;">
+        <li>Patch struct + SoundPool + Project types</li>
+        <li>Track → slot assignment</li>
+        <li>Patch browser UI (double-tap B1-B6)</li>
+        <li>Init patch per chain type</li>
+        <li>Load patch into track</li>
+        <li>Serialization format (ready for SD)</li>
+      </ul>
+    </div>
+    <div style="background: #2e1a1a; border-radius: 8px; padding: 16px;">
+      <h4 style="color: #f55; margin-top: 0;">Out of Scope (later)</h4>
+      <ul style="color: #ccc; line-height: 1.8;">
+        <li>SD card driver (SPI2)</li>
+        <li>FAT filesystem</li>
+        <li>Save/load from SD</li>
+        <li>Copy/paste patches between slots</li>
+        <li>Project save/load</li>
+        <li>Factory preset bank</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div class="options" style="margin-top: 24px;">
+  <div class="option" data-choice="approved" onclick="toggleSelect(this)">
+    <div class="letter">✓</div>
+    <div class="content">
+      <h3>Design approved — write the spec</h3>
+    </div>
+  </div>
+  <div class="option" data-choice="changes" onclick="toggleSelect(this)">
+    <div class="letter">✎</div>
+    <div class="content">
+      <h3>Needs changes</h3>
+    </div>
+  </div>
+</div>

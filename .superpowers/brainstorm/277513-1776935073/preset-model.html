@@ -1,0 +1,26 @@
+<h2>Preset Model</h2>
+<p class="subtitle">What's your mental model for how presets work on Chimera?</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Single Global Preset</h3>
+      <p>One patch = one sound (engine + chain + effects + mod matrix). Like a Moog or Juno — save/load the entire synth state as one thing.</p>
+    </div>
+  </div>
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Multi-Part Preset</h3>
+      <p>A "performance" contains 6 parts (one per chain/voice), each with its own engine + params. Like the original PreenFM3 — save/load the whole multi-timbral setup.</p>
+    </div>
+  </div>
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Both Levels</h3>
+      <p>Individual part patches AND multi-part performances. Save a single sound, or save the whole 6-part setup. Like a Yamaha Motif or Nord.</p>
+    </div>
+  </div>
+</div>
