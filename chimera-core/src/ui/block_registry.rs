@@ -372,6 +372,70 @@ pub static MOD_MATRIX: BlockDef = BlockDef {
 };
 
 // ---------------------------------------------------------------------------
+// TX81Z 5-stage envelopes (one per FM operator)
+// ---------------------------------------------------------------------------
+
+pub static FM_ENV1: BlockDef = BlockDef {
+    name: "Op1 Env",
+    short: "E1",
+    layout: PageLayout::BigViz,
+    viz: VizType::Adsr,
+    params: [
+        ParamSlot { label: "AR",  format: ValFmt::Int(31), icon: CellIcon::None },
+        ParamSlot { label: "D1R", format: ValFmt::Int(31), icon: CellIcon::None },
+        ParamSlot { label: "D1L", format: ValFmt::Int(15), icon: CellIcon::None },
+        ParamSlot { label: "D2R", format: ValFmt::Int(31), icon: CellIcon::None },
+        ParamSlot { label: "RR",  format: ValFmt::Int(15), icon: CellIcon::None },
+        ParamSlot { label: "RS",  format: ValFmt::Int(3),  icon: CellIcon::None },
+    ],
+};
+
+pub static FM_ENV2: BlockDef = BlockDef {
+    name: "Op2 Env",
+    short: "E2",
+    layout: PageLayout::BigViz,
+    viz: VizType::Adsr,
+    params: [
+        ParamSlot { label: "AR",  format: ValFmt::Int(31), icon: CellIcon::None },
+        ParamSlot { label: "D1R", format: ValFmt::Int(31), icon: CellIcon::None },
+        ParamSlot { label: "D1L", format: ValFmt::Int(15), icon: CellIcon::None },
+        ParamSlot { label: "D2R", format: ValFmt::Int(31), icon: CellIcon::None },
+        ParamSlot { label: "RR",  format: ValFmt::Int(15), icon: CellIcon::None },
+        ParamSlot { label: "RS",  format: ValFmt::Int(3),  icon: CellIcon::None },
+    ],
+};
+
+pub static FM_ENV3: BlockDef = BlockDef {
+    name: "Op3 Env",
+    short: "E3",
+    layout: PageLayout::BigViz,
+    viz: VizType::Adsr,
+    params: [
+        ParamSlot { label: "AR",  format: ValFmt::Int(31), icon: CellIcon::None },
+        ParamSlot { label: "D1R", format: ValFmt::Int(31), icon: CellIcon::None },
+        ParamSlot { label: "D1L", format: ValFmt::Int(15), icon: CellIcon::None },
+        ParamSlot { label: "D2R", format: ValFmt::Int(31), icon: CellIcon::None },
+        ParamSlot { label: "RR",  format: ValFmt::Int(15), icon: CellIcon::None },
+        ParamSlot { label: "RS",  format: ValFmt::Int(3),  icon: CellIcon::None },
+    ],
+};
+
+pub static FM_ENV4: BlockDef = BlockDef {
+    name: "Op4 Env",
+    short: "E4",
+    layout: PageLayout::BigViz,
+    viz: VizType::Adsr,
+    params: [
+        ParamSlot { label: "AR",  format: ValFmt::Int(31), icon: CellIcon::None },
+        ParamSlot { label: "D1R", format: ValFmt::Int(31), icon: CellIcon::None },
+        ParamSlot { label: "D1L", format: ValFmt::Int(15), icon: CellIcon::None },
+        ParamSlot { label: "D2R", format: ValFmt::Int(31), icon: CellIcon::None },
+        ParamSlot { label: "RR",  format: ValFmt::Int(15), icon: CellIcon::None },
+        ParamSlot { label: "RS",  format: ValFmt::Int(3),  icon: CellIcon::None },
+    ],
+};
+
+// ---------------------------------------------------------------------------
 // Chain templates
 // ---------------------------------------------------------------------------
 
@@ -418,12 +482,14 @@ pub static MODAL_PLUCK_CHAIN: ChainDef2 = ChainDef2 {
 
 static FM_SUB_PAGES: [&BlockDef; 2] = [&FM_OP, &FM_RATIO];
 
+static FM_MOD_MATRIX_SUB_PAGES: [&BlockDef; 4] = [&FM_ENV1, &FM_ENV2, &FM_ENV3, &FM_ENV4];
+
 static FM_BLOCKS: [ChainBlock; 5] = [
     ChainBlock { def: &FM_ALG,     sub_pages: &FM_SUB_PAGES },
     ChainBlock { def: &DRIVE,      sub_pages: &[] },
     ChainBlock { def: &FILTER,     sub_pages: &[] },
     ChainBlock { def: &FOLDER,     sub_pages: &[] },
-    ChainBlock { def: &MOD_MATRIX, sub_pages: &MOD_MATRIX_SUB_PAGES },
+    ChainBlock { def: &MOD_MATRIX, sub_pages: &FM_MOD_MATRIX_SUB_PAGES },
 ];
 
 pub static FM_CHAIN: ChainDef2 = ChainDef2 {
