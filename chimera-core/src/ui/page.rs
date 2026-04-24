@@ -115,6 +115,10 @@ pub enum PageId {
     FmAlg,
     FmOp,
     FmRatio,
+    FmEnv1,
+    FmEnv2,
+    FmEnv3,
+    FmEnv4,
     DemoWaves,
     DemoShapes,
     DemoMotion,
@@ -183,8 +187,10 @@ impl PageId {
                 3 => PageId::Folder,
                 4 => match sub_page {
                     0 => PageId::DemoMatrix,
-                    1 => PageId::Vca,
-                    _ => PageId::Lfo,
+                    1 => PageId::FmEnv1,
+                    2 => PageId::FmEnv2,
+                    3 => PageId::FmEnv3,
+                    _ => PageId::FmEnv4,
                 },
                 _ => PageId::Efx,
             },
@@ -317,6 +323,10 @@ impl PageId {
                 params.fm.operators[fm_selected_op()].fine.normalized(),
                 0.0,
             ],
+            PageId::FmEnv1 => read_fm_env_values(&params.fm.operators[0]),
+            PageId::FmEnv2 => read_fm_env_values(&params.fm.operators[1]),
+            PageId::FmEnv3 => read_fm_env_values(&params.fm.operators[2]),
+            PageId::FmEnv4 => read_fm_env_values(&params.fm.operators[3]),
             PageId::Chorus => [
                 params.chorus.mode as f32 / 3.0,
                 params.chorus.rate,
@@ -379,6 +389,22 @@ impl PageId {
             }
             PageId::FmRatio => {
                 apply_fm_ratio_encoder(idx, delta, params);
+                return;
+            }
+            PageId::FmEnv1 => {
+                apply_fm_env_encoder(idx, delta, &mut params.fm.operators[0]);
+                return;
+            }
+            PageId::FmEnv2 => {
+                apply_fm_env_encoder(idx, delta, &mut params.fm.operators[1]);
+                return;
+            }
+            PageId::FmEnv3 => {
+                apply_fm_env_encoder(idx, delta, &mut params.fm.operators[2]);
+                return;
+            }
+            PageId::FmEnv4 => {
+                apply_fm_env_encoder(idx, delta, &mut params.fm.operators[3]);
                 return;
             }
             PageId::Chorus => {
@@ -699,6 +725,47 @@ fn apply_fm_op_encoder(idx: usize, delta: i8, params: &mut ParamSnapshot) {
                 _ => {}
             }
         }
+    }
+}
+
+fn read_fm_env_values(op: &crate::params::FmOpParams) -> [f32; 6] {
+    [
+        op.attack_rate.normalized(),
+        op.decay1_rate.normalized(),
+        op.decay1_level.normalized(),
+        op.decay2_rate.normalized(),
+        op.release_rate.normalized(),
+        op.rate_scaling.normalized(),
+    ]
+}
+
+fn apply_fm_env_encoder(idx: usize, delta: i8, op: &mut crate::params::FmOpParams) {
+    match idx {
+        0 => {
+            let cur = op.attack_rate.value as i8;
+            op.attack_rate.value = (cur as i16 + delta as i16).clamp(0, 31) as f32;
+        }
+        1 => {
+            let cur = op.decay1_rate.value as i8;
+            op.decay1_rate.value = (cur as i16 + delta as i16).clamp(0, 31) as f32;
+        }
+        2 => {
+            let cur = op.decay1_level.value as i8;
+            op.decay1_level.value = (cur + delta).clamp(0, 15) as f32;
+        }
+        3 => {
+            let cur = op.decay2_rate.value as i8;
+            op.decay2_rate.value = (cur as i16 + delta as i16).clamp(0, 31) as f32;
+        }
+        4 => {
+            let cur = op.release_rate.value as i8;
+            op.release_rate.value = (cur + delta).clamp(1, 15) as f32;
+        }
+        5 => {
+            let cur = op.rate_scaling.value as i8;
+            op.rate_scaling.value = (cur + delta).clamp(0, 3) as f32;
+        }
+        _ => {}
     }
 }
 
