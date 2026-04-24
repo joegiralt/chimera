@@ -78,6 +78,7 @@ pub fn fast_tan(x: f32) -> f32 {
     x * (1.0 + x2 * (1.0 / 3.0 + x2 * (2.0 / 15.0)))
 }
 
+pub mod fm_tables;
 pub mod chorus;
 pub mod delay;
 pub mod drive;
