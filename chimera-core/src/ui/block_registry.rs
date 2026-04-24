@@ -78,6 +78,55 @@ pub static VA: BlockDef = BlockDef {
 };
 
 // ---------------------------------------------------------------------------
+// FM engine pages
+// ---------------------------------------------------------------------------
+
+pub static FM_ALG: BlockDef = BlockDef {
+    name: "4opFM",
+    short: "FM",
+    layout: PageLayout::CellGrid,
+    viz: VizType::AlgorithmDiagram,
+    params: [
+        ParamSlot { label: "ALG",   format: ValFmt::Int(7), icon: CellIcon::Arc },
+        EMPTY,
+        ParamSlot { label: "LEVEL", format: ValFmt::Uni,    icon: CellIcon::LevelBar },
+        EMPTY,
+        EMPTY,
+        EMPTY,
+    ],
+};
+
+pub static FM_OP: BlockDef = BlockDef {
+    name: "Operator",
+    short: "OP",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot { label: "OP",     format: ValFmt::Int(3), icon: CellIcon::Arc },
+        ParamSlot { label: "WAVE",   format: ValFmt::Int(7), icon: CellIcon::WaveShape },
+        ParamSlot { label: "LEVEL",  format: ValFmt::Uni,    icon: CellIcon::LevelBar },
+        ParamSlot { label: "FDBK",   format: ValFmt::Int(7), icon: CellIcon::Arc },
+        ParamSlot { label: "DETUN",  format: ValFmt::Bi,     icon: CellIcon::Arc },
+        ParamSlot { label: "V.SNS",  format: ValFmt::Int(7), icon: CellIcon::Arc },
+    ],
+};
+
+pub static FM_RATIO: BlockDef = BlockDef {
+    name: "Ratios",
+    short: "RAT",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot { label: "OP1",  format: ValFmt::Int(63), icon: CellIcon::Arc },
+        ParamSlot { label: "OP2",  format: ValFmt::Int(63), icon: CellIcon::Arc },
+        ParamSlot { label: "OP3",  format: ValFmt::Int(63), icon: CellIcon::Arc },
+        ParamSlot { label: "OP4",  format: ValFmt::Int(63), icon: CellIcon::Arc },
+        ParamSlot { label: "FINE", format: ValFmt::Int(15), icon: CellIcon::Arc },
+        EMPTY,
+    ],
+};
+
+// ---------------------------------------------------------------------------
 // Drive / Folder
 // ---------------------------------------------------------------------------
 
@@ -365,6 +414,21 @@ static MODAL_PLUCK_BLOCKS: [ChainBlock; 3] = [
 pub static MODAL_PLUCK_CHAIN: ChainDef2 = ChainDef2 {
     name: "Modal Pluck",
     blocks: &MODAL_PLUCK_BLOCKS,
+};
+
+static FM_SUB_PAGES: [&BlockDef; 2] = [&FM_OP, &FM_RATIO];
+
+static FM_BLOCKS: [ChainBlock; 5] = [
+    ChainBlock { def: &FM_ALG,     sub_pages: &FM_SUB_PAGES },
+    ChainBlock { def: &DRIVE,      sub_pages: &[] },
+    ChainBlock { def: &FILTER,     sub_pages: &[] },
+    ChainBlock { def: &FOLDER,     sub_pages: &[] },
+    ChainBlock { def: &MOD_MATRIX, sub_pages: &MOD_MATRIX_SUB_PAGES },
+];
+
+pub static FM_CHAIN: ChainDef2 = ChainDef2 {
+    name: "FM",
+    blocks: &FM_BLOCKS,
 };
 
 static MIX_BLOCKS: [ChainBlock; 5] = [

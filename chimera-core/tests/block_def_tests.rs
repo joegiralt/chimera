@@ -72,6 +72,30 @@ fn system_chain_has_5_blocks() {
 }
 
 #[test]
+fn fm_chain_has_5_blocks() {
+    let chain = &block_registry::FM_CHAIN;
+    assert_eq!(chain.len(), 5);
+    assert_eq!(chain.blocks[0].def.name, "4opFM");
+    assert_eq!(chain.blocks[1].def.name, "Drive");
+    assert_eq!(chain.blocks[2].def.name, "Filter");
+    assert_eq!(chain.blocks[3].def.name, "Folder");
+    assert_eq!(chain.blocks[4].def.name, "Mod Matrix");
+    // FM engine block has 2 sub-pages: Operator + Ratios
+    assert_eq!(chain.blocks[0].sub_pages.len(), 2);
+    assert_eq!(chain.blocks[0].sub_pages[0].name, "Operator");
+    assert_eq!(chain.blocks[0].sub_pages[1].name, "Ratios");
+    assert_eq!(chain.blocks[0].sub_page_count(), 3); // primary + 2 subs
+}
+
+#[test]
+fn fm_chain_resolves_sub_pages() {
+    let chain = &block_registry::FM_CHAIN;
+    assert_eq!(chain.active_def(0, 0).unwrap().name, "4opFM");
+    assert_eq!(chain.active_def(0, 1).unwrap().name, "Operator");
+    assert_eq!(chain.active_def(0, 2).unwrap().name, "Ratios");
+}
+
+#[test]
 fn demo_chain_has_4_blocks() {
     let chain = &block_registry::DEMO_CHAIN;
     assert_eq!(chain.blocks[0].def.name, "Waves");

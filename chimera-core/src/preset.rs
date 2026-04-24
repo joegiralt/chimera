@@ -38,10 +38,16 @@ impl Patch {
         let mut name = [0u8; NAME_LEN];
         let tag = b"(init)";
         name[..tag.len()].copy_from_slice(tag);
+        let mut params = ParamSnapshot::default();
+        match chain_type {
+            ChainType::PizzaPoly => { /* default is already Pizza */ }
+            ChainType::Modal => { params.engine = crate::params::EngineType::Modal; }
+            ChainType::Fm => { params.engine = crate::params::EngineType::Fm; }
+        }
         Self {
             name,
             chain_type,
-            params: ParamSnapshot::default(),
+            params,
             mod_state: ModState::default(),
         }
     }
