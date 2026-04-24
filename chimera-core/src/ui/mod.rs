@@ -346,6 +346,17 @@ impl UiState {
             a.set_target(v);
             a.update();
         }
+
+        // Animate branch scroll for dungeon map sub-pages
+        let avail = (chimera_hal::SCREEN_HEIGHT as i32 - theme::BRANCH_START_Y) / theme::BRANCH_LINE_HEIGHT;
+        let max_visible = avail.max(1) as usize;
+        let target_scroll = if self.nav.sub_page >= max_visible {
+            (self.nav.sub_page - max_visible + 1) as f32
+        } else {
+            0.0
+        };
+        self.renderer.branch_scroll.set_target(target_scroll);
+        self.renderer.branch_scroll.update();
     }
 
     /// Render full screen to a display.
