@@ -176,31 +176,59 @@ Feedback is applied by feeding the operator's previous output sample back as pha
 
 ## UI Layout
 
-The FM block appears as a single block in the chain with 5 sub-pages:
+The FM block is a single chain block with 3 sub-pages. Per-operator envelope editing (AR, D1R, D1L, D2R, RR, rate scaling) lives in the mod matrix sub-pages, following the same pattern as existing envelope/LFO editing.
 
 ```
-FM Block (top-level)
-  ├ Algorithm — alg select (A), output level (C)
-  ├ OP1 — wave/coarse/fine/level/fb/detune + shift:envelope
-  ├ OP2 — same layout
-  ├ OP3 — same layout
-  └ OP4 — same layout
+FM Block
+  ├ Algorithm — algorithm select, diagram on screen
+  ├ Operator Focus — select OP, edit its tone params
+  └ Ratios — all 4 operator ratios for harmonic relationships
 ```
 
-### Operator Sub-Page Encoder Mapping
+### Sub-Page 1: Algorithm
 
-Consistent across all 4 operator pages (muscle memory):
+| Encoder | Parameter |
+|---------|-----------|
+| A | Algorithm (0–7) |
+| B | — |
+| C | Output Level |
+| D | — |
+| E | — |
+| F | — |
 
-| Encoder | Normal | Shift |
-|---------|--------|-------|
-| A | Waveform | AR |
-| B | Coarse | D1R |
-| C | Level | D1L |
-| D | Feedback | D2R |
-| E | Detune | RR |
-| F | Vel Sens | Rate Scaling |
+Screen shows the algorithm routing diagram (e.g., `4→3→2→[1]`) so the user always knows the FM topology.
 
-Fine ratio parameter accessed via shift on Coarse (B+Shift → Fine), displacing D1R to a secondary access method or dedicated page.
+### Sub-Page 2: Operator Focus
+
+Encoder A selects which operator (1–4). Encoders B–F edit the selected operator. The screen highlights the selected operator in the algorithm diagram.
+
+| Encoder | Parameter |
+|---------|-----------|
+| A | Operator Select (1–4) |
+| B | Waveform (0–7) |
+| C | Level (0–99) |
+| D | Feedback (0–7) |
+| E | Detune (-7..+7) |
+| F | Vel Sens (0–7) |
+
+One page instead of four — same muscle memory, the selected operator is highlighted on screen.
+
+### Sub-Page 3: Ratios
+
+All 4 operator ratios on one page for harmonic relationship editing. Seeing all ratios together makes it easy to tune intervals.
+
+| Encoder | Parameter |
+|---------|-----------|
+| A | OP1 Coarse (0–63) |
+| B | OP2 Coarse (0–63) |
+| C | OP3 Coarse (0–63) |
+| D | OP4 Coarse (0–63) |
+| E | Fine (selected op) |
+| F | — |
+
+### Envelope Editing
+
+The 5-stage TX81Z envelope (AR, D1R, D1L, D2R, RR, rate scaling) per operator is accessed through the mod matrix sub-pages, consistent with how Chimera handles envelopes and LFOs for all engines. The mod matrix sees the 4 operator envelopes as modulation sources.
 
 ## Integration with Chimera
 
