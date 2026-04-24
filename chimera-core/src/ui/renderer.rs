@@ -30,6 +30,8 @@ pub struct Renderer {
     pub focused: usize,
     /// Animated scroll offset for dungeon map sub-page branches (in pixels).
     pub branch_scroll: AnimatedValue,
+    /// Current page — used for context-aware mod bar paths.
+    pub current_page: PageId,
 }
 
 impl Default for Renderer {
@@ -44,6 +46,7 @@ impl Renderer {
             anim: [AnimatedValue::new(0.5); 6],
             focused: 0,
             branch_scroll: AnimatedValue::new(0.0).with_speed(0.25),
+            current_page: PageId::Pizza,
         }
     }
 
@@ -56,9 +59,30 @@ impl Renderer {
     }
 
     pub fn snap_to_current(&mut self, page: PageId, params: &ParamSnapshot) {
+        self.current_page = page;
         let values = page.read_values(params);
         for (a, &v) in self.anim.iter_mut().zip(values.iter()) {
             a.snap(v);
+        }
+    }
+
+    /// Build the correct ParamPath for a cell at (block_idx, encoder_idx),
+    /// taking the current page context into account for FM operator pages.
+    fn param_path_for_cell(&self, block_idx: usize, encoder_idx: usize) -> crate::mod_path::ParamPath {
+        use crate::mod_path::ParamPath;
+        match self.current_page {
+            PageId::FmOp => ParamPath::FmOp {
+                op: crate::ui::page::fm_selected_op() as u8,
+                param: encoder_idx as u8,
+            },
+            PageId::FmEnv1 => ParamPath::FmEnv { op: 0, param: encoder_idx as u8 },
+            PageId::FmEnv2 => ParamPath::FmEnv { op: 1, param: encoder_idx as u8 },
+            PageId::FmEnv3 => ParamPath::FmEnv { op: 2, param: encoder_idx as u8 },
+            PageId::FmEnv4 => ParamPath::FmEnv { op: 3, param: encoder_idx as u8 },
+            _ => ParamPath::Block {
+                block: block_idx as u8,
+                param: encoder_idx as u8,
+            },
         }
     }
 
@@ -726,7 +750,8 @@ impl Renderer {
             }
 
             // Mod bar — bipolar, below value bar. Shows when param is a mod destination.
-            let mod_info = matrix_state.mod_info_for_param(block_idx as u8, i as u8);
+            let mod_path = self.param_path_for_cell(block_idx, i);
+            let mod_info = matrix_state.mod_info_for_path(mod_path);
             if let Some(mod_amount) = mod_info {
                 let mod_bar_y = bar_y + theme::BAR_HEIGHT + 2;
                 let mid_x = x + theme::BAR_WIDTH / 2;
@@ -777,7 +802,8 @@ impl Renderer {
         for (i, slot) in def.params.iter().enumerate() {
             let col = (i % 3) as i32;
             let row = (i / 3) as i32;
-            let mod_info = matrix_state.mod_info_for_param(block_idx as u8, i as u8);
+            let mod_path = self.param_path_for_cell(block_idx, i);
+            let mod_info = matrix_state.mod_info_for_path(mod_path);
             cell::draw_cell_with_mod(
                 display,
                 col,
