@@ -44,11 +44,22 @@ impl Patch {
             ChainType::Modal => { params.engine = crate::params::EngineType::Modal; }
             ChainType::Fm => { params.engine = crate::params::EngineType::Fm; }
         }
+        let mod_state = match chain_type {
+            ChainType::Fm => {
+                // Pre-wire: 4 envelope sources for the 4 FM operators.
+                // The internal routing (env→op amplitude) is handled by the FM engine.
+                // ModState just declares 4 sources so the matrix UI shows E1-E4.
+                let mut ms = ModState::new();
+                ms.num_sources = 4;
+                ms
+            }
+            _ => ModState::default(),
+        };
         Self {
             name,
             chain_type,
             params,
-            mod_state: ModState::default(),
+            mod_state,
         }
     }
 
