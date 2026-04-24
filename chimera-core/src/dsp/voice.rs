@@ -1,6 +1,7 @@
 use chimera_hal::BLOCK_SIZE;
 
 use crate::dsp::drive::Drive;
+use crate::dsp::engine_fm::FmEngine;
 use crate::dsp::envelope::Envelope;
 use crate::dsp::filter::SvfFilter;
 use crate::dsp::lfo::Lfo;
@@ -16,6 +17,7 @@ use crate::params::{EngineType, ParamSnapshot};
 pub struct Voice {
     pub pizza: PizzaOsc,
     pub modal: ModalEngine,
+    pub fm: FmEngine,
     drive: Drive,
     filter: SvfFilter,
     folder: Wavefolder,
@@ -36,6 +38,7 @@ impl Voice {
         Self {
             pizza: PizzaOsc::new(),
             modal: ModalEngine::new(),
+            fm: FmEngine::new(),
             drive: Drive::new(),
             filter: SvfFilter::new(),
             folder: Wavefolder::new(),
@@ -53,8 +56,11 @@ impl Voice {
             EngineType::Pizza => {
                 self.pizza.note_on(freq, sample_rate);
             }
-            EngineType::Fm | EngineType::Va => {
-                // FM/VA removed — silence placeholder
+            EngineType::Fm => {
+                self.fm.note_on_params(note, velocity as f32 / 127.0, &params.fm, sample_rate as f32);
+            }
+            EngineType::Va => {
+                // VA — silence placeholder
             }
             EngineType::Modal => {
                 self.modal
@@ -68,7 +74,8 @@ impl Voice {
     pub fn note_off(&mut self) {
         match self.active_engine {
             EngineType::Pizza => self.pizza.note_off(),
-            EngineType::Fm | EngineType::Va => { /* FM/VA removed */ }
+            EngineType::Fm => self.fm.note_off(),
+            EngineType::Va => { /* VA — silence placeholder */ }
             EngineType::Modal => self.modal.note_off(),
         }
         self.amp_env.note_off();
@@ -132,8 +139,11 @@ impl Voice {
             EngineType::Pizza => {
                 self.pizza.render(output, &mod_pizza, sample_rate);
             }
-            EngineType::Fm | EngineType::Va => {
-                // FM/VA removed — render silence
+            EngineType::Fm => {
+                self.fm.render_params(output, &params.fm);
+            }
+            EngineType::Va => {
+                // VA — render silence
                 for s in output.iter_mut() {
                     *s = 0.0;
                 }
@@ -173,7 +183,8 @@ impl Voice {
         // Check if done
         self.active = match self.active_engine {
             EngineType::Pizza => self.amp_env.is_active(),
-            EngineType::Fm | EngineType::Va => false, // FM/VA removed
+            EngineType::Fm => !self.fm.is_idle(),
+            EngineType::Va => false, // VA — silence placeholder
             EngineType::Modal => self.modal.is_active(),
         };
     }
