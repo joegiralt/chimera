@@ -140,7 +140,64 @@ fn project_has_six_tracks() {
     assert_eq!(project.tracks.len(), 6);
 }
 
-// ── UI integration tests ──────────────────────────────────────────
+// ── Navigation tests ─────────────────────────────────────────────
+
+#[test]
+fn plus_moves_one_block_per_press() {
+    let mut ui = UiState::new();
+    let start_node = ui.nav.node;
+
+    // Single Pressed event → one step
+    ui.handle_input(&MockControls::new().button(ButtonId::Plus, ButtonState::Pressed));
+    assert_eq!(ui.nav.node, start_node + 1);
+
+    // Held does NOT advance further
+    ui.handle_input(&MockControls::new().button(ButtonId::Plus, ButtonState::Held));
+    assert_eq!(ui.nav.node, start_node + 1);
+
+    // Released does NOT advance
+    ui.handle_input(&MockControls::new().button(ButtonId::Plus, ButtonState::Released));
+    assert_eq!(ui.nav.node, start_node + 1);
+
+    // Another Pressed → one more step
+    ui.handle_input(&MockControls::new().button(ButtonId::Plus, ButtonState::Pressed));
+    assert_eq!(ui.nav.node, start_node + 2);
+}
+
+#[test]
+fn minus_moves_one_block_per_press() {
+    let mut ui = UiState::new();
+
+    // Move forward first so we have room to go back
+    ui.handle_input(&MockControls::new().button(ButtonId::Plus, ButtonState::Pressed));
+    ui.handle_input(&MockControls::new().button(ButtonId::Plus, ButtonState::Pressed));
+    assert_eq!(ui.nav.node, 2);
+
+    // Minus → one step back
+    ui.handle_input(&MockControls::new().button(ButtonId::Minus, ButtonState::Pressed));
+    assert_eq!(ui.nav.node, 1);
+
+    // Held does NOT go further
+    ui.handle_input(&MockControls::new().button(ButtonId::Minus, ButtonState::Held));
+    assert_eq!(ui.nav.node, 1);
+}
+
+#[test]
+fn edit_held_with_b_press_does_not_navigate() {
+    let mut ui = UiState::new();
+    let start_node = ui.nav.node;
+
+    // Edit+B1 should open browser, NOT navigate
+    ui.handle_input(&MockControls::new()
+        .button(ButtonId::Edit, ButtonState::Held)
+        .button(ButtonId::B1, ButtonState::Pressed));
+
+    // Should be in browser, not navigated
+    assert!(matches!(ui.ui_mode, UiMode::PatchBrowser { .. }));
+    assert_eq!(ui.nav.node, start_node);
+}
+
+// ── Patch browser integration tests ─────────────────────────────
 
 /// Helper: open patch browser for a track via Edit + B-button
 fn open_browser(ui: &mut UiState, btn: ButtonId) {
