@@ -142,44 +142,35 @@ fn project_has_six_tracks() {
 
 // ── UI integration tests ──────────────────────────────────────────
 
+/// Helper: open patch browser for a track via Edit + B-button
+fn open_browser(ui: &mut UiState, btn: ButtonId) {
+    ui.handle_input(&MockControls::new()
+        .button(ButtonId::Edit, ButtonState::Held)
+        .button(btn, ButtonState::Pressed));
+}
+
 #[test]
-fn double_tap_b1_opens_patch_browser() {
+fn edit_b1_opens_patch_browser() {
     let mut ui = UiState::new();
     assert!(matches!(ui.ui_mode, UiMode::Normal));
 
-    // First press at tick 100
-    ui.set_tick(100);
-    ui.handle_input(&MockControls::new().button(ButtonId::B1, ButtonState::Pressed));
-    assert!(matches!(ui.ui_mode, UiMode::Normal));
-
-    // Second press 100ms later (50 ticks at 500Hz) — within 300ms window
-    ui.set_tick(150);
-    ui.handle_input(&MockControls::new().button(ButtonId::B1, ButtonState::Pressed));
+    open_browser(&mut ui, ButtonId::B1);
     assert!(matches!(ui.ui_mode, UiMode::PatchBrowser { track: 0, .. }));
 }
 
 #[test]
-fn double_tap_b3_opens_browser_for_track_2() {
+fn edit_b3_opens_browser_for_track_2() {
     let mut ui = UiState::new();
 
-    ui.set_tick(100);
-    ui.handle_input(&MockControls::new().button(ButtonId::B3, ButtonState::Pressed));
-    ui.set_tick(150);
-    ui.handle_input(&MockControls::new().button(ButtonId::B3, ButtonState::Pressed));
-
+    open_browser(&mut ui, ButtonId::B3);
     assert!(matches!(ui.ui_mode, UiMode::PatchBrowser { track: 2, .. }));
 }
 
 #[test]
-fn slow_double_press_does_not_open_browser() {
+fn b1_without_edit_does_not_open_browser() {
     let mut ui = UiState::new();
 
-    ui.set_tick(100);
     ui.handle_input(&MockControls::new().button(ButtonId::B1, ButtonState::Pressed));
-    // 500ms later (250 ticks) — past the 300ms/150-tick window
-    ui.set_tick(350);
-    ui.handle_input(&MockControls::new().button(ButtonId::B1, ButtonState::Pressed));
-
     assert!(matches!(ui.ui_mode, UiMode::Normal));
 }
 
@@ -192,11 +183,8 @@ fn browser_load_copies_patch_to_track() {
     patch.name = *b"Test Sound\0\0\0\0\0\0";
     ui.project.pool.store(2, patch);
 
-    // Open browser for B1 (track 0) via double-tap
-    ui.set_tick(100);
-    ui.handle_input(&MockControls::new().button(ButtonId::B1, ButtonState::Pressed));
-    ui.set_tick(150);
-    ui.handle_input(&MockControls::new().button(ButtonId::B1, ButtonState::Pressed));
+    // Open browser for B1 (track 0)
+    open_browser(&mut ui, ButtonId::B1);
     assert!(matches!(ui.ui_mode, UiMode::PatchBrowser { track: 0, cursor: 0, .. }));
 
     // Scroll down to slot 2
@@ -216,12 +204,9 @@ fn browser_cancel_does_not_load() {
     let mut ui = UiState::new();
     let original_name = ui.project.tracks[0].patch.name;
 
-    // Store patch and open browser via double-tap
+    // Store patch and open browser
     ui.project.pool.store(0, Patch::init(ChainType::Modal));
-    ui.set_tick(100);
-    ui.handle_input(&MockControls::new().button(ButtonId::B1, ButtonState::Pressed));
-    ui.set_tick(150);
-    ui.handle_input(&MockControls::new().button(ButtonId::B1, ButtonState::Pressed));
+    open_browser(&mut ui, ButtonId::B1);
     assert!(matches!(ui.ui_mode, UiMode::PatchBrowser { .. }));
 
     // Cancel by pressing a B-button
@@ -238,11 +223,8 @@ fn browser_save_to_pool() {
     // Edit track 0's patch name
     ui.project.tracks[0].patch.name = *b"My Bass\0\0\0\0\0\0\0\0\0";
 
-    // Open browser for B1 via double-tap
-    ui.set_tick(100);
-    ui.handle_input(&MockControls::new().button(ButtonId::B1, ButtonState::Pressed));
-    ui.set_tick(150);
-    ui.handle_input(&MockControls::new().button(ButtonId::B1, ButtonState::Pressed));
+    // Open browser for B1
+    open_browser(&mut ui, ButtonId::B1);
     assert!(matches!(ui.ui_mode, UiMode::PatchBrowser { .. }));
 
     // Scroll to slot 5 and save
@@ -262,11 +244,8 @@ fn browser_init_resets_to_track_chain_type() {
     ui.project.tracks[0].patch.chain_type = ChainType::Modal;
     ui.project.tracks[0].patch.name = *b"Custom Modal\0\0\0\0";
 
-    // Open browser via double-tap, scroll to init entry (slot 32 = POOL_SIZE)
-    ui.set_tick(100);
-    ui.handle_input(&MockControls::new().button(ButtonId::B1, ButtonState::Pressed));
-    ui.set_tick(150);
-    ui.handle_input(&MockControls::new().button(ButtonId::B1, ButtonState::Pressed));
+    // Open browser, scroll to init entry (slot 32 = POOL_SIZE)
+    open_browser(&mut ui, ButtonId::B1);
 
     // Scroll to the init entry at the end
     ui.handle_input(&MockControls::new().encoder(EncoderId::Main, POOL_SIZE as i8));
