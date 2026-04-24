@@ -162,6 +162,12 @@ impl UiState {
                 self.nav.sub_page = 0;
                 self.nav.chain_type = self.project.tracks[sel_track].patch.chain_type;
                 self.page = PageId::from_nav(&self.nav);
+                // Rebuild mod matrix sources/dests for the new chain type
+                let chain = self.nav.active_chain();
+                if let Some(last_block) = chain.blocks.last() {
+                    self.matrix_state.rebuild_sources(last_block.sub_pages);
+                }
+                self.matrix_state.rebuild_dests_from_chain(chain.blocks);
                 self.renderer.snap_to_current(self.page, &self.project.tracks[sel_track].patch.params);
                 self.ui_mode = UiMode::Normal;
                 return;
