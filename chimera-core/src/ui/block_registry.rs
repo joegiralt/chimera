@@ -87,7 +87,7 @@ pub static FM_ALG: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::AlgorithmDiagram,
     params: [
-        ParamSlot { label: "ALG",   format: ValFmt::Int(7), icon: CellIcon::Arc },
+        ParamSlot { label: "ALG",   format: ValFmt::Int(7), icon: CellIcon::FmAlgorithm },
         EMPTY,
         ParamSlot { label: "LEVEL", format: ValFmt::Uni,    icon: CellIcon::LevelBar },
         EMPTY,

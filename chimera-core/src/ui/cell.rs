@@ -206,6 +206,7 @@ where
         CellIcon::Stack => draw_icon_stack(display, x, y, w, h, val),
         CellIcon::Bounce => draw_icon_bounce(display, x, y, w, h, val),
         CellIcon::Cube => draw_icon_cube(display, x, y, w, h, val),
+        CellIcon::FmAlgorithm => draw_icon_fm_alg(display, x, y, w, h, val),
     }
 }
 
@@ -1060,6 +1061,136 @@ where
     // Highlight dot at ball center
     let _ = Rectangle::new(Point::new(cx - 1, by - 1), Size::new(3, 3))
         .draw_styled(&PrimitiveStyle::with_fill(theme::ACCENT_BRIGHT), display);
+}
+
+// ── FM Algorithm icon ─────────────────────────────────────────────
+//
+// Draws a tiny operator topology diagram for each of the 8 TX81Z algorithms.
+// Operators shown as small squares, arrows as lines.
+// Carriers (output) are brighter, modulators dimmer.
+
+fn draw_icon_fm_alg<D>(display: &mut D, x: i32, y: i32, w: i32, h: i32, val: f32)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let alg = (val * 7.0 + 0.5) as u8;
+    let cx = x + w / 2;
+    let cy = y + h / 2;
+
+    // Op box size
+    let bsz = 7i32;
+    let gap = 3i32;
+    let step = bsz + gap;
+
+    let carrier_style = PrimitiveStyle::with_fill(theme::ACCENT_BRIGHT);
+    let mod_style = PrimitiveStyle::with_fill(theme::TEXT_DIM);
+    let line_style = PrimitiveStyle::with_stroke(theme::VIZ_LINE, 1);
+
+    // Helper: draw an operator box at (bx, by), filled = carrier
+    let draw_op = |display: &mut D, bx: i32, by: i32, is_carrier: bool, label: &str| {
+        let style = if is_carrier { &carrier_style } else { &mod_style };
+        let _ = Rectangle::new(Point::new(bx, by), Size::new(bsz as u32, bsz as u32))
+            .draw_styled(style, display);
+        let text_style = MonoTextStyle::new(
+            &embedded_graphics::mono_font::ascii::FONT_4X6,
+            if is_carrier { theme::BG } else { theme::TEXT },
+        );
+        let _ = Text::new(label, Point::new(bx + 2, by + 6), text_style).draw(display);
+    };
+
+    // Layout: stack vertically for serial, spread for parallel
+    // Position slots — up to 4 operators arranged to show topology
+    match alg {
+        0 => {
+            // 4→3→2→[1] — full serial, vertical stack
+            let sx = cx - bsz / 2;
+            let sy = cy - 2 * step;
+            draw_op(display, sx, sy, false, "4");
+            let _ = Line::new(Point::new(cx, sy + bsz), Point::new(cx, sy + step)).draw_styled(&line_style, display);
+            draw_op(display, sx, sy + step, false, "3");
+            let _ = Line::new(Point::new(cx, sy + step + bsz), Point::new(cx, sy + 2 * step)).draw_styled(&line_style, display);
+            draw_op(display, sx, sy + 2 * step, false, "2");
+            let _ = Line::new(Point::new(cx, sy + 2 * step + bsz), Point::new(cx, sy + 3 * step)).draw_styled(&line_style, display);
+            draw_op(display, sx, sy + 3 * step, true, "1");
+        }
+        1 => {
+            // (3+4)→2→[1]
+            let sy = cy - step - bsz / 2;
+            draw_op(display, cx - step, sy, false, "3");
+            draw_op(display, cx + gap, sy, false, "4");
+            let _ = Line::new(Point::new(cx, sy + bsz), Point::new(cx, sy + step)).draw_styled(&line_style, display);
+            draw_op(display, cx - bsz / 2, sy + step, false, "2");
+            let _ = Line::new(Point::new(cx, sy + step + bsz), Point::new(cx, sy + 2 * step)).draw_styled(&line_style, display);
+            draw_op(display, cx - bsz / 2, sy + 2 * step, true, "1");
+        }
+        2 => {
+            // 3→2, (2+4)→[1]
+            let sy = cy - step - bsz / 2;
+            draw_op(display, cx - step, sy, false, "3");
+            draw_op(display, cx + gap, sy, false, "4");
+            let _ = Line::new(Point::new(cx - step + bsz / 2, sy + bsz), Point::new(cx, sy + step)).draw_styled(&line_style, display);
+            let _ = Line::new(Point::new(cx + gap + bsz / 2, sy + bsz), Point::new(cx, sy + 2 * step)).draw_styled(&line_style, display);
+            draw_op(display, cx - bsz / 2, sy + step, false, "2");
+            let _ = Line::new(Point::new(cx, sy + step + bsz), Point::new(cx, sy + 2 * step)).draw_styled(&line_style, display);
+            draw_op(display, cx - bsz / 2, sy + 2 * step, true, "1");
+        }
+        3 => {
+            // 4→3, (3+4→2)→[1]
+            let sy = cy - step - bsz / 2;
+            draw_op(display, cx - bsz / 2, sy, false, "4");
+            let _ = Line::new(Point::new(cx - bsz, sy + bsz), Point::new(cx - step, sy + step)).draw_styled(&line_style, display);
+            let _ = Line::new(Point::new(cx + bsz / 2, sy + bsz), Point::new(cx + gap, sy + step)).draw_styled(&line_style, display);
+            draw_op(display, cx - step - bsz / 2, sy + step, false, "3");
+            draw_op(display, cx + gap - bsz / 2 + bsz / 2, sy + step, false, "2");
+            let _ = Line::new(Point::new(cx, sy + step + bsz), Point::new(cx, sy + 2 * step)).draw_styled(&line_style, display);
+            draw_op(display, cx - bsz / 2, sy + 2 * step, true, "1");
+        }
+        4 => {
+            // 2→[1], 4→[3] — two pairs
+            let sy = cy - step / 2 - bsz;
+            let lx = cx - step;
+            let rx = cx + gap;
+            draw_op(display, lx, sy, false, "2");
+            let _ = Line::new(Point::new(lx + bsz / 2, sy + bsz), Point::new(lx + bsz / 2, sy + step)).draw_styled(&line_style, display);
+            draw_op(display, lx, sy + step, true, "1");
+            draw_op(display, rx, sy, false, "4");
+            let _ = Line::new(Point::new(rx + bsz / 2, sy + bsz), Point::new(rx + bsz / 2, sy + step)).draw_styled(&line_style, display);
+            draw_op(display, rx, sy + step, true, "3");
+        }
+        5 => {
+            // 4→[1], 4→[2], 4→[3]
+            let sy = cy - step / 2 - bsz;
+            draw_op(display, cx - bsz / 2, sy, false, "4");
+            let by = sy + step;
+            let lx = cx - step - bsz / 2;
+            draw_op(display, lx, by, true, "1");
+            draw_op(display, cx - bsz / 2, by, true, "2");
+            draw_op(display, cx + step - bsz / 2, by, true, "3");
+            let _ = Line::new(Point::new(cx, sy + bsz), Point::new(lx + bsz / 2, by)).draw_styled(&line_style, display);
+            let _ = Line::new(Point::new(cx, sy + bsz), Point::new(cx, by)).draw_styled(&line_style, display);
+            let _ = Line::new(Point::new(cx, sy + bsz), Point::new(cx + step - bsz / 2 + bsz / 2, by)).draw_styled(&line_style, display);
+        }
+        6 => {
+            // [1], [2], 4→[3]
+            let sy = cy - step / 2 - bsz;
+            draw_op(display, cx + step - bsz / 2, sy, false, "4");
+            let by = sy + step;
+            draw_op(display, cx - step - bsz / 2, by, true, "1");
+            draw_op(display, cx - bsz / 2, by, true, "2");
+            let _ = Line::new(Point::new(cx + step, sy + bsz), Point::new(cx + step, by)).draw_styled(&line_style, display);
+            draw_op(display, cx + step - bsz / 2, by, true, "3");
+        }
+        _ => {
+            // 7: [1], [2], [3], [4] — all parallel
+            let sy = cy - bsz / 2;
+            let total_w = 4 * bsz + 3 * gap;
+            let sx = cx - total_w / 2;
+            draw_op(display, sx, sy, true, "1");
+            draw_op(display, sx + step, sy, true, "2");
+            draw_op(display, sx + 2 * step, sy, true, "3");
+            draw_op(display, sx + 3 * step, sy, true, "4");
+        }
+    }
 }
 
 /// Triangle-fold waveshaping.

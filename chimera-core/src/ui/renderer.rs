@@ -395,11 +395,12 @@ impl Renderer {
         let d2r = self.anim[3].current().max(0.02);  // decay 2 rate
         let rr = self.anim[4].current().max(0.02);   // release rate
 
-        // Invert rates for width (higher rate = shorter time = narrower segment)
-        let atk_t = 1.0 - ar * 0.7;   // fast attack = narrow
-        let d1_t = 1.0 - d1r * 0.7;
-        let d2_t = 0.3;                // sustain/d2 gets fixed proportion
-        let rel_t = 1.0 - rr * 0.5;
+        // Invert rates for width: higher rate = faster = narrower segment
+        // rate=0 (slowest) → full width, rate=1.0 (AR=31, fastest) → minimal width
+        let atk_t = (1.0 - ar).max(0.03);
+        let d1_t = (1.0 - d1r).max(0.03);
+        let d2_t = 0.25;               // D2/sustain gets fixed proportion
+        let rel_t = (1.0 - rr).max(0.03);
 
         let total = atk_t + d1_t + d2_t + rel_t;
         let widths = [atk_t / total, d1_t / total, d2_t / total, rel_t / total];
@@ -426,8 +427,8 @@ impl Renderer {
     {
         let x0 = theme::VIZ_LEFT;
         let x1 = theme::VIZ_RIGHT;
-        let y0 = theme::VIZ_TOP + 8;
-        let y1 = theme::VIZ_BOTTOM - 8;
+        let y0 = theme::VIZ_TOP + 10;
+        let y1 = theme::VIZ_BOTTOM - 18; // room for dots (3px) + labels (12px) below baseline
         let w = (x1 - x0) as f32;
         let h = (y1 - y0) as f32;
 
