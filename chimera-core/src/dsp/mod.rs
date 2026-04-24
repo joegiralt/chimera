@@ -81,6 +81,7 @@ pub fn fast_tan(x: f32) -> f32 {
 pub mod fm_tables;
 pub mod fm_waveform;
 pub mod envelope_fm;
+pub mod engine_fm;
 pub mod chorus;
 pub mod delay;
 pub mod drive;

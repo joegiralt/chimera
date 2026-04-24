@@ -1,4 +1,5 @@
 use chimera_core::dsp::envelope_fm::FmEnvelope;
+use chimera_core::dsp::engine_fm::{FmOperator, FmOpSettings};
 use chimera_core::dsp::fm_tables;
 use chimera_core::dsp::fm_waveform;
 
@@ -141,4 +142,72 @@ fn fm_envelope_d1l_zero_decays_to_silence() {
         env.run(&mut buf);
     }
     assert!(env.current_level() < 0.001);
+}
+
+#[test]
+fn fm_operator_produces_sound() {
+    let mut op = FmOperator::new();
+    let settings = FmOpSettings {
+        waveform: 0, coarse: 4, fine: 0, level: 99,
+        feedback: 0, detune: 0, velocity_sens: 0,
+        ar: 31, d1r: 0, d1l: 15, d2r: 0, rr: 15, rate_scaling: 0,
+    };
+    op.note_on(69, 1.0, &settings, 48000.0);
+    let zeros = [0.0f32; 1024];
+    let mut buf = [0.0f32; 1024];
+    op.run(&zeros, &mut buf);
+    let rms = (buf.iter().map(|x| x * x).sum::<f32>() / 1024.0).sqrt();
+    assert!(rms > 0.01, "rms={rms}");
+}
+
+#[test]
+fn fm_operator_modulation_changes_timbre() {
+    let settings = FmOpSettings {
+        waveform: 0, coarse: 4, fine: 0, level: 99,
+        feedback: 0, detune: 0, velocity_sens: 0,
+        ar: 31, d1r: 0, d1l: 15, d2r: 0, rr: 15, rate_scaling: 0,
+    };
+
+    // Clean (no modulation)
+    let mut op = FmOperator::new();
+    op.note_on(69, 1.0, &settings, 48000.0);
+    let zeros = [0.0f32; 1024];
+    let mut clean = [0.0f32; 1024];
+    op.run(&zeros, &mut clean);
+
+    // Modulated
+    let mut op2 = FmOperator::new();
+    op2.note_on(69, 1.0, &settings, 48000.0);
+    let modulator = [0.3f32; 1024];
+    let mut modded = [0.0f32; 1024];
+    op2.run(&modulator, &mut modded);
+
+    let diff: f32 = clean.iter().zip(modded.iter()).map(|(a, b)| (a - b).abs()).sum::<f32>();
+    assert!(diff > 1.0, "modulation should change output");
+}
+
+#[test]
+fn fm_operator_feedback_adds_harmonics() {
+    let mut settings = FmOpSettings {
+        waveform: 0, coarse: 4, fine: 0, level: 99,
+        feedback: 0, detune: 0, velocity_sens: 0,
+        ar: 31, d1r: 0, d1l: 15, d2r: 0, rr: 15, rate_scaling: 0,
+    };
+
+    // No feedback
+    let mut op = FmOperator::new();
+    op.note_on(69, 1.0, &settings, 48000.0);
+    let zeros = [0.0f32; 2048];
+    let mut clean = [0.0f32; 2048];
+    op.run(&zeros, &mut clean);
+
+    // Max feedback
+    settings.feedback = 7;
+    let mut op2 = FmOperator::new();
+    op2.note_on(69, 1.0, &settings, 48000.0);
+    let mut fb = [0.0f32; 2048];
+    op2.run(&zeros, &mut fb);
+
+    let diff: f32 = clean.iter().zip(fb.iter()).map(|(a, b)| (a - b).abs()).sum::<f32>();
+    assert!(diff > 1.0, "feedback should change timbre");
 }
