@@ -29,6 +29,27 @@ pub struct FmOpSettings {
     pub rate_scaling: u8,
 }
 
+impl FmOpSettings {
+    /// Convert from [`crate::params::FmOpParams`] to this settings struct.
+    pub fn from_params(p: &crate::params::FmOpParams) -> Self {
+        Self {
+            waveform: p.waveform.value as u8,
+            coarse: p.coarse.value as u8,
+            fine: p.fine.value as u8,
+            level: p.level.value as u8,
+            feedback: p.feedback.value as u8,
+            detune: p.detune.value as i8,
+            velocity_sens: p.velocity_sens.value as u8,
+            ar: p.attack_rate.value as u8,
+            d1r: p.decay1_rate.value as u8,
+            d1l: p.decay1_level.value as u8,
+            d2r: p.decay2_rate.value as u8,
+            rr: p.release_rate.value as u8,
+            rate_scaling: p.rate_scaling.value as u8,
+        }
+    }
+}
+
 impl Default for FmOpSettings {
     fn default() -> Self {
         Self {
@@ -311,6 +332,28 @@ impl FmEngine {
     /// Returns `true` when all operators have finished sounding.
     pub fn is_idle(&self) -> bool {
         self.op1.is_idle() && self.op2.is_idle() && self.op3.is_idle() && self.op4.is_idle()
+    }
+
+    /// Trigger all 4 operators using [`crate::params::FmParams`].
+    pub fn note_on_params(
+        &mut self,
+        note: u8,
+        velocity: f32,
+        params: &crate::params::FmParams,
+        sample_rate: f32,
+    ) {
+        let alg = params.algorithm.value as u8;
+        let settings: [FmOpSettings; 4] =
+            core::array::from_fn(|i| FmOpSettings::from_params(&params.operators[i]));
+        self.note_on(note, velocity, alg, &settings, sample_rate);
+    }
+
+    /// Render audio using [`crate::params::FmParams`].
+    pub fn render_params(&mut self, output: &mut [f32], params: &crate::params::FmParams) {
+        let alg = params.algorithm.value as u8;
+        let settings: [FmOpSettings; 4] =
+            core::array::from_fn(|i| FmOpSettings::from_params(&params.operators[i]));
+        self.render(output, alg, &settings);
     }
 
     /// Render audio into `output` using the given algorithm routing.

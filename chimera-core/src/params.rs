@@ -166,6 +166,67 @@ impl Default for FolderParams {
     }
 }
 
+/// Parameters for one FM operator.
+#[derive(Clone, Copy, Debug)]
+pub struct FmOpParams {
+    pub waveform: Param,       // 0.0–7.0 (integer steps)
+    pub coarse: Param,         // 0.0–63.0 (integer steps)
+    pub fine: Param,           // 0.0–15.0 (integer steps)
+    pub level: Param,          // 0.0–99.0 (integer steps)
+    pub feedback: Param,       // 0.0–7.0 (integer steps)
+    pub detune: Param,         // -7.0–7.0 (integer steps)
+    pub velocity_sens: Param,  // 0.0–7.0 (integer steps)
+    pub attack_rate: Param,    // 0.0–31.0 (integer steps)
+    pub decay1_rate: Param,    // 0.0–31.0 (integer steps)
+    pub decay1_level: Param,   // 0.0–15.0 (integer steps)
+    pub decay2_rate: Param,    // 0.0–31.0 (integer steps)
+    pub release_rate: Param,   // 1.0–15.0 (integer steps)
+    pub rate_scaling: Param,   // 0.0–3.0 (integer steps)
+}
+
+impl Default for FmOpParams {
+    fn default() -> Self {
+        Self {
+            waveform: Param::new(0.0, 7.0, 0.0),
+            coarse: Param::new(0.0, 63.0, 4.0),
+            fine: Param::new(0.0, 15.0, 0.0),
+            level: Param::new(0.0, 99.0, 0.0),
+            feedback: Param::new(0.0, 7.0, 0.0),
+            detune: Param::new(-7.0, 7.0, 0.0),
+            velocity_sens: Param::new(0.0, 7.0, 0.0),
+            attack_rate: Param::new(0.0, 31.0, 31.0),
+            decay1_rate: Param::new(0.0, 31.0, 0.0),
+            decay1_level: Param::new(0.0, 15.0, 15.0),
+            decay2_rate: Param::new(0.0, 31.0, 0.0),
+            release_rate: Param::new(1.0, 15.0, 15.0),
+            rate_scaling: Param::new(0.0, 3.0, 0.0),
+        }
+    }
+}
+
+/// Parameters for the 4-operator FM engine.
+#[derive(Clone, Copy, Debug)]
+pub struct FmParams {
+    pub algorithm: Param,           // 0.0–7.0 (integer steps)
+    pub operators: [FmOpParams; 4],
+}
+
+impl Default for FmParams {
+    fn default() -> Self {
+        let mut op0 = FmOpParams::default();
+        op0.level = Param::new(0.0, 99.0, 99.0);
+        Self {
+            algorithm: Param::new(0.0, 7.0, 0.0),
+            operators: [
+                op0,
+                FmOpParams::default(),
+                FmOpParams::default(),
+                FmOpParams::default(),
+            ],
+        }
+    }
+}
+
 /// Which synthesis engine is active.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum EngineType {
@@ -184,6 +245,7 @@ pub struct ParamSnapshot {
     pub folder: FolderParams,
     pub envelopes: [EnvParams; 3],
     pub pizza: crate::dsp::pizza::PizzaParams,
+    pub fm: FmParams,
     pub modal: crate::dsp::modal::ModalParams,
     pub reverb: crate::dsp::reverb::ReverbParams,
     pub delay: crate::dsp::delay::DelayParams,
@@ -206,6 +268,7 @@ impl Default for ParamSnapshot {
             folder: FolderParams::default(),
             envelopes: [EnvParams::default(); 3],
             pizza: crate::dsp::pizza::PizzaParams::default(),
+            fm: FmParams::default(),
             modal: crate::dsp::modal::ModalParams::default(),
             delay: crate::dsp::delay::DelayParams::default(),
             chorus: crate::dsp::chorus::ChorusParams::default(),
