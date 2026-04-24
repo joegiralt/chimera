@@ -1,6 +1,7 @@
 #![no_std]
 
 pub mod dsp;
+pub mod mod_path;
 pub mod modulation;
 pub mod params;
 pub mod preset;
