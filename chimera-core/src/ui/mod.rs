@@ -153,8 +153,9 @@ impl UiState {
                         self.project.tracks[sel_track].loaded_from = Some(sel_cursor as u8);
                     }
                 } else {
-                    // Init entry: reset track to default PizzaPoly
-                    self.project.tracks[sel_track] = crate::preset::Track::new(ChainType::PizzaPoly);
+                    // Init entry: reset track to its current chain type
+                    let chain = self.project.tracks[sel_track].patch.chain_type;
+                    self.project.tracks[sel_track] = crate::preset::Track::new(chain);
                 }
                 // Switch to the loaded track and return to normal mode
                 self.active_track = sel_track;
@@ -219,7 +220,7 @@ impl UiState {
         for (i, &btn) in b_buttons.iter().enumerate() {
             if controls.button_state(btn) == ButtonState::Pressed {
                 let prev = self.last_b_press[i];
-                if self.frame_count.wrapping_sub(prev) <= DOUBLE_TAP_FRAMES {
+                if prev != u32::MAX && self.frame_count.wrapping_sub(prev) <= DOUBLE_TAP_FRAMES {
                     // Double-tap detected — open patch browser for this track
                     self.ui_mode = UiMode::PatchBrowser { track: i, cursor: 0, scroll: 0 };
                     // Reset so a third tap doesn't re-trigger
@@ -373,7 +374,7 @@ impl UiState {
             >,
     {
         if let UiMode::PatchBrowser { track, cursor, scroll } = self.ui_mode {
-            Renderer::draw_patch_browser(display, &self.project.pool, track, cursor, scroll);
+            Renderer::draw_patch_browser(display, &self.project.pool, track, cursor, scroll, self.project.tracks[track].patch.chain_type);
             return;
         }
         let def = self.nav.active_block_def();
@@ -428,7 +429,7 @@ impl UiState {
         if let UiMode::PatchBrowser { track, cursor, scroll } = self.ui_mode {
             let fb = display.pixel_buffer();
             Renderer::clear_region_fb(fb, 0, chimera_hal::SCREEN_HEIGHT);
-            Renderer::draw_patch_browser(display, &self.project.pool, track, cursor, scroll);
+            Renderer::draw_patch_browser(display, &self.project.pool, track, cursor, scroll, self.project.tracks[track].patch.chain_type);
             // Invalidate region set so normal layout forces full rebuild on exit
             self.region_set.prev_layout = None;
             let mut flush_list = [(0u16, 0u16); region::MAX_REGIONS];

@@ -900,6 +900,7 @@ impl Renderer {
         track: usize,
         cursor: usize,
         scroll: usize,
+        track_chain_type: crate::preset::ChainType,
     )
     where
         D: DrawTarget<Color = Rgb565>,
@@ -961,7 +962,9 @@ impl Renderer {
                 let _ = Text::new(row_buf.as_str(), Point::new(8, y + 16), style).draw(display);
             } else {
                 // Init entry (index == POOL_SIZE)
-                let _ = Text::new("** (init) PizzaPoly", Point::new(8, y + 16), style).draw(display);
+                let mut init_buf = FmtBuf::new();
+                let _ = write!(init_buf, "** (init) {}", track_chain_type.label());
+                let _ = Text::new(init_buf.as_str(), Point::new(8, y + 16), style).draw(display);
             }
         }
 

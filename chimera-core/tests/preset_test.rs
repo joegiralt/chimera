@@ -1,5 +1,60 @@
-use chimera_core::preset::{ChainType, Patch, Project, SoundPool, Track};
+use chimera_core::preset::{ChainType, Patch, Project, SoundPool, Track, POOL_SIZE};
 use chimera_core::params::Param;
+use chimera_core::ui::{UiMode, UiState};
+use chimera_hal::{ButtonId, ButtonState, Controls, EncoderId};
+
+/// Mock controls for testing UI input handling.
+struct MockControls {
+    buttons: [(ButtonId, ButtonState); 16],
+    button_count: usize,
+    encoder_deltas: [(EncoderId, i8); 4],
+    delta_count: usize,
+}
+
+impl MockControls {
+    fn new() -> Self {
+        Self {
+            buttons: [(ButtonId::B1, ButtonState::Up); 16],
+            button_count: 0,
+            encoder_deltas: [(EncoderId::Main, 0); 4],
+            delta_count: 0,
+        }
+    }
+
+    fn none() -> Self { Self::new() }
+
+    fn button(mut self, id: ButtonId, state: ButtonState) -> Self {
+        self.buttons[self.button_count] = (id, state);
+        self.button_count += 1;
+        self
+    }
+
+    fn encoder(mut self, id: EncoderId, delta: i8) -> Self {
+        self.encoder_deltas[self.delta_count] = (id, delta);
+        self.delta_count += 1;
+        self
+    }
+}
+
+impl Controls for MockControls {
+    fn button_state(&self, id: ButtonId) -> ButtonState {
+        for i in 0..self.button_count {
+            if self.buttons[i].0 == id {
+                return self.buttons[i].1;
+            }
+        }
+        ButtonState::Up
+    }
+
+    fn encoder_delta(&self, id: EncoderId) -> i8 {
+        for i in 0..self.delta_count {
+            if self.encoder_deltas[i].0 == id {
+                return self.encoder_deltas[i].1;
+            }
+        }
+        0
+    }
+}
 
 #[test]
 fn patch_init_has_musically_useful_defaults() {
@@ -83,4 +138,139 @@ fn track_save_to_pool_overwrites() {
 fn project_has_six_tracks() {
     let project = Project::new();
     assert_eq!(project.tracks.len(), 6);
+}
+
+// ── UI integration tests ──────────────────────────────────────────
+
+#[test]
+fn double_tap_b1_opens_patch_browser() {
+    let mut ui = UiState::new();
+    assert!(matches!(ui.ui_mode, UiMode::Normal));
+
+    // First press — single tap, just navigates
+    ui.handle_input(&MockControls::new().button(ButtonId::B1, ButtonState::Pressed));
+    ui.update(); // advance frame counter
+    assert!(matches!(ui.ui_mode, UiMode::Normal));
+
+    // Second press within double-tap window (next frame = ~50ms < 300ms)
+    ui.handle_input(&MockControls::new().button(ButtonId::B1, ButtonState::Pressed));
+    assert!(matches!(ui.ui_mode, UiMode::PatchBrowser { track: 0, .. }));
+}
+
+#[test]
+fn double_tap_b3_opens_browser_for_track_2() {
+    let mut ui = UiState::new();
+
+    ui.handle_input(&MockControls::new().button(ButtonId::B3, ButtonState::Pressed));
+    ui.update();
+    ui.handle_input(&MockControls::new().button(ButtonId::B3, ButtonState::Pressed));
+
+    assert!(matches!(ui.ui_mode, UiMode::PatchBrowser { track: 2, .. }));
+}
+
+#[test]
+fn slow_double_press_does_not_open_browser() {
+    let mut ui = UiState::new();
+
+    ui.handle_input(&MockControls::new().button(ButtonId::B1, ButtonState::Pressed));
+    // Advance past double-tap window (7+ frames)
+    for _ in 0..8 {
+        ui.update();
+    }
+    ui.handle_input(&MockControls::new().button(ButtonId::B1, ButtonState::Pressed));
+
+    assert!(matches!(ui.ui_mode, UiMode::Normal));
+}
+
+#[test]
+fn browser_load_copies_patch_to_track() {
+    let mut ui = UiState::new();
+
+    // Store a named patch in pool slot 2
+    let mut patch = Patch::init(ChainType::PizzaPoly);
+    patch.name = *b"Test Sound\0\0\0\0\0\0";
+    ui.project.pool.store(2, patch);
+
+    // Open browser for B1 (track 0)
+    ui.handle_input(&MockControls::new().button(ButtonId::B1, ButtonState::Pressed));
+    ui.update();
+    ui.handle_input(&MockControls::new().button(ButtonId::B1, ButtonState::Pressed));
+    assert!(matches!(ui.ui_mode, UiMode::PatchBrowser { track: 0, cursor: 0, .. }));
+
+    // Scroll down to slot 2
+    ui.handle_input(&MockControls::new().encoder(EncoderId::Main, 2));
+
+    // Confirm selection
+    ui.handle_input(&MockControls::new().button(ButtonId::Edit, ButtonState::Pressed));
+
+    // Should exit browser and load patch into track 0
+    assert!(matches!(ui.ui_mode, UiMode::Normal));
+    assert_eq!(ui.project.tracks[0].patch.name_str(), "Test Sound");
+    assert_eq!(ui.project.tracks[0].loaded_from, Some(2));
+}
+
+#[test]
+fn browser_cancel_does_not_load() {
+    let mut ui = UiState::new();
+    let original_name = ui.project.tracks[0].patch.name;
+
+    // Store patch and open browser
+    ui.project.pool.store(0, Patch::init(ChainType::Modal));
+    ui.handle_input(&MockControls::new().button(ButtonId::B1, ButtonState::Pressed));
+    ui.update();
+    ui.handle_input(&MockControls::new().button(ButtonId::B1, ButtonState::Pressed));
+    assert!(matches!(ui.ui_mode, UiMode::PatchBrowser { .. }));
+
+    // Cancel by pressing a B-button
+    ui.handle_input(&MockControls::new().button(ButtonId::B2, ButtonState::Pressed));
+
+    assert!(matches!(ui.ui_mode, UiMode::Normal));
+    assert_eq!(ui.project.tracks[0].patch.name, original_name);
+}
+
+#[test]
+fn browser_save_to_pool() {
+    let mut ui = UiState::new();
+
+    // Edit track 0's patch name
+    ui.project.tracks[0].patch.name = *b"My Bass\0\0\0\0\0\0\0\0\0";
+
+    // Open browser for B1
+    ui.handle_input(&MockControls::new().button(ButtonId::B1, ButtonState::Pressed));
+    ui.update();
+    ui.handle_input(&MockControls::new().button(ButtonId::B1, ButtonState::Pressed));
+    assert!(matches!(ui.ui_mode, UiMode::PatchBrowser { .. }));
+
+    // Scroll to slot 5 and save
+    ui.handle_input(&MockControls::new().encoder(EncoderId::Main, 5));
+    ui.handle_input(&MockControls::new().button(ButtonId::Seq, ButtonState::Pressed));
+
+    // Should stay in browser, and pool slot 5 now has our patch
+    assert!(matches!(ui.ui_mode, UiMode::PatchBrowser { .. }));
+    assert_eq!(ui.project.pool.get(5).unwrap().name_str(), "My Bass");
+}
+
+#[test]
+fn browser_init_resets_to_track_chain_type() {
+    let mut ui = UiState::new();
+
+    // Set track 0 to Modal chain
+    ui.project.tracks[0].patch.chain_type = ChainType::Modal;
+    ui.project.tracks[0].patch.name = *b"Custom Modal\0\0\0\0";
+
+    // Open browser, scroll to init entry (slot 32 = POOL_SIZE)
+    ui.handle_input(&MockControls::new().button(ButtonId::B1, ButtonState::Pressed));
+    ui.update();
+    ui.handle_input(&MockControls::new().button(ButtonId::B1, ButtonState::Pressed));
+
+    // Scroll to the init entry at the end
+    ui.handle_input(&MockControls::new().encoder(EncoderId::Main, POOL_SIZE as i8));
+
+    // Select init
+    ui.handle_input(&MockControls::new().button(ButtonId::Edit, ButtonState::Pressed));
+
+    assert!(matches!(ui.ui_mode, UiMode::Normal));
+    // Should reset to Modal init, not PizzaPoly
+    assert_eq!(ui.project.tracks[0].patch.chain_type, ChainType::Modal);
+    assert!(ui.project.tracks[0].patch.name_str().starts_with("(init)"));
 }
