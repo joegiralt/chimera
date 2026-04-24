@@ -2,6 +2,9 @@ use chimera_core::dsp::envelope_fm::FmEnvelope;
 use chimera_core::dsp::engine_fm::{FmEngine, FmOperator, FmOpSettings};
 use chimera_core::dsp::fm_tables;
 use chimera_core::dsp::fm_waveform;
+use chimera_core::dsp::voice::Voice;
+use chimera_core::modulation::ModState;
+use chimera_core::params::{EngineType, ParamSnapshot};
 
 #[test]
 fn ratio_table_unity() {
@@ -276,6 +279,45 @@ fn fm_output_bounded() {
         engine.render(&mut buf, alg, &settings);
         for &s in &buf {
             assert!(s.is_finite(), "alg={alg} NaN/Inf");
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Voice integration tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn voice_fm_produces_sound() {
+    let mut voice = Voice::new();
+    let mut params = ParamSnapshot::default();
+    params.engine = EngineType::Fm;
+    // Op1 already has level=99 from FmParams default
+    voice.note_on(69, 100, &params, 48000);
+    let mut buf = [0.0f32; 64];
+    let mod_state = ModState::default();
+    voice.render(&mut buf, &params, &mod_state, 48000);
+    let rms = (buf.iter().map(|x| x * x).sum::<f32>() / buf.len() as f32).sqrt();
+    assert!(rms > 0.001, "FM voice should produce sound, rms={rms}");
+}
+
+#[test]
+fn voice_fm_output_finite() {
+    let mut voice = Voice::new();
+    let mut params = ParamSnapshot::default();
+    params.engine = EngineType::Fm;
+    for op in params.fm.operators.iter_mut() {
+        op.level.value = 99.0;
+        op.feedback.value = 7.0;
+    }
+    voice.note_on(69, 127, &params, 48000);
+    let mut buf = [0.0f32; 64];
+    let mod_state = ModState::default();
+    // Render many blocks to stress-test
+    for _ in 0..64 {
+        voice.render(&mut buf, &params, &mod_state, 48000);
+        for &s in &buf {
+            assert!(s.is_finite(), "NaN/Inf in FM voice output");
         }
     }
 }
