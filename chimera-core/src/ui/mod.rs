@@ -347,16 +347,20 @@ impl UiState {
             a.update();
         }
 
-        // Animate branch scroll for dungeon map sub-pages
-        let avail = (chimera_hal::SCREEN_HEIGHT as i32 - theme::BRANCH_START_Y) / theme::BRANCH_LINE_HEIGHT;
-        let max_visible = avail.max(1) as usize;
-        let target_scroll = if self.nav.sub_page >= max_visible {
-            (self.nav.sub_page - max_visible + 1) as f32
+        // Animate branch scroll for dungeon map sub-pages.
+        // Ensure the active row's bottom edge (y + LINE_HEIGHT) is on screen.
+        // scroll_px = max(0, BRANCH_START_Y + (sub_page+1)*LINE_HEIGHT - SCREEN_HEIGHT)
+        let needed_bottom = theme::BRANCH_START_Y
+            + (self.nav.sub_page as i32 + 1) * theme::BRANCH_LINE_HEIGHT;
+        let overflow = needed_bottom - chimera_hal::SCREEN_HEIGHT as i32;
+        let target_scroll = if overflow > 0 {
+            overflow as f32 / theme::BRANCH_LINE_HEIGHT as f32
         } else {
             0.0
         };
         self.renderer.branch_scroll.set_target(target_scroll);
         self.renderer.branch_scroll.update();
+        // Force nav region redraw while scroll is animating
     }
 
     /// Render full screen to a display.
@@ -393,7 +397,7 @@ impl UiState {
                 RegionKind::Viz => RegionData::viz(self.page, qvalues),
                 RegionKind::Params => RegionData::params(self.page, qvalues),
                 RegionKind::Cells => RegionData::cells(self.page, qvalues, self.matrix_state.mod_enabled),
-                RegionKind::Nav => RegionData::nav(nav_tag.0, nav_tag.1, nav_tag.2),
+                RegionKind::Nav => RegionData::nav(nav_tag.0, nav_tag.1, nav_tag.2, region::quantize(self.renderer.branch_scroll.current())),
                 RegionKind::Grid => RegionData::grid_with_amount(
                     self.matrix_state.sel_row as u8,
                     self.matrix_state.sel_col as u8,
@@ -451,7 +455,7 @@ impl UiState {
                 RegionKind::Viz => RegionData::viz(self.page, qvalues),
                 RegionKind::Params => RegionData::params(self.page, qvalues),
                 RegionKind::Cells => RegionData::cells(self.page, qvalues, self.matrix_state.mod_enabled),
-                RegionKind::Nav => RegionData::nav(nav_tag.0, nav_tag.1, nav_tag.2),
+                RegionKind::Nav => RegionData::nav(nav_tag.0, nav_tag.1, nav_tag.2, region::quantize(self.renderer.branch_scroll.current())),
                 RegionKind::Grid => RegionData::grid_with_amount(
                     self.matrix_state.sel_row as u8,
                     self.matrix_state.sel_col as u8,

@@ -142,7 +142,7 @@ where
         // Apply animated scroll offset (in pixels)
         let y = theme::BRANCH_START_Y + i as i32 * theme::BRANCH_LINE_HEIGHT - branch_scroll_px;
         // Skip items scrolled above the branch area
-        if y < theme::BRANCH_START_Y - theme::BRANCH_LINE_HEIGHT {
+        if y < theme::BRANCH_START_Y {
             continue;
         }
         // Skip items below screen
