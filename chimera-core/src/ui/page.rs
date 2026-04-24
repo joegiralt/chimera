@@ -1,4 +1,5 @@
 use crate::params::ParamSnapshot;
+use crate::preset::ChainType;
 use crate::ui::chain::ChainNav;
 
 /// Cell type: defines display format and snap behavior.
@@ -111,6 +112,9 @@ pub enum PageId {
     EnvFilter,
     EnvAux,
     Lfo,
+    FmAlg,
+    FmOp,
+    FmRatio,
     DemoWaves,
     DemoShapes,
     DemoMotion,
@@ -122,18 +126,7 @@ impl PageId {
     pub fn from_nav(nav: &ChainNav) -> Self {
         use crate::ui::chain::ChainId;
         match nav.chain_id {
-            ChainId::Part(_) => match nav.node {
-                0 => PageId::Pizza,
-                1 => PageId::Drive,
-                2 => PageId::Filter,
-                3 => PageId::Folder,
-                4 => match nav.sub_page {
-                    0 => PageId::DemoMatrix, // Mod matrix grid
-                    1 => PageId::Vca,        // Envelope (ADSR)
-                    _ => PageId::Lfo,        // LFO
-                },
-                _ => PageId::Efx,
-            },
+            ChainId::Part(_) => Self::from_part_nav(nav.chain_type, nav.node, nav.sub_page),
             ChainId::Mixer(_) => match nav.node {
                 0 => PageId::Mixer,
                 1 => PageId::Chorus,
@@ -147,6 +140,53 @@ impl PageId {
                 1 => PageId::DemoShapes,
                 2 => PageId::DemoMotion,
                 _ => PageId::DemoMatrix,
+            },
+        }
+    }
+
+    /// Resolve Part navigation to a PageId based on chain type.
+    fn from_part_nav(chain_type: ChainType, node: usize, sub_page: usize) -> Self {
+        match chain_type {
+            ChainType::PizzaPoly => match node {
+                0 => PageId::Pizza,
+                1 => PageId::Drive,
+                2 => PageId::Filter,
+                3 => PageId::Folder,
+                4 => match sub_page {
+                    0 => PageId::DemoMatrix, // Mod matrix grid
+                    1 => PageId::Vca,        // Envelope (ADSR)
+                    _ => PageId::Lfo,        // LFO
+                },
+                _ => PageId::Efx,
+            },
+            ChainType::Modal => match node {
+                0 => match sub_page {
+                    0 => PageId::EngineModal1,
+                    _ => PageId::EngineModal2,
+                },
+                1 => PageId::Filter,
+                2 => match sub_page {
+                    0 => PageId::DemoMatrix,
+                    1 => PageId::Vca,
+                    _ => PageId::Lfo,
+                },
+                _ => PageId::Efx,
+            },
+            ChainType::Fm => match node {
+                0 => match sub_page {
+                    0 => PageId::FmAlg,
+                    1 => PageId::FmOp,
+                    _ => PageId::FmRatio,
+                },
+                1 => PageId::Drive,
+                2 => PageId::Filter,
+                3 => PageId::Folder,
+                4 => match sub_page {
+                    0 => PageId::DemoMatrix,
+                    1 => PageId::Vca,
+                    _ => PageId::Lfo,
+                },
+                _ => PageId::Efx,
             },
         }
     }
@@ -247,6 +287,36 @@ impl PageId {
                 params.modal.ks_ens_rate,
                 params.modal.ks_ens_mix,
             ],
+            PageId::FmAlg => [
+                params.fm.algorithm.normalized(),
+                0.0,
+                params.volume.normalized(),
+                0.0,
+                0.0,
+                0.0,
+            ],
+            PageId::FmOp => {
+                // Selected operator index stored in first slot as a UI concept.
+                // For read_values, show op0 by default (operator selection is
+                // handled by the encoder apply logic via a static index).
+                let op = &params.fm.operators[fm_selected_op()];
+                [
+                    fm_selected_op() as f32 / 3.0,
+                    op.waveform.normalized(),
+                    op.level.normalized(),
+                    op.feedback.normalized(),
+                    op.detune.normalized(),
+                    op.velocity_sens.normalized(),
+                ]
+            },
+            PageId::FmRatio => [
+                params.fm.operators[0].coarse.normalized(),
+                params.fm.operators[1].coarse.normalized(),
+                params.fm.operators[2].coarse.normalized(),
+                params.fm.operators[3].coarse.normalized(),
+                params.fm.operators[fm_selected_op()].fine.normalized(),
+                0.0,
+            ],
             PageId::Chorus => [
                 params.chorus.mode as f32 / 3.0,
                 params.chorus.rate,
@@ -297,6 +367,18 @@ impl PageId {
             }
             PageId::EngineModal2 => {
                 apply_modal2_encoder(idx, delta, &mut params.modal);
+                return;
+            }
+            PageId::FmAlg => {
+                apply_fm_alg_encoder(idx, delta, &mut params.fm, &mut params.volume);
+                return;
+            }
+            PageId::FmOp => {
+                apply_fm_op_encoder(idx, delta, params);
+                return;
+            }
+            PageId::FmRatio => {
+                apply_fm_ratio_encoder(idx, delta, params);
                 return;
             }
             PageId::Chorus => {
@@ -534,5 +616,107 @@ fn resolve_env_param(
         4 => Some(&mut env.level),
         5 => Some(&mut env.vel_sens),
         _ => None,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// FM operator selection state (module-level, simple static)
+// ---------------------------------------------------------------------------
+
+/// Currently selected FM operator index (0-3).
+/// This is UI-only state shared between FM_OP and FM_RATIO pages.
+static FM_SEL_OP: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+
+fn fm_selected_op() -> usize {
+    FM_SEL_OP.load(core::sync::atomic::Ordering::Relaxed) as usize
+}
+
+fn fm_set_selected_op(idx: u8) {
+    FM_SEL_OP.store(idx.min(3), core::sync::atomic::Ordering::Relaxed);
+}
+
+// ---------------------------------------------------------------------------
+// FM encoder handlers
+// ---------------------------------------------------------------------------
+
+fn apply_fm_alg_encoder(
+    idx: usize,
+    delta: i8,
+    fm: &mut crate::params::FmParams,
+    volume: &mut crate::params::Param,
+) {
+    match idx {
+        0 => {
+            // Algorithm: integer 0-7
+            let cur = fm.algorithm.value as i8;
+            fm.algorithm.value = (cur + delta).clamp(0, 7) as f32;
+        }
+        2 => {
+            // Level (overall volume)
+            let step = (volume.max - volume.min) / 128.0;
+            volume.nudge(delta as f32 * step);
+        }
+        _ => {}
+    }
+}
+
+fn apply_fm_op_encoder(idx: usize, delta: i8, params: &mut ParamSnapshot) {
+    match idx {
+        0 => {
+            // Operator select: 0-3
+            let cur = fm_selected_op() as i8;
+            fm_set_selected_op((cur + delta).clamp(0, 3) as u8);
+        }
+        _ => {
+            let sel = fm_selected_op();
+            let op = &mut params.fm.operators[sel];
+            match idx {
+                1 => {
+                    // Waveform: integer 0-7
+                    let cur = op.waveform.value as i8;
+                    op.waveform.value = (cur + delta).clamp(0, 7) as f32;
+                }
+                2 => {
+                    // Level: integer 0-99
+                    let cur = op.level.value as i8;
+                    op.level.value = (cur as i16 + delta as i16).clamp(0, 99) as f32;
+                }
+                3 => {
+                    // Feedback: integer 0-7
+                    let cur = op.feedback.value as i8;
+                    op.feedback.value = (cur + delta).clamp(0, 7) as f32;
+                }
+                4 => {
+                    // Detune: integer -7 to 7
+                    let cur = op.detune.value as i8;
+                    op.detune.value = (cur + delta).clamp(-7, 7) as f32;
+                }
+                5 => {
+                    // Velocity sensitivity: integer 0-7
+                    let cur = op.velocity_sens.value as i8;
+                    op.velocity_sens.value = (cur + delta).clamp(0, 7) as f32;
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+fn apply_fm_ratio_encoder(idx: usize, delta: i8, params: &mut ParamSnapshot) {
+    match idx {
+        0..=3 => {
+            // Coarse ratio for op 0-3: integer 0-63
+            let op = &mut params.fm.operators[idx];
+            let cur = op.coarse.value as i8;
+            op.coarse.value = (cur as i16 + delta as i16).clamp(0, 63) as f32;
+        }
+        4 => {
+            // Fine for selected op: integer 0-15
+            let sel = fm_selected_op();
+            let op = &mut params.fm.operators[sel];
+            let cur = op.fine.value as i8;
+            op.fine.value = (cur + delta).clamp(0, 15) as f32;
+        }
+        _ => {}
     }
 }

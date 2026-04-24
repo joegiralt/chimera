@@ -5,6 +5,7 @@ use chimera_core::dsp::fm_waveform;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::modulation::ModState;
 use chimera_core::params::{EngineType, ParamSnapshot};
+use chimera_core::preset::{ChainType, Patch};
 
 #[test]
 fn ratio_table_unity() {
@@ -281,6 +282,35 @@ fn fm_output_bounded() {
             assert!(s.is_finite(), "alg={alg} NaN/Inf");
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Init patch tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn fm_init_patch_is_audible() {
+    let patch = Patch::init(ChainType::Fm);
+    assert_eq!(patch.params.engine, EngineType::Fm);
+    let mut voice = Voice::new();
+    voice.note_on(69, 100, &patch.params, 48000);
+    let mut buf = [0.0f32; 64];
+    let mod_state = ModState::default();
+    // Render 16 blocks (64 * 16 = 1024 samples) to accumulate energy
+    let mut total_energy = 0.0f32;
+    for _ in 0..16 {
+        voice.render(&mut buf, &patch.params, &mod_state, 48000);
+        total_energy += buf.iter().map(|x| x * x).sum::<f32>();
+    }
+    let rms = (total_energy / 1024.0).sqrt();
+    assert!(rms > 0.001, "FM init patch should be audible, rms={rms}");
+}
+
+#[test]
+fn fm_init_patch_sets_engine_type() {
+    let patch = Patch::init(ChainType::Fm);
+    assert_eq!(patch.params.engine, EngineType::Fm);
+    assert_eq!(patch.chain_type, ChainType::Fm);
 }
 
 // ---------------------------------------------------------------------------

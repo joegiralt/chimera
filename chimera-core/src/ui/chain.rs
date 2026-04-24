@@ -157,7 +157,6 @@ pub fn chain_def_for(ct: ChainType) -> &'static ChainDef2 {
     match ct {
         ChainType::PizzaPoly => &block_registry::PIZZA_POLY_CHAIN,
         ChainType::Modal => &block_registry::MODAL_PLUCK_CHAIN,
-        // FM chain not yet built — fall back to PizzaPoly for now.
-        ChainType::Fm => &block_registry::PIZZA_POLY_CHAIN,
+        ChainType::Fm => &block_registry::FM_CHAIN,
     }
 }
