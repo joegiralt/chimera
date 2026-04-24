@@ -12,7 +12,8 @@ use crate::ui::theme;
 
 /// Render the dungeon map in the bottom zone of the screen.
 /// Shows: separator, chain nodes as boxes, connector lines, vertical branches.
-pub fn draw<D>(display: &mut D, nav: &ChainNav)
+/// `branch_scroll_px` is the animated scroll offset in pixels for the sub-page list.
+pub fn draw<D>(display: &mut D, nav: &ChainNav, branch_scroll_px: i32)
 where
     D: DrawTarget<Color = Rgb565>,
 {
@@ -30,7 +31,7 @@ where
     let _ = Text::new(chain.name, Point::new(8, theme::MAP_TOP + 12), dim_style).draw(display);
 
     draw_nodes(display, chain, nav);
-    draw_branches(display, nav);
+    draw_branches(display, nav, branch_scroll_px);
 }
 
 /// Draw the horizontal row of node boxes with connectors.
@@ -105,7 +106,7 @@ where
 }
 
 /// Draw vertical branch list below the active node (if it has sub-pages).
-fn draw_branches<D>(display: &mut D, nav: &ChainNav)
+fn draw_branches<D>(display: &mut D, nav: &ChainNav, branch_scroll_px: i32)
 where
     D: DrawTarget<Color = Rgb565>,
 {
@@ -130,6 +131,7 @@ where
     // then each sub_page def.
     // Total count = 1 + sub_pages.len()
     let count = block.sub_page_count();
+
     for i in 0..count {
         let label = if i == 0 {
             block.def.short
@@ -137,7 +139,16 @@ where
             block.sub_pages[i - 1].short
         };
 
-        let y = theme::BRANCH_START_Y + i as i32 * theme::BRANCH_LINE_HEIGHT;
+        // Apply animated scroll offset (in pixels)
+        let y = theme::BRANCH_START_Y + i as i32 * theme::BRANCH_LINE_HEIGHT - branch_scroll_px;
+        // Skip items scrolled above the branch area
+        if y < theme::BRANCH_START_Y - theme::BRANCH_LINE_HEIGHT {
+            continue;
+        }
+        // Skip items below screen
+        if y >= chimera_hal::SCREEN_HEIGHT as i32 {
+            break;
+        }
         let is_active = i == nav.sub_page;
 
         // Branch connector: vertical line + horizontal tick

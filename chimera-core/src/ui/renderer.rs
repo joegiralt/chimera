@@ -28,6 +28,8 @@ pub struct Renderer {
     pub anim: [AnimatedValue; 6],
     /// Last-touched encoder index (0-5) — shown with focus indicator.
     pub focused: usize,
+    /// Animated scroll offset for dungeon map sub-page branches (in pixels).
+    pub branch_scroll: AnimatedValue,
 }
 
 impl Default for Renderer {
@@ -41,6 +43,7 @@ impl Renderer {
         Self {
             anim: [AnimatedValue::new(0.5); 6],
             focused: 0,
+            branch_scroll: AnimatedValue::new(0.0).with_speed(0.25),
         }
     }
 
@@ -797,7 +800,7 @@ impl Renderer {
         )
         .draw_styled(&PrimitiveStyle::with_stroke(theme::SEPARATOR, 1), display);
 
-        dungeon_map::draw(display, nav);
+        dungeon_map::draw(display, nav, (self.branch_scroll.current() * theme::BRANCH_LINE_HEIGHT as f32) as i32);
         self.draw_perf(display, perf);
     }
 
@@ -849,7 +852,7 @@ impl Renderer {
                 .draw_styled(&PrimitiveStyle::with_stroke(theme::SEPARATOR, 1), display);
             }
             RegionKind::Nav => {
-                dungeon_map::draw(display, nav);
+                dungeon_map::draw(display, nav, (self.branch_scroll.current() * theme::BRANCH_LINE_HEIGHT as f32) as i32);
             }
         }
     }
