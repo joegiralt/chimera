@@ -1,3 +1,4 @@
+use chimera_core::dsp::envelope_fm::FmEnvelope;
 use chimera_core::dsp::fm_tables;
 use chimera_core::dsp::fm_waveform;
 
@@ -96,4 +97,48 @@ fn all_waveforms_bounded() {
             assert!(v >= -2.0 && v <= 2.0, "w={w} phase={phase} v={v}");
         }
     }
+}
+
+#[test]
+fn fm_envelope_starts_idle() {
+    let env = FmEnvelope::new();
+    assert!(env.is_idle());
+    assert_eq!(env.current_level(), 0.0);
+}
+
+#[test]
+fn fm_envelope_attack_reaches_peak() {
+    let mut env = FmEnvelope::new();
+    // Fast attack (rate=31), slow decay, full D1L
+    env.note_on(31, 0, 15, 0, 15, 0, 0, 48000.0, 60);
+    let mut buf = [0.0f32; 4800]; // 100ms
+    env.run(&mut buf);
+    // Should have values > 0.9 somewhere
+    assert!(buf.iter().any(|&v| v > 0.9));
+}
+
+#[test]
+fn fm_envelope_gate_off_silences() {
+    let mut env = FmEnvelope::new();
+    env.note_on(31, 31, 15, 0, 15, 0, 0, 48000.0, 60);
+    let mut buf = [0.0f32; 480];
+    env.run(&mut buf);
+    env.note_off();
+    // Process more samples — should go silent
+    for _ in 0..100 {
+        env.run(&mut buf);
+    }
+    assert!(env.current_level() < 0.001);
+}
+
+#[test]
+fn fm_envelope_d1l_zero_decays_to_silence() {
+    let mut env = FmEnvelope::new();
+    // Fast attack, fast D1, D1L=0 (decay to zero)
+    env.note_on(31, 31, 0, 0, 15, 0, 0, 48000.0, 60);
+    let mut buf = [0.0f32; 4800];
+    for _ in 0..20 {
+        env.run(&mut buf);
+    }
+    assert!(env.current_level() < 0.001);
 }
