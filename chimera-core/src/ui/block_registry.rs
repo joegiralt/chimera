@@ -379,7 +379,7 @@ pub static FM_ENV1: BlockDef = BlockDef {
     name: "Op1 Env",
     short: "E1",
     layout: PageLayout::BigViz,
-    viz: VizType::Adsr,
+    viz: VizType::FmEnvelope,
     params: [
         ParamSlot { label: "AR",  format: ValFmt::Int(31), icon: CellIcon::None },
         ParamSlot { label: "D1R", format: ValFmt::Int(31), icon: CellIcon::None },
@@ -394,7 +394,7 @@ pub static FM_ENV2: BlockDef = BlockDef {
     name: "Op2 Env",
     short: "E2",
     layout: PageLayout::BigViz,
-    viz: VizType::Adsr,
+    viz: VizType::FmEnvelope,
     params: [
         ParamSlot { label: "AR",  format: ValFmt::Int(31), icon: CellIcon::None },
         ParamSlot { label: "D1R", format: ValFmt::Int(31), icon: CellIcon::None },
@@ -409,7 +409,7 @@ pub static FM_ENV3: BlockDef = BlockDef {
     name: "Op3 Env",
     short: "E3",
     layout: PageLayout::BigViz,
-    viz: VizType::Adsr,
+    viz: VizType::FmEnvelope,
     params: [
         ParamSlot { label: "AR",  format: ValFmt::Int(31), icon: CellIcon::None },
         ParamSlot { label: "D1R", format: ValFmt::Int(31), icon: CellIcon::None },
@@ -424,7 +424,7 @@ pub static FM_ENV4: BlockDef = BlockDef {
     name: "Op4 Env",
     short: "E4",
     layout: PageLayout::BigViz,
-    viz: VizType::Adsr,
+    viz: VizType::FmEnvelope,
     params: [
         ParamSlot { label: "AR",  format: ValFmt::Int(31), icon: CellIcon::None },
         ParamSlot { label: "D1R", format: ValFmt::Int(31), icon: CellIcon::None },
