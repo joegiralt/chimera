@@ -31,8 +31,6 @@ pub enum UiMode {
     PatchBrowser { track: usize, cursor: usize, scroll: usize },
 }
 
-/// Double-tap detection window in ticks (~300ms at 500 Hz = 150 ticks).
-const DOUBLE_TAP_TICKS: u32 = 150;
 
 /// Top-level UI state. Owns navigation, parameters, and display animation.
 /// Portable across desktop and hardware — only depends on HAL traits.
@@ -49,11 +47,6 @@ pub struct UiState {
     last_encoder: usize,
     /// Display-side LFO for animating modulated parameters
     display_lfo: Lfo,
-    /// Tick counter for double-tap timing. Set by caller via `set_tick()`.
-    /// Units are caller-defined but should be ~500 Hz for 300ms window.
-    tick: u32,
-    /// Tick of last B1-B6 press per button — for double-tap detection
-    last_b_press: [u32; 6],
 }
 
 impl Default for UiState {
@@ -89,16 +82,7 @@ impl UiState {
             region_set: region::RegionSet::new(),
             last_encoder: 0,
             display_lfo: Lfo::new(),
-            tick: 0,
-            // Initialize to u32::MAX so first press is never detected as double-tap
-            last_b_press: [u32::MAX; 6],
         }
-    }
-
-    /// Set the current tick counter for double-tap timing.
-    /// Call from main loop with a hardware timer (e.g., SysTick at 500 Hz).
-    pub fn set_tick(&mut self, tick: u32) {
-        self.tick = tick;
     }
 
     /// Returns a reference to the active track's params.
@@ -196,9 +180,6 @@ impl UiState {
             for &btn in &b_buttons {
                 if controls.button_state(btn) == ButtonState::Pressed {
                     self.ui_mode = UiMode::Normal;
-                    // Reset double-tap timers so the cancel press doesn't
-                    // immediately re-trigger a double-tap
-                    self.last_b_press = [u32::MAX; 6];
                     return;
                 }
             }
@@ -215,25 +196,20 @@ impl UiState {
 
         // ── Normal mode ──────────────────────────────────────────────
 
-        // Double-tap detection for B1-B6: check *before* nav consumes the press
-        let b_buttons = [
-            ButtonId::B1,
-            ButtonId::B2,
-            ButtonId::B3,
-            ButtonId::B4,
-            ButtonId::B5,
-            ButtonId::B6,
-        ];
-        for (i, &btn) in b_buttons.iter().enumerate() {
-            if controls.button_state(btn) == ButtonState::Pressed {
-                let prev = self.last_b_press[i];
-                if prev != u32::MAX && self.tick.wrapping_sub(prev) <= DOUBLE_TAP_TICKS {
-                    // Double-tap detected — open patch browser for this track
+        // Edit + B1-B6: open patch browser for that track
+        let edit_held = matches!(
+            controls.button_state(ButtonId::Edit),
+            ButtonState::Pressed | ButtonState::Held
+        );
+        if edit_held {
+            let b_buttons = [
+                ButtonId::B1, ButtonId::B2, ButtonId::B3,
+                ButtonId::B4, ButtonId::B5, ButtonId::B6,
+            ];
+            for (i, &btn) in b_buttons.iter().enumerate() {
+                if controls.button_state(btn) == ButtonState::Pressed {
                     self.ui_mode = UiMode::PatchBrowser { track: i, cursor: 0, scroll: 0 };
-                    // Reset so a third tap doesn't re-trigger
-                    self.last_b_press[i] = u32::MAX;
-                } else {
-                    self.last_b_press[i] = self.tick;
+                    return; // consume — don't pass to navigation
                 }
             }
         }
@@ -321,7 +297,6 @@ impl UiState {
 
     /// Advance animations. Call at UI_FPS (~20fps).
     pub fn update(&mut self) {
-        // (tick is set externally via set_tick — not incremented here)
 
         let at = self.active_track;
         let patch = &self.project.tracks[at].patch;
