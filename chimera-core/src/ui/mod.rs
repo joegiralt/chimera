@@ -65,12 +65,13 @@ impl UiState {
         renderer.snap_to_current(page, &project.tracks[0].patch.params);
 
         let mut matrix_state = MatrixState::new();
-        // Build source + dest lists from the chain
+        // Build source list from the chain's mod block sub-pages
         let chain = nav.active_chain();
         if let Some(last_block) = chain.blocks.last() {
             matrix_state.rebuild_sources(last_block.sub_pages);
         }
-        matrix_state.rebuild_dests_from_chain(chain.blocks);
+        // Rebuild dests from the patch's ModDestRegistry
+        matrix_state.rebuild_dests_from_registry(&project.tracks[0].patch.dest_registry);
 
         Self {
             nav,
@@ -163,12 +164,14 @@ impl UiState {
                 self.nav.sub_page = 0;
                 self.nav.chain_type = self.project.tracks[sel_track].patch.chain_type;
                 self.page = PageId::from_nav(&self.nav);
-                // Rebuild mod matrix sources/dests for the new chain type
+                // Rebuild mod matrix sources for the new chain type
                 let chain = self.nav.active_chain();
                 if let Some(last_block) = chain.blocks.last() {
                     self.matrix_state.rebuild_sources(last_block.sub_pages);
                 }
-                self.matrix_state.rebuild_dests_from_chain(chain.blocks);
+                self.matrix_state.rebuild_dests_from_registry(
+                    &self.project.tracks[sel_track].patch.dest_registry
+                );
                 self.renderer.snap_to_current(self.page, &self.project.tracks[sel_track].patch.params);
                 self.ui_mode = UiMode::Normal;
                 return;
@@ -289,23 +292,8 @@ impl UiState {
                 }
             }
 
-            // MIX + Plus/Minus: toggle mod destination for last-touched encoder param
-            if shift {
-                let block_idx = self.nav.node as u8;
-                let param_idx = self.last_encoder as u8;
-                let chain = self.nav.active_chain();
-                let at = self.active_track;
-                if controls.button_state(ButtonId::Plus) == ButtonState::Pressed {
-                    self.matrix_state.set_mod_enabled(block_idx, param_idx, true);
-                    self.matrix_state.rebuild_dests_from_chain(chain.blocks);
-                    self.project.tracks[at].patch.mod_state.sync_from_matrix(&self.matrix_state);
-                }
-                if controls.button_state(ButtonId::Minus) == ButtonState::Pressed {
-                    self.matrix_state.set_mod_enabled(block_idx, param_idx, false);
-                    self.matrix_state.rebuild_dests_from_chain(chain.blocks);
-                    self.project.tracks[at].patch.mod_state.sync_from_matrix(&self.matrix_state);
-                }
-            }
+            // TODO(Task 5): MIX + Plus/Minus prime/un-prime via ModDestRegistry
+            // Will add/remove from the patch's registry and rebuild matrix dests.
         }
     }
 
@@ -410,7 +398,7 @@ impl UiState {
                 ),
                 RegionKind::Viz => RegionData::viz(self.page, qvalues),
                 RegionKind::Params => RegionData::params(self.page, qvalues),
-                RegionKind::Cells => RegionData::cells(self.page, qvalues, self.matrix_state.mod_enabled),
+                RegionKind::Cells => RegionData::cells(self.page, qvalues, self.matrix_state.num_dests as u16),
                 RegionKind::Nav => RegionData::nav(nav_tag.0, nav_tag.1, nav_tag.2, region::quantize(self.renderer.branch_scroll.current())),
                 RegionKind::Grid => RegionData::grid_with_amount(
                     self.matrix_state.sel_row as u8,
@@ -468,7 +456,7 @@ impl UiState {
                 ),
                 RegionKind::Viz => RegionData::viz(self.page, qvalues),
                 RegionKind::Params => RegionData::params(self.page, qvalues),
-                RegionKind::Cells => RegionData::cells(self.page, qvalues, self.matrix_state.mod_enabled),
+                RegionKind::Cells => RegionData::cells(self.page, qvalues, self.matrix_state.num_dests as u16),
                 RegionKind::Nav => RegionData::nav(nav_tag.0, nav_tag.1, nav_tag.2, region::quantize(self.renderer.branch_scroll.current())),
                 RegionKind::Grid => RegionData::grid_with_amount(
                     self.matrix_state.sel_row as u8,
