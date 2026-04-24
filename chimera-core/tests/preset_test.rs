@@ -147,12 +147,13 @@ fn double_tap_b1_opens_patch_browser() {
     let mut ui = UiState::new();
     assert!(matches!(ui.ui_mode, UiMode::Normal));
 
-    // First press — single tap, just navigates
+    // First press at tick 100
+    ui.set_tick(100);
     ui.handle_input(&MockControls::new().button(ButtonId::B1, ButtonState::Pressed));
-    ui.update(); // advance frame counter
     assert!(matches!(ui.ui_mode, UiMode::Normal));
 
-    // Second press within double-tap window (next frame = ~50ms < 300ms)
+    // Second press 100ms later (50 ticks at 500Hz) — within 300ms window
+    ui.set_tick(150);
     ui.handle_input(&MockControls::new().button(ButtonId::B1, ButtonState::Pressed));
     assert!(matches!(ui.ui_mode, UiMode::PatchBrowser { track: 0, .. }));
 }
@@ -161,8 +162,9 @@ fn double_tap_b1_opens_patch_browser() {
 fn double_tap_b3_opens_browser_for_track_2() {
     let mut ui = UiState::new();
 
+    ui.set_tick(100);
     ui.handle_input(&MockControls::new().button(ButtonId::B3, ButtonState::Pressed));
-    ui.update();
+    ui.set_tick(150);
     ui.handle_input(&MockControls::new().button(ButtonId::B3, ButtonState::Pressed));
 
     assert!(matches!(ui.ui_mode, UiMode::PatchBrowser { track: 2, .. }));
@@ -172,11 +174,10 @@ fn double_tap_b3_opens_browser_for_track_2() {
 fn slow_double_press_does_not_open_browser() {
     let mut ui = UiState::new();
 
+    ui.set_tick(100);
     ui.handle_input(&MockControls::new().button(ButtonId::B1, ButtonState::Pressed));
-    // Advance past double-tap window (7+ frames)
-    for _ in 0..8 {
-        ui.update();
-    }
+    // 500ms later (250 ticks) — past the 300ms/150-tick window
+    ui.set_tick(350);
     ui.handle_input(&MockControls::new().button(ButtonId::B1, ButtonState::Pressed));
 
     assert!(matches!(ui.ui_mode, UiMode::Normal));
@@ -191,9 +192,10 @@ fn browser_load_copies_patch_to_track() {
     patch.name = *b"Test Sound\0\0\0\0\0\0";
     ui.project.pool.store(2, patch);
 
-    // Open browser for B1 (track 0)
+    // Open browser for B1 (track 0) via double-tap
+    ui.set_tick(100);
     ui.handle_input(&MockControls::new().button(ButtonId::B1, ButtonState::Pressed));
-    ui.update();
+    ui.set_tick(150);
     ui.handle_input(&MockControls::new().button(ButtonId::B1, ButtonState::Pressed));
     assert!(matches!(ui.ui_mode, UiMode::PatchBrowser { track: 0, cursor: 0, .. }));
 
@@ -214,10 +216,11 @@ fn browser_cancel_does_not_load() {
     let mut ui = UiState::new();
     let original_name = ui.project.tracks[0].patch.name;
 
-    // Store patch and open browser
+    // Store patch and open browser via double-tap
     ui.project.pool.store(0, Patch::init(ChainType::Modal));
+    ui.set_tick(100);
     ui.handle_input(&MockControls::new().button(ButtonId::B1, ButtonState::Pressed));
-    ui.update();
+    ui.set_tick(150);
     ui.handle_input(&MockControls::new().button(ButtonId::B1, ButtonState::Pressed));
     assert!(matches!(ui.ui_mode, UiMode::PatchBrowser { .. }));
 
@@ -235,9 +238,10 @@ fn browser_save_to_pool() {
     // Edit track 0's patch name
     ui.project.tracks[0].patch.name = *b"My Bass\0\0\0\0\0\0\0\0\0";
 
-    // Open browser for B1
+    // Open browser for B1 via double-tap
+    ui.set_tick(100);
     ui.handle_input(&MockControls::new().button(ButtonId::B1, ButtonState::Pressed));
-    ui.update();
+    ui.set_tick(150);
     ui.handle_input(&MockControls::new().button(ButtonId::B1, ButtonState::Pressed));
     assert!(matches!(ui.ui_mode, UiMode::PatchBrowser { .. }));
 
@@ -258,9 +262,10 @@ fn browser_init_resets_to_track_chain_type() {
     ui.project.tracks[0].patch.chain_type = ChainType::Modal;
     ui.project.tracks[0].patch.name = *b"Custom Modal\0\0\0\0";
 
-    // Open browser, scroll to init entry (slot 32 = POOL_SIZE)
+    // Open browser via double-tap, scroll to init entry (slot 32 = POOL_SIZE)
+    ui.set_tick(100);
     ui.handle_input(&MockControls::new().button(ButtonId::B1, ButtonState::Pressed));
-    ui.update();
+    ui.set_tick(150);
     ui.handle_input(&MockControls::new().button(ButtonId::B1, ButtonState::Pressed));
 
     // Scroll to the init entry at the end

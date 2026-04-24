@@ -190,7 +190,8 @@ impl Stm32Controls {
         }
     }
 
-    pub fn raw_bits(&self) -> u32 { RAW.load(Ordering::Relaxed) }
+    /// Current ISR tick count (500 Hz). For UI timing (double-tap, etc.)
+    pub fn tick(&self) -> u32 { ISR_TICK.load(Ordering::Relaxed) }
 
     /// Returns true if any button changed state or any encoder moved this frame.
     pub fn has_activity(&self) -> bool {

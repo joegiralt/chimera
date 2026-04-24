@@ -31,8 +31,8 @@ pub enum UiMode {
     PatchBrowser { track: usize, cursor: usize, scroll: usize },
 }
 
-/// Double-tap detection window in frames (~300ms at 20 FPS).
-const DOUBLE_TAP_FRAMES: u32 = 6;
+/// Double-tap detection window in ticks (~300ms at 500 Hz = 150 ticks).
+const DOUBLE_TAP_TICKS: u32 = 150;
 
 /// Top-level UI state. Owns navigation, parameters, and display animation.
 /// Portable across desktop and hardware — only depends on HAL traits.
@@ -49,9 +49,10 @@ pub struct UiState {
     last_encoder: usize,
     /// Display-side LFO for animating modulated parameters
     display_lfo: Lfo,
-    /// Frame counter incremented each update() call — used for double-tap timing
-    frame_count: u32,
-    /// Frame of last B1-B6 press per button — for double-tap detection
+    /// Tick counter for double-tap timing. Set by caller via `set_tick()`.
+    /// Units are caller-defined but should be ~500 Hz for 300ms window.
+    tick: u32,
+    /// Tick of last B1-B6 press per button — for double-tap detection
     last_b_press: [u32; 6],
 }
 
@@ -88,10 +89,16 @@ impl UiState {
             region_set: region::RegionSet::new(),
             last_encoder: 0,
             display_lfo: Lfo::new(),
-            frame_count: 0,
+            tick: 0,
             // Initialize to u32::MAX so first press is never detected as double-tap
             last_b_press: [u32::MAX; 6],
         }
+    }
+
+    /// Set the current tick counter for double-tap timing.
+    /// Call from main loop with a hardware timer (e.g., SysTick at 500 Hz).
+    pub fn set_tick(&mut self, tick: u32) {
+        self.tick = tick;
     }
 
     /// Returns a reference to the active track's params.
@@ -220,13 +227,13 @@ impl UiState {
         for (i, &btn) in b_buttons.iter().enumerate() {
             if controls.button_state(btn) == ButtonState::Pressed {
                 let prev = self.last_b_press[i];
-                if prev != u32::MAX && self.frame_count.wrapping_sub(prev) <= DOUBLE_TAP_FRAMES {
+                if prev != u32::MAX && self.tick.wrapping_sub(prev) <= DOUBLE_TAP_TICKS {
                     // Double-tap detected — open patch browser for this track
                     self.ui_mode = UiMode::PatchBrowser { track: i, cursor: 0, scroll: 0 };
                     // Reset so a third tap doesn't re-trigger
                     self.last_b_press[i] = u32::MAX;
                 } else {
-                    self.last_b_press[i] = self.frame_count;
+                    self.last_b_press[i] = self.tick;
                 }
             }
         }
@@ -314,7 +321,7 @@ impl UiState {
 
     /// Advance animations. Call at UI_FPS (~20fps).
     pub fn update(&mut self) {
-        self.frame_count = self.frame_count.wrapping_add(1);
+        // (tick is set externally via set_tick — not incremented here)
 
         let at = self.active_track;
         let patch = &self.project.tracks[at].patch;
