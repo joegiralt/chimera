@@ -90,6 +90,8 @@ pub enum CellIcon {
     Bounce,
     /// Isometric 3D cube that fills from bottom to top
     Cube,
+    /// FM algorithm topology diagram (8 algorithms, val selects which)
+    FmAlgorithm,
 }
 
 /// Identifies which page is active, derived from chain position.
