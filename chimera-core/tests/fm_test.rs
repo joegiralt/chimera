@@ -1,4 +1,5 @@
 use chimera_core::dsp::fm_tables;
+use chimera_core::dsp::fm_waveform;
 
 #[test]
 fn ratio_table_unity() {
@@ -55,4 +56,44 @@ fn d1l_15_near_unity() {
 fn feedback_factors_correct() {
     assert_eq!(fm_tables::FEEDBACK[0], 0.0);
     assert_eq!(fm_tables::FEEDBACK[7], 0.26);
+}
+
+#[test]
+fn waveform_0_is_sine() {
+    let v = fm_waveform::compute(0, 0.25);
+    assert!((v - 1.0).abs() < 0.001);
+}
+
+#[test]
+fn waveform_0_zero_at_origin() {
+    let v = fm_waveform::compute(0, 0.0);
+    assert!(v.abs() < 0.001);
+}
+
+#[test]
+fn waveform_2_half_sine_zero_second_half() {
+    let v = fm_waveform::compute(2, 0.75);
+    assert!(v.abs() < 0.001);
+}
+
+#[test]
+fn all_8_waveforms_produce_different_output() {
+    let phase = 0.13;
+    let values: [f32; 8] = core::array::from_fn(|w| fm_waveform::compute(w as u8, phase));
+    let mut unique = values.to_vec();
+    unique.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    unique.dedup_by(|a, b| (*a - *b).abs() < 0.001);
+    assert!(unique.len() >= 4);
+}
+
+#[test]
+fn all_waveforms_bounded() {
+    for w in 0..8u8 {
+        for i in 0..1024 {
+            let phase = i as f32 / 1024.0;
+            let v = fm_waveform::compute(w, phase);
+            assert!(v.is_finite(), "w={w} phase={phase}");
+            assert!(v >= -2.0 && v <= 2.0, "w={w} phase={phase} v={v}");
+        }
+    }
 }
