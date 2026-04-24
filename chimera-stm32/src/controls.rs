@@ -41,6 +41,11 @@ static BTN_LATCH: AtomicU32 = AtomicU32::new(0);
 static RAW: AtomicU32 = AtomicU32::new(0xFFFFFFFF);
 static mut ENC_STATE: [u8; 6] = [0; 6];
 static mut ENC_DEBOUNCE: [u8; 6] = [0; 6];
+/// Button debounce: tracks how many consecutive ISR ticks a button has been stable.
+/// Only latches as pressed after BTN_DEBOUNCE_TICKS consecutive "pressed" reads.
+static mut BTN_DEBOUNCE: [u8; NUM_BUTTONS] = [0; NUM_BUTTONS];
+static mut BTN_STATE: [bool; NUM_BUTTONS] = [false; NUM_BUTTONS];
+const BTN_DEBOUNCE_TICKS: u8 = 3; // 6ms at 500Hz
 static ISR_TICK: AtomicU32 = AtomicU32::new(0);
 static ENC_LAST_EDGE: [AtomicU32; NUM_ENCODERS] = [
     AtomicU32::new(0), AtomicU32::new(0), AtomicU32::new(0), AtomicU32::new(0),
@@ -95,12 +100,30 @@ pub fn isr_tick() {
 
     RAW.store(bits, Ordering::Relaxed);
 
-    // Buttons: active low → latch
-    let mut pressed: u32 = 0;
-    for (i, &mask) in BTN_BITS.iter().enumerate() {
-        if bits & mask == 0 { pressed |= 1 << i; }
+    // Buttons: active low, debounced to stable level
+    // SAFETY: only accessed from this ISR
+    unsafe {
+        let mut debounced: u32 = 0;
+        for (i, &mask) in BTN_BITS.iter().enumerate() {
+            let raw_pressed = bits & mask == 0;
+            if raw_pressed == BTN_STATE[i] {
+                // Same as current debounced state — reset counter
+                BTN_DEBOUNCE[i] = 0;
+            } else {
+                // Different from debounced state — count stable ticks
+                BTN_DEBOUNCE[i] += 1;
+                if BTN_DEBOUNCE[i] >= BTN_DEBOUNCE_TICKS {
+                    BTN_STATE[i] = raw_pressed;
+                    BTN_DEBOUNCE[i] = 0;
+                }
+            }
+            if BTN_STATE[i] {
+                debounced |= 1 << i;
+            }
+        }
+        // Store debounced level (not edge-latched)
+        BTN_LATCH.store(debounced, Ordering::Relaxed);
     }
-    BTN_LATCH.fetch_or(pressed, Ordering::Relaxed);
 
     // Encoders: quadrature decode with debounce
     for i in 0..6 {
@@ -163,9 +186,9 @@ impl Stm32Controls {
     /// Read and clear accumulated ISR state. Call once per frame.
     pub fn snapshot(&mut self) {
         self.btn_prev = self.btn_cur;
-        let latched = BTN_LATCH.swap(0, Ordering::Relaxed);
+        let debounced = BTN_LATCH.load(Ordering::Relaxed);
         for i in 0..NUM_BUTTONS {
-            self.btn_cur[i] = latched & (1 << i) != 0;
+            self.btn_cur[i] = debounced & (1 << i) != 0;
         }
         let now = ISR_TICK.load(Ordering::Relaxed);
         for i in 0..NUM_ENCODERS {
