@@ -52,7 +52,7 @@ The label is generated at prime-time from the current page context (block name +
 Replaces the `mod_enabled: u64` bitfield. A fixed-size array of primed destinations, stored per-patch.
 
 ```rust
-pub const MAX_DESTS: usize = 16;
+pub const MAX_DESTS: usize = 32;
 
 pub struct ModDestRegistry {
     pub dests: [Option<ModDest>; MAX_DESTS],
@@ -124,7 +124,43 @@ On the cell grid, a param shows a mod bar if `dest_registry.is_primed(current_pa
 
 `compute_offset()` changes from matching `(block_idx, param_idx)` to matching `ParamPath`. The voice's render loop resolves each destination path to the actual parameter value to apply the offset.
 
-For `ParamPath::Block`, this maps directly to the existing block-based offset application. For `ParamPath::FmOp`, the voice applies the offset to the specific operator's parameter.
+A `resolve_param` function maps `ParamPath` to the actual `&mut Param` (or raw f32) in `ParamSnapshot`:
+
+```rust
+fn resolve_param_mut(path: ParamPath, params: &mut ParamSnapshot) -> Option<&mut Param> {
+    match path {
+        ParamPath::Block { block: 1, param: 0 } => Some(&mut params.drive.drive),
+        ParamPath::Block { block: 2, param: 0 } => Some(&mut params.filter.cutoff),
+        // ... other block params
+        ParamPath::FmOp { op, param: 0 } => Some(&mut params.fm.operators[op as usize].waveform),
+        ParamPath::FmOp { op, param: 2 } => Some(&mut params.fm.operators[op as usize].level),
+        // ... all FmOp params indexed 0-12
+        ParamPath::FmEnv { op, param: 0 } => Some(&mut params.fm.operators[op as usize].attack_rate),
+        // ... all FmEnv params
+        _ => None,
+    }
+}
+```
+
+This is a static match with no allocation — O(1) lookup, suitable for the audio ISR. The match arms are generated from the chain/block definitions. Each chain type contributes its param mappings.
+
+### Aliasing Prevention
+
+The same physical parameter must not be reachable via multiple paths. When priming:
+- On the FM operator focus page, always use `ParamPath::FmOp { op, param }` — never `ParamPath::Block`
+- On the FM envelope sub-page, always use `ParamPath::FmEnv { op, param }`
+- On regular block pages (Drive, Filter, etc.), use `ParamPath::Block { block, param }`
+- The `add()` method checks for duplicate paths before inserting
+
+The page context determines which `ParamPath` variant to use. Pages that show multi-instance params (operator focus, envelope sub-pages) generate instance-specific paths.
+
+### Migration
+
+Old patches have no `dest_registry` field. On load:
+- If the registry field is missing or zeroed, treat as empty (no primed destinations)
+- The serialization format version (future) will distinguish old vs new patches
+- For RAM-only patches (current): `Patch::init()` always creates a fresh registry, so no migration needed yet
+- When SD card persistence is added, format version bump + empty default handles it
 
 ### FM Init Patch Pre-wiring
 
