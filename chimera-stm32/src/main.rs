@@ -120,6 +120,7 @@ fn main() -> ! {
     loop {
         // Controls + display
         controls.snapshot();
+        ui.set_tick(controls.tick());
         let has_input = controls.has_activity();
 
         if has_input {
