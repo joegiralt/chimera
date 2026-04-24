@@ -52,6 +52,7 @@ pub enum RegionData {
         chain_idx: u8,
         node_idx: u8,
         sub_page: u8,
+        branch_scroll: u16,
     },
     Grid {
         sel_row: u8,
@@ -79,8 +80,8 @@ impl RegionData {
         Self::Cells { page, values, mod_bits }
     }
 
-    pub fn nav(chain_idx: u8, node_idx: u8, sub_page: u8) -> Self {
-        Self::Nav { chain_idx, node_idx, sub_page }
+    pub fn nav(chain_idx: u8, node_idx: u8, sub_page: u8, branch_scroll: u16) -> Self {
+        Self::Nav { chain_idx, node_idx, sub_page, branch_scroll }
     }
 
     pub fn sentinel_header() -> Self {
@@ -100,7 +101,7 @@ impl RegionData {
     }
 
     pub fn sentinel_nav() -> Self {
-        Self::Nav { chain_idx: 255, node_idx: 255, sub_page: 255 }
+        Self::Nav { chain_idx: 255, node_idx: 255, sub_page: 255, branch_scroll: SENTINEL }
     }
 
     pub fn grid(sel_row: u8, sel_col: u8, scroll_x: u8, scroll_y: u8) -> Self {
