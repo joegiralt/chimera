@@ -1,3 +1,4 @@
+use crate::mod_path::{ModDestRegistry, ParamPath};
 use crate::modulation::ModState;
 use crate::params::ParamSnapshot;
 
@@ -31,6 +32,7 @@ pub struct Patch {
     pub chain_type: ChainType,
     pub params: ParamSnapshot,
     pub mod_state: ModState,
+    pub dest_registry: ModDestRegistry,
 }
 
 impl Patch {
@@ -39,27 +41,41 @@ impl Patch {
         let tag = b"(init)";
         name[..tag.len()].copy_from_slice(tag);
         let mut params = ParamSnapshot::default();
-        match chain_type {
-            ChainType::PizzaPoly => { /* default is already Pizza */ }
-            ChainType::Modal => { params.engine = crate::params::EngineType::Modal; }
-            ChainType::Fm => { params.engine = crate::params::EngineType::Fm; }
-        }
-        let mod_state = match chain_type {
+        let (mod_state, dest_registry) = match chain_type {
+            ChainType::PizzaPoly => (ModState::default(), ModDestRegistry::new()),
+            ChainType::Modal => {
+                params.engine = crate::params::EngineType::Modal;
+                (ModState::default(), ModDestRegistry::new())
+            }
             ChainType::Fm => {
-                // Pre-wire: 4 envelope sources for the 4 FM operators.
-                // The internal routing (env→op amplitude) is handled by the FM engine.
-                // ModState just declares 4 sources so the matrix UI shows E1-E4.
+                params.engine = crate::params::EngineType::Fm;
+                // Pre-wire: 4 envelope sources → 4 FM operator levels
                 let mut ms = ModState::new();
                 ms.num_sources = 4;
-                ms
+                ms.num_dests = 4;
+                ms.dests[0] = ParamPath::FmOp { op: 0, param: 2 }; // Op1 Level
+                ms.dests[1] = ParamPath::FmOp { op: 1, param: 2 }; // Op2 Level
+                ms.dests[2] = ParamPath::FmOp { op: 2, param: 2 }; // Op3 Level
+                ms.dests[3] = ParamPath::FmOp { op: 3, param: 2 }; // Op4 Level
+                ms.amounts[0][0] = 127; // E1 → Op1 Level full
+                ms.amounts[1][1] = 127; // E2 → Op2 Level full
+                ms.amounts[2][2] = 127; // E3 → Op3 Level full
+                ms.amounts[3][3] = 127; // E4 → Op4 Level full
+
+                let mut reg = ModDestRegistry::new();
+                reg.add(ParamPath::FmOp { op: 0, param: 2 }, *b"O1 Lvl\0\0");
+                reg.add(ParamPath::FmOp { op: 1, param: 2 }, *b"O2 Lvl\0\0");
+                reg.add(ParamPath::FmOp { op: 2, param: 2 }, *b"O3 Lvl\0\0");
+                reg.add(ParamPath::FmOp { op: 3, param: 2 }, *b"O4 Lvl\0\0");
+                (ms, reg)
             }
-            _ => ModState::default(),
         };
         Self {
             name,
             chain_type,
             params,
             mod_state,
+            dest_registry,
         }
     }
 
