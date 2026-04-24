@@ -363,9 +363,64 @@ impl Renderer {
         }
     }
 
-    // ── Envelope (ADSR) ─────────────────────────────────────────────
+    // ── Envelope visualization (Digitone 2 style) ───────────────────
+    //
+    // Connected line segments with square breakpoint dots and dotted
+    // vertical grid lines between stages. Labels below baseline.
 
     fn draw_envelope_viz<D>(&self, display: &mut D)
+    where
+        D: DrawTarget<Color = Rgb565>,
+    {
+        let atk = self.anim[0].current().max(0.02);
+        let dec = self.anim[1].current().max(0.02);
+        let sus = self.anim[2].current();
+        let rel = self.anim[3].current().max(0.02);
+
+        let total = atk + dec + 0.3 + rel;
+        let widths = [atk / total, dec / total, 0.3 / total, rel / total];
+        let heights = [0.0, 1.0, sus, sus, 0.0]; // start, peak, sustain, sustain, end
+        let labels = ["ATK", "DEC", "SUS", "REL"];
+
+        Self::draw_envelope_shape(display, &widths, &heights, &labels);
+    }
+
+    fn draw_fm_envelope_viz<D>(&self, display: &mut D)
+    where
+        D: DrawTarget<Color = Rgb565>,
+    {
+        let ar = self.anim[0].current().max(0.02);   // attack rate (higher = faster)
+        let d1r = self.anim[1].current().max(0.02);  // decay 1 rate
+        let d1l = self.anim[2].current();             // decay 1 level (sustain breakpoint)
+        let d2r = self.anim[3].current().max(0.02);  // decay 2 rate
+        let rr = self.anim[4].current().max(0.02);   // release rate
+
+        // Invert rates for width (higher rate = shorter time = narrower segment)
+        let atk_t = 1.0 - ar * 0.7;   // fast attack = narrow
+        let d1_t = 1.0 - d1r * 0.7;
+        let d2_t = 0.3;                // sustain/d2 gets fixed proportion
+        let rel_t = 1.0 - rr * 0.5;
+
+        let total = atk_t + d1_t + d2_t + rel_t;
+        let widths = [atk_t / total, d1_t / total, d2_t / total, rel_t / total];
+        // Heights: start=0, peak=1.0, D1L level, near-zero after D2, end=0
+        let d2_end = d1l * 0.3; // D2 decays toward 0 from D1L
+        let heights = [0.0, 1.0, d1l, d2_end, 0.0];
+        let labels = ["AR", "D1R", "D2R", "RR"];
+
+        Self::draw_envelope_shape(display, &widths, &heights, &labels);
+    }
+
+    /// Shared envelope drawing — Digitone 2 style.
+    /// `widths`: proportional width of each segment (4 segments).
+    /// `heights`: y-value at each breakpoint (5 points: start + 4 segment ends).
+    /// `labels`: 4 stage labels below baseline.
+    fn draw_envelope_shape<D>(
+        display: &mut D,
+        widths: &[f32; 4],
+        heights: &[f32; 5],
+        labels: &[&str; 4],
+    )
     where
         D: DrawTarget<Color = Rgb565>,
     {
@@ -373,61 +428,55 @@ impl Renderer {
         let x1 = theme::VIZ_RIGHT;
         let y0 = theme::VIZ_TOP + 8;
         let y1 = theme::VIZ_BOTTOM - 8;
-        let w = x1 - x0;
-        let h = y1 - y0;
+        let w = (x1 - x0) as f32;
+        let h = (y1 - y0) as f32;
 
         // Baseline
         let _ = Line::new(Point::new(x0, y1), Point::new(x1, y1))
             .draw_styled(&PrimitiveStyle::with_stroke(theme::VIZ_GRID, 1), display);
 
-        let atk = self.anim[0].current().max(0.02);
-        let dec = self.anim[1].current().max(0.02);
-        let sus = self.anim[2].current();
-        let rel = self.anim[3].current().max(0.02);
+        // Compute breakpoints
+        let mut points = [Point::new(0, 0); 5];
+        let mut cx = x0 as f32;
+        for i in 0..5 {
+            let py = y1 as f32 - h * heights[i].clamp(0.0, 1.0);
+            points[i] = Point::new(cx as i32, py as i32);
+            if i < 4 {
+                cx += w * widths[i];
+            }
+        }
 
-        // Proportional widths
-        let total = atk + dec + 0.3 + rel; // sustain gets fixed width
-        let atk_w = (w as f32 * atk / total) as i32;
-        let dec_w = (w as f32 * dec / total) as i32;
-        let sus_w = (w as f32 * 0.3 / total) as i32;
-        let rel_w = (w as f32 * rel / total) as i32;
+        // Dotted vertical grid lines at each breakpoint (Digitone style)
+        let grid_stroke = PrimitiveStyle::with_stroke(theme::VIZ_GRID, 1);
+        for i in 1..4 {
+            // Draw dotted line (every other pixel)
+            let px = points[i].x;
+            let mut dy = y0;
+            while dy < y1 {
+                let _ = Line::new(Point::new(px, dy), Point::new(px, (dy + 1).min(y1)))
+                    .draw_styled(&grid_stroke, display);
+                dy += 3;
+            }
+        }
 
-        let sus_y = y1 - (h as f32 * sus) as i32;
-
-        let p0 = Point::new(x0, y1);
-        let p1 = Point::new(x0 + atk_w, y0);
-        let p2 = Point::new(x0 + atk_w + dec_w, sus_y);
-        let p3 = Point::new(x0 + atk_w + dec_w + sus_w, sus_y);
-        let p4 = Point::new(x0 + atk_w + dec_w + sus_w + rel_w, y1);
-
+        // Envelope line segments
         let stroke = PrimitiveStyle::with_stroke(theme::VIZ_LINE, 2);
-        let _ = Line::new(p0, p1).draw_styled(&stroke, display);
-        let _ = Line::new(p1, p2).draw_styled(&stroke, display);
-        let _ = Line::new(p2, p3).draw_styled(&stroke, display);
-        let _ = Line::new(p3, p4).draw_styled(&stroke, display);
+        for i in 0..4 {
+            let _ = Line::new(points[i], points[i + 1]).draw_styled(&stroke, display);
+        }
 
-        // Breakpoint dots
-        for &p in &[p0, p1, p2, p3, p4] {
-            let _ = Rectangle::new(Point::new(p.x - 1, p.y - 1), Size::new(3, 3))
+        // Square breakpoint dots
+        for &p in &points {
+            let _ = Rectangle::new(Point::new(p.x - 2, p.y - 2), Size::new(5, 5))
                 .draw_styled(&PrimitiveStyle::with_fill(theme::ACCENT_BRIGHT), display);
         }
 
-        // Stage labels (tiny, below baseline)
+        // Stage labels below baseline
         let dim = MonoTextStyle::new(&FONT_6X10, theme::TEXT_DIM);
-        let _ = Text::new("A", Point::new(x0 + atk_w / 2 - 3, y1 + 12), dim).draw(display);
-        let _ = Text::new("D", Point::new(x0 + atk_w + dec_w / 2 - 3, y1 + 12), dim).draw(display);
-        let _ = Text::new(
-            "S",
-            Point::new(x0 + atk_w + dec_w + sus_w / 2 - 3, y1 + 12),
-            dim,
-        )
-        .draw(display);
-        let _ = Text::new(
-            "R",
-            Point::new(x0 + atk_w + dec_w + sus_w + rel_w / 2 - 3, y1 + 12),
-            dim,
-        )
-        .draw(display);
+        for i in 0..4 {
+            let lx = (points[i].x + points[i + 1].x) / 2 - (labels[i].len() as i32 * 3);
+            let _ = Text::new(labels[i], Point::new(lx, y1 + 12), dim).draw(display);
+        }
     }
 
     // ── Effects ─────────────────────────────────────────────────────
@@ -755,6 +804,7 @@ impl Renderer {
             VizType::FilterResponse => self.draw_filter_viz(display),
             VizType::WaveFold => self.draw_folder_viz(display),
             VizType::Adsr => self.draw_envelope_viz(display),
+            VizType::FmEnvelope => self.draw_fm_envelope_viz(display),
             VizType::EffectsFlow => self.draw_efx_viz(display),
             VizType::MixerLevels => self.draw_mixer_viz(display),
             VizType::RoutingMatrix => {

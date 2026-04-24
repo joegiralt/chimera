@@ -17,6 +17,8 @@ pub enum VizType {
     MixerLevels,
     RoutingMatrix,
     CompressorCurve,
+    /// TX81Z 5-stage envelope: AR → D1R → D1L → D2R → RR
+    FmEnvelope,
 }
 
 #[derive(Clone, Copy, Debug)]
