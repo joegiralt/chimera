@@ -47,7 +47,7 @@ fn voice_render_with_mod_offset_changes_filter() {
     let mut mod_state = ModState::new();
     mod_state.num_sources = 2; // source 0 = env, source 1 = LFO
     mod_state.num_dests = 1;
-    mod_state.dests[0] = (2, 0); // filter cutoff
+    mod_state.dests[0] = chimera_core::mod_path::ParamPath::Block { block: 2, param: 0 }; // filter cutoff
     mod_state.amounts[1][0] = 100; // LFO -> cutoff at high amount
 
     voice_dry.note_on(60, 100, &params, SAMPLE_RATE);

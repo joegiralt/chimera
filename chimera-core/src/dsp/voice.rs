@@ -8,6 +8,7 @@ use crate::dsp::lfo::Lfo;
 use crate::dsp::modal::ModalEngine;
 use crate::dsp::pizza::PizzaOsc;
 use crate::dsp::wavefolder::Wavefolder;
+use crate::mod_path::ParamPath;
 use crate::modulation::{ModState, MAX_MOD_SOURCES};
 use crate::params::{EngineType, ParamSnapshot};
 
@@ -118,21 +119,21 @@ impl Voice {
 
         // Apply mod offsets — block indices match the chain: 0=Pizza, 1=Drive, 2=Filter, 3=Folder
         // Pizza params are raw f32 (0.0-1.0)
-        mod_pizza.shape = (mod_pizza.shape + mod_state.compute_offset(&mod_values, 0, 0)).clamp(0.0, 1.0);
-        mod_pizza.crush = (mod_pizza.crush + mod_state.compute_offset(&mod_values, 0, 1)).clamp(0.0, 1.0);
-        mod_pizza.level = (mod_pizza.level + mod_state.compute_offset(&mod_values, 0, 2)).clamp(0.0, 1.0);
+        mod_pizza.shape = (mod_pizza.shape + mod_state.compute_offset(&mod_values, ParamPath::Block { block: 0, param: 0 })).clamp(0.0, 1.0);
+        mod_pizza.crush = (mod_pizza.crush + mod_state.compute_offset(&mod_values, ParamPath::Block { block: 0, param: 1 })).clamp(0.0, 1.0);
+        mod_pizza.level = (mod_pizza.level + mod_state.compute_offset(&mod_values, ParamPath::Block { block: 0, param: 2 })).clamp(0.0, 1.0);
 
         // Drive params use Param structs — offset scaled by range
-        mod_drive.drive.apply_mod_offset(mod_state.compute_offset(&mod_values, 1, 0));
-        mod_drive.tone.apply_mod_offset(mod_state.compute_offset(&mod_values, 1, 1));
+        mod_drive.drive.apply_mod_offset(mod_state.compute_offset(&mod_values, ParamPath::Block { block: 1, param: 0 }));
+        mod_drive.tone.apply_mod_offset(mod_state.compute_offset(&mod_values, ParamPath::Block { block: 1, param: 1 }));
 
         // Filter
-        mod_filter.cutoff.apply_mod_offset(mod_state.compute_offset(&mod_values, 2, 0));
-        mod_filter.resonance.apply_mod_offset(mod_state.compute_offset(&mod_values, 2, 1));
+        mod_filter.cutoff.apply_mod_offset(mod_state.compute_offset(&mod_values, ParamPath::Block { block: 2, param: 0 }));
+        mod_filter.resonance.apply_mod_offset(mod_state.compute_offset(&mod_values, ParamPath::Block { block: 2, param: 1 }));
 
         // Folder
-        mod_folder.fold.apply_mod_offset(mod_state.compute_offset(&mod_values, 3, 0));
-        mod_folder.symmetry.apply_mod_offset(mod_state.compute_offset(&mod_values, 3, 1));
+        mod_folder.fold.apply_mod_offset(mod_state.compute_offset(&mod_values, ParamPath::Block { block: 3, param: 0 }));
+        mod_folder.symmetry.apply_mod_offset(mod_state.compute_offset(&mod_values, ParamPath::Block { block: 3, param: 1 }));
 
         // 1. Engine → raw oscillator output
         match self.active_engine {
