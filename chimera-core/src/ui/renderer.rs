@@ -893,8 +893,8 @@ impl Renderer {
 
     /// Number of visible rows in the patch browser list.
     pub const BROWSER_VISIBLE_ROWS: usize = 10;
-    /// Total entries: 32 pool slots + 1 "(init)" option.
-    pub const BROWSER_TOTAL_ENTRIES: usize = crate::preset::POOL_SIZE + 1;
+    /// Total entries: 32 pool slots + 3 init options (Pizza, Modal, FM).
+    pub const BROWSER_TOTAL_ENTRIES: usize = crate::preset::POOL_SIZE + 3;
 
     /// Draw the full-screen patch browser overlay.
     pub fn draw_patch_browser<D>(
@@ -964,9 +964,17 @@ impl Renderer {
                 }
                 let _ = Text::new(row_buf.as_str(), Point::new(8, y + 16), style).draw(display);
             } else {
-                // Init entry (index == POOL_SIZE)
+                // Init entries: POOL_SIZE=Pizza, POOL_SIZE+1=Modal, POOL_SIZE+2=FM
+                let init_types = [
+                    crate::preset::ChainType::PizzaPoly,
+                    crate::preset::ChainType::Modal,
+                    crate::preset::ChainType::Fm,
+                ];
+                let init_idx = entry_idx - crate::preset::POOL_SIZE;
                 let mut init_buf = FmtBuf::new();
-                let _ = write!(init_buf, "** (init) {}", track_chain_type.label());
+                if init_idx < init_types.len() {
+                    let _ = write!(init_buf, "** (init) {}", init_types[init_idx].label());
+                }
                 let _ = Text::new(init_buf.as_str(), Point::new(8, y + 16), style).draw(display);
             }
         }

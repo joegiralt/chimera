@@ -294,24 +294,23 @@ fn browser_save_to_pool() {
 }
 
 #[test]
-fn browser_init_resets_to_track_chain_type() {
+fn browser_init_entries_set_chain_type() {
     let mut ui = UiState::new();
 
-    // Set track 0 to Modal chain
-    ui.project.tracks[0].patch.chain_type = ChainType::Modal;
-    ui.project.tracks[0].patch.name = *b"Custom Modal\0\0\0\0";
-
-    // Open browser, scroll to init entry (slot 32 = POOL_SIZE)
+    // Open browser, scroll to "(init) Modal" (POOL_SIZE + 1)
     open_browser(&mut ui, ButtonId::B1);
-
-    // Scroll to the init entry at the end
-    ui.handle_input(&MockControls::new().encoder(EncoderId::Main, POOL_SIZE as i8));
-
-    // Select init
+    ui.handle_input(&MockControls::new().encoder(EncoderId::Main, (POOL_SIZE + 1) as i8));
     ui.handle_input(&MockControls::new().button(ButtonId::Edit, ButtonState::Pressed));
 
     assert!(matches!(ui.ui_mode, UiMode::Normal));
-    // Should reset to Modal init, not PizzaPoly
     assert_eq!(ui.project.tracks[0].patch.chain_type, ChainType::Modal);
     assert!(ui.project.tracks[0].patch.name_str().starts_with("(init)"));
+
+    // Open browser again, scroll to "(init) FM" (POOL_SIZE + 2)
+    open_browser(&mut ui, ButtonId::B1);
+    ui.handle_input(&MockControls::new().encoder(EncoderId::Main, (POOL_SIZE + 2) as i8));
+    ui.handle_input(&MockControls::new().button(ButtonId::Edit, ButtonState::Pressed));
+
+    assert!(matches!(ui.ui_mode, UiMode::Normal));
+    assert_eq!(ui.project.tracks[0].patch.chain_type, ChainType::Fm);
 }
