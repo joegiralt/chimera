@@ -1,58 +1,54 @@
-//! Oscilloscope buffer — captures end-of-chain audio for UI display.
+//! Oscilloscope buffer — double-buffered for clean display.
 //!
-//! The audio thread writes samples after the full signal chain.
-//! The UI thread reads them to draw the waveform strip.
+//! Audio thread writes to the back buffer. When full, it finds a
+//! rising zero-crossing trigger point and swaps to front.
+//! UI thread reads the stable front buffer — no tearing.
 
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-/// Number of samples in the scope display buffer.
-/// 240 samples = 1 sample per screen pixel width = clean mapping.
+/// Display width in samples.
 pub const SCOPE_LEN: usize = 240;
+/// Back buffer is larger to allow trigger search.
+const BACK_LEN: usize = SCOPE_LEN * 2;
 
-/// Shared scope buffer. Written by audio, read by UI.
-/// Stored as u32 (f32 bits) for atomic-free simplicity — single writer, single reader.
-static mut SCOPE_BUF: [f32; SCOPE_LEN] = [0.0; SCOPE_LEN];
-static SCOPE_WRITE_POS: AtomicU32 = AtomicU32::new(0);
+static mut FRONT: [f32; SCOPE_LEN] = [0.0; SCOPE_LEN];
+static mut BACK: [f32; BACK_LEN] = [0.0; BACK_LEN];
+static BACK_POS: AtomicUsize = AtomicUsize::new(0);
+static FRESH: AtomicBool = AtomicBool::new(false);
 
-/// Called by the audio thread after each block render.
-/// Copies the block's output samples into the ring buffer.
-///
-/// # Safety
-/// Single writer (audio thread only). Reader tolerates torn reads.
+/// Called by audio thread after each block render.
 pub fn write_samples(samples: &[f32]) {
-    let mut pos = SCOPE_WRITE_POS.load(Ordering::Relaxed) as usize;
+    let mut pos = BACK_POS.load(Ordering::Relaxed);
     for &s in samples {
-        unsafe {
-            SCOPE_BUF[pos % SCOPE_LEN] = s;
+        if pos < BACK_LEN {
+            unsafe { BACK[pos] = s; }
+            pos += 1;
         }
-        pos += 1;
     }
-    SCOPE_WRITE_POS.store(pos as u32, Ordering::Relaxed);
+    BACK_POS.store(pos, Ordering::Relaxed);
+
+    // When back buffer is full, find trigger and copy to front
+    if pos >= BACK_LEN {
+        // Find rising zero-crossing for trigger
+        let mut trigger = 0;
+        unsafe {
+            for i in 1..BACK_LEN - SCOPE_LEN {
+                if BACK[i - 1] <= 0.0 && BACK[i] > 0.0 {
+                    trigger = i;
+                    break;
+                }
+            }
+            // Copy SCOPE_LEN samples from trigger point to front
+            FRONT.copy_from_slice(&BACK[trigger..trigger + SCOPE_LEN]);
+        }
+        BACK_POS.store(0, Ordering::Relaxed);
+        FRESH.store(true, Ordering::Relaxed);
+    }
 }
 
-/// Read the scope buffer for display with zero-crossing trigger.
-/// Finds a rising zero-crossing and starts the display from there,
-/// so periodic waveforms appear stable (like a real oscilloscope).
+/// Read the front buffer for display. Always stable — no tearing.
 pub fn read_samples(out: &mut [f32; SCOPE_LEN]) {
-    let pos = SCOPE_WRITE_POS.load(Ordering::Relaxed) as usize;
-
-    // Search for a rising zero-crossing in the first half of the buffer
-    // to use as the trigger point
-    let mut trigger = 0usize;
-    let search_len = SCOPE_LEN / 2;
-    for i in 1..search_len {
-        let prev = unsafe { SCOPE_BUF[(pos + i - 1) % SCOPE_LEN] };
-        let curr = unsafe { SCOPE_BUF[(pos + i) % SCOPE_LEN] };
-        if prev <= 0.0 && curr > 0.0 {
-            trigger = i;
-            break;
-        }
-    }
-
-    // Read from trigger point
-    for i in 0..SCOPE_LEN {
-        unsafe {
-            out[i] = SCOPE_BUF[(pos + trigger + i) % SCOPE_LEN];
-        }
+    unsafe {
+        out.copy_from_slice(&FRONT);
     }
 }
