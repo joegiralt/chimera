@@ -130,6 +130,7 @@ pub enum PageId {
     DemoWaves,
     DemoShapes,
     DemoMotion,
+    DemoFm,
     DemoMatrix,
 }
 
@@ -151,6 +152,7 @@ impl PageId {
                 0 => PageId::DemoWaves,
                 1 => PageId::DemoShapes,
                 2 => PageId::DemoMotion,
+                3 => PageId::DemoFm,
                 _ => PageId::DemoMatrix,
             },
         }
@@ -283,6 +285,14 @@ impl PageId {
                 params.lfo.phase_offset,           // 0-1
                 params.lfo.depth,                  // 0-1
                 (params.lfo.offset + 1.0) / 2.0,  // -1..1 → 0..1 for display
+            ],
+            PageId::DemoFm => [
+                params.fm.algorithm.normalized(),
+                params.fm.operators[0].feedback.normalized(),
+                params.fm.operators[1].feedback.normalized(),
+                params.fm.operators[2].feedback.normalized(),
+                0.0,
+                0.0,
             ],
             PageId::DemoMatrix => [0.0; 6],
             PageId::EngineModal1 => [
@@ -507,6 +517,13 @@ impl PageId {
                 _ => None,
             },
             PageId::Lfo => None, // handled by apply_encoder special case
+            PageId::DemoFm => match idx {
+                0 => Some(&mut params.fm.algorithm),
+                1 => Some(&mut params.fm.operators[0].feedback),
+                2 => Some(&mut params.fm.operators[1].feedback),
+                3 => Some(&mut params.fm.operators[2].feedback),
+                _ => None,
+            },
             PageId::DemoMatrix => None,
             _ => None,
         }
