@@ -30,13 +30,29 @@ pub fn write_samples(samples: &[f32]) {
     SCOPE_WRITE_POS.store(pos as u32, Ordering::Relaxed);
 }
 
-/// Read the scope buffer for display. Returns a snapshot.
-/// The waveform may have minor tearing but that's fine for a visual scope.
+/// Read the scope buffer for display with zero-crossing trigger.
+/// Finds a rising zero-crossing and starts the display from there,
+/// so periodic waveforms appear stable (like a real oscilloscope).
 pub fn read_samples(out: &mut [f32; SCOPE_LEN]) {
     let pos = SCOPE_WRITE_POS.load(Ordering::Relaxed) as usize;
+
+    // Search for a rising zero-crossing in the first half of the buffer
+    // to use as the trigger point
+    let mut trigger = 0usize;
+    let search_len = SCOPE_LEN / 2;
+    for i in 1..search_len {
+        let prev = unsafe { SCOPE_BUF[(pos + i - 1) % SCOPE_LEN] };
+        let curr = unsafe { SCOPE_BUF[(pos + i) % SCOPE_LEN] };
+        if prev <= 0.0 && curr > 0.0 {
+            trigger = i;
+            break;
+        }
+    }
+
+    // Read from trigger point
     for i in 0..SCOPE_LEN {
         unsafe {
-            out[i] = SCOPE_BUF[(pos + i) % SCOPE_LEN];
+            out[i] = SCOPE_BUF[(pos + trigger + i) % SCOPE_LEN];
         }
     }
 }
