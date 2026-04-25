@@ -96,11 +96,13 @@ fn fm_chain_resolves_sub_pages() {
 }
 
 #[test]
-fn demo_chain_has_4_blocks() {
+fn demo_chain_has_5_blocks() {
     let chain = &block_registry::DEMO_CHAIN;
+    assert_eq!(chain.blocks.len(), 5);
     assert_eq!(chain.blocks[0].def.name, "Waves");
     assert_eq!(chain.blocks[2].def.name, "Motion");
-    assert_eq!(chain.blocks[3].def.name, "Matrix");
-    assert_eq!(chain.blocks[3].def.layout, PageLayout::Matrix);
-    assert_eq!(chain.len(), 4);
+    assert_eq!(chain.blocks[3].def.name, "FM Icons");
+    assert_eq!(chain.blocks[4].def.name, "Matrix");
+    assert_eq!(chain.blocks[4].def.layout, PageLayout::Matrix);
+    assert_eq!(chain.len(), 5);
 }
