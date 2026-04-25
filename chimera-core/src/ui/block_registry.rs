@@ -732,10 +732,26 @@ pub static DEMO_MATRIX: BlockDef = BlockDef {
     params: [EMPTY; 6],
 };
 
-static DEMO_BLOCKS: [ChainBlock; 4] = [
+pub static DEMO_FM: BlockDef = BlockDef {
+    name: "FM Icons",
+    short: "FM",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot { label: "ALGO",  format: ValFmt::Int(7), icon: CellIcon::FmAlgorithm    },
+        ParamSlot { label: "LOOP",  format: ValFmt::Uni,    icon: CellIcon::FeedbackLoop   },
+        ParamSlot { label: "SPIRL", format: ValFmt::Uni,    icon: CellIcon::FeedbackSpiral },
+        ParamSlot { label: "WAVE",  format: ValFmt::Uni,    icon: CellIcon::FeedbackWave   },
+        EMPTY,
+        EMPTY,
+    ],
+};
+
+static DEMO_BLOCKS: [ChainBlock; 5] = [
     ChainBlock { def: &DEMO_WAVES,  sub_pages: &[] },
     ChainBlock { def: &DEMO_SHAPES, sub_pages: &[] },
     ChainBlock { def: &DEMO_MOTION, sub_pages: &[] },
+    ChainBlock { def: &DEMO_FM,     sub_pages: &[] },
     ChainBlock { def: &DEMO_MATRIX, sub_pages: &[] },
 ];
 

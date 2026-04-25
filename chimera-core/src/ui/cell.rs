@@ -207,6 +207,9 @@ where
         CellIcon::Bounce => draw_icon_bounce(display, x, y, w, h, val),
         CellIcon::Cube => draw_icon_cube(display, x, y, w, h, val),
         CellIcon::FmAlgorithm => draw_icon_fm_alg(display, x, y, w, h, val),
+        CellIcon::FeedbackLoop => draw_icon_feedback_loop(display, x, y, w, h, val),
+        CellIcon::FeedbackSpiral => draw_icon_feedback_spiral(display, x, y, w, h, val),
+        CellIcon::FeedbackWave => draw_icon_feedback_wave(display, x, y, w, h, val),
     }
 }
 
@@ -1061,6 +1064,105 @@ where
     // Highlight dot at ball center
     let _ = Rectangle::new(Point::new(cx - 1, by - 1), Size::new(3, 3))
         .draw_styled(&PrimitiveStyle::with_fill(theme::ACCENT_BRIGHT), display);
+}
+
+// ── Feedback icons ────────────────────────────────────────────────
+
+/// Circular arrow that tightens as feedback increases.
+fn draw_icon_feedback_loop<D>(display: &mut D, x: i32, y: i32, w: i32, h: i32, val: f32)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let cx = x + w / 2;
+    let cy = y + h / 2;
+    let max_r = w.min(h) / 2 - 2;
+    let r = (max_r as f32 * (0.3 + 0.7 * val)) as i32;
+    let style = PrimitiveStyle::with_stroke(theme::VIZ_LINE, 1);
+
+    // Draw circular arc as line segments
+    let steps = 12 + (val * 8.0) as i32; // more segments = tighter loop
+    let arc_len = 0.75 + val * 0.2; // nearly full circle at max
+    for i in 0..steps {
+        let t0 = i as f32 / steps as f32 * arc_len;
+        let t1 = (i + 1) as f32 / steps as f32 * arc_len;
+        let a0 = t0 * core::f32::consts::TAU;
+        let a1 = t1 * core::f32::consts::TAU;
+        let x0 = cx + (r as f32 * libm::cosf(a0)) as i32;
+        let y0 = cy + (r as f32 * libm::sinf(a0)) as i32;
+        let x1 = cx + (r as f32 * libm::cosf(a1)) as i32;
+        let y1 = cy + (r as f32 * libm::sinf(a1)) as i32;
+        let _ = Line::new(Point::new(x0, y0), Point::new(x1, y1))
+            .draw_styled(&style, display);
+    }
+
+    // Arrowhead at end of arc
+    let end_a = arc_len * core::f32::consts::TAU;
+    let ex = cx + (r as f32 * libm::cosf(end_a)) as i32;
+    let ey = cy + (r as f32 * libm::sinf(end_a)) as i32;
+    let _ = Rectangle::new(Point::new(ex - 1, ey - 1), Size::new(3, 3))
+        .draw_styled(&PrimitiveStyle::with_fill(theme::ACCENT_BRIGHT), display);
+}
+
+/// Spiral expanding outward as feedback increases.
+fn draw_icon_feedback_spiral<D>(display: &mut D, x: i32, y: i32, w: i32, h: i32, val: f32)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let cx = x + w / 2;
+    let cy = y + h / 2;
+    let max_r = w.min(h) / 2 - 2;
+    let style = PrimitiveStyle::with_stroke(theme::VIZ_LINE, 1);
+
+    let turns = 1.0 + val * 2.0; // 1-3 turns based on feedback
+    let steps = (20.0 + val * 20.0) as i32;
+
+    for i in 0..steps {
+        let t0 = i as f32 / steps as f32;
+        let t1 = (i + 1) as f32 / steps as f32;
+        let a0 = t0 * turns * core::f32::consts::TAU;
+        let a1 = t1 * turns * core::f32::consts::TAU;
+        let r0 = max_r as f32 * t0 * (0.3 + 0.7 * val);
+        let r1 = max_r as f32 * t1 * (0.3 + 0.7 * val);
+        let x0 = cx + (r0 * libm::cosf(a0)) as i32;
+        let y0 = cy + (r0 * libm::sinf(a0)) as i32;
+        let x1 = cx + (r1 * libm::cosf(a1)) as i32;
+        let y1 = cy + (r1 * libm::sinf(a1)) as i32;
+        let _ = Line::new(Point::new(x0, y0), Point::new(x1, y1))
+            .draw_styled(&style, display);
+    }
+}
+
+/// Sine wave getting progressively distorted/clipped as feedback increases.
+fn draw_icon_feedback_wave<D>(display: &mut D, x: i32, y: i32, w: i32, h: i32, val: f32)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let style = PrimitiveStyle::with_stroke(theme::VIZ_LINE, 1);
+    let cy = y + h / 2;
+    let amp = h as f32 / 2.0 - 2.0;
+    let feedback = val * 3.0; // scale for visible distortion
+
+    let steps = w - 4;
+    for i in 0..steps {
+        let t0 = i as f32 / steps as f32;
+        let t1 = (i + 1) as f32 / steps as f32;
+
+        // Pure sine + self-feedback distortion
+        let phase0 = t0 * core::f32::consts::TAU * 2.0;
+        let phase1 = t1 * core::f32::consts::TAU * 2.0;
+        let mut s0 = libm::sinf(phase0);
+        let mut s1 = libm::sinf(phase1);
+        // Apply feedback: sin(phase + feedback * sin(phase))
+        s0 = libm::sinf(phase0 + feedback * s0);
+        s1 = libm::sinf(phase1 + feedback * s1);
+
+        let x0 = x + 2 + i;
+        let x1 = x + 2 + i + 1;
+        let y0 = cy - (amp * s0) as i32;
+        let y1 = cy - (amp * s1) as i32;
+        let _ = Line::new(Point::new(x0, y0), Point::new(x1, y1))
+            .draw_styled(&style, display);
+    }
 }
 
 // ── FM Algorithm icon ─────────────────────────────────────────────

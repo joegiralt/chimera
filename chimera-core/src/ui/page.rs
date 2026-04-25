@@ -92,6 +92,12 @@ pub enum CellIcon {
     Cube,
     /// FM algorithm topology diagram (8 algorithms, val selects which)
     FmAlgorithm,
+    /// Feedback: circular arrow that tightens with value
+    FeedbackLoop,
+    /// Feedback: spiral expanding outward
+    FeedbackSpiral,
+    /// Feedback: sine getting progressively distorted
+    FeedbackWave,
 }
 
 /// Identifies which page is active, derived from chain position.
@@ -655,7 +661,7 @@ fn resolve_env_param(
 /// This is UI-only state shared between FM_OP and FM_RATIO pages.
 static FM_SEL_OP: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
 
-fn fm_selected_op() -> usize {
+pub fn fm_selected_op() -> usize {
     FM_SEL_OP.load(core::sync::atomic::Ordering::Relaxed) as usize
 }
 
