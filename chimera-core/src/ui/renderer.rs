@@ -877,6 +877,11 @@ impl Renderer {
         )
         .draw_styled(&PrimitiveStyle::with_stroke(theme::SEPARATOR, 1), display);
 
+        // Oscilloscope strip — on CellGrid pages, between cells and dungeon map
+        if def.layout == PageLayout::CellGrid {
+            Self::draw_scope(display);
+        }
+
         dungeon_map::draw(display, nav, (self.branch_scroll.current() * theme::BRANCH_LINE_HEIGHT as f32) as i32);
         self.draw_perf(display, perf);
     }
@@ -1079,6 +1084,48 @@ impl Renderer {
         let hint_style = MonoTextStyle::new(&FONT_6X10, theme::TEXT_DIM);
         let _ = Text::new("Turn:scroll  Edit:load  B:cancel", Point::new(8, 306), hint_style)
             .draw(display);
+    }
+
+    // ── Oscilloscope ────────────────────────────────────────────────
+
+    /// Draw a waveform scope strip showing end-of-chain audio.
+    fn draw_scope<D>(display: &mut D)
+    where
+        D: DrawTarget<Color = Rgb565>,
+    {
+        let x0 = 0i32;
+        let y0 = theme::SCOPE_TOP;
+        let h = theme::SCOPE_HEIGHT;
+        let w = theme::SCREEN_W;
+        let cy = y0 + h / 2;
+
+        // Background
+        let _ = Rectangle::new(Point::new(x0, y0), Size::new(w as u32, h as u32))
+            .draw_styled(&PrimitiveStyle::with_fill(theme::BG), display);
+
+        // Center line (zero crossing)
+        let _ = Line::new(Point::new(x0, cy), Point::new(x0 + w - 1, cy))
+            .draw_styled(&PrimitiveStyle::with_stroke(theme::VIZ_GRID, 1), display);
+
+        // Read scope buffer
+        let mut buf = [0.0f32; crate::scope::SCOPE_LEN];
+        crate::scope::read_samples(&mut buf);
+
+        // Draw waveform — one pixel per sample, 240 samples = 240px
+        let amp = (h / 2 - 2) as f32;
+        let style = PrimitiveStyle::with_stroke(theme::ACCENT_BRIGHT, 1);
+
+        for i in 0..(w - 1) as usize {
+            let s0 = buf[i].clamp(-1.0, 1.0);
+            let s1 = buf[i + 1].clamp(-1.0, 1.0);
+            let y0p = cy - (s0 * amp) as i32;
+            let y1p = cy - (s1 * amp) as i32;
+            let _ = Line::new(
+                Point::new(x0 + i as i32, y0p),
+                Point::new(x0 + i as i32 + 1, y1p),
+            )
+            .draw_styled(&style, display);
+        }
     }
 
     // ── Dirty region helpers ─────────────────────────────────────────

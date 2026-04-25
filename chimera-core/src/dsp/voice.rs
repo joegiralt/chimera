@@ -141,7 +141,18 @@ impl Voice {
                 self.pizza.render(output, &mod_pizza, sample_rate);
             }
             EngineType::Fm => {
-                self.fm.render_params(output, &params.fm);
+                let mut mod_fm = params.fm;
+                // Apply modulation offsets to FM operator params
+                for op in 0..4u8 {
+                    // Level (param index 2 in FmOpParams)
+                    let offset = mod_state.compute_offset(&mod_values, ParamPath::FmOp { op, param: 2 });
+                    if offset != 0.0 {
+                        mod_fm.operators[op as usize].level.apply_mod_offset(offset);
+                    }
+                    // Could add more modulatable FM params here in the future:
+                    // coarse (1), feedback (3), detune (4), etc.
+                }
+                self.fm.render_params(output, &mod_fm);
             }
             EngineType::Va => {
                 // VA — render silence
@@ -180,6 +191,9 @@ impl Voice {
                 }
             }
         }
+
+        // 6. Scope — capture end-of-chain for oscilloscope display
+        crate::scope::write_samples(output);
 
         // Check if done
         self.active = match self.active_engine {
