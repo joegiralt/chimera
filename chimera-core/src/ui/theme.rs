@@ -40,11 +40,16 @@ pub const HEADER_LABEL: Rgb565 = Rgb565::new(14, 28, 14);
 
 // --- Layout (240x320 screen) ---
 
-/// Content zone: header + content + compact map
-pub const ENCODER_ZONE_BOTTOM: i32 = 265;
+/// Content zone: header + content + scope + compact map
+pub const ENCODER_ZONE_BOTTOM: i32 = 252;
+
+/// Oscilloscope strip between cells and dungeon map
+pub const SCOPE_TOP: i32 = 253;
+pub const SCOPE_HEIGHT: i32 = 30;
+pub const SCOPE_BOTTOM: i32 = SCOPE_TOP + SCOPE_HEIGHT;
 
 /// Dungeon map: compact bottom strip
-pub const MAP_TOP: i32 = 266;
+pub const MAP_TOP: i32 = SCOPE_BOTTOM + 1;
 
 /// Header
 pub const HEADER_Y: i32 = 6;
@@ -65,8 +70,8 @@ pub const PARAM_LEFT: i32 = 10; // left margin
 pub const NODE_WIDTH: i32 = 30;
 pub const NODE_HEIGHT: i32 = 14;
 pub const NODE_GAP: i32 = 6;
-pub const NODE_ROW_Y: i32 = 278;
-pub const BRANCH_START_Y: i32 = 296;
+pub const NODE_ROW_Y: i32 = MAP_TOP + 12;
+pub const BRANCH_START_Y: i32 = MAP_TOP + 30;
 pub const BRANCH_LINE_HEIGHT: i32 = 12;
 
 /// Screen
