@@ -1089,7 +1089,7 @@ impl Renderer {
     // ── Oscilloscope ────────────────────────────────────────────────
 
     /// Draw a waveform scope strip showing end-of-chain audio.
-    fn draw_scope<D>(display: &mut D)
+    pub fn draw_scope<D>(display: &mut D)
     where
         D: DrawTarget<Color = Rgb565>,
     {

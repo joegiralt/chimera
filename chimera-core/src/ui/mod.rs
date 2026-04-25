@@ -521,6 +521,17 @@ impl UiState {
         let mut flush_list = [(0u16, 0u16); region::MAX_REGIONS];
         let mut flush_count = 0;
 
+        // Always redraw scope on CellGrid pages — it's live audio data
+        if layout == PageLayout::CellGrid {
+            let fb = display.pixel_buffer();
+            renderer::Renderer::clear_region_fb(fb, theme::SCOPE_TOP as u16, theme::SCOPE_BOTTOM as u16);
+            renderer::Renderer::draw_scope(display);
+            if flush_count < flush_list.len() {
+                flush_list[flush_count] = (theme::SCOPE_TOP as u16, theme::SCOPE_BOTTOM as u16);
+                flush_count += 1;
+            }
+        }
+
         // Rebuild regions if layout changed
         if self.region_set.prev_layout != Some(layout) {
             self.region_set.set_layout(layout);
