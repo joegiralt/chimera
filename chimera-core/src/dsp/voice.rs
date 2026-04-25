@@ -26,6 +26,9 @@ pub struct Voice {
     pub lfo: Lfo,
     active_engine: EngineType,
     active: bool,
+    last_note: u8,
+    last_velocity: u8,
+    last_sample_rate: u32,
 }
 
 impl Default for Voice {
@@ -47,11 +50,17 @@ impl Voice {
             lfo: Lfo::new(),
             active_engine: EngineType::Pizza,
             active: false,
+            last_note: 69,
+            last_velocity: 100,
+            last_sample_rate: 48000,
         }
     }
 
     pub fn note_on(&mut self, note: u8, velocity: u8, params: &ParamSnapshot, sample_rate: u32) {
         self.active_engine = params.engine;
+        self.last_note = note;
+        self.last_velocity = velocity;
+        self.last_sample_rate = sample_rate;
         let freq = crate::dsp::note_to_freq(note);
         match self.active_engine {
             EngineType::Pizza => {
@@ -93,6 +102,11 @@ impl Voice {
         mod_state: &ModState,
         sample_rate: u32,
     ) {
+        // Auto-retrigger if engine type changed (e.g., user loaded FM patch)
+        if self.active && params.engine != self.active_engine {
+            self.note_on(self.last_note, self.last_velocity, params, self.last_sample_rate);
+        }
+
         if !self.active {
             for s in output.iter_mut() {
                 *s = 0.0;
