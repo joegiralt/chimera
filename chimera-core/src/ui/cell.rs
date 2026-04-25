@@ -1132,34 +1132,33 @@ where
     }
 }
 
-/// Sine wave getting progressively distorted/clipped as feedback increases.
+/// Growing oscillation — amplitude expands left-to-right like Larsen feedback.
+/// At low val: small tight wave. At high val: large growing oscillation.
 fn draw_icon_feedback_wave<D>(display: &mut D, x: i32, y: i32, w: i32, h: i32, val: f32)
 where
     D: DrawTarget<Color = Rgb565>,
 {
     let style = PrimitiveStyle::with_stroke(theme::VIZ_LINE, 1);
     let cy = y + h / 2;
-    let amp = h as f32 / 2.0 - 2.0;
-    let feedback = val * 3.0; // scale for visible distortion
+    let max_amp = h as f32 / 2.0 - 2.0;
+    let growth = 0.1 + val * 0.9; // how much amplitude grows across the width
 
     let steps = w - 4;
     for i in 0..steps {
         let t0 = i as f32 / steps as f32;
         let t1 = (i + 1) as f32 / steps as f32;
 
-        // Pure sine + self-feedback distortion
-        let phase0 = t0 * core::f32::consts::TAU * 2.0;
-        let phase1 = t1 * core::f32::consts::TAU * 2.0;
-        let mut s0 = libm::sinf(phase0);
-        let mut s1 = libm::sinf(phase1);
-        // Apply feedback: sin(phase + feedback * sin(phase))
-        s0 = libm::sinf(phase0 + feedback * s0);
-        s1 = libm::sinf(phase1 + feedback * s1);
+        // Amplitude grows exponentially from left to right
+        let amp0 = max_amp * (t0 * growth).min(1.0);
+        let amp1 = max_amp * (t1 * growth).min(1.0);
+
+        let phase0 = t0 * core::f32::consts::TAU * 3.0;
+        let phase1 = t1 * core::f32::consts::TAU * 3.0;
 
         let x0 = x + 2 + i;
         let x1 = x + 2 + i + 1;
-        let y0 = cy - (amp * s0) as i32;
-        let y1 = cy - (amp * s1) as i32;
+        let y0 = cy - (amp0 * libm::sinf(phase0)) as i32;
+        let y1 = cy - (amp1 * libm::sinf(phase1)) as i32;
         let _ = Line::new(Point::new(x0, y0), Point::new(x1, y1))
             .draw_styled(&style, display);
     }
