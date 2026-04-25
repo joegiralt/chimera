@@ -1111,15 +1111,20 @@ impl Renderer {
         let mut buf = [0.0f32; crate::scope::SCOPE_LEN];
         crate::scope::read_samples(&mut buf);
 
-        // Draw waveform — one pixel per sample, 240 samples = 240px
-        let amp = (h / 2 - 2) as f32;
+        // Auto-scale: find peak amplitude and scale to fill display
+        let mut peak = 0.0f32;
+        for &s in buf.iter() {
+            let a = if s < 0.0 { -s } else { s };
+            if a > peak { peak = a; }
+        }
+        let scale = if peak > 0.001 { (h / 2 - 2) as f32 / peak } else { 1.0 };
         let style = PrimitiveStyle::with_stroke(theme::ACCENT_BRIGHT, 1);
 
         for i in 0..(w - 1) as usize {
-            let s0 = buf[i].clamp(-1.0, 1.0);
-            let s1 = buf[i + 1].clamp(-1.0, 1.0);
-            let y0p = cy - (s0 * amp) as i32;
-            let y1p = cy - (s1 * amp) as i32;
+            let s0 = buf[i] * scale;
+            let s1 = buf[i + 1] * scale;
+            let y0p = cy - s0 as i32;
+            let y1p = cy - s1 as i32;
             let _ = Line::new(
                 Point::new(x0 + i as i32, y0p),
                 Point::new(x0 + i as i32 + 1, y1p),
