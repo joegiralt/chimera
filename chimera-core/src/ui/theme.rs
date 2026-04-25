@@ -44,8 +44,8 @@ pub const HEADER_LABEL: Rgb565 = Rgb565::new(14, 28, 14);
 pub const ENCODER_ZONE_BOTTOM: i32 = 265;
 
 /// Oscilloscope strip — between cells and dungeon map on CellGrid pages
-pub const SCOPE_TOP: i32 = 220;
-pub const SCOPE_HEIGHT: i32 = 45;
+pub const SCOPE_TOP: i32 = 240;
+pub const SCOPE_HEIGHT: i32 = 26;
 pub const SCOPE_BOTTOM: i32 = SCOPE_TOP + SCOPE_HEIGHT;
 
 /// Dungeon map: compact bottom strip

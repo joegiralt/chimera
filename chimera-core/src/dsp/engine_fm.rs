@@ -155,6 +155,14 @@ impl FmOperator {
         self.active = true;
     }
 
+    /// Update live-tweakable params without resetting phase or envelope.
+    /// Called each render block so encoder changes are heard immediately.
+    pub fn update_live(&mut self, settings: &FmOpSettings) {
+        self.gain = fm_tables::level_to_gain(settings.level);
+        self.feedback_amount = fm_tables::FEEDBACK[settings.feedback.min(7) as usize];
+        self.waveform = settings.waveform;
+    }
+
     /// Release the operator (envelope enters release stage).
     pub fn note_off(&mut self) {
         self.envelope.note_off();
@@ -353,6 +361,11 @@ impl FmEngine {
         let alg = params.algorithm.value as u8;
         let settings: [FmOpSettings; 4] =
             core::array::from_fn(|i| FmOpSettings::from_params(&params.operators[i]));
+        // Update live-tweakable params so encoder changes are heard immediately
+        self.op1.update_live(&settings[0]);
+        self.op2.update_live(&settings[1]);
+        self.op3.update_live(&settings[2]);
+        self.op4.update_live(&settings[3]);
         self.render(output, alg, &settings);
     }
 
