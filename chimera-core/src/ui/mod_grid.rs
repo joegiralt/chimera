@@ -10,14 +10,8 @@ use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::primitives::{PrimitiveStyle, Rectangle, StyledDrawable};
 use embedded_graphics::text::Text;
 
+use crate::mod_path::{ParamPath, LABEL_LEN};
 use crate::ui::theme;
-
-/// Fallback source label if none provided
-const NO_SOURCES: &[&str] = &[];
-
-// Destination labels are now dynamic — read from chain BlockDefs via MatrixState.dests[]
-
-// No demo amounts — matrix starts empty. Users set amounts via Encoder E on the grid.
 
 /// Grid geometry
 const GRID_TOP: i32 = 28;        // below header
@@ -36,18 +30,19 @@ const VISIBLE_ROWS: usize = ((GRID_BOTTOM - GRID_TOP - COL_HEADER_H) / CELL_H) a
 pub const MAX_SOURCES: usize = 16;
 pub const MAX_DESTS: usize = 16;
 
-/// Max blocks in a chain
-pub const MAX_BLOCKS: usize = 8;
-/// Max params per block
-pub const MAX_PARAMS: usize = 6;
-
-/// A destination in the mod matrix — identifies a block param that's been enabled.
+/// A destination in the mod matrix — identifies a primed param via its ParamPath.
 #[derive(Clone, Copy, Debug)]
 pub struct ModDest {
-    pub block_idx: u8,
-    pub param_idx: u8,
-    pub block_short: &'static str,
-    pub param_label: &'static str,
+    pub path: ParamPath,
+    pub label: [u8; LABEL_LEN],
+}
+
+impl ModDest {
+    /// Return the label as a &str (up to the first NUL byte).
+    pub fn label_str(&self) -> &str {
+        let end = self.label.iter().position(|&b| b == 0).unwrap_or(LABEL_LEN);
+        core::str::from_utf8(&self.label[..end]).unwrap_or("???")
+    }
 }
 
 /// A source in the mod matrix — one per modulator sub-page.
@@ -65,10 +60,7 @@ pub struct MatrixState {
     pub scroll_y: usize,
     /// Modulation amounts: [source][dest_idx], -127 to +127. 0 = no connection.
     pub amounts: [[i8; MAX_DESTS]; MAX_SOURCES],
-    /// Which block params are enabled as mod destinations.
-    /// Bit = block_idx * 6 + param_idx. If set, the param appears in the matrix.
-    pub mod_enabled: u64,
-    /// Cached destination list, rebuilt when mod_enabled changes.
+    /// Destination list, rebuilt from ModDestRegistry.
     pub dests: [Option<ModDest>; MAX_DESTS],
     pub num_dests: usize,
     /// Source list — built from mod matrix sub-pages.
@@ -78,13 +70,12 @@ pub struct MatrixState {
 
 impl MatrixState {
     pub fn new() -> Self {
-        let mut state = Self {
+        let state = Self {
             sel_row: 0,
             sel_col: 0,
             scroll_x: 0,
             scroll_y: 0,
             amounts: [[0; MAX_DESTS]; MAX_SOURCES],
-            mod_enabled: 0,
             dests: [None; MAX_DESTS],
             num_dests: 0,
             sources: [None; MAX_SOURCES],
@@ -107,55 +98,20 @@ impl MatrixState {
         }
     }
 
-    /// Check if a block param is enabled as a mod destination.
-    pub fn is_mod_enabled(&self, block_idx: u8, param_idx: u8) -> bool {
-        let bit = block_idx as u64 * MAX_PARAMS as u64 + param_idx as u64;
-        (self.mod_enabled >> bit) & 1 != 0
-    }
-
-    /// Enable or disable a block param as a mod destination.
-    pub fn set_mod_enabled(&mut self, block_idx: u8, param_idx: u8, enabled: bool) {
-        let bit = block_idx as u64 * MAX_PARAMS as u64 + param_idx as u64;
-        if enabled {
-            self.mod_enabled |= 1 << bit;
-        } else {
-            self.mod_enabled &= !(1 << bit);
-        }
-        self.rebuild_dests();
-    }
-
-    /// Toggle a block param's mod enabled state.
-    pub fn toggle_mod_enabled(&mut self, block_idx: u8, param_idx: u8) {
-        let currently = self.is_mod_enabled(block_idx, param_idx);
-        self.set_mod_enabled(block_idx, param_idx, !currently);
-    }
-
-    /// Rebuild the destination list from mod_enabled bits.
-    /// Call with the chain's blocks so we can read labels from BlockDefs.
-    pub fn rebuild_dests_from_chain(&mut self, blocks: &[crate::ui::block_def::ChainBlock]) {
+    /// Rebuild the destination list from a ModDestRegistry.
+    pub fn rebuild_dests_from_registry(&mut self, registry: &crate::mod_path::ModDestRegistry) {
         self.num_dests = 0;
-        for (bi, block) in blocks.iter().enumerate() {
-            for (pi, slot) in block.def.params.iter().enumerate() {
-                if slot.label == "--" { continue; }
-                if self.is_mod_enabled(bi as u8, pi as u8) {
-                    if self.num_dests < MAX_DESTS {
-                        self.dests[self.num_dests] = Some(ModDest {
-                            block_idx: bi as u8,
-                            param_idx: pi as u8,
-                            block_short: block.def.short,
-                            param_label: slot.label,
-                        });
-                        self.num_dests += 1;
-                    }
+        for i in 0..registry.count {
+            if let Some(entry) = registry.get(i) {
+                if self.num_dests < MAX_DESTS {
+                    self.dests[self.num_dests] = Some(ModDest {
+                        path: entry.path,
+                        label: entry.label,
+                    });
+                    self.num_dests += 1;
                 }
             }
         }
-    }
-
-    /// Backward compat — rebuild without chain access (clears dests).
-    /// The caller is expected to follow up with rebuild_dests_from_chain.
-    fn rebuild_dests(&mut self) {
-        self.num_dests = 0;
     }
 
     /// Get the amount at the current cursor position.
@@ -165,17 +121,17 @@ impl MatrixState {
 
     /// Check if a param is a mod destination and get its total modulation amount.
     /// Returns None if not a mod destination.
-    /// Returns Some(0.0) if enabled but no amounts set.
+    /// Returns Some(0.0) if primed but no amounts set.
     /// Returns Some(amount) if modulation is active.
     pub fn mod_info_for_param(&self, block_idx: u8, param_idx: u8) -> Option<f32> {
-        if !self.is_mod_enabled(block_idx, param_idx) {
-            return None;
-        }
-        // Find which dest index this block/param maps to
+        self.mod_info_for_path(ParamPath::Block { block: block_idx, param: param_idx })
+    }
+
+    /// Check if a ParamPath is a mod destination and get its total modulation amount.
+    pub fn mod_info_for_path(&self, path: ParamPath) -> Option<f32> {
         for di in 0..self.num_dests {
             if let Some(dest) = &self.dests[di] {
-                if dest.block_idx == block_idx && dest.param_idx == param_idx {
-                    // Sum all source amounts for this dest
+                if dest.path == path {
                     let mut total: i16 = 0;
                     for si in 0..self.num_sources {
                         total += self.amounts[si][di] as i16;
@@ -184,28 +140,14 @@ impl MatrixState {
                 }
             }
         }
-        // Enabled but not yet in dests list (rebuild pending)
-        Some(0.0)
+        None
     }
 
     /// Adjust the amount at the current cursor position.
-    /// If setting a non-zero amount on an unconnected cell, auto-enables the destination.
-    /// If zeroing out the last amount for a destination, auto-disables it.
     pub fn adjust_amount(&mut self, delta: i8) {
         let current = self.amounts[self.sel_row][self.sel_col] as i16;
         let new = (current + delta as i16).clamp(-127, 127) as i8;
         self.amounts[self.sel_row][self.sel_col] = new;
-
-        // Auto-enable dest if amount becomes non-zero
-        if let Some(dest) = &self.dests[self.sel_col] {
-            let bi = dest.block_idx;
-            let pi = dest.param_idx;
-            if new != 0 && !self.is_mod_enabled(bi, pi) {
-                let bit = bi as u64 * MAX_PARAMS as u64 + pi as u64;
-                self.mod_enabled |= 1 << bit;
-                // Note: rebuild_dests_from_chain should be called by the caller
-            }
-        }
     }
 
     pub fn move_row(&mut self, delta: i8) {
@@ -296,11 +238,17 @@ pub fn draw_grid<D>(
         let y = GRID_TOP;
 
         let style = if di == sel_col { accent } else { dim };
-        // Truncate labels to fit cell width
-        let blk = if dest.block_short.len() > 4 { &dest.block_short[..4] } else { dest.block_short };
-        let prm = if dest.param_label.len() > 4 { &dest.param_label[..4] } else { dest.param_label };
-        let _ = Text::new(blk, Point::new(x, y + 10), style).draw(display);
-        let _ = Text::new(prm, Point::new(x, y + 20), style).draw(display);
+        // Label is up to 8 chars; split into two 4-char lines for column header
+        let full = dest.label_str();
+        let (line1, line2) = if full.len() > 4 {
+            (&full[..4], &full[4..])
+        } else {
+            (full, "")
+        };
+        let _ = Text::new(line1, Point::new(x, y + 10), style).draw(display);
+        if !line2.is_empty() {
+            let _ = Text::new(line2, Point::new(x, y + 20), style).draw(display);
+        }
     }
 
     // ── Row labels + cells ──

@@ -46,7 +46,7 @@ pub enum RegionData {
     Cells {
         page: PageId,
         values: [u16; 6],
-        mod_bits: u64,
+        dest_count: u16,
     },
     Nav {
         chain_idx: u8,
@@ -76,8 +76,8 @@ impl RegionData {
         Self::Params { page, values }
     }
 
-    pub fn cells(page: PageId, values: [u16; 6], mod_bits: u64) -> Self {
-        Self::Cells { page, values, mod_bits }
+    pub fn cells(page: PageId, values: [u16; 6], dest_count: u16) -> Self {
+        Self::Cells { page, values, dest_count }
     }
 
     pub fn nav(chain_idx: u8, node_idx: u8, sub_page: u8, branch_scroll: u16) -> Self {
@@ -97,7 +97,7 @@ impl RegionData {
     }
 
     pub fn sentinel_cells() -> Self {
-        Self::Cells { page: PageId::Filter, values: [SENTINEL; 6], mod_bits: u64::MAX }
+        Self::Cells { page: PageId::Filter, values: [SENTINEL; 6], dest_count: u16::MAX }
     }
 
     pub fn sentinel_nav() -> Self {
