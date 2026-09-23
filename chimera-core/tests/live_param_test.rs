@@ -119,11 +119,11 @@ fn test_filter_cutoff_sweep_mid_note() {
     let (before_rms, after_rms, _, _) = render_with_param_change(
         |p| {
             p.engine = EngineType::Pizza;
-            p.filter.cutoff.set(10000.0);
+            p.filter.cutoff = 10000.0;
             p.filter.mode = 2; // LP4
         },
         |p| {
-            p.filter.cutoff.set(200.0);
+            p.filter.cutoff = 200.0;
         }, // close the filter
         16,
         16,
@@ -141,12 +141,12 @@ fn test_filter_resonance_mid_note() {
     let (_, _, before, after) = render_with_param_change(
         |p| {
             p.engine = EngineType::Pizza;
-            p.filter.cutoff.set(1000.0);
+            p.filter.cutoff = 1000.0;
             p.filter.mode = 1; // LP2
-            p.filter.resonance.set(0.0);
+            p.filter.resonance = 0.0;
         },
         |p| {
-            p.filter.resonance.set(0.9);
+            p.filter.resonance = 0.9;
         },
         8,
         8,

@@ -173,3 +173,15 @@ fn modal_conforms() {
 fn drive_conforms() {
     conforms("drive", chimera_core::params::DriveParams::default());
 }
+
+#[test]
+fn filter_conforms() {
+    conforms("filter", chimera_core::params::FilterParams::default());
+}
+
+/// Spec §1: defaults differ per instance — the snapshot's filter is fully open.
+#[test]
+fn snapshot_filter_starts_open() {
+    assert_eq!(chimera_core::params::FilterParams::default().cutoff, 1000.0);
+    assert_eq!(chimera_core::params::ParamSnapshot::default().filter.cutoff, 20000.0);
+}

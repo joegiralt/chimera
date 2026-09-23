@@ -156,7 +156,7 @@ fn test_drive_tone_changes_spectrum() {
 fn test_filter_lp_removes_highs() {
     let mut filter = SvfFilter::new();
     let mut params = FilterParams::default();
-    params.cutoff.set(500.0);
+    params.cutoff = 500.0;
     params.mode = 2; // LP4
 
     // Mix of 200Hz (below cutoff) and 2000Hz (above cutoff)
@@ -194,7 +194,7 @@ fn test_filter_lp_removes_highs() {
 fn test_filter_hp_removes_lows() {
     let mut filter = SvfFilter::new();
     let mut params = FilterParams::default();
-    params.cutoff.set(1000.0);
+    params.cutoff = 1000.0;
     params.mode = 5; // HP4
 
     let mut buf: Vec<f32> = (0..4096)
@@ -231,8 +231,8 @@ fn test_filter_hp_removes_lows() {
 fn test_filter_bp_passes_center() {
     let mut filter = SvfFilter::new();
     let mut params = FilterParams::default();
-    params.cutoff.set(1000.0);
-    params.resonance.set(0.7);
+    params.cutoff = 1000.0;
+    params.resonance = 0.7;
     params.mode = 3; // BP2
 
     let mut buf: Vec<f32> = (0..4096)
@@ -266,8 +266,8 @@ fn test_filter_resonance_boosts_cutoff() {
     let measure_peak = |reso: f32| -> f32 {
         let mut filter = SvfFilter::new();
         let mut params = FilterParams::default();
-        params.cutoff.set(freq);
-        params.resonance.set(reso);
+        params.cutoff = freq;
+        params.resonance = reso;
         params.mode = 1; // LP2
 
         // White-ish noise (sum of many sines)
@@ -302,7 +302,7 @@ fn test_filter_cutoff_sweep_changes_brightness() {
     let measure_brightness = |cutoff: f32| -> f32 {
         let mut filter = SvfFilter::new();
         let mut params = FilterParams::default();
-        params.cutoff.set(cutoff);
+        params.cutoff = cutoff;
         params.mode = 2; // LP4
 
         // Rich signal (square-ish wave with harmonics)
@@ -401,7 +401,7 @@ fn test_voice_filter_sweep_audible() {
         let mut voice = Voice::new();
         let mut params = ParamSnapshot::default();
         // Pizza produces harmonics by default
-        params.filter.cutoff.set(cutoff);
+        params.filter.cutoff = cutoff;
         params.filter.mode = 2; // LP4
 
         voice.note_on(60, 100, &params, SR);

@@ -11,7 +11,7 @@ use crate::dsp::pizza::{PizzaOsc, PizzaParams};
 use crate::dsp::wavefolder::Wavefolder;
 use crate::mod_path::ParamPath;
 use crate::modulation::{ModState, MAX_MOD_SOURCES};
-use crate::params::{DriveParams, EngineType, ParamSnapshot};
+use crate::params::{DriveParams, EngineType, FilterParams, ParamSnapshot};
 
 /// Complete voice signal chain:
 /// [Engine (Pizza/Modal)] → [Drive] → [Filter] → [Wavefolder]
@@ -141,8 +141,8 @@ impl Voice {
         apply_offset(&mut mod_drive, DriveParams::TONE, mod_state.compute_offset(&mod_values, ParamPath::Block { block: 1, param: 1 }));
 
         // Filter
-        mod_filter.cutoff.apply_mod_offset(mod_state.compute_offset(&mod_values, ParamPath::Block { block: 2, param: 0 }));
-        mod_filter.resonance.apply_mod_offset(mod_state.compute_offset(&mod_values, ParamPath::Block { block: 2, param: 1 }));
+        apply_offset(&mut mod_filter, FilterParams::CUTOFF, mod_state.compute_offset(&mod_values, ParamPath::Block { block: 2, param: 0 }));
+        apply_offset(&mut mod_filter, FilterParams::RESONANCE, mod_state.compute_offset(&mod_values, ParamPath::Block { block: 2, param: 1 }));
 
         // Folder
         mod_folder.fold.apply_mod_offset(mod_state.compute_offset(&mod_values, ParamPath::Block { block: 3, param: 0 }));

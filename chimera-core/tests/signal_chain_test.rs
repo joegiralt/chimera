@@ -53,7 +53,7 @@ fn test_drive_output_bounded() {
 fn test_filter_lowpass_attenuates_high_freq() {
     let mut filter = SvfFilter::new();
     let mut params = FilterParams::default();
-    params.cutoff.set(200.0); // very low cutoff
+    params.cutoff = 200.0; // very low cutoff
     params.mode = 2; // LP4
 
     // Generate a high-frequency signal (5kHz at 48kHz = fast oscillation)
@@ -78,7 +78,7 @@ fn test_filter_lowpass_attenuates_high_freq() {
 fn test_filter_passes_low_freq() {
     let mut filter = SvfFilter::new();
     let mut params = FilterParams::default();
-    params.cutoff.set(5000.0);
+    params.cutoff = 5000.0;
     params.mode = 2; // LP4
 
     // Low frequency signal: one cycle over 128 samples ≈ 375Hz at 48kHz
@@ -103,8 +103,8 @@ fn test_filter_passes_low_freq() {
 fn test_filter_output_stable() {
     let mut filter = SvfFilter::new();
     let mut params = FilterParams::default();
-    params.resonance.set(0.99); // near self-oscillation
-    params.cutoff.set(1000.0);
+    params.resonance = 0.99; // near self-oscillation
+    params.cutoff = 1000.0;
     params.mode = 2; // LP4
 
     let mut buf = [0.0f32; 64];
@@ -232,8 +232,8 @@ fn test_voice_filter_shapes_sound() {
     // Both with active Pizza
 
     // One with open filter, one with very closed filter
-    params_open.filter.cutoff.set(15000.0);
-    params_closed.filter.cutoff.set(100.0);
+    params_open.filter.cutoff = 15000.0;
+    params_closed.filter.cutoff = 100.0;
     params_closed.filter.mode = 2; // LP4
 
     voice_open.note_on(60, 100, &params_open, 48000);
