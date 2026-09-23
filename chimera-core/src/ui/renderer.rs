@@ -72,7 +72,7 @@ impl Renderer {
         use crate::mod_path::ParamPath;
         match self.current_page {
             PageId::FmOp => ParamPath::FmOp {
-                op: crate::ui::page::fm_selected_op() as u8,
+                op: crate::ui::page::selected_op().index() as u8,
                 param: encoder_idx as u8,
             },
             PageId::FmEnv1 => ParamPath::FmEnv { op: 0, param: encoder_idx as u8 },

@@ -117,7 +117,7 @@ impl UiState {
     fn current_param_path(&self) -> ParamPath {
         match self.page {
             PageId::FmOp => ParamPath::FmOp {
-                op: page::fm_selected_op() as u8,
+                op: page::selected_op().index() as u8,
                 param: self.last_encoder as u8,
             },
             PageId::FmEnv1 => ParamPath::FmEnv { op: 0, param: self.last_encoder as u8 },
@@ -140,7 +140,7 @@ impl UiState {
 
         match self.page {
             PageId::FmOp => {
-                let op = page::fm_selected_op() as u8;
+                let op = page::selected_op().index() as u8;
                 let prefix = [b'O', b'0' + op + 1, b' '];
                 let plen = prefix.len().min(3);
                 label[..plen].copy_from_slice(&prefix[..plen]);

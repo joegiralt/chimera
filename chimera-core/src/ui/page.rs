@@ -1,4 +1,5 @@
-use crate::block::{Block, ParamId};
+use crate::addr::{BlockRef, Op, ParamAddr};
+use crate::block::ParamId;
 use crate::dsp::chorus::ChorusParams;
 use crate::dsp::delay::DelayParams;
 use crate::dsp::lfo::LfoParams;
@@ -180,190 +181,100 @@ impl PageId {
         }
     }
 
+    /// The parameter bound to encoder `idx` on this page, if any.
+    /// FM operator pages resolve to the currently selected operator.
+    pub fn binding(&self, idx: usize) -> Option<ParamAddr> {
+        use BlockRef as B;
+        let at = |block: BlockRef, ids: &[ParamId]| ids.get(idx).map(|&param| ParamAddr::new(block, param));
+        match self {
+            PageId::Pizza => at(B::Pizza, &PIZZA_PAGE),
+            PageId::EngineModal1 => at(B::Modal, &MODAL1_PAGE),
+            PageId::EngineModal2 => at(B::Modal, &MODAL2_PAGE),
+            PageId::Drive => at(B::Drive, &DRIVE_PAGE),
+            PageId::Filter => at(B::Filter, &FILTER_PAGE),
+            PageId::Folder => at(B::Folder, &FOLDER_PAGE),
+            PageId::EnvAmp | PageId::Vca => at(B::AmpEnv, &ENV_PAGE),
+            PageId::EnvFilter => at(B::FilterEnv, &ENV_PAGE),
+            PageId::EnvAux => at(B::AuxEnv, &ENV_PAGE),
+            PageId::Lfo => at(B::Lfo, &LFO_PAGE),
+            PageId::Mixer | PageId::Master => at(B::Out, &OUT_PAGE),
+            PageId::Chorus => at(B::Chorus, &CHORUS_PAGE),
+            PageId::Delay => at(B::Delay, &DELAY_PAGE),
+            PageId::Efx | PageId::MixReverb => at(B::Reverb, &REVERB_PAGE),
+            PageId::FmAlg => match idx {
+                0 => Some(ParamAddr::new(B::Fm, FmParams::ALGORITHM)),
+                2 => Some(ParamAddr::new(B::Out, OutParams::VOLUME)),
+                _ => None,
+            },
+            // Slot 0 selects the operator (see `apply_encoder`).
+            PageId::FmOp => {
+                let id = *FM_OP_PAGE.get(idx.checked_sub(1)?)?;
+                Some(ParamAddr::new(B::FmOp(selected_op()), id))
+            }
+            PageId::FmRatio => match idx {
+                0..=3 => Some(ParamAddr::new(B::FmOp(Op::ALL[idx]), FmOpParams::COARSE)),
+                4 => Some(ParamAddr::new(B::FmOp(selected_op()), FmOpParams::FINE)),
+                _ => None,
+            },
+            PageId::FmEnv1 => at(B::FmOp(Op::A), &FM_ENV_PAGE),
+            PageId::FmEnv2 => at(B::FmOp(Op::B), &FM_ENV_PAGE),
+            PageId::FmEnv3 => at(B::FmOp(Op::C), &FM_ENV_PAGE),
+            PageId::FmEnv4 => at(B::FmOp(Op::D), &FM_ENV_PAGE),
+            PageId::DemoWaves => DEMO_WAVES.get(idx).copied(),
+            PageId::DemoShapes => DEMO_SHAPES.get(idx).copied(),
+            PageId::DemoMotion => DEMO_MOTION.get(idx).copied(),
+            PageId::DemoFm => DEMO_FM.get(idx).copied(),
+            PageId::DemoMatrix => None,
+        }
+    }
+
     /// Read 6 normalized (0..1) encoder values from params for this page.
     pub fn read_values(&self, params: &ParamSnapshot) -> [f32; 6] {
-        match self {
-            PageId::Pizza => read_block(&params.pizza, PIZZA_PAGE),
-            PageId::Filter => read_block(&params.filter, FILTER_PAGE),
-            PageId::EnvAmp | PageId::Vca => read_block(&params.envelopes[0], ENV_PAGE),
-            PageId::EnvFilter => read_block(&params.envelopes[1], ENV_PAGE),
-            PageId::EnvAux => read_block(&params.envelopes[2], ENV_PAGE),
-            PageId::Mixer => [
-                params.out.normalized(OutParams::VOLUME),
-                params.out.normalized(OutParams::PAN),
-                0.5,
-                0.0,
-                0.5,
-                0.0, // placeholders
-            ],
-            PageId::Drive => read_block(&params.drive, DRIVE_PAGE),
-            PageId::Folder => read_block(&params.folder, FOLDER_PAGE),
-            // Demo pages reuse filter + envelope params for tweaking
-            PageId::DemoWaves => [
-                params.drive.normalized(DriveParams::DRIVE),
-                params.drive.normalized(DriveParams::TONE),
-                params.folder.normalized(FolderParams::FOLD),
-                params.folder.normalized(FolderParams::SYMMETRY),
-                params.filter.normalized(FilterParams::ENV_AMOUNT),
-                params.out.normalized(OutParams::PAN),
-            ],
-            PageId::DemoShapes => [
-                params.out.normalized(OutParams::VOLUME),
-                params.filter.normalized(FilterParams::CUTOFF),
-                params.out.normalized(OutParams::PAN),
-                params.filter.normalized(FilterParams::DRIVE),
-                params.filter.normalized(FilterParams::RESONANCE),
-                params.filter.normalized(FilterParams::FM_AMOUNT),
-            ],
-            PageId::DemoMotion => [
-                params.envelopes[0].normalized(EnvParams::ATTACK),
-                params.envelopes[0].normalized(EnvParams::DECAY),
-                params.envelopes[0].normalized(EnvParams::SUSTAIN),
-                params.envelopes[0].normalized(EnvParams::RELEASE),
-                params.envelopes[1].normalized(EnvParams::ATTACK),
-                params.envelopes[1].normalized(EnvParams::DECAY),
-            ],
-            PageId::Lfo => read_block(&params.lfo, LFO_PAGE),
-            PageId::DemoFm => [
-                params.fm.normalized(FmParams::ALGORITHM),
-                params.fm.operators[0].normalized(FmOpParams::FEEDBACK),
-                params.fm.operators[1].normalized(FmOpParams::FEEDBACK),
-                params.fm.operators[2].normalized(FmOpParams::FEEDBACK),
-                0.0,
-                0.0,
-            ],
-            PageId::DemoMatrix => [0.0; 6],
-            PageId::EngineModal1 => read_block(&params.modal, MODAL1_PAGE),
-            PageId::EngineModal2 => read_block(&params.modal, MODAL2_PAGE),
-            PageId::FmAlg => [
-                params.fm.normalized(FmParams::ALGORITHM),
-                0.0,
-                params.out.normalized(OutParams::VOLUME),
-                0.0,
-                0.0,
-                0.0,
-            ],
-            PageId::FmOp => {
-                let sel = fm_selected_op();
-                let mut v = read_block(&params.fm.operators[sel], FM_OP_PAGE);
-                v.rotate_right(1); // slot 0 is the operator selector
-                v[0] = sel as f32 / 3.0;
-                v
-            }
-            PageId::FmRatio => [
-                params.fm.operators[0].normalized(FmOpParams::COARSE),
-                params.fm.operators[1].normalized(FmOpParams::COARSE),
-                params.fm.operators[2].normalized(FmOpParams::COARSE),
-                params.fm.operators[3].normalized(FmOpParams::COARSE),
-                params.fm.operators[fm_selected_op()].normalized(FmOpParams::FINE),
-                0.0,
-            ],
-            PageId::FmEnv1 => read_block(&params.fm.operators[0], FM_ENV_PAGE),
-            PageId::FmEnv2 => read_block(&params.fm.operators[1], FM_ENV_PAGE),
-            PageId::FmEnv3 => read_block(&params.fm.operators[2], FM_ENV_PAGE),
-            PageId::FmEnv4 => read_block(&params.fm.operators[3], FM_ENV_PAGE),
-            PageId::Chorus => read_block(&params.chorus, CHORUS_PAGE),
-            PageId::Delay => read_block(&params.delay, DELAY_PAGE),
-            PageId::Efx | PageId::MixReverb => read_block(&params.reverb, REVERB_PAGE),
-            PageId::Master => read_block(&params.out, OUT_PAGE),
-        }
+        core::array::from_fn(|i| match (self, i) {
+            (PageId::FmOp, 0) => selected_op().index() as f32 / 3.0,
+            // Mixer bars for the unbound VOICES and PITCH slots.
+            (PageId::Mixer, 2 | 4) => 0.5,
+            _ => self.binding(i).map_or(0.0, |a| params.block(a.block).normalized(a.param)),
+        })
     }
 
     /// Apply an encoder delta: `delta` ticks of the bound param's spec step.
     pub fn apply_encoder(&self, idx: usize, delta: i8, params: &mut ParamSnapshot) {
         if *self == PageId::FmOp && idx == 0 {
-            // Operator select: 0-3
-            let cur = fm_selected_op() as i16;
-            fm_set_selected_op((cur + delta as i16).clamp(0, 3) as u8);
+            set_selected_op(selected_op().nudged(delta));
             return;
         }
-        if let Some((blk, id)) = self.resolve_mut(idx, params) {
-            blk.nudge(id, delta);
+        if let Some(a) = self.binding(idx) {
+            params.block_mut(a.block).nudge(a.param, delta);
         }
     }
 
     /// Shift+encoder: snap to the coarse points of the bound param's format.
     pub fn snap_encoder(&self, idx: usize, delta: i8, params: &mut ParamSnapshot) {
-        if let Some((blk, id)) = self.resolve_mut(idx, params) {
-            blk.snap(id, delta);
-        }
-    }
-
-    /// Block + param bound to encoder `idx`, for pages whose block implements
-    /// `Block`. Tasks 3–11 add one arm per converted block.
-    fn resolve_mut<'a>(
-        &self,
-        idx: usize,
-        params: &'a mut ParamSnapshot,
-    ) -> Option<(&'a mut dyn Block, ParamId)> {
-        let p = params;
-        match self {
-            PageId::Pizza => bind(&mut p.pizza, *PIZZA_PAGE.get(idx)?),
-            PageId::EngineModal1 => bind(&mut p.modal, *MODAL1_PAGE.get(idx)?),
-            PageId::EngineModal2 => bind(&mut p.modal, *MODAL2_PAGE.get(idx)?),
-            PageId::Drive => bind(&mut p.drive, *DRIVE_PAGE.get(idx)?),
-            PageId::DemoWaves => match idx {
-                0 => bind(&mut p.drive, DriveParams::DRIVE),
-                1 => bind(&mut p.drive, DriveParams::TONE),
-                2 => bind(&mut p.folder, FolderParams::FOLD),
-                3 => bind(&mut p.folder, FolderParams::SYMMETRY),
-                4 => bind(&mut p.filter, FilterParams::ENV_AMOUNT),
-                5 => bind(&mut p.out, OutParams::PAN),
-                _ => None,
-            },
-            PageId::Filter => bind(&mut p.filter, *FILTER_PAGE.get(idx)?),
-            PageId::Folder => bind(&mut p.folder, *FOLDER_PAGE.get(idx)?),
-            PageId::DemoShapes => match idx {
-                0 => bind(&mut p.out, OutParams::VOLUME),
-                1 => bind(&mut p.filter, FilterParams::CUTOFF),
-                2 => bind(&mut p.out, OutParams::PAN),
-                3 => bind(&mut p.filter, FilterParams::DRIVE),
-                4 => bind(&mut p.filter, FilterParams::RESONANCE),
-                5 => bind(&mut p.filter, FilterParams::FM_AMOUNT),
-                _ => None,
-            },
-            PageId::EnvAmp | PageId::Vca => bind(&mut p.envelopes[0], *ENV_PAGE.get(idx)?),
-            PageId::EnvFilter => bind(&mut p.envelopes[1], *ENV_PAGE.get(idx)?),
-            PageId::EnvAux => bind(&mut p.envelopes[2], *ENV_PAGE.get(idx)?),
-            PageId::DemoMotion => match idx {
-                0..=3 => bind(&mut p.envelopes[0], ENV_PAGE[idx]),
-                4 => bind(&mut p.envelopes[1], EnvParams::ATTACK),
-                5 => bind(&mut p.envelopes[1], EnvParams::DECAY),
-                _ => None,
-            },
-            PageId::Lfo => bind(&mut p.lfo, *LFO_PAGE.get(idx)?),
-            PageId::FmAlg => match idx {
-                0 => bind(&mut p.fm, FmParams::ALGORITHM),
-                2 => bind(&mut p.out, OutParams::VOLUME),
-                _ => None,
-            },
-            // Slot 0 selects the operator (handled in `apply_encoder`).
-            PageId::FmOp => bind(&mut p.fm.operators[fm_selected_op()], *FM_OP_PAGE.get(idx.checked_sub(1)?)?),
-            PageId::FmRatio => match idx {
-                0..=3 => bind(&mut p.fm.operators[idx], FmOpParams::COARSE),
-                4 => bind(&mut p.fm.operators[fm_selected_op()], FmOpParams::FINE),
-                _ => None,
-            },
-            PageId::FmEnv1 => bind(&mut p.fm.operators[0], *FM_ENV_PAGE.get(idx)?),
-            PageId::FmEnv2 => bind(&mut p.fm.operators[1], *FM_ENV_PAGE.get(idx)?),
-            PageId::FmEnv3 => bind(&mut p.fm.operators[2], *FM_ENV_PAGE.get(idx)?),
-            PageId::FmEnv4 => bind(&mut p.fm.operators[3], *FM_ENV_PAGE.get(idx)?),
-            PageId::DemoFm => match idx {
-                0 => bind(&mut p.fm, FmParams::ALGORITHM),
-                1..=3 => bind(&mut p.fm.operators[idx - 1], FmOpParams::FEEDBACK),
-                _ => None,
-            },
-            PageId::Mixer | PageId::Master => bind(&mut p.out, *OUT_PAGE.get(idx)?),
-            PageId::Chorus => bind(&mut p.chorus, *CHORUS_PAGE.get(idx)?),
-            PageId::Delay => bind(&mut p.delay, *DELAY_PAGE.get(idx)?),
-            PageId::Efx | PageId::MixReverb => bind(&mut p.reverb, *REVERB_PAGE.get(idx)?),
-            _ => None,
+        if let Some(a) = self.binding(idx) {
+            params.block_mut(a.block).snap(a.param, delta);
         }
     }
 }
 
-/// Encoder slot → param id, per page. Shared by `read_values` and `resolve_mut`.
+/// Encoder slot → param id, for pages bound to a single block.
 const PIZZA_PAGE: [ParamId; 3] = [PizzaParams::SHAPE, PizzaParams::CRUSH, PizzaParams::LEVEL];
+const MODAL1_PAGE: [ParamId; 6] = [
+    ModalParams::MODE,
+    ModalParams::EXCITE,
+    ModalParams::DECAY,
+    ModalParams::BRIGHTNESS,
+    ModalParams::POSITION,
+    ModalParams::INHARM,
+];
+const MODAL2_PAGE: [ParamId; 6] = [
+    ModalParams::KS_BODY,
+    ModalParams::KS_STIFFNESS,
+    ModalParams::KS_FEEDBACK,
+    ModalParams::KS_ENS_DEPTH,
+    ModalParams::KS_ENS_RATE,
+    ModalParams::KS_ENS_MIX,
+];
 const DRIVE_PAGE: [ParamId; 3] = [DriveParams::DRIVE, DriveParams::TONE, DriveParams::MIX];
 const FILTER_PAGE: [ParamId; 6] = [
     FilterParams::CUTOFF,
@@ -428,49 +339,54 @@ const REVERB_PAGE: [ParamId; 5] = [
     ReverbParams::SIZE,
     ReverbParams::MIX,
 ];
-const MODAL1_PAGE: [ParamId; 6] = [
-    ModalParams::MODE,
-    ModalParams::EXCITE,
-    ModalParams::DECAY,
-    ModalParams::BRIGHTNESS,
-    ModalParams::POSITION,
-    ModalParams::INHARM,
-];
-const MODAL2_PAGE: [ParamId; 6] = [
-    ModalParams::KS_BODY,
-    ModalParams::KS_STIFFNESS,
-    ModalParams::KS_FEEDBACK,
-    ModalParams::KS_ENS_DEPTH,
-    ModalParams::KS_ENS_RATE,
-    ModalParams::KS_ENS_MIX,
-];
 
-/// Coercion point so every `resolve_mut` arm has the same type.
-fn bind<'a>(b: &'a mut dyn Block, id: ParamId) -> Option<(&'a mut dyn Block, ParamId)> {
-    Some((b, id))
-}
-
-/// Normalized values of `ids` on `b`, padded with 0.0 to six slots.
-fn read_block<const N: usize>(b: &dyn Block, ids: [ParamId; N]) -> [f32; 6] {
-    let mut out = [0.0f32; 6];
-    for (o, id) in out.iter_mut().zip(ids) {
-        *o = b.normalized(id);
-    }
-    out
-}
+/// Demo pages borrow params from several blocks (spec §5: `envelopes[1]` is
+/// addressed as `FilterEnv`).
+const DEMO_WAVES: [ParamAddr; 6] = [
+    ParamAddr::new(BlockRef::Drive, DriveParams::DRIVE),
+    ParamAddr::new(BlockRef::Drive, DriveParams::TONE),
+    ParamAddr::new(BlockRef::Folder, FolderParams::FOLD),
+    ParamAddr::new(BlockRef::Folder, FolderParams::SYMMETRY),
+    ParamAddr::new(BlockRef::Filter, FilterParams::ENV_AMOUNT),
+    ParamAddr::new(BlockRef::Out, OutParams::PAN),
+];
+const DEMO_SHAPES: [ParamAddr; 6] = [
+    ParamAddr::new(BlockRef::Out, OutParams::VOLUME),
+    ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF),
+    ParamAddr::new(BlockRef::Out, OutParams::PAN),
+    ParamAddr::new(BlockRef::Filter, FilterParams::DRIVE),
+    ParamAddr::new(BlockRef::Filter, FilterParams::RESONANCE),
+    ParamAddr::new(BlockRef::Filter, FilterParams::FM_AMOUNT),
+];
+const DEMO_MOTION: [ParamAddr; 6] = [
+    ParamAddr::new(BlockRef::AmpEnv, EnvParams::ATTACK),
+    ParamAddr::new(BlockRef::AmpEnv, EnvParams::DECAY),
+    ParamAddr::new(BlockRef::AmpEnv, EnvParams::SUSTAIN),
+    ParamAddr::new(BlockRef::AmpEnv, EnvParams::RELEASE),
+    ParamAddr::new(BlockRef::FilterEnv, EnvParams::ATTACK),
+    ParamAddr::new(BlockRef::FilterEnv, EnvParams::DECAY),
+];
+const DEMO_FM: [ParamAddr; 4] = [
+    ParamAddr::new(BlockRef::Fm, FmParams::ALGORITHM),
+    ParamAddr::new(BlockRef::FmOp(Op::A), FmOpParams::FEEDBACK),
+    ParamAddr::new(BlockRef::FmOp(Op::B), FmOpParams::FEEDBACK),
+    ParamAddr::new(BlockRef::FmOp(Op::C), FmOpParams::FEEDBACK),
+];
 
 // ---------------------------------------------------------------------------
-// FM operator selection state (module-level, simple static)
+// FM operator selection state (module-level, simple static; Task 20 moves it
+// into `UiState`)
 // ---------------------------------------------------------------------------
 
-/// Currently selected FM operator index (0-3).
+/// Currently selected FM operator (index 0-3).
 /// This is UI-only state shared between FM_OP and FM_RATIO pages.
 static FM_SEL_OP: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
 
-pub fn fm_selected_op() -> usize {
-    FM_SEL_OP.load(core::sync::atomic::Ordering::Relaxed) as usize
+/// The selected FM operator.
+pub fn selected_op() -> Op {
+    Op::try_from(FM_SEL_OP.load(core::sync::atomic::Ordering::Relaxed)).unwrap_or(Op::A)
 }
 
-fn fm_set_selected_op(idx: u8) {
-    FM_SEL_OP.store(idx.min(3), core::sync::atomic::Ordering::Relaxed);
+fn set_selected_op(op: Op) {
+    FM_SEL_OP.store(op.index() as u8, core::sync::atomic::Ordering::Relaxed);
 }
