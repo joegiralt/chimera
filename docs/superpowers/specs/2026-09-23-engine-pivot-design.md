@@ -1,7 +1,7 @@
 # Engine Pivot: Monomachine-style Engines + MI Physical Modeling
 
 **Date:** 2026-09-23
-**Status:** Draft, awaiting review
+**Status:** Superseded in part — becomes sub-project 4 (new engines); must be revised after the engine refactor (keep TX81Z FM, Modal replaces Resonator, BLOCK_SIZE is 64)
 **Amends:** `docs/chimera-synth-design.md` (Synthesis Engines, CPU Budget, Phases 3 and 7)
 
 ## Intent
