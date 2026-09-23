@@ -1,42 +1,10 @@
+use crate::block::{Block, ParamId};
+use crate::dsp::pizza::PizzaParams;
 use crate::params::ParamSnapshot;
 use crate::preset::ChainType;
 use crate::ui::chain::ChainNav;
 
-/// Cell type: defines display format and snap behavior.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ValFmt {
-    /// Unipolar: 0 to 127. Snaps: 0, 100, 127.
-    Uni,
-    /// Bipolar: -64 to +63. Snaps: -64, -44, 0, +43, +63.
-    Bi,
-    /// Discrete integer 0..N. N is stored in the variant.
-    /// Display shows the integer directly. Snaps at each integer.
-    Int(u8),
-}
-
-impl ValFmt {
-    /// Coarse snap points in normalized 0..1 space.
-    pub fn snap_points(self) -> &'static [f32] {
-        match self {
-            ValFmt::Uni => &[0.0, 100.0 / 127.0, 1.0],
-            ValFmt::Bi => &[0.0, 20.0 / 127.0, 64.0 / 127.0, 107.0 / 127.0, 1.0],
-            // Discrete: shift-encoder jumps to 0 or max
-            ValFmt::Int(_) => &[0.0, 1.0],
-        }
-    }
-
-    pub fn is_bipolar(self) -> bool {
-        matches!(self, ValFmt::Bi)
-    }
-
-    /// Max integer value (only meaningful for Int variant).
-    pub fn max_int(self) -> u8 {
-        match self {
-            ValFmt::Int(n) => n,
-            _ => 127,
-        }
-    }
-}
+pub use crate::block::ValFmt;
 
 /// Layout mode for a page.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -210,14 +178,7 @@ impl PageId {
     /// Read 6 normalized (0..1) encoder values from params for this page.
     pub fn read_values(&self, params: &ParamSnapshot) -> [f32; 6] {
         match self {
-            PageId::Pizza => [
-                params.pizza.shape,
-                params.pizza.crush,
-                params.pizza.level,
-                0.0,
-                0.0,
-                0.0,
-            ],
+            PageId::Pizza => read_block(&params.pizza, PIZZA_PAGE),
             PageId::Filter => [
                 params.filter.cutoff.normalized(),
                 params.filter.resonance.normalized(),
@@ -379,12 +340,12 @@ impl PageId {
 
     /// Apply an encoder delta. Each tick = 1/128 of the parameter range.
     pub fn apply_encoder(&self, idx: usize, delta: i8, params: &mut ParamSnapshot) {
+        if let Some((blk, id)) = self.resolve_mut(idx, params) {
+            blk.nudge(id, delta);
+            return;
+        }
         // Direct float manipulation (not Param structs)
         match self {
-            PageId::Pizza => {
-                apply_pizza_encoder(idx, delta, &mut params.pizza);
-                return;
-            }
             PageId::Lfo => {
                 apply_lfo_encoder(idx, delta, &mut params.lfo);
                 return;
@@ -448,8 +409,26 @@ impl PageId {
     /// Shift+encoder: snap to coarse jump points defined by the cell type.
     /// The caller must supply the `ValFmt` for encoder `idx` (from `BlockDef.params[idx].format`).
     pub fn snap_encoder(&self, idx: usize, delta: i8, fmt: ValFmt, params: &mut ParamSnapshot) {
+        if let Some((blk, id)) = self.resolve_mut(idx, params) {
+            blk.snap(id, delta);
+            return;
+        }
         if let Some(param) = self.resolve_param_mut(idx, params) {
             param.snap_to(delta, fmt.snap_points());
+        }
+    }
+
+    /// Block + param bound to encoder `idx`, for pages whose block implements
+    /// `Block`. Tasks 3–11 add one arm per converted block.
+    fn resolve_mut<'a>(
+        &self,
+        idx: usize,
+        params: &'a mut ParamSnapshot,
+    ) -> Option<(&'a mut dyn Block, ParamId)> {
+        let p = params;
+        match self {
+            PageId::Pizza => bind(&mut p.pizza, *PIZZA_PAGE.get(idx)?),
+            _ => None,
         }
     }
 
@@ -528,6 +507,23 @@ impl PageId {
             _ => None,
         }
     }
+}
+
+/// Encoder slot → param id, per page. Shared by `read_values` and `resolve_mut`.
+const PIZZA_PAGE: [ParamId; 3] = [PizzaParams::SHAPE, PizzaParams::CRUSH, PizzaParams::LEVEL];
+
+/// Coercion point so every `resolve_mut` arm has the same type.
+fn bind<'a>(b: &'a mut dyn Block, id: ParamId) -> Option<(&'a mut dyn Block, ParamId)> {
+    Some((b, id))
+}
+
+/// Normalized values of `ids` on `b`, padded with 0.0 to six slots.
+fn read_block<const N: usize>(b: &dyn Block, ids: [ParamId; N]) -> [f32; 6] {
+    let mut out = [0.0f32; 6];
+    for (o, id) in out.iter_mut().zip(ids) {
+        *o = b.normalized(id);
+    }
+    out
 }
 
 fn apply_modal1_encoder(idx: usize, delta: i8, modal: &mut crate::dsp::modal::ModalParams) {
@@ -624,16 +620,6 @@ fn nudge_float(v: &mut f32, delta: i8, step: f32) {
 fn nudge_u8(v: &mut u8, delta: i8, max: u8) {
     let n = *v as i8 + delta;
     *v = n.clamp(0, max as i8) as u8;
-}
-
-fn apply_pizza_encoder(idx: usize, delta: i8, pizza: &mut crate::dsp::pizza::PizzaParams) {
-    let step = 1.0 / 128.0;
-    match idx {
-        0 => nudge_float(&mut pizza.shape, delta, step),
-        1 => nudge_float(&mut pizza.crush, delta, step),
-        2 => nudge_float(&mut pizza.level, delta, step),
-        _ => {}
-    }
 }
 
 fn apply_lfo_encoder(idx: usize, delta: i8, lfo: &mut crate::dsp::lfo::LfoParams) {
