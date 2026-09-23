@@ -8,7 +8,7 @@ const SR: u32 = 48000;
 fn render_voice(engine: EngineType, note: u8, blocks: usize) -> Vec<f32> {
     let empty_mod = ModState::new();
     let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
-    let mut params = ParamSnapshot::for_engine(engine);
+    let params = ParamSnapshot::for_engine(engine);
 
     voice.note_on(MidiNote::new(note).unwrap(), Velocity::new(100).unwrap(), &params);
 
@@ -66,10 +66,9 @@ fn test_pizza_and_modal_produce_different_output() {
 fn test_engine_type_is_respected() {
     let empty_mod = ModState::new();
     let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
-    let mut params = ParamSnapshot::default();
 
     // Start with Pizza
-    params = ParamSnapshot::for_engine(EngineType::Pizza);
+    let mut params = ParamSnapshot::for_engine(EngineType::Pizza);
     voice.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params);
 
     let mut block = [0.0f32; 64];
@@ -158,8 +157,8 @@ fn test_pizza_sustains_while_modal_decays() {
 fn every_engine_pair_switches_mid_note() {
     for from in EngineType::ALL {
         for to in EngineType::ALL {
-            let mut a = ParamSnapshot::for_engine(from);
-            let mut b = ParamSnapshot::for_engine(to);
+            let a = ParamSnapshot::for_engine(from);
+            let b = ParamSnapshot::for_engine(to);
             let mut voice = Voice::new(SR);
             voice.note_on(MidiNote::A4, Velocity::DEFAULT, &a);
             let mut block = [0.0f32; 64];

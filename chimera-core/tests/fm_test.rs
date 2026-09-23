@@ -321,7 +321,7 @@ fn fm_init_patch_sets_engine_type() {
 #[test]
 fn voice_fm_produces_sound() {
     let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
-    let mut params = ParamSnapshot::for_engine(EngineType::Fm);
+    let params = ParamSnapshot::for_engine(EngineType::Fm);
     // Op1 already has level=99 from FmParams default
     voice.note_on(MidiNote::new(69).unwrap(), Velocity::new(100).unwrap(), &params);
     let mut buf = [0.0f32; 64];
