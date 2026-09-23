@@ -5,7 +5,10 @@ use chimera_core::block::{ParamKind, ParamSpec, ValFmt};
 /// Every block's spec table. Tasks 3–11 add one row each; Task 14 replaces
 /// the list with `BlockRef::ALL`.
 fn all_specs() -> Vec<(&'static str, &'static [ParamSpec])> {
-    vec![("pizza", &chimera_core::dsp::pizza::PIZZA_SPECS[..])]
+    vec![
+        ("pizza", &chimera_core::dsp::pizza::PIZZA_SPECS[..]),
+        ("modal", &chimera_core::dsp::modal::MODAL_SPECS[..]),
+    ]
 }
 
 fn check(name: &str, specs: &[ParamSpec]) {

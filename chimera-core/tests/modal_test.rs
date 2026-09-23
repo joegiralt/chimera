@@ -1,4 +1,4 @@
-use chimera_core::dsp::modal::{ModalEngine, ModalParams};
+use chimera_core::dsp::modal::{ModalEngine, ModalParams, ResonatorMode};
 
 const SR: u32 = 48000;
 
@@ -20,7 +20,7 @@ fn goertzel(buf: &[f32], target_freq: f32, sample_rate: u32) -> f32 {
 
 fn modal_params() -> ModalParams {
     let mut p = ModalParams::default();
-    p.mode = 1; // Modal resonator (SVF bank)
+    p.mode = ResonatorMode::Modal; // Modal resonator (SVF bank)
     p
 }
 

@@ -1,5 +1,7 @@
 use chimera_hal::BLOCK_SIZE;
 
+use crate::block::{Block, ParamId, ParamSpec, ValFmt};
+
 const MAX_MODES: usize = 48;
 
 // ── SVF Bandpass (ZDF topology, matching Rings/stmlib) ──────────────
@@ -149,7 +151,7 @@ impl ResonatorMode {
 
 #[derive(Clone, Copy, Debug)]
 pub struct ModalParams {
-    pub mode: u8, // 0=String(KS+), 1=Modal, 2=Bowed
+    pub mode: ResonatorMode,
     pub excite: f32,
     pub decay: f32,
     pub brightness: f32,
@@ -174,7 +176,7 @@ pub struct ModalParams {
 impl Default for ModalParams {
     fn default() -> Self {
         Self {
-            mode: 0, // String (KS+) by default
+            mode: ResonatorMode::String,
             excite: 0.8,
             decay: 0.3,
             brightness: 0.7,
@@ -192,6 +194,81 @@ impl Default for ModalParams {
             ks_ens_mix: 0.0,
             bow_velocity: 0.5,
             bow_force: 0.5,
+        }
+    }
+}
+
+impl ModalParams {
+    pub const MODE: ParamId = ParamId(0);
+    pub const EXCITE: ParamId = ParamId(1);
+    pub const DECAY: ParamId = ParamId(2);
+    pub const BRIGHTNESS: ParamId = ParamId(3);
+    pub const POSITION: ParamId = ParamId(4);
+    pub const INHARM: ParamId = ParamId(5);
+    pub const KS_BODY: ParamId = ParamId(6);
+    pub const KS_STIFFNESS: ParamId = ParamId(7);
+    pub const KS_FEEDBACK: ParamId = ParamId(8);
+    pub const KS_ENS_DEPTH: ParamId = ParamId(9);
+    pub const KS_ENS_RATE: ParamId = ParamId(10);
+    pub const KS_ENS_MIX: ParamId = ParamId(11);
+}
+
+/// Modal params are read at note-on (or by the engine from the unmodulated
+/// snapshot), never from `Voice`'s modulated copy: none are modulatable.
+/// Only UI-bound params have specs (plan D16). MODE max 3 is plan D3.
+pub static MODAL_SPECS: [ParamSpec; 12] = [
+    ParamSpec::choice(0, "MODE", ValFmt::Int(3), 3.0, 0.0),
+    ParamSpec::continuous(1, "EXCITE", ValFmt::Uni, 0.0, 1.0, 0.8, 1.0 / 128.0, false),
+    ParamSpec::continuous(2, "DECAY", ValFmt::Uni, 0.0, 1.0, 0.3, 1.0 / 128.0, false),
+    ParamSpec::continuous(3, "BRIGHT", ValFmt::Uni, 0.0, 1.0, 0.7, 1.0 / 128.0, false),
+    ParamSpec::continuous(4, "POS", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false),
+    ParamSpec::continuous(5, "INHARM", ValFmt::Uni, 0.0, 1.0, 0.25, 1.0 / 128.0, false),
+    ParamSpec::continuous(6, "BODY", ValFmt::Uni, 0.0, 1.0, 0.3, 1.0 / 128.0, false),
+    ParamSpec::continuous(7, "STIFF", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false),
+    ParamSpec::continuous(8, "FDBK", ValFmt::Uni, 0.0, 1.0, 0.2, 1.0 / 128.0, false),
+    ParamSpec::continuous(9, "E.DPT", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false),
+    ParamSpec::continuous(10, "E.RAT", ValFmt::Uni, 0.0, 1.0, 0.3, 1.0 / 128.0, false),
+    ParamSpec::continuous(11, "E.MIX", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false),
+];
+
+impl Block for ModalParams {
+    fn specs(&self) -> &'static [ParamSpec] {
+        &MODAL_SPECS
+    }
+
+    fn get(&self, id: ParamId) -> f32 {
+        match id {
+            Self::MODE => self.mode as u8 as f32,
+            Self::EXCITE => self.excite,
+            Self::DECAY => self.decay,
+            Self::BRIGHTNESS => self.brightness,
+            Self::POSITION => self.position,
+            Self::INHARM => self.inharm,
+            Self::KS_BODY => self.ks_body,
+            Self::KS_STIFFNESS => self.ks_stiffness,
+            Self::KS_FEEDBACK => self.ks_feedback,
+            Self::KS_ENS_DEPTH => self.ks_ens_depth,
+            Self::KS_ENS_RATE => self.ks_ens_rate,
+            Self::KS_ENS_MIX => self.ks_ens_mix,
+            _ => 0.0,
+        }
+    }
+
+    fn write(&mut self, id: ParamId, v: f32) {
+        match id {
+            Self::MODE => self.mode = ResonatorMode::from_u8(v as u8),
+            Self::EXCITE => self.excite = v,
+            Self::DECAY => self.decay = v,
+            Self::BRIGHTNESS => self.brightness = v,
+            Self::POSITION => self.position = v,
+            Self::INHARM => self.inharm = v,
+            Self::KS_BODY => self.ks_body = v,
+            Self::KS_STIFFNESS => self.ks_stiffness = v,
+            Self::KS_FEEDBACK => self.ks_feedback = v,
+            Self::KS_ENS_DEPTH => self.ks_ens_depth = v,
+            Self::KS_ENS_RATE => self.ks_ens_rate = v,
+            Self::KS_ENS_MIX => self.ks_ens_mix = v,
+            _ => {}
         }
     }
 }
@@ -428,7 +505,7 @@ impl ModalEngine {
     }
 
     pub fn note_on(&mut self, note: u8, velocity: u8, params: &ModalParams, sample_rate: u32) {
-        self.active_mode = ResonatorMode::from_u8(params.mode);
+        self.active_mode = params.mode;
         let vel = velocity as f32 / 127.0;
         let freq = note_to_freq(note);
         self.frequency = freq / sample_rate as f32;

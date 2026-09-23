@@ -1,6 +1,7 @@
 //! Property-based tests: verify invariants hold for random parameter combinations.
 //! Uses a simple xorshift PRNG instead of proptest (no_std compatible).
 
+use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::modulation::ModState;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::params::{EngineType, ParamSnapshot};
@@ -55,7 +56,7 @@ fn random_params(rng: &mut Rng) -> ParamSnapshot {
     p.pizza.level = rng.f32();
 
     // Modal params
-    p.modal.mode = rng.u8(2);
+    p.modal.mode = ResonatorMode::from_u8(rng.u8(2));
     p.modal.excite = rng.f32();
     p.modal.decay = rng.f32();
     p.modal.brightness = rng.f32();
@@ -181,7 +182,7 @@ fn prop_note_on_produces_sound() {
 
         assert!(
             total_max > 0.0001,
-            "trial {}: note_on should produce sound, max={} engine={:?} modal_mode={} note={}",
+            "trial {}: note_on should produce sound, max={} engine={:?} modal_mode={:?} note={}",
             trial,
             total_max,
             params.engine,
@@ -271,8 +272,8 @@ fn prop_note_off_eventually_silences() {
         params.modal.ks_feedback = params.modal.ks_feedback * 0.1;
         params.modal.decay = params.modal.decay * 0.2;
         // Force bowed mode (2) to not self-sustain
-        if params.modal.mode == 2 {
-            params.modal.mode = 1; // use resonator instead
+        if params.modal.mode == ResonatorMode::Bowed {
+            params.modal.mode = ResonatorMode::Modal; // use resonator instead
         }
         params
             .filter
@@ -305,7 +306,7 @@ fn prop_note_off_eventually_silences() {
 
         assert!(
             silent,
-            "trial {}: note_off should eventually silence, engine={:?} mode={}",
+            "trial {}: note_off should eventually silence, engine={:?} mode={:?}",
             trial, params.engine, params.modal.mode
         );
     }
@@ -456,7 +457,7 @@ fn prop_ks_body_full_sweep() {
         "KS body",
         |p| {
             p.engine = EngineType::Modal;
-            p.modal.mode = 0;
+            p.modal.mode = ResonatorMode::String;
         },
         |p, v| {
             p.modal.ks_body = v;
@@ -471,7 +472,7 @@ fn prop_ks_stiffness_full_sweep() {
         "KS stiffness",
         |p| {
             p.engine = EngineType::Modal;
-            p.modal.mode = 0;
+            p.modal.mode = ResonatorMode::String;
         },
         |p, v| {
             p.modal.ks_stiffness = v;
@@ -486,7 +487,7 @@ fn prop_ks_brightness_full_sweep() {
         "KS brightness",
         |p| {
             p.engine = EngineType::Modal;
-            p.modal.mode = 0;
+            p.modal.mode = ResonatorMode::String;
         },
         |p, v| {
             p.modal.brightness = v;
@@ -501,7 +502,7 @@ fn prop_modal_decay_full_sweep() {
         "Modal decay",
         |p| {
             p.engine = EngineType::Modal;
-            p.modal.mode = 1;
+            p.modal.mode = ResonatorMode::Modal;
         },
         |p, v| {
             p.modal.decay = v;
@@ -516,7 +517,7 @@ fn prop_modal_brightness_full_sweep() {
         "Modal brightness",
         |p| {
             p.engine = EngineType::Modal;
-            p.modal.mode = 1;
+            p.modal.mode = ResonatorMode::Modal;
         },
         |p, v| {
             p.modal.brightness = v;

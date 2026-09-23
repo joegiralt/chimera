@@ -1,3 +1,4 @@
+use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::modulation::ModState;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::params::{EngineType, ParamSnapshot};
@@ -50,7 +51,7 @@ fn test_modal_string_through_voice() {
     let mut voice = Voice::new();
     let mut params = ParamSnapshot::default();
     params.engine = EngineType::Modal;
-    params.modal.mode = 1; // String mode
+    params.modal.mode = ResonatorMode::Modal; // String mode
 
     voice.note_on(60, 100, &params, SR);
 
@@ -77,7 +78,7 @@ fn test_modal_bowed_through_voice() {
     let mut voice = Voice::new();
     let mut params = ParamSnapshot::default();
     params.engine = EngineType::Modal;
-    params.modal.mode = 2; // Bowed mode
+    params.modal.mode = ResonatorMode::Bowed; // Bowed mode
 
     voice.note_on(60, 100, &params, SR);
 
