@@ -379,7 +379,8 @@ fn priming_on_fm_ratio_slot_2_registers_nothing() {
     press(&mut ui, ButtonId::Edit); // sub-page 2: FmRatio
     assert_eq!(ui.page(), PageKey::Part { def: reg::FM_RATIO.id, op: Op::A });
     ui.handle_input(&MockControls::new().encoder(EncoderId::C, 1)); // focus slot 2
-    let before = primed(&ui); // the FM init pre-wire
+    let before = primed(&ui);
+    assert!(before.is_empty()); // no FM init pre-wire since Task 22
     prime(&mut ui);
     assert_eq!(primed(&ui), before);
 }

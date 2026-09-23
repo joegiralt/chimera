@@ -1,13 +1,13 @@
 use chimera_core::{MidiNote, Velocity};
 use chimera_core::dsp::voice::Voice;
-use chimera_core::modulation::{ModState, MAX_MOD_SOURCES};
+use chimera_core::modulation::ModState;
 use chimera_core::params::ParamSnapshot;
 use chimera_core::addr::{BlockRef, ParamAddr};
 use chimera_core::dsp::pizza::PizzaParams;
 use chimera_core::params::{DriveParams, FilterParams};
 use chimera_core::ui::mod_grid::MatrixState;
 
-use chimera_hal::{BLOCK_SIZE, SAMPLE_RATE};
+use chimera_hal::BLOCK_SIZE;
 
 const CUTOFF: ParamAddr = ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF);
 const DRIVE: ParamAddr = ParamAddr::new(BlockRef::Drive, DriveParams::DRIVE);

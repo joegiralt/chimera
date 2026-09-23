@@ -18,7 +18,7 @@ fn bench_render(name: &str, setup: impl FnOnce(&mut ParamSnapshot)) -> f64 {
     let mut params = ParamSnapshot::default();
     setup(&mut params);
 
-    let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
+    let mut voice = Voice::new(SR);
     voice.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params);
 
     let mut block = [0.0f32; 64];

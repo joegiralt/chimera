@@ -101,7 +101,7 @@ fn prop_output_always_finite() {
         let params = random_params(&mut rng);
         let note = rng.note();
 
-        let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
+        let mut voice = Voice::new(SR);
         voice.note_on(MidiNote::new(note).unwrap(), Velocity::new(100).unwrap(), &params);
 
         let mut block = [0.0f32; 64];
@@ -134,7 +134,7 @@ fn prop_output_bounded() {
         let params = random_params(&mut rng);
         let note = rng.note();
 
-        let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
+        let mut voice = Voice::new(SR);
         voice.note_on(MidiNote::new(note).unwrap(), Velocity::new(127).unwrap(), &params);
 
         let mut block = [0.0f32; 64];
@@ -168,7 +168,7 @@ fn prop_note_on_produces_sound() {
             continue;
         }
 
-        let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
+        let mut voice = Voice::new(SR);
         voice.note_on(MidiNote::new(note).unwrap(), Velocity::new(100).unwrap(), &params);
 
         let mut block = [0.0f32; 64];
@@ -222,7 +222,7 @@ fn prop_param_change_changes_output() {
         }
 
         // Render A
-        let mut voice_a = Voice::new(chimera_hal::SAMPLE_RATE);
+        let mut voice_a = Voice::new(SR);
         voice_a.note_on(MidiNote::new(note).unwrap(), Velocity::new(100).unwrap(), &params_a);
         let mut buf_a = [0.0f32; 64];
         for _ in 0..8 {
@@ -230,7 +230,7 @@ fn prop_param_change_changes_output() {
         }
 
         // Render B
-        let mut voice_b = Voice::new(chimera_hal::SAMPLE_RATE);
+        let mut voice_b = Voice::new(SR);
         voice_b.note_on(MidiNote::new(note).unwrap(), Velocity::new(100).unwrap(), &params_b);
         let mut buf_b = [0.0f32; 64];
         for _ in 0..8 {
@@ -279,7 +279,7 @@ fn prop_note_off_eventually_silences() {
         params.folder.fold = 0.0; // disable folder feedback path
         let note = rng.note();
 
-        let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
+        let mut voice = Voice::new(SR);
         voice.note_on(MidiNote::new(note).unwrap(), Velocity::new(100).unwrap(), &params);
 
         let mut block = [0.0f32; 64];
@@ -330,7 +330,7 @@ fn verify_full_sweep(
         setup(&mut params);
         sweep(&mut params, val);
 
-        let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
+        let mut voice = Voice::new(SR);
         voice.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params);
         let mut block = [0.0f32; 64];
         // Render enough blocks for damping/decay differences to manifest
