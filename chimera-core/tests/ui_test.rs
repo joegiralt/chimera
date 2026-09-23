@@ -190,9 +190,9 @@ fn test_drive_block_formats_in_registry() {
     use chimera_core::ui::block_registry;
     use chimera_core::ui::page::ValFmt;
     let def = &block_registry::DRIVE;
-    assert_eq!(def.params[0].format, ValFmt::Uni); // DRIVE
-    assert_eq!(def.params[1].format, ValFmt::Bi);  // TONE
-    assert_eq!(def.params[2].format, ValFmt::Bi);  // MIX
+    assert_eq!(def.params[0].format(), ValFmt::Uni); // DRIVE
+    assert_eq!(def.params[1].format(), ValFmt::Bi);  // TONE
+    assert_eq!(def.params[2].format(), ValFmt::Bi);  // MIX
 }
 
 #[test]
@@ -200,7 +200,7 @@ fn test_filter_env_amount_bipolar_in_registry() {
     use chimera_core::ui::block_registry;
     use chimera_core::ui::page::ValFmt;
     let def = &block_registry::FILTER;
-    assert_eq!(def.params[4].format, ValFmt::Bi); // ENV amount
+    assert_eq!(def.params[4].format(), ValFmt::Bi); // ENV amount
 }
 
 #[test]
@@ -208,5 +208,5 @@ fn test_mixer_pan_bipolar_in_registry() {
     use chimera_core::ui::block_registry;
     use chimera_core::ui::page::ValFmt;
     let def = &block_registry::MIXER;
-    assert_eq!(def.params[1].format, ValFmt::Bi); // PAN
+    assert_eq!(def.params[1].format(), ValFmt::Bi); // PAN
 }

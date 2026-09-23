@@ -72,7 +72,7 @@ fn modal_mode_display_is_true_value() {
 /// Plan D5: BODY is a 0..1 float, displayed Uni.
 #[test]
 fn modal2_body_is_uni() {
-    assert_eq!(chimera_core::ui::block_registry::MODAL_2.params[0].format, ValFmt::Uni);
+    assert_eq!(chimera_core::ui::block_registry::MODAL_2.params[0].format(), ValFmt::Uni);
 }
 
 // ── Drive (Task 4) ───────────────────────────────────────────────────

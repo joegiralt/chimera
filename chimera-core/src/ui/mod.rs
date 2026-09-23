@@ -141,7 +141,7 @@ impl UiState {
     /// currently focused encoder. Used when priming a mod destination.
     fn current_param_label(&self) -> [u8; 8] {
         let def = self.nav.active_block_def();
-        let param_label = def.params[self.last_encoder].label;
+        let param_label = def.params[self.last_encoder].label();
         let mut label = [0u8; 8];
 
         match self.page {

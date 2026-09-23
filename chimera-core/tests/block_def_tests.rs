@@ -18,8 +18,8 @@ fn pizza_poly_chain_has_5_blocks() {
 #[test]
 fn filter_block_params() {
     let def = &block_registry::FILTER;
-    assert_eq!(def.params[0].label, "CUTOFF");
-    assert_eq!(def.params[1].label, "RESO");
+    assert_eq!(def.params[0].label(), "CUTOFF");
+    assert_eq!(def.params[1].label(), "RESO");
     assert_eq!(def.layout, PageLayout::BigViz);
 }
 
