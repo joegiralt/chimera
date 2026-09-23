@@ -88,7 +88,7 @@ fn random_params(rng: &mut Rng) -> ParamSnapshot {
     p.folder.mix = rng.f32();
 
     // Volume
-    p.volume.set(0.1 + rng.f32() * 0.9); // never zero
+    p.out.volume = 0.1 + rng.f32() * 0.9; // never zero
 
     p
 }
@@ -212,7 +212,7 @@ fn prop_param_change_changes_output() {
             0 => params_b.filter.cutoff = params_a.filter.cutoff * 0.1 + 100.0,
             1 => params_b.drive.drive = 1.0 - params_a.drive.drive,
             2 => params_b.folder.fold = 1.0 - params_a.folder.fold,
-            3 => params_b.volume.set(params_a.volume.value * 0.2),
+            3 => params_b.out.volume = params_a.out.volume * 0.2,
             _ => params_b.pizza.crush = 1.0 - params_a.pizza.crush,
         }
 
@@ -439,7 +439,7 @@ fn prop_volume_full_sweep() {
             p.engine = EngineType::Pizza;
         },
         |p, v| {
-            p.volume.set(v);
+            p.out.volume = v;
         },
         16,
     );

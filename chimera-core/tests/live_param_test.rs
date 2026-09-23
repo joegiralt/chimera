@@ -372,10 +372,10 @@ fn test_volume_mid_note() {
     let (before_rms, after_rms, _, _) = render_with_param_change(
         |p| {
             p.engine = EngineType::Pizza;
-            p.volume.set(0.8);
+            p.out.volume = 0.8;
         },
         |p| {
-            p.volume.set(0.1);
+            p.out.volume = 0.1;
         },
         8,
         8,

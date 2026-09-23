@@ -15,6 +15,7 @@ fn all_specs() -> Vec<(&'static str, &'static [ParamSpec])> {
         ("lfo", &chimera_core::dsp::lfo::LFO_SPECS[..]),
         ("fm", &chimera_core::params::FM_SPECS[..]),
         ("fm_op", &chimera_core::params::FM_OP_SPECS[..]),
+        ("out", &chimera_core::params::OUT_SPECS[..]),
     ]
 }
 

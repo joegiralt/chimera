@@ -523,6 +523,53 @@ pub enum EngineType {
     Va = 3,
 }
 
+/// Voice output stage: level into the mixer and pan.
+#[derive(Clone, Copy, Debug)]
+pub struct OutParams {
+    pub volume: f32,
+    pub pan: f32,
+}
+
+impl Default for OutParams {
+    fn default() -> Self {
+        Self { volume: 0.8, pan: 0.0 }
+    }
+}
+
+impl OutParams {
+    pub const VOLUME: ParamId = ParamId(0);
+    pub const PAN: ParamId = ParamId(1);
+}
+
+/// Volume is read by `Voice`'s VCA every block (newly modulatable); pan is
+/// not used by `Voice`.
+pub static OUT_SPECS: [ParamSpec; 2] = [
+    ParamSpec::continuous(0, "LEVEL", ValFmt::Uni, 0.0, 1.0, 0.8, 1.0 / 128.0, true),
+    ParamSpec::continuous(1, "PAN", ValFmt::Bi, -1.0, 1.0, 0.0, 2.0 / 128.0, false),
+];
+
+impl Block for OutParams {
+    fn specs(&self) -> &'static [ParamSpec] {
+        &OUT_SPECS
+    }
+
+    fn get(&self, id: ParamId) -> f32 {
+        match id {
+            Self::VOLUME => self.volume,
+            Self::PAN => self.pan,
+            _ => 0.0,
+        }
+    }
+
+    fn write(&mut self, id: ParamId, v: f32) {
+        match id {
+            Self::VOLUME => self.volume = v,
+            Self::PAN => self.pan = v,
+            _ => {}
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ParamSnapshot {
     pub engine: EngineType,
@@ -537,8 +584,7 @@ pub struct ParamSnapshot {
     pub delay: crate::dsp::delay::DelayParams,
     pub chorus: crate::dsp::chorus::ChorusParams,
     pub lfo: crate::dsp::lfo::LfoParams,
-    pub volume: Param,
-    pub pan: Param,
+    pub out: OutParams,
 }
 
 impl Default for ParamSnapshot {
@@ -566,8 +612,7 @@ impl Default for ParamSnapshot {
                 mix: 0.0,
             },
             lfo: crate::dsp::lfo::LfoParams::default(),
-            volume: Param::new(0.0, 1.0, 0.8),
-            pan: Param::new(-1.0, 1.0, 0.0),
+            out: OutParams::default(),
         }
     }
 }

@@ -227,3 +227,23 @@ fn fm_rr_reaches_zero() {
     PageId::FmEnv2.apply_encoder(4, -20, &mut p);
     assert_eq!(p.fm.operators[1].release_rate, 0);
 }
+
+// ── Out (Task 10) ────────────────────────────────────────────────────
+
+#[test]
+fn out_encoders_step_like_before() {
+    let mut p = ParamSnapshot::default();
+    PageId::Mixer.apply_encoder(0, -8, &mut p);
+    assert_eq!(p.out.volume, 0.8 - 8.0 / 128.0);
+    PageId::Master.apply_encoder(1, 1, &mut p);
+    assert_eq!(p.out.pan, 2.0 / 128.0);
+    PageId::FmAlg.apply_encoder(2, 1, &mut p);
+    assert_eq!(p.out.volume, 0.8 - 8.0 / 128.0 + 1.0 / 128.0);
+}
+
+/// The mixer page keeps its placeholder bars for unbound slots.
+#[test]
+fn mixer_read_values_keep_placeholders() {
+    let p = ParamSnapshot::default();
+    assert_eq!(PageId::Mixer.read_values(&p), [0.8, 0.5, 0.5, 0.0, 0.5, 0.0]);
+}

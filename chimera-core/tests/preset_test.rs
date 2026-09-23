@@ -1,5 +1,4 @@
 use chimera_core::preset::{ChainType, Patch, Project, SoundPool, Track, POOL_SIZE};
-use chimera_core::params::Param;
 use chimera_core::ui::{UiMode, UiState};
 use chimera_hal::{ButtonId, ButtonState, Controls, EncoderId};
 
@@ -60,7 +59,7 @@ impl Controls for MockControls {
 fn patch_init_has_musically_useful_defaults() {
     let p = Patch::init(ChainType::PizzaPoly);
     assert_eq!(p.chain_type, ChainType::PizzaPoly);
-    assert!(p.params.volume.value() > 0.0);
+    assert!(p.params.out.volume > 0.0);
     assert!(p.params.filter.cutoff > 1000.0);
     assert!(p.name_str().starts_with("(init)"));
 }
@@ -115,10 +114,10 @@ fn track_edit_does_not_modify_pool() {
 
     let mut track = Track::new(ChainType::PizzaPoly);
     track.load_from_pool(&pool, 0);
-    track.patch.params.volume = Param::new(0.0, 1.0, 0.0); // mute
+    track.patch.params.out.volume = 0.0; // mute
 
     // Pool slot unchanged
-    assert!(pool.get(0).unwrap().params.volume.value() > 0.0);
+    assert!(pool.get(0).unwrap().params.out.volume > 0.0);
 }
 
 #[test]
