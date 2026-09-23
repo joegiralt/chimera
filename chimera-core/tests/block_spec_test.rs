@@ -11,6 +11,7 @@ fn all_specs() -> Vec<(&'static str, &'static [ParamSpec])> {
         ("drive", &chimera_core::params::DRIVE_SPECS[..]),
         ("filter", &chimera_core::params::FILTER_SPECS[..]),
         ("folder", &chimera_core::params::FOLDER_SPECS[..]),
+        ("env", &chimera_core::params::ENV_SPECS[..]),
     ]
 }
 
