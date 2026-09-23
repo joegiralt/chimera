@@ -5,7 +5,6 @@ mod audio;
 
 mod controls;
 mod display;
-mod midi;
 
 use chimera_core::ui::UiState;
 use chimera_core::ui::perf::PerfTracker;

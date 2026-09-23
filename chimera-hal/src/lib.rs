@@ -3,6 +3,8 @@
 use embedded_graphics_core::draw_target::DrawTarget;
 use embedded_graphics_core::pixelcolor::Rgb565;
 
+pub mod midi;
+
 pub const BLOCK_SIZE: usize = 64;
 pub const SCREEN_WIDTH: u16 = 240;
 pub const SCREEN_HEIGHT: u16 = 320;
@@ -72,10 +74,52 @@ pub trait MidiIn {
     fn read(&mut self) -> Option<MidiMessage>;
 }
 
-#[derive(Clone, Copy, Debug)]
+/// MIDI note number, 0..=127. Built at the MIDI trust boundary (the parser,
+/// the desktop keyboard), so the audio path only ever sees valid notes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct MidiNote(u8);
+
+impl MidiNote {
+    /// A4 (440 Hz).
+    pub const A4: MidiNote = MidiNote(69);
+
+    pub const fn new(n: u8) -> Option<Self> {
+        if n <= 127 { Some(Self(n)) } else { None }
+    }
+
+    pub const fn get(self) -> u8 {
+        self.0
+    }
+}
+
+/// Note-on velocity, 1..=127. Zero means note-off and is not representable.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Velocity(u8);
+
+impl Velocity {
+    pub const MAX: Velocity = Velocity(127);
+    /// Velocity of the desktop keyboard and the firmware test note.
+    pub const DEFAULT: Velocity = Velocity(100);
+
+    pub const fn new(v: u8) -> Option<Self> {
+        if v >= 1 && v <= 127 { Some(Self(v)) } else { None }
+    }
+
+    pub const fn get(self) -> u8 {
+        self.0
+    }
+
+    /// Velocity as 0..1, exactly `v as f32 / 127.0` (what the engines used).
+    pub fn unit(self) -> f32 {
+        self.0 as f32 / 127.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MidiMessage {
-    NoteOn { channel: u8, note: u8, velocity: u8 },
-    NoteOff { channel: u8, note: u8, velocity: u8 },
+    NoteOn { channel: u8, note: MidiNote, velocity: Velocity },
+    /// Release velocity may be 0.
+    NoteOff { channel: u8, note: MidiNote, velocity: u8 },
     ControlChange { channel: u8, cc: u8, value: u8 },
     PitchBend { channel: u8, value: i16 },
 }
