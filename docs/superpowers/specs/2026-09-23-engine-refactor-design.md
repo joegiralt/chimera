@@ -298,6 +298,14 @@ Everything else must stay identical (verified by golden buffers).
 
 TDD; each landing step starts with a failing test.
 
+- **Goldens are a refactor lock, not a quality claim.** The engines have not
+  been listened to or validated; goldens freeze today's output, good or bad,
+  so the refactor provably changes structure and not sound.
+- **Sanity gate (before recording goldens):** per engine init patch: output
+  not silent, finite, within ±1.0, silent after note-off; pitched engines'
+  fundamental within one semitone of the played note. A failing engine gets
+  an issue in `docs/issues/` and is not fixed in this refactor; its golden is
+  still recorded and marked as locking known-broken output.
 - **Goldens (land first):** fixed harness = fresh `Voice` per case (RNG
   seeds are per instance), 48 kHz, note 60 vel 100 on, 200 blocks, note off,
   200 blocks. Cases per engine: init patch with empty `ModState`; init patch
