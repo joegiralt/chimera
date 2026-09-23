@@ -10,7 +10,8 @@ use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::primitives::{PrimitiveStyle, Rectangle, StyledDrawable};
 use embedded_graphics::text::Text;
 
-use crate::mod_path::{ParamPath, LABEL_LEN};
+use crate::addr::ParamAddr;
+use crate::mod_path::LABEL_LEN;
 use crate::ui::theme;
 
 /// Grid geometry
@@ -30,10 +31,10 @@ const VISIBLE_ROWS: usize = ((GRID_BOTTOM - GRID_TOP - COL_HEADER_H) / CELL_H) a
 pub const MAX_SOURCES: usize = 16;
 pub const MAX_DESTS: usize = 16;
 
-/// A destination in the mod matrix — identifies a primed param via its ParamPath.
+/// A destination in the mod matrix — a primed param.
 #[derive(Clone, Copy, Debug)]
 pub struct ModDest {
-    pub path: ParamPath,
+    pub addr: ParamAddr,
     pub label: [u8; LABEL_LEN],
 }
 
@@ -105,7 +106,7 @@ impl MatrixState {
             if let Some(entry) = registry.get(i) {
                 if self.num_dests < MAX_DESTS {
                     self.dests[self.num_dests] = Some(ModDest {
-                        path: entry.path,
+                        addr: entry.addr,
                         label: entry.label,
                     });
                     self.num_dests += 1;
@@ -119,19 +120,12 @@ impl MatrixState {
         self.amounts[self.sel_row][self.sel_col]
     }
 
-    /// Check if a param is a mod destination and get its total modulation amount.
-    /// Returns None if not a mod destination.
-    /// Returns Some(0.0) if primed but no amounts set.
-    /// Returns Some(amount) if modulation is active.
-    pub fn mod_info_for_param(&self, block_idx: u8, param_idx: u8) -> Option<f32> {
-        self.mod_info_for_path(ParamPath::Block { block: block_idx, param: param_idx })
-    }
-
-    /// Check if a ParamPath is a mod destination and get its total modulation amount.
-    pub fn mod_info_for_path(&self, path: ParamPath) -> Option<f32> {
+    /// Whether `addr` is a mod destination, and its summed amount (−1..1).
+    /// `None` = not primed; `Some(0.0)` = primed with no amounts set.
+    pub fn mod_info_for(&self, addr: ParamAddr) -> Option<f32> {
         for di in 0..self.num_dests {
             if let Some(dest) = &self.dests[di] {
-                if dest.path == path {
+                if dest.addr == addr {
                     let mut total: i16 = 0;
                     for si in 0..self.num_sources {
                         total += self.amounts[si][di] as i16;

@@ -1,4 +1,5 @@
-use crate::mod_path::{ModDestRegistry, ParamPath};
+use crate::addr::{BlockRef, Op, ParamAddr};
+use crate::mod_path::ModDestRegistry;
 use crate::modulation::ModState;
 use crate::params::ParamSnapshot;
 
@@ -53,10 +54,10 @@ impl Patch {
                 params.engine = crate::params::EngineType::Fm;
                 // Pre-wire: 4 envelope sources → 4 FM operator levels
                 let mut reg = ModDestRegistry::new();
-                for (op, label) in [(0u8, *b"O1 Lvl\0\0"), (1, *b"O2 Lvl\0\0"), (2, *b"O3 Lvl\0\0"), (3, *b"O4 Lvl\0\0")] {
-                    let _ = reg.add(ChainType::Fm, ParamPath::FmOp { op, param: 2 }, label);
+                for (op, label) in [(Op::A, *b"O1 Lvl\0\0"), (Op::B, *b"O2 Lvl\0\0"), (Op::C, *b"O3 Lvl\0\0"), (Op::D, *b"O4 Lvl\0\0")] {
+                    let _ = reg.add(ParamAddr::new(BlockRef::FmOp(op), crate::params::FmOpParams::LEVEL), label);
                 }
-                let mut ms = ModState::from_registry(&reg, ChainType::Fm, 4);
+                let mut ms = ModState::from_registry(&reg, 4);
                 for i in 0..4 {
                     ms.set_amount(i, i, 127); // E(i+1) → Op(i+1) Level full
                 }

@@ -2,10 +2,17 @@ use chimera_core::{MidiNote, Velocity};
 use chimera_core::dsp::voice::Voice;
 use chimera_core::modulation::{ModState, MAX_MOD_SOURCES};
 use chimera_core::params::ParamSnapshot;
-use chimera_core::preset::ChainType;
+use chimera_core::addr::{BlockRef, ParamAddr};
+use chimera_core::dsp::pizza::PizzaParams;
+use chimera_core::params::{DriveParams, FilterParams};
 use chimera_core::ui::mod_grid::MatrixState;
 
 use chimera_hal::{BLOCK_SIZE, SAMPLE_RATE};
+
+const CUTOFF: ParamAddr = ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF);
+const DRIVE: ParamAddr = ParamAddr::new(BlockRef::Drive, DriveParams::DRIVE);
+const CRUSH: ParamAddr = ParamAddr::new(BlockRef::Pizza, PizzaParams::CRUSH);
+const SHAPE: ParamAddr = ParamAddr::new(BlockRef::Pizza, PizzaParams::SHAPE);
 
 fn rms(buf: &[f32]) -> f32 {
     let sum: f32 = buf.iter().map(|s| s * s).sum();
@@ -45,12 +52,10 @@ fn voice_render_with_mod_offset_changes_filter() {
     // Dry: no modulation
     let empty_mod = ModState::new();
 
-    // Modulated: LFO (source 1) -> filter cutoff (Pizza chain node 2, slot 0)
+    // Modulated: LFO (source 1) -> filter cutoff
     let mut registry = chimera_core::mod_path::ModDestRegistry::new();
-    registry
-        .add(ChainType::PizzaPoly, chimera_core::mod_path::ParamPath::Block { block: 2, param: 0 }, *b"FLTCUT\0\0")
-        .unwrap();
-    let mut mod_state = ModState::from_registry(&registry, ChainType::PizzaPoly, 2); // env, LFO
+    registry.add(CUTOFF, *b"FLTCUT\0\0").unwrap();
+    let mut mod_state = ModState::from_registry(&registry, 2); // env, LFO
     mod_state.set_amount(1, 0, 100); // LFO -> cutoff at high amount
 
     voice_dry.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params);
@@ -80,21 +85,21 @@ fn voice_render_with_mod_offset_changes_filter() {
 
 #[test]
 fn mod_bar_shows_when_primed() {
-    use chimera_core::mod_path::{ModDestRegistry, ParamPath};
+    use chimera_core::mod_path::ModDestRegistry;
 
     let mut matrix = MatrixState::new();
     // Not primed yet
     assert!(
-        matrix.mod_info_for_param(1, 0).is_none(),
+        matrix.mod_info_for(DRIVE).is_none(),
         "un-primed param should return None"
     );
 
     // Prime block 1, param 0 via registry
     let mut registry = ModDestRegistry::new();
-    registry.add(ChainType::PizzaPoly, ParamPath::Block { block: 1, param: 0 }, *b"B1 Prm0\0").unwrap();
+    registry.add(DRIVE, *b"B1 Prm0\0").unwrap();
     matrix.rebuild_dests_from_registry(&registry);
 
-    let info = matrix.mod_info_for_param(1, 0);
+    let info = matrix.mod_info_for(DRIVE);
     assert!(
         info.is_some(),
         "primed param should return Some"
@@ -103,21 +108,21 @@ fn mod_bar_shows_when_primed() {
 
 #[test]
 fn mod_bar_amount_reflects_matrix() {
-    use chimera_core::mod_path::{ModDestRegistry, ParamPath};
+    use chimera_core::mod_path::ModDestRegistry;
 
     let mut matrix = MatrixState::new();
     matrix.num_sources = 2;
 
     // Prime a destination via registry
     let mut registry = ModDestRegistry::new();
-    registry.add(ChainType::PizzaPoly, ParamPath::Block { block: 0, param: 1 }, *b"TSTaPrm\0").unwrap();
+    registry.add(CRUSH, *b"TSTaPrm\0").unwrap();
     matrix.rebuild_dests_from_registry(&registry);
 
     // Set amounts from two sources
     matrix.amounts[0][0] = 64;
     matrix.amounts[1][0] = 32;
 
-    let info = matrix.mod_info_for_param(0, 1);
+    let info = matrix.mod_info_for(CRUSH);
     assert!(info.is_some(), "primed param should have mod info");
 
     let amount = info.unwrap();
@@ -180,11 +185,11 @@ fn matrix_state_rebuild_sources() {
 
 #[test]
 fn matrix_state_rebuild_dests_from_registry() {
-    use chimera_core::mod_path::{ModDestRegistry, ParamPath};
+    use chimera_core::mod_path::ModDestRegistry;
 
     let mut registry = ModDestRegistry::new();
-    registry.add(ChainType::PizzaPoly, ParamPath::Block { block: 0, param: 0 }, *b"PIZShape").unwrap();
-    registry.add(ChainType::PizzaPoly, ParamPath::Block { block: 1, param: 0 }, *b"FLT Freq").unwrap();
+    registry.add(SHAPE, *b"PIZShape").unwrap();
+    registry.add(DRIVE, *b"FLT Freq").unwrap();
 
     let mut matrix = MatrixState::new();
     matrix.rebuild_dests_from_registry(&registry);
@@ -192,10 +197,10 @@ fn matrix_state_rebuild_dests_from_registry() {
     assert_eq!(matrix.num_dests, 2);
 
     let dest0 = matrix.dests[0].as_ref().unwrap();
-    assert_eq!(dest0.path, ParamPath::Block { block: 0, param: 0 });
+    assert_eq!(dest0.addr, SHAPE);
     assert_eq!(dest0.label_str(), "PIZShape");
 
     let dest1 = matrix.dests[1].as_ref().unwrap();
-    assert_eq!(dest1.path, ParamPath::Block { block: 1, param: 0 });
+    assert_eq!(dest1.addr, DRIVE);
     assert_eq!(dest1.label_str(), "FLT Freq");
 }

@@ -314,7 +314,7 @@ fn browser_init_entries_set_chain_type() {
     assert_eq!(ui.project.tracks[0].patch.chain_type, ChainType::Fm);
 }
 
-// ── Priming guard (Task 16 bridge; deleted in Task 19) ───────────
+// ── Priming by slot address ──────────────────────────────────────
 
 fn press(ui: &mut UiState, id: ButtonId) {
     ui.handle_input(&MockControls::new().button(id, ButtonState::Pressed));
@@ -329,9 +329,9 @@ fn prime(ui: &mut UiState) {
     );
 }
 
-fn primed(ui: &UiState) -> Vec<chimera_core::mod_path::ParamPath> {
+fn primed(ui: &UiState) -> Vec<chimera_core::addr::ParamAddr> {
     let reg = &ui.project.tracks[ui.active_track].patch.dest_registry;
-    (0..reg.len()).map(|i| reg.get(i).unwrap().path).collect()
+    (0..reg.len()).map(|i| reg.get(i).unwrap().addr).collect()
 }
 
 /// Positive control: the Pizza filter page primes cutoff.
@@ -341,11 +341,17 @@ fn priming_on_main_page_registers_focused_param() {
     press(&mut ui, ButtonId::Plus);
     press(&mut ui, ButtonId::Plus); // node 2: Filter
     prime(&mut ui); // slot 0: cutoff
-    assert_eq!(primed(&ui), [chimera_core::mod_path::ParamPath::Block { block: 2, param: 0 }]);
+    assert_eq!(
+        primed(&ui),
+        [chimera_core::addr::ParamAddr::new(
+            chimera_core::addr::BlockRef::Filter,
+            chimera_core::params::FilterParams::CUTOFF
+        )]
+    );
 }
 
-/// Pizza LFO sub-page (node 4, sub-page 2): `Block{4,0}` would resolve to the
-/// AmpEnv attack on the Vca page, not LFO rate, so nothing is registered.
+/// Pizza LFO sub-page (node 4, sub-page 2): slot 0 is LFO rate, which is not
+/// modulatable, so the registry refuses it.
 #[test]
 fn priming_on_pizza_lfo_sub_page_registers_nothing() {
     let mut ui = UiState::new();
@@ -359,8 +365,8 @@ fn priming_on_pizza_lfo_sub_page_registers_nothing() {
     assert!(primed(&ui).is_empty());
 }
 
-/// FmRatio slot 2 edits op C coarse; `Block{0,2}` on the FM chain would
-/// resolve to FmAlg slot 2 (Out.VOLUME), so nothing new is registered.
+/// FmRatio slot 2 edits op C coarse, which is not modulatable, so the
+/// registry refuses it and nothing new is registered.
 #[test]
 fn priming_on_fm_ratio_slot_2_registers_nothing() {
     let mut ui = UiState::new();
