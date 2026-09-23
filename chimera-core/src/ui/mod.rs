@@ -7,6 +7,7 @@ pub mod dungeon_map;
 pub mod fmt;
 pub mod mod_grid;
 pub mod page;
+pub mod part_page;
 pub mod perf;
 pub mod region;
 pub mod renderer;
@@ -16,7 +17,7 @@ use chimera_hal::{ButtonId, ButtonState, Controls, EncoderId};
 
 use crate::block::Block;
 use crate::dsp::lfo::Lfo;
-use crate::addr::{BlockRef, ParamAddr};
+use crate::addr::{BlockRef, Op, ParamAddr};
 use crate::mod_path::LABEL_LEN;
 use crate::modulation::{ModState, MAX_MOD_SOURCES};
 use crate::params::{EnvParams, ParamSnapshot};
@@ -24,7 +25,8 @@ use crate::preset::{Project, POOL_SIZE};
 use block_def::slot_addr;
 use chain::{ChainId, ChainNav};
 use mod_grid::MatrixState;
-use page::{PageId, PageLayout};
+use block_def::BlockDef;
+use page::{PageKey, PageLayout};
 use perf::PerfStats;
 use renderer::Renderer;
 
@@ -45,7 +47,9 @@ pub struct UiState {
     pub renderer: Renderer,
     pub matrix_state: MatrixState,
     pub ui_mode: UiMode,
-    page: PageId,
+    page: PageKey,
+    /// Selected FM operator — one global selection, as before (spec §5).
+    sel_op: Op,
     region_set: region::RegionSet,
     /// Last encoder touched (0-5) — used to identify focused param for MIX+Plus/Minus
     last_encoder: usize,
@@ -63,9 +67,9 @@ impl UiState {
     pub fn new() -> Self {
         let nav = ChainNav::new();
         let project = Project::new();
-        let page = PageId::from_nav(&nav);
+        let page = PageKey::from_nav(&nav, Op::A);
         let mut renderer = Renderer::new();
-        renderer.snap_to_current(page, &project.tracks[0].patch.params);
+        renderer.snap_to_current(page_values(page, nav.active_block_def(), &project.tracks[0].patch.params, Op::A));
 
         let mut matrix_state = MatrixState::new();
         // Build source list from the chain's mod block sub-pages
@@ -84,6 +88,7 @@ impl UiState {
             matrix_state,
             ui_mode: UiMode::Normal,
             page,
+            sel_op: Op::A,
             region_set: region::RegionSet::new(),
             last_encoder: 0,
             display_lfo: Lfo::new(),
@@ -110,9 +115,21 @@ impl UiState {
         &mut self.project.tracks[self.active_track].patch.mod_state
     }
 
-    /// Current page id.
-    pub fn page(&self) -> PageId {
+    /// Current page identity.
+    pub fn page(&self) -> PageKey {
         self.page
+    }
+
+    /// The selected FM operator.
+    pub fn selected_op(&self) -> Op {
+        self.sel_op
+    }
+
+    /// Recompute the page identity and jump the display to its values.
+    fn enter_page(&mut self) {
+        self.page = PageKey::from_nav(&self.nav, self.sel_op);
+        let values = page_values(self.page, self.nav.active_block_def(), self.params(), self.sel_op);
+        self.renderer.snap_to_current(values);
     }
 
     /// Rebuild a track's audio-side `ModState` from the matrix.
@@ -124,7 +141,7 @@ impl UiState {
     /// The address the focused encoder edits, if its slot is bound. Mixer,
     /// System and Demo slots are `Legacy`, so priming there does nothing.
     fn current_param_addr(&self) -> Option<ParamAddr> {
-        slot_addr(self.nav.active_block_def(), self.last_encoder, page::selected_op())
+        slot_addr(self.nav.active_block_def(), self.last_encoder, self.sel_op)
     }
 
     /// 8-byte matrix column label for a primed destination: `O<n> ` + spec
@@ -202,8 +219,6 @@ impl UiState {
                 self.nav.node = 0;
                 self.nav.sub_page = 0;
                 self.nav.chain_type = self.project.tracks[sel_track].patch.chain_type;
-                self.page = PageId::from_nav(&self.nav);
-                self.renderer.current_page = self.page;
                 // Rebuild mod matrix sources for the new chain type
                 let chain = self.nav.active_chain();
                 if let Some(last_block) = chain.blocks.last() {
@@ -212,7 +227,7 @@ impl UiState {
                 self.matrix_state.rebuild_dests_from_registry(
                     &self.project.tracks[sel_track].patch.dest_registry
                 );
-                self.renderer.snap_to_current(self.page, &self.project.tracks[sel_track].patch.params);
+                self.enter_page();
                 self.ui_mode = UiMode::Normal;
                 return;
             }
@@ -279,8 +294,7 @@ impl UiState {
                 self.active_track = i;
                 self.nav.chain_type = self.project.tracks[i].patch.chain_type;
             }
-            self.page = PageId::from_nav(&self.nav);
-            self.renderer.snap_to_current(self.page, &self.project.tracks[self.active_track].patch.params);
+            self.enter_page();
         }
 
         // Encoder deltas -> parameter changes
@@ -316,20 +330,23 @@ impl UiState {
                 }
             }
         } else {
-            let page = self.page;
             let at = self.active_track;
             for (i, &enc) in encoder_ids.iter().enumerate() {
                 let delta = controls.encoder_delta(enc);
                 if delta != 0 {
                     self.last_encoder = i;
                     self.renderer.focused = i;
-                    if shift {
-                        page.snap_encoder(i, delta, &mut self.project.tracks[at].patch.params);
-                    } else {
-                        page.apply_encoder(i, delta, &mut self.project.tracks[at].patch.params);
+                    let params = &mut self.project.tracks[at].patch.params;
+                    match (self.page, shift) {
+                        (PageKey::Part { .. }, true) => part_page::snap_encoder(def, i, delta, params, self.sel_op),
+                        (PageKey::Part { .. }, false) => part_page::apply_encoder(def, i, delta, params, &mut self.sel_op),
+                        (PageKey::Legacy(p), true) => p.snap_encoder(i, delta, params),
+                        (PageKey::Legacy(p), false) => p.apply_encoder(i, delta, params),
                     }
                 }
             }
+            // The operator selection is part of the page identity.
+            self.page = PageKey::from_nav(&self.nav, self.sel_op);
 
             // MIX + Plus/Minus: prime/un-prime parameter for modulation
             if shift {
@@ -365,7 +382,8 @@ impl UiState {
         let patch = &self.project.tracks[at].patch;
 
         // Read base param values
-        let mut values = self.page.read_values(&patch.params);
+        let def = self.nav.active_block_def();
+        let mut values = page_values(self.page, def, &patch.params, self.sel_op);
 
         // Apply mod offsets for display — makes bars and vizzes animate with modulation.
         // Skip the LFO tick entirely when no modulation is active.
@@ -395,10 +413,8 @@ impl UiState {
             }
 
             // Apply offsets to the 6 display values
-            let def = self.nav.active_block_def();
-            let sel_op = page::selected_op();
             for i in 0..6 {
-                let offset = slot_addr(def, i, sel_op).map_or(0.0, |a| patch.mod_state.offset_for(a, &mod_sources));
+                let offset = slot_addr(def, i, self.sel_op).map_or(0.0, |a| patch.mod_state.offset_for(a, &mod_sources));
                 if offset != 0.0 {
                     values[i] = (values[i] + offset).clamp(0.0, 1.0);
                 }
@@ -439,7 +455,7 @@ impl UiState {
             return;
         }
         let def = self.nav.active_block_def();
-        self.renderer.draw_with_def(display, &self.nav, def, perf, &self.matrix_state);
+        self.renderer.draw_with_def(display, &self.nav, def, perf, &self.matrix_state, self.sel_op);
     }
 
     /// Prime the region set after an initial full render, so render_dirty
@@ -511,6 +527,7 @@ impl UiState {
         let qvalues = region::quantize_values(&self.renderer.anim);
         let nav_tag = nav_tag(&self.nav);
 
+        let sel_op = self.sel_op;
         for r in self.region_set.active_regions_mut() {
             let current_data = match r.kind {
                 RegionKind::Header => RegionData::header(
@@ -535,7 +552,7 @@ impl UiState {
                 renderer::Renderer::clear_region_fb(fb, r.y_start, r.y_end);
 
                 // Draw region using BlockDef
-                self.renderer.draw_region_with_def(display, r.kind, &self.nav, def, perf, &self.matrix_state);
+                self.renderer.draw_region_with_def(display, r.kind, &self.nav, def, perf, &self.matrix_state, sel_op);
 
                 r.prev_data = current_data;
                 flush_list[flush_count] = (r.y_start, r.y_end);
@@ -555,6 +572,15 @@ impl UiState {
         }
 
         flush_list
+    }
+}
+
+/// Display values for `page`: Part pages through slot bindings, legacy pages
+/// through `PageId`.
+fn page_values(page: PageKey, def: &BlockDef, params: &ParamSnapshot, sel_op: Op) -> [f32; 6] {
+    match page {
+        PageKey::Part { .. } => part_page::read_values(def, params, sel_op),
+        PageKey::Legacy(p) => p.read_values(params),
     }
 }
 

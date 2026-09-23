@@ -3,7 +3,7 @@
 //! Each PageLayout defines screen regions with data snapshots.
 //! Only regions whose data changed get cleared, redrawn, and flushed.
 
-use crate::ui::page::{PageId, PageLayout};
+use crate::ui::page::{PageId, PageKey, PageLayout};
 use crate::ui::animation::AnimatedValue;
 
 /// Quantize a float to u16 for cheap comparison. Range 0.0..65.0 → 0..65000.
@@ -25,6 +25,8 @@ pub fn quantize_values(anim: &[AnimatedValue; 6]) -> [u16; 6] {
 
 /// Sentinel value that never matches real data — forces initial redraw.
 const SENTINEL: u16 = u16::MAX;
+/// Page used in sentinel snapshots (the SENTINEL values make them unequal).
+const SENTINEL_PAGE: PageKey = PageKey::Legacy(PageId::System);
 
 /// Data snapshot for a screen region. If current != previous, region is dirty.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -36,15 +38,15 @@ pub enum RegionData {
         render_us: u32,
     },
     Viz {
-        page: PageId,
+        page: PageKey,
         values: [u16; 6],
     },
     Params {
-        page: PageId,
+        page: PageKey,
         values: [u16; 6],
     },
     Cells {
-        page: PageId,
+        page: PageKey,
         values: [u16; 6],
         dest_count: u16,
     },
@@ -68,15 +70,15 @@ impl RegionData {
         Self::Header { chain_idx, node_idx, sub_page, render_us }
     }
 
-    pub fn viz(page: PageId, values: [u16; 6]) -> Self {
+    pub fn viz(page: PageKey, values: [u16; 6]) -> Self {
         Self::Viz { page, values }
     }
 
-    pub fn params(page: PageId, values: [u16; 6]) -> Self {
+    pub fn params(page: PageKey, values: [u16; 6]) -> Self {
         Self::Params { page, values }
     }
 
-    pub fn cells(page: PageId, values: [u16; 6], dest_count: u16) -> Self {
+    pub fn cells(page: PageKey, values: [u16; 6], dest_count: u16) -> Self {
         Self::Cells { page, values, dest_count }
     }
 
@@ -89,15 +91,15 @@ impl RegionData {
     }
 
     pub fn sentinel_viz() -> Self {
-        Self::Viz { page: PageId::Filter, values: [SENTINEL; 6] }
+        Self::Viz { page: SENTINEL_PAGE, values: [SENTINEL; 6] }
     }
 
     pub fn sentinel_params() -> Self {
-        Self::Params { page: PageId::Filter, values: [SENTINEL; 6] }
+        Self::Params { page: SENTINEL_PAGE, values: [SENTINEL; 6] }
     }
 
     pub fn sentinel_cells() -> Self {
-        Self::Cells { page: PageId::Filter, values: [SENTINEL; 6], dest_count: u16::MAX }
+        Self::Cells { page: SENTINEL_PAGE, values: [SENTINEL; 6], dest_count: u16::MAX }
     }
 
     pub fn sentinel_nav() -> Self {

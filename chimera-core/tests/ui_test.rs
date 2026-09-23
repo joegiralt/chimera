@@ -1,7 +1,10 @@
 use chimera_core::ui::animation::AnimatedValue;
 use chimera_core::ui::chain::{ChainId, ChainNav};
 use chimera_core::ui::fmt::{FmtBuf, fmt_val};
-use chimera_core::ui::page::{PageId, ValFmt};
+use chimera_core::addr::Op;
+use chimera_core::ui::block_def::BlockDef;
+use chimera_core::ui::block_registry as reg;
+use chimera_core::ui::page::{PageId, PageKey, ValFmt};
 
 // -- ValFmt --
 
@@ -143,32 +146,32 @@ fn test_animated_value_moves_toward_target() {
 
 // -- Chain navigation --
 
+fn part(def: &BlockDef) -> PageKey {
+    PageKey::Part { def: def.id, op: Op::A }
+}
+
 #[test]
 fn test_chain_nav_starts_at_part0_engine() {
     let nav = ChainNav::new();
     assert_eq!(nav.chain_id, ChainId::Part(0));
     assert_eq!(nav.node, 0);
     assert_eq!(nav.sub_page, 0);
-    assert_eq!(PageId::from_nav(&nav), PageId::Pizza);
+    assert_eq!(PageKey::from_nav(&nav, Op::A), part(&reg::PIZZA));
 }
 
 #[test]
 fn test_page_from_nav_part_chain() {
     let mut nav = ChainNav::new();
-    nav.node = 0;
-    assert_eq!(PageId::from_nav(&nav), PageId::Pizza);
-    nav.node = 1;
-    assert_eq!(PageId::from_nav(&nav), PageId::Drive);
-    nav.node = 2;
-    assert_eq!(PageId::from_nav(&nav), PageId::Filter);
-    nav.node = 3;
-    assert_eq!(PageId::from_nav(&nav), PageId::Folder);
-    nav.node = 4;
-    assert_eq!(PageId::from_nav(&nav), PageId::DemoMatrix); // Mod matrix grid at sub_page 0
+    for (node, def) in [(0, &reg::PIZZA), (1, &reg::DRIVE), (2, &reg::FILTER), (3, &reg::FOLDER), (4, &reg::MOD_MATRIX)] {
+        nav.node = node;
+        assert_eq!(PageKey::from_nav(&nav, Op::A), part(def), "node {node}");
+    }
     nav.sub_page = 1;
-    assert_eq!(PageId::from_nav(&nav), PageId::Vca); // Envelope at sub_page 1
+    assert_eq!(PageKey::from_nav(&nav, Op::A), part(&reg::ENVELOPE)); // Envelope at sub_page 1
     nav.sub_page = 2;
-    assert_eq!(PageId::from_nav(&nav), PageId::Lfo); // LFO at sub_page 2
+    assert_eq!(PageKey::from_nav(&nav, Op::A), part(&reg::LFO)); // LFO at sub_page 2
+    // The operator selection is part of a Part page's identity.
+    assert_ne!(PageKey::from_nav(&nav, Op::B), PageKey::from_nav(&nav, Op::A));
 }
 
 #[test]
@@ -176,11 +179,19 @@ fn test_page_from_nav_demo_chain() {
     let mut nav = ChainNav::new();
     nav.chain_id = ChainId::Demo;
     nav.node = 0;
-    assert_eq!(PageId::from_nav(&nav), PageId::DemoWaves);
+    assert_eq!(PageKey::from_nav(&nav, Op::A), PageKey::Legacy(PageId::DemoWaves));
     nav.node = 1;
-    assert_eq!(PageId::from_nav(&nav), PageId::DemoShapes);
+    assert_eq!(PageKey::from_nav(&nav, Op::A), PageKey::Legacy(PageId::DemoShapes));
     nav.node = 2;
-    assert_eq!(PageId::from_nav(&nav), PageId::DemoMotion);
+    assert_eq!(PageKey::from_nav(&nav, Op::A), PageKey::Legacy(PageId::DemoMotion));
+}
+
+/// Spec §5: System gets its own page (it used to alias the Pizza page).
+#[test]
+fn test_system_chain_has_its_own_page() {
+    let mut nav = ChainNav::new();
+    nav.chain_id = ChainId::System;
+    assert_eq!(PageKey::from_nav(&nav, Op::A), PageKey::Legacy(PageId::System));
 }
 
 // -- BlockDef registry: format coverage --

@@ -1,4 +1,7 @@
+use chimera_core::addr::Op;
 use chimera_core::preset::{ChainType, Patch, Project, SoundPool, Track, POOL_SIZE};
+use chimera_core::ui::block_registry as reg;
+use chimera_core::ui::page::PageKey;
 use chimera_core::ui::{UiMode, UiState};
 use chimera_hal::{ButtonId, ButtonState, Controls, EncoderId};
 
@@ -360,7 +363,7 @@ fn priming_on_pizza_lfo_sub_page_registers_nothing() {
     }
     press(&mut ui, ButtonId::Edit);
     press(&mut ui, ButtonId::Edit); // sub-page 2: LFO
-    assert_eq!(ui.page(), chimera_core::ui::page::PageId::Lfo);
+    assert_eq!(ui.page(), PageKey::Part { def: reg::LFO.id, op: Op::A });
     prime(&mut ui);
     assert!(primed(&ui).is_empty());
 }
@@ -374,7 +377,7 @@ fn priming_on_fm_ratio_slot_2_registers_nothing() {
     ui.nav.chain_type = ChainType::Fm;
     press(&mut ui, ButtonId::Edit);
     press(&mut ui, ButtonId::Edit); // sub-page 2: FmRatio
-    assert_eq!(ui.page(), chimera_core::ui::page::PageId::FmRatio);
+    assert_eq!(ui.page(), PageKey::Part { def: reg::FM_RATIO.id, op: Op::A });
     ui.handle_input(&MockControls::new().encoder(EncoderId::C, 1)); // focus slot 2
     let before = primed(&ui); // the FM init pre-wire
     prime(&mut ui);
