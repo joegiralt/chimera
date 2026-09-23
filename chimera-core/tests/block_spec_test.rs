@@ -10,6 +10,7 @@ fn all_specs() -> Vec<(&'static str, &'static [ParamSpec])> {
         ("modal", &chimera_core::dsp::modal::MODAL_SPECS[..]),
         ("drive", &chimera_core::params::DRIVE_SPECS[..]),
         ("filter", &chimera_core::params::FILTER_SPECS[..]),
+        ("folder", &chimera_core::params::FOLDER_SPECS[..]),
     ]
 }
 

@@ -139,8 +139,8 @@ fn test_folder_passthrough_at_zero() {
 fn test_folder_output_bounded() {
     let folder = Wavefolder::new();
     let mut params = FolderParams::default();
-    params.fold.set(1.0);
-    params.mix.set(1.0);
+    params.fold = 1.0;
+    params.mix = 1.0;
 
     let mut buf = [5.0, -5.0, 10.0, -10.0];
     folder.process(&mut buf, &params);
@@ -157,8 +157,8 @@ fn test_folder_output_bounded() {
 fn test_folder_adds_harmonics() {
     let folder = Wavefolder::new();
     let mut params = FolderParams::default();
-    params.fold.set(1.0);
-    params.mix.set(1.0);
+    params.fold = 1.0;
+    params.mix = 1.0;
 
     // Sine wave
     let mut buf = [0.0f32; 64];
@@ -267,8 +267,8 @@ fn test_voice_output_bounded() {
     params.pizza.crush = 0.7;
     params.drive.drive = 1.0;
     params.drive.mix = 1.0;
-    params.folder.fold.set(0.5);
-    params.folder.mix.set(1.0);
+    params.folder.fold = 0.5;
+    params.folder.mix = 1.0;
 
     voice.note_on(60, 127, &params, 48000);
 

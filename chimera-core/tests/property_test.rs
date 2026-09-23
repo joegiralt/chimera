@@ -83,9 +83,9 @@ fn random_params(rng: &mut Rng) -> ParamSnapshot {
     p.drive.mix = rng.f32();
 
     // Folder
-    p.folder.fold.set(rng.f32());
-    p.folder.symmetry.set(rng.f32());
-    p.folder.mix.set(rng.f32());
+    p.folder.fold = rng.f32();
+    p.folder.symmetry = rng.f32();
+    p.folder.mix = rng.f32();
 
     // Volume
     p.volume.set(0.1 + rng.f32() * 0.9); // never zero
@@ -211,7 +211,7 @@ fn prop_param_change_changes_output() {
         match tweak {
             0 => params_b.filter.cutoff = params_a.filter.cutoff * 0.1 + 100.0,
             1 => params_b.drive.drive = 1.0 - params_a.drive.drive,
-            2 => params_b.folder.fold.set(1.0 - params_a.folder.fold.value),
+            2 => params_b.folder.fold = 1.0 - params_a.folder.fold,
             3 => params_b.volume.set(params_a.volume.value * 0.2),
             _ => params_b.pizza.crush = 1.0 - params_a.pizza.crush,
         }
@@ -273,7 +273,7 @@ fn prop_note_off_eventually_silences() {
             params.modal.mode = ResonatorMode::Modal; // use resonator instead
         }
         params.filter.resonance *= 0.5; // prevent self-oscillation
-        params.folder.fold.set(0.0); // disable folder feedback path
+        params.folder.fold = 0.0; // disable folder feedback path
         let note = rng.note();
 
         let mut voice = Voice::new();
@@ -422,10 +422,10 @@ fn prop_folder_full_sweep() {
         "Wavefolder",
         |p| {
             p.engine = EngineType::Pizza;
-            p.folder.mix.set(1.0);
+            p.folder.mix = 1.0;
         },
         |p, v| {
-            p.folder.fold.set(v);
+            p.folder.fold = v;
         },
         16,
     );

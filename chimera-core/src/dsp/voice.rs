@@ -11,7 +11,7 @@ use crate::dsp::pizza::{PizzaOsc, PizzaParams};
 use crate::dsp::wavefolder::Wavefolder;
 use crate::mod_path::ParamPath;
 use crate::modulation::{ModState, MAX_MOD_SOURCES};
-use crate::params::{DriveParams, EngineType, FilterParams, ParamSnapshot};
+use crate::params::{DriveParams, EngineType, FilterParams, FolderParams, ParamSnapshot};
 
 /// Complete voice signal chain:
 /// [Engine (Pizza/Modal)] → [Drive] → [Filter] → [Wavefolder]
@@ -145,8 +145,8 @@ impl Voice {
         apply_offset(&mut mod_filter, FilterParams::RESONANCE, mod_state.compute_offset(&mod_values, ParamPath::Block { block: 2, param: 1 }));
 
         // Folder
-        mod_folder.fold.apply_mod_offset(mod_state.compute_offset(&mod_values, ParamPath::Block { block: 3, param: 0 }));
-        mod_folder.symmetry.apply_mod_offset(mod_state.compute_offset(&mod_values, ParamPath::Block { block: 3, param: 1 }));
+        apply_offset(&mut mod_folder, FolderParams::FOLD, mod_state.compute_offset(&mod_values, ParamPath::Block { block: 3, param: 0 }));
+        apply_offset(&mut mod_folder, FolderParams::SYMMETRY, mod_state.compute_offset(&mod_values, ParamPath::Block { block: 3, param: 1 }));
 
         // 1. Engine → raw oscillator output
         match self.active_engine {

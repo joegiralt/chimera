@@ -69,8 +69,8 @@ fn stress_pizza_full_with_chain() {
         p.filter.cutoff = 2000.0;
         p.filter.resonance = 0.7;
         p.filter.mode = 2; // LP4
-        p.folder.fold.set(0.5);
-        p.folder.mix.set(1.0);
+        p.folder.fold = 0.5;
+        p.folder.mix = 1.0;
     });
     assert!(t < 5000.0, "Pizza + chain too slow: {} us/block", t);
 }
@@ -139,8 +139,8 @@ fn stress_sympathetic_with_chain() {
         p.filter.cutoff = 3000.0;
         p.filter.resonance = 0.5;
         p.filter.mode = 2;
-        p.folder.fold.set(0.3);
-        p.folder.mix.set(1.0);
+        p.folder.fold = 0.3;
+        p.folder.mix = 1.0;
     });
     assert!(t < 10000.0, "Sympathetic + chain too slow: {} us/block", t);
 }
@@ -156,8 +156,8 @@ fn stress_worst_case() {
         p.filter.cutoff = 1000.0;
         p.filter.resonance = 0.9;
         p.filter.mode = 2; // LP4 (two cascaded SVFs)
-        p.folder.fold.set(1.0);
-        p.folder.mix.set(1.0);
+        p.folder.fold = 1.0;
+        p.folder.mix = 1.0;
     });
     // This is the absolute worst case — if this fits, everything fits
     assert!(t < 15000.0, "Worst case too slow: {} us/block", t);
@@ -228,8 +228,8 @@ fn stress_summary() {
     });
     bench_render("+ Wavefolder", |p| {
         p.engine = EngineType::Pizza;
-        p.folder.fold.set(0.8);
-        p.folder.mix.set(1.0);
+        p.folder.fold = 0.8;
+        p.folder.mix = 1.0;
     });
 
     eprintln!("\nBudget: 2667 us/block (128 samples @ 48kHz)");

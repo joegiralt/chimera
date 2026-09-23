@@ -241,17 +241,54 @@ impl Block for DriveParams {
 /// Parameters for post-filter wavefolder
 #[derive(Clone, Copy, Debug)]
 pub struct FolderParams {
-    pub fold: Param,
-    pub symmetry: Param,
-    pub mix: Param,
+    pub fold: f32,
+    pub symmetry: f32,
+    pub mix: f32,
 }
 
 impl Default for FolderParams {
     fn default() -> Self {
         Self {
-            fold: Param::new(0.0, 1.0, 0.0),
-            symmetry: Param::new(0.0, 1.0, 0.5),
-            mix: Param::new(0.0, 1.0, 0.5),
+            fold: 0.0,
+            symmetry: 0.5,
+            mix: 0.5,
+        }
+    }
+}
+
+impl FolderParams {
+    pub const FOLD: ParamId = ParamId(0);
+    pub const SYMMETRY: ParamId = ParamId(1);
+    pub const MIX: ParamId = ParamId(2);
+}
+
+/// All three are read by `Voice` every block from the modulated copy.
+pub static FOLDER_SPECS: [ParamSpec; 3] = [
+    ParamSpec::continuous(0, "FOLD", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, true),
+    ParamSpec::continuous(1, "SYM", ValFmt::Bi, 0.0, 1.0, 0.5, 1.0 / 128.0, true),
+    ParamSpec::continuous(2, "MIX", ValFmt::Bi, 0.0, 1.0, 0.5, 1.0 / 128.0, true),
+];
+
+impl Block for FolderParams {
+    fn specs(&self) -> &'static [ParamSpec] {
+        &FOLDER_SPECS
+    }
+
+    fn get(&self, id: ParamId) -> f32 {
+        match id {
+            Self::FOLD => self.fold,
+            Self::SYMMETRY => self.symmetry,
+            Self::MIX => self.mix,
+            _ => 0.0,
+        }
+    }
+
+    fn write(&mut self, id: ParamId, v: f32) {
+        match id {
+            Self::FOLD => self.fold = v,
+            Self::SYMMETRY => self.symmetry = v,
+            Self::MIX => self.mix = v,
+            _ => {}
         }
     }
 }
