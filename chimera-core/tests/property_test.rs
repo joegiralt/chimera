@@ -72,9 +72,9 @@ fn random_params(rng: &mut Rng) -> ParamSnapshot {
     p.modal.ks_ens_mix = rng.f32();
 
     // Filter
-    p.filter.cutoff.set(20.0 + rng.f32() * 19980.0);
-    p.filter.resonance.set(rng.f32());
-    p.filter.drive.set(rng.f32());
+    p.filter.cutoff = 20.0 + rng.f32() * 19980.0;
+    p.filter.resonance = rng.f32();
+    p.filter.drive = rng.f32();
     p.filter.mode = rng.u8(7);
 
     // Drive
@@ -209,10 +209,7 @@ fn prop_param_change_changes_output() {
         // Randomly tweak one parameter
         let tweak = rng.u8(5);
         match tweak {
-            0 => params_b
-                .filter
-                .cutoff
-                .set(params_a.filter.cutoff.value * 0.1 + 100.0),
+            0 => params_b.filter.cutoff = params_a.filter.cutoff * 0.1 + 100.0,
             1 => params_b.drive.drive = 1.0 - params_a.drive.drive,
             2 => params_b.folder.fold.set(1.0 - params_a.folder.fold.value),
             3 => params_b.volume.set(params_a.volume.value * 0.2),
@@ -275,10 +272,7 @@ fn prop_note_off_eventually_silences() {
         if params.modal.mode == ResonatorMode::Bowed {
             params.modal.mode = ResonatorMode::Modal; // use resonator instead
         }
-        params
-            .filter
-            .resonance
-            .set(params.filter.resonance.value * 0.5); // prevent self-oscillation
+        params.filter.resonance *= 0.5; // prevent self-oscillation
         params.folder.fold.set(0.0); // disable folder feedback path
         let note = rng.note();
 
@@ -385,7 +379,7 @@ fn prop_filter_cutoff_full_sweep() {
             p.filter.mode = 2;
         },
         |p, v| {
-            p.filter.cutoff.set(20.0 + v * 19980.0);
+            p.filter.cutoff = 20.0 + v * 19980.0;
         },
         16,
     );
@@ -397,11 +391,11 @@ fn prop_filter_resonance_full_sweep() {
         "Filter resonance",
         |p| {
             p.engine = EngineType::Pizza;
-            p.filter.cutoff.set(1000.0);
+            p.filter.cutoff = 1000.0;
             p.filter.mode = 1;
         },
         |p, v| {
-            p.filter.resonance.set(v);
+            p.filter.resonance = v;
         },
         16,
     );

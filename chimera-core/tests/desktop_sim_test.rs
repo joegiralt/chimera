@@ -245,7 +245,7 @@ fn test_desktop_filter_affects_output() {
         |ui| {
             ui.params_mut().engine = EngineType::Pizza;
             
-            ui.params_mut().filter.cutoff.set(15000.0);
+            ui.params_mut().filter.cutoff = 15000.0;
         },
         60,
         16,
@@ -255,7 +255,7 @@ fn test_desktop_filter_affects_output() {
         |ui| {
             ui.params_mut().engine = EngineType::Pizza;
             
-            ui.params_mut().filter.cutoff.set(200.0);
+            ui.params_mut().filter.cutoff = 200.0;
             ui.params_mut().filter.mode = 2;
         },
         60,
@@ -366,7 +366,7 @@ fn test_desktop_mid_note_filter_sweep() {
     let mut ui = UiState::new();
     ui.params_mut().engine = EngineType::Pizza;
     
-    ui.params_mut().filter.cutoff.set(10000.0);
+    ui.params_mut().filter.cutoff = 10000.0;
     ui.params_mut().filter.mode = 2;
 
     let mut voice = Voice::new();
@@ -381,7 +381,7 @@ fn test_desktop_mid_note_filter_sweep() {
     }
 
     // Close the filter mid-note
-    ui.params_mut().filter.cutoff.set(200.0);
+    ui.params_mut().filter.cutoff = 200.0;
 
     let mut after_energy = 0.0f32;
     for _ in 0..16 {

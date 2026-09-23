@@ -1,7 +1,7 @@
 use crate::block::{Block, ParamId};
 use crate::dsp::modal::ModalParams;
 use crate::dsp::pizza::PizzaParams;
-use crate::params::{DriveParams, ParamSnapshot};
+use crate::params::{DriveParams, FilterParams, ParamSnapshot};
 use crate::preset::ChainType;
 use crate::ui::chain::ChainNav;
 
@@ -180,14 +180,7 @@ impl PageId {
     pub fn read_values(&self, params: &ParamSnapshot) -> [f32; 6] {
         match self {
             PageId::Pizza => read_block(&params.pizza, PIZZA_PAGE),
-            PageId::Filter => [
-                params.filter.cutoff.normalized(),
-                params.filter.resonance.normalized(),
-                params.filter.drive.normalized(),
-                params.filter.fm_amount.normalized(),
-                params.filter.env_amount.normalized(),
-                params.filter.key_track.normalized(),
-            ],
+            PageId::Filter => read_block(&params.filter, FILTER_PAGE),
             PageId::EnvAmp | PageId::Vca => read_env_values(&params.envelopes[0]),
             PageId::EnvFilter => read_env_values(&params.envelopes[1]),
             PageId::EnvAux => read_env_values(&params.envelopes[2]),
@@ -214,16 +207,16 @@ impl PageId {
                 params.drive.normalized(DriveParams::TONE),
                 params.folder.fold.normalized(),
                 params.folder.symmetry.normalized(),
-                params.filter.env_amount.normalized(),
+                params.filter.normalized(FilterParams::ENV_AMOUNT),
                 params.pan.normalized(),
             ],
             PageId::DemoShapes => [
                 params.volume.normalized(),
-                params.filter.cutoff.normalized(),
+                params.filter.normalized(FilterParams::CUTOFF),
                 params.pan.normalized(),
-                params.filter.drive.normalized(),
-                params.filter.resonance.normalized(),
-                params.filter.fm_amount.normalized(),
+                params.filter.normalized(FilterParams::DRIVE),
+                params.filter.normalized(FilterParams::RESONANCE),
+                params.filter.normalized(FilterParams::FM_AMOUNT),
             ],
             PageId::DemoMotion => [
                 params.envelopes[0].attack.normalized(),
@@ -406,6 +399,15 @@ impl PageId {
             PageId::DemoWaves => match idx {
                 0 => bind(&mut p.drive, DriveParams::DRIVE),
                 1 => bind(&mut p.drive, DriveParams::TONE),
+                4 => bind(&mut p.filter, FilterParams::ENV_AMOUNT),
+                _ => None,
+            },
+            PageId::Filter => bind(&mut p.filter, *FILTER_PAGE.get(idx)?),
+            PageId::DemoShapes => match idx {
+                1 => bind(&mut p.filter, FilterParams::CUTOFF),
+                3 => bind(&mut p.filter, FilterParams::DRIVE),
+                4 => bind(&mut p.filter, FilterParams::RESONANCE),
+                5 => bind(&mut p.filter, FilterParams::FM_AMOUNT),
                 _ => None,
             },
             _ => None,
@@ -419,15 +421,6 @@ impl PageId {
         params: &'a mut ParamSnapshot,
     ) -> Option<&'a mut crate::params::Param> {
         match self {
-            PageId::Filter => match idx {
-                0 => Some(&mut params.filter.cutoff),
-                1 => Some(&mut params.filter.resonance),
-                2 => Some(&mut params.filter.drive),
-                3 => Some(&mut params.filter.fm_amount),
-                4 => Some(&mut params.filter.env_amount),
-                5 => Some(&mut params.filter.key_track),
-                _ => None,
-            },
             PageId::EnvAmp | PageId::Vca => resolve_env_param(&mut params.envelopes[0], idx),
             PageId::EnvFilter => resolve_env_param(&mut params.envelopes[1], idx),
             PageId::EnvAux => resolve_env_param(&mut params.envelopes[2], idx),
@@ -445,17 +438,12 @@ impl PageId {
             PageId::DemoWaves => match idx {
                 2 => Some(&mut params.folder.fold),
                 3 => Some(&mut params.folder.symmetry),
-                4 => Some(&mut params.filter.env_amount),
                 5 => Some(&mut params.pan),
                 _ => None,
             },
             PageId::DemoShapes => match idx {
                 0 => Some(&mut params.volume),
-                1 => Some(&mut params.filter.cutoff),
                 2 => Some(&mut params.pan),
-                3 => Some(&mut params.filter.drive),
-                4 => Some(&mut params.filter.resonance),
-                5 => Some(&mut params.filter.fm_amount),
                 _ => None,
             },
             PageId::DemoMotion => match idx {
@@ -484,6 +472,14 @@ impl PageId {
 /// Encoder slot → param id, per page. Shared by `read_values` and `resolve_mut`.
 const PIZZA_PAGE: [ParamId; 3] = [PizzaParams::SHAPE, PizzaParams::CRUSH, PizzaParams::LEVEL];
 const DRIVE_PAGE: [ParamId; 3] = [DriveParams::DRIVE, DriveParams::TONE, DriveParams::MIX];
+const FILTER_PAGE: [ParamId; 6] = [
+    FilterParams::CUTOFF,
+    FilterParams::RESONANCE,
+    FilterParams::DRIVE,
+    FilterParams::FM_AMOUNT,
+    FilterParams::ENV_AMOUNT,
+    FilterParams::KEY_TRACK,
+];
 const MODAL1_PAGE: [ParamId; 6] = [
     ModalParams::MODE,
     ModalParams::EXCITE,

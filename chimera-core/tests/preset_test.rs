@@ -61,7 +61,7 @@ fn patch_init_has_musically_useful_defaults() {
     let p = Patch::init(ChainType::PizzaPoly);
     assert_eq!(p.chain_type, ChainType::PizzaPoly);
     assert!(p.params.volume.value() > 0.0);
-    assert!(p.params.filter.cutoff.value() > 1000.0);
+    assert!(p.params.filter.cutoff > 1000.0);
     assert!(p.name_str().starts_with("(init)"));
 }
 

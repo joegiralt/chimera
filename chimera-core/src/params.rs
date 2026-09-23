@@ -85,25 +85,76 @@ impl Param {
 /// Parameters for one voice's filter
 #[derive(Clone, Copy, Debug)]
 pub struct FilterParams {
-    pub cutoff: Param,
-    pub resonance: Param,
-    pub drive: Param,
-    pub fm_amount: Param,
-    pub env_amount: Param,
-    pub key_track: Param,
+    pub cutoff: f32,
+    pub resonance: f32,
+    pub drive: f32,
+    pub fm_amount: f32,
+    pub env_amount: f32,
+    pub key_track: f32,
     pub mode: u8,
 }
 
 impl Default for FilterParams {
     fn default() -> Self {
         Self {
-            cutoff: Param::new(20.0, 20000.0, 1000.0),
-            resonance: Param::new(0.0, 1.0, 0.0),
-            drive: Param::new(0.0, 1.0, 0.0),
-            fm_amount: Param::new(0.0, 1.0, 0.0),
-            env_amount: Param::new(-1.0, 1.0, 0.0),
-            key_track: Param::new(0.0, 1.0, 0.0),
+            cutoff: 1000.0,
+            resonance: 0.0,
+            drive: 0.0,
+            fm_amount: 0.0,
+            env_amount: 0.0,
+            key_track: 0.0,
             mode: 2, // LP4
+        }
+    }
+}
+
+impl FilterParams {
+    pub const CUTOFF: ParamId = ParamId(0);
+    pub const RESONANCE: ParamId = ParamId(1);
+    pub const DRIVE: ParamId = ParamId(2);
+    pub const FM_AMOUNT: ParamId = ParamId(3);
+    pub const ENV_AMOUNT: ParamId = ParamId(4);
+    pub const KEY_TRACK: ParamId = ParamId(5);
+}
+
+/// Cutoff, resonance and drive are read by `Voice` every block. FM amount,
+/// env amount and key track are never read (spec § Current state).
+/// `mode` has no spec (not on any page; plan D16).
+pub static FILTER_SPECS: [ParamSpec; 6] = [
+    ParamSpec::continuous(0, "CUTOFF", ValFmt::Uni, 20.0, 20000.0, 1000.0, (20000.0 - 20.0) / 128.0, true),
+    ParamSpec::continuous(1, "RESO", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, true),
+    ParamSpec::continuous(2, "DRIVE", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, true),
+    ParamSpec::continuous(3, "FM", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false),
+    ParamSpec::continuous(4, "ENV", ValFmt::Bi, -1.0, 1.0, 0.0, 2.0 / 128.0, false),
+    ParamSpec::continuous(5, "TRACK", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false),
+];
+
+impl Block for FilterParams {
+    fn specs(&self) -> &'static [ParamSpec] {
+        &FILTER_SPECS
+    }
+
+    fn get(&self, id: ParamId) -> f32 {
+        match id {
+            Self::CUTOFF => self.cutoff,
+            Self::RESONANCE => self.resonance,
+            Self::DRIVE => self.drive,
+            Self::FM_AMOUNT => self.fm_amount,
+            Self::ENV_AMOUNT => self.env_amount,
+            Self::KEY_TRACK => self.key_track,
+            _ => 0.0,
+        }
+    }
+
+    fn write(&mut self, id: ParamId, v: f32) {
+        match id {
+            Self::CUTOFF => self.cutoff = v,
+            Self::RESONANCE => self.resonance = v,
+            Self::DRIVE => self.drive = v,
+            Self::FM_AMOUNT => self.fm_amount = v,
+            Self::ENV_AMOUNT => self.env_amount = v,
+            Self::KEY_TRACK => self.key_track = v,
+            _ => {}
         }
     }
 }
@@ -300,7 +351,7 @@ impl Default for ParamSnapshot {
             engine: EngineType::default(),
             filter: {
                 let mut f = FilterParams::default();
-                f.cutoff = Param::new(20.0, 20000.0, 20000.0); // fully open
+                f.cutoff = 20000.0; // fully open
                 f
             },
             drive: DriveParams::default(),

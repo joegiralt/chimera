@@ -99,3 +99,22 @@ fn drive_read_values() {
     let p = ParamSnapshot::default();
     assert_eq!(PageId::Drive.read_values(&p), [0.0, 0.5, 1.0, 0.0, 0.0, 0.0]);
 }
+
+// ── Filter (Task 5) ──────────────────────────────────────────────────
+
+#[test]
+fn filter_encoder_steps_like_before() {
+    let mut p = ParamSnapshot::default();
+    PageId::Filter.apply_encoder(0, -1, &mut p);
+    assert_eq!(p.filter.cutoff, 20000.0 - (20000.0 - 20.0) / 128.0);
+    PageId::Filter.apply_encoder(4, 1, &mut p);
+    assert_eq!(p.filter.env_amount, (1.0 - -1.0) / 128.0);
+    PageId::DemoShapes.apply_encoder(4, 3, &mut p);
+    assert_eq!(p.filter.resonance, 3.0 / 128.0);
+}
+
+#[test]
+fn filter_read_values() {
+    let p = ParamSnapshot::default();
+    assert_eq!(PageId::Filter.read_values(&p), [1.0, 0.0, 0.0, 0.0, 0.5, 0.0]);
+}

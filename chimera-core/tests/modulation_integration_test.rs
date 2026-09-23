@@ -32,7 +32,7 @@ fn voice_render_with_mod_offset_changes_filter() {
     let mut voice_dry = Voice::new();
     let mut voice_mod = Voice::new();
     let mut params = ParamSnapshot::default();
-    params.filter.cutoff.set(2000.0);
+    params.filter.cutoff = 2000.0;
     params.filter.mode = 2; // LP4
 
     // Set up LFO: fast rate so it clearly modulates within a few blocks

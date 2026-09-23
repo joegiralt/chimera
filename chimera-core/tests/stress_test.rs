@@ -66,8 +66,8 @@ fn stress_pizza_full_with_chain() {
         p.pizza.crush = 0.5;
         p.drive.drive = 0.5;
         p.drive.mix = 1.0;
-        p.filter.cutoff.set(2000.0);
-        p.filter.resonance.set(0.7);
+        p.filter.cutoff = 2000.0;
+        p.filter.resonance = 0.7;
         p.filter.mode = 2; // LP4
         p.folder.fold.set(0.5);
         p.folder.mix.set(1.0);
@@ -136,8 +136,8 @@ fn stress_sympathetic_with_chain() {
         p.modal.inharm = 0.5;
         p.drive.drive = 0.5;
         p.drive.mix = 1.0;
-        p.filter.cutoff.set(3000.0);
-        p.filter.resonance.set(0.5);
+        p.filter.cutoff = 3000.0;
+        p.filter.resonance = 0.5;
         p.filter.mode = 2;
         p.folder.fold.set(0.3);
         p.folder.mix.set(1.0);
@@ -153,8 +153,8 @@ fn stress_worst_case() {
         p.modal.num_modes = 48;
         p.drive.drive = 1.0;
         p.drive.mix = 1.0;
-        p.filter.cutoff.set(1000.0);
-        p.filter.resonance.set(0.9);
+        p.filter.cutoff = 1000.0;
+        p.filter.resonance = 0.9;
         p.filter.mode = 2; // LP4 (two cascaded SVFs)
         p.folder.fold.set(1.0);
         p.folder.mix.set(1.0);
@@ -223,7 +223,7 @@ fn stress_summary() {
     });
     bench_render("+ Filter LP4", |p| {
         p.engine = EngineType::Pizza;
-        p.filter.cutoff.set(2000.0);
+        p.filter.cutoff = 2000.0;
         p.filter.mode = 2;
     });
     bench_render("+ Wavefolder", |p| {

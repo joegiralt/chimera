@@ -150,11 +150,11 @@ fn test_modal_signal_chain_affects_output() {
 
     let mut params_open = ParamSnapshot::default();
     params_open.engine = EngineType::Modal;
-    params_open.filter.cutoff.set(20000.0);
+    params_open.filter.cutoff = 20000.0;
 
     let mut params_closed = ParamSnapshot::default();
     params_closed.engine = EngineType::Modal;
-    params_closed.filter.cutoff.set(200.0);
+    params_closed.filter.cutoff = 200.0;
     params_closed.filter.mode = 2; // LP4
 
     voice_open.note_on(60, 100, &params_open, SR);
