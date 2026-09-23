@@ -73,6 +73,7 @@ impl ParamSlot {
     pub fn spec(&self) -> Option<&'static ParamSpec> {
         match self.binding {
             SlotBinding::Param(a) => a.spec(),
+            // All four FM operators share one spec table, so FmOp(Op::A) stands in.
             SlotBinding::SelectedOp(id) => find_spec(BlockRef::FmOp(Op::A).specs(), id),
             SlotBinding::Empty | SlotBinding::SelectOp | SlotBinding::Legacy { .. } => None,
         }

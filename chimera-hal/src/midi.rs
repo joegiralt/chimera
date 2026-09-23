@@ -1,6 +1,6 @@
 //! MIDI byte-stream parser — the trust boundary where raw bytes become
 //! `MidiNote`/`Velocity`. Hardware-independent (moved from chimera-stm32 so
-//! it is host-testable); the firmware feeds it bytes from USART1 @ 31250.
+//! it is host-testable); the firmware will feed it bytes from USART1 @ 31250.
 
 use crate::{MidiMessage, MidiNote, Velocity};
 
