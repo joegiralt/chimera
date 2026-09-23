@@ -82,6 +82,7 @@ pub mod fm_tables;
 pub mod fm_waveform;
 pub mod envelope_fm;
 pub mod engine_fm;
+pub mod engines;
 pub mod chorus;
 pub mod delay;
 pub mod drive;

@@ -1,3 +1,4 @@
+use chimera_core::{MidiNote, Velocity};
 use chimera_core::dsp::envelope_fm::FmEnvelope;
 use chimera_core::dsp::engine_fm::{FmEngine, FmOperator, FmOpSettings};
 use chimera_core::dsp::fm_tables;
@@ -292,14 +293,14 @@ fn fm_output_bounded() {
 fn fm_init_patch_is_audible() {
     let patch = Patch::init(ChainType::Fm);
     assert_eq!(patch.params.engine, EngineType::Fm);
-    let mut voice = Voice::new();
-    voice.note_on(69, 100, &patch.params, 48000);
+    let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
+    voice.note_on(MidiNote::new(69).unwrap(), Velocity::new(100).unwrap(), &patch.params);
     let mut buf = [0.0f32; 64];
     let mod_state = ModState::default();
     // Render 16 blocks (64 * 16 = 1024 samples) to accumulate energy
     let mut total_energy = 0.0f32;
     for _ in 0..16 {
-        voice.render(&mut buf, &patch.params, &mod_state, 48000);
+        voice.render(&mut buf, &patch.params, &mod_state);
         total_energy += buf.iter().map(|x| x * x).sum::<f32>();
     }
     let rms = (total_energy / 1024.0).sqrt();
@@ -319,33 +320,33 @@ fn fm_init_patch_sets_engine_type() {
 
 #[test]
 fn voice_fm_produces_sound() {
-    let mut voice = Voice::new();
+    let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
     let mut params = ParamSnapshot::default();
     params.engine = EngineType::Fm;
     // Op1 already has level=99 from FmParams default
-    voice.note_on(69, 100, &params, 48000);
+    voice.note_on(MidiNote::new(69).unwrap(), Velocity::new(100).unwrap(), &params);
     let mut buf = [0.0f32; 64];
     let mod_state = ModState::default();
-    voice.render(&mut buf, &params, &mod_state, 48000);
+    voice.render(&mut buf, &params, &mod_state);
     let rms = (buf.iter().map(|x| x * x).sum::<f32>() / buf.len() as f32).sqrt();
     assert!(rms > 0.001, "FM voice should produce sound, rms={rms}");
 }
 
 #[test]
 fn voice_fm_output_finite() {
-    let mut voice = Voice::new();
+    let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
     let mut params = ParamSnapshot::default();
     params.engine = EngineType::Fm;
     for op in params.fm.operators.iter_mut() {
         op.level = 99.0;
         op.feedback = 7.0;
     }
-    voice.note_on(69, 127, &params, 48000);
+    voice.note_on(MidiNote::new(69).unwrap(), Velocity::new(127).unwrap(), &params);
     let mut buf = [0.0f32; 64];
     let mod_state = ModState::default();
     // Render many blocks to stress-test
     for _ in 0..64 {
-        voice.render(&mut buf, &params, &mod_state, 48000);
+        voice.render(&mut buf, &params, &mod_state);
         for &s in &buf {
             assert!(s.is_finite(), "NaN/Inf in FM voice output");
         }

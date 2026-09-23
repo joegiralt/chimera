@@ -2,6 +2,7 @@
 //! Simulates the desktop audio callback pattern: rendering blocks
 //! and scattering to variable-size output buffers.
 
+use chimera_core::{MidiNote, Velocity};
 use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::modulation::ModState;
 use chimera_core::dsp::reverb::Reverb;
@@ -19,12 +20,12 @@ fn check_no_clicks(
     callback_sizes: &[usize], // simulate varying cpal buffer sizes
 ) {
     let empty_mod = ModState::new();
-    let mut voice = Voice::new();
+    let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
     let mut reverb = Reverb::new();
     let mut params = ParamSnapshot::default();
     setup(&mut params);
 
-    voice.note_on(60, 100, &params, SR);
+    voice.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params);
 
     // Persistent state (like the fixed audio callback)
     let mut block = [0.0f32; BLOCK_SIZE];
@@ -35,7 +36,7 @@ fn check_no_clicks(
     for &cb_size in callback_sizes {
         for _ in 0..cb_size {
             if block_pos >= BLOCK_SIZE {
-                voice.render(&mut block, &params, &empty_mod, SR);
+                voice.render(&mut block, &params, &empty_mod);
                 reverb.process(&mut block, &params.reverb);
                 block_pos = 0;
             }
@@ -153,12 +154,12 @@ fn test_no_clicks_modal() {
     // these are the character of struck metal, not clicks.
     // Use a higher threshold than other engines.
     let empty_mod = ModState::new();
-    let mut voice = Voice::new();
+    let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
     let mut reverb = Reverb::new();
     let mut params = ParamSnapshot::default();
     params.engine = EngineType::Modal;
     params.modal.mode = ResonatorMode::Modal;
-    voice.note_on(60, 100, &params, SR);
+    voice.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params);
 
     let mut block = [0.0f32; BLOCK_SIZE];
     let mut block_pos: usize = BLOCK_SIZE;
@@ -167,7 +168,7 @@ fn test_no_clicks_modal() {
     for &cb_size in &[256, 256, 256, 256, 256, 256, 256, 256] {
         for _ in 0..cb_size {
             if block_pos >= BLOCK_SIZE {
-                voice.render(&mut block, &params, &empty_mod, SR);
+                voice.render(&mut block, &params, &empty_mod);
                 reverb.process(&mut block, &params.reverb);
                 block_pos = 0;
             }

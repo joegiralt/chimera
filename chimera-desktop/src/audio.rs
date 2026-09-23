@@ -3,6 +3,7 @@ use chimera_core::dsp::delay::TapeDelay;
 use chimera_core::dsp::reverb::Reverb;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::params::ParamSnapshot;
+use chimera_core::{MidiNote, Velocity};
 use cpal::Stream;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::Arc;
@@ -41,7 +42,7 @@ impl DesktopAudio {
         });
         let shared_clone = Arc::clone(&shared);
 
-        let mut voice = Box::new(Voice::new());
+        let mut voice = Box::new(Voice::new(sample_rate));
         let mut chorus = Box::new(JunoChorus::new());
         let mut delay = Box::new(TapeDelay::new());
         let mut reverb = Box::new(Reverb::new());
@@ -59,9 +60,11 @@ impl DesktopAudio {
 
                     let cmd = shared_clone.note_cmd.swap(NOTE_NONE, Ordering::Relaxed);
                     if cmd & NOTE_ON_FLAG != 0 {
-                        let note = cmd & 0x7F;
                         let vel = shared_clone.velocity.load(Ordering::Relaxed);
-                        voice.note_on(note, vel, params, sample_rate);
+                        // Both were stored from a MidiNote/Velocity, so these always succeed.
+                        if let (Some(note), Some(vel)) = (MidiNote::new(cmd & 0x7F), Velocity::new(vel)) {
+                            voice.note_on(note, vel, params);
+                        }
                     } else if cmd > 0 {
                         voice.note_off();
                     }
@@ -69,7 +72,7 @@ impl DesktopAudio {
                     let empty_mod = chimera_core::modulation::ModState::new();
                     for sample in data.iter_mut() {
                         if block_pos >= chimera_hal::BLOCK_SIZE {
-                            voice.render(&mut block, params, &empty_mod, sample_rate);
+                            voice.render(&mut block, params, &empty_mod);
                             // Effects chain: chorus → delay → reverb (Digitone II style)
                             chorus.process(&mut block, &params.chorus, sample_rate);
                             delay.process(&mut block, &params.delay, sample_rate);
@@ -104,11 +107,11 @@ impl DesktopAudio {
         self.active_buf = inactive;
     }
 
-    pub fn note_on(&self, note: u8, velocity: u8) {
-        self.shared.velocity.store(velocity, Ordering::Relaxed);
+    pub fn note_on(&self, note: MidiNote, velocity: Velocity) {
+        self.shared.velocity.store(velocity.get(), Ordering::Relaxed);
         self.shared
             .note_cmd
-            .store(NOTE_ON_FLAG | (note & 0x7F), Ordering::Relaxed);
+            .store(NOTE_ON_FLAG | note.get(), Ordering::Relaxed);
     }
 
     pub fn note_off(&self) {

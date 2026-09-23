@@ -1,3 +1,4 @@
+use chimera_core::{MidiNote, Velocity};
 use chimera_core::dsp::voice::Voice;
 use chimera_core::modulation::{ModState, MAX_MOD_SOURCES};
 use chimera_core::params::ParamSnapshot;
@@ -13,13 +14,13 @@ fn rms(buf: &[f32]) -> f32 {
 #[test]
 fn voice_render_with_empty_mod_state() {
     let empty_mod = ModState::new();
-    let mut voice = Voice::new();
+    let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
     let params = ParamSnapshot::default();
 
-    voice.note_on(60, 100, &params, SAMPLE_RATE);
+    voice.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params);
 
     let mut output = [0.0f32; BLOCK_SIZE];
-    voice.render(&mut output, &params, &empty_mod, SAMPLE_RATE);
+    voice.render(&mut output, &params, &empty_mod);
 
     // Should produce sound normally
     let level = rms(&output);
@@ -29,8 +30,8 @@ fn voice_render_with_empty_mod_state() {
 #[test]
 fn voice_render_with_mod_offset_changes_filter() {
     // Render two voices identically, except one has an LFO modulating filter cutoff.
-    let mut voice_dry = Voice::new();
-    let mut voice_mod = Voice::new();
+    let mut voice_dry = Voice::new(chimera_hal::SAMPLE_RATE);
+    let mut voice_mod = Voice::new(chimera_hal::SAMPLE_RATE);
     let mut params = ParamSnapshot::default();
     params.filter.cutoff = 2000.0;
     params.filter.mode = 2; // LP4
@@ -50,16 +51,16 @@ fn voice_render_with_mod_offset_changes_filter() {
     mod_state.dests[0] = chimera_core::mod_path::ParamPath::Block { block: 2, param: 0 }; // filter cutoff
     mod_state.amounts[1][0] = 100; // LFO -> cutoff at high amount
 
-    voice_dry.note_on(60, 100, &params, SAMPLE_RATE);
-    voice_mod.note_on(60, 100, &params, SAMPLE_RATE);
+    voice_dry.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params);
+    voice_mod.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params);
 
     let mut out_dry = [0.0f32; BLOCK_SIZE];
     let mut out_mod = [0.0f32; BLOCK_SIZE];
 
     // Render several blocks to let modulation develop
     for _ in 0..16 {
-        voice_dry.render(&mut out_dry, &params, &empty_mod, SAMPLE_RATE);
-        voice_mod.render(&mut out_mod, &params, &mod_state, SAMPLE_RATE);
+        voice_dry.render(&mut out_dry, &params, &empty_mod);
+        voice_mod.render(&mut out_mod, &params, &mod_state);
     }
 
     // Compare outputs: they should differ due to filter cutoff modulation

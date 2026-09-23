@@ -1,3 +1,4 @@
+use chimera_core::{MidiNote, Velocity};
 use chimera_core::modulation::ModState;
 use chimera_core::dsp::drive::Drive;
 use chimera_core::dsp::filter::SvfFilter;
@@ -398,18 +399,18 @@ fn test_voice_filter_sweep_audible() {
     let f0 = freq;
 
     let measure = |cutoff: f32| -> f32 {
-        let mut voice = Voice::new();
+        let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
         let mut params = ParamSnapshot::default();
         // Pizza produces harmonics by default
         params.filter.cutoff = cutoff;
         params.filter.mode = 2; // LP4
 
-        voice.note_on(60, 100, &params, SR);
+        voice.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params);
 
         let mut all = Vec::new();
         let mut block = [0.0f32; 64];
         for _ in 0..32 {
-            voice.render(&mut block, &params, &empty_mod, SR);
+            voice.render(&mut block, &params, &empty_mod);
             all.extend_from_slice(&block);
         }
         harmonic_energy(&all, f0)
@@ -432,17 +433,17 @@ fn test_voice_drive_adds_grit() {
     let freq = 261.6;
 
     let measure = |drive_amount: f32| -> f32 {
-        let mut voice = Voice::new();
+        let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
         let mut params = ParamSnapshot::default();
         params.drive.drive = drive_amount;
         params.drive.mix = 1.0;
 
-        voice.note_on(60, 100, &params, SR);
+        voice.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params);
 
         let mut all = Vec::new();
         let mut block = [0.0f32; 64];
         for _ in 0..32 {
-            voice.render(&mut block, &params, &empty_mod, SR);
+            voice.render(&mut block, &params, &empty_mod);
             all.extend_from_slice(&block);
         }
         harmonic_energy(&all, freq)

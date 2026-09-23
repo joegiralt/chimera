@@ -6,6 +6,7 @@
 //! without threads). It verifies that UiState.params flows
 //! correctly through Voice.render().
 
+use chimera_core::{MidiNote, Velocity};
 use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::modulation::ModState;
 use chimera_core::dsp::voice::Voice;
@@ -20,14 +21,14 @@ fn sim_render(setup_ui: impl FnOnce(&mut UiState), note: u8, blocks: usize) -> V
     let mut ui = UiState::new();
     setup_ui(&mut ui);
 
-    let mut voice = Voice::new();
+    let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
     // This is what the audio callback does: read params, note_on, render
-    voice.note_on(note, 100, ui.params(), SR);
+    voice.note_on(MidiNote::new(note).unwrap(), Velocity::new(100).unwrap(), ui.params());
 
     let mut all = Vec::new();
     let mut block = [0.0f32; 64];
     for _ in 0..blocks {
-        voice.render(&mut block, ui.params(), &empty_mod, SR);
+        voice.render(&mut block, ui.params(), &empty_mod);
         all.extend_from_slice(&block);
     }
     all
@@ -369,14 +370,14 @@ fn test_desktop_mid_note_filter_sweep() {
     ui.params_mut().filter.cutoff = 10000.0;
     ui.params_mut().filter.mode = 2;
 
-    let mut voice = Voice::new();
-    voice.note_on(60, 100, ui.params(), SR);
+    let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
+    voice.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), ui.params());
 
     // Render with open filter
     let mut block = [0.0f32; 64];
     let mut before_energy = 0.0f32;
     for _ in 0..16 {
-        voice.render(&mut block, ui.params(), &empty_mod, SR);
+        voice.render(&mut block, ui.params(), &empty_mod);
         before_energy += block.iter().map(|s| s * s).sum::<f32>();
     }
 
@@ -385,7 +386,7 @@ fn test_desktop_mid_note_filter_sweep() {
 
     let mut after_energy = 0.0f32;
     for _ in 0..16 {
-        voice.render(&mut block, ui.params(), &empty_mod, SR);
+        voice.render(&mut block, ui.params(), &empty_mod);
         after_energy += block.iter().map(|s| s * s).sum::<f32>();
     }
 

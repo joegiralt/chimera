@@ -1,3 +1,4 @@
+use chimera_core::{MidiNote, Velocity};
 use chimera_core::modulation::ModState;
 use chimera_core::dsp::drive::Drive;
 use chimera_core::dsp::filter::SvfFilter;
@@ -191,10 +192,10 @@ fn test_folder_adds_harmonics() {
 #[test]
 fn test_voice_silent_when_idle() {
     let empty_mod = ModState::new();
-    let mut voice = Voice::new();
+    let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
     let params = ParamSnapshot::default();
     let mut output = [0.0f32; 64];
-    voice.render(&mut output, &params, &empty_mod, 48000);
+    voice.render(&mut output, &params, &empty_mod);
     let max = output.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
     assert!(max < 0.001, "idle voice should be silent");
 }
@@ -202,15 +203,15 @@ fn test_voice_silent_when_idle() {
 #[test]
 fn test_voice_produces_sound() {
     let empty_mod = ModState::new();
-    let mut voice = Voice::new();
+    let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
     let mut params = ParamSnapshot::default();
     // Pizza produces sound by default
 
-    voice.note_on(60, 100, &params, 48000);
+    voice.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params);
 
     let mut output = [0.0f32; 64];
     for _ in 0..4 {
-        voice.render(&mut output, &params, &empty_mod, 48000);
+        voice.render(&mut output, &params, &empty_mod);
     }
 
     let max = output.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
@@ -224,8 +225,8 @@ fn test_voice_produces_sound() {
 #[test]
 fn test_voice_filter_shapes_sound() {
     let empty_mod = ModState::new();
-    let mut voice_open = Voice::new();
-    let mut voice_closed = Voice::new();
+    let mut voice_open = Voice::new(chimera_hal::SAMPLE_RATE);
+    let mut voice_closed = Voice::new(chimera_hal::SAMPLE_RATE);
     let mut params_open = ParamSnapshot::default();
     let mut params_closed = ParamSnapshot::default();
 
@@ -236,15 +237,15 @@ fn test_voice_filter_shapes_sound() {
     params_closed.filter.cutoff = 100.0;
     params_closed.filter.mode = 2; // LP4
 
-    voice_open.note_on(60, 100, &params_open, 48000);
-    voice_closed.note_on(60, 100, &params_closed, 48000);
+    voice_open.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params_open);
+    voice_closed.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params_closed);
 
     let mut out_open = [0.0f32; 64];
     let mut out_closed = [0.0f32; 64];
 
     for _ in 0..8 {
-        voice_open.render(&mut out_open, &params_open, &empty_mod, 48000);
-        voice_closed.render(&mut out_closed, &params_closed, &empty_mod, 48000);
+        voice_open.render(&mut out_open, &params_open, &empty_mod);
+        voice_closed.render(&mut out_closed, &params_closed, &empty_mod);
     }
 
     // Closed filter should have less energy (high frequencies removed)
@@ -262,7 +263,7 @@ fn test_voice_filter_shapes_sound() {
 #[test]
 fn test_voice_output_bounded() {
     let empty_mod = ModState::new();
-    let mut voice = Voice::new();
+    let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
     let mut params = ParamSnapshot::default();
     params.pizza.crush = 0.7;
     params.drive.drive = 1.0;
@@ -270,11 +271,11 @@ fn test_voice_output_bounded() {
     params.folder.fold = 0.5;
     params.folder.mix = 1.0;
 
-    voice.note_on(60, 127, &params, 48000);
+    voice.note_on(MidiNote::new(60).unwrap(), Velocity::new(127).unwrap(), &params);
 
     let mut output = [0.0f32; 64];
     for _ in 0..20 {
-        voice.render(&mut output, &params, &empty_mod, 48000);
+        voice.render(&mut output, &params, &empty_mod);
         let max = output.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
         assert!(max < 10.0, "voice output should stay bounded, got {}", max);
     }

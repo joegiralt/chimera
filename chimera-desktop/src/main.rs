@@ -4,7 +4,7 @@ mod display;
 
 use chimera_core::ui::UiState;
 use chimera_core::ui::perf::PerfTracker;
-use chimera_hal::ChimeraDisplay;
+use chimera_hal::{ChimeraDisplay, MidiNote, Velocity};
 use controls::DesktopControls;
 use display::DesktopDisplay;
 use std::time::Instant;
@@ -16,7 +16,7 @@ fn main() {
 
     let mut ui = UiState::new();
     let mut perf = PerfTracker::new();
-    let mut current_note: Option<u8> = None;
+    let mut current_note: Option<MidiNote> = None;
     let mut octave: i8 = 0; // -2 to +2
     let mut frame_start = Instant::now();
 
@@ -37,10 +37,11 @@ fn main() {
         }
 
         // Piano keys
-        let note = piano_note(&keys).map(|n| (n as i8 + octave * 12).clamp(0, 127) as u8);
+        let note = piano_note(&keys)
+            .and_then(|n| MidiNote::new((n as i8 + octave * 12).clamp(0, 127) as u8));
         if note != current_note {
             if let Some(n) = note {
-                audio.note_on(n, 100);
+                audio.note_on(n, Velocity::DEFAULT);
             } else {
                 audio.note_off();
             }

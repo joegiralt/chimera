@@ -1,10 +1,14 @@
 //! Property-based tests: verify invariants hold for random parameter combinations.
 //! Uses a simple xorshift PRNG instead of proptest (no_std compatible).
 
+mod common;
+
+use chimera_core::{MidiNote, Velocity};
 use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::modulation::ModState;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::params::{EngineType, ParamSnapshot};
+use common::expects_sound;
 
 const SR: u32 = 48000;
 
@@ -42,13 +46,8 @@ impl Rng {
 fn random_params(rng: &mut Rng) -> ParamSnapshot {
     let mut p = ParamSnapshot::default();
 
-    // Engine type
-    let engine = rng.u8(1); // 0=Pizza, 1=Modal
-    p.engine = if engine == 0 {
-        EngineType::Pizza
-    } else {
-        EngineType::Modal
-    };
+    // Engine type: every engine (spec § Testing "Engines")
+    p.engine = EngineType::ALL[rng.u8(EngineType::ALL.len() as u8 - 1) as usize];
 
     // Pizza params
     p.pizza.shape = rng.f32();
@@ -104,12 +103,12 @@ fn prop_output_always_finite() {
         let params = random_params(&mut rng);
         let note = rng.note();
 
-        let mut voice = Voice::new();
-        voice.note_on(note, 100, &params, SR);
+        let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
+        voice.note_on(MidiNote::new(note).unwrap(), Velocity::new(100).unwrap(), &params);
 
         let mut block = [0.0f32; 64];
         for _ in 0..8 {
-            voice.render(&mut block, &params, &empty_mod, SR);
+            voice.render(&mut block, &params, &empty_mod);
 
             for (i, &s) in block.iter().enumerate() {
                 assert!(
@@ -137,12 +136,12 @@ fn prop_output_bounded() {
         let params = random_params(&mut rng);
         let note = rng.note();
 
-        let mut voice = Voice::new();
-        voice.note_on(note, 127, &params, SR);
+        let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
+        voice.note_on(MidiNote::new(note).unwrap(), Velocity::new(127).unwrap(), &params);
 
         let mut block = [0.0f32; 64];
         for _ in 0..16 {
-            voice.render(&mut block, &params, &empty_mod, SR);
+            voice.render(&mut block, &params, &empty_mod);
 
             let max = block.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
             assert!(
@@ -167,15 +166,18 @@ fn prop_note_on_produces_sound() {
     for trial in 0..50 {
         let params = random_params(&mut rng);
         let note = rng.note();
+        if !expects_sound(params.engine) {
+            continue;
+        }
 
-        let mut voice = Voice::new();
-        voice.note_on(note, 100, &params, SR);
+        let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
+        voice.note_on(MidiNote::new(note).unwrap(), Velocity::new(100).unwrap(), &params);
 
         let mut block = [0.0f32; 64];
         let mut total_max = 0.0f32;
 
         for _ in 0..16 {
-            voice.render(&mut block, &params, &empty_mod, SR);
+            voice.render(&mut block, &params, &empty_mod);
             let max = block.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
             total_max = total_max.max(max);
         }
@@ -217,21 +219,24 @@ fn prop_param_change_changes_output() {
         }
 
         let note = 60;
+        if !expects_sound(params_a.engine) {
+            continue;
+        }
 
         // Render A
-        let mut voice_a = Voice::new();
-        voice_a.note_on(note, 100, &params_a, SR);
+        let mut voice_a = Voice::new(chimera_hal::SAMPLE_RATE);
+        voice_a.note_on(MidiNote::new(note).unwrap(), Velocity::new(100).unwrap(), &params_a);
         let mut buf_a = [0.0f32; 64];
         for _ in 0..8 {
-            voice_a.render(&mut buf_a, &params_a, &empty_mod, SR);
+            voice_a.render(&mut buf_a, &params_a, &empty_mod);
         }
 
         // Render B
-        let mut voice_b = Voice::new();
-        voice_b.note_on(note, 100, &params_b, SR);
+        let mut voice_b = Voice::new(chimera_hal::SAMPLE_RATE);
+        voice_b.note_on(MidiNote::new(note).unwrap(), Velocity::new(100).unwrap(), &params_b);
         let mut buf_b = [0.0f32; 64];
         for _ in 0..8 {
-            voice_b.render(&mut buf_b, &params_b, &empty_mod, SR);
+            voice_b.render(&mut buf_b, &params_b, &empty_mod);
         }
 
         let diff: f32 = buf_a
@@ -276,13 +281,13 @@ fn prop_note_off_eventually_silences() {
         params.folder.fold = 0.0; // disable folder feedback path
         let note = rng.note();
 
-        let mut voice = Voice::new();
-        voice.note_on(note, 100, &params, SR);
+        let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
+        voice.note_on(MidiNote::new(note).unwrap(), Velocity::new(100).unwrap(), &params);
 
         let mut block = [0.0f32; 64];
         // Play for a bit
         for _ in 0..4 {
-            voice.render(&mut block, &params, &empty_mod, SR);
+            voice.render(&mut block, &params, &empty_mod);
         }
         // Note off
         voice.note_off();
@@ -290,7 +295,7 @@ fn prop_note_off_eventually_silences() {
         // Render until silent or max 1000 blocks (~2.6s)
         let mut silent = false;
         for _ in 0..1000 {
-            voice.render(&mut block, &params, &empty_mod, SR);
+            voice.render(&mut block, &params, &empty_mod);
             let max = block.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
             if max < 0.005 || !voice.is_active() {
                 silent = true;
@@ -327,12 +332,12 @@ fn verify_full_sweep(
         setup(&mut params);
         sweep(&mut params, val);
 
-        let mut voice = Voice::new();
-        voice.note_on(60, 100, &params, SR);
+        let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
+        voice.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params);
         let mut block = [0.0f32; 64];
         // Render enough blocks for damping/decay differences to manifest
         for _ in 0..32 {
-            voice.render(&mut block, &params, &empty_mod, SR);
+            voice.render(&mut block, &params, &empty_mod);
         }
         let rms = libm::sqrtf(block.iter().map(|s| s * s).sum::<f32>() / 128.0);
 
