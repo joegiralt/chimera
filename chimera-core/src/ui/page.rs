@@ -1,7 +1,10 @@
 use crate::block::{Block, ParamId};
+use crate::dsp::chorus::ChorusParams;
+use crate::dsp::delay::DelayParams;
 use crate::dsp::lfo::LfoParams;
 use crate::dsp::modal::ModalParams;
 use crate::dsp::pizza::PizzaParams;
+use crate::dsp::reverb::ReverbParams;
 use crate::params::{DriveParams, EnvParams, FilterParams, FmOpParams, FmParams, FolderParams, OutParams, ParamSnapshot};
 use crate::preset::ChainType;
 use crate::ui::chain::ChainNav;
@@ -259,35 +262,14 @@ impl PageId {
             PageId::FmEnv2 => read_block(&params.fm.operators[1], FM_ENV_PAGE),
             PageId::FmEnv3 => read_block(&params.fm.operators[2], FM_ENV_PAGE),
             PageId::FmEnv4 => read_block(&params.fm.operators[3], FM_ENV_PAGE),
-            PageId::Chorus => [
-                params.chorus.mode as f32 / 3.0,
-                params.chorus.rate,
-                params.chorus.depth,
-                params.chorus.mix,
-                0.0,
-                0.0,
-            ],
-            PageId::Delay => [
-                params.delay.time_ms / 1000.0,
-                params.delay.feedback,
-                params.delay.wow_flutter,
-                params.delay.saturation,
-                params.delay.tone,
-                params.delay.mix,
-            ],
-            PageId::Efx | PageId::MixReverb => [
-                params.reverb.reverb_type as f32 / 2.0,
-                params.reverb.time,
-                params.reverb.damping,
-                params.reverb.size,
-                params.reverb.mix,
-                0.0,
-            ],
+            PageId::Chorus => read_block(&params.chorus, CHORUS_PAGE),
+            PageId::Delay => read_block(&params.delay, DELAY_PAGE),
+            PageId::Efx | PageId::MixReverb => read_block(&params.reverb, REVERB_PAGE),
             PageId::Master => read_block(&params.out, OUT_PAGE),
         }
     }
 
-    /// Apply an encoder delta. Each tick = 1/128 of the parameter range.
+    /// Apply an encoder delta: `delta` ticks of the bound param's spec step.
     pub fn apply_encoder(&self, idx: usize, delta: i8, params: &mut ParamSnapshot) {
         if *self == PageId::FmOp && idx == 0 {
             // Operator select: 0-3
@@ -297,39 +279,13 @@ impl PageId {
         }
         if let Some((blk, id)) = self.resolve_mut(idx, params) {
             blk.nudge(id, delta);
-            return;
-        }
-        // Direct float manipulation (not Param structs)
-        match self {
-            PageId::Chorus => {
-                apply_chorus_encoder(idx, delta, &mut params.chorus);
-                return;
-            }
-            PageId::Delay => {
-                apply_delay_encoder(idx, delta, &mut params.delay);
-                return;
-            }
-            PageId::Efx | PageId::MixReverb => {
-                apply_reverb_encoder(idx, delta, &mut params.reverb);
-                return;
-            }
-            _ => {}
-        }
-        if let Some(param) = self.resolve_param_mut(idx, params) {
-            let step = (param.max - param.min) / 128.0;
-            param.nudge(delta as f32 * step);
         }
     }
 
-    /// Shift+encoder: snap to coarse jump points defined by the cell type.
-    /// The caller must supply the `ValFmt` for encoder `idx` (from `BlockDef.params[idx].format`).
-    pub fn snap_encoder(&self, idx: usize, delta: i8, fmt: ValFmt, params: &mut ParamSnapshot) {
+    /// Shift+encoder: snap to the coarse points of the bound param's format.
+    pub fn snap_encoder(&self, idx: usize, delta: i8, params: &mut ParamSnapshot) {
         if let Some((blk, id)) = self.resolve_mut(idx, params) {
             blk.snap(id, delta);
-            return;
-        }
-        if let Some(param) = self.resolve_param_mut(idx, params) {
-            param.snap_to(delta, fmt.snap_points());
         }
     }
 
@@ -398,18 +354,9 @@ impl PageId {
                 _ => None,
             },
             PageId::Mixer | PageId::Master => bind(&mut p.out, *OUT_PAGE.get(idx)?),
-            _ => None,
-        }
-    }
-
-    /// Resolve the mutable Param reference for encoder `idx` on this page.
-    fn resolve_param_mut<'a>(
-        &self,
-        idx: usize,
-        params: &'a mut ParamSnapshot,
-    ) -> Option<&'a mut crate::params::Param> {
-        match self {
-            PageId::DemoMatrix => None,
+            PageId::Chorus => bind(&mut p.chorus, *CHORUS_PAGE.get(idx)?),
+            PageId::Delay => bind(&mut p.delay, *DELAY_PAGE.get(idx)?),
+            PageId::Efx | PageId::MixReverb => bind(&mut p.reverb, *REVERB_PAGE.get(idx)?),
             _ => None,
         }
     }
@@ -460,6 +407,27 @@ const FM_ENV_PAGE: [ParamId; 6] = [
     FmOpParams::RATE_SCALING,
 ];
 const OUT_PAGE: [ParamId; 2] = [OutParams::VOLUME, OutParams::PAN];
+const CHORUS_PAGE: [ParamId; 4] = [
+    ChorusParams::MODE,
+    ChorusParams::RATE,
+    ChorusParams::DEPTH,
+    ChorusParams::MIX,
+];
+const DELAY_PAGE: [ParamId; 6] = [
+    DelayParams::TIME_MS,
+    DelayParams::FEEDBACK,
+    DelayParams::WOW_FLUTTER,
+    DelayParams::SATURATION,
+    DelayParams::TONE,
+    DelayParams::MIX,
+];
+const REVERB_PAGE: [ParamId; 5] = [
+    ReverbParams::REVERB_TYPE,
+    ReverbParams::TIME,
+    ReverbParams::DAMPING,
+    ReverbParams::SIZE,
+    ReverbParams::MIX,
+];
 const MODAL1_PAGE: [ParamId; 6] = [
     ModalParams::MODE,
     ModalParams::EXCITE,
@@ -489,65 +457,6 @@ fn read_block<const N: usize>(b: &dyn Block, ids: [ParamId; N]) -> [f32; 6] {
         *o = b.normalized(id);
     }
     out
-}
-
-fn apply_chorus_encoder(
-    idx: usize,
-    delta: i8,
-    chorus: &mut crate::dsp::chorus::ChorusParams,
-) {
-    let step = 1.0 / 128.0;
-    match idx {
-        0 => nudge_u8(&mut chorus.mode, delta, 3),
-        1 => nudge_float(&mut chorus.rate, delta, step),
-        2 => nudge_float(&mut chorus.depth, delta, step),
-        3 => nudge_float(&mut chorus.mix, delta, step),
-        _ => {}
-    }
-}
-
-fn apply_delay_encoder(
-    idx: usize,
-    delta: i8,
-    delay: &mut crate::dsp::delay::DelayParams,
-) {
-    match idx {
-        0 => {
-            // TIME: 10ms to 1000ms, logarithmic feel
-            delay.time_ms = (delay.time_ms + delta as f32 * 8.0).clamp(10.0, 1000.0);
-        }
-        1 => nudge_float(&mut delay.feedback, delta, 1.0 / 128.0),
-        2 => nudge_float(&mut delay.wow_flutter, delta, 1.0 / 128.0),
-        3 => nudge_float(&mut delay.saturation, delta, 1.0 / 128.0),
-        4 => nudge_float(&mut delay.tone, delta, 1.0 / 128.0),
-        5 => nudge_float(&mut delay.mix, delta, 1.0 / 128.0),
-        _ => {}
-    }
-}
-
-fn apply_reverb_encoder(
-    idx: usize,
-    delta: i8,
-    reverb: &mut crate::dsp::reverb::ReverbParams,
-) {
-    let step = 1.0 / 128.0;
-    match idx {
-        0 => nudge_u8(&mut reverb.reverb_type, delta, 2),
-        1 => nudge_float(&mut reverb.time, delta, step),
-        2 => nudge_float(&mut reverb.damping, delta, step),
-        3 => nudge_float(&mut reverb.size, delta, step),
-        4 => nudge_float(&mut reverb.mix, delta, step),
-        _ => {}
-    }
-}
-
-fn nudge_float(v: &mut f32, delta: i8, step: f32) {
-    *v = (*v + delta as f32 * step).clamp(0.0, 1.0);
-}
-
-fn nudge_u8(v: &mut u8, delta: i8, max: u8) {
-    let n = *v as i8 + delta;
-    *v = n.clamp(0, max as i8) as u8;
 }
 
 // ---------------------------------------------------------------------------

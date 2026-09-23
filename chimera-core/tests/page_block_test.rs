@@ -17,7 +17,7 @@ fn pizza_encoder_steps_like_before() {
 #[test]
 fn pizza_snap_now_works() {
     let mut p = ParamSnapshot::default();
-    PageId::Pizza.snap_encoder(1, 1, ValFmt::Uni, &mut p);
+    PageId::Pizza.snap_encoder(1, 1, &mut p);
     assert_eq!(p.pizza.crush, 100.0 / 127.0);
 }
 
@@ -55,9 +55,9 @@ fn modal_mode_reaches_sympathetic() {
 #[test]
 fn modal_mode_snap_lands_on_integer() {
     let mut p = ParamSnapshot::default();
-    PageId::EngineModal1.snap_encoder(0, 1, ValFmt::Int(3), &mut p);
+    PageId::EngineModal1.snap_encoder(0, 1, &mut p);
     assert_eq!(p.modal.mode, ResonatorMode::Sympathetic);
-    PageId::EngineModal1.snap_encoder(0, -1, ValFmt::Int(3), &mut p);
+    PageId::EngineModal1.snap_encoder(0, -1, &mut p);
     assert_eq!(p.modal.mode, ResonatorMode::String);
 }
 
@@ -90,7 +90,7 @@ fn drive_encoder_steps_like_before() {
 fn drive_snap_uses_spec_format() {
     let mut p = ParamSnapshot::default();
     // TONE is Bi: from the centre, the next point up is +43 (107/127).
-    PageId::Drive.snap_encoder(1, 1, ValFmt::Bi, &mut p);
+    PageId::Drive.snap_encoder(1, 1, &mut p);
     assert_eq!(p.drive.tone, 107.0 / 127.0);
 }
 
@@ -165,7 +165,7 @@ fn lfo_encoder_steps_like_before() {
 #[test]
 fn lfo_snap_now_works() {
     let mut p = ParamSnapshot::default();
-    PageId::Lfo.snap_encoder(1, 1, ValFmt::Int(4), &mut p);
+    PageId::Lfo.snap_encoder(1, 1, &mut p);
     assert_eq!(p.lfo.shape, 4);
 }
 
@@ -192,7 +192,7 @@ fn fm_pages_step_like_before() {
     assert_eq!(p.fm.operators[1].fine, 1);
     assert_eq!(PageId::FmOp.read_values(&p)[0], 1.0 / 3.0);
     // Review Focus 3: snapping a Stepped level lands on an integer.
-    PageId::FmOp.snap_encoder(2, 1, ValFmt::Uni, &mut p);
+    PageId::FmOp.snap_encoder(2, 1, &mut p);
     assert_eq!(p.fm.operators[1].level, 78.0); // 99 * 100/127 = 77.95 → 78
     PageId::FmOp.apply_encoder(0, -1, &mut p); // back to op A
 }
@@ -214,9 +214,9 @@ fn fm_fixed_op_pages_step_like_before() {
 #[test]
 fn fm_snap_lands_on_integers() {
     let mut p = ParamSnapshot::default();
-    PageId::FmRatio.snap_encoder(0, 1, ValFmt::Int(63), &mut p);
+    PageId::FmRatio.snap_encoder(0, 1, &mut p);
     assert_eq!(p.fm.operators[0].coarse, 63);
-    PageId::FmEnv1.snap_encoder(0, -1, ValFmt::Int(31), &mut p);
+    PageId::FmEnv1.snap_encoder(0, -1, &mut p);
     assert_eq!(p.fm.operators[0].attack_rate, 0);
 }
 
@@ -246,4 +246,19 @@ fn out_encoders_step_like_before() {
 fn mixer_read_values_keep_placeholders() {
     let p = ParamSnapshot::default();
     assert_eq!(PageId::Mixer.read_values(&p), [0.8, 0.5, 0.5, 0.0, 0.5, 0.0]);
+}
+
+// ── FX (Task 11) ─────────────────────────────────────────────────────
+
+#[test]
+fn fx_encoders_step_like_before() {
+    let mut p = ParamSnapshot::default();
+    PageId::Delay.apply_encoder(0, 2, &mut p);
+    assert_eq!(p.delay.time_ms, 375.0 + 2.0 * 8.0);
+    PageId::Chorus.apply_encoder(0, 5, &mut p);
+    assert_eq!(p.chorus.mode, 3);
+    PageId::MixReverb.apply_encoder(0, 5, &mut p);
+    assert_eq!(p.reverb.reverb_type, 2);
+    PageId::Efx.apply_encoder(4, 1, &mut p);
+    assert_eq!(p.reverb.mix, 1.0 / 128.0);
 }

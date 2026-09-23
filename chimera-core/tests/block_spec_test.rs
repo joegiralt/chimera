@@ -16,6 +16,9 @@ fn all_specs() -> Vec<(&'static str, &'static [ParamSpec])> {
         ("fm", &chimera_core::params::FM_SPECS[..]),
         ("fm_op", &chimera_core::params::FM_OP_SPECS[..]),
         ("out", &chimera_core::params::OUT_SPECS[..]),
+        ("chorus", &chimera_core::dsp::chorus::CHORUS_SPECS[..]),
+        ("delay", &chimera_core::dsp::delay::DELAY_SPECS[..]),
+        ("reverb", &chimera_core::dsp::reverb::REVERB_SPECS[..]),
     ]
 }
 
