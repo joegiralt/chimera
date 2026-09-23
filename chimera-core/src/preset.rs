@@ -1,4 +1,3 @@
-use crate::addr::{BlockRef, Op, ParamAddr};
 use crate::mod_path::ModDestRegistry;
 use crate::modulation::ModState;
 use crate::params::{EngineType, ParamSnapshot};
@@ -52,28 +51,14 @@ impl Patch {
         let mut name = [0u8; NAME_LEN];
         let tag = b"(init)";
         name[..tag.len()].copy_from_slice(tag);
-        let params = ParamSnapshot::for_engine(chain_type.engine());
-        let (mod_state, dest_registry) = match chain_type {
-            ChainType::PizzaPoly | ChainType::Modal => (ModState::default(), ModDestRegistry::new()),
-            ChainType::Fm => {
-                // Pre-wire: 4 envelope sources → 4 FM operator levels
-                let mut reg = ModDestRegistry::new();
-                for (op, label) in [(Op::A, *b"O1 Lvl\0\0"), (Op::B, *b"O2 Lvl\0\0"), (Op::C, *b"O3 Lvl\0\0"), (Op::D, *b"O4 Lvl\0\0")] {
-                    let _ = reg.add(ParamAddr::new(BlockRef::FmOp(op), crate::params::FmOpParams::LEVEL), label);
-                }
-                let mut ms = ModState::from_registry(&reg, 4);
-                for i in 0..4 {
-                    ms.set_amount(i, i, 127); // E(i+1) → Op(i+1) Level full
-                }
-                (ms, reg)
-            }
-        };
         Self {
             name,
             chain_type,
-            params,
-            mod_state,
-            dest_registry,
+            params: ParamSnapshot::for_engine(chain_type.engine()),
+            // No pre-wired routes: the matrix starts empty on every chain
+            // (spec §4 "FM pre-wire removed").
+            mod_state: ModState::new(),
+            dest_registry: ModDestRegistry::new(),
         }
     }
 

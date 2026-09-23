@@ -19,7 +19,9 @@ const GOLDENS: &[(&str, u64, [u32; 8])] = &[
     ("fm_init", 0x9bfe44d54ef0385b, [898059883, 1045152839, 1054792150, 3163439516, 3202136915, 3201882817, 0, 0]),
     ("fm_lfo_cutoff", 0x34b678f3574b1538, [898059883, 1045152839, 1054642467, 3163439516, 3202136915, 3201882817, 0, 0]),
     ("fm_lfo_op_a_level", 0x2016ba5789cfbf28, [898059883, 1045152839, 1049001337, 3163439517, 3202136915, 3201882817, 0, 0]),
-    ("fm_init_patch_mod", 0xadc0aa292dba2808, [898059883, 1045018283, 1048839351, 1049419518, 3201107490, 3194638958, 0, 0]),
+    // Re-recorded in Task 22 (spec step 8): the FM pre-wire is gone, so the
+    // FM init patch's own ModState is empty and this equals `fm_init`.
+    ("fm_init_patch_mod", 0x9bfe44d54ef0385b, [898059883, 1045152839, 1054792150, 3163439516, 3202136915, 3201882817, 0, 0]),
     ("modal_init", 0x90f1197c153d0b05, [3146805428, 3183273506, 3195882399, 1063217482, 3191764060, 3172592491, 993906163, 1000698095]),
     ("modal_lfo_cutoff", 0x40afa2290a49dae2, [3146805428, 3183273506, 3196374285, 1063217482, 3191764060, 3172592491, 993770242, 999762977]),
     ("va_init", 0x5125674880996325, [0, 0, 0, 0, 0, 0, 0, 0]),
@@ -69,6 +71,13 @@ fn known_broken_goldens_have_issues() {
         assert!(Case::ALL.iter().any(|c| c.name() == *case), "unknown case {case}");
         assert!(root.join(issue).exists(), "{case}: missing {issue}");
     }
+}
+
+/// Spec step 8: without the pre-wire, the FM init patch renders exactly like
+/// FM init params with no modulation.
+#[test]
+fn fm_init_patch_has_no_prewire() {
+    assert_eq!(fnv1a(&render_case(Case::FmInitPatchMod)), fnv1a(&render_case(Case::FmInit)));
 }
 
 #[test]

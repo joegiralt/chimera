@@ -72,11 +72,8 @@ impl UiState {
         renderer.snap_to_current(page_values(page, nav.active_block_def(), &project.tracks[0].patch.params, Op::A));
 
         let mut matrix_state = MatrixState::new();
-        // Build source list from the chain's mod block sub-pages
-        let chain = nav.active_chain();
-        if let Some(last_block) = chain.blocks.last() {
-            matrix_state.rebuild_sources(last_block.sub_pages);
-        }
+        // Source rows = what the chain's voice produces (ENV, LFO)
+        matrix_state.rebuild_sources(nav.active_chain().mod_sources);
         // Rebuild dests from the patch's ModDestRegistry
         matrix_state.rebuild_dests_from_registry(&project.tracks[0].patch.dest_registry);
 
@@ -220,10 +217,7 @@ impl UiState {
                 self.nav.sub_page = 0;
                 self.nav.chain_type = self.project.tracks[sel_track].patch.chain_type;
                 // Rebuild mod matrix sources for the new chain type
-                let chain = self.nav.active_chain();
-                if let Some(last_block) = chain.blocks.last() {
-                    self.matrix_state.rebuild_sources(last_block.sub_pages);
-                }
+                self.matrix_state.rebuild_sources(self.nav.active_chain().mod_sources);
                 self.matrix_state.rebuild_dests_from_registry(
                     &self.project.tracks[sel_track].patch.dest_registry
                 );

@@ -467,6 +467,10 @@ pub static FM_ENV4: BlockDef = BlockDef {
 // Chain templates
 // ---------------------------------------------------------------------------
 
+/// Mod sources every Part voice produces: source 0 = amp envelope, 1 = LFO
+/// (`Voice::render`).
+pub static PART_MOD_SOURCES: [&str; 2] = ["ENV", "LFO"];
+
 static PIZZA_BLOCK: ChainBlock = ChainBlock { def: &PIZZA, sub_pages: &[] };
 
 static MOD_MATRIX_SUB_PAGES: [&BlockDef; 2] = [&ENVELOPE, &LFO];
@@ -482,6 +486,7 @@ static PIZZA_POLY_BLOCKS: [ChainBlock; 5] = [
 pub static PIZZA_POLY_CHAIN: ChainDef2 = ChainDef2 {
     name: "Pizza",
     blocks: &PIZZA_POLY_BLOCKS,
+    mod_sources: &PART_MOD_SOURCES,
 };
 
 static KICK_BLOCKS: [ChainBlock; 3] = [
@@ -493,6 +498,7 @@ static KICK_BLOCKS: [ChainBlock; 3] = [
 pub static KICK_CHAIN: ChainDef2 = ChainDef2 {
     name: "Kick",
     blocks: &KICK_BLOCKS,
+    mod_sources: &PART_MOD_SOURCES,
 };
 
 static MODAL_SUB_PAGES: [&BlockDef; 1] = [&MODAL_2];
@@ -506,6 +512,7 @@ static MODAL_PLUCK_BLOCKS: [ChainBlock; 3] = [
 pub static MODAL_PLUCK_CHAIN: ChainDef2 = ChainDef2 {
     name: "Modal Pluck",
     blocks: &MODAL_PLUCK_BLOCKS,
+    mod_sources: &PART_MOD_SOURCES,
 };
 
 static FM_SUB_PAGES: [&BlockDef; 2] = [&FM_OP, &FM_RATIO];
@@ -523,6 +530,7 @@ static FM_BLOCKS: [ChainBlock; 5] = [
 pub static FM_CHAIN: ChainDef2 = ChainDef2 {
     name: "FM",
     blocks: &FM_BLOCKS,
+    mod_sources: &PART_MOD_SOURCES,
 };
 
 static MIX_BLOCKS: [ChainBlock; 5] = [
@@ -536,6 +544,7 @@ static MIX_BLOCKS: [ChainBlock; 5] = [
 pub static MIX_CHAIN: ChainDef2 = ChainDef2 {
     name: "Mix",
     blocks: &MIX_BLOCKS,
+    mod_sources: &[],
 };
 
 static ENVELOPE_BLOCKS: [ChainBlock; 3] = [
@@ -547,6 +556,7 @@ static ENVELOPE_BLOCKS: [ChainBlock; 3] = [
 pub static ENVELOPE_CHAIN: ChainDef2 = ChainDef2 {
     name: "Envelopes",
     blocks: &ENVELOPE_BLOCKS,
+    mod_sources: &[],
 };
 
 // ---------------------------------------------------------------------------
@@ -627,6 +637,7 @@ static MIXER_CHANNEL_BLOCKS: [ChainBlock; 4] = [
 pub static MIXER_CHANNEL_CHAIN: ChainDef2 = ChainDef2 {
     name: "Mixer",
     blocks: &MIXER_CHANNEL_BLOCKS,
+    mod_sources: &[],
 };
 
 // ---------------------------------------------------------------------------
@@ -710,6 +721,7 @@ static SYSTEM_BLOCKS: [ChainBlock; 5] = [
 pub static SYSTEM_CHAIN: ChainDef2 = ChainDef2 {
     name: "System",
     blocks: &SYSTEM_BLOCKS,
+    mod_sources: &[],
 };
 
 // ---------------------------------------------------------------------------
@@ -800,4 +812,5 @@ static DEMO_BLOCKS: [ChainBlock; 5] = [
 pub static DEMO_CHAIN: ChainDef2 = ChainDef2 {
     name: "Demo",
     blocks: &DEMO_BLOCKS,
+    mod_sources: &[],
 };

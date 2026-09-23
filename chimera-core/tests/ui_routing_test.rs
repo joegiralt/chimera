@@ -130,3 +130,24 @@ fn selected_op_route_is_concrete() {
     assert!(!primed(&ui).contains(&ParamAddr::new(BlockRef::FmOp(Op::C), FmOpParams::FEEDBACK)));
     assert_eq!(ui.project.tracks[0].patch.params.fm.operators[1].feedback, 1.0);
 }
+
+/// Spec §4: after loading the FM init patch the matrix rows are ENV and LFO
+/// (they used to be "Op1 Env".."Op4 Env", of which only two produced values).
+#[test]
+fn fm_matrix_rows_are_env_and_lfo() {
+    use chimera_core::preset::POOL_SIZE;
+
+    let mut ui = UiState::new();
+    ui.handle_input(
+        &MockControls::new()
+            .button(ButtonId::Edit, ButtonState::Held)
+            .button(ButtonId::B1, ButtonState::Pressed),
+    );
+    ui.handle_input(&MockControls::new().encoder(EncoderId::Main, (POOL_SIZE + 2) as i8));
+    press(&mut ui, ButtonId::Edit); // load "(init) FM"
+    let rows: Vec<&str> = (0..ui.matrix_state.num_sources)
+        .map(|i| ui.matrix_state.sources[i].unwrap().name)
+        .collect();
+    assert_eq!(rows, ["ENV", "LFO"]);
+    assert_eq!(ui.matrix_state.num_dests, 0);
+}

@@ -149,6 +149,8 @@ impl ChainBlock {
 pub struct ChainDef2 {
     pub name: &'static str,
     pub blocks: &'static [ChainBlock],
+    /// Mod matrix source rows, in `Voice`'s source order (spec §4).
+    pub mod_sources: &'static [&'static str],
 }
 
 impl ChainDef2 {

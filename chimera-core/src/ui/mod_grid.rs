@@ -46,7 +46,7 @@ impl ModDest {
     }
 }
 
-/// A source in the mod matrix — one per modulator sub-page.
+/// A source row in the mod matrix.
 #[derive(Clone, Copy, Debug)]
 pub struct ModSource {
     pub name: &'static str,
@@ -87,13 +87,13 @@ impl MatrixState {
         state
     }
 
-    /// Rebuild the source list from the mod matrix block's sub-pages.
+    /// Rebuild the source rows from the chain's `mod_sources`.
     /// Call this when the chain changes or at init.
-    pub fn rebuild_sources(&mut self, sub_pages: &[&'static crate::ui::block_def::BlockDef]) {
+    pub fn rebuild_sources(&mut self, names: &[&'static str]) {
         self.num_sources = 0;
-        for def in sub_pages {
+        for &name in names {
             if self.num_sources < MAX_SOURCES {
-                self.sources[self.num_sources] = Some(ModSource { name: def.name });
+                self.sources[self.num_sources] = Some(ModSource { name });
                 self.num_sources += 1;
             }
         }
