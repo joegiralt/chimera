@@ -345,40 +345,121 @@ impl Block for FolderParams {
     }
 }
 
-/// Parameters for one FM operator.
+/// Parameters for one FM operator. Stepped params that are modulatable
+/// (`level`, `feedback`) are `f32` so a modulated copy can hold fractional
+/// values (the DSP truncates `as u8`); the others keep integer types (plan D18).
 #[derive(Clone, Copy, Debug)]
 pub struct FmOpParams {
-    pub waveform: Param,       // 0.0–7.0 (integer steps)
-    pub coarse: Param,         // 0.0–63.0 (integer steps)
-    pub fine: Param,           // 0.0–15.0 (integer steps)
-    pub level: Param,          // 0.0–99.0 (integer steps)
-    pub feedback: Param,       // 0.0–7.0 (integer steps)
-    pub detune: Param,         // -7.0–7.0 (integer steps)
-    pub velocity_sens: Param,  // 0.0–7.0 (integer steps)
-    pub attack_rate: Param,    // 0.0–31.0 (integer steps)
-    pub decay1_rate: Param,    // 0.0–31.0 (integer steps)
-    pub decay1_level: Param,   // 0.0–15.0 (integer steps)
-    pub decay2_rate: Param,    // 0.0–31.0 (integer steps)
-    pub release_rate: Param,   // 1.0–15.0 (integer steps)
-    pub rate_scaling: Param,   // 0.0–3.0 (integer steps)
+    pub waveform: u8,      // 0–7
+    pub coarse: u8,        // 0–63
+    pub fine: u8,          // 0–15
+    pub level: f32,        // 0–99 (integer steps)
+    pub feedback: f32,     // 0–7 (integer steps)
+    pub detune: i8,        // -7–7
+    pub velocity_sens: u8, // 0–7
+    pub attack_rate: u8,   // 0–31
+    pub decay1_rate: u8,   // 0–31
+    pub decay1_level: u8,  // 0–15
+    pub decay2_rate: u8,   // 0–31
+    pub release_rate: u8,  // 0–15 (plan D4)
+    pub rate_scaling: u8,  // 0–3
 }
 
 impl Default for FmOpParams {
     fn default() -> Self {
         Self {
-            waveform: Param::new(0.0, 7.0, 0.0),
-            coarse: Param::new(0.0, 63.0, 4.0),
-            fine: Param::new(0.0, 15.0, 0.0),
-            level: Param::new(0.0, 99.0, 0.0),
-            feedback: Param::new(0.0, 7.0, 0.0),
-            detune: Param::new(-7.0, 7.0, 0.0),
-            velocity_sens: Param::new(0.0, 7.0, 0.0),
-            attack_rate: Param::new(0.0, 31.0, 31.0),
-            decay1_rate: Param::new(0.0, 31.0, 0.0),
-            decay1_level: Param::new(0.0, 15.0, 15.0),
-            decay2_rate: Param::new(0.0, 31.0, 0.0),
-            release_rate: Param::new(1.0, 15.0, 15.0),
-            rate_scaling: Param::new(0.0, 3.0, 0.0),
+            waveform: 0,
+            coarse: 4,
+            fine: 0,
+            level: 0.0,
+            feedback: 0.0,
+            detune: 0,
+            velocity_sens: 0,
+            attack_rate: 31,
+            decay1_rate: 0,
+            decay1_level: 15,
+            decay2_rate: 0,
+            release_rate: 15,
+            rate_scaling: 0,
+        }
+    }
+}
+
+impl FmOpParams {
+    pub const WAVEFORM: ParamId = ParamId(0);
+    pub const COARSE: ParamId = ParamId(1);
+    pub const FINE: ParamId = ParamId(2);
+    pub const LEVEL: ParamId = ParamId(3);
+    pub const FEEDBACK: ParamId = ParamId(4);
+    pub const DETUNE: ParamId = ParamId(5);
+    pub const VELOCITY_SENS: ParamId = ParamId(6);
+    pub const ATTACK_RATE: ParamId = ParamId(7);
+    pub const DECAY1_RATE: ParamId = ParamId(8);
+    pub const DECAY1_LEVEL: ParamId = ParamId(9);
+    pub const DECAY2_RATE: ParamId = ParamId(10);
+    pub const RELEASE_RATE: ParamId = ParamId(11);
+    pub const RATE_SCALING: ParamId = ParamId(12);
+}
+
+/// Level and feedback are read every block (`FmOperator::update_live`);
+/// waveform is too, but it is a choice. Ratios, detune and the envelope are
+/// read only at note-on, so they are not modulatable.
+pub static FM_OP_SPECS: [ParamSpec; 13] = [
+    ParamSpec::choice(0, "WAVE", ValFmt::Int(7), 7.0, 0.0),
+    ParamSpec::stepped(1, "CRSE", ValFmt::Int(63), 0.0, 63.0, 4.0, false),
+    ParamSpec::stepped(2, "FINE", ValFmt::Int(15), 0.0, 15.0, 0.0, false),
+    ParamSpec::stepped(3, "LEVEL", ValFmt::Uni, 0.0, 99.0, 0.0, true),
+    ParamSpec::stepped(4, "FDBK", ValFmt::Int(7), 0.0, 7.0, 0.0, true),
+    ParamSpec::stepped(5, "DETUN", ValFmt::Bi, -7.0, 7.0, 0.0, false),
+    ParamSpec::stepped(6, "V.SNS", ValFmt::Int(7), 0.0, 7.0, 0.0, false),
+    ParamSpec::stepped(7, "AR", ValFmt::Int(31), 0.0, 31.0, 31.0, false),
+    ParamSpec::stepped(8, "D1R", ValFmt::Int(31), 0.0, 31.0, 0.0, false),
+    ParamSpec::stepped(9, "D1L", ValFmt::Int(15), 0.0, 15.0, 15.0, false),
+    ParamSpec::stepped(10, "D2R", ValFmt::Int(31), 0.0, 31.0, 0.0, false),
+    ParamSpec::stepped(11, "RR", ValFmt::Int(15), 0.0, 15.0, 15.0, false),
+    ParamSpec::stepped(12, "RS", ValFmt::Int(3), 0.0, 3.0, 0.0, false),
+];
+
+impl Block for FmOpParams {
+    fn specs(&self) -> &'static [ParamSpec] {
+        &FM_OP_SPECS
+    }
+
+    fn get(&self, id: ParamId) -> f32 {
+        match id {
+            Self::WAVEFORM => self.waveform as f32,
+            Self::COARSE => self.coarse as f32,
+            Self::FINE => self.fine as f32,
+            Self::LEVEL => self.level,
+            Self::FEEDBACK => self.feedback,
+            Self::DETUNE => self.detune as f32,
+            Self::VELOCITY_SENS => self.velocity_sens as f32,
+            Self::ATTACK_RATE => self.attack_rate as f32,
+            Self::DECAY1_RATE => self.decay1_rate as f32,
+            Self::DECAY1_LEVEL => self.decay1_level as f32,
+            Self::DECAY2_RATE => self.decay2_rate as f32,
+            Self::RELEASE_RATE => self.release_rate as f32,
+            Self::RATE_SCALING => self.rate_scaling as f32,
+            _ => 0.0,
+        }
+    }
+
+    fn write(&mut self, id: ParamId, v: f32) {
+        match id {
+            Self::WAVEFORM => self.waveform = v as u8,
+            Self::COARSE => self.coarse = v as u8,
+            Self::FINE => self.fine = v as u8,
+            Self::LEVEL => self.level = v,
+            Self::FEEDBACK => self.feedback = v,
+            Self::DETUNE => self.detune = v as i8,
+            Self::VELOCITY_SENS => self.velocity_sens = v as u8,
+            Self::ATTACK_RATE => self.attack_rate = v as u8,
+            Self::DECAY1_RATE => self.decay1_rate = v as u8,
+            Self::DECAY1_LEVEL => self.decay1_level = v as u8,
+            Self::DECAY2_RATE => self.decay2_rate = v as u8,
+            Self::RELEASE_RATE => self.release_rate = v as u8,
+            Self::RATE_SCALING => self.rate_scaling = v as u8,
+            _ => {}
         }
     }
 }
@@ -386,22 +467,48 @@ impl Default for FmOpParams {
 /// Parameters for the 4-operator FM engine.
 #[derive(Clone, Copy, Debug)]
 pub struct FmParams {
-    pub algorithm: Param,           // 0.0–7.0 (integer steps)
+    pub algorithm: u8, // 0–7
     pub operators: [FmOpParams; 4],
 }
 
 impl Default for FmParams {
     fn default() -> Self {
         let mut op0 = FmOpParams::default();
-        op0.level = Param::new(0.0, 99.0, 99.0);
+        op0.level = 99.0;
         Self {
-            algorithm: Param::new(0.0, 7.0, 0.0),
+            algorithm: 0,
             operators: [
                 op0,
                 FmOpParams::default(),
                 FmOpParams::default(),
                 FmOpParams::default(),
             ],
+        }
+    }
+}
+
+impl FmParams {
+    pub const ALGORITHM: ParamId = ParamId(0);
+}
+
+/// Engine-level FM params. Operators are separate blocks (`FmOpParams`).
+pub static FM_SPECS: [ParamSpec; 1] = [ParamSpec::choice(0, "ALG", ValFmt::Int(7), 7.0, 0.0)];
+
+impl Block for FmParams {
+    fn specs(&self) -> &'static [ParamSpec] {
+        &FM_SPECS
+    }
+
+    fn get(&self, id: ParamId) -> f32 {
+        match id {
+            Self::ALGORITHM => self.algorithm as f32,
+            _ => 0.0,
+        }
+    }
+
+    fn write(&mut self, id: ParamId, v: f32) {
+        if id == Self::ALGORITHM {
+            self.algorithm = v as u8;
         }
     }
 }

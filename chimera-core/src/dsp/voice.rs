@@ -11,7 +11,7 @@ use crate::dsp::pizza::{PizzaOsc, PizzaParams};
 use crate::dsp::wavefolder::Wavefolder;
 use crate::mod_path::ParamPath;
 use crate::modulation::{ModState, MAX_MOD_SOURCES};
-use crate::params::{DriveParams, EngineType, FilterParams, FolderParams, ParamSnapshot};
+use crate::params::{DriveParams, EngineType, FilterParams, FmOpParams, FolderParams, ParamSnapshot};
 
 /// Complete voice signal chain:
 /// [Engine (Pizza/Modal)] → [Drive] → [Filter] → [Wavefolder]
@@ -160,7 +160,7 @@ impl Voice {
                     // Level (param index 2 in FmOpParams)
                     let offset = mod_state.compute_offset(&mod_values, ParamPath::FmOp { op, param: 2 });
                     if offset != 0.0 {
-                        mod_fm.operators[op as usize].level.apply_mod_offset(offset);
+                        apply_offset(&mut mod_fm.operators[op as usize], FmOpParams::LEVEL, offset);
                     }
                     // Could add more modulatable FM params here in the future:
                     // coarse (1), feedback (3), detune (4), etc.
