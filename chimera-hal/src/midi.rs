@@ -1,14 +1,19 @@
-//! MIDI input via USART1 at 31250 baud.
-//! This module is not directly used in main.rs — MIDI rx is split
-//! from the serial peripheral and polled directly.
-//! This file provides the MIDI parser for future use.
+//! MIDI byte-stream parser — the trust boundary where raw bytes become
+//! `MidiNote`/`Velocity`. Hardware-independent (moved from chimera-stm32 so
+//! it is host-testable); the firmware will feed it bytes from USART1 @ 31250.
 
-use chimera_hal::MidiMessage;
+use crate::{MidiMessage, MidiNote, Velocity};
 
 pub struct MidiParser {
     running_status: u8,
     data: [u8; 2],
     data_idx: usize,
+}
+
+impl Default for MidiParser {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MidiParser {
@@ -58,23 +63,16 @@ impl MidiParser {
         let channel = self.running_status & 0x0F;
         match self.running_status & 0xF0 {
             0x90 => {
-                if self.data[1] == 0 {
-                    Some(MidiMessage::NoteOff {
-                        channel,
-                        note: self.data[0],
-                        velocity: 0,
-                    })
-                } else {
-                    Some(MidiMessage::NoteOn {
-                        channel,
-                        note: self.data[0],
-                        velocity: self.data[1],
-                    })
+                let note = MidiNote::new(self.data[0])?;
+                match Velocity::new(self.data[1]) {
+                    Some(velocity) => Some(MidiMessage::NoteOn { channel, note, velocity }),
+                    // Note-on with velocity 0 is a note-off (MIDI 1.0 spec).
+                    None => Some(MidiMessage::NoteOff { channel, note, velocity: 0 }),
                 }
             }
             0x80 => Some(MidiMessage::NoteOff {
                 channel,
-                note: self.data[0],
+                note: MidiNote::new(self.data[0])?,
                 velocity: self.data[1],
             }),
             0xB0 => Some(MidiMessage::ControlChange {

@@ -54,9 +54,9 @@ impl SvfFilter {
 
     pub fn process(&mut self, buf: &mut [f32], params: &FilterParams, sample_rate: u32) {
         let mode = FilterMode::from_u8(params.mode);
-        let cutoff = params.cutoff.value;
-        let reso = params.resonance.value;
-        let drive = params.drive.value;
+        let cutoff = params.cutoff;
+        let reso = params.resonance;
+        let drive = params.drive;
 
         let fc = cutoff.min(sample_rate as f32 * 0.49);
         let g = crate::dsp::fast_tan(core::f32::consts::PI * fc / sample_rate as f32);

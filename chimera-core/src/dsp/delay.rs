@@ -2,6 +2,7 @@
 //! Inspired by Roland Space Echo / analog tape delay character.
 
 use chimera_hal::BLOCK_SIZE;
+use crate::block::{Block, ParamId, ParamSpec, ValFmt};
 
 /// Max delay: ~1 second at 48kHz
 const MAX_DELAY_SAMPLES: usize = 48000;
@@ -32,6 +33,55 @@ impl Default for DelayParams {
             saturation: 0.2,
             tone: 0.6,
             mix: 0.0, // off by default
+        }
+    }
+}
+
+impl DelayParams {
+    pub const TIME_MS: ParamId = ParamId(0);
+    pub const FEEDBACK: ParamId = ParamId(1);
+    pub const WOW_FLUTTER: ParamId = ParamId(2);
+    pub const SATURATION: ParamId = ParamId(3);
+    pub const TONE: ParamId = ParamId(4);
+    pub const MIX: ParamId = ParamId(5);
+}
+
+/// Delay runs outside `Voice` (desktop only): nothing is modulatable.
+pub static DELAY_SPECS: [ParamSpec; 6] = [
+    ParamSpec::continuous(0, "TIME", ValFmt::Uni, 10.0, 1000.0, 375.0, 8.0, false),
+    ParamSpec::continuous(1, "FDBK", ValFmt::Uni, 0.0, 1.0, 0.4, 1.0 / 128.0, false),
+    ParamSpec::continuous(2, "WOW", ValFmt::Uni, 0.0, 1.0, 0.15, 1.0 / 128.0, false),
+    ParamSpec::continuous(3, "SAT", ValFmt::Uni, 0.0, 1.0, 0.2, 1.0 / 128.0, false),
+    ParamSpec::continuous(4, "TONE", ValFmt::Uni, 0.0, 1.0, 0.6, 1.0 / 128.0, false),
+    ParamSpec::continuous(5, "MIX", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false),
+];
+
+impl Block for DelayParams {
+    fn specs(&self) -> &'static [ParamSpec] {
+        &DELAY_SPECS
+    }
+
+    fn get(&self, id: ParamId) -> f32 {
+        match id {
+            Self::TIME_MS => self.time_ms,
+            Self::FEEDBACK => self.feedback,
+            Self::WOW_FLUTTER => self.wow_flutter,
+            Self::SATURATION => self.saturation,
+            Self::TONE => self.tone,
+            Self::MIX => self.mix,
+            _ => 0.0,
+        }
+    }
+
+    fn write(&mut self, id: ParamId, v: f32) {
+        match id {
+            Self::TIME_MS => self.time_ms = v,
+            Self::FEEDBACK => self.feedback = v,
+            Self::WOW_FLUTTER => self.wow_flutter = v,
+            Self::SATURATION => self.saturation = v,
+            Self::TONE => self.tone = v,
+            Self::MIX => self.mix = v,
+            _ => {}
         }
     }
 }

@@ -1,19 +1,14 @@
+//! The mod destination registry: parameters a patch has primed for
+//! modulation, by semantic address (spec §2, §4).
+
+use crate::addr::ParamAddr;
+
 pub const MAX_REGISTRY_DESTS: usize = 32;
 pub const LABEL_LEN: usize = 8;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ParamPath {
-    /// Standard chain block param: block node index + encoder index
-    Block { block: u8, param: u8 },
-    /// FM operator param: operator index (0-3) + param within operator
-    FmOp { op: u8, param: u8 },
-    /// FM operator envelope param: operator index (0-3) + envelope param
-    FmEnv { op: u8, param: u8 },
-}
-
 #[derive(Clone, Copy, Debug)]
 pub struct ModDestEntry {
-    pub path: ParamPath,
+    pub addr: ParamAddr,
     pub label: [u8; LABEL_LEN],
 }
 
@@ -24,10 +19,18 @@ impl ModDestEntry {
     }
 }
 
+/// Why `ModDestRegistry::add` refused a destination.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RegistryError {
+    /// The address's spec is not modulatable.
+    NotModulatable,
+    Full,
+}
+
 #[derive(Clone)]
 pub struct ModDestRegistry {
-    pub entries: [Option<ModDestEntry>; MAX_REGISTRY_DESTS],
-    pub count: usize,
+    entries: [Option<ModDestEntry>; MAX_REGISTRY_DESTS],
+    count: usize,
 }
 
 impl ModDestRegistry {
@@ -38,48 +41,48 @@ impl ModDestRegistry {
         }
     }
 
-    pub fn add(&mut self, path: ParamPath, label: [u8; LABEL_LEN]) {
-        // No duplicates
-        if self.is_primed(path) {
-            return;
+    pub fn len(&self) -> usize {
+        self.count
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.count == 0
+    }
+
+    /// Prime `addr` as a mod destination. Refuses non-modulatable addresses
+    /// (spec §4). Priming an already primed address is a no-op success.
+    pub fn add(&mut self, addr: ParamAddr, label: [u8; LABEL_LEN]) -> Result<(), RegistryError> {
+        if !addr.modulatable() {
+            return Err(RegistryError::NotModulatable);
         }
-        // Find first empty slot
+        if self.is_primed(addr) {
+            return Ok(());
+        }
         if self.count >= MAX_REGISTRY_DESTS {
-            return;
+            return Err(RegistryError::Full);
         }
-        self.entries[self.count] = Some(ModDestEntry { path, label });
+        self.entries[self.count] = Some(ModDestEntry { addr, label });
         self.count += 1;
+        Ok(())
     }
 
-    pub fn remove(&mut self, path: ParamPath) {
-        for i in 0..self.count {
-            if let Some(entry) = &self.entries[i] {
-                if entry.path == path {
-                    // Shift remaining entries down
-                    for j in i..self.count - 1 {
-                        self.entries[j] = self.entries[j + 1];
-                    }
-                    self.entries[self.count - 1] = None;
-                    self.count -= 1;
-                    return;
-                }
+    pub fn remove(&mut self, addr: ParamAddr) {
+        if let Some(i) = self.find(addr) {
+            // Shift remaining entries down
+            for j in i..self.count - 1 {
+                self.entries[j] = self.entries[j + 1];
             }
+            self.entries[self.count - 1] = None;
+            self.count -= 1;
         }
     }
 
-    pub fn find(&self, path: ParamPath) -> Option<usize> {
-        for i in 0..self.count {
-            if let Some(entry) = &self.entries[i] {
-                if entry.path == path {
-                    return Some(i);
-                }
-            }
-        }
-        None
+    pub fn find(&self, addr: ParamAddr) -> Option<usize> {
+        (0..self.count).find(|&i| self.entries[i].is_some_and(|e| e.addr == addr))
     }
 
-    pub fn is_primed(&self, path: ParamPath) -> bool {
-        self.find(path).is_some()
+    pub fn is_primed(&self, addr: ParamAddr) -> bool {
+        self.find(addr).is_some()
     }
 
     pub fn get(&self, index: usize) -> Option<&ModDestEntry> {
@@ -88,5 +91,11 @@ impl ModDestRegistry {
         } else {
             None
         }
+    }
+}
+
+impl Default for ModDestRegistry {
+    fn default() -> Self {
+        Self::new()
     }
 }

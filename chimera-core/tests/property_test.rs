@@ -1,9 +1,14 @@
 //! Property-based tests: verify invariants hold for random parameter combinations.
 //! Uses a simple xorshift PRNG instead of proptest (no_std compatible).
 
+mod common;
+
+use chimera_core::{MidiNote, Velocity};
+use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::modulation::ModState;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::params::{EngineType, ParamSnapshot};
+use common::expects_sound;
 
 const SR: u32 = 48000;
 
@@ -39,15 +44,8 @@ impl Rng {
 
 /// Generate a completely random ParamSnapshot.
 fn random_params(rng: &mut Rng) -> ParamSnapshot {
-    let mut p = ParamSnapshot::default();
-
-    // Engine type
-    let engine = rng.u8(1); // 0=Pizza, 1=Modal
-    p.engine = if engine == 0 {
-        EngineType::Pizza
-    } else {
-        EngineType::Modal
-    };
+    // Engine type: every engine (spec § Testing "Engines")
+    let mut p = ParamSnapshot::for_engine(EngineType::ALL[rng.u8(EngineType::ALL.len() as u8 - 1) as usize]);
 
     // Pizza params
     p.pizza.shape = rng.f32();
@@ -55,7 +53,7 @@ fn random_params(rng: &mut Rng) -> ParamSnapshot {
     p.pizza.level = rng.f32();
 
     // Modal params
-    p.modal.mode = rng.u8(2);
+    p.modal.mode = ResonatorMode::from_u8(rng.u8(2));
     p.modal.excite = rng.f32();
     p.modal.decay = rng.f32();
     p.modal.brightness = rng.f32();
@@ -71,23 +69,23 @@ fn random_params(rng: &mut Rng) -> ParamSnapshot {
     p.modal.ks_ens_mix = rng.f32();
 
     // Filter
-    p.filter.cutoff.set(20.0 + rng.f32() * 19980.0);
-    p.filter.resonance.set(rng.f32());
-    p.filter.drive.set(rng.f32());
+    p.filter.cutoff = 20.0 + rng.f32() * 19980.0;
+    p.filter.resonance = rng.f32();
+    p.filter.drive = rng.f32();
     p.filter.mode = rng.u8(7);
 
     // Drive
-    p.drive.drive.set(rng.f32());
-    p.drive.tone.set(rng.f32());
-    p.drive.mix.set(rng.f32());
+    p.drive.drive = rng.f32();
+    p.drive.tone = rng.f32();
+    p.drive.mix = rng.f32();
 
     // Folder
-    p.folder.fold.set(rng.f32());
-    p.folder.symmetry.set(rng.f32());
-    p.folder.mix.set(rng.f32());
+    p.folder.fold = rng.f32();
+    p.folder.symmetry = rng.f32();
+    p.folder.mix = rng.f32();
 
     // Volume
-    p.volume.set(0.1 + rng.f32() * 0.9); // never zero
+    p.out.volume = 0.1 + rng.f32() * 0.9; // never zero
 
     p
 }
@@ -103,12 +101,12 @@ fn prop_output_always_finite() {
         let params = random_params(&mut rng);
         let note = rng.note();
 
-        let mut voice = Voice::new();
-        voice.note_on(note, 100, &params, SR);
+        let mut voice = Voice::new(SR);
+        voice.note_on(MidiNote::new(note).unwrap(), Velocity::new(100).unwrap(), &params);
 
         let mut block = [0.0f32; 64];
         for _ in 0..8 {
-            voice.render(&mut block, &params, &empty_mod, SR);
+            voice.render(&mut block, &params, &empty_mod);
 
             for (i, &s) in block.iter().enumerate() {
                 assert!(
@@ -117,7 +115,7 @@ fn prop_output_always_finite() {
                     trial,
                     i,
                     s,
-                    params.engine,
+                    params.engine(),
                     note
                 );
             }
@@ -136,12 +134,12 @@ fn prop_output_bounded() {
         let params = random_params(&mut rng);
         let note = rng.note();
 
-        let mut voice = Voice::new();
-        voice.note_on(note, 127, &params, SR);
+        let mut voice = Voice::new(SR);
+        voice.note_on(MidiNote::new(note).unwrap(), Velocity::new(127).unwrap(), &params);
 
         let mut block = [0.0f32; 64];
         for _ in 0..16 {
-            voice.render(&mut block, &params, &empty_mod, SR);
+            voice.render(&mut block, &params, &empty_mod);
 
             let max = block.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
             assert!(
@@ -149,7 +147,7 @@ fn prop_output_bounded() {
                 "trial {}: output max {} is too large with engine={:?} note={}",
                 trial,
                 max,
-                params.engine,
+                params.engine(),
                 note
             );
         }
@@ -166,25 +164,28 @@ fn prop_note_on_produces_sound() {
     for trial in 0..50 {
         let params = random_params(&mut rng);
         let note = rng.note();
+        if !expects_sound(params.engine()) {
+            continue;
+        }
 
-        let mut voice = Voice::new();
-        voice.note_on(note, 100, &params, SR);
+        let mut voice = Voice::new(SR);
+        voice.note_on(MidiNote::new(note).unwrap(), Velocity::new(100).unwrap(), &params);
 
         let mut block = [0.0f32; 64];
         let mut total_max = 0.0f32;
 
         for _ in 0..16 {
-            voice.render(&mut block, &params, &empty_mod, SR);
+            voice.render(&mut block, &params, &empty_mod);
             let max = block.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
             total_max = total_max.max(max);
         }
 
         assert!(
             total_max > 0.0001,
-            "trial {}: note_on should produce sound, max={} engine={:?} modal_mode={} note={}",
+            "trial {}: note_on should produce sound, max={} engine={:?} modal_mode={:?} note={}",
             trial,
             total_max,
-            params.engine,
+            params.engine(),
             params.modal.mode,
             note
         );
@@ -208,32 +209,32 @@ fn prop_param_change_changes_output() {
         // Randomly tweak one parameter
         let tweak = rng.u8(5);
         match tweak {
-            0 => params_b
-                .filter
-                .cutoff
-                .set(params_a.filter.cutoff.value * 0.1 + 100.0),
-            1 => params_b.drive.drive.set(1.0 - params_a.drive.drive.value),
-            2 => params_b.folder.fold.set(1.0 - params_a.folder.fold.value),
-            3 => params_b.volume.set(params_a.volume.value * 0.2),
+            0 => params_b.filter.cutoff = params_a.filter.cutoff * 0.1 + 100.0,
+            1 => params_b.drive.drive = 1.0 - params_a.drive.drive,
+            2 => params_b.folder.fold = 1.0 - params_a.folder.fold,
+            3 => params_b.out.volume = params_a.out.volume * 0.2,
             _ => params_b.pizza.crush = 1.0 - params_a.pizza.crush,
         }
 
         let note = 60;
+        if !expects_sound(params_a.engine()) {
+            continue;
+        }
 
         // Render A
-        let mut voice_a = Voice::new();
-        voice_a.note_on(note, 100, &params_a, SR);
+        let mut voice_a = Voice::new(SR);
+        voice_a.note_on(MidiNote::new(note).unwrap(), Velocity::new(100).unwrap(), &params_a);
         let mut buf_a = [0.0f32; 64];
         for _ in 0..8 {
-            voice_a.render(&mut buf_a, &params_a, &empty_mod, SR);
+            voice_a.render(&mut buf_a, &params_a, &empty_mod);
         }
 
         // Render B
-        let mut voice_b = Voice::new();
-        voice_b.note_on(note, 100, &params_b, SR);
+        let mut voice_b = Voice::new(SR);
+        voice_b.note_on(MidiNote::new(note).unwrap(), Velocity::new(100).unwrap(), &params_b);
         let mut buf_b = [0.0f32; 64];
         for _ in 0..8 {
-            voice_b.render(&mut buf_b, &params_b, &empty_mod, SR);
+            voice_b.render(&mut buf_b, &params_b, &empty_mod);
         }
 
         let diff: f32 = buf_a
@@ -271,23 +272,20 @@ fn prop_note_off_eventually_silences() {
         params.modal.ks_feedback = params.modal.ks_feedback * 0.1;
         params.modal.decay = params.modal.decay * 0.2;
         // Force bowed mode (2) to not self-sustain
-        if params.modal.mode == 2 {
-            params.modal.mode = 1; // use resonator instead
+        if params.modal.mode == ResonatorMode::Bowed {
+            params.modal.mode = ResonatorMode::Modal; // use resonator instead
         }
-        params
-            .filter
-            .resonance
-            .set(params.filter.resonance.value * 0.5); // prevent self-oscillation
-        params.folder.fold.set(0.0); // disable folder feedback path
+        params.filter.resonance *= 0.5; // prevent self-oscillation
+        params.folder.fold = 0.0; // disable folder feedback path
         let note = rng.note();
 
-        let mut voice = Voice::new();
-        voice.note_on(note, 100, &params, SR);
+        let mut voice = Voice::new(SR);
+        voice.note_on(MidiNote::new(note).unwrap(), Velocity::new(100).unwrap(), &params);
 
         let mut block = [0.0f32; 64];
         // Play for a bit
         for _ in 0..4 {
-            voice.render(&mut block, &params, &empty_mod, SR);
+            voice.render(&mut block, &params, &empty_mod);
         }
         // Note off
         voice.note_off();
@@ -295,7 +293,7 @@ fn prop_note_off_eventually_silences() {
         // Render until silent or max 1000 blocks (~2.6s)
         let mut silent = false;
         for _ in 0..1000 {
-            voice.render(&mut block, &params, &empty_mod, SR);
+            voice.render(&mut block, &params, &empty_mod);
             let max = block.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
             if max < 0.005 || !voice.is_active() {
                 silent = true;
@@ -305,8 +303,8 @@ fn prop_note_off_eventually_silences() {
 
         assert!(
             silent,
-            "trial {}: note_off should eventually silence, engine={:?} mode={}",
-            trial, params.engine, params.modal.mode
+            "trial {}: note_off should eventually silence, engine={:?} mode={:?}",
+            trial, params.engine(), params.modal.mode
         );
     }
 }
@@ -332,12 +330,12 @@ fn verify_full_sweep(
         setup(&mut params);
         sweep(&mut params, val);
 
-        let mut voice = Voice::new();
-        voice.note_on(60, 100, &params, SR);
+        let mut voice = Voice::new(SR);
+        voice.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params);
         let mut block = [0.0f32; 64];
         // Render enough blocks for damping/decay differences to manifest
         for _ in 0..32 {
-            voice.render(&mut block, &params, &empty_mod, SR);
+            voice.render(&mut block, &params, &empty_mod);
         }
         let rms = libm::sqrtf(block.iter().map(|s| s * s).sum::<f32>() / 128.0);
 
@@ -366,7 +364,7 @@ fn prop_pizza_crush_full_sweep() {
     verify_full_sweep(
         "Pizza crush",
         |p| {
-            p.engine = EngineType::Pizza;
+            *p = ParamSnapshot::for_engine(EngineType::Pizza);
         },
         |p, v| {
             p.pizza.crush = v;
@@ -380,11 +378,11 @@ fn prop_filter_cutoff_full_sweep() {
     verify_full_sweep(
         "Filter cutoff",
         |p| {
-            p.engine = EngineType::Pizza;
+            *p = ParamSnapshot::for_engine(EngineType::Pizza);
             p.filter.mode = 2;
         },
         |p, v| {
-            p.filter.cutoff.set(20.0 + v * 19980.0);
+            p.filter.cutoff = 20.0 + v * 19980.0;
         },
         16,
     );
@@ -395,12 +393,12 @@ fn prop_filter_resonance_full_sweep() {
     verify_full_sweep(
         "Filter resonance",
         |p| {
-            p.engine = EngineType::Pizza;
-            p.filter.cutoff.set(1000.0);
+            *p = ParamSnapshot::for_engine(EngineType::Pizza);
+            p.filter.cutoff = 1000.0;
             p.filter.mode = 1;
         },
         |p, v| {
-            p.filter.resonance.set(v);
+            p.filter.resonance = v;
         },
         16,
     );
@@ -411,11 +409,11 @@ fn prop_drive_full_sweep() {
     verify_full_sweep(
         "Drive",
         |p| {
-            p.engine = EngineType::Pizza;
-            p.drive.mix.set(1.0);
+            *p = ParamSnapshot::for_engine(EngineType::Pizza);
+            p.drive.mix = 1.0;
         },
         |p, v| {
-            p.drive.drive.set(v);
+            p.drive.drive = v;
         },
         16,
     );
@@ -426,11 +424,11 @@ fn prop_folder_full_sweep() {
     verify_full_sweep(
         "Wavefolder",
         |p| {
-            p.engine = EngineType::Pizza;
-            p.folder.mix.set(1.0);
+            *p = ParamSnapshot::for_engine(EngineType::Pizza);
+            p.folder.mix = 1.0;
         },
         |p, v| {
-            p.folder.fold.set(v);
+            p.folder.fold = v;
         },
         16,
     );
@@ -441,10 +439,10 @@ fn prop_volume_full_sweep() {
     verify_full_sweep(
         "Volume",
         |p| {
-            p.engine = EngineType::Pizza;
+            *p = ParamSnapshot::for_engine(EngineType::Pizza);
         },
         |p, v| {
-            p.volume.set(v);
+            p.out.volume = v;
         },
         16,
     );
@@ -455,8 +453,8 @@ fn prop_ks_body_full_sweep() {
     verify_full_sweep(
         "KS body",
         |p| {
-            p.engine = EngineType::Modal;
-            p.modal.mode = 0;
+            *p = ParamSnapshot::for_engine(EngineType::Modal);
+            p.modal.mode = ResonatorMode::String;
         },
         |p, v| {
             p.modal.ks_body = v;
@@ -470,8 +468,8 @@ fn prop_ks_stiffness_full_sweep() {
     verify_full_sweep(
         "KS stiffness",
         |p| {
-            p.engine = EngineType::Modal;
-            p.modal.mode = 0;
+            *p = ParamSnapshot::for_engine(EngineType::Modal);
+            p.modal.mode = ResonatorMode::String;
         },
         |p, v| {
             p.modal.ks_stiffness = v;
@@ -485,8 +483,8 @@ fn prop_ks_brightness_full_sweep() {
     verify_full_sweep(
         "KS brightness",
         |p| {
-            p.engine = EngineType::Modal;
-            p.modal.mode = 0;
+            *p = ParamSnapshot::for_engine(EngineType::Modal);
+            p.modal.mode = ResonatorMode::String;
         },
         |p, v| {
             p.modal.brightness = v;
@@ -500,8 +498,8 @@ fn prop_modal_decay_full_sweep() {
     verify_full_sweep(
         "Modal decay",
         |p| {
-            p.engine = EngineType::Modal;
-            p.modal.mode = 1;
+            *p = ParamSnapshot::for_engine(EngineType::Modal);
+            p.modal.mode = ResonatorMode::Modal;
         },
         |p, v| {
             p.modal.decay = v;
@@ -515,8 +513,8 @@ fn prop_modal_brightness_full_sweep() {
     verify_full_sweep(
         "Modal brightness",
         |p| {
-            p.engine = EngineType::Modal;
-            p.modal.mode = 1;
+            *p = ParamSnapshot::for_engine(EngineType::Modal);
+            p.modal.mode = ResonatorMode::Modal;
         },
         |p, v| {
             p.modal.brightness = v;
