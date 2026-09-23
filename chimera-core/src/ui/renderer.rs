@@ -7,7 +7,7 @@ use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::primitives::{Line, PrimitiveStyle, Rectangle, StyledDrawable};
 use embedded_graphics::text::Text;
 
-use crate::params::ParamSnapshot;
+use crate::addr::Op;
 use crate::ui::animation::AnimatedValue;
 use crate::ui::block_def::{slot_addr, BlockDef, VizType};
 use crate::ui::cell;
@@ -15,7 +15,7 @@ use crate::ui::chain::ChainNav;
 use crate::ui::mod_grid::MatrixState;
 use crate::ui::dungeon_map;
 use crate::ui::fmt::{self, FmtBuf};
-use crate::ui::page::{PageId, PageLayout};
+use crate::ui::page::PageLayout;
 use crate::ui::perf::PerfStats;
 use crate::ui::region::RegionKind;
 use crate::ui::theme;
@@ -30,8 +30,6 @@ pub struct Renderer {
     pub focused: usize,
     /// Animated scroll offset for dungeon map sub-page branches (in pixels).
     pub branch_scroll: AnimatedValue,
-    /// Current page — used for context-aware mod bar paths.
-    pub current_page: PageId,
 }
 
 impl Default for Renderer {
@@ -46,29 +44,19 @@ impl Renderer {
             anim: [AnimatedValue::new(0.5); 6],
             focused: 0,
             branch_scroll: AnimatedValue::new(0.0).with_speed(0.25),
-            current_page: PageId::Pizza,
         }
     }
 
-    pub fn update(&mut self, page: PageId, params: &ParamSnapshot) {
-        let values = page.read_values(params);
-        for (a, &v) in self.anim.iter_mut().zip(values.iter()) {
-            a.set_target(v);
-            a.update();
-        }
-    }
-
-    pub fn snap_to_current(&mut self, page: PageId, params: &ParamSnapshot) {
-        self.current_page = page;
-        let values = page.read_values(params);
+    /// Jump the animated values (page change: nothing to lerp from).
+    pub fn snap_to_current(&mut self, values: [f32; 6]) {
         for (a, &v) in self.anim.iter_mut().zip(values.iter()) {
             a.snap(v);
         }
     }
 
     /// Mod-bar amount for slot `i` of `def`, if that param is a destination.
-    fn cell_mod_info(def: &BlockDef, i: usize, matrix_state: &MatrixState) -> Option<f32> {
-        slot_addr(def, i, crate::ui::page::selected_op()).and_then(|a| matrix_state.mod_info_for(a))
+    fn cell_mod_info(def: &BlockDef, i: usize, sel_op: Op, matrix_state: &MatrixState) -> Option<f32> {
+        slot_addr(def, i, sel_op).and_then(|a| matrix_state.mod_info_for(a))
     }
 
     // ── Modal / Physical Modeling ───────────────────────────────────
@@ -684,6 +672,7 @@ impl Renderer {
         &self,
         display: &mut D,
         def: &BlockDef,
+        sel_op: Op,
         matrix_state: &crate::ui::mod_grid::MatrixState,
     )
     where
@@ -734,7 +723,7 @@ impl Renderer {
             }
 
             // Mod bar — bipolar, below value bar. Shows when param is a mod destination.
-            let mod_info = Self::cell_mod_info(def, i, matrix_state);
+            let mod_info = Self::cell_mod_info(def, i, sel_op, matrix_state);
             if let Some(mod_amount) = mod_info {
                 let mod_bar_y = bar_y + theme::BAR_HEIGHT + 2;
                 let mid_x = x + theme::BAR_WIDTH / 2;
@@ -776,6 +765,7 @@ impl Renderer {
         &self,
         display: &mut D,
         def: &BlockDef,
+        sel_op: Op,
         matrix_state: &crate::ui::mod_grid::MatrixState,
     )
     where
@@ -784,7 +774,7 @@ impl Renderer {
         for (i, slot) in def.params.iter().enumerate() {
             let col = (i % 3) as i32;
             let row = (i / 3) as i32;
-            let mod_info = Self::cell_mod_info(def, i, matrix_state);
+            let mod_info = Self::cell_mod_info(def, i, sel_op, matrix_state);
             cell::draw_cell_with_mod(
                 display,
                 col,
@@ -828,7 +818,7 @@ impl Renderer {
     // ── BlockDef-based full render ─────────────────────────────────────
 
     /// Render full screen using a `BlockDef` for layout, viz, and params.
-    pub fn draw_with_def<D>(&self, display: &mut D, nav: &ChainNav, def: &BlockDef, perf: &PerfStats, matrix_state: &MatrixState)
+    pub fn draw_with_def<D>(&self, display: &mut D, nav: &ChainNav, def: &BlockDef, perf: &PerfStats, matrix_state: &MatrixState, sel_op: Op)
     where
         D: DrawTarget<Color = Rgb565>,
     {
@@ -841,10 +831,10 @@ impl Renderer {
         match def.layout {
             PageLayout::BigViz => {
                 self.draw_viz_from_type(display, def.viz);
-                self.draw_params_from_def(display, def, matrix_state);
+                self.draw_params_from_def(display, def, sel_op, matrix_state);
             }
             PageLayout::CellGrid => {
-                self.draw_cell_grid_from_def(display, def, matrix_state);
+                self.draw_cell_grid_from_def(display, def, sel_op, matrix_state);
             }
             PageLayout::Matrix => {
                 crate::ui::mod_grid::draw_grid(display, matrix_state);
@@ -868,6 +858,7 @@ impl Renderer {
     }
 
     /// Draw a single region using BlockDef. The caller has already cleared the region.
+    #[allow(clippy::too_many_arguments)]
     pub fn draw_region_with_def<D>(
         &self,
         display: &mut D,
@@ -876,6 +867,7 @@ impl Renderer {
         def: &BlockDef,
         perf: &PerfStats,
         matrix_state: &MatrixState,
+        sel_op: Op,
     )
     where
         D: DrawTarget<Color = Rgb565>,
@@ -889,7 +881,7 @@ impl Renderer {
                 self.draw_viz_from_type(display, def.viz);
             }
             RegionKind::Params => {
-                self.draw_params_from_def(display, def, matrix_state);
+                self.draw_params_from_def(display, def, sel_op, matrix_state);
                 let _ = Line::new(
                     Point::new(0, theme::ENCODER_ZONE_BOTTOM),
                     Point::new(theme::SCREEN_W - 1, theme::ENCODER_ZONE_BOTTOM),
@@ -897,7 +889,7 @@ impl Renderer {
                 .draw_styled(&PrimitiveStyle::with_stroke(theme::SEPARATOR, 1), display);
             }
             RegionKind::Cells => {
-                self.draw_cell_grid_from_def(display, def, matrix_state);
+                self.draw_cell_grid_from_def(display, def, sel_op, matrix_state);
                 let _ = Line::new(
                     Point::new(0, theme::ENCODER_ZONE_BOTTOM),
                     Point::new(theme::SCREEN_W - 1, theme::ENCODER_ZONE_BOTTOM),

@@ -93,3 +93,40 @@ fn priming_a_non_modulatable_param_is_refused() {
     prime_slot_0(&mut ui);
     assert!(primed(&ui).is_empty());
 }
+
+/// Review Focus 5 / spec §5: a route primed on a `SelectedOp` slot names the
+/// operator selected at that moment; changing the selection later does not
+/// retarget it.
+#[test]
+fn selected_op_route_is_concrete() {
+    use chimera_core::addr::Op;
+    use chimera_core::params::FmOpParams;
+    use chimera_core::preset::POOL_SIZE;
+
+    let mut ui = UiState::new();
+    // Load "(init) FM" into track 1 via the patch browser.
+    ui.handle_input(
+        &MockControls::new()
+            .button(ButtonId::Edit, ButtonState::Held)
+            .button(ButtonId::B1, ButtonState::Pressed),
+    );
+    ui.handle_input(&MockControls::new().encoder(EncoderId::Main, (POOL_SIZE + 2) as i8));
+    press(&mut ui, ButtonId::Edit);
+    press(&mut ui, ButtonId::Edit); // FM node → Operator sub-page
+    ui.handle_input(&MockControls::new().encoder(EncoderId::A, 1)); // select op B
+    assert_eq!(ui.selected_op(), Op::B);
+    ui.handle_input(&MockControls::new().encoder(EncoderId::D, 1)); // FDBK slot
+    ui.handle_input(
+        &MockControls::new()
+            .button(ButtonId::Mix, ButtonState::Held)
+            .button(ButtonId::Plus, ButtonState::Pressed),
+    );
+    let fdbk_b = ParamAddr::new(BlockRef::FmOp(Op::B), FmOpParams::FEEDBACK);
+    assert!(primed(&ui).contains(&fdbk_b));
+
+    ui.handle_input(&MockControls::new().encoder(EncoderId::A, 1)); // select op C
+    assert_eq!(ui.selected_op(), Op::C);
+    assert!(primed(&ui).contains(&fdbk_b));
+    assert!(!primed(&ui).contains(&ParamAddr::new(BlockRef::FmOp(Op::C), FmOpParams::FEEDBACK)));
+    assert_eq!(ui.project.tracks[0].patch.params.fm.operators[1].feedback, 1.0);
+}
