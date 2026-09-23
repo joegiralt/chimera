@@ -1,7 +1,7 @@
 use crate::addr::{BlockRef, Op, ParamAddr};
 use crate::mod_path::ModDestRegistry;
 use crate::modulation::ModState;
-use crate::params::ParamSnapshot;
+use crate::params::{EngineType, ParamSnapshot};
 
 pub const POOL_SIZE: usize = 32;
 pub const NAME_LEN: usize = 16;
@@ -26,6 +26,15 @@ impl ChainType {
             ChainType::Fm => "FM",
         }
     }
+
+    /// The engine this chain plays (spec §6).
+    pub const fn engine(self) -> EngineType {
+        match self {
+            ChainType::PizzaPoly => EngineType::Pizza,
+            ChainType::Modal => EngineType::Modal,
+            ChainType::Fm => EngineType::Fm,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -43,15 +52,10 @@ impl Patch {
         let mut name = [0u8; NAME_LEN];
         let tag = b"(init)";
         name[..tag.len()].copy_from_slice(tag);
-        let mut params = ParamSnapshot::default();
+        let params = ParamSnapshot::for_engine(chain_type.engine());
         let (mod_state, dest_registry) = match chain_type {
-            ChainType::PizzaPoly => (ModState::default(), ModDestRegistry::new()),
-            ChainType::Modal => {
-                params.engine = crate::params::EngineType::Modal;
-                (ModState::default(), ModDestRegistry::new())
-            }
+            ChainType::PizzaPoly | ChainType::Modal => (ModState::default(), ModDestRegistry::new()),
             ChainType::Fm => {
-                params.engine = crate::params::EngineType::Fm;
                 // Pre-wire: 4 envelope sources → 4 FM operator levels
                 let mut reg = ModDestRegistry::new();
                 for (op, label) in [(Op::A, *b"O1 Lvl\0\0"), (Op::B, *b"O2 Lvl\0\0"), (Op::C, *b"O3 Lvl\0\0"), (Op::D, *b"O4 Lvl\0\0")] {

@@ -16,11 +16,10 @@ const SR: u32 = 48000;
 fn test_modal_through_voice_produces_sound() {
     let empty_mod = ModState::new();
     let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
-    let mut params = ParamSnapshot::default();
-    params.engine = EngineType::Modal;
+    let mut params = ParamSnapshot::for_engine(EngineType::Modal);
 
     // Verify engine type is set
-    assert_eq!(params.engine, EngineType::Modal);
+    assert_eq!(params.engine(), EngineType::Modal);
 
     voice.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params);
 
@@ -50,8 +49,7 @@ fn test_modal_through_voice_produces_sound() {
 fn test_modal_string_through_voice() {
     let empty_mod = ModState::new();
     let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
-    let mut params = ParamSnapshot::default();
-    params.engine = EngineType::Modal;
+    let mut params = ParamSnapshot::for_engine(EngineType::Modal);
     params.modal.mode = ResonatorMode::Modal; // String mode
 
     voice.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params);
@@ -77,8 +75,7 @@ fn test_modal_string_through_voice() {
 fn test_modal_bowed_through_voice() {
     let empty_mod = ModState::new();
     let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
-    let mut params = ParamSnapshot::default();
-    params.engine = EngineType::Modal;
+    let mut params = ParamSnapshot::for_engine(EngineType::Modal);
     params.modal.mode = ResonatorMode::Bowed; // Bowed mode
 
     voice.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params);
@@ -105,8 +102,7 @@ fn test_modal_different_from_pizza_through_voice() {
     let empty_mod = ModState::new();
     let render = |engine: EngineType| -> Vec<f32> {
         let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
-        let mut params = ParamSnapshot::default();
-        params.engine = engine;
+        let mut params = ParamSnapshot::for_engine(engine);
         voice.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params);
         let mut all = Vec::new();
         let mut block = [0.0f32; 64];
@@ -149,12 +145,10 @@ fn test_modal_signal_chain_affects_output() {
     let mut voice_open = Voice::new(chimera_hal::SAMPLE_RATE);
     let mut voice_closed = Voice::new(chimera_hal::SAMPLE_RATE);
 
-    let mut params_open = ParamSnapshot::default();
-    params_open.engine = EngineType::Modal;
+    let mut params_open = ParamSnapshot::for_engine(EngineType::Modal);
     params_open.filter.cutoff = 20000.0;
 
-    let mut params_closed = ParamSnapshot::default();
-    params_closed.engine = EngineType::Modal;
+    let mut params_closed = ParamSnapshot::for_engine(EngineType::Modal);
     params_closed.filter.cutoff = 200.0;
     params_closed.filter.mode = 2; // LP4
 

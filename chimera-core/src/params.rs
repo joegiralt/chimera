@@ -497,7 +497,9 @@ impl Block for OutParams {
 
 #[derive(Clone, Debug)]
 pub struct ParamSnapshot {
-    pub engine: EngineType,
+    /// Private: set only through `for_engine` (and so `Patch::init`, from
+    /// `ChainType::engine`) — one source of truth for engine choice (spec §6).
+    engine: EngineType,
     pub filter: FilterParams,
     pub drive: DriveParams,
     pub folder: FolderParams,
@@ -513,6 +515,15 @@ pub struct ParamSnapshot {
 }
 
 impl ParamSnapshot {
+    /// Default params for `engine`.
+    pub fn for_engine(engine: EngineType) -> Self {
+        Self { engine, ..Self::default() }
+    }
+
+    pub fn engine(&self) -> EngineType {
+        self.engine
+    }
+
     /// The one exhaustive dispatch from a block address to its values
     /// (spec §2). UI and modulation go through this; DSP reads fields.
     pub fn block(&self, b: BlockRef) -> &dyn Block {

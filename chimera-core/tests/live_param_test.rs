@@ -71,7 +71,7 @@ fn harmonic_energy(buf: &[f32], f0: f32) -> f32 {
 fn test_pizza_shape_change_mid_note() {
     let (_, _, before, after) = render_with_param_change(
         |p| {
-            p.engine = EngineType::Pizza;
+            *p = ParamSnapshot::for_engine(EngineType::Pizza);
             p.pizza.shape = 0.5; // triangle
         },
         |p| {
@@ -93,7 +93,7 @@ fn test_pizza_shape_change_mid_note() {
 fn test_pizza_crush_change_mid_note() {
     let (_, _, before, after) = render_with_param_change(
         |p| {
-            p.engine = EngineType::Pizza;
+            *p = ParamSnapshot::for_engine(EngineType::Pizza);
             p.pizza.crush = 0.0;
         },
         |p| {
@@ -119,7 +119,7 @@ fn test_pizza_crush_change_mid_note() {
 fn test_filter_cutoff_sweep_mid_note() {
     let (before_rms, after_rms, _, _) = render_with_param_change(
         |p| {
-            p.engine = EngineType::Pizza;
+            *p = ParamSnapshot::for_engine(EngineType::Pizza);
             p.filter.cutoff = 10000.0;
             p.filter.mode = 2; // LP4
         },
@@ -141,7 +141,7 @@ fn test_filter_cutoff_sweep_mid_note() {
 fn test_filter_resonance_mid_note() {
     let (_, _, before, after) = render_with_param_change(
         |p| {
-            p.engine = EngineType::Pizza;
+            *p = ParamSnapshot::for_engine(EngineType::Pizza);
             p.filter.cutoff = 1000.0;
             p.filter.mode = 1; // LP2
             p.filter.resonance = 0.0;
@@ -168,7 +168,7 @@ fn test_filter_resonance_mid_note() {
 fn test_drive_amount_mid_note() {
     let (_, _, before, after) = render_with_param_change(
         |p| {
-            p.engine = EngineType::Pizza;
+            *p = ParamSnapshot::for_engine(EngineType::Pizza);
             p.drive.drive = 0.0;
             p.drive.mix = 1.0;
         },
@@ -195,7 +195,7 @@ fn test_drive_amount_mid_note() {
 fn test_folder_mid_note() {
     let (_, _, before, after) = render_with_param_change(
         |p| {
-            p.engine = EngineType::Pizza;
+            *p = ParamSnapshot::for_engine(EngineType::Pizza);
             p.folder.fold = 0.0;
         },
         |p| {
@@ -222,7 +222,7 @@ fn test_folder_mid_note() {
 fn test_ks_body_mid_note() {
     let (_, _, before, after) = render_with_param_change(
         |p| {
-            p.engine = EngineType::Modal;
+            *p = ParamSnapshot::for_engine(EngineType::Modal);
             p.modal.mode = ResonatorMode::String;
             p.modal.ks_body = 0.0;
         },
@@ -249,7 +249,7 @@ fn test_ks_body_mid_note() {
 fn test_ks_stiffness_mid_note() {
     let (_, _, before, after) = render_with_param_change(
         |p| {
-            p.engine = EngineType::Modal;
+            *p = ParamSnapshot::for_engine(EngineType::Modal);
             p.modal.mode = ResonatorMode::String;
             p.modal.ks_stiffness = 0.0;
         },
@@ -272,7 +272,7 @@ fn test_ks_stiffness_mid_note() {
 fn test_ks_feedback_mid_note() {
     let (before_rms, after_rms, _, _) = render_with_param_change(
         |p| {
-            p.engine = EngineType::Modal;
+            *p = ParamSnapshot::for_engine(EngineType::Modal);
             p.modal.mode = ResonatorMode::String;
             p.modal.ks_feedback = 0.0;
         },
@@ -295,7 +295,7 @@ fn test_ks_feedback_mid_note() {
 fn test_ks_brightness_mid_note() {
     let (_, _, before, after) = render_with_param_change(
         |p| {
-            p.engine = EngineType::Modal;
+            *p = ParamSnapshot::for_engine(EngineType::Modal);
             p.modal.mode = ResonatorMode::String;
             p.modal.brightness = 0.1;
         },
@@ -322,7 +322,7 @@ fn test_ks_brightness_mid_note() {
 fn test_modal_decay_mid_note() {
     let (before_rms, after_rms, _, _) = render_with_param_change(
         |p| {
-            p.engine = EngineType::Modal;
+            *p = ParamSnapshot::for_engine(EngineType::Modal);
             p.modal.mode = ResonatorMode::Modal;
             p.modal.decay = 0.8;
         },
@@ -345,7 +345,7 @@ fn test_modal_decay_mid_note() {
 fn test_modal_brightness_mid_note() {
     let (_, _, before, after) = render_with_param_change(
         |p| {
-            p.engine = EngineType::Modal;
+            *p = ParamSnapshot::for_engine(EngineType::Modal);
             p.modal.mode = ResonatorMode::Modal;
             p.modal.brightness = 0.1;
         },
@@ -372,7 +372,7 @@ fn test_modal_brightness_mid_note() {
 fn test_volume_mid_note() {
     let (before_rms, after_rms, _, _) = render_with_param_change(
         |p| {
-            p.engine = EngineType::Pizza;
+            *p = ParamSnapshot::for_engine(EngineType::Pizza);
             p.out.volume = 0.8;
         },
         |p| {

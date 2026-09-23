@@ -55,7 +55,7 @@ impl Voice {
     }
 
     pub fn note_on(&mut self, note: MidiNote, velocity: Velocity, params: &ParamSnapshot) {
-        self.active_engine = params.engine;
+        self.active_engine = params.engine();
         self.last_note = note;
         self.last_velocity = velocity;
         self.engines.note_on(self.active_engine, note, velocity, params);
@@ -76,7 +76,7 @@ impl Voice {
         let sample_rate = self.sample_rate();
 
         // Auto-retrigger if engine type changed (e.g., user loaded FM patch)
-        if self.active && params.engine != self.active_engine {
+        if self.active && params.engine() != self.active_engine {
             self.note_on(self.last_note, self.last_velocity, params);
         }
 
