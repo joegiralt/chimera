@@ -101,7 +101,7 @@ impl MatrixState {
     /// Rebuild the destination list from a ModDestRegistry.
     pub fn rebuild_dests_from_registry(&mut self, registry: &crate::mod_path::ModDestRegistry) {
         self.num_dests = 0;
-        for i in 0..registry.count {
+        for i in 0..registry.len() {
             if let Some(entry) = registry.get(i) {
                 if self.num_dests < MAX_DESTS {
                     self.dests[self.num_dests] = Some(ModDest {

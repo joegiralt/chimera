@@ -2,6 +2,7 @@ use chimera_core::{MidiNote, Velocity};
 use chimera_core::dsp::voice::Voice;
 use chimera_core::modulation::{ModState, MAX_MOD_SOURCES};
 use chimera_core::params::ParamSnapshot;
+use chimera_core::preset::ChainType;
 use chimera_core::ui::mod_grid::MatrixState;
 
 use chimera_hal::{BLOCK_SIZE, SAMPLE_RATE};
@@ -44,12 +45,13 @@ fn voice_render_with_mod_offset_changes_filter() {
     // Dry: no modulation
     let empty_mod = ModState::new();
 
-    // Modulated: LFO (source 1) -> filter cutoff (block 2, param 0)
-    let mut mod_state = ModState::new();
-    mod_state.num_sources = 2; // source 0 = env, source 1 = LFO
-    mod_state.num_dests = 1;
-    mod_state.dests[0] = chimera_core::mod_path::ParamPath::Block { block: 2, param: 0 }; // filter cutoff
-    mod_state.amounts[1][0] = 100; // LFO -> cutoff at high amount
+    // Modulated: LFO (source 1) -> filter cutoff (Pizza chain node 2, slot 0)
+    let mut registry = chimera_core::mod_path::ModDestRegistry::new();
+    registry
+        .add(ChainType::PizzaPoly, chimera_core::mod_path::ParamPath::Block { block: 2, param: 0 }, *b"FLTCUT\0\0")
+        .unwrap();
+    let mut mod_state = ModState::from_registry(&registry, ChainType::PizzaPoly, 2); // env, LFO
+    mod_state.set_amount(1, 0, 100); // LFO -> cutoff at high amount
 
     voice_dry.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params);
     voice_mod.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params);
@@ -89,7 +91,7 @@ fn mod_bar_shows_when_primed() {
 
     // Prime block 1, param 0 via registry
     let mut registry = ModDestRegistry::new();
-    registry.add(ParamPath::Block { block: 1, param: 0 }, *b"B1 Prm0\0");
+    registry.add(ChainType::PizzaPoly, ParamPath::Block { block: 1, param: 0 }, *b"B1 Prm0\0").unwrap();
     matrix.rebuild_dests_from_registry(&registry);
 
     let info = matrix.mod_info_for_param(1, 0);
@@ -108,7 +110,7 @@ fn mod_bar_amount_reflects_matrix() {
 
     // Prime a destination via registry
     let mut registry = ModDestRegistry::new();
-    registry.add(ParamPath::Block { block: 0, param: 1 }, *b"TSTaPrm\0");
+    registry.add(ChainType::PizzaPoly, ParamPath::Block { block: 0, param: 1 }, *b"TSTaPrm\0").unwrap();
     matrix.rebuild_dests_from_registry(&registry);
 
     // Set amounts from two sources
@@ -179,8 +181,8 @@ fn matrix_state_rebuild_dests_from_registry() {
     use chimera_core::mod_path::{ModDestRegistry, ParamPath};
 
     let mut registry = ModDestRegistry::new();
-    registry.add(ParamPath::Block { block: 0, param: 0 }, *b"PIZShape");
-    registry.add(ParamPath::Block { block: 1, param: 0 }, *b"FLT Freq");
+    registry.add(ChainType::PizzaPoly, ParamPath::Block { block: 0, param: 0 }, *b"PIZShape").unwrap();
+    registry.add(ChainType::PizzaPoly, ParamPath::Block { block: 1, param: 0 }, *b"FLT Freq").unwrap();
 
     let mut matrix = MatrixState::new();
     matrix.rebuild_dests_from_registry(&registry);
