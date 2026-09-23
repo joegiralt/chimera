@@ -6,6 +6,7 @@
 //! note 60 vel 100 on, ON_BLOCKS blocks, note off, OFF_BLOCKS blocks.
 #![allow(dead_code)]
 
+use chimera_core::{MidiNote, Velocity};
 use chimera_core::dsp::voice::Voice;
 use chimera_core::mod_path::ParamPath;
 use chimera_core::modulation::ModState;
@@ -142,8 +143,8 @@ fn switched_params(params: &ParamSnapshot) -> ParamSnapshot {
 pub fn render_case(case: Case) -> Vec<f32> {
     let (params, mod_state) = setup(case);
     let switched = switched_params(&params);
-    let mut voice = Voice::new();
-    voice.note_on(NOTE, VEL, &params, SR);
+    let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
+    voice.note_on(MidiNote::new(NOTE).unwrap(), Velocity::new(VEL).unwrap(), &params);
     let mut out = Vec::with_capacity(TOTAL_SAMPLES);
     let mut block = [0.0f32; BLOCK_SIZE];
     for b in 0..ON_BLOCKS + OFF_BLOCKS {
@@ -155,7 +156,7 @@ pub fn render_case(case: Case) -> Vec<f32> {
         } else {
             &params
         };
-        voice.render(&mut block, p, &mod_state, SR);
+        voice.render(&mut block, p, &mod_state);
         out.extend_from_slice(&block);
     }
     out
@@ -178,4 +179,14 @@ pub const SPOT_IDX: [usize; 8] = [0, 1_000, 5_000, 10_000, 12_799, 12_800, 19_20
 
 pub fn spots(samples: &[f32]) -> [u32; 8] {
     SPOT_IDX.map(|i| samples[i].to_bits())
+}
+
+/// Whether an engine produces sound from its default params. Exhaustive on
+/// purpose: adding an `EngineType` variant fails to compile here until its
+/// expectation is written (spec § Testing "Engines").
+pub fn expects_sound(e: EngineType) -> bool {
+    match e {
+        EngineType::Pizza | EngineType::Fm | EngineType::Modal => true,
+        EngineType::Va => false,
+    }
 }

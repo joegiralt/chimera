@@ -441,6 +441,12 @@ pub enum EngineType {
     Va = 3,
 }
 
+impl EngineType {
+    /// Every engine. Tests iterate this; see `engines_test.rs` for the
+    /// exhaustive-match guard that makes a new variant a compile error there.
+    pub const ALL: [EngineType; 4] = [EngineType::Pizza, EngineType::Fm, EngineType::Modal, EngineType::Va];
+}
+
 /// Voice output stage: level into the mixer and pan.
 #[derive(Clone, Copy, Debug)]
 pub struct OutParams {

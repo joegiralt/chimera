@@ -2,6 +2,7 @@
 //! STM32H750 @ 480MHz, 48kHz, BLOCK_SIZE=128 = 10,000 cycles/sample.
 //! We measure wall-clock time on desktop and flag anything too slow.
 
+use chimera_core::{MidiNote, Velocity};
 use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::modulation::ModState;
 use chimera_core::dsp::voice::Voice;
@@ -17,18 +18,18 @@ fn bench_render(name: &str, setup: impl FnOnce(&mut ParamSnapshot)) -> f64 {
     let mut params = ParamSnapshot::default();
     setup(&mut params);
 
-    let mut voice = Voice::new();
-    voice.note_on(60, 100, &params, SR);
+    let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
+    voice.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params);
 
     let mut block = [0.0f32; 64];
     // Warmup
     for _ in 0..10 {
-        voice.render(&mut block, &params, &empty_mod, SR);
+        voice.render(&mut block, &params, &empty_mod);
     }
 
     let start = Instant::now();
     for _ in 0..BLOCKS {
-        voice.render(&mut block, &params, &empty_mod, SR);
+        voice.render(&mut block, &params, &empty_mod);
     }
     let elapsed = start.elapsed();
 

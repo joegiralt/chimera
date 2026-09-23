@@ -1,3 +1,4 @@
+use chimera_core::{MidiNote, Velocity};
 use chimera_core::modulation::ModState;
 use chimera_core::dsp::reverb::{Reverb, ReverbParams, ReverbType};
 
@@ -414,19 +415,19 @@ fn test_reverb_through_voice_produces_tail() {
     use chimera_core::params::{EngineType, ParamSnapshot};
 
     let empty_mod = ModState::new();
-    let mut voice = Voice::new();
+    let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
     let mut reverb = Reverb::new();
     let mut params = ParamSnapshot::default();
     params.engine = EngineType::Pizza;
     params.reverb.mix = 0.5;
     params.reverb.time = 0.7;
 
-    voice.note_on(60, 100, &params, 48000);
+    voice.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params);
 
     // Render a few blocks with note
     let mut block = [0.0f32; 64];
     for _ in 0..8 {
-        voice.render(&mut block, &params, &empty_mod, 48000);
+        voice.render(&mut block, &params, &empty_mod);
         reverb.process(&mut block, &params.reverb);
     }
 
@@ -436,7 +437,7 @@ fn test_reverb_through_voice_produces_tail() {
     // Render more — reverb tail should persist after note ends
     let mut tail_energy = 0.0f32;
     for _ in 0..64 {
-        voice.render(&mut block, &params, &empty_mod, 48000);
+        voice.render(&mut block, &params, &empty_mod);
         reverb.process(&mut block, &params.reverb);
         tail_energy += block.iter().map(|s| s * s).sum::<f32>();
     }
@@ -455,7 +456,7 @@ fn test_reverb_type_switch_e2e() {
 
     let empty_mod = ModState::new();
     let render_with_reverb = |rt: u8| -> f32 {
-        let mut voice = Voice::new();
+        let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
         let mut reverb = Reverb::new();
         let mut params = ParamSnapshot::default();
         params.engine = EngineType::Pizza;
@@ -463,12 +464,12 @@ fn test_reverb_type_switch_e2e() {
         params.reverb.mix = 0.8;
         params.reverb.time = 0.6;
 
-        voice.note_on(60, 100, &params, 48000);
+        voice.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params);
 
         let mut block = [0.0f32; 64];
         let mut total = 0.0f32;
         for _ in 0..32 {
-            voice.render(&mut block, &params, &empty_mod, 48000);
+            voice.render(&mut block, &params, &empty_mod);
             reverb.process(&mut block, &params.reverb);
             total += block.iter().map(|s| s * s).sum::<f32>();
         }

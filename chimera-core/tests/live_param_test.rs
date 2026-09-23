@@ -1,3 +1,4 @@
+use chimera_core::{MidiNote, Velocity};
 use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::modulation::ModState;
 use chimera_core::dsp::voice::Voice;
@@ -14,17 +15,17 @@ fn render_with_param_change(
     blocks_after: usize,
 ) -> (f32, f32, Vec<f32>, Vec<f32>) {
     let empty_mod = ModState::new();
-    let mut voice = Voice::new();
+    let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
     let mut params = ParamSnapshot::default();
     setup(&mut params);
 
-    voice.note_on(60, 100, &params, SR);
+    voice.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params);
 
     // Render "before" blocks
     let mut before_buf = Vec::new();
     let mut block = [0.0f32; 64];
     for _ in 0..blocks_before {
-        voice.render(&mut block, &params, &empty_mod, SR);
+        voice.render(&mut block, &params, &empty_mod);
         before_buf.extend_from_slice(&block);
     }
 
@@ -34,7 +35,7 @@ fn render_with_param_change(
     // Render "after" blocks
     let mut after_buf = Vec::new();
     for _ in 0..blocks_after {
-        voice.render(&mut block, &params, &empty_mod, SR);
+        voice.render(&mut block, &params, &empty_mod);
         after_buf.extend_from_slice(&block);
     }
 
