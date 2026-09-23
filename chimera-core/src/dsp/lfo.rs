@@ -1,6 +1,7 @@
 /// LFO — Low Frequency Oscillator for modulation.
 /// Outputs -1.0 to +1.0 (bipolar) at sub-audio rates.
 
+use crate::block::{Block, ParamId, ParamSpec, ValFmt};
 use crate::dsp::fast_sin;
 
 /// LFO waveform shapes.
@@ -52,6 +53,56 @@ impl Default for LfoParams {
             phase_offset: 0.0,
             depth: 1.0,      // full depth
             offset: 0.0,     // centered (bipolar)
+        }
+    }
+}
+
+impl LfoParams {
+    pub const RATE: ParamId = ParamId(0);
+    pub const SHAPE: ParamId = ParamId(1);
+    pub const SYNC: ParamId = ParamId(2);
+    pub const PHASE: ParamId = ParamId(3);
+    pub const DEPTH: ParamId = ParamId(4);
+    pub const OFFSET: ParamId = ParamId(5);
+}
+
+/// The LFO source is computed from the unmodulated `params.lfo`; modulating
+/// the LFO itself is out of scope, so nothing here is modulatable.
+pub static LFO_SPECS: [ParamSpec; 6] = [
+    ParamSpec::continuous(0, "RATE", ValFmt::Uni, 0.01, 20.0, 1.0, 0.15, false),
+    ParamSpec::choice(1, "SHAPE", ValFmt::Int(4), 4.0, 0.0),
+    ParamSpec::choice(2, "SYNC", ValFmt::Int(1), 1.0, 0.0),
+    ParamSpec::continuous(3, "PHASE", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false),
+    ParamSpec::continuous(4, "DEPTH", ValFmt::Uni, 0.0, 1.0, 1.0, 1.0 / 128.0, false),
+    ParamSpec::continuous(5, "OFST", ValFmt::Bi, -1.0, 1.0, 0.0, 2.0 / 128.0, false),
+];
+
+impl Block for LfoParams {
+    fn specs(&self) -> &'static [ParamSpec] {
+        &LFO_SPECS
+    }
+
+    fn get(&self, id: ParamId) -> f32 {
+        match id {
+            Self::RATE => self.rate,
+            Self::SHAPE => self.shape as f32,
+            Self::SYNC => self.sync as f32,
+            Self::PHASE => self.phase_offset,
+            Self::DEPTH => self.depth,
+            Self::OFFSET => self.offset,
+            _ => 0.0,
+        }
+    }
+
+    fn write(&mut self, id: ParamId, v: f32) {
+        match id {
+            Self::RATE => self.rate = v,
+            Self::SHAPE => self.shape = v as u8,
+            Self::SYNC => self.sync = v as u8,
+            Self::PHASE => self.phase_offset = v,
+            Self::DEPTH => self.depth = v,
+            Self::OFFSET => self.offset = v,
+            _ => {}
         }
     }
 }

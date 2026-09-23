@@ -145,3 +145,33 @@ fn env_encoder_steps_like_before() {
     PageId::EnvAux.apply_encoder(3, -128, &mut p);
     assert_eq!(p.envelopes[2].release, 0.001);
 }
+
+// ── LFO (Task 8) ─────────────────────────────────────────────────────
+
+#[test]
+fn lfo_encoder_steps_like_before() {
+    let mut p = ParamSnapshot::default();
+    PageId::Lfo.apply_encoder(0, 2, &mut p);
+    assert_eq!(p.lfo.rate, 1.0 + 2.0 * 0.15);
+    PageId::Lfo.apply_encoder(1, 9, &mut p);
+    assert_eq!(p.lfo.shape, 4);
+    PageId::Lfo.apply_encoder(2, 1, &mut p);
+    assert_eq!(p.lfo.sync, 1);
+    PageId::Lfo.apply_encoder(5, 3, &mut p);
+    assert_eq!(p.lfo.offset, 3.0 * (1.0 / 128.0) * 2.0);
+}
+
+/// Spec § Intended behavior changes: shift-snap now works on the LFO page.
+#[test]
+fn lfo_snap_now_works() {
+    let mut p = ParamSnapshot::default();
+    PageId::Lfo.snap_encoder(1, 1, ValFmt::Int(4), &mut p);
+    assert_eq!(p.lfo.shape, 4);
+}
+
+/// Plan D19: RATE displays over its real range 0.01..20.
+#[test]
+fn lfo_rate_display_uses_range() {
+    let p = ParamSnapshot::default();
+    assert_eq!(PageId::Lfo.read_values(&p)[0], (1.0 - 0.01) / (20.0 - 0.01));
+}

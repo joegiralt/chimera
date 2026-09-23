@@ -195,3 +195,8 @@ fn folder_conforms() {
 fn env_conforms() {
     conforms("env", chimera_core::params::EnvParams::default());
 }
+
+#[test]
+fn lfo_conforms() {
+    conforms("lfo", chimera_core::dsp::lfo::LfoParams::default());
+}

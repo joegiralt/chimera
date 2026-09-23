@@ -1,4 +1,5 @@
 use crate::block::{Block, ParamId};
+use crate::dsp::lfo::LfoParams;
 use crate::dsp::modal::ModalParams;
 use crate::dsp::pizza::PizzaParams;
 use crate::params::{DriveParams, EnvParams, FilterParams, FolderParams, ParamSnapshot};
@@ -219,14 +220,7 @@ impl PageId {
                 params.envelopes[1].normalized(EnvParams::ATTACK),
                 params.envelopes[1].normalized(EnvParams::DECAY),
             ],
-            PageId::Lfo => [
-                params.lfo.rate / 20.0,           // normalized 0-1 (0-20 Hz)
-                params.lfo.shape as f32 / 4.0,    // 0-4 shapes
-                params.lfo.sync as f32,            // 0 or 1
-                params.lfo.phase_offset,           // 0-1
-                params.lfo.depth,                  // 0-1
-                (params.lfo.offset + 1.0) / 2.0,  // -1..1 → 0..1 for display
-            ],
+            PageId::Lfo => read_block(&params.lfo, LFO_PAGE),
             PageId::DemoFm => [
                 params.fm.algorithm.normalized(),
                 params.fm.operators[0].feedback.normalized(),
@@ -312,10 +306,6 @@ impl PageId {
         }
         // Direct float manipulation (not Param structs)
         match self {
-            PageId::Lfo => {
-                apply_lfo_encoder(idx, delta, &mut params.lfo);
-                return;
-            }
             PageId::FmAlg => {
                 apply_fm_alg_encoder(idx, delta, &mut params.fm, &mut params.volume);
                 return;
@@ -415,6 +405,7 @@ impl PageId {
                 5 => bind(&mut p.envelopes[1], EnvParams::DECAY),
                 _ => None,
             },
+            PageId::Lfo => bind(&mut p.lfo, *LFO_PAGE.get(idx)?),
             _ => None,
         }
     }
@@ -440,7 +431,6 @@ impl PageId {
                 2 => Some(&mut params.pan),
                 _ => None,
             },
-            PageId::Lfo => None, // handled by apply_encoder special case
             PageId::DemoFm => match idx {
                 0 => Some(&mut params.fm.algorithm),
                 1 => Some(&mut params.fm.operators[0].feedback),
@@ -473,6 +463,14 @@ const ENV_PAGE: [ParamId; 6] = [
     EnvParams::RELEASE,
     EnvParams::LEVEL,
     EnvParams::VEL_SENS,
+];
+const LFO_PAGE: [ParamId; 6] = [
+    LfoParams::RATE,
+    LfoParams::SHAPE,
+    LfoParams::SYNC,
+    LfoParams::PHASE,
+    LfoParams::DEPTH,
+    LfoParams::OFFSET,
 ];
 const MODAL1_PAGE: [ParamId; 6] = [
     ModalParams::MODE,
@@ -562,25 +560,6 @@ fn nudge_float(v: &mut f32, delta: i8, step: f32) {
 fn nudge_u8(v: &mut u8, delta: i8, max: u8) {
     let n = *v as i8 + delta;
     *v = n.clamp(0, max as i8) as u8;
-}
-
-fn apply_lfo_encoder(idx: usize, delta: i8, lfo: &mut crate::dsp::lfo::LfoParams) {
-    let step = 1.0 / 128.0;
-    match idx {
-        0 => {
-            // Rate: 0.01 to 20 Hz, logarithmic feel
-            lfo.rate = (lfo.rate + delta as f32 * 0.15).clamp(0.01, 20.0);
-        }
-        1 => nudge_u8(&mut lfo.shape, delta, 4),    // 5 shapes (0-4)
-        2 => nudge_u8(&mut lfo.sync, delta, 1),     // free/sync
-        3 => nudge_float(&mut lfo.phase_offset, delta, step),
-        4 => nudge_float(&mut lfo.depth, delta, step),
-        5 => {
-            // Offset: -1.0 to +1.0
-            lfo.offset = (lfo.offset + delta as f32 * step * 2.0).clamp(-1.0, 1.0);
-        }
-        _ => {}
-    }
 }
 
 // ---------------------------------------------------------------------------
