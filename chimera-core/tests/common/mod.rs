@@ -84,8 +84,7 @@ pub fn init_params(engine: EngineType) -> ParamSnapshot {
         EngineType::Fm => Patch::init(ChainType::Fm).params,
         EngineType::Modal => Patch::init(ChainType::Modal).params,
         EngineType::Va => {
-            let mut p = ParamSnapshot::default();
-            p.engine = EngineType::Va;
+            let mut p = ParamSnapshot::for_engine(EngineType::Va);
             p
         }
     }
@@ -130,17 +129,12 @@ pub fn setup(case: Case) -> (ParamSnapshot, ModState) {
     }
 }
 
-/// Params the switch case renders with from block ON_BLOCKS / 2 on.
-fn switched_params(params: &ParamSnapshot) -> ParamSnapshot {
-    let mut p = params.clone();
-    p.engine = EngineType::Modal;
-    p
-}
-
 /// Render the fixed harness for one case. Returns TOTAL_SAMPLES samples.
 pub fn render_case(case: Case) -> Vec<f32> {
     let (params, mod_state) = setup(case);
-    let switched = switched_params(&params);
+    // Pizza→Modal: from block ON_BLOCKS / 2 the same (default) params with
+    // the engine switched — i.e. the Modal init params.
+    let switched = init_params(EngineType::Modal);
     let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
     voice.note_on(MidiNote::new(NOTE).unwrap(), Velocity::new(VEL).unwrap(), &params);
     let mut out = Vec::with_capacity(TOTAL_SAMPLES);

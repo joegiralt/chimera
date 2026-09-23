@@ -44,10 +44,8 @@ impl Rng {
 
 /// Generate a completely random ParamSnapshot.
 fn random_params(rng: &mut Rng) -> ParamSnapshot {
-    let mut p = ParamSnapshot::default();
-
     // Engine type: every engine (spec § Testing "Engines")
-    p.engine = EngineType::ALL[rng.u8(EngineType::ALL.len() as u8 - 1) as usize];
+    let mut p = ParamSnapshot::for_engine(EngineType::ALL[rng.u8(EngineType::ALL.len() as u8 - 1) as usize]);
 
     // Pizza params
     p.pizza.shape = rng.f32();
@@ -117,7 +115,7 @@ fn prop_output_always_finite() {
                     trial,
                     i,
                     s,
-                    params.engine,
+                    params.engine(),
                     note
                 );
             }
@@ -149,7 +147,7 @@ fn prop_output_bounded() {
                 "trial {}: output max {} is too large with engine={:?} note={}",
                 trial,
                 max,
-                params.engine,
+                params.engine(),
                 note
             );
         }
@@ -166,7 +164,7 @@ fn prop_note_on_produces_sound() {
     for trial in 0..50 {
         let params = random_params(&mut rng);
         let note = rng.note();
-        if !expects_sound(params.engine) {
+        if !expects_sound(params.engine()) {
             continue;
         }
 
@@ -187,7 +185,7 @@ fn prop_note_on_produces_sound() {
             "trial {}: note_on should produce sound, max={} engine={:?} modal_mode={:?} note={}",
             trial,
             total_max,
-            params.engine,
+            params.engine(),
             params.modal.mode,
             note
         );
@@ -219,7 +217,7 @@ fn prop_param_change_changes_output() {
         }
 
         let note = 60;
-        if !expects_sound(params_a.engine) {
+        if !expects_sound(params_a.engine()) {
             continue;
         }
 
@@ -306,7 +304,7 @@ fn prop_note_off_eventually_silences() {
         assert!(
             silent,
             "trial {}: note_off should eventually silence, engine={:?} mode={:?}",
-            trial, params.engine, params.modal.mode
+            trial, params.engine(), params.modal.mode
         );
     }
 }
@@ -366,7 +364,7 @@ fn prop_pizza_crush_full_sweep() {
     verify_full_sweep(
         "Pizza crush",
         |p| {
-            p.engine = EngineType::Pizza;
+            *p = ParamSnapshot::for_engine(EngineType::Pizza);
         },
         |p, v| {
             p.pizza.crush = v;
@@ -380,7 +378,7 @@ fn prop_filter_cutoff_full_sweep() {
     verify_full_sweep(
         "Filter cutoff",
         |p| {
-            p.engine = EngineType::Pizza;
+            *p = ParamSnapshot::for_engine(EngineType::Pizza);
             p.filter.mode = 2;
         },
         |p, v| {
@@ -395,7 +393,7 @@ fn prop_filter_resonance_full_sweep() {
     verify_full_sweep(
         "Filter resonance",
         |p| {
-            p.engine = EngineType::Pizza;
+            *p = ParamSnapshot::for_engine(EngineType::Pizza);
             p.filter.cutoff = 1000.0;
             p.filter.mode = 1;
         },
@@ -411,7 +409,7 @@ fn prop_drive_full_sweep() {
     verify_full_sweep(
         "Drive",
         |p| {
-            p.engine = EngineType::Pizza;
+            *p = ParamSnapshot::for_engine(EngineType::Pizza);
             p.drive.mix = 1.0;
         },
         |p, v| {
@@ -426,7 +424,7 @@ fn prop_folder_full_sweep() {
     verify_full_sweep(
         "Wavefolder",
         |p| {
-            p.engine = EngineType::Pizza;
+            *p = ParamSnapshot::for_engine(EngineType::Pizza);
             p.folder.mix = 1.0;
         },
         |p, v| {
@@ -441,7 +439,7 @@ fn prop_volume_full_sweep() {
     verify_full_sweep(
         "Volume",
         |p| {
-            p.engine = EngineType::Pizza;
+            *p = ParamSnapshot::for_engine(EngineType::Pizza);
         },
         |p, v| {
             p.out.volume = v;
@@ -455,7 +453,7 @@ fn prop_ks_body_full_sweep() {
     verify_full_sweep(
         "KS body",
         |p| {
-            p.engine = EngineType::Modal;
+            *p = ParamSnapshot::for_engine(EngineType::Modal);
             p.modal.mode = ResonatorMode::String;
         },
         |p, v| {
@@ -470,7 +468,7 @@ fn prop_ks_stiffness_full_sweep() {
     verify_full_sweep(
         "KS stiffness",
         |p| {
-            p.engine = EngineType::Modal;
+            *p = ParamSnapshot::for_engine(EngineType::Modal);
             p.modal.mode = ResonatorMode::String;
         },
         |p, v| {
@@ -485,7 +483,7 @@ fn prop_ks_brightness_full_sweep() {
     verify_full_sweep(
         "KS brightness",
         |p| {
-            p.engine = EngineType::Modal;
+            *p = ParamSnapshot::for_engine(EngineType::Modal);
             p.modal.mode = ResonatorMode::String;
         },
         |p, v| {
@@ -500,7 +498,7 @@ fn prop_modal_decay_full_sweep() {
     verify_full_sweep(
         "Modal decay",
         |p| {
-            p.engine = EngineType::Modal;
+            *p = ParamSnapshot::for_engine(EngineType::Modal);
             p.modal.mode = ResonatorMode::Modal;
         },
         |p, v| {
@@ -515,7 +513,7 @@ fn prop_modal_brightness_full_sweep() {
     verify_full_sweep(
         "Modal brightness",
         |p| {
-            p.engine = EngineType::Modal;
+            *p = ParamSnapshot::for_engine(EngineType::Modal);
             p.modal.mode = ResonatorMode::Modal;
         },
         |p, v| {

@@ -292,7 +292,7 @@ fn fm_output_bounded() {
 #[test]
 fn fm_init_patch_is_audible() {
     let patch = Patch::init(ChainType::Fm);
-    assert_eq!(patch.params.engine, EngineType::Fm);
+    assert_eq!(patch.params.engine(), EngineType::Fm);
     let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
     voice.note_on(MidiNote::new(69).unwrap(), Velocity::new(100).unwrap(), &patch.params);
     let mut buf = [0.0f32; 64];
@@ -310,7 +310,7 @@ fn fm_init_patch_is_audible() {
 #[test]
 fn fm_init_patch_sets_engine_type() {
     let patch = Patch::init(ChainType::Fm);
-    assert_eq!(patch.params.engine, EngineType::Fm);
+    assert_eq!(patch.params.engine(), EngineType::Fm);
     assert_eq!(patch.chain_type, ChainType::Fm);
 }
 
@@ -321,8 +321,7 @@ fn fm_init_patch_sets_engine_type() {
 #[test]
 fn voice_fm_produces_sound() {
     let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
-    let mut params = ParamSnapshot::default();
-    params.engine = EngineType::Fm;
+    let mut params = ParamSnapshot::for_engine(EngineType::Fm);
     // Op1 already has level=99 from FmParams default
     voice.note_on(MidiNote::new(69).unwrap(), Velocity::new(100).unwrap(), &params);
     let mut buf = [0.0f32; 64];
@@ -335,8 +334,7 @@ fn voice_fm_produces_sound() {
 #[test]
 fn voice_fm_output_finite() {
     let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
-    let mut params = ParamSnapshot::default();
-    params.engine = EngineType::Fm;
+    let mut params = ParamSnapshot::for_engine(EngineType::Fm);
     for op in params.fm.operators.iter_mut() {
         op.level = 99.0;
         op.feedback = 7.0;

@@ -13,21 +13,24 @@ use chimera_hal::BLOCK_SIZE;
 /// A base patch in which `block` is audible (spec: engine params use their
 /// own engine; drive/folder > 0; amp env and FM use Pizza or FM).
 fn recipe(block: BlockRef) -> ParamSnapshot {
-    let mut p = ParamSnapshot::default();
+    let engine = match block {
+        BlockRef::Fm | BlockRef::FmOp(_) => EngineType::Fm,
+        BlockRef::Modal => EngineType::Modal,
+        _ => EngineType::Pizza, // Pizza, AmpEnv, Out, Drive, Filter, Folder
+    };
+    let mut p = ParamSnapshot::for_engine(engine);
     p.lfo.rate = 5.0; // swings both ways within the render
     match block {
         BlockRef::Fm | BlockRef::FmOp(_) => {
-            p.engine = EngineType::Fm;
             p.fm.algorithm = 7; // every operator is a carrier
             for op in p.fm.operators.iter_mut() {
                 op.level = 99.0;
             }
         }
-        BlockRef::Modal => p.engine = EngineType::Modal,
         BlockRef::Drive => p.drive.drive = 0.5,
         BlockRef::Filter => p.filter.cutoff = 2000.0,
         BlockRef::Folder => p.folder.fold = 0.5,
-        _ => {} // Pizza engine defaults: Pizza, AmpEnv, Out
+        _ => {}
     }
     p
 }

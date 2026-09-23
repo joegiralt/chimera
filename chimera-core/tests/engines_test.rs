@@ -18,8 +18,7 @@ use chimera_hal::BLOCK_SIZE;
 use common::{expects_sound, SR};
 
 fn params(kind: EngineType) -> ParamSnapshot {
-    let mut p = ParamSnapshot::default();
-    p.engine = kind;
+    let mut p = ParamSnapshot::for_engine(kind);
     p
 }
 

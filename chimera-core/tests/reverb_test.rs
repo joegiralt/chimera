@@ -417,8 +417,7 @@ fn test_reverb_through_voice_produces_tail() {
     let empty_mod = ModState::new();
     let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
     let mut reverb = Reverb::new();
-    let mut params = ParamSnapshot::default();
-    params.engine = EngineType::Pizza;
+    let mut params = ParamSnapshot::for_engine(EngineType::Pizza);
     params.reverb.mix = 0.5;
     params.reverb.time = 0.7;
 
@@ -458,8 +457,7 @@ fn test_reverb_type_switch_e2e() {
     let render_with_reverb = |rt: u8| -> f32 {
         let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
         let mut reverb = Reverb::new();
-        let mut params = ParamSnapshot::default();
-        params.engine = EngineType::Pizza;
+        let mut params = ParamSnapshot::for_engine(EngineType::Pizza);
         params.reverb.reverb_type = rt;
         params.reverb.mix = 0.8;
         params.reverb.time = 0.6;
