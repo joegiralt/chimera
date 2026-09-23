@@ -2,6 +2,7 @@ use chimera_core::dsp::chorus::JunoChorus;
 use chimera_core::dsp::delay::TapeDelay;
 use chimera_core::dsp::reverb::Reverb;
 use chimera_core::dsp::voice::Voice;
+use chimera_core::modulation::ModState;
 use chimera_core::params::ParamSnapshot;
 use chimera_core::{MidiNote, Velocity};
 use cpal::Stream;
@@ -12,8 +13,16 @@ use std::sync::atomic::{AtomicPtr, AtomicU8, Ordering};
 const NOTE_NONE: u8 = 0;
 const NOTE_ON_FLAG: u8 = 0x80;
 
+/// Everything the audio callback reads from the UI, swapped as one unit so
+/// params and modulation routes always match (spec §4, "Desktop").
+#[derive(Clone, Default)]
+struct AudioShared {
+    params: ParamSnapshot,
+    mod_state: ModState,
+}
+
 struct SharedState {
-    params: AtomicPtr<ParamSnapshot>,
+    current: AtomicPtr<AudioShared>,
     note_cmd: AtomicU8,
     velocity: AtomicU8,
 }
@@ -21,7 +30,7 @@ struct SharedState {
 pub struct DesktopAudio {
     _stream: Stream,
     shared: Arc<SharedState>,
-    param_bufs: Box<[ParamSnapshot; 2]>,
+    bufs: Box<[AudioShared; 2]>,
     active_buf: usize,
 }
 
@@ -32,13 +41,13 @@ impl DesktopAudio {
         let config = device.default_output_config().expect("no output config");
         let sample_rate = config.sample_rate().0;
 
-        let mut param_bufs = Box::new([ParamSnapshot::default(), ParamSnapshot::default()]);
-        let initial_ptr = &mut param_bufs[0] as *mut ParamSnapshot;
+        let mut bufs = Box::new([AudioShared::default(), AudioShared::default()]);
+        let initial_ptr = &mut bufs[0] as *mut AudioShared;
 
         let shared = Arc::new(SharedState {
-            params: AtomicPtr::new(initial_ptr),
+            current: AtomicPtr::new(initial_ptr),
             note_cmd: AtomicU8::new(NOTE_NONE),
-            velocity: AtomicU8::new(100),
+            velocity: AtomicU8::new(Velocity::DEFAULT.get()),
         });
         let shared_clone = Arc::clone(&shared);
 
@@ -53,10 +62,10 @@ impl DesktopAudio {
             .build_output_stream(
                 &config.into(),
                 move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                    let params_ptr = shared_clone.params.load(Ordering::Acquire);
-                    // SAFETY: pointer always valid — points into param_bufs owned
-                    // by DesktopAudio. UI writes inactive buffer, swaps atomically.
-                    let params = unsafe { &*params_ptr };
+                    let current = shared_clone.current.load(Ordering::Acquire);
+                    // SAFETY: pointer always valid — points into `bufs` owned by
+                    // DesktopAudio. UI writes the inactive buffer, swaps atomically.
+                    let AudioShared { params, mod_state } = unsafe { &*current };
 
                     let cmd = shared_clone.note_cmd.swap(NOTE_NONE, Ordering::Relaxed);
                     if cmd & NOTE_ON_FLAG != 0 {
@@ -69,10 +78,9 @@ impl DesktopAudio {
                         voice.note_off();
                     }
 
-                    let empty_mod = chimera_core::modulation::ModState::new();
                     for sample in data.iter_mut() {
                         if block_pos >= chimera_hal::BLOCK_SIZE {
-                            voice.render(&mut block, params, &empty_mod);
+                            voice.render(&mut block, params, mod_state);
                             // Effects chain: chorus → delay → reverb (Digitone II style)
                             chorus.process(&mut block, &params.chorus, sample_rate);
                             delay.process(&mut block, &params.delay, sample_rate);
@@ -93,17 +101,19 @@ impl DesktopAudio {
         Self {
             _stream: stream,
             shared,
-            param_bufs,
+            bufs,
             active_buf: 0,
         }
     }
 
-    /// Push full param snapshot to audio thread (lock-free swap).
-    pub fn update_params(&mut self, params: &ParamSnapshot) {
+    /// Push params and modulation routes to the audio thread (lock-free swap).
+    pub fn update(&mut self, params: &ParamSnapshot, mod_state: &ModState) {
         let inactive = 1 - self.active_buf;
-        self.param_bufs[inactive] = params.clone();
-        let ptr = &mut self.param_bufs[inactive] as *mut ParamSnapshot;
-        self.shared.params.store(ptr, Ordering::Release);
+        let buf = &mut self.bufs[inactive];
+        buf.params = params.clone();
+        buf.mod_state = mod_state.clone();
+        let ptr = buf as *mut AudioShared;
+        self.shared.current.store(ptr, Ordering::Release);
         self.active_buf = inactive;
     }
 
