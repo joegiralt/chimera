@@ -76,47 +76,46 @@ fn voice_render_with_mod_offset_changes_filter() {
 }
 
 #[test]
-fn mod_bar_shows_when_enabled() {
+fn mod_bar_shows_when_primed() {
+    use chimera_core::mod_path::{ModDestRegistry, ParamPath};
+
     let mut matrix = MatrixState::new();
-    // Not enabled yet
+    // Not primed yet
     assert!(
         matrix.mod_info_for_param(1, 0).is_none(),
-        "disabled param should return None"
+        "un-primed param should return None"
     );
 
-    // Enable block 1, param 0
-    matrix.set_mod_enabled(1, 0, true);
+    // Prime block 1, param 0 via registry
+    let mut registry = ModDestRegistry::new();
+    registry.add(ParamPath::Block { block: 1, param: 0 }, *b"B1 Prm0\0");
+    matrix.rebuild_dests_from_registry(&registry);
+
     let info = matrix.mod_info_for_param(1, 0);
     assert!(
         info.is_some(),
-        "enabled param should return Some"
+        "primed param should return Some"
     );
 }
 
 #[test]
 fn mod_bar_amount_reflects_matrix() {
-    use chimera_core::ui::mod_grid::ModDest;
+    use chimera_core::mod_path::{ModDestRegistry, ParamPath};
 
     let mut matrix = MatrixState::new();
     matrix.num_sources = 2;
 
-    // Enable a destination and manually populate dests (as rebuild_dests_from_chain would).
-    matrix.set_mod_enabled(0, 1, true);
-    // set_mod_enabled clears num_dests; populate the dest entry manually.
-    matrix.dests[0] = Some(ModDest {
-        block_idx: 0,
-        param_idx: 1,
-        block_short: "TST",
-        param_label: "Prm",
-    });
-    matrix.num_dests = 1;
+    // Prime a destination via registry
+    let mut registry = ModDestRegistry::new();
+    registry.add(ParamPath::Block { block: 0, param: 1 }, *b"TSTaPrm\0");
+    matrix.rebuild_dests_from_registry(&registry);
 
     // Set amounts from two sources
     matrix.amounts[0][0] = 64;
     matrix.amounts[1][0] = 32;
 
     let info = matrix.mod_info_for_param(0, 1);
-    assert!(info.is_some(), "enabled param should have mod info");
+    assert!(info.is_some(), "primed param should have mod info");
 
     let amount = info.unwrap();
     // Total = (64 + 32) / 127 = 96/127 ~= 0.756
@@ -175,65 +174,23 @@ fn matrix_state_rebuild_sources() {
 }
 
 #[test]
-fn matrix_state_rebuild_dests_from_chain() {
-    use chimera_core::ui::block_def::{BlockDef, ChainBlock};
-    use chimera_core::ui::page::{CellIcon, PageLayout, ValFmt};
+fn matrix_state_rebuild_dests_from_registry() {
+    use chimera_core::mod_path::{ModDestRegistry, ParamPath};
 
-    static PIZZA_DEF: BlockDef = BlockDef {
-        name: "Pizza",
-        short: "PIZ",
-        layout: PageLayout::BigViz,
-        viz: chimera_core::ui::block_def::VizType::WaveformPreview,
-        params: [
-            chimera_core::ui::block_def::ParamSlot { label: "Shape", format: ValFmt::Uni, icon: CellIcon::None },
-            chimera_core::ui::block_def::ParamSlot { label: "Crush", format: ValFmt::Uni, icon: CellIcon::None },
-            chimera_core::ui::block_def::ParamSlot { label: "Level", format: ValFmt::Uni, icon: CellIcon::None },
-            chimera_core::ui::block_def::ParamSlot { label: "--", format: ValFmt::Uni, icon: CellIcon::None },
-            chimera_core::ui::block_def::ParamSlot { label: "--", format: ValFmt::Uni, icon: CellIcon::None },
-            chimera_core::ui::block_def::ParamSlot { label: "--", format: ValFmt::Uni, icon: CellIcon::None },
-        ],
-    };
-
-    static FILTER_DEF: BlockDef = BlockDef {
-        name: "Filter",
-        short: "FLT",
-        layout: PageLayout::BigViz,
-        viz: chimera_core::ui::block_def::VizType::FilterResponse,
-        params: [
-            chimera_core::ui::block_def::ParamSlot { label: "Freq", format: ValFmt::Uni, icon: CellIcon::None },
-            chimera_core::ui::block_def::ParamSlot { label: "Reso", format: ValFmt::Uni, icon: CellIcon::None },
-            chimera_core::ui::block_def::ParamSlot { label: "--", format: ValFmt::Uni, icon: CellIcon::None },
-            chimera_core::ui::block_def::ParamSlot { label: "--", format: ValFmt::Uni, icon: CellIcon::None },
-            chimera_core::ui::block_def::ParamSlot { label: "--", format: ValFmt::Uni, icon: CellIcon::None },
-            chimera_core::ui::block_def::ParamSlot { label: "--", format: ValFmt::Uni, icon: CellIcon::None },
-        ],
-    };
-
-    let chain = [
-        ChainBlock { def: &PIZZA_DEF, sub_pages: &[] },
-        ChainBlock { def: &FILTER_DEF, sub_pages: &[] },
-    ];
-
-    use chimera_core::ui::mod_grid::MAX_PARAMS;
+    let mut registry = ModDestRegistry::new();
+    registry.add(ParamPath::Block { block: 0, param: 0 }, *b"PIZShape");
+    registry.add(ParamPath::Block { block: 1, param: 0 }, *b"FLT Freq");
 
     let mut matrix = MatrixState::new();
-    // Enable pizza shape (block 0, param 0) and filter freq (block 1, param 0)
-    matrix.mod_enabled |= 1 << (0 * MAX_PARAMS + 0); // block 0, param 0
-    matrix.mod_enabled |= 1 << (1 * MAX_PARAMS + 0); // block 1, param 0
-
-    matrix.rebuild_dests_from_chain(&chain);
+    matrix.rebuild_dests_from_registry(&registry);
 
     assert_eq!(matrix.num_dests, 2);
 
     let dest0 = matrix.dests[0].as_ref().unwrap();
-    assert_eq!(dest0.block_idx, 0);
-    assert_eq!(dest0.param_idx, 0);
-    assert_eq!(dest0.block_short, "PIZ");
-    assert_eq!(dest0.param_label, "Shape");
+    assert_eq!(dest0.path, ParamPath::Block { block: 0, param: 0 });
+    assert_eq!(dest0.label_str(), "PIZShape");
 
     let dest1 = matrix.dests[1].as_ref().unwrap();
-    assert_eq!(dest1.block_idx, 1);
-    assert_eq!(dest1.param_idx, 0);
-    assert_eq!(dest1.block_short, "FLT");
-    assert_eq!(dest1.param_label, "Freq");
+    assert_eq!(dest1.path, ParamPath::Block { block: 1, param: 0 });
+    assert_eq!(dest1.label_str(), "FLT Freq");
 }

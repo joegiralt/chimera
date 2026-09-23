@@ -90,15 +90,15 @@ fn mod_state_compute_offset_negative_amount() {
 
 #[test]
 fn mod_state_sync_from_matrix() {
-    use chimera_core::ui::mod_grid::ModDest;
+    use chimera_core::mod_path::ModDestRegistry;
 
     let mut matrix = MatrixState::new();
-    // Enable two destinations and manually populate dests (as rebuild_dests_from_chain would).
-    matrix.set_mod_enabled(0, 1, true); // block 0, param 1
-    matrix.set_mod_enabled(2, 0, true); // block 2, param 0
-    matrix.dests[0] = Some(ModDest { block_idx: 0, param_idx: 1, block_short: "A", param_label: "p" });
-    matrix.dests[1] = Some(ModDest { block_idx: 2, param_idx: 0, block_short: "B", param_label: "q" });
-    matrix.num_dests = 2;
+
+    // Build two destinations via registry
+    let mut registry = ModDestRegistry::new();
+    registry.add(ParamPath::Block { block: 0, param: 1 }, *b"A  p\0\0\0\0");
+    registry.add(ParamPath::Block { block: 2, param: 0 }, *b"B  q\0\0\0\0");
+    matrix.rebuild_dests_from_registry(&registry);
 
     // Set up sources
     matrix.num_sources = 2;
@@ -121,7 +121,7 @@ fn mod_state_sync_from_matrix() {
     // Verify dests copied from matrix.dests
     for di in 0..matrix.num_dests {
         if let Some(dest) = &matrix.dests[di] {
-            assert_eq!(ms.dests[di], ParamPath::Block { block: dest.block_idx, param: dest.param_idx });
+            assert_eq!(ms.dests[di], dest.path);
         }
     }
 }

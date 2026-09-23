@@ -61,7 +61,7 @@ impl ModState {
         for di in 0..MAX_MOD_DESTS {
             if di < matrix.num_dests {
                 if let Some(dest) = &matrix.dests[di] {
-                    self.dests[di] = ParamPath::Block { block: dest.block_idx, param: dest.param_idx };
+                    self.dests[di] = dest.path;
                 } else {
                     self.dests[di] = ParamPath::Block { block: 0, param: 0 };
                 }
