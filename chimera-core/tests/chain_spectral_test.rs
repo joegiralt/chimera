@@ -351,8 +351,8 @@ fn test_folder_adds_harmonics() {
 
     let mut folded = sine_buf(freq, 4096);
     let mut params = FolderParams::default();
-    params.fold.set(0.7);
-    params.mix.set(1.0);
+    params.fold = 0.7;
+    params.mix = 1.0;
     folder.process(&mut folded, &params);
     let folded_h = harmonic_energy(&folded, freq);
 
@@ -372,8 +372,8 @@ fn test_folder_more_fold_more_harmonics() {
     let measure = |amount: f32| -> f32 {
         let mut buf = sine_buf(freq, 4096);
         let mut params = FolderParams::default();
-        params.fold.set(amount);
-        params.mix.set(1.0);
+        params.fold = amount;
+        params.mix = 1.0;
         folder.process(&mut buf, &params);
         harmonic_energy(&buf, freq)
     };

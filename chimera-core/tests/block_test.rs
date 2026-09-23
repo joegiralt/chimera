@@ -185,3 +185,8 @@ fn snapshot_filter_starts_open() {
     assert_eq!(chimera_core::params::FilterParams::default().cutoff, 1000.0);
     assert_eq!(chimera_core::params::ParamSnapshot::default().filter.cutoff, 20000.0);
 }
+
+#[test]
+fn folder_conforms() {
+    conforms("folder", chimera_core::params::FolderParams::default());
+}

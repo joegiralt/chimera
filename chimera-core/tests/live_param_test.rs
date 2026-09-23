@@ -195,11 +195,11 @@ fn test_folder_mid_note() {
     let (_, _, before, after) = render_with_param_change(
         |p| {
             p.engine = EngineType::Pizza;
-            p.folder.fold.set(0.0);
+            p.folder.fold = 0.0;
         },
         |p| {
-            p.folder.fold.set(0.8);
-            p.folder.mix.set(1.0);
+            p.folder.fold = 0.8;
+            p.folder.mix = 1.0;
         },
         8,
         8,

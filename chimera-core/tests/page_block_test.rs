@@ -118,3 +118,15 @@ fn filter_read_values() {
     let p = ParamSnapshot::default();
     assert_eq!(PageId::Filter.read_values(&p), [1.0, 0.0, 0.0, 0.0, 0.5, 0.0]);
 }
+
+// ── Folder (Task 6) ──────────────────────────────────────────────────
+
+#[test]
+fn folder_encoder_steps_like_before() {
+    let mut p = ParamSnapshot::default();
+    PageId::Folder.apply_encoder(0, 4, &mut p);
+    assert_eq!(p.folder.fold, 4.0 / 128.0);
+    PageId::DemoWaves.apply_encoder(3, -1, &mut p);
+    assert_eq!(p.folder.symmetry, 0.5 - 1.0 / 128.0);
+    assert_eq!(PageId::Folder.read_values(&p)[..3], [4.0 / 128.0, 0.5 - 1.0 / 128.0, 0.5]);
+}

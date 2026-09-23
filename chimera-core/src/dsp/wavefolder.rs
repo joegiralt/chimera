@@ -19,13 +19,13 @@ impl Wavefolder {
 
     /// Process a block of samples in-place.
     pub fn process(&self, buf: &mut [f32], params: &FolderParams) {
-        let fold = params.fold.value;
+        let fold = params.fold;
         if fold < 0.001 {
             return;
         }
 
-        let sym = params.symmetry.value; // 0..1, center=0.5=no bias
-        let mix = params.mix.value;
+        let sym = params.symmetry; // 0..1, center=0.5=no bias
+        let mix = params.mix;
         let gain = 1.0 + fold * fold * 6.0; // quadratic gain ramp
 
         for sample in buf.iter_mut() {

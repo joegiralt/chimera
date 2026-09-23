@@ -1,7 +1,7 @@
 use crate::block::{Block, ParamId};
 use crate::dsp::modal::ModalParams;
 use crate::dsp::pizza::PizzaParams;
-use crate::params::{DriveParams, FilterParams, ParamSnapshot};
+use crate::params::{DriveParams, FilterParams, FolderParams, ParamSnapshot};
 use crate::preset::ChainType;
 use crate::ui::chain::ChainNav;
 
@@ -193,20 +193,13 @@ impl PageId {
                 0.0, // placeholders
             ],
             PageId::Drive => read_block(&params.drive, DRIVE_PAGE),
-            PageId::Folder => [
-                params.folder.fold.normalized(),
-                params.folder.symmetry.normalized(),
-                params.folder.mix.normalized(),
-                0.0,
-                0.0,
-                0.0,
-            ],
+            PageId::Folder => read_block(&params.folder, FOLDER_PAGE),
             // Demo pages reuse filter + envelope params for tweaking
             PageId::DemoWaves => [
                 params.drive.normalized(DriveParams::DRIVE),
                 params.drive.normalized(DriveParams::TONE),
-                params.folder.fold.normalized(),
-                params.folder.symmetry.normalized(),
+                params.folder.normalized(FolderParams::FOLD),
+                params.folder.normalized(FolderParams::SYMMETRY),
                 params.filter.normalized(FilterParams::ENV_AMOUNT),
                 params.pan.normalized(),
             ],
@@ -399,10 +392,13 @@ impl PageId {
             PageId::DemoWaves => match idx {
                 0 => bind(&mut p.drive, DriveParams::DRIVE),
                 1 => bind(&mut p.drive, DriveParams::TONE),
+                2 => bind(&mut p.folder, FolderParams::FOLD),
+                3 => bind(&mut p.folder, FolderParams::SYMMETRY),
                 4 => bind(&mut p.filter, FilterParams::ENV_AMOUNT),
                 _ => None,
             },
             PageId::Filter => bind(&mut p.filter, *FILTER_PAGE.get(idx)?),
+            PageId::Folder => bind(&mut p.folder, *FOLDER_PAGE.get(idx)?),
             PageId::DemoShapes => match idx {
                 1 => bind(&mut p.filter, FilterParams::CUTOFF),
                 3 => bind(&mut p.filter, FilterParams::DRIVE),
@@ -429,15 +425,7 @@ impl PageId {
                 1 => Some(&mut params.pan),
                 _ => None,
             },
-            PageId::Folder => match idx {
-                0 => Some(&mut params.folder.fold),
-                1 => Some(&mut params.folder.symmetry),
-                2 => Some(&mut params.folder.mix),
-                _ => None,
-            },
             PageId::DemoWaves => match idx {
-                2 => Some(&mut params.folder.fold),
-                3 => Some(&mut params.folder.symmetry),
                 5 => Some(&mut params.pan),
                 _ => None,
             },
@@ -480,6 +468,7 @@ const FILTER_PAGE: [ParamId; 6] = [
     FilterParams::ENV_AMOUNT,
     FilterParams::KEY_TRACK,
 ];
+const FOLDER_PAGE: [ParamId; 3] = [FolderParams::FOLD, FolderParams::SYMMETRY, FolderParams::MIX];
 const MODAL1_PAGE: [ParamId; 6] = [
     ModalParams::MODE,
     ModalParams::EXCITE,
