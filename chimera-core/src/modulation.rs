@@ -45,9 +45,11 @@ impl ModState {
         self.num_dests
     }
 
-    /// Destination `d` (`d < num_dests()`).
+    /// Destination `d` (`d < num_dests()`). Returns the unused sentinel
+    /// address when `d` is out of range instead of panicking: this is called
+    /// from the audio ISR (`Voice::render`), which must never hard-fault.
     pub fn dest(&self, d: usize) -> ParamAddr {
-        self.dests[d]
+        self.dests.get(d).copied().unwrap_or(UNUSED)
     }
 
     /// Amount from `source` to destination `dest`; 0 when out of range.
@@ -60,8 +62,12 @@ impl ModState {
     }
 
     /// Sum of `source_value * amount / 127` over all sources for dest `d`.
-    /// Same order and arithmetic as the old `compute_offset`.
+    /// Same order and arithmetic as the old `compute_offset`. Returns 0.0
+    /// when `d` is out of range instead of panicking (see `dest`).
     pub fn sum_for(&self, d: usize, source_values: &[f32; MAX_MOD_SOURCES]) -> f32 {
+        if d >= MAX_MOD_DESTS {
+            return 0.0;
+        }
         let mut total = 0.0f32;
         for si in 0..self.num_sources {
             let amt = self.amounts[si][d];
