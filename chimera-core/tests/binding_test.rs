@@ -35,6 +35,20 @@ fn every_part_slot_resolves_to_a_spec() {
     }
 }
 
+/// Spec §4: matrix source rows are what `Voice` produces — ENV and LFO on
+/// every Part chain (FM no longer lists four envelope rows).
+#[test]
+fn part_chains_offer_env_and_lfo_sources() {
+    for ct in ChainType::ALL {
+        assert_eq!(chain_def_for(ct).mod_sources, ["ENV", "LFO"], "{ct:?}");
+        let patch = chimera_core::preset::Patch::init(ct);
+        assert!(patch.dest_registry.is_empty(), "{ct:?}: no pre-wired destinations");
+        assert_eq!(patch.mod_state.num_dests(), 0, "{ct:?}");
+    }
+    // The FM_ENV pages stay as MOD sub-pages; they are just not source rows.
+    assert_eq!(chain_def_for(ChainType::Fm).blocks[4].sub_pages.len(), 4);
+}
+
 #[test]
 fn block_def_ids_are_unique() {
     let all: [&BlockDef; 40] = [
