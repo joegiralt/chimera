@@ -43,13 +43,20 @@ fn modal_pages() {
     assert_eq!(p.modal.excite, 0.8 + 2.0 * (1.0 / 128.0));
     turn(&reg::MODAL_2, 5, -1, &mut p);
     assert_eq!(p.modal.ks_ens_mix, 0.0);
+    assert_eq!(read(&reg::MODAL_2, &p), [0.3, 0.0, 0.2, 0.0, 0.3, 0.0]);
     // Plan D3: MODE reaches Sympathetic; Review Focus 3: snap lands on a choice.
     p.modal.mode = ResonatorMode::Bowed;
     assert_eq!(read(&reg::MODAL_1, &p)[0], 2.0 / 3.0);
     turn(&reg::MODAL_1, 0, 1, &mut p);
     assert_eq!(p.modal.mode, ResonatorMode::Sympathetic);
+    // Top clamp: Sympathetic is the last choice, +1 stays put.
+    turn(&reg::MODAL_1, 0, 1, &mut p);
+    assert_eq!(p.modal.mode, ResonatorMode::Sympathetic);
     snap(&reg::MODAL_1, 0, -1, &mut p);
     assert_eq!(p.modal.mode, ResonatorMode::String);
+    // Shift-snap on an Enum jumps straight to the far end.
+    snap(&reg::MODAL_1, 0, 1, &mut p);
+    assert_eq!(p.modal.mode, ResonatorMode::Sympathetic);
 }
 
 #[test]
@@ -67,6 +74,7 @@ fn drive_filter_folder_pages() {
     turn(&reg::FILTER, 4, 1, &mut p);
     assert_eq!(p.filter.env_amount, (1.0 - -1.0) / 128.0);
 
+    assert_eq!(read(&reg::FOLDER, &p), [0.0, 0.5, 0.5, 0.0, 0.0, 0.0]);
     turn(&reg::FOLDER, 0, 4, &mut p);
     assert_eq!(p.folder.fold, 4.0 / 128.0);
 }
@@ -74,6 +82,10 @@ fn drive_filter_folder_pages() {
 #[test]
 fn envelope_and_lfo_pages() {
     let mut p = ParamSnapshot::default();
+    assert_eq!(
+        read(&reg::ENVELOPE, &p),
+        [(0.01 - 0.001) / (10.0 - 0.001), (0.3 - 0.001) / (10.0 - 0.001), 0.7, (0.3 - 0.001) / (10.0 - 0.001), 1.0, 0.5]
+    );
     turn(&reg::ENVELOPE, 0, 1, &mut p);
     assert_eq!(p.envelopes[0].attack, 0.01 + (10.0 - 0.001) / 128.0);
     turn(&reg::ENVELOPE, 2, -1, &mut p);
@@ -84,6 +96,8 @@ fn envelope_and_lfo_pages() {
     assert_eq!(p.lfo.rate, 1.0 + 2.0 * 0.15);
     turn(&reg::LFO, 1, 9, &mut p);
     assert_eq!(p.lfo.shape, 4);
+    turn(&reg::LFO, 2, 1, &mut p); // SYNC: free-running -> retrigger
+    assert_eq!(p.lfo.sync, 1);
     turn(&reg::LFO, 5, 3, &mut p);
     assert_eq!(p.lfo.offset, 3.0 * (1.0 / 128.0) * 2.0);
     snap(&reg::LFO, 1, -1, &mut p); // shift-snap works on LFO (spec)
