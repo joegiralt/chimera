@@ -15,6 +15,8 @@ pub enum ChainType {
 }
 
 impl ChainType {
+    pub const ALL: [ChainType; 3] = [ChainType::PizzaPoly, ChainType::Modal, ChainType::Fm];
+
     /// Short display label for the chain type.
     pub fn label(self) -> &'static str {
         match self {
@@ -50,23 +52,14 @@ impl Patch {
             ChainType::Fm => {
                 params.engine = crate::params::EngineType::Fm;
                 // Pre-wire: 4 envelope sources → 4 FM operator levels
-                let mut ms = ModState::new();
-                ms.num_sources = 4;
-                ms.num_dests = 4;
-                ms.dests[0] = ParamPath::FmOp { op: 0, param: 2 }; // Op1 Level
-                ms.dests[1] = ParamPath::FmOp { op: 1, param: 2 }; // Op2 Level
-                ms.dests[2] = ParamPath::FmOp { op: 2, param: 2 }; // Op3 Level
-                ms.dests[3] = ParamPath::FmOp { op: 3, param: 2 }; // Op4 Level
-                ms.amounts[0][0] = 127; // E1 → Op1 Level full
-                ms.amounts[1][1] = 127; // E2 → Op2 Level full
-                ms.amounts[2][2] = 127; // E3 → Op3 Level full
-                ms.amounts[3][3] = 127; // E4 → Op4 Level full
-
                 let mut reg = ModDestRegistry::new();
-                reg.add(ParamPath::FmOp { op: 0, param: 2 }, *b"O1 Lvl\0\0");
-                reg.add(ParamPath::FmOp { op: 1, param: 2 }, *b"O2 Lvl\0\0");
-                reg.add(ParamPath::FmOp { op: 2, param: 2 }, *b"O3 Lvl\0\0");
-                reg.add(ParamPath::FmOp { op: 3, param: 2 }, *b"O4 Lvl\0\0");
+                for (op, label) in [(0u8, *b"O1 Lvl\0\0"), (1, *b"O2 Lvl\0\0"), (2, *b"O3 Lvl\0\0"), (3, *b"O4 Lvl\0\0")] {
+                    let _ = reg.add(ChainType::Fm, ParamPath::FmOp { op, param: 2 }, label);
+                }
+                let mut ms = ModState::from_registry(&reg, ChainType::Fm, 4);
+                for i in 0..4 {
+                    ms.set_amount(i, i, 127); // E(i+1) → Op(i+1) Level full
+                }
                 (ms, reg)
             }
         };

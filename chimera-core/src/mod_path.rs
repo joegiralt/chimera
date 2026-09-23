@@ -1,3 +1,7 @@
+use crate::addr::{BlockRef, Op, ParamAddr};
+use crate::preset::ChainType;
+use crate::ui::page::PageId;
+
 pub const MAX_REGISTRY_DESTS: usize = 32;
 pub const LABEL_LEN: usize = 8;
 
@@ -24,10 +28,18 @@ impl ModDestEntry {
     }
 }
 
+/// Why `ModDestRegistry::add` refused a destination.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RegistryError {
+    /// The address's spec is not modulatable (or the path means nothing).
+    NotModulatable,
+    Full,
+}
+
 #[derive(Clone)]
 pub struct ModDestRegistry {
-    pub entries: [Option<ModDestEntry>; MAX_REGISTRY_DESTS],
-    pub count: usize,
+    entries: [Option<ModDestEntry>; MAX_REGISTRY_DESTS],
+    count: usize,
 }
 
 impl ModDestRegistry {
@@ -38,17 +50,30 @@ impl ModDestRegistry {
         }
     }
 
-    pub fn add(&mut self, path: ParamPath, label: [u8; LABEL_LEN]) {
-        // No duplicates
-        if self.is_primed(path) {
-            return;
+    pub fn len(&self) -> usize {
+        self.count
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.count == 0
+    }
+
+    /// Prime `path` (as the UI on `chain` means it) as a mod destination.
+    /// Refuses non-modulatable addresses (spec §4). Priming an already
+    /// primed path is a no-op success.
+    pub fn add(&mut self, chain: ChainType, path: ParamPath, label: [u8; LABEL_LEN]) -> Result<(), RegistryError> {
+        if !legacy_to_addr(chain, path).is_some_and(ParamAddr::modulatable) {
+            return Err(RegistryError::NotModulatable);
         }
-        // Find first empty slot
+        if self.is_primed(path) {
+            return Ok(());
+        }
         if self.count >= MAX_REGISTRY_DESTS {
-            return;
+            return Err(RegistryError::Full);
         }
         self.entries[self.count] = Some(ModDestEntry { path, label });
         self.count += 1;
+        Ok(())
     }
 
     pub fn remove(&mut self, path: ParamPath) {
@@ -87,6 +112,38 @@ impl ModDestRegistry {
             self.entries[index].as_ref()
         } else {
             None
+        }
+    }
+}
+
+/// Temporary bridge (deleted in Task 19): the semantic address a UI
+/// `ParamPath` means on `chain`. `Block { block: node, param: slot }` names
+/// the node's main page, except each chain's MOD node, whose slots mean the
+/// envelope sub-page (plan D8).
+pub fn legacy_to_addr(chain: ChainType, path: ParamPath) -> Option<ParamAddr> {
+    match path {
+        ParamPath::FmOp { op, param } => {
+            let op = Op::try_from(op).ok()?;
+            let a = PageId::FmOp.binding(param as usize)?;
+            Some(ParamAddr::new(BlockRef::FmOp(op), a.param))
+        }
+        ParamPath::FmEnv { op, param } => {
+            let op = Op::try_from(op).ok()?;
+            let a = PageId::FmEnv1.binding(param as usize)?;
+            Some(ParamAddr::new(BlockRef::FmOp(op), a.param))
+        }
+        ParamPath::Block { block, param } => {
+            let page = match (chain, block) {
+                (ChainType::PizzaPoly, 0) => PageId::Pizza,
+                (ChainType::Modal, 0) => PageId::EngineModal1,
+                (ChainType::Fm, 0) => PageId::FmAlg,
+                (ChainType::PizzaPoly | ChainType::Fm, 1) => PageId::Drive,
+                (ChainType::PizzaPoly | ChainType::Fm, 2) | (ChainType::Modal, 1) => PageId::Filter,
+                (ChainType::PizzaPoly | ChainType::Fm, 3) => PageId::Folder,
+                (ChainType::PizzaPoly, 4) | (ChainType::Modal, 2) => PageId::Vca,
+                _ => return None,
+            };
+            page.binding(param as usize)
         }
     }
 }

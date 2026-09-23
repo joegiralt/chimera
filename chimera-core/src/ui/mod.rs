@@ -113,6 +113,12 @@ impl UiState {
         self.page
     }
 
+    /// Rebuild a track's audio-side `ModState` from the matrix.
+    fn sync_mod_state(&mut self, track: usize) {
+        let patch = &mut self.project.tracks[track].patch;
+        patch.mod_state.sync_from_matrix(&self.matrix_state, patch.chain_type);
+    }
+
     /// Build the ParamPath for the currently focused encoder on the active page.
     fn current_param_path(&self) -> ParamPath {
         match self.page {
@@ -331,7 +337,7 @@ impl UiState {
                         3 => self.matrix_state.scroll_h(delta),
                         4 => {
                             self.matrix_state.adjust_amount(delta);
-                            self.project.tracks[self.active_track].patch.mod_state.sync_from_matrix(&self.matrix_state);
+                            self.sync_mod_state(self.active_track);
                         }
                         _ => {}
                     }
@@ -359,11 +365,13 @@ impl UiState {
                 if controls.button_state(ButtonId::Plus) == ButtonState::Pressed {
                     let path = self.current_param_path();
                     let label = self.current_param_label();
-                    self.project.tracks[at].patch.dest_registry.add(path, label);
+                    // Refused when the param is not modulatable (spec §4).
+                    let chain = self.project.tracks[at].patch.chain_type;
+                    let _ = self.project.tracks[at].patch.dest_registry.add(chain, path, label);
                     self.matrix_state.rebuild_dests_from_registry(
                         &self.project.tracks[at].patch.dest_registry
                     );
-                    self.project.tracks[at].patch.mod_state.sync_from_matrix(&self.matrix_state);
+                    self.sync_mod_state(at);
                 }
                 if controls.button_state(ButtonId::Minus) == ButtonState::Pressed {
                     let path = self.current_param_path();
@@ -371,7 +379,7 @@ impl UiState {
                     self.matrix_state.rebuild_dests_from_registry(
                         &self.project.tracks[at].patch.dest_registry
                     );
-                    self.project.tracks[at].patch.mod_state.sync_from_matrix(&self.matrix_state);
+                    self.sync_mod_state(at);
                 }
             }
         }
@@ -388,7 +396,7 @@ impl UiState {
 
         // Apply mod offsets for display — makes bars and vizzes animate with modulation.
         // Skip the LFO tick entirely when no modulation is active.
-        if patch.mod_state.num_dests > 0 {
+        if patch.mod_state.num_dests() > 0 {
             // Tick the display-side LFO for visual modulation feedback.
             // LFO.process() advances phase by: rate / sample_rate * BLOCK_SIZE
             // We want phase to advance by: rate / ui_fps per call.
@@ -403,20 +411,19 @@ impl UiState {
             const UI_FPS: u32 = 20; // tuned to match audio-side LFO rate
             let lfo_val = self.display_lfo.process(&patch.params.lfo, chimera_hal::BLOCK_SIZE as u32 * UI_FPS);
 
-            let block_idx = self.nav.node as u8;
             let mut mod_sources = [0.0f32; MAX_MOD_SOURCES];
             // Source 0 = Envelope (use sustain level as approximation for display)
-            if patch.mod_state.num_sources > 0 {
+            if patch.mod_state.num_sources() > 0 {
                 mod_sources[0] = patch.params.envelopes[0].normalized(EnvParams::SUSTAIN);
             }
             // Source 1 = LFO
-            if patch.mod_state.num_sources > 1 {
+            if patch.mod_state.num_sources() > 1 {
                 mod_sources[1] = lfo_val;
             }
 
             // Apply offsets to the 6 display values
             for i in 0..6 {
-                let offset = patch.mod_state.compute_offset(&mod_sources, ParamPath::Block { block: block_idx, param: i as u8 });
+                let offset = self.page.binding(i).map_or(0.0, |a| patch.mod_state.offset_for(a, &mod_sources));
                 if offset != 0.0 {
                     values[i] = (values[i] + offset).clamp(0.0, 1.0);
                 }

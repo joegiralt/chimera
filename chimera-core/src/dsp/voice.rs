@@ -6,11 +6,9 @@ use crate::dsp::engines::Engines;
 use crate::dsp::envelope::Envelope;
 use crate::dsp::filter::SvfFilter;
 use crate::dsp::lfo::Lfo;
-use crate::dsp::pizza::PizzaParams;
 use crate::dsp::wavefolder::Wavefolder;
-use crate::mod_path::ParamPath;
 use crate::modulation::{ModState, MAX_MOD_SOURCES};
-use crate::params::{DriveParams, EngineType, FilterParams, FmOpParams, FolderParams, ParamSnapshot};
+use crate::params::{EngineType, ParamSnapshot};
 use crate::{MidiNote, Velocity};
 
 /// Complete voice signal chain:
@@ -90,31 +88,22 @@ impl Voice {
         // Compute modulator source values
         let mut mod_values = [0.0f32; MAX_MOD_SOURCES];
         // Source 0 = Envelope
-        if mod_state.num_sources > 0 {
+        if mod_state.num_sources() > 0 {
             mod_values[0] = self.amp_env.current_level();
         }
         // Source 1 = LFO
-        if mod_state.num_sources > 1 {
+        if mod_state.num_sources() > 1 {
             mod_values[1] = self.lfo.process(&params.lfo, sample_rate);
         }
 
-        // Modulated copy (stack only). Offsets still use the chain-index paths
-        // `Voice` hard-coded before the refactor; Task 16 makes this generic.
+        // Modulated copy (stack only): every routed destination gets its
+        // offset through its block's spec (spec §4).
         let mut m = params.clone();
-        let off = |block: u8, param: u8| mod_state.compute_offset(&mod_values, ParamPath::Block { block, param });
-        apply_offset(&mut m.pizza, PizzaParams::SHAPE, off(0, 0));
-        apply_offset(&mut m.pizza, PizzaParams::CRUSH, off(0, 1));
-        apply_offset(&mut m.pizza, PizzaParams::LEVEL, off(0, 2));
-        apply_offset(&mut m.drive, DriveParams::DRIVE, off(1, 0));
-        apply_offset(&mut m.drive, DriveParams::TONE, off(1, 1));
-        apply_offset(&mut m.filter, FilterParams::CUTOFF, off(2, 0));
-        apply_offset(&mut m.filter, FilterParams::RESONANCE, off(2, 1));
-        apply_offset(&mut m.folder, FolderParams::FOLD, off(3, 0));
-        apply_offset(&mut m.folder, FolderParams::SYMMETRY, off(3, 1));
-        for (op, p) in m.fm.operators.iter_mut().enumerate() {
-            let offset = mod_state.compute_offset(&mod_values, ParamPath::FmOp { op: op as u8, param: 2 });
-            if offset != 0.0 {
-                apply_offset(p, FmOpParams::LEVEL, offset);
+        for d in 0..mod_state.num_dests() {
+            let off = mod_state.sum_for(d, &mod_values);
+            if off != 0.0 {
+                let a = mod_state.dest(d);
+                apply_offset(m.block_mut(a.block), a.param, off);
             }
         }
 

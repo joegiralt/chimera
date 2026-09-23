@@ -8,7 +8,7 @@
 
 use chimera_core::{MidiNote, Velocity};
 use chimera_core::dsp::voice::Voice;
-use chimera_core::mod_path::ParamPath;
+use chimera_core::mod_path::{ModDestRegistry, ParamPath};
 use chimera_core::modulation::ModState;
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::preset::{ChainType, Patch};
@@ -90,43 +90,44 @@ pub fn init_params(engine: EngineType) -> ParamSnapshot {
     }
 }
 
-/// Filter cutoff at today's DSP path. `Voice::render` maps `Block{2,0}` to
-/// filter cutoff on every chain — including Modal, whose UI would emit
-/// `Block{1,0}` (spec § Intended behavior changes).
-pub const CUTOFF: ParamPath = ParamPath::Block { block: 2, param: 0 };
-/// FM operator A level at today's DSP path.
-pub const OP_A_LEVEL: ParamPath = ParamPath::FmOp { op: 0, param: 2 };
+/// Filter cutoff on each chain's UI path. Before Task 16, `Voice` mapped
+/// `Block{2,0}` to cutoff on every chain; the Modal chain's filter page is
+/// node 1, so the same destination is `Block{1,0}` there.
+pub const PIZZA_CUTOFF: (ChainType, ParamPath) = (ChainType::PizzaPoly, ParamPath::Block { block: 2, param: 0 });
+pub const FM_CUTOFF: (ChainType, ParamPath) = (ChainType::Fm, ParamPath::Block { block: 2, param: 0 });
+pub const MODAL_CUTOFF: (ChainType, ParamPath) = (ChainType::Modal, ParamPath::Block { block: 1, param: 0 });
+/// FM operator A level.
+pub const OP_A_LEVEL: (ChainType, ParamPath) = (ChainType::Fm, ParamPath::FmOp { op: 0, param: 2 });
 
 /// One LFO (source 1) route at MOD_AMOUNT to `dest`; env is source 0 so
 /// `num_sources >= 2` and the LFO runs.
-pub fn lfo_route(dest: ParamPath) -> ModState {
-    let mut ms = ModState::new();
-    ms.num_sources = 2;
-    ms.num_dests = 1;
-    ms.dests[0] = dest;
-    ms.amounts[1][0] = MOD_AMOUNT;
+pub fn lfo_route((chain, dest): (ChainType, ParamPath)) -> ModState {
+    let mut reg = ModDestRegistry::new();
+    reg.add(chain, dest, *b"GOLDEN\0\0").expect("golden destination must be modulatable");
+    let mut ms = ModState::from_registry(&reg, chain, 2);
+    ms.set_amount(1, 0, MOD_AMOUNT);
     ms
 }
 
 /// Params + ModState for a case (the switch's second half is in `render_case`).
 pub fn setup(case: Case) -> (ParamSnapshot, ModState) {
-    let with_lfo = |engine: EngineType, dest: ParamPath| {
+    let with_lfo = |engine: EngineType, dest: (ChainType, ParamPath)| {
         let mut p = init_params(engine);
         p.lfo.rate = MOD_LFO_RATE;
         (p, lfo_route(dest))
     };
     match case {
         Case::PizzaInit => (init_params(EngineType::Pizza), ModState::new()),
-        Case::PizzaLfoCutoff => with_lfo(EngineType::Pizza, CUTOFF),
+        Case::PizzaLfoCutoff => with_lfo(EngineType::Pizza, PIZZA_CUTOFF),
         Case::FmInit => (init_params(EngineType::Fm), ModState::new()),
-        Case::FmLfoCutoff => with_lfo(EngineType::Fm, CUTOFF),
+        Case::FmLfoCutoff => with_lfo(EngineType::Fm, FM_CUTOFF),
         Case::FmLfoOpALevel => with_lfo(EngineType::Fm, OP_A_LEVEL),
         Case::FmInitPatchMod => {
             let patch = Patch::init(ChainType::Fm);
             (patch.params, patch.mod_state)
         }
         Case::ModalInit => (init_params(EngineType::Modal), ModState::new()),
-        Case::ModalLfoCutoff => with_lfo(EngineType::Modal, CUTOFF),
+        Case::ModalLfoCutoff => with_lfo(EngineType::Modal, MODAL_CUTOFF),
         Case::VaInit => (init_params(EngineType::Va), ModState::new()),
         Case::PizzaToModalSwitch => (init_params(EngineType::Pizza), ModState::new()),
     }
