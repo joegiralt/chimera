@@ -313,3 +313,64 @@ fn browser_init_entries_set_chain_type() {
     assert!(matches!(ui.ui_mode, UiMode::Normal));
     assert_eq!(ui.project.tracks[0].patch.chain_type, ChainType::Fm);
 }
+
+// ── Priming guard (Task 16 bridge; deleted in Task 19) ───────────
+
+fn press(ui: &mut UiState, id: ButtonId) {
+    ui.handle_input(&MockControls::new().button(id, ButtonState::Pressed));
+}
+
+/// MIX + Plus on the focused slot.
+fn prime(ui: &mut UiState) {
+    ui.handle_input(
+        &MockControls::new()
+            .button(ButtonId::Mix, ButtonState::Pressed)
+            .button(ButtonId::Plus, ButtonState::Pressed),
+    );
+}
+
+fn primed(ui: &UiState) -> Vec<chimera_core::mod_path::ParamPath> {
+    let reg = &ui.project.tracks[ui.active_track].patch.dest_registry;
+    (0..reg.len()).map(|i| reg.get(i).unwrap().path).collect()
+}
+
+/// Positive control: the Pizza filter page primes cutoff.
+#[test]
+fn priming_on_main_page_registers_focused_param() {
+    let mut ui = UiState::new();
+    press(&mut ui, ButtonId::Plus);
+    press(&mut ui, ButtonId::Plus); // node 2: Filter
+    prime(&mut ui); // slot 0: cutoff
+    assert_eq!(primed(&ui), [chimera_core::mod_path::ParamPath::Block { block: 2, param: 0 }]);
+}
+
+/// Pizza LFO sub-page (node 4, sub-page 2): `Block{4,0}` would resolve to the
+/// AmpEnv attack on the Vca page, not LFO rate, so nothing is registered.
+#[test]
+fn priming_on_pizza_lfo_sub_page_registers_nothing() {
+    let mut ui = UiState::new();
+    for _ in 0..4 {
+        press(&mut ui, ButtonId::Plus);
+    }
+    press(&mut ui, ButtonId::Edit);
+    press(&mut ui, ButtonId::Edit); // sub-page 2: LFO
+    assert_eq!(ui.page(), chimera_core::ui::page::PageId::Lfo);
+    prime(&mut ui);
+    assert!(primed(&ui).is_empty());
+}
+
+/// FmRatio slot 2 edits op C coarse; `Block{0,2}` on the FM chain would
+/// resolve to FmAlg slot 2 (Out.VOLUME), so nothing new is registered.
+#[test]
+fn priming_on_fm_ratio_slot_2_registers_nothing() {
+    let mut ui = UiState::new();
+    ui.project.tracks[0] = Track::new(ChainType::Fm);
+    ui.nav.chain_type = ChainType::Fm;
+    press(&mut ui, ButtonId::Edit);
+    press(&mut ui, ButtonId::Edit); // sub-page 2: FmRatio
+    assert_eq!(ui.page(), chimera_core::ui::page::PageId::FmRatio);
+    ui.handle_input(&MockControls::new().encoder(EncoderId::C, 1)); // focus slot 2
+    let before = primed(&ui); // the FM init pre-wire
+    prime(&mut ui);
+    assert_eq!(primed(&ui), before);
+}
