@@ -74,3 +74,28 @@ fn modal_mode_display_is_true_value() {
 fn modal2_body_is_uni() {
     assert_eq!(chimera_core::ui::block_registry::MODAL_2.params[0].format, ValFmt::Uni);
 }
+
+// ── Drive (Task 4) ───────────────────────────────────────────────────
+
+#[test]
+fn drive_encoder_steps_like_before() {
+    let mut p = ParamSnapshot::default();
+    PageId::Drive.apply_encoder(0, 5, &mut p);
+    assert_eq!(p.drive.drive, 5.0 * ((1.0 - 0.0) / 128.0));
+    PageId::DemoWaves.apply_encoder(1, -2, &mut p);
+    assert_eq!(p.drive.tone, 0.5 - 2.0 * (1.0 / 128.0));
+}
+
+#[test]
+fn drive_snap_uses_spec_format() {
+    let mut p = ParamSnapshot::default();
+    // TONE is Bi: from the centre, the next point up is +43 (107/127).
+    PageId::Drive.snap_encoder(1, 1, ValFmt::Bi, &mut p);
+    assert_eq!(p.drive.tone, 107.0 / 127.0);
+}
+
+#[test]
+fn drive_read_values() {
+    let p = ParamSnapshot::default();
+    assert_eq!(PageId::Drive.read_values(&p), [0.0, 0.5, 1.0, 0.0, 0.0, 0.0]);
+}

@@ -168,3 +168,8 @@ fn pizza_conforms() {
 fn modal_conforms() {
     conforms("modal", chimera_core::dsp::modal::ModalParams::default());
 }
+
+#[test]
+fn drive_conforms() {
+    conforms("drive", chimera_core::params::DriveParams::default());
+}

@@ -8,6 +8,7 @@ fn all_specs() -> Vec<(&'static str, &'static [ParamSpec])> {
     vec![
         ("pizza", &chimera_core::dsp::pizza::PIZZA_SPECS[..]),
         ("modal", &chimera_core::dsp::modal::MODAL_SPECS[..]),
+        ("drive", &chimera_core::params::DRIVE_SPECS[..]),
     ]
 }
 

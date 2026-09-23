@@ -78,9 +78,9 @@ fn random_params(rng: &mut Rng) -> ParamSnapshot {
     p.filter.mode = rng.u8(7);
 
     // Drive
-    p.drive.drive.set(rng.f32());
-    p.drive.tone.set(rng.f32());
-    p.drive.mix.set(rng.f32());
+    p.drive.drive = rng.f32();
+    p.drive.tone = rng.f32();
+    p.drive.mix = rng.f32();
 
     // Folder
     p.folder.fold.set(rng.f32());
@@ -213,7 +213,7 @@ fn prop_param_change_changes_output() {
                 .filter
                 .cutoff
                 .set(params_a.filter.cutoff.value * 0.1 + 100.0),
-            1 => params_b.drive.drive.set(1.0 - params_a.drive.drive.value),
+            1 => params_b.drive.drive = 1.0 - params_a.drive.drive,
             2 => params_b.folder.fold.set(1.0 - params_a.folder.fold.value),
             3 => params_b.volume.set(params_a.volume.value * 0.2),
             _ => params_b.pizza.crush = 1.0 - params_a.pizza.crush,
@@ -413,10 +413,10 @@ fn prop_drive_full_sweep() {
         "Drive",
         |p| {
             p.engine = EngineType::Pizza;
-            p.drive.mix.set(1.0);
+            p.drive.mix = 1.0;
         },
         |p, v| {
-            p.drive.drive.set(v);
+            p.drive.drive = v;
         },
         16,
     );

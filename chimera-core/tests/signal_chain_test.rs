@@ -23,8 +23,8 @@ fn test_drive_passthrough_at_zero() {
 fn test_drive_clips_signal() {
     let drive = Drive::new();
     let mut params = DriveParams::default();
-    params.drive.set(1.0); // full drive
-    params.mix.set(1.0);
+    params.drive = 1.0; // full drive
+    params.mix = 1.0;
 
     let mut buf = [1.0; 4];
     drive.process(&mut buf, &params);
@@ -37,8 +37,8 @@ fn test_drive_clips_signal() {
 fn test_drive_output_bounded() {
     let drive = Drive::new();
     let mut params = DriveParams::default();
-    params.drive.set(1.0);
-    params.mix.set(1.0);
+    params.drive = 1.0;
+    params.mix = 1.0;
 
     let mut buf = [5.0, -5.0, 10.0, -10.0];
     drive.process(&mut buf, &params);
@@ -265,8 +265,8 @@ fn test_voice_output_bounded() {
     let mut voice = Voice::new();
     let mut params = ParamSnapshot::default();
     params.pizza.crush = 0.7;
-    params.drive.drive.set(1.0);
-    params.drive.mix.set(1.0);
+    params.drive.drive = 1.0;
+    params.drive.mix = 1.0;
     params.folder.fold.set(0.5);
     params.folder.mix.set(1.0);
 

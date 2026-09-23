@@ -64,8 +64,8 @@ fn stress_pizza_full_with_chain() {
     let t = bench_render("Pizza + drive + filter + folder", |p| {
         p.engine = EngineType::Pizza;
         p.pizza.crush = 0.5;
-        p.drive.drive.set(0.5);
-        p.drive.mix.set(1.0);
+        p.drive.drive = 0.5;
+        p.drive.mix = 1.0;
         p.filter.cutoff.set(2000.0);
         p.filter.resonance.set(0.7);
         p.filter.mode = 2; // LP4
@@ -134,8 +134,8 @@ fn stress_sympathetic_with_chain() {
         p.engine = EngineType::Modal;
         p.modal.mode = ResonatorMode::Sympathetic;
         p.modal.inharm = 0.5;
-        p.drive.drive.set(0.5);
-        p.drive.mix.set(1.0);
+        p.drive.drive = 0.5;
+        p.drive.mix = 1.0;
         p.filter.cutoff.set(3000.0);
         p.filter.resonance.set(0.5);
         p.filter.mode = 2;
@@ -151,8 +151,8 @@ fn stress_worst_case() {
         p.engine = EngineType::Modal;
         p.modal.mode = ResonatorMode::Modal;
         p.modal.num_modes = 48;
-        p.drive.drive.set(1.0);
-        p.drive.mix.set(1.0);
+        p.drive.drive = 1.0;
+        p.drive.mix = 1.0;
         p.filter.cutoff.set(1000.0);
         p.filter.resonance.set(0.9);
         p.filter.mode = 2; // LP4 (two cascaded SVFs)
@@ -218,8 +218,8 @@ fn stress_summary() {
     });
     bench_render("+ Drive", |p| {
         p.engine = EngineType::Pizza;
-        p.drive.drive.set(0.8);
-        p.drive.mix.set(1.0);
+        p.drive.drive = 0.8;
+        p.drive.mix = 1.0;
     });
     bench_render("+ Filter LP4", |p| {
         p.engine = EngineType::Pizza;

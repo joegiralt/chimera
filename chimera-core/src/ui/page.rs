@@ -1,7 +1,7 @@
 use crate::block::{Block, ParamId};
 use crate::dsp::modal::ModalParams;
 use crate::dsp::pizza::PizzaParams;
-use crate::params::ParamSnapshot;
+use crate::params::{DriveParams, ParamSnapshot};
 use crate::preset::ChainType;
 use crate::ui::chain::ChainNav;
 
@@ -199,14 +199,7 @@ impl PageId {
                 0.5,
                 0.0, // placeholders
             ],
-            PageId::Drive => [
-                params.drive.drive.normalized(),
-                params.drive.tone.normalized(),
-                params.drive.mix.normalized(),
-                0.0,
-                0.0,
-                0.0,
-            ],
+            PageId::Drive => read_block(&params.drive, DRIVE_PAGE),
             PageId::Folder => [
                 params.folder.fold.normalized(),
                 params.folder.symmetry.normalized(),
@@ -217,8 +210,8 @@ impl PageId {
             ],
             // Demo pages reuse filter + envelope params for tweaking
             PageId::DemoWaves => [
-                params.drive.drive.normalized(),
-                params.drive.tone.normalized(),
+                params.drive.normalized(DriveParams::DRIVE),
+                params.drive.normalized(DriveParams::TONE),
                 params.folder.fold.normalized(),
                 params.folder.symmetry.normalized(),
                 params.filter.env_amount.normalized(),
@@ -409,6 +402,12 @@ impl PageId {
             PageId::Pizza => bind(&mut p.pizza, *PIZZA_PAGE.get(idx)?),
             PageId::EngineModal1 => bind(&mut p.modal, *MODAL1_PAGE.get(idx)?),
             PageId::EngineModal2 => bind(&mut p.modal, *MODAL2_PAGE.get(idx)?),
+            PageId::Drive => bind(&mut p.drive, *DRIVE_PAGE.get(idx)?),
+            PageId::DemoWaves => match idx {
+                0 => bind(&mut p.drive, DriveParams::DRIVE),
+                1 => bind(&mut p.drive, DriveParams::TONE),
+                _ => None,
+            },
             _ => None,
         }
     }
@@ -437,12 +436,6 @@ impl PageId {
                 1 => Some(&mut params.pan),
                 _ => None,
             },
-            PageId::Drive => match idx {
-                0 => Some(&mut params.drive.drive),
-                1 => Some(&mut params.drive.tone),
-                2 => Some(&mut params.drive.mix),
-                _ => None,
-            },
             PageId::Folder => match idx {
                 0 => Some(&mut params.folder.fold),
                 1 => Some(&mut params.folder.symmetry),
@@ -450,8 +443,6 @@ impl PageId {
                 _ => None,
             },
             PageId::DemoWaves => match idx {
-                0 => Some(&mut params.drive.drive),
-                1 => Some(&mut params.drive.tone),
                 2 => Some(&mut params.folder.fold),
                 3 => Some(&mut params.folder.symmetry),
                 4 => Some(&mut params.filter.env_amount),
@@ -492,6 +483,7 @@ impl PageId {
 
 /// Encoder slot → param id, per page. Shared by `read_values` and `resolve_mut`.
 const PIZZA_PAGE: [ParamId; 3] = [PizzaParams::SHAPE, PizzaParams::CRUSH, PizzaParams::LEVEL];
+const DRIVE_PAGE: [ParamId; 3] = [DriveParams::DRIVE, DriveParams::TONE, DriveParams::MIX];
 const MODAL1_PAGE: [ParamId; 6] = [
     ModalParams::MODE,
     ModalParams::EXCITE,

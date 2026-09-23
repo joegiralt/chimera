@@ -283,8 +283,8 @@ fn test_desktop_drive_affects_output() {
     let driven = sim_render(
         |ui| {
             ui.params_mut().engine = EngineType::Pizza;
-            ui.params_mut().drive.drive.set(0.9);
-            ui.params_mut().drive.mix.set(1.0);
+            ui.params_mut().drive.drive = 0.9;
+            ui.params_mut().drive.mix = 1.0;
         },
         60,
         16,
