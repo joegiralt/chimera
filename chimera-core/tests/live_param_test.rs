@@ -168,11 +168,11 @@ fn test_drive_amount_mid_note() {
     let (_, _, before, after) = render_with_param_change(
         |p| {
             p.engine = EngineType::Pizza;
-            p.drive.drive.set(0.0);
-            p.drive.mix.set(1.0);
+            p.drive.drive = 0.0;
+            p.drive.mix = 1.0;
         },
         |p| {
-            p.drive.drive.set(0.9);
+            p.drive.drive = 0.9;
         },
         8,
         8,

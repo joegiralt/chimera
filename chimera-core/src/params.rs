@@ -1,3 +1,5 @@
+use crate::block::{Block, ParamId, ParamSpec, ValFmt};
+
 /// A single parameter value with range clamping
 #[derive(Clone, Copy, Debug)]
 pub struct Param {
@@ -133,17 +135,54 @@ impl Default for EnvParams {
 /// Parameters for pre-filter drive stage
 #[derive(Clone, Copy, Debug)]
 pub struct DriveParams {
-    pub drive: Param,
-    pub tone: Param,
-    pub mix: Param,
+    pub drive: f32,
+    pub tone: f32,
+    pub mix: f32,
 }
 
 impl Default for DriveParams {
     fn default() -> Self {
         Self {
-            drive: Param::new(0.0, 1.0, 0.0),
-            tone: Param::new(0.0, 1.0, 0.5),
-            mix: Param::new(0.0, 1.0, 1.0),
+            drive: 0.0,
+            tone: 0.5,
+            mix: 1.0,
+        }
+    }
+}
+
+impl DriveParams {
+    pub const DRIVE: ParamId = ParamId(0);
+    pub const TONE: ParamId = ParamId(1);
+    pub const MIX: ParamId = ParamId(2);
+}
+
+/// All three are read by `Voice` every block from the modulated copy.
+pub static DRIVE_SPECS: [ParamSpec; 3] = [
+    ParamSpec::continuous(0, "DRIVE", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, true),
+    ParamSpec::continuous(1, "TONE", ValFmt::Bi, 0.0, 1.0, 0.5, 1.0 / 128.0, true),
+    ParamSpec::continuous(2, "MIX", ValFmt::Bi, 0.0, 1.0, 1.0, 1.0 / 128.0, true),
+];
+
+impl Block for DriveParams {
+    fn specs(&self) -> &'static [ParamSpec] {
+        &DRIVE_SPECS
+    }
+
+    fn get(&self, id: ParamId) -> f32 {
+        match id {
+            Self::DRIVE => self.drive,
+            Self::TONE => self.tone,
+            Self::MIX => self.mix,
+            _ => 0.0,
+        }
+    }
+
+    fn write(&mut self, id: ParamId, v: f32) {
+        match id {
+            Self::DRIVE => self.drive = v,
+            Self::TONE => self.tone = v,
+            Self::MIX => self.mix = v,
+            _ => {}
         }
     }
 }

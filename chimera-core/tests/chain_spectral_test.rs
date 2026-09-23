@@ -58,8 +58,8 @@ fn test_drive_adds_harmonics() {
     let clean_harmonics = harmonic_energy(&clean, freq);
 
     let mut params = DriveParams::default();
-    params.drive.set(0.8);
-    params.mix.set(1.0);
+    params.drive = 0.8;
+    params.mix = 1.0;
     drive.process(&mut clean, &params);
     let driven_harmonics = harmonic_energy(&clean, freq);
 
@@ -100,8 +100,8 @@ fn test_drive_more_drive_more_harmonics() {
     let measure = |amount: f32| -> f32 {
         let mut buf = sine_buf(freq, 4096);
         let mut params = DriveParams::default();
-        params.drive.set(amount);
-        params.mix.set(1.0);
+        params.drive = amount;
+        params.mix = 1.0;
         drive.process(&mut buf, &params);
         harmonic_energy(&buf, freq)
     };
@@ -132,9 +132,9 @@ fn test_drive_tone_changes_spectrum() {
     let measure = |tone: f32| -> f32 {
         let mut buf = sine_buf(freq, 4096);
         let mut params = DriveParams::default();
-        params.drive.set(0.6);
-        params.tone.set(tone);
-        params.mix.set(1.0);
+        params.drive = 0.6;
+        params.tone = tone;
+        params.mix = 1.0;
         drive.process(&mut buf, &params);
         harmonic_energy(&buf, freq)
     };
@@ -434,8 +434,8 @@ fn test_voice_drive_adds_grit() {
     let measure = |drive_amount: f32| -> f32 {
         let mut voice = Voice::new();
         let mut params = ParamSnapshot::default();
-        params.drive.drive.set(drive_amount);
-        params.drive.mix.set(1.0);
+        params.drive.drive = drive_amount;
+        params.drive.mix = 1.0;
 
         voice.note_on(60, 100, &params, SR);
 
