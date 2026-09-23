@@ -1,5 +1,6 @@
 #![no_std]
 
+pub mod block;
 pub mod dsp;
 pub mod mod_path;
 pub mod modulation;

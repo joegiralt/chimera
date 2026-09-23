@@ -9,6 +9,8 @@
 
 use chimera_hal::BLOCK_SIZE;
 
+use crate::block::{Block, ParamId, ParamSpec, ValFmt};
+
 /// Pizza oscillator state.
 #[derive(Clone, Debug)]
 pub struct PizzaOsc {
@@ -41,6 +43,43 @@ impl Default for PizzaParams {
             shape: 0.5,  // triangle
             crush: 0.0,  // clean
             level: 0.8,
+        }
+    }
+}
+
+impl PizzaParams {
+    pub const SHAPE: ParamId = ParamId(0);
+    pub const CRUSH: ParamId = ParamId(1);
+    pub const LEVEL: ParamId = ParamId(2);
+}
+
+/// All three are read by `Voice` every block, so all are modulatable.
+pub static PIZZA_SPECS: [ParamSpec; 3] = [
+    ParamSpec::continuous(0, "SHAPE", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, true),
+    ParamSpec::continuous(1, "CRUSH", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, true),
+    ParamSpec::continuous(2, "LEVEL", ValFmt::Uni, 0.0, 1.0, 0.8, 1.0 / 128.0, true),
+];
+
+impl Block for PizzaParams {
+    fn specs(&self) -> &'static [ParamSpec] {
+        &PIZZA_SPECS
+    }
+
+    fn get(&self, id: ParamId) -> f32 {
+        match id {
+            Self::SHAPE => self.shape,
+            Self::CRUSH => self.crush,
+            Self::LEVEL => self.level,
+            _ => 0.0,
+        }
+    }
+
+    fn write(&mut self, id: ParamId, v: f32) {
+        match id {
+            Self::SHAPE => self.shape = v,
+            Self::CRUSH => self.crush = v,
+            Self::LEVEL => self.level = v,
+            _ => {}
         }
     }
 }

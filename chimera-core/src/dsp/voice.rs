@@ -1,12 +1,13 @@
 use chimera_hal::BLOCK_SIZE;
 
+use crate::block::apply_offset;
 use crate::dsp::drive::Drive;
 use crate::dsp::engine_fm::FmEngine;
 use crate::dsp::envelope::Envelope;
 use crate::dsp::filter::SvfFilter;
 use crate::dsp::lfo::Lfo;
 use crate::dsp::modal::ModalEngine;
-use crate::dsp::pizza::PizzaOsc;
+use crate::dsp::pizza::{PizzaOsc, PizzaParams};
 use crate::dsp::wavefolder::Wavefolder;
 use crate::mod_path::ParamPath;
 use crate::modulation::{ModState, MAX_MOD_SOURCES};
@@ -132,10 +133,9 @@ impl Voice {
         let mut mod_folder = params.folder;
 
         // Apply mod offsets — block indices match the chain: 0=Pizza, 1=Drive, 2=Filter, 3=Folder
-        // Pizza params are raw f32 (0.0-1.0)
-        mod_pizza.shape = (mod_pizza.shape + mod_state.compute_offset(&mod_values, ParamPath::Block { block: 0, param: 0 })).clamp(0.0, 1.0);
-        mod_pizza.crush = (mod_pizza.crush + mod_state.compute_offset(&mod_values, ParamPath::Block { block: 0, param: 1 })).clamp(0.0, 1.0);
-        mod_pizza.level = (mod_pizza.level + mod_state.compute_offset(&mod_values, ParamPath::Block { block: 0, param: 2 })).clamp(0.0, 1.0);
+        apply_offset(&mut mod_pizza, PizzaParams::SHAPE, mod_state.compute_offset(&mod_values, ParamPath::Block { block: 0, param: 0 }));
+        apply_offset(&mut mod_pizza, PizzaParams::CRUSH, mod_state.compute_offset(&mod_values, ParamPath::Block { block: 0, param: 1 }));
+        apply_offset(&mut mod_pizza, PizzaParams::LEVEL, mod_state.compute_offset(&mod_values, ParamPath::Block { block: 0, param: 2 }));
 
         // Drive params use Param structs — offset scaled by range
         mod_drive.drive.apply_mod_offset(mod_state.compute_offset(&mod_values, ParamPath::Block { block: 1, param: 0 }));
