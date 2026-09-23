@@ -20,7 +20,7 @@ fn check_no_clicks(
     callback_sizes: &[usize], // simulate varying cpal buffer sizes
 ) {
     let empty_mod = ModState::new();
-    let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
+    let mut voice = Voice::new(SR);
     let mut reverb = Reverb::new();
     let mut params = ParamSnapshot::default();
     setup(&mut params);
@@ -154,7 +154,7 @@ fn test_no_clicks_modal() {
     // these are the character of struck metal, not clicks.
     // Use a higher threshold than other engines.
     let empty_mod = ModState::new();
-    let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
+    let mut voice = Voice::new(SR);
     let mut reverb = Reverb::new();
     let mut params = ParamSnapshot::for_engine(EngineType::Modal);
     params.modal.mode = ResonatorMode::Modal;

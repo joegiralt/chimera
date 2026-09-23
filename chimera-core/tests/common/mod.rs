@@ -36,8 +36,10 @@ pub enum Case {
     FmInit,
     FmLfoCutoff,
     FmLfoOpALevel,
-    /// FM init params with the FM init patch's own `ModState` (the pre-wire).
-    /// The only case Task 22 (pre-wire removal) re-records.
+    /// FM init params with the FM init patch's own `ModState`. Since Task 22
+    /// dropped the pre-wire, `Patch::init` no longer seeds any destinations,
+    /// so this is empty like `FmInit`'s `ModState::new()` — kept as its own
+    /// case for golden continuity (the only case Task 22 re-recorded).
     FmInitPatchMod,
     ModalInit,
     ModalLfoCutoff,

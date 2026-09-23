@@ -15,7 +15,7 @@ const SR: u32 = 48000;
 #[test]
 fn test_modal_through_voice_produces_sound() {
     let empty_mod = ModState::new();
-    let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
+    let mut voice = Voice::new(SR);
     let params = ParamSnapshot::for_engine(EngineType::Modal);
 
     // Verify engine type is set
@@ -48,7 +48,7 @@ fn test_modal_through_voice_produces_sound() {
 #[test]
 fn test_modal_string_through_voice() {
     let empty_mod = ModState::new();
-    let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
+    let mut voice = Voice::new(SR);
     let mut params = ParamSnapshot::for_engine(EngineType::Modal);
     params.modal.mode = ResonatorMode::Modal; // String mode
 
@@ -74,7 +74,7 @@ fn test_modal_string_through_voice() {
 #[test]
 fn test_modal_bowed_through_voice() {
     let empty_mod = ModState::new();
-    let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
+    let mut voice = Voice::new(SR);
     let mut params = ParamSnapshot::for_engine(EngineType::Modal);
     params.modal.mode = ResonatorMode::Bowed; // Bowed mode
 
@@ -101,7 +101,7 @@ fn test_modal_bowed_through_voice() {
 fn test_modal_different_from_pizza_through_voice() {
     let empty_mod = ModState::new();
     let render = |engine: EngineType| -> Vec<f32> {
-        let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
+        let mut voice = Voice::new(SR);
         let params = ParamSnapshot::for_engine(engine);
         voice.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params);
         let mut all = Vec::new();
@@ -142,8 +142,8 @@ fn test_modal_different_from_pizza_through_voice() {
 fn test_modal_signal_chain_affects_output() {
     let empty_mod = ModState::new();
     // Modal through filter should be different from modal without filter
-    let mut voice_open = Voice::new(chimera_hal::SAMPLE_RATE);
-    let mut voice_closed = Voice::new(chimera_hal::SAMPLE_RATE);
+    let mut voice_open = Voice::new(SR);
+    let mut voice_closed = Voice::new(SR);
 
     let mut params_open = ParamSnapshot::for_engine(EngineType::Modal);
     params_open.filter.cutoff = 20000.0;
