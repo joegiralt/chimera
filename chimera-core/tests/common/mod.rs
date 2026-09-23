@@ -83,10 +83,7 @@ pub fn init_params(engine: EngineType) -> ParamSnapshot {
         EngineType::Pizza => Patch::init(ChainType::PizzaPoly).params,
         EngineType::Fm => Patch::init(ChainType::Fm).params,
         EngineType::Modal => Patch::init(ChainType::Modal).params,
-        EngineType::Va => {
-            let mut p = ParamSnapshot::for_engine(EngineType::Va);
-            p
-        }
+        EngineType::Va => ParamSnapshot::for_engine(EngineType::Va),
     }
 }
 

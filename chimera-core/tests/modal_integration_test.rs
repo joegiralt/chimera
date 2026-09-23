@@ -16,7 +16,7 @@ const SR: u32 = 48000;
 fn test_modal_through_voice_produces_sound() {
     let empty_mod = ModState::new();
     let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
-    let mut params = ParamSnapshot::for_engine(EngineType::Modal);
+    let params = ParamSnapshot::for_engine(EngineType::Modal);
 
     // Verify engine type is set
     assert_eq!(params.engine(), EngineType::Modal);
@@ -102,7 +102,7 @@ fn test_modal_different_from_pizza_through_voice() {
     let empty_mod = ModState::new();
     let render = |engine: EngineType| -> Vec<f32> {
         let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
-        let mut params = ParamSnapshot::for_engine(engine);
+        let params = ParamSnapshot::for_engine(engine);
         voice.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params);
         let mut all = Vec::new();
         let mut block = [0.0f32; 64];
