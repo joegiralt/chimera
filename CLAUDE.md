@@ -42,3 +42,4 @@ chimera-desktop/  — simulator (minifb window, cpal audio)
 - No libc
 - Audio thread never blocks, never allocates
 - All parameter changes lerped in UI — never snap
+- Decisions that constrain future work (architecture, algorithm choice and provenance, UX behavior, licensing) get an ADR in `docs/adr/` (template `0000-template.md`, add it to `docs/adr/README.md`). Check existing ADRs before re-deciding something; never edit an accepted ADR — supersede it with a new one.
