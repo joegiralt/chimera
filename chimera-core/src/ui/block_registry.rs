@@ -49,7 +49,7 @@ pub static MODAL_2: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::ModalPeaks,
     params: [
-        ParamSlot { label: "BODY",  format: ValFmt::Int(3), icon: CellIcon::Arc },
+        ParamSlot { label: "BODY",  format: ValFmt::Uni,    icon: CellIcon::Arc },
         ParamSlot { label: "STIFF", format: ValFmt::Uni,    icon: CellIcon::Arc },
         ParamSlot { label: "FDBK",  format: ValFmt::Uni,    icon: CellIcon::Arc },
         ParamSlot { label: "E.DPT", format: ValFmt::Uni,    icon: CellIcon::Arc },

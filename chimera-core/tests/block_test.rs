@@ -163,3 +163,8 @@ fn conforms(name: &str, mut b: impl Block) {
 fn pizza_conforms() {
     conforms("pizza", PizzaParams::default());
 }
+
+#[test]
+fn modal_conforms() {
+    conforms("modal", chimera_core::dsp::modal::ModalParams::default());
+}

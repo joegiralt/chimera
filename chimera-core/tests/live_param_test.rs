@@ -1,3 +1,4 @@
+use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::modulation::ModState;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::params::{EngineType, ParamSnapshot};
@@ -221,7 +222,7 @@ fn test_ks_body_mid_note() {
     let (_, _, before, after) = render_with_param_change(
         |p| {
             p.engine = EngineType::Modal;
-            p.modal.mode = 0;
+            p.modal.mode = ResonatorMode::String;
             p.modal.ks_body = 0.0;
         },
         |p| {
@@ -248,7 +249,7 @@ fn test_ks_stiffness_mid_note() {
     let (_, _, before, after) = render_with_param_change(
         |p| {
             p.engine = EngineType::Modal;
-            p.modal.mode = 0;
+            p.modal.mode = ResonatorMode::String;
             p.modal.ks_stiffness = 0.0;
         },
         |p| {
@@ -271,7 +272,7 @@ fn test_ks_feedback_mid_note() {
     let (before_rms, after_rms, _, _) = render_with_param_change(
         |p| {
             p.engine = EngineType::Modal;
-            p.modal.mode = 0;
+            p.modal.mode = ResonatorMode::String;
             p.modal.ks_feedback = 0.0;
         },
         |p| {
@@ -294,7 +295,7 @@ fn test_ks_brightness_mid_note() {
     let (_, _, before, after) = render_with_param_change(
         |p| {
             p.engine = EngineType::Modal;
-            p.modal.mode = 0;
+            p.modal.mode = ResonatorMode::String;
             p.modal.brightness = 0.1;
         },
         |p| {
@@ -321,7 +322,7 @@ fn test_modal_decay_mid_note() {
     let (before_rms, after_rms, _, _) = render_with_param_change(
         |p| {
             p.engine = EngineType::Modal;
-            p.modal.mode = 1;
+            p.modal.mode = ResonatorMode::Modal;
             p.modal.decay = 0.8;
         },
         |p| {
@@ -344,7 +345,7 @@ fn test_modal_brightness_mid_note() {
     let (_, _, before, after) = render_with_param_change(
         |p| {
             p.engine = EngineType::Modal;
-            p.modal.mode = 1;
+            p.modal.mode = ResonatorMode::Modal;
             p.modal.brightness = 0.1;
         },
         |p| {

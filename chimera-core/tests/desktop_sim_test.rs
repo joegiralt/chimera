@@ -6,6 +6,7 @@
 //! without threads). It verifies that UiState.params flows
 //! correctly through Voice.render().
 
+use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::modulation::ModState;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::params::EngineType;
@@ -104,7 +105,7 @@ fn test_desktop_ks_produces_sound() {
     let buf = sim_render(
         |ui| {
             ui.params_mut().engine = EngineType::Modal;
-            ui.params_mut().modal.mode = 0;
+            ui.params_mut().modal.mode = ResonatorMode::String;
         },
         60,
         16,
@@ -121,7 +122,7 @@ fn test_desktop_ks_body_resonance_changes_sound() {
     let no_body = sim_render(
         |ui| {
             ui.params_mut().engine = EngineType::Modal;
-            ui.params_mut().modal.mode = 0;
+            ui.params_mut().modal.mode = ResonatorMode::String;
             ui.params_mut().modal.ks_body = 0.0;
         },
         60,
@@ -131,7 +132,7 @@ fn test_desktop_ks_body_resonance_changes_sound() {
     let with_body = sim_render(
         |ui| {
             ui.params_mut().engine = EngineType::Modal;
-            ui.params_mut().modal.mode = 0;
+            ui.params_mut().modal.mode = ResonatorMode::String;
             ui.params_mut().modal.ks_body = 0.8;
         },
         60,
@@ -156,7 +157,7 @@ fn test_desktop_ks_stiffness_changes_sound() {
     let no_stiff = sim_render(
         |ui| {
             ui.params_mut().engine = EngineType::Modal;
-            ui.params_mut().modal.mode = 0;
+            ui.params_mut().modal.mode = ResonatorMode::String;
             ui.params_mut().modal.ks_stiffness = 0.0;
         },
         60,
@@ -166,7 +167,7 @@ fn test_desktop_ks_stiffness_changes_sound() {
     let with_stiff = sim_render(
         |ui| {
             ui.params_mut().engine = EngineType::Modal;
-            ui.params_mut().modal.mode = 0;
+            ui.params_mut().modal.mode = ResonatorMode::String;
             ui.params_mut().modal.ks_stiffness = 0.7;
         },
         60,
@@ -187,7 +188,7 @@ fn test_desktop_ks_excitation_types_differ() {
     let noise = sim_render(
         |ui| {
             ui.params_mut().engine = EngineType::Modal;
-            ui.params_mut().modal.mode = 0;
+            ui.params_mut().modal.mode = ResonatorMode::String;
             ui.params_mut().modal.ks_excitation = 0;
         },
         60,
@@ -197,7 +198,7 @@ fn test_desktop_ks_excitation_types_differ() {
     let click = sim_render(
         |ui| {
             ui.params_mut().engine = EngineType::Modal;
-            ui.params_mut().modal.mode = 0;
+            ui.params_mut().modal.mode = ResonatorMode::String;
             ui.params_mut().modal.ks_excitation = 1;
         },
         60,
@@ -224,7 +225,7 @@ fn test_desktop_modal_produces_sound() {
     let buf = sim_render(
         |ui| {
             ui.params_mut().engine = EngineType::Modal;
-            ui.params_mut().modal.mode = 1;
+            ui.params_mut().modal.mode = ResonatorMode::Modal;
         },
         60,
         16,
@@ -315,7 +316,7 @@ fn test_desktop_engine_switch() {
     let modal = sim_render(
         |ui| {
             ui.params_mut().engine = EngineType::Modal;
-            ui.params_mut().modal.mode = 1;
+            ui.params_mut().modal.mode = ResonatorMode::Modal;
         },
         60,
         16,
@@ -324,7 +325,7 @@ fn test_desktop_engine_switch() {
     let ks = sim_render(
         |ui| {
             ui.params_mut().engine = EngineType::Modal;
-            ui.params_mut().modal.mode = 0;
+            ui.params_mut().modal.mode = ResonatorMode::String;
         },
         60,
         16,

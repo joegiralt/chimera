@@ -1,4 +1,5 @@
 use crate::block::{Block, ParamId};
+use crate::dsp::modal::ModalParams;
 use crate::dsp::pizza::PizzaParams;
 use crate::params::ParamSnapshot;
 use crate::preset::ChainType;
@@ -256,22 +257,8 @@ impl PageId {
                 0.0,
             ],
             PageId::DemoMatrix => [0.0; 6],
-            PageId::EngineModal1 => [
-                params.modal.mode as f32 / 2.0,
-                params.modal.excite,
-                params.modal.decay,
-                params.modal.brightness,
-                params.modal.position,
-                params.modal.inharm,
-            ],
-            PageId::EngineModal2 => [
-                params.modal.ks_body,
-                params.modal.ks_stiffness,
-                params.modal.ks_feedback,
-                params.modal.ks_ens_depth,
-                params.modal.ks_ens_rate,
-                params.modal.ks_ens_mix,
-            ],
+            PageId::EngineModal1 => read_block(&params.modal, MODAL1_PAGE),
+            PageId::EngineModal2 => read_block(&params.modal, MODAL2_PAGE),
             PageId::FmAlg => [
                 params.fm.algorithm.normalized(),
                 0.0,
@@ -350,14 +337,6 @@ impl PageId {
                 apply_lfo_encoder(idx, delta, &mut params.lfo);
                 return;
             }
-            PageId::EngineModal1 => {
-                apply_modal1_encoder(idx, delta, &mut params.modal);
-                return;
-            }
-            PageId::EngineModal2 => {
-                apply_modal2_encoder(idx, delta, &mut params.modal);
-                return;
-            }
             PageId::FmAlg => {
                 apply_fm_alg_encoder(idx, delta, &mut params.fm, &mut params.volume);
                 return;
@@ -428,6 +407,8 @@ impl PageId {
         let p = params;
         match self {
             PageId::Pizza => bind(&mut p.pizza, *PIZZA_PAGE.get(idx)?),
+            PageId::EngineModal1 => bind(&mut p.modal, *MODAL1_PAGE.get(idx)?),
+            PageId::EngineModal2 => bind(&mut p.modal, *MODAL2_PAGE.get(idx)?),
             _ => None,
         }
     }
@@ -511,6 +492,22 @@ impl PageId {
 
 /// Encoder slot → param id, per page. Shared by `read_values` and `resolve_mut`.
 const PIZZA_PAGE: [ParamId; 3] = [PizzaParams::SHAPE, PizzaParams::CRUSH, PizzaParams::LEVEL];
+const MODAL1_PAGE: [ParamId; 6] = [
+    ModalParams::MODE,
+    ModalParams::EXCITE,
+    ModalParams::DECAY,
+    ModalParams::BRIGHTNESS,
+    ModalParams::POSITION,
+    ModalParams::INHARM,
+];
+const MODAL2_PAGE: [ParamId; 6] = [
+    ModalParams::KS_BODY,
+    ModalParams::KS_STIFFNESS,
+    ModalParams::KS_FEEDBACK,
+    ModalParams::KS_ENS_DEPTH,
+    ModalParams::KS_ENS_RATE,
+    ModalParams::KS_ENS_MIX,
+];
 
 /// Coercion point so every `resolve_mut` arm has the same type.
 fn bind<'a>(b: &'a mut dyn Block, id: ParamId) -> Option<(&'a mut dyn Block, ParamId)> {
@@ -524,32 +521,6 @@ fn read_block<const N: usize>(b: &dyn Block, ids: [ParamId; N]) -> [f32; 6] {
         *o = b.normalized(id);
     }
     out
-}
-
-fn apply_modal1_encoder(idx: usize, delta: i8, modal: &mut crate::dsp::modal::ModalParams) {
-    let step = 1.0 / 128.0;
-    match idx {
-        0 => nudge_u8(&mut modal.mode, delta, 2),
-        1 => nudge_float(&mut modal.excite, delta, step),
-        2 => nudge_float(&mut modal.decay, delta, step),
-        3 => nudge_float(&mut modal.brightness, delta, step),
-        4 => nudge_float(&mut modal.position, delta, step),
-        5 => nudge_float(&mut modal.inharm, delta, step),
-        _ => {}
-    }
-}
-
-fn apply_modal2_encoder(idx: usize, delta: i8, modal: &mut crate::dsp::modal::ModalParams) {
-    let step = 1.0 / 128.0;
-    match idx {
-        0 => nudge_float(&mut modal.ks_body, delta, step),
-        1 => nudge_float(&mut modal.ks_stiffness, delta, step),
-        2 => nudge_float(&mut modal.ks_feedback, delta, step),
-        3 => nudge_float(&mut modal.ks_ens_depth, delta, step),
-        4 => nudge_float(&mut modal.ks_ens_rate, delta, step),
-        5 => nudge_float(&mut modal.ks_ens_mix, delta, step),
-        _ => {}
-    }
 }
 
 fn apply_chorus_encoder(

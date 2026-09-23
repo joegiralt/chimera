@@ -2,6 +2,7 @@
 //! STM32H750 @ 480MHz, 48kHz, BLOCK_SIZE=128 = 10,000 cycles/sample.
 //! We measure wall-clock time on desktop and flag anything too slow.
 
+use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::modulation::ModState;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::params::{EngineType, ParamSnapshot};
@@ -78,7 +79,7 @@ fn stress_pizza_full_with_chain() {
 fn stress_ks_string() {
     let t = bench_render("KS+ string (body+stiff+ens)", |p| {
         p.engine = EngineType::Modal;
-        p.modal.mode = 0;
+        p.modal.mode = ResonatorMode::String;
         p.modal.ks_body = 0.5;
         p.modal.ks_stiffness = 0.3;
         p.modal.ks_feedback = 0.3;
@@ -92,7 +93,7 @@ fn stress_ks_string() {
 fn stress_modal_32_modes() {
     let t = bench_render("Modal 32 modes", |p| {
         p.engine = EngineType::Modal;
-        p.modal.mode = 1;
+        p.modal.mode = ResonatorMode::Modal;
         p.modal.num_modes = 32;
     });
     assert!(t < 5000.0, "Modal 32 too slow: {} us/block", t);
@@ -102,7 +103,7 @@ fn stress_modal_32_modes() {
 fn stress_modal_48_modes() {
     let t = bench_render("Modal 48 modes", |p| {
         p.engine = EngineType::Modal;
-        p.modal.mode = 1;
+        p.modal.mode = ResonatorMode::Modal;
         p.modal.num_modes = 48;
     });
     assert!(t < 10000.0, "Modal 48 too slow: {} us/block", t);
@@ -112,7 +113,7 @@ fn stress_modal_48_modes() {
 fn stress_bowed() {
     let t = bench_render("Bowed string", |p| {
         p.engine = EngineType::Modal;
-        p.modal.mode = 2;
+        p.modal.mode = ResonatorMode::Bowed;
     });
     assert!(t < 5000.0, "Bowed too slow: {} us/block", t);
 }
@@ -121,7 +122,7 @@ fn stress_bowed() {
 fn stress_sympathetic() {
     let t = bench_render("Sympathetic (8 strings)", |p| {
         p.engine = EngineType::Modal;
-        p.modal.mode = 3;
+        p.modal.mode = ResonatorMode::Sympathetic;
         p.modal.inharm = 0.5;
     });
     assert!(t < 10000.0, "Sympathetic too slow: {} us/block", t);
@@ -131,7 +132,7 @@ fn stress_sympathetic() {
 fn stress_sympathetic_with_chain() {
     let t = bench_render("Sympathetic + full chain", |p| {
         p.engine = EngineType::Modal;
-        p.modal.mode = 3;
+        p.modal.mode = ResonatorMode::Sympathetic;
         p.modal.inharm = 0.5;
         p.drive.drive.set(0.5);
         p.drive.mix.set(1.0);
@@ -148,7 +149,7 @@ fn stress_sympathetic_with_chain() {
 fn stress_worst_case() {
     let t = bench_render("WORST CASE: 48-mode + full chain", |p| {
         p.engine = EngineType::Modal;
-        p.modal.mode = 1;
+        p.modal.mode = ResonatorMode::Modal;
         p.modal.num_modes = 48;
         p.drive.drive.set(1.0);
         p.drive.mix.set(1.0);
@@ -182,11 +183,11 @@ fn stress_summary() {
     });
     bench_render("KS+ string", |p| {
         p.engine = EngineType::Modal;
-        p.modal.mode = 0;
+        p.modal.mode = ResonatorMode::String;
     });
     bench_render("KS+ full features", |p| {
         p.engine = EngineType::Modal;
-        p.modal.mode = 0;
+        p.modal.mode = ResonatorMode::String;
         p.modal.ks_body = 0.5;
         p.modal.ks_stiffness = 0.3;
         p.modal.ks_ens_depth = 0.5;
@@ -194,26 +195,26 @@ fn stress_summary() {
     });
     bench_render("Modal 16 modes", |p| {
         p.engine = EngineType::Modal;
-        p.modal.mode = 1;
+        p.modal.mode = ResonatorMode::Modal;
         p.modal.num_modes = 16;
     });
     bench_render("Modal 32 modes", |p| {
         p.engine = EngineType::Modal;
-        p.modal.mode = 1;
+        p.modal.mode = ResonatorMode::Modal;
         p.modal.num_modes = 32;
     });
     bench_render("Modal 48 modes", |p| {
         p.engine = EngineType::Modal;
-        p.modal.mode = 1;
+        p.modal.mode = ResonatorMode::Modal;
         p.modal.num_modes = 48;
     });
     bench_render("Bowed", |p| {
         p.engine = EngineType::Modal;
-        p.modal.mode = 2;
+        p.modal.mode = ResonatorMode::Bowed;
     });
     bench_render("Sympathetic 8 strings", |p| {
         p.engine = EngineType::Modal;
-        p.modal.mode = 3;
+        p.modal.mode = ResonatorMode::Sympathetic;
     });
     bench_render("+ Drive", |p| {
         p.engine = EngineType::Pizza;

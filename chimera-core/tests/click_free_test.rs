@@ -2,6 +2,7 @@
 //! Simulates the desktop audio callback pattern: rendering blocks
 //! and scattering to variable-size output buffers.
 
+use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::modulation::ModState;
 use chimera_core::dsp::reverb::Reverb;
 use chimera_core::dsp::voice::Voice;
@@ -140,7 +141,7 @@ fn test_no_clicks_ks_string() {
         "KS+ string",
         |p| {
             p.engine = EngineType::Modal;
-            p.modal.mode = 0;
+            p.modal.mode = ResonatorMode::String;
         },
         &[256, 256, 256, 512, 256, 256, 256, 256],
     );
@@ -156,7 +157,7 @@ fn test_no_clicks_modal() {
     let mut reverb = Reverb::new();
     let mut params = ParamSnapshot::default();
     params.engine = EngineType::Modal;
-    params.modal.mode = 1;
+    params.modal.mode = ResonatorMode::Modal;
     voice.note_on(60, 100, &params, SR);
 
     let mut block = [0.0f32; BLOCK_SIZE];
