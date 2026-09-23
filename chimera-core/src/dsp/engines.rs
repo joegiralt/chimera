@@ -1,0 +1,87 @@
+//! Persistent engine instances with dispatch in one place (spec §3).
+//!
+//! Engines are never constructed in the audio interrupt: `ModalEngine` is
+//! ~66 KB and the stack has no guard. Adding an engine = one field here plus
+//! one arm in each exhaustive `match` below; the compiler lists them.
+
+use chimera_hal::BLOCK_SIZE;
+
+use crate::dsp::engine_fm::FmEngine;
+use crate::dsp::envelope::Envelope;
+use crate::dsp::modal::ModalEngine;
+use crate::dsp::pizza::PizzaOsc;
+use crate::params::{EngineType, ParamSnapshot};
+use crate::{MidiNote, Velocity};
+
+pub struct Engines {
+    pizza: PizzaOsc,
+    fm: FmEngine,
+    modal: ModalEngine,
+    sample_rate: u32,
+}
+
+impl Engines {
+    pub fn new(sample_rate: u32) -> Self {
+        Self {
+            pizza: PizzaOsc::new(),
+            fm: FmEngine::new(),
+            modal: ModalEngine::new(),
+            sample_rate,
+        }
+    }
+
+    pub fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+
+    pub fn note_on(&mut self, kind: EngineType, note: MidiNote, vel: Velocity, p: &ParamSnapshot) {
+        match kind {
+            EngineType::Pizza => {
+                self.pizza.note_on(crate::dsp::note_to_freq(note.get()), self.sample_rate)
+            }
+            EngineType::Fm => {
+                self.fm.note_on_params(note.get(), vel.unit(), &p.fm, self.sample_rate as f32)
+            }
+            EngineType::Modal => self.modal.note_on(note.get(), vel.get(), &p.modal, self.sample_rate),
+            EngineType::Va => {} // placeholder: silent
+        }
+    }
+
+    pub fn note_off(&mut self, kind: EngineType) {
+        match kind {
+            EngineType::Pizza => self.pizza.note_off(),
+            EngineType::Fm => self.fm.note_off(),
+            EngineType::Modal => self.modal.note_off(),
+            EngineType::Va => {}
+        }
+    }
+
+    /// Render one block of raw engine output from (possibly modulated) params.
+    pub fn render(&mut self, kind: EngineType, out: &mut [f32; BLOCK_SIZE], p: &ParamSnapshot) {
+        match kind {
+            EngineType::Pizza => self.pizza.render(out, &p.pizza, self.sample_rate),
+            EngineType::Fm => self.fm.render_params(out, &p.fm),
+            EngineType::Modal => self.modal.render(out, &p.modal, self.sample_rate),
+            EngineType::Va => out.fill(0.0),
+        }
+    }
+
+    /// VCA choice: does the amp envelope shape this engine's output?
+    /// Modal's modes decay naturally, so it only gets the volume.
+    pub fn uses_amp_env(kind: EngineType) -> bool {
+        match kind {
+            EngineType::Pizza | EngineType::Fm | EngineType::Va => true,
+            EngineType::Modal => false,
+        }
+    }
+
+    /// Voice lifetime: is this engine still sounding?
+    pub fn is_active(&self, kind: EngineType, amp_env: &Envelope) -> bool {
+        match kind {
+            EngineType::Pizza => amp_env.is_active(),
+            EngineType::Fm => !self.fm.is_idle(),
+            EngineType::Modal => self.modal.is_active(),
+            EngineType::Va => false,
+        }
+    }
+}

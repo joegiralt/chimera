@@ -1,5 +1,7 @@
+use chimera_core::addr::Op;
 use chimera_core::preset::{ChainType, Patch, Project, SoundPool, Track, POOL_SIZE};
-use chimera_core::params::Param;
+use chimera_core::ui::block_registry as reg;
+use chimera_core::ui::page::PageKey;
 use chimera_core::ui::{UiMode, UiState};
 use chimera_hal::{ButtonId, ButtonState, Controls, EncoderId};
 
@@ -60,8 +62,8 @@ impl Controls for MockControls {
 fn patch_init_has_musically_useful_defaults() {
     let p = Patch::init(ChainType::PizzaPoly);
     assert_eq!(p.chain_type, ChainType::PizzaPoly);
-    assert!(p.params.volume.value() > 0.0);
-    assert!(p.params.filter.cutoff.value() > 1000.0);
+    assert!(p.params.out.volume > 0.0);
+    assert!(p.params.filter.cutoff > 1000.0);
     assert!(p.name_str().starts_with("(init)"));
 }
 
@@ -115,10 +117,10 @@ fn track_edit_does_not_modify_pool() {
 
     let mut track = Track::new(ChainType::PizzaPoly);
     track.load_from_pool(&pool, 0);
-    track.patch.params.volume = Param::new(0.0, 1.0, 0.0); // mute
+    track.patch.params.out.volume = 0.0; // mute
 
     // Pool slot unchanged
-    assert!(pool.get(0).unwrap().params.volume.value() > 0.0);
+    assert!(pool.get(0).unwrap().params.out.volume > 0.0);
 }
 
 #[test]
@@ -313,4 +315,72 @@ fn browser_init_entries_set_chain_type() {
 
     assert!(matches!(ui.ui_mode, UiMode::Normal));
     assert_eq!(ui.project.tracks[0].patch.chain_type, ChainType::Fm);
+}
+
+// ── Priming by slot address ──────────────────────────────────────
+
+fn press(ui: &mut UiState, id: ButtonId) {
+    ui.handle_input(&MockControls::new().button(id, ButtonState::Pressed));
+}
+
+/// MIX + Plus on the focused slot.
+fn prime(ui: &mut UiState) {
+    ui.handle_input(
+        &MockControls::new()
+            .button(ButtonId::Mix, ButtonState::Pressed)
+            .button(ButtonId::Plus, ButtonState::Pressed),
+    );
+}
+
+fn primed(ui: &UiState) -> Vec<chimera_core::addr::ParamAddr> {
+    let reg = &ui.project.tracks[ui.active_track].patch.dest_registry;
+    (0..reg.len()).map(|i| reg.get(i).unwrap().addr).collect()
+}
+
+/// Positive control: the Pizza filter page primes cutoff.
+#[test]
+fn priming_on_main_page_registers_focused_param() {
+    let mut ui = UiState::new();
+    press(&mut ui, ButtonId::Plus);
+    press(&mut ui, ButtonId::Plus); // node 2: Filter
+    prime(&mut ui); // slot 0: cutoff
+    assert_eq!(
+        primed(&ui),
+        [chimera_core::addr::ParamAddr::new(
+            chimera_core::addr::BlockRef::Filter,
+            chimera_core::params::FilterParams::CUTOFF
+        )]
+    );
+}
+
+/// Pizza LFO sub-page (node 4, sub-page 2): slot 0 is LFO rate, which is not
+/// modulatable, so the registry refuses it.
+#[test]
+fn priming_on_pizza_lfo_sub_page_registers_nothing() {
+    let mut ui = UiState::new();
+    for _ in 0..4 {
+        press(&mut ui, ButtonId::Plus);
+    }
+    press(&mut ui, ButtonId::Edit);
+    press(&mut ui, ButtonId::Edit); // sub-page 2: LFO
+    assert_eq!(ui.page(), PageKey::Part { def: reg::LFO.id, op: Op::A });
+    prime(&mut ui);
+    assert!(primed(&ui).is_empty());
+}
+
+/// FmRatio slot 2 edits op C coarse, which is not modulatable, so the
+/// registry refuses it and nothing new is registered.
+#[test]
+fn priming_on_fm_ratio_slot_2_registers_nothing() {
+    let mut ui = UiState::new();
+    ui.project.tracks[0] = Track::new(ChainType::Fm);
+    ui.nav.chain_type = ChainType::Fm;
+    press(&mut ui, ButtonId::Edit);
+    press(&mut ui, ButtonId::Edit); // sub-page 2: FmRatio
+    assert_eq!(ui.page(), PageKey::Part { def: reg::FM_RATIO.id, op: Op::A });
+    ui.handle_input(&MockControls::new().encoder(EncoderId::C, 1)); // focus slot 2
+    let before = primed(&ui);
+    assert!(before.is_empty()); // no FM init pre-wire since Task 22
+    prime(&mut ui);
+    assert_eq!(primed(&ui), before);
 }

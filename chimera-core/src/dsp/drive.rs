@@ -19,15 +19,15 @@ impl Drive {
 
     /// Process a block of samples in-place.
     pub fn process(&self, buf: &mut [f32], params: &DriveParams) {
-        let drive = params.drive.value;
+        let drive = params.drive;
         if drive < 0.001 {
             // Drive at zero: apply only dry/wet mix (which at mix=1 is passthrough)
             return;
         }
 
         let gain = 1.0 + drive * 8.0; // 1x to 9x input gain
-        let tone = params.tone.value; // 0=dark, 0.5=neutral, 1=bright
-        let mix = params.mix.value; // 0..1 dry/wet
+        let tone = params.tone; // 0=dark, 0.5=neutral, 1=bright
+        let mix = params.mix; // 0..1 dry/wet
 
         // Tone: simple tilt EQ via asymmetric pre/post gain
         // tone < 0.5 = reduce highs (softer clip), tone > 0.5 = boost highs

@@ -5,7 +5,6 @@ mod audio;
 
 mod controls;
 mod display;
-mod midi;
 
 use chimera_core::ui::UiState;
 use chimera_core::ui::perf::PerfTracker;
@@ -104,7 +103,7 @@ fn main() -> ! {
         &ui.project.tracks[0].patch.params as *const _,
         &ui.project.tracks[0].patch.mod_state as *const _,
     ); }
-    audio::trigger_note(69, 100);  // A4, velocity 100
+    audio::trigger_note(chimera_hal::MidiNote::A4, chimera_hal::Velocity::DEFAULT);
 
     audio::prefill_buffer();   // Fill buffer with first rendered audio
     audio::init_dma();         // Configure + enable DMA1_Stream0

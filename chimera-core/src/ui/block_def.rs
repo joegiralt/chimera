@@ -1,3 +1,5 @@
+use crate::addr::{BlockRef, Op, ParamAddr};
+use crate::block::{find_spec, ParamId, ParamSpec};
 use crate::ui::page::{CellIcon, PageLayout, ValFmt};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -21,15 +23,98 @@ pub enum VizType {
     FmEnvelope,
 }
 
+/// What an encoder slot edits (spec §5).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SlotBinding {
+    Empty,
+    /// A fixed param, e.g. Filter cutoff or `FmOp(A)` coarse.
+    Param(ParamAddr),
+    /// A param of the currently selected FM operator.
+    SelectedOp(ParamId),
+    /// The FM operator selector itself.
+    SelectOp,
+    /// Mixer/System/Demo pages, still driven by `PageId`.
+    Legacy { label: &'static str, fmt: ValFmt },
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct ParamSlot {
-    pub label: &'static str,
-    pub format: ValFmt,
+    pub binding: SlotBinding,
     pub icon: CellIcon,
+    /// Display label override; `None` shows the spec's label (plan D6).
+    /// Format and step always come from the spec.
+    pub label_override: Option<&'static str>,
+}
+
+impl ParamSlot {
+    pub const EMPTY: ParamSlot = ParamSlot { binding: SlotBinding::Empty, icon: CellIcon::None, label_override: None };
+
+    pub const fn param(block: BlockRef, param: ParamId, icon: CellIcon) -> Self {
+        Self { binding: SlotBinding::Param(ParamAddr::new(block, param)), icon, label_override: None }
+    }
+
+    pub const fn selected_op(param: ParamId, icon: CellIcon) -> Self {
+        Self { binding: SlotBinding::SelectedOp(param), icon, label_override: None }
+    }
+
+    pub const fn select_op(icon: CellIcon) -> Self {
+        Self { binding: SlotBinding::SelectOp, icon, label_override: None }
+    }
+
+    pub const fn legacy(label: &'static str, fmt: ValFmt, icon: CellIcon) -> Self {
+        Self { binding: SlotBinding::Legacy { label, fmt }, icon, label_override: None }
+    }
+
+    pub const fn with_label(self, label: &'static str) -> Self {
+        Self { label_override: Some(label), ..self }
+    }
+
+    /// The spec this slot edits (bound slots only).
+    pub fn spec(&self) -> Option<&'static ParamSpec> {
+        match self.binding {
+            SlotBinding::Param(a) => a.spec(),
+            // All four FM operators share one spec table, so FmOp(Op::A) stands in.
+            SlotBinding::SelectedOp(id) => find_spec(BlockRef::FmOp(Op::A).specs(), id),
+            SlotBinding::Empty | SlotBinding::SelectOp | SlotBinding::Legacy { .. } => None,
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        if let Some(label) = self.label_override {
+            return label;
+        }
+        match self.binding {
+            SlotBinding::Empty => "--",
+            SlotBinding::SelectOp => "OP",
+            SlotBinding::Legacy { label, .. } => label,
+            SlotBinding::Param(_) | SlotBinding::SelectedOp(_) => self.spec().map_or("??", |s| s.label),
+        }
+    }
+
+    pub fn format(&self) -> ValFmt {
+        match self.binding {
+            SlotBinding::Empty => ValFmt::Uni,
+            SlotBinding::SelectOp => ValFmt::Int(3),
+            SlotBinding::Legacy { fmt, .. } => fmt,
+            SlotBinding::Param(_) | SlotBinding::SelectedOp(_) => self.spec().map_or(ValFmt::Uni, |s| s.fmt),
+        }
+    }
+}
+
+/// The address slot `slot` of `def` edits. `SelectedOp` resolves to the
+/// operator selected *now*, so a saved route always names a concrete operator.
+pub fn slot_addr(def: &BlockDef, slot: usize, sel_op: Op) -> Option<ParamAddr> {
+    match def.params.get(slot)?.binding {
+        SlotBinding::Param(a) => Some(a),
+        SlotBinding::SelectedOp(id) => Some(ParamAddr::new(BlockRef::FmOp(sel_op), id)),
+        SlotBinding::Empty | SlotBinding::SelectOp | SlotBinding::Legacy { .. } => None,
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
 pub struct BlockDef {
+    /// Unique page identity (`PageKey`); defs like FILTER are shared across chains.
+    pub id: u16,
     pub name: &'static str,
     pub short: &'static str,
     pub layout: PageLayout,
@@ -65,6 +150,8 @@ impl ChainBlock {
 pub struct ChainDef2 {
     pub name: &'static str,
     pub blocks: &'static [ChainBlock],
+    /// Mod matrix source rows, in `Voice`'s source order (spec §4).
+    pub mod_sources: &'static [&'static str],
 }
 
 impl ChainDef2 {

@@ -15,7 +15,7 @@ use stm32h7xx_hal::pac::interrupt;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::modulation::ModState;
 use chimera_core::params::ParamSnapshot;
-use chimera_hal::BLOCK_SIZE;
+use chimera_hal::{BLOCK_SIZE, MidiNote, Velocity};
 
 // SAI1 Block A CR1 register address for raw bit manipulation (MCKEN bit 27)
 const SAI1_CHA_CR1: *mut u32 = 0x4001_5804 as *mut u32;
@@ -79,7 +79,7 @@ fn render_block(offset: usize) {
         };
 
         // Render full Voice signal chain: Engine → Drive → Filter → Wavefolder → VCA
-        voice.render(work, params, mod_state, chimera_hal::SAMPLE_RATE);
+        voice.render(work, params, mod_state);
 
         // Convert f32 mono → i16 stereo
         let buf = &mut *addr_of_mut!(AUDIO_BUF);
@@ -104,20 +104,20 @@ pub fn prefill_buffer() {
 pub unsafe fn init_voice(params_ptr: *const ParamSnapshot, mod_ptr: *const ModState) {
     // SAFETY: called once during single-threaded init before ISR is active
     unsafe {
-        addr_of_mut!(VOICE).write(Some(Voice::new()));
+        addr_of_mut!(VOICE).write(Some(Voice::new(chimera_hal::SAMPLE_RATE)));
         addr_of_mut!(PARAMS).write(Some(params_ptr));
         addr_of_mut!(MOD_STATE_PTR).write(Some(mod_ptr));
     }
 }
 
 /// Trigger a note on the voice.
-pub fn trigger_note(note: u8, velocity: u8) {
+pub fn trigger_note(note: MidiNote, velocity: Velocity) {
     // SAFETY: called during init before ISR is active
     unsafe {
         let voice_ptr = addr_of_mut!(VOICE);
         let params_ptr = addr_of_mut!(PARAMS);
         if let (Some(voice), Some(p)) = ((*voice_ptr).as_mut(), *params_ptr) {
-            voice.note_on(note, velocity, &*p, chimera_hal::SAMPLE_RATE);
+            voice.note_on(note, velocity, &*p);
         }
     }
 }

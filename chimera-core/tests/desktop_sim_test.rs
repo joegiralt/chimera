@@ -6,9 +6,11 @@
 //! without threads). It verifies that UiState.params flows
 //! correctly through Voice.render().
 
+use chimera_core::{MidiNote, Velocity};
+use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::modulation::ModState;
 use chimera_core::dsp::voice::Voice;
-use chimera_core::params::EngineType;
+use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::ui::UiState;
 
 const SR: u32 = 48000;
@@ -19,14 +21,14 @@ fn sim_render(setup_ui: impl FnOnce(&mut UiState), note: u8, blocks: usize) -> V
     let mut ui = UiState::new();
     setup_ui(&mut ui);
 
-    let mut voice = Voice::new();
+    let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
     // This is what the audio callback does: read params, note_on, render
-    voice.note_on(note, 100, ui.params(), SR);
+    voice.note_on(MidiNote::new(note).unwrap(), Velocity::new(100).unwrap(), ui.params());
 
     let mut all = Vec::new();
     let mut block = [0.0f32; 64];
     for _ in 0..blocks {
-        voice.render(&mut block, ui.params(), &empty_mod, SR);
+        voice.render(&mut block, ui.params(), &empty_mod);
         all.extend_from_slice(&block);
     }
     all
@@ -57,7 +59,7 @@ fn goertzel(buf: &[f32], target_freq: f32) -> f32 {
 fn test_desktop_fm_produces_sound() {
     let buf = sim_render(
         |ui| {
-            ui.params_mut().engine = EngineType::Pizza;
+            *ui.params_mut() = ParamSnapshot::for_engine(EngineType::Pizza);
         },
         60,
         8,
@@ -69,7 +71,7 @@ fn test_desktop_fm_produces_sound() {
 fn test_desktop_fm_modulation_works() {
     let clean = sim_render(
         |ui| {
-            ui.params_mut().engine = EngineType::Pizza;
+            *ui.params_mut() = ParamSnapshot::for_engine(EngineType::Pizza);
             // Default: modulators at 0
         },
         60,
@@ -78,7 +80,7 @@ fn test_desktop_fm_modulation_works() {
 
     let modulated = sim_render(
         |ui| {
-            ui.params_mut().engine = EngineType::Pizza;
+            *ui.params_mut() = ParamSnapshot::for_engine(EngineType::Pizza);
             ui.params_mut().pizza.crush = 0.7;
         },
         60,
@@ -103,8 +105,8 @@ fn test_desktop_fm_modulation_works() {
 fn test_desktop_ks_produces_sound() {
     let buf = sim_render(
         |ui| {
-            ui.params_mut().engine = EngineType::Modal;
-            ui.params_mut().modal.mode = 0;
+            *ui.params_mut() = ParamSnapshot::for_engine(EngineType::Modal);
+            ui.params_mut().modal.mode = ResonatorMode::String;
         },
         60,
         16,
@@ -120,8 +122,8 @@ fn test_desktop_ks_produces_sound() {
 fn test_desktop_ks_body_resonance_changes_sound() {
     let no_body = sim_render(
         |ui| {
-            ui.params_mut().engine = EngineType::Modal;
-            ui.params_mut().modal.mode = 0;
+            *ui.params_mut() = ParamSnapshot::for_engine(EngineType::Modal);
+            ui.params_mut().modal.mode = ResonatorMode::String;
             ui.params_mut().modal.ks_body = 0.0;
         },
         60,
@@ -130,8 +132,8 @@ fn test_desktop_ks_body_resonance_changes_sound() {
 
     let with_body = sim_render(
         |ui| {
-            ui.params_mut().engine = EngineType::Modal;
-            ui.params_mut().modal.mode = 0;
+            *ui.params_mut() = ParamSnapshot::for_engine(EngineType::Modal);
+            ui.params_mut().modal.mode = ResonatorMode::String;
             ui.params_mut().modal.ks_body = 0.8;
         },
         60,
@@ -155,8 +157,8 @@ fn test_desktop_ks_body_resonance_changes_sound() {
 fn test_desktop_ks_stiffness_changes_sound() {
     let no_stiff = sim_render(
         |ui| {
-            ui.params_mut().engine = EngineType::Modal;
-            ui.params_mut().modal.mode = 0;
+            *ui.params_mut() = ParamSnapshot::for_engine(EngineType::Modal);
+            ui.params_mut().modal.mode = ResonatorMode::String;
             ui.params_mut().modal.ks_stiffness = 0.0;
         },
         60,
@@ -165,8 +167,8 @@ fn test_desktop_ks_stiffness_changes_sound() {
 
     let with_stiff = sim_render(
         |ui| {
-            ui.params_mut().engine = EngineType::Modal;
-            ui.params_mut().modal.mode = 0;
+            *ui.params_mut() = ParamSnapshot::for_engine(EngineType::Modal);
+            ui.params_mut().modal.mode = ResonatorMode::String;
             ui.params_mut().modal.ks_stiffness = 0.7;
         },
         60,
@@ -186,8 +188,8 @@ fn test_desktop_ks_stiffness_changes_sound() {
 fn test_desktop_ks_excitation_types_differ() {
     let noise = sim_render(
         |ui| {
-            ui.params_mut().engine = EngineType::Modal;
-            ui.params_mut().modal.mode = 0;
+            *ui.params_mut() = ParamSnapshot::for_engine(EngineType::Modal);
+            ui.params_mut().modal.mode = ResonatorMode::String;
             ui.params_mut().modal.ks_excitation = 0;
         },
         60,
@@ -196,8 +198,8 @@ fn test_desktop_ks_excitation_types_differ() {
 
     let click = sim_render(
         |ui| {
-            ui.params_mut().engine = EngineType::Modal;
-            ui.params_mut().modal.mode = 0;
+            *ui.params_mut() = ParamSnapshot::for_engine(EngineType::Modal);
+            ui.params_mut().modal.mode = ResonatorMode::String;
             ui.params_mut().modal.ks_excitation = 1;
         },
         60,
@@ -223,8 +225,8 @@ fn test_desktop_ks_excitation_types_differ() {
 fn test_desktop_modal_produces_sound() {
     let buf = sim_render(
         |ui| {
-            ui.params_mut().engine = EngineType::Modal;
-            ui.params_mut().modal.mode = 1;
+            *ui.params_mut() = ParamSnapshot::for_engine(EngineType::Modal);
+            ui.params_mut().modal.mode = ResonatorMode::Modal;
         },
         60,
         16,
@@ -242,9 +244,9 @@ fn test_desktop_modal_produces_sound() {
 fn test_desktop_filter_affects_output() {
     let open = sim_render(
         |ui| {
-            ui.params_mut().engine = EngineType::Pizza;
+            *ui.params_mut() = ParamSnapshot::for_engine(EngineType::Pizza);
             
-            ui.params_mut().filter.cutoff.set(15000.0);
+            ui.params_mut().filter.cutoff = 15000.0;
         },
         60,
         16,
@@ -252,9 +254,9 @@ fn test_desktop_filter_affects_output() {
 
     let closed = sim_render(
         |ui| {
-            ui.params_mut().engine = EngineType::Pizza;
+            *ui.params_mut() = ParamSnapshot::for_engine(EngineType::Pizza);
             
-            ui.params_mut().filter.cutoff.set(200.0);
+            ui.params_mut().filter.cutoff = 200.0;
             ui.params_mut().filter.mode = 2;
         },
         60,
@@ -273,7 +275,7 @@ fn test_desktop_filter_affects_output() {
 fn test_desktop_drive_affects_output() {
     let clean = sim_render(
         |ui| {
-            ui.params_mut().engine = EngineType::Pizza;
+            *ui.params_mut() = ParamSnapshot::for_engine(EngineType::Pizza);
         },
         60,
         16,
@@ -281,9 +283,9 @@ fn test_desktop_drive_affects_output() {
 
     let driven = sim_render(
         |ui| {
-            ui.params_mut().engine = EngineType::Pizza;
-            ui.params_mut().drive.drive.set(0.9);
-            ui.params_mut().drive.mix.set(1.0);
+            *ui.params_mut() = ParamSnapshot::for_engine(EngineType::Pizza);
+            ui.params_mut().drive.drive = 0.9;
+            ui.params_mut().drive.mix = 1.0;
         },
         60,
         16,
@@ -306,7 +308,7 @@ fn test_desktop_drive_affects_output() {
 fn test_desktop_engine_switch() {
     let fm = sim_render(
         |ui| {
-            ui.params_mut().engine = EngineType::Pizza;
+            *ui.params_mut() = ParamSnapshot::for_engine(EngineType::Pizza);
         },
         60,
         16,
@@ -314,8 +316,8 @@ fn test_desktop_engine_switch() {
 
     let modal = sim_render(
         |ui| {
-            ui.params_mut().engine = EngineType::Modal;
-            ui.params_mut().modal.mode = 1;
+            *ui.params_mut() = ParamSnapshot::for_engine(EngineType::Modal);
+            ui.params_mut().modal.mode = ResonatorMode::Modal;
         },
         60,
         16,
@@ -323,8 +325,8 @@ fn test_desktop_engine_switch() {
 
     let ks = sim_render(
         |ui| {
-            ui.params_mut().engine = EngineType::Modal;
-            ui.params_mut().modal.mode = 0;
+            *ui.params_mut() = ParamSnapshot::for_engine(EngineType::Modal);
+            ui.params_mut().modal.mode = ResonatorMode::String;
         },
         60,
         16,
@@ -363,28 +365,28 @@ fn test_desktop_engine_switch() {
 fn test_desktop_mid_note_filter_sweep() {
     let empty_mod = ModState::new();
     let mut ui = UiState::new();
-    ui.params_mut().engine = EngineType::Pizza;
+    *ui.params_mut() = ParamSnapshot::for_engine(EngineType::Pizza);
     
-    ui.params_mut().filter.cutoff.set(10000.0);
+    ui.params_mut().filter.cutoff = 10000.0;
     ui.params_mut().filter.mode = 2;
 
-    let mut voice = Voice::new();
-    voice.note_on(60, 100, ui.params(), SR);
+    let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
+    voice.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), ui.params());
 
     // Render with open filter
     let mut block = [0.0f32; 64];
     let mut before_energy = 0.0f32;
     for _ in 0..16 {
-        voice.render(&mut block, ui.params(), &empty_mod, SR);
+        voice.render(&mut block, ui.params(), &empty_mod);
         before_energy += block.iter().map(|s| s * s).sum::<f32>();
     }
 
     // Close the filter mid-note
-    ui.params_mut().filter.cutoff.set(200.0);
+    ui.params_mut().filter.cutoff = 200.0;
 
     let mut after_energy = 0.0f32;
     for _ in 0..16 {
-        voice.render(&mut block, ui.params(), &empty_mod, SR);
+        voice.render(&mut block, ui.params(), &empty_mod);
         after_energy += block.iter().map(|s| s * s).sum::<f32>();
     }
 

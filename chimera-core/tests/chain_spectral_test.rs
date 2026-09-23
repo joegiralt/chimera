@@ -1,3 +1,4 @@
+use chimera_core::{MidiNote, Velocity};
 use chimera_core::modulation::ModState;
 use chimera_core::dsp::drive::Drive;
 use chimera_core::dsp::filter::SvfFilter;
@@ -58,8 +59,8 @@ fn test_drive_adds_harmonics() {
     let clean_harmonics = harmonic_energy(&clean, freq);
 
     let mut params = DriveParams::default();
-    params.drive.set(0.8);
-    params.mix.set(1.0);
+    params.drive = 0.8;
+    params.mix = 1.0;
     drive.process(&mut clean, &params);
     let driven_harmonics = harmonic_energy(&clean, freq);
 
@@ -100,8 +101,8 @@ fn test_drive_more_drive_more_harmonics() {
     let measure = |amount: f32| -> f32 {
         let mut buf = sine_buf(freq, 4096);
         let mut params = DriveParams::default();
-        params.drive.set(amount);
-        params.mix.set(1.0);
+        params.drive = amount;
+        params.mix = 1.0;
         drive.process(&mut buf, &params);
         harmonic_energy(&buf, freq)
     };
@@ -132,9 +133,9 @@ fn test_drive_tone_changes_spectrum() {
     let measure = |tone: f32| -> f32 {
         let mut buf = sine_buf(freq, 4096);
         let mut params = DriveParams::default();
-        params.drive.set(0.6);
-        params.tone.set(tone);
-        params.mix.set(1.0);
+        params.drive = 0.6;
+        params.tone = tone;
+        params.mix = 1.0;
         drive.process(&mut buf, &params);
         harmonic_energy(&buf, freq)
     };
@@ -156,7 +157,7 @@ fn test_drive_tone_changes_spectrum() {
 fn test_filter_lp_removes_highs() {
     let mut filter = SvfFilter::new();
     let mut params = FilterParams::default();
-    params.cutoff.set(500.0);
+    params.cutoff = 500.0;
     params.mode = 2; // LP4
 
     // Mix of 200Hz (below cutoff) and 2000Hz (above cutoff)
@@ -194,7 +195,7 @@ fn test_filter_lp_removes_highs() {
 fn test_filter_hp_removes_lows() {
     let mut filter = SvfFilter::new();
     let mut params = FilterParams::default();
-    params.cutoff.set(1000.0);
+    params.cutoff = 1000.0;
     params.mode = 5; // HP4
 
     let mut buf: Vec<f32> = (0..4096)
@@ -231,8 +232,8 @@ fn test_filter_hp_removes_lows() {
 fn test_filter_bp_passes_center() {
     let mut filter = SvfFilter::new();
     let mut params = FilterParams::default();
-    params.cutoff.set(1000.0);
-    params.resonance.set(0.7);
+    params.cutoff = 1000.0;
+    params.resonance = 0.7;
     params.mode = 3; // BP2
 
     let mut buf: Vec<f32> = (0..4096)
@@ -266,8 +267,8 @@ fn test_filter_resonance_boosts_cutoff() {
     let measure_peak = |reso: f32| -> f32 {
         let mut filter = SvfFilter::new();
         let mut params = FilterParams::default();
-        params.cutoff.set(freq);
-        params.resonance.set(reso);
+        params.cutoff = freq;
+        params.resonance = reso;
         params.mode = 1; // LP2
 
         // White-ish noise (sum of many sines)
@@ -302,7 +303,7 @@ fn test_filter_cutoff_sweep_changes_brightness() {
     let measure_brightness = |cutoff: f32| -> f32 {
         let mut filter = SvfFilter::new();
         let mut params = FilterParams::default();
-        params.cutoff.set(cutoff);
+        params.cutoff = cutoff;
         params.mode = 2; // LP4
 
         // Rich signal (square-ish wave with harmonics)
@@ -351,8 +352,8 @@ fn test_folder_adds_harmonics() {
 
     let mut folded = sine_buf(freq, 4096);
     let mut params = FolderParams::default();
-    params.fold.set(0.7);
-    params.mix.set(1.0);
+    params.fold = 0.7;
+    params.mix = 1.0;
     folder.process(&mut folded, &params);
     let folded_h = harmonic_energy(&folded, freq);
 
@@ -372,8 +373,8 @@ fn test_folder_more_fold_more_harmonics() {
     let measure = |amount: f32| -> f32 {
         let mut buf = sine_buf(freq, 4096);
         let mut params = FolderParams::default();
-        params.fold.set(amount);
-        params.mix.set(1.0);
+        params.fold = amount;
+        params.mix = 1.0;
         folder.process(&mut buf, &params);
         harmonic_energy(&buf, freq)
     };
@@ -398,18 +399,18 @@ fn test_voice_filter_sweep_audible() {
     let f0 = freq;
 
     let measure = |cutoff: f32| -> f32 {
-        let mut voice = Voice::new();
+        let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
         let mut params = ParamSnapshot::default();
         // Pizza produces harmonics by default
-        params.filter.cutoff.set(cutoff);
+        params.filter.cutoff = cutoff;
         params.filter.mode = 2; // LP4
 
-        voice.note_on(60, 100, &params, SR);
+        voice.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params);
 
         let mut all = Vec::new();
         let mut block = [0.0f32; 64];
         for _ in 0..32 {
-            voice.render(&mut block, &params, &empty_mod, SR);
+            voice.render(&mut block, &params, &empty_mod);
             all.extend_from_slice(&block);
         }
         harmonic_energy(&all, f0)
@@ -432,17 +433,17 @@ fn test_voice_drive_adds_grit() {
     let freq = 261.6;
 
     let measure = |drive_amount: f32| -> f32 {
-        let mut voice = Voice::new();
+        let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
         let mut params = ParamSnapshot::default();
-        params.drive.drive.set(drive_amount);
-        params.drive.mix.set(1.0);
+        params.drive.drive = drive_amount;
+        params.drive.mix = 1.0;
 
-        voice.note_on(60, 100, &params, SR);
+        voice.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params);
 
         let mut all = Vec::new();
         let mut block = [0.0f32; 64];
         for _ in 0..32 {
-            voice.render(&mut block, &params, &empty_mod, SR);
+            voice.render(&mut block, &params, &empty_mod);
             all.extend_from_slice(&block);
         }
         harmonic_energy(&all, freq)

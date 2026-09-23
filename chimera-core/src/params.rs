@@ -1,107 +1,79 @@
-/// A single parameter value with range clamping
-#[derive(Clone, Copy, Debug)]
-pub struct Param {
-    pub value: f32,
-    pub min: f32,
-    pub max: f32,
-    pub default: f32,
-}
-
-impl Param {
-    pub const fn new(min: f32, max: f32, default: f32) -> Self {
-        Self {
-            value: default,
-            min,
-            max,
-            default,
-        }
-    }
-
-    pub fn set(&mut self, v: f32) {
-        self.value = if v < self.min {
-            self.min
-        } else if v > self.max {
-            self.max
-        } else {
-            v
-        };
-    }
-
-    pub fn nudge(&mut self, delta: f32) {
-        self.set(self.value + delta);
-    }
-
-    /// Normalized 0.0..1.0
-    pub fn normalized(&self) -> f32 {
-        (self.value - self.min) / (self.max - self.min)
-    }
-
-    /// Set from normalized 0.0..1.0
-    pub fn set_normalized(&mut self, n: f32) {
-        self.set(self.min + n * (self.max - self.min));
-    }
-
-    /// Returns the current value.
-    pub fn value(&self) -> f32 {
-        self.value
-    }
-
-    /// Apply a modulation offset scaled by the param's range.
-    pub fn apply_mod_offset(&mut self, offset: f32) {
-        self.value = (self.value + offset * (self.max - self.min))
-            .clamp(self.min, self.max);
-    }
-
-    /// Snap to next coarse point in the given direction.
-    /// `snap_points` are in normalized space (0..1), must be sorted ascending.
-    pub fn snap_to(&mut self, delta: i8, snap_points: &[f32]) {
-        let n = self.normalized();
-        if delta > 0 {
-            // Find first snap point above current (with small epsilon)
-            for &sp in snap_points {
-                if sp > n + 0.005 {
-                    self.set_normalized(sp);
-                    return;
-                }
-            }
-            // Already at or above max snap point
-            self.set_normalized(1.0);
-        } else {
-            // Find last snap point below current
-            for &sp in snap_points.iter().rev() {
-                if sp < n - 0.005 {
-                    self.set_normalized(sp);
-                    return;
-                }
-            }
-            // Already at or below min snap point
-            self.set_normalized(0.0);
-        }
-    }
-}
+use crate::addr::BlockRef;
+use crate::block::{Block, ParamId, ParamSpec, ValFmt};
 
 /// Parameters for one voice's filter
 #[derive(Clone, Copy, Debug)]
 pub struct FilterParams {
-    pub cutoff: Param,
-    pub resonance: Param,
-    pub drive: Param,
-    pub fm_amount: Param,
-    pub env_amount: Param,
-    pub key_track: Param,
+    pub cutoff: f32,
+    pub resonance: f32,
+    pub drive: f32,
+    pub fm_amount: f32,
+    pub env_amount: f32,
+    pub key_track: f32,
     pub mode: u8,
 }
 
 impl Default for FilterParams {
     fn default() -> Self {
         Self {
-            cutoff: Param::new(20.0, 20000.0, 1000.0),
-            resonance: Param::new(0.0, 1.0, 0.0),
-            drive: Param::new(0.0, 1.0, 0.0),
-            fm_amount: Param::new(0.0, 1.0, 0.0),
-            env_amount: Param::new(-1.0, 1.0, 0.0),
-            key_track: Param::new(0.0, 1.0, 0.0),
+            cutoff: 1000.0,
+            resonance: 0.0,
+            drive: 0.0,
+            fm_amount: 0.0,
+            env_amount: 0.0,
+            key_track: 0.0,
             mode: 2, // LP4
+        }
+    }
+}
+
+impl FilterParams {
+    pub const CUTOFF: ParamId = ParamId(0);
+    pub const RESONANCE: ParamId = ParamId(1);
+    pub const DRIVE: ParamId = ParamId(2);
+    pub const FM_AMOUNT: ParamId = ParamId(3);
+    pub const ENV_AMOUNT: ParamId = ParamId(4);
+    pub const KEY_TRACK: ParamId = ParamId(5);
+}
+
+/// Cutoff, resonance and drive are read by `Voice` every block. FM amount,
+/// env amount and key track are never read (spec § Current state).
+/// `mode` has no spec (not on any page; plan D16).
+pub static FILTER_SPECS: [ParamSpec; 6] = [
+    ParamSpec::continuous(0, "CUTOFF", ValFmt::Uni, 20.0, 20000.0, 1000.0, (20000.0 - 20.0) / 128.0, true),
+    ParamSpec::continuous(1, "RESO", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, true),
+    ParamSpec::continuous(2, "DRIVE", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, true),
+    ParamSpec::continuous(3, "FM", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false),
+    ParamSpec::continuous(4, "ENV", ValFmt::Bi, -1.0, 1.0, 0.0, 2.0 / 128.0, false),
+    ParamSpec::continuous(5, "TRACK", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false),
+];
+
+impl Block for FilterParams {
+    fn specs(&self) -> &'static [ParamSpec] {
+        &FILTER_SPECS
+    }
+
+    fn get(&self, id: ParamId) -> f32 {
+        match id {
+            Self::CUTOFF => self.cutoff,
+            Self::RESONANCE => self.resonance,
+            Self::DRIVE => self.drive,
+            Self::FM_AMOUNT => self.fm_amount,
+            Self::ENV_AMOUNT => self.env_amount,
+            Self::KEY_TRACK => self.key_track,
+            _ => 0.0,
+        }
+    }
+
+    fn write(&mut self, id: ParamId, v: f32) {
+        match id {
+            Self::CUTOFF => self.cutoff = v,
+            Self::RESONANCE => self.resonance = v,
+            Self::DRIVE => self.drive = v,
+            Self::FM_AMOUNT => self.fm_amount = v,
+            Self::ENV_AMOUNT => self.env_amount = v,
+            Self::KEY_TRACK => self.key_track = v,
+            _ => {}
         }
     }
 }
@@ -109,23 +81,75 @@ impl Default for FilterParams {
 /// Parameters for one envelope
 #[derive(Clone, Copy, Debug)]
 pub struct EnvParams {
-    pub attack: Param,
-    pub decay: Param,
-    pub sustain: Param,
-    pub release: Param,
-    pub level: Param,
-    pub vel_sens: Param,
+    pub attack: f32,
+    pub decay: f32,
+    pub sustain: f32,
+    pub release: f32,
+    pub level: f32,
+    pub vel_sens: f32,
 }
 
 impl Default for EnvParams {
     fn default() -> Self {
         Self {
-            attack: Param::new(0.001, 10.0, 0.01),
-            decay: Param::new(0.001, 10.0, 0.3),
-            sustain: Param::new(0.0, 1.0, 0.7),
-            release: Param::new(0.001, 10.0, 0.3),
-            level: Param::new(0.0, 1.0, 1.0),
-            vel_sens: Param::new(0.0, 1.0, 0.5),
+            attack: 0.01,
+            decay: 0.3,
+            sustain: 0.7,
+            release: 0.3,
+            level: 1.0,
+            vel_sens: 0.5,
+        }
+    }
+}
+
+impl EnvParams {
+    pub const ATTACK: ParamId = ParamId(0);
+    pub const DECAY: ParamId = ParamId(1);
+    pub const SUSTAIN: ParamId = ParamId(2);
+    pub const RELEASE: ParamId = ParamId(3);
+    pub const LEVEL: ParamId = ParamId(4);
+    pub const VEL_SENS: ParamId = ParamId(5);
+}
+
+/// Shared by all three envelopes. A/D/S/R are read by `Voice` every block
+/// for the amp envelope (`envelopes[0]`); level and vel_sens are never read.
+/// `envelopes[1..2]` are never read at all — `ParamAddr::modulatable`
+/// excludes them (plan D7).
+pub static ENV_SPECS: [ParamSpec; 6] = [
+    ParamSpec::continuous(0, "ATK", ValFmt::Uni, 0.001, 10.0, 0.01, (10.0 - 0.001) / 128.0, true),
+    ParamSpec::continuous(1, "DEC", ValFmt::Uni, 0.001, 10.0, 0.3, (10.0 - 0.001) / 128.0, true),
+    ParamSpec::continuous(2, "SUS", ValFmt::Uni, 0.0, 1.0, 0.7, 1.0 / 128.0, true),
+    ParamSpec::continuous(3, "REL", ValFmt::Uni, 0.001, 10.0, 0.3, (10.0 - 0.001) / 128.0, true),
+    ParamSpec::continuous(4, "LEVEL", ValFmt::Uni, 0.0, 1.0, 1.0, 1.0 / 128.0, false),
+    ParamSpec::continuous(5, "VEL", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false),
+];
+
+impl Block for EnvParams {
+    fn specs(&self) -> &'static [ParamSpec] {
+        &ENV_SPECS
+    }
+
+    fn get(&self, id: ParamId) -> f32 {
+        match id {
+            Self::ATTACK => self.attack,
+            Self::DECAY => self.decay,
+            Self::SUSTAIN => self.sustain,
+            Self::RELEASE => self.release,
+            Self::LEVEL => self.level,
+            Self::VEL_SENS => self.vel_sens,
+            _ => 0.0,
+        }
+    }
+
+    fn write(&mut self, id: ParamId, v: f32) {
+        match id {
+            Self::ATTACK => self.attack = v,
+            Self::DECAY => self.decay = v,
+            Self::SUSTAIN => self.sustain = v,
+            Self::RELEASE => self.release = v,
+            Self::LEVEL => self.level = v,
+            Self::VEL_SENS => self.vel_sens = v,
+            _ => {}
         }
     }
 }
@@ -133,17 +157,54 @@ impl Default for EnvParams {
 /// Parameters for pre-filter drive stage
 #[derive(Clone, Copy, Debug)]
 pub struct DriveParams {
-    pub drive: Param,
-    pub tone: Param,
-    pub mix: Param,
+    pub drive: f32,
+    pub tone: f32,
+    pub mix: f32,
 }
 
 impl Default for DriveParams {
     fn default() -> Self {
         Self {
-            drive: Param::new(0.0, 1.0, 0.0),
-            tone: Param::new(0.0, 1.0, 0.5),
-            mix: Param::new(0.0, 1.0, 1.0),
+            drive: 0.0,
+            tone: 0.5,
+            mix: 1.0,
+        }
+    }
+}
+
+impl DriveParams {
+    pub const DRIVE: ParamId = ParamId(0);
+    pub const TONE: ParamId = ParamId(1);
+    pub const MIX: ParamId = ParamId(2);
+}
+
+/// All three are read by `Voice` every block from the modulated copy.
+pub static DRIVE_SPECS: [ParamSpec; 3] = [
+    ParamSpec::continuous(0, "DRIVE", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, true),
+    ParamSpec::continuous(1, "TONE", ValFmt::Bi, 0.0, 1.0, 0.5, 1.0 / 128.0, true),
+    ParamSpec::continuous(2, "MIX", ValFmt::Bi, 0.0, 1.0, 1.0, 1.0 / 128.0, true),
+];
+
+impl Block for DriveParams {
+    fn specs(&self) -> &'static [ParamSpec] {
+        &DRIVE_SPECS
+    }
+
+    fn get(&self, id: ParamId) -> f32 {
+        match id {
+            Self::DRIVE => self.drive,
+            Self::TONE => self.tone,
+            Self::MIX => self.mix,
+            _ => 0.0,
+        }
+    }
+
+    fn write(&mut self, id: ParamId, v: f32) {
+        match id {
+            Self::DRIVE => self.drive = v,
+            Self::TONE => self.tone = v,
+            Self::MIX => self.mix = v,
+            _ => {}
         }
     }
 }
@@ -151,55 +212,173 @@ impl Default for DriveParams {
 /// Parameters for post-filter wavefolder
 #[derive(Clone, Copy, Debug)]
 pub struct FolderParams {
-    pub fold: Param,
-    pub symmetry: Param,
-    pub mix: Param,
+    pub fold: f32,
+    pub symmetry: f32,
+    pub mix: f32,
 }
 
 impl Default for FolderParams {
     fn default() -> Self {
         Self {
-            fold: Param::new(0.0, 1.0, 0.0),
-            symmetry: Param::new(0.0, 1.0, 0.5),
-            mix: Param::new(0.0, 1.0, 0.5),
+            fold: 0.0,
+            symmetry: 0.5,
+            mix: 0.5,
         }
     }
 }
 
-/// Parameters for one FM operator.
+impl FolderParams {
+    pub const FOLD: ParamId = ParamId(0);
+    pub const SYMMETRY: ParamId = ParamId(1);
+    pub const MIX: ParamId = ParamId(2);
+}
+
+/// All three are read by `Voice` every block from the modulated copy.
+pub static FOLDER_SPECS: [ParamSpec; 3] = [
+    ParamSpec::continuous(0, "FOLD", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, true),
+    ParamSpec::continuous(1, "SYM", ValFmt::Bi, 0.0, 1.0, 0.5, 1.0 / 128.0, true),
+    ParamSpec::continuous(2, "MIX", ValFmt::Bi, 0.0, 1.0, 0.5, 1.0 / 128.0, true),
+];
+
+impl Block for FolderParams {
+    fn specs(&self) -> &'static [ParamSpec] {
+        &FOLDER_SPECS
+    }
+
+    fn get(&self, id: ParamId) -> f32 {
+        match id {
+            Self::FOLD => self.fold,
+            Self::SYMMETRY => self.symmetry,
+            Self::MIX => self.mix,
+            _ => 0.0,
+        }
+    }
+
+    fn write(&mut self, id: ParamId, v: f32) {
+        match id {
+            Self::FOLD => self.fold = v,
+            Self::SYMMETRY => self.symmetry = v,
+            Self::MIX => self.mix = v,
+            _ => {}
+        }
+    }
+}
+
+/// Parameters for one FM operator. Stepped params that are modulatable
+/// (`level`, `feedback`) are `f32` so a modulated copy can hold fractional
+/// values (the DSP truncates `as u8`); the others keep integer types (plan D18).
 #[derive(Clone, Copy, Debug)]
 pub struct FmOpParams {
-    pub waveform: Param,       // 0.0–7.0 (integer steps)
-    pub coarse: Param,         // 0.0–63.0 (integer steps)
-    pub fine: Param,           // 0.0–15.0 (integer steps)
-    pub level: Param,          // 0.0–99.0 (integer steps)
-    pub feedback: Param,       // 0.0–7.0 (integer steps)
-    pub detune: Param,         // -7.0–7.0 (integer steps)
-    pub velocity_sens: Param,  // 0.0–7.0 (integer steps)
-    pub attack_rate: Param,    // 0.0–31.0 (integer steps)
-    pub decay1_rate: Param,    // 0.0–31.0 (integer steps)
-    pub decay1_level: Param,   // 0.0–15.0 (integer steps)
-    pub decay2_rate: Param,    // 0.0–31.0 (integer steps)
-    pub release_rate: Param,   // 1.0–15.0 (integer steps)
-    pub rate_scaling: Param,   // 0.0–3.0 (integer steps)
+    pub waveform: u8,      // 0–7
+    pub coarse: u8,        // 0–63
+    pub fine: u8,          // 0–15
+    pub level: f32,        // 0–99 (integer steps)
+    pub feedback: f32,     // 0–7 (integer steps)
+    pub detune: i8,        // -7–7
+    pub velocity_sens: u8, // 0–7
+    pub attack_rate: u8,   // 0–31
+    pub decay1_rate: u8,   // 0–31
+    pub decay1_level: u8,  // 0–15
+    pub decay2_rate: u8,   // 0–31
+    pub release_rate: u8,  // 0–15 (plan D4)
+    pub rate_scaling: u8,  // 0–3
 }
 
 impl Default for FmOpParams {
     fn default() -> Self {
         Self {
-            waveform: Param::new(0.0, 7.0, 0.0),
-            coarse: Param::new(0.0, 63.0, 4.0),
-            fine: Param::new(0.0, 15.0, 0.0),
-            level: Param::new(0.0, 99.0, 0.0),
-            feedback: Param::new(0.0, 7.0, 0.0),
-            detune: Param::new(-7.0, 7.0, 0.0),
-            velocity_sens: Param::new(0.0, 7.0, 0.0),
-            attack_rate: Param::new(0.0, 31.0, 31.0),
-            decay1_rate: Param::new(0.0, 31.0, 0.0),
-            decay1_level: Param::new(0.0, 15.0, 15.0),
-            decay2_rate: Param::new(0.0, 31.0, 0.0),
-            release_rate: Param::new(1.0, 15.0, 15.0),
-            rate_scaling: Param::new(0.0, 3.0, 0.0),
+            waveform: 0,
+            coarse: 4,
+            fine: 0,
+            level: 0.0,
+            feedback: 0.0,
+            detune: 0,
+            velocity_sens: 0,
+            attack_rate: 31,
+            decay1_rate: 0,
+            decay1_level: 15,
+            decay2_rate: 0,
+            release_rate: 15,
+            rate_scaling: 0,
+        }
+    }
+}
+
+impl FmOpParams {
+    pub const WAVEFORM: ParamId = ParamId(0);
+    pub const COARSE: ParamId = ParamId(1);
+    pub const FINE: ParamId = ParamId(2);
+    pub const LEVEL: ParamId = ParamId(3);
+    pub const FEEDBACK: ParamId = ParamId(4);
+    pub const DETUNE: ParamId = ParamId(5);
+    pub const VELOCITY_SENS: ParamId = ParamId(6);
+    pub const ATTACK_RATE: ParamId = ParamId(7);
+    pub const DECAY1_RATE: ParamId = ParamId(8);
+    pub const DECAY1_LEVEL: ParamId = ParamId(9);
+    pub const DECAY2_RATE: ParamId = ParamId(10);
+    pub const RELEASE_RATE: ParamId = ParamId(11);
+    pub const RATE_SCALING: ParamId = ParamId(12);
+}
+
+/// Level and feedback are read every block (`FmOperator::update_live`);
+/// waveform is too, but it is a choice. Ratios, detune and the envelope are
+/// read only at note-on, so they are not modulatable.
+pub static FM_OP_SPECS: [ParamSpec; 13] = [
+    ParamSpec::choice(0, "WAVE", ValFmt::Int(7), 7.0, 0.0),
+    ParamSpec::stepped(1, "CRSE", ValFmt::Int(63), 0.0, 63.0, 4.0, false),
+    ParamSpec::stepped(2, "FINE", ValFmt::Int(15), 0.0, 15.0, 0.0, false),
+    ParamSpec::stepped(3, "LEVEL", ValFmt::Uni, 0.0, 99.0, 0.0, true),
+    ParamSpec::stepped(4, "FDBK", ValFmt::Int(7), 0.0, 7.0, 0.0, true),
+    ParamSpec::stepped(5, "DETUN", ValFmt::Bi, -7.0, 7.0, 0.0, false),
+    ParamSpec::stepped(6, "V.SNS", ValFmt::Int(7), 0.0, 7.0, 0.0, false),
+    ParamSpec::stepped(7, "AR", ValFmt::Int(31), 0.0, 31.0, 31.0, false),
+    ParamSpec::stepped(8, "D1R", ValFmt::Int(31), 0.0, 31.0, 0.0, false),
+    ParamSpec::stepped(9, "D1L", ValFmt::Int(15), 0.0, 15.0, 15.0, false),
+    ParamSpec::stepped(10, "D2R", ValFmt::Int(31), 0.0, 31.0, 0.0, false),
+    ParamSpec::stepped(11, "RR", ValFmt::Int(15), 0.0, 15.0, 15.0, false),
+    ParamSpec::stepped(12, "RS", ValFmt::Int(3), 0.0, 3.0, 0.0, false),
+];
+
+impl Block for FmOpParams {
+    fn specs(&self) -> &'static [ParamSpec] {
+        &FM_OP_SPECS
+    }
+
+    fn get(&self, id: ParamId) -> f32 {
+        match id {
+            Self::WAVEFORM => self.waveform as f32,
+            Self::COARSE => self.coarse as f32,
+            Self::FINE => self.fine as f32,
+            Self::LEVEL => self.level,
+            Self::FEEDBACK => self.feedback,
+            Self::DETUNE => self.detune as f32,
+            Self::VELOCITY_SENS => self.velocity_sens as f32,
+            Self::ATTACK_RATE => self.attack_rate as f32,
+            Self::DECAY1_RATE => self.decay1_rate as f32,
+            Self::DECAY1_LEVEL => self.decay1_level as f32,
+            Self::DECAY2_RATE => self.decay2_rate as f32,
+            Self::RELEASE_RATE => self.release_rate as f32,
+            Self::RATE_SCALING => self.rate_scaling as f32,
+            _ => 0.0,
+        }
+    }
+
+    fn write(&mut self, id: ParamId, v: f32) {
+        match id {
+            Self::WAVEFORM => self.waveform = v as u8,
+            Self::COARSE => self.coarse = v as u8,
+            Self::FINE => self.fine = v as u8,
+            Self::LEVEL => self.level = v,
+            Self::FEEDBACK => self.feedback = v,
+            Self::DETUNE => self.detune = v as i8,
+            Self::VELOCITY_SENS => self.velocity_sens = v as u8,
+            Self::ATTACK_RATE => self.attack_rate = v as u8,
+            Self::DECAY1_RATE => self.decay1_rate = v as u8,
+            Self::DECAY1_LEVEL => self.decay1_level = v as u8,
+            Self::DECAY2_RATE => self.decay2_rate = v as u8,
+            Self::RELEASE_RATE => self.release_rate = v as u8,
+            Self::RATE_SCALING => self.rate_scaling = v as u8,
+            _ => {}
         }
     }
 }
@@ -207,22 +386,48 @@ impl Default for FmOpParams {
 /// Parameters for the 4-operator FM engine.
 #[derive(Clone, Copy, Debug)]
 pub struct FmParams {
-    pub algorithm: Param,           // 0.0–7.0 (integer steps)
+    pub algorithm: u8, // 0–7
     pub operators: [FmOpParams; 4],
 }
 
 impl Default for FmParams {
     fn default() -> Self {
         let mut op0 = FmOpParams::default();
-        op0.level = Param::new(0.0, 99.0, 99.0);
+        op0.level = 99.0;
         Self {
-            algorithm: Param::new(0.0, 7.0, 0.0),
+            algorithm: 0,
             operators: [
                 op0,
                 FmOpParams::default(),
                 FmOpParams::default(),
                 FmOpParams::default(),
             ],
+        }
+    }
+}
+
+impl FmParams {
+    pub const ALGORITHM: ParamId = ParamId(0);
+}
+
+/// Engine-level FM params. Operators are separate blocks (`FmOpParams`).
+pub static FM_SPECS: [ParamSpec; 1] = [ParamSpec::choice(0, "ALG", ValFmt::Int(7), 7.0, 0.0)];
+
+impl Block for FmParams {
+    fn specs(&self) -> &'static [ParamSpec] {
+        &FM_SPECS
+    }
+
+    fn get(&self, id: ParamId) -> f32 {
+        match id {
+            Self::ALGORITHM => self.algorithm as f32,
+            _ => 0.0,
+        }
+    }
+
+    fn write(&mut self, id: ParamId, v: f32) {
+        if id == Self::ALGORITHM {
+            self.algorithm = v as u8;
         }
     }
 }
@@ -237,9 +442,64 @@ pub enum EngineType {
     Va = 3,
 }
 
+impl EngineType {
+    /// Every engine. Tests iterate this; see `engines_test.rs` for the
+    /// exhaustive-match guard that makes a new variant a compile error there.
+    pub const ALL: [EngineType; 4] = [EngineType::Pizza, EngineType::Fm, EngineType::Modal, EngineType::Va];
+}
+
+/// Voice output stage: level into the mixer and pan.
+#[derive(Clone, Copy, Debug)]
+pub struct OutParams {
+    pub volume: f32,
+    pub pan: f32,
+}
+
+impl Default for OutParams {
+    fn default() -> Self {
+        Self { volume: 0.8, pan: 0.0 }
+    }
+}
+
+impl OutParams {
+    pub const VOLUME: ParamId = ParamId(0);
+    pub const PAN: ParamId = ParamId(1);
+}
+
+/// Volume is read by `Voice`'s VCA every block (newly modulatable); pan is
+/// not used by `Voice`.
+pub static OUT_SPECS: [ParamSpec; 2] = [
+    ParamSpec::continuous(0, "LEVEL", ValFmt::Uni, 0.0, 1.0, 0.8, 1.0 / 128.0, true),
+    ParamSpec::continuous(1, "PAN", ValFmt::Bi, -1.0, 1.0, 0.0, 2.0 / 128.0, false),
+];
+
+impl Block for OutParams {
+    fn specs(&self) -> &'static [ParamSpec] {
+        &OUT_SPECS
+    }
+
+    fn get(&self, id: ParamId) -> f32 {
+        match id {
+            Self::VOLUME => self.volume,
+            Self::PAN => self.pan,
+            _ => 0.0,
+        }
+    }
+
+    fn write(&mut self, id: ParamId, v: f32) {
+        match id {
+            Self::VOLUME => self.volume = v,
+            Self::PAN => self.pan = v,
+            _ => {}
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ParamSnapshot {
-    pub engine: EngineType,
+    /// Private: set only through `for_engine` (and so `Patch::init`, from
+    /// `ChainType::engine`) — one source of truth for engine choice (spec §6).
+    engine: EngineType,
     pub filter: FilterParams,
     pub drive: DriveParams,
     pub folder: FolderParams,
@@ -251,8 +511,60 @@ pub struct ParamSnapshot {
     pub delay: crate::dsp::delay::DelayParams,
     pub chorus: crate::dsp::chorus::ChorusParams,
     pub lfo: crate::dsp::lfo::LfoParams,
-    pub volume: Param,
-    pub pan: Param,
+    pub out: OutParams,
+}
+
+impl ParamSnapshot {
+    /// Default params for `engine`.
+    pub fn for_engine(engine: EngineType) -> Self {
+        Self { engine, ..Self::default() }
+    }
+
+    pub fn engine(&self) -> EngineType {
+        self.engine
+    }
+
+    /// The one exhaustive dispatch from a block address to its values
+    /// (spec §2). UI and modulation go through this; DSP reads fields.
+    pub fn block(&self, b: BlockRef) -> &dyn Block {
+        match b {
+            BlockRef::Pizza => &self.pizza,
+            BlockRef::Modal => &self.modal,
+            BlockRef::Fm => &self.fm,
+            BlockRef::FmOp(op) => &self.fm.operators[op.index()],
+            BlockRef::Drive => &self.drive,
+            BlockRef::Filter => &self.filter,
+            BlockRef::Folder => &self.folder,
+            BlockRef::AmpEnv => &self.envelopes[0],
+            BlockRef::FilterEnv => &self.envelopes[1],
+            BlockRef::AuxEnv => &self.envelopes[2],
+            BlockRef::Lfo => &self.lfo,
+            BlockRef::Out => &self.out,
+            BlockRef::Chorus => &self.chorus,
+            BlockRef::Delay => &self.delay,
+            BlockRef::Reverb => &self.reverb,
+        }
+    }
+
+    pub fn block_mut(&mut self, b: BlockRef) -> &mut dyn Block {
+        match b {
+            BlockRef::Pizza => &mut self.pizza,
+            BlockRef::Modal => &mut self.modal,
+            BlockRef::Fm => &mut self.fm,
+            BlockRef::FmOp(op) => &mut self.fm.operators[op.index()],
+            BlockRef::Drive => &mut self.drive,
+            BlockRef::Filter => &mut self.filter,
+            BlockRef::Folder => &mut self.folder,
+            BlockRef::AmpEnv => &mut self.envelopes[0],
+            BlockRef::FilterEnv => &mut self.envelopes[1],
+            BlockRef::AuxEnv => &mut self.envelopes[2],
+            BlockRef::Lfo => &mut self.lfo,
+            BlockRef::Out => &mut self.out,
+            BlockRef::Chorus => &mut self.chorus,
+            BlockRef::Delay => &mut self.delay,
+            BlockRef::Reverb => &mut self.reverb,
+        }
+    }
 }
 
 impl Default for ParamSnapshot {
@@ -261,7 +573,7 @@ impl Default for ParamSnapshot {
             engine: EngineType::default(),
             filter: {
                 let mut f = FilterParams::default();
-                f.cutoff = Param::new(20.0, 20000.0, 20000.0); // fully open
+                f.cutoff = 20000.0; // fully open
                 f
             },
             drive: DriveParams::default(),
@@ -280,8 +592,7 @@ impl Default for ParamSnapshot {
                 mix: 0.0,
             },
             lfo: crate::dsp::lfo::LfoParams::default(),
-            volume: Param::new(0.0, 1.0, 0.8),
-            pan: Param::new(-1.0, 1.0, 0.0),
+            out: OutParams::default(),
         }
     }
 }

@@ -1,6 +1,7 @@
 #![allow(clippy::needless_range_loop, clippy::manual_clamp)]
 
 use chimera_hal::BLOCK_SIZE;
+use crate::block::{Block, ParamId, ParamSpec, ValFmt};
 
 // ── Shared delay line infrastructure ────────────────────────────────
 
@@ -395,6 +396,51 @@ impl Default for ReverbParams {
             damping: 0.3,
             size: 0.5,
             mix: 0.3,
+        }
+    }
+}
+
+impl ReverbParams {
+    pub const REVERB_TYPE: ParamId = ParamId(0);
+    pub const TIME: ParamId = ParamId(1);
+    pub const DAMPING: ParamId = ParamId(2);
+    pub const SIZE: ParamId = ParamId(3);
+    pub const MIX: ParamId = ParamId(4);
+}
+
+/// Reverb runs outside `Voice` (desktop only): nothing is modulatable.
+pub static REVERB_SPECS: [ParamSpec; 5] = [
+    ParamSpec::choice(0, "TYPE", ValFmt::Int(2), 2.0, 0.0),
+    ParamSpec::continuous(1, "TIME", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false),
+    ParamSpec::continuous(2, "DAMP", ValFmt::Uni, 0.0, 1.0, 0.3, 1.0 / 128.0, false),
+    ParamSpec::continuous(3, "SIZE", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false),
+    ParamSpec::continuous(4, "MIX", ValFmt::Uni, 0.0, 1.0, 0.3, 1.0 / 128.0, false),
+];
+
+impl Block for ReverbParams {
+    fn specs(&self) -> &'static [ParamSpec] {
+        &REVERB_SPECS
+    }
+
+    fn get(&self, id: ParamId) -> f32 {
+        match id {
+            Self::REVERB_TYPE => self.reverb_type as f32,
+            Self::TIME => self.time,
+            Self::DAMPING => self.damping,
+            Self::SIZE => self.size,
+            Self::MIX => self.mix,
+            _ => 0.0,
+        }
+    }
+
+    fn write(&mut self, id: ParamId, v: f32) {
+        match id {
+            Self::REVERB_TYPE => self.reverb_type = v as u8,
+            Self::TIME => self.time = v,
+            Self::DAMPING => self.damping = v,
+            Self::SIZE => self.size = v,
+            Self::MIX => self.mix = v,
+            _ => {}
         }
     }
 }
