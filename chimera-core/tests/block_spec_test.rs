@@ -1,25 +1,11 @@
 //! Every spec table is well-formed (spec § Testing "Specs").
 
+use chimera_core::addr::BlockRef;
 use chimera_core::block::{ParamKind, ParamSpec, ValFmt};
 
-/// Every block's spec table. Tasks 3–11 add one row each; Task 14 replaces
-/// the list with `BlockRef::ALL`.
-fn all_specs() -> Vec<(&'static str, &'static [ParamSpec])> {
-    vec![
-        ("pizza", &chimera_core::dsp::pizza::PIZZA_SPECS[..]),
-        ("modal", &chimera_core::dsp::modal::MODAL_SPECS[..]),
-        ("drive", &chimera_core::params::DRIVE_SPECS[..]),
-        ("filter", &chimera_core::params::FILTER_SPECS[..]),
-        ("folder", &chimera_core::params::FOLDER_SPECS[..]),
-        ("env", &chimera_core::params::ENV_SPECS[..]),
-        ("lfo", &chimera_core::dsp::lfo::LFO_SPECS[..]),
-        ("fm", &chimera_core::params::FM_SPECS[..]),
-        ("fm_op", &chimera_core::params::FM_OP_SPECS[..]),
-        ("out", &chimera_core::params::OUT_SPECS[..]),
-        ("chorus", &chimera_core::dsp::chorus::CHORUS_SPECS[..]),
-        ("delay", &chimera_core::dsp::delay::DELAY_SPECS[..]),
-        ("reverb", &chimera_core::dsp::reverb::REVERB_SPECS[..]),
-    ]
+/// Every block's spec table, via the one exhaustive `BlockRef` list.
+fn all_specs() -> Vec<(String, &'static [ParamSpec])> {
+    BlockRef::ALL.iter().map(|b| (format!("{b:?}"), b.specs())).collect()
 }
 
 fn check(name: &str, specs: &[ParamSpec]) {
@@ -43,6 +29,6 @@ fn check(name: &str, specs: &[ParamSpec]) {
 #[test]
 fn every_spec_table_is_well_formed() {
     for (name, specs) in all_specs() {
-        check(name, specs);
+        check(&name, specs);
     }
 }

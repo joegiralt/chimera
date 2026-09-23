@@ -2,6 +2,7 @@
 
 pub use chimera_hal::{MidiNote, Velocity};
 
+pub mod addr;
 pub mod block;
 pub mod dsp;
 pub mod mod_path;
