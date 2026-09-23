@@ -1,6 +1,7 @@
 //! Slot bindings (spec §5, § Testing "Bindings").
 
 use chimera_core::addr::{BlockRef, Op, ParamAddr};
+use chimera_core::block::ParamId;
 use chimera_core::params::FmOpParams;
 use chimera_core::preset::ChainType;
 use chimera_core::ui::block_def::{slot_addr, BlockDef, SlotBinding};
@@ -115,4 +116,31 @@ fn slot_addr_resolves_selected_op_at_build_time() {
     assert_eq!(slot_addr(&reg::PIZZA, 5, Op::A), None); // empty
     assert_eq!(slot_addr(&reg::MIXER, 0, Op::A), None); // legacy
     assert_eq!(slot_addr(&reg::PIZZA, 9, Op::A), None); // out of range
+    // FM_RATIO slot 3 is the OP4 column: a fixed binding, so `sel_op` doesn't matter.
+    assert_eq!(
+        slot_addr(&reg::FM_RATIO, 3, Op::A),
+        Some(ParamAddr::new(BlockRef::FmOp(Op::D), FmOpParams::COARSE))
+    );
+}
+
+/// Each FM_ENVn page edits its own operator's envelope; a copy-paste op slip
+/// (e.g. FM_ENV3 accidentally reading FmOp(B)) would silently edit the wrong
+/// operator's sound.
+#[test]
+fn fm_env_pages_bind_to_their_own_operator() {
+    let env_params: [ParamId; 6] = [
+        FmOpParams::ATTACK_RATE,
+        FmOpParams::DECAY1_RATE,
+        FmOpParams::DECAY1_LEVEL,
+        FmOpParams::DECAY2_RATE,
+        FmOpParams::RELEASE_RATE,
+        FmOpParams::RATE_SCALING,
+    ];
+    let pages: [(&BlockDef, Op); 4] =
+        [(&reg::FM_ENV1, Op::A), (&reg::FM_ENV2, Op::B), (&reg::FM_ENV3, Op::C), (&reg::FM_ENV4, Op::D)];
+    for (def, op) in pages {
+        for (i, &id) in env_params.iter().enumerate() {
+            assert_eq!(slot_addr(def, i, Op::A), Some(ParamAddr::new(BlockRef::FmOp(op), id)), "{} slot {i}", def.name);
+        }
+    }
 }

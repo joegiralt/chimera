@@ -131,6 +131,25 @@ fn selected_op_route_is_concrete() {
     assert_eq!(ui.project.tracks[0].patch.params.fm.operators[1].feedback, 1.0);
 }
 
+/// Spec §5: the FM operator selection is part of the page identity, so
+/// turning the selector on the FM_OP page must refresh `ui.page()` too
+/// (pins the redraw key update at ui/mod.rs ~343).
+#[test]
+fn fm_operator_selector_updates_the_page_key() {
+    use chimera_core::addr::Op;
+    use chimera_core::preset::{ChainType, Track};
+    use chimera_core::ui::block_registry as reg;
+    use chimera_core::ui::page::PageKey;
+
+    let mut ui = UiState::new();
+    ui.project.tracks[0] = Track::new(ChainType::Fm);
+    ui.nav.chain_type = ChainType::Fm;
+    press(&mut ui, ButtonId::Edit); // sub-page 1: FM_OP
+    assert_eq!(ui.page(), PageKey::Part { def: reg::FM_OP.id, op: Op::A });
+    ui.handle_input(&MockControls::new().encoder(EncoderId::A, 1)); // selector: A -> B
+    assert_eq!(ui.page(), PageKey::Part { def: reg::FM_OP.id, op: Op::B });
+}
+
 /// Spec §4: after loading the FM init patch the matrix rows are ENV and LFO
 /// (they used to be "Op1 Env".."Op4 Env", of which only two produced values).
 #[test]

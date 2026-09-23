@@ -49,6 +49,8 @@ fn fx_encoders_step_like_before() {
     assert_eq!(p.reverb.reverb_type, 2);
     PageId::MixReverb.apply_encoder(4, -1, &mut p);
     assert_eq!(p.reverb.mix, 0.0);
+    PageId::MixReverb.apply_encoder(4, 1, &mut p); // Efx MIX slot, +1 off the floor
+    assert_eq!(p.reverb.mix, 1.0 / 128.0);
     PageId::Delay.snap_encoder(5, 1, &mut p);
     assert_eq!(p.delay.mix, 100.0 / 127.0);
 }
