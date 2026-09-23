@@ -709,7 +709,7 @@ impl Renderer {
         let value_style = MonoTextStyle::new(&FONT_6X10, theme::PARAM_VALUE);
 
         for (i, slot) in def.params.iter().enumerate() {
-            let label = slot.label;
+            let label = slot.label();
             if label == "--" {
                 continue;
             }
@@ -727,7 +727,7 @@ impl Renderer {
 
             // Numeric value
             let mut buf = FmtBuf::new();
-            fmt::fmt_val(&mut buf, val, slot.format);
+            fmt::fmt_val(&mut buf, val, slot.format());
             let label_end = x + label.len() as i32 * 6 + 4;
             let _ =
                 Text::new(buf.as_str(), Point::new(label_end, y + 10), value_style).draw(display);
@@ -808,10 +808,10 @@ impl Renderer {
                 display,
                 col,
                 row,
-                slot.label,
+                slot.label(),
                 self.anim[i].current(),
                 slot.icon,
-                slot.format,
+                slot.format(),
                 i == self.focused,
                 mod_info,
             );

@@ -137,32 +137,34 @@ fn matrix_state_rebuild_sources() {
     use chimera_core::ui::page::{CellIcon, PageLayout, ValFmt};
 
     static ENV_DEF: BlockDef = BlockDef {
+        id: 900,
         name: "Env",
         short: "ENV",
         layout: PageLayout::BigViz,
         viz: chimera_core::ui::block_def::VizType::Adsr,
         params: [
-            chimera_core::ui::block_def::ParamSlot { label: "Atk", format: ValFmt::Uni, icon: CellIcon::None },
-            chimera_core::ui::block_def::ParamSlot { label: "Dec", format: ValFmt::Uni, icon: CellIcon::None },
-            chimera_core::ui::block_def::ParamSlot { label: "Sus", format: ValFmt::Uni, icon: CellIcon::None },
-            chimera_core::ui::block_def::ParamSlot { label: "Rel", format: ValFmt::Uni, icon: CellIcon::None },
-            chimera_core::ui::block_def::ParamSlot { label: "--", format: ValFmt::Uni, icon: CellIcon::None },
-            chimera_core::ui::block_def::ParamSlot { label: "--", format: ValFmt::Uni, icon: CellIcon::None },
+            chimera_core::ui::block_def::ParamSlot::legacy("Atk", ValFmt::Uni, CellIcon::None),
+            chimera_core::ui::block_def::ParamSlot::legacy("Dec", ValFmt::Uni, CellIcon::None),
+            chimera_core::ui::block_def::ParamSlot::legacy("Sus", ValFmt::Uni, CellIcon::None),
+            chimera_core::ui::block_def::ParamSlot::legacy("Rel", ValFmt::Uni, CellIcon::None),
+            chimera_core::ui::block_def::ParamSlot::legacy("--", ValFmt::Uni, CellIcon::None),
+            chimera_core::ui::block_def::ParamSlot::legacy("--", ValFmt::Uni, CellIcon::None),
         ],
     };
 
     static LFO_DEF: BlockDef = BlockDef {
+        id: 901,
         name: "LFO",
         short: "LFO",
         layout: PageLayout::BigViz,
         viz: chimera_core::ui::block_def::VizType::None,
         params: [
-            chimera_core::ui::block_def::ParamSlot { label: "Rate", format: ValFmt::Uni, icon: CellIcon::None },
-            chimera_core::ui::block_def::ParamSlot { label: "Shape", format: ValFmt::Int(4), icon: CellIcon::None },
-            chimera_core::ui::block_def::ParamSlot { label: "--", format: ValFmt::Uni, icon: CellIcon::None },
-            chimera_core::ui::block_def::ParamSlot { label: "--", format: ValFmt::Uni, icon: CellIcon::None },
-            chimera_core::ui::block_def::ParamSlot { label: "--", format: ValFmt::Uni, icon: CellIcon::None },
-            chimera_core::ui::block_def::ParamSlot { label: "--", format: ValFmt::Uni, icon: CellIcon::None },
+            chimera_core::ui::block_def::ParamSlot::legacy("Rate", ValFmt::Uni, CellIcon::None),
+            chimera_core::ui::block_def::ParamSlot::legacy("Shape", ValFmt::Int(4), CellIcon::None),
+            chimera_core::ui::block_def::ParamSlot::legacy("--", ValFmt::Uni, CellIcon::None),
+            chimera_core::ui::block_def::ParamSlot::legacy("--", ValFmt::Uni, CellIcon::None),
+            chimera_core::ui::block_def::ParamSlot::legacy("--", ValFmt::Uni, CellIcon::None),
+            chimera_core::ui::block_def::ParamSlot::legacy("--", ValFmt::Uni, CellIcon::None),
         ],
     };
 
