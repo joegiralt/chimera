@@ -190,3 +190,8 @@ fn snapshot_filter_starts_open() {
 fn folder_conforms() {
     conforms("folder", chimera_core::params::FolderParams::default());
 }
+
+#[test]
+fn env_conforms() {
+    conforms("env", chimera_core::params::EnvParams::default());
+}

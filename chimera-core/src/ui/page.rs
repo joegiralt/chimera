@@ -1,7 +1,7 @@
 use crate::block::{Block, ParamId};
 use crate::dsp::modal::ModalParams;
 use crate::dsp::pizza::PizzaParams;
-use crate::params::{DriveParams, FilterParams, FolderParams, ParamSnapshot};
+use crate::params::{DriveParams, EnvParams, FilterParams, FolderParams, ParamSnapshot};
 use crate::preset::ChainType;
 use crate::ui::chain::ChainNav;
 
@@ -181,9 +181,9 @@ impl PageId {
         match self {
             PageId::Pizza => read_block(&params.pizza, PIZZA_PAGE),
             PageId::Filter => read_block(&params.filter, FILTER_PAGE),
-            PageId::EnvAmp | PageId::Vca => read_env_values(&params.envelopes[0]),
-            PageId::EnvFilter => read_env_values(&params.envelopes[1]),
-            PageId::EnvAux => read_env_values(&params.envelopes[2]),
+            PageId::EnvAmp | PageId::Vca => read_block(&params.envelopes[0], ENV_PAGE),
+            PageId::EnvFilter => read_block(&params.envelopes[1], ENV_PAGE),
+            PageId::EnvAux => read_block(&params.envelopes[2], ENV_PAGE),
             PageId::Mixer => [
                 params.volume.normalized(),
                 params.pan.normalized(),
@@ -212,12 +212,12 @@ impl PageId {
                 params.filter.normalized(FilterParams::FM_AMOUNT),
             ],
             PageId::DemoMotion => [
-                params.envelopes[0].attack.normalized(),
-                params.envelopes[0].decay.normalized(),
-                params.envelopes[0].sustain.normalized(),
-                params.envelopes[0].release.normalized(),
-                params.envelopes[1].attack.normalized(),
-                params.envelopes[1].decay.normalized(),
+                params.envelopes[0].normalized(EnvParams::ATTACK),
+                params.envelopes[0].normalized(EnvParams::DECAY),
+                params.envelopes[0].normalized(EnvParams::SUSTAIN),
+                params.envelopes[0].normalized(EnvParams::RELEASE),
+                params.envelopes[1].normalized(EnvParams::ATTACK),
+                params.envelopes[1].normalized(EnvParams::DECAY),
             ],
             PageId::Lfo => [
                 params.lfo.rate / 20.0,           // normalized 0-1 (0-20 Hz)
@@ -406,6 +406,15 @@ impl PageId {
                 5 => bind(&mut p.filter, FilterParams::FM_AMOUNT),
                 _ => None,
             },
+            PageId::EnvAmp | PageId::Vca => bind(&mut p.envelopes[0], *ENV_PAGE.get(idx)?),
+            PageId::EnvFilter => bind(&mut p.envelopes[1], *ENV_PAGE.get(idx)?),
+            PageId::EnvAux => bind(&mut p.envelopes[2], *ENV_PAGE.get(idx)?),
+            PageId::DemoMotion => match idx {
+                0..=3 => bind(&mut p.envelopes[0], ENV_PAGE[idx]),
+                4 => bind(&mut p.envelopes[1], EnvParams::ATTACK),
+                5 => bind(&mut p.envelopes[1], EnvParams::DECAY),
+                _ => None,
+            },
             _ => None,
         }
     }
@@ -417,9 +426,6 @@ impl PageId {
         params: &'a mut ParamSnapshot,
     ) -> Option<&'a mut crate::params::Param> {
         match self {
-            PageId::EnvAmp | PageId::Vca => resolve_env_param(&mut params.envelopes[0], idx),
-            PageId::EnvFilter => resolve_env_param(&mut params.envelopes[1], idx),
-            PageId::EnvAux => resolve_env_param(&mut params.envelopes[2], idx),
             PageId::Mixer => match idx {
                 0 => Some(&mut params.volume),
                 1 => Some(&mut params.pan),
@@ -432,15 +438,6 @@ impl PageId {
             PageId::DemoShapes => match idx {
                 0 => Some(&mut params.volume),
                 2 => Some(&mut params.pan),
-                _ => None,
-            },
-            PageId::DemoMotion => match idx {
-                0 => Some(&mut params.envelopes[0].attack),
-                1 => Some(&mut params.envelopes[0].decay),
-                2 => Some(&mut params.envelopes[0].sustain),
-                3 => Some(&mut params.envelopes[0].release),
-                4 => Some(&mut params.envelopes[1].attack),
-                5 => Some(&mut params.envelopes[1].decay),
                 _ => None,
             },
             PageId::Lfo => None, // handled by apply_encoder special case
@@ -469,6 +466,14 @@ const FILTER_PAGE: [ParamId; 6] = [
     FilterParams::KEY_TRACK,
 ];
 const FOLDER_PAGE: [ParamId; 3] = [FolderParams::FOLD, FolderParams::SYMMETRY, FolderParams::MIX];
+const ENV_PAGE: [ParamId; 6] = [
+    EnvParams::ATTACK,
+    EnvParams::DECAY,
+    EnvParams::SUSTAIN,
+    EnvParams::RELEASE,
+    EnvParams::LEVEL,
+    EnvParams::VEL_SENS,
+];
 const MODAL1_PAGE: [ParamId; 6] = [
     ModalParams::MODE,
     ModalParams::EXCITE,
@@ -550,17 +555,6 @@ fn apply_reverb_encoder(
     }
 }
 
-fn read_env_values(e: &crate::params::EnvParams) -> [f32; 6] {
-    [
-        e.attack.normalized(),
-        e.decay.normalized(),
-        e.sustain.normalized(),
-        e.release.normalized(),
-        e.level.normalized(),
-        e.vel_sens.normalized(),
-    ]
-}
-
 fn nudge_float(v: &mut f32, delta: i8, step: f32) {
     *v = (*v + delta as f32 * step).clamp(0.0, 1.0);
 }
@@ -586,21 +580,6 @@ fn apply_lfo_encoder(idx: usize, delta: i8, lfo: &mut crate::dsp::lfo::LfoParams
             lfo.offset = (lfo.offset + delta as f32 * step * 2.0).clamp(-1.0, 1.0);
         }
         _ => {}
-    }
-}
-
-fn resolve_env_param(
-    env: &mut crate::params::EnvParams,
-    idx: usize,
-) -> Option<&mut crate::params::Param> {
-    match idx {
-        0 => Some(&mut env.attack),
-        1 => Some(&mut env.decay),
-        2 => Some(&mut env.sustain),
-        3 => Some(&mut env.release),
-        4 => Some(&mut env.level),
-        5 => Some(&mut env.vel_sens),
-        _ => None,
     }
 }
 

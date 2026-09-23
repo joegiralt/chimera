@@ -57,7 +57,7 @@ impl Envelope {
         match self.stage {
             Stage::Idle => 0.0,
             Stage::Attack => {
-                let rate = 1.0 / (params.attack.value * sr);
+                let rate = 1.0 / (params.attack * sr);
                 self.level += rate;
                 if self.level >= 1.0 {
                     self.level = 1.0;
@@ -66,8 +66,8 @@ impl Envelope {
                 self.level * self.velocity
             }
             Stage::Decay => {
-                let target = params.sustain.value;
-                let rate = 1.0 / (params.decay.value * sr);
+                let target = params.sustain;
+                let rate = 1.0 / (params.decay * sr);
                 self.level -= rate;
                 if self.level <= target {
                     self.level = target;
@@ -77,7 +77,7 @@ impl Envelope {
             }
             Stage::Sustain => self.level * self.velocity,
             Stage::Release => {
-                let rate = 1.0 / (params.release.value * sr);
+                let rate = 1.0 / (params.release * sr);
                 self.level -= rate;
                 if self.level <= 0.0 {
                     self.level = 0.0;

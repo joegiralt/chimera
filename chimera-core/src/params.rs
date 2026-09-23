@@ -162,23 +162,75 @@ impl Block for FilterParams {
 /// Parameters for one envelope
 #[derive(Clone, Copy, Debug)]
 pub struct EnvParams {
-    pub attack: Param,
-    pub decay: Param,
-    pub sustain: Param,
-    pub release: Param,
-    pub level: Param,
-    pub vel_sens: Param,
+    pub attack: f32,
+    pub decay: f32,
+    pub sustain: f32,
+    pub release: f32,
+    pub level: f32,
+    pub vel_sens: f32,
 }
 
 impl Default for EnvParams {
     fn default() -> Self {
         Self {
-            attack: Param::new(0.001, 10.0, 0.01),
-            decay: Param::new(0.001, 10.0, 0.3),
-            sustain: Param::new(0.0, 1.0, 0.7),
-            release: Param::new(0.001, 10.0, 0.3),
-            level: Param::new(0.0, 1.0, 1.0),
-            vel_sens: Param::new(0.0, 1.0, 0.5),
+            attack: 0.01,
+            decay: 0.3,
+            sustain: 0.7,
+            release: 0.3,
+            level: 1.0,
+            vel_sens: 0.5,
+        }
+    }
+}
+
+impl EnvParams {
+    pub const ATTACK: ParamId = ParamId(0);
+    pub const DECAY: ParamId = ParamId(1);
+    pub const SUSTAIN: ParamId = ParamId(2);
+    pub const RELEASE: ParamId = ParamId(3);
+    pub const LEVEL: ParamId = ParamId(4);
+    pub const VEL_SENS: ParamId = ParamId(5);
+}
+
+/// Shared by all three envelopes. A/D/S/R are read by `Voice` every block
+/// for the amp envelope (`envelopes[0]`); level and vel_sens are never read.
+/// `envelopes[1..2]` are never read at all — `ParamAddr::modulatable`
+/// excludes them (plan D7).
+pub static ENV_SPECS: [ParamSpec; 6] = [
+    ParamSpec::continuous(0, "ATK", ValFmt::Uni, 0.001, 10.0, 0.01, (10.0 - 0.001) / 128.0, true),
+    ParamSpec::continuous(1, "DEC", ValFmt::Uni, 0.001, 10.0, 0.3, (10.0 - 0.001) / 128.0, true),
+    ParamSpec::continuous(2, "SUS", ValFmt::Uni, 0.0, 1.0, 0.7, 1.0 / 128.0, true),
+    ParamSpec::continuous(3, "REL", ValFmt::Uni, 0.001, 10.0, 0.3, (10.0 - 0.001) / 128.0, true),
+    ParamSpec::continuous(4, "LEVEL", ValFmt::Uni, 0.0, 1.0, 1.0, 1.0 / 128.0, false),
+    ParamSpec::continuous(5, "VEL", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false),
+];
+
+impl Block for EnvParams {
+    fn specs(&self) -> &'static [ParamSpec] {
+        &ENV_SPECS
+    }
+
+    fn get(&self, id: ParamId) -> f32 {
+        match id {
+            Self::ATTACK => self.attack,
+            Self::DECAY => self.decay,
+            Self::SUSTAIN => self.sustain,
+            Self::RELEASE => self.release,
+            Self::LEVEL => self.level,
+            Self::VEL_SENS => self.vel_sens,
+            _ => 0.0,
+        }
+    }
+
+    fn write(&mut self, id: ParamId, v: f32) {
+        match id {
+            Self::ATTACK => self.attack = v,
+            Self::DECAY => self.decay = v,
+            Self::SUSTAIN => self.sustain = v,
+            Self::RELEASE => self.release = v,
+            Self::LEVEL => self.level = v,
+            Self::VEL_SENS => self.vel_sens = v,
+            _ => {}
         }
     }
 }

@@ -14,10 +14,11 @@ pub mod theme;
 
 use chimera_hal::{ButtonId, ButtonState, Controls, EncoderId};
 
+use crate::block::Block;
 use crate::dsp::lfo::Lfo;
 use crate::mod_path::ParamPath;
 use crate::modulation::{ModState, MAX_MOD_SOURCES};
-use crate::params::ParamSnapshot;
+use crate::params::{EnvParams, ParamSnapshot};
 use crate::preset::{ChainType, Project, POOL_SIZE};
 use chain::{ChainId, ChainNav};
 use mod_grid::MatrixState;
@@ -407,7 +408,7 @@ impl UiState {
             let mut mod_sources = [0.0f32; MAX_MOD_SOURCES];
             // Source 0 = Envelope (use sustain level as approximation for display)
             if patch.mod_state.num_sources > 0 {
-                mod_sources[0] = patch.params.envelopes[0].sustain.normalized();
+                mod_sources[0] = patch.params.envelopes[0].normalized(EnvParams::SUSTAIN);
             }
             // Source 1 = LFO
             if patch.mod_state.num_sources > 1 {

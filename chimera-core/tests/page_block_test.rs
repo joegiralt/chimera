@@ -130,3 +130,18 @@ fn folder_encoder_steps_like_before() {
     assert_eq!(p.folder.symmetry, 0.5 - 1.0 / 128.0);
     assert_eq!(PageId::Folder.read_values(&p)[..3], [4.0 / 128.0, 0.5 - 1.0 / 128.0, 0.5]);
 }
+
+// ── Envelopes (Task 7) ───────────────────────────────────────────────
+
+#[test]
+fn env_encoder_steps_like_before() {
+    let mut p = ParamSnapshot::default();
+    PageId::Vca.apply_encoder(0, 1, &mut p);
+    assert_eq!(p.envelopes[0].attack, 0.01 + (10.0 - 0.001) / 128.0);
+    PageId::Vca.apply_encoder(2, -1, &mut p);
+    assert_eq!(p.envelopes[0].sustain, 0.7 - 1.0 / 128.0);
+    PageId::DemoMotion.apply_encoder(4, 1, &mut p);
+    assert_eq!(p.envelopes[1].attack, 0.01 + (10.0 - 0.001) / 128.0);
+    PageId::EnvAux.apply_encoder(3, -128, &mut p);
+    assert_eq!(p.envelopes[2].release, 0.001);
+}
