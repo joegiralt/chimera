@@ -188,7 +188,7 @@ impl Voice {
         self.folder.process(output, &mod_folder);
 
         // 5. VCA — amp envelope shapes the sound
-        let volume = params.volume.value;
+        let volume = params.out.volume;
         match self.active_engine {
             EngineType::Modal => {
                 // Modal: modes have natural decay. Just apply volume.

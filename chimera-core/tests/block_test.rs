@@ -217,3 +217,8 @@ fn fm_settings_truncate_fractional_level() {
     let s = FmOpSettings::from_params(&op);
     assert_eq!((s.level, s.feedback), (50, 6));
 }
+
+#[test]
+fn out_conforms() {
+    conforms("out", chimera_core::params::OutParams::default());
+}

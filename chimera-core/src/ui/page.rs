@@ -2,7 +2,7 @@ use crate::block::{Block, ParamId};
 use crate::dsp::lfo::LfoParams;
 use crate::dsp::modal::ModalParams;
 use crate::dsp::pizza::PizzaParams;
-use crate::params::{DriveParams, EnvParams, FilterParams, FmOpParams, FmParams, FolderParams, ParamSnapshot};
+use crate::params::{DriveParams, EnvParams, FilterParams, FmOpParams, FmParams, FolderParams, OutParams, ParamSnapshot};
 use crate::preset::ChainType;
 use crate::ui::chain::ChainNav;
 
@@ -186,8 +186,8 @@ impl PageId {
             PageId::EnvFilter => read_block(&params.envelopes[1], ENV_PAGE),
             PageId::EnvAux => read_block(&params.envelopes[2], ENV_PAGE),
             PageId::Mixer => [
-                params.volume.normalized(),
-                params.pan.normalized(),
+                params.out.normalized(OutParams::VOLUME),
+                params.out.normalized(OutParams::PAN),
                 0.5,
                 0.0,
                 0.5,
@@ -202,12 +202,12 @@ impl PageId {
                 params.folder.normalized(FolderParams::FOLD),
                 params.folder.normalized(FolderParams::SYMMETRY),
                 params.filter.normalized(FilterParams::ENV_AMOUNT),
-                params.pan.normalized(),
+                params.out.normalized(OutParams::PAN),
             ],
             PageId::DemoShapes => [
-                params.volume.normalized(),
+                params.out.normalized(OutParams::VOLUME),
                 params.filter.normalized(FilterParams::CUTOFF),
-                params.pan.normalized(),
+                params.out.normalized(OutParams::PAN),
                 params.filter.normalized(FilterParams::DRIVE),
                 params.filter.normalized(FilterParams::RESONANCE),
                 params.filter.normalized(FilterParams::FM_AMOUNT),
@@ -235,7 +235,7 @@ impl PageId {
             PageId::FmAlg => [
                 params.fm.normalized(FmParams::ALGORITHM),
                 0.0,
-                params.volume.normalized(),
+                params.out.normalized(OutParams::VOLUME),
                 0.0,
                 0.0,
                 0.0,
@@ -283,11 +283,7 @@ impl PageId {
                 params.reverb.mix,
                 0.0,
             ],
-            PageId::Master => [
-                params.volume.normalized(),
-                params.pan.normalized(),
-                0.0, 0.0, 0.0, 0.0,
-            ],
+            PageId::Master => read_block(&params.out, OUT_PAGE),
         }
     }
 
@@ -356,12 +352,15 @@ impl PageId {
                 2 => bind(&mut p.folder, FolderParams::FOLD),
                 3 => bind(&mut p.folder, FolderParams::SYMMETRY),
                 4 => bind(&mut p.filter, FilterParams::ENV_AMOUNT),
+                5 => bind(&mut p.out, OutParams::PAN),
                 _ => None,
             },
             PageId::Filter => bind(&mut p.filter, *FILTER_PAGE.get(idx)?),
             PageId::Folder => bind(&mut p.folder, *FOLDER_PAGE.get(idx)?),
             PageId::DemoShapes => match idx {
+                0 => bind(&mut p.out, OutParams::VOLUME),
                 1 => bind(&mut p.filter, FilterParams::CUTOFF),
+                2 => bind(&mut p.out, OutParams::PAN),
                 3 => bind(&mut p.filter, FilterParams::DRIVE),
                 4 => bind(&mut p.filter, FilterParams::RESONANCE),
                 5 => bind(&mut p.filter, FilterParams::FM_AMOUNT),
@@ -379,6 +378,7 @@ impl PageId {
             PageId::Lfo => bind(&mut p.lfo, *LFO_PAGE.get(idx)?),
             PageId::FmAlg => match idx {
                 0 => bind(&mut p.fm, FmParams::ALGORITHM),
+                2 => bind(&mut p.out, OutParams::VOLUME),
                 _ => None,
             },
             // Slot 0 selects the operator (handled in `apply_encoder`).
@@ -397,6 +397,7 @@ impl PageId {
                 1..=3 => bind(&mut p.fm.operators[idx - 1], FmOpParams::FEEDBACK),
                 _ => None,
             },
+            PageId::Mixer | PageId::Master => bind(&mut p.out, *OUT_PAGE.get(idx)?),
             _ => None,
         }
     }
@@ -408,24 +409,6 @@ impl PageId {
         params: &'a mut ParamSnapshot,
     ) -> Option<&'a mut crate::params::Param> {
         match self {
-            PageId::Mixer => match idx {
-                0 => Some(&mut params.volume),
-                1 => Some(&mut params.pan),
-                _ => None,
-            },
-            PageId::DemoWaves => match idx {
-                5 => Some(&mut params.pan),
-                _ => None,
-            },
-            PageId::DemoShapes => match idx {
-                0 => Some(&mut params.volume),
-                2 => Some(&mut params.pan),
-                _ => None,
-            },
-            PageId::FmAlg => match idx {
-                2 => Some(&mut params.volume),
-                _ => None,
-            },
             PageId::DemoMatrix => None,
             _ => None,
         }
@@ -476,6 +459,7 @@ const FM_ENV_PAGE: [ParamId; 6] = [
     FmOpParams::RELEASE_RATE,
     FmOpParams::RATE_SCALING,
 ];
+const OUT_PAGE: [ParamId; 2] = [OutParams::VOLUME, OutParams::PAN];
 const MODAL1_PAGE: [ParamId; 6] = [
     ModalParams::MODE,
     ModalParams::EXCITE,
