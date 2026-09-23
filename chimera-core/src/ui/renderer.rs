@@ -9,7 +9,7 @@ use embedded_graphics::text::Text;
 
 use crate::params::ParamSnapshot;
 use crate::ui::animation::AnimatedValue;
-use crate::ui::block_def::{BlockDef, VizType};
+use crate::ui::block_def::{slot_addr, BlockDef, VizType};
 use crate::ui::cell;
 use crate::ui::chain::ChainNav;
 use crate::ui::mod_grid::MatrixState;
@@ -66,24 +66,9 @@ impl Renderer {
         }
     }
 
-    /// Build the correct ParamPath for a cell at (block_idx, encoder_idx),
-    /// taking the current page context into account for FM operator pages.
-    fn param_path_for_cell(&self, block_idx: usize, encoder_idx: usize) -> crate::mod_path::ParamPath {
-        use crate::mod_path::ParamPath;
-        match self.current_page {
-            PageId::FmOp => ParamPath::FmOp {
-                op: crate::ui::page::selected_op().index() as u8,
-                param: encoder_idx as u8,
-            },
-            PageId::FmEnv1 => ParamPath::FmEnv { op: 0, param: encoder_idx as u8 },
-            PageId::FmEnv2 => ParamPath::FmEnv { op: 1, param: encoder_idx as u8 },
-            PageId::FmEnv3 => ParamPath::FmEnv { op: 2, param: encoder_idx as u8 },
-            PageId::FmEnv4 => ParamPath::FmEnv { op: 3, param: encoder_idx as u8 },
-            _ => ParamPath::Block {
-                block: block_idx as u8,
-                param: encoder_idx as u8,
-            },
-        }
+    /// Mod-bar amount for slot `i` of `def`, if that param is a destination.
+    fn cell_mod_info(def: &BlockDef, i: usize, matrix_state: &MatrixState) -> Option<f32> {
+        slot_addr(def, i, crate::ui::page::selected_op()).and_then(|a| matrix_state.mod_info_for(a))
     }
 
     // ── Modal / Physical Modeling ───────────────────────────────────
@@ -699,7 +684,6 @@ impl Renderer {
         &self,
         display: &mut D,
         def: &BlockDef,
-        block_idx: usize,
         matrix_state: &crate::ui::mod_grid::MatrixState,
     )
     where
@@ -750,8 +734,7 @@ impl Renderer {
             }
 
             // Mod bar — bipolar, below value bar. Shows when param is a mod destination.
-            let mod_path = self.param_path_for_cell(block_idx, i);
-            let mod_info = matrix_state.mod_info_for_path(mod_path);
+            let mod_info = Self::cell_mod_info(def, i, matrix_state);
             if let Some(mod_amount) = mod_info {
                 let mod_bar_y = bar_y + theme::BAR_HEIGHT + 2;
                 let mid_x = x + theme::BAR_WIDTH / 2;
@@ -793,7 +776,6 @@ impl Renderer {
         &self,
         display: &mut D,
         def: &BlockDef,
-        block_idx: usize,
         matrix_state: &crate::ui::mod_grid::MatrixState,
     )
     where
@@ -802,8 +784,7 @@ impl Renderer {
         for (i, slot) in def.params.iter().enumerate() {
             let col = (i % 3) as i32;
             let row = (i / 3) as i32;
-            let mod_path = self.param_path_for_cell(block_idx, i);
-            let mod_info = matrix_state.mod_info_for_path(mod_path);
+            let mod_info = Self::cell_mod_info(def, i, matrix_state);
             cell::draw_cell_with_mod(
                 display,
                 col,
@@ -860,10 +841,10 @@ impl Renderer {
         match def.layout {
             PageLayout::BigViz => {
                 self.draw_viz_from_type(display, def.viz);
-                self.draw_params_from_def(display, def, nav.node, matrix_state);
+                self.draw_params_from_def(display, def, matrix_state);
             }
             PageLayout::CellGrid => {
-                self.draw_cell_grid_from_def(display, def, nav.node, matrix_state);
+                self.draw_cell_grid_from_def(display, def, matrix_state);
             }
             PageLayout::Matrix => {
                 crate::ui::mod_grid::draw_grid(display, matrix_state);
@@ -908,7 +889,7 @@ impl Renderer {
                 self.draw_viz_from_type(display, def.viz);
             }
             RegionKind::Params => {
-                self.draw_params_from_def(display, def, nav.node, matrix_state);
+                self.draw_params_from_def(display, def, matrix_state);
                 let _ = Line::new(
                     Point::new(0, theme::ENCODER_ZONE_BOTTOM),
                     Point::new(theme::SCREEN_W - 1, theme::ENCODER_ZONE_BOTTOM),
@@ -916,7 +897,7 @@ impl Renderer {
                 .draw_styled(&PrimitiveStyle::with_stroke(theme::SEPARATOR, 1), display);
             }
             RegionKind::Cells => {
-                self.draw_cell_grid_from_def(display, def, nav.node, matrix_state);
+                self.draw_cell_grid_from_def(display, def, matrix_state);
                 let _ = Line::new(
                     Point::new(0, theme::ENCODER_ZONE_BOTTOM),
                     Point::new(theme::SCREEN_W - 1, theme::ENCODER_ZONE_BOTTOM),

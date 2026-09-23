@@ -16,10 +16,12 @@ use chimera_hal::{ButtonId, ButtonState, Controls, EncoderId};
 
 use crate::block::Block;
 use crate::dsp::lfo::Lfo;
-use crate::mod_path::{legacy_to_addr, ParamPath};
+use crate::addr::{BlockRef, ParamAddr};
+use crate::mod_path::LABEL_LEN;
 use crate::modulation::{ModState, MAX_MOD_SOURCES};
 use crate::params::{EnvParams, ParamSnapshot};
-use crate::preset::{ChainType, Project, POOL_SIZE};
+use crate::preset::{Project, POOL_SIZE};
+use block_def::slot_addr;
 use chain::{ChainId, ChainNav};
 use mod_grid::MatrixState;
 use page::{PageId, PageLayout};
@@ -116,66 +118,36 @@ impl UiState {
     /// Rebuild a track's audio-side `ModState` from the matrix.
     fn sync_mod_state(&mut self, track: usize) {
         let patch = &mut self.project.tracks[track].patch;
-        patch.mod_state.sync_from_matrix(&self.matrix_state, patch.chain_type);
+        patch.mod_state.sync_from_matrix(&self.matrix_state);
     }
 
-    /// Build the ParamPath for the currently focused encoder on the active page.
-    fn current_param_path(&self) -> ParamPath {
-        match self.page {
-            PageId::FmOp => ParamPath::FmOp {
-                op: page::selected_op().index() as u8,
-                param: self.last_encoder as u8,
-            },
-            PageId::FmEnv1 => ParamPath::FmEnv { op: 0, param: self.last_encoder as u8 },
-            PageId::FmEnv2 => ParamPath::FmEnv { op: 1, param: self.last_encoder as u8 },
-            PageId::FmEnv3 => ParamPath::FmEnv { op: 2, param: self.last_encoder as u8 },
-            PageId::FmEnv4 => ParamPath::FmEnv { op: 3, param: self.last_encoder as u8 },
-            _ => ParamPath::Block {
-                block: self.nav.node as u8,
-                param: self.last_encoder as u8,
-            },
-        }
+    /// The address the focused encoder edits, if its slot is bound. Mixer,
+    /// System and Demo slots are `Legacy`, so priming there does nothing.
+    fn current_param_addr(&self) -> Option<ParamAddr> {
+        slot_addr(self.nav.active_block_def(), self.last_encoder, page::selected_op())
     }
 
-    /// Build a short 8-byte label from the block name + param label for the
-    /// currently focused encoder. Used when priming a mod destination.
-    fn current_param_label(&self) -> [u8; 8] {
+    /// 8-byte matrix column label for a primed destination: `O<n> ` + spec
+    /// label for FM operator params, else the page's short name (≤ 3 chars)
+    /// + the slot label.
+    fn mod_label(&self, addr: ParamAddr) -> [u8; LABEL_LEN] {
         let def = self.nav.active_block_def();
-        let param_label = def.params[self.last_encoder].label();
-        let mut label = [0u8; 8];
-
-        match self.page {
-            PageId::FmOp => {
-                let op = page::selected_op().index() as u8;
-                let prefix = [b'O', b'0' + op + 1, b' '];
-                let plen = prefix.len().min(3);
-                label[..plen].copy_from_slice(&prefix[..plen]);
-                let rest = param_label.as_bytes();
-                let rlen = rest.len().min(8 - plen);
-                label[plen..plen + rlen].copy_from_slice(&rest[..rlen]);
-            }
-            PageId::FmEnv1 | PageId::FmEnv2 | PageId::FmEnv3 | PageId::FmEnv4 => {
-                let op = match self.page {
-                    PageId::FmEnv1 => 0u8,
-                    PageId::FmEnv2 => 1,
-                    PageId::FmEnv3 => 2,
-                    _ => 3,
-                };
-                let prefix = [b'E', b'0' + op + 1, b' '];
-                label[..3].copy_from_slice(&prefix);
-                let rest = param_label.as_bytes();
-                let rlen = rest.len().min(5);
-                label[3..3 + rlen].copy_from_slice(&rest[..rlen]);
+        let op_prefix;
+        let (prefix, name): (&[u8], &str) = match addr.block {
+            BlockRef::FmOp(op) => {
+                op_prefix = [b'O', b'1' + op.index() as u8, b' '];
+                (&op_prefix, addr.spec().map_or("", |s| s.label))
             }
             _ => {
-                let bs = def.short.as_bytes();
-                let blen = bs.len().min(3);
-                label[..blen].copy_from_slice(&bs[..blen]);
-                let rest = param_label.as_bytes();
-                let rlen = rest.len().min(8 - blen);
-                label[blen..blen + rlen].copy_from_slice(&rest[..rlen]);
+                let short = def.short.as_bytes();
+                (&short[..short.len().min(3)], def.params[self.last_encoder].label())
             }
-        }
+        };
+        let mut label = [0u8; LABEL_LEN];
+        label[..prefix.len()].copy_from_slice(prefix);
+        let rest = name.as_bytes();
+        let rlen = rest.len().min(LABEL_LEN - prefix.len());
+        label[prefix.len()..prefix.len() + rlen].copy_from_slice(&rest[..rlen]);
         label
     }
 
@@ -363,29 +335,24 @@ impl UiState {
             if shift {
                 let at = self.active_track;
                 if controls.button_state(ButtonId::Plus) == ButtonState::Pressed {
-                    let path = self.current_param_path();
-                    let label = self.current_param_label();
-                    // Refused when the param is not modulatable (spec §4).
-                    // Bridge guard (deleted in Task 19): a `Block` path has no
-                    // sub-page, so prime only when it means the address the
-                    // focused slot edits (on FmOp both use the selected op).
-                    let chain = self.project.tracks[at].patch.chain_type;
-                    let focused = self.page.binding(self.last_encoder);
-                    if focused.is_some() && legacy_to_addr(chain, path) == focused {
-                        let _ = self.project.tracks[at].patch.dest_registry.add(chain, path, label);
+                    // Unbound slots prime nothing; non-modulatable params are refused.
+                    if let Some(addr) = self.current_param_addr() {
+                        let label = self.mod_label(addr);
+                        let _ = self.project.tracks[at].patch.dest_registry.add(addr, label);
+                        self.matrix_state.rebuild_dests_from_registry(
+                            &self.project.tracks[at].patch.dest_registry
+                        );
+                        self.sync_mod_state(at);
                     }
-                    self.matrix_state.rebuild_dests_from_registry(
-                        &self.project.tracks[at].patch.dest_registry
-                    );
-                    self.sync_mod_state(at);
                 }
                 if controls.button_state(ButtonId::Minus) == ButtonState::Pressed {
-                    let path = self.current_param_path();
-                    self.project.tracks[at].patch.dest_registry.remove(path);
-                    self.matrix_state.rebuild_dests_from_registry(
-                        &self.project.tracks[at].patch.dest_registry
-                    );
-                    self.sync_mod_state(at);
+                    if let Some(addr) = self.current_param_addr() {
+                        self.project.tracks[at].patch.dest_registry.remove(addr);
+                        self.matrix_state.rebuild_dests_from_registry(
+                            &self.project.tracks[at].patch.dest_registry
+                        );
+                        self.sync_mod_state(at);
+                    }
                 }
             }
         }
@@ -428,8 +395,10 @@ impl UiState {
             }
 
             // Apply offsets to the 6 display values
+            let def = self.nav.active_block_def();
+            let sel_op = page::selected_op();
             for i in 0..6 {
-                let offset = self.page.binding(i).map_or(0.0, |a| patch.mod_state.offset_for(a, &mod_sources));
+                let offset = slot_addr(def, i, sel_op).map_or(0.0, |a| patch.mod_state.offset_for(a, &mod_sources));
                 if offset != 0.0 {
                     values[i] = (values[i] + offset).clamp(0.0, 1.0);
                 }

@@ -4,10 +4,9 @@
 
 use chimera_core::addr::{BlockRef, ParamAddr};
 use chimera_core::dsp::voice::Voice;
-use chimera_core::mod_path::{legacy_to_addr, ModDestRegistry, ParamPath};
+use chimera_core::mod_path::ModDestRegistry;
 use chimera_core::modulation::ModState;
 use chimera_core::params::{EngineType, ParamSnapshot};
-use chimera_core::preset::ChainType;
 use chimera_core::{MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
 
@@ -33,23 +32,10 @@ fn recipe(block: BlockRef) -> ParamSnapshot {
     p
 }
 
-/// A UI path that reaches `addr` (every modulatable address must have one).
-fn ui_path_for(addr: ParamAddr) -> (ChainType, ParamPath) {
-    for chain in ChainType::ALL {
-        let blocks = (0..6u8).flat_map(|block| (0..6u8).map(move |param| ParamPath::Block { block, param }));
-        let ops = (0..4u8).flat_map(|op| (0..6u8).map(move |param| ParamPath::FmOp { op, param }));
-        if let Some(path) = blocks.chain(ops).find(|&p| legacy_to_addr(chain, p) == Some(addr)) {
-            return (chain, path);
-        }
-    }
-    panic!("no UI path reaches {addr:?}");
-}
-
 fn lfo_route(addr: ParamAddr) -> ModState {
-    let (chain, path) = ui_path_for(addr);
     let mut reg = ModDestRegistry::new();
-    reg.add(chain, path, *b"TEST\0\0\0\0").expect("modulatable");
-    let mut ms = ModState::from_registry(&reg, chain, 2);
+    reg.add(addr, *b"TEST\0\0\0\0").expect("modulatable");
+    let mut ms = ModState::from_registry(&reg, 2);
     ms.set_amount(1, 0, 127);
     ms
 }

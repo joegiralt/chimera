@@ -7,8 +7,7 @@
 
 use crate::addr::{BlockRef, ParamAddr};
 use crate::dsp::pizza::PizzaParams;
-use crate::mod_path::{legacy_to_addr, ModDestRegistry};
-use crate::preset::ChainType;
+use crate::mod_path::ModDestRegistry;
 use crate::ui::mod_grid::MatrixState;
 
 pub const MAX_MOD_SOURCES: usize = 8;
@@ -82,12 +81,12 @@ impl ModState {
 
     /// Destinations from the registry (in order, at most `MAX_MOD_DESTS`),
     /// all amounts zero. `num_sources` is clamped to `MAX_MOD_SOURCES`.
-    pub fn from_registry(registry: &ModDestRegistry, chain: ChainType, num_sources: usize) -> Self {
+    pub fn from_registry(registry: &ModDestRegistry, num_sources: usize) -> Self {
         let mut ms = Self::new();
         ms.num_sources = num_sources.min(MAX_MOD_SOURCES);
         for i in 0..registry.len() {
             let Some(entry) = registry.get(i) else { continue };
-            ms.push_dest(legacy_to_addr(chain, entry.path));
+            ms.push_dest(Some(entry.addr));
         }
         ms
     }
@@ -102,11 +101,11 @@ impl ModState {
     /// Copy routing from the UI's matrix. Keeps only modulatable
     /// destinations (at most `MAX_MOD_DESTS`, amounts moved with their dest)
     /// and at most `MAX_MOD_SOURCES` sources.
-    pub fn sync_from_matrix(&mut self, matrix: &MatrixState, chain: ChainType) {
+    pub fn sync_from_matrix(&mut self, matrix: &MatrixState) {
         *self = Self::new();
         self.num_sources = matrix.num_sources.min(MAX_MOD_SOURCES);
         for di in 0..matrix.num_dests {
-            let addr = matrix.dests[di].as_ref().and_then(|d| legacy_to_addr(chain, d.path));
+            let addr = matrix.dests[di].map(|d| d.addr);
             if self.push_dest(addr) {
                 let d = self.num_dests - 1;
                 for si in 0..self.num_sources {
