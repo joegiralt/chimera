@@ -30,9 +30,9 @@ const GOLDENS: &[(&str, u64, [u32; 8])] = &[
 
 /// Goldens that lock output which failed the sanity gate.
 const KNOWN_BROKEN: &[(&str, &str)] = &[
-    ("modal_init", "docs/issues/003-modal-sanity-gate.md"),
-    ("modal_lfo_cutoff", "docs/issues/003-modal-sanity-gate.md"),
-    ("pizza_to_modal_switch", "docs/issues/003-modal-sanity-gate.md"),
+    ("modal_init", "https://github.com/joegiralt/chimera/issues/10"),
+    ("modal_lfo_cutoff", "https://github.com/joegiralt/chimera/issues/10"),
+    ("pizza_to_modal_switch", "https://github.com/joegiralt/chimera/issues/10"),
 ];
 
 #[test]
@@ -66,10 +66,14 @@ fn goldens_match() {
 
 #[test]
 fn known_broken_goldens_have_issues() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    const TRACKER: &str = "https://github.com/joegiralt/chimera/issues/";
     for (case, issue) in KNOWN_BROKEN {
         assert!(Case::ALL.iter().any(|c| c.name() == *case), "unknown case {case}");
-        assert!(root.join(issue).exists(), "{case}: missing {issue}");
+        let num = issue.strip_prefix(TRACKER);
+        assert!(
+            num.is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())),
+            "{case}: {issue} is not a GitHub issue URL"
+        );
     }
 }
 

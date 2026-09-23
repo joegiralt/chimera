@@ -1,7 +1,7 @@
 //! Sanity gate (spec § Testing), run before goldens are recorded.
 //! Per engine init patch: finite, within ±1.0, not silent, silent after
 //! note-off; pitched engines' fundamental within one semitone of the note.
-//! A failing engine gets an issue in docs/issues/ and its failing test is
+//! A failing engine gets a GitHub issue and its failing test is
 //! marked `#[ignore = "known broken: …"]`. It is not fixed in this refactor.
 
 mod common;
@@ -90,10 +90,10 @@ fn fm_is_pitched() { assert_pitched(Case::FmInit); }
 #[test]
 fn modal_is_finite_bounded_audible() { assert_finite_bounded_audible(Case::ModalInit); }
 #[test]
-#[ignore = "known broken: docs/issues/003-modal-sanity-gate.md"]
+#[ignore = "known broken: https://github.com/joegiralt/chimera/issues/10"]
 fn modal_is_silent_after_note_off() { assert_silent_after_note_off(Case::ModalInit); }
 #[test]
-#[ignore = "known broken: docs/issues/003-modal-sanity-gate.md"]
+#[ignore = "known broken: https://github.com/joegiralt/chimera/issues/10"]
 fn modal_is_pitched() { assert_pitched(Case::ModalInit); }
 
 /// Va is a placeholder engine: it must render exact silence, never garbage.

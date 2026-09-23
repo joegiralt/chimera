@@ -23,7 +23,7 @@ reference (and possibly port parts of it). Verify the MI firmware license in
 Modal is the heavy engine: ~66 KB per voice today (8 × `[f32; 2048]` string
 buffers). Its buffers must move to a shared pool before polyphony.
 Known issues: plays an octave high and rings after note-off
-(`docs/issues/003-modal-sanity-gate.md`).
+(https://github.com/joegiralt/chimera/issues/10).
 
 ## Sources
 - https://github.com/pichenettes/eurorack (Rings, Elements)

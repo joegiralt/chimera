@@ -21,7 +21,7 @@ goldens deliberately. Goldens are never re-recorded to make a refactor pass.
 
 ## Consequences
 Modal's goldens lock known-broken output (octave high, rings after
-note-off; `docs/issues/003-modal-sanity-gate.md`). Listening remains the real
+note-off; https://github.com/joegiralt/chimera/issues/10). Listening remains the real
 quality test, on the desktop simulator.
 
 ## Sources
