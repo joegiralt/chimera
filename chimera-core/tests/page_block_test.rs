@@ -262,3 +262,47 @@ fn fx_encoders_step_like_before() {
     PageId::Efx.apply_encoder(4, 1, &mut p);
     assert_eq!(p.reverb.mix, 1.0 / 128.0);
 }
+
+// ── Bindings (Task 15) ───────────────────────────────────────────────
+
+use chimera_core::addr::{BlockRef, Op, ParamAddr};
+use chimera_core::params::{EnvParams, FmOpParams, FmParams, OutParams};
+
+#[test]
+fn page_bindings_name_semantic_addresses() {
+    assert_eq!(
+        PageId::FmRatio.binding(3),
+        Some(ParamAddr::new(BlockRef::FmOp(Op::D), FmOpParams::COARSE))
+    );
+    assert_eq!(PageId::FmAlg.binding(0), Some(ParamAddr::new(BlockRef::Fm, FmParams::ALGORITHM)));
+    assert_eq!(PageId::FmAlg.binding(2), Some(ParamAddr::new(BlockRef::Out, OutParams::VOLUME)));
+    assert_eq!(PageId::FmAlg.binding(1), None);
+    assert_eq!(PageId::FmOp.binding(0), None); // operator selector
+    // Spec §5: Demo pages address envelopes[1] via FilterEnv.
+    assert_eq!(
+        PageId::DemoMotion.binding(4),
+        Some(ParamAddr::new(BlockRef::FilterEnv, EnvParams::ATTACK))
+    );
+    assert_eq!(PageId::DemoMatrix.binding(0), None);
+    assert_eq!(PageId::Pizza.binding(3), None);
+}
+
+/// Every bound slot of every page resolves to a spec.
+#[test]
+fn every_page_binding_has_a_spec() {
+    let pages = [
+        PageId::Pizza, PageId::EngineModal1, PageId::EngineModal2, PageId::Drive, PageId::Filter,
+        PageId::Folder, PageId::Vca, PageId::Efx, PageId::Mixer, PageId::Chorus, PageId::Delay,
+        PageId::MixReverb, PageId::Master, PageId::EnvAmp, PageId::EnvFilter, PageId::EnvAux,
+        PageId::Lfo, PageId::FmAlg, PageId::FmOp, PageId::FmRatio, PageId::FmEnv1, PageId::FmEnv2,
+        PageId::FmEnv3, PageId::FmEnv4, PageId::DemoWaves, PageId::DemoShapes, PageId::DemoMotion,
+        PageId::DemoFm, PageId::DemoMatrix,
+    ];
+    for page in pages {
+        for i in 0..6 {
+            if let Some(a) = page.binding(i) {
+                assert!(a.spec().is_some(), "{page:?} slot {i}: {a:?} has no spec");
+            }
+        }
+    }
+}
