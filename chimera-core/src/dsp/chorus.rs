@@ -10,6 +10,7 @@
 //! Mode I+II: both LFOs running simultaneously (thickest)
 
 use chimera_hal::BLOCK_SIZE;
+use crate::block::{Block, ParamId, ParamSpec, ValFmt};
 
 const MAX_CHORUS_DELAY: usize = 2048; // ~42ms at 48kHz, plenty for chorus
 
@@ -54,6 +55,47 @@ impl Default for ChorusParams {
             rate: 0.5,
             depth: 0.5,
             mix: 0.0,
+        }
+    }
+}
+
+impl ChorusParams {
+    pub const MODE: ParamId = ParamId(0);
+    pub const RATE: ParamId = ParamId(1);
+    pub const DEPTH: ParamId = ParamId(2);
+    pub const MIX: ParamId = ParamId(3);
+}
+
+/// Chorus runs outside `Voice` (desktop only): nothing is modulatable.
+pub static CHORUS_SPECS: [ParamSpec; 4] = [
+    ParamSpec::choice(0, "MODE", ValFmt::Int(3), 3.0, 0.0),
+    ParamSpec::continuous(1, "RATE", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false),
+    ParamSpec::continuous(2, "DEPTH", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false),
+    ParamSpec::continuous(3, "MIX", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false),
+];
+
+impl Block for ChorusParams {
+    fn specs(&self) -> &'static [ParamSpec] {
+        &CHORUS_SPECS
+    }
+
+    fn get(&self, id: ParamId) -> f32 {
+        match id {
+            Self::MODE => self.mode as f32,
+            Self::RATE => self.rate,
+            Self::DEPTH => self.depth,
+            Self::MIX => self.mix,
+            _ => 0.0,
+        }
+    }
+
+    fn write(&mut self, id: ParamId, v: f32) {
+        match id {
+            Self::MODE => self.mode = v as u8,
+            Self::RATE => self.rate = v,
+            Self::DEPTH => self.depth = v,
+            Self::MIX => self.mix = v,
+            _ => {}
         }
     }
 }

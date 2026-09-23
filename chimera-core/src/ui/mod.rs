@@ -346,8 +346,7 @@ impl UiState {
                     self.last_encoder = i;
                     self.renderer.focused = i;
                     if shift {
-                        let fmt = def.params[i].format;
-                        page.snap_encoder(i, delta, fmt, &mut self.project.tracks[at].patch.params);
+                        page.snap_encoder(i, delta, &mut self.project.tracks[at].patch.params);
                     } else {
                         page.apply_encoder(i, delta, &mut self.project.tracks[at].patch.params);
                     }

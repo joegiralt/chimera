@@ -222,3 +222,34 @@ fn fm_settings_truncate_fractional_level() {
 fn out_conforms() {
     conforms("out", chimera_core::params::OutParams::default());
 }
+
+#[test]
+fn fx_conform() {
+    conforms("chorus", chimera_core::dsp::chorus::ChorusParams::default());
+    conforms("delay", chimera_core::dsp::delay::DelayParams::default());
+    conforms("reverb", chimera_core::dsp::reverb::ReverbParams::default());
+}
+
+/// Ported from the deleted `param_test.rs`: the bipolar snap walk
+/// −64 → −44 → 0 → +43 → +63 and back.
+#[test]
+fn snap_walks_bipolar_points_both_ways() {
+    let mut p = Probe { c: -1.0, s: 0.0, e: 0 };
+    let up = [20.0 / 127.0, 64.0 / 127.0, 107.0 / 127.0, 1.0];
+    for want in up {
+        p.snap(C, 1);
+        assert!((p.normalized(C) - want).abs() < 0.01, "up: {} vs {want}", p.normalized(C));
+    }
+    for want in [107.0 / 127.0, 64.0 / 127.0, 20.0 / 127.0, 0.0] {
+        p.snap(C, -1);
+        assert!((p.normalized(C) - want).abs() < 0.01, "down: {} vs {want}", p.normalized(C));
+    }
+}
+
+/// Spec §1: `ParamSnapshot` shrinks from 1,524 B to roughly 0.4 KB.
+#[test]
+fn snapshot_is_small() {
+    let size = core::mem::size_of::<chimera_core::params::ParamSnapshot>();
+    eprintln!("ParamSnapshot = {size} B");
+    assert!(size <= 512, "ParamSnapshot is {size} B");
+}
