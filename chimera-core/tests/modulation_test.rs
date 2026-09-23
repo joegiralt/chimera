@@ -152,6 +152,20 @@ fn mod_state_clamps_sources() {
     assert_eq!(ms.sum_for(0, &values), 0.0); // row 12 was dropped, nothing panicked
 }
 
+/// `dest`/`sum_for` are indexed by the audio ISR (`Voice::render`) with `d`
+/// derived from `num_dests()`; an out-of-range `d` must never panic (hard
+/// fault on the STM32), just return the unused sentinel / zero offset.
+#[test]
+fn dest_and_sum_for_never_panic_out_of_range() {
+    let ms = ModState::new();
+    let sentinel = ParamAddr::new(BlockRef::Pizza, PizzaParams::SHAPE);
+    let sources = [1.0f32; MAX_MOD_SOURCES];
+    assert_eq!(ms.dest(16), sentinel);
+    assert_eq!(ms.dest(255), sentinel);
+    assert_eq!(ms.sum_for(16, &sources), 0.0);
+    assert_eq!(ms.sum_for(255, &sources), 0.0);
+}
+
 /// The matrix holds addresses, so a route to an FM operator stays on that
 /// operator (and the amp envelope is a destination like any other).
 #[test]
