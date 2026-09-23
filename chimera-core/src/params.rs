@@ -1,3 +1,4 @@
+use crate::addr::BlockRef;
 use crate::block::{Block, ParamId, ParamSpec, ValFmt};
 
 /// Parameters for one voice's filter
@@ -509,6 +510,50 @@ pub struct ParamSnapshot {
     pub chorus: crate::dsp::chorus::ChorusParams,
     pub lfo: crate::dsp::lfo::LfoParams,
     pub out: OutParams,
+}
+
+impl ParamSnapshot {
+    /// The one exhaustive dispatch from a block address to its values
+    /// (spec §2). UI and modulation go through this; DSP reads fields.
+    pub fn block(&self, b: BlockRef) -> &dyn Block {
+        match b {
+            BlockRef::Pizza => &self.pizza,
+            BlockRef::Modal => &self.modal,
+            BlockRef::Fm => &self.fm,
+            BlockRef::FmOp(op) => &self.fm.operators[op.index()],
+            BlockRef::Drive => &self.drive,
+            BlockRef::Filter => &self.filter,
+            BlockRef::Folder => &self.folder,
+            BlockRef::AmpEnv => &self.envelopes[0],
+            BlockRef::FilterEnv => &self.envelopes[1],
+            BlockRef::AuxEnv => &self.envelopes[2],
+            BlockRef::Lfo => &self.lfo,
+            BlockRef::Out => &self.out,
+            BlockRef::Chorus => &self.chorus,
+            BlockRef::Delay => &self.delay,
+            BlockRef::Reverb => &self.reverb,
+        }
+    }
+
+    pub fn block_mut(&mut self, b: BlockRef) -> &mut dyn Block {
+        match b {
+            BlockRef::Pizza => &mut self.pizza,
+            BlockRef::Modal => &mut self.modal,
+            BlockRef::Fm => &mut self.fm,
+            BlockRef::FmOp(op) => &mut self.fm.operators[op.index()],
+            BlockRef::Drive => &mut self.drive,
+            BlockRef::Filter => &mut self.filter,
+            BlockRef::Folder => &mut self.folder,
+            BlockRef::AmpEnv => &mut self.envelopes[0],
+            BlockRef::FilterEnv => &mut self.envelopes[1],
+            BlockRef::AuxEnv => &mut self.envelopes[2],
+            BlockRef::Lfo => &mut self.lfo,
+            BlockRef::Out => &mut self.out,
+            BlockRef::Chorus => &mut self.chorus,
+            BlockRef::Delay => &mut self.delay,
+            BlockRef::Reverb => &mut self.reverb,
+        }
+    }
 }
 
 impl Default for ParamSnapshot {
