@@ -18,3 +18,4 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0010](0010-modulation-targets-are-honest.md) | Only parameters the voice reads per block are modulatable | Accepted |
 | [0011](0011-goldens-are-a-refactor-lock.md) | Golden recordings are a refactor lock, not a quality claim | Accepted |
 | [0012](0012-type-driven-development.md) | Type-driven development where it pays | Accepted |
+| [0013](0013-hardware-parity-budgets.md) | The simulator enforces the chip's limits | Accepted |
