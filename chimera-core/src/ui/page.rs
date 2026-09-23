@@ -2,7 +2,7 @@ use crate::block::{Block, ParamId};
 use crate::dsp::lfo::LfoParams;
 use crate::dsp::modal::ModalParams;
 use crate::dsp::pizza::PizzaParams;
-use crate::params::{DriveParams, EnvParams, FilterParams, FolderParams, ParamSnapshot};
+use crate::params::{DriveParams, EnvParams, FilterParams, FmOpParams, FmParams, FolderParams, ParamSnapshot};
 use crate::preset::ChainType;
 use crate::ui::chain::ChainNav;
 
@@ -222,10 +222,10 @@ impl PageId {
             ],
             PageId::Lfo => read_block(&params.lfo, LFO_PAGE),
             PageId::DemoFm => [
-                params.fm.algorithm.normalized(),
-                params.fm.operators[0].feedback.normalized(),
-                params.fm.operators[1].feedback.normalized(),
-                params.fm.operators[2].feedback.normalized(),
+                params.fm.normalized(FmParams::ALGORITHM),
+                params.fm.operators[0].normalized(FmOpParams::FEEDBACK),
+                params.fm.operators[1].normalized(FmOpParams::FEEDBACK),
+                params.fm.operators[2].normalized(FmOpParams::FEEDBACK),
                 0.0,
                 0.0,
             ],
@@ -233,7 +233,7 @@ impl PageId {
             PageId::EngineModal1 => read_block(&params.modal, MODAL1_PAGE),
             PageId::EngineModal2 => read_block(&params.modal, MODAL2_PAGE),
             PageId::FmAlg => [
-                params.fm.algorithm.normalized(),
+                params.fm.normalized(FmParams::ALGORITHM),
                 0.0,
                 params.volume.normalized(),
                 0.0,
@@ -241,31 +241,24 @@ impl PageId {
                 0.0,
             ],
             PageId::FmOp => {
-                // Selected operator index stored in first slot as a UI concept.
-                // For read_values, show op0 by default (operator selection is
-                // handled by the encoder apply logic via a static index).
-                let op = &params.fm.operators[fm_selected_op()];
-                [
-                    fm_selected_op() as f32 / 3.0,
-                    op.waveform.normalized(),
-                    op.level.normalized(),
-                    op.feedback.normalized(),
-                    op.detune.normalized(),
-                    op.velocity_sens.normalized(),
-                ]
-            },
+                let sel = fm_selected_op();
+                let mut v = read_block(&params.fm.operators[sel], FM_OP_PAGE);
+                v.rotate_right(1); // slot 0 is the operator selector
+                v[0] = sel as f32 / 3.0;
+                v
+            }
             PageId::FmRatio => [
-                params.fm.operators[0].coarse.normalized(),
-                params.fm.operators[1].coarse.normalized(),
-                params.fm.operators[2].coarse.normalized(),
-                params.fm.operators[3].coarse.normalized(),
-                params.fm.operators[fm_selected_op()].fine.normalized(),
+                params.fm.operators[0].normalized(FmOpParams::COARSE),
+                params.fm.operators[1].normalized(FmOpParams::COARSE),
+                params.fm.operators[2].normalized(FmOpParams::COARSE),
+                params.fm.operators[3].normalized(FmOpParams::COARSE),
+                params.fm.operators[fm_selected_op()].normalized(FmOpParams::FINE),
                 0.0,
             ],
-            PageId::FmEnv1 => read_fm_env_values(&params.fm.operators[0]),
-            PageId::FmEnv2 => read_fm_env_values(&params.fm.operators[1]),
-            PageId::FmEnv3 => read_fm_env_values(&params.fm.operators[2]),
-            PageId::FmEnv4 => read_fm_env_values(&params.fm.operators[3]),
+            PageId::FmEnv1 => read_block(&params.fm.operators[0], FM_ENV_PAGE),
+            PageId::FmEnv2 => read_block(&params.fm.operators[1], FM_ENV_PAGE),
+            PageId::FmEnv3 => read_block(&params.fm.operators[2], FM_ENV_PAGE),
+            PageId::FmEnv4 => read_block(&params.fm.operators[3], FM_ENV_PAGE),
             PageId::Chorus => [
                 params.chorus.mode as f32 / 3.0,
                 params.chorus.rate,
@@ -300,40 +293,18 @@ impl PageId {
 
     /// Apply an encoder delta. Each tick = 1/128 of the parameter range.
     pub fn apply_encoder(&self, idx: usize, delta: i8, params: &mut ParamSnapshot) {
+        if *self == PageId::FmOp && idx == 0 {
+            // Operator select: 0-3
+            let cur = fm_selected_op() as i16;
+            fm_set_selected_op((cur + delta as i16).clamp(0, 3) as u8);
+            return;
+        }
         if let Some((blk, id)) = self.resolve_mut(idx, params) {
             blk.nudge(id, delta);
             return;
         }
         // Direct float manipulation (not Param structs)
         match self {
-            PageId::FmAlg => {
-                apply_fm_alg_encoder(idx, delta, &mut params.fm, &mut params.volume);
-                return;
-            }
-            PageId::FmOp => {
-                apply_fm_op_encoder(idx, delta, params);
-                return;
-            }
-            PageId::FmRatio => {
-                apply_fm_ratio_encoder(idx, delta, params);
-                return;
-            }
-            PageId::FmEnv1 => {
-                apply_fm_env_encoder(idx, delta, &mut params.fm.operators[0]);
-                return;
-            }
-            PageId::FmEnv2 => {
-                apply_fm_env_encoder(idx, delta, &mut params.fm.operators[1]);
-                return;
-            }
-            PageId::FmEnv3 => {
-                apply_fm_env_encoder(idx, delta, &mut params.fm.operators[2]);
-                return;
-            }
-            PageId::FmEnv4 => {
-                apply_fm_env_encoder(idx, delta, &mut params.fm.operators[3]);
-                return;
-            }
             PageId::Chorus => {
                 apply_chorus_encoder(idx, delta, &mut params.chorus);
                 return;
@@ -406,6 +377,26 @@ impl PageId {
                 _ => None,
             },
             PageId::Lfo => bind(&mut p.lfo, *LFO_PAGE.get(idx)?),
+            PageId::FmAlg => match idx {
+                0 => bind(&mut p.fm, FmParams::ALGORITHM),
+                _ => None,
+            },
+            // Slot 0 selects the operator (handled in `apply_encoder`).
+            PageId::FmOp => bind(&mut p.fm.operators[fm_selected_op()], *FM_OP_PAGE.get(idx.checked_sub(1)?)?),
+            PageId::FmRatio => match idx {
+                0..=3 => bind(&mut p.fm.operators[idx], FmOpParams::COARSE),
+                4 => bind(&mut p.fm.operators[fm_selected_op()], FmOpParams::FINE),
+                _ => None,
+            },
+            PageId::FmEnv1 => bind(&mut p.fm.operators[0], *FM_ENV_PAGE.get(idx)?),
+            PageId::FmEnv2 => bind(&mut p.fm.operators[1], *FM_ENV_PAGE.get(idx)?),
+            PageId::FmEnv3 => bind(&mut p.fm.operators[2], *FM_ENV_PAGE.get(idx)?),
+            PageId::FmEnv4 => bind(&mut p.fm.operators[3], *FM_ENV_PAGE.get(idx)?),
+            PageId::DemoFm => match idx {
+                0 => bind(&mut p.fm, FmParams::ALGORITHM),
+                1..=3 => bind(&mut p.fm.operators[idx - 1], FmOpParams::FEEDBACK),
+                _ => None,
+            },
             _ => None,
         }
     }
@@ -431,11 +422,8 @@ impl PageId {
                 2 => Some(&mut params.pan),
                 _ => None,
             },
-            PageId::DemoFm => match idx {
-                0 => Some(&mut params.fm.algorithm),
-                1 => Some(&mut params.fm.operators[0].feedback),
-                2 => Some(&mut params.fm.operators[1].feedback),
-                3 => Some(&mut params.fm.operators[2].feedback),
+            PageId::FmAlg => match idx {
+                2 => Some(&mut params.volume),
                 _ => None,
             },
             PageId::DemoMatrix => None,
@@ -471,6 +459,22 @@ const LFO_PAGE: [ParamId; 6] = [
     LfoParams::PHASE,
     LfoParams::DEPTH,
     LfoParams::OFFSET,
+];
+/// FM_OP slots 1..=5 (slot 0 selects the operator).
+const FM_OP_PAGE: [ParamId; 5] = [
+    FmOpParams::WAVEFORM,
+    FmOpParams::LEVEL,
+    FmOpParams::FEEDBACK,
+    FmOpParams::DETUNE,
+    FmOpParams::VELOCITY_SENS,
+];
+const FM_ENV_PAGE: [ParamId; 6] = [
+    FmOpParams::ATTACK_RATE,
+    FmOpParams::DECAY1_RATE,
+    FmOpParams::DECAY1_LEVEL,
+    FmOpParams::DECAY2_RATE,
+    FmOpParams::RELEASE_RATE,
+    FmOpParams::RATE_SCALING,
 ];
 const MODAL1_PAGE: [ParamId; 6] = [
     ModalParams::MODE,
@@ -576,131 +580,4 @@ pub fn fm_selected_op() -> usize {
 
 fn fm_set_selected_op(idx: u8) {
     FM_SEL_OP.store(idx.min(3), core::sync::atomic::Ordering::Relaxed);
-}
-
-// ---------------------------------------------------------------------------
-// FM encoder handlers
-// ---------------------------------------------------------------------------
-
-fn apply_fm_alg_encoder(
-    idx: usize,
-    delta: i8,
-    fm: &mut crate::params::FmParams,
-    volume: &mut crate::params::Param,
-) {
-    match idx {
-        0 => {
-            // Algorithm: integer 0-7
-            let cur = fm.algorithm.value as i8;
-            fm.algorithm.value = (cur + delta).clamp(0, 7) as f32;
-        }
-        2 => {
-            // Level (overall volume)
-            let step = (volume.max - volume.min) / 128.0;
-            volume.nudge(delta as f32 * step);
-        }
-        _ => {}
-    }
-}
-
-fn apply_fm_op_encoder(idx: usize, delta: i8, params: &mut ParamSnapshot) {
-    match idx {
-        0 => {
-            // Operator select: 0-3
-            let cur = fm_selected_op() as i8;
-            fm_set_selected_op((cur + delta).clamp(0, 3) as u8);
-        }
-        _ => {
-            let sel = fm_selected_op();
-            let op = &mut params.fm.operators[sel];
-            match idx {
-                1 => {
-                    // Waveform: integer 0-7
-                    let cur = op.waveform.value as i8;
-                    op.waveform.value = (cur + delta).clamp(0, 7) as f32;
-                }
-                2 => {
-                    // Level: integer 0-99
-                    let cur = op.level.value as i8;
-                    op.level.value = (cur as i16 + delta as i16).clamp(0, 99) as f32;
-                }
-                3 => {
-                    // Feedback: integer 0-7
-                    let cur = op.feedback.value as i8;
-                    op.feedback.value = (cur + delta).clamp(0, 7) as f32;
-                }
-                4 => {
-                    // Detune: integer -7 to 7
-                    let cur = op.detune.value as i8;
-                    op.detune.value = (cur + delta).clamp(-7, 7) as f32;
-                }
-                5 => {
-                    // Velocity sensitivity: integer 0-7
-                    let cur = op.velocity_sens.value as i8;
-                    op.velocity_sens.value = (cur + delta).clamp(0, 7) as f32;
-                }
-                _ => {}
-            }
-        }
-    }
-}
-
-fn read_fm_env_values(op: &crate::params::FmOpParams) -> [f32; 6] {
-    [
-        op.attack_rate.normalized(),
-        op.decay1_rate.normalized(),
-        op.decay1_level.normalized(),
-        op.decay2_rate.normalized(),
-        op.release_rate.normalized(),
-        op.rate_scaling.normalized(),
-    ]
-}
-
-fn apply_fm_env_encoder(idx: usize, delta: i8, op: &mut crate::params::FmOpParams) {
-    match idx {
-        0 => {
-            let cur = op.attack_rate.value as i8;
-            op.attack_rate.value = (cur as i16 + delta as i16).clamp(0, 31) as f32;
-        }
-        1 => {
-            let cur = op.decay1_rate.value as i8;
-            op.decay1_rate.value = (cur as i16 + delta as i16).clamp(0, 31) as f32;
-        }
-        2 => {
-            let cur = op.decay1_level.value as i8;
-            op.decay1_level.value = (cur + delta).clamp(0, 15) as f32;
-        }
-        3 => {
-            let cur = op.decay2_rate.value as i8;
-            op.decay2_rate.value = (cur as i16 + delta as i16).clamp(0, 31) as f32;
-        }
-        4 => {
-            let cur = op.release_rate.value as i8;
-            op.release_rate.value = (cur + delta).clamp(1, 15) as f32;
-        }
-        5 => {
-            let cur = op.rate_scaling.value as i8;
-            op.rate_scaling.value = (cur + delta).clamp(0, 3) as f32;
-        }
-        _ => {}
-    }
-}
-
-fn apply_fm_ratio_encoder(idx: usize, delta: i8, params: &mut ParamSnapshot) {
-    match idx {
-        0..=3 => {
-            // Coarse ratio for op 0-3: integer 0-63
-            let op = &mut params.fm.operators[idx];
-            let cur = op.coarse.value as i8;
-            op.coarse.value = (cur as i16 + delta as i16).clamp(0, 63) as f32;
-        }
-        4 => {
-            // Fine for selected op: integer 0-15
-            let sel = fm_selected_op();
-            let op = &mut params.fm.operators[sel];
-            let cur = op.fine.value as i8;
-            op.fine.value = (cur + delta).clamp(0, 15) as f32;
-        }
-        _ => {}
-    }
 }

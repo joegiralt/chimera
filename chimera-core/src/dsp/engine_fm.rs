@@ -33,19 +33,19 @@ impl FmOpSettings {
     /// Convert from [`crate::params::FmOpParams`] to this settings struct.
     pub fn from_params(p: &crate::params::FmOpParams) -> Self {
         Self {
-            waveform: p.waveform.value as u8,
-            coarse: p.coarse.value as u8,
-            fine: p.fine.value as u8,
-            level: p.level.value as u8,
-            feedback: p.feedback.value as u8,
-            detune: p.detune.value as i8,
-            velocity_sens: p.velocity_sens.value as u8,
-            ar: p.attack_rate.value as u8,
-            d1r: p.decay1_rate.value as u8,
-            d1l: p.decay1_level.value as u8,
-            d2r: p.decay2_rate.value as u8,
-            rr: p.release_rate.value as u8,
-            rate_scaling: p.rate_scaling.value as u8,
+            waveform: p.waveform,
+            coarse: p.coarse,
+            fine: p.fine,
+            level: p.level as u8,
+            feedback: p.feedback as u8,
+            detune: p.detune,
+            velocity_sens: p.velocity_sens,
+            ar: p.attack_rate,
+            d1r: p.decay1_rate,
+            d1l: p.decay1_level,
+            d2r: p.decay2_rate,
+            rr: p.release_rate,
+            rate_scaling: p.rate_scaling,
         }
     }
 }
@@ -350,7 +350,7 @@ impl FmEngine {
         params: &crate::params::FmParams,
         sample_rate: f32,
     ) {
-        let alg = params.algorithm.value as u8;
+        let alg = params.algorithm;
         let settings: [FmOpSettings; 4] =
             core::array::from_fn(|i| FmOpSettings::from_params(&params.operators[i]));
         self.note_on(note, velocity, alg, &settings, sample_rate);
@@ -358,7 +358,7 @@ impl FmEngine {
 
     /// Render audio using [`crate::params::FmParams`].
     pub fn render_params(&mut self, output: &mut [f32], params: &crate::params::FmParams) {
-        let alg = params.algorithm.value as u8;
+        let alg = params.algorithm;
         let settings: [FmOpSettings; 4] =
             core::array::from_fn(|i| FmOpSettings::from_params(&params.operators[i]));
         // Update live-tweakable params so encoder changes are heard immediately

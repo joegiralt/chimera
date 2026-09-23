@@ -13,6 +13,8 @@ fn all_specs() -> Vec<(&'static str, &'static [ParamSpec])> {
         ("folder", &chimera_core::params::FOLDER_SPECS[..]),
         ("env", &chimera_core::params::ENV_SPECS[..]),
         ("lfo", &chimera_core::dsp::lfo::LFO_SPECS[..]),
+        ("fm", &chimera_core::params::FM_SPECS[..]),
+        ("fm_op", &chimera_core::params::FM_OP_SPECS[..]),
     ]
 }
 

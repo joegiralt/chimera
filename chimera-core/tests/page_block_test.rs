@@ -175,3 +175,55 @@ fn lfo_rate_display_uses_range() {
     let p = ParamSnapshot::default();
     assert_eq!(PageId::Lfo.read_values(&p)[0], (1.0 - 0.01) / (20.0 - 0.01));
 }
+
+// ── FM (Task 9) ──────────────────────────────────────────────────────
+
+/// The selected operator is a process-wide static until Task 20, so every
+/// assertion that depends on it lives in this one test.
+#[test]
+fn fm_pages_step_like_before() {
+    let mut p = ParamSnapshot::default();
+    PageId::FmOp.apply_encoder(0, 1, &mut p); // select op B
+    PageId::FmOp.apply_encoder(2, 5, &mut p);
+    assert_eq!(p.fm.operators[1].level, 5.0);
+    PageId::FmOp.apply_encoder(4, -9, &mut p);
+    assert_eq!(p.fm.operators[1].detune, -7);
+    PageId::FmRatio.apply_encoder(4, 1, &mut p); // FINE of the selected op
+    assert_eq!(p.fm.operators[1].fine, 1);
+    assert_eq!(PageId::FmOp.read_values(&p)[0], 1.0 / 3.0);
+    // Review Focus 3: snapping a Stepped level lands on an integer.
+    PageId::FmOp.snap_encoder(2, 1, ValFmt::Uni, &mut p);
+    assert_eq!(p.fm.operators[1].level, 78.0); // 99 * 100/127 = 77.95 → 78
+    PageId::FmOp.apply_encoder(0, -1, &mut p); // back to op A
+}
+
+#[test]
+fn fm_fixed_op_pages_step_like_before() {
+    let mut p = ParamSnapshot::default();
+    PageId::FmAlg.apply_encoder(0, 9, &mut p);
+    assert_eq!(p.fm.algorithm, 7);
+    PageId::FmRatio.apply_encoder(2, 1, &mut p);
+    assert_eq!(p.fm.operators[2].coarse, 5);
+    PageId::FmEnv3.apply_encoder(2, -1, &mut p);
+    assert_eq!(p.fm.operators[2].decay1_level, 14);
+    PageId::DemoFm.apply_encoder(3, 2, &mut p);
+    assert_eq!(p.fm.operators[2].feedback, 2.0);
+}
+
+/// Review Focus 3: snap on Stepped params lands on integers in range.
+#[test]
+fn fm_snap_lands_on_integers() {
+    let mut p = ParamSnapshot::default();
+    PageId::FmRatio.snap_encoder(0, 1, ValFmt::Int(63), &mut p);
+    assert_eq!(p.fm.operators[0].coarse, 63);
+    PageId::FmEnv1.snap_encoder(0, -1, ValFmt::Int(31), &mut p);
+    assert_eq!(p.fm.operators[0].attack_rate, 0);
+}
+
+/// Plan D4: RR spans 0..=15 (today's encoder stopped at 1).
+#[test]
+fn fm_rr_reaches_zero() {
+    let mut p = ParamSnapshot::default();
+    PageId::FmEnv2.apply_encoder(4, -20, &mut p);
+    assert_eq!(p.fm.operators[1].release_rate, 0);
+}

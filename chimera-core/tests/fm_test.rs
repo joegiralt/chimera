@@ -337,8 +337,8 @@ fn voice_fm_output_finite() {
     let mut params = ParamSnapshot::default();
     params.engine = EngineType::Fm;
     for op in params.fm.operators.iter_mut() {
-        op.level.value = 99.0;
-        op.feedback.value = 7.0;
+        op.level = 99.0;
+        op.feedback = 7.0;
     }
     voice.note_on(69, 127, &params, 48000);
     let mut buf = [0.0f32; 64];

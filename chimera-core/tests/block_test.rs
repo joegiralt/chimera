@@ -200,3 +200,20 @@ fn env_conforms() {
 fn lfo_conforms() {
     conforms("lfo", chimera_core::dsp::lfo::LfoParams::default());
 }
+
+#[test]
+fn fm_conforms() {
+    conforms("fm", chimera_core::params::FmParams::default());
+    conforms("fm_op", chimera_core::params::FmOpParams::default());
+}
+
+/// Plan D18: a modulated (fractional) level truncates exactly like the old
+/// `Param.value as u8` — never rounds.
+#[test]
+fn fm_settings_truncate_fractional_level() {
+    use chimera_core::dsp::engine_fm::FmOpSettings;
+    use chimera_core::params::FmOpParams;
+    let op = FmOpParams { level: 50.7, feedback: 6.9, ..FmOpParams::default() };
+    let s = FmOpSettings::from_params(&op);
+    assert_eq!((s.level, s.feedback), (50, 6));
+}
