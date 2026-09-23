@@ -16,7 +16,7 @@ use chimera_hal::{ButtonId, ButtonState, Controls, EncoderId};
 
 use crate::block::Block;
 use crate::dsp::lfo::Lfo;
-use crate::mod_path::ParamPath;
+use crate::mod_path::{legacy_to_addr, ParamPath};
 use crate::modulation::{ModState, MAX_MOD_SOURCES};
 use crate::params::{EnvParams, ParamSnapshot};
 use crate::preset::{ChainType, Project, POOL_SIZE};
@@ -366,8 +366,14 @@ impl UiState {
                     let path = self.current_param_path();
                     let label = self.current_param_label();
                     // Refused when the param is not modulatable (spec §4).
+                    // Bridge guard (deleted in Task 19): a `Block` path has no
+                    // sub-page, so prime only when it means the address the
+                    // focused slot edits (on FmOp both use the selected op).
                     let chain = self.project.tracks[at].patch.chain_type;
-                    let _ = self.project.tracks[at].patch.dest_registry.add(chain, path, label);
+                    let focused = self.page.binding(self.last_encoder);
+                    if focused.is_some() && legacy_to_addr(chain, path) == focused {
+                        let _ = self.project.tracks[at].patch.dest_registry.add(chain, path, label);
+                    }
                     self.matrix_state.rebuild_dests_from_registry(
                         &self.project.tracks[at].patch.dest_registry
                     );
