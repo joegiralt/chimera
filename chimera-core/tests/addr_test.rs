@@ -31,7 +31,8 @@ fn block_ref_all_has_no_duplicates() {
 }
 
 /// `block()` hands out the instance whose spec table `BlockRef::specs`
-/// names; a Part view resolves every address, a Sound all but the FX.
+/// names; a Part view resolves every address, a Sound all but the FX and
+/// the Part's own mix settings.
 #[test]
 fn block_and_specs_agree() {
     let mut perf = Performance::new();
@@ -39,8 +40,8 @@ fn block_and_specs_agree() {
     for b in BlockRef::ALL {
         let blk = part.block(b).expect("a Part resolves every block");
         assert!(core::ptr::eq(blk.specs(), b.specs()), "{b:?}");
-        let fx = matches!(b, BlockRef::Chorus | BlockRef::Delay | BlockRef::Reverb);
-        assert_eq!(ParamSnapshot::default().block(b).is_some(), !fx, "{b:?}");
+        let not_in_sound = matches!(b, BlockRef::Chorus | BlockRef::Delay | BlockRef::Reverb | BlockRef::Part);
+        assert_eq!(ParamSnapshot::default().block(b).is_some(), !not_in_sound, "{b:?}");
     }
 }
 

@@ -56,11 +56,9 @@ fn mix_chain_has_5_blocks() {
 #[test]
 fn mixer_channel_strip_chain() {
     let chain = &block_registry::MIXER_CHANNEL_CHAIN;
-    assert_eq!(chain.blocks[0].def.name, "Channel");
-    assert_eq!(chain.blocks[1].def.name, "MIDI");
-    assert_eq!(chain.blocks[2].def.name, "EQ");
-    assert_eq!(chain.blocks[3].def.name, "Sends");
-    assert_eq!(chain.len(), 4);
+    assert_eq!(chain.blocks[0].def.name, "Part");
+    assert_eq!(chain.blocks[1].def.name, "Sends");
+    assert_eq!(chain.len(), 5);
 }
 
 #[test]

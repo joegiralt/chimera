@@ -1,8 +1,5 @@
 use crate::addr::{BlockRef, Blocks, Op, ParamAddr};
 use crate::block::ParamId;
-use crate::dsp::chorus::ChorusParams;
-use crate::dsp::delay::DelayParams;
-use crate::dsp::reverb::ReverbParams;
 use crate::params::{DriveParams, EnvParams, FilterParams, FmOpParams, FmParams, FolderParams, OutParams};
 use crate::ui::chain::ChainNav;
 
@@ -70,16 +67,11 @@ pub enum CellIcon {
     FeedbackWave,
 }
 
-/// Pages still driven by `PageId`: Mixer, System and Demo (spec §5).
-/// Part-chain pages are identified by `PageKey::Part` and driven by their
+/// Pages still driven by `PageId`: System and Demo (spec §5). Part- and
+/// Mixer-chain pages are identified by `PageKey::Part` and driven by their
 /// `BlockDef` slot bindings (`ui::part_page`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PageId {
-    Mixer,
-    Chorus,
-    Delay,
-    MixReverb,
-    Master,
     /// Standalone envelope pages (not reachable from any chain today).
     EnvAmp,
     EnvFilter,
@@ -96,11 +88,11 @@ pub enum PageId {
 /// Page identity for the renderer and dirty-region tracking (spec §5).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PageKey {
-    /// A Part-chain page by `BlockDef::id` (defs like FILTER are shared
-    /// across chains), with the FM operator selection so a selection change
-    /// redraws the page.
+    /// A slot-bound page (Part or Mixer chain) by `BlockDef::id` (defs like
+    /// FILTER are shared across chains), with the FM operator selection so a
+    /// selection change redraws the page.
     Part { def: u16, op: Op },
-    /// Mixer/System/Demo pages.
+    /// System/Demo pages.
     Legacy(PageId),
 }
 
@@ -115,18 +107,11 @@ impl PageKey {
 
 impl PageId {
     /// The legacy page at the current navigation position; `None` on a
-    /// Part chain (see `PageKey::from_nav`).
+    /// slot-bound Part or Mixer chain (see `PageKey::from_nav`).
     pub fn from_nav(nav: &ChainNav) -> Option<Self> {
         use crate::ui::chain::ChainId;
         Some(match nav.chain_id {
-            ChainId::Part(_) => return None,
-            ChainId::Mixer(_) => match nav.node {
-                0 => PageId::Mixer,
-                1 => PageId::Chorus,
-                2 => PageId::Delay,
-                3 => PageId::MixReverb,
-                _ => PageId::Master,
-            },
+            ChainId::Part(_) | ChainId::Mixer(_) => return None,
             ChainId::System => PageId::System,
             ChainId::Demo => match nav.node {
                 0 => PageId::DemoWaves,
@@ -146,10 +131,6 @@ impl PageId {
             PageId::EnvAmp => at(B::AmpEnv, &ENV_PAGE),
             PageId::EnvFilter => at(B::FilterEnv, &ENV_PAGE),
             PageId::EnvAux => at(B::AuxEnv, &ENV_PAGE),
-            PageId::Mixer | PageId::Master => at(B::Out, &OUT_PAGE),
-            PageId::Chorus => at(B::Chorus, &CHORUS_PAGE),
-            PageId::Delay => at(B::Delay, &DELAY_PAGE),
-            PageId::MixReverb => at(B::Reverb, &REVERB_PAGE),
             PageId::DemoWaves => DEMO_WAVES.get(idx).copied(),
             PageId::DemoShapes => DEMO_SHAPES.get(idx).copied(),
             PageId::DemoMotion => DEMO_MOTION.get(idx).copied(),
@@ -160,13 +141,10 @@ impl PageId {
 
     /// Read 6 normalized (0..1) encoder values from params for this page.
     pub fn read_values(&self, params: &impl Blocks) -> [f32; 6] {
-        core::array::from_fn(|i| match (self, i) {
-            // Mixer bars for the unbound VOICES and PITCH slots.
-            (PageId::Mixer, 2 | 4) => 0.5,
-            _ => self
-                .binding(i)
+        core::array::from_fn(|i| {
+            self.binding(i)
                 .and_then(|a| Some(params.block(a.block)?.normalized(a.param)))
-                .unwrap_or(0.0),
+                .unwrap_or(0.0)
         })
     }
 
@@ -197,28 +175,6 @@ const ENV_PAGE: [ParamId; 6] = [
     EnvParams::RELEASE,
     EnvParams::LEVEL,
     EnvParams::VEL_SENS,
-];
-const OUT_PAGE: [ParamId; 2] = [OutParams::VOLUME, OutParams::PAN];
-const CHORUS_PAGE: [ParamId; 4] = [
-    ChorusParams::MODE,
-    ChorusParams::RATE,
-    ChorusParams::DEPTH,
-    ChorusParams::MIX,
-];
-const DELAY_PAGE: [ParamId; 6] = [
-    DelayParams::TIME_MS,
-    DelayParams::FEEDBACK,
-    DelayParams::WOW_FLUTTER,
-    DelayParams::SATURATION,
-    DelayParams::TONE,
-    DelayParams::MIX,
-];
-const REVERB_PAGE: [ParamId; 5] = [
-    ReverbParams::REVERB_TYPE,
-    ReverbParams::TIME,
-    ReverbParams::DAMPING,
-    ReverbParams::SIZE,
-    ReverbParams::MIX,
 ];
 
 /// Demo pages borrow params from several blocks (spec §5: `envelopes[1]` is

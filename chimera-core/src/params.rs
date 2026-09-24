@@ -524,7 +524,7 @@ impl ParamSnapshot {
 
 /// The one exhaustive dispatch from a block address to a Sound's values
 /// (spec §2). UI and modulation go through this; DSP reads fields. The FX
-/// belong to the Performance, not the Sound.
+/// and the mix settings belong to the Performance and Part, not the Sound.
 impl Blocks for ParamSnapshot {
     fn block(&self, b: BlockRef) -> Option<&dyn Block> {
         Some(match b {
@@ -540,7 +540,7 @@ impl Blocks for ParamSnapshot {
             BlockRef::AuxEnv => &self.envelopes[2],
             BlockRef::Lfo => &self.lfo,
             BlockRef::Out => &self.out,
-            BlockRef::Chorus | BlockRef::Delay | BlockRef::Reverb => return None,
+            BlockRef::Chorus | BlockRef::Delay | BlockRef::Reverb | BlockRef::Part => return None,
         })
     }
 
@@ -558,7 +558,7 @@ impl Blocks for ParamSnapshot {
             BlockRef::AuxEnv => &mut self.envelopes[2],
             BlockRef::Lfo => &mut self.lfo,
             BlockRef::Out => &mut self.out,
-            BlockRef::Chorus | BlockRef::Delay | BlockRef::Reverb => return None,
+            BlockRef::Chorus | BlockRef::Delay | BlockRef::Reverb | BlockRef::Part => return None,
         })
     }
 }

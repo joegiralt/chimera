@@ -1,0 +1,147 @@
+//! Mixer chain (instrument-core spec § UI): MIX + B<n> opens Part n's PART
+//! and SENDS pages and the shared FX pages, all bound through slot bindings.
+
+use chimera_core::addr::{BlockRef, Op, ParamAddr};
+use chimera_core::part::{DacPair, PartMode, PartParams};
+use chimera_core::preset::Performance;
+use chimera_core::ui::block_def::{BlockDef, SlotBinding};
+use chimera_core::ui::block_registry as reg;
+use chimera_core::ui::page::PageKey;
+use chimera_core::ui::{part_page, UiState};
+use chimera_hal::{ButtonId, ButtonState, Controls, EncoderId};
+
+struct MockControls {
+    buttons: Vec<(ButtonId, ButtonState)>,
+    encoders: Vec<(EncoderId, i8)>,
+}
+
+impl MockControls {
+    fn new() -> Self {
+        Self { buttons: Vec::new(), encoders: Vec::new() }
+    }
+    fn button(mut self, id: ButtonId, state: ButtonState) -> Self {
+        self.buttons.push((id, state));
+        self
+    }
+    fn encoder(mut self, id: EncoderId, delta: i8) -> Self {
+        self.encoders.push((id, delta));
+        self
+    }
+}
+
+impl Controls for MockControls {
+    fn button_state(&self, id: ButtonId) -> ButtonState {
+        self.buttons.iter().find(|b| b.0 == id).map_or(ButtonState::Up, |b| b.1)
+    }
+    fn encoder_delta(&self, id: EncoderId) -> i8 {
+        self.encoders.iter().find(|e| e.0 == id).map_or(0, |e| e.1)
+    }
+}
+
+fn open_mixer(ui: &mut UiState, b: ButtonId) {
+    ui.handle_input(&MockControls::new().button(ButtonId::Mix, ButtonState::Held).button(b, ButtonState::Pressed));
+}
+
+fn turn(ui: &mut UiState, enc: EncoderId, delta: i8) {
+    ui.handle_input(&MockControls::new().encoder(enc, delta));
+}
+
+#[test]
+fn mixer_chain_is_part_sends_and_fx() {
+    let names: Vec<&str> = reg::MIXER_CHANNEL_CHAIN.blocks.iter().map(|b| b.def.name).collect();
+    assert_eq!(names, ["Part", "Sends", "Chorus", "Delay", "Reverb"]);
+}
+
+/// Every slot on the Mixer chain is bound to a real spec: no Legacy slot is
+/// left to edit the wrong block.
+#[test]
+fn every_mixer_slot_is_bound() {
+    for block in reg::MIXER_CHANNEL_CHAIN.blocks {
+        for (i, slot) in block.def.params.iter().enumerate() {
+            match slot.binding {
+                SlotBinding::Empty => {}
+                SlotBinding::Param(a) => assert!(a.spec().is_some(), "{} slot {i}", block.def.name),
+                other => panic!("{} slot {i}: {other:?}", block.def.name),
+            }
+        }
+    }
+}
+
+#[test]
+fn part_page_binds_channel_mode_output_level_pan() {
+    let at = |i: usize| match reg::PART.params[i].binding {
+        SlotBinding::Param(a) => a,
+        other => panic!("slot {i}: {other:?}"),
+    };
+    let ids = [PartParams::CHANNEL, PartParams::MODE, PartParams::OUTPUT, PartParams::LEVEL, PartParams::PAN];
+    for (i, id) in ids.into_iter().enumerate() {
+        assert_eq!(at(i), ParamAddr::new(BlockRef::Part, id));
+    }
+}
+
+/// MIX + B2 selects Part 2 and its encoders edit Part 2's mix settings.
+#[test]
+fn mix_b2_edits_part_2() {
+    let mut ui = UiState::new();
+    open_mixer(&mut ui, ButtonId::B2);
+    assert_eq!(ui.active_part, 1);
+    assert!(matches!(ui.page(), PageKey::Part { def: 27, .. }));
+    turn(&mut ui, EncoderId::A, 3); // CH 1 → 4
+    turn(&mut ui, EncoderId::B, -1); // Poly → Mono
+    turn(&mut ui, EncoderId::C, 2); // P1 → P3
+    turn(&mut ui, EncoderId::D, -8); // level
+    let m = &ui.performance.parts[1].mix;
+    assert_eq!((m.channel.get(), m.mode, m.output), (4, PartMode::Mono, DacPair::P3));
+    assert_eq!(m.level, 0.8 - 8.0 / 128.0);
+    assert_eq!(ui.performance.parts[0].mix, PartParams::for_part(0), "part 1 untouched");
+}
+
+#[test]
+fn sends_page_edits_the_part_sends() {
+    let mut ui = UiState::new();
+    open_mixer(&mut ui, ButtonId::B3);
+    ui.handle_input(&MockControls::new().button(ButtonId::Plus, ButtonState::Pressed)); // → SENDS
+    turn(&mut ui, EncoderId::C, 64); // reverb send
+    assert_eq!(ui.performance.parts[2].mix.sends, [0.0, 0.0, 0.5]);
+}
+
+fn turn_def(def: &BlockDef, slot: usize, delta: i8, perf: &mut Performance) {
+    part_page::apply_encoder(def, slot, delta, &mut perf.edit(0), &mut Op::A);
+}
+
+/// FX pages keep the old encoder steps and edit the Performance's FX.
+#[test]
+fn fx_encoders_step_like_before() {
+    let mut perf = Performance::new();
+    turn_def(&reg::DELAY, 0, 2, &mut perf);
+    assert_eq!(perf.fx.delay.time_ms, 375.0 + 2.0 * 8.0);
+    turn_def(&reg::CHORUS, 0, 5, &mut perf);
+    assert_eq!(perf.fx.chorus.mode, 3);
+    turn_def(&reg::EFX, 0, 5, &mut perf);
+    assert_eq!(perf.fx.reverb.reverb_type, 2);
+    turn_def(&reg::EFX, 4, -1, &mut perf);
+    assert_eq!(perf.fx.reverb.mix, 0.0);
+    turn_def(&reg::EFX, 4, 1, &mut perf);
+    assert_eq!(perf.fx.reverb.mix, 1.0 / 128.0);
+    part_page::snap_encoder(&reg::DELAY, 5, 1, &mut perf.edit(0), Op::A);
+    assert_eq!(perf.fx.delay.mix, 100.0 / 127.0);
+}
+
+/// One FX set for every Part: an edit from part 1 is what part 4 shows.
+#[test]
+fn fx_are_shared_across_parts() {
+    let mut perf = Performance::new();
+    turn_def(&reg::DELAY, 0, 2, &mut perf);
+    let shown = part_page::read_values(&reg::DELAY, &perf.edit(3), Op::A)[0];
+    assert_eq!(shown, (391.0 - 10.0) / (500.0 - 10.0));
+}
+
+/// ADR 0010: mix settings are not modulatable, so MIX + Plus primes nothing.
+#[test]
+fn priming_a_part_param_is_refused() {
+    let mut ui = UiState::new();
+    open_mixer(&mut ui, ButtonId::B1);
+    turn(&mut ui, EncoderId::D, 1); // focus LEVEL
+    ui.handle_input(&MockControls::new().button(ButtonId::Mix, ButtonState::Held).button(ButtonId::Plus, ButtonState::Pressed));
+    assert!(ui.performance.parts[0].sound.dest_registry.is_empty());
+}

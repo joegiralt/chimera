@@ -64,10 +64,13 @@ pub enum BlockRef {
     Chorus,
     Delay,
     Reverb,
+    /// A Part's mix settings (`PartParams`): channel, mode, output, level,
+    /// pan, sends.
+    Part,
 }
 
 impl BlockRef {
-    pub const ALL: [BlockRef; 18] = [
+    pub const ALL: [BlockRef; 19] = [
         BlockRef::Pizza,
         BlockRef::Modal,
         BlockRef::Fm,
@@ -86,6 +89,7 @@ impl BlockRef {
         BlockRef::Chorus,
         BlockRef::Delay,
         BlockRef::Reverb,
+        BlockRef::Part,
     ];
 
     /// The block type's spec table (static; no instance needed).
@@ -104,6 +108,7 @@ impl BlockRef {
             BlockRef::Chorus => &crate::dsp::chorus::CHORUS_SPECS,
             BlockRef::Delay => &crate::dsp::delay::DELAY_SPECS,
             BlockRef::Reverb => &crate::dsp::reverb::REVERB_SPECS,
+            BlockRef::Part => &crate::part::PART_SPECS,
         }
     }
 
@@ -126,7 +131,8 @@ impl BlockRef {
             | BlockRef::Lfo
             | BlockRef::Chorus
             | BlockRef::Delay
-            | BlockRef::Reverb => false,
+            | BlockRef::Reverb
+            | BlockRef::Part => false,
         }
     }
 }
