@@ -960,7 +960,7 @@ impl Renderer {
     pub const BROWSER_TOTAL_ENTRIES: usize = crate::preset::POOL_SIZE + 3;
 
     /// Draw the full-screen sound browser overlay.
-    pub fn draw_patch_browser<D>(
+    pub fn draw_sound_browser<D>(
         display: &mut D,
         pool: &crate::preset::SoundPool,
         part: usize,
@@ -975,9 +975,9 @@ impl Renderer {
         let _ = Rectangle::new(Point::zero(), Size::new(240, 320))
             .draw_styled(&PrimitiveStyle::with_fill(theme::BG), display);
 
-        // Title bar: "LOAD PATCH: B[n]"
+        // Title bar: "LOAD SOUND: P[n]" (the Part it loads into)
         let mut title_buf = FmtBuf::new();
-        let _ = write!(title_buf, "LOAD PATCH: B{}", part + 1);
+        let _ = write!(title_buf, "LOAD SOUND: P{}", part + 1);
         let title_style = MonoTextStyle::new(&FONT_6X10, theme::ACCENT);
         let _ = Text::new(title_buf.as_str(), Point::new(8, theme::HEADER_Y + 10), title_style)
             .draw(display);
