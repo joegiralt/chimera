@@ -7,7 +7,7 @@ use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::primitives::{Line, PrimitiveStyle, Rectangle, StyledDrawable};
 use embedded_graphics::text::Text;
 
-use crate::addr::Op;
+use crate::addr::{BlockRef, Op, ParamAddr};
 use crate::ui::animation::AnimatedValue;
 use crate::ui::block_def::{slot_addr, BlockDef, VizType};
 use crate::ui::cell;
@@ -18,6 +18,7 @@ use crate::ui::fmt::{self, FmtBuf};
 use crate::ui::page::PageLayout;
 use crate::ui::perf::PerfStats;
 use crate::ui::region::RegionKind;
+use crate::part::PartParams;
 use crate::ui::theme;
 
 use core::fmt::Write;
@@ -519,7 +520,10 @@ impl Renderer {
 
     // ── Mixer ───────────────────────────────────────────────────────
 
-    fn draw_mixer_viz<D>(&self, display: &mut D)
+    /// Level and pan come from the page's Part LEVEL and PAN slots (the
+    /// PART page: CH, MODE, OUT, LEVEL, PAN); a page without them (the
+    /// legacy MIXER: VOL, PAN, …) keeps slots 0 and 1.
+    fn draw_mixer_viz<D>(&self, display: &mut D, def: &BlockDef)
     where
         D: DrawTarget<Color = Rgb565>,
     {
@@ -528,8 +532,12 @@ impl Renderer {
         let y1 = theme::VIZ_BOTTOM - 8;
         let h = y1 - y0;
 
-        let vol = self.anim[0].current();
-        let pan = self.anim[1].current(); // 0=L, 0.5=C, 1=R
+        let slot = |id, legacy: usize| {
+            let addr = ParamAddr::new(BlockRef::Part, id);
+            (0..def.params.len()).find(|&i| slot_addr(def, i, Op::A) == Some(addr)).unwrap_or(legacy)
+        };
+        let vol = self.anim[slot(PartParams::LEVEL, 0)].current();
+        let pan = self.anim[slot(PartParams::PAN, 1)].current(); // 0=L, 0.5=C, 1=R
 
         // Channel level bars (4 channels)
         let bar_w: i32 = 20;
@@ -790,11 +798,11 @@ impl Renderer {
     }
 
     /// Dispatch to the appropriate visualization method based on `VizType`.
-    pub fn draw_viz_from_type<D>(&self, display: &mut D, viz: VizType)
+    pub fn draw_viz_from_type<D>(&self, display: &mut D, def: &BlockDef)
     where
         D: DrawTarget<Color = Rgb565>,
     {
-        match viz {
+        match def.viz {
             VizType::AlgorithmDiagram => { /* FM removed */ }
             VizType::ModalPeaks => self.draw_modal_viz(display),
             VizType::WaveformPreview => self.draw_va_viz(display),
@@ -804,7 +812,7 @@ impl Renderer {
             VizType::Adsr => self.draw_envelope_viz(display),
             VizType::FmEnvelope => self.draw_fm_envelope_viz(display),
             VizType::EffectsFlow => self.draw_efx_viz(display),
-            VizType::MixerLevels => self.draw_mixer_viz(display),
+            VizType::MixerLevels => self.draw_mixer_viz(display, def),
             VizType::RoutingMatrix => {
                 // Handled by PageLayout::Matrix path — draw_grid called with MatrixState directly.
                 // draw_viz_from_type is only called from BigViz, so this is a no-op.
@@ -830,7 +838,7 @@ impl Renderer {
 
         match def.layout {
             PageLayout::BigViz => {
-                self.draw_viz_from_type(display, def.viz);
+                self.draw_viz_from_type(display, def);
                 self.draw_params_from_def(display, def, sel_op, matrix_state);
             }
             PageLayout::CellGrid => {
@@ -878,7 +886,7 @@ impl Renderer {
                 self.draw_perf(display, perf);
             }
             RegionKind::Viz => {
-                self.draw_viz_from_type(display, def.viz);
+                self.draw_viz_from_type(display, def);
             }
             RegionKind::Params => {
                 self.draw_params_from_def(display, def, sel_op, matrix_state);
