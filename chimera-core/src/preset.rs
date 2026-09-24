@@ -149,6 +149,12 @@ pub struct Performance {
     pub fx: FxParams,
 }
 
+impl Default for Performance {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Performance {
     pub fn new() -> Self {
         Self {
