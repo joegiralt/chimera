@@ -49,3 +49,15 @@ Recorded when `u8g2-fonts` was added (UI refresh plan); the decision above is un
 
 Sources: https://github.com/olikraus/u8g2/blob/master/LICENSE,
 https://github.com/olikraus/u8g2/wiki/fntgrplogisoso
+
+Measured cost (release firmware, `llvm-size -A`, UI refresh final task —
+removing `cell.rs`, `CellIcon` and the dead pre-Direction-A theme constants;
+the fonts and the rest of Direction A were already in place from earlier
+tasks in this plan): `.text` 172 360 → 172 072 B (−288 B), `.rodata`
+48 056 → 46 960 B (−1 096 B); `.text` + `.rodata` −1 384 B overall. `.data`
+and `.bss` unchanged at 40 696 B / 156 844 B. Font data (all five faces)
+is 10 253 B — logisoso42 4 625, logisoso20 2 226, helvB10 1 333, helvR08
+1 041, helvB08 1 028 — within the 16 KB budget. AXI: 511 440 B of
+524 288 B resident, 12 848 B headroom (`memory_budget_test::axi_residents_fit`),
+unchanged by this task; `UiState` besides its `Performance`/`SoundPool` is
+1 120 B (`ui_state_fits_the_ui_reserve`), also unchanged.

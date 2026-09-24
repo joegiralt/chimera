@@ -1,9 +1,7 @@
 //! Screen goldens (UI refresh spec § Testing): one FNV-1a hash per screen.
 //!
-//! A case is `Pending` until the task that converts its page type to
-//! Direction A records it; from then on it is `Locked` and must match
-//! bit-for-bit. Re-record a Locked case ONLY in a task whose text names that
-//! case as an intended change:
+//! Every case must match bit-for-bit. Re-record a case ONLY for a change
+//! that is meant to alter that screen, in the commit that makes it:
 //!
 //!     SCREEN_RECORD=1 cargo test -p chimera-core --test screen_golden_test -- --nocapture
 //!
@@ -15,28 +13,19 @@ mod screen;
 
 use screen::*;
 
-#[derive(Clone, Copy, Debug)]
-enum Golden {
-    /// Not yet converted: may change freely.
-    Pending,
-    /// Converted: must match.
-    Locked(u64),
-}
-use Golden::*;
-
-const GOLDENS: &[(&str, Golden)] = &[
-    ("engine_pizza", Locked(0xbf9c1f573baa9d59)),
-    ("engine_fm_alg", Locked(0x649bc08e55e64c2b)),
-    ("engine_fm_op", Locked(0x2353d264169904b3)),
-    ("bigviz_filter", Locked(0x24ef227569f308c9)),
-    ("bigviz_env", Locked(0xf22986571c209654)),
-    ("bigviz_fm_op_env", Locked(0xd64cac3d5290898e)),
-    ("mixer_part", Locked(0x3e3480eee3041370)),
-    ("mixer_sends", Locked(0xfc90ed4f83130581)),
-    ("mixer_fx_delay", Locked(0x4b5f420a1ec41f11)),
-    ("mod_matrix", Locked(0xf923780b2127813c)),
-    ("sound_browser", Locked(0x91b39fd39c530bcd)),
-    ("system", Locked(0x966235b0ff853d19)),
+const GOLDENS: &[(&str, u64)] = &[
+    ("engine_pizza", 0xbf9c1f573baa9d59),
+    ("engine_fm_alg", 0x649bc08e55e64c2b),
+    ("engine_fm_op", 0x2353d264169904b3),
+    ("bigviz_filter", 0x24ef227569f308c9),
+    ("bigviz_env", 0xf22986571c209654),
+    ("bigviz_fm_op_env", 0xd64cac3d5290898e),
+    ("mixer_part", 0x3e3480eee3041370),
+    ("mixer_sends", 0xfc90ed4f83130581),
+    ("mixer_fx_delay", 0x4b5f420a1ec41f11),
+    ("mod_matrix", 0xf923780b2127813c),
+    ("sound_browser", 0x91b39fd39c530bcd),
+    ("system", 0x966235b0ff853d19),
 ];
 
 #[test]
@@ -50,15 +39,13 @@ fn every_case_has_a_golden_entry() {
 fn screen_goldens_match() {
     let record = std::env::var_os("SCREEN_RECORD").is_some();
     let mut failures = Vec::new();
-    for &(name, golden) in GOLDENS {
+    for &(name, want) in GOLDENS {
         let hash = render(name).hash();
         if record {
-            println!("    (\"{name}\", Locked(0x{hash:016x})),");
+            println!("    (\"{name}\", 0x{hash:016x}),");
             continue;
         }
-        if let Locked(want) = golden
-            && hash != want
-        {
+        if hash != want {
             failures.push(format!("{name}: 0x{hash:016x} (want 0x{want:016x})"));
         }
     }

@@ -2,7 +2,6 @@ pub mod animation;
 pub mod block_def;
 pub mod block_registry;
 pub mod browser;
-pub mod cell;
 pub mod chain;
 pub mod components;
 pub mod draw;
