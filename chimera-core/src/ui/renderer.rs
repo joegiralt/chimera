@@ -179,7 +179,7 @@ impl Renderer {
     where
         D: DrawTarget<Color = Rgb565>,
     {
-        let _ = Rectangle::new(Point::zero(), Size::new(240, 320))
+        let _ = Rectangle::new(Point::zero(), Size::new(theme::SCREEN_W as u32, theme::SCREEN_H as u32))
             .draw_styled(&PrimitiveStyle::with_fill(theme::BG), display);
         for &(kind, _, _) in region::layout_regions(f.def.layout) {
             self.draw_region_with_def(display, kind, f);

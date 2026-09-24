@@ -78,6 +78,17 @@ where
     let _ = Line::new(Point::new(x0, y0), Point::new(x1, y1)).draw_styled(&PrimitiveStyle::with_stroke(color, width), d);
 }
 
+/// A viz accent line: the spec's 1.5-px line rounded up to 2 px, since the
+/// display has no anti-aliasing. Two adjacent 1-px strokes, the second one
+/// row below, so the extra pixel stays inside the band under the curve.
+pub fn thick_line<D>(d: &mut D, x0: i32, y0: i32, x1: i32, y1: i32, color: Rgb565)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    line(d, x0, y0, x1, y1, color, 1);
+    line(d, x0, y0 + 1, x1, y1 + 1, color, 1);
+}
+
 /// Filled circle of radius `r` centred on (cx, cy).
 pub fn dot<D>(d: &mut D, cx: i32, cy: i32, r: i32, color: Rgb565)
 where

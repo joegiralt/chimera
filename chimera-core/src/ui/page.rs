@@ -10,7 +10,7 @@ pub use crate::block::ValFmt;
 pub enum PageLayout {
     /// One large visualization + 3x2 parameter grid below.
     BigViz,
-    /// 3x2 grid of independent cells, each with its own mini icon.
+    /// Focus band, viz band, and a 3x2 grid of independent parameter cells.
     CellGrid,
     /// Mod matrix grid — source×destination routing table.
     Matrix,

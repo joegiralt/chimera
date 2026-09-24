@@ -100,7 +100,7 @@ fn a_wide_matrix_scrolls_with_the_cursor() {
     assert_eq!(fb.at(x - 14, y), theme::ACCENT, "cursor in the last visible column");
 }
 
-/// PRE-FLIGHT ruling: the stats line must not overflow the 32-byte `FmtBuf`
+/// The stats line must not overflow the 32-byte `FmtBuf`
 /// at the worst case — `MAX_MOD_SOURCES` × `MAX_DESTS` routes, `MAX_DESTS`
 /// of `MAX_DESTS` destinations. The original `"{} OF {} DESTINATIONS"`
 /// wording produced `"128 ROUTES   16 OF 16 DESTINATIONS"` (34 bytes),
