@@ -22,6 +22,7 @@ use crate::mod_path::LABEL_LEN;
 use crate::modulation::{ModState, MAX_MOD_SOURCES};
 use crate::params::{EnvParams, ParamSnapshot};
 use crate::preset::{Performance, SoundPool, POOL_SIZE};
+use crate::scope::SCOPE_LEN;
 use block_def::slot_addr;
 use chain::{ChainId, ChainNav};
 use mod_grid::MatrixState;
@@ -445,8 +446,21 @@ impl UiState {
         // Force nav region redraw while scroll is animating
     }
 
-    /// Render full screen to a display.
+    /// Render full screen to a display, with live output from the scope buffer.
     pub fn render<D>(&self, display: &mut D, perf: &PerfStats)
+    where
+        D: embedded_graphics::draw_target::DrawTarget<
+                Color = embedded_graphics::pixelcolor::Rgb565,
+            >,
+    {
+        let mut scope = [0.0f32; SCOPE_LEN];
+        crate::scope::read_samples(&mut scope);
+        self.render_with_scope(display, perf, &scope);
+    }
+
+    /// Render full screen with `scope` as the live output (tests pass a
+    /// fixed buffer so screen goldens are deterministic).
+    pub fn render_with_scope<D>(&self, display: &mut D, perf: &PerfStats, scope: &[f32; SCOPE_LEN])
     where
         D: embedded_graphics::draw_target::DrawTarget<
                 Color = embedded_graphics::pixelcolor::Rgb565,
@@ -457,7 +471,7 @@ impl UiState {
             return;
         }
         let def = self.nav.active_block_def();
-        self.renderer.draw_with_def(display, &self.nav, def, perf, &self.matrix_state, self.sel_op);
+        self.renderer.draw_with_def(display, &self.nav, def, perf, &self.matrix_state, self.sel_op, scope);
     }
 
     /// Prime the region set after an initial full render, so render_dirty
@@ -497,6 +511,22 @@ impl UiState {
         &mut self,
         display: &mut D,
         perf: &PerfStats,
+    ) -> [(u16, u16); region::MAX_REGIONS]
+    where
+        D: embedded_graphics::draw_target::DrawTarget<Color = embedded_graphics::pixelcolor::Rgb565>
+            + chimera_hal::ChimeraDisplay,
+    {
+        let mut scope = [0.0f32; SCOPE_LEN];
+        crate::scope::read_samples(&mut scope);
+        self.render_dirty_with_scope(display, perf, &scope)
+    }
+
+    /// `render_dirty` with `scope` as the live output.
+    pub fn render_dirty_with_scope<D>(
+        &mut self,
+        display: &mut D,
+        perf: &PerfStats,
+        scope: &[f32; SCOPE_LEN],
     ) -> [(u16, u16); region::MAX_REGIONS]
     where
         D: embedded_graphics::draw_target::DrawTarget<Color = embedded_graphics::pixelcolor::Rgb565>
@@ -566,7 +596,7 @@ impl UiState {
         if layout == PageLayout::CellGrid {
             let fb = display.pixel_buffer();
             renderer::Renderer::clear_region_fb(fb, theme::SCOPE_TOP as u16, theme::SCOPE_BOTTOM as u16);
-            renderer::Renderer::draw_scope(display);
+            renderer::Renderer::draw_scope(display, scope);
             if flush_count < flush_list.len() {
                 flush_list[flush_count] = (theme::SCOPE_TOP as u16, theme::SCOPE_BOTTOM as u16);
                 flush_count += 1;

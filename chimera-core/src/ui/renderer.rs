@@ -826,7 +826,8 @@ impl Renderer {
     // ── BlockDef-based full render ─────────────────────────────────────
 
     /// Render full screen using a `BlockDef` for layout, viz, and params.
-    pub fn draw_with_def<D>(&self, display: &mut D, nav: &ChainNav, def: &BlockDef, perf: &PerfStats, matrix_state: &MatrixState, sel_op: Op)
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_with_def<D>(&self, display: &mut D, nav: &ChainNav, def: &BlockDef, perf: &PerfStats, matrix_state: &MatrixState, sel_op: Op, scope: &[f32; crate::scope::SCOPE_LEN])
     where
         D: DrawTarget<Color = Rgb565>,
     {
@@ -858,7 +859,7 @@ impl Renderer {
 
         // Oscilloscope strip — on CellGrid pages, between cells and dungeon map
         if def.layout == PageLayout::CellGrid {
-            Self::draw_scope(display);
+            Self::draw_scope(display, scope);
         }
 
         dungeon_map::draw(display, nav, (self.branch_scroll.current() * theme::BRANCH_LINE_HEIGHT as f32) as i32);
@@ -1070,7 +1071,7 @@ impl Renderer {
     // ── Oscilloscope ────────────────────────────────────────────────
 
     /// Draw a waveform scope strip showing end-of-chain audio.
-    pub fn draw_scope<D>(display: &mut D)
+    pub fn draw_scope<D>(display: &mut D, buf: &[f32; crate::scope::SCOPE_LEN])
     where
         D: DrawTarget<Color = Rgb565>,
     {
@@ -1087,10 +1088,6 @@ impl Renderer {
         // Center line (zero crossing)
         let _ = Line::new(Point::new(x0, cy), Point::new(x0 + w - 1, cy))
             .draw_styled(&PrimitiveStyle::with_stroke(theme::VIZ_GRID, 1), display);
-
-        // Read scope buffer
-        let mut buf = [0.0f32; crate::scope::SCOPE_LEN];
-        crate::scope::read_samples(&mut buf);
 
         // Auto-scale: find peak amplitude and scale to fill display
         let mut peak = 0.0f32;
