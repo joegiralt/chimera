@@ -98,6 +98,18 @@ where
     draw::arc_gauge(d, theme::ARC_CX, theme::ARC_CY, theme::ARC_R, theme::ARC_WIDTH, value, bipolar, theme::FAINT, theme::ACCENT);
 }
 
+/// Mod matrix focus band: the selected route `SOURCE → DEST` and its
+/// bipolar amount.
+pub fn focus_route<D>(d: &mut D, source: &str, dest: &str, value_text: &str, value: f32)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let x = focus_label(d, source, theme::MARGIN_X) + 6;
+    let x = x + draw::arrow(d, x, theme::FOCUS_LABEL_Y, theme::MID) + 6;
+    focus_label(d, dest, x);
+    focus_value(d, value_text, value, true);
+}
+
 /// One cell of the 3×2 grid.
 pub struct Cell<'a> {
     pub label: &'a str,

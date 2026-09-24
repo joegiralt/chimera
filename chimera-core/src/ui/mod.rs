@@ -135,8 +135,19 @@ impl UiState {
     /// Recompute the page identity and jump the display to its values.
     fn enter_page(&mut self) {
         self.page = PageKey::from_nav(&self.nav, self.sel_op);
-        let values = page_values(self.page, self.nav.active_block_def(), &self.performance.edit(self.active_part), self.sel_op);
+        let values = self.display_values();
         self.renderer.snap_to_current(values);
+    }
+
+    /// The six values the display animates toward: the page's slots, and on
+    /// the mod matrix the selected route's amount in slot e.
+    fn display_values(&mut self) -> [f32; 6] {
+        let def = self.nav.active_block_def();
+        let mut values = page_values(self.page, def, &self.performance.edit(self.active_part), self.sel_op);
+        if def.layout == PageLayout::Matrix {
+            values[renderer::MATRIX_AMOUNT_SLOT] = renderer::amount_value(self.matrix_state.current_amount());
+        }
+        values
     }
 
     /// Show Part `part`'s routing in the matrix: source rows from its
@@ -395,7 +406,7 @@ impl UiState {
 
         // Read base param values
         let def = self.nav.active_block_def();
-        let mut values = page_values(self.page, def, &self.performance.edit(at), self.sel_op);
+        let mut values = self.display_values();
         let sound = &self.performance.parts[at].sound;
 
         // Apply mod offsets for display — makes bars and vizzes animate with modulation.
@@ -506,6 +517,12 @@ impl UiState {
         let (chain, node, sub) = nav_tag(&self.nav);
         match kind {
             RegionKind::Header => RegionData::header(chain, node, sub, f.perf.audio_load_pct, f.sounding),
+            RegionKind::Focus if f.def.layout == PageLayout::Matrix => RegionData::Route {
+                row: self.matrix_state.sel_row as u8,
+                col: self.matrix_state.sel_col as u8,
+                dests: self.matrix_state.num_dests as u8,
+                value: qvalues[renderer::MATRIX_AMOUNT_SLOT],
+            },
             RegionKind::Focus => RegionData::focus(self.page, f.focus as u8, qvalues[f.focus]),
             RegionKind::Viz => {
                 let (values, live) = self.renderer.viz_inputs(f);
