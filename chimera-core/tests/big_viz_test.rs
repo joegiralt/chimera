@@ -109,3 +109,49 @@ fn fm_envelope_is_reachable_and_lit() {
     settle(&mut ui);
     assert!(accent_pixels(&mut ui) > 0, "D1R segment lit");
 }
+
+/// Columns in the envelope's stage-label row (below the base line and the
+/// breakpoint dots) that hold `color`.
+fn label_columns(fb: &Fb, color: embedded_graphics::pixelcolor::Rgb565) -> Vec<i32> {
+    let base = PLOT_BASE - 8;
+    (0..W as i32).filter(|&x| (base + 4..base + 16).any(|y| fb.at(x, y) == color)).collect()
+}
+
+/// A short DEC focused next to a short ATK: the lit DEC label is drawn and
+/// the ATK label, which would run into it, is left out.
+#[test]
+fn envelope_labels_never_collide_with_the_lit_one() {
+    let mut fb = Fb::new();
+    let w = (theme::VIZ_RIGHT - theme::VIZ_LEFT) as f32;
+    viz::envelope(&mut fb, &[30.0 / w, 6.0 / w, 102.0 / w, 78.0 / w], &[0.0, 1.0, 0.6, 0.6, 0.0], &["ATK", "DEC", "SUS", "REL"], Some(1));
+    let lit = label_columns(&fb, theme::ACCENT);
+    assert!(!lit.is_empty(), "the lit label is drawn");
+    let (l, r) = (lit[0], *lit.last().unwrap());
+    let rest = label_columns(&fb, theme::MID);
+    assert!(rest.iter().all(|&x| x < l - 2 || x > r + 2), "lit {l}..={r}, others at {rest:?}");
+    assert!(!rest.is_empty(), "labels that fit are still drawn");
+}
+
+/// Across many shapes and every lit stage, the drawn label spans never
+/// overlap or touch, and the lit stage's label is always among them.
+#[test]
+fn envelope_label_spans_never_overlap() {
+    let labels = ["ATK", "DEC", "SUS", "REL"];
+    for a in (0..=120).step_by(3) {
+        for b in (0..=120).step_by(3) {
+            let xs = [12, 12 + a, 12 + a + b, 12 + a + b + 40, 228];
+            for lit in [None, Some(0), Some(1), Some(2), Some(3)] {
+                let spans = viz::stage_label_spans(&xs, &labels, lit);
+                if let Some(s) = lit {
+                    assert!(spans[s].is_some(), "lit {s} drawn at {xs:?}");
+                }
+                let drawn: Vec<(i32, i32)> = spans.iter().flatten().copied().collect();
+                for (i, p) in drawn.iter().enumerate() {
+                    for q in &drawn[i + 1..] {
+                        assert!(p.1 < q.0 || q.1 < p.0, "{p:?} vs {q:?} at {xs:?} lit {lit:?}");
+                    }
+                }
+            }
+        }
+    }
+}
