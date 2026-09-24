@@ -13,6 +13,7 @@ use crate::ui::components;
 use crate::ui::block_def::{slot_addr, BlockDef, SlotBinding, VizType};
 use crate::ui::chain::ChainNav;
 use crate::ui::mod_grid::MatrixState;
+use crate::ui::draw;
 use crate::ui::dungeon_map;
 use crate::ui::fmt::{self, FmtBuf};
 use crate::ui::page::PageLayout;
@@ -226,15 +227,7 @@ impl Renderer {
                 PageLayout::Matrix => {}
             },
             RegionKind::Cells => self.draw_cells(display, f, theme::CELL_LABEL_Y),
-            RegionKind::Grid => {
-                self.draw_header(display, f);
-                crate::ui::mod_grid::draw_grid(display, matrix_state);
-                let _ = Line::new(
-                    Point::new(0, theme::ENCODER_ZONE_BOTTOM),
-                    Point::new(theme::SCREEN_W - 1, theme::ENCODER_ZONE_BOTTOM),
-                )
-                .draw_styled(&PrimitiveStyle::with_stroke(theme::SEPARATOR, 1), display);
-            }
+            RegionKind::Grid => crate::ui::mod_grid::draw_grid(display, matrix_state),
             RegionKind::Nav => {
                 dungeon_map::draw(display, nav, (self.branch_scroll.current() * theme::BRANCH_LINE_HEIGHT as f32) as i32);
             }
@@ -246,6 +239,9 @@ impl Renderer {
     where
         D: DrawTarget<Color = Rgb565>,
     {
+        if f.def.layout == PageLayout::Matrix {
+            return self.draw_route(display, f.matrix);
+        }
         let slot = &f.def.params[f.focus];
         if slot.binding == SlotBinding::Empty {
             return;
@@ -254,6 +250,24 @@ impl Renderer {
         let mut buf = FmtBuf::new();
         fmt::fmt_val(&mut buf, v, slot.format());
         components::focus_band(display, slot.label(), buf.as_str(), v, slot.format().is_bipolar());
+    }
+
+    /// Mod matrix focus band: the selected route; the amount lerps through
+    /// slot e's animated value (the amount encoder).
+    fn draw_route<D>(&self, display: &mut D, m: &MatrixState)
+    where
+        D: DrawTarget<Color = Rgb565>,
+    {
+        let dest = m.dests.get(m.sel_col).copied().flatten().filter(|_| m.sel_col < m.num_dests);
+        let (Some(dest), Some(src)) = (dest, m.sources.get(m.sel_row).copied().flatten()) else {
+            let label = "NO DESTINATIONS";
+            draw::text_tracked(display, &theme::FONT_VALUE, label, theme::MARGIN_X, theme::FOCUS_LABEL_Y, theme::MID, theme::LABEL_TRACKING);
+            return;
+        };
+        let v = self.anim[MATRIX_AMOUNT_SLOT].current();
+        let mut buf = FmtBuf::new();
+        crate::ui::mod_grid::fmt_amount(&mut buf, amount_of(v));
+        components::focus_route(display, src.name, crate::ui::mod_grid::dest_name(&dest), buf.as_str(), v);
     }
 
     /// The six cells, first row's labels at `top`.
@@ -424,4 +438,17 @@ fn strips_key(strips: &[viz::Strip], selected: usize) -> u32 {
         let q = (region::quantize(s.level) as u32) << 16 | region::quantize(s.pan + 1.0) as u32;
         (h ^ q).wrapping_mul(0x0100_0193)
     })
+}
+
+/// The matrix page shows the selected amount through this display slot.
+pub const MATRIX_AMOUNT_SLOT: usize = 4;
+
+/// Amount −127..127 as a 0..1 display value (0 at the centre).
+pub fn amount_value(amount: i8) -> f32 {
+    0.5 + amount as f32 / 254.0
+}
+
+/// Inverse of `amount_value`, rounded.
+pub fn amount_of(v: f32) -> i8 {
+    libm::roundf((v - 0.5) * 254.0).clamp(-127.0, 127.0) as i8
 }

@@ -46,6 +46,13 @@ pub enum RegionData {
         slot: u8,
         value: u16,
     },
+    /// The mod matrix focus band: the selected route and its animated amount.
+    Route {
+        row: u8,
+        col: u8,
+        dests: u8,
+        value: u16,
+    },
     Viz {
         page: PageKey,
         values: [u16; 6],
@@ -210,7 +217,9 @@ const CELL_GRID: [(RegionKind, u16, u16); 5] = [
 /// BigViz: header, large viz, cells, map.
 const BIG_VIZ: [(RegionKind, u16, u16); 4] =
     [(K::Header, 0, HEADER), (K::Viz, HEADER, BIG_VIZ_END), (K::Cells, BIG_VIZ_END, CELLS), (K::Nav, CELLS, SCREEN)];
-const MATRIX: [(RegionKind, u16, u16); 2] = [(K::Grid, 0, CELLS), (K::Nav, CELLS, SCREEN)];
+/// Mod matrix: header, the selected route, dot grid, map.
+const MATRIX: [(RegionKind, u16, u16); 4] =
+    [(K::Header, 0, HEADER), (K::Focus, HEADER, FOCUS), (K::Grid, FOCUS, CELLS), (K::Nav, CELLS, SCREEN)];
 
 /// The bands of `layout`, top to bottom; they tile 0..320.
 pub fn layout_regions(layout: PageLayout) -> &'static [(RegionKind, u16, u16)] {
