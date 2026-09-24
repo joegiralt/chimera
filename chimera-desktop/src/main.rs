@@ -52,9 +52,9 @@ fn main() {
         ui.handle_input(&controls);
         ui.update();
 
-        // Push params + modulation routes to the audio thread (track 0)
-        let patch = &ui.project.tracks[0].patch;
-        audio.update(&patch.params, &patch.mod_state);
+        // Push params + modulation routes to the audio thread (part 0)
+        let sound = &ui.performance.parts[0].sound;
+        audio.update(&sound.params, &sound.mod_state);
 
         // Measure render time
         let render_start = Instant::now();

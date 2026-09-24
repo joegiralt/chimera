@@ -97,11 +97,11 @@ fn main() -> ! {
     audio::init_sai1a();      // Configures SAI but does NOT enable it
 
     // Connect voice to UI params and trigger test note
-    // SAFETY: ui.project lives in main's stack frame which never returns (-> !).
-    // Track 0's patch params/mod_state outlive the audio DMA for the same reason.
+    // SAFETY: ui.performance lives in main's stack frame which never returns (-> !).
+    // Part 0's sound params/mod_state outlive the audio DMA for the same reason.
     unsafe { audio::init_voice(
-        &ui.project.tracks[0].patch.params as *const _,
-        &ui.project.tracks[0].patch.mod_state as *const _,
+        &ui.performance.parts[0].sound.params as *const _,
+        &ui.performance.parts[0].sound.mod_state as *const _,
     ); }
     audio::trigger_note(chimera_hal::MidiNote::A4, chimera_hal::Velocity::DEFAULT);
 

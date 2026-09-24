@@ -12,7 +12,7 @@ use chimera_core::addr::{BlockRef, Op, ParamAddr};
 use chimera_core::mod_path::ModDestRegistry;
 use chimera_core::modulation::ModState;
 use chimera_core::params::{EngineType, FilterParams, FmOpParams, ParamSnapshot};
-use chimera_core::preset::{ChainType, Patch};
+use chimera_core::preset::{ChainType, Sound};
 use chimera_hal::BLOCK_SIZE;
 
 pub const SR: u32 = 48_000;
@@ -36,8 +36,8 @@ pub enum Case {
     FmInit,
     FmLfoCutoff,
     FmLfoOpALevel,
-    /// FM init params with the FM init patch's own `ModState`. Since Task 22
-    /// dropped the pre-wire, `Patch::init` no longer seeds any destinations,
+    /// FM init params with the FM init sound's own `ModState`. Since Task 22
+    /// dropped the pre-wire, `Sound::init` no longer seeds any destinations,
     /// so this is empty like `FmInit`'s `ModState::new()` — kept as its own
     /// case for golden continuity (the only case Task 22 re-recorded).
     FmInitPatchMod,
@@ -78,13 +78,13 @@ impl Case {
     }
 }
 
-/// Init params per engine: the chain's `Patch::init` params for the three
+/// Init params per engine: the chain's `Sound::init` params for the three
 /// real engines; defaults with `engine = Va` for Va (it has no chain).
 pub fn init_params(engine: EngineType) -> ParamSnapshot {
     match engine {
-        EngineType::Pizza => Patch::init(ChainType::PizzaPoly).params,
-        EngineType::Fm => Patch::init(ChainType::Fm).params,
-        EngineType::Modal => Patch::init(ChainType::Modal).params,
+        EngineType::Pizza => Sound::init(ChainType::PizzaPoly).params,
+        EngineType::Fm => Sound::init(ChainType::Fm).params,
+        EngineType::Modal => Sound::init(ChainType::Modal).params,
         EngineType::Va => ParamSnapshot::for_engine(EngineType::Va),
     }
 }
@@ -118,8 +118,8 @@ pub fn setup(case: Case) -> (ParamSnapshot, ModState) {
         Case::FmLfoCutoff => with_lfo(EngineType::Fm, CUTOFF),
         Case::FmLfoOpALevel => with_lfo(EngineType::Fm, OP_A_LEVEL),
         Case::FmInitPatchMod => {
-            let patch = Patch::init(ChainType::Fm);
-            (patch.params, patch.mod_state)
+            let sound = Sound::init(ChainType::Fm);
+            (sound.params, sound.mod_state)
         }
         Case::ModalInit => (init_params(EngineType::Modal), ModState::new()),
         Case::ModalLfoCutoff => with_lfo(EngineType::Modal, CUTOFF),

@@ -21,7 +21,7 @@ use crate::addr::{BlockRef, Op, ParamAddr};
 use crate::mod_path::LABEL_LEN;
 use crate::modulation::{ModState, MAX_MOD_SOURCES};
 use crate::params::{EnvParams, ParamSnapshot};
-use crate::preset::{Project, POOL_SIZE};
+use crate::preset::{Performance, POOL_SIZE};
 use block_def::slot_addr;
 use chain::{ChainId, ChainNav};
 use mod_grid::MatrixState;
@@ -34,7 +34,7 @@ use renderer::Renderer;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UiMode {
     Normal,
-    PatchBrowser { track: usize, cursor: usize, scroll: usize },
+    SoundBrowser { part: usize, cursor: usize, scroll: usize },
 }
 
 
@@ -42,8 +42,8 @@ pub enum UiMode {
 /// Portable across desktop and hardware — only depends on HAL traits.
 pub struct UiState {
     pub nav: ChainNav,
-    pub project: Project,
-    pub active_track: usize,
+    pub performance: Performance,
+    pub active_part: usize,
     pub renderer: Renderer,
     pub matrix_state: MatrixState,
     pub ui_mode: UiMode,
@@ -66,21 +66,21 @@ impl Default for UiState {
 impl UiState {
     pub fn new() -> Self {
         let nav = ChainNav::new();
-        let project = Project::new();
+        let performance = Performance::new();
         let page = PageKey::from_nav(&nav, Op::A);
         let mut renderer = Renderer::new();
-        renderer.snap_to_current(page_values(page, nav.active_block_def(), &project.tracks[0].patch.params, Op::A));
+        renderer.snap_to_current(page_values(page, nav.active_block_def(), &performance.parts[0].sound.params, Op::A));
 
         let mut matrix_state = MatrixState::new();
         // Source rows = what the chain's voice produces (ENV, LFO)
         matrix_state.rebuild_sources(nav.active_chain().mod_sources);
-        // Rebuild dests from the patch's ModDestRegistry
-        matrix_state.rebuild_dests_from_registry(&project.tracks[0].patch.dest_registry);
+        // Rebuild dests from the sound's ModDestRegistry
+        matrix_state.rebuild_dests_from_registry(&performance.parts[0].sound.dest_registry);
 
         Self {
             nav,
-            project,
-            active_track: 0,
+            performance,
+            active_part: 0,
             renderer,
             matrix_state,
             ui_mode: UiMode::Normal,
@@ -92,24 +92,24 @@ impl UiState {
         }
     }
 
-    /// Returns a reference to the active track's params.
+    /// Returns a reference to the active part's params.
     pub fn params(&self) -> &ParamSnapshot {
-        &self.project.tracks[self.active_track].patch.params
+        &self.performance.parts[self.active_part].sound.params
     }
 
-    /// Returns a mutable reference to the active track's params.
+    /// Returns a mutable reference to the active part's params.
     pub fn params_mut(&mut self) -> &mut ParamSnapshot {
-        &mut self.project.tracks[self.active_track].patch.params
+        &mut self.performance.parts[self.active_part].sound.params
     }
 
-    /// Returns a reference to the active track's mod state.
+    /// Returns a reference to the active part's mod state.
     pub fn mod_state(&self) -> &ModState {
-        &self.project.tracks[self.active_track].patch.mod_state
+        &self.performance.parts[self.active_part].sound.mod_state
     }
 
-    /// Returns a mutable reference to the active track's mod state.
+    /// Returns a mutable reference to the active part's mod state.
     pub fn mod_state_mut(&mut self) -> &mut ModState {
-        &mut self.project.tracks[self.active_track].patch.mod_state
+        &mut self.performance.parts[self.active_part].sound.mod_state
     }
 
     /// Current page identity.
@@ -129,10 +129,10 @@ impl UiState {
         self.renderer.snap_to_current(values);
     }
 
-    /// Rebuild a track's audio-side `ModState` from the matrix.
-    fn sync_mod_state(&mut self, track: usize) {
-        let patch = &mut self.project.tracks[track].patch;
-        patch.mod_state.sync_from_matrix(&self.matrix_state);
+    /// Rebuild a part's audio-side `ModState` from the matrix.
+    fn sync_mod_state(&mut self, part: usize) {
+        let sound = &mut self.performance.parts[part].sound;
+        sound.mod_state.sync_from_matrix(&self.matrix_state);
     }
 
     /// The address the focused encoder edits, if its slot is bound. Mixer,
@@ -167,8 +167,8 @@ impl UiState {
 
     /// Process one frame of input: navigation + encoder deltas.
     pub fn handle_input(&mut self, controls: &impl Controls) {
-        // ── Patch Browser mode input ─────────────────────────────────
-        if let UiMode::PatchBrowser { track, ref mut cursor, ref mut scroll } = self.ui_mode {
+        // ── Sound Browser mode input ─────────────────────────────────
+        if let UiMode::SoundBrowser { part, ref mut cursor, ref mut scroll } = self.ui_mode {
             let total = Renderer::BROWSER_TOTAL_ENTRIES;
             let visible = Renderer::BROWSER_VISIBLE_ROWS.min(total);
 
@@ -190,13 +190,13 @@ impl UiState {
             // Edit button: confirm selection / load
             if controls.button_state(ButtonId::Edit) == ButtonState::Pressed {
                 let sel_cursor = *cursor;
-                let sel_track = track;
+                let sel_part = part;
                 if sel_cursor < POOL_SIZE {
-                    // Load from pool — clone patch first to avoid borrow conflict
-                    if let Some(patch) = self.project.pool.get(sel_cursor) {
-                        let loaded = patch.clone();
-                        self.project.tracks[sel_track].patch = loaded;
-                        self.project.tracks[sel_track].loaded_from = Some(sel_cursor as u8);
+                    // Load from pool — clone sound first to avoid borrow conflict
+                    if let Some(sound) = self.performance.pool.get(sel_cursor) {
+                        let loaded = sound.clone();
+                        self.performance.parts[sel_part].sound = loaded;
+                        self.performance.parts[sel_part].loaded_from = Some(sel_cursor as u8);
                     }
                 } else {
                     // Init entries: POOL_SIZE=Pizza, POOL_SIZE+1=Modal, POOL_SIZE+2=FM
@@ -207,32 +207,32 @@ impl UiState {
                     ];
                     let init_idx = sel_cursor - POOL_SIZE;
                     if init_idx < init_types.len() {
-                        self.project.tracks[sel_track] = crate::preset::Track::new(init_types[init_idx]);
+                        self.performance.parts[sel_part] = crate::preset::Part::new(init_types[init_idx]);
                     }
                 }
-                // Switch to the loaded track and return to normal mode
-                self.active_track = sel_track;
-                self.nav.chain_id = ChainId::Part(sel_track);
+                // Switch to the loaded part and return to normal mode
+                self.active_part = sel_part;
+                self.nav.chain_id = ChainId::Part(sel_part);
                 self.nav.node = 0;
                 self.nav.sub_page = 0;
-                self.nav.chain_type = self.project.tracks[sel_track].patch.chain_type;
+                self.nav.chain_type = self.performance.parts[sel_part].sound.chain_type;
                 // Rebuild mod matrix sources for the new chain type
                 self.matrix_state.rebuild_sources(self.nav.active_chain().mod_sources);
                 self.matrix_state.rebuild_dests_from_registry(
-                    &self.project.tracks[sel_track].patch.dest_registry
+                    &self.performance.parts[sel_part].sound.dest_registry
                 );
                 self.enter_page();
                 self.ui_mode = UiMode::Normal;
                 return;
             }
 
-            // Seq button: save current track's patch into highlighted pool slot
+            // Seq button: save current part's sound into highlighted pool slot
             if controls.button_state(ButtonId::Seq) == ButtonState::Pressed {
                 let save_cursor = *cursor;
-                let save_track = track;
+                let save_part = part;
                 if save_cursor < POOL_SIZE {
-                    let patch = self.project.tracks[save_track].patch.clone();
-                    self.project.pool.store(save_cursor, patch);
+                    let sound = self.performance.parts[save_part].sound.clone();
+                    self.performance.pool.store(save_cursor, sound);
                 }
                 // Stay in browser mode so the user can see the saved slot
                 return;
@@ -262,7 +262,7 @@ impl UiState {
 
         // ── Normal mode ──────────────────────────────────────────────
 
-        // Edit + B1-B6: open patch browser for that track
+        // Edit + B1-B6: open sound browser for that part
         let edit_held = matches!(
             controls.button_state(ButtonId::Edit),
             ButtonState::Pressed | ButtonState::Held
@@ -274,7 +274,7 @@ impl UiState {
             ];
             for (i, &btn) in b_buttons.iter().enumerate() {
                 if controls.button_state(btn) == ButtonState::Pressed {
-                    self.ui_mode = UiMode::PatchBrowser { track: i, cursor: 0, scroll: 0 };
+                    self.ui_mode = UiMode::SoundBrowser { part: i, cursor: 0, scroll: 0 };
                     return; // consume — don't pass to navigation
                 }
             }
@@ -283,10 +283,10 @@ impl UiState {
         // Navigation
         let nav_changed = self.nav.handle_input(controls);
         if nav_changed {
-            // Update active_track when navigating to a Part
+            // Update active_part when navigating to a Part
             if let ChainId::Part(i) = self.nav.chain_id {
-                self.active_track = i;
-                self.nav.chain_type = self.project.tracks[i].patch.chain_type;
+                self.active_part = i;
+                self.nav.chain_type = self.performance.parts[i].sound.chain_type;
             }
             self.enter_page();
         }
@@ -317,20 +317,20 @@ impl UiState {
                         3 => self.matrix_state.scroll_h(delta),
                         4 => {
                             self.matrix_state.adjust_amount(delta);
-                            self.sync_mod_state(self.active_track);
+                            self.sync_mod_state(self.active_part);
                         }
                         _ => {}
                     }
                 }
             }
         } else {
-            let at = self.active_track;
+            let at = self.active_part;
             for (i, &enc) in encoder_ids.iter().enumerate() {
                 let delta = controls.encoder_delta(enc);
                 if delta != 0 {
                     self.last_encoder = i;
                     self.renderer.focused = i;
-                    let params = &mut self.project.tracks[at].patch.params;
+                    let params = &mut self.performance.parts[at].sound.params;
                     match (self.page, shift) {
                         (PageKey::Part { .. }, true) => part_page::snap_encoder(def, i, delta, params, self.sel_op),
                         (PageKey::Part { .. }, false) => part_page::apply_encoder(def, i, delta, params, &mut self.sel_op),
@@ -344,23 +344,23 @@ impl UiState {
 
             // MIX + Plus/Minus: prime/un-prime parameter for modulation
             if shift {
-                let at = self.active_track;
+                let at = self.active_part;
                 if controls.button_state(ButtonId::Plus) == ButtonState::Pressed {
                     // Unbound slots prime nothing; non-modulatable params are refused.
                     if let Some(addr) = self.current_param_addr() {
                         let label = self.mod_label(addr);
-                        let _ = self.project.tracks[at].patch.dest_registry.add(addr, label);
+                        let _ = self.performance.parts[at].sound.dest_registry.add(addr, label);
                         self.matrix_state.rebuild_dests_from_registry(
-                            &self.project.tracks[at].patch.dest_registry
+                            &self.performance.parts[at].sound.dest_registry
                         );
                         self.sync_mod_state(at);
                     }
                 }
                 if controls.button_state(ButtonId::Minus) == ButtonState::Pressed {
                     if let Some(addr) = self.current_param_addr() {
-                        self.project.tracks[at].patch.dest_registry.remove(addr);
+                        self.performance.parts[at].sound.dest_registry.remove(addr);
                         self.matrix_state.rebuild_dests_from_registry(
-                            &self.project.tracks[at].patch.dest_registry
+                            &self.performance.parts[at].sound.dest_registry
                         );
                         self.sync_mod_state(at);
                     }
@@ -372,16 +372,16 @@ impl UiState {
     /// Advance animations. Call at UI_FPS (~20fps).
     pub fn update(&mut self) {
 
-        let at = self.active_track;
-        let patch = &self.project.tracks[at].patch;
+        let at = self.active_part;
+        let sound = &self.performance.parts[at].sound;
 
         // Read base param values
         let def = self.nav.active_block_def();
-        let mut values = page_values(self.page, def, &patch.params, self.sel_op);
+        let mut values = page_values(self.page, def, &sound.params, self.sel_op);
 
         // Apply mod offsets for display — makes bars and vizzes animate with modulation.
         // Skip the LFO tick entirely when no modulation is active.
-        if patch.mod_state.num_dests() > 0 {
+        if sound.mod_state.num_dests() > 0 {
             // Tick the display-side LFO for visual modulation feedback.
             // LFO.process() advances phase by: rate / sample_rate * BLOCK_SIZE
             // We want phase to advance by: rate / ui_fps per call.
@@ -394,21 +394,21 @@ impl UiState {
             // sr = BLOCK_SIZE * fps. At variable fps, assume ~30.
             // If animations look too slow/fast, this constant needs tuning.
             const UI_FPS: u32 = 20; // tuned to match audio-side LFO rate
-            let lfo_val = self.display_lfo.process(&patch.params.lfo, chimera_hal::BLOCK_SIZE as u32 * UI_FPS);
+            let lfo_val = self.display_lfo.process(&sound.params.lfo, chimera_hal::BLOCK_SIZE as u32 * UI_FPS);
 
             let mut mod_sources = [0.0f32; MAX_MOD_SOURCES];
             // Source 0 = Envelope (use sustain level as approximation for display)
-            if patch.mod_state.num_sources() > 0 {
-                mod_sources[0] = patch.params.envelopes[0].normalized(EnvParams::SUSTAIN);
+            if sound.mod_state.num_sources() > 0 {
+                mod_sources[0] = sound.params.envelopes[0].normalized(EnvParams::SUSTAIN);
             }
             // Source 1 = LFO
-            if patch.mod_state.num_sources() > 1 {
+            if sound.mod_state.num_sources() > 1 {
                 mod_sources[1] = lfo_val;
             }
 
             // Apply offsets to the 6 display values
             for i in 0..6 {
-                let offset = slot_addr(def, i, self.sel_op).map_or(0.0, |a| patch.mod_state.offset_for(a, &mod_sources));
+                let offset = slot_addr(def, i, self.sel_op).map_or(0.0, |a| sound.mod_state.offset_for(a, &mod_sources));
                 if offset != 0.0 {
                     values[i] = (values[i] + offset).clamp(0.0, 1.0);
                 }
@@ -444,8 +444,8 @@ impl UiState {
                 Color = embedded_graphics::pixelcolor::Rgb565,
             >,
     {
-        if let UiMode::PatchBrowser { track, cursor, scroll } = self.ui_mode {
-            Renderer::draw_patch_browser(display, &self.project.pool, track, cursor, scroll, self.project.tracks[track].patch.chain_type);
+        if let UiMode::SoundBrowser { part, cursor, scroll } = self.ui_mode {
+            Renderer::draw_patch_browser(display, &self.performance.pool, part, cursor, scroll, self.performance.parts[part].sound.chain_type);
             return;
         }
         let def = self.nav.active_block_def();
@@ -496,11 +496,11 @@ impl UiState {
     {
         use region::{RegionData, RegionKind};
 
-        // Patch browser overlay — always full redraw, single flush region
-        if let UiMode::PatchBrowser { track, cursor, scroll } = self.ui_mode {
+        // Sound browser overlay — always full redraw, single flush region
+        if let UiMode::SoundBrowser { part, cursor, scroll } = self.ui_mode {
             let fb = display.pixel_buffer();
             Renderer::clear_region_fb(fb, 0, chimera_hal::SCREEN_HEIGHT);
-            Renderer::draw_patch_browser(display, &self.project.pool, track, cursor, scroll, self.project.tracks[track].patch.chain_type);
+            Renderer::draw_patch_browser(display, &self.performance.pool, part, cursor, scroll, self.performance.parts[part].sound.chain_type);
             // Invalidate region set so normal layout forces full rebuild on exit
             self.region_set.prev_layout = None;
             let mut flush_list = [(0u16, 0u16); region::MAX_REGIONS];

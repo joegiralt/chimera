@@ -49,7 +49,7 @@ fn prime_slot_0(ui: &mut UiState) {
 }
 
 fn primed(ui: &UiState) -> Vec<ParamAddr> {
-    let reg = &ui.project.tracks[0].patch.dest_registry;
+    let reg = &ui.performance.parts[0].sound.dest_registry;
     (0..reg.len()).filter_map(|i| reg.get(i)).map(|e| e.addr).collect()
 }
 
@@ -58,7 +58,7 @@ fn priming_on_a_part_page_registers_its_address() {
     let mut ui = UiState::new(); // Part 1, Pizza page
     prime_slot_0(&mut ui);
     assert_eq!(primed(&ui), [ParamAddr::new(BlockRef::Pizza, PizzaParams::SHAPE)]);
-    let reg = &ui.project.tracks[0].patch.dest_registry;
+    let reg = &ui.performance.parts[0].sound.dest_registry;
     assert_eq!(reg.get(0).unwrap().label_str(), "PIZSHAPE");
     assert_eq!(ui.mod_state().num_dests(), 1);
 }
@@ -104,7 +104,7 @@ fn selected_op_route_is_concrete() {
     use chimera_core::preset::POOL_SIZE;
 
     let mut ui = UiState::new();
-    // Load "(init) FM" into track 1 via the patch browser.
+    // Load "(init) FM" into part 1 via the sound browser.
     ui.handle_input(
         &MockControls::new()
             .button(ButtonId::Edit, ButtonState::Held)
@@ -128,7 +128,7 @@ fn selected_op_route_is_concrete() {
     assert_eq!(ui.selected_op(), Op::C);
     assert!(primed(&ui).contains(&fdbk_b));
     assert!(!primed(&ui).contains(&ParamAddr::new(BlockRef::FmOp(Op::C), FmOpParams::FEEDBACK)));
-    assert_eq!(ui.project.tracks[0].patch.params.fm.operators[1].feedback, 1.0);
+    assert_eq!(ui.performance.parts[0].sound.params.fm.operators[1].feedback, 1.0);
 }
 
 /// Spec §5: the FM operator selection is part of the page identity, so
@@ -137,12 +137,12 @@ fn selected_op_route_is_concrete() {
 #[test]
 fn fm_operator_selector_updates_the_page_key() {
     use chimera_core::addr::Op;
-    use chimera_core::preset::{ChainType, Track};
+    use chimera_core::preset::{ChainType, Part};
     use chimera_core::ui::block_registry as reg;
     use chimera_core::ui::page::PageKey;
 
     let mut ui = UiState::new();
-    ui.project.tracks[0] = Track::new(ChainType::Fm);
+    ui.performance.parts[0] = Part::new(ChainType::Fm);
     ui.nav.chain_type = ChainType::Fm;
     press(&mut ui, ButtonId::Edit); // sub-page 1: FM_OP
     assert_eq!(ui.page(), PageKey::Part { def: reg::FM_OP.id, op: Op::A });
@@ -150,7 +150,7 @@ fn fm_operator_selector_updates_the_page_key() {
     assert_eq!(ui.page(), PageKey::Part { def: reg::FM_OP.id, op: Op::B });
 }
 
-/// Spec §4: after loading the FM init patch the matrix rows are ENV and LFO
+/// Spec §4: after loading the FM init sound the matrix rows are ENV and LFO
 /// (they used to be "Op1 Env".."Op4 Env", of which only two produced values).
 #[test]
 fn fm_matrix_rows_are_env_and_lfo() {

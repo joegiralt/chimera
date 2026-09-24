@@ -1,4 +1,4 @@
-//! The mod destination registry: parameters a patch has primed for
+//! The mod destination registry: parameters a sound has primed for
 //! modulation, by semantic address (spec §2, §4).
 
 use crate::addr::ParamAddr;

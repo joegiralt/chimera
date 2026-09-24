@@ -66,7 +66,7 @@ fn check_no_clicks(
     );
 }
 
-// ── FM init patch (pure sine) ───────────────────────────────────────
+// ── FM init sound (pure sine) ───────────────────────────────────────
 
 #[test]
 fn test_no_clicks_fm_init() {

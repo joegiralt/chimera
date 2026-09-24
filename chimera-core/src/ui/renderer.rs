@@ -944,21 +944,21 @@ impl Renderer {
         let _ = Text::new(def.name, Point::new(x, y), bright).draw(display);
     }
 
-    // ── Patch Browser ────────────────────────────────────────────────
+    // ── Sound Browser ────────────────────────────────────────────────
 
-    /// Number of visible rows in the patch browser list.
+    /// Number of visible rows in the sound browser list.
     pub const BROWSER_VISIBLE_ROWS: usize = 10;
     /// Total entries: 32 pool slots + 3 init options (Pizza, Modal, FM).
     pub const BROWSER_TOTAL_ENTRIES: usize = crate::preset::POOL_SIZE + 3;
 
-    /// Draw the full-screen patch browser overlay.
+    /// Draw the full-screen sound browser overlay.
     pub fn draw_patch_browser<D>(
         display: &mut D,
         pool: &crate::preset::SoundPool,
-        track: usize,
+        part: usize,
         cursor: usize,
         scroll: usize,
-        track_chain_type: crate::preset::ChainType,
+        part_chain_type: crate::preset::ChainType,
     )
     where
         D: DrawTarget<Color = Rgb565>,
@@ -969,7 +969,7 @@ impl Renderer {
 
         // Title bar: "LOAD PATCH: B[n]"
         let mut title_buf = FmtBuf::new();
-        let _ = write!(title_buf, "LOAD PATCH: B{}", track + 1);
+        let _ = write!(title_buf, "LOAD PATCH: B{}", part + 1);
         let title_style = MonoTextStyle::new(&FONT_6X10, theme::ACCENT);
         let _ = Text::new(title_buf.as_str(), Point::new(8, theme::HEADER_Y + 10), title_style)
             .draw(display);
@@ -1012,8 +1012,8 @@ impl Renderer {
             if entry_idx < crate::preset::POOL_SIZE {
                 // Pool slot row: "[nn] Name  Type"
                 let mut row_buf = FmtBuf::new();
-                if let Some(patch) = pool.get(entry_idx) {
-                    let _ = write!(row_buf, "{:2} {} {}", entry_idx + 1, patch.name_str(), patch.chain_type.label());
+                if let Some(sound) = pool.get(entry_idx) {
+                    let _ = write!(row_buf, "{:2} {} {}", entry_idx + 1, sound.name_str(), sound.chain_type.label());
                 } else {
                     let _ = write!(row_buf, "{:2} (empty)", entry_idx + 1);
                 }

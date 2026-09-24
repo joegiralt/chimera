@@ -79,7 +79,7 @@ impl Voice {
     pub fn render(&mut self, output: &mut [f32; BLOCK_SIZE], params: &ParamSnapshot, mod_state: &ModState) {
         let sample_rate = self.sample_rate();
 
-        // Auto-retrigger if engine type changed (e.g., user loaded FM patch)
+        // Auto-retrigger if engine type changed (e.g., user loaded FM sound)
         if self.active && params.engine() != self.active_engine {
             self.note_on(self.last_note, self.last_velocity, params);
         }

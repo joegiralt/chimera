@@ -497,7 +497,7 @@ impl Block for OutParams {
 
 #[derive(Clone, Debug)]
 pub struct ParamSnapshot {
-    /// Private: set only through `for_engine` (and so `Patch::init`, from
+    /// Private: set only through `for_engine` (and so `Sound::init`, from
     /// `ChainType::engine`) — one source of truth for engine choice (spec §6).
     engine: EngineType,
     pub filter: FilterParams,

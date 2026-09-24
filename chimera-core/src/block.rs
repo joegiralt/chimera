@@ -66,7 +66,7 @@ pub struct ParamSpec {
     pub min: f32,
     pub max: f32,
     /// UI reset value only. Initial values come from the values struct's
-    /// `Default` and from `Patch::init`.
+    /// `Default` and from `Sound::init`.
     pub default: f32,
     /// Value change per encoder tick (today's per-page step).
     pub step: f32,
