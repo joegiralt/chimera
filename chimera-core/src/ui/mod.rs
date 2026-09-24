@@ -3,6 +3,7 @@ pub mod block_def;
 pub mod block_registry;
 pub mod cell;
 pub mod chain;
+pub mod components;
 pub mod draw;
 pub mod dungeon_map;
 pub mod fmt;
@@ -491,37 +492,46 @@ impl UiState {
             sel_op: self.sel_op,
             focus: self.focused_slot(),
             scope,
+            sounding: crate::scope::peak(scope) > crate::scope::SOUNDING_PEAK,
+        }
+    }
+
+    /// Snapshot of what region `kind` shows; a region redraws when it changes.
+    fn region_data(&self, kind: region::RegionKind, f: &renderer::Frame) -> region::RegionData {
+        use region::{RegionData, RegionKind};
+        let qvalues = region::quantize_values(&self.renderer.anim);
+        let (chain, node, sub) = nav_tag(&self.nav);
+        match kind {
+            RegionKind::Header => RegionData::header(chain, node, sub, f.perf.audio_load_pct, f.sounding),
+            RegionKind::Viz => RegionData::viz(self.page, qvalues),
+            RegionKind::Params => RegionData::params(self.page, qvalues),
+            RegionKind::Cells => RegionData::cells(self.page, qvalues, self.matrix_state.num_dests as u16),
+            RegionKind::Nav => RegionData::nav(chain, node, sub, region::quantize(self.renderer.branch_scroll.current())),
+            RegionKind::Grid => RegionData::grid_with_amount(
+                self.matrix_state.sel_row as u8,
+                self.matrix_state.sel_col as u8,
+                self.matrix_state.scroll_x as u8,
+                self.matrix_state.scroll_y as u8,
+                self.matrix_state.current_amount(),
+            ),
         }
     }
 
     /// Prime the region set after an initial full render, so render_dirty
     /// won't redundantly redraw everything on the first call.
     pub fn prime_regions(&mut self, perf: &PerfStats) {
-        use region::{RegionData, RegionKind};
-
-        let def = self.nav.active_block_def();
-        let layout = def.layout;
-        self.region_set.set_layout(layout);
-        let qvalues = region::quantize_values(&self.renderer.anim);
-        let nav_tag = nav_tag(&self.nav);
-
-        for r in self.region_set.active_regions_mut() {
-            r.prev_data = match r.kind {
-                RegionKind::Header => RegionData::header(
-                    nav_tag.0, nav_tag.1, nav_tag.2, perf.render_us,
-                ),
-                RegionKind::Viz => RegionData::viz(self.page, qvalues),
-                RegionKind::Params => RegionData::params(self.page, qvalues),
-                RegionKind::Cells => RegionData::cells(self.page, qvalues, self.matrix_state.num_dests as u16),
-                RegionKind::Nav => RegionData::nav(nav_tag.0, nav_tag.1, nav_tag.2, region::quantize(self.renderer.branch_scroll.current())),
-                RegionKind::Grid => RegionData::grid_with_amount(
-                    self.matrix_state.sel_row as u8,
-                    self.matrix_state.sel_col as u8,
-                    self.matrix_state.scroll_x as u8,
-                    self.matrix_state.scroll_y as u8,
-                    self.matrix_state.current_amount(),
-                ),
-            };
+        let mut scope = [0.0f32; SCOPE_LEN];
+        crate::scope::read_samples(&mut scope);
+        self.region_set.set_layout(self.nav.active_block_def().layout);
+        let mut data = [region::RegionData::sentinel_header(); region::MAX_REGIONS];
+        {
+            let f = self.frame(perf, &scope);
+            for (d, r) in data.iter_mut().zip(self.region_set.active_regions()) {
+                *d = self.region_data(r.kind, &f);
+            }
+        }
+        for (r, d) in self.region_set.active_regions_mut().iter_mut().zip(data) {
+            r.prev_data = d;
         }
     }
 
@@ -552,8 +562,6 @@ impl UiState {
         D: embedded_graphics::draw_target::DrawTarget<Color = embedded_graphics::pixelcolor::Rgb565>
             + chimera_hal::ChimeraDisplay,
     {
-        use region::{RegionData, RegionKind};
-
         // Sound browser overlay — always full redraw, single flush region
         if let UiMode::SoundBrowser { part, cursor, scroll } = self.ui_mode {
             let fb = display.pixel_buffer();
@@ -566,8 +574,7 @@ impl UiState {
             return flush_list;
         }
 
-        let def = self.nav.active_block_def();
-        let layout = def.layout;
+        let layout = self.nav.active_block_def().layout;
         let mut flush_list = [(0u16, 0u16); region::MAX_REGIONS];
         let mut flush_count = 0;
 
@@ -576,48 +583,23 @@ impl UiState {
             self.region_set.set_layout(layout);
         }
 
-        let qvalues = region::quantize_values(&self.renderer.anim);
-        let nav_tag = nav_tag(&self.nav);
-
-        let frame = renderer::Frame {
-            nav: &self.nav,
-            def,
-            perf,
-            matrix: &self.matrix_state,
-            sel_op: self.sel_op,
-            focus: self.focus.get(def.id),
-            scope,
-        };
-        for r in self.region_set.active_regions_mut() {
-            let current_data = match r.kind {
-                RegionKind::Header => RegionData::header(
-                    nav_tag.0, nav_tag.1, nav_tag.2, perf.render_us,
-                ),
-                RegionKind::Viz => RegionData::viz(self.page, qvalues),
-                RegionKind::Params => RegionData::params(self.page, qvalues),
-                RegionKind::Cells => RegionData::cells(self.page, qvalues, self.matrix_state.num_dests as u16),
-                RegionKind::Nav => RegionData::nav(nav_tag.0, nav_tag.1, nav_tag.2, region::quantize(self.renderer.branch_scroll.current())),
-                RegionKind::Grid => RegionData::grid_with_amount(
-                    self.matrix_state.sel_row as u8,
-                    self.matrix_state.sel_col as u8,
-                    self.matrix_state.scroll_x as u8,
-                    self.matrix_state.scroll_y as u8,
-                    self.matrix_state.current_amount(),
-                ),
-            };
-
-            if current_data != r.prev_data {
-                // Clear region via direct fb access
-                let fb = display.pixel_buffer();
-                renderer::Renderer::clear_region_fb(fb, r.y_start, r.y_end);
-
-                // Draw region using BlockDef
-                self.renderer.draw_region_with_def(display, r.kind, &frame);
-
-                r.prev_data = current_data;
-                flush_list[flush_count] = (r.y_start, r.y_end);
-                flush_count += 1;
+        let count = self.region_set.count as usize;
+        let mut data = [region::RegionData::sentinel_header(); region::MAX_REGIONS];
+        {
+            let f = self.frame(perf, scope);
+            for i in 0..count {
+                let r = self.region_set.regions[i];
+                data[i] = self.region_data(r.kind, &f);
+                if data[i] != r.prev_data {
+                    renderer::Renderer::clear_region_fb(display.pixel_buffer(), r.y_start, r.y_end);
+                    self.renderer.draw_region_with_def(display, r.kind, &f);
+                    flush_list[flush_count] = (r.y_start, r.y_end);
+                    flush_count += 1;
+                }
             }
+        }
+        for (r, d) in self.region_set.regions[..count].iter_mut().zip(data) {
+            r.prev_data = d;
         }
 
         // Scope strip — always redraws after regions (so regions can't overwrite it)

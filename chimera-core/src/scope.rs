@@ -60,3 +60,11 @@ pub fn read_samples(out: &mut [f32; SCOPE_LEN]) {
         out.copy_from_slice(&*core::ptr::addr_of!(FRONT));
     }
 }
+
+/// Largest |sample| in a scope buffer.
+pub fn peak(buf: &[f32; SCOPE_LEN]) -> f32 {
+    buf.iter().fold(0.0f32, |m, &s| m.max(if s < 0.0 { -s } else { s }))
+}
+
+/// Below this peak the output counts as silent (the header dot is off).
+pub const SOUNDING_PEAK: f32 = 1.0e-3;

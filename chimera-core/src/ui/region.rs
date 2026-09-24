@@ -35,7 +35,9 @@ pub enum RegionData {
         chain_idx: u8,
         node_idx: u8,
         sub_page: u8,
-        render_us: u32,
+        /// Audio load shown in the header (0 = not measured).
+        load_pct: u8,
+        sounding: bool,
     },
     Viz {
         page: PageKey,
@@ -66,8 +68,8 @@ pub enum RegionData {
 }
 
 impl RegionData {
-    pub fn header(chain_idx: u8, node_idx: u8, sub_page: u8, render_us: u32) -> Self {
-        Self::Header { chain_idx, node_idx, sub_page, render_us }
+    pub fn header(chain_idx: u8, node_idx: u8, sub_page: u8, load_pct: u8, sounding: bool) -> Self {
+        Self::Header { chain_idx, node_idx, sub_page, load_pct, sounding }
     }
 
     pub fn viz(page: PageKey, values: [u16; 6]) -> Self {
@@ -87,7 +89,7 @@ impl RegionData {
     }
 
     pub fn sentinel_header() -> Self {
-        Self::Header { chain_idx: 255, node_idx: 255, sub_page: 255, render_us: u32::MAX }
+        Self::Header { chain_idx: 255, node_idx: 255, sub_page: 255, load_pct: u8::MAX, sounding: false }
     }
 
     pub fn sentinel_viz() -> Self {
