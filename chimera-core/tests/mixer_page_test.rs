@@ -215,3 +215,30 @@ fn sound_browser_title_names_the_part() {
     Text::new("LOAD SOUND: P2", Point::new(8, theme::HEADER_Y + 10), style).draw(&mut want).unwrap();
     assert!(title_band(&got) == title_band(&want), "title is LOAD SOUND: P2");
 }
+
+/// The PART page shows CH as 1–16 (stored 0–15), MODE as MONO/POLY and OUT
+/// as P1/P2/P3, through each slot's value format.
+#[test]
+fn part_page_shows_channel_mode_and_output_by_name() {
+    use chimera_core::block::Block;
+    use chimera_core::ui::fmt::{fmt_val, FmtBuf};
+
+    let shown = |p: &PartParams, slot: usize| {
+        let SlotBinding::Param(a) = reg::PART.params[slot].binding else { panic!("slot {slot}") };
+        let mut buf = FmtBuf::new();
+        fmt_val(&mut buf, p.normalized(a.param), reg::PART.params[slot].format());
+        buf.as_str().to_string()
+    };
+    let mut p = PartParams::for_part(0);
+    assert_eq!([shown(&p, 0), shown(&p, 1), shown(&p, 2)], ["1", "POLY", "P1"]);
+    p.set(PartParams::CHANNEL, 15.0);
+    p.set(PartParams::MODE, 0.0);
+    p.set(PartParams::OUTPUT, 2.0);
+    assert_eq!([shown(&p, 0), shown(&p, 1), shown(&p, 2)], ["16", "MONO", "P3"]);
+    p.set(PartParams::OUTPUT, 1.0);
+    assert_eq!(shown(&p, 2), "P2");
+    // Near-integer display values (the renderer lerps) still round to a name.
+    let mut buf = FmtBuf::new();
+    fmt_val(&mut buf, 0.97, reg::PART.params[1].format());
+    assert_eq!(buf.as_str(), "POLY");
+}
