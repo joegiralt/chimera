@@ -4,13 +4,14 @@
 use chimera_hal::BLOCK_SIZE;
 use crate::block::{Block, ParamId, ParamSpec, ValFmt};
 
-/// Max delay: ~1 second at 48kHz
-const MAX_DELAY_SAMPLES: usize = 48000;
+/// 500 ms at 48 kHz plus headroom for the ±20-sample wow/flutter swing
+/// (ADR 0014: the delay's range is 10..500 ms so the FX bus fits AXI).
+const MAX_DELAY_SAMPLES: usize = 24_064;
 
 /// Tape delay parameters.
 #[derive(Clone, Copy, Debug)]
 pub struct DelayParams {
-    /// Delay time in ms (10..1000)
+    /// Delay time in ms (10..500)
     pub time_ms: f32,
     /// Feedback amount (0..1)
     pub feedback: f32,
@@ -38,6 +39,12 @@ impl Default for DelayParams {
 }
 
 impl DelayParams {
+    /// Off when the mix is below audibility; `process` passes the input
+    /// through unchanged then.
+    pub fn is_on(&self) -> bool {
+        self.mix >= 0.001
+    }
+
     pub const TIME_MS: ParamId = ParamId(0);
     pub const FEEDBACK: ParamId = ParamId(1);
     pub const WOW_FLUTTER: ParamId = ParamId(2);
@@ -48,7 +55,7 @@ impl DelayParams {
 
 /// Delay runs outside `Voice` (desktop only): nothing is modulatable.
 pub static DELAY_SPECS: [ParamSpec; 6] = [
-    ParamSpec::continuous(0, "TIME", ValFmt::Uni, 10.0, 1000.0, 375.0, 8.0, false),
+    ParamSpec::continuous(0, "TIME", ValFmt::Uni, 10.0, 500.0, 375.0, 8.0, false),
     ParamSpec::continuous(1, "FDBK", ValFmt::Uni, 0.0, 1.0, 0.4, 1.0 / 128.0, false),
     ParamSpec::continuous(2, "WOW", ValFmt::Uni, 0.0, 1.0, 0.15, 1.0 / 128.0, false),
     ParamSpec::continuous(3, "SAT", ValFmt::Uni, 0.0, 1.0, 0.2, 1.0 / 128.0, false),
@@ -115,7 +122,7 @@ impl TapeDelay {
     }
 
     pub fn process(&mut self, buf: &mut [f32; BLOCK_SIZE], params: &DelayParams, sample_rate: u32) {
-        if params.mix < 0.001 {
+        if !params.is_on() {
             return;
         }
 

@@ -26,6 +26,10 @@ pub const D2_DMA_RESERVE: usize = 8 * 1024;
 /// `[Voice; MAX_VOICES]` lives in D2 beside the DMA buffers.
 pub const VOICE_RAM_BUDGET: usize = D2_SRAM - D2_DMA_RESERVE; // 286_720
 
+/// AXI share for the FX bus (ADR 0014). `instrument.rs` asserts the sum of
+/// everything placed in AXI.
+pub const FX_BUS_BUDGET: usize = 256 * 1024; // 262_144
+
 /// CPU cycles per sample (per voice for engines). Values are estimates
 /// until measured on hardware with the DWT cycle counter (ADR 0013).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]

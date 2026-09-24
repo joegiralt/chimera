@@ -25,3 +25,11 @@ fn modal_strings_cover_e1_and_no_lower() {
     assert!(period(28) <= MAX_STRING_DELAY - 1, "E1 must not clamp");
     assert!(period(27) > MAX_STRING_DELAY - 1, "buffer is larger than E1 needs");
 }
+
+#[test]
+fn fx_bus_fits_its_axi_share() {
+    use chimera_core::dsp::fx_bus::FxBus;
+    let size = size_of::<FxBus>();
+    eprintln!("FxBus = {size} B, budget {} B", hw::FX_BUS_BUDGET);
+    assert!(size <= hw::FX_BUS_BUDGET, "FxBus = {size} B");
+}
