@@ -189,7 +189,7 @@ fn part_viz_reads_the_level_and_pan_slots() {
     let (nav, matrix) = (ChainNav::new(), MatrixState::new());
     let scope = [0.0; chimera_core::scope::SCOPE_LEN];
     let frame = chimera_core::ui::renderer::Frame {
-        nav: &nav, def: &reg::PART, perf: &PerfStats::zero(), matrix: &matrix, sel_op: Op::A, focus: 0, scope: &scope,
+        nav: &nav, def: &reg::PART, perf: &PerfStats::zero(), matrix: &matrix, sel_op: Op::A, focus: 0, scope: &scope, sounding: false,
     };
     r.draw_region_with_def(&mut fb, RegionKind::Viz, &frame);
     let px = |x: i32, y: i32| fb.0[y as usize * 240 + x as usize];

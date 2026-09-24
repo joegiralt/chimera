@@ -9,6 +9,7 @@ use embedded_graphics::text::Text;
 
 use crate::addr::{BlockRef, Op, ParamAddr};
 use crate::ui::animation::AnimatedValue;
+use crate::ui::components;
 use crate::ui::block_def::{slot_addr, BlockDef, VizType};
 use crate::ui::cell;
 use crate::ui::chain::ChainNav;
@@ -34,6 +35,8 @@ pub struct Frame<'a> {
     pub focus: usize,
     /// Live output (the oscilloscope buffer).
     pub scope: &'a [f32; crate::scope::SCOPE_LEN],
+    /// The live output is above silence (header dot).
+    pub sounding: bool,
 }
 
 /// Full-screen renderer. Composites header, visualization, parameters, and dungeon map.
@@ -848,7 +851,7 @@ impl Renderer {
         let _ = Rectangle::new(Point::zero(), Size::new(240, 320))
             .draw_styled(&PrimitiveStyle::with_fill(theme::BG), display);
 
-        self.draw_header_with_def(display, nav, def);
+        self.draw_header(display, f);
 
         match def.layout {
             PageLayout::BigViz => {
@@ -876,7 +879,6 @@ impl Renderer {
         }
 
         dungeon_map::draw(display, nav, (self.branch_scroll.current() * theme::BRANCH_LINE_HEIGHT as f32) as i32);
-        self.draw_perf(display, f.perf);
     }
 
     /// Draw a single region using BlockDef. The caller has already cleared the region.
@@ -889,13 +891,10 @@ impl Renderer {
     where
         D: DrawTarget<Color = Rgb565>,
     {
-        let (nav, def, perf, matrix_state, sel_op) = (f.nav, f.def, f.perf, f.matrix, f.sel_op);
+        let (nav, def, matrix_state, sel_op) = (f.nav, f.def, f.matrix, f.sel_op);
 
         match kind {
-            RegionKind::Header => {
-                self.draw_header_with_def(display, nav, def);
-                self.draw_perf(display, perf);
-            }
+            RegionKind::Header => self.draw_header(display, f),
             RegionKind::Viz => {
                 self.draw_viz_from_type(display, def);
             }
@@ -916,8 +915,7 @@ impl Renderer {
                 .draw_styled(&PrimitiveStyle::with_stroke(theme::SEPARATOR, 1), display);
             }
             RegionKind::Grid => {
-                self.draw_header_with_def(display, nav, def);
-                self.draw_perf(display, perf);
+                self.draw_header(display, f);
                 crate::ui::mod_grid::draw_grid(display, matrix_state);
                 let _ = Line::new(
                     Point::new(0, theme::ENCODER_ZONE_BOTTOM),
@@ -931,36 +929,13 @@ impl Renderer {
         }
     }
 
-    /// Header showing ChainId context and BlockDef name.
-    /// Format: "Context > BlockName"
-    fn draw_header_with_def<D>(&self, display: &mut D, nav: &ChainNav, def: &BlockDef)
+    /// Header band: context, page name, audio load, sounding dot.
+    fn draw_header<D>(&self, display: &mut D, f: &Frame)
     where
         D: DrawTarget<Color = Rgb565>,
     {
-        use crate::ui::chain::ChainId;
-        use crate::ui::fmt::FmtBuf;
-        use core::fmt::Write;
-
-        let dim = MonoTextStyle::new(&FONT_6X10, theme::HEADER_LABEL);
-        let bright = MonoTextStyle::new(&FONT_6X10, theme::TEXT);
-        let y = theme::HEADER_Y + 10;
-
-        let mut context_buf = FmtBuf::new();
-        match nav.chain_id {
-            ChainId::Part(n) => { let _ = write!(context_buf, "Part {}", n + 1); }
-            ChainId::Mixer(n) => { let _ = write!(context_buf, "Mix CH{}", n + 1); }
-            ChainId::System => { let _ = write!(context_buf, "System"); }
-            ChainId::Demo => { let _ = write!(context_buf, "Demo"); }
-        }
-
-        let mut x = 8;
-        let _ = Text::new(context_buf.as_str(), Point::new(x, y), dim).draw(display);
-        x += context_buf.as_str().len() as i32 * 6;
-
-        let _ = Text::new(" > ", Point::new(x, y), dim).draw(display);
-        x += 18;
-
-        let _ = Text::new(def.name, Point::new(x, y), bright).draw(display);
+        let (context, name) = components::header_text(f.nav, f.def);
+        components::header(display, context.as_str(), name.as_str(), f.sounding, f.perf.audio_load_pct);
     }
 
     // ── Sound Browser ────────────────────────────────────────────────
@@ -1132,47 +1107,4 @@ impl Renderer {
         fb[start..end].fill(bg);
     }
 
-    // ── Perf overlay ────────────────────────────────────────────────
-
-    fn draw_perf<D>(&self, display: &mut D, perf: &PerfStats)
-    where
-        D: DrawTarget<Color = Rgb565>,
-    {
-        let dim = MonoTextStyle::new(&FONT_6X10, theme::TEXT_DIM);
-        let y = theme::HEADER_Y + 10;
-
-        // Render time — top right
-        let mut buf = FmtBuf::new();
-        let _ = write!(buf, "{}us", perf.render_us);
-        let text_w = buf.as_str().len() as i32 * 6;
-        let _ = Text::new(
-            buf.as_str(),
-            Point::new(theme::SCREEN_W - text_w - 4, y),
-            dim,
-        )
-        .draw(display);
-
-        // Audio load — below render time (if measured)
-        if perf.audio_load_pct > 0 {
-            let mut buf2 = FmtBuf::new();
-            let _ = write!(buf2, "CPU {}%", perf.audio_load_pct);
-            let text_w2 = buf2.as_str().len() as i32 * 6;
-
-            // Color based on load
-            let color = if perf.audio_load_pct > 80 {
-                Rgb565::new(31, 0, 0) // red
-            } else if perf.audio_load_pct > 60 {
-                Rgb565::new(31, 32, 0) // yellow
-            } else {
-                theme::TEXT_DIM
-            };
-            let style = MonoTextStyle::new(&FONT_6X10, color);
-            let _ = Text::new(
-                buf2.as_str(),
-                Point::new(theme::SCREEN_W - text_w2 - 4, y + 12),
-                style,
-            )
-            .draw(display);
-        }
-    }
 }
