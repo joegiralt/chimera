@@ -17,12 +17,12 @@ pub mod renderer;
 pub mod theme;
 pub mod viz;
 
-use chimera_hal::{ButtonId, ButtonState, Controls, EncoderId};
+use chimera_hal::{ButtonId, ButtonState, Controls, EncoderId, ALL_BUTTONS};
 
 use crate::block::Block;
 use crate::dsp::lfo::Lfo;
 use crate::addr::{BlockRef, Blocks, Op, ParamAddr};
-use crate::mod_path::LABEL_LEN;
+use crate::mod_path::{RegistryError, LABEL_LEN};
 use crate::modulation::{ModState, MAX_MOD_SOURCES};
 use crate::params::{EnvParams, ParamSnapshot};
 use crate::preset::{Performance, SoundPool, POOL_SIZE};
@@ -42,6 +42,42 @@ pub enum UiMode {
     SoundBrowser { part: usize, cursor: usize, scroll: usize },
 }
 
+/// The outcome of the last MIX+PLUS attempt on a parameter page, shown in
+/// the focus band in place of the value readout until the next encoder,
+/// button or page change — no timer, matching the focus band's own rule
+/// (issue #21).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PrimeStatus {
+    /// The parameter was not yet a mod destination; it is now.
+    Added,
+    /// The parameter was already primed.
+    AlreadyRouted,
+    /// The parameter's spec is not modulatable (ADR 0010).
+    NotModulatable,
+    /// The registry is at `MAX_REGISTRY_DESTS`.
+    Full,
+}
+
+impl PrimeStatus {
+    /// The word(s) shown in the focus band.
+    pub fn label(self) -> &'static str {
+        match self {
+            PrimeStatus::Added => "ADDED",
+            PrimeStatus::AlreadyRouted => "ALREADY ROUTED",
+            PrimeStatus::NotModulatable => "NOT MODULATABLE",
+            PrimeStatus::Full => "MATRIX FULL",
+        }
+    }
+}
+
+impl From<RegistryError> for PrimeStatus {
+    fn from(e: RegistryError) -> Self {
+        match e {
+            RegistryError::NotModulatable => PrimeStatus::NotModulatable,
+            RegistryError::Full => PrimeStatus::Full,
+        }
+    }
+}
 
 /// Top-level UI state. Owns navigation, parameters, and display animation.
 /// Portable across desktop and hardware — only depends on HAL traits.
@@ -66,6 +102,8 @@ pub struct UiState {
     focus: focus::FocusMemory,
     /// Display-side LFO for animating modulated parameters
     display_lfo: Lfo,
+    /// The last MIX+PLUS outcome; `None` once retired (issue #21).
+    prime_status: Option<PrimeStatus>,
 }
 
 impl Default for UiState {
@@ -96,9 +134,16 @@ impl UiState {
             region_set: region::RegionSet::new(),
             focus: focus::FocusMemory::new(),
             display_lfo: Lfo::new(),
+            prime_status: None,
         };
         ui.load_matrix(0);
         ui
+    }
+
+    /// The last MIX+PLUS outcome, shown in the focus band until the next
+    /// encoder, button or page change (issue #21).
+    pub fn prime_status(&self) -> Option<PrimeStatus> {
+        self.prime_status
     }
 
     /// Returns a reference to the active part's params.
@@ -208,6 +253,13 @@ impl UiState {
 
     /// Process one frame of input: navigation + encoder deltas.
     pub fn handle_input(&mut self, controls: &impl Controls) {
+        // Any encoder turn or button press retires the last prime-status
+        // message (issue #21; no timer). The MIX+Plus branch below re-sets
+        // it when this same frame is itself a prime attempt.
+        if any_input(controls) {
+            self.prime_status = None;
+        }
+
         // ── Sound Browser mode input ─────────────────────────────────
         if let UiMode::SoundBrowser { part, ref mut cursor, ref mut scroll } = self.ui_mode {
             let total = browser::TOTAL_ENTRIES;
@@ -385,11 +437,21 @@ impl UiState {
             if shift {
                 let at = self.active_part;
                 if controls.button_state(ButtonId::Plus) == ButtonState::Pressed {
-                    // Unbound slots prime nothing; non-modulatable params are refused.
+                    // Unbound slots prime nothing; non-modulatable params are
+                    // refused. Report the outcome in the focus band (#21):
+                    // an already-primed address is a silent `Ok` from
+                    // `add`, so it must be checked for before calling it.
                     if let Some(addr) = self.current_param_addr() {
                         let label = self.mod_label(addr);
                         let sound = &mut self.performance.parts[at].sound;
-                        let _ = sound.dest_registry.add(addr, label);
+                        self.prime_status = Some(if sound.dest_registry.is_primed(addr) {
+                            PrimeStatus::AlreadyRouted
+                        } else {
+                            match sound.dest_registry.add(addr, label) {
+                                Ok(()) => PrimeStatus::Added,
+                                Err(e) => e.into(),
+                            }
+                        });
                         self.matrix_state.rebuild_dests_from_registry(&sound.dest_registry);
                         // Amounts follow their destination's ParamAddr, not the
                         // column: reload from the still-committed ModState so a
@@ -524,6 +586,7 @@ impl UiState {
             sounding: crate::scope::peak(scope) > crate::scope::SOUNDING_PEAK,
             parts: &self.performance.parts,
             active_part: self.active_part,
+            prime_status: self.prime_status,
         }
     }
 
@@ -540,7 +603,7 @@ impl UiState {
                 dests: self.matrix_state.num_dests as u8,
                 value: qvalues[renderer::MATRIX_AMOUNT_SLOT],
             },
-            RegionKind::Focus => RegionData::focus(self.page, f.focus as u8, qvalues[f.focus]),
+            RegionKind::Focus => RegionData::focus(self.page, f.focus as u8, qvalues[f.focus], self.prime_status),
             RegionKind::Viz => {
                 let (values, live) = self.renderer.viz_inputs(f);
                 RegionData::viz(self.page, values, live)
@@ -648,6 +711,15 @@ impl UiState {
 
         flush_list
     }
+}
+
+/// Whether `controls` reports an encoder turn or a button press this frame —
+/// any of which retires the last prime-status message (issue #21).
+fn any_input(controls: &impl Controls) -> bool {
+    const ENCODERS: [EncoderId; 7] =
+        [EncoderId::A, EncoderId::B, EncoderId::C, EncoderId::D, EncoderId::E, EncoderId::F, EncoderId::Main];
+    ENCODERS.iter().any(|&e| controls.encoder_delta(e) != 0)
+        || ALL_BUTTONS.iter().any(|&b| controls.button_state(b) == ButtonState::Pressed)
 }
 
 /// Display values for `page`: Part pages through slot bindings, legacy pages

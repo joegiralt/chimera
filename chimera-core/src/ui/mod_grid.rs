@@ -361,7 +361,7 @@ where
             }
         }
     }
-    draw::text(d, &theme::FONT_LABEL, "MIX+PLUS ADD   MIX+MINUS REMOVE", theme::MARGIN_X, HINT_Y, theme::MID);
+    draw::text(d, &theme::FONT_LABEL, "PRIME: MIX+PLUS ON A PARAM", theme::MARGIN_X, HINT_Y, theme::MID);
     let routes = (0..state.num_sources)
         .flat_map(|r| (0..state.num_dests).map(move |c| (r, c)))
         .filter(|&(r, c)| state.amounts[r][c] != 0)

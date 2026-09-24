@@ -12,6 +12,7 @@ use crate::ui::chain::{ChainId, ChainNav};
 use crate::ui::draw;
 use crate::ui::fmt::FmtBuf;
 use crate::ui::theme;
+use crate::ui::PrimeStatus;
 
 /// `s` in upper case (names are stored mixed case: "Filter", "4opFM").
 pub fn upper(s: &str) -> FmtBuf {
@@ -88,12 +89,31 @@ where
 
 /// Focus band (y 28..118): the focused slot's label, its value large, and an
 /// arc gauge (from 12:00 for bipolar params). `value` is the animated 0..1.
-pub fn focus_band<D>(d: &mut D, label: &str, value_text: &str, value: f32, bipolar: bool)
+///
+/// While a MIX+PLUS `status` is pending (issue #21) the value readout — the
+/// large numerals and the arc gauge — is replaced by the status word(s) at
+/// the mid-size value font, so the longest message (`NOT MODULATABLE`)
+/// still fits the full row width; the label above is unchanged, so the
+/// message still reads against the parameter it was tried on.
+pub fn focus_band<D>(d: &mut D, label: &str, value_text: &str, value: f32, bipolar: bool, status: Option<PrimeStatus>)
 where
     D: DrawTarget<Color = Rgb565>,
 {
     focus_label(d, label, theme::MARGIN_X);
-    focus_value(d, value_text, value, bipolar);
+    match status {
+        Some(status) => {
+            draw::text_tracked(
+                d,
+                &theme::FONT_VALUE,
+                status.label(),
+                theme::MARGIN_X,
+                theme::FOCUS_VALUE_Y,
+                theme::INK,
+                theme::LABEL_TRACKING,
+            );
+        }
+        None => focus_value(d, value_text, value, bipolar),
+    }
 }
 
 /// Focus label at `x`; returns where it ends.

@@ -6,6 +6,7 @@
 use crate::ui::page::{PageId, PageKey, PageLayout};
 use crate::ui::animation::AnimatedValue;
 use crate::ui::theme;
+use crate::ui::PrimeStatus;
 
 /// Quantize a float to u16 for cheap comparison. Range 0.0..65.0 → 0..65000.
 pub fn quantize(f: f32) -> u16 {
@@ -40,11 +41,13 @@ pub enum RegionData {
         load_pct: u8,
         sounding: bool,
     },
-    /// The focus band: which slot, and its animated value.
+    /// The focus band: which slot, its animated value, and any pending
+    /// prime-status message (issue #21) shown in the value's place.
     Focus {
         page: PageKey,
         slot: u8,
         value: u16,
+        status: Option<PrimeStatus>,
     },
     /// The mod matrix focus band: the selected route and its animated amount.
     Route {
@@ -86,8 +89,8 @@ impl RegionData {
         Self::Header { chain_idx, node_idx, sub_page, load_pct, sounding }
     }
 
-    pub fn focus(page: PageKey, slot: u8, value: u16) -> Self {
-        Self::Focus { page, slot, value }
+    pub fn focus(page: PageKey, slot: u8, value: u16, status: Option<PrimeStatus>) -> Self {
+        Self::Focus { page, slot, value, status }
     }
 
     pub fn viz(page: PageKey, values: [u16; 6], live: u32) -> Self {
@@ -107,7 +110,7 @@ impl RegionData {
     }
 
     pub fn sentinel_focus() -> Self {
-        Self::Focus { page: SENTINEL_PAGE, slot: u8::MAX, value: SENTINEL }
+        Self::Focus { page: SENTINEL_PAGE, slot: u8::MAX, value: SENTINEL, status: None }
     }
 
     pub fn sentinel_viz() -> Self {
