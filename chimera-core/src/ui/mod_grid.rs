@@ -262,8 +262,10 @@ pub fn cell_center(ci: usize, vi: usize) -> (i32, i32) {
 
 /// Dot grid: sources down, primed destinations across; a filled dot is a
 /// positive amount, a ring negative, size = |amount|, a tiny dim dot none;
-/// the selected cell outlined in the accent. Then the hint and route count.
-pub fn draw_grid<D>(d: &mut D, state: &MatrixState)
+/// the selected cell outlined in the accent, its dot sized by `sel_amount`
+/// (the lerped amount, so it grows with the focus band rather than
+/// snapping). Then the hint and route count.
+pub fn draw_grid<D>(d: &mut D, state: &MatrixState, sel_amount: i8)
 where
     D: DrawTarget<Color = Rgb565>,
 {
@@ -297,8 +299,8 @@ where
                 break;
             }
             let (x, y) = cell_center(ci, vi);
-            let amount = state.amounts[ri][di];
             let selected = ri == state.sel_row && di == state.sel_col;
+            let amount = if selected { sel_amount } else { state.amounts[ri][di] };
             if selected {
                 draw::round_outline(d, x - 14, y - 11, 28, 22, 6, theme::ACCENT);
             }

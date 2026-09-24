@@ -221,7 +221,9 @@ impl Renderer {
                 PageLayout::Matrix => {}
             },
             RegionKind::Cells => self.draw_cells(display, f, theme::CELL_LABEL_Y),
-            RegionKind::Grid => crate::ui::mod_grid::draw_grid(display, matrix_state),
+            RegionKind::Grid => {
+                crate::ui::mod_grid::draw_grid(display, matrix_state, amount_of(self.anim[MATRIX_AMOUNT_SLOT].current()))
+            }
             RegionKind::Nav => {
                 dungeon_map::draw(display, nav, (self.branch_scroll.current() * theme::BRANCH_LINE_HEIGHT as f32) as i32);
             }

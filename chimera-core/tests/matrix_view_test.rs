@@ -93,7 +93,7 @@ fn a_wide_matrix_scrolls_with_the_cursor() {
     m.move_col(MAX_DESTS as i8 - 1);
     assert_eq!(m.scroll_x, MAX_DESTS - m.visible_cols());
     let mut fb = Fb::new();
-    draw_grid(&mut fb, &m);
+    draw_grid(&mut fb, &m, m.current_amount());
     assert_eq!(fb.oob, 0);
     let (x, y) = cell_center(m.visible_cols() - 1, 0);
     assert_eq!(fb.at(x - 14, y), theme::ACCENT, "cursor in the last visible column");
@@ -142,6 +142,42 @@ fn stats_line_renders_at_max_counts_without_overflow() {
         }
     }
     let mut fb = Fb::new();
-    draw_grid(&mut fb, &m);
+    draw_grid(&mut fb, &m, m.current_amount());
     assert_eq!(fb.oob, 0);
+}
+
+/// Radius of the filled accent dot at `(x, y)`: accent pixels to its right.
+fn dot_radius(fb: &Fb, x: i32, y: i32) -> i32 {
+    (1..12).take_while(|&r| fb.at(x + r, y) == theme::ACCENT).count() as i32
+}
+
+/// The selected route's dot grows with the lerped amount, frame by frame —
+/// never a jump from the old size to the new — and a dirty render matches
+/// a full render on every frame of the way.
+#[test]
+fn the_selected_dot_lerps_with_the_amount() {
+    let mut ui = ui_for("mod_matrix");
+    let (x, y) = cell_center(0, 1); // LFO → CUTOFF, +42
+    let mut dirty = Fb::new();
+    ui.render_dirty_with_scope(&mut dirty, &PerfStats::zero(), &scope_fixture());
+    let full = |ui: &chimera_core::ui::UiState| {
+        let mut fb = Fb::new();
+        ui.render_with_scope(&mut fb, &PerfStats::zero(), &scope_fixture());
+        fb
+    };
+    let start = dot_radius(&full(&ui), x, y);
+    feed(&mut ui, Input::turn(EncoderId::E, 85)); // +42 → +127
+    let mut radii = vec![start];
+    for frame in 0..30 {
+        ui.update();
+        ui.render_dirty_with_scope(&mut dirty, &PerfStats::zero(), &scope_fixture());
+        let fb = full(&ui);
+        assert!(dirty.px == fb.px, "frame {frame}: dirty render == full render");
+        radii.push(dot_radius(&fb, x, y));
+    }
+    let end = *radii.last().unwrap();
+    assert!(start < end, "{radii:?}");
+    assert!(radii.windows(2).all(|w| w[0] <= w[1]), "monotonic: {radii:?}");
+    assert!(radii.iter().any(|&r| start < r && r < end), "intermediate sizes: {radii:?}");
+    assert!(radii[1] < end, "no jump on the first frame: {radii:?}");
 }
