@@ -40,13 +40,10 @@ where
         let (a, b) = if y(i) < mid { (y(i) + 1, mid) } else { (mid, y(i)) };
         draw::fill_rect(d, x, a, 1, b - a, theme::ACCENT_SOFT);
     }
-    // 1.5-px line (spec § Shared components), rounded up to 2 px since the
-    // display has no anti-aliasing: two adjacent 1-px strokes, offset down
-    // by one row so the extra pixel stays inside the band (152±24, +1 ≤ 185).
+    // The line's extra row stays inside the band (152±24, +1 ≤ 185).
     for i in 1..cols.len() {
         let x = theme::VIZ_LEFT + i as i32;
-        draw::line(d, x - 1, y(i - 1), x, y(i), theme::ACCENT, 1);
-        draw::line(d, x - 1, y(i - 1) + 1, x, y(i) + 1, theme::ACCENT, 1);
+        draw::thick_line(d, x - 1, y(i - 1), x, y(i), theme::ACCENT);
     }
 }
 
@@ -84,8 +81,7 @@ where
         draw::fill_rect(d, x, y(x) + 1, 1, base - y(x) - 1, theme::ACCENT_SOFT);
     }
     for x in x0 + 1..=x1 {
-        draw::line(d, x - 1, y(x - 1), x, y(x), theme::ACCENT, 1);
-        draw::line(d, x - 1, y(x - 1) + 1, x, y(x) + 1, theme::ACCENT, 1);
+        draw::thick_line(d, x - 1, y(x - 1), x, y(x), theme::ACCENT);
     }
 }
 
@@ -181,12 +177,7 @@ where
     for s in 0..4 {
         let ((xa, ya), (xb, yb)) = (pts[s], pts[s + 1]);
         if lit == Some(s) {
-            // 2-px accent (spec's 1.5-px line; the display has no
-            // anti-aliasing — binding ruling, Task 6): two adjacent 1-px
-            // strokes, offset down by one row so the extra pixel stays
-            // inside the band.
-            draw::line(d, xa, ya, xb, yb, theme::ACCENT, 1);
-            draw::line(d, xa, ya + 1, xb, yb + 1, theme::ACCENT, 1);
+            draw::thick_line(d, xa, ya, xb, yb, theme::ACCENT);
         } else {
             draw::line(d, xa, ya, xb, yb, theme::INK2, 1);
         }
