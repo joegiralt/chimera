@@ -6,6 +6,7 @@ pub mod addr;
 pub mod block;
 pub mod dsp;
 pub mod hw;
+pub mod instrument;
 pub mod mod_path;
 pub mod modulation;
 pub mod note_queue;
