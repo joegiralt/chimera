@@ -26,6 +26,12 @@ pub const D2_DMA_RESERVE: usize = 8 * 1024;
 /// `[Voice; MAX_VOICES]` lives in D2 beside the DMA buffers.
 pub const VOICE_RAM_BUDGET: usize = D2_SRAM - D2_DMA_RESERVE; // 286_720
 
+/// Framebuffer: 240 × 320 RGB565, one static in AXI (`chimera-stm32/src/display.rs`).
+pub const FB_BYTES: usize = chimera_hal::FB_SIZE * 2; // 153_600
+/// AXI kept for the UI besides the Performance and SoundPool: renderer and
+/// navigation state, `main`'s stack temporaries and the interrupt stacks.
+pub const UI_RESERVE: usize = 64 * 1024;
+
 /// AXI share for the FX bus (ADR 0014). `instrument.rs` asserts the sum of
 /// everything placed in AXI.
 pub const FX_BUS_BUDGET: usize = 256 * 1024; // 262_144

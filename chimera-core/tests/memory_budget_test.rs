@@ -33,3 +33,27 @@ fn fx_bus_fits_its_axi_share() {
     eprintln!("FxBus = {size} B, budget {} B", hw::FX_BUS_BUDGET);
     assert!(size <= hw::FX_BUS_BUDGET, "FxBus = {size} B");
 }
+
+/// Spec § Hardware parity: Performance + SoundPool + framebuffer + UI
+/// reserve (+ both AudioShared copies + the FX bus, ADR 0014) fit AXI.
+#[test]
+fn axi_residents_fit() {
+    use chimera_core::dsp::fx_bus::FxBus;
+    use chimera_core::instrument::{AudioShared, AXI_RESIDENT};
+    use chimera_core::preset::{Performance, SoundPool};
+    let parts = [
+        ("framebuffer", hw::FB_BYTES),
+        ("UI reserve", hw::UI_RESERVE),
+        ("Performance", size_of::<Performance>()),
+        ("SoundPool", size_of::<SoundPool>()),
+        ("AudioShared x2", 2 * size_of::<AudioShared>()),
+        ("FxBus", size_of::<FxBus>()),
+    ];
+    for (name, size) in parts {
+        eprintln!("{name:>15} {size:>7} B");
+    }
+    let total: usize = parts.iter().map(|p| p.1).sum();
+    eprintln!("{:>15} {total:>7} B of {} B", "AXI", hw::AXI_SRAM);
+    assert_eq!(total, AXI_RESIDENT);
+    assert!(total <= hw::AXI_SRAM);
+}
