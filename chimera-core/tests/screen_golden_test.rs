@@ -31,7 +31,7 @@ const GOLDENS: &[(&str, Golden)] = &[
     ("bigviz_filter", Locked(0x24ef227569f308c9)),
     ("bigviz_env", Locked(0xf22986571c209654)),
     ("bigviz_fm_op_env", Locked(0xd64cac3d5290898e)),
-    ("mixer_part", Pending),
+    ("mixer_part", Locked(0x3e3480eee3041370)),
     ("mixer_sends", Pending),
     ("mixer_fx_delay", Pending),
     ("mod_matrix", Pending),

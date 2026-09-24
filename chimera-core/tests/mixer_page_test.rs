@@ -146,29 +146,58 @@ fn priming_a_part_param_is_refused() {
     assert!(ui.performance.parts[0].sound.dest_registry.is_empty());
 }
 
-/// A 240×320 framebuffer for drawing the renderer's output in tests.
-struct Fb(Vec<embedded_graphics::pixelcolor::Rgb565>);
+mod screen;
 
-impl embedded_graphics::geometry::OriginDimensions for Fb {
-    fn size(&self) -> embedded_graphics::geometry::Size {
-        embedded_graphics::geometry::Size::new(240, 320)
-    }
+fn overview(setup: impl FnOnce(&mut UiState), part_button: ButtonId) -> screen::Fb {
+    let mut ui = UiState::new();
+    setup(&mut ui);
+    open_mixer(&mut ui, part_button);
+    screen::settle(&mut ui);
+    let mut fb = screen::Fb::new();
+    ui.render_with_scope(&mut fb, &chimera_core::ui::perf::PerfStats::zero(), &screen::scope_fixture());
+    fb
 }
 
-impl embedded_graphics::draw_target::DrawTarget for Fb {
-    type Color = embedded_graphics::pixelcolor::Rgb565;
-    type Error = core::convert::Infallible;
-    fn draw_iter<I>(&mut self, pixels: I) -> Result<(), Self::Error>
-    where
-        I: IntoIterator<Item = embedded_graphics::Pixel<Self::Color>>,
-    {
-        for embedded_graphics::Pixel(p, c) in pixels {
-            if (0..240).contains(&p.x) && (0..320).contains(&p.y) {
-                self.0[p.y as usize * 240 + p.x as usize] = c;
-            }
-        }
-        Ok(())
-    }
+/// Mixer PART viz band: every Part's level bar and pan dot, the edited Part
+/// lit and drawn from its LEVEL and PAN slots (CH, MODE, OUT, LEVEL, PAN).
+#[test]
+fn part_overview_shows_every_part_with_the_edited_one_lit() {
+    use chimera_core::ui::theme;
+    use chimera_core::ui::viz::{strip_x, STRIP_H, STRIP_PAN_Y, STRIP_TOP};
+    let fb = overview(
+        |ui| {
+            ui.performance.parts[1].mix.level = 1.0;
+            ui.performance.parts[1].mix.pan = 1.0;
+            ui.performance.parts[3].mix.level = 0.0;
+        },
+        ButtonId::B2,
+    );
+    let column = |i: usize, c| (STRIP_TOP..STRIP_TOP + STRIP_H).filter(|&y| fb.at(strip_x(i) + 4, y) == c).count();
+    assert_eq!(column(1, theme::ACCENT), STRIP_H as usize, "Part 2: full, lit");
+    assert_eq!(column(0, theme::ACCENT), 0, "Part 1 not lit");
+    assert!(column(0, theme::BAR_REST) > 0, "Part 1 at its stored level");
+    assert_eq!(column(3, theme::BAR_REST), 0, "Part 4 at level 0");
+    let dot: Vec<i32> = (strip_x(1) - 6..strip_x(1) + 16).filter(|&x| fb.at(x, STRIP_PAN_Y) == theme::INK).collect();
+    assert!(dot.iter().all(|&x| x > strip_x(1) + 10), "Part 2 panned right: {dot:?}");
+}
+
+#[test]
+fn part_overview_redraws_as_the_level_lerps() {
+    let mut ui = UiState::new();
+    open_mixer(&mut ui, ButtonId::B1);
+    screen::settle(&mut ui);
+    let mut fb = screen::Fb::new();
+    let (perf, scope) = (chimera_core::ui::perf::PerfStats::zero(), screen::scope_fixture());
+    ui.render_dirty_with_scope(&mut fb, &perf, &scope);
+    turn(&mut ui, EncoderId::D, -20);
+    ui.update();
+    let flushed = ui.render_dirty_with_scope(&mut fb, &perf, &scope);
+    assert!(flushed.contains(&(118, 186)), "viz band follows the lerped level: {flushed:?}");
+}
+
+#[test]
+fn mixer_part_dirty_render_equals_full_render() {
+    assert!(screen::render("mixer_part").px == screen::render_dirty("mixer_part").px);
 }
 
 /// The sound browser's title names what it loads and the Part it loads
@@ -182,10 +211,11 @@ fn sound_browser_title_names_the_part() {
     use embedded_graphics::prelude::*;
     use embedded_graphics::text::Text;
 
-    let title_band = |fb: &Fb| fb.0[..22 * 240].to_vec();
-    let mut got = Fb(vec![theme::BG; 240 * 320]);
+    let title_band = |fb: &screen::Fb| fb.px[..22 * 240].to_vec();
+    let mut got = screen::Fb::new();
     Renderer::draw_sound_browser(&mut got, &SoundPool::new(), 1, 0, 0, ChainType::PizzaPoly);
-    let mut want = Fb(vec![theme::BG; 240 * 320]);
+    let mut want = screen::Fb::new();
+    want.px.fill(got.px[0]); // the ground
     let style = MonoTextStyle::new(&FONT_6X10, theme::ACCENT);
     Text::new("LOAD SOUND: P2", Point::new(8, theme::HEADER_Y + 10), style).draw(&mut want).unwrap();
     assert!(title_band(&got) == title_band(&want), "title is LOAD SOUND: P2");

@@ -217,3 +217,43 @@ where
     draw::text(d, &theme::FONT_LABEL, "IN", x1 + 4, PLOT_BASE, theme::MID);
     draw::text(d, &theme::FONT_LABEL, "OUT", x0 - 20, PLOT_TOP + 8, theme::MID);
 }
+
+/// One Part in the Mixer overview.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Strip {
+    /// 0..1
+    pub level: f32,
+    /// −1 (left) .. 1 (right)
+    pub pan: f32,
+}
+
+/// Bar x of Part `i` in the overview.
+pub fn strip_x(i: usize) -> i32 {
+    20 + i as i32 * 36
+}
+pub const STRIP_NUM_Y: i32 = 128;
+pub const STRIP_TOP: i32 = 132;
+pub const STRIP_H: i32 = 38;
+pub const STRIP_PAN_Y: i32 = 177;
+
+/// Mixer PART viz band: each Part's level bar and pan dot, `selected` lit.
+pub fn parts_overview<D>(d: &mut D, strips: &[Strip], selected: usize)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let mut num = crate::ui::fmt::FmtBuf::new();
+    for (i, s) in strips.iter().enumerate() {
+        let (x, sel) = (strip_x(i), i == selected);
+        num.clear();
+        let _ = core::fmt::Write::write_fmt(&mut num, format_args!("{}", i + 1));
+        let (font, color) = if sel { (&theme::FONT_LABEL_BOLD, theme::INK) } else { (&theme::FONT_LABEL, theme::MID) };
+        draw::text_center(d, font, num.as_str(), x + 4, STRIP_NUM_Y, color, 0);
+        draw::fill_rect(d, x, STRIP_TOP, 8, STRIP_H, theme::FAINT);
+        let h = (STRIP_H as f32 * s.level.clamp(0.0, 1.0) + 0.5) as i32;
+        let fill = if sel { theme::ACCENT } else if s.level > 0.0 { theme::BAR_REST } else { theme::FAINT };
+        draw::fill_rect(d, x, STRIP_TOP + STRIP_H - h, 8, h, fill);
+        draw::fill_rect(d, x - 6, STRIP_PAN_Y, 20, 1, theme::FAINT);
+        let px = x + 4 + libm::roundf(s.pan.clamp(-1.0, 1.0) * 10.0) as i32;
+        draw::dot(d, px, STRIP_PAN_Y, 2, if sel { theme::INK } else { theme::MID });
+    }
+}

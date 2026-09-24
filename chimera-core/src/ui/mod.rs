@@ -494,6 +494,8 @@ impl UiState {
             focus: self.focused_slot(),
             scope,
             sounding: crate::scope::peak(scope) > crate::scope::SOUNDING_PEAK,
+            parts: &self.performance.parts,
+            active_part: self.active_part,
         }
     }
 

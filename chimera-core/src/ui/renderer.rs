@@ -36,6 +36,9 @@ pub struct Frame<'a> {
     pub scope: &'a [f32; crate::scope::SCOPE_LEN],
     /// The live output is above silence (header dot).
     pub sounding: bool,
+    /// Every Part (Mixer overview, FM algorithm) and the one being edited.
+    pub parts: &'a [crate::preset::Part; crate::hw::MAX_PARTS],
+    pub active_part: usize,
 }
 
 /// Full-screen renderer. Composites header, visualization, parameters, and dungeon map.
@@ -122,6 +125,40 @@ impl Renderer {
         }
     }
 
+    /// The viz band of a CellGrid page.
+    fn draw_band_viz<D>(&self, display: &mut D, f: &Frame)
+    where
+        D: DrawTarget<Color = Rgb565>,
+    {
+        match f.def.viz {
+            VizType::MixerLevels => viz::parts_overview(display, &self.strips(f), f.active_part),
+            _ => viz::live_output(display, f.scope),
+        }
+    }
+
+    /// Level and pan of every Part; the edited one from its animated LEVEL
+    /// and PAN slots so it lerps like the cells.
+    fn strips(&self, f: &Frame) -> [viz::Strip; crate::hw::MAX_PARTS] {
+        let slot = |id| {
+            let addr = crate::addr::ParamAddr::new(crate::addr::BlockRef::Part, id);
+            (0..f.def.params.len()).find(|&i| slot_addr(f.def, i, Op::A) == Some(addr))
+        };
+        let (level, pan) = (slot(crate::part::PartParams::LEVEL), slot(crate::part::PartParams::PAN));
+        core::array::from_fn(|i| {
+            let mix = &f.parts[i].mix;
+            let mut s = viz::Strip { level: mix.level, pan: mix.pan };
+            if i == f.active_part {
+                if let Some(l) = level {
+                    s.level = self.anim[l].current();
+                }
+                if let Some(p) = pan {
+                    s.pan = self.anim[p].current() * 2.0 - 1.0;
+                }
+            }
+            s
+        })
+    }
+
     // ── BlockDef-based full render ─────────────────────────────────────
 
     /// Render the full screen: every region of the page's layout.
@@ -140,7 +177,10 @@ impl Renderer {
     /// values it reads (quantized) and a fingerprint of outside data.
     pub fn viz_inputs(&self, f: &Frame) -> ([u16; 6], u32) {
         match f.def.layout {
-            PageLayout::CellGrid => ([0; 6], viz::live_key(f.scope)),
+            PageLayout::CellGrid => match f.def.viz {
+                VizType::MixerLevels => (region::quantize_values(&self.anim), strips_key(&self.strips(f), f.active_part)),
+                _ => ([0; 6], viz::live_key(f.scope)),
+            },
             PageLayout::BigViz => (region::quantize_values(&self.anim), f.focus as u32),
             PageLayout::Matrix => ([0; 6], 0),
         }
@@ -156,7 +196,7 @@ impl Renderer {
             RegionKind::Header => self.draw_header(display, f),
             RegionKind::Focus => self.draw_focus(display, f),
             RegionKind::Viz => match def.layout {
-                PageLayout::CellGrid => viz::live_output(display, f.scope),
+                PageLayout::CellGrid => self.draw_band_viz(display, f),
                 PageLayout::BigViz => self.draw_big_viz(display, f),
                 PageLayout::Matrix => {}
             },
@@ -351,4 +391,12 @@ impl Renderer {
         fb[start..end].fill(bg);
     }
 
+}
+
+/// Fingerprint of the Mixer overview (quantized levels and pans, selection).
+fn strips_key(strips: &[viz::Strip], selected: usize) -> u32 {
+    strips.iter().fold(selected as u32, |h, s| {
+        let q = (region::quantize(s.level) as u32) << 16 | region::quantize(s.pan + 1.0) as u32;
+        (h ^ q).wrapping_mul(0x0100_0193)
+    })
 }
