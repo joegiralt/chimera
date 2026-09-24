@@ -54,14 +54,13 @@ impl AudioShared {
         }
     }
 
-    /// Overwrite with `perf` in place (the UI's per-frame copy into the back
-    /// buffer; no allocation).
+    /// Overwrite with `perf` (the UI's per-frame refresh of the back
+    /// buffer). Built through `from_performance` so there is exactly one
+    /// place that lists `AudioShared`'s fields; the fresh copy is a stack
+    /// temporary (~3 KB) that replaces `*self` in one move, never the heap.
+    /// Callers must only ever run this on the back buffer — never on the
+    /// copy the audio thread is currently reading.
     pub fn update_from(&mut self, perf: &Performance) {
-        for (dst, src) in self.parts.iter_mut().zip(&perf.parts) {
-            dst.params.clone_from(&src.sound.params);
-            dst.mod_state.clone_from(&src.sound.mod_state);
-            dst.mix = src.mix;
-        }
-        self.fx = perf.fx;
+        *self = Self::from_performance(perf);
     }
 }
