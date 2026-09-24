@@ -149,11 +149,29 @@ impl MatrixState {
         None
     }
 
-    /// Adjust the amount at the current cursor position.
+    /// Adjust the amount at the current cursor position. A no-op when
+    /// `sel_col` is stale (e.g. left over from a Part with more
+    /// destinations, not yet clamped by `clamp_cursor`) — otherwise this
+    /// would write into a column with no destination, which a later prime
+    /// landing on that same column would then inherit as a phantom amount
+    /// (issue #11).
     pub fn adjust_amount(&mut self, delta: i8) {
+        if self.sel_col >= self.num_dests {
+            return;
+        }
         let current = self.amounts[self.sel_row][self.sel_col] as i16;
         let new = (current + delta as i16).clamp(-127, 127) as i8;
         self.amounts[self.sel_row][self.sel_col] = new;
+    }
+
+    /// Clamp `sel_col`/`scroll_x` to the current destination count. Call
+    /// after `rebuild_dests_from_registry` (e.g. on a Part switch), whose
+    /// new destination count may be smaller than the cursor position left
+    /// over from before (issue #11).
+    pub fn clamp_cursor(&mut self) {
+        let max = if self.num_dests > 0 { self.num_dests - 1 } else { 0 };
+        self.sel_col = self.sel_col.min(max);
+        self.scroll_x = self.scroll_x.min(max);
     }
 
     pub fn move_row(&mut self, delta: i8) {

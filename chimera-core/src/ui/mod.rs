@@ -164,6 +164,9 @@ impl UiState {
         self.matrix_state.rebuild_sources(chain::chain_def_for(sound.chain_type).mod_sources);
         self.matrix_state.rebuild_dests_from_registry(&sound.dest_registry);
         self.matrix_state.load_amounts(&sound.mod_state);
+        // The cursor may be left over from a Part with more destinations
+        // than this one (issue #11).
+        self.matrix_state.clamp_cursor();
     }
 
     /// Rebuild a part's audio-side `ModState` from the matrix.
@@ -385,20 +388,28 @@ impl UiState {
                     // Unbound slots prime nothing; non-modulatable params are refused.
                     if let Some(addr) = self.current_param_addr() {
                         let label = self.mod_label(addr);
-                        let _ = self.performance.parts[at].sound.dest_registry.add(addr, label);
-                        self.matrix_state.rebuild_dests_from_registry(
-                            &self.performance.parts[at].sound.dest_registry
-                        );
+                        let sound = &mut self.performance.parts[at].sound;
+                        let _ = sound.dest_registry.add(addr, label);
+                        self.matrix_state.rebuild_dests_from_registry(&sound.dest_registry);
+                        // Amounts follow their destination's ParamAddr, not the
+                        // column: reload from the still-committed ModState so a
+                        // stale column (e.g. left over from a Part switch) can't
+                        // leak into the new route (issue #11).
+                        self.matrix_state.load_amounts(&sound.mod_state);
                         self.sync_mod_state(at);
                     }
                 }
                 if controls.button_state(ButtonId::Minus) == ButtonState::Pressed
                     && let Some(addr) = self.current_param_addr()
                 {
-                    self.performance.parts[at].sound.dest_registry.remove(addr);
-                    self.matrix_state.rebuild_dests_from_registry(
-                        &self.performance.parts[at].sound.dest_registry
-                    );
+                    let sound = &mut self.performance.parts[at].sound;
+                    sound.dest_registry.remove(addr);
+                    self.matrix_state.rebuild_dests_from_registry(&sound.dest_registry);
+                    // Re-key amounts to the (possibly shifted) destination
+                    // columns by ParamAddr rather than position, so surviving
+                    // routes keep their own amount, not their old column's
+                    // (issue #11).
+                    self.matrix_state.load_amounts(&sound.mod_state);
                     self.sync_mod_state(at);
                 }
             }

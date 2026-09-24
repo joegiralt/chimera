@@ -48,6 +48,39 @@ fn prime_slot_0(ui: &mut UiState) {
     );
 }
 
+/// Touch encoder `enc` (focus its slot), then MIX + Plus.
+fn prime_slot(ui: &mut UiState, enc: EncoderId) {
+    ui.handle_input(&MockControls::new().encoder(enc, 1));
+    ui.handle_input(
+        &MockControls::new()
+            .button(ButtonId::Mix, ButtonState::Held)
+            .button(ButtonId::Plus, ButtonState::Pressed),
+    );
+}
+
+/// Touch encoder `enc` (focus its slot), then MIX + Minus (un-prime).
+fn unprime_slot(ui: &mut UiState, enc: EncoderId) {
+    ui.handle_input(&MockControls::new().encoder(enc, 1));
+    ui.handle_input(
+        &MockControls::new()
+            .button(ButtonId::Mix, ButtonState::Held)
+            .button(ButtonId::Minus, ButtonState::Pressed),
+    );
+}
+
+/// Plus x4 from a Part's first page reaches the MOD node (the matrix);
+/// Minus x4 returns.
+fn enter_matrix(ui: &mut UiState) {
+    for _ in 0..4 {
+        press(ui, ButtonId::Plus);
+    }
+}
+fn leave_matrix(ui: &mut UiState) {
+    for _ in 0..4 {
+        press(ui, ButtonId::Minus);
+    }
+}
+
 fn primed(ui: &UiState) -> Vec<ParamAddr> {
     let reg = &ui.performance.parts[0].sound.dest_registry;
     (0..reg.len()).filter_map(|i| reg.get(i)).map(|e| e.addr).collect()
@@ -217,4 +250,87 @@ fn switching_part_rebuilds_the_matrix_for_that_part() {
     set_first_amount(&mut ui, 1);
     assert_eq!(routes(&ui, 0), [(shape, 11)], "edited from Part 1's amount, not Part 2's");
     assert_eq!(routes(&ui, 1), [(p2, 20)]);
+}
+
+/// Issue #11, regression 1: `sel_col`/`scroll_x` used to survive a Part
+/// switch uncapped. An E-encoder turn with `sel_col >= num_dests` wrote a
+/// phantom amount into a column that had no destination yet; because
+/// `ModDestRegistry::add` always appends at the current count, a later
+/// MIX+Plus prime on that Part could land a brand-new route on exactly that
+/// column and inherit the phantom instead of starting at 0. Checks all
+/// three parts of the fix: `load_matrix` clamps the cursor on a Part switch;
+/// `adjust_amount` refuses to write past `num_dests` even if the cursor is
+/// somehow stale anyway; and a prime reloads amounts from the committed
+/// `ModState` rather than trusting the matrix's raw column array.
+#[test]
+fn priming_after_a_stale_cursor_does_not_inherit_a_phantom_amount() {
+    let level = ParamAddr::new(BlockRef::Pizza, PizzaParams::LEVEL);
+    let mut ui = UiState::new();
+
+    // Prime 3 destinations on Part 1 (SHAPE, CRUSH, LEVEL) and move the
+    // cursor to column 2.
+    prime_slot(&mut ui, EncoderId::A);
+    prime_slot(&mut ui, EncoderId::B);
+    prime_slot(&mut ui, EncoderId::C);
+    enter_matrix(&mut ui);
+    ui.handle_input(&MockControls::new().encoder(EncoderId::B, 2));
+    assert_eq!(ui.matrix_state.sel_col, 2);
+
+    // Switch to Part 2, which has one destination of its own (SHAPE).
+    press(&mut ui, ButtonId::B2);
+    prime_slot(&mut ui, EncoderId::A);
+    assert_eq!(ui.matrix_state.num_dests, 1);
+    assert_eq!(ui.matrix_state.sel_col, 0, "load_matrix must clamp the cursor to the new Part's destination count");
+
+    // Force the cursor back out of range, as belt-and-suspenders coverage
+    // for adjust_amount's own guard even if some other path left it stale.
+    ui.matrix_state.sel_col = 1;
+    ui.nav.node = 4; // MOD_MATRIX (block_registry::PIZZA_POLY_BLOCKS[4])
+    ui.handle_input(&MockControls::new().encoder(EncoderId::E, 50));
+    assert_eq!(ui.matrix_state.amounts[0][1], 0, "adjust_amount must not write past num_dests");
+
+    // Back on the Part's first page, prime a second destination (LEVEL) --
+    // it lands at column 1, the same column the (blocked) stale write
+    // targeted.
+    ui.nav.node = 0;
+    prime_slot(&mut ui, EncoderId::C);
+    assert_eq!(ui.matrix_state.num_dests, 2);
+    assert_eq!(routes(&ui, 1).last(), Some(&(level, 0)), "new route must start at 0, not inherit a stale column's amount");
+}
+
+/// Issue #11, regression 2: un-priming rebuilt the destination list (shifted
+/// left) but left the amount columns in place, so a surviving route could
+/// shift onto a neighbour's old amount. Amounts must follow their
+/// destination's `ParamAddr`, not its column position.
+#[test]
+fn un_priming_keeps_the_other_routes_own_amounts() {
+    let shape = ParamAddr::new(BlockRef::Pizza, PizzaParams::SHAPE);
+    let level = ParamAddr::new(BlockRef::Pizza, PizzaParams::LEVEL);
+    let mut ui = UiState::new();
+
+    // Prime SHAPE (A), CRUSH (B), LEVEL (C) -- columns 0, 1, 2.
+    prime_slot(&mut ui, EncoderId::A);
+    prime_slot(&mut ui, EncoderId::B);
+    prime_slot(&mut ui, EncoderId::C);
+    assert_eq!(ui.matrix_state.num_dests, 3);
+
+    // Give each destination its own, distinct amount.
+    enter_matrix(&mut ui);
+    ui.handle_input(&MockControls::new().encoder(EncoderId::E, 10)); // col 0: SHAPE +10
+    ui.handle_input(&MockControls::new().encoder(EncoderId::B, 1)); // -> col 1
+    ui.handle_input(&MockControls::new().encoder(EncoderId::E, 20)); // col 1: CRUSH +20
+    ui.handle_input(&MockControls::new().encoder(EncoderId::B, 1)); // -> col 2
+    ui.handle_input(&MockControls::new().encoder(EncoderId::E, 30)); // col 2: LEVEL +30
+    assert_eq!(routes(&ui, 0).len(), 3);
+
+    // Un-prime CRUSH (B).
+    leave_matrix(&mut ui);
+    unprime_slot(&mut ui, EncoderId::B);
+
+    assert_eq!(ui.matrix_state.num_dests, 2);
+    assert_eq!(
+        routes(&ui, 0),
+        [(shape, 10), (level, 30)],
+        "A and C keep their own amounts, keyed by destination, not by column"
+    );
 }
