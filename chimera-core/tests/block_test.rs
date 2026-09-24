@@ -224,6 +224,11 @@ fn out_conforms() {
 }
 
 #[test]
+fn part_conforms() {
+    conforms("part", chimera_core::part::PartParams::default());
+}
+
+#[test]
 fn fx_conform() {
     conforms("chorus", chimera_core::dsp::chorus::ChorusParams::default());
     conforms("delay", chimera_core::dsp::delay::DelayParams::default());

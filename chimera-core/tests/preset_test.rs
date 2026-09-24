@@ -244,7 +244,7 @@ fn browser_load_copies_patch_to_part() {
     // Store a named sound in pool slot 2
     let mut sound = Sound::init(ChainType::PizzaPoly);
     sound.name = *b"Test Sound\0\0\0\0\0\0";
-    ui.performance.pool.store(2, sound);
+    ui.pool.store(2, sound);
 
     // Open browser for B1 (part 0)
     open_browser(&mut ui, ButtonId::B1);
@@ -268,7 +268,7 @@ fn browser_cancel_does_not_load() {
     let original_name = ui.performance.parts[0].sound.name;
 
     // Store sound and open browser
-    ui.performance.pool.store(0, Sound::init(ChainType::Modal));
+    ui.pool.store(0, Sound::init(ChainType::Modal));
     open_browser(&mut ui, ButtonId::B1);
     assert!(matches!(ui.ui_mode, UiMode::SoundBrowser { .. }));
 
@@ -296,7 +296,7 @@ fn browser_save_to_pool() {
 
     // Should stay in browser, and pool slot 5 now has our sound
     assert!(matches!(ui.ui_mode, UiMode::SoundBrowser { .. }));
-    assert_eq!(ui.performance.pool.get(5).unwrap().name_str(), "My Bass");
+    assert_eq!(ui.pool.get(5).unwrap().name_str(), "My Bass");
 }
 
 #[test]
@@ -319,6 +319,21 @@ fn browser_init_entries_set_chain_type() {
 
     assert!(matches!(ui.ui_mode, UiMode::Normal));
     assert_eq!(ui.performance.parts[0].sound.chain_type, ChainType::Fm);
+}
+
+/// Loading from the browser replaces the Sound only: the Part keeps its
+/// channel and mix (Review Focus: a load must not re-route MIDI).
+#[test]
+fn browser_load_keeps_part_mix() {
+    let mut ui = UiState::new();
+    ui.performance.parts[2].mix.channel = chimera_core::MidiChannel::new(9).unwrap();
+    ui.performance.parts[2].mix.level = 0.3;
+    open_browser(&mut ui, ButtonId::B3);
+    ui.handle_input(&MockControls::new().encoder(EncoderId::Main, (POOL_SIZE + 2) as i8));
+    ui.handle_input(&MockControls::new().button(ButtonId::Edit, ButtonState::Pressed));
+    assert_eq!(ui.performance.parts[2].sound.chain_type, ChainType::Fm);
+    assert_eq!(ui.performance.parts[2].mix.channel.get(), 9);
+    assert_eq!(ui.performance.parts[2].mix.level, 0.3);
 }
 
 // ── Priming by slot address ──────────────────────────────────────

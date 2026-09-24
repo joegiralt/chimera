@@ -1,6 +1,8 @@
+use crate::hw::MAX_PARTS;
 use crate::mod_path::ModDestRegistry;
 use crate::modulation::ModState;
 use crate::params::{EngineType, ParamSnapshot};
+use crate::part::PartParams;
 
 pub const POOL_SIZE: usize = 32;
 pub const NAME_LEN: usize = 16;
@@ -100,17 +102,27 @@ impl SoundPool {
     }
 }
 
+/// A slot playing one Sound, with its MIDI channel, mode, output and mix.
 pub struct Part {
     pub sound: Sound,
     pub loaded_from: Option<u8>,
+    pub mix: PartParams,
 }
 
 impl Part {
+    /// An init Sound of `chain_type` with part 1's mix settings.
     pub fn new(chain_type: ChainType) -> Self {
         Self {
             sound: Sound::init(chain_type),
             loaded_from: None,
+            mix: PartParams::default(),
         }
+    }
+
+    /// Replace the Sound with an init one; channel and mix stay.
+    pub fn load_init(&mut self, chain_type: ChainType) {
+        self.sound = Sound::init(chain_type);
+        self.loaded_from = None;
     }
 
     pub fn load_from_pool(&mut self, pool: &SoundPool, slot: usize) {
@@ -125,36 +137,18 @@ impl Part {
     }
 }
 
-pub struct MixerState {
-    pub levels: [f32; 6],
-    pub pans: [f32; 6],
-    pub sends: [f32; 6],
-}
-
-impl Default for MixerState {
-    fn default() -> Self {
-        Self {
-            levels: [0.8; 6],
-            pans: [0.0; 6],
-            sends: [0.0; 6],
-        }
-    }
-}
-
+/// All Parts: the whole setup you play and save. The `SoundPool` is not
+/// part of it (it stays on the UI side).
 pub struct Performance {
     pub name: [u8; NAME_LEN],
-    pub pool: SoundPool,
-    pub parts: [Part; 6],
-    pub mixer: MixerState,
+    pub parts: [Part; MAX_PARTS],
 }
 
 impl Performance {
     pub fn new() -> Self {
         Self {
             name: *b"New Performance\0",
-            pool: SoundPool::new(),
-            parts: core::array::from_fn(|_| Part::new(ChainType::PizzaPoly)),
-            mixer: MixerState::default(),
+            parts: core::array::from_fn(|i| Part { mix: PartParams::for_part(i), ..Part::new(ChainType::PizzaPoly) }),
         }
     }
 }

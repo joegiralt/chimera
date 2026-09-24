@@ -21,7 +21,7 @@ use crate::addr::{BlockRef, Op, ParamAddr};
 use crate::mod_path::LABEL_LEN;
 use crate::modulation::{ModState, MAX_MOD_SOURCES};
 use crate::params::{EnvParams, ParamSnapshot};
-use crate::preset::{Performance, POOL_SIZE};
+use crate::preset::{Performance, SoundPool, POOL_SIZE};
 use block_def::slot_addr;
 use chain::{ChainId, ChainNav};
 use mod_grid::MatrixState;
@@ -43,6 +43,8 @@ pub enum UiMode {
 pub struct UiState {
     pub nav: ChainNav,
     pub performance: Performance,
+    /// Saved Sounds that can be loaded into a Part (not part of the Performance).
+    pub pool: SoundPool,
     pub active_part: usize,
     pub renderer: Renderer,
     pub matrix_state: MatrixState,
@@ -80,6 +82,7 @@ impl UiState {
         Self {
             nav,
             performance,
+            pool: SoundPool::new(),
             active_part: 0,
             renderer,
             matrix_state,
@@ -193,7 +196,7 @@ impl UiState {
                 let sel_part = part;
                 if sel_cursor < POOL_SIZE {
                     // Load from pool — clone sound first to avoid borrow conflict
-                    if let Some(sound) = self.performance.pool.get(sel_cursor) {
+                    if let Some(sound) = self.pool.get(sel_cursor) {
                         let loaded = sound.clone();
                         self.performance.parts[sel_part].sound = loaded;
                         self.performance.parts[sel_part].loaded_from = Some(sel_cursor as u8);
@@ -207,7 +210,7 @@ impl UiState {
                     ];
                     let init_idx = sel_cursor - POOL_SIZE;
                     if init_idx < init_types.len() {
-                        self.performance.parts[sel_part] = crate::preset::Part::new(init_types[init_idx]);
+                        self.performance.parts[sel_part].load_init(init_types[init_idx]);
                     }
                 }
                 // Switch to the loaded part and return to normal mode
@@ -232,7 +235,7 @@ impl UiState {
                 let save_part = part;
                 if save_cursor < POOL_SIZE {
                     let sound = self.performance.parts[save_part].sound.clone();
-                    self.performance.pool.store(save_cursor, sound);
+                    self.pool.store(save_cursor, sound);
                 }
                 // Stay in browser mode so the user can see the saved slot
                 return;
@@ -445,7 +448,7 @@ impl UiState {
             >,
     {
         if let UiMode::SoundBrowser { part, cursor, scroll } = self.ui_mode {
-            Renderer::draw_patch_browser(display, &self.performance.pool, part, cursor, scroll, self.performance.parts[part].sound.chain_type);
+            Renderer::draw_patch_browser(display, &self.pool, part, cursor, scroll, self.performance.parts[part].sound.chain_type);
             return;
         }
         let def = self.nav.active_block_def();
@@ -500,7 +503,7 @@ impl UiState {
         if let UiMode::SoundBrowser { part, cursor, scroll } = self.ui_mode {
             let fb = display.pixel_buffer();
             Renderer::clear_region_fb(fb, 0, chimera_hal::SCREEN_HEIGHT);
-            Renderer::draw_patch_browser(display, &self.performance.pool, part, cursor, scroll, self.performance.parts[part].sound.chain_type);
+            Renderer::draw_patch_browser(display, &self.pool, part, cursor, scroll, self.performance.parts[part].sound.chain_type);
             // Invalidate region set so normal layout forces full rebuild on exit
             self.region_set.prev_layout = None;
             let mut flush_list = [(0u16, 0u16); region::MAX_REGIONS];
