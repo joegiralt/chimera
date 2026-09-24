@@ -8,7 +8,7 @@ use crate::dsp::envelope::Envelope;
 use crate::dsp::filter::SvfFilter;
 use crate::dsp::lfo::Lfo;
 use crate::dsp::wavefolder::Wavefolder;
-use crate::hw::{MAX_VOICES, VOICE_RAM_BUDGET};
+use crate::hw::{Cost, MAX_VOICES, VOICE_RAM_BUDGET};
 use crate::modulation::{ModState, MAX_MOD_SOURCES};
 use crate::params::{EngineType, ParamSnapshot};
 use crate::{MidiNote, Velocity};
@@ -39,6 +39,16 @@ impl Default for Voice {
 }
 
 impl Voice {
+    /// Design doc § CPU Budget, everything but the engine: drive 20, filter
+    /// 80, filter FM 60, folder 40, VCA + amp env 50, 3 envelopes 90,
+    /// 2 LFOs 40, mod matrix 30.
+    pub const CHAIN_COST: Cost = Cost(410); // estimate
+
+    /// Cycles/sample of a voice playing `kind`.
+    pub const fn cost(kind: EngineType) -> Cost {
+        Cost(Engines::cost(kind).0 + Self::CHAIN_COST.0)
+    }
+
     /// The sample rate is stored once (spec §3), not passed per call.
     pub fn new(sample_rate: u32) -> Self {
         Self {

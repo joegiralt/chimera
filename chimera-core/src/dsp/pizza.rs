@@ -10,6 +10,7 @@
 use chimera_hal::BLOCK_SIZE;
 
 use crate::block::{Block, ParamId, ParamSpec, ValFmt};
+use crate::hw::Cost;
 
 /// Pizza oscillator state.
 #[derive(Clone, Debug)]
@@ -91,6 +92,9 @@ impl Default for PizzaOsc {
 }
 
 impl PizzaOsc {
+    /// Not in the design doc's table; costed like the VA oscillator pair.
+    pub const COST: Cost = Cost(300); // estimate
+
     pub fn new() -> Self {
         Self {
             phase: 0.0,

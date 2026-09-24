@@ -8,7 +8,7 @@ use chimera_hal::BLOCK_SIZE;
 use crate::dsp::chorus::{ChorusParams, JunoChorus};
 use crate::dsp::delay::{DelayParams, TapeDelay};
 use crate::dsp::reverb::{Reverb, ReverbParams};
-use crate::hw::FX_BUS_BUDGET;
+use crate::hw::{Cost, FX_BUS_BUDGET};
 
 /// Sends per part, in this order: chorus, delay, reverb.
 pub const FX_SENDS: usize = 3;
@@ -48,6 +48,11 @@ impl Default for FxBus {
 }
 
 impl FxBus {
+    /// Not in the design doc's table: chorus ~60, tape delay ~350 (two
+    /// `sinf` + `tanhf` per sample), reverb ~150, plus mixing. Reserved
+    /// from the voice budget whether or not an effect is on.
+    pub const COST: Cost = Cost(600); // estimate
+
     pub fn new() -> Self {
         Self { chorus: JunoChorus::new(), delay: TapeDelay::new(), reverb: Reverb::new() }
     }
