@@ -61,3 +61,13 @@ is 10 253 B — logisoso42 4 625, logisoso20 2 226, helvB10 1 333, helvR08
 524 288 B resident, 12 848 B headroom (`memory_budget_test::axi_residents_fit`),
 unchanged by this task; `UiState` besides its `Performance`/`SoundPool` is
 1 120 B (`ui_state_fits_the_ui_reserve`), also unchanged.
+
+## Addendum: Whole-branch flash cost (2026-09-24)
+Recorded after the whole-branch review of the UI refresh; the decision above
+is unchanged.
+
+Release firmware, `llvm-size -A`, branch base (merge-base with `main`,
+f5ce050) against the reviewed branch head (2d3572c): `.text` + `.rodata` 215 316 →
+219 032 B (+3 716 B: `.text` −7 824 B, `.rodata` +11 540 B). `.data`,
+`.bss` and `.ram_d2` unchanged. The five font faces account for ≈10.25 KB of
+the `.rodata` growth, within the 16 KB font budget.
