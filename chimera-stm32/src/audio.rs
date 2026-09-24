@@ -6,6 +6,7 @@
 //! PLL3: HSE 8MHz / M=1 * N=46 / P=3 = 122.67 MHz SAI kernel clock
 //! SAI1_A: MCKDIV=5 → MCLK=12.27MHz → FS=47917Hz
 
+use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 
 use stm32h7xx_hal::pac;
@@ -13,6 +14,7 @@ use cortex_m::peripheral::NVIC;
 use stm32h7xx_hal::pac::interrupt;
 
 use chimera_core::dsp::voice::Voice;
+use chimera_core::instrument::Instrument;
 use chimera_core::modulation::ModState;
 use chimera_core::params::ParamSnapshot;
 use chimera_hal::{BLOCK_SIZE, MidiNote, Velocity};
@@ -22,6 +24,16 @@ const SAI1_CHA_CR1: *mut u32 = 0x4001_5804 as *mut u32;
 
 // SAI1 Block A data register address: base 0x40015800 + CHA offset 0x04 + DR offset 0x1C
 const SAI1_CHA_DR: u32 = 0x4001_5820;
+
+/// The voice pool's place in D2 SRAM, reserved for the port sub-project
+/// (ADR 0014): the linker proves `Instrument` fits beside the DMA buffer.
+/// Not initialised or read yet; the single `VOICE` below still plays.
+// SAFETY: never read or written in this sub-project; the port that
+// initialises and accesses it in place must do so under the same
+// single-ISR-owner discipline as the other statics in this file.
+#[used]
+#[unsafe(link_section = ".ram_d2.voices")]
+static mut INSTRUMENT: MaybeUninit<Instrument> = MaybeUninit::uninit();
 
 /// DMA audio buffer in RAM_D2 — 256 × i16 = 128 stereo pairs.
 /// DMA reads one half while ISR fills the other.
