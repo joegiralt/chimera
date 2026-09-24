@@ -130,7 +130,7 @@ Rules:
    retriggers that voice (legato/glide is a later Sound param). Mono voices
    are never stolen.
 2. **Poly part:** take a free voice, round-robin from `rr`.
-3. **Pool full:** steal the oldest (lowest `age`) non-mono voice, from any part.
+3. **Pool full:** steal the oldest (lowest `age`) non-mono voice, from any part. *(Superseded by ADR 0015: released voices are stolen before held ones.)*
    If every voice is mono, refuse.
 4. **CPU budget:** if `sounding_cost + cost > AUDIO_CYCLE_BUDGET`, first try to
    steal as in rule 3; refuse if that doesn't free enough.
