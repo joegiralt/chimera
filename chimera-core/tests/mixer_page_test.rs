@@ -187,7 +187,11 @@ fn part_viz_reads_the_level_and_pan_slots() {
     r.snap_to_current([0.0, 0.0, 0.0, 1.0, 1.0, 0.0]); // CH MODE OUT = 0; LEVEL 1, PAN right
     let mut fb = Fb(vec![theme::BG; 240 * 320]);
     let (nav, matrix) = (ChainNav::new(), MatrixState::new());
-    r.draw_region_with_def(&mut fb, RegionKind::Viz, &nav, &reg::PART, &PerfStats::zero(), &matrix, Op::A);
+    let scope = [0.0; chimera_core::scope::SCOPE_LEN];
+    let frame = chimera_core::ui::renderer::Frame {
+        nav: &nav, def: &reg::PART, perf: &PerfStats::zero(), matrix: &matrix, sel_op: Op::A, focus: 0, scope: &scope,
+    };
+    r.draw_region_with_def(&mut fb, RegionKind::Viz, &frame);
     let px = |x: i32, y: i32| fb.0[y as usize * 240 + x as usize];
     // First bar: x 32..52, y 44..162 (theme::VIZ_LEFT + 20, VIZ_TOP + 16, VIZ_BOTTOM - 8).
     let filled = (44..162).filter(|&y| px(40, y) == theme::PARAM_BAR_FG).count();

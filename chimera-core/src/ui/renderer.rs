@@ -23,12 +23,23 @@ use crate::ui::theme;
 
 use core::fmt::Write;
 
+/// Everything one frame draws from, besides the renderer's own animation.
+pub struct Frame<'a> {
+    pub nav: &'a ChainNav,
+    pub def: &'static BlockDef,
+    pub perf: &'a PerfStats,
+    pub matrix: &'a MatrixState,
+    pub sel_op: Op,
+    /// Slot the focus band shows: the last one touched on this page.
+    pub focus: usize,
+    /// Live output (the oscilloscope buffer).
+    pub scope: &'a [f32; crate::scope::SCOPE_LEN],
+}
+
 /// Full-screen renderer. Composites header, visualization, parameters, and dungeon map.
 pub struct Renderer {
     /// Animated display values for the 6 encoders (normalized 0..1).
     pub anim: [AnimatedValue; 6],
-    /// Last-touched encoder index (0-5) — shown with focus indicator.
-    pub focused: usize,
     /// Animated scroll offset for dungeon map sub-page branches (in pixels).
     pub branch_scroll: AnimatedValue,
 }
@@ -43,7 +54,6 @@ impl Renderer {
     pub fn new() -> Self {
         Self {
             anim: [AnimatedValue::new(0.5); 6],
-            focused: 0,
             branch_scroll: AnimatedValue::new(0.0).with_speed(0.25),
         }
     }
@@ -680,6 +690,7 @@ impl Renderer {
         &self,
         display: &mut D,
         def: &BlockDef,
+        focus: usize,
         sel_op: Op,
         matrix_state: &crate::ui::mod_grid::MatrixState,
     )
@@ -703,7 +714,7 @@ impl Renderer {
             let val = self.anim[i].current();
 
             // Label — accent if focused
-            let lbl_style = if i == self.focused { MonoTextStyle::new(&FONT_6X10, theme::ACCENT) } else { label_style };
+            let lbl_style = if i == focus { MonoTextStyle::new(&FONT_6X10, theme::ACCENT) } else { label_style };
             let _ = Text::new(label, Point::new(x, y + 10), lbl_style).draw(display);
 
             // Numeric value
@@ -773,6 +784,7 @@ impl Renderer {
         &self,
         display: &mut D,
         def: &BlockDef,
+        focus: usize,
         sel_op: Op,
         matrix_state: &crate::ui::mod_grid::MatrixState,
     )
@@ -791,7 +803,7 @@ impl Renderer {
                 self.anim[i].current(),
                 slot.icon,
                 slot.format(),
-                i == self.focused,
+                i == focus,
                 mod_info,
             );
         }
@@ -826,11 +838,12 @@ impl Renderer {
     // ── BlockDef-based full render ─────────────────────────────────────
 
     /// Render full screen using a `BlockDef` for layout, viz, and params.
-    #[allow(clippy::too_many_arguments)]
-    pub fn draw_with_def<D>(&self, display: &mut D, nav: &ChainNav, def: &BlockDef, perf: &PerfStats, matrix_state: &MatrixState, sel_op: Op, scope: &[f32; crate::scope::SCOPE_LEN])
+    pub fn draw_with_def<D>(&self, display: &mut D, f: &Frame)
     where
         D: DrawTarget<Color = Rgb565>,
     {
+        let (nav, def, matrix_state, sel_op) = (f.nav, f.def, f.matrix, f.sel_op);
+
         // Clear
         let _ = Rectangle::new(Point::zero(), Size::new(240, 320))
             .draw_styled(&PrimitiveStyle::with_fill(theme::BG), display);
@@ -840,10 +853,10 @@ impl Renderer {
         match def.layout {
             PageLayout::BigViz => {
                 self.draw_viz_from_type(display, def);
-                self.draw_params_from_def(display, def, sel_op, matrix_state);
+                self.draw_params_from_def(display, def, f.focus, sel_op, matrix_state);
             }
             PageLayout::CellGrid => {
-                self.draw_cell_grid_from_def(display, def, sel_op, matrix_state);
+                self.draw_cell_grid_from_def(display, def, f.focus, sel_op, matrix_state);
             }
             PageLayout::Matrix => {
                 crate::ui::mod_grid::draw_grid(display, matrix_state);
@@ -859,28 +872,25 @@ impl Renderer {
 
         // Oscilloscope strip — on CellGrid pages, between cells and dungeon map
         if def.layout == PageLayout::CellGrid {
-            Self::draw_scope(display, scope);
+            Self::draw_scope(display, f.scope);
         }
 
         dungeon_map::draw(display, nav, (self.branch_scroll.current() * theme::BRANCH_LINE_HEIGHT as f32) as i32);
-        self.draw_perf(display, perf);
+        self.draw_perf(display, f.perf);
     }
 
     /// Draw a single region using BlockDef. The caller has already cleared the region.
-    #[allow(clippy::too_many_arguments)]
     pub fn draw_region_with_def<D>(
         &self,
         display: &mut D,
         kind: RegionKind,
-        nav: &ChainNav,
-        def: &BlockDef,
-        perf: &PerfStats,
-        matrix_state: &MatrixState,
-        sel_op: Op,
+        f: &Frame,
     )
     where
         D: DrawTarget<Color = Rgb565>,
     {
+        let (nav, def, perf, matrix_state, sel_op) = (f.nav, f.def, f.perf, f.matrix, f.sel_op);
+
         match kind {
             RegionKind::Header => {
                 self.draw_header_with_def(display, nav, def);
@@ -890,7 +900,7 @@ impl Renderer {
                 self.draw_viz_from_type(display, def);
             }
             RegionKind::Params => {
-                self.draw_params_from_def(display, def, sel_op, matrix_state);
+                self.draw_params_from_def(display, def, f.focus, sel_op, matrix_state);
                 let _ = Line::new(
                     Point::new(0, theme::ENCODER_ZONE_BOTTOM),
                     Point::new(theme::SCREEN_W - 1, theme::ENCODER_ZONE_BOTTOM),
@@ -898,7 +908,7 @@ impl Renderer {
                 .draw_styled(&PrimitiveStyle::with_stroke(theme::SEPARATOR, 1), display);
             }
             RegionKind::Cells => {
-                self.draw_cell_grid_from_def(display, def, sel_op, matrix_state);
+                self.draw_cell_grid_from_def(display, def, f.focus, sel_op, matrix_state);
                 let _ = Line::new(
                     Point::new(0, theme::ENCODER_ZONE_BOTTOM),
                     Point::new(theme::SCREEN_W - 1, theme::ENCODER_ZONE_BOTTOM),
