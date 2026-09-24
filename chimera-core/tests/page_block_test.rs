@@ -1,8 +1,10 @@
 //! Legacy (`PageId`) pages — Mixer, System, Demo — after moving onto
 //! `Block` specs and `ParamAddr` bindings. Parity tests pin today's steps.
 
-use chimera_core::addr::{BlockRef, Op, ParamAddr};
+use chimera_core::addr::{BlockRef, Blocks, Op, ParamAddr};
+use chimera_core::dsp::delay::DelayParams;
 use chimera_core::params::{EnvParams, FilterParams, FmOpParams, OutParams, ParamSnapshot};
+use chimera_core::preset::Performance;
 use chimera_core::ui::page::PageId;
 
 #[test]
@@ -38,21 +40,40 @@ fn mixer_read_values_keep_placeholders() {
     assert_eq!(PageId::Mixer.read_values(&p), [0.8, 0.5, 0.5, 0.0, 0.5, 0.0]);
 }
 
+/// FX pages edit the Performance's shared FX (spec § Data model).
 #[test]
 fn fx_encoders_step_like_before() {
-    let mut p = ParamSnapshot::default();
-    PageId::Delay.apply_encoder(0, 2, &mut p);
-    assert_eq!(p.delay.time_ms, 375.0 + 2.0 * 8.0);
-    PageId::Chorus.apply_encoder(0, 5, &mut p);
-    assert_eq!(p.chorus.mode, 3);
-    PageId::MixReverb.apply_encoder(0, 5, &mut p);
-    assert_eq!(p.reverb.reverb_type, 2);
-    PageId::MixReverb.apply_encoder(4, -1, &mut p);
-    assert_eq!(p.reverb.mix, 0.0);
-    PageId::MixReverb.apply_encoder(4, 1, &mut p); // Efx MIX slot, +1 off the floor
-    assert_eq!(p.reverb.mix, 1.0 / 128.0);
-    PageId::Delay.snap_encoder(5, 1, &mut p);
-    assert_eq!(p.delay.mix, 100.0 / 127.0);
+    let mut perf = Performance::new();
+    PageId::Delay.apply_encoder(0, 2, &mut perf.edit(0));
+    assert_eq!(perf.fx.delay.time_ms, 375.0 + 2.0 * 8.0);
+    PageId::Chorus.apply_encoder(0, 5, &mut perf.edit(0));
+    assert_eq!(perf.fx.chorus.mode, 3);
+    PageId::MixReverb.apply_encoder(0, 5, &mut perf.edit(0));
+    assert_eq!(perf.fx.reverb.reverb_type, 2);
+    PageId::MixReverb.apply_encoder(4, -1, &mut perf.edit(0));
+    assert_eq!(perf.fx.reverb.mix, 0.0);
+    PageId::MixReverb.apply_encoder(4, 1, &mut perf.edit(0)); // Efx MIX slot, +1 off the floor
+    assert_eq!(perf.fx.reverb.mix, 1.0 / 128.0);
+    PageId::Delay.snap_encoder(5, 1, &mut perf.edit(0));
+    assert_eq!(perf.fx.delay.mix, 100.0 / 127.0);
+}
+
+/// One FX set for every Part: an edit from part 1 is what part 4 sees.
+#[test]
+fn fx_are_shared_across_parts() {
+    let mut perf = Performance::new();
+    PageId::Delay.apply_encoder(0, 2, &mut perf.edit(0));
+    let seen = perf.edit(3).block(BlockRef::Delay).map(|b| b.get(DelayParams::TIME_MS));
+    assert_eq!(seen, Some(391.0));
+}
+
+/// A Sound carries no FX blocks any more.
+#[test]
+fn a_sound_has_no_fx_blocks() {
+    let p = ParamSnapshot::default();
+    for b in [BlockRef::Chorus, BlockRef::Delay, BlockRef::Reverb] {
+        assert!(p.block(b).is_none(), "{b:?}");
+    }
 }
 
 #[test]

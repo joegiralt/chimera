@@ -1,3 +1,6 @@
+use crate::addr::{BlockRef, Blocks};
+use crate::block::Block;
+use crate::dsp::fx_bus::FxParams;
 use crate::hw::MAX_PARTS;
 use crate::mod_path::ModDestRegistry;
 use crate::modulation::ModState;
@@ -137,11 +140,13 @@ impl Part {
     }
 }
 
-/// All Parts: the whole setup you play and save. The `SoundPool` is not
-/// part of it (it stays on the UI side).
+/// All Parts + FX: the whole setup you play and save. The `SoundPool` is
+/// not part of it (it stays on the UI side).
 pub struct Performance {
     pub name: [u8; NAME_LEN],
     pub parts: [Part; MAX_PARTS],
+    /// Chorus, delay and reverb: shared by every Part, not per Sound.
+    pub fx: FxParams,
 }
 
 impl Performance {
@@ -149,6 +154,61 @@ impl Performance {
         Self {
             name: *b"New Performance\0",
             parts: core::array::from_fn(|i| Part { mix: PartParams::for_part(i), ..Part::new(ChainType::PizzaPoly) }),
+            fx: FxParams::default(),
+        }
+    }
+
+    /// Part `part` as the pages edit it: its Sound plus the shared FX.
+    pub fn edit(&mut self, part: usize) -> PartEdit<'_> {
+        PartEdit { part: &mut self.parts[part], fx: &mut self.fx }
+    }
+}
+
+/// One Part and the Performance's FX, borrowed together so a page can
+/// address any block by `BlockRef`.
+pub struct PartEdit<'a> {
+    pub part: &'a mut Part,
+    pub fx: &'a mut FxParams,
+}
+
+impl Blocks for PartEdit<'_> {
+    fn block(&self, b: BlockRef) -> Option<&dyn Block> {
+        match b {
+            BlockRef::Chorus => Some(&self.fx.chorus),
+            BlockRef::Delay => Some(&self.fx.delay),
+            BlockRef::Reverb => Some(&self.fx.reverb),
+            BlockRef::Pizza
+            | BlockRef::Modal
+            | BlockRef::Fm
+            | BlockRef::FmOp(_)
+            | BlockRef::Drive
+            | BlockRef::Filter
+            | BlockRef::Folder
+            | BlockRef::AmpEnv
+            | BlockRef::FilterEnv
+            | BlockRef::AuxEnv
+            | BlockRef::Lfo
+            | BlockRef::Out => self.part.sound.params.block(b),
+        }
+    }
+
+    fn block_mut(&mut self, b: BlockRef) -> Option<&mut dyn Block> {
+        match b {
+            BlockRef::Chorus => Some(&mut self.fx.chorus),
+            BlockRef::Delay => Some(&mut self.fx.delay),
+            BlockRef::Reverb => Some(&mut self.fx.reverb),
+            BlockRef::Pizza
+            | BlockRef::Modal
+            | BlockRef::Fm
+            | BlockRef::FmOp(_)
+            | BlockRef::Drive
+            | BlockRef::Filter
+            | BlockRef::Folder
+            | BlockRef::AmpEnv
+            | BlockRef::FilterEnv
+            | BlockRef::AuxEnv
+            | BlockRef::Lfo
+            | BlockRef::Out => self.part.sound.params.block_mut(b),
         }
     }
 }

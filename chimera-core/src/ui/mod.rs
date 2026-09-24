@@ -17,7 +17,7 @@ use chimera_hal::{ButtonId, ButtonState, Controls, EncoderId};
 
 use crate::block::Block;
 use crate::dsp::lfo::Lfo;
-use crate::addr::{BlockRef, Op, ParamAddr};
+use crate::addr::{BlockRef, Blocks, Op, ParamAddr};
 use crate::mod_path::LABEL_LEN;
 use crate::modulation::{ModState, MAX_MOD_SOURCES};
 use crate::params::{EnvParams, ParamSnapshot};
@@ -68,10 +68,10 @@ impl Default for UiState {
 impl UiState {
     pub fn new() -> Self {
         let nav = ChainNav::new();
-        let performance = Performance::new();
+        let mut performance = Performance::new();
         let page = PageKey::from_nav(&nav, Op::A);
         let mut renderer = Renderer::new();
-        renderer.snap_to_current(page_values(page, nav.active_block_def(), &performance.parts[0].sound.params, Op::A));
+        renderer.snap_to_current(page_values(page, nav.active_block_def(), &performance.edit(0), Op::A));
 
         let mut matrix_state = MatrixState::new();
         // Source rows = what the chain's voice produces (ENV, LFO)
@@ -128,7 +128,7 @@ impl UiState {
     /// Recompute the page identity and jump the display to its values.
     fn enter_page(&mut self) {
         self.page = PageKey::from_nav(&self.nav, self.sel_op);
-        let values = page_values(self.page, self.nav.active_block_def(), self.params(), self.sel_op);
+        let values = page_values(self.page, self.nav.active_block_def(), &self.performance.edit(self.active_part), self.sel_op);
         self.renderer.snap_to_current(values);
     }
 
@@ -333,7 +333,7 @@ impl UiState {
                 if delta != 0 {
                     self.last_encoder = i;
                     self.renderer.focused = i;
-                    let params = &mut self.performance.parts[at].sound.params;
+                    let params = &mut self.performance.edit(at);
                     match (self.page, shift) {
                         (PageKey::Part { .. }, true) => part_page::snap_encoder(def, i, delta, params, self.sel_op),
                         (PageKey::Part { .. }, false) => part_page::apply_encoder(def, i, delta, params, &mut self.sel_op),
@@ -376,11 +376,11 @@ impl UiState {
     pub fn update(&mut self) {
 
         let at = self.active_part;
-        let sound = &self.performance.parts[at].sound;
 
         // Read base param values
         let def = self.nav.active_block_def();
-        let mut values = page_values(self.page, def, &sound.params, self.sel_op);
+        let mut values = page_values(self.page, def, &self.performance.edit(at), self.sel_op);
+        let sound = &self.performance.parts[at].sound;
 
         // Apply mod offsets for display — makes bars and vizzes animate with modulation.
         // Skip the LFO tick entirely when no modulation is active.
@@ -574,7 +574,7 @@ impl UiState {
 
 /// Display values for `page`: Part pages through slot bindings, legacy pages
 /// through `PageId`.
-fn page_values(page: PageKey, def: &BlockDef, params: &ParamSnapshot, sel_op: Op) -> [f32; 6] {
+fn page_values(page: PageKey, def: &BlockDef, params: &impl Blocks, sel_op: Op) -> [f32; 6] {
     match page {
         PageKey::Part { .. } => part_page::read_values(def, params, sel_op),
         PageKey::Legacy(p) => p.read_values(params),

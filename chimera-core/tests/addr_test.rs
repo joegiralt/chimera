@@ -1,6 +1,7 @@
 //! Semantic addresses (spec §2) and `ParamSnapshot::block(_mut)`.
 
-use chimera_core::addr::{BlockRef, Op, OpOutOfRange, ParamAddr};
+use chimera_core::addr::{BlockRef, Blocks, Op, OpOutOfRange, ParamAddr};
+use chimera_core::preset::Performance;
 use chimera_core::dsp::pizza::PizzaParams;
 use chimera_core::params::{DriveParams, EnvParams, FilterParams, FmOpParams, FolderParams, OutParams, ParamSnapshot};
 
@@ -29,26 +30,31 @@ fn block_ref_all_has_no_duplicates() {
     }
 }
 
-/// `block()` hands out the instance whose spec table `BlockRef::specs` names.
+/// `block()` hands out the instance whose spec table `BlockRef::specs`
+/// names; a Part view resolves every address, a Sound all but the FX.
 #[test]
 fn block_and_specs_agree() {
-    let p = ParamSnapshot::default();
+    let mut perf = Performance::new();
+    let part = perf.edit(0);
     for b in BlockRef::ALL {
-        assert!(core::ptr::eq(p.block(b).specs(), b.specs()), "{b:?}");
+        let blk = part.block(b).expect("a Part resolves every block");
+        assert!(core::ptr::eq(blk.specs(), b.specs()), "{b:?}");
+        let fx = matches!(b, BlockRef::Chorus | BlockRef::Delay | BlockRef::Reverb);
+        assert_eq!(ParamSnapshot::default().block(b).is_some(), !fx, "{b:?}");
     }
 }
 
 #[test]
 fn block_mut_reaches_the_named_instance() {
     let mut p = ParamSnapshot::default();
-    p.block_mut(BlockRef::FmOp(Op::C)).set(FmOpParams::LEVEL, 42.0);
+    p.block_mut(BlockRef::FmOp(Op::C)).unwrap().set(FmOpParams::LEVEL, 42.0);
     assert_eq!(p.fm.operators[2].level, 42.0);
-    p.block_mut(BlockRef::FilterEnv).set(EnvParams::ATTACK, 2.0);
+    p.block_mut(BlockRef::FilterEnv).unwrap().set(EnvParams::ATTACK, 2.0);
     assert_eq!(p.envelopes[1].attack, 2.0);
     assert_eq!(p.envelopes[0].attack, 0.01);
-    p.block_mut(BlockRef::Out).set(OutParams::VOLUME, 0.25);
+    p.block_mut(BlockRef::Out).unwrap().set(OutParams::VOLUME, 0.25);
     assert_eq!(p.out.volume, 0.25);
-    assert_eq!(p.block(BlockRef::Out).get(OutParams::VOLUME), 0.25);
+    assert_eq!(p.block(BlockRef::Out).unwrap().get(OutParams::VOLUME), 0.25);
 }
 
 /// Spec §4: exactly these are modulatable (read by `Voice` per block).

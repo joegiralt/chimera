@@ -1,4 +1,4 @@
-use crate::addr::BlockRef;
+use crate::addr::{BlockRef, Blocks};
 use crate::block::{Block, ParamId, ParamSpec, ValFmt};
 
 /// Parameters for one voice's filter
@@ -507,9 +507,6 @@ pub struct ParamSnapshot {
     pub pizza: crate::dsp::pizza::PizzaParams,
     pub fm: FmParams,
     pub modal: crate::dsp::modal::ModalParams,
-    pub reverb: crate::dsp::reverb::ReverbParams,
-    pub delay: crate::dsp::delay::DelayParams,
-    pub chorus: crate::dsp::chorus::ChorusParams,
     pub lfo: crate::dsp::lfo::LfoParams,
     pub out: OutParams,
 }
@@ -523,11 +520,14 @@ impl ParamSnapshot {
     pub fn engine(&self) -> EngineType {
         self.engine
     }
+}
 
-    /// The one exhaustive dispatch from a block address to its values
-    /// (spec §2). UI and modulation go through this; DSP reads fields.
-    pub fn block(&self, b: BlockRef) -> &dyn Block {
-        match b {
+/// The one exhaustive dispatch from a block address to a Sound's values
+/// (spec §2). UI and modulation go through this; DSP reads fields. The FX
+/// belong to the Performance, not the Sound.
+impl Blocks for ParamSnapshot {
+    fn block(&self, b: BlockRef) -> Option<&dyn Block> {
+        Some(match b {
             BlockRef::Pizza => &self.pizza,
             BlockRef::Modal => &self.modal,
             BlockRef::Fm => &self.fm,
@@ -540,14 +540,12 @@ impl ParamSnapshot {
             BlockRef::AuxEnv => &self.envelopes[2],
             BlockRef::Lfo => &self.lfo,
             BlockRef::Out => &self.out,
-            BlockRef::Chorus => &self.chorus,
-            BlockRef::Delay => &self.delay,
-            BlockRef::Reverb => &self.reverb,
-        }
+            BlockRef::Chorus | BlockRef::Delay | BlockRef::Reverb => return None,
+        })
     }
 
-    pub fn block_mut(&mut self, b: BlockRef) -> &mut dyn Block {
-        match b {
+    fn block_mut(&mut self, b: BlockRef) -> Option<&mut dyn Block> {
+        Some(match b {
             BlockRef::Pizza => &mut self.pizza,
             BlockRef::Modal => &mut self.modal,
             BlockRef::Fm => &mut self.fm,
@@ -560,10 +558,8 @@ impl ParamSnapshot {
             BlockRef::AuxEnv => &mut self.envelopes[2],
             BlockRef::Lfo => &mut self.lfo,
             BlockRef::Out => &mut self.out,
-            BlockRef::Chorus => &mut self.chorus,
-            BlockRef::Delay => &mut self.delay,
-            BlockRef::Reverb => &mut self.reverb,
-        }
+            BlockRef::Chorus | BlockRef::Delay | BlockRef::Reverb => return None,
+        })
     }
 }
 
@@ -582,15 +578,6 @@ impl Default for ParamSnapshot {
             pizza: crate::dsp::pizza::PizzaParams::default(),
             fm: FmParams::default(),
             modal: crate::dsp::modal::ModalParams::default(),
-            delay: crate::dsp::delay::DelayParams::default(),
-            chorus: crate::dsp::chorus::ChorusParams::default(),
-            reverb: crate::dsp::reverb::ReverbParams {
-                reverb_type: 0,
-                time: 0.5,
-                damping: 0.3,
-                size: 0.5,
-                mix: 0.0,
-            },
             lfo: crate::dsp::lfo::LfoParams::default(),
             out: OutParams::default(),
         }

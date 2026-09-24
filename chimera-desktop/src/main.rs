@@ -54,7 +54,7 @@ fn main() {
 
         // Push params + modulation routes to the audio thread (part 0)
         let sound = &ui.performance.parts[0].sound;
-        audio.update(&sound.params, &sound.mod_state);
+        audio.update(&sound.params, &sound.mod_state, &ui.performance.fx);
 
         // Measure render time
         let render_start = Instant::now();

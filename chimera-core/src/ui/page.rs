@@ -1,9 +1,9 @@
-use crate::addr::{BlockRef, Op, ParamAddr};
+use crate::addr::{BlockRef, Blocks, Op, ParamAddr};
 use crate::block::ParamId;
 use crate::dsp::chorus::ChorusParams;
 use crate::dsp::delay::DelayParams;
 use crate::dsp::reverb::ReverbParams;
-use crate::params::{DriveParams, EnvParams, FilterParams, FmOpParams, FmParams, FolderParams, OutParams, ParamSnapshot};
+use crate::params::{DriveParams, EnvParams, FilterParams, FmOpParams, FmParams, FolderParams, OutParams};
 use crate::ui::chain::ChainNav;
 
 pub use crate::block::ValFmt;
@@ -159,25 +159,32 @@ impl PageId {
     }
 
     /// Read 6 normalized (0..1) encoder values from params for this page.
-    pub fn read_values(&self, params: &ParamSnapshot) -> [f32; 6] {
+    pub fn read_values(&self, params: &impl Blocks) -> [f32; 6] {
         core::array::from_fn(|i| match (self, i) {
             // Mixer bars for the unbound VOICES and PITCH slots.
             (PageId::Mixer, 2 | 4) => 0.5,
-            _ => self.binding(i).map_or(0.0, |a| params.block(a.block).normalized(a.param)),
+            _ => self
+                .binding(i)
+                .and_then(|a| Some(params.block(a.block)?.normalized(a.param)))
+                .unwrap_or(0.0),
         })
     }
 
     /// Apply an encoder delta: `delta` ticks of the bound param's spec step.
-    pub fn apply_encoder(&self, idx: usize, delta: i8, params: &mut ParamSnapshot) {
-        if let Some(a) = self.binding(idx) {
-            params.block_mut(a.block).nudge(a.param, delta);
+    pub fn apply_encoder(&self, idx: usize, delta: i8, params: &mut impl Blocks) {
+        if let Some(a) = self.binding(idx)
+            && let Some(b) = params.block_mut(a.block)
+        {
+            b.nudge(a.param, delta);
         }
     }
 
     /// Shift+encoder: snap to the coarse points of the bound param's format.
-    pub fn snap_encoder(&self, idx: usize, delta: i8, params: &mut ParamSnapshot) {
-        if let Some(a) = self.binding(idx) {
-            params.block_mut(a.block).snap(a.param, delta);
+    pub fn snap_encoder(&self, idx: usize, delta: i8, params: &mut impl Blocks) {
+        if let Some(a) = self.binding(idx)
+            && let Some(b) = params.block_mut(a.block)
+        {
+            b.snap(a.param, delta);
         }
     }
 }
