@@ -54,6 +54,10 @@ pub struct UiState {
     pub renderer: Renderer,
     pub matrix_state: MatrixState,
     pub ui_mode: UiMode,
+    /// Set when the sound browser opens, its cursor/scroll moves, or a save
+    /// changes the pool; `render_dirty_with_scope` redraws it only then, and
+    /// clears the flag once flushed (#7).
+    browser_dirty: bool,
     page: PageKey,
     /// Selected FM operator — one global selection, as before (spec §5).
     sel_op: Op,
@@ -86,6 +90,7 @@ impl UiState {
             renderer,
             matrix_state: MatrixState::new(),
             ui_mode: UiMode::Normal,
+            browser_dirty: false,
             page,
             sel_op: Op::A,
             region_set: region::RegionSet::new(),
@@ -218,6 +223,7 @@ impl UiState {
                 } else if new_cursor >= *scroll + visible {
                     *scroll = new_cursor + 1 - visible;
                 }
+                self.browser_dirty = true;
             }
 
             // Edit button: confirm selection / load
@@ -246,6 +252,7 @@ impl UiState {
                 self.load_matrix(sel_part);
                 self.enter_page();
                 self.ui_mode = UiMode::Normal;
+                self.browser_dirty = true;
                 return;
             }
 
@@ -258,6 +265,7 @@ impl UiState {
                     self.pool.store(save_cursor, sound);
                 }
                 // Stay in browser mode so the user can see the saved slot
+                self.browser_dirty = true;
                 return;
             }
 
@@ -298,6 +306,7 @@ impl UiState {
             for (i, &btn) in b_buttons.iter().enumerate() {
                 if controls.button_state(btn) == ButtonState::Pressed {
                     self.ui_mode = UiMode::SoundBrowser { part: i, cursor: 0, scroll: 0 };
+                    self.browser_dirty = true;
                     return; // consume — don't pass to navigation
                 }
             }
@@ -582,15 +591,19 @@ impl UiState {
         D: embedded_graphics::draw_target::DrawTarget<Color = embedded_graphics::pixelcolor::Rgb565>
             + chimera_hal::ChimeraDisplay,
     {
-        // Sound browser overlay — always full redraw, single flush region
+        // Sound browser overlay — one flush region, redrawn only while dirty
+        // (opened, cursor/scroll moved, or a save changed the pool; #7).
         if let UiMode::SoundBrowser { part, cursor, scroll } = self.ui_mode {
-            let fb = display.pixel_buffer();
-            Renderer::clear_region_fb(fb, 0, chimera_hal::SCREEN_HEIGHT);
-            browser::draw(display, &self.pool, part, cursor, scroll);
-            // Invalidate region set so normal layout forces full rebuild on exit
-            self.region_set.prev_layout = None;
             let mut flush_list = [(0u16, 0u16); region::MAX_REGIONS];
-            flush_list[0] = (0, chimera_hal::SCREEN_HEIGHT);
+            if self.browser_dirty {
+                let fb = display.pixel_buffer();
+                Renderer::clear_region_fb(fb, 0, chimera_hal::SCREEN_HEIGHT);
+                browser::draw(display, &self.pool, part, cursor, scroll);
+                // Invalidate region set so normal layout forces full rebuild on exit
+                self.region_set.prev_layout = None;
+                flush_list[0] = (0, chimera_hal::SCREEN_HEIGHT);
+                self.browser_dirty = false;
+            }
             return flush_list;
         }
 

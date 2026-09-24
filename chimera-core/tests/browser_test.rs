@@ -4,6 +4,7 @@ mod screen;
 
 use chimera_core::preset::{ChainType, Sound, SoundPool};
 use chimera_core::ui::browser::{self, row_y, SCROLL_TOP, SCROLL_X, TOTAL_ENTRIES, VISIBLE_ROWS};
+use chimera_core::ui::perf::PerfStats;
 use chimera_core::ui::theme;
 use chimera_core::ui::UiMode;
 use chimera_hal::{ButtonId, EncoderId};
@@ -67,6 +68,36 @@ fn render_ui(ui: &chimera_core::ui::UiState) -> Fb {
 #[test]
 fn browser_dirty_render_equals_full_render() {
     assert!(render("sound_browser").px == render_dirty("sound_browser").px);
+}
+
+/// An idle browser (no cursor/scroll change, no save/load) must not redraw
+/// or flush on every frame — only the first render after it opens (#7).
+#[test]
+fn idle_browser_flushes_nothing_after_the_first_frame() {
+    let mut ui = ui_for("sound_browser");
+    let mut fb = Fb::new();
+    let scope = scope_fixture();
+    ui.render_dirty_with_scope(&mut fb, &PerfStats::zero(), &scope); // consume the open-time redraw
+    for frame in 0..5 {
+        let flushed = ui.render_dirty_with_scope(&mut fb, &PerfStats::zero(), &scope);
+        assert!(flushed.iter().all(|&(a, b)| a == b), "frame {frame}: idle browser flushed {flushed:?}");
+    }
+}
+
+/// Moving the cursor redraws, and the result matches a full render (#7).
+#[test]
+fn cursor_move_redraws_and_matches_a_full_render() {
+    let mut ui = ui_for("sound_browser");
+    let mut fb = Fb::new();
+    let scope = scope_fixture();
+    ui.render_dirty_with_scope(&mut fb, &PerfStats::zero(), &scope); // consume the open-time redraw
+    feed(&mut ui, Input::turn(EncoderId::Main, 1));
+    let flushed = ui.render_dirty_with_scope(&mut fb, &PerfStats::zero(), &scope);
+    assert!(flushed.iter().any(|&(a, b)| a != b), "cursor move should flush: {flushed:?}");
+
+    let mut full = Fb::new();
+    ui.render_with_scope(&mut full, &PerfStats::zero(), &scope);
+    assert!(fb.px == full.px, "dirty render after a cursor move == full render");
 }
 
 /// A saved Sound's name fills all of `NAME_LEN` (16 bytes, no null
