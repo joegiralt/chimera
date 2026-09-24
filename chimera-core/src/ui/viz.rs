@@ -190,18 +190,47 @@ where
         } else {
             draw::line(d, xa, ya, xb, yb, theme::INK2, 1);
         }
-        // A label wider than its segment is left out, unless it is the lit one.
-        let fits = draw::text_width(&theme::FONT_LABEL, labels[s], theme::LABEL_TRACKING) + 2 <= xb - xa;
-        if lit == Some(s) {
-            draw::text_center(d, &theme::FONT_LABEL, labels[s], (xa + xb) / 2, base + 14, theme::ACCENT, theme::LABEL_TRACKING);
-        } else if fits {
-            draw::text_center(d, &theme::FONT_LABEL, labels[s], (xa + xb) / 2, base + 14, theme::MID, theme::LABEL_TRACKING);
+    }
+    let xs = pts.map(|p| p.0);
+    for (s, span) in stage_label_spans(&xs, labels, lit).iter().enumerate() {
+        if let Some((left, _)) = *span {
+            let color = if lit == Some(s) { theme::ACCENT } else { theme::MID };
+            draw::text_tracked(d, &theme::FONT_LABEL, labels[s], left, base + 14, color, theme::LABEL_TRACKING);
         }
     }
     for (i, &(x, y)) in pts.iter().enumerate() {
         let on_lit = lit.is_some_and(|s| i == s || i == s + 1);
         draw::dot(d, x, y, 2, if on_lit { theme::ACCENT } else { theme::INK2 });
     }
+}
+
+/// Horizontal gap kept between two stage labels.
+const STAGE_LABEL_GAP: i32 = 2;
+
+/// Where each stage label of `envelope` goes, as `(left, right)` columns
+/// (inclusive), centred under its segment `xs[s]..xs[s + 1]`; `None` = left
+/// out. The lit stage's label is always drawn. Any other is drawn only when
+/// it fits its own segment and keeps `STAGE_LABEL_GAP` from every label
+/// already placed (the lit one first), so no two labels ever touch.
+pub fn stage_label_spans(xs: &[i32; 5], labels: &[&str; 4], lit: Option<usize>) -> [Option<(i32, i32)>; 4] {
+    let span = |s: usize| {
+        let w = draw::text_width(&theme::FONT_LABEL, labels[s], theme::LABEL_TRACKING);
+        let left = (xs[s] + xs[s + 1]) / 2 - w / 2;
+        (w, (left, left + w - 1))
+    };
+    let mut spans = [None; 4];
+    if let Some(s) = lit.filter(|&s| s < 4) {
+        spans[s] = Some(span(s).1);
+    }
+    for s in (0..4).filter(|&s| lit != Some(s)) {
+        let (w, (l, r)) = span(s);
+        let fits = w + 2 <= xs[s + 1] - xs[s];
+        let clear = spans.iter().flatten().all(|&(pl, pr)| r + STAGE_LABEL_GAP < pl || pr + STAGE_LABEL_GAP < l);
+        if fits && clear {
+            spans[s] = Some((l, r));
+        }
+    }
+    spans
 }
 
 /// Compressor transfer curve (knee at 60 %, 0.3 above it) over a faint 1:1 line.
