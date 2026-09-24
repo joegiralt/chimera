@@ -70,7 +70,7 @@ fn focus_band_shows_the_last_touched_slot() {
     fmt_val(&mut text, v, ValFmt::Uni);
     let mut want = Fb::new();
     want.px.fill(fb.px[0]); // ground
-    components::focus_band(&mut want, "LEVEL", text.as_str(), v, false);
+    components::focus_band(&mut want, "LEVEL", text.as_str(), v, false, None);
     assert!(band(&fb, 28, 118) == band(&want, 28, 118), "focus band is LEVEL {}", text.as_str());
 }
 

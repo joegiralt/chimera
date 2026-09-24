@@ -99,3 +99,25 @@ impl Default for ModDestRegistry {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::addr::{BlockRef, Op};
+    use crate::params::FmOpParams;
+
+    /// `add` refuses a distinct, modulatable address once the registry is
+    /// physically full. Today's param specs define only 25 distinct
+    /// modulatable addresses in total (`mod_registry_test::
+    /// registry_accepts_exactly_the_modulatable_addresses`), short of
+    /// `MAX_REGISTRY_DESTS` (32), so this can't be reached through `add`
+    /// alone from outside the crate — hence the direct `count` poke here
+    /// (issue #21).
+    #[test]
+    fn add_refuses_once_physically_full() {
+        let mut reg = ModDestRegistry::new();
+        reg.count = MAX_REGISTRY_DESTS;
+        let addr = ParamAddr::new(BlockRef::FmOp(Op::A), FmOpParams::LEVEL);
+        assert_eq!(reg.add(addr, [0; LABEL_LEN]), Err(RegistryError::Full));
+    }
+}

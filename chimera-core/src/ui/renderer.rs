@@ -17,6 +17,7 @@ use crate::ui::perf::PerfStats;
 use crate::ui::region::{self, RegionKind};
 use crate::ui::viz;
 use crate::ui::theme;
+use crate::ui::PrimeStatus;
 
 /// Everything one frame draws from, besides the renderer's own animation.
 pub struct Frame<'a> {
@@ -34,6 +35,9 @@ pub struct Frame<'a> {
     /// Every Part (Mixer overview, FM algorithm) and the one being edited.
     pub parts: &'a [crate::preset::Part; crate::hw::MAX_PARTS],
     pub active_part: usize,
+    /// The last MIX+PLUS outcome, shown in the focus band in place of the
+    /// value readout (issue #21).
+    pub prime_status: Option<PrimeStatus>,
 }
 
 /// Full-screen renderer. Composites header, visualization, parameters, and dungeon map.
@@ -245,7 +249,7 @@ impl Renderer {
         let v = self.anim[f.focus].current();
         let mut buf = FmtBuf::new();
         fmt::fmt_val(&mut buf, v, slot.format());
-        components::focus_band(display, slot.label(), buf.as_str(), v, slot.format().is_bipolar());
+        components::focus_band(display, slot.label(), buf.as_str(), v, slot.format().is_bipolar(), f.prime_status);
     }
 
     /// Mod matrix focus band: the selected route (`SRC → TAG DEST`); the amount lerps through
