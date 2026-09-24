@@ -81,3 +81,27 @@ fn every_page_id_fits_the_focus_table() {
         }
     }
 }
+
+/// Turning an encoder over an empty slot (4opFM slot b) edits nothing, so it
+/// does not take the focus: the focus band and the active cell stay put.
+#[test]
+fn an_empty_slot_does_not_take_focus() {
+    use chimera_core::preset::ChainType;
+    use screen::{load_init, settle, Fb, W};
+    let render = |ui: &UiState| {
+        let mut fb = Fb::new();
+        ui.render_with_scope(&mut fb, &chimera_core::ui::perf::PerfStats::zero(), &screen::scope_fixture());
+        fb
+    };
+    let mut ui = UiState::new();
+    load_init(&mut ui, ChainType::Fm);
+    feed(&mut ui, Input::turn(EncoderId::C, 1)); // LEVEL
+    settle(&mut ui);
+    let before = render(&ui);
+    feed(&mut ui, Input::turn(EncoderId::B, 3)); // slot b: empty
+    settle(&mut ui);
+    assert_eq!(ui.focused_slot(), 2);
+    let after = render(&ui);
+    assert!(before.px[28 * W..118 * W] == after.px[28 * W..118 * W], "focus band unchanged");
+    assert!(before.px[186 * W..266 * W] == after.px[186 * W..266 * W], "cells unchanged");
+}
