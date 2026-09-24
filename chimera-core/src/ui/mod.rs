@@ -527,12 +527,12 @@ impl UiState {
             }
             RegionKind::Cells => RegionData::cells(self.page, qvalues, f.focus as u8, self.matrix_state.num_dests as u16),
             RegionKind::Nav => RegionData::nav(chain, node, sub, region::quantize(self.renderer.branch_scroll.current())),
-            RegionKind::Grid => RegionData::grid_with_amount(
+            RegionKind::Grid => RegionData::grid_with_value(
                 self.matrix_state.sel_row as u8,
                 self.matrix_state.sel_col as u8,
                 self.matrix_state.scroll_x as u8,
                 self.matrix_state.scroll_y as u8,
-                self.matrix_state.current_amount(),
+                qvalues[renderer::MATRIX_AMOUNT_SLOT],
             ),
         }
     }
