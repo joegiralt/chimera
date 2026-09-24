@@ -85,6 +85,7 @@ pub mod engine_fm;
 pub mod engines;
 pub mod chorus;
 pub mod delay;
+pub mod fx_bus;
 pub mod drive;
 pub mod midiverb;
 pub mod envelope;

@@ -60,6 +60,12 @@ impl Default for ChorusParams {
 }
 
 impl ChorusParams {
+    /// Off when the mode is off or the mix is below audibility; `process`
+    /// passes the input through unchanged then.
+    pub fn is_on(&self) -> bool {
+        ChorusMode::from_u8(self.mode) != ChorusMode::Off && self.mix >= 0.001
+    }
+
     pub const MODE: ParamId = ParamId(0);
     pub const RATE: ParamId = ParamId(1);
     pub const DEPTH: ParamId = ParamId(2);
@@ -174,10 +180,10 @@ impl JunoChorus {
     }
 
     pub fn process(&mut self, buf: &mut [f32; BLOCK_SIZE], params: &ChorusParams, sample_rate: u32) {
-        let mode = ChorusMode::from_u8(params.mode);
-        if mode == ChorusMode::Off || params.mix < 0.001 {
+        if !params.is_on() {
             return;
         }
+        let mode = ChorusMode::from_u8(params.mode);
 
         // Juno I: 0.513 Hz LFO, 1.7ms depth, 3.6ms base delay
         // Juno II: 0.863 Hz LFO, 2.3ms depth, 3.6ms base delay

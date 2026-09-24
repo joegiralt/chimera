@@ -77,8 +77,8 @@ pub struct PlateReverb {
     // Input diffusion: 4 allpass filters
     ap_in: [DelayLine<512>; 4],
     // Tank: 2 branches, each with 2 allpass + 1 delay
-    ap_tank: [DelayLine<4096>; 4],
-    del_tank: [DelayLine<8192>; 2],
+    ap_tank: [DelayLine<AP_TANK_LINE>; 4],
+    del_tank: [DelayLine<DEL_TANK_LINE>; 2],
     // Damping
     lp: [OnePole; 2],
 }
@@ -86,6 +86,11 @@ pub struct PlateReverb {
 const AP_IN_LENS: [usize; 4] = [113, 162, 241, 399];
 const AP_TANK_LENS: [usize; 4] = [1653, 2038, 1913, 1663];
 const DEL_TANK_LENS: [usize; 2] = [3411, 4782];
+/// Line lengths cover the longest fixed tap (ADR 0014); a `DelayLine<N>`
+/// with `N >= delay` reads exactly what a longer one would.
+const AP_TANK_LINE: usize = 2048;
+const DEL_TANK_LINE: usize = 4800;
+const _: () = assert!(AP_TANK_LENS[1] <= AP_TANK_LINE && DEL_TANK_LENS[1] <= DEL_TANK_LINE);
 
 impl Default for PlateReverb {
     fn default() -> Self {
@@ -170,13 +175,15 @@ impl PlateReverb {
 
 pub struct FdnReverb {
     // 4 delay lines with mutually prime lengths
-    lines: [DelayLine<2048>; 4],
+    lines: [DelayLine<FDN_LINE>; 4],
     // Per-line damping
     lp: [OnePole; 4],
 }
 
 // Mutually prime delay lengths for dense, non-repeating reflections
 const FDN_LENS: [usize; 4] = [601, 773, 947, 1123];
+/// Covers the longest line at size 1.0 (`size_scale` = 1.0): 1,123 samples.
+const FDN_LINE: usize = 1152;
 
 impl Default for FdnReverb {
     fn default() -> Self {
@@ -225,7 +232,7 @@ impl FdnReverb {
             let mut taps = [0.0f32; 4];
             for i in 0..4 {
                 let len = (FDN_LENS[i] as f32 * size_scale) as usize;
-                let len = len.max(2).min(2047);
+                let len = len.max(2).min(FDN_LINE - 1);
                 taps[i] = self.lines[i].read(len);
             }
 
@@ -401,6 +408,12 @@ impl Default for ReverbParams {
 }
 
 impl ReverbParams {
+    /// Off when the mix is below audibility; `process` passes the input
+    /// through unchanged then.
+    pub fn is_on(&self) -> bool {
+        self.mix >= 0.001
+    }
+
     pub const REVERB_TYPE: ParamId = ParamId(0);
     pub const TIME: ParamId = ParamId(1);
     pub const DAMPING: ParamId = ParamId(2);
@@ -468,7 +481,7 @@ impl Reverb {
     }
 
     pub fn process(&mut self, buf: &mut [f32; BLOCK_SIZE], params: &ReverbParams) {
-        if params.mix < 0.001 {
+        if !params.is_on() {
             return; // bypass
         }
         match ReverbType::from_u8(params.reverb_type) {
