@@ -1,11 +1,11 @@
-/// Pizza oscillator — variable-symmetry triangle with XOR bitcrush.
-/// Inspired by the Bastl Pizza (ATtiny85 VCO).
-///
-/// Parameters:
-/// - frequency: pitch in Hz
-/// - shape: 0.0 = ramp down, 0.5 = triangle, 1.0 = ramp up
-/// - crush: 0.0 = clean, 1.0 = fully bitcrushed
-/// - level: output level 0.0..1.0
+//! Pizza oscillator — variable-symmetry triangle with XOR bitcrush.
+//! Inspired by the Bastl Pizza (ATtiny85 VCO).
+//!
+//! Parameters:
+//! - frequency: pitch in Hz
+//! - shape: 0.0 = ramp down, 0.5 = triangle, 1.0 = ramp up
+//! - crush: 0.0 = clean, 1.0 = fully bitcrushed
+//! - level: output level 0.0..1.0
 
 use chimera_hal::BLOCK_SIZE;
 

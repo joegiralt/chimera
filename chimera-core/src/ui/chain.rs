@@ -136,12 +136,12 @@ impl ChainNav {
         if controls.button_state(ButtonId::Seq) == ButtonState::Pressed && self.sub_page > 0 {
             self.sub_page -= 1;
         }
-        if controls.button_state(ButtonId::Edit) == ButtonState::Pressed {
-            if let Some(block) = self.active_chain_block() {
-                let count = block.sub_page_count();
-                if count > 0 && self.sub_page + 1 < count {
-                    self.sub_page += 1;
-                }
+        if controls.button_state(ButtonId::Edit) == ButtonState::Pressed
+            && let Some(block) = self.active_chain_block()
+        {
+            let count = block.sub_page_count();
+            if count > 0 && self.sub_page + 1 < count {
+                self.sub_page += 1;
             }
         }
 

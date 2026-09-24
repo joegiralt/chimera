@@ -383,14 +383,14 @@ impl UiState {
                         self.sync_mod_state(at);
                     }
                 }
-                if controls.button_state(ButtonId::Minus) == ButtonState::Pressed {
-                    if let Some(addr) = self.current_param_addr() {
-                        self.performance.parts[at].sound.dest_registry.remove(addr);
-                        self.matrix_state.rebuild_dests_from_registry(
-                            &self.performance.parts[at].sound.dest_registry
-                        );
-                        self.sync_mod_state(at);
-                    }
+                if controls.button_state(ButtonId::Minus) == ButtonState::Pressed
+                    && let Some(addr) = self.current_param_addr()
+                {
+                    self.performance.parts[at].sound.dest_registry.remove(addr);
+                    self.matrix_state.rebuild_dests_from_registry(
+                        &self.performance.parts[at].sound.dest_registry
+                    );
+                    self.sync_mod_state(at);
                 }
             }
         }
@@ -434,10 +434,10 @@ impl UiState {
             }
 
             // Apply offsets to the 6 display values
-            for i in 0..6 {
+            for (i, value) in values.iter_mut().enumerate() {
                 let offset = slot_addr(def, i, self.sel_op).map_or(0.0, |a| sound.mod_state.offset_for(a, &mod_sources));
                 if offset != 0.0 {
-                    values[i] = (values[i] + offset).clamp(0.0, 1.0);
+                    *value = (*value + offset).clamp(0.0, 1.0);
                 }
             }
         }

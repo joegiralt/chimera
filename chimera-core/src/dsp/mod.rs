@@ -9,9 +9,9 @@ static SINE_LUT: [f32; 1024] = {
     let mut i = 0;
     while i < 1024 {
         let t = i as f64 / 1024.0;
-        let x = t * 2.0 * 3.14159265358979323846;
+        let x = t * 2.0 * core::f64::consts::PI;
         // Taylor series with enough terms for <0.001% error
-        let x = x - (6.28318530717958647692 * ((x / 6.28318530717958647692 + 0.5) as i64 as f64));
+        let x = x - (core::f64::consts::TAU * ((x / core::f64::consts::TAU + 0.5) as i64 as f64));
         let x2 = x * x;
         let x3 = x2 * x;
         let x5 = x3 * x2;

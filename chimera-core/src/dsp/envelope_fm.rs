@@ -1,9 +1,9 @@
-/// TX81Z-style 5-stage FM envelope.
-///
-/// Stages: Idle → Attack → Decay1 → Decay2 → (Release) → Idle
-///
-/// Ported from the p81z C++ implementation with one intentional deviation:
-/// noteOff() enters a proper Release stage rather than going directly to Idle.
+//! TX81Z-style 5-stage FM envelope.
+//!
+//! Stages: Idle → Attack → Decay1 → Decay2 → (Release) → Idle
+//!
+//! Ported from the p81z C++ implementation with one intentional deviation:
+//! noteOff() enters a proper Release stage rather than going directly to Idle.
 
 use crate::dsp::fm_tables;
 

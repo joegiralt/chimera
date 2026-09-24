@@ -1,5 +1,5 @@
-/// LFO — Low Frequency Oscillator for modulation.
-/// Outputs -1.0 to +1.0 (bipolar) at sub-audio rates.
+//! LFO — Low Frequency Oscillator for modulation.
+//! Outputs -1.0 to +1.0 (bipolar) at sub-audio rates.
 
 use crate::block::{Block, ParamId, ParamSpec, ValFmt};
 use crate::dsp::fast_sin;

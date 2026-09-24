@@ -641,12 +641,12 @@ impl ModalEngine {
         let mut harmonic = frequency;
         let mut stretch_factor = 1.0_f32;
 
-        for i in 0..num {
+        for filter in self.filters.iter_mut().take(num) {
             let partial_freq = (harmonic * stretch_factor).min(0.49);
 
             // Per-mode Q (Rings: 1.0 + partial_freq * q)
             let mode_q = 1.0 + partial_freq * q;
-            self.filters[i].set(partial_freq, mode_q);
+            filter.set(partial_freq, mode_q);
 
             // Accumulate stiffness with decay for negative values
             stretch_factor += stiffness;

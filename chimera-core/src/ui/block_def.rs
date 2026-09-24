@@ -165,4 +165,8 @@ impl ChainDef2 {
     pub fn len(&self) -> usize {
         self.blocks.len()
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.blocks.is_empty()
+    }
 }

@@ -8,7 +8,7 @@ mod display;
 
 use chimera_core::ui::UiState;
 use chimera_core::ui::perf::PerfTracker;
-use chimera_hal::{ChimeraDisplay, Controls};
+use chimera_hal::ChimeraDisplay;
 use controls::Stm32Controls;
 use cortex_m_rt::{entry, exception, pre_init};
 use display::Stm32Display;
@@ -19,7 +19,13 @@ use stm32h7xx_hal::{pac, prelude::*, spi};
 /// provides a clean peripheral state, so no other cleanup is needed.
 #[pre_init]
 unsafe fn before_main() {
-    core::ptr::write_volatile(0xE000_ED08 as *mut u32, 0x0802_0000);
+    // SAFETY: runs once, before `main` and before interrupts are enabled, on
+    // a single core. 0xE000_ED08 is the SCB->VTOR register (a valid, aligned,
+    // memory-mapped address on every Cortex-M7), and 0x0802_0000 is our
+    // linked vector table's flash address.
+    unsafe {
+        core::ptr::write_volatile(0xE000_ED08 as *mut u32, 0x0802_0000);
+    }
 }
 
 #[exception]
