@@ -621,7 +621,7 @@ pub static SENDS: BlockDef = BlockDef {
     name: "Sends",
     short: "SND",
     layout: PageLayout::CellGrid,
-    viz: VizType::None,
+    viz: VizType::EffectsFlow,
     params: [
         ParamSlot::param(BlockRef::Part, PartParams::SEND_CHORUS, CellIcon::Arc),
         ParamSlot::param(BlockRef::Part, PartParams::SEND_DELAY, CellIcon::Arc),

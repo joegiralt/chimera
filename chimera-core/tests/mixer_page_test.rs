@@ -195,9 +195,37 @@ fn part_overview_redraws_as_the_level_lerps() {
     assert!(flushed.contains(&(118, 186)), "viz band follows the lerped level: {flushed:?}");
 }
 
+/// FX flow node `k` (0 = CHR) is the lit pill in `fb`.
+fn flow_lit(fb: &screen::Fb) -> Vec<usize> {
+    use chimera_core::ui::dungeon_map::node_x;
+    use chimera_core::ui::theme;
+    use chimera_core::ui::viz::FLOW_Y;
+    (0..3).filter(|&k| fb.at(node_x(k + 1, 5) - 14, FLOW_Y) == theme::ACCENT).collect()
+}
+
+#[test]
+fn fx_pages_light_their_effect_in_the_flow() {
+    let fb = screen::render("mixer_fx_delay");
+    assert_eq!(flow_lit(&fb), [1], "Delay page lights DLY");
+    assert!(matches!(reg::SENDS.viz, chimera_core::ui::block_def::VizType::EffectsFlow));
+}
+
+#[test]
+fn sends_page_lights_the_focused_send() {
+    assert_eq!(flow_lit(&screen::render("mixer_sends")), [2], "REV send focused");
+    let mut ui = screen::ui_for("mixer_sends");
+    turn(&mut ui, EncoderId::A, 1);
+    screen::settle(&mut ui);
+    let mut fb = screen::Fb::new();
+    ui.render_with_scope(&mut fb, &chimera_core::ui::perf::PerfStats::zero(), &screen::scope_fixture());
+    assert_eq!(flow_lit(&fb), [0], "CHR send focused");
+}
+
 #[test]
 fn mixer_part_dirty_render_equals_full_render() {
-    assert!(screen::render("mixer_part").px == screen::render_dirty("mixer_part").px);
+    for name in ["mixer_part", "mixer_sends", "mixer_fx_delay"] {
+        assert!(screen::render(name).px == screen::render_dirty(name).px, "{name}");
+    }
 }
 
 /// The sound browser's title names what it loads and the Part it loads
