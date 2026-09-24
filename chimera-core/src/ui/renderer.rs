@@ -1115,11 +1115,11 @@ impl Renderer {
 
     /// Clear a screen region by direct framebuffer fill. Much faster than draw_iter.
     pub fn clear_region_fb(fb: &mut [u16], y_start: u16, y_end: u16) {
+        use embedded_graphics::pixelcolor::raw::{RawData, RawU16};
+        let bg = RawU16::from(theme::BG).into_inner();
         let start = y_start as usize * 240;
         let end = y_end as usize * 240;
-        for px in &mut fb[start..end] {
-            *px = 0; // theme::BG is black = 0x0000
-        }
+        fb[start..end].fill(bg);
     }
 
     // ── Perf overlay ────────────────────────────────────────────────

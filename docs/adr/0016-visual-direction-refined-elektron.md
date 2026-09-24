@@ -37,3 +37,15 @@ flash; RAM unchanged (ADR 0013 budgets apply).
 
 ## Sources
 Mockups above; `chimera-core/src/ui/theme.rs`, `ui/renderer.rs`.
+
+## Addendum: Font licences (2026-09-24)
+Recorded when `u8g2-fonts` was added (UI refresh plan); the decision above is unchanged.
+
+| Font (u8g2 name) | Use | Author / licence |
+|---|---|---|
+| crate `u8g2-fonts` 0.8.0 | renderer | Finomnis; MIT OR Apache-2.0 |
+| `logisoso42_tr`, `logisoso20_tr` | focus value, viz readout | Mathieu Gabiot (2009); GPL v2 with font exception per its copyright statement, OFL per openfontlibrary.org — either permits embedding in firmware |
+| `helvB10_tr`, `helvR08_tr`, `helvB08_tr` | values, labels, map | Adobe / Digital Equipment Corp. X11 bitmap fonts; permission notice in the U8g2 LICENSE (use, copy, modify, distribute, sell; keep the notice) |
+
+Sources: https://github.com/olikraus/u8g2/blob/master/LICENSE,
+https://github.com/olikraus/u8g2/wiki/fntgrplogisoso
