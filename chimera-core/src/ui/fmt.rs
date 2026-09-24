@@ -47,6 +47,14 @@ pub fn fmt_val(buf: &mut FmtBuf, val: f32, fmt: ValFmt) {
                 let _ = write!(buf, "{}", v);
             }
         }
+        ValFmt::Pan => {
+            let v = (val * 127.0 + 0.5) as i32 - 64;
+            let _ = match v {
+                0 => buf.write_str("C"),
+                v if v < 0 => write!(buf, "L{}", -v),
+                v => write!(buf, "R{}", v),
+            };
+        }
         ValFmt::Int(max) => {
             let _ = write!(buf, "{}", discrete(val, max));
         }

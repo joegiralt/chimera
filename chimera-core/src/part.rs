@@ -96,7 +96,7 @@ pub static PART_SPECS: [ParamSpec; 8] = [
     ParamSpec::choice(1, "MODE", ValFmt::Names(&["MONO", "POLY"]), 1.0, 1.0),
     ParamSpec::choice(2, "OUT", ValFmt::Names(&["P1", "P2", "P3"]), 2.0, 0.0),
     ParamSpec::continuous(3, "LEVEL", ValFmt::Uni, 0.0, 1.0, 0.8, 1.0 / 128.0, false),
-    ParamSpec::continuous(4, "PAN", ValFmt::Bi, -1.0, 1.0, 0.0, 2.0 / 128.0, false),
+    ParamSpec::continuous(4, "PAN", ValFmt::Pan, -1.0, 1.0, 0.0, 2.0 / 128.0, false),
     ParamSpec::continuous(5, "CHR", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false),
     ParamSpec::continuous(6, "DLY", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false),
     ParamSpec::continuous(7, "REV", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false),
