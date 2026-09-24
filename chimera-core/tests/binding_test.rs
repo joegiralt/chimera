@@ -42,9 +42,9 @@ fn every_part_slot_resolves_to_a_spec() {
 fn part_chains_offer_env_and_lfo_sources() {
     for ct in ChainType::ALL {
         assert_eq!(chain_def_for(ct).mod_sources, ["ENV", "LFO"], "{ct:?}");
-        let patch = chimera_core::preset::Patch::init(ct);
-        assert!(patch.dest_registry.is_empty(), "{ct:?}: no pre-wired destinations");
-        assert_eq!(patch.mod_state.num_dests(), 0, "{ct:?}");
+        let sound = chimera_core::preset::Sound::init(ct);
+        assert!(sound.dest_registry.is_empty(), "{ct:?}: no pre-wired destinations");
+        assert_eq!(sound.mod_state.num_dests(), 0, "{ct:?}");
     }
     // The FM_ENV pages stay as MOD sub-pages; they are just not source rows.
     assert_eq!(chain_def_for(ChainType::Fm).blocks[4].sub_pages.len(), 4);
@@ -57,7 +57,7 @@ fn block_def_ids_are_unique() {
         &reg::FM_RATIO, &reg::DRIVE, &reg::FOLDER, &reg::FILTER, &reg::ENVELOPE, &reg::LFO,
         &reg::ENV_AMP, &reg::ENV_FILTER, &reg::ENV_AUX, &reg::EFX, &reg::MIXER, &reg::CHORUS,
         &reg::DELAY, &reg::MASTER, &reg::NOISE, &reg::MOD_MATRIX, &reg::FM_ENV1, &reg::FM_ENV2,
-        &reg::FM_ENV3, &reg::FM_ENV4, &reg::CHANNEL, &reg::MIDI_CFG, &reg::EQ, &reg::SENDS,
+        &reg::FM_ENV3, &reg::FM_ENV4, &reg::PART, &reg::MIDI_CFG, &reg::EQ, &reg::SENDS,
         &reg::SYS_MIDI, &reg::SYS_TUNING, &reg::SYS_THEME, &reg::SYS_UPDATES, &reg::SYS_ABOUT,
         &reg::DEMO_WAVES, &reg::DEMO_SHAPES, &reg::DEMO_MOTION, &reg::DEMO_MATRIX, &reg::DEMO_FM,
     ];

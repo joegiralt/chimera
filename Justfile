@@ -12,9 +12,14 @@ firmware:
 build:
     cargo build -p chimera-core -p chimera-hal -p chimera-desktop
 
-# Check everything compiles (desktop targets)
+# Everything must pass before a commit (ADR 0013): core + hal tests, desktop
+# build + unit tests, firmware build + link into its flash/RAM regions.
+# The desktop needs ALSA's pkg-config file; point PKG_CONFIG_PATH at it if it
+# is not installed system-wide (cargo inherits the variable).
 check:
-    cargo check -p chimera-core -p chimera-hal -p chimera-desktop
+    cargo test -p chimera-core -p chimera-hal
+    cargo test -p chimera-desktop
+    cargo build -p chimera-stm32 --target thumbv7em-none-eabihf
 
 # Run tests
 test:

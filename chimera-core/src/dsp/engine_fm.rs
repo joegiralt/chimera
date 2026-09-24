@@ -10,6 +10,7 @@ use chimera_hal::BLOCK_SIZE;
 use crate::dsp::envelope_fm::FmEnvelope;
 use crate::dsp::fm_tables;
 use crate::dsp::fm_waveform;
+use crate::hw::Cost;
 
 /// Per-operator settings (matches TX81Z voice parameters).
 #[derive(Clone, Copy, Debug)]
@@ -302,6 +303,9 @@ impl Default for FmEngine {
 }
 
 impl FmEngine {
+    /// Design doc § CPU Budget: 4-op FM ~200 cycles/sample.
+    pub const COST: Cost = Cost(200); // estimate
+
     pub fn new() -> Self {
         Self {
             op1: FmOperator::new(),

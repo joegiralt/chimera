@@ -45,8 +45,8 @@ fn region_data_diff_is_not_equal() {
 
 #[test]
 fn region_data_params_values_differ() {
-    let a = RegionData::params(PageKey::Legacy(PageId::Mixer), [500; 6]);
-    let b = RegionData::params(PageKey::Legacy(PageId::Mixer), [501, 500, 500, 500, 500, 500]);
+    let a = RegionData::params(PageKey::Legacy(PageId::DemoWaves), [500; 6]);
+    let b = RegionData::params(PageKey::Legacy(PageId::DemoWaves), [501, 500, 500, 500, 500, 500]);
     assert_ne!(a, b);
 }
 
@@ -93,7 +93,7 @@ fn regions_tile_full_screen_cell_grid() {
 fn layout_change_resets_all_regions() {
     let mut rs = RegionSet::new();
     rs.set_layout(PageLayout::BigViz);
-    rs.regions[2].prev_data = RegionData::params(PageKey::Legacy(PageId::Mixer), [500; 6]);
+    rs.regions[2].prev_data = RegionData::params(PageKey::Legacy(PageId::DemoWaves), [500; 6]);
     rs.set_layout(PageLayout::CellGrid);
     for r in rs.active_regions() {
         match r.prev_data {
@@ -128,7 +128,7 @@ fn encoder_only_dirties_params_not_header() {
     let mut rs = RegionSet::new();
     rs.set_layout(PageLayout::BigViz);
 
-    let page = PageKey::Legacy(PageId::Mixer);
+    let page = PageKey::Legacy(PageId::DemoWaves);
     let values_a = [500u16; 6];
     let values_b = [501, 500, 500, 500, 500, 500];
 
@@ -156,7 +156,7 @@ fn nav_change_dirties_header_and_nav() {
     let mut rs = RegionSet::new();
     rs.set_layout(PageLayout::BigViz);
 
-    let page = PageKey::Legacy(PageId::Mixer);
+    let page = PageKey::Legacy(PageId::DemoWaves);
     let values = [500u16; 6];
 
     rs.regions[0].prev_data = RegionData::header(0, 0, 0, 0);
@@ -183,7 +183,7 @@ fn no_change_means_no_dirty() {
     let mut rs = RegionSet::new();
     rs.set_layout(PageLayout::BigViz);
 
-    let page = PageKey::Legacy(PageId::Mixer);
+    let page = PageKey::Legacy(PageId::DemoWaves);
     let values = [500u16; 6];
 
     rs.regions[0].prev_data = RegionData::header(0, 0, 0, 0);

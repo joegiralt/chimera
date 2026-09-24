@@ -49,7 +49,7 @@ fn prime_slot_0(ui: &mut UiState) {
 }
 
 fn primed(ui: &UiState) -> Vec<ParamAddr> {
-    let reg = &ui.project.tracks[0].patch.dest_registry;
+    let reg = &ui.performance.parts[0].sound.dest_registry;
     (0..reg.len()).filter_map(|i| reg.get(i)).map(|e| e.addr).collect()
 }
 
@@ -58,14 +58,14 @@ fn priming_on_a_part_page_registers_its_address() {
     let mut ui = UiState::new(); // Part 1, Pizza page
     prime_slot_0(&mut ui);
     assert_eq!(primed(&ui), [ParamAddr::new(BlockRef::Pizza, PizzaParams::SHAPE)]);
-    let reg = &ui.project.tracks[0].patch.dest_registry;
+    let reg = &ui.performance.parts[0].sound.dest_registry;
     assert_eq!(reg.get(0).unwrap().label_str(), "PIZSHAPE");
     assert_eq!(ui.mod_state().num_dests(), 1);
 }
 
-/// Review Focus 1: Mixer/System/Demo slots are Legacy — priming there must
-/// not register anything (it used to register `Block{node,i}`, which the
-/// voice read as a Pizza/Drive/Filter/Folder param).
+/// Review Focus 1: priming on the Mixer (bound, not modulatable) or System
+/// (Legacy) chain must not register anything (it used to register
+/// `Block{node,i}`, which the voice read as a Pizza/Drive/Filter/Folder param).
 #[test]
 fn priming_on_legacy_page_registers_nothing() {
     let mut ui = UiState::new();
@@ -104,7 +104,7 @@ fn selected_op_route_is_concrete() {
     use chimera_core::preset::POOL_SIZE;
 
     let mut ui = UiState::new();
-    // Load "(init) FM" into track 1 via the patch browser.
+    // Load "(init) FM" into part 1 via the sound browser.
     ui.handle_input(
         &MockControls::new()
             .button(ButtonId::Edit, ButtonState::Held)
@@ -128,7 +128,7 @@ fn selected_op_route_is_concrete() {
     assert_eq!(ui.selected_op(), Op::C);
     assert!(primed(&ui).contains(&fdbk_b));
     assert!(!primed(&ui).contains(&ParamAddr::new(BlockRef::FmOp(Op::C), FmOpParams::FEEDBACK)));
-    assert_eq!(ui.project.tracks[0].patch.params.fm.operators[1].feedback, 1.0);
+    assert_eq!(ui.performance.parts[0].sound.params.fm.operators[1].feedback, 1.0);
 }
 
 /// Spec §5: the FM operator selection is part of the page identity, so
@@ -137,12 +137,12 @@ fn selected_op_route_is_concrete() {
 #[test]
 fn fm_operator_selector_updates_the_page_key() {
     use chimera_core::addr::Op;
-    use chimera_core::preset::{ChainType, Track};
+    use chimera_core::preset::{ChainType, Part};
     use chimera_core::ui::block_registry as reg;
     use chimera_core::ui::page::PageKey;
 
     let mut ui = UiState::new();
-    ui.project.tracks[0] = Track::new(ChainType::Fm);
+    ui.performance.parts[0] = Part::new(ChainType::Fm);
     ui.nav.chain_type = ChainType::Fm;
     press(&mut ui, ButtonId::Edit); // sub-page 1: FM_OP
     assert_eq!(ui.page(), PageKey::Part { def: reg::FM_OP.id, op: Op::A });
@@ -150,7 +150,7 @@ fn fm_operator_selector_updates_the_page_key() {
     assert_eq!(ui.page(), PageKey::Part { def: reg::FM_OP.id, op: Op::B });
 }
 
-/// Spec §4: after loading the FM init patch the matrix rows are ENV and LFO
+/// Spec §4: after loading the FM init sound the matrix rows are ENV and LFO
 /// (they used to be "Op1 Env".."Op4 Env", of which only two produced values).
 #[test]
 fn fm_matrix_rows_are_env_and_lfo() {
@@ -169,4 +169,52 @@ fn fm_matrix_rows_are_env_and_lfo() {
         .collect();
     assert_eq!(rows, ["ENV", "LFO"]);
     assert_eq!(ui.matrix_state.num_dests, 0);
+}
+
+/// From a Part's first page: Plus ×4 to the MOD node, whose first page is
+/// the matrix; encoder E sets the amount at the cursor (ENV → first dest).
+fn set_first_amount(ui: &mut UiState, delta: i8) {
+    for _ in 0..4 {
+        press(ui, ButtonId::Plus);
+    }
+    ui.handle_input(&MockControls::new().encoder(EncoderId::E, delta));
+}
+
+fn routes(ui: &UiState, part: usize) -> Vec<(ParamAddr, i8)> {
+    let ms = &ui.performance.parts[part].sound.mod_state;
+    (0..ms.num_dests()).map(|d| (ms.dest(d), ms.amount(0, d))).collect()
+}
+
+/// Switching Part (B<n>, MIX + B<n>) rebuilds the matrix for that Part —
+/// sources, destinations and amounts — so editing Part 2's matrix never
+/// writes Part 1's routes into it, and Part 1's amounts come back with it.
+#[test]
+fn switching_part_rebuilds_the_matrix_for_that_part() {
+    let shape = ParamAddr::new(BlockRef::Pizza, PizzaParams::SHAPE);
+    let mut ui = UiState::new();
+    prime_slot_0(&mut ui); // Part 1: SHAPE
+    set_first_amount(&mut ui, 10);
+    assert_eq!(routes(&ui, 0), [(shape, 10)]);
+
+    press(&mut ui, ButtonId::B2); // Part 2: nothing primed
+    assert_eq!(ui.active_part, 1);
+    assert_eq!(ui.matrix_state.num_dests, 0, "Part 2's matrix is empty");
+    ui.handle_input(&MockControls::new().encoder(EncoderId::B, 1)); // slot 1 of its first page
+    ui.handle_input(
+        &MockControls::new().button(ButtonId::Mix, ButtonState::Held).button(ButtonId::Plus, ButtonState::Pressed),
+    );
+    let p2 = ui.performance.parts[1].sound.dest_registry.get(0).expect("Part 2 primed").addr;
+    assert_ne!(p2, shape);
+    set_first_amount(&mut ui, 20);
+    assert_eq!(routes(&ui, 1), [(p2, 20)], "Part 2 keeps its own route");
+    assert_eq!(routes(&ui, 0), [(shape, 10)], "Part 1 untouched");
+
+    // MIX + B1 then B1: back on Part 1, its matrix shows its own amount.
+    ui.handle_input(&MockControls::new().button(ButtonId::Mix, ButtonState::Held).button(ButtonId::B1, ButtonState::Pressed));
+    assert_eq!(ui.active_part, 0);
+    assert_eq!((ui.matrix_state.num_dests, ui.matrix_state.amounts[0][0]), (1, 10));
+    press(&mut ui, ButtonId::B1);
+    set_first_amount(&mut ui, 1);
+    assert_eq!(routes(&ui, 0), [(shape, 11)], "edited from Part 1's amount, not Part 2's");
+    assert_eq!(routes(&ui, 1), [(p2, 20)]);
 }

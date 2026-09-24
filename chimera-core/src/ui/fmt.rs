@@ -48,11 +48,23 @@ pub fn fmt_val(buf: &mut FmtBuf, val: f32, fmt: ValFmt) {
             }
         }
         ValFmt::Int(max) => {
-            let v = (val * max as f32 + 0.5) as u8;
-            let v = if v > max { max } else { v };
-            let _ = write!(buf, "{}", v);
+            let _ = write!(buf, "{}", discrete(val, max));
+        }
+        ValFmt::OneBased(max) => {
+            let _ = write!(buf, "{}", discrete(val, max) as u16 + 1);
+        }
+        ValFmt::Names(names) => {
+            if let Some(name) = names.get(discrete(val, fmt.max_int()) as usize) {
+                let _ = buf.write_str(name);
+            }
         }
     }
+}
+
+/// Normalized `val` rounded to the nearest of 0..=max.
+fn discrete(val: f32, max: u8) -> u8 {
+    let v = (val * max as f32 + 0.5) as u8;
+    if v > max { max } else { v }
 }
 
 impl core::fmt::Write for FmtBuf {

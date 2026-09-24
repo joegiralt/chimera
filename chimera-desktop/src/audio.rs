@@ -1,30 +1,26 @@
-use chimera_core::dsp::chorus::JunoChorus;
-use chimera_core::dsp::delay::TapeDelay;
-use chimera_core::dsp::reverb::Reverb;
-use chimera_core::dsp::voice::Voice;
-use chimera_core::modulation::ModState;
-use chimera_core::params::ParamSnapshot;
-use chimera_core::{MidiNote, Velocity};
+//! Desktop audio: the same `Instrument` the firmware will run (ADR 0013),
+//! fed by the `NoteQueue` and a double-buffered `AudioShared`, summed from
+//! three DAC pairs to the speakers.
+
+use chimera_core::dsp::fx_bus::FxBus;
+use chimera_core::hw::{BLOCK_SIZE, DAC_PAIRS, SAMPLE_RATE};
+use chimera_core::instrument::{AudioShared, DacOut, Instrument};
+use chimera_core::note_queue::{NoteEvent, NoteKind, NoteQueue};
+use chimera_core::preset::Performance;
+use chimera_core::{MidiChannel, MidiNote, Velocity};
 use cpal::Stream;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicPtr, AtomicU8, Ordering};
 
-const NOTE_NONE: u8 = 0;
-const NOTE_ON_FLAG: u8 = 0x80;
-
-/// Everything the audio callback reads from the UI, swapped as one unit so
-/// params and modulation routes always match (spec §4, "Desktop").
-#[derive(Clone, Default)]
-struct AudioShared {
-    params: ParamSnapshot,
-    mod_state: ModState,
-}
-
+/// Everything the audio callback shares with the UI thread.
 struct SharedState {
+    /// The `AudioShared` buffer the callback reads; the UI fills the other
+    /// one and swaps this pointer once per frame.
     current: AtomicPtr<AudioShared>,
-    note_cmd: AtomicU8,
-    velocity: AtomicU8,
+    notes: NoteQueue,
+    /// 0 = all pairs, 1..=3 = only that DAC pair.
+    solo: AtomicU8,
 }
 
 pub struct DesktopAudio {
@@ -38,56 +34,57 @@ impl DesktopAudio {
     pub fn new() -> Self {
         let host = cpal::default_host();
         let device = host.default_output_device().expect("no output device");
-        let config = device.default_output_config().expect("no output config");
+        let config = stereo_48k(&device).unwrap_or_else(|| {
+            let c = device.default_output_config().expect("no output config");
+            eprintln!("no 48 kHz stereo f32 output; using {} Hz (Modal pitch floor and delay range assume 48 kHz)", c.sample_rate().0);
+            c
+        });
         let sample_rate = config.sample_rate().0;
+        let channels = config.channels() as usize;
 
         let mut bufs = Box::new([AudioShared::default(), AudioShared::default()]);
         let initial_ptr = &mut bufs[0] as *mut AudioShared;
-
         let shared = Arc::new(SharedState {
             current: AtomicPtr::new(initial_ptr),
-            note_cmd: AtomicU8::new(NOTE_NONE),
-            velocity: AtomicU8::new(Velocity::DEFAULT.get()),
+            notes: NoteQueue::new(),
+            solo: AtomicU8::new(0),
         });
-        let shared_clone = Arc::clone(&shared);
+        let audio = Arc::clone(&shared);
 
-        let mut voice = Box::new(Voice::new(sample_rate));
-        let mut chorus = Box::new(JunoChorus::new());
-        let mut delay = Box::new(TapeDelay::new());
-        let mut reverb = Box::new(Reverb::new());
-        let mut block = [0.0f32; chimera_hal::BLOCK_SIZE];
-        let mut block_pos: usize = chimera_hal::BLOCK_SIZE;
+        let mut inst = Box::new(Instrument::new(sample_rate));
+        let mut fx = Box::new(FxBus::new());
+        let mut dac: DacOut = [[0.0; BLOCK_SIZE * 2]; DAC_PAIRS];
+        let mut block_pos = BLOCK_SIZE;
 
         let stream = device
             .build_output_stream(
                 &config.into(),
                 move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                    let current = shared_clone.current.load(Ordering::Acquire);
-                    // SAFETY: pointer always valid — points into `bufs` owned by
-                    // DesktopAudio. UI writes the inactive buffer, swaps atomically.
-                    let AudioShared { params, mod_state } = unsafe { &*current };
-
-                    let cmd = shared_clone.note_cmd.swap(NOTE_NONE, Ordering::Relaxed);
-                    if cmd & NOTE_ON_FLAG != 0 {
-                        let vel = shared_clone.velocity.load(Ordering::Relaxed);
-                        // Both were stored from a MidiNote/Velocity, so these always succeed.
-                        if let (Some(note), Some(vel)) = (MidiNote::new(cmd & 0x7F), Velocity::new(vel)) {
-                            voice.note_on(note, vel, params);
-                        }
-                    } else if cmd > 0 {
-                        voice.note_off();
+                    // SAFETY: the pointer always points into `bufs`, owned by
+                    // `DesktopAudio`, which outlives the stream. The UI only
+                    // writes the buffer this pointer does not name.
+                    let shared = unsafe { &*audio.current.load(Ordering::Acquire) };
+                    // This is the note queue's only consumer: the UI/main
+                    // thread is the only pusher (see `note_on`/`note_off`).
+                    while let Some(ev) = audio.notes.pop() {
+                        inst.handle(ev, shared);
                     }
-
-                    for sample in data.iter_mut() {
-                        if block_pos >= chimera_hal::BLOCK_SIZE {
-                            voice.render(&mut block, params, mod_state);
-                            // Effects chain: chorus → delay → reverb (Digitone II style)
-                            chorus.process(&mut block, &params.chorus, sample_rate);
-                            delay.process(&mut block, &params.delay, sample_rate);
-                            reverb.process(&mut block, &params.reverb);
+                    let solo = audio.solo.load(Ordering::Relaxed);
+                    for frame in data.chunks_mut(channels) {
+                        if block_pos >= BLOCK_SIZE {
+                            inst.render(&mut fx, &mut dac, shared);
                             block_pos = 0;
                         }
-                        *sample = libm::tanhf(block[block_pos] * 0.7);
+                        let (l, r) = stereo_frame(&dac, solo, block_pos);
+                        let (l, r) = (libm::tanhf(l * 0.7), libm::tanhf(r * 0.7));
+                        match frame {
+                            [mono] => *mono = 0.5 * (l + r),
+                            [fl, fr, rest @ ..] => {
+                                (*fl, *fr) = (l, r);
+                                rest.fill(0.0);
+                            }
+                            [] => {}
+                        }
                         block_pos += 1;
                     }
                 },
@@ -98,33 +95,88 @@ impl DesktopAudio {
 
         stream.play().expect("failed to play stream");
 
-        Self {
-            _stream: stream,
-            shared,
-            bufs,
-            active_buf: 0,
-        }
+        Self { _stream: stream, shared, bufs, active_buf: 0 }
     }
 
-    /// Push params and modulation routes to the audio thread (lock-free swap).
-    pub fn update(&mut self, params: &ParamSnapshot, mod_state: &ModState) {
+    /// Push the Performance to the audio thread (lock-free swap). Must only
+    /// ever run on the back buffer — the one `shared.current` is not
+    /// pointing at — never on the buffer the audio callback may currently
+    /// be reading.
+    pub fn update(&mut self, perf: &Performance) {
         let inactive = 1 - self.active_buf;
         let buf = &mut self.bufs[inactive];
-        buf.params = params.clone();
-        buf.mod_state = mod_state.clone();
-        let ptr = buf as *mut AudioShared;
-        self.shared.current.store(ptr, Ordering::Release);
+        buf.update_from(perf);
+        self.shared.current.store(buf as *mut AudioShared, Ordering::Release);
         self.active_buf = inactive;
     }
 
-    pub fn note_on(&self, note: MidiNote, velocity: Velocity) {
-        self.shared.velocity.store(velocity.get(), Ordering::Relaxed);
-        self.shared
-            .note_cmd
-            .store(NOTE_ON_FLAG | note.get(), Ordering::Relaxed);
+    /// Push a note-on onto the queue. Callers: the UI/main thread only —
+    /// `NoteQueue` is single-producer/single-consumer and the audio
+    /// callback is the sole consumer.
+    pub fn note_on(&self, channel: MidiChannel, note: MidiNote, velocity: Velocity) {
+        self.shared.notes.push(NoteEvent { channel, note, kind: NoteKind::On(velocity) });
     }
 
-    pub fn note_off(&self) {
-        self.shared.note_cmd.store(1, Ordering::Relaxed);
+    /// Push a note-off onto the queue. Callers: the UI/main thread only —
+    /// see `note_on`.
+    pub fn note_off(&self, channel: MidiChannel, note: MidiNote) {
+        self.shared.notes.push(NoteEvent { channel, note, kind: NoteKind::Off });
+    }
+
+    /// Hear only DAC pair `pair` (1..=3), or all of them (0).
+    pub fn solo(&self, pair: u8) {
+        self.shared.solo.store(pair.min(DAC_PAIRS as u8), Ordering::Relaxed);
+    }
+}
+
+/// A 48 kHz stereo f32 config if the device has one (hardware parity).
+fn stereo_48k(device: &cpal::Device) -> Option<cpal::SupportedStreamConfig> {
+    device
+        .supported_output_configs()
+        .ok()?
+        .find(|c| {
+            c.channels() >= 2
+                && c.sample_format() == cpal::SampleFormat::F32
+                && (c.min_sample_rate().0..=c.max_sample_rate().0).contains(&SAMPLE_RATE)
+        })
+        .map(|c| c.with_sample_rate(cpal::SampleRate(SAMPLE_RATE)))
+}
+
+/// Frame `i` of the three pairs summed to one stereo pair, or only pair
+/// `solo` (1..=3) when `solo` is not 0.
+fn stereo_frame(dac: &DacOut, solo: u8, i: usize) -> (f32, f32) {
+    let mut l = 0.0;
+    let mut r = 0.0;
+    for (p, pair) in dac.iter().enumerate() {
+        if solo == 0 || solo as usize == p + 1 {
+            l += pair[2 * i];
+            r += pair[2 * i + 1];
+        }
+    }
+    (l, r)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dac() -> DacOut {
+        let mut d = [[0.0; BLOCK_SIZE * 2]; DAC_PAIRS];
+        for (p, pair) in d.iter_mut().enumerate() {
+            pair[0] = (p + 1) as f32; // L of frame 0
+            pair[1] = 10.0 * (p + 1) as f32; // R of frame 0
+        }
+        d
+    }
+
+    #[test]
+    fn pairs_sum_to_stereo() {
+        assert_eq!(stereo_frame(&dac(), 0, 0), (6.0, 60.0));
+    }
+
+    #[test]
+    fn solo_hears_one_pair() {
+        assert_eq!(stereo_frame(&dac(), 2, 0), (2.0, 20.0));
+        assert_eq!(stereo_frame(&dac(), 3, 0), (3.0, 30.0));
     }
 }

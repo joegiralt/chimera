@@ -4,7 +4,7 @@ mod display;
 
 use chimera_core::ui::UiState;
 use chimera_core::ui::perf::PerfTracker;
-use chimera_hal::{ChimeraDisplay, MidiNote, Velocity};
+use chimera_hal::{ChimeraDisplay, MidiChannel, MidiNote, Velocity};
 use controls::DesktopControls;
 use display::DesktopDisplay;
 use std::time::Instant;
@@ -16,7 +16,9 @@ fn main() {
 
     let mut ui = UiState::new();
     let mut perf = PerfTracker::new();
-    let mut current_note: Option<MidiNote> = None;
+    // The held key and the channel it was sent on, so its note-off follows
+    // it even if the selected Part changes while it is held.
+    let mut current_note: Option<(MidiChannel, MidiNote)> = None;
     let mut octave: i8 = 0; // -2 to +2
     let mut frame_start = Instant::now();
 
@@ -36,25 +38,32 @@ fn main() {
             octave = (octave + 1).min(2);
         }
 
-        // Piano keys
+        // Solo a DAC pair: F1-F3; F4 hears all three.
+        for (key, pair) in [(minifb::Key::F1, 1), (minifb::Key::F2, 2), (minifb::Key::F3, 3), (minifb::Key::F4, 0)] {
+            if keys.contains(&key) {
+                audio.solo(pair);
+            }
+        }
+
+        // Piano keys play the selected Part's channel.
         let note = piano_note(&keys)
             .and_then(|n| MidiNote::new((n as i8 + octave * 12).clamp(0, 127) as u8));
-        if note != current_note {
-            if let Some(n) = note {
-                audio.note_on(n, Velocity::DEFAULT);
-            } else {
-                audio.note_off();
+        if note != current_note.map(|(_, n)| n) {
+            if let Some((ch, n)) = current_note {
+                audio.note_off(ch, n);
             }
-            current_note = note;
+            current_note = note.map(|n| (ui.performance.parts[ui.active_part].mix.channel, n));
+            if let Some((ch, n)) = current_note {
+                audio.note_on(ch, n, Velocity::DEFAULT);
+            }
         }
 
         // UI framework handles navigation + encoder -> param binding
         ui.handle_input(&controls);
         ui.update();
 
-        // Push params + modulation routes to the audio thread (track 0)
-        let patch = &ui.project.tracks[0].patch;
-        audio.update(&patch.params, &patch.mod_state);
+        // Push every Part and the FX to the audio thread.
+        audio.update(&ui.performance);
 
         // Measure render time
         let render_start = Instant::now();

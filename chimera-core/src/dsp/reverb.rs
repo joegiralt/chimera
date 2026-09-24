@@ -77,8 +77,8 @@ pub struct PlateReverb {
     // Input diffusion: 4 allpass filters
     ap_in: [DelayLine<512>; 4],
     // Tank: 2 branches, each with 2 allpass + 1 delay
-    ap_tank: [DelayLine<4096>; 4],
-    del_tank: [DelayLine<8192>; 2],
+    ap_tank: [DelayLine<AP_TANK_LINE>; 4],
+    del_tank: [DelayLine<DEL_TANK_LINE>; 2],
     // Damping
     lp: [OnePole; 2],
 }
@@ -86,6 +86,11 @@ pub struct PlateReverb {
 const AP_IN_LENS: [usize; 4] = [113, 162, 241, 399];
 const AP_TANK_LENS: [usize; 4] = [1653, 2038, 1913, 1663];
 const DEL_TANK_LENS: [usize; 2] = [3411, 4782];
+/// Line lengths cover the longest fixed tap (ADR 0014); a `DelayLine<N>`
+/// with `N >= delay` reads exactly what a longer one would.
+const AP_TANK_LINE: usize = 2048;
+const DEL_TANK_LINE: usize = 4800;
+const _: () = assert!(AP_TANK_LENS[1] <= AP_TANK_LINE && DEL_TANK_LENS[1] <= DEL_TANK_LINE);
 
 impl Default for PlateReverb {
     fn default() -> Self {
@@ -114,13 +119,15 @@ impl PlateReverb {
     }
 
     /// Process a block in-place.
-    /// time: 0..1 (reverb time), diffusion: 0..1, damping: 0..1, mix: 0..1
+    /// time: 0..1 (reverb time), diffusion: 0..1, damping: 0..1, dry_gain: dry level
+    /// (1 − mix inserted, 0 on a send), mix: wet level 0..1
     pub fn process(
         &mut self,
         buf: &mut [f32; BLOCK_SIZE],
         time: f32,
         diffusion: f32,
         damping: f32,
+        dry_gain: f32,
         mix: f32,
     ) {
         let krt = time; // feedback coefficient
@@ -159,7 +166,7 @@ impl PlateReverb {
             let wet = (tank_a + tank_b) * 0.5;
 
             // Mix
-            *s = dry * (1.0 - mix) + wet * mix;
+            *s = dry * dry_gain + wet * mix;
         }
     }
 }
@@ -170,13 +177,15 @@ impl PlateReverb {
 
 pub struct FdnReverb {
     // 4 delay lines with mutually prime lengths
-    lines: [DelayLine<2048>; 4],
+    lines: [DelayLine<FDN_LINE>; 4],
     // Per-line damping
     lp: [OnePole; 4],
 }
 
 // Mutually prime delay lengths for dense, non-repeating reflections
 const FDN_LENS: [usize; 4] = [601, 773, 947, 1123];
+/// Covers the longest line at size 1.0 (`size_scale` = 1.0): 1,123 samples.
+const FDN_LINE: usize = 1152;
 
 impl Default for FdnReverb {
     fn default() -> Self {
@@ -203,13 +212,15 @@ impl FdnReverb {
     }
 
     /// Process a block in-place.
-    /// time: 0..1, diffusion: 0..1, damping: 0..1, mix: 0..1
+    /// time: 0..1, diffusion: 0..1, damping: 0..1, dry_gain: dry level
+    /// (1 − mix inserted, 0 on a send), mix: wet level 0..1
     pub fn process(
         &mut self,
         buf: &mut [f32; BLOCK_SIZE],
         time: f32,
         damping: f32,
         size: f32,
+        dry_gain: f32,
         mix: f32,
     ) {
         let fb = 0.3 + time * 0.65; // feedback 0.3..0.95
@@ -225,7 +236,7 @@ impl FdnReverb {
             let mut taps = [0.0f32; 4];
             for i in 0..4 {
                 let len = (FDN_LENS[i] as f32 * size_scale) as usize;
-                let len = len.max(2).min(2047);
+                let len = len.max(2).min(FDN_LINE - 1);
                 taps[i] = self.lines[i].read(len);
             }
 
@@ -249,7 +260,7 @@ impl FdnReverb {
 
             // Output: sum of all taps
             let wet = (taps[0] + taps[1] + taps[2] + taps[3]) * 0.25;
-            *s = dry * (1.0 - mix) + wet * mix;
+            *s = dry * dry_gain + wet * mix;
         }
     }
 }
@@ -311,13 +322,15 @@ impl MidiVerbReverb {
     }
 
     /// Process a block in-place.
-    /// time: 0..1, tone: 0..1 (dark/bright), mix: 0..1
+    /// time: 0..1, tone: 0..1 (dark/bright), dry_gain: dry
+    /// level (1 − mix inserted, 0 on a send), mix: wet level 0..1
     pub fn process(
         &mut self,
         buf: &mut [f32; BLOCK_SIZE],
         time: f32,
         tone: f32,
         _size: f32,
+        dry_gain: f32,
         mix: f32,
     ) {
         // MidiVerb uses power-of-2 coefficients: 1/2, 3/4, 3/8
@@ -351,7 +364,7 @@ impl MidiVerbReverb {
             // Output: sum of both networks (MidiVerb uses multiple taps but
             // we simplify to the network outputs for now)
             let wet = (a + b) * 0.5;
-            *s = dry * (1.0 - mix) + wet * mix;
+            *s = dry * dry_gain + wet * mix;
         }
     }
 }
@@ -401,6 +414,12 @@ impl Default for ReverbParams {
 }
 
 impl ReverbParams {
+    /// Off when the mix is below audibility; `process` passes the input
+    /// through unchanged then.
+    pub fn is_on(&self) -> bool {
+        self.mix >= 0.001
+    }
+
     pub const REVERB_TYPE: ParamId = ParamId(0);
     pub const TIME: ParamId = ParamId(1);
     pub const DAMPING: ParamId = ParamId(2);
@@ -467,22 +486,33 @@ impl Reverb {
         }
     }
 
+    /// Insert use: dry/wet mix in place.
     pub fn process(&mut self, buf: &mut [f32; BLOCK_SIZE], params: &ReverbParams) {
-        if params.mix < 0.001 {
+        self.run(buf, params, 1.0 - params.mix);
+    }
+
+    /// Send/return use (the FX bus): writes only the wet signal × MIX, the
+    /// return level, in place of the send.
+    pub fn process_wet(&mut self, buf: &mut [f32; BLOCK_SIZE], params: &ReverbParams) {
+        self.run(buf, params, 0.0);
+    }
+
+    fn run(&mut self, buf: &mut [f32; BLOCK_SIZE], params: &ReverbParams, dry_gain: f32) {
+        if !params.is_on() {
             return; // bypass
         }
         match ReverbType::from_u8(params.reverb_type) {
             ReverbType::Plate => {
                 self.plate
-                    .process(buf, params.time, params.size, params.damping, params.mix);
+                    .process(buf, params.time, params.size, params.damping, dry_gain, params.mix);
             }
             ReverbType::Fdn => {
                 self.fdn
-                    .process(buf, params.time, params.damping, params.size, params.mix);
+                    .process(buf, params.time, params.damping, params.size, dry_gain, params.mix);
             }
             ReverbType::MidiVerb => {
                 self.midiverb
-                    .process(buf, params.time, params.damping, params.size, params.mix);
+                    .process(buf, params.time, params.damping, params.size, dry_gain, params.mix);
             }
         }
     }

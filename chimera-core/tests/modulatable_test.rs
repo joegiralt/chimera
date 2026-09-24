@@ -10,7 +10,7 @@ use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::{MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
 
-/// A base patch in which `block` is audible (spec: engine params use their
+/// A base sound in which `block` is audible (spec: engine params use their
 /// own engine; drive/folder > 0; amp env and FM use Pizza or FM).
 fn recipe(block: BlockRef) -> ParamSnapshot {
     let engine = match block {
