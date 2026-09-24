@@ -15,7 +15,7 @@ use screen::*;
 
 const GOLDENS: &[(&str, u64)] = &[
     ("engine_pizza", 0xbf9c1f573baa9d59),
-    ("engine_fm_alg", 0x649bc08e55e64c2b),
+    ("engine_fm_alg", 0x2a5b3df0165783a3),
     ("engine_fm_op", 0x2353d264169904b3),
     ("bigviz_filter", 0x24ef227569f308c9),
     ("bigviz_env", 0xf22986571c209654),

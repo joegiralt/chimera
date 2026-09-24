@@ -106,3 +106,16 @@ fn fm_alg_page_lights_no_operator() {
         assert_ne!(fb.at(x - 4, y), theme::ACCENT, "operator {} lit on the FM algorithm page", op + 1);
     }
 }
+
+/// ALG reads 1–8, like OP 1–4 and the TX81Z's own algorithm numbers.
+#[test]
+fn the_algorithm_shows_one_based() {
+    use chimera_core::ui::block_registry::FM_ALG;
+    use chimera_core::ui::fmt::{fmt_val, FmtBuf};
+    let fmt = FM_ALG.params[0].format();
+    for (v, want) in [(0.0, "1"), (3.0 / 7.0, "4"), (1.0, "8")] {
+        let mut buf = FmtBuf::new();
+        fmt_val(&mut buf, v, fmt);
+        assert_eq!(buf.as_str(), want);
+    }
+}
