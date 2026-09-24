@@ -353,7 +353,10 @@ impl UiState {
             for (i, &enc) in encoder_ids.iter().enumerate() {
                 let delta = controls.encoder_delta(enc);
                 if delta != 0 {
-                    self.focus.touch(def.id, i);
+                    // An empty slot edits nothing, so it does not take the focus.
+                    if def.params[i].binding != block_def::SlotBinding::Empty {
+                        self.focus.touch(def.id, i);
+                    }
                     let params = &mut self.performance.edit(at);
                     match (self.page, shift) {
                         (PageKey::Part { .. }, true) => part_page::snap_encoder(def, i, delta, params, self.sel_op),
