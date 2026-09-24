@@ -132,8 +132,12 @@ impl Renderer {
     {
         match f.def.viz {
             VizType::AlgorithmDiagram => {
+                use crate::ui::block_registry as reg;
                 let alg = f.parts[f.active_part].sound.params.fm.algorithm;
-                viz::fm_algorithm(display, alg, f.sel_op.index());
+                // Only the FM operator page edits a single operator; the FM
+                // algorithm page lights none (accent is the active element only).
+                let selected = (f.def.id == reg::FM_OP.id).then(|| f.sel_op.index());
+                viz::fm_algorithm(display, alg, selected);
             }
             VizType::MixerLevels => viz::parts_overview(display, &self.strips(f), f.active_part),
             VizType::EffectsFlow => {
@@ -193,8 +197,10 @@ impl Renderer {
         match f.def.layout {
             PageLayout::CellGrid => match f.def.viz {
                 VizType::AlgorithmDiagram => {
+                    use crate::ui::block_registry as reg;
                     let alg = f.parts[f.active_part].sound.params.fm.algorithm as u32;
-                    ([0; 6], alg << 2 | f.sel_op.index() as u32)
+                    let sel = if f.def.id == reg::FM_OP.id { f.sel_op.index() as u32 } else { 0 };
+                    ([0; 6], alg << 2 | sel)
                 }
                 VizType::MixerLevels => (region::quantize_values(&self.anim), strips_key(&self.strips(f), f.active_part)),
                 VizType::EffectsFlow => (region::quantize_values(&self.anim), f.focus as u32),
