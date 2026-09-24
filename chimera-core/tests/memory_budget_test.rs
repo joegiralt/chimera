@@ -65,3 +65,15 @@ fn instrument_fits_d2() {
     eprintln!("Instrument = {size} B, budget {} B", hw::VOICE_RAM_BUDGET);
     assert!(size <= hw::VOICE_RAM_BUDGET, "Instrument = {size} B");
 }
+
+/// UiState lives on `main`'s stack in AXI. Its Performance and SoundPool
+/// are counted on their own in `axi_residents_fit`; the rest (navigation,
+/// renderer, regions, focus: 1 120 B after the UI refresh, +48 B for the
+/// per-page focus) comes out of the UI reserve.
+#[test]
+fn ui_state_fits_the_ui_reserve() {
+    use chimera_core::preset::{Performance, SoundPool};
+    let rest = size_of::<chimera_core::ui::UiState>() - size_of::<Performance>() - size_of::<SoundPool>();
+    eprintln!("UiState without Performance and SoundPool = {rest} B, reserve {} B", hw::UI_RESERVE);
+    assert!(rest <= 2 * 1024, "UiState grew to {rest} B besides its Performance and SoundPool");
+}

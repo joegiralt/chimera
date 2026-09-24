@@ -16,57 +16,6 @@ pub enum PageLayout {
     Matrix,
 }
 
-/// What mini icon to draw in a cell (CellGrid mode).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CellIcon {
-    /// No icon — just label + value + bar.
-    None,
-    /// Waveform morphing: sine -> clipped (drive)
-    WaveClip,
-    /// Tone/EQ tilt indicator
-    ToneTilt,
-    /// Dry/wet blend arc
-    DryWet,
-    /// Waveform selector: saw / square / tri
-    WaveShape,
-    /// Pulse width bar
-    PulseWidth,
-    /// Knob arc indicator
-    Arc,
-    /// Vertical level bar
-    LevelBar,
-    /// Pan dot on L-R line
-    PanDot,
-    /// Fold: sine getting folded
-    WaveFold,
-    /// Symmetry bias indicator
-    Symmetry,
-    /// Concentric ripples expanding from center (reverb, decay)
-    Ripple,
-    /// Rays bursting from center point (excite, attack)
-    Burst,
-    /// Dot orbiting center (LFO rate, modulation)
-    Orbit,
-    /// Dots scattering outward from center (diffusion, spread)
-    Scatter,
-    /// Breathing circle — pulsing size (depth, amount)
-    Breathe,
-    /// Horizontal lines stacking up (density, voices)
-    Stack,
-    /// Bouncing ball: compressed at extremes, round at center (bipolar)
-    Bounce,
-    /// Isometric 3D cube that fills from bottom to top
-    Cube,
-    /// FM algorithm topology diagram (8 algorithms, val selects which)
-    FmAlgorithm,
-    /// Feedback: circular arrow that tightens with value
-    FeedbackLoop,
-    /// Feedback: spiral expanding outward
-    FeedbackSpiral,
-    /// Feedback: sine getting progressively distorted
-    FeedbackWave,
-}
-
 /// Pages still driven by `PageId`: System and Demo (spec §5). Part- and
 /// Mixer-chain pages are identified by `PageKey::Part` and driven by their
 /// `BlockDef` slot bindings (`ui::part_page`).

@@ -8,7 +8,7 @@ use crate::dsp::reverb::ReverbParams;
 use crate::part::PartParams;
 use crate::params::{DriveParams, EnvParams, FilterParams, FmOpParams, FmParams, FolderParams, OutParams};
 use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2, ParamSlot, VizType};
-use crate::ui::page::{CellIcon, PageLayout, ValFmt};
+use crate::ui::page::{PageLayout, ValFmt};
 
 const EMPTY: ParamSlot = ParamSlot::EMPTY;
 
@@ -23,9 +23,9 @@ pub static PIZZA: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
-        ParamSlot::param(BlockRef::Pizza, PizzaParams::SHAPE, CellIcon::WaveShape),
-        ParamSlot::param(BlockRef::Pizza, PizzaParams::CRUSH, CellIcon::WaveClip),
-        ParamSlot::param(BlockRef::Pizza, PizzaParams::LEVEL, CellIcon::LevelBar),
+        ParamSlot::param(BlockRef::Pizza, PizzaParams::SHAPE),
+        ParamSlot::param(BlockRef::Pizza, PizzaParams::CRUSH),
+        ParamSlot::param(BlockRef::Pizza, PizzaParams::LEVEL),
         EMPTY, EMPTY, EMPTY,
     ],
 };
@@ -41,12 +41,12 @@ pub static MODAL_1: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::ModalPeaks,
     params: [
-        ParamSlot::param(BlockRef::Modal, ModalParams::MODE, CellIcon::Arc),
-        ParamSlot::param(BlockRef::Modal, ModalParams::EXCITE, CellIcon::Arc),
-        ParamSlot::param(BlockRef::Modal, ModalParams::DECAY, CellIcon::Arc),
-        ParamSlot::param(BlockRef::Modal, ModalParams::BRIGHTNESS, CellIcon::Arc),
-        ParamSlot::param(BlockRef::Modal, ModalParams::POSITION, CellIcon::Arc),
-        ParamSlot::param(BlockRef::Modal, ModalParams::INHARM, CellIcon::Arc),
+        ParamSlot::param(BlockRef::Modal, ModalParams::MODE),
+        ParamSlot::param(BlockRef::Modal, ModalParams::EXCITE),
+        ParamSlot::param(BlockRef::Modal, ModalParams::DECAY),
+        ParamSlot::param(BlockRef::Modal, ModalParams::BRIGHTNESS),
+        ParamSlot::param(BlockRef::Modal, ModalParams::POSITION),
+        ParamSlot::param(BlockRef::Modal, ModalParams::INHARM),
     ],
 };
 
@@ -57,12 +57,12 @@ pub static MODAL_2: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::ModalPeaks,
     params: [
-        ParamSlot::param(BlockRef::Modal, ModalParams::KS_BODY, CellIcon::Arc),
-        ParamSlot::param(BlockRef::Modal, ModalParams::KS_STIFFNESS, CellIcon::Arc),
-        ParamSlot::param(BlockRef::Modal, ModalParams::KS_FEEDBACK, CellIcon::Arc),
-        ParamSlot::param(BlockRef::Modal, ModalParams::KS_ENS_DEPTH, CellIcon::Arc),
-        ParamSlot::param(BlockRef::Modal, ModalParams::KS_ENS_RATE, CellIcon::Arc),
-        ParamSlot::param(BlockRef::Modal, ModalParams::KS_ENS_MIX, CellIcon::Arc),
+        ParamSlot::param(BlockRef::Modal, ModalParams::KS_BODY),
+        ParamSlot::param(BlockRef::Modal, ModalParams::KS_STIFFNESS),
+        ParamSlot::param(BlockRef::Modal, ModalParams::KS_FEEDBACK),
+        ParamSlot::param(BlockRef::Modal, ModalParams::KS_ENS_DEPTH),
+        ParamSlot::param(BlockRef::Modal, ModalParams::KS_ENS_RATE),
+        ParamSlot::param(BlockRef::Modal, ModalParams::KS_ENS_MIX),
     ],
 };
 
@@ -77,12 +77,12 @@ pub static VA: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::WaveformPreview,
     params: [
-        ParamSlot::legacy("WAVE", ValFmt::Uni, CellIcon::WaveShape),
-        ParamSlot::legacy("PW", ValFmt::Uni, CellIcon::PulseWidth),
-        ParamSlot::legacy("SYNC", ValFmt::Uni, CellIcon::Arc),
-        ParamSlot::legacy("SUB", ValFmt::Uni, CellIcon::Arc),
-        ParamSlot::legacy("DETUNE", ValFmt::Uni, CellIcon::Arc),
-        ParamSlot::legacy("MIX", ValFmt::Bi, CellIcon::DryWet),
+        ParamSlot::legacy("WAVE", ValFmt::Uni),
+        ParamSlot::legacy("PW", ValFmt::Uni),
+        ParamSlot::legacy("SYNC", ValFmt::Uni),
+        ParamSlot::legacy("SUB", ValFmt::Uni),
+        ParamSlot::legacy("DETUNE", ValFmt::Uni),
+        ParamSlot::legacy("MIX", ValFmt::Bi),
     ],
 };
 
@@ -97,10 +97,10 @@ pub static FM_ALG: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::AlgorithmDiagram,
     params: [
-        ParamSlot::param(BlockRef::Fm, FmParams::ALGORITHM, CellIcon::FmAlgorithm),
+        ParamSlot::param(BlockRef::Fm, FmParams::ALGORITHM),
         EMPTY,
         // One address per physical param: the voice's output level.
-        ParamSlot::param(BlockRef::Out, OutParams::VOLUME, CellIcon::LevelBar),
+        ParamSlot::param(BlockRef::Out, OutParams::VOLUME),
         EMPTY,
         EMPTY,
         EMPTY,
@@ -114,12 +114,12 @@ pub static FM_OP: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::AlgorithmDiagram,
     params: [
-        ParamSlot::select_op(CellIcon::Arc),
-        ParamSlot::selected_op(FmOpParams::WAVEFORM, CellIcon::WaveShape),
-        ParamSlot::selected_op(FmOpParams::LEVEL, CellIcon::LevelBar),
-        ParamSlot::selected_op(FmOpParams::FEEDBACK, CellIcon::Arc),
-        ParamSlot::selected_op(FmOpParams::DETUNE, CellIcon::Arc),
-        ParamSlot::selected_op(FmOpParams::VELOCITY_SENS, CellIcon::Arc),
+        ParamSlot::select_op(),
+        ParamSlot::selected_op(FmOpParams::WAVEFORM),
+        ParamSlot::selected_op(FmOpParams::LEVEL),
+        ParamSlot::selected_op(FmOpParams::FEEDBACK),
+        ParamSlot::selected_op(FmOpParams::DETUNE),
+        ParamSlot::selected_op(FmOpParams::VELOCITY_SENS),
     ],
 };
 
@@ -130,11 +130,11 @@ pub static FM_RATIO: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
-        ParamSlot::param(BlockRef::FmOp(Op::A), FmOpParams::COARSE, CellIcon::Arc).with_label("OP1"),
-        ParamSlot::param(BlockRef::FmOp(Op::B), FmOpParams::COARSE, CellIcon::Arc).with_label("OP2"),
-        ParamSlot::param(BlockRef::FmOp(Op::C), FmOpParams::COARSE, CellIcon::Arc).with_label("OP3"),
-        ParamSlot::param(BlockRef::FmOp(Op::D), FmOpParams::COARSE, CellIcon::Arc).with_label("OP4"),
-        ParamSlot::selected_op(FmOpParams::FINE, CellIcon::Arc),
+        ParamSlot::param(BlockRef::FmOp(Op::A), FmOpParams::COARSE).with_label("OP1"),
+        ParamSlot::param(BlockRef::FmOp(Op::B), FmOpParams::COARSE).with_label("OP2"),
+        ParamSlot::param(BlockRef::FmOp(Op::C), FmOpParams::COARSE).with_label("OP3"),
+        ParamSlot::param(BlockRef::FmOp(Op::D), FmOpParams::COARSE).with_label("OP4"),
+        ParamSlot::selected_op(FmOpParams::FINE),
         EMPTY,
     ],
 };
@@ -150,9 +150,9 @@ pub static DRIVE: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::DriveClip,
     params: [
-        ParamSlot::param(BlockRef::Drive, DriveParams::DRIVE, CellIcon::WaveClip),
-        ParamSlot::param(BlockRef::Drive, DriveParams::TONE, CellIcon::ToneTilt),
-        ParamSlot::param(BlockRef::Drive, DriveParams::MIX, CellIcon::DryWet),
+        ParamSlot::param(BlockRef::Drive, DriveParams::DRIVE),
+        ParamSlot::param(BlockRef::Drive, DriveParams::TONE),
+        ParamSlot::param(BlockRef::Drive, DriveParams::MIX),
         EMPTY,
         EMPTY,
         EMPTY,
@@ -166,9 +166,9 @@ pub static FOLDER: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::WaveFold,
     params: [
-        ParamSlot::param(BlockRef::Folder, FolderParams::FOLD, CellIcon::WaveFold),
-        ParamSlot::param(BlockRef::Folder, FolderParams::SYMMETRY, CellIcon::Symmetry),
-        ParamSlot::param(BlockRef::Folder, FolderParams::MIX, CellIcon::DryWet),
+        ParamSlot::param(BlockRef::Folder, FolderParams::FOLD),
+        ParamSlot::param(BlockRef::Folder, FolderParams::SYMMETRY),
+        ParamSlot::param(BlockRef::Folder, FolderParams::MIX),
         EMPTY,
         EMPTY,
         EMPTY,
@@ -186,12 +186,12 @@ pub static FILTER: BlockDef = BlockDef {
     layout: PageLayout::BigViz,
     viz: VizType::FilterResponse,
     params: [
-        ParamSlot::param(BlockRef::Filter, FilterParams::CUTOFF, CellIcon::None),
-        ParamSlot::param(BlockRef::Filter, FilterParams::RESONANCE, CellIcon::None),
-        ParamSlot::param(BlockRef::Filter, FilterParams::DRIVE, CellIcon::None),
-        ParamSlot::param(BlockRef::Filter, FilterParams::FM_AMOUNT, CellIcon::None),
-        ParamSlot::param(BlockRef::Filter, FilterParams::ENV_AMOUNT, CellIcon::None),
-        ParamSlot::param(BlockRef::Filter, FilterParams::KEY_TRACK, CellIcon::None),
+        ParamSlot::param(BlockRef::Filter, FilterParams::CUTOFF),
+        ParamSlot::param(BlockRef::Filter, FilterParams::RESONANCE),
+        ParamSlot::param(BlockRef::Filter, FilterParams::DRIVE),
+        ParamSlot::param(BlockRef::Filter, FilterParams::FM_AMOUNT),
+        ParamSlot::param(BlockRef::Filter, FilterParams::ENV_AMOUNT),
+        ParamSlot::param(BlockRef::Filter, FilterParams::KEY_TRACK),
     ],
 };
 
@@ -208,12 +208,12 @@ pub static ENVELOPE: BlockDef = BlockDef {
     layout: PageLayout::BigViz,
     viz: VizType::Adsr,
     params: [
-        ParamSlot::param(BlockRef::AmpEnv, EnvParams::ATTACK, CellIcon::None),
-        ParamSlot::param(BlockRef::AmpEnv, EnvParams::DECAY, CellIcon::None),
-        ParamSlot::param(BlockRef::AmpEnv, EnvParams::SUSTAIN, CellIcon::None),
-        ParamSlot::param(BlockRef::AmpEnv, EnvParams::RELEASE, CellIcon::None),
-        ParamSlot::param(BlockRef::AmpEnv, EnvParams::LEVEL, CellIcon::None).with_label("DEPTH"),
-        ParamSlot::param(BlockRef::AmpEnv, EnvParams::VEL_SENS, CellIcon::None),
+        ParamSlot::param(BlockRef::AmpEnv, EnvParams::ATTACK),
+        ParamSlot::param(BlockRef::AmpEnv, EnvParams::DECAY),
+        ParamSlot::param(BlockRef::AmpEnv, EnvParams::SUSTAIN),
+        ParamSlot::param(BlockRef::AmpEnv, EnvParams::RELEASE),
+        ParamSlot::param(BlockRef::AmpEnv, EnvParams::LEVEL).with_label("DEPTH"),
+        ParamSlot::param(BlockRef::AmpEnv, EnvParams::VEL_SENS),
     ],
 };
 
@@ -225,12 +225,12 @@ pub static LFO: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
-        ParamSlot::param(BlockRef::Lfo, LfoParams::RATE, CellIcon::Orbit),
-        ParamSlot::param(BlockRef::Lfo, LfoParams::SHAPE, CellIcon::WaveShape),
-        ParamSlot::param(BlockRef::Lfo, LfoParams::SYNC, CellIcon::Arc),
-        ParamSlot::param(BlockRef::Lfo, LfoParams::PHASE, CellIcon::Arc),
-        ParamSlot::param(BlockRef::Lfo, LfoParams::DEPTH, CellIcon::Breathe),
-        ParamSlot::param(BlockRef::Lfo, LfoParams::OFFSET, CellIcon::Arc),
+        ParamSlot::param(BlockRef::Lfo, LfoParams::RATE),
+        ParamSlot::param(BlockRef::Lfo, LfoParams::SHAPE),
+        ParamSlot::param(BlockRef::Lfo, LfoParams::SYNC),
+        ParamSlot::param(BlockRef::Lfo, LfoParams::PHASE),
+        ParamSlot::param(BlockRef::Lfo, LfoParams::DEPTH),
+        ParamSlot::param(BlockRef::Lfo, LfoParams::OFFSET),
     ],
 };
 
@@ -241,12 +241,12 @@ pub static ENV_AMP: BlockDef = BlockDef {
     layout: PageLayout::BigViz,
     viz: VizType::Adsr,
     params: [
-        ParamSlot::legacy("ATK", ValFmt::Uni, CellIcon::None),
-        ParamSlot::legacy("DEC", ValFmt::Uni, CellIcon::None),
-        ParamSlot::legacy("SUS", ValFmt::Uni, CellIcon::None),
-        ParamSlot::legacy("REL", ValFmt::Uni, CellIcon::None),
-        ParamSlot::legacy("LEVEL", ValFmt::Uni, CellIcon::None),
-        ParamSlot::legacy("VEL", ValFmt::Uni, CellIcon::None),
+        ParamSlot::legacy("ATK", ValFmt::Uni),
+        ParamSlot::legacy("DEC", ValFmt::Uni),
+        ParamSlot::legacy("SUS", ValFmt::Uni),
+        ParamSlot::legacy("REL", ValFmt::Uni),
+        ParamSlot::legacy("LEVEL", ValFmt::Uni),
+        ParamSlot::legacy("VEL", ValFmt::Uni),
     ],
 };
 
@@ -257,12 +257,12 @@ pub static ENV_FILTER: BlockDef = BlockDef {
     layout: PageLayout::BigViz,
     viz: VizType::Adsr,
     params: [
-        ParamSlot::legacy("ATK", ValFmt::Uni, CellIcon::None),
-        ParamSlot::legacy("DEC", ValFmt::Uni, CellIcon::None),
-        ParamSlot::legacy("SUS", ValFmt::Uni, CellIcon::None),
-        ParamSlot::legacy("REL", ValFmt::Uni, CellIcon::None),
-        ParamSlot::legacy("LEVEL", ValFmt::Uni, CellIcon::None),
-        ParamSlot::legacy("VEL", ValFmt::Uni, CellIcon::None),
+        ParamSlot::legacy("ATK", ValFmt::Uni),
+        ParamSlot::legacy("DEC", ValFmt::Uni),
+        ParamSlot::legacy("SUS", ValFmt::Uni),
+        ParamSlot::legacy("REL", ValFmt::Uni),
+        ParamSlot::legacy("LEVEL", ValFmt::Uni),
+        ParamSlot::legacy("VEL", ValFmt::Uni),
     ],
 };
 
@@ -273,12 +273,12 @@ pub static ENV_AUX: BlockDef = BlockDef {
     layout: PageLayout::BigViz,
     viz: VizType::Adsr,
     params: [
-        ParamSlot::legacy("ATK", ValFmt::Uni, CellIcon::None),
-        ParamSlot::legacy("DEC", ValFmt::Uni, CellIcon::None),
-        ParamSlot::legacy("SUS", ValFmt::Uni, CellIcon::None),
-        ParamSlot::legacy("REL", ValFmt::Uni, CellIcon::None),
-        ParamSlot::legacy("LEVEL", ValFmt::Uni, CellIcon::None),
-        ParamSlot::legacy("VEL", ValFmt::Uni, CellIcon::None),
+        ParamSlot::legacy("ATK", ValFmt::Uni),
+        ParamSlot::legacy("DEC", ValFmt::Uni),
+        ParamSlot::legacy("SUS", ValFmt::Uni),
+        ParamSlot::legacy("REL", ValFmt::Uni),
+        ParamSlot::legacy("LEVEL", ValFmt::Uni),
+        ParamSlot::legacy("VEL", ValFmt::Uni),
     ],
 };
 
@@ -293,11 +293,11 @@ pub static EFX: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::EffectsFlow,
     params: [
-        ParamSlot::param(BlockRef::Reverb, ReverbParams::REVERB_TYPE, CellIcon::Arc),
-        ParamSlot::param(BlockRef::Reverb, ReverbParams::TIME, CellIcon::Arc),
-        ParamSlot::param(BlockRef::Reverb, ReverbParams::DAMPING, CellIcon::Arc),
-        ParamSlot::param(BlockRef::Reverb, ReverbParams::SIZE, CellIcon::Arc),
-        ParamSlot::param(BlockRef::Reverb, ReverbParams::MIX, CellIcon::Arc),
+        ParamSlot::param(BlockRef::Reverb, ReverbParams::REVERB_TYPE),
+        ParamSlot::param(BlockRef::Reverb, ReverbParams::TIME),
+        ParamSlot::param(BlockRef::Reverb, ReverbParams::DAMPING),
+        ParamSlot::param(BlockRef::Reverb, ReverbParams::SIZE),
+        ParamSlot::param(BlockRef::Reverb, ReverbParams::MIX),
         EMPTY,
     ],
 };
@@ -309,12 +309,12 @@ pub static MIXER: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::MixerLevels,
     params: [
-        ParamSlot::legacy("VOL", ValFmt::Uni, CellIcon::LevelBar),
-        ParamSlot::legacy("PAN", ValFmt::Bi, CellIcon::PanDot),
-        ParamSlot::legacy("VOICES", ValFmt::Uni, CellIcon::Arc),
-        ParamSlot::legacy("MIDI", ValFmt::Uni, CellIcon::Arc),
-        ParamSlot::legacy("PITCH", ValFmt::Bi, CellIcon::Arc),
-        ParamSlot::legacy("GLIDE", ValFmt::Uni, CellIcon::Arc),
+        ParamSlot::legacy("VOL", ValFmt::Uni),
+        ParamSlot::legacy("PAN", ValFmt::Bi),
+        ParamSlot::legacy("VOICES", ValFmt::Uni),
+        ParamSlot::legacy("MIDI", ValFmt::Uni),
+        ParamSlot::legacy("PITCH", ValFmt::Bi),
+        ParamSlot::legacy("GLIDE", ValFmt::Uni),
     ],
 };
 
@@ -325,10 +325,10 @@ pub static CHORUS: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::EffectsFlow,
     params: [
-        ParamSlot::param(BlockRef::Chorus, ChorusParams::MODE, CellIcon::Arc),
-        ParamSlot::param(BlockRef::Chorus, ChorusParams::RATE, CellIcon::Arc),
-        ParamSlot::param(BlockRef::Chorus, ChorusParams::DEPTH, CellIcon::Arc),
-        ParamSlot::param(BlockRef::Chorus, ChorusParams::MIX, CellIcon::Arc),
+        ParamSlot::param(BlockRef::Chorus, ChorusParams::MODE),
+        ParamSlot::param(BlockRef::Chorus, ChorusParams::RATE),
+        ParamSlot::param(BlockRef::Chorus, ChorusParams::DEPTH),
+        ParamSlot::param(BlockRef::Chorus, ChorusParams::MIX),
         EMPTY,
         EMPTY,
     ],
@@ -341,12 +341,12 @@ pub static DELAY: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::EffectsFlow,
     params: [
-        ParamSlot::param(BlockRef::Delay, DelayParams::TIME_MS, CellIcon::Arc),
-        ParamSlot::param(BlockRef::Delay, DelayParams::FEEDBACK, CellIcon::Arc),
-        ParamSlot::param(BlockRef::Delay, DelayParams::WOW_FLUTTER, CellIcon::Arc),
-        ParamSlot::param(BlockRef::Delay, DelayParams::SATURATION, CellIcon::Arc),
-        ParamSlot::param(BlockRef::Delay, DelayParams::TONE, CellIcon::Arc),
-        ParamSlot::param(BlockRef::Delay, DelayParams::MIX, CellIcon::Arc),
+        ParamSlot::param(BlockRef::Delay, DelayParams::TIME_MS),
+        ParamSlot::param(BlockRef::Delay, DelayParams::FEEDBACK),
+        ParamSlot::param(BlockRef::Delay, DelayParams::WOW_FLUTTER),
+        ParamSlot::param(BlockRef::Delay, DelayParams::SATURATION),
+        ParamSlot::param(BlockRef::Delay, DelayParams::TONE),
+        ParamSlot::param(BlockRef::Delay, DelayParams::MIX),
     ],
 };
 
@@ -357,8 +357,8 @@ pub static MASTER: BlockDef = BlockDef {
     layout: PageLayout::BigViz,
     viz: VizType::CompressorCurve,
     params: [
-        ParamSlot::legacy("VOL", ValFmt::Uni, CellIcon::None),
-        ParamSlot::legacy("PAN", ValFmt::Bi, CellIcon::None),
+        ParamSlot::legacy("VOL", ValFmt::Uni),
+        ParamSlot::legacy("PAN", ValFmt::Bi),
         EMPTY,
         EMPTY,
         EMPTY,
@@ -377,12 +377,12 @@ pub static NOISE: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::WaveformPreview,
     params: [
-        ParamSlot::legacy("COLOR", ValFmt::Uni, CellIcon::Arc),
-        ParamSlot::legacy("PITCH", ValFmt::Uni, CellIcon::Arc),
-        ParamSlot::legacy("DECAY", ValFmt::Uni, CellIcon::Arc),
-        ParamSlot::legacy("CLICK", ValFmt::Uni, CellIcon::Arc),
-        ParamSlot::legacy("TONE", ValFmt::Uni, CellIcon::Arc),
-        ParamSlot::legacy("LEVEL", ValFmt::Uni, CellIcon::Arc),
+        ParamSlot::legacy("COLOR", ValFmt::Uni),
+        ParamSlot::legacy("PITCH", ValFmt::Uni),
+        ParamSlot::legacy("DECAY", ValFmt::Uni),
+        ParamSlot::legacy("CLICK", ValFmt::Uni),
+        ParamSlot::legacy("TONE", ValFmt::Uni),
+        ParamSlot::legacy("LEVEL", ValFmt::Uni),
     ],
 };
 
@@ -410,12 +410,12 @@ pub static FM_ENV1: BlockDef = BlockDef {
     layout: PageLayout::BigViz,
     viz: VizType::FmEnvelope,
     params: [
-        ParamSlot::param(BlockRef::FmOp(Op::A), FmOpParams::ATTACK_RATE, CellIcon::None),
-        ParamSlot::param(BlockRef::FmOp(Op::A), FmOpParams::DECAY1_RATE, CellIcon::None),
-        ParamSlot::param(BlockRef::FmOp(Op::A), FmOpParams::DECAY1_LEVEL, CellIcon::None),
-        ParamSlot::param(BlockRef::FmOp(Op::A), FmOpParams::DECAY2_RATE, CellIcon::None),
-        ParamSlot::param(BlockRef::FmOp(Op::A), FmOpParams::RELEASE_RATE, CellIcon::None),
-        ParamSlot::param(BlockRef::FmOp(Op::A), FmOpParams::RATE_SCALING, CellIcon::None),
+        ParamSlot::param(BlockRef::FmOp(Op::A), FmOpParams::ATTACK_RATE),
+        ParamSlot::param(BlockRef::FmOp(Op::A), FmOpParams::DECAY1_RATE),
+        ParamSlot::param(BlockRef::FmOp(Op::A), FmOpParams::DECAY1_LEVEL),
+        ParamSlot::param(BlockRef::FmOp(Op::A), FmOpParams::DECAY2_RATE),
+        ParamSlot::param(BlockRef::FmOp(Op::A), FmOpParams::RELEASE_RATE),
+        ParamSlot::param(BlockRef::FmOp(Op::A), FmOpParams::RATE_SCALING),
     ],
 };
 
@@ -426,12 +426,12 @@ pub static FM_ENV2: BlockDef = BlockDef {
     layout: PageLayout::BigViz,
     viz: VizType::FmEnvelope,
     params: [
-        ParamSlot::param(BlockRef::FmOp(Op::B), FmOpParams::ATTACK_RATE, CellIcon::None),
-        ParamSlot::param(BlockRef::FmOp(Op::B), FmOpParams::DECAY1_RATE, CellIcon::None),
-        ParamSlot::param(BlockRef::FmOp(Op::B), FmOpParams::DECAY1_LEVEL, CellIcon::None),
-        ParamSlot::param(BlockRef::FmOp(Op::B), FmOpParams::DECAY2_RATE, CellIcon::None),
-        ParamSlot::param(BlockRef::FmOp(Op::B), FmOpParams::RELEASE_RATE, CellIcon::None),
-        ParamSlot::param(BlockRef::FmOp(Op::B), FmOpParams::RATE_SCALING, CellIcon::None),
+        ParamSlot::param(BlockRef::FmOp(Op::B), FmOpParams::ATTACK_RATE),
+        ParamSlot::param(BlockRef::FmOp(Op::B), FmOpParams::DECAY1_RATE),
+        ParamSlot::param(BlockRef::FmOp(Op::B), FmOpParams::DECAY1_LEVEL),
+        ParamSlot::param(BlockRef::FmOp(Op::B), FmOpParams::DECAY2_RATE),
+        ParamSlot::param(BlockRef::FmOp(Op::B), FmOpParams::RELEASE_RATE),
+        ParamSlot::param(BlockRef::FmOp(Op::B), FmOpParams::RATE_SCALING),
     ],
 };
 
@@ -442,12 +442,12 @@ pub static FM_ENV3: BlockDef = BlockDef {
     layout: PageLayout::BigViz,
     viz: VizType::FmEnvelope,
     params: [
-        ParamSlot::param(BlockRef::FmOp(Op::C), FmOpParams::ATTACK_RATE, CellIcon::None),
-        ParamSlot::param(BlockRef::FmOp(Op::C), FmOpParams::DECAY1_RATE, CellIcon::None),
-        ParamSlot::param(BlockRef::FmOp(Op::C), FmOpParams::DECAY1_LEVEL, CellIcon::None),
-        ParamSlot::param(BlockRef::FmOp(Op::C), FmOpParams::DECAY2_RATE, CellIcon::None),
-        ParamSlot::param(BlockRef::FmOp(Op::C), FmOpParams::RELEASE_RATE, CellIcon::None),
-        ParamSlot::param(BlockRef::FmOp(Op::C), FmOpParams::RATE_SCALING, CellIcon::None),
+        ParamSlot::param(BlockRef::FmOp(Op::C), FmOpParams::ATTACK_RATE),
+        ParamSlot::param(BlockRef::FmOp(Op::C), FmOpParams::DECAY1_RATE),
+        ParamSlot::param(BlockRef::FmOp(Op::C), FmOpParams::DECAY1_LEVEL),
+        ParamSlot::param(BlockRef::FmOp(Op::C), FmOpParams::DECAY2_RATE),
+        ParamSlot::param(BlockRef::FmOp(Op::C), FmOpParams::RELEASE_RATE),
+        ParamSlot::param(BlockRef::FmOp(Op::C), FmOpParams::RATE_SCALING),
     ],
 };
 
@@ -458,12 +458,12 @@ pub static FM_ENV4: BlockDef = BlockDef {
     layout: PageLayout::BigViz,
     viz: VizType::FmEnvelope,
     params: [
-        ParamSlot::param(BlockRef::FmOp(Op::D), FmOpParams::ATTACK_RATE, CellIcon::None),
-        ParamSlot::param(BlockRef::FmOp(Op::D), FmOpParams::DECAY1_RATE, CellIcon::None),
-        ParamSlot::param(BlockRef::FmOp(Op::D), FmOpParams::DECAY1_LEVEL, CellIcon::None),
-        ParamSlot::param(BlockRef::FmOp(Op::D), FmOpParams::DECAY2_RATE, CellIcon::None),
-        ParamSlot::param(BlockRef::FmOp(Op::D), FmOpParams::RELEASE_RATE, CellIcon::None),
-        ParamSlot::param(BlockRef::FmOp(Op::D), FmOpParams::RATE_SCALING, CellIcon::None),
+        ParamSlot::param(BlockRef::FmOp(Op::D), FmOpParams::ATTACK_RATE),
+        ParamSlot::param(BlockRef::FmOp(Op::D), FmOpParams::DECAY1_RATE),
+        ParamSlot::param(BlockRef::FmOp(Op::D), FmOpParams::DECAY1_LEVEL),
+        ParamSlot::param(BlockRef::FmOp(Op::D), FmOpParams::DECAY2_RATE),
+        ParamSlot::param(BlockRef::FmOp(Op::D), FmOpParams::RELEASE_RATE),
+        ParamSlot::param(BlockRef::FmOp(Op::D), FmOpParams::RATE_SCALING),
     ],
 };
 
@@ -575,11 +575,11 @@ pub static PART: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::MixerLevels,
     params: [
-        ParamSlot::param(BlockRef::Part, PartParams::CHANNEL, CellIcon::Arc),
-        ParamSlot::param(BlockRef::Part, PartParams::MODE, CellIcon::Arc),
-        ParamSlot::param(BlockRef::Part, PartParams::OUTPUT, CellIcon::Arc),
-        ParamSlot::param(BlockRef::Part, PartParams::LEVEL, CellIcon::LevelBar),
-        ParamSlot::param(BlockRef::Part, PartParams::PAN, CellIcon::PanDot),
+        ParamSlot::param(BlockRef::Part, PartParams::CHANNEL),
+        ParamSlot::param(BlockRef::Part, PartParams::MODE),
+        ParamSlot::param(BlockRef::Part, PartParams::OUTPUT),
+        ParamSlot::param(BlockRef::Part, PartParams::LEVEL),
+        ParamSlot::param(BlockRef::Part, PartParams::PAN),
         EMPTY,
     ],
 };
@@ -591,11 +591,11 @@ pub static MIDI_CFG: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
-        ParamSlot::legacy("CH", ValFmt::Int(16), CellIcon::Arc),
-        ParamSlot::legacy("PGM", ValFmt::Int(1), CellIcon::Arc),
-        ParamSlot::legacy("CC.RX", ValFmt::Int(1), CellIcon::Arc),
-        ParamSlot::legacy("BEND", ValFmt::Int(12), CellIcon::Arc),
-        ParamSlot::legacy("TRNS", ValFmt::Bi, CellIcon::Arc),
+        ParamSlot::legacy("CH", ValFmt::Int(16)),
+        ParamSlot::legacy("PGM", ValFmt::Int(1)),
+        ParamSlot::legacy("CC.RX", ValFmt::Int(1)),
+        ParamSlot::legacy("BEND", ValFmt::Int(12)),
+        ParamSlot::legacy("TRNS", ValFmt::Bi),
         EMPTY,
     ],
 };
@@ -607,12 +607,12 @@ pub static EQ: BlockDef = BlockDef {
     layout: PageLayout::BigViz,
     viz: VizType::EqResponse,
     params: [
-        ParamSlot::legacy("LOW", ValFmt::Bi, CellIcon::None),
-        ParamSlot::legacy("L.FRQ", ValFmt::Uni, CellIcon::None),
-        ParamSlot::legacy("MID", ValFmt::Bi, CellIcon::None),
-        ParamSlot::legacy("M.FRQ", ValFmt::Uni, CellIcon::None),
-        ParamSlot::legacy("HIGH", ValFmt::Bi, CellIcon::None),
-        ParamSlot::legacy("H.FRQ", ValFmt::Uni, CellIcon::None),
+        ParamSlot::legacy("LOW", ValFmt::Bi),
+        ParamSlot::legacy("L.FRQ", ValFmt::Uni),
+        ParamSlot::legacy("MID", ValFmt::Bi),
+        ParamSlot::legacy("M.FRQ", ValFmt::Uni),
+        ParamSlot::legacy("HIGH", ValFmt::Bi),
+        ParamSlot::legacy("H.FRQ", ValFmt::Uni),
     ],
 };
 
@@ -623,9 +623,9 @@ pub static SENDS: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::EffectsFlow,
     params: [
-        ParamSlot::param(BlockRef::Part, PartParams::SEND_CHORUS, CellIcon::Arc),
-        ParamSlot::param(BlockRef::Part, PartParams::SEND_DELAY, CellIcon::Arc),
-        ParamSlot::param(BlockRef::Part, PartParams::SEND_REVERB, CellIcon::Arc),
+        ParamSlot::param(BlockRef::Part, PartParams::SEND_CHORUS),
+        ParamSlot::param(BlockRef::Part, PartParams::SEND_DELAY),
+        ParamSlot::param(BlockRef::Part, PartParams::SEND_REVERB),
         EMPTY,
         EMPTY,
         EMPTY,
@@ -658,12 +658,12 @@ pub static SYS_MIDI: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
-        ParamSlot::legacy("P1 CH", ValFmt::Int(16), CellIcon::Arc),
-        ParamSlot::legacy("P2 CH", ValFmt::Int(16), CellIcon::Arc),
-        ParamSlot::legacy("P3 CH", ValFmt::Int(16), CellIcon::Arc),
-        ParamSlot::legacy("P4 CH", ValFmt::Int(16), CellIcon::Arc),
-        ParamSlot::legacy("P5 CH", ValFmt::Int(16), CellIcon::Arc),
-        ParamSlot::legacy("P6 CH", ValFmt::Int(16), CellIcon::Arc),
+        ParamSlot::legacy("P1 CH", ValFmt::Int(16)),
+        ParamSlot::legacy("P2 CH", ValFmt::Int(16)),
+        ParamSlot::legacy("P3 CH", ValFmt::Int(16)),
+        ParamSlot::legacy("P4 CH", ValFmt::Int(16)),
+        ParamSlot::legacy("P5 CH", ValFmt::Int(16)),
+        ParamSlot::legacy("P6 CH", ValFmt::Int(16)),
     ],
 };
 
@@ -674,8 +674,8 @@ pub static SYS_TUNING: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
-        ParamSlot::legacy("TUNE", ValFmt::Bi, CellIcon::Arc),
-        ParamSlot::legacy("SCALE", ValFmt::Int(2), CellIcon::Arc),
+        ParamSlot::legacy("TUNE", ValFmt::Bi),
+        ParamSlot::legacy("SCALE", ValFmt::Int(2)),
         EMPTY,
         EMPTY,
         EMPTY,
@@ -690,8 +690,8 @@ pub static SYS_THEME: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
-        ParamSlot::legacy("BRIGHT", ValFmt::Uni, CellIcon::Arc),
-        ParamSlot::legacy("ACCENT", ValFmt::Int(4), CellIcon::Arc),
+        ParamSlot::legacy("BRIGHT", ValFmt::Uni),
+        ParamSlot::legacy("ACCENT", ValFmt::Int(4)),
         EMPTY,
         EMPTY,
         EMPTY,
@@ -742,12 +742,12 @@ pub static DEMO_WAVES: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
-        ParamSlot::legacy("CLIP", ValFmt::Uni, CellIcon::WaveClip),
-        ParamSlot::legacy("WAVE", ValFmt::Uni, CellIcon::WaveShape),
-        ParamSlot::legacy("PW", ValFmt::Uni, CellIcon::PulseWidth),
-        ParamSlot::legacy("FOLD", ValFmt::Uni, CellIcon::WaveFold),
-        ParamSlot::legacy("TILT", ValFmt::Bi, CellIcon::ToneTilt),
-        ParamSlot::legacy("SYM", ValFmt::Bi, CellIcon::Symmetry),
+        ParamSlot::legacy("CLIP", ValFmt::Uni),
+        ParamSlot::legacy("WAVE", ValFmt::Uni),
+        ParamSlot::legacy("PW", ValFmt::Uni),
+        ParamSlot::legacy("FOLD", ValFmt::Uni),
+        ParamSlot::legacy("TILT", ValFmt::Bi),
+        ParamSlot::legacy("SYM", ValFmt::Bi),
     ],
 };
 
@@ -758,12 +758,12 @@ pub static DEMO_SHAPES: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
-        ParamSlot::legacy("ARC", ValFmt::Uni, CellIcon::Arc),
-        ParamSlot::legacy("LEVEL", ValFmt::Uni, CellIcon::LevelBar),
-        ParamSlot::legacy("PAN", ValFmt::Bi, CellIcon::PanDot),
-        ParamSlot::legacy("D/W", ValFmt::Bi, CellIcon::DryWet),
-        ParamSlot::legacy("CUBE", ValFmt::Uni, CellIcon::Cube),
-        ParamSlot::legacy("STACK", ValFmt::Uni, CellIcon::Stack),
+        ParamSlot::legacy("ARC", ValFmt::Uni),
+        ParamSlot::legacy("LEVEL", ValFmt::Uni),
+        ParamSlot::legacy("PAN", ValFmt::Bi),
+        ParamSlot::legacy("D/W", ValFmt::Bi),
+        ParamSlot::legacy("CUBE", ValFmt::Uni),
+        ParamSlot::legacy("STACK", ValFmt::Uni),
     ],
 };
 
@@ -774,12 +774,12 @@ pub static DEMO_MOTION: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
-        ParamSlot::legacy("RIPPL", ValFmt::Uni, CellIcon::Ripple),
-        ParamSlot::legacy("BURST", ValFmt::Uni, CellIcon::Burst),
-        ParamSlot::legacy("ORBIT", ValFmt::Uni, CellIcon::Orbit),
-        ParamSlot::legacy("SCATR", ValFmt::Uni, CellIcon::Scatter),
-        ParamSlot::legacy("BOUNC", ValFmt::Bi, CellIcon::Bounce),
-        ParamSlot::legacy("PULSE", ValFmt::Uni, CellIcon::Breathe),
+        ParamSlot::legacy("RIPPL", ValFmt::Uni),
+        ParamSlot::legacy("BURST", ValFmt::Uni),
+        ParamSlot::legacy("ORBIT", ValFmt::Uni),
+        ParamSlot::legacy("SCATR", ValFmt::Uni),
+        ParamSlot::legacy("BOUNC", ValFmt::Bi),
+        ParamSlot::legacy("PULSE", ValFmt::Uni),
     ],
 };
 
@@ -799,10 +799,10 @@ pub static DEMO_FM: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
-        ParamSlot::legacy("ALGO", ValFmt::Int(7), CellIcon::FmAlgorithm),
-        ParamSlot::legacy("LOOP", ValFmt::Uni, CellIcon::FeedbackLoop),
-        ParamSlot::legacy("SPIRL", ValFmt::Uni, CellIcon::FeedbackSpiral),
-        ParamSlot::legacy("WAVE", ValFmt::Uni, CellIcon::FeedbackWave),
+        ParamSlot::legacy("ALGO", ValFmt::Int(7)),
+        ParamSlot::legacy("LOOP", ValFmt::Uni),
+        ParamSlot::legacy("SPIRL", ValFmt::Uni),
+        ParamSlot::legacy("WAVE", ValFmt::Uni),
         EMPTY,
         EMPTY,
     ],
