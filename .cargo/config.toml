@@ -1,2 +1,10 @@
 [target.thumbv7em-none-eabihf]
 rustflags = ["-C", "link-arg=-Tlink.x"]
+
+[env]
+# Test threads construct the 250 KB voice pool and FX bus by value; debug
+# builds copy them on the stack several times on the way into a Box. Give
+# spawned threads room (the default is 2 MiB). `[env]` applies to every
+# cargo invocation in the workspace (build, run, test — desktop included),
+# not only tests; it only raises the minimum for threads that don't set one.
+RUST_MIN_STACK = "8388608"

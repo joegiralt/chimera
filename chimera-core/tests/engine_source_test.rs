@@ -1,7 +1,7 @@
 //! One source of truth for engine choice (spec §6).
 
 use chimera_core::params::{EngineType, ParamSnapshot};
-use chimera_core::preset::{ChainType, Patch};
+use chimera_core::preset::{ChainType, Sound};
 
 /// `ChainType::engine` is usable in const context.
 const FM_ENGINE: EngineType = ChainType::Fm.engine();
@@ -16,7 +16,7 @@ fn chain_type_names_its_engine() {
 #[test]
 fn patch_init_takes_its_engine_from_the_chain() {
     for ct in ChainType::ALL {
-        assert_eq!(Patch::init(ct).params.engine(), ct.engine(), "{ct:?}");
+        assert_eq!(Sound::init(ct).params.engine(), ct.engine(), "{ct:?}");
     }
 }
 

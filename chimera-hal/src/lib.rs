@@ -92,6 +92,25 @@ impl MidiNote {
     }
 }
 
+/// MIDI channel, 0..=15 (the low nibble of the status byte).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct MidiChannel(u8);
+
+impl MidiChannel {
+    pub const fn new(c: u8) -> Option<Self> {
+        if c <= 15 { Some(Self(c)) } else { None }
+    }
+
+    /// `c` limited to 15: for values already clamped by a param spec.
+    pub const fn clamped(c: u8) -> Self {
+        Self(if c > 15 { 15 } else { c })
+    }
+
+    pub const fn get(self) -> u8 {
+        self.0
+    }
+}
+
 /// Note-on velocity, 1..=127. Zero means note-off and is not representable.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Velocity(u8);

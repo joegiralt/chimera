@@ -14,6 +14,12 @@ pub enum ValFmt {
     /// Discrete integer 0..N. N is stored in the variant.
     /// Display shows the integer directly. Snaps at each integer.
     Int(u8),
+    /// Discrete integer 0..N shown one-based, 1..N+1 (MIDI channel).
+    OneBased(u8),
+    /// Discrete choice 0..len-1 shown by name.
+    Names(&'static [&'static str]),
+    /// Stereo position: bipolar like `Bi`, shown as `L64`..`C`..`R63`.
+    Pan,
 }
 
 impl ValFmt {
@@ -21,20 +27,27 @@ impl ValFmt {
     pub fn snap_points(self) -> &'static [f32] {
         match self {
             ValFmt::Uni => &[0.0, 100.0 / 127.0, 1.0],
-            ValFmt::Bi => &[0.0, 20.0 / 127.0, 64.0 / 127.0, 107.0 / 127.0, 1.0],
+            ValFmt::Bi | ValFmt::Pan => &[0.0, 20.0 / 127.0, 64.0 / 127.0, 107.0 / 127.0, 1.0],
             // Discrete: shift-encoder jumps to 0 or max
-            ValFmt::Int(_) => &[0.0, 1.0],
+            ValFmt::Int(_) | ValFmt::OneBased(_) | ValFmt::Names(_) => &[0.0, 1.0],
         }
     }
 
     pub fn is_bipolar(self) -> bool {
-        matches!(self, ValFmt::Bi)
+        matches!(self, ValFmt::Bi | ValFmt::Pan)
     }
 
-    /// Max integer value (only meaningful for Int variant).
+    /// A choice among a few values (channel, mode, output, type): shown as
+    /// text with no value bar.
+    pub fn is_discrete(self) -> bool {
+        matches!(self, ValFmt::Int(_) | ValFmt::OneBased(_) | ValFmt::Names(_))
+    }
+
+    /// Max integer value (only meaningful for the discrete variants).
     pub fn max_int(self) -> u8 {
         match self {
-            ValFmt::Int(n) => n,
+            ValFmt::Int(n) | ValFmt::OneBased(n) => n,
+            ValFmt::Names(names) => names.len().saturating_sub(1) as u8,
             _ => 127,
         }
     }
@@ -66,7 +79,7 @@ pub struct ParamSpec {
     pub min: f32,
     pub max: f32,
     /// UI reset value only. Initial values come from the values struct's
-    /// `Default` and from `Patch::init`.
+    /// `Default` and from `Sound::init`.
     pub default: f32,
     /// Value change per encoder tick (today's per-page step).
     pub step: f32,

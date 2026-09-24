@@ -42,9 +42,9 @@ fn every_part_slot_resolves_to_a_spec() {
 fn part_chains_offer_env_and_lfo_sources() {
     for ct in ChainType::ALL {
         assert_eq!(chain_def_for(ct).mod_sources, ["ENV", "LFO"], "{ct:?}");
-        let patch = chimera_core::preset::Patch::init(ct);
-        assert!(patch.dest_registry.is_empty(), "{ct:?}: no pre-wired destinations");
-        assert_eq!(patch.mod_state.num_dests(), 0, "{ct:?}");
+        let sound = chimera_core::preset::Sound::init(ct);
+        assert!(sound.dest_registry.is_empty(), "{ct:?}: no pre-wired destinations");
+        assert_eq!(sound.mod_state.num_dests(), 0, "{ct:?}");
     }
     // The FM_ENV pages stay as MOD sub-pages; they are just not source rows.
     assert_eq!(chain_def_for(ChainType::Fm).blocks[4].sub_pages.len(), 4);
@@ -57,7 +57,7 @@ fn block_def_ids_are_unique() {
         &reg::FM_RATIO, &reg::DRIVE, &reg::FOLDER, &reg::FILTER, &reg::ENVELOPE, &reg::LFO,
         &reg::ENV_AMP, &reg::ENV_FILTER, &reg::ENV_AUX, &reg::EFX, &reg::MIXER, &reg::CHORUS,
         &reg::DELAY, &reg::MASTER, &reg::NOISE, &reg::MOD_MATRIX, &reg::FM_ENV1, &reg::FM_ENV2,
-        &reg::FM_ENV3, &reg::FM_ENV4, &reg::CHANNEL, &reg::MIDI_CFG, &reg::EQ, &reg::SENDS,
+        &reg::FM_ENV3, &reg::FM_ENV4, &reg::PART, &reg::MIDI_CFG, &reg::EQ, &reg::SENDS,
         &reg::SYS_MIDI, &reg::SYS_TUNING, &reg::SYS_THEME, &reg::SYS_UPDATES, &reg::SYS_ABOUT,
         &reg::DEMO_WAVES, &reg::DEMO_SHAPES, &reg::DEMO_MOTION, &reg::DEMO_MATRIX, &reg::DEMO_FM,
     ];
@@ -67,16 +67,18 @@ fn block_def_ids_are_unique() {
 }
 
 /// Labels and formats of Part pages are exactly what they displayed before
-/// bindings (spec labels + the two plan-D6 overrides; plan D5 BODY fix).
+/// bindings (spec labels + the two plan-D6 overrides; plan D5 BODY fix), except
+/// the operator selector and the algorithm, shown 1–4 and 1–8 since the UI
+/// refresh.
 #[test]
 fn part_pages_display_like_before() {
-    use ValFmt::{Bi, Int, Uni};
+    use ValFmt::{Bi, Int, OneBased, Uni};
     let want: [(&BlockDef, [(&str, ValFmt); 6]); 15] = [
         (&reg::PIZZA, [("SHAPE", Uni), ("CRUSH", Uni), ("LEVEL", Uni), ("--", Uni), ("--", Uni), ("--", Uni)]),
         (&reg::MODAL_1, [("MODE", Int(3)), ("EXCITE", Uni), ("DECAY", Uni), ("BRIGHT", Uni), ("POS", Uni), ("INHARM", Uni)]),
         (&reg::MODAL_2, [("BODY", Uni), ("STIFF", Uni), ("FDBK", Uni), ("E.DPT", Uni), ("E.RAT", Uni), ("E.MIX", Uni)]),
-        (&reg::FM_ALG, [("ALG", Int(7)), ("--", Uni), ("LEVEL", Uni), ("--", Uni), ("--", Uni), ("--", Uni)]),
-        (&reg::FM_OP, [("OP", Int(3)), ("WAVE", Int(7)), ("LEVEL", Uni), ("FDBK", Int(7)), ("DETUN", Bi), ("V.SNS", Int(7))]),
+        (&reg::FM_ALG, [("ALG", OneBased(7)), ("--", Uni), ("LEVEL", Uni), ("--", Uni), ("--", Uni), ("--", Uni)]),
+        (&reg::FM_OP, [("OP", OneBased(3)), ("WAVE", Int(7)), ("LEVEL", Uni), ("FDBK", Int(7)), ("DETUN", Bi), ("V.SNS", Int(7))]),
         (&reg::FM_RATIO, [("OP1", Int(63)), ("OP2", Int(63)), ("OP3", Int(63)), ("OP4", Int(63)), ("FINE", Int(15)), ("--", Uni)]),
         (&reg::DRIVE, [("DRIVE", Uni), ("TONE", Bi), ("MIX", Bi), ("--", Uni), ("--", Uni), ("--", Uni)]),
         (&reg::FOLDER, [("FOLD", Uni), ("SYM", Bi), ("MIX", Bi), ("--", Uni), ("--", Uni), ("--", Uni)]),

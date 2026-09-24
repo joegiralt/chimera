@@ -182,6 +182,7 @@ dependencies = [
  "embedded-graphics",
  "embedded-graphics-core",
  "libm",
+ "u8g2-fonts",
 ]
 
 [[package]]
@@ -1475,6 +1476,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2abe9b86193656635d2411dc43050282ca48aa31c2451210f4202550afb7526"
 dependencies = [
  "winnow",
+]
+
+[[package]]
+name = "u8g2-fonts"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3ce3199e4c7d98a0a47ddd5ae9cde5a4e944d316319e3208527de504f4e76032"
+dependencies = [
+ "embedded-graphics-core",
 ]
 
 [[package]]

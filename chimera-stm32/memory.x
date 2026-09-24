@@ -2,5 +2,6 @@ MEMORY
 {
     FLASH (rx) : ORIGIN = 0x08020000, LENGTH = 896K
     RAM  (rwx) : ORIGIN = 0x24000000, LENGTH = 512K
-    RAM_D2 (rwx) : ORIGIN = 0x30000000, LENGTH = 32K
+    /* D2 SRAM1 (128K) + SRAM2 (128K) + SRAM3 (32K), contiguous (RM0433 §2.3) */
+    RAM_D2 (rwx) : ORIGIN = 0x30000000, LENGTH = 288K
 }

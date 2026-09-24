@@ -2,10 +2,10 @@
 //! parameter is, not where it sits on a page or in a chain, so rearranging
 //! cells or reordering blocks never remaps a mod route.
 
-use crate::block::{find_spec, ParamId, ParamSpec};
+use crate::block::{find_spec, Block, ParamId, ParamSpec};
 
 /// An FM operator. `TryFrom<u8>` rejects values above 3, so an out-of-range
-/// operator (bad patch or SysEx data) is unrepresentable.
+/// operator (bad sound or SysEx data) is unrepresentable.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Op {
     A,
@@ -60,14 +60,17 @@ pub enum BlockRef {
     Lfo,
     /// `OutParams { volume, pan }`
     Out,
-    /// Chorus, delay and reverb run outside `Voice` (desktop only).
+    /// Chorus, delay and reverb: the Performance's shared FX bus.
     Chorus,
     Delay,
     Reverb,
+    /// A Part's mix settings (`PartParams`): channel, mode, output, level,
+    /// pan, sends.
+    Part,
 }
 
 impl BlockRef {
-    pub const ALL: [BlockRef; 18] = [
+    pub const ALL: [BlockRef; 19] = [
         BlockRef::Pizza,
         BlockRef::Modal,
         BlockRef::Fm,
@@ -86,6 +89,7 @@ impl BlockRef {
         BlockRef::Chorus,
         BlockRef::Delay,
         BlockRef::Reverb,
+        BlockRef::Part,
     ];
 
     /// The block type's spec table (static; no instance needed).
@@ -104,6 +108,7 @@ impl BlockRef {
             BlockRef::Chorus => &crate::dsp::chorus::CHORUS_SPECS,
             BlockRef::Delay => &crate::dsp::delay::DELAY_SPECS,
             BlockRef::Reverb => &crate::dsp::reverb::REVERB_SPECS,
+            BlockRef::Part => &crate::part::PART_SPECS,
         }
     }
 
@@ -126,7 +131,8 @@ impl BlockRef {
             | BlockRef::Lfo
             | BlockRef::Chorus
             | BlockRef::Delay
-            | BlockRef::Reverb => false,
+            | BlockRef::Reverb
+            | BlockRef::Part => false,
         }
     }
 }
@@ -152,4 +158,12 @@ impl ParamAddr {
     pub fn modulatable(self) -> bool {
         self.block.voice_reads() && self.spec().is_some_and(|s| s.modulatable)
     }
+}
+
+/// Resolves block addresses to values (spec § Data model). A Sound's
+/// `ParamSnapshot` holds the voice blocks; a Part view (`PartEdit`) adds the
+/// shared FX. `None`: the address is not held here.
+pub trait Blocks {
+    fn block(&self, b: BlockRef) -> Option<&dyn Block>;
+    fn block_mut(&mut self, b: BlockRef) -> Option<&mut dyn Block>;
 }
