@@ -86,6 +86,38 @@ fn part_bus_is_panned_and_levelled_into_its_pair() {
     assert_eq!(peak(&rig.out[1]) + peak(&rig.out[2]), 0.0, "other pairs silent");
 }
 
+/// Send/return: a Part on pair 3, panned hard left, with a reverb send puts
+/// no dry signal on pair 1 — pair 1 carries exactly the FX return (the same
+/// on both sides), which is silent until the plate's first reflection.
+#[test]
+fn fx_send_puts_no_dry_signal_on_pair_1() {
+    let mut rig = Rig::new();
+    let mut shared = AudioShared::default();
+    shared.fx.reverb.mix = 0.5;
+    shared.fx.reverb.time = 0.7;
+    shared.parts[0].mix.output = DacPair::P3;
+    shared.parts[0].mix.pan = -1.0;
+    shared.parts[0].mix.sends[2] = 0.5;
+    let mut fx = Box::new(FxBus::new());
+    rig.inst.handle(on(0, 60), &shared);
+    for b in 0..120 {
+        rig.render(&shared);
+        let bus = *rig.inst.part_bus(0);
+        let mut sends = [[0.0; BLOCK_SIZE], [0.0; BLOCK_SIZE], bus.map(|s| s * 0.5)];
+        let mut ret = [0.0f32; BLOCK_SIZE];
+        fx.process(&mut sends, &shared.fx, SR, &mut ret);
+        let (l, r) = lr(&rig.out[0]);
+        assert_eq!((l, r), (ret, ret), "block {b}: pair 1 is the return only");
+        let (l3, r3) = lr(&rig.out[2]);
+        assert_eq!(peak(&r3), 0.0, "block {b}: hard left");
+        if b < 3_411 / BLOCK_SIZE {
+            assert!(b < 2 || peak(&l3) > 0.01, "block {b}: the part sounds on pair 3");
+            assert_eq!(peak(&rig.out[0]), 0.0, "block {b}: no dry on pair 1");
+        }
+    }
+    assert!(peak(&rig.out[0]) > 1e-4, "the wet return arrived");
+}
+
 /// Part routing by channel at dequeue; parts sharing a channel layer.
 #[test]
 fn notes_route_by_channel() {
@@ -188,7 +220,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("poly_chord", 0x9e1be15b748f4ab1),
     ("two_parts_two_pairs", 0xcfe8ed2b4c185e18),
     ("reverb_send_off", 0x25fa9f662d1acb99),
-    ("reverb_send_on", 0xaee0d4aead340f8d),
+    ("reverb_send_on", 0x51da232bdad6e4d9), // re-recorded: FX returns wet-only
 ];
 
 #[test]

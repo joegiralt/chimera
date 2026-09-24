@@ -121,7 +121,18 @@ impl TapeDelay {
         }
     }
 
+    /// Insert use: dry/wet mix in place.
     pub fn process(&mut self, buf: &mut [f32; BLOCK_SIZE], params: &DelayParams, sample_rate: u32) {
+        self.run(buf, params, sample_rate, 1.0 - params.mix);
+    }
+
+    /// Send/return use (the FX bus): writes only the wet signal × MIX, the
+    /// return level, in place of the send.
+    pub fn process_wet(&mut self, buf: &mut [f32; BLOCK_SIZE], params: &DelayParams, sample_rate: u32) {
+        self.run(buf, params, sample_rate, 0.0);
+    }
+
+    fn run(&mut self, buf: &mut [f32; BLOCK_SIZE], params: &DelayParams, sample_rate: u32, dry_gain: f32) {
         if !params.is_on() {
             return;
         }
@@ -178,7 +189,7 @@ impl TapeDelay {
             self.write_pos = (self.write_pos + 1) % MAX_DELAY_SAMPLES;
 
             // Mix
-            *s = dry * (1.0 - params.mix) + delayed * params.mix;
+            *s = dry * dry_gain + delayed * params.mix;
         }
     }
 }
