@@ -6,6 +6,7 @@ pub mod chain;
 pub mod draw;
 pub mod dungeon_map;
 pub mod fmt;
+pub mod focus;
 pub mod mod_grid;
 pub mod page;
 pub mod part_page;
@@ -55,8 +56,8 @@ pub struct UiState {
     /// Selected FM operator — one global selection, as before (spec §5).
     sel_op: Op,
     region_set: region::RegionSet,
-    /// Last encoder touched (0-5) — used to identify focused param for MIX+Plus/Minus
-    last_encoder: usize,
+    /// Last-touched slot per page: the focus band and MIX + Plus/Minus.
+    focus: focus::FocusMemory,
     /// Display-side LFO for animating modulated parameters
     display_lfo: Lfo,
 }
@@ -86,7 +87,7 @@ impl UiState {
             page,
             sel_op: Op::A,
             region_set: region::RegionSet::new(),
-            last_encoder: 0,
+            focus: focus::FocusMemory::new(),
             display_lfo: Lfo::new(),
         };
         ui.load_matrix(0);
@@ -116,6 +117,12 @@ impl UiState {
     /// Current page identity.
     pub fn page(&self) -> PageKey {
         self.page
+    }
+
+    /// The slot the focus band shows on the current page: the last one
+    /// turned there, slot a until then.
+    pub fn focused_slot(&self) -> usize {
+        self.focus.get(self.nav.active_block_def().id)
     }
 
     /// The selected FM operator.
@@ -151,7 +158,7 @@ impl UiState {
     /// and Demo slots are `Legacy`, so priming there does nothing; Mixer
     /// params are bound but not modulatable, so the registry refuses them.
     fn current_param_addr(&self) -> Option<ParamAddr> {
-        slot_addr(self.nav.active_block_def(), self.last_encoder, self.sel_op)
+        slot_addr(self.nav.active_block_def(), self.focused_slot(), self.sel_op)
     }
 
     /// 8-byte matrix column label for a primed destination: `O<n> ` + spec
@@ -167,7 +174,7 @@ impl UiState {
             }
             _ => {
                 let short = def.short.as_bytes();
-                (&short[..short.len().min(3)], def.params[self.last_encoder].label())
+                (&short[..short.len().min(3)], def.params[self.focused_slot()].label())
             }
         };
         let mut label = [0u8; LABEL_LEN];
@@ -320,6 +327,7 @@ impl UiState {
             for (i, &enc) in encoder_ids.iter().enumerate() {
                 let delta = controls.encoder_delta(enc);
                 if delta != 0 {
+                    self.focus.touch(def.id, i);
                     match i {
                         0 => self.matrix_state.move_row(delta),
                         1 => self.matrix_state.move_col(delta),
@@ -338,8 +346,7 @@ impl UiState {
             for (i, &enc) in encoder_ids.iter().enumerate() {
                 let delta = controls.encoder_delta(enc);
                 if delta != 0 {
-                    self.last_encoder = i;
-                    self.renderer.focused = i;
+                    self.focus.touch(def.id, i);
                     let params = &mut self.performance.edit(at);
                     match (self.page, shift) {
                         (PageKey::Part { .. }, true) => part_page::snap_encoder(def, i, delta, params, self.sel_op),
@@ -471,8 +478,20 @@ impl UiState {
             Renderer::draw_sound_browser(display, &self.pool, part, cursor, scroll, self.performance.parts[part].sound.chain_type);
             return;
         }
-        let def = self.nav.active_block_def();
-        self.renderer.draw_with_def(display, &self.nav, def, perf, &self.matrix_state, self.sel_op, scope);
+        self.renderer.draw_with_def(display, &self.frame(perf, scope));
+    }
+
+    /// What one frame draws from.
+    fn frame<'a>(&'a self, perf: &'a PerfStats, scope: &'a [f32; SCOPE_LEN]) -> renderer::Frame<'a> {
+        renderer::Frame {
+            nav: &self.nav,
+            def: self.nav.active_block_def(),
+            perf,
+            matrix: &self.matrix_state,
+            sel_op: self.sel_op,
+            focus: self.focused_slot(),
+            scope,
+        }
     }
 
     /// Prime the region set after an initial full render, so render_dirty
@@ -560,7 +579,15 @@ impl UiState {
         let qvalues = region::quantize_values(&self.renderer.anim);
         let nav_tag = nav_tag(&self.nav);
 
-        let sel_op = self.sel_op;
+        let frame = renderer::Frame {
+            nav: &self.nav,
+            def,
+            perf,
+            matrix: &self.matrix_state,
+            sel_op: self.sel_op,
+            focus: self.focus.get(def.id),
+            scope,
+        };
         for r in self.region_set.active_regions_mut() {
             let current_data = match r.kind {
                 RegionKind::Header => RegionData::header(
@@ -585,7 +612,7 @@ impl UiState {
                 renderer::Renderer::clear_region_fb(fb, r.y_start, r.y_end);
 
                 // Draw region using BlockDef
-                self.renderer.draw_region_with_def(display, r.kind, &self.nav, def, perf, &self.matrix_state, sel_op);
+                self.renderer.draw_region_with_def(display, r.kind, &frame);
 
                 r.prev_data = current_data;
                 flush_list[flush_count] = (r.y_start, r.y_end);
