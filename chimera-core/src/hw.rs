@@ -20,6 +20,12 @@ pub const AXI_SRAM: usize = 512 * 1024; // D1: framebuffer, UI, Performance, FX 
 pub const D2_SRAM: usize = 288 * 1024; // SRAM1+2+3 at 0x3000_0000: voices, DMA buffers
 pub const DTCM: usize = 128 * 1024; // tables, audio stack
 
+/// D2 kept free for audio DMA (3 SAI × 2 halves × 64 frames × 2 ch × 4 B =
+/// 3 KB; today one 512 B buffer) and MIDI buffers.
+pub const D2_DMA_RESERVE: usize = 8 * 1024;
+/// `[Voice; MAX_VOICES]` lives in D2 beside the DMA buffers.
+pub const VOICE_RAM_BUDGET: usize = D2_SRAM - D2_DMA_RESERVE; // 286_720
+
 /// CPU cycles per sample (per voice for engines). Values are estimates
 /// until measured on hardware with the DWT cycle counter (ADR 0013).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]

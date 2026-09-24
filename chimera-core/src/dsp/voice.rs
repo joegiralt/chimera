@@ -7,9 +7,13 @@ use crate::dsp::envelope::Envelope;
 use crate::dsp::filter::SvfFilter;
 use crate::dsp::lfo::Lfo;
 use crate::dsp::wavefolder::Wavefolder;
+use crate::hw::{MAX_VOICES, VOICE_RAM_BUDGET};
 use crate::modulation::{ModState, MAX_MOD_SOURCES};
 use crate::params::{EngineType, ParamSnapshot};
 use crate::{MidiNote, Velocity};
+
+// ADR 0013: the voice pool fits D2 SRAM beside the DMA buffers, on both targets.
+const _: () = assert!(core::mem::size_of::<[Voice; MAX_VOICES]>() <= VOICE_RAM_BUDGET);
 
 /// Complete voice signal chain:
 /// [Engine] → [Drive] → [Filter] → [Wavefolder] → [VCA]

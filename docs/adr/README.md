@@ -19,3 +19,4 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0011](0011-goldens-are-a-refactor-lock.md) | Golden recordings are a refactor lock, not a quality claim | Accepted |
 | [0012](0012-type-driven-development.md) | Type-driven development where it pays | Accepted |
 | [0013](0013-hardware-parity-budgets.md) | The simulator enforces the chip's limits | Accepted |
+| [0014](0014-audio-memory-map.md) | Voices in D2, FX bus in AXI; buffers sized to the range they serve | Accepted |
