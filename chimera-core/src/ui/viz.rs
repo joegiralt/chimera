@@ -382,25 +382,24 @@ where
 }
 
 /// FX pages and SENDS: IN → CHR → DLY → REV → OUT on a line (the
-/// pre-refresh flow diagram, restyled like the map). `lit` (0 = CHR) is the
-/// page's effect, or on SENDS the focused send; `sends` shows each send level
-/// under its effect.
+/// pre-refresh flow diagram, drawn with the map's nodes). `lit` (0 = CHR)
+/// is the page's effect, or on SENDS the focused send: an INK pill, so the
+/// map's pill stays the page's one accent pill. `sends` shows each send
+/// level under its effect.
 pub fn effects_flow<D>(d: &mut D, lit: Option<usize>, sends: Option<[f32; 3]>)
 where
     D: DrawTarget<Color = Rgb565>,
 {
+    use crate::ui::dungeon_map::{node_x, pill_node, ring_node};
     let n = FX_NODES.len();
     draw::fill_rect(d, theme::MAP_X0, FLOW_Y, theme::MAP_X1 - theme::MAP_X0, 1, theme::FAINT);
     for (i, label) in FX_NODES.iter().enumerate() {
-        let x = crate::ui::dungeon_map::node_x(i, n);
+        let x = node_x(i, n);
         let fx = i.checked_sub(1).filter(|&k| k < 3);
         if fx.is_some() && fx == lit {
-            draw::pill(d, x - theme::PILL_W / 2, FLOW_Y - theme::PILL_H / 2, theme::PILL_W, theme::PILL_H, theme::ACCENT);
-            draw::text_center(d, &theme::FONT_LABEL_BOLD, label, x, FLOW_Y + 4, theme::BG, 0);
+            pill_node(d, x, FLOW_Y, label, theme::INK);
         } else {
-            draw::dot(d, x, FLOW_Y, theme::NODE_R, theme::BG);
-            draw::ring(d, x, FLOW_Y, theme::NODE_R, theme::MID, 1);
-            draw::text_center(d, &theme::FONT_LABEL, label, x, FLOW_Y + 18, theme::MID, 0);
+            ring_node(d, x, FLOW_Y, label, FLOW_Y + 18);
         }
         if let (Some(k), Some(levels)) = (fx, sends) {
             let fill = if lit == Some(k) { theme::ACCENT } else { theme::BAR_REST };

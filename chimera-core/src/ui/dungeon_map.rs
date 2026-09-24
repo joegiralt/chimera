@@ -32,16 +32,31 @@ where
     for (i, block) in chain.blocks.iter().enumerate() {
         let x = node_x(i, n);
         if i == nav.node {
-            let top = theme::MAP_LINE_Y - theme::PILL_H / 2;
-            draw::pill(d, x - theme::PILL_W / 2, top, theme::PILL_W, theme::PILL_H, theme::ACCENT);
-            draw::text_center(d, &theme::FONT_LABEL_BOLD, block.def.short, x, theme::PILL_LABEL_Y, theme::BG, 0);
+            pill_node(d, x, theme::MAP_LINE_Y, block.def.short, theme::ACCENT);
         } else {
-            draw::dot(d, x, theme::MAP_LINE_Y, theme::NODE_R, theme::BG);
-            draw::ring(d, x, theme::MAP_LINE_Y, theme::NODE_R, theme::MID, 1);
-            draw::text_center(d, &theme::FONT_LABEL, block.def.short, x, theme::NODE_LABEL_Y, theme::MID, 0);
+            ring_node(d, x, theme::MAP_LINE_Y, block.def.short, theme::NODE_LABEL_Y);
         }
     }
     draw_branches(d, nav, node_x(nav.node, n), branch_scroll_px);
+}
+
+/// A current node: a `fill` pill centred on (x, cy) with a dark bold label.
+pub fn pill_node<D>(d: &mut D, x: i32, cy: i32, label: &str, fill: Rgb565)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    draw::pill(d, x - theme::PILL_W / 2, cy - theme::PILL_H / 2, theme::PILL_W, theme::PILL_H, fill);
+    draw::text_center(d, &theme::FONT_LABEL_BOLD, label, x, cy + theme::PILL_LABEL_Y - theme::MAP_LINE_Y, theme::BG, 0);
+}
+
+/// Any other node: a small ring on the line, its grey label below at `label_y`.
+pub fn ring_node<D>(d: &mut D, x: i32, cy: i32, label: &str, label_y: i32)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    draw::dot(d, x, cy, theme::NODE_R, theme::BG);
+    draw::ring(d, x, cy, theme::NODE_R, theme::MID, 1);
+    draw::text_center(d, &theme::FONT_LABEL, label, x, label_y, theme::MID, 0);
 }
 
 /// Sub-pages of the current block, under its pill.

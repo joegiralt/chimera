@@ -195,12 +195,27 @@ fn part_overview_redraws_as_the_level_lerps() {
     assert!(flushed.contains(&(118, 186)), "viz band follows the lerped level: {flushed:?}");
 }
 
-/// FX flow node `k` (0 = CHR) is the lit pill in `fb`.
+/// FX flow node `k` (0 = CHR) is the lit pill in `fb` (INK: the map pill
+/// is the page's one accent pill).
 fn flow_lit(fb: &screen::Fb) -> Vec<usize> {
     use chimera_core::ui::dungeon_map::node_x;
     use chimera_core::ui::theme;
     use chimera_core::ui::viz::FLOW_Y;
-    (0..3).filter(|&k| fb.at(node_x(k + 1, 5) - 14, FLOW_Y) == theme::ACCENT).collect()
+    (0..3).filter(|&k| fb.at(node_x(k + 1, 5) - 14, FLOW_Y) == theme::INK).collect()
+}
+
+/// The flow's nodes carry no accent: on SENDS and the FX pages the map
+/// pill stays the only accent pill.
+#[test]
+fn the_flow_node_is_not_a_second_accent_pill() {
+    use chimera_core::ui::theme;
+    use chimera_core::ui::viz::FLOW_Y;
+    for name in ["mixer_sends", "mixer_fx_delay"] {
+        let fb = screen::render(name);
+        let rows = FLOW_Y - theme::PILL_H / 2..=FLOW_Y + theme::PILL_H / 2;
+        let accent = rows.flat_map(|y| (0..screen::W as i32).map(move |x| (x, y))).filter(|&(x, y)| fb.at(x, y) == theme::ACCENT).count();
+        assert_eq!(accent, 0, "{name}");
+    }
 }
 
 #[test]
