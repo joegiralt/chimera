@@ -132,6 +132,16 @@ impl Renderer {
     {
         match f.def.viz {
             VizType::MixerLevels => viz::parts_overview(display, &self.strips(f), f.active_part),
+            VizType::EffectsFlow => {
+                use crate::ui::block_registry as reg;
+                if f.def.id == reg::SENDS.id {
+                    let sends = [self.anim[0].current(), self.anim[1].current(), self.anim[2].current()];
+                    viz::effects_flow(display, (f.focus < 3).then_some(f.focus), Some(sends));
+                } else {
+                    let lit = [reg::CHORUS.id, reg::DELAY.id, reg::EFX.id].iter().position(|&id| id == f.def.id);
+                    viz::effects_flow(display, lit, None);
+                }
+            }
             _ => viz::live_output(display, f.scope),
         }
     }
@@ -179,6 +189,7 @@ impl Renderer {
         match f.def.layout {
             PageLayout::CellGrid => match f.def.viz {
                 VizType::MixerLevels => (region::quantize_values(&self.anim), strips_key(&self.strips(f), f.active_part)),
+                VizType::EffectsFlow => (region::quantize_values(&self.anim), f.focus as u32),
                 _ => ([0; 6], viz::live_key(f.scope)),
             },
             PageLayout::BigViz => (region::quantize_values(&self.anim), f.focus as u32),
