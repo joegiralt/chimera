@@ -3,6 +3,7 @@ pub mod block_def;
 pub mod block_registry;
 pub mod cell;
 pub mod chain;
+pub mod draw;
 pub mod dungeon_map;
 pub mod fmt;
 pub mod mod_grid;
