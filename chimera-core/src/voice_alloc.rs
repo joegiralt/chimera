@@ -4,8 +4,9 @@
 //! 1. A Mono part owns one voice while it sounds; a new note retriggers it.
 //!    Mono voices are never stolen.
 //! 2. A Poly part takes a free voice, round-robin.
-//! 3. Pool full: steal the oldest non-mono voice from any part; refuse if
-//!    every voice is mono.
+//! 3. Pool full: steal from any part the oldest released (note-off'd, tail
+//!    ringing) non-mono voice; if none, the oldest held non-mono voice;
+//!    refuse if every voice is mono.
 //! 4. Over the CPU budget: steal one voice as in rule 3 if that makes room,
 //!    else refuse (and steal nothing).
 //! 5. Note-off releases the voice (`release`); the voice is free once its
@@ -175,10 +176,11 @@ impl Allocator {
         {
             return Some(v);
         }
-        // Rules 3 and 4: steal the oldest non-mono voice if that makes room.
+        // Rules 3 and 4: steal the oldest non-mono voice — tails before held
+        // notes — if that makes room.
         let oldest = (0..MAX_VOICES)
             .filter(|&v| !self.slots[v].is_free() && !self.slots[v].mono)
-            .min_by_key(|&v| self.slots[v].age)?;
+            .min_by_key(|&v| (self.slots[v].held, self.slots[v].age))?;
         fits(self.slots[oldest].cost).then_some(oldest)
     }
 }

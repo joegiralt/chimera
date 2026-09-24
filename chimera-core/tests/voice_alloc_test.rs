@@ -146,6 +146,7 @@ impl Rng {
 }
 
 /// Seeded property test: random notes on/off across parts and modes.
+/// Steals take a released tail before a held note and never a mono voice.
 #[test]
 fn random_play_keeps_the_pool_invariants() {
     const COSTS: [Cost; 3] = [Cost(610), Cost(710), Cost(1_210)];
@@ -173,9 +174,16 @@ fn random_play_keeps_the_pool_invariants() {
                         // (same mono part) retriggered: it is no longer held.
                         held.retain(|h| h.2 != v);
                         held.push((part, note, v));
-                        if let (Some(p), _, true) = before[v] {
+                        if let (Some(p), _, was_held) = before[v] {
                             assert!(modes[p as usize] == Poly || p == part, "{ctx}: mono voice of part {p} stolen");
-                            steals += (p != part || modes[p as usize] == Poly) as u32;
+                            let stolen = p != part || modes[p as usize] == Poly;
+                            steals += stolen as u32;
+                            // Tails go first: a held voice is stolen only
+                            // when no non-mono voice was ringing out.
+                            let tail_ringing = before
+                                .iter()
+                                .any(|&(q, _, h)| q.is_some_and(|q| modes[q as usize] == Poly) && !h);
+                            assert!(!(stolen && was_held && tail_ringing), "{ctx}: held voice stolen over a tail");
                         }
                     }
                 }
@@ -246,4 +254,35 @@ fn poly_to_mono_switch_releases_the_held_chord() {
         a.release(v);
         assert!(!a.slots()[v].held());
     }
+}
+
+/// Rule 3: a full pool steals a released tail before a held note — a held
+/// drone survives newer tails.
+#[test]
+fn full_pool_steals_a_tail_before_a_held_drone() {
+    let mut a = Allocator::new();
+    let drone = voice(on(&mut a, 0, Poly, 36)); // oldest, held
+    let tails: Vec<usize> = (1..MAX_VOICES as u8).map(|i| voice(on(&mut a, 1, Poly, 60 + i))).collect();
+    for &v in &tails {
+        a.release(v); // tails ring
+    }
+    let v = voice(on(&mut a, 2, Poly, 90));
+    assert_eq!(v, tails[0], "the oldest tail, not the drone");
+    assert_eq!(a.slots()[drone].note(), Some(n(36)));
+    assert!(a.slots()[drone].held());
+}
+
+/// Rule 4 prefers a tail too: over the CPU budget, the oldest released
+/// voice is stolen before an older held one.
+#[test]
+fn cpu_budget_steals_a_tail_before_a_held_note() {
+    let modal = Cost(1_210);
+    let fx = Cost(1_000);
+    let mut a = Allocator::new();
+    let drone = voice(a.note_on(0, Poly, n(36), modal, fx));
+    let rest: Vec<usize> = (1..4).map(|i| voice(a.note_on(0, Poly, n(60 + i), modal, fx))).collect();
+    a.release(rest[1]);
+    a.release(rest[2]);
+    assert_eq!(a.note_on(1, Poly, n(70), modal, fx), Alloc::Voice(rest[1]));
+    assert!(a.slots()[drone].held());
 }
