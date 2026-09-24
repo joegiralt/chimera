@@ -18,6 +18,8 @@ pub enum ValFmt {
     OneBased(u8),
     /// Discrete choice 0..len-1 shown by name.
     Names(&'static [&'static str]),
+    /// Stereo position: bipolar like `Bi`, shown as `L64`..`C`..`R63`.
+    Pan,
 }
 
 impl ValFmt {
@@ -25,14 +27,20 @@ impl ValFmt {
     pub fn snap_points(self) -> &'static [f32] {
         match self {
             ValFmt::Uni => &[0.0, 100.0 / 127.0, 1.0],
-            ValFmt::Bi => &[0.0, 20.0 / 127.0, 64.0 / 127.0, 107.0 / 127.0, 1.0],
+            ValFmt::Bi | ValFmt::Pan => &[0.0, 20.0 / 127.0, 64.0 / 127.0, 107.0 / 127.0, 1.0],
             // Discrete: shift-encoder jumps to 0 or max
             ValFmt::Int(_) | ValFmt::OneBased(_) | ValFmt::Names(_) => &[0.0, 1.0],
         }
     }
 
     pub fn is_bipolar(self) -> bool {
-        matches!(self, ValFmt::Bi)
+        matches!(self, ValFmt::Bi | ValFmt::Pan)
+    }
+
+    /// A choice among a few values (channel, mode, output, type): shown as
+    /// text with no value bar.
+    pub fn is_discrete(self) -> bool {
+        matches!(self, ValFmt::Int(_) | ValFmt::OneBased(_) | ValFmt::Names(_))
     }
 
     /// Max integer value (only meaningful for the discrete variants).

@@ -470,7 +470,7 @@ impl OutParams {
 /// not used by `Voice`.
 pub static OUT_SPECS: [ParamSpec; 2] = [
     ParamSpec::continuous(0, "LEVEL", ValFmt::Uni, 0.0, 1.0, 0.8, 1.0 / 128.0, true),
-    ParamSpec::continuous(1, "PAN", ValFmt::Bi, -1.0, 1.0, 0.0, 2.0 / 128.0, false),
+    ParamSpec::continuous(1, "PAN", ValFmt::Pan, -1.0, 1.0, 0.0, 2.0 / 128.0, false),
 ];
 
 impl Block for OutParams {
