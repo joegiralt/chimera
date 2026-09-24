@@ -20,12 +20,13 @@ fn amount_display_value_round_trips() {
 }
 
 /// The fixture: ENV→CUTOFF +20, ENV→FOLD −30, LFO→CUTOFF +42 (selected).
+/// The destination carries its block tag, as in the column headers.
 #[test]
 fn focus_band_names_the_selected_route() {
     let fb = render("mod_matrix");
     let mut want = Fb::new();
     want.px.fill(fb.px[0]);
-    components::focus_route(&mut want, "LFO", "CUTOFF", "+42", amount_value(42));
+    components::focus_route(&mut want, "LFO", "FLT CUTOFF", "+42", amount_value(42));
     assert!(fb.px[28 * W..118 * W] == want.px[28 * W..118 * W]);
 }
 
@@ -180,4 +181,36 @@ fn the_selected_dot_lerps_with_the_amount() {
     assert!(radii.windows(2).all(|w| w[0] <= w[1]), "monotonic: {radii:?}");
     assert!(radii.iter().any(|&r| start < r && r < end), "intermediate sizes: {radii:?}");
     assert!(radii[1] < end, "no jump on the first frame: {radii:?}");
+}
+
+/// The focus band's destination is `TAG NAME`, the column header's two
+/// lines, so OP1 LEVEL and OP2 LEVEL read apart. Every destination fits its
+/// buffer untruncated, and the longest route stays on screen.
+#[test]
+fn route_destination_names_the_block_and_fits() {
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::ui::block_registry::PART_MOD_SOURCES;
+    use chimera_core::ui::fmt::FmtBuf;
+    use chimera_core::ui::mod_grid::{block_tag, fmt_route_dest, ModDest};
+    let mut longest = (0, String::new());
+    for b in BlockRef::ALL {
+        for spec in b.specs() {
+            let dest = ModDest { addr: ParamAddr::new(b, spec.id), label: [0; 8] };
+            let mut buf = FmtBuf::new();
+            fmt_route_dest(&mut buf, &dest);
+            let want = format!("{} {}", block_tag(b), spec.label);
+            assert_eq!(buf.as_str(), want, "untruncated");
+            let w = chimera_core::ui::draw::text_width(&theme::FONT_VALUE, &want, theme::LABEL_TRACKING);
+            if w > longest.0 {
+                longest = (w, want);
+            }
+        }
+    }
+    let src = PART_MOD_SOURCES
+        .iter()
+        .max_by_key(|s| chimera_core::ui::draw::text_width(&theme::FONT_VALUE, s, theme::LABEL_TRACKING))
+        .unwrap();
+    let mut fb = Fb::new();
+    components::focus_route(&mut fb, src, &longest.1, "-127", amount_value(-127));
+    assert_eq!(fb.oob, 0, "{src} -> {}", longest.1);
 }

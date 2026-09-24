@@ -241,6 +241,12 @@ pub fn dest_name(d: &ModDest) -> &'static str {
     d.addr.spec().map_or("?", |s| s.label)
 }
 
+/// A destination as the focus band names it: the column header's two lines
+/// on one, `TAG NAME` (`OP1 LEVEL`), so operators read apart.
+pub fn fmt_route_dest(buf: &mut FmtBuf, d: &ModDest) {
+    let _ = write!(buf, "{} {}", block_tag(d.addr.block), dest_name(d));
+}
+
 /// Amount as shown: `+42`, `-30`, `0`.
 pub fn fmt_amount(buf: &mut FmtBuf, amount: i8) {
     let _ = if amount > 0 { write!(buf, "+{}", amount) } else { write!(buf, "{}", amount) };

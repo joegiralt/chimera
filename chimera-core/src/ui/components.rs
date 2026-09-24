@@ -112,8 +112,8 @@ where
     draw::arc_gauge(d, theme::ARC_CX, theme::ARC_CY, theme::ARC_R, theme::ARC_WIDTH, value, bipolar, theme::FAINT, theme::ACCENT);
 }
 
-/// Mod matrix focus band: the selected route `SOURCE → DEST` and its
-/// bipolar amount.
+/// Mod matrix focus band: the selected route `SOURCE → DEST` (`LFO → OP1
+/// LEVEL`) and its bipolar amount.
 pub fn focus_route<D>(d: &mut D, source: &str, dest: &str, value_text: &str, value: f32)
 where
     D: DrawTarget<Color = Rgb565>,

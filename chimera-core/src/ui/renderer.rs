@@ -248,7 +248,7 @@ impl Renderer {
         components::focus_band(display, slot.label(), buf.as_str(), v, slot.format().is_bipolar());
     }
 
-    /// Mod matrix focus band: the selected route; the amount lerps through
+    /// Mod matrix focus band: the selected route (`SRC → TAG DEST`); the amount lerps through
     /// slot e's animated value (the amount encoder).
     fn draw_route<D>(&self, display: &mut D, m: &MatrixState)
     where
@@ -263,7 +263,9 @@ impl Renderer {
         let v = self.anim[MATRIX_AMOUNT_SLOT].current();
         let mut buf = FmtBuf::new();
         crate::ui::mod_grid::fmt_amount(&mut buf, amount_of(v));
-        components::focus_route(display, src.name, crate::ui::mod_grid::dest_name(&dest), buf.as_str(), v);
+        let mut name = FmtBuf::new();
+        crate::ui::mod_grid::fmt_route_dest(&mut name, &dest);
+        components::focus_route(display, src.name, name.as_str(), buf.as_str(), v);
     }
 
     /// The six cells, first row's labels at `top`.
