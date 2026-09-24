@@ -5,6 +5,7 @@
 
 use crate::ui::page::{PageId, PageKey, PageLayout};
 use crate::ui::animation::AnimatedValue;
+use crate::ui::theme;
 
 /// Quantize a float to u16 for cheap comparison. Range 0.0..65.0 → 0..65000.
 pub fn quantize(f: f32) -> u16 {
@@ -39,9 +40,17 @@ pub enum RegionData {
         load_pct: u8,
         sounding: bool,
     },
+    /// The focus band: which slot, and its animated value.
+    Focus {
+        page: PageKey,
+        slot: u8,
+        value: u16,
+    },
     Viz {
         page: PageKey,
         values: [u16; 6],
+        /// Fingerprint of outside data the viz shows (live output).
+        live: u32,
     },
     Params {
         page: PageKey,
@@ -50,6 +59,7 @@ pub enum RegionData {
     Cells {
         page: PageKey,
         values: [u16; 6],
+        focus: u8,
         dest_count: u16,
     },
     Nav {
@@ -72,16 +82,20 @@ impl RegionData {
         Self::Header { chain_idx, node_idx, sub_page, load_pct, sounding }
     }
 
-    pub fn viz(page: PageKey, values: [u16; 6]) -> Self {
-        Self::Viz { page, values }
+    pub fn focus(page: PageKey, slot: u8, value: u16) -> Self {
+        Self::Focus { page, slot, value }
+    }
+
+    pub fn viz(page: PageKey, values: [u16; 6], live: u32) -> Self {
+        Self::Viz { page, values, live }
     }
 
     pub fn params(page: PageKey, values: [u16; 6]) -> Self {
         Self::Params { page, values }
     }
 
-    pub fn cells(page: PageKey, values: [u16; 6], dest_count: u16) -> Self {
-        Self::Cells { page, values, dest_count }
+    pub fn cells(page: PageKey, values: [u16; 6], focus: u8, dest_count: u16) -> Self {
+        Self::Cells { page, values, focus, dest_count }
     }
 
     pub fn nav(chain_idx: u8, node_idx: u8, sub_page: u8, branch_scroll: u16) -> Self {
@@ -92,8 +106,12 @@ impl RegionData {
         Self::Header { chain_idx: 255, node_idx: 255, sub_page: 255, load_pct: u8::MAX, sounding: false }
     }
 
+    pub fn sentinel_focus() -> Self {
+        Self::Focus { page: SENTINEL_PAGE, slot: u8::MAX, value: SENTINEL }
+    }
+
     pub fn sentinel_viz() -> Self {
-        Self::Viz { page: SENTINEL_PAGE, values: [SENTINEL; 6] }
+        Self::Viz { page: SENTINEL_PAGE, values: [SENTINEL; 6], live: u32::MAX }
     }
 
     pub fn sentinel_params() -> Self {
@@ -101,7 +119,7 @@ impl RegionData {
     }
 
     pub fn sentinel_cells() -> Self {
-        Self::Cells { page: SENTINEL_PAGE, values: [SENTINEL; 6], dest_count: u16::MAX }
+        Self::Cells { page: SENTINEL_PAGE, values: [SENTINEL; 6], focus: u8::MAX, dest_count: u16::MAX }
     }
 
     pub fn sentinel_nav() -> Self {
@@ -125,6 +143,7 @@ impl RegionData {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum RegionKind {
     Header,
+    Focus,
     Viz,
     Params,
     Cells,
@@ -166,53 +185,11 @@ impl RegionSet {
 
     /// Rebuild the region list for a new layout. All regions start dirty (sentinel data).
     pub fn set_layout(&mut self, layout: PageLayout) {
-        match layout {
-            PageLayout::BigViz => {
-                self.count = 4;
-                self.regions[0] = Region {
-                    kind: RegionKind::Header, y_start: 0, y_end: 28,
-                    prev_data: RegionData::sentinel_header(),
-                };
-                self.regions[1] = Region {
-                    kind: RegionKind::Viz, y_start: 28, y_end: 170,
-                    prev_data: RegionData::sentinel_viz(),
-                };
-                self.regions[2] = Region {
-                    kind: RegionKind::Params, y_start: 170, y_end: 266,
-                    prev_data: RegionData::sentinel_params(),
-                };
-                self.regions[3] = Region {
-                    kind: RegionKind::Nav, y_start: 266, y_end: 320,
-                    prev_data: RegionData::sentinel_nav(),
-                };
-            }
-            PageLayout::CellGrid => {
-                self.count = 3;
-                self.regions[0] = Region {
-                    kind: RegionKind::Header, y_start: 0, y_end: 28,
-                    prev_data: RegionData::sentinel_header(),
-                };
-                self.regions[1] = Region {
-                    kind: RegionKind::Cells, y_start: 28, y_end: 266,
-                    prev_data: RegionData::sentinel_cells(),
-                };
-                self.regions[2] = Region {
-                    kind: RegionKind::Nav, y_start: 266, y_end: 320,
-                    prev_data: RegionData::sentinel_nav(),
-                };
-            }
-            PageLayout::Matrix => {
-                self.count = 2;
-                self.regions[0] = Region {
-                    kind: RegionKind::Grid, y_start: 0, y_end: 266,
-                    prev_data: RegionData::sentinel_grid(),
-                };
-                self.regions[1] = Region {
-                    kind: RegionKind::Nav, y_start: 266, y_end: 320,
-                    prev_data: RegionData::sentinel_nav(),
-                };
-            }
+        let bands = layout_regions(layout);
+        for (r, &(kind, y_start, y_end)) in self.regions.iter_mut().zip(bands) {
+            *r = Region { kind, y_start, y_end, prev_data: sentinel(kind) };
         }
+        self.count = bands.len() as u8;
         self.prev_layout = Some(layout);
     }
 
@@ -222,5 +199,46 @@ impl RegionSet {
 
     pub fn active_regions_mut(&mut self) -> &mut [Region] {
         &mut self.regions[..self.count as usize]
+    }
+}
+
+use RegionKind as K;
+
+const HEADER: u16 = theme::HEADER_BOTTOM as u16;
+const FOCUS: u16 = theme::FOCUS_BOTTOM as u16;
+const BAND: u16 = theme::VIZ_BAND_BOTTOM as u16;
+const CELLS: u16 = theme::CELLS_BOTTOM as u16;
+const SCREEN: u16 = theme::SCREEN_H as u16;
+
+/// CellGrid (UI refresh spec § Page types): header, focus band, viz band,
+/// cells, map.
+const CELL_GRID: [(RegionKind, u16, u16); 5] = [
+    (K::Header, 0, HEADER),
+    (K::Focus, HEADER, FOCUS),
+    (K::Viz, FOCUS, BAND),
+    (K::Cells, BAND, CELLS),
+    (K::Nav, CELLS, SCREEN),
+];
+const BIG_VIZ: [(RegionKind, u16, u16); 4] = [(K::Header, 0, 28), (K::Viz, 28, 170), (K::Params, 170, 266), (K::Nav, 266, 320)];
+const MATRIX: [(RegionKind, u16, u16); 2] = [(K::Grid, 0, CELLS), (K::Nav, CELLS, SCREEN)];
+
+/// The bands of `layout`, top to bottom; they tile 0..320.
+pub fn layout_regions(layout: PageLayout) -> &'static [(RegionKind, u16, u16)] {
+    match layout {
+        PageLayout::CellGrid => &CELL_GRID,
+        PageLayout::BigViz => &BIG_VIZ,
+        PageLayout::Matrix => &MATRIX,
+    }
+}
+
+fn sentinel(kind: RegionKind) -> RegionData {
+    match kind {
+        K::Header => RegionData::sentinel_header(),
+        K::Focus => RegionData::sentinel_focus(),
+        K::Viz => RegionData::sentinel_viz(),
+        K::Params => RegionData::sentinel_params(),
+        K::Cells => RegionData::sentinel_cells(),
+        K::Nav => RegionData::sentinel_nav(),
+        K::Grid => RegionData::sentinel_grid(),
     }
 }

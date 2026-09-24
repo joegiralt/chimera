@@ -58,10 +58,10 @@ fn big_viz_has_4_regions() {
 }
 
 #[test]
-fn cell_grid_has_3_regions() {
+fn cell_grid_has_5_regions() {
     let mut rs = RegionSet::new();
     rs.set_layout(PageLayout::CellGrid);
-    assert_eq!(rs.count, 3);
+    assert_eq!(rs.count, 5);
 }
 
 #[test]
@@ -98,6 +98,8 @@ fn layout_change_resets_all_regions() {
     for r in rs.active_regions() {
         match r.prev_data {
             RegionData::Header { chain_idx: 255, .. } => {}
+            RegionData::Focus { slot: u8::MAX, .. } => {}
+            RegionData::Viz { values, .. } if values == [u16::MAX; 6] => {}
             RegionData::Cells { values, .. } if values == [u16::MAX; 6] => {}
             RegionData::Nav { chain_idx: 255, .. } => {}
             other => panic!("expected sentinel, got {:?}", other),
@@ -120,7 +122,7 @@ fn cell_grid_region_kinds() {
     let mut rs = RegionSet::new();
     rs.set_layout(PageLayout::CellGrid);
     let kinds: Vec<RegionKind> = rs.active_regions().iter().map(|r| r.kind).collect();
-    assert_eq!(kinds, vec![RegionKind::Header, RegionKind::Cells, RegionKind::Nav]);
+    assert_eq!(kinds, vec![RegionKind::Header, RegionKind::Focus, RegionKind::Viz, RegionKind::Cells, RegionKind::Nav]);
 }
 
 #[test]
@@ -133,13 +135,13 @@ fn encoder_only_dirties_params_not_header() {
     let values_b = [501, 500, 500, 500, 500, 500];
 
     rs.regions[0].prev_data = RegionData::header(0, 0, 0, 0, false);
-    rs.regions[1].prev_data = RegionData::viz(page, values_a);
+    rs.regions[1].prev_data = RegionData::viz(page, values_a, 0);
     rs.regions[2].prev_data = RegionData::params(page, values_a);
     rs.regions[3].prev_data = RegionData::nav(0, 0, 0, 0);
 
     let current = [
         RegionData::header(0, 0, 0, 0, false),
-        RegionData::viz(page, values_b),
+        RegionData::viz(page, values_b, 0),
         RegionData::params(page, values_b),
         RegionData::nav(0, 0, 0, 0),
     ];
@@ -160,13 +162,13 @@ fn nav_change_dirties_header_and_nav() {
     let values = [500u16; 6];
 
     rs.regions[0].prev_data = RegionData::header(0, 0, 0, 0, false);
-    rs.regions[1].prev_data = RegionData::viz(page, values);
+    rs.regions[1].prev_data = RegionData::viz(page, values, 0);
     rs.regions[2].prev_data = RegionData::params(page, values);
     rs.regions[3].prev_data = RegionData::nav(0, 0, 0, 0);
 
     let current = [
         RegionData::header(0, 1, 0, 0, false),
-        RegionData::viz(page, values),
+        RegionData::viz(page, values, 0),
         RegionData::params(page, values),
         RegionData::nav(0, 1, 0, 0),
     ];
@@ -187,13 +189,13 @@ fn no_change_means_no_dirty() {
     let values = [500u16; 6];
 
     rs.regions[0].prev_data = RegionData::header(0, 0, 0, 0, false);
-    rs.regions[1].prev_data = RegionData::viz(page, values);
+    rs.regions[1].prev_data = RegionData::viz(page, values, 0);
     rs.regions[2].prev_data = RegionData::params(page, values);
     rs.regions[3].prev_data = RegionData::nav(0, 0, 0, 0);
 
     let current = [
         RegionData::header(0, 0, 0, 0, false),
-        RegionData::viz(page, values),
+        RegionData::viz(page, values, 0),
         RegionData::params(page, values),
         RegionData::nav(0, 0, 0, 0),
     ];

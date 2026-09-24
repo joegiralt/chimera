@@ -10,7 +10,7 @@ use embedded_graphics::text::Text;
 use crate::addr::{BlockRef, Op, ParamAddr};
 use crate::ui::animation::AnimatedValue;
 use crate::ui::components;
-use crate::ui::block_def::{slot_addr, BlockDef, VizType};
+use crate::ui::block_def::{slot_addr, BlockDef, SlotBinding, VizType};
 use crate::ui::cell;
 use crate::ui::chain::ChainNav;
 use crate::ui::mod_grid::MatrixState;
@@ -18,7 +18,8 @@ use crate::ui::dungeon_map;
 use crate::ui::fmt::{self, FmtBuf};
 use crate::ui::page::PageLayout;
 use crate::ui::perf::PerfStats;
-use crate::ui::region::RegionKind;
+use crate::ui::region::{self, RegionKind};
+use crate::ui::viz;
 use crate::part::PartParams;
 use crate::ui::theme;
 
@@ -782,36 +783,6 @@ impl Renderer {
         }
     }
 
-    /// Render the cell grid from a `BlockDef` instead of a `PageId`.
-    pub fn draw_cell_grid_from_def<D>(
-        &self,
-        display: &mut D,
-        def: &BlockDef,
-        focus: usize,
-        sel_op: Op,
-        matrix_state: &crate::ui::mod_grid::MatrixState,
-    )
-    where
-        D: DrawTarget<Color = Rgb565>,
-    {
-        for (i, slot) in def.params.iter().enumerate() {
-            let col = (i % 3) as i32;
-            let row = (i / 3) as i32;
-            let mod_info = Self::cell_mod_info(def, i, sel_op, matrix_state);
-            cell::draw_cell_with_mod(
-                display,
-                col,
-                row,
-                slot.label(),
-                self.anim[i].current(),
-                slot.icon,
-                slot.format(),
-                i == focus,
-                mod_info,
-            );
-        }
-    }
-
     /// Dispatch to the appropriate visualization method based on `VizType`.
     pub fn draw_viz_from_type<D>(&self, display: &mut D, def: &BlockDef)
     where
@@ -840,64 +811,40 @@ impl Renderer {
 
     // ── BlockDef-based full render ─────────────────────────────────────
 
-    /// Render full screen using a `BlockDef` for layout, viz, and params.
+    /// Render the full screen: every region of the page's layout.
     pub fn draw_with_def<D>(&self, display: &mut D, f: &Frame)
     where
         D: DrawTarget<Color = Rgb565>,
     {
-        let (nav, def, matrix_state, sel_op) = (f.nav, f.def, f.matrix, f.sel_op);
-
-        // Clear
         let _ = Rectangle::new(Point::zero(), Size::new(240, 320))
             .draw_styled(&PrimitiveStyle::with_fill(theme::BG), display);
-
-        self.draw_header(display, f);
-
-        match def.layout {
-            PageLayout::BigViz => {
-                self.draw_viz_from_type(display, def);
-                self.draw_params_from_def(display, def, f.focus, sel_op, matrix_state);
-            }
-            PageLayout::CellGrid => {
-                self.draw_cell_grid_from_def(display, def, f.focus, sel_op, matrix_state);
-            }
-            PageLayout::Matrix => {
-                crate::ui::mod_grid::draw_grid(display, matrix_state);
-            }
+        for &(kind, _, _) in region::layout_regions(f.def.layout) {
+            self.draw_region_with_def(display, kind, f);
         }
-
-        // Separator
-        let _ = Line::new(
-            Point::new(0, theme::ENCODER_ZONE_BOTTOM),
-            Point::new(theme::SCREEN_W - 1, theme::ENCODER_ZONE_BOTTOM),
-        )
-        .draw_styled(&PrimitiveStyle::with_stroke(theme::SEPARATOR, 1), display);
-
-        // Oscilloscope strip — on CellGrid pages, between cells and dungeon map
-        if def.layout == PageLayout::CellGrid {
-            Self::draw_scope(display, f.scope);
-        }
-
-        dungeon_map::draw(display, nav, (self.branch_scroll.current() * theme::BRANCH_LINE_HEIGHT as f32) as i32);
     }
 
-    /// Draw a single region using BlockDef. The caller has already cleared the region.
-    pub fn draw_region_with_def<D>(
-        &self,
-        display: &mut D,
-        kind: RegionKind,
-        f: &Frame,
-    )
+    /// What the page's viz is drawn from, for dirty tracking: the slot
+    /// values it reads (quantized) and a fingerprint of outside data.
+    pub fn viz_inputs(&self, f: &Frame) -> ([u16; 6], u32) {
+        match f.def.layout {
+            PageLayout::CellGrid => ([0; 6], viz::live_key(f.scope)),
+            PageLayout::BigViz | PageLayout::Matrix => (region::quantize_values(&self.anim), 0),
+        }
+    }
+
+    /// Draw a single region. The caller has already cleared it.
+    pub fn draw_region_with_def<D>(&self, display: &mut D, kind: RegionKind, f: &Frame)
     where
         D: DrawTarget<Color = Rgb565>,
     {
         let (nav, def, matrix_state, sel_op) = (f.nav, f.def, f.matrix, f.sel_op);
-
         match kind {
             RegionKind::Header => self.draw_header(display, f),
-            RegionKind::Viz => {
-                self.draw_viz_from_type(display, def);
-            }
+            RegionKind::Focus => self.draw_focus(display, f),
+            RegionKind::Viz => match def.layout {
+                PageLayout::CellGrid => viz::live_output(display, f.scope),
+                PageLayout::BigViz | PageLayout::Matrix => self.draw_viz_from_type(display, def),
+            },
             RegionKind::Params => {
                 self.draw_params_from_def(display, def, f.focus, sel_op, matrix_state);
                 let _ = Line::new(
@@ -906,14 +853,7 @@ impl Renderer {
                 )
                 .draw_styled(&PrimitiveStyle::with_stroke(theme::SEPARATOR, 1), display);
             }
-            RegionKind::Cells => {
-                self.draw_cell_grid_from_def(display, def, f.focus, sel_op, matrix_state);
-                let _ = Line::new(
-                    Point::new(0, theme::ENCODER_ZONE_BOTTOM),
-                    Point::new(theme::SCREEN_W - 1, theme::ENCODER_ZONE_BOTTOM),
-                )
-                .draw_styled(&PrimitiveStyle::with_stroke(theme::SEPARATOR, 1), display);
-            }
+            RegionKind::Cells => self.draw_cells(display, f, theme::CELL_LABEL_Y),
             RegionKind::Grid => {
                 self.draw_header(display, f);
                 crate::ui::mod_grid::draw_grid(display, matrix_state);
@@ -926,6 +866,46 @@ impl Renderer {
             RegionKind::Nav => {
                 dungeon_map::draw(display, nav, (self.branch_scroll.current() * theme::BRANCH_LINE_HEIGHT as f32) as i32);
             }
+        }
+    }
+
+    /// Focus band: the focused slot large (nothing for an empty slot).
+    fn draw_focus<D>(&self, display: &mut D, f: &Frame)
+    where
+        D: DrawTarget<Color = Rgb565>,
+    {
+        let slot = &f.def.params[f.focus];
+        if slot.binding == SlotBinding::Empty {
+            return;
+        }
+        let v = self.anim[f.focus].current();
+        let mut buf = FmtBuf::new();
+        fmt::fmt_val(&mut buf, v, slot.format());
+        components::focus_band(display, slot.label(), buf.as_str(), v, slot.format().is_bipolar());
+    }
+
+    /// The six cells, first row's labels at `top`.
+    fn draw_cells<D>(&self, display: &mut D, f: &Frame, top: i32)
+    where
+        D: DrawTarget<Color = Rgb565>,
+    {
+        for (i, slot) in f.def.params.iter().enumerate() {
+            if slot.binding == SlotBinding::Empty {
+                components::cell(display, i, top, None);
+                continue;
+            }
+            let v = self.anim[i].current();
+            let mut buf = FmtBuf::new();
+            fmt::fmt_val(&mut buf, v, slot.format());
+            let c = components::Cell {
+                label: slot.label(),
+                text: buf.as_str(),
+                value: v,
+                fmt: slot.format(),
+                active: i == f.focus,
+                mod_amount: Self::cell_mod_info(f.def, i, f.sel_op, f.matrix),
+            };
+            components::cell(display, i, top, Some(&c));
         }
     }
 
@@ -1051,49 +1031,6 @@ impl Renderer {
         let hint_style = MonoTextStyle::new(&FONT_6X10, theme::TEXT_DIM);
         let _ = Text::new("Turn:scroll  Edit:load  B:cancel", Point::new(8, 306), hint_style)
             .draw(display);
-    }
-
-    // ── Oscilloscope ────────────────────────────────────────────────
-
-    /// Draw a waveform scope strip showing end-of-chain audio.
-    pub fn draw_scope<D>(display: &mut D, buf: &[f32; crate::scope::SCOPE_LEN])
-    where
-        D: DrawTarget<Color = Rgb565>,
-    {
-        let x0 = 0i32;
-        let y0 = theme::SCOPE_TOP;
-        let h = theme::SCOPE_HEIGHT;
-        let w = theme::SCREEN_W;
-        let cy = y0 + h / 2;
-
-        // Background
-        let _ = Rectangle::new(Point::new(x0, y0), Size::new(w as u32, h as u32))
-            .draw_styled(&PrimitiveStyle::with_fill(theme::BG), display);
-
-        // Center line (zero crossing)
-        let _ = Line::new(Point::new(x0, cy), Point::new(x0 + w - 1, cy))
-            .draw_styled(&PrimitiveStyle::with_stroke(theme::VIZ_GRID, 1), display);
-
-        // Auto-scale: find peak amplitude and scale to fill display
-        let mut peak = 0.0f32;
-        for &s in buf.iter() {
-            let a = if s < 0.0 { -s } else { s };
-            if a > peak { peak = a; }
-        }
-        let scale = if peak > 0.001 { (h / 2 - 2) as f32 / peak } else { 1.0 };
-        let style = PrimitiveStyle::with_stroke(theme::ACCENT_BRIGHT, 1);
-
-        for i in 0..(w - 1) as usize {
-            let s0 = buf[i] * scale;
-            let s1 = buf[i + 1] * scale;
-            let y0p = cy - s0 as i32;
-            let y1p = cy - s1 as i32;
-            let _ = Line::new(
-                Point::new(x0 + i as i32, y0p),
-                Point::new(x0 + i as i32 + 1, y1p),
-            )
-            .draw_styled(&style, display);
-        }
     }
 
     // ── Dirty region helpers ─────────────────────────────────────────
