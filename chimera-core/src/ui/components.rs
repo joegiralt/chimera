@@ -71,3 +71,72 @@ where
         draw::dot(d, theme::HEADER_DOT_X, theme::HEADER_DOT_Y, theme::HEADER_DOT_R, theme::ACCENT);
     }
 }
+
+/// Focus band (y 28..118): the focused slot's label, its value large, and an
+/// arc gauge (from 12:00 for bipolar params). `value` is the animated 0..1.
+pub fn focus_band<D>(d: &mut D, label: &str, value_text: &str, value: f32, bipolar: bool)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    focus_label(d, label, theme::MARGIN_X);
+    focus_value(d, value_text, value, bipolar);
+}
+
+/// Focus label at `x`; returns where it ends.
+fn focus_label<D>(d: &mut D, label: &str, x: i32) -> i32
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    x + draw::text_tracked(d, &theme::FONT_VALUE, label, x, theme::FOCUS_LABEL_Y, theme::MID, theme::LABEL_TRACKING)
+}
+
+fn focus_value<D>(d: &mut D, value_text: &str, value: f32, bipolar: bool)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    draw::text(d, &theme::FONT_FOCUS, value_text, theme::FOCUS_VALUE_X, theme::FOCUS_VALUE_Y, theme::INK);
+    draw::arc_gauge(d, theme::ARC_CX, theme::ARC_CY, theme::ARC_R, theme::ARC_WIDTH, value, bipolar, theme::FAINT, theme::ACCENT);
+}
+
+/// One cell of the 3×2 grid.
+pub struct Cell<'a> {
+    pub label: &'a str,
+    /// Formatted value.
+    pub text: &'a str,
+    /// Animated 0..1 value for the bar.
+    pub value: f32,
+    pub fmt: crate::block::ValFmt,
+    /// The focused slot: accent label and bar.
+    pub active: bool,
+    /// Summed mod amount (−1..1) when the param is a mod destination.
+    pub mod_amount: Option<f32>,
+}
+
+/// Draw cell `i` (knob order a–f, 3×2) with its label baseline `top + row·36`.
+/// `None` is an empty slot: a dim dash.
+pub fn cell<D>(d: &mut D, i: usize, top: i32, cell: Option<&Cell>)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let x = theme::MARGIN_X + (i % 3) as i32 * theme::CELL_COL_W;
+    let y = top + (i / 3) as i32 * theme::CELL_ROW_H;
+    let Some(c) = cell else {
+        draw::fill_rect(d, x, y - 3, 8, 1, theme::FAINT);
+        return;
+    };
+    let label_color = if c.active { theme::ACCENT } else { theme::MID };
+    draw::text_tracked(d, &theme::FONT_LABEL, c.label, x, y, label_color, theme::LABEL_TRACKING);
+    let value_color = if c.active { theme::INK } else { theme::INK2 };
+    draw::text(d, &theme::FONT_VALUE, c.text, x, y + theme::CELL_VALUE_DY, value_color);
+    if !c.fmt.is_discrete() {
+        let fill = if c.active { theme::ACCENT } else { theme::BAR_REST };
+        draw::bar(d, x, y + theme::CELL_BAR_DY, theme::CELL_BAR_W, theme::CELL_BAR_H, c.value, c.fmt.is_bipolar(), theme::FAINT, fill);
+    }
+    if let Some(m) = c.mod_amount {
+        let mid = x + theme::CELL_BAR_W / 2;
+        let len = (m.clamp(-1.0, 1.0) * (theme::CELL_BAR_W / 2) as f32) as i32;
+        let (x0, x1) = if len >= 0 { (mid, mid + len) } else { (mid + len, mid) };
+        draw::fill_rect(d, mid, y + theme::CELL_MOD_DY - 1, 1, 3, theme::MID);
+        draw::fill_rect(d, x0, y + theme::CELL_MOD_DY, (x1 - x0).max(1), 1, theme::INK2);
+    }
+}

@@ -16,7 +16,6 @@ mod screen;
 use screen::*;
 
 #[derive(Clone, Copy, Debug)]
-#[allow(dead_code)] // `Locked` arrives with the first converted page type
 enum Golden {
     /// Not yet converted: may change freely.
     Pending,
@@ -26,7 +25,7 @@ enum Golden {
 use Golden::*;
 
 const GOLDENS: &[(&str, Golden)] = &[
-    ("engine_pizza", Pending),
+    ("engine_pizza", Locked(0x4797d6f7d4edc427)),
     ("engine_fm_alg", Pending),
     ("engine_fm_op", Pending),
     ("bigviz_filter", Pending),
@@ -37,7 +36,7 @@ const GOLDENS: &[(&str, Golden)] = &[
     ("mixer_fx_delay", Pending),
     ("mod_matrix", Pending),
     ("sound_browser", Pending),
-    ("system", Pending),
+    ("system", Locked(0x02f7456a841f9613)),
 ];
 
 #[test]
@@ -70,5 +69,12 @@ fn screen_goldens_match() {
 fn rendering_is_deterministic() {
     for &(name, _) in GOLDENS {
         assert_eq!(render(name).hash(), render(name).hash(), "{name}");
+    }
+}
+
+#[test]
+fn no_screen_draws_outside_240x320() {
+    for &(name, _) in GOLDENS {
+        assert_eq!(render(name).oob, 0, "{name}");
     }
 }

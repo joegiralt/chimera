@@ -15,6 +15,7 @@ pub mod perf;
 pub mod region;
 pub mod renderer;
 pub mod theme;
+pub mod viz;
 
 use chimera_hal::{ButtonId, ButtonState, Controls, EncoderId};
 
@@ -503,9 +504,13 @@ impl UiState {
         let (chain, node, sub) = nav_tag(&self.nav);
         match kind {
             RegionKind::Header => RegionData::header(chain, node, sub, f.perf.audio_load_pct, f.sounding),
-            RegionKind::Viz => RegionData::viz(self.page, qvalues),
+            RegionKind::Focus => RegionData::focus(self.page, f.focus as u8, qvalues[f.focus]),
+            RegionKind::Viz => {
+                let (values, live) = self.renderer.viz_inputs(f);
+                RegionData::viz(self.page, values, live)
+            }
             RegionKind::Params => RegionData::params(self.page, qvalues),
-            RegionKind::Cells => RegionData::cells(self.page, qvalues, self.matrix_state.num_dests as u16),
+            RegionKind::Cells => RegionData::cells(self.page, qvalues, f.focus as u8, self.matrix_state.num_dests as u16),
             RegionKind::Nav => RegionData::nav(chain, node, sub, region::quantize(self.renderer.branch_scroll.current())),
             RegionKind::Grid => RegionData::grid_with_amount(
                 self.matrix_state.sel_row as u8,
@@ -600,17 +605,6 @@ impl UiState {
         }
         for (r, d) in self.region_set.regions[..count].iter_mut().zip(data) {
             r.prev_data = d;
-        }
-
-        // Scope strip — always redraws after regions (so regions can't overwrite it)
-        if layout == PageLayout::CellGrid {
-            let fb = display.pixel_buffer();
-            renderer::Renderer::clear_region_fb(fb, theme::SCOPE_TOP as u16, theme::SCOPE_BOTTOM as u16);
-            renderer::Renderer::draw_scope(display, scope);
-            if flush_count < flush_list.len() {
-                flush_list[flush_count] = (theme::SCOPE_TOP as u16, theme::SCOPE_BOTTOM as u16);
-                flush_count += 1;
-            }
         }
 
         flush_list
