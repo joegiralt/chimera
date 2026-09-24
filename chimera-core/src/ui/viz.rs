@@ -263,6 +263,80 @@ pub const FX_NODES: [&str; 5] = ["IN", "CHR", "DLY", "REV", "OUT"];
 pub const FLOW_Y: i32 = 146;
 pub const FLOW_SEND_Y: i32 = 176;
 
+/// FM algorithm topologies 0..=7 (the pre-refresh diagrams, as data):
+/// operator 1..4 positions as (x in half steps from centre, row), the
+/// modulation edges (from, to), and the carriers (bit n-1 = operator n).
+const ALG_POS: [[(i8, i8); 4]; 8] = [
+    [(0, 3), (0, 2), (0, 1), (0, 0)],
+    [(0, 2), (0, 1), (-1, 0), (1, 0)],
+    [(0, 2), (0, 1), (-1, 0), (1, 0)],
+    [(0, 2), (1, 1), (-1, 1), (0, 0)],
+    [(-1, 1), (-1, 0), (1, 1), (1, 0)],
+    [(-2, 1), (0, 1), (2, 1), (0, 0)],
+    [(-2, 1), (0, 1), (2, 1), (2, 0)],
+    [(-3, 0), (-1, 0), (1, 0), (3, 0)],
+];
+// Edges verified against `dsp::engine_fm::FmEngine::render`'s routing per
+// algorithm, not just the pre-refresh diagram: algorithm 3 (TX81Z ALG4)
+// forks operator 3's own output into operator 1's modulation input in
+// addition to operator 3 feeding operator 2 (`(3, 2)`, not `(4, 2)` — the
+// plan's table had this edge sourced from the wrong operator; the render()
+// match's own inline comment is similarly misleading). See task-10-report.md.
+const ALG_EDGES: [&[(u8, u8)]; 8] = [
+    &[(4, 3), (3, 2), (2, 1)],
+    &[(3, 2), (4, 2), (2, 1)],
+    &[(3, 2), (2, 1), (4, 1)],
+    &[(4, 3), (3, 2), (3, 1), (2, 1)],
+    &[(2, 1), (4, 3)],
+    &[(4, 1), (4, 2), (4, 3)],
+    &[(4, 3)],
+    &[],
+];
+const ALG_CARRIERS: [u8; 8] = [0b0001, 0b0001, 0b0001, 0b0001, 0b0101, 0b0111, 0b0111, 0b1111];
+const ALG_STEP_X: i32 = 20;
+const ALG_STEP_Y: i32 = 17;
+const ALG_OP_R: i32 = 7;
+
+/// Centre of operator `op` (0-based) in algorithm `alg`, in the viz band.
+pub fn alg_op_center(alg: u8, op: usize) -> (i32, i32) {
+    let a = (alg as usize).min(7);
+    let rows = ALG_POS[a].iter().map(|p| p.1).max().unwrap_or(0) as i32 + 1;
+    let top = theme::VIZ_BAND_MID - (rows - 1) * ALG_STEP_Y / 2;
+    let (hx, row) = ALG_POS[a][op];
+    (theme::SCREEN_W / 2 + hx as i32 * ALG_STEP_X, top + row as i32 * ALG_STEP_Y)
+}
+
+/// FM algorithm page and operator page: the algorithm's operators and
+/// edges; carriers filled, modulators as rings, the selected operator lit.
+/// Edges are drawn in `theme::MID` (non-accent grey), so the controller's
+/// 2-px accent-line ruling (Task 6) does not apply to them: 1 px.
+pub fn fm_algorithm<D>(d: &mut D, alg: u8, selected: usize)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let a = (alg as usize).min(7);
+    for &(from, to) in ALG_EDGES[a] {
+        let (x0, y0) = alg_op_center(alg, from as usize - 1);
+        let (x1, y1) = alg_op_center(alg, to as usize - 1);
+        draw::line(d, x0, y0, x1, y1, theme::MID, 1);
+    }
+    for (op, label) in ["1", "2", "3", "4"].into_iter().enumerate() {
+        let (x, y) = alg_op_center(alg, op);
+        let carrier = ALG_CARRIERS[a] & (1 << op) != 0;
+        if op == selected {
+            draw::dot(d, x, y, ALG_OP_R, theme::ACCENT);
+            draw::text_center(d, &theme::FONT_LABEL_BOLD, label, x + 1, y + 4, theme::BG, 0);
+        } else if carrier {
+            draw::dot(d, x, y, ALG_OP_R, theme::INK2);
+            draw::text_center(d, &theme::FONT_LABEL_BOLD, label, x + 1, y + 4, theme::BG, 0);
+        } else {
+            draw::dot(d, x, y, ALG_OP_R, theme::BG);
+            draw::ring(d, x, y, ALG_OP_R, theme::MID, 1);
+            draw::text_center(d, &theme::FONT_LABEL, label, x + 1, y + 4, theme::MID, 0);
+        }
+    }
+}
+
 /// FX pages and SENDS: IN → CHR → DLY → REV → OUT on a line (the
 /// pre-refresh flow diagram, restyled like the map). `lit` (0 = CHR) is the
 /// page's effect, or on SENDS the focused send; `sends` shows each send level

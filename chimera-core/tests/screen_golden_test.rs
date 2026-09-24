@@ -26,8 +26,8 @@ use Golden::*;
 
 const GOLDENS: &[(&str, Golden)] = &[
     ("engine_pizza", Locked(0xbf9c1f573baa9d59)),
-    ("engine_fm_alg", Pending),
-    ("engine_fm_op", Pending),
+    ("engine_fm_alg", Locked(0xfd5b554652d678e6)),
+    ("engine_fm_op", Locked(0x2353d264169904b3)),
     ("bigviz_filter", Locked(0x24ef227569f308c9)),
     ("bigviz_env", Locked(0xf22986571c209654)),
     ("bigviz_fm_op_env", Locked(0xd64cac3d5290898e)),

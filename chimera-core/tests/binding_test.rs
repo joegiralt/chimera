@@ -67,16 +67,17 @@ fn block_def_ids_are_unique() {
 }
 
 /// Labels and formats of Part pages are exactly what they displayed before
-/// bindings (spec labels + the two plan-D6 overrides; plan D5 BODY fix).
+/// bindings (spec labels + the two plan-D6 overrides; plan D5 BODY fix), except
+/// the operator selector, shown 1–4 since the UI refresh.
 #[test]
 fn part_pages_display_like_before() {
-    use ValFmt::{Bi, Int, Uni};
+    use ValFmt::{Bi, Int, OneBased, Uni};
     let want: [(&BlockDef, [(&str, ValFmt); 6]); 15] = [
         (&reg::PIZZA, [("SHAPE", Uni), ("CRUSH", Uni), ("LEVEL", Uni), ("--", Uni), ("--", Uni), ("--", Uni)]),
         (&reg::MODAL_1, [("MODE", Int(3)), ("EXCITE", Uni), ("DECAY", Uni), ("BRIGHT", Uni), ("POS", Uni), ("INHARM", Uni)]),
         (&reg::MODAL_2, [("BODY", Uni), ("STIFF", Uni), ("FDBK", Uni), ("E.DPT", Uni), ("E.RAT", Uni), ("E.MIX", Uni)]),
         (&reg::FM_ALG, [("ALG", Int(7)), ("--", Uni), ("LEVEL", Uni), ("--", Uni), ("--", Uni), ("--", Uni)]),
-        (&reg::FM_OP, [("OP", Int(3)), ("WAVE", Int(7)), ("LEVEL", Uni), ("FDBK", Int(7)), ("DETUN", Bi), ("V.SNS", Int(7))]),
+        (&reg::FM_OP, [("OP", OneBased(3)), ("WAVE", Int(7)), ("LEVEL", Uni), ("FDBK", Int(7)), ("DETUN", Bi), ("V.SNS", Int(7))]),
         (&reg::FM_RATIO, [("OP1", Int(63)), ("OP2", Int(63)), ("OP3", Int(63)), ("OP4", Int(63)), ("FINE", Int(15)), ("--", Uni)]),
         (&reg::DRIVE, [("DRIVE", Uni), ("TONE", Bi), ("MIX", Bi), ("--", Uni), ("--", Uni), ("--", Uni)]),
         (&reg::FOLDER, [("FOLD", Uni), ("SYM", Bi), ("MIX", Bi), ("--", Uni), ("--", Uni), ("--", Uni)]),
