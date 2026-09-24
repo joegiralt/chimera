@@ -50,7 +50,7 @@ fn filter_readout_rides_the_focused_value() {
 #[test]
 fn readout_flips_left_at_the_right_edge() {
     let mut fb = Fb::new();
-    viz::readout(&mut fb, 220, 100, "CUTOFF", "127");
+    viz::readout(&mut fb, 220, |_| 100, "CUTOFF", "127");
     for y in 28..186 {
         for x in theme::VIZ_RIGHT + 1..240 {
             assert_eq!(fb.px[y as usize * W + x as usize], 0, "({x},{y})");
@@ -58,13 +58,39 @@ fn readout_flips_left_at_the_right_edge() {
     }
 }
 
+/// At full resonance the peak reaches `PLOT_TOP`, leaving no room above it;
+/// the readout must clear the curve at any cutoff (low, mid, high) rather
+/// than let the peak pass through the digits.
+#[test]
+fn filter_readout_clears_the_peak_at_full_resonance() {
+    for &cutoff in &[0.1_f32, 0.5, 0.9] {
+        let mut without = Fb::new();
+        viz::filter(&mut without, cutoff, 1.0, None);
+        let mut with = Fb::new();
+        viz::filter(&mut with, cutoff, 1.0, Some(("CUTOFF", "127")));
+        assert_eq!(with.oob, 0, "cutoff={cutoff}: nothing drawn outside 240x320");
+        for y in 0..H {
+            for x in 0..W {
+                let i = y * W + x;
+                let curve_px = without.at(x as i32, y as i32) == theme::ACCENT;
+                let readout_drew_here = with.px[i] != without.px[i];
+                assert!(!(curve_px && readout_drew_here), "cutoff={cutoff}: readout overlaps curve at ({x},{y})");
+            }
+        }
+    }
+}
+
+fn accent_pixels(ui: &mut chimera_core::ui::UiState) -> usize {
+    let mut fb = Fb::new();
+    ui.render_with_scope(&mut fb, &PerfStats::zero(), &scope_fixture());
+    (28..186).flat_map(|y| (0..240).map(move |x| (x, y))).filter(|&(x, y)| fb.at(x, y) == theme::ACCENT).count()
+}
+
 fn accent_in_viz(name_setup: impl FnOnce(&mut chimera_core::ui::UiState)) -> usize {
     let mut ui = ui_for("bigviz_env");
     name_setup(&mut ui);
     settle(&mut ui);
-    let mut fb = Fb::new();
-    ui.render_with_scope(&mut fb, &PerfStats::zero(), &scope_fixture());
-    (28..186).flat_map(|y| (0..240).map(move |x| (x, y))).filter(|&(x, y)| fb.at(x, y) == theme::ACCENT).count()
+    accent_pixels(&mut ui)
 }
 
 /// Envelope: the segment the focused slot edits is lit; LEVEL/VEL light none.
@@ -80,4 +106,6 @@ fn fm_envelope_is_reachable_and_lit() {
     feed(&mut ui, Input::press(ButtonId::Seq)); // back up to MOD
     feed(&mut ui, Input::press(ButtonId::Edit)); // E1 again
     assert_eq!(ui.focused_slot(), 2, "focus survives leaving the page");
+    settle(&mut ui);
+    assert!(accent_pixels(&mut ui) > 0, "D1R segment lit");
 }

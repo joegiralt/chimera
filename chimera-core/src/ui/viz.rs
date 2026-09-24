@@ -90,15 +90,42 @@ where
 }
 
 /// The touched value riding on a viz: label above, value in the readout
-/// face, to the right of (x, y) or to its left when it would not fit.
-pub fn readout<D>(d: &mut D, x: i32, y: i32, label: &str, value: &str)
+/// face, to the right of `x` (or its left, when it would not fit). Placed
+/// above the highest point `curve` reaches across the text's own columns —
+/// clear of the curve, not just of the anchor — or, when the curve is too
+/// close to `PLOT_TOP` to fit the block above it, below the curve's lowest
+/// point there instead, inside the fill.
+pub fn readout<D>(d: &mut D, x: i32, curve: impl Fn(i32) -> i32, label: &str, value: &str)
 where
     D: DrawTarget<Color = Rgb565>,
 {
+    // Measured glyph extents relative to each line's own baseline
+    // (FONT_LABEL, FONT_READOUT): the label's ink spans baseline-8..baseline;
+    // the value's spans baseline-21..baseline-1. The value sits on `vy`; the
+    // label sits `LABEL_RISE` above it.
+    const LABEL_RISE: i32 = 24;
+    const BLOCK_TOP: i32 = LABEL_RISE + 8;
+    const GAP: i32 = 3;
+
     let w = draw::text_width(&theme::FONT_READOUT, value, 0).max(draw::text_width(&theme::FONT_LABEL, label, theme::LABEL_TRACKING));
     let left = if x + 8 + w <= theme::VIZ_RIGHT { x + 8 } else { x - 8 - w };
-    let vy = (y + 2).clamp(PLOT_TOP + 20, PLOT_BASE - 2);
-    draw::text_tracked(d, &theme::FONT_LABEL, label, left + 1, vy - 24, theme::MID, theme::LABEL_TRACKING);
+
+    // The curve's highest and lowest point across the columns the text will
+    // actually occupy — not just at the anchor, which can be far from flat
+    // this close to a resonant peak.
+    let (lo, hi) = (left.max(theme::VIZ_LEFT), (left + w).min(theme::VIZ_RIGHT));
+    let (mut top, mut bottom) = (curve(lo), curve(lo));
+    for cx in lo..=hi {
+        let cy = curve(cx);
+        top = top.min(cy);
+        bottom = bottom.max(cy);
+    }
+    let bottom = bottom + 1; // the curve's 2-px accent line draws one row below `y(x)` too
+
+    let vy = if top - GAP - BLOCK_TOP >= PLOT_TOP { top - GAP } else { bottom + GAP + BLOCK_TOP };
+    let vy = vy.clamp(PLOT_TOP + BLOCK_TOP, PLOT_BASE - 2);
+
+    draw::text_tracked(d, &theme::FONT_LABEL, label, left + 1, vy - LABEL_RISE, theme::MID, theme::LABEL_TRACKING);
     draw::text(d, &theme::FONT_READOUT, value, left, vy, theme::INK);
 }
 
@@ -121,7 +148,7 @@ where
     }
     draw::dot(d, mx, my, 4, theme::INK);
     if let Some((label, value)) = readout_text {
-        readout(d, mx, my, label, value);
+        readout(d, mx, y, label, value);
     }
 }
 
