@@ -138,8 +138,9 @@ impl UiState {
         sound.mod_state.sync_from_matrix(&self.matrix_state);
     }
 
-    /// The address the focused encoder edits, if its slot is bound. Mixer,
-    /// System and Demo slots are `Legacy`, so priming there does nothing.
+    /// The address the focused encoder edits, if its slot is bound. System
+    /// and Demo slots are `Legacy`, so priming there does nothing; Mixer
+    /// params are bound but not modulatable, so the registry refuses them.
     fn current_param_addr(&self) -> Option<ParamAddr> {
         slot_addr(self.nav.active_block_def(), self.last_encoder, self.sel_op)
     }
@@ -286,8 +287,8 @@ impl UiState {
         // Navigation
         let nav_changed = self.nav.handle_input(controls);
         if nav_changed {
-            // Update active_part when navigating to a Part
-            if let ChainId::Part(i) = self.nav.chain_id {
+            // B<n> and MIX + B<n> both select Part n for editing.
+            if let ChainId::Part(i) | ChainId::Mixer(i) = self.nav.chain_id {
                 self.active_part = i;
                 self.nav.chain_type = self.performance.parts[i].sound.chain_type;
             }

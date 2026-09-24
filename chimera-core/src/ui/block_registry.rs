@@ -1,7 +1,11 @@
 use crate::addr::{BlockRef, Op};
+use crate::dsp::chorus::ChorusParams;
+use crate::dsp::delay::DelayParams;
 use crate::dsp::lfo::LfoParams;
 use crate::dsp::modal::ModalParams;
 use crate::dsp::pizza::PizzaParams;
+use crate::dsp::reverb::ReverbParams;
+use crate::part::PartParams;
 use crate::params::{DriveParams, EnvParams, FilterParams, FmOpParams, FmParams, FolderParams, OutParams};
 use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2, ParamSlot, VizType};
 use crate::ui::page::{CellIcon, PageLayout, ValFmt};
@@ -289,11 +293,11 @@ pub static EFX: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::EffectsFlow,
     params: [
-        ParamSlot::legacy("TYPE", ValFmt::Int(2), CellIcon::Arc),
-        ParamSlot::legacy("TIME", ValFmt::Uni, CellIcon::Arc),
-        ParamSlot::legacy("DAMP", ValFmt::Uni, CellIcon::Arc),
-        ParamSlot::legacy("SIZE", ValFmt::Uni, CellIcon::Arc),
-        ParamSlot::legacy("MIX", ValFmt::Uni, CellIcon::Arc),
+        ParamSlot::param(BlockRef::Reverb, ReverbParams::REVERB_TYPE, CellIcon::Arc),
+        ParamSlot::param(BlockRef::Reverb, ReverbParams::TIME, CellIcon::Arc),
+        ParamSlot::param(BlockRef::Reverb, ReverbParams::DAMPING, CellIcon::Arc),
+        ParamSlot::param(BlockRef::Reverb, ReverbParams::SIZE, CellIcon::Arc),
+        ParamSlot::param(BlockRef::Reverb, ReverbParams::MIX, CellIcon::Arc),
         EMPTY,
     ],
 };
@@ -321,10 +325,10 @@ pub static CHORUS: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::EffectsFlow,
     params: [
-        ParamSlot::legacy("MODE", ValFmt::Int(3), CellIcon::Arc),
-        ParamSlot::legacy("RATE", ValFmt::Uni, CellIcon::Arc),
-        ParamSlot::legacy("DEPTH", ValFmt::Uni, CellIcon::Arc),
-        ParamSlot::legacy("MIX", ValFmt::Uni, CellIcon::Arc),
+        ParamSlot::param(BlockRef::Chorus, ChorusParams::MODE, CellIcon::Arc),
+        ParamSlot::param(BlockRef::Chorus, ChorusParams::RATE, CellIcon::Arc),
+        ParamSlot::param(BlockRef::Chorus, ChorusParams::DEPTH, CellIcon::Arc),
+        ParamSlot::param(BlockRef::Chorus, ChorusParams::MIX, CellIcon::Arc),
         EMPTY,
         EMPTY,
     ],
@@ -337,12 +341,12 @@ pub static DELAY: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::EffectsFlow,
     params: [
-        ParamSlot::legacy("TIME", ValFmt::Uni, CellIcon::Arc),
-        ParamSlot::legacy("FDBK", ValFmt::Uni, CellIcon::Arc),
-        ParamSlot::legacy("WOW", ValFmt::Uni, CellIcon::Arc),
-        ParamSlot::legacy("SAT", ValFmt::Uni, CellIcon::Arc),
-        ParamSlot::legacy("TONE", ValFmt::Uni, CellIcon::Arc),
-        ParamSlot::legacy("MIX", ValFmt::Uni, CellIcon::Arc),
+        ParamSlot::param(BlockRef::Delay, DelayParams::TIME_MS, CellIcon::Arc),
+        ParamSlot::param(BlockRef::Delay, DelayParams::FEEDBACK, CellIcon::Arc),
+        ParamSlot::param(BlockRef::Delay, DelayParams::WOW_FLUTTER, CellIcon::Arc),
+        ParamSlot::param(BlockRef::Delay, DelayParams::SATURATION, CellIcon::Arc),
+        ParamSlot::param(BlockRef::Delay, DelayParams::TONE, CellIcon::Arc),
+        ParamSlot::param(BlockRef::Delay, DelayParams::MIX, CellIcon::Arc),
     ],
 };
 
@@ -563,19 +567,20 @@ pub static ENVELOPE_CHAIN: ChainDef2 = ChainDef2 {
 // Mixer channel strip
 // ---------------------------------------------------------------------------
 
-pub static CHANNEL: BlockDef = BlockDef {
+/// A Part's MIDI channel, mode, output, level and pan (spec § UI).
+pub static PART: BlockDef = BlockDef {
     id: 27,
-    name: "Channel",
-    short: "CH",
+    name: "Part",
+    short: "PRT",
     layout: PageLayout::CellGrid,
     viz: VizType::MixerLevels,
     params: [
-        ParamSlot::legacy("VOL", ValFmt::Uni, CellIcon::LevelBar),
-        ParamSlot::legacy("PAN", ValFmt::Bi, CellIcon::PanDot),
-        ParamSlot::legacy("OUT", ValFmt::Int(2), CellIcon::Arc),
-        ParamSlot::legacy("VOICES", ValFmt::Int(5), CellIcon::Arc),
-        ParamSlot::legacy("MODE", ValFmt::Int(2), CellIcon::Arc),
-        ParamSlot::legacy("GLIDE", ValFmt::Uni, CellIcon::Arc),
+        ParamSlot::param(BlockRef::Part, PartParams::CHANNEL, CellIcon::Arc),
+        ParamSlot::param(BlockRef::Part, PartParams::MODE, CellIcon::Arc),
+        ParamSlot::param(BlockRef::Part, PartParams::OUTPUT, CellIcon::Arc),
+        ParamSlot::param(BlockRef::Part, PartParams::LEVEL, CellIcon::LevelBar),
+        ParamSlot::param(BlockRef::Part, PartParams::PAN, CellIcon::PanDot),
+        EMPTY,
     ],
 };
 
@@ -618,20 +623,22 @@ pub static SENDS: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
-        ParamSlot::legacy("REV", ValFmt::Uni, CellIcon::Arc),
-        ParamSlot::legacy("DLY", ValFmt::Uni, CellIcon::Arc),
-        ParamSlot::legacy("CHR", ValFmt::Uni, CellIcon::Arc),
-        ParamSlot::legacy("S4", ValFmt::Uni, CellIcon::Arc),
+        ParamSlot::param(BlockRef::Part, PartParams::SEND_CHORUS, CellIcon::Arc),
+        ParamSlot::param(BlockRef::Part, PartParams::SEND_DELAY, CellIcon::Arc),
+        ParamSlot::param(BlockRef::Part, PartParams::SEND_REVERB, CellIcon::Arc),
+        EMPTY,
         EMPTY,
         EMPTY,
     ],
 };
 
-static MIXER_CHANNEL_BLOCKS: [ChainBlock; 4] = [
-    ChainBlock { def: &CHANNEL,  sub_pages: &[] },
-    ChainBlock { def: &MIDI_CFG, sub_pages: &[] },
-    ChainBlock { def: &EQ,       sub_pages: &[] },
-    ChainBlock { def: &SENDS,    sub_pages: &[] },
+/// MIX + B<n>: Part n's mix settings, then the shared FX (spec § UI).
+static MIXER_CHANNEL_BLOCKS: [ChainBlock; 5] = [
+    ChainBlock { def: &PART,   sub_pages: &[] },
+    ChainBlock { def: &SENDS,  sub_pages: &[] },
+    ChainBlock { def: &CHORUS, sub_pages: &[] },
+    ChainBlock { def: &DELAY,  sub_pages: &[] },
+    ChainBlock { def: &EFX,    sub_pages: &[] },
 ];
 
 pub static MIXER_CHANNEL_CHAIN: ChainDef2 = ChainDef2 {

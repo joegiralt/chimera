@@ -164,8 +164,8 @@ impl Performance {
     }
 }
 
-/// One Part and the Performance's FX, borrowed together so a page can
-/// address any block by `BlockRef`.
+/// One Part (Sound + mix settings) and the Performance's FX, borrowed
+/// together so a page can address any block by `BlockRef`.
 pub struct PartEdit<'a> {
     pub part: &'a mut Part,
     pub fx: &'a mut FxParams,
@@ -177,6 +177,7 @@ impl Blocks for PartEdit<'_> {
             BlockRef::Chorus => Some(&self.fx.chorus),
             BlockRef::Delay => Some(&self.fx.delay),
             BlockRef::Reverb => Some(&self.fx.reverb),
+            BlockRef::Part => Some(&self.part.mix),
             BlockRef::Pizza
             | BlockRef::Modal
             | BlockRef::Fm
@@ -197,6 +198,7 @@ impl Blocks for PartEdit<'_> {
             BlockRef::Chorus => Some(&mut self.fx.chorus),
             BlockRef::Delay => Some(&mut self.fx.delay),
             BlockRef::Reverb => Some(&mut self.fx.reverb),
+            BlockRef::Part => Some(&mut self.part.mix),
             BlockRef::Pizza
             | BlockRef::Modal
             | BlockRef::Fm

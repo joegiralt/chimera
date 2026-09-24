@@ -63,9 +63,9 @@ fn priming_on_a_part_page_registers_its_address() {
     assert_eq!(ui.mod_state().num_dests(), 1);
 }
 
-/// Review Focus 1: Mixer/System/Demo slots are Legacy — priming there must
-/// not register anything (it used to register `Block{node,i}`, which the
-/// voice read as a Pizza/Drive/Filter/Folder param).
+/// Review Focus 1: priming on the Mixer (bound, not modulatable) or System
+/// (Legacy) chain must not register anything (it used to register
+/// `Block{node,i}`, which the voice read as a Pizza/Drive/Filter/Folder param).
 #[test]
 fn priming_on_legacy_page_registers_nothing() {
     let mut ui = UiState::new();
