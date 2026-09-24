@@ -10,8 +10,13 @@ use crate::dsp::engine_fm::FmEngine;
 use crate::dsp::envelope::Envelope;
 use crate::dsp::modal::ModalEngine;
 use crate::dsp::pizza::PizzaOsc;
+use crate::hw::Cost;
 use crate::params::{EngineType, ParamSnapshot};
 use crate::{MidiNote, Velocity};
+
+/// Design doc § CPU Budget: VA Polymod (2 osc + sync + PWM) ~300. The VA
+/// engine is a silent placeholder; its budget is reserved now.
+const VA_COST: Cost = Cost(300); // estimate
 
 pub struct Engines {
     pizza: PizzaOsc,
@@ -63,6 +68,16 @@ impl Engines {
             EngineType::Fm => self.fm.render_params(out, &p.fm),
             EngineType::Modal => self.modal.render(out, &p.modal, self.sample_rate),
             EngineType::Va => out.fill(0.0),
+        }
+    }
+
+    /// Cycles/sample of one engine instance (ADR 0013).
+    pub const fn cost(kind: EngineType) -> Cost {
+        match kind {
+            EngineType::Pizza => PizzaOsc::COST,
+            EngineType::Fm => FmEngine::COST,
+            EngineType::Modal => ModalEngine::COST,
+            EngineType::Va => VA_COST,
         }
     }
 

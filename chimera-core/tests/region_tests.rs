@@ -31,22 +31,22 @@ fn quantize_stability_tiny_jitter() {
 
 #[test]
 fn region_data_same_is_equal() {
-    let a = RegionData::header(0, 1, 2, 0);
-    let b = RegionData::header(0, 1, 2, 0);
+    let a = RegionData::header(0, 1, 2, 0, false);
+    let b = RegionData::header(0, 1, 2, 0, false);
     assert_eq!(a, b);
 }
 
 #[test]
 fn region_data_diff_is_not_equal() {
-    let a = RegionData::header(0, 1, 2, 0);
-    let b = RegionData::header(0, 1, 3, 0);
+    let a = RegionData::header(0, 1, 2, 0, false);
+    let b = RegionData::header(0, 1, 3, 0, false);
     assert_ne!(a, b);
 }
 
 #[test]
-fn region_data_params_values_differ() {
-    let a = RegionData::params(PageKey::Legacy(PageId::Mixer), [500; 6]);
-    let b = RegionData::params(PageKey::Legacy(PageId::Mixer), [501, 500, 500, 500, 500, 500]);
+fn region_data_cell_values_differ() {
+    let a = RegionData::cells(PageKey::Legacy(PageId::DemoWaves), [500; 6], 0, 0);
+    let b = RegionData::cells(PageKey::Legacy(PageId::DemoWaves), [501, 500, 500, 500, 500, 500], 0, 0);
     assert_ne!(a, b);
 }
 
@@ -58,10 +58,10 @@ fn big_viz_has_4_regions() {
 }
 
 #[test]
-fn cell_grid_has_3_regions() {
+fn cell_grid_has_5_regions() {
     let mut rs = RegionSet::new();
     rs.set_layout(PageLayout::CellGrid);
-    assert_eq!(rs.count, 3);
+    assert_eq!(rs.count, 5);
 }
 
 #[test]
@@ -93,11 +93,13 @@ fn regions_tile_full_screen_cell_grid() {
 fn layout_change_resets_all_regions() {
     let mut rs = RegionSet::new();
     rs.set_layout(PageLayout::BigViz);
-    rs.regions[2].prev_data = RegionData::params(PageKey::Legacy(PageId::Mixer), [500; 6]);
+    rs.regions[2].prev_data = RegionData::cells(PageKey::Legacy(PageId::DemoWaves), [500; 6], 0, 0);
     rs.set_layout(PageLayout::CellGrid);
     for r in rs.active_regions() {
         match r.prev_data {
             RegionData::Header { chain_idx: 255, .. } => {}
+            RegionData::Focus { slot: u8::MAX, .. } => {}
+            RegionData::Viz { values, .. } if values == [u16::MAX; 6] => {}
             RegionData::Cells { values, .. } if values == [u16::MAX; 6] => {}
             RegionData::Nav { chain_idx: 255, .. } => {}
             other => panic!("expected sentinel, got {:?}", other),
@@ -111,7 +113,7 @@ fn big_viz_region_kinds() {
     let mut rs = RegionSet::new();
     rs.set_layout(PageLayout::BigViz);
     let kinds: Vec<RegionKind> = rs.active_regions().iter().map(|r| r.kind).collect();
-    assert_eq!(kinds, vec![RegionKind::Header, RegionKind::Viz, RegionKind::Params, RegionKind::Nav]);
+    assert_eq!(kinds, vec![RegionKind::Header, RegionKind::Viz, RegionKind::Cells, RegionKind::Nav]);
 }
 
 #[test]
@@ -120,7 +122,7 @@ fn cell_grid_region_kinds() {
     let mut rs = RegionSet::new();
     rs.set_layout(PageLayout::CellGrid);
     let kinds: Vec<RegionKind> = rs.active_regions().iter().map(|r| r.kind).collect();
-    assert_eq!(kinds, vec![RegionKind::Header, RegionKind::Cells, RegionKind::Nav]);
+    assert_eq!(kinds, vec![RegionKind::Header, RegionKind::Focus, RegionKind::Viz, RegionKind::Cells, RegionKind::Nav]);
 }
 
 #[test]
@@ -128,19 +130,19 @@ fn encoder_only_dirties_params_not_header() {
     let mut rs = RegionSet::new();
     rs.set_layout(PageLayout::BigViz);
 
-    let page = PageKey::Legacy(PageId::Mixer);
+    let page = PageKey::Legacy(PageId::DemoWaves);
     let values_a = [500u16; 6];
     let values_b = [501, 500, 500, 500, 500, 500];
 
-    rs.regions[0].prev_data = RegionData::header(0, 0, 0, 0);
-    rs.regions[1].prev_data = RegionData::viz(page, values_a);
-    rs.regions[2].prev_data = RegionData::params(page, values_a);
+    rs.regions[0].prev_data = RegionData::header(0, 0, 0, 0, false);
+    rs.regions[1].prev_data = RegionData::viz(page, values_a, 0);
+    rs.regions[2].prev_data = RegionData::cells(page, values_a, 0, 0);
     rs.regions[3].prev_data = RegionData::nav(0, 0, 0, 0);
 
     let current = [
-        RegionData::header(0, 0, 0, 0),
-        RegionData::viz(page, values_b),
-        RegionData::params(page, values_b),
+        RegionData::header(0, 0, 0, 0, false),
+        RegionData::viz(page, values_b, 0),
+        RegionData::cells(page, values_b, 0, 0),
         RegionData::nav(0, 0, 0, 0),
     ];
 
@@ -156,18 +158,18 @@ fn nav_change_dirties_header_and_nav() {
     let mut rs = RegionSet::new();
     rs.set_layout(PageLayout::BigViz);
 
-    let page = PageKey::Legacy(PageId::Mixer);
+    let page = PageKey::Legacy(PageId::DemoWaves);
     let values = [500u16; 6];
 
-    rs.regions[0].prev_data = RegionData::header(0, 0, 0, 0);
-    rs.regions[1].prev_data = RegionData::viz(page, values);
-    rs.regions[2].prev_data = RegionData::params(page, values);
+    rs.regions[0].prev_data = RegionData::header(0, 0, 0, 0, false);
+    rs.regions[1].prev_data = RegionData::viz(page, values, 0);
+    rs.regions[2].prev_data = RegionData::cells(page, values, 0, 0);
     rs.regions[3].prev_data = RegionData::nav(0, 0, 0, 0);
 
     let current = [
-        RegionData::header(0, 1, 0, 0),
-        RegionData::viz(page, values),
-        RegionData::params(page, values),
+        RegionData::header(0, 1, 0, 0, false),
+        RegionData::viz(page, values, 0),
+        RegionData::cells(page, values, 0, 0),
         RegionData::nav(0, 1, 0, 0),
     ];
 
@@ -183,18 +185,18 @@ fn no_change_means_no_dirty() {
     let mut rs = RegionSet::new();
     rs.set_layout(PageLayout::BigViz);
 
-    let page = PageKey::Legacy(PageId::Mixer);
+    let page = PageKey::Legacy(PageId::DemoWaves);
     let values = [500u16; 6];
 
-    rs.regions[0].prev_data = RegionData::header(0, 0, 0, 0);
-    rs.regions[1].prev_data = RegionData::viz(page, values);
-    rs.regions[2].prev_data = RegionData::params(page, values);
+    rs.regions[0].prev_data = RegionData::header(0, 0, 0, 0, false);
+    rs.regions[1].prev_data = RegionData::viz(page, values, 0);
+    rs.regions[2].prev_data = RegionData::cells(page, values, 0, 0);
     rs.regions[3].prev_data = RegionData::nav(0, 0, 0, 0);
 
     let current = [
-        RegionData::header(0, 0, 0, 0),
-        RegionData::viz(page, values),
-        RegionData::params(page, values),
+        RegionData::header(0, 0, 0, 0, false),
+        RegionData::viz(page, values, 0),
+        RegionData::cells(page, values, 0, 0),
         RegionData::nav(0, 0, 0, 0),
     ];
 

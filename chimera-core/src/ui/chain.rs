@@ -37,7 +37,7 @@ impl ChainNav {
     }
 
     /// Get the chain definition for the current ChainId.
-    /// For `Part(_)`, resolves via the stored `chain_type` (set by UiState from the active track).
+    /// For `Part(_)`, resolves via the stored `chain_type` (set by UiState from the active part).
     pub fn active_chain(&self) -> &'static ChainDef2 {
         match self.chain_id {
             ChainId::Part(_) => chain_def_for(self.chain_type),

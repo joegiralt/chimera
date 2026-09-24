@@ -1,5 +1,6 @@
 use chimera_hal::BLOCK_SIZE;
 
+use crate::addr::Blocks;
 use crate::block::apply_offset;
 use crate::dsp::drive::Drive;
 use crate::dsp::engines::Engines;
@@ -7,9 +8,13 @@ use crate::dsp::envelope::Envelope;
 use crate::dsp::filter::SvfFilter;
 use crate::dsp::lfo::Lfo;
 use crate::dsp::wavefolder::Wavefolder;
+use crate::hw::{Cost, MAX_VOICES, VOICE_RAM_BUDGET};
 use crate::modulation::{ModState, MAX_MOD_SOURCES};
 use crate::params::{EngineType, ParamSnapshot};
 use crate::{MidiNote, Velocity};
+
+// ADR 0013: the voice pool fits D2 SRAM beside the DMA buffers, on both targets.
+const _: () = assert!(core::mem::size_of::<[Voice; MAX_VOICES]>() <= VOICE_RAM_BUDGET);
 
 /// Complete voice signal chain:
 /// [Engine] → [Drive] → [Filter] → [Wavefolder] → [VCA]
@@ -34,6 +39,16 @@ impl Default for Voice {
 }
 
 impl Voice {
+    /// Design doc § CPU Budget, everything but the engine: drive 20, filter
+    /// 80, filter FM 60, folder 40, VCA + amp env 50, 3 envelopes 90,
+    /// 2 LFOs 40, mod matrix 30.
+    pub const CHAIN_COST: Cost = Cost(410); // estimate
+
+    /// Cycles/sample of a voice playing `kind`.
+    pub const fn cost(kind: EngineType) -> Cost {
+        Cost(Engines::cost(kind).0 + Self::CHAIN_COST.0)
+    }
+
     /// The sample rate is stored once (spec §3), not passed per call.
     pub fn new(sample_rate: u32) -> Self {
         Self {
@@ -75,7 +90,7 @@ impl Voice {
     pub fn render(&mut self, output: &mut [f32; BLOCK_SIZE], params: &ParamSnapshot, mod_state: &ModState) {
         let sample_rate = self.sample_rate();
 
-        // Auto-retrigger if engine type changed (e.g., user loaded FM patch)
+        // Auto-retrigger if engine type changed (e.g., user loaded FM sound)
         if self.active && params.engine() != self.active_engine {
             self.note_on(self.last_note, self.last_velocity, params);
         }
@@ -103,7 +118,10 @@ impl Voice {
             let off = mod_state.sum_for(d, &mod_values);
             if off != 0.0 {
                 let a = mod_state.dest(d);
-                apply_offset(m.block_mut(a.block), a.param, off);
+                // Modulatable addresses are always Sound blocks (`voice_reads`).
+                if let Some(blk) = m.block_mut(a.block) {
+                    apply_offset(blk, a.param, off);
+                }
             }
         }
 
@@ -131,9 +149,6 @@ impl Voice {
                 *sample *= volume;
             }
         }
-
-        // 6. Scope — capture end-of-chain for oscilloscope display
-        crate::scope::write_samples(output);
 
         // Check if done
         self.active = self.engines.is_active(self.active_engine, &self.amp_env);

@@ -60,6 +60,12 @@ impl Default for ChorusParams {
 }
 
 impl ChorusParams {
+    /// Off when the mode is off or the mix is below audibility; `process`
+    /// passes the input through unchanged then.
+    pub fn is_on(&self) -> bool {
+        ChorusMode::from_u8(self.mode) != ChorusMode::Off && self.mix >= 0.001
+    }
+
     pub const MODE: ParamId = ParamId(0);
     pub const RATE: ParamId = ParamId(1);
     pub const DEPTH: ParamId = ParamId(2);
@@ -173,11 +179,22 @@ impl JunoChorus {
         }
     }
 
+    /// Insert use: dry/wet mix in place.
     pub fn process(&mut self, buf: &mut [f32; BLOCK_SIZE], params: &ChorusParams, sample_rate: u32) {
-        let mode = ChorusMode::from_u8(params.mode);
-        if mode == ChorusMode::Off || params.mix < 0.001 {
+        self.run(buf, params, sample_rate, 1.0 - params.mix * 0.5);
+    }
+
+    /// Send/return use (the FX bus): writes only the wet signal × MIX, the
+    /// return level, in place of the send.
+    pub fn process_wet(&mut self, buf: &mut [f32; BLOCK_SIZE], params: &ChorusParams, sample_rate: u32) {
+        self.run(buf, params, sample_rate, 0.0);
+    }
+
+    fn run(&mut self, buf: &mut [f32; BLOCK_SIZE], params: &ChorusParams, sample_rate: u32, dry_gain: f32) {
+        if !params.is_on() {
             return;
         }
+        let mode = ChorusMode::from_u8(params.mode);
 
         // Juno I: 0.513 Hz LFO, 1.7ms depth, 3.6ms base delay
         // Juno II: 0.863 Hz LFO, 2.3ms depth, 3.6ms base delay
@@ -235,7 +252,7 @@ impl JunoChorus {
             //   L = dry + wet * mix
             //   R = dry - wet * mix (phase inversion = wide stereo)
             // For now, mono mix:
-            *s = dry * (1.0 - params.mix * 0.5) + wet * params.mix;
+            *s = dry * dry_gain + wet * params.mix;
         }
     }
 }

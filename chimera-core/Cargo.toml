@@ -8,5 +8,7 @@ chimera-hal = { path = "../chimera-hal" }
 libm = "0.2"
 embedded-graphics = "0.8"
 embedded-graphics-core = "0.4"
+# Bitmap fonts from U8g2 (crate MIT OR Apache-2.0; font licences in ADR 0016).
+u8g2-fonts = "=0.8.0"
 
 [dev-dependencies]

@@ -1,6 +1,6 @@
 use crate::addr::{BlockRef, Op, ParamAddr};
 use crate::block::{find_spec, ParamId, ParamSpec};
-use crate::ui::page::{CellIcon, PageLayout, ValFmt};
+use crate::ui::page::{PageLayout, ValFmt};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VizType {
@@ -40,29 +40,28 @@ pub enum SlotBinding {
 #[derive(Clone, Copy, Debug)]
 pub struct ParamSlot {
     pub binding: SlotBinding,
-    pub icon: CellIcon,
     /// Display label override; `None` shows the spec's label (plan D6).
     /// Format and step always come from the spec.
     pub label_override: Option<&'static str>,
 }
 
 impl ParamSlot {
-    pub const EMPTY: ParamSlot = ParamSlot { binding: SlotBinding::Empty, icon: CellIcon::None, label_override: None };
+    pub const EMPTY: ParamSlot = ParamSlot { binding: SlotBinding::Empty, label_override: None };
 
-    pub const fn param(block: BlockRef, param: ParamId, icon: CellIcon) -> Self {
-        Self { binding: SlotBinding::Param(ParamAddr::new(block, param)), icon, label_override: None }
+    pub const fn param(block: BlockRef, param: ParamId) -> Self {
+        Self { binding: SlotBinding::Param(ParamAddr::new(block, param)), label_override: None }
     }
 
-    pub const fn selected_op(param: ParamId, icon: CellIcon) -> Self {
-        Self { binding: SlotBinding::SelectedOp(param), icon, label_override: None }
+    pub const fn selected_op(param: ParamId) -> Self {
+        Self { binding: SlotBinding::SelectedOp(param), label_override: None }
     }
 
-    pub const fn select_op(icon: CellIcon) -> Self {
-        Self { binding: SlotBinding::SelectOp, icon, label_override: None }
+    pub const fn select_op() -> Self {
+        Self { binding: SlotBinding::SelectOp, label_override: None }
     }
 
-    pub const fn legacy(label: &'static str, fmt: ValFmt, icon: CellIcon) -> Self {
-        Self { binding: SlotBinding::Legacy { label, fmt }, icon, label_override: None }
+    pub const fn legacy(label: &'static str, fmt: ValFmt) -> Self {
+        Self { binding: SlotBinding::Legacy { label, fmt }, label_override: None }
     }
 
     pub const fn with_label(self, label: &'static str) -> Self {
@@ -94,7 +93,7 @@ impl ParamSlot {
     pub fn format(&self) -> ValFmt {
         match self.binding {
             SlotBinding::Empty => ValFmt::Uni,
-            SlotBinding::SelectOp => ValFmt::Int(3),
+            SlotBinding::SelectOp => ValFmt::OneBased(3),
             SlotBinding::Legacy { fmt, .. } => fmt,
             SlotBinding::Param(_) | SlotBinding::SelectedOp(_) => self.spec().map_or(ValFmt::Uni, |s| s.fmt),
         }

@@ -1,31 +1,29 @@
-//! Mod matrix grid renderer — draws the source×destination grid.
-//! For now uses hardcoded demo data. Will be dynamic from chain later.
+//! Mod matrix: routing state (cursor, amounts, sources, destinations) and
+//! its dot grid (UI refresh spec § Page types).
 
-use embedded_graphics::Drawable;
+use core::fmt::Write;
+
 use embedded_graphics::draw_target::DrawTarget;
-use embedded_graphics::geometry::{Point, Size};
-use embedded_graphics::mono_font::MonoTextStyle;
-use embedded_graphics::mono_font::ascii::FONT_6X10;
 use embedded_graphics::pixelcolor::Rgb565;
-use embedded_graphics::primitives::{PrimitiveStyle, Rectangle, StyledDrawable};
-use embedded_graphics::text::Text;
 
-use crate::addr::ParamAddr;
+use crate::addr::{BlockRef, ParamAddr};
 use crate::mod_path::LABEL_LEN;
+use crate::ui::draw;
+use crate::ui::fmt::FmtBuf;
 use crate::ui::theme;
 
-/// Grid geometry
-const GRID_TOP: i32 = 28;        // below header
-const GRID_LEFT: i32 = 0;        // left edge
-const ROW_LABEL_W: i32 = 36;     // width for source labels
-const COL_HEADER_H: i32 = 22;    // height for dest column headers (2 lines)
-const CELL_W: i32 = 32;          // width per cell (fits 4 chars + padding)
-const CELL_H: i32 = 14;          // height per cell
-const GRID_BOTTOM: i32 = 265;    // above dungeon map
-
-/// Calculated visible dimensions
-const VISIBLE_COLS: usize = ((240 - ROW_LABEL_W) / CELL_W) as usize;
-const VISIBLE_ROWS: usize = ((GRID_BOTTOM - GRID_TOP - COL_HEADER_H) / CELL_H) as usize;
+/// Dot grid geometry (grid region y 118..266): destination labels across,
+/// sources down, one dot per route.
+pub const GRID_X: i32 = 58;
+pub const GRID_COL_W: i32 = 40;
+pub const GRID_TAG_Y: i32 = 130;
+pub const GRID_NAME_Y: i32 = 140;
+pub const GRID_ROW0_Y: i32 = 162;
+pub const GRID_ROW_H: i32 = 24;
+pub const HINT_Y: i32 = 236;
+pub const STATS_Y: i32 = 254;
+const VISIBLE_COLS: usize = 5;
+const VISIBLE_ROWS: usize = 3;
 
 /// Max sources and destinations for the amounts grid.
 pub const MAX_SOURCES: usize = 16;
@@ -115,6 +113,20 @@ impl MatrixState {
         }
     }
 
+    /// Amounts from a Part's `ModState`, matched by destination address
+    /// (0 for a destination it does not route). Call after
+    /// `rebuild_sources` and `rebuild_dests_from_registry`.
+    pub fn load_amounts(&mut self, mod_state: &crate::modulation::ModState) {
+        self.amounts = [[0; MAX_DESTS]; MAX_SOURCES];
+        for di in 0..self.num_dests {
+            let Some(dest) = self.dests[di] else { continue };
+            let Some(d) = (0..mod_state.num_dests()).find(|&d| mod_state.dest(d) == dest.addr) else { continue };
+            for si in 0..self.num_sources {
+                self.amounts[si][di] = mod_state.amount(si, d);
+            }
+        }
+    }
+
     /// Get the amount at the current cursor position.
     pub fn current_amount(&self) -> i8 {
         self.amounts[self.sel_row][self.sel_col]
@@ -198,197 +210,121 @@ impl MatrixState {
     }
 }
 
-/// Draw the mod matrix grid in the content zone.
-/// Reads cursor position and scroll from `MatrixState`.
-pub fn draw_grid<D>(
-    display: &mut D,
-    state: &MatrixState,
-) where
+/// Short tag for the block a destination lives in (column header, top line).
+pub fn block_tag(b: BlockRef) -> &'static str {
+    use crate::addr::Op;
+    match b {
+        BlockRef::Pizza => "PIZ",
+        BlockRef::Modal => "MDL",
+        BlockRef::Fm => "FM",
+        BlockRef::FmOp(Op::A) => "OP1",
+        BlockRef::FmOp(Op::B) => "OP2",
+        BlockRef::FmOp(Op::C) => "OP3",
+        BlockRef::FmOp(Op::D) => "OP4",
+        BlockRef::Drive => "DRV",
+        BlockRef::Filter => "FLT",
+        BlockRef::Folder => "FLD",
+        BlockRef::AmpEnv => "ENV",
+        BlockRef::FilterEnv => "FEN",
+        BlockRef::AuxEnv => "AEN",
+        BlockRef::Lfo => "LFO",
+        BlockRef::Out => "OUT",
+        BlockRef::Chorus => "CHR",
+        BlockRef::Delay => "DLY",
+        BlockRef::Reverb => "REV",
+        BlockRef::Part => "PRT",
+    }
+}
+
+/// A destination's parameter name (its spec label).
+pub fn dest_name(d: &ModDest) -> &'static str {
+    d.addr.spec().map_or("?", |s| s.label)
+}
+
+/// A destination as the focus band names it: the column header's two lines
+/// on one, `TAG NAME` (`OP1 LEVEL`), so operators read apart.
+pub fn fmt_route_dest(buf: &mut FmtBuf, d: &ModDest) {
+    let _ = write!(buf, "{} {}", block_tag(d.addr.block), dest_name(d));
+}
+
+/// Amount as shown: `+42`, `-30`, `0`.
+pub fn fmt_amount(buf: &mut FmtBuf, amount: i8) {
+    let _ = if amount > 0 { write!(buf, "+{}", amount) } else { write!(buf, "{}", amount) };
+}
+
+/// Route count and destination count, e.g. `"12 ROUTES   5 OF 16 DEST"`.
+/// Sized to fit the 32-byte `FmtBuf` even at the worst case: routes up to
+/// `MAX_MOD_SOURCES` × `MAX_DESTS` (three digits) and `num_dests` at
+/// `MAX_DESTS`/`MAX_DESTS` — the original `"{} OF {} DESTINATIONS"` wording
+/// overflowed at max counts, so this is the shortened form.
+pub fn fmt_stats(buf: &mut FmtBuf, routes: usize, num_dests: usize) {
+    let _ = write!(buf, "{} ROUTES   {} OF {} DEST", routes, num_dests, MAX_DESTS);
+}
+
+/// Centre of grid cell (visible column `ci`, visible row `vi`).
+pub fn cell_center(ci: usize, vi: usize) -> (i32, i32) {
+    (GRID_X + ci as i32 * GRID_COL_W, GRID_ROW0_Y + vi as i32 * GRID_ROW_H)
+}
+
+/// Dot grid: sources down, primed destinations across; a filled dot is a
+/// positive amount, a ring negative, size = |amount|, a tiny dim dot none;
+/// the selected cell outlined in the accent, its dot sized by `sel_amount`
+/// (the lerped amount, so it grows with the focus band rather than
+/// snapping). Then the hint and route count.
+pub fn draw_grid<D>(d: &mut D, state: &MatrixState, sel_amount: i8)
+where
     D: DrawTarget<Color = Rgb565>,
 {
-    let sel_row = state.sel_row;
-    let sel_col = state.sel_col;
-    let scroll_y = state.scroll_y;
-    let scroll_x = state.scroll_x;
-    let dim = MonoTextStyle::new(&FONT_6X10, theme::TEXT_DIM);
-    let mid = MonoTextStyle::new(&FONT_6X10, theme::TEXT_MID);
-    let bright = MonoTextStyle::new(&FONT_6X10, theme::PARAM_VALUE);
-    let accent = MonoTextStyle::new(&FONT_6X10, theme::ACCENT);
-
-    let visible_cols = state.visible_cols();
-    let visible_rows = state.visible_rows();
-
-    let num_dests = state.num_dests;
-
-    // ── Column headers (2-line: block short + param) — from enabled destinations ──
-    for ci in 0..visible_cols {
-        let di = ci + scroll_x;
-        if di >= num_dests { break; }
-        let dest = match &state.dests[di] {
-            Some(d) => d,
-            None => break,
-        };
-        let x = ROW_LABEL_W + ci as i32 * CELL_W + 2;
-        let y = GRID_TOP;
-
-        let style = if di == sel_col { accent } else { dim };
-        // Label is up to 8 chars; split into two 4-char lines for column header
-        let full = dest.label_str();
-        let (line1, line2) = if full.len() > 4 {
-            (&full[..4], &full[4..])
-        } else {
-            (full, "")
-        };
-        let _ = Text::new(line1, Point::new(x, y + 10), style).draw(display);
-        if !line2.is_empty() {
-            let _ = Text::new(line2, Point::new(x, y + 20), style).draw(display);
-        }
+    let (cols, rows) = (state.visible_cols(), state.visible_rows());
+    for ci in 0..cols {
+        let di = ci + state.scroll_x;
+        let Some(Some(dest)) = state.dests.get(di).filter(|_| di < state.num_dests) else { break };
+        let x = GRID_X + ci as i32 * GRID_COL_W;
+        let name_color = if di == state.sel_col { theme::INK } else { theme::MID };
+        draw::text_center(d, &theme::FONT_LABEL, block_tag(dest.addr.block), x, GRID_TAG_Y, theme::MID, 0);
+        draw::text_center(d, &theme::FONT_LABEL, dest_name(dest), x, GRID_NAME_Y, name_color, 0);
     }
-
-    // ── Row labels + cells ──
-
-    for vi in 0..visible_rows {
-        let ri = vi + scroll_y;
-        if ri >= state.num_sources { break; }
-        let y = GRID_TOP + COL_HEADER_H + vi as i32 * CELL_H;
-
-        // Row label from source list
-        let label_style = if ri == sel_row { accent } else { dim };
-        let source_name = match &state.sources[ri] {
-            Some(s) => s.name,
-            None => "?",
-        };
-        let label = if source_name.len() > 5 { &source_name[..5] } else { source_name };
-        let _ = Text::new(label, Point::new(GRID_LEFT + 2, y + 10), label_style).draw(display);
-
-        // Cells
-        for ci in 0..visible_cols {
-            let di = ci + scroll_x;
-            if di >= num_dests { break; }
-            let x = ROW_LABEL_W + ci as i32 * CELL_W;
-
-            let is_selected = ri == sel_row && di == sel_col;
-
-            // Read amount from mutable state
-            let amt = state.amounts[ri][di];
-            let amount = if amt != 0 { Some(amt) } else { None };
-
-            // Cell background for selected
-            if is_selected {
-                let _ = Rectangle::new(
-                    Point::new(x, y),
-                    Size::new(CELL_W as u32 - 1, CELL_H as u32 - 1),
-                )
-                .draw_styled(
-                    &PrimitiveStyle::with_fill(Rgb565::new(0, 8, 4)),
-                    display,
-                );
+    if state.scroll_x > 0 {
+        draw::text(d, &theme::FONT_LABEL, "<", GRID_X - 26, GRID_NAME_Y, theme::MID);
+    }
+    if state.num_dests > state.scroll_x + cols {
+        draw::text(d, &theme::FONT_LABEL, ">", theme::SCREEN_W - 8, GRID_NAME_Y, theme::MID);
+    }
+    for vi in 0..rows {
+        let ri = vi + state.scroll_y;
+        if ri >= state.num_sources {
+            break;
+        }
+        let (_, y) = cell_center(0, vi);
+        let name = state.sources[ri].map_or("?", |s| s.name);
+        let color = if ri == state.sel_row { theme::INK } else { theme::MID };
+        draw::text(d, &theme::FONT_LABEL_BOLD, name, theme::MARGIN_X, y + 4, color);
+        for ci in 0..cols {
+            let di = ci + state.scroll_x;
+            if di >= state.num_dests {
+                break;
             }
-
-            // Draw amount
-            if let Some(amt) = amount {
-                let text_style = if is_selected { bright } else { mid };
-                // Format: +64, -40, etc.
-                let mut buf = [0u8; 5];
-                let s = format_amount(amt, &mut buf);
-                let _ = Text::new(s, Point::new(x + 2, y + 10), text_style).draw(display);
-            } else if is_selected {
-                // Show cursor in empty selected cell
-                let _ = Text::new("·", Point::new(x + 10, y + 10), dim).draw(display);
+            let (x, y) = cell_center(ci, vi);
+            let selected = ri == state.sel_row && di == state.sel_col;
+            let amount = if selected { sel_amount } else { state.amounts[ri][di] };
+            if selected {
+                draw::round_outline(d, x - 14, y - 11, 28, 22, 6, theme::ACCENT);
+            }
+            let r = 2 + (amount as i32).abs() * 8 / 127;
+            let color = if selected { theme::ACCENT } else { theme::INK2 };
+            match amount {
+                0 => draw::dot(d, x, y, 1, theme::FAINT),
+                a if a > 0 => draw::dot(d, x, y, r, color),
+                _ => draw::ring(d, x, y, r, color, 1),
             }
         }
     }
-
-    // ── Grid lines ──
-    let grid_style = PrimitiveStyle::with_stroke(Rgb565::new(2, 4, 2), 1);
-
-    // Horizontal line below column headers
-    let header_line_y = GRID_TOP + COL_HEADER_H - 1;
-    let _ = embedded_graphics::primitives::Line::new(
-        Point::new(ROW_LABEL_W, header_line_y),
-        Point::new(239, header_line_y),
-    )
-    .draw_styled(&grid_style, display);
-
-    // Vertical line after row labels
-    let _ = embedded_graphics::primitives::Line::new(
-        Point::new(ROW_LABEL_W - 1, GRID_TOP),
-        Point::new(ROW_LABEL_W - 1, GRID_BOTTOM),
-    )
-    .draw_styled(&grid_style, display);
-
-    // ── Scroll indicator ──
-    let max_col_scroll = if num_dests > visible_cols { num_dests - visible_cols } else { 0 };
-    if max_col_scroll > 0 {
-        let indicator_style = MonoTextStyle::new(&FONT_6X10, theme::TEXT_DIM);
-        if scroll_x > 0 {
-            let _ = Text::new("<", Point::new(ROW_LABEL_W - 8, GRID_BOTTOM - 2), indicator_style).draw(display);
-        }
-        if scroll_x < max_col_scroll {
-            let _ = Text::new(">", Point::new(234, GRID_BOTTOM - 2), indicator_style).draw(display);
-        }
-    }
-
-    // ── Stats line ──
-    let mut stats_buf = [0u8; 32];
-    let stats = format_stats(state.num_sources, num_dests, visible_rows, visible_cols, &mut stats_buf);
-    let _ = Text::new(stats, Point::new(4, GRID_BOTTOM - 2), dim).draw(display);
-}
-
-fn format_amount(amt: i8, buf: &mut [u8; 5]) -> &str {
-    let negative = amt < 0;
-    let abs = if negative { -(amt as i16) } else { amt as i16 } as u16;
-
-    let mut pos = 0;
-    if negative {
-        buf[pos] = b'-';
-    } else {
-        buf[pos] = b'+';
-    }
-    pos += 1;
-
-    if abs >= 100 {
-        buf[pos] = b'0' + (abs / 100) as u8;
-        pos += 1;
-    }
-    if abs >= 10 {
-        buf[pos] = b'0' + ((abs / 10) % 10) as u8;
-        pos += 1;
-    }
-    buf[pos] = b'0' + (abs % 10) as u8;
-    pos += 1;
-
-    core::str::from_utf8(&buf[..pos]).unwrap_or("?")
-}
-
-fn format_stats(rows: usize, cols: usize, vis_r: usize, vis_c: usize, buf: &mut [u8; 32]) -> &str {
-    // "12×10 (11×7 vis)"
-    let mut pos = 0;
-
-    pos += write_num(rows, &mut buf[pos..]);
-    buf[pos] = b'x'; pos += 1;
-    pos += write_num(cols, &mut buf[pos..]);
-    buf[pos] = b' '; pos += 1;
-    buf[pos] = b'('; pos += 1;
-    pos += write_num(vis_r.min(rows), &mut buf[pos..]);
-    buf[pos] = b'x'; pos += 1;
-    pos += write_num(vis_c.min(cols), &mut buf[pos..]);
-    buf[pos] = b' '; pos += 1;
-    buf[pos] = b'v'; pos += 1;
-    buf[pos] = b'i'; pos += 1;
-    buf[pos] = b's'; pos += 1;
-    buf[pos] = b')'; pos += 1;
-
-    core::str::from_utf8(&buf[..pos]).unwrap_or("?")
-}
-
-fn write_num(n: usize, buf: &mut [u8]) -> usize {
-    if n >= 10 {
-        buf[0] = b'0' + (n / 10) as u8;
-        buf[1] = b'0' + (n % 10) as u8;
-        2
-    } else {
-        buf[0] = b'0' + n as u8;
-        1
-    }
+    draw::text(d, &theme::FONT_LABEL, "MIX+PLUS ADD   MIX+MINUS REMOVE", theme::MARGIN_X, HINT_Y, theme::MID);
+    let routes = (0..state.num_sources)
+        .flat_map(|r| (0..state.num_dests).map(move |c| (r, c)))
+        .filter(|&(r, c)| state.amounts[r][c] != 0)
+        .count();
+    let mut buf = FmtBuf::new();
+    fmt_stats(&mut buf, routes, state.num_dests);
+    draw::text(d, &theme::FONT_LABEL, buf.as_str(), theme::MARGIN_X, STATS_Y, theme::MID);
 }

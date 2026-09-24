@@ -12,9 +12,14 @@ firmware:
 build:
     cargo build -p chimera-core -p chimera-hal -p chimera-desktop
 
-# Check everything compiles (desktop targets)
+# Everything must pass before a commit (ADR 0013): core + hal tests, desktop
+# build + unit tests, firmware build + link into its flash/RAM regions.
+# The desktop needs ALSA's pkg-config file; point PKG_CONFIG_PATH at it if it
+# is not installed system-wide (cargo inherits the variable).
 check:
-    cargo check -p chimera-core -p chimera-hal -p chimera-desktop
+    cargo test -p chimera-core -p chimera-hal
+    cargo test -p chimera-desktop
+    cargo build -p chimera-stm32 --target thumbv7em-none-eabihf
 
 # Run tests
 test:
@@ -23,6 +28,15 @@ test:
 # Clippy
 clippy:
     cargo clippy -p chimera-core -p chimera-hal -p chimera-desktop -- -D warnings
+
+# Render every screen-golden case with the real renderer and write
+# docs/screens/<case>.png at 2x (nearest neighbour). Needs ImageMagick (`magick`).
+# SCREEN_DUMP must be absolute: cargo runs the test binary with its CWD set
+# to chimera-core/, not the workspace root, so a relative path lands there.
+screens:
+    rm -rf target/screens && mkdir -p target/screens docs/screens
+    SCREEN_DUMP="$(pwd)/target/screens" cargo test -p chimera-core --test screen_golden_test -q
+    for f in target/screens/*.ppm; do magick "$f" -filter point -resize 200% "docs/screens/$(basename "$f" .ppm).png"; done
 
 # Flash firmware to PreenFM3 via DFU
 flash:

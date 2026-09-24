@@ -1,6 +1,7 @@
 use chimera_hal::BLOCK_SIZE;
 
 use crate::block::{Block, ParamId, ParamSpec, ValFmt};
+use crate::hw::Cost;
 
 const MAX_MODES: usize = 48;
 
@@ -277,10 +278,13 @@ impl Block for ModalParams {
 
 // ── Karplus-Strong delay line (ported from Ambika custom firmware) ───
 
-const MAX_DELAY: usize = 2048;
+/// String delay-line length (ADR 0014): the period of E1 (MIDI 28, 41.2 Hz)
+/// at 48 kHz is 1,164 samples, so E1 and above play at their exact period;
+/// lower notes clamp to 1,199 samples (~40 Hz). Sized so six voices fit D2.
+pub const MAX_STRING_DELAY: usize = 1200;
 
 struct KsString {
-    buffer: [f32; MAX_DELAY],
+    buffer: [f32; MAX_STRING_DELAY],
     write_pos: usize,
     delay_len: usize,
     ens_lfo_phase: u32,
@@ -290,7 +294,7 @@ struct KsString {
 impl KsString {
     fn new() -> Self {
         Self {
-            buffer: [0.0; MAX_DELAY],
+            buffer: [0.0; MAX_STRING_DELAY],
             write_pos: 0,
             delay_len: 100,
             ens_lfo_phase: 0,
@@ -300,7 +304,7 @@ impl KsString {
 
     fn set_freq(&mut self, freq: f32, sample_rate: u32) {
         let period = sample_rate as f32 / freq;
-        self.delay_len = (period as usize).clamp(2, MAX_DELAY - 1);
+        self.delay_len = (period as usize).clamp(2, MAX_STRING_DELAY - 1);
     }
 
     /// Excite the string (ported from Ambika Trigger).
@@ -484,6 +488,9 @@ impl Default for ModalEngine {
 }
 
 impl ModalEngine {
+    /// Design doc § CPU Budget: physical modeling (modal, 8 modes) ~800.
+    pub const COST: Cost = Cost(800); // estimate
+
     pub fn new() -> Self {
         Self {
             filters: core::array::from_fn(|_| Svf::new()),
@@ -779,7 +786,7 @@ impl ModalEngine {
 
         for s in output.iter_mut() {
             // Read from delay line
-            let read_pos = (self.string.write_pos + MAX_DELAY - self.string.delay_len) % MAX_DELAY;
+            let read_pos = (self.string.write_pos + MAX_STRING_DELAY - self.string.delay_len) % MAX_STRING_DELAY;
             let string_vel = self.string.buffer[read_pos];
 
             // Bow friction: stick-slip model.
@@ -794,7 +801,7 @@ impl ModalEngine {
             let clamped = libm::tanhf(feedback);
 
             self.string.buffer[self.string.write_pos] = clamped;
-            self.string.write_pos = (self.string.write_pos + 1) % MAX_DELAY;
+            self.string.write_pos = (self.string.write_pos + 1) % MAX_STRING_DELAY;
 
             *s = string_vel;
             *max_level = max_level.max(libm::fabsf(*s));

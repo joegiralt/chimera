@@ -221,3 +221,65 @@ fn test_mixer_pan_bipolar_in_registry() {
     let def = &block_registry::MIXER;
     assert_eq!(def.params[1].format(), ValFmt::Bi); // PAN
 }
+
+#[test]
+fn test_fmt_one_based() {
+    let mut buf = FmtBuf::new();
+    fmt_val(&mut buf, 0.0, ValFmt::OneBased(15));
+    assert_eq!(buf.as_str(), "1");
+    let mut buf = FmtBuf::new();
+    fmt_val(&mut buf, 1.0, ValFmt::OneBased(15));
+    assert_eq!(buf.as_str(), "16");
+    let mut buf = FmtBuf::new();
+    fmt_val(&mut buf, 2.0, ValFmt::OneBased(255)); // clamps, no overflow
+    assert_eq!(buf.as_str(), "256");
+}
+
+#[test]
+fn test_fmt_names() {
+    const NAMES: ValFmt = ValFmt::Names(&["P1", "P2", "P3"]);
+    for (v, want) in [(0.0, "P1"), (0.5, "P2"), (0.74, "P2"), (1.0, "P3"), (1.5, "P3")] {
+        let mut buf = FmtBuf::new();
+        fmt_val(&mut buf, v, NAMES);
+        assert_eq!(buf.as_str(), want, "{v}");
+    }
+    assert_eq!(NAMES.max_int(), 2);
+    assert_eq!(NAMES.snap_points(), ValFmt::Int(2).snap_points());
+    let mut buf = FmtBuf::new();
+    fmt_val(&mut buf, 0.0, ValFmt::Names(&[]));
+    assert_eq!(buf.as_str(), "", "no names: nothing shown, no panic");
+}
+
+// -- Pan shows as L / C / R (UI refresh spec § Principles) --
+
+#[test]
+fn test_fmt_pan_left_centre_right() {
+    for (v, want) in [(0.0, "L64"), (0.25, "L32"), (0.5, "C"), (0.75, "R31"), (1.0, "R63")] {
+        let mut buf = FmtBuf::new();
+        fmt_val(&mut buf, v, ValFmt::Pan);
+        assert_eq!(buf.as_str(), want, "{v}");
+    }
+}
+
+#[test]
+fn test_pan_snaps_and_bipolar_like_bi() {
+    assert!(ValFmt::Pan.is_bipolar());
+    assert_eq!(ValFmt::Pan.snap_points(), ValFmt::Bi.snap_points());
+    assert!(!ValFmt::Pan.is_discrete());
+}
+
+#[test]
+fn test_discrete_formats_are_choices() {
+    assert!(ValFmt::Int(7).is_discrete());
+    assert!(ValFmt::OneBased(15).is_discrete());
+    assert!(ValFmt::Names(&["A"]).is_discrete());
+    assert!(!ValFmt::Uni.is_discrete() && !ValFmt::Bi.is_discrete());
+}
+
+#[test]
+fn test_part_and_out_pan_use_the_pan_format() {
+    use chimera_core::part::PART_SPECS;
+    use chimera_core::params::OUT_SPECS;
+    assert_eq!(PART_SPECS[4].fmt, ValFmt::Pan);
+    assert_eq!(OUT_SPECS[1].fmt, ValFmt::Pan);
+}
