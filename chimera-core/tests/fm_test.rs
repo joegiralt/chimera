@@ -6,7 +6,7 @@ use chimera_core::dsp::fm_waveform;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::modulation::ModState;
 use chimera_core::params::{EngineType, ParamSnapshot};
-use chimera_core::preset::{ChainType, Patch};
+use chimera_core::preset::{ChainType, Sound};
 
 #[test]
 fn ratio_table_unity() {
@@ -286,32 +286,32 @@ fn fm_output_bounded() {
 }
 
 // ---------------------------------------------------------------------------
-// Init patch tests
+// Init sound tests
 // ---------------------------------------------------------------------------
 
 #[test]
 fn fm_init_patch_is_audible() {
-    let patch = Patch::init(ChainType::Fm);
-    assert_eq!(patch.params.engine(), EngineType::Fm);
+    let sound = Sound::init(ChainType::Fm);
+    assert_eq!(sound.params.engine(), EngineType::Fm);
     let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
-    voice.note_on(MidiNote::new(69).unwrap(), Velocity::new(100).unwrap(), &patch.params);
+    voice.note_on(MidiNote::new(69).unwrap(), Velocity::new(100).unwrap(), &sound.params);
     let mut buf = [0.0f32; 64];
     let mod_state = ModState::default();
     // Render 16 blocks (64 * 16 = 1024 samples) to accumulate energy
     let mut total_energy = 0.0f32;
     for _ in 0..16 {
-        voice.render(&mut buf, &patch.params, &mod_state);
+        voice.render(&mut buf, &sound.params, &mod_state);
         total_energy += buf.iter().map(|x| x * x).sum::<f32>();
     }
     let rms = (total_energy / 1024.0).sqrt();
-    assert!(rms > 0.001, "FM init patch should be audible, rms={rms}");
+    assert!(rms > 0.001, "FM init sound should be audible, rms={rms}");
 }
 
 #[test]
 fn fm_init_patch_sets_engine_type() {
-    let patch = Patch::init(ChainType::Fm);
-    assert_eq!(patch.params.engine(), EngineType::Fm);
-    assert_eq!(patch.chain_type, ChainType::Fm);
+    let sound = Sound::init(ChainType::Fm);
+    assert_eq!(sound.params.engine(), EngineType::Fm);
+    assert_eq!(sound.chain_type, ChainType::Fm);
 }
 
 // ---------------------------------------------------------------------------

@@ -221,3 +221,31 @@ fn test_mixer_pan_bipolar_in_registry() {
     let def = &block_registry::MIXER;
     assert_eq!(def.params[1].format(), ValFmt::Bi); // PAN
 }
+
+#[test]
+fn test_fmt_one_based() {
+    let mut buf = FmtBuf::new();
+    fmt_val(&mut buf, 0.0, ValFmt::OneBased(15));
+    assert_eq!(buf.as_str(), "1");
+    let mut buf = FmtBuf::new();
+    fmt_val(&mut buf, 1.0, ValFmt::OneBased(15));
+    assert_eq!(buf.as_str(), "16");
+    let mut buf = FmtBuf::new();
+    fmt_val(&mut buf, 2.0, ValFmt::OneBased(255)); // clamps, no overflow
+    assert_eq!(buf.as_str(), "256");
+}
+
+#[test]
+fn test_fmt_names() {
+    const NAMES: ValFmt = ValFmt::Names(&["P1", "P2", "P3"]);
+    for (v, want) in [(0.0, "P1"), (0.5, "P2"), (0.74, "P2"), (1.0, "P3"), (1.5, "P3")] {
+        let mut buf = FmtBuf::new();
+        fmt_val(&mut buf, v, NAMES);
+        assert_eq!(buf.as_str(), want, "{v}");
+    }
+    assert_eq!(NAMES.max_int(), 2);
+    assert_eq!(NAMES.snap_points(), ValFmt::Int(2).snap_points());
+    let mut buf = FmtBuf::new();
+    fmt_val(&mut buf, 0.0, ValFmt::Names(&[]));
+    assert_eq!(buf.as_str(), "", "no names: nothing shown, no panic");
+}

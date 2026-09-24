@@ -115,6 +115,20 @@ impl MatrixState {
         }
     }
 
+    /// Amounts from a Part's `ModState`, matched by destination address
+    /// (0 for a destination it does not route). Call after
+    /// `rebuild_sources` and `rebuild_dests_from_registry`.
+    pub fn load_amounts(&mut self, mod_state: &crate::modulation::ModState) {
+        self.amounts = [[0; MAX_DESTS]; MAX_SOURCES];
+        for di in 0..self.num_dests {
+            let Some(dest) = self.dests[di] else { continue };
+            let Some(d) = (0..mod_state.num_dests()).find(|&d| mod_state.dest(d) == dest.addr) else { continue };
+            for si in 0..self.num_sources {
+                self.amounts[si][di] = mod_state.amount(si, d);
+            }
+        }
+    }
+
     /// Get the amount at the current cursor position.
     pub fn current_amount(&self) -> i8 {
         self.amounts[self.sel_row][self.sel_col]

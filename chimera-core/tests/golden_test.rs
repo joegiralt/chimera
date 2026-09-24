@@ -20,7 +20,7 @@ const GOLDENS: &[(&str, u64, [u32; 8])] = &[
     ("fm_lfo_cutoff", 0x34b678f3574b1538, [898059883, 1045152839, 1054642467, 3163439516, 3202136915, 3201882817, 0, 0]),
     ("fm_lfo_op_a_level", 0x2016ba5789cfbf28, [898059883, 1045152839, 1049001337, 3163439517, 3202136915, 3201882817, 0, 0]),
     // Re-recorded in Task 22 (spec step 8): the FM pre-wire is gone, so the
-    // FM init patch's own ModState is empty and this equals `fm_init`.
+    // FM init sound's own ModState is empty and this equals `fm_init`.
     ("fm_init_patch_mod", 0x9bfe44d54ef0385b, [898059883, 1045152839, 1054792150, 3163439516, 3202136915, 3201882817, 0, 0]),
     ("modal_init", 0x90f1197c153d0b05, [3146805428, 3183273506, 3195882399, 1063217482, 3191764060, 3172592491, 993906163, 1000698095]),
     ("modal_lfo_cutoff", 0x40afa2290a49dae2, [3146805428, 3183273506, 3196374285, 1063217482, 3191764060, 3172592491, 993770242, 999762977]),
@@ -64,6 +64,22 @@ fn goldens_match() {
     assert!(failures.is_empty(), "golden mismatch:\n{}", failures.join("\n"));
 }
 
+/// Spec § Testing: part 1's mono bus through the new voice pool matches
+/// every existing golden bit-for-bit.
+#[test]
+fn goldens_match_through_the_instrument() {
+    let mut failures = Vec::new();
+    for case in Case::ALL {
+        let out = render_case_through_instrument(case);
+        let (hash, sp) = (fnv1a(&out), spots(&out));
+        let &(_, want_hash, want_spots) = GOLDENS.iter().find(|g| g.0 == case.name()).expect("recorded");
+        if hash != want_hash || sp != want_spots {
+            failures.push(format!("{}: hash 0x{hash:016x} (want 0x{want_hash:016x})", case.name()));
+        }
+    }
+    assert!(failures.is_empty(), "instrument golden mismatch:\n{}", failures.join("\n"));
+}
+
 #[test]
 fn known_broken_goldens_have_issues() {
     const TRACKER: &str = "https://github.com/joegiralt/chimera/issues/";
@@ -77,7 +93,7 @@ fn known_broken_goldens_have_issues() {
     }
 }
 
-/// Spec step 8: without the pre-wire, the FM init patch renders exactly like
+/// Spec step 8: without the pre-wire, the FM init sound renders exactly like
 /// FM init params with no modulation.
 #[test]
 fn fm_init_patch_has_no_prewire() {

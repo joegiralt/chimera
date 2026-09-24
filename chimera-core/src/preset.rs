@@ -1,6 +1,11 @@
+use crate::addr::{BlockRef, Blocks};
+use crate::block::Block;
+use crate::dsp::fx_bus::FxParams;
+use crate::hw::MAX_PARTS;
 use crate::mod_path::ModDestRegistry;
 use crate::modulation::ModState;
 use crate::params::{EngineType, ParamSnapshot};
+use crate::part::PartParams;
 
 pub const POOL_SIZE: usize = 32;
 pub const NAME_LEN: usize = 16;
@@ -38,7 +43,7 @@ impl ChainType {
 
 #[derive(Clone)]
 #[repr(C)]
-pub struct Patch {
+pub struct Sound {
     pub name: [u8; NAME_LEN],
     pub chain_type: ChainType,
     pub params: ParamSnapshot,
@@ -46,7 +51,7 @@ pub struct Patch {
     pub dest_registry: ModDestRegistry,
 }
 
-impl Patch {
+impl Sound {
     pub fn init(chain_type: ChainType) -> Self {
         let mut name = [0u8; NAME_LEN];
         let tag = b"(init)";
@@ -69,7 +74,7 @@ impl Patch {
 }
 
 pub struct SoundPool {
-    slots: [Option<Patch>; POOL_SIZE],
+    slots: [Option<Sound>; POOL_SIZE],
 }
 
 impl SoundPool {
@@ -79,13 +84,13 @@ impl SoundPool {
         }
     }
 
-    pub fn get(&self, index: usize) -> Option<&Patch> {
+    pub fn get(&self, index: usize) -> Option<&Sound> {
         self.slots.get(index)?.as_ref()
     }
 
-    pub fn store(&mut self, index: usize, patch: Patch) {
+    pub fn store(&mut self, index: usize, sound: Sound) {
         if index < POOL_SIZE {
-            self.slots[index] = Some(patch);
+            self.slots[index] = Some(sound);
         }
     }
 
@@ -100,61 +105,118 @@ impl SoundPool {
     }
 }
 
-pub struct Track {
-    pub patch: Patch,
+/// A slot playing one Sound, with its MIDI channel, mode, output and mix.
+pub struct Part {
+    pub sound: Sound,
     pub loaded_from: Option<u8>,
+    pub mix: PartParams,
 }
 
-impl Track {
+impl Part {
+    /// An init Sound of `chain_type` with part 1's mix settings.
     pub fn new(chain_type: ChainType) -> Self {
         Self {
-            patch: Patch::init(chain_type),
+            sound: Sound::init(chain_type),
             loaded_from: None,
+            mix: PartParams::default(),
         }
+    }
+
+    /// Replace the Sound with an init one; channel and mix stay.
+    pub fn load_init(&mut self, chain_type: ChainType) {
+        self.sound = Sound::init(chain_type);
+        self.loaded_from = None;
     }
 
     pub fn load_from_pool(&mut self, pool: &SoundPool, slot: usize) {
         if let Some(p) = pool.get(slot) {
-            self.patch = p.clone();
+            self.sound = p.clone();
             self.loaded_from = Some(slot as u8);
         }
     }
 
     pub fn save_to_pool(&self, pool: &mut SoundPool, slot: usize) {
-        pool.store(slot, self.patch.clone());
+        pool.store(slot, self.sound.clone());
     }
 }
 
-pub struct MixerState {
-    pub levels: [f32; 6],
-    pub pans: [f32; 6],
-    pub sends: [f32; 6],
-}
-
-impl Default for MixerState {
-    fn default() -> Self {
-        Self {
-            levels: [0.8; 6],
-            pans: [0.0; 6],
-            sends: [0.0; 6],
-        }
-    }
-}
-
-pub struct Project {
+/// All Parts + FX: the whole setup you play and save. The `SoundPool` is
+/// not part of it (it stays on the UI side).
+pub struct Performance {
     pub name: [u8; NAME_LEN],
-    pub pool: SoundPool,
-    pub tracks: [Track; 6],
-    pub mixer: MixerState,
+    pub parts: [Part; MAX_PARTS],
+    /// Chorus, delay and reverb: shared by every Part, not per Sound.
+    pub fx: FxParams,
 }
 
-impl Project {
+impl Default for Performance {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Performance {
     pub fn new() -> Self {
         Self {
-            name: *b"New Project\0\0\0\0\0",
-            pool: SoundPool::new(),
-            tracks: core::array::from_fn(|_| Track::new(ChainType::PizzaPoly)),
-            mixer: MixerState::default(),
+            name: *b"New Performance\0",
+            parts: core::array::from_fn(|i| Part { mix: PartParams::for_part(i), ..Part::new(ChainType::PizzaPoly) }),
+            fx: FxParams::default(),
+        }
+    }
+
+    /// Part `part` as the pages edit it: its Sound plus the shared FX.
+    pub fn edit(&mut self, part: usize) -> PartEdit<'_> {
+        PartEdit { part: &mut self.parts[part], fx: &mut self.fx }
+    }
+}
+
+/// One Part (Sound + mix settings) and the Performance's FX, borrowed
+/// together so a page can address any block by `BlockRef`.
+pub struct PartEdit<'a> {
+    pub part: &'a mut Part,
+    pub fx: &'a mut FxParams,
+}
+
+impl Blocks for PartEdit<'_> {
+    fn block(&self, b: BlockRef) -> Option<&dyn Block> {
+        match b {
+            BlockRef::Chorus => Some(&self.fx.chorus),
+            BlockRef::Delay => Some(&self.fx.delay),
+            BlockRef::Reverb => Some(&self.fx.reverb),
+            BlockRef::Part => Some(&self.part.mix),
+            BlockRef::Pizza
+            | BlockRef::Modal
+            | BlockRef::Fm
+            | BlockRef::FmOp(_)
+            | BlockRef::Drive
+            | BlockRef::Filter
+            | BlockRef::Folder
+            | BlockRef::AmpEnv
+            | BlockRef::FilterEnv
+            | BlockRef::AuxEnv
+            | BlockRef::Lfo
+            | BlockRef::Out => self.part.sound.params.block(b),
+        }
+    }
+
+    fn block_mut(&mut self, b: BlockRef) -> Option<&mut dyn Block> {
+        match b {
+            BlockRef::Chorus => Some(&mut self.fx.chorus),
+            BlockRef::Delay => Some(&mut self.fx.delay),
+            BlockRef::Reverb => Some(&mut self.fx.reverb),
+            BlockRef::Part => Some(&mut self.part.mix),
+            BlockRef::Pizza
+            | BlockRef::Modal
+            | BlockRef::Fm
+            | BlockRef::FmOp(_)
+            | BlockRef::Drive
+            | BlockRef::Filter
+            | BlockRef::Folder
+            | BlockRef::AmpEnv
+            | BlockRef::FilterEnv
+            | BlockRef::AuxEnv
+            | BlockRef::Lfo
+            | BlockRef::Out => self.part.sound.params.block_mut(b),
         }
     }
 }
