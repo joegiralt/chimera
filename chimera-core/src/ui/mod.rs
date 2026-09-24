@@ -1,6 +1,7 @@
 pub mod animation;
 pub mod block_def;
 pub mod block_registry;
+pub mod browser;
 pub mod cell;
 pub mod chain;
 pub mod components;
@@ -202,8 +203,8 @@ impl UiState {
     pub fn handle_input(&mut self, controls: &impl Controls) {
         // ── Sound Browser mode input ─────────────────────────────────
         if let UiMode::SoundBrowser { part, ref mut cursor, ref mut scroll } = self.ui_mode {
-            let total = Renderer::BROWSER_TOTAL_ENTRIES;
-            let visible = Renderer::BROWSER_VISIBLE_ROWS.min(total);
+            let total = browser::TOTAL_ENTRIES;
+            let visible = browser::VISIBLE_ROWS.min(total);
 
             // Encoder A or Main: scroll cursor
             let delta = controls.encoder_delta(EncoderId::Main)
@@ -232,15 +233,9 @@ impl UiState {
                         self.performance.parts[sel_part].loaded_from = Some(sel_cursor as u8);
                     }
                 } else {
-                    // Init entries: POOL_SIZE=Pizza, POOL_SIZE+1=Modal, POOL_SIZE+2=FM
-                    let init_types = [
-                        crate::preset::ChainType::PizzaPoly,
-                        crate::preset::ChainType::Modal,
-                        crate::preset::ChainType::Fm,
-                    ];
-                    let init_idx = sel_cursor - POOL_SIZE;
-                    if init_idx < init_types.len() {
-                        self.performance.parts[sel_part].load_init(init_types[init_idx]);
+                    // Init entries follow the pool slots.
+                    if let Some(&ct) = browser::INIT_TYPES.get(sel_cursor - POOL_SIZE) {
+                        self.performance.parts[sel_part].load_init(ct);
                     }
                 }
                 // Switch to the loaded part and return to normal mode
@@ -488,7 +483,7 @@ impl UiState {
             >,
     {
         if let UiMode::SoundBrowser { part, cursor, scroll } = self.ui_mode {
-            Renderer::draw_sound_browser(display, &self.pool, part, cursor, scroll, self.performance.parts[part].sound.chain_type);
+            browser::draw(display, &self.pool, part, cursor, scroll);
             return;
         }
         self.renderer.draw_with_def(display, &self.frame(perf, scope));
@@ -589,7 +584,7 @@ impl UiState {
         if let UiMode::SoundBrowser { part, cursor, scroll } = self.ui_mode {
             let fb = display.pixel_buffer();
             Renderer::clear_region_fb(fb, 0, chimera_hal::SCREEN_HEIGHT);
-            Renderer::draw_sound_browser(display, &self.pool, part, cursor, scroll, self.performance.parts[part].sound.chain_type);
+            browser::draw(display, &self.pool, part, cursor, scroll);
             // Invalidate region set so normal layout forces full rebuild on exit
             self.region_set.prev_layout = None;
             let mut flush_list = [(0u16, 0u16); region::MAX_REGIONS];

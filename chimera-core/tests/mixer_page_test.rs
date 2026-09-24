@@ -229,24 +229,18 @@ fn mixer_part_dirty_render_equals_full_render() {
 }
 
 /// The sound browser's title names what it loads and the Part it loads
-/// into: "LOAD SOUND: P2" for Part 2 (it was "LOAD PATCH: B2").
+/// into: "LOAD SOUND → PART 2" for Part 2.
 #[test]
 fn sound_browser_title_names_the_part() {
-    use chimera_core::preset::{ChainType, SoundPool};
-    use chimera_core::ui::renderer::Renderer;
-    use chimera_core::ui::theme;
-    use embedded_graphics::mono_font::{ascii::FONT_6X10, MonoTextStyle};
-    use embedded_graphics::prelude::*;
-    use embedded_graphics::text::Text;
+    use chimera_core::preset::SoundPool;
+    use chimera_core::ui::{browser, components};
 
-    let title_band = |fb: &screen::Fb| fb.px[..22 * 240].to_vec();
     let mut got = screen::Fb::new();
-    Renderer::draw_sound_browser(&mut got, &SoundPool::new(), 1, 0, 0, ChainType::PizzaPoly);
+    browser::draw(&mut got, &SoundPool::new(), 1, 0, 0);
     let mut want = screen::Fb::new();
     want.px.fill(got.px[0]); // the ground
-    let style = MonoTextStyle::new(&FONT_6X10, theme::ACCENT);
-    Text::new("LOAD SOUND: P2", Point::new(8, theme::HEADER_Y + 10), style).draw(&mut want).unwrap();
-    assert!(title_band(&got) == title_band(&want), "title is LOAD SOUND: P2");
+    components::title_to(&mut want, "LOAD SOUND", "PART 2");
+    assert!(got.px[..28 * 240] == want.px[..28 * 240], "title is LOAD SOUND → PART 2");
 }
 
 /// The PART page shows CH as 1–16 (stored 0–15), MODE as MONO/POLY and OUT
