@@ -403,3 +403,13 @@ fn priming_on_fm_ratio_slot_2_registers_nothing() {
     prime(&mut ui);
     assert_eq!(primed(&ui), before);
 }
+
+/// `Performance::default()` is `Performance::new()` (clippy new_without_default).
+#[test]
+fn performance_default_is_new() {
+    use chimera_core::part::PartParams;
+    let p = chimera_core::preset::Performance::default();
+    for (i, part) in p.parts.iter().enumerate() {
+        assert_eq!(part.mix, PartParams::for_part(i));
+    }
+}
