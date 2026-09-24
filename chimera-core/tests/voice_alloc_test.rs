@@ -28,7 +28,7 @@ fn poly_takes_free_voices_round_robin() {
     let mut a = Allocator::new();
     let got: Vec<usize> = (0..3).map(|i| voice(on(&mut a, 0, Poly, 60 + i))).collect();
     assert_eq!(got, [0, 1, 2]);
-    a.note_off(0, n(60));
+    a.release(0);
     a.release_finished(0);
     // The next notes continue after the last voice used, wrapping, instead
     // of reusing the just-freed voice 0.
@@ -76,20 +76,24 @@ fn mono_retrigger_reuses_its_voice() {
     assert_eq!(voice(on(&mut a, 3, Mono, 64)), v);
     assert_eq!(a.slots()[v].note(), Some(n(64)));
     assert_eq!(a.slots().iter().filter(|s| s.part() == Some(3)).count(), 1);
-    // Releasing the first note does nothing: the voice now plays 64.
-    assert_eq!(a.note_off(3, n(60)), None);
     assert!(a.slots()[v].held());
 }
 
+/// `release` un-holds exactly the voice named; releasing twice, a free
+/// voice or an out-of-range index is a no-op.
 #[test]
-fn note_off_releases_only_the_matching_part_and_note() {
+fn release_unholds_only_that_voice() {
     let mut a = Allocator::new();
     let v0 = voice(on(&mut a, 0, Poly, 60));
     let v1 = voice(on(&mut a, 1, Poly, 60)); // same note, other part
-    assert_eq!(a.note_off(1, n(60)), Some(v1));
+    a.release(v1);
     assert!(a.slots()[v0].held());
     assert!(!a.slots()[v1].held());
-    assert_eq!(a.note_off(1, n(60)), None, "already released");
+    a.release(v1); // already released
+    a.release(5); // free
+    a.release(MAX_VOICES); // out of range
+    assert_eq!(a.slots()[v1].part(), Some(1), "released, tail still rings");
+    assert!(a.slots()[5].is_free() && a.slots()[v0].held());
 }
 
 /// Rule 5: a released voice keeps its slot (its tail rings) until the
@@ -100,7 +104,7 @@ fn tails_keep_the_voice_until_finished() {
     let v = voice(on(&mut a, 0, Poly, 60));
     a.release_finished(v); // still held: ignored
     assert_eq!(a.slots()[v].part(), Some(0));
-    a.note_off(0, n(60));
+    a.release(v);
     assert_eq!(a.slots()[v].part(), Some(0), "tail rings");
     a.release_finished(v);
     assert!(a.slots()[v].is_free());
@@ -178,7 +182,7 @@ fn random_play_keeps_the_pool_invariants() {
                 2 => {
                     if let Some(i) = held.iter().position(|h| h.0 == part && h.1 == note) {
                         let (_, _, v) = held.remove(i);
-                        assert_eq!(a.note_off(part, n(note)), Some(v), "{ctx}");
+                        a.release(v);
                     }
                 }
                 _ => {
@@ -238,6 +242,8 @@ fn poly_to_mono_switch_releases_the_held_chord() {
     assert!(!chord.contains(&m));
     assert_eq!(voice(on(&mut a, 0, Mono, 74)), m);
     for (i, &v) in chord.iter().enumerate() {
-        assert_eq!(a.note_off(0, n(60 + i as u8)), Some(v));
+        assert_eq!(a.slots()[v].note(), Some(n(60 + i as u8)));
+        a.release(v);
+        assert!(!a.slots()[v].held());
     }
 }

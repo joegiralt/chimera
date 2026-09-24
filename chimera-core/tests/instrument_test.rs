@@ -56,6 +56,9 @@ fn pan_law_is_constant_power() {
     assert!((l - core::f32::consts::FRAC_1_SQRT_2).abs() < 1e-7 && l == r, "centre = -3 dB per side");
     assert_eq!(pan_gains(-1.0), (1.0, 0.0), "hard left");
     assert_eq!(pan_gains(1.0), (0.0, 1.0), "hard right");
+    assert_eq!(pan_gains(-3.0), pan_gains(-1.0), "clamped left");
+    assert_eq!(pan_gains(2.5), pan_gains(1.0), "clamped right");
+    assert_eq!(pan_gains(f32::NAN), pan_gains(0.0), "NaN is centre");
     for p in [-0.7f32, -0.2, 0.3, 0.9] {
         let (l, r) = pan_gains(p);
         assert!((l * l + r * r - 1.0).abs() < 1e-6, "pan {p}");
@@ -364,5 +367,35 @@ fn retriggering_a_releasing_mono_voice_does_not_free_the_new_note() {
             assert!(blocks < 20_000, "voice never freed");
         }
         assert!(blocks > 50, "{after_off}/{held}: new note freed after {blocks} blocks, before it rang out");
+    }
+}
+
+/// Review Focus (stuck notes): one Part holds the same key from two
+/// channels — C4 from channel 1, then the Part moves to channel 4 and C4
+/// comes again. Each note-off releases exactly the voice its channel
+/// started, in either order, and both voices ring out and are freed.
+#[test]
+fn same_note_from_two_channels_releases_both_voices() {
+    for ch4_first in [true, false] {
+        let mut rig = Rig::new();
+        let mut shared = AudioShared::default();
+        rig.inst.handle(on(0, 60), &shared); // voice 0
+        rig.render(&shared);
+        shared.parts[0].mix.channel = MidiChannel::new(3).unwrap();
+        rig.inst.handle(on(3, 60), &shared); // voice 1
+        rig.render(&shared);
+        let slots = rig.inst.allocator().slots();
+        assert_eq!([slots[0].part(), slots[1].part()], [Some(0), Some(0)]);
+        let (first, second) = if ch4_first { (3, 0) } else { (0, 3) };
+        rig.inst.handle(off(first, 60), &shared);
+        let held: Vec<bool> = rig.inst.allocator().slots()[..2].iter().map(|s| s.held()).collect();
+        assert_eq!(held, if ch4_first { [true, false] } else { [false, true] }, "only {first}'s voice released");
+        rig.inst.handle(off(second, 60), &shared);
+        let mut blocks = 0;
+        while rig.inst.allocator().slots().iter().any(|s| !s.is_free()) {
+            rig.render(&shared);
+            blocks += 1;
+            assert!(blocks < 3_000, "stuck: {:?}", rig.inst.allocator().slots().map(|s| (s.part(), s.held())));
+        }
     }
 }
