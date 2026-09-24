@@ -52,10 +52,6 @@ pub enum RegionData {
         /// Fingerprint of outside data the viz shows (live output).
         live: u32,
     },
-    Params {
-        page: PageKey,
-        values: [u16; 6],
-    },
     Cells {
         page: PageKey,
         values: [u16; 6],
@@ -90,10 +86,6 @@ impl RegionData {
         Self::Viz { page, values, live }
     }
 
-    pub fn params(page: PageKey, values: [u16; 6]) -> Self {
-        Self::Params { page, values }
-    }
-
     pub fn cells(page: PageKey, values: [u16; 6], focus: u8, dest_count: u16) -> Self {
         Self::Cells { page, values, focus, dest_count }
     }
@@ -112,10 +104,6 @@ impl RegionData {
 
     pub fn sentinel_viz() -> Self {
         Self::Viz { page: SENTINEL_PAGE, values: [SENTINEL; 6], live: u32::MAX }
-    }
-
-    pub fn sentinel_params() -> Self {
-        Self::Params { page: SENTINEL_PAGE, values: [SENTINEL; 6] }
     }
 
     pub fn sentinel_cells() -> Self {
@@ -145,7 +133,6 @@ pub enum RegionKind {
     Header,
     Focus,
     Viz,
-    Params,
     Cells,
     Nav,
     Grid,
@@ -209,6 +196,7 @@ const FOCUS: u16 = theme::FOCUS_BOTTOM as u16;
 const BAND: u16 = theme::VIZ_BAND_BOTTOM as u16;
 const CELLS: u16 = theme::CELLS_BOTTOM as u16;
 const SCREEN: u16 = theme::SCREEN_H as u16;
+const BIG_VIZ_END: u16 = theme::BIGVIZ_BOTTOM as u16;
 
 /// CellGrid (UI refresh spec § Page types): header, focus band, viz band,
 /// cells, map.
@@ -219,7 +207,9 @@ const CELL_GRID: [(RegionKind, u16, u16); 5] = [
     (K::Cells, BAND, CELLS),
     (K::Nav, CELLS, SCREEN),
 ];
-const BIG_VIZ: [(RegionKind, u16, u16); 4] = [(K::Header, 0, 28), (K::Viz, 28, 170), (K::Params, 170, 266), (K::Nav, 266, 320)];
+/// BigViz: header, large viz, cells, map.
+const BIG_VIZ: [(RegionKind, u16, u16); 4] =
+    [(K::Header, 0, HEADER), (K::Viz, HEADER, BIG_VIZ_END), (K::Cells, BIG_VIZ_END, CELLS), (K::Nav, CELLS, SCREEN)];
 const MATRIX: [(RegionKind, u16, u16); 2] = [(K::Grid, 0, CELLS), (K::Nav, CELLS, SCREEN)];
 
 /// The bands of `layout`, top to bottom; they tile 0..320.
@@ -236,7 +226,6 @@ fn sentinel(kind: RegionKind) -> RegionData {
         K::Header => RegionData::sentinel_header(),
         K::Focus => RegionData::sentinel_focus(),
         K::Viz => RegionData::sentinel_viz(),
-        K::Params => RegionData::sentinel_params(),
         K::Cells => RegionData::sentinel_cells(),
         K::Nav => RegionData::sentinel_nav(),
         K::Grid => RegionData::sentinel_grid(),

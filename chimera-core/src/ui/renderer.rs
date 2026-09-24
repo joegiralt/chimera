@@ -7,11 +7,10 @@ use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::primitives::{Line, PrimitiveStyle, Rectangle, StyledDrawable};
 use embedded_graphics::text::Text;
 
-use crate::addr::{BlockRef, Op, ParamAddr};
+use crate::addr::Op;
 use crate::ui::animation::AnimatedValue;
 use crate::ui::components;
 use crate::ui::block_def::{slot_addr, BlockDef, SlotBinding, VizType};
-use crate::ui::cell;
 use crate::ui::chain::ChainNav;
 use crate::ui::mod_grid::MatrixState;
 use crate::ui::dungeon_map;
@@ -20,7 +19,6 @@ use crate::ui::page::PageLayout;
 use crate::ui::perf::PerfStats;
 use crate::ui::region::{self, RegionKind};
 use crate::ui::viz;
-use crate::part::PartParams;
 use crate::ui::theme;
 
 use core::fmt::Write;
@@ -74,738 +72,53 @@ impl Renderer {
         slot_addr(def, i, sel_op).and_then(|a| matrix_state.mod_info_for(a))
     }
 
-    // ── Modal / Physical Modeling ───────────────────────────────────
-
-    fn draw_modal_viz<D>(&self, display: &mut D)
+    /// BigViz: the page's visualization with the touched value riding on it.
+    fn draw_big_viz<D>(&self, display: &mut D, f: &Frame)
     where
         D: DrawTarget<Color = Rgb565>,
     {
-        let x0 = theme::VIZ_LEFT;
-        let x1 = theme::VIZ_RIGHT;
-        let y0 = theme::VIZ_TOP + 12;
-        let y1 = theme::VIZ_BOTTOM - 12;
-        let w = x1 - x0;
-        let h = y1 - y0;
-        let mid_y = y0 + h / 2;
-
-        // Baseline
-        let _ = Line::new(Point::new(x0, mid_y), Point::new(x1, mid_y))
-            .draw_styled(&PrimitiveStyle::with_stroke(theme::VIZ_GRID, 1), display);
-
-        let excite = self.anim[0].current();
-        let decay = self.anim[1].current();
-        let bright = self.anim[4].current();
-
-        // Draw modal resonance peaks — series of decaying sine peaks
-        let num_modes = 3 + (bright * 5.0) as i32; // 3-8 modes based on brightness
-        let stroke = PrimitiveStyle::with_stroke(theme::VIZ_LINE, 2);
-
-        for mode in 0..num_modes {
-            let mode_x = x0 + (w * (mode + 1)) / (num_modes + 1);
-            let peak_h =
-                (h as f32 * 0.4 * excite * (1.0 - mode as f32 * decay * 0.1).max(0.1)) as i32;
-
-            // Draw a peak shape: 3 line segments
-            let pw = 8 + (4.0 * (1.0 - bright)) as i32; // peak width
-            let _ = Line::new(
-                Point::new(mode_x - pw, mid_y),
-                Point::new(mode_x, mid_y - peak_h),
-            )
-            .draw_styled(&stroke, display);
-            let _ = Line::new(
-                Point::new(mode_x, mid_y - peak_h),
-                Point::new(mode_x + pw, mid_y),
-            )
-            .draw_styled(&stroke, display);
-        }
-
-        // Label
-        let _ = Text::new(
-            "MODES",
-            Point::new(x0, y1 + 10),
-            MonoTextStyle::new(&FONT_6X10, theme::TEXT_DIM),
-        )
-        .draw(display);
-    }
-
-    // ── VA / Analog ─────────────────────────────────────────────────
-
-    fn draw_va_viz<D>(&self, display: &mut D)
-    where
-        D: DrawTarget<Color = Rgb565>,
-    {
-        let x0 = theme::VIZ_LEFT + 20;
-        let x1 = theme::VIZ_RIGHT - 20;
-        let y0 = theme::VIZ_TOP + 16;
-        let y1 = theme::VIZ_BOTTOM - 16;
-        let w = x1 - x0;
-        let h = y1 - y0;
-        let mid_y = y0 + h / 2;
-
-        // Baseline
-        let _ = Line::new(Point::new(x0, mid_y), Point::new(x1, mid_y))
-            .draw_styled(&PrimitiveStyle::with_stroke(theme::VIZ_GRID, 1), display);
-
-        let wave = self.anim[0].current(); // wave shape: 0=saw, 0.5=square, 1=tri
-        let pw = self.anim[1].current(); // pulse width
-
-        let stroke = PrimitiveStyle::with_stroke(theme::VIZ_LINE, 2);
-        let periods = 2;
-
-        // Draw 2 periods of the waveform
-        let period_w = w / periods;
-        for p in 0..periods {
-            let px = x0 + p * period_w;
-
-            if wave < 0.33 {
-                // Sawtooth: ramp up, drop
-                let _ = Line::new(
-                    Point::new(px, mid_y + h / 3),
-                    Point::new(px + period_w - 2, mid_y - h / 3),
-                )
-                .draw_styled(&stroke, display);
-                let _ = Line::new(
-                    Point::new(px + period_w - 2, mid_y - h / 3),
-                    Point::new(px + period_w, mid_y + h / 3),
-                )
-                .draw_styled(&stroke, display);
-            } else if wave < 0.66 {
-                // Square/pulse with variable width
-                let duty = (period_w as f32 * (0.2 + pw * 0.6)) as i32;
-                let _ = Line::new(Point::new(px, mid_y + h / 3), Point::new(px, mid_y - h / 3))
-                    .draw_styled(&stroke, display);
-                let _ = Line::new(
-                    Point::new(px, mid_y - h / 3),
-                    Point::new(px + duty, mid_y - h / 3),
-                )
-                .draw_styled(&stroke, display);
-                let _ = Line::new(
-                    Point::new(px + duty, mid_y - h / 3),
-                    Point::new(px + duty, mid_y + h / 3),
-                )
-                .draw_styled(&stroke, display);
-                let _ = Line::new(
-                    Point::new(px + duty, mid_y + h / 3),
-                    Point::new(px + period_w, mid_y + h / 3),
-                )
-                .draw_styled(&stroke, display);
-            } else {
-                // Triangle
-                let half = period_w / 2;
-                let _ = Line::new(Point::new(px, mid_y), Point::new(px + half, mid_y - h / 3))
-                    .draw_styled(&stroke, display);
-                let _ = Line::new(
-                    Point::new(px + half, mid_y - h / 3),
-                    Point::new(px + period_w, mid_y),
-                )
-                .draw_styled(&stroke, display);
+        let a = |i: usize| self.anim[i].current();
+        match f.def.viz {
+            VizType::FilterResponse => {
+                let slot = &f.def.params[f.focus];
+                let mut buf = FmtBuf::new();
+                fmt::fmt_val(&mut buf, a(f.focus), slot.format());
+                let readout = (slot.binding != SlotBinding::Empty).then(|| (slot.label(), buf.as_str()));
+                viz::filter(display, a(0), a(1), readout);
             }
-        }
-    }
-
-    // ── Drive ───────────────────────────────────────────────────────
-    // Shows a sine wave being progressively saturated/crushed by drive amount.
-
-    fn draw_drive_viz<D>(&self, display: &mut D)
-    where
-        D: DrawTarget<Color = Rgb565>,
-    {
-        let x0 = theme::VIZ_LEFT;
-        let x1 = theme::VIZ_RIGHT;
-        let y0 = theme::VIZ_TOP + 12;
-        let y1 = theme::VIZ_BOTTOM - 12;
-        let w = x1 - x0;
-        let h = y1 - y0;
-        let mid_y = y0 + h / 2;
-
-        // Baseline
-        let _ = Line::new(Point::new(x0, mid_y), Point::new(x1, mid_y))
-            .draw_styled(&PrimitiveStyle::with_stroke(theme::VIZ_GRID, 1), display);
-
-        let drive = self.anim[0].current();
-
-        // Cubic curve so clipping develops gradually across the full range.
-        // drive=0 -> threshold=1.0 (no clip), drive=1 -> threshold=0.05 (full square)
-        let d = 1.0 - drive;
-        let threshold = 0.05 + d * d * d * 0.95;
-
-        let segments = 48;
-        let ghost = PrimitiveStyle::with_stroke(theme::VIZ_GRID, 1);
-        let mut prev_clean: Option<Point> = None;
-        let mut prev_driven: Option<Point> = None;
-
-        for i in 0..=segments {
-            let t = i as f32 / segments as f32;
-            let px = x0 + (w as f32 * t) as i32;
-            let input = libm::sinf(t * core::f32::consts::PI * 4.0);
-
-            // Clean sine (ghost)
-            let clean_y = mid_y - (h as f32 * 0.38 * input) as i32;
-            let clean_pt = Point::new(px, clean_y);
-            if let Some(p) = prev_clean {
-                let _ = Line::new(p, clean_pt).draw_styled(&ghost, display);
+            VizType::Adsr => {
+                let (atk, dec, sus, rel) = (a(0).max(0.02), a(1).max(0.02), a(2), a(3).max(0.02));
+                let total = atk + dec + 0.3 + rel;
+                viz::envelope(
+                    display,
+                    &[atk / total, dec / total, 0.3 / total, rel / total],
+                    &[0.0, 1.0, sus, sus, 0.0],
+                    &["ATK", "DEC", "SUS", "REL"],
+                    (f.focus < 4).then_some(f.focus),
+                );
             }
-            prev_clean = Some(clean_pt);
-
-            // Hard clip at threshold, rescale to fill amplitude
-            let clipped = if input > threshold {
-                threshold
-            } else if input < -threshold {
-                -threshold
-            } else {
-                input
-            };
-            let driven = clipped / threshold;
-            let driven_y = mid_y - (h as f32 * 0.38 * driven) as i32;
-            let driven_pt = Point::new(px, driven_y);
-            if let Some(p) = prev_driven {
-                let _ = Line::new(p, driven_pt)
-                    .draw_styled(&PrimitiveStyle::with_stroke(theme::VIZ_LINE, 2), display);
+            VizType::FmEnvelope => {
+                // Rates: higher = faster = narrower. D1L is the level after D1R.
+                let (ar, d1r, d1l, rr) = (a(0).max(0.02), a(1).max(0.02), a(2), a(4).max(0.02));
+                let (atk_t, d1_t, d2_t, rel_t) = ((1.0 - ar).max(0.03), (1.0 - d1r).max(0.03), 0.25, (1.0 - rr).max(0.03));
+                let total = atk_t + d1_t + d2_t + rel_t;
+                let lit = match f.focus {
+                    0 => Some(0),
+                    1 | 2 => Some(1),
+                    3 => Some(2),
+                    4 => Some(3),
+                    _ => None,
+                };
+                viz::envelope(
+                    display,
+                    &[atk_t / total, d1_t / total, d2_t / total, rel_t / total],
+                    &[0.0, 1.0, d1l, d1l * 0.3, 0.0],
+                    &["AR", "D1R", "D2R", "RR"],
+                    lit,
+                );
             }
-            prev_driven = Some(driven_pt);
-        }
-    }
-
-    // ── Filter ──────────────────────────────────────────────────────
-
-    fn draw_filter_viz<D>(&self, display: &mut D)
-    where
-        D: DrawTarget<Color = Rgb565>,
-    {
-        let x0 = theme::VIZ_LEFT;
-        let x1 = theme::VIZ_RIGHT;
-        let y0 = theme::VIZ_TOP + 8;
-        let y1 = theme::VIZ_BOTTOM - 8;
-        let h = y1 - y0;
-        let w = x1 - x0;
-
-        // Grid lines
-        for i in 0..4 {
-            let gy = y0 + (h * i) / 3;
-            let _ = Line::new(Point::new(x0, gy), Point::new(x1, gy))
-                .draw_styled(&PrimitiveStyle::with_stroke(theme::VIZ_GRID, 1), display);
-        }
-
-        let cutoff = self.anim[0].current();
-        let reso = self.anim[1].current();
-
-        let cx = x0 + (w as f32 * cutoff) as i32;
-        let peak_height = (h as f32 * 0.3 * reso) as i32;
-
-        let segments = 32;
-        let mut prev = Point::new(x0, y0 + 4);
-
-        for i in 1..=segments {
-            let t = i as f32 / segments as f32;
-            let px = x0 + (w as f32 * t) as i32;
-
-            let dist = (t - cutoff) * 6.0;
-            let y = if dist < -0.5 {
-                y0 + 4
-            } else if dist < 0.5 {
-                let peak = libm::cosf(dist * core::f32::consts::PI) * 0.5 + 0.5;
-                y0 + 4 - (peak_height as f32 * peak) as i32
-            } else {
-                let rolloff = (dist - 0.5).min(4.0) / 4.0;
-                y0 + 4 + (h as f32 * 0.8 * rolloff) as i32
-            };
-
-            let y = y.max(y0).min(y1);
-            let curr = Point::new(px, y);
-
-            let _ = Line::new(prev, curr)
-                .draw_styled(&PrimitiveStyle::with_stroke(theme::VIZ_LINE, 2), display);
-            prev = curr;
-        }
-
-        // Cutoff marker
-        let _ = Line::new(Point::new(cx, y0), Point::new(cx, y1))
-            .draw_styled(&PrimitiveStyle::with_stroke(theme::ACCENT_DIM, 1), display);
-    }
-
-    // ── Wavefolder ──────────────────────────────────────────────────
-
-    fn draw_folder_viz<D>(&self, display: &mut D)
-    where
-        D: DrawTarget<Color = Rgb565>,
-    {
-        let x0 = theme::VIZ_LEFT + 20;
-        let x1 = theme::VIZ_RIGHT - 20;
-        let y0 = theme::VIZ_TOP + 16;
-        let y1 = theme::VIZ_BOTTOM - 16;
-        let w = x1 - x0;
-        let h = y1 - y0;
-        let mid_y = y0 + h / 2;
-
-        // Baseline
-        let _ = Line::new(Point::new(x0, mid_y), Point::new(x1, mid_y))
-            .draw_styled(&PrimitiveStyle::with_stroke(theme::VIZ_GRID, 1), display);
-
-        let fold = self.anim[0].current();
-        let sym = self.anim[1].current();
-
-        // Folded sine wave
-        let segments = 48;
-        let stroke = PrimitiveStyle::with_stroke(theme::VIZ_LINE, 2);
-        let mut prev: Option<Point> = None;
-
-        for i in 0..=segments {
-            let t = i as f32 / segments as f32;
-            let px = x0 + (w as f32 * t) as i32;
-
-            // Input sine
-            let input = libm::sinf(t * core::f32::consts::PI * 4.0);
-
-            // Apply symmetry bias
-            let biased = input + (sym - 0.5) * 0.5;
-
-            // Fold: gain ramps from 1x to 5x using quadratic curve
-            // so the folding develops gradually across the full 0-100% range
-            let gain = 1.0 + fold * fold * 4.0;
-            let driven = biased * gain;
-            let folded = cell::fold_wave(driven);
-
-            let py = mid_y - (h as f32 * 0.4 * folded) as i32;
-            let curr = Point::new(px, py.max(y0).min(y1));
-
-            if let Some(p) = prev {
-                let _ = Line::new(p, curr).draw_styled(&stroke, display);
-            }
-            prev = Some(curr);
-        }
-    }
-
-    // ── Envelope visualization (Digitone 2 style) ───────────────────
-    //
-    // Connected line segments with square breakpoint dots and dotted
-    // vertical grid lines between stages. Labels below baseline.
-
-    fn draw_envelope_viz<D>(&self, display: &mut D)
-    where
-        D: DrawTarget<Color = Rgb565>,
-    {
-        let atk = self.anim[0].current().max(0.02);
-        let dec = self.anim[1].current().max(0.02);
-        let sus = self.anim[2].current();
-        let rel = self.anim[3].current().max(0.02);
-
-        let total = atk + dec + 0.3 + rel;
-        let widths = [atk / total, dec / total, 0.3 / total, rel / total];
-        let heights = [0.0, 1.0, sus, sus, 0.0]; // start, peak, sustain, sustain, end
-        let labels = ["ATK", "DEC", "SUS", "REL"];
-
-        Self::draw_envelope_shape(display, &widths, &heights, &labels);
-    }
-
-    fn draw_fm_envelope_viz<D>(&self, display: &mut D)
-    where
-        D: DrawTarget<Color = Rgb565>,
-    {
-        let ar = self.anim[0].current().max(0.02);   // attack rate (higher = faster)
-        let d1r = self.anim[1].current().max(0.02);  // decay 1 rate
-        let d1l = self.anim[2].current();             // decay 1 level (sustain breakpoint)
-        let d2r = self.anim[3].current().max(0.02);  // decay 2 rate
-        let rr = self.anim[4].current().max(0.02);   // release rate
-
-        // Invert rates for width: higher rate = faster = narrower segment
-        // rate=0 (slowest) → full width, rate=1.0 (AR=31, fastest) → minimal width
-        let atk_t = (1.0 - ar).max(0.03);
-        let d1_t = (1.0 - d1r).max(0.03);
-        let d2_t = 0.25;               // D2/sustain gets fixed proportion
-        let rel_t = (1.0 - rr).max(0.03);
-
-        let total = atk_t + d1_t + d2_t + rel_t;
-        let widths = [atk_t / total, d1_t / total, d2_t / total, rel_t / total];
-        // Heights: start=0, peak=1.0, D1L level, near-zero after D2, end=0
-        let d2_end = d1l * 0.3; // D2 decays toward 0 from D1L
-        let heights = [0.0, 1.0, d1l, d2_end, 0.0];
-        let labels = ["AR", "D1R", "D2R", "RR"];
-
-        Self::draw_envelope_shape(display, &widths, &heights, &labels);
-    }
-
-    /// Shared envelope drawing — Digitone 2 style.
-    /// `widths`: proportional width of each segment (4 segments).
-    /// `heights`: y-value at each breakpoint (5 points: start + 4 segment ends).
-    /// `labels`: 4 stage labels below baseline.
-    fn draw_envelope_shape<D>(
-        display: &mut D,
-        widths: &[f32; 4],
-        heights: &[f32; 5],
-        labels: &[&str; 4],
-    )
-    where
-        D: DrawTarget<Color = Rgb565>,
-    {
-        let x0 = theme::VIZ_LEFT;
-        let x1 = theme::VIZ_RIGHT;
-        let y0 = theme::VIZ_TOP + 10;
-        let y1 = theme::VIZ_BOTTOM - 18; // room for dots (3px) + labels (12px) below baseline
-        let w = (x1 - x0) as f32;
-        let h = (y1 - y0) as f32;
-
-        // Baseline
-        let _ = Line::new(Point::new(x0, y1), Point::new(x1, y1))
-            .draw_styled(&PrimitiveStyle::with_stroke(theme::VIZ_GRID, 1), display);
-
-        // Compute breakpoints
-        let mut points = [Point::new(0, 0); 5];
-        let mut cx = x0 as f32;
-        for i in 0..5 {
-            let py = y1 as f32 - h * heights[i].clamp(0.0, 1.0);
-            points[i] = Point::new(cx as i32, py as i32);
-            if i < 4 {
-                cx += w * widths[i];
-            }
-        }
-
-        // Dotted vertical grid lines at each breakpoint (Digitone style)
-        let grid_stroke = PrimitiveStyle::with_stroke(theme::VIZ_GRID, 1);
-        for i in 1..4 {
-            // Draw dotted line (every other pixel)
-            let px = points[i].x;
-            let mut dy = y0;
-            while dy < y1 {
-                let _ = Line::new(Point::new(px, dy), Point::new(px, (dy + 1).min(y1)))
-                    .draw_styled(&grid_stroke, display);
-                dy += 3;
-            }
-        }
-
-        // Envelope line segments
-        let stroke = PrimitiveStyle::with_stroke(theme::VIZ_LINE, 2);
-        for i in 0..4 {
-            let _ = Line::new(points[i], points[i + 1]).draw_styled(&stroke, display);
-        }
-
-        // Square breakpoint dots
-        for &p in &points {
-            let _ = Rectangle::new(Point::new(p.x - 2, p.y - 2), Size::new(5, 5))
-                .draw_styled(&PrimitiveStyle::with_fill(theme::ACCENT_BRIGHT), display);
-        }
-
-        // Stage labels below baseline
-        let dim = MonoTextStyle::new(&FONT_6X10, theme::TEXT_DIM);
-        for i in 0..4 {
-            let lx = (points[i].x + points[i + 1].x) / 2 - (labels[i].len() as i32 * 3);
-            let _ = Text::new(labels[i], Point::new(lx, y1 + 12), dim).draw(display);
-        }
-    }
-
-    // ── Effects ─────────────────────────────────────────────────────
-
-    fn draw_efx_viz<D>(&self, display: &mut D)
-    where
-        D: DrawTarget<Color = Rgb565>,
-    {
-        let cx = theme::SCREEN_W / 2;
-        let cy = (theme::VIZ_TOP + theme::VIZ_BOTTOM) / 2;
-
-        // Signal flow: IN -> [DLY] -> [REV] -> [CHR] -> OUT
-        let boxes = ["DLY", "REV", "CHR"];
-        let dim = MonoTextStyle::new(&FONT_6X10, theme::TEXT_DIM);
-        let border = PrimitiveStyle::with_stroke(theme::NODE_INACTIVE_BORDER, 1);
-        let conn = PrimitiveStyle::with_stroke(theme::NODE_CONNECTOR, 1);
-
-        let total_w = boxes.len() as i32 * 32 + (boxes.len() as i32 - 1) * 12;
-        let start_x = cx - total_w / 2;
-
-        // IN label
-        let _ = Text::new("IN", Point::new(start_x - 24, cy + 4), dim).draw(display);
-
-        for (i, &name) in boxes.iter().enumerate() {
-            let bx = start_x + i as i32 * 44;
-
-            let _ = Rectangle::new(Point::new(bx, cy - 8), Size::new(32, 16))
-                .draw_styled(&border, display);
-            let _ = Text::new(name, Point::new(bx + 5, cy + 4), dim).draw(display);
-
-            // Connector to next
-            if i + 1 < boxes.len() {
-                let _ = Line::new(Point::new(bx + 32, cy), Point::new(bx + 44, cy))
-                    .draw_styled(&conn, display);
-            }
-        }
-
-        // OUT label
-        let last_x = start_x + (boxes.len() as i32 - 1) * 44 + 32;
-        let _ = Text::new("OUT", Point::new(last_x + 8, cy + 4), dim).draw(display);
-    }
-
-    // ── Mixer ───────────────────────────────────────────────────────
-
-    /// Level and pan come from the page's Part LEVEL and PAN slots (the
-    /// PART page: CH, MODE, OUT, LEVEL, PAN); a page without them (the
-    /// legacy MIXER: VOL, PAN, …) keeps slots 0 and 1.
-    fn draw_mixer_viz<D>(&self, display: &mut D, def: &BlockDef)
-    where
-        D: DrawTarget<Color = Rgb565>,
-    {
-        let x0 = theme::VIZ_LEFT + 20;
-        let y0 = theme::VIZ_TOP + 16;
-        let y1 = theme::VIZ_BOTTOM - 8;
-        let h = y1 - y0;
-
-        let slot = |id, legacy: usize| {
-            let addr = ParamAddr::new(BlockRef::Part, id);
-            (0..def.params.len()).find(|&i| slot_addr(def, i, Op::A) == Some(addr)).unwrap_or(legacy)
-        };
-        let vol = self.anim[slot(PartParams::LEVEL, 0)].current();
-        let pan = self.anim[slot(PartParams::PAN, 1)].current(); // 0=L, 0.5=C, 1=R
-
-        // Channel level bars (4 channels)
-        let bar_w: i32 = 20;
-        let bar_gap: i32 = 24;
-        let labels = ["CH1", "CH2", "CH3", "CH4"];
-
-        let dim = MonoTextStyle::new(&FONT_6X10, theme::TEXT_DIM);
-        let bar_bg = PrimitiveStyle::with_fill(theme::PARAM_BAR_BG);
-
-        for (i, &name) in labels.iter().enumerate() {
-            let bx = x0 + i as i32 * (bar_w + bar_gap);
-
-            // Bar background
-            let _ = Rectangle::new(Point::new(bx, y0), Size::new(bar_w as u32, h as u32))
-                .draw_styled(&bar_bg, display);
-
-            // Fill level — ch1 uses vol param, others are at 50%
-            let level = if i == 0 { vol } else { 0.5 };
-            let fill_h = (h as f32 * level) as i32;
-            if fill_h > 0 {
-                let _ = Rectangle::new(
-                    Point::new(bx, y1 - fill_h),
-                    Size::new(bar_w as u32, fill_h as u32),
-                )
-                .draw_styled(&PrimitiveStyle::with_fill(theme::PARAM_BAR_FG), display);
-            }
-
-            // Label below
-            let _ = Text::new(name, Point::new(bx, y1 + 12), dim).draw(display);
-        }
-
-        // Pan indicator
-        let pan_x0 = x0;
-        let pan_x1 = x0 + 3 * (bar_w + bar_gap) + bar_w;
-        let pan_y = y0 - 12;
-        let pan_pos = pan_x0 + ((pan_x1 - pan_x0) as f32 * pan) as i32;
-
-        let _ = Line::new(Point::new(pan_x0, pan_y), Point::new(pan_x1, pan_y))
-            .draw_styled(&PrimitiveStyle::with_stroke(theme::VIZ_GRID, 1), display);
-        let _ = Rectangle::new(Point::new(pan_pos - 2, pan_y - 2), Size::new(5, 5))
-            .draw_styled(&PrimitiveStyle::with_fill(theme::ACCENT), display);
-
-        let _ = Text::new("L", Point::new(pan_x0 - 10, pan_y + 4), dim).draw(display);
-        let _ = Text::new("R", Point::new(pan_x1 + 4, pan_y + 4), dim).draw(display);
-    }
-
-    // ── Routing ─────────────────────────────────────────────────────
-
-    fn draw_routing_viz<D>(&self, display: &mut D)
-    where
-        D: DrawTarget<Color = Rgb565>,
-    {
-        let cx = theme::SCREEN_W / 2;
-        let cy = (theme::VIZ_TOP + theme::VIZ_BOTTOM) / 2;
-        let dim = MonoTextStyle::new(&FONT_6X10, theme::TEXT_DIM);
-        let border = PrimitiveStyle::with_stroke(theme::NODE_INACTIVE_BORDER, 1);
-        let conn = PrimitiveStyle::with_stroke(theme::NODE_CONNECTOR, 1);
-
-        // 4 inputs -> routing matrix -> 3 outputs (DAC pairs)
-        let inputs = ["P1", "P2", "P3", "P4"];
-        let outputs = ["L/R", "3/4", "5/6"];
-
-        // Input column
-        for (i, &name) in inputs.iter().enumerate() {
-            let y = cy - 30 + i as i32 * 18;
-            let _ = Text::new(name, Point::new(cx - 60, y + 4), dim).draw(display);
-            let _ = Line::new(Point::new(cx - 40, y), Point::new(cx - 20, y))
-                .draw_styled(&conn, display);
-        }
-
-        // Matrix box
-        let _ = Rectangle::new(Point::new(cx - 20, cy - 34), Size::new(40, 68))
-            .draw_styled(&border, display);
-        let _ = Text::new("MTX", Point::new(cx - 10, cy + 4), dim).draw(display);
-
-        // Output column
-        for (i, &name) in outputs.iter().enumerate() {
-            let y = cy - 22 + i as i32 * 22;
-            let _ = Line::new(Point::new(cx + 20, y), Point::new(cx + 40, y))
-                .draw_styled(&conn, display);
-            let _ = Text::new(name, Point::new(cx + 44, y + 4), dim).draw(display);
-        }
-    }
-
-    // ── Compressor ──────────────────────────────────────────────────
-
-    fn draw_comp_viz<D>(&self, display: &mut D)
-    where
-        D: DrawTarget<Color = Rgb565>,
-    {
-        let x0 = theme::VIZ_LEFT + 30;
-        let x1 = theme::VIZ_RIGHT - 30;
-        let y0 = theme::VIZ_TOP + 16;
-        let y1 = theme::VIZ_BOTTOM - 16;
-        let w = x1 - x0;
-        let h = y1 - y0;
-
-        // Axes
-        let grid = PrimitiveStyle::with_stroke(theme::VIZ_GRID, 1);
-        let _ = Line::new(Point::new(x0, y1), Point::new(x1, y1)).draw_styled(&grid, display);
-        let _ = Line::new(Point::new(x0, y0), Point::new(x0, y1)).draw_styled(&grid, display);
-
-        // 1:1 reference line (diagonal)
-        let _ = Line::new(Point::new(x0, y1), Point::new(x1, y0))
-            .draw_styled(&PrimitiveStyle::with_stroke(theme::VIZ_GRID, 1), display);
-
-        // Compression curve — knee at ~60%
-        let threshold = 0.6;
-        let ratio = 0.3; // compression above threshold
-
-        let segments = 20;
-        let stroke = PrimitiveStyle::with_stroke(theme::VIZ_LINE, 2);
-        let mut prev = Point::new(x0, y1);
-
-        for i in 1..=segments {
-            let t = i as f32 / segments as f32;
-            let output = if t < threshold {
-                t
-            } else {
-                threshold + (t - threshold) * ratio
-            };
-
-            let px = x0 + (w as f32 * t) as i32;
-            let py = y1 - (h as f32 * output) as i32;
-            let curr = Point::new(px, py.max(y0).min(y1));
-            let _ = Line::new(prev, curr).draw_styled(&stroke, display);
-            prev = curr;
-        }
-
-        // Labels
-        let dim = MonoTextStyle::new(&FONT_6X10, theme::TEXT_DIM);
-        let _ = Text::new("IN", Point::new(x1 + 4, y1 + 4), dim).draw(display);
-        let _ = Text::new("OUT", Point::new(x0 - 4, y0 - 4), dim).draw(display);
-    }
-
-    // ── BlockDef-based rendering ─────────────────────────────────────
-
-    /// Render the parameter grid from a `BlockDef` instead of a `PageId`.
-    pub fn draw_params_from_def<D>(
-        &self,
-        display: &mut D,
-        def: &BlockDef,
-        focus: usize,
-        sel_op: Op,
-        matrix_state: &crate::ui::mod_grid::MatrixState,
-    )
-    where
-        D: DrawTarget<Color = Rgb565>,
-    {
-        let label_style = MonoTextStyle::new(&FONT_6X10, theme::PARAM_LABEL);
-        let value_style = MonoTextStyle::new(&FONT_6X10, theme::PARAM_VALUE);
-
-        for (i, slot) in def.params.iter().enumerate() {
-            let label = slot.label();
-            if label == "--" {
-                continue;
-            }
-
-            let col = i % 3;
-            let row = i / 3;
-            let x = theme::PARAM_LEFT + col as i32 * theme::PARAM_COL_WIDTH;
-            let y = theme::PARAM_TOP + row as i32 * theme::PARAM_ROW_HEIGHT;
-
-            let val = self.anim[i].current();
-
-            // Label — accent if focused
-            let lbl_style = if i == focus { MonoTextStyle::new(&FONT_6X10, theme::ACCENT) } else { label_style };
-            let _ = Text::new(label, Point::new(x, y + 10), lbl_style).draw(display);
-
-            // Numeric value
-            let mut buf = FmtBuf::new();
-            fmt::fmt_val(&mut buf, val, slot.format());
-            let label_end = x + label.len() as i32 * 6 + 4;
-            let _ =
-                Text::new(buf.as_str(), Point::new(label_end, y + 10), value_style).draw(display);
-
-            // Value bar below
-            let bar_y = y + 15;
-            let _ = Rectangle::new(
-                Point::new(x, bar_y),
-                Size::new(theme::BAR_WIDTH as u32, theme::BAR_HEIGHT as u32),
-            )
-            .draw_styled(&PrimitiveStyle::with_fill(theme::PARAM_BAR_BG), display);
-
-            let fill_w = (theme::BAR_WIDTH as f32 * val) as i32;
-            if fill_w > 0 {
-                let _ = Rectangle::new(
-                    Point::new(x, bar_y),
-                    Size::new(fill_w as u32, theme::BAR_HEIGHT as u32),
-                )
-                .draw_styled(&PrimitiveStyle::with_fill(theme::PARAM_BAR_FG), display);
-            }
-
-            // Mod bar — bipolar, below value bar. Shows when param is a mod destination.
-            let mod_info = Self::cell_mod_info(def, i, sel_op, matrix_state);
-            if let Some(mod_amount) = mod_info {
-                let mod_bar_y = bar_y + theme::BAR_HEIGHT + 2;
-                let mid_x = x + theme::BAR_WIDTH / 2;
-                // Background
-                let _ = Rectangle::new(
-                    Point::new(x, mod_bar_y),
-                    Size::new(theme::BAR_WIDTH as u32, theme::BAR_HEIGHT as u32),
-                )
-                .draw_styled(&PrimitiveStyle::with_fill(theme::PARAM_BAR_BG), display);
-                // Center mark
-                let _ = Line::new(
-                    Point::new(mid_x, mod_bar_y),
-                    Point::new(mid_x, mod_bar_y + theme::BAR_HEIGHT - 1),
-                )
-                .draw_styled(&PrimitiveStyle::with_stroke(theme::TEXT_DIM, 1), display);
-                // Bipolar fill
-                let mod_color = Rgb565::new(20, 40, 20);
-                let fill = (mod_amount.clamp(-1.0, 1.0) * (theme::BAR_WIDTH / 2) as f32) as i32;
-                if fill > 0 {
-                    let _ = Rectangle::new(
-                        Point::new(mid_x, mod_bar_y),
-                        Size::new(fill as u32, theme::BAR_HEIGHT as u32),
-                    )
-                    .draw_styled(&PrimitiveStyle::with_fill(mod_color), display);
-                } else if fill < 0 {
-                    let abs_fill = (-fill) as u32;
-                    let _ = Rectangle::new(
-                        Point::new(mid_x - abs_fill as i32, mod_bar_y),
-                        Size::new(abs_fill, theme::BAR_HEIGHT as u32),
-                    )
-                    .draw_styled(&PrimitiveStyle::with_fill(mod_color), display);
-                }
-            }
-        }
-    }
-
-    /// Dispatch to the appropriate visualization method based on `VizType`.
-    pub fn draw_viz_from_type<D>(&self, display: &mut D, def: &BlockDef)
-    where
-        D: DrawTarget<Color = Rgb565>,
-    {
-        match def.viz {
-            VizType::AlgorithmDiagram => { /* FM removed */ }
-            VizType::ModalPeaks => self.draw_modal_viz(display),
-            VizType::WaveformPreview => self.draw_va_viz(display),
-            VizType::DriveClip => self.draw_drive_viz(display),
-            VizType::FilterResponse => self.draw_filter_viz(display),
-            VizType::WaveFold => self.draw_folder_viz(display),
-            VizType::Adsr => self.draw_envelope_viz(display),
-            VizType::FmEnvelope => self.draw_fm_envelope_viz(display),
-            VizType::EffectsFlow => self.draw_efx_viz(display),
-            VizType::MixerLevels => self.draw_mixer_viz(display, def),
-            VizType::RoutingMatrix => {
-                // Handled by PageLayout::Matrix path — draw_grid called with MatrixState directly.
-                // draw_viz_from_type is only called from BigViz, so this is a no-op.
-                self.draw_routing_viz(display);
-            }
-            VizType::CompressorCurve => self.draw_comp_viz(display),
-            VizType::None | VizType::EqResponse | VizType::LpgResponse | VizType::Logo => {}
+            VizType::CompressorCurve => viz::compressor(display),
+            _ => {}
         }
     }
 
@@ -828,7 +141,8 @@ impl Renderer {
     pub fn viz_inputs(&self, f: &Frame) -> ([u16; 6], u32) {
         match f.def.layout {
             PageLayout::CellGrid => ([0; 6], viz::live_key(f.scope)),
-            PageLayout::BigViz | PageLayout::Matrix => (region::quantize_values(&self.anim), 0),
+            PageLayout::BigViz => (region::quantize_values(&self.anim), f.focus as u32),
+            PageLayout::Matrix => ([0; 6], 0),
         }
     }
 
@@ -837,22 +151,15 @@ impl Renderer {
     where
         D: DrawTarget<Color = Rgb565>,
     {
-        let (nav, def, matrix_state, sel_op) = (f.nav, f.def, f.matrix, f.sel_op);
+        let (nav, def, matrix_state) = (f.nav, f.def, f.matrix);
         match kind {
             RegionKind::Header => self.draw_header(display, f),
             RegionKind::Focus => self.draw_focus(display, f),
             RegionKind::Viz => match def.layout {
                 PageLayout::CellGrid => viz::live_output(display, f.scope),
-                PageLayout::BigViz | PageLayout::Matrix => self.draw_viz_from_type(display, def),
+                PageLayout::BigViz => self.draw_big_viz(display, f),
+                PageLayout::Matrix => {}
             },
-            RegionKind::Params => {
-                self.draw_params_from_def(display, def, f.focus, sel_op, matrix_state);
-                let _ = Line::new(
-                    Point::new(0, theme::ENCODER_ZONE_BOTTOM),
-                    Point::new(theme::SCREEN_W - 1, theme::ENCODER_ZONE_BOTTOM),
-                )
-                .draw_styled(&PrimitiveStyle::with_stroke(theme::SEPARATOR, 1), display);
-            }
             RegionKind::Cells => self.draw_cells(display, f, theme::CELL_LABEL_Y),
             RegionKind::Grid => {
                 self.draw_header(display, f);

@@ -44,9 +44,9 @@ fn region_data_diff_is_not_equal() {
 }
 
 #[test]
-fn region_data_params_values_differ() {
-    let a = RegionData::params(PageKey::Legacy(PageId::DemoWaves), [500; 6]);
-    let b = RegionData::params(PageKey::Legacy(PageId::DemoWaves), [501, 500, 500, 500, 500, 500]);
+fn region_data_cell_values_differ() {
+    let a = RegionData::cells(PageKey::Legacy(PageId::DemoWaves), [500; 6], 0, 0);
+    let b = RegionData::cells(PageKey::Legacy(PageId::DemoWaves), [501, 500, 500, 500, 500, 500], 0, 0);
     assert_ne!(a, b);
 }
 
@@ -93,7 +93,7 @@ fn regions_tile_full_screen_cell_grid() {
 fn layout_change_resets_all_regions() {
     let mut rs = RegionSet::new();
     rs.set_layout(PageLayout::BigViz);
-    rs.regions[2].prev_data = RegionData::params(PageKey::Legacy(PageId::DemoWaves), [500; 6]);
+    rs.regions[2].prev_data = RegionData::cells(PageKey::Legacy(PageId::DemoWaves), [500; 6], 0, 0);
     rs.set_layout(PageLayout::CellGrid);
     for r in rs.active_regions() {
         match r.prev_data {
@@ -113,7 +113,7 @@ fn big_viz_region_kinds() {
     let mut rs = RegionSet::new();
     rs.set_layout(PageLayout::BigViz);
     let kinds: Vec<RegionKind> = rs.active_regions().iter().map(|r| r.kind).collect();
-    assert_eq!(kinds, vec![RegionKind::Header, RegionKind::Viz, RegionKind::Params, RegionKind::Nav]);
+    assert_eq!(kinds, vec![RegionKind::Header, RegionKind::Viz, RegionKind::Cells, RegionKind::Nav]);
 }
 
 #[test]
@@ -136,13 +136,13 @@ fn encoder_only_dirties_params_not_header() {
 
     rs.regions[0].prev_data = RegionData::header(0, 0, 0, 0, false);
     rs.regions[1].prev_data = RegionData::viz(page, values_a, 0);
-    rs.regions[2].prev_data = RegionData::params(page, values_a);
+    rs.regions[2].prev_data = RegionData::cells(page, values_a, 0, 0);
     rs.regions[3].prev_data = RegionData::nav(0, 0, 0, 0);
 
     let current = [
         RegionData::header(0, 0, 0, 0, false),
         RegionData::viz(page, values_b, 0),
-        RegionData::params(page, values_b),
+        RegionData::cells(page, values_b, 0, 0),
         RegionData::nav(0, 0, 0, 0),
     ];
 
@@ -163,13 +163,13 @@ fn nav_change_dirties_header_and_nav() {
 
     rs.regions[0].prev_data = RegionData::header(0, 0, 0, 0, false);
     rs.regions[1].prev_data = RegionData::viz(page, values, 0);
-    rs.regions[2].prev_data = RegionData::params(page, values);
+    rs.regions[2].prev_data = RegionData::cells(page, values, 0, 0);
     rs.regions[3].prev_data = RegionData::nav(0, 0, 0, 0);
 
     let current = [
         RegionData::header(0, 1, 0, 0, false),
         RegionData::viz(page, values, 0),
-        RegionData::params(page, values),
+        RegionData::cells(page, values, 0, 0),
         RegionData::nav(0, 1, 0, 0),
     ];
 
@@ -190,13 +190,13 @@ fn no_change_means_no_dirty() {
 
     rs.regions[0].prev_data = RegionData::header(0, 0, 0, 0, false);
     rs.regions[1].prev_data = RegionData::viz(page, values, 0);
-    rs.regions[2].prev_data = RegionData::params(page, values);
+    rs.regions[2].prev_data = RegionData::cells(page, values, 0, 0);
     rs.regions[3].prev_data = RegionData::nav(0, 0, 0, 0);
 
     let current = [
         RegionData::header(0, 0, 0, 0, false),
         RegionData::viz(page, values, 0),
-        RegionData::params(page, values),
+        RegionData::cells(page, values, 0, 0),
         RegionData::nav(0, 0, 0, 0),
     ];
 

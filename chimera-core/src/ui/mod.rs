@@ -509,7 +509,6 @@ impl UiState {
                 let (values, live) = self.renderer.viz_inputs(f);
                 RegionData::viz(self.page, values, live)
             }
-            RegionKind::Params => RegionData::params(self.page, qvalues),
             RegionKind::Cells => RegionData::cells(self.page, qvalues, f.focus as u8, self.matrix_state.num_dests as u16),
             RegionKind::Nav => RegionData::nav(chain, node, sub, region::quantize(self.renderer.branch_scroll.current())),
             RegionKind::Grid => RegionData::grid_with_amount(
