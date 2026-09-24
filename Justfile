@@ -29,6 +29,15 @@ test:
 clippy:
     cargo clippy -p chimera-core -p chimera-hal -p chimera-desktop -- -D warnings
 
+# Render every screen-golden case with the real renderer and write
+# docs/screens/<case>.png at 2x (nearest neighbour). Needs ImageMagick (`magick`).
+# SCREEN_DUMP must be absolute: cargo runs the test binary with its CWD set
+# to chimera-core/, not the workspace root, so a relative path lands there.
+screens:
+    rm -rf target/screens && mkdir -p target/screens docs/screens
+    SCREEN_DUMP="$(pwd)/target/screens" cargo test -p chimera-core --test screen_golden_test -q
+    for f in target/screens/*.ppm; do magick "$f" -filter point -resize 200% "docs/screens/$(basename "$f" .ppm).png"; done
+
 # Flash firmware to PreenFM3 via DFU
 flash:
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf
