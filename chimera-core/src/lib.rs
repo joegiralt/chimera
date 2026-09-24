@@ -13,3 +13,4 @@ pub mod part;
 pub mod preset;
 pub mod scope;
 pub mod ui;
+pub mod voice_alloc;
