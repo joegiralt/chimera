@@ -21,6 +21,9 @@ pub fn write_samples(samples: &[f32]) {
     let mut pos = BACK_POS.load(Ordering::Relaxed);
     for &s in samples {
         if pos < BACK_LEN {
+            // SAFETY: `write_samples` is only ever called from the audio
+            // thread (the sole writer to `BACK`), and the bounds check above
+            // (`pos < BACK_LEN`) guarantees the index is in range.
             unsafe { BACK[pos] = s; }
             pos += 1;
         }

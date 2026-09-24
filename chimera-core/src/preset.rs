@@ -77,6 +77,12 @@ pub struct SoundPool {
     slots: [Option<Sound>; POOL_SIZE],
 }
 
+impl Default for SoundPool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SoundPool {
     pub fn new() -> Self {
         Self {

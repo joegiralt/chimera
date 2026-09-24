@@ -1,15 +1,17 @@
-/// FM synthesis lookup tables and math functions.
-///
-/// Ported from p81z (TX81Z_extra.cpp). Covers:
-///   - Frequency ratio tables (coarse + fine)
-///   - Level-to-gain conversion (operator output level)
-///   - D1L (first decay level) conversion
-///   - Feedback factors
-///   - KVS (key velocity sensitivity) polynomial coefficients
-///   - Rate scaling
-///   - Envelope rate factors
+//! FM synthesis lookup tables and math functions.
+//!
+//! Ported from p81z (TX81Z_extra.cpp). Covers:
+//!   - Frequency ratio tables (coarse + fine)
+//!   - Level-to-gain conversion (operator output level)
+//!   - D1L (first decay level) conversion
+//!   - Feedback factors
+//!   - KVS (key velocity sensitivity) polynomial coefficients
+//!   - Rate scaling
+//!   - Envelope rate factors
 
 /// Coarse frequency ratios (index 0–63), corresponding to the TX81Z ratio table.
+// 3.14 and 6.28 below are TX81Z frequency ratios, not approximations of pi/tau.
+#[allow(clippy::approx_constant)]
 pub static FREQ_RATIOS: [f32; 64] = [
     0.50, 0.71, 0.78, 0.87, 1.00, 1.41, 1.57, 1.73,
     2.00, 2.82, 3.00, 3.14, 3.46, 4.00, 4.24, 4.71,

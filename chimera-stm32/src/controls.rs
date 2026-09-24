@@ -214,6 +214,8 @@ impl Stm32Controls {
     }
 
     /// Current ISR tick count (500 Hz). For UI timing (double-tap, etc.)
+    // removed in #15 part 2
+    #[allow(dead_code)]
     pub fn tick(&self) -> u32 { ISR_TICK.load(Ordering::Relaxed) }
 
     /// Returns true if any button changed state or any encoder moved this frame.

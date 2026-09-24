@@ -101,14 +101,14 @@ impl MatrixState {
     pub fn rebuild_dests_from_registry(&mut self, registry: &crate::mod_path::ModDestRegistry) {
         self.num_dests = 0;
         for i in 0..registry.len() {
-            if let Some(entry) = registry.get(i) {
-                if self.num_dests < MAX_DESTS {
-                    self.dests[self.num_dests] = Some(ModDest {
-                        addr: entry.addr,
-                        label: entry.label,
-                    });
-                    self.num_dests += 1;
-                }
+            if let Some(entry) = registry.get(i)
+                && self.num_dests < MAX_DESTS
+            {
+                self.dests[self.num_dests] = Some(ModDest {
+                    addr: entry.addr,
+                    label: entry.label,
+                });
+                self.num_dests += 1;
             }
         }
     }
@@ -136,14 +136,14 @@ impl MatrixState {
     /// `None` = not primed; `Some(0.0)` = primed with no amounts set.
     pub fn mod_info_for(&self, addr: ParamAddr) -> Option<f32> {
         for di in 0..self.num_dests {
-            if let Some(dest) = &self.dests[di] {
-                if dest.addr == addr {
-                    let mut total: i16 = 0;
-                    for si in 0..self.num_sources {
-                        total += self.amounts[si][di] as i16;
-                    }
-                    return Some((total as f32 / 127.0).clamp(-1.0, 1.0));
+            if let Some(dest) = &self.dests[di]
+                && dest.addr == addr
+            {
+                let mut total: i16 = 0;
+                for amounts in self.amounts.iter().take(self.num_sources) {
+                    total += amounts[di] as i16;
                 }
+                return Some((total as f32 / 127.0).clamp(-1.0, 1.0));
             }
         }
         None
@@ -207,6 +207,12 @@ impl MatrixState {
 
     pub fn visible_cols(&self) -> usize {
         VISIBLE_COLS
+    }
+}
+
+impl Default for MatrixState {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

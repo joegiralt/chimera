@@ -19,7 +19,8 @@ impl FmtBuf {
     }
 
     pub fn as_str(&self) -> &str {
-        // Safe: we only write valid UTF-8 via core::fmt::Write
+        // SAFETY: `pos` only ever advances via `core::fmt::Write::write_str`,
+        // which rejects non-UTF-8 input, so `buf[..pos]` is always valid UTF-8.
         unsafe { core::str::from_utf8_unchecked(&self.buf[..self.pos]) }
     }
 

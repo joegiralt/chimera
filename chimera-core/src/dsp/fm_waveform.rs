@@ -1,7 +1,7 @@
-/// TX81Z 8 waveform functions.
-///
-/// Ported line-for-line from p81z (TX81Z_extra.cpp / getWaveshape).
-/// Phase is 0.0–1.0 (one full cycle). Output is approximately –1.0 to +2.0.
+//! TX81Z 8 waveform functions.
+//!
+//! Ported line-for-line from p81z (TX81Z_extra.cpp / getWaveshape).
+//! Phase is 0.0–1.0 (one full cycle). Output is approximately –1.0 to +2.0.
 
 #[inline(always)]
 fn sin_of_phase(p: f32) -> f32 {

@@ -197,6 +197,12 @@ impl RegionSet {
     }
 }
 
+impl Default for RegionSet {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 use RegionKind as K;
 
 const HEADER: u16 = theme::HEADER_BOTTOM as u16;

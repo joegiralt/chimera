@@ -453,7 +453,7 @@ impl FmEngine {
                     self.op4.run(&self.zeros[..n], &mut self.temp[..n]);
                     self.op3.run_adding(&self.temp[..n], out);
                 }
-                7 | _ => {
+                _ => {
                     // [1], [2], [3], [4]
                     self.op1.run(&self.zeros[..n], out);
                     self.op2.run_adding(&self.zeros[..n], out);

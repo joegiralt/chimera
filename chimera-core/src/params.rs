@@ -392,8 +392,10 @@ pub struct FmParams {
 
 impl Default for FmParams {
     fn default() -> Self {
-        let mut op0 = FmOpParams::default();
-        op0.level = 99.0;
+        let op0 = FmOpParams {
+            level: 99.0,
+            ..Default::default()
+        };
         Self {
             algorithm: 0,
             operators: [
@@ -567,10 +569,9 @@ impl Default for ParamSnapshot {
     fn default() -> Self {
         Self {
             engine: EngineType::default(),
-            filter: {
-                let mut f = FilterParams::default();
-                f.cutoff = 20000.0; // fully open
-                f
+            filter: FilterParams {
+                cutoff: 20000.0, // fully open
+                ..Default::default()
             },
             drive: DriveParams::default(),
             folder: FolderParams::default(),

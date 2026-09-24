@@ -148,7 +148,7 @@ pub fn init_pll3() {
     while rcc.cr.read().pll3rdy().is_ready() {}
 
     // 3. Set PLL3 input divider: DIVM3 = 1 (preserve DIVM1/DIVM2)
-    rcc.pllckselr.modify(|_, w| unsafe { w.divm3().bits(1) });
+    rcc.pllckselr.modify(|_, w| w.divm3().bits(1));
 
     // 4. Set PLL3 multiplier and dividers: N=46 (val 45), P=3 (val 2)
     rcc.pll3divr.write(|w| unsafe {
