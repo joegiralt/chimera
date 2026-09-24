@@ -8,7 +8,7 @@
 //!    every voice is mono.
 //! 4. Over the CPU budget: steal one voice as in rule 3 if that makes room,
 //!    else refuse (and steal nothing).
-//! 5. Note-off releases the matching (part, note); the voice is free once its
+//! 5. Note-off releases the voice (`release`); the voice is free once its
 //!    engine reports inactive (`release_finished`), so tails ring out.
 //!
 //! A Sound change re-costs sounding voices (`recost`); `shed` then cuts the
@@ -116,14 +116,15 @@ impl Allocator {
         Alloc::Voice(v)
     }
 
-    /// Release the held voice playing `note` on `part`, if any.
-    pub fn note_off(&mut self, part: u8, note: MidiNote) -> Option<usize> {
-        let v = self
-            .slots
-            .iter()
-            .position(|s| s.held && s.part == Some(part) && s.note == Some(note))?;
-        self.slots[v].held = false;
-        Some(v)
+    /// Key up on `voice`: it is no longer held (its tail keeps the slot
+    /// until `release_finished`). No-op for a free or already released
+    /// voice, or an index out of range. The caller picks the voice — the
+    /// Instrument matches note and note-on channel, which a (part, note)
+    /// lookup cannot tell apart when one Part holds a key from two channels.
+    pub fn release(&mut self, voice: usize) {
+        if let Some(s) = self.slots.get_mut(voice) {
+            s.held = false;
+        }
     }
 
     /// The voice now costs `cost` (its Part's Sound changed engine).

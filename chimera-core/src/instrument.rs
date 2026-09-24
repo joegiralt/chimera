@@ -78,8 +78,10 @@ pub type DacOut = [[f32; BLOCK_SIZE * 2]; DAC_PAIRS];
 const _: () = assert!(size_of::<Instrument>() <= VOICE_RAM_BUDGET);
 
 /// Constant-power pan: (left, right) gains for `pan` in -1..1. Centre is
-/// -3 dB per side; hard left/right is unity on one side, exactly 0 on the other.
+/// -3 dB per side; hard left/right is unity on one side, exactly 0 on the
+/// other. Out-of-range `pan` is clamped (NaN reads as centre).
 pub fn pan_gains(pan: f32) -> (f32, f32) {
+    let pan = if pan.is_nan() { 0.0 } else { pan.clamp(-1.0, 1.0) };
     let q = core::f32::consts::FRAC_PI_4;
     (libm::sinf((1.0 - pan) * q), libm::sinf((1.0 + pan) * q))
 }
@@ -146,14 +148,12 @@ impl Instrument {
                 }
             }
             NoteKind::Off => {
+                // By voice index: every held voice this channel started on
+                // this note (one per layered Part), and no other.
                 for v in 0..MAX_VOICES {
                     let s = self.alloc.slots()[v];
-                    if !(s.held() && s.note() == Some(ev.note) && self.note_channel[v] == ev.channel) {
-                        continue;
-                    }
-                    if let Some(p) = s.part()
-                        && self.alloc.note_off(p, ev.note) == Some(v)
-                    {
+                    if s.held() && s.note() == Some(ev.note) && self.note_channel[v] == ev.channel {
+                        self.alloc.release(v);
                         self.voices[v].note_off();
                     }
                 }
@@ -170,6 +170,9 @@ impl Instrument {
                 self.alloc.recost(v, Voice::cost(shared.parts[p as usize].params.engine()));
             }
         }
+        // A hard cut, not a release: the slot is free at once and the voice
+        // is no longer rendered, so its tail stops mid-block. The next
+        // note-on on it re-triggers the engine from scratch.
         while let Some(v) = self.alloc.shed(FxBus::COST) {
             self.voices[v].note_off();
         }
@@ -211,6 +214,10 @@ impl Instrument {
         }
         let mut scope = [0.0f32; BLOCK_SIZE];
         for (p, part) in shared.parts.iter().enumerate() {
+            // A part with no voices this block has a silent bus: nothing to add.
+            if !written[p] {
+                continue;
+            }
             let bus = &self.buses[p];
             let (gl, gr) = pan_gains(part.mix.pan);
             let (gl, gr) = (gl * part.mix.level, gr * part.mix.level);
