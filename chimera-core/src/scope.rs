@@ -61,8 +61,8 @@ pub fn read_samples(out: &mut [f32; SCOPE_LEN]) {
     }
 }
 
-/// Largest |sample| in a scope buffer.
-pub fn peak(buf: &[f32; SCOPE_LEN]) -> f32 {
+/// Largest |sample| in a scope buffer (or a slice of one).
+pub fn peak(buf: &[f32]) -> f32 {
     buf.iter().fold(0.0f32, |m, &s| m.max(if s < 0.0 { -s } else { s }))
 }
 
