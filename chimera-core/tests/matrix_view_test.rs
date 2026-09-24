@@ -100,6 +100,48 @@ fn a_wide_matrix_scrolls_with_the_cursor() {
     assert_eq!(fb.at(x - 14, y), theme::ACCENT, "cursor in the last visible column");
 }
 
+/// Issue #11: `adjust_amount` must not write past `num_dests`, independent
+/// of how the cursor got there. `load_matrix`'s `clamp_cursor` is the fix a
+/// user actually hits (see `priming_after_a_stale_cursor_does_not_inherit_a_phantom_amount`
+/// in ui_routing_test.rs); this is the belt-and-suspenders check on
+/// `adjust_amount` itself, direct on `MatrixState` since no button sequence
+/// can leave the cursor stale here to exercise it through `UiState`.
+#[test]
+fn adjust_amount_is_a_no_op_past_num_dests() {
+    use chimera_core::ui::mod_grid::MatrixState;
+    let mut m = MatrixState::new();
+    m.rebuild_sources(&["ENV", "LFO"]);
+    m.num_dests = 0;
+    m.sel_col = 1; // stale: no destination at this column
+    m.adjust_amount(50);
+    assert_eq!(m.amounts[0][1], 0, "no destination at this column -- must not write");
+}
+
+/// Issue #11 fix round 1: `clamp_cursor`'s `scroll_x` must follow the same
+/// rule as `scroll_h` (`num_dests.saturating_sub(visible_cols())`), not
+/// `num_dests - 1`, so destinations that fit on screen are not left
+/// scrolled out of view.
+#[test]
+fn clamp_cursor_does_not_hide_columns_that_fit_on_screen() {
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::block::ParamId;
+    use chimera_core::ui::mod_grid::{ModDest, MatrixState};
+    let mut m = MatrixState::new();
+    m.rebuild_sources(&["ENV", "LFO"]);
+    for i in 0..8 {
+        m.dests[i] = Some(ModDest { addr: ParamAddr::new(BlockRef::Filter, ParamId(i as u8 % 6)), label: [b'X'; 8] });
+    }
+    m.num_dests = 8;
+    m.move_col(7); // scroll right: scroll_x lands at 8 - visible_cols()
+    assert_eq!(m.scroll_x, 8 - m.visible_cols());
+
+    // Switch to a Part with only 2 destinations -- both fit on screen.
+    m.num_dests = 2;
+    m.clamp_cursor();
+    assert_eq!(m.scroll_x, 0, "both destinations fit on screen -- must not stay scrolled");
+    assert_eq!(m.sel_col, 1);
+}
+
 /// The stats line must not overflow the 32-byte `FmtBuf`
 /// at the worst case — `MAX_MOD_SOURCES` × `MAX_DESTS` routes, `MAX_DESTS`
 /// of `MAX_DESTS` destinations. The original `"{} OF {} DESTINATIONS"`

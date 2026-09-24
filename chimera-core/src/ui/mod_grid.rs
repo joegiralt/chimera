@@ -164,14 +164,32 @@ impl MatrixState {
         self.amounts[self.sel_row][self.sel_col] = new;
     }
 
-    /// Clamp `sel_col`/`scroll_x` to the current destination count. Call
-    /// after `rebuild_dests_from_registry` (e.g. on a Part switch), whose
-    /// new destination count may be smaller than the cursor position left
-    /// over from before (issue #11).
+    /// Clamp the cursor and scroll position to the current source/
+    /// destination counts, keeping the cursor inside the visible window —
+    /// the same rule `move_row`/`move_col`/`scroll_v`/`scroll_h` use. Call
+    /// after `rebuild_sources`/`rebuild_dests_from_registry` (e.g. on a Part
+    /// switch), whose new counts may be smaller than the cursor/scroll
+    /// position left over from before (issue #11).
     pub fn clamp_cursor(&mut self) {
-        let max = if self.num_dests > 0 { self.num_dests - 1 } else { 0 };
-        self.sel_col = self.sel_col.min(max);
-        self.scroll_x = self.scroll_x.min(max);
+        let max_row = if self.num_sources > 0 { self.num_sources - 1 } else { 0 };
+        self.sel_row = self.sel_row.min(max_row);
+        self.scroll_y = self.scroll_y.min(self.num_sources.saturating_sub(self.visible_rows()));
+        let vis_r = self.visible_rows();
+        if self.sel_row < self.scroll_y {
+            self.scroll_y = self.sel_row;
+        } else if self.sel_row >= self.scroll_y + vis_r {
+            self.scroll_y = self.sel_row + 1 - vis_r;
+        }
+
+        let max_col = if self.num_dests > 0 { self.num_dests - 1 } else { 0 };
+        self.sel_col = self.sel_col.min(max_col);
+        self.scroll_x = self.scroll_x.min(self.num_dests.saturating_sub(self.visible_cols()));
+        let vis_c = self.visible_cols();
+        if self.sel_col < self.scroll_x {
+            self.scroll_x = self.sel_col;
+        } else if self.sel_col >= self.scroll_x + vis_c {
+            self.scroll_x = self.sel_col + 1 - vis_c;
+        }
     }
 
     pub fn move_row(&mut self, delta: i8) {
