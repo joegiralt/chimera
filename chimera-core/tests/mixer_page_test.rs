@@ -195,3 +195,23 @@ fn part_viz_reads_the_level_and_pan_slots() {
     let marker: Vec<i32> = (0..240).filter(|&x| px(x, 32) == theme::ACCENT).collect();
     assert!(!marker.is_empty() && marker.iter().all(|&x| x > 150), "pan marker right: {marker:?}");
 }
+
+/// The sound browser's title names what it loads and the Part it loads
+/// into: "LOAD SOUND: P2" for Part 2 (it was "LOAD PATCH: B2").
+#[test]
+fn sound_browser_title_names_the_part() {
+    use chimera_core::preset::{ChainType, SoundPool};
+    use chimera_core::ui::renderer::Renderer;
+    use chimera_core::ui::theme;
+    use embedded_graphics::mono_font::{ascii::FONT_6X10, MonoTextStyle};
+    use embedded_graphics::prelude::*;
+    use embedded_graphics::text::Text;
+
+    let title_band = |fb: &Fb| fb.0[..22 * 240].to_vec();
+    let mut got = Fb(vec![theme::BG; 240 * 320]);
+    Renderer::draw_sound_browser(&mut got, &SoundPool::new(), 1, 0, 0, ChainType::PizzaPoly);
+    let mut want = Fb(vec![theme::BG; 240 * 320]);
+    let style = MonoTextStyle::new(&FONT_6X10, theme::ACCENT);
+    Text::new("LOAD SOUND: P2", Point::new(8, theme::HEADER_Y + 10), style).draw(&mut want).unwrap();
+    assert!(title_band(&got) == title_band(&want), "title is LOAD SOUND: P2");
+}

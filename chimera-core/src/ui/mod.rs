@@ -453,7 +453,7 @@ impl UiState {
             >,
     {
         if let UiMode::SoundBrowser { part, cursor, scroll } = self.ui_mode {
-            Renderer::draw_patch_browser(display, &self.pool, part, cursor, scroll, self.performance.parts[part].sound.chain_type);
+            Renderer::draw_sound_browser(display, &self.pool, part, cursor, scroll, self.performance.parts[part].sound.chain_type);
             return;
         }
         let def = self.nav.active_block_def();
@@ -508,7 +508,7 @@ impl UiState {
         if let UiMode::SoundBrowser { part, cursor, scroll } = self.ui_mode {
             let fb = display.pixel_buffer();
             Renderer::clear_region_fb(fb, 0, chimera_hal::SCREEN_HEIGHT);
-            Renderer::draw_patch_browser(display, &self.pool, part, cursor, scroll, self.performance.parts[part].sound.chain_type);
+            Renderer::draw_sound_browser(display, &self.pool, part, cursor, scroll, self.performance.parts[part].sound.chain_type);
             // Invalidate region set so normal layout forces full rebuild on exit
             self.region_set.prev_layout = None;
             let mut flush_list = [(0u16, 0u16); region::MAX_REGIONS];
