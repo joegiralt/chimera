@@ -112,7 +112,7 @@ pub static FM_OP: BlockDef = BlockDef {
     name: "Operator",
     short: "OP",
     layout: PageLayout::CellGrid,
-    viz: VizType::None,
+    viz: VizType::AlgorithmDiagram,
     params: [
         ParamSlot::select_op(CellIcon::Arc),
         ParamSlot::selected_op(FmOpParams::WAVEFORM, CellIcon::WaveShape),

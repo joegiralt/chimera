@@ -131,6 +131,10 @@ impl Renderer {
         D: DrawTarget<Color = Rgb565>,
     {
         match f.def.viz {
+            VizType::AlgorithmDiagram => {
+                let alg = f.parts[f.active_part].sound.params.fm.algorithm;
+                viz::fm_algorithm(display, alg, f.sel_op.index());
+            }
             VizType::MixerLevels => viz::parts_overview(display, &self.strips(f), f.active_part),
             VizType::EffectsFlow => {
                 use crate::ui::block_registry as reg;
@@ -188,6 +192,10 @@ impl Renderer {
     pub fn viz_inputs(&self, f: &Frame) -> ([u16; 6], u32) {
         match f.def.layout {
             PageLayout::CellGrid => match f.def.viz {
+                VizType::AlgorithmDiagram => {
+                    let alg = f.parts[f.active_part].sound.params.fm.algorithm as u32;
+                    ([0; 6], alg << 2 | f.sel_op.index() as u32)
+                }
                 VizType::MixerLevels => (region::quantize_values(&self.anim), strips_key(&self.strips(f), f.active_part)),
                 VizType::EffectsFlow => (region::quantize_values(&self.anim), f.focus as u32),
                 _ => ([0; 6], viz::live_key(f.scope)),
