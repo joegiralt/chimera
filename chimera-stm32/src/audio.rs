@@ -80,6 +80,7 @@ fn render_block(offset: usize) {
 
         // Render full Voice signal chain: Engine → Drive → Filter → Wavefolder → VCA
         voice.render(work, params, mod_state);
+        chimera_core::scope::write_samples(work);
 
         // Convert f32 mono → i16 stereo
         let buf = &mut *addr_of_mut!(AUDIO_BUF);

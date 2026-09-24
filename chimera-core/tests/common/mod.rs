@@ -6,8 +6,12 @@
 //! note 60 vel 100 on, ON_BLOCKS blocks, note off, OFF_BLOCKS blocks.
 #![allow(dead_code)]
 
-use chimera_core::{MidiNote, Velocity};
+use chimera_core::{MidiChannel, MidiNote, Velocity};
+use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::voice::Voice;
+use chimera_core::hw::DAC_PAIRS;
+use chimera_core::instrument::{AudioShared, Instrument};
+use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::addr::{BlockRef, Op, ParamAddr};
 use chimera_core::mod_path::ModDestRegistry;
 use chimera_core::modulation::ModState;
@@ -149,6 +153,35 @@ pub fn render_case(case: Case) -> Vec<f32> {
         };
         voice.render(&mut block, p, &mod_state);
         out.extend_from_slice(&block);
+    }
+    out
+}
+
+/// The same harness through `Instrument` (instrument-core spec § Testing):
+/// the case on part 1 (MIDI channel 1), other parts silent, sends 0.
+/// Returns part 1's mono bus — the sum of its voices before pan and level.
+pub fn render_case_through_instrument(case: Case) -> Vec<f32> {
+    let (params, mod_state) = setup(case);
+    let mut shared = AudioShared::default();
+    shared.parts[0].params = params;
+    shared.parts[0].mod_state = mod_state;
+    let mut switched = shared.clone();
+    switched.parts[0].params = init_params(EngineType::Modal);
+    let mut inst = Box::new(Instrument::new(chimera_hal::SAMPLE_RATE));
+    let mut fx = Box::new(FxBus::new());
+    let mut dac = [[0.0f32; BLOCK_SIZE * 2]; DAC_PAIRS];
+    let event = |kind| NoteEvent { channel: MidiChannel::new(0).unwrap(), note: MidiNote::new(NOTE).unwrap(), kind };
+    let mut out = Vec::with_capacity(TOTAL_SAMPLES);
+    for b in 0..ON_BLOCKS + OFF_BLOCKS {
+        let s = if case == Case::PizzaToModalSwitch && b >= ON_BLOCKS / 2 { &switched } else { &shared };
+        if b == 0 {
+            inst.handle(event(NoteKind::On(Velocity::new(VEL).unwrap())), s);
+        }
+        if b == ON_BLOCKS {
+            inst.handle(event(NoteKind::Off), s);
+        }
+        inst.render(&mut fx, &mut dac, s);
+        out.extend_from_slice(inst.part_bus(0));
     }
     out
 }

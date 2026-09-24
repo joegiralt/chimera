@@ -150,9 +150,6 @@ impl Voice {
             }
         }
 
-        // 6. Scope — capture end-of-chain for oscilloscope display
-        crate::scope::write_samples(output);
-
         // Check if done
         self.active = self.engines.is_active(self.active_engine, &self.amp_env);
     }

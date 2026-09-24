@@ -57,3 +57,11 @@ fn axi_residents_fit() {
     assert_eq!(total, AXI_RESIDENT);
     assert!(total <= hw::AXI_SRAM);
 }
+
+/// The whole pool with its bookkeeping (allocator, part buses, sends) fits D2.
+#[test]
+fn instrument_fits_d2() {
+    let size = size_of::<chimera_core::instrument::Instrument>();
+    eprintln!("Instrument = {size} B, budget {} B", hw::VOICE_RAM_BUDGET);
+    assert!(size <= hw::VOICE_RAM_BUDGET, "Instrument = {size} B");
+}
