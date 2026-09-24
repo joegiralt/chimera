@@ -25,7 +25,7 @@ enum Golden {
 use Golden::*;
 
 const GOLDENS: &[(&str, Golden)] = &[
-    ("engine_pizza", Locked(0x4797d6f7d4edc427)),
+    ("engine_pizza", Locked(0xbf9c1f573baa9d59)),
     ("engine_fm_alg", Pending),
     ("engine_fm_op", Pending),
     ("bigviz_filter", Pending),
@@ -36,7 +36,7 @@ const GOLDENS: &[(&str, Golden)] = &[
     ("mixer_fx_delay", Pending),
     ("mod_matrix", Pending),
     ("sound_browser", Pending),
-    ("system", Locked(0x02f7456a841f9613)),
+    ("system", Locked(0x966235b0ff853d19)),
 ];
 
 #[test]

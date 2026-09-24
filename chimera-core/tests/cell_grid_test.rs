@@ -149,7 +149,7 @@ fn non_finite_live_output_is_flat() {
     buf[9] = f32::INFINITY;
     buf[20] = f32::NEG_INFINITY;
     let cols = viz::live_columns(&buf);
-    assert!(cols.iter().all(|&c| c.abs() <= theme::VIZ_BAND_AMP as i8));
+    assert!(cols.iter().all(|&c| c == 0), "{cols:?}");
     let mut fb = Fb::new();
     viz::live_output(&mut fb, &buf);
     assert_eq!(fb.oob, 0);
