@@ -179,7 +179,18 @@ impl JunoChorus {
         }
     }
 
+    /// Insert use: dry/wet mix in place.
     pub fn process(&mut self, buf: &mut [f32; BLOCK_SIZE], params: &ChorusParams, sample_rate: u32) {
+        self.run(buf, params, sample_rate, 1.0 - params.mix * 0.5);
+    }
+
+    /// Send/return use (the FX bus): writes only the wet signal × MIX, the
+    /// return level, in place of the send.
+    pub fn process_wet(&mut self, buf: &mut [f32; BLOCK_SIZE], params: &ChorusParams, sample_rate: u32) {
+        self.run(buf, params, sample_rate, 0.0);
+    }
+
+    fn run(&mut self, buf: &mut [f32; BLOCK_SIZE], params: &ChorusParams, sample_rate: u32, dry_gain: f32) {
         if !params.is_on() {
             return;
         }
@@ -241,7 +252,7 @@ impl JunoChorus {
             //   L = dry + wet * mix
             //   R = dry - wet * mix (phase inversion = wide stereo)
             // For now, mono mix:
-            *s = dry * (1.0 - params.mix * 0.5) + wet * params.mix;
+            *s = dry * dry_gain + wet * params.mix;
         }
     }
 }

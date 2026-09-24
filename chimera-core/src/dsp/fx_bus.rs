@@ -1,7 +1,9 @@
 //! The shared FX bus (instrument-core spec § Audio path): chorus, delay and
-//! reverb run once per block on the sum of every part's sends. The effects
-//! are mono today, so the return is mono and lands on both sides of DAC
-//! pair 1.
+//! reverb run once per block on the sum of every part's sends. Send/return:
+//! each effect returns only its wet signal, its MIX acting as the return
+//! level; the dry signal reaches the DACs through the parts alone. The
+//! effects are mono today, so the return is mono and lands on both sides of
+//! DAC pair 1.
 
 use chimera_hal::BLOCK_SIZE;
 
@@ -57,8 +59,8 @@ impl FxBus {
         Self { chorus: JunoChorus::new(), delay: TapeDelay::new(), reverb: Reverb::new() }
     }
 
-    /// Run each effect that is on over its send (processed in place) and
-    /// write the sum of their outputs to `ret`. An effect that is off
+    /// Run each effect that is on over its send (replaced in place by its
+    /// wet signal × MIX) and write the sum to `ret`. An effect that is off
     /// returns nothing, so a send into it is silent.
     pub fn process(
         &mut self,
@@ -70,15 +72,15 @@ impl FxBus {
         ret.fill(0.0);
         let [chorus, delay, reverb] = sends;
         if params.chorus.is_on() {
-            self.chorus.process(chorus, &params.chorus, sample_rate);
+            self.chorus.process_wet(chorus, &params.chorus, sample_rate);
             add(ret, chorus);
         }
         if params.delay.is_on() {
-            self.delay.process(delay, &params.delay, sample_rate);
+            self.delay.process_wet(delay, &params.delay, sample_rate);
             add(ret, delay);
         }
         if params.reverb.is_on() {
-            self.reverb.process(reverb, &params.reverb);
+            self.reverb.process_wet(reverb, &params.reverb);
             add(ret, reverb);
         }
     }
