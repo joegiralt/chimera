@@ -411,7 +411,7 @@ impl FmParams {
 }
 
 /// Engine-level FM params. Operators are separate blocks (`FmOpParams`).
-pub static FM_SPECS: [ParamSpec; 1] = [ParamSpec::choice(0, "ALG", ValFmt::Int(7), 7.0, 0.0)];
+pub static FM_SPECS: [ParamSpec; 1] = [ParamSpec::choice(0, "ALG", ValFmt::OneBased(7), 7.0, 0.0)];
 
 impl Block for FmParams {
     fn specs(&self) -> &'static [ParamSpec] {
