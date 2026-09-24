@@ -1,5 +1,6 @@
 use chimera_core::dsp::chorus::JunoChorus;
 use chimera_core::dsp::delay::TapeDelay;
+use chimera_core::dsp::fx_bus::FxParams;
 use chimera_core::dsp::reverb::Reverb;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::modulation::ModState;
@@ -19,6 +20,7 @@ const NOTE_ON_FLAG: u8 = 0x80;
 struct AudioShared {
     params: ParamSnapshot,
     mod_state: ModState,
+    fx: FxParams,
 }
 
 struct SharedState {
@@ -65,7 +67,7 @@ impl DesktopAudio {
                     let current = shared_clone.current.load(Ordering::Acquire);
                     // SAFETY: pointer always valid — points into `bufs` owned by
                     // DesktopAudio. UI writes the inactive buffer, swaps atomically.
-                    let AudioShared { params, mod_state } = unsafe { &*current };
+                    let AudioShared { params, mod_state, fx } = unsafe { &*current };
 
                     let cmd = shared_clone.note_cmd.swap(NOTE_NONE, Ordering::Relaxed);
                     if cmd & NOTE_ON_FLAG != 0 {
@@ -82,9 +84,9 @@ impl DesktopAudio {
                         if block_pos >= chimera_hal::BLOCK_SIZE {
                             voice.render(&mut block, params, mod_state);
                             // Effects chain: chorus → delay → reverb (Digitone II style)
-                            chorus.process(&mut block, &params.chorus, sample_rate);
-                            delay.process(&mut block, &params.delay, sample_rate);
-                            reverb.process(&mut block, &params.reverb);
+                            chorus.process(&mut block, &fx.chorus, sample_rate);
+                            delay.process(&mut block, &fx.delay, sample_rate);
+                            reverb.process(&mut block, &fx.reverb);
                             block_pos = 0;
                         }
                         *sample = libm::tanhf(block[block_pos] * 0.7);
@@ -106,12 +108,13 @@ impl DesktopAudio {
         }
     }
 
-    /// Push params and modulation routes to the audio thread (lock-free swap).
-    pub fn update(&mut self, params: &ParamSnapshot, mod_state: &ModState) {
+    /// Push params, modulation routes and FX to the audio thread (lock-free swap).
+    pub fn update(&mut self, params: &ParamSnapshot, mod_state: &ModState, fx: &FxParams) {
         let inactive = 1 - self.active_buf;
         let buf = &mut self.bufs[inactive];
         buf.params = params.clone();
         buf.mod_state = mod_state.clone();
+        buf.fx = *fx;
         let ptr = buf as *mut AudioShared;
         self.shared.current.store(ptr, Ordering::Release);
         self.active_buf = inactive;

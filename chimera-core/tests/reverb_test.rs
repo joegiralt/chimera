@@ -417,9 +417,10 @@ fn test_reverb_through_voice_produces_tail() {
     let empty_mod = ModState::new();
     let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
     let mut reverb = Reverb::new();
-    let mut params = ParamSnapshot::for_engine(EngineType::Pizza);
-    params.reverb.mix = 0.5;
-    params.reverb.time = 0.7;
+    let params = ParamSnapshot::for_engine(EngineType::Pizza);
+    let mut rv = chimera_core::dsp::fx_bus::FxParams::default().reverb;
+    rv.mix = 0.5;
+    rv.time = 0.7;
 
     voice.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params);
 
@@ -427,7 +428,7 @@ fn test_reverb_through_voice_produces_tail() {
     let mut block = [0.0f32; 64];
     for _ in 0..8 {
         voice.render(&mut block, &params, &empty_mod);
-        reverb.process(&mut block, &params.reverb);
+        reverb.process(&mut block, &rv);
     }
 
     // Note off
@@ -437,7 +438,7 @@ fn test_reverb_through_voice_produces_tail() {
     let mut tail_energy = 0.0f32;
     for _ in 0..64 {
         voice.render(&mut block, &params, &empty_mod);
-        reverb.process(&mut block, &params.reverb);
+        reverb.process(&mut block, &rv);
         tail_energy += block.iter().map(|s| s * s).sum::<f32>();
     }
 
@@ -457,10 +458,11 @@ fn test_reverb_type_switch_e2e() {
     let render_with_reverb = |rt: u8| -> f32 {
         let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
         let mut reverb = Reverb::new();
-        let mut params = ParamSnapshot::for_engine(EngineType::Pizza);
-        params.reverb.reverb_type = rt;
-        params.reverb.mix = 0.8;
-        params.reverb.time = 0.6;
+        let params = ParamSnapshot::for_engine(EngineType::Pizza);
+        let mut rv = chimera_core::dsp::fx_bus::FxParams::default().reverb;
+        rv.reverb_type = rt;
+        rv.mix = 0.8;
+        rv.time = 0.6;
 
         voice.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params);
 
@@ -468,7 +470,7 @@ fn test_reverb_type_switch_e2e() {
         let mut total = 0.0f32;
         for _ in 0..32 {
             voice.render(&mut block, &params, &empty_mod);
-            reverb.process(&mut block, &params.reverb);
+            reverb.process(&mut block, &rv);
             total += block.iter().map(|s| s * s).sum::<f32>();
         }
         total

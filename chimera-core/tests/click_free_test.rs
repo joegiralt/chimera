@@ -5,7 +5,8 @@
 use chimera_core::{MidiNote, Velocity};
 use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::modulation::ModState;
-use chimera_core::dsp::reverb::Reverb;
+use chimera_core::dsp::fx_bus::FxParams;
+use chimera_core::dsp::reverb::{Reverb, ReverbParams};
 use chimera_core::dsp::voice::Voice;
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_hal::BLOCK_SIZE;
@@ -16,14 +17,15 @@ const SR: u32 = 48000;
 /// check for discontinuities (clicks) in the output stream.
 fn check_no_clicks(
     name: &str,
-    setup: impl FnOnce(&mut ParamSnapshot),
+    setup: impl FnOnce(&mut ParamSnapshot, &mut ReverbParams),
     callback_sizes: &[usize], // simulate varying cpal buffer sizes
 ) {
     let empty_mod = ModState::new();
     let mut voice = Voice::new(SR);
     let mut reverb = Reverb::new();
     let mut params = ParamSnapshot::default();
-    setup(&mut params);
+    let mut rv = FxParams::default().reverb;
+    setup(&mut params, &mut rv);
 
     voice.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params);
 
@@ -37,7 +39,7 @@ fn check_no_clicks(
         for _ in 0..cb_size {
             if block_pos >= BLOCK_SIZE {
                 voice.render(&mut block, &params, &empty_mod);
-                reverb.process(&mut block, &params.reverb);
+                reverb.process(&mut block, &rv);
                 block_pos = 0;
             }
             let s = libm::tanhf(block[block_pos] * 0.4);
@@ -72,7 +74,7 @@ fn check_no_clicks(
 fn test_no_clicks_fm_init() {
     check_no_clicks(
         "Pizza init",
-        |p| {
+        |p, _| {
             *p = ParamSnapshot::for_engine(EngineType::Pizza);
         },
         // Simulate realistic cpal callback pattern: varying buffer sizes
@@ -84,7 +86,7 @@ fn test_no_clicks_fm_init() {
 fn test_no_clicks_pizza_with_crush() {
     check_no_clicks(
         "Pizza crushed",
-        |p| {
+        |p, _| {
             *p = ParamSnapshot::for_engine(EngineType::Pizza);
             p.pizza.crush = 0.7;
         },
@@ -98,11 +100,11 @@ fn test_no_clicks_pizza_with_crush() {
 fn test_no_clicks_pizza_with_plate_reverb() {
     check_no_clicks(
         "Pizza + plate reverb",
-        |p| {
+        |p, rv| {
             *p = ParamSnapshot::for_engine(EngineType::Pizza);
-            p.reverb.reverb_type = 0;
-            p.reverb.mix = 0.5;
-            p.reverb.time = 0.7;
+            rv.reverb_type = 0;
+            rv.mix = 0.5;
+            rv.time = 0.7;
         },
         &[256, 512, 256, 128, 256, 256, 512, 256],
     );
@@ -112,10 +114,10 @@ fn test_no_clicks_pizza_with_plate_reverb() {
 fn test_no_clicks_pizza_with_fdn_reverb() {
     check_no_clicks(
         "Pizza + FDN reverb",
-        |p| {
+        |p, rv| {
             *p = ParamSnapshot::for_engine(EngineType::Pizza);
-            p.reverb.reverb_type = 1;
-            p.reverb.mix = 0.5;
+            rv.reverb_type = 1;
+            rv.mix = 0.5;
         },
         &[256, 256, 256, 256, 256, 256, 256, 256],
     );
@@ -125,10 +127,10 @@ fn test_no_clicks_pizza_with_fdn_reverb() {
 fn test_no_clicks_fm_with_midiverb() {
     check_no_clicks(
         "FM + MidiVerb",
-        |p| {
+        |p, rv| {
             *p = ParamSnapshot::for_engine(EngineType::Pizza);
-            p.reverb.reverb_type = 2;
-            p.reverb.mix = 0.5;
+            rv.reverb_type = 2;
+            rv.mix = 0.5;
         },
         &[256, 256, 256, 256, 256, 256, 256, 256],
     );
@@ -140,7 +142,7 @@ fn test_no_clicks_fm_with_midiverb() {
 fn test_no_clicks_ks_string() {
     check_no_clicks(
         "KS+ string",
-        |p| {
+        |p, _| {
             *p = ParamSnapshot::for_engine(EngineType::Modal);
             p.modal.mode = ResonatorMode::String;
         },
@@ -158,6 +160,7 @@ fn test_no_clicks_modal() {
     let mut reverb = Reverb::new();
     let mut params = ParamSnapshot::for_engine(EngineType::Modal);
     params.modal.mode = ResonatorMode::Modal;
+    let rv = FxParams::default().reverb;
     voice.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params);
 
     let mut block = [0.0f32; BLOCK_SIZE];
@@ -168,7 +171,7 @@ fn test_no_clicks_modal() {
         for _ in 0..cb_size {
             if block_pos >= BLOCK_SIZE {
                 voice.render(&mut block, &params, &empty_mod);
-                reverb.process(&mut block, &params.reverb);
+                reverb.process(&mut block, &rv);
                 block_pos = 0;
             }
             all_samples.push(libm::tanhf(block[block_pos] * 0.7));
@@ -189,7 +192,7 @@ fn test_no_clicks_modal() {
 fn test_no_clicks_odd_buffer_sizes() {
     check_no_clicks(
         "FM with odd callback sizes",
-        |p| {
+        |p, _| {
             *p = ParamSnapshot::for_engine(EngineType::Pizza);
         },
         // Deliberately misaligned with BLOCK_SIZE=128
@@ -201,7 +204,7 @@ fn test_no_clicks_odd_buffer_sizes() {
 fn test_no_clicks_tiny_buffers() {
     check_no_clicks(
         "FM with tiny callbacks",
-        |p| {
+        |p, _| {
             *p = ParamSnapshot::for_engine(EngineType::Pizza);
         },
         // Very small buffers — stress the block boundary logic
@@ -213,7 +216,7 @@ fn test_no_clicks_tiny_buffers() {
 fn test_no_clicks_single_sample_buffers() {
     check_no_clicks(
         "FM with single-sample callbacks",
-        |p| {
+        |p, _| {
             *p = ParamSnapshot::for_engine(EngineType::Pizza);
         },
         // Worst case: one sample per callback

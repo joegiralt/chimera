@@ -2,7 +2,7 @@
 //! parameter is, not where it sits on a page or in a chain, so rearranging
 //! cells or reordering blocks never remaps a mod route.
 
-use crate::block::{find_spec, ParamId, ParamSpec};
+use crate::block::{find_spec, Block, ParamId, ParamSpec};
 
 /// An FM operator. `TryFrom<u8>` rejects values above 3, so an out-of-range
 /// operator (bad sound or SysEx data) is unrepresentable.
@@ -60,7 +60,7 @@ pub enum BlockRef {
     Lfo,
     /// `OutParams { volume, pan }`
     Out,
-    /// Chorus, delay and reverb run outside `Voice` (desktop only).
+    /// Chorus, delay and reverb: the Performance's shared FX bus.
     Chorus,
     Delay,
     Reverb,
@@ -152,4 +152,12 @@ impl ParamAddr {
     pub fn modulatable(self) -> bool {
         self.block.voice_reads() && self.spec().is_some_and(|s| s.modulatable)
     }
+}
+
+/// Resolves block addresses to values (spec § Data model). A Sound's
+/// `ParamSnapshot` holds the voice blocks; a Part view (`PartEdit`) adds the
+/// shared FX. `None`: the address is not held here.
+pub trait Blocks {
+    fn block(&self, b: BlockRef) -> Option<&dyn Block>;
+    fn block_mut(&mut self, b: BlockRef) -> Option<&mut dyn Block>;
 }

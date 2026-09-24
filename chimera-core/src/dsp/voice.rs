@@ -1,5 +1,6 @@
 use chimera_hal::BLOCK_SIZE;
 
+use crate::addr::Blocks;
 use crate::block::apply_offset;
 use crate::dsp::drive::Drive;
 use crate::dsp::engines::Engines;
@@ -107,7 +108,10 @@ impl Voice {
             let off = mod_state.sum_for(d, &mod_values);
             if off != 0.0 {
                 let a = mod_state.dest(d);
-                apply_offset(m.block_mut(a.block), a.param, off);
+                // Modulatable addresses are always Sound blocks (`voice_reads`).
+                if let Some(blk) = m.block_mut(a.block) {
+                    apply_offset(blk, a.param, off);
+                }
             }
         }
 
