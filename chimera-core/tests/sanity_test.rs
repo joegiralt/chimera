@@ -1,5 +1,5 @@
 //! Sanity gate (spec § Testing), run before goldens are recorded.
-//! Per engine init patch: finite, within ±1.0, not silent, silent after
+//! Per engine init sound: finite, within ±1.0, not silent, silent after
 //! note-off; pitched engines' fundamental within one semitone of the note.
 //! A failing engine gets a GitHub issue and its failing test is
 //! marked `#[ignore = "known broken: …"]`. It is not fixed in this refactor.

@@ -5,7 +5,7 @@
 use crate::block::{find_spec, ParamId, ParamSpec};
 
 /// An FM operator. `TryFrom<u8>` rejects values above 3, so an out-of-range
-/// operator (bad patch or SysEx data) is unrepresentable.
+/// operator (bad sound or SysEx data) is unrepresentable.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Op {
     A,

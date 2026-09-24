@@ -38,7 +38,7 @@ impl ChainType {
 
 #[derive(Clone)]
 #[repr(C)]
-pub struct Patch {
+pub struct Sound {
     pub name: [u8; NAME_LEN],
     pub chain_type: ChainType,
     pub params: ParamSnapshot,
@@ -46,7 +46,7 @@ pub struct Patch {
     pub dest_registry: ModDestRegistry,
 }
 
-impl Patch {
+impl Sound {
     pub fn init(chain_type: ChainType) -> Self {
         let mut name = [0u8; NAME_LEN];
         let tag = b"(init)";
@@ -69,7 +69,7 @@ impl Patch {
 }
 
 pub struct SoundPool {
-    slots: [Option<Patch>; POOL_SIZE],
+    slots: [Option<Sound>; POOL_SIZE],
 }
 
 impl SoundPool {
@@ -79,13 +79,13 @@ impl SoundPool {
         }
     }
 
-    pub fn get(&self, index: usize) -> Option<&Patch> {
+    pub fn get(&self, index: usize) -> Option<&Sound> {
         self.slots.get(index)?.as_ref()
     }
 
-    pub fn store(&mut self, index: usize, patch: Patch) {
+    pub fn store(&mut self, index: usize, sound: Sound) {
         if index < POOL_SIZE {
-            self.slots[index] = Some(patch);
+            self.slots[index] = Some(sound);
         }
     }
 
@@ -100,28 +100,28 @@ impl SoundPool {
     }
 }
 
-pub struct Track {
-    pub patch: Patch,
+pub struct Part {
+    pub sound: Sound,
     pub loaded_from: Option<u8>,
 }
 
-impl Track {
+impl Part {
     pub fn new(chain_type: ChainType) -> Self {
         Self {
-            patch: Patch::init(chain_type),
+            sound: Sound::init(chain_type),
             loaded_from: None,
         }
     }
 
     pub fn load_from_pool(&mut self, pool: &SoundPool, slot: usize) {
         if let Some(p) = pool.get(slot) {
-            self.patch = p.clone();
+            self.sound = p.clone();
             self.loaded_from = Some(slot as u8);
         }
     }
 
     pub fn save_to_pool(&self, pool: &mut SoundPool, slot: usize) {
-        pool.store(slot, self.patch.clone());
+        pool.store(slot, self.sound.clone());
     }
 }
 
@@ -141,19 +141,19 @@ impl Default for MixerState {
     }
 }
 
-pub struct Project {
+pub struct Performance {
     pub name: [u8; NAME_LEN],
     pub pool: SoundPool,
-    pub tracks: [Track; 6],
+    pub parts: [Part; 6],
     pub mixer: MixerState,
 }
 
-impl Project {
+impl Performance {
     pub fn new() -> Self {
         Self {
-            name: *b"New Project\0\0\0\0\0",
+            name: *b"New Performance\0",
             pool: SoundPool::new(),
-            tracks: core::array::from_fn(|_| Track::new(ChainType::PizzaPoly)),
+            parts: core::array::from_fn(|_| Part::new(ChainType::PizzaPoly)),
             mixer: MixerState::default(),
         }
     }

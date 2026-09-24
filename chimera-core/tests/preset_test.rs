@@ -1,5 +1,5 @@
 use chimera_core::addr::Op;
-use chimera_core::preset::{ChainType, Patch, Project, SoundPool, Track, POOL_SIZE};
+use chimera_core::preset::{ChainType, Sound, Performance, SoundPool, Part, POOL_SIZE};
 use chimera_core::ui::block_registry as reg;
 use chimera_core::ui::page::PageKey;
 use chimera_core::ui::{UiMode, UiState};
@@ -60,7 +60,7 @@ impl Controls for MockControls {
 
 #[test]
 fn patch_init_has_musically_useful_defaults() {
-    let p = Patch::init(ChainType::PizzaPoly);
+    let p = Sound::init(ChainType::PizzaPoly);
     assert_eq!(p.chain_type, ChainType::PizzaPoly);
     assert!(p.params.out.volume > 0.0);
     assert!(p.params.filter.cutoff > 1000.0);
@@ -77,8 +77,8 @@ fn sound_pool_starts_empty() {
 #[test]
 fn sound_pool_store_and_retrieve() {
     let mut pool = SoundPool::new();
-    let patch = Patch::init(ChainType::PizzaPoly);
-    pool.store(0, patch);
+    let sound = Sound::init(ChainType::PizzaPoly);
+    pool.store(0, sound);
     assert!(pool.get(0).is_some());
     assert_eq!(pool.get(0).unwrap().chain_type, ChainType::PizzaPoly);
 }
@@ -90,56 +90,60 @@ fn sound_pool_slot_count() {
 }
 
 #[test]
-fn track_starts_with_init_patch() {
-    let track = Track::new(ChainType::PizzaPoly);
-    assert_eq!(track.patch.chain_type, ChainType::PizzaPoly);
-    assert!(track.loaded_from.is_none());
+fn part_starts_with_init_patch() {
+    let part = Part::new(ChainType::PizzaPoly);
+    assert_eq!(part.sound.chain_type, ChainType::PizzaPoly);
+    assert!(part.loaded_from.is_none());
 }
 
 #[test]
-fn track_load_from_pool_copies() {
+fn part_load_from_pool_copies() {
     let mut pool = SoundPool::new();
-    let mut patch = Patch::init(ChainType::PizzaPoly);
-    patch.name = *b"Acid Bass\0\0\0\0\0\0\0";
-    pool.store(3, patch);
+    let mut sound = Sound::init(ChainType::PizzaPoly);
+    sound.name = *b"Acid Bass\0\0\0\0\0\0\0";
+    pool.store(3, sound);
 
-    let mut track = Track::new(ChainType::PizzaPoly);
-    track.load_from_pool(&pool, 3);
+    let mut part = Part::new(ChainType::PizzaPoly);
+    part.load_from_pool(&pool, 3);
 
-    assert_eq!(track.patch.name_str(), "Acid Bass");
-    assert_eq!(track.loaded_from, Some(3));
+    assert_eq!(part.sound.name_str(), "Acid Bass");
+    assert_eq!(part.loaded_from, Some(3));
 }
 
 #[test]
-fn track_edit_does_not_modify_pool() {
+fn part_edit_does_not_modify_pool() {
     let mut pool = SoundPool::new();
-    pool.store(0, Patch::init(ChainType::PizzaPoly));
+    pool.store(0, Sound::init(ChainType::PizzaPoly));
 
-    let mut track = Track::new(ChainType::PizzaPoly);
-    track.load_from_pool(&pool, 0);
-    track.patch.params.out.volume = 0.0; // mute
+    let mut part = Part::new(ChainType::PizzaPoly);
+    part.load_from_pool(&pool, 0);
+    part.sound.params.out.volume = 0.0; // mute
 
     // Pool slot unchanged
     assert!(pool.get(0).unwrap().params.out.volume > 0.0);
 }
 
 #[test]
-fn track_save_to_pool_overwrites() {
+fn part_save_to_pool_overwrites() {
     let mut pool = SoundPool::new();
-    pool.store(5, Patch::init(ChainType::PizzaPoly));
+    pool.store(5, Sound::init(ChainType::PizzaPoly));
 
-    let mut track = Track::new(ChainType::Modal);
-    track.patch.name = *b"My Sound\0\0\0\0\0\0\0\0";
-    track.save_to_pool(&mut pool, 5);
+    let mut part = Part::new(ChainType::Modal);
+    part.sound.name = *b"My Sound\0\0\0\0\0\0\0\0";
+    part.save_to_pool(&mut pool, 5);
 
     assert_eq!(pool.get(5).unwrap().name_str(), "My Sound");
     assert_eq!(pool.get(5).unwrap().chain_type, ChainType::Modal);
 }
 
+/// Spec § Vocabulary: a Performance holds MAX_PARTS Parts, each playing a Sound.
 #[test]
-fn project_has_six_tracks() {
-    let project = Project::new();
-    assert_eq!(project.tracks.len(), 6);
+fn performance_has_six_parts_playing_sounds() {
+    let perf = Performance::new();
+    assert_eq!(perf.parts.len(), chimera_core::hw::MAX_PARTS);
+    let sound: &Sound = &perf.parts[0].sound;
+    assert_eq!(sound.chain_type, ChainType::PizzaPoly);
+    assert_eq!(&perf.name, b"New Performance\0");
 }
 
 // ── Navigation tests ─────────────────────────────────────────────
@@ -195,13 +199,13 @@ fn edit_held_with_b_press_does_not_navigate() {
         .button(ButtonId::B1, ButtonState::Pressed));
 
     // Should be in browser, not navigated
-    assert!(matches!(ui.ui_mode, UiMode::PatchBrowser { .. }));
+    assert!(matches!(ui.ui_mode, UiMode::SoundBrowser { .. }));
     assert_eq!(ui.nav.node, start_node);
 }
 
-// ── Patch browser integration tests ─────────────────────────────
+// ── Sound browser integration tests ─────────────────────────────
 
-/// Helper: open patch browser for a track via Edit + B-button
+/// Helper: open sound browser for a part via Edit + B-button
 fn open_browser(ui: &mut UiState, btn: ButtonId) {
     ui.handle_input(&MockControls::new()
         .button(ButtonId::Edit, ButtonState::Held)
@@ -214,7 +218,7 @@ fn edit_b1_opens_patch_browser() {
     assert!(matches!(ui.ui_mode, UiMode::Normal));
 
     open_browser(&mut ui, ButtonId::B1);
-    assert!(matches!(ui.ui_mode, UiMode::PatchBrowser { track: 0, .. }));
+    assert!(matches!(ui.ui_mode, UiMode::SoundBrowser { part: 0, .. }));
 }
 
 #[test]
@@ -222,7 +226,7 @@ fn edit_b3_opens_browser_for_track_2() {
     let mut ui = UiState::new();
 
     open_browser(&mut ui, ButtonId::B3);
-    assert!(matches!(ui.ui_mode, UiMode::PatchBrowser { track: 2, .. }));
+    assert!(matches!(ui.ui_mode, UiMode::SoundBrowser { part: 2, .. }));
 }
 
 #[test]
@@ -234,17 +238,17 @@ fn b1_without_edit_does_not_open_browser() {
 }
 
 #[test]
-fn browser_load_copies_patch_to_track() {
+fn browser_load_copies_patch_to_part() {
     let mut ui = UiState::new();
 
-    // Store a named patch in pool slot 2
-    let mut patch = Patch::init(ChainType::PizzaPoly);
-    patch.name = *b"Test Sound\0\0\0\0\0\0";
-    ui.project.pool.store(2, patch);
+    // Store a named sound in pool slot 2
+    let mut sound = Sound::init(ChainType::PizzaPoly);
+    sound.name = *b"Test Sound\0\0\0\0\0\0";
+    ui.performance.pool.store(2, sound);
 
-    // Open browser for B1 (track 0)
+    // Open browser for B1 (part 0)
     open_browser(&mut ui, ButtonId::B1);
-    assert!(matches!(ui.ui_mode, UiMode::PatchBrowser { track: 0, cursor: 0, .. }));
+    assert!(matches!(ui.ui_mode, UiMode::SoundBrowser { part: 0, cursor: 0, .. }));
 
     // Scroll down to slot 2
     ui.handle_input(&MockControls::new().encoder(EncoderId::Main, 2));
@@ -252,47 +256,47 @@ fn browser_load_copies_patch_to_track() {
     // Confirm selection
     ui.handle_input(&MockControls::new().button(ButtonId::Edit, ButtonState::Pressed));
 
-    // Should exit browser and load patch into track 0
+    // Should exit browser and load sound into part 0
     assert!(matches!(ui.ui_mode, UiMode::Normal));
-    assert_eq!(ui.project.tracks[0].patch.name_str(), "Test Sound");
-    assert_eq!(ui.project.tracks[0].loaded_from, Some(2));
+    assert_eq!(ui.performance.parts[0].sound.name_str(), "Test Sound");
+    assert_eq!(ui.performance.parts[0].loaded_from, Some(2));
 }
 
 #[test]
 fn browser_cancel_does_not_load() {
     let mut ui = UiState::new();
-    let original_name = ui.project.tracks[0].patch.name;
+    let original_name = ui.performance.parts[0].sound.name;
 
-    // Store patch and open browser
-    ui.project.pool.store(0, Patch::init(ChainType::Modal));
+    // Store sound and open browser
+    ui.performance.pool.store(0, Sound::init(ChainType::Modal));
     open_browser(&mut ui, ButtonId::B1);
-    assert!(matches!(ui.ui_mode, UiMode::PatchBrowser { .. }));
+    assert!(matches!(ui.ui_mode, UiMode::SoundBrowser { .. }));
 
     // Cancel by pressing a B-button
     ui.handle_input(&MockControls::new().button(ButtonId::B2, ButtonState::Pressed));
 
     assert!(matches!(ui.ui_mode, UiMode::Normal));
-    assert_eq!(ui.project.tracks[0].patch.name, original_name);
+    assert_eq!(ui.performance.parts[0].sound.name, original_name);
 }
 
 #[test]
 fn browser_save_to_pool() {
     let mut ui = UiState::new();
 
-    // Edit track 0's patch name
-    ui.project.tracks[0].patch.name = *b"My Bass\0\0\0\0\0\0\0\0\0";
+    // Edit part 0's sound name
+    ui.performance.parts[0].sound.name = *b"My Bass\0\0\0\0\0\0\0\0\0";
 
     // Open browser for B1
     open_browser(&mut ui, ButtonId::B1);
-    assert!(matches!(ui.ui_mode, UiMode::PatchBrowser { .. }));
+    assert!(matches!(ui.ui_mode, UiMode::SoundBrowser { .. }));
 
     // Scroll to slot 5 and save
     ui.handle_input(&MockControls::new().encoder(EncoderId::Main, 5));
     ui.handle_input(&MockControls::new().button(ButtonId::Seq, ButtonState::Pressed));
 
-    // Should stay in browser, and pool slot 5 now has our patch
-    assert!(matches!(ui.ui_mode, UiMode::PatchBrowser { .. }));
-    assert_eq!(ui.project.pool.get(5).unwrap().name_str(), "My Bass");
+    // Should stay in browser, and pool slot 5 now has our sound
+    assert!(matches!(ui.ui_mode, UiMode::SoundBrowser { .. }));
+    assert_eq!(ui.performance.pool.get(5).unwrap().name_str(), "My Bass");
 }
 
 #[test]
@@ -305,8 +309,8 @@ fn browser_init_entries_set_chain_type() {
     ui.handle_input(&MockControls::new().button(ButtonId::Edit, ButtonState::Pressed));
 
     assert!(matches!(ui.ui_mode, UiMode::Normal));
-    assert_eq!(ui.project.tracks[0].patch.chain_type, ChainType::Modal);
-    assert!(ui.project.tracks[0].patch.name_str().starts_with("(init)"));
+    assert_eq!(ui.performance.parts[0].sound.chain_type, ChainType::Modal);
+    assert!(ui.performance.parts[0].sound.name_str().starts_with("(init)"));
 
     // Open browser again, scroll to "(init) FM" (POOL_SIZE + 2)
     open_browser(&mut ui, ButtonId::B1);
@@ -314,7 +318,7 @@ fn browser_init_entries_set_chain_type() {
     ui.handle_input(&MockControls::new().button(ButtonId::Edit, ButtonState::Pressed));
 
     assert!(matches!(ui.ui_mode, UiMode::Normal));
-    assert_eq!(ui.project.tracks[0].patch.chain_type, ChainType::Fm);
+    assert_eq!(ui.performance.parts[0].sound.chain_type, ChainType::Fm);
 }
 
 // ── Priming by slot address ──────────────────────────────────────
@@ -333,7 +337,7 @@ fn prime(ui: &mut UiState) {
 }
 
 fn primed(ui: &UiState) -> Vec<chimera_core::addr::ParamAddr> {
-    let reg = &ui.project.tracks[ui.active_track].patch.dest_registry;
+    let reg = &ui.performance.parts[ui.active_part].sound.dest_registry;
     (0..reg.len()).map(|i| reg.get(i).unwrap().addr).collect()
 }
 
@@ -373,7 +377,7 @@ fn priming_on_pizza_lfo_sub_page_registers_nothing() {
 #[test]
 fn priming_on_fm_ratio_slot_2_registers_nothing() {
     let mut ui = UiState::new();
-    ui.project.tracks[0] = Track::new(ChainType::Fm);
+    ui.performance.parts[0] = Part::new(ChainType::Fm);
     ui.nav.chain_type = ChainType::Fm;
     press(&mut ui, ButtonId::Edit);
     press(&mut ui, ButtonId::Edit); // sub-page 2: FmRatio
