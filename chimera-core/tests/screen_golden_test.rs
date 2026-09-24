@@ -35,7 +35,7 @@ const GOLDENS: &[(&str, Golden)] = &[
     ("mixer_sends", Locked(0xfc90ed4f83130581)),
     ("mixer_fx_delay", Locked(0x4b5f420a1ec41f11)),
     ("mod_matrix", Locked(0xf923780b2127813c)),
-    ("sound_browser", Pending),
+    ("sound_browser", Locked(0x91b39fd39c530bcd)),
     ("system", Locked(0x966235b0ff853d19)),
 ];
 

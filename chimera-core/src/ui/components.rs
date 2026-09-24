@@ -72,6 +72,20 @@ where
     }
 }
 
+/// Overlay title in the header band: grey context, an arrow, bold name
+/// (`LOAD SOUND → PART 1`).
+pub fn title_to<D>(d: &mut D, context: &str, name: &str)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let y = theme::HEADER_BASELINE;
+    let x = theme::MARGIN_X
+        + draw::text_tracked(d, &theme::FONT_LABEL, context, theme::MARGIN_X, y, theme::MID, theme::LABEL_TRACKING)
+        + 6;
+    let x = x + draw::arrow(d, x, y, theme::MID) + 5;
+    draw::text_tracked(d, &theme::FONT_LABEL_BOLD, name, x, y, theme::INK, theme::LABEL_TRACKING);
+}
+
 /// Focus band (y 28..118): the focused slot's label, its value large, and an
 /// arc gauge (from 12:00 for bipolar params). `value` is the animated 0..1.
 pub fn focus_band<D>(d: &mut D, label: &str, value_text: &str, value: f32, bipolar: bool)

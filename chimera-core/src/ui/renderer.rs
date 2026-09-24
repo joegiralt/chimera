@@ -1,11 +1,7 @@
-use embedded_graphics::Drawable;
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::geometry::{Point, Size};
-use embedded_graphics::mono_font::MonoTextStyle;
-use embedded_graphics::mono_font::ascii::FONT_6X10;
 use embedded_graphics::pixelcolor::Rgb565;
-use embedded_graphics::primitives::{Line, PrimitiveStyle, Rectangle, StyledDrawable};
-use embedded_graphics::text::Text;
+use embedded_graphics::primitives::{PrimitiveStyle, Rectangle, StyledDrawable};
 
 use crate::addr::Op;
 use crate::ui::animation::AnimatedValue;
@@ -21,8 +17,6 @@ use crate::ui::perf::PerfStats;
 use crate::ui::region::{self, RegionKind};
 use crate::ui::viz;
 use crate::ui::theme;
-
-use core::fmt::Write;
 
 /// Everything one frame draws from, besides the renderer's own animation.
 pub struct Frame<'a> {
@@ -302,121 +296,6 @@ impl Renderer {
     {
         let (context, name) = components::header_text(f.nav, f.def);
         components::header(display, context.as_str(), name.as_str(), f.sounding, f.perf.audio_load_pct);
-    }
-
-    // ── Sound Browser ────────────────────────────────────────────────
-
-    /// Number of visible rows in the sound browser list.
-    pub const BROWSER_VISIBLE_ROWS: usize = 10;
-    /// Total entries: 32 pool slots + 3 init options (Pizza, Modal, FM).
-    pub const BROWSER_TOTAL_ENTRIES: usize = crate::preset::POOL_SIZE + 3;
-
-    /// Draw the full-screen sound browser overlay.
-    pub fn draw_sound_browser<D>(
-        display: &mut D,
-        pool: &crate::preset::SoundPool,
-        part: usize,
-        cursor: usize,
-        scroll: usize,
-        part_chain_type: crate::preset::ChainType,
-    )
-    where
-        D: DrawTarget<Color = Rgb565>,
-    {
-        // Clear screen
-        let _ = Rectangle::new(Point::zero(), Size::new(240, 320))
-            .draw_styled(&PrimitiveStyle::with_fill(theme::BG), display);
-
-        // Title bar: "LOAD SOUND: P[n]" (the Part it loads into)
-        let mut title_buf = FmtBuf::new();
-        let _ = write!(title_buf, "LOAD SOUND: P{}", part + 1);
-        let title_style = MonoTextStyle::new(&FONT_6X10, theme::ACCENT);
-        let _ = Text::new(title_buf.as_str(), Point::new(8, theme::HEADER_Y + 10), title_style)
-            .draw(display);
-
-        // Separator below title
-        let _ = Line::new(
-            Point::new(0, 22),
-            Point::new(theme::SCREEN_W - 1, 22),
-        )
-        .draw_styled(&PrimitiveStyle::with_stroke(theme::SEPARATOR, 1), display);
-
-        // List rows
-        let row_height: i32 = 24;
-        let list_top: i32 = 28;
-        let text_style = MonoTextStyle::new(&FONT_6X10, theme::TEXT);
-        let dim_style = MonoTextStyle::new(&FONT_6X10, theme::TEXT_DIM);
-
-        let visible = Self::BROWSER_VISIBLE_ROWS.min(Self::BROWSER_TOTAL_ENTRIES);
-        for i in 0..visible {
-            let entry_idx = scroll + i;
-            if entry_idx >= Self::BROWSER_TOTAL_ENTRIES {
-                break;
-            }
-
-            let y = list_top + i as i32 * row_height;
-            let is_selected = entry_idx == cursor;
-
-            // Highlight bar for selected row
-            if is_selected {
-                let _ = Rectangle::new(
-                    Point::new(0, y),
-                    Size::new(240, row_height as u32),
-                )
-                .draw_styled(&PrimitiveStyle::with_fill(theme::ACCENT_DIM), display);
-            }
-
-            let text_color = if is_selected { theme::TEXT } else { theme::TEXT_MID };
-            let style = MonoTextStyle::new(&FONT_6X10, text_color);
-
-            if entry_idx < crate::preset::POOL_SIZE {
-                // Pool slot row: "[nn] Name  Type"
-                let mut row_buf = FmtBuf::new();
-                if let Some(sound) = pool.get(entry_idx) {
-                    let _ = write!(row_buf, "{:2} {} {}", entry_idx + 1, sound.name_str(), sound.chain_type.label());
-                } else {
-                    let _ = write!(row_buf, "{:2} (empty)", entry_idx + 1);
-                }
-                let _ = Text::new(row_buf.as_str(), Point::new(8, y + 16), style).draw(display);
-            } else {
-                // Init entries: POOL_SIZE=Pizza, POOL_SIZE+1=Modal, POOL_SIZE+2=FM
-                let init_types = [
-                    crate::preset::ChainType::PizzaPoly,
-                    crate::preset::ChainType::Modal,
-                    crate::preset::ChainType::Fm,
-                ];
-                let init_idx = entry_idx - crate::preset::POOL_SIZE;
-                let mut init_buf = FmtBuf::new();
-                if init_idx < init_types.len() {
-                    let _ = write!(init_buf, "** (init) {}", init_types[init_idx].label());
-                }
-                let _ = Text::new(init_buf.as_str(), Point::new(8, y + 16), style).draw(display);
-            }
-        }
-
-        // Scroll indicator — show position in list
-        if Self::BROWSER_TOTAL_ENTRIES > visible {
-            let bar_top = list_top;
-            let bar_height = visible as i32 * row_height;
-            let thumb_height = (bar_height * visible as i32 / Self::BROWSER_TOTAL_ENTRIES as i32).max(8);
-            let max_scroll = Self::BROWSER_TOTAL_ENTRIES - visible;
-            let thumb_y = bar_top + if max_scroll > 0 {
-                (bar_height - thumb_height) * scroll as i32 / max_scroll as i32
-            } else {
-                0
-            };
-
-            let _ = Rectangle::new(
-                Point::new(234, thumb_y),
-                Size::new(4, thumb_height as u32),
-            )
-            .draw_styled(&PrimitiveStyle::with_fill(theme::TEXT_DIM), display);
-        }
-
-        // Footer hint
-        let hint_style = MonoTextStyle::new(&FONT_6X10, theme::TEXT_DIM);
-        let _ = Text::new("Turn:scroll  Edit:load  B:cancel", Point::new(8, 306), hint_style)
-            .draw(display);
     }
 
     // ── Dirty region helpers ─────────────────────────────────────────
