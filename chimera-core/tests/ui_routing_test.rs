@@ -253,17 +253,19 @@ fn switching_part_rebuilds_the_matrix_for_that_part() {
 }
 
 /// Issue #11, regression 1: `sel_col`/`scroll_x` used to survive a Part
-/// switch uncapped. An E-encoder turn with `sel_col >= num_dests` wrote a
-/// phantom amount into a column that had no destination yet; because
-/// `ModDestRegistry::add` always appends at the current count, a later
-/// MIX+Plus prime on that Part could land a brand-new route on exactly that
-/// column and inherit the phantom instead of starting at 0. Checks all
-/// three parts of the fix: `load_matrix` clamps the cursor on a Part switch;
-/// `adjust_amount` refuses to write past `num_dests` even if the cursor is
-/// somehow stale anyway; and a prime reloads amounts from the committed
-/// `ModState` rather than trusting the matrix's raw column array.
+/// switch uncapped. With real button/encoder input only, the observable
+/// bug was not the "phantom route" wording in the issue -- reaching a page
+/// where MIX+Plus can prime always requires leaving the matrix, and that
+/// navigation already reloads the matrix's amounts from the committed
+/// `ModState` (a separate, pre-existing behaviour), which wipes an
+/// out-of-range write before any later prime could land on it. What a user
+/// actually hit: the cursor stayed drawn past the last column after a Part
+/// switch, and turning the amount encoder there silently edited nothing --
+/// the write went to a column with no destination and was discarded on the
+/// next navigation instead of landing on the Part's one real route.
 #[test]
 fn priming_after_a_stale_cursor_does_not_inherit_a_phantom_amount() {
+    let shape = ParamAddr::new(BlockRef::Pizza, PizzaParams::SHAPE);
     let level = ParamAddr::new(BlockRef::Pizza, PizzaParams::LEVEL);
     let mut ui = UiState::new();
 
@@ -276,26 +278,23 @@ fn priming_after_a_stale_cursor_does_not_inherit_a_phantom_amount() {
     ui.handle_input(&MockControls::new().encoder(EncoderId::B, 2));
     assert_eq!(ui.matrix_state.sel_col, 2);
 
-    // Switch to Part 2, which has one destination of its own (SHAPE).
+    // Switch to Part 2, which has one destination of its own (SHAPE). Before
+    // the fix the cursor is still 2 here, one past Part 2's single column.
     press(&mut ui, ButtonId::B2);
     prime_slot(&mut ui, EncoderId::A);
     assert_eq!(ui.matrix_state.num_dests, 1);
     assert_eq!(ui.matrix_state.sel_col, 0, "load_matrix must clamp the cursor to the new Part's destination count");
 
-    // Force the cursor back out of range, as belt-and-suspenders coverage
-    // for adjust_amount's own guard even if some other path left it stale.
-    ui.matrix_state.sel_col = 1;
-    ui.nav.node = 4; // MOD_MATRIX (block_registry::PIZZA_POLY_BLOCKS[4])
+    // Turn the amount encoder, leave the matrix, then prime a second
+    // destination (LEVEL) -- real navigation and encoder input throughout.
+    enter_matrix(&mut ui);
     ui.handle_input(&MockControls::new().encoder(EncoderId::E, 50));
-    assert_eq!(ui.matrix_state.amounts[0][1], 0, "adjust_amount must not write past num_dests");
-
-    // Back on the Part's first page, prime a second destination (LEVEL) --
-    // it lands at column 1, the same column the (blocked) stale write
-    // targeted.
-    ui.nav.node = 0;
+    leave_matrix(&mut ui);
     prime_slot(&mut ui, EncoderId::C);
+
     assert_eq!(ui.matrix_state.num_dests, 2);
-    assert_eq!(routes(&ui, 1).last(), Some(&(level, 0)), "new route must start at 0, not inherit a stale column's amount");
+    assert_eq!(routes(&ui, 1)[0], (shape, 50), "the E turn must edit Part 2's own route, not a discarded phantom column");
+    assert_eq!(routes(&ui, 1)[1], (level, 0), "the new route starts at 0");
 }
 
 /// Issue #11, regression 2: un-priming rebuilt the destination list (shifted
