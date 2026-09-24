@@ -8,6 +8,7 @@ pub mod dsp;
 pub mod hw;
 pub mod mod_path;
 pub mod modulation;
+pub mod note_queue;
 pub mod params;
 pub mod part;
 pub mod preset;
