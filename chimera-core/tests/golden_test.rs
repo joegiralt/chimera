@@ -64,6 +64,22 @@ fn goldens_match() {
     assert!(failures.is_empty(), "golden mismatch:\n{}", failures.join("\n"));
 }
 
+/// Spec § Testing: part 1's mono bus through the new voice pool matches
+/// every existing golden bit-for-bit.
+#[test]
+fn goldens_match_through_the_instrument() {
+    let mut failures = Vec::new();
+    for case in Case::ALL {
+        let out = render_case_through_instrument(case);
+        let (hash, sp) = (fnv1a(&out), spots(&out));
+        let &(_, want_hash, want_spots) = GOLDENS.iter().find(|g| g.0 == case.name()).expect("recorded");
+        if hash != want_hash || sp != want_spots {
+            failures.push(format!("{}: hash 0x{hash:016x} (want 0x{want_hash:016x})", case.name()));
+        }
+    }
+    assert!(failures.is_empty(), "instrument golden mismatch:\n{}", failures.join("\n"));
+}
+
 #[test]
 fn known_broken_goldens_have_issues() {
     const TRACKER: &str = "https://github.com/joegiralt/chimera/issues/";
