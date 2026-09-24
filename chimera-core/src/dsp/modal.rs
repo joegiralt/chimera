@@ -1,6 +1,7 @@
 use chimera_hal::BLOCK_SIZE;
 
 use crate::block::{Block, ParamId, ParamSpec, ValFmt};
+use crate::hw::Cost;
 
 const MAX_MODES: usize = 48;
 
@@ -487,6 +488,9 @@ impl Default for ModalEngine {
 }
 
 impl ModalEngine {
+    /// Design doc § CPU Budget: physical modeling (modal, 8 modes) ~800.
+    pub const COST: Cost = Cost(800); // estimate
+
     pub fn new() -> Self {
         Self {
             filters: core::array::from_fn(|_| Svf::new()),
