@@ -73,26 +73,22 @@ impl UiState {
         let mut renderer = Renderer::new();
         renderer.snap_to_current(page_values(page, nav.active_block_def(), &performance.edit(0), Op::A));
 
-        let mut matrix_state = MatrixState::new();
-        // Source rows = what the chain's voice produces (ENV, LFO)
-        matrix_state.rebuild_sources(nav.active_chain().mod_sources);
-        // Rebuild dests from the sound's ModDestRegistry
-        matrix_state.rebuild_dests_from_registry(&performance.parts[0].sound.dest_registry);
-
-        Self {
+        let mut ui = Self {
             nav,
             performance,
             pool: SoundPool::new(),
             active_part: 0,
             renderer,
-            matrix_state,
+            matrix_state: MatrixState::new(),
             ui_mode: UiMode::Normal,
             page,
             sel_op: Op::A,
             region_set: region::RegionSet::new(),
             last_encoder: 0,
             display_lfo: Lfo::new(),
-        }
+        };
+        ui.load_matrix(0);
+        ui
     }
 
     /// Returns a reference to the active part's params.
@@ -130,6 +126,17 @@ impl UiState {
         self.page = PageKey::from_nav(&self.nav, self.sel_op);
         let values = page_values(self.page, self.nav.active_block_def(), &self.performance.edit(self.active_part), self.sel_op);
         self.renderer.snap_to_current(values);
+    }
+
+    /// Show Part `part`'s routing in the matrix: source rows from its
+    /// Sound's chain (ENV, LFO — even while the Mixer chain is on screen),
+    /// destinations from its registry, amounts from its `ModState`. Call
+    /// whenever the edited Part or its Sound changes.
+    fn load_matrix(&mut self, part: usize) {
+        let sound = &self.performance.parts[part].sound;
+        self.matrix_state.rebuild_sources(chain::chain_def_for(sound.chain_type).mod_sources);
+        self.matrix_state.rebuild_dests_from_registry(&sound.dest_registry);
+        self.matrix_state.load_amounts(&sound.mod_state);
     }
 
     /// Rebuild a part's audio-side `ModState` from the matrix.
@@ -220,11 +227,7 @@ impl UiState {
                 self.nav.node = 0;
                 self.nav.sub_page = 0;
                 self.nav.chain_type = self.performance.parts[sel_part].sound.chain_type;
-                // Rebuild mod matrix sources for the new chain type
-                self.matrix_state.rebuild_sources(self.nav.active_chain().mod_sources);
-                self.matrix_state.rebuild_dests_from_registry(
-                    &self.performance.parts[sel_part].sound.dest_registry
-                );
+                self.load_matrix(sel_part);
                 self.enter_page();
                 self.ui_mode = UiMode::Normal;
                 return;
@@ -291,6 +294,7 @@ impl UiState {
             if let ChainId::Part(i) | ChainId::Mixer(i) = self.nav.chain_id {
                 self.active_part = i;
                 self.nav.chain_type = self.performance.parts[i].sound.chain_type;
+                self.load_matrix(i);
             }
             self.enter_page();
         }
