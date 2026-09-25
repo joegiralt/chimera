@@ -61,6 +61,9 @@ pub enum RegionData {
         values: [u16; 6],
         /// Fingerprint of outside data the viz shows (live output).
         live: u32,
+        /// A pending prime-status message drawn on the viz — BigViz pages
+        /// only, which have no focus band to carry it (issue #21).
+        status: Option<PrimeStatus>,
     },
     Cells {
         page: PageKey,
@@ -105,7 +108,22 @@ impl RegionData {
     }
 
     pub fn viz(page: PageKey, values: [u16; 6], live: u32) -> Self {
-        Self::Viz { page, values, live }
+        Self::viz_with_status(page, values, live, None)
+    }
+
+    /// A viz that also shows a prime-status line (BigViz pages).
+    pub fn viz_with_status(
+        page: PageKey,
+        values: [u16; 6],
+        live: u32,
+        status: Option<PrimeStatus>,
+    ) -> Self {
+        Self::Viz {
+            page,
+            values,
+            live,
+            status,
+        }
     }
 
     pub fn cells(page: PageKey, values: [u16; 6], focus: u8, dest_count: u16) -> Self {
@@ -150,6 +168,7 @@ impl RegionData {
             page: SENTINEL_PAGE,
             values: [SENTINEL; 6],
             live: u32::MAX,
+            status: None,
         }
     }
 

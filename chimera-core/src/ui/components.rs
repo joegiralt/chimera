@@ -170,6 +170,36 @@ pub fn focus_band<D>(
     }
 }
 
+/// A BigViz page's prime status (issue #21): one line at the top of the viz
+/// band, in the focus band's status style, between the header and
+/// `viz::PLOT_TOP` — above every curve and the touched-value readout, which
+/// is clamped to the plot. The strip behind the text is cleared first so a
+/// curve point at the plot's top edge can't run into the letters.
+pub fn viz_status<D>(d: &mut D, status: PrimeStatus)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let label = status.label();
+    let w = draw::text_width(&theme::FONT_VALUE, label, theme::LABEL_TRACKING);
+    draw::fill_rect(
+        d,
+        theme::MARGIN_X - 2,
+        theme::HEADER_BOTTOM,
+        w + 4,
+        crate::ui::viz::PLOT_TOP - theme::HEADER_BOTTOM,
+        theme::BG,
+    );
+    draw::text_tracked(
+        d,
+        &theme::FONT_VALUE,
+        label,
+        theme::MARGIN_X,
+        theme::BIGVIZ_STATUS_Y,
+        theme::INK,
+        theme::LABEL_TRACKING,
+    );
+}
+
 /// Focus label at `x`; returns where it ends.
 fn focus_label<D>(d: &mut D, label: &str, x: i32) -> i32
 where

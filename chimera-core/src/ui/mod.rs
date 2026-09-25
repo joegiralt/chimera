@@ -672,7 +672,12 @@ impl UiState {
             ),
             RegionKind::Viz => {
                 let (values, live) = self.renderer.viz_inputs(f);
-                RegionData::viz(self.page, values, live)
+                // BigViz pages have no focus band: their viz carries the
+                // prime status instead.
+                let status = self
+                    .prime_status
+                    .filter(|_| f.def.layout == PageLayout::BigViz);
+                RegionData::viz_with_status(self.page, values, live, status)
             }
             RegionKind::Cells => RegionData::cells(
                 self.page,
