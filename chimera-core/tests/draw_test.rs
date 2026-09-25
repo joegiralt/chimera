@@ -99,6 +99,21 @@ fn pill_stays_inside_its_box() {
     assert_ne!(fb.at(50, 276), theme::ACCENT, "rounded corner");
 }
 
+/// Issue #15 round-1 fix: a negative radius (or, for `pill`, a negative
+/// height, which is what its radius is derived from) must draw nothing and
+/// must not panic -- not wrap to a huge `u32` (the bug the `.max(0)` guards
+/// fixed), and not even the single 1px dot a plain `.max(0)` clamp would
+/// still draw for `dot`/`ring`.
+#[test]
+fn negative_radius_draws_nothing_and_does_not_panic() {
+    let mut fb = Fb::new();
+    draw::dot(&mut fb, 100, 100, -5, theme::ACCENT);
+    draw::ring(&mut fb, 100, 100, -5, theme::ACCENT, 1);
+    draw::pill(&mut fb, 50, 100, 34, -5, theme::ACCENT);
+    assert_eq!(count(&fb, theme::ACCENT), 0, "negative radius/height must draw nothing");
+    assert_eq!(fb.oob, 0, "must not attempt to draw a huge shape off-screen");
+}
+
 /// Ink pixels within a generous band around baseline `y` -- the label
 /// font's whole glyph height (`focus_font_is_large_and_label_font_small`
 /// above: <= 8 px ascent, plus a couple rows for descenders/rounding).

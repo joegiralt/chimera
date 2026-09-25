@@ -15,10 +15,7 @@ use crate::ui::theme;
 /// Dot grid geometry (grid region y 118..266): destination labels across,
 /// sources down, one dot per route.
 pub const GRID_X: i32 = 58;
-/// Narrow enough that even the widest destination label (spec §
-/// `route_destination_names_the_block_and_fits`) fits column 4 clear of the
-/// `>` scroll-more hint at the screen edge (issue #15).
-pub const GRID_COL_W: i32 = 36;
+pub const GRID_COL_W: i32 = 40;
 pub const GRID_TAG_Y: i32 = 130;
 pub const GRID_NAME_Y: i32 = 140;
 pub const GRID_ROW0_Y: i32 = 162;
@@ -333,7 +330,10 @@ where
         draw::text(d, &theme::FONT_LABEL, "<", GRID_X - 26, GRID_NAME_Y, theme::MID);
     }
     if state.num_dests > state.scroll_x + cols {
-        draw::text(d, &theme::FONT_LABEL, ">", theme::SCREEN_W - 8, GRID_NAME_Y, theme::MID);
+        // On the tag row, not the name row: tags are <= 3 chars for every
+        // BlockRef (`block_tag`), so this can never reach far enough right
+        // to touch the hint, unlike a destination name (issue #15).
+        draw::text(d, &theme::FONT_LABEL, ">", theme::SCREEN_W - 8, GRID_TAG_Y, theme::MID);
     }
     for vi in 0..rows {
         let ri = vi + state.scroll_y;

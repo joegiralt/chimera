@@ -257,43 +257,48 @@ fn route_destination_names_the_block_and_fits() {
     assert_eq!(fb.oob, 0, "{src} -> {}", longest.1);
 }
 
-/// Issue #15: the `>` scroll-more hint must not touch the fifth (rightmost
-/// visible) column's name, even for the widest label in the whole spec
-/// table (Modal's `INHARM`). Renders the two halves separately so each
-/// bound comes from real pixels, not an estimate:
-/// - the wide name alone: five destinations (the hint stays hidden --
-///   `num_dests` fits exactly in `visible_cols()`), so only the name's own
+/// Issue #15 fix round 1: the `>` scroll-more hint moved from the name row
+/// (`GRID_NAME_Y`) to the block-tag row (`GRID_TAG_Y`), since a destination
+/// name can be as wide as `INHARM` (Modal's inharmonicity, the widest label
+/// in the whole spec table) but every `block_tag()` is <= 3 characters for
+/// every `BlockRef` -- so the hint can never be reached by a tag, unlike a
+/// name. Renders the two halves separately so each bound comes from real
+/// pixels, not an estimate:
+/// - the widest tag alone: five destinations (the hint stays hidden --
+///   `num_dests` fits exactly in `visible_cols()`), so only the tag's own
 ///   pixels land on screen;
 /// - the hint alone: six destinations (one more than fits, so the hint
 ///   shows) with every destination empty, so the header loop draws no
 ///   column at all and only the hint's own pixels land on screen.
 #[test]
-fn scroll_hint_does_not_overlap_the_fifth_columns_name() {
+fn scroll_hint_does_not_overlap_the_fifth_columns_tag() {
     use chimera_core::addr::{BlockRef, ParamAddr};
     use chimera_core::block::ParamId;
-    use chimera_core::ui::mod_grid::{draw_grid, MatrixState, ModDest, GRID_NAME_Y};
+    use chimera_core::ui::mod_grid::{block_tag, draw_grid, MatrixState, ModDest, GRID_TAG_Y};
 
-    // Widest label anywhere in the spec table -- the worst case for how far
-    // a column-4 name can reach towards the hint.
-    let widest = BlockRef::ALL
+    // Widest block tag anywhere in the spec table -- the worst case for how
+    // far a column-4 tag can reach towards the hint, now that both live on
+    // the same (tag) row.
+    let widest_tag_block = BlockRef::ALL
         .iter()
-        .flat_map(|&b| b.specs().iter().map(move |s| ParamAddr::new(b, s.id)))
-        .max_by_key(|a| chimera_core::ui::draw::text_width(&theme::FONT_LABEL, a.spec().unwrap().label, 0))
+        .copied()
+        .max_by_key(|&b| chimera_core::ui::draw::text_width(&theme::FONT_LABEL, block_tag(b), 0))
         .unwrap();
-    let short = ParamAddr::new(BlockRef::Part, ParamId(0)); // "LEVEL"
+    let widest_tag_addr = ParamAddr::new(widest_tag_block, widest_tag_block.specs()[0].id);
+    let short = ParamAddr::new(BlockRef::Part, ParamId(0)); // "LEVEL", block tag "PRT"
 
-    let ink_at = |fb: &Fb, x: i32| (GRID_NAME_Y - 9..=GRID_NAME_Y).any(|y| fb.px[y as usize * W + x as usize] != 0);
+    let ink_at = |fb: &Fb, x: i32| (GRID_TAG_Y - 9..=GRID_TAG_Y).any(|y| fb.px[y as usize * W + x as usize] != 0);
 
-    let mut m_name = MatrixState::new();
-    m_name.rebuild_sources(&["ENV"]);
+    let mut m_tag = MatrixState::new();
+    m_tag.rebuild_sources(&["ENV"]);
     for i in 0..4 {
-        m_name.dests[i] = Some(ModDest { addr: short, label: [0; 8] });
+        m_tag.dests[i] = Some(ModDest { addr: short, label: [0; 8] });
     }
-    m_name.dests[4] = Some(ModDest { addr: widest, label: [0; 8] });
-    m_name.num_dests = 5;
-    let mut name_fb = Fb::new();
-    draw_grid(&mut name_fb, &m_name, 0);
-    let name_right = (0..theme::SCREEN_W).rev().find(|&x| ink_at(&name_fb, x)).expect("the name must draw something");
+    m_tag.dests[4] = Some(ModDest { addr: widest_tag_addr, label: [0; 8] });
+    m_tag.num_dests = 5;
+    let mut tag_fb = Fb::new();
+    draw_grid(&mut tag_fb, &m_tag, 0);
+    let tag_right = (0..theme::SCREEN_W).rev().find(|&x| ink_at(&tag_fb, x)).expect("the tag must draw something");
 
     let mut m_hint = MatrixState::new();
     m_hint.rebuild_sources(&["ENV"]);
@@ -303,7 +308,73 @@ fn scroll_hint_does_not_overlap_the_fifth_columns_name() {
     let hint_left = (0..theme::SCREEN_W).find(|&x| ink_at(&hint_fb, x)).expect("the hint must draw something");
 
     assert!(
-        name_right < hint_left,
-        "column 4's widest name (right edge x={name_right}) reaches the scroll hint (left edge x={hint_left})"
+        tag_right < hint_left,
+        "column 4's widest tag (right edge x={tag_right}) reaches the scroll hint (left edge x={hint_left})"
     );
+}
+
+/// Issue #15 fix round 1: reverting `GRID_COL_W` to 40 must not silently
+/// reopen adjacent-column-name collisions -- the regression the review
+/// caught in narrowing it to 36 (`"CUTOFF"` and `"FOLD"`, the `mod_matrix`
+/// golden's own destinations, rendered as `"CUTOFFFOLD"` with no visible
+/// gap). Exhaustively checks every pair of distinct real spec labels
+/// against every pair of neighbouring visible columns and requires at
+/// least a 2px gap between their rendered extents.
+///
+/// Excluded: any pair naming `"CUTOFF"` or `"INHARM"` -- the two widest
+/// labels in the whole spec table (41px and 42px against a 40px column
+/// pitch) are already marginal or overlapping even at the restored
+/// `GRID_COL_W = 40` (e.g. `"CUTOFF"` next to itself: 0px gap; `"BRIGHT"`
+/// next to `"INHARM"`: 1px gap) -- a separate, pre-existing, deeper issue
+/// than the one this fix addresses; see the round-1 report.
+///
+/// Confirmed manually: with that same exclusion, this fails at
+/// `GRID_COL_W = 36` (e.g. `"BRIGHT"` next to itself overlaps by 1px, one
+/// of 65 other failing pairs) and passes at the restored 40 (worst
+/// remaining pair, `"BRIGHT"` next to itself, has a 3px gap).
+#[test]
+fn adjacent_column_names_never_touch_for_ordinary_real_labels() {
+    use chimera_core::addr::BlockRef;
+    use chimera_core::ui::mod_grid::{cell_center, GRID_NAME_Y};
+
+    let mut labels: Vec<&str> = BlockRef::ALL.iter().flat_map(|&b| b.specs().iter().map(|s| s.label)).collect();
+    labels.sort_unstable();
+    labels.dedup();
+
+    // Rendered (min_x, max_x) of `label` centred at `cx`, from real pixels.
+    let extent = |label: &str, cx: i32| -> (i32, i32) {
+        let mut fb = Fb::new();
+        chimera_core::ui::draw::text_center(&mut fb, &theme::FONT_LABEL, label, cx, GRID_NAME_Y, theme::MID, 0);
+        let mut span: Option<(i32, i32)> = None;
+        for y in (GRID_NAME_Y - 9)..=GRID_NAME_Y {
+            for x in 0..theme::SCREEN_W {
+                if fb.px[y as usize * W + x as usize] != 0 {
+                    span = Some(span.map_or((x, x), |(l, r)| (l.min(x), r.max(x))));
+                }
+            }
+        }
+        span.expect("every real label must draw something")
+    };
+
+    // Extents at every visible column's x, computed once per label.
+    let xs: Vec<i32> = (0..5).map(|ci| cell_center(ci, 0).0).collect();
+    let extents: Vec<Vec<(i32, i32)>> = labels.iter().map(|&label| xs.iter().map(|&cx| extent(label, cx)).collect()).collect();
+
+    let excluded = |label: &str| label == "CUTOFF" || label == "INHARM";
+
+    for ci in 0..4 {
+        for (ai, &a) in labels.iter().enumerate() {
+            if excluded(a) {
+                continue;
+            }
+            let (_, ra) = extents[ai][ci];
+            for (bi, &b) in labels.iter().enumerate() {
+                if excluded(b) {
+                    continue;
+                }
+                let (lb, _) = extents[bi][ci + 1];
+                assert!(lb - ra - 1 >= 2, "columns {ci}/{}: {a:?} (right={ra}) touches {b:?} (left={lb})", ci + 1);
+            }
+        }
+    }
 }

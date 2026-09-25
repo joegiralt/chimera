@@ -89,31 +89,42 @@ where
     line(d, x0, y0 + 1, x1, y1 + 1, color, 1);
 }
 
-/// Filled circle of radius `r` centred on (cx, cy).
+/// Filled circle of radius `r` centred on (cx, cy). A negative `r` draws
+/// nothing (rather than clamping to 0, which would still draw a 1px dot).
 pub fn dot<D>(d: &mut D, cx: i32, cy: i32, r: i32, color: Rgb565)
 where
     D: DrawTarget<Color = Rgb565>,
 {
-    let r = r.max(0);
+    if r < 0 {
+        return;
+    }
     let _ = Circle::with_center(Point::new(cx, cy), (2 * r + 1) as u32).draw_styled(&PrimitiveStyle::with_fill(color), d);
 }
 
-/// Circle outline of radius `r`.
+/// Circle outline of radius `r`. A negative `r` draws nothing.
 pub fn ring<D>(d: &mut D, cx: i32, cy: i32, r: i32, color: Rgb565, width: u32)
 where
     D: DrawTarget<Color = Rgb565>,
 {
-    let r = r.max(0);
+    if r < 0 {
+        return;
+    }
     let _ = Circle::with_center(Point::new(cx, cy), (2 * r + 1) as u32)
         .draw_styled(&PrimitiveStyle::with_stroke(color, width), d);
 }
 
-/// Filled rounded rectangle with fully round ends (radius h/2).
+/// Filled rounded rectangle with fully round ends (radius h/2). A
+/// non-positive `w` or `h` draws nothing, the same guard `fill_rect` uses —
+/// otherwise `w`/`h` (and the radius derived from `h`) would cast a
+/// negative value to a huge `u32`.
 pub fn pill<D>(d: &mut D, x: i32, y: i32, w: i32, h: i32, color: Rgb565)
 where
     D: DrawTarget<Color = Rgb565>,
 {
-    let r = (h / 2).max(0) as u32;
+    if w <= 0 || h <= 0 {
+        return;
+    }
+    let r = (h / 2) as u32;
     let _ = RoundedRectangle::new(Rectangle::new(Point::new(x, y), Size::new(w as u32, h as u32)), CornerRadii::new(Size::new(r, r)))
         .draw_styled(&PrimitiveStyle::with_fill(color), d);
 }
