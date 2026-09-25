@@ -19,8 +19,9 @@ impl FmtBuf {
     }
 
     pub fn as_str(&self) -> &str {
-        // SAFETY: `pos` only ever advances via `core::fmt::Write::write_str`,
-        // which rejects non-UTF-8 input, so `buf[..pos]` is always valid UTF-8.
+        // SAFETY: `pos` only ever advances in `write_str`, which copies a
+        // prefix of a `&str` (valid UTF-8) cut at a char boundary, so
+        // `buf[..pos]` is always a concatenation of whole UTF-8 chars.
         unsafe { core::str::from_utf8_unchecked(&self.buf[..self.pos]) }
     }
 
@@ -79,14 +80,33 @@ fn discrete(val: f32, max: u8) -> u8 {
 impl core::fmt::Write for FmtBuf {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
         let bytes = s.as_bytes();
-        let remaining = self.buf.len() - self.pos;
-        let len = if bytes.len() < remaining {
-            bytes.len()
-        } else {
-            remaining
-        };
+        let mut len = bytes.len().min(self.buf.len() - self.pos);
+        // Truncate whole chars only: `as_str` relies on `buf[..pos]` being
+        // valid UTF-8.
+        while !s.is_char_boundary(len) {
+            len -= 1;
+        }
         self.buf[self.pos..self.pos + len].copy_from_slice(&bytes[..len]);
         self.pos += len;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::FmtBuf;
+    use core::fmt::Write;
+
+    /// A multi-byte char straddling the capacity is dropped whole, never
+    /// split, so `as_str`'s unchecked conversion stays sound.
+    #[test]
+    fn truncation_never_splits_a_char() {
+        let mut buf = FmtBuf::new();
+        let _ = buf.write_str("0123456789012345678901234567890"); // 31 bytes
+        let _ = buf.write_str("é"); // 2 bytes: would straddle byte 32
+        assert!(core::str::from_utf8(&buf.buf[..buf.pos]).is_ok());
+        assert_eq!(buf.as_str(), "0123456789012345678901234567890");
+        let _ = buf.write_str("x"); // the one byte left still fits
+        assert_eq!(buf.as_str().len(), 32);
     }
 }
