@@ -18,13 +18,27 @@ mod screen;
 
 use chimera_core::preset::ChainType;
 use chimera_core::scope::SCOPE_LEN;
-use chimera_core::ui::perf::PerfStats;
 use chimera_core::ui::UiState;
+use chimera_core::ui::perf::PerfStats;
 use chimera_hal::{ButtonId, EncoderId};
 use screen::*;
 
-const ENCODERS: [EncoderId; 6] = [EncoderId::A, EncoderId::B, EncoderId::C, EncoderId::D, EncoderId::E, EncoderId::F];
-const B: [ButtonId; 6] = [ButtonId::B1, ButtonId::B2, ButtonId::B3, ButtonId::B4, ButtonId::B5, ButtonId::B6];
+const ENCODERS: [EncoderId; 6] = [
+    EncoderId::A,
+    EncoderId::B,
+    EncoderId::C,
+    EncoderId::D,
+    EncoderId::E,
+    EncoderId::F,
+];
+const B: [ButtonId; 6] = [
+    ButtonId::B1,
+    ButtonId::B2,
+    ButtonId::B3,
+    ButtonId::B4,
+    ButtonId::B5,
+    ButtonId::B6,
+];
 
 /// Which chain a walk starts from.
 #[derive(Clone, Copy, Debug)]
@@ -73,7 +87,14 @@ struct Walk {
 
 impl Walk {
     fn new(ctx: Context, frames_per_step: usize) -> Self {
-        Self { ui: ctx.start(), dirty: Fb::new(), frames: 0, tick: 0, load_pct: 0, frames_per_step }
+        Self {
+            ui: ctx.start(),
+            dirty: Fb::new(),
+            frames: 0,
+            tick: 0,
+            load_pct: 0,
+            frames_per_step,
+        }
     }
 
     /// The fixture's waveform, shifted each frame so the live output moves.
@@ -87,16 +108,28 @@ impl Walk {
         for _ in 0..self.frames_per_step {
             self.ui.update();
             let scope = self.scope();
-            let perf = PerfStats { audio_load_pct: self.load_pct, ..PerfStats::zero() };
-            self.ui.render_dirty_with_scope(&mut self.dirty, &perf, &scope);
+            let perf = PerfStats {
+                audio_load_pct: self.load_pct,
+                ..PerfStats::zero()
+            };
+            self.ui
+                .render_dirty_with_scope(&mut self.dirty, &perf, &scope);
             let mut full = Fb::new();
             self.ui.render_with_scope(&mut full, &perf, &scope);
             let page = self.ui.nav.active_block_def().name;
             assert_eq!(full.oob, 0, "{what} on {page}: full render drew off screen");
-            assert_eq!(self.dirty.oob, 0, "{what} on {page}: dirty render drew off screen");
+            assert_eq!(
+                self.dirty.oob, 0,
+                "{what} on {page}: dirty render drew off screen"
+            );
             if self.dirty.px != full.px {
-                let y = (0..H).find(|&y| self.dirty.px[y * W..(y + 1) * W] != full.px[y * W..(y + 1) * W]).unwrap();
-                panic!("{what} on {page} (frame {}): dirty render != full render, first at row {y}", self.frames);
+                let y = (0..H)
+                    .find(|&y| self.dirty.px[y * W..(y + 1) * W] != full.px[y * W..(y + 1) * W])
+                    .unwrap();
+                panic!(
+                    "{what} on {page} (frame {}): dirty render != full render, first at row {y}",
+                    self.frames
+                );
             }
             self.frames += 1;
             self.tick += 1;
@@ -128,7 +161,12 @@ impl Walk {
 
 /// Visit every node and sub-page of `ctx`'s chain (or only those `keep`
 /// accepts), exercising each. Returns the frames rendered.
-fn walk(ctx: Context, frames_per_step: usize, encoders: &[EncoderId], keep: impl Fn(usize, usize) -> bool) -> usize {
+fn walk(
+    ctx: Context,
+    frames_per_step: usize,
+    encoders: &[EncoderId],
+    keep: impl Fn(usize, usize) -> bool,
+) -> usize {
     let mut w = Walk::new(ctx, frames_per_step);
     let chain = w.ui.nav.active_chain();
     for (node, block) in chain.blocks.iter().enumerate() {
@@ -143,7 +181,11 @@ fn walk(ctx: Context, frames_per_step: usize, encoders: &[EncoderId], keep: impl
             for _ in 0..sub {
                 feed(&mut w.ui, Input::press(ButtonId::Edit));
             }
-            assert_eq!((w.ui.nav.node, w.ui.nav.sub_page), (node, sub), "{ctx:?} reached");
+            assert_eq!(
+                (w.ui.nav.node, w.ui.nav.sub_page),
+                (node, sub),
+                "{ctx:?} reached"
+            );
             w.exercise(encoders);
         }
     }
@@ -165,7 +207,10 @@ fn every_page_walk() {
     for ctx in every_context() {
         frames += walk(ctx, 4, &ENCODERS, |_, _| true);
     }
-    println!("all-pages walk: {frames} frames, dirty == full, 0 off-screen writes, {:.1?}", t.elapsed());
+    println!(
+        "all-pages walk: {frames} frames, dirty == full, 0 off-screen writes, {:.1?}",
+        t.elapsed()
+    );
 }
 
 /// A trimmed walk: the FM chain (CellGrid, BigViz envelopes, the matrix),

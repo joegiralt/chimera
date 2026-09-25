@@ -40,7 +40,10 @@ impl ValFmt {
     /// A choice among a few values (channel, mode, output, type): shown as
     /// text with no value bar.
     pub fn is_discrete(self) -> bool {
-        matches!(self, ValFmt::Int(_) | ValFmt::OneBased(_) | ValFmt::Names(_))
+        matches!(
+            self,
+            ValFmt::Int(_) | ValFmt::OneBased(_) | ValFmt::Names(_)
+        )
     }
 
     /// Max integer value (only meaningful for the discrete variants).
@@ -100,7 +103,17 @@ impl ParamSpec {
         step: f32,
         modulatable: bool,
     ) -> Self {
-        Self { id: ParamId(id), label, fmt, min, max, default, step, kind: ParamKind::Continuous, modulatable }
+        Self {
+            id: ParamId(id),
+            label,
+            fmt,
+            min,
+            max,
+            default,
+            step,
+            kind: ParamKind::Continuous,
+            modulatable,
+        }
     }
 
     /// Integer-valued, one unit per encoder tick.
@@ -113,7 +126,17 @@ impl ParamSpec {
         default: f32,
         modulatable: bool,
     ) -> Self {
-        Self { id: ParamId(id), label, fmt, min, max, default, step: 1.0, kind: ParamKind::Stepped, modulatable }
+        Self {
+            id: ParamId(id),
+            label,
+            fmt,
+            min,
+            max,
+            default,
+            step: 1.0,
+            kind: ParamKind::Stepped,
+            modulatable,
+        }
     }
 
     /// Discrete choice `0..=max`, one choice per tick. Never modulatable.
@@ -190,9 +213,18 @@ pub trait Block {
         let n = s.normalize(self.get(id));
         let points = s.fmt.snap_points();
         let target = if delta > 0 {
-            points.iter().copied().find(|&sp| sp > n + 0.005).unwrap_or(1.0)
+            points
+                .iter()
+                .copied()
+                .find(|&sp| sp > n + 0.005)
+                .unwrap_or(1.0)
         } else {
-            points.iter().rev().copied().find(|&sp| sp < n - 0.005).unwrap_or(0.0)
+            points
+                .iter()
+                .rev()
+                .copied()
+                .find(|&sp| sp < n - 0.005)
+                .unwrap_or(0.0)
         };
         self.set(id, s.min + target * (s.max - s.min));
     }

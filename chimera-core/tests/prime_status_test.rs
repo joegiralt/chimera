@@ -62,7 +62,10 @@ fn mix_plus_on_a_non_modulatable_param_reports_not_modulatable() {
 #[test]
 fn registry_full_maps_to_the_full_status() {
     assert_eq!(PrimeStatus::from(RegistryError::Full), PrimeStatus::Full);
-    assert_eq!(PrimeStatus::from(RegistryError::NotModulatable), PrimeStatus::NotModulatable);
+    assert_eq!(
+        PrimeStatus::from(RegistryError::NotModulatable),
+        PrimeStatus::NotModulatable
+    );
 }
 
 #[test]
@@ -101,7 +104,10 @@ fn un_priming_also_clears_the_status() {
 #[test]
 fn matrix_hint_fits_its_row() {
     let w = draw::text_width(&theme::FONT_LABEL, "PRIME: MIX+PLUS ON A PARAM", 0);
-    assert!(w <= theme::SCREEN_W - theme::MARGIN_X * 2, "hint is {w}px wide");
+    assert!(
+        w <= theme::SCREEN_W - theme::MARGIN_X * 2,
+        "hint is {w}px wide"
+    );
 }
 
 /// Review Focus (#21): the message is redrawn through the dirty-region
@@ -133,5 +139,8 @@ fn dirty_render_with_a_status_message_equals_full_render() {
     );
     let mut full = Fb::new();
     ui.render_with_scope(&mut full, &PerfStats::zero(), &scope);
-    assert!(dirty.px == full.px, "dirty render with a status message must equal a full render");
+    assert!(
+        dirty.px == full.px,
+        "dirty render with a status message must equal a full render"
+    );
 }

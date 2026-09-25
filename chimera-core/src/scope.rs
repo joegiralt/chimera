@@ -24,7 +24,9 @@ pub fn write_samples(samples: &[f32]) {
             // SAFETY: `write_samples` is only ever called from the audio
             // thread (the sole writer to `BACK`), and the bounds check above
             // (`pos < BACK_LEN`) guarantees the index is in range.
-            unsafe { BACK[pos] = s; }
+            unsafe {
+                BACK[pos] = s;
+            }
             pos += 1;
         }
     }
@@ -66,7 +68,8 @@ pub fn read_samples(out: &mut [f32; SCOPE_LEN]) {
 
 /// Largest |sample| in a scope buffer (or a slice of one).
 pub fn peak(buf: &[f32]) -> f32 {
-    buf.iter().fold(0.0f32, |m, &s| m.max(if s < 0.0 { -s } else { s }))
+    buf.iter()
+        .fold(0.0f32, |m, &s| m.max(if s < 0.0 { -s } else { s }))
 }
 
 /// Below this peak the output counts as silent (the header dot is off).

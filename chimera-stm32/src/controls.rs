@@ -18,24 +18,43 @@ const SYST_CVR: *mut u32 = 0xE000_E018 as *mut u32;
 
 /// Encoder bit pairs from PreenFM3 (1-indexed pins → 0-indexed masks)
 const ENC_BITS: [(u32, u32); 6] = [
-    (1 << 16, 1 << 17), (1 << 14, 1 << 15), (1 << 8, 1 << 9),
-    (1 << 19, 1 << 18), (1 << 13, 1 << 12), (1 << 11, 1 << 10),
+    (1 << 16, 1 << 17),
+    (1 << 14, 1 << 15),
+    (1 << 8, 1 << 9),
+    (1 << 19, 1 << 18),
+    (1 << 13, 1 << 12),
+    (1 << 11, 1 << 10),
 ];
 
 /// Button bit masks from PreenFM3 (1-indexed pins → 0-indexed)
 const BTN_BITS: [u32; NUM_BUTTONS] = [
-    1 << 22, 1 << 20, 1 << 3, 1 << 23, 1 << 2, 1 << 1,
-    1 << 21, 1 << 4, 1 << 5, 1 << 6, 1 << 7, 1 << 0,
+    1 << 22,
+    1 << 20,
+    1 << 3,
+    1 << 23,
+    1 << 2,
+    1 << 1,
+    1 << 21,
+    1 << 4,
+    1 << 5,
+    1 << 6,
+    1 << 7,
+    1 << 0,
 ];
 
 /// N24 quadrature table — 1 count per detent click (vs N12 which gives 2)
-const QUAD: [u8; 16] = [0,0,0,0, 0,0,0,1, 0,0,0,2, 0,0,0,0];
+const QUAD: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 0];
 
 // Shared ISR ↔ main state
 static READY: AtomicBool = AtomicBool::new(false);
 static ENC_DELTA: [AtomicI8; 7] = [
-    AtomicI8::new(0), AtomicI8::new(0), AtomicI8::new(0), AtomicI8::new(0),
-    AtomicI8::new(0), AtomicI8::new(0), AtomicI8::new(0),
+    AtomicI8::new(0),
+    AtomicI8::new(0),
+    AtomicI8::new(0),
+    AtomicI8::new(0),
+    AtomicI8::new(0),
+    AtomicI8::new(0),
+    AtomicI8::new(0),
 ];
 static BTN_LATCH: AtomicU32 = AtomicU32::new(0);
 static RAW: AtomicU32 = AtomicU32::new(0xFFFFFFFF);
@@ -48,8 +67,13 @@ static mut BTN_STATE: [bool; NUM_BUTTONS] = [false; NUM_BUTTONS];
 const BTN_DEBOUNCE_TICKS: u8 = 3; // 6ms at 500Hz
 static ISR_TICK: AtomicU32 = AtomicU32::new(0);
 static ENC_LAST_EDGE: [AtomicU32; NUM_ENCODERS] = [
-    AtomicU32::new(0), AtomicU32::new(0), AtomicU32::new(0), AtomicU32::new(0),
-    AtomicU32::new(0), AtomicU32::new(0), AtomicU32::new(0),
+    AtomicU32::new(0),
+    AtomicU32::new(0),
+    AtomicU32::new(0),
+    AtomicU32::new(0),
+    AtomicU32::new(0),
+    AtomicU32::new(0),
+    AtomicU32::new(0),
 ];
 
 /// Configure SysTick for 500Hz interrupt. Call after clocks are configured.
@@ -87,14 +111,15 @@ pub fn isr_tick() {
         // Latch: LOAD low then high
         core::ptr::write_volatile(GPIOF_BSRR, 1u32 << 17); // PF1 reset (LOAD low)
         cortex_m::asm::delay(100);
-        core::ptr::write_volatile(GPIOF_BSRR, 1u32 << 1);  // PF1 set (LOAD high)
+        core::ptr::write_volatile(GPIOF_BSRR, 1u32 << 1); // PF1 set (LOAD high)
         cortex_m::asm::delay(100);
 
         let mut b: u32 = 0;
         for i in 0..24u32 {
             core::ptr::write_volatile(GPIOF_BSRR, 1u32 << 16); // PF0 reset (CLK low)
             cortex_m::asm::delay(100);
-            if core::ptr::read_volatile(GPIOF_IDR) & (1 << 2) != 0 { // PF2 (DATA)
+            if core::ptr::read_volatile(GPIOF_IDR) & (1 << 2) != 0 {
+                // PF2 (DATA)
                 b |= 1 << i;
             }
             core::ptr::write_volatile(GPIOF_BSRR, 1u32 << 0); // PF0 set (CLK high)
@@ -220,7 +245,9 @@ impl Stm32Controls {
 
     /// Current ISR tick count (500 Hz). For UI timing (double-tap, etc.)
     #[allow(dead_code)] // polling API for the double-tap timing the preset browser needs; no caller until that lands
-    pub fn tick(&self) -> u32 { ISR_TICK.load(Ordering::Relaxed) }
+    pub fn tick(&self) -> u32 {
+        ISR_TICK.load(Ordering::Relaxed)
+    }
 
     /// Returns true if any button changed state or any encoder moved this frame.
     pub fn has_activity(&self) -> bool {
@@ -240,7 +267,9 @@ impl Controls for Stm32Controls {
 
     fn button_state(&self, id: ButtonId) -> ButtonState {
         let i = id as usize;
-        if i >= NUM_BUTTONS { return ButtonState::Up; }
+        if i >= NUM_BUTTONS {
+            return ButtonState::Up;
+        }
         match (self.btn_prev[i], self.btn_cur[i]) {
             (false, true) => ButtonState::Pressed,
             (true, true) => ButtonState::Held,

@@ -15,13 +15,13 @@ use crate::hw::Cost;
 /// Per-operator settings (matches TX81Z voice parameters).
 #[derive(Clone, Copy, Debug)]
 pub struct FmOpSettings {
-    pub waveform: u8,       // 0-7
-    pub coarse: u8,         // 0-63
-    pub fine: u8,           // 0-15
-    pub level: u8,          // 0-99
-    pub feedback: u8,       // 0-7
-    pub detune: i8,         // -7..+7
-    pub velocity_sens: u8,  // 0-7
+    pub waveform: u8,      // 0-7
+    pub coarse: u8,        // 0-63
+    pub fine: u8,          // 0-15
+    pub level: u8,         // 0-99
+    pub feedback: u8,      // 0-7
+    pub detune: i8,        // -7..+7
+    pub velocity_sens: u8, // 0-7
     pub ar: u8,
     pub d1r: u8,
     pub d1l: u8,
@@ -55,7 +55,7 @@ impl Default for FmOpSettings {
     fn default() -> Self {
         Self {
             waveform: 0,
-            coarse: 4,       // ratio 1.0
+            coarse: 4, // ratio 1.0
             fine: 0,
             level: 99,
             feedback: 0,
@@ -108,13 +108,7 @@ impl FmOperator {
     ///
     /// Computes frequency from note + coarse/fine ratio + detune, sets gain
     /// from operator level, configures feedback, and starts the envelope.
-    pub fn note_on(
-        &mut self,
-        note: u8,
-        velocity: f32,
-        settings: &FmOpSettings,
-        sample_rate: f32,
-    ) {
+    pub fn note_on(&mut self, note: u8, velocity: f32, settings: &FmOpSettings, sample_rate: f32) {
         // Base frequency from MIDI note
         let base_freq = 440.0 * libm::powf(2.0, (note as f32 - 69.0) / 12.0);
 

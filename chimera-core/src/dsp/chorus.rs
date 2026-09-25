@@ -9,8 +9,8 @@
 //! Mode II: triangle LFO at 0.863 Hz, depth ~2.3ms
 //! Mode I+II: both LFOs running simultaneously (thickest)
 
-use chimera_hal::BLOCK_SIZE;
 use crate::block::{Block, ParamId, ParamSpec, ValFmt};
+use chimera_hal::BLOCK_SIZE;
 
 const MAX_CHORUS_DELAY: usize = 2048; // ~42ms at 48kHz, plenty for chorus
 
@@ -19,8 +19,8 @@ const MAX_CHORUS_DELAY: usize = 2048; // ~42ms at 48kHz, plenty for chorus
 #[repr(u8)]
 pub enum ChorusMode {
     Off = 0,
-    JunoI = 1,   // Slow, subtle
-    JunoII = 2,  // Faster, wider
+    JunoI = 1,    // Slow, subtle
+    JunoII = 2,   // Faster, wider
     JunoBoth = 3, // Both LFOs (thickest)
 }
 
@@ -124,7 +124,14 @@ impl BbdLine {
 
     /// Process one sample. Returns the modulated delayed sample.
     #[inline]
-    fn tick(&mut self, input: f32, base_delay_ms: f32, lfo_rate_hz: f32, depth_ms: f32, sample_rate: u32) -> f32 {
+    fn tick(
+        &mut self,
+        input: f32,
+        base_delay_ms: f32,
+        lfo_rate_hz: f32,
+        depth_ms: f32,
+        sample_rate: u32,
+    ) -> f32 {
         // Write input
         self.buffer[self.write_pos] = input;
         self.write_pos = (self.write_pos + 1) % MAX_CHORUS_DELAY;
@@ -180,17 +187,33 @@ impl JunoChorus {
     }
 
     /// Insert use: dry/wet mix in place.
-    pub fn process(&mut self, buf: &mut [f32; BLOCK_SIZE], params: &ChorusParams, sample_rate: u32) {
+    pub fn process(
+        &mut self,
+        buf: &mut [f32; BLOCK_SIZE],
+        params: &ChorusParams,
+        sample_rate: u32,
+    ) {
         self.run(buf, params, sample_rate, 1.0 - params.mix * 0.5);
     }
 
     /// Send/return use (the FX bus): writes only the wet signal × MIX, the
     /// return level, in place of the send.
-    pub fn process_wet(&mut self, buf: &mut [f32; BLOCK_SIZE], params: &ChorusParams, sample_rate: u32) {
+    pub fn process_wet(
+        &mut self,
+        buf: &mut [f32; BLOCK_SIZE],
+        params: &ChorusParams,
+        sample_rate: u32,
+    ) {
         self.run(buf, params, sample_rate, 0.0);
     }
 
-    fn run(&mut self, buf: &mut [f32; BLOCK_SIZE], params: &ChorusParams, sample_rate: u32, dry_gain: f32) {
+    fn run(
+        &mut self,
+        buf: &mut [f32; BLOCK_SIZE],
+        params: &ChorusParams,
+        sample_rate: u32,
+        dry_gain: f32,
+    ) {
         if !params.is_on() {
             return;
         }

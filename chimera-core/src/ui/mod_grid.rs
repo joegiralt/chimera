@@ -120,7 +120,10 @@ impl MatrixState {
         self.amounts = [[0; MAX_DESTS]; MAX_SOURCES];
         for di in 0..self.num_dests {
             let Some(dest) = self.dests[di] else { continue };
-            let Some(d) = (0..mod_state.num_dests()).find(|&d| mod_state.dest(d) == dest.addr) else { continue };
+            let Some(d) = (0..mod_state.num_dests()).find(|&d| mod_state.dest(d) == dest.addr)
+            else {
+                continue;
+            };
             for si in 0..self.num_sources {
                 self.amounts[si][di] = mod_state.amount(si, d);
             }
@@ -171,9 +174,15 @@ impl MatrixState {
     /// switch), whose new counts may be smaller than the cursor/scroll
     /// position left over from before (issue #11).
     pub fn clamp_cursor(&mut self) {
-        let max_row = if self.num_sources > 0 { self.num_sources - 1 } else { 0 };
+        let max_row = if self.num_sources > 0 {
+            self.num_sources - 1
+        } else {
+            0
+        };
         self.sel_row = self.sel_row.min(max_row);
-        self.scroll_y = self.scroll_y.min(self.num_sources.saturating_sub(self.visible_rows()));
+        self.scroll_y = self
+            .scroll_y
+            .min(self.num_sources.saturating_sub(self.visible_rows()));
         let vis_r = self.visible_rows();
         if self.sel_row < self.scroll_y {
             self.scroll_y = self.sel_row;
@@ -181,9 +190,15 @@ impl MatrixState {
             self.scroll_y = self.sel_row + 1 - vis_r;
         }
 
-        let max_col = if self.num_dests > 0 { self.num_dests - 1 } else { 0 };
+        let max_col = if self.num_dests > 0 {
+            self.num_dests - 1
+        } else {
+            0
+        };
         self.sel_col = self.sel_col.min(max_col);
-        self.scroll_x = self.scroll_x.min(self.num_dests.saturating_sub(self.visible_cols()));
+        self.scroll_x = self
+            .scroll_x
+            .min(self.num_dests.saturating_sub(self.visible_cols()));
         let vis_c = self.visible_cols();
         if self.sel_col < self.scroll_x {
             self.scroll_x = self.sel_col;
@@ -205,7 +220,11 @@ impl MatrixState {
     }
 
     pub fn move_col(&mut self, delta: i8) {
-        let max = if self.num_dests > 0 { self.num_dests - 1 } else { 0 };
+        let max = if self.num_dests > 0 {
+            self.num_dests - 1
+        } else {
+            0
+        };
         let new = self.sel_col as i32 + delta as i32;
         self.sel_col = new.clamp(0, max as i32) as usize;
         // Auto-scroll to keep cursor visible
@@ -291,7 +310,11 @@ pub fn fmt_route_dest(buf: &mut FmtBuf, d: &ModDest) {
 
 /// Amount as shown: `+42`, `-30`, `0`.
 pub fn fmt_amount(buf: &mut FmtBuf, amount: i8) {
-    let _ = if amount > 0 { write!(buf, "+{}", amount) } else { write!(buf, "{}", amount) };
+    let _ = if amount > 0 {
+        write!(buf, "+{}", amount)
+    } else {
+        write!(buf, "{}", amount)
+    };
 }
 
 /// Route count and destination count, e.g. `"12 ROUTES   5 OF 16 DEST"`.
@@ -300,12 +323,19 @@ pub fn fmt_amount(buf: &mut FmtBuf, amount: i8) {
 /// `MAX_DESTS`/`MAX_DESTS` — the original `"{} OF {} DESTINATIONS"` wording
 /// overflowed at max counts, so this is the shortened form.
 pub fn fmt_stats(buf: &mut FmtBuf, routes: usize, num_dests: usize) {
-    let _ = write!(buf, "{} ROUTES   {} OF {} DEST", routes, num_dests, MAX_DESTS);
+    let _ = write!(
+        buf,
+        "{} ROUTES   {} OF {} DEST",
+        routes, num_dests, MAX_DESTS
+    );
 }
 
 /// Centre of grid cell (visible column `ci`, visible row `vi`).
 pub fn cell_center(ci: usize, vi: usize) -> (i32, i32) {
-    (GRID_X + ci as i32 * GRID_COL_W, GRID_ROW0_Y + vi as i32 * GRID_ROW_H)
+    (
+        GRID_X + ci as i32 * GRID_COL_W,
+        GRID_ROW0_Y + vi as i32 * GRID_ROW_H,
+    )
 }
 
 /// Dot grid: sources down, primed destinations across; a filled dot is a
@@ -320,20 +350,56 @@ where
     let (cols, rows) = (state.visible_cols(), state.visible_rows());
     for ci in 0..cols {
         let di = ci + state.scroll_x;
-        let Some(Some(dest)) = state.dests.get(di).filter(|_| di < state.num_dests) else { break };
+        let Some(Some(dest)) = state.dests.get(di).filter(|_| di < state.num_dests) else {
+            break;
+        };
         let x = GRID_X + ci as i32 * GRID_COL_W;
-        let name_color = if di == state.sel_col { theme::INK } else { theme::MID };
-        draw::text_center(d, &theme::FONT_LABEL, block_tag(dest.addr.block), x, GRID_TAG_Y, theme::MID, 0);
-        draw::text_center(d, &theme::FONT_LABEL, dest_name(dest), x, GRID_NAME_Y, name_color, 0);
+        let name_color = if di == state.sel_col {
+            theme::INK
+        } else {
+            theme::MID
+        };
+        draw::text_center(
+            d,
+            &theme::FONT_LABEL,
+            block_tag(dest.addr.block),
+            x,
+            GRID_TAG_Y,
+            theme::MID,
+            0,
+        );
+        draw::text_center(
+            d,
+            &theme::FONT_LABEL,
+            dest_name(dest),
+            x,
+            GRID_NAME_Y,
+            name_color,
+            0,
+        );
     }
     if state.scroll_x > 0 {
-        draw::text(d, &theme::FONT_LABEL, "<", GRID_X - 26, GRID_NAME_Y, theme::MID);
+        draw::text(
+            d,
+            &theme::FONT_LABEL,
+            "<",
+            GRID_X - 26,
+            GRID_NAME_Y,
+            theme::MID,
+        );
     }
     if state.num_dests > state.scroll_x + cols {
         // On the tag row, not the name row: tags are <= 3 chars for every
         // BlockRef (`block_tag`), so this can never reach far enough right
         // to touch the hint, unlike a destination name (issue #15).
-        draw::text(d, &theme::FONT_LABEL, ">", theme::SCREEN_W - 8, GRID_TAG_Y, theme::MID);
+        draw::text(
+            d,
+            &theme::FONT_LABEL,
+            ">",
+            theme::SCREEN_W - 8,
+            GRID_TAG_Y,
+            theme::MID,
+        );
     }
     for vi in 0..rows {
         let ri = vi + state.scroll_y;
@@ -342,8 +408,19 @@ where
         }
         let (_, y) = cell_center(0, vi);
         let name = state.sources[ri].map_or("?", |s| s.name);
-        let color = if ri == state.sel_row { theme::INK } else { theme::MID };
-        draw::text(d, &theme::FONT_LABEL_BOLD, name, theme::MARGIN_X, y + 4, color);
+        let color = if ri == state.sel_row {
+            theme::INK
+        } else {
+            theme::MID
+        };
+        draw::text(
+            d,
+            &theme::FONT_LABEL_BOLD,
+            name,
+            theme::MARGIN_X,
+            y + 4,
+            color,
+        );
         for ci in 0..cols {
             let di = ci + state.scroll_x;
             if di >= state.num_dests {
@@ -351,7 +428,11 @@ where
             }
             let (x, y) = cell_center(ci, vi);
             let selected = ri == state.sel_row && di == state.sel_col;
-            let amount = if selected { sel_amount } else { state.amounts[ri][di] };
+            let amount = if selected {
+                sel_amount
+            } else {
+                state.amounts[ri][di]
+            };
             if selected {
                 draw::round_outline(d, x - 14, y - 11, 28, 22, 6, theme::ACCENT);
             }
@@ -364,12 +445,26 @@ where
             }
         }
     }
-    draw::text(d, &theme::FONT_LABEL, "PRIME: MIX+PLUS ON A PARAM", theme::MARGIN_X, HINT_Y, theme::MID);
+    draw::text(
+        d,
+        &theme::FONT_LABEL,
+        "PRIME: MIX+PLUS ON A PARAM",
+        theme::MARGIN_X,
+        HINT_Y,
+        theme::MID,
+    );
     let routes = (0..state.num_sources)
         .flat_map(|r| (0..state.num_dests).map(move |c| (r, c)))
         .filter(|&(r, c)| state.amounts[r][c] != 0)
         .count();
     let mut buf = FmtBuf::new();
     fmt_stats(&mut buf, routes, state.num_dests);
-    draw::text(d, &theme::FONT_LABEL, buf.as_str(), theme::MARGIN_X, STATS_Y, theme::MID);
+    draw::text(
+        d,
+        &theme::FONT_LABEL,
+        buf.as_str(),
+        theme::MARGIN_X,
+        STATS_Y,
+        theme::MID,
+    );
 }

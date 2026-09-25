@@ -29,14 +29,14 @@ fn write_line(dram: &mut [f32; DRAM_SIZE], ptr: usize, w_addr: usize, val: f32) 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum MvProgram {
-    SmallBright = 0,   // Effect 1: Small Bright .1 Sec
-    MediumWarm = 1,    // Effect 4: Medium Warm 1.1 Sec
-    LargeBright = 2,   // Effect 6: Large Bright 1.2 Sec
-    LargeDark = 3,     // Effect 7: Large Dark 1.0 Sec
-    XlargeWarm = 4,    // Effect 28: Xlarge Warm 5.0 Sec
-    XlargeInf = 5,     // Effect 29: Xlarge Warm 15.0 Sec
-    Bloom = 6,         // Effect 45: Bloom 1 8 Sec
-    ReverseRegen = 7,  // Effect 47: Reverse Regen. 2 Sec
+    SmallBright = 0,  // Effect 1: Small Bright .1 Sec
+    MediumWarm = 1,   // Effect 4: Medium Warm 1.1 Sec
+    LargeBright = 2,  // Effect 6: Large Bright 1.2 Sec
+    LargeDark = 3,    // Effect 7: Large Dark 1.0 Sec
+    XlargeWarm = 4,   // Effect 28: Xlarge Warm 5.0 Sec
+    XlargeInf = 5,    // Effect 29: Xlarge Warm 15.0 Sec
+    Bloom = 6,        // Effect 45: Bloom 1 8 Sec
+    ReverseRegen = 7, // Effect 47: Reverse Regen. 2 Sec
 }
 
 impl MvProgram {
@@ -76,12 +76,7 @@ impl MidiVerbII {
     }
 
     /// Process a block with the selected program.
-    pub fn process(
-        &mut self,
-        buf: &mut [f32; BLOCK_SIZE],
-        program: MvProgram,
-        mix: f32,
-    ) {
+    pub fn process(&mut self, buf: &mut [f32; BLOCK_SIZE], program: MvProgram, mix: f32) {
         if mix < 0.001 {
             return;
         }
@@ -113,71 +108,81 @@ impl MidiVerbII {
 
         write_line(d, p, 0, input);
 
-        let tmp_3 = line(d,p,15972,12)*0.75 + line(d,p,15549,234)*0.75
-            + line(d,p,15035,252)*0.75 + line(d,p,14477,378)*0.75
-            + line(d,p,12812,169)*0.75 + line(d,p,12375,199)*0.75
-            + line(d,p,11892,423)*0.75;
+        let tmp_3 = line(d, p, 15972, 12) * 0.75
+            + line(d, p, 15549, 234) * 0.75
+            + line(d, p, 15035, 252) * 0.75
+            + line(d, p, 14477, 378) * 0.75
+            + line(d, p, 12812, 169) * 0.75
+            + line(d, p, 12375, 199) * 0.75
+            + line(d, p, 11892, 423) * 0.75;
 
-        let tmp_5 = line(d,p,15972,145)*0.75 + line(d,p,15549,130)*0.75
-            + line(d,p,15035,459)*0.75 + line(d,p,14477,277)*0.75
-            + line(d,p,12812,103)*0.75 + line(d,p,12375,208)*0.75
-            + line(d,p,10744,16)*0.75;
+        let tmp_5 = line(d, p, 15972, 145) * 0.75
+            + line(d, p, 15549, 130) * 0.75
+            + line(d, p, 15035, 459) * 0.75
+            + line(d, p, 14477, 277) * 0.75
+            + line(d, p, 12812, 103) * 0.75
+            + line(d, p, 12375, 208) * 0.75
+            + line(d, p, 10744, 16) * 0.75;
 
-        let mut acc = line(d,p,16381,19)*0.75 + line(d,p,0,1)*0.5;
+        let mut acc = line(d, p, 16381, 19) * 0.75 + line(d, p, 0, 1) * 0.5;
         write_line(d, p, 16381, -acc);
-        acc = acc * -0.75 + line(d,p,16360,45)*0.75 + line(d,p,16381,19);
+        acc = acc * -0.75 + line(d, p, 16360, 45) * 0.75 + line(d, p, 16381, 19);
         write_line(d, p, 16360, -acc);
-        acc = acc * -0.75 + line(d,p,16313,84)*0.75 + line(d,p,16360,45);
+        acc = acc * -0.75 + line(d, p, 16313, 84) * 0.75 + line(d, p, 16360, 45);
         write_line(d, p, 16313, -acc);
-        acc = acc * -0.75 + line(d,p,16227,115)*0.75 + line(d,p,16313,84);
+        acc = acc * -0.75 + line(d, p, 16227, 115) * 0.75 + line(d, p, 16313, 84);
         write_line(d, p, 16227, -acc);
-        acc = acc * -0.75 + line(d,p,16110,136)*0.75 + line(d,p,16227,115);
+        acc = acc * -0.75 + line(d, p, 16110, 136) * 0.75 + line(d, p, 16227, 115);
         write_line(d, p, 16110, -acc);
-        acc = acc * -1.125 + line(d,p,16110,136)*1.5;
+        acc = acc * -1.125 + line(d, p, 16110, 136) * 1.5;
         let tmp_b = acc;
 
-        acc = line(d,p,15972,421)*0.5 + line(d,p,13797,278)*0.5;
+        acc = line(d, p, 15972, 421) * 0.5 + line(d, p, 13797, 278) * 0.5;
         write_line(d, p, 13797, -acc);
-        acc = -acc*0.5 + line(d,p,13797,278);
+        acc = -acc * 0.5 + line(d, p, 13797, 278);
         write_line(d, p, 15549, acc);
 
-        acc = -line(d,p,15549,512)*0.25 + -line(d,p,15549,513)*0.25 + line(d,p,13517,212)*0.5;
+        acc = -line(d, p, 15549, 512) * 0.25
+            + -line(d, p, 15549, 513) * 0.25
+            + line(d, p, 13517, 212) * 0.5;
         write_line(d, p, 13517, -acc);
-        acc = -acc*0.5 + line(d,p,13517,212);
+        acc = -acc * 0.5 + line(d, p, 13517, 212);
         write_line(d, p, 15035, acc);
 
-        acc = line(d,p,15035,556)*0.5 + line(d,p,13303,256)*0.5;
+        acc = line(d, p, 15035, 556) * 0.5 + line(d, p, 13303, 256) * 0.5;
         write_line(d, p, 13303, -acc);
-        acc = -acc*0.5 + line(d,p,13303,256);
+        acc = -acc * 0.5 + line(d, p, 13303, 256);
         write_line(d, p, 14477, acc);
 
-        acc = line(d,p,14477,678)*0.5 + line(d,p,13045,231)*0.5;
+        acc = line(d, p, 14477, 678) * 0.5 + line(d, p, 13045, 231) * 0.5;
         write_line(d, p, 13045, -acc);
-        acc = -acc*0.5 + line(d,p,13045,231) + line(d,p,9694,1)*0.5;
+        acc = -acc * 0.5 + line(d, p, 13045, 231) + line(d, p, 9694, 1) * 0.5;
         write_line(d, p, 9694, acc);
-        acc = line(d,p,9694,0)*0.5 + tmp_b;
+        acc = line(d, p, 9694, 0) * 0.5 + tmp_b;
         write_line(d, p, 15972, acc);
 
-        acc = line(d,p,12812,435)*0.5 + line(d,p,10744,292)*0.5;
+        acc = line(d, p, 12812, 435) * 0.5 + line(d, p, 10744, 292) * 0.5;
         write_line(d, p, 10744, -acc);
-        acc = -acc*0.5 + line(d,p,10744,292);
+        acc = -acc * 0.5 + line(d, p, 10744, 292);
         write_line(d, p, 12375, acc);
 
-        acc = -line(d,p,12375,481)*0.25 + -line(d,p,12375,482)*0.25 + line(d,p,10450,281)*0.5;
+        acc = -line(d, p, 12375, 481) * 0.25
+            + -line(d, p, 12375, 482) * 0.25
+            + line(d, p, 10450, 281) * 0.5;
         write_line(d, p, 10450, -acc);
-        acc = -acc*0.5 + line(d,p,10450,281);
+        acc = -acc * 0.5 + line(d, p, 10450, 281);
         write_line(d, p, 11892, acc);
 
-        acc = line(d,p,11892,571)*0.5 + line(d,p,10167,234)*0.5;
+        acc = line(d, p, 11892, 571) * 0.5 + line(d, p, 10167, 234) * 0.5;
         write_line(d, p, 10167, -acc);
-        acc = -acc*0.5 + line(d,p,10167,234);
+        acc = -acc * 0.5 + line(d, p, 10167, 234);
         write_line(d, p, 11319, acc);
 
-        acc = line(d,p,11319,573)*0.5 + line(d,p,9931,232)*0.5;
+        acc = line(d, p, 11319, 573) * 0.5 + line(d, p, 9931, 232) * 0.5;
         write_line(d, p, 9931, -acc);
-        acc = -acc*0.5 + line(d,p,9931,232) + line(d,p,9691,1)*0.5;
+        acc = -acc * 0.5 + line(d, p, 9931, 232) + line(d, p, 9691, 1) * 0.5;
         write_line(d, p, 9691, acc);
-        acc = line(d,p,9691,0)*0.5 + tmp_b;
+        acc = line(d, p, 9691, 0) * 0.5 + tmp_b;
         write_line(d, p, 12812, acc);
 
         (tmp_5, tmp_3)
@@ -191,34 +196,34 @@ impl MidiVerbII {
         write_line(d, p, 0, input);
 
         // Input diffusion
-        let mut acc = line(d,p,16381,19)*0.75 + line(d,p,0,1)*0.5;
+        let mut acc = line(d, p, 16381, 19) * 0.75 + line(d, p, 0, 1) * 0.5;
         write_line(d, p, 16381, -acc);
-        acc = acc * -0.75 + line(d,p,16360,45)*0.75 + line(d,p,16381,19);
+        acc = acc * -0.75 + line(d, p, 16360, 45) * 0.75 + line(d, p, 16381, 19);
         write_line(d, p, 16360, -acc);
-        acc = acc * -0.75 + line(d,p,16313,84)*0.75 + line(d,p,16360,45);
+        acc = acc * -0.75 + line(d, p, 16313, 84) * 0.75 + line(d, p, 16360, 45);
         write_line(d, p, 16313, -acc);
-        acc = acc * -0.75 + line(d,p,16227,115)*0.75 + line(d,p,16313,84);
+        acc = acc * -0.75 + line(d, p, 16227, 115) * 0.75 + line(d, p, 16313, 84);
         write_line(d, p, 16227, -acc);
-        acc = acc * -0.75 + line(d,p,16110,136)*0.75 + line(d,p,16227,115);
+        acc = acc * -0.75 + line(d, p, 16110, 136) * 0.75 + line(d, p, 16227, 115);
         write_line(d, p, 16110, -acc);
         let diffused = acc;
 
         // Two parallel tanks with cross-feedback and lowpass
         // Tank A
-        acc = line(d,p,15972,421)*0.5 + line(d,p,13797,278)*0.5;
+        acc = line(d, p, 15972, 421) * 0.5 + line(d, p, 13797, 278) * 0.5;
         write_line(d, p, 13797, -acc);
-        acc = -acc*0.5 + line(d,p,13797,278);
+        acc = -acc * 0.5 + line(d, p, 13797, 278);
         let tank_a = acc;
 
         // Tank B
-        acc = line(d,p,12812,435)*0.5 + line(d,p,10744,292)*0.5;
+        acc = line(d, p, 12812, 435) * 0.5 + line(d, p, 10744, 292) * 0.5;
         write_line(d, p, 10744, -acc);
-        acc = -acc*0.5 + line(d,p,10744,292);
+        acc = -acc * 0.5 + line(d, p, 10744, 292);
         let tank_b = acc;
 
         // Lowpass in feedback path (warm character)
-        let lp_a = (tank_a + line(d,p,15972,420)) * 0.5;
-        let lp_b = (tank_b + line(d,p,12812,434)) * 0.5;
+        let lp_a = (tank_a + line(d, p, 15972, 420)) * 0.5;
+        let lp_b = (tank_b + line(d, p, 12812, 434)) * 0.5;
 
         write_line(d, p, 15972, diffused * 0.5 + lp_b * 0.375);
         write_line(d, p, 12812, diffused * 0.5 + lp_a * 0.375);
@@ -238,41 +243,45 @@ impl MidiVerbII {
         write_line(d, p, 0, input);
 
         // Input diffusion (5 allpasses)
-        let mut acc = line(d,p,16381,19)*0.75 + line(d,p,0,1)*0.5;
+        let mut acc = line(d, p, 16381, 19) * 0.75 + line(d, p, 0, 1) * 0.5;
         write_line(d, p, 16381, -acc);
-        acc = acc * -0.75 + line(d,p,16360,45)*0.75 + line(d,p,16381,19);
+        acc = acc * -0.75 + line(d, p, 16360, 45) * 0.75 + line(d, p, 16381, 19);
         write_line(d, p, 16360, -acc);
-        acc = acc * -0.75 + line(d,p,16313,84)*0.75 + line(d,p,16360,45);
+        acc = acc * -0.75 + line(d, p, 16313, 84) * 0.75 + line(d, p, 16360, 45);
         write_line(d, p, 16313, -acc);
-        acc = acc * -0.75 + line(d,p,16227,115)*0.75 + line(d,p,16313,84);
+        acc = acc * -0.75 + line(d, p, 16227, 115) * 0.75 + line(d, p, 16313, 84);
         write_line(d, p, 16227, -acc);
-        acc = acc * -0.75 + line(d,p,16110,136)*0.75 + line(d,p,16227,115);
+        acc = acc * -0.75 + line(d, p, 16110, 136) * 0.75 + line(d, p, 16227, 115);
         write_line(d, p, 16110, -acc);
-        let diffused = acc * -1.125 + line(d,p,16110,136)*1.5;
+        let diffused = acc * -1.125 + line(d, p, 16110, 136) * 1.5;
 
         // Long tank allpasses
-        acc = line(d,p,15972,821)*0.5 + line(d,p,13797,578)*0.5;
+        acc = line(d, p, 15972, 821) * 0.5 + line(d, p, 13797, 578) * 0.5;
         write_line(d, p, 13797, -acc);
-        acc = -acc*0.5 + line(d,p,13797,578);
+        acc = -acc * 0.5 + line(d, p, 13797, 578);
         write_line(d, p, 15549, acc);
 
-        acc = line(d,p,15549,912)*0.5 + line(d,p,13517,412)*0.5;
+        acc = line(d, p, 15549, 912) * 0.5 + line(d, p, 13517, 412) * 0.5;
         write_line(d, p, 13517, -acc);
-        acc = -acc*0.5 + line(d,p,13517,412);
+        acc = -acc * 0.5 + line(d, p, 13517, 412);
         write_line(d, p, 15035, acc);
 
-        acc = line(d,p,15035,956)*0.5 + line(d,p,13303,456)*0.5;
+        acc = line(d, p, 15035, 956) * 0.5 + line(d, p, 13303, 456) * 0.5;
         write_line(d, p, 13303, -acc);
-        acc = -acc*0.5 + line(d,p,13303,456) + line(d,p,9694,1)*0.5;
+        acc = -acc * 0.5 + line(d, p, 13303, 456) + line(d, p, 9694, 1) * 0.5;
         write_line(d, p, 9694, acc);
-        acc = line(d,p,9694,0)*0.5 + diffused;
+        acc = line(d, p, 9694, 0) * 0.5 + diffused;
         write_line(d, p, 15972, acc);
 
         // Output taps (7 taps per channel for density)
-        let left = line(d,p,15972,145)*0.75 + line(d,p,15549,230)*0.75
-            + line(d,p,15035,459)*0.75 + line(d,p,13797,277)*0.75;
-        let right = line(d,p,15972,212)*0.75 + line(d,p,15549,334)*0.75
-            + line(d,p,15035,352)*0.75 + line(d,p,13517,278)*0.75;
+        let left = line(d, p, 15972, 145) * 0.75
+            + line(d, p, 15549, 230) * 0.75
+            + line(d, p, 15035, 459) * 0.75
+            + line(d, p, 13797, 277) * 0.75;
+        let right = line(d, p, 15972, 212) * 0.75
+            + line(d, p, 15549, 334) * 0.75
+            + line(d, p, 15035, 352) * 0.75
+            + line(d, p, 13517, 278) * 0.75;
 
         (left * 0.5, right * 0.5)
     }
@@ -285,27 +294,27 @@ impl MidiVerbII {
 
         write_line(d, p, 0, input);
 
-        let mut acc = line(d,p,16381,19)*0.75 + line(d,p,0,1)*0.5;
+        let mut acc = line(d, p, 16381, 19) * 0.75 + line(d, p, 0, 1) * 0.5;
         write_line(d, p, 16381, -acc);
-        acc = acc * -0.75 + line(d,p,16360,45)*0.75 + line(d,p,16381,19);
+        acc = acc * -0.75 + line(d, p, 16360, 45) * 0.75 + line(d, p, 16381, 19);
         write_line(d, p, 16360, -acc);
-        acc = acc * -0.75 + line(d,p,16313,84)*0.75 + line(d,p,16360,45);
+        acc = acc * -0.75 + line(d, p, 16313, 84) * 0.75 + line(d, p, 16360, 45);
         write_line(d, p, 16313, -acc);
         let diffused = acc;
 
-        acc = line(d,p,15972,621)*0.5 + line(d,p,13797,378)*0.5;
+        acc = line(d, p, 15972, 621) * 0.5 + line(d, p, 13797, 378) * 0.5;
         write_line(d, p, 13797, -acc);
-        acc = -acc*0.5 + line(d,p,13797,378);
+        acc = -acc * 0.5 + line(d, p, 13797, 378);
         let tank_a = acc;
 
-        acc = line(d,p,12812,535)*0.5 + line(d,p,10744,392)*0.5;
+        acc = line(d, p, 12812, 535) * 0.5 + line(d, p, 10744, 392) * 0.5;
         write_line(d, p, 10744, -acc);
-        acc = -acc*0.5 + line(d,p,10744,392);
+        acc = -acc * 0.5 + line(d, p, 10744, 392);
         let tank_b = acc;
 
         // Heavy lowpass: average of 3 taps (dark character)
-        let lp_a = (tank_a + line(d,p,15972,620) + line(d,p,15972,619)) / 3.0;
-        let lp_b = (tank_b + line(d,p,12812,534) + line(d,p,12812,533)) / 3.0;
+        let lp_a = (tank_a + line(d, p, 15972, 620) + line(d, p, 15972, 619)) / 3.0;
+        let lp_b = (tank_b + line(d, p, 12812, 534) + line(d, p, 12812, 533)) / 3.0;
 
         write_line(d, p, 15972, diffused * 0.5 + lp_b * 0.375);
         write_line(d, p, 12812, diffused * 0.5 + lp_a * 0.375);
@@ -323,31 +332,31 @@ impl MidiVerbII {
         write_line(d, p, 0, input);
 
         // Long diffusion chain
-        let mut acc = line(d,p,16381,19)*0.75 + line(d,p,0,1)*0.5;
+        let mut acc = line(d, p, 16381, 19) * 0.75 + line(d, p, 0, 1) * 0.5;
         write_line(d, p, 16381, -acc);
-        acc = acc * -0.75 + line(d,p,16360,45)*0.75 + line(d,p,16381,19);
+        acc = acc * -0.75 + line(d, p, 16360, 45) * 0.75 + line(d, p, 16381, 19);
         write_line(d, p, 16360, -acc);
-        acc = acc * -0.75 + line(d,p,16313,84)*0.75 + line(d,p,16360,45);
+        acc = acc * -0.75 + line(d, p, 16313, 84) * 0.75 + line(d, p, 16360, 45);
         write_line(d, p, 16313, -acc);
-        acc = acc * -0.75 + line(d,p,16227,115)*0.75 + line(d,p,16313,84);
+        acc = acc * -0.75 + line(d, p, 16227, 115) * 0.75 + line(d, p, 16313, 84);
         write_line(d, p, 16227, -acc);
-        acc = acc * -0.75 + line(d,p,16110,136)*0.75 + line(d,p,16227,115);
+        acc = acc * -0.75 + line(d, p, 16110, 136) * 0.75 + line(d, p, 16227, 115);
         write_line(d, p, 16110, -acc);
-        let diffused = acc * -1.125 + line(d,p,16110,136)*1.5;
+        let diffused = acc * -1.125 + line(d, p, 16110, 136) * 1.5;
 
         // Very long tanks with high feedback
-        acc = line(d,p,15000,4500)*0.5 + line(d,p,10000,3000)*0.5;
+        acc = line(d, p, 15000, 4500) * 0.5 + line(d, p, 10000, 3000) * 0.5;
         write_line(d, p, 10000, -acc);
-        acc = -acc*0.5 + line(d,p,10000,3000);
+        acc = -acc * 0.5 + line(d, p, 10000, 3000);
         write_line(d, p, 15000, acc * 0.5 + diffused * 0.5);
 
-        acc = line(d,p,7000,3500)*0.5 + line(d,p,3500,2000)*0.5;
+        acc = line(d, p, 7000, 3500) * 0.5 + line(d, p, 3500, 2000) * 0.5;
         write_line(d, p, 3500, -acc);
-        acc = -acc*0.5 + line(d,p,3500,2000);
+        acc = -acc * 0.5 + line(d, p, 3500, 2000);
         write_line(d, p, 7000, acc * 0.5 + diffused * 0.5);
 
-        let left = line(d,p,15000,1000)*0.75 + line(d,p,7000,800)*0.5;
-        let right = line(d,p,15000,2000)*0.75 + line(d,p,7000,1500)*0.5;
+        let left = line(d, p, 15000, 1000) * 0.75 + line(d, p, 7000, 800) * 0.5;
+        let right = line(d, p, 15000, 2000) * 0.75 + line(d, p, 7000, 1500) * 0.5;
         (left * 0.5, right * 0.5)
     }
 
@@ -359,25 +368,25 @@ impl MidiVerbII {
 
         write_line(d, p, 0, input);
 
-        let mut acc = line(d,p,16381,19)*0.75 + line(d,p,0,1)*0.5;
+        let mut acc = line(d, p, 16381, 19) * 0.75 + line(d, p, 0, 1) * 0.5;
         write_line(d, p, 16381, -acc);
-        acc = acc * -0.75 + line(d,p,16360,45)*0.75 + line(d,p,16381,19);
+        acc = acc * -0.75 + line(d, p, 16360, 45) * 0.75 + line(d, p, 16381, 19);
         write_line(d, p, 16360, -acc);
         let diffused = acc;
 
         // Near-unity feedback tanks
-        acc = line(d,p,15000,4500)*0.5 + line(d,p,10000,3000)*0.5;
+        acc = line(d, p, 15000, 4500) * 0.5 + line(d, p, 10000, 3000) * 0.5;
         write_line(d, p, 10000, -acc);
-        acc = -acc*0.5 + line(d,p,10000,3000);
+        acc = -acc * 0.5 + line(d, p, 10000, 3000);
         write_line(d, p, 15000, acc * 0.75 + diffused * 0.25);
 
-        acc = line(d,p,7000,3500)*0.5 + line(d,p,3500,2000)*0.5;
+        acc = line(d, p, 7000, 3500) * 0.5 + line(d, p, 3500, 2000) * 0.5;
         write_line(d, p, 3500, -acc);
-        acc = -acc*0.5 + line(d,p,3500,2000);
+        acc = -acc * 0.5 + line(d, p, 3500, 2000);
         write_line(d, p, 7000, acc * 0.75 + diffused * 0.25);
 
-        let left = line(d,p,15000,1000)*0.75 + line(d,p,7000,800)*0.5;
-        let right = line(d,p,15000,2000)*0.75 + line(d,p,7000,1500)*0.5;
+        let left = line(d, p, 15000, 1000) * 0.75 + line(d, p, 7000, 800) * 0.5;
+        let right = line(d, p, 15000, 2000) * 0.75 + line(d, p, 7000, 1500) * 0.5;
         (left * 0.5, right * 0.5)
     }
 
@@ -389,31 +398,31 @@ impl MidiVerbII {
 
         write_line(d, p, 0, input);
 
-        let mut acc = line(d,p,16381,19)*0.75 + line(d,p,0,1)*0.5;
+        let mut acc = line(d, p, 16381, 19) * 0.75 + line(d, p, 0, 1) * 0.5;
         write_line(d, p, 16381, -acc);
-        acc = acc * -0.75 + line(d,p,16360,45)*0.75 + line(d,p,16381,19);
+        acc = acc * -0.75 + line(d, p, 16360, 45) * 0.75 + line(d, p, 16381, 19);
         write_line(d, p, 16360, -acc);
-        acc = acc * -0.75 + line(d,p,16313,84)*0.75 + line(d,p,16360,45);
+        acc = acc * -0.75 + line(d, p, 16313, 84) * 0.75 + line(d, p, 16360, 45);
         write_line(d, p, 16313, -acc);
         let diffused = acc;
 
         // Long cross-coupled tanks
-        acc = line(d,p,14000,5000)*0.5 + line(d,p,8000,4000)*0.5;
+        acc = line(d, p, 14000, 5000) * 0.5 + line(d, p, 8000, 4000) * 0.5;
         write_line(d, p, 8000, -acc);
-        acc = -acc*0.5 + line(d,p,8000,4000);
+        acc = -acc * 0.5 + line(d, p, 8000, 4000);
         let tank_a = acc;
 
-        acc = line(d,p,6000,3000)*0.5 + line(d,p,2000,1500)*0.5;
+        acc = line(d, p, 6000, 3000) * 0.5 + line(d, p, 2000, 1500) * 0.5;
         write_line(d, p, 2000, -acc);
-        acc = -acc*0.5 + line(d,p,2000,1500);
+        acc = -acc * 0.5 + line(d, p, 2000, 1500);
         let tank_b = acc;
 
         // Cross-coupled with reverse taps for bloom character
         write_line(d, p, 14000, diffused * 0.375 + tank_b * 0.625);
         write_line(d, p, 6000, diffused * 0.375 + tank_a * 0.625);
 
-        let left = line(d,p,14000,4000)*0.5 + line(d,p,6000,2500)*0.5;
-        let right = line(d,p,14000,3000)*0.5 + line(d,p,6000,1800)*0.5;
+        let left = line(d, p, 14000, 4000) * 0.5 + line(d, p, 6000, 2500) * 0.5;
+        let right = line(d, p, 14000, 3000) * 0.5 + line(d, p, 6000, 1800) * 0.5;
         (left, right)
     }
 

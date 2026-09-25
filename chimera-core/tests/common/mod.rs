@@ -6,17 +6,17 @@
 //! note 60 vel 100 on, ON_BLOCKS blocks, note off, OFF_BLOCKS blocks.
 #![allow(dead_code)]
 
-use chimera_core::{MidiChannel, MidiNote, Velocity};
+use chimera_core::addr::{BlockRef, Op, ParamAddr};
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::hw::DAC_PAIRS;
 use chimera_core::instrument::{AudioShared, Instrument};
-use chimera_core::note_queue::{NoteEvent, NoteKind};
-use chimera_core::addr::{BlockRef, Op, ParamAddr};
 use chimera_core::mod_path::ModDestRegistry;
 use chimera_core::modulation::ModState;
+use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::{EngineType, FilterParams, FmOpParams, ParamSnapshot};
 use chimera_core::preset::{ChainType, Sound};
+use chimera_core::{MidiChannel, MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
 
 pub const SR: u32 = 48_000;
@@ -102,7 +102,8 @@ pub const OP_A_LEVEL: ParamAddr = ParamAddr::new(BlockRef::FmOp(Op::A), FmOpPara
 /// `num_sources >= 2` and the LFO runs.
 pub fn lfo_route(dest: ParamAddr) -> ModState {
     let mut reg = ModDestRegistry::new();
-    reg.add(dest, *b"GOLDEN\0\0").expect("golden destination must be modulatable");
+    reg.add(dest, *b"GOLDEN\0\0")
+        .expect("golden destination must be modulatable");
     let mut ms = ModState::from_registry(&reg, 2);
     ms.set_amount(1, 0, MOD_AMOUNT);
     ms
@@ -139,7 +140,11 @@ pub fn render_case(case: Case) -> Vec<f32> {
     // the engine switched — i.e. the Modal init params.
     let switched = init_params(EngineType::Modal);
     let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
-    voice.note_on(MidiNote::new(NOTE).unwrap(), Velocity::new(VEL).unwrap(), &params);
+    voice.note_on(
+        MidiNote::new(NOTE).unwrap(),
+        Velocity::new(VEL).unwrap(),
+        &params,
+    );
     let mut out = Vec::with_capacity(TOTAL_SAMPLES);
     let mut block = [0.0f32; BLOCK_SIZE];
     for b in 0..ON_BLOCKS + OFF_BLOCKS {
@@ -170,10 +175,18 @@ pub fn render_case_through_instrument(case: Case) -> Vec<f32> {
     let mut inst = Box::new(Instrument::new(chimera_hal::SAMPLE_RATE));
     let mut fx = Box::new(FxBus::new());
     let mut dac = [[0.0f32; BLOCK_SIZE * 2]; DAC_PAIRS];
-    let event = |kind| NoteEvent { channel: MidiChannel::new(0).unwrap(), note: MidiNote::new(NOTE).unwrap(), kind };
+    let event = |kind| NoteEvent {
+        channel: MidiChannel::new(0).unwrap(),
+        note: MidiNote::new(NOTE).unwrap(),
+        kind,
+    };
     let mut out = Vec::with_capacity(TOTAL_SAMPLES);
     for b in 0..ON_BLOCKS + OFF_BLOCKS {
-        let s = if case == Case::PizzaToModalSwitch && b >= ON_BLOCKS / 2 { &switched } else { &shared };
+        let s = if case == Case::PizzaToModalSwitch && b >= ON_BLOCKS / 2 {
+            &switched
+        } else {
+            &shared
+        };
         if b == 0 {
             inst.handle(event(NoteKind::On(Velocity::new(VEL).unwrap())), s);
         }

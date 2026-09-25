@@ -4,20 +4,20 @@ use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::primitives::{PrimitiveStyle, Rectangle, StyledDrawable};
 
 use crate::addr::Op;
+use crate::ui::PrimeStatus;
 use crate::ui::animation::AnimatedValue;
-use crate::ui::components;
-use crate::ui::block_def::{slot_addr, BlockDef, SlotBinding, VizType};
+use crate::ui::block_def::{BlockDef, SlotBinding, VizType, slot_addr};
 use crate::ui::chain::ChainNav;
-use crate::ui::mod_grid::MatrixState;
+use crate::ui::components;
 use crate::ui::draw;
 use crate::ui::dungeon_map;
 use crate::ui::fmt::{self, FmtBuf};
+use crate::ui::mod_grid::MatrixState;
 use crate::ui::page::PageLayout;
 use crate::ui::perf::PerfStats;
 use crate::ui::region::{self, RegionKind};
-use crate::ui::viz;
 use crate::ui::theme;
-use crate::ui::PrimeStatus;
+use crate::ui::viz;
 
 /// Everything one frame draws from, besides the renderer's own animation.
 pub struct Frame<'a> {
@@ -70,7 +70,12 @@ impl Renderer {
     }
 
     /// Mod-bar amount for slot `i` of `def`, if that param is a destination.
-    fn cell_mod_info(def: &BlockDef, i: usize, sel_op: Op, matrix_state: &MatrixState) -> Option<f32> {
+    fn cell_mod_info(
+        def: &BlockDef,
+        i: usize,
+        sel_op: Op,
+        matrix_state: &MatrixState,
+    ) -> Option<f32> {
         slot_addr(def, i, sel_op).and_then(|a| matrix_state.mod_info_for(a))
     }
 
@@ -85,7 +90,8 @@ impl Renderer {
                 let slot = &f.def.params[f.focus];
                 let mut buf = FmtBuf::new();
                 fmt::fmt_val(&mut buf, a(f.focus), slot.format());
-                let readout = (slot.binding != SlotBinding::Empty).then(|| (slot.label(), buf.as_str()));
+                let readout =
+                    (slot.binding != SlotBinding::Empty).then(|| (slot.label(), buf.as_str()));
                 viz::filter(display, a(0), a(1), readout);
             }
             VizType::Adsr => {
@@ -102,7 +108,12 @@ impl Renderer {
             VizType::FmEnvelope => {
                 // Rates: higher = faster = narrower. D1L is the level after D1R.
                 let (ar, d1r, d1l, rr) = (a(0).max(0.02), a(1).max(0.02), a(2), a(4).max(0.02));
-                let (atk_t, d1_t, d2_t, rel_t) = ((1.0 - ar).max(0.03), (1.0 - d1r).max(0.03), 0.25, (1.0 - rr).max(0.03));
+                let (atk_t, d1_t, d2_t, rel_t) = (
+                    (1.0 - ar).max(0.03),
+                    (1.0 - d1r).max(0.03),
+                    0.25,
+                    (1.0 - rr).max(0.03),
+                );
                 let total = atk_t + d1_t + d2_t + rel_t;
                 let lit = match f.focus {
                     0 => Some(0),
@@ -142,10 +153,16 @@ impl Renderer {
             VizType::EffectsFlow => {
                 use crate::ui::block_registry as reg;
                 if f.def.id == reg::SENDS.id {
-                    let sends = [self.anim[0].current(), self.anim[1].current(), self.anim[2].current()];
+                    let sends = [
+                        self.anim[0].current(),
+                        self.anim[1].current(),
+                        self.anim[2].current(),
+                    ];
                     viz::effects_flow(display, (f.focus < 3).then_some(f.focus), Some(sends));
                 } else {
-                    let lit = [reg::CHORUS.id, reg::DELAY.id, reg::EFX.id].iter().position(|&id| id == f.def.id);
+                    let lit = [reg::CHORUS.id, reg::DELAY.id, reg::EFX.id]
+                        .iter()
+                        .position(|&id| id == f.def.id);
                     viz::effects_flow(display, lit, None);
                 }
             }
@@ -160,10 +177,16 @@ impl Renderer {
             let addr = crate::addr::ParamAddr::new(crate::addr::BlockRef::Part, id);
             (0..f.def.params.len()).find(|&i| slot_addr(f.def, i, Op::A) == Some(addr))
         };
-        let (level, pan) = (slot(crate::part::PartParams::LEVEL), slot(crate::part::PartParams::PAN));
+        let (level, pan) = (
+            slot(crate::part::PartParams::LEVEL),
+            slot(crate::part::PartParams::PAN),
+        );
         core::array::from_fn(|i| {
             let mix = &f.parts[i].mix;
-            let mut s = viz::Strip { level: mix.level, pan: mix.pan };
+            let mut s = viz::Strip {
+                level: mix.level,
+                pan: mix.pan,
+            };
             if i == f.active_part {
                 if let Some(l) = level {
                     s.level = self.anim[l].current();
@@ -183,8 +206,11 @@ impl Renderer {
     where
         D: DrawTarget<Color = Rgb565>,
     {
-        let _ = Rectangle::new(Point::zero(), Size::new(theme::SCREEN_W as u32, theme::SCREEN_H as u32))
-            .draw_styled(&PrimitiveStyle::with_fill(theme::BG), display);
+        let _ = Rectangle::new(
+            Point::zero(),
+            Size::new(theme::SCREEN_W as u32, theme::SCREEN_H as u32),
+        )
+        .draw_styled(&PrimitiveStyle::with_fill(theme::BG), display);
         for &(kind, _, _) in region::layout_regions(f.def.layout) {
             self.draw_region_with_def(display, kind, f);
         }
@@ -198,10 +224,17 @@ impl Renderer {
                 VizType::AlgorithmDiagram => {
                     use crate::ui::block_registry as reg;
                     let alg = f.parts[f.active_part].sound.params.fm.algorithm as u32;
-                    let sel = if f.def.id == reg::FM_OP.id { f.sel_op.index() as u32 } else { 0 };
+                    let sel = if f.def.id == reg::FM_OP.id {
+                        f.sel_op.index() as u32
+                    } else {
+                        0
+                    };
                     ([0; 6], alg << 2 | sel)
                 }
-                VizType::MixerLevels => (region::quantize_values(&self.anim), strips_key(&self.strips(f), f.active_part)),
+                VizType::MixerLevels => (
+                    region::quantize_values(&self.anim),
+                    strips_key(&self.strips(f), f.active_part),
+                ),
                 VizType::EffectsFlow => (region::quantize_values(&self.anim), f.focus as u32),
                 _ => ([0; 6], viz::live_key(f.scope)),
             },
@@ -225,11 +258,17 @@ impl Renderer {
                 PageLayout::Matrix => {}
             },
             RegionKind::Cells => self.draw_cells(display, f, theme::CELL_LABEL_Y),
-            RegionKind::Grid => {
-                crate::ui::mod_grid::draw_grid(display, matrix_state, amount_of(self.anim[MATRIX_AMOUNT_SLOT].current()))
-            }
+            RegionKind::Grid => crate::ui::mod_grid::draw_grid(
+                display,
+                matrix_state,
+                amount_of(self.anim[MATRIX_AMOUNT_SLOT].current()),
+            ),
             RegionKind::Nav => {
-                dungeon_map::draw(display, nav, (self.branch_scroll.current() * theme::BRANCH_LINE_HEIGHT as f32) as i32);
+                dungeon_map::draw(
+                    display,
+                    nav,
+                    (self.branch_scroll.current() * theme::BRANCH_LINE_HEIGHT as f32) as i32,
+                );
             }
         }
     }
@@ -249,7 +288,14 @@ impl Renderer {
         let v = self.anim[f.focus].current();
         let mut buf = FmtBuf::new();
         fmt::fmt_val(&mut buf, v, slot.format());
-        components::focus_band(display, slot.label(), buf.as_str(), v, slot.format().is_bipolar(), f.prime_status);
+        components::focus_band(
+            display,
+            slot.label(),
+            buf.as_str(),
+            v,
+            slot.format().is_bipolar(),
+            f.prime_status,
+        );
     }
 
     /// Mod matrix focus band: the selected route (`SRC → TAG DEST`); the amount lerps through
@@ -258,10 +304,23 @@ impl Renderer {
     where
         D: DrawTarget<Color = Rgb565>,
     {
-        let dest = m.dests.get(m.sel_col).copied().flatten().filter(|_| m.sel_col < m.num_dests);
+        let dest = m
+            .dests
+            .get(m.sel_col)
+            .copied()
+            .flatten()
+            .filter(|_| m.sel_col < m.num_dests);
         let (Some(dest), Some(src)) = (dest, m.sources.get(m.sel_row).copied().flatten()) else {
             let label = "NO DESTINATIONS";
-            draw::text_tracked(display, &theme::FONT_VALUE, label, theme::MARGIN_X, theme::FOCUS_LABEL_Y, theme::MID, theme::LABEL_TRACKING);
+            draw::text_tracked(
+                display,
+                &theme::FONT_VALUE,
+                label,
+                theme::MARGIN_X,
+                theme::FOCUS_LABEL_Y,
+                theme::MID,
+                theme::LABEL_TRACKING,
+            );
             return;
         };
         let v = self.anim[MATRIX_AMOUNT_SLOT].current();
@@ -303,7 +362,13 @@ impl Renderer {
         D: DrawTarget<Color = Rgb565>,
     {
         let (context, name) = components::header_text(f.nav, f.def);
-        components::header(display, context.as_str(), name.as_str(), f.sounding, f.perf.audio_load_pct);
+        components::header(
+            display,
+            context.as_str(),
+            name.as_str(),
+            f.sounding,
+            f.perf.audio_load_pct,
+        );
     }
 
     // ── Dirty region helpers ─────────────────────────────────────────
@@ -316,7 +381,6 @@ impl Renderer {
         let end = y_end as usize * theme::SCREEN_W as usize;
         fb[start..end].fill(bg);
     }
-
 }
 
 /// Fingerprint of the Mixer overview (quantized levels and pans, selection).

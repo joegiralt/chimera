@@ -17,14 +17,20 @@ pub const LIVE_COLS: usize = (theme::VIZ_RIGHT - theme::VIZ_LEFT + 1) as usize;
 /// silent).
 pub fn live_columns(buf: &[f32; SCOPE_LEN]) -> [i8; LIVE_COLS] {
     let peak = scope::peak(&buf[..LIVE_COLS]);
-    let scale = if peak > scope::SOUNDING_PEAK { theme::VIZ_BAND_AMP as f32 / peak } else { 0.0 };
+    let scale = if peak > scope::SOUNDING_PEAK {
+        theme::VIZ_BAND_AMP as f32 / peak
+    } else {
+        0.0
+    };
     core::array::from_fn(|i| libm::roundf(buf[i] * scale) as i8)
 }
 
 /// Cheap fingerprint of what `live_output` draws: the viz region redraws
 /// only when it changes (a silent or frozen scope costs no SPI traffic).
 pub fn live_key(buf: &[f32; SCOPE_LEN]) -> u32 {
-    live_columns(buf).iter().fold(0x811c_9dc5u32, |h, &c| (h ^ c as u8 as u32).wrapping_mul(0x0100_0193))
+    live_columns(buf).iter().fold(0x811c_9dc5u32, |h, &c| {
+        (h ^ c as u8 as u32).wrapping_mul(0x0100_0193)
+    })
 }
 
 /// The page's live output as a filled waveform in the viz band.
@@ -37,7 +43,11 @@ where
     let y = |i: usize| mid - cols[i] as i32;
     for (i, _) in cols.iter().enumerate() {
         let x = theme::VIZ_LEFT + i as i32;
-        let (a, b) = if y(i) < mid { (y(i) + 1, mid) } else { (mid, y(i)) };
+        let (a, b) = if y(i) < mid {
+            (y(i) + 1, mid)
+        } else {
+            (mid, y(i))
+        };
         draw::fill_rect(d, x, a, 1, b - a, theme::ACCENT_SOFT);
     }
     // The line's extra row stays inside the band (152±24, +1 ≤ 185).
@@ -103,8 +113,16 @@ where
     const BLOCK_TOP: i32 = LABEL_RISE + 8;
     const GAP: i32 = 3;
 
-    let w = draw::text_width(&theme::FONT_READOUT, value, 0).max(draw::text_width(&theme::FONT_LABEL, label, theme::LABEL_TRACKING));
-    let left = if x + 8 + w <= theme::VIZ_RIGHT { x + 8 } else { x - 8 - w };
+    let w = draw::text_width(&theme::FONT_READOUT, value, 0).max(draw::text_width(
+        &theme::FONT_LABEL,
+        label,
+        theme::LABEL_TRACKING,
+    ));
+    let left = if x + 8 + w <= theme::VIZ_RIGHT {
+        x + 8
+    } else {
+        x - 8 - w
+    };
 
     // The curve's highest and lowest point across the columns the text will
     // actually occupy — not just at the anchor, which can be far from flat
@@ -118,10 +136,22 @@ where
     }
     let bottom = bottom + 1; // the curve's 2-px accent line draws one row below `y(x)` too
 
-    let vy = if top - GAP - BLOCK_TOP >= PLOT_TOP { top - GAP } else { bottom + GAP + BLOCK_TOP };
+    let vy = if top - GAP - BLOCK_TOP >= PLOT_TOP {
+        top - GAP
+    } else {
+        bottom + GAP + BLOCK_TOP
+    };
     let vy = vy.clamp(PLOT_TOP + BLOCK_TOP, PLOT_BASE - 2);
 
-    draw::text_tracked(d, &theme::FONT_LABEL, label, left + 1, vy - LABEL_RISE, theme::MID, theme::LABEL_TRACKING);
+    draw::text_tracked(
+        d,
+        &theme::FONT_LABEL,
+        label,
+        left + 1,
+        vy - LABEL_RISE,
+        theme::MID,
+        theme::LABEL_TRACKING,
+    );
     draw::text(d, &theme::FONT_READOUT, value, left, vy, theme::INK);
 }
 
@@ -134,7 +164,14 @@ where
     let w = (theme::VIZ_RIGHT - theme::VIZ_LEFT) as f32;
     let y = |x: i32| filter_y((x - theme::VIZ_LEFT) as f32 / w, cutoff, reso);
     filled_curve(d, theme::VIZ_LEFT, theme::VIZ_RIGHT, PLOT_BASE, y);
-    draw::fill_rect(d, theme::VIZ_LEFT, FILTER_PASS_Y, theme::VIZ_RIGHT - theme::VIZ_LEFT, 1, theme::FAINT);
+    draw::fill_rect(
+        d,
+        theme::VIZ_LEFT,
+        FILTER_PASS_Y,
+        theme::VIZ_RIGHT - theme::VIZ_LEFT,
+        1,
+        theme::FAINT,
+    );
     let mx = theme::VIZ_LEFT + (w * cutoff.clamp(0.0, 1.0)) as i32;
     let my = y(mx);
     let mut dy = my + 6;
@@ -151,12 +188,21 @@ where
 /// Envelope: four segments over proportional `widths`, breakpoints at
 /// `heights` (0..1), stage labels below; segment `lit` (the one the focused
 /// slot edits) in the accent.
-pub fn envelope<D>(d: &mut D, widths: &[f32; 4], heights: &[f32; 5], labels: &[&str; 4], lit: Option<usize>)
-where
+pub fn envelope<D>(
+    d: &mut D,
+    widths: &[f32; 4],
+    heights: &[f32; 5],
+    labels: &[&str; 4],
+    lit: Option<usize>,
+) where
     D: DrawTarget<Color = Rgb565>,
 {
     let base = PLOT_BASE - 8;
-    let (x0, w, h) = (theme::VIZ_LEFT, (theme::VIZ_RIGHT - theme::VIZ_LEFT) as f32, (base - PLOT_TOP) as f32);
+    let (x0, w, h) = (
+        theme::VIZ_LEFT,
+        (theme::VIZ_RIGHT - theme::VIZ_LEFT) as f32,
+        (base - PLOT_TOP) as f32,
+    );
     let mut pts = [(0i32, 0i32); 5];
     let mut cx = x0 as f32;
     for i in 0..5 {
@@ -168,7 +214,11 @@ where
     let y_at = |x: i32| {
         let s = (0..4).find(|&s| x <= pts[s + 1].0).unwrap_or(3);
         let ((xa, ya), (xb, yb)) = (pts[s], pts[s + 1]);
-        if xb == xa { yb } else { ya + (yb - ya) * (x - xa) / (xb - xa) }
+        if xb == xa {
+            yb
+        } else {
+            ya + (yb - ya) * (x - xa) / (xb - xa)
+        }
     };
     for x in x0..=pts[4].0 {
         draw::fill_rect(d, x, y_at(x) + 1, 1, base - y_at(x) - 1, theme::ACCENT_SOFT);
@@ -185,8 +235,20 @@ where
     let xs = pts.map(|p| p.0);
     for (s, span) in stage_label_spans(&xs, labels, lit).iter().enumerate() {
         if let Some((left, _)) = *span {
-            let color = if lit == Some(s) { theme::ACCENT } else { theme::MID };
-            draw::text_tracked(d, &theme::FONT_LABEL, labels[s], left, base + 14, color, theme::LABEL_TRACKING);
+            let color = if lit == Some(s) {
+                theme::ACCENT
+            } else {
+                theme::MID
+            };
+            draw::text_tracked(
+                d,
+                &theme::FONT_LABEL,
+                labels[s],
+                left,
+                base + 14,
+                color,
+                theme::LABEL_TRACKING,
+            );
         }
     }
     for (i, &(x, y)) in pts.iter().enumerate() {
@@ -203,7 +265,11 @@ const STAGE_LABEL_GAP: i32 = 2;
 /// out. The lit stage's label is always drawn. Any other is drawn only when
 /// it fits its own segment and keeps `STAGE_LABEL_GAP` from every label
 /// already placed (the lit one first), so no two labels ever touch.
-pub fn stage_label_spans(xs: &[i32; 5], labels: &[&str; 4], lit: Option<usize>) -> [Option<(i32, i32)>; 4] {
+pub fn stage_label_spans(
+    xs: &[i32; 5],
+    labels: &[&str; 4],
+    lit: Option<usize>,
+) -> [Option<(i32, i32)>; 4] {
     let span = |s: usize| {
         let w = draw::text_width(&theme::FONT_LABEL, labels[s], theme::LABEL_TRACKING);
         let left = (xs[s] + xs[s + 1]) / 2 - w / 2;
@@ -216,7 +282,10 @@ pub fn stage_label_spans(xs: &[i32; 5], labels: &[&str; 4], lit: Option<usize>) 
     for s in (0..4).filter(|&s| lit != Some(s)) {
         let (w, (l, r)) = span(s);
         let fits = w + 2 <= xs[s + 1] - xs[s];
-        let clear = spans.iter().flatten().all(|&(pl, pr)| r + STAGE_LABEL_GAP < pl || pr + STAGE_LABEL_GAP < l);
+        let clear = spans
+            .iter()
+            .flatten()
+            .all(|&(pl, pr)| r + STAGE_LABEL_GAP < pl || pr + STAGE_LABEL_GAP < l);
         if fits && clear {
             spans[s] = Some((l, r));
         }
@@ -233,9 +302,18 @@ where
     let (w, h) = ((x1 - x0) as f32, (PLOT_BASE - PLOT_TOP) as f32);
     draw::line(d, x0, PLOT_BASE, x1, PLOT_TOP, theme::FAINT, 1);
     let out = |t: f32| if t < 0.6 { t } else { 0.6 + (t - 0.6) * 0.3 };
-    filled_curve(d, x0, x1, PLOT_BASE, |x| PLOT_BASE - (h * out((x - x0) as f32 / w)) as i32);
+    filled_curve(d, x0, x1, PLOT_BASE, |x| {
+        PLOT_BASE - (h * out((x - x0) as f32 / w)) as i32
+    });
     draw::text(d, &theme::FONT_LABEL, "IN", x1 + 4, PLOT_BASE, theme::MID);
-    draw::text(d, &theme::FONT_LABEL, "OUT", x0 - 20, PLOT_TOP + 8, theme::MID);
+    draw::text(
+        d,
+        &theme::FONT_LABEL,
+        "OUT",
+        x0 - 20,
+        PLOT_TOP + 8,
+        theme::MID,
+    );
 }
 
 /// One Part in the Mixer overview.
@@ -266,15 +344,31 @@ where
         let (x, sel) = (strip_x(i), i == selected);
         num.clear();
         let _ = core::fmt::Write::write_fmt(&mut num, format_args!("{}", i + 1));
-        let (font, color) = if sel { (&theme::FONT_LABEL_BOLD, theme::INK) } else { (&theme::FONT_LABEL, theme::MID) };
+        let (font, color) = if sel {
+            (&theme::FONT_LABEL_BOLD, theme::INK)
+        } else {
+            (&theme::FONT_LABEL, theme::MID)
+        };
         draw::text_center(d, font, num.as_str(), x + 4, STRIP_NUM_Y, color, 0);
         draw::fill_rect(d, x, STRIP_TOP, 8, STRIP_H, theme::FAINT);
         let h = (STRIP_H as f32 * s.level.clamp(0.0, 1.0) + 0.5) as i32;
-        let fill = if sel { theme::ACCENT } else if s.level > 0.0 { theme::BAR_REST } else { theme::FAINT };
+        let fill = if sel {
+            theme::ACCENT
+        } else if s.level > 0.0 {
+            theme::BAR_REST
+        } else {
+            theme::FAINT
+        };
         draw::fill_rect(d, x, STRIP_TOP + STRIP_H - h, 8, h, fill);
         draw::fill_rect(d, x - 6, STRIP_PAN_Y, 20, 1, theme::FAINT);
         let px = x + 4 + libm::roundf(s.pan.clamp(-1.0, 1.0) * 10.0) as i32;
-        draw::dot(d, px, STRIP_PAN_Y, 2, if sel { theme::INK } else { theme::MID });
+        draw::dot(
+            d,
+            px,
+            STRIP_PAN_Y,
+            2,
+            if sel { theme::INK } else { theme::MID },
+        );
     }
 }
 
@@ -317,7 +411,9 @@ const ALG_EDGES: [&[(u8, u8)]; 8] = [
     &[(4, 3)],
     &[],
 ];
-const ALG_CARRIERS: [u8; 8] = [0b0001, 0b0001, 0b0001, 0b0001, 0b0101, 0b0111, 0b0111, 0b1111];
+const ALG_CARRIERS: [u8; 8] = [
+    0b0001, 0b0001, 0b0001, 0b0001, 0b0101, 0b0111, 0b0111, 0b1111,
+];
 const ALG_STEP_X: i32 = 20;
 const ALG_STEP_Y: i32 = 17;
 /// Drawn radius of an operator node; also the minimum clearance an edge
@@ -330,7 +426,10 @@ pub fn alg_op_center(alg: u8, op: usize) -> (i32, i32) {
     let rows = ALG_POS[a].iter().map(|p| p.1).max().unwrap_or(0) as i32 + 1;
     let top = theme::VIZ_BAND_MID - (rows - 1) * ALG_STEP_Y / 2;
     let (hx, row) = ALG_POS[a][op];
-    (theme::SCREEN_W / 2 + hx as i32 * ALG_STEP_X, top + row as i32 * ALG_STEP_Y)
+    (
+        theme::SCREEN_W / 2 + hx as i32 * ALG_STEP_X,
+        top + row as i32 * ALG_STEP_Y,
+    )
 }
 
 /// The algorithm's modulation edges, `(from, to)`, both 1-based operator numbers.
@@ -360,10 +459,26 @@ where
         let carrier = ALG_CARRIERS[a] & (1 << op) != 0;
         if selected == Some(op) {
             draw::dot(d, x, y, ALG_OP_R, theme::ACCENT);
-            draw::text_center(d, &theme::FONT_LABEL_BOLD, label, x + 1, y + 4, theme::BG, 0);
+            draw::text_center(
+                d,
+                &theme::FONT_LABEL_BOLD,
+                label,
+                x + 1,
+                y + 4,
+                theme::BG,
+                0,
+            );
         } else if carrier {
             draw::dot(d, x, y, ALG_OP_R, theme::INK2);
-            draw::text_center(d, &theme::FONT_LABEL_BOLD, label, x + 1, y + 4, theme::BG, 0);
+            draw::text_center(
+                d,
+                &theme::FONT_LABEL_BOLD,
+                label,
+                x + 1,
+                y + 4,
+                theme::BG,
+                0,
+            );
         } else {
             draw::dot(d, x, y, ALG_OP_R, theme::BG);
             draw::ring(d, x, y, ALG_OP_R, theme::MID, 1);
@@ -383,7 +498,14 @@ where
 {
     use crate::ui::dungeon_map::{node_x, pill_node, ring_node};
     let n = FX_NODES.len();
-    draw::fill_rect(d, theme::MAP_X0, FLOW_Y, theme::MAP_X1 - theme::MAP_X0, 1, theme::FAINT);
+    draw::fill_rect(
+        d,
+        theme::MAP_X0,
+        FLOW_Y,
+        theme::MAP_X1 - theme::MAP_X0,
+        1,
+        theme::FAINT,
+    );
     for (i, label) in FX_NODES.iter().enumerate() {
         let x = node_x(i, n);
         let fx = i.checked_sub(1).filter(|&k| k < 3);
@@ -393,8 +515,22 @@ where
             ring_node(d, x, FLOW_Y, label, FLOW_Y + 18);
         }
         if let (Some(k), Some(levels)) = (fx, sends) {
-            let fill = if lit == Some(k) { theme::ACCENT } else { theme::BAR_REST };
-            draw::bar(d, x - 14, FLOW_SEND_Y, 28, 2, levels[k], false, theme::FAINT, fill);
+            let fill = if lit == Some(k) {
+                theme::ACCENT
+            } else {
+                theme::BAR_REST
+            };
+            draw::bar(
+                d,
+                x - 14,
+                FLOW_SEND_Y,
+                28,
+                2,
+                levels[k],
+                false,
+                theme::FAINT,
+                fill,
+            );
         }
     }
 }

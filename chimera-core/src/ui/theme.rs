@@ -2,7 +2,7 @@
 //! Dark ground, warm greys, one accent for the active element.
 
 use embedded_graphics::pixelcolor::Rgb565;
-use u8g2_fonts::{fonts, FontRenderer};
+use u8g2_fonts::{FontRenderer, fonts};
 
 // --- Palette (mockup hex → RGB565) ---
 

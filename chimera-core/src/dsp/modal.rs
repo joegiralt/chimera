@@ -791,7 +791,8 @@ impl ModalEngine {
 
         for s in output.iter_mut() {
             // Read from delay line
-            let read_pos = (self.string.write_pos + MAX_STRING_DELAY - self.string.delay_len) % MAX_STRING_DELAY;
+            let read_pos = (self.string.write_pos + MAX_STRING_DELAY - self.string.delay_len)
+                % MAX_STRING_DELAY;
             let string_vel = self.string.buffer[read_pos];
 
             // Bow friction: stick-slip model.
@@ -881,7 +882,6 @@ impl ModalEngine {
             *max_level = max_level.max(libm::fabsf(*s));
         }
     }
-
 }
 
 use super::note_to_freq;

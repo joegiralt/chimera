@@ -1,6 +1,6 @@
-use chimera_core::{MidiNote, Velocity};
-use chimera_core::modulation::ModState;
 use chimera_core::dsp::reverb::{Reverb, ReverbParams};
+use chimera_core::modulation::ModState;
+use chimera_core::{MidiNote, Velocity};
 
 fn impulse_block() -> [f32; 64] {
     let mut block = [0.0f32; 64];
@@ -422,7 +422,11 @@ fn test_reverb_through_voice_produces_tail() {
     rv.mix = 0.5;
     rv.time = 0.7;
 
-    voice.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params);
+    voice.note_on(
+        MidiNote::new(60).unwrap(),
+        Velocity::new(100).unwrap(),
+        &params,
+    );
 
     // Render a few blocks with note
     let mut block = [0.0f32; 64];
@@ -464,7 +468,11 @@ fn test_reverb_type_switch_e2e() {
         rv.mix = 0.8;
         rv.time = 0.6;
 
-        voice.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params);
+        voice.note_on(
+            MidiNote::new(60).unwrap(),
+            Velocity::new(100).unwrap(),
+            &params,
+        );
 
         let mut block = [0.0f32; 64];
         let mut total = 0.0f32;
@@ -522,7 +530,8 @@ fn test_midiverb_ii_all_programs_produce_output() {
         assert!(
             total_energy > 0.0001,
             "MidiVerb II program {:?} should produce output, energy={}",
-            prog, total_energy
+            prog,
+            total_energy
         );
     }
 }
@@ -549,10 +558,18 @@ fn test_midiverb_ii_programs_sound_different() {
     let small = render_program(MvProgram::SmallBright);
     let large = render_program(MvProgram::LargeBright);
 
-    let diff: f32 = small.iter().zip(large.iter())
-        .map(|(a, b)| (a - b).abs()).sum::<f32>() / small.len() as f32;
+    let diff: f32 = small
+        .iter()
+        .zip(large.iter())
+        .map(|(a, b)| (a - b).abs())
+        .sum::<f32>()
+        / small.len() as f32;
 
-    assert!(diff > 0.001, "Small vs Large should sound different: diff={}", diff);
+    assert!(
+        diff > 0.001,
+        "Small vs Large should sound different: diff={}",
+        diff
+    );
 }
 
 #[test]
@@ -568,7 +585,12 @@ fn test_midiverb_ii_output_bounded() {
             block[0] = 1.0;
             mv.process(&mut block, prog, 1.0);
             let max = block.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
-            assert!(max < 20.0, "MidiVerb II {:?} output too hot: max={}", prog, max);
+            assert!(
+                max < 20.0,
+                "MidiVerb II {:?} output too hot: max={}",
+                prog,
+                max
+            );
         }
     }
 }
@@ -586,7 +608,11 @@ fn test_midiverb_ii_output_finite() {
             block[0] = 0.5;
             mv.process(&mut block, prog, 1.0);
             for &s in &block {
-                assert!(s.is_finite(), "MidiVerb II {:?} produced non-finite output", prog);
+                assert!(
+                    s.is_finite(),
+                    "MidiVerb II {:?} produced non-finite output",
+                    prog
+                );
             }
         }
     }

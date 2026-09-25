@@ -5,7 +5,7 @@ mod screen;
 
 use chimera_core::ui::perf::PerfStats;
 use chimera_core::ui::theme;
-use chimera_core::ui::viz::{alg_edges, alg_op_center, ALG_OP_R};
+use chimera_core::ui::viz::{ALG_OP_R, alg_edges, alg_op_center};
 use chimera_hal::EncoderId;
 use screen::*;
 
@@ -14,13 +14,21 @@ fn every_algorithm_fits_the_band_without_overlap() {
     for alg in 0..8 {
         let c: Vec<(i32, i32)> = (0..4).map(|op| alg_op_center(alg, op)).collect();
         for &(x, y) in &c {
-            assert!((theme::VIZ_BAND_TOP + 8..=theme::VIZ_BAND_BOTTOM - 8).contains(&y), "alg {alg} y {y}");
+            assert!(
+                (theme::VIZ_BAND_TOP + 8..=theme::VIZ_BAND_BOTTOM - 8).contains(&y),
+                "alg {alg} y {y}"
+            );
             assert!((8..232).contains(&x), "alg {alg} x {x}");
         }
         for i in 0..4 {
             for j in i + 1..4 {
                 let (dx, dy) = (c[i].0 - c[j].0, c[i].1 - c[j].1);
-                assert!(dx * dx + dy * dy >= 16 * 16, "alg {alg}: ops {} and {} overlap", i + 1, j + 1);
+                assert!(
+                    dx * dx + dy * dy >= 16 * 16,
+                    "alg {alg}: ops {} and {} overlap",
+                    i + 1,
+                    j + 1
+                );
             }
         }
     }
@@ -33,10 +41,12 @@ fn the_selected_operator_is_lit() {
     let lit = |ui: &chimera_core::ui::UiState| {
         let mut fb = Fb::new();
         ui.render_with_scope(&mut fb, &PerfStats::zero(), &scope_fixture());
-        (0..4).filter(|&op| {
-            let (x, y) = alg_op_center(alg, op);
-            fb.at(x - 4, y) == theme::ACCENT
-        }).collect::<Vec<_>>()
+        (0..4)
+            .filter(|&op| {
+                let (x, y) = alg_op_center(alg, op);
+                fb.at(x - 4, y) == theme::ACCENT
+            })
+            .collect::<Vec<_>>()
     };
     assert_eq!(lit(&ui), [2]);
     feed(&mut ui, Input::turn(EncoderId::A, -1));
@@ -68,7 +78,12 @@ fn algorithm_edges_point_downward_and_clear_other_nodes() {
         let (bx, by) = (b.0 as f64, b.1 as f64);
         let (dx, dy) = (bx - ax, by - ay);
         let len2 = dx * dx + dy * dy;
-        let t = if len2 == 0.0 { 0.0 } else { ((px - ax) * dx + (py - ay) * dy) / len2 }.clamp(0.0, 1.0);
+        let t = if len2 == 0.0 {
+            0.0
+        } else {
+            ((px - ax) * dx + (py - ay) * dy) / len2
+        }
+        .clamp(0.0, 1.0);
         let (cx, cy) = (ax + t * dx, ay + t * dy);
         ((px - cx).powi(2) + (py - cy).powi(2)).sqrt()
     }
@@ -77,7 +92,10 @@ fn algorithm_edges_point_downward_and_clear_other_nodes() {
         let centers: Vec<(i32, i32)> = (0..4).map(|op| alg_op_center(alg, op)).collect();
         for &(from, to) in alg_edges(alg) {
             let (a, b) = (centers[from as usize - 1], centers[to as usize - 1]);
-            assert!(a.1 < b.1, "alg {alg}: edge {from}->{to} doesn't point downward ({a:?} -> {b:?})");
+            assert!(
+                a.1 < b.1,
+                "alg {alg}: edge {from}->{to} doesn't point downward ({a:?} -> {b:?})"
+            );
             for (op, &c) in centers.iter().enumerate() {
                 if op == from as usize - 1 || op == to as usize - 1 {
                     continue;
@@ -103,7 +121,12 @@ fn fm_alg_page_lights_no_operator() {
     ui.render_with_scope(&mut fb, &PerfStats::zero(), &scope_fixture());
     for op in 0..4 {
         let (x, y) = alg_op_center(alg, op);
-        assert_ne!(fb.at(x - 4, y), theme::ACCENT, "operator {} lit on the FM algorithm page", op + 1);
+        assert_ne!(
+            fb.at(x - 4, y),
+            theme::ACCENT,
+            "operator {} lit on the FM algorithm page",
+            op + 1
+        );
     }
 }
 
@@ -111,7 +134,7 @@ fn fm_alg_page_lights_no_operator() {
 #[test]
 fn the_algorithm_shows_one_based() {
     use chimera_core::ui::block_registry::FM_ALG;
-    use chimera_core::ui::fmt::{fmt_val, FmtBuf};
+    use chimera_core::ui::fmt::{FmtBuf, fmt_val};
     let fmt = FM_ALG.params[0].format();
     for (v, want) in [(0.0, "1"), (3.0 / 7.0, "4"), (1.0, "8")] {
         let mut buf = FmtBuf::new();

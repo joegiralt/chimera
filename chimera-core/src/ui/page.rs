@@ -1,6 +1,8 @@
 use crate::addr::{BlockRef, Blocks, Op, ParamAddr};
 use crate::block::ParamId;
-use crate::params::{DriveParams, EnvParams, FilterParams, FmOpParams, FmParams, FolderParams, OutParams};
+use crate::params::{
+    DriveParams, EnvParams, FilterParams, FmOpParams, FmParams, FolderParams, OutParams,
+};
 use crate::ui::chain::ChainNav;
 
 pub use crate::block::ValFmt;
@@ -49,7 +51,10 @@ impl PageKey {
     pub fn from_nav(nav: &ChainNav, sel_op: Op) -> Self {
         match PageId::from_nav(nav) {
             Some(page) => PageKey::Legacy(page),
-            None => PageKey::Part { def: nav.active_block_def().id, op: sel_op },
+            None => PageKey::Part {
+                def: nav.active_block_def().id,
+                op: sel_op,
+            },
         }
     }
 }
@@ -75,7 +80,9 @@ impl PageId {
     /// The parameter bound to encoder `idx` on this page, if any.
     pub fn binding(&self, idx: usize) -> Option<ParamAddr> {
         use BlockRef as B;
-        let at = |block: BlockRef, ids: &[ParamId]| ids.get(idx).map(|&param| ParamAddr::new(block, param));
+        let at = |block: BlockRef, ids: &[ParamId]| {
+            ids.get(idx).map(|&param| ParamAddr::new(block, param))
+        };
         match self {
             PageId::EnvAmp => at(B::AmpEnv, &ENV_PAGE),
             PageId::EnvFilter => at(B::FilterEnv, &ENV_PAGE),

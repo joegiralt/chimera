@@ -1,10 +1,10 @@
 //! A Part's mix settings (instrument-core spec § Data model).
 
+use chimera_core::MidiChannel;
 use chimera_core::block::Block;
 use chimera_core::hw::MAX_PARTS;
 use chimera_core::part::{DacPair, PartMode, PartParams};
 use chimera_core::preset::{ChainType, Part, Performance};
-use chimera_core::MidiChannel;
 
 #[test]
 fn midi_channel_accepts_0_to_15_only() {

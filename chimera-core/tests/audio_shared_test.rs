@@ -25,7 +25,10 @@ fn snapshot_copies_every_part_and_the_fx() {
     perf.parts[4].sound.mod_state = mod_state;
 
     let shared = AudioShared::from_performance(&perf);
-    assert_eq!(shared.parts[4].params.engine(), perf.parts[4].sound.params.engine());
+    assert_eq!(
+        shared.parts[4].params.engine(),
+        perf.parts[4].sound.params.engine()
+    );
     assert_eq!(shared.parts[4].mix, perf.parts[4].mix);
     assert_eq!(shared.fx.reverb.mix, 0.4);
     assert_eq!(shared.parts[4].mod_state.num_dests(), 1);

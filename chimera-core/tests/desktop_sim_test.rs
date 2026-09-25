@@ -6,12 +6,12 @@
 //! without threads). It verifies that UiState.params flows
 //! correctly through Voice.render().
 
-use chimera_core::{MidiNote, Velocity};
 use chimera_core::dsp::modal::ResonatorMode;
-use chimera_core::modulation::ModState;
 use chimera_core::dsp::voice::Voice;
+use chimera_core::modulation::ModState;
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::ui::UiState;
+use chimera_core::{MidiNote, Velocity};
 
 const SR: u32 = 48000;
 
@@ -23,7 +23,11 @@ fn sim_render(setup_ui: impl FnOnce(&mut UiState), note: u8, blocks: usize) -> V
 
     let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
     // This is what the audio callback does: read params, note_on, render
-    voice.note_on(MidiNote::new(note).unwrap(), Velocity::new(100).unwrap(), ui.params());
+    voice.note_on(
+        MidiNote::new(note).unwrap(),
+        Velocity::new(100).unwrap(),
+        ui.params(),
+    );
 
     let mut all = Vec::new();
     let mut block = [0.0f32; 64];
@@ -245,7 +249,7 @@ fn test_desktop_filter_affects_output() {
     let open = sim_render(
         |ui| {
             *ui.params_mut() = ParamSnapshot::for_engine(EngineType::Pizza);
-            
+
             ui.params_mut().filter.cutoff = 15000.0;
         },
         60,
@@ -255,7 +259,7 @@ fn test_desktop_filter_affects_output() {
     let closed = sim_render(
         |ui| {
             *ui.params_mut() = ParamSnapshot::for_engine(EngineType::Pizza);
-            
+
             ui.params_mut().filter.cutoff = 200.0;
             ui.params_mut().filter.mode = 2;
         },
@@ -366,12 +370,16 @@ fn test_desktop_mid_note_filter_sweep() {
     let empty_mod = ModState::new();
     let mut ui = UiState::new();
     *ui.params_mut() = ParamSnapshot::for_engine(EngineType::Pizza);
-    
+
     ui.params_mut().filter.cutoff = 10000.0;
     ui.params_mut().filter.mode = 2;
 
     let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
-    voice.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), ui.params());
+    voice.note_on(
+        MidiNote::new(60).unwrap(),
+        Velocity::new(100).unwrap(),
+        ui.params(),
+    );
 
     // Render with open filter
     let mut block = [0.0f32; 64];

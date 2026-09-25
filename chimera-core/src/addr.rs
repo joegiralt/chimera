@@ -2,7 +2,7 @@
 //! parameter is, not where it sits on a page or in a chain, so rearranging
 //! cells or reordering blocks never remaps a mod route.
 
-use crate::block::{find_spec, Block, ParamId, ParamSpec};
+use crate::block::{Block, ParamId, ParamSpec, find_spec};
 
 /// An FM operator. `TryFrom<u8>` rejects values above 3, so an out-of-range
 /// operator (bad sound or SysEx data) is unrepresentable.
