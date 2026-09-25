@@ -3,13 +3,13 @@
 
 mod screen;
 
+use chimera_core::ui::UiState;
 use chimera_core::ui::components::{self, Cell};
-use chimera_core::ui::fmt::{fmt_val, FmtBuf};
+use chimera_core::ui::fmt::{FmtBuf, fmt_val};
 use chimera_core::ui::page::ValFmt;
 use chimera_core::ui::perf::PerfStats;
 use chimera_core::ui::theme;
 use chimera_core::ui::viz;
-use chimera_core::ui::UiState;
 use chimera_hal::EncoderId;
 use screen::*;
 
@@ -70,8 +70,12 @@ fn focus_band_shows_the_last_touched_slot() {
     fmt_val(&mut text, v, ValFmt::Uni);
     let mut want = Fb::new();
     want.px.fill(fb.px[0]); // ground
-    components::focus_band(&mut want, "LEVEL", text.as_str(), v, false);
-    assert!(band(&fb, 28, 118) == band(&want, 28, 118), "focus band is LEVEL {}", text.as_str());
+    components::focus_band(&mut want, "LEVEL", text.as_str(), v, false, None);
+    assert!(
+        band(&fb, 28, 118) == band(&want, 28, 118),
+        "focus band is LEVEL {}",
+        text.as_str()
+    );
 }
 
 /// The focus value lerps toward the new value (CLAUDE.md: never snap).
@@ -89,7 +93,8 @@ fn the_focus_value_animates_toward_its_target() {
 fn only_the_focused_cell_label_uses_the_accent() {
     let fb = render("engine_pizza"); // focus SHAPE (slot a)
     let accent_in = |x0: i32| {
-        (theme::CELL_LABEL_Y - 8..=theme::CELL_LABEL_Y).any(|y| (x0..x0 + 60).any(|x| fb.at(x, y) == theme::ACCENT))
+        (theme::CELL_LABEL_Y - 8..=theme::CELL_LABEL_Y)
+            .any(|y| (x0..x0 + 60).any(|x| fb.at(x, y) == theme::ACCENT))
     };
     assert!(accent_in(theme::MARGIN_X));
     assert!(!accent_in(theme::MARGIN_X + theme::CELL_COL_W));
@@ -101,12 +106,22 @@ fn empty_slots_are_a_dim_dash_and_choices_have_no_bar() {
     let mut fb = Fb::new();
     components::cell(&mut fb, 0, 200, None);
     assert_eq!(fb.at(theme::MARGIN_X + 3, 197), theme::FAINT);
-    let c = Cell { label: "MODE", text: "POLY", value: 1.0, fmt: ValFmt::Names(&["MONO", "POLY"]), active: false, mod_amount: None };
+    let c = Cell {
+        label: "MODE",
+        text: "POLY",
+        value: 1.0,
+        fmt: ValFmt::Names(&["MONO", "POLY"]),
+        active: false,
+        mod_amount: None,
+    };
     let mut fb = Fb::new();
     components::cell(&mut fb, 1, 200, Some(&c));
     let bar_y = 200 + theme::CELL_BAR_DY;
     let x = theme::MARGIN_X + theme::CELL_COL_W;
-    assert!((x..x + theme::CELL_BAR_W).all(|x| fb.at(x, bar_y) != theme::FAINT), "no track under a choice");
+    assert!(
+        (x..x + theme::CELL_BAR_W).all(|x| fb.at(x, bar_y) != theme::FAINT),
+        "no track under a choice"
+    );
 }
 
 #[test]

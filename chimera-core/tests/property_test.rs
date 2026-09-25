@@ -3,11 +3,11 @@
 
 mod common;
 
-use chimera_core::{MidiNote, Velocity};
 use chimera_core::dsp::modal::ResonatorMode;
-use chimera_core::modulation::ModState;
 use chimera_core::dsp::voice::Voice;
+use chimera_core::modulation::ModState;
 use chimera_core::params::{EngineType, ParamSnapshot};
+use chimera_core::{MidiNote, Velocity};
 use common::expects_sound;
 
 const SR: u32 = 48000;
@@ -45,7 +45,9 @@ impl Rng {
 /// Generate a completely random ParamSnapshot.
 fn random_params(rng: &mut Rng) -> ParamSnapshot {
     // Engine type: every engine (spec § Testing "Engines")
-    let mut p = ParamSnapshot::for_engine(EngineType::ALL[rng.u8(EngineType::ALL.len() as u8 - 1) as usize]);
+    let mut p = ParamSnapshot::for_engine(
+        EngineType::ALL[rng.u8(EngineType::ALL.len() as u8 - 1) as usize],
+    );
 
     // Pizza params
     p.pizza.shape = rng.f32();
@@ -102,7 +104,11 @@ fn prop_output_always_finite() {
         let note = rng.note();
 
         let mut voice = Voice::new(SR);
-        voice.note_on(MidiNote::new(note).unwrap(), Velocity::new(100).unwrap(), &params);
+        voice.note_on(
+            MidiNote::new(note).unwrap(),
+            Velocity::new(100).unwrap(),
+            &params,
+        );
 
         let mut block = [0.0f32; 64];
         for _ in 0..8 {
@@ -135,7 +141,11 @@ fn prop_output_bounded() {
         let note = rng.note();
 
         let mut voice = Voice::new(SR);
-        voice.note_on(MidiNote::new(note).unwrap(), Velocity::new(127).unwrap(), &params);
+        voice.note_on(
+            MidiNote::new(note).unwrap(),
+            Velocity::new(127).unwrap(),
+            &params,
+        );
 
         let mut block = [0.0f32; 64];
         for _ in 0..16 {
@@ -169,7 +179,11 @@ fn prop_note_on_produces_sound() {
         }
 
         let mut voice = Voice::new(SR);
-        voice.note_on(MidiNote::new(note).unwrap(), Velocity::new(100).unwrap(), &params);
+        voice.note_on(
+            MidiNote::new(note).unwrap(),
+            Velocity::new(100).unwrap(),
+            &params,
+        );
 
         let mut block = [0.0f32; 64];
         let mut total_max = 0.0f32;
@@ -223,7 +237,11 @@ fn prop_param_change_changes_output() {
 
         // Render A
         let mut voice_a = Voice::new(SR);
-        voice_a.note_on(MidiNote::new(note).unwrap(), Velocity::new(100).unwrap(), &params_a);
+        voice_a.note_on(
+            MidiNote::new(note).unwrap(),
+            Velocity::new(100).unwrap(),
+            &params_a,
+        );
         let mut buf_a = [0.0f32; 64];
         for _ in 0..8 {
             voice_a.render(&mut buf_a, &params_a, &empty_mod);
@@ -231,7 +249,11 @@ fn prop_param_change_changes_output() {
 
         // Render B
         let mut voice_b = Voice::new(SR);
-        voice_b.note_on(MidiNote::new(note).unwrap(), Velocity::new(100).unwrap(), &params_b);
+        voice_b.note_on(
+            MidiNote::new(note).unwrap(),
+            Velocity::new(100).unwrap(),
+            &params_b,
+        );
         let mut buf_b = [0.0f32; 64];
         for _ in 0..8 {
             voice_b.render(&mut buf_b, &params_b, &empty_mod);
@@ -269,8 +291,8 @@ fn prop_note_off_eventually_silences() {
     for trial in 0..50 {
         let mut params = random_params(&mut rng);
         // Tame params so note actually decays
-        params.modal.ks_feedback = params.modal.ks_feedback * 0.1;
-        params.modal.decay = params.modal.decay * 0.2;
+        params.modal.ks_feedback *= 0.1;
+        params.modal.decay *= 0.2;
         // Force bowed mode (2) to not self-sustain
         if params.modal.mode == ResonatorMode::Bowed {
             params.modal.mode = ResonatorMode::Modal; // use resonator instead
@@ -280,7 +302,11 @@ fn prop_note_off_eventually_silences() {
         let note = rng.note();
 
         let mut voice = Voice::new(SR);
-        voice.note_on(MidiNote::new(note).unwrap(), Velocity::new(100).unwrap(), &params);
+        voice.note_on(
+            MidiNote::new(note).unwrap(),
+            Velocity::new(100).unwrap(),
+            &params,
+        );
 
         let mut block = [0.0f32; 64];
         // Play for a bit
@@ -304,7 +330,9 @@ fn prop_note_off_eventually_silences() {
         assert!(
             silent,
             "trial {}: note_off should eventually silence, engine={:?} mode={:?}",
-            trial, params.engine(), params.modal.mode
+            trial,
+            params.engine(),
+            params.modal.mode
         );
     }
 }
@@ -331,7 +359,11 @@ fn verify_full_sweep(
         sweep(&mut params, val);
 
         let mut voice = Voice::new(SR);
-        voice.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params);
+        voice.note_on(
+            MidiNote::new(60).unwrap(),
+            Velocity::new(100).unwrap(),
+            &params,
+        );
         let mut block = [0.0f32; 64];
         // Render enough blocks for damping/decay differences to manifest
         for _ in 0..32 {

@@ -8,27 +8,47 @@ use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::primitives::{
     Arc, Circle, CornerRadii, Line, PrimitiveStyle, Rectangle, RoundedRectangle, StyledDrawable,
 };
-use u8g2_fonts::types::{FontColor, VerticalPosition};
 use u8g2_fonts::FontRenderer;
+use u8g2_fonts::types::{FontColor, VerticalPosition};
 
 /// Draw `s` with its baseline at `y`; returns the advance in pixels.
 pub fn text<D>(d: &mut D, font: &FontRenderer, s: &str, x: i32, y: i32, color: Rgb565) -> i32
 where
     D: DrawTarget<Color = Rgb565>,
 {
-    font.render(s, Point::new(x, y), VerticalPosition::Baseline, FontColor::Transparent(color), d)
-        .map_or(0, |dims| dims.advance.x)
+    font.render(
+        s,
+        Point::new(x, y),
+        VerticalPosition::Baseline,
+        FontColor::Transparent(color),
+        d,
+    )
+    .map_or(0, |dims| dims.advance.x)
 }
 
 /// Draw `s` with `tracking` extra pixels after each glyph; returns the advance.
-pub fn text_tracked<D>(d: &mut D, font: &FontRenderer, s: &str, x: i32, y: i32, color: Rgb565, tracking: i32) -> i32
+pub fn text_tracked<D>(
+    d: &mut D,
+    font: &FontRenderer,
+    s: &str,
+    x: i32,
+    y: i32,
+    color: Rgb565,
+    tracking: i32,
+) -> i32
 where
     D: DrawTarget<Color = Rgb565>,
 {
     let mut cx = x;
     for ch in s.chars() {
         let adv = font
-            .render(ch, Point::new(cx, y), VerticalPosition::Baseline, FontColor::Transparent(color), d)
+            .render(
+                ch,
+                Point::new(cx, y),
+                VerticalPosition::Baseline,
+                FontColor::Transparent(color),
+                d,
+            )
             .map_or(0, |dims| dims.advance.x);
         cx += adv + tracking;
     }
@@ -44,8 +64,15 @@ pub fn text_width(font: &FontRenderer, s: &str, tracking: i32) -> i32 {
 }
 
 /// Draw `s` ending at `right` (exclusive).
-pub fn text_right<D>(d: &mut D, font: &FontRenderer, s: &str, right: i32, y: i32, color: Rgb565, tracking: i32)
-where
+pub fn text_right<D>(
+    d: &mut D,
+    font: &FontRenderer,
+    s: &str,
+    right: i32,
+    y: i32,
+    color: Rgb565,
+    tracking: i32,
+) where
     D: DrawTarget<Color = Rgb565>,
 {
     let w = text_width(font, s, tracking);
@@ -53,8 +80,15 @@ where
 }
 
 /// Draw `s` centred on `cx`.
-pub fn text_center<D>(d: &mut D, font: &FontRenderer, s: &str, cx: i32, y: i32, color: Rgb565, tracking: i32)
-where
+pub fn text_center<D>(
+    d: &mut D,
+    font: &FontRenderer,
+    s: &str,
+    cx: i32,
+    y: i32,
+    color: Rgb565,
+    tracking: i32,
+) where
     D: DrawTarget<Color = Rgb565>,
 {
     let w = text_width(font, s, tracking);
@@ -75,7 +109,8 @@ pub fn line<D>(d: &mut D, x0: i32, y0: i32, x1: i32, y1: i32, color: Rgb565, wid
 where
     D: DrawTarget<Color = Rgb565>,
 {
-    let _ = Line::new(Point::new(x0, y0), Point::new(x1, y1)).draw_styled(&PrimitiveStyle::with_stroke(color, width), d);
+    let _ = Line::new(Point::new(x0, y0), Point::new(x1, y1))
+        .draw_styled(&PrimitiveStyle::with_stroke(color, width), d);
 }
 
 /// A viz accent line: the spec's 1.5-px line rounded up to 2 px, since the
@@ -89,31 +124,48 @@ where
     line(d, x0, y0 + 1, x1, y1 + 1, color, 1);
 }
 
-/// Filled circle of radius `r` centred on (cx, cy).
+/// Filled circle of radius `r` centred on (cx, cy). A negative `r` draws
+/// nothing (rather than clamping to 0, which would still draw a 1px dot).
 pub fn dot<D>(d: &mut D, cx: i32, cy: i32, r: i32, color: Rgb565)
 where
     D: DrawTarget<Color = Rgb565>,
 {
-    let _ = Circle::with_center(Point::new(cx, cy), (2 * r + 1) as u32).draw_styled(&PrimitiveStyle::with_fill(color), d);
+    if r < 0 {
+        return;
+    }
+    let _ = Circle::with_center(Point::new(cx, cy), (2 * r + 1) as u32)
+        .draw_styled(&PrimitiveStyle::with_fill(color), d);
 }
 
-/// Circle outline of radius `r`.
+/// Circle outline of radius `r`. A negative `r` draws nothing.
 pub fn ring<D>(d: &mut D, cx: i32, cy: i32, r: i32, color: Rgb565, width: u32)
 where
     D: DrawTarget<Color = Rgb565>,
 {
+    if r < 0 {
+        return;
+    }
     let _ = Circle::with_center(Point::new(cx, cy), (2 * r + 1) as u32)
         .draw_styled(&PrimitiveStyle::with_stroke(color, width), d);
 }
 
-/// Filled rounded rectangle with fully round ends (radius h/2).
+/// Filled rounded rectangle with fully round ends (radius h/2). A
+/// non-positive `w` or `h` draws nothing, the same guard `fill_rect` uses —
+/// otherwise `w`/`h` (and the radius derived from `h`) would cast a
+/// negative value to a huge `u32`.
 pub fn pill<D>(d: &mut D, x: i32, y: i32, w: i32, h: i32, color: Rgb565)
 where
     D: DrawTarget<Color = Rgb565>,
 {
-    let r = Size::new((h / 2) as u32, (h / 2) as u32);
-    let _ = RoundedRectangle::new(Rectangle::new(Point::new(x, y), Size::new(w as u32, h as u32)), CornerRadii::new(r))
-        .draw_styled(&PrimitiveStyle::with_fill(color), d);
+    if w <= 0 || h <= 0 {
+        return;
+    }
+    let r = (h / 2) as u32;
+    let _ = RoundedRectangle::new(
+        Rectangle::new(Point::new(x, y), Size::new(w as u32, h as u32)),
+        CornerRadii::new(Size::new(r, r)),
+    )
+    .draw_styled(&PrimitiveStyle::with_fill(color), d);
 }
 
 /// Rounded-rectangle outline (the matrix cursor).
@@ -121,6 +173,9 @@ pub fn round_outline<D>(d: &mut D, x: i32, y: i32, w: i32, h: i32, radius: u32, 
 where
     D: DrawTarget<Color = Rgb565>,
 {
+    if w <= 0 || h <= 0 {
+        return;
+    }
     let _ = RoundedRectangle::new(
         Rectangle::new(Point::new(x, y), Size::new(w as u32, h as u32)),
         CornerRadii::new(Size::new(radius, radius)),
@@ -132,8 +187,17 @@ where
 /// grow from the left; bipolar bars grow from the centre. `value` is 0..1
 /// (bipolar centre 0.5). The fill is at least 2 px so zero stays visible.
 #[allow(clippy::too_many_arguments)]
-pub fn bar<D>(d: &mut D, x: i32, y: i32, w: i32, h: i32, value: f32, bipolar: bool, track: Rgb565, fill: Rgb565)
-where
+pub fn bar<D>(
+    d: &mut D,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    value: f32,
+    bipolar: bool,
+    track: Rgb565,
+    fill: Rgb565,
+) where
     D: DrawTarget<Color = Rgb565>,
 {
     fill_rect(d, x, y, w, h, track);
@@ -154,8 +218,17 @@ where
 /// Track in `track`; the value arc in `fill` from the start (unipolar) or
 /// from 12:00 (bipolar). Round caps.
 #[allow(clippy::too_many_arguments)]
-pub fn arc_gauge<D>(d: &mut D, cx: i32, cy: i32, r: i32, width: u32, value: f32, bipolar: bool, track: Rgb565, fill: Rgb565)
-where
+pub fn arc_gauge<D>(
+    d: &mut D,
+    cx: i32,
+    cy: i32,
+    r: i32,
+    width: u32,
+    value: f32,
+    bipolar: bool,
+    track: Rgb565,
+    fill: Rgb565,
+) where
     D: DrawTarget<Color = Rgb565>,
 {
     const START: f32 = 135.0;
@@ -172,7 +245,8 @@ where
     } else {
         (START, end.max(START + 1.0))
     };
-    let _ = Arc::with_center(center, dia, from.deg(), (to - from).deg()).draw_styled(&stroke(fill), d);
+    let _ =
+        Arc::with_center(center, dia, from.deg(), (to - from).deg()).draw_styled(&stroke(fill), d);
     let cap = (width as i32) / 2;
     for a in [from, to] {
         let rad = a.to_radians();

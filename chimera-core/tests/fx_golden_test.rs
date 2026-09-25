@@ -10,7 +10,7 @@ use chimera_core::dsp::chorus::{ChorusParams, JunoChorus};
 use chimera_core::dsp::delay::{DelayParams, TapeDelay};
 use chimera_core::dsp::reverb::{Reverb, ReverbParams};
 use chimera_hal::BLOCK_SIZE;
-use common::{fnv1a, SR};
+use common::{SR, fnv1a};
 
 /// 50 blocks of a 110 Hz saw at 0.5, then silence; 450 blocks in all so a
 /// 500 ms delay repeats at least once.
@@ -25,11 +25,41 @@ enum Fx {
 }
 
 fn cases() -> [(&'static str, Fx); 6] {
-    let reverb = |reverb_type: u8, size: f32| ReverbParams { reverb_type, time: 0.7, damping: 0.3, size, mix: 0.5 };
+    let reverb = |reverb_type: u8, size: f32| ReverbParams {
+        reverb_type,
+        time: 0.7,
+        damping: 0.3,
+        size,
+        mix: 0.5,
+    };
     [
-        ("chorus_both", Fx::Chorus(ChorusParams { mode: 3, rate: 0.5, depth: 0.5, mix: 0.5 })),
-        ("delay_375ms", Fx::Delay(DelayParams { feedback: 0.6, mix: 0.5, ..DelayParams::default() })),
-        ("delay_500ms", Fx::Delay(DelayParams { time_ms: 500.0, feedback: 0.6, wow_flutter: 1.0, mix: 0.5, ..DelayParams::default() })),
+        (
+            "chorus_both",
+            Fx::Chorus(ChorusParams {
+                mode: 3,
+                rate: 0.5,
+                depth: 0.5,
+                mix: 0.5,
+            }),
+        ),
+        (
+            "delay_375ms",
+            Fx::Delay(DelayParams {
+                feedback: 0.6,
+                mix: 0.5,
+                ..DelayParams::default()
+            }),
+        ),
+        (
+            "delay_500ms",
+            Fx::Delay(DelayParams {
+                time_ms: 500.0,
+                feedback: 0.6,
+                wow_flutter: 1.0,
+                mix: 0.5,
+                ..DelayParams::default()
+            }),
+        ),
         ("reverb_plate", Fx::Reverb(reverb(0, 0.5))),
         ("reverb_fdn_max_size", Fx::Reverb(reverb(1, 1.0))),
         ("reverb_midiverb", Fx::Reverb(reverb(2, 0.5))),
@@ -87,11 +117,17 @@ fn fx_goldens_match() {
         }
         match GOLDENS.iter().find(|g| g.0 == name) {
             Some(&(_, want)) if want == hash => {}
-            Some(&(_, want)) => failures.push(format!("{name}: 0x{hash:016x} (want 0x{want:016x})")),
+            Some(&(_, want)) => {
+                failures.push(format!("{name}: 0x{hash:016x} (want 0x{want:016x})"))
+            }
             None => failures.push(format!("{name}: no golden recorded")),
         }
     }
-    assert!(failures.is_empty(), "fx golden mismatch:\n{}", failures.join("\n"));
+    assert!(
+        failures.is_empty(),
+        "fx golden mismatch:\n{}",
+        failures.join("\n")
+    );
 }
 
 /// A case whose effect is bypassed would lock only the dry input.

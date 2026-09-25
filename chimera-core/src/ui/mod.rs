@@ -17,20 +17,20 @@ pub mod renderer;
 pub mod theme;
 pub mod viz;
 
-use chimera_hal::{ButtonId, ButtonState, Controls, EncoderId};
+use chimera_hal::{ALL_BUTTONS, ButtonId, ButtonState, Controls, EncoderId};
 
+use crate::addr::{BlockRef, Blocks, Op, ParamAddr};
 use crate::block::Block;
 use crate::dsp::lfo::Lfo;
-use crate::addr::{BlockRef, Blocks, Op, ParamAddr};
-use crate::mod_path::LABEL_LEN;
-use crate::modulation::{ModState, MAX_MOD_SOURCES};
+use crate::mod_path::{LABEL_LEN, RegistryError};
+use crate::modulation::{MAX_MOD_SOURCES, ModState};
 use crate::params::{EnvParams, ParamSnapshot};
-use crate::preset::{Performance, SoundPool, POOL_SIZE};
+use crate::preset::{POOL_SIZE, Performance, SoundPool};
 use crate::scope::SCOPE_LEN;
+use block_def::BlockDef;
 use block_def::slot_addr;
 use chain::{ChainId, ChainNav};
 use mod_grid::MatrixState;
-use block_def::BlockDef;
 use page::{PageKey, PageLayout};
 use perf::PerfStats;
 use renderer::Renderer;
@@ -39,9 +39,50 @@ use renderer::Renderer;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UiMode {
     Normal,
-    SoundBrowser { part: usize, cursor: usize, scroll: usize },
+    SoundBrowser {
+        part: usize,
+        cursor: usize,
+        scroll: usize,
+    },
 }
 
+/// The outcome of the last MIX+PLUS attempt on a parameter page, shown in
+/// the focus band in place of the value readout (on BigViz pages, which
+/// have no focus band, as a line at the top of the viz) until the next encoder,
+/// button or page change — no timer, matching the focus band's own rule
+/// (issue #21).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PrimeStatus {
+    /// The parameter was not yet a mod destination; it is now.
+    Added,
+    /// The parameter was already primed.
+    AlreadyRouted,
+    /// The parameter's spec is not modulatable (ADR 0010).
+    NotModulatable,
+    /// The registry is at `MAX_REGISTRY_DESTS`, the matrix capacity.
+    Full,
+}
+
+impl PrimeStatus {
+    /// The word(s) shown in the focus band.
+    pub fn label(self) -> &'static str {
+        match self {
+            PrimeStatus::Added => "ADDED",
+            PrimeStatus::AlreadyRouted => "ALREADY ROUTED",
+            PrimeStatus::NotModulatable => "NOT MODULATABLE",
+            PrimeStatus::Full => "MATRIX FULL",
+        }
+    }
+}
+
+impl From<RegistryError> for PrimeStatus {
+    fn from(e: RegistryError) -> Self {
+        match e {
+            RegistryError::NotModulatable => PrimeStatus::NotModulatable,
+            RegistryError::Full => PrimeStatus::Full,
+        }
+    }
+}
 
 /// Top-level UI state. Owns navigation, parameters, and display animation.
 /// Portable across desktop and hardware — only depends on HAL traits.
@@ -54,6 +95,10 @@ pub struct UiState {
     pub renderer: Renderer,
     pub matrix_state: MatrixState,
     pub ui_mode: UiMode,
+    /// Set when the sound browser opens, its cursor/scroll moves, or a save
+    /// changes the pool; `render_dirty_with_scope` redraws it only then, and
+    /// clears the flag once flushed (#7).
+    browser_dirty: bool,
     page: PageKey,
     /// Selected FM operator — one global selection, as before (spec §5).
     sel_op: Op,
@@ -62,6 +107,8 @@ pub struct UiState {
     focus: focus::FocusMemory,
     /// Display-side LFO for animating modulated parameters
     display_lfo: Lfo,
+    /// The last MIX+PLUS outcome; `None` once retired (issue #21).
+    prime_status: Option<PrimeStatus>,
 }
 
 impl Default for UiState {
@@ -76,7 +123,12 @@ impl UiState {
         let mut performance = Performance::new();
         let page = PageKey::from_nav(&nav, Op::A);
         let mut renderer = Renderer::new();
-        renderer.snap_to_current(page_values(page, nav.active_block_def(), &performance.edit(0), Op::A));
+        renderer.snap_to_current(page_values(
+            page,
+            nav.active_block_def(),
+            &performance.edit(0),
+            Op::A,
+        ));
 
         let mut ui = Self {
             nav,
@@ -86,14 +138,22 @@ impl UiState {
             renderer,
             matrix_state: MatrixState::new(),
             ui_mode: UiMode::Normal,
+            browser_dirty: false,
             page,
             sel_op: Op::A,
             region_set: region::RegionSet::new(),
             focus: focus::FocusMemory::new(),
             display_lfo: Lfo::new(),
+            prime_status: None,
         };
         ui.load_matrix(0);
         ui
+    }
+
+    /// The last MIX+PLUS outcome, shown in the focus band until the next
+    /// encoder, button or page change (issue #21).
+    pub fn prime_status(&self) -> Option<PrimeStatus> {
+        self.prime_status
     }
 
     /// Returns a reference to the active part's params.
@@ -143,9 +203,15 @@ impl UiState {
     /// the mod matrix the selected route's amount in slot e.
     fn display_values(&mut self) -> [f32; 6] {
         let def = self.nav.active_block_def();
-        let mut values = page_values(self.page, def, &self.performance.edit(self.active_part), self.sel_op);
+        let mut values = page_values(
+            self.page,
+            def,
+            &self.performance.edit(self.active_part),
+            self.sel_op,
+        );
         if def.layout == PageLayout::Matrix {
-            values[renderer::MATRIX_AMOUNT_SLOT] = renderer::amount_value(self.matrix_state.current_amount());
+            values[renderer::MATRIX_AMOUNT_SLOT] =
+                renderer::amount_value(self.matrix_state.current_amount());
         }
         values
     }
@@ -156,9 +222,14 @@ impl UiState {
     /// whenever the edited Part or its Sound changes.
     fn load_matrix(&mut self, part: usize) {
         let sound = &self.performance.parts[part].sound;
-        self.matrix_state.rebuild_sources(chain::chain_def_for(sound.chain_type).mod_sources);
-        self.matrix_state.rebuild_dests_from_registry(&sound.dest_registry);
+        self.matrix_state
+            .rebuild_sources(chain::chain_def_for(sound.chain_type).mod_sources);
+        self.matrix_state
+            .rebuild_dests_from_registry(&sound.dest_registry);
         self.matrix_state.load_amounts(&sound.mod_state);
+        // The cursor may be left over from a Part with more destinations
+        // than this one (issue #11).
+        self.matrix_state.clamp_cursor();
     }
 
     /// Rebuild a part's audio-side `ModState` from the matrix.
@@ -171,7 +242,11 @@ impl UiState {
     /// and Demo slots are `Legacy`, so priming there does nothing; Mixer
     /// params are bound but not modulatable, so the registry refuses them.
     fn current_param_addr(&self) -> Option<ParamAddr> {
-        slot_addr(self.nav.active_block_def(), self.focused_slot(), self.sel_op)
+        slot_addr(
+            self.nav.active_block_def(),
+            self.focused_slot(),
+            self.sel_op,
+        )
     }
 
     /// 8-byte matrix column label for a primed destination: `O<n> ` + spec
@@ -187,7 +262,10 @@ impl UiState {
             }
             _ => {
                 let short = def.short.as_bytes();
-                (&short[..short.len().min(3)], def.params[self.focused_slot()].label())
+                (
+                    &short[..short.len().min(3)],
+                    def.params[self.focused_slot()].label(),
+                )
             }
         };
         let mut label = [0u8; LABEL_LEN];
@@ -200,17 +278,29 @@ impl UiState {
 
     /// Process one frame of input: navigation + encoder deltas.
     pub fn handle_input(&mut self, controls: &impl Controls) {
+        // Any encoder turn or button press retires the last prime-status
+        // message (issue #21; no timer). The MIX+Plus branch below re-sets
+        // it when this same frame is itself a prime attempt.
+        if any_input(controls) {
+            self.prime_status = None;
+        }
+
         // ── Sound Browser mode input ─────────────────────────────────
-        if let UiMode::SoundBrowser { part, ref mut cursor, ref mut scroll } = self.ui_mode {
+        if let UiMode::SoundBrowser {
+            part,
+            ref mut cursor,
+            ref mut scroll,
+        } = self.ui_mode
+        {
             let total = browser::TOTAL_ENTRIES;
             let visible = browser::VISIBLE_ROWS.min(total);
 
             // Encoder A or Main: scroll cursor
-            let delta = controls.encoder_delta(EncoderId::Main)
-                + controls.encoder_delta(EncoderId::A);
+            let delta =
+                controls.encoder_delta(EncoderId::Main) + controls.encoder_delta(EncoderId::A);
             if delta != 0 {
-                let new_cursor = (*cursor as i32 + delta as i32)
-                    .clamp(0, total as i32 - 1) as usize;
+                let new_cursor =
+                    (*cursor as i32 + delta as i32).clamp(0, total as i32 - 1) as usize;
                 *cursor = new_cursor;
                 // Adjust scroll to keep cursor visible
                 if new_cursor < *scroll {
@@ -218,6 +308,7 @@ impl UiState {
                 } else if new_cursor >= *scroll + visible {
                     *scroll = new_cursor + 1 - visible;
                 }
+                self.browser_dirty = true;
             }
 
             // Edit button: confirm selection / load
@@ -246,6 +337,7 @@ impl UiState {
                 self.load_matrix(sel_part);
                 self.enter_page();
                 self.ui_mode = UiMode::Normal;
+                self.browser_dirty = true;
                 return;
             }
 
@@ -258,13 +350,18 @@ impl UiState {
                     self.pool.store(save_cursor, sound);
                 }
                 // Stay in browser mode so the user can see the saved slot
+                self.browser_dirty = true;
                 return;
             }
 
             // Any B-button press: cancel browser
             let b_buttons = [
-                ButtonId::B1, ButtonId::B2, ButtonId::B3,
-                ButtonId::B4, ButtonId::B5, ButtonId::B6,
+                ButtonId::B1,
+                ButtonId::B2,
+                ButtonId::B3,
+                ButtonId::B4,
+                ButtonId::B5,
+                ButtonId::B6,
             ];
             for &btn in &b_buttons {
                 if controls.button_state(btn) == ButtonState::Pressed {
@@ -292,12 +389,21 @@ impl UiState {
         );
         if edit_held {
             let b_buttons = [
-                ButtonId::B1, ButtonId::B2, ButtonId::B3,
-                ButtonId::B4, ButtonId::B5, ButtonId::B6,
+                ButtonId::B1,
+                ButtonId::B2,
+                ButtonId::B3,
+                ButtonId::B4,
+                ButtonId::B5,
+                ButtonId::B6,
             ];
             for (i, &btn) in b_buttons.iter().enumerate() {
                 if controls.button_state(btn) == ButtonState::Pressed {
-                    self.ui_mode = UiMode::SoundBrowser { part: i, cursor: 0, scroll: 0 };
+                    self.ui_mode = UiMode::SoundBrowser {
+                        part: i,
+                        cursor: 0,
+                        scroll: 0,
+                    };
+                    self.browser_dirty = true;
                     return; // consume — don't pass to navigation
                 }
             }
@@ -359,8 +465,12 @@ impl UiState {
                     }
                     let params = &mut self.performance.edit(at);
                     match (self.page, shift) {
-                        (PageKey::Part { .. }, true) => part_page::snap_encoder(def, i, delta, params, self.sel_op),
-                        (PageKey::Part { .. }, false) => part_page::apply_encoder(def, i, delta, params, &mut self.sel_op),
+                        (PageKey::Part { .. }, true) => {
+                            part_page::snap_encoder(def, i, delta, params, self.sel_op)
+                        }
+                        (PageKey::Part { .. }, false) => {
+                            part_page::apply_encoder(def, i, delta, params, &mut self.sel_op)
+                        }
                         (PageKey::Legacy(p), true) => p.snap_encoder(i, delta, params),
                         (PageKey::Legacy(p), false) => p.apply_encoder(i, delta, params),
                     }
@@ -373,24 +483,44 @@ impl UiState {
             if shift {
                 let at = self.active_part;
                 if controls.button_state(ButtonId::Plus) == ButtonState::Pressed {
-                    // Unbound slots prime nothing; non-modulatable params are refused.
+                    // Unbound slots prime nothing; non-modulatable params are
+                    // refused. Report the outcome in the focus band (#21):
+                    // an already-primed address is a silent `Ok` from
+                    // `add`, so it must be checked for before calling it.
                     if let Some(addr) = self.current_param_addr() {
                         let label = self.mod_label(addr);
-                        let _ = self.performance.parts[at].sound.dest_registry.add(addr, label);
-                        self.matrix_state.rebuild_dests_from_registry(
-                            &self.performance.parts[at].sound.dest_registry
-                        );
+                        let sound = &mut self.performance.parts[at].sound;
+                        self.prime_status = Some(if sound.dest_registry.is_primed(addr) {
+                            PrimeStatus::AlreadyRouted
+                        } else {
+                            match sound.dest_registry.add(addr, label) {
+                                Ok(()) => PrimeStatus::Added,
+                                Err(e) => e.into(),
+                            }
+                        });
+                        self.matrix_state
+                            .rebuild_dests_from_registry(&sound.dest_registry);
+                        // Amounts follow their destination's ParamAddr, not the
+                        // column: reload from the still-committed ModState so a
+                        // stale column (e.g. left over from a Part switch) can't
+                        // leak into the new route (issue #11).
+                        self.matrix_state.load_amounts(&sound.mod_state);
                         self.sync_mod_state(at);
                     }
                 }
-                if controls.button_state(ButtonId::Minus) == ButtonState::Pressed {
-                    if let Some(addr) = self.current_param_addr() {
-                        self.performance.parts[at].sound.dest_registry.remove(addr);
-                        self.matrix_state.rebuild_dests_from_registry(
-                            &self.performance.parts[at].sound.dest_registry
-                        );
-                        self.sync_mod_state(at);
-                    }
+                if controls.button_state(ButtonId::Minus) == ButtonState::Pressed
+                    && let Some(addr) = self.current_param_addr()
+                {
+                    let sound = &mut self.performance.parts[at].sound;
+                    sound.dest_registry.remove(addr);
+                    self.matrix_state
+                        .rebuild_dests_from_registry(&sound.dest_registry);
+                    // Re-key amounts to the (possibly shifted) destination
+                    // columns by ParamAddr rather than position, so surviving
+                    // routes keep their own amount, not their old column's
+                    // (issue #11).
+                    self.matrix_state.load_amounts(&sound.mod_state);
+                    self.sync_mod_state(at);
                 }
             }
         }
@@ -398,7 +528,6 @@ impl UiState {
 
     /// Advance animations. Call at UI_FPS (~20fps).
     pub fn update(&mut self) {
-
         let at = self.active_part;
 
         // Read base param values
@@ -421,7 +550,9 @@ impl UiState {
             // sr = BLOCK_SIZE * fps. At variable fps, assume ~30.
             // If animations look too slow/fast, this constant needs tuning.
             const UI_FPS: u32 = 20; // tuned to match audio-side LFO rate
-            let lfo_val = self.display_lfo.process(&sound.params.lfo, chimera_hal::BLOCK_SIZE as u32 * UI_FPS);
+            let lfo_val = self
+                .display_lfo
+                .process(&sound.params.lfo, chimera_hal::BLOCK_SIZE as u32 * UI_FPS);
 
             let mut mod_sources = [0.0f32; MAX_MOD_SOURCES];
             // Source 0 = Envelope (use sustain level as approximation for display)
@@ -434,10 +565,11 @@ impl UiState {
             }
 
             // Apply offsets to the 6 display values
-            for i in 0..6 {
-                let offset = slot_addr(def, i, self.sel_op).map_or(0.0, |a| sound.mod_state.offset_for(a, &mod_sources));
+            for (i, value) in values.iter_mut().enumerate() {
+                let offset = slot_addr(def, i, self.sel_op)
+                    .map_or(0.0, |a| sound.mod_state.offset_for(a, &mod_sources));
                 if offset != 0.0 {
-                    values[i] = (values[i] + offset).clamp(0.0, 1.0);
+                    *value = (*value + offset).clamp(0.0, 1.0);
                 }
             }
         }
@@ -451,8 +583,8 @@ impl UiState {
         // Animate branch scroll for dungeon map sub-pages.
         // Ensure the active row's bottom edge (y + LINE_HEIGHT) is on screen.
         // scroll_px = max(0, BRANCH_START_Y + (sub_page+1)*LINE_HEIGHT - SCREEN_HEIGHT)
-        let needed_bottom = theme::BRANCH_START_Y
-            + (self.nav.sub_page as i32 + 1) * theme::BRANCH_LINE_HEIGHT;
+        let needed_bottom =
+            theme::BRANCH_START_Y + (self.nav.sub_page as i32 + 1) * theme::BRANCH_LINE_HEIGHT;
         let overflow = needed_bottom - chimera_hal::SCREEN_HEIGHT as i32;
         let target_scroll = if overflow > 0 {
             overflow as f32 / theme::BRANCH_LINE_HEIGHT as f32
@@ -484,15 +616,25 @@ impl UiState {
                 Color = embedded_graphics::pixelcolor::Rgb565,
             >,
     {
-        if let UiMode::SoundBrowser { part, cursor, scroll } = self.ui_mode {
+        if let UiMode::SoundBrowser {
+            part,
+            cursor,
+            scroll,
+        } = self.ui_mode
+        {
             browser::draw(display, &self.pool, part, cursor, scroll);
             return;
         }
-        self.renderer.draw_with_def(display, &self.frame(perf, scope));
+        self.renderer
+            .draw_with_def(display, &self.frame(perf, scope));
     }
 
     /// What one frame draws from.
-    fn frame<'a>(&'a self, perf: &'a PerfStats, scope: &'a [f32; SCOPE_LEN]) -> renderer::Frame<'a> {
+    fn frame<'a>(
+        &'a self,
+        perf: &'a PerfStats,
+        scope: &'a [f32; SCOPE_LEN],
+    ) -> renderer::Frame<'a> {
         renderer::Frame {
             nav: &self.nav,
             def: self.nav.active_block_def(),
@@ -504,6 +646,7 @@ impl UiState {
             sounding: crate::scope::peak(scope) > crate::scope::SOUNDING_PEAK,
             parts: &self.performance.parts,
             active_part: self.active_part,
+            prime_status: self.prime_status,
         }
     }
 
@@ -513,20 +656,42 @@ impl UiState {
         let qvalues = region::quantize_values(&self.renderer.anim);
         let (chain, node, sub) = nav_tag(&self.nav);
         match kind {
-            RegionKind::Header => RegionData::header(chain, node, sub, f.perf.audio_load_pct, f.sounding),
+            RegionKind::Header => {
+                RegionData::header(chain, node, sub, f.perf.audio_load_pct, f.sounding)
+            }
             RegionKind::Focus if f.def.layout == PageLayout::Matrix => RegionData::Route {
                 row: self.matrix_state.sel_row as u8,
                 col: self.matrix_state.sel_col as u8,
                 dests: self.matrix_state.num_dests as u8,
                 value: qvalues[renderer::MATRIX_AMOUNT_SLOT],
             },
-            RegionKind::Focus => RegionData::focus(self.page, f.focus as u8, qvalues[f.focus]),
+            RegionKind::Focus => RegionData::focus(
+                self.page,
+                f.focus as u8,
+                qvalues[f.focus],
+                self.prime_status,
+            ),
             RegionKind::Viz => {
                 let (values, live) = self.renderer.viz_inputs(f);
-                RegionData::viz(self.page, values, live)
+                // BigViz pages have no focus band: their viz carries the
+                // prime status instead.
+                let status = self
+                    .prime_status
+                    .filter(|_| f.def.layout == PageLayout::BigViz);
+                RegionData::viz_with_status(self.page, values, live, status)
             }
-            RegionKind::Cells => RegionData::cells(self.page, qvalues, f.focus as u8, self.matrix_state.num_dests as u16),
-            RegionKind::Nav => RegionData::nav(chain, node, sub, region::quantize(self.renderer.branch_scroll.current())),
+            RegionKind::Cells => RegionData::cells(
+                self.page,
+                qvalues,
+                f.focus as u8,
+                self.matrix_state.num_dests as u16,
+            ),
+            RegionKind::Nav => RegionData::nav(
+                chain,
+                node,
+                sub,
+                region::quantize(self.renderer.branch_scroll.current()),
+            ),
             RegionKind::Grid => RegionData::grid_with_value(
                 self.matrix_state.sel_row as u8,
                 self.matrix_state.sel_col as u8,
@@ -542,7 +707,8 @@ impl UiState {
     pub fn prime_regions(&mut self, perf: &PerfStats) {
         let mut scope = [0.0f32; SCOPE_LEN];
         crate::scope::read_samples(&mut scope);
-        self.region_set.set_layout(self.nav.active_block_def().layout);
+        self.region_set
+            .set_layout(self.nav.active_block_def().layout);
         let mut data = [region::RegionData::sentinel_header(); region::MAX_REGIONS];
         {
             let f = self.frame(perf, &scope);
@@ -563,8 +729,9 @@ impl UiState {
         perf: &PerfStats,
     ) -> [(u16, u16); region::MAX_REGIONS]
     where
-        D: embedded_graphics::draw_target::DrawTarget<Color = embedded_graphics::pixelcolor::Rgb565>
-            + chimera_hal::ChimeraDisplay,
+        D: embedded_graphics::draw_target::DrawTarget<
+                Color = embedded_graphics::pixelcolor::Rgb565,
+            > + chimera_hal::ChimeraDisplay,
     {
         let mut scope = [0.0f32; SCOPE_LEN];
         crate::scope::read_samples(&mut scope);
@@ -579,18 +746,28 @@ impl UiState {
         scope: &[f32; SCOPE_LEN],
     ) -> [(u16, u16); region::MAX_REGIONS]
     where
-        D: embedded_graphics::draw_target::DrawTarget<Color = embedded_graphics::pixelcolor::Rgb565>
-            + chimera_hal::ChimeraDisplay,
+        D: embedded_graphics::draw_target::DrawTarget<
+                Color = embedded_graphics::pixelcolor::Rgb565,
+            > + chimera_hal::ChimeraDisplay,
     {
-        // Sound browser overlay — always full redraw, single flush region
-        if let UiMode::SoundBrowser { part, cursor, scroll } = self.ui_mode {
-            let fb = display.pixel_buffer();
-            Renderer::clear_region_fb(fb, 0, chimera_hal::SCREEN_HEIGHT);
-            browser::draw(display, &self.pool, part, cursor, scroll);
-            // Invalidate region set so normal layout forces full rebuild on exit
-            self.region_set.prev_layout = None;
+        // Sound browser overlay — one flush region, redrawn only while dirty
+        // (opened, cursor/scroll moved, or a save changed the pool; #7).
+        if let UiMode::SoundBrowser {
+            part,
+            cursor,
+            scroll,
+        } = self.ui_mode
+        {
             let mut flush_list = [(0u16, 0u16); region::MAX_REGIONS];
-            flush_list[0] = (0, chimera_hal::SCREEN_HEIGHT);
+            if self.browser_dirty {
+                let fb = display.pixel_buffer();
+                Renderer::clear_region_fb(fb, 0, chimera_hal::SCREEN_HEIGHT);
+                browser::draw(display, &self.pool, part, cursor, scroll);
+                // Invalidate region set so normal layout forces full rebuild on exit
+                self.region_set.prev_layout = None;
+                flush_list[0] = (0, chimera_hal::SCREEN_HEIGHT);
+                self.browser_dirty = false;
+            }
             return flush_list;
         }
 
@@ -626,6 +803,24 @@ impl UiState {
     }
 }
 
+/// Whether `controls` reports an encoder turn or a button press this frame —
+/// any of which retires the last prime-status message (issue #21).
+fn any_input(controls: &impl Controls) -> bool {
+    const ENCODERS: [EncoderId; 7] = [
+        EncoderId::A,
+        EncoderId::B,
+        EncoderId::C,
+        EncoderId::D,
+        EncoderId::E,
+        EncoderId::F,
+        EncoderId::Main,
+    ];
+    ENCODERS.iter().any(|&e| controls.encoder_delta(e) != 0)
+        || ALL_BUTTONS
+            .iter()
+            .any(|&b| controls.button_state(b) == ButtonState::Pressed)
+}
+
 /// Display values for `page`: Part pages through slot bindings, legacy pages
 /// through `PageId`.
 fn page_values(page: PageKey, def: &BlockDef, params: &impl Blocks, sel_op: Op) -> [f32; 6] {
@@ -640,8 +835,8 @@ fn page_values(page: PageKey, def: &BlockDef, params: &impl Blocks, sel_op: Op) 
 fn nav_tag(nav: &ChainNav) -> (u8, u8, u8) {
     use chain::ChainId;
     let chain_byte = match nav.chain_id {
-        ChainId::Part(i) => i as u8,          // 0-5
-        ChainId::Mixer(i) => 10 + i as u8,    // 10-15
+        ChainId::Part(i) => i as u8,       // 0-5
+        ChainId::Mixer(i) => 10 + i as u8, // 10-15
         ChainId::System => 20,
         ChainId::Demo => 21,
     };

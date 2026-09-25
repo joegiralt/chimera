@@ -22,3 +22,4 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0014](0014-audio-memory-map.md) | Voices in D2, FX bus in AXI; buffers sized to the range they serve | Accepted |
 | [0015](0015-voice-steal-and-fx-returns.md) | Steal released voices first; FX sends return wet only | Accepted |
 | [0016](0016-visual-direction-refined-elektron.md) | Visual direction: refined Elektron | Accepted |
+| [0017](0017-prime-status-feedback.md) | MIX+PLUS reports its outcome in place, until the next input | Accepted |

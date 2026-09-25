@@ -7,6 +7,7 @@ use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::Rgb565;
 
 use crate::addr::BlockRef;
+use crate::ui::PrimeStatus;
 use crate::ui::block_def::{BlockDef, SlotBinding};
 use crate::ui::chain::{ChainId, ChainNav};
 use crate::ui::draw;
@@ -24,7 +25,9 @@ pub fn upper(s: &str) -> FmtBuf {
 
 /// Whether any slot of `def` edits the Part's own mix settings (PART, SENDS).
 fn edits_part(def: &BlockDef) -> bool {
-    def.params.iter().any(|s| matches!(s.binding, SlotBinding::Param(a) if a.block == BlockRef::Part))
+    def.params
+        .iter()
+        .any(|s| matches!(s.binding, SlotBinding::Param(a) if a.block == BlockRef::Part))
 }
 
 /// Header context label and page name: `PART 1` `FILTER`; on the Mixer
@@ -55,8 +58,24 @@ where
 {
     let y = theme::HEADER_BASELINE;
     let x = theme::MARGIN_X
-        + draw::text_tracked(d, &theme::FONT_LABEL, context, theme::MARGIN_X, y, theme::MID, theme::LABEL_TRACKING);
-    draw::text_tracked(d, &theme::FONT_LABEL_BOLD, name, x + 7, y, theme::INK, theme::LABEL_TRACKING);
+        + draw::text_tracked(
+            d,
+            &theme::FONT_LABEL,
+            context,
+            theme::MARGIN_X,
+            y,
+            theme::MID,
+            theme::LABEL_TRACKING,
+        );
+    draw::text_tracked(
+        d,
+        &theme::FONT_LABEL_BOLD,
+        name,
+        x + 7,
+        y,
+        theme::INK,
+        theme::LABEL_TRACKING,
+    );
     if load_pct > 0 {
         let mut buf = FmtBuf::new();
         let _ = write!(buf, "CPU {}%", load_pct);
@@ -65,10 +84,24 @@ where
             61..=80 => theme::WARN,
             _ => theme::MID,
         };
-        draw::text_right(d, &theme::FONT_LABEL, buf.as_str(), theme::HEADER_DOT_X - 8, y, color, 0);
+        draw::text_right(
+            d,
+            &theme::FONT_LABEL,
+            buf.as_str(),
+            theme::HEADER_DOT_X - 8,
+            y,
+            color,
+            0,
+        );
     }
     if sounding {
-        draw::dot(d, theme::HEADER_DOT_X, theme::HEADER_DOT_Y, theme::HEADER_DOT_R, theme::ACCENT);
+        draw::dot(
+            d,
+            theme::HEADER_DOT_X,
+            theme::HEADER_DOT_Y,
+            theme::HEADER_DOT_R,
+            theme::ACCENT,
+        );
     }
 }
 
@@ -80,20 +113,91 @@ where
 {
     let y = theme::HEADER_BASELINE;
     let x = theme::MARGIN_X
-        + draw::text_tracked(d, &theme::FONT_LABEL, context, theme::MARGIN_X, y, theme::MID, theme::LABEL_TRACKING)
+        + draw::text_tracked(
+            d,
+            &theme::FONT_LABEL,
+            context,
+            theme::MARGIN_X,
+            y,
+            theme::MID,
+            theme::LABEL_TRACKING,
+        )
         + 6;
     let x = x + draw::arrow(d, x, y, theme::MID) + 5;
-    draw::text_tracked(d, &theme::FONT_LABEL_BOLD, name, x, y, theme::INK, theme::LABEL_TRACKING);
+    draw::text_tracked(
+        d,
+        &theme::FONT_LABEL_BOLD,
+        name,
+        x,
+        y,
+        theme::INK,
+        theme::LABEL_TRACKING,
+    );
 }
 
 /// Focus band (y 28..118): the focused slot's label, its value large, and an
 /// arc gauge (from 12:00 for bipolar params). `value` is the animated 0..1.
-pub fn focus_band<D>(d: &mut D, label: &str, value_text: &str, value: f32, bipolar: bool)
-where
+///
+/// While a MIX+PLUS `status` is pending (issue #21) the value readout — the
+/// large numerals and the arc gauge — is replaced by the status word(s) at
+/// the mid-size value font, so the longest message (`NOT MODULATABLE`)
+/// still fits the full row width; the label above is unchanged, so the
+/// message still reads against the parameter it was tried on.
+pub fn focus_band<D>(
+    d: &mut D,
+    label: &str,
+    value_text: &str,
+    value: f32,
+    bipolar: bool,
+    status: Option<PrimeStatus>,
+) where
     D: DrawTarget<Color = Rgb565>,
 {
     focus_label(d, label, theme::MARGIN_X);
-    focus_value(d, value_text, value, bipolar);
+    match status {
+        Some(status) => {
+            draw::text_tracked(
+                d,
+                &theme::FONT_VALUE,
+                status.label(),
+                theme::MARGIN_X,
+                theme::FOCUS_VALUE_Y,
+                theme::INK,
+                theme::LABEL_TRACKING,
+            );
+        }
+        None => focus_value(d, value_text, value, bipolar),
+    }
+}
+
+/// A BigViz page's prime status (issue #21): one line at the top of the viz
+/// band, in the focus band's status style, between the header and
+/// `viz::PLOT_TOP` — above every curve and the touched-value readout, which
+/// is clamped to the plot. The strip behind the text is cleared first so a
+/// curve point at the plot's top edge can't run into the letters.
+pub fn viz_status<D>(d: &mut D, status: PrimeStatus)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let label = status.label();
+    let w = draw::text_width(&theme::FONT_VALUE, label, theme::LABEL_TRACKING);
+    draw::fill_rect(
+        d,
+        theme::MARGIN_X - 2,
+        theme::HEADER_BOTTOM,
+        w + 4,
+        crate::ui::viz::PLOT_TOP - theme::HEADER_BOTTOM,
+        theme::BG,
+    );
+    draw::text_tracked(
+        d,
+        &theme::FONT_VALUE,
+        label,
+        theme::MARGIN_X,
+        theme::BIGVIZ_STATUS_Y,
+        theme::INK,
+        theme::LABEL_TRACKING,
+    );
 }
 
 /// Focus label at `x`; returns where it ends.
@@ -101,15 +205,40 @@ fn focus_label<D>(d: &mut D, label: &str, x: i32) -> i32
 where
     D: DrawTarget<Color = Rgb565>,
 {
-    x + draw::text_tracked(d, &theme::FONT_VALUE, label, x, theme::FOCUS_LABEL_Y, theme::MID, theme::LABEL_TRACKING)
+    x + draw::text_tracked(
+        d,
+        &theme::FONT_VALUE,
+        label,
+        x,
+        theme::FOCUS_LABEL_Y,
+        theme::MID,
+        theme::LABEL_TRACKING,
+    )
 }
 
 fn focus_value<D>(d: &mut D, value_text: &str, value: f32, bipolar: bool)
 where
     D: DrawTarget<Color = Rgb565>,
 {
-    draw::text(d, &theme::FONT_FOCUS, value_text, theme::FOCUS_VALUE_X, theme::FOCUS_VALUE_Y, theme::INK);
-    draw::arc_gauge(d, theme::ARC_CX, theme::ARC_CY, theme::ARC_R, theme::ARC_WIDTH, value, bipolar, theme::FAINT, theme::ACCENT);
+    draw::text(
+        d,
+        &theme::FONT_FOCUS,
+        value_text,
+        theme::FOCUS_VALUE_X,
+        theme::FOCUS_VALUE_Y,
+        theme::INK,
+    );
+    draw::arc_gauge(
+        d,
+        theme::ARC_CX,
+        theme::ARC_CY,
+        theme::ARC_R,
+        theme::ARC_WIDTH,
+        value,
+        bipolar,
+        theme::FAINT,
+        theme::ACCENT,
+    );
 }
 
 /// Mod matrix focus band: the selected route `SOURCE → DEST` (`LFO → OP1
@@ -151,18 +280,58 @@ where
         return;
     };
     let label_color = if c.active { theme::ACCENT } else { theme::MID };
-    draw::text_tracked(d, &theme::FONT_LABEL, c.label, x, y, label_color, theme::LABEL_TRACKING);
+    draw::text_tracked(
+        d,
+        &theme::FONT_LABEL,
+        c.label,
+        x,
+        y,
+        label_color,
+        theme::LABEL_TRACKING,
+    );
     let value_color = if c.active { theme::INK } else { theme::INK2 };
-    draw::text(d, &theme::FONT_VALUE, c.text, x, y + theme::CELL_VALUE_DY, value_color);
+    draw::text(
+        d,
+        &theme::FONT_VALUE,
+        c.text,
+        x,
+        y + theme::CELL_VALUE_DY,
+        value_color,
+    );
     if !c.fmt.is_discrete() {
-        let fill = if c.active { theme::ACCENT } else { theme::BAR_REST };
-        draw::bar(d, x, y + theme::CELL_BAR_DY, theme::CELL_BAR_W, theme::CELL_BAR_H, c.value, c.fmt.is_bipolar(), theme::FAINT, fill);
+        let fill = if c.active {
+            theme::ACCENT
+        } else {
+            theme::BAR_REST
+        };
+        draw::bar(
+            d,
+            x,
+            y + theme::CELL_BAR_DY,
+            theme::CELL_BAR_W,
+            theme::CELL_BAR_H,
+            c.value,
+            c.fmt.is_bipolar(),
+            theme::FAINT,
+            fill,
+        );
     }
     if let Some(m) = c.mod_amount {
         let mid = x + theme::CELL_BAR_W / 2;
         let len = (m.clamp(-1.0, 1.0) * (theme::CELL_BAR_W / 2) as f32) as i32;
-        let (x0, x1) = if len >= 0 { (mid, mid + len) } else { (mid + len, mid) };
+        let (x0, x1) = if len >= 0 {
+            (mid, mid + len)
+        } else {
+            (mid + len, mid)
+        };
         draw::fill_rect(d, mid, y + theme::CELL_MOD_DY - 1, 1, 3, theme::MID);
-        draw::fill_rect(d, x0, y + theme::CELL_MOD_DY, (x1 - x0).max(1), 1, theme::INK2);
+        draw::fill_rect(
+            d,
+            x0,
+            y + theme::CELL_MOD_DY,
+            (x1 - x0).max(1),
+            1,
+            theme::INK2,
+        );
     }
 }

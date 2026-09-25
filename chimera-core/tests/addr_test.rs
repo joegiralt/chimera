@@ -1,9 +1,11 @@
 //! Semantic addresses (spec §2) and `ParamSnapshot::block(_mut)`.
 
 use chimera_core::addr::{BlockRef, Blocks, Op, OpOutOfRange, ParamAddr};
-use chimera_core::preset::Performance;
 use chimera_core::dsp::pizza::PizzaParams;
-use chimera_core::params::{DriveParams, EnvParams, FilterParams, FmOpParams, FolderParams, OutParams, ParamSnapshot};
+use chimera_core::params::{
+    DriveParams, EnvParams, FilterParams, FmOpParams, FolderParams, OutParams, ParamSnapshot,
+};
+use chimera_core::preset::Performance;
 
 #[test]
 fn op_rejects_out_of_range() {
@@ -40,20 +42,33 @@ fn block_and_specs_agree() {
     for b in BlockRef::ALL {
         let blk = part.block(b).expect("a Part resolves every block");
         assert!(core::ptr::eq(blk.specs(), b.specs()), "{b:?}");
-        let not_in_sound = matches!(b, BlockRef::Chorus | BlockRef::Delay | BlockRef::Reverb | BlockRef::Part);
-        assert_eq!(ParamSnapshot::default().block(b).is_some(), !not_in_sound, "{b:?}");
+        let not_in_sound = matches!(
+            b,
+            BlockRef::Chorus | BlockRef::Delay | BlockRef::Reverb | BlockRef::Part
+        );
+        assert_eq!(
+            ParamSnapshot::default().block(b).is_some(),
+            !not_in_sound,
+            "{b:?}"
+        );
     }
 }
 
 #[test]
 fn block_mut_reaches_the_named_instance() {
     let mut p = ParamSnapshot::default();
-    p.block_mut(BlockRef::FmOp(Op::C)).unwrap().set(FmOpParams::LEVEL, 42.0);
+    p.block_mut(BlockRef::FmOp(Op::C))
+        .unwrap()
+        .set(FmOpParams::LEVEL, 42.0);
     assert_eq!(p.fm.operators[2].level, 42.0);
-    p.block_mut(BlockRef::FilterEnv).unwrap().set(EnvParams::ATTACK, 2.0);
+    p.block_mut(BlockRef::FilterEnv)
+        .unwrap()
+        .set(EnvParams::ATTACK, 2.0);
     assert_eq!(p.envelopes[1].attack, 2.0);
     assert_eq!(p.envelopes[0].attack, 0.01);
-    p.block_mut(BlockRef::Out).unwrap().set(OutParams::VOLUME, 0.25);
+    p.block_mut(BlockRef::Out)
+        .unwrap()
+        .set(OutParams::VOLUME, 0.25);
     assert_eq!(p.out.volume, 0.25);
     assert_eq!(p.block(BlockRef::Out).unwrap().get(OutParams::VOLUME), 0.25);
 }

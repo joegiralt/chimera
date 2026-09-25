@@ -27,7 +27,7 @@ const VISIBLE_ROWS: usize = 3;
 
 /// Max sources and destinations for the amounts grid.
 pub const MAX_SOURCES: usize = 16;
-pub const MAX_DESTS: usize = 16;
+pub const MAX_DESTS: usize = crate::modulation::MAX_MOD_DESTS;
 
 /// A destination in the mod matrix — a primed param.
 #[derive(Clone, Copy, Debug)]
@@ -101,14 +101,14 @@ impl MatrixState {
     pub fn rebuild_dests_from_registry(&mut self, registry: &crate::mod_path::ModDestRegistry) {
         self.num_dests = 0;
         for i in 0..registry.len() {
-            if let Some(entry) = registry.get(i) {
-                if self.num_dests < MAX_DESTS {
-                    self.dests[self.num_dests] = Some(ModDest {
-                        addr: entry.addr,
-                        label: entry.label,
-                    });
-                    self.num_dests += 1;
-                }
+            if let Some(entry) = registry.get(i)
+                && self.num_dests < MAX_DESTS
+            {
+                self.dests[self.num_dests] = Some(ModDest {
+                    addr: entry.addr,
+                    label: entry.label,
+                });
+                self.num_dests += 1;
             }
         }
     }
@@ -120,7 +120,10 @@ impl MatrixState {
         self.amounts = [[0; MAX_DESTS]; MAX_SOURCES];
         for di in 0..self.num_dests {
             let Some(dest) = self.dests[di] else { continue };
-            let Some(d) = (0..mod_state.num_dests()).find(|&d| mod_state.dest(d) == dest.addr) else { continue };
+            let Some(d) = (0..mod_state.num_dests()).find(|&d| mod_state.dest(d) == dest.addr)
+            else {
+                continue;
+            };
             for si in 0..self.num_sources {
                 self.amounts[si][di] = mod_state.amount(si, d);
             }
@@ -136,24 +139,72 @@ impl MatrixState {
     /// `None` = not primed; `Some(0.0)` = primed with no amounts set.
     pub fn mod_info_for(&self, addr: ParamAddr) -> Option<f32> {
         for di in 0..self.num_dests {
-            if let Some(dest) = &self.dests[di] {
-                if dest.addr == addr {
-                    let mut total: i16 = 0;
-                    for si in 0..self.num_sources {
-                        total += self.amounts[si][di] as i16;
-                    }
-                    return Some((total as f32 / 127.0).clamp(-1.0, 1.0));
+            if let Some(dest) = &self.dests[di]
+                && dest.addr == addr
+            {
+                let mut total: i16 = 0;
+                for amounts in self.amounts.iter().take(self.num_sources) {
+                    total += amounts[di] as i16;
                 }
+                return Some((total as f32 / 127.0).clamp(-1.0, 1.0));
             }
         }
         None
     }
 
-    /// Adjust the amount at the current cursor position.
+    /// Adjust the amount at the current cursor position. A no-op when
+    /// `sel_col` is stale (e.g. left over from a Part with more
+    /// destinations, not yet clamped by `clamp_cursor`) — otherwise this
+    /// would write into a column with no destination, which a later prime
+    /// landing on that same column would then inherit as a phantom amount
+    /// (issue #11).
     pub fn adjust_amount(&mut self, delta: i8) {
+        if self.sel_col >= self.num_dests {
+            return;
+        }
         let current = self.amounts[self.sel_row][self.sel_col] as i16;
         let new = (current + delta as i16).clamp(-127, 127) as i8;
         self.amounts[self.sel_row][self.sel_col] = new;
+    }
+
+    /// Clamp the cursor and scroll position to the current source/
+    /// destination counts, keeping the cursor inside the visible window —
+    /// the same rule `move_row`/`move_col`/`scroll_v`/`scroll_h` use. Call
+    /// after `rebuild_sources`/`rebuild_dests_from_registry` (e.g. on a Part
+    /// switch), whose new counts may be smaller than the cursor/scroll
+    /// position left over from before (issue #11).
+    pub fn clamp_cursor(&mut self) {
+        let max_row = if self.num_sources > 0 {
+            self.num_sources - 1
+        } else {
+            0
+        };
+        self.sel_row = self.sel_row.min(max_row);
+        self.scroll_y = self
+            .scroll_y
+            .min(self.num_sources.saturating_sub(self.visible_rows()));
+        let vis_r = self.visible_rows();
+        if self.sel_row < self.scroll_y {
+            self.scroll_y = self.sel_row;
+        } else if self.sel_row >= self.scroll_y + vis_r {
+            self.scroll_y = self.sel_row + 1 - vis_r;
+        }
+
+        let max_col = if self.num_dests > 0 {
+            self.num_dests - 1
+        } else {
+            0
+        };
+        self.sel_col = self.sel_col.min(max_col);
+        self.scroll_x = self
+            .scroll_x
+            .min(self.num_dests.saturating_sub(self.visible_cols()));
+        let vis_c = self.visible_cols();
+        if self.sel_col < self.scroll_x {
+            self.scroll_x = self.sel_col;
+        } else if self.sel_col >= self.scroll_x + vis_c {
+            self.scroll_x = self.sel_col + 1 - vis_c;
+        }
     }
 
     pub fn move_row(&mut self, delta: i8) {
@@ -169,7 +220,11 @@ impl MatrixState {
     }
 
     pub fn move_col(&mut self, delta: i8) {
-        let max = if self.num_dests > 0 { self.num_dests - 1 } else { 0 };
+        let max = if self.num_dests > 0 {
+            self.num_dests - 1
+        } else {
+            0
+        };
         let new = self.sel_col as i32 + delta as i32;
         self.sel_col = new.clamp(0, max as i32) as usize;
         // Auto-scroll to keep cursor visible
@@ -207,6 +262,12 @@ impl MatrixState {
 
     pub fn visible_cols(&self) -> usize {
         VISIBLE_COLS
+    }
+}
+
+impl Default for MatrixState {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -249,7 +310,11 @@ pub fn fmt_route_dest(buf: &mut FmtBuf, d: &ModDest) {
 
 /// Amount as shown: `+42`, `-30`, `0`.
 pub fn fmt_amount(buf: &mut FmtBuf, amount: i8) {
-    let _ = if amount > 0 { write!(buf, "+{}", amount) } else { write!(buf, "{}", amount) };
+    let _ = if amount > 0 {
+        write!(buf, "+{}", amount)
+    } else {
+        write!(buf, "{}", amount)
+    };
 }
 
 /// Route count and destination count, e.g. `"12 ROUTES   5 OF 16 DEST"`.
@@ -258,12 +323,19 @@ pub fn fmt_amount(buf: &mut FmtBuf, amount: i8) {
 /// `MAX_DESTS`/`MAX_DESTS` — the original `"{} OF {} DESTINATIONS"` wording
 /// overflowed at max counts, so this is the shortened form.
 pub fn fmt_stats(buf: &mut FmtBuf, routes: usize, num_dests: usize) {
-    let _ = write!(buf, "{} ROUTES   {} OF {} DEST", routes, num_dests, MAX_DESTS);
+    let _ = write!(
+        buf,
+        "{} ROUTES   {} OF {} DEST",
+        routes, num_dests, MAX_DESTS
+    );
 }
 
 /// Centre of grid cell (visible column `ci`, visible row `vi`).
 pub fn cell_center(ci: usize, vi: usize) -> (i32, i32) {
-    (GRID_X + ci as i32 * GRID_COL_W, GRID_ROW0_Y + vi as i32 * GRID_ROW_H)
+    (
+        GRID_X + ci as i32 * GRID_COL_W,
+        GRID_ROW0_Y + vi as i32 * GRID_ROW_H,
+    )
 }
 
 /// Dot grid: sources down, primed destinations across; a filled dot is a
@@ -278,17 +350,56 @@ where
     let (cols, rows) = (state.visible_cols(), state.visible_rows());
     for ci in 0..cols {
         let di = ci + state.scroll_x;
-        let Some(Some(dest)) = state.dests.get(di).filter(|_| di < state.num_dests) else { break };
+        let Some(Some(dest)) = state.dests.get(di).filter(|_| di < state.num_dests) else {
+            break;
+        };
         let x = GRID_X + ci as i32 * GRID_COL_W;
-        let name_color = if di == state.sel_col { theme::INK } else { theme::MID };
-        draw::text_center(d, &theme::FONT_LABEL, block_tag(dest.addr.block), x, GRID_TAG_Y, theme::MID, 0);
-        draw::text_center(d, &theme::FONT_LABEL, dest_name(dest), x, GRID_NAME_Y, name_color, 0);
+        let name_color = if di == state.sel_col {
+            theme::INK
+        } else {
+            theme::MID
+        };
+        draw::text_center(
+            d,
+            &theme::FONT_LABEL,
+            block_tag(dest.addr.block),
+            x,
+            GRID_TAG_Y,
+            theme::MID,
+            0,
+        );
+        draw::text_center(
+            d,
+            &theme::FONT_LABEL,
+            dest_name(dest),
+            x,
+            GRID_NAME_Y,
+            name_color,
+            0,
+        );
     }
     if state.scroll_x > 0 {
-        draw::text(d, &theme::FONT_LABEL, "<", GRID_X - 26, GRID_NAME_Y, theme::MID);
+        draw::text(
+            d,
+            &theme::FONT_LABEL,
+            "<",
+            GRID_X - 26,
+            GRID_NAME_Y,
+            theme::MID,
+        );
     }
     if state.num_dests > state.scroll_x + cols {
-        draw::text(d, &theme::FONT_LABEL, ">", theme::SCREEN_W - 8, GRID_NAME_Y, theme::MID);
+        // On the tag row, not the name row: tags are <= 3 chars for every
+        // BlockRef (`block_tag`), so this can never reach far enough right
+        // to touch the hint, unlike a destination name (issue #15).
+        draw::text(
+            d,
+            &theme::FONT_LABEL,
+            ">",
+            theme::SCREEN_W - 8,
+            GRID_TAG_Y,
+            theme::MID,
+        );
     }
     for vi in 0..rows {
         let ri = vi + state.scroll_y;
@@ -297,8 +408,19 @@ where
         }
         let (_, y) = cell_center(0, vi);
         let name = state.sources[ri].map_or("?", |s| s.name);
-        let color = if ri == state.sel_row { theme::INK } else { theme::MID };
-        draw::text(d, &theme::FONT_LABEL_BOLD, name, theme::MARGIN_X, y + 4, color);
+        let color = if ri == state.sel_row {
+            theme::INK
+        } else {
+            theme::MID
+        };
+        draw::text(
+            d,
+            &theme::FONT_LABEL_BOLD,
+            name,
+            theme::MARGIN_X,
+            y + 4,
+            color,
+        );
         for ci in 0..cols {
             let di = ci + state.scroll_x;
             if di >= state.num_dests {
@@ -306,7 +428,11 @@ where
             }
             let (x, y) = cell_center(ci, vi);
             let selected = ri == state.sel_row && di == state.sel_col;
-            let amount = if selected { sel_amount } else { state.amounts[ri][di] };
+            let amount = if selected {
+                sel_amount
+            } else {
+                state.amounts[ri][di]
+            };
             if selected {
                 draw::round_outline(d, x - 14, y - 11, 28, 22, 6, theme::ACCENT);
             }
@@ -319,12 +445,26 @@ where
             }
         }
     }
-    draw::text(d, &theme::FONT_LABEL, "MIX+PLUS ADD   MIX+MINUS REMOVE", theme::MARGIN_X, HINT_Y, theme::MID);
+    draw::text(
+        d,
+        &theme::FONT_LABEL,
+        "PRIME: MIX+PLUS ON A PARAM",
+        theme::MARGIN_X,
+        HINT_Y,
+        theme::MID,
+    );
     let routes = (0..state.num_sources)
         .flat_map(|r| (0..state.num_dests).map(move |c| (r, c)))
         .filter(|&(r, c)| state.amounts[r][c] != 0)
         .count();
     let mut buf = FmtBuf::new();
     fmt_stats(&mut buf, routes, state.num_dests);
-    draw::text(d, &theme::FONT_LABEL, buf.as_str(), theme::MARGIN_X, STATS_Y, theme::MID);
+    draw::text(
+        d,
+        &theme::FONT_LABEL,
+        buf.as_str(),
+        theme::MARGIN_X,
+        STATS_Y,
+        theme::MID,
+    );
 }

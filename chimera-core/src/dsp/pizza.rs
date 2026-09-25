@@ -1,11 +1,11 @@
-/// Pizza oscillator — variable-symmetry triangle with XOR bitcrush.
-/// Inspired by the Bastl Pizza (ATtiny85 VCO).
-///
-/// Parameters:
-/// - frequency: pitch in Hz
-/// - shape: 0.0 = ramp down, 0.5 = triangle, 1.0 = ramp up
-/// - crush: 0.0 = clean, 1.0 = fully bitcrushed
-/// - level: output level 0.0..1.0
+//! Pizza oscillator — variable-symmetry triangle with XOR bitcrush.
+//! Inspired by the Bastl Pizza (ATtiny85 VCO).
+//!
+//! Parameters:
+//! - frequency: pitch in Hz
+//! - shape: 0.0 = ramp down, 0.5 = triangle, 1.0 = ramp up
+//! - crush: 0.0 = clean, 1.0 = fully bitcrushed
+//! - level: output level 0.0..1.0
 
 use chimera_hal::BLOCK_SIZE;
 
@@ -41,8 +41,8 @@ pub struct PizzaParams {
 impl Default for PizzaParams {
     fn default() -> Self {
         Self {
-            shape: 0.5,  // triangle
-            crush: 0.0,  // clean
+            shape: 0.5, // triangle
+            crush: 0.0, // clean
             level: 0.8,
         }
     }
@@ -140,7 +140,7 @@ impl PizzaOsc {
         // shape = 0.5 → equal up/down (triangle)
         // shape = 1.0 → all up (ramp up / sawtooth)
         let shape = params.shape.clamp(0.01, 0.99);
-        let up_rate = 1.0 / shape;          // how fast we ramp up
+        let up_rate = 1.0 / shape; // how fast we ramp up
         let down_rate = 1.0 / (1.0 - shape); // how fast we ramp down
 
         // Crush: convert to an 8-bit XOR mask

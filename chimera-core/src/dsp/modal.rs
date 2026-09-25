@@ -283,6 +283,27 @@ impl Block for ModalParams {
 /// lower notes clamp to 1,199 samples (~40 Hz). Sized so six voices fit D2.
 pub const MAX_STRING_DELAY: usize = 1200;
 
+/// Parameters for `KsString::tick_full`, built once per render block (not
+/// per sample) at each call site.
+/// damping: 0..1 (lowpass coefficient)
+/// decay: 0..1 (AC attenuation rate)
+/// body: 0..1 (half-delay comb resonance)
+/// stiffness: 0..1 (allpass dispersion for bell character)
+/// feedback: 0..1 (sustain boost)
+/// ens_rate/ens_depth/ens_spread/ens_mix: ensemble chorus parameters
+#[derive(Clone, Copy)]
+pub struct KsRenderParams {
+    pub damping: f32,
+    pub decay: f32,
+    pub body: f32,
+    pub stiffness: f32,
+    pub feedback: f32,
+    pub ens_rate: f32,
+    pub ens_depth: f32,
+    pub ens_spread: f32,
+    pub ens_mix: f32,
+}
+
 struct KsString {
     buffer: [f32; MAX_STRING_DELAY],
     write_pos: usize,
@@ -360,27 +381,10 @@ impl KsString {
         self.ens_lfo_phase = 0;
     }
 
-    /// Full render with all Ambika KS features.
-    /// damping: 0..1 (lowpass coefficient)
-    /// decay: 0..1 (AC attenuation rate)
-    /// body: 0..1 (half-delay comb resonance)
-    /// stiffness: 0..1 (allpass dispersion for bell character)
-    /// feedback: 0..1 (sustain boost)
-    /// ens_rate/depth/spread/mix: ensemble chorus parameters
+    /// Full render with all Ambika KS features. See `KsRenderParams` for
+    /// the field meanings.
     #[inline]
-    #[allow(clippy::too_many_arguments)]
-    fn tick_full(
-        &mut self,
-        damping: f32,
-        decay: f32,
-        body: f32,
-        stiffness: f32,
-        feedback: f32,
-        ens_rate: f32,
-        ens_depth: f32,
-        ens_spread: f32,
-        ens_mix: f32,
-    ) -> f32 {
+    fn tick_full(&mut self, p: &KsRenderParams) -> f32 {
         // Read position: one ahead of write
         let read_pos = (self.write_pos + 1) % self.delay_len;
         let current = self.buffer[read_pos];
@@ -390,34 +394,34 @@ impl KsString {
         // Higher coeff = more averaging = darker sound.
         // damping=0 (bright): coeff=0.05 (barely any filtering)
         // damping=1 (dark): coeff=0.5 (heavy filtering, fast decay)
-        let coeff = 0.05 + damping * 0.45;
+        let coeff = 0.05 + p.damping * 0.45;
         let mut filtered = current * (1.0 - coeff) + next * coeff;
 
         // The 2-point average inherently decays the signal.
         // Apply a per-sample gain < 1.0 to control decay time.
         // decay=0 → gain=0.9990 (very long ring, ~7 seconds)
         // decay=1 → gain=0.9900 (short pluck, ~100ms)
-        let gain = 0.999 - decay * 0.009;
+        let gain = 0.999 - p.decay * 0.009;
         filtered *= gain;
 
         // Stiffness: mix with a sample from +7 offset (allpass-like dispersion)
-        if stiffness > 0.01 {
+        if p.stiffness > 0.01 {
             let stiff_pos = (read_pos + 7) % self.delay_len;
             let stiff_sample = self.buffer[stiff_pos];
-            filtered = filtered * (1.0 - stiffness) + stiff_sample * stiffness;
+            filtered = filtered * (1.0 - p.stiffness) + stiff_sample * p.stiffness;
         }
 
         // Body resonance: comb filter at half-delay
-        if body > 0.03 {
+        if p.body > 0.03 {
             let body_pos = (read_pos + self.delay_len / 2) % self.delay_len;
             let body_sample = self.buffer[body_pos];
-            filtered = filtered * (1.0 - body * 0.5) + body_sample * body * 0.5;
+            filtered = filtered * (1.0 - p.body * 0.5) + body_sample * p.body * 0.5;
         }
 
         // Feedback boost for sustain (adds energy back, fights decay)
         // Only at high values does it approach infinite sustain.
-        if feedback > 0.01 {
-            filtered += filtered * feedback * 0.3;
+        if p.feedback > 0.01 {
+            filtered += filtered * p.feedback * 0.3;
             filtered = filtered.clamp(-1.5, 1.5);
         }
 
@@ -427,8 +431,8 @@ impl KsString {
 
         // Ensemble: three read heads with LFO detuning
         let mut output = filtered;
-        if ens_mix > 0.01 && ens_depth > 0.01 {
-            let lfo_inc = ((ens_rate + 0.01) * 1000.0) as u32;
+        if p.ens_mix > 0.01 && p.ens_depth > 0.01 {
+            let lfo_inc = ((p.ens_rate + 0.01) * 1000.0) as u32;
             self.ens_lfo_phase = self.ens_lfo_phase.wrapping_add(lfo_inc);
 
             // Triangle LFO: 0..1..0..-1..0
@@ -439,8 +443,8 @@ impl KsString {
                 lfo_raw as f32 / 32768.0
             };
 
-            let offset2 = (lfo_val * ens_depth * self.delay_len as f32 * 0.05) as i32;
-            let offset3 = -offset2 + (ens_spread * self.delay_len as f32 * 0.02) as i32;
+            let offset2 = (lfo_val * p.ens_depth * self.delay_len as f32 * 0.05) as i32;
+            let offset3 = -offset2 + (p.ens_spread * self.delay_len as f32 * 0.02) as i32;
 
             let p2 = ((read_pos as i32 + offset2).rem_euclid(self.delay_len as i32)) as usize;
             let p3 = ((read_pos as i32 + offset3).rem_euclid(self.delay_len as i32)) as usize;
@@ -448,7 +452,7 @@ impl KsString {
             let head2 = self.buffer[p2];
             let head3 = self.buffer[p3];
 
-            output = filtered * (1.0 - ens_mix) + (head2 + head3) * 0.5 * ens_mix;
+            output = filtered * (1.0 - p.ens_mix) + (head2 + head3) * 0.5 * p.ens_mix;
         }
 
         output
@@ -641,12 +645,12 @@ impl ModalEngine {
         let mut harmonic = frequency;
         let mut stretch_factor = 1.0_f32;
 
-        for i in 0..num {
+        for filter in self.filters.iter_mut().take(num) {
             let partial_freq = (harmonic * stretch_factor).min(0.49);
 
             // Per-mode Q (Rings: 1.0 + partial_freq * q)
             let mode_q = 1.0 + partial_freq * q;
-            self.filters[i].set(partial_freq, mode_q);
+            filter.set(partial_freq, mode_q);
 
             // Accumulate stiffness with decay for negative values
             stretch_factor += stiffness;
@@ -753,18 +757,19 @@ impl ModalEngine {
                 params.decay,
             )
         };
+        let render_params = KsRenderParams {
+            damping: params.brightness,
+            decay,
+            body,
+            stiffness: stiff,
+            feedback: fb,
+            ens_rate: params.ks_ens_rate,
+            ens_depth: params.ks_ens_depth,
+            ens_spread: 0.3, // fixed for now
+            ens_mix: params.ks_ens_mix,
+        };
         for s in output.iter_mut() {
-            *s = self.string.tick_full(
-                params.brightness,
-                decay,
-                body,
-                stiff,
-                fb,
-                params.ks_ens_rate,  // ensemble rate
-                params.ks_ens_depth, // ensemble depth
-                0.3,                 // ensemble spread (fixed for now)
-                params.ks_ens_mix,   // ensemble mix
-            );
+            *s = self.string.tick_full(&render_params);
             *max_level = max_level.max(libm::fabsf(*s));
         }
     }
@@ -786,7 +791,8 @@ impl ModalEngine {
 
         for s in output.iter_mut() {
             // Read from delay line
-            let read_pos = (self.string.write_pos + MAX_STRING_DELAY - self.string.delay_len) % MAX_STRING_DELAY;
+            let read_pos = (self.string.write_pos + MAX_STRING_DELAY - self.string.delay_len)
+                % MAX_STRING_DELAY;
             let string_vel = self.string.buffer[read_pos];
 
             // Bow friction: stick-slip model.
@@ -829,19 +835,32 @@ impl ModalEngine {
         // Coupling gain: how much main string feeds into sympathetic
         let coupling = 0.025; // Rings uses 0.2 / num_strings
 
+        let main_params = KsRenderParams {
+            damping: params.brightness,
+            decay,
+            body,
+            stiffness: stiff,
+            feedback: fb,
+            ens_rate: params.ks_ens_rate,
+            ens_depth: params.ks_ens_depth,
+            ens_spread: 0.3,
+            ens_mix: params.ks_ens_mix,
+        };
+        let sym_params = KsRenderParams {
+            damping: params.brightness * 0.7, // darker
+            decay: decay * 0.5,               // slower decay
+            body: 0.0,
+            stiffness: 0.0,
+            feedback: 0.0, // no body/stiff/feedback
+            ens_rate: 0.0,
+            ens_depth: 0.0,
+            ens_spread: 0.0,
+            ens_mix: 0.0, // no ensemble
+        };
+
         for s in output.iter_mut() {
             // 1. Main string tick
-            let main_out = self.string.tick_full(
-                params.brightness,
-                decay,
-                body,
-                stiff,
-                fb,
-                params.ks_ens_rate,
-                params.ks_ens_depth,
-                0.3,
-                params.ks_ens_mix,
-            );
+            let main_out = self.string.tick_full(&main_params);
 
             // 2. Couple main string output into sympathetic strings
             let sym_input = main_out * coupling;
@@ -853,17 +872,7 @@ impl ModalEngine {
                 let wp = sym.write_pos;
                 sym.buffer[wp] += sym_input;
                 // Tick the sympathetic string (with gentler damping)
-                let sym_out = sym.tick_full(
-                    params.brightness * 0.7, // darker
-                    decay * 0.5,             // slower decay
-                    0.0,
-                    0.0,
-                    0.0, // no body/stiff/feedback
-                    0.0,
-                    0.0,
-                    0.0,
-                    0.0, // no ensemble
-                );
+                let sym_out = sym.tick_full(&sym_params);
                 sym_sum += sym_out;
             }
 
@@ -873,7 +882,6 @@ impl ModalEngine {
             *max_level = max_level.max(libm::fabsf(*s));
         }
     }
-
 }
 
 use super::note_to_freq;

@@ -4,7 +4,7 @@
 use chimera_core::dsp::engines::Engines;
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::voice::Voice;
-use chimera_core::hw::{Cost, AUDIO_CYCLE_BUDGET, MAX_VOICES};
+use chimera_core::hw::{AUDIO_CYCLE_BUDGET, Cost, MAX_VOICES};
 use chimera_core::params::EngineType;
 
 /// `docs/chimera-synth-design.md` § CPU Budget: FM ~610, Modal ~1,210 and
@@ -17,7 +17,11 @@ fn voice_costs_follow_the_design_table() {
     assert_eq!(Voice::cost(EngineType::Va), Cost(710));
     assert_eq!(Voice::cost(EngineType::Pizza), Cost(710));
     for e in EngineType::ALL {
-        assert_eq!(Voice::cost(e), Engines::cost(e) + Voice::CHAIN_COST, "{e:?}");
+        assert_eq!(
+            Voice::cost(e),
+            Engines::cost(e) + Voice::CHAIN_COST,
+            "{e:?}"
+        );
     }
 }
 

@@ -1,6 +1,6 @@
-use chimera_core::ui::region::{quantize, quantize_values, RegionData, RegionKind, RegionSet};
-use chimera_core::ui::page::{PageId, PageKey, PageLayout};
 use chimera_core::ui::animation::AnimatedValue;
+use chimera_core::ui::page::{PageId, PageKey, PageLayout};
+use chimera_core::ui::region::{RegionData, RegionSet, quantize, quantize_values};
 
 #[test]
 fn quantize_zero() {
@@ -46,7 +46,12 @@ fn region_data_diff_is_not_equal() {
 #[test]
 fn region_data_cell_values_differ() {
     let a = RegionData::cells(PageKey::Legacy(PageId::DemoWaves), [500; 6], 0, 0);
-    let b = RegionData::cells(PageKey::Legacy(PageId::DemoWaves), [501, 500, 500, 500, 500, 500], 0, 0);
+    let b = RegionData::cells(
+        PageKey::Legacy(PageId::DemoWaves),
+        [501, 500, 500, 500, 500, 500],
+        0,
+        0,
+    );
     assert_ne!(a, b);
 }
 
@@ -72,8 +77,13 @@ fn regions_tile_full_screen_big_viz() {
     assert_eq!(regions[0].y_start, 0);
     assert_eq!(regions[regions.len() - 1].y_end, 320);
     for i in 1..regions.len() {
-        assert_eq!(regions[i].y_start, regions[i - 1].y_end,
-            "gap between region {} and {}", i - 1, i);
+        assert_eq!(
+            regions[i].y_start,
+            regions[i - 1].y_end,
+            "gap between region {} and {}",
+            i - 1,
+            i
+        );
     }
 }
 
@@ -113,7 +123,15 @@ fn big_viz_region_kinds() {
     let mut rs = RegionSet::new();
     rs.set_layout(PageLayout::BigViz);
     let kinds: Vec<RegionKind> = rs.active_regions().iter().map(|r| r.kind).collect();
-    assert_eq!(kinds, vec![RegionKind::Header, RegionKind::Viz, RegionKind::Cells, RegionKind::Nav]);
+    assert_eq!(
+        kinds,
+        vec![
+            RegionKind::Header,
+            RegionKind::Viz,
+            RegionKind::Cells,
+            RegionKind::Nav
+        ]
+    );
 }
 
 #[test]
@@ -122,7 +140,16 @@ fn cell_grid_region_kinds() {
     let mut rs = RegionSet::new();
     rs.set_layout(PageLayout::CellGrid);
     let kinds: Vec<RegionKind> = rs.active_regions().iter().map(|r| r.kind).collect();
-    assert_eq!(kinds, vec![RegionKind::Header, RegionKind::Focus, RegionKind::Viz, RegionKind::Cells, RegionKind::Nav]);
+    assert_eq!(
+        kinds,
+        vec![
+            RegionKind::Header,
+            RegionKind::Focus,
+            RegionKind::Viz,
+            RegionKind::Cells,
+            RegionKind::Nav
+        ]
+    );
 }
 
 #[test]
@@ -146,7 +173,10 @@ fn encoder_only_dirties_params_not_header() {
         RegionData::nav(0, 0, 0, 0),
     ];
 
-    let dirty: Vec<bool> = rs.active_regions().iter().zip(current.iter())
+    let dirty: Vec<bool> = rs
+        .active_regions()
+        .iter()
+        .zip(current.iter())
         .map(|(r, c)| r.prev_data != *c)
         .collect();
 
@@ -173,7 +203,10 @@ fn nav_change_dirties_header_and_nav() {
         RegionData::nav(0, 1, 0, 0),
     ];
 
-    let dirty: Vec<bool> = rs.active_regions().iter().zip(current.iter())
+    let dirty: Vec<bool> = rs
+        .active_regions()
+        .iter()
+        .zip(current.iter())
         .map(|(r, c)| r.prev_data != *c)
         .collect();
 
@@ -200,7 +233,10 @@ fn no_change_means_no_dirty() {
         RegionData::nav(0, 0, 0, 0),
     ];
 
-    let any_dirty = rs.active_regions().iter().zip(current.iter())
+    let any_dirty = rs
+        .active_regions()
+        .iter()
+        .zip(current.iter())
         .any(|(r, c)| r.prev_data != *c);
 
     assert!(!any_dirty);
@@ -217,7 +253,10 @@ fn animation_settling_produces_dirty_then_clean() {
     anim[0].update();
     let v2 = quantize_values(&anim);
 
-    assert_ne!(v1, v2, "animation should produce different quantized values");
+    assert_ne!(
+        v1, v2,
+        "animation should produce different quantized values"
+    );
 
     for _ in 0..100 {
         anim[0].update();
@@ -227,5 +266,8 @@ fn animation_settling_produces_dirty_then_clean() {
     anim[0].update();
     let settled_b = quantize_values(&anim);
 
-    assert_eq!(settled_a, settled_b, "settled animation should produce stable values");
+    assert_eq!(
+        settled_a, settled_b,
+        "settled animation should produce stable values"
+    );
 }

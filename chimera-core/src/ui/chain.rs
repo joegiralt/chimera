@@ -1,14 +1,14 @@
-use chimera_hal::{ButtonId, ButtonState, Controls};
 use crate::preset::ChainType;
 use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2};
 use crate::ui::block_registry;
+use chimera_hal::{ButtonId, ButtonState, Controls};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ChainId {
-    Part(usize),    // 0-5 (B1-B6)
-    Mixer(usize),   // 0-5 (MIX + B1-B6, but MIX+B6 = Demo)
-    System,         // MENU
-    Demo,           // MIX + B6
+    Part(usize),  // 0-5 (B1-B6)
+    Mixer(usize), // 0-5 (MIX + B1-B6, but MIX+B6 = Demo)
+    System,       // MENU
+    Demo,         // MIX + B6
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -136,19 +136,17 @@ impl ChainNav {
         if controls.button_state(ButtonId::Seq) == ButtonState::Pressed && self.sub_page > 0 {
             self.sub_page -= 1;
         }
-        if controls.button_state(ButtonId::Edit) == ButtonState::Pressed {
-            if let Some(block) = self.active_chain_block() {
-                let count = block.sub_page_count();
-                if count > 0 && self.sub_page + 1 < count {
-                    self.sub_page += 1;
-                }
+        if controls.button_state(ButtonId::Edit) == ButtonState::Pressed
+            && let Some(block) = self.active_chain_block()
+        {
+            let count = block.sub_page_count();
+            if count > 0 && self.sub_page + 1 < count {
+                self.sub_page += 1;
             }
         }
 
         // Return whether position changed
-        self.chain_id != prev_chain_id
-            || self.node != prev_node
-            || self.sub_page != prev_sub
+        self.chain_id != prev_chain_id || self.node != prev_node || self.sub_page != prev_sub
     }
 }
 

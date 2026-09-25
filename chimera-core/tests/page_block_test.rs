@@ -42,7 +42,10 @@ fn legacy_bindings_name_semantic_addresses() {
         PageId::DemoFm.binding(1),
         Some(ParamAddr::new(BlockRef::FmOp(Op::A), FmOpParams::FEEDBACK))
     );
-    assert_eq!(PageId::DemoShapes.binding(1), Some(ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF)));
+    assert_eq!(
+        PageId::DemoShapes.binding(1),
+        Some(ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF))
+    );
     assert_eq!(PageId::DemoMatrix.binding(0), None);
     // Spec §5: System has its own page with no editable params.
     for i in 0..6 {
@@ -54,8 +57,15 @@ fn legacy_bindings_name_semantic_addresses() {
 #[test]
 fn every_legacy_binding_has_a_spec() {
     let pages = [
-        PageId::EnvAmp, PageId::EnvFilter, PageId::EnvAux, PageId::DemoWaves, PageId::DemoShapes,
-        PageId::DemoMotion, PageId::DemoFm, PageId::DemoMatrix, PageId::System,
+        PageId::EnvAmp,
+        PageId::EnvFilter,
+        PageId::EnvAux,
+        PageId::DemoWaves,
+        PageId::DemoShapes,
+        PageId::DemoMotion,
+        PageId::DemoFm,
+        PageId::DemoMatrix,
+        PageId::System,
     ];
     for page in pages {
         for i in 0..6 {

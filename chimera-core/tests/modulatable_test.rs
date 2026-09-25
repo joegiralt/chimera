@@ -70,8 +70,15 @@ fn every_modulatable_param_audibly_changes_output() {
             let base = recipe(block);
             let dry = render(&base, &ModState::new());
             let wet = render(&base, &lfo_route(addr));
-            let diff = dry.iter().zip(&wet).fold(0.0f32, |m, (a, b)| m.max((a - b).abs()));
-            assert!(diff > 1e-4, "{block:?}.{}: LFO route changes nothing (max diff {diff})", spec.label);
+            let diff = dry
+                .iter()
+                .zip(&wet)
+                .fold(0.0f32, |m, (a, b)| m.max((a - b).abs()));
+            assert!(
+                diff > 1e-4,
+                "{block:?}.{}: LFO route changes nothing (max diff {diff})",
+                spec.label
+            );
             checked += 1;
         }
     }

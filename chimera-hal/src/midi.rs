@@ -65,9 +65,17 @@ impl MidiParser {
             0x90 => {
                 let note = MidiNote::new(self.data[0])?;
                 match Velocity::new(self.data[1]) {
-                    Some(velocity) => Some(MidiMessage::NoteOn { channel, note, velocity }),
+                    Some(velocity) => Some(MidiMessage::NoteOn {
+                        channel,
+                        note,
+                        velocity,
+                    }),
                     // Note-on with velocity 0 is a note-off (MIDI 1.0 spec).
-                    None => Some(MidiMessage::NoteOff { channel, note, velocity: 0 }),
+                    None => Some(MidiMessage::NoteOff {
+                        channel,
+                        note,
+                        velocity: 0,
+                    }),
                 }
             }
             0x80 => Some(MidiMessage::NoteOff {

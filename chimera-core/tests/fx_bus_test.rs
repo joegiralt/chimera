@@ -2,7 +2,7 @@
 //! once on the sum of the parts' sends; the return is the sum of the wet
 //! outputs of the effects that are on (send/return: no dry signal).
 
-use chimera_core::dsp::fx_bus::{FxBus, FxParams, FX_SENDS};
+use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
 use chimera_core::dsp::reverb::Reverb;
 use chimera_hal::BLOCK_SIZE;
 
@@ -37,8 +37,18 @@ fn effects_that_are_off_return_nothing() {
 fn return_is_wet_only() {
     use chimera_core::dsp::chorus::{ChorusParams, JunoChorus};
     use chimera_core::dsp::delay::{DelayParams, TapeDelay};
-    let chorus = ChorusParams { mode: 3, rate: 0.5, depth: 0.5, mix: 0.5 };
-    let delay = DelayParams { time_ms: 1.0, feedback: 0.6, mix: 0.5, ..DelayParams::default() };
+    let chorus = ChorusParams {
+        mode: 3,
+        rate: 0.5,
+        depth: 0.5,
+        mix: 0.5,
+    };
+    let delay = DelayParams {
+        time_ms: 1.0,
+        feedback: 0.6,
+        mix: 0.5,
+        ..DelayParams::default()
+    };
     let mut p = FxParams::default();
     p.reverb.mix = 0.5;
     p.reverb.time = 0.7;
@@ -50,7 +60,11 @@ fn return_is_wet_only() {
             _ => params.reverb = p.reverb,
         }
         let mut bus = Box::new(FxBus::new());
-        let (mut c, mut d, mut r) = (Box::new(JunoChorus::new()), Box::new(TapeDelay::new()), Box::new(Reverb::new()));
+        let (mut c, mut d, mut r) = (
+            Box::new(JunoChorus::new()),
+            Box::new(TapeDelay::new()),
+            Box::new(Reverb::new()),
+        );
         let mut leaked = 0.0f32;
         for b in 0..80 {
             let input = if b < 4 { burst() } else { [0.0; BLOCK_SIZE] };
@@ -66,7 +80,11 @@ fn return_is_wet_only() {
             }
             for i in 0..BLOCK_SIZE {
                 let wet = alone[i] - input[i] * dry_gain;
-                assert!((ret[i] - wet).abs() < 1e-6, "effect {slot} block {b} sample {i}: {} vs {wet}", ret[i]);
+                assert!(
+                    (ret[i] - wet).abs() < 1e-6,
+                    "effect {slot} block {b} sample {i}: {} vs {wet}",
+                    ret[i]
+                );
                 leaked = leaked.max(ret[i].abs());
             }
         }

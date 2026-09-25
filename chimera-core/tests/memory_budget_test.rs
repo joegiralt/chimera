@@ -12,8 +12,16 @@ use chimera_core::hw;
 #[test]
 fn voice_pool_fits_d2() {
     let size = size_of::<[Voice; hw::MAX_VOICES]>();
-    eprintln!("[Voice; {}] = {size} B, budget {} B", hw::MAX_VOICES, hw::VOICE_RAM_BUDGET);
-    assert!(size <= hw::VOICE_RAM_BUDGET, "[Voice; {}] = {size} B", hw::MAX_VOICES);
+    eprintln!(
+        "[Voice; {}] = {size} B, budget {} B",
+        hw::MAX_VOICES,
+        hw::VOICE_RAM_BUDGET
+    );
+    assert!(
+        size <= hw::VOICE_RAM_BUDGET,
+        "[Voice; {}] = {size} B",
+        hw::MAX_VOICES
+    );
 }
 
 /// ADR 0014: Modal's string buffers hold the period of E1 (MIDI 28, 41.2 Hz)
@@ -22,8 +30,11 @@ fn voice_pool_fits_d2() {
 fn modal_strings_cover_e1_and_no_lower() {
     let period = |n: u8| (hw::SAMPLE_RATE as f32 / note_to_freq(n)) as usize;
     assert_eq!(period(28), 1164);
-    assert!(period(28) <= MAX_STRING_DELAY - 1, "E1 must not clamp");
-    assert!(period(27) > MAX_STRING_DELAY - 1, "buffer is larger than E1 needs");
+    assert!(period(28) < MAX_STRING_DELAY, "E1 must not clamp");
+    assert!(
+        period(27) > MAX_STRING_DELAY - 1,
+        "buffer is larger than E1 needs"
+    );
 }
 
 #[test]
@@ -39,7 +50,7 @@ fn fx_bus_fits_its_axi_share() {
 #[test]
 fn axi_residents_fit() {
     use chimera_core::dsp::fx_bus::FxBus;
-    use chimera_core::instrument::{AudioShared, AXI_RESIDENT};
+    use chimera_core::instrument::{AXI_RESIDENT, AudioShared};
     use chimera_core::preset::{Performance, SoundPool};
     let parts = [
         ("framebuffer", hw::FB_BYTES),
@@ -73,7 +84,14 @@ fn instrument_fits_d2() {
 #[test]
 fn ui_state_fits_the_ui_reserve() {
     use chimera_core::preset::{Performance, SoundPool};
-    let rest = size_of::<chimera_core::ui::UiState>() - size_of::<Performance>() - size_of::<SoundPool>();
-    eprintln!("UiState without Performance and SoundPool = {rest} B, reserve {} B", hw::UI_RESERVE);
-    assert!(rest <= 2 * 1024, "UiState grew to {rest} B besides its Performance and SoundPool");
+    let rest =
+        size_of::<chimera_core::ui::UiState>() - size_of::<Performance>() - size_of::<SoundPool>();
+    eprintln!(
+        "UiState without Performance and SoundPool = {rest} B, reserve {} B",
+        hw::UI_RESERVE
+    );
+    assert!(
+        rest <= 2 * 1024,
+        "UiState grew to {rest} B besides its Performance and SoundPool"
+    );
 }

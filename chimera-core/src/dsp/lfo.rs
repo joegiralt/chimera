@@ -1,5 +1,5 @@
-/// LFO — Low Frequency Oscillator for modulation.
-/// Outputs -1.0 to +1.0 (bipolar) at sub-audio rates.
+//! LFO — Low Frequency Oscillator for modulation.
+//! Outputs -1.0 to +1.0 (bipolar) at sub-audio rates.
 
 use crate::block::{Block, ParamId, ParamSpec, ValFmt};
 use crate::dsp::fast_sin;
@@ -11,7 +11,7 @@ pub enum LfoShape {
     Triangle = 1,
     Saw = 2,
     Square = 3,
-    Random = 4,  // sample & hold
+    Random = 4, // sample & hold
 }
 
 impl LfoShape {
@@ -47,12 +47,12 @@ pub struct LfoParams {
 impl Default for LfoParams {
     fn default() -> Self {
         Self {
-            rate: 1.0,       // 1 Hz
-            shape: 0,        // sine
-            sync: 0,         // free-running
+            rate: 1.0, // 1 Hz
+            shape: 0,  // sine
+            sync: 0,   // free-running
             phase_offset: 0.0,
-            depth: 1.0,      // full depth
-            offset: 0.0,     // centered (bipolar)
+            depth: 1.0,  // full depth
+            offset: 0.0, // centered (bipolar)
         }
     }
 }
@@ -153,9 +153,7 @@ impl Lfo {
 
         // Compute raw waveform from phase (0.0 to 1.0)
         let raw = match shape {
-            LfoShape::Sine => {
-                fast_sin(self.phase * core::f32::consts::TAU)
-            }
+            LfoShape::Sine => fast_sin(self.phase * core::f32::consts::TAU),
             LfoShape::Triangle => {
                 // 0→1→0→-1→0 over one cycle
                 let t = self.phase;
@@ -172,7 +170,11 @@ impl Lfo {
                 self.phase * 2.0 - 1.0
             }
             LfoShape::Square => {
-                if self.phase < 0.5 { 1.0 } else { -1.0 }
+                if self.phase < 0.5 {
+                    1.0
+                } else {
+                    -1.0
+                }
             }
             LfoShape::Random => {
                 self.random_value // held until phase wraps

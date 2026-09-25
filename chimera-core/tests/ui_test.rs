@@ -1,9 +1,9 @@
-use chimera_core::ui::animation::AnimatedValue;
-use chimera_core::ui::chain::{ChainId, ChainNav};
-use chimera_core::ui::fmt::{FmtBuf, fmt_val};
 use chimera_core::addr::Op;
+use chimera_core::ui::animation::AnimatedValue;
 use chimera_core::ui::block_def::BlockDef;
 use chimera_core::ui::block_registry as reg;
+use chimera_core::ui::chain::{ChainId, ChainNav};
+use chimera_core::ui::fmt::{FmtBuf, fmt_val};
 use chimera_core::ui::page::{PageId, PageKey, ValFmt};
 
 // -- ValFmt --
@@ -147,7 +147,10 @@ fn test_animated_value_moves_toward_target() {
 // -- Chain navigation --
 
 fn part(def: &BlockDef) -> PageKey {
-    PageKey::Part { def: def.id, op: Op::A }
+    PageKey::Part {
+        def: def.id,
+        op: Op::A,
+    }
 }
 
 #[test]
@@ -162,7 +165,13 @@ fn test_chain_nav_starts_at_part0_engine() {
 #[test]
 fn test_page_from_nav_part_chain() {
     let mut nav = ChainNav::new();
-    for (node, def) in [(0, &reg::PIZZA), (1, &reg::DRIVE), (2, &reg::FILTER), (3, &reg::FOLDER), (4, &reg::MOD_MATRIX)] {
+    for (node, def) in [
+        (0, &reg::PIZZA),
+        (1, &reg::DRIVE),
+        (2, &reg::FILTER),
+        (3, &reg::FOLDER),
+        (4, &reg::MOD_MATRIX),
+    ] {
         nav.node = node;
         assert_eq!(PageKey::from_nav(&nav, Op::A), part(def), "node {node}");
     }
@@ -171,7 +180,10 @@ fn test_page_from_nav_part_chain() {
     nav.sub_page = 2;
     assert_eq!(PageKey::from_nav(&nav, Op::A), part(&reg::LFO)); // LFO at sub_page 2
     // The operator selection is part of a Part page's identity.
-    assert_ne!(PageKey::from_nav(&nav, Op::B), PageKey::from_nav(&nav, Op::A));
+    assert_ne!(
+        PageKey::from_nav(&nav, Op::B),
+        PageKey::from_nav(&nav, Op::A)
+    );
 }
 
 #[test]
@@ -179,11 +191,20 @@ fn test_page_from_nav_demo_chain() {
     let mut nav = ChainNav::new();
     nav.chain_id = ChainId::Demo;
     nav.node = 0;
-    assert_eq!(PageKey::from_nav(&nav, Op::A), PageKey::Legacy(PageId::DemoWaves));
+    assert_eq!(
+        PageKey::from_nav(&nav, Op::A),
+        PageKey::Legacy(PageId::DemoWaves)
+    );
     nav.node = 1;
-    assert_eq!(PageKey::from_nav(&nav, Op::A), PageKey::Legacy(PageId::DemoShapes));
+    assert_eq!(
+        PageKey::from_nav(&nav, Op::A),
+        PageKey::Legacy(PageId::DemoShapes)
+    );
     nav.node = 2;
-    assert_eq!(PageKey::from_nav(&nav, Op::A), PageKey::Legacy(PageId::DemoMotion));
+    assert_eq!(
+        PageKey::from_nav(&nav, Op::A),
+        PageKey::Legacy(PageId::DemoMotion)
+    );
 }
 
 /// Spec §5: System gets its own page (it used to alias the Pizza page).
@@ -191,7 +212,10 @@ fn test_page_from_nav_demo_chain() {
 fn test_system_chain_has_its_own_page() {
     let mut nav = ChainNav::new();
     nav.chain_id = ChainId::System;
-    assert_eq!(PageKey::from_nav(&nav, Op::A), PageKey::Legacy(PageId::System));
+    assert_eq!(
+        PageKey::from_nav(&nav, Op::A),
+        PageKey::Legacy(PageId::System)
+    );
 }
 
 // -- BlockDef registry: format coverage --
@@ -202,8 +226,8 @@ fn test_drive_block_formats_in_registry() {
     use chimera_core::ui::page::ValFmt;
     let def = &block_registry::DRIVE;
     assert_eq!(def.params[0].format(), ValFmt::Uni); // DRIVE
-    assert_eq!(def.params[1].format(), ValFmt::Bi);  // TONE
-    assert_eq!(def.params[2].format(), ValFmt::Bi);  // MIX
+    assert_eq!(def.params[1].format(), ValFmt::Bi); // TONE
+    assert_eq!(def.params[2].format(), ValFmt::Bi); // MIX
 }
 
 #[test]
@@ -238,7 +262,13 @@ fn test_fmt_one_based() {
 #[test]
 fn test_fmt_names() {
     const NAMES: ValFmt = ValFmt::Names(&["P1", "P2", "P3"]);
-    for (v, want) in [(0.0, "P1"), (0.5, "P2"), (0.74, "P2"), (1.0, "P3"), (1.5, "P3")] {
+    for (v, want) in [
+        (0.0, "P1"),
+        (0.5, "P2"),
+        (0.74, "P2"),
+        (1.0, "P3"),
+        (1.5, "P3"),
+    ] {
         let mut buf = FmtBuf::new();
         fmt_val(&mut buf, v, NAMES);
         assert_eq!(buf.as_str(), want, "{v}");
@@ -254,7 +284,13 @@ fn test_fmt_names() {
 
 #[test]
 fn test_fmt_pan_left_centre_right() {
-    for (v, want) in [(0.0, "L64"), (0.25, "L32"), (0.5, "C"), (0.75, "R31"), (1.0, "R63")] {
+    for (v, want) in [
+        (0.0, "L64"),
+        (0.25, "L32"),
+        (0.5, "C"),
+        (0.75, "R31"),
+        (1.0, "R63"),
+    ] {
         let mut buf = FmtBuf::new();
         fmt_val(&mut buf, v, ValFmt::Pan);
         assert_eq!(buf.as_str(), want, "{v}");
@@ -278,8 +314,8 @@ fn test_discrete_formats_are_choices() {
 
 #[test]
 fn test_part_and_out_pan_use_the_pan_format() {
-    use chimera_core::part::PART_SPECS;
     use chimera_core::params::OUT_SPECS;
+    use chimera_core::part::PART_SPECS;
     assert_eq!(PART_SPECS[4].fmt, ValFmt::Pan);
     assert_eq!(OUT_SPECS[1].fmt, ValFmt::Pan);
 }

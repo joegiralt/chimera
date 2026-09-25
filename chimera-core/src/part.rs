@@ -2,9 +2,9 @@
 //! channel it listens on, Mono/Poly, the DAC pair it plays out of, level,
 //! pan and FX sends. One `Block`, so it gets pages and snap like any other.
 
+use crate::MidiChannel;
 use crate::block::{Block, ParamId, ParamSpec, ValFmt};
 use crate::dsp::fx_bus::FX_SENDS;
-use crate::MidiChannel;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]

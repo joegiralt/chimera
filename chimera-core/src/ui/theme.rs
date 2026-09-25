@@ -2,7 +2,7 @@
 //! Dark ground, warm greys, one accent for the active element.
 
 use embedded_graphics::pixelcolor::Rgb565;
-use u8g2_fonts::{fonts, FontRenderer};
+use u8g2_fonts::{FontRenderer, fonts};
 
 // --- Palette (mockup hex → RGB565) ---
 
@@ -78,6 +78,9 @@ pub const VIZ_BAND_MID: i32 = 152;
 pub const VIZ_BAND_AMP: i32 = 24;
 /// Large viz on BigViz pages: 28..186.
 pub const BIGVIZ_BOTTOM: i32 = 186;
+/// Baseline of the prime-status line on BigViz pages: in the strip between
+/// the header and the plot (`viz::PLOT_TOP`).
+pub const BIGVIZ_STATUS_Y: i32 = 39;
 pub const VIZ_LEFT: i32 = 12;
 pub const VIZ_RIGHT: i32 = 228;
 

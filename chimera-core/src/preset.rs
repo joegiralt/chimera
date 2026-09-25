@@ -77,6 +77,12 @@ pub struct SoundPool {
     slots: [Option<Sound>; POOL_SIZE],
 }
 
+impl Default for SoundPool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SoundPool {
     pub fn new() -> Self {
         Self {
@@ -159,14 +165,20 @@ impl Performance {
     pub fn new() -> Self {
         Self {
             name: *b"New Performance\0",
-            parts: core::array::from_fn(|i| Part { mix: PartParams::for_part(i), ..Part::new(ChainType::PizzaPoly) }),
+            parts: core::array::from_fn(|i| Part {
+                mix: PartParams::for_part(i),
+                ..Part::new(ChainType::PizzaPoly)
+            }),
             fx: FxParams::default(),
         }
     }
 
     /// Part `part` as the pages edit it: its Sound plus the shared FX.
     pub fn edit(&mut self, part: usize) -> PartEdit<'_> {
-        PartEdit { part: &mut self.parts[part], fx: &mut self.fx }
+        PartEdit {
+            part: &mut self.parts[part],
+            fx: &mut self.fx,
+        }
     }
 }
 

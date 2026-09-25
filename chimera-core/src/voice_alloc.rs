@@ -15,9 +15,9 @@
 //! A Sound change re-costs sounding voices (`recost`); `shed` then cuts the
 //! newest voices until the pool is back within the budget.
 
-use crate::hw::{Cost, AUDIO_CYCLE_BUDGET, MAX_VOICES};
-use crate::part::PartMode;
 use crate::MidiNote;
+use crate::hw::{AUDIO_CYCLE_BUDGET, Cost, MAX_VOICES};
+use crate::part::PartMode;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct VoiceSlot {
@@ -76,7 +76,12 @@ impl Default for Allocator {
 
 impl Allocator {
     pub fn new() -> Self {
-        Self { slots: [VoiceSlot::default(); MAX_VOICES], clock: 0, rr: 0, refused: 0 }
+        Self {
+            slots: [VoiceSlot::default(); MAX_VOICES],
+            clock: 0,
+            rr: 0,
+            refused: 0,
+        }
     }
 
     pub fn slots(&self) -> &[VoiceSlot; MAX_VOICES] {
@@ -96,7 +101,14 @@ impl Allocator {
     /// Allocate a voice for `note` on `part`. `cost` is the voice's
     /// cycles/sample; `reserved` is what is spent outside the pool (the FX
     /// bus). The pool's own sounding cost is tracked here, per slot.
-    pub fn note_on(&mut self, part: u8, mode: PartMode, note: MidiNote, cost: Cost, reserved: Cost) -> Alloc {
+    pub fn note_on(
+        &mut self,
+        part: u8,
+        mode: PartMode,
+        note: MidiNote,
+        cost: Cost,
+        reserved: Cost,
+    ) -> Alloc {
         let v = match self.pick(part, mode, cost, reserved) {
             Some(v) => v,
             None => {
@@ -165,12 +177,17 @@ impl Allocator {
         };
         // Rule 1: a Mono part retriggers the voice it owns.
         if mode == PartMode::Mono
-            && let Some(v) = self.slots.iter().position(|s| s.mono && s.part == Some(part))
+            && let Some(v) = self
+                .slots
+                .iter()
+                .position(|s| s.mono && s.part == Some(part))
         {
             return fits(self.slots[v].cost).then_some(v);
         }
         // Rule 2: a free voice, round-robin — if it fits the budget.
-        let free = (0..MAX_VOICES).map(|i| (self.rr + i) % MAX_VOICES).find(|&v| self.slots[v].is_free());
+        let free = (0..MAX_VOICES)
+            .map(|i| (self.rr + i) % MAX_VOICES)
+            .find(|&v| self.slots[v].is_free());
         if let Some(v) = free
             && fits(Cost::ZERO)
         {

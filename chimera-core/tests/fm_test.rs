@@ -1,12 +1,12 @@
-use chimera_core::{MidiNote, Velocity};
+use chimera_core::dsp::engine_fm::{FmEngine, FmOpSettings, FmOperator};
 use chimera_core::dsp::envelope_fm::FmEnvelope;
-use chimera_core::dsp::engine_fm::{FmEngine, FmOperator, FmOpSettings};
 use chimera_core::dsp::fm_tables;
 use chimera_core::dsp::fm_waveform;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::modulation::ModState;
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::preset::{ChainType, Sound};
+use chimera_core::{MidiNote, Velocity};
 
 #[test]
 fn ratio_table_unity() {
@@ -100,7 +100,7 @@ fn all_waveforms_bounded() {
             let phase = i as f32 / 1024.0;
             let v = fm_waveform::compute(w, phase);
             assert!(v.is_finite(), "w={w} phase={phase}");
-            assert!(v >= -2.0 && v <= 2.0, "w={w} phase={phase} v={v}");
+            assert!((-2.0..=2.0).contains(&v), "w={w} phase={phase} v={v}");
         }
     }
 }
@@ -153,9 +153,19 @@ fn fm_envelope_d1l_zero_decays_to_silence() {
 fn fm_operator_produces_sound() {
     let mut op = FmOperator::new();
     let settings = FmOpSettings {
-        waveform: 0, coarse: 4, fine: 0, level: 99,
-        feedback: 0, detune: 0, velocity_sens: 0,
-        ar: 31, d1r: 0, d1l: 15, d2r: 0, rr: 15, rate_scaling: 0,
+        waveform: 0,
+        coarse: 4,
+        fine: 0,
+        level: 99,
+        feedback: 0,
+        detune: 0,
+        velocity_sens: 0,
+        ar: 31,
+        d1r: 0,
+        d1l: 15,
+        d2r: 0,
+        rr: 15,
+        rate_scaling: 0,
     };
     op.note_on(69, 1.0, &settings, 48000.0);
     let zeros = [0.0f32; 1024];
@@ -168,9 +178,19 @@ fn fm_operator_produces_sound() {
 #[test]
 fn fm_operator_modulation_changes_timbre() {
     let settings = FmOpSettings {
-        waveform: 0, coarse: 4, fine: 0, level: 99,
-        feedback: 0, detune: 0, velocity_sens: 0,
-        ar: 31, d1r: 0, d1l: 15, d2r: 0, rr: 15, rate_scaling: 0,
+        waveform: 0,
+        coarse: 4,
+        fine: 0,
+        level: 99,
+        feedback: 0,
+        detune: 0,
+        velocity_sens: 0,
+        ar: 31,
+        d1r: 0,
+        d1l: 15,
+        d2r: 0,
+        rr: 15,
+        rate_scaling: 0,
     };
 
     // Clean (no modulation)
@@ -187,16 +207,30 @@ fn fm_operator_modulation_changes_timbre() {
     let mut modded = [0.0f32; 1024];
     op2.run(&modulator, &mut modded);
 
-    let diff: f32 = clean.iter().zip(modded.iter()).map(|(a, b)| (a - b).abs()).sum::<f32>();
+    let diff: f32 = clean
+        .iter()
+        .zip(modded.iter())
+        .map(|(a, b)| (a - b).abs())
+        .sum::<f32>();
     assert!(diff > 1.0, "modulation should change output");
 }
 
 #[test]
 fn fm_operator_feedback_adds_harmonics() {
     let mut settings = FmOpSettings {
-        waveform: 0, coarse: 4, fine: 0, level: 99,
-        feedback: 0, detune: 0, velocity_sens: 0,
-        ar: 31, d1r: 0, d1l: 15, d2r: 0, rr: 15, rate_scaling: 0,
+        waveform: 0,
+        coarse: 4,
+        fine: 0,
+        level: 99,
+        feedback: 0,
+        detune: 0,
+        velocity_sens: 0,
+        ar: 31,
+        d1r: 0,
+        d1l: 15,
+        d2r: 0,
+        rr: 15,
+        rate_scaling: 0,
     };
 
     // No feedback
@@ -213,7 +247,11 @@ fn fm_operator_feedback_adds_harmonics() {
     let mut fb = [0.0f32; 2048];
     op2.run(&zeros, &mut fb);
 
-    let diff: f32 = clean.iter().zip(fb.iter()).map(|(a, b)| (a - b).abs()).sum::<f32>();
+    let diff: f32 = clean
+        .iter()
+        .zip(fb.iter())
+        .map(|(a, b)| (a - b).abs())
+        .sum::<f32>();
     assert!(diff > 1.0, "feedback should change timbre");
 }
 
@@ -263,8 +301,11 @@ fn fm_all_algorithms_produce_different_output() {
         results[alg as usize] = (buf.iter().map(|x| x * x).sum::<f32>() / 2048.0).sqrt();
     }
     let first = results[0];
-    assert!(results.iter().any(|&r| (r - first).abs() > 0.001),
-        "all algorithms should not be identical: {:?}", results);
+    assert!(
+        results.iter().any(|&r| (r - first).abs() > 0.001),
+        "all algorithms should not be identical: {:?}",
+        results
+    );
 }
 
 #[test]
@@ -294,7 +335,11 @@ fn fm_init_patch_is_audible() {
     let sound = Sound::init(ChainType::Fm);
     assert_eq!(sound.params.engine(), EngineType::Fm);
     let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
-    voice.note_on(MidiNote::new(69).unwrap(), Velocity::new(100).unwrap(), &sound.params);
+    voice.note_on(
+        MidiNote::new(69).unwrap(),
+        Velocity::new(100).unwrap(),
+        &sound.params,
+    );
     let mut buf = [0.0f32; 64];
     let mod_state = ModState::default();
     // Render 16 blocks (64 * 16 = 1024 samples) to accumulate energy
@@ -323,7 +368,11 @@ fn voice_fm_produces_sound() {
     let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
     let params = ParamSnapshot::for_engine(EngineType::Fm);
     // Op1 already has level=99 from FmParams default
-    voice.note_on(MidiNote::new(69).unwrap(), Velocity::new(100).unwrap(), &params);
+    voice.note_on(
+        MidiNote::new(69).unwrap(),
+        Velocity::new(100).unwrap(),
+        &params,
+    );
     let mut buf = [0.0f32; 64];
     let mod_state = ModState::default();
     voice.render(&mut buf, &params, &mod_state);
@@ -339,7 +388,11 @@ fn voice_fm_output_finite() {
         op.level = 99.0;
         op.feedback = 7.0;
     }
-    voice.note_on(MidiNote::new(69).unwrap(), Velocity::new(127).unwrap(), &params);
+    voice.note_on(
+        MidiNote::new(69).unwrap(),
+        Velocity::new(127).unwrap(),
+        &params,
+    );
     let mut buf = [0.0f32; 64];
     let mod_state = ModState::default();
     // Render many blocks to stress-test

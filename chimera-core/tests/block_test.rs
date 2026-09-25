@@ -1,6 +1,6 @@
 //! `Block` trait semantics (spec §1) and per-block conformance.
 
-use chimera_core::block::{apply_offset, Block, ParamId, ParamKind, ParamSpec, ValFmt};
+use chimera_core::block::{Block, ParamId, ParamKind, ParamSpec, ValFmt, apply_offset};
 use chimera_core::dsp::pizza::PizzaParams;
 
 /// A block with one param of each kind.
@@ -81,7 +81,11 @@ fn set_rounds_stepped_and_enum() {
 
 #[test]
 fn nudge_moves_by_spec_step_and_clamps() {
-    let mut p = Probe { c: 0.0, s: 5.0, e: 0 };
+    let mut p = Probe {
+        c: 0.0,
+        s: 5.0,
+        e: 0,
+    };
     p.nudge(C, 2);
     assert_eq!(p.c, 0.5);
     p.nudge(S, -1);
@@ -125,7 +129,11 @@ fn unknown_id_is_inert() {
 
 #[test]
 fn apply_offset_is_the_old_formula_and_never_rounds() {
-    let mut p = Probe { c: 0.0, s: 5.0, e: 0 };
+    let mut p = Probe {
+        c: 0.0,
+        s: 5.0,
+        e: 0,
+    };
     apply_offset(&mut p, S, 0.03);
     assert_eq!(p.s, (5.0f32 + 0.03f32 * (10.0 - 0.0)).clamp(0.0, 10.0));
     assert_ne!(p.s, 5.0); // fractional: Stepped modulation is not rounded
@@ -140,14 +148,24 @@ fn apply_offset_is_the_old_formula_and_never_rounds() {
 /// Every spec's `default` equals the values struct's `Default` (Global Constraints).
 fn assert_defaults(name: &str, b: &dyn Block) {
     for s in b.specs() {
-        assert_eq!(b.get(s.id), s.default, "{name}.{}: Default vs spec default", s.label);
+        assert_eq!(
+            b.get(s.id),
+            s.default,
+            "{name}.{}: Default vs spec default",
+            s.label
+        );
     }
 }
 
 /// `get` returns what `set` stored at both ends; out-of-range input clamps.
 fn assert_roundtrip(name: &str, b: &mut dyn Block) {
     for s in b.specs() {
-        for (input, want) in [(s.max, s.max), (s.min, s.min), (s.max + 1000.0, s.max), (s.min - 1000.0, s.min)] {
+        for (input, want) in [
+            (s.max, s.max),
+            (s.min, s.min),
+            (s.max + 1000.0, s.max),
+            (s.min - 1000.0, s.min),
+        ] {
             b.set(s.id, input);
             assert_eq!(b.get(s.id), want, "{name}.{}: set({input})", s.label);
         }
@@ -183,7 +201,10 @@ fn filter_conforms() {
 #[test]
 fn snapshot_filter_starts_open() {
     assert_eq!(chimera_core::params::FilterParams::default().cutoff, 1000.0);
-    assert_eq!(chimera_core::params::ParamSnapshot::default().filter.cutoff, 20000.0);
+    assert_eq!(
+        chimera_core::params::ParamSnapshot::default().filter.cutoff,
+        20000.0
+    );
 }
 
 #[test]
@@ -213,7 +234,11 @@ fn fm_conforms() {
 fn fm_settings_truncate_fractional_level() {
     use chimera_core::dsp::engine_fm::FmOpSettings;
     use chimera_core::params::FmOpParams;
-    let op = FmOpParams { level: 50.7, feedback: 6.9, ..FmOpParams::default() };
+    let op = FmOpParams {
+        level: 50.7,
+        feedback: 6.9,
+        ..FmOpParams::default()
+    };
     let s = FmOpSettings::from_params(&op);
     assert_eq!((s.level, s.feedback), (50, 6));
 }
@@ -239,15 +264,27 @@ fn fx_conform() {
 /// −64 → −44 → 0 → +43 → +63 and back.
 #[test]
 fn snap_walks_bipolar_points_both_ways() {
-    let mut p = Probe { c: -1.0, s: 0.0, e: 0 };
+    let mut p = Probe {
+        c: -1.0,
+        s: 0.0,
+        e: 0,
+    };
     let up = [20.0 / 127.0, 64.0 / 127.0, 107.0 / 127.0, 1.0];
     for want in up {
         p.snap(C, 1);
-        assert!((p.normalized(C) - want).abs() < 0.01, "up: {} vs {want}", p.normalized(C));
+        assert!(
+            (p.normalized(C) - want).abs() < 0.01,
+            "up: {} vs {want}",
+            p.normalized(C)
+        );
     }
     for want in [107.0 / 127.0, 64.0 / 127.0, 20.0 / 127.0, 0.0] {
         p.snap(C, -1);
-        assert!((p.normalized(C) - want).abs() < 0.01, "down: {} vs {want}", p.normalized(C));
+        assert!(
+            (p.normalized(C) - want).abs() < 0.01,
+            "down: {} vs {want}",
+            p.normalized(C)
+        );
     }
 }
 
