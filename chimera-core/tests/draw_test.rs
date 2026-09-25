@@ -99,6 +99,51 @@ fn pill_stays_inside_its_box() {
     assert_ne!(fb.at(50, 276), theme::ACCENT, "rounded corner");
 }
 
+/// Ink pixels within a generous band around baseline `y` -- the label
+/// font's whole glyph height (`focus_font_is_large_and_label_font_small`
+/// above: <= 8 px ascent, plus a couple rows for descenders/rounding).
+fn ink_columns(fb: &Fb, y: i32, color: Rgb565) -> Vec<i32> {
+    (0..240).filter(|&x| (y - 9..=y + 2).any(|yy| fb.at(x, yy) == color)).collect()
+}
+
+/// `text_right` has no box parameter to clip to -- it just runs long to the
+/// left when `s` is wider than the space the caller meant to give it. It
+/// must still end at `right`, not shift or clip.
+#[test]
+fn text_right_still_ends_at_the_boundary_when_wider_than_the_box() {
+    let mut fb = Fb::new();
+    let s = "AN OVERFLOWING LABEL";
+    let (right, y) = (100, 40);
+    let w = draw::text_width(&theme::FONT_LABEL, s, 0);
+    assert!(w > 60, "fixture must be wider than a typical 60px box: {w}");
+    draw::text_right(&mut fb, &theme::FONT_LABEL, s, right, y, theme::INK, 0);
+    let xs = ink_columns(&fb, y, theme::INK);
+    assert!(!xs.is_empty(), "text must draw something");
+    let (min_x, max_x) = (*xs.first().unwrap(), *xs.last().unwrap());
+    assert!(min_x < right - 60, "overflow must run left past a 60px box: min_x={min_x}, right={right}");
+    assert!(max_x < right, "text_right must not run past the boundary: max_x={max_x}, right={right}");
+    assert!(max_x >= right - 3, "text_right's right edge must still land at the boundary: max_x={max_x}, right={right}");
+}
+
+/// `text_center` likewise has no box to clip to -- wider-than-the-box text
+/// stays centred on `cx`, extending equally on both sides.
+#[test]
+fn text_center_stays_centred_when_wider_than_the_box() {
+    let mut fb = Fb::new();
+    let s = "AN OVERFLOWING LABEL";
+    let (cx, y) = (120, 40);
+    let w = draw::text_width(&theme::FONT_LABEL, s, 0);
+    assert!(w > 60, "fixture must be wider than a typical 60px box: {w}");
+    draw::text_center(&mut fb, &theme::FONT_LABEL, s, cx, y, theme::INK, 0);
+    let xs = ink_columns(&fb, y, theme::INK);
+    assert!(!xs.is_empty(), "text must draw something");
+    let (min_x, max_x) = (*xs.first().unwrap(), *xs.last().unwrap());
+    assert!(min_x < cx - 30, "overflow must run left of a 60px box: min_x={min_x}, cx={cx}");
+    assert!(max_x > cx + 30, "overflow must run right of a 60px box: max_x={max_x}, cx={cx}");
+    let (left_span, right_span) = (cx - min_x, max_x - cx);
+    assert!((left_span - right_span).abs() <= 2, "centred: left={left_span}, right={right_span}");
+}
+
 #[test]
 fn primitives_clip_without_panicking() {
     let mut fb = Fb::new();

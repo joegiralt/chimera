@@ -166,8 +166,10 @@ fn part_overview_shows_every_part_with_the_edited_one_lit() {
     use chimera_core::ui::viz::{strip_x, STRIP_H, STRIP_PAN_Y, STRIP_TOP};
     let fb = overview(
         |ui| {
+            ui.performance.parts[0].mix.pan = -1.0;
             ui.performance.parts[1].mix.level = 1.0;
             ui.performance.parts[1].mix.pan = 1.0;
+            ui.performance.parts[2].mix.pan = 0.0;
             ui.performance.parts[3].mix.level = 0.0;
         },
         ButtonId::B2,
@@ -179,6 +181,15 @@ fn part_overview_shows_every_part_with_the_edited_one_lit() {
     assert_eq!(column(3, theme::BAR_REST), 0, "Part 4 at level 0");
     let dot: Vec<i32> = (strip_x(1) - 6..strip_x(1) + 16).filter(|&x| fb.at(x, STRIP_PAN_Y) == theme::INK).collect();
     assert!(dot.iter().all(|&x| x > strip_x(1) + 10), "Part 2 panned right: {dot:?}");
+    // Part 1: hard left (unselected, so MID) -- the dot sits left of centre.
+    let l_dot: Vec<i32> = (strip_x(0) - 16..strip_x(0) + 6).filter(|&x| fb.at(x, STRIP_PAN_Y) == theme::MID).collect();
+    assert!(!l_dot.is_empty(), "Part 1 dot must draw");
+    assert!(l_dot.iter().all(|&x| x < strip_x(0) - 2), "Part 1 panned left: {l_dot:?}");
+    // Part 3: centre (unselected, so MID) -- the dot sits on the strip's centre x.
+    let c_x = strip_x(2) + 4;
+    let c_dot: Vec<i32> = (strip_x(2) - 6..strip_x(2) + 16).filter(|&x| fb.at(x, STRIP_PAN_Y) == theme::MID).collect();
+    assert!(!c_dot.is_empty(), "Part 3 dot must draw");
+    assert!(c_dot.iter().all(|&x| (c_x - 2..=c_x + 2).contains(&x)), "Part 3 centred: {c_dot:?}, want near {c_x}");
 }
 
 #[test]

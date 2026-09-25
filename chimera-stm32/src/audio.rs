@@ -137,6 +137,8 @@ pub fn trigger_note(note: MidiNote, velocity: Velocity) {
 
 /// Configure PLL3 to produce the SAI audio clock.
 pub fn init_pll3() {
+    // SAFETY: single-threaded init, before interrupts are unmasked; RCC's
+    // register block is exclusively owned here.
     let rcc = unsafe { &*pac::RCC::ptr() };
 
     // 1. Enable SAI1 peripheral clock
@@ -151,6 +153,8 @@ pub fn init_pll3() {
     rcc.pllckselr.modify(|_, w| w.divm3().bits(1));
 
     // 4. Set PLL3 multiplier and dividers: N=46 (val 45), P=3 (val 2)
+    // SAFETY: single-threaded init; DIVN3/DIVP3/DIVQ3/DIVR3 are set to
+    // values within their documented field ranges (RM0433).
     rcc.pll3divr.write(|w| unsafe {
         w.divn3().bits(45)
          .divp3().bits(2)
@@ -170,11 +174,15 @@ pub fn init_pll3() {
     while !rcc.cr.read().pll3rdy().is_ready() {}
 
     // 7. Set SAI1 clock source to PLL3_P (0b010)
+    // SAFETY: single-threaded init; 0b010 is the documented SAI1SEL encoding
+    // for PLL3_P (RM0433).
     rcc.d2ccip1r.modify(|_, w| unsafe { w.sai1sel().bits(0b010) });
 }
 
 /// Configure SAI1 Block A as I2S master TX, 16-bit stereo.
 pub fn init_sai1a() {
+    // SAFETY: single-threaded init, before interrupts are unmasked; SAI1's
+    // register block is exclusively owned here.
     let sai1 = unsafe { &*pac::SAI1::ptr() };
     let cha = sai1.cha();
 
@@ -183,6 +191,8 @@ pub fn init_sai1a() {
     while cha.cr1.read().saien().bit_is_set() {}
 
     // CR1: Master TX, Free I2S, 16-bit, MCKDIV=5
+    // SAFETY: single-threaded init; MODE/PRTCFG/DS/MCKDIV are set to values
+    // within their documented field ranges (RM0433) for master-TX Free I2S.
     cha.cr1.write(|w| unsafe {
         w.mode().bits(0b00)      // Master TX
          .prtcfg().bits(0b00)    // Free protocol (I2S)
@@ -191,18 +201,24 @@ pub fn init_sai1a() {
     });
 
     // Set MCKEN (bit 27) via raw register — not in PAC
+    // SAFETY: SAI1_CHA_CR1 is SAI1 Block A's own CR1 register (RM0433);
+    // single-threaded init, read-modify-write of a single documented bit.
     unsafe {
         let cr1 = core::ptr::read_volatile(SAI1_CHA_CR1);
         core::ptr::write_volatile(SAI1_CHA_CR1, cr1 | (1 << 27));
     }
 
     // CR2: FIFO threshold 1/4, flush FIFO
+    // SAFETY: single-threaded init; FTH/FFLUSH are set to values within
+    // their documented field ranges (RM0433).
     cha.cr2.write(|w| unsafe {
         w.fth().bits(0b001)
          .fflush().set_bit()
     });
 
     // FRCR: 32-bit frame, FS active 16 bits
+    // SAFETY: single-threaded init; FRL/FSALL are set to values within
+    // their documented field ranges (RM0433).
     cha.frcr.write(|w| unsafe {
         w.frl().bits(31)         // Frame length = 32 bits
          .fsall().bits(15)       // FS active for 16 bits
@@ -212,6 +228,8 @@ pub fn init_sai1a() {
     });
 
     // SLOTR: 2 slots, both active, 16-bit slot size
+    // SAFETY: single-threaded init; NBSLOT/SLOTEN/SLOTSZ are set to values
+    // within their documented field ranges (RM0433).
     cha.slotr.write(|w| unsafe {
         w.nbslot().bits(1)       // 2 slots (N-1)
          .sloten().bits(0b0011)  // Slots 0 and 1 active

@@ -312,8 +312,8 @@ impl Renderer {
     pub fn clear_region_fb(fb: &mut [u16], y_start: u16, y_end: u16) {
         use embedded_graphics::pixelcolor::raw::{RawData, RawU16};
         let bg = RawU16::from(theme::BG).into_inner();
-        let start = y_start as usize * 240;
-        let end = y_end as usize * 240;
+        let start = y_start as usize * theme::SCREEN_W as usize;
+        let end = y_end as usize * theme::SCREEN_W as usize;
         fb[start..end].fill(bg);
     }
 

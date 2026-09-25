@@ -155,3 +155,28 @@ fn envelope_label_spans_never_overlap() {
         }
     }
 }
+
+/// `stage_label_spans` keeps its documented `STAGE_LABEL_GAP` (2 px) of
+/// background between any two drawn spans -- not merely "not touching"
+/// (`envelope_label_spans_never_overlap` above), which a 1-px gap would
+/// also satisfy.
+#[test]
+fn envelope_label_spans_keep_the_two_pixel_gap() {
+    const STAGE_LABEL_GAP: i32 = 2; // mirrors the private constant in ui::viz
+    let labels = ["ATK", "DEC", "SUS", "REL"];
+    for a in (0..=120).step_by(3) {
+        for b in (0..=120).step_by(3) {
+            let xs = [12, 12 + a, 12 + a + b, 12 + a + b + 40, 228];
+            for lit in [None, Some(0), Some(1), Some(2), Some(3)] {
+                let spans = viz::stage_label_spans(&xs, &labels, lit);
+                let drawn: Vec<(i32, i32)> = spans.iter().flatten().copied().collect();
+                for (i, p) in drawn.iter().enumerate() {
+                    for q in &drawn[i + 1..] {
+                        let gap = if p.1 < q.0 { q.0 - p.1 - 1 } else { p.0 - q.1 - 1 };
+                        assert!(gap >= STAGE_LABEL_GAP, "{p:?} vs {q:?} at {xs:?} lit {lit:?}: gap {gap} < {STAGE_LABEL_GAP}");
+                    }
+                }
+            }
+        }
+    }
+}
