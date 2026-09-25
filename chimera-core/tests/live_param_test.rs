@@ -285,8 +285,9 @@ fn test_ks_feedback_mid_note() {
     // Higher feedback should sustain longer — after_rms should be higher
     // relative to what it would be without feedback
     assert!(
-        after_rms > 0.001,
-        "feedback should help sustain: after_rms={}",
+        after_rms > before_rms,
+        "feedback should help sustain: before_rms={} after_rms={}",
+        before_rms,
         after_rms
     );
 }

@@ -23,8 +23,6 @@ impl MockControls {
         }
     }
 
-    fn none() -> Self { Self::new() }
-
     fn button(mut self, id: ButtonId, state: ButtonState) -> Self {
         self.buttons[self.button_count] = (id, state);
         self.button_count += 1;
@@ -40,18 +38,18 @@ impl MockControls {
 
 impl Controls for MockControls {
     fn button_state(&self, id: ButtonId) -> ButtonState {
-        for i in 0..self.button_count {
-            if self.buttons[i].0 == id {
-                return self.buttons[i].1;
+        for &(button_id, state) in self.buttons.iter().take(self.button_count) {
+            if button_id == id {
+                return state;
             }
         }
         ButtonState::Up
     }
 
     fn encoder_delta(&self, id: EncoderId) -> i8 {
-        for i in 0..self.delta_count {
-            if self.encoder_deltas[i].0 == id {
-                return self.encoder_deltas[i].1;
+        for &(encoder_id, delta) in self.encoder_deltas.iter().take(self.delta_count) {
+            if encoder_id == id {
+                return delta;
             }
         }
         0
@@ -118,6 +116,7 @@ fn part_edit_does_not_modify_pool() {
     let mut part = Part::new(ChainType::PizzaPoly);
     part.load_from_pool(&pool, 0);
     part.sound.params.out.volume = 0.0; // mute
+    assert_eq!(part.sound.params.out.volume, 0.0, "edit should land on the part's copy");
 
     // Pool slot unchanged
     assert!(pool.get(0).unwrap().params.out.volume > 0.0);

@@ -87,8 +87,8 @@ fn a_wide_matrix_scrolls_with_the_cursor() {
     use chimera_core::ui::mod_grid::{draw_grid, ModDest, MatrixState, MAX_DESTS};
     let mut m = MatrixState::new();
     m.rebuild_sources(&["ENV", "LFO"]);
-    for i in 0..MAX_DESTS {
-        m.dests[i] = Some(ModDest { addr: ParamAddr::new(BlockRef::Filter, ParamId(i as u8 % 6)), label: [b'X'; 8] });
+    for (i, dest) in m.dests.iter_mut().enumerate().take(MAX_DESTS) {
+        *dest = Some(ModDest { addr: ParamAddr::new(BlockRef::Filter, ParamId(i as u8 % 6)), label: [b'X'; 8] });
     }
     m.num_dests = MAX_DESTS;
     m.move_col(MAX_DESTS as i8 - 1);
@@ -128,8 +128,8 @@ fn clamp_cursor_does_not_hide_columns_that_fit_on_screen() {
     use chimera_core::ui::mod_grid::{ModDest, MatrixState};
     let mut m = MatrixState::new();
     m.rebuild_sources(&["ENV", "LFO"]);
-    for i in 0..8 {
-        m.dests[i] = Some(ModDest { addr: ParamAddr::new(BlockRef::Filter, ParamId(i as u8 % 6)), label: [b'X'; 8] });
+    for (i, dest) in m.dests.iter_mut().enumerate().take(8) {
+        *dest = Some(ModDest { addr: ParamAddr::new(BlockRef::Filter, ParamId(i as u8 % 6)), label: [b'X'; 8] });
     }
     m.num_dests = 8;
     m.move_col(7); // scroll right: scroll_x lands at 8 - visible_cols()
@@ -175,8 +175,8 @@ fn stats_line_renders_at_max_counts_without_overflow() {
     let mut m = MatrixState::new();
     let names: [&'static str; MAX_MOD_SOURCES] = ["S0", "S1", "S2", "S3", "S4", "S5", "S6", "S7"];
     m.rebuild_sources(&names);
-    for i in 0..MAX_DESTS {
-        m.dests[i] = Some(ModDest { addr: ParamAddr::new(BlockRef::Filter, ParamId(i as u8 % 6)), label: [b'X'; 8] });
+    for (i, dest) in m.dests.iter_mut().enumerate().take(MAX_DESTS) {
+        *dest = Some(ModDest { addr: ParamAddr::new(BlockRef::Filter, ParamId(i as u8 % 6)), label: [b'X'; 8] });
     }
     m.num_dests = MAX_DESTS;
     for r in 0..m.num_sources {
@@ -291,8 +291,8 @@ fn scroll_hint_does_not_overlap_the_fifth_columns_tag() {
 
     let mut m_tag = MatrixState::new();
     m_tag.rebuild_sources(&["ENV"]);
-    for i in 0..4 {
-        m_tag.dests[i] = Some(ModDest { addr: short, label: [0; 8] });
+    for dest in m_tag.dests.iter_mut().take(4) {
+        *dest = Some(ModDest { addr: short, label: [0; 8] });
     }
     m_tag.dests[4] = Some(ModDest { addr: widest_tag_addr, label: [0; 8] });
     m_tag.num_dests = 5;
@@ -373,7 +373,7 @@ fn adjacent_column_names_never_touch_for_ordinary_real_labels() {
                     continue;
                 }
                 let (lb, _) = extents[bi][ci + 1];
-                assert!(lb - ra - 1 >= 2, "columns {ci}/{}: {a:?} (right={ra}) touches {b:?} (left={lb})", ci + 1);
+                assert!(lb - ra > 2, "columns {ci}/{}: {a:?} (right={ra}) touches {b:?} (left={lb})", ci + 1);
             }
         }
     }

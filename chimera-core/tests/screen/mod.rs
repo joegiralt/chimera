@@ -158,8 +158,12 @@ fn prime(ui: &mut UiState) {
     feed(ui, Input::chord(ButtonId::Mix, ButtonId::Plus));
 }
 
+/// A named screen-golden case: a case name paired with the input sequence
+/// that produces it.
+pub type ScreenCase = (&'static str, fn(&mut UiState));
+
 /// Every screen the goldens lock, one or more per page type (spec § Testing).
-pub const CASES: &[(&str, fn(&mut UiState))] = &[
+pub const CASES: &[ScreenCase] = &[
     ("engine_pizza", |ui| feed(ui, Input::turn(EncoderId::A, 2))),
     ("engine_fm_alg", |ui| {
         load_init(ui, ChainType::Fm);

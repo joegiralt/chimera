@@ -11,14 +11,16 @@ fn lfo_default_is_zero() {
 #[test]
 fn lfo_sine_output_range() {
     let mut lfo = Lfo::new();
-    let mut params = LfoParams::default();
-    params.shape = 0; // sine
-    params.rate = 5.0;
+    let params = LfoParams {
+        shape: 0, // sine
+        rate: 5.0,
+        ..Default::default()
+    };
 
     for _ in 0..1000 {
         let out = lfo.process(&params, SAMPLE_RATE);
         assert!(
-            out >= -1.0 && out <= 1.0,
+            (-1.0..=1.0).contains(&out),
             "sine LFO output out of range: {}",
             out
         );
@@ -28,14 +30,16 @@ fn lfo_sine_output_range() {
 #[test]
 fn lfo_triangle_output_range() {
     let mut lfo = Lfo::new();
-    let mut params = LfoParams::default();
-    params.shape = 1; // triangle
-    params.rate = 5.0;
+    let params = LfoParams {
+        shape: 1, // triangle
+        rate: 5.0,
+        ..Default::default()
+    };
 
     for _ in 0..1000 {
         let out = lfo.process(&params, SAMPLE_RATE);
         assert!(
-            out >= -1.0 && out <= 1.0,
+            (-1.0..=1.0).contains(&out),
             "triangle LFO output out of range: {}",
             out
         );
@@ -45,14 +49,16 @@ fn lfo_triangle_output_range() {
 #[test]
 fn lfo_saw_output_range() {
     let mut lfo = Lfo::new();
-    let mut params = LfoParams::default();
-    params.shape = 2; // saw
-    params.rate = 5.0;
+    let params = LfoParams {
+        shape: 2, // saw
+        rate: 5.0,
+        ..Default::default()
+    };
 
     for _ in 0..1000 {
         let out = lfo.process(&params, SAMPLE_RATE);
         assert!(
-            out >= -1.0 && out <= 1.0,
+            (-1.0..=1.0).contains(&out),
             "saw LFO output out of range: {}",
             out
         );
@@ -62,9 +68,11 @@ fn lfo_saw_output_range() {
 #[test]
 fn lfo_square_output_bipolar() {
     let mut lfo = Lfo::new();
-    let mut params = LfoParams::default();
-    params.shape = 3; // square
-    params.rate = 2.0;
+    let params = LfoParams {
+        shape: 3, // square
+        rate: 2.0,
+        ..Default::default()
+    };
 
     for _ in 0..1000 {
         let out = lfo.process(&params, SAMPLE_RATE);
@@ -82,13 +90,17 @@ fn lfo_rate_affects_speed() {
     let mut lfo_slow = Lfo::new();
     let mut lfo_fast = Lfo::new();
 
-    let mut params_slow = LfoParams::default();
-    params_slow.rate = 1.0;
-    params_slow.shape = 2; // saw (monotonic ramp -> easy to count wraps)
+    let params_slow = LfoParams {
+        rate: 1.0,
+        shape: 2, // saw (monotonic ramp -> easy to count wraps)
+        ..Default::default()
+    };
 
-    let mut params_fast = LfoParams::default();
-    params_fast.rate = 10.0;
-    params_fast.shape = 2;
+    let params_fast = LfoParams {
+        rate: 10.0,
+        shape: 2,
+        ..Default::default()
+    };
 
     // Count zero crossings (negative to positive) as proxy for cycles
     let mut prev_slow = 0.0f32;
@@ -124,15 +136,19 @@ fn lfo_depth_scales_output() {
     let mut lfo_full = Lfo::new();
     let mut lfo_half = Lfo::new();
 
-    let mut params_full = LfoParams::default();
-    params_full.shape = 0; // sine
-    params_full.rate = 3.0;
-    params_full.depth = 1.0;
+    let params_full = LfoParams {
+        shape: 0, // sine
+        rate: 3.0,
+        depth: 1.0,
+        ..Default::default()
+    };
 
-    let mut params_half = LfoParams::default();
-    params_half.shape = 0;
-    params_half.rate = 3.0;
-    params_half.depth = 0.5;
+    let params_half = LfoParams {
+        shape: 0,
+        rate: 3.0,
+        depth: 0.5,
+        ..Default::default()
+    };
 
     let mut max_full = 0.0f32;
     let mut max_half = 0.0f32;
@@ -155,11 +171,13 @@ fn lfo_depth_scales_output() {
 #[test]
 fn lfo_offset_shifts_output() {
     let mut lfo = Lfo::new();
-    let mut params = LfoParams::default();
-    params.shape = 0; // sine
-    params.rate = 3.0;
-    params.depth = 0.5;
-    params.offset = 0.5;
+    let params = LfoParams {
+        shape: 0, // sine
+        rate: 3.0,
+        depth: 0.5,
+        offset: 0.5,
+        ..Default::default()
+    };
 
     let mut min_out = f32::MAX;
     let mut max_out = f32::MIN;
@@ -194,9 +212,11 @@ fn lfo_offset_shifts_output() {
 #[test]
 fn lfo_retrigger_resets_phase() {
     let mut lfo = Lfo::new();
-    let mut params = LfoParams::default();
-    params.shape = 2; // saw: output = phase*2 - 1, so phase=0 -> output=-1
-    params.rate = 5.0;
+    let params = LfoParams {
+        shape: 2, // saw: output = phase*2 - 1, so phase=0 -> output=-1
+        rate: 5.0,
+        ..Default::default()
+    };
 
     // Advance a few blocks
     for _ in 0..100 {
