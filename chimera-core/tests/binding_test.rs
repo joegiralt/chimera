@@ -4,7 +4,7 @@ use chimera_core::addr::{BlockRef, Op, ParamAddr};
 use chimera_core::block::ParamId;
 use chimera_core::params::FmOpParams;
 use chimera_core::preset::ChainType;
-use chimera_core::ui::block_def::{slot_addr, BlockDef, SlotBinding};
+use chimera_core::ui::block_def::{BlockDef, SlotBinding, slot_addr};
 use chimera_core::ui::block_registry as reg;
 use chimera_core::ui::chain::chain_def_for;
 use chimera_core::ui::page::ValFmt;
@@ -30,7 +30,9 @@ fn every_part_slot_resolves_to_a_spec() {
                 SlotBinding::Param(_) | SlotBinding::SelectedOp(_) => {
                     assert!(slot.spec().is_some(), "{} slot {i}: no spec", def.name)
                 }
-                SlotBinding::Legacy { .. } => panic!("{} slot {i}: Part pages must not be Legacy", def.name),
+                SlotBinding::Legacy { .. } => {
+                    panic!("{} slot {i}: Part pages must not be Legacy", def.name)
+                }
             }
         }
     }
@@ -43,7 +45,10 @@ fn part_chains_offer_env_and_lfo_sources() {
     for ct in ChainType::ALL {
         assert_eq!(chain_def_for(ct).mod_sources, ["ENV", "LFO"], "{ct:?}");
         let sound = chimera_core::preset::Sound::init(ct);
-        assert!(sound.dest_registry.is_empty(), "{ct:?}: no pre-wired destinations");
+        assert!(
+            sound.dest_registry.is_empty(),
+            "{ct:?}: no pre-wired destinations"
+        );
         assert_eq!(sound.mod_state.num_dests(), 0, "{ct:?}");
     }
     // The FM_ENV pages stay as MOD sub-pages; they are just not source rows.
@@ -53,16 +58,54 @@ fn part_chains_offer_env_and_lfo_sources() {
 #[test]
 fn block_def_ids_are_unique() {
     let all: [&BlockDef; 40] = [
-        &reg::PIZZA, &reg::MODAL_1, &reg::MODAL_2, &reg::VA, &reg::FM_ALG, &reg::FM_OP,
-        &reg::FM_RATIO, &reg::DRIVE, &reg::FOLDER, &reg::FILTER, &reg::ENVELOPE, &reg::LFO,
-        &reg::ENV_AMP, &reg::ENV_FILTER, &reg::ENV_AUX, &reg::EFX, &reg::MIXER, &reg::CHORUS,
-        &reg::DELAY, &reg::MASTER, &reg::NOISE, &reg::MOD_MATRIX, &reg::FM_ENV1, &reg::FM_ENV2,
-        &reg::FM_ENV3, &reg::FM_ENV4, &reg::PART, &reg::MIDI_CFG, &reg::EQ, &reg::SENDS,
-        &reg::SYS_MIDI, &reg::SYS_TUNING, &reg::SYS_THEME, &reg::SYS_UPDATES, &reg::SYS_ABOUT,
-        &reg::DEMO_WAVES, &reg::DEMO_SHAPES, &reg::DEMO_MOTION, &reg::DEMO_MATRIX, &reg::DEMO_FM,
+        &reg::PIZZA,
+        &reg::MODAL_1,
+        &reg::MODAL_2,
+        &reg::VA,
+        &reg::FM_ALG,
+        &reg::FM_OP,
+        &reg::FM_RATIO,
+        &reg::DRIVE,
+        &reg::FOLDER,
+        &reg::FILTER,
+        &reg::ENVELOPE,
+        &reg::LFO,
+        &reg::ENV_AMP,
+        &reg::ENV_FILTER,
+        &reg::ENV_AUX,
+        &reg::EFX,
+        &reg::MIXER,
+        &reg::CHORUS,
+        &reg::DELAY,
+        &reg::MASTER,
+        &reg::NOISE,
+        &reg::MOD_MATRIX,
+        &reg::FM_ENV1,
+        &reg::FM_ENV2,
+        &reg::FM_ENV3,
+        &reg::FM_ENV4,
+        &reg::PART,
+        &reg::MIDI_CFG,
+        &reg::EQ,
+        &reg::SENDS,
+        &reg::SYS_MIDI,
+        &reg::SYS_TUNING,
+        &reg::SYS_THEME,
+        &reg::SYS_UPDATES,
+        &reg::SYS_ABOUT,
+        &reg::DEMO_WAVES,
+        &reg::DEMO_SHAPES,
+        &reg::DEMO_MOTION,
+        &reg::DEMO_MATRIX,
+        &reg::DEMO_FM,
     ];
     for (i, d) in all.iter().enumerate() {
-        assert!(all[..i].iter().all(|o| o.id != d.id), "{} reuses id {}", d.name, d.id);
+        assert!(
+            all[..i].iter().all(|o| o.id != d.id),
+            "{} reuses id {}",
+            d.name,
+            d.id
+        );
     }
 }
 
@@ -74,21 +117,171 @@ fn block_def_ids_are_unique() {
 fn part_pages_display_like_before() {
     use ValFmt::{Bi, Int, OneBased, Uni};
     let want: [(&BlockDef, [(&str, ValFmt); 6]); 15] = [
-        (&reg::PIZZA, [("SHAPE", Uni), ("CRUSH", Uni), ("LEVEL", Uni), ("--", Uni), ("--", Uni), ("--", Uni)]),
-        (&reg::MODAL_1, [("MODE", Int(3)), ("EXCITE", Uni), ("DECAY", Uni), ("BRIGHT", Uni), ("POS", Uni), ("INHARM", Uni)]),
-        (&reg::MODAL_2, [("BODY", Uni), ("STIFF", Uni), ("FDBK", Uni), ("E.DPT", Uni), ("E.RAT", Uni), ("E.MIX", Uni)]),
-        (&reg::FM_ALG, [("ALG", OneBased(7)), ("--", Uni), ("LEVEL", Uni), ("--", Uni), ("--", Uni), ("--", Uni)]),
-        (&reg::FM_OP, [("OP", OneBased(3)), ("WAVE", Int(7)), ("LEVEL", Uni), ("FDBK", Int(7)), ("DETUN", Bi), ("V.SNS", Int(7))]),
-        (&reg::FM_RATIO, [("OP1", Int(63)), ("OP2", Int(63)), ("OP3", Int(63)), ("OP4", Int(63)), ("FINE", Int(15)), ("--", Uni)]),
-        (&reg::DRIVE, [("DRIVE", Uni), ("TONE", Bi), ("MIX", Bi), ("--", Uni), ("--", Uni), ("--", Uni)]),
-        (&reg::FOLDER, [("FOLD", Uni), ("SYM", Bi), ("MIX", Bi), ("--", Uni), ("--", Uni), ("--", Uni)]),
-        (&reg::FILTER, [("CUTOFF", Uni), ("RESO", Uni), ("DRIVE", Uni), ("FM", Uni), ("ENV", Bi), ("TRACK", Uni)]),
-        (&reg::ENVELOPE, [("ATK", Uni), ("DEC", Uni), ("SUS", Uni), ("REL", Uni), ("DEPTH", Uni), ("VEL", Uni)]),
-        (&reg::LFO, [("RATE", Uni), ("SHAPE", Int(4)), ("SYNC", Int(1)), ("PHASE", Uni), ("DEPTH", Uni), ("OFST", Bi)]),
-        (&reg::FM_ENV1, [("AR", Int(31)), ("D1R", Int(31)), ("D1L", Int(15)), ("D2R", Int(31)), ("RR", Int(15)), ("RS", Int(3))]),
-        (&reg::FM_ENV2, [("AR", Int(31)), ("D1R", Int(31)), ("D1L", Int(15)), ("D2R", Int(31)), ("RR", Int(15)), ("RS", Int(3))]),
-        (&reg::FM_ENV3, [("AR", Int(31)), ("D1R", Int(31)), ("D1L", Int(15)), ("D2R", Int(31)), ("RR", Int(15)), ("RS", Int(3))]),
-        (&reg::FM_ENV4, [("AR", Int(31)), ("D1R", Int(31)), ("D1L", Int(15)), ("D2R", Int(31)), ("RR", Int(15)), ("RS", Int(3))]),
+        (
+            &reg::PIZZA,
+            [
+                ("SHAPE", Uni),
+                ("CRUSH", Uni),
+                ("LEVEL", Uni),
+                ("--", Uni),
+                ("--", Uni),
+                ("--", Uni),
+            ],
+        ),
+        (
+            &reg::MODAL_1,
+            [
+                ("MODE", Int(3)),
+                ("EXCITE", Uni),
+                ("DECAY", Uni),
+                ("BRIGHT", Uni),
+                ("POS", Uni),
+                ("INHARM", Uni),
+            ],
+        ),
+        (
+            &reg::MODAL_2,
+            [
+                ("BODY", Uni),
+                ("STIFF", Uni),
+                ("FDBK", Uni),
+                ("E.DPT", Uni),
+                ("E.RAT", Uni),
+                ("E.MIX", Uni),
+            ],
+        ),
+        (
+            &reg::FM_ALG,
+            [
+                ("ALG", OneBased(7)),
+                ("--", Uni),
+                ("LEVEL", Uni),
+                ("--", Uni),
+                ("--", Uni),
+                ("--", Uni),
+            ],
+        ),
+        (
+            &reg::FM_OP,
+            [
+                ("OP", OneBased(3)),
+                ("WAVE", Int(7)),
+                ("LEVEL", Uni),
+                ("FDBK", Int(7)),
+                ("DETUN", Bi),
+                ("V.SNS", Int(7)),
+            ],
+        ),
+        (
+            &reg::FM_RATIO,
+            [
+                ("OP1", Int(63)),
+                ("OP2", Int(63)),
+                ("OP3", Int(63)),
+                ("OP4", Int(63)),
+                ("FINE", Int(15)),
+                ("--", Uni),
+            ],
+        ),
+        (
+            &reg::DRIVE,
+            [
+                ("DRIVE", Uni),
+                ("TONE", Bi),
+                ("MIX", Bi),
+                ("--", Uni),
+                ("--", Uni),
+                ("--", Uni),
+            ],
+        ),
+        (
+            &reg::FOLDER,
+            [
+                ("FOLD", Uni),
+                ("SYM", Bi),
+                ("MIX", Bi),
+                ("--", Uni),
+                ("--", Uni),
+                ("--", Uni),
+            ],
+        ),
+        (
+            &reg::FILTER,
+            [
+                ("CUTOFF", Uni),
+                ("RESO", Uni),
+                ("DRIVE", Uni),
+                ("FM", Uni),
+                ("ENV", Bi),
+                ("TRACK", Uni),
+            ],
+        ),
+        (
+            &reg::ENVELOPE,
+            [
+                ("ATK", Uni),
+                ("DEC", Uni),
+                ("SUS", Uni),
+                ("REL", Uni),
+                ("DEPTH", Uni),
+                ("VEL", Uni),
+            ],
+        ),
+        (
+            &reg::LFO,
+            [
+                ("RATE", Uni),
+                ("SHAPE", Int(4)),
+                ("SYNC", Int(1)),
+                ("PHASE", Uni),
+                ("DEPTH", Uni),
+                ("OFST", Bi),
+            ],
+        ),
+        (
+            &reg::FM_ENV1,
+            [
+                ("AR", Int(31)),
+                ("D1R", Int(31)),
+                ("D1L", Int(15)),
+                ("D2R", Int(31)),
+                ("RR", Int(15)),
+                ("RS", Int(3)),
+            ],
+        ),
+        (
+            &reg::FM_ENV2,
+            [
+                ("AR", Int(31)),
+                ("D1R", Int(31)),
+                ("D1L", Int(15)),
+                ("D2R", Int(31)),
+                ("RR", Int(15)),
+                ("RS", Int(3)),
+            ],
+        ),
+        (
+            &reg::FM_ENV3,
+            [
+                ("AR", Int(31)),
+                ("D1R", Int(31)),
+                ("D1L", Int(15)),
+                ("D2R", Int(31)),
+                ("RR", Int(15)),
+                ("RS", Int(3)),
+            ],
+        ),
+        (
+            &reg::FM_ENV4,
+            [
+                ("AR", Int(31)),
+                ("D1R", Int(31)),
+                ("D1L", Int(15)),
+                ("D2R", Int(31)),
+                ("RR", Int(15)),
+                ("RS", Int(3)),
+            ],
+        ),
     ];
     for (def, slots) in want {
         for (i, (label, fmt)) in slots.iter().enumerate() {
@@ -138,11 +331,20 @@ fn fm_env_pages_bind_to_their_own_operator() {
         FmOpParams::RELEASE_RATE,
         FmOpParams::RATE_SCALING,
     ];
-    let pages: [(&BlockDef, Op); 4] =
-        [(&reg::FM_ENV1, Op::A), (&reg::FM_ENV2, Op::B), (&reg::FM_ENV3, Op::C), (&reg::FM_ENV4, Op::D)];
+    let pages: [(&BlockDef, Op); 4] = [
+        (&reg::FM_ENV1, Op::A),
+        (&reg::FM_ENV2, Op::B),
+        (&reg::FM_ENV3, Op::C),
+        (&reg::FM_ENV4, Op::D),
+    ];
     for (def, op) in pages {
         for (i, &id) in env_params.iter().enumerate() {
-            assert_eq!(slot_addr(def, i, Op::A), Some(ParamAddr::new(BlockRef::FmOp(op), id)), "{} slot {i}", def.name);
+            assert_eq!(
+                slot_addr(def, i, Op::A),
+                Some(ParamAddr::new(BlockRef::FmOp(op), id)),
+                "{} slot {i}",
+                def.name
+            );
         }
     }
 }

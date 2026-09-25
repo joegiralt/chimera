@@ -1,7 +1,7 @@
 #![allow(clippy::needless_range_loop, clippy::manual_clamp)]
 
-use chimera_hal::BLOCK_SIZE;
 use crate::block::{Block, ParamId, ParamSpec, ValFmt};
+use chimera_hal::BLOCK_SIZE;
 
 // ── Shared delay line infrastructure ────────────────────────────────
 
@@ -503,16 +503,34 @@ impl Reverb {
         }
         match ReverbType::from_u8(params.reverb_type) {
             ReverbType::Plate => {
-                self.plate
-                    .process(buf, params.time, params.size, params.damping, dry_gain, params.mix);
+                self.plate.process(
+                    buf,
+                    params.time,
+                    params.size,
+                    params.damping,
+                    dry_gain,
+                    params.mix,
+                );
             }
             ReverbType::Fdn => {
-                self.fdn
-                    .process(buf, params.time, params.damping, params.size, dry_gain, params.mix);
+                self.fdn.process(
+                    buf,
+                    params.time,
+                    params.damping,
+                    params.size,
+                    dry_gain,
+                    params.mix,
+                );
             }
             ReverbType::MidiVerb => {
-                self.midiverb
-                    .process(buf, params.time, params.damping, params.size, dry_gain, params.mix);
+                self.midiverb.process(
+                    buf,
+                    params.time,
+                    params.damping,
+                    params.size,
+                    dry_gain,
+                    params.mix,
+                );
             }
         }
     }

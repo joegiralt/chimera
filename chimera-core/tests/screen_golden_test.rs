@@ -49,7 +49,11 @@ fn screen_goldens_match() {
             failures.push(format!("{name}: 0x{hash:016x} (want 0x{want:016x})"));
         }
     }
-    assert!(failures.is_empty(), "screen golden mismatch:\n{}", failures.join("\n"));
+    assert!(
+        failures.is_empty(),
+        "screen golden mismatch:\n{}",
+        failures.join("\n")
+    );
 }
 
 #[test]

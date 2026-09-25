@@ -1,10 +1,10 @@
-use chimera_core::{MidiNote, Velocity};
-use chimera_core::modulation::ModState;
 use chimera_core::dsp::drive::Drive;
 use chimera_core::dsp::filter::SvfFilter;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::dsp::wavefolder::Wavefolder;
+use chimera_core::modulation::ModState;
 use chimera_core::params::{DriveParams, FilterParams, FolderParams, ParamSnapshot};
+use chimera_core::{MidiNote, Velocity};
 
 // ── Drive ───────────────────────────────────────────────────────────
 
@@ -221,7 +221,11 @@ fn test_voice_produces_sound() {
     let params = ParamSnapshot::default();
     // Pizza produces sound by default
 
-    voice.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params);
+    voice.note_on(
+        MidiNote::new(60).unwrap(),
+        Velocity::new(100).unwrap(),
+        &params,
+    );
 
     let mut output = [0.0f32; 64];
     for _ in 0..4 {
@@ -251,8 +255,16 @@ fn test_voice_filter_shapes_sound() {
     params_closed.filter.cutoff = 100.0;
     params_closed.filter.mode = 2; // LP4
 
-    voice_open.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params_open);
-    voice_closed.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params_closed);
+    voice_open.note_on(
+        MidiNote::new(60).unwrap(),
+        Velocity::new(100).unwrap(),
+        &params_open,
+    );
+    voice_closed.note_on(
+        MidiNote::new(60).unwrap(),
+        Velocity::new(100).unwrap(),
+        &params_closed,
+    );
 
     let mut out_open = [0.0f32; 64];
     let mut out_closed = [0.0f32; 64];
@@ -285,7 +297,11 @@ fn test_voice_output_bounded() {
     params.folder.fold = 0.5;
     params.folder.mix = 1.0;
 
-    voice.note_on(MidiNote::new(60).unwrap(), Velocity::new(127).unwrap(), &params);
+    voice.note_on(
+        MidiNote::new(60).unwrap(),
+        Velocity::new(127).unwrap(),
+        &params,
+    );
 
     let mut output = [0.0f32; 64];
     for _ in 0..20 {

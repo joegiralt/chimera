@@ -40,7 +40,16 @@ impl FilterParams {
 /// env amount and key track are never read (spec § Current state).
 /// `mode` has no spec (not on any page; plan D16).
 pub static FILTER_SPECS: [ParamSpec; 6] = [
-    ParamSpec::continuous(0, "CUTOFF", ValFmt::Uni, 20.0, 20000.0, 1000.0, (20000.0 - 20.0) / 128.0, true),
+    ParamSpec::continuous(
+        0,
+        "CUTOFF",
+        ValFmt::Uni,
+        20.0,
+        20000.0,
+        1000.0,
+        (20000.0 - 20.0) / 128.0,
+        true,
+    ),
     ParamSpec::continuous(1, "RESO", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, true),
     ParamSpec::continuous(2, "DRIVE", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, true),
     ParamSpec::continuous(3, "FM", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false),
@@ -116,10 +125,37 @@ impl EnvParams {
 /// `envelopes[1..2]` are never read at all — `ParamAddr::modulatable`
 /// excludes them (plan D7).
 pub static ENV_SPECS: [ParamSpec; 6] = [
-    ParamSpec::continuous(0, "ATK", ValFmt::Uni, 0.001, 10.0, 0.01, (10.0 - 0.001) / 128.0, true),
-    ParamSpec::continuous(1, "DEC", ValFmt::Uni, 0.001, 10.0, 0.3, (10.0 - 0.001) / 128.0, true),
+    ParamSpec::continuous(
+        0,
+        "ATK",
+        ValFmt::Uni,
+        0.001,
+        10.0,
+        0.01,
+        (10.0 - 0.001) / 128.0,
+        true,
+    ),
+    ParamSpec::continuous(
+        1,
+        "DEC",
+        ValFmt::Uni,
+        0.001,
+        10.0,
+        0.3,
+        (10.0 - 0.001) / 128.0,
+        true,
+    ),
     ParamSpec::continuous(2, "SUS", ValFmt::Uni, 0.0, 1.0, 0.7, 1.0 / 128.0, true),
-    ParamSpec::continuous(3, "REL", ValFmt::Uni, 0.001, 10.0, 0.3, (10.0 - 0.001) / 128.0, true),
+    ParamSpec::continuous(
+        3,
+        "REL",
+        ValFmt::Uni,
+        0.001,
+        10.0,
+        0.3,
+        (10.0 - 0.001) / 128.0,
+        true,
+    ),
     ParamSpec::continuous(4, "LEVEL", ValFmt::Uni, 0.0, 1.0, 1.0, 1.0 / 128.0, false),
     ParamSpec::continuous(5, "VEL", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false),
 ];
@@ -447,7 +483,12 @@ pub enum EngineType {
 impl EngineType {
     /// Every engine. Tests iterate this; see `engines_test.rs` for the
     /// exhaustive-match guard that makes a new variant a compile error there.
-    pub const ALL: [EngineType; 4] = [EngineType::Pizza, EngineType::Fm, EngineType::Modal, EngineType::Va];
+    pub const ALL: [EngineType; 4] = [
+        EngineType::Pizza,
+        EngineType::Fm,
+        EngineType::Modal,
+        EngineType::Va,
+    ];
 }
 
 /// Voice output stage: level into the mixer and pan.
@@ -459,7 +500,10 @@ pub struct OutParams {
 
 impl Default for OutParams {
     fn default() -> Self {
-        Self { volume: 0.8, pan: 0.0 }
+        Self {
+            volume: 0.8,
+            pan: 0.0,
+        }
     }
 }
 
@@ -516,7 +560,10 @@ pub struct ParamSnapshot {
 impl ParamSnapshot {
     /// Default params for `engine`.
     pub fn for_engine(engine: EngineType) -> Self {
-        Self { engine, ..Self::default() }
+        Self {
+            engine,
+            ..Self::default()
+        }
     }
 
     pub fn engine(&self) -> EngineType {

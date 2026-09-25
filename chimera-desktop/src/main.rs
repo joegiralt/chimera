@@ -39,7 +39,12 @@ fn main() {
         }
 
         // Solo a DAC pair: F1-F3; F4 hears all three.
-        for (key, pair) in [(minifb::Key::F1, 1), (minifb::Key::F2, 2), (minifb::Key::F3, 3), (minifb::Key::F4, 0)] {
+        for (key, pair) in [
+            (minifb::Key::F1, 1),
+            (minifb::Key::F2, 2),
+            (minifb::Key::F3, 3),
+            (minifb::Key::F4, 0),
+        ] {
             if keys.contains(&key) {
                 audio.solo(pair);
             }

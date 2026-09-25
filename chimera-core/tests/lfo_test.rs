@@ -5,7 +5,10 @@ const SAMPLE_RATE: u32 = chimera_hal::SAMPLE_RATE;
 #[test]
 fn lfo_default_is_zero() {
     let lfo = Lfo::new();
-    assert!((lfo.current() - 0.0).abs() < 1e-6, "new LFO should output 0.0");
+    assert!(
+        (lfo.current() - 0.0).abs() < 1e-6,
+        "new LFO should output 0.0"
+    );
 }
 
 #[test]

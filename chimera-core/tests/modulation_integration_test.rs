@@ -1,11 +1,11 @@
-use chimera_core::{MidiNote, Velocity};
+use chimera_core::addr::{BlockRef, ParamAddr};
+use chimera_core::dsp::pizza::PizzaParams;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::modulation::ModState;
 use chimera_core::params::ParamSnapshot;
-use chimera_core::addr::{BlockRef, ParamAddr};
-use chimera_core::dsp::pizza::PizzaParams;
 use chimera_core::params::{DriveParams, FilterParams};
 use chimera_core::ui::mod_grid::MatrixState;
+use chimera_core::{MidiNote, Velocity};
 
 use chimera_hal::BLOCK_SIZE;
 
@@ -25,14 +25,22 @@ fn voice_render_with_empty_mod_state() {
     let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
     let params = ParamSnapshot::default();
 
-    voice.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params);
+    voice.note_on(
+        MidiNote::new(60).unwrap(),
+        Velocity::new(100).unwrap(),
+        &params,
+    );
 
     let mut output = [0.0f32; BLOCK_SIZE];
     voice.render(&mut output, &params, &empty_mod);
 
     // Should produce sound normally
     let level = rms(&output);
-    assert!(level > 0.001, "voice with empty mod state should still produce sound, rms={}", level);
+    assert!(
+        level > 0.001,
+        "voice with empty mod state should still produce sound, rms={}",
+        level
+    );
 }
 
 #[test]
@@ -58,8 +66,16 @@ fn voice_render_with_mod_offset_changes_filter() {
     let mut mod_state = ModState::from_registry(&registry, 2); // env, LFO
     mod_state.set_amount(1, 0, 100); // LFO -> cutoff at high amount
 
-    voice_dry.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params);
-    voice_mod.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params);
+    voice_dry.note_on(
+        MidiNote::new(60).unwrap(),
+        Velocity::new(100).unwrap(),
+        &params,
+    );
+    voice_mod.note_on(
+        MidiNote::new(60).unwrap(),
+        Velocity::new(100).unwrap(),
+        &params,
+    );
 
     let mut out_dry = [0.0f32; BLOCK_SIZE];
     let mut out_mod = [0.0f32; BLOCK_SIZE];
@@ -100,10 +116,7 @@ fn mod_bar_shows_when_primed() {
     matrix.rebuild_dests_from_registry(&registry);
 
     let info = matrix.mod_info_for(DRIVE);
-    assert!(
-        info.is_some(),
-        "primed param should return Some"
-    );
+    assert!(info.is_some(), "primed param should return Some");
 }
 
 #[test]

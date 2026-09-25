@@ -1,8 +1,8 @@
-use chimera_core::{MidiNote, Velocity};
 use chimera_core::dsp::modal::ResonatorMode;
-use chimera_core::modulation::ModState;
 use chimera_core::dsp::voice::Voice;
+use chimera_core::modulation::ModState;
 use chimera_core::params::{EngineType, ParamSnapshot};
+use chimera_core::{MidiNote, Velocity};
 
 const SR: u32 = 48000;
 
@@ -19,7 +19,11 @@ fn render_with_param_change(
     let mut params = ParamSnapshot::default();
     setup(&mut params);
 
-    voice.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params);
+    voice.note_on(
+        MidiNote::new(60).unwrap(),
+        Velocity::new(100).unwrap(),
+        &params,
+    );
 
     // Render "before" blocks
     let mut before_buf = Vec::new();
@@ -86,7 +90,11 @@ fn test_pizza_shape_change_mid_note() {
         .map(|(a, b)| (a - b).abs())
         .sum::<f32>()
         / before.len() as f32;
-    assert!(diff > 0.001, "shape change should alter sound: diff={}", diff);
+    assert!(
+        diff > 0.001,
+        "shape change should alter sound: diff={}",
+        diff
+    );
 }
 
 #[test]

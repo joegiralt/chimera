@@ -3,12 +3,12 @@
 
 mod screen;
 
+use chimera_core::ui::UiState;
 use chimera_core::ui::block_def::ChainDef2;
 use chimera_core::ui::block_registry as reg;
 use chimera_core::ui::focus::{FocusMemory, MAX_PAGES};
-use chimera_core::ui::UiState;
 use chimera_hal::{ButtonId, EncoderId};
-use screen::{feed, Input};
+use screen::{Input, feed};
 
 #[test]
 fn every_page_starts_on_slot_a() {
@@ -70,8 +70,15 @@ fn out_of_range_page_ids_are_ignored() {
 #[test]
 fn every_page_id_fits_the_focus_table() {
     let chains: [&ChainDef2; 9] = [
-        &reg::PIZZA_POLY_CHAIN, &reg::KICK_CHAIN, &reg::MODAL_PLUCK_CHAIN, &reg::FM_CHAIN, &reg::MIX_CHAIN,
-        &reg::ENVELOPE_CHAIN, &reg::MIXER_CHANNEL_CHAIN, &reg::SYSTEM_CHAIN, &reg::DEMO_CHAIN,
+        &reg::PIZZA_POLY_CHAIN,
+        &reg::KICK_CHAIN,
+        &reg::MODAL_PLUCK_CHAIN,
+        &reg::FM_CHAIN,
+        &reg::MIX_CHAIN,
+        &reg::ENVELOPE_CHAIN,
+        &reg::MIXER_CHANNEL_CHAIN,
+        &reg::SYSTEM_CHAIN,
+        &reg::DEMO_CHAIN,
     ];
     for chain in chains {
         for block in chain.blocks {
@@ -87,10 +94,14 @@ fn every_page_id_fits_the_focus_table() {
 #[test]
 fn an_empty_slot_does_not_take_focus() {
     use chimera_core::preset::ChainType;
-    use screen::{load_init, settle, Fb, W};
+    use screen::{Fb, W, load_init, settle};
     let render = |ui: &UiState| {
         let mut fb = Fb::new();
-        ui.render_with_scope(&mut fb, &chimera_core::ui::perf::PerfStats::zero(), &screen::scope_fixture());
+        ui.render_with_scope(
+            &mut fb,
+            &chimera_core::ui::perf::PerfStats::zero(),
+            &screen::scope_fixture(),
+        );
         fb
     };
     let mut ui = UiState::new();
@@ -102,6 +113,12 @@ fn an_empty_slot_does_not_take_focus() {
     settle(&mut ui);
     assert_eq!(ui.focused_slot(), 2);
     let after = render(&ui);
-    assert!(before.px[28 * W..118 * W] == after.px[28 * W..118 * W], "focus band unchanged");
-    assert!(before.px[186 * W..266 * W] == after.px[186 * W..266 * W], "cells unchanged");
+    assert!(
+        before.px[28 * W..118 * W] == after.px[28 * W..118 * W],
+        "focus band unchanged"
+    );
+    assert!(
+        before.px[186 * W..266 * W] == after.px[186 * W..266 * W],
+        "cells unchanged"
+    );
 }

@@ -9,7 +9,7 @@ use crate::dsp::filter::SvfFilter;
 use crate::dsp::lfo::Lfo;
 use crate::dsp::wavefolder::Wavefolder;
 use crate::hw::{Cost, MAX_VOICES, VOICE_RAM_BUDGET};
-use crate::modulation::{ModState, MAX_MOD_SOURCES};
+use crate::modulation::{MAX_MOD_SOURCES, ModState};
 use crate::params::{EngineType, ParamSnapshot};
 use crate::{MidiNote, Velocity};
 
@@ -73,7 +73,8 @@ impl Voice {
         self.active_engine = params.engine();
         self.last_note = note;
         self.last_velocity = velocity;
-        self.engines.note_on(self.active_engine, note, velocity, params);
+        self.engines
+            .note_on(self.active_engine, note, velocity, params);
         self.amp_env.note_on(velocity.unit());
         self.active = true;
     }
@@ -87,7 +88,12 @@ impl Voice {
         self.active
     }
 
-    pub fn render(&mut self, output: &mut [f32; BLOCK_SIZE], params: &ParamSnapshot, mod_state: &ModState) {
+    pub fn render(
+        &mut self,
+        output: &mut [f32; BLOCK_SIZE],
+        params: &ParamSnapshot,
+        mod_state: &ModState,
+    ) {
         let sample_rate = self.sample_rate();
 
         // Auto-retrigger if engine type changed (e.g., user loaded FM sound)

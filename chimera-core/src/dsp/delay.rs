@@ -1,8 +1,8 @@
 //! Tape-style delay with wow/flutter, saturation, and high-frequency rolloff.
 //! Inspired by Roland Space Echo / analog tape delay character.
 
-use chimera_hal::BLOCK_SIZE;
 use crate::block::{Block, ParamId, ParamSpec, ValFmt};
+use chimera_hal::BLOCK_SIZE;
 
 /// 500 ms at 48 kHz plus headroom for the ±20-sample wow/flutter swing
 /// (ADR 0014: the delay's range is 10..500 ms so the FX bus fits AXI).
@@ -128,11 +128,22 @@ impl TapeDelay {
 
     /// Send/return use (the FX bus): writes only the wet signal × MIX, the
     /// return level, in place of the send.
-    pub fn process_wet(&mut self, buf: &mut [f32; BLOCK_SIZE], params: &DelayParams, sample_rate: u32) {
+    pub fn process_wet(
+        &mut self,
+        buf: &mut [f32; BLOCK_SIZE],
+        params: &DelayParams,
+        sample_rate: u32,
+    ) {
         self.run(buf, params, sample_rate, 0.0);
     }
 
-    fn run(&mut self, buf: &mut [f32; BLOCK_SIZE], params: &DelayParams, sample_rate: u32, dry_gain: f32) {
+    fn run(
+        &mut self,
+        buf: &mut [f32; BLOCK_SIZE],
+        params: &DelayParams,
+        sample_rate: u32,
+        dry_gain: f32,
+    ) {
         if !params.is_on() {
             return;
         }

@@ -95,7 +95,12 @@ impl DesktopAudio {
 
         stream.play().expect("failed to play stream");
 
-        Self { _stream: stream, shared, bufs, active_buf: 0 }
+        Self {
+            _stream: stream,
+            shared,
+            bufs,
+            active_buf: 0,
+        }
     }
 
     /// Push the Performance to the audio thread (lock-free swap). Must only
@@ -106,7 +111,9 @@ impl DesktopAudio {
         let inactive = 1 - self.active_buf;
         let buf = &mut self.bufs[inactive];
         buf.update_from(perf);
-        self.shared.current.store(buf as *mut AudioShared, Ordering::Release);
+        self.shared
+            .current
+            .store(buf as *mut AudioShared, Ordering::Release);
         self.active_buf = inactive;
     }
 
@@ -114,18 +121,28 @@ impl DesktopAudio {
     /// `NoteQueue` is single-producer/single-consumer and the audio
     /// callback is the sole consumer.
     pub fn note_on(&self, channel: MidiChannel, note: MidiNote, velocity: Velocity) {
-        self.shared.notes.push(NoteEvent { channel, note, kind: NoteKind::On(velocity) });
+        self.shared.notes.push(NoteEvent {
+            channel,
+            note,
+            kind: NoteKind::On(velocity),
+        });
     }
 
     /// Push a note-off onto the queue. Callers: the UI/main thread only —
     /// see `note_on`.
     pub fn note_off(&self, channel: MidiChannel, note: MidiNote) {
-        self.shared.notes.push(NoteEvent { channel, note, kind: NoteKind::Off });
+        self.shared.notes.push(NoteEvent {
+            channel,
+            note,
+            kind: NoteKind::Off,
+        });
     }
 
     /// Hear only DAC pair `pair` (1..=3), or all of them (0).
     pub fn solo(&self, pair: u8) {
-        self.shared.solo.store(pair.min(DAC_PAIRS as u8), Ordering::Relaxed);
+        self.shared
+            .solo
+            .store(pair.min(DAC_PAIRS as u8), Ordering::Relaxed);
     }
 }
 

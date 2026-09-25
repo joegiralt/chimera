@@ -6,7 +6,7 @@ mod common;
 
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::hw::DAC_PAIRS;
-use chimera_core::instrument::{pan_gains, AudioShared, DacOut, Instrument};
+use chimera_core::instrument::{AudioShared, DacOut, Instrument, pan_gains};
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::part::{DacPair, PartMode};
@@ -18,11 +18,19 @@ use common::fnv1a;
 const SR: u32 = chimera_hal::SAMPLE_RATE;
 
 fn on(ch: u8, note: u8) -> NoteEvent {
-    NoteEvent { channel: MidiChannel::new(ch).unwrap(), note: MidiNote::new(note).unwrap(), kind: NoteKind::On(Velocity::DEFAULT) }
+    NoteEvent {
+        channel: MidiChannel::new(ch).unwrap(),
+        note: MidiNote::new(note).unwrap(),
+        kind: NoteKind::On(Velocity::DEFAULT),
+    }
 }
 
 fn off(ch: u8, note: u8) -> NoteEvent {
-    NoteEvent { channel: MidiChannel::new(ch).unwrap(), note: MidiNote::new(note).unwrap(), kind: NoteKind::Off }
+    NoteEvent {
+        channel: MidiChannel::new(ch).unwrap(),
+        note: MidiNote::new(note).unwrap(),
+        kind: NoteKind::Off,
+    }
 }
 
 struct Rig {
@@ -33,7 +41,11 @@ struct Rig {
 
 impl Rig {
     fn new() -> Self {
-        Self { inst: Box::new(Instrument::new(SR)), fx: Box::new(FxBus::new()), out: [[0.0; BLOCK_SIZE * 2]; DAC_PAIRS] }
+        Self {
+            inst: Box::new(Instrument::new(SR)),
+            fx: Box::new(FxBus::new()),
+            out: [[0.0; BLOCK_SIZE * 2]; DAC_PAIRS],
+        }
     }
     fn render(&mut self, shared: &AudioShared) -> &DacOut {
         self.inst.render(&mut self.fx, &mut self.out, shared);
@@ -47,13 +59,19 @@ fn peak(x: &[f32]) -> f32 {
 
 /// Left and right halves of an interleaved pair.
 fn lr(pair: &[f32; BLOCK_SIZE * 2]) -> ([f32; BLOCK_SIZE], [f32; BLOCK_SIZE]) {
-    (core::array::from_fn(|i| pair[2 * i]), core::array::from_fn(|i| pair[2 * i + 1]))
+    (
+        core::array::from_fn(|i| pair[2 * i]),
+        core::array::from_fn(|i| pair[2 * i + 1]),
+    )
 }
 
 #[test]
 fn pan_law_is_constant_power() {
     let (l, r) = pan_gains(0.0);
-    assert!((l - core::f32::consts::FRAC_1_SQRT_2).abs() < 1e-7 && l == r, "centre = -3 dB per side");
+    assert!(
+        (l - core::f32::consts::FRAC_1_SQRT_2).abs() < 1e-7 && l == r,
+        "centre = -3 dB per side"
+    );
     assert_eq!(pan_gains(-1.0), (1.0, 0.0), "hard left");
     assert_eq!(pan_gains(1.0), (0.0, 1.0), "hard right");
     assert_eq!(pan_gains(-3.0), pan_gains(-1.0), "clamped left");
@@ -83,7 +101,11 @@ fn part_bus_is_panned_and_levelled_into_its_pair() {
         assert_eq!(l[i], bus[i] * 0.5, "sample {i}");
         assert_eq!(r[i], 0.0);
     }
-    assert_eq!(peak(&rig.out[1]) + peak(&rig.out[2]), 0.0, "other pairs silent");
+    assert_eq!(
+        peak(&rig.out[1]) + peak(&rig.out[2]),
+        0.0,
+        "other pairs silent"
+    );
 }
 
 /// Send/return: a Part on pair 3, panned hard left, with a reverb send puts
@@ -111,7 +133,10 @@ fn fx_send_puts_no_dry_signal_on_pair_1() {
         let (l3, r3) = lr(&rig.out[2]);
         assert_eq!(peak(&r3), 0.0, "block {b}: hard left");
         if b < 3_411 / BLOCK_SIZE {
-            assert!(b < 2 || peak(&l3) > 0.01, "block {b}: the part sounds on pair 3");
+            assert!(
+                b < 2 || peak(&l3) > 0.01,
+                "block {b}: the part sounds on pair 3"
+            );
             assert_eq!(peak(&rig.out[0]), 0.0, "block {b}: no dry on pair 1");
         }
     }
@@ -131,7 +156,10 @@ fn notes_route_by_channel() {
     shared.parts[4].mix.channel = MidiChannel::new(2).unwrap();
     rig.inst.handle(on(2, 64), &shared);
     rig.render(&shared);
-    assert!(peak(rig.inst.part_bus(4)) > 0.0, "part 5 layered on channel 3");
+    assert!(
+        peak(rig.inst.part_bus(4)) > 0.0,
+        "part 5 layered on channel 3"
+    );
 }
 
 /// Rule 5: after note-off the voice keeps rendering its tail and is freed
@@ -154,7 +182,10 @@ fn tails_ring_out_then_free_the_voice() {
         blocks += 1;
         assert!(blocks < 2_000, "voice never freed");
     }
-    assert!(blocks > 50, "freed after {blocks} blocks: before the 0.3 s release ended");
+    assert!(
+        blocks > 50,
+        "freed after {blocks} blocks: before the 0.3 s release ended"
+    );
 }
 
 #[test]
@@ -194,7 +225,11 @@ fn render_perf(perf: &Performance, notes: &[(u8, u8)], blocks: usize) -> Vec<f32
 }
 
 fn chord() -> Vec<f32> {
-    render_perf(&Performance::new(), &[(0, 60), (0, 64), (0, 67), (0, 71)], 200)
+    render_perf(
+        &Performance::new(),
+        &[(0, 60), (0, 64), (0, 67), (0, 71)],
+        200,
+    )
 }
 
 fn two_parts() -> Vec<f32> {
@@ -244,14 +279,20 @@ fn instrument_goldens_match() {
             failures.push(format!("{name}: 0x{hash:016x}"));
         }
     }
-    assert!(failures.is_empty(), "instrument golden mismatch:\n{}", failures.join("\n"));
+    assert!(
+        failures.is_empty(),
+        "instrument golden mismatch:\n{}",
+        failures.join("\n")
+    );
 }
 
 /// What the goldens lock is what the spec asks for.
 #[test]
 fn golden_scenes_do_what_they_say() {
     let frames = |v: &[f32], pair: usize| -> Vec<f32> {
-        v.chunks(BLOCK_SIZE * 2 * DAC_PAIRS).flat_map(|b| b[pair * BLOCK_SIZE * 2..][..BLOCK_SIZE * 2].to_vec()).collect()
+        v.chunks(BLOCK_SIZE * 2 * DAC_PAIRS)
+            .flat_map(|b| b[pair * BLOCK_SIZE * 2..][..BLOCK_SIZE * 2].to_vec())
+            .collect()
     };
     // Four voices sound at once.
     let single = render_perf(&Performance::new(), &[(0, 60)], 200);
@@ -264,7 +305,10 @@ fn golden_scenes_do_what_they_say() {
     // when it is 0: send off = no FX at all.
     let (dry, wet) = (reverb_send(0.0), reverb_send(0.5));
     assert_ne!(fnv1a(&dry), fnv1a(&wet));
-    assert_eq!(fnv1a(&dry), fnv1a(&render_perf(&Performance::new(), &[(0, 60)], 300)));
+    assert_eq!(
+        fnv1a(&dry),
+        fnv1a(&render_perf(&Performance::new(), &[(0, 60)], 300))
+    );
 }
 
 /// Review Focus: a Part's channel changes while a key is held. The
@@ -294,13 +338,25 @@ fn sound_change_mid_chord_stays_in_budget() {
         rig.inst.handle(on(0, 60 + n), &shared);
     }
     rig.render(&shared);
-    assert_eq!(rig.inst.allocator().slots().iter().filter(|s| !s.is_free()).count(), 6);
+    assert_eq!(
+        rig.inst
+            .allocator()
+            .slots()
+            .iter()
+            .filter(|s| !s.is_free())
+            .count(),
+        6
+    );
     shared.parts[0].params = ParamSnapshot::for_engine(EngineType::Modal);
     rig.render(&shared);
     let a = rig.inst.allocator();
     assert!(a.sounding_cost() + FxBus::COST <= AUDIO_CYCLE_BUDGET);
     assert_eq!(a.slots().iter().filter(|s| !s.is_free()).count(), 5);
-    assert!(a.slots().iter().all(|s| s.is_free() || s.cost() == Voice::cost(EngineType::Modal)));
+    assert!(
+        a.slots()
+            .iter()
+            .all(|s| s.is_free() || s.cost() == Voice::cost(EngineType::Modal))
+    );
 }
 
 /// Blocks after a lone note-off (note 60, default Sound) until the voice's
@@ -336,7 +392,10 @@ fn stealing_a_releasing_voice_does_not_free_the_new_note() {
     assert!(n > 2);
     let mut shared = AudioShared::default();
     shared.parts[1].params = ParamSnapshot::for_engine(EngineType::Modal);
-    for (after_off, held) in [n - 2, n - 1, n, n + 1].into_iter().flat_map(|a| [(a, 0), (a, 20)]) {
+    for (after_off, held) in [n - 2, n - 1, n, n + 1]
+        .into_iter()
+        .flat_map(|a| [(a, 0), (a, 20)])
+    {
         let mut rig = Rig::new();
         for k in 0..6 {
             rig.inst.handle(on(0, 60 + k), &shared); // voices 0..5, voice 0 oldest
@@ -350,10 +409,17 @@ fn stealing_a_releasing_voice_does_not_free_the_new_note() {
         }
         rig.inst.handle(on(1, 72), &shared); // voice 0: stolen, or free again
         let s = rig.inst.allocator().slots()[0];
-        assert_eq!((s.part(), s.note(), s.held()), (Some(1), MidiNote::new(72), true), "{after_off}: voice 0 took it");
+        assert_eq!(
+            (s.part(), s.note(), s.held()),
+            (Some(1), MidiNote::new(72), true),
+            "{after_off}: voice 0 took it"
+        );
         for b in 0..held {
             rig.render(&shared);
-            assert!(rig.inst.allocator().slots()[0].held(), "{after_off}: new note freed at block {b}");
+            assert!(
+                rig.inst.allocator().slots()[0].held(),
+                "{after_off}: new note freed at block {b}"
+            );
         }
         rig.inst.handle(off(1, 72), &shared);
         let mut blocks = 0;
@@ -362,7 +428,10 @@ fn stealing_a_releasing_voice_does_not_free_the_new_note() {
             blocks += 1;
             assert!(blocks < 20_000, "voice never freed");
         }
-        assert!(blocks > 50, "{after_off}/{held}: new note freed after {blocks} blocks, before it rang out");
+        assert!(
+            blocks > 50,
+            "{after_off}/{held}: new note freed after {blocks} blocks, before it rang out"
+        );
     }
 }
 
@@ -377,7 +446,10 @@ fn retriggering_a_releasing_mono_voice_does_not_free_the_new_note() {
     pizza.parts[0].mix.mode = PartMode::Mono;
     let mut modal = pizza.clone();
     modal.parts[0].params = ParamSnapshot::for_engine(EngineType::Modal);
-    for (after_off, held) in [n - 2, n - 1, n, n + 1].into_iter().flat_map(|a| [(a, 0), (a, 20)]) {
+    for (after_off, held) in [n - 2, n - 1, n, n + 1]
+        .into_iter()
+        .flat_map(|a| [(a, 0), (a, 20)])
+    {
         let mut rig = Rig::new();
         rig.inst.handle(on(0, 60), &pizza);
         for _ in 0..20 {
@@ -390,7 +462,13 @@ fn retriggering_a_releasing_mono_voice_does_not_free_the_new_note() {
         rig.inst.handle(on(0, 62), &modal);
         for b in 0..held {
             rig.render(&modal);
-            let s = rig.inst.allocator().slots().iter().find(|s| !s.is_free()).copied();
+            let s = rig
+                .inst
+                .allocator()
+                .slots()
+                .iter()
+                .find(|s| !s.is_free())
+                .copied();
             let s = s.unwrap_or_else(|| panic!("{after_off}: new note freed at block {b}"));
             assert_eq!((s.note(), s.held()), (MidiNote::new(62), true));
         }
@@ -401,7 +479,10 @@ fn retriggering_a_releasing_mono_voice_does_not_free_the_new_note() {
             blocks += 1;
             assert!(blocks < 20_000, "voice never freed");
         }
-        assert!(blocks > 50, "{after_off}/{held}: new note freed after {blocks} blocks, before it rang out");
+        assert!(
+            blocks > 50,
+            "{after_off}/{held}: new note freed after {blocks} blocks, before it rang out"
+        );
     }
 }
 
@@ -423,14 +504,29 @@ fn same_note_from_two_channels_releases_both_voices() {
         assert_eq!([slots[0].part(), slots[1].part()], [Some(0), Some(0)]);
         let (first, second) = if ch4_first { (3, 0) } else { (0, 3) };
         rig.inst.handle(off(first, 60), &shared);
-        let held: Vec<bool> = rig.inst.allocator().slots()[..2].iter().map(|s| s.held()).collect();
-        assert_eq!(held, if ch4_first { [true, false] } else { [false, true] }, "only {first}'s voice released");
+        let held: Vec<bool> = rig.inst.allocator().slots()[..2]
+            .iter()
+            .map(|s| s.held())
+            .collect();
+        assert_eq!(
+            held,
+            if ch4_first {
+                [true, false]
+            } else {
+                [false, true]
+            },
+            "only {first}'s voice released"
+        );
         rig.inst.handle(off(second, 60), &shared);
         let mut blocks = 0;
         while rig.inst.allocator().slots().iter().any(|s| !s.is_free()) {
             rig.render(&shared);
             blocks += 1;
-            assert!(blocks < 3_000, "stuck: {:?}", rig.inst.allocator().slots().map(|s| (s.part(), s.held())));
+            assert!(
+                blocks < 3_000,
+                "stuck: {:?}",
+                rig.inst.allocator().slots().map(|s| (s.part(), s.held()))
+            );
         }
     }
 }

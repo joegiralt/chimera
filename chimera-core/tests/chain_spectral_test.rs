@@ -1,10 +1,10 @@
-use chimera_core::{MidiNote, Velocity};
-use chimera_core::modulation::ModState;
 use chimera_core::dsp::drive::Drive;
 use chimera_core::dsp::filter::SvfFilter;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::dsp::wavefolder::Wavefolder;
+use chimera_core::modulation::ModState;
 use chimera_core::params::{DriveParams, FilterParams, FolderParams, ParamSnapshot};
+use chimera_core::{MidiNote, Velocity};
 
 const SR: u32 = 48000;
 
@@ -418,7 +418,11 @@ fn test_voice_filter_sweep_audible() {
         params.filter.cutoff = cutoff;
         params.filter.mode = 2; // LP4
 
-        voice.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params);
+        voice.note_on(
+            MidiNote::new(60).unwrap(),
+            Velocity::new(100).unwrap(),
+            &params,
+        );
 
         let mut all = Vec::new();
         let mut block = [0.0f32; 64];
@@ -451,7 +455,11 @@ fn test_voice_drive_adds_grit() {
         params.drive.drive = drive_amount;
         params.drive.mix = 1.0;
 
-        voice.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params);
+        voice.note_on(
+            MidiNote::new(60).unwrap(),
+            Velocity::new(100).unwrap(),
+            &params,
+        );
 
         let mut all = Vec::new();
         let mut block = [0.0f32; 64];

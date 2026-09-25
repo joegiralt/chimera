@@ -1,7 +1,7 @@
 use chimera_core::addr::{BlockRef, Op, ParamAddr};
 use chimera_core::dsp::pizza::PizzaParams;
 use chimera_core::mod_path::ModDestRegistry;
-use chimera_core::modulation::{ModState, MAX_MOD_DESTS, MAX_MOD_SOURCES};
+use chimera_core::modulation::{MAX_MOD_DESTS, MAX_MOD_SOURCES, ModState};
 use chimera_core::params::{DriveParams, EnvParams, FilterParams, FmOpParams, FolderParams};
 use chimera_core::ui::mod_grid::MatrixState;
 
@@ -39,7 +39,13 @@ fn mod_state_default_is_empty() {
 fn mod_state_offset_no_routes() {
     let ms = ModState::new();
     let sources = [0.0f32; MAX_MOD_SOURCES];
-    assert_eq!(ms.offset_for(ParamAddr::new(BlockRef::Pizza, PizzaParams::SHAPE), &sources), 0.0);
+    assert_eq!(
+        ms.offset_for(
+            ParamAddr::new(BlockRef::Pizza, PizzaParams::SHAPE),
+            &sources
+        ),
+        0.0
+    );
 }
 
 #[test]
@@ -52,7 +58,10 @@ fn mod_state_offset_single_route() {
     sources[0] = 1.0;
     let offset = ms.offset_for(CUTOFF, &sources);
     let expected = 1.0 * (64.0 / 127.0);
-    assert!((offset - expected).abs() < 1e-5, "expected {expected}, got {offset}");
+    assert!(
+        (offset - expected).abs() < 1e-5,
+        "expected {expected}, got {offset}"
+    );
     assert_eq!(ms.sum_for(0, &sources), offset);
 }
 
@@ -67,7 +76,10 @@ fn mod_state_offset_multiple_sources() {
     sources[1] = -0.8;
     let offset = ms.sum_for(0, &sources);
     let expected = 0.5 * (50.0 / 127.0) + (-0.8) * (100.0 / 127.0);
-    assert!((offset - expected).abs() < 1e-5, "expected {expected}, got {offset}");
+    assert!(
+        (offset - expected).abs() < 1e-5,
+        "expected {expected}, got {offset}"
+    );
 }
 
 #[test]
@@ -122,7 +134,10 @@ fn mod_state_truncates_without_misaligning() {
         registry.add(a, *b"X\0\0\0\0\0\0\0").unwrap();
     }
     assert_eq!(registry.len(), 25);
-    assert_eq!(ModState::from_registry(&registry, 2).num_dests(), MAX_MOD_DESTS);
+    assert_eq!(
+        ModState::from_registry(&registry, 2).num_dests(),
+        MAX_MOD_DESTS
+    );
 
     let mut matrix = MatrixState::new();
     matrix.rebuild_dests_from_registry(&registry); // matrix keeps 16 too
@@ -179,5 +194,8 @@ fn matrix_dests_are_semantic() {
     matrix.rebuild_dests_from_registry(&registry);
     assert_eq!(matrix.mod_info_for(op_c), Some(0.0));
     assert_eq!(matrix.mod_info_for(atk), Some(0.0));
-    assert_eq!(matrix.mod_info_for(ParamAddr::new(BlockRef::FmOp(Op::D), FmOpParams::FEEDBACK)), None);
+    assert_eq!(
+        matrix.mod_info_for(ParamAddr::new(BlockRef::FmOp(Op::D), FmOpParams::FEEDBACK)),
+        None
+    );
 }

@@ -2,8 +2,8 @@
 //! note-on velocities are representable, and the parser builds them.
 
 use chimera_core::{MidiNote, Velocity};
-use chimera_hal::midi::MidiParser;
 use chimera_hal::MidiMessage;
+use chimera_hal::midi::MidiParser;
 
 #[test]
 fn midi_note_accepts_0_to_127_only() {
@@ -37,7 +37,11 @@ fn parser_builds_note_on() {
     let msgs = feed(&mut MidiParser::new(), &[0x90, 60, 127]);
     assert_eq!(
         msgs,
-        [MidiMessage::NoteOn { channel: 0, note: MidiNote::new(60).unwrap(), velocity: Velocity::MAX }]
+        [MidiMessage::NoteOn {
+            channel: 0,
+            note: MidiNote::new(60).unwrap(),
+            velocity: Velocity::MAX
+        }]
     );
 }
 
@@ -45,7 +49,14 @@ fn parser_builds_note_on() {
 #[test]
 fn parser_velocity_zero_is_note_off() {
     let msgs = feed(&mut MidiParser::new(), &[0x91, 127, 0]);
-    assert_eq!(msgs, [MidiMessage::NoteOff { channel: 1, note: MidiNote::new(127).unwrap(), velocity: 0 }]);
+    assert_eq!(
+        msgs,
+        [MidiMessage::NoteOff {
+            channel: 1,
+            note: MidiNote::new(127).unwrap(),
+            velocity: 0
+        }]
+    );
 }
 
 #[test]
@@ -55,8 +66,16 @@ fn parser_running_status_note_on_then_off() {
     assert_eq!(
         msgs,
         [
-            MidiMessage::NoteOn { channel: 0, note: n60, velocity: Velocity::DEFAULT },
-            MidiMessage::NoteOff { channel: 0, note: n60, velocity: 0 },
+            MidiMessage::NoteOn {
+                channel: 0,
+                note: n60,
+                velocity: Velocity::DEFAULT
+            },
+            MidiMessage::NoteOff {
+                channel: 0,
+                note: n60,
+                velocity: 0
+            },
         ]
     );
 }
@@ -64,5 +83,12 @@ fn parser_running_status_note_on_then_off() {
 #[test]
 fn parser_note_off_keeps_release_velocity() {
     let msgs = feed(&mut MidiParser::new(), &[0x82, 64, 64]);
-    assert_eq!(msgs, [MidiMessage::NoteOff { channel: 2, note: MidiNote::new(64).unwrap(), velocity: 64 }]);
+    assert_eq!(
+        msgs,
+        [MidiMessage::NoteOff {
+            channel: 2,
+            note: MidiNote::new(64).unwrap(),
+            velocity: 64
+        }]
+    );
 }

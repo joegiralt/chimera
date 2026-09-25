@@ -3,7 +3,7 @@
 //! bound param's spec.
 
 use crate::addr::{Blocks, Op};
-use crate::ui::block_def::{slot_addr, BlockDef, SlotBinding};
+use crate::ui::block_def::{BlockDef, SlotBinding, slot_addr};
 
 /// Normalized (0..1) display values of the six slots.
 pub fn read_values(def: &BlockDef, params: &impl Blocks, sel_op: Op) -> [f32; 6] {
@@ -17,8 +17,18 @@ pub fn read_values(def: &BlockDef, params: &impl Blocks, sel_op: Op) -> [f32; 6]
 
 /// One encoder turn on `slot`: steps the bound param, or the operator
 /// selection for the `SelectOp` slot.
-pub fn apply_encoder(def: &BlockDef, slot: usize, delta: i8, params: &mut impl Blocks, sel_op: &mut Op) {
-    if def.params.get(slot).is_some_and(|s| s.binding == SlotBinding::SelectOp) {
+pub fn apply_encoder(
+    def: &BlockDef,
+    slot: usize,
+    delta: i8,
+    params: &mut impl Blocks,
+    sel_op: &mut Op,
+) {
+    if def
+        .params
+        .get(slot)
+        .is_some_and(|s| s.binding == SlotBinding::SelectOp)
+    {
         *sel_op = sel_op.nudged(delta);
     } else if let Some(a) = slot_addr(def, slot, *sel_op)
         && let Some(b) = params.block_mut(a.block)

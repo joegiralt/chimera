@@ -1,5 +1,5 @@
 use crate::addr::{BlockRef, Op, ParamAddr};
-use crate::block::{find_spec, ParamId, ParamSpec};
+use crate::block::{ParamId, ParamSpec, find_spec};
 use crate::ui::page::{PageLayout, ValFmt};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -28,7 +28,10 @@ pub enum SlotBinding {
     /// The FM operator selector itself.
     SelectOp,
     /// Mixer/System/Demo pages, still driven by `PageId`.
-    Legacy { label: &'static str, fmt: ValFmt },
+    Legacy {
+        label: &'static str,
+        fmt: ValFmt,
+    },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -40,26 +43,44 @@ pub struct ParamSlot {
 }
 
 impl ParamSlot {
-    pub const EMPTY: ParamSlot = ParamSlot { binding: SlotBinding::Empty, label_override: None };
+    pub const EMPTY: ParamSlot = ParamSlot {
+        binding: SlotBinding::Empty,
+        label_override: None,
+    };
 
     pub const fn param(block: BlockRef, param: ParamId) -> Self {
-        Self { binding: SlotBinding::Param(ParamAddr::new(block, param)), label_override: None }
+        Self {
+            binding: SlotBinding::Param(ParamAddr::new(block, param)),
+            label_override: None,
+        }
     }
 
     pub const fn selected_op(param: ParamId) -> Self {
-        Self { binding: SlotBinding::SelectedOp(param), label_override: None }
+        Self {
+            binding: SlotBinding::SelectedOp(param),
+            label_override: None,
+        }
     }
 
     pub const fn select_op() -> Self {
-        Self { binding: SlotBinding::SelectOp, label_override: None }
+        Self {
+            binding: SlotBinding::SelectOp,
+            label_override: None,
+        }
     }
 
     pub const fn legacy(label: &'static str, fmt: ValFmt) -> Self {
-        Self { binding: SlotBinding::Legacy { label, fmt }, label_override: None }
+        Self {
+            binding: SlotBinding::Legacy { label, fmt },
+            label_override: None,
+        }
     }
 
     pub const fn with_label(self, label: &'static str) -> Self {
-        Self { label_override: Some(label), ..self }
+        Self {
+            label_override: Some(label),
+            ..self
+        }
     }
 
     /// The spec this slot edits (bound slots only).
@@ -80,7 +101,9 @@ impl ParamSlot {
             SlotBinding::Empty => "--",
             SlotBinding::SelectOp => "OP",
             SlotBinding::Legacy { label, .. } => label,
-            SlotBinding::Param(_) | SlotBinding::SelectedOp(_) => self.spec().map_or("??", |s| s.label),
+            SlotBinding::Param(_) | SlotBinding::SelectedOp(_) => {
+                self.spec().map_or("??", |s| s.label)
+            }
         }
     }
 
@@ -89,7 +112,9 @@ impl ParamSlot {
             SlotBinding::Empty => ValFmt::Uni,
             SlotBinding::SelectOp => ValFmt::OneBased(3),
             SlotBinding::Legacy { fmt, .. } => fmt,
-            SlotBinding::Param(_) | SlotBinding::SelectedOp(_) => self.spec().map_or(ValFmt::Uni, |s| s.fmt),
+            SlotBinding::Param(_) | SlotBinding::SelectedOp(_) => {
+                self.spec().map_or(ValFmt::Uni, |s| s.fmt)
+            }
         }
     }
 }
@@ -126,7 +151,10 @@ impl ChainBlock {
         if self.sub_pages.is_empty() || sub_page == 0 {
             self.def
         } else {
-            self.sub_pages.get(sub_page - 1).copied().unwrap_or(self.def)
+            self.sub_pages
+                .get(sub_page - 1)
+                .copied()
+                .unwrap_or(self.def)
         }
     }
 

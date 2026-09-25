@@ -34,7 +34,11 @@ pub fn fast_sin(theta: f32) -> f32 {
     // Normalize to 0.0..1.0
     let mut t = theta * INV_TAU;
     // Fast floor: cast to i32 truncates toward zero; adjust for negatives
-    t -= if t >= 0.0 { t as i32 as f32 } else { (t as i32 - 1) as f32 };
+    t -= if t >= 0.0 {
+        t as i32 as f32
+    } else {
+        (t as i32 - 1) as f32
+    };
     let idx_f = t * 1024.0;
     let idx = idx_f as usize;
     let frac = idx_f - idx as f32;
@@ -78,19 +82,19 @@ pub fn fast_tan(x: f32) -> f32 {
     x * (1.0 + x2 * (1.0 / 3.0 + x2 * (2.0 / 15.0)))
 }
 
-pub mod fm_tables;
-pub mod fm_waveform;
-pub mod envelope_fm;
-pub mod engine_fm;
-pub mod engines;
 pub mod chorus;
 pub mod delay;
-pub mod fx_bus;
 pub mod drive;
-pub mod midiverb;
+pub mod engine_fm;
+pub mod engines;
 pub mod envelope;
+pub mod envelope_fm;
 pub mod filter;
+pub mod fm_tables;
+pub mod fm_waveform;
+pub mod fx_bus;
 pub mod lfo;
+pub mod midiverb;
 pub mod modal;
 pub mod oscillator;
 pub mod pizza;

@@ -1,14 +1,14 @@
-use chimera_hal::{ButtonId, ButtonState, Controls};
 use crate::preset::ChainType;
 use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2};
 use crate::ui::block_registry;
+use chimera_hal::{ButtonId, ButtonState, Controls};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ChainId {
-    Part(usize),    // 0-5 (B1-B6)
-    Mixer(usize),   // 0-5 (MIX + B1-B6, but MIX+B6 = Demo)
-    System,         // MENU
-    Demo,           // MIX + B6
+    Part(usize),  // 0-5 (B1-B6)
+    Mixer(usize), // 0-5 (MIX + B1-B6, but MIX+B6 = Demo)
+    System,       // MENU
+    Demo,         // MIX + B6
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -146,9 +146,7 @@ impl ChainNav {
         }
 
         // Return whether position changed
-        self.chain_id != prev_chain_id
-            || self.node != prev_node
-            || self.sub_page != prev_sub
+        self.chain_id != prev_chain_id || self.node != prev_node || self.sub_page != prev_sub
     }
 }
 

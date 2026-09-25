@@ -32,7 +32,13 @@ impl Default for FxParams {
         Self {
             chorus: ChorusParams::default(),
             delay: DelayParams::default(),
-            reverb: ReverbParams { reverb_type: 0, time: 0.5, damping: 0.3, size: 0.5, mix: 0.0 },
+            reverb: ReverbParams {
+                reverb_type: 0,
+                time: 0.5,
+                damping: 0.3,
+                size: 0.5,
+                mix: 0.0,
+            },
         }
     }
 }
@@ -56,7 +62,11 @@ impl FxBus {
     pub const COST: Cost = Cost(600); // estimate
 
     pub fn new() -> Self {
-        Self { chorus: JunoChorus::new(), delay: TapeDelay::new(), reverb: Reverb::new() }
+        Self {
+            chorus: JunoChorus::new(),
+            delay: TapeDelay::new(),
+            reverb: Reverb::new(),
+        }
     }
 
     /// Run each effect that is on over its send (replaced in place by its

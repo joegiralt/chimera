@@ -2,11 +2,11 @@
 //! 240x320 RGB565, framebuffer in static BSS (too large for stack).
 
 use chimera_hal::{ChimeraDisplay, FB_SIZE, SCREEN_HEIGHT, SCREEN_WIDTH};
+use embedded_graphics_core::Pixel;
 use embedded_graphics_core::draw_target::DrawTarget;
 use embedded_graphics_core::geometry::{OriginDimensions, Size};
-use embedded_graphics_core::pixelcolor::raw::{RawData, RawU16};
 use embedded_graphics_core::pixelcolor::Rgb565;
-use embedded_graphics_core::Pixel;
+use embedded_graphics_core::pixelcolor::raw::{RawData, RawU16};
 use stm32h7xx_hal::hal::blocking::spi::Write;
 use stm32h7xx_hal::hal::digital::v2::OutputPin;
 

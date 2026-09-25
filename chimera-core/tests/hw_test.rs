@@ -26,7 +26,10 @@ fn memory_regions_match_the_h750() {
 #[test]
 fn costs_add_and_compare() {
     assert_eq!(Cost(610) + Cost(1_210), Cost(1_820));
-    assert_eq!([Cost(1), Cost(2), Cost(3)].into_iter().sum::<Cost>(), Cost(6));
+    assert_eq!(
+        [Cost(1), Cost(2), Cost(3)].into_iter().sum::<Cost>(),
+        Cost(6)
+    );
     assert!(Cost(7_001) > hw::AUDIO_CYCLE_BUDGET);
     assert_eq!(Cost::ZERO, Cost(0));
 }

@@ -1,8 +1,8 @@
 use chimera_core::addr::{BlockRef, Op, ParamAddr};
 use chimera_core::block::ParamId;
+use chimera_core::dsp::modal::ModalParams;
 use chimera_core::mod_path::{ModDestRegistry, RegistryError};
 use chimera_core::params::{DriveParams, FilterParams, FmOpParams, FmParams};
-use chimera_core::dsp::modal::ModalParams;
 
 fn op_level(op: Op) -> ParamAddr {
     ParamAddr::new(BlockRef::FmOp(op), FmOpParams::LEVEL)
@@ -59,16 +59,20 @@ fn registry_fm_ops_are_distinct() {
 fn registry_refuses_non_modulatable() {
     let mut reg = ModDestRegistry::new();
     let refused = [
-        ParamAddr::new(BlockRef::Modal, ModalParams::EXCITE),         // note-on only
-        ParamAddr::new(BlockRef::Fm, FmParams::ALGORITHM),            // Enum
-        ParamAddr::new(BlockRef::FmOp(Op::A), FmOpParams::WAVEFORM),  // Enum
+        ParamAddr::new(BlockRef::Modal, ModalParams::EXCITE), // note-on only
+        ParamAddr::new(BlockRef::Fm, FmParams::ALGORITHM),    // Enum
+        ParamAddr::new(BlockRef::FmOp(Op::A), FmOpParams::WAVEFORM), // Enum
         ParamAddr::new(BlockRef::FmOp(Op::A), FmOpParams::ATTACK_RATE), // note-on only
-        ParamAddr::new(BlockRef::Filter, FilterParams::FM_AMOUNT),    // never read
+        ParamAddr::new(BlockRef::Filter, FilterParams::FM_AMOUNT), // never read
         ParamAddr::new(BlockRef::FilterEnv, chimera_core::params::EnvParams::ATTACK), // never read (plan D7)
-        ParamAddr::new(BlockRef::Pizza, ParamId(99)),                 // no such param
+        ParamAddr::new(BlockRef::Pizza, ParamId(99)), // no such param
     ];
     for addr in refused {
-        assert_eq!(reg.add(addr, *b"X\0\0\0\0\0\0\0"), Err(RegistryError::NotModulatable), "{addr:?}");
+        assert_eq!(
+            reg.add(addr, *b"X\0\0\0\0\0\0\0"),
+            Err(RegistryError::NotModulatable),
+            "{addr:?}"
+        );
     }
     assert!(reg.is_empty());
 }
@@ -81,7 +85,11 @@ fn registry_accepts_exactly_the_modulatable_addresses() {
     for b in BlockRef::ALL {
         for s in b.specs() {
             let addr = ParamAddr::new(b, s.id);
-            assert_eq!(reg.add(addr, *b"X\0\0\0\0\0\0\0").is_ok(), addr.modulatable(), "{addr:?}");
+            assert_eq!(
+                reg.add(addr, *b"X\0\0\0\0\0\0\0").is_ok(),
+                addr.modulatable(),
+                "{addr:?}"
+            );
             accepted += addr.modulatable() as usize;
         }
     }

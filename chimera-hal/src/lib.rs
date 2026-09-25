@@ -121,7 +121,11 @@ impl Velocity {
     pub const DEFAULT: Velocity = Velocity(100);
 
     pub const fn new(v: u8) -> Option<Self> {
-        if v >= 1 && v <= 127 { Some(Self(v)) } else { None }
+        if v >= 1 && v <= 127 {
+            Some(Self(v))
+        } else {
+            None
+        }
     }
 
     pub const fn get(self) -> u8 {
@@ -136,11 +140,26 @@ impl Velocity {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MidiMessage {
-    NoteOn { channel: u8, note: MidiNote, velocity: Velocity },
+    NoteOn {
+        channel: u8,
+        note: MidiNote,
+        velocity: Velocity,
+    },
     /// Release velocity may be 0.
-    NoteOff { channel: u8, note: MidiNote, velocity: u8 },
-    ControlChange { channel: u8, cc: u8, value: u8 },
-    PitchBend { channel: u8, value: i16 },
+    NoteOff {
+        channel: u8,
+        note: MidiNote,
+        velocity: u8,
+    },
+    ControlChange {
+        channel: u8,
+        cc: u8,
+        value: u8,
+    },
+    PitchBend {
+        channel: u8,
+        value: i16,
+    },
 }
 
 /// RGB565 framebuffer pixel type

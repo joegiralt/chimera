@@ -3,10 +3,10 @@
 //! Each PageLayout defines screen regions with data snapshots.
 //! Only regions whose data changed get cleared, redrawn, and flushed.
 
-use crate::ui::page::{PageId, PageKey, PageLayout};
-use crate::ui::animation::AnimatedValue;
-use crate::ui::theme;
 use crate::ui::PrimeStatus;
+use crate::ui::animation::AnimatedValue;
+use crate::ui::page::{PageId, PageKey, PageLayout};
+use crate::ui::theme;
 
 /// Quantize a float to u16 for cheap comparison. Range 0.0..65.0 → 0..65000.
 pub fn quantize(f: f32) -> u16 {
@@ -86,11 +86,22 @@ pub enum RegionData {
 
 impl RegionData {
     pub fn header(chain_idx: u8, node_idx: u8, sub_page: u8, load_pct: u8, sounding: bool) -> Self {
-        Self::Header { chain_idx, node_idx, sub_page, load_pct, sounding }
+        Self::Header {
+            chain_idx,
+            node_idx,
+            sub_page,
+            load_pct,
+            sounding,
+        }
     }
 
     pub fn focus(page: PageKey, slot: u8, value: u16, status: Option<PrimeStatus>) -> Self {
-        Self::Focus { page, slot, value, status }
+        Self::Focus {
+            page,
+            slot,
+            value,
+            status,
+        }
     }
 
     pub fn viz(page: PageKey, values: [u16; 6], live: u32) -> Self {
@@ -98,43 +109,102 @@ impl RegionData {
     }
 
     pub fn cells(page: PageKey, values: [u16; 6], focus: u8, dest_count: u16) -> Self {
-        Self::Cells { page, values, focus, dest_count }
+        Self::Cells {
+            page,
+            values,
+            focus,
+            dest_count,
+        }
     }
 
     pub fn nav(chain_idx: u8, node_idx: u8, sub_page: u8, branch_scroll: u16) -> Self {
-        Self::Nav { chain_idx, node_idx, sub_page, branch_scroll }
+        Self::Nav {
+            chain_idx,
+            node_idx,
+            sub_page,
+            branch_scroll,
+        }
     }
 
     pub fn sentinel_header() -> Self {
-        Self::Header { chain_idx: 255, node_idx: 255, sub_page: 255, load_pct: u8::MAX, sounding: false }
+        Self::Header {
+            chain_idx: 255,
+            node_idx: 255,
+            sub_page: 255,
+            load_pct: u8::MAX,
+            sounding: false,
+        }
     }
 
     pub fn sentinel_focus() -> Self {
-        Self::Focus { page: SENTINEL_PAGE, slot: u8::MAX, value: SENTINEL, status: None }
+        Self::Focus {
+            page: SENTINEL_PAGE,
+            slot: u8::MAX,
+            value: SENTINEL,
+            status: None,
+        }
     }
 
     pub fn sentinel_viz() -> Self {
-        Self::Viz { page: SENTINEL_PAGE, values: [SENTINEL; 6], live: u32::MAX }
+        Self::Viz {
+            page: SENTINEL_PAGE,
+            values: [SENTINEL; 6],
+            live: u32::MAX,
+        }
     }
 
     pub fn sentinel_cells() -> Self {
-        Self::Cells { page: SENTINEL_PAGE, values: [SENTINEL; 6], focus: u8::MAX, dest_count: u16::MAX }
+        Self::Cells {
+            page: SENTINEL_PAGE,
+            values: [SENTINEL; 6],
+            focus: u8::MAX,
+            dest_count: u16::MAX,
+        }
     }
 
     pub fn sentinel_nav() -> Self {
-        Self::Nav { chain_idx: 255, node_idx: 255, sub_page: 255, branch_scroll: SENTINEL }
+        Self::Nav {
+            chain_idx: 255,
+            node_idx: 255,
+            sub_page: 255,
+            branch_scroll: SENTINEL,
+        }
     }
 
     pub fn grid(sel_row: u8, sel_col: u8, scroll_x: u8, scroll_y: u8) -> Self {
-        Self::Grid { sel_row, sel_col, scroll_x, scroll_y, sel_value: 0 }
+        Self::Grid {
+            sel_row,
+            sel_col,
+            scroll_x,
+            scroll_y,
+            sel_value: 0,
+        }
     }
 
-    pub fn grid_with_value(sel_row: u8, sel_col: u8, scroll_x: u8, scroll_y: u8, sel_value: u16) -> Self {
-        Self::Grid { sel_row, sel_col, scroll_x, scroll_y, sel_value }
+    pub fn grid_with_value(
+        sel_row: u8,
+        sel_col: u8,
+        scroll_x: u8,
+        scroll_y: u8,
+        sel_value: u16,
+    ) -> Self {
+        Self::Grid {
+            sel_row,
+            sel_col,
+            scroll_x,
+            scroll_y,
+            sel_value,
+        }
     }
 
     pub fn sentinel_grid() -> Self {
-        Self::Grid { sel_row: 255, sel_col: 255, scroll_x: 255, scroll_y: 255, sel_value: SENTINEL }
+        Self::Grid {
+            sel_row: 255,
+            sel_col: 255,
+            scroll_x: 255,
+            scroll_y: 255,
+            sel_value: SENTINEL,
+        }
     }
 }
 
@@ -185,7 +255,12 @@ impl RegionSet {
     pub fn set_layout(&mut self, layout: PageLayout) {
         let bands = layout_regions(layout);
         for (r, &(kind, y_start, y_end)) in self.regions.iter_mut().zip(bands) {
-            *r = Region { kind, y_start, y_end, prev_data: sentinel(kind) };
+            *r = Region {
+                kind,
+                y_start,
+                y_end,
+                prev_data: sentinel(kind),
+            };
         }
         self.count = bands.len() as u8;
         self.prev_layout = Some(layout);
@@ -225,11 +300,19 @@ const CELL_GRID: [(RegionKind, u16, u16); 5] = [
     (K::Nav, CELLS, SCREEN),
 ];
 /// BigViz: header, large viz, cells, map.
-const BIG_VIZ: [(RegionKind, u16, u16); 4] =
-    [(K::Header, 0, HEADER), (K::Viz, HEADER, BIG_VIZ_END), (K::Cells, BIG_VIZ_END, CELLS), (K::Nav, CELLS, SCREEN)];
+const BIG_VIZ: [(RegionKind, u16, u16); 4] = [
+    (K::Header, 0, HEADER),
+    (K::Viz, HEADER, BIG_VIZ_END),
+    (K::Cells, BIG_VIZ_END, CELLS),
+    (K::Nav, CELLS, SCREEN),
+];
 /// Mod matrix: header, the selected route, dot grid, map.
-const MATRIX: [(RegionKind, u16, u16); 4] =
-    [(K::Header, 0, HEADER), (K::Focus, HEADER, FOCUS), (K::Grid, FOCUS, CELLS), (K::Nav, CELLS, SCREEN)];
+const MATRIX: [(RegionKind, u16, u16); 4] = [
+    (K::Header, 0, HEADER),
+    (K::Focus, HEADER, FOCUS),
+    (K::Grid, FOCUS, CELLS),
+    (K::Nav, CELLS, SCREEN),
+];
 
 /// The bands of `layout`, top to bottom; they tile 0..320.
 pub fn layout_regions(layout: PageLayout) -> &'static [(RegionKind, u16, u16)] {

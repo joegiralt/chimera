@@ -13,7 +13,10 @@ struct MockControls {
 
 impl MockControls {
     fn new() -> Self {
-        Self { buttons: Vec::new(), encoders: Vec::new() }
+        Self {
+            buttons: Vec::new(),
+            encoders: Vec::new(),
+        }
     }
     fn button(mut self, id: ButtonId, state: ButtonState) -> Self {
         self.buttons.push((id, state));
@@ -27,7 +30,10 @@ impl MockControls {
 
 impl Controls for MockControls {
     fn button_state(&self, id: ButtonId) -> ButtonState {
-        self.buttons.iter().find(|b| b.0 == id).map_or(ButtonState::Up, |b| b.1)
+        self.buttons
+            .iter()
+            .find(|b| b.0 == id)
+            .map_or(ButtonState::Up, |b| b.1)
     }
     fn encoder_delta(&self, id: EncoderId) -> i8 {
         self.encoders.iter().find(|e| e.0 == id).map_or(0, |e| e.1)
@@ -83,14 +89,20 @@ fn leave_matrix(ui: &mut UiState) {
 
 fn primed(ui: &UiState) -> Vec<ParamAddr> {
     let reg = &ui.performance.parts[0].sound.dest_registry;
-    (0..reg.len()).filter_map(|i| reg.get(i)).map(|e| e.addr).collect()
+    (0..reg.len())
+        .filter_map(|i| reg.get(i))
+        .map(|e| e.addr)
+        .collect()
 }
 
 #[test]
 fn priming_on_a_part_page_registers_its_address() {
     let mut ui = UiState::new(); // Part 1, Pizza page
     prime_slot_0(&mut ui);
-    assert_eq!(primed(&ui), [ParamAddr::new(BlockRef::Pizza, PizzaParams::SHAPE)]);
+    assert_eq!(
+        primed(&ui),
+        [ParamAddr::new(BlockRef::Pizza, PizzaParams::SHAPE)]
+    );
     let reg = &ui.performance.parts[0].sound.dest_registry;
     assert_eq!(reg.get(0).unwrap().label_str(), "PIZSHAPE");
     assert_eq!(ui.mod_state().num_dests(), 1);
@@ -161,7 +173,10 @@ fn selected_op_route_is_concrete() {
     assert_eq!(ui.selected_op(), Op::C);
     assert!(primed(&ui).contains(&fdbk_b));
     assert!(!primed(&ui).contains(&ParamAddr::new(BlockRef::FmOp(Op::C), FmOpParams::FEEDBACK)));
-    assert_eq!(ui.performance.parts[0].sound.params.fm.operators[1].feedback, 1.0);
+    assert_eq!(
+        ui.performance.parts[0].sound.params.fm.operators[1].feedback,
+        1.0
+    );
 }
 
 /// Spec §5: the FM operator selection is part of the page identity, so
@@ -178,9 +193,21 @@ fn fm_operator_selector_updates_the_page_key() {
     ui.performance.parts[0] = Part::new(ChainType::Fm);
     ui.nav.chain_type = ChainType::Fm;
     press(&mut ui, ButtonId::Edit); // sub-page 1: FM_OP
-    assert_eq!(ui.page(), PageKey::Part { def: reg::FM_OP.id, op: Op::A });
+    assert_eq!(
+        ui.page(),
+        PageKey::Part {
+            def: reg::FM_OP.id,
+            op: Op::A
+        }
+    );
     ui.handle_input(&MockControls::new().encoder(EncoderId::A, 1)); // selector: A -> B
-    assert_eq!(ui.page(), PageKey::Part { def: reg::FM_OP.id, op: Op::B });
+    assert_eq!(
+        ui.page(),
+        PageKey::Part {
+            def: reg::FM_OP.id,
+            op: Op::B
+        }
+    );
 }
 
 /// Spec §4: after loading the FM init sound the matrix rows are ENV and LFO
@@ -215,7 +242,9 @@ fn set_first_amount(ui: &mut UiState, delta: i8) {
 
 fn routes(ui: &UiState, part: usize) -> Vec<(ParamAddr, i8)> {
     let ms = &ui.performance.parts[part].sound.mod_state;
-    (0..ms.num_dests()).map(|d| (ms.dest(d), ms.amount(0, d))).collect()
+    (0..ms.num_dests())
+        .map(|d| (ms.dest(d), ms.amount(0, d)))
+        .collect()
 }
 
 /// Switching Part (B<n>, MIX + B<n>) rebuilds the matrix for that Part —
@@ -234,21 +263,39 @@ fn switching_part_rebuilds_the_matrix_for_that_part() {
     assert_eq!(ui.matrix_state.num_dests, 0, "Part 2's matrix is empty");
     ui.handle_input(&MockControls::new().encoder(EncoderId::B, 1)); // slot 1 of its first page
     ui.handle_input(
-        &MockControls::new().button(ButtonId::Mix, ButtonState::Held).button(ButtonId::Plus, ButtonState::Pressed),
+        &MockControls::new()
+            .button(ButtonId::Mix, ButtonState::Held)
+            .button(ButtonId::Plus, ButtonState::Pressed),
     );
-    let p2 = ui.performance.parts[1].sound.dest_registry.get(0).expect("Part 2 primed").addr;
+    let p2 = ui.performance.parts[1]
+        .sound
+        .dest_registry
+        .get(0)
+        .expect("Part 2 primed")
+        .addr;
     assert_ne!(p2, shape);
     set_first_amount(&mut ui, 20);
     assert_eq!(routes(&ui, 1), [(p2, 20)], "Part 2 keeps its own route");
     assert_eq!(routes(&ui, 0), [(shape, 10)], "Part 1 untouched");
 
     // MIX + B1 then B1: back on Part 1, its matrix shows its own amount.
-    ui.handle_input(&MockControls::new().button(ButtonId::Mix, ButtonState::Held).button(ButtonId::B1, ButtonState::Pressed));
+    ui.handle_input(
+        &MockControls::new()
+            .button(ButtonId::Mix, ButtonState::Held)
+            .button(ButtonId::B1, ButtonState::Pressed),
+    );
     assert_eq!(ui.active_part, 0);
-    assert_eq!((ui.matrix_state.num_dests, ui.matrix_state.amounts[0][0]), (1, 10));
+    assert_eq!(
+        (ui.matrix_state.num_dests, ui.matrix_state.amounts[0][0]),
+        (1, 10)
+    );
     press(&mut ui, ButtonId::B1);
     set_first_amount(&mut ui, 1);
-    assert_eq!(routes(&ui, 0), [(shape, 11)], "edited from Part 1's amount, not Part 2's");
+    assert_eq!(
+        routes(&ui, 0),
+        [(shape, 11)],
+        "edited from Part 1's amount, not Part 2's"
+    );
     assert_eq!(routes(&ui, 1), [(p2, 20)]);
 }
 
@@ -283,7 +330,10 @@ fn priming_after_a_stale_cursor_does_not_inherit_a_phantom_amount() {
     press(&mut ui, ButtonId::B2);
     prime_slot(&mut ui, EncoderId::A);
     assert_eq!(ui.matrix_state.num_dests, 1);
-    assert_eq!(ui.matrix_state.sel_col, 0, "load_matrix must clamp the cursor to the new Part's destination count");
+    assert_eq!(
+        ui.matrix_state.sel_col, 0,
+        "load_matrix must clamp the cursor to the new Part's destination count"
+    );
 
     // Turn the amount encoder, leave the matrix, then prime a second
     // destination (LEVEL) -- real navigation and encoder input throughout.
@@ -293,7 +343,11 @@ fn priming_after_a_stale_cursor_does_not_inherit_a_phantom_amount() {
     prime_slot(&mut ui, EncoderId::C);
 
     assert_eq!(ui.matrix_state.num_dests, 2);
-    assert_eq!(routes(&ui, 1)[0], (shape, 50), "the E turn must edit Part 2's own route, not a discarded phantom column");
+    assert_eq!(
+        routes(&ui, 1)[0],
+        (shape, 50),
+        "the E turn must edit Part 2's own route, not a discarded phantom column"
+    );
     assert_eq!(routes(&ui, 1)[1], (level, 0), "the new route starts at 0");
 }
 

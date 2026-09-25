@@ -21,7 +21,9 @@ impl Default for FocusMemory {
 impl FocusMemory {
     /// Every page starts focused on slot a.
     pub const fn new() -> Self {
-        Self { slots: [0; MAX_PAGES] }
+        Self {
+            slots: [0; MAX_PAGES],
+        }
     }
 
     /// The focused slot (0..=5) of page `def_id`.
