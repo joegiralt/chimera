@@ -47,7 +47,8 @@ pub enum UiMode {
 }
 
 /// The outcome of the last MIX+PLUS attempt on a parameter page, shown in
-/// the focus band in place of the value readout until the next encoder,
+/// the focus band in place of the value readout (on BigViz pages, which
+/// have no focus band, as a line at the top of the viz) until the next encoder,
 /// button or page change — no timer, matching the focus band's own rule
 /// (issue #21).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
