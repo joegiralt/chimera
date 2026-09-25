@@ -1,4 +1,4 @@
-# Chimera
+# Chimera (Work in progress)
 
 Multi-engine digital synthesizer firmware for PreenFM3.
 
