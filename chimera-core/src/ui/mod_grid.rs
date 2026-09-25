@@ -27,7 +27,7 @@ const VISIBLE_ROWS: usize = 3;
 
 /// Max sources and destinations for the amounts grid.
 pub const MAX_SOURCES: usize = 16;
-pub const MAX_DESTS: usize = 16;
+pub const MAX_DESTS: usize = crate::modulation::MAX_MOD_DESTS;
 
 /// A destination in the mod matrix — a primed param.
 #[derive(Clone, Copy, Debug)]

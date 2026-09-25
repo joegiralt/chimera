@@ -126,14 +126,16 @@ fn mod_state_sync_from_matrix() {
     assert_eq!(ms.dest(1), CUTOFF);
 }
 
-/// Review Focus 2: more destinations than fit keep amounts aligned.
+/// Review Focus 2: a registry at capacity keeps amounts aligned. The
+/// registry now refuses past the matrix capacity (final review I2), so the
+/// 25 modulatable addresses fill it to exactly `MAX_MOD_DESTS`.
 #[test]
 fn mod_state_truncates_without_misaligning() {
     let mut registry = ModDestRegistry::new();
     for a in all_modulatable() {
-        registry.add(a, *b"X\0\0\0\0\0\0\0").unwrap();
+        let _ = registry.add(a, *b"X\0\0\0\0\0\0\0");
     }
-    assert_eq!(registry.len(), 25);
+    assert_eq!(registry.len(), MAX_MOD_DESTS);
     assert_eq!(
         ModState::from_registry(&registry, 2).num_dests(),
         MAX_MOD_DESTS

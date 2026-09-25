@@ -80,11 +80,13 @@ fn registry_refuses_non_modulatable() {
 /// Every address is accepted exactly when it is modulatable.
 #[test]
 fn registry_accepts_exactly_the_modulatable_addresses() {
-    let mut reg = ModDestRegistry::new();
     let mut accepted = 0;
     for b in BlockRef::ALL {
         for s in b.specs() {
             let addr = ParamAddr::new(b, s.id);
+            // A fresh registry each time: there are more modulatable
+            // addresses than the matrix capacity (`MAX_REGISTRY_DESTS`).
+            let mut reg = ModDestRegistry::new();
             assert_eq!(
                 reg.add(addr, *b"X\0\0\0\0\0\0\0").is_ok(),
                 addr.modulatable(),
@@ -94,5 +96,4 @@ fn registry_accepts_exactly_the_modulatable_addresses() {
         }
     }
     assert_eq!(accepted, 25);
-    assert_eq!(reg.len(), 25);
 }

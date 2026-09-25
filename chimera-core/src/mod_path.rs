@@ -3,7 +3,10 @@
 
 use crate::addr::ParamAddr;
 
-pub const MAX_REGISTRY_DESTS: usize = 32;
+/// The registry holds exactly as many destinations as the matrix and
+/// `ModState` can route: a primed address past that would report success
+/// but never appear (final review I2 of issue #21).
+pub const MAX_REGISTRY_DESTS: usize = crate::modulation::MAX_MOD_DESTS;
 pub const LABEL_LEN: usize = 8;
 
 #[derive(Clone, Copy, Debug)]
@@ -24,6 +27,7 @@ impl ModDestEntry {
 pub enum RegistryError {
     /// The address's spec is not modulatable.
     NotModulatable,
+    /// The registry already holds `MAX_REGISTRY_DESTS` destinations.
     Full,
 }
 
@@ -103,21 +107,28 @@ impl Default for ModDestRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::addr::{BlockRef, Op};
-    use crate::params::FmOpParams;
+    use crate::addr::BlockRef;
 
-    /// `add` refuses a distinct, modulatable address once the registry is
-    /// physically full. Today's param specs define only 25 distinct
-    /// modulatable addresses in total (`mod_registry_test::
-    /// registry_accepts_exactly_the_modulatable_addresses`), short of
-    /// `MAX_REGISTRY_DESTS` (32), so this can't be reached through `add`
-    /// alone from outside the crate — hence the direct `count` poke here
-    /// (issue #21).
+    /// Filling the registry through `add` alone: once it holds
+    /// `MAX_REGISTRY_DESTS` (the matrix capacity), the next distinct
+    /// modulatable address is refused with `Full` (issue #21).
     #[test]
-    fn add_refuses_once_physically_full() {
+    fn add_refuses_once_at_matrix_capacity() {
         let mut reg = ModDestRegistry::new();
-        reg.count = MAX_REGISTRY_DESTS;
-        let addr = ParamAddr::new(BlockRef::FmOp(Op::A), FmOpParams::LEVEL);
-        assert_eq!(reg.add(addr, [0; LABEL_LEN]), Err(RegistryError::Full));
+        let mut refused = None;
+        for b in BlockRef::ALL {
+            for s in b.specs() {
+                let addr = ParamAddr::new(b, s.id);
+                if !addr.modulatable() {
+                    continue;
+                }
+                let before = reg.len();
+                if let Err(e) = reg.add(addr, [0; LABEL_LEN]) {
+                    refused.get_or_insert((before, e));
+                }
+            }
+        }
+        assert_eq!(refused, Some((MAX_REGISTRY_DESTS, RegistryError::Full)));
+        assert_eq!(reg.len(), MAX_REGISTRY_DESTS);
     }
 }

@@ -52,13 +52,9 @@ fn mix_plus_on_a_non_modulatable_param_reports_not_modulatable() {
     assert_eq!(ui.prime_status(), Some(PrimeStatus::NotModulatable));
 }
 
-/// `MAX_REGISTRY_DESTS` (32) exceeds the number of distinct modulatable
-/// addresses the current param specs define in total (25 —
-/// `mod_registry_test::registry_accepts_exactly_the_modulatable_addresses`),
-/// so a real matrix can never actually fill up through UI navigation alone;
-/// `mod_path::tests::add_refuses_once_physically_full` covers the registry
-/// itself. This covers the other half: the UI's mapping from that refusal
-/// to the shown status.
+/// The UI's mapping from the registry's refusals to the shown status;
+/// `priming_past_matrix_capacity_on_the_fm_chain_reports_full` below
+/// reaches `Full` through real input.
 #[test]
 fn registry_full_maps_to_the_full_status() {
     assert_eq!(PrimeStatus::from(RegistryError::Full), PrimeStatus::Full);
@@ -288,5 +284,70 @@ fn focus_band_status_clearing_redraws_through_the_dirty_regions() {
         diff_rows(&before, &cleared, theme::HEADER_BOTTOM, theme::FOCUS_BOTTOM),
         0,
         "the focus band did not return to the value readout"
+    );
+}
+
+// ── Matrix capacity (final review I2) ───────────────────────────────────
+
+const ALL_SLOTS: [EncoderId; 6] = [
+    EncoderId::A,
+    EncoderId::B,
+    EncoderId::C,
+    EncoderId::D,
+    EncoderId::E,
+    EncoderId::F,
+];
+
+/// MIX+PLUS each of `slots` on the current page; collects each status set.
+fn prime_every_slot(ui: &mut UiState, slots: &[EncoderId], out: &mut Vec<PrimeStatus>) {
+    for &enc in slots {
+        feed(ui, Input::turn(enc, 1));
+        feed(ui, Input::chord(ButtonId::Mix, ButtonId::Plus));
+        out.extend(ui.prime_status());
+    }
+}
+
+/// The FM chain alone exposes more modulatable addresses (4 operators ×
+/// LEVEL/FDBK, Drive, Filter, Folder) than the matrix holds. Priming them
+/// all through real input: exactly `MAX_MOD_DESTS` report ADDED, the next
+/// distinct one reports MATRIX FULL, and the matrix holds every added one.
+#[test]
+fn priming_past_matrix_capacity_on_the_fm_chain_reports_full() {
+    use chimera_core::modulation::MAX_MOD_DESTS;
+    let mut ui = UiState::new();
+    load_init(&mut ui, ChainType::Fm);
+    let mut seen = Vec::new();
+
+    feed(&mut ui, Input::press(ButtonId::Edit)); // Operator sub-page
+    feed(&mut ui, Input::turn(EncoderId::A, -8)); // operator 1
+    for op in 0..4 {
+        if op > 0 {
+            feed(&mut ui, Input::turn(EncoderId::A, 1)); // next operator
+        }
+        prime_every_slot(&mut ui, &ALL_SLOTS[1..], &mut seen); // A selects the op
+    }
+    for _ in 0..3 {
+        feed(&mut ui, Input::press(ButtonId::Plus)); // Drive, Filter, Folder
+        prime_every_slot(&mut ui, &ALL_SLOTS, &mut seen);
+    }
+
+    let added = seen.iter().filter(|&&s| s == PrimeStatus::Added).count();
+    assert_eq!(added, MAX_MOD_DESTS, "{seen:?}");
+    let first_full = seen.iter().position(|&s| s == PrimeStatus::Full);
+    let added_before = first_full.map(|i| {
+        seen[..i]
+            .iter()
+            .filter(|&&s| s == PrimeStatus::Added)
+            .count()
+    });
+    assert_eq!(
+        added_before,
+        Some(MAX_MOD_DESTS),
+        "the 17th distinct address must report MATRIX FULL: {seen:?}"
+    );
+    assert_eq!(ui.matrix_state.num_dests, MAX_MOD_DESTS);
+    assert_eq!(
+        ui.performance.parts[0].sound.dest_registry.len(),
+        MAX_MOD_DESTS
     );
 }
