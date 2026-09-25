@@ -269,8 +269,8 @@ fn prop_note_off_eventually_silences() {
     for trial in 0..50 {
         let mut params = random_params(&mut rng);
         // Tame params so note actually decays
-        params.modal.ks_feedback = params.modal.ks_feedback * 0.1;
-        params.modal.decay = params.modal.decay * 0.2;
+        params.modal.ks_feedback *= 0.1;
+        params.modal.decay *= 0.2;
         // Force bowed mode (2) to not self-sustain
         if params.modal.mode == ResonatorMode::Bowed {
             params.modal.mode = ResonatorMode::Modal; // use resonator instead

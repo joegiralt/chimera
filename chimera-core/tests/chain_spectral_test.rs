@@ -42,12 +42,6 @@ fn harmonic_energy(buf: &[f32], fundamental: f32) -> f32 {
         .sum()
 }
 
-/// RMS of a buffer.
-fn rms(buf: &[f32]) -> f32 {
-    let sum_sq: f32 = buf.iter().map(|s| s * s).sum();
-    libm::sqrtf(sum_sq / buf.len() as f32)
-}
-
 // ── Drive spectral tests ────────────────────────────────────────────
 
 #[test]
@@ -58,9 +52,11 @@ fn test_drive_adds_harmonics() {
     let mut clean = sine_buf(freq, 4096);
     let clean_harmonics = harmonic_energy(&clean, freq);
 
-    let mut params = DriveParams::default();
-    params.drive = 0.8;
-    params.mix = 1.0;
+    let params = DriveParams {
+        drive: 0.8,
+        mix: 1.0,
+        ..Default::default()
+    };
     drive.process(&mut clean, &params);
     let driven_harmonics = harmonic_energy(&clean, freq);
 
@@ -100,9 +96,11 @@ fn test_drive_more_drive_more_harmonics() {
 
     let measure = |amount: f32| -> f32 {
         let mut buf = sine_buf(freq, 4096);
-        let mut params = DriveParams::default();
-        params.drive = amount;
-        params.mix = 1.0;
+        let params = DriveParams {
+            drive: amount,
+            mix: 1.0,
+            ..Default::default()
+        };
         drive.process(&mut buf, &params);
         harmonic_energy(&buf, freq)
     };
@@ -132,10 +130,11 @@ fn test_drive_tone_changes_spectrum() {
 
     let measure = |tone: f32| -> f32 {
         let mut buf = sine_buf(freq, 4096);
-        let mut params = DriveParams::default();
-        params.drive = 0.6;
-        params.tone = tone;
-        params.mix = 1.0;
+        let params = DriveParams {
+            drive: 0.6,
+            tone,
+            mix: 1.0,
+        };
         drive.process(&mut buf, &params);
         harmonic_energy(&buf, freq)
     };
@@ -156,9 +155,11 @@ fn test_drive_tone_changes_spectrum() {
 #[test]
 fn test_filter_lp_removes_highs() {
     let mut filter = SvfFilter::new();
-    let mut params = FilterParams::default();
-    params.cutoff = 500.0;
-    params.mode = 2; // LP4
+    let params = FilterParams {
+        cutoff: 500.0,
+        mode: 2, // LP4
+        ..Default::default()
+    };
 
     // Mix of 200Hz (below cutoff) and 2000Hz (above cutoff)
     let mut buf: Vec<f32> = (0..4096)
@@ -194,9 +195,11 @@ fn test_filter_lp_removes_highs() {
 #[test]
 fn test_filter_hp_removes_lows() {
     let mut filter = SvfFilter::new();
-    let mut params = FilterParams::default();
-    params.cutoff = 1000.0;
-    params.mode = 5; // HP4
+    let params = FilterParams {
+        cutoff: 1000.0,
+        mode: 5, // HP4
+        ..Default::default()
+    };
 
     let mut buf: Vec<f32> = (0..4096)
         .map(|i| {
@@ -231,10 +234,12 @@ fn test_filter_hp_removes_lows() {
 #[test]
 fn test_filter_bp_passes_center() {
     let mut filter = SvfFilter::new();
-    let mut params = FilterParams::default();
-    params.cutoff = 1000.0;
-    params.resonance = 0.7;
-    params.mode = 3; // BP2
+    let params = FilterParams {
+        cutoff: 1000.0,
+        resonance: 0.7,
+        mode: 3, // BP2
+        ..Default::default()
+    };
 
     let mut buf: Vec<f32> = (0..4096)
         .map(|i| {
@@ -266,10 +271,12 @@ fn test_filter_resonance_boosts_cutoff() {
 
     let measure_peak = |reso: f32| -> f32 {
         let mut filter = SvfFilter::new();
-        let mut params = FilterParams::default();
-        params.cutoff = freq;
-        params.resonance = reso;
-        params.mode = 1; // LP2
+        let params = FilterParams {
+            cutoff: freq,
+            resonance: reso,
+            mode: 1, // LP2
+            ..Default::default()
+        };
 
         // White-ish noise (sum of many sines)
         let mut buf: Vec<f32> = (0..4096)
@@ -302,9 +309,11 @@ fn test_filter_resonance_boosts_cutoff() {
 fn test_filter_cutoff_sweep_changes_brightness() {
     let measure_brightness = |cutoff: f32| -> f32 {
         let mut filter = SvfFilter::new();
-        let mut params = FilterParams::default();
-        params.cutoff = cutoff;
-        params.mode = 2; // LP4
+        let params = FilterParams {
+            cutoff,
+            mode: 2, // LP4
+            ..Default::default()
+        };
 
         // Rich signal (square-ish wave with harmonics)
         let mut buf: Vec<f32> = (0..4096)
@@ -351,9 +360,11 @@ fn test_folder_adds_harmonics() {
     let clean_h = harmonic_energy(&clean, freq);
 
     let mut folded = sine_buf(freq, 4096);
-    let mut params = FolderParams::default();
-    params.fold = 0.7;
-    params.mix = 1.0;
+    let params = FolderParams {
+        fold: 0.7,
+        mix: 1.0,
+        ..Default::default()
+    };
     folder.process(&mut folded, &params);
     let folded_h = harmonic_energy(&folded, freq);
 
@@ -372,9 +383,11 @@ fn test_folder_more_fold_more_harmonics() {
 
     let measure = |amount: f32| -> f32 {
         let mut buf = sine_buf(freq, 4096);
-        let mut params = FolderParams::default();
-        params.fold = amount;
-        params.mix = 1.0;
+        let params = FolderParams {
+            fold: amount,
+            mix: 1.0,
+            ..Default::default()
+        };
         folder.process(&mut buf, &params);
         harmonic_energy(&buf, freq)
     };

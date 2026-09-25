@@ -100,7 +100,7 @@ fn all_waveforms_bounded() {
             let phase = i as f32 / 1024.0;
             let v = fm_waveform::compute(w, phase);
             assert!(v.is_finite(), "w={w} phase={phase}");
-            assert!(v >= -2.0 && v <= 2.0, "w={w} phase={phase} v={v}");
+            assert!((-2.0..=2.0).contains(&v), "w={w} phase={phase} v={v}");
         }
     }
 }

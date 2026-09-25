@@ -1,6 +1,6 @@
 use chimera_core::{MidiNote, Velocity};
 use chimera_core::modulation::ModState;
-use chimera_core::dsp::reverb::{Reverb, ReverbParams, ReverbType};
+use chimera_core::dsp::reverb::{Reverb, ReverbParams};
 
 fn impulse_block() -> [f32; 64] {
     let mut block = [0.0f32; 64];

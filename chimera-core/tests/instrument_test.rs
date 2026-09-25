@@ -223,9 +223,12 @@ const GOLDENS: &[(&str, u64)] = &[
     ("reverb_send_on", 0x51da232bdad6e4d9), // re-recorded: FX returns wet-only
 ];
 
+/// A named golden case: a case name paired with its render function.
+type GoldenCase = (&'static str, fn() -> Vec<f32>);
+
 #[test]
 fn instrument_goldens_match() {
-    let cases: [(&str, fn() -> Vec<f32>); 4] = [
+    let cases: [GoldenCase; 4] = [
         ("poly_chord", chord),
         ("two_parts_two_pairs", two_parts),
         ("reverb_send_off", || reverb_send(0.0)),

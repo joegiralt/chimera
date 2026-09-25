@@ -1,4 +1,4 @@
-use chimera_core::ui::region::{quantize, quantize_values, RegionData, RegionKind, RegionSet};
+use chimera_core::ui::region::{quantize, quantize_values, RegionData, RegionSet};
 use chimera_core::ui::page::{PageId, PageKey, PageLayout};
 use chimera_core::ui::animation::AnimatedValue;
 
