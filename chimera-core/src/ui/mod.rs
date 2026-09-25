@@ -58,7 +58,7 @@ pub enum PrimeStatus {
     AlreadyRouted,
     /// The parameter's spec is not modulatable (ADR 0010).
     NotModulatable,
-    /// The registry is at `MAX_REGISTRY_DESTS`.
+    /// The registry is at `MAX_REGISTRY_DESTS`, the matrix capacity.
     Full,
 }
 
