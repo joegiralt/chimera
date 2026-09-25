@@ -3,7 +3,10 @@
 
 use crate::addr::ParamAddr;
 
-pub const MAX_REGISTRY_DESTS: usize = 32;
+/// The registry holds exactly as many destinations as the matrix and
+/// `ModState` can route: a primed address past that would report success
+/// but never appear (final review I2 of issue #21).
+pub const MAX_REGISTRY_DESTS: usize = crate::modulation::MAX_MOD_DESTS;
 pub const LABEL_LEN: usize = 8;
 
 #[derive(Clone, Copy, Debug)]
@@ -24,6 +27,7 @@ impl ModDestEntry {
 pub enum RegistryError {
     /// The address's spec is not modulatable.
     NotModulatable,
+    /// The registry already holds `MAX_REGISTRY_DESTS` destinations.
     Full,
 }
 
@@ -97,5 +101,34 @@ impl ModDestRegistry {
 impl Default for ModDestRegistry {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::addr::BlockRef;
+
+    /// Filling the registry through `add` alone: once it holds
+    /// `MAX_REGISTRY_DESTS` (the matrix capacity), the next distinct
+    /// modulatable address is refused with `Full` (issue #21).
+    #[test]
+    fn add_refuses_once_at_matrix_capacity() {
+        let mut reg = ModDestRegistry::new();
+        let mut refused = None;
+        for b in BlockRef::ALL {
+            for s in b.specs() {
+                let addr = ParamAddr::new(b, s.id);
+                if !addr.modulatable() {
+                    continue;
+                }
+                let before = reg.len();
+                if let Err(e) = reg.add(addr, [0; LABEL_LEN]) {
+                    refused.get_or_insert((before, e));
+                }
+            }
+        }
+        assert_eq!(refused, Some((MAX_REGISTRY_DESTS, RegistryError::Full)));
+        assert_eq!(reg.len(), MAX_REGISTRY_DESTS);
     }
 }

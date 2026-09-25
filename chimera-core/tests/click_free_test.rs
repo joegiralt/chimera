@@ -2,13 +2,13 @@
 //! Simulates the desktop audio callback pattern: rendering blocks
 //! and scattering to variable-size output buffers.
 
-use chimera_core::{MidiNote, Velocity};
-use chimera_core::dsp::modal::ResonatorMode;
-use chimera_core::modulation::ModState;
 use chimera_core::dsp::fx_bus::FxParams;
+use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::dsp::reverb::{Reverb, ReverbParams};
 use chimera_core::dsp::voice::Voice;
+use chimera_core::modulation::ModState;
 use chimera_core::params::{EngineType, ParamSnapshot};
+use chimera_core::{MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
 
 const SR: u32 = 48000;
@@ -27,7 +27,11 @@ fn check_no_clicks(
     let mut rv = FxParams::default().reverb;
     setup(&mut params, &mut rv);
 
-    voice.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params);
+    voice.note_on(
+        MidiNote::new(60).unwrap(),
+        Velocity::new(100).unwrap(),
+        &params,
+    );
 
     // Persistent state (like the fixed audio callback)
     let mut block = [0.0f32; BLOCK_SIZE];
@@ -161,7 +165,11 @@ fn test_no_clicks_modal() {
     let mut params = ParamSnapshot::for_engine(EngineType::Modal);
     params.modal.mode = ResonatorMode::Modal;
     let rv = FxParams::default().reverb;
-    voice.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params);
+    voice.note_on(
+        MidiNote::new(60).unwrap(),
+        Velocity::new(100).unwrap(),
+        &params,
+    );
 
     let mut block = [0.0f32; BLOCK_SIZE];
     let mut block_pos: usize = BLOCK_SIZE;

@@ -1,8 +1,8 @@
-use chimera_core::{MidiNote, Velocity};
 use chimera_core::dsp::modal::ResonatorMode;
-use chimera_core::modulation::ModState;
 use chimera_core::dsp::voice::Voice;
+use chimera_core::modulation::ModState;
 use chimera_core::params::{EngineType, ParamSnapshot};
+use chimera_core::{MidiNote, Velocity};
 
 const SR: u32 = 48000;
 
@@ -21,7 +21,11 @@ fn test_modal_through_voice_produces_sound() {
     // Verify engine type is set
     assert_eq!(params.engine(), EngineType::Modal);
 
-    voice.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params);
+    voice.note_on(
+        MidiNote::new(60).unwrap(),
+        Velocity::new(100).unwrap(),
+        &params,
+    );
 
     let mut output = [0.0f32; 64];
     let mut total_max = 0.0f32;
@@ -52,7 +56,11 @@ fn test_modal_string_through_voice() {
     let mut params = ParamSnapshot::for_engine(EngineType::Modal);
     params.modal.mode = ResonatorMode::Modal; // String mode
 
-    voice.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params);
+    voice.note_on(
+        MidiNote::new(60).unwrap(),
+        Velocity::new(100).unwrap(),
+        &params,
+    );
 
     let mut output = [0.0f32; 64];
     let mut total_max = 0.0f32;
@@ -78,7 +86,11 @@ fn test_modal_bowed_through_voice() {
     let mut params = ParamSnapshot::for_engine(EngineType::Modal);
     params.modal.mode = ResonatorMode::Bowed; // Bowed mode
 
-    voice.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params);
+    voice.note_on(
+        MidiNote::new(60).unwrap(),
+        Velocity::new(100).unwrap(),
+        &params,
+    );
 
     let mut output = [0.0f32; 64];
     let mut total_max = 0.0f32;
@@ -103,7 +115,11 @@ fn test_modal_different_from_pizza_through_voice() {
     let render = |engine: EngineType| -> Vec<f32> {
         let mut voice = Voice::new(SR);
         let params = ParamSnapshot::for_engine(engine);
-        voice.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params);
+        voice.note_on(
+            MidiNote::new(60).unwrap(),
+            Velocity::new(100).unwrap(),
+            &params,
+        );
         let mut all = Vec::new();
         let mut block = [0.0f32; 64];
         for _ in 0..16 {
@@ -152,8 +168,16 @@ fn test_modal_signal_chain_affects_output() {
     params_closed.filter.cutoff = 200.0;
     params_closed.filter.mode = 2; // LP4
 
-    voice_open.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params_open);
-    voice_closed.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params_closed);
+    voice_open.note_on(
+        MidiNote::new(60).unwrap(),
+        Velocity::new(100).unwrap(),
+        &params_open,
+    );
+    voice_closed.note_on(
+        MidiNote::new(60).unwrap(),
+        Velocity::new(100).unwrap(),
+        &params_closed,
+    );
 
     let mut out_open = [0.0f32; 64];
     let mut out_closed = [0.0f32; 64];

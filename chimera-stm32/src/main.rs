@@ -8,7 +8,7 @@ mod display;
 
 use chimera_core::ui::UiState;
 use chimera_core::ui::perf::PerfTracker;
-use chimera_hal::{ChimeraDisplay, Controls};
+use chimera_hal::ChimeraDisplay;
 use controls::Stm32Controls;
 use cortex_m_rt::{entry, exception, pre_init};
 use display::Stm32Display;
@@ -19,7 +19,13 @@ use stm32h7xx_hal::{pac, prelude::*, spi};
 /// provides a clean peripheral state, so no other cleanup is needed.
 #[pre_init]
 unsafe fn before_main() {
-    core::ptr::write_volatile(0xE000_ED08 as *mut u32, 0x0802_0000);
+    // SAFETY: runs once, before `main` and before interrupts are enabled, on
+    // a single core. 0xE000_ED08 is the SCB->VTOR register (a valid, aligned,
+    // memory-mapped address on every Cortex-M7), and 0x0802_0000 is our
+    // linked vector table's flash address.
+    unsafe {
+        core::ptr::write_volatile(0xE000_ED08 as *mut u32, 0x0802_0000);
+    }
 }
 
 #[exception]
@@ -29,7 +35,6 @@ fn SysTick() {
 
 #[entry]
 fn main() -> ! {
-
     let dp = pac::Peripherals::take().unwrap();
     let pwr = dp.PWR.constrain();
     let pwrcfg = pwr.freeze();
@@ -94,20 +99,22 @@ fn main() -> ! {
 
     // Audio init — DMA-driven, main loop has no audio responsibilities
     audio::init_pll3();
-    audio::init_sai1a();      // Configures SAI but does NOT enable it
+    audio::init_sai1a(); // Configures SAI but does NOT enable it
 
     // Connect voice to UI params and trigger test note
     // SAFETY: ui.performance lives in main's stack frame which never returns (-> !).
     // Part 0's sound params/mod_state outlive the audio DMA for the same reason.
-    unsafe { audio::init_voice(
-        &ui.performance.parts[0].sound.params as *const _,
-        &ui.performance.parts[0].sound.mod_state as *const _,
-    ); }
+    unsafe {
+        audio::init_voice(
+            &ui.performance.parts[0].sound.params as *const _,
+            &ui.performance.parts[0].sound.mod_state as *const _,
+        );
+    }
     audio::trigger_note(chimera_hal::MidiNote::A4, chimera_hal::Velocity::DEFAULT);
 
-    audio::prefill_buffer();   // Fill buffer with first rendered audio
-    audio::init_dma();         // Configure + enable DMA1_Stream0
-    audio::enable_sai();       // Now enable SAI — DMA begins transferring
+    audio::prefill_buffer(); // Fill buffer with first rendered audio
+    audio::init_dma(); // Configure + enable DMA1_Stream0
+    audio::enable_sai(); // Now enable SAI — DMA begins transferring
 
     // Initial render
     ui.update();

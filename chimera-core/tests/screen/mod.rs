@@ -6,13 +6,13 @@
 
 #![allow(dead_code)]
 
-use chimera_core::preset::{ChainType, Sound, POOL_SIZE};
+use chimera_core::preset::{ChainType, POOL_SIZE, Sound};
 use chimera_core::scope::SCOPE_LEN;
-use chimera_core::ui::perf::PerfStats;
 use chimera_core::ui::UiState;
+use chimera_core::ui::perf::PerfStats;
 use chimera_hal::{ButtonId, ButtonState, ChimeraDisplay, Controls, EncoderId};
-use embedded_graphics::pixelcolor::raw::{RawData, RawU16};
 use embedded_graphics::pixelcolor::Rgb565;
+use embedded_graphics::pixelcolor::raw::{RawData, RawU16};
 use embedded_graphics::prelude::*;
 
 pub const W: usize = 240;
@@ -27,7 +27,10 @@ pub struct Fb {
 
 impl Fb {
     pub fn new() -> Self {
-        Self { px: vec![0; W * H], oob: 0 }
+        Self {
+            px: vec![0; W * H],
+            oob: 0,
+        }
     }
 
     pub fn at(&self, x: i32, y: i32) -> Rgb565 {
@@ -48,11 +51,17 @@ impl Fb {
 
     /// Write a binary PPM to `$SCREEN_DUMP/<name>.ppm` when the variable is set.
     pub fn dump(&self, name: &str) {
-        let Some(dir) = std::env::var_os("SCREEN_DUMP") else { return };
+        let Some(dir) = std::env::var_os("SCREEN_DUMP") else {
+            return;
+        };
         let mut out = format!("P6\n{W} {H}\n255\n").into_bytes();
         for &p in &self.px {
             let c: Rgb565 = RawU16::new(p).into();
-            out.extend([(c.r() << 3) | (c.r() >> 2), (c.g() << 2) | (c.g() >> 4), (c.b() << 3) | (c.b() >> 2)]);
+            out.extend([
+                (c.r() << 3) | (c.r() >> 2),
+                (c.g() << 2) | (c.g() >> 4),
+                (c.b() << 3) | (c.b() >> 2),
+            ]);
         }
         let path = std::path::Path::new(&dir).join(format!("{name}.ppm"));
         std::fs::write(&path, out).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
@@ -69,7 +78,10 @@ impl DrawTarget for Fb {
     type Color = Rgb565;
     type Error = core::convert::Infallible;
 
-    fn draw_iter<I: IntoIterator<Item = Pixel<Rgb565>>>(&mut self, pixels: I) -> Result<(), Self::Error> {
+    fn draw_iter<I: IntoIterator<Item = Pixel<Rgb565>>>(
+        &mut self,
+        pixels: I,
+    ) -> Result<(), Self::Error> {
         for Pixel(p, c) in pixels {
             if (0..W as i32).contains(&p.x) && (0..H as i32).contains(&p.y) {
                 self.px[p.y as usize * W + p.x as usize] = RawU16::from(c).into_inner();
@@ -98,14 +110,23 @@ pub struct Input {
 
 impl Input {
     pub fn press(b: ButtonId) -> Self {
-        Self { buttons: vec![(b, ButtonState::Pressed)], ..Self::default() }
+        Self {
+            buttons: vec![(b, ButtonState::Pressed)],
+            ..Self::default()
+        }
     }
     /// `held` down while `b` is pressed (MIX + B1, EDIT + B1, MIX + PLUS).
     pub fn chord(held: ButtonId, b: ButtonId) -> Self {
-        Self { buttons: vec![(held, ButtonState::Held), (b, ButtonState::Pressed)], ..Self::default() }
+        Self {
+            buttons: vec![(held, ButtonState::Held), (b, ButtonState::Pressed)],
+            ..Self::default()
+        }
     }
     pub fn turn(e: EncoderId, delta: i8) -> Self {
-        Self { encoders: vec![(e, delta)], ..Self::default() }
+        Self {
+            encoders: vec![(e, delta)],
+            ..Self::default()
+        }
     }
 }
 
@@ -114,7 +135,10 @@ impl Controls for Input {
         self.encoders.iter().find(|e| e.0 == id).map_or(0, |e| e.1)
     }
     fn button_state(&self, id: ButtonId) -> ButtonState {
-        self.buttons.iter().find(|b| b.0 == id).map_or(ButtonState::Up, |b| b.1)
+        self.buttons
+            .iter()
+            .find(|b| b.0 == id)
+            .map_or(ButtonState::Up, |b| b.1)
     }
 }
 
@@ -134,7 +158,11 @@ pub fn scope_fixture() -> [f32; SCOPE_LEN] {
     core::array::from_fn(|i| {
         let p = (i as f32 / 120.0) % 1.0;
         let s = 0.7;
-        0.5 * if p < s { -1.0 + 2.0 * p / s } else { 1.0 - 2.0 * (p - s) / (1.0 - s) }
+        0.5 * if p < s {
+            -1.0 + 2.0 * p / s
+        } else {
+            1.0 - 2.0 * (p - s) / (1.0 - s)
+        }
     })
 }
 
@@ -158,8 +186,12 @@ fn prime(ui: &mut UiState) {
     feed(ui, Input::chord(ButtonId::Mix, ButtonId::Plus));
 }
 
+/// A named screen-golden case: a case name paired with the input sequence
+/// that produces it.
+pub type ScreenCase = (&'static str, fn(&mut UiState));
+
 /// Every screen the goldens lock, one or more per page type (spec § Testing).
-pub const CASES: &[(&str, fn(&mut UiState))] = &[
+pub const CASES: &[ScreenCase] = &[
     ("engine_pizza", |ui| feed(ui, Input::turn(EncoderId::A, 2))),
     ("engine_fm_alg", |ui| {
         load_init(ui, ChainType::Fm);
@@ -231,7 +263,10 @@ pub const CASES: &[(&str, fn(&mut UiState))] = &[
 
 /// Build case `name`'s screen: a fresh UiState, the case's input, settled lerps.
 pub fn ui_for(name: &str) -> UiState {
-    let (_, setup) = CASES.iter().find(|c| c.0 == name).unwrap_or_else(|| panic!("no case {name}"));
+    let (_, setup) = CASES
+        .iter()
+        .find(|c| c.0 == name)
+        .unwrap_or_else(|| panic!("no case {name}"));
     let mut ui = UiState::new();
     setup(&mut ui);
     settle(&mut ui);

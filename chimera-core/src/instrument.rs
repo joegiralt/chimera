@@ -6,16 +6,18 @@ use core::mem::size_of;
 
 use chimera_hal::BLOCK_SIZE;
 
-use crate::dsp::fx_bus::{FxBus, FxParams, FX_SENDS};
+use crate::MidiChannel;
+use crate::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
 use crate::dsp::voice::Voice;
-use crate::hw::{AXI_SRAM, DAC_PAIRS, FB_BYTES, MAX_PARTS, MAX_VOICES, UI_RESERVE, VOICE_RAM_BUDGET};
+use crate::hw::{
+    AXI_SRAM, DAC_PAIRS, FB_BYTES, MAX_PARTS, MAX_VOICES, UI_RESERVE, VOICE_RAM_BUDGET,
+};
 use crate::modulation::ModState;
 use crate::note_queue::{NoteEvent, NoteKind};
 use crate::params::ParamSnapshot;
 use crate::part::PartParams;
 use crate::preset::{Performance, SoundPool};
 use crate::voice_alloc::{Alloc, Allocator};
-use crate::MidiChannel;
 
 /// Everything the port places in AXI SRAM (ADR 0014): framebuffer, UI,
 /// Performance, SoundPool, both `AudioShared` copies and the FX bus.
@@ -54,7 +56,11 @@ impl AudioShared {
         Self {
             parts: core::array::from_fn(|i| {
                 let p = &perf.parts[i];
-                PartAudio { params: p.sound.params.clone(), mod_state: p.sound.mod_state.clone(), mix: p.mix }
+                PartAudio {
+                    params: p.sound.params.clone(),
+                    mod_state: p.sound.mod_state.clone(),
+                    mix: p.mix,
+                }
             }),
             fx: perf.fx,
         }
@@ -81,7 +87,11 @@ const _: () = assert!(size_of::<Instrument>() <= VOICE_RAM_BUDGET);
 /// -3 dB per side; hard left/right is unity on one side, exactly 0 on the
 /// other. Out-of-range `pan` is clamped (NaN reads as centre).
 pub fn pan_gains(pan: f32) -> (f32, f32) {
-    let pan = if pan.is_nan() { 0.0 } else { pan.clamp(-1.0, 1.0) };
+    let pan = if pan.is_nan() {
+        0.0
+    } else {
+        pan.clamp(-1.0, 1.0)
+    };
     let q = core::f32::consts::FRAC_PI_4;
     (libm::sinf((1.0 - pan) * q), libm::sinf((1.0 + pan) * q))
 }
@@ -141,7 +151,10 @@ impl Instrument {
                         continue;
                     }
                     let cost = Voice::cost(part.params.engine());
-                    if let Alloc::Voice(v) = self.alloc.note_on(p as u8, part.mix.mode, ev.note, cost, FxBus::COST) {
+                    if let Alloc::Voice(v) =
+                        self.alloc
+                            .note_on(p as u8, part.mix.mode, ev.note, cost, FxBus::COST)
+                    {
                         self.voices[v].note_on(ev.note, vel, &part.params);
                         self.note_channel[v] = ev.channel;
                     }
@@ -167,7 +180,8 @@ impl Instrument {
         // newest voices if that went over the budget.
         for v in 0..MAX_VOICES {
             if let Some(p) = self.alloc.slots()[v].part() {
-                self.alloc.recost(v, Voice::cost(shared.parts[p as usize].params.engine()));
+                self.alloc
+                    .recost(v, Voice::cost(shared.parts[p as usize].params.engine()));
             }
         }
         // A hard cut, not a release: the slot is free at once and the voice
@@ -185,7 +199,9 @@ impl Instrument {
         }
         let mut block = [0.0f32; BLOCK_SIZE];
         for v in 0..MAX_VOICES {
-            let Some(p) = self.alloc.slots()[v].part() else { continue };
+            let Some(p) = self.alloc.slots()[v].part() else {
+                continue;
+            };
             let (p, part) = (p as usize, &shared.parts[p as usize]);
             self.voices[v].render(&mut block, &part.params, &part.mod_state);
             if written[p] {

@@ -19,9 +19,10 @@ fn goertzel(buf: &[f32], target_freq: f32, sample_rate: u32) -> f32 {
 }
 
 fn modal_params() -> ModalParams {
-    let mut p = ModalParams::default();
-    p.mode = ResonatorMode::Modal; // Modal resonator (SVF bank)
-    p
+    ModalParams {
+        mode: ResonatorMode::Modal, // Modal resonator (SVF bank)
+        ..Default::default()
+    }
 }
 
 fn render_modal(params: &ModalParams, note: u8, blocks: usize) -> Vec<f32> {
@@ -363,6 +364,4 @@ fn test_modal_debug_output() {
         let energy = goertzel(&buf2, freq, SR);
         eprintln!("  {}Hz (H{}): {:.6}", freq as i32, h, energy);
     }
-
-    assert!(true); // always passes, just for debug output
 }

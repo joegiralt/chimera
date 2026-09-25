@@ -41,13 +41,17 @@ impl Engines {
 
     pub fn note_on(&mut self, kind: EngineType, note: MidiNote, vel: Velocity, p: &ParamSnapshot) {
         match kind {
-            EngineType::Pizza => {
-                self.pizza.note_on(crate::dsp::note_to_freq(note.get()), self.sample_rate)
-            }
+            EngineType::Pizza => self
+                .pizza
+                .note_on(crate::dsp::note_to_freq(note.get()), self.sample_rate),
             EngineType::Fm => {
-                self.fm.note_on_params(note.get(), vel.unit(), &p.fm, self.sample_rate as f32)
+                self.fm
+                    .note_on_params(note.get(), vel.unit(), &p.fm, self.sample_rate as f32)
             }
-            EngineType::Modal => self.modal.note_on(note.get(), vel.get(), &p.modal, self.sample_rate),
+            EngineType::Modal => {
+                self.modal
+                    .note_on(note.get(), vel.get(), &p.modal, self.sample_rate)
+            }
             EngineType::Va => {} // placeholder: silent
         }
     }

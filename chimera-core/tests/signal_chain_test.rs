@@ -1,10 +1,10 @@
-use chimera_core::{MidiNote, Velocity};
-use chimera_core::modulation::ModState;
 use chimera_core::dsp::drive::Drive;
 use chimera_core::dsp::filter::SvfFilter;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::dsp::wavefolder::Wavefolder;
+use chimera_core::modulation::ModState;
 use chimera_core::params::{DriveParams, FilterParams, FolderParams, ParamSnapshot};
+use chimera_core::{MidiNote, Velocity};
 
 // ── Drive ───────────────────────────────────────────────────────────
 
@@ -23,9 +23,11 @@ fn test_drive_passthrough_at_zero() {
 #[test]
 fn test_drive_clips_signal() {
     let drive = Drive::new();
-    let mut params = DriveParams::default();
-    params.drive = 1.0; // full drive
-    params.mix = 1.0;
+    let params = DriveParams {
+        drive: 1.0, // full drive
+        mix: 1.0,
+        ..Default::default()
+    };
 
     let mut buf = [1.0; 4];
     drive.process(&mut buf, &params);
@@ -37,9 +39,11 @@ fn test_drive_clips_signal() {
 #[test]
 fn test_drive_output_bounded() {
     let drive = Drive::new();
-    let mut params = DriveParams::default();
-    params.drive = 1.0;
-    params.mix = 1.0;
+    let params = DriveParams {
+        drive: 1.0,
+        mix: 1.0,
+        ..Default::default()
+    };
 
     let mut buf = [5.0, -5.0, 10.0, -10.0];
     drive.process(&mut buf, &params);
@@ -53,9 +57,11 @@ fn test_drive_output_bounded() {
 #[test]
 fn test_filter_lowpass_attenuates_high_freq() {
     let mut filter = SvfFilter::new();
-    let mut params = FilterParams::default();
-    params.cutoff = 200.0; // very low cutoff
-    params.mode = 2; // LP4
+    let params = FilterParams {
+        cutoff: 200.0, // very low cutoff
+        mode: 2,       // LP4
+        ..Default::default()
+    };
 
     // Generate a high-frequency signal (5kHz at 48kHz = fast oscillation)
     let mut buf = [0.0f32; 64];
@@ -78,9 +84,11 @@ fn test_filter_lowpass_attenuates_high_freq() {
 #[test]
 fn test_filter_passes_low_freq() {
     let mut filter = SvfFilter::new();
-    let mut params = FilterParams::default();
-    params.cutoff = 5000.0;
-    params.mode = 2; // LP4
+    let params = FilterParams {
+        cutoff: 5000.0,
+        mode: 2, // LP4
+        ..Default::default()
+    };
 
     // Low frequency signal: one cycle over 128 samples ≈ 375Hz at 48kHz
     let mut buf = [0.0f32; 64];
@@ -103,10 +111,12 @@ fn test_filter_passes_low_freq() {
 #[test]
 fn test_filter_output_stable() {
     let mut filter = SvfFilter::new();
-    let mut params = FilterParams::default();
-    params.resonance = 0.99; // near self-oscillation
-    params.cutoff = 1000.0;
-    params.mode = 2; // LP4
+    let params = FilterParams {
+        resonance: 0.99, // near self-oscillation
+        cutoff: 1000.0,
+        mode: 2, // LP4
+        ..Default::default()
+    };
 
     let mut buf = [0.0f32; 64];
     buf[0] = 1.0; // impulse
@@ -139,9 +149,11 @@ fn test_folder_passthrough_at_zero() {
 #[test]
 fn test_folder_output_bounded() {
     let folder = Wavefolder::new();
-    let mut params = FolderParams::default();
-    params.fold = 1.0;
-    params.mix = 1.0;
+    let params = FolderParams {
+        fold: 1.0,
+        mix: 1.0,
+        ..Default::default()
+    };
 
     let mut buf = [5.0, -5.0, 10.0, -10.0];
     folder.process(&mut buf, &params);
@@ -157,9 +169,11 @@ fn test_folder_output_bounded() {
 #[test]
 fn test_folder_adds_harmonics() {
     let folder = Wavefolder::new();
-    let mut params = FolderParams::default();
-    params.fold = 1.0;
-    params.mix = 1.0;
+    let params = FolderParams {
+        fold: 1.0,
+        mix: 1.0,
+        ..Default::default()
+    };
 
     // Sine wave
     let mut buf = [0.0f32; 64];
@@ -204,10 +218,14 @@ fn test_voice_silent_when_idle() {
 fn test_voice_produces_sound() {
     let empty_mod = ModState::new();
     let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
-    let mut params = ParamSnapshot::default();
+    let params = ParamSnapshot::default();
     // Pizza produces sound by default
 
-    voice.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params);
+    voice.note_on(
+        MidiNote::new(60).unwrap(),
+        Velocity::new(100).unwrap(),
+        &params,
+    );
 
     let mut output = [0.0f32; 64];
     for _ in 0..4 {
@@ -237,8 +255,16 @@ fn test_voice_filter_shapes_sound() {
     params_closed.filter.cutoff = 100.0;
     params_closed.filter.mode = 2; // LP4
 
-    voice_open.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params_open);
-    voice_closed.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params_closed);
+    voice_open.note_on(
+        MidiNote::new(60).unwrap(),
+        Velocity::new(100).unwrap(),
+        &params_open,
+    );
+    voice_closed.note_on(
+        MidiNote::new(60).unwrap(),
+        Velocity::new(100).unwrap(),
+        &params_closed,
+    );
 
     let mut out_open = [0.0f32; 64];
     let mut out_closed = [0.0f32; 64];
@@ -271,7 +297,11 @@ fn test_voice_output_bounded() {
     params.folder.fold = 0.5;
     params.folder.mix = 1.0;
 
-    voice.note_on(MidiNote::new(60).unwrap(), Velocity::new(127).unwrap(), &params);
+    voice.note_on(
+        MidiNote::new(60).unwrap(),
+        Velocity::new(127).unwrap(),
+        &params,
+    );
 
     let mut output = [0.0f32; 64];
     for _ in 0..20 {

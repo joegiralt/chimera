@@ -23,9 +23,9 @@ const GOLDENS: &[(&str, u64)] = &[
     ("mixer_part", 0x3e3480eee3041370),
     ("mixer_sends", 0x9a495656576afaf9),
     ("mixer_fx_delay", 0x872c17a4bee40923),
-    ("mod_matrix", 0x642765d66ae582c4),
+    ("mod_matrix", 0x485073990a8710cd),
     ("sound_browser", 0x91b39fd39c530bcd),
-    ("system", 0x966235b0ff853d19),
+    ("system", 0x66ca9f7c486d2749),
 ];
 
 #[test]
@@ -49,7 +49,11 @@ fn screen_goldens_match() {
             failures.push(format!("{name}: 0x{hash:016x} (want 0x{want:016x})"));
         }
     }
-    assert!(failures.is_empty(), "screen golden mismatch:\n{}", failures.join("\n"));
+    assert!(
+        failures.is_empty(),
+        "screen golden mismatch:\n{}",
+        failures.join("\n")
+    );
 }
 
 #[test]

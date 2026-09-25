@@ -1,9 +1,9 @@
-/// TX81Z-style 5-stage FM envelope.
-///
-/// Stages: Idle → Attack → Decay1 → Decay2 → (Release) → Idle
-///
-/// Ported from the p81z C++ implementation with one intentional deviation:
-/// noteOff() enters a proper Release stage rather than going directly to Idle.
+//! TX81Z-style 5-stage FM envelope.
+//!
+//! Stages: Idle → Attack → Decay1 → Decay2 → (Release) → Idle
+//!
+//! Ported from the p81z C++ implementation with one intentional deviation:
+//! noteOff() enters a proper Release stage rather than going directly to Idle.
 
 use crate::dsp::fm_tables;
 
@@ -85,21 +85,17 @@ impl FmEnvelope {
 
         let rs_offset = fm_tables::compute_rate_scaling(rs, note);
 
-        self.attack_factor =
-            fm_tables::attack_increment(ar as f32, rs_offset, sample_rate) as f64;
+        self.attack_factor = fm_tables::attack_increment(ar as f32, rs_offset, sample_rate) as f64;
 
         self.decay1_target = fm_tables::d1l_to_level(d1l) as f64;
 
-        self.decay1_factor =
-            fm_tables::decay_factor(d1r as f32, rs_offset, sample_rate) as f64;
+        self.decay1_factor = fm_tables::decay_factor(d1r as f32, rs_offset, sample_rate) as f64;
 
-        self.decay2_factor =
-            fm_tables::decay_factor(d2r as f32, rs_offset, sample_rate) as f64;
+        self.decay2_factor = fm_tables::decay_factor(d2r as f32, rs_offset, sample_rate) as f64;
 
         // p81z maps release rate as: 1 + rr * 2
         let release_rate = 1.0 + rr as f32 * 2.0;
-        self.release_factor =
-            fm_tables::decay_factor(release_rate, rs_offset, sample_rate) as f64;
+        self.release_factor = fm_tables::decay_factor(release_rate, rs_offset, sample_rate) as f64;
 
         // Start from silence each note-on (retrigger behaviour).
         self.value = 0.0;

@@ -15,7 +15,7 @@ use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::{MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
-use common::{expects_sound, SR};
+use common::{SR, expects_sound};
 
 fn params(kind: EngineType) -> ParamSnapshot {
     ParamSnapshot::for_engine(kind)

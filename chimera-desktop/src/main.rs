@@ -39,7 +39,12 @@ fn main() {
         }
 
         // Solo a DAC pair: F1-F3; F4 hears all three.
-        for (key, pair) in [(minifb::Key::F1, 1), (minifb::Key::F2, 2), (minifb::Key::F3, 3), (minifb::Key::F4, 0)] {
+        for (key, pair) in [
+            (minifb::Key::F1, 1),
+            (minifb::Key::F2, 2),
+            (minifb::Key::F3, 3),
+            (minifb::Key::F4, 0),
+        ] {
             if keys.contains(&key) {
                 audio.solo(pair);
             }
@@ -65,12 +70,9 @@ fn main() {
         // Push every Part and the FX to the audio thread.
         audio.update(&ui.performance);
 
-        // Measure render time
-        let render_start = Instant::now();
         ui.render(&mut display, &perf.stats);
-        let render_us = render_start.elapsed().as_micros() as u32;
 
-        perf.record(render_us, frame_us, 0);
+        perf.record(frame_us, 0);
 
         display.flush();
         std::thread::sleep(std::time::Duration::from_millis(33));

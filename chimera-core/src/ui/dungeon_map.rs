@@ -27,14 +27,27 @@ where
     let chain = nav.active_chain();
     let n = chain.blocks.len();
     if n > 1 {
-        draw::fill_rect(d, theme::MAP_X0, theme::MAP_LINE_Y, theme::MAP_X1 - theme::MAP_X0, 1, theme::FAINT);
+        draw::fill_rect(
+            d,
+            theme::MAP_X0,
+            theme::MAP_LINE_Y,
+            theme::MAP_X1 - theme::MAP_X0,
+            1,
+            theme::FAINT,
+        );
     }
     for (i, block) in chain.blocks.iter().enumerate() {
         let x = node_x(i, n);
         if i == nav.node {
             pill_node(d, x, theme::MAP_LINE_Y, block.def.short, theme::ACCENT);
         } else {
-            ring_node(d, x, theme::MAP_LINE_Y, block.def.short, theme::NODE_LABEL_Y);
+            ring_node(
+                d,
+                x,
+                theme::MAP_LINE_Y,
+                block.def.short,
+                theme::NODE_LABEL_Y,
+            );
         }
     }
     draw_branches(d, nav, node_x(nav.node, n), branch_scroll_px);
@@ -45,8 +58,23 @@ pub fn pill_node<D>(d: &mut D, x: i32, cy: i32, label: &str, fill: Rgb565)
 where
     D: DrawTarget<Color = Rgb565>,
 {
-    draw::pill(d, x - theme::PILL_W / 2, cy - theme::PILL_H / 2, theme::PILL_W, theme::PILL_H, fill);
-    draw::text_center(d, &theme::FONT_LABEL_BOLD, label, x, cy + theme::PILL_LABEL_Y - theme::MAP_LINE_Y, theme::BG, 0);
+    draw::pill(
+        d,
+        x - theme::PILL_W / 2,
+        cy - theme::PILL_H / 2,
+        theme::PILL_W,
+        theme::PILL_H,
+        fill,
+    );
+    draw::text_center(
+        d,
+        &theme::FONT_LABEL_BOLD,
+        label,
+        x,
+        cy + theme::PILL_LABEL_Y - theme::MAP_LINE_Y,
+        theme::BG,
+        0,
+    );
 }
 
 /// Any other node: a small ring on the line, its grey label below at `label_y`.
@@ -64,7 +92,9 @@ fn draw_branches<D>(d: &mut D, nav: &ChainNav, pill_x: i32, branch_scroll_px: i3
 where
     D: DrawTarget<Color = Rgb565>,
 {
-    let Some(block) = nav.active_chain_block() else { return };
+    let Some(block) = nav.active_chain_block() else {
+        return;
+    };
     let count = block.sub_page_count();
     if count == 0 {
         return;
@@ -80,7 +110,11 @@ where
         if y + theme::BRANCH_LINE_HEIGHT > theme::SCREEN_H {
             break;
         }
-        let label = if i == 0 { block.def.short } else { block.sub_pages[i - 1].short };
+        let label = if i == 0 {
+            block.def.short
+        } else {
+            block.sub_pages[i - 1].short
+        };
         let cy = y + theme::BRANCH_LINE_HEIGHT / 2;
         if i == nav.sub_page {
             draw::dot(d, x, cy, 2, theme::ACCENT);

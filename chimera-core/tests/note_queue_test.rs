@@ -1,7 +1,7 @@
 //! Lock-free SPSC note queue from the UI/input thread to audio
 //! (instrument-core spec § Threading).
 
-use chimera_core::note_queue::{NoteEvent, NoteKind, NoteQueue, NOTE_QUEUE_LEN};
+use chimera_core::note_queue::{NOTE_QUEUE_LEN, NoteEvent, NoteKind, NoteQueue};
 use chimera_core::{MidiChannel, MidiNote, Velocity};
 
 fn ev(ch: u8, note: u8, vel: u8) -> NoteEvent {

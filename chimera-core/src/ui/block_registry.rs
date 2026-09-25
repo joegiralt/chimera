@@ -5,8 +5,10 @@ use crate::dsp::lfo::LfoParams;
 use crate::dsp::modal::ModalParams;
 use crate::dsp::pizza::PizzaParams;
 use crate::dsp::reverb::ReverbParams;
+use crate::params::{
+    DriveParams, EnvParams, FilterParams, FmOpParams, FmParams, FolderParams, OutParams,
+};
 use crate::part::PartParams;
-use crate::params::{DriveParams, EnvParams, FilterParams, FmOpParams, FmParams, FolderParams, OutParams};
 use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2, ParamSlot, VizType};
 use crate::ui::page::{PageLayout, ValFmt};
 
@@ -26,7 +28,9 @@ pub static PIZZA: BlockDef = BlockDef {
         ParamSlot::param(BlockRef::Pizza, PizzaParams::SHAPE),
         ParamSlot::param(BlockRef::Pizza, PizzaParams::CRUSH),
         ParamSlot::param(BlockRef::Pizza, PizzaParams::LEVEL),
-        EMPTY, EMPTY, EMPTY,
+        EMPTY,
+        EMPTY,
+        EMPTY,
     ],
 };
 
@@ -39,7 +43,7 @@ pub static MODAL_1: BlockDef = BlockDef {
     name: "Modal",
     short: "MDL",
     layout: PageLayout::CellGrid,
-    viz: VizType::ModalPeaks,
+    viz: VizType::None,
     params: [
         ParamSlot::param(BlockRef::Modal, ModalParams::MODE),
         ParamSlot::param(BlockRef::Modal, ModalParams::EXCITE),
@@ -55,7 +59,7 @@ pub static MODAL_2: BlockDef = BlockDef {
     name: "Modal-2",
     short: "MDL2",
     layout: PageLayout::CellGrid,
-    viz: VizType::ModalPeaks,
+    viz: VizType::None,
     params: [
         ParamSlot::param(BlockRef::Modal, ModalParams::KS_BODY),
         ParamSlot::param(BlockRef::Modal, ModalParams::KS_STIFFNESS),
@@ -75,7 +79,7 @@ pub static VA: BlockDef = BlockDef {
     name: "VA Osc",
     short: "VA",
     layout: PageLayout::CellGrid,
-    viz: VizType::WaveformPreview,
+    viz: VizType::None,
     params: [
         ParamSlot::legacy("WAVE", ValFmt::Uni),
         ParamSlot::legacy("PW", ValFmt::Uni),
@@ -148,7 +152,7 @@ pub static DRIVE: BlockDef = BlockDef {
     name: "Drive",
     short: "DRV",
     layout: PageLayout::CellGrid,
-    viz: VizType::DriveClip,
+    viz: VizType::None,
     params: [
         ParamSlot::param(BlockRef::Drive, DriveParams::DRIVE),
         ParamSlot::param(BlockRef::Drive, DriveParams::TONE),
@@ -164,7 +168,7 @@ pub static FOLDER: BlockDef = BlockDef {
     name: "Folder",
     short: "FLD",
     layout: PageLayout::CellGrid,
-    viz: VizType::WaveFold,
+    viz: VizType::None,
     params: [
         ParamSlot::param(BlockRef::Folder, FolderParams::FOLD),
         ParamSlot::param(BlockRef::Folder, FolderParams::SYMMETRY),
@@ -375,7 +379,7 @@ pub static NOISE: BlockDef = BlockDef {
     name: "Noise",
     short: "NSE",
     layout: PageLayout::CellGrid,
-    viz: VizType::WaveformPreview,
+    viz: VizType::None,
     params: [
         ParamSlot::legacy("COLOR", ValFmt::Uni),
         ParamSlot::legacy("PITCH", ValFmt::Uni),
@@ -395,7 +399,7 @@ pub static MOD_MATRIX: BlockDef = BlockDef {
     name: "Mod Matrix",
     short: "MOD",
     layout: PageLayout::Matrix,
-    viz: VizType::RoutingMatrix,
+    viz: VizType::None,
     params: [EMPTY; 6],
 };
 
@@ -475,16 +479,31 @@ pub static FM_ENV4: BlockDef = BlockDef {
 /// (`Voice::render`).
 pub static PART_MOD_SOURCES: [&str; 2] = ["ENV", "LFO"];
 
-static PIZZA_BLOCK: ChainBlock = ChainBlock { def: &PIZZA, sub_pages: &[] };
+static PIZZA_BLOCK: ChainBlock = ChainBlock {
+    def: &PIZZA,
+    sub_pages: &[],
+};
 
 static MOD_MATRIX_SUB_PAGES: [&BlockDef; 2] = [&ENVELOPE, &LFO];
 
 static PIZZA_POLY_BLOCKS: [ChainBlock; 5] = [
     PIZZA_BLOCK,
-    ChainBlock { def: &DRIVE,      sub_pages: &[] },
-    ChainBlock { def: &FILTER,     sub_pages: &[] },
-    ChainBlock { def: &FOLDER,     sub_pages: &[] },
-    ChainBlock { def: &MOD_MATRIX, sub_pages: &MOD_MATRIX_SUB_PAGES },
+    ChainBlock {
+        def: &DRIVE,
+        sub_pages: &[],
+    },
+    ChainBlock {
+        def: &FILTER,
+        sub_pages: &[],
+    },
+    ChainBlock {
+        def: &FOLDER,
+        sub_pages: &[],
+    },
+    ChainBlock {
+        def: &MOD_MATRIX,
+        sub_pages: &MOD_MATRIX_SUB_PAGES,
+    },
 ];
 
 pub static PIZZA_POLY_CHAIN: ChainDef2 = ChainDef2 {
@@ -494,9 +513,18 @@ pub static PIZZA_POLY_CHAIN: ChainDef2 = ChainDef2 {
 };
 
 static KICK_BLOCKS: [ChainBlock; 3] = [
-    ChainBlock { def: &NOISE,      sub_pages: &[] },
-    ChainBlock { def: &FILTER,     sub_pages: &[] },
-    ChainBlock { def: &MOD_MATRIX, sub_pages: &MOD_MATRIX_SUB_PAGES },
+    ChainBlock {
+        def: &NOISE,
+        sub_pages: &[],
+    },
+    ChainBlock {
+        def: &FILTER,
+        sub_pages: &[],
+    },
+    ChainBlock {
+        def: &MOD_MATRIX,
+        sub_pages: &MOD_MATRIX_SUB_PAGES,
+    },
 ];
 
 pub static KICK_CHAIN: ChainDef2 = ChainDef2 {
@@ -508,9 +536,18 @@ pub static KICK_CHAIN: ChainDef2 = ChainDef2 {
 static MODAL_SUB_PAGES: [&BlockDef; 1] = [&MODAL_2];
 
 static MODAL_PLUCK_BLOCKS: [ChainBlock; 3] = [
-    ChainBlock { def: &MODAL_1,    sub_pages: &MODAL_SUB_PAGES },
-    ChainBlock { def: &FILTER,     sub_pages: &[] },
-    ChainBlock { def: &MOD_MATRIX, sub_pages: &MOD_MATRIX_SUB_PAGES },
+    ChainBlock {
+        def: &MODAL_1,
+        sub_pages: &MODAL_SUB_PAGES,
+    },
+    ChainBlock {
+        def: &FILTER,
+        sub_pages: &[],
+    },
+    ChainBlock {
+        def: &MOD_MATRIX,
+        sub_pages: &MOD_MATRIX_SUB_PAGES,
+    },
 ];
 
 pub static MODAL_PLUCK_CHAIN: ChainDef2 = ChainDef2 {
@@ -524,11 +561,26 @@ static FM_SUB_PAGES: [&BlockDef; 2] = [&FM_OP, &FM_RATIO];
 static FM_MOD_MATRIX_SUB_PAGES: [&BlockDef; 4] = [&FM_ENV1, &FM_ENV2, &FM_ENV3, &FM_ENV4];
 
 static FM_BLOCKS: [ChainBlock; 5] = [
-    ChainBlock { def: &FM_ALG,     sub_pages: &FM_SUB_PAGES },
-    ChainBlock { def: &DRIVE,      sub_pages: &[] },
-    ChainBlock { def: &FILTER,     sub_pages: &[] },
-    ChainBlock { def: &FOLDER,     sub_pages: &[] },
-    ChainBlock { def: &MOD_MATRIX, sub_pages: &FM_MOD_MATRIX_SUB_PAGES },
+    ChainBlock {
+        def: &FM_ALG,
+        sub_pages: &FM_SUB_PAGES,
+    },
+    ChainBlock {
+        def: &DRIVE,
+        sub_pages: &[],
+    },
+    ChainBlock {
+        def: &FILTER,
+        sub_pages: &[],
+    },
+    ChainBlock {
+        def: &FOLDER,
+        sub_pages: &[],
+    },
+    ChainBlock {
+        def: &MOD_MATRIX,
+        sub_pages: &FM_MOD_MATRIX_SUB_PAGES,
+    },
 ];
 
 pub static FM_CHAIN: ChainDef2 = ChainDef2 {
@@ -538,11 +590,26 @@ pub static FM_CHAIN: ChainDef2 = ChainDef2 {
 };
 
 static MIX_BLOCKS: [ChainBlock; 5] = [
-    ChainBlock { def: &MIXER,  sub_pages: &[] },
-    ChainBlock { def: &CHORUS, sub_pages: &[] },
-    ChainBlock { def: &DELAY,  sub_pages: &[] },
-    ChainBlock { def: &EFX,    sub_pages: &[] },
-    ChainBlock { def: &MASTER, sub_pages: &[] },
+    ChainBlock {
+        def: &MIXER,
+        sub_pages: &[],
+    },
+    ChainBlock {
+        def: &CHORUS,
+        sub_pages: &[],
+    },
+    ChainBlock {
+        def: &DELAY,
+        sub_pages: &[],
+    },
+    ChainBlock {
+        def: &EFX,
+        sub_pages: &[],
+    },
+    ChainBlock {
+        def: &MASTER,
+        sub_pages: &[],
+    },
 ];
 
 pub static MIX_CHAIN: ChainDef2 = ChainDef2 {
@@ -552,9 +619,18 @@ pub static MIX_CHAIN: ChainDef2 = ChainDef2 {
 };
 
 static ENVELOPE_BLOCKS: [ChainBlock; 3] = [
-    ChainBlock { def: &ENV_AMP,    sub_pages: &[] },
-    ChainBlock { def: &ENV_FILTER, sub_pages: &[] },
-    ChainBlock { def: &ENV_AUX,    sub_pages: &[] },
+    ChainBlock {
+        def: &ENV_AMP,
+        sub_pages: &[],
+    },
+    ChainBlock {
+        def: &ENV_FILTER,
+        sub_pages: &[],
+    },
+    ChainBlock {
+        def: &ENV_AUX,
+        sub_pages: &[],
+    },
 ];
 
 pub static ENVELOPE_CHAIN: ChainDef2 = ChainDef2 {
@@ -605,7 +681,7 @@ pub static EQ: BlockDef = BlockDef {
     name: "EQ",
     short: "EQ",
     layout: PageLayout::BigViz,
-    viz: VizType::EqResponse,
+    viz: VizType::None,
     params: [
         ParamSlot::legacy("LOW", ValFmt::Bi),
         ParamSlot::legacy("L.FRQ", ValFmt::Uni),
@@ -634,11 +710,26 @@ pub static SENDS: BlockDef = BlockDef {
 
 /// MIX + B<n>: Part n's mix settings, then the shared FX (spec § UI).
 static MIXER_CHANNEL_BLOCKS: [ChainBlock; 5] = [
-    ChainBlock { def: &PART,   sub_pages: &[] },
-    ChainBlock { def: &SENDS,  sub_pages: &[] },
-    ChainBlock { def: &CHORUS, sub_pages: &[] },
-    ChainBlock { def: &DELAY,  sub_pages: &[] },
-    ChainBlock { def: &EFX,    sub_pages: &[] },
+    ChainBlock {
+        def: &PART,
+        sub_pages: &[],
+    },
+    ChainBlock {
+        def: &SENDS,
+        sub_pages: &[],
+    },
+    ChainBlock {
+        def: &CHORUS,
+        sub_pages: &[],
+    },
+    ChainBlock {
+        def: &DELAY,
+        sub_pages: &[],
+    },
+    ChainBlock {
+        def: &EFX,
+        sub_pages: &[],
+    },
 ];
 
 pub static MIXER_CHANNEL_CHAIN: ChainDef2 = ChainDef2 {
@@ -658,12 +749,13 @@ pub static SYS_MIDI: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
-        ParamSlot::legacy("P1 CH", ValFmt::Int(16)),
-        ParamSlot::legacy("P2 CH", ValFmt::Int(16)),
-        ParamSlot::legacy("P3 CH", ValFmt::Int(16)),
-        ParamSlot::legacy("P4 CH", ValFmt::Int(16)),
-        ParamSlot::legacy("P5 CH", ValFmt::Int(16)),
-        ParamSlot::legacy("P6 CH", ValFmt::Int(16)),
+        // 1-based (CH 1..16), matching the Mixer PART page's CH formatter.
+        ParamSlot::legacy("P1 CH", ValFmt::OneBased(15)),
+        ParamSlot::legacy("P2 CH", ValFmt::OneBased(15)),
+        ParamSlot::legacy("P3 CH", ValFmt::OneBased(15)),
+        ParamSlot::legacy("P4 CH", ValFmt::OneBased(15)),
+        ParamSlot::legacy("P5 CH", ValFmt::OneBased(15)),
+        ParamSlot::legacy("P6 CH", ValFmt::OneBased(15)),
     ],
 };
 
@@ -718,11 +810,26 @@ pub static SYS_ABOUT: BlockDef = BlockDef {
 };
 
 static SYSTEM_BLOCKS: [ChainBlock; 5] = [
-    ChainBlock { def: &SYS_MIDI,    sub_pages: &[] },
-    ChainBlock { def: &SYS_TUNING,  sub_pages: &[] },
-    ChainBlock { def: &SYS_THEME,   sub_pages: &[] },
-    ChainBlock { def: &SYS_UPDATES, sub_pages: &[] },
-    ChainBlock { def: &SYS_ABOUT,   sub_pages: &[] },
+    ChainBlock {
+        def: &SYS_MIDI,
+        sub_pages: &[],
+    },
+    ChainBlock {
+        def: &SYS_TUNING,
+        sub_pages: &[],
+    },
+    ChainBlock {
+        def: &SYS_THEME,
+        sub_pages: &[],
+    },
+    ChainBlock {
+        def: &SYS_UPDATES,
+        sub_pages: &[],
+    },
+    ChainBlock {
+        def: &SYS_ABOUT,
+        sub_pages: &[],
+    },
 ];
 
 pub static SYSTEM_CHAIN: ChainDef2 = ChainDef2 {
@@ -788,7 +895,7 @@ pub static DEMO_MATRIX: BlockDef = BlockDef {
     name: "Matrix",
     short: "MTX",
     layout: PageLayout::Matrix,
-    viz: VizType::RoutingMatrix,
+    viz: VizType::None,
     params: [EMPTY; 6],
 };
 
@@ -809,11 +916,26 @@ pub static DEMO_FM: BlockDef = BlockDef {
 };
 
 static DEMO_BLOCKS: [ChainBlock; 5] = [
-    ChainBlock { def: &DEMO_WAVES,  sub_pages: &[] },
-    ChainBlock { def: &DEMO_SHAPES, sub_pages: &[] },
-    ChainBlock { def: &DEMO_MOTION, sub_pages: &[] },
-    ChainBlock { def: &DEMO_FM,     sub_pages: &[] },
-    ChainBlock { def: &DEMO_MATRIX, sub_pages: &[] },
+    ChainBlock {
+        def: &DEMO_WAVES,
+        sub_pages: &[],
+    },
+    ChainBlock {
+        def: &DEMO_SHAPES,
+        sub_pages: &[],
+    },
+    ChainBlock {
+        def: &DEMO_MOTION,
+        sub_pages: &[],
+    },
+    ChainBlock {
+        def: &DEMO_FM,
+        sub_pages: &[],
+    },
+    ChainBlock {
+        def: &DEMO_MATRIX,
+        sub_pages: &[],
+    },
 ];
 
 pub static DEMO_CHAIN: ChainDef2 = ChainDef2 {

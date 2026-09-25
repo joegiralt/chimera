@@ -91,7 +91,9 @@ impl ModState {
         let mut ms = Self::new();
         ms.num_sources = num_sources.min(MAX_MOD_SOURCES);
         for i in 0..registry.len() {
-            let Some(entry) = registry.get(i) else { continue };
+            let Some(entry) = registry.get(i) else {
+                continue;
+            };
             ms.push_dest(Some(entry.addr));
         }
         ms

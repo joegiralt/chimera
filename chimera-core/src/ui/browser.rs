@@ -7,7 +7,7 @@ use core::fmt::Write;
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::Rgb565;
 
-use crate::preset::{ChainType, SoundPool, POOL_SIZE};
+use crate::preset::{ChainType, POOL_SIZE, SoundPool};
 use crate::ui::chain::chain_def_for;
 use crate::ui::components;
 use crate::ui::draw;
@@ -55,19 +55,54 @@ where
     draw::fill_rect(d, SCROLL_X, SCROLL_TOP, 2, SCROLL_H, theme::FAINT);
     let thumb_h = (SCROLL_H * VISIBLE_ROWS as i32 / TOTAL_ENTRIES as i32).max(8);
     let max_scroll = (TOTAL_ENTRIES - VISIBLE_ROWS) as i32;
-    let thumb_y = SCROLL_TOP + (SCROLL_H - thumb_h) * scroll.min(max_scroll as usize) as i32 / max_scroll;
+    let thumb_y =
+        SCROLL_TOP + (SCROLL_H - thumb_h) * scroll.min(max_scroll as usize) as i32 / max_scroll;
     draw::fill_rect(d, SCROLL_X, thumb_y, 2, thumb_h, theme::MID);
 
-    for (i, (key, what)) in [("EDIT", "LOAD"), ("SEQ", "SAVE"), ("B", "CANCEL")].iter().enumerate() {
+    for (i, (key, what)) in [("EDIT", "LOAD"), ("SEQ", "SAVE"), ("B", "CANCEL")]
+        .iter()
+        .enumerate()
+    {
         let x = theme::MARGIN_X + i as i32 * 76;
-        let w = draw::text_tracked(d, &theme::FONT_LABEL_BOLD, key, x, HINT_Y, theme::INK, theme::LABEL_TRACKING);
-        draw::text_tracked(d, &theme::FONT_LABEL, what, x + w + 4, HINT_Y, theme::MID, theme::LABEL_TRACKING);
+        let w = draw::text_tracked(
+            d,
+            &theme::FONT_LABEL_BOLD,
+            key,
+            x,
+            HINT_Y,
+            theme::INK,
+            theme::LABEL_TRACKING,
+        );
+        draw::text_tracked(
+            d,
+            &theme::FONT_LABEL,
+            what,
+            x + w + 4,
+            HINT_Y,
+            theme::MID,
+            theme::LABEL_TRACKING,
+        );
     }
     // Two strings: FmtBuf holds 32 bytes and one line would not fit.
-    draw::text(d, &theme::FONT_LABEL, "MAIN SCROLLS", theme::MARGIN_X, INFO_Y, theme::MID);
+    draw::text(
+        d,
+        &theme::FONT_LABEL,
+        "MAIN SCROLLS",
+        theme::MARGIN_X,
+        INFO_Y,
+        theme::MID,
+    );
     let mut info = FmtBuf::new();
     let _ = write!(info, "{} INIT + {} SLOTS", INIT_TYPES.len(), POOL_SIZE);
-    draw::text_right(d, &theme::FONT_LABEL, info.as_str(), theme::VIZ_RIGHT, INFO_Y, theme::MID, 0);
+    draw::text_right(
+        d,
+        &theme::FONT_LABEL,
+        info.as_str(),
+        theme::VIZ_RIGHT,
+        INFO_Y,
+        theme::MID,
+        0,
+    );
 }
 
 fn row<D>(d: &mut D, pool: &SoundPool, entry: usize, y: i32, selected: bool)
@@ -91,14 +126,43 @@ where
         draw::pill(d, 8, y - 16, 224, 22, theme::ACCENT);
     }
     let dim = if selected { theme::BG } else { theme::MID };
-    draw::text_tracked(d, &theme::FONT_LABEL, slot.as_str(), 18, y, dim, theme::LABEL_TRACKING);
+    draw::text_tracked(
+        d,
+        &theme::FONT_LABEL,
+        slot.as_str(),
+        18,
+        y,
+        dim,
+        theme::LABEL_TRACKING,
+    );
     if empty {
-        draw::fill_rect(d, 52, y - 4, 10, 1, if selected { theme::BG } else { theme::FAINT });
+        draw::fill_rect(
+            d,
+            52,
+            y - 4,
+            10,
+            1,
+            if selected { theme::BG } else { theme::FAINT },
+        );
     } else {
-        let color = if selected { theme::BG } else if saved { theme::INK } else { theme::INK2 };
+        let color = if selected {
+            theme::BG
+        } else if saved {
+            theme::INK
+        } else {
+            theme::INK2
+        };
         draw::text(d, &theme::FONT_VALUE, name.as_str(), 52, y, color);
     }
     if let Some(ct) = chain {
-        draw::text_right(d, &theme::FONT_LABEL, chain_def_for(ct).blocks[0].def.short, 223, y, dim, 0);
+        draw::text_right(
+            d,
+            &theme::FONT_LABEL,
+            chain_def_for(ct).blocks[0].def.short,
+            223,
+            y,
+            dim,
+            0,
+        );
     }
 }

@@ -1,7 +1,7 @@
-use chimera_core::{MidiNote, Velocity};
-use chimera_core::modulation::ModState;
 use chimera_core::dsp::voice::Voice;
+use chimera_core::modulation::ModState;
 use chimera_core::params::{EngineType, ParamSnapshot};
+use chimera_core::{MidiNote, Velocity};
 
 const SR: u32 = 48000;
 
@@ -10,7 +10,11 @@ fn render_voice(engine: EngineType, note: u8, blocks: usize) -> Vec<f32> {
     let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
     let params = ParamSnapshot::for_engine(engine);
 
-    voice.note_on(MidiNote::new(note).unwrap(), Velocity::new(100).unwrap(), &params);
+    voice.note_on(
+        MidiNote::new(note).unwrap(),
+        Velocity::new(100).unwrap(),
+        &params,
+    );
 
     let mut all = Vec::new();
     let mut block = [0.0f32; 64];
@@ -69,7 +73,11 @@ fn test_engine_type_is_respected() {
 
     // Start with Pizza
     let mut params = ParamSnapshot::for_engine(EngineType::Pizza);
-    voice.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params);
+    voice.note_on(
+        MidiNote::new(60).unwrap(),
+        Velocity::new(100).unwrap(),
+        &params,
+    );
 
     let mut block = [0.0f32; 64];
     voice.render(&mut block, &params, &empty_mod);
@@ -78,7 +86,11 @@ fn test_engine_type_is_respected() {
     // Now switch to Modal
     let mut voice2 = Voice::new(chimera_hal::SAMPLE_RATE);
     params = ParamSnapshot::for_engine(EngineType::Modal);
-    voice2.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &params);
+    voice2.note_on(
+        MidiNote::new(60).unwrap(),
+        Velocity::new(100).unwrap(),
+        &params,
+    );
 
     let mut block2 = [0.0f32; 64];
     voice2.render(&mut block2, &params, &empty_mod);

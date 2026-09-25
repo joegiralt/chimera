@@ -1,5 +1,5 @@
 use chimera_core::addr::Op;
-use chimera_core::preset::{ChainType, Sound, Performance, SoundPool, Part, POOL_SIZE};
+use chimera_core::preset::{ChainType, POOL_SIZE, Part, Performance, Sound, SoundPool};
 use chimera_core::ui::block_registry as reg;
 use chimera_core::ui::page::PageKey;
 use chimera_core::ui::{UiMode, UiState};
@@ -23,8 +23,6 @@ impl MockControls {
         }
     }
 
-    fn none() -> Self { Self::new() }
-
     fn button(mut self, id: ButtonId, state: ButtonState) -> Self {
         self.buttons[self.button_count] = (id, state);
         self.button_count += 1;
@@ -40,18 +38,18 @@ impl MockControls {
 
 impl Controls for MockControls {
     fn button_state(&self, id: ButtonId) -> ButtonState {
-        for i in 0..self.button_count {
-            if self.buttons[i].0 == id {
-                return self.buttons[i].1;
+        for &(button_id, state) in self.buttons.iter().take(self.button_count) {
+            if button_id == id {
+                return state;
             }
         }
         ButtonState::Up
     }
 
     fn encoder_delta(&self, id: EncoderId) -> i8 {
-        for i in 0..self.delta_count {
-            if self.encoder_deltas[i].0 == id {
-                return self.encoder_deltas[i].1;
+        for &(encoder_id, delta) in self.encoder_deltas.iter().take(self.delta_count) {
+            if encoder_id == id {
+                return delta;
             }
         }
         0
@@ -118,6 +116,10 @@ fn part_edit_does_not_modify_pool() {
     let mut part = Part::new(ChainType::PizzaPoly);
     part.load_from_pool(&pool, 0);
     part.sound.params.out.volume = 0.0; // mute
+    assert_eq!(
+        part.sound.params.out.volume, 0.0,
+        "edit should land on the part's copy"
+    );
 
     // Pool slot unchanged
     assert!(pool.get(0).unwrap().params.out.volume > 0.0);
@@ -194,9 +196,11 @@ fn edit_held_with_b_press_does_not_navigate() {
     let start_node = ui.nav.node;
 
     // Edit+B1 should open browser, NOT navigate
-    ui.handle_input(&MockControls::new()
-        .button(ButtonId::Edit, ButtonState::Held)
-        .button(ButtonId::B1, ButtonState::Pressed));
+    ui.handle_input(
+        &MockControls::new()
+            .button(ButtonId::Edit, ButtonState::Held)
+            .button(ButtonId::B1, ButtonState::Pressed),
+    );
 
     // Should be in browser, not navigated
     assert!(matches!(ui.ui_mode, UiMode::SoundBrowser { .. }));
@@ -207,9 +211,11 @@ fn edit_held_with_b_press_does_not_navigate() {
 
 /// Helper: open sound browser for a part via Edit + B-button
 fn open_browser(ui: &mut UiState, btn: ButtonId) {
-    ui.handle_input(&MockControls::new()
-        .button(ButtonId::Edit, ButtonState::Held)
-        .button(btn, ButtonState::Pressed));
+    ui.handle_input(
+        &MockControls::new()
+            .button(ButtonId::Edit, ButtonState::Held)
+            .button(btn, ButtonState::Pressed),
+    );
 }
 
 #[test]
@@ -248,7 +254,14 @@ fn browser_load_copies_patch_to_part() {
 
     // Open browser for B1 (part 0)
     open_browser(&mut ui, ButtonId::B1);
-    assert!(matches!(ui.ui_mode, UiMode::SoundBrowser { part: 0, cursor: 0, .. }));
+    assert!(matches!(
+        ui.ui_mode,
+        UiMode::SoundBrowser {
+            part: 0,
+            cursor: 0,
+            ..
+        }
+    ));
 
     // Scroll down to slot 2
     ui.handle_input(&MockControls::new().encoder(EncoderId::Main, 2));
@@ -310,7 +323,12 @@ fn browser_init_entries_set_chain_type() {
 
     assert!(matches!(ui.ui_mode, UiMode::Normal));
     assert_eq!(ui.performance.parts[0].sound.chain_type, ChainType::Modal);
-    assert!(ui.performance.parts[0].sound.name_str().starts_with("(init)"));
+    assert!(
+        ui.performance.parts[0]
+            .sound
+            .name_str()
+            .starts_with("(init)")
+    );
 
     // Open browser again, scroll to "(init) FM" (POOL_SIZE + 2)
     open_browser(&mut ui, ButtonId::B1);
@@ -382,7 +400,13 @@ fn priming_on_pizza_lfo_sub_page_registers_nothing() {
     }
     press(&mut ui, ButtonId::Edit);
     press(&mut ui, ButtonId::Edit); // sub-page 2: LFO
-    assert_eq!(ui.page(), PageKey::Part { def: reg::LFO.id, op: Op::A });
+    assert_eq!(
+        ui.page(),
+        PageKey::Part {
+            def: reg::LFO.id,
+            op: Op::A
+        }
+    );
     prime(&mut ui);
     assert!(primed(&ui).is_empty());
 }
@@ -396,7 +420,13 @@ fn priming_on_fm_ratio_slot_2_registers_nothing() {
     ui.nav.chain_type = ChainType::Fm;
     press(&mut ui, ButtonId::Edit);
     press(&mut ui, ButtonId::Edit); // sub-page 2: FmRatio
-    assert_eq!(ui.page(), PageKey::Part { def: reg::FM_RATIO.id, op: Op::A });
+    assert_eq!(
+        ui.page(),
+        PageKey::Part {
+            def: reg::FM_RATIO.id,
+            op: Op::A
+        }
+    );
     ui.handle_input(&MockControls::new().encoder(EncoderId::C, 1)); // focus slot 2
     let before = primed(&ui);
     assert!(before.is_empty()); // no FM init pre-wire since Task 22

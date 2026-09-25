@@ -9,8 +9,8 @@
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 
-use stm32h7xx_hal::pac;
 use cortex_m::peripheral::NVIC;
+use stm32h7xx_hal::pac;
 use stm32h7xx_hal::pac::interrupt;
 
 use chimera_core::dsp::voice::Voice;
@@ -39,6 +39,7 @@ static mut INSTRUMENT: MaybeUninit<Instrument> = MaybeUninit::uninit();
 /// DMA reads one half while ISR fills the other.
 /// Note: RAM_D2 is NOLOAD, so this initializer is not applied by startup code.
 /// `prefill_buffer()` must be called before DMA starts.
+// SAFETY: ".ram_d2" is real RAM_D2 SRAM (linker-defined); NOLOAD skips the initializer, but `prefill_buffer()` fills it before anything reads it.
 #[unsafe(link_section = ".ram_d2")]
 static mut AUDIO_BUF: [i16; 256] = [0; 256];
 
@@ -67,7 +68,9 @@ fn render_block(offset: usize) {
             Some(v) => v,
             None => {
                 let buf = &mut *addr_of_mut!(AUDIO_BUF);
-                for i in 0..(BLOCK_SIZE * 2) { buf[offset + i] = 0; }
+                for i in 0..(BLOCK_SIZE * 2) {
+                    buf[offset + i] = 0;
+                }
                 return;
             }
         };
@@ -76,7 +79,9 @@ fn render_block(offset: usize) {
             Some(p) => &*p,
             None => {
                 let buf = &mut *addr_of_mut!(AUDIO_BUF);
-                for i in 0..(BLOCK_SIZE * 2) { buf[offset + i] = 0; }
+                for i in 0..(BLOCK_SIZE * 2) {
+                    buf[offset + i] = 0;
+                }
                 return;
             }
         };
@@ -98,7 +103,7 @@ fn render_block(offset: usize) {
         let buf = &mut *addr_of_mut!(AUDIO_BUF);
         for i in 0..BLOCK_SIZE {
             let sample = (work[i].clamp(-1.0, 1.0) * 32767.0) as i16;
-            buf[offset + i * 2] = sample;     // left
+            buf[offset + i * 2] = sample; // left
             buf[offset + i * 2 + 1] = sample; // right
         }
     }
@@ -137,6 +142,8 @@ pub fn trigger_note(note: MidiNote, velocity: Velocity) {
 
 /// Configure PLL3 to produce the SAI audio clock.
 pub fn init_pll3() {
+    // SAFETY: single-threaded init, before interrupts are unmasked; RCC's
+    // register block is exclusively owned here.
     let rcc = unsafe { &*pac::RCC::ptr() };
 
     // 1. Enable SAI1 peripheral clock
@@ -148,21 +155,30 @@ pub fn init_pll3() {
     while rcc.cr.read().pll3rdy().is_ready() {}
 
     // 3. Set PLL3 input divider: DIVM3 = 1 (preserve DIVM1/DIVM2)
-    rcc.pllckselr.modify(|_, w| unsafe { w.divm3().bits(1) });
+    rcc.pllckselr.modify(|_, w| w.divm3().bits(1));
 
     // 4. Set PLL3 multiplier and dividers: N=46 (val 45), P=3 (val 2)
+    // SAFETY: single-threaded init; DIVN3/DIVP3/DIVQ3/DIVR3 are set to
+    // values within their documented field ranges (RM0433).
     rcc.pll3divr.write(|w| unsafe {
-        w.divn3().bits(45)
-         .divp3().bits(2)
-         .divq3().bits(1)
-         .divr3().bits(1)
+        w.divn3()
+            .bits(45)
+            .divp3()
+            .bits(2)
+            .divq3()
+            .bits(1)
+            .divr3()
+            .bits(1)
     });
 
     // 5. Configure PLL3: wide VCO range, input range 8-16 MHz, enable P output
     rcc.pllcfgr.modify(|_, w| {
-        w.pll3vcosel().wide_vco()
-         .pll3rge().range8()
-         .divp3en().enabled()
+        w.pll3vcosel()
+            .wide_vco()
+            .pll3rge()
+            .range8()
+            .divp3en()
+            .enabled()
     });
 
     // 6. Enable PLL3
@@ -170,11 +186,16 @@ pub fn init_pll3() {
     while !rcc.cr.read().pll3rdy().is_ready() {}
 
     // 7. Set SAI1 clock source to PLL3_P (0b010)
-    rcc.d2ccip1r.modify(|_, w| unsafe { w.sai1sel().bits(0b010) });
+    // SAFETY: single-threaded init; 0b010 is the documented SAI1SEL encoding
+    // for PLL3_P (RM0433).
+    rcc.d2ccip1r
+        .modify(|_, w| unsafe { w.sai1sel().bits(0b010) });
 }
 
 /// Configure SAI1 Block A as I2S master TX, 16-bit stereo.
 pub fn init_sai1a() {
+    // SAFETY: single-threaded init, before interrupts are unmasked; SAI1's
+    // register block is exclusively owned here.
     let sai1 = unsafe { &*pac::SAI1::ptr() };
     let cha = sai1.cha();
 
@@ -183,39 +204,59 @@ pub fn init_sai1a() {
     while cha.cr1.read().saien().bit_is_set() {}
 
     // CR1: Master TX, Free I2S, 16-bit, MCKDIV=5
+    // SAFETY: single-threaded init; MODE/PRTCFG/DS/MCKDIV are set to values
+    // within their documented field ranges (RM0433) for master-TX Free I2S.
     cha.cr1.write(|w| unsafe {
-        w.mode().bits(0b00)      // Master TX
-         .prtcfg().bits(0b00)    // Free protocol (I2S)
-         .ds().bits(0b100)       // 16-bit data
-         .mckdiv().bits(5)       // MCLK divider
+        w.mode()
+            .bits(0b00) // Master TX
+            .prtcfg()
+            .bits(0b00) // Free protocol (I2S)
+            .ds()
+            .bits(0b100) // 16-bit data
+            .mckdiv()
+            .bits(5) // MCLK divider
     });
 
     // Set MCKEN (bit 27) via raw register — not in PAC
+    // SAFETY: SAI1_CHA_CR1 is SAI1 Block A's own CR1 register (RM0433);
+    // single-threaded init, read-modify-write of a single documented bit.
     unsafe {
         let cr1 = core::ptr::read_volatile(SAI1_CHA_CR1);
         core::ptr::write_volatile(SAI1_CHA_CR1, cr1 | (1 << 27));
     }
 
     // CR2: FIFO threshold 1/4, flush FIFO
-    cha.cr2.write(|w| unsafe {
-        w.fth().bits(0b001)
-         .fflush().set_bit()
-    });
+    // SAFETY: single-threaded init; FTH/FFLUSH are set to values within
+    // their documented field ranges (RM0433).
+    cha.cr2
+        .write(|w| unsafe { w.fth().bits(0b001).fflush().set_bit() });
 
     // FRCR: 32-bit frame, FS active 16 bits
+    // SAFETY: single-threaded init; FRL/FSALL are set to values within
+    // their documented field ranges (RM0433).
     cha.frcr.write(|w| unsafe {
-        w.frl().bits(31)         // Frame length = 32 bits
-         .fsall().bits(15)       // FS active for 16 bits
-         .fsdef().set_bit()      // FS is channel identification
-         .fspol().clear_bit()    // FS active low
-         .fsoff().set_bit()      // FS one bit before first data (I2S standard)
+        w.frl()
+            .bits(31) // Frame length = 32 bits
+            .fsall()
+            .bits(15) // FS active for 16 bits
+            .fsdef()
+            .set_bit() // FS is channel identification
+            .fspol()
+            .clear_bit() // FS active low
+            .fsoff()
+            .set_bit() // FS one bit before first data (I2S standard)
     });
 
     // SLOTR: 2 slots, both active, 16-bit slot size
+    // SAFETY: single-threaded init; NBSLOT/SLOTEN/SLOTSZ are set to values
+    // within their documented field ranges (RM0433).
     cha.slotr.write(|w| unsafe {
-        w.nbslot().bits(1)       // 2 slots (N-1)
-         .sloten().bits(0b0011)  // Slots 0 and 1 active
-         .slotsz().bits(0b01)    // 16-bit slot size
+        w.nbslot()
+            .bits(1) // 2 slots (N-1)
+            .sloten()
+            .bits(0b0011) // Slots 0 and 1 active
+            .slotsz()
+            .bits(0b01) // 16-bit slot size
     });
 
     // Enable DMA request (DMAEN in CR1) — but do NOT enable SAI yet.
@@ -249,18 +290,25 @@ pub fn init_dma() {
 
     // Clear all interrupt flags for stream 0
     dma1.lifcr.write(|w| {
-        w.ctcif0().clear()
-         .chtif0().clear()
-         .cteif0().clear()
-         .cdmeif0().clear()
-         .cfeif0().clear()
+        w.ctcif0()
+            .clear()
+            .chtif0()
+            .clear()
+            .cteif0()
+            .clear()
+            .cdmeif0()
+            .clear()
+            .cfeif0()
+            .clear()
     });
 
     // SAFETY: 87 is the valid DMAMUX request ID for SAI1_A (RM0433 Table 121)
     dmamux.ccr[0].modify(|_, w| unsafe { w.dmareq_id().bits(87) });
 
     // SAFETY: writing valid peripheral/memory addresses and transfer count
-    dma1.st[0].par.write(|w| unsafe { w.pa().bits(SAI1_CHA_DR) });
+    dma1.st[0]
+        .par
+        .write(|w| unsafe { w.pa().bits(SAI1_CHA_DR) });
     dma1.st[0].m0ar.write(|w| unsafe {
         // SAFETY: AUDIO_BUF is static, address stable for lifetime of program
         w.m0a().bits(core::ptr::addr_of!(AUDIO_BUF) as u32)
@@ -268,15 +316,24 @@ pub fn init_dma() {
     dma1.st[0].ndtr.write(|w| w.ndt().bits(256));
 
     dma1.st[0].cr.write(|w| {
-        w.dir().memory_to_peripheral()
-         .circ().enabled()
-         .minc().incremented()
-         .pinc().fixed()
-         .msize().bits16()
-         .psize().bits16()
-         .pl().very_high()
-         .htie().enabled()
-         .tcie().enabled()
+        w.dir()
+            .memory_to_peripheral()
+            .circ()
+            .enabled()
+            .minc()
+            .incremented()
+            .pinc()
+            .fixed()
+            .msize()
+            .bits16()
+            .psize()
+            .bits16()
+            .pl()
+            .very_high()
+            .htie()
+            .enabled()
+            .tcie()
+            .enabled()
     });
 
     // SAFETY: DMA1_STR0 ISR is defined in this module; buffer is pre-filled;

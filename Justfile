@@ -13,21 +13,24 @@ build:
     cargo build -p chimera-core -p chimera-hal -p chimera-desktop
 
 # Everything must pass before a commit (ADR 0013): core + hal tests, desktop
-# build + unit tests, firmware build + link into its flash/RAM regions.
+# build + unit tests, firmware build + link into its flash/RAM regions,
+# clippy (including test targets) and rustfmt, both clean.
 # The desktop needs ALSA's pkg-config file; point PKG_CONFIG_PATH at it if it
 # is not installed system-wide (cargo inherits the variable).
 check:
     cargo test -p chimera-core -p chimera-hal
     cargo test -p chimera-desktop
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf
+    cargo clippy -p chimera-core -p chimera-hal -p chimera-desktop --all-targets -- -D warnings
+    cargo fmt --all -- --check
 
 # Run tests
 test:
     cargo test -p chimera-core -p chimera-hal
 
-# Clippy
+# Clippy (including test targets)
 clippy:
-    cargo clippy -p chimera-core -p chimera-hal -p chimera-desktop -- -D warnings
+    cargo clippy -p chimera-core -p chimera-hal -p chimera-desktop --all-targets -- -D warnings
 
 # Render every screen-golden case with the real renderer and write
 # docs/screens/<case>.png at 2x (nearest neighbour). Needs ImageMagick (`magick`).
