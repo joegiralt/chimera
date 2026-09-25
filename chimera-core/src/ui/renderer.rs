@@ -133,6 +133,9 @@ impl Renderer {
             VizType::CompressorCurve => viz::compressor(display),
             _ => {}
         }
+        if let Some(status) = f.prime_status {
+            components::viz_status(display, status);
+        }
     }
 
     /// The viz band of a CellGrid page.

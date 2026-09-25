@@ -144,3 +144,149 @@ fn dirty_render_with_a_status_message_equals_full_render() {
         "dirty render with a status message must equal a full render"
     );
 }
+
+// ── BigViz pages (final review I1) ──────────────────────────────────────
+//
+// BigViz layouts have no focus band, so the status draws as one line at the
+// top of the viz band, above `viz::PLOT_TOP` — where no curve and no
+// touched-value readout ever reach (the readout is clamped to the plot).
+
+use chimera_core::preset::ChainType;
+use chimera_core::ui::viz;
+
+fn full(ui: &UiState) -> Fb {
+    let mut fb = Fb::new();
+    ui.render_with_scope(&mut fb, &PerfStats::zero(), &scope_fixture());
+    fb
+}
+
+/// Pixels that differ between `a` and `b` in rows `top..bottom`.
+fn diff_rows(a: &Fb, b: &Fb, top: i32, bottom: i32) -> usize {
+    let w = theme::SCREEN_W as usize;
+    (top as usize * w..bottom as usize * w)
+        .filter(|&i| a.px[i] != b.px[i])
+        .count()
+}
+
+/// Pizza → Drive → Filter, CUTOFF focused.
+fn filter_page() -> UiState {
+    let mut ui = UiState::new();
+    feed(&mut ui, Input::press(ButtonId::Plus));
+    feed(&mut ui, Input::press(ButtonId::Plus));
+    feed(&mut ui, Input::turn(EncoderId::A, 1));
+    settle(&mut ui);
+    ui
+}
+
+/// FM init Sound → MOD node → FM ENV1 sub-page, slot C focused.
+fn fm_env_page() -> UiState {
+    let mut ui = UiState::new();
+    load_init(&mut ui, ChainType::Fm);
+    for _ in 0..4 {
+        feed(&mut ui, Input::press(ButtonId::Plus));
+    }
+    feed(&mut ui, Input::press(ButtonId::Edit));
+    feed(&mut ui, Input::turn(EncoderId::C, 1));
+    settle(&mut ui);
+    ui
+}
+
+/// The status shows on a BigViz page, confined to the strip between the
+/// header and the plot: the viz (and its readout) below is untouched.
+fn assert_status_line_shows(mut ui: UiState, name: &str) {
+    let before = full(&ui);
+    feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Plus));
+    settle(&mut ui);
+    let status = ui.prime_status();
+    assert!(status.is_some(), "{name}: MIX+PLUS set no status");
+    let after = full(&ui);
+    after.dump(name);
+
+    let strip = diff_rows(&before, &after, theme::HEADER_BOTTOM, viz::PLOT_TOP);
+    assert!(
+        strip > 40,
+        "{name}: {status:?} not drawn ({strip} px changed)"
+    );
+    assert_eq!(
+        diff_rows(&before, &after, 0, theme::HEADER_BOTTOM),
+        0,
+        "{name}: status leaked into the header"
+    );
+    assert_eq!(
+        diff_rows(&before, &after, viz::PLOT_TOP, theme::BIGVIZ_BOTTOM),
+        0,
+        "{name}: status overlaps the plot / readout"
+    );
+}
+
+#[test]
+fn the_status_shows_on_the_filter_page() {
+    assert_status_line_shows(filter_page(), "prime_status_filter");
+}
+
+#[test]
+fn the_status_shows_on_an_fm_envelope_page() {
+    assert_status_line_shows(fm_env_page(), "prime_status_fm_env");
+}
+
+/// Dirty render == full render when the status appears on a BigViz page
+/// (region cache seeded first, so this can't pass on sentinels), and again
+/// when the next input clears it — and the clear really restores the strip.
+#[test]
+fn bigviz_status_appears_and_clears_through_the_dirty_regions() {
+    let mut ui = filter_page();
+    let scope = scope_fixture();
+    let mut dirty = Fb::new();
+    ui.render_dirty_with_scope(&mut dirty, &PerfStats::zero(), &scope);
+    let before = full(&ui);
+
+    feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Plus));
+    settle(&mut ui);
+    assert!(ui.prime_status().is_some());
+    ui.render_dirty_with_scope(&mut dirty, &PerfStats::zero(), &scope);
+    assert!(dirty.px == full(&ui).px, "appear: dirty != full");
+    assert!(diff_rows(&before, &dirty, theme::HEADER_BOTTOM, viz::PLOT_TOP) > 0);
+
+    feed(&mut ui, Input::press(ButtonId::Mix)); // any input retires it
+    settle(&mut ui);
+    assert_eq!(ui.prime_status(), None);
+    ui.render_dirty_with_scope(&mut dirty, &PerfStats::zero(), &scope);
+    let cleared = full(&ui);
+    assert!(dirty.px == cleared.px, "clear: dirty != full");
+    assert_eq!(
+        diff_rows(&before, &dirty, theme::HEADER_BOTTOM, viz::PLOT_TOP),
+        0,
+        "clear left the status on screen"
+    );
+}
+
+/// Final review M8: on a Focus-band page, the status clearing on the next
+/// input redraws the focus band — dirty == full, and the value is back.
+#[test]
+fn focus_band_status_clearing_redraws_through_the_dirty_regions() {
+    let mut ui = UiState::new();
+    feed(&mut ui, Input::turn(EncoderId::A, 1));
+    settle(&mut ui);
+    let before = full(&ui);
+    feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Plus));
+    settle(&mut ui);
+    let scope = scope_fixture();
+    let mut dirty = Fb::new();
+    ui.render_dirty_with_scope(&mut dirty, &PerfStats::zero(), &scope); // status shown
+
+    feed(&mut ui, Input::press(ButtonId::Mix)); // retires it, changes no value
+    settle(&mut ui);
+    assert_eq!(ui.prime_status(), None);
+    let flushed = ui.render_dirty_with_scope(&mut dirty, &PerfStats::zero(), &scope);
+    assert!(
+        flushed.iter().any(|&(a, b)| a != b),
+        "clearing redrew nothing"
+    );
+    let cleared = full(&ui);
+    assert!(dirty.px == cleared.px, "clear: dirty != full");
+    assert_eq!(
+        diff_rows(&before, &cleared, theme::HEADER_BOTTOM, theme::FOCUS_BOTTOM),
+        0,
+        "the focus band did not return to the value readout"
+    );
+}
