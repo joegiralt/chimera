@@ -256,3 +256,54 @@ fn route_destination_names_the_block_and_fits() {
     components::focus_route(&mut fb, src, &longest.1, "-127", amount_value(-127));
     assert_eq!(fb.oob, 0, "{src} -> {}", longest.1);
 }
+
+/// Issue #15: the `>` scroll-more hint must not touch the fifth (rightmost
+/// visible) column's name, even for the widest label in the whole spec
+/// table (Modal's `INHARM`). Renders the two halves separately so each
+/// bound comes from real pixels, not an estimate:
+/// - the wide name alone: five destinations (the hint stays hidden --
+///   `num_dests` fits exactly in `visible_cols()`), so only the name's own
+///   pixels land on screen;
+/// - the hint alone: six destinations (one more than fits, so the hint
+///   shows) with every destination empty, so the header loop draws no
+///   column at all and only the hint's own pixels land on screen.
+#[test]
+fn scroll_hint_does_not_overlap_the_fifth_columns_name() {
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::block::ParamId;
+    use chimera_core::ui::mod_grid::{draw_grid, MatrixState, ModDest, GRID_NAME_Y};
+
+    // Widest label anywhere in the spec table -- the worst case for how far
+    // a column-4 name can reach towards the hint.
+    let widest = BlockRef::ALL
+        .iter()
+        .flat_map(|&b| b.specs().iter().map(move |s| ParamAddr::new(b, s.id)))
+        .max_by_key(|a| chimera_core::ui::draw::text_width(&theme::FONT_LABEL, a.spec().unwrap().label, 0))
+        .unwrap();
+    let short = ParamAddr::new(BlockRef::Part, ParamId(0)); // "LEVEL"
+
+    let ink_at = |fb: &Fb, x: i32| (GRID_NAME_Y - 9..=GRID_NAME_Y).any(|y| fb.px[y as usize * W + x as usize] != 0);
+
+    let mut m_name = MatrixState::new();
+    m_name.rebuild_sources(&["ENV"]);
+    for i in 0..4 {
+        m_name.dests[i] = Some(ModDest { addr: short, label: [0; 8] });
+    }
+    m_name.dests[4] = Some(ModDest { addr: widest, label: [0; 8] });
+    m_name.num_dests = 5;
+    let mut name_fb = Fb::new();
+    draw_grid(&mut name_fb, &m_name, 0);
+    let name_right = (0..theme::SCREEN_W).rev().find(|&x| ink_at(&name_fb, x)).expect("the name must draw something");
+
+    let mut m_hint = MatrixState::new();
+    m_hint.rebuild_sources(&["ENV"]);
+    m_hint.num_dests = 6; // more than visible_cols(): the hint shows
+    let mut hint_fb = Fb::new();
+    draw_grid(&mut hint_fb, &m_hint, 0);
+    let hint_left = (0..theme::SCREEN_W).find(|&x| ink_at(&hint_fb, x)).expect("the hint must draw something");
+
+    assert!(
+        name_right < hint_left,
+        "column 4's widest name (right edge x={name_right}) reaches the scroll hint (left edge x={hint_left})"
+    );
+}

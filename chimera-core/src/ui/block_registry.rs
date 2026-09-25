@@ -39,7 +39,7 @@ pub static MODAL_1: BlockDef = BlockDef {
     name: "Modal",
     short: "MDL",
     layout: PageLayout::CellGrid,
-    viz: VizType::ModalPeaks,
+    viz: VizType::None,
     params: [
         ParamSlot::param(BlockRef::Modal, ModalParams::MODE),
         ParamSlot::param(BlockRef::Modal, ModalParams::EXCITE),
@@ -55,7 +55,7 @@ pub static MODAL_2: BlockDef = BlockDef {
     name: "Modal-2",
     short: "MDL2",
     layout: PageLayout::CellGrid,
-    viz: VizType::ModalPeaks,
+    viz: VizType::None,
     params: [
         ParamSlot::param(BlockRef::Modal, ModalParams::KS_BODY),
         ParamSlot::param(BlockRef::Modal, ModalParams::KS_STIFFNESS),
@@ -75,7 +75,7 @@ pub static VA: BlockDef = BlockDef {
     name: "VA Osc",
     short: "VA",
     layout: PageLayout::CellGrid,
-    viz: VizType::WaveformPreview,
+    viz: VizType::None,
     params: [
         ParamSlot::legacy("WAVE", ValFmt::Uni),
         ParamSlot::legacy("PW", ValFmt::Uni),
@@ -148,7 +148,7 @@ pub static DRIVE: BlockDef = BlockDef {
     name: "Drive",
     short: "DRV",
     layout: PageLayout::CellGrid,
-    viz: VizType::DriveClip,
+    viz: VizType::None,
     params: [
         ParamSlot::param(BlockRef::Drive, DriveParams::DRIVE),
         ParamSlot::param(BlockRef::Drive, DriveParams::TONE),
@@ -164,7 +164,7 @@ pub static FOLDER: BlockDef = BlockDef {
     name: "Folder",
     short: "FLD",
     layout: PageLayout::CellGrid,
-    viz: VizType::WaveFold,
+    viz: VizType::None,
     params: [
         ParamSlot::param(BlockRef::Folder, FolderParams::FOLD),
         ParamSlot::param(BlockRef::Folder, FolderParams::SYMMETRY),
@@ -375,7 +375,7 @@ pub static NOISE: BlockDef = BlockDef {
     name: "Noise",
     short: "NSE",
     layout: PageLayout::CellGrid,
-    viz: VizType::WaveformPreview,
+    viz: VizType::None,
     params: [
         ParamSlot::legacy("COLOR", ValFmt::Uni),
         ParamSlot::legacy("PITCH", ValFmt::Uni),
@@ -395,7 +395,7 @@ pub static MOD_MATRIX: BlockDef = BlockDef {
     name: "Mod Matrix",
     short: "MOD",
     layout: PageLayout::Matrix,
-    viz: VizType::RoutingMatrix,
+    viz: VizType::None,
     params: [EMPTY; 6],
 };
 
@@ -605,7 +605,7 @@ pub static EQ: BlockDef = BlockDef {
     name: "EQ",
     short: "EQ",
     layout: PageLayout::BigViz,
-    viz: VizType::EqResponse,
+    viz: VizType::None,
     params: [
         ParamSlot::legacy("LOW", ValFmt::Bi),
         ParamSlot::legacy("L.FRQ", ValFmt::Uni),
@@ -658,12 +658,13 @@ pub static SYS_MIDI: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
-        ParamSlot::legacy("P1 CH", ValFmt::Int(16)),
-        ParamSlot::legacy("P2 CH", ValFmt::Int(16)),
-        ParamSlot::legacy("P3 CH", ValFmt::Int(16)),
-        ParamSlot::legacy("P4 CH", ValFmt::Int(16)),
-        ParamSlot::legacy("P5 CH", ValFmt::Int(16)),
-        ParamSlot::legacy("P6 CH", ValFmt::Int(16)),
+        // 1-based (CH 1..16), matching the Mixer PART page's CH formatter.
+        ParamSlot::legacy("P1 CH", ValFmt::OneBased(15)),
+        ParamSlot::legacy("P2 CH", ValFmt::OneBased(15)),
+        ParamSlot::legacy("P3 CH", ValFmt::OneBased(15)),
+        ParamSlot::legacy("P4 CH", ValFmt::OneBased(15)),
+        ParamSlot::legacy("P5 CH", ValFmt::OneBased(15)),
+        ParamSlot::legacy("P6 CH", ValFmt::OneBased(15)),
     ],
 };
 
@@ -788,7 +789,7 @@ pub static DEMO_MATRIX: BlockDef = BlockDef {
     name: "Matrix",
     short: "MTX",
     layout: PageLayout::Matrix,
-    viz: VizType::RoutingMatrix,
+    viz: VizType::None,
     params: [EMPTY; 6],
 };
 

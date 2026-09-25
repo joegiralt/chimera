@@ -56,6 +56,9 @@ static ENC_LAST_EDGE: [AtomicU32; NUM_ENCODERS] = [
 /// hclk_hz: HCLK frequency in Hz (e.g. 200_000_000 for 200MHz)
 pub fn start_systick(hclk_hz: u32) {
     let reload = hclk_hz / 500 - 1; // 500Hz
+    // SAFETY: SYST_CSR/RVR/CVR are the Cortex-M SysTick registers at their
+    // fixed, always-present addresses; `enable()` gates the ISR on `READY`,
+    // so nothing reads these before this single-threaded init runs.
     unsafe {
         core::ptr::write_volatile(SYST_CSR, 0); // disable
         core::ptr::write_volatile(SYST_RVR, reload);
@@ -78,6 +81,8 @@ pub fn isr_tick() {
     ISR_TICK.fetch_add(1, Ordering::Relaxed);
 
     // Read HC165 via raw register access (same GPIO that diagnostic proved works)
+    // SAFETY: GPIOF_IDR/BSRR are PF's fixed memory-mapped registers; only
+    // this ISR (single, non-reentrant) drives PF0/PF1 and reads PF2.
     let bits = unsafe {
         // Latch: LOAD low then high
         core::ptr::write_volatile(GPIOF_BSRR, 1u32 << 17); // PF1 reset (LOAD low)
@@ -214,8 +219,7 @@ impl Stm32Controls {
     }
 
     /// Current ISR tick count (500 Hz). For UI timing (double-tap, etc.)
-    // removed in #15 part 2
-    #[allow(dead_code)]
+    #[allow(dead_code)] // polling API for the double-tap timing the preset browser needs; no caller until that lands
     pub fn tick(&self) -> u32 { ISR_TICK.load(Ordering::Relaxed) }
 
     /// Returns true if any button changed state or any encoder moved this frame.

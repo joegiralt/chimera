@@ -94,6 +94,7 @@ pub fn dot<D>(d: &mut D, cx: i32, cy: i32, r: i32, color: Rgb565)
 where
     D: DrawTarget<Color = Rgb565>,
 {
+    let r = r.max(0);
     let _ = Circle::with_center(Point::new(cx, cy), (2 * r + 1) as u32).draw_styled(&PrimitiveStyle::with_fill(color), d);
 }
 
@@ -102,6 +103,7 @@ pub fn ring<D>(d: &mut D, cx: i32, cy: i32, r: i32, color: Rgb565, width: u32)
 where
     D: DrawTarget<Color = Rgb565>,
 {
+    let r = r.max(0);
     let _ = Circle::with_center(Point::new(cx, cy), (2 * r + 1) as u32)
         .draw_styled(&PrimitiveStyle::with_stroke(color, width), d);
 }
@@ -111,8 +113,8 @@ pub fn pill<D>(d: &mut D, x: i32, y: i32, w: i32, h: i32, color: Rgb565)
 where
     D: DrawTarget<Color = Rgb565>,
 {
-    let r = Size::new((h / 2) as u32, (h / 2) as u32);
-    let _ = RoundedRectangle::new(Rectangle::new(Point::new(x, y), Size::new(w as u32, h as u32)), CornerRadii::new(r))
+    let r = (h / 2).max(0) as u32;
+    let _ = RoundedRectangle::new(Rectangle::new(Point::new(x, y), Size::new(w as u32, h as u32)), CornerRadii::new(Size::new(r, r)))
         .draw_styled(&PrimitiveStyle::with_fill(color), d);
 }
 

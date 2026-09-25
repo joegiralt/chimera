@@ -65,12 +65,9 @@ fn main() {
         // Push every Part and the FX to the audio thread.
         audio.update(&ui.performance);
 
-        // Measure render time
-        let render_start = Instant::now();
         ui.render(&mut display, &perf.stats);
-        let render_us = render_start.elapsed().as_micros() as u32;
 
-        perf.record(render_us, frame_us, 0);
+        perf.record(frame_us, 0);
 
         display.flush();
         std::thread::sleep(std::time::Duration::from_millis(33));

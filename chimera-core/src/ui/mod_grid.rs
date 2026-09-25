@@ -15,7 +15,10 @@ use crate::ui::theme;
 /// Dot grid geometry (grid region y 118..266): destination labels across,
 /// sources down, one dot per route.
 pub const GRID_X: i32 = 58;
-pub const GRID_COL_W: i32 = 40;
+/// Narrow enough that even the widest destination label (spec §
+/// `route_destination_names_the_block_and_fits`) fits column 4 clear of the
+/// `>` scroll-more hint at the screen edge (issue #15).
+pub const GRID_COL_W: i32 = 36;
 pub const GRID_TAG_Y: i32 = 130;
 pub const GRID_NAME_Y: i32 = 140;
 pub const GRID_ROW0_Y: i32 = 162;
