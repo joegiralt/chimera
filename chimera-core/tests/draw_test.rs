@@ -165,13 +165,16 @@ fn pill_stays_inside_its_box() {
 /// height, which is what its radius is derived from) must draw nothing and
 /// must not panic -- not wrap to a huge `u32` (the bug the `.max(0)` guards
 /// fixed), and not even the single 1px dot a plain `.max(0)` clamp would
-/// still draw for `dot`/`ring`.
+/// still draw for `dot`/`ring`. A negative `round_outline` width or height
+/// (final review M1) likewise draws nothing.
 #[test]
 fn negative_radius_draws_nothing_and_does_not_panic() {
     let mut fb = Fb::new();
     draw::dot(&mut fb, 100, 100, -5, theme::ACCENT);
     draw::ring(&mut fb, 100, 100, -5, theme::ACCENT, 1);
     draw::pill(&mut fb, 50, 100, 34, -5, theme::ACCENT);
+    draw::round_outline(&mut fb, 50, 100, -34, 20, 3, theme::ACCENT);
+    draw::round_outline(&mut fb, 50, 100, 34, -20, 3, theme::ACCENT);
     assert_eq!(
         count(&fb, theme::ACCENT),
         0,

@@ -173,6 +173,9 @@ pub fn round_outline<D>(d: &mut D, x: i32, y: i32, w: i32, h: i32, radius: u32, 
 where
     D: DrawTarget<Color = Rgb565>,
 {
+    if w <= 0 || h <= 0 {
+        return;
+    }
     let _ = RoundedRectangle::new(
         Rectangle::new(Point::new(x, y), Size::new(w as u32, h as u32)),
         CornerRadii::new(Size::new(radius, radius)),
