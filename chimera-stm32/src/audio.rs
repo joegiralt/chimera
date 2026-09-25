@@ -39,6 +39,7 @@ static mut INSTRUMENT: MaybeUninit<Instrument> = MaybeUninit::uninit();
 /// DMA reads one half while ISR fills the other.
 /// Note: RAM_D2 is NOLOAD, so this initializer is not applied by startup code.
 /// `prefill_buffer()` must be called before DMA starts.
+// SAFETY: ".ram_d2" is real RAM_D2 SRAM (linker-defined); NOLOAD skips the initializer, but `prefill_buffer()` fills it before anything reads it.
 #[unsafe(link_section = ".ram_d2")]
 static mut AUDIO_BUF: [i16; 256] = [0; 256];
 
