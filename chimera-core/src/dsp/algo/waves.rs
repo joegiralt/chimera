@@ -1,5 +1,8 @@
 //! The generated wave tables (ADR 0023).
 
+use crate::dsp::algo::math::log2;
+use crate::hw::SAMPLE_RATE;
+
 include!(concat!(env!("OUT_DIR"), "/waves.rs"));
 
 pub const WAVE_LEN: usize = 256;
@@ -9,6 +12,10 @@ pub type Table = [i16; WAVE_LEN];
 
 pub const WAVE_FLASH_BUDGET: usize = 64 * 1024;
 const _: () = assert!(core::mem::size_of::<[[Table; MIPS]; WAVE_COUNT]>() <= WAVE_FLASH_BUDGET);
+
+/// Mip 0's 127 harmonics stay under Nyquist up to this fundamental; each
+/// mip doubles it.
+pub const MIP0_TOP_HZ: f32 = SAMPLE_RATE as f32 / 256.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WaveId(u8);
@@ -49,5 +56,18 @@ impl WaveId {
 
     pub fn table(self, mip: usize) -> &'static Table {
         &WAVES[self.0 as usize][mip.min(MIPS - 1)]
+    }
+
+    /// The two mips either side of `bandwidth_hz` and the crossfade between
+    /// them, so a change of mip never steps the sound.
+    pub fn mip_pair(self, bandwidth_hz: f32) -> (&'static Table, &'static Table, f32) {
+        let top = (MIPS - 1) as f32;
+        let m = if bandwidth_hz > MIP0_TOP_HZ {
+            log2(bandwidth_hz / MIP0_TOP_HZ).min(top)
+        } else {
+            0.0
+        };
+        let lo = m as usize;
+        (self.table(lo), self.table(lo + 1), m - lo as f32)
     }
 }

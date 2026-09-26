@@ -2,6 +2,11 @@ use core::fmt::Write;
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 
+use chimera_core::dsp::algo::env::{EnvCoefs, EnvRates, OpEnv};
+use chimera_core::dsp::algo::kernel::{Kernel, KernelBlock, OpBlock, SAMPLE_SCALE};
+use chimera_core::dsp::algo::plan::{EvalPlan, OPS};
+use chimera_core::dsp::algo::tx::FEEDBACK_CYCLES;
+use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::hw::{BLOCK_SIZE, DAC_PAIRS, MAX_VOICES, SAMPLE_RATE, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacOut, Instrument};
@@ -77,7 +82,8 @@ pub fn run(display: &mut impl ChimeraDisplay, clocks: Clocks, perf: &Performance
             0,
         )
     });
-    show(display, clocks, &voices, &fx);
+    let kernel = time_kernel();
+    show(display, clocks, &voices, kernel, &fx);
     for _ in 0..HOLD_SECONDS {
         crate::clocks::delay_us(clocks.cpu_hz, 1_000_000);
     }
@@ -114,6 +120,76 @@ impl Rig<'_> {
     }
 }
 
+/// Spec § Budget worst case, one kernel per voice: six operators, all with
+/// feedback, six distinct waves (the D-cache worst case), mip crossfades,
+/// MORPH moving through 0.5 between A14 and A22 (the masks are written
+/// here, before the algorithm tables exist).
+#[inline(never)]
+fn time_kernel() -> u32 {
+    const A14: [u8; OPS] = [0, 0, 0b11, 0b11, 0b100, 0b1000];
+    const A22: [u8; OPS] = [0, 0b1, 0b1, 0b10, 0b100, 0b1_1000];
+    const WAVES: [WaveId; OPS] = [
+        WaveId::W2,
+        WaveId::SAW,
+        WaveId::SQR,
+        WaveId::P25,
+        WaveId::TRI,
+        WaveId::W7,
+    ];
+    let plan = EvalPlan::build(&A14, 0b11, &A22, 0b1);
+    let rates = EnvRates {
+        ar: 31,
+        d1r: 0,
+        d1l: 15,
+        d2r: 0,
+        rr: 8,
+        rs: 0,
+    };
+    let mut kernels = [Kernel::new(); MAX_VOICES];
+    let mut envs = [[OpEnv::IDLE; OPS]; MAX_VOICES];
+    for (v, env) in envs.iter_mut().enumerate() {
+        let note = MidiNote::new(48 + 5 * v as u8).unwrap_or(MidiNote::A4);
+        for e in env.iter_mut() {
+            e.note_on(EnvCoefs::new(rates, note, SAMPLE_RATE as f32));
+        }
+    }
+    let blocks: [KernelBlock; MAX_VOICES] = core::array::from_fn(|v| KernelBlock {
+        plan: &plan,
+        ops: core::array::from_fn(|i| {
+            let wave = WAVES[(i + v) % OPS];
+            OpBlock {
+                inc: (i as u32 + 1) * (11_600_000 + 2_000_000 * v as u32),
+                gain_from: 0.9 * SAMPLE_SCALE,
+                gain_to: 0.8 * SAMPLE_SCALE,
+                feedback: FEEDBACK_CYCLES[7],
+                lo: wave.table(2),
+                hi: wave.table(3),
+                xfade: 0.5,
+            }
+        }),
+        morph_from: 0.45,
+        morph_to: 0.55,
+        norm_from: 0.7,
+        norm_to: 0.7,
+    });
+    let mut out = [0.0f32; BLOCK_SIZE];
+    let mut run = |kernels: &mut [Kernel; MAX_VOICES], envs: &mut [[OpEnv; OPS]; MAX_VOICES]| {
+        for ((k, env), blk) in kernels.iter_mut().zip(envs.iter_mut()).zip(&blocks) {
+            k.render(blk, env, &mut out);
+        }
+    };
+    for _ in 0..WARM_BLOCKS {
+        run(&mut kernels, &mut envs);
+    }
+    let start = DWT::cycle_count();
+    for _ in 0..TIMED_BLOCKS {
+        run(&mut kernels, &mut envs);
+    }
+    let cycles = DWT::cycle_count().wrapping_sub(start);
+    core::hint::black_box(&out);
+    cycles / (TIMED_BLOCKS * BLOCK_SIZE as u32 * MAX_VOICES as u32)
+}
+
 fn name(e: EngineType) -> &'static str {
     match e {
         EngineType::Pizza => "PIZZA",
@@ -127,6 +203,7 @@ fn show(
     display: &mut impl ChimeraDisplay,
     clocks: Clocks,
     voices: &[[u32; MAX_VOICES]; ENGINES],
+    kernel: u32,
     fx: &[u32; REVERB_TYPES],
 ) {
     const CELL_W: i32 = 38;
@@ -176,6 +253,10 @@ fn show(
         }
     }
     let y = 58 + ENGINES as i32 * 30;
+    line.clear();
+    let _ = write!(line, "KERNEL /VOICE {kernel} (350)");
+    draw::text(display, &theme::FONT_VALUE, line.as_str(), 4, y, theme::INK);
+    let y = y + 30;
     draw::text(display, &theme::FONT_VALUE, "FX", 4, y, theme::INK);
     for (i, (label, c)) in ["PLATE", "FDN", "MV"].iter().zip(fx).enumerate() {
         line.clear();

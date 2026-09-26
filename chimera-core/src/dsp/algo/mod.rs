@@ -2,6 +2,8 @@
 //! phase-modulation operators on 32 algorithms, morphing between two.
 
 pub mod env;
+pub mod kernel;
 pub mod math;
+pub mod plan;
 pub mod tx;
 pub mod waves;
