@@ -16,8 +16,9 @@ use crate::ui::theme;
 
 /// Rows on screen.
 pub const VISIBLE_ROWS: usize = 8;
-/// The pool's slots, then one init Sound per chain type.
-pub const INIT_TYPES: [ChainType; 3] = [ChainType::PizzaPoly, ChainType::Modal, ChainType::Fm];
+/// The pool's slots, then one init Sound per chain type, in `ChainType::ALL`
+/// order.
+pub const INIT_TYPES: [ChainType; ChainType::ALL.len()] = ChainType::ALL;
 pub const TOTAL_ENTRIES: usize = POOL_SIZE + INIT_TYPES.len();
 
 pub const LIST_TOP: i32 = 44;

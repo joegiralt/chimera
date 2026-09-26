@@ -180,3 +180,35 @@ fn matrix_state_rebuild_dests_from_registry() {
     assert_eq!(dest1.addr, DRIVE);
     assert_eq!(dest1.label_str(), "FLT Freq");
 }
+
+/// Review Focus 1: the Algo engine keeps the amp envelope off the VCA, but
+/// the envelope still drives the ENV mod source.
+#[test]
+fn env_source_moves_on_an_algo_sound() {
+    use chimera_core::params::EngineType;
+    let mut params = ParamSnapshot::for_engine(EngineType::Algo);
+    params.filter.cutoff = 8000.0;
+    params.filter.mode = 2;
+    let mut registry = chimera_core::mod_path::ModDestRegistry::new();
+    registry.add(CUTOFF, *b"FLTCUT\0\0").unwrap();
+    let mut routed = ModState::from_registry(&registry, 2);
+    routed.set_amount(0, 0, -100); // ENV → cutoff
+    let render = |ms: &ModState| {
+        let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
+        voice.note_on(
+            MidiNote::new(60).unwrap(),
+            Velocity::new(100).unwrap(),
+            &params,
+        );
+        let mut out = [0.0f32; BLOCK_SIZE];
+        let mut all = Vec::new();
+        for _ in 0..16 {
+            voice.render(&mut out, &params, ms);
+            all.extend_from_slice(&out);
+        }
+        all
+    };
+    let (dry, wet) = (render(&ModState::new()), render(&routed));
+    let diff: f32 = dry.iter().zip(&wet).map(|(a, b)| (a - b).abs()).sum();
+    assert!(diff > 0.01, "the ENV route changed nothing ({diff})");
+}

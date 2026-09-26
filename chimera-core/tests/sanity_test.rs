@@ -223,3 +223,42 @@ fn va_is_silent_placeholder() {
         "va_init must be exact silence"
     );
 }
+
+#[test]
+fn algo_is_finite_bounded_audible() {
+    assert_finite_bounded_audible(Case::AlgoInit);
+}
+#[test]
+fn algo_is_silent_after_note_off() {
+    assert_silent_after_note_off(Case::AlgoInit);
+}
+#[test]
+fn algo_is_pitched() {
+    assert_pitched(Case::AlgoInit);
+}
+
+/// Spec § Testing, the ADR 0011 gate: the init patch plays A4 at 440 Hz
+/// within one cent through the whole voice.
+#[test]
+fn algo_plays_a4_within_a_cent() {
+    use chimera_core::dsp::voice::Voice;
+    use chimera_core::modulation::ModState;
+    use chimera_core::{MidiNote, Velocity};
+    let params = init_params(EngineType::Algo);
+    let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
+    voice.note_on(MidiNote::A4, Velocity::DEFAULT, &params);
+    let mut out = Vec::new();
+    let mut block = [0.0f32; BLOCK_SIZE];
+    for _ in 0..750 {
+        voice.render(&mut block, &params, &ModState::new());
+        out.extend_from_slice(&block);
+    }
+    let s = &out[4800..];
+    let ups: Vec<f64> = (1..s.len())
+        .filter(|&i| s[i - 1] < 0.0 && s[i] >= 0.0)
+        .map(|i| (i - 1) as f64 + (-s[i - 1] as f64) / ((s[i] - s[i - 1]) as f64))
+        .collect();
+    let hz = (ups.len() - 1) as f64 * SR as f64 / (ups[ups.len() - 1] - ups[0]);
+    let cents = 1200.0 * (hz / 440.0).log2();
+    assert!(cents.abs() < 1.0, "{hz} Hz, {cents:+.3} cents");
+}

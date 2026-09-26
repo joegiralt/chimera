@@ -291,7 +291,7 @@ impl UiState {
         let def = self.nav.active_block_def();
         let op_prefix;
         let (prefix, name): (&[u8], &str) = match addr.block {
-            BlockRef::FmOp(op) => {
+            BlockRef::FmOp(op) | BlockRef::AlgoOp(op) => {
                 op_prefix = [b'O', b'1' + op.index() as u8, b' '];
                 (&op_prefix, addr.spec().map_or("", |s| s.label))
             }

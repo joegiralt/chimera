@@ -165,7 +165,7 @@ fn part_pages_display_like_before() {
         (
             &reg::FM_OP,
             [
-                ("OP", OneBased(3)),
+                ("OP", OneBased(5)),
                 ("WAVE", Int(7)),
                 ("LEVEL", Uni),
                 ("FDBK", Int(7)),

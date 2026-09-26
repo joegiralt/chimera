@@ -478,16 +478,18 @@ pub enum EngineType {
     Fm = 1,
     Modal = 2,
     Va = 3,
+    Algo = 4,
 }
 
 impl EngineType {
     /// Every engine. Tests iterate this; see `engines_test.rs` for the
     /// exhaustive-match guard that makes a new variant a compile error there.
-    pub const ALL: [EngineType; 4] = [
+    pub const ALL: [EngineType; 5] = [
         EngineType::Pizza,
         EngineType::Fm,
         EngineType::Modal,
         EngineType::Va,
+        EngineType::Algo,
     ];
 }
 
@@ -552,6 +554,7 @@ pub struct ParamSnapshot {
     pub envelopes: [EnvParams; 3],
     pub pizza: crate::dsp::pizza::PizzaParams,
     pub fm: FmParams,
+    pub algo: crate::dsp::algo::params::AlgoParams,
     pub modal: crate::dsp::modal::ModalParams,
     pub lfo: crate::dsp::lfo::LfoParams,
     pub out: OutParams,
@@ -580,7 +583,11 @@ impl Blocks for ParamSnapshot {
             BlockRef::Pizza => &self.pizza,
             BlockRef::Modal => &self.modal,
             BlockRef::Fm => &self.fm,
-            BlockRef::FmOp(op) => &self.fm.operators[op.index()],
+            BlockRef::FmOp(op) => {
+                return self.fm.operators.get(op.index()).map(|o| o as &dyn Block);
+            }
+            BlockRef::Algo => &self.algo,
+            BlockRef::AlgoOp(op) => &self.algo.ops[op.index()],
             BlockRef::Drive => &self.drive,
             BlockRef::Filter => &self.filter,
             BlockRef::Folder => &self.folder,
@@ -598,7 +605,15 @@ impl Blocks for ParamSnapshot {
             BlockRef::Pizza => &mut self.pizza,
             BlockRef::Modal => &mut self.modal,
             BlockRef::Fm => &mut self.fm,
-            BlockRef::FmOp(op) => &mut self.fm.operators[op.index()],
+            BlockRef::FmOp(op) => {
+                return self
+                    .fm
+                    .operators
+                    .get_mut(op.index())
+                    .map(|o| o as &mut dyn Block);
+            }
+            BlockRef::Algo => &mut self.algo,
+            BlockRef::AlgoOp(op) => &mut self.algo.ops[op.index()],
             BlockRef::Drive => &mut self.drive,
             BlockRef::Filter => &mut self.filter,
             BlockRef::Folder => &mut self.folder,
@@ -625,6 +640,7 @@ impl Default for ParamSnapshot {
             envelopes: [EnvParams::default(); 3],
             pizza: crate::dsp::pizza::PizzaParams::default(),
             fm: FmParams::default(),
+            algo: crate::dsp::algo::params::AlgoParams::default(),
             modal: crate::dsp::modal::ModalParams::default(),
             lfo: crate::dsp::lfo::LfoParams::default(),
             out: OutParams::default(),

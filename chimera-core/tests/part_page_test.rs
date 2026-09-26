@@ -4,7 +4,7 @@
 
 use chimera_core::addr::Op;
 use chimera_core::dsp::modal::ResonatorMode;
-use chimera_core::params::ParamSnapshot;
+use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::ui::block_def::BlockDef;
 use chimera_core::ui::block_registry as reg;
 use chimera_core::ui::part_page;
@@ -118,8 +118,8 @@ fn fm_operator_page_follows_the_selection() {
     part_page::apply_encoder(&reg::FM_OP, 0, 1, &mut p, &mut op); // selector
     assert_eq!(op, Op::B);
     part_page::apply_encoder(&reg::FM_OP, 0, 9, &mut p, &mut op);
-    assert_eq!(op, Op::D);
-    part_page::apply_encoder(&reg::FM_OP, 0, -2, &mut p, &mut op);
+    assert_eq!(op, Op::F);
+    part_page::apply_encoder(&reg::FM_OP, 0, -4, &mut p, &mut op);
     assert_eq!(op, Op::B);
     part_page::apply_encoder(&reg::FM_OP, 2, 5, &mut p, &mut op);
     assert_eq!(p.fm.operators[1].level, 5.0);
@@ -127,7 +127,7 @@ fn fm_operator_page_follows_the_selection() {
     assert_eq!(p.fm.operators[1].detune, -7);
     part_page::apply_encoder(&reg::FM_RATIO, 4, 1, &mut p, &mut op); // FINE of B
     assert_eq!(p.fm.operators[1].fine, 1);
-    assert_eq!(part_page::read_values(&reg::FM_OP, &p, op)[0], 1.0 / 3.0);
+    assert_eq!(part_page::read_values(&reg::FM_OP, &p, op)[0], 1.0 / 5.0);
     // Review Focus 3: snapping a Stepped level lands on an integer.
     part_page::snap_encoder(&reg::FM_OP, 2, 1, &mut p, op);
     assert_eq!(p.fm.operators[1].level, 78.0); // 99 * 100/127 = 77.95 → 78
@@ -152,4 +152,27 @@ fn fm_fixed_pages() {
     assert_eq!(p.fm.operators[1].release_rate, 0);
     snap(&reg::FM_ENV1, 0, -1, &mut p);
     assert_eq!(p.fm.operators[0].attack_rate, 0);
+}
+
+#[test]
+fn algo_pages_edit_every_operator_and_the_algorithm() {
+    let mut p = ParamSnapshot::for_engine(EngineType::Algo);
+    for slot in 0..6 {
+        turn(&reg::ALGO_WAVE, slot, 1 + slot as i8, &mut p);
+    }
+    assert_eq!(p.algo.ops.map(|o| o.wave), [1, 2, 3, 4, 5, 6]);
+    turn(&reg::ALGO_LEVEL, 5, 40, &mut p);
+    assert_eq!(p.algo.ops[5].level, 40);
+    turn(&reg::ALGO_LEVEL, 0, 5, &mut p);
+    assert_eq!(p.algo.ops[0].level, 99, "clamped");
+    turn(&reg::ALGO_ALG, 0, 21, &mut p);
+    turn(&reg::ALGO_ALG, 1, 29, &mut p);
+    turn(&reg::ALGO_ALG, 2, 64, &mut p);
+    turn(&reg::ALGO_ALG, 3, -30, &mut p);
+    assert_eq!(
+        (p.algo.alg_a, p.algo.alg_b, p.algo.morph, p.algo.transpose),
+        (21, 29, 64, -24)
+    );
+    snap(&reg::ALGO_ALG, 2, 1, &mut p); // MIX + turn snaps MORPH like any Uni value
+    assert_eq!(p.algo.morph, 100);
 }

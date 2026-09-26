@@ -9,7 +9,8 @@ use chimera_core::params::EngineType;
 
 /// `bench-results.md`: Pizza 244, FM 6,599, Modal 379, VA (the chain) 6
 /// cycles/sample per voice, each minus the chain and rounded up to the
-/// next 10.
+/// next 10. Algo is an estimate (`AlgoEngine::COST` plus the chain) until Task 13
+/// measures the worst case.
 #[test]
 fn voice_costs_are_the_bench_measurements() {
     assert_eq!(Voice::CHAIN_COST, Cost(10));
@@ -17,6 +18,7 @@ fn voice_costs_are_the_bench_measurements() {
     assert_eq!(Voice::cost(EngineType::Fm), Cost(6_600));
     assert_eq!(Voice::cost(EngineType::Modal), Cost(380));
     assert_eq!(Voice::cost(EngineType::Va), Cost(310));
+    assert_eq!(Voice::cost(EngineType::Algo), Cost(570));
     for e in EngineType::ALL {
         assert_eq!(
             Voice::cost(e),

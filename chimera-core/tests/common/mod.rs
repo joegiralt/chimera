@@ -56,10 +56,12 @@ pub enum Case {
     VaInit,
     /// Pizza init; engine switched to Modal at block ON_BLOCKS / 2 (mid-note).
     PizzaToModalSwitch,
+    /// The Algo init Sound: operator 1 on W1 at LEVEL 99, T1.
+    AlgoInit,
 }
 
 impl Case {
-    pub const ALL: [Case; 10] = [
+    pub const ALL: [Case; 11] = [
         Case::PizzaInit,
         Case::PizzaLfoCutoff,
         Case::FmInit,
@@ -70,6 +72,7 @@ impl Case {
         Case::ModalLfoCutoff,
         Case::VaInit,
         Case::PizzaToModalSwitch,
+        Case::AlgoInit,
     ];
 
     pub fn name(self) -> &'static str {
@@ -84,6 +87,7 @@ impl Case {
             Case::ModalLfoCutoff => "modal_lfo_cutoff",
             Case::VaInit => "va_init",
             Case::PizzaToModalSwitch => "pizza_to_modal_switch",
+            Case::AlgoInit => "algo_init",
         }
     }
 }
@@ -96,6 +100,7 @@ pub fn init_params(engine: EngineType) -> ParamSnapshot {
         EngineType::Fm => Sound::init(ChainType::Fm).params,
         EngineType::Modal => Sound::init(ChainType::Modal).params,
         EngineType::Va => ParamSnapshot::for_engine(EngineType::Va),
+        EngineType::Algo => Sound::init(ChainType::Algo).params,
     }
 }
 
@@ -136,6 +141,7 @@ pub fn setup(case: Case) -> (ParamSnapshot, ModState) {
         Case::ModalLfoCutoff => with_lfo(EngineType::Modal, CUTOFF),
         Case::VaInit => (init_params(EngineType::Va), ModState::new()),
         Case::PizzaToModalSwitch => (init_params(EngineType::Pizza), ModState::new()),
+        Case::AlgoInit => (init_params(EngineType::Algo), ModState::new()),
     }
 }
 
@@ -233,7 +239,7 @@ pub fn spots(samples: &[f32]) -> [u32; 8] {
 /// expectation is written (spec § Testing "Engines").
 pub fn expects_sound(e: EngineType) -> bool {
     match e {
-        EngineType::Pizza | EngineType::Fm | EngineType::Modal => true,
+        EngineType::Pizza | EngineType::Fm | EngineType::Modal | EngineType::Algo => true,
         EngineType::Va => false,
     }
 }

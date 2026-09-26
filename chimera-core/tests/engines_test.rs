@@ -6,9 +6,11 @@
 //! | FM     | yes            | `!fm.is_idle()`        |
 //! | Modal  | no             | `modal.is_active()`    |
 //! | Va     | yes (silent)   | never                  |
+//! | Algo   | no             | a carrier's envelope   |
 
 mod common;
 
+use chimera_core::dsp::algo::engine::AlgoLive;
 use chimera_core::dsp::engines::Engines;
 use chimera_core::dsp::envelope::Envelope;
 use chimera_core::dsp::modal::ResonatorMode;
@@ -25,7 +27,7 @@ fn render(e: &mut Engines, kind: EngineType, p: &ParamSnapshot, blocks: usize) -
     let mut out = [0.0f32; BLOCK_SIZE];
     let mut peak = 0.0f32;
     for _ in 0..blocks {
-        e.render(kind, &mut out, p);
+        e.render(kind, &mut out, p, &AlgoLive::from_params(&p.algo));
         peak = out.iter().fold(peak, |m, x| m.max(x.abs()));
     }
     peak
@@ -33,7 +35,7 @@ fn render(e: &mut Engines, kind: EngineType, p: &ParamSnapshot, blocks: usize) -
 
 #[test]
 fn all_lists_every_engine_once_in_order() {
-    assert_eq!(EngineType::ALL.len(), EngineType::Va as usize + 1);
+    assert_eq!(EngineType::ALL.len(), EngineType::Algo as usize + 1);
     for (i, &e) in EngineType::ALL.iter().enumerate() {
         assert_eq!(e as usize, i);
         let _ = expects_sound(e); // exhaustive match: new variants fail to compile
@@ -111,4 +113,19 @@ fn va_row_amp_env_on_vca_never_active_silent() {
     e.note_on(kind, MidiNote::A4, Velocity::DEFAULT, &params(kind));
     assert!(!e.is_active(kind, &env));
     assert_eq!(render(&mut e, kind, &params(kind), 4), 0.0);
+}
+
+#[test]
+fn algo_row_no_amp_env_and_lives_until_its_carriers_release() {
+    let kind = EngineType::Algo;
+    assert!(!Engines::uses_amp_env(kind));
+    let mut e = Engines::new(SR);
+    let idle_env = Envelope::new(); // Algo activity ignores the amp envelope
+    assert!(!e.is_active(kind, &idle_env));
+    e.note_on(kind, MidiNote::A4, Velocity::DEFAULT, &params(kind));
+    render(&mut e, kind, &params(kind), 1);
+    assert!(e.is_active(kind, &idle_env));
+    e.note_off(kind);
+    render(&mut e, kind, &params(kind), 400);
+    assert!(!e.is_active(kind, &idle_env));
 }

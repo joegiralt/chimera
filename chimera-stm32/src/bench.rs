@@ -205,6 +205,7 @@ fn name(e: EngineType) -> &'static str {
         EngineType::Fm => "FM",
         EngineType::Modal => "MODAL",
         EngineType::Va => "VA",
+        EngineType::Algo => "ALGO",
     }
 }
 

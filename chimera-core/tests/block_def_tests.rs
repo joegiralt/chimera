@@ -112,3 +112,13 @@ fn about_has_the_audio_sub_page() {
     assert_eq!(about.sub_pages[0].name, "Audio");
     assert_eq!(about.sub_pages[0].id, 41);
 }
+
+#[test]
+fn algo_chain_is_osc_alg_then_the_voice_chain() {
+    let chain = &block_registry::ALGO_CHAIN;
+    let shorts: Vec<&str> = chain.blocks.iter().map(|b| b.def.short).collect();
+    assert_eq!(shorts, ["OSC", "ALG", "DRV", "FLT", "FLD", "MOD"]);
+    assert_eq!(chain.active_def(0, 0).unwrap().name, "Wave");
+    assert!(chain.blocks[0].sub_pages.iter().any(|d| d.name == "Level"));
+    assert_eq!(chain.blocks[5].sub_pages.len(), 2);
+}

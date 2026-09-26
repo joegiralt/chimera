@@ -9,6 +9,7 @@ use core::ptr::addr_of_mut;
 
 use chimera_hal::BLOCK_SIZE;
 
+use crate::dsp::algo::engine::{AlgoEngine, AlgoLive};
 use crate::dsp::engine_fm::FmEngine;
 use crate::dsp::envelope::Envelope;
 use crate::dsp::modal::ModalEngine;
@@ -26,10 +27,11 @@ pub struct Engines {
     pizza: PizzaOsc,
     fm: FmEngine,
     modal: ModalEngine,
+    algo: AlgoEngine,
     sample_rate: u32,
 }
 
-crate::in_place::field_list!(Engines => Engines { pizza, fm, modal, sample_rate });
+crate::in_place::field_list!(Engines => Engines { pizza, fm, modal, algo, sample_rate });
 
 impl Engines {
     pub fn new(sample_rate: u32) -> Self {
@@ -39,12 +41,13 @@ impl Engines {
 
     pub fn init_in_place(slot: &mut MaybeUninit<Self>, sample_rate: u32) -> &mut Self {
         let p = slot.as_mut_ptr();
-        // SAFETY: `p` is valid and unaliased; Modal (40 KB) is built in place,
-        // Pizza and FM (about 1.1 KB) by value, each field once.
+        // SAFETY: `p` is valid and unaliased; Modal (40 KB) and Algo are built
+        // in place, Pizza and FM (about 1.1 KB) by value, each field once.
         unsafe {
             addr_of_mut!((*p).pizza).write(PizzaOsc::new());
             addr_of_mut!((*p).fm).write(FmEngine::new());
             ModalEngine::init_in_place(uninit_at(addr_of_mut!((*p).modal)));
+            AlgoEngine::init_in_place(uninit_at(addr_of_mut!((*p).algo)));
             addr_of_mut!((*p).sample_rate).write(sample_rate);
             slot.assume_init_mut()
         }
@@ -68,6 +71,7 @@ impl Engines {
                     .note_on(note.get(), vel.get(), &p.modal, self.sample_rate)
             }
             EngineType::Va => {} // placeholder: silent
+            EngineType::Algo => self.algo.note_on(note, vel, &p.algo, self.sample_rate),
         }
     }
 
@@ -77,16 +81,24 @@ impl Engines {
             EngineType::Fm => self.fm.note_off(),
             EngineType::Modal => self.modal.note_off(),
             EngineType::Va => {}
+            EngineType::Algo => self.algo.note_off(),
         }
     }
 
     /// Render one block of raw engine output from (possibly modulated) params.
-    pub fn render(&mut self, kind: EngineType, out: &mut [f32; BLOCK_SIZE], p: &ParamSnapshot) {
+    pub fn render(
+        &mut self,
+        kind: EngineType,
+        out: &mut [f32; BLOCK_SIZE],
+        p: &ParamSnapshot,
+        live: &AlgoLive,
+    ) {
         match kind {
             EngineType::Pizza => self.pizza.render(out, &p.pizza, self.sample_rate),
             EngineType::Fm => self.fm.render_params(out, &p.fm),
             EngineType::Modal => self.modal.render(out, &p.modal, self.sample_rate),
             EngineType::Va => out.fill(0.0),
+            EngineType::Algo => self.algo.render(out, &p.algo, live, self.sample_rate),
         }
     }
 
@@ -97,15 +109,17 @@ impl Engines {
             EngineType::Fm => FmEngine::COST,
             EngineType::Modal => ModalEngine::COST,
             EngineType::Va => VA_COST,
+            EngineType::Algo => AlgoEngine::COST,
         }
     }
 
     /// VCA choice: does the amp envelope shape this engine's output?
-    /// Modal's modes decay naturally, so it only gets the volume.
+    /// Modal's modes decay naturally and Algo's operators carry their own
+    /// envelopes, so these only get the volume.
     pub fn uses_amp_env(kind: EngineType) -> bool {
         match kind {
             EngineType::Pizza | EngineType::Fm | EngineType::Va => true,
-            EngineType::Modal => false,
+            EngineType::Modal | EngineType::Algo => false,
         }
     }
 
@@ -116,6 +130,7 @@ impl Engines {
             EngineType::Fm => !self.fm.is_idle(),
             EngineType::Modal => self.modal.is_active(),
             EngineType::Va => false,
+            EngineType::Algo => self.algo.is_active(),
         }
     }
 }

@@ -83,6 +83,14 @@ const GOLDENS: &[(&str, u64, [u32; 8])] = &[
             984628055,
         ],
     ),
+    // Recorded after the Algo sanity gate (ADR 0011).
+    (
+        "algo_init",
+        0xf36afbe129df33fa,
+        [
+            971731855, 1043306224, 1058062728, 3165110143, 3205522154, 3205490133, 3120319999, 0,
+        ],
+    ),
 ];
 
 /// Goldens whose locked output no longer reflects intended behaviour, each
@@ -224,7 +232,12 @@ fn fm_init_patch_has_no_prewire() {
 
 #[test]
 fn harness_is_deterministic() {
-    for case in [Case::PizzaInit, Case::FmInit, Case::ModalInit] {
+    for case in [
+        Case::PizzaInit,
+        Case::FmInit,
+        Case::ModalInit,
+        Case::AlgoInit,
+    ] {
         assert_eq!(
             fnv1a(&render_case(case)),
             fnv1a(&render_case(case)),

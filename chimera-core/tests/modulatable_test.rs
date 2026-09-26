@@ -3,6 +3,7 @@
 //! flag from lying.
 
 use chimera_core::addr::{BlockRef, ParamAddr};
+use chimera_core::dsp::algo::algorithms::AlgoId;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::mod_path::ModDestRegistry;
 use chimera_core::modulation::ModState;
@@ -16,6 +17,7 @@ fn recipe(block: BlockRef) -> ParamSnapshot {
     let engine = match block {
         BlockRef::Fm | BlockRef::FmOp(_) => EngineType::Fm,
         BlockRef::Modal => EngineType::Modal,
+        BlockRef::Algo | BlockRef::AlgoOp(_) => EngineType::Algo,
         _ => EngineType::Pizza, // Pizza, AmpEnv, Out, Drive, Filter, Folder
     };
     let mut p = ParamSnapshot::for_engine(engine);
@@ -25,6 +27,15 @@ fn recipe(block: BlockRef) -> ParamSnapshot {
             p.fm.algorithm = 7; // every operator is a carrier
             for op in p.fm.operators.iter_mut() {
                 op.level = 99.0;
+            }
+        }
+        BlockRef::Algo | BlockRef::AlgoOp(_) => {
+            // Every operator heard at ALG A, a chain at ALG B, MORPH halfway.
+            p.algo.alg_a = AlgoId::A1.get();
+            p.algo.alg_b = AlgoId::A17.get();
+            p.algo.morph = 64;
+            for (i, op) in p.algo.ops.iter_mut().enumerate() {
+                (op.level, op.coarse) = (80, [4, 8, 10, 13, 16, 19][i]);
             }
         }
         BlockRef::Drive => p.drive.drive = 0.5,
@@ -82,5 +93,5 @@ fn every_modulatable_param_audibly_changes_output() {
             checked += 1;
         }
     }
-    assert_eq!(checked, 25);
+    assert_eq!(checked, 32);
 }

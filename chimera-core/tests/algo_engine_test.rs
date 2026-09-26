@@ -457,3 +457,22 @@ fn a_one_block_morph_away_from_the_only_sounding_carrier_does_not_end_the_note()
     }
     assert!(peak(&out[20 * BLOCK_SIZE..]) > 0.5);
 }
+
+#[test]
+fn live_values_take_offsets_by_the_adr_0010_formula_and_clamp() {
+    use chimera_core::addr::{BlockRef, Op, ParamAddr};
+    use chimera_core::params::FilterParams;
+    let morph = ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH);
+    let level = |op| ParamAddr::new(BlockRef::AlgoOp(op), AlgoOpParams::LEVEL);
+    let mut live = AlgoLive::from_params(&AlgoParams::default());
+    assert!(live.offset(morph, 0.5));
+    assert_eq!(live.morph, 63.5);
+    assert!(live.offset(morph, 2.0));
+    assert_eq!(live.morph, 127.0);
+    assert!(live.offset(level(Op::F), -0.25));
+    assert_eq!(live.level[5], 0.0);
+    assert!(live.offset(level(Op::A), -0.25));
+    assert_eq!(live.level[0], 99.0 - 24.75);
+    let cutoff = ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF);
+    assert!(!live.offset(cutoff, 0.5));
+}

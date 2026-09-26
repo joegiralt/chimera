@@ -8,7 +8,7 @@ use crate::ui::block_def::{BlockDef, SlotBinding, slot_addr};
 /// Normalized (0..1) display values of the six slots.
 pub fn read_values(def: &BlockDef, params: &impl Blocks, sel_op: Op) -> [f32; 6] {
     core::array::from_fn(|i| match def.params[i].binding {
-        SlotBinding::SelectOp => sel_op.index() as f32 / 3.0,
+        SlotBinding::SelectOp => sel_op.index() as f32 / (Op::ALL.len() - 1) as f32,
         _ => slot_addr(def, i, sel_op)
             .and_then(|a| Some(params.block(a.block)?.normalized(a.param)))
             .unwrap_or(0.0),

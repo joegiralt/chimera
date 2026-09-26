@@ -273,15 +273,14 @@ impl Default for MatrixState {
 
 /// Short tag for the block a destination lives in (column header, top line).
 pub fn block_tag(b: BlockRef) -> &'static str {
-    use crate::addr::Op;
     match b {
         BlockRef::Pizza => "PIZ",
         BlockRef::Modal => "MDL",
         BlockRef::Fm => "FM",
-        BlockRef::FmOp(Op::A) => "OP1",
-        BlockRef::FmOp(Op::B) => "OP2",
-        BlockRef::FmOp(Op::C) => "OP3",
-        BlockRef::FmOp(Op::D) => "OP4",
+        BlockRef::FmOp(op) | BlockRef::AlgoOp(op) => {
+            ["OP1", "OP2", "OP3", "OP4", "OP5", "OP6"][op.index()]
+        }
+        BlockRef::Algo => "ALG",
         BlockRef::Drive => "DRV",
         BlockRef::Filter => "FLT",
         BlockRef::Folder => "FLD",
