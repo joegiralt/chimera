@@ -80,19 +80,11 @@ impl WaveId {
         let waves = unsafe { &*ACTIVE.load(Ordering::Acquire) };
         &waves[self.0 as usize][mip.min(MIPS - 1)]
     }
-
-    /// Two adjacent mips that both keep `bandwidth_hz` under Nyquist (the
-    /// ceiling of its octave, so nothing folds down) and the crossfade
-    /// between them, so a change of mip never steps the sound.
-    pub fn mip_pair(self, bandwidth_hz: f32) -> (&'static Table, &'static Table, f32) {
-        let m = mip_position(bandwidth_hz);
-        let lo = m as usize;
-        (self.table(lo), self.table(lo + 1), m - lo as f32)
-    }
 }
 
-/// Where `bandwidth_hz` falls among the mips, `0.0..=7.0`: `mip_pair` reads
-/// mip `floor` and the next, crossfaded by the fraction.
+/// Where `bandwidth_hz` falls among the mips, `0.0..=7.0`: mip `floor` and
+/// the next both keep it under Nyquist (the ceiling of its octave, so
+/// nothing folds down), crossfaded by the fraction.
 pub fn mip_position(bandwidth_hz: f32) -> f32 {
     let half = 0.5 * MIP0_TOP_HZ;
     if bandwidth_hz > half {
