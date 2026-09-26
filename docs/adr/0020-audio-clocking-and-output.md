@@ -1,6 +1,6 @@
 # 0020. Clock the chip by silicon revision; derive the cycle budget from it
 
-- **Status:** Accepted (2026-09-26)
+- **Status:** Accepted (2026-09-26); the DTCM stack clause is superseded in part by [0025](0025-dtcm-holds-wave-tables-and-stack.md)
 - **Deciders:** project owner
 
 ## Context
