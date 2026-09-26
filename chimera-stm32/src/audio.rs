@@ -60,12 +60,13 @@ static mut MOD_STATE_PTR: Option<*const ModState> = None;
 /// Default empty ModState for when no pointer is set.
 static DEFAULT_MOD_STATE: ModState = ModState::new();
 
-static mut SCOPE: MaybeUninit<ScopeWriter> = MaybeUninit::uninit();
+/// Scope writer — only set once `init_scope` runs; `render_block` skips the
+/// scope write until then, so there is no init-order precondition on it.
+static mut SCOPE_WRITER: Option<ScopeWriter> = None;
 
 pub fn init_scope(w: Writer<ScopeFrame>) {
-    // SAFETY: called once from `main` before `prefill_buffer` and before the
-    // DMA interrupt is unmasked; nothing else touches `SCOPE` yet.
-    unsafe { (*addr_of_mut!(SCOPE)).write(ScopeWriter::new(w)) };
+    // SAFETY: called once during single-threaded init before the ISR is active.
+    unsafe { addr_of_mut!(SCOPE_WRITER).write(Some(ScopeWriter::new(w))) };
 }
 
 /// Render one block of audio from the Voice into the DMA buffer at `offset`.
@@ -107,7 +108,9 @@ fn render_block(offset: usize) {
 
         // Render full Voice signal chain: Engine → Drive → Filter → Wavefolder → VCA
         voice.render(work, params, mod_state);
-        (*addr_of_mut!(SCOPE)).assume_init_mut().write(work);
+        if let Some(s) = (*addr_of_mut!(SCOPE_WRITER)).as_mut() {
+            s.write(work);
+        }
 
         // Convert f32 mono → i16 stereo
         let buf = &mut *addr_of_mut!(AUDIO_BUF);
@@ -361,7 +364,8 @@ pub fn init_dma() {
 #[interrupt]
 fn DMA1_STR0() {
     // SAFETY: ISR has exclusive access to DMA1 status/clear registers;
-    // render_block only touches AUDIO_BUF, WORK_BUF, VOICE, PARAMS, and SCOPE
+    // render_block only touches AUDIO_BUF, WORK_BUF, VOICE, PARAMS, and
+    // SCOPE_WRITER
     // from this single ISR
     let dma1 = unsafe { &*pac::DMA1::ptr() };
 
