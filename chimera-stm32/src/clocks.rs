@@ -1,4 +1,4 @@
-use chimera_core::clock_plan::{SiliconRev, cycles_for_us};
+use chimera_core::clock_plan::{Pll3Config, PllRange, SiliconRev, VcoRange, cycles_for_us};
 use stm32h7xx_hal::pac;
 use stm32h7xx_hal::prelude::*;
 use stm32h7xx_hal::rcc::{Ccdr, PllConfigStrategy};
@@ -49,4 +49,45 @@ pub fn freeze(
 
 pub fn delay_us(cpu_hz: u32, us: u32) {
     cortex_m::asm::delay(cycles_for_us(cpu_hz, us));
+}
+
+pub fn init_pll3(cfg: &Pll3Config) {
+    // SAFETY: single-threaded init after the HAL's `freeze` (which leaves
+    // PLL3 alone) and before any SAI runs; nothing else touches PLL3.
+    let rcc = unsafe { &*pac::RCC::ptr() };
+    rcc.cr.modify(|_, w| w.pll3on().off());
+    while rcc.cr.read().pll3rdy().is_ready() {}
+    rcc.pllckselr.modify(|_, w| w.divm3().bits(cfg.m));
+    // SAFETY: DIVN3 = N − 1 with N in 4..=512 and DIVP3 = P − 1 with P in
+    // 1..=128 (clock_plan tests); DIVQ3/DIVR3 = 1, their outputs stay off.
+    rcc.pll3divr.write(|w| unsafe {
+        w.divn3()
+            .bits(cfg.n - 1)
+            .divp3()
+            .bits(cfg.p - 1)
+            .divq3()
+            .bits(1)
+            .divr3()
+            .bits(1)
+    });
+    // FRACN3 is latched when FRACEN goes from 0 to 1.
+    rcc.pllcfgr.modify(|_, w| w.pll3fracen().reset());
+    rcc.pll3fracr.write(|w| w.fracn3().bits(cfg.fracn));
+    rcc.pllcfgr.modify(|_, w| {
+        let w = match cfg.vco {
+            VcoRange::Wide => w.pll3vcosel().wide_vco(),
+            VcoRange::Medium => w.pll3vcosel().medium_vco(),
+        };
+        let w = match cfg.range {
+            PllRange::R1To2 => w.pll3rge().range1(),
+            PllRange::R2To4 => w.pll3rge().range2(),
+            PllRange::R4To8 => w.pll3rge().range4(),
+            PllRange::R8To16 => w.pll3rge().range8(),
+        };
+        w.pll3fracen().set().divp3en().enabled()
+    });
+    rcc.cr.modify(|_, w| w.pll3on().on());
+    while !rcc.cr.read().pll3rdy().is_ready() {}
+    rcc.d2ccip1r
+        .modify(|_, w| w.sai1sel().pll3_p().sai23sel().pll3_p());
 }

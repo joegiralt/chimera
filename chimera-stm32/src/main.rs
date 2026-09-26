@@ -10,7 +10,7 @@ mod panic;
 mod priority;
 mod shared;
 
-use chimera_core::clock_plan::SiliconRev;
+use chimera_core::clock_plan::{SiliconRev, pll3_for};
 use chimera_core::ui::fmt::FmtBuf;
 use chimera_core::ui::perf::PerfTracker;
 use chimera_core::ui::{draw, theme};
@@ -19,6 +19,7 @@ use controls::Stm32Controls;
 use cortex_m_rt::{entry, exception, pre_init};
 use display::Stm32Display;
 use priority::Priority;
+use stm32h7xx_hal::gpio::Speed;
 use stm32h7xx_hal::{pac, prelude::*, spi};
 
 #[pre_init]
@@ -59,16 +60,21 @@ fn main() -> ! {
     let mut backlight = gpioe.pe11.into_push_pull_output();
     backlight.set_high();
 
-    let _sai_mclk = gpioe.pe2.into_alternate::<6>();
-    let _sai_fs = gpioe.pe4.into_alternate::<6>();
-    let _sai_sck = gpioe.pe5.into_alternate::<6>();
-    let _sai_sd_a = gpioe.pe6.into_alternate::<6>();
+    let mut sai_mclk = gpioe.pe2.into_alternate::<6>();
+    let mut sai_fs = gpioe.pe4.into_alternate::<6>();
+    let mut sai_sck = gpioe.pe5.into_alternate::<6>();
+    let mut sai_sd_a1 = gpioe.pe6.into_alternate::<6>();
+    // MCLK is 12.288 MHz, the edge of the low-speed GPIO range.
+    sai_mclk.set_speed(Speed::Medium);
+    sai_fs.set_speed(Speed::Medium);
+    sai_sck.set_speed(Speed::Medium);
+    sai_sd_a1.set_speed(Speed::Medium);
     led.set_high();
 
     let mut sck = gpioa.pa5.into_alternate::<5>();
     let mut mosi = gpioa.pa7.into_alternate::<5>();
-    sck.set_speed(stm32h7xx_hal::gpio::Speed::High);
-    mosi.set_speed(stm32h7xx_hal::gpio::Speed::High);
+    sck.set_speed(Speed::High);
+    mosi.set_speed(Speed::High);
     let dc = gpiod.pd8.into_push_pull_output();
     let reset = gpiod.pd9.into_push_pull_output();
     let cs = gpiod.pd10.into_push_pull_output();
@@ -96,8 +102,9 @@ fn main() -> ! {
 
     let (scope_w, mut scope_r) = shared::take_scope().expect("scope buffer taken once");
     audio::init_scope(scope_w);
-    audio::init_pll3();
-    audio::init_sai1a();
+    let pll3 = pll3_for(clocks::HSE_HZ, chimera_hal::SAMPLE_RATE, clk.rev);
+    clocks::init_pll3(&pll3);
+    audio::sai::init(clk.rev.new_sai(), pll3.mckdiv);
 
     // SAFETY: `ui` is a `'static` in AXI, so Part 0's sound params/mod_state
     // outlive the audio DMA.
@@ -109,9 +116,11 @@ fn main() -> ! {
     }
     audio::trigger_note(chimera_hal::MidiNote::A4, chimera_hal::Velocity::DEFAULT);
 
-    audio::prefill_buffer();
-    audio::init_dma(&mut cp.NVIC);
-    audio::enable_sai();
+    audio::dma::clear();
+    audio::prefill();
+    audio::dma::init(&mut cp.NVIC);
+    audio::dma::start();
+    audio::sai::start();
 
     ui.update();
     ui.render_with_scope(&mut display, &perf.stats, scope_r.read());
