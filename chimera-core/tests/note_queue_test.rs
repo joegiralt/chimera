@@ -5,6 +5,7 @@ use chimera_core::note_queue::{
     MAX_NOTE_SOURCES, NOTE_QUEUE_LEN, NoteEvent, NoteKind, NoteQueue, NoteSources, SourceId,
 };
 use chimera_core::{MidiChannel, MidiNote, Velocity};
+use chimera_hal::MidiMessage;
 
 fn ev(ch: u8, note: u8, vel: u8) -> NoteEvent {
     NoteEvent {
@@ -15,6 +16,39 @@ fn ev(ch: u8, note: u8, vel: u8) -> NoteEvent {
             None => NoteKind::Off,
         },
     }
+}
+
+#[test]
+fn only_note_on_and_off_become_note_events() {
+    let c = MidiChannel::new(4).unwrap();
+    let n = MidiNote::new(60).unwrap();
+    let on = MidiMessage::NoteOn {
+        channel: c,
+        note: n,
+        velocity: Velocity::MAX,
+    };
+    let off = MidiMessage::NoteOff {
+        channel: c,
+        note: n,
+        velocity: 64,
+    };
+    assert_eq!(NoteEvent::from_midi(on), Some(ev(4, 60, 127)));
+    assert_eq!(NoteEvent::from_midi(off), Some(ev(4, 60, 0)));
+    assert_eq!(
+        NoteEvent::from_midi(MidiMessage::ControlChange {
+            channel: c,
+            cc: 1,
+            value: 2
+        }),
+        None
+    );
+    assert_eq!(
+        NoteEvent::from_midi(MidiMessage::PitchBend {
+            channel: c,
+            value: 0
+        }),
+        None
+    );
 }
 
 #[test]
