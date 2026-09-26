@@ -48,8 +48,10 @@ static mut AUDIO_BUF: [i16; 256] = [0; 256];
 /// f32 work buffer for Voice rendering.
 static mut WORK_BUF: [f32; BLOCK_SIZE] = [0.0; BLOCK_SIZE];
 
-/// Single voice instance — only accessed from DMA ISR.
-static mut VOICE: Option<Voice> = None;
+/// Single voice instance — only accessed from DMA ISR, and only once
+/// `VOICE_READY` is set.
+static mut VOICE: MaybeUninit<Voice> = MaybeUninit::uninit();
+static mut VOICE_READY: bool = false;
 
 /// Parameter snapshot pointer — UI thread writes, ISR reads.
 static mut PARAMS: Option<*const ParamSnapshot> = None;
@@ -74,17 +76,15 @@ fn render_block(offset: usize) {
     // SAFETY: only called from single non-reentrant ISR (and prefill during init).
     // No other code accesses these statics concurrently.
     unsafe {
-        let voice_ptr = addr_of_mut!(VOICE);
-        let voice = match (*voice_ptr).as_mut() {
-            Some(v) => v,
-            None => {
-                let buf = &mut *addr_of_mut!(AUDIO_BUF);
-                for i in 0..(BLOCK_SIZE * 2) {
-                    buf[offset + i] = 0;
-                }
-                return;
+        if !*addr_of_mut!(VOICE_READY) {
+            let buf = &mut *addr_of_mut!(AUDIO_BUF);
+            for i in 0..(BLOCK_SIZE * 2) {
+                buf[offset + i] = 0;
             }
-        };
+            return;
+        }
+        // `VOICE_READY` is set only after `VOICE` is fully initialised.
+        let voice = (*addr_of_mut!(VOICE)).assume_init_mut();
         let params_ptr = addr_of_mut!(PARAMS);
         let params = match *params_ptr {
             Some(p) => &*p,
@@ -135,7 +135,8 @@ pub fn prefill_buffer() {
 pub unsafe fn init_voice(params_ptr: *const ParamSnapshot, mod_ptr: *const ModState) {
     // SAFETY: called once during single-threaded init before ISR is active
     unsafe {
-        addr_of_mut!(VOICE).write(Some(Voice::new(chimera_hal::SAMPLE_RATE)));
+        Voice::init_in_place(&mut *addr_of_mut!(VOICE), chimera_hal::SAMPLE_RATE);
+        addr_of_mut!(VOICE_READY).write(true);
         addr_of_mut!(PARAMS).write(Some(params_ptr));
         addr_of_mut!(MOD_STATE_PTR).write(Some(mod_ptr));
     }
@@ -145,10 +146,11 @@ pub unsafe fn init_voice(params_ptr: *const ParamSnapshot, mod_ptr: *const ModSt
 pub fn trigger_note(note: MidiNote, velocity: Velocity) {
     // SAFETY: called during init before ISR is active
     unsafe {
-        let voice_ptr = addr_of_mut!(VOICE);
         let params_ptr = addr_of_mut!(PARAMS);
-        if let (Some(voice), Some(p)) = ((*voice_ptr).as_mut(), *params_ptr) {
-            voice.note_on(note, velocity, &*p);
+        if let (true, Some(p)) = (*addr_of_mut!(VOICE_READY), *params_ptr) {
+            (*addr_of_mut!(VOICE))
+                .assume_init_mut()
+                .note_on(note, velocity, &*p);
         }
     }
 }
