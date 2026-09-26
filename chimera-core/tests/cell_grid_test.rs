@@ -19,7 +19,7 @@ fn band(fb: &Fb, y0: i32, y1: i32) -> Vec<u16> {
 
 #[test]
 fn dirty_render_from_scratch_equals_full_render() {
-    for name in ["engine_algo", "system"] {
+    for name in ["engine_algo", "algo_alg", "algo_level", "system"] {
         assert!(render(name).px == render_dirty(name).px, "{name}");
     }
 }
@@ -36,7 +36,7 @@ fn a_settled_silent_or_frozen_screen_flushes_nothing() {
 
 #[test]
 fn a_turn_redraws_focus_and_cells_only() {
-    let mut ui = ui_for("engine_algo");
+    let mut ui = ui_for("algo_level");
     let mut fb = Fb::new();
     let scope = scope_fixture();
     ui.render_dirty_with_scope(&mut fb, &PerfStats::zero(), &scope);
@@ -47,9 +47,27 @@ fn a_turn_redraws_focus_and_cells_only() {
     assert_eq!(bands, [(28, 118), (186, 266)]);
 }
 
+/// The ALGO page's diagram follows the lerped MORPH, so a MORPH turn also
+/// redraws the viz band.
+#[test]
+fn a_morph_turn_redraws_the_diagram() {
+    let mut ui = ui_for("algo_alg");
+    let mut fb = Fb::new();
+    let scope = scope_fixture();
+    ui.render_dirty_with_scope(&mut fb, &PerfStats::zero(), &scope);
+    feed(&mut ui, Input::turn(EncoderId::C, 30));
+    settle(&mut ui);
+    let flushed = ui.render_dirty_with_scope(&mut fb, &PerfStats::zero(), &scope);
+    let bands: Vec<(u16, u16)> = flushed.into_iter().filter(|&(a, b)| a != b).collect();
+    assert_eq!(bands, [(28, 118), (118, 186), (186, 266)]);
+    let mut full = Fb::new();
+    ui.render_with_scope(&mut full, &PerfStats::zero(), &scope);
+    assert!(fb.px == full.px, "dirty != full");
+}
+
 #[test]
 fn new_live_output_redraws_only_the_viz_band() {
-    let mut ui = ui_for("engine_algo");
+    let mut ui = ui_for("algo_level");
     let mut fb = Fb::new();
     ui.render_dirty_with_scope(&mut fb, &PerfStats::zero(), &scope_fixture());
     let quieter = scope_fixture().map(|s| if s > 0.0 { s * 0.5 } else { s });
@@ -61,7 +79,7 @@ fn new_live_output_redraws_only_the_viz_band() {
 #[test]
 fn focus_band_shows_the_last_touched_slot() {
     let mut ui = UiState::new();
-    feed(&mut ui, Input::turn(EncoderId::C, 5)); // OP3 wave
+    feed(&mut ui, Input::turn(EncoderId::C, 5)); // MORPH
     settle(&mut ui);
     let mut fb = Fb::new();
     ui.render_with_scope(&mut fb, &PerfStats::zero(), &scope_fixture());

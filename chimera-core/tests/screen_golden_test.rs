@@ -14,7 +14,10 @@ mod screen;
 use screen::*;
 
 const GOLDENS: &[(&str, u64)] = &[
-    ("engine_algo", 0x4056065508646ed2),
+    ("engine_algo", 0xed6d835a479b5c88),
+    ("algo_alg", 0xbf0b8a96778a2159),
+    ("algo_level", 0xa1b767926f4d88b3),
+    ("algo_osc_last", 0x7f64f24127acdbce),
     ("bigviz_filter", 0x056cc0e46ba8923f),
     ("bigviz_env", 0xb673522863b1fd92),
     ("mixer_part", 0x3e3480eee3041370),

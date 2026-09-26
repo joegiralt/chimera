@@ -225,6 +225,21 @@ pub type ScreenCase = (&'static str, fn(&mut UiState));
 /// Every screen the goldens lock, one or more per page type (spec § Testing).
 pub const CASES: &[ScreenCase] = &[
     ("engine_algo", |ui| feed(ui, Input::turn(EncoderId::A, 2))),
+    ("algo_alg", |ui| {
+        feed(ui, Input::turn(EncoderId::B, 24)); // ALG B = A17
+        feed(ui, Input::turn(EncoderId::C, 50)); // MORPH 50: the diagrams blend
+    }),
+    ("algo_level", |ui| {
+        to_level_page(ui);
+        feed(ui, Input::turn(EncoderId::B, 60)); // operator 2 LEVEL
+    }),
+    ("algo_osc_last", |ui| {
+        to_osc(ui);
+        for _ in 0..12 {
+            feed(ui, Input::press(ButtonId::Edit)); // FEEDBACK, the last sub-page
+        }
+        feed(ui, Input::turn(EncoderId::D, 3));
+    }),
     ("bigviz_filter", |ui| {
         plus(ui, 3);
         feed(ui, Input::turn(EncoderId::B, 80)); // resonance

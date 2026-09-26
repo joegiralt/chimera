@@ -1,3 +1,4 @@
+pub mod alg_layout;
 pub mod animation;
 pub mod audio_page;
 pub mod block_def;

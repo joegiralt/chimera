@@ -13,6 +13,8 @@ pub enum VizType {
     MixerLevels,
     CompressorCurve,
     AudioStats,
+    /// ALG A's diagram moving to ALG B's with MORPH.
+    AlgoDiagram,
 }
 
 /// What an encoder slot edits (spec §5).

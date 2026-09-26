@@ -2,11 +2,15 @@
 
 mod screen;
 
+use chimera_core::ui::UiState;
+use chimera_core::ui::block_registry::ALGO_CHAIN;
 use chimera_core::ui::chain::{ChainId, ChainNav};
 use chimera_core::ui::components::{header, header_text};
 use chimera_core::ui::dungeon_map::{self, node_x};
+use chimera_core::ui::perf::PerfStats;
 use chimera_core::ui::theme;
-use screen::{Fb, Input, feed};
+use chimera_hal::ButtonId;
+use screen::{Fb, Input, feed, osc_node, scope_fixture, settle, to_osc};
 
 fn texts(nav: &ChainNav) -> (String, String) {
     let (c, n) = header_text(nav, nav.active_block_def());
@@ -192,9 +196,7 @@ fn the_map_draws_only_in_its_band_on_every_chain() {
 #[test]
 fn a_fresh_algo_part_lands_on_the_algo_page() {
     use chimera_core::preset::ChainType;
-    use chimera_core::ui::UiState;
     use chimera_core::ui::block_registry::ALGO_ALG;
-    use chimera_hal::ButtonId;
     let mut ui = UiState::new();
     assert_eq!(ui.nav.chain_type, ChainType::Algo);
     assert_eq!(ui.nav.active_block_def().id, ALGO_ALG.id);
@@ -205,4 +207,80 @@ fn a_fresh_algo_part_lands_on_the_algo_page() {
     feed(&mut ui, Input::press(ButtonId::Plus));
     feed(&mut ui, Input::press(ButtonId::B2));
     assert_eq!(ui.nav.active_block_def().id, ALGO_ALG.id);
+}
+
+/// Spec § UI: whichever node is current, the Algo chain's map pill and
+/// labels never overlap, and no sub-page label runs into the next node's.
+#[test]
+fn the_algo_map_has_no_overlapping_nodes() {
+    use chimera_core::ui::draw::text_width;
+    let n = ALGO_CHAIN.len();
+    let half = |label: &str| text_width(&theme::FONT_LABEL, label, 0) / 2;
+    for cur in 0..n {
+        let ext: Vec<(i32, i32)> = (0..n)
+            .map(|i| {
+                let x = node_x(i, n);
+                if i == cur {
+                    (x - theme::PILL_W / 2, x + theme::PILL_W / 2)
+                } else {
+                    let h = half(ALGO_CHAIN.blocks[i].def.short);
+                    (x - h, x + h)
+                }
+            })
+            .collect();
+        for w in ext.windows(2) {
+            assert!(w[0].1 < w[1].0, "node {cur} current: {ext:?}");
+        }
+        if cur + 1 < n {
+            let block = &ALGO_CHAIN.blocks[cur];
+            let x = node_x(cur, n) - 8 + 6;
+            for def in core::iter::once(block.def).chain(block.sub_pages.iter().copied()) {
+                let end = x + text_width(&theme::FONT_LABEL, def.short, 0);
+                assert!(
+                    end < ext[cur + 1].0,
+                    "{} runs into node {}",
+                    def.short,
+                    cur + 1
+                );
+            }
+        }
+    }
+}
+
+/// Spec § UI: EDIT reaches every OSC sub-page, and the map scrolls so the
+/// current one is always drawn lit.
+#[test]
+fn every_osc_sub_page_is_reachable_and_lit_on_the_map() {
+    let mut ui = UiState::new();
+    to_osc(&mut ui);
+    let block = &ALGO_CHAIN.blocks[osc_node()];
+    // Right of the branch trunk, which runs through the dot's centre column.
+    let x = node_x(osc_node(), ALGO_CHAIN.len()) - 8 + 1;
+    for sub in 0..block.sub_page_count() {
+        if sub > 0 {
+            feed(&mut ui, Input::press(ButtonId::Edit));
+        }
+        assert_eq!(ui.nav.active_block_def().id, block.active_def(sub).id);
+        settle(&mut ui);
+        let mut fb = Fb::new();
+        ui.render_with_scope(&mut fb, &PerfStats::zero(), &scope_fixture());
+        let cy = if sub == 0 {
+            theme::BRANCH_START_Y + theme::BRANCH_LINE_HEIGHT / 2
+        } else {
+            theme::SCREEN_H - theme::BRANCH_LINE_HEIGHT / 2
+        };
+        assert_eq!(
+            fb.at(x, cy),
+            theme::ACCENT,
+            "sub-page {sub} ({})",
+            block.active_def(sub).short
+        );
+        assert_eq!(fb.oob, 0);
+    }
+    feed(&mut ui, Input::press(ButtonId::Edit));
+    assert_eq!(
+        ui.nav.sub_page,
+        block.sub_page_count() - 1,
+        "EDIT stops at the last"
+    );
 }
