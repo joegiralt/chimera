@@ -1,11 +1,12 @@
 //! Desktop audio: the same `Instrument` the firmware will run (ADR 0013),
-//! fed by the `NoteQueue` and an `AudioShared` published through a
-//! `TripleBuffer`, summed from three DAC pairs to the speakers.
+//! fed by `NoteSources` (the keyboard, and midir when feature `midi` is on)
+//! and an `AudioShared` published through a `TripleBuffer`, summed from
+//! three DAC pairs to the speakers.
 
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::hw::{BLOCK_SIZE, CPU_HZ_REV_V, DAC_PAIRS, SAMPLE_RATE, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacOut, Instrument};
-use chimera_core::note_queue::{NoteEvent, NoteKind, NoteQueue};
+use chimera_core::note_queue::{NoteEvent, NoteKind, NoteSources, SourceId};
 use chimera_core::preset::Performance;
 use chimera_core::scope::{ScopeFrame, ScopeWriter};
 use chimera_core::triple::{TripleBuffer, Writer};
@@ -15,9 +16,18 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
 
+#[cfg(feature = "midi")]
+const N_SOURCES: usize = 2;
+#[cfg(not(feature = "midi"))]
+const N_SOURCES: usize = 1;
+
+const KEYS: SourceId<N_SOURCES> = SourceId::new(0);
+#[cfg(feature = "midi")]
+const MIDI: SourceId<N_SOURCES> = SourceId::new(1);
+
 /// Everything the audio callback shares with the UI thread.
 struct SharedState {
-    notes: NoteQueue,
+    notes: NoteSources<N_SOURCES>,
     /// 0 = all pairs, 1..=3 = only that DAC pair.
     solo: AtomicU8,
 }
@@ -26,6 +36,8 @@ pub struct DesktopAudio {
     _stream: Stream,
     shared: Arc<SharedState>,
     shared_audio: Writer<AudioShared>,
+    #[cfg(feature = "midi")]
+    _midi: Option<midir::MidiInputConnection<()>>,
 }
 
 impl DesktopAudio {
@@ -47,7 +59,7 @@ impl DesktopAudio {
         )))
         .split();
         let shared = Arc::new(SharedState {
-            notes: NoteQueue::new(),
+            notes: NoteSources::new(),
             solo: AtomicU8::new(0),
         });
         let audio = Arc::clone(&shared);
@@ -66,11 +78,10 @@ impl DesktopAudio {
                 &config.into(),
                 move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                     let shared = shared_reader.read();
-                    // This is the note queue's only consumer: the UI/main
-                    // thread is the only pusher (see `note_on`/`note_off`).
-                    while let Some(ev) = audio.notes.pop() {
-                        inst.handle(ev, shared);
-                    }
+                    // This is each source queue's only consumer: the UI/main
+                    // thread pushes to KEYS, the MIDI callback thread to
+                    // MIDI (see `note_on`/`note_off` and `connect_midi`).
+                    audio.notes.drain(|ev| inst.handle(ev, shared));
                     let solo = audio.solo.load(Ordering::Relaxed);
                     for frame in data.chunks_mut(channels) {
                         if block_pos >= BLOCK_SIZE {
@@ -99,6 +110,8 @@ impl DesktopAudio {
 
         Self {
             _stream: stream,
+            #[cfg(feature = "midi")]
+            _midi: connect_midi(Arc::clone(&shared)),
             shared,
             shared_audio,
         }
@@ -109,11 +122,11 @@ impl DesktopAudio {
         self.shared_audio.publish(|b| b.update_from(perf));
     }
 
-    /// Push a note-on onto the queue. Callers: the UI/main thread only —
-    /// `NoteQueue` is single-producer/single-consumer and the audio
-    /// callback is the sole consumer.
+    /// Push a note-on onto the KEYS queue. Callers: the UI/main thread only
+    /// — each source's queue is single-producer/single-consumer, and the
+    /// audio callback is the sole consumer of all of them.
     pub fn note_on(&self, channel: MidiChannel, note: MidiNote, velocity: Velocity) {
-        self.shared.notes.push(NoteEvent {
+        self.shared.notes.source(KEYS).push(NoteEvent {
             channel,
             note,
             kind: NoteKind::On(velocity),
@@ -123,7 +136,7 @@ impl DesktopAudio {
     /// Push a note-off onto the queue. Callers: the UI/main thread only —
     /// see `note_on`.
     pub fn note_off(&self, channel: MidiChannel, note: MidiNote) {
-        self.shared.notes.push(NoteEvent {
+        self.shared.notes.source(KEYS).push(NoteEvent {
             channel,
             note,
             kind: NoteKind::Off,
@@ -163,6 +176,44 @@ fn stereo_frame(dac: &DacOut, solo: u8, i: usize) -> (f32, f32) {
         }
     }
     (l, r)
+}
+
+/// Opens a MIDI input port for the app's lifetime, keeping the returned
+/// connection alive keeps it open. `None` (no device, or only "Midi
+/// Through") means the computer keyboard is the only note source.
+#[cfg(feature = "midi")]
+fn connect_midi(shared: Arc<SharedState>) -> Option<midir::MidiInputConnection<()>> {
+    use chimera_hal::midi::MidiParser;
+    let input = midir::MidiInput::new("chimera")
+        .map_err(|e| eprintln!("MIDI unavailable: {e}"))
+        .ok()?;
+    let ports = input.ports();
+    let names: Vec<String> = ports
+        .iter()
+        .map(|p| input.port_name(p).unwrap_or_default())
+        .collect();
+    let wanted = std::env::var("CHIMERA_MIDI_PORT").ok();
+    let Some(i) = crate::midi::pick_port(&names, wanted.as_deref()) else {
+        eprintln!("no MIDI input port; playing from the keyboard only");
+        return None;
+    };
+    eprintln!("MIDI in: {}", names[i]);
+    let mut parser = MidiParser::new();
+    input
+        .connect(
+            &ports[i],
+            "chimera-in",
+            move |_stamp, bytes, _| {
+                for &b in bytes {
+                    if let Some(ev) = parser.feed(b).and_then(NoteEvent::from_midi) {
+                        shared.notes.source(MIDI).push(ev);
+                    }
+                }
+            },
+            (),
+        )
+        .map_err(|e| eprintln!("MIDI connect failed: {e}"))
+        .ok()
 }
 
 #[cfg(test)]

@@ -9,6 +9,10 @@ chimera-hal = { path = "../chimera-hal" }
 libm = "0.2"
 minifb = "0.28"
 cpal = "0.15"
-midir = "0.10"
+midir = { version = "0.10", optional = true }
 embedded-graphics = "0.8"
 embedded-graphics-core = "0.4"
+
+[features]
+default = ["midi"]
+midi = ["dep:midir"]
