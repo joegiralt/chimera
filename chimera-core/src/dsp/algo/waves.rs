@@ -85,14 +85,34 @@ impl WaveId {
     /// ceiling of its octave, so nothing folds down) and the crossfade
     /// between them, so a change of mip never steps the sound.
     pub fn mip_pair(self, bandwidth_hz: f32) -> (&'static Table, &'static Table, f32) {
-        let top = (MIPS - 1) as f32;
-        let half = 0.5 * MIP0_TOP_HZ;
-        let m = if bandwidth_hz > half {
-            log2(bandwidth_hz / half).min(top)
-        } else {
-            0.0
-        };
+        let m = mip_position(bandwidth_hz);
         let lo = m as usize;
         (self.table(lo), self.table(lo + 1), m - lo as f32)
     }
+}
+
+/// Where `bandwidth_hz` falls among the mips, `0.0..=7.0`: `mip_pair` reads
+/// mip `floor` and the next, crossfaded by the fraction.
+pub fn mip_position(bandwidth_hz: f32) -> f32 {
+    let half = 0.5 * MIP0_TOP_HZ;
+    if bandwidth_hz > half {
+        log2(bandwidth_hz / half).min((MIPS - 1) as f32)
+    } else {
+        0.0
+    }
+}
+
+/// One block's move of a mip position from `from` toward `to`: the lower
+/// mip of the pair holding `from`, and the crossfade's ends within it. The
+/// position moves at most one mip per block, so it never jumps; a rising
+/// bandwidth fades out the lower mip within the block.
+pub fn mip_step(from: f32, to: f32) -> (usize, f32, f32) {
+    let floor = from as usize;
+    let lo = if to >= from || floor as f32 != from {
+        floor
+    } else {
+        floor.saturating_sub(1)
+    };
+    let to = to.clamp(lo as f32, lo as f32 + 1.0);
+    (lo, from - lo as f32, to - lo as f32)
 }

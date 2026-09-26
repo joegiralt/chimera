@@ -319,3 +319,15 @@ fn test_part_and_out_pan_use_the_pan_format() {
     assert_eq!(PART_SPECS[4].fmt, ValFmt::Pan);
     assert_eq!(OUT_SPECS[1].fmt, ValFmt::Pan);
 }
+
+#[test]
+fn test_fmt_signed() {
+    let mut buf = FmtBuf::new();
+    for (v, want) in [(0.0, "-3"), (0.5, "0"), (1.0, "+3"), (4.0 / 6.0, "+1")] {
+        buf.clear();
+        fmt_val(&mut buf, v, ValFmt::Signed(3));
+        assert_eq!(buf.as_str(), want);
+    }
+    assert!(ValFmt::Signed(3).is_discrete() && ValFmt::Signed(3).is_bipolar());
+    assert_eq!(ValFmt::Signed(24).max_int(), 48);
+}
