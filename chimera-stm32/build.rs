@@ -32,8 +32,29 @@ ASSERT(__eram_d2_dma - __sram_d2_dma == 4096, "the DMA rings must fill exactly t
     )
     .unwrap();
 
+    fs::write(
+        out_dir.join("dtcm.x"),
+        r#"
+/* The zero-wait working copy of the wave tables, filled from flash at boot
+   (the flash tables stay the source). The stack is the rest of DTCM. */
+SECTIONS {
+    .dtcm_waves (NOLOAD) : ALIGN(8) {
+        __sdtcm_waves = .;
+        *(.dtcm_waves .dtcm_waves.*);
+        . = ALIGN(8);
+        __edtcm_waves = .;
+    } > DTCM
+}
+INSERT AFTER .uninit;
+ASSERT(__sdtcm_waves == ORIGIN(DTCM), "the wave copy must start DTCM, below the stack");
+ASSERT(_stack_start - _stack_end >= 32K, "DTCM must keep at least 32 KB of stack beside the wave copy");
+"#,
+    )
+    .unwrap();
+
     println!("cargo:rustc-link-search={}", out_dir.display());
     println!("cargo:rustc-link-arg=-Tram_d2.x");
+    println!("cargo:rustc-link-arg=-Tdtcm.x");
     println!("cargo:rerun-if-changed=memory.x");
     println!("cargo:rerun-if-changed=build.rs");
 }

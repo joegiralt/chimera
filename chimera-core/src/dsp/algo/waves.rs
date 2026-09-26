@@ -1,5 +1,9 @@
 //! The generated wave tables (ADR 0023).
 
+use core::mem::MaybeUninit;
+use core::ptr;
+use core::sync::atomic::{AtomicPtr, Ordering};
+
 use crate::dsp::algo::math::log2;
 use crate::hw::SAMPLE_RATE;
 
@@ -12,7 +16,21 @@ pub const WAVE_COUNT: usize = 16;
 pub type Table = [i16; WAVE_LEN + 1];
 
 pub const WAVE_FLASH_BUDGET: usize = 64 * 1024 + WAVE_COUNT * MIPS * 2;
-const _: () = assert!(core::mem::size_of::<[[Table; MIPS]; WAVE_COUNT]>() <= WAVE_FLASH_BUDGET);
+pub type Waves = [[Table; MIPS]; WAVE_COUNT];
+const _: () = assert!(core::mem::size_of::<Waves>() <= WAVE_FLASH_BUDGET);
+
+/// The tables `WaveId::table` reads: `WAVES` itself, or a RAM copy.
+static ACTIVE: AtomicPtr<Waves> = AtomicPtr::new(ptr::addr_of!(WAVES).cast_mut());
+
+/// Copies the tables into `ram` and reads them from there from then on, for
+/// a target whose RAM is faster than its flash. Call before any audio runs.
+pub fn copy_into(ram: &'static mut MaybeUninit<Waves>) {
+    // SAFETY: `WAVES` and `ram` are distinct statics of type `Waves`, so the
+    // copy is in bounds, doesn't overlap and initialises all of `ram`.
+    unsafe { ptr::copy_nonoverlapping(ptr::addr_of!(WAVES), ram.as_mut_ptr(), 1) };
+    let copy: &'static MaybeUninit<Waves> = ram;
+    ACTIVE.store(copy.as_ptr().cast_mut(), Ordering::Release);
+}
 
 /// Mip 0's 127 harmonics stay under Nyquist up to this fundamental; each
 /// mip doubles it.
@@ -56,7 +74,10 @@ impl WaveId {
     }
 
     pub fn table(self, mip: usize) -> &'static Table {
-        &WAVES[self.0 as usize][mip.min(MIPS - 1)]
+        // SAFETY: `ACTIVE` points at `WAVES` or at a finished copy, whose
+        // only `&mut` was given up to `copy_into`; neither is written again.
+        let waves = unsafe { &*ACTIVE.load(Ordering::Acquire) };
+        &waves[self.0 as usize][mip.min(MIPS - 1)]
     }
 
     /// Two adjacent mips that both keep `bandwidth_hz` under Nyquist (the
