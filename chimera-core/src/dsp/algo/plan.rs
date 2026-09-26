@@ -29,6 +29,9 @@ pub fn blend(a: f32, b: f32, m: f32) -> f32 {
     a + m * (b - a)
 }
 
+/// Only `build` makes a plan the kernel can render: its fields are public
+/// for reading, and a hand-edited plan (a backward link not flagged in
+/// `delayed`, `starts` past `MAX_EDGES`) can panic `Kernel::render`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct EvalPlan {
     pub order: [u8; OPS],
