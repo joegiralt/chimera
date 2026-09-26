@@ -14,6 +14,7 @@ pub mod modulation;
 pub mod note_queue;
 pub mod params;
 pub mod part;
+pub mod perf;
 pub mod preset;
 pub mod scope;
 pub mod triple;
