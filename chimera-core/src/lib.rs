@@ -3,6 +3,7 @@
 pub use chimera_hal::{MidiChannel, MidiNote, Velocity};
 
 pub mod addr;
+pub mod audio_out;
 pub mod block;
 pub mod dsp;
 pub mod hw;
