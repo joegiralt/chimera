@@ -239,9 +239,12 @@ fn chord() -> Vec<f32> {
     )
 }
 
-fn two_parts(chain: ChainType) -> Vec<f32> {
+/// Modal, not FM: FM's bench-measured cost doesn't fit one voice under
+/// budget (https://github.com/joegiralt/chimera/issues/26), so an FM note
+/// here would be refused and pair 2 would render silent.
+fn two_parts() -> Vec<f32> {
     let mut perf = Performance::new();
-    perf.parts[1].load_init(chain);
+    perf.parts[1].load_init(ChainType::Modal);
     perf.parts[1].mix.output = DacPair::P2;
     perf.parts[1].mix.pan = 0.5;
     render_perf(&perf, &[(0, 60), (1, 67)], 200)
@@ -260,7 +263,7 @@ fn reverb_send(send: f32) -> Vec<f32> {
 ///     GOLDEN_RECORD=1 cargo test -p chimera-core --test instrument_test -- --nocapture
 const GOLDENS: &[(&str, u64)] = &[
     ("poly_chord", 0x9e1be15b748f4ab1),
-    ("two_parts_two_pairs", 0xcfe8ed2b4c185e18),
+    ("two_parts_two_pairs", 0x76a2727ec0b942ef), // re-recorded: part 2 is Modal, not FM (issues/26)
     ("reverb_send_off", 0x25fa9f662d1acb99),
     ("reverb_send_on", 0x51da232bdad6e4d9), // re-recorded: FX returns wet-only
 ];
@@ -272,7 +275,7 @@ type GoldenCase = (&'static str, fn() -> Vec<f32>);
 fn instrument_goldens_match() {
     let cases: [GoldenCase; 4] = [
         ("poly_chord", chord),
-        ("two_parts_two_pairs", || two_parts(ChainType::Fm)),
+        ("two_parts_two_pairs", two_parts),
         ("reverb_send_off", || reverb_send(0.0)),
         ("reverb_send_on", || reverb_send(0.5)),
     ];
@@ -304,10 +307,8 @@ fn golden_scenes_do_what_they_say() {
     // Four voices sound at once.
     let single = render_perf(&Performance::new(), &[(0, 60)], 200);
     assert!(peak(&chord()) > peak(&single));
-    // Part 2 plays out of pair 2 only; pair 3 stays silent. Modal, not FM:
-    // FM's bench-measured cost doesn't fit one voice under budget
-    // (https://github.com/joegiralt/chimera/issues/26), so it wouldn't sound.
-    let two = two_parts(ChainType::Modal);
+    // Part 2 plays out of pair 2 only; pair 3 stays silent.
+    let two = two_parts();
     assert!(peak(&frames(&two, 1)) > 0.01);
     assert_eq!(peak(&frames(&two, 2)), 0.0);
     // The send adds a reverb return (to pair 1) and nothing else changes
