@@ -100,6 +100,27 @@ pub struct OpEnv {
     coefs: EnvCoefs,
 }
 
+/// `OpEnv::step`'s state in registers; its `step` matches bit for bit.
+#[derive(Clone, Copy)]
+pub(crate) struct EnvRun {
+    level: f32,
+    mul: f32,
+    add: f32,
+    left: u32,
+}
+
+impl EnvRun {
+    #[inline(always)]
+    pub(crate) fn step(&mut self, env: &mut OpEnv) -> f32 {
+        self.level = self.level * self.mul + self.add;
+        self.left -= 1;
+        if self.left == 0 {
+            *self = env.stage_end(self.level);
+        }
+        self.level
+    }
+}
+
 impl OpEnv {
     pub const IDLE: OpEnv = OpEnv {
         level: 0.0,
@@ -153,6 +174,32 @@ impl OpEnv {
             self.advance();
         }
         self.level
+    }
+
+    /// The fields `step` changes, for a loop that keeps them in registers.
+    #[inline(always)]
+    pub(crate) fn run(&self) -> EnvRun {
+        EnvRun {
+            level: self.level,
+            mul: self.mul,
+            add: self.add,
+            left: self.left,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn store(&mut self, r: EnvRun) {
+        self.level = r.level;
+        self.left = r.left;
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn stage_end(&mut self, level: f32) -> EnvRun {
+        self.level = level;
+        self.left = 0;
+        self.advance();
+        self.run()
     }
 
     fn advance(&mut self) {
