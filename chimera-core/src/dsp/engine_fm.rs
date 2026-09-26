@@ -370,7 +370,8 @@ impl FmEngine {
     /// Render audio into `output` using the given algorithm routing.
     ///
     /// Processes in BLOCK_SIZE chunks. The algorithm index (0-7) selects the
-    /// operator topology, matching p81z `FMArrangement.cpp` exactly.
+    /// operator topology, matching p81z `FMArrangement.cpp` except ALG 4
+    /// (index 3), which follows the TX81Z (ADR 0018).
     ///
     /// Where p81z does `op.run(temp, temp)` (read and write same buffer),
     /// we use `temp2` as an intermediate to satisfy the borrow checker,
@@ -415,15 +416,13 @@ impl FmEngine {
                     self.op1.run(&self.temp[..n], out);
                 }
                 3 => {
-                    // 4 -> 3, (3 + 4->2) -> [1]
+                    // 4 -> 3, (3 + 2) -> [1]. TX81Z ALG 4: op2 is unmodulated
+                    // (p81z modulates op2 with op3 here; #18, ADR 0018).
                     self.op4.run(&self.zeros[..n], &mut self.temp[..n]);
                     // op3.run(temp, temp)
                     self.op3.run(&self.temp[..n], &mut self.temp2[..n]);
                     self.temp[..n].copy_from_slice(&self.temp2[..n]);
-                    // op2.run_adding(temp, temp): read temp as mod, add to temp
-                    self.temp2[..n].copy_from_slice(&self.temp[..n]);
-                    self.op2.run_adding(&self.temp[..n], &mut self.temp2[..n]);
-                    self.temp[..n].copy_from_slice(&self.temp2[..n]);
+                    self.op2.run_adding(&self.zeros[..n], &mut self.temp[..n]);
                     self.op1.run(&self.temp[..n], out);
                 }
                 4 => {
