@@ -171,7 +171,8 @@ fn time_kernel() -> u32 {
                 feedback: FEEDBACK_CYCLES[7],
                 lo: wave.table(v),
                 hi: wave.table(v + 1),
-                xfade: 0.5,
+                xfade_from: 0.4,
+                xfade_to: 0.6,
             }
         }),
         morph_from: 0.45,

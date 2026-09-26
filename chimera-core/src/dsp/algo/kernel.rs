@@ -22,7 +22,9 @@ pub struct OpBlock {
     pub feedback: f32,
     pub lo: &'static Table,
     pub hi: &'static Table,
-    pub xfade: f32,
+    /// The weight of `hi`, ramped across the block like the gain.
+    pub xfade_from: f32,
+    pub xfade_to: f32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -57,6 +59,7 @@ struct Lane {
     feedback: f32,
     hist: f32,
     xfade: f32,
+    dxfade: f32,
     lo: &'static Table,
     hi: &'static Table,
     edges: (usize, usize),
@@ -115,7 +118,8 @@ impl Kernel {
                 dcarrier: (plan.carrier_b[op] - plan.carrier_a[op]) * dm,
                 feedback: o.feedback * 0.5 * PHASE_UNITS,
                 hist: self.hist[op],
-                xfade: o.xfade,
+                xfade: o.xfade_from,
+                dxfade: (o.xfade_to - o.xfade_from) * STEP,
                 lo: o.lo,
                 hi: o.hi,
                 edges: (plan.starts[k] as usize, plan.starts[k + 1] as usize),
@@ -137,6 +141,7 @@ impl Kernel {
                 let p = l.phase.wrapping_add((pm as i32 as u32) << 8);
                 let y = read(l.lo, l.hi, l.xfade, p) * l.env.step() * l.gain;
                 l.gain += l.dgain;
+                l.xfade += l.dxfade;
                 l.hist = prev;
                 self.out[l.op & 7] = y;
                 acc += l.carrier * y;

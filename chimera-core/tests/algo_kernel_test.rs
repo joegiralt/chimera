@@ -28,7 +28,8 @@ fn op(hz: f32, gain: f32, wave: WaveId) -> OpBlock {
         feedback: 0.0,
         lo: wave.table(0),
         hi: wave.table(0),
-        xfade: 0.0,
+        xfade_from: 0.0,
+        xfade_to: 0.0,
     }
 }
 
@@ -137,7 +138,8 @@ fn the_crossfade_ends_are_its_two_mips() {
         ops[0] = OpBlock {
             lo: lo.table(0),
             hi: hi.table(0),
-            xfade,
+            xfade_from: xfade,
+            xfade_to: xfade,
             ..op(300.0, 1.0, WaveId::W1)
         };
         render(&plan, ops, 10)
@@ -221,4 +223,26 @@ fn both_mips_of_a_pair_keep_the_bandwidth_under_nyquist() {
             );
         }
     }
+}
+
+#[test]
+fn the_crossfade_ramps_across_the_block() {
+    let plan = EvalPlan::build(&NONE, 1, &NONE, 1);
+    let with = |from: f32, to: f32| {
+        let mut ops = silent();
+        ops[0] = OpBlock {
+            lo: WaveId::W1.table(0),
+            hi: WaveId::SAW.table(0),
+            xfade_from: from,
+            xfade_to: to,
+            ..op(300.0, 1.0, WaveId::W1)
+        };
+        render(&plan, ops, 1)
+    };
+    let (sine, ramp) = (with(0.0, 0.0), with(0.0, 1.0));
+    assert_eq!(ramp[0].to_bits(), sine[0].to_bits());
+    let saw = with(1.0, 1.0);
+    let s = BLOCK_SIZE - 1;
+    let expect = sine[s] + (saw[s] - sine[s]) * (s as f32 / BLOCK_SIZE as f32);
+    assert!((ramp[s] - expect).abs() < 1e-4, "{} vs {expect}", ramp[s]);
 }
