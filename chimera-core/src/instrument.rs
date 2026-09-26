@@ -47,8 +47,7 @@ pub struct PartAudio {
     pub mix: PartParams,
 }
 
-/// The Performance state the audio needs, double-buffered by the platform
-/// (one pointer swap per UI frame). The Sound names, pool and UI stay behind.
+/// The Performance state the audio needs (ADR 0021: through a triple buffer).
 #[derive(Clone, Debug)]
 pub struct AudioShared {
     pub parts: [PartAudio; MAX_PARTS],
@@ -76,12 +75,10 @@ impl AudioShared {
         }
     }
 
-    /// Overwrite with `perf` (the UI's per-frame refresh of the back
-    /// buffer). Built through `from_performance` so there is exactly one
-    /// place that lists `AudioShared`'s fields; the fresh copy is a stack
-    /// temporary (~3 KB) that replaces `*self` in one move, never the heap.
-    /// Callers must only ever run this on the back buffer — never on the
-    /// copy the audio thread is currently reading.
+    /// Overwrite with `perf` (the UI's per-frame publish). Built through
+    /// `from_performance` so there is exactly one place that lists
+    /// `AudioShared`'s fields; the fresh copy is a stack temporary (~3 KB)
+    /// that replaces `*self` in one move, never the heap.
     pub fn update_from(&mut self, perf: &Performance) {
         *self = Self::from_performance(perf);
     }
@@ -114,10 +111,8 @@ pub fn pan_gains(pan: f32) -> (f32, f32) {
 /// - The Instrument is the note queue's only consumer: the audio thread pops
 ///   every `NoteEvent` and feeds it to `handle` (the queue is single-producer,
 ///   single-consumer; nothing else may pop it).
-/// - The `&AudioShared` passed to `handle` and `render` is the front buffer.
-///   The UI's `AudioShared::update_from` must only ever run on the back
-///   buffer, never on the one borrowed here; the platform swaps them between
-///   blocks.
+/// - The `&AudioShared` passed to `handle` and `render` is the reader's
+///   current buffer.
 pub struct Instrument {
     voices: [Voice; MAX_VOICES],
     alloc: Allocator,
