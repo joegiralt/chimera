@@ -151,21 +151,38 @@ fn goldens_match() {
     );
 }
 
+/// The issue tracking FM's refusal under the measured CPU budget.
+const ISSUE_26: &str = "https://github.com/joegiralt/chimera/issues/26";
+
 /// Spec § Testing: part 1's mono bus through the new voice pool matches
-/// every existing golden bit-for-bit, except `KNOWN_BROKEN` cases.
+/// every existing golden bit-for-bit, except the FM cases tracked at #26:
+/// FM's measured cost doesn't fit the budget, so its note is refused and
+/// the part renders silent instead of matching the golden. The Modal #10
+/// cases are `KNOWN_BROKEN` for `goldens_match` but still match here, so
+/// they stay checked strictly through the Instrument.
 #[test]
 fn goldens_match_through_the_instrument() {
     let mut failures = Vec::new();
     for case in Case::ALL {
         let out = render_case_through_instrument(case);
+        let refused_by_budget = KNOWN_BROKEN
+            .iter()
+            .any(|k| k.0 == case.name() && k.1 == ISSUE_26);
+        if refused_by_budget {
+            if out.iter().any(|&s| s != 0.0) {
+                failures.push(format!(
+                    "{}: expected silence (refused by the budget, #26), got sound",
+                    case.name()
+                ));
+            }
+            continue;
+        }
         let (hash, sp) = (fnv1a(&out), spots(&out));
         let &(_, want_hash, want_spots) = GOLDENS
             .iter()
             .find(|g| g.0 == case.name())
             .expect("recorded");
-        if (hash != want_hash || sp != want_spots)
-            && !KNOWN_BROKEN.iter().any(|k| k.0 == case.name())
-        {
+        if hash != want_hash || sp != want_spots {
             failures.push(format!(
                 "{}: hash 0x{hash:016x} (want 0x{want_hash:016x})",
                 case.name()

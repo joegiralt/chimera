@@ -1,6 +1,6 @@
-//! Port choice for the desktop's midir input (Task 11, Review Focus 4):
-//! a pure function so "no device" and "loopback only" are host-tested
-//! without opening a real port.
+//! Port choice for the desktop's midir input: a pure function so "no
+//! device" and "loopback only" are host-tested without opening a real
+//! port.
 
 pub fn pick_port(names: &[String], wanted: Option<&str>) -> Option<usize> {
     let lower = |s: &str| s.to_ascii_lowercase();

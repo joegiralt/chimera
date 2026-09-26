@@ -20,6 +20,10 @@ pub const NOTE_SOURCES: usize = 1;
 pub const DIN: SourceId<NOTE_SOURCES> = SourceId::new(0);
 pub static NOTES: NoteSources<NOTE_SOURCES> = NoteSources::new();
 
+// SAFETY: ".ram_d2.voices" is real RAM_D2 SRAM (linker-defined) and NOLOAD,
+// so this static holds garbage at boot; sound because the type is
+// `MaybeUninit` and `init` writes it in place via `Instrument::init_in_place`
+// before any read.
 #[unsafe(link_section = ".ram_d2.voices")]
 static mut INSTRUMENT: MaybeUninit<Instrument> = MaybeUninit::uninit();
 static mut FX: MaybeUninit<FxBus> = MaybeUninit::uninit();
