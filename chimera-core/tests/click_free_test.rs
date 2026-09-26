@@ -2,6 +2,8 @@
 //! Simulates the desktop audio callback pattern: rendering blocks
 //! and scattering to variable-size output buffers.
 
+use chimera_core::dsp::algo::params::AlgoParams;
+use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::fx_bus::FxParams;
 use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::dsp::reverb::{Reverb, ReverbParams};
@@ -12,6 +14,13 @@ use chimera_core::{MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
 
 const SR: u32 = 48000;
+
+/// Pizza's old role: operator 1 alone on the triangle.
+fn tri() -> ParamSnapshot {
+    let mut p = ParamSnapshot::for_engine(EngineType::Algo);
+    p.algo = AlgoParams::single(WaveId::TRI);
+    p
+}
 
 /// Simulate the audio callback: render blocks, scatter to output buffer,
 /// check for discontinuities (clicks) in the output stream.
@@ -75,11 +84,11 @@ fn check_no_clicks(
 // ── FM init sound (pure sine) ───────────────────────────────────────
 
 #[test]
-fn test_no_clicks_fm_init() {
+fn test_no_clicks_algo_triangle() {
     check_no_clicks(
-        "Pizza init",
+        "Algo triangle",
         |p, _| {
-            *p = ParamSnapshot::for_engine(EngineType::Pizza);
+            *p = tri();
         },
         // Simulate realistic cpal callback pattern: varying buffer sizes
         &[256, 256, 256, 512, 256, 256, 128, 256, 512, 256],
@@ -87,12 +96,12 @@ fn test_no_clicks_fm_init() {
 }
 
 #[test]
-fn test_no_clicks_pizza_with_crush() {
+fn test_no_clicks_algo_with_pm() {
     check_no_clicks(
-        "Pizza crushed",
+        "Algo PM",
         |p, _| {
-            *p = ParamSnapshot::for_engine(EngineType::Pizza);
-            p.pizza.crush = 0.7;
+            *p = tri();
+            p.algo.ops[1].level = 70;
         },
         &[256, 256, 256, 256, 256, 256, 256, 256],
     );
@@ -101,11 +110,11 @@ fn test_no_clicks_pizza_with_crush() {
 // ── With reverb ─────────────────────────────────────────────────────
 
 #[test]
-fn test_no_clicks_pizza_with_plate_reverb() {
+fn test_no_clicks_algo_with_plate_reverb() {
     check_no_clicks(
-        "Pizza + plate reverb",
+        "Algo + plate reverb",
         |p, rv| {
-            *p = ParamSnapshot::for_engine(EngineType::Pizza);
+            *p = tri();
             rv.reverb_type = 0;
             rv.mix = 0.5;
             rv.time = 0.7;
@@ -115,11 +124,11 @@ fn test_no_clicks_pizza_with_plate_reverb() {
 }
 
 #[test]
-fn test_no_clicks_pizza_with_fdn_reverb() {
+fn test_no_clicks_algo_with_fdn_reverb() {
     check_no_clicks(
-        "Pizza + FDN reverb",
+        "Algo + FDN reverb",
         |p, rv| {
-            *p = ParamSnapshot::for_engine(EngineType::Pizza);
+            *p = tri();
             rv.reverb_type = 1;
             rv.mix = 0.5;
         },
@@ -128,11 +137,11 @@ fn test_no_clicks_pizza_with_fdn_reverb() {
 }
 
 #[test]
-fn test_no_clicks_fm_with_midiverb() {
+fn test_no_clicks_algo_with_midiverb() {
     check_no_clicks(
-        "FM + MidiVerb",
+        "Algo + MidiVerb",
         |p, rv| {
-            *p = ParamSnapshot::for_engine(EngineType::Pizza);
+            *p = tri();
             rv.reverb_type = 2;
             rv.mix = 0.5;
         },
@@ -199,9 +208,9 @@ fn test_no_clicks_modal() {
 #[test]
 fn test_no_clicks_odd_buffer_sizes() {
     check_no_clicks(
-        "FM with odd callback sizes",
+        "Algo with odd callback sizes",
         |p, _| {
-            *p = ParamSnapshot::for_engine(EngineType::Pizza);
+            *p = tri();
         },
         // Deliberately misaligned with BLOCK_SIZE=128
         &[100, 200, 50, 300, 150, 75, 250, 100, 400, 50],
@@ -211,9 +220,9 @@ fn test_no_clicks_odd_buffer_sizes() {
 #[test]
 fn test_no_clicks_tiny_buffers() {
     check_no_clicks(
-        "FM with tiny callbacks",
+        "Algo with tiny callbacks",
         |p, _| {
-            *p = ParamSnapshot::for_engine(EngineType::Pizza);
+            *p = tri();
         },
         // Very small buffers — stress the block boundary logic
         &[32, 32, 32, 32, 64, 32, 32, 32, 32, 64, 32, 32, 32, 32],
@@ -223,9 +232,9 @@ fn test_no_clicks_tiny_buffers() {
 #[test]
 fn test_no_clicks_single_sample_buffers() {
     check_no_clicks(
-        "FM with single-sample callbacks",
+        "Algo with single-sample callbacks",
         |p, _| {
-            *p = ParamSnapshot::for_engine(EngineType::Pizza);
+            *p = tri();
         },
         // Worst case: one sample per callback
         &[1; 512],

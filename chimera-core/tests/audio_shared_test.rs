@@ -11,7 +11,7 @@ use chimera_core::preset::{ChainType, Performance};
 #[test]
 fn snapshot_copies_every_part_and_the_fx() {
     let mut perf = Performance::new();
-    perf.parts[4].load_init(ChainType::Fm);
+    perf.parts[4].load_init(ChainType::Algo);
     perf.parts[4].mix.mode = PartMode::Mono;
     perf.parts[4].mix.pan = -0.5;
     perf.fx.reverb.mix = 0.4;

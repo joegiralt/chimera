@@ -110,7 +110,7 @@ fn test_modal_bowed_through_voice() {
 }
 
 #[test]
-fn test_modal_different_from_pizza_through_voice() {
+fn test_modal_different_from_algo_through_voice() {
     let empty_mod = ModState::new();
     let render = |engine: EngineType| -> Vec<f32> {
         let mut voice = Voice::new(SR);
@@ -129,29 +129,29 @@ fn test_modal_different_from_pizza_through_voice() {
         all
     };
 
-    let pizza = render(EngineType::Pizza);
+    let algo = render(EngineType::Algo);
     let modal = render(EngineType::Modal);
 
-    let pizza_max = pizza.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+    let algo_max = algo.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
     let modal_max = modal.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
 
-    eprintln!("Pizza max: {}", pizza_max);
+    eprintln!("Algo max: {}", algo_max);
     eprintln!("Modal max: {}", modal_max);
 
     // Both should produce sound
-    assert!(pizza_max > 0.001, "Pizza should produce sound");
+    assert!(algo_max > 0.001, "Algo should produce sound");
     assert!(modal_max > 0.001, "Modal should produce sound");
 
     // They should be different
-    let diff: f32 = pizza
+    let diff: f32 = algo
         .iter()
         .zip(modal.iter())
         .map(|(a, b)| (a - b).abs())
         .sum::<f32>()
-        / pizza.len() as f32;
+        / algo.len() as f32;
 
     eprintln!("Avg difference: {}", diff);
-    assert!(diff > 0.001, "Pizza and Modal should differ, diff={}", diff);
+    assert!(diff > 0.001, "Algo and Modal should differ, diff={}", diff);
 }
 
 #[test]
