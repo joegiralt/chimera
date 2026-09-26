@@ -21,7 +21,7 @@ pub fn take_scope() -> Option<(Writer<ScopeFrame>, Reader<ScopeFrame>)> {
     Some(unsafe { &mut *addr_of_mut!(SCOPE) }.split())
 }
 
-// The wave tables' zero-wait working copy, at the bottom of DTCM (dtcm.x).
+// The wave tables' zero-wait working copy, at the top of DTCM (dtcm.x).
 #[unsafe(link_section = ".dtcm_waves")]
 static mut WAVES_DTCM: MaybeUninit<Waves> = MaybeUninit::uninit();
 static WAVES_TAKEN: AtomicBool = AtomicBool::new(false);
@@ -36,8 +36,8 @@ pub fn copy_waves() {
     waves::copy_into(unsafe { &mut *addr_of_mut!(WAVES_DTCM) });
 }
 
-// `UiState` is ~27 KB: it lives in AXI, not in `main`'s frame on the 128 KB
-// DTCM stack (ADR 0020).
+// `UiState` is ~27 KB: it lives in AXI, not in `main`'s frame on the
+// ~63.75 KB DTCM stack (ADR 0025).
 static mut UI: MaybeUninit<UiState> = MaybeUninit::uninit();
 static UI_TAKEN: AtomicBool = AtomicBool::new(false);
 
