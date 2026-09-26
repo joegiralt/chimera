@@ -226,3 +226,15 @@ fn algo_plays_a4_within_a_cent() {
     let cents = 1200.0 * (hz / 440.0).log2();
     assert!(cents.abs() < 1.0, "{hz} Hz, {cents:+.3} cents");
 }
+
+/// ADR 0011: every Algo golden case passes the gate before it is recorded.
+#[test]
+fn every_algo_case_is_finite_bounded_audible_and_ends() {
+    let gated = Case::ALL
+        .into_iter()
+        .filter(|c| c.name().starts_with("algo_") && *c != Case::AlgoToModalSwitch);
+    for case in gated {
+        assert_finite_bounded_audible(case);
+        assert_silent_after_note_off(case);
+    }
+}

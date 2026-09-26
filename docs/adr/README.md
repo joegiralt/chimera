@@ -8,7 +8,7 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 |---|---|---|
 | [0001](0001-record-decisions-as-adrs.md) | Record architectural decisions as ADRs | Accepted |
 | [0002](0002-own-engine-implementations-no-elektron-code.md) | Monomachine-inspired engines are our own implementations | Accepted |
-| [0003](0003-keep-faithful-tx81z-fm.md) | Keep the faithful TX81Z 4-op FM engine | Accepted |
+| [0003](0003-keep-faithful-tx81z-fm.md) | Keep the faithful TX81Z 4-op FM engine | Superseded by 0022 |
 | [0004](0004-modal-is-the-physical-modeling-engine.md) | Modal is the physical-modeling engine; Rings/Elements are its reference | Accepted |
 | [0005](0005-engine-selection-is-patch-based.md) | Engine selection is patch-based | Accepted |
 | [0006](0006-sub-project-decomposition.md) | Decompose the pivot into five sub-projects | Accepted |
@@ -27,4 +27,7 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0019](0019-note-input-per-source-queues.md) | One parser and one single-producer queue per note source | Accepted |
 | [0020](0020-audio-clocking-and-output.md) | Clock the chip by silicon revision; derive the cycle budget from it | Accepted; DTCM stack clause superseded in part by 0025 |
 | [0021](0021-take-once-triple-buffer.md) | Audio↔UI shared state uses a take-once triple buffer | Accepted |
+| [0022](0022-one-algorithmic-engine.md) | One algorithmic six-operator engine replaces Pizza, FM and VA | Accepted |
+| [0023](0023-waves-from-our-own-recipes.md) | The waves come from our own recipes | Accepted |
+| [0024](0024-morph-blends-link-weights.md) | MORPH blends link weights; one plan orders both algorithms | Accepted |
 | [0025](0025-dtcm-holds-wave-tables-and-stack.md) | DTCM holds the wave tables and the stack | Accepted |
