@@ -389,23 +389,20 @@ const ALG_POS: [[(i8, i8); 4]; 8] = [
     [(0, 3), (0, 2), (0, 1), (0, 0)],
     [(0, 2), (0, 1), (-1, 0), (1, 0)],
     [(0, 2), (-1, 1), (-1, 0), (1, 1)],
-    [(0, 3), (1, 2), (-1, 1), (-1, 0)],
+    [(0, 2), (1, 1), (-1, 1), (-1, 0)],
     [(-1, 1), (-1, 0), (1, 1), (1, 0)],
     [(-2, 1), (0, 1), (2, 1), (0, 0)],
     [(-2, 1), (0, 1), (2, 1), (2, 0)],
     [(-3, 0), (-1, 0), (1, 0), (3, 0)],
 ];
 // Edges verified against `dsp::engine_fm::FmEngine::render`'s routing per
-// algorithm, not just the pre-refresh diagram: algorithm 3 (TX81Z ALG4)
-// forks operator 3's own output into operator 1's modulation input in
-// addition to operator 3 feeding operator 2 (`(3, 2)`, not `(4, 2)` as the
-// render() match's own inline comment claims) — see the GitHub issue on
-// ALG 4 routing.
+// algorithm. Algorithm 3 (TX81Z ALG 4) is 4 -> 3 with op3 and op2 both into
+// op1; op2 is unmodulated (#18, ADR 0018).
 const ALG_EDGES: [&[(u8, u8)]; 8] = [
     &[(4, 3), (3, 2), (2, 1)],
     &[(3, 2), (4, 2), (2, 1)],
     &[(3, 2), (2, 1), (4, 1)],
-    &[(4, 3), (3, 2), (3, 1), (2, 1)],
+    &[(4, 3), (3, 1), (2, 1)],
     &[(2, 1), (4, 3)],
     &[(4, 1), (4, 2), (4, 3)],
     &[(4, 3)],
