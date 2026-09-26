@@ -179,6 +179,7 @@ name = "chimera-core"
 version = "0.1.0"
 dependencies = [
  "chimera-hal",
+ "chimera-waves",
  "embedded-graphics",
  "embedded-graphics-core",
  "libm",
@@ -219,6 +220,10 @@ dependencies = [
  "libm",
  "stm32h7xx-hal",
 ]
+
+[[package]]
+name = "chimera-waves"
+version = "0.1.0"
 
 [[package]]
 name = "clang-sys"
