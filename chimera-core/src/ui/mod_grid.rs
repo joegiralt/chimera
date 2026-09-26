@@ -302,6 +302,18 @@ pub fn dest_name(d: &ModDest) -> &'static str {
     d.addr.spec().map_or("?", |s| s.label)
 }
 
+/// A column header's name: `label` clipped to the column pitch minus a 3px
+/// gap, so neighbouring headers never touch (#22). Only the widest labels
+/// (`CUTOFF`, `INHARM`) lose a letter; the focus band shows the full name.
+pub fn fit_header(label: &'static str) -> &'static str {
+    let max = GRID_COL_W - 3;
+    let mut end = label.len();
+    while end > 0 && draw::text_width(&theme::FONT_LABEL, &label[..end], 0) > max {
+        end = label[..end].char_indices().last().map_or(0, |(i, _)| i);
+    }
+    &label[..end]
+}
+
 /// A destination as the focus band names it: the column header's two lines
 /// on one, `TAG NAME` (`OP1 LEVEL`), so operators read apart.
 pub fn fmt_route_dest(buf: &mut FmtBuf, d: &ModDest) {
@@ -371,7 +383,7 @@ where
         draw::text_center(
             d,
             &theme::FONT_LABEL,
-            dest_name(dest),
+            fit_header(dest_name(dest)),
             x,
             GRID_NAME_Y,
             name_color,
