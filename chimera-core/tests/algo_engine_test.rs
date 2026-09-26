@@ -335,3 +335,125 @@ fn retrigger_at_another_velocity_does_not_click() {
     let (edge, inner) = jumps(&out);
     assert!(edge <= inner * 1.05, "edge {edge}, inner {inner}");
 }
+
+#[test]
+fn a_one_block_level_dip_to_zero_does_not_end_a_held_note() {
+    let p = AlgoParams::default();
+    let mut e = AlgoEngine::new();
+    e.note_on(MidiNote::A4, Velocity::DEFAULT, &p, SR);
+    let mut out = Vec::new();
+    let mut blk = [0.0; BLOCK_SIZE];
+    for b in 0..30 {
+        let mut live = AlgoLive::from_params(&p);
+        if b == 10 {
+            live.level[0] = 0.0;
+        }
+        e.render(&mut blk, &p, &live, SR);
+        out.extend_from_slice(&blk);
+        assert!(e.is_active(), "block {b}");
+    }
+    assert!(peak(&out[20 * BLOCK_SIZE..]) > 0.5);
+}
+
+/// Plays `first`, releases it until the voice is inactive, then plays the
+/// same note on the same patch.
+fn after(first: &AlgoParams, first_note: u8) -> Vec<u32> {
+    let mut e = AlgoEngine::new();
+    let mut blk = [0.0; BLOCK_SIZE];
+    e.note_on(MidiNote::new(first_note).unwrap(), Velocity::MAX, first, SR);
+    for _ in 0..20 {
+        e.render(&mut blk, first, &AlgoLive::from_params(first), SR);
+    }
+    e.note_off();
+    while e.is_active() {
+        e.render(&mut blk, first, &AlgoLive::from_params(first), SR);
+    }
+    let p = stack(AlgoId::A14, AlgoId::A22, 40);
+    e.note_on(MidiNote::new(60).unwrap(), Velocity::DEFAULT, &p, SR);
+    let mut out = Vec::new();
+    for _ in 0..20 {
+        e.render(&mut blk, &p, &AlgoLive::from_params(&p), SR);
+        out.extend(blk.iter().map(|s| s.to_bits()));
+    }
+    out
+}
+
+#[test]
+fn a_note_on_a_silent_voice_does_not_depend_on_the_note_before() {
+    // Carriers release fast; the modulators are still sounding when the
+    // voice goes inactive.
+    let mut a = stack(AlgoId::T1, AlgoId::A17, 100);
+    for (i, o) in a.ops.iter_mut().enumerate() {
+        o.rr = if i == 0 || i == 4 { 15 } else { 1 };
+        o.ar = 10;
+    }
+    let mut b = stack(AlgoId::A1, AlgoId::A5, 0);
+    for o in b.ops.iter_mut() {
+        o.rr = 15;
+    }
+    b.ops[5].level = 0;
+    b.ops[5].rr = 1;
+    let fresh = {
+        let mut e = AlgoEngine::new();
+        let p = stack(AlgoId::A14, AlgoId::A22, 40);
+        e.note_on(MidiNote::new(60).unwrap(), Velocity::DEFAULT, &p, SR);
+        let mut out = Vec::new();
+        let mut blk = [0.0; BLOCK_SIZE];
+        for _ in 0..20 {
+            e.render(&mut blk, &p, &AlgoLive::from_params(&p), SR);
+            out.extend(blk.iter().map(|s| s.to_bits()));
+        }
+        out
+    };
+    assert_eq!(after(&a, 30), fresh);
+    assert_eq!(after(&b, 100), fresh);
+}
+
+#[test]
+fn a_retrigger_adopts_an_idle_operators_new_wave_without_a_duck() {
+    // Operator 5 (a T1 carrier) decays to idle while operator 1 holds.
+    let mut p = AlgoParams::default();
+    (p.ops[4].level, p.ops[4].d1r, p.ops[4].d1l) = (99, 31, 0);
+    let mut q = p;
+    q.ops[4].wave = WaveId::SQR.get();
+    let play = |first: &AlgoParams| {
+        let mut e = AlgoEngine::new();
+        let mut blk = [0.0; BLOCK_SIZE];
+        e.note_on(MidiNote::A4, Velocity::DEFAULT, first, SR);
+        for _ in 0..40 {
+            e.render(&mut blk, first, &AlgoLive::from_params(first), SR);
+        }
+        e.note_on(MidiNote::A4, Velocity::DEFAULT, &q, SR);
+        let mut out = Vec::new();
+        for _ in 0..10 {
+            e.render(&mut blk, &q, &AlgoLive::from_params(&q), SR);
+            out.extend(blk.iter().map(|s| s.to_bits()));
+        }
+        out
+    };
+    assert_eq!(play(&p), play(&q));
+}
+
+#[test]
+fn a_one_block_morph_away_from_the_only_sounding_carrier_does_not_end_the_note() {
+    // Operator 5 carries in T1 but not in A17; operator 1 is silent.
+    let mut p = AlgoParams {
+        alg_b: AlgoId::A17.get(),
+        ..AlgoParams::default()
+    };
+    (p.ops[0].level, p.ops[4].level) = (0, 99);
+    let mut e = AlgoEngine::new();
+    e.note_on(MidiNote::A4, Velocity::DEFAULT, &p, SR);
+    let mut out = Vec::new();
+    let mut blk = [0.0; BLOCK_SIZE];
+    for b in 0..30 {
+        let mut live = AlgoLive::from_params(&p);
+        if b == 10 {
+            live.morph = 127.0;
+        }
+        e.render(&mut blk, &p, &live, SR);
+        out.extend_from_slice(&blk);
+        assert!(e.is_active(), "block {b}");
+    }
+    assert!(peak(&out[20 * BLOCK_SIZE..]) > 0.5);
+}

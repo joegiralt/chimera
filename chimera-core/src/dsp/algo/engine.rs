@@ -9,7 +9,7 @@ use crate::dsp::algo::kernel::{Kernel, KernelBlock, OpBlock, SAMPLE_SCALE};
 use crate::dsp::algo::math::exp2;
 use crate::dsp::algo::morph::{Morph, carrier_norm, incoming};
 use crate::dsp::algo::params::AlgoParams;
-use crate::dsp::algo::plan::{EvalPlan, OPS, blend};
+use crate::dsp::algo::plan::{EvalPlan, OPS};
 use crate::dsp::algo::tx::{FEEDBACK_CYCLES, detune_factor, level_gain, ratio};
 use crate::dsp::algo::waves::{WaveId, mip_position, mip_step};
 use crate::hw::{BLOCK_SIZE, Cost};
@@ -113,8 +113,9 @@ impl AlgoEngine {
         }
     }
 
-    /// A silent voice takes the patch at once; a sounding one keeps its
-    /// plan, waves, gains and mips, and `render` moves them without a step.
+    /// A silent voice starts clean from the patch; a sounding one keeps its
+    /// plan, gains and mips, and `render` moves them without a step. An
+    /// idle operator is silent, so it takes its wave, gain and mip at once.
     pub fn note_on(
         &mut self,
         note: MidiNote,
@@ -130,9 +131,7 @@ impl AlgoEngine {
         if !self.active {
             self.adopt_alg(p);
             self.swap = Swap::Idle;
-            for i in 0..OPS {
-                self.waves[i] = WaveId::clamped(p.ops[i].wave);
-            }
+            self.env = [OpEnv::IDLE; OPS];
             self.morph = m.get();
             self.norm = carrier_norm(&self.plan, m);
         }
@@ -142,6 +141,7 @@ impl AlgoEngine {
             self.rates[i] = p.ops[i].rates();
             if self.env[i].is_idle() {
                 self.kernel.reset(i);
+                self.waves[i] = WaveId::clamped(p.ops[i].wave);
                 self.gain[i] = self.target_gain(p, &live, i);
                 self.mip[i] = self.mip_target(p, cycles, sr, m, &level, i);
             }
@@ -217,8 +217,8 @@ impl AlgoEngine {
         (self.morph, self.norm) = (m.get(), norm);
         self.finish_swap(p);
         self.active = (0..OPS).any(|i| {
-            blend(self.plan.carrier_a[i], self.plan.carrier_b[i], self.morph) > 0.0
-                && live.level[i] > 0.0
+            self.plan.carrier_a[i] + self.plan.carrier_b[i] > 0.0
+                && p.ops[i].level > 0
                 && !self.env[i].is_idle()
         });
     }
