@@ -114,7 +114,7 @@ fn main() -> ! {
     controls::enable();
 
     let (scope_w, mut scope_r) = shared::take_scope().expect("scope buffer taken once");
-    let (_shared_w, shared_r) =
+    let (mut shared_w, shared_r) =
         shared::take_audio(&ui.performance).expect("audio buffer taken once");
     audio::engine::init(SampleBudget::for_cpu(clk.cpu_hz), shared_r, scope_w);
 
@@ -142,6 +142,7 @@ fn main() -> ! {
             ui.handle_input(&controls);
         }
         ui.update();
+        shared_w.publish(|b| b.update_from(&ui.performance));
         let flush_list = ui.render_dirty_with_scope(&mut display, &perf.stats, scope_r.read());
         for &(ys, ye) in &flush_list {
             if ys != ye {
