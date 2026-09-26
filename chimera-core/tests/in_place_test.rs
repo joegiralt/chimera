@@ -1,3 +1,5 @@
+use std::mem::MaybeUninit;
+
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus};
 use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::dsp::voice::Voice;
@@ -10,6 +12,16 @@ use chimera_core::{MidiChannel, MidiNote, Velocity};
 
 const SR: u32 = chimera_hal::SAMPLE_RATE;
 const BUDGET: SampleBudget = SampleBudget::for_cpu(CPU_HZ_REV_V);
+
+// On the chip the slots are NOLOAD statics holding boot garbage, so a
+// missed zero-valued field write must show up here too.
+fn poisoned<T>() -> Box<MaybeUninit<T>> {
+    let mut slot = Box::<T>::new_uninit();
+    // SAFETY: the pointer is the box's own allocation, valid and aligned for
+    // one `T`; bytes written into a `MaybeUninit` need no validity.
+    unsafe { slot.as_mut_ptr().write_bytes(0xA5, 1) };
+    slot
+}
 
 fn event(ch: u8, note: u8, kind: NoteKind) -> NoteEvent {
     NoteEvent {
@@ -61,8 +73,8 @@ fn play(inst: &mut Instrument, fx: &mut FxBus) -> Vec<u32> {
 fn instrument_built_in_place_renders_like_new() {
     let mut by_value = Box::new(Instrument::new(SR, BUDGET));
     let mut fx_a = Box::new(FxBus::new());
-    let mut slot = Box::<Instrument>::new_uninit();
-    let mut fx_slot = Box::<FxBus>::new_uninit();
+    let mut slot = poisoned::<Instrument>();
+    let mut fx_slot = poisoned::<FxBus>();
     let in_place = Instrument::init_in_place(&mut slot, SR, BUDGET);
     let fx_b = FxBus::init_in_place(&mut fx_slot);
     assert_eq!(play(&mut by_value, &mut fx_a), play(in_place, fx_b));
@@ -72,7 +84,7 @@ fn instrument_built_in_place_renders_like_new() {
 #[test]
 fn fx_bus_built_in_place_processes_like_new() {
     let mut a = Box::new(FxBus::new());
-    let mut slot = Box::<FxBus>::new_uninit();
+    let mut slot = poisoned::<FxBus>();
     let b = FxBus::init_in_place(&mut slot);
     let mut params = every_engine_and_every_effect().fx;
     let mut x = 0x1234_5678u32;
@@ -110,7 +122,7 @@ fn voice_built_in_place_renders_like_new_for_every_engine() {
             let mut params = ParamSnapshot::for_engine(engine);
             params.modal.mode = mode;
             let mut a = Box::new(Voice::new(SR));
-            let mut slot = Box::<Voice>::new_uninit();
+            let mut slot = poisoned::<Voice>();
             let b = Voice::init_in_place(&mut slot, SR);
             let note = MidiNote::new(52).unwrap();
             a.note_on(note, Velocity::DEFAULT, &params);
