@@ -2,6 +2,7 @@ use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 use core::sync::atomic::{AtomicBool, Ordering};
 
+use chimera_core::dsp::algo::waves::{self, Waves};
 use chimera_core::instrument::AudioShared;
 use chimera_core::preset::Performance;
 use chimera_core::scope::{ScopeFrame, scope_buffer};
@@ -18,6 +19,21 @@ pub fn take_scope() -> Option<(Writer<ScopeFrame>, Reader<ScopeFrame>)> {
     // SAFETY: the flag lets exactly one caller past, so this is the only
     // reference to `SCOPE` ever made.
     Some(unsafe { &mut *addr_of_mut!(SCOPE) }.split())
+}
+
+// The wave tables' zero-wait working copy, at the bottom of DTCM (dtcm.x).
+#[unsafe(link_section = ".dtcm_waves")]
+static mut WAVES_DTCM: MaybeUninit<Waves> = MaybeUninit::uninit();
+static WAVES_TAKEN: AtomicBool = AtomicBool::new(false);
+
+/// Copies the wave tables from flash into DTCM and reads them from there.
+pub fn copy_waves() {
+    if WAVES_TAKEN.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    // SAFETY: the flag lets exactly one caller past, so this is the only
+    // reference to `WAVES_DTCM` ever made.
+    waves::copy_into(unsafe { &mut *addr_of_mut!(WAVES_DTCM) });
 }
 
 // `UiState` is ~27 KB: it lives in AXI, not in `main`'s frame on the 128 KB

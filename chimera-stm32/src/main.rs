@@ -52,6 +52,7 @@ fn main() -> ! {
     let rev = clocks::read_rev(&dp.DBGMCU);
     let (ccdr, clk) = clocks::freeze(dp.PWR, dp.RCC, &dp.SYSCFG, rev);
     cache::init(&mut cp.MPU, &mut cp.SCB, &mut cp.CPUID);
+    shared::copy_waves();
 
     let gpioa = dp.GPIOA.split(ccdr.peripheral.GPIOA);
     let gpiod = dp.GPIOD.split(ccdr.peripheral.GPIOD);
