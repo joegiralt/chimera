@@ -95,5 +95,5 @@ fn registry_accepts_exactly_the_modulatable_addresses() {
             accepted += addr.modulatable() as usize;
         }
     }
-    assert_eq!(accepted, 25);
+    assert_eq!(accepted, 32);
 }

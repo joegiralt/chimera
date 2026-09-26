@@ -1,6 +1,7 @@
 //! Semantic addresses (spec §2) and `ParamSnapshot::block(_mut)`.
 
 use chimera_core::addr::{BlockRef, Blocks, Op, OpOutOfRange, ParamAddr};
+use chimera_core::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use chimera_core::dsp::pizza::PizzaParams;
 use chimera_core::params::{
     DriveParams, EnvParams, FilterParams, FmOpParams, FolderParams, OutParams, ParamSnapshot,
@@ -13,7 +14,7 @@ fn op_rejects_out_of_range() {
         assert_eq!(Op::try_from(i as u8), Ok(*op));
         assert_eq!(op.index(), i);
     }
-    assert_eq!(Op::try_from(4), Err(OpOutOfRange(4)));
+    assert_eq!(Op::try_from(6), Err(OpOutOfRange(6)));
     assert_eq!(Op::try_from(255), Err(OpOutOfRange(255)));
 }
 
@@ -21,8 +22,8 @@ fn op_rejects_out_of_range() {
 fn op_nudge_clamps() {
     assert_eq!(Op::A.nudged(-1), Op::A);
     assert_eq!(Op::A.nudged(2), Op::C);
-    assert_eq!(Op::C.nudged(127), Op::D);
-    assert_eq!(Op::D.nudged(-128), Op::A);
+    assert_eq!(Op::C.nudged(127), Op::F);
+    assert_eq!(Op::F.nudged(-128), Op::A);
 }
 
 #[test]
@@ -95,9 +96,13 @@ fn modulatable_addresses_are_exactly_the_spec_list() {
         ParamAddr::new(BlockRef::AmpEnv, EnvParams::RELEASE),
         ParamAddr::new(BlockRef::Out, OutParams::VOLUME),
     ];
-    for op in Op::ALL {
+    for op in [Op::A, Op::B, Op::C, Op::D] {
         want.push(ParamAddr::new(BlockRef::FmOp(op), FmOpParams::LEVEL));
         want.push(ParamAddr::new(BlockRef::FmOp(op), FmOpParams::FEEDBACK));
+    }
+    want.push(ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH));
+    for op in Op::ALL {
+        want.push(ParamAddr::new(BlockRef::AlgoOp(op), AlgoOpParams::LEVEL));
     }
     let got: Vec<ParamAddr> = BlockRef::ALL
         .iter()

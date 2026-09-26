@@ -5,6 +5,7 @@ use chimera_hal::BLOCK_SIZE;
 
 use crate::addr::Blocks;
 use crate::block::apply_offset;
+use crate::dsp::algo::engine::AlgoLive;
 use crate::dsp::drive::Drive;
 use crate::dsp::engines::Engines;
 use crate::dsp::envelope::Envelope;
@@ -134,10 +135,14 @@ impl Voice {
         // Modulated copy (stack only): every routed destination gets its
         // offset through its block's spec (spec §4).
         let mut m = params.clone();
+        let mut live = AlgoLive::from_params(&params.algo);
         for d in 0..mod_state.num_dests() {
             let off = mod_state.sum_for(d, &mod_values);
             if off != 0.0 {
                 let a = mod_state.dest(d);
+                if live.offset(a, off) {
+                    continue;
+                }
                 // Modulatable addresses are always Sound blocks (`voice_reads`).
                 if let Some(blk) = m.block_mut(a.block) {
                     apply_offset(blk, a.param, off);
@@ -146,7 +151,7 @@ impl Voice {
         }
 
         // 1. Engine → raw oscillator output
-        self.engines.render(self.active_engine, output, &m);
+        self.engines.render(self.active_engine, output, &m, &live);
 
         // 2. Drive
         self.drive.process(output, &m.drive);
@@ -157,17 +162,12 @@ impl Voice {
         // 4. Wavefolder
         self.folder.process(output, &m.folder);
 
-        // 5. VCA
+        // 5. VCA. The amp envelope runs even off the VCA: it is the ENV mod source.
         let volume = m.out.volume;
-        if Engines::uses_amp_env(self.active_engine) {
-            for sample in output.iter_mut() {
-                let env = self.amp_env.process(&m.envelopes[0], sample_rate);
-                *sample *= env * volume;
-            }
-        } else {
-            for sample in output.iter_mut() {
-                *sample *= volume;
-            }
+        let on_vca = Engines::uses_amp_env(self.active_engine);
+        for sample in output.iter_mut() {
+            let env = self.amp_env.process(&m.envelopes[0], sample_rate);
+            *sample *= if on_vca { env * volume } else { volume };
         }
 
         // Check if done

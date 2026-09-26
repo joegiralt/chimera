@@ -1,4 +1,6 @@
 use crate::addr::{BlockRef, Op};
+use crate::block::ParamId;
+use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::chorus::ChorusParams;
 use crate::dsp::delay::DelayParams;
 use crate::dsp::lfo::LfoParams;
@@ -472,6 +474,52 @@ pub static FM_ENV4: BlockDef = BlockDef {
 };
 
 // ---------------------------------------------------------------------------
+// Algo engine: group pages, one parameter across operators 1–6 (spec § UI)
+// ---------------------------------------------------------------------------
+
+const fn op_row(id: ParamId) -> [ParamSlot; 6] {
+    [
+        ParamSlot::param(BlockRef::AlgoOp(Op::A), id).with_label("OP1"),
+        ParamSlot::param(BlockRef::AlgoOp(Op::B), id).with_label("OP2"),
+        ParamSlot::param(BlockRef::AlgoOp(Op::C), id).with_label("OP3"),
+        ParamSlot::param(BlockRef::AlgoOp(Op::D), id).with_label("OP4"),
+        ParamSlot::param(BlockRef::AlgoOp(Op::E), id).with_label("OP5"),
+        ParamSlot::param(BlockRef::AlgoOp(Op::F), id).with_label("OP6"),
+    ]
+}
+
+const fn group(id: u16, name: &'static str, short: &'static str, param: ParamId) -> BlockDef {
+    BlockDef {
+        id,
+        name,
+        short,
+        layout: PageLayout::CellGrid,
+        viz: VizType::None,
+        params: op_row(param),
+    }
+}
+
+/// The OSC node's home page; its short name labels the node on the map.
+pub static ALGO_WAVE: BlockDef = group(42, "Wave", "OSC", AlgoOpParams::WAVE);
+pub static ALGO_LEVEL: BlockDef = group(44, "Level", "LVL", AlgoOpParams::LEVEL);
+
+pub static ALGO_ALG: BlockDef = BlockDef {
+    id: 43,
+    name: "Algorithm",
+    short: "ALG",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::param(BlockRef::Algo, AlgoParams::ALG_A),
+        ParamSlot::param(BlockRef::Algo, AlgoParams::ALG_B),
+        ParamSlot::param(BlockRef::Algo, AlgoParams::MORPH),
+        ParamSlot::param(BlockRef::Algo, AlgoParams::TRANSPOSE),
+        ParamSlot::param(BlockRef::Out, OutParams::VOLUME).with_label("VOL"),
+        EMPTY,
+    ],
+};
+
+// ---------------------------------------------------------------------------
 // Chain templates
 // ---------------------------------------------------------------------------
 
@@ -586,6 +634,41 @@ static FM_BLOCKS: [ChainBlock; 5] = [
 pub static FM_CHAIN: ChainDef2 = ChainDef2 {
     name: "FM",
     blocks: &FM_BLOCKS,
+    mod_sources: &PART_MOD_SOURCES,
+};
+
+static ALGO_OSC_SUB_PAGES: [&BlockDef; 1] = [&ALGO_LEVEL];
+
+static ALGO_BLOCKS: [ChainBlock; 6] = [
+    ChainBlock {
+        def: &ALGO_WAVE,
+        sub_pages: &ALGO_OSC_SUB_PAGES,
+    },
+    ChainBlock {
+        def: &ALGO_ALG,
+        sub_pages: &[],
+    },
+    ChainBlock {
+        def: &DRIVE,
+        sub_pages: &[],
+    },
+    ChainBlock {
+        def: &FILTER,
+        sub_pages: &[],
+    },
+    ChainBlock {
+        def: &FOLDER,
+        sub_pages: &[],
+    },
+    ChainBlock {
+        def: &MOD_MATRIX,
+        sub_pages: &MOD_MATRIX_SUB_PAGES,
+    },
+];
+
+pub static ALGO_CHAIN: ChainDef2 = ChainDef2 {
+    name: "Algo",
+    blocks: &ALGO_BLOCKS,
     mod_sources: &PART_MOD_SOURCES,
 };
 

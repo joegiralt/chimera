@@ -3,12 +3,13 @@
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 
+use crate::addr::{BlockRef, ParamAddr};
 use crate::dsp::algo::algorithms::{AlgoId, plan};
 use crate::dsp::algo::env::{EnvCoefs, EnvRates, OpEnv};
 use crate::dsp::algo::kernel::{Kernel, KernelBlock, OpBlock, SAMPLE_SCALE};
 use crate::dsp::algo::math::exp2;
 use crate::dsp::algo::morph::{Morph, carrier_norm, incoming};
-use crate::dsp::algo::params::AlgoParams;
+use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::algo::plan::{EvalPlan, OPS};
 use crate::dsp::algo::tx::{FEEDBACK_CYCLES, detune_factor, level_gain, ratio};
 use crate::dsp::algo::waves::{WaveId, mip_position, mip_step};
@@ -33,6 +34,20 @@ impl AlgoLive {
             morph: p.morph as f32,
             level: core::array::from_fn(|i| p.ops[i].level as f32),
         }
+    }
+
+    /// Takes a mod offset aimed at MORPH or a LEVEL (`false` for any other
+    /// destination, which the voice applies to its blocks as before).
+    pub fn offset(&mut self, addr: ParamAddr, off: f32) -> bool {
+        let slot = match (addr.block, addr.param) {
+            (BlockRef::Algo, AlgoParams::MORPH) => &mut self.morph,
+            (BlockRef::AlgoOp(op), AlgoOpParams::LEVEL) => &mut self.level[op.index()],
+            _ => return false,
+        };
+        if let Some(s) = addr.spec() {
+            *slot = (*slot + off * (s.max - s.min)).clamp(s.min, s.max);
+        }
+        true
     }
 }
 

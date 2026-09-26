@@ -11,6 +11,7 @@ fn chain_type_names_its_engine() {
     assert_eq!(ChainType::PizzaPoly.engine(), EngineType::Pizza);
     assert_eq!(ChainType::Modal.engine(), EngineType::Modal);
     assert_eq!(FM_ENGINE, EngineType::Fm);
+    assert_eq!(ChainType::Algo.engine(), EngineType::Algo);
 }
 
 #[test]

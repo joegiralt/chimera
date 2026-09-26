@@ -21,10 +21,16 @@ pub enum ChainType {
     PizzaPoly = 0,
     Modal = 1,
     Fm = 2,
+    Algo = 3,
 }
 
 impl ChainType {
-    pub const ALL: [ChainType; 3] = [ChainType::PizzaPoly, ChainType::Modal, ChainType::Fm];
+    pub const ALL: [ChainType; 4] = [
+        ChainType::PizzaPoly,
+        ChainType::Modal,
+        ChainType::Fm,
+        ChainType::Algo,
+    ];
 
     /// Short display label for the chain type.
     pub fn label(self) -> &'static str {
@@ -32,6 +38,7 @@ impl ChainType {
             ChainType::PizzaPoly => "Pizza",
             ChainType::Modal => "Modal",
             ChainType::Fm => "FM",
+            ChainType::Algo => "Algo",
         }
     }
 
@@ -41,6 +48,7 @@ impl ChainType {
             ChainType::PizzaPoly => EngineType::Pizza,
             ChainType::Modal => EngineType::Modal,
             ChainType::Fm => EngineType::Fm,
+            ChainType::Algo => EngineType::Algo,
         }
     }
 }
@@ -216,6 +224,8 @@ impl Blocks for PartEdit<'_> {
             | BlockRef::Modal
             | BlockRef::Fm
             | BlockRef::FmOp(_)
+            | BlockRef::Algo
+            | BlockRef::AlgoOp(_)
             | BlockRef::Drive
             | BlockRef::Filter
             | BlockRef::Folder
@@ -237,6 +247,8 @@ impl Blocks for PartEdit<'_> {
             | BlockRef::Modal
             | BlockRef::Fm
             | BlockRef::FmOp(_)
+            | BlockRef::Algo
+            | BlockRef::AlgoOp(_)
             | BlockRef::Drive
             | BlockRef::Filter
             | BlockRef::Folder

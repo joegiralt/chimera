@@ -227,7 +227,12 @@ fn prop_param_change_changes_output() {
             1 => params_b.drive.drive = 1.0 - params_a.drive.drive,
             2 => params_b.folder.fold = 1.0 - params_a.folder.fold,
             3 => params_b.out.volume = params_a.out.volume * 0.2,
-            _ => params_b.pizza.crush = 1.0 - params_a.pizza.crush,
+            // The engine's own parameter, where it has one.
+            _ => match params_a.engine() {
+                EngineType::Pizza => params_b.pizza.crush = 1.0 - params_a.pizza.crush,
+                EngineType::Algo => params_b.algo.ops[0].level = 60,
+                _ => params_b.out.volume = params_a.out.volume * 0.2,
+            },
         }
 
         let note = 60;

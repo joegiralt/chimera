@@ -111,7 +111,7 @@ impl ParamSlot {
     pub fn format(&self) -> ValFmt {
         match self.binding {
             SlotBinding::Empty => ValFmt::Uni,
-            SlotBinding::SelectOp => ValFmt::OneBased(3),
+            SlotBinding::SelectOp => ValFmt::OneBased(Op::ALL.len() as u8 - 1),
             SlotBinding::Legacy { fmt, .. } => fmt,
             SlotBinding::Param(_) | SlotBinding::SelectedOp(_) => {
                 self.spec().map_or(ValFmt::Uni, |s| s.fmt)
