@@ -159,15 +159,15 @@ fn test_chain_nav_starts_at_part0_engine() {
     assert_eq!(nav.chain_id, ChainId::Part(0));
     assert_eq!(nav.node, 0);
     assert_eq!(nav.sub_page, 0);
-    assert_eq!(PageKey::from_nav(&nav, Op::A), part(&reg::ALGO_WAVE));
+    assert_eq!(PageKey::from_nav(&nav, Op::A), part(&reg::ALGO_ALG));
 }
 
 #[test]
 fn test_page_from_nav_part_chain() {
     let mut nav = ChainNav::new();
     for (node, def) in [
-        (0, &reg::ALGO_WAVE),
-        (1, &reg::ALGO_ALG),
+        (0, &reg::ALGO_ALG),
+        (1, &reg::ALGO_WAVE),
         (2, &reg::DRIVE),
         (3, &reg::FILTER),
         (4, &reg::FOLDER),

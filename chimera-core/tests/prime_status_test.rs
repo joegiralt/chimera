@@ -323,10 +323,9 @@ fn priming_past_matrix_capacity_on_the_algo_chain_reports_full() {
     let mut ui = UiState::new();
     let mut seen = Vec::new();
 
+    prime_every_slot(&mut ui, &ALL_SLOTS[2..5], &mut seen); // ALGO: MORPH, TRNSP (refused), VOL
     to_level_page(&mut ui);
     prime_every_slot(&mut ui, &ALL_SLOTS, &mut seen); // six LEVELs
-    feed(&mut ui, Input::press(ButtonId::Plus)); // Algorithm page
-    prime_every_slot(&mut ui, &ALL_SLOTS[2..5], &mut seen); // MORPH, TRNSP (refused), VOL
     for _ in 0..3 {
         feed(&mut ui, Input::press(ButtonId::Plus)); // Drive, Filter, Folder
         prime_every_slot(&mut ui, &ALL_SLOTS, &mut seen);

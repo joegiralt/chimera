@@ -19,7 +19,7 @@ fn kick_chain_has_3_blocks() {
 #[test]
 fn chain_active_def_resolves() {
     let chain = &block_registry::ALGO_CHAIN;
-    assert_eq!(chain.active_def(0, 0).unwrap().name, "Wave");
+    assert_eq!(chain.active_def(0, 0).unwrap().name, "Algorithm");
     assert_eq!(chain.active_def(3, 0).unwrap().name, "Filter");
     assert!(chain.active_def(99, 0).is_none());
 }
@@ -77,11 +77,11 @@ fn about_has_the_audio_sub_page() {
 }
 
 #[test]
-fn algo_chain_is_osc_alg_then_the_voice_chain() {
+fn algo_chain_is_alg_osc_then_the_voice_chain() {
     let chain = &block_registry::ALGO_CHAIN;
     let shorts: Vec<&str> = chain.blocks.iter().map(|b| b.def.short).collect();
-    assert_eq!(shorts, ["OSC", "ALG", "DRV", "FLT", "FLD", "MOD"]);
-    assert_eq!(chain.active_def(0, 0).unwrap().name, "Wave");
-    assert!(chain.blocks[0].sub_pages.iter().any(|d| d.name == "Level"));
+    assert_eq!(shorts, ["ALG", "OSC", "DRV", "FLT", "FLD", "MOD"]);
+    assert_eq!(chain.active_def(1, 0).unwrap().name, "Wave");
+    assert!(chain.blocks[1].sub_pages.iter().any(|d| d.name == "Level"));
     assert_eq!(chain.blocks[5].sub_pages.len(), 2);
 }

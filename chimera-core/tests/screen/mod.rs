@@ -177,10 +177,26 @@ pub fn load_init(ui: &mut UiState, ct: ChainType) {
     feed(ui, Input::press(ButtonId::Edit));
 }
 
-/// From Part 1's home (the OSC node), EDIT down to the LEVEL sub-page.
+/// The OSC node's index on the Algo chain.
+pub fn osc_node() -> usize {
+    use chimera_core::ui::block_registry::{ALGO_CHAIN, ALGO_WAVE};
+    ALGO_CHAIN
+        .blocks
+        .iter()
+        .position(|b| b.def.id == ALGO_WAVE.id)
+        .expect("OSC is on the Algo chain")
+}
+
+/// From Part 1's home (ALGO), PLUS to the OSC node.
+pub fn to_osc(ui: &mut UiState) {
+    plus(ui, osc_node());
+}
+
+/// From Part 1's home, to OSC, then EDIT down to the LEVEL sub-page.
 pub fn to_level_page(ui: &mut UiState) {
     use chimera_core::ui::block_registry::{ALGO_CHAIN, ALGO_LEVEL};
-    let subs = ALGO_CHAIN.blocks[0].sub_pages;
+    to_osc(ui);
+    let subs = ALGO_CHAIN.blocks[osc_node()].sub_pages;
     let n = subs
         .iter()
         .position(|d| d.id == ALGO_LEVEL.id)
