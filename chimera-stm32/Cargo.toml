@@ -3,6 +3,10 @@ name = "chimera-stm32"
 version.workspace = true
 edition.workspace = true
 
+[features]
+default = ["midi-din"]
+midi-din = []
+
 [dependencies]
 chimera-core = { path = "../chimera-core" }
 chimera-hal = { path = "../chimera-hal" }
