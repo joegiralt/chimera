@@ -4,6 +4,7 @@ use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::primitives::{PrimitiveStyle, Rectangle, StyledDrawable};
 
 use crate::addr::Op;
+use crate::dsp::algo::algorithms::AlgoId;
 use crate::perf::load::AudioStats;
 use crate::ui::PrimeStatus;
 use crate::ui::animation::AnimatedValue;
@@ -141,6 +142,15 @@ impl Renderer {
                     viz::effects_flow(display, lit, None);
                 }
             }
+            VizType::AlgoDiagram => {
+                let algo = &f.parts[f.active_part].sound.params.algo;
+                viz::algo_diagram(
+                    display,
+                    AlgoId::clamped(algo.alg_a).algorithm(),
+                    AlgoId::clamped(algo.alg_b).algorithm(),
+                    self.anim[2].current(),
+                );
+            }
             _ => viz::live_output(display, f.scope),
         }
     }
@@ -202,6 +212,14 @@ impl Renderer {
                     strips_key(&self.strips(f), f.active_part),
                 ),
                 VizType::EffectsFlow => (region::quantize_values(&self.anim), f.focus as u32),
+                VizType::AlgoDiagram => {
+                    let algo = &f.parts[f.active_part].sound.params.algo;
+                    let q = region::quantize_values(&self.anim);
+                    (
+                        [0, 0, q[2], 0, 0, 0],
+                        (algo.alg_a as u32) << 8 | algo.alg_b as u32,
+                    )
+                }
                 _ => ([0; 6], viz::live_key(f.scope)),
             },
             PageLayout::BigViz => (region::quantize_values(&self.anim), f.focus as u32),

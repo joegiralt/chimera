@@ -170,3 +170,42 @@ fn algo_pages_edit_every_operator_and_the_algorithm() {
     snap(&reg::ALGO_ALG, 2, 1, &mut p); // MIX + turn snaps MORPH like any Uni value
     assert_eq!(p.algo.morph, 100);
 }
+
+#[test]
+fn the_osc_node_has_every_operator_parameter() {
+    use chimera_core::dsp::algo::params::ALGO_OP_SPECS;
+    use chimera_core::ui::block_def::SlotBinding;
+    let block = reg::ALGO_CHAIN
+        .blocks
+        .iter()
+        .find(|b| b.def.id == reg::ALGO_WAVE.id)
+        .unwrap();
+    let mut edited = Vec::new();
+    for sub in 0..block.sub_page_count() {
+        let def = block.active_def(sub);
+        for (i, slot) in def.params.iter().enumerate() {
+            let SlotBinding::Param(a) = slot.binding else {
+                panic!("{} slot {i}", def.name)
+            };
+            assert_eq!(
+                a.block,
+                BlockRef::AlgoOp(Op::ALL[i]),
+                "{} slot {i}",
+                def.name
+            );
+            edited.push(a.param);
+        }
+    }
+    for s in &ALGO_OP_SPECS {
+        assert!(edited.contains(&s.id), "{} has no page", s.label);
+    }
+    let names: Vec<&str> = (0..block.sub_page_count())
+        .map(|s| block.active_def(s).short)
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "OSC", "CRS", "FIN", "DET", "LVL", "VEL", "AR", "D1R", "D1L", "D2R", "RR", "RS", "FBK"
+        ]
+    );
+}

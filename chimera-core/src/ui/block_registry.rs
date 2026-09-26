@@ -338,13 +338,24 @@ const fn group(id: u16, name: &'static str, short: &'static str, param: ParamId)
 /// The OSC node's home page; its short name labels the node on the map.
 pub static ALGO_WAVE: BlockDef = group(42, "Wave", "OSC", AlgoOpParams::WAVE);
 pub static ALGO_LEVEL: BlockDef = group(44, "Level", "LVL", AlgoOpParams::LEVEL);
+pub static ALGO_COARSE: BlockDef = group(45, "Coarse", "CRS", AlgoOpParams::COARSE);
+pub static ALGO_FINE: BlockDef = group(46, "Fine", "FIN", AlgoOpParams::FINE);
+pub static ALGO_DETUNE: BlockDef = group(47, "Detune", "DET", AlgoOpParams::DETUNE);
+pub static ALGO_VELOCITY: BlockDef = group(48, "Velocity", "VEL", AlgoOpParams::VELOCITY);
+pub static ALGO_AR: BlockDef = group(49, "Env AR", "AR", AlgoOpParams::AR);
+pub static ALGO_D1R: BlockDef = group(50, "Env D1R", "D1R", AlgoOpParams::D1R);
+pub static ALGO_D1L: BlockDef = group(51, "Env D1L", "D1L", AlgoOpParams::D1L);
+pub static ALGO_D2R: BlockDef = group(52, "Env D2R", "D2R", AlgoOpParams::D2R);
+pub static ALGO_RR: BlockDef = group(53, "Env RR", "RR", AlgoOpParams::RR);
+pub static ALGO_RATE_SCALE: BlockDef = group(54, "Rate Scale", "RS", AlgoOpParams::RATE_SCALE);
+pub static ALGO_FEEDBACK: BlockDef = group(55, "Feedback", "FBK", AlgoOpParams::FEEDBACK);
 
 pub static ALGO_ALG: BlockDef = BlockDef {
     id: 43,
     name: "Algorithm",
     short: "ALG",
     layout: PageLayout::CellGrid,
-    viz: VizType::None,
+    viz: VizType::AlgoDiagram,
     params: [
         ParamSlot::param(BlockRef::Algo, AlgoParams::ALG_A),
         ParamSlot::param(BlockRef::Algo, AlgoParams::ALG_B),
@@ -409,7 +420,22 @@ pub static MODAL_PLUCK_CHAIN: ChainDef2 = ChainDef2 {
     mod_sources: &PART_MOD_SOURCES,
 };
 
-static ALGO_OSC_SUB_PAGES: [&BlockDef; 1] = [&ALGO_LEVEL];
+/// WAVE is the OSC node's home; FINE's DETUNE and the five ENV stages sit
+/// right after their group (sub-pages are one level deep).
+static ALGO_OSC_SUB_PAGES: [&BlockDef; 12] = [
+    &ALGO_COARSE,
+    &ALGO_FINE,
+    &ALGO_DETUNE,
+    &ALGO_LEVEL,
+    &ALGO_VELOCITY,
+    &ALGO_AR,
+    &ALGO_D1R,
+    &ALGO_D1L,
+    &ALGO_D2R,
+    &ALGO_RR,
+    &ALGO_RATE_SCALE,
+    &ALGO_FEEDBACK,
+];
 
 /// ALGO is the engine's home: first on the map, where entering the chain lands.
 static ALGO_BLOCKS: [ChainBlock; 6] = [
