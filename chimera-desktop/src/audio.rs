@@ -1,6 +1,6 @@
 //! Desktop audio: the same `Instrument` the firmware will run (ADR 0013),
-//! fed by the `NoteQueue` and a double-buffered `AudioShared`, summed from
-//! three DAC pairs to the speakers.
+//! fed by the `NoteQueue` and an `AudioShared` published through a
+//! `TripleBuffer`, summed from three DAC pairs to the speakers.
 
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::hw::{BLOCK_SIZE, CPU_HZ_REV_V, DAC_PAIRS, SAMPLE_RATE, SampleBudget};
@@ -8,18 +8,15 @@ use chimera_core::instrument::{AudioShared, DacOut, Instrument};
 use chimera_core::note_queue::{NoteEvent, NoteKind, NoteQueue};
 use chimera_core::preset::Performance;
 use chimera_core::scope::{ScopeFrame, ScopeWriter};
-use chimera_core::triple::Writer;
+use chimera_core::triple::{TripleBuffer, Writer};
 use chimera_core::{MidiChannel, MidiNote, Velocity};
 use cpal::Stream;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicPtr, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU8, Ordering};
 
 /// Everything the audio callback shares with the UI thread.
 struct SharedState {
-    /// The `AudioShared` buffer the callback reads; the UI fills the other
-    /// one and swaps this pointer once per frame.
-    current: AtomicPtr<AudioShared>,
     notes: NoteQueue,
     /// 0 = all pairs, 1..=3 = only that DAC pair.
     solo: AtomicU8,
@@ -28,8 +25,7 @@ struct SharedState {
 pub struct DesktopAudio {
     _stream: Stream,
     shared: Arc<SharedState>,
-    bufs: Box<[AudioShared; 2]>,
-    active_buf: usize,
+    shared_audio: Writer<AudioShared>,
 }
 
 impl DesktopAudio {
@@ -44,10 +40,13 @@ impl DesktopAudio {
         let sample_rate = config.sample_rate().0;
         let channels = config.channels() as usize;
 
-        let mut bufs = Box::new([AudioShared::default(), AudioShared::default()]);
-        let initial_ptr = &mut bufs[0] as *mut AudioShared;
+        let (shared_audio, mut shared_reader) = Box::leak(Box::new(TripleBuffer::new(
+            AudioShared::default(),
+            AudioShared::default(),
+            AudioShared::default(),
+        )))
+        .split();
         let shared = Arc::new(SharedState {
-            current: AtomicPtr::new(initial_ptr),
             notes: NoteQueue::new(),
             solo: AtomicU8::new(0),
         });
@@ -66,10 +65,7 @@ impl DesktopAudio {
             .build_output_stream(
                 &config.into(),
                 move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                    // SAFETY: the pointer always points into `bufs`, owned by
-                    // `DesktopAudio`, which outlives the stream. The UI only
-                    // writes the buffer this pointer does not name.
-                    let shared = unsafe { &*audio.current.load(Ordering::Acquire) };
+                    let shared = shared_reader.read();
                     // This is the note queue's only consumer: the UI/main
                     // thread is the only pusher (see `note_on`/`note_off`).
                     while let Some(ev) = audio.notes.pop() {
@@ -104,23 +100,13 @@ impl DesktopAudio {
         Self {
             _stream: stream,
             shared,
-            bufs,
-            active_buf: 0,
+            shared_audio,
         }
     }
 
-    /// Push the Performance to the audio thread (lock-free swap). Must only
-    /// ever run on the back buffer — the one `shared.current` is not
-    /// pointing at — never on the buffer the audio callback may currently
-    /// be reading.
+    /// Push the Performance to the audio thread through the triple buffer.
     pub fn update(&mut self, perf: &Performance) {
-        let inactive = 1 - self.active_buf;
-        let buf = &mut self.bufs[inactive];
-        buf.update_from(perf);
-        self.shared
-            .current
-            .store(buf as *mut AudioShared, Ordering::Release);
-        self.active_buf = inactive;
+        self.shared_audio.publish(|b| b.update_from(perf));
     }
 
     /// Push a note-on onto the queue. Callers: the UI/main thread only —
