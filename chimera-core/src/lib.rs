@@ -14,5 +14,6 @@ pub mod params;
 pub mod part;
 pub mod preset;
 pub mod scope;
+pub mod triple;
 pub mod ui;
 pub mod voice_alloc;
