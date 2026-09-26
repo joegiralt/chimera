@@ -63,6 +63,14 @@ pub fn fmt_val(buf: &mut FmtBuf, val: f32, fmt: ValFmt) {
         ValFmt::OneBased(max) => {
             let _ = write!(buf, "{}", discrete(val, max) as u16 + 1);
         }
+        ValFmt::Signed(n) => {
+            let v = discrete(val, n.saturating_mul(2)) as i16 - n as i16;
+            let _ = if v > 0 {
+                write!(buf, "+{v}")
+            } else {
+                write!(buf, "{v}")
+            };
+        }
         ValFmt::Names(names) => {
             if let Some(name) = names.get(discrete(val, fmt.max_int()) as usize) {
                 let _ = buf.write_str(name);

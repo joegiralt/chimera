@@ -143,3 +143,28 @@ fn voice_built_in_place_renders_like_new_for_every_engine() {
         }
     }
 }
+
+/// Spec § Testing: `init_in_place` equals `new` for `AlgoEngine`.
+#[test]
+fn algo_engine_built_in_place_renders_like_new() {
+    use chimera_core::dsp::algo::engine::{AlgoEngine, AlgoLive};
+    use chimera_core::dsp::algo::params::AlgoParams;
+    let p = AlgoParams::default();
+    let live = AlgoLive::from_params(&p);
+    let mut slot = poisoned::<AlgoEngine>();
+    let engines = [&mut AlgoEngine::new(), AlgoEngine::init_in_place(&mut slot)];
+    let outs: Vec<Vec<u32>> = engines
+        .into_iter()
+        .map(|e| {
+            e.note_on(MidiNote::A4, Velocity::DEFAULT, &p, SR);
+            let mut out = Vec::new();
+            let mut blk = [0.0f32; BLOCK_SIZE];
+            for _ in 0..20 {
+                e.render(&mut blk, &p, &live, SR);
+                out.extend(blk.iter().map(|s| s.to_bits()));
+            }
+            out
+        })
+        .collect();
+    assert_eq!(outs[0], outs[1]);
+}

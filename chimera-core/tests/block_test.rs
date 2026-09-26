@@ -228,6 +228,18 @@ fn fm_conforms() {
     conforms("fm_op", chimera_core::params::FmOpParams::default());
 }
 
+#[test]
+fn algo_conforms() {
+    conforms(
+        "algo",
+        chimera_core::dsp::algo::params::AlgoParams::default(),
+    );
+    conforms(
+        "algo_op",
+        chimera_core::dsp::algo::params::AlgoOpParams::default(),
+    );
+}
+
 /// Plan D18: a modulated (fractional) level truncates exactly like the old
 /// `Param.value as u8` — never rounds.
 #[test]
