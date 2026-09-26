@@ -239,9 +239,9 @@ fn chord() -> Vec<f32> {
     )
 }
 
-fn two_parts() -> Vec<f32> {
+fn two_parts(chain: ChainType) -> Vec<f32> {
     let mut perf = Performance::new();
-    perf.parts[1].load_init(ChainType::Fm);
+    perf.parts[1].load_init(chain);
     perf.parts[1].mix.output = DacPair::P2;
     perf.parts[1].mix.pan = 0.5;
     render_perf(&perf, &[(0, 60), (1, 67)], 200)
@@ -272,7 +272,7 @@ type GoldenCase = (&'static str, fn() -> Vec<f32>);
 fn instrument_goldens_match() {
     let cases: [GoldenCase; 4] = [
         ("poly_chord", chord),
-        ("two_parts_two_pairs", two_parts),
+        ("two_parts_two_pairs", || two_parts(ChainType::Fm)),
         ("reverb_send_off", || reverb_send(0.0)),
         ("reverb_send_on", || reverb_send(0.5)),
     ];
@@ -304,8 +304,10 @@ fn golden_scenes_do_what_they_say() {
     // Four voices sound at once.
     let single = render_perf(&Performance::new(), &[(0, 60)], 200);
     assert!(peak(&chord()) > peak(&single));
-    // Part 2 plays out of pair 2 only; pair 3 stays silent.
-    let two = two_parts();
+    // Part 2 plays out of pair 2 only; pair 3 stays silent. Modal, not FM:
+    // FM's bench-measured cost doesn't fit one voice under budget
+    // (https://github.com/joegiralt/chimera/issues/26), so it wouldn't sound.
+    let two = two_parts(ChainType::Modal);
     assert!(peak(&frames(&two, 1)) > 0.01);
     assert_eq!(peak(&frames(&two, 2)), 0.0);
     // The send adds a reverb return (to pair 1) and nothing else changes
@@ -333,10 +335,13 @@ fn note_off_follows_the_note_on_channel() {
 }
 
 /// Review Focus: switching a held chord to a costlier Sound must not push
-/// the pool over the CPU budget; the newest voices are cut.
+/// the pool over the CPU budget; any voices over budget are cut. At the
+/// bench-measured costs, six Modal voices plus the FX bus still fit, so
+/// none are.
 #[test]
 fn sound_change_mid_chord_stays_in_budget() {
     use chimera_core::dsp::voice::Voice;
+    use chimera_core::hw::MAX_VOICES;
     use chimera_core::params::{EngineType, ParamSnapshot};
     let mut rig = Rig::new();
     let mut shared = AudioShared::default();
@@ -357,7 +362,12 @@ fn sound_change_mid_chord_stays_in_budget() {
     rig.render(&shared);
     let a = rig.inst.allocator();
     assert!(a.sounding_cost() + FxBus::COST <= BUDGET.as_cost());
-    assert_eq!(a.slots().iter().filter(|s| !s.is_free()).count(), 5);
+    let expected = ((BUDGET.as_cost().0 - FxBus::COST.0) / Voice::cost(EngineType::Modal).0)
+        .min(MAX_VOICES as u32);
+    assert_eq!(
+        a.slots().iter().filter(|s| !s.is_free()).count(),
+        expected as usize
+    );
     assert!(
         a.slots()
             .iter()

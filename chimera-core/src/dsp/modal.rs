@@ -507,8 +507,7 @@ impl Default for ModalEngine {
 }
 
 impl ModalEngine {
-    /// Design doc § CPU Budget: physical modeling (modal, 8 modes) ~800.
-    pub const COST: Cost = Cost(800); // estimate
+    pub const COST: Cost = Cost(370); // measured 2026-09-26, bench, rev V at 480 MHz
 
     pub fn new() -> Self {
         // SAFETY: `init_in_place` writes every field of the slot.
