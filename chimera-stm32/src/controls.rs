@@ -4,6 +4,7 @@
 //! Polled at 500Hz from SysTick ISR (matching PreenFM3).
 //! Quadrature decoding matches PreenFM3 Encoders.cpp exactly.
 
+use chimera_core::clock_plan::{cycles_for_ns, systick_reload};
 use chimera_hal::{ButtonId, ButtonState, Controls, EncoderId, NUM_BUTTONS, NUM_ENCODERS};
 use core::sync::atomic::{AtomicBool, AtomicI8, AtomicU32, Ordering};
 
@@ -15,6 +16,11 @@ const GPIOF_BSRR: *mut u32 = 0x5802_1418 as *mut u32;
 const SYST_CSR: *mut u32 = 0xE000_E010 as *mut u32;
 const SYST_RVR: *mut u32 = 0xE000_E014 as *mut u32;
 const SYST_CVR: *mut u32 = 0xE000_E018 as *mut u32;
+
+pub const CONTROLS_HZ: u32 = 500;
+// The HC165 was clocked with 100-cycle spins at 400 MHz: keep 250 ns at any clock.
+const HC165_HALF_PERIOD_NS: u32 = 250;
+static HC165_DELAY: AtomicU32 = AtomicU32::new(100);
 
 /// Encoder bit pairs from PreenFM3 (1-indexed pins → 0-indexed masks)
 const ENC_BITS: [(u32, u32); 6] = [
@@ -76,18 +82,19 @@ static ENC_LAST_EDGE: [AtomicU32; NUM_ENCODERS] = [
     AtomicU32::new(0),
 ];
 
-/// Configure SysTick for 500Hz interrupt. Call after clocks are configured.
-/// hclk_hz: HCLK frequency in Hz (e.g. 200_000_000 for 200MHz)
-pub fn start_systick(hclk_hz: u32) {
-    let reload = hclk_hz / 500 - 1; // 500Hz
+pub fn start_systick(cpu_hz: u32) {
+    HC165_DELAY.store(
+        cycles_for_ns(cpu_hz, HC165_HALF_PERIOD_NS),
+        Ordering::Relaxed,
+    );
+    let reload = systick_reload(cpu_hz, CONTROLS_HZ);
     // SAFETY: SYST_CSR/RVR/CVR are the Cortex-M SysTick registers at their
-    // fixed, always-present addresses; `enable()` gates the ISR on `READY`,
-    // so nothing reads these before this single-threaded init runs.
+    // fixed addresses; `enable()` gates the ISR on `READY`, so nothing reads
+    // these before this single-threaded init runs.
     unsafe {
-        core::ptr::write_volatile(SYST_CSR, 0); // disable
+        core::ptr::write_volatile(SYST_CSR, 0);
         core::ptr::write_volatile(SYST_RVR, reload);
-        core::ptr::write_volatile(SYST_CVR, 0); // clear current
-        // Enable counter + interrupt + use processor clock
+        core::ptr::write_volatile(SYST_CVR, 0);
         core::ptr::write_volatile(SYST_CSR, 0b111);
     }
 }
@@ -104,26 +111,27 @@ pub fn isr_tick() {
     }
     ISR_TICK.fetch_add(1, Ordering::Relaxed);
 
+    let d = HC165_DELAY.load(Ordering::Relaxed);
     // Read HC165 via raw register access (same GPIO that diagnostic proved works)
     // SAFETY: GPIOF_IDR/BSRR are PF's fixed memory-mapped registers; only
     // this ISR (single, non-reentrant) drives PF0/PF1 and reads PF2.
     let bits = unsafe {
         // Latch: LOAD low then high
         core::ptr::write_volatile(GPIOF_BSRR, 1u32 << 17); // PF1 reset (LOAD low)
-        cortex_m::asm::delay(100);
+        cortex_m::asm::delay(d);
         core::ptr::write_volatile(GPIOF_BSRR, 1u32 << 1); // PF1 set (LOAD high)
-        cortex_m::asm::delay(100);
+        cortex_m::asm::delay(d);
 
         let mut b: u32 = 0;
         for i in 0..24u32 {
             core::ptr::write_volatile(GPIOF_BSRR, 1u32 << 16); // PF0 reset (CLK low)
-            cortex_m::asm::delay(100);
+            cortex_m::asm::delay(d);
             if core::ptr::read_volatile(GPIOF_IDR) & (1 << 2) != 0 {
                 // PF2 (DATA)
                 b |= 1 << i;
             }
             core::ptr::write_volatile(GPIOF_BSRR, 1u32 << 0); // PF0 set (CLK high)
-            cortex_m::asm::delay(100);
+            cortex_m::asm::delay(d);
         }
         b
     };
@@ -217,8 +225,8 @@ impl Stm32Controls {
     pub fn snapshot(&mut self) {
         self.btn_prev = self.btn_cur;
         let debounced = BTN_LATCH.load(Ordering::Relaxed);
-        for i in 0..NUM_BUTTONS {
-            self.btn_cur[i] = debounced & (1 << i) != 0;
+        for (i, cur) in self.btn_cur.iter_mut().enumerate() {
+            *cur = debounced & (1 << i) != 0;
         }
         let now = ISR_TICK.load(Ordering::Relaxed);
         for i in 0..NUM_ENCODERS {

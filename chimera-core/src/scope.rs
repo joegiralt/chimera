@@ -1,70 +1,53 @@
-//! Oscilloscope buffer — double-buffered for clean display.
-//!
-//! Audio thread writes to the back buffer. When full, it finds a
-//! rising zero-crossing trigger point and swaps to front.
-//! UI thread reads the stable front buffer — no tearing.
+//! Oscilloscope buffer: `ScopeWriter` accumulates audio-thread blocks into a
+//! back buffer twice the display width, finds a rising zero-crossing trigger
+//! point once it fills, and publishes the triggered window through a
+//! `TripleBuffer`. The UI thread reads the latest published frame.
 
-use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use crate::triple::{TripleBuffer, Writer};
 
 /// Display width in samples.
 pub const SCOPE_LEN: usize = 240;
 /// Back buffer is larger to allow trigger search.
 const BACK_LEN: usize = SCOPE_LEN * 2;
 
-static mut FRONT: [f32; SCOPE_LEN] = [0.0; SCOPE_LEN];
-static mut BACK: [f32; BACK_LEN] = [0.0; BACK_LEN];
-static BACK_POS: AtomicUsize = AtomicUsize::new(0);
-static FRESH: AtomicBool = AtomicBool::new(false);
+pub type ScopeFrame = [f32; SCOPE_LEN];
 
-/// Called by audio thread after each block render.
-pub fn write_samples(samples: &[f32]) {
-    let mut pos = BACK_POS.load(Ordering::Relaxed);
-    for &s in samples {
-        if pos < BACK_LEN {
-            // SAFETY: `write_samples` is only ever called from the audio
-            // thread (the sole writer to `BACK`), and the bounds check above
-            // (`pos < BACK_LEN`) guarantees the index is in range.
-            unsafe {
-                BACK[pos] = s;
-            }
-            pos += 1;
-        }
-    }
-    BACK_POS.store(pos, Ordering::Relaxed);
-
-    // When back buffer is full, find trigger and copy to front
-    if pos >= BACK_LEN {
-        // Find rising zero-crossing for trigger
-        let mut trigger = 0;
-        // SAFETY: FRONT/BACK are only written from the audio thread (single
-        // writer), which is the only caller of this function, and every
-        // `BACK` index below is within `1..BACK_LEN`. References are created
-        // through raw pointers, never to the `static mut` directly. The
-        // UI-side race is a known issue (spec § Known issues) and does not
-        // affect audio output.
-        unsafe {
-            for i in 1..BACK_LEN - SCOPE_LEN {
-                if BACK[i - 1] <= 0.0 && BACK[i] > 0.0 {
-                    trigger = i;
-                    break;
-                }
-            }
-            // Copy SCOPE_LEN samples from trigger point to front
-            let front = &mut *core::ptr::addr_of_mut!(FRONT);
-            let back = &*core::ptr::addr_of!(BACK);
-            front.copy_from_slice(&back[trigger..trigger + SCOPE_LEN]);
-        }
-        BACK_POS.store(0, Ordering::Relaxed);
-        FRESH.store(true, Ordering::Relaxed);
-    }
+pub const fn scope_buffer() -> TripleBuffer<ScopeFrame> {
+    TripleBuffer::new([0.0; SCOPE_LEN], [0.0; SCOPE_LEN], [0.0; SCOPE_LEN])
 }
 
-/// Read the front buffer for display. Always stable — no tearing.
-pub fn read_samples(out: &mut [f32; SCOPE_LEN]) {
-    // SAFETY: shared reference created through a raw pointer; a torn read
-    // only affects the oscilloscope display.
-    unsafe {
-        out.copy_from_slice(&*core::ptr::addr_of!(FRONT));
+pub struct ScopeWriter {
+    back: [f32; BACK_LEN],
+    pos: usize,
+    out: Writer<ScopeFrame>,
+}
+
+impl ScopeWriter {
+    pub fn new(out: Writer<ScopeFrame>) -> Self {
+        Self {
+            back: [0.0; BACK_LEN],
+            pos: 0,
+            out,
+        }
+    }
+
+    /// Called by the audio thread after each block render.
+    pub fn write(&mut self, samples: &[f32]) {
+        for &s in samples {
+            if self.pos < BACK_LEN {
+                self.back[self.pos] = s;
+                self.pos += 1;
+            }
+        }
+        if self.pos >= BACK_LEN {
+            let trigger = (1..BACK_LEN - SCOPE_LEN)
+                .find(|&i| self.back[i - 1] <= 0.0 && self.back[i] > 0.0)
+                .unwrap_or(0);
+            let back = &self.back;
+            self.out
+                .publish(|f| f.copy_from_slice(&back[trigger..trigger + SCOPE_LEN]));
+            self.pos = 0;
+        }
     }
 }
 

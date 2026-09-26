@@ -2,7 +2,8 @@
 //! what the audio thread reads from the UI, and the voice pool that renders
 //! every Part into the three DAC pairs.
 
-use core::mem::size_of;
+use core::mem::{MaybeUninit, size_of};
+use core::ptr::addr_of_mut;
 
 use chimera_hal::BLOCK_SIZE;
 
@@ -10,22 +11,31 @@ use crate::MidiChannel;
 use crate::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
 use crate::dsp::voice::Voice;
 use crate::hw::{
-    AXI_SRAM, DAC_PAIRS, FB_BYTES, MAX_PARTS, MAX_VOICES, UI_RESERVE, VOICE_RAM_BUDGET,
+    AXI_SRAM, DAC_PAIRS, FB_BYTES, MAX_PARTS, MAX_VOICES, SampleBudget, UI_RESERVE,
+    VOICE_RAM_BUDGET,
 };
+use crate::in_place::{by_value, uninit_at};
 use crate::modulation::ModState;
 use crate::note_queue::{NoteEvent, NoteKind};
 use crate::params::ParamSnapshot;
 use crate::part::PartParams;
+use crate::perf::load::AudioStats;
 use crate::preset::{Performance, SoundPool};
+use crate::scope::{ScopeFrame, ScopeWriter};
+use crate::triple::TripleBuffer;
 use crate::voice_alloc::{Alloc, Allocator};
 
 /// Everything the port places in AXI SRAM (ADR 0014): framebuffer, UI,
-/// Performance, SoundPool, both `AudioShared` copies and the FX bus.
+/// Performance, SoundPool, the `AudioShared`, scope and `AudioStats` triple
+/// buffers (the scope's writer besides), and the FX bus.
 pub const AXI_RESIDENT: usize = FB_BYTES
     + UI_RESERVE
     + size_of::<Performance>()
     + size_of::<SoundPool>()
-    + 2 * size_of::<AudioShared>()
+    + size_of::<TripleBuffer<AudioShared>>()
+    + size_of::<TripleBuffer<ScopeFrame>>()
+    + size_of::<ScopeWriter>()
+    + size_of::<TripleBuffer<AudioStats>>()
     + size_of::<FxBus>();
 const _: () = assert!(AXI_RESIDENT <= AXI_SRAM);
 
@@ -37,8 +47,7 @@ pub struct PartAudio {
     pub mix: PartParams,
 }
 
-/// The Performance state the audio needs, double-buffered by the platform
-/// (one pointer swap per UI frame). The Sound names, pool and UI stay behind.
+/// The Performance state the audio needs (ADR 0021: through a triple buffer).
 #[derive(Clone, Debug)]
 pub struct AudioShared {
     pub parts: [PartAudio; MAX_PARTS],
@@ -66,12 +75,10 @@ impl AudioShared {
         }
     }
 
-    /// Overwrite with `perf` (the UI's per-frame refresh of the back
-    /// buffer). Built through `from_performance` so there is exactly one
-    /// place that lists `AudioShared`'s fields; the fresh copy is a stack
-    /// temporary (~3 KB) that replaces `*self` in one move, never the heap.
-    /// Callers must only ever run this on the back buffer — never on the
-    /// copy the audio thread is currently reading.
+    /// Overwrite with `perf` (the UI's per-frame publish). Built through
+    /// `from_performance` so there is exactly one place that lists
+    /// `AudioShared`'s fields; the fresh copy is a stack temporary (~3 KB)
+    /// that replaces `*self` in one move, never the heap.
     pub fn update_from(&mut self, perf: &Performance) {
         *self = Self::from_performance(perf);
     }
@@ -104,10 +111,8 @@ pub fn pan_gains(pan: f32) -> (f32, f32) {
 /// - The Instrument is the note queue's only consumer: the audio thread pops
 ///   every `NoteEvent` and feeds it to `handle` (the queue is single-producer,
 ///   single-consumer; nothing else may pop it).
-/// - The `&AudioShared` passed to `handle` and `render` is the front buffer.
-///   The UI's `AudioShared::update_from` must only ever run on the back
-///   buffer, never on the one borrowed here; the platform swaps them between
-///   blocks.
+/// - The `&AudioShared` passed to `handle` and `render` is the reader's
+///   current buffer.
 pub struct Instrument {
     voices: [Voice; MAX_VOICES],
     alloc: Allocator,
@@ -120,15 +125,34 @@ pub struct Instrument {
     sample_rate: u32,
 }
 
+crate::in_place::field_list!(Instrument => Instrument { voices, alloc, note_channel, buses, sends, sample_rate });
+
 impl Instrument {
-    pub fn new(sample_rate: u32) -> Self {
-        Self {
-            voices: core::array::from_fn(|_| Voice::new(sample_rate)),
-            alloc: Allocator::new(),
-            note_channel: [MidiChannel::clamped(0); MAX_VOICES],
-            buses: [[0.0; BLOCK_SIZE]; MAX_PARTS],
-            sends: [[0.0; BLOCK_SIZE]; FX_SENDS],
-            sample_rate,
+    pub fn new(sample_rate: u32, budget: SampleBudget) -> Self {
+        // SAFETY: `init_in_place` writes every field of the slot.
+        unsafe { by_value(|slot| Self::init_in_place(slot, sample_rate, budget)) }
+    }
+
+    pub fn init_in_place(
+        slot: &mut MaybeUninit<Self>,
+        sample_rate: u32,
+        budget: SampleBudget,
+    ) -> &mut Self {
+        let p = slot.as_mut_ptr();
+        // SAFETY: `p` is valid and unaliased; the six voices are built in
+        // place and the rest (the largest, `buses`, is 1.5 KB) written once
+        // by value before `assume_init_mut`.
+        unsafe {
+            let voices = addr_of_mut!((*p).voices).cast::<Voice>();
+            for v in 0..MAX_VOICES {
+                Voice::init_in_place(uninit_at(voices.add(v)), sample_rate);
+            }
+            addr_of_mut!((*p).alloc).write(Allocator::new(budget));
+            addr_of_mut!((*p).note_channel).write([MidiChannel::clamped(0); MAX_VOICES]);
+            addr_of_mut!((*p).buses).write([[0.0; BLOCK_SIZE]; MAX_PARTS]);
+            addr_of_mut!((*p).sends).write([[0.0; BLOCK_SIZE]; FX_SENDS]);
+            addr_of_mut!((*p).sample_rate).write(sample_rate);
+            slot.assume_init_mut()
         }
     }
 
@@ -175,7 +199,13 @@ impl Instrument {
     }
 
     /// Render one block into the three DAC pairs.
-    pub fn render(&mut self, fx: &mut FxBus, out: &mut DacOut, shared: &AudioShared) {
+    pub fn render(
+        &mut self,
+        fx: &mut FxBus,
+        out: &mut DacOut,
+        shared: &AudioShared,
+        scope: &mut ScopeWriter,
+    ) {
         // A Sound that changed engine changes its voices' cost; cut the
         // newest voices if that went over the budget.
         for v in 0..MAX_VOICES {
@@ -228,7 +258,7 @@ impl Instrument {
         for send in self.sends.iter_mut() {
             send.fill(0.0);
         }
-        let mut scope = [0.0f32; BLOCK_SIZE];
+        let mut scope_block = [0.0f32; BLOCK_SIZE];
         for (p, part) in shared.parts.iter().enumerate() {
             // A part with no voices this block has a silent bus: nothing to add.
             if !written[p] {
@@ -241,7 +271,7 @@ impl Instrument {
             for i in 0..BLOCK_SIZE {
                 pair[2 * i] += bus[i] * gl;
                 pair[2 * i + 1] += bus[i] * gr;
-                scope[i] += bus[i];
+                scope_block[i] += bus[i];
             }
             for (send, &amount) in self.sends.iter_mut().zip(&part.mix.sends) {
                 for (s, &b) in send.iter_mut().zip(bus) {
@@ -259,6 +289,6 @@ impl Instrument {
         }
 
         // Oscilloscope: every part's bus, before pan and level.
-        crate::scope::write_samples(&scope);
+        scope.write(&scope_block);
     }
 }

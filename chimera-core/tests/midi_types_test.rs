@@ -1,7 +1,7 @@
 //! MIDI trust boundary (spec §3, Review Focus 4): only valid notes and
 //! note-on velocities are representable, and the parser builds them.
 
-use chimera_core::{MidiNote, Velocity};
+use chimera_core::{MidiChannel, MidiNote, Velocity};
 use chimera_hal::MidiMessage;
 use chimera_hal::midi::MidiParser;
 
@@ -38,7 +38,7 @@ fn parser_builds_note_on() {
     assert_eq!(
         msgs,
         [MidiMessage::NoteOn {
-            channel: 0,
+            channel: MidiChannel::new(0).unwrap(),
             note: MidiNote::new(60).unwrap(),
             velocity: Velocity::MAX
         }]
@@ -52,7 +52,7 @@ fn parser_velocity_zero_is_note_off() {
     assert_eq!(
         msgs,
         [MidiMessage::NoteOff {
-            channel: 1,
+            channel: MidiChannel::new(1).unwrap(),
             note: MidiNote::new(127).unwrap(),
             velocity: 0
         }]
@@ -67,12 +67,12 @@ fn parser_running_status_note_on_then_off() {
         msgs,
         [
             MidiMessage::NoteOn {
-                channel: 0,
+                channel: MidiChannel::new(0).unwrap(),
                 note: n60,
                 velocity: Velocity::DEFAULT
             },
             MidiMessage::NoteOff {
-                channel: 0,
+                channel: MidiChannel::new(0).unwrap(),
                 note: n60,
                 velocity: 0
             },
@@ -86,7 +86,7 @@ fn parser_note_off_keeps_release_velocity() {
     assert_eq!(
         msgs,
         [MidiMessage::NoteOff {
-            channel: 2,
+            channel: MidiChannel::new(2).unwrap(),
             note: MidiNote::new(64).unwrap(),
             velocity: 64
         }]

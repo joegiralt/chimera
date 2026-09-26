@@ -6,6 +6,8 @@
 
 #![allow(dead_code)]
 
+use chimera_core::clock_plan::SiliconRev;
+use chimera_core::perf::load::AudioStats;
 use chimera_core::preset::{ChainType, POOL_SIZE, Sound};
 use chimera_core::scope::SCOPE_LEN;
 use chimera_core::ui::UiState;
@@ -259,7 +261,25 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::Main, 1));
     }),
     ("system", |ui| feed(ui, Input::press(ButtonId::Menu))),
+    ("system_audio", |ui| {
+        feed(ui, Input::press(ButtonId::Menu));
+        plus(ui, 4);
+        feed(ui, Input::press(ButtonId::Edit));
+    }),
 ];
+
+/// `AudioStats` fixture for the AUDIO sub-page's goldens and tests.
+pub fn audio_fixture() -> AudioStats {
+    let mut s = AudioStats::new(SiliconRev::V, 480_000_000);
+    s.load_avg = 23;
+    s.load_peak = 41;
+    s.overruns = 2;
+    s.desyncs = 1;
+    s.drops = [0, 3];
+    s.sources = 2;
+    s.stack_used = 12_000;
+    s
+}
 
 /// Build case `name`'s screen: a fresh UiState, the case's input, settled lerps.
 pub fn ui_for(name: &str) -> UiState {
@@ -277,7 +297,12 @@ pub fn ui_for(name: &str) -> UiState {
 pub fn render(name: &str) -> Fb {
     let ui = ui_for(name);
     let mut fb = Fb::new();
-    ui.render_with_scope(&mut fb, &PerfStats::zero(), &scope_fixture());
+    ui.render_with_audio(
+        &mut fb,
+        &PerfStats::zero(),
+        Some(&audio_fixture()),
+        &scope_fixture(),
+    );
     fb.dump(name);
     fb
 }
@@ -286,6 +311,11 @@ pub fn render(name: &str) -> Fb {
 pub fn render_dirty(name: &str) -> Fb {
     let mut ui = ui_for(name);
     let mut fb = Fb::new();
-    ui.render_dirty_with_scope(&mut fb, &PerfStats::zero(), &scope_fixture());
+    ui.render_dirty_with_audio(
+        &mut fb,
+        &PerfStats::zero(),
+        Some(&audio_fixture()),
+        &scope_fixture(),
+    );
     fb
 }

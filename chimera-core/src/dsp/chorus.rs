@@ -11,6 +11,7 @@
 
 use crate::block::{Block, ParamId, ParamSpec, ValFmt};
 use chimera_hal::BLOCK_SIZE;
+use core::mem::MaybeUninit;
 
 const MAX_CHORUS_DELAY: usize = 2048; // ~42ms at 48kHz, plenty for chorus
 
@@ -164,6 +165,9 @@ impl BbdLine {
     }
 }
 
+crate::in_place::field_list!(JunoChorus => JunoChorus { line_i, line_ii });
+crate::in_place::field_list!(BbdLine => BbdLine { buffer, write_pos, lfo_phase });
+
 /// Juno-style binaural chorus.
 /// Processes mono input, outputs mono (L+R summed).
 /// For true stereo: L = dry + wet, R = dry - wet.
@@ -183,6 +187,16 @@ impl JunoChorus {
         Self {
             line_i: BbdLine::new(),
             line_ii: BbdLine::new(),
+        }
+    }
+
+    pub fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
+        // SAFETY: every field (two `BbdLine { buffer: [f32; N], write_pos:
+        // usize, lfo_phase: f32 }`) is valid as zero bytes, and zero is
+        // exactly `new()`'s state; `write_bytes` covers the whole slot.
+        unsafe {
+            slot.as_mut_ptr().write_bytes(0, 1);
+            slot.assume_init_mut()
         }
     }
 

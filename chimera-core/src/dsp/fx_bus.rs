@@ -6,11 +6,14 @@
 //! DAC pair 1.
 
 use chimera_hal::BLOCK_SIZE;
+use core::mem::MaybeUninit;
+use core::ptr::addr_of_mut;
 
 use crate::dsp::chorus::{ChorusParams, JunoChorus};
 use crate::dsp::delay::{DelayParams, TapeDelay};
 use crate::dsp::reverb::{Reverb, ReverbParams};
 use crate::hw::{Cost, FX_BUS_BUDGET};
+use crate::in_place::uninit_at;
 
 /// Sends per part, in this order: chorus, delay, reverb.
 pub const FX_SENDS: usize = 3;
@@ -49,6 +52,8 @@ pub struct FxBus {
     reverb: Reverb,
 }
 
+crate::in_place::field_list!(FxBus => FxBus { chorus, delay, reverb });
+
 impl Default for FxBus {
     fn default() -> Self {
         Self::new()
@@ -56,16 +61,28 @@ impl Default for FxBus {
 }
 
 impl FxBus {
-    /// Not in the design doc's table: chorus ~60, tape delay ~350 (two
-    /// `sinf` + `tanhf` per sample), reverb ~150, plus mixing. Reserved
-    /// from the voice budget whether or not an effect is on.
-    pub const COST: Cost = Cost(600); // estimate
+    /// Worst reverb (MidiVerb) with the bus and the Instrument's fixed
+    /// mixing; reserved from the voice budget whether or not an effect is on.
+    pub const COST: Cost = Cost(3200); // measured 2026-09-26, bench, rev V at 480 MHz
 
     pub fn new() -> Self {
         Self {
             chorus: JunoChorus::new(),
             delay: TapeDelay::new(),
             reverb: Reverb::new(),
+        }
+    }
+
+    pub fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
+        let p = slot.as_mut_ptr();
+        // SAFETY: `p` comes from `&mut MaybeUninit<Self>` (valid, aligned,
+        // unaliased); each effect's in-place constructor initialises its
+        // whole field before `assume_init_mut`.
+        unsafe {
+            JunoChorus::init_in_place(uninit_at(addr_of_mut!((*p).chorus)));
+            TapeDelay::init_in_place(uninit_at(addr_of_mut!((*p).delay)));
+            Reverb::init_in_place(uninit_at(addr_of_mut!((*p).reverb)));
+            slot.assume_init_mut()
         }
     }
 

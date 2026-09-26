@@ -92,8 +92,7 @@ impl Default for PizzaOsc {
 }
 
 impl PizzaOsc {
-    /// Not in the design doc's table; costed like the VA oscillator pair.
-    pub const COST: Cost = Cost(300); // estimate
+    pub const COST: Cost = Cost(240); // measured 2026-09-26, bench, rev V at 480 MHz
 
     pub fn new() -> Self {
         Self {

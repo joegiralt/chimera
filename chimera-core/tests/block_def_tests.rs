@@ -103,3 +103,12 @@ fn demo_chain_has_5_blocks() {
     assert_eq!(chain.blocks[4].def.layout, PageLayout::Matrix);
     assert_eq!(chain.len(), 5);
 }
+
+#[test]
+fn about_has_the_audio_sub_page() {
+    let about = &block_registry::SYSTEM_CHAIN.blocks[4];
+    assert_eq!(about.def.name, "About");
+    assert_eq!(about.sub_pages.len(), 1);
+    assert_eq!(about.sub_pages[0].name, "Audio");
+    assert_eq!(about.sub_pages[0].id, 41);
+}

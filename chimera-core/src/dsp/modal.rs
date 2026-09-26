@@ -1,7 +1,11 @@
+use core::mem::MaybeUninit;
+use core::ptr::addr_of_mut;
+
 use chimera_hal::BLOCK_SIZE;
 
 use crate::block::{Block, ParamId, ParamSpec, ValFmt};
 use crate::hw::Cost;
+use crate::in_place::{by_value, uninit_at};
 
 const MAX_MODES: usize = 48;
 
@@ -313,13 +317,18 @@ struct KsString {
 }
 
 impl KsString {
-    fn new() -> Self {
-        Self {
-            buffer: [0.0; MAX_STRING_DELAY],
-            write_pos: 0,
-            delay_len: 100,
-            ens_lfo_phase: 0,
-            noise_state: 0x87654321,
+    fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
+        let p = slot.as_mut_ptr();
+        // SAFETY: `p` is valid and unaliased; the 4.8 KB `[f32]` buffer is
+        // zero-filled (zero bytes are 0.0) and every other field is written
+        // once by value before `assume_init_mut`.
+        unsafe {
+            addr_of_mut!((*p).buffer).write_bytes(0, 1);
+            addr_of_mut!((*p).write_pos).write(0);
+            addr_of_mut!((*p).delay_len).write(100);
+            addr_of_mut!((*p).ens_lfo_phase).write(0);
+            addr_of_mut!((*p).noise_state).write(0x8765_4321);
+            slot.assume_init_mut()
         }
     }
 
@@ -485,6 +494,12 @@ pub struct ModalEngine {
     silence_counter: u32,
 }
 
+crate::in_place::field_list!(KsString => KsString { buffer, write_pos, delay_len, ens_lfo_phase, noise_state });
+crate::in_place::field_list!(ModalEngine => ModalEngine {
+    filters, cos_osc, resolution, string, sym_strings, bow_state, frequency, active_mode,
+    released, exciter_remaining, exciter_amp, noise_state, exciter_lp, active, silence_counter,
+});
+
 impl Default for ModalEngine {
     fn default() -> Self {
         Self::new()
@@ -492,26 +507,38 @@ impl Default for ModalEngine {
 }
 
 impl ModalEngine {
-    /// Design doc § CPU Budget: physical modeling (modal, 8 modes) ~800.
-    pub const COST: Cost = Cost(800); // estimate
+    pub const COST: Cost = Cost(370); // measured 2026-09-26, bench, rev V at 480 MHz
 
     pub fn new() -> Self {
-        Self {
-            filters: core::array::from_fn(|_| Svf::new()),
-            cos_osc: CosineOsc::new(),
-            resolution: 0,
-            string: KsString::new(),
-            sym_strings: core::array::from_fn(|_| KsString::new()),
-            bow_state: 0.0,
-            frequency: 220.0 / 48000.0,
-            active_mode: ResonatorMode::Modal,
-            released: false,
-            exciter_remaining: 0,
-            exciter_amp: 0.0,
-            noise_state: 0x12345678,
-            exciter_lp: 0.0,
-            active: false,
-            silence_counter: 0,
+        // SAFETY: `init_in_place` writes every field of the slot.
+        unsafe { by_value(Self::init_in_place) }
+    }
+
+    pub fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
+        let p = slot.as_mut_ptr();
+        // SAFETY: `p` is valid and unaliased; the eight strings are built in
+        // place, every other field (the largest, `filters`, is 960 B) is
+        // written once by value, before `assume_init_mut`.
+        unsafe {
+            addr_of_mut!((*p).filters).write(core::array::from_fn(|_| Svf::new()));
+            addr_of_mut!((*p).cos_osc).write(CosineOsc::new());
+            addr_of_mut!((*p).resolution).write(0);
+            KsString::init_in_place(uninit_at(addr_of_mut!((*p).string)));
+            let sym = addr_of_mut!((*p).sym_strings).cast::<KsString>();
+            for i in 0..NUM_SYMPATHETIC {
+                KsString::init_in_place(uninit_at(sym.add(i)));
+            }
+            addr_of_mut!((*p).bow_state).write(0.0);
+            addr_of_mut!((*p).frequency).write(220.0 / 48000.0);
+            addr_of_mut!((*p).active_mode).write(ResonatorMode::Modal);
+            addr_of_mut!((*p).released).write(false);
+            addr_of_mut!((*p).exciter_remaining).write(0);
+            addr_of_mut!((*p).exciter_amp).write(0.0);
+            addr_of_mut!((*p).noise_state).write(0x1234_5678);
+            addr_of_mut!((*p).exciter_lp).write(0.0);
+            addr_of_mut!((*p).active).write(false);
+            addr_of_mut!((*p).silence_counter).write(0);
+            slot.assume_init_mut()
         }
     }
 
