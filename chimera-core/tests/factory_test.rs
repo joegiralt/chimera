@@ -34,6 +34,22 @@ fn peak(s: &[f32]) -> f32 {
     s.iter().fold(0.0f32, |m, x| m.max(x.abs()))
 }
 
+/// RMS of a one-pole high-pass at `cutoff_hz`: crude, but a smothering
+/// low-pass (issue: the factory filter defaulted to 1 kHz on every FM
+/// patch) knocks it down measurably.
+fn highpass_rms(samples: &[f32], sample_rate: f32, cutoff_hz: f32) -> f32 {
+    let rc = 1.0 / (2.0 * std::f32::consts::PI * cutoff_hz);
+    let dt = 1.0 / sample_rate;
+    let a = rc / (rc + dt);
+    let (mut y, mut prev_x, mut energy) = (0.0f32, 0.0f32, 0.0f32);
+    for &x in samples {
+        y = a * (y + x - prev_x);
+        prev_x = x;
+        energy += y * y;
+    }
+    (energy / samples.len() as f32).sqrt()
+}
+
 #[test]
 fn eight_algo_sounds_with_distinct_names() {
     let names: Vec<String> = (0..FACTORY_LEN)
@@ -76,6 +92,34 @@ fn the_morph_showcases_morph() {
     let pad = factory_sound(6).unwrap();
     assert_eq!(pad.mod_state.num_dests(), 1);
     assert_ne!(pad.mod_state.amount(1, 0), 0, "the LFO moves MORPH");
+}
+
+#[test]
+fn tx_epiano_bark_survives_the_filter() {
+    let s = factory_sound(1).unwrap();
+    assert_eq!(s.name_str(), "TX EPIANO");
+    let mut v = Voice::new(chimera_hal::SAMPLE_RATE);
+    v.note_on(
+        MidiNote::new(60).unwrap(),
+        Velocity::new(100).unwrap(),
+        &s.params,
+    );
+    // First 5 blocks (~7 ms): op2's fast, high-ratio bark (COARSE 42, D1L 0)
+    // peaks here, before its own decay rolls it off. A filter cutoff left at
+    // the shared 1 kHz default flattens this measurably (0.033 vs. 0.072,
+    // calibrated against both); a smothered bark is the regression this
+    // guards against.
+    let mut early = Vec::new();
+    let mut b = [0.0f32; BLOCK_SIZE];
+    for _ in 0..5 {
+        v.render(&mut b, &s.params, &s.mod_state);
+        early.extend_from_slice(&b);
+    }
+    let hf = highpass_rms(&early, chimera_hal::SAMPLE_RATE as f32, 2000.0);
+    assert!(
+        hf > 0.05,
+        "TX EPIANO's bark is filtered out above 2 kHz: {hf}"
+    );
 }
 
 #[test]

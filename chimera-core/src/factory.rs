@@ -10,6 +10,10 @@ use crate::preset::{ChainType, NAME_LEN, Sound, SoundPool};
 
 pub const FACTORY_LEN: usize = 8;
 
+/// FILTER_SPECS' top of range (params.rs): essentially out of the way, for
+/// the FM patches whose timbre is the operators', not the filter's.
+const OPEN: f32 = 20000.0;
+
 /// `env` is AR, D1R, D1L, D2R, RR.
 fn op(wave: WaveId, coarse: u8, level: u8, env: [u8; 5]) -> AlgoOpParams {
     let [ar, d1r, d1l, d2r, rr] = env;
@@ -48,92 +52,108 @@ pub fn factory_sound(i: usize) -> Option<Sound> {
     let off = AlgoOpParams::default();
     let w1 = WaveId::W1;
     let sound = match i {
-        0 => named(
-            "TX BASS",
-            algo(
-                AlgoId::T5,
-                AlgoId::T5,
-                0,
-                [
-                    AlgoOpParams {
-                        velocity: 2,
-                        ..op(w1, 0, 99, [31, 9, 12, 4, 9])
-                    },
-                    AlgoOpParams {
-                        feedback: 5,
-                        velocity: 4,
-                        ..op(w1, 4, 76, [31, 14, 3, 6, 9])
-                    },
-                    op(WaveId::W2, 4, 80, [31, 10, 10, 4, 9]),
-                    op(w1, 8, 60, [31, 16, 2, 6, 9]),
-                    off,
-                    off,
-                ],
-            ),
-        ),
-        1 => named(
-            "TX EPIANO",
-            algo(
-                AlgoId::T5,
-                AlgoId::T5,
-                0,
-                [
-                    AlgoOpParams {
-                        velocity: 3,
-                        ..op(w1, 4, 99, [31, 6, 9, 3, 8])
-                    },
-                    AlgoOpParams {
-                        velocity: 5,
-                        ..op(w1, 42, 58, [31, 18, 0, 0, 8])
-                    },
-                    AlgoOpParams {
-                        velocity: 3,
-                        ..op(w1, 4, 92, [31, 5, 10, 3, 8])
-                    },
-                    AlgoOpParams {
-                        velocity: 5,
-                        ..op(w1, 4, 66, [31, 9, 5, 3, 8])
-                    },
-                    off,
-                    off,
-                ],
-            ),
-        ),
-        2 => named(
-            "TX BRASS",
-            algo(
-                AlgoId::T3,
-                AlgoId::T3,
-                0,
-                [
-                    op(w1, 4, 99, [18, 5, 13, 2, 7]),
-                    op(w1, 4, 72, [16, 6, 11, 2, 7]),
-                    op(w1, 4, 64, [20, 4, 12, 2, 7]),
-                    AlgoOpParams {
-                        feedback: 6,
-                        ..op(w1, 4, 58, [14, 6, 10, 2, 7])
-                    },
-                    off,
-                    off,
-                ],
-            ),
-        ),
-        3 => named(
-            "TX BELL",
-            algo(
-                AlgoId::T5,
-                AlgoId::T5,
-                0,
-                [
-                    op(w1, 4, 99, [31, 4, 0, 0, 5]),
-                    op(w1, 12, 72, [31, 6, 0, 0, 5]),
-                    op(w1, 11, 88, [31, 5, 0, 0, 5]),
-                    op(w1, 23, 66, [31, 7, 0, 0, 5]),
-                    off,
-                    off,
-                ],
-            ),
-        ),
+        0 => {
+            let mut s = named(
+                "TX BASS",
+                algo(
+                    AlgoId::T5,
+                    AlgoId::T5,
+                    0,
+                    [
+                        AlgoOpParams {
+                            velocity: 2,
+                            ..op(w1, 0, 99, [31, 9, 12, 4, 9])
+                        },
+                        AlgoOpParams {
+                            feedback: 5,
+                            velocity: 4,
+                            ..op(w1, 4, 76, [31, 14, 3, 6, 9])
+                        },
+                        op(WaveId::W2, 4, 80, [31, 10, 10, 4, 9]),
+                        op(w1, 8, 60, [31, 16, 2, 6, 9]),
+                        off,
+                        off,
+                    ],
+                ),
+            );
+            s.params.filter.cutoff = OPEN;
+            s
+        }
+        1 => {
+            let mut s = named(
+                "TX EPIANO",
+                algo(
+                    AlgoId::T5,
+                    AlgoId::T5,
+                    0,
+                    [
+                        AlgoOpParams {
+                            velocity: 3,
+                            ..op(w1, 4, 99, [31, 6, 9, 3, 8])
+                        },
+                        AlgoOpParams {
+                            velocity: 5,
+                            ..op(w1, 42, 58, [31, 18, 0, 0, 8])
+                        },
+                        AlgoOpParams {
+                            velocity: 3,
+                            ..op(w1, 4, 92, [31, 5, 10, 3, 8])
+                        },
+                        AlgoOpParams {
+                            velocity: 5,
+                            ..op(w1, 4, 66, [31, 9, 5, 3, 8])
+                        },
+                        off,
+                        off,
+                    ],
+                ),
+            );
+            s.params.filter.cutoff = OPEN;
+            s
+        }
+        2 => {
+            let mut s = named(
+                "TX BRASS",
+                algo(
+                    AlgoId::T3,
+                    AlgoId::T3,
+                    0,
+                    [
+                        op(w1, 4, 99, [18, 5, 13, 2, 7]),
+                        op(w1, 4, 72, [16, 6, 11, 2, 7]),
+                        op(w1, 4, 64, [20, 4, 12, 2, 7]),
+                        AlgoOpParams {
+                            feedback: 6,
+                            ..op(w1, 4, 58, [14, 6, 10, 2, 7])
+                        },
+                        off,
+                        off,
+                    ],
+                ),
+            );
+            s.params.filter.cutoff = OPEN;
+            s
+        }
+        3 => {
+            let mut s = named(
+                "TX BELL",
+                algo(
+                    AlgoId::T5,
+                    AlgoId::T5,
+                    0,
+                    [
+                        op(w1, 4, 99, [31, 4, 0, 0, 5]),
+                        op(w1, 12, 72, [31, 6, 0, 0, 5]),
+                        op(w1, 11, 88, [31, 5, 0, 0, 5]),
+                        op(w1, 23, 66, [31, 7, 0, 0, 5]),
+                        off,
+                        off,
+                    ],
+                ),
+            );
+            s.params.filter.cutoff = OPEN;
+            s
+        }
         4 => {
             let mut s = named(
                 "SAW LEAD",
@@ -173,6 +193,7 @@ pub fn factory_sound(i: usize) -> Option<Sound> {
             let ops = core::array::from_fn(|i| op(w1, COARSE[i], LEVEL[i], [12, 0, 15, 0, 5]));
             let mut s = named("MORPH PAD", algo(AlgoId::A1, AlgoId::A17, 40, ops));
             s.params.lfo.rate = 0.2;
+            s.params.filter.cutoff = 4000.0;
             let mut reg = ModDestRegistry::new();
             if reg
                 .add(
@@ -187,28 +208,32 @@ pub fn factory_sound(i: usize) -> Option<Sound> {
             }
             s
         }
-        7 => named(
-            "MORPH KEYS",
-            algo(
-                AlgoId::T5,
-                AlgoId::A12,
-                64,
-                [
-                    AlgoOpParams {
-                        velocity: 3,
-                        ..op(w1, 4, 94, [31, 6, 9, 3, 8])
-                    },
-                    op(WaveId::W2, 8, 70, [31, 10, 4, 3, 8]),
-                    op(w1, 4, 86, [31, 6, 9, 3, 8]),
-                    AlgoOpParams {
-                        feedback: 3,
-                        ..op(w1, 13, 64, [31, 8, 6, 3, 8])
-                    },
-                    op(WaveId::W3, 4, 76, [31, 6, 9, 3, 8]),
-                    op(w1, 19, 60, [31, 9, 5, 3, 8]),
-                ],
-            ),
-        ),
+        7 => {
+            let mut s = named(
+                "MORPH KEYS",
+                algo(
+                    AlgoId::T5,
+                    AlgoId::A12,
+                    64,
+                    [
+                        AlgoOpParams {
+                            velocity: 3,
+                            ..op(w1, 4, 94, [31, 6, 9, 3, 8])
+                        },
+                        op(WaveId::W2, 8, 70, [31, 10, 4, 3, 8]),
+                        op(w1, 4, 86, [31, 6, 9, 3, 8]),
+                        AlgoOpParams {
+                            feedback: 3,
+                            ..op(w1, 13, 64, [31, 8, 6, 3, 8])
+                        },
+                        op(WaveId::W3, 4, 76, [31, 6, 9, 3, 8]),
+                        op(w1, 19, 60, [31, 9, 5, 3, 8]),
+                    ],
+                ),
+            );
+            s.params.filter.cutoff = OPEN;
+            s
+        }
         _ => return None,
     };
     Some(sound)
