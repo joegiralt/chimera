@@ -1,7 +1,9 @@
 //! Lock-free SPSC note queue from the UI/input thread to audio
 //! (instrument-core spec § Threading).
 
-use chimera_core::note_queue::{NOTE_QUEUE_LEN, NoteEvent, NoteKind, NoteQueue};
+use chimera_core::note_queue::{
+    MAX_NOTE_SOURCES, NOTE_QUEUE_LEN, NoteEvent, NoteKind, NoteQueue, NoteSources, SourceId,
+};
 use chimera_core::{MidiChannel, MidiNote, Velocity};
 
 fn ev(ch: u8, note: u8, vel: u8) -> NoteEvent {
@@ -83,4 +85,41 @@ fn producer_and_consumer_threads() {
     }
     producer.join().unwrap();
     assert_eq!(q.pop(), None);
+}
+
+const A: SourceId<2> = SourceId::new(0);
+const B: SourceId<2> = SourceId::new(1);
+
+#[test]
+fn drain_pops_every_source_in_fixed_order() {
+    let s: NoteSources<2> = NoteSources::new();
+    s.source(B).push(ev(1, 61, 100));
+    s.source(A).push(ev(0, 60, 100));
+    s.source(B).push(ev(1, 62, 0));
+    let mut got = Vec::new();
+    s.drain(|e| got.push(e));
+    assert_eq!(got, [ev(0, 60, 100), ev(1, 61, 100), ev(1, 62, 0)]);
+    s.drain(|_| panic!("already drained"));
+}
+
+#[test]
+fn drops_are_counted_per_source() {
+    let s: NoteSources<2> = NoteSources::new();
+    for i in 0..NOTE_QUEUE_LEN + 3 {
+        s.source(B).push(ev(0, (i % 128) as u8, 100));
+    }
+    assert_eq!(s.drops(), [0, 3]);
+}
+
+#[test]
+fn source_ids_are_positions_in_the_drain_order() {
+    assert_eq!((A.index(), B.index()), (0, 1));
+    assert_eq!(MAX_NOTE_SOURCES, 2);
+}
+
+#[test]
+#[should_panic(expected = "note source index out of range")]
+fn a_runtime_source_id_past_n_panics() {
+    let i = std::hint::black_box(2);
+    let _ = SourceId::<2>::new(i);
 }
