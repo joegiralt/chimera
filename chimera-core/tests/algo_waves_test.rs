@@ -8,7 +8,7 @@ use std::f64::consts::TAU;
 
 fn magnitude(t: &Table, k: usize) -> f64 {
     let (mut a, mut b) = (0.0, 0.0);
-    for (n, &v) in t.iter().enumerate() {
+    for (n, &v) in t[..WAVE_LEN].iter().enumerate() {
         let ph = TAU * (k * n) as f64 / WAVE_LEN as f64;
         a += v as f64 * ph.cos();
         b += v as f64 * ph.sin();
@@ -40,7 +40,7 @@ fn every_mip_is_band_limited() {
 #[test]
 fn the_tables_fit_their_flash_budget() {
     let bytes = core::mem::size_of_val(&WAVES);
-    assert_eq!(bytes, WAVE_COUNT * MIPS * WAVE_LEN * 2);
+    assert_eq!(bytes, WAVE_COUNT * MIPS * (WAVE_LEN + 1) * 2);
     assert!(bytes <= WAVE_FLASH_BUDGET, "{bytes} B");
 }
 
@@ -55,4 +55,11 @@ fn wave_ids_name_their_tables() {
         WaveId::W1.table(99),
         WaveId::W1.table(MIPS - 1)
     ));
+}
+
+#[test]
+fn each_table_ends_with_a_copy_of_its_first_sample() {
+    for w in WAVES.iter().flatten() {
+        assert_eq!(w[WAVE_LEN], w[0]);
+    }
 }

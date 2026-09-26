@@ -405,13 +405,25 @@ fn run_pair<const N: usize, const M: usize>(
     eb.store(ry);
 }
 
+const _: () = assert!(cfg!(target_endian = "little") && WAVE_LEN == 256);
+
+/// Samples `i` and `i + 1` in one 32-bit load.
+#[inline(always)]
+fn pair(t: &Table, i: usize) -> (f32, f32) {
+    let i = i & (WAVE_LEN - 1);
+    // SAFETY: `i + 1 <= WAVE_LEN`, so the four bytes read lie inside the
+    // `WAVE_LEN + 1` samples of `t`; the read is unaligned, which every
+    // target (Cortex-M7 included) allows.
+    let w = unsafe { t.as_ptr().add(i).cast::<u32>().read_unaligned() };
+    (w as u16 as i16 as f32, (w as i32 >> 16) as f32)
+}
+
 #[inline(always)]
 fn read(lo: &Table, hi: &Table, xfade: f32, p: u32) -> f32 {
     let i = (p >> 24) as usize;
-    let j = (i + 1) & (WAVE_LEN - 1);
     let f = (p & 0x00ff_ffff) as f32 * (1.0 / PHASE_UNITS);
-    let (l0, l1) = (lo[i] as f32, lo[j] as f32);
-    let (h0, h1) = (hi[i] as f32, hi[j] as f32);
+    let (l0, l1) = pair(lo, i);
+    let (h0, h1) = pair(hi, i);
     let a = l0 + (l1 - l0) * f;
     a + (h0 + (h1 - h0) * f - a) * xfade
 }

@@ -99,5 +99,5 @@ fn each_mip_keeps_half_the_harmonics_of_the_one_before() {
 fn the_emitted_source_declares_both_tables() {
     let src = emit_rust();
     assert!(src.contains("pub static WAVE_NAMES: [&str; 16]"));
-    assert!(src.contains("pub static WAVES: [[[i16; 256]; 8]; 16]"));
+    assert!(src.contains("pub static WAVES: [[[i16; 257]; 8]; 16]"));
 }
