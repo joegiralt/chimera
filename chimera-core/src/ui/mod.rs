@@ -596,18 +596,6 @@ impl UiState {
         // Force nav region redraw while scroll is animating
     }
 
-    /// Render full screen to a display, with live output from the scope buffer.
-    pub fn render<D>(&self, display: &mut D, perf: &PerfStats)
-    where
-        D: embedded_graphics::draw_target::DrawTarget<
-                Color = embedded_graphics::pixelcolor::Rgb565,
-            >,
-    {
-        let mut scope = [0.0f32; SCOPE_LEN];
-        crate::scope::read_samples(&mut scope);
-        self.render_with_scope(display, perf, &scope);
-    }
-
     /// Render full screen with `scope` as the live output (tests pass a
     /// fixed buffer so screen goldens are deterministic).
     pub fn render_with_scope<D>(&self, display: &mut D, perf: &PerfStats, scope: &[f32; SCOPE_LEN])
@@ -704,14 +692,12 @@ impl UiState {
 
     /// Prime the region set after an initial full render, so render_dirty
     /// won't redundantly redraw everything on the first call.
-    pub fn prime_regions(&mut self, perf: &PerfStats) {
-        let mut scope = [0.0f32; SCOPE_LEN];
-        crate::scope::read_samples(&mut scope);
+    pub fn prime_regions(&mut self, perf: &PerfStats, scope: &[f32; SCOPE_LEN]) {
         self.region_set
             .set_layout(self.nav.active_block_def().layout);
         let mut data = [region::RegionData::sentinel_header(); region::MAX_REGIONS];
         {
-            let f = self.frame(perf, &scope);
+            let f = self.frame(perf, scope);
             for (d, r) in data.iter_mut().zip(self.region_set.active_regions()) {
                 *d = self.region_data(r.kind, &f);
             }
@@ -721,24 +707,8 @@ impl UiState {
         }
     }
 
-    /// Render only dirty regions. Returns list of (y_start, y_end) pairs to flush.
-    /// Slots with (0, 0) are unused.
-    pub fn render_dirty<D>(
-        &mut self,
-        display: &mut D,
-        perf: &PerfStats,
-    ) -> [(u16, u16); region::MAX_REGIONS]
-    where
-        D: embedded_graphics::draw_target::DrawTarget<
-                Color = embedded_graphics::pixelcolor::Rgb565,
-            > + chimera_hal::ChimeraDisplay,
-    {
-        let mut scope = [0.0f32; SCOPE_LEN];
-        crate::scope::read_samples(&mut scope);
-        self.render_dirty_with_scope(display, perf, &scope)
-    }
-
-    /// `render_dirty` with `scope` as the live output.
+    /// Render only dirty regions, with `scope` as the live output. Returns
+    /// list of (y_start, y_end) pairs to flush. Slots with (0, 0) are unused.
     pub fn render_dirty_with_scope<D>(
         &mut self,
         display: &mut D,

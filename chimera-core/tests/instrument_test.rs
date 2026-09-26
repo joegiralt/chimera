@@ -41,6 +41,7 @@ struct Rig {
     inst: Box<Instrument>,
     fx: Box<FxBus>,
     out: DacOut,
+    scope: chimera_core::scope::ScopeWriter,
 }
 
 impl Rig {
@@ -49,10 +50,12 @@ impl Rig {
             inst: Box::new(Instrument::new(SR, BUDGET)),
             fx: Box::new(FxBus::new()),
             out: [[0.0; BLOCK_SIZE * 2]; DAC_PAIRS],
+            scope: common::scope_writer(),
         }
     }
     fn render(&mut self, shared: &AudioShared) -> &DacOut {
-        self.inst.render(&mut self.fx, &mut self.out, shared);
+        self.inst
+            .render(&mut self.fx, &mut self.out, shared, &mut self.scope);
         &self.out
     }
 }

@@ -52,12 +52,16 @@ fn axi_residents_fit() {
     use chimera_core::dsp::fx_bus::FxBus;
     use chimera_core::instrument::{AXI_RESIDENT, AudioShared};
     use chimera_core::preset::{Performance, SoundPool};
+    use chimera_core::scope::{ScopeFrame, ScopeWriter};
+    use chimera_core::triple::TripleBuffer;
     let parts = [
         ("framebuffer", hw::FB_BYTES),
         ("UI reserve", hw::UI_RESERVE),
         ("Performance", size_of::<Performance>()),
         ("SoundPool", size_of::<SoundPool>()),
         ("AudioShared x2", 2 * size_of::<AudioShared>()),
+        ("scope x3", size_of::<TripleBuffer<ScopeFrame>>()),
+        ("scope writer", size_of::<ScopeWriter>()),
         ("FxBus", size_of::<FxBus>()),
     ];
     for (name, size) in parts {

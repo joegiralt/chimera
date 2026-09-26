@@ -16,8 +16,14 @@ use chimera_core::modulation::ModState;
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::{EngineType, FilterParams, FmOpParams, ParamSnapshot};
 use chimera_core::preset::{ChainType, Sound};
+use chimera_core::scope::{ScopeWriter, scope_buffer};
 use chimera_core::{MidiChannel, MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
+
+pub fn scope_writer() -> ScopeWriter {
+    let (w, _unread) = Box::leak(Box::new(scope_buffer())).split();
+    ScopeWriter::new(w)
+}
 
 pub const SR: u32 = 48_000;
 pub const NOTE: u8 = 60;
@@ -184,6 +190,7 @@ pub fn render_case_through_instrument(case: Case) -> Vec<f32> {
         kind,
     };
     let mut out = Vec::with_capacity(TOTAL_SAMPLES);
+    let mut scope = scope_writer();
     for b in 0..ON_BLOCKS + OFF_BLOCKS {
         let s = if case == Case::PizzaToModalSwitch && b >= ON_BLOCKS / 2 {
             &switched
@@ -196,7 +203,7 @@ pub fn render_case_through_instrument(case: Case) -> Vec<f32> {
         if b == ON_BLOCKS {
             inst.handle(event(NoteKind::Off), s);
         }
-        inst.render(&mut fx, &mut dac, s);
+        inst.render(&mut fx, &mut dac, s, &mut scope);
         out.extend_from_slice(inst.part_bus(0));
     }
     out

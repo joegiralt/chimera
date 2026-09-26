@@ -7,6 +7,8 @@ use chimera_core::hw::{BLOCK_SIZE, CPU_HZ_REV_V, DAC_PAIRS, SAMPLE_RATE, SampleB
 use chimera_core::instrument::{AudioShared, DacOut, Instrument};
 use chimera_core::note_queue::{NoteEvent, NoteKind, NoteQueue};
 use chimera_core::preset::Performance;
+use chimera_core::scope::{ScopeFrame, ScopeWriter};
+use chimera_core::triple::Writer;
 use chimera_core::{MidiChannel, MidiNote, Velocity};
 use cpal::Stream;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -31,7 +33,7 @@ pub struct DesktopAudio {
 }
 
 impl DesktopAudio {
-    pub fn new() -> Self {
+    pub fn new(scope: Writer<ScopeFrame>) -> Self {
         let host = cpal::default_host();
         let device = host.default_output_device().expect("no output device");
         let config = stereo_48k(&device).unwrap_or_else(|| {
@@ -58,6 +60,7 @@ impl DesktopAudio {
         let mut fx = Box::new(FxBus::new());
         let mut dac: DacOut = [[0.0; BLOCK_SIZE * 2]; DAC_PAIRS];
         let mut block_pos = BLOCK_SIZE;
+        let mut scope = ScopeWriter::new(scope);
 
         let stream = device
             .build_output_stream(
@@ -75,7 +78,7 @@ impl DesktopAudio {
                     let solo = audio.solo.load(Ordering::Relaxed);
                     for frame in data.chunks_mut(channels) {
                         if block_pos >= BLOCK_SIZE {
-                            inst.render(&mut fx, &mut dac, shared);
+                            inst.render(&mut fx, &mut dac, shared, &mut scope);
                             block_pos = 0;
                         }
                         let (l, r) = stereo_frame(&dac, solo, block_pos);

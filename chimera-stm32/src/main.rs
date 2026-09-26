@@ -5,6 +5,7 @@ mod audio;
 
 mod controls;
 mod display;
+mod shared;
 
 use chimera_core::ui::UiState;
 use chimera_core::ui::perf::PerfTracker;
@@ -98,6 +99,8 @@ fn main() -> ! {
     controls::enable();
 
     // Audio init — DMA-driven, main loop has no audio responsibilities
+    let (scope_w, mut scope_r) = shared::take_scope().expect("scope buffer taken once");
+    audio::init_scope(scope_w);
     audio::init_pll3();
     audio::init_sai1a(); // Configures SAI but does NOT enable it
 
@@ -118,9 +121,9 @@ fn main() -> ! {
 
     // Initial render
     ui.update();
-    ui.render(&mut display, &perf.stats);
+    ui.render_with_scope(&mut display, &perf.stats, scope_r.read());
     display.flush();
-    ui.prime_regions(&perf.stats);
+    ui.prime_regions(&perf.stats, scope_r.read());
     led.set_low();
 
     loop {
@@ -134,7 +137,7 @@ fn main() -> ! {
 
         ui.update();
 
-        let flush_list = ui.render_dirty(&mut display, &perf.stats);
+        let flush_list = ui.render_dirty_with_scope(&mut display, &perf.stats, scope_r.read());
 
         for &(ys, ye) in &flush_list {
             if ys != ye {
