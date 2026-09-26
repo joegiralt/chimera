@@ -246,3 +246,25 @@ fn the_crossfade_ramps_across_the_block() {
     let expect = sine[s] + (saw[s] - sine[s]) * (s as f32 / BLOCK_SIZE as f32);
     assert!((ramp[s] - expect).abs() < 1e-4, "{} vs {expect}", ramp[s]);
 }
+
+#[test]
+fn a_self_link_reads_the_previous_sample() {
+    let mut mods = NONE;
+    mods[2] = 0b100;
+    let plan = EvalPlan::build(&mods, 1, &NONE, 1);
+    assert_eq!(plan.edge_count(), 1);
+    assert_eq!(plan.delayed, 1);
+}
+
+#[test]
+fn a_union_of_more_than_fifteen_links_is_capped() {
+    let all = [0b11_1111u8; OPS];
+    let plan = EvalPlan::build(&all, 1, &all, 1);
+    assert_eq!(plan.edge_count(), 15);
+    let (mut a, mut b) = (NONE, NONE);
+    for i in 0..OPS {
+        a[i] = (1u8 << i) - 1;
+        b[i] = !((2u8 << i) - 1) & 0b11_1111;
+    }
+    assert_eq!(EvalPlan::build(&a, 1, &b, 1).edge_count(), 15);
+}
