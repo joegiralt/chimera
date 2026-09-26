@@ -1,6 +1,8 @@
 mod audio;
 mod controls;
 mod display;
+#[cfg(feature = "midi")]
+mod midi;
 
 use chimera_core::scope::scope_buffer;
 use chimera_core::ui::UiState;
