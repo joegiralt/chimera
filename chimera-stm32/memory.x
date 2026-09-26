@@ -7,8 +7,8 @@ MEMORY
     DTCM (rwx) : ORIGIN = 0x20000000, LENGTH = 128K
 }
 
-/* ADR 0020: the stack lives in DTCM (zero-wait, CPU-only), not beside the
-   framebuffer. The wave-table copy takes the bottom of DTCM (dtcm.x); the
-   stack is everything above it. */
-_stack_start = ORIGIN(DTCM) + LENGTH(DTCM);
-_stack_end = __edtcm_waves;
+/* ADR 0020, 0025: the stack lives in DTCM (zero-wait, CPU-only), not beside
+   the framebuffer. The wave-table copy takes the top of DTCM (dtcm.x); the
+   stack is everything below it. */
+_stack_start = __sdtcm_waves;
+_stack_end = ORIGIN(DTCM);
