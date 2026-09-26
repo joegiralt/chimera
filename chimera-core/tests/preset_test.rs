@@ -144,7 +144,7 @@ fn performance_has_six_parts_playing_sounds() {
     let perf = Performance::new();
     assert_eq!(perf.parts.len(), chimera_core::hw::MAX_PARTS);
     let sound: &Sound = &perf.parts[0].sound;
-    assert_eq!(sound.chain_type, ChainType::PizzaPoly);
+    assert_eq!(sound.chain_type, ChainType::Algo);
     assert_eq!(&perf.name, b"New Performance\0");
 }
 
@@ -379,7 +379,8 @@ fn primed(ui: &UiState) -> Vec<chimera_core::addr::ParamAddr> {
 fn priming_on_main_page_registers_focused_param() {
     let mut ui = UiState::new();
     press(&mut ui, ButtonId::Plus);
-    press(&mut ui, ButtonId::Plus); // node 2: Filter
+    press(&mut ui, ButtonId::Plus);
+    press(&mut ui, ButtonId::Plus); // node 3: Filter
     prime(&mut ui); // slot 0: cutoff
     assert_eq!(
         primed(&ui),
@@ -390,12 +391,12 @@ fn priming_on_main_page_registers_focused_param() {
     );
 }
 
-/// Pizza LFO sub-page (node 4, sub-page 2): slot 0 is LFO rate, which is not
+/// LFO sub-page (node 5, sub-page 2): slot 0 is LFO rate, which is not
 /// modulatable, so the registry refuses it.
 #[test]
-fn priming_on_pizza_lfo_sub_page_registers_nothing() {
+fn priming_on_the_lfo_sub_page_registers_nothing() {
     let mut ui = UiState::new();
-    for _ in 0..4 {
+    for _ in 0..5 {
         press(&mut ui, ButtonId::Plus);
     }
     press(&mut ui, ButtonId::Edit);

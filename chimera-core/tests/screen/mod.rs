@@ -177,6 +177,20 @@ pub fn load_init(ui: &mut UiState, ct: ChainType) {
     feed(ui, Input::press(ButtonId::Edit));
 }
 
+/// From Part 1's home (the OSC node), EDIT down to the LEVEL sub-page.
+pub fn to_level_page(ui: &mut UiState) {
+    use chimera_core::ui::block_registry::{ALGO_CHAIN, ALGO_LEVEL};
+    let subs = ALGO_CHAIN.blocks[0].sub_pages;
+    let n = subs
+        .iter()
+        .position(|d| d.id == ALGO_LEVEL.id)
+        .expect("LEVEL is an OSC sub-page")
+        + 1;
+    for _ in 0..n {
+        feed(ui, Input::press(ButtonId::Edit));
+    }
+}
+
 fn plus(ui: &mut UiState, n: usize) {
     for _ in 0..n {
         feed(ui, Input::press(ButtonId::Plus));
@@ -194,7 +208,7 @@ pub type ScreenCase = (&'static str, fn(&mut UiState));
 
 /// Every screen the goldens lock, one or more per page type (spec § Testing).
 pub const CASES: &[ScreenCase] = &[
-    ("engine_pizza", |ui| feed(ui, Input::turn(EncoderId::A, 2))),
+    ("engine_algo", |ui| feed(ui, Input::turn(EncoderId::A, 2))),
     ("engine_fm_alg", |ui| {
         load_init(ui, ChainType::Fm);
         feed(ui, Input::turn(EncoderId::A, 3));
@@ -205,12 +219,12 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::A, 2)); // select operator 3
     }),
     ("bigviz_filter", |ui| {
-        plus(ui, 2);
+        plus(ui, 3);
         feed(ui, Input::turn(EncoderId::B, 80)); // resonance
         feed(ui, Input::turn(EncoderId::A, -60)); // cutoff, focused
     }),
     ("bigviz_env", |ui| {
-        plus(ui, 4);
+        plus(ui, 5);
         feed(ui, Input::press(ButtonId::Edit));
         feed(ui, Input::turn(EncoderId::B, 6));
     }),
@@ -234,7 +248,7 @@ pub const CASES: &[ScreenCase] = &[
         plus(ui, 3);
     }),
     ("mod_matrix", |ui| {
-        plus(ui, 2);
+        plus(ui, 3);
         feed(ui, Input::turn(EncoderId::A, 1)); // focus CUTOFF
         prime(ui);
         plus(ui, 1);
@@ -249,7 +263,7 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::E, 42)); // LFO → CUTOFF, selected
     }),
     ("sound_browser", |ui| {
-        let mut s = Sound::init(ChainType::Fm);
+        let mut s = Sound::init(ChainType::Algo);
         s.name = [0; 16];
         s.name[..9].copy_from_slice(b"WARM BASS");
         ui.pool.store(0, s);

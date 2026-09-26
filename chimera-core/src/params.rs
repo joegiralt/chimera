@@ -473,11 +473,11 @@ impl Block for FmParams {
 /// Which synthesis engine is active.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum EngineType {
-    #[default]
     Pizza = 0,
     Fm = 1,
     Modal = 2,
     Va = 3,
+    #[default]
     Algo = 4,
 }
 

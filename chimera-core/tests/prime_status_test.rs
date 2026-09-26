@@ -21,7 +21,8 @@ fn prime(ui: &mut UiState, enc: EncoderId) {
 
 #[test]
 fn mix_plus_on_a_fresh_modulatable_param_reports_added() {
-    let mut ui = UiState::new(); // Part 1, Pizza page: slot A is SHAPE
+    let mut ui = UiState::new(); // Part 1, LEVEL page: slot A is operator 1's LEVEL
+    to_level_page(&mut ui);
     prime(&mut ui, EncoderId::A);
     assert_eq!(ui.prime_status(), Some(PrimeStatus::Added));
 }
@@ -29,6 +30,7 @@ fn mix_plus_on_a_fresh_modulatable_param_reports_added() {
 #[test]
 fn mix_plus_on_an_already_routed_param_reports_already_routed() {
     let mut ui = UiState::new();
+    to_level_page(&mut ui);
     prime(&mut ui, EncoderId::A);
     assert_eq!(ui.prime_status(), Some(PrimeStatus::Added));
 
@@ -43,7 +45,7 @@ fn mix_plus_on_an_already_routed_param_reports_already_routed() {
 #[test]
 fn mix_plus_on_a_non_modulatable_param_reports_not_modulatable() {
     let mut ui = UiState::new();
-    for _ in 0..4 {
+    for _ in 0..5 {
         feed(&mut ui, Input::press(ButtonId::Plus)); // -> MOD node
     }
     feed(&mut ui, Input::press(ButtonId::Edit)); // Envelope sub-page
@@ -67,6 +69,7 @@ fn registry_full_maps_to_the_full_status() {
 #[test]
 fn an_encoder_turn_clears_the_status() {
     let mut ui = UiState::new();
+    to_level_page(&mut ui);
     prime(&mut ui, EncoderId::A);
     assert_eq!(ui.prime_status(), Some(PrimeStatus::Added));
 
@@ -77,6 +80,7 @@ fn an_encoder_turn_clears_the_status() {
 #[test]
 fn a_page_change_clears_the_status() {
     let mut ui = UiState::new();
+    to_level_page(&mut ui);
     prime(&mut ui, EncoderId::A);
     assert_eq!(ui.prime_status(), Some(PrimeStatus::Added));
 
@@ -87,6 +91,7 @@ fn a_page_change_clears_the_status() {
 #[test]
 fn un_priming_also_clears_the_status() {
     let mut ui = UiState::new();
+    to_level_page(&mut ui);
     prime(&mut ui, EncoderId::A);
     assert_eq!(ui.prime_status(), Some(PrimeStatus::Added));
 
@@ -118,7 +123,8 @@ fn matrix_hint_fits_its_row() {
 #[test]
 fn dirty_render_with_a_status_message_equals_full_render() {
     let mut ui = UiState::new();
-    feed(&mut ui, Input::turn(EncoderId::A, 1)); // focus SHAPE, no prime yet
+    to_level_page(&mut ui);
+    feed(&mut ui, Input::turn(EncoderId::A, 1)); // focus LEVEL, no prime yet
     settle(&mut ui);
     let scope = scope_fixture();
     let mut dirty = Fb::new();
@@ -164,9 +170,10 @@ fn diff_rows(a: &Fb, b: &Fb, top: i32, bottom: i32) -> usize {
         .count()
 }
 
-/// Pizza → Drive → Filter, CUTOFF focused.
+/// OSC → ALG → DRV → FLT, CUTOFF focused.
 fn filter_page() -> UiState {
     let mut ui = UiState::new();
+    feed(&mut ui, Input::press(ButtonId::Plus));
     feed(&mut ui, Input::press(ButtonId::Plus));
     feed(&mut ui, Input::press(ButtonId::Plus));
     feed(&mut ui, Input::turn(EncoderId::A, 1));
@@ -261,6 +268,7 @@ fn bigviz_status_appears_and_clears_through_the_dirty_regions() {
 #[test]
 fn focus_band_status_clearing_redraws_through_the_dirty_regions() {
     let mut ui = UiState::new();
+    to_level_page(&mut ui);
     feed(&mut ui, Input::turn(EncoderId::A, 1));
     settle(&mut ui);
     let before = full(&ui);

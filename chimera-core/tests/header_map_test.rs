@@ -16,8 +16,8 @@ fn texts(nav: &ChainNav) -> (String, String) {
 #[test]
 fn header_names_context_and_page() {
     let mut nav = ChainNav::new();
-    assert_eq!(texts(&nav), ("PART 1".into(), "PIZZA".into()));
-    nav.node = 2;
+    assert_eq!(texts(&nav), ("PART 1".into(), "WAVE".into()));
+    nav.node = 3;
     assert_eq!(texts(&nav), ("PART 1".into(), "FILTER".into()));
     nav.chain_id = ChainId::Mixer(1);
     nav.node = 0;
@@ -39,7 +39,7 @@ fn header_names_context_and_page() {
 fn header_dot_shows_only_while_sounding_and_stays_in_the_band() {
     for sounding in [false, true] {
         let mut fb = Fb::new();
-        header(&mut fb, "PART 1", "PIZZA", sounding, 0);
+        header(&mut fb, "PART 1", "WAVE", sounding, 0);
         assert_eq!(
             fb.at(theme::HEADER_DOT_X, theme::HEADER_DOT_Y) == theme::ACCENT,
             sounding
@@ -57,7 +57,7 @@ fn header_dot_shows_only_while_sounding_and_stays_in_the_band() {
 #[test]
 fn header_shows_audio_load_in_warning_colours() {
     let mut fb = Fb::new();
-    header(&mut fb, "PART 1", "PIZZA", false, 85);
+    header(&mut fb, "PART 1", "WAVE", false, 85);
     let alert = (0..28)
         .flat_map(|y| (120..225).map(move |x| (x, y)))
         .any(|(x, y)| fb.at(x, y) == theme::ALERT);
@@ -119,10 +119,10 @@ fn nodes_spread_over_the_line_and_a_single_node_is_centred() {
 #[test]
 fn current_block_is_an_accent_pill_others_are_rings() {
     let mut nav = ChainNav::new();
-    nav.node = 2; // FLT of PIZ DRV FLT FLD MOD
+    nav.node = 3; // FLT of OSC ALG DRV FLT FLD MOD
     let mut fb = Fb::new();
     dungeon_map::draw(&mut fb, &nav, 0);
-    let (pill, other) = (node_x(2, 5), node_x(0, 5));
+    let (pill, other) = (node_x(3, 6), node_x(0, 6));
     assert_eq!(
         fb.at(pill - 14, theme::MAP_LINE_Y),
         theme::ACCENT,
@@ -142,11 +142,11 @@ fn current_block_is_an_accent_pill_others_are_rings() {
 #[test]
 fn sub_pages_hang_under_the_pill_with_the_current_one_lit() {
     let mut nav = ChainNav::new();
-    nav.node = 4; // MOD: MOD, ENV, LFO
+    nav.node = 5; // MOD: MOD, ENV, LFO
     nav.sub_page = 1;
     let mut fb = Fb::new();
     dungeon_map::draw(&mut fb, &nav, 0);
-    let x = node_x(4, 5) - 8;
+    let x = node_x(5, 6) - 8;
     let lit_row = theme::BRANCH_START_Y + theme::BRANCH_LINE_HEIGHT + theme::BRANCH_LINE_HEIGHT / 2;
     assert_eq!(fb.at(x, lit_row), theme::ACCENT, "ENV lit");
     let first_row = theme::BRANCH_START_Y + theme::BRANCH_LINE_HEIGHT / 2;

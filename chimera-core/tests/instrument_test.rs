@@ -174,7 +174,7 @@ fn notes_route_by_channel() {
 #[test]
 fn tails_ring_out_then_free_the_voice() {
     let mut rig = Rig::new();
-    let shared = AudioShared::default(); // Pizza, release 0.3 s
+    let shared = AudioShared::default(); // Algo init, RR 8
     rig.inst.handle(on(0, 60), &shared);
     for _ in 0..20 {
         rig.render(&shared);
@@ -262,10 +262,10 @@ fn reverb_send(send: f32) -> Vec<f32> {
 /// for an intended sound change:
 ///     GOLDEN_RECORD=1 cargo test -p chimera-core --test instrument_test -- --nocapture
 const GOLDENS: &[(&str, u64)] = &[
-    ("poly_chord", 0x9e1be15b748f4ab1),
-    ("two_parts_two_pairs", 0x76a2727ec0b942ef), // re-recorded: part 2 is Modal, not FM (issues/26)
-    ("reverb_send_off", 0x25fa9f662d1acb99),
-    ("reverb_send_on", 0x51da232bdad6e4d9), // re-recorded: FX returns wet-only
+    ("poly_chord", 0x508049a56f63be65), // re-recorded: the default Sound is Algo
+    ("two_parts_two_pairs", 0x98262aa38f73b0af), // re-recorded: part 1 is Algo
+    ("reverb_send_off", 0x74703404aa517989), // re-recorded: the default Sound is Algo
+    ("reverb_send_on", 0x3d1e63a510a959c1), // re-recorded: the default Sound is Algo
 ];
 
 /// A named golden case: a case name paired with its render function.
@@ -459,22 +459,22 @@ fn stealing_a_releasing_voice_does_not_free_the_new_note() {
 #[test]
 fn retriggering_a_releasing_mono_voice_does_not_free_the_new_note() {
     let n = blocks_until_free();
-    let mut pizza = AudioShared::default();
-    pizza.parts[0].mix.mode = PartMode::Mono;
-    let mut modal = pizza.clone();
+    let mut init = AudioShared::default();
+    init.parts[0].mix.mode = PartMode::Mono;
+    let mut modal = init.clone();
     modal.parts[0].params = ParamSnapshot::for_engine(EngineType::Modal);
     for (after_off, held) in [n - 2, n - 1, n, n + 1]
         .into_iter()
         .flat_map(|a| [(a, 0), (a, 20)])
     {
         let mut rig = Rig::new();
-        rig.inst.handle(on(0, 60), &pizza);
+        rig.inst.handle(on(0, 60), &init);
         for _ in 0..20 {
-            rig.render(&pizza);
+            rig.render(&init);
         }
-        rig.inst.handle(off(0, 60), &pizza);
+        rig.inst.handle(off(0, 60), &init);
         for _ in 0..after_off {
-            rig.render(&pizza);
+            rig.render(&init);
         }
         rig.inst.handle(on(0, 62), &modal);
         for b in 0..held {
