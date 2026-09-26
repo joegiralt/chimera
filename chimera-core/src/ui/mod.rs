@@ -152,8 +152,9 @@ impl UiState {
     pub fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
         let p = slot.as_mut_ptr();
         // SAFETY: `p` is valid and unaliased; the pool is built in place,
-        // every other field is written once, and `performance` is written
-        // before it is borrowed, all before `assume_init_mut`.
+        // then filled with the factory bank, every other field is written
+        // once, and `performance` is written before it is borrowed, all
+        // before `assume_init_mut`.
         unsafe {
             let nav = ChainNav::new();
             let page = PageKey::from_nav(&nav, Op::A);
@@ -167,7 +168,8 @@ impl UiState {
                 Op::A,
             ));
             addr_of_mut!((*p).nav).write(nav);
-            SoundPool::init_in_place(uninit_at(addr_of_mut!((*p).pool)));
+            let pool = SoundPool::init_in_place(uninit_at(addr_of_mut!((*p).pool)));
+            crate::factory::load_factory(pool);
             addr_of_mut!((*p).active_part).write(0);
             addr_of_mut!((*p).renderer).write(renderer);
             addr_of_mut!((*p).matrix_state).write(MatrixState::new());

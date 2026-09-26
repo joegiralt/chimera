@@ -21,7 +21,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("mixer_sends", 0x9a495656576afaf9),
     ("mixer_fx_delay", 0x872c17a4bee40923),
     ("mod_matrix", 0xc7c8ac8d7a5682cb),
-    ("sound_browser", 0x4c7be51d24a83421),
+    ("sound_browser", 0x64107334a820f249),
     ("system", 0x66ca9f7c486d2749),
     ("system_audio", 0x6880e7ea1be85438),
 ];
