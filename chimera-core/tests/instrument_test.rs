@@ -15,6 +15,10 @@ use chimera_core::{MidiChannel, MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
 use common::fnv1a;
 
+use chimera_core::hw::{CPU_HZ_REV_V, SampleBudget};
+
+const BUDGET: SampleBudget = SampleBudget::for_cpu(CPU_HZ_REV_V);
+
 const SR: u32 = chimera_hal::SAMPLE_RATE;
 
 fn on(ch: u8, note: u8) -> NoteEvent {
@@ -42,7 +46,7 @@ struct Rig {
 impl Rig {
     fn new() -> Self {
         Self {
-            inst: Box::new(Instrument::new(SR)),
+            inst: Box::new(Instrument::new(SR, BUDGET)),
             fx: Box::new(FxBus::new()),
             out: [[0.0; BLOCK_SIZE * 2]; DAC_PAIRS],
         }
@@ -330,7 +334,6 @@ fn note_off_follows_the_note_on_channel() {
 #[test]
 fn sound_change_mid_chord_stays_in_budget() {
     use chimera_core::dsp::voice::Voice;
-    use chimera_core::hw::AUDIO_CYCLE_BUDGET;
     use chimera_core::params::{EngineType, ParamSnapshot};
     let mut rig = Rig::new();
     let mut shared = AudioShared::default();
@@ -350,7 +353,7 @@ fn sound_change_mid_chord_stays_in_budget() {
     shared.parts[0].params = ParamSnapshot::for_engine(EngineType::Modal);
     rig.render(&shared);
     let a = rig.inst.allocator();
-    assert!(a.sounding_cost() + FxBus::COST <= AUDIO_CYCLE_BUDGET);
+    assert!(a.sounding_cost() + FxBus::COST <= BUDGET.as_cost());
     assert_eq!(a.slots().iter().filter(|s| !s.is_free()).count(), 5);
     assert!(
         a.slots()

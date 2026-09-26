@@ -1,10 +1,11 @@
 //! Digitone-style voice allocation (instrument-core spec § Voice allocation).
 
 use chimera_core::MidiNote;
-use chimera_core::hw::{AUDIO_CYCLE_BUDGET, Cost, MAX_VOICES};
+use chimera_core::hw::{CPU_HZ_REV_V, Cost, MAX_VOICES, SampleBudget};
 use chimera_core::part::PartMode::{self, Mono, Poly};
 use chimera_core::voice_alloc::{Alloc, Allocator};
 
+const BUDGET: SampleBudget = SampleBudget::for_cpu(CPU_HZ_REV_V);
 const FM: Cost = Cost(610);
 const NONE: Cost = Cost::ZERO;
 
@@ -25,7 +26,7 @@ fn voice(r: Alloc) -> usize {
 
 #[test]
 fn poly_takes_free_voices_round_robin() {
-    let mut a = Allocator::new();
+    let mut a = Allocator::new(BUDGET);
     let got: Vec<usize> = (0..3).map(|i| voice(on(&mut a, 0, Poly, 60 + i))).collect();
     assert_eq!(got, [0, 1, 2]);
     a.release(0);
@@ -38,7 +39,7 @@ fn poly_takes_free_voices_round_robin() {
 
 #[test]
 fn full_pool_steals_the_oldest_voice_across_parts() {
-    let mut a = Allocator::new();
+    let mut a = Allocator::new(BUDGET);
     for i in 0..MAX_VOICES as u8 {
         on(&mut a, i % 2, Poly, 60 + i); // parts 0 and 1 interleaved
     }
@@ -52,7 +53,7 @@ fn full_pool_steals_the_oldest_voice_across_parts() {
 
 #[test]
 fn mono_voices_are_never_stolen() {
-    let mut a = Allocator::new();
+    let mut a = Allocator::new(BUDGET);
     let mono = voice(on(&mut a, 0, Mono, 40)); // oldest voice, but mono
     for i in 1..MAX_VOICES as u8 {
         on(&mut a, 1, Poly, 60 + i);
@@ -64,7 +65,7 @@ fn mono_voices_are_never_stolen() {
 
 #[test]
 fn refuses_when_every_voice_is_mono() {
-    let mut a = Allocator::new();
+    let mut a = Allocator::new(BUDGET);
     for p in 0..MAX_VOICES as u8 {
         on(&mut a, p, Mono, 60);
     }
@@ -74,7 +75,7 @@ fn refuses_when_every_voice_is_mono() {
 
 #[test]
 fn mono_retrigger_reuses_its_voice() {
-    let mut a = Allocator::new();
+    let mut a = Allocator::new(BUDGET);
     let v = voice(on(&mut a, 3, Mono, 60));
     assert_eq!(voice(on(&mut a, 3, Mono, 64)), v);
     assert_eq!(a.slots()[v].note(), Some(n(64)));
@@ -86,7 +87,7 @@ fn mono_retrigger_reuses_its_voice() {
 /// voice or an out-of-range index is a no-op.
 #[test]
 fn release_unholds_only_that_voice() {
-    let mut a = Allocator::new();
+    let mut a = Allocator::new(BUDGET);
     let v0 = voice(on(&mut a, 0, Poly, 60));
     let v1 = voice(on(&mut a, 1, Poly, 60)); // same note, other part
     a.release(v1);
@@ -103,7 +104,7 @@ fn release_unholds_only_that_voice() {
 /// engine reports inactive; a held voice is never freed that way.
 #[test]
 fn tails_keep_the_voice_until_finished() {
-    let mut a = Allocator::new();
+    let mut a = Allocator::new(BUDGET);
     let v = voice(on(&mut a, 0, Poly, 60));
     a.release_finished(v); // still held: ignored
     assert_eq!(a.slots()[v].part(), Some(0));
@@ -118,7 +119,7 @@ fn tails_keep_the_voice_until_finished() {
 #[test]
 fn cpu_budget_steals_or_refuses() {
     let modal = Cost(1_210);
-    let mut a = Allocator::new();
+    let mut a = Allocator::new(BUDGET);
     let fx = Cost(1_000);
     // 4 Modal voices + FX = 5,840; a 5th would be 7,050 > 7,000.
     for i in 0..4 {
@@ -166,7 +167,7 @@ fn random_play_keeps_the_pool_invariants() {
         let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15));
         let modes: [PartMode; 6] =
             core::array::from_fn(|_| if rng.below(3) == 0 { Mono } else { Poly });
-        let mut a = Allocator::new();
+        let mut a = Allocator::new(BUDGET);
         // Model: every held (part, note) and the voice playing it.
         let mut held: Vec<(u8, u8, usize)> = Vec::new();
         for step in 0..2_000 {
@@ -245,7 +246,7 @@ fn random_play_keeps_the_pool_invariants() {
                 }
             }
             // The sounding total never exceeds the budget.
-            assert!(a.sounding_cost() + FX <= AUDIO_CYCLE_BUDGET, "{ctx}");
+            assert!(a.sounding_cost() + FX <= BUDGET.as_cost(), "{ctx}");
         }
         refusals += a.refused();
     }
@@ -260,7 +261,7 @@ fn random_play_keeps_the_pool_invariants() {
 /// non-mono voices are shed until it fits.
 #[test]
 fn recost_sheds_the_newest_voices_over_budget() {
-    let mut a = Allocator::new();
+    let mut a = Allocator::new(BUDGET);
     let fx = Cost(600);
     for i in 0..6 {
         on(&mut a, 0, Poly, 60 + i); // 6 × 610 + 600 = 4,260
@@ -281,7 +282,7 @@ fn recost_sheds_the_newest_voices_over_budget() {
 /// still releases the chord (no stuck notes); new notes share one voice.
 #[test]
 fn poly_to_mono_switch_releases_the_held_chord() {
-    let mut a = Allocator::new();
+    let mut a = Allocator::new(BUDGET);
     let chord: Vec<usize> = (0..3).map(|i| voice(on(&mut a, 0, Poly, 60 + i))).collect();
     let m = voice(on(&mut a, 0, Mono, 72));
     assert!(!chord.contains(&m));
@@ -297,7 +298,7 @@ fn poly_to_mono_switch_releases_the_held_chord() {
 /// drone survives newer tails.
 #[test]
 fn full_pool_steals_a_tail_before_a_held_drone() {
-    let mut a = Allocator::new();
+    let mut a = Allocator::new(BUDGET);
     let drone = voice(on(&mut a, 0, Poly, 36)); // oldest, held
     let tails: Vec<usize> = (1..MAX_VOICES as u8)
         .map(|i| voice(on(&mut a, 1, Poly, 60 + i)))
@@ -317,7 +318,7 @@ fn full_pool_steals_a_tail_before_a_held_drone() {
 fn cpu_budget_steals_a_tail_before_a_held_note() {
     let modal = Cost(1_210);
     let fx = Cost(1_000);
-    let mut a = Allocator::new();
+    let mut a = Allocator::new(BUDGET);
     let drone = voice(a.note_on(0, Poly, n(36), modal, fx));
     let rest: Vec<usize> = (1..4)
         .map(|i| voice(a.note_on(0, Poly, n(60 + i), modal, fx)))
@@ -326,4 +327,20 @@ fn cpu_budget_steals_a_tail_before_a_held_note() {
     a.release(rest[2]);
     assert_eq!(a.note_on(1, Poly, n(70), modal, fx), Alloc::Voice(rest[1]));
     assert!(a.slots()[drone].held());
+}
+
+#[test]
+fn allocator_honours_the_budget_it_was_given() {
+    const MODAL: Cost = Cost(1_210);
+    const FX: Cost = Cost(600);
+    let sounding = |cpu_hz: u32| {
+        let mut a = Allocator::new(SampleBudget::for_cpu(cpu_hz));
+        for i in 0..MAX_VOICES as u8 {
+            a.note_on(i, Poly, n(60 + i), MODAL, FX);
+        }
+        assert_eq!(a.budget(), SampleBudget::for_cpu(cpu_hz));
+        a.slots().iter().filter(|s| !s.is_free()).count()
+    };
+    assert_eq!(sounding(480_000_000), 5);
+    assert_eq!(sounding(400_000_000), 4);
 }

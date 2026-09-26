@@ -10,10 +10,42 @@ pub const MAX_VOICES: usize = 6;
 pub const MAX_PARTS: usize = 6;
 pub const DAC_PAIRS: usize = 3;
 
-pub const CPU_HZ: u32 = 480_000_000;
-pub const CYCLES_PER_SAMPLE: u32 = CPU_HZ / SAMPLE_RATE; // 10_000
+pub const CPU_HZ_REV_V: u32 = 480_000_000;
+pub const CPU_HZ_REV_Y: u32 = 400_000_000;
+
 /// 30% is left for UI, MIDI and interrupt overhead.
-pub const AUDIO_CYCLE_BUDGET: Cost = Cost(CYCLES_PER_SAMPLE * 70 / 100); // 7_000
+pub const AUDIO_BUDGET_PERCENT: u32 = 70;
+
+// No `Default`: a rev Y chip must never silently get the 480 MHz budget.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SampleBudget(u32);
+
+impl SampleBudget {
+    pub const fn for_cpu(cpu_hz: u32) -> Self {
+        Self((cpu_hz as u64 * AUDIO_BUDGET_PERCENT as u64 / (100 * SAMPLE_RATE as u64)) as u32)
+    }
+
+    pub const fn as_cost(self) -> Cost {
+        Cost(self.0)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BlockBudget(u32);
+
+impl BlockBudget {
+    pub const fn for_cpu(cpu_hz: u32) -> Self {
+        Self((cpu_hz as u64 * BLOCK_SIZE as u64 / SAMPLE_RATE as u64) as u32)
+    }
+
+    pub const fn block_cycles(self) -> u32 {
+        self.0
+    }
+
+    pub const fn budget_cycles(self) -> u32 {
+        (self.0 as u64 * AUDIO_BUDGET_PERCENT as u64 / 100) as u32
+    }
+}
 
 /// Memory regions, in bytes (STM32H750 map, RM0433 §2.3).
 pub const AXI_SRAM: usize = 512 * 1024; // D1: framebuffer, UI, Performance, FX bus

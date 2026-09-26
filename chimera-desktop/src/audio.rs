@@ -3,7 +3,7 @@
 //! three DAC pairs to the speakers.
 
 use chimera_core::dsp::fx_bus::FxBus;
-use chimera_core::hw::{BLOCK_SIZE, DAC_PAIRS, SAMPLE_RATE};
+use chimera_core::hw::{BLOCK_SIZE, CPU_HZ_REV_V, DAC_PAIRS, SAMPLE_RATE, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacOut, Instrument};
 use chimera_core::note_queue::{NoteEvent, NoteKind, NoteQueue};
 use chimera_core::preset::Performance;
@@ -51,7 +51,10 @@ impl DesktopAudio {
         });
         let audio = Arc::clone(&shared);
 
-        let mut inst = Box::new(Instrument::new(sample_rate));
+        let mut inst = Box::new(Instrument::new(
+            sample_rate,
+            SampleBudget::for_cpu(CPU_HZ_REV_V),
+        ));
         let mut fx = Box::new(FxBus::new());
         let mut dac: DacOut = [[0.0; BLOCK_SIZE * 2]; DAC_PAIRS];
         let mut block_pos = BLOCK_SIZE;

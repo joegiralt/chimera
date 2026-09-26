@@ -10,7 +10,8 @@ use crate::MidiChannel;
 use crate::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
 use crate::dsp::voice::Voice;
 use crate::hw::{
-    AXI_SRAM, DAC_PAIRS, FB_BYTES, MAX_PARTS, MAX_VOICES, UI_RESERVE, VOICE_RAM_BUDGET,
+    AXI_SRAM, DAC_PAIRS, FB_BYTES, MAX_PARTS, MAX_VOICES, SampleBudget, UI_RESERVE,
+    VOICE_RAM_BUDGET,
 };
 use crate::modulation::ModState;
 use crate::note_queue::{NoteEvent, NoteKind};
@@ -121,10 +122,10 @@ pub struct Instrument {
 }
 
 impl Instrument {
-    pub fn new(sample_rate: u32) -> Self {
+    pub fn new(sample_rate: u32, budget: SampleBudget) -> Self {
         Self {
             voices: core::array::from_fn(|_| Voice::new(sample_rate)),
-            alloc: Allocator::new(),
+            alloc: Allocator::new(budget),
             note_channel: [MidiChannel::clamped(0); MAX_VOICES],
             buses: [[0.0; BLOCK_SIZE]; MAX_PARTS],
             sends: [[0.0; BLOCK_SIZE]; FX_SENDS],

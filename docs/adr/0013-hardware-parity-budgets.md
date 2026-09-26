@@ -1,6 +1,6 @@
 # 0013. The simulator enforces the chip's limits
 
-- **Status:** Accepted (2026-09-24)
+- **Status:** Accepted (2026-09-24); the cycle-budget clause is superseded by [0020](0020-audio-clocking-and-output.md)
 - **Deciders:** project owner
 
 ## Context

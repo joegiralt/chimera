@@ -172,7 +172,10 @@ pub fn render_case_through_instrument(case: Case) -> Vec<f32> {
     shared.parts[0].mod_state = mod_state;
     let mut switched = shared.clone();
     switched.parts[0].params = init_params(EngineType::Modal);
-    let mut inst = Box::new(Instrument::new(chimera_hal::SAMPLE_RATE));
+    let mut inst = Box::new(Instrument::new(
+        chimera_hal::SAMPLE_RATE,
+        chimera_core::hw::SampleBudget::for_cpu(chimera_core::hw::CPU_HZ_REV_V),
+    ));
     let mut fx = Box::new(FxBus::new());
     let mut dac = [[0.0f32; BLOCK_SIZE * 2]; DAC_PAIRS];
     let event = |kind| NoteEvent {
