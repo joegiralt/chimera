@@ -6,11 +6,14 @@ mod cache;
 mod clocks;
 mod controls;
 mod display;
+#[cfg(feature = "midi-din")]
+mod midi_din;
 mod panic;
 mod priority;
 mod shared;
 
 use chimera_core::clock_plan::{SiliconRev, pll3_for};
+use chimera_core::hw::SampleBudget;
 use chimera_core::ui::fmt::FmtBuf;
 use chimera_core::ui::perf::PerfTracker;
 use chimera_core::ui::{draw, theme};
@@ -52,6 +55,12 @@ fn main() -> ! {
     let gpiod = dp.GPIOD.split(ccdr.peripheral.GPIOD);
     let gpioe = dp.GPIOE.split(ccdr.peripheral.GPIOE);
     let gpiof = dp.GPIOF.split(ccdr.peripheral.GPIOF);
+    #[cfg(feature = "midi-din")]
+    let _midi_rx = dp
+        .GPIOB
+        .split(ccdr.peripheral.GPIOB)
+        .pb7
+        .into_alternate::<7>();
     let _hc_data = gpiof.pf2.into_floating_input();
     let _hc_load = gpiof.pf1.into_push_pull_output();
     let _hc_clk = gpiof.pf0.into_push_pull_output();
@@ -105,26 +114,21 @@ fn main() -> ! {
     controls::enable();
 
     let (scope_w, mut scope_r) = shared::take_scope().expect("scope buffer taken once");
-    audio::init_scope(scope_w);
+    let (_shared_w, shared_r) =
+        shared::take_audio(&ui.performance).expect("audio buffer taken once");
+    audio::engine::init(SampleBudget::for_cpu(clk.cpu_hz), shared_r, scope_w);
+
     let pll3 = pll3_for(clocks::HSE_HZ, chimera_hal::SAMPLE_RATE, clk.rev);
     clocks::init_pll3(&pll3);
     audio::sai::init(clk.rev.new_sai(), pll3.mckdiv);
-
-    // SAFETY: `ui` is a `'static` in AXI, so Part 0's sound params/mod_state
-    // outlive the audio DMA.
-    unsafe {
-        audio::init_voice(
-            &ui.performance.parts[0].sound.params as *const _,
-            &ui.performance.parts[0].sound.mod_state as *const _,
-        );
-    }
-    audio::trigger_note(chimera_hal::MidiNote::A4, chimera_hal::Velocity::DEFAULT);
-
     audio::dma::clear();
     audio::prefill();
     audio::dma::init(&mut cp.NVIC);
     audio::dma::start();
     audio::sai::start();
+
+    #[cfg(feature = "midi-din")]
+    midi_din::init(&mut cp.NVIC, ccdr.clocks.pclk2().raw());
 
     ui.update();
     ui.render_with_scope(&mut display, &perf.stats, scope_r.read());

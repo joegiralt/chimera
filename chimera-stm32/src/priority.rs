@@ -8,6 +8,8 @@ pub struct Priority(u8);
 
 impl Priority {
     pub const AUDIO: Priority = Priority::level(0);
+    #[cfg(feature = "midi-din")]
+    pub const MIDI: Priority = Priority::level(4);
     pub const SYSTICK: Priority = Priority::level(15);
 
     const fn level(level: u8) -> Self {
@@ -21,6 +23,8 @@ impl Priority {
 }
 
 const _: () = assert!(Priority::AUDIO.bits() == 0x00 && Priority::SYSTICK.bits() == 0xF0);
+#[cfg(feature = "midi-din")]
+const _: () = assert!(Priority::MIDI.bits() == 0x40);
 
 pub fn set_irq(nvic: &mut NVIC, irq: pac::Interrupt, p: Priority) {
     // SAFETY: priorities can break priority-based critical sections; this
