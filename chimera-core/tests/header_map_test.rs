@@ -6,7 +6,7 @@ use chimera_core::ui::chain::{ChainId, ChainNav};
 use chimera_core::ui::components::{header, header_text};
 use chimera_core::ui::dungeon_map::{self, node_x};
 use chimera_core::ui::theme;
-use screen::Fb;
+use screen::{Fb, Input, feed};
 
 fn texts(nav: &ChainNav) -> (String, String) {
     let (c, n) = header_text(nav, nav.active_block_def());
@@ -16,7 +16,7 @@ fn texts(nav: &ChainNav) -> (String, String) {
 #[test]
 fn header_names_context_and_page() {
     let mut nav = ChainNav::new();
-    assert_eq!(texts(&nav), ("PART 1".into(), "WAVE".into()));
+    assert_eq!(texts(&nav), ("PART 1".into(), "ALGORITHM".into()));
     nav.node = 3;
     assert_eq!(texts(&nav), ("PART 1".into(), "FILTER".into()));
     nav.chain_id = ChainId::Mixer(1);
@@ -185,4 +185,24 @@ fn the_map_draws_only_in_its_band_on_every_chain() {
             }
         }
     }
+}
+
+/// Spec addendum: ALGO is the Algo engine's home. A fresh Part lands on it,
+/// and so does entering another Part's chain or pressing its button again.
+#[test]
+fn a_fresh_algo_part_lands_on_the_algo_page() {
+    use chimera_core::preset::ChainType;
+    use chimera_core::ui::UiState;
+    use chimera_core::ui::block_registry::ALGO_ALG;
+    use chimera_hal::ButtonId;
+    let mut ui = UiState::new();
+    assert_eq!(ui.nav.chain_type, ChainType::Algo);
+    assert_eq!(ui.nav.active_block_def().id, ALGO_ALG.id);
+    feed(&mut ui, Input::press(ButtonId::Plus));
+    feed(&mut ui, Input::press(ButtonId::B2));
+    assert_eq!(ui.nav.chain_id, ChainId::Part(1));
+    assert_eq!(ui.nav.active_block_def().id, ALGO_ALG.id);
+    feed(&mut ui, Input::press(ButtonId::Plus));
+    feed(&mut ui, Input::press(ButtonId::B2));
+    assert_eq!(ui.nav.active_block_def().id, ALGO_ALG.id);
 }

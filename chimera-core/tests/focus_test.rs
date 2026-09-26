@@ -104,7 +104,6 @@ fn an_empty_slot_does_not_take_focus() {
         fb
     };
     let mut ui = UiState::new();
-    feed(&mut ui, Input::press(ButtonId::Plus)); // Algorithm page
     feed(&mut ui, Input::turn(EncoderId::C, 1)); // MORPH
     settle(&mut ui);
     let before = render(&ui);

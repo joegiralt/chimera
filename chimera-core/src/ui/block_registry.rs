@@ -411,14 +411,15 @@ pub static MODAL_PLUCK_CHAIN: ChainDef2 = ChainDef2 {
 
 static ALGO_OSC_SUB_PAGES: [&BlockDef; 1] = [&ALGO_LEVEL];
 
+/// ALGO is the engine's home: first on the map, where entering the chain lands.
 static ALGO_BLOCKS: [ChainBlock; 6] = [
-    ChainBlock {
-        def: &ALGO_WAVE,
-        sub_pages: &ALGO_OSC_SUB_PAGES,
-    },
     ChainBlock {
         def: &ALGO_ALG,
         sub_pages: &[],
+    },
+    ChainBlock {
+        def: &ALGO_WAVE,
+        sub_pages: &ALGO_OSC_SUB_PAGES,
     },
     ChainBlock {
         def: &DRIVE,

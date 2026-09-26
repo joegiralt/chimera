@@ -417,6 +417,7 @@ fn priming_on_the_lfo_sub_page_registers_nothing() {
 #[test]
 fn priming_a_wave_registers_nothing() {
     let mut ui = UiState::new();
+    press(&mut ui, ButtonId::Plus); // WAVE
     ui.handle_input(&MockControls::new().encoder(EncoderId::C, 1)); // focus slot 2
     prime(&mut ui);
     assert!(primed(&ui).is_empty());
