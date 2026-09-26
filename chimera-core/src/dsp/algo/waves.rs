@@ -8,9 +8,10 @@ include!(concat!(env!("OUT_DIR"), "/waves.rs"));
 pub const WAVE_LEN: usize = 256;
 pub const MIPS: usize = 8;
 pub const WAVE_COUNT: usize = 16;
-pub type Table = [i16; WAVE_LEN];
+/// One period and a guard copy of its first sample.
+pub type Table = [i16; WAVE_LEN + 1];
 
-pub const WAVE_FLASH_BUDGET: usize = 64 * 1024;
+pub const WAVE_FLASH_BUDGET: usize = 64 * 1024 + WAVE_COUNT * MIPS * 2;
 const _: () = assert!(core::mem::size_of::<[[Table; MIPS]; WAVE_COUNT]>() <= WAVE_FLASH_BUDGET);
 
 /// Mip 0's 127 harmonics stay under Nyquist up to this fundamental; each

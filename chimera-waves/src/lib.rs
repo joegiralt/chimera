@@ -172,13 +172,16 @@ pub fn emit_rust() -> String {
     );
     let _ = writeln!(
         out,
-        "pub static WAVES: [[[i16; {WAVE_LEN}]; {MIPS}]; {}] = [",
+        "pub static WAVES: [[[i16; {}]; {MIPS}]; {}] = [",
+        WAVE_LEN + 1,
         RECIPES.len()
     );
     for r in &RECIPES {
         let _ = writeln!(out, "    [");
         for mip in render(r) {
-            let row: Vec<String> = mip.iter().map(i16::to_string).collect();
+            // A guard copy of sample 0 closes the period, so a sample and its
+            // successor are always adjacent.
+            let row: Vec<String> = mip.iter().chain(&mip[..1]).map(i16::to_string).collect();
             let _ = writeln!(out, "        [{}],", row.join(", "));
         }
         let _ = writeln!(out, "    ],");
