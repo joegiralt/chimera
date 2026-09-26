@@ -4,7 +4,7 @@
 use chimera_core::dsp::engines::Engines;
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::voice::Voice;
-use chimera_core::hw::{AUDIO_CYCLE_BUDGET, Cost, MAX_VOICES};
+use chimera_core::hw::{CPU_HZ_REV_V, Cost, MAX_VOICES, SampleBudget};
 use chimera_core::params::EngineType;
 
 /// `docs/chimera-synth-design.md` § CPU Budget: FM ~610, Modal ~1,210 and
@@ -29,7 +29,8 @@ fn voice_costs_follow_the_design_table() {
 /// Modal, five Modal (the design doc planned for four).
 #[test]
 fn budget_capacity_per_engine() {
-    let fits = |e: EngineType, n: u32| FxBus::COST.0 + n * Voice::cost(e).0 <= AUDIO_CYCLE_BUDGET.0;
+    let budget = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost();
+    let fits = |e: EngineType, n: u32| FxBus::COST.0 + n * Voice::cost(e).0 <= budget.0;
     for e in [EngineType::Pizza, EngineType::Fm, EngineType::Va] {
         assert!(fits(e, MAX_VOICES as u32), "{e:?}");
     }

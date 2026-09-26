@@ -16,7 +16,7 @@
 //! newest voices until the pool is back within the budget.
 
 use crate::MidiNote;
-use crate::hw::{AUDIO_CYCLE_BUDGET, Cost, MAX_VOICES};
+use crate::hw::{Cost, MAX_VOICES, SampleBudget};
 use crate::part::PartMode;
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -66,22 +66,22 @@ pub struct Allocator {
     /// Next slot to try for a free voice.
     rr: usize,
     refused: u32,
-}
-
-impl Default for Allocator {
-    fn default() -> Self {
-        Self::new()
-    }
+    budget: SampleBudget,
 }
 
 impl Allocator {
-    pub fn new() -> Self {
+    pub fn new(budget: SampleBudget) -> Self {
         Self {
             slots: [VoiceSlot::default(); MAX_VOICES],
             clock: 0,
             rr: 0,
             refused: 0,
+            budget,
         }
+    }
+
+    pub fn budget(&self) -> SampleBudget {
+        self.budget
     }
 
     pub fn slots(&self) -> &[VoiceSlot; MAX_VOICES] {
@@ -151,7 +151,7 @@ impl Allocator {
     /// voice — non-mono first — and return it for the caller to silence.
     /// Call until `None`.
     pub fn shed(&mut self, reserved: Cost) -> Option<usize> {
-        if reserved + self.sounding_cost() <= AUDIO_CYCLE_BUDGET {
+        if reserved + self.sounding_cost() <= self.budget.as_cost() {
             return None;
         }
         let v = (0..MAX_VOICES)
@@ -173,7 +173,7 @@ impl Allocator {
     fn pick(&self, part: u8, mode: PartMode, cost: Cost, reserved: Cost) -> Option<usize> {
         let fits = |freed: Cost| {
             let total = reserved.0 + self.sounding_cost().0 + cost.0;
-            total.saturating_sub(freed.0) <= AUDIO_CYCLE_BUDGET.0
+            total.saturating_sub(freed.0) <= self.budget.as_cost().0
         };
         // Rule 1: a Mono part retriggers the voice it owns.
         if mode == PartMode::Mono

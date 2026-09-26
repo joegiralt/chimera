@@ -18,9 +18,10 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0010](0010-modulation-targets-are-honest.md) | Only parameters the voice reads per block are modulatable | Accepted |
 | [0011](0011-goldens-are-a-refactor-lock.md) | Golden recordings are a refactor lock, not a quality claim | Accepted |
 | [0012](0012-type-driven-development.md) | Type-driven development where it pays | Accepted |
-| [0013](0013-hardware-parity-budgets.md) | The simulator enforces the chip's limits | Accepted |
+| [0013](0013-hardware-parity-budgets.md) | The simulator enforces the chip's limits | Accepted; budget clause superseded by 0020 |
 | [0014](0014-audio-memory-map.md) | Voices in D2, FX bus in AXI; buffers sized to the range they serve | Accepted |
 | [0015](0015-voice-steal-and-fx-returns.md) | Steal released voices first; FX sends return wet only | Accepted |
 | [0016](0016-visual-direction-refined-elektron.md) | Visual direction: refined Elektron | Accepted |
 | [0017](0017-prime-status-feedback.md) | MIX+PLUS reports its outcome in place, until the next input | Accepted |
 | [0018](0018-fm-alg4-follows-tx81z.md) | FM algorithm 4 follows the TX81Z, not p81z | Accepted |
+| [0020](0020-audio-clocking-and-output.md) | Clock the chip by silicon revision; derive the cycle budget from it | Accepted |
