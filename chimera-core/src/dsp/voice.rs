@@ -45,10 +45,8 @@ impl Default for Voice {
 }
 
 impl Voice {
-    /// Design doc § CPU Budget, everything but the engine: drive 20, filter
-    /// 80, filter FM 60, folder 40, VCA + amp env 50, 3 envelopes 90,
-    /// 2 LFOs 40, mod matrix 30.
-    pub const CHAIN_COST: Cost = Cost(410); // estimate
+    /// The VA engine renders nothing, so its bench cost is the chain alone.
+    pub const CHAIN_COST: Cost = Cost(10); // measured 2026-09-26, bench, rev V at 480 MHz
 
     /// Cycles/sample of a voice playing `kind`.
     pub const fn cost(kind: EngineType) -> Cost {

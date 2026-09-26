@@ -61,10 +61,9 @@ impl Default for FxBus {
 }
 
 impl FxBus {
-    /// Not in the design doc's table: chorus ~60, tape delay ~350 (two
-    /// `sinf` + `tanhf` per sample), reverb ~150, plus mixing. Reserved
-    /// from the voice budget whether or not an effect is on.
-    pub const COST: Cost = Cost(600); // estimate
+    /// Worst reverb (MidiVerb) with the bus and the Instrument's fixed
+    /// mixing; reserved from the voice budget whether or not an effect is on.
+    pub const COST: Cost = Cost(3200); // measured 2026-09-26, bench, rev V at 480 MHz
 
     pub fn new() -> Self {
         Self {
