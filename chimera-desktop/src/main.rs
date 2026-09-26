@@ -2,6 +2,7 @@ mod audio;
 mod controls;
 mod display;
 
+use chimera_core::scope::scope_buffer;
 use chimera_core::ui::UiState;
 use chimera_core::ui::perf::PerfTracker;
 use chimera_hal::{ChimeraDisplay, MidiChannel, MidiNote, Velocity};
@@ -12,7 +13,8 @@ use std::time::Instant;
 fn main() {
     let mut display = DesktopDisplay::new();
     let mut controls = DesktopControls::new();
-    let mut audio = audio::DesktopAudio::new();
+    let (scope_w, mut scope_r) = Box::leak(Box::new(scope_buffer())).split();
+    let mut audio = audio::DesktopAudio::new(scope_w);
 
     let mut ui = UiState::new();
     let mut perf = PerfTracker::new();
@@ -70,7 +72,7 @@ fn main() {
         // Push every Part and the FX to the audio thread.
         audio.update(&ui.performance);
 
-        ui.render(&mut display, &perf.stats);
+        ui.render_with_scope(&mut display, &perf.stats, scope_r.read());
 
         perf.record(frame_us, 0);
 

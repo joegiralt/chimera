@@ -17,6 +17,8 @@ use chimera_core::dsp::voice::Voice;
 use chimera_core::instrument::Instrument;
 use chimera_core::modulation::ModState;
 use chimera_core::params::ParamSnapshot;
+use chimera_core::scope::{ScopeFrame, ScopeWriter};
+use chimera_core::triple::Writer;
 use chimera_hal::{BLOCK_SIZE, MidiNote, Velocity};
 
 // SAI1 Block A CR1 register address for raw bit manipulation (MCKEN bit 27)
@@ -58,6 +60,14 @@ static mut MOD_STATE_PTR: Option<*const ModState> = None;
 /// Default empty ModState for when no pointer is set.
 static DEFAULT_MOD_STATE: ModState = ModState::new();
 
+static mut SCOPE: MaybeUninit<ScopeWriter> = MaybeUninit::uninit();
+
+pub fn init_scope(w: Writer<ScopeFrame>) {
+    // SAFETY: called once from `main` before `prefill_buffer` and before the
+    // DMA interrupt is unmasked; nothing else touches `SCOPE` yet.
+    unsafe { (*addr_of_mut!(SCOPE)).write(ScopeWriter::new(w)) };
+}
+
 /// Render one block of audio from the Voice into the DMA buffer at `offset`.
 fn render_block(offset: usize) {
     // SAFETY: only called from single non-reentrant ISR (and prefill during init).
@@ -97,7 +107,7 @@ fn render_block(offset: usize) {
 
         // Render full Voice signal chain: Engine → Drive → Filter → Wavefolder → VCA
         voice.render(work, params, mod_state);
-        chimera_core::scope::write_samples(work);
+        (*addr_of_mut!(SCOPE)).assume_init_mut().write(work);
 
         // Convert f32 mono → i16 stereo
         let buf = &mut *addr_of_mut!(AUDIO_BUF);
@@ -351,7 +361,8 @@ pub fn init_dma() {
 #[interrupt]
 fn DMA1_STR0() {
     // SAFETY: ISR has exclusive access to DMA1 status/clear registers;
-    // render_block only touches AUDIO_BUF, WORK_BUF, VOICE, and PARAMS from this single ISR
+    // render_block only touches AUDIO_BUF, WORK_BUF, VOICE, PARAMS, and SCOPE
+    // from this single ISR
     let dma1 = unsafe { &*pac::DMA1::ptr() };
 
     if dma1.lisr.read().htif0().is_half() {

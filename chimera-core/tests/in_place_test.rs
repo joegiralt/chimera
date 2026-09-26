@@ -1,3 +1,5 @@
+mod common;
+
 use std::mem::MaybeUninit;
 
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus};
@@ -54,6 +56,7 @@ fn play(inst: &mut Instrument, fx: &mut FxBus) -> Vec<u32> {
     let notes = [(0, 60), (1, 64), (2, 40), (3, 45)];
     let mut out: DacOut = [[0.0; BLOCK_SIZE * 2]; DAC_PAIRS];
     let mut bits = Vec::new();
+    let mut scope = common::scope_writer();
     for b in 0..200 {
         for &(ch, n) in &notes {
             if b == 0 {
@@ -63,7 +66,7 @@ fn play(inst: &mut Instrument, fx: &mut FxBus) -> Vec<u32> {
                 inst.handle(event(ch, n, NoteKind::Off), &shared);
             }
         }
-        inst.render(fx, &mut out, &shared);
+        inst.render(fx, &mut out, &shared, &mut scope);
         bits.extend(out.iter().flatten().map(|s| s.to_bits()));
     }
     bits

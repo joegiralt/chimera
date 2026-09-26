@@ -20,15 +20,20 @@ use crate::note_queue::{NoteEvent, NoteKind};
 use crate::params::ParamSnapshot;
 use crate::part::PartParams;
 use crate::preset::{Performance, SoundPool};
+use crate::scope::{ScopeFrame, ScopeWriter};
+use crate::triple::TripleBuffer;
 use crate::voice_alloc::{Alloc, Allocator};
 
 /// Everything the port places in AXI SRAM (ADR 0014): framebuffer, UI,
-/// Performance, SoundPool, both `AudioShared` copies and the FX bus.
+/// Performance, SoundPool, both `AudioShared` copies, the scope triple
+/// buffer and its writer, and the FX bus.
 pub const AXI_RESIDENT: usize = FB_BYTES
     + UI_RESERVE
     + size_of::<Performance>()
     + size_of::<SoundPool>()
     + 2 * size_of::<AudioShared>()
+    + size_of::<TripleBuffer<ScopeFrame>>()
+    + size_of::<ScopeWriter>()
     + size_of::<FxBus>();
 const _: () = assert!(AXI_RESIDENT <= AXI_SRAM);
 
@@ -197,7 +202,13 @@ impl Instrument {
     }
 
     /// Render one block into the three DAC pairs.
-    pub fn render(&mut self, fx: &mut FxBus, out: &mut DacOut, shared: &AudioShared) {
+    pub fn render(
+        &mut self,
+        fx: &mut FxBus,
+        out: &mut DacOut,
+        shared: &AudioShared,
+        scope: &mut ScopeWriter,
+    ) {
         // A Sound that changed engine changes its voices' cost; cut the
         // newest voices if that went over the budget.
         for v in 0..MAX_VOICES {
@@ -250,7 +261,7 @@ impl Instrument {
         for send in self.sends.iter_mut() {
             send.fill(0.0);
         }
-        let mut scope = [0.0f32; BLOCK_SIZE];
+        let mut scope_block = [0.0f32; BLOCK_SIZE];
         for (p, part) in shared.parts.iter().enumerate() {
             // A part with no voices this block has a silent bus: nothing to add.
             if !written[p] {
@@ -263,7 +274,7 @@ impl Instrument {
             for i in 0..BLOCK_SIZE {
                 pair[2 * i] += bus[i] * gl;
                 pair[2 * i + 1] += bus[i] * gr;
-                scope[i] += bus[i];
+                scope_block[i] += bus[i];
             }
             for (send, &amount) in self.sends.iter_mut().zip(&part.mix.sends) {
                 for (s, &b) in send.iter_mut().zip(bus) {
@@ -281,6 +292,6 @@ impl Instrument {
         }
 
         // Oscilloscope: every part's bus, before pan and level.
-        crate::scope::write_samples(&scope);
+        scope.write(&scope_block);
     }
 }
