@@ -68,7 +68,7 @@ Operators are numbered 1–6 in the TX81Z convention: higher numbers modulate lo
 - `MORPH` (`u8` stored, `Morph` 0.0–1.0 in the render);
 - a transpose.
 
-**Storage:** all of it is `u8`/`i8`. Six operators come to about 80 bytes plus 4 per voice. The 13.6 KB of AXI headroom is checked by the existing `AXI_RESIDENT` assertion. Every byte of `Sound` growth costs about 50 bytes across the pool and the buffers.
+**Storage:** all of it is `u8`/`i8`. Six operators come to about 80 bytes plus 4 per voice. The ~10.7 KB of AXI headroom is checked by the existing `AXI_RESIDENT` assertion. Every byte of `Sound` growth costs about 50 bytes across the pool and the buffers.
 
 **The voice chain:**
 - The existing drive → filter → wavefolder → VCA chain is kept.
@@ -84,7 +84,7 @@ That's 7 destinations, within the 16-slot matrix. Level modulation is applied to
 ## Waves (sub-project 1)
 
 **16 waves:**
-- **TX81Z W1–W8**, generated from their formulas: sine, sine², half-sine variants, and so on. W3–W8 contain DC by design, which is exempt from the DC test and documented.
+- **TX81Z W1–W8**, generated from their formulas: sine, sine², half-sine variants, and so on. W3, W4, W7 and W8 contain DC by design (W5 and W6 have none), which is exempt from the DC test and documented.
 - **8 classic waves:** triangle, saw, square, 25 % pulse, 12 % pulse, trisaw, rounded square and soft saw.
 
 **Generation:**
@@ -121,7 +121,7 @@ An `Algorithm` is a const table, `mods: [u8; 6]`, a bitmask per operator of whic
 | A2 | 6→1 [1–5] |
 | A3 | 6→1, 6→2 [1–5] |
 | A4 | 6→1, 5→2 [1–4] |
-| A5 | 6→1, 6→2, 6→3, 6→4 [1–4] |
+| A5 | 6→1, 6→2, 6→3, 6→4 [1–5] |
 | A6 | 6→5→1 [1–4] |
 | A7 | 4→1, 5→2, 6→3 [1–3] |
 | A8 | 4→1, 5→1, 6→1 [1–3] |
@@ -146,7 +146,7 @@ An `Algorithm` is a const table, `mods: [u8; 6]`, a bitmask per operator of whic
 
 ### Plan and morph
 
-- `plan(a, b) -> EvalPlan` is pure and cached per (A, B). `EvalPlan` is a fixed-size struct holding at most 30 edges, an order of 6, and delay flags. It lives in the voice.
+- `plan(a, b) -> EvalPlan` is pure and cached per (A, B). `EvalPlan` is a fixed-size struct holding at most 15 edges, an order of 6, and delay flags. It lives in the voice. Because every table follows the higher-modulates-lower convention, the union of any two tables has no backward link, so one plan (order 6→1) covers the whole morph. The delay rule below exists for future custom algorithms.
 - **Order:**
   - At `MORPH == 0` the engine uses A's own topological order. At `MORPH == 1` it uses B's.
   - Strictly between, it uses the union graph's order. A link that runs backwards in that order reads the previous sample.
@@ -200,6 +200,7 @@ The operator tables for one voice's working set fit the 16 KB D-cache only if a 
 | LEVEL | level |
 | ENV | 5 sub-pages: AR, D1R, D1L, D2R, RR |
 | FEEDBACK | feedback |
+| VEL, RS | velocity sensitivity and rate scaling (sub-pages) |
 | ALGO | ALG A, ALG B, MORPH, transpose |
 
 - The viz band shows the live output, as the existing CellGrid pages do. ALGO shows the A and B diagrams blended by MORPH.
