@@ -26,6 +26,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("mod_matrix", 0xeb03c532227bf99d),
     ("sound_browser", 0x91b39fd39c530bcd),
     ("system", 0x66ca9f7c486d2749),
+    ("system_audio", 0x6880e7ea1be85438),
 ];
 
 #[test]

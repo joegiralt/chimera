@@ -4,8 +4,10 @@ use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::primitives::{PrimitiveStyle, Rectangle, StyledDrawable};
 
 use crate::addr::Op;
+use crate::perf::load::AudioStats;
 use crate::ui::PrimeStatus;
 use crate::ui::animation::AnimatedValue;
+use crate::ui::audio_page;
 use crate::ui::block_def::{BlockDef, SlotBinding, VizType, slot_addr};
 use crate::ui::chain::ChainNav;
 use crate::ui::components;
@@ -38,6 +40,8 @@ pub struct Frame<'a> {
     /// The last MIX+PLUS outcome, shown in the focus band in place of the
     /// value readout (issue #21).
     pub prime_status: Option<PrimeStatus>,
+    /// The AUDIO sub-page's measured stats, `None` where it is not shown.
+    pub audio: Option<&'a AudioStats>,
 }
 
 /// Full-screen renderer. Composites header, visualization, parameters, and dungeon map.
@@ -144,6 +148,7 @@ impl Renderer {
         D: DrawTarget<Color = Rgb565>,
     {
         match f.def.viz {
+            VizType::AudioStats => audio_page::draw_viz(display, f.audio),
             VizType::AlgorithmDiagram => {
                 use crate::ui::block_registry as reg;
                 let alg = f.parts[f.active_part].sound.params.fm.algorithm;
@@ -224,6 +229,7 @@ impl Renderer {
     pub fn viz_inputs(&self, f: &Frame) -> ([u16; 6], u32) {
         match f.def.layout {
             PageLayout::CellGrid => match f.def.viz {
+                VizType::AudioStats => ([0; 6], audio_page::viz_key(f.audio)),
                 VizType::AlgorithmDiagram => {
                     use crate::ui::block_registry as reg;
                     let alg = f.parts[f.active_part].sound.params.fm.algorithm as u32;
@@ -284,6 +290,9 @@ impl Renderer {
         if f.def.layout == PageLayout::Matrix {
             return self.draw_route(display, f.matrix);
         }
+        if f.def.viz == VizType::AudioStats {
+            return audio_page::draw_focus(display, f.def, f.audio);
+        }
         let slot = &f.def.params[f.focus];
         if slot.binding == SlotBinding::Empty {
             return;
@@ -339,6 +348,9 @@ impl Renderer {
     where
         D: DrawTarget<Color = Rgb565>,
     {
+        if f.def.viz == VizType::AudioStats {
+            return audio_page::draw_cells(display, f.def, f.audio, top);
+        }
         for (i, slot) in f.def.params.iter().enumerate() {
             if slot.binding == SlotBinding::Empty {
                 components::cell(display, i, top, None);

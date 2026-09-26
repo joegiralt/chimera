@@ -809,6 +809,22 @@ pub static SYS_ABOUT: BlockDef = BlockDef {
     params: [EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY],
 };
 
+pub static SYS_AUDIO: BlockDef = BlockDef {
+    id: 41,
+    name: "Audio",
+    short: "AUD",
+    layout: PageLayout::CellGrid,
+    viz: VizType::AudioStats,
+    params: [
+        ParamSlot::legacy("LOAD", ValFmt::Int(0)),
+        ParamSlot::legacy("PEAK", ValFmt::Int(0)),
+        ParamSlot::legacy("OVER", ValFmt::Int(0)),
+        ParamSlot::legacy("DROPS", ValFmt::Int(0)),
+        ParamSlot::legacy("DESYNC", ValFmt::Int(0)),
+        ParamSlot::legacy("STACK", ValFmt::Int(0)),
+    ],
+};
+
 static SYSTEM_BLOCKS: [ChainBlock; 5] = [
     ChainBlock {
         def: &SYS_MIDI,
@@ -828,7 +844,7 @@ static SYSTEM_BLOCKS: [ChainBlock; 5] = [
     },
     ChainBlock {
         def: &SYS_ABOUT,
-        sub_pages: &[],
+        sub_pages: &[&SYS_AUDIO],
     },
 ];
 
