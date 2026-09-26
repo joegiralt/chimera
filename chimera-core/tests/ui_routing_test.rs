@@ -1,7 +1,7 @@
 //! Priming mod destinations from pages (spec §5, Review Focus 1 and 5).
 
 use chimera_core::addr::{BlockRef, ParamAddr};
-use chimera_core::dsp::pizza::PizzaParams;
+use chimera_core::params::DriveParams;
 use chimera_core::ui::UiState;
 use chimera_hal::{ButtonId, ButtonState, Controls, EncoderId};
 
@@ -44,6 +44,13 @@ fn press(ui: &mut UiState, id: ButtonId) {
     ui.handle_input(&MockControls::new().button(id, ButtonState::Pressed));
 }
 
+/// Plus ×2 from a Part's home reaches the Drive page (DRIVE, TONE, MIX).
+fn to_drive(ui: &mut UiState) {
+    for _ in 0..2 {
+        press(ui, ButtonId::Plus);
+    }
+}
+
 /// Touch encoder A (focus slot 0), then MIX + Plus.
 fn prime_slot_0(ui: &mut UiState) {
     ui.handle_input(&MockControls::new().encoder(EncoderId::A, 1));
@@ -74,15 +81,14 @@ fn unprime_slot(ui: &mut UiState, enc: EncoderId) {
     );
 }
 
-/// Plus x4 from a Part's first page reaches the MOD node (the matrix);
-/// Minus x4 returns.
+/// Plus x3 from the Drive page reaches the MOD node; Minus x3 returns.
 fn enter_matrix(ui: &mut UiState) {
-    for _ in 0..4 {
+    for _ in 0..3 {
         press(ui, ButtonId::Plus);
     }
 }
 fn leave_matrix(ui: &mut UiState) {
-    for _ in 0..4 {
+    for _ in 0..3 {
         press(ui, ButtonId::Minus);
     }
 }
@@ -97,14 +103,15 @@ fn primed(ui: &UiState) -> Vec<ParamAddr> {
 
 #[test]
 fn priming_on_a_part_page_registers_its_address() {
-    let mut ui = UiState::new(); // Part 1, Pizza page
+    let mut ui = UiState::new(); // Part 1, Drive page
+    to_drive(&mut ui);
     prime_slot_0(&mut ui);
     assert_eq!(
         primed(&ui),
-        [ParamAddr::new(BlockRef::Pizza, PizzaParams::SHAPE)]
+        [ParamAddr::new(BlockRef::Drive, DriveParams::DRIVE)]
     );
     let reg = &ui.performance.parts[0].sound.dest_registry;
-    assert_eq!(reg.get(0).unwrap().label_str(), "PIZSHAPE");
+    assert_eq!(reg.get(0).unwrap().label_str(), "DRVDRIVE");
     assert_eq!(ui.mod_state().num_dests(), 1);
 }
 
@@ -130,7 +137,7 @@ fn priming_on_legacy_page_registers_nothing() {
 #[test]
 fn priming_a_non_modulatable_param_is_refused() {
     let mut ui = UiState::new();
-    for _ in 0..4 {
+    for _ in 0..5 {
         press(&mut ui, ButtonId::Plus); // → MOD node
     }
     press(&mut ui, ButtonId::Edit); // Envelope sub-page
@@ -231,10 +238,10 @@ fn fm_matrix_rows_are_env_and_lfo() {
     assert_eq!(ui.matrix_state.num_dests, 0);
 }
 
-/// From a Part's first page: Plus ×4 to the MOD node, whose first page is
+/// From a Part's first page: Plus ×5 to the MOD node, whose first page is
 /// the matrix; encoder E sets the amount at the cursor (ENV → first dest).
 fn set_first_amount(ui: &mut UiState, delta: i8) {
-    for _ in 0..4 {
+    for _ in 0..5 {
         press(ui, ButtonId::Plus);
     }
     ui.handle_input(&MockControls::new().encoder(EncoderId::E, delta));
@@ -252,16 +259,19 @@ fn routes(ui: &UiState, part: usize) -> Vec<(ParamAddr, i8)> {
 /// writes Part 1's routes into it, and Part 1's amounts come back with it.
 #[test]
 fn switching_part_rebuilds_the_matrix_for_that_part() {
-    let shape = ParamAddr::new(BlockRef::Pizza, PizzaParams::SHAPE);
+    let drive = ParamAddr::new(BlockRef::Drive, DriveParams::DRIVE);
     let mut ui = UiState::new();
-    prime_slot_0(&mut ui); // Part 1: SHAPE
+    to_drive(&mut ui);
+    prime_slot_0(&mut ui); // Part 1: DRIVE
+    press(&mut ui, ButtonId::B1); // back home
     set_first_amount(&mut ui, 10);
-    assert_eq!(routes(&ui, 0), [(shape, 10)]);
+    assert_eq!(routes(&ui, 0), [(drive, 10)]);
 
     press(&mut ui, ButtonId::B2); // Part 2: nothing primed
     assert_eq!(ui.active_part, 1);
     assert_eq!(ui.matrix_state.num_dests, 0, "Part 2's matrix is empty");
-    ui.handle_input(&MockControls::new().encoder(EncoderId::B, 1)); // slot 1 of its first page
+    to_drive(&mut ui);
+    ui.handle_input(&MockControls::new().encoder(EncoderId::B, 1)); // TONE
     ui.handle_input(
         &MockControls::new()
             .button(ButtonId::Mix, ButtonState::Held)
@@ -273,10 +283,11 @@ fn switching_part_rebuilds_the_matrix_for_that_part() {
         .get(0)
         .expect("Part 2 primed")
         .addr;
-    assert_ne!(p2, shape);
+    assert_ne!(p2, drive);
+    press(&mut ui, ButtonId::B2); // home
     set_first_amount(&mut ui, 20);
     assert_eq!(routes(&ui, 1), [(p2, 20)], "Part 2 keeps its own route");
-    assert_eq!(routes(&ui, 0), [(shape, 10)], "Part 1 untouched");
+    assert_eq!(routes(&ui, 0), [(drive, 10)], "Part 1 untouched");
 
     // MIX + B1 then B1: back on Part 1, its matrix shows its own amount.
     ui.handle_input(
@@ -293,7 +304,7 @@ fn switching_part_rebuilds_the_matrix_for_that_part() {
     set_first_amount(&mut ui, 1);
     assert_eq!(
         routes(&ui, 0),
-        [(shape, 11)],
+        [(drive, 11)],
         "edited from Part 1's amount, not Part 2's"
     );
     assert_eq!(routes(&ui, 1), [(p2, 20)]);
@@ -312,12 +323,13 @@ fn switching_part_rebuilds_the_matrix_for_that_part() {
 /// next navigation instead of landing on the Part's one real route.
 #[test]
 fn priming_after_a_stale_cursor_does_not_inherit_a_phantom_amount() {
-    let shape = ParamAddr::new(BlockRef::Pizza, PizzaParams::SHAPE);
-    let level = ParamAddr::new(BlockRef::Pizza, PizzaParams::LEVEL);
+    let drive = ParamAddr::new(BlockRef::Drive, DriveParams::DRIVE);
+    let mix = ParamAddr::new(BlockRef::Drive, DriveParams::MIX);
     let mut ui = UiState::new();
 
-    // Prime 3 destinations on Part 1 (SHAPE, CRUSH, LEVEL) and move the
+    // Prime 3 destinations on Part 1 (DRIVE, TONE, MIX) and move the
     // cursor to column 2.
+    to_drive(&mut ui);
     prime_slot(&mut ui, EncoderId::A);
     prime_slot(&mut ui, EncoderId::B);
     prime_slot(&mut ui, EncoderId::C);
@@ -325,9 +337,10 @@ fn priming_after_a_stale_cursor_does_not_inherit_a_phantom_amount() {
     ui.handle_input(&MockControls::new().encoder(EncoderId::B, 2));
     assert_eq!(ui.matrix_state.sel_col, 2);
 
-    // Switch to Part 2, which has one destination of its own (SHAPE). Before
+    // Switch to Part 2, which has one destination of its own (DRIVE). Before
     // the fix the cursor is still 2 here, one past Part 2's single column.
     press(&mut ui, ButtonId::B2);
+    to_drive(&mut ui);
     prime_slot(&mut ui, EncoderId::A);
     assert_eq!(ui.matrix_state.num_dests, 1);
     assert_eq!(
@@ -336,7 +349,7 @@ fn priming_after_a_stale_cursor_does_not_inherit_a_phantom_amount() {
     );
 
     // Turn the amount encoder, leave the matrix, then prime a second
-    // destination (LEVEL) -- real navigation and encoder input throughout.
+    // destination (MIX) -- real navigation and encoder input throughout.
     enter_matrix(&mut ui);
     ui.handle_input(&MockControls::new().encoder(EncoderId::E, 50));
     leave_matrix(&mut ui);
@@ -345,10 +358,10 @@ fn priming_after_a_stale_cursor_does_not_inherit_a_phantom_amount() {
     assert_eq!(ui.matrix_state.num_dests, 2);
     assert_eq!(
         routes(&ui, 1)[0],
-        (shape, 50),
+        (drive, 50),
         "the E turn must edit Part 2's own route, not a discarded phantom column"
     );
-    assert_eq!(routes(&ui, 1)[1], (level, 0), "the new route starts at 0");
+    assert_eq!(routes(&ui, 1)[1], (mix, 0), "the new route starts at 0");
 }
 
 /// Issue #11, regression 2: un-priming rebuilt the destination list (shifted
@@ -357,11 +370,12 @@ fn priming_after_a_stale_cursor_does_not_inherit_a_phantom_amount() {
 /// destination's `ParamAddr`, not its column position.
 #[test]
 fn un_priming_keeps_the_other_routes_own_amounts() {
-    let shape = ParamAddr::new(BlockRef::Pizza, PizzaParams::SHAPE);
-    let level = ParamAddr::new(BlockRef::Pizza, PizzaParams::LEVEL);
+    let drive = ParamAddr::new(BlockRef::Drive, DriveParams::DRIVE);
+    let mix = ParamAddr::new(BlockRef::Drive, DriveParams::MIX);
     let mut ui = UiState::new();
 
-    // Prime SHAPE (A), CRUSH (B), LEVEL (C) -- columns 0, 1, 2.
+    // Prime DRIVE (A), TONE (B), MIX (C) -- columns 0, 1, 2.
+    to_drive(&mut ui);
     prime_slot(&mut ui, EncoderId::A);
     prime_slot(&mut ui, EncoderId::B);
     prime_slot(&mut ui, EncoderId::C);
@@ -369,21 +383,21 @@ fn un_priming_keeps_the_other_routes_own_amounts() {
 
     // Give each destination its own, distinct amount.
     enter_matrix(&mut ui);
-    ui.handle_input(&MockControls::new().encoder(EncoderId::E, 10)); // col 0: SHAPE +10
+    ui.handle_input(&MockControls::new().encoder(EncoderId::E, 10)); // col 0: DRIVE +10
     ui.handle_input(&MockControls::new().encoder(EncoderId::B, 1)); // -> col 1
-    ui.handle_input(&MockControls::new().encoder(EncoderId::E, 20)); // col 1: CRUSH +20
+    ui.handle_input(&MockControls::new().encoder(EncoderId::E, 20)); // col 1: TONE +20
     ui.handle_input(&MockControls::new().encoder(EncoderId::B, 1)); // -> col 2
-    ui.handle_input(&MockControls::new().encoder(EncoderId::E, 30)); // col 2: LEVEL +30
+    ui.handle_input(&MockControls::new().encoder(EncoderId::E, 30)); // col 2: MIX +30
     assert_eq!(routes(&ui, 0).len(), 3);
 
-    // Un-prime CRUSH (B).
+    // Un-prime TONE (B).
     leave_matrix(&mut ui);
     unprime_slot(&mut ui, EncoderId::B);
 
     assert_eq!(ui.matrix_state.num_dests, 2);
     assert_eq!(
         routes(&ui, 0),
-        [(shape, 10), (level, 30)],
+        [(drive, 10), (mix, 30)],
         "A and C keep their own amounts, keyed by destination, not by column"
     );
 }

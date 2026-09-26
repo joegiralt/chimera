@@ -17,10 +17,10 @@ pub const NAME_LEN: usize = 16;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 #[repr(u8)]
 pub enum ChainType {
-    #[default]
     PizzaPoly = 0,
     Modal = 1,
     Fm = 2,
+    #[default]
     Algo = 3,
 }
 
@@ -191,7 +191,7 @@ impl Performance {
             name: *b"New Performance\0",
             parts: core::array::from_fn(|i| Part {
                 mix: PartParams::for_part(i),
-                ..Part::new(ChainType::PizzaPoly)
+                ..Part::new(ChainType::Algo)
             }),
             fx: FxParams::default(),
         }

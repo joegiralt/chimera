@@ -72,7 +72,7 @@ impl Voice {
             addr_of_mut!((*p).folder).write(Wavefolder::new());
             addr_of_mut!((*p).amp_env).write(Envelope::new());
             addr_of_mut!((*p).lfo).write(Lfo::new());
-            addr_of_mut!((*p).active_engine).write(EngineType::Pizza);
+            addr_of_mut!((*p).active_engine).write(EngineType::Algo);
             addr_of_mut!((*p).active).write(false);
             addr_of_mut!((*p).last_note).write(MidiNote::A4);
             addr_of_mut!((*p).last_velocity).write(Velocity::DEFAULT);

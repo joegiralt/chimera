@@ -32,7 +32,7 @@ impl ChainNav {
             chain_id: ChainId::Part(0),
             node: 0,
             sub_page: 0,
-            chain_type: ChainType::PizzaPoly,
+            chain_type: ChainType::Algo,
         }
     }
 
