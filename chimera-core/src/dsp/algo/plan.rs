@@ -36,7 +36,8 @@ pub struct EvalPlan {
     pub edges: [Edge; MAX_EDGES],
     /// Links into `order[k]` are `edges[starts[k]..starts[k + 1]]`.
     pub starts: [u8; OPS + 1],
-    /// Bit `e`: link `e`'s source runs later, so it reads the previous sample.
+    /// Bit `e`: link `e`'s source runs later (or is its target), so it reads
+    /// the previous sample.
     pub delayed: u16,
     pub carrier_a: [f32; OPS],
     pub carrier_b: [f32; OPS],
@@ -44,6 +45,7 @@ pub struct EvalPlan {
 
 impl EvalPlan {
     /// `mods[i]` bit `j`: operator `i` modulates operator `j`; `carriers` bit `i`: heard.
+    /// Links past the fifteenth, which only a custom pair can have, are dropped.
     pub fn build(a_mods: &[u8; OPS], a_carriers: u8, b_mods: &[u8; OPS], b_carriers: u8) -> Self {
         let union: [u8; OPS] = core::array::from_fn(|i| a_mods[i] | b_mods[i]);
         let order = topo_order(&union);
@@ -60,10 +62,10 @@ impl EvalPlan {
             let bit = 1u8 << dst;
             for src in 0..OPS {
                 let (in_a, in_b) = (a_mods[src] & bit != 0, b_mods[src] & bit != 0);
-                if !(in_a || in_b) {
+                if !(in_a || in_b) || n == MAX_EDGES {
                     continue;
                 }
-                if pos[src] > k {
+                if pos[src] >= k {
                     delayed |= 1 << n;
                 }
                 edges[n] = Edge {
