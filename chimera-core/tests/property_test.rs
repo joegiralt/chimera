@@ -14,7 +14,7 @@ use common::expects_sound;
 
 const SR: u32 = 48000;
 
-/// Pizza's old role: operator 1 alone on the triangle.
+/// Operator 1 alone on the triangle.
 fn tri() -> ParamSnapshot {
     let mut p = ParamSnapshot::for_engine(EngineType::Algo);
     p.algo = AlgoParams::single(WaveId::TRI);
@@ -57,11 +57,6 @@ fn random_params(rng: &mut Rng) -> ParamSnapshot {
     let mut p = ParamSnapshot::for_engine(
         EngineType::ALL[rng.u8(EngineType::ALL.len() as u8 - 1) as usize],
     );
-
-    // Pizza params
-    p.pizza.shape = rng.f32();
-    p.pizza.crush = rng.f32();
-    p.pizza.level = rng.f32();
 
     // Modal params
     p.modal.mode = ResonatorMode::from_u8(rng.u8(2));
@@ -255,9 +250,8 @@ fn prop_param_change_changes_output() {
             3 => params_b.out.volume = params_a.out.volume * 0.2,
             // The engine's own parameter, where it has one.
             _ => match params_a.engine() {
-                EngineType::Pizza => params_b.pizza.crush = 1.0 - params_a.pizza.crush,
-                EngineType::Algo => params_b.algo.ops[0].level = 60,
-                _ => params_b.out.volume = params_a.out.volume * 0.2,
+                EngineType::Algo => params_b.algo.ops[0].level = 99 - params_a.algo.ops[0].level,
+                EngineType::Modal => params_b.out.volume = params_a.out.volume * 0.2,
             },
         }
 
@@ -423,15 +417,11 @@ fn verify_full_sweep(
 }
 
 #[test]
-fn prop_pizza_crush_full_sweep() {
+fn prop_algo_level_full_sweep() {
     verify_full_sweep(
-        "Pizza crush",
-        |p| {
-            *p = ParamSnapshot::for_engine(EngineType::Pizza);
-        },
-        |p, v| {
-            p.pizza.crush = v;
-        },
+        "Algo operator 1 LEVEL",
+        |p| *p = ParamSnapshot::for_engine(EngineType::Algo),
+        |p, v| p.algo.ops[0].level = (v * 99.0) as u8,
         16,
     );
 }

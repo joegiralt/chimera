@@ -330,13 +330,13 @@ fn browser_init_entries_set_chain_type() {
             .starts_with("(init)")
     );
 
-    // Open browser again, scroll to "(init) FM" (POOL_SIZE + 2)
+    // Open browser again, scroll to "(init) Algo" (POOL_SIZE)
     open_browser(&mut ui, ButtonId::B1);
-    ui.handle_input(&MockControls::new().encoder(EncoderId::Main, (POOL_SIZE + 2) as i8));
+    ui.handle_input(&MockControls::new().encoder(EncoderId::Main, POOL_SIZE as i8));
     ui.handle_input(&MockControls::new().button(ButtonId::Edit, ButtonState::Pressed));
 
     assert!(matches!(ui.ui_mode, UiMode::Normal));
-    assert_eq!(ui.performance.parts[0].sound.chain_type, ChainType::Fm);
+    assert_eq!(ui.performance.parts[0].sound.chain_type, ChainType::Algo);
 }
 
 /// Loading from the browser replaces the Sound only: the Part keeps its
@@ -347,9 +347,9 @@ fn browser_load_keeps_part_mix() {
     ui.performance.parts[2].mix.channel = chimera_core::MidiChannel::new(9).unwrap();
     ui.performance.parts[2].mix.level = 0.3;
     open_browser(&mut ui, ButtonId::B3);
-    ui.handle_input(&MockControls::new().encoder(EncoderId::Main, (POOL_SIZE + 2) as i8));
+    ui.handle_input(&MockControls::new().encoder(EncoderId::Main, (POOL_SIZE + 1) as i8));
     ui.handle_input(&MockControls::new().button(ButtonId::Edit, ButtonState::Pressed));
-    assert_eq!(ui.performance.parts[2].sound.chain_type, ChainType::Fm);
+    assert_eq!(ui.performance.parts[2].sound.chain_type, ChainType::Modal);
     assert_eq!(ui.performance.parts[2].mix.channel.get(), 9);
     assert_eq!(ui.performance.parts[2].mix.level, 0.3);
 }
@@ -374,7 +374,7 @@ fn primed(ui: &UiState) -> Vec<chimera_core::addr::ParamAddr> {
     (0..reg.len()).map(|i| reg.get(i).unwrap().addr).collect()
 }
 
-/// Positive control: the Pizza filter page primes cutoff.
+/// Positive control: the filter page primes cutoff.
 #[test]
 fn priming_on_main_page_registers_focused_param() {
     let mut ui = UiState::new();
@@ -412,27 +412,14 @@ fn priming_on_the_lfo_sub_page_registers_nothing() {
     assert!(primed(&ui).is_empty());
 }
 
-/// FmRatio slot 2 edits op C coarse, which is not modulatable, so the
-/// registry refuses it and nothing new is registered.
+/// The WAVE page's slots are Enums, never modulatable, so the registry
+/// refuses them and nothing is registered.
 #[test]
-fn priming_on_fm_ratio_slot_2_registers_nothing() {
+fn priming_a_wave_registers_nothing() {
     let mut ui = UiState::new();
-    ui.performance.parts[0] = Part::new(ChainType::Fm);
-    ui.nav.chain_type = ChainType::Fm;
-    press(&mut ui, ButtonId::Edit);
-    press(&mut ui, ButtonId::Edit); // sub-page 2: FmRatio
-    assert_eq!(
-        ui.page(),
-        PageKey::Part {
-            def: reg::FM_RATIO.id,
-            op: Op::A
-        }
-    );
     ui.handle_input(&MockControls::new().encoder(EncoderId::C, 1)); // focus slot 2
-    let before = primed(&ui);
-    assert!(before.is_empty()); // no FM init pre-wire since Task 22
     prime(&mut ui);
-    assert_eq!(primed(&ui), before);
+    assert!(primed(&ui).is_empty());
 }
 
 /// `Performance::default()` is `Performance::new()` (clippy new_without_default).

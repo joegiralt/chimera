@@ -4,6 +4,8 @@
 
 use chimera_core::addr::{BlockRef, ParamAddr};
 use chimera_core::dsp::algo::algorithms::AlgoId;
+use chimera_core::dsp::algo::params::AlgoParams;
+use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::mod_path::ModDestRegistry;
 use chimera_core::modulation::ModState;
@@ -11,26 +13,19 @@ use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::{MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
 
-/// A base sound in which `block` is audible (spec: engine params use their
-/// own engine; drive/folder > 0; amp env and FM use Pizza or FM).
+/// A base sound in which `block` is audible: Modal's own engine, else Algo
+/// (every operator heard at ALG A for its own parameters, the triangle for
+/// the chain's).
 fn recipe(block: BlockRef) -> ParamSnapshot {
-    let engine = match block {
-        BlockRef::Fm | BlockRef::FmOp(_) => EngineType::Fm,
-        BlockRef::Modal => EngineType::Modal,
-        BlockRef::Algo | BlockRef::AlgoOp(_) => EngineType::Algo,
-        _ => EngineType::Pizza, // Pizza, AmpEnv, Out, Drive, Filter, Folder
+    let engine = if block == BlockRef::Modal {
+        EngineType::Modal
+    } else {
+        EngineType::Algo
     };
     let mut p = ParamSnapshot::for_engine(engine);
     p.lfo.rate = 5.0; // swings both ways within the render
     match block {
-        BlockRef::Fm | BlockRef::FmOp(_) => {
-            p.fm.algorithm = 7; // every operator is a carrier
-            for op in p.fm.operators.iter_mut() {
-                op.level = 99.0;
-            }
-        }
         BlockRef::Algo | BlockRef::AlgoOp(_) => {
-            // Every operator heard at ALG A, a chain at ALG B, MORPH halfway.
             p.algo.alg_a = AlgoId::A1.get();
             p.algo.alg_b = AlgoId::A17.get();
             p.algo.morph = 64;
@@ -38,6 +33,10 @@ fn recipe(block: BlockRef) -> ParamSnapshot {
                 (op.level, op.coarse) = (80, [4, 8, 10, 13, 16, 19][i]);
             }
         }
+        BlockRef::Modal => {}
+        _ => p.algo = AlgoParams::single(WaveId::TRI),
+    }
+    match block {
         BlockRef::Drive => p.drive.drive = 0.5,
         BlockRef::Filter => p.filter.cutoff = 2000.0,
         BlockRef::Folder => p.folder.fold = 0.5,
@@ -93,5 +92,5 @@ fn every_modulatable_param_audibly_changes_output() {
             checked += 1;
         }
     }
-    assert_eq!(checked, 32);
+    assert_eq!(checked, 17);
 }

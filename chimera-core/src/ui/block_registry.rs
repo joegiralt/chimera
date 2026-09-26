@@ -5,36 +5,13 @@ use crate::dsp::chorus::ChorusParams;
 use crate::dsp::delay::DelayParams;
 use crate::dsp::lfo::LfoParams;
 use crate::dsp::modal::ModalParams;
-use crate::dsp::pizza::PizzaParams;
 use crate::dsp::reverb::ReverbParams;
-use crate::params::{
-    DriveParams, EnvParams, FilterParams, FmOpParams, FmParams, FolderParams, OutParams,
-};
+use crate::params::{DriveParams, EnvParams, FilterParams, FolderParams, OutParams};
 use crate::part::PartParams;
 use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2, ParamSlot, VizType};
 use crate::ui::page::{PageLayout, ValFmt};
 
 const EMPTY: ParamSlot = ParamSlot::EMPTY;
-
-// ---------------------------------------------------------------------------
-// Pizza engine
-// ---------------------------------------------------------------------------
-
-pub static PIZZA: BlockDef = BlockDef {
-    id: 1,
-    name: "Pizza",
-    short: "PIZ",
-    layout: PageLayout::CellGrid,
-    viz: VizType::None,
-    params: [
-        ParamSlot::param(BlockRef::Pizza, PizzaParams::SHAPE),
-        ParamSlot::param(BlockRef::Pizza, PizzaParams::CRUSH),
-        ParamSlot::param(BlockRef::Pizza, PizzaParams::LEVEL),
-        EMPTY,
-        EMPTY,
-        EMPTY,
-    ],
-};
 
 // ---------------------------------------------------------------------------
 // Modal engine pages
@@ -69,79 +46,6 @@ pub static MODAL_2: BlockDef = BlockDef {
         ParamSlot::param(BlockRef::Modal, ModalParams::KS_ENS_DEPTH),
         ParamSlot::param(BlockRef::Modal, ModalParams::KS_ENS_RATE),
         ParamSlot::param(BlockRef::Modal, ModalParams::KS_ENS_MIX),
-    ],
-};
-
-// ---------------------------------------------------------------------------
-// VA engine
-// ---------------------------------------------------------------------------
-
-pub static VA: BlockDef = BlockDef {
-    id: 4,
-    name: "VA Osc",
-    short: "VA",
-    layout: PageLayout::CellGrid,
-    viz: VizType::None,
-    params: [
-        ParamSlot::legacy("WAVE", ValFmt::Uni),
-        ParamSlot::legacy("PW", ValFmt::Uni),
-        ParamSlot::legacy("SYNC", ValFmt::Uni),
-        ParamSlot::legacy("SUB", ValFmt::Uni),
-        ParamSlot::legacy("DETUNE", ValFmt::Uni),
-        ParamSlot::legacy("MIX", ValFmt::Bi),
-    ],
-};
-
-// ---------------------------------------------------------------------------
-// FM engine pages
-// ---------------------------------------------------------------------------
-
-pub static FM_ALG: BlockDef = BlockDef {
-    id: 5,
-    name: "4opFM",
-    short: "FM",
-    layout: PageLayout::CellGrid,
-    viz: VizType::AlgorithmDiagram,
-    params: [
-        ParamSlot::param(BlockRef::Fm, FmParams::ALGORITHM),
-        EMPTY,
-        // One address per physical param: the voice's output level.
-        ParamSlot::param(BlockRef::Out, OutParams::VOLUME),
-        EMPTY,
-        EMPTY,
-        EMPTY,
-    ],
-};
-
-pub static FM_OP: BlockDef = BlockDef {
-    id: 6,
-    name: "Operator",
-    short: "OP",
-    layout: PageLayout::CellGrid,
-    viz: VizType::AlgorithmDiagram,
-    params: [
-        ParamSlot::select_op(),
-        ParamSlot::selected_op(FmOpParams::WAVEFORM),
-        ParamSlot::selected_op(FmOpParams::LEVEL),
-        ParamSlot::selected_op(FmOpParams::FEEDBACK),
-        ParamSlot::selected_op(FmOpParams::DETUNE),
-        ParamSlot::selected_op(FmOpParams::VELOCITY_SENS),
-    ],
-};
-
-pub static FM_RATIO: BlockDef = BlockDef {
-    id: 7,
-    name: "Ratios",
-    short: "RAT",
-    layout: PageLayout::CellGrid,
-    viz: VizType::None,
-    params: [
-        ParamSlot::param(BlockRef::FmOp(Op::A), FmOpParams::COARSE).with_label("OP1"),
-        ParamSlot::param(BlockRef::FmOp(Op::B), FmOpParams::COARSE).with_label("OP2"),
-        ParamSlot::param(BlockRef::FmOp(Op::C), FmOpParams::COARSE).with_label("OP3"),
-        ParamSlot::param(BlockRef::FmOp(Op::D), FmOpParams::COARSE).with_label("OP4"),
-        ParamSlot::selected_op(FmOpParams::FINE),
-        EMPTY,
     ],
 };
 
@@ -406,74 +310,6 @@ pub static MOD_MATRIX: BlockDef = BlockDef {
 };
 
 // ---------------------------------------------------------------------------
-// TX81Z 5-stage envelopes (one per FM operator)
-// ---------------------------------------------------------------------------
-
-pub static FM_ENV1: BlockDef = BlockDef {
-    id: 23,
-    name: "Op1 Env",
-    short: "E1",
-    layout: PageLayout::BigViz,
-    viz: VizType::FmEnvelope,
-    params: [
-        ParamSlot::param(BlockRef::FmOp(Op::A), FmOpParams::ATTACK_RATE),
-        ParamSlot::param(BlockRef::FmOp(Op::A), FmOpParams::DECAY1_RATE),
-        ParamSlot::param(BlockRef::FmOp(Op::A), FmOpParams::DECAY1_LEVEL),
-        ParamSlot::param(BlockRef::FmOp(Op::A), FmOpParams::DECAY2_RATE),
-        ParamSlot::param(BlockRef::FmOp(Op::A), FmOpParams::RELEASE_RATE),
-        ParamSlot::param(BlockRef::FmOp(Op::A), FmOpParams::RATE_SCALING),
-    ],
-};
-
-pub static FM_ENV2: BlockDef = BlockDef {
-    id: 24,
-    name: "Op2 Env",
-    short: "E2",
-    layout: PageLayout::BigViz,
-    viz: VizType::FmEnvelope,
-    params: [
-        ParamSlot::param(BlockRef::FmOp(Op::B), FmOpParams::ATTACK_RATE),
-        ParamSlot::param(BlockRef::FmOp(Op::B), FmOpParams::DECAY1_RATE),
-        ParamSlot::param(BlockRef::FmOp(Op::B), FmOpParams::DECAY1_LEVEL),
-        ParamSlot::param(BlockRef::FmOp(Op::B), FmOpParams::DECAY2_RATE),
-        ParamSlot::param(BlockRef::FmOp(Op::B), FmOpParams::RELEASE_RATE),
-        ParamSlot::param(BlockRef::FmOp(Op::B), FmOpParams::RATE_SCALING),
-    ],
-};
-
-pub static FM_ENV3: BlockDef = BlockDef {
-    id: 25,
-    name: "Op3 Env",
-    short: "E3",
-    layout: PageLayout::BigViz,
-    viz: VizType::FmEnvelope,
-    params: [
-        ParamSlot::param(BlockRef::FmOp(Op::C), FmOpParams::ATTACK_RATE),
-        ParamSlot::param(BlockRef::FmOp(Op::C), FmOpParams::DECAY1_RATE),
-        ParamSlot::param(BlockRef::FmOp(Op::C), FmOpParams::DECAY1_LEVEL),
-        ParamSlot::param(BlockRef::FmOp(Op::C), FmOpParams::DECAY2_RATE),
-        ParamSlot::param(BlockRef::FmOp(Op::C), FmOpParams::RELEASE_RATE),
-        ParamSlot::param(BlockRef::FmOp(Op::C), FmOpParams::RATE_SCALING),
-    ],
-};
-
-pub static FM_ENV4: BlockDef = BlockDef {
-    id: 26,
-    name: "Op4 Env",
-    short: "E4",
-    layout: PageLayout::BigViz,
-    viz: VizType::FmEnvelope,
-    params: [
-        ParamSlot::param(BlockRef::FmOp(Op::D), FmOpParams::ATTACK_RATE),
-        ParamSlot::param(BlockRef::FmOp(Op::D), FmOpParams::DECAY1_RATE),
-        ParamSlot::param(BlockRef::FmOp(Op::D), FmOpParams::DECAY1_LEVEL),
-        ParamSlot::param(BlockRef::FmOp(Op::D), FmOpParams::DECAY2_RATE),
-        ParamSlot::param(BlockRef::FmOp(Op::D), FmOpParams::RELEASE_RATE),
-        ParamSlot::param(BlockRef::FmOp(Op::D), FmOpParams::RATE_SCALING),
-    ],
-};
-
-// ---------------------------------------------------------------------------
 // Algo engine: group pages, one parameter across operators 1–6 (spec § UI)
 // ---------------------------------------------------------------------------
 
@@ -527,38 +363,7 @@ pub static ALGO_ALG: BlockDef = BlockDef {
 /// (`Voice::render`).
 pub static PART_MOD_SOURCES: [&str; 2] = ["ENV", "LFO"];
 
-static PIZZA_BLOCK: ChainBlock = ChainBlock {
-    def: &PIZZA,
-    sub_pages: &[],
-};
-
 static MOD_MATRIX_SUB_PAGES: [&BlockDef; 2] = [&ENVELOPE, &LFO];
-
-static PIZZA_POLY_BLOCKS: [ChainBlock; 5] = [
-    PIZZA_BLOCK,
-    ChainBlock {
-        def: &DRIVE,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &FILTER,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &FOLDER,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &MOD_MATRIX,
-        sub_pages: &MOD_MATRIX_SUB_PAGES,
-    },
-];
-
-pub static PIZZA_POLY_CHAIN: ChainDef2 = ChainDef2 {
-    name: "Pizza",
-    blocks: &PIZZA_POLY_BLOCKS,
-    mod_sources: &PART_MOD_SOURCES,
-};
 
 static KICK_BLOCKS: [ChainBlock; 3] = [
     ChainBlock {
@@ -601,39 +406,6 @@ static MODAL_PLUCK_BLOCKS: [ChainBlock; 3] = [
 pub static MODAL_PLUCK_CHAIN: ChainDef2 = ChainDef2 {
     name: "Modal Pluck",
     blocks: &MODAL_PLUCK_BLOCKS,
-    mod_sources: &PART_MOD_SOURCES,
-};
-
-static FM_SUB_PAGES: [&BlockDef; 2] = [&FM_OP, &FM_RATIO];
-
-static FM_MOD_MATRIX_SUB_PAGES: [&BlockDef; 4] = [&FM_ENV1, &FM_ENV2, &FM_ENV3, &FM_ENV4];
-
-static FM_BLOCKS: [ChainBlock; 5] = [
-    ChainBlock {
-        def: &FM_ALG,
-        sub_pages: &FM_SUB_PAGES,
-    },
-    ChainBlock {
-        def: &DRIVE,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &FILTER,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &FOLDER,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &MOD_MATRIX,
-        sub_pages: &FM_MOD_MATRIX_SUB_PAGES,
-    },
-];
-
-pub static FM_CHAIN: ChainDef2 = ChainDef2 {
-    name: "FM",
-    blocks: &FM_BLOCKS,
     mod_sources: &PART_MOD_SOURCES,
 };
 

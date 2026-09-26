@@ -209,15 +209,6 @@ pub type ScreenCase = (&'static str, fn(&mut UiState));
 /// Every screen the goldens lock, one or more per page type (spec § Testing).
 pub const CASES: &[ScreenCase] = &[
     ("engine_algo", |ui| feed(ui, Input::turn(EncoderId::A, 2))),
-    ("engine_fm_alg", |ui| {
-        load_init(ui, ChainType::Fm);
-        feed(ui, Input::turn(EncoderId::A, 3));
-    }),
-    ("engine_fm_op", |ui| {
-        load_init(ui, ChainType::Fm);
-        feed(ui, Input::press(ButtonId::Edit)); // Operator sub-page
-        feed(ui, Input::turn(EncoderId::A, 2)); // select operator 3
-    }),
     ("bigviz_filter", |ui| {
         plus(ui, 3);
         feed(ui, Input::turn(EncoderId::B, 80)); // resonance
@@ -227,12 +218,6 @@ pub const CASES: &[ScreenCase] = &[
         plus(ui, 5);
         feed(ui, Input::press(ButtonId::Edit));
         feed(ui, Input::turn(EncoderId::B, 6));
-    }),
-    ("bigviz_fm_op_env", |ui| {
-        load_init(ui, ChainType::Fm);
-        plus(ui, 4);
-        feed(ui, Input::press(ButtonId::Edit));
-        feed(ui, Input::turn(EncoderId::C, -4));
     }),
     ("mixer_part", |ui| {
         feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));

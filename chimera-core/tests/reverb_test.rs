@@ -5,7 +5,7 @@ use chimera_core::modulation::ModState;
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::{MidiNote, Velocity};
 
-/// Pizza's old role: operator 1 alone on the triangle.
+/// Operator 1 alone on the triangle.
 fn tri() -> ParamSnapshot {
     let mut p = ParamSnapshot::for_engine(EngineType::Algo);
     p.algo = AlgoParams::single(WaveId::TRI);

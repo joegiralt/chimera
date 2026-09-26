@@ -4,14 +4,12 @@ use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::preset::{ChainType, Sound};
 
 /// `ChainType::engine` is usable in const context.
-const FM_ENGINE: EngineType = ChainType::Fm.engine();
+const ALGO_ENGINE: EngineType = ChainType::Algo.engine();
 
 #[test]
 fn chain_type_names_its_engine() {
-    assert_eq!(ChainType::PizzaPoly.engine(), EngineType::Pizza);
+    assert_eq!(ALGO_ENGINE, EngineType::Algo);
     assert_eq!(ChainType::Modal.engine(), EngineType::Modal);
-    assert_eq!(FM_ENGINE, EngineType::Fm);
-    assert_eq!(ChainType::Algo.engine(), EngineType::Algo);
 }
 
 #[test]

@@ -6,7 +6,7 @@
 //! note 60 vel 100 on, ON_BLOCKS blocks, note off, OFF_BLOCKS blocks.
 #![allow(dead_code)]
 
-use chimera_core::addr::{BlockRef, Op, ParamAddr};
+use chimera_core::addr::{BlockRef, ParamAddr};
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::hw::DAC_PAIRS;
@@ -14,7 +14,7 @@ use chimera_core::instrument::{AudioShared, Instrument};
 use chimera_core::mod_path::ModDestRegistry;
 use chimera_core::modulation::ModState;
 use chimera_core::note_queue::{NoteEvent, NoteKind};
-use chimera_core::params::{EngineType, FilterParams, FmOpParams, ParamSnapshot};
+use chimera_core::params::{EngineType, FilterParams, ParamSnapshot};
 use chimera_core::preset::{ChainType, Sound};
 use chimera_core::scope::{ScopeWriter, scope_buffer};
 use chimera_core::{MidiChannel, MidiNote, Velocity};
@@ -33,7 +33,7 @@ pub const OFF_BLOCKS: usize = 200;
 pub const TOTAL_SAMPLES: usize = (ON_BLOCKS + OFF_BLOCKS) * BLOCK_SIZE;
 /// LFO rate for every modulated case. At the 1 Hz default the LFO stays
 /// positive for the first 0.5 s, so a route to a param already at its max
-/// (cutoff 20 kHz, FM op A level 99) would clamp and never be exercised.
+/// (cutoff 20 kHz) would clamp and never be exercised.
 pub const MOD_LFO_RATE: f32 = 5.0;
 /// Matrix amount (−127..=127) for every modulated case.
 pub const MOD_AMOUNT: i8 = 64;
@@ -41,73 +41,34 @@ pub const MOD_AMOUNT: i8 = 64;
 /// Every golden case. `name()` is the key in `golden_test.rs::GOLDENS`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Case {
-    PizzaInit,
-    PizzaLfoCutoff,
-    FmInit,
-    FmLfoCutoff,
-    FmLfoOpALevel,
-    /// FM init params with the FM init sound's own `ModState`. Since Task 22
-    /// dropped the pre-wire, `Sound::init` no longer seeds any destinations,
-    /// so this is empty like `FmInit`'s `ModState::new()` — kept as its own
-    /// case for golden continuity (the only case Task 22 re-recorded).
-    FmInitPatchMod,
     ModalInit,
     ModalLfoCutoff,
-    VaInit,
-    /// Pizza init; engine switched to Modal at block ON_BLOCKS / 2 (mid-note).
-    PizzaToModalSwitch,
     /// The Algo init Sound: operator 1 on W1 at LEVEL 99, T1.
     AlgoInit,
 }
 
 impl Case {
-    pub const ALL: [Case; 11] = [
-        Case::PizzaInit,
-        Case::PizzaLfoCutoff,
-        Case::FmInit,
-        Case::FmLfoCutoff,
-        Case::FmLfoOpALevel,
-        Case::FmInitPatchMod,
-        Case::ModalInit,
-        Case::ModalLfoCutoff,
-        Case::VaInit,
-        Case::PizzaToModalSwitch,
-        Case::AlgoInit,
-    ];
+    pub const ALL: [Case; 3] = [Case::ModalInit, Case::ModalLfoCutoff, Case::AlgoInit];
 
     pub fn name(self) -> &'static str {
         match self {
-            Case::PizzaInit => "pizza_init",
-            Case::PizzaLfoCutoff => "pizza_lfo_cutoff",
-            Case::FmInit => "fm_init",
-            Case::FmLfoCutoff => "fm_lfo_cutoff",
-            Case::FmLfoOpALevel => "fm_lfo_op_a_level",
-            Case::FmInitPatchMod => "fm_init_patch_mod",
             Case::ModalInit => "modal_init",
             Case::ModalLfoCutoff => "modal_lfo_cutoff",
-            Case::VaInit => "va_init",
-            Case::PizzaToModalSwitch => "pizza_to_modal_switch",
             Case::AlgoInit => "algo_init",
         }
     }
 }
 
-/// Init params per engine: the chain's `Sound::init` params for the three
-/// real engines; defaults with `engine = Va` for Va (it has no chain).
+/// Init params per engine: the chain's `Sound::init` params.
 pub fn init_params(engine: EngineType) -> ParamSnapshot {
     match engine {
-        EngineType::Pizza => Sound::init(ChainType::PizzaPoly).params,
-        EngineType::Fm => Sound::init(ChainType::Fm).params,
-        EngineType::Modal => Sound::init(ChainType::Modal).params,
-        EngineType::Va => ParamSnapshot::for_engine(EngineType::Va),
         EngineType::Algo => Sound::init(ChainType::Algo).params,
+        EngineType::Modal => Sound::init(ChainType::Modal).params,
     }
 }
 
 /// Filter cutoff — the same semantic address on every chain.
 pub const CUTOFF: ParamAddr = ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF);
-/// FM operator A level.
-pub const OP_A_LEVEL: ParamAddr = ParamAddr::new(BlockRef::FmOp(Op::A), FmOpParams::LEVEL);
 
 /// One LFO (source 1) route at MOD_AMOUNT to `dest`; env is source 0 so
 /// `num_sources >= 2` and the LFO runs.
@@ -120,7 +81,7 @@ pub fn lfo_route(dest: ParamAddr) -> ModState {
     ms
 }
 
-/// Params + ModState for a case (the switch's second half is in `render_case`).
+/// Params + ModState for a case.
 pub fn setup(case: Case) -> (ParamSnapshot, ModState) {
     let with_lfo = |engine: EngineType, dest: ParamAddr| {
         let mut p = init_params(engine);
@@ -128,19 +89,8 @@ pub fn setup(case: Case) -> (ParamSnapshot, ModState) {
         (p, lfo_route(dest))
     };
     match case {
-        Case::PizzaInit => (init_params(EngineType::Pizza), ModState::new()),
-        Case::PizzaLfoCutoff => with_lfo(EngineType::Pizza, CUTOFF),
-        Case::FmInit => (init_params(EngineType::Fm), ModState::new()),
-        Case::FmLfoCutoff => with_lfo(EngineType::Fm, CUTOFF),
-        Case::FmLfoOpALevel => with_lfo(EngineType::Fm, OP_A_LEVEL),
-        Case::FmInitPatchMod => {
-            let sound = Sound::init(ChainType::Fm);
-            (sound.params, sound.mod_state)
-        }
         Case::ModalInit => (init_params(EngineType::Modal), ModState::new()),
         Case::ModalLfoCutoff => with_lfo(EngineType::Modal, CUTOFF),
-        Case::VaInit => (init_params(EngineType::Va), ModState::new()),
-        Case::PizzaToModalSwitch => (init_params(EngineType::Pizza), ModState::new()),
         Case::AlgoInit => (init_params(EngineType::Algo), ModState::new()),
     }
 }
@@ -148,9 +98,6 @@ pub fn setup(case: Case) -> (ParamSnapshot, ModState) {
 /// Render the fixed harness for one case. Returns TOTAL_SAMPLES samples.
 pub fn render_case(case: Case) -> Vec<f32> {
     let (params, mod_state) = setup(case);
-    // Pizza→Modal: from block ON_BLOCKS / 2 the same (default) params with
-    // the engine switched — i.e. the Modal init params.
-    let switched = init_params(EngineType::Modal);
     let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
     voice.note_on(
         MidiNote::new(NOTE).unwrap(),
@@ -163,12 +110,7 @@ pub fn render_case(case: Case) -> Vec<f32> {
         if b == ON_BLOCKS {
             voice.note_off();
         }
-        let p = if case == Case::PizzaToModalSwitch && b >= ON_BLOCKS / 2 {
-            &switched
-        } else {
-            &params
-        };
-        voice.render(&mut block, p, &mod_state);
+        voice.render(&mut block, &params, &mod_state);
         out.extend_from_slice(&block);
     }
     out
@@ -182,8 +124,6 @@ pub fn render_case_through_instrument(case: Case) -> Vec<f32> {
     let mut shared = AudioShared::default();
     shared.parts[0].params = params;
     shared.parts[0].mod_state = mod_state;
-    let mut switched = shared.clone();
-    switched.parts[0].params = init_params(EngineType::Modal);
     let mut inst = Box::new(Instrument::new(
         chimera_hal::SAMPLE_RATE,
         chimera_core::hw::SampleBudget::for_cpu(chimera_core::hw::CPU_HZ_REV_V),
@@ -198,11 +138,7 @@ pub fn render_case_through_instrument(case: Case) -> Vec<f32> {
     let mut out = Vec::with_capacity(TOTAL_SAMPLES);
     let mut scope = scope_writer();
     for b in 0..ON_BLOCKS + OFF_BLOCKS {
-        let s = if case == Case::PizzaToModalSwitch && b >= ON_BLOCKS / 2 {
-            &switched
-        } else {
-            &shared
-        };
+        let s = &shared;
         if b == 0 {
             inst.handle(event(NoteKind::On(Velocity::new(VEL).unwrap())), s);
         }
@@ -239,7 +175,6 @@ pub fn spots(samples: &[f32]) -> [u32; 8] {
 /// expectation is written (spec § Testing "Engines").
 pub fn expects_sound(e: EngineType) -> bool {
     match e {
-        EngineType::Pizza | EngineType::Fm | EngineType::Modal | EngineType::Algo => true,
-        EngineType::Va => false,
+        EngineType::Algo | EngineType::Modal => true,
     }
 }

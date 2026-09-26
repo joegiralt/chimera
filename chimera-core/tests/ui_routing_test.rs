@@ -117,7 +117,7 @@ fn priming_on_a_part_page_registers_its_address() {
 
 /// Review Focus 1: priming on the Mixer (bound, not modulatable) or System
 /// (Legacy) chain must not register anything (it used to register
-/// `Block{node,i}`, which the voice read as a Pizza/Drive/Filter/Folder param).
+/// `Block{node,i}`, which the voice read as an engine/Drive/Filter/Folder param).
 #[test]
 fn priming_on_legacy_page_registers_nothing() {
     let mut ui = UiState::new();
@@ -146,81 +146,10 @@ fn priming_a_non_modulatable_param_is_refused() {
     assert!(primed(&ui).is_empty());
 }
 
-/// Review Focus 5 / spec §5: a route primed on a `SelectedOp` slot names the
-/// operator selected at that moment; changing the selection later does not
-/// retarget it.
-#[test]
-fn selected_op_route_is_concrete() {
-    use chimera_core::addr::Op;
-    use chimera_core::params::FmOpParams;
-    use chimera_core::preset::POOL_SIZE;
-
-    let mut ui = UiState::new();
-    // Load "(init) FM" into part 1 via the sound browser.
-    ui.handle_input(
-        &MockControls::new()
-            .button(ButtonId::Edit, ButtonState::Held)
-            .button(ButtonId::B1, ButtonState::Pressed),
-    );
-    ui.handle_input(&MockControls::new().encoder(EncoderId::Main, (POOL_SIZE + 2) as i8));
-    press(&mut ui, ButtonId::Edit);
-    press(&mut ui, ButtonId::Edit); // FM node → Operator sub-page
-    ui.handle_input(&MockControls::new().encoder(EncoderId::A, 1)); // select op B
-    assert_eq!(ui.selected_op(), Op::B);
-    ui.handle_input(&MockControls::new().encoder(EncoderId::D, 1)); // FDBK slot
-    ui.handle_input(
-        &MockControls::new()
-            .button(ButtonId::Mix, ButtonState::Held)
-            .button(ButtonId::Plus, ButtonState::Pressed),
-    );
-    let fdbk_b = ParamAddr::new(BlockRef::FmOp(Op::B), FmOpParams::FEEDBACK);
-    assert!(primed(&ui).contains(&fdbk_b));
-
-    ui.handle_input(&MockControls::new().encoder(EncoderId::A, 1)); // select op C
-    assert_eq!(ui.selected_op(), Op::C);
-    assert!(primed(&ui).contains(&fdbk_b));
-    assert!(!primed(&ui).contains(&ParamAddr::new(BlockRef::FmOp(Op::C), FmOpParams::FEEDBACK)));
-    assert_eq!(
-        ui.performance.parts[0].sound.params.fm.operators[1].feedback,
-        1.0
-    );
-}
-
-/// Spec §5: the FM operator selection is part of the page identity, so
-/// turning the selector on the FM_OP page must refresh `ui.page()` too
-/// (pins the redraw key update at ui/mod.rs ~343).
-#[test]
-fn fm_operator_selector_updates_the_page_key() {
-    use chimera_core::addr::Op;
-    use chimera_core::preset::{ChainType, Part};
-    use chimera_core::ui::block_registry as reg;
-    use chimera_core::ui::page::PageKey;
-
-    let mut ui = UiState::new();
-    ui.performance.parts[0] = Part::new(ChainType::Fm);
-    ui.nav.chain_type = ChainType::Fm;
-    press(&mut ui, ButtonId::Edit); // sub-page 1: FM_OP
-    assert_eq!(
-        ui.page(),
-        PageKey::Part {
-            def: reg::FM_OP.id,
-            op: Op::A
-        }
-    );
-    ui.handle_input(&MockControls::new().encoder(EncoderId::A, 1)); // selector: A -> B
-    assert_eq!(
-        ui.page(),
-        PageKey::Part {
-            def: reg::FM_OP.id,
-            op: Op::B
-        }
-    );
-}
-
-/// Spec §4: after loading the FM init sound the matrix rows are ENV and LFO
+/// Spec §4: after loading the Algo init sound the matrix rows are ENV and LFO
 /// (they used to be "Op1 Env".."Op4 Env", of which only two produced values).
 #[test]
-fn fm_matrix_rows_are_env_and_lfo() {
+fn algo_matrix_rows_are_env_and_lfo() {
     use chimera_core::preset::POOL_SIZE;
 
     let mut ui = UiState::new();
@@ -229,8 +158,8 @@ fn fm_matrix_rows_are_env_and_lfo() {
             .button(ButtonId::Edit, ButtonState::Held)
             .button(ButtonId::B1, ButtonState::Pressed),
     );
-    ui.handle_input(&MockControls::new().encoder(EncoderId::Main, (POOL_SIZE + 2) as i8));
-    press(&mut ui, ButtonId::Edit); // load "(init) FM"
+    ui.handle_input(&MockControls::new().encoder(EncoderId::Main, POOL_SIZE as i8));
+    press(&mut ui, ButtonId::Edit); // load "(init) Algo"
     let rows: Vec<&str> = (0..ui.matrix_state.num_sources)
         .map(|i| ui.matrix_state.sources[i].unwrap().name)
         .collect();

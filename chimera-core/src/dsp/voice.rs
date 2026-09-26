@@ -46,7 +46,9 @@ impl Default for Voice {
 }
 
 impl Voice {
-    /// The VA engine renders nothing, so its bench cost is the chain alone.
+    /// Measured with the silent VA placeholder, which went inactive after one
+    /// block, so this is the chain's floor rather than its cost with a
+    /// sounding engine; engine `COST`s are bench per-voice minus this.
     pub const CHAIN_COST: Cost = Cost(10); // measured 2026-09-26, bench, rev V at 480 MHz
 
     /// Cycles/sample of a voice playing `kind`.
@@ -111,7 +113,7 @@ impl Voice {
     ) {
         let sample_rate = self.sample_rate();
 
-        // Auto-retrigger if engine type changed (e.g., user loaded FM sound)
+        // Auto-retrigger if engine type changed (e.g., user loaded a Modal sound)
         if self.active && params.engine() != self.active_engine {
             self.note_on(self.last_note, self.last_velocity, params);
         }
@@ -171,6 +173,6 @@ impl Voice {
         }
 
         // Check if done
-        self.active = self.engines.is_active(self.active_engine, &self.amp_env);
+        self.active = self.engines.is_active(self.active_engine);
     }
 }

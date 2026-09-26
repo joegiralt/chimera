@@ -239,9 +239,7 @@ fn chord() -> Vec<f32> {
     )
 }
 
-/// Modal, not FM: FM's bench-measured cost doesn't fit one voice under
-/// budget (https://github.com/joegiralt/chimera/issues/26), so an FM note
-/// here would be refused and pair 2 would render silent.
+/// Part 2 plays Modal out of pair 2.
 fn two_parts() -> Vec<f32> {
     let mut perf = Performance::new();
     perf.parts[1].load_init(ChainType::Modal);

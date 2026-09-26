@@ -1,7 +1,6 @@
-use chimera_core::addr::{BlockRef, ParamAddr};
-use chimera_core::dsp::algo::params::AlgoParams;
+use chimera_core::addr::{BlockRef, Op, ParamAddr};
+use chimera_core::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use chimera_core::dsp::algo::waves::WaveId;
-use chimera_core::dsp::pizza::PizzaParams;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::modulation::ModState;
 use chimera_core::params::ParamSnapshot;
@@ -13,15 +12,15 @@ use chimera_hal::BLOCK_SIZE;
 
 const CUTOFF: ParamAddr = ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF);
 const DRIVE: ParamAddr = ParamAddr::new(BlockRef::Drive, DriveParams::DRIVE);
-const CRUSH: ParamAddr = ParamAddr::new(BlockRef::Pizza, PizzaParams::CRUSH);
-const SHAPE: ParamAddr = ParamAddr::new(BlockRef::Pizza, PizzaParams::SHAPE);
+const MORPH: ParamAddr = ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH);
+const OP1_LEVEL: ParamAddr = ParamAddr::new(BlockRef::AlgoOp(Op::A), AlgoOpParams::LEVEL);
 
 fn rms(buf: &[f32]) -> f32 {
     let sum: f32 = buf.iter().map(|s| s * s).sum();
     (sum / buf.len() as f32).sqrt()
 }
 
-/// Pizza's old role: operator 1 alone on the triangle.
+/// Operator 1 alone on the triangle.
 fn tri() -> ParamSnapshot {
     let mut p = ParamSnapshot::for_engine(EngineType::Algo);
     p.algo = AlgoParams::single(WaveId::TRI);
@@ -137,14 +136,14 @@ fn mod_bar_amount_reflects_matrix() {
 
     // Prime a destination via registry
     let mut registry = ModDestRegistry::new();
-    registry.add(CRUSH, *b"TSTaPrm\0").unwrap();
+    registry.add(MORPH, *b"TSTaPrm\0").unwrap();
     matrix.rebuild_dests_from_registry(&registry);
 
     // Set amounts from two sources
     matrix.amounts[0][0] = 64;
     matrix.amounts[1][0] = 32;
 
-    let info = matrix.mod_info_for(CRUSH);
+    let info = matrix.mod_info_for(MORPH);
     assert!(info.is_some(), "primed param should have mod info");
 
     let amount = info.unwrap();
@@ -173,7 +172,7 @@ fn matrix_state_rebuild_dests_from_registry() {
     use chimera_core::mod_path::ModDestRegistry;
 
     let mut registry = ModDestRegistry::new();
-    registry.add(SHAPE, *b"PIZShape").unwrap();
+    registry.add(OP1_LEVEL, *b"O1 LEVEL").unwrap();
     registry.add(DRIVE, *b"FLT Freq").unwrap();
 
     let mut matrix = MatrixState::new();
@@ -182,8 +181,8 @@ fn matrix_state_rebuild_dests_from_registry() {
     assert_eq!(matrix.num_dests, 2);
 
     let dest0 = matrix.dests[0].as_ref().unwrap();
-    assert_eq!(dest0.addr, SHAPE);
-    assert_eq!(dest0.label_str(), "PIZShape");
+    assert_eq!(dest0.addr, OP1_LEVEL);
+    assert_eq!(dest0.label_str(), "O1 LEVEL");
 
     let dest1 = matrix.dests[1].as_ref().unwrap();
     assert_eq!(dest1.addr, DRIVE);

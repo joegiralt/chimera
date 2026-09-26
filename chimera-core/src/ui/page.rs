@@ -1,8 +1,7 @@
 use crate::addr::{BlockRef, Blocks, Op, ParamAddr};
 use crate::block::ParamId;
-use crate::params::{
-    DriveParams, EnvParams, FilterParams, FmOpParams, FmParams, FolderParams, OutParams,
-};
+use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
+use crate::params::{DriveParams, EnvParams, FilterParams, FolderParams, OutParams};
 use crate::ui::chain::ChainNav;
 
 pub use crate::block::ValFmt;
@@ -40,7 +39,7 @@ pub enum PageId {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PageKey {
     /// A slot-bound page (Part or Mixer chain) by `BlockDef::id` (defs like
-    /// FILTER are shared across chains), with the FM operator selection so a
+    /// FILTER are shared across chains), with the operator selection so a
     /// selection change redraws the page.
     Part { def: u16, op: Op },
     /// System/Demo pages.
@@ -160,8 +159,8 @@ const DEMO_MOTION: [ParamAddr; 6] = [
     ParamAddr::new(BlockRef::FilterEnv, EnvParams::DECAY),
 ];
 const DEMO_FM: [ParamAddr; 4] = [
-    ParamAddr::new(BlockRef::Fm, FmParams::ALGORITHM),
-    ParamAddr::new(BlockRef::FmOp(Op::A), FmOpParams::FEEDBACK),
-    ParamAddr::new(BlockRef::FmOp(Op::B), FmOpParams::FEEDBACK),
-    ParamAddr::new(BlockRef::FmOp(Op::C), FmOpParams::FEEDBACK),
+    ParamAddr::new(BlockRef::Algo, AlgoParams::ALG_A),
+    ParamAddr::new(BlockRef::AlgoOp(Op::A), AlgoOpParams::FEEDBACK),
+    ParamAddr::new(BlockRef::AlgoOp(Op::B), AlgoOpParams::FEEDBACK),
+    ParamAddr::new(BlockRef::AlgoOp(Op::C), AlgoOpParams::FEEDBACK),
 ];

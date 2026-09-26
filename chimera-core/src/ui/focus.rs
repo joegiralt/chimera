@@ -1,7 +1,7 @@
 //! The last-touched encoder slot per page (UI refresh spec § Focus
 //! tracking): the focus band shows it until another slot is touched. No
 //! timer. Pages are keyed by `BlockDef::id`, so a page shared by several
-//! chains (FILTER) keeps one focus, and the FM operator selection does not
+//! chains (FILTER) keeps one focus, and the operator selection does not
 //! reset it.
 
 /// One entry per `BlockDef::id`; ids are 0..=41 today (test-checked).

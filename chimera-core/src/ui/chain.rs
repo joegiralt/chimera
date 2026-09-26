@@ -153,9 +153,7 @@ impl ChainNav {
 /// Resolve a `ChainType` to the corresponding static chain definition.
 pub fn chain_def_for(ct: ChainType) -> &'static ChainDef2 {
     match ct {
-        ChainType::PizzaPoly => &block_registry::PIZZA_POLY_CHAIN,
-        ChainType::Modal => &block_registry::MODAL_PLUCK_CHAIN,
-        ChainType::Fm => &block_registry::FM_CHAIN,
         ChainType::Algo => &block_registry::ALGO_CHAIN,
+        ChainType::Modal => &block_registry::MODAL_PLUCK_CHAIN,
     }
 }

@@ -7,18 +7,14 @@ use chimera_core::dsp::voice::Voice;
 use chimera_core::hw::{CPU_HZ_REV_V, Cost, MAX_VOICES, SampleBudget};
 use chimera_core::params::EngineType;
 
-/// `bench-results.md`: Pizza 244, FM 6,599, Modal 379, VA (the chain) 6
-/// cycles/sample per voice, each minus the chain and rounded up to the
-/// next 10. Algo is an estimate (`AlgoEngine::COST` plus the chain) until Task 13
+/// `bench-results.md`: Modal 379 cycles/sample per voice, minus the chain
+/// and rounded up to the next 10. Algo is an estimate (`AlgoEngine::COST` plus the chain) until Task 13
 /// measures the worst case.
 #[test]
 fn voice_costs_are_the_bench_measurements() {
     assert_eq!(Voice::CHAIN_COST, Cost(10));
-    assert_eq!(Voice::cost(EngineType::Pizza), Cost(250));
-    assert_eq!(Voice::cost(EngineType::Fm), Cost(6_600));
-    assert_eq!(Voice::cost(EngineType::Modal), Cost(380));
-    assert_eq!(Voice::cost(EngineType::Va), Cost(310));
     assert_eq!(Voice::cost(EngineType::Algo), Cost(570));
+    assert_eq!(Voice::cost(EngineType::Modal), Cost(380));
     for e in EngineType::ALL {
         assert_eq!(
             Voice::cost(e),
@@ -29,9 +25,8 @@ fn voice_costs_are_the_bench_measurements() {
 }
 
 /// What the 7,000-cycle budget allows with the FX bus (MidiVerb, the
-/// costliest reverb) running: six of Pizza, Modal and VA; FM (6,600/voice)
-/// doesn't fit even one, so every FM note is refused
-/// (https://github.com/joegiralt/chimera/issues/26).
+/// costliest reverb) running: as many voices of each engine as fit, up to
+/// `MAX_VOICES`.
 #[test]
 fn budget_capacity_per_engine() {
     let budget = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost();

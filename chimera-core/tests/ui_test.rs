@@ -208,7 +208,7 @@ fn test_page_from_nav_demo_chain() {
     );
 }
 
-/// Spec §5: System gets its own page (it used to alias the Pizza page).
+/// Spec §5: System gets its own page (it used to alias an engine page).
 #[test]
 fn test_system_chain_has_its_own_page() {
     let mut nav = ChainNav::new();

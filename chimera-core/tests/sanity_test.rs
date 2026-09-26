@@ -93,32 +93,6 @@ fn assert_pitched(case: Case) {
 }
 
 #[test]
-fn pizza_is_finite_bounded_audible() {
-    assert_finite_bounded_audible(Case::PizzaInit);
-}
-#[test]
-fn pizza_is_silent_after_note_off() {
-    assert_silent_after_note_off(Case::PizzaInit);
-}
-#[test]
-fn pizza_is_pitched() {
-    assert_pitched(Case::PizzaInit);
-}
-
-#[test]
-fn fm_is_finite_bounded_audible() {
-    assert_finite_bounded_audible(Case::FmInit);
-}
-#[test]
-fn fm_is_silent_after_note_off() {
-    assert_silent_after_note_off(Case::FmInit);
-}
-#[test]
-fn fm_is_pitched() {
-    assert_pitched(Case::FmInit);
-}
-
-#[test]
 fn modal_is_finite_bounded_audible() {
     assert_finite_bounded_audible(Case::ModalInit);
 }
@@ -211,16 +185,6 @@ fn modal_tail_decays_after_note_off() {
     assert!(
         faster_at < default_at,
         "higher decay should reach silence sooner: default window {default_at}, decay=1.0 window {faster_at}"
-    );
-}
-
-/// Va is a placeholder engine: it must render exact silence, never garbage.
-#[test]
-fn va_is_silent_placeholder() {
-    let out = render_case(Case::VaInit);
-    assert!(
-        out.iter().all(|&x| x == 0.0),
-        "va_init must be exact silence"
     );
 }
 
