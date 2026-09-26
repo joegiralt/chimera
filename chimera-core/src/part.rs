@@ -34,6 +34,8 @@ pub enum DacPair {
 }
 
 impl DacPair {
+    pub const ALL: [DacPair; crate::hw::DAC_PAIRS] = [DacPair::P1, DacPair::P2, DacPair::P3];
+
     pub const fn index(self) -> usize {
         self as usize
     }
