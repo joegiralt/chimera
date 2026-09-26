@@ -281,3 +281,20 @@ Later still: a custom algorithm editor, FS1R-style formant operators, user waves
 - **AXI headroom (13.6 KB):** compact `u8` parameters. The assertion fails the build if it's exceeded.
 - **Test churn:** about 83 Pizza references plus goldens. Every changed test keeps its intent, and the plan lists each change.
 - **Map and page count on this UI:** a screen-golden test for no overlap, and sub-page scrolling if needed.
+
+## Addendum (2026-09-26): home page and operator navigation
+
+User decisions from the panel mockups (https://claude.ai/artifact/Ee5fHP2k9bfkHoSvTzcTRr):
+
+- **ALGO is the engine's home page.**
+  - It's the first block on the Algo chain's map, and the page you land on when you enter the chain.
+  - In sub-project 1 it shows the A/B diagrams blended by MORPH.
+  - The living version is sub-project 4: node size follows level, envelope-lit rings, and link weight follows MORPH.
+- **Each operator gets its own page** (sub-project 4). It shows that operator's wave and envelope together, with WAVE, COARSE, FINE, LEVEL, FB and VEL in the cells.
+- **Getting to an operator page: hold B1–B6 for 1 second.**
+  - On a Part whose engine is Algo, holding Bn for 1 s opens operator n's page for the Part being edited, without changing Part.
+  - A short press (under 1 s) still selects the Part. The selection now fires on release.
+  - On a Modal Part, a long hold does nothing.
+  - On an operator page, PLUS/MINUS step through operators. EXIT, or pressing the same B button again, goes back to the previous page.
+  - The long-press detection is a pure function of press and release times, tested on the host. Moving Part select to release is covered by the existing Part-select tests, updated.
+- **Gang edit stays hold MINUS + turn** (sub-project 4).
