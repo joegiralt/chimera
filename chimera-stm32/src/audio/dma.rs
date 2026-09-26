@@ -18,6 +18,9 @@ const REQUEST_ID: [u8; DAC_PAIRS] = [87, 88, 89];
 struct Rings([[[DacSample; BLOCK_SIZE * 2]; 2]; DAC_PAIRS]);
 const _: () = assert!(core::mem::size_of::<Rings>() == DAC_PAIRS * RING_WORDS * 4);
 
+// SAFETY: ".ram_d2.dma" is real RAM_D2 SRAM (linker-defined) and NOLOAD, so
+// this static holds garbage at boot; sound because the type is `MaybeUninit`
+// and `clear` zero-fills it in place before any read.
 #[unsafe(link_section = ".ram_d2.dma")]
 static mut RINGS: MaybeUninit<Rings> = MaybeUninit::uninit();
 

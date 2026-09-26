@@ -1,4 +1,4 @@
-//! STM32H750 PLL3/SAI clock planning (ADR 0013): pure arithmetic, no
+//! STM32H750 PLL3/SAI clock planning (ADR 0020): pure arithmetic, no
 //! register access. `chimera-stm32` reads `DBGMCU_IDC.REV_ID` and writes
 //! these values; this module only computes them.
 
