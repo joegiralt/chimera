@@ -8,8 +8,7 @@ chimera-core = { path = "../chimera-core" }
 chimera-hal = { path = "../chimera-hal" }
 cortex-m = { version = "0.7", features = ["critical-section-single-core"] }
 cortex-m-rt = "0.7"
-stm32h7xx-hal = { version = "0.16", features = ["stm32h750", "rt"] }
+stm32h7xx-hal = { version = "0.16", features = ["stm32h750v", "rt"] }
 embedded-graphics = "0.8"
 embedded-graphics-core = "0.4"
-panic-halt = "1.0"
 libm = "0.2"

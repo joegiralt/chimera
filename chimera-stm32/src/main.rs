@@ -2,22 +2,25 @@
 #![no_main]
 
 mod audio;
-
+mod cache;
+mod clocks;
 mod controls;
 mod display;
+mod panic;
+mod priority;
 mod shared;
 
-use chimera_core::ui::UiState;
+use chimera_core::clock_plan::SiliconRev;
+use chimera_core::ui::fmt::FmtBuf;
 use chimera_core::ui::perf::PerfTracker;
+use chimera_core::ui::{UiState, draw, theme};
 use chimera_hal::ChimeraDisplay;
 use controls::Stm32Controls;
 use cortex_m_rt::{entry, exception, pre_init};
 use display::Stm32Display;
-use panic_halt as _;
+use priority::Priority;
 use stm32h7xx_hal::{pac, prelude::*, spi};
 
-/// Set VTOR to our vector table. Our custom bootloader (chimera-bootloader)
-/// provides a clean peripheral state, so no other cleanup is needed.
 #[pre_init]
 unsafe fn before_main() {
     // SAFETY: runs once, before `main` and before interrupts are enabled, on
@@ -36,20 +39,13 @@ fn SysTick() {
 
 #[entry]
 fn main() -> ! {
+    let mut cp = cortex_m::Peripherals::take().unwrap();
     let dp = pac::Peripherals::take().unwrap();
-    let pwr = dp.PWR.constrain();
-    let pwrcfg = pwr.freeze();
-    let rcc = dp.RCC.constrain();
-    let ccdr = rcc
-        .use_hse(8.MHz())
-        .sys_ck(400.MHz())
-        .hclk(200.MHz())
-        .pclk1(100.MHz())
-        .pclk2(100.MHz())
-        .pclk3(100.MHz())
-        .pclk4(100.MHz())
-        .pll1_q_ck(200.MHz())
-        .freeze(pwrcfg, &dp.SYSCFG);
+
+    cache::enable_d2_sram();
+    let rev = clocks::read_rev(&dp.DBGMCU);
+    let (ccdr, clk) = clocks::freeze(dp.PWR, dp.RCC, &dp.SYSCFG, rev);
+    cache::init(&mut cp.MPU, &mut cp.SCB, &mut cp.CPUID);
 
     let gpioa = dp.GPIOA.split(ccdr.peripheral.GPIOA);
     let gpiod = dp.GPIOD.split(ccdr.peripheral.GPIOD);
@@ -63,14 +59,12 @@ fn main() -> ! {
     let mut backlight = gpioe.pe11.into_push_pull_output();
     backlight.set_high();
 
-    // SAI1 pins (AF6) for audio DAC 1
     let _sai_mclk = gpioe.pe2.into_alternate::<6>();
     let _sai_fs = gpioe.pe4.into_alternate::<6>();
     let _sai_sck = gpioe.pe5.into_alternate::<6>();
     let _sai_sd_a = gpioe.pe6.into_alternate::<6>();
     led.set_high();
 
-    // SPI1 display pins
     let mut sck = gpioa.pa5.into_alternate::<5>();
     let mut mosi = gpioa.pa7.into_alternate::<5>();
     sck.set_speed(stm32h7xx_hal::gpio::Speed::High);
@@ -88,23 +82,23 @@ fn main() -> ! {
     );
 
     let mut display = Stm32Display::new(spi, dc, reset, cs);
-    cortex_m::asm::delay(100_000_000); // ~250ms power-on delay
-    display.init();
+    clocks::delay_us(clk.cpu_hz, 250_000);
+    display.init(clk.cpu_hz);
+    boot_splash(&mut display, &clk);
 
     let mut controls = Stm32Controls::new();
     let mut ui = UiState::new();
     let perf = PerfTracker::new();
 
-    controls::start_systick(200_000_000);
+    controls::start_systick(clk.cpu_hz);
+    priority::set_systick(&mut cp.SCB, Priority::SYSTICK);
     controls::enable();
 
-    // Audio init — DMA-driven, main loop has no audio responsibilities
     let (scope_w, mut scope_r) = shared::take_scope().expect("scope buffer taken once");
     audio::init_scope(scope_w);
     audio::init_pll3();
-    audio::init_sai1a(); // Configures SAI but does NOT enable it
+    audio::init_sai1a();
 
-    // Connect voice to UI params and trigger test note
     // SAFETY: ui.performance lives in main's stack frame which never returns (-> !).
     // Part 0's sound params/mod_state outlive the audio DMA for the same reason.
     unsafe {
@@ -115,11 +109,10 @@ fn main() -> ! {
     }
     audio::trigger_note(chimera_hal::MidiNote::A4, chimera_hal::Velocity::DEFAULT);
 
-    audio::prefill_buffer(); // Fill buffer with first rendered audio
-    audio::init_dma(); // Configure + enable DMA1_Stream0
-    audio::enable_sai(); // Now enable SAI — DMA begins transferring
+    audio::prefill_buffer();
+    audio::init_dma(&mut cp.NVIC);
+    audio::enable_sai();
 
-    // Initial render
     ui.update();
     ui.render_with_scope(&mut display, &perf.stats, scope_r.read());
     display.flush();
@@ -127,22 +120,60 @@ fn main() -> ! {
     led.set_low();
 
     loop {
-        // Controls + display
         controls.snapshot();
-        let has_input = controls.has_activity();
-
-        if has_input {
+        if controls.has_activity() {
             ui.handle_input(&controls);
         }
-
         ui.update();
-
         let flush_list = ui.render_dirty_with_scope(&mut display, &perf.stats, scope_r.read());
-
         for &(ys, ye) in &flush_list {
             if ys != ye {
                 display.flush_region(ys, ye);
             }
         }
     }
+}
+
+// Temporary (bring-up step 1): which revision and clock this board runs;
+// the AUDIO page replaces it in step 6.
+fn boot_splash(display: &mut impl ChimeraDisplay, clk: &clocks::Clocks) {
+    use core::fmt::Write;
+    draw::fill_rect(display, 0, 0, theme::SCREEN_W, theme::SCREEN_H, theme::BG);
+    let mut line = FmtBuf::new();
+    let _ = write!(
+        line,
+        "REV {}  {} MHZ",
+        clk.rev.label(),
+        clk.cpu_hz / 1_000_000
+    );
+    draw::text(
+        display,
+        &theme::FONT_VALUE,
+        "CHIMERA",
+        theme::MARGIN_X,
+        140,
+        theme::INK,
+    );
+    draw::text(
+        display,
+        &theme::FONT_VALUE,
+        line.as_str(),
+        theme::MARGIN_X,
+        162,
+        theme::INK2,
+    );
+    if let SiliconRev::Unknown(id) = clk.rev {
+        line.clear();
+        let _ = write!(line, "REV_ID 0x{id:04X}");
+        draw::text(
+            display,
+            &theme::FONT_LABEL,
+            line.as_str(),
+            theme::MARGIN_X,
+            180,
+            theme::MID,
+        );
+    }
+    display.flush();
+    clocks::delay_us(clk.cpu_hz, 1_500_000);
 }
