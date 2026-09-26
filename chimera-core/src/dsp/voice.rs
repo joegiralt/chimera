@@ -1,3 +1,6 @@
+use core::mem::MaybeUninit;
+use core::ptr::addr_of_mut;
+
 use chimera_hal::BLOCK_SIZE;
 
 use crate::addr::Blocks;
@@ -9,6 +12,7 @@ use crate::dsp::filter::SvfFilter;
 use crate::dsp::lfo::Lfo;
 use crate::dsp::wavefolder::Wavefolder;
 use crate::hw::{Cost, MAX_VOICES, VOICE_RAM_BUDGET};
+use crate::in_place::{by_value, uninit_at};
 use crate::modulation::{MAX_MOD_SOURCES, ModState};
 use crate::params::{EngineType, ParamSnapshot};
 use crate::{MidiNote, Velocity};
@@ -32,6 +36,8 @@ pub struct Voice {
     last_velocity: Velocity,
 }
 
+crate::in_place::field_list!(Voice => Voice { engines, drive, filter, folder, amp_env, lfo, active_engine, active, last_note, last_velocity });
+
 impl Default for Voice {
     fn default() -> Self {
         Self::new(chimera_hal::SAMPLE_RATE)
@@ -51,17 +57,27 @@ impl Voice {
 
     /// The sample rate is stored once (spec §3), not passed per call.
     pub fn new(sample_rate: u32) -> Self {
-        Self {
-            engines: Engines::new(sample_rate),
-            drive: Drive::new(),
-            filter: SvfFilter::new(),
-            folder: Wavefolder::new(),
-            amp_env: Envelope::new(),
-            lfo: Lfo::new(),
-            active_engine: EngineType::Pizza,
-            active: false,
-            last_note: MidiNote::A4,
-            last_velocity: Velocity::DEFAULT,
+        // SAFETY: `init_in_place` writes every field of the slot.
+        unsafe { by_value(|slot| Self::init_in_place(slot, sample_rate)) }
+    }
+
+    pub fn init_in_place(slot: &mut MaybeUninit<Self>, sample_rate: u32) -> &mut Self {
+        let p = slot.as_mut_ptr();
+        // SAFETY: `p` is valid and unaliased; the engines are built in place
+        // and every other (small) field is written once before
+        // `assume_init_mut`.
+        unsafe {
+            Engines::init_in_place(uninit_at(addr_of_mut!((*p).engines)), sample_rate);
+            addr_of_mut!((*p).drive).write(Drive::new());
+            addr_of_mut!((*p).filter).write(SvfFilter::new());
+            addr_of_mut!((*p).folder).write(Wavefolder::new());
+            addr_of_mut!((*p).amp_env).write(Envelope::new());
+            addr_of_mut!((*p).lfo).write(Lfo::new());
+            addr_of_mut!((*p).active_engine).write(EngineType::Pizza);
+            addr_of_mut!((*p).active).write(false);
+            addr_of_mut!((*p).last_note).write(MidiNote::A4);
+            addr_of_mut!((*p).last_velocity).write(Velocity::DEFAULT);
+            slot.assume_init_mut()
         }
     }
 

@@ -2,6 +2,7 @@
 
 use crate::block::{Block, ParamId, ParamSpec, ValFmt};
 use chimera_hal::BLOCK_SIZE;
+use core::mem::MaybeUninit;
 
 // ── Shared delay line infrastructure ────────────────────────────────
 
@@ -471,6 +472,13 @@ pub struct Reverb {
     midiverb: MidiVerbReverb,
 }
 
+crate::in_place::field_list!(Reverb => Reverb { plate, fdn, midiverb });
+crate::in_place::field_list!(PlateReverb => PlateReverb { ap_in, ap_tank, del_tank, lp });
+crate::in_place::field_list!(FdnReverb => FdnReverb { lines, lp });
+crate::in_place::field_list!(MidiVerbReverb => MidiVerbReverb { ap_diff, ap_net_a, ap_net_b, recirc_a, recirc_b });
+crate::in_place::field_list!(DelayLine<1> => DelayLine { buffer, write_pos });
+crate::in_place::field_list!(OnePole => OnePole { state });
+
 impl Default for Reverb {
     fn default() -> Self {
         Self::new()
@@ -483,6 +491,16 @@ impl Reverb {
             plate: PlateReverb::new(),
             fdn: FdnReverb::new(),
             midiverb: MidiVerbReverb::new(),
+        }
+    }
+
+    pub fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
+        // SAFETY: the plate, FDN and MidiVerb reverbs hold only `DelayLine`s
+        // (`[f32; N]` + `usize`), `OnePole`s (`f32`) and two `f32`s, all valid
+        // as zero bytes; zero is exactly `new()`'s state.
+        unsafe {
+            slot.as_mut_ptr().write_bytes(0, 1);
+            slot.assume_init_mut()
         }
     }
 
