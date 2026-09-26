@@ -8,7 +8,7 @@ use chimera_core::ui::page::ValFmt;
 use chimera_core::ui::perf::PerfStats;
 use chimera_core::ui::theme;
 use chimera_core::ui::viz::{self, FILTER_PASS_Y, PLOT_BASE, PLOT_TOP};
-use chimera_hal::{ButtonId, EncoderId};
+use chimera_hal::EncoderId;
 use screen::*;
 
 fn band(fb: &Fb, y0: i32, y1: i32) -> Vec<u16> {
@@ -17,7 +17,7 @@ fn band(fb: &Fb, y0: i32, y1: i32) -> Vec<u16> {
 
 #[test]
 fn dirty_render_from_scratch_equals_full_render() {
-    for name in ["bigviz_filter", "bigviz_env", "bigviz_fm_op_env"] {
+    for name in ["bigviz_filter", "bigviz_env"] {
         assert!(render(name).px == render_dirty(name).px, "{name}");
     }
 }
@@ -115,16 +115,6 @@ fn envelope_lights_the_edited_segment() {
         0,
         "DEPTH lights no segment"
     );
-}
-
-#[test]
-fn fm_envelope_is_reachable_and_lit() {
-    let mut ui = ui_for("bigviz_fm_op_env");
-    feed(&mut ui, Input::press(ButtonId::Seq)); // back up to MOD
-    feed(&mut ui, Input::press(ButtonId::Edit)); // E1 again
-    assert_eq!(ui.focused_slot(), 2, "focus survives leaving the page");
-    settle(&mut ui);
-    assert!(accent_pixels(&mut ui) > 0, "D1R segment lit");
 }
 
 /// Columns in the envelope's stage-label row (below the base line and the

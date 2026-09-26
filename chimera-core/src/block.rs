@@ -70,7 +70,7 @@ pub enum ParamKind {
     /// Any value in `min..=max`.
     Continuous,
     /// Integer-valued. UI input rounds; a modulated copy stays fractional and
-    /// the DSP truncates as it does today (FM level `as u8`).
+    /// the DSP truncates.
     Stepped,
     /// Discrete choice `0..=max` (`min` is 0). Never modulatable.
     Enum,

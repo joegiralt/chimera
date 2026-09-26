@@ -69,11 +69,9 @@ fn out_of_range_page_ids_are_ignored() {
 
 #[test]
 fn every_page_id_fits_the_focus_table() {
-    let chains: [&ChainDef2; 10] = [
-        &reg::PIZZA_POLY_CHAIN,
+    let chains: [&ChainDef2; 8] = [
         &reg::KICK_CHAIN,
         &reg::MODAL_PLUCK_CHAIN,
-        &reg::FM_CHAIN,
         &reg::MIX_CHAIN,
         &reg::ENVELOPE_CHAIN,
         &reg::MIXER_CHANNEL_CHAIN,

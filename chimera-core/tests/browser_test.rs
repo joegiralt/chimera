@@ -43,13 +43,13 @@ fn empty_slots_are_dimmed_and_saved_ones_bright() {
     );
 }
 
-/// An INIT row (one of the four chain-type starting points after the pool
+/// An INIT row (one of the chain-type starting points after the pool
 /// slots) names its chain in `INK2` -- distinct from a saved slot's `INK`
 /// (`empty_slots_are_dimmed_and_saved_ones_bright`) and an empty slot's dim
 /// dash (no name at all), since it is neither.
 #[test]
 fn init_rows_name_their_chain_in_a_distinct_shade() {
-    let scroll = TOTAL_ENTRIES - VISIBLE_ROWS; // the tail: the four INIT rows follow the pool
+    let scroll = TOTAL_ENTRIES - VISIBLE_ROWS; // the tail: the INIT rows follow the pool
     let init_row = VISIBLE_ROWS - INIT_TYPES.len(); // first INIT row's visible index
     let fb = drawn(&SoundPool::new(), scroll, scroll); // cursor on the first visible row, not an INIT one
     assert!(row_has(&fb, init_row, theme::INK2), "INIT row name in INK2");
@@ -95,8 +95,8 @@ fn init_rows_end_the_list_and_load() {
         theme::ACCENT,
         "last visible row selected"
     );
-    feed(&mut ui, Input::press(ButtonId::Edit)); // the last of the four INIT rows
-    assert_eq!(ui.performance.parts[1].sound.chain_type, ChainType::Algo);
+    feed(&mut ui, Input::press(ButtonId::Edit)); // the last of the two INIT rows
+    assert_eq!(ui.performance.parts[1].sound.chain_type, ChainType::Modal);
 }
 
 fn render_ui(ui: &chimera_core::ui::UiState) -> Fb {

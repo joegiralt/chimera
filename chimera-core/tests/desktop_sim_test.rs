@@ -17,7 +17,7 @@ use chimera_core::{MidiNote, Velocity};
 
 const SR: u32 = 48000;
 
-/// Pizza's old role: operator 1 alone on the triangle.
+/// Operator 1 alone on the triangle.
 fn tri() -> ParamSnapshot {
     let mut p = ParamSnapshot::for_engine(EngineType::Algo);
     p.algo = AlgoParams::single(WaveId::TRI);
@@ -66,7 +66,7 @@ fn goertzel(buf: &[f32], target_freq: f32) -> f32 {
     libm::sqrtf((s1 * s1 + s2 * s2 - coeff * s1 * s2).abs()) / n
 }
 
-// ── FM through UiState ──────────────────────────────────────────────
+// ── Algo through UiState ────────────────────────────────────────────
 
 #[test]
 fn test_desktop_algo_produces_sound() {
@@ -322,7 +322,7 @@ fn test_desktop_drive_affects_output() {
 
 #[test]
 fn test_desktop_engine_switch() {
-    let fm = sim_render(
+    let algo = sim_render(
         |ui| {
             *ui.params_mut() = tri();
         },
@@ -349,30 +349,34 @@ fn test_desktop_engine_switch() {
     );
 
     // All three should produce sound
-    assert!(rms(&fm) > 0.01, "FM should produce sound");
+    assert!(rms(&algo) > 0.01, "Algo should produce sound");
     assert!(rms(&modal) > 0.001, "Modal should produce sound");
     assert!(rms(&ks) > 0.005, "KS should produce sound");
 
     // All three should be different from each other
-    let fm_vs_modal: f32 = fm
+    let algo_vs_modal: f32 = algo
         .iter()
         .zip(modal.iter())
         .map(|(a, b)| (a - b).abs())
         .sum::<f32>()
-        / fm.len() as f32;
-    let fm_vs_ks: f32 = fm
+        / algo.len() as f32;
+    let algo_vs_ks: f32 = algo
         .iter()
         .zip(ks.iter())
         .map(|(a, b)| (a - b).abs())
         .sum::<f32>()
-        / fm.len() as f32;
+        / algo.len() as f32;
 
     assert!(
-        fm_vs_modal > 0.01,
-        "FM vs Modal should differ: {}",
-        fm_vs_modal
+        algo_vs_modal > 0.01,
+        "Algo vs Modal should differ: {}",
+        algo_vs_modal
     );
-    assert!(fm_vs_ks > 0.01, "FM vs KS should differ: {}", fm_vs_ks);
+    assert!(
+        algo_vs_ks > 0.01,
+        "Algo vs KS should differ: {}",
+        algo_vs_ks
+    );
 }
 
 // ── Mid-note param change through UiState ───────────────────────────

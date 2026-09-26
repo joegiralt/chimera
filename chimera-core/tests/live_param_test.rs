@@ -8,7 +8,7 @@ use chimera_core::{MidiNote, Velocity};
 
 const SR: u32 = 48000;
 
-/// Pizza's old role: operator 1 alone on the triangle.
+/// Operator 1 alone on the triangle.
 fn tri() -> ParamSnapshot {
     let mut p = ParamSnapshot::for_engine(EngineType::Algo);
     p.algo = AlgoParams::single(WaveId::TRI);
@@ -78,59 +78,7 @@ fn harmonic_energy(buf: &[f32], f0: f32) -> f32 {
     (2..=8).map(|h| goertzel(buf, f0 * h as f32, SR)).sum()
 }
 
-// ── Pizza: live parameter tests ─────────────────────────────────────
-
-#[test]
-fn test_pizza_shape_change_mid_note() {
-    let (_, _, before, after) = render_with_param_change(
-        |p| {
-            *p = ParamSnapshot::for_engine(EngineType::Pizza);
-            p.pizza.shape = 0.5; // triangle
-        },
-        |p| {
-            p.pizza.shape = 1.0; // ramp up
-        },
-        8,
-        8,
-    );
-    let diff: f32 = before
-        .iter()
-        .zip(after.iter())
-        .map(|(a, b)| (a - b).abs())
-        .sum::<f32>()
-        / before.len() as f32;
-    assert!(
-        diff > 0.001,
-        "shape change should alter sound: diff={}",
-        diff
-    );
-}
-
-#[test]
-fn test_pizza_crush_change_mid_note() {
-    let (_, _, before, after) = render_with_param_change(
-        |p| {
-            *p = ParamSnapshot::for_engine(EngineType::Pizza);
-            p.pizza.crush = 0.0;
-        },
-        |p| {
-            p.pizza.crush = 0.8;
-        },
-        8,
-        8,
-    );
-    let f0 = 261.6;
-    let h_before = harmonic_energy(&before, f0);
-    let h_after = harmonic_energy(&after, f0);
-    assert!(
-        (h_before - h_after).abs() > 0.001,
-        "crush change should alter harmonics: before={} after={}",
-        h_before,
-        h_after
-    );
-}
-
-// ── Filter: live parameter tests ────────────────────────────────────
+// ── Voice chain: live parameter tests────────────────────────────────
 
 #[test]
 fn test_filter_cutoff_sweep_mid_note() {

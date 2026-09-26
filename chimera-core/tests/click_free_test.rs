@@ -15,7 +15,7 @@ use chimera_hal::BLOCK_SIZE;
 
 const SR: u32 = 48000;
 
-/// Pizza's old role: operator 1 alone on the triangle.
+/// Operator 1 alone on the triangle.
 fn tri() -> ParamSnapshot {
     let mut p = ParamSnapshot::for_engine(EngineType::Algo);
     p.algo = AlgoParams::single(WaveId::TRI);
@@ -81,7 +81,7 @@ fn check_no_clicks(
     );
 }
 
-// ── FM init sound (pure sine) ───────────────────────────────────────
+// ── Algo triangle ───────────────────────────────────────────────────
 
 #[test]
 fn test_no_clicks_algo_triangle() {

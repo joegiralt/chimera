@@ -17,38 +17,27 @@ pub const NAME_LEN: usize = 16;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 #[repr(u8)]
 pub enum ChainType {
-    PizzaPoly = 0,
-    Modal = 1,
-    Fm = 2,
     #[default]
-    Algo = 3,
+    Algo = 0,
+    Modal = 1,
 }
 
 impl ChainType {
-    pub const ALL: [ChainType; 4] = [
-        ChainType::PizzaPoly,
-        ChainType::Modal,
-        ChainType::Fm,
-        ChainType::Algo,
-    ];
+    pub const ALL: [ChainType; 2] = [ChainType::Algo, ChainType::Modal];
 
     /// Short display label for the chain type.
     pub fn label(self) -> &'static str {
         match self {
-            ChainType::PizzaPoly => "Pizza",
-            ChainType::Modal => "Modal",
-            ChainType::Fm => "FM",
             ChainType::Algo => "Algo",
+            ChainType::Modal => "Modal",
         }
     }
 
     /// The engine this chain plays (spec §6).
     pub const fn engine(self) -> EngineType {
         match self {
-            ChainType::PizzaPoly => EngineType::Pizza,
-            ChainType::Modal => EngineType::Modal,
-            ChainType::Fm => EngineType::Fm,
             ChainType::Algo => EngineType::Algo,
+            ChainType::Modal => EngineType::Modal,
         }
     }
 }
@@ -220,10 +209,7 @@ impl Blocks for PartEdit<'_> {
             BlockRef::Delay => Some(&self.fx.delay),
             BlockRef::Reverb => Some(&self.fx.reverb),
             BlockRef::Part => Some(&self.part.mix),
-            BlockRef::Pizza
-            | BlockRef::Modal
-            | BlockRef::Fm
-            | BlockRef::FmOp(_)
+            BlockRef::Modal
             | BlockRef::Algo
             | BlockRef::AlgoOp(_)
             | BlockRef::Drive
@@ -243,10 +229,7 @@ impl Blocks for PartEdit<'_> {
             BlockRef::Delay => Some(&mut self.fx.delay),
             BlockRef::Reverb => Some(&mut self.fx.reverb),
             BlockRef::Part => Some(&mut self.part.mix),
-            BlockRef::Pizza
-            | BlockRef::Modal
-            | BlockRef::Fm
-            | BlockRef::FmOp(_)
+            BlockRef::Modal
             | BlockRef::Algo
             | BlockRef::AlgoOp(_)
             | BlockRef::Drive

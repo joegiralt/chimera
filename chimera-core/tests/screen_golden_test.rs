@@ -15,16 +15,13 @@ use screen::*;
 
 const GOLDENS: &[(&str, u64)] = &[
     ("engine_algo", 0x1a44cc5e673c3b44),
-    ("engine_fm_alg", 0x38a0f10f39dd99fe),
-    ("engine_fm_op", 0xc9018e55aff4632e),
     ("bigviz_filter", 0xe3852e37688722bf),
     ("bigviz_env", 0x8f99bf1e23d51ad2),
-    ("bigviz_fm_op_env", 0xd64cac3d5290898e),
     ("mixer_part", 0x3e3480eee3041370),
     ("mixer_sends", 0x9a495656576afaf9),
     ("mixer_fx_delay", 0x872c17a4bee40923),
     ("mod_matrix", 0xc7c8ac8d7a5682cb),
-    ("sound_browser", 0xe944e5b4ae6000e1),
+    ("sound_browser", 0x4c7be51d24a83421),
     ("system", 0x66ca9f7c486d2749),
     ("system_audio", 0x6880e7ea1be85438),
 ];

@@ -2,9 +2,8 @@
 
 use chimera_core::addr::{BlockRef, Blocks, Op, OpOutOfRange, ParamAddr};
 use chimera_core::dsp::algo::params::{AlgoOpParams, AlgoParams};
-use chimera_core::dsp::pizza::PizzaParams;
 use chimera_core::params::{
-    DriveParams, EnvParams, FilterParams, FmOpParams, FolderParams, OutParams, ParamSnapshot,
+    DriveParams, EnvParams, FilterParams, FolderParams, OutParams, ParamSnapshot,
 };
 use chimera_core::preset::Performance;
 
@@ -58,10 +57,10 @@ fn block_and_specs_agree() {
 #[test]
 fn block_mut_reaches_the_named_instance() {
     let mut p = ParamSnapshot::default();
-    p.block_mut(BlockRef::FmOp(Op::C))
+    p.block_mut(BlockRef::AlgoOp(Op::C))
         .unwrap()
-        .set(FmOpParams::LEVEL, 42.0);
-    assert_eq!(p.fm.operators[2].level, 42.0);
+        .set(AlgoOpParams::LEVEL, 42.0);
+    assert_eq!(p.algo.ops[2].level, 42);
     p.block_mut(BlockRef::FilterEnv)
         .unwrap()
         .set(EnvParams::ATTACK, 2.0);
@@ -78,9 +77,6 @@ fn block_mut_reaches_the_named_instance() {
 #[test]
 fn modulatable_addresses_are_exactly_the_spec_list() {
     let mut want = vec![
-        ParamAddr::new(BlockRef::Pizza, PizzaParams::SHAPE),
-        ParamAddr::new(BlockRef::Pizza, PizzaParams::CRUSH),
-        ParamAddr::new(BlockRef::Pizza, PizzaParams::LEVEL),
         ParamAddr::new(BlockRef::Drive, DriveParams::DRIVE),
         ParamAddr::new(BlockRef::Drive, DriveParams::TONE),
         ParamAddr::new(BlockRef::Drive, DriveParams::MIX),
@@ -90,16 +86,8 @@ fn modulatable_addresses_are_exactly_the_spec_list() {
         ParamAddr::new(BlockRef::Folder, FolderParams::FOLD),
         ParamAddr::new(BlockRef::Folder, FolderParams::SYMMETRY),
         ParamAddr::new(BlockRef::Folder, FolderParams::MIX),
-        ParamAddr::new(BlockRef::AmpEnv, EnvParams::ATTACK),
-        ParamAddr::new(BlockRef::AmpEnv, EnvParams::DECAY),
-        ParamAddr::new(BlockRef::AmpEnv, EnvParams::SUSTAIN),
-        ParamAddr::new(BlockRef::AmpEnv, EnvParams::RELEASE),
         ParamAddr::new(BlockRef::Out, OutParams::VOLUME),
     ];
-    for op in [Op::A, Op::B, Op::C, Op::D] {
-        want.push(ParamAddr::new(BlockRef::FmOp(op), FmOpParams::LEVEL));
-        want.push(ParamAddr::new(BlockRef::FmOp(op), FmOpParams::FEEDBACK));
-    }
     want.push(ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH));
     for op in Op::ALL {
         want.push(ParamAddr::new(BlockRef::AlgoOp(op), AlgoOpParams::LEVEL));
@@ -117,7 +105,7 @@ fn modulatable_addresses_are_exactly_the_spec_list() {
 
 #[test]
 fn unknown_param_has_no_spec_and_is_not_modulatable() {
-    let a = ParamAddr::new(BlockRef::Pizza, chimera_core::block::ParamId(99));
+    let a = ParamAddr::new(BlockRef::Algo, chimera_core::block::ParamId(99));
     assert!(a.spec().is_none());
     assert!(!a.modulatable());
 }

@@ -213,7 +213,7 @@ fn every_page_walk() {
     );
 }
 
-/// A trimmed walk: the FM chain (CellGrid, BigViz envelopes, the matrix),
+/// A trimmed walk: the Algo chain (CellGrid, BigViz filter and envelope, the matrix),
 /// the Mixer on Part 1, and the first Demo and System pages; two encoders,
 /// two frames per step.
 #[test]

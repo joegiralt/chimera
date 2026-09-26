@@ -2,7 +2,7 @@
 
 use chimera_core::addr::{BlockRef, Op, ParamAddr};
 use chimera_core::block::ParamId;
-use chimera_core::params::FmOpParams;
+use chimera_core::dsp::algo::params::AlgoOpParams;
 use chimera_core::preset::ChainType;
 use chimera_core::ui::block_def::{BlockDef, SlotBinding, slot_addr};
 use chimera_core::ui::block_registry as reg;
@@ -39,7 +39,7 @@ fn every_part_slot_resolves_to_a_spec() {
 }
 
 /// Spec §4: matrix source rows are what `Voice` produces — ENV and LFO on
-/// every Part chain (FM no longer lists four envelope rows).
+/// every Part chain.
 #[test]
 fn part_chains_offer_env_and_lfo_sources() {
     for ct in ChainType::ALL {
@@ -51,20 +51,16 @@ fn part_chains_offer_env_and_lfo_sources() {
         );
         assert_eq!(sound.mod_state.num_dests(), 0, "{ct:?}");
     }
-    // The FM_ENV pages stay as MOD sub-pages; they are just not source rows.
-    assert_eq!(chain_def_for(ChainType::Fm).blocks[4].sub_pages.len(), 4);
 }
 
 #[test]
 fn block_def_ids_are_unique() {
-    let all: [&BlockDef; 41] = [
-        &reg::PIZZA,
+    let all: [&BlockDef; 35] = [
         &reg::MODAL_1,
         &reg::MODAL_2,
-        &reg::VA,
-        &reg::FM_ALG,
-        &reg::FM_OP,
-        &reg::FM_RATIO,
+        &reg::ALGO_WAVE,
+        &reg::ALGO_ALG,
+        &reg::ALGO_LEVEL,
         &reg::DRIVE,
         &reg::FOLDER,
         &reg::FILTER,
@@ -80,10 +76,6 @@ fn block_def_ids_are_unique() {
         &reg::MASTER,
         &reg::NOISE,
         &reg::MOD_MATRIX,
-        &reg::FM_ENV1,
-        &reg::FM_ENV2,
-        &reg::FM_ENV3,
-        &reg::FM_ENV4,
         &reg::PART,
         &reg::MIDI_CFG,
         &reg::EQ,
@@ -111,24 +103,11 @@ fn block_def_ids_are_unique() {
 }
 
 /// Labels and formats of Part pages are exactly what they displayed before
-/// bindings (spec labels + the two plan-D6 overrides; plan D5 BODY fix), except
-/// the operator selector and the algorithm, shown 1–4 and 1–8 since the UI
-/// refresh.
+/// bindings (spec labels + the two plan-D6 overrides; plan D5 BODY fix).
 #[test]
 fn part_pages_display_like_before() {
-    use ValFmt::{Bi, Int, OneBased, Uni};
-    let want: [(&BlockDef, [(&str, ValFmt); 6]); 15] = [
-        (
-            &reg::PIZZA,
-            [
-                ("SHAPE", Uni),
-                ("CRUSH", Uni),
-                ("LEVEL", Uni),
-                ("--", Uni),
-                ("--", Uni),
-                ("--", Uni),
-            ],
-        ),
+    use ValFmt::{Bi, Int, Uni};
+    let want: [(&BlockDef, [(&str, ValFmt); 6]); 7] = [
         (
             &reg::MODAL_1,
             [
@@ -149,39 +128,6 @@ fn part_pages_display_like_before() {
                 ("E.DPT", Uni),
                 ("E.RAT", Uni),
                 ("E.MIX", Uni),
-            ],
-        ),
-        (
-            &reg::FM_ALG,
-            [
-                ("ALG", OneBased(7)),
-                ("--", Uni),
-                ("LEVEL", Uni),
-                ("--", Uni),
-                ("--", Uni),
-                ("--", Uni),
-            ],
-        ),
-        (
-            &reg::FM_OP,
-            [
-                ("OP", OneBased(5)),
-                ("WAVE", Int(7)),
-                ("LEVEL", Uni),
-                ("FDBK", Int(7)),
-                ("DETUN", Bi),
-                ("V.SNS", Int(7)),
-            ],
-        ),
-        (
-            &reg::FM_RATIO,
-            [
-                ("OP1", Int(63)),
-                ("OP2", Int(63)),
-                ("OP3", Int(63)),
-                ("OP4", Int(63)),
-                ("FINE", Int(15)),
-                ("--", Uni),
             ],
         ),
         (
@@ -239,50 +185,6 @@ fn part_pages_display_like_before() {
                 ("OFST", Bi),
             ],
         ),
-        (
-            &reg::FM_ENV1,
-            [
-                ("AR", Int(31)),
-                ("D1R", Int(31)),
-                ("D1L", Int(15)),
-                ("D2R", Int(31)),
-                ("RR", Int(15)),
-                ("RS", Int(3)),
-            ],
-        ),
-        (
-            &reg::FM_ENV2,
-            [
-                ("AR", Int(31)),
-                ("D1R", Int(31)),
-                ("D1L", Int(15)),
-                ("D2R", Int(31)),
-                ("RR", Int(15)),
-                ("RS", Int(3)),
-            ],
-        ),
-        (
-            &reg::FM_ENV3,
-            [
-                ("AR", Int(31)),
-                ("D1R", Int(31)),
-                ("D1L", Int(15)),
-                ("D2R", Int(31)),
-                ("RR", Int(15)),
-                ("RS", Int(3)),
-            ],
-        ),
-        (
-            &reg::FM_ENV4,
-            [
-                ("AR", Int(31)),
-                ("D1R", Int(31)),
-                ("D1L", Int(15)),
-                ("D2R", Int(31)),
-                ("RR", Int(15)),
-                ("RS", Int(3)),
-            ],
-        ),
     ];
     for (def, slots) in want {
         for (i, (label, fmt)) in slots.iter().enumerate() {
@@ -292,57 +194,31 @@ fn part_pages_display_like_before() {
     }
 }
 
-/// Spec §5: `SelectedOp` resolves to the operator selected when the address
-/// is built; fixed bindings ignore the selection.
+/// Fixed bindings ignore the operator selection (`SelectedOp` is tested in
+/// `part_page_test`).
 #[test]
-fn slot_addr_resolves_selected_op_at_build_time() {
-    assert_eq!(
-        slot_addr(&reg::FM_OP, 2, Op::C),
-        Some(ParamAddr::new(BlockRef::FmOp(Op::C), FmOpParams::LEVEL))
-    );
-    assert_eq!(
-        slot_addr(&reg::FM_RATIO, 1, Op::D),
-        Some(ParamAddr::new(BlockRef::FmOp(Op::B), FmOpParams::COARSE))
-    );
-    assert_eq!(
-        slot_addr(&reg::FM_RATIO, 4, Op::D),
-        Some(ParamAddr::new(BlockRef::FmOp(Op::D), FmOpParams::FINE))
-    );
-    assert_eq!(slot_addr(&reg::FM_OP, 0, Op::A), None); // the selector
-    assert_eq!(slot_addr(&reg::PIZZA, 5, Op::A), None); // empty
+fn slot_addr_resolves_fixed_bindings() {
+    let level = |op| Some(ParamAddr::new(BlockRef::AlgoOp(op), AlgoOpParams::LEVEL));
+    assert_eq!(slot_addr(&reg::ALGO_LEVEL, 3, Op::A), level(Op::D));
+    assert_eq!(slot_addr(&reg::ALGO_LEVEL, 3, Op::F), level(Op::D));
+    assert_eq!(slot_addr(&reg::ALGO_ALG, 5, Op::A), None); // empty
     assert_eq!(slot_addr(&reg::MIXER, 0, Op::A), None); // legacy
-    assert_eq!(slot_addr(&reg::PIZZA, 9, Op::A), None); // out of range
-    // FM_RATIO slot 3 is the OP4 column: a fixed binding, so `sel_op` doesn't matter.
-    assert_eq!(
-        slot_addr(&reg::FM_RATIO, 3, Op::A),
-        Some(ParamAddr::new(BlockRef::FmOp(Op::D), FmOpParams::COARSE))
-    );
+    assert_eq!(slot_addr(&reg::ALGO_ALG, 9, Op::A), None); // out of range
 }
 
-/// Each FM_ENVn page edits its own operator's envelope; a copy-paste op slip
-/// (e.g. FM_ENV3 accidentally reading FmOp(B)) would silently edit the wrong
-/// operator's sound.
+/// Each column of a group page edits its own operator; a copy-paste slip
+/// would silently edit the wrong operator's sound.
 #[test]
-fn fm_env_pages_bind_to_their_own_operator() {
-    let env_params: [ParamId; 6] = [
-        FmOpParams::ATTACK_RATE,
-        FmOpParams::DECAY1_RATE,
-        FmOpParams::DECAY1_LEVEL,
-        FmOpParams::DECAY2_RATE,
-        FmOpParams::RELEASE_RATE,
-        FmOpParams::RATE_SCALING,
+fn group_pages_bind_each_column_to_its_operator() {
+    let pages: [(&BlockDef, ParamId); 2] = [
+        (&reg::ALGO_WAVE, AlgoOpParams::WAVE),
+        (&reg::ALGO_LEVEL, AlgoOpParams::LEVEL),
     ];
-    let pages: [(&BlockDef, Op); 4] = [
-        (&reg::FM_ENV1, Op::A),
-        (&reg::FM_ENV2, Op::B),
-        (&reg::FM_ENV3, Op::C),
-        (&reg::FM_ENV4, Op::D),
-    ];
-    for (def, op) in pages {
-        for (i, &id) in env_params.iter().enumerate() {
+    for (def, id) in pages {
+        for (i, op) in Op::ALL.into_iter().enumerate() {
             assert_eq!(
                 slot_addr(def, i, Op::A),
-                Some(ParamAddr::new(BlockRef::FmOp(op), id)),
+                Some(ParamAddr::new(BlockRef::AlgoOp(op), id)),
                 "{} slot {i}",
                 def.name
             );

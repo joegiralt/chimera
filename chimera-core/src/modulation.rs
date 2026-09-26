@@ -6,7 +6,7 @@
 //! per-destination offsets.
 
 use crate::addr::{BlockRef, ParamAddr};
-use crate::dsp::pizza::PizzaParams;
+use crate::dsp::algo::params::AlgoParams;
 use crate::mod_path::ModDestRegistry;
 use crate::ui::mod_grid::MatrixState;
 
@@ -14,7 +14,7 @@ pub const MAX_MOD_SOURCES: usize = 8;
 pub const MAX_MOD_DESTS: usize = 16;
 
 /// Fills unused dest slots; never read (only `d < num_dests` is).
-const UNUSED: ParamAddr = ParamAddr::new(BlockRef::Pizza, PizzaParams::SHAPE);
+const UNUSED: ParamAddr = ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH);
 
 /// Compact modulation state shared between UI and audio thread.
 #[derive(Clone, Debug)]

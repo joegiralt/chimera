@@ -201,11 +201,8 @@ fn time_kernel() -> u32 {
 
 fn name(e: EngineType) -> &'static str {
     match e {
-        EngineType::Pizza => "PIZZA",
-        EngineType::Fm => "FM",
-        EngineType::Modal => "MODAL",
-        EngineType::Va => "VA",
         EngineType::Algo => "ALGO",
+        EngineType::Modal => "MODAL",
     }
 }
 

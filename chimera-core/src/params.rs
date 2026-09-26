@@ -300,197 +300,18 @@ impl Block for FolderParams {
     }
 }
 
-/// Parameters for one FM operator. Stepped params that are modulatable
-/// (`level`, `feedback`) are `f32` so a modulated copy can hold fractional
-/// values (the DSP truncates `as u8`); the others keep integer types (plan D18).
-#[derive(Clone, Copy, Debug)]
-pub struct FmOpParams {
-    pub waveform: u8,      // 0–7
-    pub coarse: u8,        // 0–63
-    pub fine: u8,          // 0–15
-    pub level: f32,        // 0–99 (integer steps)
-    pub feedback: f32,     // 0–7 (integer steps)
-    pub detune: i8,        // -7–7
-    pub velocity_sens: u8, // 0–7
-    pub attack_rate: u8,   // 0–31
-    pub decay1_rate: u8,   // 0–31
-    pub decay1_level: u8,  // 0–15
-    pub decay2_rate: u8,   // 0–31
-    pub release_rate: u8,  // 0–15 (plan D4)
-    pub rate_scaling: u8,  // 0–3
-}
-
-impl Default for FmOpParams {
-    fn default() -> Self {
-        Self {
-            waveform: 0,
-            coarse: 4,
-            fine: 0,
-            level: 0.0,
-            feedback: 0.0,
-            detune: 0,
-            velocity_sens: 0,
-            attack_rate: 31,
-            decay1_rate: 0,
-            decay1_level: 15,
-            decay2_rate: 0,
-            release_rate: 15,
-            rate_scaling: 0,
-        }
-    }
-}
-
-impl FmOpParams {
-    pub const WAVEFORM: ParamId = ParamId(0);
-    pub const COARSE: ParamId = ParamId(1);
-    pub const FINE: ParamId = ParamId(2);
-    pub const LEVEL: ParamId = ParamId(3);
-    pub const FEEDBACK: ParamId = ParamId(4);
-    pub const DETUNE: ParamId = ParamId(5);
-    pub const VELOCITY_SENS: ParamId = ParamId(6);
-    pub const ATTACK_RATE: ParamId = ParamId(7);
-    pub const DECAY1_RATE: ParamId = ParamId(8);
-    pub const DECAY1_LEVEL: ParamId = ParamId(9);
-    pub const DECAY2_RATE: ParamId = ParamId(10);
-    pub const RELEASE_RATE: ParamId = ParamId(11);
-    pub const RATE_SCALING: ParamId = ParamId(12);
-}
-
-/// Level and feedback are read every block (`FmOperator::update_live`);
-/// waveform is too, but it is a choice. Ratios, detune and the envelope are
-/// read only at note-on, so they are not modulatable.
-pub static FM_OP_SPECS: [ParamSpec; 13] = [
-    ParamSpec::choice(0, "WAVE", ValFmt::Int(7), 7.0, 0.0),
-    ParamSpec::stepped(1, "CRSE", ValFmt::Int(63), 0.0, 63.0, 4.0, false),
-    ParamSpec::stepped(2, "FINE", ValFmt::Int(15), 0.0, 15.0, 0.0, false),
-    ParamSpec::stepped(3, "LEVEL", ValFmt::Uni, 0.0, 99.0, 0.0, true),
-    ParamSpec::stepped(4, "FDBK", ValFmt::Int(7), 0.0, 7.0, 0.0, true),
-    ParamSpec::stepped(5, "DETUN", ValFmt::Bi, -7.0, 7.0, 0.0, false),
-    ParamSpec::stepped(6, "V.SNS", ValFmt::Int(7), 0.0, 7.0, 0.0, false),
-    ParamSpec::stepped(7, "AR", ValFmt::Int(31), 0.0, 31.0, 31.0, false),
-    ParamSpec::stepped(8, "D1R", ValFmt::Int(31), 0.0, 31.0, 0.0, false),
-    ParamSpec::stepped(9, "D1L", ValFmt::Int(15), 0.0, 15.0, 15.0, false),
-    ParamSpec::stepped(10, "D2R", ValFmt::Int(31), 0.0, 31.0, 0.0, false),
-    ParamSpec::stepped(11, "RR", ValFmt::Int(15), 0.0, 15.0, 15.0, false),
-    ParamSpec::stepped(12, "RS", ValFmt::Int(3), 0.0, 3.0, 0.0, false),
-];
-
-impl Block for FmOpParams {
-    fn specs(&self) -> &'static [ParamSpec] {
-        &FM_OP_SPECS
-    }
-
-    fn get(&self, id: ParamId) -> f32 {
-        match id {
-            Self::WAVEFORM => self.waveform as f32,
-            Self::COARSE => self.coarse as f32,
-            Self::FINE => self.fine as f32,
-            Self::LEVEL => self.level,
-            Self::FEEDBACK => self.feedback,
-            Self::DETUNE => self.detune as f32,
-            Self::VELOCITY_SENS => self.velocity_sens as f32,
-            Self::ATTACK_RATE => self.attack_rate as f32,
-            Self::DECAY1_RATE => self.decay1_rate as f32,
-            Self::DECAY1_LEVEL => self.decay1_level as f32,
-            Self::DECAY2_RATE => self.decay2_rate as f32,
-            Self::RELEASE_RATE => self.release_rate as f32,
-            Self::RATE_SCALING => self.rate_scaling as f32,
-            _ => 0.0,
-        }
-    }
-
-    fn write(&mut self, id: ParamId, v: f32) {
-        match id {
-            Self::WAVEFORM => self.waveform = v as u8,
-            Self::COARSE => self.coarse = v as u8,
-            Self::FINE => self.fine = v as u8,
-            Self::LEVEL => self.level = v,
-            Self::FEEDBACK => self.feedback = v,
-            Self::DETUNE => self.detune = v as i8,
-            Self::VELOCITY_SENS => self.velocity_sens = v as u8,
-            Self::ATTACK_RATE => self.attack_rate = v as u8,
-            Self::DECAY1_RATE => self.decay1_rate = v as u8,
-            Self::DECAY1_LEVEL => self.decay1_level = v as u8,
-            Self::DECAY2_RATE => self.decay2_rate = v as u8,
-            Self::RELEASE_RATE => self.release_rate = v as u8,
-            Self::RATE_SCALING => self.rate_scaling = v as u8,
-            _ => {}
-        }
-    }
-}
-
-/// Parameters for the 4-operator FM engine.
-#[derive(Clone, Copy, Debug)]
-pub struct FmParams {
-    pub algorithm: u8, // 0–7
-    pub operators: [FmOpParams; 4],
-}
-
-impl Default for FmParams {
-    fn default() -> Self {
-        let op0 = FmOpParams {
-            level: 99.0,
-            ..Default::default()
-        };
-        Self {
-            algorithm: 0,
-            operators: [
-                op0,
-                FmOpParams::default(),
-                FmOpParams::default(),
-                FmOpParams::default(),
-            ],
-        }
-    }
-}
-
-impl FmParams {
-    pub const ALGORITHM: ParamId = ParamId(0);
-}
-
-/// Engine-level FM params. Operators are separate blocks (`FmOpParams`).
-pub static FM_SPECS: [ParamSpec; 1] = [ParamSpec::choice(0, "ALG", ValFmt::OneBased(7), 7.0, 0.0)];
-
-impl Block for FmParams {
-    fn specs(&self) -> &'static [ParamSpec] {
-        &FM_SPECS
-    }
-
-    fn get(&self, id: ParamId) -> f32 {
-        match id {
-            Self::ALGORITHM => self.algorithm as f32,
-            _ => 0.0,
-        }
-    }
-
-    fn write(&mut self, id: ParamId, v: f32) {
-        if id == Self::ALGORITHM {
-            self.algorithm = v as u8;
-        }
-    }
-}
-
 /// Which synthesis engine is active.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum EngineType {
-    Pizza = 0,
-    Fm = 1,
-    Modal = 2,
-    Va = 3,
     #[default]
-    Algo = 4,
+    Algo = 0,
+    Modal = 1,
 }
 
 impl EngineType {
     /// Every engine. Tests iterate this; see `engines_test.rs` for the
     /// exhaustive-match guard that makes a new variant a compile error there.
-    pub const ALL: [EngineType; 5] = [
-        EngineType::Pizza,
-        EngineType::Fm,
-        EngineType::Modal,
-        EngineType::Va,
-        EngineType::Algo,
-    ];
+    pub const ALL: [EngineType; 2] = [EngineType::Algo, EngineType::Modal];
 }
 
 /// Voice output stage: level into the mixer and pan.
@@ -552,8 +373,6 @@ pub struct ParamSnapshot {
     pub drive: DriveParams,
     pub folder: FolderParams,
     pub envelopes: [EnvParams; 3],
-    pub pizza: crate::dsp::pizza::PizzaParams,
-    pub fm: FmParams,
     pub algo: crate::dsp::algo::params::AlgoParams,
     pub modal: crate::dsp::modal::ModalParams,
     pub lfo: crate::dsp::lfo::LfoParams,
@@ -580,12 +399,7 @@ impl ParamSnapshot {
 impl Blocks for ParamSnapshot {
     fn block(&self, b: BlockRef) -> Option<&dyn Block> {
         Some(match b {
-            BlockRef::Pizza => &self.pizza,
             BlockRef::Modal => &self.modal,
-            BlockRef::Fm => &self.fm,
-            BlockRef::FmOp(op) => {
-                return self.fm.operators.get(op.index()).map(|o| o as &dyn Block);
-            }
             BlockRef::Algo => &self.algo,
             BlockRef::AlgoOp(op) => &self.algo.ops[op.index()],
             BlockRef::Drive => &self.drive,
@@ -602,16 +416,7 @@ impl Blocks for ParamSnapshot {
 
     fn block_mut(&mut self, b: BlockRef) -> Option<&mut dyn Block> {
         Some(match b {
-            BlockRef::Pizza => &mut self.pizza,
             BlockRef::Modal => &mut self.modal,
-            BlockRef::Fm => &mut self.fm,
-            BlockRef::FmOp(op) => {
-                return self
-                    .fm
-                    .operators
-                    .get_mut(op.index())
-                    .map(|o| o as &mut dyn Block);
-            }
             BlockRef::Algo => &mut self.algo,
             BlockRef::AlgoOp(op) => &mut self.algo.ops[op.index()],
             BlockRef::Drive => &mut self.drive,
@@ -638,8 +443,6 @@ impl Default for ParamSnapshot {
             drive: DriveParams::default(),
             folder: FolderParams::default(),
             envelopes: [EnvParams::default(); 3],
-            pizza: crate::dsp::pizza::PizzaParams::default(),
-            fm: FmParams::default(),
             algo: crate::dsp::algo::params::AlgoParams::default(),
             modal: crate::dsp::modal::ModalParams::default(),
             lfo: crate::dsp::lfo::LfoParams::default(),

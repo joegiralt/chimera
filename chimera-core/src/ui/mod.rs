@@ -107,7 +107,7 @@ pub struct UiState {
     /// clears the flag once flushed (#7).
     browser_dirty: bool,
     page: PageKey,
-    /// Selected FM operator — one global selection, as before (spec §5).
+    /// Selected operator — one global selection, as before (spec §5).
     sel_op: Op,
     region_set: region::RegionSet,
     /// Last-touched slot per page: the focus band and MIX + Plus/Minus.
@@ -222,7 +222,7 @@ impl UiState {
         self.focus.get(self.nav.active_block_def().id)
     }
 
-    /// The selected FM operator.
+    /// The selected operator.
     pub fn selected_op(&self) -> Op {
         self.sel_op
     }
@@ -285,13 +285,13 @@ impl UiState {
     }
 
     /// 8-byte matrix column label for a primed destination: `O<n> ` + spec
-    /// label for FM operator params, else the page's short name (≤ 3 chars)
+    /// label for operator params, else the page's short name (≤ 3 chars)
     /// + the slot label.
     fn mod_label(&self, addr: ParamAddr) -> [u8; LABEL_LEN] {
         let def = self.nav.active_block_def();
         let op_prefix;
         let (prefix, name): (&[u8], &str) = match addr.block {
-            BlockRef::FmOp(op) | BlockRef::AlgoOp(op) => {
+            BlockRef::AlgoOp(op) => {
                 op_prefix = [b'O', b'1' + op.index() as u8, b' '];
                 (&op_prefix, addr.spec().map_or("", |s| s.label))
             }
