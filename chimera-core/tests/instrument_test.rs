@@ -15,6 +15,10 @@ use chimera_core::{MidiChannel, MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
 use common::fnv1a;
 
+use chimera_core::hw::{CPU_HZ_REV_V, SampleBudget};
+
+const BUDGET: SampleBudget = SampleBudget::for_cpu(CPU_HZ_REV_V);
+
 const SR: u32 = chimera_hal::SAMPLE_RATE;
 
 fn on(ch: u8, note: u8) -> NoteEvent {
@@ -37,18 +41,21 @@ struct Rig {
     inst: Box<Instrument>,
     fx: Box<FxBus>,
     out: DacOut,
+    scope: chimera_core::scope::ScopeWriter,
 }
 
 impl Rig {
     fn new() -> Self {
         Self {
-            inst: Box::new(Instrument::new(SR)),
+            inst: Box::new(Instrument::new(SR, BUDGET)),
             fx: Box::new(FxBus::new()),
             out: [[0.0; BLOCK_SIZE * 2]; DAC_PAIRS],
+            scope: common::scope_writer(),
         }
     }
     fn render(&mut self, shared: &AudioShared) -> &DacOut {
-        self.inst.render(&mut self.fx, &mut self.out, shared);
+        self.inst
+            .render(&mut self.fx, &mut self.out, shared, &mut self.scope);
         &self.out
     }
 }
@@ -232,9 +239,12 @@ fn chord() -> Vec<f32> {
     )
 }
 
+/// Modal, not FM: FM's bench-measured cost doesn't fit one voice under
+/// budget (https://github.com/joegiralt/chimera/issues/26), so an FM note
+/// here would be refused and pair 2 would render silent.
 fn two_parts() -> Vec<f32> {
     let mut perf = Performance::new();
-    perf.parts[1].load_init(ChainType::Fm);
+    perf.parts[1].load_init(ChainType::Modal);
     perf.parts[1].mix.output = DacPair::P2;
     perf.parts[1].mix.pan = 0.5;
     render_perf(&perf, &[(0, 60), (1, 67)], 200)
@@ -253,7 +263,7 @@ fn reverb_send(send: f32) -> Vec<f32> {
 ///     GOLDEN_RECORD=1 cargo test -p chimera-core --test instrument_test -- --nocapture
 const GOLDENS: &[(&str, u64)] = &[
     ("poly_chord", 0x9e1be15b748f4ab1),
-    ("two_parts_two_pairs", 0xcfe8ed2b4c185e18),
+    ("two_parts_two_pairs", 0x76a2727ec0b942ef), // re-recorded: part 2 is Modal, not FM (issues/26)
     ("reverb_send_off", 0x25fa9f662d1acb99),
     ("reverb_send_on", 0x51da232bdad6e4d9), // re-recorded: FX returns wet-only
 ];
@@ -326,11 +336,13 @@ fn note_off_follows_the_note_on_channel() {
 }
 
 /// Review Focus: switching a held chord to a costlier Sound must not push
-/// the pool over the CPU budget; the newest voices are cut.
+/// the pool over the CPU budget; any voices over budget are cut. At the
+/// bench-measured costs, six Modal voices plus the FX bus still fit, so
+/// none are.
 #[test]
 fn sound_change_mid_chord_stays_in_budget() {
     use chimera_core::dsp::voice::Voice;
-    use chimera_core::hw::AUDIO_CYCLE_BUDGET;
+    use chimera_core::hw::MAX_VOICES;
     use chimera_core::params::{EngineType, ParamSnapshot};
     let mut rig = Rig::new();
     let mut shared = AudioShared::default();
@@ -350,8 +362,13 @@ fn sound_change_mid_chord_stays_in_budget() {
     shared.parts[0].params = ParamSnapshot::for_engine(EngineType::Modal);
     rig.render(&shared);
     let a = rig.inst.allocator();
-    assert!(a.sounding_cost() + FxBus::COST <= AUDIO_CYCLE_BUDGET);
-    assert_eq!(a.slots().iter().filter(|s| !s.is_free()).count(), 5);
+    assert!(a.sounding_cost() + FxBus::COST <= BUDGET.as_cost());
+    let expected = ((BUDGET.as_cost().0 - FxBus::COST.0) / Voice::cost(EngineType::Modal).0)
+        .min(MAX_VOICES as u32);
+    assert_eq!(
+        a.slots().iter().filter(|s| !s.is_free()).count(),
+        expected as usize
+    );
     assert!(
         a.slots()
             .iter()

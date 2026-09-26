@@ -2,21 +2,30 @@
 #![no_main]
 
 mod audio;
-
+#[cfg(feature = "bench")]
+mod bench;
+mod cache;
+mod clocks;
 mod controls;
 mod display;
+#[cfg(feature = "midi-din")]
+mod midi_din;
+mod panic;
+mod priority;
+mod probe;
+mod shared;
 
-use chimera_core::ui::UiState;
+use chimera_core::clock_plan::pll3_for;
+use chimera_core::hw::SampleBudget;
 use chimera_core::ui::perf::PerfTracker;
 use chimera_hal::ChimeraDisplay;
 use controls::Stm32Controls;
 use cortex_m_rt::{entry, exception, pre_init};
 use display::Stm32Display;
-use panic_halt as _;
+use priority::Priority;
+use stm32h7xx_hal::gpio::Speed;
 use stm32h7xx_hal::{pac, prelude::*, spi};
 
-/// Set VTOR to our vector table. Our custom bootloader (chimera-bootloader)
-/// provides a clean peripheral state, so no other cleanup is needed.
 #[pre_init]
 unsafe fn before_main() {
     // SAFETY: runs once, before `main` and before interrupts are enabled, on
@@ -35,25 +44,25 @@ fn SysTick() {
 
 #[entry]
 fn main() -> ! {
+    probe::paint_stack();
+    let mut cp = cortex_m::Peripherals::take().unwrap();
     let dp = pac::Peripherals::take().unwrap();
-    let pwr = dp.PWR.constrain();
-    let pwrcfg = pwr.freeze();
-    let rcc = dp.RCC.constrain();
-    let ccdr = rcc
-        .use_hse(8.MHz())
-        .sys_ck(400.MHz())
-        .hclk(200.MHz())
-        .pclk1(100.MHz())
-        .pclk2(100.MHz())
-        .pclk3(100.MHz())
-        .pclk4(100.MHz())
-        .pll1_q_ck(200.MHz())
-        .freeze(pwrcfg, &dp.SYSCFG);
+
+    cache::enable_d2_sram();
+    let rev = clocks::read_rev(&dp.DBGMCU);
+    let (ccdr, clk) = clocks::freeze(dp.PWR, dp.RCC, &dp.SYSCFG, rev);
+    cache::init(&mut cp.MPU, &mut cp.SCB, &mut cp.CPUID);
 
     let gpioa = dp.GPIOA.split(ccdr.peripheral.GPIOA);
     let gpiod = dp.GPIOD.split(ccdr.peripheral.GPIOD);
     let gpioe = dp.GPIOE.split(ccdr.peripheral.GPIOE);
     let gpiof = dp.GPIOF.split(ccdr.peripheral.GPIOF);
+    #[cfg(feature = "midi-din")]
+    let _midi_rx = dp
+        .GPIOB
+        .split(ccdr.peripheral.GPIOB)
+        .pb7
+        .into_alternate::<7>();
     let _hc_data = gpiof.pf2.into_floating_input();
     let _hc_load = gpiof.pf1.into_push_pull_output();
     let _hc_clk = gpiof.pf0.into_push_pull_output();
@@ -62,18 +71,25 @@ fn main() -> ! {
     let mut backlight = gpioe.pe11.into_push_pull_output();
     backlight.set_high();
 
-    // SAI1 pins (AF6) for audio DAC 1
-    let _sai_mclk = gpioe.pe2.into_alternate::<6>();
-    let _sai_fs = gpioe.pe4.into_alternate::<6>();
-    let _sai_sck = gpioe.pe5.into_alternate::<6>();
-    let _sai_sd_a = gpioe.pe6.into_alternate::<6>();
+    let mut sai_mclk = gpioe.pe2.into_alternate::<6>();
+    let mut sai_fs = gpioe.pe4.into_alternate::<6>();
+    let mut sai_sck = gpioe.pe5.into_alternate::<6>();
+    let mut sai_sd_a1 = gpioe.pe6.into_alternate::<6>();
+    // MCLK is 12.288 MHz, the edge of the low-speed GPIO range.
+    sai_mclk.set_speed(Speed::Medium);
+    sai_fs.set_speed(Speed::Medium);
+    sai_sck.set_speed(Speed::Medium);
+    sai_sd_a1.set_speed(Speed::Medium);
+    let mut sai_sd_b1 = gpioe.pe3.into_alternate::<6>();
+    let mut sai_sd_a2 = gpiod.pd11.into_alternate::<10>();
+    sai_sd_b1.set_speed(Speed::Medium);
+    sai_sd_a2.set_speed(Speed::Medium);
     led.set_high();
 
-    // SPI1 display pins
     let mut sck = gpioa.pa5.into_alternate::<5>();
     let mut mosi = gpioa.pa7.into_alternate::<5>();
-    sck.set_speed(stm32h7xx_hal::gpio::Speed::High);
-    mosi.set_speed(stm32h7xx_hal::gpio::Speed::High);
+    sck.set_speed(Speed::High);
+    mosi.set_speed(Speed::High);
     let dc = gpiod.pd8.into_push_pull_output();
     let reset = gpiod.pd9.into_push_pull_output();
     let cs = gpiod.pd10.into_push_pull_output();
@@ -87,55 +103,57 @@ fn main() -> ! {
     );
 
     let mut display = Stm32Display::new(spi, dc, reset, cs);
-    cortex_m::asm::delay(100_000_000); // ~250ms power-on delay
-    display.init();
+    clocks::delay_us(clk.cpu_hz, 250_000);
+    display.init(clk.cpu_hz);
+    let mut stats_r = probe::init(&mut cp.DCB, &mut cp.DWT, clk);
 
     let mut controls = Stm32Controls::new();
-    let mut ui = UiState::new();
+    let ui = shared::take_ui().expect("UI state taken once");
     let perf = PerfTracker::new();
+    #[cfg(feature = "bench")]
+    bench::run(&mut display, clk, &ui.performance);
 
-    controls::start_systick(200_000_000);
+    controls::start_systick(clk.cpu_hz);
+    priority::set_systick(&mut cp.SCB, Priority::SYSTICK);
     controls::enable();
 
-    // Audio init — DMA-driven, main loop has no audio responsibilities
-    audio::init_pll3();
-    audio::init_sai1a(); // Configures SAI but does NOT enable it
+    let (scope_w, mut scope_r) = shared::take_scope().expect("scope buffer taken once");
+    let (mut shared_w, shared_r) =
+        shared::take_audio(&ui.performance).expect("audio buffer taken once");
+    audio::engine::init(SampleBudget::for_cpu(clk.cpu_hz), shared_r, scope_w);
 
-    // Connect voice to UI params and trigger test note
-    // SAFETY: ui.performance lives in main's stack frame which never returns (-> !).
-    // Part 0's sound params/mod_state outlive the audio DMA for the same reason.
-    unsafe {
-        audio::init_voice(
-            &ui.performance.parts[0].sound.params as *const _,
-            &ui.performance.parts[0].sound.mod_state as *const _,
-        );
-    }
-    audio::trigger_note(chimera_hal::MidiNote::A4, chimera_hal::Velocity::DEFAULT);
+    let pll3 = pll3_for(clocks::HSE_HZ, chimera_hal::SAMPLE_RATE, clk.rev);
+    clocks::init_pll3(&pll3);
+    audio::sai::init(clk.rev.new_sai(), pll3.mckdiv);
+    audio::dma::clear();
+    audio::prefill();
+    audio::dma::init(&mut cp.NVIC);
+    audio::dma::start();
+    audio::sai::start();
 
-    audio::prefill_buffer(); // Fill buffer with first rendered audio
-    audio::init_dma(); // Configure + enable DMA1_Stream0
-    audio::enable_sai(); // Now enable SAI — DMA begins transferring
+    #[cfg(feature = "midi-din")]
+    midi_din::init(&mut cp.NVIC, ccdr.clocks.pclk2().raw());
 
-    // Initial render
     ui.update();
-    ui.render(&mut display, &perf.stats);
+    ui.render_with_audio(&mut display, &perf.stats, None, scope_r.read());
     display.flush();
-    ui.prime_regions(&perf.stats);
+    ui.prime_regions(&perf.stats, None, scope_r.read());
     led.set_low();
 
     loop {
-        // Controls + display
         controls.snapshot();
-        let has_input = controls.has_activity();
-
-        if has_input {
+        if controls.has_activity() {
             ui.handle_input(&controls);
         }
-
         ui.update();
-
-        let flush_list = ui.render_dirty(&mut display, &perf.stats);
-
+        shared_w.publish(|b| b.update_from(&ui.performance));
+        let stats = stats_r.as_mut().map(|r| {
+            let mut s = *r.read();
+            s.stack_used = probe::stack_used();
+            s
+        });
+        let flush_list =
+            ui.render_dirty_with_audio(&mut display, &perf.stats, stats.as_ref(), scope_r.read());
         for &(ys, ye) in &flush_list {
             if ys != ye {
                 display.flush_region(ys, ye);

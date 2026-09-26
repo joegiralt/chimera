@@ -15,6 +15,7 @@ pub enum VizType {
     CompressorCurve,
     /// TX81Z 5-stage envelope: AR → D1R → D1L → D2R → RR
     FmEnvelope,
+    AudioStats,
 }
 
 /// What an encoder slot edits (spec §5).

@@ -57,7 +57,7 @@ fn part_chains_offer_env_and_lfo_sources() {
 
 #[test]
 fn block_def_ids_are_unique() {
-    let all: [&BlockDef; 40] = [
+    let all: [&BlockDef; 41] = [
         &reg::PIZZA,
         &reg::MODAL_1,
         &reg::MODAL_2,
@@ -93,6 +93,7 @@ fn block_def_ids_are_unique() {
         &reg::SYS_THEME,
         &reg::SYS_UPDATES,
         &reg::SYS_ABOUT,
+        &reg::SYS_AUDIO,
         &reg::DEMO_WAVES,
         &reg::DEMO_SHAPES,
         &reg::DEMO_MOTION,

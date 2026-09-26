@@ -141,23 +141,23 @@ impl Velocity {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MidiMessage {
     NoteOn {
-        channel: u8,
+        channel: MidiChannel,
         note: MidiNote,
         velocity: Velocity,
     },
     /// Release velocity may be 0.
     NoteOff {
-        channel: u8,
+        channel: MidiChannel,
         note: MidiNote,
         velocity: u8,
     },
     ControlChange {
-        channel: u8,
+        channel: MidiChannel,
         cc: u8,
         value: u8,
     },
     PitchBend {
-        channel: u8,
+        channel: MidiChannel,
         value: i16,
     },
 }

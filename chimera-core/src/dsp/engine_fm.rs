@@ -297,8 +297,9 @@ impl Default for FmEngine {
 }
 
 impl FmEngine {
-    /// Design doc § CPU Budget: 4-op FM ~200 cycles/sample.
-    pub const COST: Cost = Cost(200); // estimate
+    /// About 20x a 4-op FM engine's likely floor; see
+    /// https://github.com/joegiralt/chimera/issues/26.
+    pub const COST: Cost = Cost(6590); // measured 2026-09-26, bench, rev V at 480 MHz
 
     pub fn new() -> Self {
         Self {

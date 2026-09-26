@@ -58,14 +58,14 @@ where
     }
 
     /// ILI9341 init sequence (from PreenFM3 ili9341.c)
-    pub fn init(&mut self) {
+    pub fn init(&mut self, cpu_hz: u32) {
         let _ = self.reset.set_low();
-        cortex_m::asm::delay(5_000_000);
+        crate::clocks::delay_us(cpu_hz, 12_500);
         let _ = self.reset.set_high();
-        cortex_m::asm::delay(60_000_000);
+        crate::clocks::delay_us(cpu_hz, 150_000);
 
         self.cmd(0x01);
-        cortex_m::asm::delay(5_000_000);
+        crate::clocks::delay_us(cpu_hz, 12_500);
 
         self.cmd_data(0xCB, &[0x39, 0x2C, 0x00, 0x34, 0x02]);
         self.cmd_data(0xCF, &[0x00, 0xC1, 0x30]);
@@ -85,7 +85,7 @@ where
         self.cmd_data(0x26, &[0x01]);
 
         self.cmd(0x11);
-        cortex_m::asm::delay(60_000_000);
+        crate::clocks::delay_us(cpu_hz, 150_000);
         self.cmd(0x29);
     }
 

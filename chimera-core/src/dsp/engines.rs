@@ -1,8 +1,11 @@
 //! Persistent engine instances with dispatch in one place (spec §3).
 //!
 //! Engines are never constructed in the audio interrupt: `ModalEngine` is
-//! ~66 KB and the stack has no guard. Adding an engine = one field here plus
+//! ~40 KB and the stack has no guard. Adding an engine = one field here plus
 //! one arm in each exhaustive `match` below; the compiler lists them.
+
+use core::mem::MaybeUninit;
+use core::ptr::addr_of_mut;
 
 use chimera_hal::BLOCK_SIZE;
 
@@ -11,6 +14,7 @@ use crate::dsp::envelope::Envelope;
 use crate::dsp::modal::ModalEngine;
 use crate::dsp::pizza::PizzaOsc;
 use crate::hw::Cost;
+use crate::in_place::{by_value, uninit_at};
 use crate::params::{EngineType, ParamSnapshot};
 use crate::{MidiNote, Velocity};
 
@@ -25,13 +29,24 @@ pub struct Engines {
     sample_rate: u32,
 }
 
+crate::in_place::field_list!(Engines => Engines { pizza, fm, modal, sample_rate });
+
 impl Engines {
     pub fn new(sample_rate: u32) -> Self {
-        Self {
-            pizza: PizzaOsc::new(),
-            fm: FmEngine::new(),
-            modal: ModalEngine::new(),
-            sample_rate,
+        // SAFETY: `init_in_place` writes every field of the slot.
+        unsafe { by_value(|slot| Self::init_in_place(slot, sample_rate)) }
+    }
+
+    pub fn init_in_place(slot: &mut MaybeUninit<Self>, sample_rate: u32) -> &mut Self {
+        let p = slot.as_mut_ptr();
+        // SAFETY: `p` is valid and unaliased; Modal (40 KB) is built in place,
+        // Pizza and FM (about 1.1 KB) by value, each field once.
+        unsafe {
+            addr_of_mut!((*p).pizza).write(PizzaOsc::new());
+            addr_of_mut!((*p).fm).write(FmEngine::new());
+            ModalEngine::init_in_place(uninit_at(addr_of_mut!((*p).modal)));
+            addr_of_mut!((*p).sample_rate).write(sample_rate);
+            slot.assume_init_mut()
         }
     }
 

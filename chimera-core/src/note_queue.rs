@@ -26,6 +26,8 @@
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
+use chimera_hal::MidiMessage;
+
 use crate::{MidiChannel, MidiNote, Velocity};
 
 pub const NOTE_QUEUE_LEN: usize = 64;
@@ -45,6 +47,26 @@ pub struct NoteEvent {
 }
 
 impl NoteEvent {
+    pub fn from_midi(msg: MidiMessage) -> Option<Self> {
+        match msg {
+            MidiMessage::NoteOn {
+                channel,
+                note,
+                velocity,
+            } => Some(Self {
+                channel,
+                note,
+                kind: NoteKind::On(velocity),
+            }),
+            MidiMessage::NoteOff { channel, note, .. } => Some(Self {
+                channel,
+                note,
+                kind: NoteKind::Off,
+            }),
+            MidiMessage::ControlChange { .. } | MidiMessage::PitchBend { .. } => None,
+        }
+    }
+
     /// Bits 0..4 channel, 4..11 note, 11..18 velocity (0 = note-off).
     fn pack(self) -> u32 {
         let vel = match self.kind {
@@ -136,5 +158,63 @@ impl NoteQueue {
     /// Events dropped because the queue was full.
     pub fn dropped(&self) -> u32 {
         self.dropped.load(Ordering::Relaxed)
+    }
+}
+
+pub const MAX_NOTE_SOURCES: usize = 2;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SourceId<const N: usize>(usize);
+
+impl<const N: usize> SourceId<N> {
+    pub const fn new(index: usize) -> Self {
+        assert!(index < N, "note source index out of range");
+        Self(index)
+    }
+
+    pub const fn index(self) -> usize {
+        self.0
+    }
+}
+
+/// One `NoteQueue` per note source; each queue has exactly one producer.
+/// `drain` empties every queue in source order (source 0 first) so a
+/// caller processing note-offs before note-ons within a block sees a
+/// deterministic, if not timestamped, order.
+pub struct NoteSources<const N: usize> {
+    queues: [NoteQueue; N],
+}
+
+impl<const N: usize> Default for NoteSources<N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<const N: usize> NoteSources<N> {
+    pub const fn new() -> Self {
+        const {
+            assert!(N > 0);
+            assert!(N <= MAX_NOTE_SOURCES);
+        }
+        Self {
+            queues: [const { NoteQueue::new() }; N],
+        }
+    }
+
+    pub fn source(&self, id: SourceId<N>) -> &NoteQueue {
+        &self.queues[id.0]
+    }
+
+    pub fn drain(&self, mut f: impl FnMut(NoteEvent)) {
+        for q in &self.queues {
+            while let Some(ev) = q.pop() {
+                f(ev);
+            }
+        }
+    }
+
+    pub fn drops(&self) -> [u32; N] {
+        core::array::from_fn(|i| self.queues[i].dropped())
     }
 }
