@@ -46,11 +46,13 @@ fn fx_bus_fits_its_axi_share() {
 }
 
 /// Spec § Hardware parity: Performance + SoundPool + framebuffer + UI
-/// reserve (+ both AudioShared copies + the FX bus, ADR 0014) fit AXI.
+/// reserve (+ the AudioShared, scope and AudioStats triple buffers, the
+/// scope's writer, and the FX bus, ADR 0014 / ADR 0021) fit AXI.
 #[test]
 fn axi_residents_fit() {
     use chimera_core::dsp::fx_bus::FxBus;
     use chimera_core::instrument::{AXI_RESIDENT, AudioShared};
+    use chimera_core::perf::load::AudioStats;
     use chimera_core::preset::{Performance, SoundPool};
     use chimera_core::scope::{ScopeFrame, ScopeWriter};
     use chimera_core::triple::TripleBuffer;
@@ -59,9 +61,10 @@ fn axi_residents_fit() {
         ("UI reserve", hw::UI_RESERVE),
         ("Performance", size_of::<Performance>()),
         ("SoundPool", size_of::<SoundPool>()),
-        ("AudioShared x2", 2 * size_of::<AudioShared>()),
+        ("AudioShared x3", size_of::<TripleBuffer<AudioShared>>()),
         ("scope x3", size_of::<TripleBuffer<ScopeFrame>>()),
         ("scope writer", size_of::<ScopeWriter>()),
+        ("AudioStats x3", size_of::<TripleBuffer<AudioStats>>()),
         ("FxBus", size_of::<FxBus>()),
     ];
     for (name, size) in parts {

@@ -37,3 +37,15 @@ fn without_a_zero_crossing_the_window_starts_at_the_beginning() {
     sw.write(&samples);
     assert_eq!(&r.read()[..], &samples[..SCOPE_LEN]);
 }
+
+#[test]
+fn a_second_full_back_buffer_publishes_the_newer_frame() {
+    let (mut sw, mut r) = writer_and_reader();
+    let first: Vec<f32> = (0..2 * SCOPE_LEN).map(|i| 1.0 + i as f32 * 1e-4).collect();
+    sw.write(&first);
+    assert_eq!(&r.read()[..], &first[..SCOPE_LEN]);
+
+    let second: Vec<f32> = (0..2 * SCOPE_LEN).map(|i| 2.0 + i as f32 * 1e-4).collect();
+    sw.write(&second);
+    assert_eq!(&r.read()[..], &second[..SCOPE_LEN]);
+}

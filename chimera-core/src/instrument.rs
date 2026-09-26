@@ -19,21 +19,23 @@ use crate::modulation::ModState;
 use crate::note_queue::{NoteEvent, NoteKind};
 use crate::params::ParamSnapshot;
 use crate::part::PartParams;
+use crate::perf::load::AudioStats;
 use crate::preset::{Performance, SoundPool};
 use crate::scope::{ScopeFrame, ScopeWriter};
 use crate::triple::TripleBuffer;
 use crate::voice_alloc::{Alloc, Allocator};
 
 /// Everything the port places in AXI SRAM (ADR 0014): framebuffer, UI,
-/// Performance, SoundPool, both `AudioShared` copies, the scope triple
-/// buffer and its writer, and the FX bus.
+/// Performance, SoundPool, the `AudioShared`, scope and `AudioStats` triple
+/// buffers (the scope's writer besides), and the FX bus.
 pub const AXI_RESIDENT: usize = FB_BYTES
     + UI_RESERVE
     + size_of::<Performance>()
     + size_of::<SoundPool>()
-    + 2 * size_of::<AudioShared>()
+    + size_of::<TripleBuffer<AudioShared>>()
     + size_of::<TripleBuffer<ScopeFrame>>()
     + size_of::<ScopeWriter>()
+    + size_of::<TripleBuffer<AudioStats>>()
     + size_of::<FxBus>();
 const _: () = assert!(AXI_RESIDENT <= AXI_SRAM);
 
