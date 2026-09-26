@@ -2,7 +2,7 @@
 //! `MidiNote`/`Velocity`. Hardware-independent (moved from chimera-stm32 so
 //! it is host-testable); the firmware will feed it bytes from USART1 @ 31250.
 
-use crate::{MidiMessage, MidiNote, Velocity};
+use crate::{MidiChannel, MidiMessage, MidiNote, Velocity};
 
 pub struct MidiParser {
     running_status: u8,
@@ -17,7 +17,7 @@ impl Default for MidiParser {
 }
 
 impl MidiParser {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             running_status: 0,
             data: [0; 2],
@@ -60,7 +60,7 @@ impl MidiParser {
     }
 
     fn make_message(&self) -> Option<MidiMessage> {
-        let channel = self.running_status & 0x0F;
+        let channel = MidiChannel::clamped(self.running_status & 0x0F);
         match self.running_status & 0xF0 {
             0x90 => {
                 let note = MidiNote::new(self.data[0])?;
