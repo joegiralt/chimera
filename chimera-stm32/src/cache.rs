@@ -28,9 +28,14 @@ pub fn enable_d2_sram() {
 pub fn init(mpu: &mut MPU, scb: &mut SCB, cpuid: &mut CPUID) {
     cortex_m::asm::dmb();
     // SAFETY: the MPU is reprogrammed with both caches still off and no DMA
-    // running; region 0 covers exactly the linker-asserted 4 KB DMA block.
+    // running; regions 1-15 are disabled in case a bootloader left any, and
+    // region 0 covers exactly the linker-asserted 4 KB DMA block.
     unsafe {
         mpu.ctrl.write(0);
+        for region in 1..16 {
+            mpu.rnr.write(region);
+            mpu.rasr.write(0);
+        }
         mpu.rnr.write(0);
         mpu.rbar.write(DMA_REGION_BASE | RBAR_VALID);
         mpu.rasr.write(DMA_REGION_RASR);

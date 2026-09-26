@@ -23,6 +23,14 @@ check:
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf
     cargo clippy -p chimera-core -p chimera-hal -p chimera-desktop --all-targets -- -D warnings
     cargo fmt --all -- --check
+    just stack-check
+
+# The stack is 128 KB of DTCM (ADR 0020): fail if any release function moves
+# SP by 8 KB or more in one step, or by a register (a large value built on
+# the stack instead of in a static). Needs the llvm-tools rustup component.
+stack-check:
+    cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf
+    ! "$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin/llvm-objdump" -d --no-show-raw-insn -C target/thumbv7em-none-eabihf/release/chimera-stm32 | grep -E -e '^[0-9a-f]{8} <' -e 'sub(\.w)?[[:space:]]+sp, (sp, )?(#0x([2-9a-f][0-9a-f]{3}|[0-9a-f]{5,})$|r[0-9])' | grep -B1 -E '^[[:space:]]' | grep -v -e '^--$'
 
 # Run tests
 test:

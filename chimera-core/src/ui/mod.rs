@@ -17,11 +17,15 @@ pub mod renderer;
 pub mod theme;
 pub mod viz;
 
+use core::mem::MaybeUninit;
+use core::ptr::addr_of_mut;
+
 use chimera_hal::{ALL_BUTTONS, ButtonId, ButtonState, Controls, EncoderId};
 
 use crate::addr::{BlockRef, Blocks, Op, ParamAddr};
 use crate::block::Block;
 use crate::dsp::lfo::Lfo;
+use crate::in_place::{by_value, uninit_at};
 use crate::mod_path::{LABEL_LEN, RegistryError};
 use crate::modulation::{MAX_MOD_SOURCES, ModState};
 use crate::params::{EnvParams, ParamSnapshot};
@@ -111,6 +115,23 @@ pub struct UiState {
     prime_status: Option<PrimeStatus>,
 }
 
+crate::in_place::field_list!(UiState => UiState {
+    nav,
+    performance,
+    pool,
+    active_part,
+    renderer,
+    matrix_state,
+    ui_mode,
+    browser_dirty,
+    page,
+    sel_op,
+    region_set,
+    focus,
+    display_lfo,
+    prime_status,
+});
+
 impl Default for UiState {
     fn default() -> Self {
         Self::new()
@@ -119,35 +140,46 @@ impl Default for UiState {
 
 impl UiState {
     pub fn new() -> Self {
-        let nav = ChainNav::new();
-        let mut performance = Performance::new();
-        let page = PageKey::from_nav(&nav, Op::A);
-        let mut renderer = Renderer::new();
-        renderer.snap_to_current(page_values(
-            page,
-            nav.active_block_def(),
-            &performance.edit(0),
-            Op::A,
-        ));
+        // SAFETY: `init_in_place` writes every field of the slot.
+        unsafe { by_value(Self::init_in_place) }
+    }
 
-        let mut ui = Self {
-            nav,
-            performance,
-            pool: SoundPool::new(),
-            active_part: 0,
-            renderer,
-            matrix_state: MatrixState::new(),
-            ui_mode: UiMode::Normal,
-            browser_dirty: false,
-            page,
-            sel_op: Op::A,
-            region_set: region::RegionSet::new(),
-            focus: focus::FocusMemory::new(),
-            display_lfo: Lfo::new(),
-            prime_status: None,
-        };
-        ui.load_matrix(0);
-        ui
+    // In place so the ~27 KB state (the 21 KB sound pool) never passes
+    // through the firmware's stack.
+    pub fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
+        let p = slot.as_mut_ptr();
+        // SAFETY: `p` is valid and unaliased; the pool is built in place,
+        // every other field is written once, and `performance` is written
+        // before it is borrowed, all before `assume_init_mut`.
+        unsafe {
+            let nav = ChainNav::new();
+            let page = PageKey::from_nav(&nav, Op::A);
+            addr_of_mut!((*p).performance).write(Performance::new());
+            let performance = &mut *addr_of_mut!((*p).performance);
+            let mut renderer = Renderer::new();
+            renderer.snap_to_current(page_values(
+                page,
+                nav.active_block_def(),
+                &performance.edit(0),
+                Op::A,
+            ));
+            addr_of_mut!((*p).nav).write(nav);
+            SoundPool::init_in_place(uninit_at(addr_of_mut!((*p).pool)));
+            addr_of_mut!((*p).active_part).write(0);
+            addr_of_mut!((*p).renderer).write(renderer);
+            addr_of_mut!((*p).matrix_state).write(MatrixState::new());
+            addr_of_mut!((*p).ui_mode).write(UiMode::Normal);
+            addr_of_mut!((*p).browser_dirty).write(false);
+            addr_of_mut!((*p).page).write(page);
+            addr_of_mut!((*p).sel_op).write(Op::A);
+            addr_of_mut!((*p).region_set).write(region::RegionSet::new());
+            addr_of_mut!((*p).focus).write(focus::FocusMemory::new());
+            addr_of_mut!((*p).display_lfo).write(Lfo::new());
+            addr_of_mut!((*p).prime_status).write(None);
+            let ui = slot.assume_init_mut();
+            ui.load_matrix(0);
+            ui
+        }
     }
 
     /// The last MIX+PLUS outcome, shown in the focus band until the next

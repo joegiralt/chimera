@@ -18,6 +18,8 @@ unsafe fn HardFault(_frame: &ExceptionFrame) -> ! {
 
 // Circular DMA keeps looping the last buffer after the CPU stops; with the
 // SAI blocks disabled the DACs lose their clocks and go quiet instead.
+// Not covered: a stack overflow faults while stacking the exception, so the
+// core locks up before this runs and the DMA keeps looping.
 fn silence_and_halt() -> ! {
     cortex_m::interrupt::disable();
     // SAFETY: interrupts are off and nothing runs after this; SAIEN is only

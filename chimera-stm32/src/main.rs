@@ -13,7 +13,7 @@ mod shared;
 use chimera_core::clock_plan::SiliconRev;
 use chimera_core::ui::fmt::FmtBuf;
 use chimera_core::ui::perf::PerfTracker;
-use chimera_core::ui::{UiState, draw, theme};
+use chimera_core::ui::{draw, theme};
 use chimera_hal::ChimeraDisplay;
 use controls::Stm32Controls;
 use cortex_m_rt::{entry, exception, pre_init};
@@ -87,7 +87,7 @@ fn main() -> ! {
     boot_splash(&mut display, &clk);
 
     let mut controls = Stm32Controls::new();
-    let mut ui = UiState::new();
+    let ui = shared::take_ui().expect("UI state taken once");
     let perf = PerfTracker::new();
 
     controls::start_systick(clk.cpu_hz);
@@ -99,8 +99,8 @@ fn main() -> ! {
     audio::init_pll3();
     audio::init_sai1a();
 
-    // SAFETY: ui.performance lives in main's stack frame which never returns (-> !).
-    // Part 0's sound params/mod_state outlive the audio DMA for the same reason.
+    // SAFETY: `ui` is a `'static` in AXI, so Part 0's sound params/mod_state
+    // outlive the audio DMA.
     unsafe {
         audio::init_voice(
             &ui.performance.parts[0].sound.params as *const _,

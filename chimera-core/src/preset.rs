@@ -1,7 +1,11 @@
+use core::mem::MaybeUninit;
+use core::ptr::addr_of_mut;
+
 use crate::addr::{BlockRef, Blocks};
 use crate::block::Block;
 use crate::dsp::fx_bus::FxParams;
 use crate::hw::MAX_PARTS;
+use crate::in_place::by_value;
 use crate::mod_path::ModDestRegistry;
 use crate::modulation::ModState;
 use crate::params::{EngineType, ParamSnapshot};
@@ -85,8 +89,20 @@ impl Default for SoundPool {
 
 impl SoundPool {
     pub fn new() -> Self {
-        Self {
-            slots: core::array::from_fn(|_| None),
+        // SAFETY: `init_in_place` writes every field of the slot.
+        unsafe { by_value(Self::init_in_place) }
+    }
+
+    pub fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
+        let p = slot.as_mut_ptr();
+        // SAFETY: `p` is valid and unaliased; every slot is written once
+        // before `assume_init_mut`.
+        unsafe {
+            let slots = addr_of_mut!((*p).slots).cast::<Option<Sound>>();
+            for i in 0..POOL_SIZE {
+                slots.add(i).write(None);
+            }
+            slot.assume_init_mut()
         }
     }
 
