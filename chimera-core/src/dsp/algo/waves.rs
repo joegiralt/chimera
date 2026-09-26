@@ -58,12 +58,14 @@ impl WaveId {
         &WAVES[self.0 as usize][mip.min(MIPS - 1)]
     }
 
-    /// The two mips either side of `bandwidth_hz` and the crossfade between
-    /// them, so a change of mip never steps the sound.
+    /// Two adjacent mips that both keep `bandwidth_hz` under Nyquist (the
+    /// ceiling of its octave, so nothing folds down) and the crossfade
+    /// between them, so a change of mip never steps the sound.
     pub fn mip_pair(self, bandwidth_hz: f32) -> (&'static Table, &'static Table, f32) {
         let top = (MIPS - 1) as f32;
-        let m = if bandwidth_hz > MIP0_TOP_HZ {
-            log2(bandwidth_hz / MIP0_TOP_HZ).min(top)
+        let half = 0.5 * MIP0_TOP_HZ;
+        let m = if bandwidth_hz > half {
+            log2(bandwidth_hz / half).min(top)
         } else {
             0.0
         };

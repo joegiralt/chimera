@@ -198,11 +198,27 @@ fn links_from_higher_to_lower_operators_all_run_forward() {
 #[test]
 fn the_mip_follows_the_bandwidth_and_crossfades() {
     let w = WaveId::SAW;
-    let (lo, hi, x) = w.mip_pair(100.0);
+    let (lo, hi, x) = w.mip_pair(90.0);
     assert!(core::ptr::eq(lo, w.table(0)) && core::ptr::eq(hi, w.table(1)) && x == 0.0);
     let (lo, hi, x) = w.mip_pair(MIP0_TOP_HZ * 2f32.powf(2.5));
-    assert!(core::ptr::eq(lo, w.table(2)) && core::ptr::eq(hi, w.table(3)));
+    assert!(core::ptr::eq(lo, w.table(3)) && core::ptr::eq(hi, w.table(4)));
     assert!((x - 0.5).abs() < 1e-3, "{x}");
     let (lo, hi, x) = w.mip_pair(1.0e6);
     assert!(core::ptr::eq(lo, w.table(7)) && core::ptr::eq(hi, w.table(7)) && x == 0.0);
+}
+
+#[test]
+fn both_mips_of_a_pair_keep_the_bandwidth_under_nyquist() {
+    let w = WaveId::SAW;
+    for i in 0..400 {
+        let bw = 50.0 * 1.02f32.powi(i);
+        let (lo, _, _) = w.mip_pair(bw);
+        let mip = (0..8).find(|&m| core::ptr::eq(lo, w.table(m))).unwrap();
+        if mip < 7 {
+            assert!(
+                bw <= MIP0_TOP_HZ * (1 << mip) as f32 * 1.0001,
+                "{bw} Hz on mip {mip}"
+            );
+        }
+    }
 }
