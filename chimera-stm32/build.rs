@@ -36,9 +36,11 @@ ASSERT(__eram_d2_dma - __sram_d2_dma == 4096, "the DMA rings must fill exactly t
         out_dir.join("dtcm.x"),
         r#"
 /* The zero-wait working copy of the wave tables, filled from flash at boot
-   (the flash tables stay the source). The stack is the rest of DTCM. */
+   (the flash tables stay the source), at the top of DTCM (ADR 0025). The
+   stack is the rest, growing down toward ORIGIN(DTCM), so an overflow
+   faults below it instead of overwriting the tables. */
 SECTIONS {
-    .dtcm_waves (NOLOAD) : ALIGN(8) {
+    .dtcm_waves (ORIGIN(DTCM) + LENGTH(DTCM) - SIZEOF(.dtcm_waves)) (NOLOAD) : ALIGN(8) {
         __sdtcm_waves = .;
         *(.dtcm_waves .dtcm_waves.*);
         . = ALIGN(8);
@@ -46,7 +48,8 @@ SECTIONS {
     } > DTCM
 }
 INSERT AFTER .uninit;
-ASSERT(__sdtcm_waves == ORIGIN(DTCM), "the wave copy must start DTCM, below the stack");
+ASSERT(__edtcm_waves == ORIGIN(DTCM) + LENGTH(DTCM), "the wave copy must end DTCM, above the stack");
+ASSERT(_stack_start == __sdtcm_waves && _stack_end == ORIGIN(DTCM), "the stack must be the rest of DTCM, below the wave copy");
 ASSERT(_stack_start - _stack_end >= 32K, "DTCM must keep at least 32 KB of stack beside the wave copy");
 "#,
     )
