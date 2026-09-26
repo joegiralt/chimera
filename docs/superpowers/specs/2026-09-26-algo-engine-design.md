@@ -298,3 +298,20 @@ User decisions from the panel mockups (https://claude.ai/artifact/Ee5fHP2k9bfkHo
   - On an operator page, PLUS/MINUS step through operators. EXIT, or pressing the same B button again, goes back to the previous page.
   - The long-press detection is a pure function of press and release times, tested on the host. Moving Part select to release is covered by the existing Part-select tests, updated.
 - **Gang edit stays hold MINUS + turn** (sub-project 4).
+
+## Addendum (2026-09-26): kernel bench result and rulings
+
+- **The first chip bench** measured 651 cycles/voice for the worst case, against the 350 target. There's about 415 of room once the ~220-cycle voice chain is counted.
+- **Ruling, patch-dependent cost:**
+  - `AlgoEngine::cost(&AlgoParams)` computes a voice's cost from its patch's shape: active operators (level > 0), links, feedback, and whether the mip crossfade is running.
+  - The coefficients are measured by the bench.
+  - The allocator bills that cost instead of a flat worst case, so typical patches get all 6 voices, and the worst case stays honest.
+  - This replaces the single committed `AlgoEngine::COST` in Task 13.
+- **Ruling, alias-free mip choice:** the mip is `ceil` of the bandwidth octave, not `floor`, trading the top octave of harmonics for no fold-down. ADR 0023 records it.
+- **Ruling, the bench's worst case:** each voice reads distinct mip levels, so it's a real D-cache worst case, and the bench's inputs are hidden from the compiler (`black_box`).
+- **Optimization order** (the output stays bit-identical):
+  1. operator-major block rendering when the plan has no delayed links;
+  2. guard-sample tables;
+  3. fixed-point phase conversion;
+
+  then the spec's existing fallbacks. Five voices only with the user's agreement.
