@@ -7,6 +7,9 @@
 #![allow(dead_code)]
 
 use chimera_core::addr::{BlockRef, ParamAddr};
+use chimera_core::dsp::algo::algorithms::AlgoId;
+use chimera_core::dsp::algo::params::AlgoParams;
+use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::hw::DAC_PAIRS;
@@ -45,16 +48,52 @@ pub enum Case {
     ModalLfoCutoff,
     /// The Algo init Sound: operator 1 on W1 at LEVEL 99, T1.
     AlgoInit,
+    /// Algo init with the LFO on filter cutoff: the chain lock Pizza's
+    /// `pizza_lfo_cutoff` held.
+    AlgoLfoCutoff,
+    /// `tx_patch` on T1–T8 (0–7).
+    AlgoTx(u8),
+    /// `morph_patch` with no modulation.
+    AlgoMorphStatic,
+    /// `morph_patch` with the LFO sweeping MORPH.
+    AlgoMorphSweep,
+    /// Algo init; engine switched to Modal at block ON_BLOCKS / 2 (mid-note).
+    AlgoToModalSwitch,
 }
 
+static TX_NAMES: [&str; 8] = [
+    "algo_t1", "algo_t2", "algo_t3", "algo_t4", "algo_t5", "algo_t6", "algo_t7", "algo_t8",
+];
+
 impl Case {
-    pub const ALL: [Case; 3] = [Case::ModalInit, Case::ModalLfoCutoff, Case::AlgoInit];
+    pub const ALL: [Case; 15] = [
+        Case::ModalInit,
+        Case::ModalLfoCutoff,
+        Case::AlgoInit,
+        Case::AlgoLfoCutoff,
+        Case::AlgoTx(0),
+        Case::AlgoTx(1),
+        Case::AlgoTx(2),
+        Case::AlgoTx(3),
+        Case::AlgoTx(4),
+        Case::AlgoTx(5),
+        Case::AlgoTx(6),
+        Case::AlgoTx(7),
+        Case::AlgoMorphStatic,
+        Case::AlgoMorphSweep,
+        Case::AlgoToModalSwitch,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
             Case::ModalInit => "modal_init",
             Case::ModalLfoCutoff => "modal_lfo_cutoff",
             Case::AlgoInit => "algo_init",
+            Case::AlgoLfoCutoff => "algo_lfo_cutoff",
+            Case::AlgoTx(t) => TX_NAMES[t as usize % 8],
+            Case::AlgoMorphStatic => "algo_morph_static",
+            Case::AlgoMorphSweep => "algo_morph_sweep",
+            Case::AlgoToModalSwitch => "algo_to_modal_switch",
         }
     }
 }
@@ -69,6 +108,36 @@ pub fn init_params(engine: EngineType) -> ParamSnapshot {
 
 /// Filter cutoff — the same semantic address on every chain.
 pub const CUTOFF: ParamAddr = ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF);
+
+/// MORPH, the destination of the morph sweep.
+pub const MORPH: ParamAddr = ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH);
+
+/// Four TX-style operators on T1–T8 (`t` 0–7); operators 5 and 6 silent.
+pub fn tx_patch(alg: AlgoId) -> ParamSnapshot {
+    let mut p = init_params(EngineType::Algo);
+    (p.algo.alg_a, p.algo.alg_b) = (alg.get(), alg.get());
+    let ops = [
+        (WaveId::W1, 4, 99, 0),
+        (WaveId::W1, 8, 70, 0),
+        (WaveId::W2, 4, 80, 0),
+        (WaveId::W1, 13, 60, 4),
+    ];
+    for (o, (wave, coarse, level, feedback)) in p.algo.ops.iter_mut().zip(ops) {
+        (o.wave, o.coarse, o.level, o.feedback) = (wave.get(), coarse, level, feedback);
+        (o.d1r, o.d1l, o.d2r) = (6, 10, 2);
+    }
+    p
+}
+
+/// Six sines at ratios 1–6 between A1 and A17, MORPH halfway.
+pub fn morph_patch() -> ParamSnapshot {
+    let mut p = init_params(EngineType::Algo);
+    (p.algo.alg_a, p.algo.alg_b, p.algo.morph) = (AlgoId::A1.get(), AlgoId::A17.get(), 64);
+    for (i, o) in p.algo.ops.iter_mut().enumerate() {
+        (o.coarse, o.level) = ([4, 8, 10, 13, 16, 19][i], 80);
+    }
+    p
+}
 
 /// One LFO (source 1) route at MOD_AMOUNT to `dest`; env is source 0 so
 /// `num_sources >= 2` and the LFO runs.
@@ -92,12 +161,23 @@ pub fn setup(case: Case) -> (ParamSnapshot, ModState) {
         Case::ModalInit => (init_params(EngineType::Modal), ModState::new()),
         Case::ModalLfoCutoff => with_lfo(EngineType::Modal, CUTOFF),
         Case::AlgoInit => (init_params(EngineType::Algo), ModState::new()),
+        Case::AlgoLfoCutoff => with_lfo(EngineType::Algo, CUTOFF),
+        Case::AlgoTx(t) => (tx_patch(AlgoId::clamped(t)), ModState::new()),
+        Case::AlgoMorphStatic => (morph_patch(), ModState::new()),
+        Case::AlgoMorphSweep => {
+            let mut p = morph_patch();
+            p.lfo.rate = MOD_LFO_RATE;
+            (p, lfo_route(MORPH))
+        }
+        Case::AlgoToModalSwitch => (init_params(EngineType::Algo), ModState::new()),
     }
 }
 
 /// Render the fixed harness for one case. Returns TOTAL_SAMPLES samples.
 pub fn render_case(case: Case) -> Vec<f32> {
     let (params, mod_state) = setup(case);
+    // Algo→Modal: from block ON_BLOCKS / 2 the Modal init params.
+    let switched = init_params(EngineType::Modal);
     let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
     voice.note_on(
         MidiNote::new(NOTE).unwrap(),
@@ -110,7 +190,12 @@ pub fn render_case(case: Case) -> Vec<f32> {
         if b == ON_BLOCKS {
             voice.note_off();
         }
-        voice.render(&mut block, &params, &mod_state);
+        let p = if case == Case::AlgoToModalSwitch && b >= ON_BLOCKS / 2 {
+            &switched
+        } else {
+            &params
+        };
+        voice.render(&mut block, p, &mod_state);
         out.extend_from_slice(&block);
     }
     out
@@ -124,6 +209,8 @@ pub fn render_case_through_instrument(case: Case) -> Vec<f32> {
     let mut shared = AudioShared::default();
     shared.parts[0].params = params;
     shared.parts[0].mod_state = mod_state;
+    let mut switched = shared.clone();
+    switched.parts[0].params = init_params(EngineType::Modal);
     let mut inst = Box::new(Instrument::new(
         chimera_hal::SAMPLE_RATE,
         chimera_core::hw::SampleBudget::for_cpu(chimera_core::hw::CPU_HZ_REV_V),
@@ -138,7 +225,11 @@ pub fn render_case_through_instrument(case: Case) -> Vec<f32> {
     let mut out = Vec::with_capacity(TOTAL_SAMPLES);
     let mut scope = scope_writer();
     for b in 0..ON_BLOCKS + OFF_BLOCKS {
-        let s = &shared;
+        let s = if case == Case::AlgoToModalSwitch && b >= ON_BLOCKS / 2 {
+            &switched
+        } else {
+            &shared
+        };
         if b == 0 {
             inst.handle(event(NoteKind::On(Velocity::new(VEL).unwrap())), s);
         }
