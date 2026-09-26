@@ -3,6 +3,7 @@
 
 use crate::block::{Block, ParamId, ParamSpec, ValFmt};
 use chimera_hal::BLOCK_SIZE;
+use core::mem::MaybeUninit;
 
 /// 500 ms at 48 kHz plus headroom for the ±20-sample wow/flutter swing
 /// (ADR 0014: the delay's range is 10..500 ms so the FX bus fits AXI).
@@ -104,6 +105,8 @@ pub struct TapeDelay {
     flutter_phase: f32,
 }
 
+crate::in_place::field_list!(TapeDelay => TapeDelay { buffer, write_pos, lp_state, wow_phase, flutter_phase });
+
 impl Default for TapeDelay {
     fn default() -> Self {
         Self::new()
@@ -118,6 +121,15 @@ impl TapeDelay {
             lp_state: 0.0,
             wow_phase: 0.0,
             flutter_phase: 0.0,
+        }
+    }
+
+    pub fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
+        // SAFETY: every field (`[f32; N]`, `usize`, three `f32`) is valid as
+        // zero bytes, and zero is exactly `new()`'s state.
+        unsafe {
+            slot.as_mut_ptr().write_bytes(0, 1);
+            slot.assume_init_mut()
         }
     }
 

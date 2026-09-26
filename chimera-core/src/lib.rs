@@ -8,6 +8,7 @@ pub mod block;
 pub mod clock_plan;
 pub mod dsp;
 pub mod hw;
+mod in_place;
 pub mod instrument;
 pub mod mod_path;
 pub mod modulation;

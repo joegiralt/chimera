@@ -2,7 +2,8 @@
 //! what the audio thread reads from the UI, and the voice pool that renders
 //! every Part into the three DAC pairs.
 
-use core::mem::size_of;
+use core::mem::{MaybeUninit, size_of};
+use core::ptr::addr_of_mut;
 
 use chimera_hal::BLOCK_SIZE;
 
@@ -13,6 +14,7 @@ use crate::hw::{
     AXI_SRAM, DAC_PAIRS, FB_BYTES, MAX_PARTS, MAX_VOICES, SampleBudget, UI_RESERVE,
     VOICE_RAM_BUDGET,
 };
+use crate::in_place::{by_value, uninit_at};
 use crate::modulation::ModState;
 use crate::note_queue::{NoteEvent, NoteKind};
 use crate::params::ParamSnapshot;
@@ -121,15 +123,34 @@ pub struct Instrument {
     sample_rate: u32,
 }
 
+crate::in_place::field_list!(Instrument => Instrument { voices, alloc, note_channel, buses, sends, sample_rate });
+
 impl Instrument {
     pub fn new(sample_rate: u32, budget: SampleBudget) -> Self {
-        Self {
-            voices: core::array::from_fn(|_| Voice::new(sample_rate)),
-            alloc: Allocator::new(budget),
-            note_channel: [MidiChannel::clamped(0); MAX_VOICES],
-            buses: [[0.0; BLOCK_SIZE]; MAX_PARTS],
-            sends: [[0.0; BLOCK_SIZE]; FX_SENDS],
-            sample_rate,
+        // SAFETY: `init_in_place` writes every field of the slot.
+        unsafe { by_value(|slot| Self::init_in_place(slot, sample_rate, budget)) }
+    }
+
+    pub fn init_in_place(
+        slot: &mut MaybeUninit<Self>,
+        sample_rate: u32,
+        budget: SampleBudget,
+    ) -> &mut Self {
+        let p = slot.as_mut_ptr();
+        // SAFETY: `p` is valid and unaliased; the six voices are built in
+        // place and the rest (the largest, `buses`, is 1.5 KB) written once
+        // by value before `assume_init_mut`.
+        unsafe {
+            let voices = addr_of_mut!((*p).voices).cast::<Voice>();
+            for v in 0..MAX_VOICES {
+                Voice::init_in_place(uninit_at(voices.add(v)), sample_rate);
+            }
+            addr_of_mut!((*p).alloc).write(Allocator::new(budget));
+            addr_of_mut!((*p).note_channel).write([MidiChannel::clamped(0); MAX_VOICES]);
+            addr_of_mut!((*p).buses).write([[0.0; BLOCK_SIZE]; MAX_PARTS]);
+            addr_of_mut!((*p).sends).write([[0.0; BLOCK_SIZE]; FX_SENDS]);
+            addr_of_mut!((*p).sample_rate).write(sample_rate);
+            slot.assume_init_mut()
         }
     }
 
