@@ -4,7 +4,9 @@ use chimera_core::clock_plan::SiliconRev;
 use chimera_core::ui::UiState;
 use chimera_core::ui::audio_page::cell_texts;
 use chimera_core::ui::block_registry::SYS_AUDIO;
+use chimera_core::ui::draw::text_width;
 use chimera_core::ui::perf::PerfStats;
+use chimera_core::ui::theme::{CELL_COL_W, FONT_VALUE};
 use chimera_hal::ButtonId;
 use screen::*;
 
@@ -82,10 +84,27 @@ fn extreme_stats_stay_on_screen() {
     let mut fb = Fb::new();
     ui.render_with_audio(&mut fb, &PerfStats::zero(), Some(&s), &scope_fixture());
     assert_eq!(fb.oob, 0);
+    // Both sources maxed: the "a/b" join would be wider than the column, so
+    // DROPS falls back to the saturating total alone.
     assert_eq!(
         texts(Some(&s)),
-        ["250%", "65535%", "4294M", "4294M/4294M", "4294M", "128K"]
+        ["250%", "65535%", "4294M", "4294M", "4294M", "128K"]
     );
+    for text in cell_texts(Some(&s)) {
+        let w = text_width(&FONT_VALUE, text.as_str(), 0);
+        assert!(
+            w <= CELL_COL_W,
+            "{:?} is {w}px, wider than the {CELL_COL_W}px column",
+            text.as_str()
+        );
+    }
+}
+
+#[test]
+fn drops_shows_dashes_with_no_sources() {
+    let mut s = audio_fixture();
+    s.sources = 0;
+    assert_eq!(texts(Some(&s))[3], "--");
 }
 
 #[test]

@@ -13,14 +13,43 @@ pub const NONE: &str = "--";
 const TEXT_Y: i32 = 138;
 const METER_Y: i32 = 152;
 const METER_H: i32 = 4;
+/// Clearance kept from the next cell's text when the DROPS join is measured
+/// against `theme::CELL_COL_W`.
+const DROPS_GAP: i32 = 4;
 
-// Keeps every counter within its cell's width: 4294967295 reads 4294M.
+// A single counter as at most 5 ASCII chars (4294967295 reads 4294M),
+// always inside one cell's width alone. The DROPS join puts two of these
+// side by side, which can still overflow — `fmt_drops` checks that case.
 fn fmt_count(b: &mut FmtBuf, n: u32) {
     let _ = match n {
         0..10_000 => write!(b, "{n}"),
         10_000..10_000_000 => write!(b, "{}K", n / 1_000),
         _ => write!(b, "{}M", n / 1_000_000),
     };
+}
+
+/// The DROPS cell: per-source counts joined by `/` while that fits the
+/// column (measured with the real font, a small gap short of `CELL_COL_W`
+/// so it never touches the DESYNC cell beside it); otherwise the saturating
+/// total alone. `--` with no sources.
+fn fmt_drops(b: &mut FmtBuf, s: &AudioStats) {
+    let active = &s.drops[..s.sources as usize];
+    let Some((&first, rest)) = active.split_first() else {
+        let _ = b.write_str(NONE);
+        return;
+    };
+    let mut joined = FmtBuf::new();
+    fmt_count(&mut joined, first);
+    for &d in rest {
+        let _ = joined.write_str("/");
+        fmt_count(&mut joined, d);
+    }
+    if draw::text_width(&theme::FONT_VALUE, joined.as_str(), 0) <= theme::CELL_COL_W - DROPS_GAP {
+        *b = joined;
+    } else {
+        let total = active.iter().fold(0u32, |a, &d| a.saturating_add(d));
+        fmt_count(b, total);
+    }
 }
 
 pub fn cell_texts(s: Option<&AudioStats>) -> [FmtBuf; 6] {
@@ -38,14 +67,7 @@ pub fn cell_texts(s: Option<&AudioStats>) -> [FmtBuf; 6] {
                 let _ = write!(b, "{}%", s.load_peak);
             }
             2 => fmt_count(&mut b, s.overruns),
-            3 => {
-                for (k, &d) in s.drops[..s.sources as usize].iter().enumerate() {
-                    if k > 0 {
-                        let _ = b.write_str("/");
-                    }
-                    fmt_count(&mut b, d);
-                }
-            }
+            3 => fmt_drops(&mut b, s),
             4 => fmt_count(&mut b, s.desyncs),
             _ => {
                 let _ = write!(b, "{}K", s.stack_used.div_ceil(1024));
