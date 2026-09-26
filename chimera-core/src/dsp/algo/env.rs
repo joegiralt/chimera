@@ -191,15 +191,21 @@ impl OpEnv {
                 self.set(1.0, c.attack_add, left);
             }
             Stage::Attack => self.set(1.0, 0.0, u32::MAX),
-            Stage::Decay1 => self.decay(c.d1_log2, c.d1_level.max(ENV_FLOOR)),
-            Stage::Decay2 => self.decay(c.d2_log2, ENV_FLOOR),
-            Stage::Release => self.decay(c.rr_log2, ENV_FLOOR),
+            Stage::Decay1 => self.decay(c.d1_log2, c.d1_level.max(ENV_FLOOR), Stage::Decay2),
+            Stage::Decay2 => self.decay(c.d2_log2, ENV_FLOOR, Stage::Idle),
+            Stage::Release => self.decay(c.rr_log2, ENV_FLOOR, Stage::Idle),
         }
     }
 
-    fn decay(&mut self, log2_mul: f32, target: f32) {
+    /// Enters a `log2_mul`-rate decay toward `target`, moving to `after`
+    /// once there. If the level is already at or below `target` — including
+    /// a live D1L raised above it mid-decay — the target is already met:
+    /// the level holds where it is and the stage advances immediately, so a
+    /// parameter change never lifts it. A stage that ends by countdown
+    /// instead (in `next`) still snaps exactly to its target.
+    fn decay(&mut self, log2_mul: f32, target: f32, after: Stage) {
         if self.level <= target {
-            self.next();
+            self.enter(after);
         } else if log2_mul < 0.0 {
             let left = (log2(target / self.level) / log2_mul) as u32 + 1;
             self.set(exp2(log2_mul), 0.0, left);
