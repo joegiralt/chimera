@@ -123,7 +123,8 @@ impl Rig<'_> {
 
 /// Spec § Budget worst case, one kernel per voice: six operators, all with
 /// feedback, six distinct waves crossfading mips `v` and `v + 1` in voice `v`
-/// (about 21 KB of tables, more than the D-cache), MORPH moving through 0.5
+/// (about 21 KB of tables, read from their uncached, zero-wait DTCM copy
+/// as in the running synth), MORPH moving through 0.5
 /// between A14 and A22 (the masks are written here, before the algorithm
 /// tables exist). The inputs pass through `black_box` so nothing folds.
 #[inline(never)]

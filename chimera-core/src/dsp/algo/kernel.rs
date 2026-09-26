@@ -87,6 +87,7 @@ impl Kernel {
         self.hist[op] = 0.0;
     }
 
+    /// `blk.plan` must come from `EvalPlan::build` unchanged; see `EvalPlan`.
     pub fn render(
         &mut self,
         blk: &KernelBlock,

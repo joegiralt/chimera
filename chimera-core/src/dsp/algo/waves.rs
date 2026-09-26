@@ -25,8 +25,9 @@ static ACTIVE: AtomicPtr<Waves> = AtomicPtr::new(ptr::addr_of!(WAVES).cast_mut()
 /// Copies the tables into `ram` and reads them from there from then on, for
 /// a target whose RAM is faster than its flash. Call before any audio runs.
 pub fn copy_into(ram: &'static mut MaybeUninit<Waves>) {
-    // SAFETY: `WAVES` and `ram` are distinct statics of type `Waves`, so the
-    // copy is in bounds, doesn't overlap and initialises all of `ram`.
+    // SAFETY: both are one `Waves`, so the copy is in bounds and initialises
+    // all of `ram`; `ram` is a unique `&mut`, so it cannot overlap the
+    // immutable `WAVES`.
     unsafe { ptr::copy_nonoverlapping(ptr::addr_of!(WAVES), ram.as_mut_ptr(), 1) };
     let copy: &'static MaybeUninit<Waves> = ram;
     ACTIVE.store(copy.as_ptr().cast_mut(), Ordering::Release);
