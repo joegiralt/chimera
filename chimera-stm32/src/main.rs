@@ -69,6 +69,10 @@ fn main() -> ! {
     sai_fs.set_speed(Speed::Medium);
     sai_sck.set_speed(Speed::Medium);
     sai_sd_a1.set_speed(Speed::Medium);
+    let mut sai_sd_b1 = gpioe.pe3.into_alternate::<6>();
+    let mut sai_sd_a2 = gpiod.pd11.into_alternate::<10>();
+    sai_sd_b1.set_speed(Speed::Medium);
+    sai_sd_a2.set_speed(Speed::Medium);
     led.set_high();
 
     let mut sck = gpioa.pa5.into_alternate::<5>();

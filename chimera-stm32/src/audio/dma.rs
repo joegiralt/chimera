@@ -2,7 +2,7 @@ use core::mem::MaybeUninit;
 use core::ptr::{addr_of, addr_of_mut};
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use chimera_core::audio_out::{DacSample, Half, plan_halves};
+use chimera_core::audio_out::{DacSample, Half, desynced, plan_halves};
 use chimera_core::hw::{BLOCK_SIZE, DAC_PAIRS};
 use chimera_core::part::DacPair;
 use cortex_m::peripheral::NVIC;
@@ -22,6 +22,9 @@ const _: () = assert!(core::mem::size_of::<Rings>() == DAC_PAIRS * RING_WORDS * 
 static mut RINGS: MaybeUninit<Rings> = MaybeUninit::uninit();
 
 pub static OVERRUNS: AtomicU32 = AtomicU32::new(0);
+pub static DESYNCS: AtomicU32 = AtomicU32::new(0);
+// Streams 1 and 2 may trail stream 0 by the SAI FIFO (8 words) plus the DMA's.
+const DESYNC_TOLERANCE: u16 = 16;
 
 pub fn clear() {
     // SAFETY: before any DMA runs; D2 is NOLOAD, and zero bytes are valid
@@ -29,10 +32,15 @@ pub fn clear() {
     unsafe { addr_of_mut!(RINGS).cast::<Rings>().write_bytes(0, 1) };
 }
 
-pub fn half_mut(pair: DacPair, half: Half) -> &'static mut [DacSample; BLOCK_SIZE * 2] {
-    // SAFETY: `clear` ran first; only the audio interrupt, and the pre-fill
-    // before it is unmasked, write the rings, one half at a time, while the
-    // DMA reads the other half.
+/// # Safety
+/// `clear` must have run, and the caller must be the only writer of this
+/// half: the audio interrupt, or the pre-fill before it is unmasked, while the
+/// DMA reads the other half. The reference must be dropped before the next call.
+pub(super) unsafe fn half_mut(
+    pair: DacPair,
+    half: Half,
+) -> &'static mut [DacSample; BLOCK_SIZE * 2] {
+    // SAFETY: upheld by the caller, per this function's contract.
     unsafe { &mut (*addr_of_mut!(RINGS).cast::<Rings>()).0[pair.index()][half.index()] }
 }
 
@@ -48,19 +56,21 @@ pub fn init(nvic: &mut NVIC) {
     rcc.ahb1enr.modify(|_, w| w.dma1en().set_bit());
     let _ = rcc.ahb1enr.read();
     clear_flags(dma1);
-    configure_stream(dma1, dmamux, DacPair::P1, true);
+    for pair in DacPair::ALL {
+        configure_stream(dma1, dmamux, pair, pair == DacPair::P1);
+    }
     priority::set_irq(nvic, pac::Interrupt::DMA1_STR0, Priority::AUDIO);
     // SAFETY: the rings are pre-filled; the handler touches only the rings,
-    // the render path and DMA1's stream 0–2 flags.
+    // the render path, DMA1's LISR/LIFCR and the NDTR of streams 0–2.
     unsafe { NVIC::unmask(pac::Interrupt::DMA1_STR0) };
 }
 
 pub fn start() {
     // SAFETY: called once from `main` after `init`; only EN is set.
     let dma1 = unsafe { &*pac::DMA1::ptr() };
-    dma1.st[DacPair::P1.index()]
-        .cr
-        .modify(|_, w| w.en().enabled());
+    for pair in DacPair::ALL {
+        dma1.st[pair.index()].cr.modify(|_, w| w.en().enabled());
+    }
 }
 
 fn configure_stream(
@@ -143,8 +153,9 @@ fn clear_flags(dma1: &pac::dma1::RegisterBlock) {
 
 #[interrupt]
 fn DMA1_STR0() {
-    // SAFETY: once `start` has run, this handler is the only reader and
-    // clearer of DMA1's stream 0–2 flags.
+    // SAFETY: once `init` has run, this handler is the only user of DMA1's
+    // LISR and LIFCR (it clears stream 0's HT/TC and streams 1–2's TE) and
+    // only reads the streams' NDTR.
     let dma1 = unsafe { &*pac::DMA1::ptr() };
     let lisr = dma1.lisr.read();
     let (half_done, full_done) = (lisr.htif0().is_half(), lisr.tcif0().is_complete());
@@ -157,6 +168,15 @@ fn DMA1_STR0() {
         }
         w
     });
+    let ndtr = |p: DacPair| dma1.st[p.index()].ndtr.read().ndt().bits();
+    let lead = ndtr(DacPair::P1);
+    let trailing_apart = [DacPair::P2, DacPair::P3]
+        .into_iter()
+        .any(|p| desynced(lead, ndtr(p), RING_WORDS as u16, DESYNC_TOLERANCE));
+    if trailing_apart || lisr.teif1().is_error() || lisr.teif2().is_error() {
+        DESYNCS.fetch_add(1, Ordering::Relaxed);
+        dma1.lifcr.write(|w| w.cteif1().clear().cteif2().clear());
+    }
     let plan = plan_halves(half_done, full_done);
     for half in plan.halves.into_iter().flatten() {
         super::render_half(half);

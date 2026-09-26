@@ -4,7 +4,6 @@ use stm32h7xx_hal::pac;
 // CR1 bit 27, rev B and later only (absent from the rev-Y-based PAC).
 const MCKEN: u32 = 1 << 27;
 
-#[expect(dead_code, reason = "the slaves are pairs 2 and 3, Task 14")]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Role {
     Master,
@@ -14,17 +13,30 @@ pub enum Role {
 
 pub fn init(new_sai: bool, mckdiv: u8) {
     // SAFETY: single-threaded init before the audio interrupt is unmasked;
-    // RCC's APB2ENR and SAI1 are not used elsewhere yet.
-    let (rcc, sai1) = unsafe { (&*pac::RCC::ptr(), &*pac::SAI1::ptr()) };
-    rcc.apb2enr.modify(|_, w| w.sai1en().enabled());
+    // RCC's APB2ENR, SAI1 and SAI2 are not used elsewhere yet.
+    let (rcc, sai1, sai2) = unsafe { (&*pac::RCC::ptr(), &*pac::SAI1::ptr(), &*pac::SAI2::ptr()) };
+    rcc.apb2enr
+        .modify(|_, w| w.sai1en().enabled().sai2en().enabled());
     let _ = rcc.apb2enr.read();
     configure(sai1.cha(), Role::Master, mckdiv, new_sai);
+    configure(sai1.chb(), Role::InternalSlave, mckdiv, new_sai);
+    configure(sai2.cha(), Role::ExternalSlave, mckdiv, new_sai);
+    // SAFETY: SYNCOUT = 01 exports block A's FS and SCK as SAI1's sync
+    // output; SYNCIN = 00 makes SAI1 SAI2's sync source. Written while every
+    // block is disabled, as RM0433 requires.
+    unsafe {
+        sai1.gcr.write(|w| w.syncout().bits(0b01));
+        sai2.gcr.write(|w| w.syncin().bits(0b00));
+    }
 }
 
 pub fn start() {
-    // SAFETY: called once from `main` after the DMA stream is enabled and
-    // the ring pre-filled; only SAIEN is set.
-    let sai1 = unsafe { &*pac::SAI1::ptr() };
+    // SAFETY: called once from `main` after the three DMA streams run and the
+    // rings are pre-filled; only SAIEN is set. Slaves first, master last, so
+    // all three start on the master's first frame.
+    let (sai1, sai2) = unsafe { (&*pac::SAI1::ptr(), &*pac::SAI2::ptr()) };
+    sai2.cha().cr1.modify(|_, w| w.saien().set_bit());
+    sai1.chb().cr1.modify(|_, w| w.saien().set_bit());
     sai1.cha().cr1.modify(|_, w| w.saien().set_bit());
 }
 

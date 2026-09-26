@@ -41,7 +41,9 @@ pub fn render_half(half: Half) {
     // SAFETY: only the DMA1 stream 0 interrupt and `prefill` (before that
     // interrupt is unmasked) call this, never concurrently; they are the only
     // users of these statics after init. `VOICE` is read only once
-    // `VOICE_READY` says it is initialised.
+    // `VOICE_READY` says it is initialised. `dma::clear` runs before
+    // `prefill`, the DMA reads the other half while this one is written, and
+    // each `half_mut` reference ends with its `interleave` call.
     unsafe {
         let work = &mut *addr_of_mut!(WORK);
         let dac = &mut *addr_of_mut!(DAC);
@@ -60,11 +62,19 @@ pub fn render_half(half: Half) {
         if let Some(s) = (*addr_of_mut!(SCOPE_WRITER)).as_mut() {
             s.write(work);
         }
+        // Pair 1 both channels, pair 2 left only, pair 3 right only: each
+        // jack and channel can be told apart by ear.
         for (i, &s) in work.iter().enumerate() {
             dac[0][2 * i] = s;
             dac[0][2 * i + 1] = s;
+            dac[1][2 * i] = s;
+            dac[1][2 * i + 1] = 0.0;
+            dac[2][2 * i] = 0.0;
+            dac[2][2 * i + 1] = s;
         }
-        interleave(dac, DacPair::P1, dma::half_mut(DacPair::P1, half));
+        for pair in DacPair::ALL {
+            interleave(dac, pair, dma::half_mut(pair, half));
+        }
     }
 }
 
