@@ -41,8 +41,8 @@ static mut INSTRUMENT: MaybeUninit<Instrument> = MaybeUninit::uninit();
 /// DMA reads one half while ISR fills the other.
 /// Note: RAM_D2 is NOLOAD, so this initializer is not applied by startup code.
 /// `prefill_buffer()` must be called before DMA starts.
-// SAFETY: ".ram_d2" is real RAM_D2 SRAM (linker-defined); NOLOAD skips the initializer, but `prefill_buffer()` fills it before anything reads it.
-#[unsafe(link_section = ".ram_d2")]
+// SAFETY: ".ram_d2.dma" is real RAM_D2 SRAM (linker-defined); NOLOAD skips the initializer, but `prefill_buffer()` fills it before anything reads it.
+#[unsafe(link_section = ".ram_d2.dma")]
 static mut AUDIO_BUF: [i16; 256] = [0; 256];
 
 /// f32 work buffer for Voice rendering.
@@ -161,7 +161,7 @@ pub fn init_pll3() {
 
     // 1. Enable SAI1 peripheral clock
     rcc.apb2enr.modify(|_, w| w.sai1en().enabled());
-    cortex_m::asm::delay(100);
+    let _ = rcc.apb2enr.read();
 
     // 2. Disable PLL3
     rcc.cr.modify(|_, w| w.pll3on().off());
@@ -287,7 +287,7 @@ pub fn enable_sai() {
 /// Configure DMA1_Stream0 for circular transfer from AUDIO_BUF to SAI1_A.
 ///
 /// Must be called after `init_sai1a()` and `prefill_buffer()`, before `enable_sai()`.
-pub fn init_dma() {
+pub fn init_dma(nvic: &mut NVIC) {
     // SAFETY: single-threaded init, peripheral register access before interrupts are unmasked
     let rcc = unsafe { &*pac::RCC::ptr() };
     let dma1 = unsafe { &*pac::DMA1::ptr() };
@@ -295,7 +295,7 @@ pub fn init_dma() {
 
     // Enable DMA1 clock
     rcc.ahb1enr.modify(|_, w| w.dma1en().set_bit());
-    cortex_m::asm::delay(100);
+    let _ = rcc.ahb1enr.read();
 
     // Disable stream before configuration
     dma1.st[0].cr.modify(|_, w| w.en().disabled());
@@ -349,13 +349,14 @@ pub fn init_dma() {
             .enabled()
     });
 
-    // SAFETY: DMA1_STR0 ISR is defined in this module; buffer is pre-filled;
-    // unmasking is safe because the ISR only touches AUDIO_BUF, WORK_BUF, VOICE, and PARAMS.
-    unsafe {
-        let mut core = cortex_m::Peripherals::steal();
-        core.NVIC.set_priority(pac::Interrupt::DMA1_STR0, 3);
-        NVIC::unmask(pac::Interrupt::DMA1_STR0);
-    }
+    crate::priority::set_irq(
+        nvic,
+        pac::Interrupt::DMA1_STR0,
+        crate::priority::Priority::AUDIO,
+    );
+    // SAFETY: the buffer is pre-filled and the handler only touches the
+    // audio statics of this module.
+    unsafe { NVIC::unmask(pac::Interrupt::DMA1_STR0) };
 
     // Enable DMA stream
     dma1.st[0].cr.modify(|_, w| w.en().enabled());
