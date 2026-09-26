@@ -6,6 +6,8 @@
 //! without threads). It verifies that UiState.params flows
 //! correctly through Voice.render().
 
+use chimera_core::dsp::algo::params::AlgoParams;
+use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::modulation::ModState;
@@ -14,6 +16,13 @@ use chimera_core::ui::UiState;
 use chimera_core::{MidiNote, Velocity};
 
 const SR: u32 = 48000;
+
+/// Pizza's old role: operator 1 alone on the triangle.
+fn tri() -> ParamSnapshot {
+    let mut p = ParamSnapshot::for_engine(EngineType::Algo);
+    p.algo = AlgoParams::single(WaveId::TRI);
+    p
+}
 
 /// Simulate: create UiState, set engine, modify params, render through Voice.
 fn sim_render(setup_ui: impl FnOnce(&mut UiState), note: u8, blocks: usize) -> Vec<f32> {
@@ -60,22 +69,25 @@ fn goertzel(buf: &[f32], target_freq: f32) -> f32 {
 // ── FM through UiState ──────────────────────────────────────────────
 
 #[test]
-fn test_desktop_fm_produces_sound() {
+fn test_desktop_algo_produces_sound() {
     let buf = sim_render(
         |ui| {
-            *ui.params_mut() = ParamSnapshot::for_engine(EngineType::Pizza);
+            *ui.params_mut() = tri();
         },
         60,
         8,
     );
-    assert!(rms(&buf) > 0.01, "FM through UiState should produce sound");
+    assert!(
+        rms(&buf) > 0.01,
+        "Algo through UiState should produce sound"
+    );
 }
 
 #[test]
-fn test_desktop_fm_modulation_works() {
+fn test_desktop_algo_modulation_works() {
     let clean = sim_render(
         |ui| {
-            *ui.params_mut() = ParamSnapshot::for_engine(EngineType::Pizza);
+            *ui.params_mut() = tri();
             // Default: modulators at 0
         },
         60,
@@ -84,8 +96,8 @@ fn test_desktop_fm_modulation_works() {
 
     let modulated = sim_render(
         |ui| {
-            *ui.params_mut() = ParamSnapshot::for_engine(EngineType::Pizza);
-            ui.params_mut().pizza.crush = 0.7;
+            *ui.params_mut() = tri();
+            ui.params_mut().algo.ops[1].level = 70;
         },
         60,
         16,
@@ -97,7 +109,7 @@ fn test_desktop_fm_modulation_works() {
 
     assert!(
         h_mod > h_clean,
-        "FM modulation through UiState: clean={} mod={}",
+        "Algo modulation through UiState: clean={} mod={}",
         h_clean,
         h_mod
     );
@@ -248,7 +260,7 @@ fn test_desktop_modal_produces_sound() {
 fn test_desktop_filter_affects_output() {
     let open = sim_render(
         |ui| {
-            *ui.params_mut() = ParamSnapshot::for_engine(EngineType::Pizza);
+            *ui.params_mut() = tri();
 
             ui.params_mut().filter.cutoff = 15000.0;
         },
@@ -258,7 +270,7 @@ fn test_desktop_filter_affects_output() {
 
     let closed = sim_render(
         |ui| {
-            *ui.params_mut() = ParamSnapshot::for_engine(EngineType::Pizza);
+            *ui.params_mut() = tri();
 
             ui.params_mut().filter.cutoff = 200.0;
             ui.params_mut().filter.mode = 2;
@@ -279,7 +291,7 @@ fn test_desktop_filter_affects_output() {
 fn test_desktop_drive_affects_output() {
     let clean = sim_render(
         |ui| {
-            *ui.params_mut() = ParamSnapshot::for_engine(EngineType::Pizza);
+            *ui.params_mut() = tri();
         },
         60,
         16,
@@ -287,7 +299,7 @@ fn test_desktop_drive_affects_output() {
 
     let driven = sim_render(
         |ui| {
-            *ui.params_mut() = ParamSnapshot::for_engine(EngineType::Pizza);
+            *ui.params_mut() = tri();
             ui.params_mut().drive.drive = 0.9;
             ui.params_mut().drive.mix = 1.0;
         },
@@ -312,7 +324,7 @@ fn test_desktop_drive_affects_output() {
 fn test_desktop_engine_switch() {
     let fm = sim_render(
         |ui| {
-            *ui.params_mut() = ParamSnapshot::for_engine(EngineType::Pizza);
+            *ui.params_mut() = tri();
         },
         60,
         16,
@@ -369,7 +381,7 @@ fn test_desktop_engine_switch() {
 fn test_desktop_mid_note_filter_sweep() {
     let empty_mod = ModState::new();
     let mut ui = UiState::new();
-    *ui.params_mut() = ParamSnapshot::for_engine(EngineType::Pizza);
+    *ui.params_mut() = tri();
 
     ui.params_mut().filter.cutoff = 10000.0;
     ui.params_mut().filter.mode = 2;

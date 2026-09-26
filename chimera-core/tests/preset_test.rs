@@ -58,8 +58,8 @@ impl Controls for MockControls {
 
 #[test]
 fn patch_init_has_musically_useful_defaults() {
-    let p = Sound::init(ChainType::PizzaPoly);
-    assert_eq!(p.chain_type, ChainType::PizzaPoly);
+    let p = Sound::init(ChainType::Algo);
+    assert_eq!(p.chain_type, ChainType::Algo);
     assert!(p.params.out.volume > 0.0);
     assert!(p.params.filter.cutoff > 1000.0);
     assert!(p.name_str().starts_with("(init)"));
@@ -75,10 +75,10 @@ fn sound_pool_starts_empty() {
 #[test]
 fn sound_pool_store_and_retrieve() {
     let mut pool = SoundPool::new();
-    let sound = Sound::init(ChainType::PizzaPoly);
+    let sound = Sound::init(ChainType::Algo);
     pool.store(0, sound);
     assert!(pool.get(0).is_some());
-    assert_eq!(pool.get(0).unwrap().chain_type, ChainType::PizzaPoly);
+    assert_eq!(pool.get(0).unwrap().chain_type, ChainType::Algo);
 }
 
 #[test]
@@ -89,19 +89,19 @@ fn sound_pool_slot_count() {
 
 #[test]
 fn part_starts_with_init_patch() {
-    let part = Part::new(ChainType::PizzaPoly);
-    assert_eq!(part.sound.chain_type, ChainType::PizzaPoly);
+    let part = Part::new(ChainType::Algo);
+    assert_eq!(part.sound.chain_type, ChainType::Algo);
     assert!(part.loaded_from.is_none());
 }
 
 #[test]
 fn part_load_from_pool_copies() {
     let mut pool = SoundPool::new();
-    let mut sound = Sound::init(ChainType::PizzaPoly);
+    let mut sound = Sound::init(ChainType::Algo);
     sound.name = *b"Acid Bass\0\0\0\0\0\0\0";
     pool.store(3, sound);
 
-    let mut part = Part::new(ChainType::PizzaPoly);
+    let mut part = Part::new(ChainType::Algo);
     part.load_from_pool(&pool, 3);
 
     assert_eq!(part.sound.name_str(), "Acid Bass");
@@ -111,9 +111,9 @@ fn part_load_from_pool_copies() {
 #[test]
 fn part_edit_does_not_modify_pool() {
     let mut pool = SoundPool::new();
-    pool.store(0, Sound::init(ChainType::PizzaPoly));
+    pool.store(0, Sound::init(ChainType::Algo));
 
-    let mut part = Part::new(ChainType::PizzaPoly);
+    let mut part = Part::new(ChainType::Algo);
     part.load_from_pool(&pool, 0);
     part.sound.params.out.volume = 0.0; // mute
     assert_eq!(
@@ -128,7 +128,7 @@ fn part_edit_does_not_modify_pool() {
 #[test]
 fn part_save_to_pool_overwrites() {
     let mut pool = SoundPool::new();
-    pool.store(5, Sound::init(ChainType::PizzaPoly));
+    pool.store(5, Sound::init(ChainType::Algo));
 
     let mut part = Part::new(ChainType::Modal);
     part.sound.name = *b"My Sound\0\0\0\0\0\0\0\0";
@@ -248,7 +248,7 @@ fn browser_load_copies_patch_to_part() {
     let mut ui = UiState::new();
 
     // Store a named sound in pool slot 2
-    let mut sound = Sound::init(ChainType::PizzaPoly);
+    let mut sound = Sound::init(ChainType::Algo);
     sound.name = *b"Test Sound\0\0\0\0\0\0";
     ui.pool.store(2, sound);
 

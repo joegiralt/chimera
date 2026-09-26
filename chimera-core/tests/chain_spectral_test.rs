@@ -1,10 +1,19 @@
+use chimera_core::dsp::algo::params::AlgoParams;
+use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::drive::Drive;
 use chimera_core::dsp::filter::SvfFilter;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::dsp::wavefolder::Wavefolder;
 use chimera_core::modulation::ModState;
-use chimera_core::params::{DriveParams, FilterParams, FolderParams, ParamSnapshot};
+use chimera_core::params::{DriveParams, EngineType, FilterParams, FolderParams, ParamSnapshot};
 use chimera_core::{MidiNote, Velocity};
+
+/// Pizza's old role: operator 1 alone on the triangle.
+fn tri() -> ParamSnapshot {
+    let mut p = ParamSnapshot::for_engine(EngineType::Algo);
+    p.algo = AlgoParams::single(WaveId::TRI);
+    p
+}
 
 const SR: u32 = 48000;
 
@@ -413,8 +422,8 @@ fn test_voice_filter_sweep_audible() {
 
     let measure = |cutoff: f32| -> f32 {
         let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
-        let mut params = ParamSnapshot::default();
-        // Pizza produces harmonics by default
+        let mut params = tri();
+        // the triangle's odd harmonics
         params.filter.cutoff = cutoff;
         params.filter.mode = 2; // LP4
 

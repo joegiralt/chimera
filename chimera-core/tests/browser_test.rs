@@ -34,7 +34,7 @@ fn the_selected_row_is_an_accent_pill() {
 #[test]
 fn empty_slots_are_dimmed_and_saved_ones_bright() {
     let mut pool = SoundPool::new();
-    pool.store(0, Sound::init(ChainType::Fm));
+    pool.store(0, Sound::init(ChainType::Algo));
     let fb = drawn(&pool, 5, 0);
     assert!(row_has(&fb, 0, theme::INK), "saved slot name in ink");
     assert!(
@@ -161,7 +161,7 @@ fn the_longest_sound_name_is_not_truncated() {
     use chimera_core::preset::NAME_LEN;
 
     let mut pool = SoundPool::new();
-    let mut s = Sound::init(ChainType::Fm);
+    let mut s = Sound::init(ChainType::Algo);
     s.name = *b"ABCDEFGHIJKLMNOP"; // exactly NAME_LEN bytes, no trailing 0
     assert_eq!(s.name.len(), NAME_LEN);
     pool.store(0, s);

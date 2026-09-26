@@ -3,6 +3,8 @@
 
 mod common;
 
+use chimera_core::dsp::algo::params::AlgoParams;
+use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::modulation::ModState;
@@ -11,6 +13,13 @@ use chimera_core::{MidiNote, Velocity};
 use common::expects_sound;
 
 const SR: u32 = 48000;
+
+/// Pizza's old role: operator 1 alone on the triangle.
+fn tri() -> ParamSnapshot {
+    let mut p = ParamSnapshot::for_engine(EngineType::Algo);
+    p.algo = AlgoParams::single(WaveId::TRI);
+    p
+}
 
 struct Rng(u64);
 
@@ -69,6 +78,23 @@ fn random_params(rng: &mut Rng) -> ParamSnapshot {
     p.modal.ks_ens_rate = rng.f32();
     p.modal.ks_ens_depth = rng.f32();
     p.modal.ks_ens_mix = rng.f32();
+
+    // Algo params (release 8–15 so a note ends inside the note-off property's window)
+    p.algo.alg_a = rng.u8(31);
+    p.algo.alg_b = rng.u8(31);
+    p.algo.morph = rng.u8(127);
+    for op in p.algo.ops.iter_mut() {
+        op.wave = rng.u8(15);
+        op.coarse = rng.u8(63);
+        op.fine = rng.u8(15);
+        op.level = rng.u8(99);
+        op.feedback = rng.u8(7);
+        op.ar = 20 + rng.u8(11);
+        op.d1r = rng.u8(31);
+        op.d1l = rng.u8(15);
+        op.d2r = rng.u8(31);
+        op.rr = 8 + rng.u8(7);
+    }
 
     // Filter
     p.filter.cutoff = 20.0 + rng.f32() * 19980.0;
@@ -415,7 +441,7 @@ fn prop_filter_cutoff_full_sweep() {
     verify_full_sweep(
         "Filter cutoff",
         |p| {
-            *p = ParamSnapshot::for_engine(EngineType::Pizza);
+            *p = tri();
             p.filter.mode = 2;
         },
         |p, v| {
@@ -430,7 +456,7 @@ fn prop_filter_resonance_full_sweep() {
     verify_full_sweep(
         "Filter resonance",
         |p| {
-            *p = ParamSnapshot::for_engine(EngineType::Pizza);
+            *p = tri();
             p.filter.cutoff = 1000.0;
             p.filter.mode = 1;
         },
@@ -446,7 +472,7 @@ fn prop_drive_full_sweep() {
     verify_full_sweep(
         "Drive",
         |p| {
-            *p = ParamSnapshot::for_engine(EngineType::Pizza);
+            *p = tri();
             p.drive.mix = 1.0;
         },
         |p, v| {
@@ -461,7 +487,7 @@ fn prop_folder_full_sweep() {
     verify_full_sweep(
         "Wavefolder",
         |p| {
-            *p = ParamSnapshot::for_engine(EngineType::Pizza);
+            *p = tri();
             p.folder.mix = 1.0;
         },
         |p, v| {
@@ -476,7 +502,7 @@ fn prop_volume_full_sweep() {
     verify_full_sweep(
         "Volume",
         |p| {
-            *p = ParamSnapshot::for_engine(EngineType::Pizza);
+            *p = tri();
         },
         |p, v| {
             p.out.volume = v;

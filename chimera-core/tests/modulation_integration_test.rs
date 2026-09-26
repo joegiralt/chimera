@@ -1,9 +1,11 @@
 use chimera_core::addr::{BlockRef, ParamAddr};
+use chimera_core::dsp::algo::params::AlgoParams;
+use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::pizza::PizzaParams;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::modulation::ModState;
 use chimera_core::params::ParamSnapshot;
-use chimera_core::params::{DriveParams, FilterParams};
+use chimera_core::params::{DriveParams, EngineType, FilterParams};
 use chimera_core::ui::mod_grid::MatrixState;
 use chimera_core::{MidiNote, Velocity};
 
@@ -19,11 +21,18 @@ fn rms(buf: &[f32]) -> f32 {
     (sum / buf.len() as f32).sqrt()
 }
 
+/// Pizza's old role: operator 1 alone on the triangle.
+fn tri() -> ParamSnapshot {
+    let mut p = ParamSnapshot::for_engine(EngineType::Algo);
+    p.algo = AlgoParams::single(WaveId::TRI);
+    p
+}
+
 #[test]
 fn voice_render_with_empty_mod_state() {
     let empty_mod = ModState::new();
     let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
-    let params = ParamSnapshot::default();
+    let params = tri();
 
     voice.note_on(
         MidiNote::new(60).unwrap(),
@@ -48,7 +57,7 @@ fn voice_render_with_mod_offset_changes_filter() {
     // Render two voices identically, except one has an LFO modulating filter cutoff.
     let mut voice_dry = Voice::new(chimera_hal::SAMPLE_RATE);
     let mut voice_mod = Voice::new(chimera_hal::SAMPLE_RATE);
-    let mut params = ParamSnapshot::default();
+    let mut params = tri();
     params.filter.cutoff = 2000.0;
     params.filter.mode = 2; // LP4
 
@@ -185,7 +194,6 @@ fn matrix_state_rebuild_dests_from_registry() {
 /// the envelope still drives the ENV mod source.
 #[test]
 fn env_source_moves_on_an_algo_sound() {
-    use chimera_core::params::EngineType;
     let mut params = ParamSnapshot::for_engine(EngineType::Algo);
     params.filter.cutoff = 8000.0;
     params.filter.mode = 2;
