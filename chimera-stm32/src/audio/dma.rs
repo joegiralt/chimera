@@ -26,6 +26,12 @@ pub static DESYNCS: AtomicU32 = AtomicU32::new(0);
 // Streams 1 and 2 may trail stream 0 by the SAI FIFO (8 words) plus the DMA's.
 const DESYNC_TOLERANCE: u16 = 16;
 
+pub fn bump(counter: &AtomicU32, n: u32) {
+    let _ = counter.try_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+        Some(v.saturating_add(n))
+    });
+}
+
 pub fn clear() {
     // SAFETY: before any DMA runs; D2 is NOLOAD, and zero bytes are valid
     // `DacSample`s, so later references point at initialised memory.
@@ -174,17 +180,17 @@ fn DMA1_STR0() {
         .into_iter()
         .any(|p| desynced(lead, ndtr(p), RING_WORDS as u16, DESYNC_TOLERANCE));
     if trailing_apart || lisr.teif1().is_error() || lisr.teif2().is_error() {
-        DESYNCS.fetch_add(1, Ordering::Relaxed);
+        bump(&DESYNCS, 1);
         dma1.lifcr.write(|w| w.cteif1().clear().cteif2().clear());
     }
     let plan = plan_halves(half_done, full_done);
     for half in plan.halves.into_iter().flatten() {
-        super::render_half(half);
+        crate::probe::measure(|| super::render_half(half));
     }
     let after = dma1.lisr.read();
     let late = after.htif0().is_half() || after.tcif0().is_complete();
     let overruns = plan.overrun as u32 + late as u32;
     if overruns > 0 {
-        OVERRUNS.fetch_add(overruns, Ordering::Relaxed);
+        bump(&OVERRUNS, overruns);
     }
 }

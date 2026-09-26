@@ -4,8 +4,10 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-default = ["midi-din"]
+default = ["midi-din", "perf-probe"]
 midi-din = []
+perf-probe = []
+bench = ["perf-probe"]
 
 [dependencies]
 chimera-core = { path = "../chimera-core" }

@@ -2,6 +2,8 @@
 #![no_main]
 
 mod audio;
+#[cfg(feature = "bench")]
+mod bench;
 mod cache;
 mod clocks;
 mod controls;
@@ -10,13 +12,12 @@ mod display;
 mod midi_din;
 mod panic;
 mod priority;
+mod probe;
 mod shared;
 
-use chimera_core::clock_plan::{SiliconRev, pll3_for};
+use chimera_core::clock_plan::pll3_for;
 use chimera_core::hw::SampleBudget;
-use chimera_core::ui::fmt::FmtBuf;
 use chimera_core::ui::perf::PerfTracker;
-use chimera_core::ui::{draw, theme};
 use chimera_hal::ChimeraDisplay;
 use controls::Stm32Controls;
 use cortex_m_rt::{entry, exception, pre_init};
@@ -43,6 +44,7 @@ fn SysTick() {
 
 #[entry]
 fn main() -> ! {
+    probe::paint_stack();
     let mut cp = cortex_m::Peripherals::take().unwrap();
     let dp = pac::Peripherals::take().unwrap();
 
@@ -103,11 +105,13 @@ fn main() -> ! {
     let mut display = Stm32Display::new(spi, dc, reset, cs);
     clocks::delay_us(clk.cpu_hz, 250_000);
     display.init(clk.cpu_hz);
-    boot_splash(&mut display, &clk);
+    let mut stats_r = probe::init(&mut cp.DCB, &mut cp.DWT, clk);
 
     let mut controls = Stm32Controls::new();
     let ui = shared::take_ui().expect("UI state taken once");
     let perf = PerfTracker::new();
+    #[cfg(feature = "bench")]
+    bench::run(&mut display, clk, &ui.performance);
 
     controls::start_systick(clk.cpu_hz);
     priority::set_systick(&mut cp.SCB, Priority::SYSTICK);
@@ -131,7 +135,7 @@ fn main() -> ! {
     midi_din::init(&mut cp.NVIC, ccdr.clocks.pclk2().raw());
 
     ui.update();
-    ui.render_with_scope(&mut display, &perf.stats, scope_r.read());
+    ui.render_with_audio(&mut display, &perf.stats, None, scope_r.read());
     display.flush();
     ui.prime_regions(&perf.stats, None, scope_r.read());
     led.set_low();
@@ -143,55 +147,17 @@ fn main() -> ! {
         }
         ui.update();
         shared_w.publish(|b| b.update_from(&ui.performance));
-        let flush_list = ui.render_dirty_with_scope(&mut display, &perf.stats, scope_r.read());
+        let stats = stats_r.as_mut().map(|r| {
+            let mut s = *r.read();
+            s.stack_used = probe::stack_used();
+            s
+        });
+        let flush_list =
+            ui.render_dirty_with_audio(&mut display, &perf.stats, stats.as_ref(), scope_r.read());
         for &(ys, ye) in &flush_list {
             if ys != ye {
                 display.flush_region(ys, ye);
             }
         }
     }
-}
-
-// Temporary (bring-up step 1): which revision and clock this board runs;
-// the AUDIO page replaces it in step 6.
-fn boot_splash(display: &mut impl ChimeraDisplay, clk: &clocks::Clocks) {
-    use core::fmt::Write;
-    draw::fill_rect(display, 0, 0, theme::SCREEN_W, theme::SCREEN_H, theme::BG);
-    let mut line = FmtBuf::new();
-    let _ = write!(
-        line,
-        "REV {}  {} MHZ",
-        clk.rev.label(),
-        clk.cpu_hz / 1_000_000
-    );
-    draw::text(
-        display,
-        &theme::FONT_VALUE,
-        "CHIMERA",
-        theme::MARGIN_X,
-        140,
-        theme::INK,
-    );
-    draw::text(
-        display,
-        &theme::FONT_VALUE,
-        line.as_str(),
-        theme::MARGIN_X,
-        162,
-        theme::INK2,
-    );
-    if let SiliconRev::Unknown(id) = clk.rev {
-        line.clear();
-        let _ = write!(line, "REV_ID 0x{id:04X}");
-        draw::text(
-            display,
-            &theme::FONT_LABEL,
-            line.as_str(),
-            theme::MARGIN_X,
-            180,
-            theme::MID,
-        );
-    }
-    display.flush();
-    clocks::delay_us(clk.cpu_hz, 1_500_000);
 }

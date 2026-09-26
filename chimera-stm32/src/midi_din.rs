@@ -1,5 +1,5 @@
 use core::ptr::addr_of_mut;
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::AtomicU32;
 
 use chimera_core::note_queue::NoteEvent;
 use chimera_hal::midi::MidiParser;
@@ -49,7 +49,7 @@ fn USART1() {
             usart
                 .icr
                 .write(|w| w.orecf().clear().fecf().clear().ncf().clear());
-            ERRORS.fetch_add(1, Ordering::Relaxed);
+            crate::audio::dma::bump(&ERRORS, 1);
         }
         if isr.rxne().bit_is_clear() {
             break;
