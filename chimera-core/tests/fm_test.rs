@@ -403,3 +403,49 @@ fn voice_fm_output_finite() {
         }
     }
 }
+
+/// TX81Z ALG 4 (index 3) is 4 -> 3, with (3 + 2) -> [1]: op2 is an
+/// unmodulated modulator, just like op3 once op4 is turned off. With op4 off,
+/// swapping op2's and op3's settings must leave the output (nearly) unchanged.
+/// If op2 were modulated by op3 (the p81z routing, #18) the swap would not be
+/// symmetric.
+#[test]
+fn alg4_op2_is_not_modulated_by_op3() {
+    let op = |coarse: u8, level: u8, waveform: u8| FmOpSettings {
+        waveform,
+        coarse,
+        level,
+        ar: 31,
+        d1l: 15,
+        rr: 15,
+        ..FmOpSettings::default()
+    };
+    let carrier = op(4, 99, 0);
+    let a = op(8, 90, 0);
+    let b = op(12, 80, 1);
+    // Level 0 is about -72 dB, not silent; ar 0 keeps op4 from ever attacking.
+    let off = FmOpSettings {
+        level: 0,
+        ar: 0,
+        d1l: 0,
+        ..FmOpSettings::default()
+    };
+    let render = |s: [FmOpSettings; 4]| {
+        let mut e = FmEngine::new();
+        e.note_on(57, 1.0, 3, &s, 48000.0);
+        let mut buf = [0.0f32; 4096];
+        e.render(&mut buf, 3, &s);
+        buf
+    };
+    let x = render([carrier, a, b, off]);
+    let y = render([carrier, b, a, off]);
+    let rms = |v: &[f32]| (v.iter().map(|s| s * s).sum::<f32>() / v.len() as f32).sqrt();
+    let diff: [f32; 4096] = core::array::from_fn(|i| x[i] - y[i]);
+    assert!(rms(&x) > 0.01);
+    assert!(
+        rms(&diff) < rms(&x) * 0.01,
+        "diff {} vs signal {}",
+        rms(&diff),
+        rms(&x)
+    );
+}

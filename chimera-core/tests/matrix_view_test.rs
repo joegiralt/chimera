@@ -387,33 +387,18 @@ fn scroll_hint_does_not_overlap_the_fifth_columns_tag() {
     );
 }
 
-/// Issue #15 fix round 1: reverting `GRID_COL_W` to 40 must not silently
-/// reopen adjacent-column-name collisions -- the regression the review
-/// caught in narrowing it to 36 (`"CUTOFF"` and `"FOLD"`, the `mod_matrix`
-/// golden's own destinations, rendered as `"CUTOFFFOLD"` with no visible
-/// gap). Exhaustively checks every pair of distinct real spec labels
-/// against every pair of neighbouring visible columns and requires at
-/// least a 2px gap between their rendered extents.
-///
-/// Excluded: any pair naming `"CUTOFF"` or `"INHARM"` -- the two widest
-/// labels in the whole spec table (41px and 42px against a 40px column
-/// pitch) are already marginal or overlapping even at the restored
-/// `GRID_COL_W = 40` (e.g. `"CUTOFF"` next to itself: 0px gap; `"BRIGHT"`
-/// next to `"INHARM"`: 1px gap) -- a separate, pre-existing, deeper issue
-/// than the one this fix addresses; see the round-1 report.
-///
-/// Confirmed manually: with that same exclusion, this fails at
-/// `GRID_COL_W = 36` (e.g. `"BRIGHT"` next to itself overlaps by 1px, one
-/// of 65 other failing pairs) and passes at the restored 40 (worst
-/// remaining pair, `"BRIGHT"` next to itself, has a 3px gap).
+/// Neighbouring column headers never touch (#22): every real spec label, as
+/// the header draws it (`fit_header`), keeps at least a 2px gap to any other
+/// in the next column. `CUTOFF` (41px) and `INHARM` (42px) are wider than the
+/// 40px column pitch, so without clipping they touched.
 #[test]
-fn adjacent_column_names_never_touch_for_ordinary_real_labels() {
+fn adjacent_column_headers_never_touch() {
     use chimera_core::addr::BlockRef;
-    use chimera_core::ui::mod_grid::{GRID_NAME_Y, cell_center};
+    use chimera_core::ui::mod_grid::{GRID_NAME_Y, cell_center, fit_header};
 
     let mut labels: Vec<&str> = BlockRef::ALL
         .iter()
-        .flat_map(|&b| b.specs().iter().map(|s| s.label))
+        .flat_map(|&b| b.specs().iter().map(|s| fit_header(s.label)))
         .collect();
     labels.sort_unstable();
     labels.dedup();
@@ -448,18 +433,10 @@ fn adjacent_column_names_never_touch_for_ordinary_real_labels() {
         .map(|&label| xs.iter().map(|&cx| extent(label, cx)).collect())
         .collect();
 
-    let excluded = |label: &str| label == "CUTOFF" || label == "INHARM";
-
     for ci in 0..4 {
         for (ai, &a) in labels.iter().enumerate() {
-            if excluded(a) {
-                continue;
-            }
             let (_, ra) = extents[ai][ci];
             for (bi, &b) in labels.iter().enumerate() {
-                if excluded(b) {
-                    continue;
-                }
                 let (lb, _) = extents[bi][ci + 1];
                 assert!(
                     lb - ra > 2,
