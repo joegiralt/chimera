@@ -1,4 +1,5 @@
 use core::fmt::Write;
+use core::hint::black_box;
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 
@@ -121,9 +122,10 @@ impl Rig<'_> {
 }
 
 /// Spec § Budget worst case, one kernel per voice: six operators, all with
-/// feedback, six distinct waves (the D-cache worst case), mip crossfades,
-/// MORPH moving through 0.5 between A14 and A22 (the masks are written
-/// here, before the algorithm tables exist).
+/// feedback, six distinct waves crossfading mips `v` and `v + 1` in voice `v`
+/// (about 21 KB of tables, more than the D-cache), MORPH moving through 0.5
+/// between A14 and A22 (the masks are written here, before the algorithm
+/// tables exist). The inputs pass through `black_box` so nothing folds.
 #[inline(never)]
 fn time_kernel() -> u32 {
     const A14: [u8; OPS] = [0, 0, 0b11, 0b11, 0b100, 0b1000];
@@ -136,7 +138,12 @@ fn time_kernel() -> u32 {
         WaveId::TRI,
         WaveId::W7,
     ];
-    let plan = EvalPlan::build(&A14, 0b11, &A22, 0b1);
+    let plan = black_box(EvalPlan::build(
+        black_box(&A14),
+        black_box(0b11),
+        black_box(&A22),
+        black_box(0b1),
+    ));
     let rates = EnvRates {
         ar: 31,
         d1r: 0,
@@ -153,7 +160,7 @@ fn time_kernel() -> u32 {
             e.note_on(EnvCoefs::new(rates, note, SAMPLE_RATE as f32));
         }
     }
-    let blocks: [KernelBlock; MAX_VOICES] = core::array::from_fn(|v| KernelBlock {
+    let blocks: [KernelBlock; MAX_VOICES] = black_box(core::array::from_fn(|v| KernelBlock {
         plan: &plan,
         ops: core::array::from_fn(|i| {
             let wave = WAVES[(i + v) % OPS];
@@ -162,8 +169,8 @@ fn time_kernel() -> u32 {
                 gain_from: 0.9 * SAMPLE_SCALE,
                 gain_to: 0.8 * SAMPLE_SCALE,
                 feedback: FEEDBACK_CYCLES[7],
-                lo: wave.table(2),
-                hi: wave.table(3),
+                lo: wave.table(v),
+                hi: wave.table(v + 1),
                 xfade: 0.5,
             }
         }),
@@ -171,11 +178,11 @@ fn time_kernel() -> u32 {
         morph_to: 0.55,
         norm_from: 0.7,
         norm_to: 0.7,
-    });
+    }));
     let mut out = [0.0f32; BLOCK_SIZE];
     let mut run = |kernels: &mut [Kernel; MAX_VOICES], envs: &mut [[OpEnv; OPS]; MAX_VOICES]| {
         for ((k, env), blk) in kernels.iter_mut().zip(envs.iter_mut()).zip(&blocks) {
-            k.render(blk, env, &mut out);
+            k.render(black_box(blk), env, &mut out);
         }
     };
     for _ in 0..WARM_BLOCKS {
@@ -186,7 +193,7 @@ fn time_kernel() -> u32 {
         run(&mut kernels, &mut envs);
     }
     let cycles = DWT::cycle_count().wrapping_sub(start);
-    core::hint::black_box(&out);
+    black_box(&out);
     cycles / (TIMED_BLOCKS * BLOCK_SIZE as u32 * MAX_VOICES as u32)
 }
 
