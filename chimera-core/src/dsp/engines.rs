@@ -1,7 +1,7 @@
 //! Persistent engine instances with dispatch in one place (spec §3).
 //!
 //! Engines are never constructed in the audio interrupt: `ModalEngine` is
-//! ~66 KB and the stack has no guard. Adding an engine = one field here plus
+//! ~40 KB and the stack has no guard. Adding an engine = one field here plus
 //! one arm in each exhaustive `match` below; the compiler lists them.
 
 use core::mem::MaybeUninit;

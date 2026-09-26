@@ -19,8 +19,10 @@ pub(crate) unsafe fn by_value<T>(init: impl FnOnce(&mut MaybeUninit<T>) -> &mut 
     unsafe { slot.assume_init() }
 }
 
-// Adding a field fails to compile here until the in-place constructor
-// next to it is updated too.
+// Lists every field of a struct by name: adding, removing or renaming a
+// field fails to compile here, a prompt to re-check the in-place
+// constructor beside it. It does not check that constructor, nor field
+// types.
 macro_rules! field_list {
     ($ty:ty => $name:ident { $($field:ident),* $(,)? }) => {
         const _: fn(&$ty) = |v| {
