@@ -1,4 +1,5 @@
 pub mod animation;
+pub mod audio_page;
 pub mod block_def;
 pub mod block_registry;
 pub mod browser;
@@ -29,9 +30,11 @@ use crate::in_place::{by_value, uninit_at};
 use crate::mod_path::{LABEL_LEN, RegistryError};
 use crate::modulation::{MAX_MOD_SOURCES, ModState};
 use crate::params::{EnvParams, ParamSnapshot};
+use crate::perf::load::AudioStats;
 use crate::preset::{POOL_SIZE, Performance, SoundPool};
 use crate::scope::SCOPE_LEN;
 use block_def::BlockDef;
+use block_def::VizType;
 use block_def::slot_addr;
 use chain::{ChainId, ChainNav};
 use mod_grid::MatrixState;
@@ -636,6 +639,22 @@ impl UiState {
                 Color = embedded_graphics::pixelcolor::Rgb565,
             >,
     {
+        self.render_with_audio(display, perf, None, scope);
+    }
+
+    /// Render full screen with `scope` as the live output and `audio` behind
+    /// the System ▸ About ▸ AUDIO sub-page.
+    pub fn render_with_audio<D>(
+        &self,
+        display: &mut D,
+        perf: &PerfStats,
+        audio: Option<&AudioStats>,
+        scope: &[f32; SCOPE_LEN],
+    ) where
+        D: embedded_graphics::draw_target::DrawTarget<
+                Color = embedded_graphics::pixelcolor::Rgb565,
+            >,
+    {
         if let UiMode::SoundBrowser {
             part,
             cursor,
@@ -646,13 +665,14 @@ impl UiState {
             return;
         }
         self.renderer
-            .draw_with_def(display, &self.frame(perf, scope));
+            .draw_with_def(display, &self.frame(perf, audio, scope));
     }
 
     /// What one frame draws from.
     fn frame<'a>(
         &'a self,
         perf: &'a PerfStats,
+        audio: Option<&'a AudioStats>,
         scope: &'a [f32; SCOPE_LEN],
     ) -> renderer::Frame<'a> {
         renderer::Frame {
@@ -667,6 +687,7 @@ impl UiState {
             parts: &self.performance.parts,
             active_part: self.active_part,
             prime_status: self.prime_status,
+            audio,
         }
     }
 
@@ -674,6 +695,7 @@ impl UiState {
     fn region_data(&self, kind: region::RegionKind, f: &renderer::Frame) -> region::RegionData {
         use region::{RegionData, RegionKind};
         let qvalues = region::quantize_values(&self.renderer.anim);
+        let audio_page = f.def.viz == VizType::AudioStats;
         let (chain, node, sub) = nav_tag(&self.nav);
         match kind {
             RegionKind::Header => {
@@ -688,7 +710,11 @@ impl UiState {
             RegionKind::Focus => RegionData::focus(
                 self.page,
                 f.focus as u8,
-                qvalues[f.focus],
+                if audio_page {
+                    audio_page::focus_key(f.audio)
+                } else {
+                    qvalues[f.focus]
+                },
                 self.prime_status,
             ),
             RegionKind::Viz => {
@@ -702,7 +728,11 @@ impl UiState {
             }
             RegionKind::Cells => RegionData::cells(
                 self.page,
-                qvalues,
+                if audio_page {
+                    audio_page::cells_key(f.audio)
+                } else {
+                    qvalues
+                },
                 f.focus as u8,
                 self.matrix_state.num_dests as u16,
             ),
@@ -724,12 +754,17 @@ impl UiState {
 
     /// Prime the region set after an initial full render, so render_dirty
     /// won't redundantly redraw everything on the first call.
-    pub fn prime_regions(&mut self, perf: &PerfStats, scope: &[f32; SCOPE_LEN]) {
+    pub fn prime_regions(
+        &mut self,
+        perf: &PerfStats,
+        audio: Option<&AudioStats>,
+        scope: &[f32; SCOPE_LEN],
+    ) {
         self.region_set
             .set_layout(self.nav.active_block_def().layout);
         let mut data = [region::RegionData::sentinel_header(); region::MAX_REGIONS];
         {
-            let f = self.frame(perf, scope);
+            let f = self.frame(perf, audio, scope);
             for (d, r) in data.iter_mut().zip(self.region_set.active_regions()) {
                 *d = self.region_data(r.kind, &f);
             }
@@ -739,12 +774,14 @@ impl UiState {
         }
     }
 
-    /// Render only dirty regions, with `scope` as the live output. Returns
-    /// list of (y_start, y_end) pairs to flush. Slots with (0, 0) are unused.
-    pub fn render_dirty_with_scope<D>(
+    /// Render only dirty regions, with `scope` as the live output and
+    /// `audio` behind the AUDIO sub-page. Returns list of (y_start, y_end)
+    /// pairs to flush. Slots with (0, 0) are unused.
+    pub fn render_dirty_with_audio<D>(
         &mut self,
         display: &mut D,
         perf: &PerfStats,
+        audio: Option<&AudioStats>,
         scope: &[f32; SCOPE_LEN],
     ) -> [(u16, u16); region::MAX_REGIONS]
     where
@@ -785,7 +822,7 @@ impl UiState {
         let count = self.region_set.count as usize;
         let mut data = [region::RegionData::sentinel_header(); region::MAX_REGIONS];
         {
-            let f = self.frame(perf, scope);
+            let f = self.frame(perf, audio, scope);
             for i in 0..count {
                 let r = self.region_set.regions[i];
                 data[i] = self.region_data(r.kind, &f);
@@ -802,6 +839,22 @@ impl UiState {
         }
 
         flush_list
+    }
+
+    /// Render only dirty regions, with `scope` as the live output. Returns
+    /// list of (y_start, y_end) pairs to flush. Slots with (0, 0) are unused.
+    pub fn render_dirty_with_scope<D>(
+        &mut self,
+        display: &mut D,
+        perf: &PerfStats,
+        scope: &[f32; SCOPE_LEN],
+    ) -> [(u16, u16); region::MAX_REGIONS]
+    where
+        D: embedded_graphics::draw_target::DrawTarget<
+                Color = embedded_graphics::pixelcolor::Rgb565,
+            > + chimera_hal::ChimeraDisplay,
+    {
+        self.render_dirty_with_audio(display, perf, None, scope)
     }
 }
 

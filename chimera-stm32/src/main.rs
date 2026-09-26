@@ -133,7 +133,7 @@ fn main() -> ! {
     ui.update();
     ui.render_with_scope(&mut display, &perf.stats, scope_r.read());
     display.flush();
-    ui.prime_regions(&perf.stats, scope_r.read());
+    ui.prime_regions(&perf.stats, None, scope_r.read());
     led.set_low();
 
     loop {
