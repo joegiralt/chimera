@@ -138,3 +138,61 @@ impl NoteQueue {
         self.dropped.load(Ordering::Relaxed)
     }
 }
+
+pub const MAX_NOTE_SOURCES: usize = 2;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SourceId<const N: usize>(usize);
+
+impl<const N: usize> SourceId<N> {
+    pub const fn new(index: usize) -> Self {
+        assert!(index < N, "note source index out of range");
+        Self(index)
+    }
+
+    pub const fn index(self) -> usize {
+        self.0
+    }
+}
+
+/// One `NoteQueue` per note source; each queue has exactly one producer.
+/// `drain` empties every queue in source order (source 0 first) so a
+/// caller processing note-offs before note-ons within a block sees a
+/// deterministic, if not timestamped, order.
+pub struct NoteSources<const N: usize> {
+    queues: [NoteQueue; N],
+}
+
+impl<const N: usize> Default for NoteSources<N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<const N: usize> NoteSources<N> {
+    pub const fn new() -> Self {
+        const {
+            assert!(N > 0);
+            assert!(N <= MAX_NOTE_SOURCES);
+        }
+        Self {
+            queues: [const { NoteQueue::new() }; N],
+        }
+    }
+
+    pub fn source(&self, id: SourceId<N>) -> &NoteQueue {
+        &self.queues[id.0]
+    }
+
+    pub fn drain(&self, mut f: impl FnMut(NoteEvent)) {
+        for q in &self.queues {
+            while let Some(ev) = q.pop() {
+                f(ev);
+            }
+        }
+    }
+
+    pub fn drops(&self) -> [u32; N] {
+        core::array::from_fn(|i| self.queues[i].dropped())
+    }
+}
