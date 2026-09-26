@@ -43,6 +43,25 @@ fn exp2_is_exact_at_whole_octaves() {
     }
 }
 
+/// Regression test: floor-based range reduction put the fractional part
+/// near 1 for `x` just below an integer, the polynomial's least accurate
+/// point, which made slow decays run up to 18% fast (round-to-nearest keeps
+/// it in [-0.5, 0.5] instead).
+#[test]
+fn exp2_is_accurate_densely_including_just_below_zero() {
+    let mut x = -30.0f32;
+    while x <= 30.0 {
+        let want = 2f64.powf(x as f64);
+        let rel = ((exp2(x) as f64 - want) / want).abs();
+        assert!(
+            rel < 1e-6,
+            "exp2({x}) = {}, want {want}, rel {rel}",
+            exp2(x)
+        );
+        x += 0.0001;
+    }
+}
+
 #[test]
 fn coarse_is_the_tx81z_ratio_table() {
     assert_eq!(COARSE[0], 0.50);
