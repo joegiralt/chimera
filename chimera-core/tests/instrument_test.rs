@@ -1104,3 +1104,39 @@ fn the_tape_is_on_pair_1_only() {
     );
     assert!(off.iter().zip(&on).any(|(a, b)| a[0] != b[0]));
 }
+
+/// FX diet spec § Master comp: one gain for every pair. A quiet Part on
+/// pair 2 is ducked by a loud Part on pair 1.
+#[test]
+fn the_master_comp_ducks_pair_2_with_pair_1() {
+    let render = |ratio: u8| {
+        let mut shared = AudioShared::default();
+        shared.parts[0].mix.output = DacPair::P1;
+        shared.parts[1].mix.output = DacPair::P2;
+        (shared.fx.comp.thresh, shared.fx.comp.ratio) = (0.25, ratio);
+        let buses: [[f32; BLOCK_SIZE]; MAX_PARTS] = core::array::from_fn(|p| match p {
+            0 => [0.9; BLOCK_SIZE],
+            1 => core::array::from_fn(|i| 0.01 * (i as f32 * 0.3).sin()),
+            _ => [0.0; BLOCK_SIZE],
+        });
+        let written = [true, true, false, false, false, false];
+        let mut sends = [[0.0; BLOCK_SIZE]; FX_SENDS];
+        let mut pans = PanCache::default();
+        let mut fx = Box::new(FxBus::new());
+        let mut out: DacOut = [[0.0; BLOCK_SIZE * 2]; DAC_PAIRS];
+        let mut energy = 0.0f32;
+        for b in 0..128 {
+            mix_parts(
+                &buses, &written, &mut sends, &mut pans, &mut fx, &shared, SR, &mut out,
+            );
+            if b >= 64 {
+                energy += out[1].iter().map(|s| s * s).sum::<f32>();
+            }
+        }
+        (energy, fx.master_gr_db())
+    };
+    let ((open, _), (ducked, gr)) = (render(0), render(7));
+    let db = 10.0 * (ducked / open).log10();
+    assert!(db < -15.0, "{db} dB");
+    assert!(gr > 15.0, "{gr}");
+}

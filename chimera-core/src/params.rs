@@ -414,6 +414,7 @@ impl Blocks for ParamSnapshot {
             | BlockRef::Delay
             | BlockRef::Reverb
             | BlockRef::Tape
+            | BlockRef::Comp
             | BlockRef::Part => return None,
         })
     }
@@ -435,6 +436,7 @@ impl Blocks for ParamSnapshot {
             | BlockRef::Delay
             | BlockRef::Reverb
             | BlockRef::Tape
+            | BlockRef::Comp
             | BlockRef::Part => return None,
         })
     }

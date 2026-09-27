@@ -55,7 +55,7 @@ fn part_chains_offer_env_and_lfo_sources() {
 
 #[test]
 fn block_def_ids_are_unique() {
-    let all: [&BlockDef; 37] = [
+    let all: [&BlockDef; 38] = [
         &reg::MODAL_1,
         &reg::MODAL_2,
         &reg::ALGO_WAVE,
@@ -76,6 +76,7 @@ fn block_def_ids_are_unique() {
         &reg::DELAY_CHAR,
         &reg::TAPE,
         &reg::MASTER,
+        &reg::MASTER_LEVEL,
         &reg::NOISE,
         &reg::MOD_MATRIX,
         &reg::PART,

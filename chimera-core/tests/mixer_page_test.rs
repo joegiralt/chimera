@@ -65,7 +65,9 @@ fn mixer_chain_is_part_sends_and_fx() {
         .collect();
     assert_eq!(
         names,
-        ["Part", "Sends", "Chorus", "Delay", "Reverb", "Tape"]
+        [
+            "Part", "Sends", "Chorus", "Delay", "Reverb", "Tape", "Master"
+        ]
     );
 }
 
@@ -481,4 +483,76 @@ fn the_tape_page_is_drive_tone_wow_mix() {
     turn_def(&reg::TAPE, 0, 64, &mut perf);
     turn_def(&reg::TAPE, 3, 32, &mut perf);
     assert_eq!((perf.fx.tape.drive, perf.fx.tape.mix), (0.5, 0.25));
+}
+
+/// FX diet spec § UI: MST binds THRESH, RATIO, ATK, REL, MAKEUP, MIX; the
+/// legacy VOL and PAN sit on MST › LEVEL (an assumed default, pending the
+/// owner); MST ends both Mix chains.
+#[test]
+fn the_master_page_is_the_compressor_with_level_below() {
+    use chimera_core::dsp::comp::CompParams as C;
+    let at = |p| Some(ParamAddr::new(BlockRef::Comp, p));
+    assert_eq!(
+        bound(&reg::MASTER),
+        [
+            at(C::THRESH),
+            at(C::RATIO),
+            at(C::ATTACK),
+            at(C::RELEASE),
+            at(C::MAKEUP),
+            at(C::MIX)
+        ]
+    );
+    let labels: Vec<&str> = reg::MASTER_LEVEL.params.iter().map(|s| s.label()).collect();
+    assert_eq!(labels[..2], ["VOL", "PAN"]);
+    for chain in [&reg::MIX_CHAIN, &reg::MIXER_CHANNEL_CHAIN] {
+        let last = chain.blocks.last().unwrap();
+        assert_eq!(last.def.id, reg::MASTER.id, "{}", chain.name);
+        let subs: Vec<u16> = last.sub_pages.iter().map(|d| d.id).collect();
+        assert_eq!(subs, [reg::MASTER_LEVEL.id], "{}", chain.name);
+    }
+    let mut perf = Performance::new();
+    assert!(!perf.fx.comp.is_on());
+    turn_def(&reg::MASTER, 1, 4, &mut perf);
+    assert_eq!(perf.fx.comp.ratio, 4);
+    assert!(perf.fx.comp.is_on());
+}
+
+/// FX diet spec § UI: MST's GR meter is dark at 0 dB and fills half the
+/// plot at 12 dB, and a change redraws the viz. One test, because
+/// `MASTER_GR` is global.
+#[test]
+fn the_master_page_meters_gain_reduction() {
+    use chimera_core::meter::MASTER_GR;
+    use chimera_core::ui::theme;
+    use chimera_core::ui::viz::{GR_X, PLOT_BASE, PLOT_TOP};
+    let lit = |fb: &screen::Fb| {
+        (PLOT_TOP..PLOT_BASE)
+            .filter(|&y| fb.at(GR_X + 2, y) == theme::ACCENT)
+            .count() as i32
+    };
+    MASTER_GR.publish(0.0);
+    assert_eq!(lit(&screen::render("mixer_master")), 0);
+    MASTER_GR.publish(12.0);
+    assert_eq!(
+        lit(&screen::render("mixer_master")),
+        (PLOT_BASE - PLOT_TOP) / 2
+    );
+
+    MASTER_GR.publish(0.0);
+    let mut ui = screen::ui_for("mixer_master");
+    let (perf, scope) = (
+        chimera_core::ui::perf::PerfStats::zero(),
+        screen::scope_fixture(),
+    );
+    let mut fb = screen::Fb::new();
+    let moved = |f: &[(u16, u16)]| f.iter().any(|&r| r != (0, 0));
+    ui.render_dirty_with_scope(&mut fb, &perf, &scope);
+    assert!(!moved(&ui.render_dirty_with_scope(&mut fb, &perf, &scope)));
+    MASTER_GR.publish(6.0);
+    assert!(
+        moved(&ui.render_dirty_with_scope(&mut fb, &perf, &scope)),
+        "the meter redraws"
+    );
+    MASTER_GR.publish(0.0);
 }

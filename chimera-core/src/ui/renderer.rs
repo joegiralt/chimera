@@ -43,6 +43,8 @@ pub struct Frame<'a> {
     pub prime_status: Option<PrimeStatus>,
     /// The AUDIO sub-page's measured stats, `None` where it is not shown.
     pub audio: Option<&'a AudioStats>,
+    /// The master compressor's gain reduction, dB (MST's GR meter).
+    pub master_gr_db: f32,
 }
 
 /// Full-screen renderer. Composites header, visualization, parameters, and dungeon map.
@@ -110,7 +112,11 @@ impl Renderer {
                     (f.focus < 4).then_some(f.focus),
                 );
             }
-            VizType::CompressorCurve => viz::compressor(display),
+            VizType::CompressorCurve => {
+                use crate::dsp::comp::RATIOS;
+                let ratio = RATIOS[((a(1) * 7.0 + 0.5) as usize).min(RATIOS.len() - 1)];
+                viz::compressor(display, -40.0 + 40.0 * a(0), ratio, f.master_gr_db);
+            }
             _ => {}
         }
         if let Some(status) = f.prime_status {
@@ -236,7 +242,19 @@ impl Renderer {
                 }
                 _ => ([0; 6], viz::live_key(f.scope)),
             },
-            PageLayout::BigViz => (region::quantize_values(&self.anim), f.focus as u32),
+            PageLayout::BigViz => {
+                // The GR meter redraws every 0.25 dB.
+                let gr = match f.def.viz {
+                    VizType::CompressorCurve => {
+                        (f.master_gr_db.clamp(0.0, viz::GR_RANGE_DB) * 4.0) as u32
+                    }
+                    _ => 0,
+                };
+                (
+                    region::quantize_values(&self.anim),
+                    f.focus as u32 | gr << 8,
+                )
+            }
             PageLayout::Matrix => ([0; 6], 0),
         }
     }

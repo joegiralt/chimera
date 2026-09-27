@@ -424,6 +424,8 @@ impl Instrument {
             self.sample_rate,
             out,
         );
+        // The MST page's GR meter: one relaxed store, never blocks.
+        crate::meter::MASTER_GR.publish(fx.master_gr_db());
 
         // Oscilloscope: every part's bus, before pan and level.
         scope.write(&scope_block);

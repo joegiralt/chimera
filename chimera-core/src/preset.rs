@@ -209,6 +209,7 @@ impl Blocks for PartEdit<'_> {
             BlockRef::Delay => Some(&self.fx.delay),
             BlockRef::Reverb => Some(&self.fx.reverb),
             BlockRef::Tape => Some(&self.fx.tape),
+            BlockRef::Comp => Some(&self.fx.comp),
             BlockRef::Part => Some(&self.part.mix),
             BlockRef::Modal
             | BlockRef::Algo
@@ -230,6 +231,7 @@ impl Blocks for PartEdit<'_> {
             BlockRef::Delay => Some(&mut self.fx.delay),
             BlockRef::Reverb => Some(&mut self.fx.reverb),
             BlockRef::Tape => Some(&mut self.fx.tape),
+            BlockRef::Comp => Some(&mut self.fx.comp),
             BlockRef::Part => Some(&mut self.part.mix),
             BlockRef::Modal
             | BlockRef::Algo

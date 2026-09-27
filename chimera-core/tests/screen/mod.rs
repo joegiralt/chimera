@@ -278,6 +278,16 @@ pub const CASES: &[ScreenCase] = &[
         plus(ui, 5);
         feed(ui, Input::turn(EncoderId::A, 40)); // DRIVE
     }),
+    ("mixer_master", |ui| {
+        feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
+        plus(ui, 6);
+        feed(ui, Input::turn(EncoderId::B, 4)); // RATIO 4:1: the curve bends
+    }),
+    ("mixer_master_level", |ui| {
+        feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
+        plus(ui, 6);
+        feed(ui, Input::press(ButtonId::Edit)); // MST › LEVEL
+    }),
     ("mod_matrix", |ui| {
         plus(ui, 3);
         feed(ui, Input::turn(EncoderId::A, 1)); // focus CUTOFF
