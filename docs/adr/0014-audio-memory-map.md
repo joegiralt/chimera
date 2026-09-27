@@ -1,6 +1,6 @@
 # 0014. Voices in D2, FX bus in AXI; buffers sized to the range they serve
 
-- **Status:** Accepted (2026-09-24)
+- **Status:** Accepted (2026-09-24); partly superseded by [0028](0028-one-alesis-style-reverb.md) (16-bit delay lines, FX bus and AXI totals)
 - **Deciders:** project owner
 
 ## Context
