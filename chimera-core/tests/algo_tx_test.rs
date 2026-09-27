@@ -13,8 +13,9 @@ fn db(ratio: f32) -> f64 {
 
 #[test]
 fn the_math_is_close_to_std() {
-    for i in 0..60_000 {
-        let x = -30.0 + i as f32 * 0.001;
+    // exp2's own doc: accurate over -126..127.
+    for i in 0..253_000 {
+        let x = -126.0 + i as f32 * 0.001;
         let r = exp2(x) as f64 / 2f64.powf(x as f64);
         assert!((r - 1.0).abs() < 2e-6, "exp2({x})");
     }
@@ -26,19 +27,20 @@ fn the_math_is_close_to_std() {
         );
         x *= 1.01;
     }
-    let mut x = 1.0f32;
-    while x <= 6.0 {
+    // inv_sqrt's own doc: accurate for any x > 0.
+    let mut x = 1e-30f32;
+    while x < 1e30 {
         assert!(
             (inv_sqrt(x) as f64 * (x as f64).sqrt() - 1.0).abs() < 1e-5,
             "{x}"
         );
-        x += 0.01;
+        x *= 1.5;
     }
 }
 
 #[test]
 fn exp2_is_exact_at_whole_octaves() {
-    for i in -20..20 {
+    for i in -126..127 {
         assert_eq!(exp2(i as f32), 2f32.powi(i));
     }
 }

@@ -228,13 +228,17 @@ fn algo_plays_a4_within_a_cent() {
 }
 
 /// ADR 0011: every Algo golden case passes the gate before it is recorded.
+/// `AlgoToModalSwitch` ends on Modal, whose tail is #10's known-broken
+/// output, so only the tail check is exempt for it.
 #[test]
 fn every_algo_case_is_finite_bounded_audible_and_ends() {
     let gated = Case::ALL
         .into_iter()
-        .filter(|c| c.name().starts_with("algo_") && *c != Case::AlgoToModalSwitch);
+        .filter(|c| c.name().starts_with("algo_"));
     for case in gated {
         assert_finite_bounded_audible(case);
-        assert_silent_after_note_off(case);
+        if case != Case::AlgoToModalSwitch {
+            assert_silent_after_note_off(case);
+        }
     }
 }

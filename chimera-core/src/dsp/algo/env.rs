@@ -96,6 +96,9 @@ pub struct OpEnv {
     mul: f32,
     add: f32,
     left: u32,
+    /// Set with `left = u32::MAX` by `hold()`: `advance` reads this instead
+    /// of comparing `mul`/`add` to exact floats.
+    holding: bool,
     stage: Stage,
     coefs: EnvCoefs,
 }
@@ -127,6 +130,7 @@ impl OpEnv {
         mul: 1.0,
         add: 0.0,
         left: u32::MAX,
+        holding: true,
         stage: Stage::Idle,
         coefs: EnvCoefs {
             attack_add: 0.0,
@@ -203,7 +207,7 @@ impl OpEnv {
     }
 
     fn advance(&mut self) {
-        if self.mul == 1.0 && self.add == 0.0 {
+        if self.holding {
             self.left = u32::MAX; // idle or holding: never ends
         } else {
             self.next();
@@ -232,12 +236,12 @@ impl OpEnv {
         let c = self.coefs;
         self.stage = stage;
         match stage {
-            Stage::Idle => self.set(1.0, 0.0, u32::MAX),
+            Stage::Idle => self.hold(),
             Stage::Attack if c.attack_add > 0.0 => {
                 let left = ((1.0 - self.level) / c.attack_add) as u32 + 1;
                 self.set(1.0, c.attack_add, left);
             }
-            Stage::Attack => self.set(1.0, 0.0, u32::MAX),
+            Stage::Attack => self.hold(),
             Stage::Decay1 => self.decay(c.d1_log2, c.d1_level.max(ENV_FLOOR), Stage::Decay2),
             Stage::Decay2 => self.decay(c.d2_log2, ENV_FLOOR, Stage::Idle),
             Stage::Release => self.decay(c.rr_log2, ENV_FLOOR, Stage::Idle),
@@ -257,11 +261,16 @@ impl OpEnv {
             let left = (log2(target / self.level) / log2_mul) as u32 + 1;
             self.set(exp2(log2_mul), 0.0, left);
         } else {
-            self.set(1.0, 0.0, u32::MAX);
+            self.hold();
         }
     }
 
     fn set(&mut self, mul: f32, add: f32, left: u32) {
-        (self.mul, self.add, self.left) = (mul, add, left);
+        (self.mul, self.add, self.left, self.holding) = (mul, add, left, false);
+    }
+
+    /// The canonical "never ends" state: `advance` renews it forever.
+    fn hold(&mut self) {
+        (self.mul, self.add, self.left, self.holding) = (1.0, 0.0, u32::MAX, true);
     }
 }

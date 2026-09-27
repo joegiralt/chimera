@@ -2,12 +2,23 @@ use chimera_waves::{
     MAX_HARMONIC, MIPS, RECIPES, Recipe, Shape, WAVE_LEN, emit_rust, mip_harmonics, render,
     spectrum,
 };
-use std::f64::consts::PI;
+use std::f64::consts::{PI, TAU};
 
+/// The recipe evaluated directly: `Time` at its own phase, `Sines` by
+/// summing its harmonic series — both ahead of `render`'s full-scale
+/// normalization, so a recipe that overshoots unit peak on its own terms
+/// shows up here rather than being hidden by the rescale.
 fn naive(r: &Recipe) -> Vec<f64> {
     match r.shape {
         Shape::Time(f) => (0..1024).map(|n| f(n as f64 / 1024.0)).collect(),
-        Shape::Sines(_) => Vec::new(),
+        Shape::Sines(amp) => (0..1024)
+            .map(|n| {
+                let t = n as f64 / 1024.0;
+                (1..=MAX_HARMONIC)
+                    .map(|k| amp(k) * (TAU * k as f64 * t).sin())
+                    .sum()
+            })
+            .collect(),
     }
 }
 
