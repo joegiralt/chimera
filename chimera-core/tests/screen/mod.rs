@@ -229,6 +229,10 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::B, 24)); // ALG B = A17
         feed(ui, Input::turn(EncoderId::C, 50)); // MORPH 50: the diagrams blend
     }),
+    ("algo_wave", |ui| {
+        to_osc(ui);
+        feed(ui, Input::turn(EncoderId::B, 5)); // operator 2's wave, a few steps in
+    }),
     ("algo_level", |ui| {
         to_level_page(ui);
         feed(ui, Input::turn(EncoderId::B, 60)); // operator 2 LEVEL

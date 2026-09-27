@@ -220,6 +220,36 @@ fn env_source_moves_on_an_algo_sound() {
     assert!(diff > 0.01, "the ENV route changed nothing ({diff})");
 }
 
+/// #33: the amp envelope also drives the ENV mod source on a Modal sound.
+#[test]
+fn env_source_moves_on_a_modal_sound() {
+    let mut params = ParamSnapshot::for_engine(EngineType::Modal);
+    params.filter.cutoff = 8000.0;
+    params.filter.mode = 2;
+    let mut registry = chimera_core::mod_path::ModDestRegistry::new();
+    registry.add(CUTOFF, *b"FLTCUT\0\0").unwrap();
+    let mut routed = ModState::from_registry(&registry, 2);
+    routed.set_amount(0, 0, -100); // ENV → cutoff
+    let render = |ms: &ModState| {
+        let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
+        voice.note_on(
+            MidiNote::new(60).unwrap(),
+            Velocity::new(100).unwrap(),
+            &params,
+        );
+        let mut out = [0.0f32; BLOCK_SIZE];
+        let mut all = Vec::new();
+        for _ in 0..16 {
+            voice.render(&mut out, &params, ms);
+            all.extend_from_slice(&out);
+        }
+        all
+    };
+    let (dry, wet) = (render(&ModState::new()), render(&routed));
+    let diff: f32 = dry.iter().zip(&wet).map(|(a, b)| (a - b).abs()).sum();
+    assert!(diff > 0.01, "the ENV route changed nothing ({diff})");
+}
+
 /// #32: the only carrier at LEVEL 0, opened by an ENV or LFO route, sounds
 /// and keeps the voice alive, as `cost` bills it.
 #[test]
