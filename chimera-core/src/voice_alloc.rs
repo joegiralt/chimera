@@ -140,7 +140,7 @@ impl Allocator {
         }
     }
 
-    /// The voice now costs `cost` (its Part's Sound changed engine).
+    /// The voice now costs `cost` (its Part's Sound changed).
     pub fn recost(&mut self, voice: usize, cost: Cost) {
         if let Some(s) = self.slots.get_mut(voice).filter(|s| !s.is_free()) {
             s.cost = cost;

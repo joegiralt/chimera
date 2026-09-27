@@ -13,6 +13,7 @@ use crate::dsp::algo::engine::{AlgoEngine, AlgoLive};
 use crate::dsp::modal::ModalEngine;
 use crate::hw::Cost;
 use crate::in_place::{by_value, uninit_at};
+use crate::modulation::ModState;
 use crate::params::{EngineType, ParamSnapshot};
 use crate::{MidiNote, Velocity};
 
@@ -77,10 +78,10 @@ impl Engines {
         }
     }
 
-    /// Cycles/sample of one engine instance (ADR 0013).
-    pub const fn cost(kind: EngineType) -> Cost {
-        match kind {
-            EngineType::Algo => AlgoEngine::COST,
+    /// Cycles/sample of one engine instance playing `p` (ADR 0013).
+    pub fn cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
+        match p.engine() {
+            EngineType::Algo => AlgoEngine::cost(&p.algo, &mods.algo_levels_routed()),
             EngineType::Modal => ModalEngine::COST,
         }
     }

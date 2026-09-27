@@ -48,12 +48,13 @@ impl Default for Voice {
 impl Voice {
     /// Measured with the silent VA placeholder, which went inactive after one
     /// block, so this is the chain's floor rather than its cost with a
-    /// sounding engine; engine `COST`s are bench per-voice minus this.
+    /// sounding engine; engine costs are bench per-voice minus this. The
+    /// bench's `FLOOR` row (an Algo patch with every LEVEL at 0) measures it now.
     pub const CHAIN_COST: Cost = Cost(10); // measured 2026-09-26, bench, rev V at 480 MHz
 
-    /// Cycles/sample of a voice playing `kind`.
-    pub const fn cost(kind: EngineType) -> Cost {
-        Cost(Engines::cost(kind).0 + Self::CHAIN_COST.0)
+    /// Cycles/sample of a voice playing `p` under `mods`.
+    pub fn cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
+        Engines::cost(p, mods) + Self::CHAIN_COST
     }
 
     /// The sample rate is stored once (spec §3), not passed per call.

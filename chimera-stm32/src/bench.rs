@@ -3,6 +3,7 @@ use core::hint::black_box;
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 
+use chimera_core::dsp::algo::algorithms::AlgoId;
 use chimera_core::dsp::algo::env::{EnvCoefs, EnvRates, OpEnv};
 use chimera_core::dsp::algo::kernel::{Kernel, KernelBlock, OpBlock, SAMPLE_SCALE};
 use chimera_core::dsp::algo::plan::{EvalPlan, OPS};
@@ -29,7 +30,37 @@ const WARM_BLOCKS: u32 = 8;
 const TIMED_BLOCKS: u32 = 64;
 const REVERB_TYPES: usize = 3;
 const HOLD_SECONDS: u32 = 30;
-const ENGINES: usize = EngineType::ALL.len();
+const ROWS: usize = 7;
+
+/// Each Algo row plays six distinct waves; voices sit an octave apart so
+/// each reads its own mips (a D-cache worst case).
+const WAVES: [WaveId; OPS] = [
+    WaveId::W2,
+    WaveId::SAW,
+    WaveId::SQR,
+    WaveId::P25,
+    WaveId::TRI,
+    WaveId::W7,
+];
+const COARSE: [u8; OPS] = [4, 8, 10, 13, 16, 19];
+
+/// Label, patch, lowest note and note spacing of each row; the report solves
+/// `AlgoEngine::cost`'s terms from them.
+type Row = (&'static str, fn() -> ParamSnapshot, u8, u8);
+const PATCHES: [Row; ROWS] = [
+    (
+        "MODAL",
+        || ParamSnapshot::for_engine(EngineType::Modal),
+        48,
+        5,
+    ),
+    ("FLOOR", || algo(AlgoId::A1, 0, 0), 36, 12),
+    ("1 OP", || algo(AlgoId::A1, 1, 0), 36, 12),
+    ("6 OP", || algo(AlgoId::A1, OPS, 0), 36, 12),
+    ("CHAIN", || algo(AlgoId::A17, OPS, 0), 36, 12),
+    ("CHN FB", || algo(AlgoId::A17, OPS, 7), 36, 12),
+    ("WC", algo_worst_case, 36, 12),
+];
 
 static mut SCOPE: TripleBuffer<ScopeFrame> = scope_buffer();
 // A static, not a local: `AudioShared` is 3 KB (ADR 0020).
@@ -64,11 +95,10 @@ pub fn run(display: &mut impl ChimeraDisplay, clocks: Clocks, perf: &Performance
         scope: ScopeWriter::new(scope_w),
         dac: [[0.0; BLOCK_SIZE * 2]; DAC_PAIRS],
     };
-    let mut voices = [[0u32; MAX_VOICES]; ENGINES];
-    for (row, &engine) in EngineType::ALL.iter().enumerate() {
+    let mut rows = [[0u32; MAX_VOICES]; ROWS];
+    for (row, &(_, patch, low, step)) in rows.iter_mut().zip(&PATCHES) {
         for n in 1..=MAX_VOICES {
-            voices[row][n - 1] =
-                rig.time(|s| s.parts[0].params = ParamSnapshot::for_engine(engine), n);
+            row[n - 1] = rig.time(|s| s.parts[0].params = black_box(patch()), n, low, step);
         }
     }
     let fx: [u32; REVERB_TYPES] = core::array::from_fn(|t| {
@@ -81,18 +111,27 @@ pub fn run(display: &mut impl ChimeraDisplay, clocks: Clocks, perf: &Performance
                 s.fx.reverb.reverb_type = t as u8;
             },
             0,
+            0,
+            0,
         )
     });
     let kernel = time_kernel();
-    show(display, clocks, &voices, kernel, &fx);
+    show(display, clocks, &rows, kernel, &fx);
     for _ in 0..HOLD_SECONDS {
         crate::clocks::delay_us(clocks.cpu_hz, 1_000_000);
     }
 }
 
 impl Rig<'_> {
+    /// Voice `v` plays note `low + step * v`.
     #[inline(never)]
-    fn time(&mut self, setup: impl FnOnce(&mut AudioShared), voices: usize) -> u32 {
+    fn time(
+        &mut self,
+        setup: impl FnOnce(&mut AudioShared),
+        voices: usize,
+        low: u8,
+        step: u8,
+    ) -> u32 {
         // The allocator must not refuse what the bench wants to measure.
         let budget = SampleBudget::for_cpu(u32::MAX);
         let inst = Instrument::init_in_place(self.inst_slot, SAMPLE_RATE, budget);
@@ -102,7 +141,7 @@ impl Rig<'_> {
             .write(AudioShared::from_performance(self.perf));
         setup(shared);
         for v in 0..voices {
-            let note = MidiNote::new(48 + 5 * v as u8).unwrap_or(MidiNote::A4);
+            let note = MidiNote::new(low + step * v as u8).unwrap_or(MidiNote::A4);
             let ev = NoteEvent {
                 channel: MidiChannel::clamped(0),
                 note,
@@ -131,14 +170,6 @@ impl Rig<'_> {
 fn time_kernel() -> u32 {
     const A14: [u8; OPS] = [0, 0, 0b11, 0b11, 0b100, 0b1000];
     const A22: [u8; OPS] = [0, 0b1, 0b1, 0b10, 0b100, 0b1_1000];
-    const WAVES: [WaveId; OPS] = [
-        WaveId::W2,
-        WaveId::SAW,
-        WaveId::SQR,
-        WaveId::P25,
-        WaveId::TRI,
-        WaveId::W7,
-    ];
     let plan = black_box(EvalPlan::build(
         black_box(&A14),
         black_box(0b11),
@@ -199,21 +230,36 @@ fn time_kernel() -> u32 {
     cycles / (TIMED_BLOCKS * BLOCK_SIZE as u32 * MAX_VOICES as u32)
 }
 
-fn name(e: EngineType) -> &'static str {
-    match e {
-        EngineType::Algo => "ALGO",
-        EngineType::Modal => "MODAL",
+/// `alg` alone, operators `0..lit` at LEVEL 99 and the rest at 0, every
+/// operator with `feedback`.
+fn algo(alg: AlgoId, lit: usize, feedback: u8) -> ParamSnapshot {
+    let mut p = ParamSnapshot::for_engine(EngineType::Algo);
+    (p.algo.alg_a, p.algo.alg_b, p.algo.morph) = (alg.get(), alg.get(), 0);
+    for (i, op) in p.algo.ops.iter_mut().enumerate() {
+        let level = if i < lit { 99 } else { 0 };
+        (op.wave, op.coarse, op.level, op.feedback) = (WAVES[i].get(), COARSE[i], level, feedback);
     }
+    p
 }
+
+/// Spec § Budget's worst case: six audible operators, all with feedback,
+/// six distinct waves, MORPH 0.5 between A14 and A22.
+fn algo_worst_case() -> ParamSnapshot {
+    let mut p = algo(AlgoId::A14, OPS, 7);
+    (p.algo.alg_b, p.algo.morph) = (AlgoId::A22.get(), 64);
+    p
+}
+
+const ROW_H: i32 = 28;
+const CELL_W: i32 = 38;
 
 fn show(
     display: &mut impl ChimeraDisplay,
     clocks: Clocks,
-    voices: &[[u32; MAX_VOICES]; ENGINES],
+    rows: &[[u32; MAX_VOICES]; ROWS],
     kernel: u32,
     fx: &[u32; REVERB_TYPES],
 ) {
-    const CELL_W: i32 = 38;
     draw::fill_rect(display, 0, 0, theme::SCREEN_W, theme::SCREEN_H, theme::BG);
     let mut line = FmtBuf::new();
     let _ = write!(
@@ -238,32 +284,15 @@ fn show(
         36,
         theme::MID,
     );
-    for (row, (&engine, cycles)) in EngineType::ALL.iter().zip(voices).enumerate() {
-        let y = 58 + row as i32 * 30;
-        let per_voice = cycles[MAX_VOICES - 1].saturating_sub(cycles[0]) / (MAX_VOICES as u32 - 1);
-        line.clear();
-        let _ = write!(line, "{} /VOICE {}", name(engine), per_voice);
-        draw::text(display, &theme::FONT_VALUE, line.as_str(), 4, y, theme::INK);
-        // One cell per count: six five-digit counts overflow a `FmtBuf`.
-        for (i, c) in cycles.iter().enumerate() {
-            line.clear();
-            let _ = write!(line, "{c}");
-            let x = 4 + i as i32 * CELL_W;
-            draw::text(
-                display,
-                &theme::FONT_LABEL,
-                line.as_str(),
-                x,
-                y + 13,
-                theme::INK2,
-            );
-        }
+    let mut y = 56;
+    for (&(label, ..), cycles) in PATCHES.iter().zip(rows) {
+        voice_row(display, &mut line, y, label, cycles);
+        y += ROW_H;
     }
-    let y = 58 + ENGINES as i32 * 30;
     line.clear();
     let _ = write!(line, "KERNEL /VOICE {kernel} (350)");
     draw::text(display, &theme::FONT_VALUE, line.as_str(), 4, y, theme::INK);
-    let y = y + 30;
+    y += ROW_H;
     draw::text(display, &theme::FONT_VALUE, "FX", 4, y, theme::INK);
     for (i, (label, c)) in ["PLATE", "FDN", "MV"].iter().zip(fx).enumerate() {
         line.clear();
@@ -274,9 +303,36 @@ fn show(
             &theme::FONT_LABEL,
             line.as_str(),
             x,
-            y + 13,
+            y + 12,
             theme::INK2,
         );
     }
     display.flush();
+}
+
+/// `label`'s per-voice cost (six voices minus one, over five) and its six counts.
+fn voice_row(
+    display: &mut impl ChimeraDisplay,
+    line: &mut FmtBuf,
+    y: i32,
+    label: &str,
+    cycles: &[u32; MAX_VOICES],
+) {
+    let per_voice = cycles[MAX_VOICES - 1].saturating_sub(cycles[0]) / (MAX_VOICES as u32 - 1);
+    line.clear();
+    let _ = write!(line, "{label} /VOICE {per_voice}");
+    draw::text(display, &theme::FONT_VALUE, line.as_str(), 4, y, theme::INK);
+    // One cell per count: six five-digit counts overflow a `FmtBuf`.
+    for (i, c) in cycles.iter().enumerate() {
+        line.clear();
+        let _ = write!(line, "{c}");
+        draw::text(
+            display,
+            &theme::FONT_LABEL,
+            line.as_str(),
+            4 + i as i32 * CELL_W,
+            y + 12,
+            theme::INK2,
+        );
+    }
 }
