@@ -127,6 +127,7 @@ impl PanCache {
 /// by four (at 4 the send pass spills).
 const SEND_STEP: usize = 2;
 const PAIR_STEP: usize = 8;
+const _: () = assert!(BLOCK_SIZE.is_multiple_of(SEND_STEP) && BLOCK_SIZE.is_multiple_of(PAIR_STEP));
 
 /// Steps 2–4 of `render`: each written Part's bus, panned and levelled,
 /// into its pair and, by its sends, into the FX sends; then the FX bus
