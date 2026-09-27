@@ -219,3 +219,29 @@ fn env_source_moves_on_an_algo_sound() {
     let diff: f32 = dry.iter().zip(&wet).map(|(a, b)| (a - b).abs()).sum();
     assert!(diff > 0.01, "the ENV route changed nothing ({diff})");
 }
+
+/// #32: the only carrier at LEVEL 0, opened by an ENV or LFO route, sounds
+/// and keeps the voice alive, as `cost` bills it.
+#[test]
+fn a_routed_carrier_at_level_zero_sounds() {
+    let mut params = tri();
+    params.algo.ops[0].level = 0;
+    params.lfo.rate = 5.0;
+    params.lfo.depth = 1.0;
+    let mut registry = chimera_core::mod_path::ModDestRegistry::new();
+    registry.add(OP1_LEVEL, *b"OP1LEV\0\0").unwrap();
+    for source in [0, 1] {
+        let mut mod_state = ModState::from_registry(&registry, 2);
+        mod_state.set_amount(source, 0, 127);
+        let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
+        voice.note_on(MidiNote::new(60).unwrap(), Velocity::DEFAULT, &params);
+        let mut out = [0.0f32; BLOCK_SIZE];
+        let mut peak = 0.0f32;
+        for _ in 0..200 {
+            voice.render(&mut out, &params, &mod_state);
+            peak = out.iter().fold(peak, |m, s| m.max(s.abs()));
+        }
+        assert!(voice.is_active(), "source {source}: voice ended");
+        assert!(peak > 0.01, "source {source}: peak {peak}");
+    }
+}

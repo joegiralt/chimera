@@ -26,6 +26,9 @@ const VELOCITY_STEPS: f32 = 4.0;
 pub struct AlgoLive {
     pub morph: f32,
     pub level: [f32; OPS],
+    /// LEVELs with a mod route (`ModState::algo_levels_routed`): live even
+    /// at a stored 0, as `cost` bills them.
+    pub routed: [bool; OPS],
 }
 
 impl AlgoLive {
@@ -33,6 +36,7 @@ impl AlgoLive {
         Self {
             morph: p.morph as f32,
             level: core::array::from_fn(|i| p.ops[i].level as f32),
+            routed: [false; OPS],
         }
     }
 
@@ -274,7 +278,7 @@ impl AlgoEngine {
         self.finish_swap(p);
         self.active = (0..OPS).any(|i| {
             self.plan.carrier_a[i] + self.plan.carrier_b[i] > 0.0
-                && p.ops[i].level > 0
+                && (p.ops[i].level > 0 || live.routed[i])
                 && !self.env[i].is_idle()
         });
     }

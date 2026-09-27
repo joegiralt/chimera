@@ -13,6 +13,10 @@ use crate::dsp::algo::engine::{AlgoEngine, AlgoLive};
 use crate::dsp::modal::ModalEngine;
 use crate::hw::Cost;
 use crate::in_place::{by_value, uninit_at};
+
+// `reset` rebuilds an engine over the old one without dropping it.
+const _: () =
+    assert!(!core::mem::needs_drop::<AlgoEngine>() && !core::mem::needs_drop::<ModalEngine>());
 use crate::modulation::ModState;
 use crate::params::{EngineType, ParamSnapshot};
 use crate::{MidiNote, Velocity};
@@ -53,6 +57,25 @@ impl Engines {
             EngineType::Modal => {
                 self.modal
                     .note_on(note.get(), vel.get(), &p.modal, self.sample_rate)
+            }
+        }
+    }
+
+    /// Back to the idle state `new` builds, in place (no stack copy of the
+    /// ~40 KB Modal engine).
+    pub fn reset(&mut self, kind: EngineType) {
+        // SAFETY: the pointers come from `&mut self`, so they are valid,
+        // aligned and unaliased; the engines have no drop glue (asserted
+        // above), so overwriting them leaks nothing, and `init_in_place`
+        // writes every field.
+        unsafe {
+            match kind {
+                EngineType::Algo => {
+                    AlgoEngine::init_in_place(uninit_at(addr_of_mut!(self.algo)));
+                }
+                EngineType::Modal => {
+                    ModalEngine::init_in_place(uninit_at(addr_of_mut!(self.modal)));
+                }
             }
         }
     }

@@ -48,9 +48,7 @@ impl Default for Voice {
 }
 
 impl Voice {
-    /// Measured with the silent VA placeholder, which went inactive after one
-    /// block, so this is the chain's floor rather than its cost with a
-    /// sounding engine; engine costs are bench per-voice minus this. The
+    /// The chain's floor: engine costs are bench per-voice minus this. The
     /// bench's `FLOOR` row (an Algo patch with every LEVEL at 0) measured 5 on
     /// 2026-09-27; 10 is kept, erring high.
     pub const CHAIN_COST: Cost = Cost(10); // measured 2026-09-26, bench, rev V at 480 MHz
@@ -100,6 +98,10 @@ impl Voice {
     }
 
     fn trigger(&mut self, note: MidiNote, velocity: Velocity, params: &ParamSnapshot) {
+        // The engine left behind starts clean when it next plays.
+        if params.engine() != self.active_engine {
+            self.engines.reset(self.active_engine);
+        }
         self.active_engine = params.engine();
         self.last_note = note;
         self.last_velocity = velocity;
@@ -114,12 +116,27 @@ impl Voice {
         self.amp_env.note_off();
     }
 
-    /// Fade to silence over `FADE` samples, then go inactive. A second call
-    /// mid-fade does nothing.
+    /// Fade to silence over `FADE` samples, then go idle as a fresh voice.
+    /// A second call mid-fade does nothing.
     pub fn kill(&mut self) {
         if self.active && self.fade == 0 {
             self.fade = Self::FADE;
         }
+    }
+
+    /// Back to the state `new` builds, in place.
+    fn reset(&mut self) {
+        self.engines.reset(self.active_engine);
+        self.drive = Drive::new();
+        self.filter = SvfFilter::new();
+        self.folder = Wavefolder::new();
+        self.amp_env = Envelope::new();
+        self.lfo = Lfo::new();
+        self.active_engine = EngineType::Algo;
+        self.active = false;
+        self.last_note = MidiNote::A4;
+        self.last_velocity = Velocity::DEFAULT;
+        self.fade = 0;
     }
 
     pub fn is_active(&self) -> bool {
@@ -159,6 +176,7 @@ impl Voice {
         // offset through its block's spec (spec §4).
         let mut m = params.clone();
         let mut live = AlgoLive::from_params(&params.algo);
+        live.routed = mod_state.algo_levels_routed();
         for d in 0..mod_state.num_dests() {
             let off = mod_state.sum_for(d, &mod_values);
             if off != 0.0 {
@@ -202,7 +220,7 @@ impl Voice {
                 *sample *= f32::from(self.fade) / f32::from(Self::FADE);
             }
             if self.fade == 0 {
-                self.active = false;
+                self.reset();
             }
         }
     }
