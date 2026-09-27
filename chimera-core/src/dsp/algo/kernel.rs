@@ -279,35 +279,74 @@ impl Kernel {
                 env: env[op],
             }
         });
+        // Silent lanes are skipped, as in `render_ops` and `AlgoEngine::cost`.
+        // Only on the first sample does a silent operator's last output still
+        // reach the lanes before it; from its turn on it reads 0.
+        let mut live = [0usize; OPS];
+        let mut n = 0;
+        for (k, l) in lanes.iter().enumerate() {
+            if !silent(&blk.ops[l.op]) {
+                live[n] = k;
+                n += 1;
+            }
+        }
         let mut norm = blk.norm_from;
         let dnorm = (blk.norm_to - blk.norm_from) * STEP;
-        for s in out.iter_mut() {
+        let (first, rest) = out.split_at_mut(1);
+        let mut acc = 0.0f32;
+        for l in lanes.iter_mut() {
+            if silent(&blk.ops[l.op]) {
+                self.out[l.op & 7] = 0.0;
+            } else {
+                acc += self.step(l, &mut w, &dw, &src);
+            }
+        }
+        first[0] = acc * norm;
+        norm += dnorm;
+        for s in rest.iter_mut() {
             let mut acc = 0.0f32;
-            for l in lanes.iter_mut() {
-                let prev = self.out[l.op & 7];
-                let mut pm = l.feedback * (prev + l.hist);
-                for e in l.edges.0..l.edges.1.min(MAX_EDGES) {
-                    pm += w[e] * self.out[src[e] as usize & 7];
-                    w[e] += dw[e];
-                }
-                l.phase = l.phase.wrapping_add(l.inc);
-                let p = l.phase.wrapping_add((pm as i32 as u32) << 8);
-                let y = read(l.lo, l.hi, l.xfade, p) * l.env.step() * l.gain;
-                l.gain += l.dgain;
-                l.xfade += l.dxfade;
-                l.hist = prev;
-                self.out[l.op & 7] = y;
-                acc += l.carrier * y;
-                l.carrier += l.dcarrier;
+            for &k in &live[..n] {
+                acc += self.step(&mut lanes[k], &mut w, &dw, &src);
             }
             *s = acc * norm;
             norm += dnorm;
         }
         for l in &lanes {
-            self.phase[l.op] = l.phase;
-            self.hist[l.op] = l.hist;
-            env[l.op] = l.env;
+            if silent(&blk.ops[l.op]) {
+                self.idle(&blk.ops[l.op], l.op, &mut env[l.op]);
+            } else {
+                self.phase[l.op] = l.phase;
+                self.hist[l.op] = l.hist;
+                env[l.op] = l.env;
+            }
         }
+    }
+
+    /// One sample of one lane; returns its carrier share.
+    #[inline(always)]
+    fn step(
+        &mut self,
+        l: &mut Lane,
+        w: &mut [f32; MAX_EDGES],
+        dw: &[f32; MAX_EDGES],
+        src: &[u8; MAX_EDGES],
+    ) -> f32 {
+        let prev = self.out[l.op & 7];
+        let mut pm = l.feedback * (prev + l.hist);
+        for e in l.edges.0..l.edges.1.min(MAX_EDGES) {
+            pm += w[e] * self.out[src[e] as usize & 7];
+            w[e] += dw[e];
+        }
+        l.phase = l.phase.wrapping_add(l.inc);
+        let p = l.phase.wrapping_add((pm as i32 as u32) << 8);
+        let y = read(l.lo, l.hi, l.xfade, p) * l.env.step() * l.gain;
+        l.gain += l.dgain;
+        l.xfade += l.dxfade;
+        l.hist = prev;
+        self.out[l.op & 7] = y;
+        let c = l.carrier * y;
+        l.carrier += l.dcarrier;
+        c
     }
 }
 
