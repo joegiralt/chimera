@@ -64,11 +64,18 @@ fn mix_0_is_an_exact_bypass() {
     }
 }
 
+fn bits(x: &[f32]) -> Vec<u32> {
+    x.iter().map(|s| s.to_bits()).collect()
+}
+
 /// Back to MIX 0, the tape fades out over `ENGAGE` samples and then passes
-/// every block untouched.
+/// every block untouched, bit for bit, signed zeros too, and stops running.
 #[test]
 fn it_releases_back_to_an_exact_bypass() {
-    let x = noise(64 * BLOCK_SIZE, 0.5);
+    let mut x = noise(64 * BLOCK_SIZE, 0.5);
+    for s in x.iter_mut().step_by(3) {
+        *s = -0.0;
+    }
     let mut tape = Box::new(Tape::new());
     let out = run(&mut tape, &x, |b| {
         if b < 16 {
@@ -79,7 +86,55 @@ fn it_releases_back_to_an_exact_bypass() {
     });
     assert_ne!(out[..16 * BLOCK_SIZE], x[..16 * BLOCK_SIZE]);
     let done = 16 * BLOCK_SIZE + ENGAGE as usize;
-    assert_eq!(out[done..], x[done..]);
+    assert_eq!(bits(&out[done..]), bits(&x[done..]));
+    assert!(!tape.is_running());
+}
+
+/// Bypassed, nothing runs: a tape held at MIX 0 (DRIVE 1), fresh or after a
+/// finished release, then switched on, renders exactly as a new tape does.
+/// Fresh, even the wow's transport has not moved.
+#[test]
+fn the_bypass_runs_nothing() {
+    let x = noise(32 * BLOCK_SIZE, 0.5);
+    let wow = TapeParams {
+        wow: 1.0,
+        ..at(0.5, 0.5, 1.0)
+    };
+    let mut held = Box::new(Tape::new());
+    run(&mut held, &x, |_| at(1.0, 0.5, 0.0));
+    assert!(!held.is_running());
+    assert_eq!(
+        run(&mut held, &x, |_| wow),
+        run(&mut Box::new(Tape::new()), &x, |_| wow)
+    );
+
+    let fresh = run(&mut Box::new(Tape::new()), &x, |_| at(0.5, 0.5, 1.0));
+
+    let mut released = Box::new(Tape::new());
+    run(&mut released, &x, |b| {
+        at(1.0, 0.2, if b < 8 { 1.0 } else { 0.0 })
+    });
+    assert!(!released.is_running());
+    run(&mut released, &x, |_| at(1.0, 0.5, 0.0));
+    assert_eq!(run(&mut released, &x, |_| at(0.5, 0.5, 1.0)), fresh);
+}
+
+/// Switched on, the first block primes at weight 0: pair 1 is untouched,
+/// bit for bit; the fade starts on the next block.
+#[test]
+fn the_first_block_on_only_primes() {
+    let x = noise(8 * BLOCK_SIZE, 0.5);
+    let mut tape = Box::new(Tape::new());
+    let out = run(&mut tape, &x, |b| {
+        at(1.0, 0.5, if b < 2 { 0.0 } else { 1.0 })
+    });
+    let prime = 2 * BLOCK_SIZE..3 * BLOCK_SIZE;
+    assert_eq!(bits(&out[..prime.end]), bits(&x[..prime.end]));
+    assert!(tape.is_running());
+    assert_ne!(
+        out[prime.end..prime.end + BLOCK_SIZE],
+        x[prime.end..prime.end + BLOCK_SIZE]
+    );
 }
 
 /// The dry tap lines up with the wet: at MIX 1 an impulse comes out
@@ -153,27 +208,36 @@ fn plucks(n: usize, amp: f32) -> Vec<f32> {
         .collect()
 }
 
-/// Spec § Testing: DRIVE lowers the crest factor of peaky material, and
-/// the level compensation holds its RMS within 3 dB.
+/// Spec § Testing: DRIVE squashes loud material: on plucks peaking at
+/// −3 dBFS the crest factor falls from DRIVE 0 to ½ to 1.
 #[test]
-fn drive_lowers_the_crest_factor_at_a_held_level() {
+fn drive_lowers_the_crest_factor_of_loud_material() {
     let n = 256 * BLOCK_SIZE;
     let x = plucks(n, 0.7);
-    let render = |d: f32| {
+    let crest = |d: f32| {
         let mut tape = Box::new(Tape::new());
-        run(&mut tape, &x, |_| at(d, 0.5, 1.0))[n / 4..].to_vec()
+        crest_db(&run(&mut tape, &x, |_| at(d, 0.5, 1.0))[n / 4..])
     };
-    let clean = render(0.0);
-    let (c0, mut last) = (crest_db(&clean), crest_db(&clean));
+    let c = [crest(0.0), crest(0.5), crest(1.0)];
+    assert!(c[0] - c[1] >= 2.0 && c[1] - c[2] >= 2.0, "{c:?}");
+    assert!(c[0] - c[2] >= 6.0, "{c:?}");
+}
+
+/// Spec § Tape: the level compensation is 1/g, unity small-signal gain.
+/// Quiet plucks (peak 0.05) keep their level within 1 dB at any DRIVE.
+#[test]
+fn quiet_material_keeps_its_level_at_any_drive() {
+    let n = 256 * BLOCK_SIZE;
+    let x = plucks(n, 0.05);
+    let level = |d: f32| {
+        let mut tape = Box::new(Tape::new());
+        rms(&run(&mut tape, &x, |_| at(d, 0.5, 1.0))[n / 4..])
+    };
+    let l0 = level(0.0);
     for d in [0.5, 1.0] {
-        let driven = render(d);
-        let c = crest_db(&driven);
-        assert!(last - c >= 2.0, "DRIVE {d}: crest {last} → {c} dB");
-        last = c;
-        let level = db(rms(&driven) / rms(&clean));
-        assert!(level.abs() <= 3.0, "DRIVE {d}: {level} dB");
+        let rel = db(level(d) / l0);
+        assert!(rel.abs() <= 1.0, "DRIVE {d}: {rel} dB");
     }
-    assert!(c0 - last >= 6.0, "{c0} → {last}");
 }
 
 /// Power of `x` at `hz` (an exact bin: `x` is a whole second).
