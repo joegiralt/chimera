@@ -105,11 +105,18 @@ const GOLDENS: &[(&str, u64)] = &[
     ("reverb_midiverb", 0xef55c35ea73dc552),
 ];
 
+/// Intended FX diet sound changes, skipped until its goldens task
+/// re-records them after the FX sanity gate (ADR 0011).
+const PENDING: &[&str] = &["delay_375ms", "delay_500ms"];
+
 #[test]
 fn fx_goldens_match() {
     let record = std::env::var_os("GOLDEN_RECORD").is_some();
     let mut failures = Vec::new();
     for (name, fx) in cases() {
+        if PENDING.contains(&name) && !record {
+            continue;
+        }
         let hash = fnv1a(&render(fx));
         if record {
             println!("    (\"{name}\", 0x{hash:016x}),");

@@ -54,6 +54,15 @@ pub fn fast_sin_abs(theta: f32) -> f32 {
     if s < 0.0 { -s } else { s }
 }
 
+/// sin(2π·phase) for phase in [0, 1): a parabola with one correction step
+/// on the folded phase; absolute error below 0.001. `f32` only.
+#[inline(always)]
+pub fn sin_turns(phase: f32) -> f32 {
+    let x = 2.0 * phase - 1.0;
+    let y = 4.0 * x * (1.0 - x.abs());
+    -(y + 0.224 * (y * y.abs() - y))
+}
+
 /// Fast tanh approximation using rational polynomial.
 /// Accurate to ~0.1% for |x| < 4. Clamps to ±1 beyond that.
 /// ~5 cycles on Cortex-M7 vs ~400 for libm::tanhf.
