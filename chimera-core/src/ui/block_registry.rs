@@ -12,6 +12,7 @@ use crate::params::{DriveParams, EnvParams, FilterParams, FolderParams, OutParam
 use crate::part::PartParams;
 use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2, ParamSlot, VizType};
 use crate::ui::page::{PageLayout, ValFmt};
+use crate::ui::theme_settings::ThemeSettings;
 
 const EMPTY: ParamSlot = ParamSlot::EMPTY;
 
@@ -734,11 +735,12 @@ pub static SYS_THEME: BlockDef = BlockDef {
     short: "THM",
     layout: PageLayout::CellGrid,
     viz: VizType::None,
+    // Held by `UiState`, not a Sound (`ui::theme_settings`).
     params: [
-        ParamSlot::legacy("BRIGHT", ValFmt::Uni),
-        ParamSlot::legacy("ACCENT", ValFmt::Int(4)),
-        EMPTY,
-        EMPTY,
+        ParamSlot::param(BlockRef::Theme, ThemeSettings::BRIGHT),
+        ParamSlot::param(BlockRef::Theme, ThemeSettings::GAMMA),
+        ParamSlot::param(BlockRef::Theme, ThemeSettings::ACCENT),
+        ParamSlot::param(BlockRef::Theme, ThemeSettings::BLACK),
         EMPTY,
         EMPTY,
     ],

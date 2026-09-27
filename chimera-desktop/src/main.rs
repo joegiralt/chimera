@@ -69,6 +69,7 @@ fn main() {
 
         // UI framework handles navigation + encoder -> param binding
         ui.handle_input(&controls);
+        display.set_theme(&ui.theme());
         ui.update();
 
         // Push every Part and the FX to the audio thread.

@@ -291,6 +291,7 @@ pub fn block_tag(b: BlockRef) -> &'static str {
         BlockRef::Tape => "TPE",
         BlockRef::Comp => "CMP",
         BlockRef::Part => "PRT",
+        BlockRef::Theme => "THM",
     }
 }
 
