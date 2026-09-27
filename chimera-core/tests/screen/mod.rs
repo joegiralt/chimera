@@ -321,6 +321,11 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::Main, 1));
     }),
     ("system", |ui| feed(ui, Input::press(ButtonId::Menu))),
+    ("system_theme", |ui| {
+        feed(ui, Input::press(ButtonId::Menu));
+        plus(ui, 2);
+        feed(ui, Input::turn(EncoderId::C, 1)); // ACCENT AMBER, focused
+    }),
     ("system_audio", |ui| {
         feed(ui, Input::press(ButtonId::Menu));
         plus(ui, 4);

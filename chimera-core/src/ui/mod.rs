@@ -17,6 +17,7 @@ pub mod perf;
 pub mod region;
 pub mod renderer;
 pub mod theme;
+pub mod theme_settings;
 pub mod viz;
 
 use core::mem::MaybeUninit;
@@ -32,7 +33,7 @@ use crate::mod_path::{LABEL_LEN, RegistryError};
 use crate::modulation::{MAX_MOD_SOURCES, ModState};
 use crate::params::{EnvParams, ParamSnapshot};
 use crate::perf::load::AudioStats;
-use crate::preset::{POOL_SIZE, Performance, SoundPool};
+use crate::preset::{POOL_SIZE, PartEdit, Performance, SoundPool};
 use crate::scope::SCOPE_LEN;
 use block_def::BlockDef;
 use block_def::VizType;
@@ -42,6 +43,7 @@ use mod_grid::MatrixState;
 use page::{PageKey, PageLayout};
 use perf::PerfStats;
 use renderer::Renderer;
+use theme_settings::ThemeSettings;
 
 /// UI mode — Normal chain navigation vs overlay screens.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -117,6 +119,8 @@ pub struct UiState {
     display_lfo: Lfo,
     /// The last MIX+PLUS outcome; `None` once retired (issue #21).
     prime_status: Option<PrimeStatus>,
+    /// System › Theme. Not stored yet: every boot starts at the default.
+    theme: ThemeSettings,
 }
 
 crate::in_place::field_list!(UiState => UiState {
@@ -134,6 +138,7 @@ crate::in_place::field_list!(UiState => UiState {
     focus,
     display_lfo,
     prime_status,
+    theme,
 });
 
 impl Default for UiState {
@@ -182,6 +187,7 @@ impl UiState {
             addr_of_mut!((*p).focus).write(focus::FocusMemory::new());
             addr_of_mut!((*p).display_lfo).write(Lfo::new());
             addr_of_mut!((*p).prime_status).write(None);
+            addr_of_mut!((*p).theme).write(ThemeSettings::DEFAULT);
             let ui = slot.assume_init_mut();
             ui.load_matrix(0);
             ui
@@ -192,6 +198,19 @@ impl UiState {
     /// encoder, button or page change (issue #21).
     pub fn prime_status(&self) -> Option<PrimeStatus> {
         self.prime_status
+    }
+
+    /// System › Theme as last edited; the display shell applies it.
+    pub fn theme(&self) -> ThemeSettings {
+        self.theme
+    }
+
+    /// The edited Part's blocks and the UI's own (THEME), as one `Blocks`.
+    fn blocks(&mut self, part: usize) -> UiBlocks<'_> {
+        UiBlocks {
+            part: self.performance.edit(part),
+            theme: &mut self.theme,
+        }
     }
 
     /// Returns a reference to the active part's params.
@@ -241,12 +260,8 @@ impl UiState {
     /// the mod matrix the selected route's amount in slot e.
     fn display_values(&mut self) -> [f32; 6] {
         let def = self.nav.active_block_def();
-        let mut values = page_values(
-            self.page,
-            def,
-            &self.performance.edit(self.active_part),
-            self.sel_op,
-        );
+        let (page, sel_op) = (self.page, self.sel_op);
+        let mut values = page_values(page, def, &self.blocks(self.active_part), sel_op);
         if def.layout == PageLayout::Matrix {
             values[renderer::MATRIX_AMOUNT_SLOT] =
                 renderer::amount_value(self.matrix_state.current_amount());
@@ -501,7 +516,10 @@ impl UiState {
                     if def.params[i].binding != block_def::SlotBinding::Empty {
                         self.focus.touch(def.id, i);
                     }
-                    let params = &mut self.performance.edit(at);
+                    let params = &mut UiBlocks {
+                        part: self.performance.edit(at),
+                        theme: &mut self.theme,
+                    };
                     match (self.page, shift) {
                         (PageKey::Part { .. }, true) => {
                             part_page::snap_encoder(def, i, delta, params, self.sel_op)
@@ -878,6 +896,29 @@ fn any_input(controls: &impl Controls) -> bool {
         || ALL_BUTTONS
             .iter()
             .any(|&b| controls.button_state(b) == ButtonState::Pressed)
+}
+
+/// A Part's blocks plus the settings the UI holds itself (System › Theme),
+/// so the Theme page edits through the same slot bindings as any other.
+struct UiBlocks<'a> {
+    part: PartEdit<'a>,
+    theme: &'a mut ThemeSettings,
+}
+
+impl Blocks for UiBlocks<'_> {
+    fn block(&self, b: BlockRef) -> Option<&dyn Block> {
+        match b {
+            BlockRef::Theme => Some(&*self.theme),
+            _ => self.part.block(b),
+        }
+    }
+
+    fn block_mut(&mut self, b: BlockRef) -> Option<&mut dyn Block> {
+        match b {
+            BlockRef::Theme => Some(self.theme),
+            _ => self.part.block_mut(b),
+        }
+    }
 }
 
 /// Display values for `page`: Part pages through slot bindings, legacy pages

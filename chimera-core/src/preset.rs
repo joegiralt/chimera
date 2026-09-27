@@ -211,6 +211,7 @@ impl Blocks for PartEdit<'_> {
             BlockRef::Tape => Some(&self.fx.tape),
             BlockRef::Comp => Some(&self.fx.comp),
             BlockRef::Part => Some(&self.part.mix),
+            BlockRef::Theme => None,
             BlockRef::Modal
             | BlockRef::Algo
             | BlockRef::AlgoOp(_)
@@ -233,6 +234,7 @@ impl Blocks for PartEdit<'_> {
             BlockRef::Tape => Some(&mut self.fx.tape),
             BlockRef::Comp => Some(&mut self.fx.comp),
             BlockRef::Part => Some(&mut self.part.mix),
+            BlockRef::Theme => None,
             BlockRef::Modal
             | BlockRef::Algo
             | BlockRef::AlgoOp(_)
