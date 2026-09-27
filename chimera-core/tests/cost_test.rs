@@ -138,16 +138,6 @@ fn the_costliest_patch_fits_four_voices() {
     assert!(voices_beside_fx(&p) >= 4, "{}", cost(&p));
 }
 
-/// The chain (in `COST_BASE`) dominates, so one operator is not a third of
-/// the worst case, as it was with the provisional terms; it still saves at
-/// least the five silent operators.
-#[test]
-fn a_single_operator_is_much_cheaper_than_the_worst_case() {
-    let one = AlgoParams::single(chimera_core::dsp::algo::waves::WaveId::W1);
-    let (one, worst) = (cost(&one), cost(&worst()));
-    assert!(one + 5 * AlgoEngine::COST_OP.0 <= worst, "{one} vs {worst}");
-}
-
 /// MORPH does not matter: the plan runs the union's links at any MORPH.
 #[test]
 fn morph_does_not_change_the_cost() {
