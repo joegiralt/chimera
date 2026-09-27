@@ -164,6 +164,10 @@ fn fx_encoders_step_like_before() {
     assert_eq!(perf.fx.reverb.mix, 0.0);
     turn_def(&reg::EFX, 4, 1, &mut perf);
     assert_eq!(perf.fx.reverb.mix, 1.0 / 128.0);
+    turn_def(&reg::EFX, 0, 5, &mut perf);
+    assert!((perf.fx.reverb.grit - (0.3 + 5.0 / 128.0)).abs() < 1e-6);
+    turn_def(&reg::EFX, 3, 1, &mut perf);
+    assert!((perf.fx.reverb.size - (0.5 + 1.0 / 31.0)).abs() < 1e-6);
     turn_def(&reg::DELAY, 3, 64, &mut perf);
     assert_eq!(perf.fx.delay.rev_send, 0.5);
     turn_def(&reg::DELAY_CHAR, 0, 1, &mut perf);
@@ -329,6 +333,11 @@ fn fx_pages_light_their_effect_in_the_flow() {
         [1],
         "DLY › CHAR lights DLY"
     );
+    assert_eq!(
+        flow_lit(&screen::render("mixer_fx_reverb")),
+        [2],
+        "Reverb page lights REV"
+    );
 }
 
 /// FX diet spec § UI: DLY keeps TIME, FDBK, TONE, REV and MIX; WOW and SAT
@@ -369,6 +378,28 @@ fn the_delay_page_is_time_fdbk_tone_rev_mix_with_char_below() {
         let subs: Vec<u16> = dly.sub_pages.iter().map(|d| d.id).collect();
         assert_eq!(subs, [reg::DELAY_CHAR.id], "{}", chain.name);
     }
+}
+
+/// FX diet spec § UI: TYPE's slot is GRIT; the rest keep their order.
+#[test]
+fn the_reverb_page_is_grit_time_damp_size_mix() {
+    use chimera_core::dsp::reverb::ReverbParams;
+    let at = |p| Some(ParamAddr::new(BlockRef::Reverb, p));
+    assert_eq!(
+        bound(&reg::EFX),
+        [
+            at(ReverbParams::GRIT),
+            at(ReverbParams::TIME),
+            at(ReverbParams::DAMPING),
+            at(ReverbParams::SIZE),
+            at(ReverbParams::MIX),
+            None
+        ]
+    );
+    assert!(matches!(
+        reg::EFX.viz,
+        chimera_core::ui::block_def::VizType::EffectsFlow
+    ));
 }
 
 #[test]
