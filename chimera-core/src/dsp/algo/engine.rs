@@ -105,7 +105,9 @@ impl AlgoEngine {
     /// operator is priced when its LEVEL is above 0 or has a mod route
     /// (`level_routed`): the kernel skips only operators silent all block.
     /// Links are those into priced operators in the union of ALG A and B,
-    /// at any MORPH, as the plan runs them all.
+    /// at any MORPH, as the plan runs them all. One block can cost more than
+    /// this: a LEVEL ramping down to 0 still runs, and an ALG edit renders
+    /// the old plan through its duck block. The 30% reserve absorbs it.
     pub const fn cost(p: &AlgoParams, level_routed: &[bool; OPS]) -> Cost {
         let a = &ALGORITHMS[AlgoId::clamped(p.alg_a).get() as usize];
         let b = &ALGORITHMS[AlgoId::clamped(p.alg_b).get() as usize];

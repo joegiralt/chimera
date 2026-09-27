@@ -30,7 +30,7 @@ const WARM_BLOCKS: u32 = 8;
 const TIMED_BLOCKS: u32 = 64;
 const REVERB_TYPES: usize = 3;
 const HOLD_SECONDS: u32 = 30;
-const ROWS: usize = 7;
+const ROWS: usize = 8;
 
 /// Each Algo row plays six distinct waves; voices sit an octave apart so
 /// each reads its own mips (a D-cache worst case).
@@ -55,10 +55,12 @@ const PATCHES: [Row; ROWS] = [
         5,
     ),
     ("FLOOR", || algo(AlgoId::A1, 0, 0), 36, 12),
-    ("1 OP", || algo(AlgoId::A1, 1, 0), 36, 12),
-    ("6 OP", || algo(AlgoId::A1, OPS, 0), 36, 12),
-    ("CHAIN", || algo(AlgoId::A17, OPS, 0), 36, 12),
-    ("CHN FB", || algo(AlgoId::A17, OPS, 7), 36, 12),
+    ("1 OP", || algo(AlgoId::A1, 0b1, 0), 36, 12),
+    // Operators 1, 3 and 5: none can pair, so each runs alone.
+    ("ALT", || algo(AlgoId::A1, 0b1_0101, 0), 36, 12),
+    ("6 OP", || algo(AlgoId::A1, ALL, 0), 36, 12),
+    ("CHAIN", || algo(AlgoId::A17, ALL, 0), 36, 12),
+    ("CHN FB", || algo(AlgoId::A17, ALL, 7), 36, 12),
     ("WC", algo_worst_case, 36, 12),
 ];
 
@@ -230,13 +232,15 @@ fn time_kernel() -> u32 {
     cycles / (TIMED_BLOCKS * BLOCK_SIZE as u32 * MAX_VOICES as u32)
 }
 
-/// `alg` alone, operators `0..lit` at LEVEL 99 and the rest at 0, every
-/// operator with `feedback`.
-fn algo(alg: AlgoId, lit: usize, feedback: u8) -> ParamSnapshot {
+const ALL: u8 = 0b11_1111;
+
+/// `alg` alone, the operators in mask `lit` at LEVEL 99 and the rest at 0,
+/// every operator with `feedback`.
+fn algo(alg: AlgoId, lit: u8, feedback: u8) -> ParamSnapshot {
     let mut p = ParamSnapshot::for_engine(EngineType::Algo);
     (p.algo.alg_a, p.algo.alg_b, p.algo.morph) = (alg.get(), alg.get(), 0);
     for (i, op) in p.algo.ops.iter_mut().enumerate() {
-        let level = if i < lit { 99 } else { 0 };
+        let level = if lit & (1 << i) != 0 { 99 } else { 0 };
         (op.wave, op.coarse, op.level, op.feedback) = (WAVES[i].get(), COARSE[i], level, feedback);
     }
     p
@@ -245,12 +249,12 @@ fn algo(alg: AlgoId, lit: usize, feedback: u8) -> ParamSnapshot {
 /// Spec § Budget's worst case: six audible operators, all with feedback,
 /// six distinct waves, MORPH 0.5 between A14 and A22.
 fn algo_worst_case() -> ParamSnapshot {
-    let mut p = algo(AlgoId::A14, OPS, 7);
+    let mut p = algo(AlgoId::A14, ALL, 7);
     (p.algo.alg_b, p.algo.morph) = (AlgoId::A22.get(), 64);
     p
 }
 
-const ROW_H: i32 = 28;
+const ROW_H: i32 = 26;
 const CELL_W: i32 = 38;
 
 fn show(

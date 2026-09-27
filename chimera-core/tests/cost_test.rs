@@ -128,6 +128,27 @@ fn cost_is_monotonic_in_operators_links_and_feedback() {
     }
 }
 
+/// Links are priced by their target: A17 is 6→5→4→3→2→1, so silencing
+/// operator 1 drops the link 2→1, and silencing operator 6 (a source only)
+/// drops none.
+#[test]
+fn links_are_priced_by_their_active_target() {
+    let mut all = worst();
+    (all.alg_a, all.alg_b) = (AlgoId::A17.get(), AlgoId::A17.get());
+    for op in all.ops.iter_mut() {
+        op.feedback = 0;
+    }
+    let (op, link) = (AlgoEngine::COST_OP.0, AlgoEngine::COST_LINK.0);
+    let full = cost(&all);
+    assert_eq!(full, AlgoEngine::COST_BASE.0 + 6 * op + 5 * link);
+    let mut no_1 = all;
+    no_1.ops[0].level = 0;
+    assert_eq!(full - cost(&no_1), op + link, "4 links");
+    let mut no_6 = all;
+    no_6.ops[5].level = 0;
+    assert_eq!(full - cost(&no_6), op, "5 links");
+}
+
 /// A route on a silent operator's LEVEL may lift it, so it is priced.
 #[test]
 fn a_routed_silent_operator_is_priced() {
