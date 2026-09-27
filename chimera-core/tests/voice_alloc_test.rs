@@ -441,3 +441,28 @@ fn allocator_honours_the_budget_it_was_given() {
     assert_eq!(sounding(480_000_000), 5);
     assert_eq!(sounding(400_000_000), 4);
 }
+
+/// Rule 2 with no voice free takes the dying voice nearest the end of its
+/// fade: the one shed first.
+#[test]
+fn a_note_on_takes_the_dying_voice_shed_first() {
+    let mut a = Allocator::new(BUDGET);
+    let fx = Cost(600);
+    for i in 0..6 {
+        on(&mut a, 0, Poly, 60 + i);
+    }
+    for v in 0..6 {
+        a.recost(v, Cost(1_100)); // 7,200: one must go
+    }
+    let first = a.shed(fx).unwrap();
+    assert_eq!(a.shed(fx), None);
+    for v in 0..6 {
+        a.recost(v, Cost(1_300)); // another must go
+    }
+    let second = a.shed(fx).unwrap();
+    assert_ne!(first, second);
+    for v in 0..6 {
+        a.recost(v, Cost(100));
+    }
+    assert_eq!(voice(on(&mut a, 1, Poly, 80)), first);
+}

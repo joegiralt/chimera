@@ -358,35 +358,53 @@ fn max_step(x: &[f32]) -> f32 {
 }
 
 /// #33 M6: a Sound's engine change fades the old engine out over
-/// `Voice::FADE`, with no step bigger than the signal's own; the held note
-/// then restarts on the new engine exactly as on a fresh voice.
+/// `Voice::FADE` on the settings it was playing: exactly a `kill` fade, no
+/// step bigger than the signal's own. The held note then restarts on the
+/// new engine exactly as on a fresh voice.
 #[test]
 fn an_engine_switch_fades_out_then_starts_clean() {
-    let modal = ParamSnapshot::for_engine(EngineType::Modal);
-    let m = ModState::new();
-    for (name, from, to) in [
-        ("Algo→Modal", tri(), modal.clone()),
-        ("Modal→Algo", modal, tri()),
+    let factory = |i| {
+        let s = chimera_core::factory::factory_sound(i).unwrap();
+        (s.params, s.mod_state)
+    };
+    let modal = (
+        ParamSnapshot::for_engine(EngineType::Modal),
+        ModState::new(),
+    );
+    let tri = (tri(), ModState::new());
+    for (name, (from, fm), (to, tm)) in [
+        ("TRI→Modal", tri.clone(), modal.clone()),
+        ("SQR BASS→Modal", factory(5), modal.clone()),
+        ("MORPH PAD→Modal", factory(6), modal.clone()),
+        ("Modal→TRI", modal, tri),
     ] {
-        let (mut a, mut b) = (Voice::new(SR), Voice::new(SR));
+        let mut v = [Voice::new(SR), Voice::new(SR), Voice::new(SR)];
         let mut block = [0.0f32; BLOCK_SIZE];
         let mut last = 0.0;
-        for v in [&mut a, &mut b] {
+        for v in v.iter_mut() {
             v.note_on(MidiNote::new(60).unwrap(), Velocity::DEFAULT, &from);
             for _ in 0..20 {
-                v.render(&mut block, &from, &m);
+                v.render(&mut block, &from, &fm);
             }
             last = block[BLOCK_SIZE - 1];
         }
-        let (mut ra, mut rb) = (vec![last], vec![last]);
+        let [a, b, c] = &mut v;
+        c.kill();
+        let (mut ra, mut rb, mut rc) = (vec![last], vec![last], vec![last]);
         for _ in 0..Voice::FADE as usize / BLOCK_SIZE {
-            a.render(&mut block, &from, &m);
+            a.render(&mut block, &from, &fm);
             ra.extend_from_slice(&block);
-            b.render(&mut block, &to, &m);
+            b.render(&mut block, &to, &tm);
             rb.extend_from_slice(&block);
+            c.render(&mut block, &from, &fm);
+            rc.extend_from_slice(&block);
         }
-        assert!(ra.iter().any(|x| x.abs() > 0.05), "{name}: sounding");
+        assert!(ra.iter().any(|x| x.abs() > 0.01), "{name}: sounding");
         assert_eq!(*rb.last().unwrap(), 0.0, "{name}");
+        assert!(
+            rb.iter().zip(&rc).all(|(x, y)| x.to_bits() == y.to_bits()),
+            "{name}: differs from a kill fade"
+        );
         assert!(
             max_step(&rb) <= max_step(&ra),
             "{name}: fade step {} > signal step {}",
@@ -397,14 +415,34 @@ fn an_engine_switch_fades_out_then_starts_clean() {
         fresh.note_on(MidiNote::new(60).unwrap(), Velocity::DEFAULT, &to);
         for i in 0..8 {
             let mut f = [0.0f32; BLOCK_SIZE];
-            fresh.render(&mut f, &to, &m);
-            b.render(&mut block, &to, &m);
+            fresh.render(&mut f, &to, &tm);
+            b.render(&mut block, &to, &tm);
             assert!(
                 block.map(f32::to_bits) == f.map(f32::to_bits),
                 "{name}: block {i} differs from a fresh voice"
             );
         }
     }
+}
+
+/// A key up during an engine-switch fade ends the note: nothing restarts
+/// on the new engine.
+#[test]
+fn a_key_up_mid_switch_ends_the_note() {
+    let modal = ParamSnapshot::for_engine(EngineType::Modal);
+    let m = ModState::new();
+    let mut v = Voice::new(SR);
+    let mut block = [0.0f32; BLOCK_SIZE];
+    v.note_on(MidiNote::new(60).unwrap(), Velocity::DEFAULT, &tri());
+    for _ in 0..20 {
+        v.render(&mut block, &tri(), &m);
+    }
+    v.render(&mut block, &modal, &m); // the switch fade starts
+    v.note_off();
+    v.render(&mut block, &modal, &m);
+    assert!(!v.is_active());
+    v.render(&mut block, &modal, &m);
+    assert!(block.iter().all(|&s| s == 0.0));
 }
 
 /// An engine change fades a released tail out; it does not restart it as a
