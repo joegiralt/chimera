@@ -344,6 +344,28 @@ fn nan_and_out_of_range_controls_render_finite() {
     assert_ne!(out[16 * BLOCK_SIZE..], x[16 * BLOCK_SIZE..]);
 }
 
+/// Spec § Testing, final review M1: a NaN on the input latches into the
+/// IIR states, but the tape notices within a block and recovers finite
+/// output within 2 blocks, without ever being bypassed.
+#[test]
+fn a_nan_sample_recovers_within_two_blocks() {
+    let mut x = noise(32 * BLOCK_SIZE, 0.5);
+    x[10 * BLOCK_SIZE] = f32::NAN;
+    let mut tape = Box::new(Tape::new());
+    let out = run(&mut tape, &x, |_| at(0.7, 0.5, 1.0));
+    assert!(
+        out[10 * BLOCK_SIZE..12 * BLOCK_SIZE]
+            .iter()
+            .any(|s| !s.is_finite())
+    );
+    assert!(
+        out[12 * BLOCK_SIZE..].iter().all(|s| s.is_finite()),
+        "{:?}",
+        &out[12 * BLOCK_SIZE..12 * BLOCK_SIZE + 8]
+    );
+    assert!(tape.is_running());
+}
+
 /// Built in place, the tape is `new()`'s.
 #[test]
 fn built_in_place_it_processes_like_new() {
