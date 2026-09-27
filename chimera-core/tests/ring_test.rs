@@ -1,8 +1,12 @@
 //! The reverb ring (FX diet spec § Reverb, § Testing). GRIT 0 wherever RT60
 //! or stereo is measured.
 
+use chimera_core::dsp::Stereo;
+use chimera_core::dsp::halfband::HALF;
 use chimera_core::dsp::ring::*;
+use chimera_hal::BLOCK_SIZE;
 
+const SR: u32 = 48_000;
 const FS_RING: f32 = 24_000.0;
 
 #[test]
@@ -79,29 +83,56 @@ fn grit_rounds_onto_its_grid() {
     let g0 = Grid::new(0.0);
     assert_eq!(g0.delta(), 1.0);
     for v in i16::MIN..=i16::MAX {
-        assert_eq!(g0.q(v as f32), v);
+        assert_eq!(g0.q_round(v as f32), v);
     }
-    assert_eq!(g0.q(-100.7), -101);
-    assert_eq!(g0.q(100.7), 101);
-    assert_eq!(g0.q(-0.5), -1);
-    assert_eq!(g0.q(0.5), 1);
+    assert_eq!(g0.q_round(-100.7), -101);
+    assert_eq!(g0.q_round(100.7), 101);
+    assert_eq!(g0.q_round(-0.5), -1);
+    assert_eq!(g0.q_round(0.5), 1);
     let g1 = Grid::new(1.0);
     assert_eq!(g1.delta(), 64.0);
-    assert_eq!(g1.q(32.0), 64);
-    assert_eq!(g1.q(-32.0), -64);
-    assert_eq!(g1.q(31.9), 0);
-    assert_eq!(g1.q(-31.9), 0);
+    assert_eq!(g1.q_round(32.0), 64);
+    assert_eq!(g1.q_round(-32.0), -64);
+    assert_eq!(g1.q_round(31.9), 0);
+    assert_eq!(g1.q_round(-31.9), 0);
     assert_eq!(Grid::new(0.5).delta(), 8.0);
     for i in 0..=100 {
         let g = Grid::new(i as f32 / 100.0);
         for x in [-30_000.3f32, -777.7, -1.5, 0.0, 2.5, 999.9, 30_000.1] {
             // The grid point, rounded (never truncated) to an LSB.
             let p = (x / g.delta()).round() * g.delta();
-            assert!((g.q(x) as f32 - p).abs() <= 0.501, "GRIT {i}: {x}");
+            assert!((g.q_round(x) as f32 - p).abs() <= 0.501, "GRIT {i}: {x}");
             assert!(
-                (g.q(x) as f32 - x).abs() <= g.delta() / 2.0 + 0.501,
+                (g.q_round(x) as f32 - x).abs() <= g.delta() / 2.0 + 0.501,
                 "GRIT {i}: {x}"
             );
+        }
+    }
+}
+
+#[test]
+fn grit_truncates_toward_zero_onto_its_grid() {
+    let g0 = Grid::new(0.0);
+    for v in i16::MIN..=i16::MAX {
+        assert_eq!(g0.q_trunc(v as f32), v);
+    }
+    assert_eq!(g0.q_trunc(-100.7), -100);
+    assert_eq!(g0.q_trunc(100.7), 100);
+    assert_eq!(g0.q_trunc(0.99), 0);
+    assert_eq!(g0.q_trunc(-0.99), 0);
+    let g1 = Grid::new(1.0);
+    assert_eq!(g1.q_trunc(64.0), 64);
+    assert_eq!(g1.q_trunc(127.9), 64);
+    assert_eq!(g1.q_trunc(-127.9), -64);
+    assert_eq!(g1.q_trunc(63.9), 0);
+    assert_eq!(g1.q_trunc(-63.9), 0);
+    for i in 0..=100 {
+        let g = Grid::new(i as f32 / 100.0);
+        for x in [-30_000.3f32, -777.7, -1.5, 0.0, 2.5, 999.9, 30_000.1] {
+            let q = g.q_trunc(x) as f32;
+            // Never grows, never flips sign, loses under a step plus an LSB.
+            assert!(q.abs() <= x.abs() && q * x >= 0.0, "GRIT {i}: {x} → {q}");
+            assert!(x.abs() - q.abs() < g.delta() + 1.0, "GRIT {i}: {x} → {q}");
         }
     }
 }
@@ -117,9 +148,612 @@ fn the_first_reflection_is_the_shortest_tap_at_twice_the_rate() {
 fn grit_saturates_past_the_i16_range() {
     for grit in [0.0, 0.5, 1.0] {
         let g = Grid::new(grit);
-        assert_eq!(g.q(33_000.0), i16::MAX, "grit {grit}");
-        assert_eq!(g.q(2_100_000.0), i16::MAX, "grit {grit}");
-        assert_eq!(g.q(-40_000.0), i16::MIN, "grit {grit}");
-        assert_eq!(g.q(-2_100_000.0), i16::MIN, "grit {grit}");
+        for q in [Grid::q_round, Grid::q_trunc] {
+            assert_eq!(q(g, 33_000.0), i16::MAX, "grit {grit}");
+            assert_eq!(q(g, 2_100_000.0), i16::MAX, "grit {grit}");
+            assert_eq!(q(g, -40_000.0), i16::MIN, "grit {grit}");
+            assert_eq!(q(g, -2_100_000.0), i16::MIN, "grit {grit}");
+        }
     }
+}
+
+// ── behaviour ──
+
+struct Noise(u32);
+
+impl Noise {
+    fn next(&mut self) -> f32 {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 17;
+        self.0 ^= self.0 << 5;
+        self.0 as f32 / u32::MAX as f32 - 0.5
+    }
+}
+
+fn blocks(seconds: f32) -> usize {
+    (seconds * SR as f32 / BLOCK_SIZE as f32).ceil() as usize
+}
+
+/// The return at MIX 1: `input(n)` is send sample n, `ctl(b)` block b's
+/// controls.
+fn render(
+    n_blocks: usize,
+    mut input: impl FnMut(usize) -> f32,
+    mut ctl: impl FnMut(usize) -> RingControls,
+) -> (Vec<f32>, Vec<f32>) {
+    let mut rv = Box::new(RingReverb::new());
+    let (mut l, mut r) = (Vec::new(), Vec::new());
+    let mut out = Stereo::SILENT;
+    for b in 0..n_blocks {
+        let send: [f32; BLOCK_SIZE] = core::array::from_fn(|i| input(b * BLOCK_SIZE + i));
+        rv.process(&send, &ctl(b), 1.0, SR, &mut out);
+        l.extend_from_slice(&out.l);
+        r.extend_from_slice(&out.r);
+    }
+    (l, r)
+}
+
+fn at(grit: f32, time: f32, damp: f32, size: f32) -> RingControls {
+    RingControls {
+        grit,
+        time,
+        damp,
+        size,
+    }
+}
+
+fn impulse(n: usize) -> f32 {
+    if n == 0 { 1.0 } else { 0.0 }
+}
+
+fn energy(x: &[f32]) -> f64 {
+    x.iter().map(|&s| s as f64 * s as f64).sum()
+}
+
+fn rms(x: &[f32]) -> f32 {
+    (energy(x) / x.len() as f64).sqrt() as f32
+}
+
+/// 1 s of noise, 3 s of silence: finite, within ±12·`WET_GAIN`, and the
+/// last 0.5 s at least half the target's drop below the first 0.5 s after
+/// the input stops (2.5 s apart).
+fn stable(grit: f32) {
+    for time in [0.0, 0.5, 1.0] {
+        for size in [0.0, 0.5, 1.0] {
+            for damp in [0.0, 0.5, 1.0] {
+                let what = format!("GRIT {grit} TIME {time} SIZE {size} DAMP {damp}");
+                let mut n = Noise(0x1234_5678);
+                let c = at(grit, time, damp, size);
+                let (l, r) = render(
+                    blocks(4.0),
+                    |i| if i < SR as usize { n.next() } else { 0.0 },
+                    |_| c,
+                );
+                for &s in l.iter().chain(&r) {
+                    assert!(s.is_finite() && s.abs() <= 12.0 * WET_GAIN, "{what}: {s}");
+                }
+                let (s, w) = (SR as usize, SR as usize / 2);
+                let first = energy(&l[s..s + w]) + energy(&r[s..s + w]);
+                let last = energy(&l[l.len() - w..]) + energy(&r[r.len() - w..]);
+                let predicted = 60.0 * 2.5 / rt60(time, size_step(size), FS_RING);
+                let drop = 10.0 * (first / last).log10() as f32;
+                assert!(
+                    last == 0.0 || drop >= predicted / 2.0,
+                    "{what}: fell {drop} dB, want {predicted} / 2"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn stable_at_grit_0() {
+    stable(0.0);
+}
+
+#[test]
+fn stable_at_grit_1() {
+    stable(1.0);
+}
+
+/// Truncation in the allpasses leaves no limit cycle: silence in reaches
+/// exact zeros out, with no gate.
+fn falls_silent_within(grit: f32, seconds: f32) {
+    let mut rv = Box::new(RingReverb::new());
+    let mut n = Noise(0xdead_beef);
+    let c = at(grit, 1.0, 0.0, 1.0);
+    let mut out = Stereo::SILENT;
+    for _ in 0..blocks(1.0) {
+        let send = core::array::from_fn(|_| n.next());
+        rv.process(&send, &c, 1.0, SR, &mut out);
+    }
+    let silence = [0.0; BLOCK_SIZE];
+    let mut b = 0;
+    while !rv.ring().is_silent() {
+        rv.process(&silence, &c, 1.0, SR, &mut out);
+        b += 1;
+        assert!(
+            b <= blocks(seconds),
+            "GRIT {grit}: still ringing after {seconds} s"
+        );
+    }
+    for _ in 0..blocks(0.1) {
+        rv.process(&silence, &c, 1.0, SR, &mut out);
+        assert!(out.l.iter().chain(&out.r).all(|&s| s == 0.0));
+    }
+}
+
+#[test]
+fn no_limit_cycle_at_grit_1() {
+    falls_silent_within(1.0, 15.0);
+}
+
+#[test]
+fn no_limit_cycle_at_grit_0() {
+    falls_silent_within(0.0, 25.0);
+}
+
+/// −6 dBFS noise (uniform, 0.5 RMS) for `seconds`, then silence.
+fn noise_burst(seed: u32, seconds: f32) -> impl FnMut(usize) -> f32 {
+    let mut n = Noise(seed);
+    let end = (seconds * SR as f32) as usize;
+    move |i| if i < end { 3f32.sqrt() * n.next() } else { 0.0 }
+}
+
+/// A tail at a normal level is never zeroed early: every block sounds under
+/// input, and for at least half the target RT60 at TIME 0.5 after it.
+#[test]
+fn a_normal_tail_is_never_zeroed_early() {
+    for grit in [0.0, 0.3, 1.0] {
+        let c = RingControls {
+            grit,
+            ..RingControls::default()
+        };
+        let hold = 0.5 * rt60(0.5, size_step(c.size), FS_RING);
+        let (l, r) = render(blocks(0.5 + hold), noise_burst(3, 0.5), |_| c);
+        let first = blocks(0.05);
+        for (b, (bl, br)) in l.chunks(BLOCK_SIZE).zip(r.chunks(BLOCK_SIZE)).enumerate() {
+            if b >= first {
+                assert!(
+                    bl.iter().chain(br).any(|&s| s != 0.0),
+                    "GRIT {grit}: block {b} silent"
+                );
+            }
+        }
+    }
+}
+
+/// In-place iterative radix-2 FFT; `re.len()` is a power of two.
+fn fft(re: &mut [f64], im: &mut [f64]) {
+    let n = re.len();
+    let mut j = 0;
+    for i in 1..n {
+        let mut bit = n >> 1;
+        while j & bit != 0 {
+            j ^= bit;
+            bit >>= 1;
+        }
+        j |= bit;
+        if i < j {
+            re.swap(i, j);
+            im.swap(i, j);
+        }
+    }
+    let mut len = 2;
+    while len <= n {
+        let ang = -2.0 * std::f64::consts::PI / len as f64;
+        for start in (0..n).step_by(len) {
+            for k in 0..len / 2 {
+                let (s, c) = (ang * k as f64).sin_cos();
+                let (a, b) = (start + k, start + k + len / 2);
+                let (tr, ti) = (re[b] * c - im[b] * s, re[b] * s + im[b] * c);
+                (re[b], im[b]) = (re[a] - tr, im[a] - ti);
+                re[a] += tr;
+                im[a] += ti;
+            }
+        }
+        len <<= 1;
+    }
+}
+
+/// Hann-windowed power per bin, 0..=n/2, of `x` (a power of two long).
+fn power(x: &[f32]) -> Vec<f64> {
+    let n = x.len();
+    let hann = |i: usize| 0.5 - 0.5 * (2.0 * std::f64::consts::PI * i as f64 / n as f64).cos();
+    let mut re: Vec<f64> = x
+        .iter()
+        .enumerate()
+        .map(|(i, &s)| s as f64 * hann(i))
+        .collect();
+    let mut im = vec![0.0; n];
+    fft(&mut re, &mut im);
+    (0..=n / 2).map(|k| re[k] * re[k] + im[k] * im[k]).collect()
+}
+
+fn bin(hz: f32, n: usize) -> usize {
+    (hz * n as f32 / SR as f32) as usize
+}
+
+fn mean(p: &[f64]) -> f64 {
+    p.iter().sum::<f64>() / p.len() as f64
+}
+
+#[test]
+fn the_return_is_band_limited() {
+    let mut n = Noise(7);
+    let (l, r) = render(blocks(2.0), |_| n.next(), |_| at(0.0, 0.5, 0.0, 0.5));
+    let n = 1 << 16;
+    for x in [&l, &r] {
+        let p = power(&x[x.len() - n..]);
+        let band = mean(&p[bin(500.0, n)..bin(8_000.0, n)]);
+        let top = mean(&p[bin(13_500.0, n)..]);
+        let db = 10.0 * (band / top).log10();
+        assert!(db >= 40.0, "{db} dB");
+    }
+}
+
+#[test]
+fn grit_1_stores_only_multiples_of_64() {
+    let mut ring = Box::new(Ring::new());
+    ring.snap(31);
+    let blk = RingBlock {
+        gains_from: [0.9; STAGES],
+        gains_to: [0.9; STAGES],
+        damp_from: 0.5,
+        damp_to: 0.5,
+        grid: Grid::new(1.0),
+    };
+    let mut n = Noise(99);
+    let (mut l, mut r) = ([0.0; HALF], [0.0; HALF]);
+    for _ in 0..2_000 {
+        let u = core::array::from_fn(|_| n.next());
+        ring.process(&u, &blk, &mut l, &mut r);
+    }
+    assert!(ring.lines().iter().any(|&s| s != 0));
+    assert!(ring.lines().iter().all(|&s| s % 64 == 0));
+    assert!(ring.damp_state().iter().all(|&s| s % 64.0 == 0.0));
+}
+
+/// Energy from 20 Hz to 10.5 kHz outside 1 kHz ± 50 Hz, 2 s into a steady
+/// −12 dB 1 kHz sine, in dB.
+fn floor_db(grit: f32) -> f64 {
+    let sine =
+        |i: usize| 0.251 * (2.0 * core::f32::consts::PI * 1_000.0 * i as f32 / SR as f32).sin();
+    let c = RingControls {
+        grit,
+        ..RingControls::default()
+    };
+    let (l, _) = render(blocks(3.4), sine, |_| c);
+    let n = 1 << 16;
+    let p = power(&l[2 * SR as usize..][..n]);
+    let (lo, hi) = (bin(950.0, n), bin(1_050.0, n));
+    let floor: f64 = p[bin(20.0, n)..lo]
+        .iter()
+        .chain(&p[hi..bin(10_500.0, n)])
+        .sum();
+    10.0 * floor.log10()
+}
+
+#[test]
+fn grit_raises_the_noise_floor() {
+    let floors: Vec<f64> = (0..=10).map(|i| floor_db(i as f32 / 10.0)).collect();
+    for w in floors.windows(2) {
+        assert!(w[1] >= w[0] - 0.5, "{floors:?}");
+    }
+    assert!(floors[10] - floors[0] >= 24.0, "{floors:?}");
+}
+
+/// `x` band-passed to 500 Hz–4 kHz by FFT.
+fn band(x: &[f32]) -> Vec<f64> {
+    let n = x.len().next_power_of_two();
+    let mut re: Vec<f64> = x.iter().map(|&s| s as f64).collect();
+    re.resize(n, 0.0);
+    let mut im = vec![0.0; n];
+    fft(&mut re, &mut im);
+    let (lo, hi) = (bin(500.0, n), bin(4_000.0, n));
+    for k in 0..n {
+        let f = k.min(n - k);
+        if f < lo || f > hi {
+            (re[k], im[k]) = (0.0, 0.0);
+        }
+    }
+    im.iter_mut().for_each(|v| *v = -*v);
+    fft(&mut re, &mut im);
+    re.truncate(x.len());
+    re
+}
+
+/// RT60 of the tail from `start`: each side band-passed, the Schroeder EDC
+/// of L² + R², a least-squares line from −5 to −35 dB.
+fn rt60_of(l: &[f32], r: &[f32], start: usize) -> f32 {
+    let (l, r) = (band(l), band(r));
+    let mut edc: Vec<f64> = (start..l.len())
+        .map(|i| l[i] * l[i] + r[i] * r[i])
+        .collect();
+    for i in (0..edc.len() - 1).rev() {
+        edc[i] += edc[i + 1];
+    }
+    let (mut n, mut sx, mut sy, mut sxx, mut sxy) = (0.0, 0.0, 0.0, 0.0, 0.0);
+    for (i, &e) in edc.iter().enumerate() {
+        let db = 10.0 * (e / edc[0]).log10();
+        if (-35.0..=-5.0).contains(&db) {
+            let x = i as f64 / SR as f64;
+            (n, sx, sy, sxx, sxy) = (n + 1.0, sx + x, sy + db, sxx + x * x, sxy + x * db);
+        }
+    }
+    (-60.0 * (n * sxx - sx * sx) / (n * sxy - sx * sy)) as f32
+}
+
+/// 0.5 s of −6 dBFS noise; an impulse leaves the tail at the grid's floor.
+#[test]
+fn rt60_follows_time() {
+    for step in [0u8, 15, 31] {
+        let mut last = 0.0;
+        for time in [0.25, 0.5, 0.75, 1.0] {
+            let target = rt60(time, step, FS_RING);
+            let c = at(0.0, time, 0.0, step as f32 / 31.0);
+            let (l, r) = render(
+                blocks(0.5 + (1.3 * target).max(1.5)),
+                noise_burst(0x5eed, 0.5),
+                |_| c,
+            );
+            let t = rt60_of(&l, &r, SR as usize / 2);
+            println!("step {step} TIME {time}: RT60 {t:.3} s, target {target:.3} s");
+            assert!(
+                (t / target - 1.0).abs() <= 0.35,
+                "step {step} TIME {time}: RT60 {t} s, target {target} s"
+            );
+            assert!(t > last, "step {step}: RT60 not rising at TIME {time}");
+            last = t;
+        }
+    }
+}
+
+#[test]
+fn each_side_arrives_early_and_the_sides_decorrelate() {
+    let c = RingControls {
+        grit: 0.0,
+        ..RingControls::default()
+    };
+    let (l, r) = render(blocks(1.0), impulse, |_| c);
+    let w = SR as usize / 100;
+    for (side, x) in [("L", &l), ("R", &r)] {
+        let windows: Vec<f32> = x.chunks(w).map(rms).collect();
+        let peak = windows.iter().copied().fold(0.0, f32::max);
+        let early = windows[..5].iter().copied().fold(0.0, f32::max);
+        assert!(early >= 0.1 * peak, "{side}: {early} < {peak} / 10");
+    }
+    let s = SR as usize / 2;
+    let (a, b) = (&l[s..][..SR as usize / 10], &r[s..][..SR as usize / 10]);
+    let xy: f64 = a.iter().zip(b).map(|(&x, &y)| x as f64 * y as f64).sum();
+    let corr = xy / (energy(a) * energy(b)).sqrt();
+    assert!(corr.abs() < 0.5, "{corr}");
+}
+
+fn max_d2(x: &[f32]) -> f32 {
+    x.windows(3)
+        .fold(0.0, |m, w| m.max((w[2] - 2.0 * w[1] + w[0]).abs()))
+}
+
+/// A move at 0.7 s, mid-tail after 0.5 s of noise: over the next 50 ms the
+/// largest second difference is at most 1.5× that of a held render at
+/// either value.
+fn no_click(what: &str, from: RingControls, to: RingControls) {
+    let at_move = blocks(0.7);
+    let run = |ctl: &dyn Fn(usize) -> RingControls| {
+        let mut n = Noise(4242);
+        let (l, r) = render(
+            at_move + blocks(0.05),
+            |i| if i < SR as usize / 2 { n.next() } else { 0.0 },
+            ctl,
+        );
+        let s = at_move * BLOCK_SIZE - 2;
+        max_d2(&l[s..]).max(max_d2(&r[s..]))
+    };
+    let (old, new) = (run(&|_| from), run(&|_| to));
+    let moved = run(&|b| if b < at_move { from } else { to });
+    assert!(
+        moved <= 1.5 * old.max(new),
+        "{what}: {moved} vs held {old} / {new}"
+    );
+}
+
+#[test]
+fn moving_a_control_mid_tail_does_not_click() {
+    type Set = fn(&mut RingControls, f32);
+    let sets: [(&str, Set, f32); 4] = [
+        ("TIME", |c, v| c.time = v, 1.0 / 128.0),
+        ("DAMP", |c, v| c.damp = v, 1.0 / 128.0),
+        ("GRIT", |c, v| c.grit = v, 1.0 / 128.0),
+        ("SIZE", |c, v| c.size = v, 1.0 / 31.0),
+    ];
+    for (name, set, step) in sets {
+        let (mut a, mut b) = (RingControls::default(), RingControls::default());
+        set(&mut a, 16.0 / 31.0);
+        set(&mut b, 16.0 / 31.0 + step);
+        no_click(&format!("{name} one step"), a, b);
+        set(&mut a, 0.0);
+        set(&mut b, 1.0);
+        no_click(&format!("{name} full sweep"), a, b);
+    }
+}
+
+#[test]
+fn nothing_returns_before_the_first_reflection() {
+    for step in [0u8, 16, 31] {
+        let c = RingControls {
+            size: step as f32 / 31.0,
+            ..RingControls::default()
+        };
+        let (l, r) = render(blocks(0.2), impulse, |_| c);
+        let first = first_reflection(step);
+        let heard = l
+            .iter()
+            .zip(&r)
+            .position(|(a, b)| *a != 0.0 || *b != 0.0)
+            .unwrap();
+        assert!(
+            heard >= first && heard < first + 200,
+            "step {step}: {heard} vs {first}"
+        );
+    }
+}
+
+// ── WET_GAIN (spec § Topology) ──
+
+/// The plate's return RMS for `calibration_send` at TIME 0.5, DAMP 0.3,
+/// SIZE 0.5, MIX 1, recorded before the plate was deleted.
+const PLATE_RMS: f32 = 0.340_919_05;
+
+/// 0.5 s of noise, then silence.
+fn calibration_send(n: &mut Noise, i: usize) -> f32 {
+    if i < 24_000 { n.next() } else { 0.0 }
+}
+
+#[test]
+fn wet_gain_matches_the_plate_within_1_db() {
+    let mut n = Noise(0x5eed);
+    let (l, r) = render(
+        blocks(2.0),
+        |i| calibration_send(&mut n, i),
+        |_| RingControls::default(),
+    );
+    let ring = ((energy(&l) + energy(&r)) / (2.0 * l.len() as f64)).sqrt();
+    let db = 20.0 * (ring / PLATE_RMS as f64).log10();
+    assert!(db.abs() <= 1.0, "{db} dB");
+}
+
+/// Deleted with the plate (Task 6).
+#[test]
+fn plate_rms_is_the_recorded_number() {
+    use chimera_core::dsp::reverb::{Reverb, ReverbParams};
+    let mut plate = Box::new(Reverb::new());
+    let p = ReverbParams {
+        reverb_type: 0,
+        time: 0.5,
+        damping: 0.3,
+        size: 0.5,
+        mix: 1.0,
+    };
+    let mut n = Noise(0x5eed);
+    let mut out = Vec::new();
+    for b in 0..blocks(2.0) {
+        let mut send: [f32; BLOCK_SIZE] =
+            core::array::from_fn(|i| calibration_send(&mut n, b * BLOCK_SIZE + i));
+        plate.process_wet(&mut send, &p);
+        out.extend_from_slice(&send);
+    }
+    let plate_rms = rms(&out);
+    assert!((plate_rms / PLATE_RMS - 1.0).abs() < 1e-5, "{plate_rms}");
+}
+
+// ── Review Focus ──
+
+#[test]
+fn a_size_spin_settles_on_the_last_step() {
+    let mut rv = Box::new(RingReverb::new());
+    let mut n = Noise(5);
+    let mut out = Stereo::SILENT;
+    for b in 0..200usize {
+        let c = RingControls {
+            size: (b % 32) as f32 / 31.0,
+            ..RingControls::default()
+        };
+        let send = core::array::from_fn(|_| n.next());
+        rv.process(&send, &c, 1.0, SR, &mut out);
+        assert!(out.l.iter().chain(&out.r).all(|s| s.is_finite()));
+    }
+    let last = RingControls {
+        size: 7.0 / 31.0,
+        ..RingControls::default()
+    };
+    for _ in 0..2 * (XFADE as usize / HALF + 1) {
+        rv.process(&[0.0; BLOCK_SIZE], &last, 1.0, SR, &mut out);
+    }
+    assert_eq!(rv.ring().step(), 7);
+    assert!(!rv.ring().crossfading());
+}
+
+#[test]
+fn six_full_scale_parts_saturate_without_wrapping() {
+    let mut n = Noise(17);
+    let c = at(0.0, 1.0, 0.0, 1.0);
+    let (l, r) = render(
+        blocks(3.0),
+        |i| {
+            if i < SR as usize {
+                6.0 * n.next().signum()
+            } else {
+                0.0
+            }
+        },
+        |_| c,
+    );
+    assert!(
+        l.iter()
+            .chain(&r)
+            .all(|s| s.is_finite() && s.abs() <= 12.0 * WET_GAIN)
+    );
+    let w = SR as usize / 2;
+    let (first, last) = (energy(&l[SR as usize..][..w]), energy(&l[l.len() - w..]));
+    assert!(last < first, "{first} → {last}");
+}
+
+#[test]
+fn nan_and_out_of_range_controls_render_finite() {
+    let wild = [
+        at(f32::NAN, f32::NAN, f32::NAN, f32::NAN),
+        at(-3.0, 9.0, -1.0, 7.0),
+        at(
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+        ),
+    ];
+    for c in wild {
+        let mut n = Noise(11);
+        let (l, r) = render(
+            blocks(1.0),
+            |_| n.next(),
+            |b| {
+                if b % 50 < 25 {
+                    c
+                } else {
+                    RingControls::default()
+                }
+            },
+        );
+        assert!(
+            l.iter()
+                .chain(&r)
+                .all(|s| s.is_finite() && s.abs() <= 12.0 * WET_GAIN),
+            "{c:?}"
+        );
+        assert!(
+            energy(&l[l.len() - 1_000..]) > 0.0,
+            "{c:?}: the reverb went dead"
+        );
+    }
+}
+
+#[test]
+fn runs_at_44_1_khz() {
+    let mut rv = Box::new(RingReverb::new());
+    let mut n = Noise(13);
+    let c = at(0.0, 0.5, 0.3, 1.0);
+    let mut out = Stereo::SILENT;
+    let (mut first, mut last) = (0.0, 0.0);
+    let second = 44_100 / BLOCK_SIZE;
+    for b in 0..4 * second {
+        let send = core::array::from_fn(|_| if b < second { n.next() } else { 0.0 });
+        rv.process(&send, &c, 1.0, 44_100, &mut out);
+        assert!(out.l.iter().chain(&out.r).all(|s| s.is_finite()));
+        let e = energy(&out.l) + energy(&out.r);
+        if b == second + 5 {
+            first = e;
+        }
+        last = e;
+    }
+    assert!(last < first * 1e-3, "{first} → {last}");
 }

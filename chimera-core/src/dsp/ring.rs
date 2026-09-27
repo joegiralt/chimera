@@ -3,8 +3,12 @@
 //! loops (2 x AP + 1 delay), outputs from delay taps", each loop feeding the
 //! next. Half rate, stored as i16 (FX diet spec § Reverb, ADR 0028).
 
+use crate::dsp::Stereo;
 use crate::dsp::algo::math::exp2;
+use crate::dsp::halfband::{Decimator, HALF, Interpolator};
+use chimera_hal::BLOCK_SIZE;
 use core::f32::consts::{LOG2_10, LOG2_E, PI};
+use core::mem::MaybeUninit;
 
 pub const STAGES: usize = 4;
 /// Per stage: allpass 1, allpass 2, delay.
@@ -26,6 +30,10 @@ pub const FULL_SCALE: f32 = 16_384.0;
 /// Ring samples a SIZE step's crossfade lasts (30 ms at 24 kHz).
 pub const XFADE: u16 = 720;
 pub const MAX_GAIN: f32 = 0.97;
+
+/// The return's gain: its RMS at default settings matches the old plate's
+/// at the same MIX, within 1 dB (tested against the plate's recorded RMS).
+pub const WET_GAIN: f32 = 4.54;
 
 const fn offsets() -> [usize; LINES] {
     let mut o = [0; LINES];
@@ -187,8 +195,17 @@ impl Grid {
     /// `x` (in LSBs) rounded to the nearest grid point, and that to the
     /// nearest LSB, both ties away from zero; saturates at the i16 range.
     #[inline(always)]
-    pub fn q(self, x: f32) -> i16 {
+    pub fn q_round(self, x: f32) -> i16 {
         rnd(rnd(x * self.inv) as f32 * self.delta).clamp(i16::MIN as i32, i16::MAX as i32) as i16
+    }
+
+    /// `x` (in LSBs) truncated toward zero onto the grid, then onto the
+    /// LSB; saturates at the i16 range. The allpass states use it: rounding
+    /// there sustains a deadband tail.
+    #[inline(always)]
+    pub fn q_trunc(self, x: f32) -> i16 {
+        (((x * self.inv) as i32 as f32 * self.delta) as i32).clamp(i16::MIN as i32, i16::MAX as i32)
+            as i16
     }
 }
 
@@ -197,4 +214,353 @@ impl Grid {
 #[inline(always)]
 fn rnd(x: f32) -> i32 {
     (x + if x < 0.0 { -0.5 } else { 0.5 }) as i32
+}
+
+/// One block's settings for the ring; the gains and DAMP ramp from
+/// `*_from` to `*_to` across it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RingBlock {
+    pub gains_from: [f32; STAGES],
+    pub gains_to: [f32; STAGES],
+    pub damp_from: f32,
+    pub damp_to: f32,
+    pub grid: Grid,
+}
+
+pub struct Ring {
+    lines: [i16; RING_LEN],
+    pos: [u16; LINES],
+    lp: [f32; STAGES],
+    step: u8,
+    from: u8,
+    xf: u16,
+}
+
+crate::in_place::field_list!(Ring => Ring { lines, pos, lp, step, from, xf });
+
+impl Ring {
+    pub fn new() -> Self {
+        Self {
+            lines: [0; RING_LEN],
+            pos: [0; LINES],
+            lp: [0.0; STAGES],
+            step: 0,
+            from: 0,
+            xf: 0,
+        }
+    }
+
+    pub fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
+        // SAFETY: every field is an integer or float array or an integer,
+        // valid as zero bytes; zero is exactly `new()`'s state.
+        unsafe {
+            slot.as_mut_ptr().write_bytes(0, 1);
+            slot.assume_init_mut()
+        }
+    }
+
+    /// The SIZE step the lines read at (a crossfade's target).
+    pub fn step(&self) -> u8 {
+        self.step
+    }
+
+    pub fn crossfading(&self) -> bool {
+        self.xf > 0
+    }
+
+    /// Ask for SIZE `step`: a crossfade starts unless one is running; a
+    /// request during one waits for the first call after it ends.
+    pub fn request(&mut self, step: u8) {
+        let step = step.min(SIZE_STEPS as u8 - 1);
+        if self.xf == 0 && step != self.step {
+            (self.from, self.step, self.xf) = (self.step, step, XFADE);
+        }
+    }
+
+    /// Jump to `step` with no crossfade: only before anything sounds.
+    pub fn snap(&mut self, step: u8) {
+        let step = step.min(SIZE_STEPS as u8 - 1);
+        (self.from, self.step, self.xf) = (step, step, 0);
+    }
+
+    pub fn lines(&self) -> &[i16; RING_LEN] {
+        &self.lines
+    }
+
+    pub fn damp_state(&self) -> [f32; STAGES] {
+        self.lp
+    }
+
+    /// Nothing stored anywhere: the ring stays silent without input.
+    pub fn is_silent(&self) -> bool {
+        self.lp.iter().all(|&s| s == 0.0) && self.lines.iter().all(|&s| s == 0)
+    }
+
+    /// `u` is the decimated send (1.0 full scale); `l` and `r` get the tap
+    /// sums in LSBs.
+    pub fn process(
+        &mut self,
+        u: &[f32; HALF],
+        blk: &RingBlock,
+        l: &mut [f32; HALF],
+        r: &mut [f32; HALF],
+    ) {
+        if self.xf > 0 {
+            self.run::<true>(u, blk, l, r);
+        } else {
+            self.run::<false>(u, blk, l, r);
+        }
+    }
+
+    #[inline(always)]
+    fn at(&self, j: usize, d: u16) -> f32 {
+        let (p, d, cap) = (self.pos[j] as usize, d as usize, BASE[j] as usize + 1);
+        let i = if p >= d { p - d } else { p + cap - d };
+        self.lines[OFFSET[j] + i] as f32
+    }
+
+    /// Line `j` at delay `new`, or mid-crossfade blended from `old` by `w`.
+    #[inline(always)]
+    fn read<const XF: bool>(&self, j: usize, new: u16, old: u16, w: f32) -> f32 {
+        let b = self.at(j, new);
+        if XF {
+            let a = self.at(j, old);
+            a + w * (b - a)
+        } else {
+            b
+        }
+    }
+
+    #[inline(always)]
+    fn write(&mut self, j: usize, v: i16) {
+        let p = self.pos[j] as usize;
+        self.lines[OFFSET[j] + p] = v;
+        self.pos[j] = if p == BASE[j] as usize {
+            0
+        } else {
+            p as u16 + 1
+        };
+    }
+
+    fn run<const XF: bool>(
+        &mut self,
+        u: &[f32; HALF],
+        blk: &RingBlock,
+        l: &mut [f32; HALF],
+        r: &mut [f32; HALF],
+    ) {
+        let new = SIZE_TABLE[self.step as usize];
+        let old = SIZE_TABLE[self.from as usize];
+        let tap = |t: &[u16; LINES], s: usize, i: usize| -> u16 {
+            let (k, frac, _) = TAPS[s][i];
+            (frac * t[3 * k + 2] as f32) as u16
+        };
+        let taps_new: [[u16; 3]; 2] =
+            core::array::from_fn(|s| core::array::from_fn(|i| tap(&new, s, i)));
+        let taps_old: [[u16; 3]; 2] =
+            core::array::from_fn(|s| core::array::from_fn(|i| tap(&old, s, i)));
+        let n = HALF as f32;
+        let dg: [f32; STAGES] = core::array::from_fn(|k| (blk.gains_to[k] - blk.gains_from[k]) / n);
+        let da = (blk.damp_to - blk.damp_from) / n;
+        let mut g = blk.gains_from;
+        let mut a = blk.damp_from;
+        let grid = blk.grid;
+        for i in 0..HALF {
+            let w = if XF {
+                let w = 1.0 - self.xf as f32 / XFADE as f32;
+                self.xf = self.xf.saturating_sub(1);
+                w
+            } else {
+                1.0
+            };
+            let mut out = [0.0f32; STAGES];
+            for k in 0..STAGES {
+                let j = 3 * k + 2;
+                let d = self.read::<XF>(j, new[j], old[j], w);
+                self.lp[k] = grid.q_round(self.lp[k] + a * (d - self.lp[k])) as f32;
+                out[k] = g[k] * self.lp[k];
+            }
+            let mut side = [0.0f32; 2];
+            for (s, acc) in side.iter_mut().enumerate() {
+                for (t, &(k, _, sign)) in TAPS[s].iter().enumerate() {
+                    *acc += sign * self.read::<XF>(3 * k + 2, taps_new[s][t], taps_old[s][t], w);
+                }
+            }
+            (l[i], r[i]) = (side[0], side[1]);
+            let inj = u[i] * (0.5 * FULL_SCALE);
+            for k in 0..STAGES {
+                let mut x = out[(k + STAGES - 1) % STAGES];
+                if k == 0 {
+                    x += inj;
+                } else if k == 2 {
+                    x -= inj;
+                }
+                for (m, &c) in AP_COEF[k].iter().enumerate() {
+                    let j = 3 * k + m;
+                    let vd = self.read::<XF>(j, new[j], old[j], w);
+                    let vq = grid.q_trunc(x + c * vd);
+                    self.write(j, vq);
+                    x = vd - c * vq as f32;
+                }
+                self.write(3 * k + 2, grid.q_round(x));
+            }
+            for k in 0..STAGES {
+                g[k] += dg[k];
+            }
+            a += da;
+        }
+    }
+}
+
+impl Default for Ring {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// The reverb's four controls, each 0..1.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RingControls {
+    pub grit: f32,
+    pub time: f32,
+    pub damp: f32,
+    pub size: f32,
+}
+
+impl Default for RingControls {
+    fn default() -> Self {
+        Self {
+            grit: 0.3,
+            time: 0.5,
+            damp: 0.3,
+            size: 0.5,
+        }
+    }
+}
+
+impl RingControls {
+    /// Each control clamped to 0..1; NaN reads as its default.
+    pub fn sanitised(self) -> Self {
+        let d = Self::default();
+        let f = |v: f32, d: f32| if v.is_nan() { d } else { v.clamp(0.0, 1.0) };
+        Self {
+            grit: f(self.grit, d.grit),
+            time: f(self.time, d.time),
+            damp: f(self.damp, d.damp),
+            size: f(self.size, d.size),
+        }
+    }
+}
+
+/// One-pole smoothing time constants, in seconds.
+const TIME_TAU: f32 = 0.050;
+const DAMP_TAU: f32 = 0.020;
+const GRIT_TAU: f32 = 0.020;
+
+/// A once-per-block one-pole's coefficient for time constant `tau`.
+fn smoothing(tau: f32, sample_rate: u32) -> f32 {
+    1.0 - exp2(-(BLOCK_SIZE as f32) / (tau * sample_rate as f32) * LOG2_E)
+}
+
+/// The ring with its rate change and smoothing: what the FX bus runs.
+pub struct RingReverb {
+    ring: Ring,
+    dec: Decimator,
+    up_l: Interpolator,
+    up_r: Interpolator,
+    /// Smoothed TIME, DAMP and GRIT.
+    time: f32,
+    damp: f32,
+    grit: f32,
+    /// Last block's gains and DAMP coefficient: this block's ramp start.
+    gains: [f32; STAGES],
+    damp_coef: f32,
+    primed: bool,
+}
+
+crate::in_place::field_list!(RingReverb => RingReverb { ring, dec, up_l, up_r, time, damp, grit, gains, damp_coef, primed });
+
+impl RingReverb {
+    pub fn new() -> Self {
+        Self {
+            ring: Ring::new(),
+            dec: Decimator::new(),
+            up_l: Interpolator::new(),
+            up_r: Interpolator::new(),
+            time: 0.0,
+            damp: 0.0,
+            grit: 0.0,
+            gains: [0.0; STAGES],
+            damp_coef: 0.0,
+            primed: false,
+        }
+    }
+
+    pub fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
+        // SAFETY: every field is an integer or float array, a float, an
+        // integer or a `bool` (`false`), all valid as zero bytes; zero is
+        // exactly `new()`'s state.
+        unsafe {
+            slot.as_mut_ptr().write_bytes(0, 1);
+            slot.assume_init_mut()
+        }
+    }
+
+    pub fn ring(&self) -> &Ring {
+        &self.ring
+    }
+
+    /// Wet only: the ring's return × `WET_GAIN` × `mix`, into `out`.
+    pub fn process(
+        &mut self,
+        send: &[f32; BLOCK_SIZE],
+        ctl: &RingControls,
+        mix: f32,
+        sample_rate: u32,
+        out: &mut Stereo,
+    ) {
+        let ctl = ctl.sanitised();
+        let fs = sample_rate as f32 * 0.5;
+        let step = size_step(ctl.size);
+        if self.primed {
+            let k = |tau| smoothing(tau, sample_rate);
+            self.time += k(TIME_TAU) * (ctl.time - self.time);
+            self.damp += k(DAMP_TAU) * (ctl.damp - self.damp);
+            self.grit += k(GRIT_TAU) * (ctl.grit - self.grit);
+            self.ring.request(step);
+        } else {
+            (self.time, self.damp, self.grit) = (ctl.time, ctl.damp, ctl.grit);
+            self.ring.snap(step);
+        }
+        let now = self.ring.step();
+        let gains = stage_gains(rt60(self.time, now, fs), now, fs);
+        let damp = damp_coef(self.damp, fs);
+        if !self.primed {
+            (self.gains, self.damp_coef, self.primed) = (gains, damp, true);
+        }
+        let blk = RingBlock {
+            gains_from: self.gains,
+            gains_to: gains,
+            damp_from: self.damp_coef,
+            damp_to: damp,
+            grid: Grid::new(self.grit),
+        };
+        (self.gains, self.damp_coef) = (gains, damp);
+        let mut u = [0.0f32; HALF];
+        self.dec.process(send, &mut u);
+        let (mut l, mut r) = ([0.0f32; HALF], [0.0f32; HALF]);
+        self.ring.process(&u, &blk, &mut l, &mut r);
+        self.up_l.process(&l, &mut out.l);
+        self.up_r.process(&r, &mut out.r);
+        let gain = WET_GAIN * mix / FULL_SCALE;
+        for s in out.l.iter_mut().chain(out.r.iter_mut()) {
+            *s *= gain;
+        }
+    }
+}
+
+impl Default for RingReverb {
+    fn default() -> Self {
+        Self::new()
+    }
 }

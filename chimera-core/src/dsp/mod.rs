@@ -63,6 +63,20 @@ pub fn sin_turns(phase: f32) -> f32 {
     -(y + 0.224 * (y * y.abs() - y))
 }
 
+/// One block per side.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Stereo {
+    pub l: [f32; chimera_hal::BLOCK_SIZE],
+    pub r: [f32; chimera_hal::BLOCK_SIZE],
+}
+
+impl Stereo {
+    pub const SILENT: Self = Self {
+        l: [0.0; chimera_hal::BLOCK_SIZE],
+        r: [0.0; chimera_hal::BLOCK_SIZE],
+    };
+}
+
 /// Fast tanh approximation using rational polynomial.
 /// Accurate to ~0.1% for |x| < 4. Clamps to ±1 beyond that.
 /// ~5 cycles on Cortex-M7 vs ~400 for libm::tanhf.
