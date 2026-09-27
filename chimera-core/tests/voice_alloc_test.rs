@@ -6,7 +6,7 @@ use chimera_core::part::PartMode::{self, Mono, Poly};
 use chimera_core::voice_alloc::{Alloc, Allocator};
 
 const BUDGET: SampleBudget = SampleBudget::for_cpu(CPU_HZ_REV_V);
-const FM: Cost = Cost(610);
+const NOTE_COST: Cost = Cost(610);
 const NONE: Cost = Cost::ZERO;
 
 fn n(v: u8) -> MidiNote {
@@ -14,7 +14,7 @@ fn n(v: u8) -> MidiNote {
 }
 
 fn on(a: &mut Allocator, part: u8, mode: PartMode, note: u8) -> Alloc {
-    a.note_on(part, mode, n(note), FM, NONE)
+    a.note_on(part, mode, n(note), NOTE_COST, NONE)
 }
 
 fn voice(r: Alloc) -> usize {

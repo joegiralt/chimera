@@ -94,6 +94,27 @@ fn the_morph_showcases_morph() {
     assert_ne!(pad.mod_state.amount(1, 0), 0, "the LFO moves MORPH");
 }
 
+/// #33: the LFO's full swing must not push MORPH past its 0..=127 range —
+/// that clips the sweep flat at one end for a stretch of every cycle.
+#[test]
+fn morph_pad_lfo_sweep_stays_inside_morph_range() {
+    use chimera_core::dsp::lfo::Lfo;
+    use chimera_core::modulation::MAX_MOD_SOURCES;
+
+    let s = factory_sound(6).unwrap();
+    assert_eq!(s.name_str(), "MORPH PAD");
+    let base = s.params.algo.morph as f32;
+    let mut lfo = Lfo::new();
+    let period = (chimera_hal::SAMPLE_RATE as f32 / s.params.lfo.rate).ceil() as usize;
+    for _ in 0..period {
+        let mut sources = [0.0f32; MAX_MOD_SOURCES];
+        sources[1] = lfo.process(&s.params.lfo, chimera_hal::SAMPLE_RATE);
+        let off = s.mod_state.sum_for(0, &sources);
+        let morph = base + off * 127.0; // MORPH's range is 0..=127
+        assert!((0.0..=127.0).contains(&morph), "morph {morph} clips");
+    }
+}
+
 #[test]
 fn tx_epiano_bark_survives_the_filter() {
     let s = factory_sound(1).unwrap();

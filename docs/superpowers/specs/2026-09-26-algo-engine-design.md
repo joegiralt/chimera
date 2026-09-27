@@ -147,10 +147,8 @@ An `Algorithm` is a const table, `mods: [u8; 6]`, a bitmask per operator of whic
 ### Plan and morph
 
 - `plan(a, b) -> EvalPlan` is pure and cached per (A, B). `EvalPlan` is a fixed-size struct holding at most 15 edges, an order of 6, and delay flags. It lives in the voice. Because every table follows the higher-modulates-lower convention, the union of any two tables has no backward link, so one plan (order 6→1) covers the whole morph. The delay rule below exists for future custom algorithms.
-- **Order:**
-  - At `MORPH == 0` the engine uses A's own topological order. At `MORPH == 1` it uses B's.
-  - Strictly between, it uses the union graph's order. A link that runs backwards in that order reads the previous sample.
-  - So each endpoint renders exactly as that algorithm alone.
+- **Order:** the union graph's topological order runs across the whole morph — MORPH 0, MORPH 1 and everywhere between use the same one, not a separate order per end. A link that runs backwards in that order reads the previous sample.
+  - At either endpoint the other table's links carry weight 0, so that end still renders exactly as that algorithm alone, just evaluated in the union's order.
   - Entering or leaving an endpoint changes the plan only when the weight of the delayed edges is 0 on both sides of the switch, so it is continuous by construction.
 - **Blend:** edge weight `w = (1−m)·A + m·B` for each edge. Carrier gains blend the same way.
 - **Carrier normalisation:** the output is `Σ(gain·out) / sqrt(max(1, Σ gain))`. That gives constant loudness across algorithms with different carrier counts, and it's smooth through a morph.
@@ -204,7 +202,7 @@ The operator tables for one voice's working set fit the 16 KB D-cache only if a 
 | ALGO | ALG A, ALG B, MORPH, transpose |
 
 - The viz band shows the live output, as the existing CellGrid pages do. ALGO shows the A and B diagrams blended by MORPH.
-- **Map:** the Algo chain has 3 top-level blocks, `OSC · ALG · (chain…)`, with WAVE, COARSE, FINE, LEVEL, ENV and FEEDBACK as OSC's sub-pages.
+- **Map:** the Algo chain has 3 top-level blocks, `ALG · OSC · (chain…)`, with WAVE, COARSE, FINE, LEVEL, ENV and FEEDBACK as OSC's sub-pages.
 - **Sub-page navigation must reach every sub-page.** The map shows the current sub-page and its neighbours, scrolling. The existing two-row sub-page rendering gains scrolling if it lacks it. Map nodes must not overlap; a screen-golden test checks this.
 - `FocusMemory` gets room for the new pages.
 - Gang edit (MINUS+turn), SCALING and the per-operator detail pages are sub-project 4.
