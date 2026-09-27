@@ -26,8 +26,9 @@ enum Fx {
     Reverb(ReverbParams),
 }
 
-fn cases() -> [(&'static str, Fx); 5] {
-    let reverb = |size: f32| ReverbParams {
+fn cases() -> [(&'static str, Fx); 6] {
+    let reverb = |grit: f32, size: f32| ReverbParams {
+        grit,
         time: 0.7,
         damping: 0.3,
         size,
@@ -61,8 +62,9 @@ fn cases() -> [(&'static str, Fx); 5] {
                 ..DelayParams::default()
             }),
         ),
-        ("reverb_ring", Fx::Reverb(reverb(0.5))),
-        ("reverb_ring_max_size", Fx::Reverb(reverb(1.0))),
+        ("reverb_ring", Fx::Reverb(reverb(0.3, 0.5))),
+        ("reverb_ring_max_size", Fx::Reverb(reverb(0.3, 1.0))),
+        ("reverb_ring_full_grit", Fx::Reverb(reverb(1.0, 0.5))),
     ]
 }
 
@@ -123,6 +125,7 @@ const PENDING: &[&str] = &[
     "chorus_both",
     "reverb_ring",
     "reverb_ring_max_size",
+    "reverb_ring_full_grit",
 ];
 
 #[test]
