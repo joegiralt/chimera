@@ -138,8 +138,14 @@ const PAD: f32 = 0.3;
 /// DRIVE's span in octaves of gain, bent by d·(2 − d) so DRIVE ½ is ¾ of it.
 const DRIVE_OCT: f32 = 1.9;
 
+/// Above DRIVE ½, h = DRIVE − ½ adds h·(0.8 + 1.2·h) octaves: 0.7 at 1,
+/// driven hot.
+const HOT_A: f32 = 0.8;
+const HOT_B: f32 = 1.2;
+
 fn drive_oct(drive: f32) -> f32 {
-    DRIVE_OCT * drive * (2.0 - drive)
+    let hot = (drive - 0.5).max(0.0);
+    DRIVE_OCT * drive * (2.0 - drive) + hot * (HOT_A + HOT_B * hot)
 }
 
 /// Saturator input gain.
