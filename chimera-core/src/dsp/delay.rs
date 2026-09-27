@@ -24,6 +24,9 @@ pub struct DelayParams {
     pub tone: f32,
     /// Dry/wet mix (0..1)
     pub mix: f32,
+    /// The delay's return into the reverb's send (0..1): FX diet spec
+    /// § REV SEND.
+    pub rev_send: f32,
 }
 
 impl Default for DelayParams {
@@ -35,6 +38,7 @@ impl Default for DelayParams {
             saturation: 0.2,
             tone: 0.6,
             mix: 0.0, // off by default
+            rev_send: 0.0,
         }
     }
 }
@@ -52,16 +56,18 @@ impl DelayParams {
     pub const SATURATION: ParamId = ParamId(3);
     pub const TONE: ParamId = ParamId(4);
     pub const MIX: ParamId = ParamId(5);
+    pub const REV_SEND: ParamId = ParamId(6);
 }
 
 /// Delay runs outside `Voice` (desktop only): nothing is modulatable.
-pub static DELAY_SPECS: [ParamSpec; 6] = [
+pub static DELAY_SPECS: [ParamSpec; 7] = [
     ParamSpec::continuous(0, "TIME", ValFmt::Uni, 10.0, 500.0, 375.0, 8.0, false),
     ParamSpec::continuous(1, "FDBK", ValFmt::Uni, 0.0, 1.0, 0.4, 1.0 / 128.0, false),
     ParamSpec::continuous(2, "WOW", ValFmt::Uni, 0.0, 1.0, 0.15, 1.0 / 128.0, false),
     ParamSpec::continuous(3, "SAT", ValFmt::Uni, 0.0, 1.0, 0.2, 1.0 / 128.0, false),
     ParamSpec::continuous(4, "TONE", ValFmt::Uni, 0.0, 1.0, 0.6, 1.0 / 128.0, false),
     ParamSpec::continuous(5, "MIX", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false),
+    ParamSpec::continuous(6, "REV", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false),
 ];
 
 impl Block for DelayParams {
@@ -77,6 +83,7 @@ impl Block for DelayParams {
             Self::SATURATION => self.saturation,
             Self::TONE => self.tone,
             Self::MIX => self.mix,
+            Self::REV_SEND => self.rev_send,
             _ => 0.0,
         }
     }
@@ -89,6 +96,7 @@ impl Block for DelayParams {
             Self::SATURATION => self.saturation = v,
             Self::TONE => self.tone = v,
             Self::MIX => self.mix = v,
+            Self::REV_SEND => self.rev_send = v,
             _ => {}
         }
     }
@@ -182,8 +190,8 @@ impl TapeDelay {
                 self.flutter_phase -= 1.0;
             }
 
-            let wow = libm::sinf(self.wow_phase * 2.0 * core::f32::consts::PI);
-            let flutter = libm::sinf(self.flutter_phase * 2.0 * core::f32::consts::PI);
+            let wow = crate::dsp::sin_turns(self.wow_phase);
+            let flutter = crate::dsp::sin_turns(self.flutter_phase);
             let mod_amount = params.wow_flutter * 20.0; // up to ±20 samples modulation
             let delay = base_delay + wow * mod_amount * 0.7 + flutter * mod_amount * 0.3;
             let delay = delay.clamp(1.0, (MAX_DELAY_SAMPLES - 2) as f32);
@@ -191,8 +199,16 @@ impl TapeDelay {
             // Interpolated read from delay line
             let d_int = delay as usize;
             let d_frac = delay - d_int as f32;
-            let pos_a = (self.write_pos + MAX_DELAY_SAMPLES - d_int) % MAX_DELAY_SAMPLES;
-            let pos_b = (self.write_pos + MAX_DELAY_SAMPLES - d_int - 1) % MAX_DELAY_SAMPLES;
+            let pos_a = if self.write_pos >= d_int {
+                self.write_pos - d_int
+            } else {
+                self.write_pos + MAX_DELAY_SAMPLES - d_int
+            };
+            let pos_b = if pos_a == 0 {
+                MAX_DELAY_SAMPLES - 1
+            } else {
+                pos_a - 1
+            };
             let delayed = self.buffer[pos_a] * (1.0 - d_frac) + self.buffer[pos_b] * d_frac;
 
             // Tone: one-pole LP in feedback path (tape loses highs each pass)
@@ -209,7 +225,10 @@ impl TapeDelay {
 
             // Write: input + feedback
             self.buffer[self.write_pos] = dry + saturated * params.feedback;
-            self.write_pos = (self.write_pos + 1) % MAX_DELAY_SAMPLES;
+            self.write_pos += 1;
+            if self.write_pos == MAX_DELAY_SAMPLES {
+                self.write_pos = 0;
+            }
 
             // Mix
             *s = dry * dry_gain + delayed * params.mix;

@@ -11,6 +11,7 @@ pub mod factory;
 pub mod hw;
 mod in_place;
 pub mod instrument;
+pub mod meter;
 pub mod mod_path;
 pub mod modulation;
 pub mod note_queue;

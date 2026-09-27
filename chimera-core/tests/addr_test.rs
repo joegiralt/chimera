@@ -44,7 +44,12 @@ fn block_and_specs_agree() {
         assert!(core::ptr::eq(blk.specs(), b.specs()), "{b:?}");
         let not_in_sound = matches!(
             b,
-            BlockRef::Chorus | BlockRef::Delay | BlockRef::Reverb | BlockRef::Part
+            BlockRef::Chorus
+                | BlockRef::Delay
+                | BlockRef::Reverb
+                | BlockRef::Tape
+                | BlockRef::Comp
+                | BlockRef::Part
         );
         assert_eq!(
             ParamSnapshot::default().block(b).is_some(),

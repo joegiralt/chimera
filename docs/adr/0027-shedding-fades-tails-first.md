@@ -1,6 +1,6 @@
 # 0027. Shedding fades, and takes tails before held notes
 
-- **Status:** Proposed (2026-09-27); extends [0015](0015-voice-steal-and-fx-returns.md); supersedes in part [0026](0026-algo-voices-billed-by-patch-shape.md) (its "steals the oldest held voice; it never goes over" clause, and its "four is the floor", which holds on rev V only: rev Y gets two, pending the owner's sign-off)
+- **Status:** Proposed (2026-09-27); extends [0015](0015-voice-steal-and-fx-returns.md); supersedes in part [0026](0026-algo-voices-billed-by-patch-shape.md) (its "steals the oldest held voice; it never goes over" clause, and its "four is the floor", which holds on rev V only: rev Y gets two, pending the owner's sign-off); "rev Y gets two" superseded by [0031](0031-six-voices-on-rev-v.md)
 - **Deciders:** project owner
 
 ## Context

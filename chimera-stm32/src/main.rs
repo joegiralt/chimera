@@ -37,6 +37,22 @@ unsafe fn before_main() {
     }
 }
 
+/// Flush-to-zero and default NaN, in this context (FPSCR) and in every
+/// exception's (FPDSCR, which the audio ISR starts from; it resets to
+/// 0). Tails decaying toward silence then never go denormal, whose
+/// arithmetic the host would not match anyway.
+fn fp_flush_to_zero(fpu: &mut cortex_m::peripheral::FPU) {
+    const FZ_DN: u32 = 1 << 24 | 1 << 25;
+    // SAFETY: sets only FZ and DN; nothing here depends on denormals or on
+    // NaN payloads, and no interrupt has started yet.
+    unsafe {
+        fpu.fpdscr.modify(|v| v | FZ_DN);
+        cortex_m::register::fpscr::write(cortex_m::register::fpscr::Fpscr::from_bits(
+            cortex_m::register::fpscr::read().bits() | FZ_DN,
+        ));
+    }
+}
+
 #[exception]
 fn SysTick() {
     controls::isr_tick();
@@ -46,6 +62,7 @@ fn SysTick() {
 fn main() -> ! {
     probe::paint_stack();
     let mut cp = cortex_m::Peripherals::take().unwrap();
+    fp_flush_to_zero(&mut cp.FPU);
     let dp = pac::Peripherals::take().unwrap();
 
     cache::enable_d2_sram();

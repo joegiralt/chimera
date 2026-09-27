@@ -2,10 +2,12 @@ use crate::addr::{BlockRef, Op};
 use crate::block::ParamId;
 use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::chorus::ChorusParams;
+use crate::dsp::comp::CompParams;
 use crate::dsp::delay::DelayParams;
 use crate::dsp::lfo::LfoParams;
 use crate::dsp::modal::ModalParams;
 use crate::dsp::reverb::ReverbParams;
+use crate::dsp::tape::TapeParams;
 use crate::params::{DriveParams, EnvParams, FilterParams, FolderParams, OutParams};
 use crate::part::PartParams;
 use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2, ParamSlot, VizType};
@@ -199,11 +201,11 @@ pub static ENV_AUX: BlockDef = BlockDef {
 pub static EFX: BlockDef = BlockDef {
     id: 16,
     name: "Reverb",
-    short: "EFX",
+    short: "REV",
     layout: PageLayout::CellGrid,
     viz: VizType::EffectsFlow,
     params: [
-        ParamSlot::param(BlockRef::Reverb, ReverbParams::REVERB_TYPE),
+        ParamSlot::param(BlockRef::Reverb, ReverbParams::GRIT),
         ParamSlot::param(BlockRef::Reverb, ReverbParams::TIME),
         ParamSlot::param(BlockRef::Reverb, ReverbParams::DAMPING),
         ParamSlot::param(BlockRef::Reverb, ReverbParams::SIZE),
@@ -253,10 +255,47 @@ pub static DELAY: BlockDef = BlockDef {
     params: [
         ParamSlot::param(BlockRef::Delay, DelayParams::TIME_MS),
         ParamSlot::param(BlockRef::Delay, DelayParams::FEEDBACK),
+        ParamSlot::param(BlockRef::Delay, DelayParams::TONE),
+        ParamSlot::param(BlockRef::Delay, DelayParams::REV_SEND),
+        ParamSlot::param(BlockRef::Delay, DelayParams::MIX),
+        EMPTY,
+    ],
+};
+
+/// DLY › CHAR: the tape character, off the delay's main page (FX diet spec
+/// § UI; an assumed default, pending the owner's word).
+pub static DELAY_CHAR: BlockDef = BlockDef {
+    id: 56,
+    name: "Delay Char",
+    short: "CHAR",
+    layout: PageLayout::CellGrid,
+    viz: VizType::EffectsFlow,
+    params: [
         ParamSlot::param(BlockRef::Delay, DelayParams::WOW_FLUTTER),
         ParamSlot::param(BlockRef::Delay, DelayParams::SATURATION),
-        ParamSlot::param(BlockRef::Delay, DelayParams::TONE),
-        ParamSlot::param(BlockRef::Delay, DelayParams::MIX),
+        EMPTY,
+        EMPTY,
+        EMPTY,
+        EMPTY,
+    ],
+};
+
+static DELAY_SUB_PAGES: [&BlockDef; 1] = [&DELAY_CHAR];
+
+/// Tape on DAC pair 1 (FX diet spec § Tape).
+pub static TAPE: BlockDef = BlockDef {
+    id: 57,
+    name: "Tape",
+    short: "TAPE",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::param(BlockRef::Tape, TapeParams::DRIVE),
+        ParamSlot::param(BlockRef::Tape, TapeParams::TONE),
+        ParamSlot::param(BlockRef::Tape, TapeParams::WOW),
+        ParamSlot::param(BlockRef::Tape, TapeParams::MIX),
+        EMPTY,
+        EMPTY,
     ],
 };
 
@@ -267,6 +306,24 @@ pub static MASTER: BlockDef = BlockDef {
     layout: PageLayout::BigViz,
     viz: VizType::CompressorCurve,
     params: [
+        ParamSlot::param(BlockRef::Comp, CompParams::THRESH),
+        ParamSlot::param(BlockRef::Comp, CompParams::RATIO),
+        ParamSlot::param(BlockRef::Comp, CompParams::ATTACK),
+        ParamSlot::param(BlockRef::Comp, CompParams::RELEASE),
+        ParamSlot::param(BlockRef::Comp, CompParams::MAKEUP),
+        ParamSlot::param(BlockRef::Comp, CompParams::MIX),
+    ],
+};
+
+/// MST › LEVEL: the legacy VOL and PAN, off the compressor's page (FX diet
+/// spec § UI; an assumed default, pending the owner's word).
+pub static MASTER_LEVEL: BlockDef = BlockDef {
+    id: 58,
+    name: "Level",
+    short: "LVL",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
         ParamSlot::legacy("VOL", ValFmt::Uni),
         ParamSlot::legacy("PAN", ValFmt::Bi),
         EMPTY,
@@ -275,6 +332,8 @@ pub static MASTER: BlockDef = BlockDef {
         EMPTY,
     ],
 };
+
+static MASTER_SUB_PAGES: [&BlockDef; 1] = [&MASTER_LEVEL];
 
 // ---------------------------------------------------------------------------
 // Noise (new — not in current PageId)
@@ -471,7 +530,7 @@ pub static ALGO_CHAIN: ChainDef2 = ChainDef2 {
     mod_sources: &PART_MOD_SOURCES,
 };
 
-static MIX_BLOCKS: [ChainBlock; 5] = [
+static MIX_BLOCKS: [ChainBlock; 6] = [
     ChainBlock {
         def: &MIXER,
         sub_pages: &[],
@@ -482,15 +541,19 @@ static MIX_BLOCKS: [ChainBlock; 5] = [
     },
     ChainBlock {
         def: &DELAY,
-        sub_pages: &[],
+        sub_pages: &DELAY_SUB_PAGES,
     },
     ChainBlock {
         def: &EFX,
         sub_pages: &[],
     },
     ChainBlock {
-        def: &MASTER,
+        def: &TAPE,
         sub_pages: &[],
+    },
+    ChainBlock {
+        def: &MASTER,
+        sub_pages: &MASTER_SUB_PAGES,
     },
 ];
 
@@ -591,7 +654,7 @@ pub static SENDS: BlockDef = BlockDef {
 };
 
 /// MIX + B<n>: Part n's mix settings, then the shared FX (spec § UI).
-static MIXER_CHANNEL_BLOCKS: [ChainBlock; 5] = [
+static MIXER_CHANNEL_BLOCKS: [ChainBlock; 7] = [
     ChainBlock {
         def: &PART,
         sub_pages: &[],
@@ -606,11 +669,19 @@ static MIXER_CHANNEL_BLOCKS: [ChainBlock; 5] = [
     },
     ChainBlock {
         def: &DELAY,
-        sub_pages: &[],
+        sub_pages: &DELAY_SUB_PAGES,
     },
     ChainBlock {
         def: &EFX,
         sub_pages: &[],
+    },
+    ChainBlock {
+        def: &TAPE,
+        sub_pages: &[],
+    },
+    ChainBlock {
+        def: &MASTER,
+        sub_pages: &MASTER_SUB_PAGES,
     },
 ];
 

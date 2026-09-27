@@ -4,9 +4,12 @@
 
 mod common;
 
-use chimera_core::dsp::fx_bus::FxBus;
-use chimera_core::hw::DAC_PAIRS;
-use chimera_core::instrument::{AudioShared, DacOut, Instrument, pan_gains};
+use chimera_core::dsp::Stereo;
+use chimera_core::dsp::chorus::ChorusParams;
+use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus};
+use chimera_core::dsp::ring::{first_reflection, size_step};
+use chimera_core::hw::{DAC_PAIRS, MAX_PARTS};
+use chimera_core::instrument::{AudioShared, DacOut, Instrument, PanCache, mix_parts, pan_gains};
 use chimera_core::modulation::ModState;
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::{EngineType, ParamSnapshot};
@@ -18,7 +21,12 @@ use common::fnv1a;
 
 use chimera_core::hw::{CPU_HZ_REV_V, SampleBudget};
 
-const BUDGET: SampleBudget = SampleBudget::for_cpu(CPU_HZ_REV_V);
+/// The voices' share before the FX diet (7,000 − 3,310). After the diet
+/// nothing sheds on rev V, so the allocation, stealing and shedding tests
+/// here keep the share they were written against, whatever the bus costs.
+const VOICE_SHARE: u32 = 3_690;
+const BUDGET: SampleBudget =
+    SampleBudget::for_cpu(((FxBus::COST.0 + VOICE_SHARE) as u64 * 480_000).div_ceil(7) as u32);
 
 const SR: u32 = chimera_hal::SAMPLE_RATE;
 
@@ -116,9 +124,155 @@ fn part_bus_is_panned_and_levelled_into_its_pair() {
     );
 }
 
+/// The bench times `mix_parts` alone: it is exactly `render`'s steps 2–4.
+#[test]
+fn mix_parts_alone_is_renders_mix() {
+    let mut rig = Rig::new();
+    let mut shared = AudioShared::default();
+    shared.parts[0].mix.pan = 0.3;
+    shared.parts[0].mix.sends = [0.2, 0.3, 0.4];
+    shared.fx.delay.mix = 0.5;
+    rig.inst.handle(on(0, 60), &shared);
+    rig.render(&shared);
+    let bus = *rig.inst.part_bus(0);
+    assert!(peak(&bus) > 0.01);
+    let mut buses = [[0.0; BLOCK_SIZE]; MAX_PARTS];
+    buses[0] = bus;
+    let mut written = [false; MAX_PARTS];
+    written[0] = true;
+    let mut fx = Box::new(FxBus::new());
+    let mut sends = [[0.0; BLOCK_SIZE]; FX_SENDS];
+    let mut out: DacOut = [[1.0; BLOCK_SIZE * 2]; DAC_PAIRS];
+    let scope = mix_parts(
+        &buses,
+        &written,
+        &mut sends,
+        &mut PanCache::default(),
+        &mut fx,
+        &shared,
+        SR,
+        &mut out,
+    );
+    assert_eq!(scope, bus);
+    assert_eq!(out, rig.out);
+}
+
+/// `mix_parts` as first written: each Part added into zeroed buffers.
+fn mix_parts_reference(
+    buses: &[[f32; BLOCK_SIZE]; MAX_PARTS],
+    written: &[bool; MAX_PARTS],
+    sends: &mut [[f32; BLOCK_SIZE]; FX_SENDS],
+    fx: &mut FxBus,
+    shared: &AudioShared,
+    out: &mut DacOut,
+) -> [f32; BLOCK_SIZE] {
+    *out = [[0.0; BLOCK_SIZE * 2]; DAC_PAIRS];
+    *sends = [[0.0; BLOCK_SIZE]; FX_SENDS];
+    let mut scope = [0.0f32; BLOCK_SIZE];
+    for (p, part) in shared.parts.iter().enumerate() {
+        if !written[p] {
+            continue;
+        }
+        let bus = &buses[p];
+        let (gl, gr) = pan_gains(part.mix.pan);
+        let (gl, gr) = (gl * part.mix.level, gr * part.mix.level);
+        let pair = &mut out[part.mix.output.index()];
+        for i in 0..BLOCK_SIZE {
+            pair[2 * i] += bus[i] * gl;
+            pair[2 * i + 1] += bus[i] * gr;
+            scope[i] += bus[i];
+        }
+        for (send, &amount) in sends.iter_mut().zip(&part.mix.sends) {
+            for (s, &b) in send.iter_mut().zip(bus) {
+                *s += b * amount;
+            }
+        }
+    }
+    let mut ret = Stereo::SILENT;
+    fx.process(sends, &shared.fx, SR, &mut ret);
+    for (i, (&l, &r)) in ret.l.iter().zip(&ret.r).enumerate() {
+        out[0][2 * i] += l;
+        out[0][2 * i + 1] += r;
+    }
+    scope
+}
+
+fn bits<const N: usize>(x: &[f32; N]) -> [u32; N] {
+    x.map(f32::to_bits)
+}
+
+/// The fused mix is bit-for-bit the reference, every Part written or some,
+/// every FX on, pans moving under one `PanCache`, signed zeros on the buses.
+#[test]
+fn mix_parts_is_bit_identical_to_the_reference() {
+    let mut x = 0x9e37_79b9u32;
+    let mut rnd = move || {
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        x as f32 / u32::MAX as f32
+    };
+    let mut shared = AudioShared::default();
+    shared.fx.chorus.mode = 3;
+    shared.fx.chorus.mix = 0.5;
+    shared.fx.delay.mix = 0.5;
+    shared.fx.reverb.mix = 0.5;
+    let (mut fx, mut fx_ref) = (Box::new(FxBus::new()), Box::new(FxBus::new()));
+    let mut pans = PanCache::default();
+    let (mut sends, mut sends_ref) = ([[0.0; BLOCK_SIZE]; FX_SENDS], [[0.0; BLOCK_SIZE]; FX_SENDS]);
+    let mut out: DacOut = [[1.0; BLOCK_SIZE * 2]; DAC_PAIRS];
+    let mut out_ref: DacOut = [[0.0; BLOCK_SIZE * 2]; DAC_PAIRS];
+    let pairs = [DacPair::P1, DacPair::P2, DacPair::P3];
+    for block in 0..200 {
+        for part in shared.parts.iter_mut() {
+            // Pans hold for a few blocks, as the cache sees them.
+            if block % 4 == 0 {
+                part.mix.pan = rnd() * 2.4 - 1.2;
+            }
+            part.mix.level = rnd();
+            part.mix.sends = [rnd(), rnd(), rnd()];
+            part.mix.output = pairs[(rnd() * 3.0) as usize % 3];
+        }
+        let buses: [[f32; BLOCK_SIZE]; MAX_PARTS] = core::array::from_fn(|_| {
+            core::array::from_fn(|_| match rnd() {
+                r if r < 0.05 => -0.0,
+                r if r < 0.1 => 0.0,
+                _ => rnd() * 2.0 - 1.0,
+            })
+        });
+        let written: [bool; MAX_PARTS] = match block % 3 {
+            0 => [true; MAX_PARTS],
+            1 => core::array::from_fn(|_| rnd() < 0.5),
+            _ => [false; MAX_PARTS],
+        };
+        let scope = mix_parts(
+            &buses, &written, &mut sends, &mut pans, &mut fx, &shared, SR, &mut out,
+        );
+        let scope_ref = mix_parts_reference(
+            &buses,
+            &written,
+            &mut sends_ref,
+            &mut fx_ref,
+            &shared,
+            &mut out_ref,
+        );
+        assert_eq!(bits(&scope), bits(&scope_ref), "block {block}: scope");
+        for k in 0..DAC_PAIRS {
+            assert_eq!(bits(&out[k]), bits(&out_ref[k]), "block {block}: pair {k}");
+        }
+        for k in 0..FX_SENDS {
+            assert_eq!(
+                bits(&sends[k]),
+                bits(&sends_ref[k]),
+                "block {block}: send {k}"
+            );
+        }
+    }
+}
+
 /// Send/return: a Part on pair 3, panned hard left, with a reverb send puts
-/// no dry signal on pair 1 — pair 1 carries exactly the FX return (the same
-/// on both sides), which is silent until the plate's first reflection.
+/// no dry signal on pair 1 — pair 1 carries exactly the FX return, which is
+/// silent until its first reflection.
 #[test]
 fn fx_send_puts_no_dry_signal_on_pair_1() {
     let mut rig = Rig::new();
@@ -134,13 +288,17 @@ fn fx_send_puts_no_dry_signal_on_pair_1() {
         rig.render(&shared);
         let bus = *rig.inst.part_bus(0);
         let mut sends = [[0.0; BLOCK_SIZE], [0.0; BLOCK_SIZE], bus.map(|s| s * 0.5)];
-        let mut ret = [0.0f32; BLOCK_SIZE];
+        let mut ret = Stereo::SILENT;
         fx.process(&mut sends, &shared.fx, SR, &mut ret);
         let (l, r) = lr(&rig.out[0]);
-        assert_eq!((l, r), (ret, ret), "block {b}: pair 1 is the return only");
+        assert_eq!(
+            (l, r),
+            (ret.l, ret.r),
+            "block {b}: pair 1 is the return only"
+        );
         let (l3, r3) = lr(&rig.out[2]);
         assert_eq!(peak(&r3), 0.0, "block {b}: hard left");
-        if b < 3_411 / BLOCK_SIZE {
+        if b < first_reflection(size_step(shared.fx.reverb.size)) / BLOCK_SIZE {
             assert!(
                 b < 2 || peak(&l3) > 0.01,
                 "block {b}: the part sounds on pair 3"
@@ -149,6 +307,35 @@ fn fx_send_puts_no_dry_signal_on_pair_1() {
         }
     }
     assert!(peak(&rig.out[0]) > 1e-4, "the wet return arrived");
+}
+
+/// FX diet spec § Bus: the chorus returns stereo on pair 1, and the mono
+/// sum keeps it.
+#[test]
+fn the_chorus_returns_stereo_on_pair_1() {
+    let mut rig = Rig::new();
+    let mut shared = AudioShared::default();
+    shared.fx.chorus = ChorusParams {
+        mode: 1,
+        rate: 0.5,
+        depth: 0.5,
+        mix: 1.0,
+    };
+    shared.parts[0].mix.output = DacPair::P3;
+    shared.parts[0].mix.sends = [1.0, 0.0, 0.0];
+    rig.inst.handle(on(0, 60), &shared);
+    let (mut l, mut r) = (Vec::new(), Vec::new());
+    for _ in 0..100 {
+        rig.render(&shared);
+        let (a, b) = lr(&rig.out[0]);
+        l.extend(a);
+        r.extend(b);
+    }
+    let rms = |x: &[f32]| (x.iter().map(|s| s * s).sum::<f32>() / x.len() as f32).sqrt();
+    let mono: Vec<f32> = l.iter().zip(&r).map(|(a, b)| (a + b) / 2.0).collect();
+    assert!(rms(&l) > 1e-3, "the chorus returns");
+    assert!(l != r, "the sides differ");
+    assert!(rms(&mono) >= 0.5 * rms(&l));
 }
 
 /// Part routing by channel at dequeue; parts sharing a channel layer.
@@ -257,6 +444,17 @@ fn reverb_send(send: f32) -> Vec<f32> {
     render_perf(&perf, &[(0, 60)], 300)
 }
 
+/// ADR 0011's gate for `reverb_send_on`: finite, within ±1.0, and the
+/// reverb audible over the dry render.
+#[test]
+fn reverb_send_on_passes_the_sanity_gate() {
+    let (dry, wet) = (reverb_send(0.0), reverb_send(0.5));
+    assert!(wet.iter().all(|s| s.is_finite()));
+    assert!(peak(&wet) <= 1.0, "{}", peak(&wet));
+    let diff: Vec<f32> = wet.iter().zip(&dry).map(|(a, b)| a - b).collect();
+    assert!(peak(&diff) > 1e-3);
+}
+
 const CHORD6: [u8; 6] = [48, 55, 60, 64, 67, 72];
 
 fn factory(i: usize) -> Performance {
@@ -308,6 +506,33 @@ fn a_six_note_tx_epiano_chord_stays_in_budget() {
     assert_eq!(held, CHORD6[1..], "the oldest note, 48, was stolen");
 }
 
+#[test]
+fn the_test_budget_keeps_the_pre_diet_voice_share() {
+    assert_eq!(BUDGET.as_cost().0, FxBus::COST.0 + VOICE_SHARE);
+}
+
+/// Spec "Done when": on rev V the allocator grants the costliest patch,
+/// A16 ∪ A17, six voices.
+#[test]
+fn the_costliest_patch_plays_six_voices_on_rev_v() {
+    use chimera_core::dsp::algo::algorithms::AlgoId;
+    let mut shared = AudioShared::default();
+    let a = &mut shared.parts[0].params.algo;
+    (a.alg_a, a.alg_b, a.morph) = (AlgoId::A16.get(), AlgoId::A17.get(), 64);
+    for op in a.ops.iter_mut() {
+        (op.level, op.feedback) = (99, 7);
+    }
+    let mut rig = Rig::new();
+    *rig.inst = Instrument::new(SR, SampleBudget::for_cpu(CPU_HZ_REV_V));
+    for n in CHORD6 {
+        rig.inst.handle(on(0, n), &shared);
+    }
+    rig.render(&shared);
+    let a = rig.inst.allocator();
+    assert_eq!(a.refused(), 0);
+    assert_eq!(a.slots().iter().filter(|s| !s.is_free()).count(), 6);
+}
+
 /// Recorded when the instrument path landed (plan Task 12). Re-record only
 /// for an intended sound change:
 ///     GOLDEN_RECORD=1 cargo test -p chimera-core --test instrument_test -- --nocapture
@@ -315,7 +540,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("poly_chord", 0x508049a56f63be65), // re-recorded: the default Sound is Algo
     ("two_parts_two_pairs", 0x98262aa38f73b0af), // re-recorded: part 1 is Algo
     ("reverb_send_off", 0x74703404aa517989), // re-recorded: the default Sound is Algo
-    ("reverb_send_on", 0x3d1e63a510a959c1), // re-recorded: the default Sound is Algo
+    ("reverb_send_on", 0x051f724346259a5a), // re-recorded: the reverb ring (FX diet)
     ("six_voice_chord", 0xf6e19895e1a40915), // recorded after the Algo cost was measured
 ];
 
@@ -880,4 +1105,75 @@ fn a_steal_of_a_waiting_note_counts_it_as_refused() {
     }
     assert_eq!(peak(rig.inst.part_bus(1)), 0.0, "90 never sounds");
     assert!(peak(rig.inst.part_bus(2)) > 0.0, "70 plays");
+}
+
+/// FX diet spec § Tape: on pair 1 only, after its sum. With the tape up,
+/// pair 1 changes and pairs 2 and 3 stay bit-identical.
+#[test]
+fn the_tape_is_on_pair_1_only() {
+    let render = |mix: f32| {
+        let mut shared = AudioShared::default();
+        shared.parts[0].mix.output = DacPair::P1;
+        shared.parts[1].mix.output = DacPair::P2;
+        (shared.fx.tape.drive, shared.fx.tape.mix) = (1.0, mix);
+        let buses: [[f32; BLOCK_SIZE]; MAX_PARTS] = core::array::from_fn(|p| {
+            core::array::from_fn(|i| 0.5 * ((i + 7 * p) as f32 * 0.37).sin())
+        });
+        let written = [true, true, false, false, false, false];
+        let mut sends = [[0.0; BLOCK_SIZE]; FX_SENDS];
+        let mut pans = PanCache::default();
+        let mut fx = Box::new(FxBus::new());
+        let mut out: DacOut = [[0.0; BLOCK_SIZE * 2]; DAC_PAIRS];
+        let mut blocks = Vec::new();
+        for _ in 0..32 {
+            mix_parts(
+                &buses, &written, &mut sends, &mut pans, &mut fx, &shared, SR, &mut out,
+            );
+            blocks.push(out);
+        }
+        blocks
+    };
+    let (off, on) = (render(0.0), render(1.0));
+    assert!(
+        off.iter()
+            .zip(&on)
+            .all(|(a, b)| a[1] == b[1] && a[2] == b[2])
+    );
+    assert!(off.iter().zip(&on).any(|(a, b)| a[0] != b[0]));
+}
+
+/// FX diet spec § Master comp: one gain for every pair. A quiet Part on
+/// pair 2 is ducked by a loud Part on pair 1.
+#[test]
+fn the_master_comp_ducks_pair_2_with_pair_1() {
+    let render = |ratio: u8| {
+        let mut shared = AudioShared::default();
+        shared.parts[0].mix.output = DacPair::P1;
+        shared.parts[1].mix.output = DacPair::P2;
+        (shared.fx.comp.thresh, shared.fx.comp.ratio) = (0.25, ratio);
+        let buses: [[f32; BLOCK_SIZE]; MAX_PARTS] = core::array::from_fn(|p| match p {
+            0 => [0.9; BLOCK_SIZE],
+            1 => core::array::from_fn(|i| 0.01 * (i as f32 * 0.3).sin()),
+            _ => [0.0; BLOCK_SIZE],
+        });
+        let written = [true, true, false, false, false, false];
+        let mut sends = [[0.0; BLOCK_SIZE]; FX_SENDS];
+        let mut pans = PanCache::default();
+        let mut fx = Box::new(FxBus::new());
+        let mut out: DacOut = [[0.0; BLOCK_SIZE * 2]; DAC_PAIRS];
+        let mut energy = 0.0f32;
+        for b in 0..128 {
+            mix_parts(
+                &buses, &written, &mut sends, &mut pans, &mut fx, &shared, SR, &mut out,
+            );
+            if b >= 64 {
+                energy += out[1].iter().map(|s| s * s).sum::<f32>();
+            }
+        }
+        (energy, fx.master_gr_db())
+    };
+    let ((open, _), (ducked, gr)) = (render(0), render(7));
+    let db = 10.0 * (ducked / open).log10();
+    assert!(db < -15.0, "{db} dB");
+    assert!(gr > 15.0, "{gr}");
 }
