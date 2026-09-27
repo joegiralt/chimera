@@ -1,15 +1,13 @@
-//! Juno-style BBD chorus with binaural stereo output.
-//!
-//! The Roland Juno-60/106 chorus is a single BBD delay line modulated
-//! by a triangle LFO. The magic is in the specific LFO rates and the
-//! stereo trick: L = dry + wet, R = dry - wet (phase inversion creates
-//! wide stereo image from a mono source).
+//! Juno-style BBD chorus, stereo (FX diet spec § Chorus): each line has a
+//! triangle LFO and two read taps, the normal one on the left and one on
+//! the inverted LFO on the right. The mono sum does not cancel.
 //!
 //! Mode I:  triangle LFO at 0.513 Hz, depth ~1.7ms
 //! Mode II: triangle LFO at 0.863 Hz, depth ~2.3ms
-//! Mode I+II: both LFOs running simultaneously (thickest)
+//! Mode I+II: both lines; each side averages its two taps
 
 use crate::block::{Block, ParamId, ParamSpec, ValFmt};
+use crate::dsp::Stereo;
 use chimera_hal::BLOCK_SIZE;
 use core::mem::MaybeUninit;
 
@@ -123,54 +121,50 @@ impl BbdLine {
         }
     }
 
-    /// Process one sample. Returns the modulated delayed sample.
+    /// Writes `input`; returns the (normal, inverted) taps. `base` and
+    /// `depth` are in samples, `inc` is the LFO's phase step.
     #[inline]
-    fn tick(
-        &mut self,
-        input: f32,
-        base_delay_ms: f32,
-        lfo_rate_hz: f32,
-        depth_ms: f32,
-        sample_rate: u32,
-    ) -> f32 {
-        // Write input
+    fn tick(&mut self, input: f32, base: f32, depth: f32, inc: f32) -> (f32, f32) {
         self.buffer[self.write_pos] = input;
-        self.write_pos = (self.write_pos + 1) % MAX_CHORUS_DELAY;
-
-        // Triangle LFO
-        self.lfo_phase += lfo_rate_hz / sample_rate as f32;
+        self.write_pos += 1;
+        if self.write_pos == MAX_CHORUS_DELAY {
+            self.write_pos = 0;
+        }
+        self.lfo_phase += inc;
         if self.lfo_phase >= 1.0 {
             self.lfo_phase -= 1.0;
         }
         // Triangle: 0→1→0→-1→0
-        let tri = if self.lfo_phase < 0.25 {
-            self.lfo_phase * 4.0
-        } else if self.lfo_phase < 0.75 {
-            2.0 - self.lfo_phase * 4.0
+        let p = self.lfo_phase;
+        let tri = if p < 0.25 {
+            p * 4.0
+        } else if p < 0.75 {
+            2.0 - p * 4.0
         } else {
-            self.lfo_phase * 4.0 - 4.0
+            p * 4.0 - 4.0
         };
+        (self.read(base + tri * depth), self.read(base - tri * depth))
+    }
 
-        // Modulated delay time
-        let delay_samples = (base_delay_ms + tri * depth_ms) * sample_rate as f32 / 1000.0;
-        let delay_samples = delay_samples.clamp(1.0, (MAX_CHORUS_DELAY - 2) as f32);
-
-        // Interpolated read
-        let d_int = delay_samples as usize;
-        let d_frac = delay_samples - d_int as f32;
-        let pos_a = (self.write_pos + MAX_CHORUS_DELAY - d_int) % MAX_CHORUS_DELAY;
-        let pos_b = (self.write_pos + MAX_CHORUS_DELAY - d_int - 1) % MAX_CHORUS_DELAY;
-
-        self.buffer[pos_a] * (1.0 - d_frac) + self.buffer[pos_b] * d_frac
+    #[inline]
+    fn read(&self, delay: f32) -> f32 {
+        let delay = delay.clamp(1.0, (MAX_CHORUS_DELAY - 2) as f32);
+        let d = delay as usize;
+        let frac = delay - d as f32;
+        let a = if self.write_pos >= d {
+            self.write_pos - d
+        } else {
+            self.write_pos + MAX_CHORUS_DELAY - d
+        };
+        let b = if a == 0 { MAX_CHORUS_DELAY - 1 } else { a - 1 };
+        self.buffer[a] * (1.0 - frac) + self.buffer[b] * frac
     }
 }
 
 crate::in_place::field_list!(JunoChorus => JunoChorus { line_i, line_ii });
 crate::in_place::field_list!(BbdLine => BbdLine { buffer, write_pos, lfo_phase });
 
-/// Juno-style binaural chorus.
-/// Processes mono input, outputs mono (L+R summed).
-/// For true stereo: L = dry + wet, R = dry - wet.
+/// Juno-style chorus: mono send in, stereo wet out.
 pub struct JunoChorus {
     line_i: BbdLine,
     line_ii: BbdLine,
@@ -200,96 +194,41 @@ impl JunoChorus {
         }
     }
 
-    /// Insert use: dry/wet mix in place.
-    pub fn process(
-        &mut self,
-        buf: &mut [f32; BLOCK_SIZE],
-        params: &ChorusParams,
-        sample_rate: u32,
-    ) {
-        self.run(buf, params, sample_rate, 1.0 - params.mix * 0.5);
-    }
-
-    /// Send/return use (the FX bus): writes only the wet signal × MIX, the
-    /// return level, in place of the send.
+    /// Send/return use (the FX bus): the wet signal × MIX, the return
+    /// level, per side.
     pub fn process_wet(
         &mut self,
-        buf: &mut [f32; BLOCK_SIZE],
+        send: &[f32; BLOCK_SIZE],
         params: &ChorusParams,
         sample_rate: u32,
-    ) {
-        self.run(buf, params, sample_rate, 0.0);
-    }
-
-    fn run(
-        &mut self,
-        buf: &mut [f32; BLOCK_SIZE],
-        params: &ChorusParams,
-        sample_rate: u32,
-        dry_gain: f32,
+        out: &mut Stereo,
     ) {
         if !params.is_on() {
+            *out = Stereo::SILENT;
             return;
         }
         let mode = ChorusMode::from_u8(params.mode);
-
-        // Juno I: 0.513 Hz LFO, 1.7ms depth, 3.6ms base delay
-        // Juno II: 0.863 Hz LFO, 2.3ms depth, 3.6ms base delay
-        let rate_mult = 0.5 + params.rate * 1.5; // 0.5x to 2.0x
-        let depth_mult = 0.5 + params.depth * 1.5;
-
-        let base_delay = 3.6; // ms — Juno center delay
-
-        for s in buf.iter_mut() {
-            let dry = *s;
-            let mut wet = 0.0;
-
-            match mode {
-                ChorusMode::JunoI => {
-                    wet = self.line_i.tick(
-                        dry,
-                        base_delay,
-                        0.513 * rate_mult,
-                        1.7 * depth_mult,
-                        sample_rate,
-                    );
-                }
-                ChorusMode::JunoII => {
-                    wet = self.line_ii.tick(
-                        dry,
-                        base_delay,
-                        0.863 * rate_mult,
-                        2.3 * depth_mult,
-                        sample_rate,
-                    );
-                }
+        // Juno I: 0.513 Hz, 1.7 ms; Juno II: 0.863 Hz, 2.3 ms; both 3.6 ms
+        // from centre. RATE and DEPTH scale 0.5x to 2.0x.
+        let rate = 0.5 + params.rate * 1.5;
+        let depth = 0.5 + params.depth * 1.5;
+        let ms = sample_rate as f32 / 1000.0;
+        let base = 3.6 * ms;
+        let (inc_i, depth_i) = (0.513 * rate / sample_rate as f32, 1.7 * depth * ms);
+        let (inc_ii, depth_ii) = (0.863 * rate / sample_rate as f32, 2.3 * depth * ms);
+        for (i, &x) in send.iter().enumerate() {
+            let (l, r) = match mode {
+                ChorusMode::JunoI => self.line_i.tick(x, base, depth_i, inc_i),
+                ChorusMode::JunoII => self.line_ii.tick(x, base, depth_ii, inc_ii),
                 ChorusMode::JunoBoth => {
-                    let w1 = self.line_i.tick(
-                        dry,
-                        base_delay,
-                        0.513 * rate_mult,
-                        1.7 * depth_mult,
-                        sample_rate,
-                    );
-                    let w2 = self.line_ii.tick(
-                        dry,
-                        base_delay,
-                        0.863 * rate_mult,
-                        2.3 * depth_mult,
-                        sample_rate,
-                    );
-                    wet = (w1 + w2) * 0.5;
+                    let (l1, r1) = self.line_i.tick(x, base, depth_i, inc_i);
+                    let (l2, r2) = self.line_ii.tick(x, base, depth_ii, inc_ii);
+                    ((l1 + l2) * 0.5, (r1 + r2) * 0.5)
                 }
-                ChorusMode::Off => {}
-            }
-
-            // Binaural mono sum: (dry + wet) + (dry - wet) = 2*dry
-            // For mono output: mix dry with wet directly
-            // The binaural stereo magic happens when we have L/R outputs:
-            //   L = dry + wet * mix
-            //   R = dry - wet * mix (phase inversion = wide stereo)
-            // For now, mono mix:
-            *s = dry * dry_gain + wet * params.mix;
+                ChorusMode::Off => (0.0, 0.0),
+            };
+            out.l[i] = l * params.mix;
+            out.r[i] = r * params.mix;
         }
     }
 }

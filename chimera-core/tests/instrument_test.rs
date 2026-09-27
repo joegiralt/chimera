@@ -5,6 +5,7 @@
 mod common;
 
 use chimera_core::dsp::Stereo;
+use chimera_core::dsp::chorus::ChorusParams;
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus};
 use chimera_core::hw::{DAC_PAIRS, MAX_PARTS};
 use chimera_core::instrument::{AudioShared, DacOut, Instrument, PanCache, mix_parts, pan_gains};
@@ -300,6 +301,35 @@ fn fx_send_puts_no_dry_signal_on_pair_1() {
         }
     }
     assert!(peak(&rig.out[0]) > 1e-4, "the wet return arrived");
+}
+
+/// FX diet spec § Bus: the chorus returns stereo on pair 1, and the mono
+/// sum keeps it.
+#[test]
+fn the_chorus_returns_stereo_on_pair_1() {
+    let mut rig = Rig::new();
+    let mut shared = AudioShared::default();
+    shared.fx.chorus = ChorusParams {
+        mode: 1,
+        rate: 0.5,
+        depth: 0.5,
+        mix: 1.0,
+    };
+    shared.parts[0].mix.output = DacPair::P3;
+    shared.parts[0].mix.sends = [1.0, 0.0, 0.0];
+    rig.inst.handle(on(0, 60), &shared);
+    let (mut l, mut r) = (Vec::new(), Vec::new());
+    for _ in 0..100 {
+        rig.render(&shared);
+        let (a, b) = lr(&rig.out[0]);
+        l.extend(a);
+        r.extend(b);
+    }
+    let rms = |x: &[f32]| (x.iter().map(|s| s * s).sum::<f32>() / x.len() as f32).sqrt();
+    let mono: Vec<f32> = l.iter().zip(&r).map(|(a, b)| (a + b) / 2.0).collect();
+    assert!(rms(&l) > 1e-3, "the chorus returns");
+    assert!(l != r, "the sides differ");
+    assert!(rms(&mono) >= 0.5 * rms(&l));
 }
 
 /// Part routing by channel at dequeue; parts sharing a channel layer.

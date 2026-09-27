@@ -88,7 +88,11 @@ fn return_is_each_effects_wet_output() {
             let mut ret = Stereo::SILENT;
             bus.process(&mut sends, &params, SR, &mut ret);
             let want = match slot {
-                0 => mono(input, |w| c.process_wet(w, &params.chorus, SR)),
+                0 => {
+                    let mut w = Stereo::SILENT;
+                    c.process_wet(&input, &params.chorus, SR, &mut w);
+                    w
+                }
                 1 => mono(input, |w| d.process_wet(w, &params.delay, SR)),
                 _ => mono(input, |w| r.process_wet(w, &params.reverb)),
             };
