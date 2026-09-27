@@ -9,9 +9,9 @@ use chimera_core::dsp::algo::kernel::{Kernel, KernelBlock, OpBlock, SAMPLE_SCALE
 use chimera_core::dsp::algo::plan::{EvalPlan, OPS};
 use chimera_core::dsp::algo::tx::FEEDBACK_CYCLES;
 use chimera_core::dsp::algo::waves::WaveId;
-use chimera_core::dsp::fx_bus::FxBus;
-use chimera_core::hw::{BLOCK_SIZE, DAC_PAIRS, MAX_VOICES, SAMPLE_RATE, SampleBudget};
-use chimera_core::instrument::{AudioShared, DacOut, Instrument};
+use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus};
+use chimera_core::hw::{BLOCK_SIZE, DAC_PAIRS, MAX_PARTS, MAX_VOICES, SAMPLE_RATE, SampleBudget};
+use chimera_core::instrument::{AudioShared, DacOut, Instrument, mix_parts};
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::preset::Performance;
@@ -28,9 +28,9 @@ use crate::clocks::Clocks;
 
 const WARM_BLOCKS: u32 = 8;
 const TIMED_BLOCKS: u32 = 64;
-const REVERB_TYPES: usize = 3;
 const HOLD_SECONDS: u32 = 30;
-const ROWS: usize = 8;
+const ROWS: usize = 9;
+const FX_ROWS: usize = 5;
 
 /// Each Algo row plays six distinct waves; voices sit an octave apart so
 /// each reads its own mips (a D-cache worst case).
@@ -61,8 +61,40 @@ const PATCHES: [Row; ROWS] = [
     ("6 OP", || algo(AlgoId::A1, ALL, 0), 36, 12),
     ("CHAIN", || algo(AlgoId::A17, ALL, 0), 36, 12),
     ("CHN FB", || algo(AlgoId::A17, ALL, 7), 36, 12),
-    ("WC", algo_worst_case, 36, 12),
+    ("WC", || algo_pair(AlgoId::A14, AlgoId::A22), 36, 12),
+    ("A16+17", || algo_pair(AlgoId::A16, AlgoId::A17), 36, 12),
 ];
+
+/// Label and per-block FX setup of each FX row. Every row runs the same
+/// noise through `mix_parts`, six Parts written, no voices.
+type FxRow = (&'static str, fn(&mut AudioShared, u32));
+const FX: [FxRow; FX_ROWS] = [
+    ("MIX", |_, _| {}),
+    ("CHORUS", |s, _| worst_chorus(s)),
+    ("DELAY", |s, _| worst_delay(s)),
+    ("REVERB", worst_reverb),
+    ("BUS", |s, b| {
+        worst_chorus(s);
+        worst_delay(s);
+        worst_reverb(s, b);
+    }),
+];
+
+fn worst_chorus(s: &mut AudioShared) {
+    let c = &mut s.fx.chorus;
+    (c.mode, c.rate, c.depth, c.mix) = (3, 1.0, 1.0, 0.5);
+}
+
+fn worst_delay(s: &mut AudioShared) {
+    let d = &mut s.fx.delay;
+    (d.time_ms, d.wow_flutter, d.saturation, d.mix) = (500.0, 1.0, 1.0, 0.5);
+}
+
+/// Today's costliest reverb, MidiVerb, at its longest.
+fn worst_reverb(s: &mut AudioShared, _block: u32) {
+    let r = &mut s.fx.reverb;
+    (r.reverb_type, r.time, r.size, r.damping, r.mix) = (2, 1.0, 1.0, 0.5, 0.5);
+}
 
 static mut SCOPE: TripleBuffer<ScopeFrame> = scope_buffer();
 // A static, not a local: `AudioShared` is 3 KB (ADR 0020).
@@ -103,20 +135,7 @@ pub fn run(display: &mut impl ChimeraDisplay, clocks: Clocks, perf: &Performance
             row[n - 1] = rig.time(|s| s.parts[0].params = black_box(patch()), n, low, step);
         }
     }
-    let fx: [u32; REVERB_TYPES] = core::array::from_fn(|t| {
-        rig.time(
-            |s| {
-                s.fx.chorus.mode = 1;
-                s.fx.chorus.mix = 0.5;
-                s.fx.delay.mix = 0.5;
-                s.fx.reverb.mix = 0.5;
-                s.fx.reverb.reverb_type = t as u8;
-            },
-            0,
-            0,
-            0,
-        )
-    });
+    let fx: [u32; FX_ROWS] = core::array::from_fn(|i| rig.time_bus(FX[i].1));
     let kernel = time_kernel();
     show(display, clocks, &rows, kernel, &fx);
     for _ in 0..HOLD_SECONDS {
@@ -157,6 +176,49 @@ impl Rig<'_> {
         let start = DWT::cycle_count();
         for _ in 0..TIMED_BLOCKS {
             inst.render(fx, &mut self.dac, shared, &mut self.scope);
+        }
+        DWT::cycle_count().wrapping_sub(start) / (TIMED_BLOCKS * BLOCK_SIZE as u32)
+    }
+
+    /// Six Parts written with one noise block, sends 0.5, no voices:
+    /// `mix_parts` alone. `each` sets the FX before every block.
+    #[inline(never)]
+    fn time_bus(&mut self, each: fn(&mut AudioShared, u32)) -> u32 {
+        let fx = FxBus::init_in_place(self.fx_slot);
+        let shared = self
+            .shared_slot
+            .write(AudioShared::from_performance(self.perf));
+        for part in shared.parts.iter_mut() {
+            part.mix.sends = [0.5; FX_SENDS];
+        }
+        let mut x = 0x1234_5678u32;
+        let noise: [f32; BLOCK_SIZE] = core::array::from_fn(|_| {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            x as f32 / u32::MAX as f32 - 0.5
+        });
+        let buses = [noise; MAX_PARTS];
+        let written = [true; MAX_PARTS];
+        let mut sends = [[0.0; BLOCK_SIZE]; FX_SENDS];
+        let mut block = |shared: &mut AudioShared, fx: &mut FxBus, dac: &mut DacOut, b: u32| {
+            each(shared, b);
+            black_box(mix_parts(
+                black_box(&buses),
+                &written,
+                &mut sends,
+                fx,
+                shared,
+                SAMPLE_RATE,
+                dac,
+            ));
+        };
+        for b in 0..WARM_BLOCKS {
+            block(shared, fx, &mut self.dac, b);
+        }
+        let start = DWT::cycle_count();
+        for b in 0..TIMED_BLOCKS {
+            block(shared, fx, &mut self.dac, WARM_BLOCKS + b);
         }
         DWT::cycle_count().wrapping_sub(start) / (TIMED_BLOCKS * BLOCK_SIZE as u32)
     }
@@ -246,15 +308,15 @@ fn algo(alg: AlgoId, lit: u8, feedback: u8) -> ParamSnapshot {
     p
 }
 
-/// Spec § Budget's worst case: six audible operators, all with feedback,
-/// six distinct waves, MORPH 0.5 between A14 and A22.
-fn algo_worst_case() -> ParamSnapshot {
-    let mut p = algo(AlgoId::A14, ALL, 7);
-    (p.algo.alg_b, p.algo.morph) = (AlgoId::A22.get(), 64);
+/// `a` ∪ `b` at MORPH 64, six audible operators, all with feedback: A14 ∪
+/// A22 is spec § Budget's worst case, A16 ∪ A17 ADR 0026's costliest (842).
+fn algo_pair(a: AlgoId, b: AlgoId) -> ParamSnapshot {
+    let mut p = algo(a, ALL, 7);
+    (p.algo.alg_b, p.algo.morph) = (b.get(), 64);
     p
 }
 
-const ROW_H: i32 = 26;
+const ROW_H: i32 = 25;
 const CELL_W: i32 = 38;
 
 fn show(
@@ -262,7 +324,7 @@ fn show(
     clocks: Clocks,
     rows: &[[u32; MAX_VOICES]; ROWS],
     kernel: u32,
-    fx: &[u32; REVERB_TYPES],
+    fx: &[u32; FX_ROWS],
 ) {
     draw::fill_rect(display, 0, 0, theme::SCREEN_W, theme::SCREEN_H, theme::BG);
     let mut line = FmtBuf::new();
@@ -277,7 +339,7 @@ fn show(
         &theme::FONT_VALUE,
         line.as_str(),
         4,
-        20,
+        16,
         theme::INK,
     );
     draw::text(
@@ -285,10 +347,10 @@ fn show(
         &theme::FONT_LABEL,
         "CYCLES/SAMPLE, 1..6 VOICES",
         4,
-        36,
+        30,
         theme::MID,
     );
-    let mut y = 56;
+    let mut y = 46;
     for (&(label, ..), cycles) in PATCHES.iter().zip(rows) {
         voice_row(display, &mut line, y, label, cycles);
         y += ROW_H;
@@ -296,18 +358,23 @@ fn show(
     line.clear();
     let _ = write!(line, "KERNEL /VOICE {kernel} (350)");
     draw::text(display, &theme::FONT_VALUE, line.as_str(), 4, y, theme::INK);
-    y += ROW_H;
-    draw::text(display, &theme::FONT_VALUE, "FX", 4, y, theme::INK);
-    for (i, (label, c)) in ["PLATE", "FDN", "MV"].iter().zip(fx).enumerate() {
+    y += 18;
+    for (i, (&(label, _), &c)) in FX.iter().zip(fx).enumerate() {
+        // Each effect less MIX; MIX and BUS as read.
+        let c = if i == 0 || i == FX_ROWS - 1 {
+            c
+        } else {
+            c.saturating_sub(fx[0])
+        };
         line.clear();
         let _ = write!(line, "{label} {c}");
-        let x = 4 + i as i32 * 2 * CELL_W;
+        let (col, row) = ((i % 3) as i32, (i / 3) as i32);
         draw::text(
             display,
             &theme::FONT_LABEL,
             line.as_str(),
-            x,
-            y + 12,
+            4 + col * 78,
+            y + row * 14,
             theme::INK2,
         );
     }

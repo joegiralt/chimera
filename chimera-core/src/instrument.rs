@@ -103,6 +103,56 @@ pub fn pan_gains(pan: f32) -> (f32, f32) {
     (libm::sinf((1.0 - pan) * q), libm::sinf((1.0 + pan) * q))
 }
 
+/// Steps 2–4 of `render`: each written Part's bus, panned and levelled,
+/// into its pair and, by its sends, into the FX sends; then the FX bus
+/// once, its return on pair 1. Returns the scope block (the written buses
+/// summed). Separate so the bench can time it without voices.
+pub fn mix_parts(
+    buses: &[[f32; BLOCK_SIZE]; MAX_PARTS],
+    written: &[bool; MAX_PARTS],
+    sends: &mut [[f32; BLOCK_SIZE]; FX_SENDS],
+    fx: &mut FxBus,
+    shared: &AudioShared,
+    sample_rate: u32,
+    out: &mut DacOut,
+) -> [f32; BLOCK_SIZE] {
+    for pair in out.iter_mut() {
+        pair.fill(0.0);
+    }
+    for send in sends.iter_mut() {
+        send.fill(0.0);
+    }
+    let mut scope = [0.0f32; BLOCK_SIZE];
+    for (p, part) in shared.parts.iter().enumerate() {
+        // A part with no voices this block has a silent bus: nothing to add.
+        if !written[p] {
+            continue;
+        }
+        let bus = &buses[p];
+        let (gl, gr) = pan_gains(part.mix.pan);
+        let (gl, gr) = (gl * part.mix.level, gr * part.mix.level);
+        let pair = &mut out[part.mix.output.index()];
+        for i in 0..BLOCK_SIZE {
+            pair[2 * i] += bus[i] * gl;
+            pair[2 * i + 1] += bus[i] * gr;
+            scope[i] += bus[i];
+        }
+        for (send, &amount) in sends.iter_mut().zip(&part.mix.sends) {
+            for (s, &b) in send.iter_mut().zip(bus) {
+                *s += b * amount;
+            }
+        }
+    }
+    // The FX bus once; its return lands on both sides of pair 1.
+    let mut ret = [0.0f32; BLOCK_SIZE];
+    fx.process(sends, &shared.fx, sample_rate, &mut ret);
+    for (i, &r) in ret.iter().enumerate() {
+        out[0][2 * i] += r;
+        out[0][2 * i + 1] += r;
+    }
+    scope
+}
+
 /// The shared voice pool and the per-block mix. The FX bus is passed to
 /// `render` rather than owned: on hardware the pool is placed in D2 and the
 /// FX bus in AXI (ADR 0014).
@@ -294,42 +344,16 @@ impl Instrument {
             }
         }
 
-        // 2-3. Pan and level into the part's pair; sends into the FX bus.
-        for pair in out.iter_mut() {
-            pair.fill(0.0);
-        }
-        for send in self.sends.iter_mut() {
-            send.fill(0.0);
-        }
-        let mut scope_block = [0.0f32; BLOCK_SIZE];
-        for (p, part) in shared.parts.iter().enumerate() {
-            // A part with no voices this block has a silent bus: nothing to add.
-            if !written[p] {
-                continue;
-            }
-            let bus = &self.buses[p];
-            let (gl, gr) = pan_gains(part.mix.pan);
-            let (gl, gr) = (gl * part.mix.level, gr * part.mix.level);
-            let pair = &mut out[part.mix.output.index()];
-            for i in 0..BLOCK_SIZE {
-                pair[2 * i] += bus[i] * gl;
-                pair[2 * i + 1] += bus[i] * gr;
-                scope_block[i] += bus[i];
-            }
-            for (send, &amount) in self.sends.iter_mut().zip(&part.mix.sends) {
-                for (s, &b) in send.iter_mut().zip(bus) {
-                    *s += b * amount;
-                }
-            }
-        }
-
-        // 4. The FX bus once; its return lands on both sides of pair 1.
-        let mut ret = [0.0f32; BLOCK_SIZE];
-        fx.process(&mut self.sends, &shared.fx, self.sample_rate, &mut ret);
-        for (i, &r) in ret.iter().enumerate() {
-            out[0][2 * i] += r;
-            out[0][2 * i + 1] += r;
-        }
+        // 2-4.
+        let scope_block = mix_parts(
+            &self.buses,
+            &written,
+            &mut self.sends,
+            fx,
+            shared,
+            self.sample_rate,
+            out,
+        );
 
         // Oscilloscope: every part's bus, before pan and level.
         scope.write(&scope_block);
