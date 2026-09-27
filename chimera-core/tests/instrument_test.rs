@@ -828,3 +828,56 @@ fn a_steal_from_another_part_fades_on_the_old_bus() {
     assert!(peak(rig.inst.part_bus(1)) > 0.0, "then the new note plays");
     assert!(rig.inst.allocator().slots()[v].held());
 }
+
+/// Part 0 holds a six-note SAW LEAD chord, filling the pool; Parts 1 and 2
+/// play SAW LEAD too, Part 1 in `mode`.
+fn full_pool(mode: PartMode) -> (Rig, AudioShared) {
+    let mut p = factory(4);
+    for q in [1, 2] {
+        p.parts[q].sound = chimera_core::factory::factory_sound(4).unwrap();
+    }
+    p.parts[1].mix.mode = mode;
+    let shared = AudioShared::from_performance(&p);
+    let mut rig = Rig::new();
+    for n in CHORD6 {
+        rig.inst.handle(on(0, n), &shared);
+    }
+    for _ in 0..4 {
+        rig.render(&shared);
+    }
+    (rig, shared)
+}
+
+/// A Mono Part that retriggers its own note still waiting out another
+/// Part's fade replaces it unheard: counted as refused.
+#[test]
+fn a_mono_retrigger_of_a_waiting_note_counts_it_as_refused() {
+    let (mut rig, shared) = full_pool(PartMode::Mono);
+    rig.inst.handle(on(1, 40), &shared); // steals 48, waits
+    let (v, _) = slots_of(&rig, 40)[0];
+    rig.inst.handle(on(1, 41), &shared); // same voice, before 40 sounds
+    assert_eq!(slots_of(&rig, 41), [(v, false)]);
+    assert_eq!(rig.inst.allocator().refused(), 1);
+    for _ in 0..3 {
+        rig.render(&shared);
+    }
+    assert!(peak(rig.inst.part_bus(1)) > 0.0, "41 plays");
+}
+
+/// A second Part that steals a slot whose note is still waiting (released
+/// before it sounded) drops that note: counted as refused.
+#[test]
+fn a_steal_of_a_waiting_note_counts_it_as_refused() {
+    let (mut rig, shared) = full_pool(PartMode::Poly);
+    rig.inst.handle(on(1, 90), &shared); // steals 48, waits
+    let (v, _) = slots_of(&rig, 90)[0];
+    rig.inst.handle(off(1, 90), &shared); // a short note, still unheard
+    rig.inst.handle(on(2, 70), &shared); // takes the released slot
+    assert_eq!(slots_of(&rig, 70), [(v, false)]);
+    assert_eq!(rig.inst.allocator().refused(), 1);
+    for _ in 0..3 {
+        rig.render(&shared);
+    }
+    assert_eq!(peak(rig.inst.part_bus(1)), 0.0, "90 never sounds");
+    assert!(peak(rig.inst.part_bus(2)) > 0.0, "70 plays");
+}
