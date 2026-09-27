@@ -159,7 +159,7 @@ fn test_algo_sustains_while_modal_decays() {
     );
 }
 
-/// Spec § Testing "Engines": every engine pair switches mid-note (hard cut,
+/// Spec § Testing "Engines": every engine pair switches mid-note (fade,
 /// retrigger) without panicking or producing non-finite output.
 #[test]
 fn every_engine_pair_switches_mid_note() {

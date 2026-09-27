@@ -685,3 +685,82 @@ fn a_patch_edit_over_budget_fades_the_newest_held_note() {
     assert_eq!(a.slots().iter().filter(|s| !s.is_free()).count(), 5);
     assert!(a.sounding_cost() + FxBus::COST <= BUDGET.as_cost());
 }
+
+/// The slots holding `note`, and whether each is dying.
+fn slots_of(rig: &Rig, note: u8) -> Vec<(usize, bool)> {
+    let slots = rig.inst.allocator().slots();
+    (0..slots.len())
+        .filter(|&v| slots[v].note().map(|n| n.get()) == Some(note))
+        .map(|v| (v, slots[v].dying()))
+        .collect()
+}
+
+/// #33 M1: a note-on in the same block as a patch edit is judged against
+/// the new patch's costs, so it is not admitted and then shed at once.
+#[test]
+fn a_note_on_with_a_patch_edit_is_judged_at_the_new_cost() {
+    let light = AudioShared::from_performance(&factory(4)); // SAW LEAD: 6
+    let heavy = AudioShared::from_performance(&factory(6)); // MORPH PAD: 4
+    let mut rig = Rig::new();
+    for n in &CHORD6[..5] {
+        rig.inst.handle(on(0, *n), &light);
+    }
+    for _ in 0..4 {
+        rig.render(&light);
+    }
+    rig.inst.handle(on(0, 90), &heavy);
+    for _ in 0..4 {
+        rig.render(&heavy);
+    }
+    let a = rig.inst.allocator();
+    assert!(a.sounding_cost() + FxBus::COST <= BUDGET.as_cost());
+    assert_eq!(slots_of(&rig, 90).len(), 1, "the new note plays");
+    let (v, dying) = slots_of(&rig, 90)[0];
+    assert!(!dying && rig.inst.allocator().slots()[v].held());
+    assert!(peak(rig.inst.part_bus(0)) > 0.0);
+    assert_eq!(rig.inst.allocator().refused(), 0);
+}
+
+/// #33 M7: with the pool full only because voices are fading out, a note
+/// that fits the budget takes a dying slot and plays once the fade ends; no
+/// held note is stolen and none is refused.
+#[test]
+fn a_note_on_waits_out_a_fade_before_stealing_a_held_note() {
+    let perf = |lead: usize| {
+        let mut p = factory(lead);
+        p.parts[1].sound = chimera_core::factory::factory_sound(5).unwrap(); // SQR BASS
+        AudioShared::from_performance(&p)
+    };
+    let (light, heavy) = (perf(4), perf(6)); // SAW LEAD fits six, MORPH PAD four
+    let mut rig = Rig::new();
+    for n in CHORD6 {
+        rig.inst.handle(on(0, n), &light);
+    }
+    for _ in 0..4 {
+        rig.render(&light);
+    }
+    rig.render(&heavy); // four fit: two are shed
+    let dying: Vec<usize> = (0..6)
+        .filter(|&v| rig.inst.allocator().slots()[v].dying())
+        .collect();
+    assert_eq!(dying.len(), 2);
+    rig.inst.handle(on(1, 40), &heavy);
+    let a = rig.inst.allocator();
+    assert_eq!(a.refused(), 0);
+    let held: Vec<_> = a
+        .slots()
+        .iter()
+        .filter(|s| s.part() == Some(0) && s.held() && !s.dying())
+        .collect();
+    assert_eq!(held.len(), 4, "no held note stolen");
+    let (v, d) = slots_of(&rig, 40)[0];
+    assert!(dying.contains(&v) && !d);
+    rig.render(&heavy); // the fade's second block: bass still silent
+    assert_eq!(peak(rig.inst.part_bus(1)), 0.0);
+    rig.render(&heavy);
+    assert!(
+        peak(rig.inst.part_bus(1)) > 0.0,
+        "the bass plays after the fade"
+    );
+    assert!(rig.inst.allocator().slots()[v].held());
+}

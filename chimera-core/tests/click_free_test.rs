@@ -352,3 +352,109 @@ fn an_engine_round_trip_leaves_no_stale_state() {
     play_then_kill(&mut v, &modal, &ModState::new());
     assert!(first_blocks(&mut v, 64, p, m) == first_blocks(&mut Voice::new(SR), 64, p, m));
 }
+
+fn max_step(x: &[f32]) -> f32 {
+    x.windows(2).fold(0.0f32, |s, w| s.max((w[1] - w[0]).abs()))
+}
+
+/// #33 M6: a Sound's engine change fades the old engine out over
+/// `Voice::FADE`, with no step bigger than the signal's own; the held note
+/// then restarts on the new engine exactly as on a fresh voice.
+#[test]
+fn an_engine_switch_fades_out_then_starts_clean() {
+    let modal = ParamSnapshot::for_engine(EngineType::Modal);
+    let m = ModState::new();
+    for (name, from, to) in [
+        ("Algo→Modal", tri(), modal.clone()),
+        ("Modal→Algo", modal, tri()),
+    ] {
+        let (mut a, mut b) = (Voice::new(SR), Voice::new(SR));
+        let mut block = [0.0f32; BLOCK_SIZE];
+        let mut last = 0.0;
+        for v in [&mut a, &mut b] {
+            v.note_on(MidiNote::new(60).unwrap(), Velocity::DEFAULT, &from);
+            for _ in 0..20 {
+                v.render(&mut block, &from, &m);
+            }
+            last = block[BLOCK_SIZE - 1];
+        }
+        let (mut ra, mut rb) = (vec![last], vec![last]);
+        for _ in 0..Voice::FADE as usize / BLOCK_SIZE {
+            a.render(&mut block, &from, &m);
+            ra.extend_from_slice(&block);
+            b.render(&mut block, &to, &m);
+            rb.extend_from_slice(&block);
+        }
+        assert!(ra.iter().any(|x| x.abs() > 0.05), "{name}: sounding");
+        assert_eq!(*rb.last().unwrap(), 0.0, "{name}");
+        assert!(
+            max_step(&rb) <= max_step(&ra),
+            "{name}: fade step {} > signal step {}",
+            max_step(&rb),
+            max_step(&ra)
+        );
+        let mut fresh = Voice::new(SR);
+        fresh.note_on(MidiNote::new(60).unwrap(), Velocity::DEFAULT, &to);
+        for i in 0..8 {
+            let mut f = [0.0f32; BLOCK_SIZE];
+            fresh.render(&mut f, &to, &m);
+            b.render(&mut block, &to, &m);
+            assert!(
+                block.map(f32::to_bits) == f.map(f32::to_bits),
+                "{name}: block {i} differs from a fresh voice"
+            );
+        }
+    }
+}
+
+/// An engine change fades a released tail out; it does not restart it as a
+/// held note that nothing will release.
+#[test]
+fn an_engine_switch_ends_a_released_tail() {
+    let modal = ParamSnapshot::for_engine(EngineType::Modal);
+    let m = ModState::new();
+    let mut v = Voice::new(SR);
+    let mut block = [0.0f32; BLOCK_SIZE];
+    v.note_on(MidiNote::new(60).unwrap(), Velocity::DEFAULT, &tri());
+    for _ in 0..20 {
+        v.render(&mut block, &tri(), &m);
+    }
+    v.note_off();
+    v.render(&mut block, &tri(), &m);
+    for _ in 0..Voice::FADE as usize / BLOCK_SIZE {
+        v.render(&mut block, &modal, &m);
+    }
+    assert!(!v.is_active());
+}
+
+/// #33 M7: a note-on on a fading voice waits for the fade, then starts
+/// exactly as on a fresh voice.
+#[test]
+fn a_note_on_mid_fade_starts_clean_after_it() {
+    let s = chimera_core::factory::factory_sound(4).unwrap(); // SAW LEAD
+    let (p, m) = (&s.params, &s.mod_state);
+    let mut v = Voice::new(SR);
+    let mut block = [0.0f32; BLOCK_SIZE];
+    v.note_on(MidiNote::new(60).unwrap(), Velocity::DEFAULT, p);
+    for _ in 0..20 {
+        v.render(&mut block, p, m);
+    }
+    v.kill();
+    v.render(&mut block, p, m);
+    v.note_on(MidiNote::new(64).unwrap(), Velocity::DEFAULT, p);
+    v.render(&mut block, p, m);
+    assert_eq!(block[BLOCK_SIZE - 1], 0.0, "the fade ran to the end");
+    let mut out = Vec::new();
+    for _ in 0..8 {
+        v.render(&mut block, p, m);
+        out.extend(block.iter().map(|s| s.to_bits()));
+    }
+    let mut fresh = Voice::new(SR);
+    fresh.note_on(MidiNote::new(64).unwrap(), Velocity::DEFAULT, p);
+    let mut want = Vec::new();
+    for _ in 0..8 {
+        fresh.render(&mut block, p, m);
+        want.extend(block.iter().map(|s| s.to_bits()));
+    }
+    assert!(out == want);
+}

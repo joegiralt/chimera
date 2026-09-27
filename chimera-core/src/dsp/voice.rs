@@ -35,11 +35,19 @@ pub struct Voice {
     active: bool,
     last_note: MidiNote,
     last_velocity: Velocity,
-    /// Samples left of a `kill` fade; 0 when not fading.
+    /// Samples left of a fade-out (`kill`, an engine change); 0 when not
+    /// fading. Never set on an inactive voice.
     fade: u16,
+    /// `last_note` waits for the fade to end, then starts clean.
+    queued: bool,
+    /// Key down since the last note-on.
+    held: bool,
 }
 
-crate::in_place::field_list!(Voice => Voice { engines, drive, filter, folder, amp_env, lfo, active_engine, active, last_note, last_velocity, fade });
+crate::in_place::field_list!(Voice => Voice { engines, drive, filter, folder, amp_env, lfo, active_engine, active, last_note, last_velocity, fade, queued, held });
+
+// `reset` overwrites fields in place without dropping them.
+const _: () = assert!(!core::mem::needs_drop::<Voice>());
 
 impl Default for Voice {
     fn default() -> Self {
@@ -74,6 +82,20 @@ impl Voice {
         // `assume_init_mut`.
         unsafe {
             Engines::init_in_place(uninit_at(addr_of_mut!((*p).engines)), sample_rate);
+            Self::init_chain(p);
+            slot.assume_init_mut()
+        }
+    }
+
+    /// Every field but `engines`, as `new` builds it: the one list that
+    /// `init_in_place` and `reset` share.
+    ///
+    /// # Safety
+    /// `p` must be valid for writes, aligned and unaliased.
+    unsafe fn init_chain(p: *mut Self) {
+        // SAFETY: the caller's guarantee; every field is written by value,
+        // and none has drop glue (asserted above) to skip.
+        unsafe {
             addr_of_mut!((*p).drive).write(Drive::new());
             addr_of_mut!((*p).filter).write(SvfFilter::new());
             addr_of_mut!((*p).folder).write(Wavefolder::new());
@@ -84,7 +106,8 @@ impl Voice {
             addr_of_mut!((*p).last_note).write(MidiNote::A4);
             addr_of_mut!((*p).last_velocity).write(Velocity::DEFAULT);
             addr_of_mut!((*p).fade).write(0);
-            slot.assume_init_mut()
+            addr_of_mut!((*p).queued).write(false);
+            addr_of_mut!((*p).held).write(false);
         }
     }
 
@@ -92,8 +115,17 @@ impl Voice {
         self.engines.sample_rate()
     }
 
+    /// On a fading voice, or one sounding another engine, the note waits
+    /// for the fade-out and then starts clean.
     pub fn note_on(&mut self, note: MidiNote, velocity: Velocity, params: &ParamSnapshot) {
-        self.fade = 0;
+        self.held = true;
+        if self.fade > 0 || (self.active && params.engine() != self.active_engine) {
+            self.last_note = note;
+            self.last_velocity = velocity;
+            self.queued = true;
+            self.fade_out();
+            return;
+        }
         self.trigger(note, velocity, params);
     }
 
@@ -112,35 +144,56 @@ impl Voice {
     }
 
     pub fn note_off(&mut self) {
+        self.held = false;
         self.engines.note_off(self.active_engine);
         self.amp_env.note_off();
     }
 
-    /// Fade to silence over `FADE` samples, then go idle as a fresh voice.
-    /// A second call mid-fade does nothing.
+    /// Fade to silence over `FADE` samples, then go idle as a fresh voice,
+    /// dropping a queued note. A second call mid-fade does not restart it.
     pub fn kill(&mut self) {
+        self.queued = false;
+        self.fade_out();
+    }
+
+    fn fade_out(&mut self) {
         if self.active && self.fade == 0 {
             self.fade = Self::FADE;
+        }
+    }
+
+    /// The fade is over: back to fresh, then start a queued note.
+    fn fade_ended(&mut self, params: &ParamSnapshot) {
+        let (queued, held) = (self.queued, self.held);
+        let (note, velocity) = (self.last_note, self.last_velocity);
+        self.reset();
+        if queued {
+            self.held = true;
+            self.trigger(note, velocity, params);
+            if !held {
+                self.note_off();
+            }
         }
     }
 
     /// Back to the state `new` builds, in place.
     fn reset(&mut self) {
         self.engines.reset(self.active_engine);
-        self.drive = Drive::new();
-        self.filter = SvfFilter::new();
-        self.folder = Wavefolder::new();
-        self.amp_env = Envelope::new();
-        self.lfo = Lfo::new();
-        self.active_engine = EngineType::Algo;
-        self.active = false;
-        self.last_note = MidiNote::A4;
-        self.last_velocity = Velocity::DEFAULT;
-        self.fade = 0;
+        // SAFETY: `self` is a valid, aligned, unaliased `Voice`.
+        unsafe { Self::init_chain(self) }
     }
 
     pub fn is_active(&self) -> bool {
         self.active
+    }
+
+    /// Fading out (`kill`, an engine change).
+    pub fn is_fading(&self) -> bool {
+        self.fade > 0
+    }
+
+    pub fn engine(&self) -> EngineType {
+        self.active_engine
     }
 
     pub fn render(
@@ -151,9 +204,11 @@ impl Voice {
     ) {
         let sample_rate = self.sample_rate();
 
-        // Auto-retrigger if engine type changed (e.g., user loaded a Modal sound)
-        if self.active && params.engine() != self.active_engine {
-            self.trigger(self.last_note, self.last_velocity, params);
+        // The Sound changed engine: fade the old one out; a held note then
+        // restarts on the new one.
+        if self.active && self.fade == 0 && params.engine() != self.active_engine {
+            self.queued = self.held;
+            self.fade_out();
         }
 
         if !self.active {
@@ -219,8 +274,8 @@ impl Voice {
                 self.fade = self.fade.saturating_sub(1);
                 *sample *= f32::from(self.fade) / f32::from(Self::FADE);
             }
-            if self.fade == 0 {
-                self.reset();
+            if self.fade == 0 || !self.active {
+                self.fade_ended(params);
             }
         }
     }
