@@ -93,13 +93,12 @@ impl Default for AlgoEngine {
 }
 
 impl AlgoEngine {
-    // Cycles/sample terms of `cost`, provisional until the chip bench.
-    // They sum to the old flat 560 on the bench's worst case (6 ops, 8 links,
-    // 6 feedback). The mip crossfade always runs, so it is in `COST_OP`.
-    pub const COST_BASE: Cost = Cost(90);
-    pub const COST_OP: Cost = Cost(60);
-    pub const COST_LINK: Cost = Cost(10);
-    pub const COST_FEEDBACK: Cost = Cost(5);
+    // Cycles/sample terms of `cost`, solved from the bench rows and rounded
+    // up. The mip crossfade always runs, so it is in `COST_OP`.
+    pub const COST_BASE: Cost = Cost(370); // measured 2026-09-27, bench, rev V at 480 MHz
+    pub const COST_OP: Cost = Cost(60); // measured 2026-09-27, bench, rev V at 480 MHz
+    pub const COST_LINK: Cost = Cost(8); // measured 2026-09-27, bench, rev V at 480 MHz
+    pub const COST_FEEDBACK: Cost = Cost(1); // measured 2026-09-27, bench, rev V at 480 MHz
 
     /// A voice's cycles/sample from its patch's shape (spec addendum). An
     /// operator is priced when its LEVEL is above 0 or has a mod route
