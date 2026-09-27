@@ -321,6 +321,19 @@ impl Tape {
         self.running
     }
 
+    /// False once a NaN or inf has reached pre-emphasis, de-emphasis, the
+    /// head bump or the roll-off: each is an IIR state that then stays
+    /// non-finite forever on its own (final review M1).
+    fn states_finite(&self) -> bool {
+        let f2 = |v: Lr| v[0].is_finite() && v[1].is_finite();
+        f2(self.pre.0)
+            && f2(self.pre.1)
+            && f2(self.de.0)
+            && f2(self.de.1)
+            && self.bump.iter().all(|&v| f2(v))
+            && f2(self.lp)
+    }
+
     /// Tape over one pair's interleaved block (L, R), in place.
     pub fn process(&mut self, pair: &mut [f32; 2 * BLOCK_SIZE], p: &TapeParams, sample_rate: u32) {
         let on = p.is_on();
@@ -332,11 +345,14 @@ impl Tape {
             self.fs = sample_rate;
         }
         let t = p.sanitised();
-        if !self.running {
-            // From bypass: nothing of the tape sounds yet, so it starts from
-            // rest, as `new()` (only the transport runs on), with the
-            // controls at their targets; the first block primes the line
-            // and every filter at weight 0 before the fade in.
+        if !self.running || !self.states_finite() {
+            // From bypass, or a NaN stuck in an IIR state (final review
+            // M1: one bad sample latches pre-emphasis, de-emphasis, the
+            // head bump or the roll-off forever): nothing of the tape
+            // sounds yet, so it starts from rest, as `new()` (only the
+            // transport runs on), with the controls at their targets; the
+            // first block primes the line and every filter at weight 0
+            // before the fade in.
             *self = Self {
                 coefs: self.coefs,
                 fs: self.fs,
