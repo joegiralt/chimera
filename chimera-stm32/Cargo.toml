@@ -20,3 +20,10 @@ stm32h7xx-hal = { version = "0.16", features = ["stm32h750v", "rt"] }
 embedded-graphics = "0.8"
 embedded-graphics-core = "0.4"
 libm = "0.2"
+
+# no_std bin, own #[panic_handler]: the test harness pulls in std's, which
+# clashes (E0152). Nothing here to unit test; chimera-core holds the logic.
+[[bin]]
+name = "chimera-stm32"
+path = "src/main.rs"
+test = false
