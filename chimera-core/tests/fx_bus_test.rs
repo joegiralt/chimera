@@ -35,6 +35,7 @@ fn defaults_are_all_off() {
     assert!(!p.chorus.is_on() && !p.delay.is_on() && !p.reverb.is_on());
     assert_eq!(p.reverb.mix, 0.0);
     assert_eq!(p.delay.time_ms, 375.0);
+    assert_eq!(p.delay.rev_send, 0.0);
 }
 
 #[test]
@@ -129,5 +130,112 @@ fn reverb_return_is_silent_before_its_first_reflection() {
         let mut ret = full();
         bus.process(&mut sends, &p, SR, &mut ret);
         assert_eq!(ret, Stereo::SILENT, "block {b}");
+    }
+}
+
+// ── REV SEND ──
+
+/// The bus's left return: a burst into the delay for the first 8 blocks
+/// (into the reverb too when `own`), REV SEND `send(block)`.
+fn with_rev_send(blocks: usize, own: bool, send: impl Fn(usize) -> f32) -> Vec<f32> {
+    let mut p = FxParams::default();
+    (p.delay.time_ms, p.delay.feedback, p.delay.mix) = (120.0, 0.5, 0.5);
+    p.reverb.mix = 0.5;
+    let mut bus = Box::new(FxBus::new());
+    let mut out = Vec::new();
+    for b in 0..blocks {
+        p.delay.rev_send = send(b);
+        let x = if b < 8 { burst() } else { [0.0; BLOCK_SIZE] };
+        let own = if own { x } else { [0.0; BLOCK_SIZE] };
+        let mut sends = [[0.0; BLOCK_SIZE], x, own];
+        let mut ret = Stereo::SILENT;
+        bus.process(&mut sends, &p, SR, &mut ret);
+        out.extend(ret.l);
+    }
+    out
+}
+
+/// FX diet spec § Testing: at REV SEND 0 the reverb hears only its own
+/// send, bit for bit: the return is the delay and the reverb, each run
+/// alone.
+#[test]
+fn rev_send_0_leaves_the_reverb_its_own_send() {
+    let mut p = FxParams::default();
+    (p.delay.time_ms, p.delay.feedback, p.delay.mix) = (120.0, 0.5, 0.5);
+    p.reverb.mix = 0.5;
+    let mut bus = Box::new(FxBus::new());
+    let (mut d, mut r) = (Box::new(TapeDelay::new()), Box::new(RingReverb::new()));
+    for b in 0..64 {
+        let x = if b < 8 { burst() } else { [0.0; BLOCK_SIZE] };
+        let mut sends = [[0.0; BLOCK_SIZE], x, x];
+        let mut ret = Stereo::SILENT;
+        bus.process(&mut sends, &p, SR, &mut ret);
+        let mut dw = x;
+        d.process_wet(&mut dw, &p.delay, SR);
+        let mut rw = Stereo::SILENT;
+        r.process(&x, &p.reverb.controls(), p.reverb.mix, SR, &mut rw);
+        let want = Stereo {
+            l: core::array::from_fn(|i| dw[i] + rw.l[i]),
+            r: core::array::from_fn(|i| dw[i] + rw.r[i]),
+        };
+        assert_eq!(ret, want, "block {b}");
+    }
+}
+
+/// FX diet spec § Testing: REV SEND above 0 raises the reverb's energy.
+/// Only the delay is sent to, so the return less REV SEND 0's is the
+/// reverb's alone.
+#[test]
+fn rev_send_raises_the_reverbs_energy() {
+    let base = with_rev_send(400, false, |_| 0.0);
+    let reverb = |s: f32| -> f32 {
+        with_rev_send(400, false, |_| s)
+            .iter()
+            .zip(&base)
+            .map(|(a, b)| (a - b) * (a - b))
+            .sum()
+    };
+    let (half, full) = (reverb(0.5), reverb(1.0));
+    assert!(half > 0.1, "{half}");
+    assert!(full > 2.0 * half, "{half} → {full}");
+}
+
+/// With the delay off its buffer holds the raw send: REV SEND passes none
+/// of it to the reverb.
+#[test]
+fn rev_send_feeds_nothing_while_the_delay_is_off() {
+    let mut p = FxParams::default();
+    (p.delay.rev_send, p.reverb.mix) = (1.0, 0.5);
+    let mut bus = Box::new(FxBus::new());
+    for b in 0..first_reflection(size_step(p.reverb.size)) / BLOCK_SIZE + 64 {
+        let mut sends = [[0.0; BLOCK_SIZE], burst(), [0.0; BLOCK_SIZE]];
+        let mut ret = full();
+        bus.process(&mut sends, &p, SR, &mut ret);
+        assert_eq!(ret, Stereo::SILENT, "block {b}");
+    }
+}
+
+/// Largest second difference.
+fn kink(x: &[f32]) -> f32 {
+    x.windows(3)
+        .fold(0.0f32, |m, w| m.max((w[2] - 2.0 * w[1] + w[0]).abs()))
+}
+
+/// FX diet spec § Testing: REV SEND jumping 0 → 1 or 1 → 0 mid-echo does
+/// not click: over the next 50 ms the largest second difference is at most
+/// 1.5× the larger of the renders held at 0 and at 1.
+#[test]
+fn a_rev_send_jump_does_not_click() {
+    let (at_b, win) = (176, 2_400);
+    let w = at_b * BLOCK_SIZE..at_b * BLOCK_SIZE + win;
+    let (off, on) = (
+        with_rev_send(220, false, |_| 0.0),
+        with_rev_send(220, false, |_| 1.0),
+    );
+    let bound = kink(&off[w.clone()]).max(kink(&on[w.clone()]));
+    for (a, b) in [(0.0, 1.0), (1.0, 0.0)] {
+        let moved = with_rev_send(220, false, |blk| if blk < at_b { a } else { b });
+        let k = kink(&moved[w.clone()]);
+        assert!(k <= 1.5 * bound, "{a} → {b}: {k} vs {bound}");
     }
 }

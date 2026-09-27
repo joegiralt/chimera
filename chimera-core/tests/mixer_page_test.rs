@@ -136,6 +136,17 @@ fn turn_def(def: &BlockDef, slot: usize, delta: i8, perf: &mut Performance) {
     part_page::apply_encoder(def, slot, delta, &mut perf.edit(0), &mut Op::A);
 }
 
+/// Each slot's parameter address, `None` where the slot is not bound.
+fn bound(def: &BlockDef) -> Vec<Option<ParamAddr>> {
+    def.params
+        .iter()
+        .map(|s| match s.binding {
+            SlotBinding::Param(a) => Some(a),
+            _ => None,
+        })
+        .collect()
+}
+
 /// FX pages keep the old encoder steps and edit the Performance's FX.
 #[test]
 fn fx_encoders_step_like_before() {
@@ -148,7 +159,11 @@ fn fx_encoders_step_like_before() {
     assert_eq!(perf.fx.reverb.mix, 0.0);
     turn_def(&reg::EFX, 4, 1, &mut perf);
     assert_eq!(perf.fx.reverb.mix, 1.0 / 128.0);
-    part_page::snap_encoder(&reg::DELAY, 5, 1, &mut perf.edit(0), Op::A);
+    turn_def(&reg::DELAY, 3, 64, &mut perf);
+    assert_eq!(perf.fx.delay.rev_send, 0.5);
+    turn_def(&reg::DELAY_CHAR, 0, 1, &mut perf);
+    assert!((perf.fx.delay.wow_flutter - (0.15 + 1.0 / 128.0)).abs() < 1e-6);
+    part_page::snap_encoder(&reg::DELAY, 4, 1, &mut perf.edit(0), Op::A);
     assert_eq!(perf.fx.delay.mix, 100.0 / 127.0);
 }
 
@@ -304,6 +319,51 @@ fn fx_pages_light_their_effect_in_the_flow() {
         reg::SENDS.viz,
         chimera_core::ui::block_def::VizType::EffectsFlow
     ));
+    assert_eq!(
+        flow_lit(&screen::render("mixer_fx_delay_char")),
+        [1],
+        "DLY › CHAR lights DLY"
+    );
+}
+
+/// FX diet spec § UI: DLY keeps TIME, FDBK, TONE, REV and MIX; WOW and SAT
+/// move to DLY › CHAR (an assumed default, pending the owner), on both
+/// Mix chains.
+#[test]
+fn the_delay_page_is_time_fdbk_tone_rev_mix_with_char_below() {
+    use chimera_core::dsp::delay::DelayParams as D;
+    let at = |p| Some(ParamAddr::new(BlockRef::Delay, p));
+    assert_eq!(
+        bound(&reg::DELAY),
+        [
+            at(D::TIME_MS),
+            at(D::FEEDBACK),
+            at(D::TONE),
+            at(D::REV_SEND),
+            at(D::MIX),
+            None
+        ]
+    );
+    assert_eq!(
+        bound(&reg::DELAY_CHAR),
+        [
+            at(D::WOW_FLUTTER),
+            at(D::SATURATION),
+            None,
+            None,
+            None,
+            None
+        ]
+    );
+    for chain in [&reg::MIX_CHAIN, &reg::MIXER_CHANNEL_CHAIN] {
+        let dly = chain
+            .blocks
+            .iter()
+            .find(|b| b.def.id == reg::DELAY.id)
+            .unwrap();
+        let subs: Vec<u16> = dly.sub_pages.iter().map(|d| d.id).collect();
+        assert_eq!(subs, [reg::DELAY_CHAR.id], "{}", chain.name);
+    }
 }
 
 #[test]

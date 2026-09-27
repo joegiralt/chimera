@@ -85,9 +85,10 @@ fn worst_chorus(s: &mut AudioShared) {
     (c.mode, c.rate, c.depth, c.mix) = (3, 1.0, 1.0, 0.5);
 }
 
+/// REV SEND costs only with the reverb on: the BUS row pays it.
 fn worst_delay(s: &mut AudioShared) {
     let d = &mut s.fx.delay;
-    (d.time_ms, d.wow_flutter, d.saturation, d.mix) = (500.0, 1.0, 1.0, 0.5);
+    (d.time_ms, d.wow_flutter, d.saturation, d.mix, d.rev_send) = (500.0, 1.0, 1.0, 0.5, 1.0);
 }
 
 /// The ring at its costliest: longest TIME and SIZE, with a SIZE crossfade

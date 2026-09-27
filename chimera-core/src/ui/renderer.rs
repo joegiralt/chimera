@@ -136,9 +136,16 @@ impl Renderer {
                     ];
                     viz::effects_flow(display, (f.focus < 3).then_some(f.focus), Some(sends));
                 } else {
-                    let lit = [reg::CHORUS.id, reg::DELAY.id, reg::EFX.id]
-                        .iter()
-                        .position(|&id| id == f.def.id);
+                    let id = f.def.id;
+                    let lit = if id == reg::CHORUS.id {
+                        Some(0)
+                    } else if id == reg::DELAY.id || id == reg::DELAY_CHAR.id {
+                        Some(1)
+                    } else if id == reg::EFX.id {
+                        Some(2)
+                    } else {
+                        None
+                    };
                     viz::effects_flow(display, lit, None);
                 }
             }

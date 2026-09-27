@@ -253,12 +253,32 @@ pub static DELAY: BlockDef = BlockDef {
     params: [
         ParamSlot::param(BlockRef::Delay, DelayParams::TIME_MS),
         ParamSlot::param(BlockRef::Delay, DelayParams::FEEDBACK),
-        ParamSlot::param(BlockRef::Delay, DelayParams::WOW_FLUTTER),
-        ParamSlot::param(BlockRef::Delay, DelayParams::SATURATION),
         ParamSlot::param(BlockRef::Delay, DelayParams::TONE),
+        ParamSlot::param(BlockRef::Delay, DelayParams::REV_SEND),
         ParamSlot::param(BlockRef::Delay, DelayParams::MIX),
+        EMPTY,
     ],
 };
+
+/// DLY › CHAR: the tape character, off the delay's main page (FX diet spec
+/// § UI; an assumed default, pending the owner's word).
+pub static DELAY_CHAR: BlockDef = BlockDef {
+    id: 56,
+    name: "Delay Char",
+    short: "CHAR",
+    layout: PageLayout::CellGrid,
+    viz: VizType::EffectsFlow,
+    params: [
+        ParamSlot::param(BlockRef::Delay, DelayParams::WOW_FLUTTER),
+        ParamSlot::param(BlockRef::Delay, DelayParams::SATURATION),
+        EMPTY,
+        EMPTY,
+        EMPTY,
+        EMPTY,
+    ],
+};
+
+static DELAY_SUB_PAGES: [&BlockDef; 1] = [&DELAY_CHAR];
 
 pub static MASTER: BlockDef = BlockDef {
     id: 20,
@@ -482,7 +502,7 @@ static MIX_BLOCKS: [ChainBlock; 5] = [
     },
     ChainBlock {
         def: &DELAY,
-        sub_pages: &[],
+        sub_pages: &DELAY_SUB_PAGES,
     },
     ChainBlock {
         def: &EFX,
@@ -606,7 +626,7 @@ static MIXER_CHANNEL_BLOCKS: [ChainBlock; 5] = [
     },
     ChainBlock {
         def: &DELAY,
-        sub_pages: &[],
+        sub_pages: &DELAY_SUB_PAGES,
     },
     ChainBlock {
         def: &EFX,

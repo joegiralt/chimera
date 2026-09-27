@@ -3,13 +3,16 @@
 //! each effect returns only its wet signal, its MIX acting as the return
 //! level; the dry signal reaches the DACs through the parts alone. The
 //! chorus and reverb return stereo; the delay is mono, on both sides of
-//! DAC pair 1 at unity.
+//! DAC pair 1 at unity. The delay's return can feed the reverb's send (REV
+//! SEND), in the same block.
 
 use chimera_hal::BLOCK_SIZE;
+use core::f32::consts::LOG2_E;
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 
 use crate::dsp::Stereo;
+use crate::dsp::algo::math::exp2;
 use crate::dsp::chorus::{ChorusParams, JunoChorus};
 use crate::dsp::delay::{DelayParams, TapeDelay};
 use crate::dsp::reverb::ReverbParams;
@@ -46,9 +49,11 @@ pub struct FxBus {
     chorus: JunoChorus,
     delay: TapeDelay,
     reverb: RingReverb,
+    /// REV SEND, smoothed: where this block's ramp starts.
+    rev_send: f32,
 }
 
-crate::in_place::field_list!(FxBus => FxBus { chorus, delay, reverb });
+crate::in_place::field_list!(FxBus => FxBus { chorus, delay, reverb, rev_send });
 
 impl Default for FxBus {
     fn default() -> Self {
@@ -66,6 +71,7 @@ impl FxBus {
             chorus: JunoChorus::new(),
             delay: TapeDelay::new(),
             reverb: RingReverb::new(),
+            rev_send: 0.0,
         }
     }
 
@@ -73,11 +79,12 @@ impl FxBus {
         let p = slot.as_mut_ptr();
         // SAFETY: `p` comes from `&mut MaybeUninit<Self>` (valid, aligned,
         // unaliased); each effect's in-place constructor initialises its
-        // whole field before `assume_init_mut`.
+        // whole field, and `rev_send` is written, before `assume_init_mut`.
         unsafe {
             JunoChorus::init_in_place(uninit_at(addr_of_mut!((*p).chorus)));
             TapeDelay::init_in_place(uninit_at(addr_of_mut!((*p).delay)));
             RingReverb::init_in_place(uninit_at(addr_of_mut!((*p).reverb)));
+            addr_of_mut!((*p).rev_send).write(0.0);
             slot.assume_init_mut()
         }
     }
@@ -101,11 +108,31 @@ impl FxBus {
             add(&mut ret.l, &wet.l);
             add(&mut ret.r, &wet.r);
         }
-        if params.delay.is_on() {
+        let delay_on = params.delay.is_on();
+        if delay_on {
             self.delay.process_wet(delay, &params.delay, sample_rate);
             add(&mut ret.l, delay);
             add(&mut ret.r, delay);
         }
+        // REV SEND: the delay's return into the reverb's send, this block.
+        // With the delay off its buffer is the raw send: nothing passes.
+        let target = if delay_on && params.reverb.is_on() {
+            unit(params.delay.rev_send)
+        } else {
+            0.0
+        };
+        let from = if delay_on { self.rev_send } else { 0.0 };
+        let mut to = target + smoothing(sample_rate) * (from - target);
+        if target == 0.0 && to < 1e-4 {
+            to = 0.0;
+        }
+        if from != 0.0 || to != 0.0 {
+            let n = BLOCK_SIZE as f32;
+            for (i, (r, &d)) in reverb.iter_mut().zip(delay.iter()).enumerate() {
+                *r += (from + (to - from) * (i + 1) as f32 / n) * d;
+            }
+        }
+        self.rev_send = to;
         if params.reverb.is_on() {
             let mut wet = Stereo::SILENT;
             self.reverb.process(
@@ -125,4 +152,14 @@ fn add(acc: &mut [f32; BLOCK_SIZE], x: &[f32; BLOCK_SIZE]) {
     for (a, &v) in acc.iter_mut().zip(x) {
         *a += v;
     }
+}
+
+/// REV SEND's one-pole, once per block: 20 ms.
+fn smoothing(sample_rate: u32) -> f32 {
+    exp2(-LOG2_E * BLOCK_SIZE as f32 / (0.02 * sample_rate as f32))
+}
+
+/// Clamped to 0..1; NaN reads as 0.
+fn unit(v: f32) -> f32 {
+    if v.is_nan() { 0.0 } else { v.clamp(0.0, 1.0) }
 }
