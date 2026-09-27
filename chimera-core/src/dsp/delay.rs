@@ -182,8 +182,8 @@ impl TapeDelay {
                 self.flutter_phase -= 1.0;
             }
 
-            let wow = libm::sinf(self.wow_phase * 2.0 * core::f32::consts::PI);
-            let flutter = libm::sinf(self.flutter_phase * 2.0 * core::f32::consts::PI);
+            let wow = crate::dsp::sin_turns(self.wow_phase);
+            let flutter = crate::dsp::sin_turns(self.flutter_phase);
             let mod_amount = params.wow_flutter * 20.0; // up to ±20 samples modulation
             let delay = base_delay + wow * mod_amount * 0.7 + flutter * mod_amount * 0.3;
             let delay = delay.clamp(1.0, (MAX_DELAY_SAMPLES - 2) as f32);
@@ -191,8 +191,16 @@ impl TapeDelay {
             // Interpolated read from delay line
             let d_int = delay as usize;
             let d_frac = delay - d_int as f32;
-            let pos_a = (self.write_pos + MAX_DELAY_SAMPLES - d_int) % MAX_DELAY_SAMPLES;
-            let pos_b = (self.write_pos + MAX_DELAY_SAMPLES - d_int - 1) % MAX_DELAY_SAMPLES;
+            let pos_a = if self.write_pos >= d_int {
+                self.write_pos - d_int
+            } else {
+                self.write_pos + MAX_DELAY_SAMPLES - d_int
+            };
+            let pos_b = if pos_a == 0 {
+                MAX_DELAY_SAMPLES - 1
+            } else {
+                pos_a - 1
+            };
             let delayed = self.buffer[pos_a] * (1.0 - d_frac) + self.buffer[pos_b] * d_frac;
 
             // Tone: one-pole LP in feedback path (tape loses highs each pass)
@@ -209,7 +217,10 @@ impl TapeDelay {
 
             // Write: input + feedback
             self.buffer[self.write_pos] = dry + saturated * params.feedback;
-            self.write_pos = (self.write_pos + 1) % MAX_DELAY_SAMPLES;
+            self.write_pos += 1;
+            if self.write_pos == MAX_DELAY_SAMPLES {
+                self.write_pos = 0;
+            }
 
             // Mix
             *s = dry * dry_gain + delayed * params.mix;
