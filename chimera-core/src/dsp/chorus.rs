@@ -109,54 +109,45 @@ impl Block for ChorusParams {
 struct BbdLine {
     buffer: [f32; MAX_CHORUS_DELAY],
     write_pos: usize,
-    lfo_phase: f32,
+    /// The LFO's phase, in turns × 2^32: it wraps for free.
+    lfo_phase: u32,
 }
+
+const MASK: usize = MAX_CHORUS_DELAY - 1;
+const _: () = assert!(MAX_CHORUS_DELAY.is_power_of_two());
 
 impl BbdLine {
     fn new() -> Self {
         Self {
             buffer: [0.0; MAX_CHORUS_DELAY],
             write_pos: 0,
-            lfo_phase: 0.0,
+            lfo_phase: 0,
         }
     }
 
     /// Writes `input`; returns the (normal, inverted) taps. `base` and
-    /// `depth` are in samples, `inc` is the LFO's phase step.
-    #[inline]
-    fn tick(&mut self, input: f32, base: f32, depth: f32, inc: f32) -> (f32, f32) {
-        self.buffer[self.write_pos] = input;
-        self.write_pos += 1;
-        if self.write_pos == MAX_CHORUS_DELAY {
-            self.write_pos = 0;
-        }
-        self.lfo_phase += inc;
-        if self.lfo_phase >= 1.0 {
-            self.lfo_phase -= 1.0;
-        }
-        // Triangle: 0→1→0→-1→0
-        let p = self.lfo_phase;
-        let tri = if p < 0.25 {
-            p * 4.0
-        } else if p < 0.75 {
-            2.0 - p * 4.0
-        } else {
-            p * 4.0 - 4.0
-        };
+    /// `depth` are in samples, `inc` is the LFO's phase step in turns ×
+    /// 2^32.
+    #[inline(always)]
+    fn tick(&mut self, input: f32, base: f32, depth: f32, inc: u32) -> (f32, f32) {
+        self.buffer[self.write_pos & MASK] = input;
+        self.write_pos = (self.write_pos + 1) & MASK;
+        self.lfo_phase = self.lfo_phase.wrapping_add(inc);
+        // Triangle, 0→1→0→-1→0: 1 − |4v − 2| a quarter turn on, v ∈ [0, 1),
+        // from the phase's distance to the half turn.
+        let x = (self.lfo_phase.wrapping_add(1 << 30) ^ (1 << 31)) as i32;
+        let tri = 1.0 - (x as f32).abs() * (1.0 / (1u32 << 30) as f32);
         (self.read(base + tri * depth), self.read(base - tri * depth))
     }
 
-    #[inline]
+    #[inline(always)]
     fn read(&self, delay: f32) -> f32 {
-        let delay = delay.clamp(1.0, (MAX_CHORUS_DELAY - 2) as f32);
+        // max then min: VMAXNM and VMINNM, no compare.
+        let delay = delay.max(1.0).min((MAX_CHORUS_DELAY - 2) as f32);
         let d = delay as usize;
         let frac = delay - d as f32;
-        let a = if self.write_pos >= d {
-            self.write_pos - d
-        } else {
-            self.write_pos + MAX_CHORUS_DELAY - d
-        };
-        let b = if a == 0 { MAX_CHORUS_DELAY - 1 } else { a - 1 };
+        let a = self.write_pos.wrapping_sub(d) & MASK;
+        let b = a.wrapping_sub(1) & MASK;
         self.buffer[a] * (1.0 - frac) + self.buffer[b] * frac
     }
 }
@@ -186,7 +177,7 @@ impl JunoChorus {
 
     pub fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
         // SAFETY: every field (two `BbdLine { buffer: [f32; N], write_pos:
-        // usize, lfo_phase: f32 }`) is valid as zero bytes, and zero is
+        // usize, lfo_phase: u32 }`) is valid as zero bytes, and zero is
         // exactly `new()`'s state; `write_bytes` covers the whole slot.
         unsafe {
             slot.as_mut_ptr().write_bytes(0, 1);
@@ -214,21 +205,35 @@ impl JunoChorus {
         let depth = 0.5 + params.depth * 1.5;
         let ms = sample_rate as f32 / 1000.0;
         let base = 3.6 * ms;
-        let (inc_i, depth_i) = (0.513 * rate / sample_rate as f32, 1.7 * depth * ms);
-        let (inc_ii, depth_ii) = (0.863 * rate / sample_rate as f32, 2.3 * depth * ms);
-        for (i, &x) in send.iter().enumerate() {
-            let (l, r) = match mode {
-                ChorusMode::JunoI => self.line_i.tick(x, base, depth_i, inc_i),
-                ChorusMode::JunoII => self.line_ii.tick(x, base, depth_ii, inc_ii),
-                ChorusMode::JunoBoth => {
-                    let (l1, r1) = self.line_i.tick(x, base, depth_i, inc_i);
-                    let (l2, r2) = self.line_ii.tick(x, base, depth_ii, inc_ii);
-                    ((l1 + l2) * 0.5, (r1 + r2) * 0.5)
-                }
-                ChorusMode::Off => (0.0, 0.0),
-            };
-            out.l[i] = l * params.mix;
-            out.r[i] = r * params.mix;
+        let turns = |hz: f32| (hz / sample_rate as f32 * 4_294_967_296.0) as u32;
+        let (inc_i, depth_i) = (turns(0.513 * rate), 1.7 * depth * ms);
+        let (inc_ii, depth_ii) = (turns(0.863 * rate), 2.3 * depth * ms);
+        let (a, b, mix) = (&mut self.line_i, &mut self.line_ii, params.mix);
+        match mode {
+            ChorusMode::JunoI => each(send, mix, out, |x| a.tick(x, base, depth_i, inc_i)),
+            ChorusMode::JunoII => each(send, mix, out, |x| b.tick(x, base, depth_ii, inc_ii)),
+            ChorusMode::JunoBoth => each(send, mix, out, |x| {
+                let (l1, r1) = a.tick(x, base, depth_i, inc_i);
+                let (l2, r2) = b.tick(x, base, depth_ii, inc_ii);
+                ((l1 + l2) * 0.5, (r1 + r2) * 0.5)
+            }),
+            ChorusMode::Off => *out = Stereo::SILENT,
         }
+    }
+}
+
+/// One loop per mode, so no per-sample dispatch: `tick` from the send to
+/// (L, R), × `mix`.
+#[inline(always)]
+fn each(
+    send: &[f32; BLOCK_SIZE],
+    mix: f32,
+    out: &mut Stereo,
+    mut tick: impl FnMut(f32) -> (f32, f32),
+) {
+    for (i, &x) in send.iter().enumerate() {
+        let (l, r) = tick(x);
+        out.l[i] = l * mix;
+        out.r[i] = r * mix;
     }
 }
