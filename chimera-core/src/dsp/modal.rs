@@ -507,7 +507,7 @@ impl Default for ModalEngine {
 }
 
 impl ModalEngine {
-    pub const COST: Cost = Cost(370); // measured 2026-09-26, bench, rev V at 480 MHz
+    pub const COST: Cost = Cost(390); // measured 2026-09-27, bench, rev V at 480 MHz
 
     pub fn new() -> Self {
         // SAFETY: `init_in_place` writes every field of the slot.

@@ -49,7 +49,8 @@ impl Voice {
     /// Measured with the silent VA placeholder, which went inactive after one
     /// block, so this is the chain's floor rather than its cost with a
     /// sounding engine; engine costs are bench per-voice minus this. The
-    /// bench's `FLOOR` row (an Algo patch with every LEVEL at 0) measures it now.
+    /// bench's `FLOOR` row (an Algo patch with every LEVEL at 0) measured 5 on
+    /// 2026-09-27; 10 is kept, erring high.
     pub const CHAIN_COST: Cost = Cost(10); // measured 2026-09-26, bench, rev V at 480 MHz
 
     /// Cycles/sample of a voice playing `p` under `mods`.

@@ -257,6 +257,57 @@ fn reverb_send(send: f32) -> Vec<f32> {
     render_perf(&perf, &[(0, 60)], 300)
 }
 
+const CHORD6: [u8; 6] = [48, 55, 60, 64, 67, 72];
+
+fn factory(i: usize) -> Performance {
+    let mut perf = Performance::new();
+    perf.parts[0].sound = chimera_core::factory::factory_sound(i).expect("factory Sound");
+    perf
+}
+
+/// Six voices of the factory SAW LEAD, which fits six (ADR 0026).
+fn six_voice_chord() -> Vec<f32> {
+    render_perf(&factory(4), &CHORD6.map(|n| (0, n)), 200)
+}
+
+#[test]
+fn a_six_voice_saw_lead_chord_is_not_refused() {
+    let shared = AudioShared::from_performance(&factory(4));
+    let mut rig = Rig::new();
+    for n in CHORD6 {
+        rig.inst.handle(on(0, n), &shared);
+    }
+    rig.render(&shared);
+    let a = rig.inst.allocator();
+    assert_eq!(a.refused(), 0);
+    assert_eq!(a.slots().iter().filter(|s| !s.is_free()).count(), 6);
+}
+
+/// ADR 0026: TX EPIANO fits five voices, so the sixth note steals the
+/// oldest held one (voice_alloc rule 4) and the pool stays in budget.
+#[test]
+fn a_six_note_tx_epiano_chord_stays_in_budget() {
+    let shared = AudioShared::from_performance(&factory(1));
+    let mut rig = Rig::new();
+    for n in CHORD6 {
+        rig.inst.handle(on(0, n), &shared);
+        assert!(rig.inst.allocator().sounding_cost() + FxBus::COST <= BUDGET.as_cost());
+    }
+    for _ in 0..4 {
+        rig.render(&shared);
+    }
+    let a = rig.inst.allocator();
+    assert!(a.sounding_cost() + FxBus::COST <= BUDGET.as_cost());
+    assert_eq!(a.refused(), 0);
+    let mut held: Vec<u8> = a
+        .slots()
+        .iter()
+        .filter_map(|s| s.note().filter(|_| s.held()).map(|n| n.get()))
+        .collect();
+    held.sort();
+    assert_eq!(held, CHORD6[1..], "the oldest note, 48, was stolen");
+}
+
 /// Recorded when the instrument path landed (plan Task 12). Re-record only
 /// for an intended sound change:
 ///     GOLDEN_RECORD=1 cargo test -p chimera-core --test instrument_test -- --nocapture
@@ -265,6 +316,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("two_parts_two_pairs", 0x98262aa38f73b0af), // re-recorded: part 1 is Algo
     ("reverb_send_off", 0x74703404aa517989), // re-recorded: the default Sound is Algo
     ("reverb_send_on", 0x3d1e63a510a959c1), // re-recorded: the default Sound is Algo
+    ("six_voice_chord", 0xf6e19895e1a40915), // recorded after the Algo cost was measured
 ];
 
 /// A named golden case: a case name paired with its render function.
@@ -272,11 +324,12 @@ type GoldenCase = (&'static str, fn() -> Vec<f32>);
 
 #[test]
 fn instrument_goldens_match() {
-    let cases: [GoldenCase; 4] = [
+    let cases: [GoldenCase; 5] = [
         ("poly_chord", chord),
         ("two_parts_two_pairs", two_parts),
         ("reverb_send_off", || reverb_send(0.0)),
         ("reverb_send_on", || reverb_send(0.5)),
+        ("six_voice_chord", six_voice_chord),
     ];
     let record = std::env::var_os("GOLDEN_RECORD").is_some();
     let mut failures = Vec::new();
