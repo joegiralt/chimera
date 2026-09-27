@@ -288,6 +288,7 @@ pub fn block_tag(b: BlockRef) -> &'static str {
         BlockRef::Chorus => "CHR",
         BlockRef::Delay => "DLY",
         BlockRef::Reverb => "REV",
+        BlockRef::Tape => "TPE",
         BlockRef::Part => "PRT",
     }
 }

@@ -4,7 +4,8 @@
 //! level; the dry signal reaches the DACs through the parts alone. The
 //! chorus and reverb return stereo; the delay is mono, on both sides of
 //! DAC pair 1 at unity. The delay's return can feed the reverb's send (REV
-//! SEND), in the same block.
+//! SEND), in the same block. After the pairs are summed, `master` runs the
+//! master section: the tape on DAC pair 1.
 
 use chimera_hal::BLOCK_SIZE;
 use core::f32::consts::LOG2_E;
@@ -17,7 +18,8 @@ use crate::dsp::chorus::{ChorusParams, JunoChorus};
 use crate::dsp::delay::{DelayParams, TapeDelay};
 use crate::dsp::reverb::ReverbParams;
 use crate::dsp::ring::RingReverb;
-use crate::hw::{Cost, FX_BUS_BUDGET};
+use crate::dsp::tape::{Tape, TapeParams};
+use crate::hw::{Cost, DAC_PAIRS, FX_BUS_BUDGET};
 use crate::in_place::uninit_at;
 
 /// Sends per part, in this order: chorus, delay, reverb.
@@ -32,6 +34,7 @@ pub struct FxParams {
     pub chorus: ChorusParams,
     pub delay: DelayParams,
     pub reverb: ReverbParams,
+    pub tape: TapeParams,
 }
 
 impl Default for FxParams {
@@ -41,6 +44,7 @@ impl Default for FxParams {
             chorus: ChorusParams::default(),
             delay: DelayParams::default(),
             reverb: ReverbParams::default(),
+            tape: TapeParams::default(),
         }
     }
 }
@@ -49,11 +53,12 @@ pub struct FxBus {
     chorus: JunoChorus,
     delay: TapeDelay,
     reverb: RingReverb,
+    tape: Tape,
     /// REV SEND, smoothed: where this block's ramp starts.
     rev_send: f32,
 }
 
-crate::in_place::field_list!(FxBus => FxBus { chorus, delay, reverb, rev_send });
+crate::in_place::field_list!(FxBus => FxBus { chorus, delay, reverb, tape, rev_send });
 
 impl Default for FxBus {
     fn default() -> Self {
@@ -71,6 +76,7 @@ impl FxBus {
             chorus: JunoChorus::new(),
             delay: TapeDelay::new(),
             reverb: RingReverb::new(),
+            tape: Tape::new(),
             rev_send: 0.0,
         }
     }
@@ -84,6 +90,7 @@ impl FxBus {
             JunoChorus::init_in_place(uninit_at(addr_of_mut!((*p).chorus)));
             TapeDelay::init_in_place(uninit_at(addr_of_mut!((*p).delay)));
             RingReverb::init_in_place(uninit_at(addr_of_mut!((*p).reverb)));
+            Tape::init_in_place(uninit_at(addr_of_mut!((*p).tape)));
             addr_of_mut!((*p).rev_send).write(0.0);
             slot.assume_init_mut()
         }
@@ -145,6 +152,16 @@ impl FxBus {
             add(&mut ret.l, &wet.l);
             add(&mut ret.r, &wet.r);
         }
+    }
+
+    /// The master section, after every pair is summed: the tape on pair 1.
+    pub fn master(
+        &mut self,
+        out: &mut [[f32; 2 * BLOCK_SIZE]; DAC_PAIRS],
+        params: &FxParams,
+        sample_rate: u32,
+    ) {
+        self.tape.process(&mut out[0], &params.tape, sample_rate);
     }
 }
 

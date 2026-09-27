@@ -63,7 +63,10 @@ fn mixer_chain_is_part_sends_and_fx() {
         .iter()
         .map(|b| b.def.name)
         .collect();
-    assert_eq!(names, ["Part", "Sends", "Chorus", "Delay", "Reverb"]);
+    assert_eq!(
+        names,
+        ["Part", "Sends", "Chorus", "Delay", "Reverb", "Tape"]
+    );
 }
 
 /// Every slot on the Mixer chain is bound to a real spec: no Legacy slot is
@@ -450,4 +453,32 @@ fn part_page_shows_channel_mode_and_output_by_name() {
     let mut buf = FmtBuf::new();
     fmt_val(&mut buf, 0.97, reg::PART.params[1].format());
     assert_eq!(buf.as_str(), "POLY");
+}
+
+/// FX diet spec § UI: TAPE is DRIVE, TONE, WOW, MIX, right after REV on
+/// both Mix chains; its encoders edit the Performance's tape.
+#[test]
+fn the_tape_page_is_drive_tone_wow_mix() {
+    use chimera_core::dsp::tape::TapeParams as T;
+    let at = |p| Some(ParamAddr::new(BlockRef::Tape, p));
+    assert_eq!(
+        bound(&reg::TAPE),
+        [
+            at(T::DRIVE),
+            at(T::TONE),
+            at(T::WOW),
+            at(T::MIX),
+            None,
+            None
+        ]
+    );
+    for chain in [&reg::MIX_CHAIN, &reg::MIXER_CHANNEL_CHAIN] {
+        let ids: Vec<u16> = chain.blocks.iter().map(|b| b.def.id).collect();
+        let rev = ids.iter().position(|&i| i == reg::EFX.id).unwrap();
+        assert_eq!(ids[rev + 1], reg::TAPE.id, "{}", chain.name);
+    }
+    let mut perf = Performance::new();
+    turn_def(&reg::TAPE, 0, 64, &mut perf);
+    turn_def(&reg::TAPE, 3, 32, &mut perf);
+    assert_eq!((perf.fx.tape.drive, perf.fx.tape.mix), (0.5, 0.25));
 }

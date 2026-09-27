@@ -118,5 +118,6 @@ pub mod lfo;
 pub mod modal;
 pub mod reverb;
 pub mod ring;
+pub mod tape;
 pub mod voice;
 pub mod wavefolder;

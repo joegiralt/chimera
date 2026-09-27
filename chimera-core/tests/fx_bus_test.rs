@@ -7,6 +7,7 @@ use chimera_core::dsp::chorus::{ChorusParams, JunoChorus};
 use chimera_core::dsp::delay::{DelayParams, TapeDelay};
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
 use chimera_core::dsp::ring::{RingReverb, first_reflection, size_step};
+use chimera_core::hw::DAC_PAIRS;
 use chimera_hal::BLOCK_SIZE;
 
 const SR: u32 = 48_000;
@@ -237,5 +238,21 @@ fn a_rev_send_jump_does_not_click() {
         let moved = with_rev_send(220, false, |blk| if blk < at_b { a } else { b });
         let k = kink(&moved[w.clone()]);
         assert!(k <= 1.5 * bound, "{a} → {b}: {k} vs {bound}");
+    }
+}
+
+/// FX diet spec § Master section: off by default, the master section
+/// leaves every pair untouched, bit for bit.
+#[test]
+fn the_master_section_is_off_by_default() {
+    let p = FxParams::default();
+    assert!(!p.tape.is_on());
+    let mut out: [[f32; 2 * BLOCK_SIZE]; DAC_PAIRS] =
+        core::array::from_fn(|k| core::array::from_fn(|i| ((i * 7 + k) % 13) as f32 / 6.5 - 1.0));
+    let before = out;
+    let mut bus = Box::new(FxBus::new());
+    for b in 0..16 {
+        bus.master(&mut out, &p, SR);
+        assert_eq!(out, before, "block {b}");
     }
 }
