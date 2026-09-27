@@ -222,15 +222,16 @@ type Lr = [f32; 2];
 
 pub struct Tape {
     /// Per side, L and R together: the input's last `LINE_HIST` samples,
-    /// oldest first.
-    line: [Lr; LINE_HIST],
+    /// oldest first, then this block's. Each scratch buffer here is history
+    /// then block, written before it is read: nothing is cleared.
+    line: [Lr; LINE_HIST + BLOCK_SIZE],
     /// Pre-emphasis: its last input and output.
     pre: (Lr, Lr),
     /// The oversampler's history: gained, pre-emphasised input, then the
     /// saturated even (filtered) and odd (centre-tap) 2× samples.
-    u: [Lr; U_HIST],
-    even: [Lr; E_HIST],
-    odd: [Lr; O_HIST],
+    u: [Lr; U_HIST + BLOCK_SIZE],
+    even: [Lr; E_HIST + BLOCK_SIZE],
+    odd: [Lr; O_HIST + BLOCK_SIZE],
     /// De-emphasis: its last input and output.
     de: (Lr, Lr),
     /// Head bump: x[n−1], x[n−2], y[n−1], y[n−2].
@@ -278,11 +279,11 @@ struct Ramps {
 impl Tape {
     pub const fn new() -> Self {
         Self {
-            line: [[0.0; 2]; LINE_HIST],
+            line: [[0.0; 2]; LINE_HIST + BLOCK_SIZE],
             pre: ([0.0; 2], [0.0; 2]),
-            u: [[0.0; 2]; U_HIST],
-            even: [[0.0; 2]; E_HIST],
-            odd: [[0.0; 2]; O_HIST],
+            u: [[0.0; 2]; U_HIST + BLOCK_SIZE],
+            even: [[0.0; 2]; E_HIST + BLOCK_SIZE],
+            odd: [[0.0; 2]; O_HIST + BLOCK_SIZE],
             de: ([0.0; 2], [0.0; 2]),
             bump: [[0.0; 2]; 4],
             lp: [0.0; 2],
@@ -388,25 +389,23 @@ impl Tape {
         let e0 = self.engage;
         let fading = !(on && e0 >= 1.0);
 
-        let mut line = [[0.0f32; 2]; LINE_HIST + BLOCK_SIZE];
-        let mut u = [[0.0f32; 2]; U_HIST + BLOCK_SIZE];
-        line[..LINE_HIST].copy_from_slice(&self.line);
-        u[..U_HIST].copy_from_slice(&self.u);
         match (wow, held) {
-            (true, true) => self.pass_in::<true, false>(pair, &mut line, &mut u, &r),
-            (true, false) => self.pass_in::<true, true>(pair, &mut line, &mut u, &r),
-            (false, true) => self.pass_in::<false, false>(pair, &mut line, &mut u, &r),
-            (false, false) => self.pass_in::<false, true>(pair, &mut line, &mut u, &r),
+            (true, true) => self.pass_in::<true, false>(pair, &r),
+            (true, false) => self.pass_in::<true, true>(pair, &r),
+            (false, true) => self.pass_in::<false, false>(pair, &r),
+            (false, false) => self.pass_in::<false, true>(pair, &r),
         }
-        let sat = self.pass_os(&u);
+        let sat = self.pass_os();
         match (fading, held) {
-            (true, true) => self.pass_out::<true, false>(pair, &line, &sat, &r, e0, on),
-            (true, false) => self.pass_out::<true, true>(pair, &line, &sat, &r, e0, on),
-            (false, true) => self.pass_out::<false, false>(pair, &line, &sat, &r, e0, on),
-            (false, false) => self.pass_out::<false, true>(pair, &line, &sat, &r, e0, on),
+            (true, true) => self.pass_out::<true, false>(pair, &sat, &r, e0, on),
+            (true, false) => self.pass_out::<true, true>(pair, &sat, &r, e0, on),
+            (false, true) => self.pass_out::<false, false>(pair, &sat, &r, e0, on),
+            (false, false) => self.pass_out::<false, true>(pair, &sat, &r, e0, on),
         }
-        self.line.copy_from_slice(&line[BLOCK_SIZE..]);
-        self.u.copy_from_slice(&u[BLOCK_SIZE..]);
+        self.line.copy_within(BLOCK_SIZE.., 0);
+        self.u.copy_within(BLOCK_SIZE.., 0);
+        self.even.copy_within(BLOCK_SIZE.., 0);
+        self.odd.copy_within(BLOCK_SIZE.., 0);
 
         // Priming runs below 0; the fade holds at its ends.
         let e = e0 + if on { n } else { -n } / ENGAGE as f32;
@@ -422,10 +421,9 @@ impl Tape {
     fn pass_in<const WOW: bool, const RAMP: bool>(
         &mut self,
         pair: &[f32; 2 * BLOCK_SIZE],
-        line: &mut [Lr; LINE_HIST + BLOCK_SIZE],
-        u: &mut [Lr; U_HIST + BLOCK_SIZE],
         r: &Ramps,
     ) {
+        let (line, u) = (&mut self.line, &mut self.u);
         let [b0, b1, a1] = self.coefs.pre;
         let (mut px, mut py) = self.pre;
         // Held, g's step is 0: it starts where it stays.
@@ -460,14 +458,12 @@ impl Tape {
     /// sum, the odd one the centre tap's copy; down, the centre tap reads
     /// the odd stream, the odd taps the even stream.
     #[inline(always)]
-    fn pass_os(&mut self, u: &[Lr; U_HIST + BLOCK_SIZE]) -> [Lr; BLOCK_SIZE] {
-        let mut even = [[0.0f32; 2]; E_HIST + BLOCK_SIZE];
-        let mut odd = [[0.0f32; 2]; O_HIST + BLOCK_SIZE];
-        even[..E_HIST].copy_from_slice(&self.even);
-        odd[..O_HIST].copy_from_slice(&self.odd);
-        let mut sat = [[0.0f32; 2]; BLOCK_SIZE];
-        for i in 0..BLOCK_SIZE {
+    fn pass_os(&mut self) -> [Lr; BLOCK_SIZE] {
+        let (u, even, odd) = (&self.u, &mut self.even, &mut self.odd);
+        // Built in order, each sample's even and odd before its output.
+        core::array::from_fn(|i| {
             let (m, e) = (U_HIST + i, E_HIST + i);
+            let mut y = [0.0f32; 2];
             for s in 0..2 {
                 let mut ve = 0.0;
                 for (j, &h) in HB2.iter().enumerate() {
@@ -475,16 +471,13 @@ impl Tape {
                 }
                 even[e][s] = soft_clip(ve);
                 odd[O_HIST + i][s] = soft_clip(u[m - 3][s]);
-                let mut y = 0.5 * odd[i][s];
+                y[s] = 0.5 * odd[i][s];
                 for (j, &h) in HB.iter().enumerate() {
-                    y += h * (even[e - 3 + j][s] + even[e - 4 - j][s]);
+                    y[s] += h * (even[e - 3 + j][s] + even[e - 4 - j][s]);
                 }
-                sat[i][s] = y;
             }
-        }
-        self.even.copy_from_slice(&even[BLOCK_SIZE..]);
-        self.odd.copy_from_slice(&odd[BLOCK_SIZE..]);
-        sat
+            y
+        })
     }
 
     /// Pass 3: level compensation, de-emphasis, head bump, roll-off, the
@@ -494,7 +487,6 @@ impl Tape {
     fn pass_out<const FADE: bool, const RAMP: bool>(
         &mut self,
         pair: &mut [f32; 2 * BLOCK_SIZE],
-        line: &[Lr; LINE_HIST + BLOCK_SIZE],
         sat: &[Lr; BLOCK_SIZE],
         r: &Ramps,
         e0: f32,
@@ -512,7 +504,7 @@ impl Tape {
             if RAMP {
                 (ci, lpi, mi) = (ci + r.c.1, lpi + r.lp.1, mi + r.mix.1);
             }
-            let dry = line[LINE_HIST + i - DRY_TAP];
+            let dry = self.line[LINE_HIST + i - DRY_TAP];
             let mut y = [0.0f32; 2];
             for s in 0..2 {
                 let x = sat[i][s] * ci;
