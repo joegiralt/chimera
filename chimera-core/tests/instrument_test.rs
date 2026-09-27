@@ -605,3 +605,83 @@ fn same_note_from_two_channels_releases_both_voices() {
         }
     }
 }
+
+/// Six SAW LEAD notes, then the chord's Sound becomes TX EPIANO, which fits
+/// five (ADR 0026): one voice is shed. `release` notes are let go first.
+fn shed_one(release: &[u8]) -> (Rig, AudioShared) {
+    let light = AudioShared::from_performance(&factory(4));
+    let heavy = AudioShared::from_performance(&factory(1));
+    let mut rig = Rig::new();
+    for n in CHORD6 {
+        rig.inst.handle(on(0, n), &light);
+    }
+    for _ in 0..20 {
+        rig.render(&light);
+    }
+    for &n in release {
+        rig.inst.handle(off(0, n), &light);
+    }
+    rig.render(&light);
+    assert_eq!(
+        rig.inst
+            .allocator()
+            .slots()
+            .iter()
+            .filter(|s| !s.is_free())
+            .count(),
+        6
+    );
+    rig.render(&heavy);
+    (rig, heavy)
+}
+
+fn dying(rig: &Rig) -> Vec<(usize, u8)> {
+    let slots = rig.inst.allocator().slots();
+    (0..slots.len())
+        .filter(|&v| slots[v].dying())
+        .map(|v| (v, slots[v].note().unwrap().get()))
+        .collect()
+}
+
+/// ADR 0027: a recost over budget takes a released tail, the oldest, before
+/// any held note; the dying voice is not reallocated, and frees when the
+/// fade ends, back within budget.
+#[test]
+fn a_patch_edit_over_budget_fades_a_tail_first() {
+    let (mut rig, heavy) = shed_one(&[64, 55]);
+    let d = dying(&rig);
+    assert_eq!(
+        d.iter().map(|x| x.1).collect::<Vec<_>>(),
+        [55],
+        "the oldest tail"
+    );
+    let v = d[0].0;
+    rig.inst.handle(on(0, 90), &heavy);
+    let s = rig.inst.allocator().slots()[v];
+    assert!(
+        s.dying() && s.note() == MidiNote::new(55),
+        "reallocated mid-fade"
+    );
+    rig.render(&heavy); // the fade's second block
+    let a = rig.inst.allocator();
+    assert!(a.slots()[v].is_free());
+    assert!(a.sounding_cost() + FxBus::COST <= BUDGET.as_cost());
+}
+
+/// With only held notes, the newest is shed. It keeps its slot, not
+/// reallocated, through the two-block fade (the block it was shed in and
+/// the next), then frees.
+#[test]
+fn a_patch_edit_over_budget_fades_the_newest_held_note() {
+    let (mut rig, heavy) = shed_one(&[]);
+    let d = dying(&rig);
+    assert_eq!(d.iter().map(|x| x.1).collect::<Vec<_>>(), [72]);
+    rig.inst.handle(off(0, 48), &heavy); // a tail to steal
+    rig.inst.handle(on(0, 90), &heavy);
+    assert_eq!(dying(&rig), d, "reallocated mid-fade");
+    rig.render(&heavy);
+    assert!(dying(&rig).is_empty());
+    let a = rig.inst.allocator();
+    assert_eq!(a.slots().iter().filter(|s| !s.is_free()).count(), 5);
+    assert!(a.sounding_cost() + FxBus::COST <= BUDGET.as_cost());
+}

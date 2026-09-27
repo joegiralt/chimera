@@ -240,3 +240,43 @@ fn test_no_clicks_single_sample_buffers() {
         &[1; 512],
     );
 }
+
+/// ADR 0027: a killed voice ramps to 0 over `Voice::FADE` samples instead
+/// of stopping dead; no step is bigger than the signal's own.
+#[test]
+fn a_killed_voice_fades_out() {
+    let sound = chimera_core::factory::factory_sound(4).unwrap(); // SAW LEAD
+    let (p, m) = (&sound.params, &sound.mod_state);
+    let (mut a, mut b) = (Voice::new(SR), Voice::new(SR));
+    let mut block = [0.0f32; BLOCK_SIZE];
+    let mut last = 0.0;
+    for v in [&mut a, &mut b] {
+        v.note_on(MidiNote::new(60).unwrap(), Velocity::DEFAULT, p);
+        for _ in 0..20 {
+            v.render(&mut block, p, m);
+        }
+        last = block[BLOCK_SIZE - 1];
+    }
+    b.kill();
+    let (mut ra, mut rb) = (vec![last], vec![last]);
+    for _ in 0..Voice::FADE as usize / BLOCK_SIZE {
+        a.render(&mut block, p, m);
+        ra.extend_from_slice(&block);
+        b.kill(); // a second kill does not restart the fade
+        b.render(&mut block, p, m);
+        rb.extend_from_slice(&block);
+    }
+    let step = |x: &[f32]| x.windows(2).fold(0.0f32, |s, w| s.max((w[1] - w[0]).abs()));
+    let peak = ra.iter().fold(0.0f32, |s, x| s.max(x.abs()));
+    assert!(peak > 0.05, "the voice is sounding: {peak}");
+    assert_eq!(*rb.last().unwrap(), 0.0);
+    assert!(!b.is_active() && a.is_active());
+    assert!(
+        step(&rb) <= step(&ra),
+        "fade step {} > signal step {}",
+        step(&rb),
+        step(&ra)
+    );
+    b.render(&mut block, p, m);
+    assert!(block.iter().all(|&s| s == 0.0));
+}
