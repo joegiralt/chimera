@@ -206,8 +206,8 @@ impl Instrument {
         shared: &AudioShared,
         scope: &mut ScopeWriter,
     ) {
-        // A patch edit changes its voices' cost; cut the newest voices if
-        // that went over the budget.
+        // A patch edit changes its voices' cost; fade voices out if that
+        // went over the budget (ADR 0027).
         let costs: [Cost; MAX_PARTS] = core::array::from_fn(|p| {
             Voice::cost(&shared.parts[p].params, &shared.parts[p].mod_state)
         });
@@ -216,11 +216,10 @@ impl Instrument {
                 self.alloc.recost(v, costs[p as usize % MAX_PARTS]);
             }
         }
-        // A hard cut, not a release: the slot is free at once and the voice
-        // is no longer rendered, so its tail stops mid-block. The next
-        // note-on on it re-triggers the engine from scratch.
+        // The slot stays taken, and counted, until the fade ends and step 5
+        // frees it.
         while let Some(v) = self.alloc.shed(FxBus::COST) {
-            self.voices[v].note_off();
+            self.voices[v].kill();
         }
 
         // 1. Voices into their part's mono bus. The first voice of a part is
@@ -244,7 +243,8 @@ impl Instrument {
                 self.buses[p] = block;
                 written[p] = true;
             }
-            // 5. A released voice whose engine went quiet is free again.
+            // 5. A released voice whose engine went quiet, or a shed one whose
+            //    fade ended, is free again.
             //    Read right after rendering the note the voice plays *now*,
             //    so a steal or retrigger since the last block is never freed
             //    by a report about the note it replaced.

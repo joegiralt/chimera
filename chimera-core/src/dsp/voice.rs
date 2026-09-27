@@ -35,9 +35,11 @@ pub struct Voice {
     active: bool,
     last_note: MidiNote,
     last_velocity: Velocity,
+    /// Samples left of a `kill` fade; 0 when not fading.
+    fade: u16,
 }
 
-crate::in_place::field_list!(Voice => Voice { engines, drive, filter, folder, amp_env, lfo, active_engine, active, last_note, last_velocity });
+crate::in_place::field_list!(Voice => Voice { engines, drive, filter, folder, amp_env, lfo, active_engine, active, last_note, last_velocity, fade });
 
 impl Default for Voice {
     fn default() -> Self {
@@ -52,6 +54,9 @@ impl Voice {
     /// bench's `FLOOR` row (an Algo patch with every LEVEL at 0) measured 5 on
     /// 2026-09-27; 10 is kept, erring high.
     pub const CHAIN_COST: Cost = Cost(10); // measured 2026-09-26, bench, rev V at 480 MHz
+
+    /// A `kill` ramps to silence over this many samples (ADR 0027).
+    pub const FADE: u16 = 2 * BLOCK_SIZE as u16;
 
     /// Cycles/sample of a voice playing `p` under `mods`.
     pub fn cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
@@ -80,6 +85,7 @@ impl Voice {
             addr_of_mut!((*p).active).write(false);
             addr_of_mut!((*p).last_note).write(MidiNote::A4);
             addr_of_mut!((*p).last_velocity).write(Velocity::DEFAULT);
+            addr_of_mut!((*p).fade).write(0);
             slot.assume_init_mut()
         }
     }
@@ -89,6 +95,11 @@ impl Voice {
     }
 
     pub fn note_on(&mut self, note: MidiNote, velocity: Velocity, params: &ParamSnapshot) {
+        self.fade = 0;
+        self.trigger(note, velocity, params);
+    }
+
+    fn trigger(&mut self, note: MidiNote, velocity: Velocity, params: &ParamSnapshot) {
         self.active_engine = params.engine();
         self.last_note = note;
         self.last_velocity = velocity;
@@ -101,6 +112,14 @@ impl Voice {
     pub fn note_off(&mut self) {
         self.engines.note_off(self.active_engine);
         self.amp_env.note_off();
+    }
+
+    /// Fade to silence over `FADE` samples, then go inactive. A second call
+    /// mid-fade does nothing.
+    pub fn kill(&mut self) {
+        if self.active && self.fade == 0 {
+            self.fade = Self::FADE;
+        }
     }
 
     pub fn is_active(&self) -> bool {
@@ -117,7 +136,7 @@ impl Voice {
 
         // Auto-retrigger if engine type changed (e.g., user loaded a Modal sound)
         if self.active && params.engine() != self.active_engine {
-            self.note_on(self.last_note, self.last_velocity, params);
+            self.trigger(self.last_note, self.last_velocity, params);
         }
 
         if !self.active {
@@ -176,5 +195,15 @@ impl Voice {
 
         // Check if done
         self.active = self.engines.is_active(self.active_engine);
+
+        if self.fade > 0 {
+            for sample in output.iter_mut() {
+                self.fade = self.fade.saturating_sub(1);
+                *sample *= f32::from(self.fade) / f32::from(Self::FADE);
+            }
+            if self.fade == 0 {
+                self.active = false;
+            }
+        }
     }
 }
