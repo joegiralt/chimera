@@ -74,7 +74,7 @@ impl Default for FxBus {
 impl FxBus {
     /// The whole bus at its worst settings, with the Instrument's mixing;
     /// reserved from the voice budget whether or not an effect is on.
-    pub const COST: Cost = Cost(3310); // MV 3300, measured 2026-09-27, bench, rev V at 480 MHz; rounded up
+    pub const COST: Cost = Cost(1360); // BUS 1356, measured 2026-09-27, bench, rev V at 480 MHz; rounded up
 
     pub fn new() -> Self {
         Self {

@@ -96,6 +96,7 @@ fn the_model_bills_every_bench_row_high() {
         ("CHAIN", row(AlgoId::A17, &all, 0), 776),
         ("CHN FB", row(AlgoId::A17, &all, 7), 777),
         ("WC", Voice::CHAIN_COST.0 + cost(&worst()), 790),
+        ("A16+17", Voice::CHAIN_COST.0 + cost(&a16_a17()), 821),
     ] {
         assert!(billed >= measured, "{name}: {billed} < {measured}");
     }
@@ -134,25 +135,34 @@ fn a_one_operator_patch_fits_six_voices() {
     assert_eq!(voices_beside_fx(&one), MAX_VOICES as u32);
 }
 
-/// ADR 0026: the costliest patch still gets four voices beside the FX bus.
-#[test]
-fn the_costliest_patch_fits_four_voices() {
-    let p = costliest();
-    assert!(cost(&p) > cost(&worst()), "more links than A14 ∪ A22");
-    assert!(voices_beside_fx(&p) >= 4, "{}", cost(&p));
+/// A16 ∪ A17 at MORPH 64, six operators with feedback: 12 links, ADR
+/// 0026's costliest shape.
+fn a16_a17() -> AlgoParams {
+    let mut p = worst();
+    (p.alg_a, p.alg_b) = (AlgoId::A16.get(), AlgoId::A17.get());
+    p
 }
 
-/// ADR 0026's floor of four is rev V's. A rev Y chip, or an unknown
-/// revision (`clock_plan`), runs at 400 MHz: 5,833 cycles, 2,523 beside the
-/// FX bus, so the costliest patch (842) gets two voices, and the priciest
-/// factory Sound (MORPH KEYS, 797) three.
+/// FX diet spec § Intent: with the bus measured at 1,360 the costliest
+/// patch still gets six voices on rev V (6 × 842 + 1,360 = 6,412 ≤ 7,000),
+/// and five on rev Y (5,833 − 1,360 = 4,473; 4,473 / 842 = 5.3).
 #[test]
-fn the_voice_floor_per_revision() {
-    let p = costliest();
-    assert_eq!(voices_at(CPU_HZ_REV_V, &p), 4);
-    assert_eq!(voices_at(CPU_HZ_REV_Y, &p), 2);
-    let keys = chimera_core::factory::factory_sound(7).unwrap().params.algo;
-    assert_eq!(voices_at(CPU_HZ_REV_Y, &keys), 3);
+fn the_costliest_patch_gets_six_voices_on_rev_v() {
+    let p = a16_a17();
+    assert_eq!(Voice::CHAIN_COST.0 + cost(&p), 842);
+    assert_eq!(cost(&costliest()), cost(&p), "no pair has more links");
+    assert_eq!(FxBus::COST.0, 1_360, "{:?}", FxBus::COST);
+    assert_eq!(voices_at(CPU_HZ_REV_V, &p), MAX_VOICES as u32);
+    assert_eq!(voices_at(CPU_HZ_REV_Y, &p), 5);
+}
+
+/// Spec § Intent: on rev V every factory Sound gets six voices.
+#[test]
+fn every_factory_sound_gets_six_voices_on_rev_v() {
+    for i in 0..8 {
+        let s = chimera_core::factory::factory_sound(i).unwrap();
+        assert_eq!(voices_at(CPU_HZ_REV_V, &s.params.algo), 6, "factory {i}");
+    }
 }
 
 /// MORPH does not matter: the plan runs the union's links at any MORPH.

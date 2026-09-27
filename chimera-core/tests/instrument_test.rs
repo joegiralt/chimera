@@ -21,7 +21,12 @@ use common::fnv1a;
 
 use chimera_core::hw::{CPU_HZ_REV_V, SampleBudget};
 
-const BUDGET: SampleBudget = SampleBudget::for_cpu(CPU_HZ_REV_V);
+/// The voices' share before the FX diet (7,000 − 3,310). After the diet
+/// nothing sheds on rev V, so the allocation, stealing and shedding tests
+/// here keep the share they were written against, whatever the bus costs.
+const VOICE_SHARE: u32 = 3_690;
+const BUDGET: SampleBudget =
+    SampleBudget::for_cpu(((FxBus::COST.0 + VOICE_SHARE) as u64 * 480_000).div_ceil(7) as u32);
 
 const SR: u32 = chimera_hal::SAMPLE_RATE;
 
@@ -499,6 +504,33 @@ fn a_six_note_tx_epiano_chord_stays_in_budget() {
         .collect();
     held.sort();
     assert_eq!(held, CHORD6[1..], "the oldest note, 48, was stolen");
+}
+
+#[test]
+fn the_test_budget_keeps_the_pre_diet_voice_share() {
+    assert_eq!(BUDGET.as_cost().0, FxBus::COST.0 + VOICE_SHARE);
+}
+
+/// Spec "Done when": on rev V the allocator grants the costliest patch,
+/// A16 ∪ A17, six voices.
+#[test]
+fn the_costliest_patch_plays_six_voices_on_rev_v() {
+    use chimera_core::dsp::algo::algorithms::AlgoId;
+    let mut shared = AudioShared::default();
+    let a = &mut shared.parts[0].params.algo;
+    (a.alg_a, a.alg_b, a.morph) = (AlgoId::A16.get(), AlgoId::A17.get(), 64);
+    for op in a.ops.iter_mut() {
+        (op.level, op.feedback) = (99, 7);
+    }
+    let mut rig = Rig::new();
+    *rig.inst = Instrument::new(SR, SampleBudget::for_cpu(CPU_HZ_REV_V));
+    for n in CHORD6 {
+        rig.inst.handle(on(0, n), &shared);
+    }
+    rig.render(&shared);
+    let a = rig.inst.allocator();
+    assert_eq!(a.refused(), 0);
+    assert_eq!(a.slots().iter().filter(|s| !s.is_free()).count(), 6);
 }
 
 /// Recorded when the instrument path landed (plan Task 12). Re-record only
