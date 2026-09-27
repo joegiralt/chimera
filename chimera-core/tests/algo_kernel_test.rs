@@ -386,7 +386,12 @@ fn random_ops(
     let ops = core::array::from_fn(|i| {
         let wave = WaveId::clamped(rng.below(16) as u8);
         let mip = rng.below(8) as usize;
-        to_gain[i] = rng.unit() * SAMPLE_SCALE;
+        // A quarter of the gains are 0, so some operators are silent all block.
+        to_gain[i] = if rng.below(4) == 0 {
+            0.0
+        } else {
+            rng.unit() * SAMPLE_SCALE
+        };
         to_xfade[i] = rng.unit();
         OpBlock {
             inc: rng.next() >> 4,
