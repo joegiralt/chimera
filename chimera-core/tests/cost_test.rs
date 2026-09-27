@@ -8,7 +8,7 @@ use chimera_core::dsp::algo::plan::OPS;
 use chimera_core::dsp::engines::Engines;
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::voice::Voice;
-use chimera_core::hw::{CPU_HZ_REV_V, Cost, MAX_VOICES, SampleBudget};
+use chimera_core::hw::{CPU_HZ_REV_V, CPU_HZ_REV_Y, Cost, MAX_VOICES, SampleBudget};
 use chimera_core::modulation::ModState;
 use chimera_core::params::{EngineType, ParamSnapshot};
 
@@ -118,7 +118,11 @@ fn costliest() -> AlgoParams {
 }
 
 fn voices_beside_fx(p: &AlgoParams) -> u32 {
-    let budget = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0;
+    voices_at(CPU_HZ_REV_V, p)
+}
+
+fn voices_at(cpu_hz: u32, p: &AlgoParams) -> u32 {
+    let budget = SampleBudget::for_cpu(cpu_hz).as_cost().0;
     let voice = Voice::CHAIN_COST.0 + cost(p);
     ((budget - FxBus::COST.0) / voice).min(MAX_VOICES as u32)
 }
@@ -136,6 +140,19 @@ fn the_costliest_patch_fits_four_voices() {
     let p = costliest();
     assert!(cost(&p) > cost(&worst()), "more links than A14 ∪ A22");
     assert!(voices_beside_fx(&p) >= 4, "{}", cost(&p));
+}
+
+/// ADR 0026's floor of four is rev V's. A rev Y chip, or an unknown
+/// revision (`clock_plan`), runs at 400 MHz: 5,833 cycles, 2,523 beside the
+/// FX bus, so the costliest patch (842) gets two voices, and the priciest
+/// factory Sound (MORPH KEYS, 797) three.
+#[test]
+fn the_voice_floor_per_revision() {
+    let p = costliest();
+    assert_eq!(voices_at(CPU_HZ_REV_V, &p), 4);
+    assert_eq!(voices_at(CPU_HZ_REV_Y, &p), 2);
+    let keys = chimera_core::factory::factory_sound(7).unwrap().params.algo;
+    assert_eq!(voices_at(CPU_HZ_REV_Y, &keys), 3);
 }
 
 /// MORPH does not matter: the plan runs the union's links at any MORPH.
