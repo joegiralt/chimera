@@ -50,9 +50,9 @@ fn voice_costs_are_the_bench_measurements() {
     }
 }
 
-/// What the 7,000-cycle budget allows with the FX bus (MidiVerb, the
-/// costliest reverb) running: as many voices of each engine's default
-/// Sound as fit, up to `MAX_VOICES`.
+/// What the 7,000-cycle budget allows with the FX bus (the whole bus at
+/// its worst) running: as many voices of each engine's default Sound as
+/// fit, up to `MAX_VOICES`.
 #[test]
 fn budget_capacity_per_engine() {
     let budget = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost();

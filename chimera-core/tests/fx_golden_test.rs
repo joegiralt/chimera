@@ -9,7 +9,8 @@ mod common;
 use chimera_core::dsp::Stereo;
 use chimera_core::dsp::chorus::{ChorusParams, JunoChorus};
 use chimera_core::dsp::delay::{DelayParams, TapeDelay};
-use chimera_core::dsp::reverb::{Reverb, ReverbParams};
+use chimera_core::dsp::reverb::ReverbParams;
+use chimera_core::dsp::ring::RingReverb;
 use chimera_hal::BLOCK_SIZE;
 use common::{SR, fnv1a};
 
@@ -25,9 +26,8 @@ enum Fx {
     Reverb(ReverbParams),
 }
 
-fn cases() -> [(&'static str, Fx); 6] {
-    let reverb = |reverb_type: u8, size: f32| ReverbParams {
-        reverb_type,
+fn cases() -> [(&'static str, Fx); 5] {
+    let reverb = |size: f32| ReverbParams {
         time: 0.7,
         damping: 0.3,
         size,
@@ -61,9 +61,8 @@ fn cases() -> [(&'static str, Fx); 6] {
                 ..DelayParams::default()
             }),
         ),
-        ("reverb_plate", Fx::Reverb(reverb(0, 0.5))),
-        ("reverb_fdn_max_size", Fx::Reverb(reverb(1, 1.0))),
-        ("reverb_midiverb", Fx::Reverb(reverb(2, 0.5))),
+        ("reverb_ring", Fx::Reverb(reverb(0.5))),
+        ("reverb_ring_max_size", Fx::Reverb(reverb(1.0))),
     ]
 }
 
@@ -83,7 +82,7 @@ fn input(b: usize, phase: &mut f32) -> [f32; BLOCK_SIZE] {
 fn render(fx: Fx) -> Vec<f32> {
     let mut chorus = Box::new(JunoChorus::new());
     let mut delay = Box::new(TapeDelay::new());
-    let mut reverb = Box::new(Reverb::new());
+    let mut reverb = Box::new(RingReverb::new());
     let mut out = Vec::with_capacity(2 * FX_BLOCKS * BLOCK_SIZE);
     let mut phase = 0.0f32;
     for b in 0..FX_BLOCKS {
@@ -100,8 +99,10 @@ fn render(fx: Fx) -> Vec<f32> {
                 out.extend_from_slice(&block);
             }
             Fx::Reverb(p) => {
-                reverb.process(&mut block, &p);
-                out.extend_from_slice(&block);
+                let mut wet = Stereo::SILENT;
+                reverb.process(&block, &p.controls(), p.mix, SR, &mut wet);
+                out.extend_from_slice(&wet.l);
+                out.extend_from_slice(&wet.r);
             }
         }
     }
@@ -112,14 +113,17 @@ const GOLDENS: &[(&str, u64)] = &[
     ("chorus_both", 0x0ad6a4dbd5636552),
     ("delay_375ms", 0x4ed2b23c577884bf),
     ("delay_500ms", 0xc1f7798ede6627fd),
-    ("reverb_plate", 0x543857e5bed9848d),
-    ("reverb_fdn_max_size", 0xcd5bdb2e4f83a478),
-    ("reverb_midiverb", 0xef55c35ea73dc552),
 ];
 
 /// Intended FX diet sound changes, skipped until its goldens task
 /// re-records them after the FX sanity gate (ADR 0011).
-const PENDING: &[&str] = &["chorus_both", "delay_375ms", "delay_500ms"];
+const PENDING: &[&str] = &[
+    "delay_375ms",
+    "delay_500ms",
+    "chorus_both",
+    "reverb_ring",
+    "reverb_ring_max_size",
+];
 
 #[test]
 fn fx_goldens_match() {

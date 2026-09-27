@@ -144,8 +144,6 @@ fn fx_encoders_step_like_before() {
     assert_eq!(perf.fx.delay.time_ms, 375.0 + 2.0 * 8.0);
     turn_def(&reg::CHORUS, 0, 5, &mut perf);
     assert_eq!(perf.fx.chorus.mode, 3);
-    turn_def(&reg::EFX, 0, 5, &mut perf);
-    assert_eq!(perf.fx.reverb.reverb_type, 2);
     turn_def(&reg::EFX, 4, -1, &mut perf);
     assert_eq!(perf.fx.reverb.mix, 0.0);
     turn_def(&reg::EFX, 4, 1, &mut perf);
