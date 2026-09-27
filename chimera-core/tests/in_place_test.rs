@@ -2,6 +2,7 @@ mod common;
 
 use std::mem::MaybeUninit;
 
+use chimera_core::dsp::Stereo;
 use chimera_core::dsp::algo::algorithms::AlgoId;
 use chimera_core::dsp::algo::params::AlgoParams;
 use chimera_core::dsp::algo::waves::WaveId;
@@ -116,12 +117,12 @@ fn fx_bus_built_in_place_processes_like_new() {
             *s = (x as f32 / u32::MAX as f32) - 0.5;
         }
         let mut sends_b = sends;
-        let (mut ret_a, mut ret_b) = ([0.0f32; BLOCK_SIZE], [0.0f32; BLOCK_SIZE]);
+        let (mut ret_a, mut ret_b) = (Stereo::SILENT, Stereo::SILENT);
         a.process(&mut sends, &params, SR, &mut ret_a);
         b.process(&mut sends_b, &params, SR, &mut ret_b);
         assert_eq!(
-            ret_a.map(f32::to_bits),
-            ret_b.map(f32::to_bits),
+            [ret_a.l, ret_a.r].map(|x| x.map(f32::to_bits)),
+            [ret_b.l, ret_b.r].map(|x| x.map(f32::to_bits)),
             "block {block}"
         );
     }

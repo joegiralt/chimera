@@ -4,6 +4,7 @@
 
 mod common;
 
+use chimera_core::dsp::Stereo;
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus};
 use chimera_core::hw::{DAC_PAIRS, MAX_PARTS};
 use chimera_core::instrument::{AudioShared, DacOut, Instrument, PanCache, mix_parts, pan_gains};
@@ -180,10 +181,10 @@ fn mix_parts_reference(
             }
         }
     }
-    let mut ret = [0.0f32; BLOCK_SIZE];
+    let mut ret = Stereo::SILENT;
     fx.process(sends, &shared.fx, SR, &mut ret);
-    for (i, &r) in ret.iter().enumerate() {
-        out[0][2 * i] += r;
+    for (i, (&l, &r)) in ret.l.iter().zip(&ret.r).enumerate() {
+        out[0][2 * i] += l;
         out[0][2 * i + 1] += r;
     }
     scope
@@ -280,10 +281,14 @@ fn fx_send_puts_no_dry_signal_on_pair_1() {
         rig.render(&shared);
         let bus = *rig.inst.part_bus(0);
         let mut sends = [[0.0; BLOCK_SIZE], [0.0; BLOCK_SIZE], bus.map(|s| s * 0.5)];
-        let mut ret = [0.0f32; BLOCK_SIZE];
+        let mut ret = Stereo::SILENT;
         fx.process(&mut sends, &shared.fx, SR, &mut ret);
         let (l, r) = lr(&rig.out[0]);
-        assert_eq!((l, r), (ret, ret), "block {b}: pair 1 is the return only");
+        assert_eq!(
+            (l, r),
+            (ret.l, ret.r),
+            "block {b}: pair 1 is the return only"
+        );
         let (l3, r3) = lr(&rig.out[2]);
         assert_eq!(peak(&r3), 0.0, "block {b}: hard left");
         if b < 3_411 / BLOCK_SIZE {

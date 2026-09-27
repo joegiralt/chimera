@@ -7,6 +7,7 @@ use core::ptr::addr_of_mut;
 
 use chimera_hal::BLOCK_SIZE;
 
+use crate::dsp::Stereo;
 use crate::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
 use crate::dsp::voice::Voice;
 use crate::hw::{
@@ -189,8 +190,8 @@ pub fn mix_parts(
         scope[i..i + SEND_STEP].copy_from_slice(&a[3]);
     }
 
-    // The FX bus once; its return lands on both sides of pair 1.
-    let mut ret = [0.0f32; BLOCK_SIZE];
+    // The FX bus once; its return lands on pair 1, L and R.
+    let mut ret = Stereo::SILENT;
     fx.process(sends, &shared.fx, sample_rate, &mut ret);
 
     for (k, pair) in out.iter_mut().enumerate() {
@@ -206,8 +207,8 @@ pub fn mix_parts(
             }
             if k == 0 {
                 for j in 0..PAIR_STEP {
-                    a[2 * j] += ret[i + j];
-                    a[2 * j + 1] += ret[i + j];
+                    a[2 * j] += ret.l[i + j];
+                    a[2 * j + 1] += ret.r[i + j];
                 }
             }
             pair[2 * i..2 * (i + PAIR_STEP)].copy_from_slice(&a);

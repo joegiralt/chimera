@@ -2,13 +2,14 @@
 //! reverb run once per block on the sum of every part's sends. Send/return:
 //! each effect returns only its wet signal, its MIX acting as the return
 //! level; the dry signal reaches the DACs through the parts alone. The
-//! effects are mono today, so the return is mono and lands on both sides of
-//! DAC pair 1.
+//! return is a stereo pair on DAC pair 1; a mono effect lands on both sides
+//! at unity.
 
 use chimera_hal::BLOCK_SIZE;
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 
+use crate::dsp::Stereo;
 use crate::dsp::chorus::{ChorusParams, JunoChorus};
 use crate::dsp::delay::{DelayParams, TapeDelay};
 use crate::dsp::reverb::{Reverb, ReverbParams};
@@ -86,29 +87,32 @@ impl FxBus {
         }
     }
 
-    /// Run each effect that is on over its send (replaced in place by its
-    /// wet signal × MIX) and write the sum to `ret`. An effect that is off
-    /// returns nothing, so a send into it is silent.
+    /// Run each effect that is on over its send and sum the wet returns
+    /// into `ret`. An effect that is off returns nothing, so a send into
+    /// it is silent.
     pub fn process(
         &mut self,
         sends: &mut [[f32; BLOCK_SIZE]; FX_SENDS],
         params: &FxParams,
         sample_rate: u32,
-        ret: &mut [f32; BLOCK_SIZE],
+        ret: &mut Stereo,
     ) {
-        ret.fill(0.0);
+        *ret = Stereo::SILENT;
         let [chorus, delay, reverb] = sends;
         if params.chorus.is_on() {
             self.chorus.process_wet(chorus, &params.chorus, sample_rate);
-            add(ret, chorus);
+            add(&mut ret.l, chorus);
+            add(&mut ret.r, chorus);
         }
         if params.delay.is_on() {
             self.delay.process_wet(delay, &params.delay, sample_rate);
-            add(ret, delay);
+            add(&mut ret.l, delay);
+            add(&mut ret.r, delay);
         }
         if params.reverb.is_on() {
             self.reverb.process_wet(reverb, &params.reverb);
-            add(ret, reverb);
+            add(&mut ret.l, reverb);
+            add(&mut ret.r, reverb);
         }
     }
 }
