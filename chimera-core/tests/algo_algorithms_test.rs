@@ -102,6 +102,8 @@ fn t4_operator_2_is_not_modulated_by_operator_3() {
     assert_ne!(t4.mods[2] & 0b01, 0);
 }
 
+/// `delayed == 0` also keeps every built-in pair on `render_ops`, the only
+/// path that skips silent operators (`AlgoEngine::cost` relies on it).
 #[test]
 fn every_pair_plans_forward_with_both_algorithms_links() {
     for a in 0..ALGO_COUNT as u8 {
