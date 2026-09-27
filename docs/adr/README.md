@@ -32,3 +32,4 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0024](0024-morph-blends-link-weights.md) | MORPH blends link weights; one plan orders both algorithms | Accepted |
 | [0025](0025-dtcm-holds-wave-tables-and-stack.md) | DTCM holds the wave tables and the stack | Accepted |
 | [0026](0026-algo-voices-billed-by-patch-shape.md) | Algo voices are billed by patch shape; heavy patches get fewer voices | Accepted |
+| [0027](0027-shedding-fades-tails-first.md) | Shedding fades, and takes tails before held notes | Accepted |
