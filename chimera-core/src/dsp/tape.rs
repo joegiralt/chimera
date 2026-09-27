@@ -11,10 +11,10 @@ use crate::block::{Block, ParamId, ParamSpec, ValFmt};
 use crate::dsp::algo::math::exp2;
 use crate::dsp::sin_turns;
 
-/// The input line per side: the wet reads it through the wow, the dry at
-/// the wet's whole delay.
-const LINE: usize = 32;
-const MASK: usize = LINE - 1;
+/// Input history kept per side: the wet reads it through the wow, the dry
+/// at the wet's whole delay. Each block works on history then block, in
+/// one linear buffer.
+const LINE_HIST: usize = 24;
 /// The wow's centre tap and its largest swing, in samples.
 const WOW_BASE: f32 = 12.0;
 const WOW_SWING: f32 = 8.0;
@@ -33,7 +33,8 @@ const E_HIST: usize = 7;
 const O_HIST: usize = 4;
 /// The dry's tap: the wet's delay, so the parallel blend lines up.
 pub const DRY_TAP: usize = WOW_BASE as usize + OS_LATENCY;
-const _: () = assert!(DRY_TAP < LINE && (WOW_BASE + WOW_SWING) as usize + 1 < LINE);
+// The wow reads up to one past its largest swing.
+const _: () = assert!(DRY_TAP <= LINE_HIST && ((WOW_BASE + WOW_SWING) as usize) < LINE_HIST);
 /// Engaging or releasing crossfades from the undelayed signal over this
 /// many samples (10 ms at 48 kHz), after one block of priming.
 pub const ENGAGE: u32 = 480;
@@ -48,8 +49,10 @@ const BUMP_Q: f32 = 0.7;
 /// 2π·log2(e): `exp(−2πf/fs)` is `exp2(−TWO_PI_LOG2E·f/fs)`.
 const TWO_PI_LOG2E: f32 = 9.064_72;
 const LOG2_E: f32 = core::f32::consts::LOG2_E;
-/// Every control: one-pole, once per block.
+/// Every control: one-pole, once per block; within `SETTLED` of its target
+/// it lands on it, so a held control stops ramping.
 const SMOOTH_S: f32 = 0.02;
+const SETTLED: f32 = 1e-6;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TapeParams {
@@ -135,9 +138,10 @@ pub fn drive_gain(drive: f32) -> f32 {
     exp2(4.0 * drive)
 }
 
-/// Level compensation: 1/√gain, so loud material keeps its level.
+/// Level compensation: 1/gain, so the small-signal gain is unity at any
+/// DRIVE: quiet material keeps its level, loud material is squashed.
 pub fn drive_comp(drive: f32) -> f32 {
-    exp2(-2.0 * drive)
+    exp2(-4.0 * drive)
 }
 
 /// The HF roll-off's corner: 12 kHz at TONE ½ and DRIVE 0, ±1.5 octaves
@@ -204,26 +208,24 @@ impl Coefs {
     }
 }
 
-/// One side's state.
-#[derive(Clone, Copy)]
-struct Side {
-    line: [f32; LINE],
-    pos: usize,
-    pre: (f32, f32),
-    /// The oversampler's history: pre-emphasised input, then the
-    /// saturated even (filtered) and odd (centre-tap) 2× samples.
-    u: [f32; U_HIST],
-    even: [f32; E_HIST],
-    odd: [f32; O_HIST],
-    de: (f32, f32),
-    bump: [f32; 4],
-    lp: f32,
-}
-
-crate::in_place::field_list!(Side => Side { line, pos, pre, u, even, odd, de, bump, lp });
+type Lr = [f32; 2];
 
 pub struct Tape {
-    side: [Side; 2],
+    /// Per side, L and R together: the input's last `LINE_HIST` samples,
+    /// oldest first.
+    line: [Lr; LINE_HIST],
+    /// Pre-emphasis: its last input and output.
+    pre: (Lr, Lr),
+    /// The oversampler's history: gained, pre-emphasised input, then the
+    /// saturated even (filtered) and odd (centre-tap) 2× samples.
+    u: [Lr; U_HIST],
+    even: [Lr; E_HIST],
+    odd: [Lr; O_HIST],
+    /// De-emphasis: its last input and output.
+    de: (Lr, Lr),
+    /// Head bump: x[n−1], x[n−2], y[n−1], y[n−2].
+    bump: [Lr; 4],
+    lp: Lr,
     coefs: Coefs,
     /// The rate `coefs` were built for; 0 before the first block.
     fs: u32,
@@ -239,7 +241,10 @@ pub struct Tape {
     flutter_phase: u32,
 }
 
-crate::in_place::field_list!(Tape => Tape { side, coefs, fs, last, running, engage, wow_phase, flutter_phase });
+crate::in_place::field_list!(Tape => Tape {
+    line, pre, u, even, odd, de, bump, lp, coefs, fs, last, running, engage, wow_phase,
+    flutter_phase
+});
 
 impl Default for Tape {
     fn default() -> Self {
@@ -247,20 +252,30 @@ impl Default for Tape {
     }
 }
 
+/// One block's controls, each as its start and per-sample step: the
+/// first sample takes one step, the last lands on the end.
+#[derive(Clone, Copy)]
+struct Ramps {
+    /// The wow's read point, samples.
+    dly: (f32, f32),
+    /// ⅔ of the drive gain: the soft clip's input scale.
+    g: (f32, f32),
+    c: (f32, f32),
+    lp: (f32, f32),
+    mix: (f32, f32),
+}
+
 impl Tape {
     pub const fn new() -> Self {
         Self {
-            side: [Side {
-                line: [0.0; LINE],
-                pos: 0,
-                pre: (0.0, 0.0),
-                u: [0.0; U_HIST],
-                even: [0.0; E_HIST],
-                odd: [0.0; O_HIST],
-                de: (0.0, 0.0),
-                bump: [0.0; 4],
-                lp: 0.0,
-            }; 2],
+            line: [[0.0; 2]; LINE_HIST],
+            pre: ([0.0; 2], [0.0; 2]),
+            u: [[0.0; 2]; U_HIST],
+            even: [[0.0; 2]; E_HIST],
+            odd: [[0.0; 2]; O_HIST],
+            de: ([0.0; 2], [0.0; 2]),
+            bump: [[0.0; 2]; 4],
+            lp: [0.0; 2],
             coefs: Coefs {
                 pre: [0.0; 3],
                 de: [0.0; 3],
@@ -281,13 +296,18 @@ impl Tape {
     }
 
     pub fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
-        // SAFETY: every field is `f32`, `u32`, `usize`, `bool` or arrays
-        // and tuples of them, valid as zero bytes (`false` for the bool);
-        // zero is exactly `new()`'s state.
+        // SAFETY: every field is `f32`, `u32`, `bool` or arrays and tuples
+        // of them, valid as zero bytes (`false` for the bool); zero is
+        // exactly `new()`'s state.
         unsafe {
             slot.as_mut_ptr().write_bytes(0, 1);
             slot.assume_init_mut()
         }
+    }
+
+    /// Engaged, fading or priming: MIX 0 with this false runs nothing.
+    pub fn is_running(&self) -> bool {
+        self.running
     }
 
     /// Tape over one pair's interleaved block (L, R), in place.
@@ -302,17 +322,28 @@ impl Tape {
         }
         let t = p.sanitised();
         if !self.running {
-            // From bypass: nothing of the tape sounds yet, so the controls
-            // start at their targets, and the first block primes the line
-            // and the filters at weight 0 before the fade in.
-            self.last = t;
-            self.running = true;
+            // From bypass: nothing of the tape sounds yet, so it starts from
+            // rest, as `new()` (only the transport runs on), with the
+            // controls at their targets; the first block primes the line
+            // and every filter at weight 0 before the fade in.
+            *self = Self {
+                coefs: self.coefs,
+                fs: self.fs,
+                last: t,
+                running: true,
+                wow_phase: self.wow_phase,
+                flutter_phase: self.flutter_phase,
+                ..Self::new()
+            };
             self.engage = -(BLOCK_SIZE as f32) / ENGAGE as f32;
         }
         let fs = sample_rate as f32;
         // One-pole, once per block, then a linear ramp across it.
         let k = exp2(-LOG2_E * BLOCK_SIZE as f32 / (SMOOTH_S * fs));
-        let sm = |from: f32, to: f32| to + k * (from - to);
+        let sm = |from: f32, to: f32| {
+            let v = to + k * (from - to);
+            if (v - to).abs() < SETTLED { to } else { v }
+        };
         let l = self.last;
         let t = TapeParams {
             drive: sm(l.drive, t.drive),
@@ -322,22 +353,11 @@ impl Tape {
         };
         let a = |d: f32, tone: f32| 1.0 - exp2(-TWO_PI_LOG2E * rolloff_hz(d, tone) / fs);
         let n = BLOCK_SIZE as f32;
-        // Each ramp as its start and per-sample step; the first sample
-        // takes one step, the last lands on the end.
         let ramp = |x0: f32, x1: f32| (x0, (x1 - x0) / n);
-        // ⅔ of the gain is the soft clip's input scale; its ×1.5 output
-        // scale sits in `cubic`.
-        let g = ramp(
-            drive_gain(l.drive) * (2.0 / 3.0),
-            drive_gain(t.drive) * (2.0 / 3.0),
-        );
-        let c = ramp(drive_comp(l.drive), drive_comp(t.drive));
-        let lp = ramp(a(l.drive, l.tone), a(t.drive, t.tone));
-        let mix = ramp(l.mix, t.mix);
 
-        // Shared by both sides. The wow's read point at the block's two
-        // ends, ramped across it: at 6 Hz a block is 0.008 turns, so the
-        // ramp is within 0.001 samples of the sines.
+        // The wow's read point at the block's two ends, ramped across it:
+        // at 6 Hz a block is 0.008 turns, so the ramp is within 0.001
+        // samples of the sines. Both sides share the transport.
         let turns = |hz: f32| (hz / fs * 4_294_967_296.0) as u32;
         let to_f = |p: u32| (p >> 8) as f32 * (1.0 / 16_777_216.0);
         let swing = |w: u32, f: u32| 0.7 * sin_turns(to_f(w)) + 0.3 * sin_turns(to_f(f));
@@ -345,106 +365,175 @@ impl Tape {
         self.wow_phase = self.wow_phase.wrapping_add(turns(0.5 * n));
         self.flutter_phase = self.flutter_phase.wrapping_add(turns(6.0 * n));
         let at1 = WOW_BASE + t.wow * WOW_SWING * swing(self.wow_phase, self.flutter_phase);
-        let dly = ramp(at0, at1);
-        // The engage fade, compare-free per sample: clamp(e, 0, 1) as
-        // ½(|e| − |e − 1| + 1), then a smoothstep, so neither end has a
-        // corner. Fully engaged, it is skipped.
-        let step = if on { 1.0 } else { -1.0 } / ENGAGE as f32;
+        let r = Ramps {
+            dly: ramp(at0, at1),
+            g: ramp(
+                drive_gain(l.drive) * (2.0 / 3.0),
+                drive_gain(t.drive) * (2.0 / 3.0),
+            ),
+            c: ramp(drive_comp(l.drive), drive_comp(t.drive)),
+            lp: ramp(a(l.drive, l.tone), a(t.drive, t.tone)),
+            mix: ramp(l.mix, t.mix),
+        };
+        // Held controls: no ramps. WOW 0: a fixed integer tap.
+        let held = l == t;
+        let wow = l.wow != 0.0 || t.wow != 0.0;
         let e0 = self.engage;
         let fading = !(on && e0 >= 1.0);
-        let mut eng = [1.0f32; BLOCK_SIZE];
-        if fading {
-            for (i, w) in eng.iter_mut().enumerate() {
-                let e = e0 + step * (i + 1) as f32;
-                let e = 0.5 * (e.abs() - (e - 1.0).abs() + 1.0);
-                *w = e * e * (3.0 - 2.0 * e);
-            }
+
+        let mut line = [[0.0f32; 2]; LINE_HIST + BLOCK_SIZE];
+        let mut u = [[0.0f32; 2]; U_HIST + BLOCK_SIZE];
+        line[..LINE_HIST].copy_from_slice(&self.line);
+        u[..U_HIST].copy_from_slice(&self.u);
+        match (wow, held) {
+            (true, true) => self.pass_in::<true, false>(pair, &mut line, &mut u, &r),
+            (true, false) => self.pass_in::<true, true>(pair, &mut line, &mut u, &r),
+            (false, true) => self.pass_in::<false, false>(pair, &mut line, &mut u, &r),
+            (false, false) => self.pass_in::<false, true>(pair, &mut line, &mut u, &r),
         }
+        let sat = self.pass_os(&u);
+        match (fading, held) {
+            (true, true) => self.pass_out::<true, false>(pair, &line, &sat, &r, e0, on),
+            (true, false) => self.pass_out::<true, true>(pair, &line, &sat, &r, e0, on),
+            (false, true) => self.pass_out::<false, false>(pair, &line, &sat, &r, e0, on),
+            (false, false) => self.pass_out::<false, true>(pair, &line, &sat, &r, e0, on),
+        }
+        self.line.copy_from_slice(&line[BLOCK_SIZE..]);
+        self.u.copy_from_slice(&u[BLOCK_SIZE..]);
+
         // Priming runs below 0; the fade holds at its ends.
-        let e = e0 + step * n;
+        let e = e0 + if on { n } else { -n } / ENGAGE as f32;
         self.engage = if on { e.min(1.0) } else { e.max(0.0) };
         self.running = on || self.engage > 0.0;
+        self.last = t;
+    }
 
+    /// Pass 1: the input into the line; the wow's read, pre-emphasis and
+    /// the drive gain into `u`. `WOW` off reads a fixed tap; `RAMP` off
+    /// holds the gain.
+    #[inline(always)]
+    fn pass_in<const WOW: bool, const RAMP: bool>(
+        &mut self,
+        pair: &[f32; 2 * BLOCK_SIZE],
+        line: &mut [Lr; LINE_HIST + BLOCK_SIZE],
+        u: &mut [Lr; U_HIST + BLOCK_SIZE],
+        r: &Ramps,
+    ) {
         let [b0, b1, a1] = self.coefs.pre;
-        let [d0, d1, e1] = self.coefs.de;
-        let [k0, k1, k2, m1, m2] = self.coefs.bump;
-        for s in 0..2 {
-            let side = &mut self.side[s];
-            // The oversampler's working buffers, history first.
-            let mut u = [0.0f32; U_HIST + BLOCK_SIZE];
-            let mut even = [0.0f32; E_HIST + BLOCK_SIZE];
-            let mut odd = [0.0f32; O_HIST + BLOCK_SIZE];
-            u[..U_HIST].copy_from_slice(&side.u);
-            even[..E_HIST].copy_from_slice(&side.even);
-            odd[..O_HIST].copy_from_slice(&side.odd);
-            // Three passes, each light enough to stay in registers.
-            // 1. The line; wow (linearly interpolated) and pre-emphasis.
-            let mut dry = [0.0f32; BLOCK_SIZE];
-            let (mut x1, mut y1) = side.pre;
-            let mut di = dly.0;
-            for i in 0..BLOCK_SIZE {
-                di += dly.1;
-                side.pos = (side.pos + 1) & MASK;
-                side.line[side.pos] = pair[2 * i + s];
-                dry[i] = side.line[(side.pos + LINE - DRY_TAP) & MASK];
+        let (mut px, mut py) = self.pre;
+        // Held, g's step is 0: it starts where it stays.
+        let (mut di, mut gi) = (r.dly.0, r.g.0);
+        for i in 0..BLOCK_SIZE {
+            let m = LINE_HIST + i;
+            line[m] = [pair[2 * i], pair[2 * i + 1]];
+            if RAMP {
+                gi += r.g.1;
+            }
+            let x = if WOW {
+                // The read point moves with the transport even when the
+                // controls are held.
+                di += r.dly.1;
                 let d = di as usize;
                 let fr = di - d as f32;
-                let r0 = side.line[(side.pos + LINE - d) & MASK];
-                let r1 = side.line[(side.pos + LINE - d - 1) & MASK];
-                let x = r0 + fr * (r1 - r0);
-                y1 = b0 * x + b1 * x1 - a1 * y1;
-                x1 = x;
-                u[U_HIST + i] = y1;
+                let (r0, r1) = (line[m - d], line[m - d - 1]);
+                [r0[0] + fr * (r1[0] - r0[0]), r0[1] + fr * (r1[1] - r0[1])]
+            } else {
+                line[m - WOW_BASE as usize]
+            };
+            for s in 0..2 {
+                py[s] = b0 * x[s] + b1 * px[s] - a1 * py[s];
+                u[U_HIST + i][s] = gi * py[s];
             }
-            side.pre = (x1, y1);
-            // 2. Up, soft clip, down. The even 2× sample is the odd taps'
-            // sum, the odd one the centre tap's copy; down, the centre tap
-            // reads the odd stream, the odd taps the even stream.
-            let mut sat = [0.0f32; BLOCK_SIZE];
-            let mut gi = g.0;
-            for i in 0..BLOCK_SIZE {
-                gi += g.1;
-                let m = U_HIST + i;
+            px = x;
+        }
+        self.pre = (px, py);
+    }
+
+    /// Pass 2: up, soft clip, down. The even 2× sample is the odd taps'
+    /// sum, the odd one the centre tap's copy; down, the centre tap reads
+    /// the odd stream, the odd taps the even stream.
+    #[inline(always)]
+    fn pass_os(&mut self, u: &[Lr; U_HIST + BLOCK_SIZE]) -> [Lr; BLOCK_SIZE] {
+        let mut even = [[0.0f32; 2]; E_HIST + BLOCK_SIZE];
+        let mut odd = [[0.0f32; 2]; O_HIST + BLOCK_SIZE];
+        even[..E_HIST].copy_from_slice(&self.even);
+        odd[..O_HIST].copy_from_slice(&self.odd);
+        let mut sat = [[0.0f32; 2]; BLOCK_SIZE];
+        for i in 0..BLOCK_SIZE {
+            let (m, e) = (U_HIST + i, E_HIST + i);
+            for s in 0..2 {
                 let mut ve = 0.0;
                 for (j, &h) in HB2.iter().enumerate() {
-                    ve += h * (u[m - 3 + j] + u[m - 4 - j]);
+                    ve += h * (u[m - 3 + j][s] + u[m - 4 - j][s]);
                 }
-                even[E_HIST + i] = cubic(gi * ve);
-                odd[O_HIST + i] = cubic(gi * u[m - 3]);
-                let e = E_HIST + i;
-                let mut y = 0.5 * odd[i];
+                even[e][s] = cubic(ve);
+                odd[O_HIST + i][s] = cubic(u[m - 3][s]);
+                let mut y = 0.5 * odd[i][s];
                 for (j, &h) in HB.iter().enumerate() {
-                    y += h * (even[e - 3 + j] + even[e - 4 - j]);
+                    y += h * (even[e - 3 + j][s] + even[e - 4 - j][s]);
                 }
-                sat[i] = y;
+                sat[i][s] = y;
             }
-            // 3. Level compensation, de-emphasis, head bump, roll-off, then
-            // the parallel blend and the engage fade.
-            let (mut dx, mut dy) = side.de;
-            let [mut bx1, mut bx2, mut by1, mut by2] = side.bump;
-            let mut lpy = side.lp;
-            let (mut ci, mut lpi, mut mi) = (c.0, lp.0, mix.0);
-            for i in 0..BLOCK_SIZE {
-                (ci, lpi, mi) = (ci + c.1, lpi + lp.1, mi + mix.1);
-                let x = sat[i] * ci;
-                dy = d0 * x + d1 * dx - e1 * dy;
-                dx = x;
-                let w = k0 * dy + k1 * bx1 + k2 * bx2 - m1 * by1 - m2 * by2;
-                (bx2, bx1, by2, by1) = (bx1, dy, by1, w);
-                lpy += lpi * (w - lpy);
-                let y = dry[i] + mi * (lpy - dry[i]);
-                let out = &mut pair[2 * i + s];
-                if fading {
-                    *out += eng[i] * (y - *out);
-                } else {
-                    *out = y;
-                }
-            }
-            (side.de, side.bump, side.lp) = ((dx, dy), [bx1, bx2, by1, by2], lpy);
-            side.u.copy_from_slice(&u[BLOCK_SIZE..]);
-            side.even.copy_from_slice(&even[BLOCK_SIZE..]);
-            side.odd.copy_from_slice(&odd[BLOCK_SIZE..]);
         }
-        self.last = t;
+        self.even.copy_from_slice(&even[BLOCK_SIZE..]);
+        self.odd.copy_from_slice(&odd[BLOCK_SIZE..]);
+        sat
+    }
+
+    /// Pass 3: level compensation, de-emphasis, head bump, roll-off, the
+    /// parallel blend with the dry tap, and, `FADE` on, the engage fade.
+    #[inline(always)]
+    #[allow(clippy::too_many_arguments)]
+    fn pass_out<const FADE: bool, const RAMP: bool>(
+        &mut self,
+        pair: &mut [f32; 2 * BLOCK_SIZE],
+        line: &[Lr; LINE_HIST + BLOCK_SIZE],
+        sat: &[Lr; BLOCK_SIZE],
+        r: &Ramps,
+        e0: f32,
+        on: bool,
+    ) {
+        let [d0, d1, e1] = self.coefs.de;
+        let [k0, k1, k2, m1, m2] = self.coefs.bump;
+        let (mut dx, mut dy) = self.de;
+        let [mut bx1, mut bx2, mut by1, mut by2] = self.bump;
+        let mut lpy = self.lp;
+        // Held, every step is 0: each starts where it stays.
+        let (mut ci, mut lpi, mut mi) = (r.c.0, r.lp.0, r.mix.0);
+        let step = if on { 1.0 } else { -1.0 } / ENGAGE as f32;
+        for i in 0..BLOCK_SIZE {
+            if RAMP {
+                (ci, lpi, mi) = (ci + r.c.1, lpi + r.lp.1, mi + r.mix.1);
+            }
+            let dry = line[LINE_HIST + i - DRY_TAP];
+            let mut y = [0.0f32; 2];
+            for s in 0..2 {
+                let x = sat[i][s] * ci;
+                let v = d0 * x + d1 * dx[s] - e1 * dy[s];
+                (dx[s], dy[s]) = (x, v);
+                let w = k0 * v + k1 * bx1[s] + k2 * bx2[s] - m1 * by1[s] - m2 * by2[s];
+                (bx2[s], bx1[s], by2[s], by1[s]) = (bx1[s], v, by1[s], w);
+                lpy[s] += lpi * (w - lpy[s]);
+                y[s] = dry[s] + mi * (lpy[s] - dry[s]);
+            }
+            let out = &mut pair[2 * i..2 * i + 2];
+            if FADE {
+                // A smoothstep of the linear ramp, so neither end has a
+                // corner. At weight 0 (priming, or the release done) the
+                // input is untouched, bit for bit; at 1 the tape is.
+                let e = e0 + step * (i + 1) as f32;
+                if e >= 1.0 {
+                    out.copy_from_slice(&y);
+                } else if e > 0.0 {
+                    let w = e * e * (3.0 - 2.0 * e);
+                    for s in 0..2 {
+                        out[s] += w * (y[s] - out[s]);
+                    }
+                }
+            } else {
+                out.copy_from_slice(&y);
+            }
+        }
+        (self.de, self.bump, self.lp) = ((dx, dy), [bx1, bx2, by1, by2], lpy);
     }
 }
