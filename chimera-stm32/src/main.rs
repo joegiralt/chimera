@@ -26,6 +26,9 @@ use priority::Priority;
 use stm32h7xx_hal::gpio::Speed;
 use stm32h7xx_hal::{pac, prelude::*, spi};
 
+/// Backlight duty. ponytail: fixed, a UI brightness param when someone wants one.
+const BACKLIGHT_PERCENT: u16 = 75;
+
 #[pre_init]
 unsafe fn before_main() {
     // SAFETY: runs once, before `main` and before interrupts are enabled, on
@@ -86,8 +89,16 @@ fn main() -> ! {
     let _hc_clk = gpiof.pf0.into_push_pull_output();
 
     let mut led = gpioe.pe1.into_push_pull_output();
-    let mut backlight = gpioe.pe11.into_push_pull_output();
-    backlight.set_high();
+    // TIM1 CH2 PWM, above hearing so the backlight driver cannot whine.
+    // Full brightness lifts a TN panel's blacks; tune the duty by eye.
+    let mut backlight = dp.TIM1.pwm(
+        gpioe.pe11.into_alternate::<1>(),
+        20.kHz(),
+        ccdr.peripheral.TIM1,
+        &ccdr.clocks,
+    );
+    backlight.set_duty(backlight.get_max_duty() * BACKLIGHT_PERCENT / 100);
+    backlight.enable();
 
     let mut sai_mclk = gpioe.pe2.into_alternate::<6>();
     let mut sai_fs = gpioe.pe4.into_alternate::<6>();
