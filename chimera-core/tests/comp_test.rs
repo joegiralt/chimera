@@ -319,3 +319,108 @@ fn nan_and_out_of_range_controls_render_finite() {
     let out = run(&mut comp, &ch, |_| bad);
     assert!(out.iter().flatten().all(|s| s.is_finite()));
 }
+
+/// Spec § Master comp: one detector on the sum of all six channels. A loud
+/// DC on any one channel, of any pair and either side, ducks a quiet one.
+#[test]
+fn the_detector_hears_every_channel() {
+    let n = 64 * BLOCK_SIZE;
+    let quiet = noise(n, 0.01, 5);
+    let rms = |v: &[f32]| (v.iter().map(|s| s * s).sum::<f32>() / v.len() as f32).sqrt();
+    for loud in 0..2 * PAIRS {
+        let heard = if loud == 0 { 1 } else { 0 };
+        let mut ch: [Vec<f32>; 2 * PAIRS] = core::array::from_fn(|_| vec![0.0; n]);
+        (ch[loud], ch[heard]) = (vec![1.0; n], quiet.clone());
+        let mut comp = Box::new(MasterComp::new());
+        let out = run(&mut comp, &ch, |_| hard(7));
+        let tail = n / 2..;
+        let ducked = db(rms(&out[heard][tail.clone()]) / rms(&quiet[tail]));
+        assert!(ducked < -15.0, "loud on channel {loud}: {ducked} dB");
+    }
+}
+
+/// A NaN MIX reads as the default (1), for the switch as for the DSP: at
+/// 20:1 it compresses as MIX 1 does, and at 1:1 it releases to an exact
+/// bypass.
+#[test]
+fn a_nan_mix_reads_as_the_default_and_releases() {
+    let sec = SR as usize / BLOCK_SIZE * BLOCK_SIZE;
+    let ch = pair1(noise(3 * sec, 1.0, 13));
+    let nan = |r: u8| CompParams {
+        mix: f32::NAN,
+        ..hard(r)
+    };
+    let mut comp = Box::new(MasterComp::new());
+    let want = run(&mut comp, &ch, |_| hard(7));
+    let mut comp = Box::new(MasterComp::new());
+    let got = run(&mut comp, &ch, |_| nan(7));
+    assert_eq!(got, want);
+    let mut comp = Box::new(MasterComp::new());
+    let out = run(&mut comp, &ch, |b| {
+        nan(if b * BLOCK_SIZE < sec { 7 } else { 0 })
+    });
+    assert_eq!(out[0][2 * sec..], ch[0][2 * sec..]);
+    assert!(!comp.is_running());
+}
+
+/// One inf sample asks for a bounded reduction (the detector's ceiling):
+/// at the fastest ATTACK the gain is back within 1 dB four RELEASE time
+/// constants later.
+#[test]
+fn an_inf_sample_recovers() {
+    let sec = SR as usize / BLOCK_SIZE * BLOCK_SIZE;
+    let mut x = vec![0.01f32; sec];
+    x[sec / 4] = f32::INFINITY;
+    let p = CompParams {
+        attack: 0.0,
+        ..hard(7)
+    };
+    let mut comp = Box::new(MasterComp::new());
+    let out = run(&mut comp, &pair1(x.clone()), |_| p);
+    let at = sec / 4 + (4.0 * p.release_s() * SR as f32) as usize;
+    assert!(
+        out.iter()
+            .flatten()
+            .enumerate()
+            .all(|(i, s)| s.is_finite() || i == sec / 4)
+    );
+    let gr = -db(out[0][at] / x[at]);
+    assert!(gr < 1.0, "{gr} dB");
+}
+
+/// Spec § Master comp: switched off mid-reduction it releases first, and
+/// fades out only near unity. 20 ms after RATIO goes to 1:1 (two fade
+/// lengths) most of the 19 dB is still there.
+#[test]
+fn it_releases_before_it_fades_out() {
+    let sec = SR as usize / BLOCK_SIZE * BLOCK_SIZE;
+    let x = vec![1.0f32; 2 * sec];
+    let mut comp = Box::new(MasterComp::new());
+    let out = run(&mut comp, &pair1(x.clone()), |b| {
+        hard(if b * BLOCK_SIZE < sec { 7 } else { 0 })
+    });
+    let gr = -db(out[0][sec + 960] / x[sec + 960]);
+    assert!(gr > 10.0, "{gr} dB");
+}
+
+/// A new ATTACK or RELEASE takes effect: a compressor that ran at other
+/// timings matches one that always ran at these.
+#[test]
+fn a_timing_change_takes_effect() {
+    let sec = SR as usize / BLOCK_SIZE * BLOCK_SIZE;
+    let mut x = vec![0.0f32; sec];
+    x.extend(vec![1.0; sec]);
+    x.extend(vec![0.01; sec]);
+    let at = |attack, release| CompParams {
+        attack,
+        release,
+        ..hard(7)
+    };
+    let mut fresh = Box::new(MasterComp::new());
+    let want = run(&mut fresh, &pair1(x.clone()), |_| at(0.9, 0.1));
+    let mut moved = Box::new(MasterComp::new());
+    let got = run(&mut moved, &pair1(x.clone()), |b| {
+        if b < 8 { at(0.2, 0.8) } else { at(0.9, 0.1) }
+    });
+    assert_eq!(got[0][sec / 2..], want[0][sec / 2..]);
+}

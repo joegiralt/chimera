@@ -28,4 +28,7 @@ impl Default for Meter {
 }
 
 /// The master compressor's gain reduction, dB (0 while it is bypassed).
+///
+/// Global: tests run in parallel threads, so at most one test per test
+/// binary may publish a nonzero value or render MST expecting one.
 pub static MASTER_GR: Meter = Meter::new();
