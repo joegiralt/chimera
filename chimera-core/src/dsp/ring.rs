@@ -25,10 +25,13 @@ pub const TAPS: [[(usize, f32, f32); 3]; 2] = [
     [(0, 0.07, 1.0), (1, 0.41, -1.0), (2, 0.73, 1.0)],
     [(2, 0.11, 1.0), (3, 0.47, -1.0), (0, 0.79, 1.0)],
 ];
+/// The send's gain into each stage's input: +½ at S1, −½ at S3.
+pub const INJECT: [f32; STAGES] = [0.5, 0.0, -0.5, 0.0];
 /// 1.0 in i16 LSBs: ±2.0 fits.
 pub const FULL_SCALE: f32 = 16_384.0;
 /// Ring samples a SIZE step's crossfade lasts (30 ms at 24 kHz).
 pub const XFADE: u16 = 720;
+const XFADE_INV: f32 = 1.0 / XFADE as f32;
 pub const MAX_GAIN: f32 = 0.97;
 
 /// The return's gain: its RMS at default settings matches the old plate's
@@ -291,7 +294,9 @@ impl Ring {
         self.lp
     }
 
-    /// Nothing stored anywhere: the ring stays silent without input.
+    /// Every line and state is exactly zero. At high DAMP (a < ½) the
+    /// rounded DAMP state can hold ±Δ for good while the return is already
+    /// exactly zero, so this may never become true: gate nothing on it.
     pub fn is_silent(&self) -> bool {
         self.lp.iter().all(|&s| s == 0.0) && self.lines.iter().all(|&s| s == 0)
     }
@@ -367,7 +372,7 @@ impl Ring {
         let grid = blk.grid;
         for i in 0..HALF {
             let w = if XF {
-                let w = 1.0 - self.xf as f32 / XFADE as f32;
+                let w = 1.0 - self.xf as f32 * XFADE_INV;
                 self.xf = self.xf.saturating_sub(1);
                 w
             } else {
@@ -387,13 +392,11 @@ impl Ring {
                 }
             }
             (l[i], r[i]) = (side[0], side[1]);
-            let inj = u[i] * (0.5 * FULL_SCALE);
+            let inj = u[i] * FULL_SCALE;
             for k in 0..STAGES {
                 let mut x = out[(k + STAGES - 1) % STAGES];
-                if k == 0 {
-                    x += inj;
-                } else if k == 2 {
-                    x -= inj;
+                if INJECT[k] != 0.0 {
+                    x += INJECT[k] * inj;
                 }
                 for (m, &c) in AP_COEF[k].iter().enumerate() {
                     let j = 3 * k + m;

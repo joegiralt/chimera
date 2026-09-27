@@ -599,6 +599,136 @@ fn nothing_returns_before_the_first_reflection() {
     }
 }
 
+// ── SIZE crossfade, DAMP, signs ──
+
+fn held_block() -> RingBlock {
+    RingBlock {
+        gains_from: [0.9; STAGES],
+        gains_to: [0.9; STAGES],
+        damp_from: 0.5,
+        damp_to: 0.5,
+        grid: Grid::new(0.0),
+    }
+}
+
+/// A ring at SIZE step 20 after 1 s of loud noise: twins built by this are
+/// in the same state.
+fn filled() -> Box<Ring> {
+    let mut ring = Box::new(Ring::new());
+    ring.snap(20);
+    let mut n = Noise(0xface);
+    let (mut l, mut r) = ([0.0; HALF], [0.0; HALF]);
+    for _ in 0..(FS_RING as usize / HALF) {
+        let u = core::array::from_fn(|_| 2.0 * n.next());
+        ring.process(&u, &held_block(), &mut l, &mut r);
+    }
+    ring
+}
+
+/// One silent block: (L, R).
+fn tick(ring: &mut Ring) -> ([f32; HALF], [f32; HALF]) {
+    let (mut l, mut r) = ([0.0; HALF], [0.0; HALF]);
+    ring.process(&[0.0; HALF], &held_block(), &mut l, &mut r);
+    (l, r)
+}
+
+#[test]
+fn a_size_change_fades_linearly_from_the_old_length_over_xfade() {
+    let (mut old, mut new, mut fade) = (filled(), filled(), filled());
+    new.snap(25);
+    fade.request(25);
+    assert!(fade.crossfading() && fade.step() == 25);
+
+    // The first 64 samples' taps read only what was written before the
+    // request (the shortest tap at step 20 is 264 samples), so the fade's
+    // output is old + w·(new − old), with w = i / XFADE.
+    let blocks_read = 2;
+    for b in 0..blocks_read {
+        let ((ol, or), (nl, nr), (fl, fr)) = (tick(&mut old), tick(&mut new), tick(&mut fade));
+        for i in 0..HALF {
+            let n = b * HALF + i;
+            if n == 0 {
+                assert_eq!(
+                    (fl[0], fr[0]),
+                    (ol[0], or[0]),
+                    "the first sample is the old read"
+                );
+            }
+            for (o, nw, f) in [(ol[i], nl[i], fl[i]), (or[i], nr[i], fr[i])] {
+                if (nw - o).abs() > 100.0 {
+                    let w = (f - o) / (nw - o);
+                    let want = n as f32 / XFADE as f32;
+                    assert!((w - want).abs() < 1e-4, "sample {n}: w {w}, want {want}");
+                }
+            }
+        }
+    }
+
+    // Exactly XFADE samples: still fading at the last whole block before
+    // 720, done by the block that holds sample 720.
+    let before = XFADE as usize / HALF;
+    for _ in blocks_read..before {
+        tick(&mut fade);
+    }
+    assert!(fade.crossfading());
+    tick(&mut fade);
+    assert!(!fade.crossfading());
+}
+
+#[test]
+fn a_request_mid_fade_neither_restarts_nor_reverses_it() {
+    let (mut a, mut b) = (filled(), filled());
+    a.request(25);
+    b.request(25);
+    for n in 0..2 * (XFADE as usize / HALF + 1) {
+        if n == 5 {
+            b.request(3);
+            assert_eq!(b.step(), 25);
+        }
+        assert_eq!(tick(&mut a), tick(&mut b), "block {n}");
+    }
+    assert!(!b.crossfading());
+    b.request(3);
+    assert!(b.crossfading() && b.step() == 3);
+}
+
+/// The share of 4–10 kHz in the tail's 20 Hz–10 kHz energy, in dB, 0.2 s
+/// after 0.5 s of noise stops.
+fn high_share_db(damp: f32) -> f64 {
+    let c = at(0.0, 0.5, damp, 0.5);
+    let (l, _) = render(blocks(0.5 + 0.2 + 0.35), noise_burst(21, 0.5), |_| c);
+    let n = 1 << 14;
+    let p = power(&l[(0.7 * SR as f32) as usize..][..n]);
+    let high: f64 = p[bin(4_000.0, n)..bin(10_000.0, n)].iter().sum();
+    let all: f64 = p[bin(20.0, n)..bin(10_000.0, n)].iter().sum();
+    10.0 * (high / all).log10()
+}
+
+#[test]
+fn damp_darkens_the_tail() {
+    let (open, dark) = (high_share_db(0.0), high_share_db(1.0));
+    println!("4–10 kHz share: DAMP 0 {open:.1} dB, DAMP 1 {dark:.1} dB");
+    assert!(dark <= open - 10.0, "DAMP 0 {open} dB, DAMP 1 {dark} dB");
+}
+
+#[test]
+fn the_signs_match_the_spec() {
+    // The shorter allpass of each stage is +c, the longer −c.
+    for k in 0..STAGES {
+        let [c1, c2] = AP_COEF[k];
+        let (short, long) = if BASE[3 * k] < BASE[3 * k + 1] {
+            (c1, c2)
+        } else {
+            (c2, c1)
+        };
+        assert!(short > 0.0 && long == -short, "stage {k}: {:?}", AP_COEF[k]);
+    }
+    let signs = |s: usize| TAPS[s].map(|(_, _, sign)| sign);
+    assert_eq!(signs(0), [1.0, -1.0, 1.0]);
+    assert_eq!(signs(1), [1.0, -1.0, 1.0]);
+    assert_eq!(INJECT, [0.5, 0.0, -0.5, 0.0]);
+}
+
 // ── WET_GAIN (spec § Topology) ──
 
 /// The plate's return RMS for `calibration_send` at TIME 0.5, DAMP 0.3,
