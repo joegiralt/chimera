@@ -247,6 +247,7 @@ fn a_rev_send_jump_does_not_click() {
 fn the_master_section_is_off_by_default() {
     let p = FxParams::default();
     assert!(!p.tape.is_on());
+    assert!(!p.comp.is_on());
     let mut out: [[f32; 2 * BLOCK_SIZE]; DAC_PAIRS] =
         core::array::from_fn(|k| core::array::from_fn(|i| ((i * 7 + k) % 13) as f32 / 6.5 - 1.0));
     let before = out;

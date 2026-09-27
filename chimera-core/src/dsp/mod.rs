@@ -107,6 +107,7 @@ pub fn fast_tan(x: f32) -> f32 {
 
 pub mod algo;
 pub mod chorus;
+pub mod comp;
 pub mod delay;
 pub mod drive;
 pub mod engines;

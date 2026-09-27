@@ -691,6 +691,7 @@ impl UiState {
             active_part: self.active_part,
             prime_status: self.prime_status,
             audio,
+            master_gr_db: crate::meter::MASTER_GR.read(),
         }
     }
 

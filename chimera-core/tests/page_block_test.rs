@@ -32,6 +32,7 @@ fn a_sound_has_no_fx_blocks() {
         BlockRef::Delay,
         BlockRef::Reverb,
         BlockRef::Tape,
+        BlockRef::Comp,
     ] {
         assert!(p.block(b).is_none(), "{b:?}");
     }
