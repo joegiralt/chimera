@@ -4,7 +4,7 @@
 **Status:** Draft rev 2 (after adversarial self-review), awaiting user review
 **Tracks:** epic #118.
 **Builds after:** the FX diet (#36), for its CPU headroom.
-**Supersedes in part:** ADR 0022's engine-set clause (`EngineType` and `ChainType` are `{Algo, Modal}`) and its note that no engine puts the amp envelope on the VCA. The rest of 0022 stands; the old VA placeholder it removed stays removed.
+**Supersedes in part:** ADR 0022's engine-set clause (`EngineType` and `ChainType` are `{Algo, Modal}`). The amp envelope on the VCA is the routing spec's concern (`2026-09-27-filter-routing-design.md`), which supersedes 0022's VCA note. The rest of 0022 stands; the old VA placeholder it removed stays removed.
 
 ## Intent
 
@@ -44,7 +44,7 @@ A third engine, **VA**, that is only an oscillator section. It feeds the Part's 
 - A, B and C are stored as `f32`, like Modal's, so a mod offset from `apply_offset` isn't rounded, and the macros don't zipper. The block is 16 bytes. `ParamSnapshot` grows by that much, which costs about 800 B across the pool and buffers (algo spec § Storage). The `AXI_RESIDENT` assertion checks it.
 - **The note's frequency** is `f0 = 440 · 2^((note + 12·OCT + FINE/100 − 69) / 12)`, computed per block with `exp2`. It sets `inc = f0 / fs` (multiplied by the per-block `1/fs`). Every oscillator's increment is clamped to ≤ 0.45.
 - **`VaModel`** is a `#[repr(u8)]` enum with fixed discriminants 0–10, in the order of the model table. An unknown stored byte reads as `Sweep`.
-- **The amp envelope is the VCA for a VA Part.** VA is only an oscillator, so something must end its notes. On `EngineType::Va`, `Voice::render` multiplies the output by the amp envelope's per-sample value, which it already computes for the ENV mod source. The voice is active while the amp envelope is not idle. Algo and Modal are unchanged. The amp envelope's parameters stay off the destination list (ADR 0010).
+- **The VCA ends a VA Part's notes.** VA is only an oscillator, so something must end its notes. The FLD / VCA (AMP) block from the routing spec (`2026-09-27-filter-routing-design.md`) does it: VA's VCA source defaults to ENV 1, and VA offers only ENV 1 and GATE (not ENGINE: a VA oscillator never goes inactive, so ENGINE would hold notes forever). There is no engine branch in `Voice::render`. The amp envelope's parameters stay off the destination list (ADR 0010).
 - **The engine slot.** Today `Engines` holds `algo` and `modal` side by side in every voice. Because a voice sounds only one engine at a time (`note_on` fades before it switches), `Engines` becomes one slot: a `union` of the three engines, tagged by the voice's `active_engine`, and sized to the largest engine, Modal. `trigger` builds the new engine in place when the engine changes, replacing today's reset of the old one. `const` assertions keep `size_of::<VaEngine>()` no larger than the slot, and keep the slot within the existing `VOICE_RAM_BUDGET`. The voice pool shrinks by the size of `AlgoEngine` per voice, more than the 16 B that `played: ParamSnapshot` grows.
 - **The `VaEngine` state target is ≤ 512 B.** Its largest part is Spread's 7 oscillators: phase, increment, drift state and BLEP carry for each.
 
@@ -345,9 +345,9 @@ chimera-core/src/dsp/va/
   - The principle, and why plain PWM and hard sync are left to Algo's modes (#38), with P5's sync as the exception.
   - The 11 models and their three macros.
   - The band-limiting method (polyBLEP, polyBLAMP, segment shapes, no wavetables) and its provenance. The code is our own, from the cited papers and Szabo's published supersaw measurements; no Mutable or other synth code is used (ADR 0002).
-  - The amp envelope as the VA Part's VCA.
+  - VA's VCA source is ENV 1 or GATE, via the routing spec's AMP block.
   - The shared engine slot.
-  - It supersedes ADR 0022's `{Algo, Modal}` clause and its "no engine puts the amp envelope on the VCA" note.
+  - It supersedes ADR 0022's `{Algo, Modal}` clause. The VCA note is superseded by the routing spec's ADR.
   - 0028–0031 are reserved by the FX diet, and 0032 exists.
   - It goes in `docs/adr/README.md` with the template. It isn't written until the build starts.
 
