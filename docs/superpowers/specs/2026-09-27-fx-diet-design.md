@@ -131,7 +131,7 @@ The page is EFX. TYPE's slot becomes GRIT; the other slots keep their order.
 - From the smoothed values, the four *g_k*, *a* and Δ are computed once per block: four `powf`s per block, not per sample. *g_k* and *a* ramp linearly across the block from the previous block's values. Δ holds for the block.
 
 ### Guarantees
-- **Stable:** the loop gain is below 1 at every setting and mid-crossfade. *g_k* ≤ 0.97, the allpasses are unity-gain, the low-pass gain is ≤ 1, a linear crossfade's gain is ≤ 1, and rounding adds at most ½ Δ per write, bounded by the gate.
+- **Stable:** the loop gain is below 1 at every setting and mid-crossfade. *g_k* ≤ 0.97, the allpasses are unity-gain, the low-pass gain is ≤ 1, a linear crossfade's gain is ≤ 1, and rounding adds at most ½ Δ + ½ LSB per write, unbiased and bounded by the gate.
 - **No zipper noise:** see § Smoothing and § SIZE.
 - **Allocation-free:** the ring lives in the FX bus in AXI (ADR 0014), and the existing size assertion still holds.
 
