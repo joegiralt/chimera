@@ -52,6 +52,32 @@ pub const RING_LEN: usize = OFFSET[LINES - 1] + BASE[LINES - 1] as usize + 1;
 const _: () = assert!(RING_LEN == 23_220);
 const _: () = assert!(core::mem::size_of::<[i16; RING_LEN]>() == 46_440);
 
+/// The lines share one write head: line j writes at head + `HEAD[j]` and
+/// reads d back at head + `HEAD[j]` − d, both mod `RING_LEN`. Each line
+/// owns the `BASE[j] + 1` slots behind its write point, and they all
+/// rotate together, so a read d ≤ `BASE[j]` back is what line j wrote d
+/// samples ago.
+const HEAD: [usize; LINES] = {
+    let mut h = [0; LINES];
+    let mut j = 0;
+    while j < LINES {
+        h[j] = OFFSET[j] + BASE[j] as usize;
+        j += 1;
+    }
+    h
+};
+
+/// One block per `K` in the list, with `K` a const: the stage loops
+/// unroll, and every table lookup in them folds to an immediate.
+macro_rules! unroll {
+    ($k:ident in [$($n:literal),*] $body:block) => {
+        $({
+            const $k: usize = $n;
+            $body
+        })*
+    };
+}
+
 const fn is_prime(n: u32) -> bool {
     if n < 2 {
         return false;
@@ -232,20 +258,27 @@ pub struct RingBlock {
 
 pub struct Ring {
     lines: [i16; RING_LEN],
-    pos: [u16; LINES],
+    /// The shared write head, below `RING_LEN`.
+    head: u16,
     lp: [f32; STAGES],
     step: u8,
     from: u8,
     xf: u16,
 }
 
-crate::in_place::field_list!(Ring => Ring { lines, pos, lp, step, from, xf });
+crate::in_place::field_list!(Ring => Ring { lines, head, lp, step, from, xf });
+
+/// `i` below 2·`RING_LEN`, wrapped under it.
+#[inline(always)]
+fn wrap(i: usize) -> usize {
+    if i >= RING_LEN { i - RING_LEN } else { i }
+}
 
 impl Ring {
     pub fn new() -> Self {
         Self {
             lines: [0; RING_LEN],
-            pos: [0; LINES],
+            head: 0,
             lp: [0.0; STAGES],
             step: 0,
             from: 0,
@@ -317,36 +350,6 @@ impl Ring {
         }
     }
 
-    #[inline(always)]
-    fn at(&self, j: usize, d: u16) -> f32 {
-        let (p, d, cap) = (self.pos[j] as usize, d as usize, BASE[j] as usize + 1);
-        let i = if p >= d { p - d } else { p + cap - d };
-        self.lines[OFFSET[j] + i] as f32
-    }
-
-    /// Line `j` at delay `new`, or mid-crossfade blended from `old` by `w`.
-    #[inline(always)]
-    fn read<const XF: bool>(&self, j: usize, new: u16, old: u16, w: f32) -> f32 {
-        let b = self.at(j, new);
-        if XF {
-            let a = self.at(j, old);
-            a + w * (b - a)
-        } else {
-            b
-        }
-    }
-
-    #[inline(always)]
-    fn write(&mut self, j: usize, v: i16) {
-        let p = self.pos[j] as usize;
-        self.lines[OFFSET[j] + p] = v;
-        self.pos[j] = if p == BASE[j] as usize {
-            0
-        } else {
-            p as u16 + 1
-        };
-    }
-
     fn run<const XF: bool>(
         &mut self,
         u: &[f32; HALF],
@@ -354,64 +357,119 @@ impl Ring {
         l: &mut [f32; HALF],
         r: &mut [f32; HALF],
     ) {
-        let new = SIZE_TABLE[self.step as usize];
-        let old = SIZE_TABLE[self.from as usize];
-        let tap = |t: &[u16; LINES], s: usize, i: usize| -> u16 {
-            let (k, frac, _) = TAPS[s][i];
-            (frac * t[3 * k + 2] as f32) as u16
+        // Each read's offset from the head: `HEAD[j]` − d, d ≤ `BASE[j]`
+        // (the table fits, and a tap is a fraction of its line), so at
+        // least `OFFSET[j]`; the clamp keeps the bound below local.
+        let back = |j: usize, d: u16| (HEAD[j] - d as usize).min(RING_LEN - 1);
+        let reads = |t: &[u16; LINES]| -> [usize; LINES] { core::array::from_fn(|j| back(j, t[j])) };
+        let taps = |t: &[u16; LINES]| -> [[usize; 3]; 2] {
+            core::array::from_fn(|s| {
+                core::array::from_fn(|i| {
+                    let (k, frac, _) = TAPS[s][i];
+                    back(3 * k + 2, (frac * t[3 * k + 2] as f32) as u16)
+                })
+            })
         };
-        let taps_new: [[u16; 3]; 2] =
-            core::array::from_fn(|s| core::array::from_fn(|i| tap(&new, s, i)));
-        let taps_old: [[u16; 3]; 2] =
-            core::array::from_fn(|s| core::array::from_fn(|i| tap(&old, s, i)));
+        let (new, old) = (&SIZE_TABLE[self.step as usize], &SIZE_TABLE[self.from as usize]);
+        let (kn, ko) = (reads(new), reads(old));
+        let (tn, to) = (taps(new), taps(old));
         let n = HALF as f32;
         let dg: [f32; STAGES] = core::array::from_fn(|k| (blk.gains_to[k] - blk.gains_from[k]) / n);
         let da = (blk.damp_to - blk.damp_from) / n;
         let mut g = blk.gains_from;
         let mut a = blk.damp_from;
         let grid = blk.grid;
-        for i in 0..HALF {
-            let w = if XF {
-                let w = 1.0 - self.xf as f32 * XFADE_INV;
-                self.xf = self.xf.saturating_sub(1);
-                w
-            } else {
-                1.0
-            };
-            let mut out = [0.0f32; STAGES];
-            for k in 0..STAGES {
-                let j = 3 * k + 2;
-                let d = self.read::<XF>(j, new[j], old[j], w);
-                self.lp[k] = grid.q_round(self.lp[k] + a * (d - self.lp[k])) as f32;
-                out[k] = g[k] * self.lp[k];
+        let mut lp = self.lp;
+        let mut xf = self.xf;
+        let mut h = (self.head as usize).min(RING_LEN - 1);
+        let lines = &mut self.lines;
+        let mut i = 0;
+        // In segments that no access wraps in: each access's slot at the
+        // segment's start, plus the sample's index in it.
+        while i < HALF {
+            let at = |k: usize| wrap(h + k);
+            let (bn, bo, bw) = (kn.map(at), ko.map(at), HEAD.map(at));
+            let (sn, so) = (tn.map(|s| s.map(at)), to.map(|s| s.map(at)));
+            let mut len = HALF - i;
+            let slots = bn.iter().chain(&bw).chain(sn.as_flattened());
+            for &b in slots {
+                len = len.min(RING_LEN - b);
             }
-            let mut side = [0.0f32; 2];
-            for (s, acc) in side.iter_mut().enumerate() {
-                for (t, &(k, _, sign)) in TAPS[s].iter().enumerate() {
-                    *acc += sign * self.read::<XF>(3 * k + 2, taps_new[s][t], taps_old[s][t], w);
+            if XF {
+                for &b in bo.iter().chain(so.as_flattened()) {
+                    len = len.min(RING_LEN - b);
                 }
             }
-            (l[i], r[i]) = (side[0], side[1]);
-            let inj = u[i] * FULL_SCALE;
-            for k in 0..STAGES {
-                let mut x = out[(k + STAGES - 1) % STAGES];
-                if INJECT[k] != 0.0 {
-                    x += INJECT[k] * inj;
+            for t in 0..len {
+                macro_rules! rd {
+                    ($b:expr) => {
+                        // SAFETY: `h` and each offset are below `RING_LEN`,
+                        // so `wrap` puts each slot b under it; `len` ≤
+                        // `RING_LEN` − b and `t` < `len`, so b + t is in
+                        // range. The writes below likewise.
+                        (unsafe { *lines.get_unchecked($b + t) }) as f32
+                    };
                 }
-                for (m, &c) in AP_COEF[k].iter().enumerate() {
-                    let j = 3 * k + m;
-                    let vd = self.read::<XF>(j, new[j], old[j], w);
-                    let vq = grid.q_trunc(x + c * vd);
-                    self.write(j, vq);
-                    x = vd - c * vq as f32;
+                let w = if XF {
+                    let w = 1.0 - xf as f32 * XFADE_INV;
+                    xf = xf.saturating_sub(1);
+                    w
+                } else {
+                    1.0
+                };
+                macro_rules! blend {
+                    ($nb:expr, $ob:expr) => {{
+                        let v = rd!($nb);
+                        if XF {
+                            let o = rd!($ob);
+                            o + w * (v - o)
+                        } else {
+                            v
+                        }
+                    }};
                 }
-                self.write(3 * k + 2, grid.q_round(x));
+                let mut out = [0.0f32; STAGES];
+                unroll!(K in [0, 1, 2, 3] {
+                    let j = 3 * K + 2;
+                    let d = blend!(bn[j], bo[j]);
+                    lp[K] = grid.q_round(lp[K] + a * (d - lp[K])) as f32;
+                    out[K] = g[K] * lp[K];
+                });
+                let mut side = [0.0f32; 2];
+                unroll!(S in [0, 1] {
+                    unroll!(T in [0, 1, 2] {
+                        side[S] += TAPS[S][T].2 * blend!(sn[S][T], so[S][T]);
+                    });
+                });
+                (l[i + t], r[i + t]) = (side[0], side[1]);
+                let inj = u[i + t] * FULL_SCALE;
+                unroll!(K in [0, 1, 2, 3] {
+                    let mut x = out[(K + STAGES - 1) % STAGES];
+                    if INJECT[K] != 0.0 {
+                        x += INJECT[K] * inj;
+                    }
+                    unroll!(M in [0, 1] {
+                        let (j, c) = (3 * K + M, AP_COEF[K][M]);
+                        let vd = blend!(bn[j], bo[j]);
+                        let vq = grid.q_trunc(x + c * vd);
+                        // SAFETY: as the reads.
+                        unsafe { *lines.get_unchecked_mut(bw[j] + t) = vq };
+                        x = vd - c * vq as f32;
+                    });
+                    // SAFETY: as the reads.
+                    unsafe { *lines.get_unchecked_mut(bw[3 * K + 2] + t) = grid.q_round(x) };
+                });
+                unroll!(K in [0, 1, 2, 3] {
+                    g[K] += dg[K];
+                });
+                a += da;
             }
-            for k in 0..STAGES {
-                g[k] += dg[k];
-            }
-            a += da;
+            i += len;
+            h = wrap(h + len);
         }
+        self.lp = lp;
+        self.xf = xf;
+        self.head = h as u16;
     }
 }
 
