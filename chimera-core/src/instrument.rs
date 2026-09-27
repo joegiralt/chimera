@@ -103,52 +103,114 @@ pub fn pan_gains(pan: f32) -> (f32, f32) {
     (libm::sinf((1.0 - pan) * q), libm::sinf((1.0 + pan) * q))
 }
 
+/// Each Part's last pan and its `pan_gains`. `pan_gains` is two libm
+/// `sinf`, soft-float f64 on this FPU and most of what mixing cost, so the
+/// audio thread pays it only when a pan moves.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct PanCache([Option<(u32, (f32, f32))>; MAX_PARTS]);
+
+impl PanCache {
+    fn gains(&mut self, p: usize, pan: f32) -> (f32, f32) {
+        match self.0[p] {
+            Some((bits, g)) if bits == pan.to_bits() => g,
+            _ => {
+                let g = pan_gains(pan);
+                self.0[p] = Some((pan.to_bits(), g));
+                g
+            }
+        }
+    }
+}
+
+/// Samples per step of the send and the pair passes, sized so their
+/// accumulators stay in the FPU's 32 registers once LLVM unrolls the Parts
+/// by four (at 4 the send pass spills).
+const SEND_STEP: usize = 2;
+const PAIR_STEP: usize = 8;
+
 /// Steps 2–4 of `render`: each written Part's bus, panned and levelled,
 /// into its pair and, by its sends, into the FX sends; then the FX bus
 /// once, its return on pair 1. Returns the scope block (the written buses
 /// summed). Separate so the bench can time it without voices.
+///
+/// Each output sample is summed in registers from 0.0, Part by Part in
+/// order (the return last), and stored once: the same additions in the
+/// same order as adding each Part into zeroed buffers, a fraction of the
+/// loads and stores.
+#[allow(clippy::too_many_arguments)]
 pub fn mix_parts(
     buses: &[[f32; BLOCK_SIZE]; MAX_PARTS],
     written: &[bool; MAX_PARTS],
     sends: &mut [[f32; BLOCK_SIZE]; FX_SENDS],
+    pans: &mut PanCache,
     fx: &mut FxBus,
     shared: &AudioShared,
     sample_rate: u32,
     out: &mut DacOut,
 ) -> [f32; BLOCK_SIZE] {
-    for pair in out.iter_mut() {
-        pair.fill(0.0);
-    }
-    for send in sends.iter_mut() {
-        send.fill(0.0);
-    }
-    let mut scope = [0.0f32; BLOCK_SIZE];
+    // The written Parts in order, gains hoisted; by pair for the dry mix.
+    let mut src = [(&buses[0], [0.0f32; FX_SENDS]); MAX_PARTS];
+    let mut n = 0;
+    let mut dry = [[(&buses[0], 0.0f32, 0.0f32); MAX_PARTS]; DAC_PAIRS];
+    let mut dry_n = [0usize; DAC_PAIRS];
     for (p, part) in shared.parts.iter().enumerate() {
         // A part with no voices this block has a silent bus: nothing to add.
         if !written[p] {
             continue;
         }
         let bus = &buses[p];
-        let (gl, gr) = pan_gains(part.mix.pan);
+        let (gl, gr) = pans.gains(p, part.mix.pan);
         let (gl, gr) = (gl * part.mix.level, gr * part.mix.level);
-        let pair = &mut out[part.mix.output.index()];
-        for i in 0..BLOCK_SIZE {
-            pair[2 * i] += bus[i] * gl;
-            pair[2 * i + 1] += bus[i] * gr;
-            scope[i] += bus[i];
-        }
-        for (send, &amount) in sends.iter_mut().zip(&part.mix.sends) {
-            for (s, &b) in send.iter_mut().zip(bus) {
-                *s += b * amount;
+        src[n] = (bus, part.mix.sends);
+        n += 1;
+        let k = part.mix.output.index();
+        dry[k][dry_n[k]] = (bus, gl, gr);
+        dry_n[k] += 1;
+    }
+
+    let mut scope = [0.0f32; BLOCK_SIZE];
+    let [s0, s1, s2] = sends;
+    for c in 0..BLOCK_SIZE / SEND_STEP {
+        let i = c * SEND_STEP;
+        let mut a = [[0.0f32; SEND_STEP]; FX_SENDS + 1];
+        for &(bus, amt) in &src[..n] {
+            for k in 0..SEND_STEP {
+                let b = bus[i + k];
+                a[0][k] += b * amt[0];
+                a[1][k] += b * amt[1];
+                a[2][k] += b * amt[2];
+                a[3][k] += b;
             }
         }
+        s0[i..i + SEND_STEP].copy_from_slice(&a[0]);
+        s1[i..i + SEND_STEP].copy_from_slice(&a[1]);
+        s2[i..i + SEND_STEP].copy_from_slice(&a[2]);
+        scope[i..i + SEND_STEP].copy_from_slice(&a[3]);
     }
+
     // The FX bus once; its return lands on both sides of pair 1.
     let mut ret = [0.0f32; BLOCK_SIZE];
     fx.process(sends, &shared.fx, sample_rate, &mut ret);
-    for (i, &r) in ret.iter().enumerate() {
-        out[0][2 * i] += r;
-        out[0][2 * i + 1] += r;
+
+    for (k, pair) in out.iter_mut().enumerate() {
+        let parts = &dry[k][..dry_n[k]];
+        for c in 0..BLOCK_SIZE / PAIR_STEP {
+            let i = c * PAIR_STEP;
+            let mut a = [0.0f32; 2 * PAIR_STEP];
+            for &(bus, gl, gr) in parts {
+                for j in 0..PAIR_STEP {
+                    a[2 * j] += bus[i + j] * gl;
+                    a[2 * j + 1] += bus[i + j] * gr;
+                }
+            }
+            if k == 0 {
+                for j in 0..PAIR_STEP {
+                    a[2 * j] += ret[i + j];
+                    a[2 * j + 1] += ret[i + j];
+                }
+            }
+            pair[2 * i..2 * (i + PAIR_STEP)].copy_from_slice(&a);
+        }
     }
     scope
 }
@@ -177,10 +239,11 @@ pub struct Instrument {
     /// Each Part's mono bus from the last `render`: the sum of its voices.
     buses: [[f32; BLOCK_SIZE]; MAX_PARTS],
     sends: [[f32; BLOCK_SIZE]; FX_SENDS],
+    pans: PanCache,
     sample_rate: u32,
 }
 
-crate::in_place::field_list!(Instrument => Instrument { voices, alloc, note_channel, sounding, waiting, buses, sends, sample_rate });
+crate::in_place::field_list!(Instrument => Instrument { voices, alloc, note_channel, sounding, waiting, buses, sends, pans, sample_rate });
 
 impl Instrument {
     pub fn new(sample_rate: u32, budget: SampleBudget) -> Self {
@@ -208,6 +271,7 @@ impl Instrument {
             addr_of_mut!((*p).waiting).write([None; MAX_VOICES]);
             addr_of_mut!((*p).buses).write([[0.0; BLOCK_SIZE]; MAX_PARTS]);
             addr_of_mut!((*p).sends).write([[0.0; BLOCK_SIZE]; FX_SENDS]);
+            addr_of_mut!((*p).pans).write(PanCache::default());
             addr_of_mut!((*p).sample_rate).write(sample_rate);
             slot.assume_init_mut()
         }
@@ -349,6 +413,7 @@ impl Instrument {
             &self.buses,
             &written,
             &mut self.sends,
+            &mut self.pans,
             fx,
             shared,
             self.sample_rate,
