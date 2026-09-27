@@ -24,6 +24,9 @@ pub struct DelayParams {
     pub tone: f32,
     /// Dry/wet mix (0..1)
     pub mix: f32,
+    /// The delay's return into the reverb's send (0..1): FX diet spec
+    /// § REV SEND.
+    pub rev_send: f32,
 }
 
 impl Default for DelayParams {
@@ -35,6 +38,7 @@ impl Default for DelayParams {
             saturation: 0.2,
             tone: 0.6,
             mix: 0.0, // off by default
+            rev_send: 0.0,
         }
     }
 }
@@ -52,16 +56,18 @@ impl DelayParams {
     pub const SATURATION: ParamId = ParamId(3);
     pub const TONE: ParamId = ParamId(4);
     pub const MIX: ParamId = ParamId(5);
+    pub const REV_SEND: ParamId = ParamId(6);
 }
 
 /// Delay runs outside `Voice` (desktop only): nothing is modulatable.
-pub static DELAY_SPECS: [ParamSpec; 6] = [
+pub static DELAY_SPECS: [ParamSpec; 7] = [
     ParamSpec::continuous(0, "TIME", ValFmt::Uni, 10.0, 500.0, 375.0, 8.0, false),
     ParamSpec::continuous(1, "FDBK", ValFmt::Uni, 0.0, 1.0, 0.4, 1.0 / 128.0, false),
     ParamSpec::continuous(2, "WOW", ValFmt::Uni, 0.0, 1.0, 0.15, 1.0 / 128.0, false),
     ParamSpec::continuous(3, "SAT", ValFmt::Uni, 0.0, 1.0, 0.2, 1.0 / 128.0, false),
     ParamSpec::continuous(4, "TONE", ValFmt::Uni, 0.0, 1.0, 0.6, 1.0 / 128.0, false),
     ParamSpec::continuous(5, "MIX", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false),
+    ParamSpec::continuous(6, "REV", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false),
 ];
 
 impl Block for DelayParams {
@@ -77,6 +83,7 @@ impl Block for DelayParams {
             Self::SATURATION => self.saturation,
             Self::TONE => self.tone,
             Self::MIX => self.mix,
+            Self::REV_SEND => self.rev_send,
             _ => 0.0,
         }
     }
@@ -89,6 +96,7 @@ impl Block for DelayParams {
             Self::SATURATION => self.saturation = v,
             Self::TONE => self.tone = v,
             Self::MIX => self.mix = v,
+            Self::REV_SEND => self.rev_send = v,
             _ => {}
         }
     }

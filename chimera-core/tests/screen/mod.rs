@@ -267,6 +267,12 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
         plus(ui, 3);
     }),
+    ("mixer_fx_delay_char", |ui| {
+        feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
+        plus(ui, 3);
+        feed(ui, Input::press(ButtonId::Edit)); // DLY › CHAR
+        feed(ui, Input::turn(EncoderId::A, 20)); // WOW
+    }),
     ("mod_matrix", |ui| {
         plus(ui, 3);
         feed(ui, Input::turn(EncoderId::A, 1)); // focus CUTOFF

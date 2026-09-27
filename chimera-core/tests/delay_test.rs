@@ -24,6 +24,7 @@ fn with_no_wow_each_click_repeats_time_later() {
         saturation: 0.0,
         tone: 1.0,
         mix: 0.5,
+        rev_send: 0.0,
     };
     let mut d = Box::new(TapeDelay::new());
     let mut out = Vec::new();
@@ -46,4 +47,25 @@ fn with_no_wow_each_click_repeats_time_later() {
         };
         assert_eq!(s, want, "sample {n}");
     }
+}
+
+/// FX diet spec § REV SEND: a new id, 6 (0–5 are in use; ADR 0009), off by
+/// default.
+#[test]
+fn rev_send_is_param_6_and_off_by_default() {
+    use chimera_core::block::{Block, ParamId};
+    use chimera_core::dsp::delay::DELAY_SPECS;
+    let mut p = DelayParams::default();
+    assert_eq!(DelayParams::REV_SEND, ParamId(6));
+    assert_eq!(p.rev_send, 0.0);
+    p.write(DelayParams::REV_SEND, 0.4);
+    assert_eq!(p.get(DelayParams::REV_SEND), 0.4);
+    let s = DELAY_SPECS
+        .iter()
+        .find(|s| s.id == DelayParams::REV_SEND)
+        .unwrap();
+    assert_eq!(
+        (s.label, s.min, s.max, s.default, s.step),
+        ("REV", 0.0, 1.0, 0.0, 1.0 / 128.0)
+    );
 }
