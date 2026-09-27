@@ -6,7 +6,7 @@ mod common;
 
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus};
 use chimera_core::hw::{DAC_PAIRS, MAX_PARTS};
-use chimera_core::instrument::{AudioShared, DacOut, Instrument, mix_parts, pan_gains};
+use chimera_core::instrument::{AudioShared, DacOut, Instrument, PanCache, mix_parts, pan_gains};
 use chimera_core::modulation::ModState;
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::{EngineType, ParamSnapshot};
@@ -135,9 +135,131 @@ fn mix_parts_alone_is_renders_mix() {
     let mut fx = Box::new(FxBus::new());
     let mut sends = [[0.0; BLOCK_SIZE]; FX_SENDS];
     let mut out: DacOut = [[1.0; BLOCK_SIZE * 2]; DAC_PAIRS];
-    let scope = mix_parts(&buses, &written, &mut sends, &mut fx, &shared, SR, &mut out);
+    let scope = mix_parts(
+        &buses,
+        &written,
+        &mut sends,
+        &mut PanCache::default(),
+        &mut fx,
+        &shared,
+        SR,
+        &mut out,
+    );
     assert_eq!(scope, bus);
     assert_eq!(out, rig.out);
+}
+
+/// `mix_parts` as first written: each Part added into zeroed buffers.
+fn mix_parts_reference(
+    buses: &[[f32; BLOCK_SIZE]; MAX_PARTS],
+    written: &[bool; MAX_PARTS],
+    sends: &mut [[f32; BLOCK_SIZE]; FX_SENDS],
+    fx: &mut FxBus,
+    shared: &AudioShared,
+    out: &mut DacOut,
+) -> [f32; BLOCK_SIZE] {
+    *out = [[0.0; BLOCK_SIZE * 2]; DAC_PAIRS];
+    *sends = [[0.0; BLOCK_SIZE]; FX_SENDS];
+    let mut scope = [0.0f32; BLOCK_SIZE];
+    for (p, part) in shared.parts.iter().enumerate() {
+        if !written[p] {
+            continue;
+        }
+        let bus = &buses[p];
+        let (gl, gr) = pan_gains(part.mix.pan);
+        let (gl, gr) = (gl * part.mix.level, gr * part.mix.level);
+        let pair = &mut out[part.mix.output.index()];
+        for i in 0..BLOCK_SIZE {
+            pair[2 * i] += bus[i] * gl;
+            pair[2 * i + 1] += bus[i] * gr;
+            scope[i] += bus[i];
+        }
+        for (send, &amount) in sends.iter_mut().zip(&part.mix.sends) {
+            for (s, &b) in send.iter_mut().zip(bus) {
+                *s += b * amount;
+            }
+        }
+    }
+    let mut ret = [0.0f32; BLOCK_SIZE];
+    fx.process(sends, &shared.fx, SR, &mut ret);
+    for (i, &r) in ret.iter().enumerate() {
+        out[0][2 * i] += r;
+        out[0][2 * i + 1] += r;
+    }
+    scope
+}
+
+fn bits<const N: usize>(x: &[f32; N]) -> [u32; N] {
+    x.map(f32::to_bits)
+}
+
+/// The fused mix is bit-for-bit the reference, every Part written or some,
+/// every FX on, pans moving under one `PanCache`, signed zeros on the buses.
+#[test]
+fn mix_parts_is_bit_identical_to_the_reference() {
+    let mut x = 0x9e37_79b9u32;
+    let mut rnd = move || {
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        x as f32 / u32::MAX as f32
+    };
+    let mut shared = AudioShared::default();
+    shared.fx.chorus.mode = 3;
+    shared.fx.chorus.mix = 0.5;
+    shared.fx.delay.mix = 0.5;
+    shared.fx.reverb.mix = 0.5;
+    let (mut fx, mut fx_ref) = (Box::new(FxBus::new()), Box::new(FxBus::new()));
+    let mut pans = PanCache::default();
+    let (mut sends, mut sends_ref) = ([[0.0; BLOCK_SIZE]; FX_SENDS], [[0.0; BLOCK_SIZE]; FX_SENDS]);
+    let mut out: DacOut = [[1.0; BLOCK_SIZE * 2]; DAC_PAIRS];
+    let mut out_ref: DacOut = [[0.0; BLOCK_SIZE * 2]; DAC_PAIRS];
+    let pairs = [DacPair::P1, DacPair::P2, DacPair::P3];
+    for block in 0..200 {
+        for part in shared.parts.iter_mut() {
+            // Pans hold for a few blocks, as the cache sees them.
+            if block % 4 == 0 {
+                part.mix.pan = rnd() * 2.4 - 1.2;
+            }
+            part.mix.level = rnd();
+            part.mix.sends = [rnd(), rnd(), rnd()];
+            part.mix.output = pairs[(rnd() * 3.0) as usize % 3];
+        }
+        let buses: [[f32; BLOCK_SIZE]; MAX_PARTS] = core::array::from_fn(|_| {
+            core::array::from_fn(|_| match rnd() {
+                r if r < 0.05 => -0.0,
+                r if r < 0.1 => 0.0,
+                _ => rnd() * 2.0 - 1.0,
+            })
+        });
+        let written: [bool; MAX_PARTS] = match block % 3 {
+            0 => [true; MAX_PARTS],
+            1 => core::array::from_fn(|_| rnd() < 0.5),
+            _ => [false; MAX_PARTS],
+        };
+        let scope = mix_parts(
+            &buses, &written, &mut sends, &mut pans, &mut fx, &shared, SR, &mut out,
+        );
+        let scope_ref = mix_parts_reference(
+            &buses,
+            &written,
+            &mut sends_ref,
+            &mut fx_ref,
+            &shared,
+            &mut out_ref,
+        );
+        assert_eq!(bits(&scope), bits(&scope_ref), "block {block}: scope");
+        for k in 0..DAC_PAIRS {
+            assert_eq!(bits(&out[k]), bits(&out_ref[k]), "block {block}: pair {k}");
+        }
+        for k in 0..FX_SENDS {
+            assert_eq!(
+                bits(&sends[k]),
+                bits(&sends_ref[k]),
+                "block {block}: send {k}"
+            );
+        }
+    }
 }
 
 /// Send/return: a Part on pair 3, panned hard left, with a reverb send puts

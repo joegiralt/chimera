@@ -11,7 +11,7 @@ use chimera_core::dsp::algo::tx::FEEDBACK_CYCLES;
 use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus};
 use chimera_core::hw::{BLOCK_SIZE, DAC_PAIRS, MAX_PARTS, MAX_VOICES, SAMPLE_RATE, SampleBudget};
-use chimera_core::instrument::{AudioShared, DacOut, Instrument, mix_parts};
+use chimera_core::instrument::{AudioShared, DacOut, Instrument, PanCache, mix_parts};
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::preset::Performance;
@@ -201,12 +201,14 @@ impl Rig<'_> {
         let buses = [noise; MAX_PARTS];
         let written = [true; MAX_PARTS];
         let mut sends = [[0.0; BLOCK_SIZE]; FX_SENDS];
+        let mut pans = PanCache::default();
         let mut block = |shared: &mut AudioShared, fx: &mut FxBus, dac: &mut DacOut, b: u32| {
             each(shared, b);
             black_box(mix_parts(
                 black_box(&buses),
                 &written,
                 &mut sends,
+                &mut pans,
                 fx,
                 shared,
                 SAMPLE_RATE,
