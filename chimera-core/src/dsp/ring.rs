@@ -246,11 +246,12 @@ pub fn rnd(x: f32) -> i32 {
     {
         // FPv5's VCVTA; an FPU without it fails to assemble here.
         let r: f32;
-        // SAFETY: one register-to-register convert; no memory, stack or
-        // flags touched.
+        // SAFETY: one register-to-register convert; no memory or stack
+        // touched. May set FPSCR's exception flags (IXC on an inexact
+        // result, IOC on NaN); nothing reads them.
         unsafe {
             core::arch::asm!("vcvta.s32.f32 {r}, {x}", r = lateout(sreg) r, x = in(sreg) x,
-                options(pure, nomem, nostack, preserves_flags));
+                options(pure, nomem, nostack));
         }
         r.to_bits() as i32
     }
@@ -268,10 +269,11 @@ pub fn rint(x: f32) -> f32 {
     #[cfg(all(target_arch = "arm", target_feature = "vfp2"))]
     {
         let r: f32;
-        // SAFETY: as `rnd`'s.
+        // SAFETY: as `rnd`'s. (VRINTA raises only IOC, on a signalling
+        // NaN.)
         unsafe {
             core::arch::asm!("vrinta.f32 {r}, {x}", r = lateout(sreg) r, x = in(sreg) x,
-                options(pure, nomem, nostack, preserves_flags));
+                options(pure, nomem, nostack));
         }
         r
     }
