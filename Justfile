@@ -33,7 +33,7 @@ check:
     cargo fmt --all -- --check
     just stack-check
 
-# The stack is 128 KB of DTCM (ADR 0020): fail if any release function moves
+# The stack is the 63.75 KB of DTCM below the wave tables (ADR 0025): fail if any release function moves
 # SP by 8 KB or more in one step, or by a register (a large value built on
 # the stack instead of in a static), checked for the default, no-default and
 # bench feature sets. Needs the llvm-tools rustup component; a missing
