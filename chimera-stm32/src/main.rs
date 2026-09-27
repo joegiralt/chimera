@@ -89,7 +89,7 @@ fn main() -> ! {
     let mut led = gpioe.pe1.into_push_pull_output();
     // TIM1 CH2 PWM, above hearing so the backlight driver cannot whine.
     // Full brightness lifts a TN panel's blacks; System › Theme's BRIGHT
-    // sets the duty (75 % at boot: no storage yet).
+    // sets the duty (70 % at boot: no storage yet).
     let mut backlight = dp.TIM1.pwm(
         gpioe.pe11.into_alternate::<1>(),
         20.kHz(),
@@ -134,6 +134,11 @@ fn main() -> ! {
     let mut display = Stm32Display::new(spi, dc, reset, cs);
     clocks::delay_us(clk.cpu_hz, 250_000);
     display.init(clk.cpu_hz);
+    // The boot theme is no longer the panel's own reset state (PUNCH, not
+    // PANEL; ground −2, not 0), so push it explicitly instead of waiting for
+    // the first change the main loop notices.
+    display.set_gamma(theme.gamma.tables());
+    display.set_palette(theme.palette());
     let mut stats_r = probe::init(&mut cp.DCB, &mut cp.DWT, clk);
 
     let mut controls = Stm32Controls::new();

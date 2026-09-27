@@ -7,7 +7,7 @@
 //! GAMMA are hardware: the shell turns them into PWM duty and ILI9341
 //! commands. Nothing here touches the audio thread.
 //!
-//! No storage yet: the settings reset at boot to 75 / PANEL / TEAL / 0.
+//! No storage yet: the settings reset at boot to the owner's pick, 70 / PUNCH / TEAL / −2.
 
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::pixelcolor::raw::{RawData, RawU16};
@@ -24,7 +24,7 @@ impl Bright {
     pub const MIN: u8 = 10;
     pub const MAX: u8 = 100;
     pub const STEP: u8 = 5;
-    pub const DEFAULT: Bright = Bright(75);
+    pub const DEFAULT: Bright = Bright(70);
 
     /// `pct` clamped to 10..=100 and rounded to the nearest step.
     pub const fn new(pct: u8) -> Self {
@@ -202,7 +202,9 @@ pub struct Black(i8);
 impl Black {
     pub const MIN: i8 = -2;
     pub const MAX: i8 = 4;
-    pub const DEFAULT: Black = Black(0);
+    pub const DEFAULT: Black = Black(-2);
+    /// The renderer's own ground.
+    pub const ZERO: Black = Black(0);
 
     pub const fn new(v: i8) -> Self {
         Black(if v < Self::MIN {
@@ -282,12 +284,18 @@ fn raw(c: Rgb565) -> u16 {
 }
 
 impl ThemeSettings {
-    /// Boot state (no storage yet): 75 %, PANEL, TEAL, 0.
+    /// Boot state (no storage yet): the owner's pick, 70 %, PUNCH, TEAL, −2.
     pub const DEFAULT: ThemeSettings = ThemeSettings {
         bright: Bright::DEFAULT,
-        gamma: Gamma::Panel,
+        gamma: Gamma::Punch,
         accent: Accent::Teal,
         black: Black::DEFAULT,
+    };
+
+    /// TEAL at ground 0: the palette the renderer draws, unchanged.
+    pub const NEUTRAL: ThemeSettings = ThemeSettings {
+        black: Black::ZERO,
+        ..ThemeSettings::DEFAULT
     };
 
     pub const BRIGHT: ParamId = ParamId(0);
@@ -298,7 +306,7 @@ impl ThemeSettings {
     /// The colours the display shows for ACCENT, ACCENT_SOFT and BG. The soft
     /// accent rides the ground: it moves with BLACK by the ground's own step.
     pub fn palette(&self) -> Palette {
-        let (g0, g) = (Black::DEFAULT.ground(), self.black.ground());
+        let (g0, g) = (Black::ZERO.ground(), self.black.ground());
         let s = self.accent.soft();
         let ch = |v: u8, d0: u8, d: u8, max: i16| (v as i16 + d as i16 - d0 as i16).clamp(0, max);
         Palette {
@@ -321,12 +329,13 @@ const GAMMA_NAMES: [&str; 3] = ["PANEL", "SOFT", "PUNCH"];
 const ACCENT_NAMES: [&str; 5] = ["TEAL", "AMBER", "ROSE", "LIME", "ICE"];
 const BLACK_NAMES: [&str; 7] = ["-2", "-1", "0", "+1", "+2", "+3", "+4"];
 
-/// Choices by index: BRIGHT 0..=18 (10..100 %), BLACK 0..=6 (−2..+4).
+/// Choices by index: BRIGHT 0..=18 (10..100 %), BLACK 0..=6 (−2..+4). The
+/// defaults are the owner's pick: 70, PUNCH, TEAL, −2.
 pub static THEME_SPECS: [ParamSpec; 4] = [
-    ParamSpec::choice(0, "BRIGHT", ValFmt::Names(&BRIGHT_NAMES), 18.0, 13.0),
-    ParamSpec::choice(1, "GAMMA", ValFmt::Names(&GAMMA_NAMES), 2.0, 0.0),
+    ParamSpec::choice(0, "BRIGHT", ValFmt::Names(&BRIGHT_NAMES), 18.0, 12.0),
+    ParamSpec::choice(1, "GAMMA", ValFmt::Names(&GAMMA_NAMES), 2.0, 2.0),
     ParamSpec::choice(2, "ACCENT", ValFmt::Names(&ACCENT_NAMES), 4.0, 0.0),
-    ParamSpec::choice(3, "BLACK", ValFmt::Names(&BLACK_NAMES), 6.0, 2.0),
+    ParamSpec::choice(3, "BLACK", ValFmt::Names(&BLACK_NAMES), 6.0, 0.0),
 ];
 
 impl Block for ThemeSettings {
