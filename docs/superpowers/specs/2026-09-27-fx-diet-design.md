@@ -19,6 +19,12 @@ This comes first among the remaining algo-engine work, because it frees the CPU 
 - the bench's A16 ∪ A17 row is ≤ 1,000 per voice, and the allocator grants that patch 6 voices on rev V;
 - the user has heard the loopback takes.
 
+**Owner ruling (2026-09-27):** the chip bench measured BUS at 1,356, still
+over this 1,000 target. Rather than spend the fallbacks below to chase a
+budget the six-voice floor no longer needs, the owner accepted 1,356 and
+committed `FxBus::COST` = 1,360 (ADR 0031). Closing the remaining gap to
+≤ 1,000 is parked, not blocking, in [#141](https://github.com/joegiralt/chimera/issues/141).
+
 ## Order of work
 
 1. **Bench each effect first**, on today's code (§ Bench). The three reverb totals sit within 234 cycles of each other, so most of today's 3,310 is likely the delay, chorus and mixing, not the reverb.
@@ -43,7 +49,7 @@ This comes first among the remaining algo-engine work, because it frees the CPU 
 
 **Signal flow:** Parts → dry and three sends (CHR, DLY, REV) → the delay's return also feeds the reverb by REV SEND → pair 1 sum (dry Parts + FX returns) → TAPE → MASTER COMP (with pairs 2 and 3) → DAC.
 
-**Budget split:** step 1's bench read each effect (plan § Measured budget); the split below follows from those readings. Only the 1,000 total is fixed.
+**Budget split:** step 1's bench read each effect (plan § Measured budget); the split below follows from those readings. Only the 1,000 total is fixed as originally set here; see the Intent's owner ruling above for the measured 1,356 and the committed 1,360 (ADR 0031).
 
 | Part of the bus | Cycles per sample |
 |---|---|
@@ -104,7 +110,7 @@ Provenance: the topology follows Sean Costello's description of the Quadraverb (
 
 ### Storage
 - Each line is sized to its SIZE-1 length + 1: 23,220 samples. It is held as i16 with full scale ±2.0 (1.0 is stored as 16,384), leaving 6 dB above a full send. Writes saturate (`as i16` saturates).
-- The ring is 46,440 B, asserted in a `const`. After the diet the FxBus is about 160 KB of the 256 KB `FX_BUS_BUDGET`, down from 253,612 B.
+- The ring is 46,440 B, asserted in a `const`. After the diet the FxBus is 162,056 B (host `memory_budget_test`, ADR 0031) of the 256 KB `FX_BUS_BUDGET`, down from 253,612 B; ADR 0028 recorded the pre-tape-growth figure of 160,032 B.
 - f32 storage (92,880 B) would also fit. i16 is chosen for the grain, and for a smaller D-cache footprint, not for memory.
 
 ### GRIT and quantisation
@@ -207,7 +213,7 @@ On DAC pair 1 only, after the pair-1 sum of the dry Parts and the FX returns, be
 | c | WOW | 2 | 0..1, step 1/128 | 0.0 | Swing 8·WOW samples |
 | d | MIX | 3 | 0..1, step 1/128 | 0.0 | Parallel blend; below 0.001, bypass |
 
-Budget: 80 cycles per sample (§ Risks). Memory: under 1 KB.
+Budget: 80 cycles per sample (§ Risks). Memory: 2,536 B (`size_of::<Tape>()`, host), the line, oversampler and filter history buffers.
 
 ### Master comp
 

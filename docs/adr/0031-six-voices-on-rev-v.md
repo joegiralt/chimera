@@ -40,6 +40,11 @@ further optimisation as [#141](https://github.com/joegiralt/chimera/issues/141).
   six voices on rev V (6 × 842 + 1,360 = 6,412 ≤ 7,000) and 5 on rev Y
   (5,833 cycles: (5,833 − 1,360) / 842 = 5.3).
 - Every factory Sound gets six voices on rev V.
+- Memory, host `memory_budget_test` (ADR 0028's body is accepted and
+  stays unedited, so the current totals are recorded here instead):
+  `FxBus` = 162,056 B of the 262,144 B budget, AXI = 421,092 of
+  524,288 B — up from 0028's 160,032 / 419,068, the tape's state having
+  grown about 2 KB in `fa2790f`.
 
 ## Alternatives considered
 - **Apply the spec's fallbacks to reach ≤ 1,000 anyway:** each trades a
