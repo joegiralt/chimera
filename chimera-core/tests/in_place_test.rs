@@ -108,7 +108,7 @@ fn fx_bus_built_in_place_processes_like_new() {
     let mut params = every_engine_and_every_effect().fx;
     let mut x = 0x1234_5678u32;
     for block in 0..300 {
-        params.reverb.reverb_type = (block / 100) as u8;
+        params.reverb.size = (block / 100) as f32 / 2.0;
         let mut sends = [[0.0f32; BLOCK_SIZE]; FX_SENDS];
         for s in sends.iter_mut().flatten() {
             x ^= x << 13;

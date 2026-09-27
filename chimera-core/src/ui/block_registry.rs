@@ -203,7 +203,7 @@ pub static EFX: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::EffectsFlow,
     params: [
-        ParamSlot::param(BlockRef::Reverb, ReverbParams::REVERB_TYPE),
+        EMPTY,
         ParamSlot::param(BlockRef::Reverb, ReverbParams::TIME),
         ParamSlot::param(BlockRef::Reverb, ReverbParams::DAMPING),
         ParamSlot::param(BlockRef::Reverb, ReverbParams::SIZE),

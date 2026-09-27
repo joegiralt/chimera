@@ -90,10 +90,12 @@ fn worst_delay(s: &mut AudioShared) {
     (d.time_ms, d.wow_flutter, d.saturation, d.mix) = (500.0, 1.0, 1.0, 0.5);
 }
 
-/// Today's costliest reverb, MidiVerb, at its longest.
-fn worst_reverb(s: &mut AudioShared, _block: u32) {
+/// The ring at its costliest: longest TIME and SIZE, with a SIZE crossfade
+/// always running (steps 31 and 30 in turn).
+fn worst_reverb(s: &mut AudioShared, block: u32) {
     let r = &mut s.fx.reverb;
-    (r.reverb_type, r.time, r.size, r.damping, r.mix) = (2, 1.0, 1.0, 0.5, 0.5);
+    let size = [1.0, 30.0 / 31.0][block as usize % 2];
+    (r.time, r.size, r.damping, r.mix) = (1.0, size, 0.5, 0.5);
 }
 
 static mut SCOPE: TripleBuffer<ScopeFrame> = scope_buffer();

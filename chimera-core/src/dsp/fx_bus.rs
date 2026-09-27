@@ -2,8 +2,8 @@
 //! reverb run once per block on the sum of every part's sends. Send/return:
 //! each effect returns only its wet signal, its MIX acting as the return
 //! level; the dry signal reaches the DACs through the parts alone. The
-//! chorus returns stereo; a mono effect lands on both sides of DAC pair 1
-//! at unity.
+//! chorus and reverb return stereo; the delay is mono, on both sides of
+//! DAC pair 1 at unity.
 
 use chimera_hal::BLOCK_SIZE;
 use core::mem::MaybeUninit;
@@ -12,7 +12,8 @@ use core::ptr::addr_of_mut;
 use crate::dsp::Stereo;
 use crate::dsp::chorus::{ChorusParams, JunoChorus};
 use crate::dsp::delay::{DelayParams, TapeDelay};
-use crate::dsp::reverb::{Reverb, ReverbParams};
+use crate::dsp::reverb::ReverbParams;
+use crate::dsp::ring::RingReverb;
 use crate::hw::{Cost, FX_BUS_BUDGET};
 use crate::in_place::uninit_at;
 
@@ -31,18 +32,12 @@ pub struct FxParams {
 }
 
 impl Default for FxParams {
-    /// The values `ParamSnapshot` carried before the FX moved out: all off.
+    /// Everything off.
     fn default() -> Self {
         Self {
             chorus: ChorusParams::default(),
             delay: DelayParams::default(),
-            reverb: ReverbParams {
-                reverb_type: 0,
-                time: 0.5,
-                damping: 0.3,
-                size: 0.5,
-                mix: 0.0,
-            },
+            reverb: ReverbParams::default(),
         }
     }
 }
@@ -50,7 +45,7 @@ impl Default for FxParams {
 pub struct FxBus {
     chorus: JunoChorus,
     delay: TapeDelay,
-    reverb: Reverb,
+    reverb: RingReverb,
 }
 
 crate::in_place::field_list!(FxBus => FxBus { chorus, delay, reverb });
@@ -62,15 +57,15 @@ impl Default for FxBus {
 }
 
 impl FxBus {
-    /// Worst reverb (MidiVerb) with the bus and the Instrument's fixed
-    /// mixing; reserved from the voice budget whether or not an effect is on.
+    /// The whole bus at its worst settings, with the Instrument's mixing;
+    /// reserved from the voice budget whether or not an effect is on.
     pub const COST: Cost = Cost(3310); // MV 3300, measured 2026-09-27, bench, rev V at 480 MHz; rounded up
 
     pub fn new() -> Self {
         Self {
             chorus: JunoChorus::new(),
             delay: TapeDelay::new(),
-            reverb: Reverb::new(),
+            reverb: RingReverb::new(),
         }
     }
 
@@ -82,7 +77,7 @@ impl FxBus {
         unsafe {
             JunoChorus::init_in_place(uninit_at(addr_of_mut!((*p).chorus)));
             TapeDelay::init_in_place(uninit_at(addr_of_mut!((*p).delay)));
-            Reverb::init_in_place(uninit_at(addr_of_mut!((*p).reverb)));
+            RingReverb::init_in_place(uninit_at(addr_of_mut!((*p).reverb)));
             slot.assume_init_mut()
         }
     }
@@ -112,9 +107,16 @@ impl FxBus {
             add(&mut ret.r, delay);
         }
         if params.reverb.is_on() {
-            self.reverb.process_wet(reverb, &params.reverb);
-            add(&mut ret.l, reverb);
-            add(&mut ret.r, reverb);
+            let mut wet = Stereo::SILENT;
+            self.reverb.process(
+                reverb,
+                &params.reverb.controls(),
+                params.reverb.mix,
+                sample_rate,
+                &mut wet,
+            );
+            add(&mut ret.l, &wet.l);
+            add(&mut ret.r, &wet.r);
         }
     }
 }

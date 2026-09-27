@@ -7,6 +7,7 @@ mod common;
 use chimera_core::dsp::Stereo;
 use chimera_core::dsp::chorus::ChorusParams;
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus};
+use chimera_core::dsp::ring::{first_reflection, size_step};
 use chimera_core::hw::{DAC_PAIRS, MAX_PARTS};
 use chimera_core::instrument::{AudioShared, DacOut, Instrument, PanCache, mix_parts, pan_gains};
 use chimera_core::modulation::ModState;
@@ -265,8 +266,8 @@ fn mix_parts_is_bit_identical_to_the_reference() {
 }
 
 /// Send/return: a Part on pair 3, panned hard left, with a reverb send puts
-/// no dry signal on pair 1 — pair 1 carries exactly the FX return (the same
-/// on both sides), which is silent until the plate's first reflection.
+/// no dry signal on pair 1 — pair 1 carries exactly the FX return, which is
+/// silent until its first reflection.
 #[test]
 fn fx_send_puts_no_dry_signal_on_pair_1() {
     let mut rig = Rig::new();
@@ -292,7 +293,7 @@ fn fx_send_puts_no_dry_signal_on_pair_1() {
         );
         let (l3, r3) = lr(&rig.out[2]);
         assert_eq!(peak(&r3), 0.0, "block {b}: hard left");
-        if b < 3_411 / BLOCK_SIZE {
+        if b < first_reflection(size_step(shared.fx.reverb.size)) / BLOCK_SIZE {
             assert!(
                 b < 2 || peak(&l3) > 0.01,
                 "block {b}: the part sounds on pair 3"
@@ -500,6 +501,10 @@ const GOLDENS: &[(&str, u64)] = &[
     ("six_voice_chord", 0xf6e19895e1a40915), // recorded after the Algo cost was measured
 ];
 
+/// Intended FX diet sound changes, skipped until its goldens task
+/// re-records them after the FX sanity gate (ADR 0011).
+const PENDING: &[&str] = &["reverb_send_on"];
+
 /// A named golden case: a case name paired with its render function.
 type GoldenCase = (&'static str, fn() -> Vec<f32>);
 
@@ -518,7 +523,9 @@ fn instrument_goldens_match() {
         let hash = fnv1a(&render());
         if record {
             println!("    (\"{name}\", 0x{hash:016x}),");
-        } else if GOLDENS.iter().find(|g| g.0 == name).map(|g| g.1) != Some(hash) {
+        } else if !PENDING.contains(&name)
+            && GOLDENS.iter().find(|g| g.0 == name).map(|g| g.1) != Some(hash)
+        {
             failures.push(format!("{name}: 0x{hash:016x}"));
         }
     }

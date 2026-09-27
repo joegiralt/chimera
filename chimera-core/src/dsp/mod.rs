@@ -115,7 +115,6 @@ pub mod filter;
 pub mod fx_bus;
 pub mod halfband;
 pub mod lfo;
-pub mod midiverb;
 pub mod modal;
 pub mod reverb;
 pub mod ring;

@@ -6,7 +6,7 @@ use chimera_core::dsp::Stereo;
 use chimera_core::dsp::chorus::{ChorusParams, JunoChorus};
 use chimera_core::dsp::delay::{DelayParams, TapeDelay};
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
-use chimera_core::dsp::reverb::Reverb;
+use chimera_core::dsp::ring::{RingReverb, first_reflection, size_step};
 use chimera_hal::BLOCK_SIZE;
 
 const SR: u32 = 48_000;
@@ -78,7 +78,7 @@ fn return_is_each_effects_wet_output() {
         let (mut c, mut d, mut r) = (
             Box::new(JunoChorus::new()),
             Box::new(TapeDelay::new()),
-            Box::new(Reverb::new()),
+            Box::new(RingReverb::new()),
         );
         let mut heard = 0.0f32;
         for b in 0..80 {
@@ -94,7 +94,17 @@ fn return_is_each_effects_wet_output() {
                     w
                 }
                 1 => mono(input, |w| d.process_wet(w, &params.delay, SR)),
-                _ => mono(input, |w| r.process_wet(w, &params.reverb)),
+                _ => {
+                    let mut w = Stereo::SILENT;
+                    r.process(
+                        &input,
+                        &params.reverb.controls(),
+                        params.reverb.mix,
+                        SR,
+                        &mut w,
+                    );
+                    w
+                }
             };
             assert_eq!(ret, want, "effect {slot} block {b}");
             heard = ret
@@ -107,14 +117,14 @@ fn return_is_each_effects_wet_output() {
     }
 }
 
-/// Before the plate's first tank tap (3,411 samples) the reverb's wet
-/// signal is silent: so is the return, however loud the send.
+/// Before its first tap the reverb's wet signal is silent: so is the
+/// return, however loud the send.
 #[test]
 fn reverb_return_is_silent_before_its_first_reflection() {
     let mut p = FxParams::default();
     p.reverb.mix = 0.5;
     let mut bus = Box::new(FxBus::new());
-    for b in 0..3_411 / BLOCK_SIZE {
+    for b in 0..first_reflection(size_step(p.reverb.size)) / BLOCK_SIZE {
         let mut sends = [[0.0; BLOCK_SIZE], [0.0; BLOCK_SIZE], burst()];
         let mut ret = full();
         bus.process(&mut sends, &p, SR, &mut ret);
