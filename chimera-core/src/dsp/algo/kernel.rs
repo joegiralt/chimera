@@ -122,6 +122,12 @@ impl Kernel {
         out.fill(0.0);
         let mut k = 0;
         while k < OPS {
+            let a = plan.order[k] as usize % OPS;
+            if silent(&blk.ops[a]) {
+                self.idle(&blk.ops[a], a, &mut env[a]);
+                k += 1;
+                continue;
+            }
             let n = plan.starts[k + 1].saturating_sub(plan.starts[k]) as usize;
             let (done, rest) = bufs.split_at_mut(k);
             let link = |i: usize| {
@@ -132,16 +138,16 @@ impl Kernel {
                     src: &done[pos[e.src as usize]],
                 }
             };
-            let a = plan.order[k] as usize % OPS;
             let mut x = self.lane(blk, a, dm);
-            let pair = k + 1 < OPS && n <= 2 && {
-                let m = plan.starts[k + 2].saturating_sub(plan.starts[k + 1]) as usize;
-                let from_a = plan.edges[plan.starts[k + 1] as usize..]
-                    .iter()
-                    .take(m)
-                    .any(|e| e.src as usize == a);
-                m <= 2 && !from_a
-            };
+            let pair =
+                k + 1 < OPS && n <= 2 && !silent(&blk.ops[plan.order[k + 1] as usize % OPS]) && {
+                    let m = plan.starts[k + 2].saturating_sub(plan.starts[k + 1]) as usize;
+                    let from_a = plan.edges[plan.starts[k + 1] as usize..]
+                        .iter()
+                        .take(m)
+                        .any(|e| e.src as usize == a);
+                    m <= 2 && !from_a
+                };
             if pair {
                 let b = plan.order[k + 1] as usize % OPS;
                 let mut y = self.lane(blk, b, dm);
@@ -213,6 +219,19 @@ impl Kernel {
             lo: o.lo,
             hi: o.hi,
         }
+    }
+
+    /// An operator silent all block outputs zeros (its row stays 0), so
+    /// only its phase and envelope move; the output is unchanged.
+    fn idle(&mut self, o: &OpBlock, op: usize, env: &mut OpEnv) {
+        let mut run = env.run();
+        for _ in 0..BLOCK_SIZE {
+            run.step(env);
+        }
+        env.store(run);
+        self.phase[op] = self.phase[op].wrapping_add(o.inc.wrapping_mul(BLOCK_SIZE as u32));
+        self.out[op] = 0.0;
+        self.hist[op] = 0.0;
     }
 
     #[inline(always)]
@@ -293,6 +312,10 @@ impl Kernel {
 }
 
 const STEP: f32 = 1.0 / BLOCK_SIZE as f32;
+
+fn silent(o: &OpBlock) -> bool {
+    o.gain_from == 0.0 && o.gain_to == 0.0
+}
 
 #[derive(Clone, Copy)]
 struct OpState {
