@@ -6,6 +6,7 @@
 
 mod common;
 
+use chimera_core::dsp::Stereo;
 use chimera_core::dsp::chorus::{ChorusParams, JunoChorus};
 use chimera_core::dsp::delay::{DelayParams, TapeDelay};
 use chimera_core::dsp::reverb::{Reverb, ReverbParams};
@@ -78,20 +79,31 @@ fn input(b: usize, phase: &mut f32) -> [f32; BLOCK_SIZE] {
     block
 }
 
+/// Stereo effects add L then R per block; the delay its insert output.
 fn render(fx: Fx) -> Vec<f32> {
     let mut chorus = Box::new(JunoChorus::new());
     let mut delay = Box::new(TapeDelay::new());
     let mut reverb = Box::new(Reverb::new());
-    let mut out = Vec::with_capacity(FX_BLOCKS * BLOCK_SIZE);
+    let mut out = Vec::with_capacity(2 * FX_BLOCKS * BLOCK_SIZE);
     let mut phase = 0.0f32;
     for b in 0..FX_BLOCKS {
         let mut block = input(b, &mut phase);
         match fx {
-            Fx::Chorus(p) => chorus.process(&mut block, &p, SR),
-            Fx::Delay(p) => delay.process(&mut block, &p, SR),
-            Fx::Reverb(p) => reverb.process(&mut block, &p),
+            Fx::Chorus(p) => {
+                let mut wet = Stereo::SILENT;
+                chorus.process_wet(&block, &p, SR, &mut wet);
+                out.extend_from_slice(&wet.l);
+                out.extend_from_slice(&wet.r);
+            }
+            Fx::Delay(p) => {
+                delay.process(&mut block, &p, SR);
+                out.extend_from_slice(&block);
+            }
+            Fx::Reverb(p) => {
+                reverb.process(&mut block, &p);
+                out.extend_from_slice(&block);
+            }
         }
-        out.extend_from_slice(&block);
     }
     out
 }
@@ -107,7 +119,7 @@ const GOLDENS: &[(&str, u64)] = &[
 
 /// Intended FX diet sound changes, skipped until its goldens task
 /// re-records them after the FX sanity gate (ADR 0011).
-const PENDING: &[&str] = &["delay_375ms", "delay_500ms"];
+const PENDING: &[&str] = &["chorus_both", "delay_375ms", "delay_500ms"];
 
 #[test]
 fn fx_goldens_match() {

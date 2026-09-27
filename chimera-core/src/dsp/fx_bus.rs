@@ -2,7 +2,7 @@
 //! reverb run once per block on the sum of every part's sends. Send/return:
 //! each effect returns only its wet signal, its MIX acting as the return
 //! level; the dry signal reaches the DACs through the parts alone. The
-//! return is a stereo pair on DAC pair 1; a mono effect lands on both sides
+//! chorus returns stereo; a mono effect lands on both sides of DAC pair 1
 //! at unity.
 
 use chimera_hal::BLOCK_SIZE;
@@ -100,9 +100,11 @@ impl FxBus {
         *ret = Stereo::SILENT;
         let [chorus, delay, reverb] = sends;
         if params.chorus.is_on() {
-            self.chorus.process_wet(chorus, &params.chorus, sample_rate);
-            add(&mut ret.l, chorus);
-            add(&mut ret.r, chorus);
+            let mut wet = Stereo::SILENT;
+            self.chorus
+                .process_wet(chorus, &params.chorus, sample_rate, &mut wet);
+            add(&mut ret.l, &wet.l);
+            add(&mut ret.r, &wet.r);
         }
         if params.delay.is_on() {
             self.delay.process_wet(delay, &params.delay, sample_rate);
