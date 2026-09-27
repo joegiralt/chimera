@@ -133,15 +133,24 @@ impl Block for TapeParams {
     }
 }
 
-/// Saturator input gain: 0 to +24 dB.
+/// Input pad: at DRIVE 0 a −6 dBFS peak sits at 0.15 of the knee.
+const PAD: f32 = 0.3;
+/// DRIVE's span in octaves of gain, bent by d·(2 − d) so DRIVE ½ is ¾ of it.
+const DRIVE_OCT: f32 = 1.9;
+
+fn drive_oct(drive: f32) -> f32 {
+    DRIVE_OCT * drive * (2.0 - drive)
+}
+
+/// Saturator input gain.
 pub fn drive_gain(drive: f32) -> f32 {
-    exp2(4.0 * drive)
+    PAD * exp2(drive_oct(drive))
 }
 
 /// Level compensation: 1/gain, so the small-signal gain is unity at any
 /// DRIVE: quiet material keeps its level, loud material is squashed.
 pub fn drive_comp(drive: f32) -> f32 {
-    exp2(-4.0 * drive)
+    (1.0 / PAD) * exp2(-drive_oct(drive))
 }
 
 /// The HF roll-off's corner: 12 kHz at TONE ½ and DRIVE 0, ±1.5 octaves
@@ -150,21 +159,16 @@ pub fn rolloff_hz(drive: f32, tone: f32) -> f32 {
     12_000.0 * exp2(3.0 * (tone - 0.5) - 1.5 * drive)
 }
 
-/// The divide-free soft clip on `x` already scaled by ⅔: the cubic
-/// 1.5·x − 0.5·x³ on x clamped to ±1. Slope 1 at 0, as `v` itself would
-/// be; it reaches ±1 with zero slope at |v| = 1.5.
+/// The divide-free soft clip: the quintic v − ⅔v³ + ⅕v⁵ on v clamped to
+/// ±1, slope (1 − v²)², so it meets its ceiling of 8/15 at |v| = 1 with
+/// zero slope and curvature.
 #[inline(always)]
-fn cubic(x: f32) -> f32 {
-    // t = 2·clamp(x, ±1) without a compare (no FPSCR stall on the M7);
-    // then 1.5·(t/2) − 0.5·(t/2)³.
-    let t = (x + 1.0).abs() - (x - 1.0).abs();
-    t * (0.75 - 0.0625 * t * t)
-}
-
-/// The soft clip, unscaled: `soft_clip(v)` ≈ `v` for small `v`, ±1 from
-/// |v| = 1.5.
 pub fn soft_clip(v: f32) -> f32 {
-    cubic(v * (2.0 / 3.0))
+    // t = 2·clamp(v, ±1) without a compare (no FPSCR stall on the M7);
+    // then the quintic in t/2.
+    let t = (v + 1.0).abs() - (v - 1.0).abs();
+    let t2 = t * t;
+    t * (0.5 + t2 * (t2 * (1.0 / 160.0) - 1.0 / 12.0))
 }
 
 /// The fixed filters' coefficients at one sample rate.
@@ -258,7 +262,7 @@ impl Default for Tape {
 struct Ramps {
     /// The wow's read point, samples.
     dly: (f32, f32),
-    /// ⅔ of the drive gain: the soft clip's input scale.
+    /// The drive gain: the soft clip's input scale.
     g: (f32, f32),
     c: (f32, f32),
     lp: (f32, f32),
@@ -367,10 +371,7 @@ impl Tape {
         let at1 = WOW_BASE + t.wow * WOW_SWING * swing(self.wow_phase, self.flutter_phase);
         let r = Ramps {
             dly: ramp(at0, at1),
-            g: ramp(
-                drive_gain(l.drive) * (2.0 / 3.0),
-                drive_gain(t.drive) * (2.0 / 3.0),
-            ),
+            g: ramp(drive_gain(l.drive), drive_gain(t.drive)),
             c: ramp(drive_comp(l.drive), drive_comp(t.drive)),
             lp: ramp(a(l.drive, l.tone), a(t.drive, t.tone)),
             mix: ramp(l.mix, t.mix),
@@ -466,8 +467,8 @@ impl Tape {
                 for (j, &h) in HB2.iter().enumerate() {
                     ve += h * (u[m - 3 + j][s] + u[m - 4 - j][s]);
                 }
-                even[e][s] = cubic(ve);
-                odd[O_HIST + i][s] = cubic(u[m - 3][s]);
+                even[e][s] = soft_clip(ve);
+                odd[O_HIST + i][s] = soft_clip(u[m - 3][s]);
                 let mut y = 0.5 * odd[i][s];
                 for (j, &h) in HB.iter().enumerate() {
                     y += h * (even[e - 3 + j][s] + even[e - 4 - j][s]);
