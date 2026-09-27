@@ -1,6 +1,6 @@
 # 0018. FM algorithm 4 follows the TX81Z, not p81z
 
-- **Status:** Accepted (2026-09-26)
+- **Status:** Accepted (2026-09-26); superseded by [0022](0022-one-algorithmic-engine.md)
 - **Deciders:** project owner
 
 ## Context

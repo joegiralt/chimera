@@ -1,6 +1,6 @@
 # 0027. Shedding fades, and takes tails before held notes
 
-- **Status:** Accepted (2026-09-27); extends [0015](0015-voice-steal-and-fx-returns.md) and [0026](0026-algo-voices-billed-by-patch-shape.md)
+- **Status:** Proposed (2026-09-27); extends [0015](0015-voice-steal-and-fx-returns.md); supersedes in part [0026](0026-algo-voices-billed-by-patch-shape.md) (its "steals the oldest held voice; it never goes over" clause)
 - **Deciders:** project owner
 
 ## Context
@@ -20,6 +20,11 @@ were still ringing ([#31](https://github.com/joegiralt/chimera/issues/31)).
   again. A note-on meanwhile steals elsewhere or is refused.
 - **Overrun:** `shed` stops once the voices that are not dying fit, so the
   pool runs over budget by the dying voices only, for at most two blocks.
+  This supersedes ADR 0026's clause that past the budget the allocator
+  "steals the oldest held voice; it never goes over": steals take tails
+  first (ADR 0015), and a shed may briefly go over.
+- **Clean slot:** when the fade ends the voice is reset to the state a new
+  voice has, engine and chain, so the next note on the slot starts clean.
 
 ## Alternatives considered
 - **Price at note-on only:** the overrun would last as long as the notes

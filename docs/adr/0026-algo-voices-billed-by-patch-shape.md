@@ -1,6 +1,6 @@
 # 0026. Algo voices are billed by patch shape; heavy patches get fewer voices
 
-- **Status:** Accepted (2026-09-27); extends [0022](0022-one-algorithmic-engine.md)
+- **Status:** Accepted (2026-09-27); extends [0022](0022-one-algorithmic-engine.md); partly superseded by [0027](0027-shedding-fades-tails-first.md) (shedding)
 - **Deciders:** project owner
 
 ## Context

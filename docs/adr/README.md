@@ -23,7 +23,7 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0015](0015-voice-steal-and-fx-returns.md) | Steal released voices first; FX sends return wet only | Accepted |
 | [0016](0016-visual-direction-refined-elektron.md) | Visual direction: refined Elektron | Accepted |
 | [0017](0017-prime-status-feedback.md) | MIX+PLUS reports its outcome in place, until the next input | Accepted |
-| [0018](0018-fm-alg4-follows-tx81z.md) | FM algorithm 4 follows the TX81Z, not p81z | Accepted |
+| [0018](0018-fm-alg4-follows-tx81z.md) | FM algorithm 4 follows the TX81Z, not p81z | Superseded by 0022 |
 | [0019](0019-note-input-per-source-queues.md) | One parser and one single-producer queue per note source | Accepted |
 | [0020](0020-audio-clocking-and-output.md) | Clock the chip by silicon revision; derive the cycle budget from it | Accepted; DTCM stack clause superseded in part by 0025 |
 | [0021](0021-take-once-triple-buffer.md) | Audio↔UI shared state uses a take-once triple buffer | Accepted |
@@ -31,5 +31,5 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0023](0023-waves-from-our-own-recipes.md) | The waves come from our own recipes | Accepted |
 | [0024](0024-morph-blends-link-weights.md) | MORPH blends link weights; one plan orders both algorithms | Accepted |
 | [0025](0025-dtcm-holds-wave-tables-and-stack.md) | DTCM holds the wave tables and the stack | Accepted |
-| [0026](0026-algo-voices-billed-by-patch-shape.md) | Algo voices are billed by patch shape; heavy patches get fewer voices | Accepted |
-| [0027](0027-shedding-fades-tails-first.md) | Shedding fades, and takes tails before held notes | Accepted |
+| [0026](0026-algo-voices-billed-by-patch-shape.md) | Algo voices are billed by patch shape; heavy patches get fewer voices | Accepted; shedding clause superseded in part by 0027 |
+| [0027](0027-shedding-fades-tails-first.md) | Shedding fades, and takes tails before held notes | Proposed |
