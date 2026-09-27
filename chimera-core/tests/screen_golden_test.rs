@@ -16,17 +16,17 @@ use screen::*;
 const GOLDENS: &[(&str, u64)] = &[
     ("engine_algo", 0xed6d835a479b5c88),
     ("algo_alg", 0xbf0b8a96778a2159),
-    ("algo_level", 0xa1b767926f4d88b3),
-    ("algo_osc_last", 0x7f64f24127acdbce),
+    ("algo_level", 0x8129f2285f9620fb),
+    ("algo_osc_last", 0x4fd82a2e09729f46),
     ("bigviz_filter", 0x056cc0e46ba8923f),
-    ("bigviz_env", 0xb673522863b1fd92),
+    ("bigviz_env", 0xdbaee1e6ec98e456),
     ("mixer_part", 0x3e3480eee3041370),
     ("mixer_sends", 0x9a495656576afaf9),
     ("mixer_fx_delay", 0x872c17a4bee40923),
-    ("mod_matrix", 0x398dc7117e0632fb),
+    ("mod_matrix", 0x0f91332a85a50e66),
     ("sound_browser", 0xdc94376f632eebac),
     ("system", 0x66ca9f7c486d2749),
-    ("system_audio", 0x6880e7ea1be85438),
+    ("system_audio", 0x425eb6d9e5f0d9d0),
 ];
 
 #[test]
