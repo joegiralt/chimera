@@ -144,11 +144,18 @@ impl Renderer {
             }
             VizType::AlgoDiagram => {
                 let algo = &f.parts[f.active_part].sound.params.algo;
+                let morph = crate::addr::ParamAddr::new(
+                    crate::addr::BlockRef::Algo,
+                    crate::dsp::algo::params::AlgoParams::MORPH,
+                );
+                let slot = (0..f.def.params.len())
+                    .find(|&i| slot_addr(f.def, i, Op::A) == Some(morph))
+                    .expect("ALG page binds MORPH");
                 viz::algo_diagram(
                     display,
                     AlgoId::clamped(algo.alg_a).algorithm(),
                     AlgoId::clamped(algo.alg_b).algorithm(),
-                    self.anim[2].current(),
+                    self.anim[slot].current(),
                 );
             }
             _ => viz::live_output(display, f.scope),

@@ -69,8 +69,9 @@ pub struct ParamId(pub u8);
 pub enum ParamKind {
     /// Any value in `min..=max`.
     Continuous,
-    /// Integer-valued. UI input rounds; a modulated copy stays fractional and
-    /// the DSP truncates.
+    /// Integer-valued. UI input rounds; a modulated copy stays fractional,
+    /// and the DSP decides what to do with that — Algo LEVEL interpolates
+    /// between steps rather than truncating.
     Stepped,
     /// Discrete choice `0..=max` (`min` is 0). Never modulatable.
     Enum,
