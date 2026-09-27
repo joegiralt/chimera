@@ -67,7 +67,57 @@ fn the_blend_ends_are_the_two_layouts() {
         layout(AlgoId::T1.algorithm()),
         layout(AlgoId::A17.algorithm()),
     );
-    assert_eq!(blend(&a, &b, 0.0).pos, a.pos);
-    assert_eq!(blend(&a, &b, 1.0).pos, b.pos);
-    assert_eq!(blend(&a, &b, 0.5).r, b.r);
+    let lo = blend(&a, &b, 0.0);
+    let hi = blend(&a, &b, 1.0);
+    assert_eq!(lo.pos, a.pos, "MORPH 0 must be exactly A's layout");
+    assert_eq!(lo.r, a.r, "MORPH 0 must use A's radius");
+    assert_eq!(hi.pos, b.pos, "MORPH 1 must be exactly B's layout");
+    assert_eq!(hi.r, b.r, "MORPH 1 must use B's radius");
+}
+
+#[test]
+fn blend_never_overlaps_and_stays_in_the_band_across_every_pair_and_step() {
+    const STEPS: usize = 101;
+    for a in ALGORITHMS.iter() {
+        let la = layout(a);
+        for b in ALGORITHMS.iter() {
+            let lb = layout(b);
+            for step in 0..STEPS {
+                let m = step as f32 / (STEPS - 1) as f32;
+                let l = blend(&la, &lb, m);
+                for (op, &(x, y)) in l.pos.iter().enumerate() {
+                    assert!(
+                        y - l.r > theme::VIZ_BAND_TOP && y + l.r < theme::VIZ_BAND_BOTTOM,
+                        "{}->{} m={m}: op {} y {y} r {}",
+                        a.name,
+                        b.name,
+                        op + 1,
+                        l.r
+                    );
+                    assert!(
+                        x - l.r >= theme::VIZ_LEFT && x + l.r <= theme::VIZ_RIGHT,
+                        "{}->{} m={m}: op {} x {x} r {}",
+                        a.name,
+                        b.name,
+                        op + 1,
+                        l.r
+                    );
+                }
+                for i in 0..OPS {
+                    for j in i + 1..OPS {
+                        let (dx, dy) = (l.pos[i].0 - l.pos[j].0, l.pos[i].1 - l.pos[j].1);
+                        assert!(
+                            dx * dx + dy * dy >= (2 * l.r + 1).pow(2),
+                            "{}->{} m={m}: operators {} and {} overlap (r={})",
+                            a.name,
+                            b.name,
+                            i + 1,
+                            j + 1,
+                            l.r
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
