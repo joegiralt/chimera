@@ -885,6 +885,32 @@ fn reverb_params_default_to_the_spec_and_retire_type() {
 }
 
 #[test]
+fn grit_is_param_5_and_reaches_the_ring() {
+    let mut p = ReverbParams::default();
+    assert_eq!(ReverbParams::GRIT, ParamId(5));
+    assert_eq!(p.get(ReverbParams::GRIT), 0.3);
+    p.write(ReverbParams::GRIT, 0.8);
+    assert_eq!(p.grit, 0.8);
+    assert_eq!(p.controls().grit, 0.8);
+    let ids: Vec<ParamId> = REVERB_SPECS.iter().map(|s| s.id).collect();
+    assert_eq!(
+        ids,
+        [
+            ReverbParams::GRIT,
+            ReverbParams::TIME,
+            ReverbParams::DAMPING,
+            ReverbParams::SIZE,
+            ReverbParams::MIX
+        ]
+    );
+    let grit = &REVERB_SPECS[0];
+    assert_eq!(
+        (grit.label, grit.min, grit.max, grit.step),
+        ("GRIT", 0.0, 1.0, 1.0 / 128.0)
+    );
+}
+
+#[test]
 fn a_voice_through_the_reverb_leaves_a_tail() {
     use chimera_core::dsp::algo::params::AlgoParams;
     use chimera_core::dsp::algo::waves::WaveId;

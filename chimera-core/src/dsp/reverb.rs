@@ -6,6 +6,7 @@ use crate::dsp::ring::RingControls;
 
 #[derive(Clone, Copy, Debug)]
 pub struct ReverbParams {
+    pub grit: f32,
     pub time: f32,
     pub damping: f32,
     pub size: f32,
@@ -16,6 +17,7 @@ pub struct ReverbParams {
 impl Default for ReverbParams {
     fn default() -> Self {
         Self {
+            grit: 0.3,
             time: 0.5,
             damping: 0.3,
             size: 0.5,
@@ -31,6 +33,7 @@ impl ReverbParams {
     }
 
     // ParamId(0) was TYPE: retired, never reused (ADR 0009).
+    pub const GRIT: ParamId = ParamId(5);
     pub const TIME: ParamId = ParamId(1);
     pub const DAMPING: ParamId = ParamId(2);
     pub const SIZE: ParamId = ParamId(3);
@@ -39,16 +42,17 @@ impl ReverbParams {
     /// What the ring reads.
     pub fn controls(&self) -> RingControls {
         RingControls {
+            grit: self.grit,
             time: self.time,
             damp: self.damping,
             size: self.size,
-            ..RingControls::default()
         }
     }
 }
 
 /// The reverb runs outside `Voice`: nothing is modulatable.
-pub static REVERB_SPECS: [ParamSpec; 4] = [
+pub static REVERB_SPECS: [ParamSpec; 5] = [
+    ParamSpec::continuous(5, "GRIT", ValFmt::Uni, 0.0, 1.0, 0.3, 1.0 / 128.0, false),
     ParamSpec::continuous(1, "TIME", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false),
     ParamSpec::continuous(2, "DAMP", ValFmt::Uni, 0.0, 1.0, 0.3, 1.0 / 128.0, false),
     ParamSpec::continuous(3, "SIZE", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 31.0, false),
@@ -62,6 +66,7 @@ impl Block for ReverbParams {
 
     fn get(&self, id: ParamId) -> f32 {
         match id {
+            Self::GRIT => self.grit,
             Self::TIME => self.time,
             Self::DAMPING => self.damping,
             Self::SIZE => self.size,
@@ -72,6 +77,7 @@ impl Block for ReverbParams {
 
     fn write(&mut self, id: ParamId, v: f32) {
         match id {
+            Self::GRIT => self.grit = v,
             Self::TIME => self.time = v,
             Self::DAMPING => self.damping = v,
             Self::SIZE => self.size = v,

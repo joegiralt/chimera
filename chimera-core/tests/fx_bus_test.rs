@@ -241,6 +241,26 @@ fn a_rev_send_jump_does_not_click() {
     }
 }
 
+/// GRIT reaches the ring through the bus: at 1 the return differs.
+#[test]
+fn grit_changes_the_return() {
+    let render = |grit: f32| {
+        let mut p = FxParams::default();
+        (p.reverb.mix, p.reverb.grit) = (0.5, grit);
+        let mut bus = Box::new(FxBus::new());
+        let mut out = Vec::new();
+        for b in 0..40 {
+            let mut sends = [[0.0; BLOCK_SIZE]; FX_SENDS];
+            sends[2] = if b < 4 { burst() } else { [0.0; BLOCK_SIZE] };
+            let mut ret = Stereo::SILENT;
+            bus.process(&mut sends, &p, SR, &mut ret);
+            out.extend(ret.l);
+        }
+        out
+    };
+    assert_ne!(render(0.0), render(1.0));
+}
+
 /// FX diet spec § Master section: off by default, the master section
 /// leaves every pair untouched, bit for bit.
 #[test]
