@@ -225,7 +225,7 @@ impl Grid {
     /// nearest LSB, both ties away from zero; saturates at the i16 range.
     #[inline(always)]
     pub fn q_round(self, x: f32) -> i16 {
-        rnd(rnd(x * self.inv) as f32 * self.delta).clamp(i16::MIN as i32, i16::MAX as i32) as i16
+        rnd(rint(x * self.inv) * self.delta).clamp(i16::MIN as i32, i16::MAX as i32) as i16
     }
 
     /// `x` (in LSBs) truncated toward zero onto the grid, then onto the
@@ -238,11 +238,73 @@ impl Grid {
     }
 }
 
-/// Nearest integer, ties away from zero (`core` has no `f32::round`); `as`
-/// saturates.
+/// Nearest integer, ties away from zero, saturating, NaN to 0: VCVTA on
+/// the M7 (`core` has no `f32::round`).
 #[inline(always)]
-fn rnd(x: f32) -> i32 {
-    (x + if x < 0.0 { -0.5 } else { 0.5 }) as i32
+pub fn rnd(x: f32) -> i32 {
+    #[cfg(all(target_arch = "arm", target_feature = "vfp2"))]
+    {
+        // FPv5's VCVTA; an FPU without it fails to assemble here.
+        let r: f32;
+        // SAFETY: one register-to-register convert; no memory, stack or
+        // flags touched.
+        unsafe {
+            core::arch::asm!("vcvta.s32.f32 {r}, {x}", r = lateout(sreg) r, x = in(sreg) x,
+                options(pure, nomem, nostack, preserves_flags));
+        }
+        r.to_bits() as i32
+    }
+    #[cfg(not(all(target_arch = "arm", target_feature = "vfp2")))]
+    {
+        rnd_portable(x)
+    }
+}
+
+/// `rnd` as a float, `x` itself when already integral (so ±inf and NaN
+/// too): VRINTA on the M7. Scaled and passed through `rnd`, it gives what
+/// `rnd(x) as f32` would.
+#[inline(always)]
+pub fn rint(x: f32) -> f32 {
+    #[cfg(all(target_arch = "arm", target_feature = "vfp2"))]
+    {
+        let r: f32;
+        // SAFETY: as `rnd`'s.
+        unsafe {
+            core::arch::asm!("vrinta.f32 {r}, {x}", r = lateout(sreg) r, x = in(sreg) x,
+                options(pure, nomem, nostack, preserves_flags));
+        }
+        r
+    }
+    #[cfg(not(all(target_arch = "arm", target_feature = "vfp2")))]
+    {
+        rint_portable(x)
+    }
+}
+
+/// `rnd` without the FPU instruction: the host's path.
+pub fn rnd_portable(x: f32) -> i32 {
+    // Past 2^31 `as` saturates, as VCVTA does, and NaN goes to 0.
+    rint_portable(x) as i32
+}
+
+/// `rint` without the FPU instruction: the host's path.
+pub fn rint_portable(x: f32) -> f32 {
+    // From 2^23 up every float is an integer, as are ±inf, and NaN stays
+    // NaN; below it the fraction is exact.
+    if x.is_nan() || x.abs() >= 8_388_608.0 {
+        return x;
+    }
+    let t = x as i32 as f32;
+    let f = x - t;
+    let r = if f >= 0.5 {
+        t + 1.0
+    } else if f <= -0.5 {
+        t - 1.0
+    } else {
+        t
+    };
+    // VRINTA keeps the sign of a zero result.
+    if r == 0.0 { 0.0f32.copysign(x) } else { r }
 }
 
 /// One block's settings for the ring; the gains and DAMP ramp from
@@ -361,7 +423,8 @@ impl Ring {
         // (the table fits, and a tap is a fraction of its line), so at
         // least `OFFSET[j]`; the clamp keeps the bound below local.
         let back = |j: usize, d: u16| (HEAD[j] - d as usize).min(RING_LEN - 1);
-        let reads = |t: &[u16; LINES]| -> [usize; LINES] { core::array::from_fn(|j| back(j, t[j])) };
+        let reads =
+            |t: &[u16; LINES]| -> [usize; LINES] { core::array::from_fn(|j| back(j, t[j])) };
         let taps = |t: &[u16; LINES]| -> [[usize; 3]; 2] {
             core::array::from_fn(|s| {
                 core::array::from_fn(|i| {
@@ -370,7 +433,10 @@ impl Ring {
                 })
             })
         };
-        let (new, old) = (&SIZE_TABLE[self.step as usize], &SIZE_TABLE[self.from as usize]);
+        let (new, old) = (
+            &SIZE_TABLE[self.step as usize],
+            &SIZE_TABLE[self.from as usize],
+        );
         let (kn, ko) = (reads(new), reads(old));
         let (tn, to) = (taps(new), taps(old));
         let n = HALF as f32;

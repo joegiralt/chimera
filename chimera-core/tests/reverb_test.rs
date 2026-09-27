@@ -942,3 +942,60 @@ fn a_voice_through_the_reverb_leaves_a_tail() {
     }
     assert!(tail > 0.01, "{tail}");
 }
+
+/// `rnd`'s portable path against std's round, ties away from zero, with
+/// `as` saturating: near every half and whole number to ±300 and the
+/// 2^22..2^24 and 2^31 edges, and a stride through every bit pattern.
+fn rounding_matches(x: f32) {
+    let want = x.round();
+    let got = rint_portable(x);
+    assert!(
+        got.to_bits() == want.to_bits() || (got.is_nan() && want.is_nan()),
+        "rint({x:e}) = {got:e}, want {want:e}"
+    );
+    assert_eq!(rnd_portable(x), want as i32, "rnd({x:e})");
+    assert_eq!(rnd(x), want as i32, "rnd({x:e})");
+    assert_eq!(rint(x).to_bits(), got.to_bits(), "rint({x:e})");
+}
+
+fn around(x: f32, ulps: i32) -> impl Iterator<Item = f32> {
+    (-ulps..=ulps).map(move |d| f32::from_bits((x.to_bits() as i32 + d) as u32))
+}
+
+#[test]
+fn rounding_is_ties_away_from_zero() {
+    for k in -600..=600 {
+        let x = k as f32 * 0.5;
+        around(x, 64).for_each(rounding_matches);
+    }
+    for e in [22, 23, 24, 31] {
+        let x = (1u64 << e) as f32;
+        around(x, 64)
+            .chain(around(-x, 64))
+            .for_each(rounding_matches);
+    }
+    for x in [
+        0.0,
+        -0.0,
+        f32::INFINITY,
+        f32::NEG_INFINITY,
+        f32::NAN,
+        f32::MAX,
+        f32::MIN,
+    ] {
+        rounding_matches(x);
+    }
+    (0..=u32::MAX)
+        .step_by(4099)
+        .map(f32::from_bits)
+        .for_each(rounding_matches);
+}
+
+/// Every f32: run by hand, in release.
+#[test]
+#[ignore]
+fn rounding_is_ties_away_from_zero_everywhere() {
+    (0..=u32::MAX)
+        .map(f32::from_bits)
+        .for_each(rounding_matches);
+}
