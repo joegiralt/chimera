@@ -4,7 +4,7 @@
 **Status:** Draft rev 2 (after adversarial self-review), awaiting user review
 **Tracks:** epic #118.
 **Builds after:** the FX diet (#36), for its CPU headroom.
-**Supersedes in part:** ADR 0022's engine-set clause (`EngineType` and `ChainType` are `{Algo, Modal}`). The amp envelope on the VCA is the routing spec's concern (`2026-09-27-filter-routing-design.md`), which supersedes 0022's VCA note. The rest of 0022 stands; the old VA placeholder it removed stays removed.
+**Supersedes in part:** ADR 0022's engine-set clause (`EngineType` and `ChainType` are `{Algo, Modal}`). What drives the VCA is the routing spec's concern (`2026-09-27-filter-routing-design.md`), which supersedes 0022's VCA note. The rest of 0022 stands; the old VA placeholder it removed stays removed.
 
 ## Intent
 
@@ -44,7 +44,7 @@ A third engine, **VA**, that is only an oscillator section. It feeds the Part's 
 - A, B and C are stored as `f32`, like Modal's, so a mod offset from `apply_offset` isn't rounded, and the macros don't zipper. The block is 16 bytes. `ParamSnapshot` grows by that much, which costs about 800 B across the pool and buffers (algo spec § Storage). The `AXI_RESIDENT` assertion checks it.
 - **The note's frequency** is `f0 = 440 · 2^((note + 12·OCT + FINE/100 − 69) / 12)`, computed per block with `exp2`. It sets `inc = f0 / fs` (multiplied by the per-block `1/fs`). Every oscillator's increment is clamped to ≤ 0.45.
 - **`VaModel`** is a `#[repr(u8)]` enum with fixed discriminants 0–10, in the order of the model table. An unknown stored byte reads as `Sweep`.
-- **The VCA ends a VA Part's notes.** VA is only an oscillator, so something must end its notes. The FLD / VCA (AMP) block from the routing spec (`2026-09-27-filter-routing-design.md`) does it: VA's VCA source defaults to ENV 1, and VA offers only ENV 1 and GATE (not ENGINE: a VA oscillator never goes inactive, so ENGINE would hold notes forever). There is no engine branch in `Voice::render`. The amp envelope's parameters stay off the destination list (ADR 0010).
+- **The VCA ends a VA Part's notes.** VA is only an oscillator, so something must end its notes. In the routing spec (`2026-09-27-filter-routing-design.md`) the VCA is a mod-matrix destination: a new VA Sound has the default route ENV 2 → VCA at 100 %, and if that route is deleted, a VA voice with no VCA route acts as a gate. That no-route rule is the only engine-specific branch. The amp envelope's parameters stay off the destination list (ADR 0010).
 - **The engine slot.** Today `Engines` holds `algo` and `modal` side by side in every voice. Because a voice sounds only one engine at a time (`note_on` fades before it switches), `Engines` becomes one slot: a `union` of the three engines, tagged by the voice's `active_engine`, and sized to the largest engine, Modal. `trigger` builds the new engine in place when the engine changes, replacing today's reset of the old one. `const` assertions keep `size_of::<VaEngine>()` no larger than the slot, and keep the slot within the existing `VOICE_RAM_BUDGET`. The voice pool shrinks by the size of `AlgoEngine` per voice, more than the 16 B that `played: ParamSnapshot` grows.
 - **The `VaEngine` state target is ≤ 512 B.** Its largest part is Spread's 7 oscillators: phase, increment, drift state and BLEP carry for each.
 
@@ -200,7 +200,7 @@ Two oscillators, A and B, mixed equally: `(o_A + o_B)/2`. B sits exactly 7 cents
   - Increments (SPREAD, DRIFT, OCT, FINE, PMOD's base) change per block. A frequency step moves the slope only, never the value, so it can't click.
 - **Shapes latch per cycle.** At each period start, the walker rebuilds its breakpoints from the ramped macros at that sample. The same happens after a P5 sync reset. A width change mid-cycle therefore never skips or doubles an edge. The period-start event's Δ spans the old shape's end and the new shape's start, so the change itself is band-limited.
 - **MODEL** changes while a note sounds use Algo's duck: the output ramps to 0 over one block, the model swaps, and the output ramps back over the next.
-- **Retriggering.** A note-on to a sounding VA voice keeps its phases and drift, and only the amp envelope retriggers. Only a note from silence reseeds.
+- **Retriggering.** A note-on to a sounding VA voice keeps its phases and drift, and only the modulators retrigger: ENV 1–3 restart, and the LFO slots follow their SYNC setting. Only a note from silence reseeds.
 
 **The note seed.**
 - It is `splitmix32(note | velocity << 8 | count << 16)`, where `count` is the engine's note-on count since it was built, as a wrapping `u16`.
@@ -324,7 +324,7 @@ chimera-core/src/dsp/va/
 
 **The ADR 0011 sanity gate,** for each model's init (Sweep's is A 0.5, B 0, C 0):
 - it is finite, within ±1 and audible;
-- it is silent after note-off, through the amp envelope VCA;
+- it is silent after note-off, through ENV 2 → VCA, and through the gate when that route is deleted;
 - pitched models are within one semitone.
 
 **Goldens** (ADR 0011), recorded after the gate:
@@ -345,7 +345,7 @@ chimera-core/src/dsp/va/
   - The principle, and why plain PWM and hard sync are left to Algo's modes (#38), with P5's sync as the exception.
   - The 11 models and their three macros.
   - The band-limiting method (polyBLEP, polyBLAMP, segment shapes, no wavetables) and its provenance. The code is our own, from the cited papers and Szabo's published supersaw measurements; no Mutable or other synth code is used (ADR 0002).
-  - VA's VCA source is ENV 1 or GATE, via the routing spec's AMP block.
+  - VA's notes end through the routing spec's VCA: the default route ENV 2 → VCA, or the gate when there's no VCA route.
   - The shared engine slot.
   - It supersedes ADR 0022's `{Algo, Modal}` clause. The VCA note is superseded by the routing spec's ADR.
   - 0028–0031 are reserved by the FX diet, and 0032 exists.
