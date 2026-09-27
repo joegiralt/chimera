@@ -185,10 +185,10 @@ impl Grid {
     }
 
     /// `x` (in LSBs) rounded to the nearest grid point, and that to the
-    /// nearest LSB, both ties away from zero; `as i16` saturates.
+    /// nearest LSB, both ties away from zero; saturates at the i16 range.
     #[inline(always)]
     pub fn q(self, x: f32) -> i16 {
-        rnd(rnd(x * self.inv) as f32 * self.delta) as i16
+        rnd(rnd(x * self.inv) as f32 * self.delta).clamp(i16::MIN as i32, i16::MAX as i32) as i16
     }
 }
 
