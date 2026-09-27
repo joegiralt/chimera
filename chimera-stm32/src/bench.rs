@@ -30,7 +30,7 @@ const WARM_BLOCKS: u32 = 8;
 const TIMED_BLOCKS: u32 = 64;
 const HOLD_SECONDS: u32 = 30;
 const ROWS: usize = 9;
-const FX_ROWS: usize = 5;
+const FX_ROWS: usize = 7;
 
 /// Each Algo row plays six distinct waves; voices sit an octave apart so
 /// each reads its own mips (a D-cache worst case).
@@ -73,10 +73,14 @@ const FX: [FxRow; FX_ROWS] = [
     ("CHORUS", |s, _| worst_chorus(s)),
     ("DELAY", |s, _| worst_delay(s)),
     ("REVERB", worst_reverb),
+    ("TAPE", |s, _| worst_tape(s)),
+    ("COMP", |s, _| worst_comp(s)),
     ("BUS", |s, b| {
         worst_chorus(s);
         worst_delay(s);
         worst_reverb(s, b);
+        worst_tape(s);
+        worst_comp(s);
     }),
 ];
 
@@ -97,6 +101,21 @@ fn worst_reverb(s: &mut AudioShared, block: u32) {
     let r = &mut s.fx.reverb;
     let size = [1.0, 30.0 / 31.0][block as usize % 2];
     (r.grit, r.time, r.size, r.damping, r.mix) = (1.0, 1.0, size, 0.5, 0.5);
+}
+
+/// Full DRIVE and WOW (its interpolated, most expensive tap), full MIX:
+/// fully engaged and steady once warm, never fading.
+fn worst_tape(s: &mut AudioShared) {
+    let t = &mut s.fx.tape;
+    (t.drive, t.tone, t.wow, t.mix) = (1.0, 0.5, 1.0, 1.0);
+}
+
+/// −40 dB threshold at 20:1 (the noise is always over it), the fastest
+/// timing, 12 dB of makeup, full MIX: fully in and compressing, on all
+/// three DAC pairs (`MasterComp::process` always runs every pair).
+fn worst_comp(s: &mut AudioShared) {
+    let c = &mut s.fx.comp;
+    (c.thresh, c.ratio, c.attack, c.release, c.makeup, c.mix) = (0.0, 7, 0.0, 0.0, 0.5, 1.0);
 }
 
 static mut SCOPE: TripleBuffer<ScopeFrame> = scope_buffer();
@@ -363,7 +382,9 @@ fn show(
     line.clear();
     let _ = write!(line, "KERNEL /VOICE {kernel} (350)");
     draw::text(display, &theme::FONT_VALUE, line.as_str(), 4, y, theme::INK);
-    y += 18;
+    // Seven rows, three to a line: with FX_ROWS at 7 the old 18/14 spacing
+    // put the third line at y 317; 16/10 keeps it at 307, under 310.
+    y += 16;
     for (i, (&(label, _), &c)) in FX.iter().zip(fx).enumerate() {
         // Each effect less MIX; MIX and BUS as read.
         let c = if i == 0 || i == FX_ROWS - 1 {
@@ -379,7 +400,7 @@ fn show(
             &theme::FONT_LABEL,
             line.as_str(),
             4 + col * 78,
-            y + row * 14,
+            y + row * 10,
             theme::INK2,
         );
     }
