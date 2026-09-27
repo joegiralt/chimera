@@ -1,6 +1,16 @@
+use chimera_core::dsp::algo::params::AlgoParams;
+use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::reverb::{Reverb, ReverbParams};
 use chimera_core::modulation::ModState;
+use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::{MidiNote, Velocity};
+
+/// Operator 1 alone on the triangle.
+fn tri() -> ParamSnapshot {
+    let mut p = ParamSnapshot::for_engine(EngineType::Algo);
+    p.algo = AlgoParams::single(WaveId::TRI);
+    p
+}
 
 fn impulse_block() -> [f32; 64] {
     let mut block = [0.0f32; 64];
@@ -412,12 +422,11 @@ fn test_fdn_size_mid_reverb() {
 #[test]
 fn test_reverb_through_voice_produces_tail() {
     use chimera_core::dsp::voice::Voice;
-    use chimera_core::params::{EngineType, ParamSnapshot};
 
     let empty_mod = ModState::new();
     let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
     let mut reverb = Reverb::new();
-    let params = ParamSnapshot::for_engine(EngineType::Pizza);
+    let params = tri();
     let mut rv = chimera_core::dsp::fx_bus::FxParams::default().reverb;
     rv.mix = 0.5;
     rv.time = 0.7;
@@ -456,13 +465,12 @@ fn test_reverb_through_voice_produces_tail() {
 #[test]
 fn test_reverb_type_switch_e2e() {
     use chimera_core::dsp::voice::Voice;
-    use chimera_core::params::{EngineType, ParamSnapshot};
 
     let empty_mod = ModState::new();
     let render_with_reverb = |rt: u8| -> f32 {
         let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
         let mut reverb = Reverb::new();
-        let params = ParamSnapshot::for_engine(EngineType::Pizza);
+        let params = tri();
         let mut rv = chimera_core::dsp::fx_bus::FxParams::default().reverb;
         rv.reverb_type = rt;
         rv.mix = 0.8;

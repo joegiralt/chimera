@@ -4,6 +4,7 @@ use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::primitives::{PrimitiveStyle, Rectangle, StyledDrawable};
 
 use crate::addr::Op;
+use crate::dsp::algo::algorithms::AlgoId;
 use crate::perf::load::AudioStats;
 use crate::ui::PrimeStatus;
 use crate::ui::animation::AnimatedValue;
@@ -34,7 +35,7 @@ pub struct Frame<'a> {
     pub scope: &'a [f32; crate::scope::SCOPE_LEN],
     /// The live output is above silence (header dot).
     pub sounding: bool,
-    /// Every Part (Mixer overview, FM algorithm) and the one being edited.
+    /// Every Part (Mixer overview) and the one being edited.
     pub parts: &'a [crate::preset::Part; crate::hw::MAX_PARTS],
     pub active_part: usize,
     /// The last MIX+PLUS outcome, shown in the focus band in place of the
@@ -109,31 +110,6 @@ impl Renderer {
                     (f.focus < 4).then_some(f.focus),
                 );
             }
-            VizType::FmEnvelope => {
-                // Rates: higher = faster = narrower. D1L is the level after D1R.
-                let (ar, d1r, d1l, rr) = (a(0).max(0.02), a(1).max(0.02), a(2), a(4).max(0.02));
-                let (atk_t, d1_t, d2_t, rel_t) = (
-                    (1.0 - ar).max(0.03),
-                    (1.0 - d1r).max(0.03),
-                    0.25,
-                    (1.0 - rr).max(0.03),
-                );
-                let total = atk_t + d1_t + d2_t + rel_t;
-                let lit = match f.focus {
-                    0 => Some(0),
-                    1 | 2 => Some(1),
-                    3 => Some(2),
-                    4 => Some(3),
-                    _ => None,
-                };
-                viz::envelope(
-                    display,
-                    &[atk_t / total, d1_t / total, d2_t / total, rel_t / total],
-                    &[0.0, 1.0, d1l, d1l * 0.3, 0.0],
-                    &["AR", "D1R", "D2R", "RR"],
-                    lit,
-                );
-            }
             VizType::CompressorCurve => viz::compressor(display),
             _ => {}
         }
@@ -149,14 +125,6 @@ impl Renderer {
     {
         match f.def.viz {
             VizType::AudioStats => audio_page::draw_viz(display, f.audio),
-            VizType::AlgorithmDiagram => {
-                use crate::ui::block_registry as reg;
-                let alg = f.parts[f.active_part].sound.params.fm.algorithm;
-                // Only the FM operator page edits a single operator; the FM
-                // algorithm page lights none (accent is the active element only).
-                let selected = (f.def.id == reg::FM_OP.id).then(|| f.sel_op.index());
-                viz::fm_algorithm(display, alg, selected);
-            }
             VizType::MixerLevels => viz::parts_overview(display, &self.strips(f), f.active_part),
             VizType::EffectsFlow => {
                 use crate::ui::block_registry as reg;
@@ -173,6 +141,22 @@ impl Renderer {
                         .position(|&id| id == f.def.id);
                     viz::effects_flow(display, lit, None);
                 }
+            }
+            VizType::AlgoDiagram => {
+                let algo = &f.parts[f.active_part].sound.params.algo;
+                let morph = crate::addr::ParamAddr::new(
+                    crate::addr::BlockRef::Algo,
+                    crate::dsp::algo::params::AlgoParams::MORPH,
+                );
+                let slot = (0..f.def.params.len())
+                    .find(|&i| slot_addr(f.def, i, Op::A) == Some(morph))
+                    .expect("ALG page binds MORPH");
+                viz::algo_diagram(
+                    display,
+                    AlgoId::clamped(algo.alg_a).algorithm(),
+                    AlgoId::clamped(algo.alg_b).algorithm(),
+                    self.anim[slot].current(),
+                );
             }
             _ => viz::live_output(display, f.scope),
         }
@@ -230,21 +214,19 @@ impl Renderer {
         match f.def.layout {
             PageLayout::CellGrid => match f.def.viz {
                 VizType::AudioStats => ([0; 6], audio_page::viz_key(f.audio)),
-                VizType::AlgorithmDiagram => {
-                    use crate::ui::block_registry as reg;
-                    let alg = f.parts[f.active_part].sound.params.fm.algorithm as u32;
-                    let sel = if f.def.id == reg::FM_OP.id {
-                        f.sel_op.index() as u32
-                    } else {
-                        0
-                    };
-                    ([0; 6], alg << 2 | sel)
-                }
                 VizType::MixerLevels => (
                     region::quantize_values(&self.anim),
                     strips_key(&self.strips(f), f.active_part),
                 ),
                 VizType::EffectsFlow => (region::quantize_values(&self.anim), f.focus as u32),
+                VizType::AlgoDiagram => {
+                    let algo = &f.parts[f.active_part].sound.params.algo;
+                    let q = region::quantize_values(&self.anim);
+                    (
+                        [0, 0, q[2], 0, 0, 0],
+                        (algo.alg_a as u32) << 8 | algo.alg_b as u32,
+                    )
+                }
                 _ => ([0; 6], viz::live_key(f.scope)),
             },
             PageLayout::BigViz => (region::quantize_values(&self.anim), f.focus as u32),

@@ -1,7 +1,6 @@
 //! `Block` trait semantics (spec §1) and per-block conformance.
 
 use chimera_core::block::{Block, ParamId, ParamKind, ParamSpec, ValFmt, apply_offset};
-use chimera_core::dsp::pizza::PizzaParams;
 
 /// A block with one param of each kind.
 #[derive(Default)]
@@ -178,11 +177,6 @@ fn conforms(name: &str, mut b: impl Block) {
 }
 
 #[test]
-fn pizza_conforms() {
-    conforms("pizza", PizzaParams::default());
-}
-
-#[test]
 fn modal_conforms() {
     conforms("modal", chimera_core::dsp::modal::ModalParams::default());
 }
@@ -223,24 +217,15 @@ fn lfo_conforms() {
 }
 
 #[test]
-fn fm_conforms() {
-    conforms("fm", chimera_core::params::FmParams::default());
-    conforms("fm_op", chimera_core::params::FmOpParams::default());
-}
-
-/// Plan D18: a modulated (fractional) level truncates exactly like the old
-/// `Param.value as u8` — never rounds.
-#[test]
-fn fm_settings_truncate_fractional_level() {
-    use chimera_core::dsp::engine_fm::FmOpSettings;
-    use chimera_core::params::FmOpParams;
-    let op = FmOpParams {
-        level: 50.7,
-        feedback: 6.9,
-        ..FmOpParams::default()
-    };
-    let s = FmOpSettings::from_params(&op);
-    assert_eq!((s.level, s.feedback), (50, 6));
+fn algo_conforms() {
+    conforms(
+        "algo",
+        chimera_core::dsp::algo::params::AlgoParams::default(),
+    );
+    conforms(
+        "algo_op",
+        chimera_core::dsp::algo::params::AlgoOpParams::default(),
+    );
 }
 
 #[test]

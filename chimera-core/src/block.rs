@@ -16,6 +16,8 @@ pub enum ValFmt {
     Int(u8),
     /// Discrete integer 0..N shown one-based, 1..N+1 (MIDI channel).
     OneBased(u8),
+    /// Discrete integer −N..=N shown with a sign (`-3`, `0`, `+3`).
+    Signed(u8),
     /// Discrete choice 0..len-1 shown by name.
     Names(&'static [&'static str]),
     /// Stereo position: bipolar like `Bi`, shown as `L64`..`C`..`R63`.
@@ -30,11 +32,12 @@ impl ValFmt {
             ValFmt::Bi | ValFmt::Pan => &[0.0, 20.0 / 127.0, 64.0 / 127.0, 107.0 / 127.0, 1.0],
             // Discrete: shift-encoder jumps to 0 or max
             ValFmt::Int(_) | ValFmt::OneBased(_) | ValFmt::Names(_) => &[0.0, 1.0],
+            ValFmt::Signed(_) => &[0.0, 0.5, 1.0],
         }
     }
 
     pub fn is_bipolar(self) -> bool {
-        matches!(self, ValFmt::Bi | ValFmt::Pan)
+        matches!(self, ValFmt::Bi | ValFmt::Pan | ValFmt::Signed(_))
     }
 
     /// A choice among a few values (channel, mode, output, type): shown as
@@ -42,7 +45,7 @@ impl ValFmt {
     pub fn is_discrete(self) -> bool {
         matches!(
             self,
-            ValFmt::Int(_) | ValFmt::OneBased(_) | ValFmt::Names(_)
+            ValFmt::Int(_) | ValFmt::OneBased(_) | ValFmt::Names(_) | ValFmt::Signed(_)
         )
     }
 
@@ -50,6 +53,7 @@ impl ValFmt {
     pub fn max_int(self) -> u8 {
         match self {
             ValFmt::Int(n) | ValFmt::OneBased(n) => n,
+            ValFmt::Signed(n) => n.saturating_mul(2),
             ValFmt::Names(names) => names.len().saturating_sub(1) as u8,
             _ => 127,
         }
@@ -65,8 +69,9 @@ pub struct ParamId(pub u8);
 pub enum ParamKind {
     /// Any value in `min..=max`.
     Continuous,
-    /// Integer-valued. UI input rounds; a modulated copy stays fractional and
-    /// the DSP truncates as it does today (FM level `as u8`).
+    /// Integer-valued. UI input rounds; a modulated copy stays fractional,
+    /// and the DSP decides what to do with that — Algo LEVEL interpolates
+    /// between steps rather than truncating.
     Stepped,
     /// Discrete choice `0..=max` (`min` is 0). Never modulatable.
     Enum,

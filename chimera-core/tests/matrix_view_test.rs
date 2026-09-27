@@ -63,7 +63,7 @@ fn the_amount_lerps() {
 #[test]
 fn an_empty_matrix_says_so() {
     let mut ui = chimera_core::ui::UiState::new();
-    for _ in 0..4 {
+    for _ in 0..5 {
         feed(&mut ui, Input::press(ButtonId::Plus));
     }
     settle(&mut ui);

@@ -3,6 +3,8 @@
 
 mod common;
 
+use chimera_core::dsp::algo::params::AlgoParams;
+use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::modulation::ModState;
@@ -11,6 +13,13 @@ use chimera_core::{MidiNote, Velocity};
 use common::expects_sound;
 
 const SR: u32 = 48000;
+
+/// Operator 1 alone on the triangle.
+fn tri() -> ParamSnapshot {
+    let mut p = ParamSnapshot::for_engine(EngineType::Algo);
+    p.algo = AlgoParams::single(WaveId::TRI);
+    p
+}
 
 struct Rng(u64);
 
@@ -49,11 +58,6 @@ fn random_params(rng: &mut Rng) -> ParamSnapshot {
         EngineType::ALL[rng.u8(EngineType::ALL.len() as u8 - 1) as usize],
     );
 
-    // Pizza params
-    p.pizza.shape = rng.f32();
-    p.pizza.crush = rng.f32();
-    p.pizza.level = rng.f32();
-
     // Modal params
     p.modal.mode = ResonatorMode::from_u8(rng.u8(2));
     p.modal.excite = rng.f32();
@@ -69,6 +73,23 @@ fn random_params(rng: &mut Rng) -> ParamSnapshot {
     p.modal.ks_ens_rate = rng.f32();
     p.modal.ks_ens_depth = rng.f32();
     p.modal.ks_ens_mix = rng.f32();
+
+    // Algo params (release 8–15 so a note ends inside the note-off property's window)
+    p.algo.alg_a = rng.u8(31);
+    p.algo.alg_b = rng.u8(31);
+    p.algo.morph = rng.u8(127);
+    for op in p.algo.ops.iter_mut() {
+        op.wave = rng.u8(15);
+        op.coarse = rng.u8(63);
+        op.fine = rng.u8(15);
+        op.level = rng.u8(99);
+        op.feedback = rng.u8(7);
+        op.ar = 20 + rng.u8(11);
+        op.d1r = rng.u8(31);
+        op.d1l = rng.u8(15);
+        op.d2r = rng.u8(31);
+        op.rr = 8 + rng.u8(7);
+    }
 
     // Filter
     p.filter.cutoff = 20.0 + rng.f32() * 19980.0;
@@ -227,7 +248,11 @@ fn prop_param_change_changes_output() {
             1 => params_b.drive.drive = 1.0 - params_a.drive.drive,
             2 => params_b.folder.fold = 1.0 - params_a.folder.fold,
             3 => params_b.out.volume = params_a.out.volume * 0.2,
-            _ => params_b.pizza.crush = 1.0 - params_a.pizza.crush,
+            // The engine's own parameter, where it has one.
+            _ => match params_a.engine() {
+                EngineType::Algo => params_b.algo.ops[0].level = 99 - params_a.algo.ops[0].level,
+                EngineType::Modal => params_b.out.volume = params_a.out.volume * 0.2,
+            },
         }
 
         let note = 60;
@@ -392,15 +417,11 @@ fn verify_full_sweep(
 }
 
 #[test]
-fn prop_pizza_crush_full_sweep() {
+fn prop_algo_level_full_sweep() {
     verify_full_sweep(
-        "Pizza crush",
-        |p| {
-            *p = ParamSnapshot::for_engine(EngineType::Pizza);
-        },
-        |p, v| {
-            p.pizza.crush = v;
-        },
+        "Algo operator 1 LEVEL",
+        |p| *p = ParamSnapshot::for_engine(EngineType::Algo),
+        |p, v| p.algo.ops[0].level = (v * 99.0) as u8,
         16,
     );
 }
@@ -410,7 +431,7 @@ fn prop_filter_cutoff_full_sweep() {
     verify_full_sweep(
         "Filter cutoff",
         |p| {
-            *p = ParamSnapshot::for_engine(EngineType::Pizza);
+            *p = tri();
             p.filter.mode = 2;
         },
         |p, v| {
@@ -425,7 +446,7 @@ fn prop_filter_resonance_full_sweep() {
     verify_full_sweep(
         "Filter resonance",
         |p| {
-            *p = ParamSnapshot::for_engine(EngineType::Pizza);
+            *p = tri();
             p.filter.cutoff = 1000.0;
             p.filter.mode = 1;
         },
@@ -441,7 +462,7 @@ fn prop_drive_full_sweep() {
     verify_full_sweep(
         "Drive",
         |p| {
-            *p = ParamSnapshot::for_engine(EngineType::Pizza);
+            *p = tri();
             p.drive.mix = 1.0;
         },
         |p, v| {
@@ -456,7 +477,7 @@ fn prop_folder_full_sweep() {
     verify_full_sweep(
         "Wavefolder",
         |p| {
-            *p = ParamSnapshot::for_engine(EngineType::Pizza);
+            *p = tri();
             p.folder.mix = 1.0;
         },
         |p, v| {
@@ -471,7 +492,7 @@ fn prop_volume_full_sweep() {
     verify_full_sweep(
         "Volume",
         |p| {
-            *p = ParamSnapshot::for_engine(EngineType::Pizza);
+            *p = tri();
         },
         |p, v| {
             p.out.volume = v;

@@ -2,7 +2,8 @@
 //! `Block` specs and `ParamAddr` bindings. Parity tests pin today's steps.
 
 use chimera_core::addr::{BlockRef, Blocks, Op, ParamAddr};
-use chimera_core::params::{EnvParams, FilterParams, FmOpParams, ParamSnapshot};
+use chimera_core::dsp::algo::params::AlgoOpParams;
+use chimera_core::params::{EnvParams, FilterParams, ParamSnapshot};
 use chimera_core::ui::page::PageId;
 
 #[test]
@@ -17,7 +18,7 @@ fn demo_pages_step_like_before() {
     PageId::DemoMotion.apply_encoder(4, 1, &mut p);
     assert_eq!(p.envelopes[1].attack, 0.01 + (10.0 - 0.001) / 128.0);
     PageId::DemoFm.apply_encoder(3, 2, &mut p);
-    assert_eq!(p.fm.operators[2].feedback, 2.0);
+    assert_eq!(p.algo.ops[2].feedback, 2);
     PageId::EnvAux.apply_encoder(3, -128, &mut p);
     assert_eq!(p.envelopes[2].release, 0.001);
 }
@@ -40,7 +41,10 @@ fn legacy_bindings_name_semantic_addresses() {
     );
     assert_eq!(
         PageId::DemoFm.binding(1),
-        Some(ParamAddr::new(BlockRef::FmOp(Op::A), FmOpParams::FEEDBACK))
+        Some(ParamAddr::new(
+            BlockRef::AlgoOp(Op::A),
+            AlgoOpParams::FEEDBACK
+        ))
     );
     assert_eq!(
         PageId::DemoShapes.binding(1),

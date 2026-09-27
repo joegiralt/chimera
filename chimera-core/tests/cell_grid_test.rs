@@ -19,14 +19,14 @@ fn band(fb: &Fb, y0: i32, y1: i32) -> Vec<u16> {
 
 #[test]
 fn dirty_render_from_scratch_equals_full_render() {
-    for name in ["engine_pizza", "system"] {
+    for name in ["engine_algo", "algo_alg", "algo_level", "system"] {
         assert!(render(name).px == render_dirty(name).px, "{name}");
     }
 }
 
 #[test]
 fn a_settled_silent_or_frozen_screen_flushes_nothing() {
-    let mut ui = ui_for("engine_pizza");
+    let mut ui = ui_for("engine_algo");
     let mut fb = Fb::new();
     let scope = scope_fixture();
     ui.render_dirty_with_scope(&mut fb, &PerfStats::zero(), &scope);
@@ -36,20 +36,38 @@ fn a_settled_silent_or_frozen_screen_flushes_nothing() {
 
 #[test]
 fn a_turn_redraws_focus_and_cells_only() {
-    let mut ui = ui_for("engine_pizza");
+    let mut ui = ui_for("algo_level");
     let mut fb = Fb::new();
     let scope = scope_fixture();
     ui.render_dirty_with_scope(&mut fb, &PerfStats::zero(), &scope);
-    feed(&mut ui, Input::turn(EncoderId::C, -3));
+    feed(&mut ui, Input::turn(EncoderId::C, 3));
     ui.update();
     let flushed = ui.render_dirty_with_scope(&mut fb, &PerfStats::zero(), &scope);
     let bands: Vec<(u16, u16)> = flushed.into_iter().filter(|&(a, b)| a != b).collect();
     assert_eq!(bands, [(28, 118), (186, 266)]);
 }
 
+/// The ALGO page's diagram follows the lerped MORPH, so a MORPH turn also
+/// redraws the viz band.
+#[test]
+fn a_morph_turn_redraws_the_diagram() {
+    let mut ui = ui_for("algo_alg");
+    let mut fb = Fb::new();
+    let scope = scope_fixture();
+    ui.render_dirty_with_scope(&mut fb, &PerfStats::zero(), &scope);
+    feed(&mut ui, Input::turn(EncoderId::C, 30));
+    settle(&mut ui);
+    let flushed = ui.render_dirty_with_scope(&mut fb, &PerfStats::zero(), &scope);
+    let bands: Vec<(u16, u16)> = flushed.into_iter().filter(|&(a, b)| a != b).collect();
+    assert_eq!(bands, [(28, 118), (118, 186), (186, 266)]);
+    let mut full = Fb::new();
+    ui.render_with_scope(&mut full, &PerfStats::zero(), &scope);
+    assert!(fb.px == full.px, "dirty != full");
+}
+
 #[test]
 fn new_live_output_redraws_only_the_viz_band() {
-    let mut ui = ui_for("engine_pizza");
+    let mut ui = ui_for("algo_level");
     let mut fb = Fb::new();
     ui.render_dirty_with_scope(&mut fb, &PerfStats::zero(), &scope_fixture());
     let quieter = scope_fixture().map(|s| if s > 0.0 { s * 0.5 } else { s });
@@ -61,19 +79,28 @@ fn new_live_output_redraws_only_the_viz_band() {
 #[test]
 fn focus_band_shows_the_last_touched_slot() {
     let mut ui = UiState::new();
-    feed(&mut ui, Input::turn(EncoderId::C, -5)); // LEVEL
+    feed(&mut ui, Input::turn(EncoderId::C, 5)); // MORPH
     settle(&mut ui);
     let mut fb = Fb::new();
     ui.render_with_scope(&mut fb, &PerfStats::zero(), &scope_fixture());
+    let slot = &ui.nav.active_block_def().params[2];
     let v = ui.renderer.anim[2].current();
     let mut text = FmtBuf::new();
-    fmt_val(&mut text, v, ValFmt::Uni);
+    fmt_val(&mut text, v, slot.format());
     let mut want = Fb::new();
     want.px.fill(fb.px[0]); // ground
-    components::focus_band(&mut want, "LEVEL", text.as_str(), v, false, None);
+    components::focus_band(
+        &mut want,
+        slot.label(),
+        text.as_str(),
+        v,
+        slot.format().is_bipolar(),
+        None,
+    );
     assert!(
         band(&fb, 28, 118) == band(&want, 28, 118),
-        "focus band is LEVEL {}",
+        "focus band is {} {}",
+        slot.label(),
         text.as_str()
     );
 }
@@ -81,7 +108,7 @@ fn focus_band_shows_the_last_touched_slot() {
 /// The focus value lerps toward the new value (CLAUDE.md: never snap).
 #[test]
 fn the_focus_value_animates_toward_its_target() {
-    let mut ui = ui_for("engine_pizza");
+    let mut ui = ui_for("engine_algo");
     let before = ui.renderer.anim[0].current();
     feed(&mut ui, Input::turn(EncoderId::A, 40));
     ui.update();
@@ -91,7 +118,7 @@ fn the_focus_value_animates_toward_its_target() {
 
 #[test]
 fn only_the_focused_cell_label_uses_the_accent() {
-    let fb = render("engine_pizza"); // focus SHAPE (slot a)
+    let fb = render("engine_algo"); // focus OP1 (slot a)
     let accent_in = |x0: i32| {
         (theme::CELL_LABEL_Y - 8..=theme::CELL_LABEL_Y)
             .any(|y| (x0..x0 + 60).any(|x| fb.at(x, y) == theme::ACCENT))

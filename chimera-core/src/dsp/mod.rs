@@ -82,22 +82,17 @@ pub fn fast_tan(x: f32) -> f32 {
     x * (1.0 + x2 * (1.0 / 3.0 + x2 * (2.0 / 15.0)))
 }
 
+pub mod algo;
 pub mod chorus;
 pub mod delay;
 pub mod drive;
-pub mod engine_fm;
 pub mod engines;
 pub mod envelope;
-pub mod envelope_fm;
 pub mod filter;
-pub mod fm_tables;
-pub mod fm_waveform;
 pub mod fx_bus;
 pub mod lfo;
 pub mod midiverb;
 pub mod modal;
-pub mod oscillator;
-pub mod pizza;
 pub mod reverb;
 pub mod voice;
 pub mod wavefolder;

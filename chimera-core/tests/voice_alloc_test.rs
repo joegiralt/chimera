@@ -6,7 +6,7 @@ use chimera_core::part::PartMode::{self, Mono, Poly};
 use chimera_core::voice_alloc::{Alloc, Allocator};
 
 const BUDGET: SampleBudget = SampleBudget::for_cpu(CPU_HZ_REV_V);
-const FM: Cost = Cost(610);
+const NOTE_COST: Cost = Cost(610);
 const NONE: Cost = Cost::ZERO;
 
 fn n(v: u8) -> MidiNote {
@@ -14,7 +14,7 @@ fn n(v: u8) -> MidiNote {
 }
 
 fn on(a: &mut Allocator, part: u8, mode: PartMode, note: u8) -> Alloc {
-    a.note_on(part, mode, n(note), FM, NONE)
+    a.note_on(part, mode, n(note), NOTE_COST, NONE)
 }
 
 fn voice(r: Alloc) -> usize {
@@ -258,9 +258,10 @@ fn random_play_keeps_the_pool_invariants() {
 }
 
 /// A Sound change re-costs its sounding voices; over the budget, the newest
-/// non-mono voices are shed until it fits.
+/// held voice is shed (ADR 0027): marked dying, still counted, freed when
+/// its fade ends.
 #[test]
-fn recost_sheds_the_newest_voices_over_budget() {
+fn recost_sheds_the_newest_held_voice_over_budget() {
     let mut a = Allocator::new(BUDGET);
     let fx = Cost(600);
     for i in 0..6 {
@@ -274,8 +275,104 @@ fn recost_sheds_the_newest_voices_over_budget() {
         shed.push(v);
     }
     assert_eq!(shed, [5], "newest first, only as many as needed");
+    assert!(a.slots()[5].dying() && !a.slots()[5].is_free());
+    assert_eq!(a.sounding_cost() + fx, Cost(6 * 1_210 + 600));
+    a.release_finished(5); // the fade ended
     assert!(a.slots()[5].is_free());
-    assert_eq!(a.sounding_cost() + fx, Cost(5 * 1_210 + 600));
+    assert!(a.sounding_cost() + fx <= BUDGET.as_cost());
+}
+
+/// ADR 0027: a recost over budget takes the oldest tail before any held note.
+#[test]
+fn recost_sheds_a_tail_before_a_held_note() {
+    let mut a = Allocator::new(BUDGET);
+    let fx = Cost(600);
+    for i in 0..6 {
+        on(&mut a, 0, Poly, 60 + i);
+    }
+    a.release(3);
+    a.release(1);
+    for v in 0..6 {
+        a.recost(v, Cost(1_210));
+    }
+    assert_eq!(a.shed(fx), Some(1), "the oldest tail");
+    assert_eq!(a.shed(fx), None);
+}
+
+/// A dying voice is neither stolen, retriggered nor shed again before its
+/// fade ends. A note-on takes it only when no voice is free.
+#[test]
+fn a_dying_voice_keeps_its_slot_until_freed() {
+    let mut a = Allocator::new(BUDGET);
+    let fx = Cost(600);
+    for i in 0..6 {
+        on(&mut a, 0, Poly, 60 + i);
+    }
+    a.release(2);
+    for v in 0..6 {
+        a.recost(v, Cost(1_210));
+    }
+    assert_eq!(a.shed(fx), Some(2));
+    // More over budget: the next shed takes another voice, never 2.
+    let mut shed = vec![2];
+    for v in 0..6 {
+        a.recost(v, Cost(1_500));
+    }
+    while let Some(v) = a.shed(fx) {
+        assert_ne!(v, 2, "shed twice");
+        shed.push(v);
+    }
+    for v in 0..6 {
+        a.recost(v, Cost(100)); // room again
+    }
+    let live = (0..6).find(|v| !shed.contains(v)).unwrap();
+    a.release(live);
+    a.release_finished(live);
+    assert_eq!(voice(on(&mut a, 1, Poly, 80)), live, "a free voice first");
+    assert!(a.slots()[2].dying());
+    assert_eq!(a.slots()[2].note(), Some(n(62)));
+    let v = voice(on(&mut a, 1, Poly, 81));
+    assert!(shed.contains(&v), "then a dying one, not a held note");
+    assert!(!a.slots()[v].dying() && a.slots()[v].held());
+    a.release_finished(v); // the old note's fade ended: the new one stays
+    assert_eq!(a.slots()[v].note(), Some(n(81)));
+    for &d in shed.iter().filter(|&&d| d != v) {
+        a.release_finished(d);
+        assert!(a.slots()[d].is_free());
+    }
+}
+
+/// #33 M7: a dying voice's cost does not count against a note-on, so over
+/// budget only by the dying voice, the note takes a free slot and steals
+/// nothing.
+#[test]
+fn a_note_on_does_not_pay_for_a_dying_voice() {
+    let mut a = Allocator::new(BUDGET);
+    let fx = Cost(600);
+    for i in 0..5 {
+        on(&mut a, 0, Poly, 60 + i);
+    }
+    for v in 0..5 {
+        a.recost(v, Cost(1_400)); // 7,600: one must go
+    }
+    assert_eq!(a.shed(fx), Some(4));
+    let v = voice(a.note_on(1, Poly, n(80), Cost(600), fx));
+    assert_eq!(v, 5, "a free voice");
+    assert!((0..4).all(|v| a.slots()[v].held() && a.slots()[v].note() == Some(n(60 + v as u8))));
+    assert!(a.slots()[4].dying());
+}
+
+/// A Mono part whose voice is dying takes another voice, not the dying one.
+#[test]
+fn a_mono_part_does_not_retrigger_its_dying_voice() {
+    let mut a = Allocator::new(BUDGET);
+    let m = voice(on(&mut a, 0, Mono, 60));
+    a.recost(m, Cost(7_001));
+    assert_eq!(a.shed(NONE), Some(m));
+    a.recost(m, Cost(100));
+    let v = voice(on(&mut a, 0, Mono, 62));
+    assert_ne!(v, m);
+    assert!(a.slots()[m].dying());
 }
 
 /// Review Focus: a Part switched from Poly to Mono while a chord is held
@@ -343,4 +440,29 @@ fn allocator_honours_the_budget_it_was_given() {
     };
     assert_eq!(sounding(480_000_000), 5);
     assert_eq!(sounding(400_000_000), 4);
+}
+
+/// Rule 2 with no voice free takes the dying voice nearest the end of its
+/// fade: the one shed first.
+#[test]
+fn a_note_on_takes_the_dying_voice_shed_first() {
+    let mut a = Allocator::new(BUDGET);
+    let fx = Cost(600);
+    for i in 0..6 {
+        on(&mut a, 0, Poly, 60 + i);
+    }
+    for v in 0..6 {
+        a.recost(v, Cost(1_100)); // 7,200: one must go
+    }
+    let first = a.shed(fx).unwrap();
+    assert_eq!(a.shed(fx), None);
+    for v in 0..6 {
+        a.recost(v, Cost(1_300)); // another must go
+    }
+    let second = a.shed(fx).unwrap();
+    assert_ne!(first, second);
+    for v in 0..6 {
+        a.recost(v, Cost(100));
+    }
+    assert_eq!(voice(on(&mut a, 1, Poly, 80)), first);
 }

@@ -2,6 +2,8 @@
 //! Simulates the desktop audio callback pattern: rendering blocks
 //! and scattering to variable-size output buffers.
 
+use chimera_core::dsp::algo::params::AlgoParams;
+use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::fx_bus::FxParams;
 use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::dsp::reverb::{Reverb, ReverbParams};
@@ -12,6 +14,13 @@ use chimera_core::{MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
 
 const SR: u32 = 48000;
+
+/// Operator 1 alone on the triangle.
+fn tri() -> ParamSnapshot {
+    let mut p = ParamSnapshot::for_engine(EngineType::Algo);
+    p.algo = AlgoParams::single(WaveId::TRI);
+    p
+}
 
 /// Simulate the audio callback: render blocks, scatter to output buffer,
 /// check for discontinuities (clicks) in the output stream.
@@ -72,14 +81,14 @@ fn check_no_clicks(
     );
 }
 
-// ── FM init sound (pure sine) ───────────────────────────────────────
+// ── Algo triangle ───────────────────────────────────────────────────
 
 #[test]
-fn test_no_clicks_fm_init() {
+fn test_no_clicks_algo_triangle() {
     check_no_clicks(
-        "Pizza init",
+        "Algo triangle",
         |p, _| {
-            *p = ParamSnapshot::for_engine(EngineType::Pizza);
+            *p = tri();
         },
         // Simulate realistic cpal callback pattern: varying buffer sizes
         &[256, 256, 256, 512, 256, 256, 128, 256, 512, 256],
@@ -87,12 +96,12 @@ fn test_no_clicks_fm_init() {
 }
 
 #[test]
-fn test_no_clicks_pizza_with_crush() {
+fn test_no_clicks_algo_with_pm() {
     check_no_clicks(
-        "Pizza crushed",
+        "Algo PM",
         |p, _| {
-            *p = ParamSnapshot::for_engine(EngineType::Pizza);
-            p.pizza.crush = 0.7;
+            *p = tri();
+            p.algo.ops[1].level = 70;
         },
         &[256, 256, 256, 256, 256, 256, 256, 256],
     );
@@ -101,11 +110,11 @@ fn test_no_clicks_pizza_with_crush() {
 // ── With reverb ─────────────────────────────────────────────────────
 
 #[test]
-fn test_no_clicks_pizza_with_plate_reverb() {
+fn test_no_clicks_algo_with_plate_reverb() {
     check_no_clicks(
-        "Pizza + plate reverb",
+        "Algo + plate reverb",
         |p, rv| {
-            *p = ParamSnapshot::for_engine(EngineType::Pizza);
+            *p = tri();
             rv.reverb_type = 0;
             rv.mix = 0.5;
             rv.time = 0.7;
@@ -115,11 +124,11 @@ fn test_no_clicks_pizza_with_plate_reverb() {
 }
 
 #[test]
-fn test_no_clicks_pizza_with_fdn_reverb() {
+fn test_no_clicks_algo_with_fdn_reverb() {
     check_no_clicks(
-        "Pizza + FDN reverb",
+        "Algo + FDN reverb",
         |p, rv| {
-            *p = ParamSnapshot::for_engine(EngineType::Pizza);
+            *p = tri();
             rv.reverb_type = 1;
             rv.mix = 0.5;
         },
@@ -128,11 +137,11 @@ fn test_no_clicks_pizza_with_fdn_reverb() {
 }
 
 #[test]
-fn test_no_clicks_fm_with_midiverb() {
+fn test_no_clicks_algo_with_midiverb() {
     check_no_clicks(
-        "FM + MidiVerb",
+        "Algo + MidiVerb",
         |p, rv| {
-            *p = ParamSnapshot::for_engine(EngineType::Pizza);
+            *p = tri();
             rv.reverb_type = 2;
             rv.mix = 0.5;
         },
@@ -199,9 +208,9 @@ fn test_no_clicks_modal() {
 #[test]
 fn test_no_clicks_odd_buffer_sizes() {
     check_no_clicks(
-        "FM with odd callback sizes",
+        "Algo with odd callback sizes",
         |p, _| {
-            *p = ParamSnapshot::for_engine(EngineType::Pizza);
+            *p = tri();
         },
         // Deliberately misaligned with BLOCK_SIZE=128
         &[100, 200, 50, 300, 150, 75, 250, 100, 400, 50],
@@ -211,9 +220,9 @@ fn test_no_clicks_odd_buffer_sizes() {
 #[test]
 fn test_no_clicks_tiny_buffers() {
     check_no_clicks(
-        "FM with tiny callbacks",
+        "Algo with tiny callbacks",
         |p, _| {
-            *p = ParamSnapshot::for_engine(EngineType::Pizza);
+            *p = tri();
         },
         // Very small buffers — stress the block boundary logic
         &[32, 32, 32, 32, 64, 32, 32, 32, 32, 64, 32, 32, 32, 32],
@@ -223,11 +232,267 @@ fn test_no_clicks_tiny_buffers() {
 #[test]
 fn test_no_clicks_single_sample_buffers() {
     check_no_clicks(
-        "FM with single-sample callbacks",
+        "Algo with single-sample callbacks",
         |p, _| {
-            *p = ParamSnapshot::for_engine(EngineType::Pizza);
+            *p = tri();
         },
         // Worst case: one sample per callback
         &[1; 512],
     );
+}
+
+/// ADR 0027: a killed voice ramps to 0 over `Voice::FADE` samples instead
+/// of stopping dead; no step is bigger than the signal's own.
+#[test]
+fn a_killed_voice_fades_out() {
+    let sound = chimera_core::factory::factory_sound(4).unwrap(); // SAW LEAD
+    let (p, m) = (&sound.params, &sound.mod_state);
+    let (mut a, mut b) = (Voice::new(SR), Voice::new(SR));
+    let mut block = [0.0f32; BLOCK_SIZE];
+    let mut last = 0.0;
+    for v in [&mut a, &mut b] {
+        v.note_on(MidiNote::new(60).unwrap(), Velocity::DEFAULT, p);
+        for _ in 0..20 {
+            v.render(&mut block, p, m);
+        }
+        last = block[BLOCK_SIZE - 1];
+    }
+    b.kill();
+    let (mut ra, mut rb) = (vec![last], vec![last]);
+    for _ in 0..Voice::FADE as usize / BLOCK_SIZE {
+        a.render(&mut block, p, m);
+        ra.extend_from_slice(&block);
+        b.kill(); // a second kill does not restart the fade
+        b.render(&mut block, p, m);
+        rb.extend_from_slice(&block);
+    }
+    let step = |x: &[f32]| x.windows(2).fold(0.0f32, |s, w| s.max((w[1] - w[0]).abs()));
+    let peak = ra.iter().fold(0.0f32, |s, x| s.max(x.abs()));
+    assert!(peak > 0.05, "the voice is sounding: {peak}");
+    assert_eq!(*rb.last().unwrap(), 0.0);
+    assert!(!b.is_active() && a.is_active());
+    assert!(
+        step(&rb) <= step(&ra),
+        "fade step {} > signal step {}",
+        step(&rb),
+        step(&ra)
+    );
+    b.render(&mut block, p, m);
+    assert!(block.iter().all(|&s| s == 0.0));
+}
+
+fn first_blocks(v: &mut Voice, note: u8, p: &ParamSnapshot, m: &ModState) -> Vec<u32> {
+    let mut block = [0.0f32; BLOCK_SIZE];
+    let mut out = Vec::new();
+    v.note_on(MidiNote::new(note).unwrap(), Velocity::DEFAULT, p);
+    for _ in 0..8 {
+        v.render(&mut block, p, m);
+        out.extend(block.iter().map(|s| s.to_bits()));
+    }
+    out
+}
+
+fn play_then_kill(v: &mut Voice, p: &ParamSnapshot, m: &ModState) {
+    let mut block = [0.0f32; BLOCK_SIZE];
+    v.note_on(MidiNote::new(60).unwrap(), Velocity::DEFAULT, p);
+    for _ in 0..40 {
+        v.render(&mut block, p, m);
+    }
+    v.kill();
+    for _ in 0..Voice::FADE as usize / BLOCK_SIZE {
+        v.render(&mut block, p, m);
+    }
+    assert!(!v.is_active());
+}
+
+/// A killed voice's next note is bit-identical to a fresh voice's: no
+/// stale engine or chain state (no click, a full attack).
+#[test]
+fn a_killed_voice_restarts_like_a_fresh_one() {
+    let sounds: Vec<(&str, ParamSnapshot, ModState)> = [("SQR BASS", 5usize), ("SAW LEAD", 4)]
+        .into_iter()
+        .map(|(name, i)| {
+            let s = chimera_core::factory::factory_sound(i).unwrap();
+            (name, s.params, s.mod_state)
+        })
+        .chain([(
+            "MODAL",
+            ParamSnapshot::for_engine(EngineType::Modal),
+            ModState::new(),
+        )])
+        .collect();
+    for (name, p, m) in &sounds {
+        let mut v = Voice::new(SR);
+        play_then_kill(&mut v, p, m);
+        let fresh = first_blocks(&mut Voice::new(SR), 64, p, m);
+        assert!(
+            fresh.iter().any(|&b| f32::from_bits(b) != 0.0),
+            "{name} silent"
+        );
+        assert!(
+            first_blocks(&mut v, 64, p, m) == fresh,
+            "{name}: reused voice differs"
+        );
+    }
+}
+
+/// Algo → Modal → Algo on one voice: the Algo engine left behind starts
+/// clean when it plays again.
+#[test]
+fn an_engine_round_trip_leaves_no_stale_state() {
+    let s = chimera_core::factory::factory_sound(5).unwrap(); // SQR BASS
+    let (p, m) = (&s.params, &s.mod_state);
+    let modal = ParamSnapshot::for_engine(EngineType::Modal);
+    let mut v = Voice::new(SR);
+    let mut block = [0.0f32; BLOCK_SIZE];
+    v.note_on(MidiNote::new(60).unwrap(), Velocity::DEFAULT, p);
+    for _ in 0..40 {
+        v.render(&mut block, p, m);
+    }
+    play_then_kill(&mut v, &modal, &ModState::new());
+    assert!(first_blocks(&mut v, 64, p, m) == first_blocks(&mut Voice::new(SR), 64, p, m));
+}
+
+fn max_step(x: &[f32]) -> f32 {
+    x.windows(2).fold(0.0f32, |s, w| s.max((w[1] - w[0]).abs()))
+}
+
+/// #33 M6: a Sound's engine change fades the old engine out over
+/// `Voice::FADE` on the settings it was playing: exactly a `kill` fade, no
+/// step bigger than the signal's own. The held note then restarts on the
+/// new engine exactly as on a fresh voice.
+#[test]
+fn an_engine_switch_fades_out_then_starts_clean() {
+    let factory = |i| {
+        let s = chimera_core::factory::factory_sound(i).unwrap();
+        (s.params, s.mod_state)
+    };
+    let modal = (
+        ParamSnapshot::for_engine(EngineType::Modal),
+        ModState::new(),
+    );
+    let tri = (tri(), ModState::new());
+    for (name, (from, fm), (to, tm)) in [
+        ("TRI→Modal", tri.clone(), modal.clone()),
+        ("SQR BASS→Modal", factory(5), modal.clone()),
+        ("MORPH PAD→Modal", factory(6), modal.clone()),
+        ("Modal→TRI", modal, tri),
+    ] {
+        let mut v = [Voice::new(SR), Voice::new(SR), Voice::new(SR)];
+        let mut block = [0.0f32; BLOCK_SIZE];
+        let mut last = 0.0;
+        for v in v.iter_mut() {
+            v.note_on(MidiNote::new(60).unwrap(), Velocity::DEFAULT, &from);
+            for _ in 0..20 {
+                v.render(&mut block, &from, &fm);
+            }
+            last = block[BLOCK_SIZE - 1];
+        }
+        let [a, b, c] = &mut v;
+        c.kill();
+        let (mut ra, mut rb, mut rc) = (vec![last], vec![last], vec![last]);
+        for _ in 0..Voice::FADE as usize / BLOCK_SIZE {
+            a.render(&mut block, &from, &fm);
+            ra.extend_from_slice(&block);
+            b.render(&mut block, &to, &tm);
+            rb.extend_from_slice(&block);
+            c.render(&mut block, &from, &fm);
+            rc.extend_from_slice(&block);
+        }
+        assert!(ra.iter().any(|x| x.abs() > 0.01), "{name}: sounding");
+        assert_eq!(*rb.last().unwrap(), 0.0, "{name}");
+        assert!(
+            rb.iter().zip(&rc).all(|(x, y)| x.to_bits() == y.to_bits()),
+            "{name}: differs from a kill fade"
+        );
+        assert!(
+            max_step(&rb) <= max_step(&ra),
+            "{name}: fade step {} > signal step {}",
+            max_step(&rb),
+            max_step(&ra)
+        );
+        let mut fresh = Voice::new(SR);
+        fresh.note_on(MidiNote::new(60).unwrap(), Velocity::DEFAULT, &to);
+        for i in 0..8 {
+            let mut f = [0.0f32; BLOCK_SIZE];
+            fresh.render(&mut f, &to, &tm);
+            b.render(&mut block, &to, &tm);
+            assert!(
+                block.map(f32::to_bits) == f.map(f32::to_bits),
+                "{name}: block {i} differs from a fresh voice"
+            );
+        }
+    }
+}
+
+/// A key up during an engine-switch fade ends the note: nothing restarts
+/// on the new engine.
+#[test]
+fn a_key_up_mid_switch_ends_the_note() {
+    let modal = ParamSnapshot::for_engine(EngineType::Modal);
+    let m = ModState::new();
+    let mut v = Voice::new(SR);
+    let mut block = [0.0f32; BLOCK_SIZE];
+    v.note_on(MidiNote::new(60).unwrap(), Velocity::DEFAULT, &tri());
+    for _ in 0..20 {
+        v.render(&mut block, &tri(), &m);
+    }
+    v.render(&mut block, &modal, &m); // the switch fade starts
+    v.note_off();
+    v.render(&mut block, &modal, &m);
+    assert!(!v.is_active());
+    v.render(&mut block, &modal, &m);
+    assert!(block.iter().all(|&s| s == 0.0));
+}
+
+/// An engine change fades a released tail out; it does not restart it as a
+/// held note that nothing will release.
+#[test]
+fn an_engine_switch_ends_a_released_tail() {
+    let modal = ParamSnapshot::for_engine(EngineType::Modal);
+    let m = ModState::new();
+    let mut v = Voice::new(SR);
+    let mut block = [0.0f32; BLOCK_SIZE];
+    v.note_on(MidiNote::new(60).unwrap(), Velocity::DEFAULT, &tri());
+    for _ in 0..20 {
+        v.render(&mut block, &tri(), &m);
+    }
+    v.note_off();
+    v.render(&mut block, &tri(), &m);
+    for _ in 0..Voice::FADE as usize / BLOCK_SIZE {
+        v.render(&mut block, &modal, &m);
+    }
+    assert!(!v.is_active());
+}
+
+/// #33 M7: a note-on on a fading voice waits for the fade, then starts
+/// exactly as on a fresh voice.
+#[test]
+fn a_note_on_mid_fade_starts_clean_after_it() {
+    let s = chimera_core::factory::factory_sound(4).unwrap(); // SAW LEAD
+    let (p, m) = (&s.params, &s.mod_state);
+    let mut v = Voice::new(SR);
+    let mut block = [0.0f32; BLOCK_SIZE];
+    v.note_on(MidiNote::new(60).unwrap(), Velocity::DEFAULT, p);
+    for _ in 0..20 {
+        v.render(&mut block, p, m);
+    }
+    v.kill();
+    v.render(&mut block, p, m);
+    v.note_on(MidiNote::new(64).unwrap(), Velocity::DEFAULT, p);
+    v.render(&mut block, p, m);
+    assert_eq!(block[BLOCK_SIZE - 1], 0.0, "the fade ran to the end");
+    let mut out = Vec::new();
+    for _ in 0..8 {
+        v.render(&mut block, p, m);
+        out.extend(block.iter().map(|s| s.to_bits()));
+    }
+    let mut fresh = Voice::new(SR);
+    fresh.note_on(MidiNote::new(64).unwrap(), Velocity::DEFAULT, p);
+    let mut want = Vec::new();
+    for _ in 0..8 {
+        fresh.render(&mut block, p, m);
+        want.extend(block.iter().map(|s| s.to_bits()));
+    }
+    assert!(out == want);
 }

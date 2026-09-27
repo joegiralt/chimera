@@ -159,18 +159,19 @@ fn test_chain_nav_starts_at_part0_engine() {
     assert_eq!(nav.chain_id, ChainId::Part(0));
     assert_eq!(nav.node, 0);
     assert_eq!(nav.sub_page, 0);
-    assert_eq!(PageKey::from_nav(&nav, Op::A), part(&reg::PIZZA));
+    assert_eq!(PageKey::from_nav(&nav, Op::A), part(&reg::ALGO_ALG));
 }
 
 #[test]
 fn test_page_from_nav_part_chain() {
     let mut nav = ChainNav::new();
     for (node, def) in [
-        (0, &reg::PIZZA),
-        (1, &reg::DRIVE),
-        (2, &reg::FILTER),
-        (3, &reg::FOLDER),
-        (4, &reg::MOD_MATRIX),
+        (0, &reg::ALGO_ALG),
+        (1, &reg::ALGO_WAVE),
+        (2, &reg::DRIVE),
+        (3, &reg::FILTER),
+        (4, &reg::FOLDER),
+        (5, &reg::MOD_MATRIX),
     ] {
         nav.node = node;
         assert_eq!(PageKey::from_nav(&nav, Op::A), part(def), "node {node}");
@@ -207,7 +208,7 @@ fn test_page_from_nav_demo_chain() {
     );
 }
 
-/// Spec §5: System gets its own page (it used to alias the Pizza page).
+/// Spec §5: System gets its own page (it used to alias an engine page).
 #[test]
 fn test_system_chain_has_its_own_page() {
     let mut nav = ChainNav::new();
@@ -318,4 +319,16 @@ fn test_part_and_out_pan_use_the_pan_format() {
     use chimera_core::part::PART_SPECS;
     assert_eq!(PART_SPECS[4].fmt, ValFmt::Pan);
     assert_eq!(OUT_SPECS[1].fmt, ValFmt::Pan);
+}
+
+#[test]
+fn test_fmt_signed() {
+    let mut buf = FmtBuf::new();
+    for (v, want) in [(0.0, "-3"), (0.5, "0"), (1.0, "+3"), (4.0 / 6.0, "+1")] {
+        buf.clear();
+        fmt_val(&mut buf, v, ValFmt::Signed(3));
+        assert_eq!(buf.as_str(), want);
+    }
+    assert!(ValFmt::Signed(3).is_discrete() && ValFmt::Signed(3).is_bipolar());
+    assert_eq!(ValFmt::Signed(24).max_int(), 48);
 }

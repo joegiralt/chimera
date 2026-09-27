@@ -2,11 +2,13 @@
 //! and display go through the bound param's spec. Parity tests pin today's
 //! step sizes (plan § Encoder step audit).
 
-use chimera_core::addr::Op;
+use chimera_core::addr::{BlockRef, Op, ParamAddr};
+use chimera_core::dsp::algo::params::AlgoOpParams;
 use chimera_core::dsp::modal::ResonatorMode;
-use chimera_core::params::ParamSnapshot;
-use chimera_core::ui::block_def::BlockDef;
+use chimera_core::params::{EngineType, ParamSnapshot};
+use chimera_core::ui::block_def::{BlockDef, ParamSlot, VizType, slot_addr};
 use chimera_core::ui::block_registry as reg;
+use chimera_core::ui::page::PageLayout;
 use chimera_core::ui::part_page;
 
 /// One encoder turn with operator A selected.
@@ -21,19 +23,6 @@ fn snap(def: &BlockDef, slot: usize, delta: i8, p: &mut ParamSnapshot) {
 
 fn read(def: &BlockDef, p: &ParamSnapshot) -> [f32; 6] {
     part_page::read_values(def, p, Op::A)
-}
-
-#[test]
-fn pizza_page() {
-    let mut p = ParamSnapshot::default();
-    assert_eq!(read(&reg::PIZZA, &p), [0.5, 0.0, 0.8, 0.0, 0.0, 0.0]);
-    turn(&reg::PIZZA, 0, 3, &mut p);
-    assert_eq!(p.pizza.shape, 0.5 + 3.0 * (1.0 / 128.0));
-    turn(&reg::PIZZA, 2, 127, &mut p);
-    assert_eq!(p.pizza.level, 1.0);
-    snap(&reg::PIZZA, 1, 1, &mut p); // shift-snap works on Pizza (spec)
-    assert_eq!(p.pizza.crush, 100.0 / 127.0);
-    turn(&reg::PIZZA, 4, 1, &mut p); // empty slot: nothing happens
 }
 
 #[test]
@@ -111,45 +100,112 @@ fn envelope_and_lfo_pages() {
     assert_eq!(p.lfo.shape, 0);
 }
 
+/// The selector machinery sub-project 4's per-operator pages will use.
+static OP_PAGE: BlockDef = BlockDef {
+    id: 63,
+    name: "Op",
+    short: "OP",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::select_op(),
+        ParamSlot::selected_op(AlgoOpParams::LEVEL),
+        ParamSlot::selected_op(AlgoOpParams::DETUNE),
+        ParamSlot::EMPTY,
+        ParamSlot::EMPTY,
+        ParamSlot::EMPTY,
+    ],
+};
+
 #[test]
-fn fm_operator_page_follows_the_selection() {
+fn select_op_page_follows_the_selection() {
     let mut p = ParamSnapshot::default();
     let mut op = Op::A;
-    part_page::apply_encoder(&reg::FM_OP, 0, 1, &mut p, &mut op); // selector
+    part_page::apply_encoder(&OP_PAGE, 0, 1, &mut p, &mut op);
     assert_eq!(op, Op::B);
-    part_page::apply_encoder(&reg::FM_OP, 0, 9, &mut p, &mut op);
-    assert_eq!(op, Op::D);
-    part_page::apply_encoder(&reg::FM_OP, 0, -2, &mut p, &mut op);
+    part_page::apply_encoder(&OP_PAGE, 0, 9, &mut p, &mut op);
+    assert_eq!(op, Op::F);
+    part_page::apply_encoder(&OP_PAGE, 0, -4, &mut p, &mut op);
     assert_eq!(op, Op::B);
-    part_page::apply_encoder(&reg::FM_OP, 2, 5, &mut p, &mut op);
-    assert_eq!(p.fm.operators[1].level, 5.0);
-    part_page::apply_encoder(&reg::FM_OP, 4, -9, &mut p, &mut op);
-    assert_eq!(p.fm.operators[1].detune, -7);
-    part_page::apply_encoder(&reg::FM_RATIO, 4, 1, &mut p, &mut op); // FINE of B
-    assert_eq!(p.fm.operators[1].fine, 1);
-    assert_eq!(part_page::read_values(&reg::FM_OP, &p, op)[0], 1.0 / 3.0);
-    // Review Focus 3: snapping a Stepped level lands on an integer.
-    part_page::snap_encoder(&reg::FM_OP, 2, 1, &mut p, op);
-    assert_eq!(p.fm.operators[1].level, 78.0); // 99 * 100/127 = 77.95 → 78
-    part_page::snap_encoder(&reg::FM_OP, 0, 1, &mut p, op); // selector: no snap
+    part_page::apply_encoder(&OP_PAGE, 1, 5, &mut p, &mut op);
+    assert_eq!(p.algo.ops[1].level, 5);
+    part_page::apply_encoder(&OP_PAGE, 2, -9, &mut p, &mut op);
+    assert_eq!(p.algo.ops[1].detune, -3);
+    assert_eq!(part_page::read_values(&OP_PAGE, &p, op)[0], 1.0 / 5.0);
+    part_page::snap_encoder(&OP_PAGE, 1, 1, &mut p, op); // Int(99): the snap is the top
+    assert_eq!(p.algo.ops[1].level, 99);
+    part_page::snap_encoder(&OP_PAGE, 0, 1, &mut p, op); // selector: no snap
     assert_eq!(op, Op::B);
 }
 
+/// Review Focus 5 (spec §5): a route primed on a `SelectedOp` slot names
+/// the operator selected at that moment.
 #[test]
-fn fm_fixed_pages() {
-    let mut p = ParamSnapshot::default();
-    turn(&reg::FM_ALG, 0, 9, &mut p);
-    assert_eq!(p.fm.algorithm, 7);
-    turn(&reg::FM_ALG, 2, 1, &mut p); // LEVEL = voice output volume
-    assert_eq!(p.out.volume, 0.8 + 1.0 / 128.0);
-    turn(&reg::FM_RATIO, 2, 1, &mut p);
-    assert_eq!(p.fm.operators[2].coarse, 5);
-    snap(&reg::FM_RATIO, 0, 1, &mut p);
-    assert_eq!(p.fm.operators[0].coarse, 63);
-    turn(&reg::FM_ENV3, 2, -1, &mut p);
-    assert_eq!(p.fm.operators[2].decay1_level, 14);
-    turn(&reg::FM_ENV2, 4, -20, &mut p); // plan D4: RR reaches 0
-    assert_eq!(p.fm.operators[1].release_rate, 0);
-    snap(&reg::FM_ENV1, 0, -1, &mut p);
-    assert_eq!(p.fm.operators[0].attack_rate, 0);
+fn a_selected_op_slot_resolves_to_the_operator_selected_now() {
+    let level = |op| Some(ParamAddr::new(BlockRef::AlgoOp(op), AlgoOpParams::LEVEL));
+    assert_eq!(slot_addr(&OP_PAGE, 1, Op::B), level(Op::B));
+    assert_eq!(slot_addr(&OP_PAGE, 1, Op::F), level(Op::F));
+    assert_eq!(slot_addr(&OP_PAGE, 0, Op::B), None);
+}
+
+#[test]
+fn algo_pages_edit_every_operator_and_the_algorithm() {
+    let mut p = ParamSnapshot::for_engine(EngineType::Algo);
+    for slot in 0..6 {
+        turn(&reg::ALGO_WAVE, slot, 1 + slot as i8, &mut p);
+    }
+    assert_eq!(p.algo.ops.map(|o| o.wave), [1, 2, 3, 4, 5, 6]);
+    turn(&reg::ALGO_LEVEL, 5, 40, &mut p);
+    assert_eq!(p.algo.ops[5].level, 40);
+    turn(&reg::ALGO_LEVEL, 0, 5, &mut p);
+    assert_eq!(p.algo.ops[0].level, 99, "clamped");
+    turn(&reg::ALGO_ALG, 0, 21, &mut p);
+    turn(&reg::ALGO_ALG, 1, 29, &mut p);
+    turn(&reg::ALGO_ALG, 2, 64, &mut p);
+    turn(&reg::ALGO_ALG, 3, -30, &mut p);
+    assert_eq!(
+        (p.algo.alg_a, p.algo.alg_b, p.algo.morph, p.algo.transpose),
+        (21, 29, 64, -24)
+    );
+    snap(&reg::ALGO_ALG, 2, 1, &mut p); // MIX + turn snaps MORPH like any Uni value
+    assert_eq!(p.algo.morph, 100);
+}
+
+#[test]
+fn the_osc_node_has_every_operator_parameter() {
+    use chimera_core::dsp::algo::params::ALGO_OP_SPECS;
+    use chimera_core::ui::block_def::SlotBinding;
+    let block = reg::ALGO_CHAIN
+        .blocks
+        .iter()
+        .find(|b| b.def.id == reg::ALGO_WAVE.id)
+        .unwrap();
+    let mut edited = Vec::new();
+    for sub in 0..block.sub_page_count() {
+        let def = block.active_def(sub);
+        for (i, slot) in def.params.iter().enumerate() {
+            let SlotBinding::Param(a) = slot.binding else {
+                panic!("{} slot {i}", def.name)
+            };
+            assert_eq!(
+                a.block,
+                BlockRef::AlgoOp(Op::ALL[i]),
+                "{} slot {i}",
+                def.name
+            );
+            edited.push(a.param);
+        }
+    }
+    for s in &ALGO_OP_SPECS {
+        assert!(edited.contains(&s.id), "{} has no page", s.label);
+    }
+    let names: Vec<&str> = (0..block.sub_page_count())
+        .map(|s| block.active_def(s).short)
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "OSC", "CRS", "FIN", "DET", "LVL", "VEL", "AR", "D1R", "D1L", "D2R", "RR", "RS", "FBK"
+        ]
+    );
 }

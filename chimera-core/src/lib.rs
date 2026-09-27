@@ -7,6 +7,7 @@ pub mod audio_out;
 pub mod block;
 pub mod clock_plan;
 pub mod dsp;
+pub mod factory;
 pub mod hw;
 mod in_place;
 pub mod instrument;

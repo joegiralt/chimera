@@ -58,8 +58,8 @@ impl Controls for MockControls {
 
 #[test]
 fn patch_init_has_musically_useful_defaults() {
-    let p = Sound::init(ChainType::PizzaPoly);
-    assert_eq!(p.chain_type, ChainType::PizzaPoly);
+    let p = Sound::init(ChainType::Algo);
+    assert_eq!(p.chain_type, ChainType::Algo);
     assert!(p.params.out.volume > 0.0);
     assert!(p.params.filter.cutoff > 1000.0);
     assert!(p.name_str().starts_with("(init)"));
@@ -75,10 +75,10 @@ fn sound_pool_starts_empty() {
 #[test]
 fn sound_pool_store_and_retrieve() {
     let mut pool = SoundPool::new();
-    let sound = Sound::init(ChainType::PizzaPoly);
+    let sound = Sound::init(ChainType::Algo);
     pool.store(0, sound);
     assert!(pool.get(0).is_some());
-    assert_eq!(pool.get(0).unwrap().chain_type, ChainType::PizzaPoly);
+    assert_eq!(pool.get(0).unwrap().chain_type, ChainType::Algo);
 }
 
 #[test]
@@ -89,19 +89,19 @@ fn sound_pool_slot_count() {
 
 #[test]
 fn part_starts_with_init_patch() {
-    let part = Part::new(ChainType::PizzaPoly);
-    assert_eq!(part.sound.chain_type, ChainType::PizzaPoly);
+    let part = Part::new(ChainType::Algo);
+    assert_eq!(part.sound.chain_type, ChainType::Algo);
     assert!(part.loaded_from.is_none());
 }
 
 #[test]
 fn part_load_from_pool_copies() {
     let mut pool = SoundPool::new();
-    let mut sound = Sound::init(ChainType::PizzaPoly);
+    let mut sound = Sound::init(ChainType::Algo);
     sound.name = *b"Acid Bass\0\0\0\0\0\0\0";
     pool.store(3, sound);
 
-    let mut part = Part::new(ChainType::PizzaPoly);
+    let mut part = Part::new(ChainType::Algo);
     part.load_from_pool(&pool, 3);
 
     assert_eq!(part.sound.name_str(), "Acid Bass");
@@ -111,9 +111,9 @@ fn part_load_from_pool_copies() {
 #[test]
 fn part_edit_does_not_modify_pool() {
     let mut pool = SoundPool::new();
-    pool.store(0, Sound::init(ChainType::PizzaPoly));
+    pool.store(0, Sound::init(ChainType::Algo));
 
-    let mut part = Part::new(ChainType::PizzaPoly);
+    let mut part = Part::new(ChainType::Algo);
     part.load_from_pool(&pool, 0);
     part.sound.params.out.volume = 0.0; // mute
     assert_eq!(
@@ -128,7 +128,7 @@ fn part_edit_does_not_modify_pool() {
 #[test]
 fn part_save_to_pool_overwrites() {
     let mut pool = SoundPool::new();
-    pool.store(5, Sound::init(ChainType::PizzaPoly));
+    pool.store(5, Sound::init(ChainType::Algo));
 
     let mut part = Part::new(ChainType::Modal);
     part.sound.name = *b"My Sound\0\0\0\0\0\0\0\0";
@@ -144,7 +144,7 @@ fn performance_has_six_parts_playing_sounds() {
     let perf = Performance::new();
     assert_eq!(perf.parts.len(), chimera_core::hw::MAX_PARTS);
     let sound: &Sound = &perf.parts[0].sound;
-    assert_eq!(sound.chain_type, ChainType::PizzaPoly);
+    assert_eq!(sound.chain_type, ChainType::Algo);
     assert_eq!(&perf.name, b"New Performance\0");
 }
 
@@ -248,7 +248,7 @@ fn browser_load_copies_patch_to_part() {
     let mut ui = UiState::new();
 
     // Store a named sound in pool slot 2
-    let mut sound = Sound::init(ChainType::PizzaPoly);
+    let mut sound = Sound::init(ChainType::Algo);
     sound.name = *b"Test Sound\0\0\0\0\0\0";
     ui.pool.store(2, sound);
 
@@ -330,13 +330,13 @@ fn browser_init_entries_set_chain_type() {
             .starts_with("(init)")
     );
 
-    // Open browser again, scroll to "(init) FM" (POOL_SIZE + 2)
+    // Open browser again, scroll to "(init) Algo" (POOL_SIZE)
     open_browser(&mut ui, ButtonId::B1);
-    ui.handle_input(&MockControls::new().encoder(EncoderId::Main, (POOL_SIZE + 2) as i8));
+    ui.handle_input(&MockControls::new().encoder(EncoderId::Main, POOL_SIZE as i8));
     ui.handle_input(&MockControls::new().button(ButtonId::Edit, ButtonState::Pressed));
 
     assert!(matches!(ui.ui_mode, UiMode::Normal));
-    assert_eq!(ui.performance.parts[0].sound.chain_type, ChainType::Fm);
+    assert_eq!(ui.performance.parts[0].sound.chain_type, ChainType::Algo);
 }
 
 /// Loading from the browser replaces the Sound only: the Part keeps its
@@ -347,9 +347,9 @@ fn browser_load_keeps_part_mix() {
     ui.performance.parts[2].mix.channel = chimera_core::MidiChannel::new(9).unwrap();
     ui.performance.parts[2].mix.level = 0.3;
     open_browser(&mut ui, ButtonId::B3);
-    ui.handle_input(&MockControls::new().encoder(EncoderId::Main, (POOL_SIZE + 2) as i8));
+    ui.handle_input(&MockControls::new().encoder(EncoderId::Main, (POOL_SIZE + 1) as i8));
     ui.handle_input(&MockControls::new().button(ButtonId::Edit, ButtonState::Pressed));
-    assert_eq!(ui.performance.parts[2].sound.chain_type, ChainType::Fm);
+    assert_eq!(ui.performance.parts[2].sound.chain_type, ChainType::Modal);
     assert_eq!(ui.performance.parts[2].mix.channel.get(), 9);
     assert_eq!(ui.performance.parts[2].mix.level, 0.3);
 }
@@ -374,12 +374,13 @@ fn primed(ui: &UiState) -> Vec<chimera_core::addr::ParamAddr> {
     (0..reg.len()).map(|i| reg.get(i).unwrap().addr).collect()
 }
 
-/// Positive control: the Pizza filter page primes cutoff.
+/// Positive control: the filter page primes cutoff.
 #[test]
 fn priming_on_main_page_registers_focused_param() {
     let mut ui = UiState::new();
     press(&mut ui, ButtonId::Plus);
-    press(&mut ui, ButtonId::Plus); // node 2: Filter
+    press(&mut ui, ButtonId::Plus);
+    press(&mut ui, ButtonId::Plus); // node 3: Filter
     prime(&mut ui); // slot 0: cutoff
     assert_eq!(
         primed(&ui),
@@ -390,12 +391,12 @@ fn priming_on_main_page_registers_focused_param() {
     );
 }
 
-/// Pizza LFO sub-page (node 4, sub-page 2): slot 0 is LFO rate, which is not
+/// LFO sub-page (node 5, sub-page 2): slot 0 is LFO rate, which is not
 /// modulatable, so the registry refuses it.
 #[test]
-fn priming_on_pizza_lfo_sub_page_registers_nothing() {
+fn priming_on_the_lfo_sub_page_registers_nothing() {
     let mut ui = UiState::new();
-    for _ in 0..4 {
+    for _ in 0..5 {
         press(&mut ui, ButtonId::Plus);
     }
     press(&mut ui, ButtonId::Edit);
@@ -411,27 +412,22 @@ fn priming_on_pizza_lfo_sub_page_registers_nothing() {
     assert!(primed(&ui).is_empty());
 }
 
-/// FmRatio slot 2 edits op C coarse, which is not modulatable, so the
-/// registry refuses it and nothing new is registered.
+/// The WAVE page's slots are Enums, never modulatable, so the registry
+/// refuses them and nothing is registered.
 #[test]
-fn priming_on_fm_ratio_slot_2_registers_nothing() {
+fn priming_a_wave_registers_nothing() {
     let mut ui = UiState::new();
-    ui.performance.parts[0] = Part::new(ChainType::Fm);
-    ui.nav.chain_type = ChainType::Fm;
-    press(&mut ui, ButtonId::Edit);
-    press(&mut ui, ButtonId::Edit); // sub-page 2: FmRatio
+    press(&mut ui, ButtonId::Plus); // WAVE
     assert_eq!(
         ui.page(),
         PageKey::Part {
-            def: reg::FM_RATIO.id,
+            def: reg::ALGO_WAVE.id,
             op: Op::A
         }
     );
     ui.handle_input(&MockControls::new().encoder(EncoderId::C, 1)); // focus slot 2
-    let before = primed(&ui);
-    assert!(before.is_empty()); // no FM init pre-wire since Task 22
     prime(&mut ui);
-    assert_eq!(primed(&ui), before);
+    assert!(primed(&ui).is_empty());
 }
 
 /// `Performance::default()` is `Performance::new()` (clippy new_without_default).

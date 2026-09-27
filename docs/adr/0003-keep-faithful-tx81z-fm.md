@@ -1,6 +1,6 @@
 # 0003. Keep the faithful TX81Z 4-op FM engine
 
-- **Status:** Accepted (2026-09-23)
+- **Status:** Accepted (2026-09-23); superseded by [0022](0022-one-algorithmic-engine.md)
 - **Deciders:** project owner
 
 ## Context

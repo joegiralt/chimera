@@ -26,24 +26,20 @@ fn render_voice(engine: EngineType, note: u8, blocks: usize) -> Vec<f32> {
 }
 
 #[test]
-fn test_pizza_and_modal_produce_different_output() {
-    let pizza_buf = render_voice(EngineType::Pizza, 60, 16);
+fn test_algo_and_modal_produce_different_output() {
+    let algo_buf = render_voice(EngineType::Algo, 60, 16);
     let modal_buf = render_voice(EngineType::Modal, 60, 16);
 
-    let pizza_rms: f32 =
-        libm::sqrtf(pizza_buf.iter().map(|s| s * s).sum::<f32>() / pizza_buf.len() as f32);
+    let algo_rms: f32 =
+        libm::sqrtf(algo_buf.iter().map(|s| s * s).sum::<f32>() / algo_buf.len() as f32);
     let modal_rms: f32 =
         libm::sqrtf(modal_buf.iter().map(|s| s * s).sum::<f32>() / modal_buf.len() as f32);
 
-    eprintln!("Pizza RMS: {}", pizza_rms);
+    eprintln!("Algo RMS: {}", algo_rms);
     eprintln!("Modal RMS: {}", modal_rms);
 
     // Both should produce sound
-    assert!(
-        pizza_rms > 0.001,
-        "Pizza should produce sound: {}",
-        pizza_rms
-    );
+    assert!(algo_rms > 0.001, "Algo should produce sound: {}", algo_rms);
     assert!(
         modal_rms > 0.001,
         "Modal should produce sound: {}",
@@ -51,17 +47,17 @@ fn test_pizza_and_modal_produce_different_output() {
     );
 
     // They should sound DIFFERENT — compare sample-by-sample
-    let diff: f32 = pizza_buf
+    let diff: f32 = algo_buf
         .iter()
         .zip(modal_buf.iter())
         .map(|(a, b)| (a - b).abs())
         .sum::<f32>()
-        / pizza_buf.len() as f32;
+        / algo_buf.len() as f32;
 
     eprintln!("Average sample difference: {}", diff);
     assert!(
         diff > 0.001,
-        "Pizza and Modal should produce different output, diff={}",
+        "Algo and Modal should produce different output, diff={}",
         diff
     );
 }
@@ -71,8 +67,8 @@ fn test_engine_type_is_respected() {
     let empty_mod = ModState::new();
     let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
 
-    // Start with Pizza
-    let mut params = ParamSnapshot::for_engine(EngineType::Pizza);
+    // Start with Algo
+    let mut params = ParamSnapshot::for_engine(EngineType::Algo);
     voice.note_on(
         MidiNote::new(60).unwrap(),
         Velocity::new(100).unwrap(),
@@ -81,7 +77,7 @@ fn test_engine_type_is_respected() {
 
     let mut block = [0.0f32; 64];
     voice.render(&mut block, &params, &empty_mod);
-    let pizza_sample = block[32];
+    let algo_sample = block[32];
 
     // Now switch to Modal
     let mut voice2 = Voice::new(chimera_hal::SAMPLE_RATE);
@@ -96,14 +92,14 @@ fn test_engine_type_is_respected() {
     voice2.render(&mut block2, &params, &empty_mod);
     let modal_sample = block2[32];
 
-    eprintln!("Pizza sample[32]: {}", pizza_sample);
+    eprintln!("Algo sample[32]: {}", algo_sample);
     eprintln!("Modal sample[32]: {}", modal_sample);
 
     // At the very least, they shouldn't be identical
     assert!(
-        (pizza_sample - modal_sample).abs() > 0.0001,
-        "different engines should produce different samples: pizza={} modal={}",
-        pizza_sample,
+        (algo_sample - modal_sample).abs() > 0.0001,
+        "different engines should produce different samples: algo={} modal={}",
+        algo_sample,
         modal_sample
     );
 }
@@ -137,9 +133,9 @@ fn test_modal_has_percussive_character() {
 }
 
 #[test]
-fn test_pizza_sustains_while_modal_decays() {
-    // Pizza with default envelope should sustain, Modal should decay
-    let pizza_buf = render_voice(EngineType::Pizza, 60, 64);
+fn test_algo_sustains_while_modal_decays() {
+    // Algo's init patch holds at D1L 15 until note-off, Modal should decay
+    let algo_buf = render_voice(EngineType::Algo, 60, 64);
     let modal_buf = render_voice(EngineType::Modal, 60, 64);
 
     // Measure energy in last quarter of each
@@ -149,21 +145,21 @@ fn test_pizza_sustains_while_modal_decays() {
         libm::sqrtf(slice.iter().map(|s| s * s).sum::<f32>() / slice.len() as f32)
     };
 
-    let pizza_late = last_quarter(&pizza_buf);
+    let algo_late = last_quarter(&algo_buf);
     let modal_late = last_quarter(&modal_buf);
 
-    eprintln!("Pizza late RMS: {}", pizza_late);
+    eprintln!("Algo late RMS: {}", algo_late);
     eprintln!("Modal late RMS: {}", modal_late);
 
-    // Pizza should sustain (it has an amp envelope)
+    // Algo should sustain (it holds at D1L until note-off)
     assert!(
-        pizza_late > 0.01,
-        "Pizza should sustain: pizza_late={}",
-        pizza_late,
+        algo_late > 0.01,
+        "Algo should sustain: algo_late={}",
+        algo_late,
     );
 }
 
-/// Spec § Testing "Engines": every engine pair switches mid-note (hard cut,
+/// Spec § Testing "Engines": every engine pair switches mid-note (fade,
 /// retrigger) without panicking or producing non-finite output.
 #[test]
 fn every_engine_pair_switches_mid_note() {

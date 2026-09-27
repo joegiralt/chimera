@@ -1,38 +1,17 @@
 use crate::addr::{BlockRef, Op};
+use crate::block::ParamId;
+use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::chorus::ChorusParams;
 use crate::dsp::delay::DelayParams;
 use crate::dsp::lfo::LfoParams;
 use crate::dsp::modal::ModalParams;
-use crate::dsp::pizza::PizzaParams;
 use crate::dsp::reverb::ReverbParams;
-use crate::params::{
-    DriveParams, EnvParams, FilterParams, FmOpParams, FmParams, FolderParams, OutParams,
-};
+use crate::params::{DriveParams, EnvParams, FilterParams, FolderParams, OutParams};
 use crate::part::PartParams;
 use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2, ParamSlot, VizType};
 use crate::ui::page::{PageLayout, ValFmt};
 
 const EMPTY: ParamSlot = ParamSlot::EMPTY;
-
-// ---------------------------------------------------------------------------
-// Pizza engine
-// ---------------------------------------------------------------------------
-
-pub static PIZZA: BlockDef = BlockDef {
-    id: 1,
-    name: "Pizza",
-    short: "PIZ",
-    layout: PageLayout::CellGrid,
-    viz: VizType::None,
-    params: [
-        ParamSlot::param(BlockRef::Pizza, PizzaParams::SHAPE),
-        ParamSlot::param(BlockRef::Pizza, PizzaParams::CRUSH),
-        ParamSlot::param(BlockRef::Pizza, PizzaParams::LEVEL),
-        EMPTY,
-        EMPTY,
-        EMPTY,
-    ],
-};
 
 // ---------------------------------------------------------------------------
 // Modal engine pages
@@ -67,79 +46,6 @@ pub static MODAL_2: BlockDef = BlockDef {
         ParamSlot::param(BlockRef::Modal, ModalParams::KS_ENS_DEPTH),
         ParamSlot::param(BlockRef::Modal, ModalParams::KS_ENS_RATE),
         ParamSlot::param(BlockRef::Modal, ModalParams::KS_ENS_MIX),
-    ],
-};
-
-// ---------------------------------------------------------------------------
-// VA engine
-// ---------------------------------------------------------------------------
-
-pub static VA: BlockDef = BlockDef {
-    id: 4,
-    name: "VA Osc",
-    short: "VA",
-    layout: PageLayout::CellGrid,
-    viz: VizType::None,
-    params: [
-        ParamSlot::legacy("WAVE", ValFmt::Uni),
-        ParamSlot::legacy("PW", ValFmt::Uni),
-        ParamSlot::legacy("SYNC", ValFmt::Uni),
-        ParamSlot::legacy("SUB", ValFmt::Uni),
-        ParamSlot::legacy("DETUNE", ValFmt::Uni),
-        ParamSlot::legacy("MIX", ValFmt::Bi),
-    ],
-};
-
-// ---------------------------------------------------------------------------
-// FM engine pages
-// ---------------------------------------------------------------------------
-
-pub static FM_ALG: BlockDef = BlockDef {
-    id: 5,
-    name: "4opFM",
-    short: "FM",
-    layout: PageLayout::CellGrid,
-    viz: VizType::AlgorithmDiagram,
-    params: [
-        ParamSlot::param(BlockRef::Fm, FmParams::ALGORITHM),
-        EMPTY,
-        // One address per physical param: the voice's output level.
-        ParamSlot::param(BlockRef::Out, OutParams::VOLUME),
-        EMPTY,
-        EMPTY,
-        EMPTY,
-    ],
-};
-
-pub static FM_OP: BlockDef = BlockDef {
-    id: 6,
-    name: "Operator",
-    short: "OP",
-    layout: PageLayout::CellGrid,
-    viz: VizType::AlgorithmDiagram,
-    params: [
-        ParamSlot::select_op(),
-        ParamSlot::selected_op(FmOpParams::WAVEFORM),
-        ParamSlot::selected_op(FmOpParams::LEVEL),
-        ParamSlot::selected_op(FmOpParams::FEEDBACK),
-        ParamSlot::selected_op(FmOpParams::DETUNE),
-        ParamSlot::selected_op(FmOpParams::VELOCITY_SENS),
-    ],
-};
-
-pub static FM_RATIO: BlockDef = BlockDef {
-    id: 7,
-    name: "Ratios",
-    short: "RAT",
-    layout: PageLayout::CellGrid,
-    viz: VizType::None,
-    params: [
-        ParamSlot::param(BlockRef::FmOp(Op::A), FmOpParams::COARSE).with_label("OP1"),
-        ParamSlot::param(BlockRef::FmOp(Op::B), FmOpParams::COARSE).with_label("OP2"),
-        ParamSlot::param(BlockRef::FmOp(Op::C), FmOpParams::COARSE).with_label("OP3"),
-        ParamSlot::param(BlockRef::FmOp(Op::D), FmOpParams::COARSE).with_label("OP4"),
-        ParamSlot::selected_op(FmOpParams::FINE),
-        EMPTY,
     ],
 };
 
@@ -404,70 +310,59 @@ pub static MOD_MATRIX: BlockDef = BlockDef {
 };
 
 // ---------------------------------------------------------------------------
-// TX81Z 5-stage envelopes (one per FM operator)
+// Algo engine: group pages, one parameter across operators 1–6 (spec § UI)
 // ---------------------------------------------------------------------------
 
-pub static FM_ENV1: BlockDef = BlockDef {
-    id: 23,
-    name: "Op1 Env",
-    short: "E1",
-    layout: PageLayout::BigViz,
-    viz: VizType::FmEnvelope,
-    params: [
-        ParamSlot::param(BlockRef::FmOp(Op::A), FmOpParams::ATTACK_RATE),
-        ParamSlot::param(BlockRef::FmOp(Op::A), FmOpParams::DECAY1_RATE),
-        ParamSlot::param(BlockRef::FmOp(Op::A), FmOpParams::DECAY1_LEVEL),
-        ParamSlot::param(BlockRef::FmOp(Op::A), FmOpParams::DECAY2_RATE),
-        ParamSlot::param(BlockRef::FmOp(Op::A), FmOpParams::RELEASE_RATE),
-        ParamSlot::param(BlockRef::FmOp(Op::A), FmOpParams::RATE_SCALING),
-    ],
-};
+const fn op_row(id: ParamId) -> [ParamSlot; 6] {
+    [
+        ParamSlot::param(BlockRef::AlgoOp(Op::A), id).with_label("OP1"),
+        ParamSlot::param(BlockRef::AlgoOp(Op::B), id).with_label("OP2"),
+        ParamSlot::param(BlockRef::AlgoOp(Op::C), id).with_label("OP3"),
+        ParamSlot::param(BlockRef::AlgoOp(Op::D), id).with_label("OP4"),
+        ParamSlot::param(BlockRef::AlgoOp(Op::E), id).with_label("OP5"),
+        ParamSlot::param(BlockRef::AlgoOp(Op::F), id).with_label("OP6"),
+    ]
+}
 
-pub static FM_ENV2: BlockDef = BlockDef {
-    id: 24,
-    name: "Op2 Env",
-    short: "E2",
-    layout: PageLayout::BigViz,
-    viz: VizType::FmEnvelope,
-    params: [
-        ParamSlot::param(BlockRef::FmOp(Op::B), FmOpParams::ATTACK_RATE),
-        ParamSlot::param(BlockRef::FmOp(Op::B), FmOpParams::DECAY1_RATE),
-        ParamSlot::param(BlockRef::FmOp(Op::B), FmOpParams::DECAY1_LEVEL),
-        ParamSlot::param(BlockRef::FmOp(Op::B), FmOpParams::DECAY2_RATE),
-        ParamSlot::param(BlockRef::FmOp(Op::B), FmOpParams::RELEASE_RATE),
-        ParamSlot::param(BlockRef::FmOp(Op::B), FmOpParams::RATE_SCALING),
-    ],
-};
+const fn group(id: u16, name: &'static str, short: &'static str, param: ParamId) -> BlockDef {
+    BlockDef {
+        id,
+        name,
+        short,
+        layout: PageLayout::CellGrid,
+        viz: VizType::None,
+        params: op_row(param),
+    }
+}
 
-pub static FM_ENV3: BlockDef = BlockDef {
-    id: 25,
-    name: "Op3 Env",
-    short: "E3",
-    layout: PageLayout::BigViz,
-    viz: VizType::FmEnvelope,
-    params: [
-        ParamSlot::param(BlockRef::FmOp(Op::C), FmOpParams::ATTACK_RATE),
-        ParamSlot::param(BlockRef::FmOp(Op::C), FmOpParams::DECAY1_RATE),
-        ParamSlot::param(BlockRef::FmOp(Op::C), FmOpParams::DECAY1_LEVEL),
-        ParamSlot::param(BlockRef::FmOp(Op::C), FmOpParams::DECAY2_RATE),
-        ParamSlot::param(BlockRef::FmOp(Op::C), FmOpParams::RELEASE_RATE),
-        ParamSlot::param(BlockRef::FmOp(Op::C), FmOpParams::RATE_SCALING),
-    ],
-};
+/// The OSC node's home page; its short name labels the node on the map.
+pub static ALGO_WAVE: BlockDef = group(42, "Wave", "OSC", AlgoOpParams::WAVE);
+pub static ALGO_LEVEL: BlockDef = group(44, "Level", "LVL", AlgoOpParams::LEVEL);
+pub static ALGO_COARSE: BlockDef = group(45, "Coarse", "CRS", AlgoOpParams::COARSE);
+pub static ALGO_FINE: BlockDef = group(46, "Fine", "FIN", AlgoOpParams::FINE);
+pub static ALGO_DETUNE: BlockDef = group(47, "Detune", "DET", AlgoOpParams::DETUNE);
+pub static ALGO_VELOCITY: BlockDef = group(48, "Velocity", "VEL", AlgoOpParams::VELOCITY);
+pub static ALGO_AR: BlockDef = group(49, "Env AR", "AR", AlgoOpParams::AR);
+pub static ALGO_D1R: BlockDef = group(50, "Env D1R", "D1R", AlgoOpParams::D1R);
+pub static ALGO_D1L: BlockDef = group(51, "Env D1L", "D1L", AlgoOpParams::D1L);
+pub static ALGO_D2R: BlockDef = group(52, "Env D2R", "D2R", AlgoOpParams::D2R);
+pub static ALGO_RR: BlockDef = group(53, "Env RR", "RR", AlgoOpParams::RR);
+pub static ALGO_RATE_SCALE: BlockDef = group(54, "Rate Scale", "RS", AlgoOpParams::RATE_SCALE);
+pub static ALGO_FEEDBACK: BlockDef = group(55, "Feedback", "FBK", AlgoOpParams::FEEDBACK);
 
-pub static FM_ENV4: BlockDef = BlockDef {
-    id: 26,
-    name: "Op4 Env",
-    short: "E4",
-    layout: PageLayout::BigViz,
-    viz: VizType::FmEnvelope,
+pub static ALGO_ALG: BlockDef = BlockDef {
+    id: 43,
+    name: "Algorithm",
+    short: "ALG",
+    layout: PageLayout::CellGrid,
+    viz: VizType::AlgoDiagram,
     params: [
-        ParamSlot::param(BlockRef::FmOp(Op::D), FmOpParams::ATTACK_RATE),
-        ParamSlot::param(BlockRef::FmOp(Op::D), FmOpParams::DECAY1_RATE),
-        ParamSlot::param(BlockRef::FmOp(Op::D), FmOpParams::DECAY1_LEVEL),
-        ParamSlot::param(BlockRef::FmOp(Op::D), FmOpParams::DECAY2_RATE),
-        ParamSlot::param(BlockRef::FmOp(Op::D), FmOpParams::RELEASE_RATE),
-        ParamSlot::param(BlockRef::FmOp(Op::D), FmOpParams::RATE_SCALING),
+        ParamSlot::param(BlockRef::Algo, AlgoParams::ALG_A),
+        ParamSlot::param(BlockRef::Algo, AlgoParams::ALG_B),
+        ParamSlot::param(BlockRef::Algo, AlgoParams::MORPH),
+        ParamSlot::param(BlockRef::Algo, AlgoParams::TRANSPOSE),
+        ParamSlot::param(BlockRef::Out, OutParams::VOLUME).with_label("VOL"),
+        EMPTY,
     ],
 };
 
@@ -479,38 +374,7 @@ pub static FM_ENV4: BlockDef = BlockDef {
 /// (`Voice::render`).
 pub static PART_MOD_SOURCES: [&str; 2] = ["ENV", "LFO"];
 
-static PIZZA_BLOCK: ChainBlock = ChainBlock {
-    def: &PIZZA,
-    sub_pages: &[],
-};
-
 static MOD_MATRIX_SUB_PAGES: [&BlockDef; 2] = [&ENVELOPE, &LFO];
-
-static PIZZA_POLY_BLOCKS: [ChainBlock; 5] = [
-    PIZZA_BLOCK,
-    ChainBlock {
-        def: &DRIVE,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &FILTER,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &FOLDER,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &MOD_MATRIX,
-        sub_pages: &MOD_MATRIX_SUB_PAGES,
-    },
-];
-
-pub static PIZZA_POLY_CHAIN: ChainDef2 = ChainDef2 {
-    name: "Pizza",
-    blocks: &PIZZA_POLY_BLOCKS,
-    mod_sources: &PART_MOD_SOURCES,
-};
 
 static KICK_BLOCKS: [ChainBlock; 3] = [
     ChainBlock {
@@ -556,14 +420,32 @@ pub static MODAL_PLUCK_CHAIN: ChainDef2 = ChainDef2 {
     mod_sources: &PART_MOD_SOURCES,
 };
 
-static FM_SUB_PAGES: [&BlockDef; 2] = [&FM_OP, &FM_RATIO];
+/// WAVE is the OSC node's home; FINE's DETUNE and the five ENV stages sit
+/// right after their group (sub-pages are one level deep).
+static ALGO_OSC_SUB_PAGES: [&BlockDef; 12] = [
+    &ALGO_COARSE,
+    &ALGO_FINE,
+    &ALGO_DETUNE,
+    &ALGO_LEVEL,
+    &ALGO_VELOCITY,
+    &ALGO_AR,
+    &ALGO_D1R,
+    &ALGO_D1L,
+    &ALGO_D2R,
+    &ALGO_RR,
+    &ALGO_RATE_SCALE,
+    &ALGO_FEEDBACK,
+];
 
-static FM_MOD_MATRIX_SUB_PAGES: [&BlockDef; 4] = [&FM_ENV1, &FM_ENV2, &FM_ENV3, &FM_ENV4];
-
-static FM_BLOCKS: [ChainBlock; 5] = [
+/// ALGO is the engine's home: first on the map, where entering the chain lands.
+static ALGO_BLOCKS: [ChainBlock; 6] = [
     ChainBlock {
-        def: &FM_ALG,
-        sub_pages: &FM_SUB_PAGES,
+        def: &ALGO_ALG,
+        sub_pages: &[],
+    },
+    ChainBlock {
+        def: &ALGO_WAVE,
+        sub_pages: &ALGO_OSC_SUB_PAGES,
     },
     ChainBlock {
         def: &DRIVE,
@@ -579,13 +461,13 @@ static FM_BLOCKS: [ChainBlock; 5] = [
     },
     ChainBlock {
         def: &MOD_MATRIX,
-        sub_pages: &FM_MOD_MATRIX_SUB_PAGES,
+        sub_pages: &MOD_MATRIX_SUB_PAGES,
     },
 ];
 
-pub static FM_CHAIN: ChainDef2 = ChainDef2 {
-    name: "FM",
-    blocks: &FM_BLOCKS,
+pub static ALGO_CHAIN: ChainDef2 = ChainDef2 {
+    name: "Algo",
+    blocks: &ALGO_BLOCKS,
     mod_sources: &PART_MOD_SOURCES,
 };
 
