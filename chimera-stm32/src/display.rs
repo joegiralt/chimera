@@ -1,6 +1,7 @@
 //! ILI9341 display driver via SPI1.
 //! 240x320 RGB565, framebuffer in static BSS (too large for stack).
 
+use chimera_core::ui::theme_settings::{GammaTables, Palette};
 use chimera_hal::{ChimeraDisplay, FB_SIZE, SCREEN_HEIGHT, SCREEN_WIDTH};
 use embedded_graphics_core::Pixel;
 use embedded_graphics_core::draw_target::DrawTarget;
@@ -25,6 +26,9 @@ pub struct Stm32Display<SPI, DC, RST, CS> {
     dc: DC,
     reset: RST,
     cs: CS,
+    /// System › Theme's colours, swapped in as pixels go out; the
+    /// framebuffer keeps the canonical palette.
+    palette: Palette,
 }
 
 impl<SPI, DC, RST, CS> Stm32Display<SPI, DC, RST, CS>
@@ -35,7 +39,40 @@ where
     CS: OutputPin,
 {
     pub fn new(spi: SPI, dc: DC, reset: RST, cs: CS) -> Self {
-        Self { spi, dc, reset, cs }
+        Self {
+            spi,
+            dc,
+            reset,
+            cs,
+            palette: Palette::IDENTITY,
+        }
+    }
+
+    /// Show the framebuffer through `palette` from the next flush on.
+    pub fn set_palette(&mut self, palette: Palette) {
+        self.palette = palette;
+    }
+
+    /// Positive (E0h) and negative (E1h) gamma correction, live.
+    pub fn set_gamma(&mut self, t: &GammaTables) {
+        self.cmd_data(0xE0, &t.positive);
+        self.cmd_data(0xE1, &t.negative);
+    }
+
+    /// Push framebuffer pixels `start..end` (already windowed) through the palette.
+    fn write_pixels(&mut self, start: usize, end: usize) {
+        let _ = self.dc.set_high();
+        let _ = self.cs.set_low();
+        let mut bytes = [0u8; 512];
+        for chunk in fb()[start..end].chunks(256) {
+            for (i, &pixel) in chunk.iter().enumerate() {
+                let [hi, lo] = self.palette.map_raw(pixel).to_be_bytes();
+                bytes[i * 2] = hi;
+                bytes[i * 2 + 1] = lo;
+            }
+            let _ = self.spi.write(&bytes[..chunk.len() * 2]);
+        }
+        let _ = self.cs.set_high();
     }
 
     fn cmd(&mut self, cmd: u8) {
@@ -57,7 +94,9 @@ where
         self.data_bytes(data);
     }
 
-    /// ILI9341 init sequence (from PreenFM3 ili9341.c)
+    /// ILI9341 init sequence (from PreenFM3 ili9341.c). Leaves gamma at the
+    /// panel's reset tables (THEME's PANEL); the caller pushes the boot
+    /// theme's actual gamma right after.
     pub fn init(&mut self, cpu_hz: u32) {
         let _ = self.reset.set_low();
         crate::clocks::delay_us(cpu_hz, 12_500);
@@ -137,19 +176,7 @@ where
 {
     fn flush(&mut self) {
         self.set_window();
-        let _ = self.dc.set_high();
-        let _ = self.cs.set_low();
-
-        let mut bytes = [0u8; 512];
-        for chunk in fb().chunks(256) {
-            for (i, &pixel) in chunk.iter().enumerate() {
-                bytes[i * 2] = (pixel >> 8) as u8;
-                bytes[i * 2 + 1] = pixel as u8;
-            }
-            let _ = self.spi.write(&bytes[..chunk.len() * 2]);
-        }
-
-        let _ = self.cs.set_high();
+        self.write_pixels(0, FB_SIZE);
     }
 
     fn flush_region(&mut self, y_start: u16, y_end: u16) {
@@ -158,22 +185,10 @@ where
         let ye = (y_end - 1).to_be_bytes();
         self.cmd_data(0x2B, &[ys[0], ys[1], ye[0], ye[1]]);
         self.cmd(0x2C);
-
-        let _ = self.dc.set_high();
-        let _ = self.cs.set_low();
-
-        let start = y_start as usize * SCREEN_WIDTH as usize;
-        let end = y_end as usize * SCREEN_WIDTH as usize;
-        let mut bytes = [0u8; 512];
-        for chunk in fb()[start..end].chunks(256) {
-            for (i, &pixel) in chunk.iter().enumerate() {
-                bytes[i * 2] = (pixel >> 8) as u8;
-                bytes[i * 2 + 1] = pixel as u8;
-            }
-            let _ = self.spi.write(&bytes[..chunk.len() * 2]);
-        }
-
-        let _ = self.cs.set_high();
+        self.write_pixels(
+            y_start as usize * SCREEN_WIDTH as usize,
+            y_end as usize * SCREEN_WIDTH as usize,
+        );
     }
 
     fn pixel_buffer(&mut self) -> &mut [u16] {

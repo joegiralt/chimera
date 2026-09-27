@@ -72,10 +72,12 @@ pub enum BlockRef {
     /// A Part's mix settings (`PartParams`): channel, mode, output, level,
     /// pan, sends.
     Part,
+    /// System › Theme (`ThemeSettings`): held by the UI, not a Sound.
+    Theme,
 }
 
 impl BlockRef {
-    pub const ALL: [BlockRef; 22] = [
+    pub const ALL: [BlockRef; 23] = [
         BlockRef::Modal,
         BlockRef::Algo,
         BlockRef::AlgoOp(Op::A),
@@ -98,6 +100,7 @@ impl BlockRef {
         BlockRef::Tape,
         BlockRef::Comp,
         BlockRef::Part,
+        BlockRef::Theme,
     ];
 
     /// The block type's spec table (static; no instance needed).
@@ -118,6 +121,7 @@ impl BlockRef {
             BlockRef::Tape => &crate::dsp::tape::TAPE_SPECS,
             BlockRef::Comp => &crate::dsp::comp::COMP_SPECS,
             BlockRef::Part => &crate::part::PART_SPECS,
+            BlockRef::Theme => &crate::ui::theme_settings::THEME_SPECS,
         }
     }
 
@@ -144,7 +148,8 @@ impl BlockRef {
             | BlockRef::Reverb
             | BlockRef::Tape
             | BlockRef::Comp
-            | BlockRef::Part => false,
+            | BlockRef::Part
+            | BlockRef::Theme => false,
         }
     }
 }

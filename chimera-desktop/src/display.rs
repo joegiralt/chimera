@@ -1,3 +1,4 @@
+use chimera_core::ui::theme_settings::{Palette, ThemeSettings};
 use chimera_hal::{ChimeraDisplay, FB_SIZE, SCREEN_HEIGHT, SCREEN_WIDTH};
 use embedded_graphics_core::Pixel;
 use embedded_graphics_core::draw_target::DrawTarget;
@@ -12,6 +13,10 @@ pub struct DesktopDisplay {
     window: Window,
     fb: Vec<u16>,
     window_buf: Vec<u32>,
+    /// System › Theme: the palette swap, and BRIGHT as a dimming of the
+    /// window. GAMMA has no desktop equivalent and is ignored here.
+    palette: Palette,
+    bright_pct: u32,
 }
 
 impl DesktopDisplay {
@@ -28,6 +33,40 @@ impl DesktopDisplay {
             window,
             fb: vec![0u16; FB_SIZE],
             window_buf: vec![0u32; FB_SIZE * SCALE * SCALE],
+            palette: Palette::IDENTITY,
+            bright_pct: ThemeSettings::DEFAULT.bright.percent() as u32,
+        }
+    }
+
+    /// Show the framebuffer with `theme`'s colours and brightness.
+    pub fn set_theme(&mut self, theme: &ThemeSettings) {
+        self.palette = theme.palette();
+        self.bright_pct = theme.bright.percent() as u32;
+    }
+
+    /// One framebuffer pixel as window RGB888: palette, then brightness.
+    fn to_rgb(&self, pixel: u16) -> u32 {
+        let pixel = self.palette.map_raw(pixel);
+        let dim = |v: u32| v * self.bright_pct / 100;
+        let r = dim((((pixel >> 11) & 0x1F) as u32) << 3);
+        let g = dim((((pixel >> 5) & 0x3F) as u32) << 2);
+        let b = dim(((pixel & 0x1F) as u32) << 3);
+        (r << 16) | (g << 8) | b
+    }
+
+    /// Convert framebuffer rows `y_start..y_end` into the scaled window buffer.
+    fn convert_rows(&mut self, y_start: usize, y_end: usize) {
+        let w = SCREEN_WIDTH as usize;
+        let sw = w * SCALE;
+        for y in y_start..y_end {
+            for x in 0..w {
+                let rgb = self.to_rgb(self.fb[y * w + x]);
+                for dy in 0..SCALE {
+                    for dx in 0..SCALE {
+                        self.window_buf[(y * SCALE + dy) * sw + x * SCALE + dx] = rgb;
+                    }
+                }
+            }
         }
     }
 
@@ -37,26 +76,6 @@ impl DesktopDisplay {
 
     pub fn get_keys(&self) -> Vec<Key> {
         self.window.get_keys()
-    }
-
-    /// Convert RGB565 framebuffer to scaled RGB888 for minifb
-    fn convert_fb(&mut self) {
-        let w = SCREEN_WIDTH as usize;
-        let sw = w * SCALE;
-        for y in 0..SCREEN_HEIGHT as usize {
-            for x in 0..w {
-                let pixel = self.fb[y * w + x];
-                let r = ((pixel >> 11) & 0x1F) as u32;
-                let g = ((pixel >> 5) & 0x3F) as u32;
-                let b = (pixel & 0x1F) as u32;
-                let rgb = (r << 19) | (g << 10) | (b << 3);
-                for dy in 0..SCALE {
-                    for dx in 0..SCALE {
-                        self.window_buf[(y * SCALE + dy) * sw + x * SCALE + dx] = rgb;
-                    }
-                }
-            }
-        }
     }
 }
 
@@ -88,7 +107,7 @@ impl OriginDimensions for DesktopDisplay {
 
 impl ChimeraDisplay for DesktopDisplay {
     fn flush(&mut self) {
-        self.convert_fb();
+        self.convert_rows(0, SCREEN_HEIGHT as usize);
         self.window
             .update_with_buffer(
                 &self.window_buf,
@@ -99,22 +118,7 @@ impl ChimeraDisplay for DesktopDisplay {
     }
 
     fn flush_region(&mut self, y_start: u16, y_end: u16) {
-        let w = SCREEN_WIDTH as usize;
-        let sw = w * SCALE;
-        for y in y_start as usize..y_end as usize {
-            for x in 0..w {
-                let pixel = self.fb[y * w + x];
-                let r = ((pixel >> 11) & 0x1F) as u32;
-                let g = ((pixel >> 5) & 0x3F) as u32;
-                let b = (pixel & 0x1F) as u32;
-                let rgb = (r << 19) | (g << 10) | (b << 3);
-                for dy in 0..SCALE {
-                    for dx in 0..SCALE {
-                        self.window_buf[(y * SCALE + dy) * sw + x * SCALE + dx] = rgb;
-                    }
-                }
-            }
-        }
+        self.convert_rows(y_start as usize, y_end as usize);
         self.window
             .update_with_buffer(
                 &self.window_buf,

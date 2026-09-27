@@ -38,3 +38,4 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0030](0030-master-section.md) | REV SEND feeds the delay into the reverb; tape on pair 1; a compressor linked across the pairs, last | Accepted |
 | [0031](0031-six-voices-on-rev-v.md) | Every patch gets six voices on rev V | Accepted |
 | [0032](0032-modal-code-provenance.md) | Modal's string is the owner's own code; Rings-derived parts keep Mutable's MIT notice | Accepted |
+| [0033](0033-theme-applied-in-the-display-shell.md) | The theme is applied in the display shell, not the renderer | Proposed |
