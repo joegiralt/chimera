@@ -112,3 +112,14 @@ fn the_first_reflection_is_the_shortest_tap_at_twice_the_rate() {
     assert_eq!(first_reflection(16), 470);
     assert_eq!(first_reflection(31), 686);
 }
+
+#[test]
+fn grit_saturates_past_the_i16_range() {
+    for grit in [0.0, 0.5, 1.0] {
+        let g = Grid::new(grit);
+        assert_eq!(g.q(33_000.0), i16::MAX, "grit {grit}");
+        assert_eq!(g.q(2_100_000.0), i16::MAX, "grit {grit}");
+        assert_eq!(g.q(-40_000.0), i16::MIN, "grit {grit}");
+        assert_eq!(g.q(-2_100_000.0), i16::MIN, "grit {grit}");
+    }
+}
