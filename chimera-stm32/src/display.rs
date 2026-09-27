@@ -94,8 +94,9 @@ where
         self.data_bytes(data);
     }
 
-    /// ILI9341 init sequence (from PreenFM3 ili9341.c). Gamma stays at the
-    /// panel's reset tables (THEME's PANEL) until System › Theme changes it.
+    /// ILI9341 init sequence (from PreenFM3 ili9341.c). Leaves gamma at the
+    /// panel's reset tables (THEME's PANEL); the caller pushes the boot
+    /// theme's actual gamma right after.
     pub fn init(&mut self, cpu_hz: u32) {
         let _ = self.reset.set_low();
         crate::clocks::delay_us(cpu_hz, 12_500);

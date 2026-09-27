@@ -21,9 +21,9 @@ fn bright_clamps_and_steps_by_five() {
     assert_eq!(Bright::new(77).percent(), 75);
     assert_eq!(Bright::new(78).percent(), 80);
     let mut t = ThemeSettings::DEFAULT;
-    assert_eq!(t.bright.percent(), 75);
+    assert_eq!(t.bright.percent(), 70);
     t.nudge(ThemeSettings::BRIGHT, 1);
-    assert_eq!(t.bright.percent(), 80);
+    assert_eq!(t.bright.percent(), 75);
     t.nudge(ThemeSettings::BRIGHT, 100);
     assert_eq!(t.bright.percent(), 100);
     t.nudge(ThemeSettings::BRIGHT, -100);
@@ -32,7 +32,7 @@ fn bright_clamps_and_steps_by_five() {
 
 #[test]
 fn bright_duty_does_not_overflow() {
-    assert_eq!(Bright::DEFAULT.duty(12_000), 9_000);
+    assert_eq!(Bright::DEFAULT.duty(12_000), 8_400);
     assert_eq!(Bright::new(100).duty(u16::MAX), u16::MAX);
     assert_eq!(Bright::new(10).duty(12_000), 1_200);
 }
@@ -42,7 +42,8 @@ fn black_clamps_to_minus_two_plus_four() {
     assert_eq!(Black::new(-9).get(), -2);
     assert_eq!(Black::new(9).get(), 4);
     let mut t = ThemeSettings::DEFAULT;
-    t.nudge(ThemeSettings::BLACK, -1);
+    assert_eq!(t.black.get(), -2);
+    t.nudge(ThemeSettings::BLACK, 1);
     assert_eq!(t.black.get(), -1);
     t.nudge(ThemeSettings::BLACK, -10);
     assert_eq!(t.black.get(), -2);
@@ -66,10 +67,10 @@ fn choices_clamp_at_their_ends() {
 #[test]
 fn boot_defaults() {
     let t = ThemeSettings::default();
-    assert_eq!(t.bright.percent(), 75);
-    assert_eq!(t.gamma, Gamma::Panel);
+    assert_eq!(t.bright.percent(), 70);
+    assert_eq!(t.gamma, Gamma::Punch);
     assert_eq!(t.accent, Accent::Teal);
-    assert_eq!(t.black.get(), 0);
+    assert_eq!(t.black.get(), -2);
     for s in t.specs() {
         assert_eq!(t.get(s.id), s.default, "{}", s.label);
     }
@@ -141,8 +142,8 @@ fn soft_averages_fields_not_bytes() {
 fn teal_and_black_zero_are_the_canonical_palette() {
     assert_eq!(Accent::Teal.color(), theme::ACCENT);
     assert_eq!(Accent::Teal.soft(), theme::ACCENT_SOFT);
-    assert_eq!(Black::DEFAULT.ground(), theme::BG);
-    assert_eq!(ThemeSettings::DEFAULT.palette(), Palette::IDENTITY);
+    assert_eq!(Black::ZERO.ground(), theme::BG);
+    assert_eq!(ThemeSettings::NEUTRAL.palette(), Palette::IDENTITY);
 }
 
 #[test]
@@ -184,7 +185,7 @@ fn mapped(fb: &Fb, p: &Palette) -> Vec<u16> {
 /// TEAL, BLACK 0 through the display's palette changes no pixel of any golden.
 #[test]
 fn default_theme_leaves_every_golden_bit_identical() {
-    let p = ThemeSettings::DEFAULT.palette();
+    let p = ThemeSettings::NEUTRAL.palette();
     for (name, _) in CASES {
         let fb = render(name);
         assert_eq!(mapped(&fb, &p), fb.px, "{name}");
@@ -204,7 +205,7 @@ fn each_accent_recolours_only_accent_pixels() {
     for accent in &Accent::ALL[1..] {
         let t = ThemeSettings {
             accent: *accent,
-            ..ThemeSettings::DEFAULT
+            ..ThemeSettings::NEUTRAL
         };
         let out = mapped(&fb, &t.palette());
         for (&before, &after) in fb.px.iter().zip(&out) {
@@ -257,10 +258,10 @@ fn theme_page_is_reachable_and_edits_the_settings() {
     feed(&mut ui, Input::turn(EncoderId::C, 1));
     feed(&mut ui, Input::turn(EncoderId::D, -1));
     let t = ui.theme();
-    assert_eq!(t.bright.percent(), 80);
+    assert_eq!(t.bright.percent(), 75);
     assert_eq!(t.gamma, Gamma::Punch);
     assert_eq!(t.accent, Accent::Amber);
-    assert_eq!(t.black.get(), -1);
+    assert_eq!(t.black.get(), -2);
     // The Sound is untouched: THEME lives in the UI.
     assert!(
         ui.performance

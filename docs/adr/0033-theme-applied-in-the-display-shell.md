@@ -15,7 +15,8 @@ PreenFM3's TN panel shows the ground as navy and the Adafruit gamma tables
 - The settings are a `ThemeSettings` value in chimera-core
   (`ui::theme_settings`) held by `UiState`, addressed as
   `BlockRef::Theme` params 0–3 (ADR 0009) through the Theme page's slots.
-  They are not in a Sound. No storage yet: every boot is 75 / PANEL / TEAL / 0.
+  They are not in a Sound. No storage yet: every boot is the owner's pick,
+  70 / PUNCH / TEAL / −2.
 - The renderer keeps drawing the canonical palette. `ThemeSettings::palette`
   gives three swaps (ACCENT, ACCENT_SOFT, BG), and the display shell maps each
   framebuffer pixel through them as it pushes it out (SPI on the firmware, the
