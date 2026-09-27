@@ -7,11 +7,10 @@ use core::ptr::addr_of_mut;
 
 use chimera_hal::BLOCK_SIZE;
 
-use crate::MidiChannel;
 use crate::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
 use crate::dsp::voice::Voice;
 use crate::hw::{
-    AXI_SRAM, DAC_PAIRS, FB_BYTES, MAX_PARTS, MAX_VOICES, SampleBudget, UI_RESERVE,
+    AXI_SRAM, Cost, DAC_PAIRS, FB_BYTES, MAX_PARTS, MAX_VOICES, SampleBudget, UI_RESERVE,
     VOICE_RAM_BUDGET,
 };
 use crate::in_place::{by_value, uninit_at};
@@ -24,6 +23,7 @@ use crate::preset::{Performance, SoundPool};
 use crate::scope::{ScopeFrame, ScopeWriter};
 use crate::triple::TripleBuffer;
 use crate::voice_alloc::{Alloc, Allocator};
+use crate::{MidiChannel, Velocity};
 
 /// Everything the port places in AXI SRAM (ADR 0014): framebuffer, UI,
 /// Performance, SoundPool, the `AudioShared`, scope and `AudioStats` triple
@@ -119,13 +119,18 @@ pub struct Instrument {
     /// The MIDI channel each voice's note-on arrived on, so its note-off
     /// releases it even if the Part's channel changed meanwhile.
     note_channel: [MidiChannel; MAX_VOICES],
+    /// The Part whose Sound each voice renders: its slot's Part, except
+    /// while another Part's sound fades out ahead of a waiting note.
+    sounding: [u8; MAX_VOICES],
+    /// A note waiting for its voice's fade to end (#33 M7).
+    waiting: [Option<Velocity>; MAX_VOICES],
     /// Each Part's mono bus from the last `render`: the sum of its voices.
     buses: [[f32; BLOCK_SIZE]; MAX_PARTS],
     sends: [[f32; BLOCK_SIZE]; FX_SENDS],
     sample_rate: u32,
 }
 
-crate::in_place::field_list!(Instrument => Instrument { voices, alloc, note_channel, buses, sends, sample_rate });
+crate::in_place::field_list!(Instrument => Instrument { voices, alloc, note_channel, sounding, waiting, buses, sends, sample_rate });
 
 impl Instrument {
     pub fn new(sample_rate: u32, budget: SampleBudget) -> Self {
@@ -149,6 +154,8 @@ impl Instrument {
             }
             addr_of_mut!((*p).alloc).write(Allocator::new(budget));
             addr_of_mut!((*p).note_channel).write([MidiChannel::clamped(0); MAX_VOICES]);
+            addr_of_mut!((*p).sounding).write([0; MAX_VOICES]);
+            addr_of_mut!((*p).waiting).write([None; MAX_VOICES]);
             addr_of_mut!((*p).buses).write([[0.0; BLOCK_SIZE]; MAX_PARTS]);
             addr_of_mut!((*p).sends).write([[0.0; BLOCK_SIZE]; FX_SENDS]);
             addr_of_mut!((*p).sample_rate).write(sample_rate);
@@ -170,16 +177,32 @@ impl Instrument {
     pub fn handle(&mut self, ev: NoteEvent, shared: &AudioShared) {
         match ev.kind {
             NoteKind::On(vel) => {
+                // Judge the note against this block's patches, not the last.
+                self.recost(shared);
                 for (p, part) in shared.parts.iter().enumerate() {
                     if part.mix.channel != ev.channel {
                         continue;
                     }
-                    let cost = Voice::cost(part.params.engine());
+                    let cost = Voice::cost(&part.params, &part.mod_state);
                     if let Alloc::Voice(v) =
                         self.alloc
                             .note_on(p as u8, part.mix.mode, ev.note, cost, FxBus::COST)
                     {
-                        self.voices[v].note_on(ev.note, vel, &part.params);
+                        let voice = &mut self.voices[v];
+                        let waited = self.waiting[v].take().is_some();
+                        let queued = if self.sounding[v] as usize != p && voice.is_active() {
+                            // Another Part's sound fades out on its own bus
+                            // and settings first.
+                            self.waiting[v] = Some(vel);
+                            voice.kill()
+                        } else {
+                            self.sounding[v] = p as u8;
+                            voice.note_on(ev.note, vel, &part.params)
+                        };
+                        // A note replaced before it sounded (ADR 0027).
+                        if waited || queued {
+                            self.alloc.dropped_unheard();
+                        }
                         self.note_channel[v] = ev.channel;
                     }
                 }
@@ -198,6 +221,26 @@ impl Instrument {
         }
     }
 
+    /// A patch edit changes its voices' cost; fade voices out if that went
+    /// over the budget (ADR 0027). The slot stays taken until the fade ends
+    /// and `render` step 5 frees it.
+    fn recost(&mut self, shared: &AudioShared) {
+        let costs: [Cost; MAX_PARTS] = core::array::from_fn(|p| {
+            Voice::cost(&shared.parts[p].params, &shared.parts[p].mod_state)
+        });
+        for v in 0..MAX_VOICES {
+            if let Some(p) = self.alloc.slots()[v].part() {
+                self.alloc.recost(v, costs[p as usize % MAX_PARTS]);
+            }
+        }
+        while let Some(v) = self.alloc.shed(FxBus::COST) {
+            let queued = self.voices[v].kill();
+            if self.waiting[v].take().is_some() || queued {
+                self.alloc.dropped_unheard();
+            }
+        }
+    }
+
     /// Render one block into the three DAC pairs.
     pub fn render(
         &mut self,
@@ -206,20 +249,7 @@ impl Instrument {
         shared: &AudioShared,
         scope: &mut ScopeWriter,
     ) {
-        // A Sound that changed engine changes its voices' cost; cut the
-        // newest voices if that went over the budget.
-        for v in 0..MAX_VOICES {
-            if let Some(p) = self.alloc.slots()[v].part() {
-                self.alloc
-                    .recost(v, Voice::cost(shared.parts[p as usize].params.engine()));
-            }
-        }
-        // A hard cut, not a release: the slot is free at once and the voice
-        // is no longer rendered, so its tail stops mid-block. The next
-        // note-on on it re-triggers the engine from scratch.
-        while let Some(v) = self.alloc.shed(FxBus::COST) {
-            self.voices[v].note_off();
-        }
+        self.recost(shared);
 
         // 1. Voices into their part's mono bus. The first voice of a part is
         //    copied, not added, so a lone voice reaches the bus bit-for-bit.
@@ -229,10 +259,11 @@ impl Instrument {
         }
         let mut block = [0.0f32; BLOCK_SIZE];
         for v in 0..MAX_VOICES {
-            let Some(p) = self.alloc.slots()[v].part() else {
+            if self.alloc.slots()[v].is_free() {
                 continue;
-            };
-            let (p, part) = (p as usize, &shared.parts[p as usize]);
+            }
+            let p = self.sounding[v] as usize % MAX_PARTS;
+            let part = &shared.parts[p];
             self.voices[v].render(&mut block, &part.params, &part.mod_state);
             if written[p] {
                 for (b, &s) in self.buses[p].iter_mut().zip(&block) {
@@ -242,12 +273,24 @@ impl Instrument {
                 self.buses[p] = block;
                 written[p] = true;
             }
-            // 5. A released voice whose engine went quiet is free again.
+            // 5. A released voice whose engine went quiet, or a shed one whose
+            //    fade ended, is free again.
             //    Read right after rendering the note the voice plays *now*,
             //    so a steal or retrigger since the last block is never freed
             //    by a report about the note it replaced.
             if !self.voices[v].is_active() {
-                self.alloc.release_finished(v);
+                let s = self.alloc.slots()[v];
+                match (self.waiting[v].take(), s.part(), s.note()) {
+                    (Some(vel), Some(q), Some(note)) => {
+                        let voice = &mut self.voices[v];
+                        voice.note_on(note, vel, &shared.parts[q as usize % MAX_PARTS].params);
+                        if !s.held() {
+                            voice.note_off();
+                        }
+                        self.sounding[v] = q;
+                    }
+                    _ => self.alloc.release_finished(v),
+                }
             }
         }
 

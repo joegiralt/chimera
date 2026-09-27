@@ -63,7 +63,7 @@ impl Default for FxBus {
 impl FxBus {
     /// Worst reverb (MidiVerb) with the bus and the Instrument's fixed
     /// mixing; reserved from the voice budget whether or not an effect is on.
-    pub const COST: Cost = Cost(3200); // measured 2026-09-26, bench, rev V at 480 MHz
+    pub const COST: Cost = Cost(3310); // MV 3300, measured 2026-09-27, bench, rev V at 480 MHz; rounded up
 
     pub fn new() -> Self {
         Self {

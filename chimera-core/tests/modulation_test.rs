@@ -1,8 +1,8 @@
 use chimera_core::addr::{BlockRef, Op, ParamAddr};
-use chimera_core::dsp::pizza::PizzaParams;
+use chimera_core::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use chimera_core::mod_path::ModDestRegistry;
 use chimera_core::modulation::{MAX_MOD_DESTS, MAX_MOD_SOURCES, ModState};
-use chimera_core::params::{DriveParams, EnvParams, FilterParams, FmOpParams, FolderParams};
+use chimera_core::params::{DriveParams, FilterParams, FolderParams};
 use chimera_core::ui::mod_grid::MatrixState;
 
 const CUTOFF: ParamAddr = ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF);
@@ -14,7 +14,7 @@ fn one_dest(addr: ParamAddr, n: usize) -> ModState {
     ModState::from_registry(&reg, n)
 }
 
-/// Every modulatable address (25).
+/// Every modulatable address (17).
 fn all_modulatable() -> Vec<ParamAddr> {
     BlockRef::ALL
         .iter()
@@ -40,10 +40,7 @@ fn mod_state_offset_no_routes() {
     let ms = ModState::new();
     let sources = [0.0f32; MAX_MOD_SOURCES];
     assert_eq!(
-        ms.offset_for(
-            ParamAddr::new(BlockRef::Pizza, PizzaParams::SHAPE),
-            &sources
-        ),
+        ms.offset_for(ParamAddr::new(BlockRef::Drive, DriveParams::TONE), &sources),
         0.0
     );
 }
@@ -96,7 +93,7 @@ fn mod_state_offset_negative_amount() {
 
 #[test]
 fn mod_state_set_amount_ignores_out_of_range() {
-    let mut ms = one_dest(ParamAddr::new(BlockRef::Pizza, PizzaParams::SHAPE), 2);
+    let mut ms = one_dest(ParamAddr::new(BlockRef::Drive, DriveParams::TONE), 2);
     ms.set_amount(5, 0, 99); // no such source
     ms.set_amount(0, 3, 99); // no such dest
     assert_eq!(ms.amount(5, 0), 0);
@@ -105,9 +102,9 @@ fn mod_state_set_amount_ignores_out_of_range() {
 
 #[test]
 fn mod_state_sync_from_matrix() {
-    let crush = ParamAddr::new(BlockRef::Pizza, PizzaParams::CRUSH);
+    let tone = ParamAddr::new(BlockRef::Drive, DriveParams::TONE);
     let mut registry = ModDestRegistry::new();
-    registry.add(crush, *b"A  p\0\0\0\0").unwrap();
+    registry.add(tone, *b"A  p\0\0\0\0").unwrap();
     registry.add(CUTOFF, *b"B  q\0\0\0\0").unwrap();
     let mut matrix = MatrixState::new();
     matrix.rebuild_dests_from_registry(&registry);
@@ -122,13 +119,13 @@ fn mod_state_sync_from_matrix() {
     assert_eq!(ms.num_dests(), 2);
     assert_eq!(ms.amount(0, 0), 42);
     assert_eq!(ms.amount(1, 1), -99);
-    assert_eq!(ms.dest(0), crush);
+    assert_eq!(ms.dest(0), tone);
     assert_eq!(ms.dest(1), CUTOFF);
 }
 
 /// Review Focus 2: a registry at capacity keeps amounts aligned. The
 /// registry now refuses past the matrix capacity (final review I2), so the
-/// 25 modulatable addresses fill it to exactly `MAX_MOD_DESTS`.
+/// 17 modulatable addresses fill it to exactly `MAX_MOD_DESTS`.
 #[test]
 fn mod_state_truncates_without_misaligning() {
     let mut registry = ModDestRegistry::new();
@@ -175,7 +172,7 @@ fn mod_state_clamps_sources() {
 #[test]
 fn dest_and_sum_for_never_panic_out_of_range() {
     let ms = ModState::new();
-    let sentinel = ParamAddr::new(BlockRef::Pizza, PizzaParams::SHAPE);
+    let sentinel = ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH);
     let sources = [1.0f32; MAX_MOD_SOURCES];
     assert_eq!(ms.dest(16), sentinel);
     assert_eq!(ms.dest(255), sentinel);
@@ -183,21 +180,21 @@ fn dest_and_sum_for_never_panic_out_of_range() {
     assert_eq!(ms.sum_for(255, &sources), 0.0);
 }
 
-/// The matrix holds addresses, so a route to an FM operator stays on that
-/// operator (and the amp envelope is a destination like any other).
+/// The matrix holds addresses, so a route to an operator stays on that
+/// operator.
 #[test]
 fn matrix_dests_are_semantic() {
-    let op_c = ParamAddr::new(BlockRef::FmOp(Op::C), FmOpParams::FEEDBACK);
-    let atk = ParamAddr::new(BlockRef::AmpEnv, EnvParams::ATTACK);
+    let op_c = ParamAddr::new(BlockRef::AlgoOp(Op::C), AlgoOpParams::LEVEL);
+    let fold = ParamAddr::new(BlockRef::Folder, FolderParams::FOLD);
     let mut registry = ModDestRegistry::new();
-    registry.add(op_c, *b"O3 FDBK\0").unwrap();
-    registry.add(atk, *b"ENVATK\0\0").unwrap();
+    registry.add(op_c, *b"O3 LEVEL").unwrap();
+    registry.add(fold, *b"FLDFOLD\0").unwrap();
     let mut matrix = MatrixState::new();
     matrix.rebuild_dests_from_registry(&registry);
     assert_eq!(matrix.mod_info_for(op_c), Some(0.0));
-    assert_eq!(matrix.mod_info_for(atk), Some(0.0));
+    assert_eq!(matrix.mod_info_for(fold), Some(0.0));
     assert_eq!(
-        matrix.mod_info_for(ParamAddr::new(BlockRef::FmOp(Op::D), FmOpParams::FEEDBACK)),
+        matrix.mod_info_for(ParamAddr::new(BlockRef::AlgoOp(Op::D), AlgoOpParams::LEVEL)),
         None
     );
 }

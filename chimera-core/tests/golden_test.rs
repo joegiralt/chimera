@@ -15,50 +15,6 @@ use common::*;
 /// (case name, FNV-1a 64 over every sample's bits, sample bits at SPOT_IDX).
 const GOLDENS: &[(&str, u64, [u32; 8])] = &[
     (
-        "pizza_init",
-        0xc533d18a26331e4c,
-        [
-            3111930299, 1053289385, 999362770, 1051778009, 3163126675, 3167254354, 1028737615, 0,
-        ],
-    ),
-    (
-        "pizza_lfo_cutoff",
-        0x54c74c6f8ae46bd4,
-        [
-            3111930299, 1053289385, 995579318, 1051778010, 3163126675, 3167254354, 1028758405, 0,
-        ],
-    ),
-    (
-        "fm_init",
-        0x9bfe44d54ef0385b,
-        [
-            898059883, 1045152839, 1054792150, 3163439516, 3202136915, 3201882817, 0, 0,
-        ],
-    ),
-    (
-        "fm_lfo_cutoff",
-        0x34b678f3574b1538,
-        [
-            898059883, 1045152839, 1054642467, 3163439516, 3202136915, 3201882817, 0, 0,
-        ],
-    ),
-    (
-        "fm_lfo_op_a_level",
-        0x2016ba5789cfbf28,
-        [
-            898059883, 1045152839, 1049001337, 3163439517, 3202136915, 3201882817, 0, 0,
-        ],
-    ),
-    // Re-recorded in Task 22 (spec step 8): the FM pre-wire is gone, so the
-    // FM init sound's own ModState is empty and this equals `fm_init`.
-    (
-        "fm_init_patch_mod",
-        0x9bfe44d54ef0385b,
-        [
-            898059883, 1045152839, 1054792150, 3163439516, 3202136915, 3201882817, 0, 0,
-        ],
-    ),
-    (
         "modal_init",
         0x90f1197c153d0b05,
         [
@@ -74,22 +30,105 @@ const GOLDENS: &[(&str, u64, [u32; 8])] = &[
             999762977,
         ],
     ),
-    ("va_init", 0x5125674880996325, [0, 0, 0, 0, 0, 0, 0, 0]),
+    // Recorded after the Algo sanity gate (ADR 0011).
     (
-        "pizza_to_modal_switch",
-        0x2b4f3ce20159fef6,
+        "algo_init",
+        0xf36afbe129df33fa,
         [
-            3111930299, 1053289385, 999362770, 1051584936, 3196878310, 3185521127, 3117844736,
-            984628055,
+            971731855, 1043306224, 1058062728, 3165110143, 3205522154, 3205490133, 3120319999, 0,
+        ],
+    ),
+    (
+        "algo_lfo_cutoff",
+        0xa81aa97b0c8dfeb6,
+        [
+            971731855, 1043306224, 1058063011, 3165110143, 3205522154, 3205490133, 3120308848, 0,
+        ],
+    ),
+    (
+        "algo_t1",
+        0x57f7fb7dad21330b,
+        [
+            975558553, 3205163018, 1035235053, 3171912679, 3196166760, 3180376198, 3116015589, 0,
+        ],
+    ),
+    (
+        "algo_t2",
+        0x61296f52bf29b39f,
+        [
+            976084442, 1055408551, 3180754269, 3188080873, 3200843130, 3198210359, 3116015590, 0,
+        ],
+    ),
+    (
+        "algo_t3",
+        0x5ed88cdff093f5d5,
+        [
+            978182322, 1057391737, 3181731779, 3185290458, 3201160651, 3199162194, 3116012059, 0,
+        ],
+    ),
+    (
+        "algo_t4",
+        0x8470ff7a980cfbbc,
+        [
+            975631701, 3204752372, 3199141284, 3175316328, 1053354039, 1051217629, 3116001746, 0,
+        ],
+    ),
+    (
+        "algo_t5",
+        0x3905a60e3d653931,
+        [
+            973579067, 1056859010, 1056369218, 3177643136, 3200636257, 3200240779, 3114767223, 0,
+        ],
+    ),
+    (
+        "algo_t6",
+        0xd09b9930f903a536,
+        [
+            973080338, 1052346433, 1054072797, 3172710543, 3198924223, 3198447324, 3112458771, 0,
+        ],
+    ),
+    (
+        "algo_t7",
+        0xd1bd6882436f4f51,
+        [
+            969047199, 1041386195, 1054188336, 3156789383, 3199107695, 3198911376, 3112461375, 0,
+        ],
+    ),
+    (
+        "algo_t8",
+        0x97d3c3b17a154868,
+        [
+            969022679, 1034300548, 1052868578, 3152857871, 3198136270, 3198051589, 3111311968, 0,
+        ],
+    ),
+    (
+        "algo_morph_static",
+        0x0aa07549d41d5dc0,
+        [
+            980865416, 3180258739, 1039999960, 3172698160, 3171969701, 3181376776, 3092390763, 0,
+        ],
+    ),
+    (
+        "algo_morph_sweep",
+        0x04a6c036e951997b,
+        [
+            980865416, 3188008887, 1036634440, 3156268221, 1028937371, 1032383698, 3091938455, 0,
+        ],
+    ),
+    // Re-recorded: the switch fades Algo out, then Modal starts (#33 M6).
+    (
+        "algo_to_modal_switch",
+        0xcb7b77755402857f,
+        [
+            971731855, 1043306224, 1058062728, 3198051069, 3178790723, 3188171051, 3137935627,
+            3125743219,
         ],
     ),
 ];
 
 /// Goldens whose locked output no longer reflects intended behaviour, each
-/// tracked at an issue: Modal failed the sanity gate (#10); FM's cases are
-/// refused outright under the measured CPU budget when played through the
-/// Instrument (#26), so `goldens_match_through_the_instrument` excuses them
-/// too instead of asserting a hash FM can no longer produce.
+/// tracked at an issue: Modal failed the sanity gate (#10), and the switch
+/// case's second half is Modal's.
 const KNOWN_BROKEN: &[(&str, &str)] = &[
     (
         "modal_init",
@@ -100,21 +139,8 @@ const KNOWN_BROKEN: &[(&str, &str)] = &[
         "https://github.com/joegiralt/chimera/issues/10",
     ),
     (
-        "pizza_to_modal_switch",
+        "algo_to_modal_switch",
         "https://github.com/joegiralt/chimera/issues/10",
-    ),
-    ("fm_init", "https://github.com/joegiralt/chimera/issues/26"),
-    (
-        "fm_lfo_cutoff",
-        "https://github.com/joegiralt/chimera/issues/26",
-    ),
-    (
-        "fm_lfo_op_a_level",
-        "https://github.com/joegiralt/chimera/issues/26",
-    ),
-    (
-        "fm_init_patch_mod",
-        "https://github.com/joegiralt/chimera/issues/26",
     ),
 ];
 
@@ -151,32 +177,13 @@ fn goldens_match() {
     );
 }
 
-/// The issue tracking FM's refusal under the measured CPU budget.
-const ISSUE_26: &str = "https://github.com/joegiralt/chimera/issues/26";
-
-/// Spec § Testing: part 1's mono bus through the new voice pool matches
-/// every existing golden bit-for-bit, except the FM cases tracked at #26:
-/// FM's measured cost doesn't fit the budget, so its note is refused and
-/// the part renders silent instead of matching the golden. The Modal #10
-/// cases are `KNOWN_BROKEN` for `goldens_match` but still match here, so
-/// they stay checked strictly through the Instrument.
+/// Spec § Testing: part 1's mono bus through the voice pool matches every
+/// golden bit-for-bit.
 #[test]
 fn goldens_match_through_the_instrument() {
     let mut failures = Vec::new();
     for case in Case::ALL {
         let out = render_case_through_instrument(case);
-        let refused_by_budget = KNOWN_BROKEN
-            .iter()
-            .any(|k| k.0 == case.name() && k.1 == ISSUE_26);
-        if refused_by_budget {
-            if out.iter().any(|&s| s != 0.0) {
-                failures.push(format!(
-                    "{}: expected silence (refused by the budget, #26), got sound",
-                    case.name()
-                ));
-            }
-            continue;
-        }
         let (hash, sp) = (fnv1a(&out), spots(&out));
         let &(_, want_hash, want_spots) = GOLDENS
             .iter()
@@ -212,19 +219,9 @@ fn known_broken_goldens_have_issues() {
     }
 }
 
-/// Spec step 8: without the pre-wire, the FM init sound renders exactly like
-/// FM init params with no modulation.
-#[test]
-fn fm_init_patch_has_no_prewire() {
-    assert_eq!(
-        fnv1a(&render_case(Case::FmInitPatchMod)),
-        fnv1a(&render_case(Case::FmInit))
-    );
-}
-
 #[test]
 fn harness_is_deterministic() {
-    for case in [Case::PizzaInit, Case::FmInit, Case::ModalInit] {
+    for case in [Case::AlgoInit, Case::ModalInit] {
         assert_eq!(
             fnv1a(&render_case(case)),
             fnv1a(&render_case(case)),
@@ -239,10 +236,9 @@ fn harness_is_deterministic() {
 #[test]
 fn modulated_cases_differ_from_unmodulated() {
     for (modulated, plain) in [
-        (Case::PizzaLfoCutoff, Case::PizzaInit),
-        (Case::FmLfoCutoff, Case::FmInit),
-        (Case::FmLfoOpALevel, Case::FmInit),
         (Case::ModalLfoCutoff, Case::ModalInit),
+        (Case::AlgoLfoCutoff, Case::AlgoInit),
+        (Case::AlgoMorphSweep, Case::AlgoMorphStatic),
     ] {
         assert_ne!(
             fnv1a(&render_case(modulated)),
@@ -250,6 +246,21 @@ fn modulated_cases_differ_from_unmodulated() {
             "{} renders the same as {}",
             modulated.name(),
             plain.name()
+        );
+    }
+}
+
+/// Spec § Testing: a patch per T1–T8, each a different algorithm.
+#[test]
+fn the_eight_tx_algorithms_render_differently() {
+    let hashes: Vec<u64> = (0..8)
+        .map(|t| fnv1a(&render_case(Case::AlgoTx(t))))
+        .collect();
+    for (i, h) in hashes.iter().enumerate() {
+        assert!(
+            !hashes[..i].contains(h),
+            "T{} renders like an earlier T",
+            i + 1
         );
     }
 }

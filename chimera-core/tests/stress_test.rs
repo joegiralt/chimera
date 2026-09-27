@@ -2,12 +2,22 @@
 //! STM32H750 @ 480MHz, 48kHz, BLOCK_SIZE=128 = 10,000 cycles/sample.
 //! We measure wall-clock time on desktop and flag anything too slow.
 
+use chimera_core::dsp::algo::algorithms::AlgoId;
+use chimera_core::dsp::algo::params::AlgoParams;
+use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::modulation::ModState;
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::{MidiNote, Velocity};
 use std::time::Instant;
+
+/// Operator 1 alone on the triangle.
+fn tri() -> ParamSnapshot {
+    let mut p = ParamSnapshot::for_engine(EngineType::Algo);
+    p.algo = AlgoParams::single(WaveId::TRI);
+    p
+}
 
 const SR: u32 = 48000;
 const BLOCKS: usize = 100;
@@ -47,28 +57,27 @@ fn bench_render(name: &str, setup: impl FnOnce(&mut ParamSnapshot)) -> f64 {
 }
 
 #[test]
-fn stress_pizza_basic() {
-    let t = bench_render("Pizza basic (triangle)", |p| {
-        *p = ParamSnapshot::for_engine(EngineType::Pizza);
+fn stress_algo_basic() {
+    let t = bench_render("Algo basic (triangle)", |p| {
+        *p = tri();
     });
-    assert!(t < 5000.0, "Pizza basic too slow: {} us/block", t);
+    assert!(t < 5000.0, "Algo basic too slow: {} us/block", t);
 }
 
 #[test]
-fn stress_pizza_crushed() {
-    let t = bench_render("Pizza crushed", |p| {
-        *p = ParamSnapshot::for_engine(EngineType::Pizza);
-        p.pizza.crush = 0.7;
-        p.pizza.shape = 0.8;
+fn stress_algo_pm() {
+    let t = bench_render("Algo PM", |p| {
+        *p = tri();
+        p.algo.ops[1].level = 70;
     });
-    assert!(t < 5000.0, "Pizza crushed too slow: {} us/block", t);
+    assert!(t < 5000.0, "Algo PM too slow: {} us/block", t);
 }
 
 #[test]
-fn stress_pizza_full_with_chain() {
-    let t = bench_render("Pizza + drive + filter + folder", |p| {
-        *p = ParamSnapshot::for_engine(EngineType::Pizza);
-        p.pizza.crush = 0.5;
+fn stress_algo_full_with_chain() {
+    let t = bench_render("Algo + drive + filter + folder", |p| {
+        *p = tri();
+        p.algo.ops[1].level = 70;
         p.drive.drive = 0.5;
         p.drive.mix = 1.0;
         p.filter.cutoff = 2000.0;
@@ -77,7 +86,7 @@ fn stress_pizza_full_with_chain() {
         p.folder.fold = 0.5;
         p.folder.mix = 1.0;
     });
-    assert!(t < 5000.0, "Pizza + chain too slow: {} us/block", t);
+    assert!(t < 5000.0, "Algo + chain too slow: {} us/block", t);
 }
 
 #[test]
@@ -178,13 +187,12 @@ fn stress_summary() {
     );
     eprintln!("{}", "-".repeat(55));
 
-    bench_render("Pizza basic", |p| {
-        *p = ParamSnapshot::for_engine(EngineType::Pizza);
+    bench_render("Algo basic", |p| {
+        *p = tri();
     });
-    bench_render("Pizza crushed", |p| {
-        *p = ParamSnapshot::for_engine(EngineType::Pizza);
-        p.pizza.crush = 0.7;
-        p.pizza.shape = 0.8;
+    bench_render("Algo PM", |p| {
+        *p = tri();
+        p.algo.ops[1].level = 70;
     });
     bench_render("KS+ string", |p| {
         *p = ParamSnapshot::for_engine(EngineType::Modal);
@@ -222,21 +230,34 @@ fn stress_summary() {
         p.modal.mode = ResonatorMode::Sympathetic;
     });
     bench_render("+ Drive", |p| {
-        *p = ParamSnapshot::for_engine(EngineType::Pizza);
+        *p = tri();
         p.drive.drive = 0.8;
         p.drive.mix = 1.0;
     });
     bench_render("+ Filter LP4", |p| {
-        *p = ParamSnapshot::for_engine(EngineType::Pizza);
+        *p = tri();
         p.filter.cutoff = 2000.0;
         p.filter.mode = 2;
     });
     bench_render("+ Wavefolder", |p| {
-        *p = ParamSnapshot::for_engine(EngineType::Pizza);
+        *p = tri();
         p.folder.fold = 0.8;
         p.folder.mix = 1.0;
     });
 
     eprintln!("\nBudget: 2667 us/block (128 samples @ 48kHz)");
     eprintln!("STM32H750 is ~3x faster than desktop per-cycle");
+}
+
+#[test]
+fn stress_algo_worst_case() {
+    let t = bench_render("Algo worst case (6 ops, morph)", |p| {
+        *p = ParamSnapshot::for_engine(EngineType::Algo);
+        (p.algo.alg_a, p.algo.alg_b, p.algo.morph) = (AlgoId::A14.get(), AlgoId::A22.get(), 64);
+        for (i, op) in p.algo.ops.iter_mut().enumerate() {
+            (op.wave, op.coarse, op.level, op.feedback) =
+                (i as u8, [4, 8, 10, 13, 16, 19][i], 99, 7);
+        }
+    });
+    assert!(t < 5000.0, "Algo worst case too slow: {} us/block", t);
 }

@@ -34,7 +34,7 @@ fn the_selected_row_is_an_accent_pill() {
 #[test]
 fn empty_slots_are_dimmed_and_saved_ones_bright() {
     let mut pool = SoundPool::new();
-    pool.store(0, Sound::init(ChainType::Fm));
+    pool.store(0, Sound::init(ChainType::Algo));
     let fb = drawn(&pool, 5, 0);
     assert!(row_has(&fb, 0, theme::INK), "saved slot name in ink");
     assert!(
@@ -43,13 +43,13 @@ fn empty_slots_are_dimmed_and_saved_ones_bright() {
     );
 }
 
-/// An INIT row (one of the three chain-type starting points after the pool
+/// An INIT row (one of the chain-type starting points after the pool
 /// slots) names its chain in `INK2` -- distinct from a saved slot's `INK`
 /// (`empty_slots_are_dimmed_and_saved_ones_bright`) and an empty slot's dim
 /// dash (no name at all), since it is neither.
 #[test]
 fn init_rows_name_their_chain_in_a_distinct_shade() {
-    let scroll = TOTAL_ENTRIES - VISIBLE_ROWS; // the tail: the three INIT rows follow the pool
+    let scroll = TOTAL_ENTRIES - VISIBLE_ROWS; // the tail: the INIT rows follow the pool
     let init_row = VISIBLE_ROWS - INIT_TYPES.len(); // first INIT row's visible index
     let fb = drawn(&SoundPool::new(), scroll, scroll); // cursor on the first visible row, not an INIT one
     assert!(row_has(&fb, init_row, theme::INK2), "INIT row name in INK2");
@@ -95,8 +95,8 @@ fn init_rows_end_the_list_and_load() {
         theme::ACCENT,
         "last visible row selected"
     );
-    feed(&mut ui, Input::press(ButtonId::Edit));
-    assert_eq!(ui.performance.parts[1].sound.chain_type, ChainType::Fm);
+    feed(&mut ui, Input::press(ButtonId::Edit)); // the last of the two INIT rows
+    assert_eq!(ui.performance.parts[1].sound.chain_type, ChainType::Modal);
 }
 
 fn render_ui(ui: &chimera_core::ui::UiState) -> Fb {
@@ -161,7 +161,7 @@ fn the_longest_sound_name_is_not_truncated() {
     use chimera_core::preset::NAME_LEN;
 
     let mut pool = SoundPool::new();
-    let mut s = Sound::init(ChainType::Fm);
+    let mut s = Sound::init(ChainType::Algo);
     s.name = *b"ABCDEFGHIJKLMNOP"; // exactly NAME_LEN bytes, no trailing 0
     assert_eq!(s.name.len(), NAME_LEN);
     pool.store(0, s);

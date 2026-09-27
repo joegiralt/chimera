@@ -1,3 +1,5 @@
+use chimera_core::dsp::algo::params::AlgoParams;
+use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::modulation::ModState;
@@ -5,6 +7,13 @@ use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::{MidiNote, Velocity};
 
 const SR: u32 = 48000;
+
+/// Operator 1 alone on the triangle.
+fn tri() -> ParamSnapshot {
+    let mut p = ParamSnapshot::for_engine(EngineType::Algo);
+    p.algo = AlgoParams::single(WaveId::TRI);
+    p
+}
 
 /// Render a voice, then change a parameter mid-note, render more.
 /// Returns (before_rms, after_rms) for comparison.
@@ -69,65 +78,13 @@ fn harmonic_energy(buf: &[f32], f0: f32) -> f32 {
     (2..=8).map(|h| goertzel(buf, f0 * h as f32, SR)).sum()
 }
 
-// ── Pizza: live parameter tests ─────────────────────────────────────
-
-#[test]
-fn test_pizza_shape_change_mid_note() {
-    let (_, _, before, after) = render_with_param_change(
-        |p| {
-            *p = ParamSnapshot::for_engine(EngineType::Pizza);
-            p.pizza.shape = 0.5; // triangle
-        },
-        |p| {
-            p.pizza.shape = 1.0; // ramp up
-        },
-        8,
-        8,
-    );
-    let diff: f32 = before
-        .iter()
-        .zip(after.iter())
-        .map(|(a, b)| (a - b).abs())
-        .sum::<f32>()
-        / before.len() as f32;
-    assert!(
-        diff > 0.001,
-        "shape change should alter sound: diff={}",
-        diff
-    );
-}
-
-#[test]
-fn test_pizza_crush_change_mid_note() {
-    let (_, _, before, after) = render_with_param_change(
-        |p| {
-            *p = ParamSnapshot::for_engine(EngineType::Pizza);
-            p.pizza.crush = 0.0;
-        },
-        |p| {
-            p.pizza.crush = 0.8;
-        },
-        8,
-        8,
-    );
-    let f0 = 261.6;
-    let h_before = harmonic_energy(&before, f0);
-    let h_after = harmonic_energy(&after, f0);
-    assert!(
-        (h_before - h_after).abs() > 0.001,
-        "crush change should alter harmonics: before={} after={}",
-        h_before,
-        h_after
-    );
-}
-
-// ── Filter: live parameter tests ────────────────────────────────────
+// ── Voice chain: live parameter tests────────────────────────────────
 
 #[test]
 fn test_filter_cutoff_sweep_mid_note() {
     let (before_rms, after_rms, _, _) = render_with_param_change(
         |p| {
-            *p = ParamSnapshot::for_engine(EngineType::Pizza);
+            *p = tri();
             p.filter.cutoff = 10000.0;
             p.filter.mode = 2; // LP4
         },
@@ -149,7 +106,7 @@ fn test_filter_cutoff_sweep_mid_note() {
 fn test_filter_resonance_mid_note() {
     let (_, _, before, after) = render_with_param_change(
         |p| {
-            *p = ParamSnapshot::for_engine(EngineType::Pizza);
+            *p = tri();
             p.filter.cutoff = 1000.0;
             p.filter.mode = 1; // LP2
             p.filter.resonance = 0.0;
@@ -176,7 +133,7 @@ fn test_filter_resonance_mid_note() {
 fn test_drive_amount_mid_note() {
     let (_, _, before, after) = render_with_param_change(
         |p| {
-            *p = ParamSnapshot::for_engine(EngineType::Pizza);
+            *p = tri();
             p.drive.drive = 0.0;
             p.drive.mix = 1.0;
         },
@@ -203,7 +160,7 @@ fn test_drive_amount_mid_note() {
 fn test_folder_mid_note() {
     let (_, _, before, after) = render_with_param_change(
         |p| {
-            *p = ParamSnapshot::for_engine(EngineType::Pizza);
+            *p = tri();
             p.folder.fold = 0.0;
         },
         |p| {
@@ -381,7 +338,7 @@ fn test_modal_brightness_mid_note() {
 fn test_volume_mid_note() {
     let (before_rms, after_rms, _, _) = render_with_param_change(
         |p| {
-            *p = ParamSnapshot::for_engine(EngineType::Pizza);
+            *p = tri();
             p.out.volume = 0.8;
         },
         |p| {
@@ -396,4 +353,34 @@ fn test_volume_mid_note() {
         before_rms,
         after_rms
     );
+}
+
+// ── Algo: live parameter tests ──────────────────────────────────────
+
+#[test]
+fn test_algo_wave_change_mid_note() {
+    let (_, _, before, after) = render_with_param_change(
+        |p| *p = ParamSnapshot::for_engine(EngineType::Algo),
+        |p| p.algo.ops[0].wave = WaveId::SAW.get(),
+        8,
+        8,
+    );
+    let f0 = 261.6;
+    let h_before = harmonic_energy(&before, f0);
+    let h_after = harmonic_energy(&after, f0);
+    assert!(
+        h_after > h_before * 2.0,
+        "a saw has more harmonics than a sine: before {h_before}, after {h_after}"
+    );
+}
+
+#[test]
+fn test_algo_level_change_mid_note() {
+    let (before_rms, after_rms, _, _) = render_with_param_change(
+        |p| *p = ParamSnapshot::for_engine(EngineType::Algo),
+        |p| p.algo.ops[0].level = 60,
+        8,
+        64,
+    );
+    assert!(after_rms < before_rms * 0.1, "{before_rms} → {after_rms}");
 }

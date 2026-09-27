@@ -34,11 +34,11 @@ fn the_first_tick_of_another_slot_moves_focus_and_it_stays() {
 #[test]
 fn focus_is_remembered_per_page() {
     let mut ui = UiState::new();
-    feed(&mut ui, Input::turn(EncoderId::C, 1)); // Pizza: C
-    feed(&mut ui, Input::press(ButtonId::Plus)); // → Drive
+    feed(&mut ui, Input::turn(EncoderId::C, 1)); // Wave: C
+    feed(&mut ui, Input::press(ButtonId::Plus)); // → Algorithm
     assert_eq!(ui.focused_slot(), 0, "a page not yet touched shows slot a");
-    feed(&mut ui, Input::turn(EncoderId::B, 1)); // Drive: B
-    feed(&mut ui, Input::press(ButtonId::Minus)); // ← Pizza
+    feed(&mut ui, Input::turn(EncoderId::B, 1)); // Algorithm: B
+    feed(&mut ui, Input::press(ButtonId::Minus)); // ← Wave
     assert_eq!(ui.focused_slot(), 2);
     feed(&mut ui, Input::press(ButtonId::Plus));
     assert_eq!(ui.focused_slot(), 1);
@@ -50,8 +50,8 @@ fn mixer_part_and_matrix_pages_use_the_same_mechanism() {
     feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::B1));
     feed(&mut ui, Input::turn(EncoderId::D, -1)); // LEVEL
     assert_eq!(ui.focused_slot(), 3);
-    feed(&mut ui, Input::press(ButtonId::B1)); // Part 1 chain, Pizza
-    for _ in 0..4 {
+    feed(&mut ui, Input::press(ButtonId::B1)); // Part 1 chain, Algo
+    for _ in 0..5 {
         feed(&mut ui, Input::press(ButtonId::Plus)); // → MOD
     }
     feed(&mut ui, Input::turn(EncoderId::E, 5)); // amount
@@ -69,16 +69,15 @@ fn out_of_range_page_ids_are_ignored() {
 
 #[test]
 fn every_page_id_fits_the_focus_table() {
-    let chains: [&ChainDef2; 9] = [
-        &reg::PIZZA_POLY_CHAIN,
+    let chains: [&ChainDef2; 8] = [
         &reg::KICK_CHAIN,
         &reg::MODAL_PLUCK_CHAIN,
-        &reg::FM_CHAIN,
         &reg::MIX_CHAIN,
         &reg::ENVELOPE_CHAIN,
         &reg::MIXER_CHANNEL_CHAIN,
         &reg::SYSTEM_CHAIN,
         &reg::DEMO_CHAIN,
+        &reg::ALGO_CHAIN,
     ];
     for chain in chains {
         for block in chain.blocks {
@@ -89,12 +88,12 @@ fn every_page_id_fits_the_focus_table() {
     }
 }
 
-/// Turning an encoder over an empty slot (4opFM slot b) edits nothing, so it
-/// does not take the focus: the focus band and the active cell stay put.
+/// Turning an encoder over an empty slot (Algorithm page slot f) edits
+/// nothing, so it does not take the focus: the focus band and the active
+/// cell stay put.
 #[test]
 fn an_empty_slot_does_not_take_focus() {
-    use chimera_core::preset::ChainType;
-    use screen::{Fb, W, load_init, settle};
+    use screen::{Fb, W, settle};
     let render = |ui: &UiState| {
         let mut fb = Fb::new();
         ui.render_with_scope(
@@ -105,11 +104,10 @@ fn an_empty_slot_does_not_take_focus() {
         fb
     };
     let mut ui = UiState::new();
-    load_init(&mut ui, ChainType::Fm);
-    feed(&mut ui, Input::turn(EncoderId::C, 1)); // LEVEL
+    feed(&mut ui, Input::turn(EncoderId::C, 1)); // MORPH
     settle(&mut ui);
     let before = render(&ui);
-    feed(&mut ui, Input::turn(EncoderId::B, 3)); // slot b: empty
+    feed(&mut ui, Input::turn(EncoderId::F, 3)); // slot f: empty
     settle(&mut ui);
     assert_eq!(ui.focused_slot(), 2);
     let after = render(&ui);

@@ -1,11 +1,12 @@
 use chimera_core::addr::{BlockRef, Op, ParamAddr};
 use chimera_core::block::ParamId;
+use chimera_core::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use chimera_core::dsp::modal::ModalParams;
 use chimera_core::mod_path::{ModDestRegistry, RegistryError};
-use chimera_core::params::{DriveParams, FilterParams, FmOpParams, FmParams};
+use chimera_core::params::{DriveParams, EnvParams, FilterParams};
 
 fn op_level(op: Op) -> ParamAddr {
-    ParamAddr::new(BlockRef::FmOp(op), FmOpParams::LEVEL)
+    ParamAddr::new(BlockRef::AlgoOp(op), AlgoOpParams::LEVEL)
 }
 
 #[test]
@@ -60,12 +61,14 @@ fn registry_refuses_non_modulatable() {
     let mut reg = ModDestRegistry::new();
     let refused = [
         ParamAddr::new(BlockRef::Modal, ModalParams::EXCITE), // note-on only
-        ParamAddr::new(BlockRef::Fm, FmParams::ALGORITHM),    // Enum
-        ParamAddr::new(BlockRef::FmOp(Op::A), FmOpParams::WAVEFORM), // Enum
-        ParamAddr::new(BlockRef::FmOp(Op::A), FmOpParams::ATTACK_RATE), // note-on only
+        ParamAddr::new(BlockRef::Algo, AlgoParams::ALG_A),    // Enum
+        ParamAddr::new(BlockRef::AlgoOp(Op::A), AlgoOpParams::WAVE), // Enum
+        ParamAddr::new(BlockRef::AlgoOp(Op::A), AlgoOpParams::AR), // note-on only
+        ParamAddr::new(BlockRef::AlgoOp(Op::A), AlgoOpParams::FEEDBACK), // not a destination yet
+        ParamAddr::new(BlockRef::AmpEnv, EnvParams::ATTACK),  // off the VCA
         ParamAddr::new(BlockRef::Filter, FilterParams::FM_AMOUNT), // never read
-        ParamAddr::new(BlockRef::FilterEnv, chimera_core::params::EnvParams::ATTACK), // never read (plan D7)
-        ParamAddr::new(BlockRef::Pizza, ParamId(99)), // no such param
+        ParamAddr::new(BlockRef::FilterEnv, EnvParams::ATTACK), // never read (plan D7)
+        ParamAddr::new(BlockRef::Algo, ParamId(99)),          // no such param
     ];
     for addr in refused {
         assert_eq!(
@@ -95,5 +98,5 @@ fn registry_accepts_exactly_the_modulatable_addresses() {
             accepted += addr.modulatable() as usize;
         }
     }
-    assert_eq!(accepted, 25);
+    assert_eq!(accepted, 17);
 }

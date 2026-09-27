@@ -7,26 +7,25 @@ pub enum VizType {
     None,
     FilterResponse,
     Adsr,
-    AlgorithmDiagram,
     LpgResponse,
     Logo,
     EffectsFlow,
     MixerLevels,
     CompressorCurve,
-    /// TX81Z 5-stage envelope: AR → D1R → D1L → D2R → RR
-    FmEnvelope,
     AudioStats,
+    /// ALG A's diagram moving to ALG B's with MORPH.
+    AlgoDiagram,
 }
 
 /// What an encoder slot edits (spec §5).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SlotBinding {
     Empty,
-    /// A fixed param, e.g. Filter cutoff or `FmOp(A)` coarse.
+    /// A fixed param, e.g. Filter cutoff or `AlgoOp(A)` level.
     Param(ParamAddr),
-    /// A param of the currently selected FM operator.
+    /// A param of the currently selected operator.
     SelectedOp(ParamId),
-    /// The FM operator selector itself.
+    /// The operator selector itself.
     SelectOp,
     /// Mixer/System/Demo pages, still driven by `PageId`.
     Legacy {
@@ -88,8 +87,8 @@ impl ParamSlot {
     pub fn spec(&self) -> Option<&'static ParamSpec> {
         match self.binding {
             SlotBinding::Param(a) => a.spec(),
-            // All four FM operators share one spec table, so FmOp(Op::A) stands in.
-            SlotBinding::SelectedOp(id) => find_spec(BlockRef::FmOp(Op::A).specs(), id),
+            // All six operators share one spec table, so AlgoOp(Op::A) stands in.
+            SlotBinding::SelectedOp(id) => find_spec(BlockRef::AlgoOp(Op::A).specs(), id),
             SlotBinding::Empty | SlotBinding::SelectOp | SlotBinding::Legacy { .. } => None,
         }
     }
@@ -111,7 +110,7 @@ impl ParamSlot {
     pub fn format(&self) -> ValFmt {
         match self.binding {
             SlotBinding::Empty => ValFmt::Uni,
-            SlotBinding::SelectOp => ValFmt::OneBased(3),
+            SlotBinding::SelectOp => ValFmt::OneBased(Op::ALL.len() as u8 - 1),
             SlotBinding::Legacy { fmt, .. } => fmt,
             SlotBinding::Param(_) | SlotBinding::SelectedOp(_) => {
                 self.spec().map_or(ValFmt::Uni, |s| s.fmt)
@@ -125,7 +124,7 @@ impl ParamSlot {
 pub fn slot_addr(def: &BlockDef, slot: usize, sel_op: Op) -> Option<ParamAddr> {
     match def.params.get(slot)?.binding {
         SlotBinding::Param(a) => Some(a),
-        SlotBinding::SelectedOp(id) => Some(ParamAddr::new(BlockRef::FmOp(sel_op), id)),
+        SlotBinding::SelectedOp(id) => Some(ParamAddr::new(BlockRef::AlgoOp(sel_op), id)),
         SlotBinding::Empty | SlotBinding::SelectOp | SlotBinding::Legacy { .. } => None,
     }
 }

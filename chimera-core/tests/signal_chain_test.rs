@@ -1,10 +1,19 @@
+use chimera_core::dsp::algo::params::AlgoParams;
+use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::drive::Drive;
 use chimera_core::dsp::filter::SvfFilter;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::dsp::wavefolder::Wavefolder;
 use chimera_core::modulation::ModState;
-use chimera_core::params::{DriveParams, FilterParams, FolderParams, ParamSnapshot};
+use chimera_core::params::{DriveParams, EngineType, FilterParams, FolderParams, ParamSnapshot};
 use chimera_core::{MidiNote, Velocity};
+
+/// Operator 1 alone on the triangle.
+fn tri() -> ParamSnapshot {
+    let mut p = ParamSnapshot::for_engine(EngineType::Algo);
+    p.algo = AlgoParams::single(WaveId::TRI);
+    p
+}
 
 // ── Drive ───────────────────────────────────────────────────────────
 
@@ -218,8 +227,8 @@ fn test_voice_silent_when_idle() {
 fn test_voice_produces_sound() {
     let empty_mod = ModState::new();
     let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
-    let params = ParamSnapshot::default();
-    // Pizza produces sound by default
+    let params = tri();
+    // Algo produces sound by default
 
     voice.note_on(
         MidiNote::new(60).unwrap(),
@@ -245,10 +254,10 @@ fn test_voice_filter_shapes_sound() {
     let empty_mod = ModState::new();
     let mut voice_open = Voice::new(chimera_hal::SAMPLE_RATE);
     let mut voice_closed = Voice::new(chimera_hal::SAMPLE_RATE);
-    let mut params_open = ParamSnapshot::default();
-    let mut params_closed = ParamSnapshot::default();
+    let mut params_open = tri();
+    let mut params_closed = tri();
 
-    // Both with active Pizza
+    // Both with active Algo
 
     // One with open filter, one with very closed filter
     params_open.filter.cutoff = 15000.0;
@@ -290,8 +299,8 @@ fn test_voice_filter_shapes_sound() {
 fn test_voice_output_bounded() {
     let empty_mod = ModState::new();
     let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
-    let mut params = ParamSnapshot::default();
-    params.pizza.crush = 0.7;
+    let mut params = tri();
+    params.algo.ops[1].level = 70;
     params.drive.drive = 1.0;
     params.drive.mix = 1.0;
     params.folder.fold = 0.5;

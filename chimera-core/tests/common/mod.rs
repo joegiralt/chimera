@@ -6,7 +6,10 @@
 //! note 60 vel 100 on, ON_BLOCKS blocks, note off, OFF_BLOCKS blocks.
 #![allow(dead_code)]
 
-use chimera_core::addr::{BlockRef, Op, ParamAddr};
+use chimera_core::addr::{BlockRef, ParamAddr};
+use chimera_core::dsp::algo::algorithms::AlgoId;
+use chimera_core::dsp::algo::params::AlgoParams;
+use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::hw::DAC_PAIRS;
@@ -14,7 +17,7 @@ use chimera_core::instrument::{AudioShared, Instrument};
 use chimera_core::mod_path::ModDestRegistry;
 use chimera_core::modulation::ModState;
 use chimera_core::note_queue::{NoteEvent, NoteKind};
-use chimera_core::params::{EngineType, FilterParams, FmOpParams, ParamSnapshot};
+use chimera_core::params::{EngineType, FilterParams, ParamSnapshot};
 use chimera_core::preset::{ChainType, Sound};
 use chimera_core::scope::{ScopeWriter, scope_buffer};
 use chimera_core::{MidiChannel, MidiNote, Velocity};
@@ -33,7 +36,7 @@ pub const OFF_BLOCKS: usize = 200;
 pub const TOTAL_SAMPLES: usize = (ON_BLOCKS + OFF_BLOCKS) * BLOCK_SIZE;
 /// LFO rate for every modulated case. At the 1 Hz default the LFO stays
 /// positive for the first 0.5 s, so a route to a param already at its max
-/// (cutoff 20 kHz, FM op A level 99) would clamp and never be exercised.
+/// (cutoff 20 kHz) would clamp and never be exercised.
 pub const MOD_LFO_RATE: f32 = 5.0;
 /// Matrix amount (−127..=127) for every modulated case.
 pub const MOD_AMOUNT: i8 = 64;
@@ -41,68 +44,100 @@ pub const MOD_AMOUNT: i8 = 64;
 /// Every golden case. `name()` is the key in `golden_test.rs::GOLDENS`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Case {
-    PizzaInit,
-    PizzaLfoCutoff,
-    FmInit,
-    FmLfoCutoff,
-    FmLfoOpALevel,
-    /// FM init params with the FM init sound's own `ModState`. Since Task 22
-    /// dropped the pre-wire, `Sound::init` no longer seeds any destinations,
-    /// so this is empty like `FmInit`'s `ModState::new()` — kept as its own
-    /// case for golden continuity (the only case Task 22 re-recorded).
-    FmInitPatchMod,
     ModalInit,
     ModalLfoCutoff,
-    VaInit,
-    /// Pizza init; engine switched to Modal at block ON_BLOCKS / 2 (mid-note).
-    PizzaToModalSwitch,
+    /// The Algo init Sound: operator 1 on W1 at LEVEL 99, T1.
+    AlgoInit,
+    /// Algo init with the LFO on filter cutoff: the chain lock Pizza's
+    /// `pizza_lfo_cutoff` held.
+    AlgoLfoCutoff,
+    /// `tx_patch` on T1–T8 (0–7).
+    AlgoTx(u8),
+    /// `morph_patch` with no modulation.
+    AlgoMorphStatic,
+    /// `morph_patch` with the LFO sweeping MORPH.
+    AlgoMorphSweep,
+    /// Algo init; engine switched to Modal at block ON_BLOCKS / 2 (mid-note).
+    AlgoToModalSwitch,
 }
 
+static TX_NAMES: [&str; 8] = [
+    "algo_t1", "algo_t2", "algo_t3", "algo_t4", "algo_t5", "algo_t6", "algo_t7", "algo_t8",
+];
+
 impl Case {
-    pub const ALL: [Case; 10] = [
-        Case::PizzaInit,
-        Case::PizzaLfoCutoff,
-        Case::FmInit,
-        Case::FmLfoCutoff,
-        Case::FmLfoOpALevel,
-        Case::FmInitPatchMod,
+    pub const ALL: [Case; 15] = [
         Case::ModalInit,
         Case::ModalLfoCutoff,
-        Case::VaInit,
-        Case::PizzaToModalSwitch,
+        Case::AlgoInit,
+        Case::AlgoLfoCutoff,
+        Case::AlgoTx(0),
+        Case::AlgoTx(1),
+        Case::AlgoTx(2),
+        Case::AlgoTx(3),
+        Case::AlgoTx(4),
+        Case::AlgoTx(5),
+        Case::AlgoTx(6),
+        Case::AlgoTx(7),
+        Case::AlgoMorphStatic,
+        Case::AlgoMorphSweep,
+        Case::AlgoToModalSwitch,
     ];
 
     pub fn name(self) -> &'static str {
         match self {
-            Case::PizzaInit => "pizza_init",
-            Case::PizzaLfoCutoff => "pizza_lfo_cutoff",
-            Case::FmInit => "fm_init",
-            Case::FmLfoCutoff => "fm_lfo_cutoff",
-            Case::FmLfoOpALevel => "fm_lfo_op_a_level",
-            Case::FmInitPatchMod => "fm_init_patch_mod",
             Case::ModalInit => "modal_init",
             Case::ModalLfoCutoff => "modal_lfo_cutoff",
-            Case::VaInit => "va_init",
-            Case::PizzaToModalSwitch => "pizza_to_modal_switch",
+            Case::AlgoInit => "algo_init",
+            Case::AlgoLfoCutoff => "algo_lfo_cutoff",
+            Case::AlgoTx(t) => TX_NAMES[t as usize % 8],
+            Case::AlgoMorphStatic => "algo_morph_static",
+            Case::AlgoMorphSweep => "algo_morph_sweep",
+            Case::AlgoToModalSwitch => "algo_to_modal_switch",
         }
     }
 }
 
-/// Init params per engine: the chain's `Sound::init` params for the three
-/// real engines; defaults with `engine = Va` for Va (it has no chain).
+/// Init params per engine: the chain's `Sound::init` params.
 pub fn init_params(engine: EngineType) -> ParamSnapshot {
     match engine {
-        EngineType::Pizza => Sound::init(ChainType::PizzaPoly).params,
-        EngineType::Fm => Sound::init(ChainType::Fm).params,
+        EngineType::Algo => Sound::init(ChainType::Algo).params,
         EngineType::Modal => Sound::init(ChainType::Modal).params,
-        EngineType::Va => ParamSnapshot::for_engine(EngineType::Va),
     }
 }
 
 /// Filter cutoff — the same semantic address on every chain.
 pub const CUTOFF: ParamAddr = ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF);
-/// FM operator A level.
-pub const OP_A_LEVEL: ParamAddr = ParamAddr::new(BlockRef::FmOp(Op::A), FmOpParams::LEVEL);
+
+/// MORPH, the destination of the morph sweep.
+pub const MORPH: ParamAddr = ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH);
+
+/// Four TX-style operators on T1–T8 (`t` 0–7); operators 5 and 6 silent.
+pub fn tx_patch(alg: AlgoId) -> ParamSnapshot {
+    let mut p = init_params(EngineType::Algo);
+    (p.algo.alg_a, p.algo.alg_b) = (alg.get(), alg.get());
+    let ops = [
+        (WaveId::W1, 4, 99, 0),
+        (WaveId::W1, 8, 70, 0),
+        (WaveId::W2, 4, 80, 0),
+        (WaveId::W1, 13, 60, 4),
+    ];
+    for (o, (wave, coarse, level, feedback)) in p.algo.ops.iter_mut().zip(ops) {
+        (o.wave, o.coarse, o.level, o.feedback) = (wave.get(), coarse, level, feedback);
+        (o.d1r, o.d1l, o.d2r) = (6, 10, 2);
+    }
+    p
+}
+
+/// Six sines at ratios 1–6 between A1 and A17, MORPH halfway.
+pub fn morph_patch() -> ParamSnapshot {
+    let mut p = init_params(EngineType::Algo);
+    (p.algo.alg_a, p.algo.alg_b, p.algo.morph) = (AlgoId::A1.get(), AlgoId::A17.get(), 64);
+    for (i, o) in p.algo.ops.iter_mut().enumerate() {
+        (o.coarse, o.level) = ([4, 8, 10, 13, 16, 19][i], 80);
+    }
+    p
+}
 
 /// One LFO (source 1) route at MOD_AMOUNT to `dest`; env is source 0 so
 /// `num_sources >= 2` and the LFO runs.
@@ -115,7 +150,7 @@ pub fn lfo_route(dest: ParamAddr) -> ModState {
     ms
 }
 
-/// Params + ModState for a case (the switch's second half is in `render_case`).
+/// Params + ModState for a case.
 pub fn setup(case: Case) -> (ParamSnapshot, ModState) {
     let with_lfo = |engine: EngineType, dest: ParamAddr| {
         let mut p = init_params(engine);
@@ -123,27 +158,25 @@ pub fn setup(case: Case) -> (ParamSnapshot, ModState) {
         (p, lfo_route(dest))
     };
     match case {
-        Case::PizzaInit => (init_params(EngineType::Pizza), ModState::new()),
-        Case::PizzaLfoCutoff => with_lfo(EngineType::Pizza, CUTOFF),
-        Case::FmInit => (init_params(EngineType::Fm), ModState::new()),
-        Case::FmLfoCutoff => with_lfo(EngineType::Fm, CUTOFF),
-        Case::FmLfoOpALevel => with_lfo(EngineType::Fm, OP_A_LEVEL),
-        Case::FmInitPatchMod => {
-            let sound = Sound::init(ChainType::Fm);
-            (sound.params, sound.mod_state)
-        }
         Case::ModalInit => (init_params(EngineType::Modal), ModState::new()),
         Case::ModalLfoCutoff => with_lfo(EngineType::Modal, CUTOFF),
-        Case::VaInit => (init_params(EngineType::Va), ModState::new()),
-        Case::PizzaToModalSwitch => (init_params(EngineType::Pizza), ModState::new()),
+        Case::AlgoInit => (init_params(EngineType::Algo), ModState::new()),
+        Case::AlgoLfoCutoff => with_lfo(EngineType::Algo, CUTOFF),
+        Case::AlgoTx(t) => (tx_patch(AlgoId::clamped(t)), ModState::new()),
+        Case::AlgoMorphStatic => (morph_patch(), ModState::new()),
+        Case::AlgoMorphSweep => {
+            let mut p = morph_patch();
+            p.lfo.rate = MOD_LFO_RATE;
+            (p, lfo_route(MORPH))
+        }
+        Case::AlgoToModalSwitch => (init_params(EngineType::Algo), ModState::new()),
     }
 }
 
 /// Render the fixed harness for one case. Returns TOTAL_SAMPLES samples.
 pub fn render_case(case: Case) -> Vec<f32> {
     let (params, mod_state) = setup(case);
-    // Pizza→Modal: from block ON_BLOCKS / 2 the same (default) params with
-    // the engine switched — i.e. the Modal init params.
+    // Algo→Modal: from block ON_BLOCKS / 2 the Modal init params.
     let switched = init_params(EngineType::Modal);
     let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
     voice.note_on(
@@ -157,7 +190,7 @@ pub fn render_case(case: Case) -> Vec<f32> {
         if b == ON_BLOCKS {
             voice.note_off();
         }
-        let p = if case == Case::PizzaToModalSwitch && b >= ON_BLOCKS / 2 {
+        let p = if case == Case::AlgoToModalSwitch && b >= ON_BLOCKS / 2 {
             &switched
         } else {
             &params
@@ -192,7 +225,7 @@ pub fn render_case_through_instrument(case: Case) -> Vec<f32> {
     let mut out = Vec::with_capacity(TOTAL_SAMPLES);
     let mut scope = scope_writer();
     for b in 0..ON_BLOCKS + OFF_BLOCKS {
-        let s = if case == Case::PizzaToModalSwitch && b >= ON_BLOCKS / 2 {
+        let s = if case == Case::AlgoToModalSwitch && b >= ON_BLOCKS / 2 {
             &switched
         } else {
             &shared
@@ -233,7 +266,6 @@ pub fn spots(samples: &[f32]) -> [u32; 8] {
 /// expectation is written (spec § Testing "Engines").
 pub fn expects_sound(e: EngineType) -> bool {
     match e {
-        EngineType::Pizza | EngineType::Fm | EngineType::Modal => true,
-        EngineType::Va => false,
+        EngineType::Algo | EngineType::Modal => true,
     }
 }

@@ -5,7 +5,10 @@
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::Rgb565;
 
+use crate::dsp::algo::algorithms::Algorithm;
+use crate::dsp::algo::plan::{OPS, blend};
 use crate::scope::{self, SCOPE_LEN};
+use crate::ui::alg_layout;
 use crate::ui::draw;
 use crate::ui::theme;
 
@@ -377,113 +380,6 @@ pub const FX_NODES: [&str; 5] = ["IN", "CHR", "DLY", "REV", "OUT"];
 pub const FLOW_Y: i32 = 146;
 pub const FLOW_SEND_Y: i32 = 176;
 
-/// FM algorithm topologies 0..=7 (the pre-refresh diagrams, as data):
-/// operator 1..4 positions as (x in half steps from centre, row), the
-/// modulation edges (from, to), and the carriers (bit n-1 = operator n).
-// Algorithms 2 and 3 are repositioned from the pre-refresh diagram so every
-// edge reads unambiguously: no edge line passes near an unrelated node
-// (alg 2's old layout put operator 2 almost on the 4→1 line), and every
-// edge runs strictly downward, modulator above target (alg 3's old layout
-// put operators 2 and 3 on the same row, which hid the (3, 2) direction).
-const ALG_POS: [[(i8, i8); 4]; 8] = [
-    [(0, 3), (0, 2), (0, 1), (0, 0)],
-    [(0, 2), (0, 1), (-1, 0), (1, 0)],
-    [(0, 2), (-1, 1), (-1, 0), (1, 1)],
-    [(0, 2), (1, 1), (-1, 1), (-1, 0)],
-    [(-1, 1), (-1, 0), (1, 1), (1, 0)],
-    [(-2, 1), (0, 1), (2, 1), (0, 0)],
-    [(-2, 1), (0, 1), (2, 1), (2, 0)],
-    [(-3, 0), (-1, 0), (1, 0), (3, 0)],
-];
-// Edges verified against `dsp::engine_fm::FmEngine::render`'s routing per
-// algorithm. Algorithm 3 (TX81Z ALG 4) is 4 -> 3 with op3 and op2 both into
-// op1; op2 is unmodulated (#18, ADR 0018).
-const ALG_EDGES: [&[(u8, u8)]; 8] = [
-    &[(4, 3), (3, 2), (2, 1)],
-    &[(3, 2), (4, 2), (2, 1)],
-    &[(3, 2), (2, 1), (4, 1)],
-    &[(4, 3), (3, 1), (2, 1)],
-    &[(2, 1), (4, 3)],
-    &[(4, 1), (4, 2), (4, 3)],
-    &[(4, 3)],
-    &[],
-];
-const ALG_CARRIERS: [u8; 8] = [
-    0b0001, 0b0001, 0b0001, 0b0001, 0b0101, 0b0111, 0b0111, 0b1111,
-];
-const ALG_STEP_X: i32 = 20;
-const ALG_STEP_Y: i32 = 17;
-/// Drawn radius of an operator node; also the minimum clearance an edge
-/// keeps from any node that isn't one of its own endpoints (`+2`, tested).
-pub const ALG_OP_R: i32 = 7;
-
-/// Centre of operator `op` (0-based) in algorithm `alg`, in the viz band.
-pub fn alg_op_center(alg: u8, op: usize) -> (i32, i32) {
-    let a = (alg as usize).min(7);
-    let rows = ALG_POS[a].iter().map(|p| p.1).max().unwrap_or(0) as i32 + 1;
-    let top = theme::VIZ_BAND_MID - (rows - 1) * ALG_STEP_Y / 2;
-    let (hx, row) = ALG_POS[a][op];
-    (
-        theme::SCREEN_W / 2 + hx as i32 * ALG_STEP_X,
-        top + row as i32 * ALG_STEP_Y,
-    )
-}
-
-/// The algorithm's modulation edges, `(from, to)`, both 1-based operator numbers.
-pub fn alg_edges(alg: u8) -> &'static [(u8, u8)] {
-    ALG_EDGES[(alg as usize).min(7)]
-}
-
-/// FM algorithm page and operator page: the algorithm's operators and
-/// edges; carriers filled, modulators as rings. `selected` lights an
-/// operator in the accent colour — the FM operator page passes the operator
-/// being edited; the FM algorithm page edits no single operator, so it
-/// passes `None` (accent is reserved for the active element).
-/// Edges are drawn in `theme::MID` (non-accent grey): the visualization
-/// accent-line width rule doesn't apply to them, so they stay 1 px.
-pub fn fm_algorithm<D>(d: &mut D, alg: u8, selected: Option<usize>)
-where
-    D: DrawTarget<Color = Rgb565>,
-{
-    let a = (alg as usize).min(7);
-    for &(from, to) in ALG_EDGES[a] {
-        let (x0, y0) = alg_op_center(alg, from as usize - 1);
-        let (x1, y1) = alg_op_center(alg, to as usize - 1);
-        draw::line(d, x0, y0, x1, y1, theme::MID, 1);
-    }
-    for (op, label) in ["1", "2", "3", "4"].into_iter().enumerate() {
-        let (x, y) = alg_op_center(alg, op);
-        let carrier = ALG_CARRIERS[a] & (1 << op) != 0;
-        if selected == Some(op) {
-            draw::dot(d, x, y, ALG_OP_R, theme::ACCENT);
-            draw::text_center(
-                d,
-                &theme::FONT_LABEL_BOLD,
-                label,
-                x + 1,
-                y + 4,
-                theme::BG,
-                0,
-            );
-        } else if carrier {
-            draw::dot(d, x, y, ALG_OP_R, theme::INK2);
-            draw::text_center(
-                d,
-                &theme::FONT_LABEL_BOLD,
-                label,
-                x + 1,
-                y + 4,
-                theme::BG,
-                0,
-            );
-        } else {
-            draw::dot(d, x, y, ALG_OP_R, theme::BG);
-            draw::ring(d, x, y, ALG_OP_R, theme::MID, 1);
-            draw::text_center(d, &theme::FONT_LABEL, label, x + 1, y + 4, theme::MID, 0);
-        }
-    }
-}
-
 /// FX pages and SENDS: IN → CHR → DLY → REV → OUT on a line (the
 /// pre-refresh flow diagram, drawn with the map's nodes). `lit` (0 = CHR)
 /// is the page's effect, or on SENDS the focused send: an INK pill, so the
@@ -528,6 +424,56 @@ where
                 theme::FAINT,
                 fill,
             );
+        }
+    }
+}
+
+/// The ALGO page: A's layout moving to B's with MORPH. A link is drawn in
+/// MID once its blended weight reaches 0.5, FAINT below; an operator is a
+/// filled carrier once its blended carrier gain reaches 0.5.
+pub fn algo_diagram<D>(d: &mut D, a: &Algorithm, b: &Algorithm, morph: f32)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let on = |bit: bool| if bit { 1.0 } else { 0.0 };
+    let l = alg_layout::blend(&alg_layout::layout(a), &alg_layout::layout(b), morph);
+    for src in 0..OPS {
+        for dst in 0..OPS {
+            let bit = 1 << dst;
+            let w = blend(
+                on(a.mods[src] & bit != 0),
+                on(b.mods[src] & bit != 0),
+                morph,
+            );
+            if w > 0.0 {
+                let ((x0, y0), (x1, y1)) = (l.pos[src], l.pos[dst]);
+                let c = if w >= 0.5 { theme::MID } else { theme::FAINT };
+                draw::line(d, x0, y0, x1, y1, c, 1);
+            }
+        }
+    }
+    for (op, label) in ["1", "2", "3", "4", "5", "6"].into_iter().enumerate() {
+        let (x, y) = l.pos[op];
+        let c = blend(
+            on(a.carriers & (1 << op) != 0),
+            on(b.carriers & (1 << op) != 0),
+            morph,
+        );
+        if c >= 0.5 {
+            draw::dot(d, x, y, l.r, theme::INK2);
+            draw::text_center(
+                d,
+                &theme::FONT_LABEL_BOLD,
+                label,
+                x + 1,
+                y + 4,
+                theme::BG,
+                0,
+            );
+        } else {
+            draw::dot(d, x, y, l.r, theme::BG);
+            draw::ring(d, x, y, l.r, theme::MID, 1);
+            draw::text_center(d, &theme::FONT_LABEL, label, x + 1, y + 4, theme::MID, 0);
         }
     }
 }

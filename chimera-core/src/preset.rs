@@ -18,29 +18,26 @@ pub const NAME_LEN: usize = 16;
 #[repr(u8)]
 pub enum ChainType {
     #[default]
-    PizzaPoly = 0,
+    Algo = 0,
     Modal = 1,
-    Fm = 2,
 }
 
 impl ChainType {
-    pub const ALL: [ChainType; 3] = [ChainType::PizzaPoly, ChainType::Modal, ChainType::Fm];
+    pub const ALL: [ChainType; 2] = [ChainType::Algo, ChainType::Modal];
 
     /// Short display label for the chain type.
     pub fn label(self) -> &'static str {
         match self {
-            ChainType::PizzaPoly => "Pizza",
+            ChainType::Algo => "Algo",
             ChainType::Modal => "Modal",
-            ChainType::Fm => "FM",
         }
     }
 
     /// The engine this chain plays (spec §6).
     pub const fn engine(self) -> EngineType {
         match self {
-            ChainType::PizzaPoly => EngineType::Pizza,
+            ChainType::Algo => EngineType::Algo,
             ChainType::Modal => EngineType::Modal,
-            ChainType::Fm => EngineType::Fm,
         }
     }
 }
@@ -183,7 +180,7 @@ impl Performance {
             name: *b"New Performance\0",
             parts: core::array::from_fn(|i| Part {
                 mix: PartParams::for_part(i),
-                ..Part::new(ChainType::PizzaPoly)
+                ..Part::new(ChainType::Algo)
             }),
             fx: FxParams::default(),
         }
@@ -212,10 +209,9 @@ impl Blocks for PartEdit<'_> {
             BlockRef::Delay => Some(&self.fx.delay),
             BlockRef::Reverb => Some(&self.fx.reverb),
             BlockRef::Part => Some(&self.part.mix),
-            BlockRef::Pizza
-            | BlockRef::Modal
-            | BlockRef::Fm
-            | BlockRef::FmOp(_)
+            BlockRef::Modal
+            | BlockRef::Algo
+            | BlockRef::AlgoOp(_)
             | BlockRef::Drive
             | BlockRef::Filter
             | BlockRef::Folder
@@ -233,10 +229,9 @@ impl Blocks for PartEdit<'_> {
             BlockRef::Delay => Some(&mut self.fx.delay),
             BlockRef::Reverb => Some(&mut self.fx.reverb),
             BlockRef::Part => Some(&mut self.part.mix),
-            BlockRef::Pizza
-            | BlockRef::Modal
-            | BlockRef::Fm
-            | BlockRef::FmOp(_)
+            BlockRef::Modal
+            | BlockRef::Algo
+            | BlockRef::AlgoOp(_)
             | BlockRef::Drive
             | BlockRef::Filter
             | BlockRef::Folder

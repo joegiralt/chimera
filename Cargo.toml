@@ -6,11 +6,13 @@ members = [
     "chimera-stm32",
     "chimera-desktop",
     "chimera-bootloader",
+    "chimera-waves",
 ]
 default-members = [
     "chimera-core",
     "chimera-hal",
     "chimera-desktop",
+    "chimera-waves",
 ]
 
 [workspace.package]

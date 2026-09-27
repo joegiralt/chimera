@@ -1,3 +1,4 @@
+pub mod alg_layout;
 pub mod animation;
 pub mod audio_page;
 pub mod block_def;
@@ -107,7 +108,7 @@ pub struct UiState {
     /// clears the flag once flushed (#7).
     browser_dirty: bool,
     page: PageKey,
-    /// Selected FM operator — one global selection, as before (spec §5).
+    /// Selected operator — one global selection, as before (spec §5).
     sel_op: Op,
     region_set: region::RegionSet,
     /// Last-touched slot per page: the focus band and MIX + Plus/Minus.
@@ -152,8 +153,9 @@ impl UiState {
     pub fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
         let p = slot.as_mut_ptr();
         // SAFETY: `p` is valid and unaliased; the pool is built in place,
-        // every other field is written once, and `performance` is written
-        // before it is borrowed, all before `assume_init_mut`.
+        // then filled with the factory bank, every other field is written
+        // once, and `performance` is written before it is borrowed, all
+        // before `assume_init_mut`.
         unsafe {
             let nav = ChainNav::new();
             let page = PageKey::from_nav(&nav, Op::A);
@@ -167,7 +169,8 @@ impl UiState {
                 Op::A,
             ));
             addr_of_mut!((*p).nav).write(nav);
-            SoundPool::init_in_place(uninit_at(addr_of_mut!((*p).pool)));
+            let pool = SoundPool::init_in_place(uninit_at(addr_of_mut!((*p).pool)));
+            crate::factory::load_factory(pool);
             addr_of_mut!((*p).active_part).write(0);
             addr_of_mut!((*p).renderer).write(renderer);
             addr_of_mut!((*p).matrix_state).write(MatrixState::new());
@@ -222,7 +225,7 @@ impl UiState {
         self.focus.get(self.nav.active_block_def().id)
     }
 
-    /// The selected FM operator.
+    /// The selected operator.
     pub fn selected_op(&self) -> Op {
         self.sel_op
     }
@@ -285,13 +288,13 @@ impl UiState {
     }
 
     /// 8-byte matrix column label for a primed destination: `O<n> ` + spec
-    /// label for FM operator params, else the page's short name (≤ 3 chars)
+    /// label for operator params, else the page's short name (≤ 3 chars)
     /// + the slot label.
     fn mod_label(&self, addr: ParamAddr) -> [u8; LABEL_LEN] {
         let def = self.nav.active_block_def();
         let op_prefix;
         let (prefix, name): (&[u8], &str) = match addr.block {
-            BlockRef::FmOp(op) => {
+            BlockRef::AlgoOp(op) => {
                 op_prefix = [b'O', b'1' + op.index() as u8, b' '];
                 (&op_prefix, addr.spec().map_or("", |s| s.label))
             }

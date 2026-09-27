@@ -213,13 +213,13 @@ fn every_page_walk() {
     );
 }
 
-/// A trimmed walk: the FM chain (CellGrid, BigViz envelopes, the matrix),
+/// A trimmed walk: the Algo chain (CellGrid, BigViz filter and envelope, the matrix),
 /// the Mixer on Part 1, and the first Demo and System pages; two encoders,
 /// two frames per step.
 #[test]
 fn representative_pages_walk() {
     let enc = [EncoderId::A, EncoderId::E];
-    walk(Context::Part(ChainType::Fm), 2, &enc, |_, sub| sub <= 1);
+    walk(Context::Part(ChainType::Algo), 2, &enc, |_, sub| sub <= 1);
     walk(Context::Mixer(0), 2, &enc, |_, _| true);
     walk(Context::Demo, 2, &enc, |node, _| node == 0);
     walk(Context::System, 2, &enc, |node, _| node == 0);

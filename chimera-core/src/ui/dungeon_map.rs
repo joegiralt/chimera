@@ -101,29 +101,31 @@ where
     }
     let x = pill_x - 8;
     let pill_bottom = theme::MAP_LINE_Y + theme::PILL_H / 2;
-    let mut last_y = pill_bottom;
-    for i in 0..count {
-        let y = theme::BRANCH_START_Y + i as i32 * theme::BRANCH_LINE_HEIGHT - branch_scroll_px;
-        if y < theme::BRANCH_START_Y {
-            continue;
-        }
-        if y + theme::BRANCH_LINE_HEIGHT > theme::SCREEN_H {
-            break;
-        }
+    let visible = |i: i32| {
+        let y = theme::BRANCH_START_Y + i * theme::BRANCH_LINE_HEIGHT - branch_scroll_px;
+        (y >= theme::BRANCH_START_Y && y + theme::BRANCH_LINE_HEIGHT <= theme::SCREEN_H)
+            .then_some(y)
+    };
+    // Trunk first, so a lit dot's fill draws over it instead of the other
+    // way round (#29).
+    if let Some(last_y) = (0..count as i32).rev().find_map(visible) {
+        let cy = last_y + theme::BRANCH_LINE_HEIGHT / 2;
+        draw::fill_rect(d, x, pill_bottom, 1, cy - 3 - pill_bottom, theme::FAINT);
+    }
+    for i in 0..count as i32 {
+        let Some(y) = visible(i) else { continue };
         let label = if i == 0 {
             block.def.short
         } else {
-            block.sub_pages[i - 1].short
+            block.sub_pages[i as usize - 1].short
         };
         let cy = y + theme::BRANCH_LINE_HEIGHT / 2;
-        if i == nav.sub_page {
+        if i as usize == nav.sub_page {
             draw::dot(d, x, cy, 2, theme::ACCENT);
             draw::text(d, &theme::FONT_LABEL, label, x + 6, y + 8, theme::ACCENT);
         } else {
             draw::ring(d, x, cy, 2, theme::MID, 1);
             draw::text(d, &theme::FONT_LABEL, label, x + 6, y + 8, theme::MID);
         }
-        last_y = cy - 3;
     }
-    draw::fill_rect(d, x, pill_bottom, 1, last_y - pill_bottom, theme::FAINT);
 }

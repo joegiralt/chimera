@@ -4,7 +4,7 @@
 
 use crate::block::{Block, ParamId, ParamSpec, find_spec};
 
-/// An FM operator. `TryFrom<u8>` rejects values above 3, so an out-of-range
+/// An operator of the Algo engine. `TryFrom<u8>` rejects values above 5, so an out-of-range
 /// operator (bad sound or SysEx data) is unrepresentable.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Op {
@@ -12,6 +12,8 @@ pub enum Op {
     B,
     C,
     D,
+    E,
+    F,
 }
 
 /// Rejected operator index.
@@ -19,16 +21,16 @@ pub enum Op {
 pub struct OpOutOfRange(pub u8);
 
 impl Op {
-    pub const ALL: [Op; 4] = [Op::A, Op::B, Op::C, Op::D];
+    pub const ALL: [Op; 6] = [Op::A, Op::B, Op::C, Op::D, Op::E, Op::F];
 
-    /// Index into `FmParams::operators`.
+    /// Index into `AlgoParams::ops`.
     pub const fn index(self) -> usize {
         self as usize
     }
 
-    /// Step through the operators by encoder ticks, clamped at A and D.
+    /// Step through the operators by encoder ticks, clamped at A and F.
     pub fn nudged(self, delta: i8) -> Op {
-        Op::ALL[(self.index() as i16 + delta as i16).clamp(0, 3) as usize]
+        Op::ALL[(self.index() as i16 + delta as i16).clamp(0, Op::ALL.len() as i16 - 1) as usize]
     }
 }
 
@@ -44,10 +46,11 @@ impl TryFrom<u8> for Op {
 /// filters) are sub-project 2.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BlockRef {
-    Pizza,
     Modal,
-    Fm,
-    FmOp(Op),
+    /// The Algo engine's voice-level parameters (`AlgoParams`).
+    Algo,
+    /// One Algo operator (`AlgoOpParams`).
+    AlgoOp(Op),
     Drive,
     Filter,
     Folder,
@@ -70,14 +73,15 @@ pub enum BlockRef {
 }
 
 impl BlockRef {
-    pub const ALL: [BlockRef; 19] = [
-        BlockRef::Pizza,
+    pub const ALL: [BlockRef; 20] = [
         BlockRef::Modal,
-        BlockRef::Fm,
-        BlockRef::FmOp(Op::A),
-        BlockRef::FmOp(Op::B),
-        BlockRef::FmOp(Op::C),
-        BlockRef::FmOp(Op::D),
+        BlockRef::Algo,
+        BlockRef::AlgoOp(Op::A),
+        BlockRef::AlgoOp(Op::B),
+        BlockRef::AlgoOp(Op::C),
+        BlockRef::AlgoOp(Op::D),
+        BlockRef::AlgoOp(Op::E),
+        BlockRef::AlgoOp(Op::F),
         BlockRef::Drive,
         BlockRef::Filter,
         BlockRef::Folder,
@@ -95,10 +99,9 @@ impl BlockRef {
     /// The block type's spec table (static; no instance needed).
     pub fn specs(self) -> &'static [ParamSpec] {
         match self {
-            BlockRef::Pizza => &crate::dsp::pizza::PIZZA_SPECS,
             BlockRef::Modal => &crate::dsp::modal::MODAL_SPECS,
-            BlockRef::Fm => &crate::params::FM_SPECS,
-            BlockRef::FmOp(_) => &crate::params::FM_OP_SPECS,
+            BlockRef::Algo => &crate::dsp::algo::params::ALGO_SPECS,
+            BlockRef::AlgoOp(_) => &crate::dsp::algo::params::ALGO_OP_SPECS,
             BlockRef::Drive => &crate::params::DRIVE_SPECS,
             BlockRef::Filter => &crate::params::FILTER_SPECS,
             BlockRef::Folder => &crate::params::FOLDER_SPECS,
@@ -112,21 +115,22 @@ impl BlockRef {
         }
     }
 
-    /// Whether `Voice::render` reads this block from its modulated copy.
-    /// Filter/aux envelopes are never read; the LFO is read unmodulated; FX
-    /// run outside `Voice`.
+    /// Whether `Voice::render` reads this block from its modulated copy and
+    /// hears it without a route of its own. The amp envelope only shapes the
+    /// ENV source (no engine puts it on the VCA, ADR 0022); filter/aux
+    /// envelopes are never read; the LFO is read unmodulated; FX run outside
+    /// `Voice`.
     pub const fn voice_reads(self) -> bool {
         match self {
-            BlockRef::Pizza
-            | BlockRef::Modal
-            | BlockRef::Fm
-            | BlockRef::FmOp(_)
+            BlockRef::Modal
+            | BlockRef::Algo
+            | BlockRef::AlgoOp(_)
             | BlockRef::Drive
             | BlockRef::Filter
             | BlockRef::Folder
-            | BlockRef::AmpEnv
             | BlockRef::Out => true,
-            BlockRef::FilterEnv
+            BlockRef::AmpEnv
+            | BlockRef::FilterEnv
             | BlockRef::AuxEnv
             | BlockRef::Lfo
             | BlockRef::Chorus

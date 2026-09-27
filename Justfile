@@ -19,13 +19,13 @@ build:
 # pkg-config file; point PKG_CONFIG_PATH at it if it is not installed
 # system-wide.
 check:
-    cargo test -p chimera-core -p chimera-hal
+    cargo test -p chimera-core -p chimera-hal -p chimera-waves
     cargo test -p chimera-desktop
     cargo build -p chimera-desktop --no-default-features
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --features bench
-    cargo clippy -p chimera-core -p chimera-hal -p chimera-desktop --all-targets -- -D warnings
+    cargo clippy -p chimera-core -p chimera-hal -p chimera-desktop -p chimera-waves --all-targets -- -D warnings
     cargo clippy -p chimera-desktop --no-default-features --all-targets -- -D warnings
     cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf -- -D warnings
     cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features -- -D warnings
@@ -33,7 +33,7 @@ check:
     cargo fmt --all -- --check
     just stack-check
 
-# The stack is 128 KB of DTCM (ADR 0020): fail if any release function moves
+# The stack is the 63.75 KB of DTCM below the wave tables (ADR 0025): fail if any release function moves
 # SP by 8 KB or more in one step, or by a register (a large value built on
 # the stack instead of in a static), checked for the default, no-default and
 # bench feature sets. Needs the llvm-tools rustup component; a missing
@@ -59,11 +59,11 @@ stack-check:
 
 # Run tests
 test:
-    cargo test -p chimera-core -p chimera-hal
+    cargo test -p chimera-core -p chimera-hal -p chimera-waves
 
 # Clippy (including test targets)
 clippy:
-    cargo clippy -p chimera-core -p chimera-hal -p chimera-desktop --all-targets -- -D warnings
+    cargo clippy -p chimera-core -p chimera-hal -p chimera-desktop -p chimera-waves --all-targets -- -D warnings
     cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf -- -D warnings
 
 # Render every screen-golden case with the real renderer and write

@@ -5,6 +5,7 @@ use chimera_hal::BLOCK_SIZE;
 
 use crate::addr::Blocks;
 use crate::block::apply_offset;
+use crate::dsp::algo::engine::AlgoLive;
 use crate::dsp::drive::Drive;
 use crate::dsp::engines::Engines;
 use crate::dsp::envelope::Envelope;
@@ -34,9 +35,41 @@ pub struct Voice {
     active: bool,
     last_note: MidiNote,
     last_velocity: Velocity,
+    /// Samples left of a fade-out (`kill`, an engine change); 0 when not
+    /// fading. Never set on an inactive voice.
+    fade: u16,
+    /// What starts when the fade ends.
+    after_fade: AfterFade,
+    /// Key down since the last note-on.
+    held: bool,
+    /// The modulated settings of the last block rendered. A fade keeps
+    /// them, so a new Sound never reaches the sound it fades out.
+    played: ParamSnapshot,
+    played_live: AlgoLive,
 }
 
-crate::in_place::field_list!(Voice => Voice { engines, drive, filter, folder, amp_env, lfo, active_engine, active, last_note, last_velocity });
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AfterFade {
+    Idle,
+    /// The held note, on the Sound's new engine; a key up cancels it.
+    Restart,
+    /// A note-on that came mid-fade: `last_note`.
+    Note,
+}
+
+// `reset` overwrites fields in place without dropping them.
+const _: () = assert!(!core::mem::needs_drop::<Voice>());
+
+/// Writes every field of `*p` but `engines`. The pattern is exhaustive, so
+/// a new field fails to build until it is written here.
+macro_rules! write_chain {
+    ($p:ident, { $($f:ident: $v:expr),* $(,)? }) => {{
+        let _every_field = |v: &Voice| {
+            let Voice { engines: _, $($f: _),* } = v;
+        };
+        $(addr_of_mut!((*$p).$f).write($v);)*
+    }};
+}
 
 impl Default for Voice {
     fn default() -> Self {
@@ -45,12 +78,17 @@ impl Default for Voice {
 }
 
 impl Voice {
-    /// The VA engine renders nothing, so its bench cost is the chain alone.
+    /// The chain's floor: engine costs are bench per-voice minus this. The
+    /// bench's `FLOOR` row (an Algo patch with every LEVEL at 0) measured 5 on
+    /// 2026-09-27; 10 is kept, erring high.
     pub const CHAIN_COST: Cost = Cost(10); // measured 2026-09-26, bench, rev V at 480 MHz
 
-    /// Cycles/sample of a voice playing `kind`.
-    pub const fn cost(kind: EngineType) -> Cost {
-        Cost(Engines::cost(kind).0 + Self::CHAIN_COST.0)
+    /// A `kill` ramps to silence over this many samples (ADR 0027).
+    pub const FADE: u16 = 2 * BLOCK_SIZE as u16;
+
+    /// Cycles/sample of a voice playing `p` under `mods`.
+    pub fn cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
+        Engines::cost(p, mods) + Self::CHAIN_COST
     }
 
     /// The sample rate is stored once (spec §3), not passed per call.
@@ -66,16 +104,37 @@ impl Voice {
         // `assume_init_mut`.
         unsafe {
             Engines::init_in_place(uninit_at(addr_of_mut!((*p).engines)), sample_rate);
-            addr_of_mut!((*p).drive).write(Drive::new());
-            addr_of_mut!((*p).filter).write(SvfFilter::new());
-            addr_of_mut!((*p).folder).write(Wavefolder::new());
-            addr_of_mut!((*p).amp_env).write(Envelope::new());
-            addr_of_mut!((*p).lfo).write(Lfo::new());
-            addr_of_mut!((*p).active_engine).write(EngineType::Pizza);
-            addr_of_mut!((*p).active).write(false);
-            addr_of_mut!((*p).last_note).write(MidiNote::A4);
-            addr_of_mut!((*p).last_velocity).write(Velocity::DEFAULT);
+            Self::init_chain(p);
             slot.assume_init_mut()
+        }
+    }
+
+    /// Every field but `engines`, as `new` builds it: the one list that
+    /// `init_in_place` and `reset` share.
+    ///
+    /// # Safety
+    /// `p` must be valid for writes, aligned and unaliased.
+    unsafe fn init_chain(p: *mut Self) {
+        // SAFETY: the caller's guarantee; every field is written by value,
+        // and none has drop glue (asserted above) to skip.
+        unsafe {
+            let played = ParamSnapshot::default();
+            write_chain!(p, {
+                drive: Drive::new(),
+                filter: SvfFilter::new(),
+                folder: Wavefolder::new(),
+                amp_env: Envelope::new(),
+                lfo: Lfo::new(),
+                active_engine: EngineType::Algo,
+                active: false,
+                last_note: MidiNote::A4,
+                last_velocity: Velocity::DEFAULT,
+                fade: 0,
+                after_fade: AfterFade::Idle,
+                held: false,
+                played_live: AlgoLive::from_params(&played.algo),
+                played: played,
+            });
         }
     }
 
@@ -83,7 +142,28 @@ impl Voice {
         self.engines.sample_rate()
     }
 
-    pub fn note_on(&mut self, note: MidiNote, velocity: Velocity, params: &ParamSnapshot) {
+    /// On a fading voice, or one sounding another engine, the note waits
+    /// for the fade-out and then starts clean. Returns whether it replaced
+    /// a note still waiting, unheard.
+    pub fn note_on(&mut self, note: MidiNote, velocity: Velocity, params: &ParamSnapshot) -> bool {
+        let replaced = self.after_fade == AfterFade::Note;
+        self.held = true;
+        if self.fade > 0 || (self.active && params.engine() != self.active_engine) {
+            self.last_note = note;
+            self.last_velocity = velocity;
+            self.after_fade = AfterFade::Note;
+            self.fade_out();
+            return replaced;
+        }
+        self.trigger(note, velocity, params);
+        replaced
+    }
+
+    fn trigger(&mut self, note: MidiNote, velocity: Velocity, params: &ParamSnapshot) {
+        // The engine left behind starts clean when it next plays.
+        if params.engine() != self.active_engine {
+            self.engines.reset(self.active_engine);
+        }
         self.active_engine = params.engine();
         self.last_note = note;
         self.last_velocity = velocity;
@@ -91,11 +171,57 @@ impl Voice {
             .note_on(self.active_engine, note, velocity, params);
         self.amp_env.note_on(velocity.unit());
         self.active = true;
+        // Until the first block renders, a fade has these to keep.
+        self.played.clone_from(params);
+        self.played_live = AlgoLive::from_params(&params.algo);
     }
 
     pub fn note_off(&mut self) {
+        self.held = false;
+        if self.after_fade == AfterFade::Restart {
+            self.after_fade = AfterFade::Idle;
+        }
         self.engines.note_off(self.active_engine);
         self.amp_env.note_off();
+    }
+
+    /// Fade to silence over `FADE` samples, then go idle as a fresh voice.
+    /// A second call mid-fade does not restart it. Returns whether a note
+    /// that came mid-fade was dropped unheard.
+    pub fn kill(&mut self) -> bool {
+        let dropped = self.after_fade == AfterFade::Note;
+        self.after_fade = AfterFade::Idle;
+        self.fade_out();
+        dropped
+    }
+
+    fn fade_out(&mut self) {
+        if self.active && self.fade == 0 {
+            self.fade = Self::FADE;
+        }
+    }
+
+    /// The fade is over: back to fresh, then start a queued note.
+    fn fade_ended(&mut self, params: &ParamSnapshot) {
+        let (after, held) = (self.after_fade, self.held);
+        let (note, velocity) = (self.last_note, self.last_velocity);
+        self.reset();
+        if after != AfterFade::Idle {
+            // Both engines are clean now: `trigger` has none to reset.
+            self.active_engine = params.engine();
+            self.held = true;
+            self.trigger(note, velocity, params);
+            if !held {
+                self.note_off();
+            }
+        }
+    }
+
+    /// Back to the state `new` builds, in place.
+    fn reset(&mut self) {
+        self.engines.reset(self.active_engine);
+        // SAFETY: `self` is a valid, aligned, unaliased `Voice`.
+        unsafe { Self::init_chain(self) }
     }
 
     pub fn is_active(&self) -> bool {
@@ -110,9 +236,13 @@ impl Voice {
     ) {
         let sample_rate = self.sample_rate();
 
-        // Auto-retrigger if engine type changed (e.g., user loaded FM sound)
-        if self.active && params.engine() != self.active_engine {
-            self.note_on(self.last_note, self.last_velocity, params);
+        // The Sound changed engine: fade the old one out; a held note then
+        // restarts on the new one.
+        if self.active && self.fade == 0 && params.engine() != self.active_engine {
+            if self.held {
+                self.after_fade = AfterFade::Restart;
+            }
+            self.fade_out();
         }
 
         if !self.active {
@@ -120,33 +250,41 @@ impl Voice {
             return;
         }
 
-        // Compute modulator source values
-        let mut mod_values = [0.0f32; MAX_MOD_SOURCES];
-        // Source 0 = Envelope
-        if mod_state.num_sources() > 0 {
-            mod_values[0] = self.amp_env.current_level();
-        }
-        // Source 1 = LFO
-        if mod_state.num_sources() > 1 {
-            mod_values[1] = self.lfo.process(&params.lfo, sample_rate);
-        }
-
-        // Modulated copy (stack only): every routed destination gets its
-        // offset through its block's spec (spec §4).
-        let mut m = params.clone();
-        for d in 0..mod_state.num_dests() {
-            let off = mod_state.sum_for(d, &mod_values);
-            if off != 0.0 {
-                let a = mod_state.dest(d);
-                // Modulatable addresses are always Sound blocks (`voice_reads`).
-                if let Some(blk) = m.block_mut(a.block) {
-                    apply_offset(blk, a.param, off);
+        // A fading voice keeps the settings it last played.
+        if self.fade == 0 {
+            let mut mod_values = [0.0f32; MAX_MOD_SOURCES];
+            // Source 0 = Envelope
+            if mod_state.num_sources() > 0 {
+                mod_values[0] = self.amp_env.current_level();
+            }
+            // Source 1 = LFO
+            if mod_state.num_sources() > 1 {
+                mod_values[1] = self.lfo.process(&params.lfo, sample_rate);
+            }
+            // Every routed destination gets its offset through its block's
+            // spec (spec §4).
+            let (m, live) = (&mut self.played, &mut self.played_live);
+            m.clone_from(params);
+            *live = AlgoLive::from_params(&params.algo);
+            live.routed = mod_state.algo_levels_routed();
+            for d in 0..mod_state.num_dests() {
+                let off = mod_state.sum_for(d, &mod_values);
+                if off != 0.0 {
+                    let a = mod_state.dest(d);
+                    if live.offset(a, off) {
+                        continue;
+                    }
+                    // Modulatable addresses are always Sound blocks (`voice_reads`).
+                    if let Some(blk) = m.block_mut(a.block) {
+                        apply_offset(blk, a.param, off);
+                    }
                 }
             }
         }
+        let (m, live) = (&self.played, &self.played_live);
 
         // 1. Engine → raw oscillator output
-        self.engines.render(self.active_engine, output, &m);
+        self.engines.render(self.active_engine, output, m, live);
 
         // 2. Drive
         self.drive.process(output, &m.drive);
@@ -157,20 +295,25 @@ impl Voice {
         // 4. Wavefolder
         self.folder.process(output, &m.folder);
 
-        // 5. VCA
+        // 5. Volume. The amp envelope does not shape the output; it runs as
+        //    the ENV mod source.
         let volume = m.out.volume;
-        if Engines::uses_amp_env(self.active_engine) {
-            for sample in output.iter_mut() {
-                let env = self.amp_env.process(&m.envelopes[0], sample_rate);
-                *sample *= env * volume;
-            }
-        } else {
-            for sample in output.iter_mut() {
-                *sample *= volume;
-            }
+        for sample in output.iter_mut() {
+            self.amp_env.process(&m.envelopes[0], sample_rate);
+            *sample *= volume;
         }
 
         // Check if done
-        self.active = self.engines.is_active(self.active_engine, &self.amp_env);
+        self.active = self.engines.is_active(self.active_engine);
+
+        if self.fade > 0 {
+            for sample in output.iter_mut() {
+                self.fade = self.fade.saturating_sub(1);
+                *sample *= f32::from(self.fade) / f32::from(Self::FADE);
+            }
+            if self.fade == 0 || !self.active {
+                self.fade_ended(params);
+            }
+        }
     }
 }

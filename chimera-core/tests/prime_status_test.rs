@@ -21,7 +21,8 @@ fn prime(ui: &mut UiState, enc: EncoderId) {
 
 #[test]
 fn mix_plus_on_a_fresh_modulatable_param_reports_added() {
-    let mut ui = UiState::new(); // Part 1, Pizza page: slot A is SHAPE
+    let mut ui = UiState::new(); // Part 1, LEVEL page: slot A is operator 1's LEVEL
+    to_level_page(&mut ui);
     prime(&mut ui, EncoderId::A);
     assert_eq!(ui.prime_status(), Some(PrimeStatus::Added));
 }
@@ -29,6 +30,7 @@ fn mix_plus_on_a_fresh_modulatable_param_reports_added() {
 #[test]
 fn mix_plus_on_an_already_routed_param_reports_already_routed() {
     let mut ui = UiState::new();
+    to_level_page(&mut ui);
     prime(&mut ui, EncoderId::A);
     assert_eq!(ui.prime_status(), Some(PrimeStatus::Added));
 
@@ -43,7 +45,7 @@ fn mix_plus_on_an_already_routed_param_reports_already_routed() {
 #[test]
 fn mix_plus_on_a_non_modulatable_param_reports_not_modulatable() {
     let mut ui = UiState::new();
-    for _ in 0..4 {
+    for _ in 0..5 {
         feed(&mut ui, Input::press(ButtonId::Plus)); // -> MOD node
     }
     feed(&mut ui, Input::press(ButtonId::Edit)); // Envelope sub-page
@@ -53,7 +55,7 @@ fn mix_plus_on_a_non_modulatable_param_reports_not_modulatable() {
 }
 
 /// The UI's mapping from the registry's refusals to the shown status;
-/// `priming_past_matrix_capacity_on_the_fm_chain_reports_full` below
+/// `priming_past_matrix_capacity_on_the_algo_chain_reports_full` below
 /// reaches `Full` through real input.
 #[test]
 fn registry_full_maps_to_the_full_status() {
@@ -67,6 +69,7 @@ fn registry_full_maps_to_the_full_status() {
 #[test]
 fn an_encoder_turn_clears_the_status() {
     let mut ui = UiState::new();
+    to_level_page(&mut ui);
     prime(&mut ui, EncoderId::A);
     assert_eq!(ui.prime_status(), Some(PrimeStatus::Added));
 
@@ -77,6 +80,7 @@ fn an_encoder_turn_clears_the_status() {
 #[test]
 fn a_page_change_clears_the_status() {
     let mut ui = UiState::new();
+    to_level_page(&mut ui);
     prime(&mut ui, EncoderId::A);
     assert_eq!(ui.prime_status(), Some(PrimeStatus::Added));
 
@@ -87,6 +91,7 @@ fn a_page_change_clears_the_status() {
 #[test]
 fn un_priming_also_clears_the_status() {
     let mut ui = UiState::new();
+    to_level_page(&mut ui);
     prime(&mut ui, EncoderId::A);
     assert_eq!(ui.prime_status(), Some(PrimeStatus::Added));
 
@@ -118,7 +123,8 @@ fn matrix_hint_fits_its_row() {
 #[test]
 fn dirty_render_with_a_status_message_equals_full_render() {
     let mut ui = UiState::new();
-    feed(&mut ui, Input::turn(EncoderId::A, 1)); // focus SHAPE, no prime yet
+    to_level_page(&mut ui);
+    feed(&mut ui, Input::turn(EncoderId::A, 1)); // focus LEVEL, no prime yet
     settle(&mut ui);
     let scope = scope_fixture();
     let mut dirty = Fb::new();
@@ -147,7 +153,6 @@ fn dirty_render_with_a_status_message_equals_full_render() {
 // top of the viz band, above `viz::PLOT_TOP` — where no curve and no
 // touched-value readout ever reach (the readout is clamped to the plot).
 
-use chimera_core::preset::ChainType;
 use chimera_core::ui::viz;
 
 fn full(ui: &UiState) -> Fb {
@@ -164,9 +169,10 @@ fn diff_rows(a: &Fb, b: &Fb, top: i32, bottom: i32) -> usize {
         .count()
 }
 
-/// Pizza → Drive → Filter, CUTOFF focused.
+/// OSC → ALG → DRV → FLT, CUTOFF focused.
 fn filter_page() -> UiState {
     let mut ui = UiState::new();
+    feed(&mut ui, Input::press(ButtonId::Plus));
     feed(&mut ui, Input::press(ButtonId::Plus));
     feed(&mut ui, Input::press(ButtonId::Plus));
     feed(&mut ui, Input::turn(EncoderId::A, 1));
@@ -174,11 +180,10 @@ fn filter_page() -> UiState {
     ui
 }
 
-/// FM init Sound → MOD node → FM ENV1 sub-page, slot C focused.
-fn fm_env_page() -> UiState {
+/// The MOD node's ADSR sub-page (BigViz), slot C focused.
+fn envelope_page() -> UiState {
     let mut ui = UiState::new();
-    load_init(&mut ui, ChainType::Fm);
-    for _ in 0..4 {
+    for _ in 0..5 {
         feed(&mut ui, Input::press(ButtonId::Plus));
     }
     feed(&mut ui, Input::press(ButtonId::Edit));
@@ -221,8 +226,8 @@ fn the_status_shows_on_the_filter_page() {
 }
 
 #[test]
-fn the_status_shows_on_an_fm_envelope_page() {
-    assert_status_line_shows(fm_env_page(), "prime_status_fm_env");
+fn the_status_shows_on_the_envelope_page() {
+    assert_status_line_shows(envelope_page(), "prime_status_envelope");
 }
 
 /// Dirty render == full render when the status appears on a BigViz page
@@ -261,6 +266,7 @@ fn bigviz_status_appears_and_clears_through_the_dirty_regions() {
 #[test]
 fn focus_band_status_clearing_redraws_through_the_dirty_regions() {
     let mut ui = UiState::new();
+    to_level_page(&mut ui);
     feed(&mut ui, Input::turn(EncoderId::A, 1));
     settle(&mut ui);
     let before = full(&ui);
@@ -307,25 +313,19 @@ fn prime_every_slot(ui: &mut UiState, slots: &[EncoderId], out: &mut Vec<PrimeSt
     }
 }
 
-/// The FM chain alone exposes more modulatable addresses (4 operators ×
-/// LEVEL/FDBK, Drive, Filter, Folder) than the matrix holds. Priming them
-/// all through real input: exactly `MAX_MOD_DESTS` report ADDED, the next
-/// distinct one reports MATRIX FULL, and the matrix holds every added one.
+/// The Algo chain alone reaches 17 modulatable addresses (six LEVELs, MORPH,
+/// VOL, Drive, Filter and Folder), one more than the matrix holds. Priming
+/// them all through real input: exactly `MAX_MOD_DESTS` report ADDED, the
+/// next distinct one reports MATRIX FULL, and the matrix holds every added one.
 #[test]
-fn priming_past_matrix_capacity_on_the_fm_chain_reports_full() {
+fn priming_past_matrix_capacity_on_the_algo_chain_reports_full() {
     use chimera_core::modulation::MAX_MOD_DESTS;
     let mut ui = UiState::new();
-    load_init(&mut ui, ChainType::Fm);
     let mut seen = Vec::new();
 
-    feed(&mut ui, Input::press(ButtonId::Edit)); // Operator sub-page
-    feed(&mut ui, Input::turn(EncoderId::A, -8)); // operator 1
-    for op in 0..4 {
-        if op > 0 {
-            feed(&mut ui, Input::turn(EncoderId::A, 1)); // next operator
-        }
-        prime_every_slot(&mut ui, &ALL_SLOTS[1..], &mut seen); // A selects the op
-    }
+    prime_every_slot(&mut ui, &ALL_SLOTS[2..5], &mut seen); // ALGO: MORPH, TRNSP (refused), VOL
+    to_level_page(&mut ui);
+    prime_every_slot(&mut ui, &ALL_SLOTS, &mut seen); // six LEVELs
     for _ in 0..3 {
         feed(&mut ui, Input::press(ButtonId::Plus)); // Drive, Filter, Folder
         prime_every_slot(&mut ui, &ALL_SLOTS, &mut seen);

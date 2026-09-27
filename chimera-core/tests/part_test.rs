@@ -52,11 +52,11 @@ fn no_part_param_is_modulatable() {
 /// Loading a Sound replaces only the Sound: channel, mode and mix stay.
 #[test]
 fn loading_a_sound_keeps_the_mix() {
-    let mut part = Part::new(ChainType::PizzaPoly);
+    let mut part = Part::new(ChainType::Modal);
     part.mix.channel = MidiChannel::new(9).unwrap();
     part.mix.level = 0.25;
-    part.load_init(ChainType::Fm);
-    assert_eq!(part.sound.chain_type, ChainType::Fm);
+    part.load_init(ChainType::Algo);
+    assert_eq!(part.sound.chain_type, ChainType::Algo);
     assert_eq!((part.mix.channel.get(), part.mix.level), (9, 0.25));
     assert_eq!(part.loaded_from, None);
 }

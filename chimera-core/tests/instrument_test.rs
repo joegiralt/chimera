@@ -7,6 +7,7 @@ mod common;
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::hw::DAC_PAIRS;
 use chimera_core::instrument::{AudioShared, DacOut, Instrument, pan_gains};
+use chimera_core::modulation::ModState;
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::part::{DacPair, PartMode};
@@ -174,7 +175,7 @@ fn notes_route_by_channel() {
 #[test]
 fn tails_ring_out_then_free_the_voice() {
     let mut rig = Rig::new();
-    let shared = AudioShared::default(); // Pizza, release 0.3 s
+    let shared = AudioShared::default(); // Algo init, RR 8
     rig.inst.handle(on(0, 60), &shared);
     for _ in 0..20 {
         rig.render(&shared);
@@ -239,9 +240,7 @@ fn chord() -> Vec<f32> {
     )
 }
 
-/// Modal, not FM: FM's bench-measured cost doesn't fit one voice under
-/// budget (https://github.com/joegiralt/chimera/issues/26), so an FM note
-/// here would be refused and pair 2 would render silent.
+/// Part 2 plays Modal out of pair 2.
 fn two_parts() -> Vec<f32> {
     let mut perf = Performance::new();
     perf.parts[1].load_init(ChainType::Modal);
@@ -258,14 +257,66 @@ fn reverb_send(send: f32) -> Vec<f32> {
     render_perf(&perf, &[(0, 60)], 300)
 }
 
+const CHORD6: [u8; 6] = [48, 55, 60, 64, 67, 72];
+
+fn factory(i: usize) -> Performance {
+    let mut perf = Performance::new();
+    perf.parts[0].sound = chimera_core::factory::factory_sound(i).expect("factory Sound");
+    perf
+}
+
+/// Six voices of the factory SAW LEAD, which fits six (ADR 0026).
+fn six_voice_chord() -> Vec<f32> {
+    render_perf(&factory(4), &CHORD6.map(|n| (0, n)), 200)
+}
+
+#[test]
+fn a_six_voice_saw_lead_chord_is_not_refused() {
+    let shared = AudioShared::from_performance(&factory(4));
+    let mut rig = Rig::new();
+    for n in CHORD6 {
+        rig.inst.handle(on(0, n), &shared);
+    }
+    rig.render(&shared);
+    let a = rig.inst.allocator();
+    assert_eq!(a.refused(), 0);
+    assert_eq!(a.slots().iter().filter(|s| !s.is_free()).count(), 6);
+}
+
+/// ADR 0026: TX EPIANO fits five voices, so the sixth note steals the
+/// oldest held one (voice_alloc rule 4) and the pool stays in budget.
+#[test]
+fn a_six_note_tx_epiano_chord_stays_in_budget() {
+    let shared = AudioShared::from_performance(&factory(1));
+    let mut rig = Rig::new();
+    for n in CHORD6 {
+        rig.inst.handle(on(0, n), &shared);
+        assert!(rig.inst.allocator().sounding_cost() + FxBus::COST <= BUDGET.as_cost());
+    }
+    for _ in 0..4 {
+        rig.render(&shared);
+    }
+    let a = rig.inst.allocator();
+    assert!(a.sounding_cost() + FxBus::COST <= BUDGET.as_cost());
+    assert_eq!(a.refused(), 0);
+    let mut held: Vec<u8> = a
+        .slots()
+        .iter()
+        .filter_map(|s| s.note().filter(|_| s.held()).map(|n| n.get()))
+        .collect();
+    held.sort();
+    assert_eq!(held, CHORD6[1..], "the oldest note, 48, was stolen");
+}
+
 /// Recorded when the instrument path landed (plan Task 12). Re-record only
 /// for an intended sound change:
 ///     GOLDEN_RECORD=1 cargo test -p chimera-core --test instrument_test -- --nocapture
 const GOLDENS: &[(&str, u64)] = &[
-    ("poly_chord", 0x9e1be15b748f4ab1),
-    ("two_parts_two_pairs", 0x76a2727ec0b942ef), // re-recorded: part 2 is Modal, not FM (issues/26)
-    ("reverb_send_off", 0x25fa9f662d1acb99),
-    ("reverb_send_on", 0x51da232bdad6e4d9), // re-recorded: FX returns wet-only
+    ("poly_chord", 0x508049a56f63be65), // re-recorded: the default Sound is Algo
+    ("two_parts_two_pairs", 0x98262aa38f73b0af), // re-recorded: part 1 is Algo
+    ("reverb_send_off", 0x74703404aa517989), // re-recorded: the default Sound is Algo
+    ("reverb_send_on", 0x3d1e63a510a959c1), // re-recorded: the default Sound is Algo
+    ("six_voice_chord", 0xf6e19895e1a40915), // recorded after the Algo cost was measured
 ];
 
 /// A named golden case: a case name paired with its render function.
@@ -273,11 +324,12 @@ type GoldenCase = (&'static str, fn() -> Vec<f32>);
 
 #[test]
 fn instrument_goldens_match() {
-    let cases: [GoldenCase; 4] = [
+    let cases: [GoldenCase; 5] = [
         ("poly_chord", chord),
         ("two_parts_two_pairs", two_parts),
         ("reverb_send_off", || reverb_send(0.0)),
         ("reverb_send_on", || reverb_send(0.5)),
+        ("six_voice_chord", six_voice_chord),
     ];
     let record = std::env::var_os("GOLDEN_RECORD").is_some();
     let mut failures = Vec::new();
@@ -363,17 +415,23 @@ fn sound_change_mid_chord_stays_in_budget() {
     rig.render(&shared);
     let a = rig.inst.allocator();
     assert!(a.sounding_cost() + FxBus::COST <= BUDGET.as_cost());
-    let expected = ((BUDGET.as_cost().0 - FxBus::COST.0) / Voice::cost(EngineType::Modal).0)
+    let expected = ((BUDGET.as_cost().0 - FxBus::COST.0)
+        / Voice::cost(
+            &ParamSnapshot::for_engine(EngineType::Modal),
+            &ModState::new(),
+        )
+        .0)
         .min(MAX_VOICES as u32);
     assert_eq!(
         a.slots().iter().filter(|s| !s.is_free()).count(),
         expected as usize
     );
-    assert!(
-        a.slots()
-            .iter()
-            .all(|s| s.is_free() || s.cost() == Voice::cost(EngineType::Modal))
-    );
+    assert!(a.slots().iter().all(|s| s.is_free()
+        || s.cost()
+            == Voice::cost(
+                &ParamSnapshot::for_engine(EngineType::Modal),
+                &ModState::new()
+            )));
 }
 
 /// Blocks after a lone note-off (note 60, default Sound) until the voice's
@@ -459,22 +517,22 @@ fn stealing_a_releasing_voice_does_not_free_the_new_note() {
 #[test]
 fn retriggering_a_releasing_mono_voice_does_not_free_the_new_note() {
     let n = blocks_until_free();
-    let mut pizza = AudioShared::default();
-    pizza.parts[0].mix.mode = PartMode::Mono;
-    let mut modal = pizza.clone();
+    let mut init = AudioShared::default();
+    init.parts[0].mix.mode = PartMode::Mono;
+    let mut modal = init.clone();
     modal.parts[0].params = ParamSnapshot::for_engine(EngineType::Modal);
     for (after_off, held) in [n - 2, n - 1, n, n + 1]
         .into_iter()
         .flat_map(|a| [(a, 0), (a, 20)])
     {
         let mut rig = Rig::new();
-        rig.inst.handle(on(0, 60), &pizza);
+        rig.inst.handle(on(0, 60), &init);
         for _ in 0..20 {
-            rig.render(&pizza);
+            rig.render(&init);
         }
-        rig.inst.handle(off(0, 60), &pizza);
+        rig.inst.handle(off(0, 60), &init);
         for _ in 0..after_off {
-            rig.render(&pizza);
+            rig.render(&init);
         }
         rig.inst.handle(on(0, 62), &modal);
         for b in 0..held {
@@ -546,4 +604,280 @@ fn same_note_from_two_channels_releases_both_voices() {
             );
         }
     }
+}
+
+/// Six SAW LEAD notes, then the chord's Sound becomes TX EPIANO, which fits
+/// five (ADR 0026): one voice is shed. `release` notes are let go first.
+fn shed_one(release: &[u8]) -> (Rig, AudioShared) {
+    let light = AudioShared::from_performance(&factory(4));
+    let heavy = AudioShared::from_performance(&factory(1));
+    let mut rig = Rig::new();
+    for n in CHORD6 {
+        rig.inst.handle(on(0, n), &light);
+    }
+    for _ in 0..20 {
+        rig.render(&light);
+    }
+    for &n in release {
+        rig.inst.handle(off(0, n), &light);
+    }
+    rig.render(&light);
+    assert_eq!(
+        rig.inst
+            .allocator()
+            .slots()
+            .iter()
+            .filter(|s| !s.is_free())
+            .count(),
+        6
+    );
+    rig.render(&heavy);
+    (rig, heavy)
+}
+
+fn dying(rig: &Rig) -> Vec<(usize, u8)> {
+    let slots = rig.inst.allocator().slots();
+    (0..slots.len())
+        .filter(|&v| slots[v].dying())
+        .map(|v| (v, slots[v].note().unwrap().get()))
+        .collect()
+}
+
+/// ADR 0027: a recost over budget takes a released tail, the oldest, before
+/// any held note; the dying voice is not reallocated, and frees when the
+/// fade ends, back within budget.
+#[test]
+fn a_patch_edit_over_budget_fades_a_tail_first() {
+    let (mut rig, heavy) = shed_one(&[64, 55]);
+    let d = dying(&rig);
+    assert_eq!(
+        d.iter().map(|x| x.1).collect::<Vec<_>>(),
+        [55],
+        "the oldest tail"
+    );
+    let v = d[0].0;
+    rig.inst.handle(on(0, 90), &heavy);
+    let s = rig.inst.allocator().slots()[v];
+    assert!(
+        s.dying() && s.note() == MidiNote::new(55),
+        "reallocated mid-fade"
+    );
+    rig.render(&heavy); // the fade's second block
+    let a = rig.inst.allocator();
+    assert!(a.slots()[v].is_free());
+    assert!(a.sounding_cost() + FxBus::COST <= BUDGET.as_cost());
+}
+
+/// With only held notes, the newest is shed. It keeps its slot, not
+/// reallocated, through the two-block fade (the block it was shed in and
+/// the next), then frees.
+#[test]
+fn a_patch_edit_over_budget_fades_the_newest_held_note() {
+    let (mut rig, heavy) = shed_one(&[]);
+    let d = dying(&rig);
+    assert_eq!(d.iter().map(|x| x.1).collect::<Vec<_>>(), [72]);
+    rig.inst.handle(off(0, 48), &heavy); // a tail to steal
+    rig.inst.handle(on(0, 90), &heavy);
+    assert_eq!(dying(&rig), d, "reallocated mid-fade");
+    rig.render(&heavy);
+    assert!(dying(&rig).is_empty());
+    let a = rig.inst.allocator();
+    assert_eq!(a.slots().iter().filter(|s| !s.is_free()).count(), 5);
+    assert!(a.sounding_cost() + FxBus::COST <= BUDGET.as_cost());
+}
+
+/// The slots holding `note`, and whether each is dying.
+fn slots_of(rig: &Rig, note: u8) -> Vec<(usize, bool)> {
+    let slots = rig.inst.allocator().slots();
+    (0..slots.len())
+        .filter(|&v| slots[v].note().map(|n| n.get()) == Some(note))
+        .map(|v| (v, slots[v].dying()))
+        .collect()
+}
+
+/// #33 M1: a note-on in the same block as a patch edit is judged against
+/// the new patch's costs, so it is not admitted and then shed at once. The
+/// edit sheds the newest held note, 67, as `render` would; the note-on then
+/// steals the oldest held note, 48 (voice_alloc rule 4), as it would a
+/// block later.
+#[test]
+fn a_note_on_with_a_patch_edit_is_judged_at_the_new_cost() {
+    let light = AudioShared::from_performance(&factory(4)); // SAW LEAD: 6
+    let heavy = AudioShared::from_performance(&factory(6)); // MORPH PAD: 4
+    let mut rig = Rig::new();
+    for n in &CHORD6[..5] {
+        rig.inst.handle(on(0, *n), &light);
+    }
+    for _ in 0..4 {
+        rig.render(&light);
+    }
+    rig.inst.handle(on(0, 90), &heavy);
+    for _ in 0..4 {
+        rig.render(&heavy);
+    }
+    let a = rig.inst.allocator();
+    assert!(a.sounding_cost() + FxBus::COST <= BUDGET.as_cost());
+    assert_eq!(slots_of(&rig, 90).len(), 1, "the new note plays");
+    let (v, dying) = slots_of(&rig, 90)[0];
+    assert!(!dying && rig.inst.allocator().slots()[v].held());
+    assert!(peak(rig.inst.part_bus(0)) > 0.0);
+    assert_eq!(rig.inst.allocator().refused(), 0);
+    assert!(slots_of(&rig, 48).is_empty() && slots_of(&rig, 67).is_empty());
+    for n in [55, 60, 64] {
+        assert_eq!(slots_of(&rig, n).len(), 1, "{n} still held");
+    }
+}
+
+/// #33 M7: with the pool full only because voices are fading out, a note
+/// that fits the budget takes a dying slot and plays once the fade ends; no
+/// held note is stolen and none is refused.
+#[test]
+fn a_note_on_waits_out_a_fade_before_stealing_a_held_note() {
+    let perf = |lead: usize| {
+        let mut p = factory(lead);
+        p.parts[1].sound = chimera_core::factory::factory_sound(5).unwrap(); // SQR BASS
+        AudioShared::from_performance(&p)
+    };
+    let (light, heavy) = (perf(4), perf(6)); // SAW LEAD fits six, MORPH PAD four
+    let mut rig = Rig::new();
+    for n in CHORD6 {
+        rig.inst.handle(on(0, n), &light);
+    }
+    for _ in 0..4 {
+        rig.render(&light);
+    }
+    rig.render(&heavy); // four fit: two are shed
+    let dying: Vec<usize> = (0..6)
+        .filter(|&v| rig.inst.allocator().slots()[v].dying())
+        .collect();
+    assert_eq!(dying.len(), 2);
+    rig.inst.handle(on(1, 40), &heavy);
+    let a = rig.inst.allocator();
+    assert_eq!(a.refused(), 0);
+    let held: Vec<_> = a
+        .slots()
+        .iter()
+        .filter(|s| s.part() == Some(0) && s.held() && !s.dying())
+        .collect();
+    assert_eq!(held.len(), 4, "no held note stolen");
+    let (v, d) = slots_of(&rig, 40)[0];
+    assert!(dying.contains(&v) && !d);
+    rig.render(&heavy); // the fade's second block: bass still silent
+    assert_eq!(peak(rig.inst.part_bus(1)), 0.0);
+    rig.render(&heavy);
+    assert!(
+        peak(rig.inst.part_bus(1)) > 0.0,
+        "the bass plays after the fade"
+    );
+    assert!(rig.inst.allocator().slots()[v].held());
+}
+
+/// ADR 0027: a patch edit that sheds a note still waiting out a fade drops
+/// it unheard, and counts it as refused.
+#[test]
+fn a_shed_waiting_note_counts_as_refused() {
+    let perf = |lead: usize, other: usize| {
+        let mut p = factory(lead);
+        p.parts[1].sound = chimera_core::factory::factory_sound(other).unwrap();
+        AudioShared::from_performance(&p)
+    };
+    let mut rig = Rig::new();
+    let light = perf(4, 5);
+    for n in CHORD6 {
+        rig.inst.handle(on(0, n), &light);
+    }
+    for _ in 0..4 {
+        rig.render(&light);
+    }
+    let heavy = perf(6, 5);
+    rig.render(&heavy); // two shed
+    rig.inst.handle(on(1, 40), &heavy); // waits on a dying slot
+    assert_eq!(slots_of(&rig, 40).len(), 1);
+    rig.render(&perf(6, 7)); // part 2 now MORPH KEYS: the waiting note goes
+    assert_eq!(rig.inst.allocator().refused(), 1);
+    for _ in 0..4 {
+        rig.render(&perf(6, 7));
+    }
+    assert!(slots_of(&rig, 40).is_empty());
+    assert_eq!(peak(rig.inst.part_bus(1)), 0.0);
+}
+
+/// #33: a steal from another Part on the same engine fades the old sound
+/// out on its own Part's bus, then starts the new note clean.
+#[test]
+fn a_steal_from_another_part_fades_on_the_old_bus() {
+    let mut p = factory(4); // SAW LEAD on both Parts
+    p.parts[1].sound = chimera_core::factory::factory_sound(4).unwrap();
+    let shared = AudioShared::from_performance(&p);
+    let mut rig = Rig::new();
+    for n in CHORD6 {
+        rig.inst.handle(on(0, n), &shared);
+    }
+    for _ in 0..4 {
+        rig.render(&shared);
+    }
+    rig.inst.handle(off(0, 48), &shared);
+    rig.render(&shared);
+    rig.inst.handle(on(1, 40), &shared); // steals the tail of 48
+    let (v, _) = slots_of(&rig, 40)[0];
+    for _ in 0..2 {
+        rig.render(&shared);
+        assert_eq!(peak(rig.inst.part_bus(1)), 0.0, "fading on part 1's bus");
+    }
+    rig.render(&shared);
+    assert!(peak(rig.inst.part_bus(1)) > 0.0, "then the new note plays");
+    assert!(rig.inst.allocator().slots()[v].held());
+}
+
+/// Part 0 holds a six-note SAW LEAD chord, filling the pool; Parts 1 and 2
+/// play SAW LEAD too, Part 1 in `mode`.
+fn full_pool(mode: PartMode) -> (Rig, AudioShared) {
+    let mut p = factory(4);
+    for q in [1, 2] {
+        p.parts[q].sound = chimera_core::factory::factory_sound(4).unwrap();
+    }
+    p.parts[1].mix.mode = mode;
+    let shared = AudioShared::from_performance(&p);
+    let mut rig = Rig::new();
+    for n in CHORD6 {
+        rig.inst.handle(on(0, n), &shared);
+    }
+    for _ in 0..4 {
+        rig.render(&shared);
+    }
+    (rig, shared)
+}
+
+/// A Mono Part that retriggers its own note still waiting out another
+/// Part's fade replaces it unheard: counted as refused.
+#[test]
+fn a_mono_retrigger_of_a_waiting_note_counts_it_as_refused() {
+    let (mut rig, shared) = full_pool(PartMode::Mono);
+    rig.inst.handle(on(1, 40), &shared); // steals 48, waits
+    let (v, _) = slots_of(&rig, 40)[0];
+    rig.inst.handle(on(1, 41), &shared); // same voice, before 40 sounds
+    assert_eq!(slots_of(&rig, 41), [(v, false)]);
+    assert_eq!(rig.inst.allocator().refused(), 1);
+    for _ in 0..3 {
+        rig.render(&shared);
+    }
+    assert!(peak(rig.inst.part_bus(1)) > 0.0, "41 plays");
+}
+
+/// A second Part that steals a slot whose note is still waiting (released
+/// before it sounded) drops that note: counted as refused.
+#[test]
+fn a_steal_of_a_waiting_note_counts_it_as_refused() {
+    let (mut rig, shared) = full_pool(PartMode::Poly);
+    rig.inst.handle(on(1, 90), &shared); // steals 48, waits
+    let (v, _) = slots_of(&rig, 90)[0];
+    rig.inst.handle(off(1, 90), &shared); // a short note, still unheard
+    rig.inst.handle(on(2, 70), &shared); // takes the released slot
+    assert_eq!(slots_of(&rig, 70), [(v, false)]);
+    assert_eq!(rig.inst.allocator().refused(), 1);
+    for _ in 0..3 {
+        rig.render(&shared);
+    }
+    assert_eq!(peak(rig.inst.part_bus(1)), 0.0, "90 never sounds");
+    assert!(peak(rig.inst.part_bus(2)) > 0.0, "70 plays");
 }
