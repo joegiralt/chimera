@@ -189,14 +189,19 @@ impl Instrument {
                             .note_on(p as u8, part.mix.mode, ev.note, cost, FxBus::COST)
                     {
                         let voice = &mut self.voices[v];
-                        if self.sounding[v] as usize != p && voice.is_active() {
+                        let waited = self.waiting[v].take().is_some();
+                        let queued = if self.sounding[v] as usize != p && voice.is_active() {
                             // Another Part's sound fades out on its own bus
                             // and settings first.
-                            voice.kill();
                             self.waiting[v] = Some(vel);
+                            voice.kill()
                         } else {
-                            voice.note_on(ev.note, vel, &part.params);
-                            (self.sounding[v], self.waiting[v]) = (p as u8, None);
+                            self.sounding[v] = p as u8;
+                            voice.note_on(ev.note, vel, &part.params)
+                        };
+                        // A note replaced before it sounded (ADR 0027).
+                        if waited || queued {
+                            self.alloc.dropped_unheard();
                         }
                         self.note_channel[v] = ev.channel;
                     }

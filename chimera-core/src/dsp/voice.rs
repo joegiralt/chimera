@@ -143,17 +143,20 @@ impl Voice {
     }
 
     /// On a fading voice, or one sounding another engine, the note waits
-    /// for the fade-out and then starts clean.
-    pub fn note_on(&mut self, note: MidiNote, velocity: Velocity, params: &ParamSnapshot) {
+    /// for the fade-out and then starts clean. Returns whether it replaced
+    /// a note still waiting, unheard.
+    pub fn note_on(&mut self, note: MidiNote, velocity: Velocity, params: &ParamSnapshot) -> bool {
+        let replaced = self.after_fade == AfterFade::Note;
         self.held = true;
         if self.fade > 0 || (self.active && params.engine() != self.active_engine) {
             self.last_note = note;
             self.last_velocity = velocity;
             self.after_fade = AfterFade::Note;
             self.fade_out();
-            return;
+            return replaced;
         }
         self.trigger(note, velocity, params);
+        replaced
     }
 
     fn trigger(&mut self, note: MidiNote, velocity: Velocity, params: &ParamSnapshot) {
