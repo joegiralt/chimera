@@ -2,11 +2,13 @@
 //! Simulates the desktop audio callback pattern: rendering blocks
 //! and scattering to variable-size output buffers.
 
+use chimera_core::dsp::Stereo;
 use chimera_core::dsp::algo::params::AlgoParams;
 use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::fx_bus::FxParams;
 use chimera_core::dsp::modal::ResonatorMode;
-use chimera_core::dsp::reverb::{Reverb, ReverbParams};
+use chimera_core::dsp::reverb::ReverbParams;
+use chimera_core::dsp::ring::RingReverb;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::modulation::ModState;
 use chimera_core::params::{EngineType, ParamSnapshot};
@@ -31,7 +33,7 @@ fn check_no_clicks(
 ) {
     let empty_mod = ModState::new();
     let mut voice = Voice::new(SR);
-    let mut reverb = Reverb::new();
+    let mut reverb = Box::new(RingReverb::new());
     let mut params = ParamSnapshot::default();
     let mut rv = FxParams::default().reverb;
     setup(&mut params, &mut rv);
@@ -52,7 +54,13 @@ fn check_no_clicks(
         for _ in 0..cb_size {
             if block_pos >= BLOCK_SIZE {
                 voice.render(&mut block, &params, &empty_mod);
-                reverb.process(&mut block, &rv);
+                if rv.is_on() {
+                    let mut wet = Stereo::SILENT;
+                    reverb.process(&block, &rv.controls(), rv.mix, SR, &mut wet);
+                    for (b, w) in block.iter_mut().zip(&wet.l) {
+                        *b += w;
+                    }
+                }
                 block_pos = 0;
             }
             let s = libm::tanhf(block[block_pos] * 0.4);
@@ -110,42 +118,15 @@ fn test_no_clicks_algo_with_pm() {
 // ── With reverb ─────────────────────────────────────────────────────
 
 #[test]
-fn test_no_clicks_algo_with_plate_reverb() {
+fn test_no_clicks_algo_with_reverb() {
     check_no_clicks(
-        "Algo + plate reverb",
+        "Algo + reverb",
         |p, rv| {
             *p = tri();
-            rv.reverb_type = 0;
             rv.mix = 0.5;
             rv.time = 0.7;
         },
         &[256, 512, 256, 128, 256, 256, 512, 256],
-    );
-}
-
-#[test]
-fn test_no_clicks_algo_with_fdn_reverb() {
-    check_no_clicks(
-        "Algo + FDN reverb",
-        |p, rv| {
-            *p = tri();
-            rv.reverb_type = 1;
-            rv.mix = 0.5;
-        },
-        &[256, 256, 256, 256, 256, 256, 256, 256],
-    );
-}
-
-#[test]
-fn test_no_clicks_algo_with_midiverb() {
-    check_no_clicks(
-        "Algo + MidiVerb",
-        |p, rv| {
-            *p = tri();
-            rv.reverb_type = 2;
-            rv.mix = 0.5;
-        },
-        &[256, 256, 256, 256, 256, 256, 256, 256],
     );
 }
 
@@ -170,10 +151,8 @@ fn test_no_clicks_modal() {
     // Use a higher threshold than other engines.
     let empty_mod = ModState::new();
     let mut voice = Voice::new(SR);
-    let mut reverb = Reverb::new();
     let mut params = ParamSnapshot::for_engine(EngineType::Modal);
     params.modal.mode = ResonatorMode::Modal;
-    let rv = FxParams::default().reverb;
     voice.note_on(
         MidiNote::new(60).unwrap(),
         Velocity::new(100).unwrap(),
@@ -188,7 +167,6 @@ fn test_no_clicks_modal() {
         for _ in 0..cb_size {
             if block_pos >= BLOCK_SIZE {
                 voice.render(&mut block, &params, &empty_mod);
-                reverb.process(&mut block, &rv);
                 block_pos = 0;
             }
             all_samples.push(libm::tanhf(block[block_pos] * 0.7));

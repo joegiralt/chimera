@@ -296,17 +296,31 @@ pub fn stage_label_spans(
     spans
 }
 
-/// Compressor transfer curve (knee at 60 %, 0.3 above it) over a faint 1:1 line.
-pub fn compressor<D>(d: &mut D)
+/// The GR meter: a bar at the plot's right edge, lit down from the top,
+/// full height at `GR_RANGE_DB`.
+pub const GR_X: i32 = theme::VIZ_RIGHT - 6;
+pub const GR_W: i32 = 6;
+pub const GR_RANGE_DB: f32 = 24.0;
+
+/// MST: the compressor's static curve at `thresh_db` and `ratio`, input and
+/// output over −48..0 dB, and the GR meter at `gr_db`.
+pub fn compressor<D>(d: &mut D, thresh_db: f32, ratio: f32, gr_db: f32)
 where
     D: DrawTarget<Color = Rgb565>,
 {
     let (x0, x1) = (theme::VIZ_LEFT + 30, theme::VIZ_RIGHT - 30);
     let (w, h) = ((x1 - x0) as f32, (PLOT_BASE - PLOT_TOP) as f32);
     draw::line(d, x0, PLOT_BASE, x1, PLOT_TOP, theme::FAINT, 1);
-    let out = |t: f32| if t < 0.6 { t } else { 0.6 + (t - 0.6) * 0.3 };
+    let out = |db: f32| {
+        if db < thresh_db {
+            db
+        } else {
+            thresh_db + (db - thresh_db) / ratio
+        }
+    };
     filled_curve(d, x0, x1, PLOT_BASE, |x| {
-        PLOT_BASE - (h * out((x - x0) as f32 / w)) as i32
+        let db = -48.0 + 48.0 * (x - x0) as f32 / w;
+        PLOT_BASE - (h * (out(db) + 48.0) / 48.0) as i32
     });
     draw::text(d, &theme::FONT_LABEL, "IN", x1 + 4, PLOT_BASE, theme::MID);
     draw::text(
@@ -317,6 +331,9 @@ where
         PLOT_TOP + 8,
         theme::MID,
     );
+    let lit = (h * (gr_db / GR_RANGE_DB).clamp(0.0, 1.0) + 0.5) as i32;
+    draw::fill_rect(d, GR_X, PLOT_TOP, GR_W, PLOT_BASE - PLOT_TOP, theme::FAINT);
+    draw::fill_rect(d, GR_X, PLOT_TOP, GR_W, lit, theme::ACCENT);
 }
 
 /// One Part in the Mixer overview.

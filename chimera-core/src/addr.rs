@@ -63,17 +63,19 @@ pub enum BlockRef {
     Lfo,
     /// `OutParams { volume, pan }`
     Out,
-    /// Chorus, delay and reverb: the Performance's shared FX bus.
+    /// Chorus, delay, reverb, tape and the master compressor: the Performance's shared FX.
     Chorus,
     Delay,
     Reverb,
+    Tape,
+    Comp,
     /// A Part's mix settings (`PartParams`): channel, mode, output, level,
     /// pan, sends.
     Part,
 }
 
 impl BlockRef {
-    pub const ALL: [BlockRef; 20] = [
+    pub const ALL: [BlockRef; 22] = [
         BlockRef::Modal,
         BlockRef::Algo,
         BlockRef::AlgoOp(Op::A),
@@ -93,6 +95,8 @@ impl BlockRef {
         BlockRef::Chorus,
         BlockRef::Delay,
         BlockRef::Reverb,
+        BlockRef::Tape,
+        BlockRef::Comp,
         BlockRef::Part,
     ];
 
@@ -111,6 +115,8 @@ impl BlockRef {
             BlockRef::Chorus => &crate::dsp::chorus::CHORUS_SPECS,
             BlockRef::Delay => &crate::dsp::delay::DELAY_SPECS,
             BlockRef::Reverb => &crate::dsp::reverb::REVERB_SPECS,
+            BlockRef::Tape => &crate::dsp::tape::TAPE_SPECS,
+            BlockRef::Comp => &crate::dsp::comp::COMP_SPECS,
             BlockRef::Part => &crate::part::PART_SPECS,
         }
     }
@@ -136,6 +142,8 @@ impl BlockRef {
             | BlockRef::Chorus
             | BlockRef::Delay
             | BlockRef::Reverb
+            | BlockRef::Tape
+            | BlockRef::Comp
             | BlockRef::Part => false,
         }
     }

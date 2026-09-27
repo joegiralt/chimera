@@ -54,6 +54,29 @@ pub fn fast_sin_abs(theta: f32) -> f32 {
     if s < 0.0 { -s } else { s }
 }
 
+/// sin(2π·phase) for phase in [0, 1): a parabola with one correction step
+/// on the folded phase; absolute error below 0.001. `f32` only.
+#[inline(always)]
+pub fn sin_turns(phase: f32) -> f32 {
+    let x = 2.0 * phase - 1.0;
+    let y = 4.0 * x * (1.0 - x.abs());
+    -(y + 0.224 * (y * y.abs() - y))
+}
+
+/// One block per side.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Stereo {
+    pub l: [f32; chimera_hal::BLOCK_SIZE],
+    pub r: [f32; chimera_hal::BLOCK_SIZE],
+}
+
+impl Stereo {
+    pub const SILENT: Self = Self {
+        l: [0.0; chimera_hal::BLOCK_SIZE],
+        r: [0.0; chimera_hal::BLOCK_SIZE],
+    };
+}
+
 /// Fast tanh approximation using rational polynomial.
 /// Accurate to ~0.1% for |x| < 4. Clamps to ±1 beyond that.
 /// ~5 cycles on Cortex-M7 vs ~400 for libm::tanhf.
@@ -84,15 +107,18 @@ pub fn fast_tan(x: f32) -> f32 {
 
 pub mod algo;
 pub mod chorus;
+pub mod comp;
 pub mod delay;
 pub mod drive;
 pub mod engines;
 pub mod envelope;
 pub mod filter;
 pub mod fx_bus;
+pub mod halfband;
 pub mod lfo;
-pub mod midiverb;
 pub mod modal;
 pub mod reverb;
+pub mod ring;
+pub mod tape;
 pub mod voice;
 pub mod wavefolder;

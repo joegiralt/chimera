@@ -267,6 +267,32 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
         plus(ui, 3);
     }),
+    ("mixer_fx_reverb", |ui| {
+        feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
+        plus(ui, 4);
+        feed(ui, Input::turn(EncoderId::A, 20)); // GRIT
+    }),
+    ("mixer_fx_delay_char", |ui| {
+        feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
+        plus(ui, 3);
+        feed(ui, Input::press(ButtonId::Edit)); // DLY › CHAR
+        feed(ui, Input::turn(EncoderId::A, 20)); // WOW
+    }),
+    ("mixer_tape", |ui| {
+        feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
+        plus(ui, 5);
+        feed(ui, Input::turn(EncoderId::A, 40)); // DRIVE
+    }),
+    ("mixer_master", |ui| {
+        feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
+        plus(ui, 6);
+        feed(ui, Input::turn(EncoderId::B, 4)); // RATIO 4:1: the curve bends
+    }),
+    ("mixer_master_level", |ui| {
+        feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
+        plus(ui, 6);
+        feed(ui, Input::press(ButtonId::Edit)); // MST › LEVEL
+    }),
     ("mod_matrix", |ui| {
         plus(ui, 3);
         feed(ui, Input::turn(EncoderId::A, 1)); // focus CUTOFF

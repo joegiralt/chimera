@@ -63,7 +63,12 @@ fn mixer_chain_is_part_sends_and_fx() {
         .iter()
         .map(|b| b.def.name)
         .collect();
-    assert_eq!(names, ["Part", "Sends", "Chorus", "Delay", "Reverb"]);
+    assert_eq!(
+        names,
+        [
+            "Part", "Sends", "Chorus", "Delay", "Reverb", "Tape", "Master"
+        ]
+    );
 }
 
 /// Every slot on the Mixer chain is bound to a real spec: no Legacy slot is
@@ -136,6 +141,17 @@ fn turn_def(def: &BlockDef, slot: usize, delta: i8, perf: &mut Performance) {
     part_page::apply_encoder(def, slot, delta, &mut perf.edit(0), &mut Op::A);
 }
 
+/// Each slot's parameter address, `None` where the slot is not bound.
+fn bound(def: &BlockDef) -> Vec<Option<ParamAddr>> {
+    def.params
+        .iter()
+        .map(|s| match s.binding {
+            SlotBinding::Param(a) => Some(a),
+            _ => None,
+        })
+        .collect()
+}
+
 /// FX pages keep the old encoder steps and edit the Performance's FX.
 #[test]
 fn fx_encoders_step_like_before() {
@@ -144,13 +160,19 @@ fn fx_encoders_step_like_before() {
     assert_eq!(perf.fx.delay.time_ms, 375.0 + 2.0 * 8.0);
     turn_def(&reg::CHORUS, 0, 5, &mut perf);
     assert_eq!(perf.fx.chorus.mode, 3);
-    turn_def(&reg::EFX, 0, 5, &mut perf);
-    assert_eq!(perf.fx.reverb.reverb_type, 2);
     turn_def(&reg::EFX, 4, -1, &mut perf);
     assert_eq!(perf.fx.reverb.mix, 0.0);
     turn_def(&reg::EFX, 4, 1, &mut perf);
     assert_eq!(perf.fx.reverb.mix, 1.0 / 128.0);
-    part_page::snap_encoder(&reg::DELAY, 5, 1, &mut perf.edit(0), Op::A);
+    turn_def(&reg::EFX, 0, 5, &mut perf);
+    assert!((perf.fx.reverb.grit - (0.3 + 5.0 / 128.0)).abs() < 1e-6);
+    turn_def(&reg::EFX, 3, 1, &mut perf);
+    assert!((perf.fx.reverb.size - (0.5 + 1.0 / 31.0)).abs() < 1e-6);
+    turn_def(&reg::DELAY, 3, 64, &mut perf);
+    assert_eq!(perf.fx.delay.rev_send, 0.5);
+    turn_def(&reg::DELAY_CHAR, 0, 1, &mut perf);
+    assert!((perf.fx.delay.wow_flutter - (0.15 + 1.0 / 128.0)).abs() < 1e-6);
+    part_page::snap_encoder(&reg::DELAY, 4, 1, &mut perf.edit(0), Op::A);
     assert_eq!(perf.fx.delay.mix, 100.0 / 127.0);
 }
 
@@ -306,6 +328,78 @@ fn fx_pages_light_their_effect_in_the_flow() {
         reg::SENDS.viz,
         chimera_core::ui::block_def::VizType::EffectsFlow
     ));
+    assert_eq!(
+        flow_lit(&screen::render("mixer_fx_delay_char")),
+        [1],
+        "DLY › CHAR lights DLY"
+    );
+    assert_eq!(
+        flow_lit(&screen::render("mixer_fx_reverb")),
+        [2],
+        "Reverb page lights REV"
+    );
+}
+
+/// FX diet spec § UI: DLY keeps TIME, FDBK, TONE, REV and MIX; WOW and SAT
+/// move to DLY › CHAR (an assumed default, pending the owner), on both
+/// Mix chains.
+#[test]
+fn the_delay_page_is_time_fdbk_tone_rev_mix_with_char_below() {
+    use chimera_core::dsp::delay::DelayParams as D;
+    let at = |p| Some(ParamAddr::new(BlockRef::Delay, p));
+    assert_eq!(
+        bound(&reg::DELAY),
+        [
+            at(D::TIME_MS),
+            at(D::FEEDBACK),
+            at(D::TONE),
+            at(D::REV_SEND),
+            at(D::MIX),
+            None
+        ]
+    );
+    assert_eq!(
+        bound(&reg::DELAY_CHAR),
+        [
+            at(D::WOW_FLUTTER),
+            at(D::SATURATION),
+            None,
+            None,
+            None,
+            None
+        ]
+    );
+    for chain in [&reg::MIX_CHAIN, &reg::MIXER_CHANNEL_CHAIN] {
+        let dly = chain
+            .blocks
+            .iter()
+            .find(|b| b.def.id == reg::DELAY.id)
+            .unwrap();
+        let subs: Vec<u16> = dly.sub_pages.iter().map(|d| d.id).collect();
+        assert_eq!(subs, [reg::DELAY_CHAR.id], "{}", chain.name);
+    }
+}
+
+/// FX diet spec § UI: TYPE's slot is GRIT; the rest keep their order.
+#[test]
+fn the_reverb_page_is_grit_time_damp_size_mix() {
+    use chimera_core::dsp::reverb::ReverbParams;
+    let at = |p| Some(ParamAddr::new(BlockRef::Reverb, p));
+    assert_eq!(
+        bound(&reg::EFX),
+        [
+            at(ReverbParams::GRIT),
+            at(ReverbParams::TIME),
+            at(ReverbParams::DAMPING),
+            at(ReverbParams::SIZE),
+            at(ReverbParams::MIX),
+            None
+        ]
+    );
+    assert!(matches!(
+        reg::EFX.viz,
+        chimera_core::ui::block_def::VizType::EffectsFlow
+    ));
 }
 
 #[test]
@@ -392,4 +486,104 @@ fn part_page_shows_channel_mode_and_output_by_name() {
     let mut buf = FmtBuf::new();
     fmt_val(&mut buf, 0.97, reg::PART.params[1].format());
     assert_eq!(buf.as_str(), "POLY");
+}
+
+/// FX diet spec § UI: TAPE is DRIVE, TONE, WOW, MIX, right after REV on
+/// both Mix chains; its encoders edit the Performance's tape.
+#[test]
+fn the_tape_page_is_drive_tone_wow_mix() {
+    use chimera_core::dsp::tape::TapeParams as T;
+    let at = |p| Some(ParamAddr::new(BlockRef::Tape, p));
+    assert_eq!(
+        bound(&reg::TAPE),
+        [
+            at(T::DRIVE),
+            at(T::TONE),
+            at(T::WOW),
+            at(T::MIX),
+            None,
+            None
+        ]
+    );
+    for chain in [&reg::MIX_CHAIN, &reg::MIXER_CHANNEL_CHAIN] {
+        let ids: Vec<u16> = chain.blocks.iter().map(|b| b.def.id).collect();
+        let rev = ids.iter().position(|&i| i == reg::EFX.id).unwrap();
+        assert_eq!(ids[rev + 1], reg::TAPE.id, "{}", chain.name);
+    }
+    let mut perf = Performance::new();
+    turn_def(&reg::TAPE, 0, 64, &mut perf);
+    turn_def(&reg::TAPE, 3, 32, &mut perf);
+    assert_eq!((perf.fx.tape.drive, perf.fx.tape.mix), (0.5, 0.25));
+}
+
+/// FX diet spec § UI: MST binds THRESH, RATIO, ATK, REL, MAKEUP, MIX; the
+/// legacy VOL and PAN sit on MST › LEVEL (an assumed default, pending the
+/// owner); MST ends both Mix chains.
+#[test]
+fn the_master_page_is_the_compressor_with_level_below() {
+    use chimera_core::dsp::comp::CompParams as C;
+    let at = |p| Some(ParamAddr::new(BlockRef::Comp, p));
+    assert_eq!(
+        bound(&reg::MASTER),
+        [
+            at(C::THRESH),
+            at(C::RATIO),
+            at(C::ATTACK),
+            at(C::RELEASE),
+            at(C::MAKEUP),
+            at(C::MIX)
+        ]
+    );
+    let labels: Vec<&str> = reg::MASTER_LEVEL.params.iter().map(|s| s.label()).collect();
+    assert_eq!(labels[..2], ["VOL", "PAN"]);
+    for chain in [&reg::MIX_CHAIN, &reg::MIXER_CHANNEL_CHAIN] {
+        let last = chain.blocks.last().unwrap();
+        assert_eq!(last.def.id, reg::MASTER.id, "{}", chain.name);
+        let subs: Vec<u16> = last.sub_pages.iter().map(|d| d.id).collect();
+        assert_eq!(subs, [reg::MASTER_LEVEL.id], "{}", chain.name);
+    }
+    let mut perf = Performance::new();
+    assert!(!perf.fx.comp.is_on());
+    turn_def(&reg::MASTER, 1, 4, &mut perf);
+    assert_eq!(perf.fx.comp.ratio, 4);
+    assert!(perf.fx.comp.is_on());
+}
+
+/// FX diet spec § UI: MST's GR meter is dark at 0 dB and fills half the
+/// plot at 12 dB, and a change redraws the viz. One test, because
+/// `MASTER_GR` is global.
+#[test]
+fn the_master_page_meters_gain_reduction() {
+    use chimera_core::meter::MASTER_GR;
+    use chimera_core::ui::theme;
+    use chimera_core::ui::viz::{GR_X, PLOT_BASE, PLOT_TOP};
+    let lit = |fb: &screen::Fb| {
+        (PLOT_TOP..PLOT_BASE)
+            .filter(|&y| fb.at(GR_X + 2, y) == theme::ACCENT)
+            .count() as i32
+    };
+    MASTER_GR.publish(0.0);
+    assert_eq!(lit(&screen::render("mixer_master")), 0);
+    MASTER_GR.publish(12.0);
+    assert_eq!(
+        lit(&screen::render("mixer_master")),
+        (PLOT_BASE - PLOT_TOP) / 2
+    );
+
+    MASTER_GR.publish(0.0);
+    let mut ui = screen::ui_for("mixer_master");
+    let (perf, scope) = (
+        chimera_core::ui::perf::PerfStats::zero(),
+        screen::scope_fixture(),
+    );
+    let mut fb = screen::Fb::new();
+    let moved = |f: &[(u16, u16)]| f.iter().any(|&r| r != (0, 0));
+    ui.render_dirty_with_scope(&mut fb, &perf, &scope);
+    assert!(!moved(&ui.render_dirty_with_scope(&mut fb, &perf, &scope)));
+    MASTER_GR.publish(6.0);
+    assert!(
+        moved(&ui.render_dirty_with_scope(&mut fb, &perf, &scope)),
+        "the meter redraws"
+    );
+    MASTER_GR.publish(0.0);
 }

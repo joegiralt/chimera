@@ -1,3 +1,30 @@
+// The SVF bandpass, fast tangent, cosine oscillator and bow table follow
+// Mutable Instruments Rings and stmlib (ADR 0032):
+//
+// Copyright 2014-2015 Emilie Gillet.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a
+// copy of this software and associated documentation files (the
+// "Software"), to deal in the Software without restriction, including
+// without limitation the rights to use, copy, modify, merge, publish,
+// distribute, sublicense, and/or sell copies of the Software, and to permit
+// persons to whom the Software is furnished to do so, subject to the
+// following conditions:
+//
+// The above copyright notice and this permission notice shall be included
+// in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+// USE OR OTHER DEALINGS IN THE SOFTWARE.
+//
+// The Karplus-Strong string is the project owner's own code, from their
+// Carcosa firmware for the Ambika, relicensed here under MIT (ADR 0032).
+
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 
@@ -137,7 +164,7 @@ fn stiffness_from_structure(structure: f32) -> f32 {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum ResonatorMode {
-    String = 0,      // Ambika KS+ (body, stiffness, position, ensemble)
+    String = 0,      // KS+ (body, stiffness, position, ensemble)
     Modal = 1,       // SVF bandpass bank (Rings-style)
     Bowed = 2,       // Sustained bow friction
     Sympathetic = 3, // Multiple resonating strings (Rings-style)
@@ -280,7 +307,7 @@ impl Block for ModalParams {
 
 // ── Modal Engine ────────────────────────────────────────────────────
 
-// ── Karplus-Strong delay line (ported from Ambika custom firmware) ───
+// ── Karplus-Strong delay line (from the owner's Carcosa firmware) ───
 
 /// String delay-line length (ADR 0014): the period of E1 (MIDI 28, 41.2 Hz)
 /// at 48 kHz is 1,164 samples, so E1 and above play at their exact period;
@@ -337,7 +364,7 @@ impl KsString {
         self.delay_len = (period as usize).clamp(2, MAX_STRING_DELAY - 1);
     }
 
-    /// Excite the string (ported from Ambika Trigger).
+    /// Excite the string (Carcosa's Trigger).
     /// excitation: 0=noise, 1=click, 2=bright, 3=dark
     fn trigger(&mut self, amplitude: f32, excitation: u8, color: f32, position: f32) {
         // Fill delay line based on excitation type
@@ -390,7 +417,7 @@ impl KsString {
         self.ens_lfo_phase = 0;
     }
 
-    /// Full render with all Ambika KS features. See `KsRenderParams` for
+    /// Full render with all the KS+ features. See `KsRenderParams` for
     /// the field meanings.
     #[inline]
     fn tick_full(&mut self, p: &KsRenderParams) -> f32 {

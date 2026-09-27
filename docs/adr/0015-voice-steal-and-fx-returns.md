@@ -1,6 +1,6 @@
 # 0015. Steal released voices first; FX sends return wet only
 
-- **Status:** Accepted (2026-09-24)
+- **Status:** Accepted (2026-09-24); partly superseded by [0029](0029-stereo-fx-returns.md) (mono FX return)
 - **Deciders:** project owner
 
 ## Context

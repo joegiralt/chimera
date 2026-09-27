@@ -31,12 +31,19 @@ fn modal_pluck_chain() {
     assert_eq!(chain.blocks[0].sub_page_count(), 2); // primary + Modal-2
 }
 
+/// FX diet spec § UI: the Mix map reads MIX · CHR · DLY · REV · TAPE · MST;
+/// EFX keeps its id and name, only its short label is REV.
 #[test]
-fn mix_chain_has_5_blocks() {
+fn mix_chain_is_mix_chr_dly_rev_tape_mst() {
     let chain = &block_registry::MIX_CHAIN;
-    assert_eq!(chain.len(), 5);
+    let shorts: Vec<&str> = chain.blocks.iter().map(|b| b.def.short).collect();
+    assert_eq!(shorts, ["MIX", "CHR", "DLY", "REV", "TAPE", "MST"]);
     assert_eq!(chain.blocks[0].def.name, "Mixer");
-    assert_eq!(chain.blocks[4].def.name, "Master");
+    assert_eq!(
+        (chain.blocks[3].def.id, chain.blocks[3].def.name),
+        (16, "Reverb")
+    );
+    assert_eq!(chain.blocks[5].def.name, "Master");
 }
 
 #[test]
@@ -44,7 +51,8 @@ fn mixer_channel_strip_chain() {
     let chain = &block_registry::MIXER_CHANNEL_CHAIN;
     assert_eq!(chain.blocks[0].def.name, "Part");
     assert_eq!(chain.blocks[1].def.name, "Sends");
-    assert_eq!(chain.len(), 5);
+    assert_eq!(chain.len(), 7);
+    assert_eq!(chain.blocks[6].def.name, "Master");
 }
 
 #[test]

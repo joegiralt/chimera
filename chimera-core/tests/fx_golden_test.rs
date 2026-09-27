@@ -6,9 +6,11 @@
 
 mod common;
 
+use chimera_core::dsp::Stereo;
 use chimera_core::dsp::chorus::{ChorusParams, JunoChorus};
 use chimera_core::dsp::delay::{DelayParams, TapeDelay};
-use chimera_core::dsp::reverb::{Reverb, ReverbParams};
+use chimera_core::dsp::reverb::ReverbParams;
+use chimera_core::dsp::ring::RingReverb;
 use chimera_hal::BLOCK_SIZE;
 use common::{SR, fnv1a};
 
@@ -25,8 +27,8 @@ enum Fx {
 }
 
 fn cases() -> [(&'static str, Fx); 6] {
-    let reverb = |reverb_type: u8, size: f32| ReverbParams {
-        reverb_type,
+    let reverb = |grit: f32, size: f32| ReverbParams {
+        grit,
         time: 0.7,
         damping: 0.3,
         size,
@@ -60,9 +62,9 @@ fn cases() -> [(&'static str, Fx); 6] {
                 ..DelayParams::default()
             }),
         ),
-        ("reverb_plate", Fx::Reverb(reverb(0, 0.5))),
-        ("reverb_fdn_max_size", Fx::Reverb(reverb(1, 1.0))),
-        ("reverb_midiverb", Fx::Reverb(reverb(2, 0.5))),
+        ("reverb_ring", Fx::Reverb(reverb(0.3, 0.5))),
+        ("reverb_ring_max_size", Fx::Reverb(reverb(0.3, 1.0))),
+        ("reverb_ring_full_grit", Fx::Reverb(reverb(1.0, 0.5))),
     ]
 }
 
@@ -78,31 +80,44 @@ fn input(b: usize, phase: &mut f32) -> [f32; BLOCK_SIZE] {
     block
 }
 
+/// Stereo effects add L then R per block; the delay its insert output.
 fn render(fx: Fx) -> Vec<f32> {
     let mut chorus = Box::new(JunoChorus::new());
     let mut delay = Box::new(TapeDelay::new());
-    let mut reverb = Box::new(Reverb::new());
-    let mut out = Vec::with_capacity(FX_BLOCKS * BLOCK_SIZE);
+    let mut reverb = Box::new(RingReverb::new());
+    let mut out = Vec::with_capacity(2 * FX_BLOCKS * BLOCK_SIZE);
     let mut phase = 0.0f32;
     for b in 0..FX_BLOCKS {
         let mut block = input(b, &mut phase);
         match fx {
-            Fx::Chorus(p) => chorus.process(&mut block, &p, SR),
-            Fx::Delay(p) => delay.process(&mut block, &p, SR),
-            Fx::Reverb(p) => reverb.process(&mut block, &p),
+            Fx::Chorus(p) => {
+                let mut wet = Stereo::SILENT;
+                chorus.process_wet(&block, &p, SR, &mut wet);
+                out.extend_from_slice(&wet.l);
+                out.extend_from_slice(&wet.r);
+            }
+            Fx::Delay(p) => {
+                delay.process(&mut block, &p, SR);
+                out.extend_from_slice(&block);
+            }
+            Fx::Reverb(p) => {
+                let mut wet = Stereo::SILENT;
+                reverb.process(&block, &p.controls(), p.mix, SR, &mut wet);
+                out.extend_from_slice(&wet.l);
+                out.extend_from_slice(&wet.r);
+            }
         }
-        out.extend_from_slice(&block);
     }
     out
 }
 
 const GOLDENS: &[(&str, u64)] = &[
-    ("chorus_both", 0x0ad6a4dbd5636552),
-    ("delay_375ms", 0x4ed2b23c577884bf),
-    ("delay_500ms", 0xc1f7798ede6627fd),
-    ("reverb_plate", 0x543857e5bed9848d),
-    ("reverb_fdn_max_size", 0xcd5bdb2e4f83a478),
-    ("reverb_midiverb", 0xef55c35ea73dc552),
+    ("chorus_both", 0x666b43969f8ed31a),           // u32 LFO phase
+    ("delay_375ms", 0xa1736e10da654418),           // FX diet
+    ("delay_500ms", 0xca8db167654567bd),           // FX diet
+    ("reverb_ring", 0x2a4709f629cb4cd8),           // FX diet
+    ("reverb_ring_max_size", 0x6eee15a3372d88b5),  // FX diet
+    ("reverb_ring_full_grit", 0xe8b2bff63402edec), // FX diet
 ];
 
 #[test]
@@ -128,6 +143,18 @@ fn fx_goldens_match() {
         "fx golden mismatch:\n{}",
         failures.join("\n")
     );
+}
+
+/// ADR 0011's gate for the FX cases, run before their goldens are
+/// recorded: finite, within ±1.0, and audible.
+#[test]
+fn fx_cases_pass_the_sanity_gate() {
+    for (name, fx) in cases() {
+        let out = render(fx);
+        assert!(out.iter().all(|s| s.is_finite()), "{name}: non-finite");
+        let peak = out.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+        assert!((1e-3..=1.0).contains(&peak), "{name}: peak {peak}");
+    }
 }
 
 /// A case whose effect is bypassed would lock only the dry input.
