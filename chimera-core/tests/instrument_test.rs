@@ -439,6 +439,17 @@ fn reverb_send(send: f32) -> Vec<f32> {
     render_perf(&perf, &[(0, 60)], 300)
 }
 
+/// ADR 0011's gate for `reverb_send_on`: finite, within ±1.0, and the
+/// reverb audible over the dry render.
+#[test]
+fn reverb_send_on_passes_the_sanity_gate() {
+    let (dry, wet) = (reverb_send(0.0), reverb_send(0.5));
+    assert!(wet.iter().all(|s| s.is_finite()));
+    assert!(peak(&wet) <= 1.0, "{}", peak(&wet));
+    let diff: Vec<f32> = wet.iter().zip(&dry).map(|(a, b)| a - b).collect();
+    assert!(peak(&diff) > 1e-3);
+}
+
 const CHORD6: [u8; 6] = [48, 55, 60, 64, 67, 72];
 
 fn factory(i: usize) -> Performance {
@@ -497,13 +508,9 @@ const GOLDENS: &[(&str, u64)] = &[
     ("poly_chord", 0x508049a56f63be65), // re-recorded: the default Sound is Algo
     ("two_parts_two_pairs", 0x98262aa38f73b0af), // re-recorded: part 1 is Algo
     ("reverb_send_off", 0x74703404aa517989), // re-recorded: the default Sound is Algo
-    ("reverb_send_on", 0x3d1e63a510a959c1), // re-recorded: the default Sound is Algo
+    ("reverb_send_on", 0x051f724346259a5a), // re-recorded: the reverb ring (FX diet)
     ("six_voice_chord", 0xf6e19895e1a40915), // recorded after the Algo cost was measured
 ];
-
-/// Intended FX diet sound changes, skipped until its goldens task
-/// re-records them after the FX sanity gate (ADR 0011).
-const PENDING: &[&str] = &["reverb_send_on"];
 
 /// A named golden case: a case name paired with its render function.
 type GoldenCase = (&'static str, fn() -> Vec<f32>);
@@ -523,9 +530,7 @@ fn instrument_goldens_match() {
         let hash = fnv1a(&render());
         if record {
             println!("    (\"{name}\", 0x{hash:016x}),");
-        } else if !PENDING.contains(&name)
-            && GOLDENS.iter().find(|g| g.0 == name).map(|g| g.1) != Some(hash)
-        {
+        } else if GOLDENS.iter().find(|g| g.0 == name).map(|g| g.1) != Some(hash) {
             failures.push(format!("{name}: 0x{hash:016x}"));
         }
     }

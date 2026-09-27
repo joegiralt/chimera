@@ -112,20 +112,12 @@ fn render(fx: Fx) -> Vec<f32> {
 }
 
 const GOLDENS: &[(&str, u64)] = &[
-    ("chorus_both", 0x0ad6a4dbd5636552),
-    ("delay_375ms", 0x4ed2b23c577884bf),
-    ("delay_500ms", 0xc1f7798ede6627fd),
-];
-
-/// Intended FX diet sound changes, skipped until its goldens task
-/// re-records them after the FX sanity gate (ADR 0011).
-const PENDING: &[&str] = &[
-    "delay_375ms",
-    "delay_500ms",
-    "chorus_both",
-    "reverb_ring",
-    "reverb_ring_max_size",
-    "reverb_ring_full_grit",
+    ("chorus_both", 0x716ccf79801ea026),           // FX diet
+    ("delay_375ms", 0xa1736e10da654418),           // FX diet
+    ("delay_500ms", 0xca8db167654567bd),           // FX diet
+    ("reverb_ring", 0x2a4709f629cb4cd8),           // FX diet
+    ("reverb_ring_max_size", 0x6eee15a3372d88b5),  // FX diet
+    ("reverb_ring_full_grit", 0xe8b2bff63402edec), // FX diet
 ];
 
 #[test]
@@ -133,9 +125,6 @@ fn fx_goldens_match() {
     let record = std::env::var_os("GOLDEN_RECORD").is_some();
     let mut failures = Vec::new();
     for (name, fx) in cases() {
-        if PENDING.contains(&name) && !record {
-            continue;
-        }
         let hash = fnv1a(&render(fx));
         if record {
             println!("    (\"{name}\", 0x{hash:016x}),");
@@ -154,6 +143,18 @@ fn fx_goldens_match() {
         "fx golden mismatch:\n{}",
         failures.join("\n")
     );
+}
+
+/// ADR 0011's gate for the FX cases, run before their goldens are
+/// recorded: finite, within ±1.0, and audible.
+#[test]
+fn fx_cases_pass_the_sanity_gate() {
+    for (name, fx) in cases() {
+        let out = render(fx);
+        assert!(out.iter().all(|s| s.is_finite()), "{name}: non-finite");
+        let peak = out.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+        assert!((1e-3..=1.0).contains(&peak), "{name}: peak {peak}");
+    }
 }
 
 /// A case whose effect is bypassed would lock only the dry input.
