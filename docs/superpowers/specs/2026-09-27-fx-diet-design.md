@@ -132,7 +132,7 @@ The page is EFX. TYPE's slot becomes GRIT; the other slots keep their order.
 - From the smoothed values, the four *g_k*, *a* and Δ are computed once per block: four `powf`s per block, not per sample. *g_k* and *a* ramp linearly across the block from the previous block's values. Δ holds for the block.
 
 ### Guarantees
-- **Stable:** the loop gain is below 1 at every setting and mid-crossfade. *g_k* ≤ 0.97, the allpasses are unity-gain, the low-pass gain is ≤ 1, a linear crossfade's gain is ≤ 1, and quantisation adds at most ½ Δ + ½ LSB per rounded write. The truncated allpass writes only ever shrink a value's magnitude, so with no input the ring reaches exact zero on its own, with no limit cycle.
+- **Stable:** the loop gain is below 1 at every setting and mid-crossfade. *g_k* ≤ 0.97, the allpasses are unity-gain, the low-pass gain is ≤ 1, a linear crossfade's gain is ≤ 1, and quantisation adds at most ½ Δ + ½ LSB per rounded write. The truncated allpass writes only ever shrink a value's magnitude, so with no input the *return* reaches exact zero on its own, with no limit cycle. The rounded DAMP state can hold ±Δ for good at high DAMP (*a* < ½), but a constant under Δ cannot pass the truncated allpass pair; so "every line and state is zero" (`Ring::is_silent`) may never become true, and nothing may gate work on it.
 - **No zipper noise:** see § Smoothing and § SIZE.
 - **Allocation-free:** the ring lives in the FX bus in AXI (ADR 0014), and the existing size assertion still holds.
 
@@ -183,11 +183,14 @@ All tests run on the host, at the test profile's default opt-level, so the rende
   - the energy of the last 0.5 s is below that of the first 0.5 s after the input stops, by at least half the drop the target RT60 predicts.
 - **No limit cycles:** after 1 s of noise at TIME 1, SIZE 1, DAMP 0 and GRIT 1, the return is exactly 0.0 within 15 s of silence. At GRIT 0 the bound is 25 s.
 - **RT60:** at TIME 0.25, 0.5, 0.75 and 1, SIZE steps 0, 15 and 31, DAMP 0, GRIT 0. The send is 0.5 s of −6 dBFS noise, then silence. Each side is band-passed to 500 Hz–4 kHz, and the Schroeder EDC of L² + R² from the end of the input gets a least-squares line from −5 to −35 dB; RT60 is 60 dB over its slope. It is within ±35 % of the target and rises monotonically with TIME. An impulse is not used: its diffuse tail starts near 100 LSB and measures the quantisation floor.
-- **No early zero:** under a noise send every output block sounds, and after the send stops the tail sounds for at least half the target RT60 at TIME 0.5, at GRIT 0, 0.3 and 1.
+- **No early zero:** under a −6 dBFS noise send every output block sounds, and after the send stops the tail sounds for at least half the target RT60 at TIME 0.5, at GRIT 0, 0.3 and 1.
 - **Stereo:** for an impulse in, each side's 10 ms RMS reaches −20 dB of its own peak within 50 ms. The zero-lag correlation of L and R over a 100 ms window starting at 500 ms is below 0.5.
 - **GRIT:**
-  - at GRIT 1, every stored value is a multiple of 64; at GRIT 0, `q` is the identity on i16;
+  - at GRIT 1, every stored value is a multiple of 64; at GRIT 0, `q_round` and `q_trunc` are each the identity on i16;
   - with a steady −12 dB 1 kHz sine in, the output's noise floor (energy outside 1 kHz ± 50 Hz, 1 s after 2 s of settling) is non-decreasing across GRIT 0, 0.1 … 1, within 0.5 dB, and is at least 24 dB higher at 1 than at 0.
+- **DAMP:** 0.5 s of −6 dBFS noise at TIME 0.5, SIZE 0.5, GRIT 0; in the 0.34 s of return from 0.2 s after the send stops, the 4–10 kHz share of the 20 Hz–10 kHz energy is at least 10 dB lower at DAMP 1 than at DAMP 0.
+- **SIZE crossfade:** `Ring` twins in one state, one held, one given a new step. The fading twin's first sample equals the held twin's; over the first samples its output is old + *w*·(new − old) with *w* = *n* / 720; it is still fading at sample 704 and done by 736; a request mid-fade leaves its output bit-identical to a twin without it.
+- **Signs:** the shorter allpass of each stage is +*c* and the longer −*c*; the tap signs are +, −, + per side; the send enters at +½ (S1) and −½ (S3).
 - **Band limit:** with white noise in, at DAMP 0 and GRIT 0, the return's mean power density above 13.5 kHz is at least 40 dB below its mean in 0.5–8 kHz.
 - **Clicks:** each of TIME, DAMP, GRIT and SIZE (one step and a full sweep) moves mid-tail. Over the 50 ms after the move, the largest second difference `|x[n] − 2x[n−1] + x[n−2]|` is at most 1.5× the larger of two held renders over the same window, one held at the old value and one at the new. `click_free_test`'s 0.15 absolute bound doesn't suit tails.
 - **Chorus stereo:** with a sine in, the mono sum (L + R)/2 keeps at least −6 dB of L's RMS, and L ≠ R.
