@@ -4,9 +4,9 @@
 
 mod common;
 
-use chimera_core::dsp::fx_bus::FxBus;
-use chimera_core::hw::DAC_PAIRS;
-use chimera_core::instrument::{AudioShared, DacOut, Instrument, pan_gains};
+use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus};
+use chimera_core::hw::{DAC_PAIRS, MAX_PARTS};
+use chimera_core::instrument::{AudioShared, DacOut, Instrument, mix_parts, pan_gains};
 use chimera_core::modulation::ModState;
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::{EngineType, ParamSnapshot};
@@ -114,6 +114,30 @@ fn part_bus_is_panned_and_levelled_into_its_pair() {
         0.0,
         "other pairs silent"
     );
+}
+
+/// The bench times `mix_parts` alone: it is exactly `render`'s steps 2–4.
+#[test]
+fn mix_parts_alone_is_renders_mix() {
+    let mut rig = Rig::new();
+    let mut shared = AudioShared::default();
+    shared.parts[0].mix.pan = 0.3;
+    shared.parts[0].mix.sends = [0.2, 0.3, 0.4];
+    shared.fx.delay.mix = 0.5;
+    rig.inst.handle(on(0, 60), &shared);
+    rig.render(&shared);
+    let bus = *rig.inst.part_bus(0);
+    assert!(peak(&bus) > 0.01);
+    let mut buses = [[0.0; BLOCK_SIZE]; MAX_PARTS];
+    buses[0] = bus;
+    let mut written = [false; MAX_PARTS];
+    written[0] = true;
+    let mut fx = Box::new(FxBus::new());
+    let mut sends = [[0.0; BLOCK_SIZE]; FX_SENDS];
+    let mut out: DacOut = [[1.0; BLOCK_SIZE * 2]; DAC_PAIRS];
+    let scope = mix_parts(&buses, &written, &mut sends, &mut fx, &shared, SR, &mut out);
+    assert_eq!(scope, bus);
+    assert_eq!(out, rig.out);
 }
 
 /// Send/return: a Part on pair 3, panned hard left, with a reverb send puts
