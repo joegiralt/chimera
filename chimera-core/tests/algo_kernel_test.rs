@@ -632,3 +632,53 @@ fn silent_but(first: OpBlock) -> [OpBlock; OPS] {
     ops[0] = first;
     ops
 }
+
+/// #33 N4: a plan with a delayed link skips silent operators, as the
+/// forward path and `AlgoEngine::cost` do, and still matches the model bit
+/// for bit, including an operator that goes silent while a delayed link
+/// reads it (its last output reaches that link on the first sample only).
+#[test]
+fn a_delayed_plan_skips_silent_operators_bit_for_bit() {
+    let (mut a, mut b) = (NONE, NONE);
+    a[1] = 0b01; // 2 → 1
+    b[0] = 0b10; // 1 → 2: a cycle, one link delayed
+    let plan = EvalPlan::build(&a, 0b11, &b, 0b11);
+    assert_ne!(plan.delayed, 0);
+    let (mut k, mut m) = (Kernel::new(), Model::new());
+    let (mut env_k, mut env_m) = (envs(), envs());
+    let (mut x, mut y) = ([0.0; BLOCK_SIZE], [0.0; BLOCK_SIZE]);
+    let ramps: [(f32, f32, f32, f32); 7] = [
+        (1.0, 1.0, 1.0, 1.0),
+        (1.0, 0.0, 1.0, 1.0),
+        (0.0, 0.0, 1.0, 1.0),
+        (0.0, 0.0, 1.0, 0.0),
+        (0.0, 0.0, 0.0, 0.0),
+        (0.0, 1.0, 0.0, 0.0),
+        (1.0, 1.0, 0.0, 1.0),
+    ];
+    for (i, &(f0, t0, f1, t1)) in ramps.iter().enumerate() {
+        let mut ops = silent();
+        ops[0] = OpBlock {
+            gain_from: f0 * SAMPLE_SCALE,
+            gain_to: t0 * SAMPLE_SCALE,
+            feedback: FEEDBACK_CYCLES[5],
+            ..op(700.0, 1.0, WaveId::W1)
+        };
+        ops[1] = OpBlock {
+            gain_from: f1 * SAMPLE_SCALE,
+            gain_to: t1 * SAMPLE_SCALE,
+            ..op(300.0, 1.0, WaveId::W1)
+        };
+        let blk = KernelBlock {
+            plan: &plan,
+            ops,
+            morph_from: 0.5,
+            morph_to: 0.5,
+            norm_from: 1.0,
+            norm_to: 1.0,
+        };
+        k.render(&blk, &mut env_k, &mut x);
+        m.render(&blk, &mut env_m, &mut y);
+        assert!(same_bits(&x, &y), "block {i}");
+    }
+}
