@@ -254,8 +254,8 @@ fn every_osc_sub_page_is_reachable_and_lit_on_the_map() {
     let mut ui = UiState::new();
     to_osc(&mut ui);
     let block = &ALGO_CHAIN.blocks[osc_node()];
-    // Right of the branch trunk, which runs through the dot's centre column.
-    let x = node_x(osc_node(), ALGO_CHAIN.len()) - 8 + 1;
+    // The dot's centre column; its fill draws over the trunk beneath it.
+    let x = node_x(osc_node(), ALGO_CHAIN.len()) - 8;
     for sub in 0..block.sub_page_count() {
         if sub > 0 {
             feed(&mut ui, Input::press(ButtonId::Edit));
