@@ -11,7 +11,7 @@ use crate::MidiChannel;
 use crate::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
 use crate::dsp::voice::Voice;
 use crate::hw::{
-    AXI_SRAM, DAC_PAIRS, FB_BYTES, MAX_PARTS, MAX_VOICES, SampleBudget, UI_RESERVE,
+    AXI_SRAM, Cost, DAC_PAIRS, FB_BYTES, MAX_PARTS, MAX_VOICES, SampleBudget, UI_RESERVE,
     VOICE_RAM_BUDGET,
 };
 use crate::in_place::{by_value, uninit_at};
@@ -174,7 +174,7 @@ impl Instrument {
                     if part.mix.channel != ev.channel {
                         continue;
                     }
-                    let cost = Voice::cost(part.params.engine());
+                    let cost = Voice::cost(&part.params, &part.mod_state);
                     if let Alloc::Voice(v) =
                         self.alloc
                             .note_on(p as u8, part.mix.mode, ev.note, cost, FxBus::COST)
@@ -206,12 +206,14 @@ impl Instrument {
         shared: &AudioShared,
         scope: &mut ScopeWriter,
     ) {
-        // A Sound that changed engine changes its voices' cost; cut the
-        // newest voices if that went over the budget.
+        // A patch edit changes its voices' cost; cut the newest voices if
+        // that went over the budget.
+        let costs: [Cost; MAX_PARTS] = core::array::from_fn(|p| {
+            Voice::cost(&shared.parts[p].params, &shared.parts[p].mod_state)
+        });
         for v in 0..MAX_VOICES {
             if let Some(p) = self.alloc.slots()[v].part() {
-                self.alloc
-                    .recost(v, Voice::cost(shared.parts[p as usize].params.engine()));
+                self.alloc.recost(v, costs[p as usize % MAX_PARTS]);
             }
         }
         // A hard cut, not a release: the slot is free at once and the voice

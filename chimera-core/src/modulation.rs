@@ -6,7 +6,8 @@
 //! per-destination offsets.
 
 use crate::addr::{BlockRef, ParamAddr};
-use crate::dsp::algo::params::AlgoParams;
+use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
+use crate::dsp::algo::plan::OPS;
 use crate::mod_path::ModDestRegistry;
 use crate::ui::mod_grid::MatrixState;
 
@@ -59,6 +60,21 @@ impl ModState {
         } else {
             0
         }
+    }
+
+    /// Operators whose LEVEL has a route with a nonzero amount: a LEVEL of
+    /// 0 there may still sound.
+    pub fn algo_levels_routed(&self) -> [bool; OPS] {
+        let mut routed = [false; OPS];
+        for d in 0..self.num_dests.min(MAX_MOD_DESTS) {
+            if let BlockRef::AlgoOp(op) = self.dests[d].block
+                && self.dests[d].param == AlgoOpParams::LEVEL
+                && (0..self.num_sources).any(|s| self.amounts[s][d] != 0)
+            {
+                routed[op.index()] = true;
+            }
+        }
+        routed
     }
 
     /// Sum of `source_value * amount / 127` over all sources for dest `d`.

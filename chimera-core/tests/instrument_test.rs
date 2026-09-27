@@ -7,6 +7,7 @@ mod common;
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::hw::DAC_PAIRS;
 use chimera_core::instrument::{AudioShared, DacOut, Instrument, pan_gains};
+use chimera_core::modulation::ModState;
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::part::{DacPair, PartMode};
@@ -361,17 +362,23 @@ fn sound_change_mid_chord_stays_in_budget() {
     rig.render(&shared);
     let a = rig.inst.allocator();
     assert!(a.sounding_cost() + FxBus::COST <= BUDGET.as_cost());
-    let expected = ((BUDGET.as_cost().0 - FxBus::COST.0) / Voice::cost(EngineType::Modal).0)
+    let expected = ((BUDGET.as_cost().0 - FxBus::COST.0)
+        / Voice::cost(
+            &ParamSnapshot::for_engine(EngineType::Modal),
+            &ModState::new(),
+        )
+        .0)
         .min(MAX_VOICES as u32);
     assert_eq!(
         a.slots().iter().filter(|s| !s.is_free()).count(),
         expected as usize
     );
-    assert!(
-        a.slots()
-            .iter()
-            .all(|s| s.is_free() || s.cost() == Voice::cost(EngineType::Modal))
-    );
+    assert!(a.slots().iter().all(|s| s.is_free()
+        || s.cost()
+            == Voice::cost(
+                &ParamSnapshot::for_engine(EngineType::Modal),
+                &ModState::new()
+            )));
 }
 
 /// Blocks after a lone note-off (note 60, default Sound) until the voice's
