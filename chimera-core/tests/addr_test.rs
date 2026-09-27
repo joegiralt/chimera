@@ -33,13 +33,18 @@ fn block_ref_all_has_no_duplicates() {
 }
 
 /// `block()` hands out the instance whose spec table `BlockRef::specs`
-/// names; a Part view resolves every address, a Sound all but the FX and
-/// the Part's own mix settings.
+/// names; a Part view resolves every address but THEME (the UI holds it),
+/// a Sound all but the FX and the Part's own mix settings.
 #[test]
 fn block_and_specs_agree() {
     let mut perf = Performance::new();
     let part = perf.edit(0);
     for b in BlockRef::ALL {
+        if b == BlockRef::Theme {
+            assert!(part.block(b).is_none());
+            assert!(ParamSnapshot::default().block(b).is_none());
+            continue;
+        }
         let blk = part.block(b).expect("a Part resolves every block");
         assert!(core::ptr::eq(blk.specs(), b.specs()), "{b:?}");
         let not_in_sound = matches!(

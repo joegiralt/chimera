@@ -2,6 +2,7 @@ use crate::addr::{BlockRef, Blocks, Op, ParamAddr};
 use crate::block::ParamId;
 use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::params::{DriveParams, EnvParams, FilterParams, FolderParams, OutParams};
+use crate::ui::block_def::SlotBinding;
 use crate::ui::chain::ChainNav;
 
 pub use crate::block::ValFmt;
@@ -26,7 +27,7 @@ pub enum PageId {
     EnvAmp,
     EnvFilter,
     EnvAux,
-    /// System chain: no editable params yet.
+    /// System chain pages with no bound slots.
     System,
     DemoWaves,
     DemoShapes,
@@ -60,11 +61,21 @@ impl PageKey {
 
 impl PageId {
     /// The legacy page at the current navigation position; `None` on a
-    /// slot-bound Part or Mixer chain (see `PageKey::from_nav`).
+    /// slot-bound page: the Part and Mixer chains, and a System page whose
+    /// slots are bound (THEME) (see `PageKey::from_nav`).
     pub fn from_nav(nav: &ChainNav) -> Option<Self> {
         use crate::ui::chain::ChainId;
         Some(match nav.chain_id {
             ChainId::Part(_) | ChainId::Mixer(_) => return None,
+            ChainId::System
+                if nav
+                    .active_block_def()
+                    .params
+                    .iter()
+                    .any(|s| matches!(s.binding, SlotBinding::Param(_))) =>
+            {
+                return None;
+            }
             ChainId::System => PageId::System,
             ChainId::Demo => match nav.node {
                 0 => PageId::DemoWaves,
