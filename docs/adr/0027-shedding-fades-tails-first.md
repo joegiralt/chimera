@@ -1,6 +1,6 @@
 # 0027. Shedding fades, and takes tails before held notes
 
-- **Status:** Proposed (2026-09-27); extends [0015](0015-voice-steal-and-fx-returns.md); supersedes in part [0026](0026-algo-voices-billed-by-patch-shape.md) (its "steals the oldest held voice; it never goes over" clause)
+- **Status:** Proposed (2026-09-27); extends [0015](0015-voice-steal-and-fx-returns.md); supersedes in part [0026](0026-algo-voices-billed-by-patch-shape.md) (its "steals the oldest held voice; it never goes over" clause, and its "four is the floor", which holds on rev V only: rev Y gets two, pending the owner's sign-off)
 - **Deciders:** project owner
 
 ## Context
@@ -17,19 +17,35 @@ were still ringing ([#31](https://github.com/joegiralt/chimera/issues/31)).
   two blocks (128 samples, 2.7 ms), then goes inactive and frees.
 - **Dying:** through the fade the voice keeps its slot, is marked dying and
   still counts in `sounding_cost`. It is never stolen or shed again.
+- **The fade keeps the old settings:** a fading voice renders with the
+  engine and chain settings of its last block, so the edit that caused
+  the fade never reaches the sound it fades out. This costs a
+  `ParamSnapshot` and an `AlgoLive` per voice, 336 B, in D2.
 - **Note-on during a fade:** a dying voice's cost does not count against a
   note-on, and with no voice free a note-on takes a dying slot and waits out
   its fade (at most two blocks, a bounded delay, not a block) before any
   held note is stolen: a late note is less surprising than a cut one
-  ([#33](https://github.com/joegiralt/chimera/issues/33) M7).
+  ([#33](https://github.com/joegiralt/chimera/issues/33) M7). The slot
+  nearest the end of its fade goes first. A note waiting there, or queued
+  on a fading voice, that a later shed takes is dropped unheard and counted
+  in `refused`: sparing it would cut a note already sounding.
+- **Steal from another Part:** the stolen voice fades out on its own Part's
+  bus and settings, then the new note starts clean, two blocks later; a
+  steal within a Part stays a legato retrigger.
 - **Costs are current first:** `handle` recosts and sheds before it admits a
   note-on, so a note played with a patch edit is judged at the new cost
-  (#33 M1).
+  (#33 M1). If the edit leaves no room, the note steals the oldest held
+  note (ADR 0015's rule 4), as it would a block later.
 - **Engine change:** a Sound that changes engine under a sounding voice
   fades the old engine out the same way, resets the voice, then restarts a
-  held note on the new engine; a released tail just ends (#33 M6).
+  held note on the new engine. A released tail, or a key let go during the
+  fade, just ends (#33 M6).
 - **Overrun:** `shed` stops once the voices that are not dying fit, so the
-  pool runs over budget by the dying voices only, for at most two blocks.
+  pool runs over budget, for at most two blocks, by the voices still
+  rendering an old sound: dying voices, engine-switch fades (billed at the
+  new engine's cost) and waiting slots. The fades' resets land in the
+  block the fade ends, so up to six can fall in one block (a Modal reset
+  zeroes about 43 KB).
   This supersedes ADR 0026's clause that past the budget the allocator
   "steals the oldest held voice; it never goes over": steals take tails
   first (ADR 0015), and a shed may briefly go over.
@@ -51,8 +67,9 @@ were still ringing ([#31](https://github.com/joegiralt/chimera/issues/31)).
   audio, is briefly delayed.
 - A note-on in those two blocks may start up to two blocks late.
 - The overrun stays bounded by the physical pool: six voices at the
-  costliest patch (842) plus the FX bus is 8,362, under the 10,000-cycle
-  deadline.
+  costliest patch (842) plus the FX bus is 8,362, under rev V's
+  10,000-cycle deadline. On rev Y the deadline is 8,333, so that
+  worst case, plus the resets, could miss it; it needs chip numbers.
 - `FxBus::COST` is now 3,310, the MV reading of 3,300 rounded up like the
   other terms.
 - ADR 0026's floor of four voices holds on rev V at 480 MHz only. A rev Y

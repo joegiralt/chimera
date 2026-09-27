@@ -109,15 +109,6 @@ impl Engines {
         }
     }
 
-    /// VCA choice: does the amp envelope shape this engine's output? Modal's
-    /// modes decay naturally and Algo's operators carry their own
-    /// envelopes, so both only get the volume.
-    pub fn uses_amp_env(kind: EngineType) -> bool {
-        match kind {
-            EngineType::Algo | EngineType::Modal => false,
-        }
-    }
-
     /// Voice lifetime: is this engine still sounding?
     pub fn is_active(&self, kind: EngineType) -> bool {
         match kind {

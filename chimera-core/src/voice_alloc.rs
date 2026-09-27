@@ -4,7 +4,7 @@
 //! 1. A Mono part owns one voice while it sounds; a new note retriggers it.
 //!    Mono voices are never stolen.
 //! 2. A Poly part takes a free voice, round-robin; with none free, a dying
-//!    one (its note starts when the fade ends).
+//!    one, nearest the end of its fade (its note starts when the fade ends).
 //! 3. Pool full: steal from any part the oldest released (note-off'd, tail
 //!    ringing) non-mono voice; if none, the oldest held non-mono voice;
 //!    refuse if every voice is mono.
@@ -32,8 +32,8 @@ pub struct VoiceSlot {
     age: u32,
     held: bool,
     mono: bool,
-    /// Shed: fading out, freed by `release_finished`.
-    dying: bool,
+    /// Shed, fading out, freed by `release_finished`: the shed's order.
+    dying: Option<u32>,
     cost: Cost,
 }
 
@@ -53,7 +53,7 @@ impl VoiceSlot {
 
     /// Shed and fading out.
     pub fn dying(&self) -> bool {
-        self.dying
+        self.dying.is_some()
     }
 
     pub fn is_free(&self) -> bool {
@@ -78,6 +78,8 @@ pub struct Allocator {
     /// Next slot to try for a free voice.
     rr: usize,
     refused: u32,
+    /// Counts sheds: a lower `dying` is nearer the end of its fade.
+    sheds: u32,
     budget: SampleBudget,
 }
 
@@ -88,6 +90,7 @@ impl Allocator {
             clock: 0,
             rr: 0,
             refused: 0,
+            sheds: 0,
             budget,
         }
     }
@@ -100,9 +103,15 @@ impl Allocator {
         &self.slots
     }
 
-    /// Notes refused since start (debug counter).
+    /// Notes refused since start, and notes shed before they sounded
+    /// (debug counter).
     pub fn refused(&self) -> u32 {
         self.refused
+    }
+
+    /// A note was shed before it sounded (ADR 0027): count it as refused.
+    pub fn dropped_unheard(&mut self) {
+        self.refused = self.refused.wrapping_add(1);
     }
 
     /// Sum of the costs of every allocated voice.
@@ -112,7 +121,11 @@ impl Allocator {
 
     /// `sounding_cost` without the dying voices.
     fn live_cost(&self) -> Cost {
-        self.slots.iter().filter(|s| !s.dying).map(|s| s.cost).sum()
+        self.slots
+            .iter()
+            .filter(|s| s.dying.is_none())
+            .map(|s| s.cost)
+            .sum()
     }
 
     /// Allocate a voice for `note` on `part`. `cost` is the voice's
@@ -141,7 +154,7 @@ impl Allocator {
             age: self.clock,
             held: true,
             mono: mode == PartMode::Mono,
-            dying: false,
+            dying: None,
             cost,
         };
         Alloc::Voice(v)
@@ -174,7 +187,7 @@ impl Allocator {
             return None;
         }
         let v = (0..MAX_VOICES)
-            .filter(|&v| !self.slots[v].is_free() && !self.slots[v].dying)
+            .filter(|&v| !self.slots[v].is_free() && !self.slots[v].dying())
             .min_by_key(|&v| {
                 let s = &self.slots[v];
                 (
@@ -183,14 +196,15 @@ impl Allocator {
                     if s.held { u32::MAX - s.age } else { s.age },
                 )
             })?;
-        self.slots[v].dying = true;
+        self.sheds = self.sheds.wrapping_add(1);
+        self.slots[v].dying = Some(self.sheds);
         Some(v)
     }
 
     /// The voice's engine went silent: free it if it was released or shed.
     pub fn release_finished(&mut self, voice: usize) {
         if let Some(s) = self.slots.get_mut(voice)
-            && (!s.held || s.dying)
+            && (!s.held || s.dying())
         {
             *s = VoiceSlot::default();
         }
@@ -206,16 +220,21 @@ impl Allocator {
             && let Some(v) = self
                 .slots
                 .iter()
-                .position(|s| s.mono && !s.dying && s.part == Some(part))
+                .position(|s| s.mono && !s.dying() && s.part == Some(part))
         {
             return fits(self.slots[v].cost).then_some(v);
         }
-        // Rule 2: a free voice, round-robin, else a dying one — if it fits.
-        let rr = (0..MAX_VOICES).map(|i| (self.rr + i) % MAX_VOICES);
-        let free = rr
-            .clone()
+        // Rule 2: a free voice, round-robin, else the dying one nearest the
+        // end of its fade — if it fits.
+        let free = (0..MAX_VOICES)
+            .map(|i| (self.rr + i) % MAX_VOICES)
             .find(|&v| self.slots[v].is_free())
-            .or_else(|| rr.clone().find(|&v| self.slots[v].dying));
+            .or_else(|| {
+                (0..MAX_VOICES)
+                    .filter_map(|v| self.slots[v].dying.map(|d| (d, v)))
+                    .min()
+                    .map(|(_, v)| v)
+            });
         if let Some(v) = free
             && fits(Cost::ZERO)
         {
@@ -224,7 +243,7 @@ impl Allocator {
         // Rules 3 and 4: steal the oldest non-mono voice — tails before held
         // notes — if that makes room.
         let oldest = (0..MAX_VOICES)
-            .filter(|&v| !self.slots[v].is_free() && !self.slots[v].mono && !self.slots[v].dying)
+            .filter(|&v| !self.slots[v].is_free() && !self.slots[v].mono && !self.slots[v].dying())
             .min_by_key(|&v| (self.slots[v].held, self.slots[v].age))?;
         fits(self.slots[oldest].cost).then_some(oldest)
     }

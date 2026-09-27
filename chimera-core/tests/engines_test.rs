@@ -52,7 +52,6 @@ fn every_engine_renders_per_its_expectation() {
 #[test]
 fn modal_row_no_amp_env_and_lives_until_modes_decay() {
     let kind = EngineType::Modal;
-    assert!(!Engines::uses_amp_env(kind));
     let mut p = params(kind);
     p.modal.mode = ResonatorMode::Modal;
     p.modal.decay = 0.0;
@@ -68,7 +67,6 @@ fn modal_row_no_amp_env_and_lives_until_modes_decay() {
 #[test]
 fn algo_row_no_amp_env_and_lives_until_its_carriers_release() {
     let kind = EngineType::Algo;
-    assert!(!Engines::uses_amp_env(kind));
     let mut e = Engines::new(SR);
     assert!(!e.is_active(kind));
     e.note_on(kind, MidiNote::A4, Velocity::DEFAULT, &params(kind));

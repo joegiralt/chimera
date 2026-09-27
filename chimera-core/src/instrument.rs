@@ -189,10 +189,9 @@ impl Instrument {
                             .note_on(p as u8, part.mix.mode, ev.note, cost, FxBus::COST)
                     {
                         let voice = &mut self.voices[v];
-                        let other_engine =
-                            voice.is_active() && voice.engine() != part.params.engine();
-                        if self.sounding[v] as usize != p && (voice.is_fading() || other_engine) {
-                            // Another Part's sound fades out on its own bus first.
+                        if self.sounding[v] as usize != p && voice.is_active() {
+                            // Another Part's sound fades out on its own bus
+                            // and settings first.
                             voice.kill();
                             self.waiting[v] = Some(vel);
                         } else {
@@ -230,8 +229,10 @@ impl Instrument {
             }
         }
         while let Some(v) = self.alloc.shed(FxBus::COST) {
-            self.voices[v].kill();
-            self.waiting[v] = None;
+            let queued = self.voices[v].kill();
+            if self.waiting[v].take().is_some() || queued {
+                self.alloc.dropped_unheard();
+            }
         }
     }
 

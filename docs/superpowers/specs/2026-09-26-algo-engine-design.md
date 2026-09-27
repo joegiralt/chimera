@@ -72,7 +72,7 @@ Operators are numbered 1–6 in the TX81Z convention: higher numbers modulate lo
 
 **The voice chain:**
 - The existing drive → filter → wavefolder → VCA chain is kept.
-- Like the TX81Z, the Algo engine does **not** use the amp envelope: `uses_amp_env(Algo) == false`. The operator envelopes shape the sound, so release tails ring out.
+- Like the TX81Z, the Algo engine does **not** use the amp envelope; it runs only as the ENV mod source. The operator envelopes shape the sound, so release tails ring out.
 - `is_active` is true while any operator that is a carrier in the blended graph has a live envelope.
 
 **Mod-matrix destinations** (ADR 0010, all read once per block, ramped):

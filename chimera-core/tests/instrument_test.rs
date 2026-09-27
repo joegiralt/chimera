@@ -696,7 +696,10 @@ fn slots_of(rig: &Rig, note: u8) -> Vec<(usize, bool)> {
 }
 
 /// #33 M1: a note-on in the same block as a patch edit is judged against
-/// the new patch's costs, so it is not admitted and then shed at once.
+/// the new patch's costs, so it is not admitted and then shed at once. The
+/// edit sheds the newest held note, 67, as `render` would; the note-on then
+/// steals the oldest held note, 48 (voice_alloc rule 4), as it would a
+/// block later.
 #[test]
 fn a_note_on_with_a_patch_edit_is_judged_at_the_new_cost() {
     let light = AudioShared::from_performance(&factory(4)); // SAW LEAD: 6
@@ -719,6 +722,10 @@ fn a_note_on_with_a_patch_edit_is_judged_at_the_new_cost() {
     assert!(!dying && rig.inst.allocator().slots()[v].held());
     assert!(peak(rig.inst.part_bus(0)) > 0.0);
     assert_eq!(rig.inst.allocator().refused(), 0);
+    assert!(slots_of(&rig, 48).is_empty() && slots_of(&rig, 67).is_empty());
+    for n in [55, 60, 64] {
+        assert_eq!(slots_of(&rig, n).len(), 1, "{n} still held");
+    }
 }
 
 /// #33 M7: with the pool full only because voices are fading out, a note
@@ -762,5 +769,62 @@ fn a_note_on_waits_out_a_fade_before_stealing_a_held_note() {
         peak(rig.inst.part_bus(1)) > 0.0,
         "the bass plays after the fade"
     );
+    assert!(rig.inst.allocator().slots()[v].held());
+}
+
+/// ADR 0027: a patch edit that sheds a note still waiting out a fade drops
+/// it unheard, and counts it as refused.
+#[test]
+fn a_shed_waiting_note_counts_as_refused() {
+    let perf = |lead: usize, other: usize| {
+        let mut p = factory(lead);
+        p.parts[1].sound = chimera_core::factory::factory_sound(other).unwrap();
+        AudioShared::from_performance(&p)
+    };
+    let mut rig = Rig::new();
+    let light = perf(4, 5);
+    for n in CHORD6 {
+        rig.inst.handle(on(0, n), &light);
+    }
+    for _ in 0..4 {
+        rig.render(&light);
+    }
+    let heavy = perf(6, 5);
+    rig.render(&heavy); // two shed
+    rig.inst.handle(on(1, 40), &heavy); // waits on a dying slot
+    assert_eq!(slots_of(&rig, 40).len(), 1);
+    rig.render(&perf(6, 7)); // part 2 now MORPH KEYS: the waiting note goes
+    assert_eq!(rig.inst.allocator().refused(), 1);
+    for _ in 0..4 {
+        rig.render(&perf(6, 7));
+    }
+    assert!(slots_of(&rig, 40).is_empty());
+    assert_eq!(peak(rig.inst.part_bus(1)), 0.0);
+}
+
+/// #33: a steal from another Part on the same engine fades the old sound
+/// out on its own Part's bus, then starts the new note clean.
+#[test]
+fn a_steal_from_another_part_fades_on_the_old_bus() {
+    let mut p = factory(4); // SAW LEAD on both Parts
+    p.parts[1].sound = chimera_core::factory::factory_sound(4).unwrap();
+    let shared = AudioShared::from_performance(&p);
+    let mut rig = Rig::new();
+    for n in CHORD6 {
+        rig.inst.handle(on(0, n), &shared);
+    }
+    for _ in 0..4 {
+        rig.render(&shared);
+    }
+    rig.inst.handle(off(0, 48), &shared);
+    rig.render(&shared);
+    rig.inst.handle(on(1, 40), &shared); // steals the tail of 48
+    let (v, _) = slots_of(&rig, 40)[0];
+    for _ in 0..2 {
+        rig.render(&shared);
+        assert_eq!(peak(rig.inst.part_bus(1)), 0.0, "fading on part 1's bus");
+    }
+    rig.render(&shared);
+    assert!(peak(rig.inst.part_bus(1)) > 0.0, "then the new note plays");
     assert!(rig.inst.allocator().slots()[v].held());
 }
