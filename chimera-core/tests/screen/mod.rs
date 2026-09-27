@@ -273,6 +273,11 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::press(ButtonId::Edit)); // DLY › CHAR
         feed(ui, Input::turn(EncoderId::A, 20)); // WOW
     }),
+    ("mixer_tape", |ui| {
+        feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
+        plus(ui, 5);
+        feed(ui, Input::turn(EncoderId::A, 40)); // DRIVE
+    }),
     ("mod_matrix", |ui| {
         plus(ui, 3);
         feed(ui, Input::turn(EncoderId::A, 1)); // focus CUTOFF

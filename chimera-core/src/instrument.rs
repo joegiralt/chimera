@@ -132,8 +132,8 @@ const _: () = assert!(BLOCK_SIZE.is_multiple_of(SEND_STEP) && BLOCK_SIZE.is_mult
 
 /// Steps 2–4 of `render`: each written Part's bus, panned and levelled,
 /// into its pair and, by its sends, into the FX sends; then the FX bus
-/// once, its return on pair 1. Returns the scope block (the written buses
-/// summed). Separate so the bench can time it without voices.
+/// once, its return on pair 1; then the master section (`FxBus::master`).
+/// Returns the scope block (the written buses summed). Separate so the bench can time it without voices.
 ///
 /// Each output sample is summed in registers from 0.0, Part by Part in
 /// order (the return last), and stored once: the same additions in the
@@ -214,6 +214,8 @@ pub fn mix_parts(
             pair[2 * i..2 * (i + PAIR_STEP)].copy_from_slice(&a);
         }
     }
+    // The master section, after every pair is summed.
+    fx.master(out, &shared.fx, sample_rate);
     scope
 }
 

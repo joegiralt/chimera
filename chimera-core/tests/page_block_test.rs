@@ -27,7 +27,12 @@ fn demo_pages_step_like_before() {
 #[test]
 fn a_sound_has_no_fx_blocks() {
     let p = ParamSnapshot::default();
-    for b in [BlockRef::Chorus, BlockRef::Delay, BlockRef::Reverb] {
+    for b in [
+        BlockRef::Chorus,
+        BlockRef::Delay,
+        BlockRef::Reverb,
+        BlockRef::Tape,
+    ] {
         assert!(p.block(b).is_none(), "{b:?}");
     }
 }

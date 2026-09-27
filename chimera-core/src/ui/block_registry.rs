@@ -6,6 +6,7 @@ use crate::dsp::delay::DelayParams;
 use crate::dsp::lfo::LfoParams;
 use crate::dsp::modal::ModalParams;
 use crate::dsp::reverb::ReverbParams;
+use crate::dsp::tape::TapeParams;
 use crate::params::{DriveParams, EnvParams, FilterParams, FolderParams, OutParams};
 use crate::part::PartParams;
 use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2, ParamSlot, VizType};
@@ -199,7 +200,7 @@ pub static ENV_AUX: BlockDef = BlockDef {
 pub static EFX: BlockDef = BlockDef {
     id: 16,
     name: "Reverb",
-    short: "EFX",
+    short: "REV",
     layout: PageLayout::CellGrid,
     viz: VizType::EffectsFlow,
     params: [
@@ -279,6 +280,23 @@ pub static DELAY_CHAR: BlockDef = BlockDef {
 };
 
 static DELAY_SUB_PAGES: [&BlockDef; 1] = [&DELAY_CHAR];
+
+/// Tape on DAC pair 1 (FX diet spec § Tape).
+pub static TAPE: BlockDef = BlockDef {
+    id: 57,
+    name: "Tape",
+    short: "TAPE",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::param(BlockRef::Tape, TapeParams::DRIVE),
+        ParamSlot::param(BlockRef::Tape, TapeParams::TONE),
+        ParamSlot::param(BlockRef::Tape, TapeParams::WOW),
+        ParamSlot::param(BlockRef::Tape, TapeParams::MIX),
+        EMPTY,
+        EMPTY,
+    ],
+};
 
 pub static MASTER: BlockDef = BlockDef {
     id: 20,
@@ -491,7 +509,7 @@ pub static ALGO_CHAIN: ChainDef2 = ChainDef2 {
     mod_sources: &PART_MOD_SOURCES,
 };
 
-static MIX_BLOCKS: [ChainBlock; 5] = [
+static MIX_BLOCKS: [ChainBlock; 6] = [
     ChainBlock {
         def: &MIXER,
         sub_pages: &[],
@@ -506,6 +524,10 @@ static MIX_BLOCKS: [ChainBlock; 5] = [
     },
     ChainBlock {
         def: &EFX,
+        sub_pages: &[],
+    },
+    ChainBlock {
+        def: &TAPE,
         sub_pages: &[],
     },
     ChainBlock {
@@ -611,7 +633,7 @@ pub static SENDS: BlockDef = BlockDef {
 };
 
 /// MIX + B<n>: Part n's mix settings, then the shared FX (spec § UI).
-static MIXER_CHANNEL_BLOCKS: [ChainBlock; 5] = [
+static MIXER_CHANNEL_BLOCKS: [ChainBlock; 6] = [
     ChainBlock {
         def: &PART,
         sub_pages: &[],
@@ -630,6 +652,10 @@ static MIXER_CHANNEL_BLOCKS: [ChainBlock; 5] = [
     },
     ChainBlock {
         def: &EFX,
+        sub_pages: &[],
+    },
+    ChainBlock {
+        def: &TAPE,
         sub_pages: &[],
     },
 ];

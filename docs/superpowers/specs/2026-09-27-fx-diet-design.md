@@ -186,17 +186,17 @@ Every control here is 0..1 in its block and mapped in the DSP, like the reverb's
 
 On DAC pair 1 only, after the pair-1 sum of the dry Parts and the FX returns, before the master comp. Per side:
 
-1. **Wow:** a 32-sample input line read at 12 + 8·WOW·(0.7·sin(wow) + 0.3·sin(flutter)) samples, linearly interpolated. It is the delay's wow: `sin_turns`, 0.5 Hz and 6 Hz, one transport for both sides.
+1. **Wow:** a 32-sample input line read at 12 + 8·WOW·(0.7·sin(wow) + 0.3·sin(flutter)) samples, linearly interpolated. It is the delay's wow: `sin_turns`, 0.5 Hz and 6 Hz, one transport for both sides. The read point is computed at each block's two ends and ramped across it (at 6 Hz a block is 0.008 turns, so the ramp is within 0.001 samples of the sines).
 2. **Pre-emphasis:** a first-order high shelf, +6 dB (gain 2), midpoint 3 kHz: the bilinear (G·s + ω)/(s + ω) with its pole prewarped to 3 kHz·√2.
-3. **2× oversampling** through § Rate's 35-tap half-band: the interpolator up, the decimator down. Each half block of base samples is one block at the doubled rate. At 96 kHz the passband is 0–21 kHz and the stopband starts at 27 kHz.
-4. **Saturation:** `fast_tanh(g·x)·c`, the engine's Padé tanh (`dsp::fast_tanh`), not libm. g = 2^(4·DRIVE), 0 to +24 dB. c = 2^(−2·DRIVE) = 1/√g is the level compensation.
+3. **2× oversampling** through a short 15-tap half-band of its own (controller ruling, for the 80-cycle budget: saturation aliasing needs far less stopband than the reverb's band limit, so § Rate's 35-tap filter is not used here). Minimax, centre tap 0.5, even taps off centre 0; odd taps h[±1], h[±3], h[±5], h[±7] = 0.309846, −0.082748, 0.030668, −0.009527. At 96 kHz the passband is 0–16 kHz within ±0.03 dB and the stopband starts at 32 kHz, **49 dB** down. Polyphase, per base sample: the interpolator's even output is the odd taps' sum (×2 for the zero-stuffing), its odd output the centre tap's copy; the decimator runs the centre tap on the odd stream and the odd taps on the even stream. Latency 3½ + 3½ = 7 base samples.
+4. **Saturation** (controller ruling): a divide-free soft clip, not `fast_tanh` (four divides per sample). The cubic y = 1.5·x − 0.5·x³ on x = clamp(⅔·g·v, ±1): slope 1 at 0, reaching ±1 with zero slope at |g·v| = 1.5, so DRIVE 0 is near-linear (−0.3 dB at 0.5 in). The clamp is compare-free, 2·clamp(x) = |x + 1| − |x − 1| (no FPSCR stall on the M7; it rounds to within 2^−22). g = 2^(4·DRIVE), 0 to +24 dB. c = 2^(−2·DRIVE) = 1/√g is the level compensation, applied after the decimator.
 5. **Back to the base rate.**
 6. **De-emphasis:** the shelf's exact inverse (stable: the shelf is minimum-phase).
 7. **Head bump:** a peaking biquad (RBJ), +2 dB at 80 Hz, Q 0.7.
 8. **HF roll-off:** a one-pole low-pass at f_c = 12 kHz·2^(3·(TONE − ½) − 1.5·DRIVE). TONE spans ±1.5 octaves; full DRIVE darkens 1.5 octaves.
 
-- **MIX is parallel:** out = dry + MIX·(wet − dry). The dry is read from the same line at 29 samples: the wow's 12 plus the oversampler's 17. So the blend lines up and does not comb.
-- **Bypass:** MIX below 0.001 (the default, at any DRIVE) is an exact bypass: pair 1 is untouched, bit for bit, and nothing runs. The wet path's 29-sample latency cannot switch as a step. So switching on primes the line and filters for one block at weight 0, then crossfades from the undelayed signal over 480 samples (10 ms). Switching off crossfades back over 480 samples, then bypasses.
+- **MIX is parallel:** out = dry + MIX·(wet − dry). The dry is read from the same line at 19 samples: the wow's 12 plus the oversampler's 7. So the blend lines up and does not comb.
+- **Bypass:** MIX below 0.001 (the default, at any DRIVE) is an exact bypass: pair 1 is untouched, bit for bit, and nothing runs. The wet path's 19-sample latency cannot switch as a step. So switching on primes the line and filters for one block at weight 0, then crossfades from the undelayed signal over 480 samples (10 ms). Switching off crossfades back over 480 samples, then bypasses. The crossfade's weight is a smoothstep of the linear 480-sample ramp, so neither end has a corner (a linear fade's corner clicked at MIX on by the § Testing criterion).
 - **Smoothing:** DRIVE, TONE, WOW and MIX are one-pole smoothed over 20 ms once per block, and ramped linearly across it. Switching on from bypass starts them at their targets.
 - **Per block and rarer:** g, c and the roll-off coefficient come from `algo::math::exp2` at each block's two ends. The shelf and bump coefficients are computed once per sample-rate change, the only libm use (`tanf`, `sinf`, `cosf`); nothing libm runs per block or per sample.
 
@@ -282,9 +282,10 @@ All tests run on the host, at the test profile's default opt-level, so the rende
   - it does not click when it jumps 0 → 1 or 1 → 0 mid-echo (§ Clicks' criterion).
 - **Tape:**
   - **bypass:** MIX 0, at DRIVE 0 and at DRIVE 1, leaves pair 1 bit-identical. Switched back to MIX 0, pair 1 is bit-identical again 480 samples later;
-  - **alignment:** at MIX 1 and at MIX ½, an impulse comes out as one peak, 29 samples later;
+  - **alignment:** at MIX 1 and at MIX ½, an impulse comes out as one peak, 19 samples later;
   - **DRIVE lowers the crest factor:** on decaying 220 Hz plucks peaking at −3 dBFS, the crest factor falls by at least 2 dB from DRIVE 0 to ½ and from ½ to 1, and by at least 6 dB overall. The RMS stays within 3 dB of DRIVE 0's (the level compensation);
-  - **aliasing below the half-band stopband:** a 1,003 Hz sine at −12 dBFS, DRIVE 1, TONE 1. Every alias of harmonics 1–200 that lands in 20 Hz–20 kHz sums to at least 43 dB under the fundamental;
+  - **aliasing below the half-band stopband:** a 1,003 Hz sine at −12 dBFS, DRIVE 1, TONE 1. Every alias of harmonics 1–200 that lands in 20 Hz–20 kHz sums to at least 49 dB (the 15-tap half-band's stopband) under the fundamental. Measured: −84 dB. The half-band itself is checked for ±0.05 dB to 16 kHz and 49 dB down from 32 kHz;
+  - **the soft clip:** unity slope at 0, monotonic, ±1 from 1.5;
   - **the head bump shows in the response:** at −40 dBFS, DRIVE 0, TONE 1, 80 Hz sits 1.5–2.5 dB above 1 kHz;
   - the emphasis pair is flat within 1 dB from 300 Hz to 5 kHz at small signal; TONE 1 puts 8 kHz at least 4 dB above TONE 0;
   - WOW reaches the wet; NaN and out-of-range controls render finite; built in place it matches `new()`.
@@ -336,6 +337,7 @@ Each new ADR follows the template, goes in `docs/adr/README.md`, and marks what 
 - **New: the master section.**
   - REV SEND at `ParamId(6)`: the delay's return into the reverb's send, in the same block.
   - The tape on pair 1 only, instead of a separate glue compressor there.
+  - The tape's own 15-tap half-band and divide-free cubic soft clip (controller ruling, § Tape), and why: the 80-cycle budget.
   - The master compressor, linked across all three pairs, and its exact bypass.
   - The new pages, and the two sub-page moves (DLY › CHAR, MST › LEVEL), marked as assumed defaults until the owner confirms them.
   - The budget: the tape's 80 and the compressor's 50 come out of the reverb's share, which falls to 297.
@@ -356,6 +358,6 @@ Each new ADR follows the template, goes in `docs/adr/README.md`, and marks what 
 - **The delay misses after the sinf fix:** the Padé soft clip (§ Delay).
 - **The A16 ∪ A17 row measures over 1,000 per voice:** the costliest patch gets 5 voices on rev V too; bring the numbers to the user before the six-voice ADR.
 - **The i16 grain is too strong at GRIT 0:** store the ring as f32 (92,880 B, still inside `FX_BUS_BUDGET`). GRIT then quantises the f32 writes to the same grid.
-- **The tape misses its 80.** A paper count puts it near 150–250 cycles per sample. Each side runs two 35-tap half-bands, and four `fast_tanh` divides run per sample. If the bench agrees, the options are a divide-free soft clip or a polyphase IIR half-band. Neither is in this design, so bring the numbers to the user.
+- **The tape misses its 80.** The first paper count was 150–250 cycles per sample (two 35-tap half-bands per side, four `fast_tanh` divides). The controller's ruling put in the divide-free soft clip and the 15-tap half-band (§ Tape). Counted from the built firmware's inner loops, it is still about 250 instructions per sample (per side: wow and pre-emphasis 29, the oversampled soft clip 60, the output filters and blend 31; both sides 240, plus per-block work), likely 230–280 cycles. The bench decides; if it agrees, bring the numbers to the user. Nothing here is cut.
 - **The compressor misses its 50** (a paper count puts it at 35–45): compute the gain every 8 samples instead of 4.
 - **The reverb's share is now 297:** with the tape and compressor in, the ring has 130 fewer cycles than before. If it misses, § Risks' first move applies; then bring the numbers to the user.

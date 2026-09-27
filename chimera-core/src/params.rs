@@ -410,7 +410,11 @@ impl Blocks for ParamSnapshot {
             BlockRef::AuxEnv => &self.envelopes[2],
             BlockRef::Lfo => &self.lfo,
             BlockRef::Out => &self.out,
-            BlockRef::Chorus | BlockRef::Delay | BlockRef::Reverb | BlockRef::Part => return None,
+            BlockRef::Chorus
+            | BlockRef::Delay
+            | BlockRef::Reverb
+            | BlockRef::Tape
+            | BlockRef::Part => return None,
         })
     }
 
@@ -427,7 +431,11 @@ impl Blocks for ParamSnapshot {
             BlockRef::AuxEnv => &mut self.envelopes[2],
             BlockRef::Lfo => &mut self.lfo,
             BlockRef::Out => &mut self.out,
-            BlockRef::Chorus | BlockRef::Delay | BlockRef::Reverb | BlockRef::Part => return None,
+            BlockRef::Chorus
+            | BlockRef::Delay
+            | BlockRef::Reverb
+            | BlockRef::Tape
+            | BlockRef::Part => return None,
         })
     }
 }

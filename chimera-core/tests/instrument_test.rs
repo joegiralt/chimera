@@ -1069,3 +1069,38 @@ fn a_steal_of_a_waiting_note_counts_it_as_refused() {
     assert_eq!(peak(rig.inst.part_bus(1)), 0.0, "90 never sounds");
     assert!(peak(rig.inst.part_bus(2)) > 0.0, "70 plays");
 }
+
+/// FX diet spec § Tape: on pair 1 only, after its sum. With the tape up,
+/// pair 1 changes and pairs 2 and 3 stay bit-identical.
+#[test]
+fn the_tape_is_on_pair_1_only() {
+    let render = |mix: f32| {
+        let mut shared = AudioShared::default();
+        shared.parts[0].mix.output = DacPair::P1;
+        shared.parts[1].mix.output = DacPair::P2;
+        (shared.fx.tape.drive, shared.fx.tape.mix) = (1.0, mix);
+        let buses: [[f32; BLOCK_SIZE]; MAX_PARTS] = core::array::from_fn(|p| {
+            core::array::from_fn(|i| 0.5 * ((i + 7 * p) as f32 * 0.37).sin())
+        });
+        let written = [true, true, false, false, false, false];
+        let mut sends = [[0.0; BLOCK_SIZE]; FX_SENDS];
+        let mut pans = PanCache::default();
+        let mut fx = Box::new(FxBus::new());
+        let mut out: DacOut = [[0.0; BLOCK_SIZE * 2]; DAC_PAIRS];
+        let mut blocks = Vec::new();
+        for _ in 0..32 {
+            mix_parts(
+                &buses, &written, &mut sends, &mut pans, &mut fx, &shared, SR, &mut out,
+            );
+            blocks.push(out);
+        }
+        blocks
+    };
+    let (off, on) = (render(0.0), render(1.0));
+    assert!(
+        off.iter()
+            .zip(&on)
+            .all(|(a, b)| a[1] == b[1] && a[2] == b[2])
+    );
+    assert!(off.iter().zip(&on).any(|(a, b)| a[0] != b[0]));
+}
