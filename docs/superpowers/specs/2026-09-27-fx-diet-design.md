@@ -101,11 +101,11 @@ Provenance: the topology follows Sean Costello's description of the Quadraverb (
 
 ### GRIT and quantisation
 - GRIT sets a continuous bit depth *b* = 16 − 6·GRIT, from 16 bits down to 10. The step is Δ = 2^(6·GRIT) i16 LSBs.
-- Every value written into a delay line, an allpass state or the DAMP state is quantised as `q(x) = round(x·16384 / Δ) · Δ` (round to nearest), then stored. Nothing else is quantised.
-- **Rounding, plus a silence gate.** Rounding keeps the decay honest; truncation was tried in the plan's prototype and cut T30 by up to 79 % at long TIME. Rounding alone can sustain a small limit cycle with no input, so a gate clears the ring:
-  - The gate watches the send input and the ring's output.
-  - It clears every line and state to exact zero once the send input has been exactly 0 and the output's peak has stayed within 2 Δ, for 100 ms.
-  - The gate is checked once per block and costs a compare per sample on the output only.
+- Every value written into a delay line, an allpass state or the DAMP state is quantised onto the grid, then onto the LSB, then stored. Nothing else is quantised.
+  - The 8 allpass state writes (`v`) use magnitude truncation toward zero: `q_trunc(x) = trunc(x·16384 / Δ) · Δ`.
+  - The delay writes and the DAMP state round to nearest: `q_round(x) = round(x·16384 / Δ) · Δ`.
+  - Both saturate at the i16 range.
+- **Why the mix, and no gate.** Rounding everywhere sustains a deadband tail of 12–32 Δ with no input, far above any gate that would not also cut a live tail. Truncation in the allpass recursions kills it: the ring reaches exact zero on its own, in about 10 s at GRIT 0 and 4 s at GRIT 1, after 1 s of noise at TIME 1. There is no silence gate. The earlier "truncation cut T30 by 79 %" came from an impulse, measured at the quantisation floor; with a noise burst, every quantiser holds GRIT 0's RT60 within 0.76–1.08 of the target.
 - At GRIT 0, Δ = 1: the i16 storage only. At GRIT 1 the grid is 64 LSB, 1/256 of 1.0 (−48 dB).
 
 ### Controls
@@ -122,6 +122,7 @@ The page is EFX. TYPE's slot becomes GRIT; the other slots keep their order.
 - **ParamIds:** GRIT takes the new `ParamId(5)`. TYPE's `ParamId(0)` is retired and never reused (ADR 0009).
 - **TIME:** the target is frequency-averaged. The ring's round-trip gain Π*g_k* is spread over its mean delay ΣL_k. So *g_k* = 10^(−3·L_k / (RT60·fs_ring)), with L_k from the current SIZE step, capped at 0.97. The cap never binds in these ranges: the largest *g_k* is 0.956 (SIZE 0.35, 12 s).
 - **TIME floor:** each allpass rings on its own for about 13.5·M / fs_ring. TIME can't go below T_min(SIZE) = max(0.3 s, 1.5 × 13.5 × M_max(SIZE) / fs_ring), where M_max is the longest allpass at that step. T_min is 0.3 s up to SIZE ≈ 0.9 and rises to 0.335 s at SIZE 1. At short TIME and large SIZE the tail is a few discrete passes rather than a smooth decay; that is the character.
+- **GRIT and the tail:** at high GRIT the truncation shortens long tails. At GRIT 1 the tail reaches about 0.34–0.9 of the TIME target, shortest at long TIME and small SIZE. That is part of the grain's character.
 - **DAMP:** the one-pole is `y += a·(x − y)`, with *a* = 1 − exp(−2π·*f_c* / fs_ring), in (0, 1], so its gain is ≤ 1. It acts once per pass, so a smaller SIZE (more passes per second) gives a darker tail. That coupling is intended.
 - **Defaults:** `ReverbParams::default()` and `REVERB_SPECS` agree: GRIT 0.3, TIME 0.5, DAMP 0.3, SIZE 0.5, MIX 0.0. `FxParams::default()` uses `ReverbParams::default()` instead of spelling the fields out.
 - `ReverbParams { grit, time, damping, size, mix }` replaces `reverb_type`. Nothing is persisted yet, so nothing migrates.
@@ -131,7 +132,7 @@ The page is EFX. TYPE's slot becomes GRIT; the other slots keep their order.
 - From the smoothed values, the four *g_k*, *a* and Δ are computed once per block: four `powf`s per block, not per sample. *g_k* and *a* ramp linearly across the block from the previous block's values. Δ holds for the block.
 
 ### Guarantees
-- **Stable:** the loop gain is below 1 at every setting and mid-crossfade. *g_k* ≤ 0.97, the allpasses are unity-gain, the low-pass gain is ≤ 1, a linear crossfade's gain is ≤ 1, and rounding adds at most ½ Δ + ½ LSB per write, unbiased and bounded by the gate.
+- **Stable:** the loop gain is below 1 at every setting and mid-crossfade. *g_k* ≤ 0.97, the allpasses are unity-gain, the low-pass gain is ≤ 1, a linear crossfade's gain is ≤ 1, and quantisation adds at most ½ Δ + ½ LSB per rounded write. The truncated allpass writes only ever shrink a value's magnitude, so with no input the ring reaches exact zero on its own, with no limit cycle.
 - **No zipper noise:** see § Smoothing and § SIZE.
 - **Allocation-free:** the ring lives in the FX bus in AXI (ADR 0014), and the existing size assertion still holds.
 
@@ -181,7 +182,8 @@ All tests run on the host, at the test profile's default opt-level, so the rende
   - the output is finite, and within ±12·`WET_GAIN` (three taps at full scale, with 2× for the interpolator's overshoot);
   - the energy of the last 0.5 s is below that of the first 0.5 s after the input stops, by at least half the drop the target RT60 predicts.
 - **No limit cycles:** after 1 s of noise at TIME 1, SIZE 1, DAMP 0 and GRIT 1, the return is exactly 0.0 within 15 s of silence. At GRIT 0 the bound is 25 s.
-- **RT60:** at TIME 0.25, 0.5, 0.75 and 1, SIZE steps 0, 15 and 31, DAMP 0, GRIT 0: T30 by Schroeder integration of the impulse response, band-passed to 500 Hz–4 kHz. It is within ±35 % of the target and rises monotonically with TIME.
+- **RT60:** at TIME 0.25, 0.5, 0.75 and 1, SIZE steps 0, 15 and 31, DAMP 0, GRIT 0. The send is 0.5 s of −6 dBFS noise, then silence. Each side is band-passed to 500 Hz–4 kHz, and the Schroeder EDC of L² + R² from the end of the input gets a least-squares line from −5 to −35 dB; RT60 is 60 dB over its slope. It is within ±35 % of the target and rises monotonically with TIME. An impulse is not used: its diffuse tail starts near 100 LSB and measures the quantisation floor.
+- **No early zero:** under a noise send every output block sounds, and after the send stops the tail sounds for at least half the target RT60 at TIME 0.5, at GRIT 0, 0.3 and 1.
 - **Stereo:** for an impulse in, each side's 10 ms RMS reaches −20 dB of its own peak within 50 ms. The zero-lag correlation of L and R over a 100 ms window starting at 500 ms is below 0.5.
 - **GRIT:**
   - at GRIT 1, every stored value is a multiple of 64; at GRIT 0, `q` is the identity on i16;
