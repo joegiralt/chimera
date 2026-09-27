@@ -300,7 +300,7 @@ fn recost_sheds_a_tail_before_a_held_note() {
 }
 
 /// A dying voice is neither stolen, retriggered nor shed again before its
-/// fade ends.
+/// fade ends. A note-on takes it only when no voice is free.
 #[test]
 fn a_dying_voice_keeps_its_slot_until_freed() {
     let mut a = Allocator::new(BUDGET);
@@ -314,24 +314,52 @@ fn a_dying_voice_keeps_its_slot_until_freed() {
     }
     assert_eq!(a.shed(fx), Some(2));
     // More over budget: the next shed takes another voice, never 2.
+    let mut shed = vec![2];
     for v in 0..6 {
         a.recost(v, Cost(1_500));
     }
     while let Some(v) = a.shed(fx) {
         assert_ne!(v, 2, "shed twice");
+        shed.push(v);
     }
     for v in 0..6 {
         a.recost(v, Cost(100)); // room again
     }
-    for k in 0..6 {
-        if let Alloc::Voice(v) = on(&mut a, 1, Poly, 80 + k) {
-            assert_ne!(v, 2, "reallocated mid-fade");
-        }
-    }
+    let live = (0..6).find(|v| !shed.contains(v)).unwrap();
+    a.release(live);
+    a.release_finished(live);
+    assert_eq!(voice(on(&mut a, 1, Poly, 80)), live, "a free voice first");
     assert!(a.slots()[2].dying());
     assert_eq!(a.slots()[2].note(), Some(n(62)));
-    a.release_finished(2);
-    assert!(a.slots()[2].is_free());
+    let v = voice(on(&mut a, 1, Poly, 81));
+    assert!(shed.contains(&v), "then a dying one, not a held note");
+    assert!(!a.slots()[v].dying() && a.slots()[v].held());
+    a.release_finished(v); // the old note's fade ended: the new one stays
+    assert_eq!(a.slots()[v].note(), Some(n(81)));
+    for &d in shed.iter().filter(|&&d| d != v) {
+        a.release_finished(d);
+        assert!(a.slots()[d].is_free());
+    }
+}
+
+/// #33 M7: a dying voice's cost does not count against a note-on, so over
+/// budget only by the dying voice, the note takes a free slot and steals
+/// nothing.
+#[test]
+fn a_note_on_does_not_pay_for_a_dying_voice() {
+    let mut a = Allocator::new(BUDGET);
+    let fx = Cost(600);
+    for i in 0..5 {
+        on(&mut a, 0, Poly, 60 + i);
+    }
+    for v in 0..5 {
+        a.recost(v, Cost(1_400)); // 7,600: one must go
+    }
+    assert_eq!(a.shed(fx), Some(4));
+    let v = voice(a.note_on(1, Poly, n(80), Cost(600), fx));
+    assert_eq!(v, 5, "a free voice");
+    assert!((0..4).all(|v| a.slots()[v].held() && a.slots()[v].note() == Some(n(60 + v as u8))));
+    assert!(a.slots()[4].dying());
 }
 
 /// A Mono part whose voice is dying takes another voice, not the dying one.

@@ -3,7 +3,8 @@
 //!
 //! 1. A Mono part owns one voice while it sounds; a new note retriggers it.
 //!    Mono voices are never stolen.
-//! 2. A Poly part takes a free voice, round-robin.
+//! 2. A Poly part takes a free voice, round-robin; with none free, a dying
+//!    one (its note starts when the fade ends).
 //! 3. Pool full: steal from any part the oldest released (note-off'd, tail
 //!    ringing) non-mono voice; if none, the oldest held non-mono voice;
 //!    refuse if every voice is mono.
@@ -14,9 +15,10 @@
 //!
 //! A Sound change re-costs sounding voices (`recost`); `shed` then marks
 //! voices dying until the rest fit the budget (ADR 0027): tails first, oldest
-//! first, then the newest held note. A dying voice keeps its slot and its
-//! cost while it fades, is never stolen or shed again, and frees when the
-//! fade ends (`release_finished`).
+//! first, then the newest held note. A dying voice keeps its slot while it
+//! fades, is never stolen or shed again, and frees when the fade ends
+//! (`release_finished`). Its cost counts in `sounding_cost` but not against a
+//! note-on: it is gone within `Voice::FADE`.
 
 use crate::MidiNote;
 use crate::hw::{Cost, MAX_VOICES, SampleBudget};
@@ -108,6 +110,11 @@ impl Allocator {
         self.slots.iter().map(|s| s.cost).sum()
     }
 
+    /// `sounding_cost` without the dying voices.
+    fn live_cost(&self) -> Cost {
+        self.slots.iter().filter(|s| !s.dying).map(|s| s.cost).sum()
+    }
+
     /// Allocate a voice for `note` on `part`. `cost` is the voice's
     /// cycles/sample; `reserved` is what is spent outside the pool (the FX
     /// bus). The pool's own sounding cost is tracked here, per slot.
@@ -163,8 +170,7 @@ impl Allocator {
     /// first, then the oldest tail, then the newest held note. Call until
     /// `None`. Dying voices still count in `sounding_cost`.
     pub fn shed(&mut self, reserved: Cost) -> Option<usize> {
-        let live: Cost = self.slots.iter().filter(|s| !s.dying).map(|s| s.cost).sum();
-        if reserved + live <= self.budget.as_cost() {
+        if reserved + self.live_cost() <= self.budget.as_cost() {
             return None;
         }
         let v = (0..MAX_VOICES)
@@ -192,7 +198,7 @@ impl Allocator {
 
     fn pick(&self, part: u8, mode: PartMode, cost: Cost, reserved: Cost) -> Option<usize> {
         let fits = |freed: Cost| {
-            let total = reserved.0 + self.sounding_cost().0 + cost.0;
+            let total = reserved.0 + self.live_cost().0 + cost.0;
             total.saturating_sub(freed.0) <= self.budget.as_cost().0
         };
         // Rule 1: a Mono part retriggers the voice it owns.
@@ -204,10 +210,12 @@ impl Allocator {
         {
             return fits(self.slots[v].cost).then_some(v);
         }
-        // Rule 2: a free voice, round-robin — if it fits the budget.
-        let free = (0..MAX_VOICES)
-            .map(|i| (self.rr + i) % MAX_VOICES)
-            .find(|&v| self.slots[v].is_free());
+        // Rule 2: a free voice, round-robin, else a dying one — if it fits.
+        let rr = (0..MAX_VOICES).map(|i| (self.rr + i) % MAX_VOICES);
+        let free = rr
+            .clone()
+            .find(|&v| self.slots[v].is_free())
+            .or_else(|| rr.clone().find(|&v| self.slots[v].dying));
         if let Some(v) = free
             && fits(Cost::ZERO)
         {
