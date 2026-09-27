@@ -280,3 +280,75 @@ fn a_killed_voice_fades_out() {
     b.render(&mut block, p, m);
     assert!(block.iter().all(|&s| s == 0.0));
 }
+
+fn first_blocks(v: &mut Voice, note: u8, p: &ParamSnapshot, m: &ModState) -> Vec<u32> {
+    let mut block = [0.0f32; BLOCK_SIZE];
+    let mut out = Vec::new();
+    v.note_on(MidiNote::new(note).unwrap(), Velocity::DEFAULT, p);
+    for _ in 0..8 {
+        v.render(&mut block, p, m);
+        out.extend(block.iter().map(|s| s.to_bits()));
+    }
+    out
+}
+
+fn play_then_kill(v: &mut Voice, p: &ParamSnapshot, m: &ModState) {
+    let mut block = [0.0f32; BLOCK_SIZE];
+    v.note_on(MidiNote::new(60).unwrap(), Velocity::DEFAULT, p);
+    for _ in 0..40 {
+        v.render(&mut block, p, m);
+    }
+    v.kill();
+    for _ in 0..Voice::FADE as usize / BLOCK_SIZE {
+        v.render(&mut block, p, m);
+    }
+    assert!(!v.is_active());
+}
+
+/// A killed voice's next note is bit-identical to a fresh voice's: no
+/// stale engine or chain state (no click, a full attack).
+#[test]
+fn a_killed_voice_restarts_like_a_fresh_one() {
+    let sounds: Vec<(&str, ParamSnapshot, ModState)> = [("SQR BASS", 5usize), ("SAW LEAD", 4)]
+        .into_iter()
+        .map(|(name, i)| {
+            let s = chimera_core::factory::factory_sound(i).unwrap();
+            (name, s.params, s.mod_state)
+        })
+        .chain([(
+            "MODAL",
+            ParamSnapshot::for_engine(EngineType::Modal),
+            ModState::new(),
+        )])
+        .collect();
+    for (name, p, m) in &sounds {
+        let mut v = Voice::new(SR);
+        play_then_kill(&mut v, p, m);
+        let fresh = first_blocks(&mut Voice::new(SR), 64, p, m);
+        assert!(
+            fresh.iter().any(|&b| f32::from_bits(b) != 0.0),
+            "{name} silent"
+        );
+        assert!(
+            first_blocks(&mut v, 64, p, m) == fresh,
+            "{name}: reused voice differs"
+        );
+    }
+}
+
+/// Algo → Modal → Algo on one voice: the Algo engine left behind starts
+/// clean when it plays again.
+#[test]
+fn an_engine_round_trip_leaves_no_stale_state() {
+    let s = chimera_core::factory::factory_sound(5).unwrap(); // SQR BASS
+    let (p, m) = (&s.params, &s.mod_state);
+    let modal = ParamSnapshot::for_engine(EngineType::Modal);
+    let mut v = Voice::new(SR);
+    let mut block = [0.0f32; BLOCK_SIZE];
+    v.note_on(MidiNote::new(60).unwrap(), Velocity::DEFAULT, p);
+    for _ in 0..40 {
+        v.render(&mut block, p, m);
+    }
+    play_then_kill(&mut v, &modal, &ModState::new());
+    assert!(first_blocks(&mut v, 64, p, m) == first_blocks(&mut Voice::new(SR), 64, p, m));
+}
