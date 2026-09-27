@@ -101,8 +101,11 @@ Provenance: the topology follows Sean Costello's description of the Quadraverb (
 
 ### GRIT and quantisation
 - GRIT sets a continuous bit depth *b* = 16 − 6·GRIT, from 16 bits down to 10. The step is Δ = 2^(6·GRIT) i16 LSBs.
-- Every value written into a delay line, an allpass state or the DAMP state is quantised as `q(x) = trunc(x·16384 / Δ) · Δ`, then stored. Nothing else is quantised.
-- **Every quantiser truncates toward zero** (`as`, never `round()`). Truncation strictly shrinks any nonzero state that has no input, so the ring can't sustain a zero-input limit cycle; silence in reaches exact zeros out.
+- Every value written into a delay line, an allpass state or the DAMP state is quantised as `q(x) = round(x·16384 / Δ) · Δ` (round to nearest), then stored. Nothing else is quantised.
+- **Rounding, plus a silence gate.** Rounding keeps the decay honest; truncation was tried in the plan's prototype and cut T30 by up to 79 % at long TIME. Rounding alone can sustain a small limit cycle with no input, so a gate clears the ring:
+  - The gate watches the send input and the ring's output.
+  - It clears every line and state to exact zero once the send input has been exactly 0 and the output's peak has stayed within 2 Δ, for 100 ms.
+  - The gate is checked once per block and costs a compare per sample on the output only.
 - At GRIT 0, Δ = 1: the i16 storage only. At GRIT 1 the grid is 64 LSB, 1/256 of 1.0 (−48 dB).
 
 ### Controls
@@ -128,7 +131,7 @@ The page is EFX. TYPE's slot becomes GRIT; the other slots keep their order.
 - From the smoothed values, the four *g_k*, *a* and Δ are computed once per block: four `powf`s per block, not per sample. *g_k* and *a* ramp linearly across the block from the previous block's values. Δ holds for the block.
 
 ### Guarantees
-- **Stable:** the loop gain is below 1 at every setting and mid-crossfade. *g_k* ≤ 0.97, the allpasses are unity-gain, the low-pass gain is ≤ 1, a linear crossfade's gain is ≤ 1, and truncation only shrinks.
+- **Stable:** the loop gain is below 1 at every setting and mid-crossfade. *g_k* ≤ 0.97, the allpasses are unity-gain, the low-pass gain is ≤ 1, a linear crossfade's gain is ≤ 1, and rounding adds at most ½ Δ per write, bounded by the gate.
 - **No zipper noise:** see § Smoothing and § SIZE.
 - **Allocation-free:** the ring lives in the FX bus in AXI (ADR 0014), and the existing size assertion still holds.
 
