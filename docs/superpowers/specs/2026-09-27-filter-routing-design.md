@@ -77,7 +77,7 @@ These record the owner's decisions of 2026-09-27, made precise. They replace the
   - On a change of direction (Release during Attack, a note-on during Release) `x` is remapped so `L` doesn't move: rising `x = f⁻¹(L)`, falling `x = 1 − f⁻¹(1 − L)`, where `f⁻¹(y) = w·y / (1 − y + w·y)`. One divide per stage change.
 - Sustain holds the level it reached, as today.
 - Idle: after Release reaches 0.
-- **Page:** A · D · S · R / H · RANGE. CURVE is on the slot's + sub-page (§ UI).
+- **Page:** A · D · S / R · H · TYPE. RANGE and CURVE are on the shared RNG page (§ UI).
 
 #### Envelope B: function generator
 
@@ -93,13 +93,15 @@ These record the owner's decisions of 2026-09-27, made precise. They replace the
 - **LFO:** phase φ in 0..1 at RATE. With `r = (1 + TILT)/2`, the output is `u = φ/r` for φ < r and `(1 − φ)/(1 − r)` after; at r = 0 it is `1 − φ`, at r = 1 it is `φ`. TILT −1 is a ramp (instant rise, linear fall), 0 a triangle, +1 a saw (linear rise, instant fall). SYNC sets φ = PHASE at each note-on; FREE lets φ run on, and PHASE is dimmed. Never idle.
 - **BURST:** after a note-on, LENGTH cycles at RATE, then 0 and idle until the next note-on. Each cycle is one pulse: with s = SLEW, it rises over [0, s/2), is high until ½, falls over [½, ½ + s/2), and is low after. SLEW 0 is a square pulse, 1 a triangle. SYNC restarts the pulse clock at the note-on, so the burst starts at once; FREE keeps the clock running and the burst starts at the next cycle start.
 - RATE is 0.01–20 Hz, as CLASSIC's: at the block rate (750 Hz) a 20 Hz cycle has 37 points.
-- **Page:** MODE · RISE · FALL / SHAPE · SYNC · —. The labels follow MODE, the way the filter's labels follow KIND: RISE shows RATE in LFO and BURST, FALL shows PHASE or LENGTH, SHAPE shows CURVE, TILT or SLEW.
+- **Page:** MODE · RISE · FALL / SHAPE · SYNC · TYPE, one page. B's ENV-mode CURVE is its SHAPE knob in ENV mode, on this page, not on RNG. The labels follow MODE, the way the filter's labels follow KIND: RISE shows RATE in LFO and BURST, FALL shows PHASE or LENGTH, SHAPE shows CURVE, TILT or SLEW.
 
 #### LFO slots
 
-- **CLASSIC** is today's LFO: sine, triangle, saw, square, S&H; RATE SHAPE SYNC PHASE DEPTH OFST; its value is taken before the block's advance, with today's arithmetic, so LFO 1 is bit-identical.
-- **FUNC** is Envelope B in LFO or BURST mode (MODE offers only those two; default LFO), with its own B parameters. The output is `2u − 1` in LFO mode and `u` in BURST (0 at rest, so an idle burst adds nothing), times DEPTH, clamped to −1..1. OFFSET is not applied under FUNC (it isn't on the FUNC page).
-- **Pages:** CLASSIC is today's page, unchanged. FUNC is MODE · RATE · PHASE or LENGTH / TILT or SLEW · SYNC · DEPTH. TYPE is on the slot's + sub-page.
+- **CLASSIC** is today's LFO: sine, triangle, saw, square, S&H; RATE SHAPE SYNC PHASE DEPTH, and OFFSET stored but no longer applied (below); its value is taken before the block's advance, with today's arithmetic, so LFO 1 is bit-identical.
+- **FUNC** is Envelope B in LFO or BURST mode (MODE offers only those two; default LFO), with its own B parameters. The output is `2u − 1` in LFO mode and `u` in BURST (0 at rest, so an idle burst adds nothing), clamped to −1..1. DEPTH is not applied under FUNC (it isn't on the FUNC page).
+- **Pages,** with TYPE in the last cell as on the ENV pages:
+  - CLASSIC: RATE · SHAPE · SYNC / PHASE · DEPTH · TYPE. TYPE takes OFST's cell. OFFSET leaves the page and is no longer applied: a constant added to a source only shifts its destination, which the destination's own knob already does, and no Sound sets it (default 0, so nothing changes). DEPTH stays: MORPH PAD's amount is computed from it.
+  - FUNC: MODE · RATE · PHASE or LENGTH / TILT or SLEW · SYNC · TYPE. The route's amount is FUNC's depth.
 
 #### TYPE or MODE change mid-note: the level never jumps
 
@@ -400,11 +402,11 @@ Sounds live in RAM and the factory bank is code, so nothing on disk migrates. Ev
 - **FLT › MODE**, a new sub-page: MODE · extra · extra · — · — · —. Layout CellGrid. A single-mode kind shows MODE fixed, dimmed. Extras are the kind's (SVF: DRIVE, LFO); an empty extra is "—".
 - **AMP (FLD / VCA),** the `FOLDER` def (id 9) renamed "Fold / VCA", short AMP: FOLD · SYM · MIX · VEL · — · —. VEL is dimmed on Algo and Modal with no VCA route. The Algo map reads ALG · OSC · DRV · FLT · AMP · MOD; the Modal map MDL · FLT · AMP · MOD.
 - **Dimmed:** a fixed or inapplicable slot draws its label and value in `theme::MID` with no value bar. Its encoder is ignored, and MIX+PLUS on it reports "not modulatable" (ADR 0017).
-- **MOD's sub-pages,** twelve (as OSC has twelve), in order: ENV 1 (id 11, was ENVELOPE), ENV 1+, ENV 2, ENV 2+, ENV 3, ENV 3+, LFO 1 (id 12), LFO 1+, LFO 2, LFO 2+, LFO 3, LFO 3+.
-  - An ENV page shows its TYPE's panel (§ 1): A · D · S · R / H · RANGE, or MODE · RISE · FALL / SHAPE · SYNC · — with MODE's labels. Its Adsr viz draws the TYPE's shape (B: one cycle or burst of its MODE).
-  - An ENV + page: TYPE · CURVE · — · — · — · —. CURVE is dimmed "—" under B, whose curve is on its main page.
-  - An LFO page shows CLASSIC's (today's) or FUNC's panel; an LFO + page: TYPE · — · — · — · — · —.
-- **Page ids:** eleven new (FLT › MODE, ENV 2, ENV 3, LFO 2, LFO 3, six + pages), taken in that order from the next free id at build time: 59 today, skipping 63 (the test page in `part_page_test.rs`). The VA spec also takes the next free id; whichever lands first takes 59.
+- **The MOD node's pages,** one flat list (EDIT steps down, SEQ up; there is no second level): **E1 · E2 · E3 · RNG · L1 · L2 · L3 · MTX**. E1 (id 11, was ENVELOPE) becomes the node's own page, and the matrix (MOD_MATRIX, id 22) moves to the end of its sub-pages.
+  - An ENV page shows its TYPE's panel (§ 1): A · D · S / R · H · TYPE, or MODE · RISE · FALL / SHAPE · SYNC · TYPE with MODE's labels. Its Adsr viz draws the TYPE's shape (B: one cycle or burst of its MODE).
+  - **RNG** is one shared page for type A's settings, one parameter pair across slots, as the Algo group pages are: E1 RANGE · E1 CURVE · E2 RANGE / E2 CURVE · E3 RANGE · E3 CURVE. A type-B slot's two cells are dimmed and inert: B shapes with SHAPE on its own page.
+  - An LFO page shows CLASSIC's or FUNC's panel (§ 1), TYPE in the last cell.
+- **Page ids:** six new (FLT › MODE, E2, E3, RNG, L2, L3), taken in that order from the next free id at build time: 59 today, skipping 63 (the test page in `part_page_test.rs`). The VA spec also takes the next free id; whichever lands first takes 59.
 - **Retired:** `ENV_AMP`, `ENV_FILTER`, `ENV_AUX` (ids 13–15) and `ENVELOPE_CHAIN`. Their ids are not reused.
 - **Slot binding:** new `SlotBinding::FilterPanel(u8)` and `SlotBinding::ModPanel(u8)` resolve against the Sound's KIND, or the slot's TYPE and MODE, as `SelectedOp` resolves against the selected operator. `slot_addr` takes a `SlotCtx { sel_op, kind, env_modes, lfo_modes }` in place of `sel_op`. A `Route` target resolves to a matrix cell, not a `ParamAddr`.
 - **Vizzes read by address, not slot:** FilterResponse reads CUTOFF, RES and MODE; Adsr reads the TYPE's stages. Today's `a(0), a(1)` and `a(0..3)` would read KIND and the wrong stage.
@@ -439,7 +441,7 @@ Sounds live in RAM and the factory bank is code, so nothing on disk migrates. Ev
 - **Shortcut:** the 303's DECAY edits ENV 1's DECAY and dims when ENV 1 is B (with #127).
 - **Cost:** `Voice::cost` includes `ModRouting::cost` and `FilterKind::cost`; the allocator's voice count for each factory Sound is recomputed with 8 added, and `cost_test` pins the new counts.
 - **RAM:** the existing `const` asserts hold (`[Voice; MAX_VOICES]`, `Instrument`, `AXI_RESIDENT`).
-- **UI:** new screen goldens: FLT (SVF), FLT › MODE (SVF), AMP (VEL dimmed and live), ENV pages at A and at each B MODE, the + pages, LFO pages at CLASSIC and FUNC, the matrix with eight rows; the Algo and Modal maps with AMP. The dimmed readout gets its golden with the first single-mode kind (#123).
+- **UI:** new screen goldens: FLT (SVF), FLT › MODE (SVF), AMP (VEL dimmed and live), ENV pages at A and at each B MODE, RNG with one B slot dimmed, LFO pages at CLASSIC and FUNC, the matrix with eight rows; the Algo and Modal maps with AMP. The dimmed readout gets its golden with the first single-mode kind (#123).
 - **Goldens:** the 8 factory goldens bit-identical; the two `*_lfo_cutoff` re-recorded; all other audio goldens unchanged.
 - **Bench:** a MODS row (1 OP, ENV 2 → VCA with CURVE on, ENV 1 → CUTOFF, every source routed somewhere, all three LFOs FUNC) and an SVF row (1 OP, PHASER), each minus the 1 OP row.
 
@@ -479,7 +481,6 @@ Sounds live in RAM and the factory bank is code, so nothing on disk migrates. Ev
 - **The CUTOFF offset lags one block** (block-start values, ramped from the previous block's). 1.3 ms, inaudible on a filter; the VCA, which would hear it, is per sample.
 - **A curved envelope on the VCA** costs a divide per sample (14 cycles). Three of them cost 42 of the ~158 left per voice.
 - **The FLOOR row's 5 cycles look low** for a two-stage SVF with a per-sample divide. The SVF row checks whether `CHAIN_COST` really covers it; if not, the SVF's cost joins every voice's bill.
-- **Twelve MOD sub-pages** is a long Seq/Edit walk, as OSC's twelve are. A later UX pass may jump by slot.
 - **`played` grows** in every voice (ADR 0027) and in the per-frame publish: about 280 B, under budget but not free.
 
 ## Defaults chosen
@@ -502,9 +503,9 @@ The owner's decisions didn't settle these; each is a default until the owner say
 14. **SLEW:** each BURST pulse's edges last SLEW × ½ cycle; 0 square, 1 triangle.
 15. **B ENV mode is one-shot:** rise from the current level, fall to 0, key-up ignored.
 16. **SYNC:** default SYNC on B. LFO: SYNC sets φ = PHASE at note-on, FREE runs on (PHASE dimmed). BURST: SYNC restarts the clock at note-on, FREE starts the burst at the next cycle start.
-17. **FUNC LFO output:** LFO mode `2u − 1`, BURST `u` (0 at rest), × DEPTH; OFFSET not applied.
+17. **FUNC LFO output:** LFO mode `2u − 1`, BURST `u` (0 at rest); neither DEPTH nor OFFSET applied (the route amount is the depth).
 18. **TYPE and MODE changes:** into A, B ENV and B LFO the new shape enters at the current level; into BURST, CLASSIC or FUNC the difference glides to 0 over 256 samples.
-19. **Pages:** TYPE (and A's CURVE) on each slot's + sub-page; A's and B's main pages as the owner set; CLASSIC's page unchanged; FUNC's MODE · RATE · PHASE/LENGTH / TILT/SLEW · SYNC · DEPTH.
+19. **LFO pages:** TYPE in the last cell, as the owner set for ENV. CLASSIC: RATE · SHAPE · SYNC / PHASE · DEPTH · TYPE; OFFSET leaves the page and stops being applied (redundant with the destination's knob; no Sound sets it). FUNC: MODE · RATE · PHASE/LENGTH / TILT/SLEW · SYNC · TYPE. (The MOD node's order, the ENV pages and RNG are the owner's.)
 20. **Rates:** an ENV slot ticks per sample only while routed to VCA; everything else per block; all six modulators always run.
 21. **AMP:** short label AMP, name "Fold / VCA", VEL default 100 %, dimmed under the Algo/Modal pass-through. VA's no-route gate has 64-sample linear edges.
 22. Route knobs show the matrix amount, −100..+100 %, KEY included. One bipolar amount per route on every kind, even where the original panel was unipolar.
@@ -517,5 +518,5 @@ The owner's decisions didn't settle these; each is a default until the owner say
 29. FM, ENV and KEY's filter ids 3–5 are retired, never reused; the first version's ids 9–10 were never built and stay free.
 30. Envelope and LFO parameters, and route amounts, stay non-modulatable.
 31. `FilterKind` gains each variant with its model; there are no stand-in kinds.
-32. Eleven new page ids from the next free (59 today, skipping 63); retired ids 13–15 are not reused.
+32. Six new page ids from the next free (59 today, skipping 63); retired ids 13–15 are not reused.
 33. `BlockRef::Env(EnvSlot)` and `BlockRef::Lfo(LfoSlot)` replace the role-named envelope refs and the single LFO ref.
