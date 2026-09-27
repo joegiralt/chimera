@@ -7,3 +7,10 @@ edition.workspace = true
 cortex-m = "0.7"
 cortex-m-rt = "0.7"
 panic-halt = "1.0"
+
+# no_std bin: the test harness pulls in std's own panic_impl, clashing with
+# panic-halt's (E0152). Nothing here to unit test anyway.
+[[bin]]
+name = "chimera-bootloader"
+path = "src/main.rs"
+test = false
