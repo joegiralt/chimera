@@ -194,10 +194,6 @@ fn tone_moves_the_top() {
     assert!(bright - dark > 4.0, "{dark} vs {bright}");
 }
 
-fn crest_db(x: &[f32]) -> f32 {
-    db(x.iter().fold(0.0f32, |m, s| m.max(s.abs())) / rms(x))
-}
-
 /// Decaying 220 Hz plucks, one every 100 ms, peaking at `amp`.
 fn plucks(n: usize, amp: f32) -> Vec<f32> {
     (0..n)
@@ -206,21 +202,6 @@ fn plucks(n: usize, amp: f32) -> Vec<f32> {
             amp * libm::expf(-30.0 * t) * libm::sinf(2.0 * core::f32::consts::PI * 220.0 * t)
         })
         .collect()
-}
-
-/// Spec § Testing: DRIVE squashes loud material: on plucks peaking at
-/// −3 dBFS the crest factor falls from DRIVE 0 to ½ to 1.
-#[test]
-fn drive_lowers_the_crest_factor_of_loud_material() {
-    let n = 256 * BLOCK_SIZE;
-    let x = plucks(n, 0.7);
-    let crest = |d: f32| {
-        let mut tape = Box::new(Tape::new());
-        crest_db(&run(&mut tape, &x, |_| at(d, 0.5, 1.0))[n / 4..])
-    };
-    let c = [crest(0.0), crest(0.5), crest(1.0)];
-    assert!(c[0] - c[1] >= 2.0 && c[1] - c[2] >= 2.0, "{c:?}");
-    assert!(c[0] - c[2] >= 6.0, "{c:?}");
 }
 
 /// Spec § Tape: the level compensation is 1/g, unity small-signal gain.
@@ -264,7 +245,7 @@ fn folded(k: u32, f0: u32) -> u32 {
 /// Spec § Testing: the tape's aliasing is below the 15-tap half-band's
 /// 49 dB stopband. A 1,003 Hz sine at −12 dBFS, full DRIVE, TONE 1: every
 /// alias of harmonics 1..=200 landing in 20 Hz–20 kHz sums to at least
-/// 49 dB under the fundamental (measured −84 dB).
+/// 49 dB under the fundamental (measured −101 dB).
 #[test]
 fn aliasing_stays_below_the_stopband() {
     const F0: u32 = 1_003;
@@ -373,19 +354,22 @@ fn built_in_place_it_processes_like_new() {
     assert_eq!(run(placed, &x, p), run(&mut Box::new(Tape::new()), &x, p));
 }
 
-/// The divide-free soft clip: slope 1 at 0, monotonic, ±1 from |v| = 1.5.
+/// The divide-free soft clip: slope 1 at 0, monotonic, 8/15 from |v| = 1.
 /// Its compare-free clamp rounds to within 2^-22.
 #[test]
 fn the_soft_clip_is_unity_then_flat() {
     use chimera_core::dsp::tape::soft_clip;
     for v in [1e-6, 1e-3, 0.01] {
-        assert!((soft_clip(v) - v).abs() < 1e-6 + 0.2 * v * v, "{v}");
+        assert!((soft_clip(v) - v).abs() < 1e-6 + v * v, "{v}");
     }
-    assert_eq!((soft_clip(1.5), soft_clip(-9.0)), (1.0, -1.0));
-    let mut last = -1.0;
+    let top = 8.0 / 15.0;
+    for (v, y) in [(1.0, top), (9.0, top), (-1.0, -top)] {
+        assert!((soft_clip(v) - y).abs() < 1e-6, "{v}");
+    }
+    let mut last = -top;
     for i in -300..=300 {
         let y = soft_clip(i as f32 / 100.0);
-        assert!(y >= last - 1e-6 && y.abs() <= 1.0 + 1e-6, "{i}");
+        assert!(y >= last - 1e-6 && y.abs() <= top + 1e-6, "{i}");
         last = y;
     }
 }
@@ -409,4 +393,80 @@ fn the_half_band_meets_its_bands() {
         assert!(h(pass).abs() < 0.05, "{pass} Hz: {} dB", h(pass));
         assert!(h(stop) < -49.0, "{stop} Hz: {} dB", h(stop));
     }
+}
+
+/// Peak of `x`.
+fn peak(x: &[f32]) -> f32 {
+    x.iter().fold(0.0f32, |m, s| m.max(s.abs()))
+}
+
+/// How far the output's peak rises, dB, when plucks peaking at −6 dBFS
+/// (0.5) come in 6 dB louder, at `drive`.
+fn peak_rise_db(drive: f32) -> f32 {
+    let n = 256 * BLOCK_SIZE;
+    let out = |amp: f32| {
+        let mut tape = Box::new(Tape::new());
+        peak(&run(&mut tape, &plucks(n, amp), |_| at(drive, 0.5, 1.0))[n / 4..])
+    };
+    db(out(1.0) / out(0.5))
+}
+
+/// Spec § Testing: the peak compression law. A pluck 6 dB louder comes out
+/// ≥ 5.5 dB louder at DRIVE 0, 3–4 dB at ½, 1.5–2.5 dB at 1, and the rise
+/// falls as DRIVE rises.
+#[test]
+fn peaks_compress_by_the_drive_law() {
+    let d = [0.0, 0.25, 0.5, 0.75, 1.0];
+    let r: Vec<f32> = d.iter().map(|&d| peak_rise_db(d)).collect();
+    assert!(r[0] >= 5.5, "{r:?}");
+    assert!((3.0..=4.0).contains(&r[2]), "{r:?}");
+    assert!((1.5..=2.5).contains(&r[4]), "{r:?}");
+    assert!(r.windows(2).all(|w| w[1] < w[0]), "{r:?}");
+}
+
+/// A whole second of a steady sine at `hz`, peak `amp`, through the tape
+/// at `drive`, after a second of settling.
+fn steady(hz: f32, amp: f32, drive: f32) -> Vec<f32> {
+    let n = 2 * SR as usize;
+    let mut tape = Box::new(Tape::new());
+    run(&mut tape, &sine(n, hz, amp), |_| at(drive, 0.5, 1.0))[SR as usize..].to_vec()
+}
+
+/// THD of a 200 Hz sine at −6 dBFS, harmonics 2–50.
+fn thd(drive: f32) -> f32 {
+    let y = steady(200.0, 0.5, drive);
+    let h: f32 = (2..=50).map(|k| power_at(&y, 200.0 * k as f32)).sum();
+    (h / power_at(&y, 200.0)).sqrt()
+}
+
+/// Spec § Testing: harmonics grow with DRIVE: THD of a 200 Hz sine at
+/// −6 dBFS rises from DRIVE 0 to 1, from under 1 % to at most 10 %:
+/// tape, not fuzz.
+#[test]
+fn harmonics_grow_with_drive() {
+    let t: Vec<f32> = [0.0, 0.25, 0.5, 0.75, 1.0]
+        .iter()
+        .map(|&d| thd(d))
+        .collect();
+    assert!(t[0] < 0.01 && t[4] <= 0.1, "{t:?}");
+    assert!(t.windows(2).all(|w| w[1] > w[0]), "{t:?}");
+}
+
+/// Gain reduction at `hz`, DRIVE `drive`: the fundamental's gain at −40
+/// dBFS less its gain at −6 dBFS, dB.
+fn gain_reduction_db(hz: f32, drive: f32) -> f32 {
+    let g = |amp: f32| 10.0 * (power_at(&steady(hz, amp, drive), hz) / (amp * amp / 4.0)).log10();
+    g(0.01) - g(0.5)
+}
+
+/// Spec § Testing: highs saturate first: through the pre-emphasis, a
+/// 6 kHz tone at DRIVE ½ loses at least 1 dB more to the clip than a
+/// 200 Hz one at the same level, which loses under 1.5 dB.
+#[test]
+fn highs_saturate_first() {
+    let (lo, hi) = (
+        gain_reduction_db(200.0, 0.5),
+        gain_reduction_db(6_000.0, 0.5),
+    );
+    assert!(lo < 1.5 && hi > lo + 1.0, "{lo} vs {hi}");
 }
