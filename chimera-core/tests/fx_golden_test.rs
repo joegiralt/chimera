@@ -112,7 +112,7 @@ fn render(fx: Fx) -> Vec<f32> {
 }
 
 const GOLDENS: &[(&str, u64)] = &[
-    ("chorus_both", 0x716ccf79801ea026),           // FX diet
+    ("chorus_both", 0x666b43969f8ed31a),           // u32 LFO phase
     ("delay_375ms", 0xa1736e10da654418),           // FX diet
     ("delay_500ms", 0xca8db167654567bd),           // FX diet
     ("reverb_ring", 0x2a4709f629cb4cd8),           // FX diet
