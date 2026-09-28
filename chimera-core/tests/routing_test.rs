@@ -14,11 +14,13 @@ const CUTOFF: ParamAddr = ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF)
 
 #[test]
 fn sources_are_in_spec_order() {
-    let tags = ["E1", "LF1", "E2", "E3", "LF2", "LF3", "VEL", "NTE"];
+    let tags = [
+        "ENV1", "LFO1", "ENV2", "ENV3", "LFO2", "LFO3", "VELO", "NOTE",
+    ];
     for (i, s) in ModSource::ALL.iter().enumerate() {
         assert_eq!(s.index(), i);
         assert_eq!(s.tag(), tags[i]);
-        assert!(s.tag().len() <= 3, "#15");
+        assert_eq!(s.tag().len(), 4);
     }
     assert_eq!(PART_MOD_SOURCES, tags);
     for ct in EngineType::ALL {

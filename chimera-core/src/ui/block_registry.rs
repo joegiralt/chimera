@@ -402,8 +402,9 @@ pub static ALGO_ALG: BlockDef = BlockDef {
 // ---------------------------------------------------------------------------
 
 /// Mod sources every Part voice produces, in `ModSource` order (spec § 2).
-pub static PART_MOD_SOURCES: [&str; crate::modulation::MAX_MOD_SOURCES] =
-    ["E1", "LF1", "E2", "E3", "LF2", "LF3", "VEL", "NTE"];
+pub static PART_MOD_SOURCES: [&str; crate::modulation::MAX_MOD_SOURCES] = [
+    "ENV1", "LFO1", "ENV2", "ENV3", "LFO2", "LFO3", "VELO", "NOTE",
+];
 
 /// The MOD node's sub-list after its home MTX (spec § UI).
 static MOD_SUB_PAGES: [&BlockDef; 7] =
