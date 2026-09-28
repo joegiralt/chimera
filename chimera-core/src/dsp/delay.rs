@@ -19,7 +19,7 @@ pub struct DelayParams {
     /// Wow & flutter depth (0..1) — tape speed instability
     pub wow_flutter: f32,
     /// Tape saturation amount (0..1) — soft clipping in feedback path; 0 is
-    /// the gentlest, never none (ADR 0036)
+    /// the gentlest, never none (ADR 0038)
     pub saturation: f32,
     /// Tone: high-frequency rolloff in feedback (0..1, 0=dark, 1=bright)
     pub tone: f32,
@@ -217,7 +217,7 @@ impl TapeDelay {
             self.lp_state += lp_coeff * (delayed - self.lp_state);
             let filtered = self.lp_state;
 
-            // Tape saturation in the feedback path, always on (ADR 0036): at
+            // Tape saturation in the feedback path, always on (ADR 0038): at
             // SAT 0 the loop is otherwise linear with unity DC gain, so FDBK
             // 1 grows without bound. Bounded by 1 / gain, the write stays
             // within |dry| + FDBK.

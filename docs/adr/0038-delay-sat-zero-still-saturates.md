@@ -1,4 +1,4 @@
-# 0036. The delay's feedback loop saturates at every SAT, SAT 0 included
+# 0038. The delay's feedback loop saturates at every SAT, SAT 0 included
 
 - **Status:** Proposed
 - **Deciders:** firmware (audit #52)
