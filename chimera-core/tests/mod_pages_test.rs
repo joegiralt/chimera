@@ -14,7 +14,7 @@ use chimera_core::ui::block_registry::{
 use chimera_core::ui::fmt::{FmtBuf, fmt_val};
 use chimera_core::ui::page::ValFmt;
 use chimera_core::ui::view::{SlotCtx, View, is_dimmed, view};
-use chimera_hal::{ButtonId, EncoderId};
+use chimera_hal::EncoderId;
 use screen::*;
 
 fn labels(p: &ParamSnapshot, def: &chimera_core::ui::block_def::BlockDef) -> [&'static str; 6] {
@@ -23,17 +23,11 @@ fn labels(p: &ParamSnapshot, def: &chimera_core::ui::block_def::BlockDef) -> [&'
 }
 
 #[test]
-fn the_mod_node_is_e1_with_its_sub_list() {
+fn the_mod_node_is_mtx_with_its_sub_list() {
     let node = ALGO_CHAIN.blocks.last().unwrap();
-    assert_eq!(node.def.id, ENVELOPE.id);
+    assert_eq!(node.def.id, MOD_MATRIX.id);
     assert_eq!(node.map, Some("MOD"));
-    let subs: Vec<&str> = core::iter::once(node.def)
-        .chain(node.sub_pages.iter().copied())
-        .map(|d| d.short)
-        .collect();
-    assert_eq!(subs.first(), Some(&"E1"));
-    assert_eq!(subs.last(), Some(&"MTX"));
-    assert_eq!(node.sub_pages.last().unwrap().id, MOD_MATRIX.id);
+    assert_eq!(node.sub_pages.first().unwrap().id, ENVELOPE.id);
     assert_eq!((ENV_2.id, ENV_3.id), (60, 61));
 }
 
@@ -133,9 +127,7 @@ fn a_type_flip_redraws_the_title() {
     use chimera_core::ui::perf::PerfStats;
     use chimera_core::ui::region::{RegionKind, layout_regions};
     let mut ui = UiState::new();
-    for _ in 0..5 {
-        feed(&mut ui, Input::press(ButtonId::Plus));
-    }
+    to_mod_sub(&mut ui, 1, &ENVELOPE);
     let (mut fb, perf, scope) = (Fb::new(), PerfStats::zero(), scope_fixture());
     ui.render_dirty_with_audio(&mut fb, &perf, None, &scope);
     feed(&mut ui, Input::turn(EncoderId::F, 1)); // TYPE → B
@@ -152,9 +144,7 @@ fn a_type_flip_redraws_the_title() {
 #[test]
 fn a_type_change_reseeds_the_page() {
     let mut ui = UiState::new();
-    for _ in 0..5 {
-        feed(&mut ui, Input::press(ButtonId::Plus));
-    }
+    to_mod_sub(&mut ui, 1, &ENVELOPE);
     feed(&mut ui, Input::turn(EncoderId::F, 1)); // TYPE → B
     ui.update();
     let rise = ui.params().envelopes[0].func.rise;
@@ -181,13 +171,13 @@ fn form_reads_its_modes_names() {
 }
 
 #[test]
-fn the_sub_list_is_e1_to_mtx() {
+fn the_sub_list_is_mtx_then_e1_to_l3() {
     let node = ALGO_CHAIN.blocks.last().unwrap();
     let shorts: Vec<&str> = core::iter::once(node.def)
         .chain(node.sub_pages.iter().copied())
         .map(|d| d.short)
         .collect();
-    assert_eq!(shorts, ["E1", "E2", "E3", "SPD", "L1", "L2", "L3", "MTX"]);
+    assert_eq!(shorts, ["MTX", "E1", "E2", "E3", "SPD", "L1", "L2", "L3"]);
     assert_eq!((ENV_SPEED.id, LFO.id, LFO_2.id, LFO_3.id), (62, 12, 64, 65));
 }
 
@@ -235,7 +225,7 @@ fn a_fixed_slot_is_dimmed_in_the_focus_band() {
     use chimera_core::ui::theme;
     use embedded_graphics::pixelcolor::Rgb565;
     let mut ui = UiState::new();
-    to_mod_sub(&mut ui, 4, &LFO);
+    to_mod_sub(&mut ui, 5, &LFO);
     feed(&mut ui, Input::turn(EncoderId::F, 1)); // TYPE → FUNC
     feed(&mut ui, Input::turn(EncoderId::A, 1)); // MODE: focused, inert
     assert_eq!(ui.focused_slot(), 0);
@@ -281,7 +271,7 @@ fn spd_knobs_drive_the_column_above() {
             .collect()
     };
     let mut ui = UiState::new();
-    to_mod_sub(&mut ui, 3, &ENV_SPEED);
+    to_mod_sub(&mut ui, 4, &ENV_SPEED);
     let e2 = column(&mut ui, 1);
     feed(&mut ui, Input::turn(EncoderId::B, 1));
     assert_eq!(

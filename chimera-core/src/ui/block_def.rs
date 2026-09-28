@@ -199,7 +199,7 @@ pub struct ChainBlock {
     pub def: &'static BlockDef,
     pub sub_pages: &'static [&'static BlockDef],
     /// The map's label for this node when it isn't the home page's short
-    /// (the MOD node's home is E1).
+    /// (the MOD node's home is MTX).
     pub map: Option<&'static str>,
 }
 

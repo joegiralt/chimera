@@ -220,11 +220,8 @@ fn plus(ui: &mut UiState, n: usize) {
     }
 }
 
-/// From the MOD node's home E1, EDIT down to the matrix, its last sub-page.
+/// At the MOD node: its home is the matrix.
 fn to_matrix(ui: &mut UiState) {
-    for _ in 0..7 {
-        feed(ui, Input::press(ButtonId::Edit)); // E2, E3, SPD, L1, L2, L3, MTX
-    }
     assert_eq!(
         ui.page(),
         chimera_core::ui::page::PageKey::Part {
@@ -234,7 +231,7 @@ fn to_matrix(ui: &mut UiState) {
     );
 }
 
-/// From Part 1's home to the MOD node, then EDIT ×`n` down its sub-list
+/// From Part 1's home to the MOD node (MTX), then EDIT ×`n` down its sub-list
 /// to `def`.
 pub fn to_mod_sub(ui: &mut UiState, n: usize, def: &chimera_core::ui::block_def::BlockDef) {
     plus(ui, 5);
@@ -254,7 +251,7 @@ pub fn to_mod_sub(ui: &mut UiState, n: usize, def: &chimera_core::ui::block_def:
 
 /// From Part 1's home to E3: type B, ENV · AD by default.
 fn to_e3(ui: &mut UiState) {
-    to_mod_sub(ui, 2, &reg::ENV_3);
+    to_mod_sub(ui, 3, &reg::ENV_3);
 }
 
 /// Prime the focused slot for modulation (MIX + PLUS).
@@ -299,7 +296,7 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::A, 3)); // MODE: BP12
     }),
     ("env_a", |ui| {
-        plus(ui, 5); // E1, the MOD node's home
+        to_mod_sub(ui, 1, &reg::ENVELOPE);
         feed(ui, Input::turn(EncoderId::B, 6));
     }),
     ("env_b_env_ad", |ui| {
@@ -343,15 +340,15 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::E, 2));
     }),
     ("spd", |ui| {
-        to_mod_sub(ui, 3, &reg::ENV_SPEED);
+        to_mod_sub(ui, 4, &reg::ENV_SPEED);
         feed(ui, Input::turn(EncoderId::B, -1)); // E2 SPEED → FAST
     }),
     ("lfo_classic", |ui| {
-        to_mod_sub(ui, 4, &reg::LFO);
+        to_mod_sub(ui, 5, &reg::LFO);
         feed(ui, Input::turn(EncoderId::A, 5)); // RATE
     }),
     ("lfo_func", |ui| {
-        to_mod_sub(ui, 4, &reg::LFO);
+        to_mod_sub(ui, 5, &reg::LFO);
         feed(ui, Input::turn(EncoderId::F, 1)); // TYPE → FUNC
     }),
     ("amp_vel_dimmed", |ui| {

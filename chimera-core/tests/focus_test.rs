@@ -51,10 +51,7 @@ fn mixer_part_and_matrix_pages_use_the_same_mechanism() {
     assert_eq!(ui.focused_slot(), 3);
     feed(&mut ui, Input::press(ButtonId::B1)); // Part 1 chain, Algo
     for _ in 0..5 {
-        feed(&mut ui, Input::press(ButtonId::Plus)); // → MOD
-    }
-    for _ in 0..7 {
-        feed(&mut ui, Input::press(ButtonId::Edit)); // E1 → MTX
+        feed(&mut ui, Input::press(ButtonId::Plus)); // → MOD: MTX
     }
     assert_eq!(
         ui.page(),

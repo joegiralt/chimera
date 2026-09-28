@@ -155,7 +155,7 @@ const fn env_page(id: u16, name: &'static str, short: &'static str, s: EnvSlot) 
     }
 }
 
-/// E1: the MOD node's home (id 11, once the amp envelope's page).
+/// E1: first of the MOD node's sub-list (id 11, once the amp envelope's page).
 pub static ENVELOPE: BlockDef = env_page(11, "Env 1", "E1", EnvSlot::Env1);
 pub static ENV_2: BlockDef = env_page(60, "Env 2", "E2", EnvSlot::Env2);
 pub static ENV_3: BlockDef = env_page(61, "Env 3", "E3", EnvSlot::Env3);
@@ -405,16 +405,9 @@ pub static ALGO_ALG: BlockDef = BlockDef {
 pub static PART_MOD_SOURCES: [&str; crate::modulation::MAX_MOD_SOURCES] =
     ["E1", "LF1", "E2", "E3", "LF2", "LF3", "VEL", "NTE"];
 
-/// The MOD node's sub-list after its home E1 (spec § UI).
-static MOD_SUB_PAGES: [&BlockDef; 7] = [
-    &ENV_2,
-    &ENV_3,
-    &ENV_SPEED,
-    &LFO,
-    &LFO_2,
-    &LFO_3,
-    &MOD_MATRIX,
-];
+/// The MOD node's sub-list after its home MTX (spec § UI).
+static MOD_SUB_PAGES: [&BlockDef; 7] =
+    [&ENVELOPE, &ENV_2, &ENV_3, &ENV_SPEED, &LFO, &LFO_2, &LFO_3];
 
 static MODAL_SUB_PAGES: [&BlockDef; 1] = [&MODAL_2];
 
@@ -423,7 +416,7 @@ static MODAL_PLUCK_BLOCKS: [ChainBlock; 4] = [
     ChainBlock::with_subs(&FILTER, &FILTER_SUB_PAGES),
     ChainBlock::page(&FOLDER),
     ChainBlock {
-        def: &ENVELOPE,
+        def: &MOD_MATRIX,
         sub_pages: &MOD_SUB_PAGES,
         map: Some("MOD"),
     },
@@ -460,7 +453,7 @@ static ALGO_BLOCKS: [ChainBlock; 6] = [
     ChainBlock::with_subs(&FILTER, &FILTER_SUB_PAGES),
     ChainBlock::page(&FOLDER),
     ChainBlock {
-        def: &ENVELOPE,
+        def: &MOD_MATRIX,
         sub_pages: &MOD_SUB_PAGES,
         map: Some("MOD"),
     },

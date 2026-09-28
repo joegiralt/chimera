@@ -69,10 +69,7 @@ fn an_empty_matrix_says_so() {
         .remove(chimera_core::modulation::CUTOFF);
     feed(&mut ui, Input::press(ButtonId::B1));
     for _ in 0..5 {
-        feed(&mut ui, Input::press(ButtonId::Plus));
-    }
-    for _ in 0..7 {
-        feed(&mut ui, Input::press(ButtonId::Edit)); // E1 → MTX
+        feed(&mut ui, Input::press(ButtonId::Plus)); // → MOD: MTX
     }
     assert_eq!(
         ui.page(),
