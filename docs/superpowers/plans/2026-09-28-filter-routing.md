@@ -81,9 +81,9 @@ Every task's requirements include this section. Numbers are the spec's, verbatim
 
 **CPU and RAM (spec § CPU)**
 - `Voice::cost = Engines::cost + CHAIN_COST + FilterKind::cost(kind, mode) + ModRouting::cost(p, mods)`.
-- `ModRouting::cost` has the spec's shape: a base, plus per ENV slot routed to VCA a term for type A or type B (and more for B in ENV mode with SHAPE off centre), plus a term per other VCA route and one for the clamp and multiply. **Ruling:** the model must never undercount, so until the bench measures each term (Task 13) it bills the plan review's estimates, not the spec's: BASE 30, ENV_A 30, ENV_B 40, CURVE 15 more, OTHER 3, CLAMP 3. Examples: an Algo or Modal Sound with the defaults, 30; ENV 2 (type A) on the VCA, 63; the worst case (three curved B slots and five other sources on the VCA), 30 + 3 + 3·55 + 5·3 = 213. The costliest patch (842) then bills 872, and 6 × 872 + 1,360 = 6,592 ≤ 7,000 keeps six voices on rev V.
+- `ModRouting::cost` has the spec's shape: a base, plus per ENV slot routed to VCA a term for type A or type B (and more for B in ENV mode with SHAPE off centre, or with an ENV n SHAPE route that can move it), plus a term per other VCA route and one for the clamp and multiply. **Ruling:** the model must never undercount, so until the bench measures each term (Task 13) it bills the plan review's estimates, not the spec's: BASE 30, ENV_A 30, ENV_B 40, CURVE 15 more, OTHER 3, CLAMP 3. Examples: an Algo or Modal Sound with the defaults, 30; ENV 2 (type A) on the VCA, 63; the worst case (three curved B slots and five other sources on the VCA), 30 + 3 + 3·55 + 5·3 = 213. The costliest patch (842) then bills 872, and 6 × 872 + 1,360 = 6,592 ≤ 7,000 keeps six voices on rev V.
 - `FilterKind::cost(Svf, _)` is 0 until the bench's SVF row (1 OP at PHASER, minus the 1 OP row) settles it. `CHAIN_COST` is not lowered until the bench shows it.
-- RAM: `Instrument` from 246,728 to about 250,000 B of 286,720; the VCA buffer is on the audio stack (256 B). The existing `const` asserts hold (`[Voice; MAX_VOICES]`, `Instrument`, `AXI_RESIDENT`).
+- RAM: `Instrument` from 246,728 to about 258,000 B of 286,720 (the per-slot coefficient caches, a `FuncGen` in each ENV and LFO slot and `Lfo`'s FUNC state add about 1.5 KB per voice); the VCA buffer is on the audio stack (256 B). The existing `const` asserts hold (`[Voice; MAX_VOICES]`, `Instrument`, `AXI_RESIDENT`).
 
 **Migration and goldens**
 - Before any change, one audio golden per factory Sound (8). They stay bit-identical through this work.
@@ -135,7 +135,7 @@ The executor must not re-decide these; the reviewer checks them against the spec
 | LFV slew per block | closed form toward the block-end target (approximate; per sample it is exact) | Task 6 |
 | Glide | one `Glide` type shared by `Envelope` and `Lfo`; every TYPE/MODE/FORM change sets `d = old − new` (below 1e-6 is none); into A or B ENV `d` is 0 by construction (a clamp into A's 0..1 leaves a remainder that glides); a change seen first at a note-on takes over the same way | Tasks 6, 7 |
 | Kinds in types | **Ruling:** `envelope::Kind { A, B(Func) }`, `view::EnvKind { A(EnvSpeed), B(Func) }`, `view::LfoKind { Classic, Func(LfoForm) }`: no dummy fields on A | Tasks 6, 16, 17 |
-| Per-sample paths | `EnvA::fill` and `FuncGen::fill` write a block of levels in tight per-stage loops (one output evaluation per sample, curve divide once); `Envelope` then adds `amount · (level · peak[n]) + glide[n]` into the VCA's gain, the peak ramped per sample and the glide in its own loop | Tasks 5, 6 |
+| Per-sample paths | `EnvA::fill` and `FuncGen::fill` write a block of levels in tight per-stage loops (one output evaluation per sample, curve divide once). B's positions are anchored, not accumulated: `x = x₀ ± k·step`, re-anchored at each turn, wrap and block start, and φ is a `u32` turn (f32 `+= step` drifts past 1e-4 in the cycling forms); `Envelope` then adds `amount · (level · peak[n]) + glide[n]` into the VCA's gain, the peak ramped per sample and the glide in its own loop | Tasks 5, 6 |
 | Coefficients per block | only the running TYPE's (`ACoefs` or `BCoefs`), and reused while their inputs are unchanged | Tasks 5, 6 |
 | Matrix amount scale | `amount / 127` read from a `const` table of 255 values (bit-identical to the divide), not divided per cell | Task 4 |
 | Tick vs advance tolerance | **Ruling:** each path within 1e-4 of an f64 reference, stage changes within ±1 sample (ADR 0036) | Tasks 5, 6 |
@@ -147,7 +147,7 @@ The executor must not re-decide these; the reviewer checks them against the spec
 | CLASSIC SYNC | a note-on retriggers a CLASSIC LFO with SYNC 1 at its PHASE (today nothing called `retrigger`); FREE, LFV and BURST phases run free | Task 7 |
 | `FilterMode` Lp18, Hp12 | not added: they land with their kinds (#127, #124); `FilterMode` has today's eight | Task 2 |
 | Filter panel data | `ui/filter_panel.rs` (`KindPanel`, `SVF_PANEL`, `panel(kind)`, `applies(kind, id)`), not a method on the DSP enum; `PanelTarget` has `Filter` and `Route` only (TB-303's `Env1` and Prophet's stepped view land with #127, #126) | Task 15 |
-| Slot bindings | `SlotBinding::Route(ModSource)` (Task 4, removed in 14), `FilterPanel(u8)` (main 0–4, extras 5–6), `EnvPanel(EnvSlot, u8)`, `LfoPanel(LfoSlot, u8)` | Tasks 4, 15–17 |
+| Slot bindings | `SlotBinding::Route(ModSource)` (Task 4, removed in 15), `FilterPanel(u8)` (main 0–4, extras 5–6), `EnvPanel(EnvSlot, u8)`, `LfoPanel(LfoSlot, u8)` | Tasks 4, 15–17 |
 | `SlotCtx` | read from any `Blocks` through `Block::get`, so `part_page`'s signatures stay | Task 15 |
 | Dimming | `ui/view.rs::dimmed(addr, &Sound)` and `is_dimmed(&View, &Sound)`: a `View::Text` cell, KIND while one kind is built, a single-mode MODE, AMP VEL with no VCA route, SPD cells of a type-B slot | Tasks 14–17 |
 | Dirty regions | `MatrixState.rev` (bumped on every amount, presence or column change) joins the Grid, Route and Cells keys; the Cells key also packs the six cells' `Look`s | Tasks 8, 14 |
@@ -156,8 +156,8 @@ The executor must not re-decide these; the reviewer checks them against the spec
 | `MAX_PAGES` | 64 → 72 (L2 and L3 take 64 and 65) | Task 17 |
 | `MatrixState::MAX_SOURCES` | 16 → `MAX_MOD_SOURCES` (8): presence is a `u8` | Task 8 |
 | Matrix hint | `PRIME MIX+PLUS  DELETE MIX+MINUS` | Task 8 |
-| Bench layout | a second 30-second screen, ROUTING, with eight rows (1 OP, MODS, SVF, A VCA, B VCA, B CRV, VEL VCA, 2 VCA), each `/VOICE` only | Task 13 |
-| `ModRouting` after the bench | **Ruling:** each term is measured on its own (Task 13): OTHER = 2 VCA − VEL VCA; CLAMP = VEL VCA − 1 OP − OTHER; ENV_A = A VCA − 1 OP − CLAMP; ENV_B = B VCA − 1 OP − CLAMP; CURVE = B CRV − B VCA; BASE = 1 OP − 436 (the 1 OP row before the pool, 2026-09-27). Each is rounded up (a term that reads 0 or below is billed 1), and the model is checked to bill the MODS row at least as measured: after measuring, the measured values are billed, and the MODS check keeps them from undercounting | Task 13 |
+| Bench layout | a second 30-second screen, ROUTING, with ten rows (1 OP, MODS, SVF, A VCA, B VCA, B BST, B LFO, B CRV, VEL VCA, 2 VCA), each in the first screen's `voice_row` form | Task 13 |
+| `ModRouting` after the bench | **Ruling:** each term is measured on its own (Task 13): OTHER = 2 VCA − VEL VCA; CLAMP = VEL VCA − 1 OP − OTHER; ENV_A = A VCA − 1 OP − CLAMP; ENV_B = max(B VCA, B BST, B LFO) − 1 OP − CLAMP, B's costliest form; CURVE = B CRV − B VCA; BASE = 1 OP − 436 (the 1 OP row before the pool, 2026-09-27). Each is rounded up (a term that reads 0 or below is billed 1), and the model is checked to bill the MODS row at least as measured: after measuring, the measured values are billed, and the MODS check keeps them from undercounting | Task 13 |
 
 ## File structure
 
@@ -181,7 +181,7 @@ Modified: `dsp/mod.rs`, `dsp/filter.rs`, `dsp/envelope.rs`, `dsp/lfo.rs`, `dsp/v
 
 1. Lock the factory Sounds
 2. Typed MODE on FLT › MODE; FM, ENV and KEY leave the filter (#111, #57)
-3. CUTOFF in octaves; the cutoff ramps across the block (#53); the `*_lfo_cutoff` goldens re-recorded
+3. CUTOFF in octaves; the cutoff ramps across the block (#53); the `*_lfo_cutoff` goldens re-recorded after the owner's listen — **listen STOP**
 4. Eight matrix sources; ENV, KEY and LFO as route knobs
 5. Envelope A, and ENV 1–3 on it
 6. Envelope B and the ENV slot's TYPE changes
@@ -852,7 +852,7 @@ fn a_cutoff_sweep_does_not_click() {
                 let mut p = FilterParams::default();
                 p.resonance = 0.5;
                 let mut out = Vec::new();
-                for b in 0..40 {
+                for b in 0..40usize {
                     p.cutoff = if how == How::HeldAtMean {
                         0.5 * (fc(b.saturating_sub(1)) + fc(b))
                     } else {
@@ -912,22 +912,29 @@ fn g_ramps_evenly_to_the_new_value() {
     }
 }
 
-/// A block whose cutoff did not change filters exactly as before (the
-/// ramp only runs when `g` moves).
+/// After a cutoff change, the next steady blocks don't ramp again: the
+/// ramp ended on the new `g` and kept it, so dropping any ramp (`hold`)
+/// changes nothing. Fails if the ramp's end isn't stored.
 #[test]
 fn a_steady_cutoff_does_not_ramp() {
-    let p = FilterParams::default();
+    // MODE is private: no struct-update syntax from a test.
+    let (mut lo, mut hi) = (FilterParams::default(), FilterParams::default());
+    (lo.cutoff, hi.cutoff) = (500.0, 2000.0);
     let saw = |b: usize| -> Vec<f32> {
         (0..BLOCK_SIZE)
             .map(|i| ((b * BLOCK_SIZE + i) % 97) as f32 / 48.5 - 1.0)
             .collect()
     };
-    let (mut a, mut b) = (SvfFilter::new(), SvfFilter::new());
-    for blk in 0..10 {
+    let mut a = SvfFilter::new();
+    for (blk, p) in [&lo, &hi].into_iter().enumerate() {
+        a.process(&mut saw(blk), p, SR); // block 1 ramps 500 → 2000 Hz
+    }
+    let mut b = a.clone();
+    for blk in 2..10 {
         let (mut x, mut y) = (saw(blk), saw(blk));
-        a.process(&mut x, &p, SR);
+        a.process(&mut x, &hi, SR);
         b.hold();
-        b.process(&mut y, &p, SR);
+        b.process(&mut y, &hi, SR);
         assert_eq!(x, y, "block {blk}");
     }
 }
@@ -1187,7 +1194,13 @@ fn write_lfo_cutoff_wavs() {
 }
 ```
 
-Name the two files in this task's report so the owner can listen: a cutoff wobbling by about ±5 octaves (64/127 × 10) at 5 Hz, smooth, with no zipper. If the owner hears a problem, the re-record below is reverted and the ramp revisited.
+- [ ] **Step 9b: STOP. Ask the owner to listen, and wait**
+
+Send the owner this, then wait for the answer before re-recording anything:
+
+> Filter-routing Task 3 moves two audio goldens. Please listen to `algo_lfo_cutoff.wav` and `modal_lfo_cutoff.wav` in the scratchpad: a cutoff wobbling by about ±5 octaves (64/127 × 10) at 5 Hz. It should be smooth, with no zipper or clicks. OK to re-record them?
+
+If the owner hears a problem, fix the ramp (Step 5) and go back to Step 7. Re-record only on the owner's yes.
 
 - [ ] **Step 10: Re-record the two rows**
 
@@ -1314,9 +1327,17 @@ fn env1_lfo1_vel_and_note_move_their_destination() {
             "{source:?}"
         );
     }
-    // VEL follows the velocity. (ENV 1 carries none: `envelope.rs`'s
-    // `the_env1_source_ignores_velocity`.)
-    assert_ne!(render(ModSource::Vel, 100, 60, 30), render(ModSource::Vel, 100, 60, 120));
+    // VEL follows the velocity. The route's effect is measured against the
+    // same velocity with the route at 0, so the engine's own velocity
+    // response cancels; a harder note opens the filter further. (ENV 1
+    // carries none: `envelope.rs`'s unit test until Task 5, then `note_on`'s
+    // signature, which takes none.)
+    let effect = |vel| {
+        let (on, off) = (render(ModSource::Vel, 100, 60, vel), render(ModSource::Vel, 0, 60, vel));
+        let diff: f32 = on.iter().zip(&off).map(|(a, b)| (a - b).abs()).sum();
+        diff / off.iter().map(|x| x.abs()).sum::<f32>()
+    };
+    assert!(effect(120) > effect(30), "{} vs {}", effect(120), effect(30));
 }
 ```
 
@@ -2075,11 +2096,15 @@ fn near(refs: &[(Stage, f64)], n: usize, stage: Option<Stage>, level: f32) -> bo
 /// (`advance`) each match the f64 reference across every stage boundary.
 #[test]
 fn each_path_matches_an_f64_reference() {
-    for (speed, hold_pos, hold, a, d, s, r) in [
-        (EnvSpeed::Fast, HoldPos::Off, 0.0, 0.0, 0.3, 0.5, 0.3), // attack ends mid-block
-        (EnvSpeed::Med, HoldPos::Ahdsr, 0.55, 0.19, 0.4, 0.2, 0.4), // a hold stage
-        (EnvSpeed::Med, HoldPos::GateExt, 0.6, 0.1, 0.2, 0.6, 0.3), // GATE EXT falls mid-block
-        (EnvSpeed::Fast, HoldPos::Ahdsr, 0.0, 0.05, 0.05, 0.0, 0.05), // decay to 0, release to idle
+    // (…, blocks the key is held)
+    for (speed, hold_pos, hold, a, d, s, r, held) in [
+        (EnvSpeed::Fast, HoldPos::Off, 0.0, 0.0, 0.3, 0.5, 0.3, 150), // attack ends mid-block
+        (EnvSpeed::Med, HoldPos::Ahdsr, 0.55, 0.19, 0.4, 0.2, 0.4, 150), // a hold stage
+        // GATE EXT: the key is up after one block, well inside H (760
+        // samples), so the extended gate decides where the release starts,
+        // mid-block.
+        (EnvSpeed::Med, HoldPos::GateExt, 0.6, 0.1, 0.2, 0.6, 0.3, 1),
+        (EnvSpeed::Fast, HoldPos::Ahdsr, 0.0, 0.05, 0.05, 0.0, 0.05, 150), // decay to 0, release to idle
     ] {
         let p = EnvParams {
             speed,
@@ -2092,7 +2117,7 @@ fn each_path_matches_an_f64_reference() {
             ..EnvParams::default()
         };
         const BLOCKS: usize = 300;
-        let key = |b: usize| b < 150;
+        let key = |b: usize| b < held;
         let mut reference = RefA::new(&p, SR);
         reference.note_on();
         let refs: Vec<(Stage, f64)> = (0..BLOCKS * BLOCK_SIZE)
@@ -3502,10 +3527,15 @@ fn type_mode_and_form_changes_never_step() {
                 if into_env && (0.0..=1.0).contains(&before) {
                     assert!(!e.gliding(), "{from:?} → {to:?} glides");
                 }
-                for _ in 0..4 {
-                    e.run_block(&to, &EnvMods::NONE, key_down, SR, None);
+                let mut last = [0.0f32; 4];
+                for l in last.iter_mut() {
+                    *l = e.run_block(&to, &EnvMods::NONE, key_down, SR, None);
                 }
                 assert!(!e.gliding(), "the glide lasts 256 samples");
+                // A held CYCLE never parks, whatever level it was entered at.
+                if key_down && to.env_type == EnvType::B && to.func.func() == Func::Env(EnvForm::Cycle) {
+                    assert_ne!(last[2], last[3], "{from:?} → CYCLE is moving");
+                }
             }
         }
     }
@@ -3852,6 +3882,10 @@ pub struct BCoefs {
     /// LFV's slew: its per-sample step and `log2` retention (none: 1, −∞).
     slew_c: f32,
     slew_k: f32,
+    /// φ's step per sample in a `u32` turn (LFO; BURST's pulse phase): an
+    /// integer accumulator wraps exactly, where `phase += step` in f32
+    /// drifts past 1e-4 within a second.
+    inc: u32,
 }
 
 impl BCoefs {
@@ -3897,9 +3931,16 @@ impl BCoefs {
             fall_pos,
             slew_c,
             slew_k,
+            inc: match func {
+                Func::Env(_) => 0,
+                Func::Lfo(_) | Func::Burst(_) => (rise * TURN) as u32,
+            },
         }
     }
 }
+
+/// One turn of φ as a `u32`.
+const TURN: f32 = 4_294_967_296.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Seg {
@@ -3917,8 +3958,13 @@ pub struct FuncGen {
     /// ENV: the running segment's linear position, 0..1 (a fall runs 1 → 0).
     /// BURST: time into the burst, a fraction of LENGTH.
     x: f32,
-    /// LFO φ; BURST's pulse phase.
-    phase: f32,
+    /// `x`'s anchor: `x = x0 ± k·step`, computed, not accumulated, so a
+    /// constant step's f32 rounding can't build up (ADR 0036). Re-anchored
+    /// at every turn, wrap and block start (`go`, `set`).
+    x0: f32,
+    k: u32,
+    /// LFO φ; BURST's pulse phase: a `u32` turn.
+    phase: u32,
     /// LFV: the cycle's start and end targets, and the slewed output.
     from: f32,
     to: f32,
@@ -3944,7 +3990,9 @@ impl FuncGen {
             func: Func::Env(EnvForm::Ad),
             seg: Seg::Idle,
             x: 0.0,
-            phase: 0.0,
+            x0: 0.0,
+            k: 0,
+            phase: 0,
             from: 0.0,
             to: 0.0,
             slewed: 0.0,
@@ -3956,10 +4004,22 @@ impl FuncGen {
         }
     }
 
-    /// Take a block's MODE, FORM and shape.
+    /// Take a block's MODE, FORM and shape; re-anchor, since the step may
+    /// change.
     pub fn set(&mut self, c: &BCoefs) {
         self.func = c.func;
         (self.w, self.tilt, self.phase_off) = (c.w, c.shape, c.fall_pos);
+        (self.x0, self.k) = (self.x, 0);
+    }
+
+    /// Into segment `seg` at `x`, anchored there.
+    fn go(&mut self, seg: Seg, x: f32) {
+        (self.seg, self.x, self.x0, self.k) = (seg, x, x, 0);
+    }
+
+    /// φ as 0..1.
+    fn phase_f(&self) -> f32 {
+        self.phase as f32 * (1.0 / TURN)
     }
 
     /// A note-on: AD and AHR rise from the current level, CYCLE restarts its
@@ -3968,14 +4028,17 @@ impl FuncGen {
     pub fn note_on(&mut self, f: Func) {
         self.func = f;
         match f {
-            Func::Env(EnvForm::Cycle) => (self.seg, self.x) = (Seg::Rise, 0.0),
+            Func::Env(EnvForm::Cycle) => self.go(Seg::Rise, 0.0),
             Func::Env(_) => {
                 let l = self.env_level();
-                (self.seg, self.x) = (Seg::Rise, curve_inv(l, self.w));
+                self.go(Seg::Rise, curve_inv(l, self.w));
             }
-            Func::Lfo(LfoForm::Sync) => self.phase = 0.0,
+            Func::Lfo(LfoForm::Sync) => self.phase = 0,
             Func::Lfo(_) => {}
-            Func::Burst(_) => (self.seg, self.x, self.last_burst) = (Seg::Rise, 0.0, false),
+            Func::Burst(_) => {
+                self.go(Seg::Rise, 0.0);
+                self.last_burst = false;
+            }
         }
     }
 
@@ -3987,7 +4050,7 @@ impl FuncGen {
                 let l = self.env_level();
                 self.fall_from(l);
             }
-            (Func::Env(EnvForm::Ahr), Seg::Hold) => (self.seg, self.x) = (Seg::Fall, 1.0),
+            (Func::Env(EnvForm::Ahr), Seg::Hold) => self.go(Seg::Fall, 1.0),
             (Func::Burst(EnvForm::Ahr), Seg::Hold) => self.seg = Seg::Rise,
             (Func::Burst(EnvForm::Cycle), Seg::Rise) => self.last_burst = true,
             _ => {}
@@ -3995,7 +4058,7 @@ impl FuncGen {
     }
 
     fn fall_from(&mut self, l: f32) {
-        (self.seg, self.x) = (Seg::Fall, 1.0 - curve_inv(1.0 - l, self.w));
+        self.go(Seg::Fall, 1.0 - curve_inv(1.0 - l, self.w));
     }
 
     /// ENV mode's level: `f(x)` rising, `1 − f(1 − x)` falling.
@@ -4012,7 +4075,7 @@ impl FuncGen {
         if form == LfoForm::Lfv {
             return self.slewed;
         }
-        let p = self.phase + self.phase_off;
+        let p = self.phase_f() + self.phase_off;
         2.0 * tilt(p - (p as u32) as f32, self.tilt) - 1.0
     }
 
@@ -4021,12 +4084,13 @@ impl FuncGen {
             return 0.0;
         }
         let env = tilt(self.x.min(1.0), self.tilt);
+        let ph = self.phase_f();
         let pulse = if form == EnvForm::Cycle {
-            tilt(self.phase, self.tilt)
+            tilt(ph, self.tilt)
         } else {
             let m = 1.0 - (2.0 * self.tilt - 1.0).abs();
-            let square = if self.phase < 0.5 { 1.0 } else { 0.0 };
-            let sine = 0.5 - 0.5 * fast_sin(TAU * self.phase + FRAC_PI_2);
+            let square = if ph < 0.5 { 1.0 } else { 0.0 };
+            let sine = 0.5 - 0.5 * fast_sin(TAU * ph + FRAC_PI_2);
             (1.0 - m) * square + m * sine
         };
         env * pulse
@@ -4043,7 +4107,7 @@ impl FuncGen {
 
     /// One sample; returns the output after it.
     pub fn tick(&mut self, c: &BCoefs, key: bool) -> f32 {
-        self.step(c, key, 1.0, true);
+        self.step(c, key, 1, true);
         self.output()
     }
 
@@ -4054,19 +4118,19 @@ impl FuncGen {
         match c.func {
             Func::Env(form) => {
                 for o in out.iter_mut() {
-                    self.env_step(c, form, key, 1.0);
+                    self.env_step(c, form, key, 1);
                     *o = self.env_level();
                 }
             }
             Func::Lfo(form) => {
                 for o in out.iter_mut() {
-                    self.lfo_step(c, form, 1.0, true);
+                    self.lfo_step(c, form, 1, true);
                     *o = self.lfo_level(form);
                 }
             }
             Func::Burst(form) => {
                 for o in out.iter_mut() {
-                    self.burst_step(c, form, key, 1.0);
+                    self.burst_step(c, form, key, 1);
                     *o = self.burst_level(form);
                 }
             }
@@ -4076,10 +4140,10 @@ impl FuncGen {
     /// `n` samples at once: linear in `x` and φ, so within ±1 sample of `n`
     /// ticks (ADR 0036).
     pub fn advance(&mut self, c: &BCoefs, key: bool, n: u32) {
-        self.step(c, key, n as f32, false);
+        self.step(c, key, n, false);
     }
 
-    fn step(&mut self, c: &BCoefs, key: bool, n: f32, tick: bool) {
+    fn step(&mut self, c: &BCoefs, key: bool, n: u32, tick: bool) {
         match c.func {
             Func::Env(form) => self.env_step(c, form, key, n),
             Func::Lfo(form) => self.lfo_step(c, form, n, tick),
@@ -4087,48 +4151,48 @@ impl FuncGen {
         }
     }
 
-    fn env_step(&mut self, c: &BCoefs, form: EnvForm, key: bool, n: f32) {
+    fn env_step(&mut self, c: &BCoefs, form: EnvForm, key: bool, n: u32) {
+        self.k += n;
         match self.seg {
-            Seg::Rise => self.x += n * c.rise,
-            Seg::Fall => self.x -= n * c.fall,
+            Seg::Rise => self.x = self.x0 + self.k as f32 * c.rise,
+            Seg::Fall => self.x = self.x0 - self.k as f32 * c.fall,
             Seg::Idle | Seg::Hold => return,
         }
-        // Turns carry the overshoot into the next segment.
+        // Turns carry the overshoot into the next segment, anchored there.
         for _ in 0..4 {
             match self.seg {
                 Seg::Rise if self.x >= 1.0 => {
                     if form == EnvForm::Ahr && key {
-                        (self.seg, self.x) = (Seg::Hold, 1.0);
+                        self.go(Seg::Hold, 1.0);
                         return;
                     }
-                    (self.seg, self.x) = (Seg::Fall, 1.0 - (self.x - 1.0) * c.fall_per_rise);
+                    self.go(Seg::Fall, 1.0 - (self.x - 1.0) * c.fall_per_rise);
                 }
                 Seg::Fall if self.x <= 0.0 => {
                     if form != EnvForm::Cycle {
-                        (self.seg, self.x) = (Seg::Idle, 0.0);
+                        self.go(Seg::Idle, 0.0);
                         return;
                     }
-                    (self.seg, self.x) = (Seg::Rise, -self.x * c.rise_per_fall);
+                    self.go(Seg::Rise, -self.x * c.rise_per_fall);
                 }
                 _ => return,
             }
         }
     }
 
-    fn lfo_step(&mut self, c: &BCoefs, form: LfoForm, n: f32, tick: bool) {
-        self.phase += n * c.rise;
-        if self.phase >= 1.0 {
-            self.phase -= (self.phase as u32) as f32;
-            if form == LfoForm::Lfv {
+    fn lfo_step(&mut self, c: &BCoefs, form: LfoForm, n: u32, tick: bool) {
+        // Exact in integers; per block the clamp allows at most one wrap.
+        let t = self.phase as u64 + c.inc as u64 * n as u64;
+        self.phase = t as u32;
+        if form == LfoForm::Lfv {
+            if t >> 32 != 0 {
                 self.next_target(c.fall_pos);
             }
-        }
-        if form == LfoForm::Lfv {
-            let lin = self.from + (self.to - self.from) * self.phase;
+            let lin = self.from + (self.to - self.from) * self.phase_f();
             self.slewed = if tick {
                 self.slewed + c.slew_c * (lin - self.slewed)
             } else {
-                lin + (self.slewed - lin) * fast_exp2(c.slew_k * n)
+                lin + (self.slewed - lin) * fast_exp2(c.slew_k * n as f32)
             };
         }
     }
@@ -4145,21 +4209,21 @@ impl FuncGen {
         self.to = (self.to + delta * r).max(-1.0).min(1.0);
     }
 
-    fn burst_step(&mut self, c: &BCoefs, form: EnvForm, key: bool, n: f32) {
-        self.phase += n * c.rise;
-        self.phase -= (self.phase as u32) as f32;
+    fn burst_step(&mut self, c: &BCoefs, form: EnvForm, key: bool, n: u32) {
+        self.phase = self.phase.wrapping_add(c.inc.wrapping_mul(n));
         if matches!(self.seg, Seg::Idle | Seg::Hold) {
             return;
         }
         let before = self.x;
-        self.x += n * c.fall;
+        self.k += n;
+        self.x = self.x0 + self.k as f32 * c.fall;
         if form == EnvForm::Ahr && key && before <= c.shape && self.x >= c.shape {
-            (self.seg, self.x) = (Seg::Hold, c.shape);
+            self.go(Seg::Hold, c.shape);
         } else if self.x >= 1.0 {
             if form == EnvForm::Cycle && !self.last_burst {
-                self.x -= 1.0;
+                self.go(Seg::Rise, self.x - 1.0);
             } else {
-                (self.seg, self.x) = (Seg::Idle, 0.0);
+                self.go(Seg::Idle, 0.0);
             }
         }
     }
@@ -4184,29 +4248,33 @@ impl FuncGen {
         match self.func {
             Func::Env(_) => self.seg == Seg::Rise,
             Func::Lfo(_) => {
-                let p = self.phase + self.phase_off;
+                let p = self.phase_f() + self.phase_off;
                 p - (p as u32) as f32 < self.tilt
             }
             Func::Burst(_) => self.seg != Seg::Idle && self.x < self.tilt,
         }
     }
 
-    /// Into ENV mode at `level` (spec § 1): rising → rise from it, else fall from it.
+    /// Into ENV mode at `level` (spec § 1): rising → rise from it, else fall
+    /// from it. At 0 the fall is already over: CYCLE turns and rises (its own
+    /// rule), AD and AHR are done. Call after `set`, which names the FORM.
     pub fn enter_env(&mut self, level: f32, rising: bool) {
         let l = level.max(0.0).min(1.0);
         if rising {
-            (self.seg, self.x) = (Seg::Rise, curve_inv(l, self.w));
+            self.go(Seg::Rise, curve_inv(l, self.w));
         } else if l > 0.0 {
             self.fall_from(l);
+        } else if self.func == Func::Env(EnvForm::Cycle) {
+            self.go(Seg::Rise, 0.0);
         } else {
-            (self.seg, self.x) = (Seg::Idle, 0.0);
+            self.go(Seg::Idle, 0.0);
         }
     }
 
     /// Into BURST: a burst starts now if the key is held.
     pub fn enter_burst(&mut self, key: bool) {
-        self.seg = if key { Seg::Rise } else { Seg::Idle };
-        (self.x, self.last_burst) = (0.0, false);
+        self.go(if key { Seg::Rise } else { Seg::Idle }, 0.0);
+        self.last_burst = false;
     }
 }
 
@@ -4235,6 +4303,22 @@ mod tests {
         assert!(burst.fall <= max * 1.0001);
         assert!(coefs(Func::Env(EnvForm::Cycle), true).rise > max);
         assert!(coefs(Func::Env(EnvForm::Ad), false).rise > max);
+    }
+
+    /// CYCLE entered at level 0 (from a finished AD, or an idle A) rises at
+    /// once instead of parking; AD entered at 0 stays done.
+    #[test]
+    fn cycle_entered_at_zero_rises() {
+        for (f, moves) in [(Func::Env(EnvForm::Cycle), true), (Func::Env(EnvForm::Ad), false)] {
+            let mut p = FuncParams::ENV;
+            p.set_func(f);
+            let c = BCoefs::new(&p, &Slides::default(), 48_000, false);
+            let mut g = FuncGen::new();
+            g.set(&c);
+            g.enter_env(0.0, false);
+            g.advance(&c, true, 64);
+            assert_eq!(g.output() > 0.0, moves, "{f:?}");
+        }
     }
 }
 ```
@@ -4340,12 +4424,10 @@ impl Envelope {
             bc: None,
             peak: 1.0,
             prev_peak: 1.0,
-            glide: Glide { d: 0.0, left: 0 },
+            glide: Glide::NONE,
         }
     }
 ```
-
-(`Glide`'s fields are private to `modulator`; give it `pub const NONE: Self = Self { d: 0.0, left: 0 };` in Task 6's Step 3 and write `glide: Glide::NONE` here.)
 
 ```rust
     /// This block's A coefficients, rebuilt only when an input changed.
@@ -5270,9 +5352,14 @@ In `chimera-core/src/ui/mod.rs`, delete the local `CUTOFF` const and `use crate:
 - `matrix_view_test.rs`, `an_empty_matrix_says_so`: after `UiState::new()`, empty Part 1's matrix first: `ui.performance.parts[0].sound.dest_registry.remove(chimera_core::modulation::CUTOFF); feed(&mut ui, Input::press(ButtonId::B1));`, then the five PLUS.
 - `prime_status_test.rs:107` measures the old hint: measure `chimera_core::ui::mod_grid::HINT` instead, and assert it fits `theme::SCREEN_W - 2 * theme::MARGIN_X`.
 
-- `ui_routing_test.rs`: `algo_matrix_rows_are_env_and_lfo` expects `ui.matrix_state.num_dests == 1`; the default CUTOFF column is column 0, so `set_first_amount` now sets E1 → CUTOFF, and every `routes(&ui, p)` expectation gains that leading `(CUTOFF, amount)` entry, with the amount set by `set_first_amount` on it (for example `[(CUTOFF, 10), (drive, 0)]`).
+- `ui_routing_test.rs` (`use chimera_core::modulation::CUTOFF;`). The default CUTOFF column is column 0 in every new Sound, so:
+  - `algo_matrix_rows_are_env_and_lfo`: `ui.matrix_state.num_dests == 1`.
+  - `priming_on_a_part_page_registers_its_address`: `primed(&ui) == [CUTOFF, ParamAddr::new(BlockRef::Drive, DriveParams::DRIVE)]`, the label check reads `reg.get(1)` (`"DRVDRIVE"`), and `num_dests() == 2`.
+  - `switching_part_rebuilds_the_matrix_for_that_part`: `set_first_amount` now sets E1 → CUTOFF (column 0). Part 1 reads `[(CUTOFF, 10), (drive, 0)]`. Part 2 starts at `num_dests == 1` ("only its default CUTOFF column"), and its primed address is `dest_registry.get(1)`. After its `set_first_amount(20)`, Part 2 reads `[(CUTOFF, 20), (p2, 0)]` and Part 1 still reads `[(CUTOFF, 10), (drive, 0)]`. Back on Part 1, `(num_dests, amounts[0][0]) == (2, 10)`. After `set_first_amount(1)`, Part 1 reads `[(CUTOFF, 11), (drive, 0)]` and Part 2 `[(CUTOFF, 20), (p2, 0)]`.
+  - `priming_after_a_stale_cursor_does_not_inherit_a_phantom_amount` is rewritten, since the old column 2 is no longer past Part 2's end. Part 1 now has four columns (CUTOFF, DRIVE, TONE, MIX). The cursor turn becomes `encoder(EncoderId::B, 3)` with `sel_col == 3`. On Part 2, after priming DRIVE, `num_dests == 2` (CUTOFF, DRIVE) and the cursor clamps to its last column, `sel_col == 1`, with the same message. The E turn then edits Part 2's DRIVE at column 1. After priming MIX, `num_dests == 3`, and `routes(&ui, 1) == [(CUTOFF, 0), (drive, 50), (mix, 0)]`, where the E turn edited Part 2's own DRIVE, not a phantom column. The doc comment's column numbers follow.
+  - `un_priming_keeps_the_other_routes_own_amounts`: DRIVE, TONE and MIX are columns 1, 2 and 3, and `num_dests == 3` becomes 4. In the matrix, each amount follows a `B` turn: `B 1` (column 1), `E 10`; `B 1`, `E 20`; `B 1`, `E 30`, with the comments renumbered. Then `routes(&ui, 0).len() == 4`. After un-priming TONE, `num_dests == 3` and `routes(&ui, 0) == [(CUTOFF, 0), (drive, 10), (mix, 30)]`.
 
-Any other test that fails only because a new Sound now has the CUTOFF column is updated the same way; a failure for any other reason is a bug to fix.
+These are all the tests the default column turns red; any other failure at Step 9 is a bug or a gap in this list, and is fixed at its cause, not by editing the test.
 
 - [ ] **Step 9: Run the tests**
 
@@ -5372,10 +5459,12 @@ fn env_destinations_are_modulatable() {
 fn vel_to_level_scales_env1() {
     let e1_cut = (ModSource::Env1, CUTOFF, 127);
     let level = |amt| (ModSource::Vel, env(EnvSlot::Env1, EnvParams::LEVEL), amt);
-    assert_ne!(
-        render_with(&plain(), &[e1_cut, level(127)], 30),
-        render_with(&plain(), &[e1_cut, level(127)], 120)
-    );
+    // Against the same velocity without the LEVEL route, so the engine's
+    // own velocity response cancels: at full velocity the peak is exactly 1
+    // (1.0 × 127/127), a soft note lowers it.
+    let no_level = |vel| render_with(&plain(), &[e1_cut], vel);
+    assert_eq!(render_with(&plain(), &[e1_cut, level(127)], 127), no_level(127), "full velocity: peak 1");
+    assert_ne!(render_with(&plain(), &[e1_cut, level(127)], 30), no_level(30), "a soft note: a lower peak");
     assert_eq!(
         render_with(&plain(), &[e1_cut, level(0)], 100),
         render_with(&plain(), &[(ModSource::Env1, CUTOFF, 0), level(0)], 100)
@@ -6139,6 +6228,19 @@ fn mod_routing_bills_the_spec_shape() {
     let three_b = M::ENV_B + M::CURVE + M::ENV_B + M::CURVE + M::ENV_B + M::CURVE;
     let five_other = Cost(5 * M::OTHER.0);
     assert_eq!(M::cost(&worst, &routed(&ModSource::ALL)), M::BASE + M::CLAMP + three_b + five_other);
+    // A route into ENV 2's SHAPE bills the curve on a centred B ENV.
+    let mut b2 = p.clone();
+    (b2.envelopes[1].env_type, b2.envelopes[1].func.mode) = (EnvType::B, FuncMode::Env);
+    let mut shaped = routed(&[ModSource::Env2]);
+    let d = shaped
+        .push(chimera_core::addr::ParamAddr::new(
+            chimera_core::addr::BlockRef::Env(chimera_core::dsp::modulator::EnvSlot::Env2),
+            chimera_core::params::EnvParams::SHAPE,
+        ))
+        .unwrap();
+    shaped.set_route(ModSource::Lfo1.index(), d, 64);
+    assert_eq!(M::cost(&b2, &routed(&[ModSource::Env2])), M::BASE + M::CLAMP + M::ENV_B);
+    assert_eq!(M::cost(&b2, &shaped), M::BASE + M::CLAMP + M::ENV_B + M::CURVE);
     // The review's estimates, until the bench (Task 13): 30, 63 and 213.
     assert_eq!((M::BASE, M::cost(&p, &routed(&[ModSource::Env2]))), (Cost(30), Cost(63)));
     assert_eq!(M::cost(&worst, &routed(&ModSource::ALL)), Cost(213));
@@ -6161,9 +6263,10 @@ Expected: FAIL to compile: no `ModRouting`.
 In `chimera-core/src/modulation.rs`:
 
 ```rust
+use crate::addr::{BlockRef, ParamAddr};
 use crate::dsp::modulator::{EnvType, FuncMode};
 use crate::hw::Cost;
-use crate::params::ParamSnapshot;
+use crate::params::{EnvParams, ParamSnapshot};
 
 /// The modulator pool's cycles per sample (spec § CPU). Never low: the
 /// plan review's estimates until the bench measures each term.
@@ -6176,7 +6279,8 @@ impl ModRouting {
     pub const ENV_A: Cost = Cost(30);
     /// Type B filling it.
     pub const ENV_B: Cost = Cost(40);
-    /// More for B in ENV mode with SHAPE off centre: a divide per sample.
+    /// More for B in ENV mode with SHAPE off centre, or with a route into
+    /// its SHAPE: a divide per sample.
     pub const CURVE: Cost = Cost(15);
     /// Each other VCA route's ramp.
     pub const OTHER: Cost = Cost(3);
@@ -6191,13 +6295,21 @@ impl ModRouting {
         ModSource::ALL
             .iter()
             .filter(|s| bits & (1 << s.index()) != 0)
-            .map(|s| match s.env_slot().map(|e| &p.envelopes[e.index()]) {
-                Some(e) if e.env_type == EnvType::A => Self::ENV_A,
-                Some(e) if e.func.mode == FuncMode::Env && e.func.shape != 0.5 => {
-                    Self::ENV_B + Self::CURVE
-                }
-                Some(_) => Self::ENV_B,
+            .map(|s| match s.env_slot() {
                 None => Self::OTHER,
+                Some(slot) => {
+                    let e = &p.envelopes[slot.index()];
+                    // A SHAPE route moves a centred SHAPE off 0.5: the divide runs.
+                    let shape_routed =
+                        mods.routes_into(ParamAddr::new(BlockRef::Env(slot), EnvParams::SHAPE)) != 0;
+                    match e.env_type {
+                        EnvType::A => Self::ENV_A,
+                        EnvType::B if e.func.mode == FuncMode::Env && (e.func.shape != 0.5 || shape_routed) => {
+                            Self::ENV_B + Self::CURVE
+                        }
+                        EnvType::B => Self::ENV_B,
+                    }
+                }
             })
             .fold(Self::BASE + Self::CLAMP, |a, b| a + b)
     }
@@ -6231,14 +6343,14 @@ The cost model went live in Task 12 on estimates; the UI tasks after this build 
 
 **Interfaces:**
 - Consumes: `ModState::{find, set_route}`, `ModRouting`, `FilterMode::Phaser`.
-- Produces: `bench::ROUTING: [RoutingRow; 8]`, `RoutingRow = (&'static str, fn(&mut PartAudio))`; the readings, recorded for Task 15's `FilterKind::cost`.
+- Produces: `bench::ROUTING: [RoutingRow; 10]`, `RoutingRow = (&'static str, fn(&mut PartAudio))`; the readings, recorded for Task 15's `FilterKind::cost`.
 
 - [ ] **Step 1: The rows**
 
 In `chimera-stm32/src/bench.rs` (`use chimera_core::instrument::PartAudio;` and the core types named below):
 
 ```rust
-const ROUTING_ROWS: usize = 8;
+const ROUTING_ROWS: usize = 10;
 
 /// A ROUTING row: its label and the Part it plays (params and matrix). Each
 /// per-VCA row is 1 OP plus one routing, so its reading less 1 OP (and
@@ -6252,20 +6364,24 @@ const ROUTING: [RoutingRow; ROUTING_ROWS] = [
         p.params.filter.set_mode(FilterMode::Phaser); // the SVF's costliest mode
     }),
     ("A VCA", |p| on_vca(p, &[ModSource::Env2], None)),
-    ("B VCA", |p| on_vca(p, &[ModSource::Env2], Some(0.5))),
-    ("B CRV", |p| on_vca(p, &[ModSource::Env2], Some(0.8))),
+    ("B VCA", |p| on_vca(p, &[ModSource::Env2], Some((Func::Env(EnvForm::Ad), 0.5)))),
+    // BURST: `fast_sin` and two `tilt` divides per sample.
+    ("B BST", |p| on_vca(p, &[ModSource::Env2], Some((Func::Burst(EnvForm::Ad), 0.8)))),
+    // LFO: a `tilt` divide and a wrap per sample.
+    ("B LFO", |p| on_vca(p, &[ModSource::Env2], Some((Func::Lfo(LfoForm::Free), 0.8)))),
+    ("B CRV", |p| on_vca(p, &[ModSource::Env2], Some((Func::Env(EnvForm::Ad), 0.8)))),
     ("VEL VCA", |p| on_vca(p, &[ModSource::Vel], None)),
     ("2 VCA", |p| on_vca(p, &[ModSource::Vel, ModSource::Note], None)),
 ];
 
-/// 1 OP with `sources` routed to the VCA at 127; with `b_shape`, ENV 2 is
-/// type B in ENV mode at that SHAPE (0.5 linear, 0.8 curved).
-fn on_vca(p: &mut PartAudio, sources: &[ModSource], b_shape: Option<f32>) {
+/// 1 OP with `sources` routed to the VCA at 127; with `b`, ENV 2 is type
+/// B running that `Func` at that SHAPE (0.5 linear, 0.8 curved or tilted).
+fn on_vca(p: &mut PartAudio, sources: &[ModSource], b: Option<(Func, f32)>) {
     p.params = algo(AlgoId::A1, 0b1, 0);
-    if let Some(shape) = b_shape {
+    if let Some((f, shape)) = b {
         let e2 = &mut p.params.envelopes[1];
         e2.env_type = EnvType::B;
-        e2.func.set_func(Func::Env(EnvForm::Ad));
+        e2.func.set_func(f);
         e2.func.shape = shape;
     }
     let mut reg = ModDestRegistry::new();
@@ -6316,8 +6432,8 @@ fn mods(p: &mut PartAudio) {
     p.mod_state = ms;
 }
 
-/// The ROUTING screen, in the first screen's `voice_row`s: eight rows from
-/// y 46 at `ROW_H` 25 end at 233.
+/// The ROUTING screen, in the first screen's `voice_row`s: ten rows from
+/// y 46 at `ROW_H` 25 end at 283.
 fn show_routing(display: &mut impl ChimeraDisplay, rows: &[[u32; MAX_VOICES]; ROUTING_ROWS]) {
     draw::fill_rect(display, 0, 0, theme::SCREEN_W, theme::SCREEN_H, theme::BG);
     draw::text(display, &theme::FONT_VALUE, "ROUTING", 4, 16, theme::INK);
@@ -6329,7 +6445,7 @@ fn show_routing(display: &mut impl ChimeraDisplay, rows: &[[u32; MAX_VOICES]; RO
 }
 ```
 
-(`use chimera_core::addr::{BlockRef, ParamAddr}; use chimera_core::dsp::algo::params::AlgoParams; use chimera_core::dsp::filter::FilterMode; use chimera_core::dsp::modulator::{EnvForm, EnvType, Func, LfoType}; use chimera_core::mod_path::ModDestRegistry; use chimera_core::modulation::{CUTOFF, MAX_MOD_SOURCES, ModSource, ModState, VCA}; use chimera_core::params::{FilterParams, FolderParams, OutParams};`.) In `run`, after the first screen's hold loop:
+(`use chimera_core::addr::{BlockRef, ParamAddr}; use chimera_core::dsp::algo::params::AlgoParams; use chimera_core::dsp::filter::FilterMode; use chimera_core::dsp::modulator::{EnvForm, EnvType, Func, LfoForm, LfoType}; use chimera_core::mod_path::ModDestRegistry; use chimera_core::modulation::{CUTOFF, MAX_MOD_SOURCES, ModSource, ModState, VCA}; use chimera_core::params::{FilterParams, FolderParams, OutParams};`.) In `run`, after the first screen's hold loop:
 
 ```rust
     let mut routing = [[0u32; MAX_VOICES]; ROUTING_ROWS];
@@ -6352,7 +6468,7 @@ fn show_routing(display: &mut impl ChimeraDisplay, rows: &[[u32; MAX_VOICES]; RO
     }
 ```
 
-Run: `cargo fmt --all && just check` (it builds and lints the bench feature and runs the stack check; `routing` is 192 B on the stack). Commit:
+Run: `cargo fmt --all && just check` (it builds and lints the bench feature and runs the stack check; `routing` is 240 B on the stack). Commit:
 
 ```bash
 git add chimera-stm32/src/bench.rs
@@ -6365,7 +6481,7 @@ Send the owner this, then wait for the numbers:
 
 > The modulator pool and the VCA routes are in (filter-routing Tasks 1–12). Please bench them:
 > 1. Put the synth in DFU mode and run `just flash-bench`. The first screen shows as before for 30 s. Please read `1 OP /VOICE` there too.
-> 2. A second screen, ROUTING, follows for 30 s. Please read all eight `/VOICE` numbers: 1 OP, MODS, SVF, A VCA, B VCA, B CRV, VEL VCA, 2 VCA.
+> 2. A second screen, ROUTING, follows for 30 s. Please read all ten `/VOICE` numbers: 1 OP, MODS, SVF, A VCA, B VCA, B BST, B LFO, B CRV, VEL VCA, 2 VCA.
 > 3. `just flash` to put the normal firmware back, and reply with the numbers.
 
 - [ ] **Step 3: Bill what was measured**
@@ -6374,7 +6490,7 @@ Record the raw readings, with the date, in a new `## Measured` section at the en
 - OTHER = 2 VCA − VEL VCA;
 - CLAMP = VEL VCA − 1 OP − OTHER;
 - ENV_A = A VCA − 1 OP − CLAMP;
-- ENV_B = B VCA − 1 OP − CLAMP;
+- ENV_B = max(B VCA, B BST, B LFO) − 1 OP − CLAMP (B's costliest form bills every form);
 - CURVE = B CRV − B VCA;
 - BASE = 1 OP − 436 (the 1 OP row before the pool, measured 2026-09-27, in `cost_test`'s `the_model_bills_every_bench_row_high`).
 
@@ -7360,9 +7476,9 @@ The MOD node's home becomes E1 (id 11, formerly ENVELOPE), and the matrix moves 
 - Modify: `chimera-core/src/ui/view.rs` (`EnvKind`, `SlotCtx.envs`, `View::Text`, `EnvPanel` views)
 - Modify: `chimera-core/src/ui/block_def.rs` (`SlotBinding::EnvPanel`, `ChainBlock.map`)
 - Modify: `chimera-core/src/ui/block_registry.rs` (E1 on ENVELOPE, ENV_2 id 60, ENV_3 id 61, the MOD node, MOD_MATRIX short MTX; `map: None` on every other `ChainBlock`)
-- Modify: `chimera-core/src/ui/dungeon_map.rs` (the node label), `chimera-core/src/ui/renderer.rs` (the ENV viz, the header's TYPE), `chimera-core/src/ui/viz.rs` (`envelope` over slices, `func`, `func_shape`)
+- Modify: `chimera-core/src/ui/dungeon_map.rs` (the node label), `chimera-core/src/ui/renderer.rs` (the ENV viz, the header's TYPE, `title_type`), `chimera-core/src/ui/region.rs` (`Header.title_type`), `chimera-core/src/ui/viz.rs` (`envelope` over slices, `func`, `func_shape`)
 - Create: `chimera-core/tests/mod_pages_test.rs`
-- Modify tests: `ui_test.rs`, `ui_routing_test.rs`, `prime_status_test.rs`, `preset_test.rs`, `block_def_tests.rs`, `header_map_test.rs`, `big_viz_test.rs`, `binding_test.rs`, `flt_page_test.rs`, `matrix_view_test.rs`, `focus_test.rs`, `screen/mod.rs`, `screen_golden_test.rs`
+- Modify tests: `ui_test.rs`, `ui_routing_test.rs`, `prime_status_test.rs`, `preset_test.rs`, `block_def_tests.rs`, `header_map_test.rs`, `big_viz_test.rs`, `binding_test.rs`, `flt_page_test.rs`, `matrix_view_test.rs`, `focus_test.rs`, `region_tests.rs`, `screen/mod.rs`, `screen_golden_test.rs`
 
 **Interfaces:**
 - Consumes: `EnvParams` ids (Tasks 5–6), the laws (Tasks 5–6), `view` (Task 15).
@@ -7446,6 +7562,27 @@ fn slider_cells_read_in_units() {
     assert_eq!(text(&ENVELOPE, 4, 0.0), "0.0 ms", "the integer formatter pads");
     assert_eq!(text(&ENV_3, 3, 0.5), "LIN");
     assert_eq!(text(&ENV_3, 3, 0.8), "EXP 60");
+}
+
+/// A TYPE flip redraws the header, whose title reads `ENV 1 / B` now.
+#[test]
+fn a_type_flip_redraws_the_title() {
+    use chimera_core::ui::page::PageLayout;
+    use chimera_core::ui::perf::PerfStats;
+    use chimera_core::ui::region::{RegionKind, layout_regions};
+    let mut ui = UiState::new();
+    for _ in 0..5 {
+        feed(&mut ui, Input::press(ButtonId::Plus));
+    }
+    let (mut fb, perf, scope) = (Fb::new(), PerfStats::zero(), scope_fixture());
+    ui.render_dirty_with_audio(&mut fb, &perf, None, &scope);
+    feed(&mut ui, Input::turn(EncoderId::F, 1)); // TYPE → B
+    let flushed = ui.render_dirty_with_audio(&mut fb, &perf, None, &scope);
+    let &(_, y0, y1) = layout_regions(PageLayout::BigViz)
+        .iter()
+        .find(|r| r.0 == RegionKind::Header)
+        .unwrap();
+    assert!(flushed.contains(&(y0, y1)), "{flushed:?}");
 }
 
 /// A TYPE change re-seeds the animators: the cells jump to the new
@@ -7928,18 +8065,31 @@ In `renderer.rs`, the `VizType::Adsr` arm reads its values by address from the p
             }
 ```
 
-(`use crate::ui::view::EnvKind;` in `renderer.rs`. `return` skips the prime-status line only on a malformed page; place the status draw before the `match` if you prefer.) In `draw_header`, append the slot's TYPE after `components::header_text`:
+(`use crate::ui::view::EnvKind;` in `renderer.rs`. `return` skips the prime-status line only on a malformed page; place the status draw before the `match` if you prefer.) In `renderer.rs`, one function names the title's TYPE suffix, for drawing and for the header's region key:
+
+```rust
+/// The ENV page title's TYPE suffix: 0 none, 1 A, 2 B.
+pub fn title_type(f: &Frame) -> u8 {
+    match f.def.params.first().map(|p| p.binding) {
+        Some(SlotBinding::EnvPanel(s, _)) => match f.ctx.envs[s.index()] {
+            EnvKind::A(_) => 1,
+            EnvKind::B(_) => 2,
+        },
+        _ => 0,
+    }
+}
+```
+
+and `draw_header` appends it after `components::header_text`:
 
 ```rust
         let (context, mut name) = components::header_text(f.nav, f.def);
-        if let Some(SlotBinding::EnvPanel(s, _)) = f.def.params.first().map(|p| p.binding) {
-            let ty = match f.ctx.envs[s.index()] {
-                EnvKind::A(_) => "A",
-                EnvKind::B(_) => "B",
-            };
-            let _ = core::fmt::Write::write_fmt(&mut name, format_args!(" / {ty}"));
+        if let Some(ty) = ["", " / A", " / B"].get(title_type(f) as usize) {
+            let _ = core::fmt::Write::write_str(&mut name, ty);
         }
 ```
+
+The header redraws only when its region key changes, so the suffix joins the key. Otherwise a TYPE flip would keep the old letter until the load figure next moved. In `region.rs`, `Header` gains `title_type: u8` (sentinel `u8::MAX`), and `RegionData::header` takes it as a sixth argument. `region_data` passes `renderer::title_type(f)`. `region_tests.rs`'s five `RegionData::header(…)` calls add `, 0`.
 
 - [ ] **Step 8: Update the tests for the new node**
 
@@ -8001,6 +8151,7 @@ git add chimera-core/src/ui/mod_panel.rs chimera-core/src/dsp/modulator/law.rs c
   chimera-core/tests/prime_status_test.rs chimera-core/tests/preset_test.rs chimera-core/tests/block_def_tests.rs \
   chimera-core/tests/header_map_test.rs chimera-core/tests/big_viz_test.rs chimera-core/tests/binding_test.rs \
   chimera-core/tests/flt_page_test.rs chimera-core/tests/matrix_view_test.rs chimera-core/tests/focus_test.rs \
+  chimera-core/tests/region_tests.rs chimera-core/src/ui/region.rs \
   chimera-core/tests/screen/mod.rs chimera-core/tests/screen_golden_test.rs
 git commit -m "The MOD node's ENV pages: each slot's TYPE panel, its shape and units"
 ```
@@ -8318,7 +8469,7 @@ Expected: PASS except `screen_goldens_match`.
 
 - `spd`: header `ENV SPEED`, three columns of FAST/MED/SLOW pills (E1 MED lit, E2 FAST lit, E3 faint with "RISE/FALL"), cells E1 SPEED · E1 HOLD · E2 SPEED / E2 HOLD · E3 SPEED · E3 HOLD with E3's two dimmed.
 - `lfo_classic`: RATE · SHAPE `SINE` · SYNC `FREE` / PHASE · DEPTH · TYPE `CLASSIC`.
-- `lfo_func`: MODE `LFO` dimmed · RATE `0.99 Hz` · PHASE `0` / TILT `TRI` · FORM `FREE` · TYPE `FUNC`; the animators re-seeded (no sweep).
+- `lfo_func`: MODE `LFO` dimmed · RATE `1.00 Hz` (0.9955 Hz, rounded) · PHASE `0` / TILT `TRI` · FORM `FREE` · TYPE `FUNC`; the animators re-seeded (no sweep).
 - `mod_matrix`: the sub-list scrolled so MTX is lit on screen.
 - `amp_vel_live`: VEL still live, with its bar.
 
@@ -8374,7 +8525,7 @@ The FLT page showed ENV, KEY and FM knobs the DSP never read (#121, #112), the a
 - Every new Sound carries ENV 1, LFO 1 and NOTE → CUTOFF at 0 (NOTE at the kind's key default); VA's ENV 2 → VCA at 100 % comes with VA (#148).
 - The filter page's ENV, LFO and KEY knobs are views of those routes: an absent route shows a dash; turning it creates it (and the CUTOFF column, or reports MATRIX FULL). KIND never edits the matrix.
 - The hidden destinations, which the spec gives no page, are primed from the cells that own them (owner's decision): AMP's VEL primes VCA, even while VEL is dimmed (the one exception to ADR 0037's dimming rule). An A page's A, D, R and H prime that slot's TIME, and its S primes LEVEL.
-- `Voice::cost` adds `ModRouting::cost`: a base, then for each ENV slot on the VCA a term for A, one for B, and more for a curved B ENV, plus a term per other VCA route and one for the clamp. The model must never undercount. Until the bench measures each term on its own row, it bills the plan review's estimates, not the spec's (BASE 30, ENV_A 30, ENV_B 40, CURVE 15, OTHER 3, CLAMP 3). After that it bills the measured values, rounded up, and a test checks that it bills the bench's MODS row at least as measured.
+- `Voice::cost` adds `ModRouting::cost`: a base, then for each ENV slot on the VCA a term for A, one for B (billed at B's costliest form: ENV, LFO or BURST), and more for a B ENV whose SHAPE is off centre or routed, plus a term per other VCA route and one for the clamp. The model must never undercount. Until the bench measures each term on its own row, it bills the plan review's estimates, not the spec's (BASE 30, ENV_A 30, ENV_B 40, CURVE 15, OTHER 3, CLAMP 3). After that it bills the measured values, rounded up, and a test checks that it bills the bench's MODS row at least as measured.
 
 ## Alternatives considered
 - **Fixed ENV/LFO SOURCE selectors on the filter** (the spec's first version): two sources of truth for routing.
@@ -8414,7 +8565,7 @@ Chimera had one linear amp envelope with a per-sample divide, two envelopes noth
 - A TYPE, MODE or FORM change never jumps the level: into A or B ENV the new shape enters at the current level; otherwise the difference glides to 0 over 256 samples (one `Glide` type, shared by ENV and LFO slots).
 - Outputs carry no velocity; VEL reaches the sound as a source, through AMP's VEL and through ENV n LEVEL.
 - The FORM chosen is kept per MODE, in types: `EnvForm` (ENV and BURST) and `LfoForm`, stored as `env_form`, `lfo_form` and `burst_form`. What runs is `Func { Env(EnvForm), Lfo(LfoForm), Burst(EnvForm) }`, so a MODE/FORM mismatch can't be represented. A value a TYPE, MODE or FORM doesn't use is kept.
-- **Accuracy:** both paths (the per-sample tick and the per-block closed form) are tested against an f64 reference, to about 1e-4 absolute, with stage changes within ±1 sample. This supersedes the spec's 1e-6, which f32 cannot meet over a long stage.
+- **Accuracy:** both paths (the per-sample tick and the per-block closed form) are tested against an f64 reference, to about 1e-4 absolute, with stage changes within ±1 sample. This supersedes the spec's 1e-6, which f32 cannot meet over a long stage. B's per-sample path is anchored, not accumulated: a position is `x₀ ± k·step`, re-anchored at each turn, wrap and block start, and φ is a `u32` turn. A constant f32 step added every sample rounds the same way each time, and the error grows past 1e-4 within a few cycles.
 
 ## Alternatives considered
 - **A curve control on Envelope A:** the Cascadia has none; A stays divide-free.
