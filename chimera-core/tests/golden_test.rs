@@ -124,6 +124,66 @@ const GOLDENS: &[(&str, u64, [u32; 8])] = &[
             3125743219,
         ],
     ),
+    // Filter-routing spec § Migration: recorded before the change; never re-recorded.
+    (
+        "factory_0",
+        0xc0e212b1b98a9bcb,
+        [
+            964437059, 3199329880, 3193359562, 1045509919, 3189007987, 3188798728, 0, 0,
+        ],
+    ),
+    (
+        "factory_1",
+        0xd11d69ebe6b0e4f7,
+        [
+            976193070, 1034005773, 1055856311, 3160335090, 3201989701, 3202021445, 3116575811, 0,
+        ],
+    ),
+    (
+        "factory_2",
+        0x5d86bbdbd84012d3,
+        [
+            916897411, 1044137602, 3144861674, 3155915962, 3147564710, 1004262272, 3158174435,
+            3098924637,
+        ],
+    ),
+    (
+        "factory_3",
+        0xe34e4665f140410c,
+        [
+            983890740, 1055268379, 3187154725, 1056680784, 1027381955, 996064416, 3191809284,
+            1021923848,
+        ],
+    ),
+    (
+        "factory_4",
+        0x44a3e31517fc8b68,
+        [
+            908004282, 1055568624, 1049472589, 1032256248, 3191880895, 3191507797, 3113373005, 0,
+        ],
+    ),
+    (
+        "factory_5",
+        0xdadaa3f8d1eecb4a,
+        [
+            898768017, 3209206341, 3207329766, 1059949211, 3206682307, 3206681785, 0, 0,
+        ],
+    ),
+    (
+        "factory_6",
+        0x29b3e58dfd18575b,
+        [
+            834313439, 1010085667, 1036978923, 994349819, 3182746209, 3181968895, 3178439848,
+            997704184,
+        ],
+    ),
+    (
+        "factory_7",
+        0x3dc833ebd9700912,
+        [
+            972212234, 1048682744, 1049003804, 1029203815, 1040613396, 1040457063, 3110007328, 0,
+        ],
+    ),
 ];
 
 /// Goldens whose locked output no longer reflects intended behaviour, each
@@ -262,5 +322,14 @@ fn the_eight_tx_algorithms_render_differently() {
             "T{} renders like an earlier T",
             i + 1
         );
+    }
+}
+
+/// Filter-routing spec § Migration: every factory Sound is locked.
+#[test]
+fn every_factory_sound_has_a_golden() {
+    for i in 0..chimera_core::factory::FACTORY_LEN {
+        let name = format!("factory_{i}");
+        assert!(GOLDENS.iter().any(|g| g.0 == name), "{name}");
     }
 }
