@@ -176,3 +176,105 @@ fn form_reads_its_modes_names() {
         assert_eq!(b.as_str(), want, "{f:?}");
     }
 }
+
+use chimera_core::dsp::modulator::LfoType;
+use chimera_core::params::EngineType;
+use chimera_core::preset::Sound;
+use chimera_core::ui::block_registry::{ENV_SPEED, LFO, LFO_2, LFO_3};
+use chimera_core::ui::view::{View, is_dimmed};
+
+#[test]
+fn the_sub_list_is_e1_to_mtx() {
+    let node = ALGO_CHAIN.blocks.last().unwrap();
+    let shorts: Vec<&str> = core::iter::once(node.def)
+        .chain(node.sub_pages.iter().copied())
+        .map(|d| d.short)
+        .collect();
+    assert_eq!(shorts, ["E1", "E2", "E3", "SPD", "L1", "L2", "L3", "MTX"]);
+    assert_eq!((ENV_SPEED.id, LFO.id, LFO_2.id, LFO_3.id), (62, 12, 64, 65));
+}
+
+#[test]
+fn lfo_pages_show_classic_or_func() {
+    let mut p = ParamSnapshot::default();
+    assert_eq!(
+        labels(&p, &LFO),
+        ["RATE", "SHAPE", "SYNC", "PHASE", "DEPTH", "TYPE"]
+    );
+    p.lfos[1].lfo_type = LfoType::Func;
+    assert_eq!(
+        labels(&p, &LFO_2),
+        ["MODE", "RATE", "PHASE", "TILT", "FORM", "TYPE"]
+    );
+    p.lfos[1].func.lfo_form = LfoForm::Lfv;
+    assert_eq!(
+        labels(&p, &LFO_2),
+        ["MODE", "RATE", "DELTA", "SLEW", "FORM", "TYPE"]
+    );
+    let ctx = SlotCtx::read(&p, Op::A);
+    assert!(
+        matches!(view(&LFO_2, 0, &ctx), View::Text { text: "LFO", .. }),
+        "MODE is fixed"
+    );
+}
+
+/// SPD: a type-B slot's two cells are dimmed and inert (ENV 3 is B).
+#[test]
+fn spd_dims_a_type_b_slot() {
+    let s = Sound::init(EngineType::Algo);
+    let ctx = SlotCtx::read(&s.params, Op::A);
+    let dim: Vec<bool> = (0..6)
+        .map(|i| is_dimmed(&view(&ENV_SPEED, i, &ctx), &s))
+        .collect();
+    assert_eq!(dim, [false, false, false, false, true, true]);
+}
+
+/// FUNC's fixed MODE takes the focus but reads dimmed in the focus band as
+/// in its cell: label and value in MID, no arc (#123).
+#[test]
+fn a_fixed_slot_is_dimmed_in_the_focus_band() {
+    use chimera_core::ui::components::{self, Look};
+    use chimera_core::ui::page::PageKey;
+    use chimera_core::ui::perf::PerfStats;
+    use chimera_core::ui::theme;
+    use embedded_graphics::pixelcolor::Rgb565;
+    let mut ui = UiState::new();
+    for _ in 0..5 {
+        feed(&mut ui, Input::press(ButtonId::Plus));
+    }
+    for _ in 0..4 {
+        feed(&mut ui, Input::press(ButtonId::Edit)); // E2, E3, SPD, L1
+    }
+    assert_eq!(
+        ui.page(),
+        PageKey::Part {
+            def: LFO.id,
+            op: Op::A
+        }
+    );
+    feed(&mut ui, Input::turn(EncoderId::F, 1)); // TYPE → FUNC
+    feed(&mut ui, Input::turn(EncoderId::A, 1)); // MODE: focused, inert
+    assert_eq!(ui.focused_slot(), 0);
+    assert_eq!(ui.params().lfos[0].lfo_type, LfoType::Func);
+    settle(&mut ui);
+    let mut fb = Fb::new();
+    ui.render_with_scope(&mut fb, &PerfStats::zero(), &scope_fixture());
+
+    let (y0, y1) = (theme::HEADER_BOTTOM, theme::FOCUS_BOTTOM);
+    let band = |fb: &Fb| -> Vec<Rgb565> {
+        (y0..y1)
+            .flat_map(|y| (0..240).map(move |x| (x, y)))
+            .map(|(x, y)| fb.at(x, y))
+            .collect()
+    };
+    let mut want = Fb::new();
+    want.px.fill(fb.px[0]);
+    let v = ui.renderer.anim[0].current();
+    components::focus_band(&mut want, "MODE", "LFO", v, false, Look::Dimmed, None);
+    assert!(band(&fb) == band(&want), "the band is MODE LFO, dimmed");
+    let inks = [theme::INK, theme::ACCENT];
+    assert!(
+        !band(&fb).iter().any(|c| inks.contains(c)),
+        "no INK value, no arc"
+    );
+}

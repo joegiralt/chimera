@@ -4,12 +4,11 @@ use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::chorus::ChorusParams;
 use crate::dsp::comp::CompParams;
 use crate::dsp::delay::DelayParams;
-use crate::dsp::lfo::LfoParams;
 use crate::dsp::modal::ModalParams;
 use crate::dsp::modulator::{EnvSlot, LfoSlot};
 use crate::dsp::reverb::ReverbParams;
 use crate::dsp::tape::TapeParams;
-use crate::params::{DriveParams, FilterParams, FolderParams, OutParams};
+use crate::params::{DriveParams, EnvParams, FilterParams, FolderParams, OutParams};
 use crate::part::PartParams;
 use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2, ParamSlot, VizType};
 use crate::ui::page::{PageLayout, ValFmt};
@@ -161,20 +160,44 @@ pub static ENVELOPE: BlockDef = env_page(11, "Env 1", "E1", EnvSlot::Env1);
 pub static ENV_2: BlockDef = env_page(60, "Env 2", "E2", EnvSlot::Env2);
 pub static ENV_3: BlockDef = env_page(61, "Env 3", "E3", EnvSlot::Env3);
 
-/// LFO modulator — cyclical modulation source.
-pub static LFO: BlockDef = BlockDef {
-    id: 12,
-    name: "LFO",
-    short: "LFO",
-    layout: PageLayout::CellGrid,
-    viz: VizType::None,
+const fn lfo_page(id: u16, name: &'static str, short: &'static str, s: LfoSlot) -> BlockDef {
+    BlockDef {
+        id,
+        name,
+        short,
+        layout: PageLayout::CellGrid,
+        viz: VizType::None,
+        params: [
+            ParamSlot::lfo_panel(s, 0),
+            ParamSlot::lfo_panel(s, 1),
+            ParamSlot::lfo_panel(s, 2),
+            ParamSlot::lfo_panel(s, 3),
+            ParamSlot::lfo_panel(s, 4),
+            ParamSlot::lfo_panel(s, 5),
+        ],
+    }
+}
+
+/// L1 (id 12, once the one LFO's page).
+pub static LFO: BlockDef = lfo_page(12, "LFO 1", "L1", LfoSlot::Lfo1);
+pub static LFO_2: BlockDef = lfo_page(64, "LFO 2", "L2", LfoSlot::Lfo2);
+pub static LFO_3: BlockDef = lfo_page(65, "LFO 3", "L3", LfoSlot::Lfo3);
+
+/// SPD: type A's SPEED and HOLD POSITION for the three ENV slots (spec § UI).
+pub static ENV_SPEED: BlockDef = BlockDef {
+    id: 62,
+    name: "Env Speed",
+    short: "SPD",
+    // BigViz, as E1–E3: the three pill columns need the tall plot.
+    layout: PageLayout::BigViz,
+    viz: VizType::EnvSpeed,
     params: [
-        ParamSlot::param(BlockRef::Lfo(LfoSlot::Lfo1), LfoParams::RATE),
-        ParamSlot::param(BlockRef::Lfo(LfoSlot::Lfo1), LfoParams::SHAPE),
-        ParamSlot::param(BlockRef::Lfo(LfoSlot::Lfo1), LfoParams::SYNC),
-        ParamSlot::param(BlockRef::Lfo(LfoSlot::Lfo1), LfoParams::PHASE),
-        ParamSlot::param(BlockRef::Lfo(LfoSlot::Lfo1), LfoParams::DEPTH),
-        EMPTY,
+        ParamSlot::param(BlockRef::Env(EnvSlot::Env1), EnvParams::SPEED).with_label("E1 SPEED"),
+        ParamSlot::param(BlockRef::Env(EnvSlot::Env1), EnvParams::HOLD_POS).with_label("E1 HOLD"),
+        ParamSlot::param(BlockRef::Env(EnvSlot::Env2), EnvParams::SPEED).with_label("E2 SPEED"),
+        ParamSlot::param(BlockRef::Env(EnvSlot::Env2), EnvParams::HOLD_POS).with_label("E2 HOLD"),
+        ParamSlot::param(BlockRef::Env(EnvSlot::Env3), EnvParams::SPEED).with_label("E3 SPEED"),
+        ParamSlot::param(BlockRef::Env(EnvSlot::Env3), EnvParams::HOLD_POS).with_label("E3 HOLD"),
     ],
 };
 
@@ -418,7 +441,15 @@ pub static PART_MOD_SOURCES: [&str; crate::modulation::MAX_MOD_SOURCES] =
     ["E1", "LF1", "E2", "E3", "LF2", "LF3", "VEL", "NTE"];
 
 /// The MOD node's sub-list after its home E1 (spec § UI).
-static MOD_SUB_PAGES: [&BlockDef; 4] = [&ENV_2, &ENV_3, &LFO, &MOD_MATRIX];
+static MOD_SUB_PAGES: [&BlockDef; 7] = [
+    &ENV_2,
+    &ENV_3,
+    &ENV_SPEED,
+    &LFO,
+    &LFO_2,
+    &LFO_3,
+    &MOD_MATRIX,
+];
 
 static KICK_BLOCKS: [ChainBlock; 3] = [
     ChainBlock {

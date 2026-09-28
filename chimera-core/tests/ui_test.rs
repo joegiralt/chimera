@@ -179,8 +179,11 @@ fn test_page_from_nav_part_chain() {
     for (sub, def) in [
         (1, &reg::ENV_2),
         (2, &reg::ENV_3),
-        (3, &reg::LFO),
-        (4, &reg::MOD_MATRIX),
+        (3, &reg::ENV_SPEED),
+        (4, &reg::LFO),
+        (5, &reg::LFO_2),
+        (6, &reg::LFO_3),
+        (7, &reg::MOD_MATRIX),
     ] {
         nav.sub_page = sub;
         assert_eq!(PageKey::from_nav(&nav, Op::A), part(def), "sub-page {sub}");

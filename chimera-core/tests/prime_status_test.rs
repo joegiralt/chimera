@@ -48,8 +48,8 @@ fn mix_plus_on_a_non_modulatable_param_reports_not_modulatable() {
     for _ in 0..5 {
         feed(&mut ui, Input::press(ButtonId::Plus)); // -> MOD node
     }
-    for _ in 0..3 {
-        feed(&mut ui, Input::press(ButtonId::Edit)); // E2, E3, LFO
+    for _ in 0..4 {
+        feed(&mut ui, Input::press(ButtonId::Edit)); // E2, E3, SPD, L1
     }
     assert_eq!(
         ui.page(),

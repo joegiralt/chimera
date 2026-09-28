@@ -221,9 +221,16 @@ fn plus(ui: &mut UiState, n: usize) {
 
 /// From the MOD node's home E1, EDIT down to the matrix, its last sub-page.
 fn to_matrix(ui: &mut UiState) {
-    for _ in 0..4 {
-        feed(ui, Input::press(ButtonId::Edit));
+    for _ in 0..7 {
+        feed(ui, Input::press(ButtonId::Edit)); // E2, E3, SPD, L1, L2, L3, MTX
     }
+    assert_eq!(
+        ui.page(),
+        chimera_core::ui::page::PageKey::Part {
+            def: chimera_core::ui::block_registry::MOD_MATRIX.id,
+            op: chimera_core::addr::Op::A
+        }
+    );
 }
 
 /// From Part 1's home to E3: type B, ENV · AD by default.
@@ -317,6 +324,27 @@ pub const CASES: &[ScreenCase] = &[
         to_e3(ui);
         feed(ui, Input::turn(EncoderId::A, 2));
         feed(ui, Input::turn(EncoderId::E, 2));
+    }),
+    ("spd", |ui| {
+        plus(ui, 5);
+        for _ in 0..3 {
+            feed(ui, Input::press(ButtonId::Edit)); // SPD
+        }
+        feed(ui, Input::turn(EncoderId::C, -1)); // E2 SPEED → FAST
+    }),
+    ("lfo_classic", |ui| {
+        plus(ui, 5);
+        for _ in 0..4 {
+            feed(ui, Input::press(ButtonId::Edit)); // L1
+        }
+        feed(ui, Input::turn(EncoderId::A, 5)); // RATE
+    }),
+    ("lfo_func", |ui| {
+        plus(ui, 5);
+        for _ in 0..4 {
+            feed(ui, Input::press(ButtonId::Edit));
+        }
+        feed(ui, Input::turn(EncoderId::F, 1)); // TYPE → FUNC
     }),
     ("amp_vel_dimmed", |ui| {
         plus(ui, 4);

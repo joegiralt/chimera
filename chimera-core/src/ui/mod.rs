@@ -859,6 +859,7 @@ impl UiState {
                 } else {
                     qvalues[f.focus]
                 },
+                renderer::look(f, f.focus),
                 self.prime_status,
             ),
             RegionKind::Viz => {

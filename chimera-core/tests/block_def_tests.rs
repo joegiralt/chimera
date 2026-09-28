@@ -100,5 +100,5 @@ fn algo_chain_is_alg_osc_then_the_voice_chain() {
     assert_eq!(labels, ["ALG", "OSC", "DRV", "FLT", "AMP", "MOD"]);
     assert_eq!(chain.active_def(1, 0).unwrap().name, "Wave");
     assert!(chain.blocks[1].sub_pages.iter().any(|d| d.name == "Level"));
-    assert_eq!(chain.blocks[5].sub_pages.len(), 4);
+    assert_eq!(chain.blocks[5].sub_pages.len(), 7);
 }

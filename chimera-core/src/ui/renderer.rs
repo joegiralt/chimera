@@ -5,7 +5,7 @@ use embedded_graphics::primitives::{PrimitiveStyle, Rectangle, StyledDrawable};
 
 use crate::addr::Op;
 use crate::dsp::algo::algorithms::AlgoId;
-use crate::dsp::modulator::HoldPos;
+use crate::dsp::modulator::{EnvType, HoldPos};
 use crate::perf::load::AudioStats;
 use crate::ui::PrimeStatus;
 use crate::ui::animation::AnimatedValue;
@@ -171,6 +171,15 @@ impl Renderer {
                 use crate::dsp::comp::RATIOS;
                 let ratio = RATIOS[((a(1) * 7.0 + 0.5) as usize).min(RATIOS.len() - 1)];
                 viz::compressor(display, -40.0 + 40.0 * a(0), ratio, f.master_gr_db);
+            }
+            VizType::EnvSpeed => {
+                let e = &f.parts[f.active_part].sound.params.envelopes;
+                viz::env_speed(
+                    display,
+                    core::array::from_fn(|i| {
+                        (e[i].env_type == EnvType::A, e[i].speed, e[i].hold_pos)
+                    }),
+                );
             }
             _ => {}
         }
@@ -367,6 +376,7 @@ impl Renderer {
             buf.as_str(),
             v,
             view.fmt().is_bipolar(),
+            look(f, f.focus),
             f.prime_status,
         );
     }

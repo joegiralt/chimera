@@ -7,7 +7,7 @@ use embedded_graphics::pixelcolor::Rgb565;
 
 use crate::dsp::algo::algorithms::Algorithm;
 use crate::dsp::algo::plan::{OPS, blend};
-use crate::dsp::modulator::{EnvForm, Func, LfoForm};
+use crate::dsp::modulator::{EnvForm, EnvSpeed, Func, HoldPos, LfoForm};
 use crate::scope::{self, SCOPE_LEN};
 use crate::ui::alg_layout;
 use crate::ui::draw;
@@ -631,5 +631,43 @@ where
             draw::ring(d, x, y, l.r, theme::MID, 1);
             draw::text_center(d, &theme::FONT_LABEL, label, x + 1, y + 4, theme::MID, 0);
         }
+    }
+}
+
+/// SPD's picture (the approved mockup): per ENV slot, its SPEED as three
+/// pills and its HOLD POSITION's name; a type-B slot's column is faint.
+pub fn env_speed<D>(d: &mut D, slots: [(bool, EnvSpeed, HoldPos); 3])
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    for (i, &(is_a, speed, hold)) in slots.iter().enumerate() {
+        let x = theme::VIZ_LEFT + 4 + i as i32 * 74;
+        let ink = if is_a { theme::MID } else { theme::FAINT };
+        draw::text_center(
+            d,
+            &theme::FONT_LABEL,
+            ["E1", "E2", "E3"][i],
+            x + 30,
+            50,
+            ink,
+            1,
+        );
+        for (k, name) in ["FAST", "MED", "SLOW"].iter().enumerate() {
+            let y = 56 + k as i32 * 18;
+            let lit = is_a && k == speed as usize;
+            if lit {
+                draw::pill(d, x + 6, y, 48, 14, theme::ACCENT);
+            } else {
+                draw::round_outline(d, x + 6, y, 48, 14, 7, theme::FAINT);
+            }
+            let c = if lit { theme::BG } else { ink };
+            draw::text_center(d, &theme::FONT_LABEL_BOLD, name, x + 30, y + 10, c, 0);
+        }
+        let under = if is_a {
+            ["OFF", "AHDSR", "GATE EXT"][hold as usize]
+        } else {
+            "RISE/FALL"
+        };
+        draw::text_center(d, &theme::FONT_LABEL, under, x + 30, 140, ink, 1);
     }
 }

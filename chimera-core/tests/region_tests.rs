@@ -1,4 +1,5 @@
 use chimera_core::ui::animation::AnimatedValue;
+use chimera_core::ui::components::Look;
 use chimera_core::ui::page::{PageId, PageKey, PageLayout};
 use chimera_core::ui::region::{RegionData, RegionSet, quantize, quantize_values};
 
@@ -307,4 +308,17 @@ fn region_data_cell_looks_differ() {
 #[test]
 fn region_data_cell_matrix_rev_differs() {
     assert_ne!(cells_keyed(0, 0), cells_keyed(1, 0));
+}
+
+fn focus_with(look: Look) -> RegionData {
+    RegionData::focus(PageKey::Legacy(PageId::DemoWaves), 0, 500, look, None)
+}
+
+/// The focused slot turning dimmed (or absent) alone redraws the focus
+/// band: a look can change without a `matrix_rev` bump (#123).
+#[test]
+fn region_data_focus_looks_differ() {
+    assert_eq!(focus_with(Look::Dimmed), focus_with(Look::Dimmed));
+    assert_ne!(focus_with(Look::Live), focus_with(Look::Dimmed));
+    assert_ne!(focus_with(Look::Live), focus_with(Look::Absent));
 }

@@ -53,7 +53,7 @@ fn mixer_part_and_matrix_pages_use_the_same_mechanism() {
     for _ in 0..5 {
         feed(&mut ui, Input::press(ButtonId::Plus)); // → MOD
     }
-    for _ in 0..4 {
+    for _ in 0..7 {
         feed(&mut ui, Input::press(ButtonId::Edit)); // E1 → MTX
     }
     assert_eq!(

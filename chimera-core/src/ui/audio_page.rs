@@ -108,6 +108,7 @@ where
         texts[0].as_str(),
         value,
         false,
+        components::Look::Live,
         None,
     );
 }

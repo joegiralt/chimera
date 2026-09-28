@@ -2,10 +2,11 @@
 //! § UI), as `const` data.
 
 use crate::block::{ParamId, ValFmt};
+use crate::dsp::lfo::LfoParams as L;
 use crate::dsp::modulator::law::Law;
 use crate::dsp::modulator::{EnvSpeed, Func, LfoForm};
 use crate::params::EnvParams as E;
-use crate::ui::view::EnvKind;
+use crate::ui::view::{EnvKind, LfoKind};
 
 /// One cell of a modulator page.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -108,5 +109,58 @@ pub fn env_panel(k: EnvKind) -> &'static ModPanel {
         EnvKind::B(Func::Lfo(LfoForm::Lfv)) => &B_LFV,
         EnvKind::B(Func::Lfo(_)) => &B_LFO,
         EnvKind::B(Func::Burst(_)) => &B_BURST,
+    }
+}
+
+/// CLASSIC: RATE · SHAPE · SYNC / PHASE · DEPTH · TYPE (OFST's cell is TYPE's).
+static CLASSIC: ModPanel = ModPanel {
+    slots: [
+        p(L::RATE, "RATE", ValFmt::Uni),
+        p(
+            L::SHAPE,
+            "SHAPE",
+            ValFmt::Names(&["SINE", "TRI", "SAW", "SQR", "S&H"]),
+        ),
+        p(L::SYNC, "SYNC", ValFmt::Names(&["FREE", "RETRIG"])),
+        p(L::PHASE, "PHASE", ValFmt::Uni),
+        p(L::DEPTH, "DEPTH", ValFmt::Uni),
+        LFO_TYPE,
+    ],
+};
+const LFO_TYPE: Option<PanelSlot> = p(L::TYPE, "TYPE", ValFmt::Names(&["CLASSIC", "FUNC"]));
+/// In `LfoForm::ALL`'s order.
+const LFO_FORM: Option<PanelSlot> = p(L::FORM, "FORM", ValFmt::Names(&["FREE", "SYNC", "LFV"]));
+const FUNC_MODE: Option<PanelSlot> = Some(PanelSlot::Fixed {
+    label: "MODE",
+    text: "LFO",
+});
+
+/// FUNC: B's page with MODE locked to LFO.
+static FUNC: ModPanel = ModPanel {
+    slots: [
+        FUNC_MODE,
+        p(L::RISE, "RATE", ValFmt::Law(Law::BRate)),
+        p(L::FALL, "PHASE", ValFmt::Law(Law::Phase)),
+        p(L::SHAPE_B, "TILT", ValFmt::Law(Law::Tilt)),
+        LFO_FORM,
+        LFO_TYPE,
+    ],
+};
+static FUNC_LFV: ModPanel = ModPanel {
+    slots: [
+        FUNC_MODE,
+        p(L::RISE, "RATE", ValFmt::Law(Law::BRate)),
+        p(L::FALL, "DELTA", ValFmt::Law(Law::Pct)),
+        p(L::SHAPE_B, "SLEW", ValFmt::Law(Law::Pct)),
+        LFO_FORM,
+        LFO_TYPE,
+    ],
+};
+
+pub fn lfo_panel(k: LfoKind) -> &'static ModPanel {
+    match k {
+        LfoKind::Classic => &CLASSIC,
+        LfoKind::Func(LfoForm::Lfv) => &FUNC_LFV,
+        LfoKind::Func(_) => &FUNC,
     }
 }
