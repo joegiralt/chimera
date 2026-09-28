@@ -10,7 +10,7 @@ use core::ptr::addr_of_mut;
 use chimera_hal::BLOCK_SIZE;
 
 use crate::dsp::algo::engine::{AlgoEngine, AlgoLive};
-use crate::dsp::modal::ModalEngine;
+use crate::dsp::modal::{ModalEngine, ResonatorMode};
 use crate::hw::Cost;
 use crate::in_place::{by_value, uninit_at};
 
@@ -121,6 +121,11 @@ impl Engines {
             }
             EngineType::Modal => ModalEngine::cost(&p.modal),
         }
+    }
+
+    /// The Modal model the sounding note plays, if Modal is sounding.
+    pub fn modal_playing(&self) -> Option<ResonatorMode> {
+        self.modal.playing()
     }
 
     /// Voice lifetime: is this engine still sounding?

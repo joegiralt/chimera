@@ -79,9 +79,9 @@ at its 32) provisional, from the emulator scaled to String's bench reading
 and rounded up about 10 %, until the bench's MDL rows (ROUTING 3/3) read
 them. Beside the whole FX bus that gives, on rev V and rev Y: String 8
 and 8 voices, Bowed 8 and 6, Sympathetic 3 and 3, the bank 2 and 2. No
-factory Sound is Modal, so their counts are unchanged. The bill follows
-the Part's stored model, while a sounding voice keeps its note-on model
-until its next note (#183).
+factory Sound is Modal, so their counts are unchanged. A sounding voice
+keeps its note-on model until its next note, so after a MODE edit it is
+billed at the costlier of that model and the stored one (#183).
 
 RAM, measured with `memory_budget_test` after this change: `PitchParams`
 adds 8 B to `ParamSnapshot`; the engines' pitch state and Modal's seven

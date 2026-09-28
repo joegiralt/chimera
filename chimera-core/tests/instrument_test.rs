@@ -1223,3 +1223,54 @@ fn the_master_comp_ducks_pair_2_with_pair_1() {
     assert!(db < -15.0, "{db} dB");
     assert!(gr > 15.0, "{gr}");
 }
+
+/// #183: a Modal voice keeps its note-on model. Sympathetic tails ringing
+/// when the Part switches to String still cost Sympathetic, so the new
+/// String notes are admitted against that, not against String's price.
+#[test]
+fn a_mode_switch_bills_sounding_tails_at_their_own_model() {
+    use chimera_core::dsp::modal::ResonatorMode;
+    let voice = |mode| {
+        let mut p = ParamSnapshot::for_engine(EngineType::Modal);
+        p.modal.mode = mode;
+        chimera_core::dsp::voice::Voice::cost(&p, &ModState::new())
+    };
+    let (sym, string) = (
+        voice(ResonatorMode::Sympathetic),
+        voice(ResonatorMode::String),
+    );
+    let mut shared = AudioShared::default();
+    shared.parts[0].params = ParamSnapshot::for_engine(EngineType::Modal);
+    shared.parts[0].params.modal.mode = ResonatorMode::Sympathetic;
+    let mut rig = Rig::rev_v();
+    let tails = [48, 52, 55];
+    for n in tails {
+        rig.inst.handle(on(0, n), &shared);
+    }
+    rig.render(&shared);
+    for n in tails {
+        rig.inst.handle(off(0, n), &shared);
+    }
+    rig.render(&shared);
+    shared.parts[0].params.modal.mode = ResonatorMode::String;
+    rig.render(&shared);
+    // Five fill the pool beside the tails: the budget alone decides.
+    for n in 60..65 {
+        rig.inst.handle(on(0, n), &shared);
+    }
+    rig.render(&shared);
+    // What the allocated voices really cost: each tail its own model.
+    let slots = rig.inst.allocator().slots();
+    let ringing = slots
+        .iter()
+        .filter(|s| s.note().is_some_and(|n| tails.contains(&n.get())))
+        .count();
+    assert!(ringing > 0, "the tails still ring");
+    let strings = slots.iter().filter(|s| !s.is_free()).count() - ringing;
+    let real = sym.0 * ringing as u32 + string.0 * strings as u32;
+    let budget = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0;
+    assert!(
+        real + FxBus::COST.0 <= budget,
+        "{ringing} SYM tails and {strings} STR notes cost {real} + FX over {budget}"
+    );
+}
