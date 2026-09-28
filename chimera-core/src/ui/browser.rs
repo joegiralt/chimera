@@ -120,8 +120,8 @@ where
         }
     } else {
         let _ = slot.write_str("INIT");
-        let ct = INIT_TYPES[entry - POOL_SIZE];
-        (components::upper(ct.label()), Some(ct), false)
+        let engine = INIT_TYPES[entry - POOL_SIZE];
+        (components::upper(engine.label()), Some(engine), false)
     };
     let empty = chain.is_none();
     if selected {
@@ -156,11 +156,11 @@ where
         };
         draw::text(d, &theme::FONT_VALUE, name.as_str(), 52, y, color);
     }
-    if let Some(ct) = chain {
+    if let Some(engine) = chain {
         draw::text_right(
             d,
             &theme::FONT_LABEL,
-            chain_def_for(ct).blocks[0].def.short,
+            chain_def_for(engine).blocks[0].def.short,
             223,
             y,
             dim,

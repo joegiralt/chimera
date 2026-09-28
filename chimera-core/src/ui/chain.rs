@@ -150,9 +150,9 @@ impl ChainNav {
     }
 }
 
-/// Resolve a `EngineType` to the corresponding static chain definition.
-pub fn chain_def_for(ct: EngineType) -> &'static ChainDef2 {
-    match ct {
+/// The static chain definition for an engine.
+pub fn chain_def_for(engine: EngineType) -> &'static ChainDef2 {
+    match engine {
         EngineType::Algo => &block_registry::ALGO_CHAIN,
         EngineType::Modal => &block_registry::MODAL_PLUCK_CHAIN,
     }

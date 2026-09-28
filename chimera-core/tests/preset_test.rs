@@ -314,7 +314,7 @@ fn browser_save_to_pool() {
 }
 
 #[test]
-fn browser_init_entries_set_chain_type() {
+fn browser_init_entries_set_the_engine() {
     let mut ui = UiState::new();
 
     // Open browser, scroll to "(init) Modal" (POOL_SIZE + 1)

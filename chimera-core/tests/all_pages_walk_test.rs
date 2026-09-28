@@ -66,8 +66,8 @@ impl Context {
 
     fn start(self) -> UiState {
         let mut ui = UiState::new();
-        if let Context::Part(ct) = self {
-            load_init(&mut ui, ct);
+        if let Context::Part(engine) = self {
+            load_init(&mut ui, engine);
         }
         self.home(&mut ui);
         ui
@@ -195,7 +195,7 @@ fn walk(
 fn every_context() -> Vec<Context> {
     let mut all: Vec<Context> = EngineType::ALL
         .iter()
-        .map(|&ct| Context::Part(ct))
+        .map(|&engine| Context::Part(engine))
         .collect();
     all.extend((0..5).map(Context::Mixer));
     all.extend([Context::Demo, Context::System]);

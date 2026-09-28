@@ -12,8 +12,8 @@ use chimera_core::ui::page::ValFmt;
 /// Every page reachable from a Part chain (main pages and sub-pages).
 fn part_defs() -> Vec<&'static BlockDef> {
     let mut defs = Vec::new();
-    for ct in EngineType::ALL {
-        for block in chain_def_for(ct).blocks {
+    for engine in EngineType::ALL {
+        for block in chain_def_for(engine).blocks {
             defs.push(block.def);
             defs.extend(block.sub_pages.iter().copied());
         }
@@ -42,14 +42,18 @@ fn every_part_slot_resolves_to_a_spec() {
 /// every Part chain.
 #[test]
 fn part_chains_offer_env_and_lfo_sources() {
-    for ct in EngineType::ALL {
-        assert_eq!(chain_def_for(ct).mod_sources, ["ENV", "LFO"], "{ct:?}");
-        let sound = chimera_core::preset::Sound::init(ct);
+    for engine in EngineType::ALL {
+        assert_eq!(
+            chain_def_for(engine).mod_sources,
+            ["ENV", "LFO"],
+            "{engine:?}"
+        );
+        let sound = chimera_core::preset::Sound::init(engine);
         assert!(
             sound.dest_registry.is_empty(),
-            "{ct:?}: no pre-wired destinations"
+            "{engine:?}: no pre-wired destinations"
         );
-        assert_eq!(sound.mod_state.num_dests(), 0, "{ct:?}");
+        assert_eq!(sound.mod_state.num_dests(), 0, "{engine:?}");
     }
 }
 
