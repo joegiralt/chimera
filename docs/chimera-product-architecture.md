@@ -460,7 +460,7 @@ Changing a Part's chain is equivalent to loading a different instrument. The UI 
 ### Hardware Constraints
 
 - **Display**: ILI9341 240×320 TFT (portrait orientation, taller than wide)
-- **Encoders**: 6 parameter encoders + 1 main encoder
+- **Encoders**: 6 parameter encoders, no main encoder (ADR 0039)
 - **Buttons**: 6 parameter buttons + 6 navigation buttons (Menu, Minus, Plus, Mix, Edit, Seq)
 - **No velocity-sensitive keys, no pads, no faders**
 
@@ -489,7 +489,7 @@ Pages are generated from the chain. Each block in the chain becomes a page. The 
 
 **Example: "FM Poly" chain (FM Osc → Drive → Filter → Wavefolder → VCA)**
 ```
-[PART SELECT]  ← Main encoder selects active Part (1-4)
+[PART SELECT]  ← no main encoder (ADR 0039); the built UI uses B1-B6
      │
      ├── (B1) [FM OSC]      Operator config: algorithm, ratios, levels, waveforms
      ├── (B2) [DRIVE]       Drive amount, tone, mix, env amt, lfo amt
@@ -520,7 +520,7 @@ The page labels change depending on the chain. A user on the "Kick" preset sees 
 
 ### Navigation Model
 
-1. **Main encoder** always selects the active Part (top-level context).
+1. **Part select** is the top-level context. There is no main encoder (ADR 0039); the built UI selects Part n with Bn and steps pages with Minus/Plus (see the UI/UX spec).
 2. **B1-B6** select block pages within the chain (auto-mapped to the chain's blocks + mod matrix).
 3. **Param encoders (A-F)** edit the 6 parameters shown on the current page.
 4. **Minus/Plus** scroll sub-pages when a block has more than 6 parameters (e.g., FM operator editing has 4 operators).
@@ -528,10 +528,10 @@ The page labels change depending on the chain. A user on the "Kick" preset sees 
 
 ### Multi-Part Workflow
 
-Switching Parts is one turn of the main encoder. The selected Part is always visible at the top of the screen. All B1-B6 pages are scoped to the selected Part — and the page labels update to reflect that Part's chain.
+Switching Parts is one button press (Bn for Part n in the built UI; there is no main encoder, ADR 0039). The selected Part is always visible at the top of the screen. All pages are scoped to the selected Part — and the page labels update to reflect that Part's chain.
 
-- Turn main encoder to Part 1 (FM Poly) → B1 shows "FM OSC"
-- Turn main encoder to Part 2 (Kick) → B1 shows "EXCITER"
+- Select Part 1 (FM Poly) → the first page shows "FM OSC"
+- Select Part 2 (Kick) → the first page shows "EXCITER"
 
 No mode switching. No "enter Part edit mode." Just select and edit.
 
