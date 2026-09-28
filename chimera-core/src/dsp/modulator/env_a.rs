@@ -231,25 +231,24 @@ impl EnvA {
                     m
                 }
                 Some((rc, t, end, rising)) => {
+                    let seg = &mut out[i..i + span];
                     let mut l = self.level;
-                    let mut m = 0;
-                    let mut ended = false;
-                    while m < span {
-                        l += rc.c * (t - l);
-                        m += 1;
-                        if (rising && l >= end) || (!rising && l <= end) {
-                            ended = true;
-                            break;
-                        }
-                        out[i + m - 1] = l;
-                    }
-                    if ended {
-                        self.finish(c, end);
-                        out[i + m - 1] = end;
+                    let ended = if rising {
+                        curve(seg, &mut l, rc.c, t, |l| l >= end)
                     } else {
-                        self.level = l;
+                        curve(seg, &mut l, rc.c, t, |l| l <= end)
+                    };
+                    match ended {
+                        Some(m) => {
+                            self.finish(c, end);
+                            seg[m] = end;
+                            m + 1
+                        }
+                        None => {
+                            self.level = l;
+                            span
+                        }
                     }
-                    m
                 }
             };
             self.since_on = self.since_on.saturating_add(used as u32);
@@ -328,4 +327,25 @@ fn steps_to(l: f32, t: f32, end: f32, k: f32) -> u32 {
     }
     let i = m as u32;
     if (i as f32) < m { i + 1 } else { i.max(1) }
+}
+
+/// `l += c · (t − l)` into `seg` until `done(l)`: the index where it ended
+/// (unwritten), or `None`. Generic in `done`, so each direction's loop is
+/// its own, the bounds checked once.
+#[inline(always)]
+fn curve(
+    seg: &mut [f32],
+    l: &mut f32,
+    c: f32,
+    t: f32,
+    done: impl Fn(f32) -> bool,
+) -> Option<usize> {
+    for (m, o) in seg.iter_mut().enumerate() {
+        *l += c * (t - *l);
+        if done(*l) {
+            return Some(m);
+        }
+        *o = *l;
+    }
+    None
 }

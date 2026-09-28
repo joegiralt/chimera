@@ -54,28 +54,6 @@ impl AKey {
     }
 }
 
-/// `gain[n] += amount · level[n] · peak[n]`, the peak ramped from `from` to
-/// `to` across the block, so a route into LEVEL doesn't zipper the VCA.
-fn add_ramped(
-    gain: &mut [f32; BLOCK_SIZE],
-    level: &[f32; BLOCK_SIZE],
-    amount: f32,
-    from: f32,
-    to: f32,
-) {
-    if from == to {
-        let a = amount * to;
-        for (g, l) in gain.iter_mut().zip(level) {
-            *g += a * l;
-        }
-    } else {
-        let step = (to - from) / BLOCK_SIZE as f32;
-        for (n, (g, l)) in gain.iter_mut().zip(level).enumerate() {
-            *g += amount * l * (from + step * (n + 1) as f32);
-        }
-    }
-}
-
 /// What a slot runs (spec § 1): Envelope A, or B with its MODE and FORM.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Kind {
@@ -194,6 +172,35 @@ impl Envelope {
         (raw + self.glide.at(n)).clamp(self.glide_lo, 1.0)
     }
 
+    /// `gain[n] += amount · level[n] · peak[n]`, the peak ramped from `from`
+    /// to `to` across the block, so a route into LEVEL doesn't zipper the
+    /// VCA; a gliding change's leftover in the same pass.
+    fn add_ramped(
+        &self,
+        gain: &mut [f32; BLOCK_SIZE],
+        level: &[f32; BLOCK_SIZE],
+        amount: f32,
+        from: f32,
+        to: f32,
+    ) {
+        let step = (to - from) / BLOCK_SIZE as f32;
+        if self.glide.active() {
+            for (n, (g, l)) in gain.iter_mut().zip(level).enumerate() {
+                let raw = l * (from + step * (n + 1) as f32);
+                *g += amount * self.glided(raw, n + 1);
+            }
+        } else if from == to {
+            let a = amount * to;
+            for (g, l) in gain.iter_mut().zip(level) {
+                *g += a * l;
+            }
+        } else {
+            for (n, (g, l)) in gain.iter_mut().zip(level).enumerate() {
+                *g += amount * l * (from + step * (n + 1) as f32);
+            }
+        }
+    }
+
     fn is_b(&self) -> bool {
         matches!(self.kind, Some(Kind::B(_)))
     }
@@ -272,7 +279,7 @@ impl Envelope {
 
     /// One block. Returns the output at the block's start. With `vca`, the
     /// slot fills a block of outputs and adds `amount ·` each into the
-    /// buffer (the peak ramped, the glide in its own loop); otherwise it
+    /// buffer (the peak ramped, any glide in the same pass); otherwise it
     /// advances in closed form. Only the running TYPE's coefficients are
     /// computed.
     pub fn run_block(
@@ -339,15 +346,7 @@ impl Envelope {
                         (1.0, 1.0)
                     }
                 };
-                add_ramped(gain, &level, amount, from, to);
-                if self.glide.active() {
-                    // Each sample's raw output as `add_ramped` added it.
-                    let step = (to - from) / BLOCK_SIZE as f32;
-                    for (n, (g, l)) in gain.iter_mut().zip(&level).enumerate() {
-                        let raw = l * (from + step * (n + 1) as f32);
-                        *g += amount * (self.glided(raw, n + 1) - raw);
-                    }
-                }
+                self.add_ramped(gain, &level, amount, from, to);
             }
             (None, Coefs::A(c)) => self.a.advance(c, key, BLOCK_SIZE as u32),
             (None, Coefs::B(c)) => self.b.advance(c, key, BLOCK_SIZE as u32),
