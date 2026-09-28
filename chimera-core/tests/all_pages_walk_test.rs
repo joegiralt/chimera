@@ -224,3 +224,22 @@ fn representative_pages_walk() {
     walk(Context::Demo, 2, &enc, |node, _| node == 0);
     walk(Context::System, 2, &enc, |node, _| node == 0);
 }
+
+/// PLUS alone between System pages redraws each one (#69): they share a
+/// layout and read no values, so only their def tells them apart.
+#[test]
+fn system_pages_redraw_on_plus_alone() {
+    use chimera_core::ui::block_registry::SYSTEM_CHAIN;
+    let (perf, scope, audio) = (PerfStats::zero(), scope_fixture(), audio_fixture());
+    let mut ui = UiState::new();
+    feed(&mut ui, Input::press(ButtonId::Menu));
+    let mut fb = Fb::new();
+    for node in 0..SYSTEM_CHAIN.blocks.len() {
+        settle(&mut ui);
+        ui.render_dirty_with_audio(&mut fb, &perf, Some(&audio), &scope);
+        let mut full = Fb::new();
+        ui.render_with_audio(&mut full, &perf, Some(&audio), &scope);
+        assert!(fb.px == full.px, "System node {node}");
+        feed(&mut ui, Input::press(ButtonId::Plus));
+    }
+}

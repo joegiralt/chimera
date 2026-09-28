@@ -58,8 +58,10 @@ fn legacy_bindings_name_semantic_addresses() {
     );
     assert_eq!(PageId::DemoMatrix.binding(0), None);
     // Spec §5: System has its own page with no editable params.
-    for i in 0..6 {
-        assert_eq!(PageId::System.binding(i), None);
+    for def in chimera_core::ui::block_registry::SYSTEM_CHAIN.blocks {
+        for i in 0..6 {
+            assert_eq!(PageId::System(def.def.id).binding(i), None);
+        }
     }
 }
 
@@ -75,7 +77,6 @@ fn every_legacy_binding_has_a_spec() {
         PageId::DemoMotion,
         PageId::DemoFm,
         PageId::DemoMatrix,
-        PageId::System,
     ];
     for page in pages {
         for i in 0..6 {

@@ -28,7 +28,7 @@ pub fn quantize_values(anim: &[AnimatedValue; 6]) -> [u16; 6] {
 /// Sentinel value that never matches real data — forces initial redraw.
 const SENTINEL: u16 = u16::MAX;
 /// Page used in sentinel snapshots (the SENTINEL values make them unequal).
-const SENTINEL_PAGE: PageKey = PageKey::Legacy(PageId::System);
+const SENTINEL_PAGE: PageKey = PageKey::Legacy(PageId::System(u16::MAX));
 
 /// Data snapshot for a screen region. If current != previous, region is dirty.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
