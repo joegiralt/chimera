@@ -322,3 +322,49 @@ fn region_data_focus_looks_differ() {
     assert_ne!(focus_with(Look::Live), focus_with(Look::Dimmed));
     assert_ne!(focus_with(Look::Live), focus_with(Look::Absent));
 }
+
+/// Mod matrix (#161): the grid under the header, the one-line readout under
+/// it, tiling the screen.
+#[test]
+fn matrix_regions_tile_grid_then_readout() {
+    use chimera_core::ui::mod_grid::GRID_BOTTOM;
+    use chimera_core::ui::region::RegionKind;
+    let mut rs = RegionSet::new();
+    rs.set_layout(PageLayout::Matrix);
+    let regions = rs.active_regions();
+    let kinds: Vec<RegionKind> = regions.iter().map(|r| r.kind).collect();
+    assert_eq!(
+        kinds,
+        [
+            RegionKind::Header,
+            RegionKind::Grid,
+            RegionKind::Focus,
+            RegionKind::Nav
+        ]
+    );
+    assert_eq!(regions[1].y_end, GRID_BOTTOM as u16);
+    assert_eq!((regions[0].y_start, regions[3].y_end), (0, 320));
+    for i in 1..regions.len() {
+        assert_eq!(regions[i].y_start, regions[i - 1].y_end);
+    }
+}
+
+/// The readout's key carries `MatrixState.rev` (a delete changes the route
+/// count) and the grid's the scroll (the cursor can stay put).
+#[test]
+fn matrix_keys_carry_rev_and_scroll() {
+    let route = |rev| {
+        RegionData::Route {
+            row: 1,
+            col: 0,
+            dests: 2,
+            matrix_rev: 0,
+        }
+        .keyed(rev, 0)
+    };
+    assert_eq!(route(3), route(3));
+    assert_ne!(route(3), route(4));
+    let grid = |sx, rev| RegionData::grid(1, 0, sx, 0).keyed(rev, 0);
+    assert_ne!(grid(0, 3), grid(1, 3));
+    assert_ne!(grid(0, 3), grid(0, 4));
+}

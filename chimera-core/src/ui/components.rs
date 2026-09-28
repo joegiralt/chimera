@@ -258,18 +258,6 @@ where
     );
 }
 
-/// Mod matrix focus band: the selected route `SOURCE → DEST` (`LFO → OP1
-/// LEVEL`) and its bipolar amount.
-pub fn focus_route<D>(d: &mut D, source: &str, dest: &str, value_text: &str, value: f32)
-where
-    D: DrawTarget<Color = Rgb565>,
-{
-    let x = focus_label(d, source, theme::MARGIN_X) + 6;
-    let x = x + draw::arrow(d, x, theme::FOCUS_LABEL_Y, theme::MID) + 6;
-    focus_label(d, dest, x);
-    focus_value(d, value_text, value, true);
-}
-
 /// How a cell reads (spec § UI). The discriminants pack into the Cells
 /// region's key.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

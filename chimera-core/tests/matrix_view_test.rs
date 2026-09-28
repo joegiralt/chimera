@@ -1,10 +1,10 @@
-//! Mod matrix page in Direction A (UI refresh spec § Page types): the
-//! selected route in the focus band, then a dot grid.
+//! Mod matrix page (UI refresh spec § Page types, #161): an amount grid
+//! with every source on screen, then a one-line readout of the route.
 
 mod screen;
 
-use chimera_core::ui::components;
-use chimera_core::ui::mod_grid::cell_center;
+use chimera_core::ui::draw;
+use chimera_core::ui::mod_grid::{CELL_H, CELL_W, GRID_BOTTOM, READOUT_Y, cell_origin};
 use chimera_core::ui::perf::PerfStats;
 use chimera_core::ui::renderer::{MATRIX_AMOUNT_SLOT, amount_of, amount_value};
 use chimera_core::ui::theme;
@@ -19,31 +19,128 @@ fn amount_display_value_round_trips() {
     assert_eq!(amount_value(0), 0.5);
 }
 
-/// The fixture: ENV→CUTOFF +20, ENV→FOLD −30, LFO→CUTOFF +42 (selected).
-/// The destination carries its block tag, as in the column headers.
-#[test]
-fn focus_band_names_the_selected_route() {
-    let fb = render("mod_matrix");
-    let mut want = Fb::new();
-    want.px.fill(fb.px[0]);
-    components::focus_route(&mut want, "LF1", "FLT CUTOFF", "+42", amount_value(42));
-    assert!(fb.px[28 * W..118 * W] == want.px[28 * W..118 * W]);
+/// A blank frame drawn by `f`, for comparing a band of the screen.
+fn drawn(bg: u16, f: impl FnOnce(&mut Fb)) -> Fb {
+    let mut fb = Fb::new();
+    fb.px.fill(bg);
+    f(&mut fb);
+    fb
 }
 
+fn rows(fb: &Fb, y0: i32, y1: i32) -> &[u16] {
+    &fb.px[y0 as usize * W..y1 as usize * W]
+}
+
+/// The fixture: E1→CUTOFF +20, E1→FOLD −30, LF1→CUTOFF +42 (selected).
+/// One line, block tag included: `LF1 → FLT CUTOFF`.
 #[test]
-fn dots_show_sign_and_size_and_the_cursor_is_outlined() {
+fn the_readout_names_the_selected_route() {
     let fb = render("mod_matrix");
-    let (x, y) = cell_center(0, 0); // ENV → CUTOFF, +20
-    assert_eq!(fb.at(x, y), theme::INK2, "positive: filled");
-    let (x, y) = cell_center(1, 0); // ENV → FOLD, −30
-    assert_eq!(fb.at(x, y), theme::BG, "negative: a ring");
-    assert!((1..6).any(|r| fb.at(x + r, y) == theme::INK2));
-    let (x, y) = cell_center(1, 1); // LFO → FOLD, none
-    assert_eq!(fb.at(x, y), theme::FAINT, "no route: a tiny dim dot");
-    assert_ne!(fb.at(x + 2, y), theme::FAINT);
-    let (x, y) = cell_center(0, 1); // LFO → CUTOFF, selected
-    assert_eq!(fb.at(x, y), theme::ACCENT, "selected route lit");
-    assert_eq!(fb.at(x - 14, y), theme::ACCENT, "cursor outline");
+    let want = drawn(fb.px[0], |d| {
+        let x = theme::MARGIN_X;
+        let x = x
+            + draw::text_tracked(d, &theme::FONT_LABEL, "LF1", x, READOUT_Y, theme::ACCENT, 1)
+            + 4;
+        let x = x + draw::arrow(d, x, READOUT_Y, theme::ACCENT) + 5;
+        draw::text_tracked(
+            d,
+            &theme::FONT_LABEL,
+            "FLT CUTOFF",
+            x,
+            READOUT_Y,
+            theme::ACCENT,
+            1,
+        );
+    });
+    assert!(rows(&fb, GRID_BOTTOM, READOUT_Y + 3) == rows(&want, GRID_BOTTOM, READOUT_Y + 3));
+}
+
+/// Cell (`ci`, `vi`) as drawn: `edge` outline, and a route's fill and amount.
+fn cell_as(
+    bg: u16,
+    ci: usize,
+    vi: usize,
+    edge: embedded_graphics::pixelcolor::Rgb565,
+    route: Option<&str>,
+) -> Fb {
+    drawn(bg, |d| {
+        let (x, y) = cell_origin(ci, vi);
+        draw::round_outline(d, x, y, CELL_W, CELL_H, 0, edge);
+        match route {
+            Some("0") => draw::text_center(
+                d,
+                &theme::FONT_LABEL_BOLD,
+                "0",
+                x + CELL_W / 2,
+                y + 10,
+                theme::BAR_REST,
+                0,
+            ),
+            Some(t) => {
+                draw::fill_rect(d, x + 1, y + 1, CELL_W - 2, CELL_H - 2, theme::ACCENT_SOFT);
+                draw::text_center(
+                    d,
+                    &theme::FONT_LABEL_BOLD,
+                    t,
+                    x + CELL_W / 2,
+                    y + 10,
+                    theme::ACCENT,
+                    0,
+                );
+            }
+            None => {}
+        }
+    })
+}
+
+fn same_cell(a: &Fb, b: &Fb, ci: usize, vi: usize) -> bool {
+    let (x, y) = cell_origin(ci, vi);
+    (y..y + CELL_H).all(|y| (x..x + CELL_W).all(|x| a.at(x, y) == b.at(x, y)))
+}
+
+/// Every route prints its amount in a lit cell (0 unlit, in the rest
+/// grey); an absent route is an empty outline; the cursor's is the accent.
+#[test]
+fn cells_print_their_amounts_and_the_cursor_is_outlined() {
+    let fb = render("mod_matrix");
+    let bg = fb.px[0];
+    for (ci, vi, edge, route) in [
+        (0, 0, theme::FAINT, Some("+20")),
+        (1, 0, theme::FAINT, Some("-30")),
+        (0, 1, theme::ACCENT, Some("+42")),
+        (1, 1, theme::FAINT, None),
+        (0, 7, theme::FAINT, Some("0")), // NTE → CUTOFF, the default pitch route
+    ] {
+        assert!(
+            same_cell(&fb, &cell_as(bg, ci, vi, edge, route), ci, vi),
+            "cell {ci},{vi}"
+        );
+    }
+}
+
+/// All eight sources are rows at once: no vertical scroll.
+#[test]
+fn every_source_is_a_row_on_screen() {
+    let mut ui = ui_for("mod_matrix");
+    let m = &ui.matrix_state;
+    assert_eq!(m.num_sources, 8);
+    assert_eq!(m.visible_rows(), m.num_sources);
+    let fb = render("mod_matrix");
+    for vi in 0..8 {
+        let (_, y) = cell_origin(0, vi);
+        let label =
+            (y..y + CELL_H).any(|y| (theme::MARGIN_X..40).any(|x| fb.at(x, y) != theme::BG));
+        assert!(label, "row {vi} labelled");
+        assert_ne!(
+            fb.at(cell_origin(1, vi).0, y),
+            theme::BG,
+            "row {vi} has cells"
+        );
+    }
+    assert!(cell_origin(0, 7).1 + CELL_H <= GRID_BOTTOM);
+    feed(&mut ui, Input::turn(EncoderId::A, 7));
+    feed(&mut ui, Input::turn(EncoderId::C, 3));
+    assert_eq!((ui.matrix_state.sel_row, ui.matrix_state.scroll_y), (7, 0));
 }
 
 #[test]
@@ -78,22 +175,28 @@ fn an_empty_matrix_says_so() {
             op: chimera_core::addr::Op::A
         }
     );
+    assert_eq!(ui.matrix_state.num_dests, 0);
     settle(&mut ui);
     let mut fb = Fb::new();
     ui.render_with_scope(&mut fb, &PerfStats::zero(), &scope_fixture());
     assert_eq!(fb.oob, 0);
-    let mut want = Fb::new();
-    want.px.fill(fb.px[0]);
-    chimera_core::ui::draw::text_tracked(
-        &mut want,
-        &theme::FONT_VALUE,
-        "NO DESTINATIONS",
-        theme::MARGIN_X,
-        theme::FOCUS_LABEL_Y,
-        theme::MID,
-        theme::LABEL_TRACKING,
-    );
-    assert!(fb.px[28 * W..118 * W] == want.px[28 * W..118 * W]);
+    let want = drawn(fb.px[0], |d| {
+        draw::text_tracked(
+            d,
+            &theme::FONT_LABEL,
+            "NO DESTINATIONS",
+            theme::MARGIN_X,
+            READOUT_Y,
+            theme::MID,
+            1,
+        );
+    });
+    assert!(rows(&fb, GRID_BOTTOM, READOUT_Y + 3) == rows(&want, GRID_BOTTOM, READOUT_Y + 3));
+    let (x, y) = cell_origin(0, 0);
+    assert_eq!(fb.at(x, y), theme::BG, "no cells");
+    let mut dirty = Fb::new();
+    ui.render_dirty_with_scope(&mut dirty, &PerfStats::zero(), &scope_fixture());
+    assert!(dirty.px == fb.px);
 }
 
 #[test]
@@ -122,12 +225,40 @@ fn a_wide_matrix_scrolls_with_the_cursor() {
     let mut fb = Fb::new();
     draw_grid(&mut fb, &m, m.current_amount());
     assert_eq!(fb.oob, 0);
-    let (x, y) = cell_center(m.visible_cols() - 1, 0);
+    let (x, y) = cell_origin(m.visible_cols() - 1, 0);
     assert_eq!(
-        fb.at(x - 14, y),
+        fb.at(x, y),
         theme::ACCENT,
         "cursor in the last visible column"
     );
+}
+
+/// The grid stays put until the cursor passes the last visible column, then
+/// follows it one column at a time, and back.
+#[test]
+fn sideways_scroll_starts_past_the_last_visible_column() {
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::block::ParamId;
+    use chimera_core::ui::mod_grid::{MatrixState, ModDest};
+    let mut m = MatrixState::new();
+    m.rebuild_sources(&["ENV"]);
+    for (i, dest) in m.dests.iter_mut().enumerate().take(8) {
+        *dest = Some(ModDest {
+            addr: ParamAddr::new(BlockRef::Filter, ParamId(i as u8 % 6)),
+            label: [0; 8],
+        });
+    }
+    m.num_dests = 8;
+    let vis = m.visible_cols();
+    let mut seen = vec![];
+    for _ in 0..8 {
+        seen.push(m.scroll_x);
+        m.move_col(1);
+    }
+    assert_eq!(seen, [0, 0, 0, 0, 0, 1, 2, 3]);
+    assert_eq!(m.scroll_x, 8 - vis);
+    m.move_col(-(vis as i8));
+    assert_eq!((m.sel_col, m.scroll_x), (2, 2));
 }
 
 /// Issue #11: `adjust_amount` must not write past `num_dests`, independent
@@ -242,20 +373,12 @@ fn stats_line_renders_at_max_counts_without_overflow() {
     assert_eq!(fb.oob, 0);
 }
 
-/// Radius of the filled accent dot at `(x, y)`: accent pixels to its right.
-fn dot_radius(fb: &Fb, x: i32, y: i32) -> i32 {
-    (1..12)
-        .take_while(|&r| fb.at(x + r, y) == theme::ACCENT)
-        .count() as i32
-}
-
-/// The selected route's dot grows with the lerped amount, frame by frame —
-/// never a jump from the old size to the new — and a dirty render matches
-/// a full render on every frame of the way.
+/// The selected cell's amount counts up with the lerp, frame by frame —
+/// never a jump to the new value — and a dirty render matches a full
+/// render on every frame of the way.
 #[test]
-fn the_selected_dot_lerps_with_the_amount() {
+fn the_selected_amount_lerps() {
     let mut ui = ui_for("mod_matrix");
-    let (x, y) = cell_center(0, 1); // LFO → CUTOFF, +42
     let mut dirty = Fb::new();
     ui.render_dirty_with_scope(&mut dirty, &PerfStats::zero(), &scope_fixture());
     let full = |ui: &chimera_core::ui::UiState| {
@@ -263,10 +386,12 @@ fn the_selected_dot_lerps_with_the_amount() {
         ui.render_with_scope(&mut fb, &PerfStats::zero(), &scope_fixture());
         fb
     };
-    let start = dot_radius(&full(&ui), x, y);
+    let shows =
+        |fb: &Fb, t: &str| same_cell(fb, &cell_as(fb.px[0], 0, 1, theme::ACCENT, Some(t)), 0, 1);
+    assert!(shows(&full(&ui), "+42"));
     feed(&mut ui, Input::turn(EncoderId::E, 85)); // +42 → +127
-    let mut radii = vec![start];
-    for frame in 0..30 {
+    let mut shown = vec![];
+    for frame in 0..60 {
         ui.update();
         ui.render_dirty_with_scope(&mut dirty, &PerfStats::zero(), &scope_fixture());
         let fb = full(&ui);
@@ -274,31 +399,97 @@ fn the_selected_dot_lerps_with_the_amount() {
             dirty.px == fb.px,
             "frame {frame}: dirty render == full render"
         );
-        radii.push(dot_radius(&fb, x, y));
+        let a = amount_of(ui.renderer.anim[MATRIX_AMOUNT_SLOT].current());
+        assert!(
+            shows(&fb, &format!("{a:+}")),
+            "frame {frame}: cell prints {a:+}"
+        );
+        shown.push(a);
     }
-    let end = *radii.last().unwrap();
-    assert!(start < end, "{radii:?}");
     assert!(
-        radii.windows(2).all(|w| w[0] <= w[1]),
-        "monotonic: {radii:?}"
+        shown.windows(2).all(|w| w[0] <= w[1]),
+        "monotonic: {shown:?}"
     );
+    assert!(shown[0] < 127 && shown.contains(&127), "{shown:?}");
     assert!(
-        radii.iter().any(|&r| start < r && r < end),
-        "intermediate sizes: {radii:?}"
+        shown.iter().any(|&a| 42 < a && a < 127),
+        "intermediate: {shown:?}"
     );
-    assert!(radii[1] < end, "no jump on the first frame: {radii:?}");
 }
 
-/// The focus band's destination is `TAG NAME`, the column header's two
-/// lines, so OP1 LEVEL and OP2 LEVEL read apart. Every destination fits its
-/// buffer untruncated, and the longest route stays on screen.
+/// Grid and readout keys (`MatrixState.rev`, cursor, scroll): every matrix
+/// edit — cursor, amount, MIX+MINUS delete, MIX+PLUS prime, a sideways
+/// scroll — redraws what changed, so a dirty render equals a full one.
+#[test]
+fn matrix_edits_redraw_through_the_region_keys() {
+    let mut ui = ui_for("mod_matrix");
+    let mut dirty = Fb::new();
+    let check = |ui: &mut chimera_core::ui::UiState, dirty: &mut Fb, what: &str| {
+        settle(ui);
+        ui.render_dirty_with_scope(dirty, &PerfStats::zero(), &scope_fixture());
+        let mut fb = Fb::new();
+        ui.render_with_scope(&mut fb, &PerfStats::zero(), &scope_fixture());
+        assert!(dirty.px == fb.px, "{what}: dirty render == full render");
+        fb
+    };
+    let before = check(&mut ui, &mut dirty, "start");
+    feed(&mut ui, Input::turn(EncoderId::B, 1));
+    let moved = check(&mut ui, &mut dirty, "cursor");
+    assert!(
+        rows(&before, GRID_BOTTOM, READOUT_Y + 3) != rows(&moved, GRID_BOTTOM, READOUT_Y + 3),
+        "readout follows the cursor"
+    );
+    feed(&mut ui, Input::turn(EncoderId::E, 12));
+    check(&mut ui, &mut dirty, "amount");
+    feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Minus));
+    assert!(!ui.matrix_state.is_present(1, 1), "MIX+MINUS deletes");
+    let fb = check(&mut ui, &mut dirty, "delete");
+    assert!(same_cell(
+        &fb,
+        &cell_as(fb.px[0], 1, 1, theme::ACCENT, None),
+        1,
+        1
+    ));
+    // MIX+PLUS on DRV's three knobs and FLT's C: six columns, one past
+    // the visible five, so the grid scrolls sideways.
+    let prime = |ui: &mut chimera_core::ui::UiState, enc| {
+        feed(ui, Input::turn(enc, 1));
+        feed(ui, Input::chord(ButtonId::Mix, ButtonId::Plus));
+    };
+    let dests = ui.matrix_state.num_dests;
+    for _ in 0..3 {
+        feed(&mut ui, Input::press(ButtonId::Minus)); // → DRV
+    }
+    for enc in [EncoderId::A, EncoderId::B, EncoderId::C] {
+        prime(&mut ui, enc);
+    }
+    feed(&mut ui, Input::press(ButtonId::Plus)); // → FLT
+    prime(&mut ui, EncoderId::C);
+    for _ in 0..2 {
+        feed(&mut ui, Input::press(ButtonId::Plus)); // → MTX
+    }
+    assert_eq!(ui.matrix_state.num_dests, dests + 4, "MIX+PLUS primes");
+    check(&mut ui, &mut dirty, "primed");
+    feed(&mut ui, Input::turn(EncoderId::B, 8));
+    assert!(ui.matrix_state.scroll_x > 0);
+    let fb = check(&mut ui, &mut dirty, "scrolled");
+    let (x, y) = cell_origin(ui.matrix_state.visible_cols() - 1, ui.matrix_state.sel_row);
+    assert_eq!(fb.at(x, y), theme::ACCENT, "cursor on screen");
+}
+
+/// The readout's destination is `TAG NAME`, the column header's two lines,
+/// so OP1 LEVEL and OP2 LEVEL read apart. Every destination fits its buffer
+/// untruncated, and the longest route stays inside the margins.
 #[test]
 fn route_destination_names_the_block_and_fits() {
     use chimera_core::addr::{BlockRef, ParamAddr};
     use chimera_core::ui::block_registry::PART_MOD_SOURCES;
     use chimera_core::ui::fmt::FmtBuf;
-    use chimera_core::ui::mod_grid::{ModDest, block_tag, fmt_route_dest};
-    let mut longest = (0, String::new());
+    use chimera_core::ui::mod_grid::{
+        MatrixState, ModDest, block_tag, draw_readout, fmt_route_dest,
+    };
+    let width = |s: &str| draw::text_width(&theme::FONT_LABEL, s, theme::LABEL_TRACKING);
+    let mut longest = (0, None);
     for b in BlockRef::ALL {
         for spec in b.specs() {
             let dest = ModDest {
@@ -309,25 +500,27 @@ fn route_destination_names_the_block_and_fits() {
             fmt_route_dest(&mut buf, &dest);
             let want = format!("{} {}", block_tag(b), spec.label);
             assert_eq!(buf.as_str(), want, "untruncated");
-            let w = chimera_core::ui::draw::text_width(
-                &theme::FONT_VALUE,
-                &want,
-                theme::LABEL_TRACKING,
-            );
-            if w > longest.0 {
-                longest = (w, want);
+            if width(&want) > longest.0 {
+                longest = (width(&want), Some(dest));
             }
         }
     }
-    let src = PART_MOD_SOURCES
-        .iter()
-        .max_by_key(|s| {
-            chimera_core::ui::draw::text_width(&theme::FONT_VALUE, s, theme::LABEL_TRACKING)
-        })
-        .unwrap();
+    let src = *PART_MOD_SOURCES.iter().max_by_key(|s| width(s)).unwrap();
+    let mut m = MatrixState::new();
+    m.rebuild_sources(&[src]);
+    m.dests[0] = longest.1;
+    m.num_dests = 1;
     let mut fb = Fb::new();
-    components::focus_route(&mut fb, src, &longest.1, "-127", amount_value(-127));
-    assert_eq!(fb.oob, 0, "{src} -> {}", longest.1);
+    draw_readout(&mut fb, &m);
+    assert_eq!(fb.oob, 0);
+    let right = (0..theme::SCREEN_W)
+        .rev()
+        .find(|&x| (READOUT_Y - 9..=READOUT_Y).any(|y| fb.at(x, y) != fb.at(0, 0)))
+        .unwrap();
+    assert!(
+        right < theme::SCREEN_W - theme::MARGIN_X,
+        "readout ends at x={right}"
+    );
 }
 
 /// Issue #15 fix round 1: the `>` scroll-more hint moved from the name row
@@ -457,5 +650,14 @@ fn adjacent_column_headers_never_touch() {
                 );
             }
         }
+    }
+}
+
+/// The widest amount keeps a pixel clear of the cell's fill on each side.
+#[test]
+fn the_widest_amount_fits_its_cell() {
+    for a in ["-127", "+127"] {
+        let w = draw::text_width(&theme::FONT_LABEL_BOLD, a, 0);
+        assert!(w <= CELL_W - 4, "{a} is {w}px in a {CELL_W}px cell");
     }
 }

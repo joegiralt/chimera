@@ -1,5 +1,5 @@
-//! Mod matrix: routing state (cursor, amounts, sources, destinations) and
-//! its dot grid (UI refresh spec § Page types).
+//! Mod matrix: routing state (cursor, amounts, sources, destinations), its
+//! amount grid and the route readout (UI refresh spec § Page types, #161).
 
 use core::fmt::Write;
 
@@ -12,18 +12,24 @@ use crate::ui::draw;
 use crate::ui::fmt::FmtBuf;
 use crate::ui::theme;
 
-/// Dot grid geometry (grid region y 118..266): destination labels across,
-/// sources down, one dot per route.
+/// Grid geometry (grid region 28..`GRID_BOTTOM`): destination labels
+/// across, every source down (no vertical scroll), one amount cell per route.
 pub const GRID_X: i32 = 58;
-pub const GRID_COL_W: i32 = 40;
-pub const GRID_TAG_Y: i32 = 130;
-pub const GRID_NAME_Y: i32 = 140;
-pub const GRID_ROW0_Y: i32 = 162;
-pub const GRID_ROW_H: i32 = 24;
-pub const HINT_Y: i32 = 236;
-pub const STATS_Y: i32 = 254;
+pub const GRID_COL_W: i32 = 36;
+pub const GRID_TAG_Y: i32 = 38;
+pub const GRID_NAME_Y: i32 = 47;
+/// Top of the first row; a cell is inset `CELL_INSET` in its column and
+/// spans `row + 1 .. row + GRID_ROW_H - 2`.
+pub const GRID_ROW0_Y: i32 = 50;
+pub const GRID_ROW_H: i32 = 17;
+const CELL_INSET: i32 = 4;
+pub const GRID_BOTTOM: i32 = 190;
+/// The readout band below the grid (`GRID_BOTTOM`..cells bottom).
+pub const READOUT_Y: i32 = 208;
+pub const HINT_Y: i32 = 228;
+pub const STATS_Y: i32 = 246;
 const VISIBLE_COLS: usize = 5;
-const VISIBLE_ROWS: usize = 3;
+const VISIBLE_ROWS: usize = MAX_SOURCES;
 
 /// Max sources and destinations for the amounts grid (presence is a `u8`).
 pub const MAX_SOURCES: usize = crate::modulation::MAX_MOD_SOURCES;
@@ -355,7 +361,7 @@ pub fn dest_name(d: &ModDest) -> &'static str {
 
 /// A column header's name: `label` clipped to the column pitch minus a 3px
 /// gap, so neighbouring headers never touch (#22). Only the widest labels
-/// (`CUTOFF`, `INHARM`) lose a letter; the focus band shows the full name.
+/// lose letters (`CUTOFF` reads `CUTO`); the readout shows the full name.
 pub fn fit_header(label: &'static str) -> &'static str {
     let max = GRID_COL_W - 3;
     let mut end = label.len();
@@ -393,36 +399,45 @@ pub fn fmt_stats(buf: &mut FmtBuf, routes: usize, num_dests: usize) {
     );
 }
 
-/// Centre of grid cell (visible column `ci`, visible row `vi`).
-pub fn cell_center(ci: usize, vi: usize) -> (i32, i32) {
+/// Top-left of the cell box at (visible column `ci`, visible row `vi`).
+pub fn cell_origin(ci: usize, vi: usize) -> (i32, i32) {
     (
-        GRID_X + ci as i32 * GRID_COL_W,
-        GRID_ROW0_Y + vi as i32 * GRID_ROW_H,
+        GRID_X + ci as i32 * GRID_COL_W + CELL_INSET,
+        GRID_ROW0_Y + vi as i32 * GRID_ROW_H + 1,
     )
 }
 
-/// Dot grid: sources down, primed destinations across; a filled dot is a
-/// positive amount, a ring negative, size = |amount|, a small ring a route
-/// at 0, a tiny dim dot no route;
-/// the selected cell outlined in the accent, its dot sized by `sel_amount`
-/// (the lerped amount, so it grows with the focus band rather than
-/// snapping). Then the hint and route count.
+/// Cell box width and height.
+pub const CELL_W: i32 = GRID_COL_W - 2 * CELL_INSET;
+pub const CELL_H: i32 = GRID_ROW_H - 3;
+
+/// Centre of the cell at (visible column `ci`, visible row `vi`).
+pub fn cell_center(ci: usize, vi: usize) -> (i32, i32) {
+    let (x, y) = cell_origin(ci, vi);
+    (x + CELL_W / 2, y + CELL_H / 2)
+}
+
+/// The amount grid: sources down, primed destinations across. A route's
+/// cell is lit and prints its amount (`+60`, `-30`, `0` in the rest grey);
+/// an absent route is an empty outline. The cursor's cell is outlined in
+/// the accent and prints `sel_amount`, the lerped amount.
 pub fn draw_grid<D>(d: &mut D, state: &MatrixState, sel_amount: i8)
 where
     D: DrawTarget<Color = Rgb565>,
 {
     let (cols, rows) = (state.visible_cols(), state.visible_rows());
+    let col_x = |ci: usize| GRID_X + ci as i32 * GRID_COL_W + GRID_COL_W / 2;
     for ci in 0..cols {
         let di = ci + state.scroll_x;
         let Some(Some(dest)) = state.dests.get(di).filter(|_| di < state.num_dests) else {
             break;
         };
-        let x = GRID_X + ci as i32 * GRID_COL_W;
         let name_color = if di == state.sel_col {
             theme::INK
         } else {
             theme::MID
         };
+        let x = col_x(ci);
         draw::text_center(
             d,
             &theme::FONT_LABEL,
@@ -447,15 +462,14 @@ where
             d,
             &theme::FONT_LABEL,
             "<",
-            GRID_X - 26,
+            theme::MARGIN_X,
             GRID_NAME_Y,
             theme::MID,
         );
     }
     if state.num_dests > state.scroll_x + cols {
-        // On the tag row, not the name row: tags are <= 3 chars for every
-        // BlockRef (`block_tag`), so this can never reach far enough right
-        // to touch the hint, unlike a destination name (issue #15).
+        // On the tag row: tags are <= 3 chars (`block_tag`), so the last
+        // column's never reaches it, unlike a name (issue #15).
         draw::text(
             d,
             &theme::FONT_LABEL,
@@ -470,7 +484,7 @@ where
         if ri >= state.num_sources {
             break;
         }
-        let (_, y) = cell_center(0, vi);
+        let (_, y) = cell_origin(0, vi);
         let name = state.sources[ri].map_or("?", |s| s.name);
         let color = if ri == state.sel_row {
             theme::INK
@@ -482,7 +496,7 @@ where
             &theme::FONT_LABEL_BOLD,
             name,
             theme::MARGIN_X,
-            y + 4,
+            y + 10,
             color,
         );
         for ci in 0..cols {
@@ -490,24 +504,95 @@ where
             if di >= state.num_dests {
                 break;
             }
-            let (x, y) = cell_center(ci, vi);
             let selected = ri == state.sel_row && di == state.sel_col;
             let amount = if selected {
                 sel_amount
             } else {
                 state.amounts[ri][di]
             };
-            if selected {
-                draw::round_outline(d, x - 14, y - 11, 28, 22, 6, theme::ACCENT);
-            }
-            let r = 2 + (amount as i32).abs() * 8 / 127;
-            let color = if selected { theme::ACCENT } else { theme::INK2 };
-            match (state.is_present(ri, di), amount) {
-                (false, _) => draw::dot(d, x, y, 1, theme::FAINT),
-                (true, 0) => draw::ring(d, x, y, 2, color, 1),
-                (true, a) if a > 0 => draw::dot(d, x, y, r, color),
-                (true, _) => draw::ring(d, x, y, r, color, 1),
-            }
+            draw_cell(
+                d,
+                ci,
+                vi,
+                state.is_present(ri, di).then_some(amount),
+                selected,
+            );
+        }
+    }
+}
+
+/// One cell: an outline (the accent under the cursor); a route fills it
+/// and prints its amount.
+fn draw_cell<D>(d: &mut D, ci: usize, vi: usize, route: Option<i8>, selected: bool)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let (x, y) = cell_origin(ci, vi);
+    let edge = if selected {
+        theme::ACCENT
+    } else {
+        theme::FAINT
+    };
+    draw::round_outline(d, x, y, CELL_W, CELL_H, 0, edge);
+    let Some(amount) = route else { return };
+    let text = if amount == 0 {
+        theme::BAR_REST
+    } else {
+        draw::fill_rect(d, x + 1, y + 1, CELL_W - 2, CELL_H - 2, theme::ACCENT_SOFT);
+        theme::ACCENT
+    };
+    let mut buf = FmtBuf::new();
+    fmt_amount(&mut buf, amount);
+    draw::text_center(
+        d,
+        &theme::FONT_LABEL_BOLD,
+        buf.as_str(),
+        x + CELL_W / 2,
+        y + 10,
+        text,
+        0,
+    );
+}
+
+/// The band under the grid: the cursor's route on one line (`LF1 → FLT
+/// CUTOFF`, `NO DESTINATIONS` without one), the hint and the route count.
+pub fn draw_readout<D>(d: &mut D, state: &MatrixState)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let dest = state
+        .dests
+        .get(state.sel_col)
+        .copied()
+        .flatten()
+        .filter(|_| state.sel_col < state.num_dests);
+    let src = state
+        .sources
+        .get(state.sel_row)
+        .copied()
+        .flatten()
+        .filter(|_| state.sel_row < state.num_sources);
+    let label = |d: &mut D, s: &str, x: i32, color| {
+        x + draw::text_tracked(
+            d,
+            &theme::FONT_LABEL,
+            s,
+            x,
+            READOUT_Y,
+            color,
+            theme::LABEL_TRACKING,
+        )
+    };
+    match (src, dest) {
+        (Some(src), Some(dest)) => {
+            let x = label(d, src.name, theme::MARGIN_X, theme::ACCENT) + 4;
+            let x = x + draw::arrow(d, x, READOUT_Y, theme::ACCENT) + 5;
+            let mut name = FmtBuf::new();
+            fmt_route_dest(&mut name, &dest);
+            label(d, name.as_str(), x, theme::ACCENT);
+        }
+        _ => {
+            label(d, "NO DESTINATIONS", theme::MARGIN_X, theme::MID);
         }
     }
     draw::text(

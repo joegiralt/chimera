@@ -806,7 +806,6 @@ impl UiState {
                 row: self.matrix_state.sel_row as u8,
                 col: self.matrix_state.sel_col as u8,
                 dests: self.matrix_state.num_dests as u8,
-                value: qvalues[renderer::MATRIX_AMOUNT_SLOT],
                 matrix_rev: self.matrix_state.rev,
             },
             RegionKind::Focus => RegionData::focus(
