@@ -123,19 +123,20 @@ impl Renderer {
                 let p = &f.parts[f.active_part].sound.params.envelopes[s.index()];
                 match f.ctx.envs[s.index()] {
                     EnvKind::A(_) => {
-                        // H is a stage under AHDSR only; its floor, as A, D
-                        // and R have, keeps it drawn at 0.
-                        let hold = if p.hold_pos == HoldPos::Ahdsr {
-                            at(E::HOLD).unwrap_or(0.0).max(0.02)
-                        } else {
-                            0.0
-                        };
                         let (atk, dec, sus, rel) = (
                             at(E::ATTACK).unwrap_or(0.0).max(0.02),
                             at(E::DECAY).unwrap_or(0.0).max(0.02),
                             at(E::SUSTAIN).unwrap_or(0.0),
                             at(E::RELEASE).unwrap_or(0.0).max(0.02),
                         );
+                        // H is a stage under AHDSR only, wide enough for its
+                        // label even at 0.
+                        let hold = if p.hold_pos == HoldPos::Ahdsr {
+                            let floor = viz::label_floor("H", atk + dec + 0.3 + rel);
+                            at(E::HOLD).unwrap_or(0.0).max(floor)
+                        } else {
+                            0.0
+                        };
                         let total = atk + hold + dec + 0.3 + rel;
                         let focus = view::view(f.def, f.focus, &f.ctx).addr().map(|x| x.param);
                         let lit = match focus {
