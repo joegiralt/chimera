@@ -215,22 +215,6 @@ pub static EFX: BlockDef = BlockDef {
     ],
 };
 
-pub static MIXER: BlockDef = BlockDef {
-    id: 17,
-    name: "Mixer",
-    short: "MIX",
-    layout: PageLayout::CellGrid,
-    viz: VizType::MixerLevels,
-    params: [
-        ParamSlot::legacy("VOL", ValFmt::Uni),
-        ParamSlot::legacy("PAN", ValFmt::Bi),
-        ParamSlot::legacy("VOICES", ValFmt::Uni),
-        ParamSlot::legacy("MIDI", ValFmt::Uni),
-        ParamSlot::legacy("PITCH", ValFmt::Bi),
-        ParamSlot::legacy("GLIDE", ValFmt::Uni),
-    ],
-};
-
 pub static CHORUS: BlockDef = BlockDef {
     id: 18,
     name: "Chorus",
@@ -337,26 +321,6 @@ pub static MASTER_LEVEL: BlockDef = BlockDef {
 static MASTER_SUB_PAGES: [&BlockDef; 1] = [&MASTER_LEVEL];
 
 // ---------------------------------------------------------------------------
-// Noise (new — not in current PageId)
-// ---------------------------------------------------------------------------
-
-pub static NOISE: BlockDef = BlockDef {
-    id: 21,
-    name: "Noise",
-    short: "NSE",
-    layout: PageLayout::CellGrid,
-    viz: VizType::None,
-    params: [
-        ParamSlot::legacy("COLOR", ValFmt::Uni),
-        ParamSlot::legacy("PITCH", ValFmt::Uni),
-        ParamSlot::legacy("DECAY", ValFmt::Uni),
-        ParamSlot::legacy("CLICK", ValFmt::Uni),
-        ParamSlot::legacy("TONE", ValFmt::Uni),
-        ParamSlot::legacy("LEVEL", ValFmt::Uni),
-    ],
-};
-
-// ---------------------------------------------------------------------------
 // Mod Matrix (new placeholder)
 // ---------------------------------------------------------------------------
 
@@ -436,27 +400,6 @@ pub static PART_MOD_SOURCES: [&str; 2] = ["ENV", "LFO"];
 
 static MOD_MATRIX_SUB_PAGES: [&BlockDef; 2] = [&ENVELOPE, &LFO];
 
-static KICK_BLOCKS: [ChainBlock; 3] = [
-    ChainBlock {
-        def: &NOISE,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &FILTER,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &MOD_MATRIX,
-        sub_pages: &MOD_MATRIX_SUB_PAGES,
-    },
-];
-
-pub static KICK_CHAIN: ChainDef2 = ChainDef2 {
-    name: "Kick",
-    blocks: &KICK_BLOCKS,
-    mod_sources: &PART_MOD_SOURCES,
-};
-
 static MODAL_SUB_PAGES: [&BlockDef; 1] = [&MODAL_2];
 
 static MODAL_PLUCK_BLOCKS: [ChainBlock; 3] = [
@@ -531,39 +474,6 @@ pub static ALGO_CHAIN: ChainDef2 = ChainDef2 {
     mod_sources: &PART_MOD_SOURCES,
 };
 
-static MIX_BLOCKS: [ChainBlock; 6] = [
-    ChainBlock {
-        def: &MIXER,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &CHORUS,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &DELAY,
-        sub_pages: &DELAY_SUB_PAGES,
-    },
-    ChainBlock {
-        def: &EFX,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &TAPE,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &MASTER,
-        sub_pages: &MASTER_SUB_PAGES,
-    },
-];
-
-pub static MIX_CHAIN: ChainDef2 = ChainDef2 {
-    name: "Mix",
-    blocks: &MIX_BLOCKS,
-    mod_sources: &[],
-};
-
 static ENVELOPE_BLOCKS: [ChainBlock; 3] = [
     ChainBlock {
         def: &ENV_AMP,
@@ -603,38 +513,6 @@ pub static PART: BlockDef = BlockDef {
         ParamSlot::param(BlockRef::Part, PartParams::LEVEL),
         ParamSlot::param(BlockRef::Part, PartParams::PAN),
         EMPTY,
-    ],
-};
-
-pub static MIDI_CFG: BlockDef = BlockDef {
-    id: 28,
-    name: "MIDI",
-    short: "MID",
-    layout: PageLayout::CellGrid,
-    viz: VizType::None,
-    params: [
-        ParamSlot::legacy("CH", ValFmt::Int(16)),
-        ParamSlot::legacy("PGM", ValFmt::Int(1)),
-        ParamSlot::legacy("CC.RX", ValFmt::Int(1)),
-        ParamSlot::legacy("BEND", ValFmt::Int(12)),
-        ParamSlot::legacy("TRNS", ValFmt::Bi),
-        EMPTY,
-    ],
-};
-
-pub static EQ: BlockDef = BlockDef {
-    id: 29,
-    name: "EQ",
-    short: "EQ",
-    layout: PageLayout::BigViz,
-    viz: VizType::None,
-    params: [
-        ParamSlot::legacy("LOW", ValFmt::Bi),
-        ParamSlot::legacy("L.FRQ", ValFmt::Uni),
-        ParamSlot::legacy("MID", ValFmt::Bi),
-        ParamSlot::legacy("M.FRQ", ValFmt::Uni),
-        ParamSlot::legacy("HIGH", ValFmt::Bi),
-        ParamSlot::legacy("H.FRQ", ValFmt::Uni),
     ],
 };
 
@@ -915,13 +793,11 @@ pub static DEMO_CHAIN: ChainDef2 = ChainDef2 {
 };
 
 /// Every chain, for whole-registry checks (unique ids, the focus table).
-pub static ALL_CHAINS: [&ChainDef2; 8] = [
+pub static ALL_CHAINS: [&ChainDef2; 6] = [
     &ALGO_CHAIN,
     &MODAL_PLUCK_CHAIN,
     &MIXER_CHANNEL_CHAIN,
     &SYSTEM_CHAIN,
     &DEMO_CHAIN,
-    &KICK_CHAIN,
-    &MIX_CHAIN,
     &ENVELOPE_CHAIN,
 ];
