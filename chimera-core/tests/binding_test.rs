@@ -57,53 +57,52 @@ fn part_chains_offer_the_eight_sources() {
     }
 }
 
+/// Every page of every chain, main pages and sub-pages, has its own id: an
+/// id is the page's key for focus memory and dirty tracking.
 #[test]
 fn block_def_ids_are_unique() {
-    let all: [&BlockDef; 36] = [
-        &reg::MODAL_1,
-        &reg::MODAL_2,
-        &reg::ALGO_WAVE,
-        &reg::ALGO_ALG,
-        &reg::ALGO_LEVEL,
-        &reg::DRIVE,
-        &reg::FOLDER,
-        &reg::FILTER,
-        &reg::FILTER_MODE,
-        &reg::ENVELOPE,
-        &reg::LFO,
-        &reg::EFX,
-        &reg::MIXER,
-        &reg::CHORUS,
-        &reg::DELAY,
-        &reg::DELAY_CHAR,
-        &reg::TAPE,
-        &reg::MASTER,
-        &reg::MASTER_LEVEL,
-        &reg::NOISE,
-        &reg::MOD_MATRIX,
-        &reg::PART,
-        &reg::MIDI_CFG,
-        &reg::EQ,
-        &reg::SENDS,
-        &reg::SYS_MIDI,
-        &reg::SYS_TUNING,
-        &reg::SYS_THEME,
-        &reg::SYS_UPDATES,
-        &reg::SYS_ABOUT,
-        &reg::SYS_AUDIO,
-        &reg::DEMO_WAVES,
-        &reg::DEMO_SHAPES,
-        &reg::DEMO_MOTION,
-        &reg::DEMO_MATRIX,
-        &reg::DEMO_FM,
-    ];
-    for (i, d) in all.iter().enumerate() {
-        assert!(
-            all[..i].iter().all(|o| o.id != d.id),
-            "{} reuses id {}",
-            d.name,
-            d.id
-        );
+    let mut seen: Vec<&BlockDef> = Vec::new();
+    for chain in reg::ALL_CHAINS {
+        for block in chain.blocks {
+            for def in core::iter::once(block.def).chain(block.sub_pages.iter().copied()) {
+                if let Some(o) = seen.iter().find(|o| o.id == def.id) {
+                    assert!(
+                        core::ptr::eq(*o, def),
+                        "{} reuses id {} of {}",
+                        def.name,
+                        def.id,
+                        o.name
+                    );
+                } else {
+                    seen.push(def);
+                }
+            }
+        }
+    }
+}
+
+/// Every chain the navigation can reach is in `ALL_CHAINS`, so the
+/// registry-wide checks cover it.
+#[test]
+fn all_chains_holds_every_reachable_chain() {
+    use chimera_core::ui::chain::{ChainId, ChainNav};
+    let mut nav = ChainNav::new();
+    for id in [
+        ChainId::Part(0),
+        ChainId::Mixer(0),
+        ChainId::System,
+        ChainId::Demo,
+    ] {
+        nav.chain_id = id;
+        for engine in EngineType::ALL {
+            nav.engine = engine;
+            let chain = nav.active_chain();
+            assert!(
+                reg::ALL_CHAINS.iter().any(|c| core::ptr::eq(*c, chain)),
+                "{}",
+                chain.name
+            );
+        }
     }
 }
 

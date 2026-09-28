@@ -30,7 +30,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("mixer_master", 0xc1981d439df14ddd),
     ("mixer_master_level", 0x7554d112cc792b98),
     ("mod_matrix", 0x7d8a119fbe438eeb),
-    ("sound_browser", 0xdc94376f632eebac),
+    ("sound_browser", 0xaf0c38105a4aee59),
     ("system", 0x66ca9f7c486d2749),
     ("system_theme", 0x6f46ed28ddb10559),
     ("system_audio", 0x281985b580ac2fb1),

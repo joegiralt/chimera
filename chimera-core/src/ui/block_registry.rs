@@ -871,3 +871,14 @@ pub static DEMO_CHAIN: ChainDef2 = ChainDef2 {
     blocks: &DEMO_BLOCKS,
     mod_sources: &[],
 };
+
+/// Every chain, for whole-registry checks (unique ids, the focus table).
+pub static ALL_CHAINS: [&ChainDef2; 7] = [
+    &ALGO_CHAIN,
+    &MODAL_PLUCK_CHAIN,
+    &MIXER_CHANNEL_CHAIN,
+    &SYSTEM_CHAIN,
+    &DEMO_CHAIN,
+    &KICK_CHAIN,
+    &MIX_CHAIN,
+];

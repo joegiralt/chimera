@@ -70,6 +70,9 @@ pub enum RegionData {
         values: [u16; 6],
         focus: u8,
         dest_count: u16,
+        /// Each cell's mod bar (its amount's f32 bits), which a Part switch
+        /// can change alone.
+        mods: [Option<u32>; 6],
     },
     Nav {
         chain_idx: u8,
@@ -126,12 +129,19 @@ impl RegionData {
         }
     }
 
-    pub fn cells(page: PageKey, values: [u16; 6], focus: u8, dest_count: u16) -> Self {
+    pub fn cells(
+        page: PageKey,
+        values: [u16; 6],
+        focus: u8,
+        dest_count: u16,
+        mods: [Option<u32>; 6],
+    ) -> Self {
         Self::Cells {
             page,
             values,
             focus,
             dest_count,
+            mods,
         }
     }
 
@@ -178,6 +188,7 @@ impl RegionData {
             values: [SENTINEL; 6],
             focus: u8::MAX,
             dest_count: u16::MAX,
+            mods: [Some(u32::MAX); 6],
         }
     }
 

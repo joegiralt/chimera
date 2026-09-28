@@ -13,7 +13,9 @@ bench = ["perf-probe"]
 chimera-core = { path = "../chimera-core" }
 chimera-hal = { path = "../chimera-hal" }
 cortex-m = { version = "0.7", features = ["critical-section-single-core"] }
-cortex-m-rt = "0.7"
+# set-vtor: Reset points VTOR at the linked __vector_table (FLASH ORIGIN in
+# memory.x), whatever the bootloader left there.
+cortex-m-rt = { version = "0.7.5", features = ["set-vtor"] }
 # `stm32h750v` selects the rev V register definitions; that is safe on rev Y
 # only while the HAL's ADC and `Delay` (rev-V-specific there) stay unused.
 stm32h7xx-hal = { version = "0.16", features = ["stm32h750v", "rt"] }

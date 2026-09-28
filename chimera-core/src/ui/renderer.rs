@@ -77,7 +77,7 @@ impl Renderer {
     }
 
     /// Mod-bar amount for slot `i` of `def`, if that param is a destination.
-    fn cell_mod_info(
+    pub(crate) fn cell_mod_info(
         def: &BlockDef,
         i: usize,
         sel_op: Op,
