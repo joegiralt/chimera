@@ -103,8 +103,7 @@ impl Renderer {
                 };
                 use crate::params::FilterParams;
                 let slot = &f.def.params[f.focus];
-                let mut buf = FmtBuf::new();
-                fmt::fmt_val(&mut buf, a(f.focus), slot.format());
+                let buf = value_text(f, f.focus, a(f.focus));
                 let readout =
                     (slot.binding != SlotBinding::Empty).then(|| (slot.label(), buf.as_str()));
                 viz::filter(
@@ -318,12 +317,7 @@ impl Renderer {
             return;
         }
         let v = self.anim[f.focus].current();
-        let mut buf = FmtBuf::new();
-        if look(f, f.focus) == components::Look::Absent {
-            let _ = core::fmt::Write::write_str(&mut buf, "--");
-        } else {
-            fmt::fmt_val(&mut buf, v, slot.format());
-        }
+        let buf = value_text(f, f.focus, v);
         components::focus_band(
             display,
             slot.label(),
@@ -436,6 +430,18 @@ pub fn look(f: &Frame, i: usize) -> components::Look {
         }
         _ => components::Look::Live,
     }
+}
+
+/// Slot `i`'s value as the focus band and a viz readout show it: `--` for
+/// an absent route.
+fn value_text(f: &Frame, i: usize, v: f32) -> FmtBuf {
+    let mut buf = FmtBuf::new();
+    if look(f, i) == components::Look::Absent {
+        let _ = core::fmt::Write::write_str(&mut buf, "--");
+    } else {
+        fmt::fmt_val(&mut buf, v, f.def.params[i].format());
+    }
+    buf
 }
 
 /// Fingerprint of the Mixer overview (quantized levels and pans, selection).
