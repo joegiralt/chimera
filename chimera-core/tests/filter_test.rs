@@ -8,6 +8,7 @@ use chimera_core::dsp::filter::{FilterMode, SVF_MODES, SvfFilter};
 use chimera_core::params::{FilterParams, ParamSnapshot};
 use chimera_core::ui::block_def::slot_addr;
 use chimera_core::ui::block_registry::{FILTER, FILTER_MODE};
+use chimera_core::ui::view::SlotCtx;
 use chimera_hal::BLOCK_SIZE;
 
 const SR: u32 = 48_000;
@@ -47,7 +48,8 @@ fn retired_filter_ids_have_no_spec() {
 #[test]
 fn mode_is_on_the_flt_pages() {
     let mode = ParamAddr::new(BlockRef::Filter, FilterParams::MODE);
-    let on = |def| (0..6).any(|i| slot_addr(def, i, chimera_core::addr::Op::A) == Some(mode));
+    let ctx = SlotCtx::read(&ParamSnapshot::default(), chimera_core::addr::Op::A);
+    let on = |def| (0..6).any(|i| slot_addr(def, i, &ctx) == Some(mode));
     assert!(on(&FILTER) && on(&FILTER_MODE));
 }
 

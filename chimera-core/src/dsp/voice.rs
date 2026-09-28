@@ -139,6 +139,7 @@ impl Voice {
     pub fn cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
         Engines::cost(p, mods)
             + Self::CHAIN_COST
+            + p.filter.kind().cost(p.filter.mode())
             + ModRouting::cost(p, mods)
             + Self::stage_cost(p, mods)
     }

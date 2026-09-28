@@ -32,9 +32,9 @@ pub enum SlotBinding {
         label: &'static str,
         fmt: ValFmt,
     },
-    /// A view of the matrix route `source → CUTOFF` (spec § 6): the knob
-    /// shows and edits the route's amount.
-    Route(crate::modulation::ModSource),
+    /// Knob `k` of the Sound's filter KIND's panel (spec § 6): 0–4 FLT's
+    /// knobs 2–6, 5–6 FLT › MODE's extras.
+    FilterPanel(u8),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -79,10 +79,10 @@ impl ParamSlot {
         }
     }
 
-    pub const fn route(source: crate::modulation::ModSource, label: &'static str) -> Self {
+    pub const fn filter_panel(k: u8) -> Self {
         Self {
-            binding: SlotBinding::Route(source),
-            label_override: Some(label),
+            binding: SlotBinding::FilterPanel(k),
+            label_override: None,
         }
     }
 
@@ -102,7 +102,7 @@ impl ParamSlot {
             SlotBinding::Empty
             | SlotBinding::SelectOp
             | SlotBinding::Legacy { .. }
-            | SlotBinding::Route(_) => None,
+            | SlotBinding::FilterPanel(_) => None,
         }
     }
 
@@ -111,10 +111,10 @@ impl ParamSlot {
             return label;
         }
         match self.binding {
-            SlotBinding::Empty => "--",
+            // Views resolve a panel knob.
+            SlotBinding::Empty | SlotBinding::FilterPanel(_) => "--",
             SlotBinding::SelectOp => "OP",
             SlotBinding::Legacy { label, .. } => label,
-            SlotBinding::Route(s) => s.tag(),
             SlotBinding::Param(_) | SlotBinding::SelectedOp(_) => {
                 self.spec().map_or("??", |s| s.label)
             }
@@ -123,10 +123,9 @@ impl ParamSlot {
 
     pub fn format(&self) -> ValFmt {
         match self.binding {
-            SlotBinding::Empty => ValFmt::Uni,
+            SlotBinding::Empty | SlotBinding::FilterPanel(_) => ValFmt::Uni,
             SlotBinding::SelectOp => ValFmt::OneBased(Op::ALL.len() as u8 - 1),
             SlotBinding::Legacy { fmt, .. } => fmt,
-            SlotBinding::Route(_) => ValFmt::Route,
             SlotBinding::Param(_) | SlotBinding::SelectedOp(_) => {
                 self.spec().map_or(ValFmt::Uni, |s| s.fmt)
             }
@@ -134,17 +133,10 @@ impl ParamSlot {
     }
 }
 
-/// The address slot `slot` of `def` edits. `SelectedOp` resolves to the
-/// operator selected *now*, so a saved route always names a concrete operator.
-pub fn slot_addr(def: &BlockDef, slot: usize, sel_op: Op) -> Option<ParamAddr> {
-    match def.params.get(slot)?.binding {
-        SlotBinding::Param(a) => Some(a),
-        SlotBinding::SelectedOp(id) => Some(ParamAddr::new(BlockRef::AlgoOp(sel_op), id)),
-        SlotBinding::Empty
-        | SlotBinding::SelectOp
-        | SlotBinding::Legacy { .. }
-        | SlotBinding::Route(_) => None,
-    }
+/// The address slot `slot` of `def` edits under `ctx`: operator slots name
+/// the selected operator, panel knobs the Sound's kind's parameter.
+pub fn slot_addr(def: &BlockDef, slot: usize, ctx: &crate::ui::view::SlotCtx) -> Option<ParamAddr> {
+    crate::ui::view::view(def, slot, ctx).addr()
 }
 
 #[derive(Clone, Copy, Debug)]

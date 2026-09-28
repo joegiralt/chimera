@@ -3,9 +3,14 @@ use chimera_core::ui::page::PageLayout;
 
 #[test]
 fn filter_block_params() {
+    use chimera_core::ui::view::{SlotCtx, view};
     let def = &block_registry::FILTER;
-    assert_eq!(def.params[1].label(), "CUTOFF");
-    assert_eq!(def.params[2].label(), "RESO");
+    let ctx = SlotCtx::read(
+        &chimera_core::params::ParamSnapshot::default(),
+        chimera_core::addr::Op::A,
+    );
+    assert_eq!(view(def, 1, &ctx).label(), "CUTOFF");
+    assert_eq!(view(def, 2, &ctx).label(), "RES");
     assert_eq!(def.layout, PageLayout::BigViz);
 }
 

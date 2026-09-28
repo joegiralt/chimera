@@ -255,6 +255,11 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::C, 80)); // resonance
         feed(ui, Input::turn(EncoderId::B, -60)); // cutoff, focused
     }),
+    ("flt_mode", |ui| {
+        plus(ui, 3);
+        feed(ui, Input::press(ButtonId::Edit)); // FLT › MODE
+        feed(ui, Input::turn(EncoderId::A, 3)); // MODE: BP12
+    }),
     ("bigviz_env", |ui| {
         plus(ui, 5);
         feed(ui, Input::press(ButtonId::Edit));

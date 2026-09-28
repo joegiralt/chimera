@@ -84,6 +84,48 @@ pub fn filter_y(t: f32, cutoff: f32, reso: f32) -> i32 {
     (y as i32).clamp(PLOT_TOP, PLOT_BASE)
 }
 
+/// Which side of the cutoff passes (the viz reads MODE, spec § UI).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Response {
+    Low,
+    High,
+    Band,
+    Notch,
+}
+
+impl Response {
+    pub fn of(m: crate::dsp::filter::FilterMode) -> Self {
+        use crate::dsp::filter::FilterMode as M;
+        match m {
+            M::Hp24 => Response::High,
+            M::Bp12 | M::Bp24 => Response::Band,
+            M::Notch => Response::Notch,
+            M::Lp6 | M::Lp12 | M::Lp24 | M::Phaser => Response::Low,
+        }
+    }
+}
+
+/// `filter_y` for each response: high-pass mirrors it about the cutoff,
+/// band-pass takes both skirts, notch dips at the cutoff.
+pub fn response_y(t: f32, cutoff: f32, reso: f32, r: Response) -> i32 {
+    let low = filter_y(t, cutoff, reso);
+    let high = filter_y(2.0 * cutoff - t, cutoff, reso);
+    match r {
+        Response::Low => low,
+        Response::High => high,
+        Response::Band => low.max(high),
+        Response::Notch => {
+            let d = ((t - cutoff) * 6.0).abs();
+            if d < 0.5 {
+                let dip = 0.5 + 0.5 * libm::cosf(d * 2.0 * core::f32::consts::PI);
+                FILTER_PASS_Y + ((PLOT_BASE - FILTER_PASS_Y) as f32 * dip) as i32
+            } else {
+                FILTER_PASS_Y
+            }
+        }
+    }
+}
+
 /// Columns `x0..=x1`: soft fill from the curve point `y(x)` down to `base`,
 /// then the curve as an accent line (2 px: see the module doc comment).
 fn filled_curve<D>(d: &mut D, x0: i32, x1: i32, base: i32, y: impl Fn(i32) -> i32)
@@ -160,12 +202,17 @@ where
 
 /// Filter: response with a soft fill, a faint pass-band line, and a marker
 /// at the cutoff carrying `readout` (the focused slot's label and value).
-pub fn filter<D>(d: &mut D, cutoff: f32, reso: f32, readout_text: Option<(&str, &str)>)
-where
+pub fn filter<D>(
+    d: &mut D,
+    cutoff: f32,
+    reso: f32,
+    response: Response,
+    readout_text: Option<(&str, &str)>,
+) where
     D: DrawTarget<Color = Rgb565>,
 {
     let w = (theme::VIZ_RIGHT - theme::VIZ_LEFT) as f32;
-    let y = |x: i32| filter_y((x - theme::VIZ_LEFT) as f32 / w, cutoff, reso);
+    let y = |x: i32| response_y((x - theme::VIZ_LEFT) as f32 / w, cutoff, reso, response);
     filled_curve(d, theme::VIZ_LEFT, theme::VIZ_RIGHT, PLOT_BASE, y);
     draw::fill_rect(
         d,

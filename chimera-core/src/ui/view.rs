@@ -1,9 +1,119 @@
-//! A page slot as it reads now (filter-routing spec § UI).
+//! A page slot as it reads now (filter-routing spec § UI): params, the
+//! filter kind's panel and route views resolve here against the
+//! Sound, so pages, vizzes and encoders all read by address.
 
-use crate::addr::{BlockRef, ParamAddr};
-use crate::modulation::VCA;
-use crate::params::OutParams;
+use crate::addr::{BlockRef, Blocks, Op, ParamAddr};
+use crate::block::ValFmt;
+use crate::dsp::filter::FilterKind;
+use crate::modulation::{ModSource, VCA};
+use crate::params::{FilterParams, OutParams};
 use crate::preset::Sound;
+use crate::ui::block_def::{BlockDef, SlotBinding};
+use crate::ui::filter_panel::{self, PanelKnob, PanelTarget};
+
+/// What a page's panels resolve against (spec § UI "Slot binding").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SlotCtx {
+    pub sel_op: Op,
+    pub kind: FilterKind,
+}
+
+impl SlotCtx {
+    /// Read from any `Blocks`: a Sound's params or a Part view.
+    pub fn read(params: &impl Blocks, sel_op: Op) -> Self {
+        let get = |b: BlockRef, id| params.block(b).map_or(0.0, |blk| blk.get(id));
+        Self {
+            sel_op,
+            kind: FilterKind::from_index(get(BlockRef::Filter, FilterParams::KIND)),
+        }
+    }
+}
+
+/// A slot, resolved.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum View {
+    Empty,
+    SelectOp,
+    Legacy {
+        label: &'static str,
+        fmt: ValFmt,
+    },
+    /// A parameter; `dimmed` decides from the Sound whether it is inert.
+    Param {
+        addr: ParamAddr,
+        label: &'static str,
+        fmt: ValFmt,
+    },
+    /// The route `source → CUTOFF` (spec § 6).
+    Route {
+        source: ModSource,
+        label: &'static str,
+    },
+}
+
+impl View {
+    pub fn label(&self) -> &'static str {
+        match *self {
+            View::Empty => "--",
+            View::SelectOp => "OP",
+            View::Legacy { label, .. } | View::Param { label, .. } | View::Route { label, .. } => {
+                label
+            }
+        }
+    }
+
+    pub fn fmt(&self) -> ValFmt {
+        match *self {
+            View::Empty => ValFmt::Uni,
+            View::SelectOp => ValFmt::OneBased(Op::ALL.len() as u8 - 1),
+            View::Legacy { fmt, .. } | View::Param { fmt, .. } => fmt,
+            View::Route { .. } => ValFmt::Route,
+        }
+    }
+
+    pub fn addr(&self) -> Option<ParamAddr> {
+        match *self {
+            View::Param { addr, .. } => Some(addr),
+            _ => None,
+        }
+    }
+}
+
+fn param(addr: ParamAddr, label: &'static str, fmt: ValFmt) -> View {
+    View::Param { addr, label, fmt }
+}
+
+/// Slot `i` of `def` as it reads under `ctx`.
+pub fn view(def: &BlockDef, i: usize, ctx: &SlotCtx) -> View {
+    let Some(slot) = def.params.get(i) else {
+        return View::Empty;
+    };
+    match slot.binding {
+        SlotBinding::Empty => View::Empty,
+        SlotBinding::SelectOp => View::SelectOp,
+        SlotBinding::Legacy { label, fmt } => View::Legacy { label, fmt },
+        SlotBinding::Param(addr) => param(addr, slot.label(), slot.format()),
+        SlotBinding::SelectedOp(id) => param(
+            ParamAddr::new(BlockRef::AlgoOp(ctx.sel_op), id),
+            slot.label(),
+            slot.format(),
+        ),
+        SlotBinding::FilterPanel(k) => match filter_panel::knob(ctx.kind, k) {
+            None => View::Empty,
+            Some(&PanelKnob {
+                target: PanelTarget::Filter(id),
+                label,
+            }) => {
+                let addr = ParamAddr::new(BlockRef::Filter, id);
+                param(addr, label, addr.spec().map_or(ValFmt::Uni, |s| s.fmt))
+            }
+            Some(&PanelKnob {
+                target: PanelTarget::Route(source),
+                label,
+            }) => View::Route { source, label },
+        },
+    }
+}
 
 /// A fixed or inapplicable slot draws dimmed, and its encoder is ignored
 /// (spec § UI "Dimmed").
@@ -11,6 +121,15 @@ pub fn dimmed(addr: ParamAddr, sound: &Sound) -> bool {
     match (addr.block, addr.param) {
         // AMP's VEL under the Algo/Modal pass-through (spec § 5).
         (BlockRef::Out, OutParams::VCA_VEL) => sound.mod_state.routes_into(VCA) == 0,
+        // KIND lists built kinds only; with one it is fixed.
+        (BlockRef::Filter, FilterParams::KIND) => FilterKind::BUILT.len() == 1,
+        // A single-mode kind shows its mode fixed (spec § 7).
+        (BlockRef::Filter, FilterParams::MODE) => sound.params.filter.kind().modes().len() == 1,
         _ => false,
     }
+}
+
+/// The view is drawn dimmed and inert.
+pub fn is_dimmed(v: &View, sound: &Sound) -> bool {
+    matches!(*v, View::Param { addr, .. } if dimmed(addr, sound))
 }

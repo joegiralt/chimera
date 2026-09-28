@@ -1,6 +1,6 @@
 use crate::addr::{BlockRef, Blocks};
 use crate::block::{Block, ParamId, ParamSpec, ValFmt};
-use crate::dsp::filter::{FilterMode, SVF_MODE_NAMES, SVF_MODES};
+use crate::dsp::filter::{FilterKind, FilterMode, KIND_NAMES, SVF_MODE_NAMES};
 use crate::dsp::modulator::{EnvSpeed, EnvType, FuncMode, FuncParams, HoldPos, pick};
 
 /// Parameters for one voice's filter.
@@ -9,7 +9,9 @@ pub struct FilterParams {
     pub cutoff: f32,
     pub resonance: f32,
     pub drive: f32,
-    /// Private: `set_mode` keeps it in the SVF's list (spec § 7).
+    /// Private: kept consistent with mode through set_kind and set_mode.
+    kind: FilterKind,
+    /// Private: `set_mode` keeps it in the kind's list (spec § 7).
     mode: FilterMode,
 }
 
@@ -19,6 +21,7 @@ impl Default for FilterParams {
             cutoff: 1000.0,
             resonance: 0.0,
             drive: 0.0,
+            kind: FilterKind::Svf,
             mode: FilterMode::Lp24,
         }
     }
@@ -29,15 +32,30 @@ impl FilterParams {
     pub const RESONANCE: ParamId = ParamId(1);
     pub const DRIVE: ParamId = ParamId(2);
     // 3 (FM), 4 (ENV) and 5 (KEY) are retired, never reused (ADR 0009).
+    pub const KIND: ParamId = ParamId(6);
     pub const MODE: ParamId = ParamId(7);
 
     pub fn mode(&self) -> FilterMode {
         self.mode
     }
 
-    /// Sets `m` if the SVF has it; returns whether it did.
+    pub fn kind(&self) -> FilterKind {
+        self.kind
+    }
+
+    /// Change KIND (spec § 7): MODE stays if the new kind has it.
+    pub fn set_kind(&mut self, k: FilterKind) {
+        *self = crate::dsp::filter::kind_change(*self, k);
+    }
+
+    /// Only `kind_change` calls this; MODE is fixed up there.
+    pub(crate) fn set_kind_raw(&mut self, k: FilterKind) {
+        self.kind = k;
+    }
+
+    /// Sets `m` if the kind has it; returns whether it did.
     pub fn set_mode(&mut self, m: FilterMode) -> bool {
-        let ok = SVF_MODES.contains(&m);
+        let ok = self.kind.modes().contains(&m);
         if ok {
             self.mode = m;
         }
@@ -46,7 +64,7 @@ impl FilterParams {
 }
 
 /// Every one read by `Voice` per block; MODE is an Enum, so not modulatable.
-pub static FILTER_SPECS: [ParamSpec; 4] = [
+pub static FILTER_SPECS: [ParamSpec; 5] = [
     ParamSpec::continuous(
         0,
         "CUTOFF",
@@ -60,6 +78,8 @@ pub static FILTER_SPECS: [ParamSpec; 4] = [
     .octaves(crate::dsp::filter::CUTOFF_OCTAVES),
     ParamSpec::continuous(1, "RESO", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, true),
     ParamSpec::continuous(2, "DRIVE", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, true),
+    // A choice among the one built kind.
+    ParamSpec::choice(6, "KIND", ValFmt::Names(&KIND_NAMES), 0.0, 0.0),
     ParamSpec::choice(7, "MODE", ValFmt::Names(&SVF_MODE_NAMES), 7.0, 0.0),
 ];
 
@@ -73,7 +93,16 @@ impl Block for FilterParams {
             Self::CUTOFF => self.cutoff,
             Self::RESONANCE => self.resonance,
             Self::DRIVE => self.drive,
-            Self::MODE => SVF_MODES.iter().position(|&m| m == self.mode).unwrap_or(0) as f32,
+            Self::KIND => FilterKind::BUILT
+                .iter()
+                .position(|&k| k == self.kind)
+                .unwrap_or(0) as f32,
+            Self::MODE => self
+                .kind
+                .modes()
+                .iter()
+                .position(|&m| m == self.mode)
+                .unwrap_or(0) as f32,
             _ => 0.0,
         }
     }
@@ -83,8 +112,10 @@ impl Block for FilterParams {
             Self::CUTOFF => self.cutoff = v,
             Self::RESONANCE => self.resonance = v,
             Self::DRIVE => self.drive = v,
+            Self::KIND => self.set_kind(FilterKind::from_index(v)),
             Self::MODE => {
-                self.set_mode(SVF_MODES[(v.max(0.0) as usize).min(SVF_MODES.len() - 1)]);
+                let m = self.kind.modes();
+                self.set_mode(m[(v.max(0.0) as usize).min(m.len() - 1)]);
             }
             _ => {}
         }

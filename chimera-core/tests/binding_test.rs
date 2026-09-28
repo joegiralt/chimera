@@ -3,11 +3,12 @@
 use chimera_core::addr::{BlockRef, Op, ParamAddr};
 use chimera_core::block::ParamId;
 use chimera_core::dsp::algo::params::AlgoOpParams;
-use chimera_core::params::EngineType;
+use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::ui::block_def::{BlockDef, SlotBinding, slot_addr};
 use chimera_core::ui::block_registry as reg;
 use chimera_core::ui::chain::chain_def_for;
 use chimera_core::ui::page::ValFmt;
+use chimera_core::ui::view::{SlotCtx, view};
 
 /// Every page reachable from a Part chain (main pages and sub-pages).
 fn part_defs() -> Vec<&'static BlockDef> {
@@ -26,7 +27,7 @@ fn every_part_slot_resolves_to_a_spec() {
     for def in part_defs() {
         for (i, slot) in def.params.iter().enumerate() {
             match slot.binding {
-                SlotBinding::Empty | SlotBinding::SelectOp | SlotBinding::Route(_) => {}
+                SlotBinding::Empty | SlotBinding::SelectOp | SlotBinding::FilterPanel(_) => {}
                 SlotBinding::Param(_) | SlotBinding::SelectedOp(_) => {
                     assert!(slot.spec().is_some(), "{} slot {i}: no spec", def.name)
                 }
@@ -160,9 +161,12 @@ fn part_pages_display_like_before() {
         (
             &reg::FILTER,
             [
-                ("--", Uni),
+                (
+                    "KIND",
+                    ValFmt::Names(&chimera_core::dsp::filter::KIND_NAMES),
+                ),
                 ("CUTOFF", Uni),
-                ("RESO", Uni),
+                ("RES", Uni),
                 (
                     "MODE",
                     ValFmt::Names(&chimera_core::dsp::filter::SVF_MODE_NAMES),
@@ -194,10 +198,17 @@ fn part_pages_display_like_before() {
             ],
         ),
     ];
+    // A panel slot's own label and format are empty: FLT reads its views.
+    let ctx = ctx();
     for (def, slots) in want {
         for (i, (label, fmt)) in slots.iter().enumerate() {
-            assert_eq!(def.params[i].label(), *label, "{} slot {i}", def.name);
-            assert_eq!(def.params[i].format(), *fmt, "{} slot {i}", def.name);
+            let got = if core::ptr::eq(def, &reg::FILTER) {
+                let v = view(def, i, &ctx);
+                (v.label(), v.fmt())
+            } else {
+                (def.params[i].label(), def.params[i].format())
+            };
+            assert_eq!(got, (*label, *fmt), "{} slot {i}", def.name);
         }
     }
 }
@@ -207,11 +218,16 @@ fn part_pages_display_like_before() {
 #[test]
 fn slot_addr_resolves_fixed_bindings() {
     let level = |op| Some(ParamAddr::new(BlockRef::AlgoOp(op), AlgoOpParams::LEVEL));
-    assert_eq!(slot_addr(&reg::ALGO_LEVEL, 3, Op::A), level(Op::D));
-    assert_eq!(slot_addr(&reg::ALGO_LEVEL, 3, Op::F), level(Op::D));
-    assert_eq!(slot_addr(&reg::ALGO_ALG, 5, Op::A), None); // empty
-    assert_eq!(slot_addr(&reg::MIXER, 0, Op::A), None); // legacy
-    assert_eq!(slot_addr(&reg::ALGO_ALG, 9, Op::A), None); // out of range
+    let on = |op| SlotCtx::read(&ParamSnapshot::default(), op);
+    assert_eq!(slot_addr(&reg::ALGO_LEVEL, 3, &on(Op::A)), level(Op::D));
+    assert_eq!(slot_addr(&reg::ALGO_LEVEL, 3, &on(Op::F)), level(Op::D));
+    assert_eq!(slot_addr(&reg::ALGO_ALG, 5, &ctx()), None); // empty
+    assert_eq!(slot_addr(&reg::MIXER, 0, &ctx()), None); // legacy
+    assert_eq!(slot_addr(&reg::ALGO_ALG, 9, &ctx()), None); // out of range
+}
+
+fn ctx() -> SlotCtx {
+    SlotCtx::read(&ParamSnapshot::default(), Op::A)
 }
 
 /// Each column of a group page edits its own operator; a copy-paste slip
@@ -225,7 +241,7 @@ fn group_pages_bind_each_column_to_its_operator() {
     for (def, id) in pages {
         for (i, op) in Op::ALL.into_iter().enumerate() {
             assert_eq!(
-                slot_addr(def, i, Op::A),
+                slot_addr(def, i, &ctx()),
                 Some(ParamAddr::new(BlockRef::AlgoOp(op), id)),
                 "{} slot {i}",
                 def.name
