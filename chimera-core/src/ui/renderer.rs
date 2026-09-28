@@ -428,6 +428,11 @@ pub fn look(f: &Frame, i: usize) -> components::Look {
         {
             components::Look::Absent
         }
+        _ if slot_addr(f.def, i, f.sel_op)
+            .is_some_and(|a| crate::ui::view::dimmed(a, &f.parts[f.active_part].sound)) =>
+        {
+            components::Look::Dimmed
+        }
         _ => components::Look::Live,
     }
 }

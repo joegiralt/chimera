@@ -70,7 +70,7 @@ fn drive_filter_folder_pages() {
     turn(&reg::FILTER, 3, 20, &mut p);
     assert_eq!(p.filter.mode(), FilterMode::Phaser, "clamps at the last");
 
-    assert_eq!(read(&reg::FOLDER, &p), [0.0, 0.5, 0.5, 0.0, 0.0, 0.0]);
+    assert_eq!(read(&reg::FOLDER, &p), [0.0, 0.5, 0.5, 1.0, 0.0, 0.0]);
     turn(&reg::FOLDER, 0, 4, &mut p);
     assert_eq!(p.folder.fold, 4.0 / 128.0);
 }

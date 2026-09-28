@@ -74,17 +74,19 @@ pub static DRIVE: BlockDef = BlockDef {
     ],
 };
 
+/// FLD / VCA (spec § 5): the fold, then the VCA; last before MOD on every
+/// Part chain.
 pub static FOLDER: BlockDef = BlockDef {
     id: 9,
-    name: "Folder",
-    short: "FLD",
+    name: "Fold / VCA",
+    short: "AMP",
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
         ParamSlot::param(BlockRef::Folder, FolderParams::FOLD),
         ParamSlot::param(BlockRef::Folder, FolderParams::SYMMETRY),
         ParamSlot::param(BlockRef::Folder, FolderParams::MIX),
-        EMPTY,
+        ParamSlot::param(BlockRef::Out, OutParams::VCA_VEL),
         EMPTY,
         EMPTY,
     ],
@@ -113,8 +115,8 @@ pub static FILTER: BlockDef = BlockDef {
 };
 
 /// FLT › MODE: MODE and the SVF's extras (spec § UI). `short` is "MDE", not
-/// "MODE": on the Algo map that reaches FOLDER, the full word overlaps FLD's
-/// label by 2px (`MOD` is already MOD_MATRIX's); this abbreviation is only
+/// "MODE": on the Algo map the full word overlaps the next node's label
+/// (`MOD` is already MOD_MATRIX's); this abbreviation is only
 /// the map's branch label, not the MODE param's own spec name.
 pub static FILTER_MODE: BlockDef = BlockDef {
     id: 59,
@@ -437,7 +439,7 @@ pub static KICK_CHAIN: ChainDef2 = ChainDef2 {
 
 static MODAL_SUB_PAGES: [&BlockDef; 1] = [&MODAL_2];
 
-static MODAL_PLUCK_BLOCKS: [ChainBlock; 3] = [
+static MODAL_PLUCK_BLOCKS: [ChainBlock; 4] = [
     ChainBlock {
         def: &MODAL_1,
         sub_pages: &MODAL_SUB_PAGES,
@@ -445,6 +447,10 @@ static MODAL_PLUCK_BLOCKS: [ChainBlock; 3] = [
     ChainBlock {
         def: &FILTER,
         sub_pages: &FILTER_SUB_PAGES,
+    },
+    ChainBlock {
+        def: &FOLDER,
+        sub_pages: &[],
     },
     ChainBlock {
         def: &MOD_MATRIX,

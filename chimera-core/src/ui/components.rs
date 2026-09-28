@@ -292,7 +292,12 @@ where
         draw::fill_rect(d, x, y - 3, 8, 1, theme::FAINT);
         return;
     };
-    let label_color = if c.active { theme::ACCENT } else { theme::MID };
+    let dim = c.look == Look::Dimmed;
+    let label_color = if c.active && !dim {
+        theme::ACCENT
+    } else {
+        theme::MID
+    };
     draw::text_tracked(
         d,
         &theme::FONT_LABEL,
@@ -306,7 +311,11 @@ where
         draw::fill_rect(d, x, y + theme::CELL_VALUE_DY - 5, 12, 2, theme::INK2);
         return;
     }
-    let value_color = if c.active { theme::INK } else { theme::INK2 };
+    let value_color = match (dim, c.active) {
+        (true, _) => theme::MID,
+        (false, true) => theme::INK,
+        (false, false) => theme::INK2,
+    };
     draw::text(
         d,
         &theme::FONT_VALUE,
@@ -315,7 +324,7 @@ where
         y + theme::CELL_VALUE_DY,
         value_color,
     );
-    if !c.fmt.is_discrete() {
+    if !c.fmt.is_discrete() && !dim {
         let fill = if c.active {
             theme::ACCENT
         } else {
@@ -333,7 +342,7 @@ where
             fill,
         );
     }
-    if let Some(m) = c.mod_amount {
+    if let Some(m) = c.mod_amount.filter(|_| !dim) {
         let mid = x + theme::CELL_BAR_W / 2;
         let len = (m.clamp(-1.0, 1.0) * (theme::CELL_BAR_W / 2) as f32) as i32;
         let (x0, x1) = if len >= 0 {

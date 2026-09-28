@@ -18,6 +18,7 @@ pub mod region;
 pub mod renderer;
 pub mod theme;
 pub mod theme_settings;
+pub mod view;
 pub mod viz;
 
 use core::mem::MaybeUninit;
@@ -65,6 +66,7 @@ fn prime_target(addr: ParamAddr) -> ParamAddr {
             ParamAddr::new(addr.block, E::TIME)
         }
         (BlockRef::Env(_), E::SUSTAIN) => ParamAddr::new(addr.block, E::LEVEL),
+        (BlockRef::Out, crate::params::OutParams::VCA_VEL) => crate::modulation::VCA,
         _ => addr,
     }
 }
@@ -373,6 +375,7 @@ impl UiState {
                 op_prefix = [b'E', b'1' + s.index() as u8, b' '];
                 (&op_prefix, addr.spec().map_or("", |s| s.label))
             }
+            _ if addr == crate::modulation::VCA => (b"OUT ".as_slice(), "VCA"),
             _ => {
                 let short = mod_grid::block_tag(addr.block).as_bytes();
                 (
@@ -589,6 +592,10 @@ impl UiState {
                         });
                         continue;
                     }
+                    let own = slot_addr(def, i, self.sel_op);
+                    if own.is_some_and(|a| view::dimmed(a, &self.performance.parts[at].sound)) {
+                        continue; // dimmed: the encoder is ignored
+                    }
                     let params = &mut UiBlocks {
                         perf: &mut self.performance,
                         at,
@@ -617,7 +624,16 @@ impl UiState {
                     // refused. Report the outcome in the focus band (#21):
                     // an already-primed address is a silent `Ok` from
                     // `add`, so it must be checked for before calling it.
-                    if let Some(addr) = self.current_param_addr() {
+                    // A dimmed slot that primes itself is refused; one that
+                    // primes elsewhere (AMP's VEL: the VCA) still primes.
+                    let own = slot_addr(def, self.focused_slot(), self.sel_op);
+                    let sound = &self.performance.parts[at].sound;
+                    if let Some(a) = own
+                        && prime_target(a) == a
+                        && view::dimmed(a, sound)
+                    {
+                        self.prime_status = Some(PrimeStatus::NotModulatable);
+                    } else if let Some(addr) = self.current_param_addr() {
                         let label = self.mod_label(addr);
                         let sound = &mut self.performance.parts[at].sound;
                         self.prime_status = Some(if sound.dest_registry.is_primed(addr) {
