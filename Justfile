@@ -80,8 +80,8 @@ screens:
 # Flash firmware to PreenFM3 via DFU
 flash:
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf
-    rust-objcopy -O binary target/thumbv7em-none-eabihf/release/chimera-stm32 chimera.bin
-    dfu-util -a0 -d 0x0483:0xdf11 -D chimera.bin -s 0x8020000:leave
+    rust-objcopy -O binary target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera.bin
+    dfu-util -a0 -d 0x0483:0xdf11 -D target/chimera.bin -s 0x8020000:leave
 
 # Flash the bench build (--features bench) to PreenFM3 via DFU
 flash-bench:
