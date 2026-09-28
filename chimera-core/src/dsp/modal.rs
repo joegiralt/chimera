@@ -34,7 +34,7 @@ use crate::block::{Block, ParamId, ParamSpec, ValFmt};
 use crate::hw::Cost;
 use crate::in_place::{by_value, uninit_at};
 
-const MAX_MODES: usize = 48;
+pub const MAX_MODES: usize = 48;
 
 // ── SVF Bandpass (ZDF topology, matching Rings/stmlib) ──────────────
 

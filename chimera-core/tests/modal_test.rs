@@ -345,3 +345,17 @@ fn sympathetic_mode_is_bounded_and_falls_silent() {
     engine.render(&mut block, &p, SR);
     assert!(block.iter().all(|&s| s == 0.0));
 }
+
+/// The modal bank at its full size, 48 modes (the deleted stress test's
+/// case): every sample finite and within `render_modal`'s 2·tanh bound.
+#[test]
+fn modal_bank_at_full_size_is_finite_and_bounded() {
+    let p = ModalParams {
+        num_modes: chimera_core::dsp::modal::MAX_MODES as u8,
+        decay: 1.0,
+        ..modal_params()
+    };
+    let buf = render_modal(&p, 36, 400);
+    assert!(buf.iter().all(|s| s.is_finite() && s.abs() <= 2.0));
+    assert!(buf.iter().any(|&s| s != 0.0), "it rings");
+}

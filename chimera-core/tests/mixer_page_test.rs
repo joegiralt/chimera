@@ -4,7 +4,7 @@
 use chimera_core::addr::{BlockRef, Op, ParamAddr};
 use chimera_core::part::{DacPair, PartMode, PartParams};
 use chimera_core::preset::Performance;
-use chimera_core::ui::block_def::{BlockDef, SlotBinding};
+use chimera_core::ui::block_def::{BlockDef, FxFlow, FxNode, SlotBinding, VizType};
 use chimera_core::ui::block_registry as reg;
 use chimera_core::ui::page::PageKey;
 use chimera_core::ui::{UiState, part_page};
@@ -324,10 +324,7 @@ fn the_flow_node_is_not_a_second_accent_pill() {
 fn fx_pages_light_their_effect_in_the_flow() {
     let fb = screen::render("mixer_fx_delay");
     assert_eq!(flow_lit(&fb), [1], "Delay page lights DLY");
-    assert!(matches!(
-        reg::SENDS.viz,
-        chimera_core::ui::block_def::VizType::EffectsFlow(_)
-    ));
+    assert_eq!(reg::SENDS.viz, VizType::EffectsFlow(FxFlow::Sends));
     assert_eq!(
         flow_lit(&screen::render("mixer_fx_delay_char")),
         [1],
@@ -395,10 +392,10 @@ fn the_reverb_page_is_grit_time_damp_size_mix() {
             None
         ]
     );
-    assert!(matches!(
+    assert_eq!(
         reg::EFX.viz,
-        chimera_core::ui::block_def::VizType::EffectsFlow(_)
-    ));
+        VizType::EffectsFlow(FxFlow::Effect(FxNode::Reverb))
+    );
 }
 
 #[test]
