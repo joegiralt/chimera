@@ -173,8 +173,8 @@ impl Voice {
         self.last_velocity = velocity;
         self.engines
             .note_on(self.active_engine, note, velocity, params);
-        for (e, p) in self.envs.iter_mut().zip(&params.envelopes) {
-            e.note_on(p);
+        for e in &mut self.envs {
+            e.note_on();
         }
         self.active = true;
         // Until the first block renders, a fade has these to keep.

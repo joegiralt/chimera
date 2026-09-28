@@ -412,7 +412,7 @@ fn level_sets_the_peak() {
             ..EnvMods::NONE
         };
         let mut e = Envelope::new();
-        e.note_on(&p);
+        e.note_on();
         let mut peak = 0.0f32;
         for _ in 0..40 {
             peak = peak.max(e.run_block(&p, &m, true, SR, None));
@@ -439,7 +439,7 @@ fn a_level_change_ramps_on_the_vca_path() {
         ..EnvMods::NONE
     };
     let mut e = Envelope::new();
-    e.note_on(&p);
+    e.note_on();
     for _ in 0..1000 {
         e.run_block(&p, &full, true, SR, None); // well into sustain at 0.7
     }
