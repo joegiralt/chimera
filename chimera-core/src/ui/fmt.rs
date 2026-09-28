@@ -57,6 +57,15 @@ pub fn fmt_val(buf: &mut FmtBuf, val: f32, fmt: ValFmt) {
                 v => write!(buf, "R{}", v),
             };
         }
+        ValFmt::Route => {
+            let a = crate::ui::renderer::amount_of(val) as i32;
+            let pct = (a * 100 + a.signum() * 63) / 127;
+            let _ = if pct > 0 {
+                write!(buf, "+{pct}%")
+            } else {
+                write!(buf, "{pct}%")
+            };
+        }
         ValFmt::Int(max) => {
             let _ = write!(buf, "{}", discrete(val, max));
         }

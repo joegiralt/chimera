@@ -26,7 +26,7 @@ fn focus_band_names_the_selected_route() {
     let fb = render("mod_matrix");
     let mut want = Fb::new();
     want.px.fill(fb.px[0]);
-    components::focus_route(&mut want, "LFO", "FLT CUTOFF", "+42", amount_value(42));
+    components::focus_route(&mut want, "LF1", "FLT CUTOFF", "+42", amount_value(42));
     assert!(fb.px[28 * W..118 * W] == want.px[28 * W..118 * W]);
 }
 

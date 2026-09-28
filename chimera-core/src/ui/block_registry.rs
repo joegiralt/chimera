@@ -8,6 +8,7 @@ use crate::dsp::lfo::LfoParams;
 use crate::dsp::modal::ModalParams;
 use crate::dsp::reverb::ReverbParams;
 use crate::dsp::tape::TapeParams;
+use crate::modulation::ModSource;
 use crate::params::{DriveParams, EnvParams, FilterParams, FolderParams, OutParams};
 use crate::part::PartParams;
 use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2, ParamSlot, VizType};
@@ -105,8 +106,8 @@ pub static FILTER: BlockDef = BlockDef {
         ParamSlot::param(BlockRef::Filter, FilterParams::CUTOFF),
         ParamSlot::param(BlockRef::Filter, FilterParams::RESONANCE),
         ParamSlot::param(BlockRef::Filter, FilterParams::MODE),
-        EMPTY,
-        EMPTY,
+        ParamSlot::route(ModSource::Env1, "ENV"),
+        ParamSlot::route(ModSource::Note, "KEY"),
     ],
 };
 
@@ -123,7 +124,7 @@ pub static FILTER_MODE: BlockDef = BlockDef {
     params: [
         ParamSlot::param(BlockRef::Filter, FilterParams::MODE),
         ParamSlot::param(BlockRef::Filter, FilterParams::DRIVE),
-        EMPTY,
+        ParamSlot::route(ModSource::Lfo1, "LFO"),
         EMPTY,
         EMPTY,
         EMPTY,
@@ -454,9 +455,9 @@ pub static ALGO_ALG: BlockDef = BlockDef {
 // Chain templates
 // ---------------------------------------------------------------------------
 
-/// Mod sources every Part voice produces: source 0 = amp envelope, 1 = LFO
-/// (`Voice::render`).
-pub static PART_MOD_SOURCES: [&str; 2] = ["ENV", "LFO"];
+/// Mod sources every Part voice produces, in `ModSource` order (spec § 2).
+pub static PART_MOD_SOURCES: [&str; crate::modulation::MAX_MOD_SOURCES] =
+    ["E1", "LF1", "E2", "E3", "LF2", "LF3", "VEL", "NTE"];
 
 static MOD_MATRIX_SUB_PAGES: [&BlockDef; 2] = [&ENVELOPE, &LFO];
 

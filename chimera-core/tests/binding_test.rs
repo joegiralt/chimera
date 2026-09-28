@@ -26,7 +26,7 @@ fn every_part_slot_resolves_to_a_spec() {
     for def in part_defs() {
         for (i, slot) in def.params.iter().enumerate() {
             match slot.binding {
-                SlotBinding::Empty | SlotBinding::SelectOp => {}
+                SlotBinding::Empty | SlotBinding::SelectOp | SlotBinding::Route(_) => {}
                 SlotBinding::Param(_) | SlotBinding::SelectedOp(_) => {
                     assert!(slot.spec().is_some(), "{} slot {i}: no spec", def.name)
                 }
@@ -38,14 +38,14 @@ fn every_part_slot_resolves_to_a_spec() {
     }
 }
 
-/// Spec §4: matrix source rows are what `Voice` produces — ENV and LFO on
-/// every Part chain.
+/// Spec §4: matrix source rows are what `Voice` produces — the eight
+/// `ModSource`s on every Part chain.
 #[test]
-fn part_chains_offer_env_and_lfo_sources() {
+fn part_chains_offer_the_eight_sources() {
     for engine in EngineType::ALL {
         assert_eq!(
             chain_def_for(engine).mod_sources,
-            ["ENV", "LFO"],
+            chimera_core::ui::block_registry::PART_MOD_SOURCES,
             "{engine:?}"
         );
         let sound = chimera_core::preset::Sound::init(engine);
@@ -170,8 +170,8 @@ fn part_pages_display_like_before() {
                     "MODE",
                     ValFmt::Names(&chimera_core::dsp::filter::SVF_MODE_NAMES),
                 ),
-                ("--", Uni),
-                ("--", Uni),
+                ("ENV", ValFmt::Route),
+                ("KEY", ValFmt::Route),
             ],
         ),
         (

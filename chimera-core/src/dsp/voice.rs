@@ -14,7 +14,7 @@ use crate::dsp::lfo::Lfo;
 use crate::dsp::wavefolder::Wavefolder;
 use crate::hw::{Cost, MAX_VOICES, VOICE_RAM_BUDGET};
 use crate::in_place::{by_value, uninit_at};
-use crate::modulation::{MAX_MOD_SOURCES, ModState};
+use crate::modulation::{MAX_MOD_SOURCES, ModSource, ModState, note_source};
 use crate::params::{EngineType, ParamSnapshot};
 use crate::{MidiNote, Velocity};
 
@@ -256,14 +256,10 @@ impl Voice {
         // A fading voice keeps the settings it last played.
         if self.fade == 0 {
             let mut mod_values = [0.0f32; MAX_MOD_SOURCES];
-            // Source 0 = Envelope
-            if mod_state.num_sources() > 0 {
-                mod_values[0] = self.amp_env.current_level();
-            }
-            // Source 1 = LFO
-            if mod_state.num_sources() > 1 {
-                mod_values[1] = self.lfo.process(&params.lfo, sample_rate);
-            }
+            mod_values[ModSource::Env1.index()] = self.amp_env.level();
+            mod_values[ModSource::Lfo1.index()] = self.lfo.process(&params.lfo, sample_rate);
+            mod_values[ModSource::Vel.index()] = self.last_velocity.unit();
+            mod_values[ModSource::Note.index()] = note_source(self.last_note);
             // Every routed destination gets its offset through its block's
             // spec (spec §4).
             let (m, live) = (&mut self.played, &mut self.played_live);
