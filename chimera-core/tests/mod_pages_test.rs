@@ -4,13 +4,16 @@ mod screen;
 
 use chimera_core::addr::Op;
 use chimera_core::dsp::modulator::law::Law;
-use chimera_core::dsp::modulator::{EnvForm, EnvSpeed, EnvType, Func, LfoForm};
-use chimera_core::params::ParamSnapshot;
+use chimera_core::dsp::modulator::{EnvForm, EnvSpeed, EnvType, Func, LfoForm, LfoType};
+use chimera_core::params::{EngineType, ParamSnapshot};
+use chimera_core::preset::Sound;
 use chimera_core::ui::UiState;
-use chimera_core::ui::block_registry::{ALGO_CHAIN, ENV_2, ENV_3, ENVELOPE, MOD_MATRIX};
+use chimera_core::ui::block_registry::{
+    ALGO_CHAIN, ENV_2, ENV_3, ENV_SPEED, ENVELOPE, LFO, LFO_2, LFO_3, MOD_MATRIX,
+};
 use chimera_core::ui::fmt::{FmtBuf, fmt_val};
 use chimera_core::ui::page::ValFmt;
-use chimera_core::ui::view::{SlotCtx, view};
+use chimera_core::ui::view::{SlotCtx, View, is_dimmed, view};
 use chimera_hal::{ButtonId, EncoderId};
 use screen::*;
 
@@ -177,12 +180,6 @@ fn form_reads_its_modes_names() {
     }
 }
 
-use chimera_core::dsp::modulator::LfoType;
-use chimera_core::params::EngineType;
-use chimera_core::preset::Sound;
-use chimera_core::ui::block_registry::{ENV_SPEED, LFO, LFO_2, LFO_3};
-use chimera_core::ui::view::{View, is_dimmed};
-
 #[test]
 fn the_sub_list_is_e1_to_mtx() {
     let node = ALGO_CHAIN.blocks.last().unwrap();
@@ -234,24 +231,11 @@ fn spd_dims_a_type_b_slot() {
 #[test]
 fn a_fixed_slot_is_dimmed_in_the_focus_band() {
     use chimera_core::ui::components::{self, Look};
-    use chimera_core::ui::page::PageKey;
     use chimera_core::ui::perf::PerfStats;
     use chimera_core::ui::theme;
     use embedded_graphics::pixelcolor::Rgb565;
     let mut ui = UiState::new();
-    for _ in 0..5 {
-        feed(&mut ui, Input::press(ButtonId::Plus));
-    }
-    for _ in 0..4 {
-        feed(&mut ui, Input::press(ButtonId::Edit)); // E2, E3, SPD, L1
-    }
-    assert_eq!(
-        ui.page(),
-        PageKey::Part {
-            def: LFO.id,
-            op: Op::A
-        }
-    );
+    to_mod_sub(&mut ui, 4, &LFO);
     feed(&mut ui, Input::turn(EncoderId::F, 1)); // TYPE → FUNC
     feed(&mut ui, Input::turn(EncoderId::A, 1)); // MODE: focused, inert
     assert_eq!(ui.focused_slot(), 0);
