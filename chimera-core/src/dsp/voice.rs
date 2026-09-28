@@ -329,8 +329,9 @@ impl Voice {
             self.vca = VcaRoutes::of(mod_state);
         }
         let vca = self.vca;
-        // The VCA's gain (spec § 4): 64 samples on the audio stack.
-        let mut gain = [0.0f32; BLOCK_SIZE];
+        // The VCA's gain (spec § 4): 64 samples on the audio stack, zeroed
+        // only with a route into VCA.
+        let mut gain = (vca.bits != 0).then_some([0.0f32; BLOCK_SIZE]);
         if core::mem::take(&mut self.retrigger) {
             // The last block's ENV and LFO values; the new note's VEL and NOTE.
             let mut v = self.mod_values;
@@ -347,7 +348,10 @@ impl Voice {
         let mut mod_values = [0.0f32; MAX_MOD_SOURCES];
         for (s, env) in EnvSlot::ALL.iter().zip(self.envs.iter_mut()) {
             let i = ModSource::of_env(*s).index();
-            let feed = vca.has(i).then_some((&mut gain, vca.amount[i]));
+            let feed = gain
+                .as_mut()
+                .filter(|_| vca.has(i))
+                .map(|g| (g, vca.amount[i]));
             mod_values[i] = env.run_block(
                 &src.envelopes[s.index()],
                 &self.env_mods[s.index()],
@@ -364,7 +368,9 @@ impl Voice {
         mod_values[ModSource::Note.index()] = note_source(self.last_note);
         // The other VCA sources ramp from their last block's value.
         for (s, &cur) in mod_values.iter().enumerate() {
-            if vca.has(s) && ModSource::ALL[s].env_slot().is_none() {
+            if let Some(gain) = gain.as_mut().filter(|_| vca.has(s))
+                && ModSource::ALL[s].env_slot().is_none()
+            {
                 let a = vca.amount[s];
                 let (from, step) = (
                     a * self.mod_values[s],
@@ -428,27 +434,30 @@ impl Voice {
         // The block's last routed gain, × AMP's VEL: whether the lifetime
         // check below ends the voice through a fade.
         let mut last_gain = 0.0;
-        if vca.bits == 0 {
-            // No route: the engine decides (spec § 4). No wildcard, so a new
-            // engine can't inherit the pass-through (VA gates: #148).
-            match self.active_engine {
-                EngineType::Algo | EngineType::Modal => {
-                    // Its own envelopes shape the sound: today's expression, bit for bit.
-                    for sample in output.iter_mut() {
-                        *sample *= volume;
+        match &gain {
+            None => {
+                // No route: the engine decides (spec § 4). No wildcard, so a new
+                // engine can't inherit the pass-through (VA gates: #148).
+                match self.active_engine {
+                    EngineType::Algo | EngineType::Modal => {
+                        // Its own envelopes shape the sound: today's expression, bit for bit.
+                        for sample in output.iter_mut() {
+                            *sample *= volume;
+                        }
                     }
                 }
             }
-        } else {
-            let vel = 1.0 - m.out.vca_vel + m.out.vca_vel * self.last_velocity.unit();
-            let k = volume * vel;
-            #[allow(clippy::manual_clamp)] // max/min, not clamp: NaN clamps too
-            for (sample, g) in output.iter_mut().zip(&gain) {
-                *sample *= k * g.max(0.0).min(1.0);
+            Some(gain) => {
+                let vel = 1.0 - m.out.vca_vel + m.out.vca_vel * self.last_velocity.unit();
+                let k = volume * vel;
+                #[allow(clippy::manual_clamp)] // max/min, not clamp: NaN clamps too
+                for (sample, g) in output.iter_mut().zip(gain) {
+                    *sample *= k * g.max(0.0).min(1.0);
+                }
+                #[allow(clippy::manual_clamp)]
+                let g = gain[BLOCK_SIZE - 1].max(0.0).min(1.0);
+                last_gain = g * vel;
             }
-            #[allow(clippy::manual_clamp)]
-            let g = gain[BLOCK_SIZE - 1].max(0.0).min(1.0);
-            last_gain = g * vel;
         }
 
         // Check if done
