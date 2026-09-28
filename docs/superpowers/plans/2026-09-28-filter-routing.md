@@ -5131,7 +5131,7 @@ Add the field `present: [u8; MAX_MOD_DESTS],` to `ModState` (doc: `/// Route pre
 In `chimera-core/src/preset.rs`, `Sound::init`:
 
 ```rust
-    pub fn init(chain_type: EngineType) -> Self {
+    pub fn init(engine: EngineType) -> Self {
         let mut name = [0u8; NAME_LEN];
         let tag = b"(init)";
         name[..tag.len()].copy_from_slice(tag);
@@ -5145,8 +5145,7 @@ In `chimera-core/src/preset.rs`, `Sound::init`:
         }
         Self {
             name,
-            chain_type,
-            params: ParamSnapshot::for_engine(chain_type.engine()),
+            params: ParamSnapshot::for_engine(engine),
             mod_state,
             dest_registry,
         }
