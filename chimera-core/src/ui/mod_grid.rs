@@ -426,17 +426,22 @@ pub fn fmt_readout_dest(buf: &mut FmtBuf, source: &str, d: &ModDest) {
 /// `+42 = +3.3 oct` (octaves), else `+42 = +33%` of the param's span.
 pub fn fmt_route_effect(buf: &mut FmtBuf, spec: &crate::block::ParamSpec, amount: i8) {
     fmt_amount(buf, amount);
-    let a = amount as i32;
-    let _ = match spec.law {
-        crate::block::OffsetLaw::Octaves(_) if a == 0 => write!(buf, " = 0 oct"),
-        crate::block::OffsetLaw::Octaves(n) => {
-            write!(buf, " = {:+.1} oct", a as f32 / 127.0 * n)
-        }
-        crate::block::OffsetLaw::Linear if a == 0 => write!(buf, " = 0%"),
-        crate::block::OffsetLaw::Linear => {
-            write!(buf, " = {:+}%", (a * 100 + a.signum() * 63) / 127)
-        }
+    let sign = match amount {
+        0 => "",
+        a if a < 0 => "-",
+        _ => "+",
     };
+    let off = (amount as f32 / 127.0).abs();
+    let _ = write!(buf, " = {sign}");
+    match spec.law {
+        crate::block::OffsetLaw::Octaves(_) if amount == 0 => {
+            let _ = buf.write_str("0 oct");
+        }
+        crate::block::OffsetLaw::Octaves(n) => crate::ui::fmt::fixed(buf, off * n, 1, "oct"),
+        crate::block::OffsetLaw::Linear => {
+            let _ = write!(buf, "{}%", libm::roundf(off * 100.0) as i32);
+        }
+    }
 }
 
 /// Amount as shown: `+42`, `-30`, `0`.

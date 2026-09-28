@@ -91,7 +91,7 @@ pub fn fmt_val(buf: &mut FmtBuf, val: f32, fmt: ValFmt) {
 
 /// `x ≥ 0` to `places` decimals in integers: `{:.1}` would link core's
 /// float formatting, several KB of flash.
-fn fixed(buf: &mut FmtBuf, x: f32, places: u32, unit: &str) {
+pub(crate) fn fixed(buf: &mut FmtBuf, x: f32, places: u32, unit: &str) {
     use core::fmt::Write;
     let k = 10i32.pow(places);
     let n = libm::roundf(x * k as f32) as i32;
