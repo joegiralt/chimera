@@ -20,7 +20,7 @@ use crate::note_queue::{NoteEvent, NoteKind};
 use crate::params::ParamSnapshot;
 use crate::part::PartParams;
 use crate::perf::load::AudioStats;
-use crate::preset::{Performance, SoundPool};
+use crate::preset::{Part, Performance, SoundPool};
 use crate::scope::{ScopeFrame, ScopeWriter};
 use crate::triple::TripleBuffer;
 use crate::voice_alloc::{Alloc, Allocator};
@@ -61,27 +61,34 @@ impl Default for AudioShared {
     }
 }
 
+impl PartAudio {
+    fn of(p: &Part) -> Self {
+        Self {
+            params: p.sound.params.clone(),
+            mod_state: p.sound.mod_state.clone(),
+            mix: p.mix,
+        }
+    }
+}
+
 impl AudioShared {
     pub fn from_performance(perf: &Performance) -> Self {
         Self {
-            parts: core::array::from_fn(|i| {
-                let p = &perf.parts[i];
-                PartAudio {
-                    params: p.sound.params.clone(),
-                    mod_state: p.sound.mod_state.clone(),
-                    mix: p.mix,
-                }
-            }),
+            parts: core::array::from_fn(|i| PartAudio::of(&perf.parts[i])),
             fx: perf.fx,
         }
     }
 
-    /// Overwrite with `perf` (the UI's per-frame publish). Built through
-    /// `from_performance` so there is exactly one place that lists
-    /// `AudioShared`'s fields; the fresh copy is a stack temporary (~3 KB)
-    /// that replaces `*self` in one move, never the heap.
+    /// Overwrite with `perf` (the UI's per-frame publish), one Part at a
+    /// time in place: the stack holds one `PartAudio`, not the whole
+    /// struct. The destructuring lists every field, so a new one fails to
+    /// compile here.
     pub fn update_from(&mut self, perf: &Performance) {
-        *self = Self::from_performance(perf);
+        let Self { parts, fx } = self;
+        for (d, p) in parts.iter_mut().zip(&perf.parts) {
+            *d = PartAudio::of(p);
+        }
+        *fx = perf.fx;
     }
 }
 

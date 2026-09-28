@@ -325,10 +325,15 @@ impl FuncGen {
     }
 
     fn env_step(&mut self, c: &BCoefs, form: EnvForm, key: bool, n: u32) {
-        self.k += n;
         match self.seg {
-            Seg::Rise => self.x = self.x0 + self.k as f32 * c.rise,
-            Seg::Fall => self.x = self.x0 - self.k as f32 * c.fall,
+            Seg::Rise => {
+                self.k += n;
+                self.x = self.x0 + self.k as f32 * c.rise;
+            }
+            Seg::Fall => {
+                self.k += n;
+                self.x = self.x0 - self.k as f32 * c.fall;
+            }
             Seg::Idle | Seg::Hold => return,
         }
         // Turns carry the overshoot into the next segment, anchored there.
@@ -482,6 +487,32 @@ mod tests {
         assert!(burst.fall <= max * 1.0001);
         assert!(coefs(Func::Env(EnvForm::Cycle), true).rise > max);
         assert!(coefs(Func::Env(EnvForm::Ad), false).rise > max);
+    }
+
+    /// Idle and Hold don't count samples, so a long-idle slot can't overflow.
+    #[test]
+    fn idle_and_hold_do_not_count_samples() {
+        for (f, key) in [
+            (Func::Env(EnvForm::Ad), false),
+            (Func::Env(EnvForm::Ahr), true),
+        ] {
+            let mut p = FuncParams {
+                rise: 0.0,
+                ..FuncParams::ENV
+            };
+            p.set_func(f);
+            let c = BCoefs::new(&p, &Slides::default(), 48_000, false);
+            let mut g = FuncGen::new();
+            g.set(&c);
+            if key {
+                g.note_on(f);
+                g.advance(&c, true, 1_000); // AHR holds at 1
+            }
+            for _ in 0..3 {
+                g.advance(&c, key, u32::MAX / 2); // overflows a counting `k`
+            }
+            assert_eq!(g.output(), if key { 1.0 } else { 0.0 }, "{f:?}");
+        }
     }
 
     /// CYCLE entered at level 0 (from a finished AD, or an idle A) rises at
