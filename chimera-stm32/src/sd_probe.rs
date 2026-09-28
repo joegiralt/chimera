@@ -15,8 +15,11 @@ use chimera_core::ui::{draw, theme};
 use chimera_fat::volume::{PartitionType, boot_sector, first_partition};
 use chimera_hal::ChimeraDisplay;
 use cortex_m::peripheral::DWT;
-use embedded_sdmmc::{Block, BlockDevice, BlockIdx, Mode, TimeSource, Timestamp, VolumeIdx};
+use embedded_sdmmc::{
+    Block, BlockDevice, BlockIdx, Mode, SdCardError, TimeSource, Timestamp, VolumeIdx,
+};
 use stm32h7xx_hal::spi;
+use stm32h7xx_hal::time::Hertz;
 
 use crate::clocks::{self, Clocks};
 use crate::sd::{SD_ACQUIRE_MS, SD_FAST_HZ, SD_IDLE_MS, SD_INIT_HZ, SdDevice};
@@ -29,7 +32,7 @@ const PROBE_FILE: &str = "CHIMPROB.TXT";
 const PROBE_BLOCKS: u32 = 32;
 const PROBE_KB: u32 = PROBE_BLOCKS / 2;
 const TEST_HZ: [u32; 2] = [12_500_000, 25_000_000];
-/// The acquire order: the default, then the two modes cards also answer.
+/// Each tried from a cold wake; the first that answers is used.
 const MODES: [(&str, spi::Mode); 3] = [("0", spi::MODE_0), ("3", spi::MODE_3), ("1", spi::MODE_1)];
 
 /// Lines down the screen, a page at a time.
@@ -119,7 +122,11 @@ pub fn run(display: &mut impl ChimeraDisplay, clk: Clocks, sd: SdDevice) -> ! {
     let ok = if sck <= SD_INIT_HZ { "OK" } else { "HIGH" };
     c.line(format_args!("KER {}K SCK {sck} {ok}", ker / 1_000));
     let dwt = if counts { "RUNS" } else { "STOPPED" };
-    c.line(format_args!("DWT {dwt} CPU {} MHZ", cpu_hz / 1_000_000));
+    c.line(format_args!(
+        "DWT {dwt} REV {} {} MHZ",
+        clk.rev.label(),
+        cpu_hz / 1_000_000
+    ));
 
     if acquire(&mut c, &sd) {
         card(&mut c, sd);
@@ -131,40 +138,59 @@ pub fn run(display: &mut impl ChimeraDisplay, clk: Clocks, sd: SdDevice) -> ! {
     }
 }
 
-/// Acquires in each of `MODES` until one answers.
+/// Acquires from a cold wake in each of `MODES`, each on its own, then
+/// again in the first that answered, which the card steps then use.
 fn acquire<D: ChimeraDisplay>(c: &mut Console<D>, sd: &SdDevice) -> bool {
-    for (i, &(name, mode)) in MODES.iter().enumerate() {
-        if i > 0 {
-            sd.spi(|s| {
-                s.set_mode(mode);
-                s.wake();
-            });
-            sd.mark_card_uninit();
-        }
-        sd.spi(|s| s.arm(SD_ACQUIRE_MS));
-        let t = DWT::cycle_count();
-        let bytes = sd.num_bytes();
-        let ms = ms_since(c.cpu_hz, t);
-        let to = if sd.spi(|s| s.timed_out()) { " TO" } else { "" };
+    let mut first = None;
+    for &(name, mode) in &MODES {
+        let (bytes, ms, to) = cold_acquire(c.cpu_hz, sd, mode);
         match bytes {
+            _ if to => c.line(format_args!("M{name} TO (NO VERDICT) {ms} MS")),
             Ok(n) => {
-                let kind = sd.get_card_type();
+                first = first.or(Some((name, mode)));
                 c.line(format_args!("M{name} OK {ms} MS {} MB", n >> 20));
-                c.line(format_args!("  {kind:?}"));
-                return true;
+                c.line(format_args!("  {:?}", sd.get_card_type()));
             }
             Err(e) => {
-                c.line(format_args!("M{name} FAIL {ms} MS{to}"));
+                c.line(format_args!("M{name} FAIL {ms} MS"));
                 c.line(format_args!("  {e:?}"));
             }
         }
     }
-    false
+    let Some((name, mode)) = first else {
+        c.line(format_args!("NO MODE ACQUIRED"));
+        return false;
+    };
+    let ok = cold_acquire(c.cpu_hz, sd, mode).0.is_ok();
+    c.line(format_args!(
+        "USING M{name} {}",
+        if ok { "OK" } else { "FAIL" }
+    ));
+    ok
+}
+
+/// Rebuilds in `mode` at the init clock, wakes and acquires: the result,
+/// its ms and whether the deadline ended it.
+fn cold_acquire(
+    cpu_hz: u32,
+    sd: &SdDevice,
+    mode: spi::Mode,
+) -> (Result<u64, SdCardError>, u32, bool) {
+    sd.spi(|s| {
+        s.set_mode(mode);
+        s.wake();
+        s.arm(SD_ACQUIRE_MS);
+    });
+    sd.mark_card_uninit();
+    let t = DWT::cycle_count();
+    let bytes = sd.num_bytes();
+    let ms = ms_since(cpu_hz, t);
+    (bytes, ms, sd.spi(|s| s.timed_out()))
 }
 
 fn card<D: ChimeraDisplay>(c: &mut Console<D>, sd: SdDevice) {
     sd.spi(|s| {
-        s.set_hz(SD_FAST_HZ);
+        s.set_hz(Hertz::from_raw(SD_FAST_HZ));
         s.arm(SD_IDLE_MS);
     });
     let mut blk = [Block::new()];
@@ -212,9 +238,11 @@ fn card<D: ChimeraDisplay>(c: &mut Console<D>, sd: SdDevice) {
             return;
         }
     };
+    // Listed first, drawn after: no flush inside the directory walk.
+    let mut names: [FmtBuf; LIST_MAX] = core::array::from_fn(|_| FmtBuf::new());
     let mut n = 0;
     let listed = root.iterate_dir(|e| {
-        c.line(format_args!("  {} {}", e.name, e.size));
+        let _ = write!(names[n], "  {} {}", e.name, e.size);
         n += 1;
         if n < LIST_MAX {
             ControlFlow::Continue(())
@@ -222,6 +250,9 @@ fn card<D: ChimeraDisplay>(c: &mut Console<D>, sd: SdDevice) {
             ControlFlow::Break(())
         }
     });
+    for name in &names[..n] {
+        c.line(format_args!("{}", name.as_str()));
+    }
     if let Err(e) = listed {
         c.line(format_args!("LIST {e:?}"));
     }
@@ -229,7 +260,7 @@ fn card<D: ChimeraDisplay>(c: &mut Console<D>, sd: SdDevice) {
     for hz in TEST_HZ {
         vm.device(|d| {
             d.spi(|s| {
-                s.set_hz(hz);
+                s.set_hz(Hertz::from_raw(hz));
                 s.arm(SD_IDLE_MS);
             })
         });
