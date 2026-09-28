@@ -303,8 +303,9 @@ impl UiState {
     }
 
     /// 8-byte matrix column label for a primed destination: `O<n> ` + spec
-    /// label for operator params, else the page's short name (≤ 3 chars)
-    /// + the slot label.
+    /// label for operator params, else the address's block tag (≤ 3 chars,
+    /// `mod_grid::block_tag` — the page can be a sub-page with a different
+    /// short name, e.g. FLT › MODE for the filter's DRIVE) + the slot label.
     fn mod_label(&self, addr: ParamAddr) -> [u8; LABEL_LEN] {
         let def = self.nav.active_block_def();
         let op_prefix;
@@ -314,7 +315,7 @@ impl UiState {
                 (&op_prefix, addr.spec().map_or("", |s| s.label))
             }
             _ => {
-                let short = def.short.as_bytes();
+                let short = mod_grid::block_tag(addr.block).as_bytes();
                 (
                     &short[..short.len().min(3)],
                     def.params[self.focused_slot()].label(),

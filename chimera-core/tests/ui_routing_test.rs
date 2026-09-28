@@ -1,7 +1,7 @@
 //! Priming mod destinations from pages (spec §5, Review Focus 1 and 5).
 
 use chimera_core::addr::{BlockRef, ParamAddr};
-use chimera_core::params::DriveParams;
+use chimera_core::params::{DriveParams, FilterParams};
 use chimera_core::ui::UiState;
 use chimera_hal::{ButtonId, ButtonState, Controls, EncoderId};
 
@@ -49,6 +49,15 @@ fn to_drive(ui: &mut UiState) {
     for _ in 0..2 {
         press(ui, ButtonId::Plus);
     }
+}
+
+/// Plus ×3 from a Part's home reaches Filter, then Edit reaches its
+/// FLT › MODE sub-page (MODE, DRIVE).
+fn to_filter_mode(ui: &mut UiState) {
+    for _ in 0..3 {
+        press(ui, ButtonId::Plus);
+    }
+    press(ui, ButtonId::Edit);
 }
 
 /// Touch encoder A (focus slot 0), then MIX + Plus.
@@ -113,6 +122,23 @@ fn priming_on_a_part_page_registers_its_address() {
     let reg = &ui.performance.parts[0].sound.dest_registry;
     assert_eq!(reg.get(0).unwrap().label_str(), "DRVDRIVE");
     assert_eq!(ui.mod_state().num_dests(), 1);
+}
+
+/// Review fix round 1: DRIVE lives on FLT › MODE, whose own short is "MDE",
+/// not the filter's tag. `mod_label` must key its prefix off the address's
+/// block (`mod_grid::block_tag`), not the active page's short name, so
+/// priming it from the sub-page still tags it "FLT".
+#[test]
+fn priming_the_filter_drive_from_flt_mode_tags_it_flt() {
+    let mut ui = UiState::new();
+    to_filter_mode(&mut ui);
+    prime_slot(&mut ui, EncoderId::B); // DRIVE (slot 1: MODE, DRIVE, --, --, --, --)
+    assert_eq!(
+        primed(&ui),
+        [ParamAddr::new(BlockRef::Filter, FilterParams::DRIVE)]
+    );
+    let reg = &ui.performance.parts[0].sound.dest_registry;
+    assert_eq!(reg.get(0).unwrap().label_str(), "FLTDRIVE");
 }
 
 /// Review Focus 1: priming on the Mixer (bound, not modulatable) or System
