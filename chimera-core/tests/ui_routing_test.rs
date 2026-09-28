@@ -91,14 +91,11 @@ fn unprime_slot(ui: &mut UiState, enc: EncoderId) {
     );
 }
 
-/// Plus x3 from the Drive page reaches the MOD node, EDIT x7 its matrix;
+/// Plus x3 from the Drive page reaches the MOD node, its home the matrix;
 /// Minus x3 returns.
 fn enter_matrix(ui: &mut UiState) {
     for _ in 0..3 {
         press(ui, ButtonId::Plus);
-    }
-    for _ in 0..7 {
-        press(ui, ButtonId::Edit); // E2, E3, SPD, L1, L2, L3, MTX
     }
     assert_eq!(
         ui.page(),
@@ -181,8 +178,8 @@ fn priming_a_non_modulatable_param_is_refused() {
     for _ in 0..5 {
         press(&mut ui, ButtonId::Plus); // → MOD node
     }
-    for _ in 0..4 {
-        press(&mut ui, ButtonId::Edit); // E2, E3, SPD, L1
+    for _ in 0..5 {
+        press(&mut ui, ButtonId::Edit); // E1, E2, E3, SPD, L1
     }
     assert_eq!(
         ui.page(),
@@ -217,14 +214,11 @@ fn algo_matrix_rows_are_the_eight_sources() {
     assert_eq!(ui.matrix_state.num_dests, 1);
 }
 
-/// From a Part's first page: Plus ×5 to the MOD node, EDIT ×7 to its
+/// From a Part's first page: Plus ×5 to the MOD node, its home the
 /// matrix; encoder E sets the amount at the cursor (ENV → first dest).
 fn set_first_amount(ui: &mut UiState, delta: i8) {
     for _ in 0..5 {
         press(ui, ButtonId::Plus);
-    }
-    for _ in 0..7 {
-        press(ui, ButtonId::Edit); // E2, E3, SPD, L1, L2, L3, MTX
     }
     assert_eq!(
         ui.page(),

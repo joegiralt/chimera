@@ -171,19 +171,19 @@ fn test_page_from_nav_part_chain() {
         (2, &reg::DRIVE),
         (3, &reg::FILTER),
         (4, &reg::FOLDER),
-        (5, &reg::ENVELOPE),
+        (5, &reg::MOD_MATRIX),
     ] {
         nav.node = node;
         assert_eq!(PageKey::from_nav(&nav, Op::A), part(def), "node {node}");
     }
     for (sub, def) in [
-        (1, &reg::ENV_2),
-        (2, &reg::ENV_3),
-        (3, &reg::ENV_SPEED),
-        (4, &reg::LFO),
-        (5, &reg::LFO_2),
-        (6, &reg::LFO_3),
-        (7, &reg::MOD_MATRIX),
+        (1, &reg::ENVELOPE),
+        (2, &reg::ENV_2),
+        (3, &reg::ENV_3),
+        (4, &reg::ENV_SPEED),
+        (5, &reg::LFO),
+        (6, &reg::LFO_2),
+        (7, &reg::LFO_3),
     ] {
         nav.sub_page = sub;
         assert_eq!(PageKey::from_nav(&nav, Op::A), part(def), "sub-page {sub}");

@@ -48,8 +48,8 @@ fn mix_plus_on_a_non_modulatable_param_reports_not_modulatable() {
     for _ in 0..5 {
         feed(&mut ui, Input::press(ButtonId::Plus)); // -> MOD node
     }
-    for _ in 0..4 {
-        feed(&mut ui, Input::press(ButtonId::Edit)); // E2, E3, SPD, L1
+    for _ in 0..5 {
+        feed(&mut ui, Input::press(ButtonId::Edit)); // E1, E2, E3, SPD, L1
     }
     assert_eq!(
         ui.page(),
@@ -188,12 +188,10 @@ fn filter_page() -> UiState {
     ui
 }
 
-/// The MOD node's home, E1 (BigViz), slot C focused.
+/// E1 (BigViz), slot C focused.
 fn envelope_page() -> UiState {
     let mut ui = UiState::new();
-    for _ in 0..5 {
-        feed(&mut ui, Input::press(ButtonId::Plus));
-    }
+    to_mod_sub(&mut ui, 1, &chimera_core::ui::block_registry::ENVELOPE);
     feed(&mut ui, Input::turn(EncoderId::C, 1));
     settle(&mut ui);
     ui
@@ -373,9 +371,7 @@ fn stage_cells_prime_time_and_sustain_primes_level() {
     use chimera_core::dsp::modulator::EnvSlot;
     use chimera_core::params::EnvParams;
     let mut ui = UiState::new();
-    for _ in 0..5 {
-        feed(&mut ui, Input::press(ButtonId::Plus)); // MOD node: E1
-    }
+    to_mod_sub(&mut ui, 1, &chimera_core::ui::block_registry::ENVELOPE);
     prime(&mut ui, EncoderId::A); // ATTACK
     assert_eq!(ui.prime_status(), Some(PrimeStatus::Added));
     prime(&mut ui, EncoderId::C); // SUSTAIN

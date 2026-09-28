@@ -393,7 +393,7 @@ fn priming_on_main_page_registers_focused_param() {
     );
 }
 
-/// L1 (node 5, sub-page 4): slot 0 is LFO rate, which is not
+/// L1 (node 5, sub-page 5): slot 0 is LFO rate, which is not
 /// modulatable, so the registry refuses it.
 #[test]
 fn priming_on_the_lfo_sub_page_registers_nothing() {
@@ -401,8 +401,8 @@ fn priming_on_the_lfo_sub_page_registers_nothing() {
     for _ in 0..5 {
         press(&mut ui, ButtonId::Plus);
     }
-    for _ in 0..4 {
-        press(&mut ui, ButtonId::Edit); // E2, E3, SPD, L1
+    for _ in 0..5 {
+        press(&mut ui, ButtonId::Edit); // E1, E2, E3, SPD, L1
     }
     assert_eq!(
         ui.page(),

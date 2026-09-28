@@ -17,7 +17,7 @@ Chimera had one linear amp envelope with a per-sample divide, two envelopes noth
 - A TYPE, MODE or FORM change never jumps the level: into A or B ENV the new shape enters at the current level; otherwise the difference glides to 0 over 256 samples (one `Glide` type, shared by ENV and LFO slots). The glided value is clamped to the union of the old and new kinds' ranges, so a negative LFO gliding into a unipolar kind doesn't jump.
 - Outputs carry no velocity; VEL reaches the sound as a source, through AMP's VEL and through ENV n LEVEL.
 - **Accuracy:** both paths (the per-sample tick and the per-block closed form) are tested against an f64 reference, to 1e-4 absolute, with stage changes within ±1 sample. This supersedes the spec's 1e-6, which f32 cannot meet over a long stage. B's per-sample path is anchored, not accumulated: a position is `x₀ ± k·step`, re-anchored at each turn, wrap and block start, and the phase is a `u32` turn.
-- **Pages:** E1–E3 and SPD are BigViz pages. SPD holds each slot's SPEED and HOLD POSITION, dimmed on a type-B slot. The B page shows the FORM names of the current MODE. LFO mode's PHASE and ENV mode's FALL are one param id, so a MODE switch carries the value across (as the spec has it).
+- **Pages:** E1–E3 and SPD are BigViz pages on the MOD node, after its home, the matrix: MTX · E1 · E2 · E3 · SPD · L1 · L2 · L3 (the owner's order, 2026-09-28). SPD holds each slot's SPEED and HOLD POSITION, a column per slot, dimmed on a type-B slot. The B page shows the FORM names of the current MODE. LFO mode's PHASE and ENV mode's FALL are one param id, so a MODE switch carries the value across (as the spec has it).
 
 ## Alternatives considered
 - **A curve control on Envelope A:** the Cascadia has none; A stays divide-free.
