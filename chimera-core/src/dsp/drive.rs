@@ -1,7 +1,7 @@
 use crate::params::DriveParams;
 
 /// Pre-filter saturation stage.
-/// Asymmetric soft clipping via tanh with tone tilt and dry/wet mix.
+/// Symmetric soft clipping (`fast_tanh`) with a tone control and dry/wet mix.
 pub struct Drive {
     // No state needed — purely memoryless waveshaping
 }
@@ -29,8 +29,8 @@ impl Drive {
         let tone = params.tone; // 0=dark, 0.5=neutral, 1=bright
         let mix = params.mix; // 0..1 dry/wet
 
-        // Tone: simple tilt EQ via asymmetric pre/post gain
-        // tone < 0.5 = reduce highs (softer clip), tone > 0.5 = boost highs
+        // Tone: no filter. The pre- and post-clip gains move opposite ways:
+        // below 0.5 the clip is softer (fewer harmonics), above it harder.
         let pre_bright = 0.5 + tone;
         let post_dark = 1.5 - tone;
 
