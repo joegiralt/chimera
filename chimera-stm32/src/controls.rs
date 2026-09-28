@@ -7,15 +7,14 @@
 use chimera_core::clock_plan::{cycles_for_ns, systick_reload};
 use chimera_hal::{ButtonId, ButtonState, Controls, EncoderId, NUM_BUTTONS, NUM_ENCODERS};
 use core::sync::atomic::{AtomicBool, AtomicI8, AtomicU32, Ordering};
+use cortex_m::peripheral::syst::SystClkSource;
+use cortex_m::peripheral::{SCB, SYST};
+
+use crate::priority::{self, Priority};
 
 // GPIOF registers
 const GPIOF_IDR: *const u32 = 0x5802_1410 as *const u32;
 const GPIOF_BSRR: *mut u32 = 0x5802_1418 as *mut u32;
-
-// SysTick registers (Cortex-M standard)
-const SYST_CSR: *mut u32 = 0xE000_E010 as *mut u32;
-const SYST_RVR: *mut u32 = 0xE000_E014 as *mut u32;
-const SYST_CVR: *mut u32 = 0xE000_E018 as *mut u32;
 
 pub const CONTROLS_HZ: u32 = 500;
 // The HC165 was clocked with 100-cycle spins at 400 MHz: keep 250 ns at any clock.
@@ -82,21 +81,20 @@ static ENC_LAST_EDGE: [AtomicU32; NUM_ENCODERS] = [
     AtomicU32::new(0),
 ];
 
-pub fn start_systick(cpu_hz: u32) {
+/// Arms SysTick at `CONTROLS_HZ`, its priority set first so the first tick
+/// cannot run at the reset priority (0, the audio level).
+pub fn start_systick(mut syst: SYST, scb: &mut SCB, cpu_hz: u32) {
     HC165_DELAY.store(
         cycles_for_ns(cpu_hz, HC165_HALF_PERIOD_NS),
         Ordering::Relaxed,
     );
-    let reload = systick_reload(cpu_hz, CONTROLS_HZ);
-    // SAFETY: SYST_CSR/RVR/CVR are the Cortex-M SysTick registers at their
-    // fixed addresses; `enable()` gates the ISR on `READY`, so nothing reads
-    // these before this single-threaded init runs.
-    unsafe {
-        core::ptr::write_volatile(SYST_CSR, 0);
-        core::ptr::write_volatile(SYST_RVR, reload);
-        core::ptr::write_volatile(SYST_CVR, 0);
-        core::ptr::write_volatile(SYST_CSR, 0b111);
-    }
+    priority::set_systick(scb, Priority::SYSTICK);
+    syst.disable_counter();
+    syst.set_clock_source(SystClkSource::Core);
+    syst.set_reload(systick_reload(cpu_hz, CONTROLS_HZ));
+    syst.clear_current();
+    syst.enable_interrupt();
+    syst.enable_counter();
 }
 
 /// Allow ISR to run. Call after GPIOF is fully configured.
