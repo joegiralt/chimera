@@ -56,10 +56,13 @@ const SVF_MODE_NAMES_BY_ID: [&str; 8] = [
     "LP6", "LP12", "LP24", "BP12", "BP24", "HP24", "NOTCH", "PHASER",
 ];
 
-/// PHASER over LP24, which the 1 OP row (so the engine terms) carries:
-/// measured 2026-09-28, bench ROUTING SVF row, rev V at 480 MHz (500 − 483).
-/// That row never takes `saturate`'s divide; SVF HOT does, not yet read.
-const SVF_COST: u32 = 17;
+/// PHASER over LP24: measured 2026-09-28, bench ROUTING SVF row, rev V at
+/// 480 MHz (500 − 1 OP's 483). That row never takes `saturate`'s divide;
+/// SVF HOT and LP24 HOT do, not yet read.
+const SVF_PHASER: u32 = 17;
+/// BP24 and HP24 over LP24: provisional, for BP24's extra multiply and the
+/// loop's own layout, until the bench reads each mode.
+const SVF_PAD: u32 = 2;
 
 /// Which filter model (spec § Data model). A variant lands with its model
 /// (#123–#127); until then only the SVF exists.
@@ -91,12 +94,21 @@ impl FilterKind {
         }
     }
 
-    /// Cycles per sample over `CHAIN_COST` (spec § CPU). The SVF ran inside
-    /// the chain `CHAIN_COST` was measured over, at LP24; this is the bench's
-    /// SVF row (PHASER, its costliest mode) less 1 OP, billed for every mode.
-    pub const fn cost(self, _mode: FilterMode) -> Cost {
+    /// Cycles per sample over LP24 (spec § CPU), never below 0: the engine
+    /// terms were solved from bench rows that already run the SVF at LP24.
+    /// `recost` re-prices at every note-on, so a mode bills its own delta.
+    pub const fn cost(self, mode: FilterMode) -> Cost {
         match self {
-            FilterKind::Svf => Cost(SVF_COST),
+            FilterKind::Svf => Cost(match mode {
+                FilterMode::Phaser => SVF_PHASER,
+                FilterMode::Bp24 | FilterMode::Hp24 => SVF_PAD,
+                // LP24 is the baseline; LP6, LP12, BP12 and NOTCH run less.
+                FilterMode::Lp24
+                | FilterMode::Lp6
+                | FilterMode::Lp12
+                | FilterMode::Bp12
+                | FilterMode::Notch => 0,
+            }),
         }
     }
 
