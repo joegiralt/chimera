@@ -9,7 +9,7 @@ use crate::perf::load::AudioStats;
 use crate::ui::PrimeStatus;
 use crate::ui::animation::AnimatedValue;
 use crate::ui::audio_page;
-use crate::ui::block_def::{BlockDef, SlotBinding, VizType, slot_addr};
+use crate::ui::block_def::{BlockDef, FxFlow, SlotBinding, VizType, slot_addr};
 use crate::ui::chain::ChainNav;
 use crate::ui::components;
 use crate::ui::draw;
@@ -132,28 +132,16 @@ impl Renderer {
         match f.def.viz {
             VizType::AudioStats => audio_page::draw_viz(display, f.audio),
             VizType::MixerLevels => viz::parts_overview(display, &self.strips(f), f.active_part),
-            VizType::EffectsFlow => {
-                use crate::ui::block_registry as reg;
-                if f.def.id == reg::SENDS.id {
-                    let sends = [
-                        self.anim[0].current(),
-                        self.anim[1].current(),
-                        self.anim[2].current(),
-                    ];
-                    viz::effects_flow(display, (f.focus < 3).then_some(f.focus), Some(sends));
-                } else {
-                    let id = f.def.id;
-                    let lit = if id == reg::CHORUS.id {
-                        Some(0)
-                    } else if id == reg::DELAY.id || id == reg::DELAY_CHAR.id {
-                        Some(1)
-                    } else if id == reg::EFX.id {
-                        Some(2)
-                    } else {
-                        None
-                    };
-                    viz::effects_flow(display, lit, None);
-                }
+            VizType::EffectsFlow(FxFlow::Sends) => {
+                let sends = [
+                    self.anim[0].current(),
+                    self.anim[1].current(),
+                    self.anim[2].current(),
+                ];
+                viz::effects_flow(display, (f.focus < 3).then_some(f.focus), Some(sends));
+            }
+            VizType::EffectsFlow(FxFlow::Effect(node)) => {
+                viz::effects_flow(display, Some(node as usize), None)
             }
             VizType::AlgoDiagram => {
                 let algo = &f.parts[f.active_part].sound.params.algo;
@@ -231,7 +219,7 @@ impl Renderer {
                     region::quantize_values(&self.anim),
                     strips_key(&self.strips(f), f.active_part),
                 ),
-                VizType::EffectsFlow => (region::quantize_values(&self.anim), f.focus as u32),
+                VizType::EffectsFlow(_) => (region::quantize_values(&self.anim), f.focus as u32),
                 VizType::AlgoDiagram => {
                     let algo = &f.parts[f.active_part].sound.params.algo;
                     let q = region::quantize_values(&self.anim);

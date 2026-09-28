@@ -9,12 +9,29 @@ pub enum VizType {
     Adsr,
     LpgResponse,
     Logo,
-    EffectsFlow,
+    /// IN → CHR → DLY → REV → OUT, lighting this page's part of it.
+    EffectsFlow(FxFlow),
     MixerLevels,
     CompressorCurve,
     AudioStats,
     /// ALG A's diagram moving to ALG B's with MORPH.
     AlgoDiagram,
+}
+
+/// A node of the FX flow; the value is its index in `viz::effects_flow`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FxNode {
+    Chorus = 0,
+    Delay = 1,
+    Reverb = 2,
+}
+
+/// What an FX page's flow lights: its effect, or on SENDS the focused
+/// send, with every send's level.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FxFlow {
+    Effect(FxNode),
+    Sends,
 }
 
 /// What an encoder slot edits (spec §5).
