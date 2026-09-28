@@ -25,8 +25,8 @@ pub const STATS_Y: i32 = 254;
 const VISIBLE_COLS: usize = 5;
 const VISIBLE_ROWS: usize = 3;
 
-/// Max sources and destinations for the amounts grid.
-pub const MAX_SOURCES: usize = 16;
+/// Max sources and destinations for the amounts grid (presence is a `u8`).
+pub const MAX_SOURCES: usize = crate::modulation::MAX_MOD_SOURCES;
 pub const MAX_DESTS: usize = crate::modulation::MAX_MOD_DESTS;
 
 /// A destination in the mod matrix — a primed param.
@@ -57,8 +57,13 @@ pub struct MatrixState {
     pub sel_col: usize,
     pub scroll_x: usize,
     pub scroll_y: usize,
-    /// Modulation amounts: [source][dest_idx], -127 to +127. 0 = no connection.
+    /// Modulation amounts: [source][dest_idx], -127 to +127 (0 when absent).
     pub amounts: [[i8; MAX_DESTS]; MAX_SOURCES],
+    /// Route presence, one bit per source, as ModState's.
+    pub present: [u8; MAX_DESTS],
+    /// Bumped on every amount, presence or column change: part of the
+    /// dirty-region keys.
+    pub rev: u16,
     /// Destination list, rebuilt from ModDestRegistry.
     pub dests: [Option<ModDest>; MAX_DESTS],
     pub num_dests: usize,
@@ -75,6 +80,8 @@ impl MatrixState {
             scroll_x: 0,
             scroll_y: 0,
             amounts: [[0; MAX_DESTS]; MAX_SOURCES],
+            present: [0; MAX_DESTS],
+            rev: 0,
             dests: [None; MAX_DESTS],
             num_dests: 0,
             sources: [None; MAX_SOURCES],
@@ -111,6 +118,7 @@ impl MatrixState {
                 self.num_dests += 1;
             }
         }
+        self.bump();
     }
 
     /// Amounts from a Part's `ModState`, matched by destination address
@@ -118,16 +126,22 @@ impl MatrixState {
     /// `rebuild_sources` and `rebuild_dests_from_registry`.
     pub fn load_amounts(&mut self, mod_state: &crate::modulation::ModState) {
         self.amounts = [[0; MAX_DESTS]; MAX_SOURCES];
+        self.present = [0; MAX_DESTS];
         for di in 0..self.num_dests {
             let Some(dest) = self.dests[di] else { continue };
-            let Some(d) = (0..mod_state.num_dests()).find(|&d| mod_state.dest(d) == dest.addr)
-            else {
+            let Some(d) = mod_state.find(dest.addr) else {
                 continue;
             };
             for si in 0..self.num_sources {
                 self.amounts[si][di] = mod_state.amount(si, d);
             }
+            self.present[di] = mod_state.present(d);
         }
+        self.bump();
+    }
+
+    fn bump(&mut self) {
+        self.rev = self.rev.wrapping_add(1);
     }
 
     /// Get the amount at the current cursor position.
@@ -175,15 +189,32 @@ impl MatrixState {
         (0..self.num_dests).find(|&c| self.dests[c].is_some_and(|d| d.addr == addr))
     }
 
-    /// The amount of route `row → addr`; `None` without a column.
+    /// The amount of route `row → addr`; `None` when the route is absent.
     pub fn route(&self, row: usize, addr: ParamAddr) -> Option<i8> {
-        self.col_of(addr).map(|c| self.amounts[row][c])
+        self.col_of(addr)
+            .filter(|&c| self.is_present(row, c))
+            .map(|c| self.amounts[row][c])
     }
 
-    /// Set cell (`row`, `col`); out of range does nothing.
+    pub fn is_present(&self, row: usize, col: usize) -> bool {
+        row < MAX_SOURCES && col < self.num_dests && self.present[col] & (1 << row) != 0
+    }
+
+    /// Set (and so create) cell (`row`, `col`); out of range does nothing.
     pub fn set(&mut self, row: usize, col: usize, amount: i8) {
         if row < self.num_sources && col < self.num_dests {
             self.amounts[row][col] = amount;
+            self.present[col] |= 1 << row;
+            self.bump();
+        }
+    }
+
+    /// MIX+MINUS: delete the route under the cursor.
+    pub fn delete_selected(&mut self) {
+        if self.sel_col < self.num_dests && self.sel_row < self.num_sources {
+            self.amounts[self.sel_row][self.sel_col] = 0;
+            self.present[self.sel_col] &= !(1 << self.sel_row);
+            self.bump();
         }
     }
 
@@ -291,6 +322,9 @@ impl Default for MatrixState {
     }
 }
 
+/// The matrix's hint line (spec § UI: MIX+MINUS deletes a route).
+pub const HINT: &str = "PRIME MIX+PLUS  DELETE MIX+MINUS";
+
 /// Short tag for the block a destination lives in (column header, top line).
 pub fn block_tag(b: BlockRef) -> &'static str {
     match b {
@@ -367,7 +401,8 @@ pub fn cell_center(ci: usize, vi: usize) -> (i32, i32) {
 }
 
 /// Dot grid: sources down, primed destinations across; a filled dot is a
-/// positive amount, a ring negative, size = |amount|, a tiny dim dot none;
+/// positive amount, a ring negative, size = |amount|, a small ring a route
+/// at 0, a tiny dim dot no route;
 /// the selected cell outlined in the accent, its dot sized by `sel_amount`
 /// (the lerped amount, so it grows with the focus band rather than
 /// snapping). Then the hint and route count.
@@ -466,24 +501,25 @@ where
             }
             let r = 2 + (amount as i32).abs() * 8 / 127;
             let color = if selected { theme::ACCENT } else { theme::INK2 };
-            match amount {
-                0 => draw::dot(d, x, y, 1, theme::FAINT),
-                a if a > 0 => draw::dot(d, x, y, r, color),
-                _ => draw::ring(d, x, y, r, color, 1),
+            match (state.is_present(ri, di), amount) {
+                (false, _) => draw::dot(d, x, y, 1, theme::FAINT),
+                (true, 0) => draw::ring(d, x, y, 2, color, 1),
+                (true, a) if a > 0 => draw::dot(d, x, y, r, color),
+                (true, _) => draw::ring(d, x, y, r, color, 1),
             }
         }
     }
     draw::text(
         d,
         &theme::FONT_LABEL,
-        "PRIME: MIX+PLUS ON A PARAM",
+        HINT,
         theme::MARGIN_X,
         HINT_Y,
         theme::MID,
     );
     let routes = (0..state.num_sources)
         .flat_map(|r| (0..state.num_dests).map(move |c| (r, c)))
-        .filter(|&(r, c)| state.amounts[r][c] != 0)
+        .filter(|&(r, c)| state.is_present(r, c))
         .count();
     let mut buf = FmtBuf::new();
     fmt_stats(&mut buf, routes, state.num_dests);

@@ -55,6 +55,8 @@ pub enum RegionData {
         col: u8,
         dests: u8,
         value: u16,
+        /// `MatrixState::rev`: a deleted route redraws.
+        matrix_rev: u16,
     },
     Viz {
         page: PageKey,
@@ -73,6 +75,9 @@ pub enum RegionData {
         /// Each cell's mod bar (its amount's f32 bits), which a Part switch
         /// can change alone.
         mods: [Option<u32>; 6],
+        /// `MatrixState::rev`, and each cell's `Look` in two bits.
+        matrix_rev: u16,
+        looks: u16,
     },
     Nav {
         chain_idx: u8,
@@ -87,6 +92,7 @@ pub enum RegionData {
         scroll_y: u8,
         /// The selected route's animated amount (quantized display value).
         sel_value: u16,
+        matrix_rev: u16,
     },
 }
 
@@ -142,6 +148,8 @@ impl RegionData {
             focus,
             dest_count,
             mods,
+            matrix_rev: 0,
+            looks: 0,
         }
     }
 
@@ -189,6 +197,8 @@ impl RegionData {
             focus: u8::MAX,
             dest_count: u16::MAX,
             mods: [Some(u32::MAX); 6],
+            matrix_rev: u16::MAX,
+            looks: u16::MAX,
         }
     }
 
@@ -208,6 +218,7 @@ impl RegionData {
             scroll_x,
             scroll_y,
             sel_value: 0,
+            matrix_rev: 0,
         }
     }
 
@@ -224,6 +235,7 @@ impl RegionData {
             scroll_x,
             scroll_y,
             sel_value,
+            matrix_rev: 0,
         }
     }
 
@@ -234,6 +246,59 @@ impl RegionData {
             scroll_x: 255,
             scroll_y: 255,
             sel_value: SENTINEL,
+            matrix_rev: u16::MAX,
+        }
+    }
+
+    /// With the matrix's revision (and the cells' looks) in the key, so a
+    /// deleted route or a dimmed cell redraws.
+    pub fn keyed(self, matrix_rev: u16, looks: u16) -> Self {
+        match self {
+            Self::Cells {
+                page,
+                values,
+                focus,
+                dest_count,
+                mods,
+                ..
+            } => Self::Cells {
+                page,
+                values,
+                focus,
+                dest_count,
+                mods,
+                matrix_rev,
+                looks,
+            },
+            Self::Grid {
+                sel_row,
+                sel_col,
+                scroll_x,
+                scroll_y,
+                sel_value,
+                ..
+            } => Self::Grid {
+                sel_row,
+                sel_col,
+                scroll_x,
+                scroll_y,
+                sel_value,
+                matrix_rev,
+            },
+            Self::Route {
+                row,
+                col,
+                dests,
+                value,
+                ..
+            } => Self::Route {
+                row,
+                col,
+                dests,
+                value,
+                matrix_rev,
+            },
+            other => other,
         }
     }
 }

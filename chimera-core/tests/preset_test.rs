@@ -411,7 +411,7 @@ fn priming_on_the_lfo_sub_page_registers_nothing() {
         }
     );
     prime(&mut ui);
-    assert!(primed(&ui).is_empty());
+    assert_eq!(primed(&ui), [chimera_core::modulation::CUTOFF]);
 }
 
 /// The WAVE page's slots are Enums, never modulatable, so the registry
@@ -429,7 +429,7 @@ fn priming_a_wave_registers_nothing() {
     );
     ui.handle_input(&MockControls::new().encoder(EncoderId::C, 1)); // focus slot 2
     prime(&mut ui);
-    assert!(primed(&ui).is_empty());
+    assert_eq!(primed(&ui), [chimera_core::modulation::CUTOFF]);
 }
 
 /// `Performance::default()` is `Performance::new()` (clippy new_without_default).

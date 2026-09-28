@@ -104,9 +104,9 @@ fn un_priming_also_clears_the_status() {
 /// other row is checked against).
 #[test]
 fn matrix_hint_fits_its_row() {
-    let w = draw::text_width(&theme::FONT_LABEL, "PRIME: MIX+PLUS ON A PARAM", 0);
+    let w = draw::text_width(&theme::FONT_LABEL, chimera_core::ui::mod_grid::HINT, 0);
     assert!(
-        w <= theme::SCREEN_W - theme::MARGIN_X * 2,
+        w <= theme::SCREEN_W - 2 * theme::MARGIN_X,
         "hint is {w}px wide"
     );
 }
@@ -315,9 +315,10 @@ fn prime_every_slot(ui: &mut UiState, slots: &[EncoderId], out: &mut Vec<PrimeSt
 
 /// The Algo chain alone reaches 17 modulatable addresses (MORPH, VOL, six
 /// LEVELs, Drive's three, CUTOFF, RESO, the filter's DRIVE on FLT › MODE,
-/// Folder's three), one more than the matrix holds. Priming them all through
-/// real input: exactly `MAX_MOD_DESTS` report ADDED, the next distinct one
-/// reports MATRIX FULL, and the matrix holds every added one.
+/// Folder's three), one more than the matrix holds. CUTOFF is a default
+/// column, so priming it reports ALREADY ROUTED. Priming them all through
+/// real input: exactly `MAX_MOD_DESTS − 1` report ADDED (CUTOFF is a default
+/// column), then MATRIX FULL, and the matrix holds every added one.
 #[test]
 fn priming_past_matrix_capacity_on_the_algo_chain_reports_full() {
     use chimera_core::modulation::MAX_MOD_DESTS;
@@ -337,7 +338,7 @@ fn priming_past_matrix_capacity_on_the_algo_chain_reports_full() {
     prime_every_slot(&mut ui, &ALL_SLOTS, &mut seen);
 
     let added = seen.iter().filter(|&&s| s == PrimeStatus::Added).count();
-    assert_eq!(added, MAX_MOD_DESTS, "{seen:?}");
+    assert_eq!(added, MAX_MOD_DESTS - 1, "{seen:?}");
     let first_full = seen.iter().position(|&s| s == PrimeStatus::Full);
     let added_before = first_full.map(|i| {
         seen[..i]
@@ -347,7 +348,7 @@ fn priming_past_matrix_capacity_on_the_algo_chain_reports_full() {
     });
     assert_eq!(
         added_before,
-        Some(MAX_MOD_DESTS),
+        Some(MAX_MOD_DESTS - 1),
         "the 17th distinct address must report MATRIX FULL: {seen:?}"
     );
     assert_eq!(ui.matrix_state.num_dests, MAX_MOD_DESTS);

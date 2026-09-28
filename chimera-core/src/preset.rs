@@ -7,7 +7,7 @@ use crate::dsp::fx_bus::FxParams;
 use crate::hw::MAX_PARTS;
 use crate::in_place::by_value;
 use crate::mod_path::ModDestRegistry;
-use crate::modulation::ModState;
+use crate::modulation::{CUTOFF, CUTOFF_LABEL, MAX_MOD_SOURCES, ModSource, ModState};
 use crate::params::{EngineType, ParamSnapshot};
 use crate::part::PartParams;
 
@@ -29,13 +29,19 @@ impl Sound {
         let mut name = [0u8; NAME_LEN];
         let tag = b"(init)";
         name[..tag.len()].copy_from_slice(tag);
+        // The default routes (spec § 2): ENV 1, LFO 1 and NOTE → CUTOFF at
+        // 0 (NOTE at the SVF's key default, 0), on every engine.
+        let mut dest_registry = ModDestRegistry::new();
+        let _ = dest_registry.add(CUTOFF, CUTOFF_LABEL); // an empty registry takes it
+        let mut mod_state = ModState::from_registry(&dest_registry, MAX_MOD_SOURCES);
+        for s in [ModSource::Env1, ModSource::Lfo1, ModSource::Note] {
+            mod_state.set_route(s.index(), 0, 0);
+        }
         Self {
             name,
             params: ParamSnapshot::for_engine(engine),
-            // No pre-wired routes: the matrix starts empty on every chain
-            // (spec §4 "FM pre-wire removed").
-            mod_state: ModState::new(),
-            dest_registry: ModDestRegistry::new(),
+            mod_state,
+            dest_registry,
         }
     }
 

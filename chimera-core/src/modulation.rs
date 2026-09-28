@@ -8,11 +8,17 @@
 use crate::addr::{BlockRef, ParamAddr};
 use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::algo::plan::OPS;
-use crate::mod_path::ModDestRegistry;
+use crate::mod_path::{LABEL_LEN, ModDestRegistry};
+use crate::params::FilterParams;
 use crate::ui::mod_grid::MatrixState;
 
 pub const MAX_MOD_SOURCES: usize = 8;
 pub const MAX_MOD_DESTS: usize = 16;
+
+/// CUTOFF: the default routes' column, and the filter knobs' (spec § 2, § 6).
+pub const CUTOFF: ParamAddr = ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF);
+/// CUTOFF's matrix column label, wherever the column is created.
+pub const CUTOFF_LABEL: [u8; LABEL_LEN] = *b"FLTCUTOF";
 
 /// The matrix's source rows, in `Voice`'s order (spec § 2). Indices are
 /// stored: 0 and 1 keep their old meaning (the envelope and the LFO).
@@ -104,6 +110,9 @@ pub struct ModState {
     dests: [ParamAddr; MAX_MOD_DESTS],
     /// amounts[source][dest], -127 to +127
     amounts: [[i8; MAX_MOD_DESTS]; MAX_MOD_SOURCES],
+    /// Route presence (spec § 2): bit s of present[d] is set when source s
+    /// routes to dest d, at any amount. The audio thread's sums ignore it.
+    present: [u8; MAX_MOD_DESTS],
 }
 
 impl ModState {
@@ -114,6 +123,7 @@ impl ModState {
             num_dests: 0,
             dests: [UNUSED; MAX_MOD_DESTS],
             amounts: [[0; MAX_MOD_DESTS]; MAX_MOD_SOURCES],
+            present: [0; MAX_MOD_DESTS],
         }
     }
 
@@ -139,6 +149,38 @@ impl ModState {
         } else {
             0
         }
+    }
+
+    /// The present bits of destination `d` (0 out of range).
+    pub fn present(&self, d: usize) -> u8 {
+        if d < self.num_dests {
+            self.present[d]
+        } else {
+            0
+        }
+    }
+
+    /// The column of `addr`, if any.
+    pub fn find(&self, addr: ParamAddr) -> Option<usize> {
+        (0..self.num_dests).find(|&d| self.dests[d] == addr)
+    }
+
+    /// The present bits of the column of `addr` (0 without a column).
+    pub fn routes_into(&self, addr: ParamAddr) -> u8 {
+        self.find(addr).map_or(0, |d| self.present[d])
+    }
+
+    /// Create (or set) the route `source → dest` at `amount`, 0 included.
+    pub fn set_route(&mut self, source: usize, dest: usize, amount: i8) {
+        if source < self.num_sources && dest < self.num_dests {
+            self.amounts[source][dest] = amount;
+            self.present[dest] |= 1 << source;
+        }
+    }
+
+    /// Append `addr` as a column if it is modulatable and there is room.
+    pub fn push(&mut self, addr: ParamAddr) -> Option<usize> {
+        self.push_dest(Some(addr)).then(|| self.num_dests - 1)
     }
 
     /// Operators whose LEVEL has a route with a nonzero amount: a LEVEL of
@@ -175,8 +217,7 @@ impl ModState {
 
     /// Offset for `addr`, or 0.0 if it is not a destination (UI display).
     pub fn offset_for(&self, addr: ParamAddr, source_values: &[f32; MAX_MOD_SOURCES]) -> f32 {
-        (0..self.num_dests)
-            .find(|&d| self.dests[d] == addr)
+        self.find(addr)
             .map_or(0.0, |d| self.sum_for(d, source_values))
     }
 
@@ -194,10 +235,14 @@ impl ModState {
         ms
     }
 
-    /// Set one amount. Ignored when `source` or `dest` is out of range.
+    /// Set one amount; a nonzero amount creates the route. Ignored when
+    /// `source` or `dest` is out of range.
     pub fn set_amount(&mut self, source: usize, dest: usize, amount: i8) {
         if source < self.num_sources && dest < self.num_dests {
             self.amounts[source][dest] = amount;
+            if amount != 0 {
+                self.present[dest] |= 1 << source;
+            }
         }
     }
 
@@ -214,6 +259,7 @@ impl ModState {
                 for si in 0..self.num_sources {
                     self.amounts[si][d] = matrix.amounts[si][di];
                 }
+                self.present[d] = matrix.present[di];
             }
         }
     }

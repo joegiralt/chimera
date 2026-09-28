@@ -319,7 +319,11 @@ impl Renderer {
         }
         let v = self.anim[f.focus].current();
         let mut buf = FmtBuf::new();
-        fmt::fmt_val(&mut buf, v, slot.format());
+        if look(f, f.focus) == components::Look::Absent {
+            let _ = core::fmt::Write::write_str(&mut buf, "--");
+        } else {
+            fmt::fmt_val(&mut buf, v, slot.format());
+        }
         components::focus_band(
             display,
             slot.label(),
@@ -386,6 +390,7 @@ impl Renderer {
                 fmt: slot.format(),
                 active: i == f.focus,
                 mod_amount: Self::cell_mod_info(f.def, i, f.sel_op, f.matrix),
+                look: look(f, i),
             };
             components::cell(display, i, top, Some(&c));
         }
@@ -415,6 +420,21 @@ impl Renderer {
         let start = y_start as usize * theme::SCREEN_W as usize;
         let end = y_end as usize * theme::SCREEN_W as usize;
         fb[start..end].fill(bg);
+    }
+}
+
+/// How cell `i` of the page reads now: the one place a cell's look is
+/// decided, for drawing and for the dirty-region key.
+pub fn look(f: &Frame, i: usize) -> components::Look {
+    match f.def.params[i].binding {
+        SlotBinding::Route(src)
+            if f.matrix
+                .route(src.index(), crate::modulation::CUTOFF)
+                .is_none() =>
+        {
+            components::Look::Absent
+        }
+        _ => components::Look::Live,
     }
 }
 
