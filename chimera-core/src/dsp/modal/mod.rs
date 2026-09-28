@@ -163,6 +163,11 @@ impl ModalEngine {
         }
     }
 
+    /// The model the sounding note plays, set at its note-on.
+    pub fn playing(&self) -> Option<ResonatorMode> {
+        self.active.then_some(self.active_mode)
+    }
+
     /// The voice's pitch ratio, for the next `note_on` or `render`: the
     /// resonators' and strings' frequency, per block.
     pub fn set_pitch(&mut self, ratio: f32) {

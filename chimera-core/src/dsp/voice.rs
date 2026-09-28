@@ -11,6 +11,7 @@ use crate::dsp::engines::Engines;
 use crate::dsp::envelope::{EnvMods, Envelope};
 use crate::dsp::filter::SvfFilter;
 use crate::dsp::lfo::Lfo;
+use crate::dsp::modal::{ModalEngine, ModalParams};
 use crate::dsp::modulator::{EnvSlot, LfoSlot};
 use crate::dsp::wavefolder::Wavefolder;
 use crate::hw::{Cost, MAX_VOICES, VOICE_RAM_BUDGET};
@@ -141,6 +142,19 @@ impl Voice {
             + p.filter.kind().cost(p.filter.mode())
             + ModRouting::cost(p, mods)
             + Self::stage_cost(p, mods)
+    }
+
+    /// What this voice's note-on Modal model costs over `p`'s stored one
+    /// while it still plays it (#183): the model is fixed per note, so a
+    /// MODE edit under a sounding voice is billed at the costlier of the two.
+    pub fn held_model_extra(&self, p: &ParamSnapshot) -> Cost {
+        match self.engines.modal_playing() {
+            Some(mode) if self.active_engine == EngineType::Modal && mode != p.modal.mode => {
+                let held = ModalEngine::cost(&ModalParams { mode, ..p.modal });
+                Cost(held.0.saturating_sub(ModalEngine::cost(&p.modal).0))
+            }
+            _ => Cost::ZERO,
+        }
     }
 
     /// The folder and the drive stage, each once its stored amount runs it

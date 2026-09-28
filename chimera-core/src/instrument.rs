@@ -376,7 +376,9 @@ impl Instrument {
         });
         for v in 0..MAX_VOICES {
             if let Some(p) = self.alloc.slots()[v].part() {
-                self.alloc.recost(v, costs[p as usize % MAX_PARTS]);
+                let p = p as usize % MAX_PARTS;
+                let held = self.voices[v].held_model_extra(&shared.parts[p].params);
+                self.alloc.recost(v, costs[p] + held);
             }
         }
         while let Some(v) = self.alloc.shed(FxBus::COST) {
