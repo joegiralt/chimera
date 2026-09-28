@@ -77,13 +77,12 @@ impl Stereo {
     };
 }
 
-/// Fast tanh approximation using rational polynomial.
-/// Accurate to ~0.1% for |x| < 4. Clamps to ±1 beyond that.
-/// ~5 cycles on Cortex-M7 vs ~400 for libm::tanhf.
+/// Fast tanh: the Padé approximant x(27 + x²) / (27 + 9x²), clamped to ±1
+/// beyond |x| = 3, where it meets ±1. One divide, no libm call. Measured
+/// against tanh it is off by up to 0.0236 absolute (near |x| = 1.57) and
+/// 2.6 % relative (near |x| = 1.45); within 0.004 for |x| ≤ 0.5.
 #[inline(always)]
 pub fn fast_tanh(x: f32) -> f32 {
-    // Padé approximant: tanh(x) ≈ x(27 + x²) / (27 + 9x²)
-    // Good to ~0.3% error for |x| < 3
     if x > 3.0 {
         1.0
     } else if x < -3.0 {

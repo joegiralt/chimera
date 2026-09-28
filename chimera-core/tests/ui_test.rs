@@ -215,7 +215,7 @@ fn test_system_chain_has_its_own_page() {
     nav.chain_id = ChainId::System;
     assert_eq!(
         PageKey::from_nav(&nav, Op::A),
-        PageKey::Legacy(PageId::System)
+        PageKey::Legacy(PageId::System(nav.active_block_def().id))
     );
 }
 

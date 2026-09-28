@@ -1,5 +1,6 @@
 use chimera_core::addr::Op;
-use chimera_core::preset::{ChainType, POOL_SIZE, Part, Performance, Sound, SoundPool};
+use chimera_core::params::EngineType;
+use chimera_core::preset::{POOL_SIZE, Part, Performance, Sound, SoundPool};
 use chimera_core::ui::block_registry as reg;
 use chimera_core::ui::page::PageKey;
 use chimera_core::ui::{UiMode, UiState};
@@ -58,8 +59,8 @@ impl Controls for MockControls {
 
 #[test]
 fn patch_init_has_musically_useful_defaults() {
-    let p = Sound::init(ChainType::Algo);
-    assert_eq!(p.chain_type, ChainType::Algo);
+    let p = Sound::init(EngineType::Algo);
+    assert_eq!(p.engine(), EngineType::Algo);
     assert!(p.params.out.volume > 0.0);
     assert!(p.params.filter.cutoff > 1000.0);
     assert!(p.name_str().starts_with("(init)"));
@@ -75,10 +76,10 @@ fn sound_pool_starts_empty() {
 #[test]
 fn sound_pool_store_and_retrieve() {
     let mut pool = SoundPool::new();
-    let sound = Sound::init(ChainType::Algo);
+    let sound = Sound::init(EngineType::Algo);
     pool.store(0, sound);
     assert!(pool.get(0).is_some());
-    assert_eq!(pool.get(0).unwrap().chain_type, ChainType::Algo);
+    assert_eq!(pool.get(0).unwrap().engine(), EngineType::Algo);
 }
 
 #[test]
@@ -89,19 +90,19 @@ fn sound_pool_slot_count() {
 
 #[test]
 fn part_starts_with_init_patch() {
-    let part = Part::new(ChainType::Algo);
-    assert_eq!(part.sound.chain_type, ChainType::Algo);
+    let part = Part::new(EngineType::Algo);
+    assert_eq!(part.sound.engine(), EngineType::Algo);
     assert!(part.loaded_from.is_none());
 }
 
 #[test]
 fn part_load_from_pool_copies() {
     let mut pool = SoundPool::new();
-    let mut sound = Sound::init(ChainType::Algo);
+    let mut sound = Sound::init(EngineType::Algo);
     sound.name = *b"Acid Bass\0\0\0\0\0\0\0";
     pool.store(3, sound);
 
-    let mut part = Part::new(ChainType::Algo);
+    let mut part = Part::new(EngineType::Algo);
     part.load_from_pool(&pool, 3);
 
     assert_eq!(part.sound.name_str(), "Acid Bass");
@@ -111,9 +112,9 @@ fn part_load_from_pool_copies() {
 #[test]
 fn part_edit_does_not_modify_pool() {
     let mut pool = SoundPool::new();
-    pool.store(0, Sound::init(ChainType::Algo));
+    pool.store(0, Sound::init(EngineType::Algo));
 
-    let mut part = Part::new(ChainType::Algo);
+    let mut part = Part::new(EngineType::Algo);
     part.load_from_pool(&pool, 0);
     part.sound.params.out.volume = 0.0; // mute
     assert_eq!(
@@ -128,14 +129,14 @@ fn part_edit_does_not_modify_pool() {
 #[test]
 fn part_save_to_pool_overwrites() {
     let mut pool = SoundPool::new();
-    pool.store(5, Sound::init(ChainType::Algo));
+    pool.store(5, Sound::init(EngineType::Algo));
 
-    let mut part = Part::new(ChainType::Modal);
+    let mut part = Part::new(EngineType::Modal);
     part.sound.name = *b"My Sound\0\0\0\0\0\0\0\0";
     part.save_to_pool(&mut pool, 5);
 
     assert_eq!(pool.get(5).unwrap().name_str(), "My Sound");
-    assert_eq!(pool.get(5).unwrap().chain_type, ChainType::Modal);
+    assert_eq!(pool.get(5).unwrap().engine(), EngineType::Modal);
 }
 
 /// Spec § Vocabulary: a Performance holds MAX_PARTS Parts, each playing a Sound.
@@ -144,7 +145,7 @@ fn performance_has_six_parts_playing_sounds() {
     let perf = Performance::new();
     assert_eq!(perf.parts.len(), chimera_core::hw::MAX_PARTS);
     let sound: &Sound = &perf.parts[0].sound;
-    assert_eq!(sound.chain_type, ChainType::Algo);
+    assert_eq!(sound.engine(), EngineType::Algo);
     assert_eq!(&perf.name, b"New Performance\0");
 }
 
@@ -248,7 +249,7 @@ fn browser_load_copies_patch_to_part() {
     let mut ui = UiState::new();
 
     // Store a named sound in pool slot 2
-    let mut sound = Sound::init(ChainType::Algo);
+    let mut sound = Sound::init(EngineType::Algo);
     sound.name = *b"Test Sound\0\0\0\0\0\0";
     ui.pool.store(2, sound);
 
@@ -281,7 +282,7 @@ fn browser_cancel_does_not_load() {
     let original_name = ui.performance.parts[0].sound.name;
 
     // Store sound and open browser
-    ui.pool.store(0, Sound::init(ChainType::Modal));
+    ui.pool.store(0, Sound::init(EngineType::Modal));
     open_browser(&mut ui, ButtonId::B1);
     assert!(matches!(ui.ui_mode, UiMode::SoundBrowser { .. }));
 
@@ -313,7 +314,7 @@ fn browser_save_to_pool() {
 }
 
 #[test]
-fn browser_init_entries_set_chain_type() {
+fn browser_init_entries_set_the_engine() {
     let mut ui = UiState::new();
 
     // Open browser, scroll to "(init) Modal" (POOL_SIZE + 1)
@@ -322,7 +323,7 @@ fn browser_init_entries_set_chain_type() {
     ui.handle_input(&MockControls::new().button(ButtonId::Edit, ButtonState::Pressed));
 
     assert!(matches!(ui.ui_mode, UiMode::Normal));
-    assert_eq!(ui.performance.parts[0].sound.chain_type, ChainType::Modal);
+    assert_eq!(ui.performance.parts[0].sound.engine(), EngineType::Modal);
     assert!(
         ui.performance.parts[0]
             .sound
@@ -336,7 +337,7 @@ fn browser_init_entries_set_chain_type() {
     ui.handle_input(&MockControls::new().button(ButtonId::Edit, ButtonState::Pressed));
 
     assert!(matches!(ui.ui_mode, UiMode::Normal));
-    assert_eq!(ui.performance.parts[0].sound.chain_type, ChainType::Algo);
+    assert_eq!(ui.performance.parts[0].sound.engine(), EngineType::Algo);
 }
 
 /// Loading from the browser replaces the Sound only: the Part keeps its
@@ -349,7 +350,7 @@ fn browser_load_keeps_part_mix() {
     open_browser(&mut ui, ButtonId::B3);
     ui.handle_input(&MockControls::new().encoder(EncoderId::Main, (POOL_SIZE + 1) as i8));
     ui.handle_input(&MockControls::new().button(ButtonId::Edit, ButtonState::Pressed));
-    assert_eq!(ui.performance.parts[2].sound.chain_type, ChainType::Modal);
+    assert_eq!(ui.performance.parts[2].sound.engine(), EngineType::Modal);
     assert_eq!(ui.performance.parts[2].mix.channel.get(), 9);
     assert_eq!(ui.performance.parts[2].mix.level, 0.3);
 }
