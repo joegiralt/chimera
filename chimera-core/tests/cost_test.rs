@@ -106,13 +106,13 @@ fn mod_routing_bills_the_spec_shape() {
         M::cost(&b2, &shaped),
         M::BASE + M::CLAMP + M::ENV_B + M::CURVE + M::SLIDE + M::DEST_FIRST
     );
-    // Measured 2026-09-28 (Task 13): 45, 45 + 22 + 27, and
-    // 45 + 22 + 3·(98 + 79) + 5·8.
+    // Measured 2026-09-28 (Task 13): 47, 47 + 24 + 28, and
+    // 47 + 24 + 3·(98 + 76) + 5·8.
     assert_eq!(
         (M::BASE, M::cost(&p, &routed(&[ModSource::Env2]))),
-        (Cost(45), Cost(94))
+        (Cost(47), Cost(99))
     );
-    assert_eq!(M::cost(&worst, &routed(&ModSource::ALL)), Cost(638));
+    assert_eq!(M::cost(&worst, &routed(&ModSource::ALL)), Cost(633));
 }
 
 /// Each destination other than the VCA with a route of nonzero amount
@@ -350,17 +350,16 @@ fn the_model_bills_every_bench_row_high() {
     }
 }
 
-/// The Task 13 bench (rev V, 480 MHz, 2026-09-28): each ROUTING row, and
-/// the BENCH rows read with the pool in, billed at or above its reading.
-/// Every row is 1 OP (A1) but A16+17. SVF is left to Task 15's
-/// `FilterKind::cost`. The rows mirror `ROUTING`'s builders in
-/// chimera-stm32/src/bench.rs (`on_vca`, `b_on_vca`, `slide`, `mods`,
-/// `one_dest`, `a_level`): change one, change the other. FOLD, DRIVE,
-/// 1 DEST, FUNC LFO and A LEVEL join once read.
+/// The Task 13 bench (rev V, 480 MHz, 2026-09-28, the bench-t13c run):
+/// each ROUTING row billed at or above its reading. Every row is 1 OP (A1)
+/// but A16+17. SVF is left to Task 15's `FilterKind::cost`. The rows mirror
+/// `ROUTING`'s builders in chimera-stm32/src/bench.rs (`on_vca`,
+/// `b_on_vca`, `slide`, `mods`, `one_op`, `one_dest`, `a_level`): change
+/// one, change the other.
 #[test]
 fn the_model_bills_every_routing_row_high() {
     use chimera_core::addr::{BlockRef, ParamAddr};
-    use chimera_core::dsp::modulator::{EnvForm, EnvSlot, EnvType, Func, LfoForm};
+    use chimera_core::dsp::modulator::{EnvForm, EnvSlot, EnvType, Func, LfoForm, LfoType};
     use chimera_core::params::EnvParams;
     let one = || {
         let mut p = ParamSnapshot::for_engine(EngineType::Algo);
@@ -393,68 +392,63 @@ fn the_model_bills_every_routing_row_high() {
     let mut a16 = ParamSnapshot::for_engine(EngineType::Algo);
     a16.algo = a16_a17();
     let env_b = |f| b(f, 0.8);
+    let vca = || routed(&[ModSource::Env2]);
+    let dest = |t: LfoType| {
+        let mut p = one();
+        p.lfos[0].lfo_type = t;
+        let mut ms = ModState::from_registry(&chimera_core::mod_path::ModDestRegistry::new(), 8);
+        let d = ms
+            .push(ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH))
+            .unwrap();
+        ms.set_route(ModSource::Lfo1.index(), d, 127);
+        (p, ms)
+    };
+    let a_level = {
+        let mut ms = vca();
+        let d = ms.push(env2(EnvParams::LEVEL)).unwrap();
+        ms.set_route(ModSource::Lfo1.index(), d, 127);
+        ms
+    };
+    let (mut fold, mut drive) = (one(), one());
+    (fold.folder.fold, drive.drive.drive) = (1.0, 1.0);
+    let (d1, fl) = (dest(LfoType::Classic), dest(LfoType::Func));
     for (name, p, ms, measured) in [
-        ("1 OP", one(), ModState::new(), 481),
+        ("1 OP", one(), ModState::new(), 483),
+        // BENCH screen, the 13b run.
         ("A16+17", a16, ModState::new(), 861),
-        ("MODS", mods_row().0, mods_row().1, 644),
-        ("A VCA", one(), routed(&[ModSource::Env2]), 530),
-        (
-            "B VCA",
-            b(Func::Env(EnvForm::Ad), 0.5),
-            routed(&[ModSource::Env2]),
-            592,
-        ),
-        (
-            "B CURVE",
-            env_b(Func::Env(EnvForm::Ad)),
-            routed(&[ModSource::Env2]),
-            592,
-        ),
-        (
-            "B LFO",
-            env_b(Func::Lfo(LfoForm::Free)),
-            routed(&[ModSource::Env2]),
-            565,
-        ),
+        ("MODS", mods_row().0, mods_row().1, 668),
+        ("A VCA", one(), vca(), 535),
+        ("B VCA", b(Func::Env(EnvForm::Ad), 0.5), vca(), 597),
+        ("B CURVE", env_b(Func::Env(EnvForm::Ad)), vca(), 598),
+        ("B LFO", env_b(Func::Lfo(LfoForm::Free)), vca(), 570),
         // Billed as B LFO: the glide is not a term of its own.
-        (
-            "B GLIDE",
-            env_b(Func::Lfo(LfoForm::Free)),
-            routed(&[ModSource::Env2]),
-            601,
-        ),
-        (
-            "BURST AD",
-            env_b(Func::Burst(EnvForm::Ad)),
-            routed(&[ModSource::Env2]),
-            671,
-        ),
-        (
-            "BURST CYC",
-            env_b(Func::Burst(EnvForm::Cycle)),
-            routed(&[ModSource::Env2]),
-            624,
-        ),
-        ("VEL VCA", one(), routed(&[ModSource::Vel]), 511),
+        ("B GLIDE", env_b(Func::Lfo(LfoForm::Free)), vca(), 605),
+        ("BURST AD", env_b(Func::Burst(EnvForm::Ad)), vca(), 673),
+        ("BURST CYC", env_b(Func::Burst(EnvForm::Cycle)), vca(), 628),
+        ("VEL VCA", one(), routed(&[ModSource::Vel]), 515),
         (
             "2 VCA",
             one(),
             routed(&[ModSource::Vel, ModSource::Note]),
-            519,
+            523,
         ),
-        ("LFO VCA", one(), routed(&[ModSource::Lfo1]), 511),
-        ("A SLIDE", one(), slide(), 561),
+        ("LFO VCA", one(), routed(&[ModSource::Lfo1]), 514),
+        ("A SLIDE", one(), slide(), 568),
         ("B SLIDE", env_b(Func::Env(EnvForm::Ad)), slide(), 616),
+        ("FOLD", fold, ModState::new(), 526),
+        ("DRIVE", drive, ModState::new(), 540),
+        ("1 DEST", d1.0, d1.1, 486),
+        ("FUNC LFO", fl.0, fl.1, 491),
+        ("A LEVEL", one(), a_level, 548),
     ] {
         let billed = Voice::cost(&p, &ms).0;
         assert!(billed >= measured, "{name}: {billed} < {measured}");
     }
 }
 
-/// The MODS row (spec § Tests "Bench") as measured 644 on 2026-09-28: 1 OP;
-/// ENV 2 type B, ENV AD, SHAPE 0.8 → VCA; every source routed at 64; all
-/// three LFOs FUNC. bench.rs's `mods` has stored FOLD at 1 since, so the
-/// folder runs; its reading is pending.
+/// The MODS row (spec § Tests "Bench"), measured 668: 1 OP; ENV 2 type B,
+/// ENV AD, SHAPE 0.8 → VCA; every source routed at 64; all three LFOs
+/// FUNC; FOLD stored at 1, so the folder runs.
 fn mods_row() -> (ParamSnapshot, ModState) {
     use chimera_core::addr::{BlockRef, ParamAddr};
     use chimera_core::dsp::modulator::{EnvForm, EnvType, Func, LfoType};
@@ -466,6 +460,7 @@ fn mods_row() -> (ParamSnapshot, ModState) {
     let e2 = &mut p.envelopes[1];
     (e2.env_type, e2.func.shape) = (EnvType::B, 0.8);
     e2.func.set_func(Func::Env(EnvForm::Ad));
+    p.folder.fold = 1.0;
     for l in p.lfos.iter_mut() {
         l.lfo_type = LfoType::Func;
     }
@@ -503,15 +498,13 @@ fn mods_row() -> (ParamSnapshot, ModState) {
     (p, ms)
 }
 
-/// The brief's MODS check: the voice's bill at or above the 644 read.
-/// Its six destinations, three FUNC LFOs and the route into FOLD bill the
-/// 38 the pool's other terms leave.
+/// The brief's MODS check: the voice's bill at or above the 668 read.
 #[test]
 fn the_model_bills_the_mods_row_high() {
     use ModRouting as M;
     let (p, ms) = mods_row();
     let billed = Voice::cost(&p, &ms);
-    assert!(billed.0 >= 644, "{billed:?}");
+    assert!(billed.0 >= 668, "{billed:?}");
     let func = M::FUNC + M::FUNC + M::FUNC;
     assert_eq!(
         billed,
@@ -570,30 +563,31 @@ fn a16_a17() -> AlgoParams {
 }
 
 /// FX diet spec § Intent and ADR 0031: with the bus measured at 1,360 and
-/// the modulator pool's floor (`ModRouting::BASE`, 45) added, the costliest
-/// patch still gets six voices on rev V (6 × 887 + 1,360 = 6,682 ≤ 7,000),
-/// and five on rev Y ((5,833 − 1,360) / 887 = 5.04), without FOLD or DRIVE.
+/// the modulator pool's floor (`ModRouting::BASE`, 47) added, the costliest
+/// patch still gets six voices on rev V (6 × 889 + 1,360 = 6,694 ≤ 7,000),
+/// and five on rev Y ((5,833 − 1,360) / 889 = 5.03), without FOLD or DRIVE.
 #[test]
 fn the_costliest_patch_gets_six_voices_on_rev_v() {
     let p = a16_a17();
     assert_eq!(Voice::CHAIN_COST.0 + cost(&p), 842);
-    assert_eq!(Voice::CHAIN_COST.0 + ModRouting::BASE.0 + cost(&p), 887);
+    assert_eq!(Voice::CHAIN_COST.0 + ModRouting::BASE.0 + cost(&p), 889);
     assert_eq!(cost(&costliest()), cost(&p), "no pair has more links");
     assert_eq!(FxBus::COST.0, 1_360, "{:?}", FxBus::COST);
     assert_eq!(voices_at(CPU_HZ_REV_V, &p), MAX_VOICES as u32);
     assert_eq!(voices_at(CPU_HZ_REV_Y, &p), 5);
-    // With the folder on (provisional 50): 937, still six on rev V, four on
-    // rev Y; the drive stage too (987): five on rev V. No factory Sound
+    // With the folder on (43): 932, still six on rev V, four on rev Y; the
+    // drive stage too (989): five on rev V, four on rev Y. No factory Sound
     // does either with this shape.
     let fits = |hz, voice: u32| (SampleBudget::for_cpu(hz).as_cost().0 - FxBus::COST.0) / voice;
-    let fold = 887 + Voice::FOLD_COST.0;
+    let fold = 889 + Voice::FOLD_COST.0;
     assert_eq!((fits(CPU_HZ_REV_V, fold), fits(CPU_HZ_REV_Y, fold)), (6, 4));
-    assert_eq!(fits(CPU_HZ_REV_V, fold + Voice::DRIVE_COST.0), 5);
+    let both = fold + Voice::DRIVE_COST.0;
+    assert_eq!((fits(CPU_HZ_REV_V, both), fits(CPU_HZ_REV_Y, both)), (5, 4));
 }
 
 /// Spec § Intent and ADR 0031: every factory Sound gets six voices on rev
 /// V and at least five on rev Y, billed as it plays (its routes, FOLD and
-/// DRIVE in). MORPH KEYS, the costliest, bills 842: five on rev Y.
+/// DRIVE in). MORPH KEYS, the costliest, bills 844: five on rev Y.
 #[test]
 fn every_factory_sound_gets_six_voices_on_rev_v() {
     for i in 0..8 {
