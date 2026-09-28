@@ -92,6 +92,12 @@ impl Kind {
     }
 }
 
+/// A block's coefficients: the running TYPE's only.
+enum Coefs {
+    A(ACoefs),
+    B(BCoefs),
+}
+
 /// What a B slot's coefficients were built from.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct BKey {
@@ -107,6 +113,9 @@ pub struct Envelope {
     b: FuncGen,
     /// What ran last block; `None` before the first.
     kind: Option<Kind>,
+    /// A note-on the next block runs, after any take-over, with that
+    /// block's coefficients.
+    note_on: bool,
     /// The running TYPE's coefficients and their inputs, reused while
     /// the inputs hold.
     ac: Option<(AKey, ACoefs)>,
@@ -130,6 +139,7 @@ impl Envelope {
             a: EnvA::new(),
             b: FuncGen::new(),
             kind: None,
+            note_on: false,
             ac: None,
             bc: None,
             peak: 1.0,
@@ -179,20 +189,11 @@ impl Envelope {
         matches!(self.kind, Some(Kind::B(_)))
     }
 
-    /// A note-on. A TYPE, MODE or FORM change not yet seen by a block (the
-    /// slot sat idle) takes over first, so the new kind's note-on runs.
-    pub fn note_on(&mut self, p: &EnvParams) {
-        let k = Kind::of(p);
-        if self.kind.is_some_and(|was| was != k) {
-            let (old, rising) = (self.output(), self.rising());
-            self.kind = Some(k);
-            self.take_over(k, old, rising, true, p.sustain);
-        }
-        self.kind = Some(k);
-        match k {
-            Kind::A => self.a.note_on(),
-            Kind::B(f) => self.b.note_on(f),
-        }
+    /// A note-on, run by the next block: a TYPE, MODE or FORM change not
+    /// yet seen takes over first, with the new kind's coefficients, then
+    /// the new kind's note-on runs.
+    pub fn note_on(&mut self, _p: &EnvParams) {
+        self.note_on = true;
     }
 
     fn raw(&self) -> f32 {
@@ -209,7 +210,9 @@ impl Envelope {
     }
 
     pub fn is_idle(&self) -> bool {
-        if self.is_b() {
+        if self.note_on {
+            false
+        } else if self.is_b() {
             self.b.is_idle()
         } else {
             self.a.is_idle()
@@ -218,7 +221,9 @@ impl Envelope {
 
     /// Whether this slot, routed to the VCA, still holds the voice (spec § 4).
     pub fn holds(&self, key: bool) -> bool {
-        if self.is_b() {
+        if self.note_on {
+            true
+        } else if self.is_b() {
             self.b.holds(key)
         } else {
             !self.a.is_idle()
@@ -239,8 +244,8 @@ impl Envelope {
     }
 
     /// The new kind takes over at the old output `old` (spec § 1): A and B
-    /// ENV enter at that level; the rest start where they would, and the
-    /// difference glides out.
+    /// ENV enter at that level; the rest start where they would. The caller
+    /// glides out the difference.
     #[allow(clippy::manual_clamp)] // max/min, not clamp: NaN clamps too
     fn take_over(&mut self, k: Kind, old: f32, rising: bool, key: bool, sus: f32) {
         let level = old.max(0.0).min(1.0);
@@ -250,7 +255,6 @@ impl Envelope {
             Kind::B(Func::Burst(_)) => self.b.enter_burst(key),
             Kind::B(Func::Lfo(_)) => {}
         }
-        self.glide.start(old - self.raw());
     }
 
     /// One block. Returns the output at the block's start. With `vca`, the
@@ -275,32 +279,45 @@ impl Envelope {
         } else {
             1.0
         };
-        let (ac, bc) = match kind {
-            Kind::A => (Some(self.a_coefs(p, m.time, sample_rate)), None),
-            Kind::B(_) => (
-                None,
-                Some(self.b_coefs(p, &m.slides, sample_rate, vca.is_some())),
-            ),
+        let c = match kind {
+            Kind::A => Coefs::A(self.a_coefs(p, m.time, sample_rate)),
+            Kind::B(_) => Coefs::B(self.b_coefs(p, &m.slides, sample_rate, vca.is_some())),
         };
-        if let Some(c) = &bc {
+        if let Coefs::B(c) = &c {
             self.b.set(c);
         }
-        if prev.is_some_and(|k| k != kind) {
+        let changed = prev.is_some_and(|k| k != kind);
+        if changed {
             self.take_over(kind, old, rising, key, p.sustain);
         }
-        if bc.is_some() && !key {
+        if core::mem::take(&mut self.note_on) {
+            match kind {
+                Kind::A => self.a.note_on(),
+                Kind::B(f) => self.b.note_on(f),
+            }
+        }
+        if changed {
+            // After the note-on, so the glide ends where the new kind starts.
+            self.glide.start(old - self.raw());
+        }
+        if let Coefs::B(_) = c
+            && !key
+        {
             self.b.key_up();
         }
         let start = self.output();
-        match vca {
-            Some((gain, amount)) => {
+        match (vca, &c) {
+            (Some((gain, amount)), c) => {
                 let mut level = [0.0f32; BLOCK_SIZE];
-                if let Some(c) = &ac {
-                    self.a.fill(c, key, &mut level);
-                    add_ramped(gain, &level, amount, self.prev_peak, self.peak);
-                } else if let Some(c) = &bc {
-                    self.b.fill(c, key, &mut level);
-                    add_ramped(gain, &level, amount, 1.0, 1.0);
+                match c {
+                    Coefs::A(c) => {
+                        self.a.fill(c, key, &mut level);
+                        add_ramped(gain, &level, amount, self.prev_peak, self.peak);
+                    }
+                    Coefs::B(c) => {
+                        self.b.fill(c, key, &mut level);
+                        add_ramped(gain, &level, amount, 1.0, 1.0);
+                    }
                 }
                 if self.glide.active() {
                     for (n, g) in gain.iter_mut().enumerate() {
@@ -308,13 +325,8 @@ impl Envelope {
                     }
                 }
             }
-            None => {
-                if let Some(c) = &ac {
-                    self.a.advance(c, key, BLOCK_SIZE as u32);
-                } else if let Some(c) = &bc {
-                    self.b.advance(c, key, BLOCK_SIZE as u32);
-                }
-            }
+            (None, Coefs::A(c)) => self.a.advance(c, key, BLOCK_SIZE as u32),
+            (None, Coefs::B(c)) => self.b.advance(c, key, BLOCK_SIZE as u32),
         }
         self.glide.advance(BLOCK_SIZE as u16);
         start

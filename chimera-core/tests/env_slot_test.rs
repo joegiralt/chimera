@@ -172,3 +172,37 @@ fn holds_follow_the_lifetime_rule() {
         assert_eq!(e.holds(false), holds_after_key_up, "{p:?}");
     }
 }
+
+/// A note-on that changes TYPE on a sounding A takes over from where it
+/// is, with the new kind's SHAPE and TILT: no step, and within ±1.
+fn note_on_takes_over_a_sounding_a(to: EnvParams) {
+    let from = a();
+    let mut e = Envelope::new();
+    e.note_on(&from);
+    for _ in 0..20 {
+        e.run_block(&from, &EnvMods::NONE, true, SR, None);
+    }
+    let before = e.output();
+    assert!(before > 0.5, "A is sounding: {before}");
+    e.note_on(&to);
+    let start = e.run_block(&to, &EnvMods::NONE, true, SR, None);
+    assert!((start - before).abs() < 1e-6, "{before} → {start}");
+    for blk in 0..8 {
+        let v = e.run_block(&to, &EnvMods::NONE, true, SR, None);
+        assert!((-1.0 - 1e-6..=1.0 + 1e-6).contains(&v), "block {blk}: {v}");
+    }
+}
+
+#[test]
+fn a_note_on_into_b_lfo_glides_within_bounds() {
+    let mut lfo = b(Func::Lfo(LfoForm::Free));
+    (lfo.func.shape, lfo.func.fall) = (1.0, 0.75); // TILT top (a ramp), PHASE 0.75
+    note_on_takes_over_a_sounding_a(lfo);
+}
+
+#[test]
+fn a_note_on_into_b_env_enters_at_the_level_with_its_shape() {
+    let mut ahr = b(Func::Env(EnvForm::Ahr));
+    ahr.func.shape = 0.9;
+    note_on_takes_over_a_sounding_a(ahr);
+}
