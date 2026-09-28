@@ -30,6 +30,12 @@ opt-level = 2
 [profile.dev.package.cortex-m]
 opt-level = 2
 
+# The DSP tests render seconds of audio in debug builds; opt-level 1 keeps
+# overflow checks and debug assertions and changes no f32 result (no
+# fast-math), so every golden still matches bit for bit.
+[profile.dev.package.chimera-core]
+opt-level = 1
+
 # Release profile for firmware
 [profile.release]
 panic = "abort"
