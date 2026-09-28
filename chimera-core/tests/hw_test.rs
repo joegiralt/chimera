@@ -29,7 +29,7 @@ fn budgets_follow_the_cpu_clock() {
 
 #[test]
 fn capacity_constants() {
-    assert_eq!((hw::MAX_VOICES, hw::MAX_PARTS, hw::DAC_PAIRS), (6, 6, 3));
+    assert_eq!((hw::MAX_VOICES, hw::MAX_PARTS, hw::DAC_PAIRS), (8, 6, 3));
 }
 
 #[test]
