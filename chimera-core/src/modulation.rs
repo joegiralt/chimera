@@ -8,7 +8,7 @@
 use crate::addr::{BlockRef, ParamAddr};
 use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::algo::plan::OPS;
-use crate::dsp::modulator::{EnvSlot, EnvType, FuncMode};
+use crate::dsp::modulator::{EnvSlot, EnvType, FuncMode, LfoType};
 use crate::hw::Cost;
 use crate::mod_path::{LABEL_LEN, ModDestRegistry};
 use crate::params::{EnvParams, FilterParams, ParamSnapshot};
@@ -185,6 +185,16 @@ impl ModState {
         self.find(addr).map_or(0, |d| self.present[d])
     }
 
+    /// A route of nonzero amount into destination `d`: its sum can move it.
+    pub fn moves(&self, d: usize) -> bool {
+        (0..self.num_sources).any(|s| self.amount(s, d) != 0)
+    }
+
+    /// A route of nonzero amount into `addr`.
+    pub fn moves_addr(&self, addr: ParamAddr) -> bool {
+        self.find(addr).is_some_and(|d| self.moves(d))
+    }
+
     /// Create (or set) the route `source → dest` at `amount`, 0 included.
     pub fn set_route(&mut self, source: usize, dest: usize, amount: i8) {
         if source < self.num_sources && dest < self.num_dests {
@@ -299,8 +309,9 @@ impl Default for ModState {
 }
 
 /// The modulator pool's cycles per sample (spec § CPU). Each term is
-/// measured 2026-09-28, bench ROUTING row, rev V at 480 MHz, rounded up;
-/// the derivations are in the filter-routing plan's `## Measured`.
+/// measured 2026-09-28, bench ROUTING row, rev V at 480 MHz, rounded up,
+/// but those marked provisional, estimated high until the bench reads
+/// them; the derivations are in the filter-routing plan's `## Measured`.
 pub struct ModRouting;
 
 impl ModRouting {
@@ -316,8 +327,9 @@ impl ModRouting {
     /// its SHAPE: B CURVE read the same as B VCA; billed the floor, 1.
     pub const CURVE: Cost = Cost(1);
     /// More for B in BURST mode, on top of `ENV_B`: BURST AD (above BURST
-    /// CYC) less 1 OP, CLAMP and ENV_B.
-    pub const BURST: Cost = Cost(70);
+    /// CYC) less 1 OP, CLAMP and the steady B's costliest (B VCA, B LFO:
+    /// 89), so BURST keeps B GLIDE's margin.
+    pub const BURST: Cost = Cost(79);
     /// Each other VCA route's ramp: 2 VCA less VEL VCA.
     pub const OTHER: Cost = Cost(8);
     /// The VCA's clamp and multiply, with any route: VEL VCA less 1 OP and OTHER.
@@ -327,33 +339,48 @@ impl ModRouting {
     /// route, whether or not that slot feeds the VCA. The costlier of A
     /// SLIDE less A VCA and B SLIDE less B CURVE.
     pub const SLIDE: Cost = Cost(31);
-    /// Each destination other than the VCA and the ENV slots' own with a
-    /// route of nonzero amount: its offset through the block's spec every
-    /// block. The MODS row's 38 over the rest of the model, across its six
-    /// such destinations. The profile puts the gap there and in the three
-    /// FUNC LFOs (about a tenth), not in the wavefolder (FOLD stayed below
-    /// 0 in the run) or the filter's `g` ramp; the FUNC LFOs are billed here.
+    /// Provisional, until the bench's 1 DEST row: the first destination
+    /// other than the VCA with a route of nonzero amount, its sum and its
+    /// offset through the block's spec every block. The emulator puts it at
+    /// 3 (1 DEST less 1 OP, 1.36 cycles/instruction and 38 per I-miss).
+    pub const DEST_FIRST: Cost = Cost(10);
+    /// Each such destination after the first. Before `DEST_FIRST` and
+    /// `FUNC`, the MODS row's 38 over the rest of the model, over its six
+    /// destinations, read 7: an upper bound, kept until the bench splits it.
     pub const DEST: Cost = Cost(7);
+    /// Provisional, until the bench's FUNC LFO row: each LFO slot of type
+    /// FUNC, routed or not (every slot runs every block), over a CLASSIC
+    /// one. The emulator puts it at 7.
+    pub const FUNC: Cost = Cost(10);
+    /// Provisional, until the bench's A LEVEL row: an ENV slot feeding the
+    /// VCA with a route of nonzero amount into its LEVEL, whose peak then
+    /// ramps across each block (`add_ramped`). The emulator puts it at 14
+    /// on top of `DEST_FIRST`.
+    pub const LEVEL: Cost = Cost(20);
 
     pub fn cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
         let slide = EnvSlot::ALL
             .iter()
             .filter(|&&slot| Self::slot_slides(mods, slot))
             .fold(Cost::ZERO, |a, _| a + Self::SLIDE);
-        Self::BASE + Self::vca_cost(p, mods) + slide + Self::dest_cost(mods)
+        let func = p
+            .lfos
+            .iter()
+            .filter(|l| l.lfo_type == LfoType::Func)
+            .fold(Cost::ZERO, |a, _| a + Self::FUNC);
+        Self::BASE + Self::vca_cost(p, mods) + slide + Self::dest_cost(mods) + func
     }
 
-    /// `DEST` for each destination, not the VCA or an ENV slot's, with a
-    /// route of nonzero amount.
+    /// `DEST_FIRST`, then `DEST` for each further destination other than
+    /// the VCA with a route of nonzero amount. ENV slots' own count too:
+    /// their sums run every block; SLIDE and LEVEL bill what they add.
     fn dest_cost(mods: &ModState) -> Cost {
         (0..mods.num_dests())
-            .filter(|&d| {
-                let a = mods.dest(d);
-                a != VCA
-                    && !matches!(a.block, BlockRef::Env(_))
-                    && (0..MAX_MOD_SOURCES).any(|s| mods.amount(s, d) != 0)
+            .filter(|&d| mods.dest(d) != VCA && mods.moves(d))
+            .enumerate()
+            .fold(Cost::ZERO, |c, (i, _)| {
+                c + if i == 0 { Self::DEST_FIRST } else { Self::DEST }
             })
-            .fold(Cost::ZERO, |c, _| c + Self::DEST)
     }
 
     /// The VCA's own routes: 0 without one, else `CLAMP` plus each source's
@@ -368,7 +395,7 @@ impl ModRouting {
             .filter(|s| bits & (1 << s.index()) != 0)
             .map(|s| match s.env_slot() {
                 None => Self::OTHER,
-                Some(slot) => Self::env_slot_cost(p, mods, slot),
+                Some(slot) => Self::env_slot_cost(p, mods, slot) + Self::level_cost(mods, slot),
             })
             .fold(Self::CLAMP, |a, b| a + b)
     }
@@ -386,6 +413,15 @@ impl ModRouting {
                 Self::ENV_B + Self::CURVE
             }
             EnvType::B => Self::ENV_B,
+        }
+    }
+
+    /// `LEVEL` for `slot`, feeding the VCA, with a moving route into its LEVEL.
+    fn level_cost(mods: &ModState, slot: EnvSlot) -> Cost {
+        if mods.moves_addr(ParamAddr::new(BlockRef::Env(slot), EnvParams::LEVEL)) {
+            Self::LEVEL
+        } else {
+            Cost::ZERO
         }
     }
 

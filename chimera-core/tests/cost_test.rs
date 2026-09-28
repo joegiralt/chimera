@@ -86,8 +86,8 @@ fn mod_routing_bills_the_spec_shape() {
         M::cost(&worst, &routed(&ModSource::ALL)),
         M::BASE + M::CLAMP + three_b + five_other
     );
-    // A route into ENV 2's SHAPE bills the curve on a centred B ENV, and
-    // SLIDE for the coefficient rebuild the same route causes.
+    // A route into ENV 2's SHAPE bills the curve on a centred B ENV, SLIDE
+    // for the coefficient rebuild the same route causes, and its sum.
     let mut b2 = p.clone();
     (b2.envelopes[1].env_type, b2.envelopes[1].func.mode) = (EnvType::B, FuncMode::Env);
     let mut shaped = routed(&[ModSource::Env2]);
@@ -104,20 +104,21 @@ fn mod_routing_bills_the_spec_shape() {
     );
     assert_eq!(
         M::cost(&b2, &shaped),
-        M::BASE + M::CLAMP + M::ENV_B + M::CURVE + M::SLIDE
+        M::BASE + M::CLAMP + M::ENV_B + M::CURVE + M::SLIDE + M::DEST_FIRST
     );
     // Measured 2026-09-28 (Task 13): 45, 45 + 22 + 27, and
-    // 45 + 22 + 3·(98 + 70) + 5·8.
+    // 45 + 22 + 3·(98 + 79) + 5·8.
     assert_eq!(
         (M::BASE, M::cost(&p, &routed(&[ModSource::Env2]))),
         (Cost(45), Cost(94))
     );
-    assert_eq!(M::cost(&worst, &routed(&ModSource::ALL)), Cost(611));
+    assert_eq!(M::cost(&worst, &routed(&ModSource::ALL)), Cost(638));
 }
 
-/// Each destination other than the VCA and the ENV slots' own bills
-/// `DEST` once it has a route of nonzero amount; the default routes, at 0,
-/// bill nothing.
+/// Each destination other than the VCA with a route of nonzero amount
+/// bills `DEST_FIRST`, then `DEST` each; the default routes, at 0, bill
+/// nothing. An ENV slot's LEVEL counts (its sum runs), and bills `LEVEL`
+/// on top only while that slot feeds the VCA.
 #[test]
 fn mod_routing_bills_each_routed_destination() {
     use ModRouting as M;
@@ -126,25 +127,92 @@ fn mod_routing_bills_each_routed_destination() {
     use chimera_core::params::{EnvParams, FolderParams};
     let p = ParamSnapshot::for_engine(EngineType::Algo);
     let fold = ParamAddr::new(BlockRef::Folder, FolderParams::FOLD);
-    let level = ParamAddr::new(BlockRef::Env(EnvSlot::Env1), EnvParams::LEVEL);
+    let level = |s| ParamAddr::new(BlockRef::Env(s), EnvParams::LEVEL);
     let mut ms = chimera_core::preset::Sound::init(EngineType::Algo).mod_state;
-    let (f, l) = (ms.push(fold).unwrap(), ms.push(level).unwrap());
+    let f = ms.push(fold).unwrap();
     ms.set_route(ModSource::Lfo3.index(), f, 0);
+    assert_eq!(M::cost(&p, &ms), M::BASE, "amount 0");
+    let l = ms.push(level(EnvSlot::Env1)).unwrap();
     ms.set_route(ModSource::Vel.index(), l, 64);
-    assert_eq!(M::cost(&p, &ms), M::BASE, "amount 0 and ENV LEVEL");
+    assert_eq!(
+        M::cost(&p, &ms),
+        M::BASE + M::DEST_FIRST,
+        "LEVEL off the VCA"
+    );
     ms.set_route(ModSource::Lfo3.index(), f, 64);
-    assert_eq!(M::cost(&p, &ms), M::BASE + M::DEST);
+    assert_eq!(M::cost(&p, &ms), M::BASE + M::DEST_FIRST + M::DEST);
     let cutoff = ms.find(chimera_core::modulation::CUTOFF).unwrap();
     ms.set_route(ModSource::Env1.index(), cutoff, 32);
     ms.set_route(ModSource::Note.index(), cutoff, 32);
     assert_eq!(
         M::cost(&p, &ms),
-        M::BASE + M::DEST + M::DEST,
+        M::BASE + M::DEST_FIRST + M::DEST + M::DEST,
         "one per column"
+    );
+
+    // ENV 2 (A) on the VCA, LFO 1 into its LEVEL: the peak ramps.
+    let mut vca = routed(&[ModSource::Env2]);
+    let d = vca.push(level(EnvSlot::Env2)).unwrap();
+    vca.set_route(ModSource::Lfo1.index(), d, 127);
+    assert_eq!(
+        M::cost(&p, &vca),
+        M::BASE + M::CLAMP + M::ENV_A + M::LEVEL + M::DEST_FIRST
     );
 }
 
-/// BURST mode adds `BURST` on top of `ENV_B` (70 total); B in ENV or LFO
+/// Each LFO slot of type FUNC bills `FUNC`, routed or not: every slot runs
+/// every block.
+#[test]
+fn mod_routing_bills_each_func_lfo() {
+    use ModRouting as M;
+    use chimera_core::dsp::modulator::LfoType;
+    let mut p = ParamSnapshot::for_engine(EngineType::Algo);
+    let none = ModState::new();
+    assert_eq!(M::cost(&p, &none), M::BASE);
+    p.lfos[0].lfo_type = LfoType::Func;
+    p.lfos[2].lfo_type = LfoType::Func;
+    assert_eq!(M::cost(&p, &none), M::BASE + M::FUNC + M::FUNC);
+}
+
+/// The folder and the drive stage bill once their stored amount runs them
+/// (0.001 or more, as `process` tests it) or a route of nonzero amount may.
+#[test]
+fn voice_bills_fold_and_drive_when_they_can_run() {
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::params::{DriveParams, FolderParams};
+    let base = ParamSnapshot::for_engine(EngineType::Algo);
+    let none = ModState::new();
+    let bare = Voice::cost(&base, &none);
+    let mut p = base.clone();
+    p.folder.fold = 0.000_9;
+    p.drive.drive = 0.000_9;
+    assert_eq!(Voice::cost(&p, &none), bare, "below the threshold");
+    p.folder.fold = 0.001;
+    assert_eq!(Voice::cost(&p, &none), bare + Voice::FOLD_COST);
+    p.drive.drive = 1.0;
+    assert_eq!(
+        Voice::cost(&p, &none),
+        bare + Voice::FOLD_COST + Voice::DRIVE_COST
+    );
+    // Stored at 0, a route: 0 bills nothing, anything else both terms.
+    let fold = ParamAddr::new(BlockRef::Folder, FolderParams::FOLD);
+    let drive = ParamAddr::new(BlockRef::Drive, DriveParams::DRIVE);
+    let empty = chimera_core::mod_path::ModDestRegistry::new();
+    let mut ms = ModState::from_registry(&empty, 8);
+    let (f, d) = (ms.push(fold).unwrap(), ms.push(drive).unwrap());
+    ms.set_route(ModSource::Vel.index(), f, 0);
+    ms.set_route(ModSource::Vel.index(), d, 0);
+    assert_eq!(Voice::cost(&base, &ms), bare);
+    ms.set_route(ModSource::Vel.index(), f, -1);
+    ms.set_route(ModSource::Vel.index(), d, 1);
+    let routes = ModRouting::DEST_FIRST + ModRouting::DEST;
+    assert_eq!(
+        Voice::cost(&base, &ms),
+        bare + Voice::FOLD_COST + Voice::DRIVE_COST + routes
+    );
+}
+
+/// BURST mode adds `BURST` on top of `ENV_B`; B in ENV or LFO
 /// mode does not.
 #[test]
 fn mod_routing_bills_burst_only_in_burst_mode() {
@@ -184,7 +252,7 @@ fn mod_routing_bills_slide_for_a_rebuilt_slot() {
     let mut mods = ModState::from_registry(&reg, 8);
     assert_eq!(M::cost(&p, &mods), M::BASE, "no route yet");
     mods.set_route(ModSource::Lfo1.index(), 0, 64);
-    assert_eq!(M::cost(&p, &mods), M::BASE + M::SLIDE);
+    assert_eq!(M::cost(&p, &mods), M::BASE + M::SLIDE + M::DEST_FIRST);
 
     // Each of TIME, FALL and SHAPE bills it too, one SLIDE per slot even
     // with more than one of the four routed.
@@ -211,7 +279,7 @@ fn mod_routing_bills_slide_for_a_rebuilt_slot() {
     }
     assert_eq!(
         M::cost(&p, &mods),
-        M::BASE + M::SLIDE,
+        M::BASE + M::SLIDE + M::DEST_FIRST + M::DEST + M::DEST,
         "one SLIDE, not three"
     );
 
@@ -226,7 +294,7 @@ fn mod_routing_bills_slide_for_a_rebuilt_slot() {
     with_vca.set_route(ModSource::Lfo1.index(), d, 64);
     assert_eq!(
         M::cost(&p, &with_vca),
-        M::BASE + M::CLAMP + M::ENV_A + M::SLIDE
+        M::BASE + M::CLAMP + M::ENV_A + M::SLIDE + M::DEST_FIRST
     );
 }
 
@@ -285,7 +353,10 @@ fn the_model_bills_every_bench_row_high() {
 /// The Task 13 bench (rev V, 480 MHz, 2026-09-28): each ROUTING row, and
 /// the BENCH rows read with the pool in, billed at or above its reading.
 /// Every row is 1 OP (A1) but A16+17. SVF is left to Task 15's
-/// `FilterKind::cost`.
+/// `FilterKind::cost`. The rows mirror `ROUTING`'s builders in
+/// chimera-stm32/src/bench.rs (`on_vca`, `b_on_vca`, `slide`, `mods`,
+/// `one_dest`, `a_level`): change one, change the other. FOLD, DRIVE,
+/// 1 DEST, FUNC LFO and A LEVEL join once read.
 #[test]
 fn the_model_bills_every_routing_row_high() {
     use chimera_core::addr::{BlockRef, ParamAddr};
@@ -380,8 +451,10 @@ fn the_model_bills_every_routing_row_high() {
     }
 }
 
-/// The MODS row (spec § Tests "Bench"), measured 644: 1 OP; ENV 2 type B,
-/// ENV AD, SHAPE 0.8 → VCA; every source routed at 64; all three LFOs FUNC.
+/// The MODS row (spec § Tests "Bench") as measured 644 on 2026-09-28: 1 OP;
+/// ENV 2 type B, ENV AD, SHAPE 0.8 → VCA; every source routed at 64; all
+/// three LFOs FUNC. bench.rs's `mods` has stored FOLD at 1 since, so the
+/// folder runs; its reading is pending.
 fn mods_row() -> (ParamSnapshot, ModState) {
     use chimera_core::addr::{BlockRef, ParamAddr};
     use chimera_core::dsp::modulator::{EnvForm, EnvType, Func, LfoType};
@@ -430,22 +503,28 @@ fn mods_row() -> (ParamSnapshot, ModState) {
     (p, ms)
 }
 
-/// The brief's MODS check: `CHAIN_COST + AlgoEngine::cost(1 OP) +
-/// ModRouting::cost(MODS)` at or above the 644 read; six `DEST`s bill the
-/// 38 the other terms leave.
+/// The brief's MODS check: the voice's bill at or above the 644 read.
+/// Its six destinations, three FUNC LFOs and the route into FOLD bill the
+/// 38 the pool's other terms leave.
 #[test]
 fn the_model_bills_the_mods_row_high() {
+    use ModRouting as M;
     let (p, ms) = mods_row();
-    let billed =
-        Voice::CHAIN_COST + AlgoEngine::cost(&p.algo, &UNROUTED) + ModRouting::cost(&p, &ms);
+    let billed = Voice::cost(&p, &ms);
     assert!(billed.0 >= 644, "{billed:?}");
+    let func = M::FUNC + M::FUNC + M::FUNC;
     assert_eq!(
-        ModRouting::cost(&p, &ms),
-        ModRouting::BASE
-            + ModRouting::CLAMP
-            + ModRouting::ENV_B
-            + ModRouting::CURVE
-            + Cost(6 * ModRouting::DEST.0)
+        billed,
+        Voice::CHAIN_COST
+            + AlgoEngine::cost(&p.algo, &UNROUTED)
+            + M::BASE
+            + M::CLAMP
+            + M::ENV_B
+            + M::CURVE
+            + M::DEST_FIRST
+            + Cost(5 * M::DEST.0)
+            + func
+            + Voice::FOLD_COST
     );
 }
 
@@ -493,7 +572,7 @@ fn a16_a17() -> AlgoParams {
 /// FX diet spec § Intent and ADR 0031: with the bus measured at 1,360 and
 /// the modulator pool's floor (`ModRouting::BASE`, 45) added, the costliest
 /// patch still gets six voices on rev V (6 × 887 + 1,360 = 6,682 ≤ 7,000),
-/// and five on rev Y ((5,833 − 1,360) / 887 = 5.04).
+/// and five on rev Y ((5,833 − 1,360) / 887 = 5.04), without FOLD or DRIVE.
 #[test]
 fn the_costliest_patch_gets_six_voices_on_rev_v() {
     let p = a16_a17();
@@ -503,14 +582,29 @@ fn the_costliest_patch_gets_six_voices_on_rev_v() {
     assert_eq!(FxBus::COST.0, 1_360, "{:?}", FxBus::COST);
     assert_eq!(voices_at(CPU_HZ_REV_V, &p), MAX_VOICES as u32);
     assert_eq!(voices_at(CPU_HZ_REV_Y, &p), 5);
+    // With the folder on (provisional 50): 937, still six on rev V, four on
+    // rev Y; the drive stage too (987): five on rev V. No factory Sound
+    // does either with this shape.
+    let fits = |hz, voice: u32| (SampleBudget::for_cpu(hz).as_cost().0 - FxBus::COST.0) / voice;
+    let fold = 887 + Voice::FOLD_COST.0;
+    assert_eq!((fits(CPU_HZ_REV_V, fold), fits(CPU_HZ_REV_Y, fold)), (6, 4));
+    assert_eq!(fits(CPU_HZ_REV_V, fold + Voice::DRIVE_COST.0), 5);
 }
 
-/// Spec § Intent: on rev V every factory Sound gets six voices.
+/// Spec § Intent and ADR 0031: every factory Sound gets six voices on rev
+/// V and at least five on rev Y, billed as it plays (its routes, FOLD and
+/// DRIVE in). MORPH KEYS, the costliest, bills 842: five on rev Y.
 #[test]
 fn every_factory_sound_gets_six_voices_on_rev_v() {
     for i in 0..8 {
         let s = chimera_core::factory::factory_sound(i).unwrap();
-        assert_eq!(voices_at(CPU_HZ_REV_V, &s.params.algo), 6, "factory {i}");
+        let voice = Voice::cost(&s.params, &s.mod_state).0;
+        let at = |hz| {
+            let budget = SampleBudget::for_cpu(hz).as_cost().0;
+            ((budget - FxBus::COST.0) / voice).min(MAX_VOICES as u32)
+        };
+        assert_eq!(at(CPU_HZ_REV_V), 6, "factory {i}");
+        assert!(at(CPU_HZ_REV_Y) >= 5, "factory {i} on rev Y");
     }
 }
 
