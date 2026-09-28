@@ -335,6 +335,7 @@ pub fn block_tag(b: BlockRef) -> &'static str {
         BlockRef::Env(s) => ["E1", "E2", "E3"][s.index()],
         BlockRef::Lfo(s) => ["LF1", "LF2", "LF3"][s.index()],
         BlockRef::Out => "OUT",
+        BlockRef::Pitch => "PIT",
         BlockRef::Chorus => "CHR",
         BlockRef::Delay => "DLY",
         BlockRef::Reverb => "REV",
@@ -393,6 +394,8 @@ pub fn block_name(b: BlockRef) -> &'static str {
         BlockRef::Env(s) => ["ENV 1", "ENV 2", "ENV 3"][s.index()],
         BlockRef::Lfo(s) => ["LFO 1", "LFO 2", "LFO 3"][s.index()],
         BlockRef::Out => "OUTPUT",
+        // `VOICE PITCH`, not `PITCH PITCH`.
+        BlockRef::Pitch => "VOICE",
         BlockRef::Chorus => "CHORUS",
         BlockRef::Delay => "DELAY",
         BlockRef::Reverb => "REVERB",
@@ -423,7 +426,8 @@ pub fn fmt_readout_dest(buf: &mut FmtBuf, source: &str, d: &ModDest) {
 }
 
 /// A route's amount and what it does to `spec`, by its offset law:
-/// `+42 = +3.3 oct` (octaves), else `+42 = +33%` of the param's span.
+/// `+42 = +3.3 oct` (octaves), `+32 = +6.0 st` (semitones), `+32 = +25 ct`
+/// (cents), else `+42 = +33%` of the param's span.
 pub fn fmt_route_effect(buf: &mut FmtBuf, spec: &crate::block::ParamSpec, amount: i8) {
     fmt_amount(buf, amount);
     let sign = match amount {
@@ -438,6 +442,13 @@ pub fn fmt_route_effect(buf: &mut FmtBuf, spec: &crate::block::ParamSpec, amount
             let _ = buf.write_str("0 oct");
         }
         crate::block::OffsetLaw::Octaves(n) => crate::ui::fmt::fixed(buf, off * n, 1, "oct"),
+        crate::block::OffsetLaw::Semitones(_) if amount == 0 => {
+            let _ = buf.write_str("0 st");
+        }
+        crate::block::OffsetLaw::Semitones(n) => crate::ui::fmt::fixed(buf, off * n, 1, "st"),
+        crate::block::OffsetLaw::Cents(n) => {
+            let _ = write!(buf, "{} ct", libm::roundf(off * n) as i32);
+        }
         crate::block::OffsetLaw::Linear => {
             let _ = write!(buf, "{}%", libm::roundf(off * 100.0) as i32);
         }

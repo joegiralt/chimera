@@ -61,6 +61,8 @@ pub enum BlockRef {
     Lfo(crate::dsp::modulator::LfoSlot),
     /// `OutParams { volume, pan }`
     Out,
+    /// The voice's pitch (`PitchParams`), on every engine (ADR 0042).
+    Pitch,
     /// Chorus, delay, reverb, tape and the master compressor: the Performance's shared FX.
     Chorus,
     Delay,
@@ -77,7 +79,7 @@ pub enum BlockRef {
 }
 
 impl BlockRef {
-    pub const ALL: [BlockRef; 26] = [
+    pub const ALL: [BlockRef; 27] = [
         BlockRef::Modal,
         BlockRef::Algo,
         BlockRef::AlgoOp(Op::A),
@@ -96,6 +98,7 @@ impl BlockRef {
         BlockRef::Lfo(LfoSlot::Lfo2),
         BlockRef::Lfo(LfoSlot::Lfo3),
         BlockRef::Out,
+        BlockRef::Pitch,
         BlockRef::Chorus,
         BlockRef::Delay,
         BlockRef::Reverb,
@@ -118,6 +121,7 @@ impl BlockRef {
             BlockRef::Env(_) => &crate::params::ENV_SPECS,
             BlockRef::Lfo(_) => &crate::dsp::lfo::LFO_SPECS,
             BlockRef::Out => &crate::params::OUT_SPECS,
+            BlockRef::Pitch => &crate::params::PITCH_SPECS,
             BlockRef::Chorus => &crate::dsp::chorus::CHORUS_SPECS,
             BlockRef::Delay => &crate::dsp::delay::DELAY_SPECS,
             BlockRef::Reverb => &crate::dsp::reverb::REVERB_SPECS,
@@ -142,6 +146,7 @@ impl BlockRef {
             | BlockRef::Filter
             | BlockRef::Folder
             | BlockRef::Out
+            | BlockRef::Pitch
             | BlockRef::Env(_) => true,
             BlockRef::Lfo(_)
             | BlockRef::Chorus

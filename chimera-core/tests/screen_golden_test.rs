@@ -12,8 +12,8 @@ mod screen;
 use screen::*;
 
 const GOLDENS: &[(&str, u64)] = &[
-    ("engine_algo", 0x0142a10b2a5efce8),
-    ("algo_alg", 0x194e5ec92bb3327d),
+    ("engine_algo", 0x8f01be1d8f9a59b9),
+    ("algo_alg", 0x7d93a049d17ce0d4),
     ("algo_wave", 0x077421b3106b8510),
     ("algo_level", 0xd71899ea7d4a4d2b),
     ("algo_osc_last", 0xe14e98097058782e),
@@ -34,6 +34,8 @@ const GOLDENS: &[(&str, u64)] = &[
     ("lfo_func", 0x125c4f66cf905b5b),
     ("amp_vel_dimmed", 0x906c5da68f92294b),
     ("amp_vel_live", 0xe969b1ab3a3e37fb),
+    ("algo_pitch", 0x90d2841bef4b43a6),
+    ("modal_pitch", 0xecd2cbfd3f40c2e6),
     ("modal_amp", 0xad2feb025c2dfa59),
     ("mixer_part", 0x87ab4a2a75c3d238),
     ("mixer_sends", 0x650322c12ad0b389),

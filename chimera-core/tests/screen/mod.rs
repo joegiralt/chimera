@@ -214,6 +214,32 @@ pub fn to_level_page(ui: &mut UiState) {
     }
 }
 
+/// From Part 1's home (the engine's node), EDIT down its sub-list to PIT.
+pub fn to_pitch(ui: &mut UiState, engine: EngineType) {
+    use chimera_core::ui::block_registry::{ALGO_CHAIN, MODAL_PLUCK_CHAIN, PITCH};
+    let chain = match engine {
+        EngineType::Algo => &ALGO_CHAIN,
+        EngineType::Modal => &MODAL_PLUCK_CHAIN,
+    };
+    let n = chain.blocks[0]
+        .sub_pages
+        .iter()
+        .position(|d| d.id == PITCH.id)
+        .expect("PIT is a sub-page of the engine's node")
+        + 1;
+    for _ in 0..n {
+        feed(ui, Input::press(ButtonId::Edit));
+    }
+    assert_eq!(
+        ui.page(),
+        chimera_core::ui::page::PageKey::Part {
+            def: PITCH.id,
+            op: chimera_core::addr::Op::A
+        },
+        "{engine:?}"
+    );
+}
+
 fn plus(ui: &mut UiState, n: usize) {
     for _ in 0..n {
         feed(ui, Input::press(ButtonId::Plus));
@@ -384,6 +410,16 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::B, 1)); // OUT VCA
         feed(ui, Input::turn(EncoderId::E, 100)); // E2 → VCA
         feed(ui, Input::press(ButtonId::Minus)); // back to AMP: VEL live
+    }),
+    ("algo_pitch", |ui| {
+        to_pitch(ui, EngineType::Algo);
+        feed(ui, Input::turn(EncoderId::A, 7)); // PITCH +7
+        feed(ui, Input::turn(EncoderId::B, -25)); // FINE -25, focused
+    }),
+    ("modal_pitch", |ui| {
+        load_init(ui, EngineType::Modal);
+        to_pitch(ui, EngineType::Modal);
+        feed(ui, Input::turn(EncoderId::A, -12)); // PITCH -12, focused
     }),
     ("modal_amp", |ui| {
         load_init(ui, EngineType::Modal);

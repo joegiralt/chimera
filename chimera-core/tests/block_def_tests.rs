@@ -26,7 +26,7 @@ fn chain_active_def_resolves() {
 fn modal_pluck_chain() {
     let chain = &block_registry::MODAL_PLUCK_CHAIN;
     assert_eq!(chain.blocks[0].def.name, "Modal");
-    assert_eq!(chain.blocks[0].sub_page_count(), 2); // primary + Modal-2
+    assert_eq!(chain.blocks[0].sub_page_count(), 3); // primary + Modal-2 + Pitch
 }
 
 #[test]

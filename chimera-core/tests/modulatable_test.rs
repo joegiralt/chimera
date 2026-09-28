@@ -106,5 +106,5 @@ fn every_modulatable_param_audibly_changes_output() {
             checked += 1;
         }
     }
-    assert_eq!(checked, 17 + 3 * 5 + 1); // + VCA
+    assert_eq!(checked, 17 + 3 * 5 + 1 + 2); // + VCA; PITCH, FINE
 }
