@@ -326,7 +326,7 @@ fn fx_pages_light_their_effect_in_the_flow() {
     assert_eq!(flow_lit(&fb), [1], "Delay page lights DLY");
     assert!(matches!(
         reg::SENDS.viz,
-        chimera_core::ui::block_def::VizType::EffectsFlow
+        chimera_core::ui::block_def::VizType::EffectsFlow(_)
     ));
     assert_eq!(
         flow_lit(&screen::render("mixer_fx_delay_char")),
@@ -398,7 +398,7 @@ fn the_reverb_page_is_grit_time_damp_size_mix() {
     );
     assert!(matches!(
         reg::EFX.viz,
-        chimera_core::ui::block_def::VizType::EffectsFlow
+        chimera_core::ui::block_def::VizType::EffectsFlow(_)
     ));
 }
 

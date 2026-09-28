@@ -10,7 +10,7 @@ use crate::dsp::reverb::ReverbParams;
 use crate::dsp::tape::TapeParams;
 use crate::params::{DriveParams, EnvParams, FilterParams, FolderParams, OutParams};
 use crate::part::PartParams;
-use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2, ParamSlot, VizType};
+use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2, FxFlow, FxNode, ParamSlot, VizType};
 use crate::ui::page::{PageLayout, ValFmt};
 use crate::ui::theme_settings::ThemeSettings;
 
@@ -204,7 +204,7 @@ pub static EFX: BlockDef = BlockDef {
     name: "Reverb",
     short: "REV",
     layout: PageLayout::CellGrid,
-    viz: VizType::EffectsFlow,
+    viz: VizType::EffectsFlow(FxFlow::Effect(FxNode::Reverb)),
     params: [
         ParamSlot::param(BlockRef::Reverb, ReverbParams::GRIT),
         ParamSlot::param(BlockRef::Reverb, ReverbParams::TIME),
@@ -236,7 +236,7 @@ pub static CHORUS: BlockDef = BlockDef {
     name: "Chorus",
     short: "CHR",
     layout: PageLayout::CellGrid,
-    viz: VizType::EffectsFlow,
+    viz: VizType::EffectsFlow(FxFlow::Effect(FxNode::Chorus)),
     params: [
         ParamSlot::param(BlockRef::Chorus, ChorusParams::MODE),
         ParamSlot::param(BlockRef::Chorus, ChorusParams::RATE),
@@ -252,7 +252,7 @@ pub static DELAY: BlockDef = BlockDef {
     name: "Delay",
     short: "DLY",
     layout: PageLayout::CellGrid,
-    viz: VizType::EffectsFlow,
+    viz: VizType::EffectsFlow(FxFlow::Effect(FxNode::Delay)),
     params: [
         ParamSlot::param(BlockRef::Delay, DelayParams::TIME_MS),
         ParamSlot::param(BlockRef::Delay, DelayParams::FEEDBACK),
@@ -270,7 +270,7 @@ pub static DELAY_CHAR: BlockDef = BlockDef {
     name: "Delay Char",
     short: "CHAR",
     layout: PageLayout::CellGrid,
-    viz: VizType::EffectsFlow,
+    viz: VizType::EffectsFlow(FxFlow::Effect(FxNode::Delay)),
     params: [
         ParamSlot::param(BlockRef::Delay, DelayParams::WOW_FLUTTER),
         ParamSlot::param(BlockRef::Delay, DelayParams::SATURATION),
@@ -643,7 +643,7 @@ pub static SENDS: BlockDef = BlockDef {
     name: "Sends",
     short: "SND",
     layout: PageLayout::CellGrid,
-    viz: VizType::EffectsFlow,
+    viz: VizType::EffectsFlow(FxFlow::Sends),
     params: [
         ParamSlot::param(BlockRef::Part, PartParams::SEND_CHORUS),
         ParamSlot::param(BlockRef::Part, PartParams::SEND_DELAY),
