@@ -215,7 +215,7 @@ fn lfo_pages_show_classic_or_func() {
     );
 }
 
-/// SPD: a type-B slot's two cells are dimmed and inert (ENV 3 is B).
+/// SPD: a type-B slot's column is dimmed and inert (ENV 3 is B).
 #[test]
 fn spd_dims_a_type_b_slot() {
     let s = Sound::init(EngineType::Algo);
@@ -223,7 +223,7 @@ fn spd_dims_a_type_b_slot() {
     let dim: Vec<bool> = (0..6)
         .map(|i| is_dimmed(&view(&ENV_SPEED, i, &ctx), &s))
         .collect();
-    assert_eq!(dim, [false, false, false, false, true, true]);
+    assert_eq!(dim, [false, false, true, false, false, true]);
 }
 
 /// FUNC's fixed MODE takes the focus but reads dimmed in the focus band as
@@ -260,5 +260,61 @@ fn a_fixed_slot_is_dimmed_in_the_focus_band() {
     assert!(
         !band(&fb).iter().any(|c| inks.contains(c)),
         "no INK value, no arc"
+    );
+}
+
+/// SPD's viz draws a column per ENV slot, so the knobs under a column
+/// drive that slot: SPEED on the top row, HOLD on the bottom (hardware:
+/// the knobs under E2 moved E1 HOLD and the inert E3 SPEED).
+#[test]
+fn spd_knobs_drive_the_column_above() {
+    use chimera_core::dsp::modulator::HoldPos;
+    use chimera_core::ui::perf::PerfStats;
+    let column = |ui: &mut UiState, slot: i32| -> Vec<u16> {
+        settle(ui);
+        let mut fb = Fb::new();
+        ui.render_with_scope(&mut fb, &PerfStats::zero(), &scope_fixture());
+        let x0 = 16 + slot * 74;
+        (44..150)
+            .flat_map(|y| (x0..x0 + 60).map(move |x| (x, y)))
+            .map(|(x, y)| fb.px[y as usize * W + x as usize])
+            .collect()
+    };
+    let mut ui = UiState::new();
+    to_mod_sub(&mut ui, 3, &ENV_SPEED);
+    let e2 = column(&mut ui, 1);
+    feed(&mut ui, Input::turn(EncoderId::B, 1));
+    assert_eq!(
+        ui.params().envelopes[1].speed,
+        EnvSpeed::Slow,
+        "B: E2 SPEED"
+    );
+    assert_ne!(column(&mut ui, 1), e2, "E2's pills move");
+    let e2 = column(&mut ui, 1);
+    feed(&mut ui, Input::turn(EncoderId::E, 1));
+    assert_eq!(
+        ui.params().envelopes[1].hold_pos,
+        HoldPos::GateExt,
+        "E: E2 HOLD"
+    );
+    assert_ne!(column(&mut ui, 1), e2, "E2's HOLD name changes");
+
+    // E3 is type B: C and F are dimmed and inert, and its column faint.
+    feed(&mut ui, Input::turn(EncoderId::C, 1));
+    feed(&mut ui, Input::turn(EncoderId::F, 1));
+    let e3 = ui.params().envelopes[2];
+    assert_eq!(
+        (e3.speed, e3.hold_pos),
+        (EnvSpeed::Med, HoldPos::Ahdsr),
+        "inert"
+    );
+    ui.params_mut().envelopes[2].env_type = EnvType::A;
+    feed(&mut ui, Input::turn(EncoderId::C, 1));
+    feed(&mut ui, Input::turn(EncoderId::F, -1));
+    let e3 = ui.params().envelopes[2];
+    assert_eq!(
+        (e3.speed, e3.hold_pos),
+        (EnvSpeed::Slow, HoldPos::Off),
+        "C, F: E3 at A"
     );
 }
