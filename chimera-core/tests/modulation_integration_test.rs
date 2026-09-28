@@ -177,8 +177,7 @@ fn matrix_state_rebuild_dests_from_registry() {
     assert_eq!(dest1.label_str(), "FLT Freq");
 }
 
-/// Review Focus 1: the Algo engine keeps the amp envelope off the VCA, but
-/// the envelope still drives the ENV mod source.
+/// Review Focus 1: ENV 1 (source 0) drives its route on an Algo sound.
 #[test]
 fn env_source_moves_on_an_algo_sound() {
     let mut params = ParamSnapshot::for_engine(EngineType::Algo);
@@ -207,7 +206,7 @@ fn env_source_moves_on_an_algo_sound() {
     assert!(diff > 0.01, "the ENV route changed nothing ({diff})");
 }
 
-/// #33: the amp envelope also drives the ENV mod source on a Modal sound.
+/// #33: ENV 1 (source 0) drives its route on a Modal sound too.
 #[test]
 fn env_source_moves_on_a_modal_sound() {
     let mut params = ParamSnapshot::for_engine(EngineType::Modal);
