@@ -255,6 +255,24 @@ fn to_e3(ui: &mut UiState) {
 }
 
 /// Prime the focused slot for modulation (MIX + PLUS).
+/// ENV→CUTOFF +20, ENV→FOLD −30, LFO→CUTOFF +42 (selected).
+fn mod_matrix(ui: &mut UiState) {
+    plus(ui, 3);
+    feed(ui, Input::turn(EncoderId::B, 1)); // focus CUTOFF
+    prime(ui);
+    plus(ui, 1);
+    feed(ui, Input::turn(EncoderId::A, 1)); // focus FOLD
+    prime(ui);
+    plus(ui, 1);
+    to_matrix(ui);
+    feed(ui, Input::turn(EncoderId::E, 20)); // ENV → CUTOFF
+    feed(ui, Input::turn(EncoderId::B, 1));
+    feed(ui, Input::turn(EncoderId::E, -30)); // ENV → FOLD
+    feed(ui, Input::turn(EncoderId::A, 1));
+    feed(ui, Input::turn(EncoderId::B, -1));
+    feed(ui, Input::turn(EncoderId::E, 42)); // LFO → CUTOFF, selected
+}
+
 fn prime(ui: &mut UiState) {
     feed(ui, Input::chord(ButtonId::Mix, ButtonId::Plus));
 }
@@ -410,21 +428,30 @@ pub const CASES: &[ScreenCase] = &[
         plus(ui, 6);
         feed(ui, Input::press(ButtonId::Edit)); // MST › LEVEL
     }),
-    ("mod_matrix", |ui| {
-        plus(ui, 3);
-        feed(ui, Input::turn(EncoderId::B, 1)); // focus CUTOFF
-        prime(ui);
+    ("mod_matrix", mod_matrix),
+    ("mod_matrix_wide", |ui| {
+        mod_matrix(ui);
+        // DRV's three knobs, FLT's C, and B and C where FOLD is: eight
+        // columns.
+        for _ in 0..3 {
+            feed(ui, Input::press(ButtonId::Minus)); // → DRV
+        }
+        let prime_all = |ui: &mut UiState, encs: &[EncoderId]| {
+            for &enc in encs {
+                feed(ui, Input::turn(enc, 1));
+                prime(ui);
+            }
+        };
+        prime_all(ui, &[EncoderId::A, EncoderId::B, EncoderId::C]);
         plus(ui, 1);
-        feed(ui, Input::turn(EncoderId::A, 1)); // focus FOLD
-        prime(ui);
+        prime_all(ui, &[EncoderId::C]);
+        plus(ui, 1);
+        prime_all(ui, &[EncoderId::B, EncoderId::C]);
         plus(ui, 1);
         to_matrix(ui);
-        feed(ui, Input::turn(EncoderId::E, 20)); // ENV → CUTOFF
-        feed(ui, Input::turn(EncoderId::B, 1));
-        feed(ui, Input::turn(EncoderId::E, -30)); // ENV → FOLD
-        feed(ui, Input::turn(EncoderId::A, 1));
-        feed(ui, Input::turn(EncoderId::B, -1));
-        feed(ui, Input::turn(EncoderId::E, 42)); // LFO → CUTOFF, selected
+        feed(ui, Input::turn(EncoderId::B, 5)); // col 5: scrolled one, `<` and `>`
+        feed(ui, Input::turn(EncoderId::A, 5)); // VEL
+        feed(ui, Input::turn(EncoderId::E, -127));
     }),
     ("sound_browser", |ui| {
         let mut s = Sound::init(EngineType::Algo);

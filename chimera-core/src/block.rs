@@ -101,6 +101,8 @@ pub enum OffsetLaw {
 pub struct ParamSpec {
     pub id: ParamId,
     pub label: &'static str,
+    /// Matrix column header when `label` is too wide for it (`CUT`).
+    pub short: Option<&'static str>,
     /// Display format, set explicitly to today's per-slot format.
     pub fmt: ValFmt,
     pub min: f32,
@@ -132,6 +134,7 @@ impl ParamSpec {
         Self {
             id: ParamId(id),
             label,
+            short: None,
             fmt,
             min,
             max,
@@ -156,6 +159,7 @@ impl ParamSpec {
         Self {
             id: ParamId(id),
             label,
+            short: None,
             fmt,
             min,
             max,
@@ -172,6 +176,7 @@ impl ParamSpec {
         Self {
             id: ParamId(id),
             label,
+            short: None,
             fmt,
             min: 0.0,
             max,
@@ -198,6 +203,14 @@ impl ParamSpec {
             return 0.0;
         }
         (v - self.min) / (self.max - self.min)
+    }
+
+    /// This spec with a short column header.
+    pub const fn short(self, short: &'static str) -> Self {
+        Self {
+            short: Some(short),
+            ..self
+        }
     }
 
     /// This spec with the octave law.

@@ -93,7 +93,6 @@ pub enum RegionData {
         sel_row: u8,
         sel_col: u8,
         scroll_x: u8,
-        scroll_y: u8,
         /// The selected route's animated amount (quantized display value).
         sel_value: u16,
         matrix_rev: u16,
@@ -232,29 +231,21 @@ impl RegionData {
         }
     }
 
-    pub fn grid(sel_row: u8, sel_col: u8, scroll_x: u8, scroll_y: u8) -> Self {
+    pub fn grid(sel_row: u8, sel_col: u8, scroll_x: u8) -> Self {
         Self::Grid {
             sel_row,
             sel_col,
             scroll_x,
-            scroll_y,
             sel_value: 0,
             matrix_rev: 0,
         }
     }
 
-    pub fn grid_with_value(
-        sel_row: u8,
-        sel_col: u8,
-        scroll_x: u8,
-        scroll_y: u8,
-        sel_value: u16,
-    ) -> Self {
+    pub fn grid_with_value(sel_row: u8, sel_col: u8, scroll_x: u8, sel_value: u16) -> Self {
         Self::Grid {
             sel_row,
             sel_col,
             scroll_x,
-            scroll_y,
             sel_value,
             matrix_rev: 0,
         }
@@ -265,7 +256,6 @@ impl RegionData {
             sel_row: 255,
             sel_col: 255,
             scroll_x: 255,
-            scroll_y: 255,
             sel_value: SENTINEL,
             matrix_rev: u16::MAX,
         }
@@ -295,14 +285,12 @@ impl RegionData {
                 sel_row,
                 sel_col,
                 scroll_x,
-                scroll_y,
                 sel_value,
                 ..
             } => Self::Grid {
                 sel_row,
                 sel_col,
                 scroll_x,
-                scroll_y,
                 sel_value,
                 matrix_rev,
             },

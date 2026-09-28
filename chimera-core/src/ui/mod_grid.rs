@@ -14,7 +14,9 @@ use crate::ui::theme;
 
 /// Grid geometry (grid region 28..`GRID_BOTTOM`): destination labels
 /// across, every source down (no vertical scroll), one amount cell per route.
-pub const GRID_X: i32 = 58;
+/// A 12 px margin both sides: row labels at `MARGIN_X`, the last visible
+/// cell ending at `SCREEN_W - MARGIN_X`.
+pub const GRID_X: i32 = 52;
 pub const GRID_COL_W: i32 = 36;
 pub const GRID_TAG_Y: i32 = 38;
 pub const GRID_NAME_Y: i32 = 47;
@@ -29,7 +31,6 @@ pub const READOUT_Y: i32 = 208;
 pub const HINT_Y: i32 = 228;
 pub const STATS_Y: i32 = 246;
 const VISIBLE_COLS: usize = 5;
-const VISIBLE_ROWS: usize = MAX_SOURCES;
 
 /// Max sources and destinations for the amounts grid (presence is a `u8`).
 pub const MAX_SOURCES: usize = crate::modulation::MAX_MOD_SOURCES;
@@ -62,7 +63,6 @@ pub struct MatrixState {
     pub sel_row: usize,
     pub sel_col: usize,
     pub scroll_x: usize,
-    pub scroll_y: usize,
     /// Modulation amounts: [source][dest_idx], -127 to +127 (0 when absent).
     pub amounts: [[i8; MAX_DESTS]; MAX_SOURCES],
     /// Route presence, one bit per source, as ModState's.
@@ -84,7 +84,6 @@ impl MatrixState {
             sel_row: 0,
             sel_col: 0,
             scroll_x: 0,
-            scroll_y: 0,
             amounts: [[0; MAX_DESTS]; MAX_SOURCES],
             present: [0; MAX_DESTS],
             rev: 0,
@@ -225,96 +224,51 @@ impl MatrixState {
     }
 
     /// Clamp the cursor and scroll position to the current source/
-    /// destination counts, keeping the cursor inside the visible window —
-    /// the same rule `move_row`/`move_col`/`scroll_v`/`scroll_h` use. Call
-    /// after `rebuild_sources`/`rebuild_dests_from_registry` (e.g. on a Part
-    /// switch), whose new counts may be smaller than the cursor/scroll
-    /// position left over from before (issue #11).
+    /// destination counts, keeping the cursor inside the visible columns —
+    /// the rule `move_col` uses. Call after `rebuild_sources`/
+    /// `rebuild_dests_from_registry` (e.g. on a Part switch), whose new
+    /// counts may be smaller than the cursor/scroll position left over from
+    /// before (issue #11).
     pub fn clamp_cursor(&mut self) {
-        let max_row = if self.num_sources > 0 {
-            self.num_sources - 1
-        } else {
-            0
-        };
-        self.sel_row = self.sel_row.min(max_row);
-        self.scroll_y = self
-            .scroll_y
-            .min(self.num_sources.saturating_sub(self.visible_rows()));
-        let vis_r = self.visible_rows();
-        if self.sel_row < self.scroll_y {
-            self.scroll_y = self.sel_row;
-        } else if self.sel_row >= self.scroll_y + vis_r {
-            self.scroll_y = self.sel_row + 1 - vis_r;
-        }
-
-        let max_col = if self.num_dests > 0 {
-            self.num_dests - 1
-        } else {
-            0
-        };
-        self.sel_col = self.sel_col.min(max_col);
-        self.scroll_x = self
-            .scroll_x
-            .min(self.num_dests.saturating_sub(self.visible_cols()));
-        let vis_c = self.visible_cols();
-        if self.sel_col < self.scroll_x {
-            self.scroll_x = self.sel_col;
-        } else if self.sel_col >= self.scroll_x + vis_c {
-            self.scroll_x = self.sel_col + 1 - vis_c;
-        }
+        self.sel_row = self.sel_row.min(self.num_sources.saturating_sub(1));
+        self.sel_col = self.sel_col.min(self.num_dests.saturating_sub(1));
+        self.scroll_x = self.scroll_x.min(self.max_scroll_x());
+        self.follow_col();
     }
 
+    /// Every source is on screen: rows never scroll.
     pub fn move_row(&mut self, delta: i8) {
         let new = self.sel_row as i32 + delta as i32;
-        self.sel_row = new.clamp(0, self.num_sources as i32 - 1) as usize;
-        // Auto-scroll to keep cursor visible
-        let vis = self.visible_rows();
-        if self.sel_row < self.scroll_y {
-            self.scroll_y = self.sel_row;
-        } else if self.sel_row >= self.scroll_y + vis {
-            self.scroll_y = self.sel_row + 1 - vis;
-        }
+        self.sel_row = new.clamp(0, self.num_sources.saturating_sub(1) as i32) as usize;
     }
 
     pub fn move_col(&mut self, delta: i8) {
-        let max = if self.num_dests > 0 {
-            self.num_dests - 1
-        } else {
-            0
-        };
         let new = self.sel_col as i32 + delta as i32;
-        self.sel_col = new.clamp(0, max as i32) as usize;
-        // Auto-scroll to keep cursor visible
+        self.sel_col = new.clamp(0, self.num_dests.saturating_sub(1) as i32) as usize;
+        self.follow_col();
+    }
+
+    /// Scroll the columns; the cursor comes along when it would leave the
+    /// screen, so the readout never names a hidden cell.
+    pub fn scroll_h(&mut self, delta: i8) {
+        let new = self.scroll_x as i32 + delta as i32;
+        self.scroll_x = new.clamp(0, self.max_scroll_x() as i32) as usize;
+        let last = (self.scroll_x + self.visible_cols()).min(self.num_dests.max(1)) - 1;
+        self.sel_col = self.sel_col.clamp(self.scroll_x, last.max(self.scroll_x));
+    }
+
+    fn max_scroll_x(&self) -> usize {
+        self.num_dests.saturating_sub(self.visible_cols())
+    }
+
+    /// Scroll just enough to show the cursor's column.
+    fn follow_col(&mut self) {
         let vis = self.visible_cols();
         if self.sel_col < self.scroll_x {
             self.scroll_x = self.sel_col;
         } else if self.sel_col >= self.scroll_x + vis {
             self.scroll_x = self.sel_col + 1 - vis;
         }
-    }
-
-    pub fn scroll_v(&mut self, delta: i8) {
-        let max = if self.num_sources > self.visible_rows() {
-            self.num_sources - self.visible_rows()
-        } else {
-            0
-        };
-        let new = self.scroll_y as i32 + delta as i32;
-        self.scroll_y = new.clamp(0, max as i32) as usize;
-    }
-
-    pub fn scroll_h(&mut self, delta: i8) {
-        let max = if self.num_dests > self.visible_cols() {
-            self.num_dests - self.visible_cols()
-        } else {
-            0
-        };
-        let new = self.scroll_x as i32 + delta as i32;
-        self.scroll_x = new.clamp(0, max as i32) as usize;
-    }
-
-    pub fn visible_rows(&self) -> usize {
-        VISIBLE_ROWS
     }
 
     pub fn visible_cols(&self) -> usize {
@@ -359,11 +313,16 @@ pub fn dest_name(d: &ModDest) -> &'static str {
     d.addr.spec().map_or("?", |s| s.label)
 }
 
-/// A column header's name: `label` clipped to the column pitch minus a 3px
-/// gap, so neighbouring headers never touch (#22). Only the widest labels
-/// lose letters (`CUTOFF` reads `CUTO`); the readout shows the full name.
-pub fn fit_header(label: &'static str) -> &'static str {
-    let max = GRID_COL_W - 3;
+/// Widest column header: the column pitch minus a 3px gap, so neighbouring
+/// headers never touch (#22).
+pub const HEADER_MAX_W: i32 = GRID_COL_W - 3;
+
+/// A column header's name: the spec's `short` (`CUT`), else its `label`,
+/// clipped to `HEADER_MAX_W` only as a fallback. The readout shows the full
+/// name.
+pub fn fit_header(spec: &crate::block::ParamSpec) -> &'static str {
+    let label = spec.short.unwrap_or(spec.label);
+    let max = HEADER_MAX_W;
     let mut end = label.len();
     while end > 0 && draw::text_width(&theme::FONT_LABEL, &label[..end], 0) > max {
         end = label[..end].char_indices().last().map_or(0, |(i, _)| i);
@@ -425,7 +384,7 @@ pub fn draw_grid<D>(d: &mut D, state: &MatrixState, sel_amount: i8)
 where
     D: DrawTarget<Color = Rgb565>,
 {
-    let (cols, rows) = (state.visible_cols(), state.visible_rows());
+    let cols = state.visible_cols();
     let col_x = |ci: usize| GRID_X + ci as i32 * GRID_COL_W + GRID_COL_W / 2;
     for ci in 0..cols {
         let di = ci + state.scroll_x;
@@ -450,7 +409,7 @@ where
         draw::text_center(
             d,
             &theme::FONT_LABEL,
-            fit_header(dest_name(dest)),
+            dest.addr.spec().map_or("?", fit_header),
             x,
             GRID_NAME_Y,
             name_color,
@@ -468,8 +427,9 @@ where
         );
     }
     if state.num_dests > state.scroll_x + cols {
-        // On the tag row: tags are <= 3 chars (`block_tag`), so the last
-        // column's never reaches it, unlike a name (issue #15).
+        // On the tag row, in the right margin: tags are <= 3 chars
+        // (`block_tag`), so the last column's never reaches it, unlike a
+        // name (issue #15).
         draw::text(
             d,
             &theme::FONT_LABEL,
@@ -479,12 +439,8 @@ where
             theme::MID,
         );
     }
-    for vi in 0..rows {
-        let ri = vi + state.scroll_y;
-        if ri >= state.num_sources {
-            break;
-        }
-        let (_, y) = cell_origin(0, vi);
+    for ri in 0..state.num_sources.min(MAX_SOURCES) {
+        let (_, y) = cell_origin(0, ri);
         let name = state.sources[ri].map_or("?", |s| s.name);
         let color = if ri == state.sel_row {
             theme::INK
@@ -513,7 +469,7 @@ where
             draw_cell(
                 d,
                 ci,
-                vi,
+                ri,
                 state.is_present(ri, di).then_some(amount),
                 selected,
             );
