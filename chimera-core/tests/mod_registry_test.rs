@@ -99,5 +99,5 @@ fn registry_accepts_exactly_the_modulatable_addresses() {
             accepted += addr.modulatable() as usize;
         }
     }
-    assert_eq!(accepted, 17);
+    assert_eq!(accepted, 17 + 3 * 5); // + ENV n LEVEL, TIME, RISE, FALL, SHAPE
 }

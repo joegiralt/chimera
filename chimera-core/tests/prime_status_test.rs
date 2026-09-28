@@ -357,3 +357,29 @@ fn priming_past_matrix_capacity_on_the_algo_chain_reports_full() {
         MAX_MOD_DESTS
     );
 }
+
+/// The hidden LEVEL and TIME are primed from the cells that own them: A,
+/// D, R and H prime TIME; S primes LEVEL (Decisions table).
+#[test]
+fn stage_cells_prime_time_and_sustain_primes_level() {
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::params::EnvParams;
+    let mut ui = UiState::new();
+    for _ in 0..5 {
+        feed(&mut ui, Input::press(ButtonId::Plus)); // MOD node
+    }
+    feed(&mut ui, Input::press(ButtonId::Edit)); // the ENV 1 page
+    prime(&mut ui, EncoderId::A); // ATTACK
+    assert_eq!(ui.prime_status(), Some(PrimeStatus::Added));
+    prime(&mut ui, EncoderId::C); // SUSTAIN
+    assert_eq!(ui.prime_status(), Some(PrimeStatus::Added));
+    // Whichever ENV slot the page shows (E1 here; E2 once Task 16 moves E1 home).
+    let reg = &ui.performance.parts[0].sound.dest_registry;
+    let primed: Vec<ParamAddr> = (0..reg.len()).map(|i| reg.get(i).unwrap().addr).collect();
+    let has = |id| {
+        primed
+            .iter()
+            .any(|a| matches!(a.block, BlockRef::Env(_)) && a.param == id)
+    };
+    assert!(has(EnvParams::TIME) && has(EnvParams::LEVEL), "{primed:?}");
+}

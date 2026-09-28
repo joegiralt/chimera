@@ -3,7 +3,7 @@ use core::ptr::addr_of_mut;
 
 use chimera_hal::BLOCK_SIZE;
 
-use crate::addr::Blocks;
+use crate::addr::{BlockRef, Blocks};
 use crate::block::apply_offset;
 use crate::dsp::algo::engine::AlgoLive;
 use crate::dsp::drive::Drive;
@@ -16,7 +16,7 @@ use crate::dsp::wavefolder::Wavefolder;
 use crate::hw::{Cost, MAX_VOICES, VOICE_RAM_BUDGET};
 use crate::in_place::{by_value, uninit_at};
 use crate::modulation::{MAX_MOD_SOURCES, ModSource, ModState, note_source};
-use crate::params::{EngineType, ParamSnapshot};
+use crate::params::{EngineType, EnvParams, ParamSnapshot};
 use crate::{MidiNote, Velocity};
 
 // ADR 0013: the voice pool fits D2 SRAM beside the DMA buffers, on both targets.
@@ -32,6 +32,8 @@ pub struct Voice {
     folder: Wavefolder,
     envs: [Envelope; 3],
     lfos: [Lfo; 3],
+    /// The ENV destinations' sums from the last block's matrix (spec § Signal flow 1).
+    env_mods: [EnvMods; 3],
     active_engine: EngineType,
     active: bool,
     last_note: MidiNote,
@@ -126,6 +128,7 @@ impl Voice {
                 folder: Wavefolder::new(),
                 envs: [Envelope::new(); 3],
                 lfos: [Lfo::new(); 3],
+                env_mods: [EnvMods::NONE; 3],
                 active_engine: EngineType::Algo,
                 active: false,
                 last_note: MidiNote::A4,
@@ -266,7 +269,7 @@ impl Voice {
         for (s, env) in EnvSlot::ALL.iter().zip(self.envs.iter_mut()) {
             mod_values[ModSource::of_env(*s).index()] = env.run_block(
                 &src.envelopes[s.index()],
-                &EnvMods::NONE,
+                &self.env_mods[s.index()],
                 key,
                 sample_rate,
                 None,
@@ -287,10 +290,29 @@ impl Voice {
             m.clone_from(params);
             *live = AlgoLive::from_params(&params.algo);
             live.routed = mod_state.algo_levels_routed();
+            let mut next = [EnvMods::NONE; 3];
             for d in 0..mod_state.num_dests() {
+                let a = mod_state.dest(d);
+                if let BlockRef::Env(s) = a.block {
+                    // ENV destinations reach their slot next block.
+                    let sum = mod_state.sum_for(d, &mod_values);
+                    let n = &mut next[s.index()];
+                    match a.param {
+                        EnvParams::LEVEL if mod_state.present(d) != 0 => {
+                            #[allow(clippy::manual_clamp)] // max/min, not clamp: NaN clamps too
+                            let peak = sum.max(0.0).min(1.0);
+                            n.level = Some(peak);
+                        }
+                        EnvParams::TIME => n.time = sum,
+                        EnvParams::RISE => n.slides.rise = sum,
+                        EnvParams::FALL => n.slides.fall = sum,
+                        EnvParams::SHAPE => n.slides.shape = sum,
+                        _ => {}
+                    }
+                    continue;
+                }
                 let off = mod_state.sum_for(d, &mod_values);
                 if off != 0.0 {
-                    let a = mod_state.dest(d);
                     if live.offset(a, off) {
                         continue;
                     }
@@ -300,6 +322,7 @@ impl Voice {
                     }
                 }
             }
+            self.env_mods = next;
         }
         let (m, live) = (&self.played, &self.played_live);
 
