@@ -103,7 +103,7 @@ Every rule here is carried by a type or by a pure function, never by a stored fl
 | `Tag` / `TagSet` | `Tag = { Builtin(BuiltinTag), Custom(CustomTag) }`. `BuiltinTag` has 16 closed variants. `CustomTag` is 0–7. `TagSet(u32)` supports only insert, remove and contains. | A 17th built-in tag, a 9th custom tag, and tag strings stored in a Sound. |
 | `EngineFilter` | `enum { All, Engine(EngineType) }`. It cycles `EngineType::ALL`, so new engines appear by themselves (L4). | A filter value that no engine matches. |
 | `Location` | See § Navigation. An opaque struct over an enum private to the nav module. `down`, `up` and the sugar jumps are its only constructors. | A second route anywhere. |
-| `Card` | `enum { Absent, Ready(VolumeId), Failed(CardError) }`, with the transitions in § Card. Listing and saving take a `&Ready`. | Browsing or saving with no card. Writing to a swapped card. |
+| `Card` | `enum { Absent, Ready(VolumeId), Failed { err: CardError, last: Option<VolumeId> } }`, with the transitions in § Card. `CardError` has no NO CARD variant. Listing and saving take a `&Ready`, which is neither `Copy` nor `Clone` and is lent only inside `Card::run`. | Browsing or saving with no card. Writing to a swapped card. Skipping the per-operation mount. |
 | `ValidAddr` | A `ParamAddr` known to have a spec, built only by iterating `block.specs()` (L1). `ParamRecord { addr: ValidAddr, value }`. | Writing a record for a param that doesn't exist. |
 | `RecordTag` | A closed enum on the writer. `Unknown(u16)` exists only in the reader's `ReadTag` (L2). | Writing a record this version doesn't define. |
 | `LoadEpoch` | `AtomicU32` `LOAD_EPOCH` and `LOAD_ACK`, outside the triple buffer. `Project::replace` is the only writer of `LOAD_EPOCH`. | Publishing a new project while voices from the old one still sound. |
@@ -345,7 +345,7 @@ Every rung has a one-line footer, and the screen goldens include it:
   - Audio and the watchdog run above the main loop and aren't affected. Button edges are latched, so no press is lost.
 - **States.** `Absent`, `Ready(VolumeId)` and `Failed(CardError)`:
   - The card is **mounted per operation**. Every handle is closed on success and on error.
-  - Any error sets `Failed`.
+  - Any card error sets `Failed`, which keeps the last `VolumeId`. NO CARD sets `Absent`. A missing or damaged file is a file error and leaves the state alone.
   - `Failed` or `Absent` becomes `Ready` only after a fresh init and mount.
   - Each mount compares the volume serial and label with the cached `VolumeId`. On a mismatch, the library index and project list are dropped, and any `Pending` replace re-validates.
 - **Formats.** FAT16 and FAT32 only. exFAT (the default on SDXC over 32 GB) shows "CARD IS EXFAT: FORMAT FAT32".
@@ -372,12 +372,14 @@ Every rung has a one-line footer, and the screen goldens include it:
 `embedded-sdmmc` has no rename, and a FAT rename isn't atomic anyway. So:
 
 1. Every file is a pair, `<ID>.A` and `<ID>.B`. The header carries a `u32` generation.
-2. A save truncates and rewrites the older file of the pair (or the missing one) with generation + 1, then flushes.
+2. A save truncates and rewrites the file the reader would not take (the older one, or the missing or broken one) with generation + 1, then flushes.
 3. The CRC32 goes in a **trailer**, so the writer streams and never seeks back.
-4. The reader takes the valid file with the highest generation. A torn or invalid file is ignored.
+4. The reader takes the valid file with the highest generation. A torn or invalid file is ignored, except one that needs newer firmware: an older file never shadows it.
 5. A delete removes the older file first, then the newer one. A cut in between leaves one valid file, which reads as "not deleted".
 
 A cut during FAT cluster allocation can leak clusters, which a computer's disk check repairs. It never touches the other file of the pair.
+
+This assumes a 512 B block write is atomic: a cut leaves each block wholly old or wholly new, and never disturbs another block. SD cards don't promise it. The two files of a pair share a directory sector and, when small, FAT sectors, so a block torn there can lose both. ADR 0045 records the assumption, and plan 1's tests characterise the torn case.
 
 ### Format (H2)
 
