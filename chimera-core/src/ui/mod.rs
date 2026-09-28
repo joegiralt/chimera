@@ -8,6 +8,7 @@ pub mod chain;
 pub mod components;
 pub mod draw;
 pub mod dungeon_map;
+pub mod filter_panel;
 pub mod fmt;
 pub mod focus;
 pub mod mod_grid;
@@ -46,6 +47,7 @@ use page::{PageKey, PageLayout};
 use perf::PerfStats;
 use renderer::Renderer;
 use theme_settings::ThemeSettings;
+use view::{SlotCtx, View};
 
 /// MIX + turn on a route knob: the next of −127, 0, +127 that way.
 fn snap_amount(a: i8, delta: i8) -> i8 {
@@ -276,6 +278,14 @@ impl UiState {
         self.sel_op
     }
 
+    /// What the edited Part's page slots resolve against.
+    fn ctx(&self) -> SlotCtx {
+        SlotCtx::read(
+            &self.performance.parts[self.active_part].sound.params,
+            self.sel_op,
+        )
+    }
+
     /// Recompute the page identity and jump the display to its values.
     fn enter_page(&mut self) {
         self.page = PageKey::from_nav(&self.nav, self.sel_op);
@@ -289,10 +299,11 @@ impl UiState {
         let def = self.nav.active_block_def();
         let (page, sel_op) = (self.page, self.sel_op);
         let mut values = page_values(page, def, &self.blocks(self.active_part), sel_op);
-        for (i, slot) in def.params.iter().enumerate() {
-            if let block_def::SlotBinding::Route(src) = slot.binding {
-                values[i] = renderer::amount_value(
-                    self.matrix_state.route(src.index(), CUTOFF).unwrap_or(0),
+        let ctx = self.ctx();
+        for (i, value) in values.iter_mut().enumerate() {
+            if let View::Route { source, .. } = view::view(def, i, &ctx) {
+                *value = renderer::amount_value(
+                    self.matrix_state.route(source.index(), CUTOFF).unwrap_or(0),
                 );
             }
         }
@@ -354,7 +365,7 @@ impl UiState {
         slot_addr(
             self.nav.active_block_def(),
             self.focused_slot(),
-            self.sel_op,
+            &self.ctx(),
         )
         .map(prime_target)
     }
@@ -380,7 +391,7 @@ impl UiState {
                 let short = mod_grid::block_tag(addr.block).as_bytes();
                 (
                     &short[..short.len().min(3)],
-                    def.params[self.focused_slot()].label(),
+                    view::view(def, self.focused_slot(), &self.ctx()).label(),
                 )
             }
         };
@@ -575,43 +586,51 @@ impl UiState {
             }
         } else {
             let at = self.active_part;
+            let before = self.ctx();
             for (i, &enc) in encoder_ids.iter().enumerate() {
                 let delta = controls.encoder_delta(enc);
-                if delta != 0 {
-                    // An empty slot edits nothing, so it does not take the focus.
-                    if def.params[i].binding != block_def::SlotBinding::Empty {
-                        self.focus.touch(def.id, i);
-                    }
-                    if let block_def::SlotBinding::Route(src) = def.params[i].binding {
-                        self.edit_route(src, |a| {
-                            if shift {
-                                snap_amount(a, delta)
-                            } else {
-                                (a as i16 + delta as i16).clamp(-127, 127) as i8
-                            }
-                        });
-                        continue;
-                    }
-                    let own = slot_addr(def, i, self.sel_op);
-                    if own.is_some_and(|a| view::dimmed(a, &self.performance.parts[at].sound)) {
-                        continue; // dimmed: the encoder is ignored
-                    }
-                    let params = &mut UiBlocks {
-                        perf: &mut self.performance,
-                        at,
-                        theme: &mut self.theme,
-                    };
-                    match (self.page, shift) {
-                        (PageKey::Part { .. }, true) => {
-                            part_page::snap_encoder(def, i, delta, params, self.sel_op)
-                        }
-                        (PageKey::Part { .. }, false) => {
-                            part_page::apply_encoder(def, i, delta, params, &mut self.sel_op)
-                        }
-                        (PageKey::Legacy(p), true) => p.snap_encoder(i, delta, params),
-                        (PageKey::Legacy(p), false) => p.apply_encoder(i, delta, params),
-                    }
+                if delta == 0 {
+                    continue;
                 }
+                let v = view::view(def, i, &self.ctx());
+                // An empty slot edits nothing, so it does not take the focus.
+                if v != View::Empty {
+                    self.focus.touch(def.id, i);
+                }
+                if let View::Route { source, .. } = v {
+                    self.edit_route(source, |a| {
+                        if shift {
+                            snap_amount(a, delta)
+                        } else {
+                            (a as i16 + delta as i16).clamp(-127, 127) as i8
+                        }
+                    });
+                    continue;
+                }
+                if view::is_dimmed(&v, &self.performance.parts[at].sound) {
+                    continue; // dimmed: the encoder is ignored
+                }
+                let params = &mut UiBlocks {
+                    perf: &mut self.performance,
+                    at,
+                    theme: &mut self.theme,
+                };
+                match (self.page, shift) {
+                    (PageKey::Part { .. }, true) => {
+                        part_page::snap_encoder(def, i, delta, params, self.sel_op)
+                    }
+                    (PageKey::Part { .. }, false) => {
+                        part_page::apply_encoder(def, i, delta, params, &mut self.sel_op)
+                    }
+                    (PageKey::Legacy(p), true) => p.snap_encoder(i, delta, params),
+                    (PageKey::Legacy(p), false) => p.apply_encoder(i, delta, params),
+                }
+            }
+            // A KIND, TYPE or MODE change re-seeds the page's animators: a
+            // lerp between two parameters' values would draw a meaningless sweep.
+            if self.ctx() != before {
+                let values = self.display_values();
+                self.renderer.snap_to_current(values);
             }
             // The operator selection is part of the page identity.
             self.page = PageKey::from_nav(&self.nav, self.sel_op);
@@ -626,11 +645,11 @@ impl UiState {
                     // `add`, so it must be checked for before calling it.
                     // A dimmed slot that primes itself is refused; one that
                     // primes elsewhere (AMP's VEL: the VCA) still primes.
-                    let own = slot_addr(def, self.focused_slot(), self.sel_op);
+                    let v = view::view(def, self.focused_slot(), &self.ctx());
                     let sound = &self.performance.parts[at].sound;
-                    if let Some(a) = own
+                    if let Some(a) = v.addr()
                         && prime_target(a) == a
-                        && view::dimmed(a, sound)
+                        && view::is_dimmed(&v, sound)
                     {
                         self.prime_status = Some(PrimeStatus::NotModulatable);
                     } else if let Some(addr) = self.current_param_addr() {
@@ -679,6 +698,7 @@ impl UiState {
         // Read base param values
         let def = self.nav.active_block_def();
         let mut values = self.display_values();
+        let ctx = self.ctx();
         let sound = &self.performance.parts[at].sound;
 
         // Apply mod offsets for display — makes bars and vizzes animate with modulation.
@@ -712,7 +732,7 @@ impl UiState {
 
             // Apply offsets to the 6 display values
             for (i, value) in values.iter_mut().enumerate() {
-                let Some(addr) = slot_addr(def, i, self.sel_op) else {
+                let Some(addr) = slot_addr(def, i, &ctx) else {
                     continue;
                 };
                 let offset = sound.mod_state.offset_for(addr, &mod_sources);
@@ -796,6 +816,7 @@ impl UiState {
             perf,
             matrix: &self.matrix_state,
             sel_op: self.sel_op,
+            ctx: self.ctx(),
             focus: self.focused_slot(),
             scope,
             sounding: crate::scope::peak(scope) > crate::scope::SOUNDING_PEAK,
@@ -854,9 +875,7 @@ impl UiState {
                     },
                     f.focus as u8,
                     self.matrix_state.num_dests as u16,
-                    core::array::from_fn(|i| {
-                        Renderer::cell_mod_info(f.def, i, f.sel_op, f.matrix).map(f32::to_bits)
-                    }),
+                    core::array::from_fn(|i| renderer::mod_info(f, i).map(f32::to_bits)),
                 )
                 .keyed(self.matrix_state.rev, looks)
             }

@@ -38,7 +38,7 @@ fn filter_curve_keeps_its_shape() {
 #[test]
 fn filter_readout_rides_the_focused_value() {
     let mut ui = ui_for("bigviz_filter");
-    feed(&mut ui, Input::turn(EncoderId::C, -1)); // RESO
+    feed(&mut ui, Input::turn(EncoderId::C, -1)); // RES
     settle(&mut ui);
     let mut fb = Fb::new();
     ui.render_with_scope(&mut fb, &PerfStats::zero(), &scope_fixture());
@@ -47,7 +47,13 @@ fn filter_readout_rides_the_focused_value() {
     fmt_val(&mut text, reso, ValFmt::Uni);
     let mut want = Fb::new();
     want.px.fill(fb.px[0]);
-    viz::filter(&mut want, cutoff, reso, Some(("RESO", text.as_str())));
+    viz::filter(
+        &mut want,
+        cutoff,
+        reso,
+        viz::Response::Low,
+        Some(("RES", text.as_str())),
+    );
     assert!(band(&fb, 28, 186) == band(&want, 28, 186));
 }
 
@@ -69,9 +75,15 @@ fn readout_flips_left_at_the_right_edge() {
 fn filter_readout_clears_the_peak_at_full_resonance() {
     for &cutoff in &[0.1_f32, 0.5, 0.9] {
         let mut without = Fb::new();
-        viz::filter(&mut without, cutoff, 1.0, None);
+        viz::filter(&mut without, cutoff, 1.0, viz::Response::Low, None);
         let mut with = Fb::new();
-        viz::filter(&mut with, cutoff, 1.0, Some(("CUTOFF", "127")));
+        viz::filter(
+            &mut with,
+            cutoff,
+            1.0,
+            viz::Response::Low,
+            Some(("CUTOFF", "127")),
+        );
         assert_eq!(
             with.oob, 0,
             "cutoff={cutoff}: nothing drawn outside 240x320"

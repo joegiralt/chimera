@@ -1,3 +1,5 @@
+use crate::dsp::modulator::pick;
+use crate::hw::Cost;
 use crate::params::FilterParams;
 
 /// The SVF's modes. The discriminants are the old `mode` byte (#111), so
@@ -53,6 +55,66 @@ pub static SVF_MODE_NAMES: [&str; 8] = [
 const SVF_MODE_NAMES_BY_ID: [&str; 8] = [
     "LP6", "LP12", "LP24", "BP12", "BP24", "HP24", "NOTCH", "PHASER",
 ];
+
+/// PHASER over LP24, which the 1 OP row (so the engine terms) carries:
+/// measured 2026-09-28, bench ROUTING SVF row, rev V at 480 MHz (500 − 483).
+/// That row never takes `saturate`'s divide; SVF HOT does, not yet read.
+const SVF_COST: u32 = 17;
+
+/// Which filter model (spec § Data model). A variant lands with its model
+/// (#123–#127); until then only the SVF exists.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[repr(u8)]
+pub enum FilterKind {
+    #[default]
+    Svf = 0,
+}
+
+/// KIND's names, as it steps the built kinds.
+pub static KIND_NAMES: [&str; 1] = ["SVF"];
+
+impl FilterKind {
+    /// The kinds built, as KIND steps them.
+    pub const BUILT: [FilterKind; 1] = [FilterKind::Svf];
+
+    /// Never empty; `[0]` is the default (spec § 7).
+    pub const fn modes(self) -> &'static [FilterMode] {
+        match self {
+            FilterKind::Svf => &SVF_MODES,
+        }
+    }
+
+    /// NOTE → CUTOFF on a new Sound (spec § 2).
+    pub const fn key_default(self) -> i8 {
+        match self {
+            FilterKind::Svf => 0,
+        }
+    }
+
+    /// Cycles per sample over `CHAIN_COST` (spec § CPU). The SVF ran inside
+    /// the chain `CHAIN_COST` was measured over, at LP24; this is the bench's
+    /// SVF row (PHASER, its costliest mode) less 1 OP, billed for every mode.
+    pub const fn cost(self, _mode: FilterMode) -> Cost {
+        match self {
+            FilterKind::Svf => Cost(SVF_COST),
+        }
+    }
+
+    pub fn from_index(v: f32) -> Self {
+        pick(&Self::BUILT, v)
+    }
+}
+
+/// `p` with KIND `new`: MODE stays if `new` has it, else becomes `new`'s
+/// default; nothing else moves (spec § 7).
+pub fn kind_change(p: FilterParams, new: FilterKind) -> FilterParams {
+    let mut q = p;
+    q.set_kind_raw(new);
+    if !new.modes().contains(&p.mode()) {
+        q.set_mode(new.modes()[0]);
+    }
+    q
+}
 
 /// Octaves a full CUTOFF route moves (spec § 3).
 pub const CUTOFF_OCTAVES: f32 = 10.0;

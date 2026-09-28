@@ -11,6 +11,7 @@ use chimera_core::ui::block_def::{BlockDef, ParamSlot, VizType, slot_addr};
 use chimera_core::ui::block_registry as reg;
 use chimera_core::ui::page::PageLayout;
 use chimera_core::ui::part_page;
+use chimera_core::ui::view::SlotCtx;
 
 /// One encoder turn with operator A selected.
 fn turn(def: &BlockDef, slot: usize, delta: i8, p: &mut ParamSnapshot) {
@@ -141,9 +142,10 @@ fn select_op_page_follows_the_selection() {
 #[test]
 fn a_selected_op_slot_resolves_to_the_operator_selected_now() {
     let level = |op| Some(ParamAddr::new(BlockRef::AlgoOp(op), AlgoOpParams::LEVEL));
-    assert_eq!(slot_addr(&OP_PAGE, 1, Op::B), level(Op::B));
-    assert_eq!(slot_addr(&OP_PAGE, 1, Op::F), level(Op::F));
-    assert_eq!(slot_addr(&OP_PAGE, 0, Op::B), None);
+    let on = |op| SlotCtx::read(&ParamSnapshot::default(), op);
+    assert_eq!(slot_addr(&OP_PAGE, 1, &on(Op::B)), level(Op::B));
+    assert_eq!(slot_addr(&OP_PAGE, 1, &on(Op::F)), level(Op::F));
+    assert_eq!(slot_addr(&OP_PAGE, 0, &on(Op::B)), None);
 }
 
 #[test]

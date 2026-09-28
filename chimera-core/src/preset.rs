@@ -31,12 +31,17 @@ impl Sound {
         let tag = b"(init)";
         name[..tag.len()].copy_from_slice(tag);
         // The default routes (spec § 2): ENV 1, LFO 1 and NOTE → CUTOFF at
-        // 0 (NOTE at the SVF's key default, 0), on every engine.
+        // 0, NOTE at the kind's key default, on every engine.
         let mut dest_registry = ModDestRegistry::new();
         let _ = dest_registry.add(CUTOFF, CUTOFF_LABEL); // an empty registry takes it
         let mut mod_state = ModState::from_registry(&dest_registry, MAX_MOD_SOURCES);
-        for s in [ModSource::Env1, ModSource::Lfo1, ModSource::Note] {
-            mod_state.set_route(s.index(), 0, 0);
+        let key = crate::dsp::filter::FilterKind::default().key_default();
+        for (s, a) in [
+            (ModSource::Env1, 0),
+            (ModSource::Lfo1, 0),
+            (ModSource::Note, key),
+        ] {
+            mod_state.set_route(s.index(), 0, a);
         }
         Self {
             name,

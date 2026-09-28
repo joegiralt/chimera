@@ -241,8 +241,13 @@ fn test_drive_block_formats_in_registry() {
 fn test_filter_mode_is_named_in_registry() {
     use chimera_core::ui::block_registry;
     use chimera_core::ui::page::ValFmt;
+    use chimera_core::ui::view::{SlotCtx, view};
+    let ctx = SlotCtx::read(
+        &chimera_core::params::ParamSnapshot::default(),
+        chimera_core::addr::Op::A,
+    );
     assert!(matches!(
-        block_registry::FILTER.params[3].format(),
+        view(&block_registry::FILTER, 3, &ctx).fmt(),
         ValFmt::Names(_)
     ));
 }

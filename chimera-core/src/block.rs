@@ -192,6 +192,9 @@ impl ParamSpec {
 
     /// `v` mapped to 0..1 over the range.
     pub fn normalize(&self, v: f32) -> f32 {
+        if self.max == self.min {
+            return 0.0;
+        }
         (v - self.min) / (self.max - self.min)
     }
 

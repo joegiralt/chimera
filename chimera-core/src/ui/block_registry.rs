@@ -9,7 +9,6 @@ use crate::dsp::modal::ModalParams;
 use crate::dsp::modulator::{EnvSlot, LfoSlot};
 use crate::dsp::reverb::ReverbParams;
 use crate::dsp::tape::TapeParams;
-use crate::modulation::ModSource;
 use crate::params::{DriveParams, EnvParams, FilterParams, FolderParams, OutParams};
 use crate::part::PartParams;
 use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2, ParamSlot, VizType};
@@ -96,8 +95,7 @@ pub static FOLDER: BlockDef = BlockDef {
 // Filter
 // ---------------------------------------------------------------------------
 
-/// SVF: — · CUTOFF · RES / MODE · ENV · KEY (KIND and the route knobs come
-/// later in the filter-routing plan; spec § 6).
+/// FLT: KIND, then the kind's panel (spec § 6).
 pub static FILTER: BlockDef = BlockDef {
     id: 10,
     name: "Filter",
@@ -105,16 +103,16 @@ pub static FILTER: BlockDef = BlockDef {
     layout: PageLayout::BigViz,
     viz: VizType::FilterResponse,
     params: [
-        EMPTY,
-        ParamSlot::param(BlockRef::Filter, FilterParams::CUTOFF),
-        ParamSlot::param(BlockRef::Filter, FilterParams::RESONANCE),
-        ParamSlot::param(BlockRef::Filter, FilterParams::MODE),
-        ParamSlot::route(ModSource::Env1, "ENV"),
-        ParamSlot::route(ModSource::Note, "KEY"),
+        ParamSlot::param(BlockRef::Filter, FilterParams::KIND),
+        ParamSlot::filter_panel(0),
+        ParamSlot::filter_panel(1),
+        ParamSlot::filter_panel(2),
+        ParamSlot::filter_panel(3),
+        ParamSlot::filter_panel(4),
     ],
 };
 
-/// FLT › MODE: MODE and the SVF's extras (spec § UI). `short` is "MDE", not
+/// FLT › MODE: MODE and the kind's extras (spec § UI). `short` is "MDE", not
 /// "MODE": on the Algo map the full word overlaps the next node's label
 /// (`MOD` is already MOD_MATRIX's); this abbreviation is only
 /// the map's branch label, not the MODE param's own spec name.
@@ -126,8 +124,8 @@ pub static FILTER_MODE: BlockDef = BlockDef {
     viz: VizType::None,
     params: [
         ParamSlot::param(BlockRef::Filter, FilterParams::MODE),
-        ParamSlot::param(BlockRef::Filter, FilterParams::DRIVE),
-        ParamSlot::route(ModSource::Lfo1, "LFO"),
+        ParamSlot::filter_panel(5),
+        ParamSlot::filter_panel(6),
         EMPTY,
         EMPTY,
         EMPTY,
