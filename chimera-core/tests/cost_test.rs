@@ -547,11 +547,15 @@ fn voices_at(cpu_hz: u32, p: &AlgoParams) -> u32 {
     ((budget - FxBus::COST.0) / voice).min(MAX_VOICES as u32)
 }
 
-/// ADR 0026: a one-operator patch gets every voice.
+/// ADR 0026, 0040: a one-operator patch gets every voice; the pool, not
+/// the budget, is what stops it.
 #[test]
-fn a_one_operator_patch_fits_six_voices() {
+fn a_one_operator_patch_gets_every_voice() {
     let one = AlgoParams::single(chimera_core::dsp::algo::waves::WaveId::W1);
     assert_eq!(voices_beside_fx(&one), MAX_VOICES as u32);
+    let budget = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0;
+    let voice = Voice::CHAIN_COST.0 + ModRouting::BASE.0 + cost(&one);
+    assert!((budget - FxBus::COST.0) / voice > MAX_VOICES as u32);
 }
 
 /// A16 ∪ A17 at MORPH 64, six operators with feedback: 12 links, ADR
@@ -564,8 +568,10 @@ fn a16_a17() -> AlgoParams {
 
 /// FX diet spec § Intent and ADR 0031: with the bus measured at 1,360 and
 /// the modulator pool's floor (`ModRouting::BASE`, 47) added, the costliest
-/// patch still gets six voices on rev V (6 × 889 + 1,360 = 6,694 ≤ 7,000),
-/// and five on rev Y ((5,833 − 1,360) / 889 = 5.03), without FOLD or DRIVE.
+/// patch still gets six voices on rev V (6 × 889 + 1,360 = 6,694 ≤ 7,000;
+/// a seventh would be 7,583), and five on rev Y ((5,833 − 1,360) / 889 =
+/// 5.03), without FOLD or DRIVE. ADR 0040: the budget, not the eight-voice
+/// pool, is what stops it.
 #[test]
 fn the_costliest_patch_gets_six_voices_on_rev_v() {
     let p = a16_a17();
@@ -573,7 +579,8 @@ fn the_costliest_patch_gets_six_voices_on_rev_v() {
     assert_eq!(Voice::CHAIN_COST.0 + ModRouting::BASE.0 + cost(&p), 889);
     assert_eq!(cost(&costliest()), cost(&p), "no pair has more links");
     assert_eq!(FxBus::COST.0, 1_360, "{:?}", FxBus::COST);
-    assert_eq!(voices_at(CPU_HZ_REV_V, &p), MAX_VOICES as u32);
+    assert_eq!(voices_at(CPU_HZ_REV_V, &p), 6);
+    assert_eq!(MAX_VOICES, 8, "the budget stops it short of the pool");
     assert_eq!(voices_at(CPU_HZ_REV_Y, &p), 5);
     // With the folder on (43): 932, still six on rev V, four on rev Y; the
     // drive stage too (997, DRIVE provisional): five on rev V, four on rev Y. No factory Sound
@@ -585,19 +592,22 @@ fn the_costliest_patch_gets_six_voices_on_rev_v() {
     assert_eq!((fits(CPU_HZ_REV_V, both), fits(CPU_HZ_REV_Y, both)), (5, 4));
 }
 
-/// Spec § Intent and ADR 0031: every factory Sound gets six voices on rev
-/// V and at least five on rev Y, billed as it plays (its routes, FOLD and
-/// DRIVE in). MORPH KEYS, the costliest, bills 844: five on rev Y.
+/// Spec § Intent and ADR 0031, 0040: every factory Sound gets at least six
+/// voices on rev V and at least five on rev Y, billed as it plays (its
+/// routes, FOLD and DRIVE in). The TX and single-oscillator Sounds (555–692)
+/// get all eight on rev V; MORPH PAD (839) and MORPH KEYS (844) six, and
+/// MORPH KEYS, the costliest, five on rev Y.
 #[test]
-fn every_factory_sound_gets_six_voices_on_rev_v() {
-    for i in 0..8 {
+fn every_factory_sound_gets_at_least_six_voices_on_rev_v() {
+    const REV_V: [u32; 8] = [8, 8, 8, 8, 8, 8, 6, 6];
+    for (i, want) in REV_V.into_iter().enumerate() {
         let s = chimera_core::factory::factory_sound(i).unwrap();
         let voice = Voice::cost(&s.params, &s.mod_state).0;
         let at = |hz| {
             let budget = SampleBudget::for_cpu(hz).as_cost().0;
             ((budget - FxBus::COST.0) / voice).min(MAX_VOICES as u32)
         };
-        assert_eq!(at(CPU_HZ_REV_V), 6, "factory {i}");
+        assert_eq!(at(CPU_HZ_REV_V), want, "factory {i}");
         assert!(at(CPU_HZ_REV_Y) >= 5, "factory {i} on rev Y");
     }
 }

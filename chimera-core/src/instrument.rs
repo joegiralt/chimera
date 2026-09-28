@@ -289,7 +289,7 @@ impl Instrument {
         budget: SampleBudget,
     ) -> &mut Self {
         let p = slot.as_mut_ptr();
-        // SAFETY: `p` is valid and unaliased; the six voices are built in
+        // SAFETY: `p` is valid and unaliased; the voices are built in
         // place and the rest (the largest, `buses`, is 1.5 KB) written once
         // by value before `assume_init_mut`.
         unsafe {

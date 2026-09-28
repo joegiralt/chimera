@@ -483,7 +483,8 @@ impl Rig<'_> {
 
 /// Spec § Budget worst case, one kernel per voice: six operators, all with
 /// feedback, six distinct waves crossfading mips `v` and `v + 1` in voice `v`
-/// (about 21 KB of tables, read from their uncached, zero-wait DTCM copy
+/// (the top mip clamps: about 21 KB of tables at six voices, all 64 KB at
+/// eight, read from their uncached, zero-wait DTCM copy
 /// as in the running synth), MORPH moving through 0.5
 /// between A14 and A22 (the masks are written here, before the algorithm
 /// tables exist). The inputs pass through `black_box` so nothing folds.
@@ -574,7 +575,8 @@ fn algo_pair(a: AlgoId, b: AlgoId) -> ParamSnapshot {
 }
 
 const ROW_H: i32 = 25;
-const CELL_W: i32 = 38;
+/// One count per voice across the screen: 29 px holds five digits at eight.
+const CELL_W: i32 = (theme::SCREEN_W - 8) / MAX_VOICES as i32;
 
 fn show(
     display: &mut impl ChimeraDisplay,
@@ -599,10 +601,12 @@ fn show(
         16,
         theme::INK,
     );
+    line.clear();
+    let _ = write!(line, "CYCLES/SAMPLE, 1..{MAX_VOICES} VOICES");
     draw::text(
         display,
         &theme::FONT_LABEL,
-        "CYCLES/SAMPLE, 1..6 VOICES",
+        line.as_str(),
         4,
         30,
         theme::MID,
@@ -665,7 +669,8 @@ fn show_routing(
     display.flush();
 }
 
-/// `label`'s per-voice cost (six voices minus one, over five) and its six counts.
+/// `label`'s per-voice cost (the full pool minus one voice, over one fewer
+/// than the pool) and its count at each voice count.
 fn voice_row(
     display: &mut impl ChimeraDisplay,
     line: &mut FmtBuf,
@@ -677,7 +682,7 @@ fn voice_row(
     line.clear();
     let _ = write!(line, "{label} /VOICE {per_voice}");
     draw::text(display, &theme::FONT_VALUE, line.as_str(), 4, y, theme::INK);
-    // One cell per count: six five-digit counts overflow a `FmtBuf`.
+    // One cell per count: the counts together overflow a `FmtBuf`.
     for (i, c) in cycles.iter().enumerate() {
         line.clear();
         let _ = write!(line, "{c}");
