@@ -89,7 +89,7 @@ where
     draw::text(
         d,
         &theme::FONT_LABEL,
-        "MAIN SCROLLS",
+        "A SCROLLS",
         theme::MARGIN_X,
         INFO_Y,
         theme::MID,
