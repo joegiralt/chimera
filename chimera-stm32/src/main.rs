@@ -162,7 +162,10 @@ fn main() -> ! {
     let (scope_w, mut scope_r) = shared::take_scope().expect("scope buffer taken once");
     let (mut shared_w, shared_r) =
         shared::take_audio(&ui.performance).expect("audio buffer taken once");
-    audio::engine::init(SampleBudget::for_cpu(clk.cpu_hz), shared_r, scope_w);
+    let ([din_notes], notes) = audio::engine::NOTES
+        .split()
+        .expect("note sources split once");
+    audio::engine::init(SampleBudget::for_cpu(clk.cpu_hz), shared_r, notes, scope_w);
 
     let pll3 = pll3_for(clocks::HSE_HZ, chimera_hal::SAMPLE_RATE, clk.rev);
     clocks::init_pll3(&pll3);
@@ -175,7 +178,9 @@ fn main() -> ! {
     audio::sai::start();
 
     #[cfg(feature = "midi-din")]
-    midi_din::init(&mut cp.NVIC, ccdr.clocks.pclk2().raw());
+    midi_din::init(&mut cp.NVIC, ccdr.clocks.pclk2().raw(), din_notes);
+    #[cfg(not(feature = "midi-din"))]
+    let _ = din_notes; // no DIN input: its queue stays empty
 
     ui.update();
     ui.render_with_audio(&mut display, &perf.stats, None, scope_r.read());
