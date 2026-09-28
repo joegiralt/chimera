@@ -192,6 +192,25 @@ fn walk(
     w.frames
 }
 
+/// Every page reached by PLUS and EDIT alone, rendered on arrival before any
+/// encoder moves (#78): pages that differ only by their def must still
+/// redraw. Returns the frames rendered.
+fn arrive_untouched(ctx: Context, frames_per_step: usize) -> usize {
+    let mut w = Walk::new(ctx, frames_per_step);
+    let chain = w.ui.nav.active_chain();
+    for (node, block) in chain.blocks.iter().enumerate() {
+        ctx.home(&mut w.ui);
+        w.frames("home");
+        for _ in 0..node {
+            w.step(Input::press(ButtonId::Plus), "PLUS, untouched");
+        }
+        for _ in 1..block.sub_page_count().max(1) {
+            w.step(Input::press(ButtonId::Edit), "EDIT, untouched");
+        }
+    }
+    w.frames
+}
+
 fn every_context() -> Vec<Context> {
     let mut all: Vec<Context> = EngineType::ALL
         .iter()
@@ -208,6 +227,7 @@ fn every_page_walk() {
     let t = std::time::Instant::now();
     let mut frames = 0;
     for ctx in every_context() {
+        frames += arrive_untouched(ctx, 4);
         frames += walk(ctx, 4, &ENCODERS, |_, _| true);
     }
     println!(
@@ -226,6 +246,9 @@ fn representative_pages_walk() {
     walk(Context::Mixer(0), 2, &enc, |_, _| true);
     walk(Context::Demo, 2, &enc, |node, _| node == 0);
     walk(Context::System, 2, &enc, |node, _| node == 0);
+    for ctx in every_context() {
+        arrive_untouched(ctx, 1);
+    }
 }
 
 /// PLUS alone between System pages redraws each one (#69): they share a
