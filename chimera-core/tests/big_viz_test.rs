@@ -220,3 +220,14 @@ fn envelope_label_spans_keep_the_two_pixel_gap() {
         }
     }
 }
+
+/// PHASER is an all-pass: its curve is flat, not a low-pass.
+#[test]
+fn the_phaser_draws_flat() {
+    use chimera_core::dsp::filter::FilterMode;
+    let r = viz::Response::of(FilterMode::Phaser);
+    assert_eq!(r, viz::Response::Flat);
+    for t in [0.0, 0.3, 0.5, 0.9, 1.0] {
+        assert_eq!(viz::response_y(t, 0.3, 1.0, r), FILTER_PASS_Y, "{t}");
+    }
+}

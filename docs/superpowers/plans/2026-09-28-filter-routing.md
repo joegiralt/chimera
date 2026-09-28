@@ -8944,3 +8944,34 @@ The 1 DEST row (MORPH) never reached either: `AlgoLive::offset` returns before `
 | + FOLD + DRIVE | 997 | 5 | 4 |
 
 All factory Sounds keep 6 on rev V.
+
+### Task 15: the SVF's per-mode cost (2026-09-28)
+
+`FilterKind::cost(Svf, mode)` bills each mode's delta over LP24, never below 0. The engine terms were solved from rows that already run LP24, and `recost` re-prices at every note-on.
+
+| Mode | Billed | Source |
+|---|---|---|
+| LP24 | 0 | the baseline the engine terms carry |
+| LP6, LP12, BP12, NOTCH | 0 | run less than LP24 |
+| BP24, HP24 | 2 | provisional pad (BP24's extra multiply, layout) |
+| PHASER | 17 | SVF 500 − 1 OP 483 (bench-t13c) |
+
+**Hot saturation, not yet billed.** The SVF row never takes `saturate`'s divide branch (1 < |x| < 1.5); on the host, DRIVE 1, RES 1 and CUTOFF 1000 Hz take it on about 16 % of calls, in every stage. Replacing `/ 6.0` with a reciprocal multiply changed audio goldens (`filter_test` 7 of 8 modes; `golden_test` and `instrument_test`: modal_init, modal_lfo_cutoff, algo_to_modal_switch, factory_5), so it is held for the owner. New ROUTING 3/3 rows to read: LP24 HOT and SVF HOT (1 OP at those settings, LP24 and PHASER).
+
+**Voice counts** (every factory Sound runs LP24, so its SVF term is 0; the tables under "Review fix 2" stand):
+
+| Case | Cost | Rev V | Rev Y |
+|---|---|---|---|
+| Costliest patch (A16 ∪ A17), plain, LP24 | 889 | 6 | 5 |
+| + FOLD | 932 | 6 | 4 |
+| + FOLD + DRIVE | 997 | 5 | 4 |
+| Costliest patch at PHASER | 906 | 6 | 4 |
+
+| Sound | Cost | Rev V | Rev Y |
+|---|---|---|---|
+| TX BASS, TX EPIANO, TX BELL | 683–684 | 8 | 6 |
+| TX BRASS | 692 | 8 | 6 |
+| SAW LEAD | 555 | 8 | 8 |
+| SQR BASS | 560 | 8 | 7 |
+| MORPH PAD | 839 | 6 | 5 |
+| MORPH KEYS | 844 | 6 | 5 |

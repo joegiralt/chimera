@@ -91,6 +91,8 @@ pub enum Response {
     High,
     Band,
     Notch,
+    /// All-pass (PHASER): the magnitude stays flat.
+    Flat,
 }
 
 impl Response {
@@ -100,13 +102,14 @@ impl Response {
             M::Hp24 => Response::High,
             M::Bp12 | M::Bp24 => Response::Band,
             M::Notch => Response::Notch,
-            M::Lp6 | M::Lp12 | M::Lp24 | M::Phaser => Response::Low,
+            M::Phaser => Response::Flat,
+            M::Lp6 | M::Lp12 | M::Lp24 => Response::Low,
         }
     }
 }
 
 /// `filter_y` for each response: high-pass mirrors it about the cutoff,
-/// band-pass takes both skirts, notch dips at the cutoff.
+/// band-pass takes both skirts, notch dips at the cutoff, all-pass is flat.
 pub fn response_y(t: f32, cutoff: f32, reso: f32, r: Response) -> i32 {
     let low = filter_y(t, cutoff, reso);
     let high = filter_y(2.0 * cutoff - t, cutoff, reso);
@@ -123,6 +126,7 @@ pub fn response_y(t: f32, cutoff: f32, reso: f32, r: Response) -> i32 {
                 FILTER_PASS_Y
             }
         }
+        Response::Flat => FILTER_PASS_Y,
     }
 }
 

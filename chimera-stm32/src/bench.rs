@@ -126,7 +126,7 @@ fn worst_comp(s: &mut AudioShared) {
     (c.thresh, c.ratio, c.attack, c.release, c.makeup, c.mix) = (0.0, 7, 0.0, 0.0, 0.5, 1.0);
 }
 
-const ROUTING_ROWS: usize = 23;
+const ROUTING_ROWS: usize = 24;
 /// Rows per ROUTING screen: ten from y 46 at `ROW_H` 25 end at 283.
 const ROUTING_PAGE: usize = 10;
 
@@ -208,18 +208,19 @@ const ROUTING: [RoutingRow; ROUTING_ROWS] = [
         },
         STILL,
     ),
-    // SVF driven hard: `saturate` takes its divide on about 1 call in 6,
-    // which the SVF row's level never reaches.
-    (
-        "SVF HOT",
-        |p| {
-            let f = &mut one_op(p).filter;
-            let _ = f.set_mode(FilterMode::Phaser);
-            (f.drive, f.cutoff, f.resonance) = (1.0, 1000.0, 1.0);
-        },
-        STILL,
-    ),
+    // Driven hard: `saturate` takes its divide on about 1 call in 6, which
+    // the SVF row's level never reaches. HOT − 1 OP is the hot LP24 term.
+    ("LP24 HOT", |p| hot(p, FilterMode::Lp24), STILL),
+    ("SVF HOT", |p| hot(p, FilterMode::Phaser), STILL),
 ];
+
+/// 1 OP through the SVF in `mode` at DRIVE 1, RES 1 and CUTOFF 1000 Hz
+/// (not the Sound's 20 kHz: the host sweep's worst for `saturate`).
+fn hot(p: &mut PartAudio, mode: FilterMode) {
+    let f = &mut one_op(p).filter;
+    let _ = f.set_mode(mode);
+    (f.drive, f.cutoff, f.resonance) = (1.0, 1000.0, 1.0);
+}
 
 /// 1 OP, no routes.
 fn one_op(p: &mut PartAudio) -> &mut ParamSnapshot {

@@ -626,8 +626,8 @@ impl UiState {
                     (PageKey::Legacy(p), false) => p.apply_encoder(i, delta, params),
                 }
             }
-            // A KIND, TYPE or MODE change re-seeds the page's animators: a
-            // lerp between two parameters' values would draw a meaningless sweep.
+            // A KIND or operator change re-seeds the page's animators: a lerp
+            // between two parameters' values would draw a meaningless sweep.
             if self.ctx() != before {
                 let values = self.display_values();
                 self.renderer.snap_to_current(values);
