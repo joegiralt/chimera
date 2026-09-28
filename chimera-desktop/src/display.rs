@@ -11,7 +11,7 @@ const SCALE: usize = 2;
 
 pub struct DesktopDisplay {
     window: Window,
-    fb: Vec<u16>,
+    fb: Box<[u16; FB_SIZE]>,
     window_buf: Vec<u32>,
     /// System › Theme: the palette swap, and BRIGHT as a dimming of the
     /// window. GAMMA has no desktop equivalent and is ignored here.
@@ -31,7 +31,7 @@ impl DesktopDisplay {
 
         Self {
             window,
-            fb: vec![0u16; FB_SIZE],
+            fb: vec![0u16; FB_SIZE].try_into().expect("FB_SIZE pixels"),
             window_buf: vec![0u32; FB_SIZE * SCALE * SCALE],
             palette: Palette::IDENTITY,
             bright_pct: ThemeSettings::DEFAULT.bright.percent() as u32,
@@ -94,14 +94,7 @@ impl DrawTarget for DesktopDisplay {
     where
         I: IntoIterator<Item = Pixel<Rgb565>>,
     {
-        for Pixel(point, color) in pixels {
-            let x = point.x;
-            let y = point.y;
-            if x >= 0 && x < SCREEN_WIDTH as i32 && y >= 0 && y < SCREEN_HEIGHT as i32 {
-                let idx = (y as usize) * (SCREEN_WIDTH as usize) + (x as usize);
-                self.fb[idx] = RawU16::from(color).into_inner();
-            }
-        }
+        chimera_hal::draw_into_fb(&mut self.fb, pixels);
         Ok(())
     }
 }
@@ -113,17 +106,6 @@ impl OriginDimensions for DesktopDisplay {
 }
 
 impl ChimeraDisplay for DesktopDisplay {
-    fn flush(&mut self) {
-        self.convert_rows(0, SCREEN_HEIGHT as usize);
-        self.window
-            .update_with_buffer(
-                &self.window_buf,
-                SCREEN_WIDTH as usize * SCALE,
-                SCREEN_HEIGHT as usize * SCALE,
-            )
-            .expect("failed to update window");
-    }
-
     fn flush_region(&mut self, y_start: u16, y_end: u16) {
         self.convert_rows(y_start as usize, y_end as usize);
         self.window
@@ -136,6 +118,6 @@ impl ChimeraDisplay for DesktopDisplay {
     }
 
     fn pixel_buffer(&mut self) -> &mut [u16] {
-        &mut self.fb
+        &mut self.fb[..]
     }
 }

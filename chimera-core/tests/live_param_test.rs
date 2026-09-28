@@ -1,19 +1,11 @@
-use chimera_core::dsp::algo::params::AlgoParams;
+mod common;
 use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::modulation::ModState;
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::{MidiNote, Velocity};
-
-const SR: u32 = 48000;
-
-/// Operator 1 alone on the triangle.
-fn tri() -> ParamSnapshot {
-    let mut p = ParamSnapshot::for_engine(EngineType::Algo);
-    p.algo = AlgoParams::single(WaveId::TRI);
-    p
-}
+use common::{SR, goertzel, tri};
 
 /// Render a voice, then change a parameter mid-note, render more.
 /// Returns (before_rms, after_rms) for comparison.
@@ -57,21 +49,6 @@ fn render_with_param_change(
     };
 
     (rms(&before_buf), rms(&after_buf), before_buf, after_buf)
-}
-
-fn goertzel(buf: &[f32], target_freq: f32, sample_rate: u32) -> f32 {
-    let n = buf.len() as f32;
-    let k = (target_freq * n / sample_rate as f32).round();
-    let w = 2.0 * core::f32::consts::PI * k / n;
-    let coeff = 2.0 * libm::cosf(w);
-    let mut s1 = 0.0f32;
-    let mut s2 = 0.0f32;
-    for &sample in buf {
-        let s0 = sample + coeff * s1 - s2;
-        s2 = s1;
-        s1 = s0;
-    }
-    libm::sqrtf((s1 * s1 + s2 * s2 - coeff * s1 * s2).abs()) / n
 }
 
 fn harmonic_energy(buf: &[f32], f0: f32) -> f32 {

@@ -1,19 +1,12 @@
-use chimera_core::dsp::algo::params::AlgoParams;
-use chimera_core::dsp::algo::waves::WaveId;
+mod common;
 use chimera_core::dsp::drive::Drive;
 use chimera_core::dsp::filter::SvfFilter;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::dsp::wavefolder::Wavefolder;
 use chimera_core::modulation::ModState;
-use chimera_core::params::{DriveParams, EngineType, FilterParams, FolderParams, ParamSnapshot};
+use chimera_core::params::{DriveParams, FilterParams, FolderParams, ParamSnapshot};
 use chimera_core::{MidiNote, Velocity};
-
-/// Operator 1 alone on the triangle.
-fn tri() -> ParamSnapshot {
-    let mut p = ParamSnapshot::for_engine(EngineType::Algo);
-    p.algo = AlgoParams::single(WaveId::TRI);
-    p
-}
+use common::tri;
 
 // ── Drive ───────────────────────────────────────────────────────────
 

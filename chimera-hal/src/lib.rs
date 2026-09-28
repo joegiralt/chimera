@@ -51,6 +51,16 @@ pub enum ButtonId {
     Seq = 11,
 }
 
+/// B1–B6: Part n's button, or with MIX its mixer.
+pub const PART_BUTTONS: [ButtonId; 6] = [
+    ButtonId::B1,
+    ButtonId::B2,
+    ButtonId::B3,
+    ButtonId::B4,
+    ButtonId::B5,
+    ButtonId::B6,
+];
+
 pub const ALL_BUTTONS: [ButtonId; NUM_BUTTONS] = [
     ButtonId::B1,
     ButtonId::B2,
@@ -72,6 +82,18 @@ pub enum ButtonState {
     Pressed,
     Held,
     Released,
+}
+
+impl ButtonState {
+    /// From the button's level last frame and this frame.
+    pub const fn from_levels(prev: bool, cur: bool) -> Self {
+        match (prev, cur) {
+            (false, true) => ButtonState::Pressed,
+            (true, true) => ButtonState::Held,
+            (true, false) => ButtonState::Released,
+            (false, false) => ButtonState::Up,
+        }
+    }
 }
 
 pub trait Controls {
@@ -173,9 +195,26 @@ pub type Pixel = Rgb565;
 /// Framebuffer size for 240x320 RGB565
 pub const FB_SIZE: usize = (SCREEN_WIDTH as usize) * (SCREEN_HEIGHT as usize);
 
+/// Write `pixels` into a row-major 240×320 RGB565 framebuffer, dropping any
+/// off screen: both displays' `DrawTarget::draw_iter`.
+pub fn draw_into_fb(
+    fb: &mut [u16; FB_SIZE],
+    pixels: impl IntoIterator<Item = embedded_graphics_core::Pixel<Rgb565>>,
+) {
+    use embedded_graphics_core::pixelcolor::raw::{RawData, RawU16};
+    for embedded_graphics_core::Pixel(p, color) in pixels {
+        if (0..SCREEN_WIDTH as i32).contains(&p.x) && (0..SCREEN_HEIGHT as i32).contains(&p.y) {
+            fb[p.y as usize * SCREEN_WIDTH as usize + p.x as usize] =
+                RawU16::from(color).into_inner();
+        }
+    }
+}
+
 pub trait ChimeraDisplay: DrawTarget<Color = Rgb565> {
-    /// Push framebuffer to hardware
-    fn flush(&mut self);
+    /// Push the whole framebuffer to hardware.
+    fn flush(&mut self) {
+        self.flush_region(0, SCREEN_HEIGHT);
+    }
 
     /// Push a horizontal band of the framebuffer (y_start inclusive, y_end exclusive)
     fn flush_region(&mut self, y_start: u16, y_end: u16);

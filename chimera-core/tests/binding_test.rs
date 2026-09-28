@@ -230,7 +230,7 @@ fn slot_addr_resolves_fixed_bindings() {
     assert_eq!(slot_addr(&reg::ALGO_LEVEL, 3, &on(Op::A)), level(Op::D));
     assert_eq!(slot_addr(&reg::ALGO_LEVEL, 3, &on(Op::F)), level(Op::D));
     assert_eq!(slot_addr(&reg::ALGO_ALG, 5, &ctx()), None); // empty
-    assert_eq!(slot_addr(&reg::MIXER, 0, &ctx()), None); // legacy
+    assert_eq!(slot_addr(&reg::DEMO_WAVES, 0, &ctx()), None); // legacy
     assert_eq!(slot_addr(&reg::ALGO_ALG, 9, &ctx()), None); // out of range
 }
 
