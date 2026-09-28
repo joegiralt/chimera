@@ -180,7 +180,7 @@ impl AlgoParams {
 pub static ALGO_SPECS: [ParamSpec; 4] = [
     ParamSpec::choice(0, "ALG A", ValFmt::Names(&ALGO_NAMES), 31.0, 0.0),
     ParamSpec::choice(1, "ALG B", ValFmt::Names(&ALGO_NAMES), 31.0, 0.0),
-    ParamSpec::stepped(2, "MORPH", ValFmt::Uni, 0.0, 127.0, 0.0, true),
+    ParamSpec::stepped(2, "MORPH", ValFmt::Uni, 0.0, 127.0, 0.0, true).short("MRPH"),
     ParamSpec::stepped(3, "TRNSP", ValFmt::Signed(24), -24.0, 24.0, 0.0, false),
 ];
 

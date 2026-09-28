@@ -124,7 +124,6 @@ fn every_source_is_a_row_on_screen() {
     let mut ui = ui_for("mod_matrix");
     let m = &ui.matrix_state;
     assert_eq!(m.num_sources, 8);
-    assert_eq!(m.visible_rows(), m.num_sources);
     let fb = render("mod_matrix");
     for vi in 0..8 {
         let (_, y) = cell_origin(0, vi);
@@ -139,8 +138,15 @@ fn every_source_is_a_row_on_screen() {
     }
     assert!(cell_origin(0, 7).1 + CELL_H <= GRID_BOTTOM);
     feed(&mut ui, Input::turn(EncoderId::A, 7));
+    assert_eq!(ui.matrix_state.sel_row, 7);
+    let before = ui.matrix_state.clone();
     feed(&mut ui, Input::turn(EncoderId::C, 3));
-    assert_eq!((ui.matrix_state.sel_row, ui.matrix_state.scroll_y), (7, 0));
+    let after = &ui.matrix_state;
+    assert_eq!(
+        (after.sel_row, after.sel_col, after.scroll_x, after.rev),
+        (before.sel_row, before.sel_col, before.scroll_x, before.rev),
+        "C does nothing on MTX"
+    );
 }
 
 #[test]
@@ -259,6 +265,66 @@ fn sideways_scroll_starts_past_the_last_visible_column() {
     assert_eq!(m.scroll_x, 8 - vis);
     m.move_col(-(vis as i8));
     assert_eq!((m.sel_col, m.scroll_x), (2, 2));
+}
+
+/// Scrolling sideways (encoder D) drags the cursor along when its column
+/// would leave the screen, so the readout never names a hidden cell; a
+/// cursor still on screen stays put.
+#[test]
+fn scrolling_sideways_keeps_the_cursor_on_screen() {
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::block::ParamId;
+    use chimera_core::ui::mod_grid::{MatrixState, ModDest};
+    let mut m = MatrixState::new();
+    m.rebuild_sources(&["ENV"]);
+    for (i, dest) in m.dests.iter_mut().enumerate().take(8) {
+        *dest = Some(ModDest {
+            addr: ParamAddr::new(BlockRef::Filter, ParamId(i as u8 % 6)),
+            label: [0; 8],
+        });
+    }
+    m.num_dests = 8;
+    let vis = m.visible_cols();
+    m.move_col(2);
+    m.scroll_h(1);
+    assert_eq!((m.sel_col, m.scroll_x), (2, 1), "still on screen: stays");
+    m.scroll_h(10);
+    assert_eq!((m.sel_col, m.scroll_x), (3, 3), "left edge pulls it right");
+    m.move_col(4);
+    assert_eq!(m.sel_col, 7);
+    m.scroll_h(-10);
+    assert_eq!(
+        (m.sel_col, m.scroll_x),
+        (vis - 1, 0),
+        "right edge pulls it left"
+    );
+    let mut empty = MatrixState::new();
+    empty.rebuild_sources(&["ENV"]);
+    empty.scroll_h(3);
+    assert_eq!((empty.sel_col, empty.scroll_x), (0, 0), "no destinations");
+}
+
+/// Every modulatable destination's column header fits `HEADER_MAX_W`
+/// without clipping (a `short` where the label is too wide) and reads apart
+/// from the others in its block.
+#[test]
+fn every_destination_header_fits_and_is_unique_in_its_block() {
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::ui::mod_grid::{HEADER_MAX_W, fit_header};
+    for b in BlockRef::ALL {
+        let mut seen = Vec::new();
+        for spec in b.specs() {
+            if !ParamAddr::new(b, spec.id).modulatable() {
+                continue;
+            }
+            let full = spec.short.unwrap_or(spec.label);
+            let w = draw::text_width(&theme::FONT_LABEL, full, 0);
+            assert!(w <= HEADER_MAX_W, "{b:?} {full} is {w}px");
+            assert_eq!(fit_header(spec), full, "{b:?} {full}: not clipped");
+            assert!(!seen.contains(&full), "{b:?}: two {full} columns");
+            seen.push(full);
+        }
+    }
 }
 
 /// Issue #11: `adjust_amount` must not write past `num_dests`, independent
@@ -470,6 +536,13 @@ fn matrix_edits_redraw_through_the_region_keys() {
     }
     assert_eq!(ui.matrix_state.num_dests, dests + 4, "MIX+PLUS primes");
     check(&mut ui, &mut dirty, "primed");
+    let col = ui.matrix_state.sel_col;
+    feed(&mut ui, Input::turn(EncoderId::D, 1));
+    assert_eq!(
+        (ui.matrix_state.sel_col, ui.matrix_state.scroll_x),
+        (col, 1)
+    );
+    check(&mut ui, &mut dirty, "scrolled, cursor still");
     feed(&mut ui, Input::turn(EncoderId::B, 8));
     assert!(ui.matrix_state.scroll_x > 0);
     let fb = check(&mut ui, &mut dirty, "scrolled");
@@ -603,7 +676,7 @@ fn adjacent_column_headers_never_touch() {
 
     let mut labels: Vec<&str> = BlockRef::ALL
         .iter()
-        .flat_map(|&b| b.specs().iter().map(|s| fit_header(s.label)))
+        .flat_map(|&b| b.specs().iter().map(fit_header))
         .collect();
     labels.sort_unstable();
     labels.dedup();

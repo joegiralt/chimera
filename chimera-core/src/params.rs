@@ -75,7 +75,8 @@ pub static FILTER_SPECS: [ParamSpec; 5] = [
         (20000.0 - 20.0) / 128.0,
         true,
     )
-    .octaves(crate::dsp::filter::CUTOFF_OCTAVES),
+    .octaves(crate::dsp::filter::CUTOFF_OCTAVES)
+    .short("CUT"),
     ParamSpec::continuous(1, "RESO", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, true),
     ParamSpec::continuous(2, "DRIVE", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, true),
     // A choice among the one built kind.
@@ -220,7 +221,7 @@ pub static ENV_SPECS: [ParamSpec; 16] = [
     ParamSpec::choice(12, "FORM", ValFmt::Names(&["AD", "AHR", "CYCLE"]), 2.0, 0.0),
     ParamSpec::continuous(13, "RISE", ValFmt::Uni, 0.0, 1.0, 0.206, 1.0 / 128.0, true),
     ParamSpec::continuous(14, "FALL", ValFmt::Uni, 0.0, 1.0, 0.640, 1.0 / 128.0, true),
-    ParamSpec::continuous(15, "SHAPE", ValFmt::Bi, 0.0, 1.0, 0.5, 1.0 / 128.0, true),
+    ParamSpec::continuous(15, "SHAPE", ValFmt::Bi, 0.0, 1.0, 0.5, 1.0 / 128.0, true).short("SHAP"),
 ];
 
 impl Block for EnvParams {

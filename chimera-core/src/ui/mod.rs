@@ -528,7 +528,6 @@ impl UiState {
                     match i {
                         0 => self.matrix_state.move_row(delta),
                         1 => self.matrix_state.move_col(delta),
-                        2 => self.matrix_state.scroll_v(delta),
                         3 => self.matrix_state.scroll_h(delta),
                         4 => {
                             self.matrix_state.adjust_amount(delta);
@@ -853,7 +852,6 @@ impl UiState {
                 self.matrix_state.sel_row as u8,
                 self.matrix_state.sel_col as u8,
                 self.matrix_state.scroll_x as u8,
-                self.matrix_state.scroll_y as u8,
                 qvalues[renderer::MATRIX_AMOUNT_SLOT],
             )
             .keyed(self.matrix_state.rev, 0),

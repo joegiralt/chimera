@@ -364,7 +364,7 @@ fn matrix_keys_carry_rev_and_scroll() {
     };
     assert_eq!(route(3), route(3));
     assert_ne!(route(3), route(4));
-    let grid = |sx, rev| RegionData::grid(1, 0, sx, 0).keyed(rev, 0);
+    let grid = |sx, rev| RegionData::grid(1, 0, sx).keyed(rev, 0);
     assert_ne!(grid(0, 3), grid(1, 3));
     assert_ne!(grid(0, 3), grid(0, 4));
 }
