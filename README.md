@@ -27,7 +27,7 @@ Custom Rust firmware replacing stock PreenFM3 firmware. Swappable synthesis engi
 
 ## Building
 
-Requires Rust nightly + `thumbv7em-none-eabihf` target for firmware, or just stable Rust for the desktop simulator.
+Stable Rust (edition 2024) for everything; add the `thumbv7em-none-eabihf` target for the firmware and the `llvm-tools` component for `just stack-check`.
 
 ```bash
 # Desktop simulator
