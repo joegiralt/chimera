@@ -4,11 +4,22 @@
 
 use core::sync::atomic::Ordering;
 
-use chimera_core::audio_out::{Heartbeat, WATCHDOG_TIMEOUT_MS, iwdg_reload_at_div4};
+use chimera_core::audio_out::{
+    Heartbeat, LSI_MAX_HZ, LSI_NOMINAL_HZ, WATCHDOG_TIMEOUT_MS, iwdg_reload_at_div4, kick_gap_us,
+};
+use chimera_core::hw::{BLOCK_SIZE, SAMPLE_RATE};
 use stm32h7xx_hal::independent_watchdog::IndependentWatchdog;
 use stm32h7xx_hal::{pac, prelude::*};
 
 use crate::audio::dma::BLOCKS;
+use crate::controls::CONTROLS_HZ;
+
+// The timeout, shortest at the LSI's fastest, outlasts the longest healthy
+// gap between kicks at this tick rate and block size.
+const _: () = assert!(
+    (WATCHDOG_TIMEOUT_MS as u64 * 1000 * LSI_NOMINAL_HZ as u64 / LSI_MAX_HZ as u64)
+        > kick_gap_us(CONTROLS_HZ, BLOCK_SIZE as u32, SAMPLE_RATE) as u64
+);
 
 // The HAL picks the finest prescaler that fits: /4, whose 12-bit reload
 // holds the timeout.

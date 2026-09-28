@@ -5,12 +5,14 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ResetCause {
     /// IWDG1: the audio interrupt stalled, or a fault or DMA error halted
-    /// the core (ADR 0034).
+    /// the core (ADR 0034). A sustained overrun of the timeout (100 ms) or
+    /// more, audio starving the controls tick, reads the same.
     Watchdog,
     Software,
     Brownout,
     PowerOn,
-    /// The NRST pin alone: the reset button or a debug probe.
+    /// The NRST pin alone, driven from outside. A debug probe's reset
+    /// (SYSRESETREQ) reads `Software`.
     Pin,
     Unknown,
 }
