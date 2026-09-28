@@ -19,6 +19,8 @@ pub const MAX_MOD_DESTS: usize = 16;
 pub const CUTOFF: ParamAddr = ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF);
 /// CUTOFF's matrix column label, wherever the column is created.
 pub const CUTOFF_LABEL: [u8; LABEL_LEN] = *b"FLTCUTOF";
+/// The VCA: a hidden destination, the voice's output level (spec § 4).
+pub const VCA: ParamAddr = ParamAddr::new(BlockRef::Out, crate::params::OutParams::VCA);
 
 /// The matrix's source rows, in `Voice`'s order (spec § 2). Indices are
 /// stored: 0 and 1 keep their old meaning (the envelope and the LFO).
@@ -59,6 +61,17 @@ impl ModSource {
 
     pub const fn index(self) -> usize {
         self as usize
+    }
+
+    /// The ENV slot this source is, if any.
+    pub const fn env_slot(self) -> Option<crate::dsp::modulator::EnvSlot> {
+        use crate::dsp::modulator::EnvSlot;
+        match self {
+            ModSource::Env1 => Some(EnvSlot::Env1),
+            ModSource::Env2 => Some(EnvSlot::Env2),
+            ModSource::Env3 => Some(EnvSlot::Env3),
+            _ => None,
+        }
     }
 
     /// The matrix row's tag (≤ 3 characters, #15).

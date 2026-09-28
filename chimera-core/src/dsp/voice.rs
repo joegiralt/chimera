@@ -15,7 +15,7 @@ use crate::dsp::modulator::{EnvSlot, LfoSlot};
 use crate::dsp::wavefolder::Wavefolder;
 use crate::hw::{Cost, MAX_VOICES, VOICE_RAM_BUDGET};
 use crate::in_place::{by_value, uninit_at};
-use crate::modulation::{MAX_MOD_SOURCES, ModSource, ModState, note_source};
+use crate::modulation::{MAX_MOD_SOURCES, ModSource, ModState, VCA, amount_scale, note_source};
 use crate::params::{EngineType, EnvParams, ParamSnapshot};
 use crate::{MidiNote, Velocity};
 
@@ -34,8 +34,13 @@ pub struct Voice {
     lfos: [Lfo; 3],
     /// The ENV destinations' sums from the last block's matrix (spec § Signal flow 1).
     env_mods: [EnvMods; 3],
-    /// The sources' values from the last block.
+    /// The sources' values from the last block; the VCA's other routes
+    /// ramp from them.
     mod_values: [f32; MAX_MOD_SOURCES],
+    /// The routes into VCA this voice plays.
+    vca: VcaRoutes,
+    /// The last sample's VCA gain (0 without a route).
+    last_gain: f32,
     /// A note-on since the last block: its ENV destinations are recomputed
     /// with its own VEL and NOTE before the modulators run.
     retrigger: bool,
@@ -63,6 +68,32 @@ enum AfterFade {
     Restart,
     /// A note-on that came mid-fade: `last_note`.
     Note,
+}
+
+/// The routes into VCA a voice plays, kept from the last block before a
+/// fade (spec § 4; a fading voice keeps its routes).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct VcaRoutes {
+    bits: u8,
+    /// `amount / 127` per source.
+    amount: [f32; MAX_MOD_SOURCES],
+}
+
+impl VcaRoutes {
+    fn of(m: &ModState) -> Self {
+        let mut r = Self::default();
+        if let Some(d) = m.find(VCA) {
+            r.bits = m.present(d);
+            for (s, a) in r.amount.iter_mut().enumerate() {
+                *a = amount_scale(m.amount(s, d));
+            }
+        }
+        r
+    }
+
+    fn has(&self, source: usize) -> bool {
+        self.bits & (1 << source) != 0
+    }
 }
 
 // `reset` overwrites fields in place without dropping them.
@@ -135,6 +166,8 @@ impl Voice {
                 lfos: [Lfo::new(); 3],
                 env_mods: [EnvMods::NONE; 3],
                 mod_values: [0.0; MAX_MOD_SOURCES],
+                vca: VcaRoutes::default(),
+                last_gain: 0.0,
                 retrigger: false,
                 active_engine: EngineType::Algo,
                 active: false,
@@ -277,6 +310,12 @@ impl Voice {
         // the voice plays (spec § Signal flow 1).
         let src = if self.fade == 0 { params } else { &self.played };
         let key = self.held;
+        if self.fade == 0 {
+            self.vca = VcaRoutes::of(mod_state);
+        }
+        let vca = self.vca;
+        // The VCA's gain (spec § 4): 64 samples on the audio stack.
+        let mut gain = [0.0f32; BLOCK_SIZE];
         if core::mem::take(&mut self.retrigger) {
             // The last block's ENV and LFO values; the new note's VEL and NOTE.
             let mut v = self.mod_values;
@@ -292,12 +331,14 @@ impl Voice {
         }
         let mut mod_values = [0.0f32; MAX_MOD_SOURCES];
         for (s, env) in EnvSlot::ALL.iter().zip(self.envs.iter_mut()) {
-            mod_values[ModSource::of_env(*s).index()] = env.run_block(
+            let i = ModSource::of_env(*s).index();
+            let feed = vca.has(i).then_some((&mut gain, vca.amount[i]));
+            mod_values[i] = env.run_block(
                 &src.envelopes[s.index()],
                 &self.env_mods[s.index()],
                 key,
                 sample_rate,
-                None,
+                feed,
             );
         }
         for (s, lfo) in LfoSlot::ALL.iter().zip(self.lfos.iter_mut()) {
@@ -306,6 +347,19 @@ impl Voice {
         }
         mod_values[ModSource::Vel.index()] = self.last_velocity.unit();
         mod_values[ModSource::Note.index()] = note_source(self.last_note);
+        // The other VCA sources ramp from their last block's value.
+        for (s, &cur) in mod_values.iter().enumerate() {
+            if vca.has(s) && ModSource::ALL[s].env_slot().is_none() {
+                let a = vca.amount[s];
+                let (from, step) = (
+                    a * self.mod_values[s],
+                    a * (cur - self.mod_values[s]) / BLOCK_SIZE as f32,
+                );
+                for (n, g) in gain.iter_mut().enumerate() {
+                    *g += from + step * n as f32;
+                }
+            }
+        }
 
         // A fading voice keeps the settings it last played.
         if self.fade == 0 {
@@ -318,6 +372,9 @@ impl Voice {
             let mut next = [EnvMods::NONE; 3];
             for d in 0..mod_state.num_dests() {
                 let a = mod_state.dest(d);
+                if a == VCA {
+                    continue; // per sample, above
+                }
                 if let BlockRef::Env(s) = a.block {
                     // ENV destinations reach their slot next block.
                     env_mod(&mut next[s.index()], mod_state, d, &mod_values);
@@ -351,10 +408,29 @@ impl Voice {
         // 4. Wavefolder
         self.folder.process(output, &m.folder);
 
-        // 5. Volume. No engine puts an envelope on the VCA yet.
+        // 5. The VCA, after the fold.
         let volume = m.out.volume;
-        for sample in output.iter_mut() {
-            *sample *= volume;
+        if vca.bits == 0 {
+            // No route: the engine decides (spec § 4). No wildcard, so a new
+            // engine can't inherit the pass-through (VA gates: #148).
+            match self.active_engine {
+                EngineType::Algo | EngineType::Modal => {
+                    // Its own envelopes shape the sound: today's expression, bit for bit.
+                    for sample in output.iter_mut() {
+                        *sample *= volume;
+                    }
+                }
+            }
+        } else {
+            let vel = 1.0 - m.out.vca_vel + m.out.vca_vel * self.last_velocity.unit();
+            let k = volume * vel;
+            #[allow(clippy::manual_clamp)] // max/min, not clamp: NaN clamps too
+            for (sample, g) in output.iter_mut().zip(&gain) {
+                *sample *= k * g.max(0.0).min(1.0);
+            }
+            #[allow(clippy::manual_clamp)]
+            let last = gain[BLOCK_SIZE - 1].max(0.0).min(1.0) * vel;
+            self.last_gain = last;
         }
 
         // Check if done

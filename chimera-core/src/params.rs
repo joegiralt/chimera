@@ -379,6 +379,10 @@ impl EngineType {
 pub struct OutParams {
     pub volume: f32,
     pub pan: f32,
+    /// The VCA destination's stored 0 (spec § 4): its value is the sum of its routes.
+    pub vca: f32,
+    /// AMP's VEL: the VCA's velocity sensitivity, 0..1.
+    pub vca_vel: f32,
 }
 
 impl Default for OutParams {
@@ -386,6 +390,8 @@ impl Default for OutParams {
         Self {
             volume: 0.8,
             pan: 0.0,
+            vca: 0.0,
+            vca_vel: 1.0,
         }
     }
 }
@@ -393,13 +399,17 @@ impl Default for OutParams {
 impl OutParams {
     pub const VOLUME: ParamId = ParamId(0);
     pub const PAN: ParamId = ParamId(1);
+    pub const VCA: ParamId = ParamId(2);
+    pub const VCA_VEL: ParamId = ParamId(3);
 }
 
-/// Volume is read by `Voice`'s VCA every block (newly modulatable); pan is
-/// not used by `Voice`.
-pub static OUT_SPECS: [ParamSpec; 2] = [
+/// Volume and VEL are read by `Voice`'s VCA every block, VCA is a hidden
+/// destination; pan is not used by `Voice`.
+pub static OUT_SPECS: [ParamSpec; 4] = [
     ParamSpec::continuous(0, "LEVEL", ValFmt::Uni, 0.0, 1.0, 0.8, 1.0 / 128.0, true),
     ParamSpec::continuous(1, "PAN", ValFmt::Pan, -1.0, 1.0, 0.0, 2.0 / 128.0, false),
+    ParamSpec::continuous(2, "VCA", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, true),
+    ParamSpec::continuous(3, "VEL", ValFmt::Uni, 0.0, 1.0, 1.0, 1.0 / 128.0, false),
 ];
 
 impl Block for OutParams {
@@ -411,6 +421,8 @@ impl Block for OutParams {
         match id {
             Self::VOLUME => self.volume,
             Self::PAN => self.pan,
+            Self::VCA => self.vca,
+            Self::VCA_VEL => self.vca_vel,
             _ => 0.0,
         }
     }
@@ -419,6 +431,8 @@ impl Block for OutParams {
         match id {
             Self::VOLUME => self.volume = v,
             Self::PAN => self.pan = v,
+            Self::VCA => self.vca = v,
+            Self::VCA_VEL => self.vca_vel = v,
             _ => {}
         }
     }

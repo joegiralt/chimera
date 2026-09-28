@@ -98,6 +98,7 @@ fn modulatable_addresses_are_exactly_the_spec_list() {
         ParamAddr::new(BlockRef::Folder, FolderParams::SYMMETRY),
         ParamAddr::new(BlockRef::Folder, FolderParams::MIX),
         ParamAddr::new(BlockRef::Out, OutParams::VOLUME),
+        ParamAddr::new(BlockRef::Out, OutParams::VCA),
     ];
     want.push(ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH));
     for op in Op::ALL {
