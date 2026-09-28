@@ -14,7 +14,9 @@ mod panic;
 mod priority;
 mod probe;
 mod shared;
+mod watchdog;
 
+use chimera_core::audio_out::Heartbeat;
 use chimera_core::clock_plan::pll3_for;
 use chimera_core::hw::SampleBudget;
 use chimera_core::ui::perf::PerfTracker;
@@ -56,7 +58,9 @@ fn fp_flush_to_zero(fpu: &mut cortex_m::peripheral::FPU) {
 
 #[exception]
 fn SysTick() {
+    static mut HEARTBEAT: Heartbeat = Heartbeat::new();
     controls::isr_tick();
+    watchdog::kick_if_audio_alive(HEARTBEAT);
 }
 
 #[entry]
@@ -164,6 +168,7 @@ fn main() -> ! {
     audio::dma::init(&mut cp.NVIC);
     audio::dma::start();
     audio::sai::start();
+    watchdog::start(dp.IWDG, &dp.DBGMCU);
 
     #[cfg(feature = "midi-din")]
     midi_din::init(&mut cp.NVIC, ccdr.clocks.pclk2().raw());

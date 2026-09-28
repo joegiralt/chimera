@@ -26,6 +26,8 @@ static mut RINGS: MaybeUninit<Rings> = MaybeUninit::uninit();
 
 pub static OVERRUNS: AtomicU32 = AtomicU32::new(0);
 pub static DESYNCS: AtomicU32 = AtomicU32::new(0);
+/// Halves rendered, wrapping: the watchdog's audio heartbeat.
+pub static BLOCKS: AtomicU32 = AtomicU32::new(0);
 // Streams 1 and 2 may trail stream 0 by the SAI FIFO (8 words) plus the DMA's.
 const DESYNC_TOLERANCE: u16 = 16;
 
@@ -195,6 +197,7 @@ fn DMA1_STR0() {
     let plan = plan_halves(half_done, full_done);
     for half in plan.halves.into_iter().flatten() {
         crate::probe::measure(|| super::render_half(half));
+        BLOCKS.fetch_add(1, Ordering::Relaxed);
     }
     let after = dma1.lisr.read();
     let late = after.htif0().is_half() || after.tcif0().is_complete();
