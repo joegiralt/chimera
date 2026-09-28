@@ -123,8 +123,10 @@ impl Renderer {
                 let p = &f.parts[f.active_part].sound.params.envelopes[s.index()];
                 match f.ctx.envs[s.index()] {
                     EnvKind::A(_) => {
+                        // H is a stage under AHDSR only; its floor, as A, D
+                        // and R have, keeps it drawn at 0.
                         let hold = if p.hold_pos == HoldPos::Ahdsr {
-                            at(E::HOLD).unwrap_or(0.0)
+                            at(E::HOLD).unwrap_or(0.0).max(0.02)
                         } else {
                             0.0
                         };

@@ -231,3 +231,30 @@ fn the_phaser_draws_flat() {
         assert_eq!(viz::response_y(t, 0.3, 1.0, r), FILTER_PASS_Y, "{t}");
     }
 }
+
+/// Width of the lit segment on the plot: HOLD focused lights H.
+fn lit_h_width(hold: i8) -> i32 {
+    let mut ui = chimera_core::ui::UiState::new();
+    to_mod_sub(&mut ui, 1, &chimera_core::ui::block_registry::ENVELOPE);
+    feed(&mut ui, Input::turn(EncoderId::E, hold + 1));
+    feed(&mut ui, Input::turn(EncoderId::E, -1)); // HOLD focused, at `hold`
+    settle(&mut ui);
+    let mut fb = Fb::new();
+    ui.render_with_scope(&mut fb, &PerfStats::zero(), &scope_fixture());
+    let xs: Vec<i32> = (PLOT_TOP - 4..PLOT_BASE - 8)
+        .flat_map(|y| (0..240).map(move |x| (x, y)))
+        .filter(|&(x, y)| fb.at(x, y) == theme::ACCENT)
+        .map(|(x, _)| x)
+        .collect();
+    xs.iter().max().unwrap() - xs.iter().min().unwrap() + 1
+}
+
+/// ENV A draws H between A and D: a segment even at 0 (as A, D and R
+/// are), widening as HOLD turns up.
+#[test]
+fn hold_is_a_segment_of_env_a() {
+    let dot = 5;
+    let (h0, h20, h60) = (lit_h_width(0), lit_h_width(20), lit_h_width(60));
+    assert!(h0 > dot, "H at 0 is a segment: {h0}");
+    assert!(h0 < h20 && h20 < h60, "{h0} {h20} {h60}");
+}
