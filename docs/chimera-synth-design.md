@@ -69,7 +69,7 @@ Note: D2 SRAM cacheability/bufferability is configured by MPU, not fixed by addr
 ### Firmware Loading
 - Stock bootloader reads firmware from SD card or USB DFU
 - Normal update: copy .bin to SD card, hold Menu on boot, select, flash
-- Recovery: bridge Boot0 to Vcc, USB DFU via `dfu-util -a0 -d 0x0483:0xdf11 -D chimera.bin -s 0x8020000`
+- Recovery: bridge Boot0 to Vcc, USB DFU via `dfu-util -a0 -d 0x0483:0xdf11 -D target/chimera.bin -s 0x8020000`
 - Revert to stock: flash original PreenFM3 .bin via same process
 
 ---
