@@ -281,7 +281,8 @@ fn an_absent_route_knob_shows_a_dash() {
     );
 }
 
-/// On a CellGrid page (FLT › MODE's LFO knob) the focus band reads `--`.
+/// On a CellGrid page (FLT › MODE's LFO knob) the focus band reads `--`
+/// as the cell does: in INK2, with no arc.
 #[test]
 fn an_absent_route_knob_reads_dashes_in_the_focus_band() {
     use chimera_core::ui::components;
@@ -317,6 +318,16 @@ fn an_absent_route_knob_reads_dashes_in_the_focus_band() {
         (0, 240),
         (theme::HEADER_BOTTOM, theme::FOCUS_BOTTOM)
     ));
+    let band: Vec<_> = (theme::HEADER_BOTTOM..theme::FOCUS_BOTTOM)
+        .flat_map(|y| (0..240).map(move |x| (x, y)))
+        .map(|(x, y)| fb.at(x, y))
+        .collect();
+    assert!(band.contains(&theme::INK2), "the dash is INK2");
+    let live = [theme::INK, theme::ACCENT];
+    assert!(
+        !band.iter().any(|c| live.contains(c)),
+        "no INK value, no arc"
+    );
 }
 
 /// The Cells key carries the real looks: FLT's KIND (slot 0) dimmed, ENV

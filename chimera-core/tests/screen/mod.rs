@@ -13,6 +13,7 @@ use chimera_core::preset::{POOL_SIZE, Sound};
 use chimera_core::reset::ResetCause;
 use chimera_core::scope::SCOPE_LEN;
 use chimera_core::ui::UiState;
+use chimera_core::ui::block_registry as reg;
 use chimera_core::ui::perf::PerfStats;
 use chimera_hal::{ButtonId, ButtonState, ChimeraDisplay, Controls, EncoderId};
 use embedded_graphics::pixelcolor::Rgb565;
@@ -233,11 +234,27 @@ fn to_matrix(ui: &mut UiState) {
     );
 }
 
+/// From Part 1's home to the MOD node, then EDIT ×`n` down its sub-list
+/// to `def`.
+pub fn to_mod_sub(ui: &mut UiState, n: usize, def: &chimera_core::ui::block_def::BlockDef) {
+    plus(ui, 5);
+    for _ in 0..n {
+        feed(ui, Input::press(ButtonId::Edit));
+    }
+    assert_eq!(
+        ui.page(),
+        chimera_core::ui::page::PageKey::Part {
+            def: def.id,
+            op: chimera_core::addr::Op::A
+        },
+        "{}",
+        def.name
+    );
+}
+
 /// From Part 1's home to E3: type B, ENV · AD by default.
 fn to_e3(ui: &mut UiState) {
-    plus(ui, 5);
-    feed(ui, Input::press(ButtonId::Edit));
-    feed(ui, Input::press(ButtonId::Edit));
+    to_mod_sub(ui, 2, &reg::ENV_3);
 }
 
 /// Prime the focused slot for modulation (MIX + PLUS).
@@ -326,24 +343,15 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::E, 2));
     }),
     ("spd", |ui| {
-        plus(ui, 5);
-        for _ in 0..3 {
-            feed(ui, Input::press(ButtonId::Edit)); // SPD
-        }
+        to_mod_sub(ui, 3, &reg::ENV_SPEED);
         feed(ui, Input::turn(EncoderId::C, -1)); // E2 SPEED → FAST
     }),
     ("lfo_classic", |ui| {
-        plus(ui, 5);
-        for _ in 0..4 {
-            feed(ui, Input::press(ButtonId::Edit)); // L1
-        }
+        to_mod_sub(ui, 4, &reg::LFO);
         feed(ui, Input::turn(EncoderId::A, 5)); // RATE
     }),
     ("lfo_func", |ui| {
-        plus(ui, 5);
-        for _ in 0..4 {
-            feed(ui, Input::press(ButtonId::Edit));
-        }
+        to_mod_sub(ui, 4, &reg::LFO);
         feed(ui, Input::turn(EncoderId::F, 1)); // TYPE → FUNC
     }),
     ("amp_vel_dimmed", |ui| {
