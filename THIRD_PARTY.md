@@ -7,4 +7,4 @@
   - **Source:** https://github.com/Ixox/preenfm3
   - **Distribution:** it isn't part of Chimera's MIT-licensed code, and it's distributed under the GPLv3 terms, together with that source link.
   - **Status:** kept for now by the owner's choice (#94).
-- `chimera-core/src/dsp/modal.rs`: see ADR 0032 for the Rings and stmlib (MIT) notice.
+- `chimera-core/src/dsp/modal/` (`mod.rs`, `rings.rs`): see ADR 0032 for the Rings and stmlib (MIT) notice.
