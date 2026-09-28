@@ -26,12 +26,7 @@ check:
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --features bench
     cargo build -p chimera-bootloader --target thumbv7em-none-eabihf
-    cargo clippy -p chimera-core -p chimera-hal -p chimera-desktop -p chimera-waves --all-targets -- -D warnings
-    cargo clippy -p chimera-desktop --no-default-features --all-targets -- -D warnings
-    cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf -- -D warnings
-    cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features -- -D warnings
-    cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --features bench -- -D warnings
-    cargo clippy -p chimera-bootloader --target thumbv7em-none-eabihf -- -D warnings
+    just clippy
     cargo fmt --all -- --check
     just stack-check
 
@@ -63,10 +58,14 @@ stack-check:
 test:
     cargo test -p chimera-core -p chimera-hal -p chimera-waves
 
-# Clippy (including test targets)
+# Clippy on every target and feature set `check` builds, test targets included
 clippy:
     cargo clippy -p chimera-core -p chimera-hal -p chimera-desktop -p chimera-waves --all-targets -- -D warnings
+    cargo clippy -p chimera-desktop --no-default-features --all-targets -- -D warnings
     cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf -- -D warnings
+    cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features -- -D warnings
+    cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --features bench -- -D warnings
+    cargo clippy -p chimera-bootloader --target thumbv7em-none-eabihf -- -D warnings
 
 # Render every screen-golden case with the real renderer and write
 # docs/screens/<case>.png at 2x (nearest neighbour). Needs ImageMagick (`magick`).
