@@ -3,7 +3,7 @@ use core::ptr::addr_of_mut;
 
 use chimera_hal::BLOCK_SIZE;
 
-use crate::addr::{BlockRef, Blocks};
+use crate::addr::{BlockRef, Blocks, ParamAddr};
 use crate::block::apply_offset;
 use crate::dsp::algo::engine::AlgoLive;
 use crate::dsp::drive::Drive;
@@ -18,7 +18,7 @@ use crate::in_place::{by_value, uninit_at};
 use crate::modulation::{
     MAX_MOD_SOURCES, ModRouting, ModSource, ModState, VCA, amount_scale, note_source,
 };
-use crate::params::{EngineType, EnvParams, ParamSnapshot};
+use crate::params::{DriveParams, EngineType, EnvParams, FolderParams, ParamSnapshot};
 use crate::{MidiNote, Velocity};
 
 // ADR 0013: the voice pool fits D2 SRAM beside the DMA buffers, on both targets.
@@ -125,9 +125,34 @@ impl Voice {
     /// A `kill` ramps to silence over this many samples (ADR 0027).
     pub const FADE: u16 = 2 * BLOCK_SIZE as u16;
 
+    /// Provisional, until the bench's FOLD row: the wavefolder, which runs
+    /// once FOLD is 0.001 or more. The emulator puts it at 42 (FOLD less
+    /// 1 OP, 1.36 cycles/instruction and 38 per I-miss).
+    pub const FOLD_COST: Cost = Cost(50);
+    /// Provisional, until the bench's DRIVE row: the drive stage, which runs
+    /// once DRIVE is 0.001 or more. The emulator puts it at 40.
+    pub const DRIVE_COST: Cost = Cost(50);
+
     /// Cycles/sample of a voice playing `p` under `mods`.
     pub fn cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
-        Engines::cost(p, mods) + Self::CHAIN_COST + ModRouting::cost(p, mods)
+        Engines::cost(p, mods)
+            + Self::CHAIN_COST
+            + ModRouting::cost(p, mods)
+            + Self::stage_cost(p, mods)
+    }
+
+    /// The folder and the drive stage, each once its stored amount runs it
+    /// or a route of nonzero amount may.
+    fn stage_cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
+        let runs = |stored: f32, block, param| {
+            stored >= 0.001 || mods.moves_addr(ParamAddr::new(block, param))
+        };
+        let fold = runs(p.folder.fold, BlockRef::Folder, FolderParams::FOLD);
+        let drive = runs(p.drive.drive, BlockRef::Drive, DriveParams::DRIVE);
+        [(fold, Self::FOLD_COST), (drive, Self::DRIVE_COST)]
+            .into_iter()
+            .filter(|&(on, _)| on)
+            .fold(Cost::ZERO, |a, (_, c)| a + c)
     }
 
     /// The sample rate is stored once (spec §3), not passed per call.

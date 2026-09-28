@@ -126,7 +126,7 @@ fn worst_comp(s: &mut AudioShared) {
     (c.thresh, c.ratio, c.attack, c.release, c.makeup, c.mix) = (0.0, 7, 0.0, 0.0, 0.5, 1.0);
 }
 
-const ROUTING_ROWS: usize = 15;
+const ROUTING_ROWS: usize = 20;
 /// Rows per ROUTING screen: ten from y 46 at `ROW_H` 25 end at 283.
 const ROUTING_PAGE: usize = 10;
 
@@ -192,7 +192,34 @@ const ROUTING: [RoutingRow; ROUTING_ROWS] = [
         |p| slide(p, Some((Func::Env(EnvForm::Ad), 0.8))),
         STILL,
     ),
+    ("FOLD", |p| one_op(p).folder.fold = 1.0, STILL),
+    ("DRIVE", |p| one_op(p).drive.drive = 1.0, STILL),
+    ("1 DEST", |p| one_dest(p, LfoType::Classic), STILL),
+    ("FUNC LFO", |p| one_dest(p, LfoType::Func), STILL),
+    ("A LEVEL", a_level, STILL),
 ];
+
+/// 1 OP, no routes.
+fn one_op(p: &mut PartAudio) -> &mut ParamSnapshot {
+    p.params = algo(AlgoId::A1, 0b1, 0);
+    &mut p.params
+}
+
+/// 1 OP with LFO 1, of type `t`, into MORPH at 127: one destination's
+/// per-block offset.
+fn one_dest(p: &mut PartAudio, t: LfoType) {
+    one_op(p).lfos[0].lfo_type = t;
+    let morph = ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH);
+    p.mod_state = matrix(&[(ModSource::Lfo1, morph, 127)]);
+}
+
+/// A VCA with LFO 1 (1 Hz sine, so moving) into ENV 2's LEVEL: the peak
+/// ramps across every block.
+fn a_level(p: &mut PartAudio) {
+    one_op(p);
+    let level = ParamAddr::new(BlockRef::Env(EnvSlot::Env2), EnvParams::LEVEL);
+    p.mod_state = matrix(&[(ModSource::Env2, VCA, 127), (ModSource::Lfo1, level, 127)]);
+}
 
 /// `routes` as the Part's matrix, each destination primed.
 fn matrix(routes: &[(ModSource, ParamAddr, i8)]) -> ModState {
@@ -261,9 +288,11 @@ fn slide(p: &mut PartAudio, b: Option<(Func, f32)>) {
 }
 
 /// Spec § Tests "Bench": 1 OP; ENV 2 type B, ENV mode, SHAPE off centre →
-/// VCA; ENV 1 → CUTOFF; every source routed; all three LFOs FUNC.
+/// VCA; ENV 1 → CUTOFF; every source routed; all three LFOs FUNC. FOLD is
+/// stored at 1, so the folder runs whatever LFO 3 does.
 fn mods(p: &mut PartAudio) {
     b_on_vca(p, Func::Env(EnvForm::Ad), 0.8);
+    p.params.folder.fold = 1.0;
     for l in p.params.lfos.iter_mut() {
         l.lfo_type = LfoType::Func;
     }

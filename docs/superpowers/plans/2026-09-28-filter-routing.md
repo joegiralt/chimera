@@ -8736,10 +8736,10 @@ Each one is settled in this plan as noted:
 | ENV_A | A VCA − 1 OP − CLAMP = 530 − 481 − 22 | 27 |
 | ENV_B | max(B VCA, B LFO, B GLIDE) − 1 OP − CLAMP = 601 − 503 | 98 |
 | CURVE | B CURVE − B VCA = 0 | 1 |
-| BURST | max(BURST AD, BURST CYC) − 1 OP − CLAMP − ENV_B = 671 − 503 − 98 | 70 |
+| BURST | max(BURST AD, BURST CYC) − 1 OP − CLAMP − steady B = 671 − 503 − 89 (steady B = max(B VCA, B LFO) − 503; review fix 1) | 79 |
 | SLIDE | max(A SLIDE − A VCA, B SLIDE − B CURVE) = max(31, 24) | 31 |
 | BASE | 1 OP − 436 (1 OP before the pool, 2026-09-27) | 45 |
-| DEST | the MODS gap (below), over its six routed destinations: 38 / 6 | 7 |
+| DEST | each destination after the first: the MODS gap (below) over its six destinations, 38 / 6, an upper bound | 7 |
 
 **B GLIDE sets ENV_B (controller's ruling).** B GLIDE is LFO FREE with a FORM change's glide always running. The row is an upper bound: one block in four runs LFV, and two blocks in four rebuild the coefficients. Glide may get its own transient term later.
 
@@ -8751,8 +8751,8 @@ The controller ruled that the 38 over is not raised into BASE, which every voice
 
 - **Where the gap comes from.** The instruction profile (unicorn, MODS against the same patch with only ENV 2 → VCA) puts the extra work in the per-block offsets of the routed destinations: `Voice::render`'s sums, `ParamSpec::offset` and `AlgoLive::offset`, about 18 instructions/sample. It adds about 2 more for the three FUNC LFOs, and some I-cache misses.
 - **Not the wavefolder, not the filter.** In this run LFO 3's FUNC triangle starts at −1, so FOLD stays at 0 and the wavefolder never runs. The filter's `g` ramp costs no more than its steady path.
-- **The term.** So the gap is billed as `ModRouting::DEST`: 7 per destination with a route of nonzero amount, other than the VCA and the ENV slots' own (which SLIDE covers). It is keyed on the condition that makes the offset run, and the FUNC LFOs' share is folded in.
-- **The check.** MODS is billed 606 + 6 × 7 = 648 ≥ 644 (`the_model_bills_the_mods_row_high`).
+- **The term (superseded by review fix 1, below).** At first the whole gap was billed as `DEST`, 7 per routed destination.
+- **The check.** MODS (as read, FOLD stored at 0) is now billed 731 ≥ 644 (`the_model_bills_the_mods_row_high`).
 
 **Every ROUTING row and both BENCH rows are billed at or above their reading** (`the_model_bills_every_routing_row_high`).
 
@@ -8770,3 +8770,64 @@ The controller ruled that the 38 over is not raised into BASE, which every voice
 **KERNEL 463 (350).**
 - The "(350)" is the algo-engine spec's original target, fixed in the label, not a reading.
 - Past readings were 493, 469 and 478. The kernel bench runs `Kernel::render` alone, so the modulator pool can't move it.
+
+### Review fix 1: holes in the bill (2026-09-28)
+
+**What the review found.** Four holes, each of which could let the model undercount:
+- `Voice::cost` billed neither the folder nor the drive stage;
+- DEST was fit from one point, with no intercept;
+- routes into LEVEL were not billed;
+- BURST had lost its glide margin.
+
+**What changed.**
+- `ModRouting::BURST` is 79, derived against the steady B (89), not ENV_B (98).
+- `Voice::FOLD_COST` and `Voice::DRIVE_COST` bill each stage once its stored amount is 0.001 or more, or once a route of nonzero amount targets it.
+- `ModRouting::DEST_FIRST` bills the first destination with a route of nonzero amount, then `DEST` bills each further one. The VCA is left out; ENV slots' own destinations count, since their sums run every block.
+- `ModRouting::FUNC` bills each LFO slot of type FUNC, routed or not. Every slot runs every block, and the profile saw FUNC cost with no route.
+- `ModRouting::LEVEL` bills an ENV slot that feeds the VCA and has a moving route into its LEVEL.
+- The bench's MODS row now stores FOLD at 1, so the folder runs. The old MODS row never ran it: LFO 3's FUNC triangle starts at −1, so FOLD stayed at 0.
+
+**New bench rows (ROUTING 2/2), all 1 OP:**
+- FOLD: FOLD stored at 1.
+- DRIVE: DRIVE stored at 1.
+- 1 DEST: LFO 1 → MORPH at 127.
+- FUNC LFO: 1 DEST with LFO 1 FUNC.
+- A LEVEL: A VCA plus LFO 1 → ENV 2 LEVEL at 127.
+
+**Derivations once read:**
+- FOLD = FOLD − 1 OP.
+- DRIVE = DRIVE − 1 OP.
+- DEST_FIRST = 1 DEST − 1 OP.
+- FUNC = FUNC LFO − 1 DEST.
+- LEVEL = A LEVEL − A VCA − DEST_FIRST.
+- DEST = (MODS − 1 OP − CLAMP − ENV_B − CURVE − FOLD − DEST_FIRST − 3·FUNC) / 5.
+
+**Provisional until then.** Emulator estimate: 1.36 cycles/instruction plus 38 cycles per FW-layout I-miss. This model reads 1 OP as 479 (bench 481) and A VCA as 524 (bench 530).
+
+| Term | Emulator | Billed |
+|---|---|---|
+| FOLD | 42 | 50 |
+| DRIVE | 40 | 50 |
+| DEST_FIRST | 3 | 10 |
+| DEST | (38 − 3 − 3·7) / 5 ≈ 3 | 7, kept |
+| FUNC | 7 | 10 |
+| LEVEL | 14 | 20 |
+
+**Voice counts.**
+
+| Case | Cost | Rev V | Rev Y |
+|---|---|---|---|
+| Costliest patch (A16 ∪ A17) | 887 | 6 | 5 |
+| with FOLD | 937 | 6 | 4 |
+| with FOLD and DRIVE | 987 | 5 | — |
+
+The costliest-patch voice counts assume no FOLD or DRIVE. No factory Sound stores FOLD, and only SQR BASS stores DRIVE (0.3).
+
+| Factory Sound (billed as they play) | Cost | Rev V | Rev Y |
+|---|---|---|---|
+| TX BASS, TX EPIANO, TX BELL | 681–682 | 6 | 6 |
+| TX BRASS | 690 | 6 | 6 |
+| SAW LEAD | 553 | 6 | 6 |
+| SQR BASS | 543, DRIVE in | 6 | 6 |
+| MORPH PAD | 835 | 6 | 5 |
+| MORPH KEYS | 842 | 6 | 5 |
