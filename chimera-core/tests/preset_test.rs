@@ -393,7 +393,7 @@ fn priming_on_main_page_registers_focused_param() {
     );
 }
 
-/// LFO sub-page (node 5, sub-page 2): slot 0 is LFO rate, which is not
+/// LFO sub-page (node 5, sub-page 3): slot 0 is LFO rate, which is not
 /// modulatable, so the registry refuses it.
 #[test]
 fn priming_on_the_lfo_sub_page_registers_nothing() {

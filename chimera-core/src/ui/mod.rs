@@ -608,9 +608,7 @@ impl UiState {
                     });
                     continue;
                 }
-                if matches!(v, View::Text { .. })
-                    || view::is_dimmed(&v, &self.performance.parts[at].sound)
-                {
+                if view::is_dimmed(&v, &self.performance.parts[at].sound) {
                     continue; // dimmed: the encoder is ignored
                 }
                 let params = &mut UiBlocks {

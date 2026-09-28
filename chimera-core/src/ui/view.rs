@@ -171,7 +171,12 @@ pub fn dimmed(addr: ParamAddr, sound: &Sound) -> bool {
     }
 }
 
-/// The view is drawn dimmed and inert.
+/// The view is drawn dimmed and inert: a fixed readout, or a param
+/// `dimmed` rules inapplicable.
 pub fn is_dimmed(v: &View, sound: &Sound) -> bool {
-    matches!(*v, View::Param { addr, .. } if dimmed(addr, sound))
+    match *v {
+        View::Text { .. } => true,
+        View::Param { addr, .. } => dimmed(addr, sound),
+        _ => false,
+    }
 }

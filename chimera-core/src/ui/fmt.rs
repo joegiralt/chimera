@@ -121,10 +121,11 @@ fn fmt_law(buf: &mut FmtBuf, v: f32, law: crate::dsp::modulator::law::Law) {
         Law::Curve => bend(buf, "LOG", "LIN", "EXP"),
         Law::Tilt => bend(buf, "SAW", "TRI", "RAMP"),
         Law::BRate | Law::BurstRate => {
+            // Each unit is picked from the value as it would print.
             let hz = law.range().map_or(0.0, |r| r.at(v));
-            if hz < 10.0 {
+            if round(hz * 100.0) < 1000 {
                 fixed(buf, hz, 2, "Hz");
-            } else if hz < 100.0 {
+            } else if round(hz * 10.0) < 1000 {
                 fixed(buf, hz, 1, "Hz");
             } else {
                 let _ = write!(buf, "{} Hz", round(hz));
@@ -132,12 +133,13 @@ fn fmt_law(buf: &mut FmtBuf, v: f32, law: crate::dsp::modulator::law::Law) {
         }
         _ => {
             let s = law.range().map_or(0.0, |r| r.at(v));
-            if s >= 1.0 {
-                fixed(buf, s, 1, "s");
-            } else if s >= 0.01 {
-                let _ = write!(buf, "{} ms", round(s * 1000.0));
+            let ms = s * 1000.0;
+            if round(ms * 10.0) < 100 {
+                fixed(buf, ms, 1, "ms");
+            } else if round(ms) < 1000 {
+                let _ = write!(buf, "{} ms", round(ms));
             } else {
-                fixed(buf, s * 1000.0, 1, "ms");
+                fixed(buf, s, 1, "s");
             }
         }
     }

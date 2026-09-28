@@ -177,6 +177,13 @@ fn priming_a_non_modulatable_param_is_refused() {
     for _ in 0..3 {
         press(&mut ui, ButtonId::Edit); // E2, E3, LFO
     }
+    assert_eq!(
+        ui.page(),
+        chimera_core::ui::page::PageKey::Part {
+            def: chimera_core::ui::block_registry::LFO.id,
+            op: chimera_core::addr::Op::A
+        }
+    );
     prime_slot_0(&mut ui);
     assert_eq!(primed(&ui), [CUTOFF]);
 }

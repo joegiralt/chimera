@@ -56,6 +56,13 @@ fn mixer_part_and_matrix_pages_use_the_same_mechanism() {
     for _ in 0..4 {
         feed(&mut ui, Input::press(ButtonId::Edit)); // E1 → MTX
     }
+    assert_eq!(
+        ui.page(),
+        chimera_core::ui::page::PageKey::Part {
+            def: reg::MOD_MATRIX.id,
+            op: chimera_core::addr::Op::A
+        }
+    );
     feed(&mut ui, Input::turn(EncoderId::E, 5)); // amount
     assert_eq!(ui.focused_slot(), 4);
 }

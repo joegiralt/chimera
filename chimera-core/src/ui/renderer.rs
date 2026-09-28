@@ -492,7 +492,6 @@ pub fn look(f: &Frame, i: usize) -> components::Look {
         {
             components::Look::Absent
         }
-        View::Text { .. } => components::Look::Dimmed,
         v if view::is_dimmed(&v, sound) => components::Look::Dimmed,
         _ => components::Look::Live,
     }
