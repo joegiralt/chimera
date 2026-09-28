@@ -756,6 +756,9 @@ impl UiState {
                 },
                 f.focus as u8,
                 self.matrix_state.num_dests as u16,
+                core::array::from_fn(|i| {
+                    Renderer::cell_mod_info(f.def, i, f.sel_op, f.matrix).map(f32::to_bits)
+                }),
             ),
             RegionKind::Nav => RegionData::nav(
                 chain,
