@@ -143,7 +143,7 @@ pub fn isr_tick() {
     }
 
     // Encoders: quadrature decode with debounce
-    for i in 0..6 {
+    for i in 0..NUM_ENCODERS {
         // SAFETY: only accessed from this ISR (single-threaded)
         unsafe {
             if ENC_DEBOUNCE[i] > 0 {
@@ -242,8 +242,7 @@ impl Stm32Controls {
 
 impl Controls for Stm32Controls {
     fn encoder_delta(&self, id: EncoderId) -> i8 {
-        let i = id as usize;
-        if i < NUM_ENCODERS { self.enc[i] } else { 0 }
+        self.enc[id as usize]
     }
 
     fn button_state(&self, id: ButtonId) -> ButtonState {
