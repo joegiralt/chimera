@@ -38,16 +38,11 @@ where
     }
     for (i, block) in chain.blocks.iter().enumerate() {
         let x = node_x(i, n);
+        let label = block.map.unwrap_or(block.def.short);
         if i == nav.node {
-            pill_node(d, x, theme::MAP_LINE_Y, block.def.short, theme::ACCENT);
+            pill_node(d, x, theme::MAP_LINE_Y, label, theme::ACCENT);
         } else {
-            ring_node(
-                d,
-                x,
-                theme::MAP_LINE_Y,
-                block.def.short,
-                theme::NODE_LABEL_Y,
-            );
+            ring_node(d, x, theme::MAP_LINE_Y, label, theme::NODE_LABEL_Y);
         }
     }
     draw_branches(d, nav, node_x(nav.node, n), branch_scroll_px);

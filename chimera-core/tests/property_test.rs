@@ -85,7 +85,8 @@ fn random_params(rng: &mut Rng) -> ParamSnapshot {
     p.filter.cutoff = 20.0 + rng.f32() * 19980.0;
     p.filter.resonance = rng.f32();
     p.filter.drive = rng.f32();
-    p.filter.mode = rng.u8(7);
+    p.filter
+        .set_mode(chimera_core::dsp::filter::FilterMode::ALL[rng.u8(7) as usize]);
 
     // Drive
     p.drive.drive = rng.f32();
@@ -422,7 +423,6 @@ fn prop_filter_cutoff_full_sweep() {
         "Filter cutoff",
         |p| {
             *p = tri();
-            p.filter.mode = 2;
         },
         |p, v| {
             p.filter.cutoff = 20.0 + v * 19980.0;
@@ -438,7 +438,8 @@ fn prop_filter_resonance_full_sweep() {
         |p| {
             *p = tri();
             p.filter.cutoff = 1000.0;
-            p.filter.mode = 1;
+            p.filter
+                .set_mode(chimera_core::dsp::filter::FilterMode::Lp12);
         },
         |p, v| {
             p.filter.resonance = v;

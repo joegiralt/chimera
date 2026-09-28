@@ -17,7 +17,7 @@ fn band(fb: &Fb, y0: i32, y1: i32) -> Vec<u16> {
 
 #[test]
 fn dirty_render_from_scratch_equals_full_render() {
-    for name in ["bigviz_filter", "bigviz_env"] {
+    for name in ["bigviz_filter", "env_a"] {
         assert!(render(name).px == render_dirty(name).px, "{name}");
     }
 }
@@ -38,16 +38,22 @@ fn filter_curve_keeps_its_shape() {
 #[test]
 fn filter_readout_rides_the_focused_value() {
     let mut ui = ui_for("bigviz_filter");
-    feed(&mut ui, Input::turn(EncoderId::B, -1)); // RESO
+    feed(&mut ui, Input::turn(EncoderId::C, -1)); // RES
     settle(&mut ui);
     let mut fb = Fb::new();
     ui.render_with_scope(&mut fb, &PerfStats::zero(), &scope_fixture());
-    let (cutoff, reso) = (ui.renderer.anim[0].current(), ui.renderer.anim[1].current());
+    let (cutoff, reso) = (ui.renderer.anim[1].current(), ui.renderer.anim[2].current());
     let mut text = FmtBuf::new();
     fmt_val(&mut text, reso, ValFmt::Uni);
     let mut want = Fb::new();
     want.px.fill(fb.px[0]);
-    viz::filter(&mut want, cutoff, reso, Some(("RESO", text.as_str())));
+    viz::filter(
+        &mut want,
+        cutoff,
+        reso,
+        viz::Response::Low,
+        Some(("RES", text.as_str())),
+    );
     assert!(band(&fb, 28, 186) == band(&want, 28, 186));
 }
 
@@ -69,9 +75,15 @@ fn readout_flips_left_at_the_right_edge() {
 fn filter_readout_clears_the_peak_at_full_resonance() {
     for &cutoff in &[0.1_f32, 0.5, 0.9] {
         let mut without = Fb::new();
-        viz::filter(&mut without, cutoff, 1.0, None);
+        viz::filter(&mut without, cutoff, 1.0, viz::Response::Low, None);
         let mut with = Fb::new();
-        viz::filter(&mut with, cutoff, 1.0, Some(("CUTOFF", "127")));
+        viz::filter(
+            &mut with,
+            cutoff,
+            1.0,
+            viz::Response::Low,
+            Some(("CUTOFF", "127")),
+        );
         assert_eq!(
             with.oob, 0,
             "cutoff={cutoff}: nothing drawn outside 240x320"
@@ -100,20 +112,20 @@ fn accent_pixels(ui: &mut chimera_core::ui::UiState) -> usize {
 }
 
 fn accent_in_viz(name_setup: impl FnOnce(&mut chimera_core::ui::UiState)) -> usize {
-    let mut ui = ui_for("bigviz_env");
+    let mut ui = ui_for("env_a");
     name_setup(&mut ui);
     settle(&mut ui);
     accent_pixels(&mut ui)
 }
 
-/// Envelope: the segment the focused slot edits is lit; LEVEL/VEL light none.
+/// Envelope: the segment the focused slot edits is lit; TYPE lights none.
 #[test]
 fn envelope_lights_the_edited_segment() {
     assert!(accent_in_viz(|_| {}) > 0, "DEC lit");
     assert_eq!(
-        accent_in_viz(|ui| feed(ui, Input::turn(EncoderId::E, -1))),
+        accent_in_viz(|ui| feed(ui, Input::turn(EncoderId::F, -1))),
         0,
-        "DEPTH lights no segment"
+        "TYPE (still A) lights no segment"
     );
 }
 
@@ -207,4 +219,65 @@ fn envelope_label_spans_keep_the_two_pixel_gap() {
             }
         }
     }
+}
+
+/// PHASER is an all-pass: its curve is flat, not a low-pass.
+#[test]
+fn the_phaser_draws_flat() {
+    use chimera_core::dsp::filter::FilterMode;
+    let r = viz::Response::of(FilterMode::Phaser);
+    assert_eq!(r, viz::Response::Flat);
+    for t in [0.0, 0.3, 0.5, 0.9, 1.0] {
+        assert_eq!(viz::response_y(t, 0.3, 1.0, r), FILTER_PASS_Y, "{t}");
+    }
+}
+
+/// Width of the lit segment on the plot: HOLD focused lights H.
+fn lit_h_width(hold: i8) -> i32 {
+    let mut ui = chimera_core::ui::UiState::new();
+    to_mod_sub(&mut ui, 1, &chimera_core::ui::block_registry::ENVELOPE);
+    feed(&mut ui, Input::turn(EncoderId::E, hold + 1));
+    feed(&mut ui, Input::turn(EncoderId::E, -1)); // HOLD focused, at `hold`
+    settle(&mut ui);
+    let mut fb = Fb::new();
+    ui.render_with_scope(&mut fb, &PerfStats::zero(), &scope_fixture());
+    let xs: Vec<i32> = (PLOT_TOP - 4..PLOT_BASE - 8)
+        .flat_map(|y| (0..240).map(move |x| (x, y)))
+        .filter(|&(x, y)| fb.at(x, y) == theme::ACCENT)
+        .map(|(x, _)| x)
+        .collect();
+    xs.iter().max().unwrap() - xs.iter().min().unwrap() + 1
+}
+
+/// The stage labels under E1's plot, DECAY focused, as glyph runs
+/// (columns with ink, split by blank ones).
+fn stage_labels_at_hold_0(hold_pos: chimera_core::dsp::modulator::HoldPos) -> usize {
+    let mut ui = chimera_core::ui::UiState::new();
+    ui.params_mut().envelopes[0].hold_pos = hold_pos;
+    to_mod_sub(&mut ui, 1, &chimera_core::ui::block_registry::ENVELOPE);
+    feed(&mut ui, Input::turn(EncoderId::B, 1));
+    feed(&mut ui, Input::turn(EncoderId::B, -1));
+    settle(&mut ui);
+    let mut fb = Fb::new();
+    ui.render_with_scope(&mut fb, &PerfStats::zero(), &scope_fixture());
+    let bg = fb.at(0, 0);
+    let base = PLOT_BASE - 8;
+    let inked: Vec<bool> = (0..240)
+        .map(|x| (base + 4..base + 16).any(|y| fb.at(x, y) != bg))
+        .collect();
+    inked.windows(2).filter(|w| w[1] && !w[0]).count() + inked[0] as usize
+}
+
+/// ENV A draws H between A and D: a labelled segment even at 0,
+/// widening as HOLD turns up; under OFF and GATE EXT there is no H.
+#[test]
+fn hold_is_a_segment_of_env_a() {
+    use chimera_core::dsp::modulator::HoldPos;
+    let dot = 5;
+    let (h0, h20, h60) = (lit_h_width(0), lit_h_width(20), lit_h_width(60));
+    assert!(h0 > dot, "H at 0 is a segment: {h0}");
+    assert!(h0 < h20 && h20 < h60, "{h0} {h20} {h60}");
+    assert_eq!(stage_labels_at_hold_0(HoldPos::Ahdsr), 5, "A H D S R");
+    assert_eq!(stage_labels_at_hold_0(HoldPos::Off), 4, "A D S R");
+    assert_eq!(stage_labels_at_hold_0(HoldPos::GateExt), 4, "A D S R");
 }

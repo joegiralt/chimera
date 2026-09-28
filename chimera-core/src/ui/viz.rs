@@ -7,6 +7,7 @@ use embedded_graphics::pixelcolor::Rgb565;
 
 use crate::dsp::algo::algorithms::Algorithm;
 use crate::dsp::algo::plan::{OPS, blend};
+use crate::dsp::modulator::{EnvForm, EnvSpeed, Func, HoldPos, LfoForm};
 use crate::scope::{self, SCOPE_LEN};
 use crate::ui::alg_layout;
 use crate::ui::draw;
@@ -82,6 +83,52 @@ pub fn filter_y(t: f32, cutoff: f32, reso: f32) -> i32 {
         FILTER_PASS_Y as f32 + (PLOT_BASE - FILTER_PASS_Y) as f32 * rolloff
     };
     (y as i32).clamp(PLOT_TOP, PLOT_BASE)
+}
+
+/// Which side of the cutoff passes (the viz reads MODE, spec § UI).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Response {
+    Low,
+    High,
+    Band,
+    Notch,
+    /// All-pass (PHASER): the magnitude stays flat.
+    Flat,
+}
+
+impl Response {
+    pub fn of(m: crate::dsp::filter::FilterMode) -> Self {
+        use crate::dsp::filter::FilterMode as M;
+        match m {
+            M::Hp24 => Response::High,
+            M::Bp12 | M::Bp24 => Response::Band,
+            M::Notch => Response::Notch,
+            M::Phaser => Response::Flat,
+            M::Lp6 | M::Lp12 | M::Lp24 => Response::Low,
+        }
+    }
+}
+
+/// `filter_y` for each response: high-pass mirrors it about the cutoff,
+/// band-pass takes both skirts, notch dips at the cutoff, all-pass is flat.
+pub fn response_y(t: f32, cutoff: f32, reso: f32, r: Response) -> i32 {
+    let low = filter_y(t, cutoff, reso);
+    let high = filter_y(2.0 * cutoff - t, cutoff, reso);
+    match r {
+        Response::Low => low,
+        Response::High => high,
+        Response::Band => low.max(high),
+        Response::Notch => {
+            let d = ((t - cutoff) * 6.0).abs();
+            if d < 0.5 {
+                let dip = 0.5 + 0.5 * libm::cosf(d * 2.0 * core::f32::consts::PI);
+                FILTER_PASS_Y + ((PLOT_BASE - FILTER_PASS_Y) as f32 * dip) as i32
+            } else {
+                FILTER_PASS_Y
+            }
+        }
+        Response::Flat => FILTER_PASS_Y,
+    }
 }
 
 /// Columns `x0..=x1`: soft fill from the curve point `y(x)` down to `base`,
@@ -160,12 +207,17 @@ where
 
 /// Filter: response with a soft fill, a faint pass-band line, and a marker
 /// at the cutoff carrying `readout` (the focused slot's label and value).
-pub fn filter<D>(d: &mut D, cutoff: f32, reso: f32, readout_text: Option<(&str, &str)>)
-where
+pub fn filter<D>(
+    d: &mut D,
+    cutoff: f32,
+    reso: f32,
+    response: Response,
+    readout_text: Option<(&str, &str)>,
+) where
     D: DrawTarget<Color = Rgb565>,
 {
     let w = (theme::VIZ_RIGHT - theme::VIZ_LEFT) as f32;
-    let y = |x: i32| filter_y((x - theme::VIZ_LEFT) as f32 / w, cutoff, reso);
+    let y = |x: i32| response_y((x - theme::VIZ_LEFT) as f32 / w, cutoff, reso, response);
     filled_curve(d, theme::VIZ_LEFT, theme::VIZ_RIGHT, PLOT_BASE, y);
     draw::fill_rect(
         d,
@@ -188,34 +240,34 @@ where
     }
 }
 
-/// Envelope: four segments over proportional `widths`, breakpoints at
-/// `heights` (0..1), stage labels below; segment `lit` (the one the focused
-/// slot edits) in the accent.
-pub fn envelope<D>(
-    d: &mut D,
-    widths: &[f32; 4],
-    heights: &[f32; 5],
-    labels: &[&str; 4],
-    lit: Option<usize>,
-) where
+/// Most stages `envelope` draws: A · H · D · S · R.
+pub const MAX_STAGES: usize = 5;
+
+/// Envelope: up to `MAX_STAGES` segments over proportional `widths`,
+/// breakpoints at `heights` (0..1, one more than the widths), stage labels
+/// below; segment `lit` (the one the focused slot edits) in the accent.
+pub fn envelope<D>(d: &mut D, widths: &[f32], heights: &[f32], labels: &[&str], lit: Option<usize>)
+where
     D: DrawTarget<Color = Rgb565>,
 {
+    let n = widths.len().min(MAX_STAGES);
     let base = PLOT_BASE - 8;
     let (x0, w, h) = (
         theme::VIZ_LEFT,
         (theme::VIZ_RIGHT - theme::VIZ_LEFT) as f32,
         (base - PLOT_TOP) as f32,
     );
-    let mut pts = [(0i32, 0i32); 5];
+    let mut pts = [(0i32, 0i32); MAX_STAGES + 1];
     let mut cx = x0 as f32;
-    for i in 0..5 {
+    for i in 0..=n {
         pts[i] = (cx as i32, base - (h * heights[i].clamp(0.0, 1.0)) as i32);
-        if i < 4 {
+        if i < n {
             cx += w * widths[i];
         }
     }
+    let pts = &pts[..=n];
     let y_at = |x: i32| {
-        let s = (0..4).find(|&s| x <= pts[s + 1].0).unwrap_or(3);
+        let s = (0..n).find(|&s| x <= pts[s + 1].0).unwrap_or(n - 1);
         let ((xa, ya), (xb, yb)) = (pts[s], pts[s + 1]);
         if xb == xa {
             yb
@@ -223,11 +275,11 @@ pub fn envelope<D>(
             ya + (yb - ya) * (x - xa) / (xb - xa)
         }
     };
-    for x in x0..=pts[4].0 {
+    for x in x0..=pts[n].0 {
         draw::fill_rect(d, x, y_at(x) + 1, 1, base - y_at(x) - 1, theme::ACCENT_SOFT);
     }
     draw::fill_rect(d, x0, base, theme::VIZ_RIGHT - x0, 1, theme::FAINT);
-    for s in 0..4 {
+    for s in 0..n {
         let ((xa, ya), (xb, yb)) = (pts[s], pts[s + 1]);
         if lit == Some(s) {
             draw::thick_line(d, xa, ya, xb, yb, theme::ACCENT);
@@ -235,8 +287,12 @@ pub fn envelope<D>(
             draw::line(d, xa, ya, xb, yb, theme::INK2, 1);
         }
     }
-    let xs = pts.map(|p| p.0);
-    for (s, span) in stage_label_spans(&xs, labels, lit).iter().enumerate() {
+    let mut xs = [0i32; MAX_STAGES + 1];
+    for (x, p) in xs.iter_mut().zip(pts) {
+        *x = p.0;
+    }
+    let labels = &labels[..n];
+    for (s, span) in stage_label_spans(&xs[..=n], labels, lit).iter().enumerate() {
         if let Some((left, _)) = *span {
             let color = if lit == Some(s) {
                 theme::ACCENT
@@ -263,26 +319,37 @@ pub fn envelope<D>(
 /// Horizontal gap kept between two stage labels.
 const STAGE_LABEL_GAP: i32 = 2;
 
+/// The least width, in the units of `rest` (the other stages' widths
+/// summed), that gives a stage room for `label` and the gaps either side.
+pub fn label_floor(label: &str, rest: f32) -> f32 {
+    let m = (draw::text_width(&theme::FONT_LABEL, label, theme::LABEL_TRACKING)
+        + 2
+        + 2 * STAGE_LABEL_GAP
+        + 2) as f32;
+    m * rest / ((theme::VIZ_RIGHT - theme::VIZ_LEFT) as f32 - m)
+}
+
 /// Where each stage label of `envelope` goes, as `(left, right)` columns
 /// (inclusive), centred under its segment `xs[s]..xs[s + 1]`; `None` = left
 /// out. The lit stage's label is always drawn. Any other is drawn only when
 /// it fits its own segment and keeps `STAGE_LABEL_GAP` from every label
 /// already placed (the lit one first), so no two labels ever touch.
 pub fn stage_label_spans(
-    xs: &[i32; 5],
-    labels: &[&str; 4],
+    xs: &[i32],
+    labels: &[&str],
     lit: Option<usize>,
-) -> [Option<(i32, i32)>; 4] {
+) -> [Option<(i32, i32)>; MAX_STAGES] {
+    let n = labels.len().min(MAX_STAGES);
     let span = |s: usize| {
         let w = draw::text_width(&theme::FONT_LABEL, labels[s], theme::LABEL_TRACKING);
         let left = (xs[s] + xs[s + 1]) / 2 - w / 2;
         (w, (left, left + w - 1))
     };
-    let mut spans = [None; 4];
-    if let Some(s) = lit.filter(|&s| s < 4) {
+    let mut spans = [None; MAX_STAGES];
+    if let Some(s) = lit.filter(|&s| s < n) {
         spans[s] = Some(span(s).1);
     }
-    for s in (0..4).filter(|&s| lit != Some(s)) {
+    for s in (0..n).filter(|&s| lit != Some(s)) {
         let (w, (l, r)) = span(s);
         let fits = w + 2 <= xs[s + 1] - xs[s];
         let clear = spans
@@ -294,6 +361,88 @@ pub fn stage_label_spans(
         }
     }
     spans
+}
+
+/// Envelope B's shape for the viz: 0..1 across `t` (0..1). ENV: one
+/// rise-and-fall (AHR holds a quarter; CYCLE twice); LFO: three cycles, or
+/// a fixed walk for LFV; BURST: eight pulses under the burst.
+pub fn func_shape(f: Func, rise: f32, fall: f32, shape: f32, t: f32) -> f32 {
+    use crate::dsp::modulator::law::{B_TIME, curve, shape_w, tilt};
+    let frac = |x: f32| x - (x as u32) as f32;
+    match f {
+        Func::Env(e) => {
+            let (cycles, hold) = match e {
+                EnvForm::Cycle => (2.0, 0.0),
+                EnvForm::Ahr => (1.0, 0.25),
+                EnvForm::Ad => (1.0, 0.0),
+            };
+            let x = frac(t * cycles);
+            let (tr, tf) = (B_TIME.at(rise), B_TIME.at(fall));
+            let r = tr / (tr + tf) * (1.0 - hold);
+            let w = shape_w(shape);
+            if x < r {
+                curve(x / r, w)
+            } else if x < r + hold {
+                1.0
+            } else {
+                1.0 - curve((x - r - hold) / (1.0 - r - hold), w)
+            }
+        }
+        Func::Lfo(LfoForm::Lfv) => {
+            const WALK: [f32; 9] = [0.0, 0.7, -0.4, 0.9, -0.8, 0.3, -0.2, 0.6, -0.5];
+            let x = t * 8.0;
+            let k = (x as usize).min(7);
+            let u = x - k as f32;
+            let at = |i: usize| 0.5 + 0.5 * (WALK[i] * fall.max(0.2)).clamp(-1.0, 1.0);
+            let lin = at(k) + (at(k + 1) - at(k)) * u;
+            // SLEW rounds each corner toward the segment's middle.
+            let mid = 0.5 * (at(k) + at(k + 1));
+            lin + (mid - lin) * shape * (1.0 - (2.0 * u - 1.0).abs())
+        }
+        Func::Lfo(_) => tilt(frac(t * 3.0 + fall), shape),
+        Func::Burst(e) => {
+            let p = frac(t * 8.0);
+            let pulse = if e == EnvForm::Cycle {
+                tilt(p, shape)
+            } else {
+                let m = 1.0 - (2.0 * shape - 1.0).abs();
+                let square = if p < 0.5 { 1.0 } else { 0.0 };
+                (1.0 - m) * square + m * (0.5 - 0.5 * libm::cosf(core::f32::consts::TAU * p))
+            };
+            tilt(t, shape) * pulse
+        }
+    }
+}
+
+/// The B tabs' baseline, above the curve.
+pub const TAB_Y: i32 = 48;
+
+/// B's viz: ENV · LFO · BURST tabs (MODE lit), then the shape, filled.
+pub fn func<D>(d: &mut D, f: Func, rise: f32, fall: f32, shape: f32)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    for (i, name) in ["ENV", "LFO", "BURST"].iter().enumerate() {
+        let x = theme::VIZ_LEFT + i as i32 * 52;
+        let on = i == f.mode() as usize;
+        if on {
+            draw::pill(d, x, TAB_Y - 11, 46, 14, theme::ACCENT);
+        } else {
+            draw::round_outline(d, x, TAB_Y - 11, 46, 14, 7, theme::FAINT);
+        }
+        let color = if on { theme::BG } else { theme::MID };
+        draw::text_center(d, &theme::FONT_LABEL_BOLD, name, x + 23, TAB_Y, color, 0);
+    }
+    let top = TAB_Y + 8;
+    let (w, h) = (
+        (theme::VIZ_RIGHT - theme::VIZ_LEFT) as f32,
+        (PLOT_BASE - top) as f32,
+    );
+    let y = |x: i32| {
+        let t = (x - theme::VIZ_LEFT) as f32 / w;
+        PLOT_BASE - (h * func_shape(f, rise, fall, shape, t).clamp(0.0, 1.0)) as i32
+    };
+    filled_curve(d, theme::VIZ_LEFT, theme::VIZ_RIGHT, PLOT_BASE, y);
 }
 
 /// The GR meter: a bar at the plot's right edge, lit down from the top,
@@ -492,5 +641,43 @@ where
             draw::ring(d, x, y, l.r, theme::MID, 1);
             draw::text_center(d, &theme::FONT_LABEL, label, x + 1, y + 4, theme::MID, 0);
         }
+    }
+}
+
+/// SPD's picture (the approved mockup): per ENV slot, its SPEED as three
+/// pills and its HOLD POSITION's name; a type-B slot's column is faint.
+pub fn env_speed<D>(d: &mut D, slots: [(bool, EnvSpeed, HoldPos); 3])
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    for (i, &(is_a, speed, hold)) in slots.iter().enumerate() {
+        let x = theme::VIZ_LEFT + 4 + i as i32 * 74;
+        let ink = if is_a { theme::MID } else { theme::FAINT };
+        draw::text_center(
+            d,
+            &theme::FONT_LABEL,
+            ["E1", "E2", "E3"][i],
+            x + 30,
+            50,
+            ink,
+            1,
+        );
+        for (k, name) in ["FAST", "MED", "SLOW"].iter().enumerate() {
+            let y = 56 + k as i32 * 18;
+            let lit = is_a && k == speed as usize;
+            if lit {
+                draw::pill(d, x + 6, y, 48, 14, theme::ACCENT);
+            } else {
+                draw::round_outline(d, x + 6, y, 48, 14, 7, theme::FAINT);
+            }
+            let c = if lit { theme::BG } else { ink };
+            draw::text_center(d, &theme::FONT_LABEL_BOLD, name, x + 30, y + 10, c, 0);
+        }
+        let under = if is_a {
+            ["OFF", "AHDSR", "GATE EXT"][hold as usize]
+        } else {
+            "RISE/FALL"
+        };
+        draw::text_center(d, &theme::FONT_LABEL, under, x + 30, 140, ink, 1);
     }
 }

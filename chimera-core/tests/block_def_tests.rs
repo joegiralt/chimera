@@ -3,9 +3,14 @@ use chimera_core::ui::page::PageLayout;
 
 #[test]
 fn filter_block_params() {
+    use chimera_core::ui::view::{SlotCtx, view};
     let def = &block_registry::FILTER;
-    assert_eq!(def.params[0].label(), "CUTOFF");
-    assert_eq!(def.params[1].label(), "RESO");
+    let ctx = SlotCtx::read(
+        &chimera_core::params::ParamSnapshot::default(),
+        chimera_core::addr::Op::A,
+    );
+    assert_eq!(view(def, 1, &ctx).label(), "CUTOFF");
+    assert_eq!(view(def, 2, &ctx).label(), "RES");
     assert_eq!(def.layout, PageLayout::BigViz);
 }
 
@@ -21,7 +26,7 @@ fn chain_active_def_resolves() {
 fn modal_pluck_chain() {
     let chain = &block_registry::MODAL_PLUCK_CHAIN;
     assert_eq!(chain.blocks[0].def.name, "Modal");
-    assert_eq!(chain.blocks[0].sub_page_count(), 2); // primary + Modal-2
+    assert_eq!(chain.blocks[0].sub_page_count(), 3); // primary + Modal-2 + Pitch
 }
 
 #[test]
@@ -65,9 +70,13 @@ fn about_has_the_audio_sub_page() {
 #[test]
 fn algo_chain_is_alg_osc_then_the_voice_chain() {
     let chain = &block_registry::ALGO_CHAIN;
-    let shorts: Vec<&str> = chain.blocks.iter().map(|b| b.def.short).collect();
-    assert_eq!(shorts, ["ALG", "OSC", "DRV", "FLT", "FLD", "MOD"]);
+    let labels: Vec<&str> = chain
+        .blocks
+        .iter()
+        .map(|b| b.map.unwrap_or(b.def.short))
+        .collect();
+    assert_eq!(labels, ["ALG", "OSC", "DRV", "FLT", "AMP", "MOD"]);
     assert_eq!(chain.active_def(1, 0).unwrap().name, "Wave");
     assert!(chain.blocks[1].sub_pages.iter().any(|d| d.name == "Level"));
-    assert_eq!(chain.blocks[5].sub_pages.len(), 2);
+    assert_eq!(chain.blocks[5].sub_pages.len(), 7);
 }

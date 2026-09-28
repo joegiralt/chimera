@@ -19,7 +19,14 @@ fn check(name: &str, specs: &[ParamSpec]) {
             "{what}: duplicate id {:?}",
             s.id
         );
-        assert!(s.min < s.max, "{what}: min {} >= max {}", s.min, s.max);
+        // A one-choice Enum (KIND, one kind built) spans a single value.
+        let one_choice = s.kind == ParamKind::Enum && s.min == s.max;
+        assert!(
+            s.min < s.max || one_choice,
+            "{what}: min {} >= max {}",
+            s.min,
+            s.max
+        );
         assert!(
             s.default >= s.min && s.default <= s.max,
             "{what}: default {} out of range",

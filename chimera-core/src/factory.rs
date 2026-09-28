@@ -4,8 +4,7 @@ use crate::addr::{BlockRef, ParamAddr};
 use crate::dsp::algo::algorithms::AlgoId;
 use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::algo::waves::WaveId;
-use crate::mod_path::ModDestRegistry;
-use crate::modulation::ModState;
+use crate::modulation::ModSource;
 use crate::params::EngineType;
 use crate::preset::{NAME_LEN, Sound, SoundPool};
 
@@ -194,23 +193,17 @@ pub fn factory_sound(i: usize) -> Option<Sound> {
             const MORPH_BASE: u8 = 40;
             let ops = core::array::from_fn(|i| op(w1, COARSE[i], LEVEL[i], [12, 0, 15, 0, 5]));
             let mut s = named("MORPH PAD", algo(AlgoId::A1, AlgoId::A17, MORPH_BASE, ops));
-            s.params.lfo.rate = 0.2;
+            s.params.lfos[0].rate = 0.2;
             s.params.filter.cutoff = 4000.0;
-            let mut reg = ModDestRegistry::new();
-            if reg
-                .add(
-                    ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH),
-                    *b"ALGMORPH",
-                )
-                .is_ok()
+            let morph = ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH);
+            if s.dest_registry.add(morph, *b"ALGMORPH").is_ok()
+                && let Some(d) = s.mod_state.push(morph)
             {
-                s.mod_state = ModState::from_registry(&reg, 2);
                 // Full LFO swing (± `depth`) must land inside MORPH's 0..=127
                 // range from its base, or the sweep clips flat at an end.
                 let headroom = MORPH_BASE.min(127 - MORPH_BASE) as f32;
-                let amount = (headroom / s.params.lfo.depth) as i8;
-                s.mod_state.set_amount(1, 0, amount); // LFO → MORPH
-                s.dest_registry = reg;
+                let amount = (headroom / s.params.lfos[0].depth) as i8;
+                s.mod_state.set_amount(ModSource::Lfo1.index(), d, amount); // LFO 1 → MORPH
             }
             s
         }
