@@ -3,8 +3,9 @@
 use chimera_core::MidiChannel;
 use chimera_core::block::Block;
 use chimera_core::hw::MAX_PARTS;
+use chimera_core::params::EngineType;
 use chimera_core::part::{DacPair, PartMode, PartParams};
-use chimera_core::preset::{ChainType, Part, Performance};
+use chimera_core::preset::{Part, Performance};
 
 #[test]
 fn midi_channel_accepts_0_to_15_only() {
@@ -52,11 +53,11 @@ fn no_part_param_is_modulatable() {
 /// Loading a Sound replaces only the Sound: channel, mode and mix stay.
 #[test]
 fn loading_a_sound_keeps_the_mix() {
-    let mut part = Part::new(ChainType::Modal);
+    let mut part = Part::new(EngineType::Modal);
     part.mix.channel = MidiChannel::new(9).unwrap();
     part.mix.level = 0.25;
-    part.load_init(ChainType::Algo);
-    assert_eq!(part.sound.chain_type, ChainType::Algo);
+    part.load_init(EngineType::Algo);
+    assert_eq!(part.sound.engine(), EngineType::Algo);
     assert_eq!((part.mix.channel.get(), part.mix.level), (9, 0.25));
     assert_eq!(part.loaded_from, None);
 }

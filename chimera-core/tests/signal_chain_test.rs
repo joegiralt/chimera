@@ -141,6 +141,18 @@ fn test_filter_output_stable() {
     }
 }
 
+/// `fast_tanh`'s documented worst case against tanh.
+#[test]
+fn fast_tanh_is_within_its_documented_error() {
+    use chimera_core::dsp::fast_tanh;
+    let worst = (0..=80_000)
+        .map(|i| i as f32 * 1e-4 - 4.0)
+        .map(|x| (fast_tanh(x) - libm::tanhf(x)).abs())
+        .fold(0.0f32, f32::max);
+    assert!(worst <= 0.0236, "{worst}");
+    assert!(worst > 0.023, "{worst}");
+}
+
 // ── Wavefolder ──────────────────────────────────────────────────────
 
 #[test]

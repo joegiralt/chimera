@@ -312,6 +312,14 @@ impl EngineType {
     /// Every engine. Tests iterate this; see `engines_test.rs` for the
     /// exhaustive-match guard that makes a new variant a compile error there.
     pub const ALL: [EngineType; 2] = [EngineType::Algo, EngineType::Modal];
+
+    /// Short display label for the engine and its chain.
+    pub fn label(self) -> &'static str {
+        match self {
+            EngineType::Algo => "Algo",
+            EngineType::Modal => "Modal",
+        }
+    }
 }
 
 /// Voice output stage: level into the mixer and pan.
@@ -366,8 +374,8 @@ impl Block for OutParams {
 
 #[derive(Clone, Debug)]
 pub struct ParamSnapshot {
-    /// Private: set only through `for_engine` (and so `Sound::init`, from
-    /// `ChainType::engine`) — one source of truth for engine choice (spec §6).
+    /// Private: set only through `for_engine` (and so `Sound::init`) — one
+    /// source of truth for engine choice (spec §6).
     engine: EngineType,
     pub filter: FilterParams,
     pub drive: DriveParams,
@@ -415,7 +423,8 @@ impl Blocks for ParamSnapshot {
             | BlockRef::Reverb
             | BlockRef::Tape
             | BlockRef::Comp
-            | BlockRef::Part => return None,
+            | BlockRef::Part
+            | BlockRef::Theme => return None,
         })
     }
 
@@ -437,7 +446,8 @@ impl Blocks for ParamSnapshot {
             | BlockRef::Reverb
             | BlockRef::Tape
             | BlockRef::Comp
-            | BlockRef::Part => return None,
+            | BlockRef::Part
+            | BlockRef::Theme => return None,
         })
     }
 }

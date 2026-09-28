@@ -25,7 +25,7 @@ license = "MIT"
 opt-level = 2
 [profile.dev.package.stm32h7xx-hal]
 opt-level = 2
-[profile.dev.package.stm32h750]
+[profile.dev.package.stm32h7]
 opt-level = 2
 [profile.dev.package.cortex-m]
 opt-level = 2

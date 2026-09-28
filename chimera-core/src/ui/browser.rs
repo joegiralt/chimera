@@ -7,7 +7,8 @@ use core::fmt::Write;
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::Rgb565;
 
-use crate::preset::{ChainType, POOL_SIZE, SoundPool};
+use crate::params::EngineType;
+use crate::preset::{POOL_SIZE, SoundPool};
 use crate::ui::chain::chain_def_for;
 use crate::ui::components;
 use crate::ui::draw;
@@ -16,9 +17,9 @@ use crate::ui::theme;
 
 /// Rows on screen.
 pub const VISIBLE_ROWS: usize = 8;
-/// The pool's slots, then one init Sound per chain type, in `ChainType::ALL`
+/// The pool's slots, then one init Sound per engine, in `EngineType::ALL`
 /// order.
-pub const INIT_TYPES: [ChainType; ChainType::ALL.len()] = ChainType::ALL;
+pub const INIT_TYPES: [EngineType; EngineType::ALL.len()] = EngineType::ALL;
 pub const TOTAL_ENTRIES: usize = POOL_SIZE + INIT_TYPES.len();
 
 pub const LIST_TOP: i32 = 44;
@@ -114,13 +115,13 @@ where
     let (name, chain, saved) = if entry < POOL_SIZE {
         let _ = write!(slot, "{:02}", entry + 1);
         match pool.get(entry) {
-            Some(s) => (components::upper(s.name_str()), Some(s.chain_type), true),
+            Some(s) => (components::upper(s.name_str()), Some(s.engine()), true),
             None => (FmtBuf::new(), None, false),
         }
     } else {
         let _ = slot.write_str("INIT");
-        let ct = INIT_TYPES[entry - POOL_SIZE];
-        (components::upper(ct.label()), Some(ct), false)
+        let engine = INIT_TYPES[entry - POOL_SIZE];
+        (components::upper(engine.label()), Some(engine), false)
     };
     let empty = chain.is_none();
     if selected {
@@ -155,11 +156,11 @@ where
         };
         draw::text(d, &theme::FONT_VALUE, name.as_str(), 52, y, color);
     }
-    if let Some(ct) = chain {
+    if let Some(engine) = chain {
         draw::text_right(
             d,
             &theme::FONT_LABEL,
-            chain_def_for(ct).blocks[0].def.short,
+            chain_def_for(engine).blocks[0].def.short,
             223,
             y,
             dim,

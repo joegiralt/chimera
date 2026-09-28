@@ -1,6 +1,10 @@
 //! ILI9341 display driver via SPI1.
 //! 240x320 RGB565, framebuffer in static BSS (too large for stack).
 
+use core::ptr::addr_of_mut;
+use core::sync::atomic::{AtomicBool, Ordering};
+
+use chimera_core::ui::theme_settings::{GammaTables, Palette};
 use chimera_hal::{ChimeraDisplay, FB_SIZE, SCREEN_HEIGHT, SCREEN_WIDTH};
 use embedded_graphics_core::Pixel;
 use embedded_graphics_core::draw_target::DrawTarget;
@@ -10,14 +14,17 @@ use embedded_graphics_core::pixelcolor::raw::{RawData, RawU16};
 use stm32h7xx_hal::hal::blocking::spi::Write;
 use stm32h7xx_hal::hal::digital::v2::OutputPin;
 
-// SAFETY: only accessed from main thread (single-threaded, no interrupts touch this)
 static mut FRAMEBUFFER: [u16; FB_SIZE] = [0u16; FB_SIZE];
+static FRAMEBUFFER_TAKEN: AtomicBool = AtomicBool::new(false);
 
-/// Get a mutable reference to the static framebuffer.
-/// SAFETY: caller must ensure single-threaded access (true in our firmware).
-#[inline(always)]
-fn fb() -> &'static mut [u16; FB_SIZE] {
-    unsafe { &mut *core::ptr::addr_of_mut!(FRAMEBUFFER) }
+/// The framebuffer, once: `Stm32Display` owns it from then on.
+pub fn take_framebuffer() -> Option<&'static mut [u16; FB_SIZE]> {
+    if FRAMEBUFFER_TAKEN.swap(true, Ordering::AcqRel) {
+        return None;
+    }
+    // SAFETY: the flag lets exactly one caller past, so this is the only
+    // reference to `FRAMEBUFFER` ever made.
+    Some(unsafe { &mut *addr_of_mut!(FRAMEBUFFER) })
 }
 
 pub struct Stm32Display<SPI, DC, RST, CS> {
@@ -25,6 +32,10 @@ pub struct Stm32Display<SPI, DC, RST, CS> {
     dc: DC,
     reset: RST,
     cs: CS,
+    fb: &'static mut [u16; FB_SIZE],
+    /// System › Theme's colours, swapped in as pixels go out; the
+    /// framebuffer keeps the canonical palette.
+    palette: Palette,
 }
 
 impl<SPI, DC, RST, CS> Stm32Display<SPI, DC, RST, CS>
@@ -34,8 +45,42 @@ where
     RST: OutputPin,
     CS: OutputPin,
 {
-    pub fn new(spi: SPI, dc: DC, reset: RST, cs: CS) -> Self {
-        Self { spi, dc, reset, cs }
+    pub fn new(spi: SPI, dc: DC, reset: RST, cs: CS, fb: &'static mut [u16; FB_SIZE]) -> Self {
+        Self {
+            spi,
+            dc,
+            reset,
+            cs,
+            fb,
+            palette: Palette::IDENTITY,
+        }
+    }
+
+    /// Show the framebuffer through `palette` from the next flush on.
+    pub fn set_palette(&mut self, palette: Palette) {
+        self.palette = palette;
+    }
+
+    /// Positive (E0h) and negative (E1h) gamma correction, live.
+    pub fn set_gamma(&mut self, t: &GammaTables) {
+        self.cmd_data(0xE0, &t.positive);
+        self.cmd_data(0xE1, &t.negative);
+    }
+
+    /// Push framebuffer pixels `start..end` (already windowed) through the palette.
+    fn write_pixels(&mut self, start: usize, end: usize) {
+        let _ = self.dc.set_high();
+        let _ = self.cs.set_low();
+        let mut bytes = [0u8; 512];
+        for chunk in self.fb[start..end].chunks(256) {
+            for (i, &pixel) in chunk.iter().enumerate() {
+                let [hi, lo] = self.palette.map_raw(pixel).to_be_bytes();
+                bytes[i * 2] = hi;
+                bytes[i * 2 + 1] = lo;
+            }
+            let _ = self.spi.write(&bytes[..chunk.len() * 2]);
+        }
+        let _ = self.cs.set_high();
     }
 
     fn cmd(&mut self, cmd: u8) {
@@ -57,7 +102,9 @@ where
         self.data_bytes(data);
     }
 
-    /// ILI9341 init sequence (from PreenFM3 ili9341.c)
+    /// ILI9341 init sequence (from PreenFM3 ili9341.c). Leaves gamma at the
+    /// panel's reset tables (THEME's PANEL); the caller pushes the boot
+    /// theme's actual gamma right after.
     pub fn init(&mut self, cpu_hz: u32) {
         let _ = self.reset.set_low();
         crate::clocks::delay_us(cpu_hz, 12_500);
@@ -109,13 +156,12 @@ where
     where
         I: IntoIterator<Item = Pixel<Rgb565>>,
     {
-        let buf = fb();
         for Pixel(point, color) in pixels {
             let x = point.x;
             let y = point.y;
             if x >= 0 && x < SCREEN_WIDTH as i32 && y >= 0 && y < SCREEN_HEIGHT as i32 {
                 let idx = (y as usize) * (SCREEN_WIDTH as usize) + (x as usize);
-                buf[idx] = RawU16::from(color).into_inner();
+                self.fb[idx] = RawU16::from(color).into_inner();
             }
         }
         Ok(())
@@ -137,19 +183,7 @@ where
 {
     fn flush(&mut self) {
         self.set_window();
-        let _ = self.dc.set_high();
-        let _ = self.cs.set_low();
-
-        let mut bytes = [0u8; 512];
-        for chunk in fb().chunks(256) {
-            for (i, &pixel) in chunk.iter().enumerate() {
-                bytes[i * 2] = (pixel >> 8) as u8;
-                bytes[i * 2 + 1] = pixel as u8;
-            }
-            let _ = self.spi.write(&bytes[..chunk.len() * 2]);
-        }
-
-        let _ = self.cs.set_high();
+        self.write_pixels(0, FB_SIZE);
     }
 
     fn flush_region(&mut self, y_start: u16, y_end: u16) {
@@ -158,25 +192,13 @@ where
         let ye = (y_end - 1).to_be_bytes();
         self.cmd_data(0x2B, &[ys[0], ys[1], ye[0], ye[1]]);
         self.cmd(0x2C);
-
-        let _ = self.dc.set_high();
-        let _ = self.cs.set_low();
-
-        let start = y_start as usize * SCREEN_WIDTH as usize;
-        let end = y_end as usize * SCREEN_WIDTH as usize;
-        let mut bytes = [0u8; 512];
-        for chunk in fb()[start..end].chunks(256) {
-            for (i, &pixel) in chunk.iter().enumerate() {
-                bytes[i * 2] = (pixel >> 8) as u8;
-                bytes[i * 2 + 1] = pixel as u8;
-            }
-            let _ = self.spi.write(&bytes[..chunk.len() * 2]);
-        }
-
-        let _ = self.cs.set_high();
+        self.write_pixels(
+            y_start as usize * SCREEN_WIDTH as usize,
+            y_end as usize * SCREEN_WIDTH as usize,
+        );
     }
 
     fn pixel_buffer(&mut self) -> &mut [u16] {
-        fb()
+        self.fb
     }
 }

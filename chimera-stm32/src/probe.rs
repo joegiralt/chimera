@@ -12,13 +12,14 @@ mod imp {
     use chimera_core::hw::BlockBudget;
     use chimera_core::perf::load::AudioStats;
     use chimera_core::perf::stack::{STACK_PAINT, untouched_words};
+    use chimera_core::reset::ResetCause;
     use chimera_core::triple::{Reader, TripleBuffer, Writer};
     use cortex_m::peripheral::{DCB, DWT};
 
     use crate::audio::{dma, engine};
     use crate::clocks::Clocks;
 
-    const BLANK: AudioStats = AudioStats::new(SiliconRev::Unknown(0), 0);
+    const BLANK: AudioStats = AudioStats::new(SiliconRev::Unknown(0), 0, ResetCause::Unknown);
     const PAINT_MARGIN: usize = 256;
 
     static mut STATS_BUF: TripleBuffer<AudioStats> = TripleBuffer::new(BLANK, BLANK, BLANK);
@@ -28,13 +29,21 @@ mod imp {
     static READY: AtomicBool = AtomicBool::new(false);
     static TAKEN: AtomicBool = AtomicBool::new(false);
 
+    // Linker symbols: only their addresses mean anything. The stack between
+    // them is not one Rust allocation (only the live frames in it are), so
+    // pointers into it are built from the bare address, not from these
+    // zero-sized statics.
     unsafe extern "C" {
-        static _stack_start: u32;
-        static _stack_end: u32;
+        static _stack_start: [u32; 0];
+        static _stack_end: [u32; 0];
+    }
+
+    fn stack_bottom() -> *mut u32 {
+        core::ptr::with_exposed_provenance_mut((&raw const _stack_end).addr())
     }
 
     pub fn paint_stack() {
-        let bottom = (&raw const _stack_end) as *mut u32;
+        let bottom = stack_bottom();
         let limit = cortex_m::register::msp::read() as usize - PAINT_MARGIN;
         let mut p = bottom;
         while (p as usize) < limit {
@@ -48,8 +57,8 @@ mod imp {
     }
 
     pub fn stack_used() -> u32 {
-        let bottom = &raw const _stack_end;
-        let words = ((&raw const _stack_start) as usize - bottom as usize) / 4;
+        let bottom = stack_bottom().cast_const();
+        let words = ((&raw const _stack_start).addr() - bottom.addr()) / 4;
         // SAFETY: volatile reads inside the linker's stack region; a read that
         // races an interrupt's frame only moves the mark by that word.
         let untouched =
@@ -75,14 +84,19 @@ mod imp {
         DWT::cycle_count() != start
     }
 
-    pub fn init(dcb: &mut DCB, dwt: &mut DWT, clocks: Clocks) -> Option<Reader<AudioStats>> {
+    pub fn init(
+        dcb: &mut DCB,
+        dwt: &mut DWT,
+        clocks: Clocks,
+        reset: ResetCause,
+    ) -> Option<Reader<AudioStats>> {
         if !enable_cycle_counter(dcb, dwt) || TAKEN.swap(true, Ordering::AcqRel) {
             return None;
         }
         // SAFETY: the flag lets one caller past, before the audio interrupt is
         // unmasked, so nothing else touches these statics yet.
         unsafe {
-            *addr_of_mut!(STATS) = AudioStats::new(clocks.rev, clocks.cpu_hz);
+            *addr_of_mut!(STATS) = AudioStats::new(clocks.rev, clocks.cpu_hz, reset);
             *addr_of_mut!(BUDGET) = BlockBudget::for_cpu(clocks.cpu_hz);
             let (w, r) = (&mut *addr_of_mut!(STATS_BUF)).split();
             *addr_of_mut!(WRITER) = Some(w);
@@ -128,6 +142,7 @@ mod imp {
 #[cfg(not(feature = "perf-probe"))]
 mod stub {
     use chimera_core::perf::load::AudioStats;
+    use chimera_core::reset::ResetCause;
     use chimera_core::triple::Reader;
     use cortex_m::peripheral::{DCB, DWT};
 
@@ -139,7 +154,7 @@ mod stub {
         0
     }
 
-    pub fn init(_: &mut DCB, _: &mut DWT, _: Clocks) -> Option<Reader<AudioStats>> {
+    pub fn init(_: &mut DCB, _: &mut DWT, _: Clocks, _: ResetCause) -> Option<Reader<AudioStats>> {
         None
     }
 

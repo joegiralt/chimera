@@ -4,14 +4,15 @@ use chimera_core::addr::{BlockRef, ParamAddr};
 use chimera_core::instrument::AudioShared;
 use chimera_core::mod_path::ModDestRegistry;
 use chimera_core::modulation::ModState;
+use chimera_core::params::EngineType;
 use chimera_core::params::FilterParams;
 use chimera_core::part::PartMode;
-use chimera_core::preset::{ChainType, Performance};
+use chimera_core::preset::Performance;
 
 #[test]
 fn snapshot_copies_every_part_and_the_fx() {
     let mut perf = Performance::new();
-    perf.parts[4].load_init(ChainType::Algo);
+    perf.parts[4].load_init(EngineType::Algo);
     perf.parts[4].mix.mode = PartMode::Mono;
     perf.parts[4].mix.pan = -0.5;
     perf.fx.reverb.mix = 0.4;

@@ -26,7 +26,7 @@ enum Fx {
     Reverb(ReverbParams),
 }
 
-fn cases() -> [(&'static str, Fx); 6] {
+fn cases() -> [(&'static str, Fx); 7] {
     let reverb = |grit: f32, size: f32| ReverbParams {
         grit,
         time: 0.7,
@@ -58,6 +58,16 @@ fn cases() -> [(&'static str, Fx); 6] {
                 time_ms: 500.0,
                 feedback: 0.6,
                 wow_flutter: 1.0,
+                mix: 0.5,
+                ..DelayParams::default()
+            }),
+        ),
+        // Five saturated repeats in the render: the feedback loop's lock.
+        (
+            "delay_feedback_100ms",
+            Fx::Delay(DelayParams {
+                time_ms: 100.0,
+                feedback: 0.6,
                 mix: 0.5,
                 ..DelayParams::default()
             }),
@@ -115,6 +125,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("chorus_both", 0x666b43969f8ed31a),           // u32 LFO phase
     ("delay_375ms", 0xa1736e10da654418),           // FX diet
     ("delay_500ms", 0xca8db167654567bd),           // FX diet
+    ("delay_feedback_100ms", 0xe8c4faea0a0bbdf1),  // recorded before #52
     ("reverb_ring", 0x2a4709f629cb4cd8),           // FX diet
     ("reverb_ring_max_size", 0x6eee15a3372d88b5),  // FX diet
     ("reverb_ring_full_grit", 0xe8b2bff63402edec), // FX diet
