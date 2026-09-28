@@ -744,7 +744,7 @@ fn a_pitch_route_on_modal_bills_the_retune() {
     };
     let modal = ParamSnapshot::for_engine(EngineType::Modal);
     let bare = Engines::cost(&modal, &ModState::new());
-    assert_eq!(bare, ModalEngine::COST);
+    assert_eq!(bare, ModalEngine::COST_STRING);
     for q in [PitchParams::PITCH, PitchParams::FINE] {
         for amount in [127, 0] {
             assert_eq!(
@@ -758,4 +758,45 @@ fn a_pitch_route_on_modal_bills_the_retune() {
         Engines::cost(&algo, &routed(PitchParams::PITCH, 127)),
         Engines::cost(&algo, &ModState::new())
     );
+}
+
+/// Modal is billed per model (#49): String as benched, the others at or
+/// above the emulator's estimate until the bench's MDL rows (ROUTING 3/3,
+/// `modal` in chimera-stm32/src/bench.rs) read them; then the readings
+/// replace the estimates here. Voices beside the whole FX bus at its worst,
+/// on rev V and rev Y: the costlier models get fewer, as they must.
+#[test]
+fn modal_bills_each_model() {
+    use chimera_core::dsp::modal::{ModalEngine, ResonatorMode};
+    let sound = |mode| {
+        let mut p = ParamSnapshot::for_engine(EngineType::Modal);
+        p.modal.mode = mode;
+        p
+    };
+    for (mode, billed, estimate, rev_v, rev_y) in [
+        (ResonatorMode::String, 390, 390, 8, 8),
+        (ResonatorMode::Bowed, 620, 565, 8, 6),
+        (ResonatorMode::Sympathetic, 1_400, 1_274, 3, 3),
+        (ResonatorMode::Modal, 1_900, 1_703, 2, 2),
+    ] {
+        let p = sound(mode);
+        let engine = Engines::cost(&p, &ModState::new());
+        assert_eq!(engine, ModalEngine::cost(&p.modal), "{mode:?}");
+        assert_eq!(engine, Cost(billed), "{mode:?}");
+        assert!(billed >= estimate, "{mode:?}: {billed} < {estimate}");
+        let voice = Voice::cost(&p, &ModState::new()).0;
+        let at = |hz| {
+            let budget = SampleBudget::for_cpu(hz).as_cost().0;
+            ((budget - FxBus::COST.0) / voice).min(MAX_VOICES as u32)
+        };
+        assert_eq!(
+            (at(CPU_HZ_REV_V), at(CPU_HZ_REV_Y)),
+            (rev_v, rev_y),
+            "{mode:?}"
+        );
+    }
+    // The bank scales with its modes: 48, the most, is 16 more than 32.
+    let mut bank = sound(ResonatorMode::Modal);
+    bank.modal.num_modes = 48;
+    assert_eq!(ModalEngine::cost(&bank.modal), Cost(1_900 + 16 * 45));
 }

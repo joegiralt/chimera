@@ -91,7 +91,36 @@ impl Default for ModalEngine {
 }
 
 impl ModalEngine {
-    pub const COST: Cost = Cost(390); // measured 2026-09-27, bench, rev V at 480 MHz
+    /// Cycles/sample per model (ADR 0013), at the chain's LP24. String is
+    /// measured (bench `MODAL`, 2026-09-27, rev V at 480 MHz). The others
+    /// are provisional until the bench's MDL rows read them (#49): the
+    /// emulator's count over String's (1.36 cycles an instruction, 38 an
+    /// I- or D-cache miss), scaled by String's bench/emulator ratio (1.07)
+    /// and rounded up about 10 %. Emulator, per voice: String 235
+    /// instructions a sample, 78 misses a block; Bowed 340, 115;
+    /// Sympathetic 801, 174; the resonator bank 1,106, 148 at 32 modes and
+    /// 1,539, 169 at 48.
+    pub const COST_STRING: Cost = Cost(390);
+    /// Estimated 565.
+    pub const COST_BOWED: Cost = Cost(620);
+    /// Estimated 1,274.
+    pub const COST_SYMPATHETIC: Cost = Cost(1_400);
+    /// The resonator bank: this plus `COST_MODE` per mode. Estimated 1,703
+    /// at 32 modes and 40 a mode; billed 1,900 at 32.
+    pub const COST_BANK: Cost = Cost(460);
+    pub const COST_MODE: Cost = Cost(45);
+
+    /// `p`'s model, as the voice plays it from its next note-on.
+    pub fn cost(p: &ModalParams) -> Cost {
+        match p.mode {
+            ResonatorMode::String => Self::COST_STRING,
+            ResonatorMode::Bowed => Self::COST_BOWED,
+            ResonatorMode::Sympathetic => Self::COST_SYMPATHETIC,
+            ResonatorMode::Modal => {
+                Cost(Self::COST_BANK.0 + Self::COST_MODE.0 * resolution(p) as u32)
+            }
+        }
+    }
     /// More with a route into PITCH or FINE: `retune`'s eight divides a
     /// block, the per-block `fast_exp2` and the retune's I-cache lines.
     /// Provisional, pending a bench row (#182): the emulator's Sympathetic row
@@ -270,7 +299,7 @@ impl ModalEngine {
     /// Configure filters — called every render block (not just note_on).
     /// Matches Rings' ComputeFilters().
     fn compute_filters(&mut self, params: &ModalParams, frequency: f32) {
-        let num = (params.num_modes as usize).min(MAX_MODES) & !1;
+        let num = resolution(params);
         self.resolution = num;
 
         // Q from decay (Rings-style range).
@@ -535,6 +564,11 @@ impl ModalEngine {
 }
 
 use super::note_to_freq;
+
+/// The bank's mode count: `num_modes`, even, at most `MAX_MODES`.
+fn resolution(p: &ModalParams) -> usize {
+    (p.num_modes as usize).min(MAX_MODES) & !1
+}
 
 /// The sympathetic strings' ratios to the main one: harmonics/intervals
 /// spread by `inharm`, 0 unison, 1 a wide harmonic series.
