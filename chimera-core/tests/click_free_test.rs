@@ -181,7 +181,7 @@ fn test_no_clicks_odd_buffer_sizes() {
         |p, _| {
             *p = tri();
         },
-        // Deliberately misaligned with BLOCK_SIZE=128
+        // Deliberately misaligned with BLOCK_SIZE (64)
         &[100, 200, 50, 300, 150, 75, 250, 100, 400, 50],
     );
 }
