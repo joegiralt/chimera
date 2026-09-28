@@ -276,8 +276,8 @@ What changes versus 099f251, and nothing else:
   - `pub const SD_FAST_HZ: u32` (12 500 000 until the STOP decides);
   - `pub const SD_MODE: spi::Mode` (`MODE_0` until the STOP decides);
   - `pub const SD_ACQUIRE_RETRIES: u32 = 3;`, `pub const SD_ACQUIRE_MS: u32 = 1_000;`, `pub const SD_IDLE_MS: u32 = 600;`, `pub const SD_OP_CAP_MS: u32 = 10_000;`
-  - `pub struct SdSpi`: owns `Spi<SPI2, Enabled>`, CS `PE12`, the SPI2 `rec` and a private `Deadline` (`enum { Cycles { .. }, Transfers { left } }`, the second when the DWT won't count); implements `embedded_hal::spi::SpiDevice<u8>`, with `ErrorType::Error = SdSpiError { Spi, Timeout }`;
-  - `impl SdSpi { pub fn new(..) -> Self; pub fn set_hz(&mut self, hz: u32); pub fn set_mode(&mut self, m: spi::Mode); pub fn wake(&mut self); pub fn arm(&mut self, idle_ms: u32); pub fn timed_out(&self) -> bool; }`
+  - `pub struct SdSpi`: owns `Spi<SPI2, Enabled>`, CS `PE12`, the SPI2 `rec` (returned by `free()`) and a `chimera_fat::deadline::Deadline` (`arm` on DWT cycles, `arm_transfers` budgeted from SCK when the DWT won't count); implements `embedded_hal::spi::SpiDevice<u8>`, with `ErrorType::Error = SdSpiError { Spi, Timeout }`;
+  - `impl SdSpi { pub fn new(..) -> Self; pub fn set_hz(&mut self, hz: Hertz); pub fn set_mode(&mut self, m: spi::Mode); pub fn wake(&mut self); pub fn arm(&mut self, idle_ms: u32); pub fn timed_out(&self) -> bool; }`
     - `set_hz`/`set_mode` do `free()` and rebuild with `spi_unchecked`;
     - `wake` sends 10 × 0xFF with CS high (≥ 74 clocks);
     - `arm` starts the operation: clears `timed_out`, and sets the idle deadline and the `SD_OP_CAP_MS` cap. The idle deadline restarts on every transaction that moves ≥ 512 B;
@@ -967,7 +967,7 @@ pub fn draw_busy<D: DrawTarget<Color = Rgb565>>(d: &mut D, label: BusyLabel) -> 
 - Modify: `chimera-core/src/instrument.rs:32-40` (`+ STORE_RESERVE` in `AXI_RESIDENT`)
 - Modify: `chimera-core/tests/memory_budget_test.rs`: add the `STORE_RESERVE` row to `axi_residents_fit`'s list (its `assert_eq!(total, AXI_RESIDENT)` needs it), and assert that the AXI left over is ≥ 64 KB (it was ~91 KB before this plan; the SYSTEM path adds no other static)
 - Modify: `chimera-stm32/src/sd.rs`:
-  - `impl chimera_fat::SdBus for SdSpi`: `Acquire` → `set_hz(SD_INIT_HZ)` and `SD_ACQUIRE_MS`; `Data` → `set_hz(SD_FAST_HZ)` and `SD_IDLE_MS`; `start_op` → `arm(phase's ms)`; `wake` and `timed_out` forward;
+  - `impl chimera_fat::SdBus for SdSpi`: `Acquire` → `set_hz(SD_INIT_HZ.Hz())` and `SD_ACQUIRE_MS`; `Data` → `set_hz(SD_FAST_HZ.Hz())` and `SD_IDLE_MS`; `start_op` → `arm(phase's ms)`; `wake` and `timed_out` forward;
   - `pub type SdStore = FatStore<SdDevice, FixedTime>`;
   - `const _: () = assert!(size_of::<SdStore>() <= STORE_RESERVE);`;
   - `pub fn take_store(..) -> Option<&'static mut SdStore>`, a take-once `static mut MaybeUninit` in AXI, as `shared.rs` does (`// SAFETY:` on the one `unsafe`).

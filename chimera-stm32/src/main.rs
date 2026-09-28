@@ -1,6 +1,9 @@
 #![no_std]
 #![no_main]
 
+#[cfg(all(feature = "bench", feature = "sd-probe"))]
+compile_error!("bench and sd-probe both take over after boot: pick one");
+
 // The SD probe build halts after `boot`: nothing of the synth is built.
 #[cfg(not(feature = "sd-probe"))]
 mod audio;
