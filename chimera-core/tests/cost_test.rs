@@ -726,3 +726,36 @@ fn a_routed_silent_operator_is_priced() {
     assert_eq!(AlgoEngine::cost(&p, &routed).0, cost(&worst()));
     assert!(bare < cost(&worst()));
 }
+
+/// A route into PITCH or FINE retunes Modal's strings every block: billed
+/// `ModalEngine::PITCH` (provisional, emulator-derived) on any route, at
+/// amount 0 too; Algo's pitch rides its per-block operator update.
+#[test]
+fn a_pitch_route_on_modal_bills_the_retune() {
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::dsp::modal::ModalEngine;
+    use chimera_core::params::PitchParams;
+    assert_eq!(ModalEngine::PITCH, Cost(12));
+    let routed = |q, amount| {
+        let mut ms = ModState::from_registry(&chimera_core::mod_path::ModDestRegistry::new(), 8);
+        let d = ms.push(ParamAddr::new(BlockRef::Pitch, q)).unwrap();
+        ms.set_route(ModSource::Lfo1.index(), d, amount);
+        ms
+    };
+    let modal = ParamSnapshot::for_engine(EngineType::Modal);
+    let bare = Engines::cost(&modal, &ModState::new());
+    assert_eq!(bare, ModalEngine::COST);
+    for q in [PitchParams::PITCH, PitchParams::FINE] {
+        for amount in [127, 0] {
+            assert_eq!(
+                Engines::cost(&modal, &routed(q, amount)),
+                bare + ModalEngine::PITCH
+            );
+        }
+    }
+    let algo = ParamSnapshot::for_engine(EngineType::Algo);
+    assert_eq!(
+        Engines::cost(&algo, &routed(PitchParams::PITCH, 127)),
+        Engines::cost(&algo, &ModState::new())
+    );
+}
