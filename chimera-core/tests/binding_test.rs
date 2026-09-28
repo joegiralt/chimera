@@ -49,11 +49,12 @@ fn part_chains_offer_the_eight_sources() {
             "{engine:?}"
         );
         let sound = chimera_core::preset::Sound::init(engine);
-        assert!(
-            sound.dest_registry.is_empty(),
-            "{engine:?}: no pre-wired destinations"
+        assert_eq!(
+            sound.dest_registry.len(),
+            1,
+            "{engine:?}: the default CUTOFF column"
         );
-        assert_eq!(sound.mod_state.num_dests(), 0, "{engine:?}");
+        assert_eq!(sound.mod_state.num_dests(), 1, "{engine:?}");
     }
 }
 

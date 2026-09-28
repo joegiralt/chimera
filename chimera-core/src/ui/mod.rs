@@ -30,7 +30,7 @@ use crate::block::Block;
 use crate::dsp::lfo::Lfo;
 use crate::in_place::{by_value, uninit_at};
 use crate::mod_path::{LABEL_LEN, RegistryError};
-use crate::modulation::{MAX_MOD_SOURCES, ModState};
+use crate::modulation::{CUTOFF, CUTOFF_LABEL, MAX_MOD_SOURCES, ModState};
 use crate::params::{EnvParams, ParamSnapshot};
 use crate::perf::load::AudioStats;
 use crate::preset::{POOL_SIZE, PartEdit, Performance, SoundPool};
@@ -44,9 +44,6 @@ use page::{PageKey, PageLayout};
 use perf::PerfStats;
 use renderer::Renderer;
 use theme_settings::ThemeSettings;
-
-/// CUTOFF: the destination the filter's route knobs view (spec § 6).
-const CUTOFF: ParamAddr = ParamAddr::new(BlockRef::Filter, crate::params::FilterParams::CUTOFF);
 
 /// MIX + turn on a route knob: the next of −127, 0, +127 that way.
 fn snap_amount(a: i8, delta: i8) -> i8 {
@@ -311,7 +308,7 @@ impl UiState {
         let at = self.active_part;
         let sound = &mut self.performance.parts[at].sound;
         if !sound.dest_registry.is_primed(CUTOFF) {
-            if let Err(e) = sound.dest_registry.add(CUTOFF, *b"FLTCUTOF") {
+            if let Err(e) = sound.dest_registry.add(CUTOFF, CUTOFF_LABEL) {
                 self.prime_status = Some(e.into());
                 return;
             }
@@ -548,6 +545,11 @@ impl UiState {
                     }
                 }
             }
+            // MIX + Minus deletes the route under the cursor (spec § 2).
+            if shift && controls.button_state(ButtonId::Minus) == ButtonState::Pressed {
+                self.matrix_state.delete_selected();
+                self.sync_mod_state(self.active_part);
+            }
         } else {
             let at = self.active_part;
             for (i, &enc) in encoder_ids.iter().enumerate() {
@@ -777,6 +779,7 @@ impl UiState {
                 col: self.matrix_state.sel_col as u8,
                 dests: self.matrix_state.num_dests as u8,
                 value: qvalues[renderer::MATRIX_AMOUNT_SLOT],
+                matrix_rev: self.matrix_state.rev,
             },
             RegionKind::Focus => RegionData::focus(
                 self.page,
@@ -797,19 +800,23 @@ impl UiState {
                     .filter(|_| f.def.layout == PageLayout::BigViz);
                 RegionData::viz_with_status(self.page, values, live, status)
             }
-            RegionKind::Cells => RegionData::cells(
-                self.page,
-                if audio_page {
-                    audio_page::cells_key(f.audio)
-                } else {
-                    qvalues
-                },
-                f.focus as u8,
-                self.matrix_state.num_dests as u16,
-                core::array::from_fn(|i| {
-                    Renderer::cell_mod_info(f.def, i, f.sel_op, f.matrix).map(f32::to_bits)
-                }),
-            ),
+            RegionKind::Cells => {
+                let looks = (0..6).fold(0u16, |k, i| k | (renderer::look(f, i) as u16) << (2 * i));
+                RegionData::cells(
+                    self.page,
+                    if audio_page {
+                        audio_page::cells_key(f.audio)
+                    } else {
+                        qvalues
+                    },
+                    f.focus as u8,
+                    self.matrix_state.num_dests as u16,
+                    core::array::from_fn(|i| {
+                        Renderer::cell_mod_info(f.def, i, f.sel_op, f.matrix).map(f32::to_bits)
+                    }),
+                )
+                .keyed(self.matrix_state.rev, looks)
+            }
             RegionKind::Nav => RegionData::nav(
                 chain,
                 node,
@@ -822,7 +829,8 @@ impl UiState {
                 self.matrix_state.scroll_x as u8,
                 self.matrix_state.scroll_y as u8,
                 qvalues[renderer::MATRIX_AMOUNT_SLOT],
-            ),
+            )
+            .keyed(self.matrix_state.rev, 0),
         }
     }
 

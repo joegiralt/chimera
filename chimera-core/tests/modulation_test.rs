@@ -149,8 +149,9 @@ fn mod_state_truncates_without_misaligning() {
     assert_eq!(Some(ms.dest(15)), matrix.dests[15].map(|d| d.addr));
 }
 
-/// Review Focus 2: a matrix with more than MAX_MOD_SOURCES rows is clamped
-/// (the old code indexed `amounts[si]` past 8 in the audio thread).
+/// Review Focus 2: a matrix claiming more than MAX_MOD_SOURCES rows is
+/// clamped (the old code indexed `amounts[si]` past 8 in the audio thread).
+/// The matrix itself holds only MAX_MOD_SOURCES rows (presence is a `u8`).
 #[test]
 fn mod_state_clamps_sources() {
     let mut registry = ModDestRegistry::new();
@@ -158,12 +159,11 @@ fn mod_state_clamps_sources() {
     let mut matrix = MatrixState::new();
     matrix.rebuild_dests_from_registry(&registry);
     matrix.num_sources = 16;
-    matrix.amounts[12][0] = 50;
+    matrix.set(7, 0, 50);
     let mut ms = ModState::new();
-    ms.sync_from_matrix(&matrix);
+    ms.sync_from_matrix(&matrix); // nothing panicked
     assert_eq!(ms.num_sources(), MAX_MOD_SOURCES);
-    let values = [1.0f32; MAX_MOD_SOURCES];
-    assert_eq!(ms.sum_for(0, &values), 0.0); // row 12 was dropped, nothing panicked
+    assert_eq!(ms.amount(7, 0), 50);
 }
 
 /// `dest`/`sum_for` are indexed by the audio ISR (`Voice::render`) with `d`

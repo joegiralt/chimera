@@ -63,6 +63,11 @@ fn the_amount_lerps() {
 #[test]
 fn an_empty_matrix_says_so() {
     let mut ui = chimera_core::ui::UiState::new();
+    ui.performance.parts[0]
+        .sound
+        .dest_registry
+        .remove(chimera_core::modulation::CUTOFF);
+    feed(&mut ui, Input::press(ButtonId::B1));
     for _ in 0..5 {
         feed(&mut ui, Input::press(ButtonId::Plus));
     }

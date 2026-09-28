@@ -113,3 +113,59 @@ fn every_source_moves_cutoff() {
         assert_ne!(render(s, 127, note, 100), render(s, 0, note, 100), "{s:?}");
     }
 }
+
+use chimera_core::modulation::{CUTOFF as CUTOFF_ADDR, MAX_MOD_SOURCES};
+use chimera_core::preset::Sound;
+use chimera_core::ui::mod_grid::MatrixState;
+
+const DEFAULT_BITS: u8 = 1 << 0 | 1 << 1 | 1 << 7; // ENV1, LFO1, NOTE
+
+#[test]
+fn presence_is_apart_from_the_amount() {
+    let mut reg = ModDestRegistry::new();
+    reg.add(CUTOFF_ADDR, *b"FLTCUTOF").unwrap();
+    let mut ms = ModState::from_registry(&reg, MAX_MOD_SOURCES);
+    assert_eq!(ms.routes_into(CUTOFF_ADDR), 0);
+    ms.set_route(ModSource::Note.index(), 0, 0);
+    assert_eq!(ms.routes_into(CUTOFF_ADDR), 1 << 7, "a route at 0 exists");
+    ms.set_amount(ModSource::Lfo1.index(), 0, 9);
+    assert_eq!(
+        ms.routes_into(CUTOFF_ADDR),
+        1 << 7 | 1 << 1,
+        "set_amount creates"
+    );
+    let values = [1.0f32; MAX_MOD_SOURCES];
+    ms.set_amount(ModSource::Lfo1.index(), 0, 0);
+    assert_eq!(
+        ms.sum_for(0, &values),
+        0.0,
+        "a present route at 0 adds nothing"
+    );
+}
+
+#[test]
+fn presence_survives_sync_from_matrix() {
+    let sound = Sound::init(EngineType::Algo);
+    let mut m = MatrixState::new();
+    m.rebuild_sources(&PART_MOD_SOURCES);
+    m.rebuild_dests_from_registry(&sound.dest_registry);
+    m.load_amounts(&sound.mod_state);
+    assert_eq!(m.present[0], DEFAULT_BITS);
+    let mut ms = ModState::new();
+    ms.sync_from_matrix(&m);
+    assert_eq!(ms.present(0), DEFAULT_BITS);
+}
+
+/// Spec § Tests "Defaults": exactly the three CUTOFF routes at 0.
+#[test]
+fn a_new_sound_has_the_default_routes() {
+    for ct in EngineType::ALL {
+        let s = Sound::init(ct);
+        assert_eq!(s.dest_registry.len(), 1, "{ct:?}");
+        assert_eq!(s.dest_registry.get(0).unwrap().addr, CUTOFF_ADDR);
+        assert_eq!(s.mod_state.num_sources(), MAX_MOD_SOURCES);
+        assert_eq!(s.mod_state.num_dests(), 1);
+        assert_eq!(s.mod_state.present(0), DEFAULT_BITS, "{ct:?}");
+        assert!((0..MAX_MOD_SOURCES).all(|src| s.mod_state.amount(src, 0) == 0));
+    }
+}

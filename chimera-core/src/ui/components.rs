@@ -253,6 +253,18 @@ where
     focus_value(d, value_text, value, true);
 }
 
+/// How a cell reads (spec § UI). The discriminants pack into the Cells
+/// region's key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Look {
+    Live = 0,
+    /// A route knob with no route: a dash where the value goes, no bar.
+    Absent = 1,
+    /// Fixed or inapplicable: label and value in MID, no bar.
+    Dimmed = 2,
+}
+
 /// One cell of the 3×2 grid.
 pub struct Cell<'a> {
     pub label: &'a str,
@@ -265,6 +277,7 @@ pub struct Cell<'a> {
     pub active: bool,
     /// Summed mod amount (−1..1) when the param is a mod destination.
     pub mod_amount: Option<f32>,
+    pub look: Look,
 }
 
 /// Draw cell `i` (knob order a–f, 3×2) with its label baseline `top + row·36`.
@@ -289,6 +302,10 @@ where
         label_color,
         theme::LABEL_TRACKING,
     );
+    if c.look == Look::Absent {
+        draw::fill_rect(d, x, y + theme::CELL_VALUE_DY - 5, 12, 2, theme::INK2);
+        return;
+    }
     let value_color = if c.active { theme::INK } else { theme::INK2 };
     draw::text(
         d,

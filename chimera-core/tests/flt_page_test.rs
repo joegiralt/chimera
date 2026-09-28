@@ -125,3 +125,54 @@ fn a_full_matrix_keeps_the_route_knob_off() {
     assert_eq!(ui.prime_status(), Some(PrimeStatus::Full));
     assert!((0..ui.mod_state().num_dests()).all(|d| ui.mod_state().dest(d) != CUTOFF));
 }
+
+/// Plus five times from Part 1's home: the MOD node (the matrix, until
+/// Task 16 puts E1 there).
+fn to_matrix(ui: &mut UiState) {
+    feed(ui, Input::press(ButtonId::B1));
+    for _ in 0..5 {
+        feed(ui, Input::press(ButtonId::Plus));
+    }
+}
+
+/// Deleting a route at 0 changes no amount, but the dirty render redraws
+/// the grid (the desktop and the firmware draw through `render_dirty`).
+#[test]
+fn deleting_a_route_at_zero_redraws_the_grid() {
+    use chimera_core::ui::page::PageLayout;
+    use chimera_core::ui::perf::PerfStats;
+    use chimera_core::ui::region::{RegionKind, layout_regions};
+    let mut ui = UiState::new();
+    to_matrix(&mut ui); // E1 → CUTOFF, present at 0
+    let (mut fb, perf, scope) = (Fb::new(), PerfStats::zero(), scope_fixture());
+    ui.render_dirty_with_audio(&mut fb, &perf, None, &scope);
+    feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Minus));
+    let flushed = ui.render_dirty_with_audio(&mut fb, &perf, None, &scope);
+    let &(_, y0, y1) = layout_regions(PageLayout::Matrix)
+        .iter()
+        .find(|r| r.0 == RegionKind::Grid)
+        .unwrap();
+    assert!(flushed.contains(&(y0, y1)), "{flushed:?}");
+}
+
+/// MIX+MINUS on a matrix cell deletes its route; the ENV knob shows a dash
+/// until it is turned, and turning it creates the route.
+#[test]
+fn mix_minus_deletes_and_the_knob_recreates() {
+    let mut ui = on_flt(EngineType::Algo);
+    to_matrix(&mut ui); // cursor on E1 → FLT CUTOFF
+    assert_eq!(ui.matrix_state.route(0, CUTOFF), Some(0));
+    feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Minus));
+    assert_eq!(ui.matrix_state.route(0, CUTOFF), None, "deleted");
+    assert_eq!(ui.mod_state().present(0) & 1, 0);
+    feed(&mut ui, Input::press(ButtonId::B1));
+    for _ in 0..flt_node(EngineType::Algo) {
+        feed(&mut ui, Input::press(ButtonId::Plus));
+    }
+    feed(&mut ui, Input::turn(EncoderId::E, 3)); // ENV
+    assert_eq!(
+        ui.matrix_state.route(0, CUTOFF),
+        Some(3),
+        "created at 0, then turned"
+    );
+}

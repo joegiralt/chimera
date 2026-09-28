@@ -91,8 +91,8 @@ fn the_morph_showcases_morph() {
         assert_ne!(s.params.algo.alg_a, s.params.algo.alg_b, "{}", s.name_str());
     }
     let pad = factory_sound(6).unwrap();
-    assert_eq!(pad.mod_state.num_dests(), 1);
-    assert_ne!(pad.mod_state.amount(1, 0), 0, "the LFO moves MORPH");
+    assert_eq!(pad.mod_state.num_dests(), 2);
+    assert_ne!(pad.mod_state.amount(1, 1), 0, "LFO 1 moves MORPH");
 }
 
 /// #33: the LFO's full swing must not push MORPH past its 0..=127 range —
@@ -110,7 +110,7 @@ fn morph_pad_lfo_sweep_stays_inside_morph_range() {
     for _ in 0..period {
         let mut sources = [0.0f32; MAX_MOD_SOURCES];
         sources[1] = lfo.process(&s.params.lfos[0], chimera_hal::SAMPLE_RATE);
-        let off = s.mod_state.sum_for(0, &sources);
+        let off = s.mod_state.sum_for(1, &sources);
         let morph = base + off * 127.0; // MORPH's range is 0..=127
         assert!((0.0..=127.0).contains(&morph), "morph {morph} clips");
     }
