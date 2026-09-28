@@ -61,8 +61,9 @@ fn routed(routes: &[ModSource]) -> ModState {
 }
 
 /// The spec's shape, billed high: the defaults `BASE`; ENV 2 (A) on the
-/// VCA `BASE + CLAMP + ENV_A`; the worst case, three curved B slots and the
-/// five other sources, `BASE + CLAMP + 3·(ENV_B + CURVE) + 5·OTHER`.
+/// VCA `BASE + CLAMP + ENV_A`; the worst case, three BURST B slots (the
+/// costliest B mode) and the five other sources,
+/// `BASE + CLAMP + 3·(ENV_B + BURST) + 5·OTHER`.
 #[test]
 fn mod_routing_bills_the_spec_shape() {
     use ModRouting as M;
@@ -77,15 +78,16 @@ fn mod_routing_bills_the_spec_shape() {
     );
     let mut worst = p.clone();
     for e in worst.envelopes.iter_mut() {
-        (e.env_type, e.func.mode, e.func.shape) = (EnvType::B, FuncMode::Env, 0.8);
+        (e.env_type, e.func.mode) = (EnvType::B, FuncMode::Burst);
     }
-    let three_b = M::ENV_B + M::CURVE + M::ENV_B + M::CURVE + M::ENV_B + M::CURVE;
+    let three_b = M::ENV_B + M::BURST + M::ENV_B + M::BURST + M::ENV_B + M::BURST;
     let five_other = Cost(5 * M::OTHER.0);
     assert_eq!(
         M::cost(&worst, &routed(&ModSource::ALL)),
         M::BASE + M::CLAMP + three_b + five_other
     );
-    // A route into ENV 2's SHAPE bills the curve on a centred B ENV.
+    // A route into ENV 2's SHAPE bills the curve on a centred B ENV, and
+    // SLIDE for the coefficient rebuild the same route causes.
     let mut b2 = p.clone();
     (b2.envelopes[1].env_type, b2.envelopes[1].func.mode) = (EnvType::B, FuncMode::Env);
     let mut shaped = routed(&[ModSource::Env2]);
@@ -102,15 +104,102 @@ fn mod_routing_bills_the_spec_shape() {
     );
     assert_eq!(
         M::cost(&b2, &shaped),
-        M::BASE + M::CLAMP + M::ENV_B + M::CURVE
+        M::BASE + M::CLAMP + M::ENV_B + M::CURVE + M::SLIDE
     );
-    // The review's estimates, until the bench (Task 13): 30, 63 and 223
-    // (OTHER billed at 5, not the spec's 3: Task 10 review).
+    // The review's estimates, until the bench (Task 13): 30, 63 and 268
+    // (OTHER billed at 5, not the spec's 3: Task 10 review; BURST added on
+    // top of ENV_B for B in BURST mode: Task 12 fix round 1).
     assert_eq!(
         (M::BASE, M::cost(&p, &routed(&[ModSource::Env2]))),
         (Cost(30), Cost(63))
     );
-    assert_eq!(M::cost(&worst, &routed(&ModSource::ALL)), Cost(223));
+    assert_eq!(M::cost(&worst, &routed(&ModSource::ALL)), Cost(268));
+}
+
+/// BURST mode adds `BURST` on top of `ENV_B` (70 total); B in ENV or LFO
+/// mode does not.
+#[test]
+fn mod_routing_bills_burst_only_in_burst_mode() {
+    use ModRouting as M;
+    use chimera_core::dsp::modulator::{EnvType, FuncMode};
+    let mut p = ParamSnapshot::for_engine(EngineType::Algo);
+    p.envelopes[1].env_type = EnvType::B;
+    let mods = routed(&[ModSource::Env2]);
+
+    p.envelopes[1].func.mode = FuncMode::Burst;
+    assert_eq!(M::cost(&p, &mods), M::BASE + M::CLAMP + M::ENV_B + M::BURST);
+
+    p.envelopes[1].func.mode = FuncMode::Env;
+    assert_eq!(M::cost(&p, &mods), M::BASE + M::CLAMP + M::ENV_B);
+
+    p.envelopes[1].func.mode = FuncMode::Lfo;
+    assert_eq!(M::cost(&p, &mods), M::BASE + M::CLAMP + M::ENV_B);
+}
+
+/// A route into an ENV slot's TIME, RISE, FALL or SHAPE bills `SLIDE`, once
+/// per slot, whether or not that slot feeds the VCA.
+#[test]
+fn mod_routing_bills_slide_for_a_rebuilt_slot() {
+    use ModRouting as M;
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::dsp::modulator::EnvSlot;
+    use chimera_core::params::EnvParams;
+    let p = ParamSnapshot::for_engine(EngineType::Algo);
+
+    // No VCA route at all: SLIDE still bills on top of BASE alone.
+    let mut reg = chimera_core::mod_path::ModDestRegistry::new();
+    reg.add(
+        ParamAddr::new(BlockRef::Env(EnvSlot::Env1), EnvParams::RISE),
+        *b"E1 RISE\0",
+    )
+    .unwrap();
+    let mut mods = ModState::from_registry(&reg, 8);
+    assert_eq!(M::cost(&p, &mods), M::BASE, "no route yet");
+    mods.set_route(ModSource::Lfo1.index(), 0, 64);
+    assert_eq!(M::cost(&p, &mods), M::BASE + M::SLIDE);
+
+    // Each of TIME, FALL and SHAPE bills it too, one SLIDE per slot even
+    // with more than one of the four routed.
+    let mut reg = chimera_core::mod_path::ModDestRegistry::new();
+    for (addr, label) in [
+        (
+            ParamAddr::new(BlockRef::Env(EnvSlot::Env3), EnvParams::TIME),
+            *b"E3 TIME\0",
+        ),
+        (
+            ParamAddr::new(BlockRef::Env(EnvSlot::Env3), EnvParams::FALL),
+            *b"E3 FALL\0",
+        ),
+        (
+            ParamAddr::new(BlockRef::Env(EnvSlot::Env3), EnvParams::SHAPE),
+            *b"E3SHAPE\0",
+        ),
+    ] {
+        reg.add(addr, label).unwrap();
+    }
+    let mut mods = ModState::from_registry(&reg, 8);
+    for d in 0..3 {
+        mods.set_route(ModSource::Lfo1.index(), d, 64);
+    }
+    assert_eq!(
+        M::cost(&p, &mods),
+        M::BASE + M::SLIDE,
+        "one SLIDE, not three"
+    );
+
+    // On top of a VCA term, SLIDE still adds.
+    let mut with_vca = routed(&[ModSource::Env2]);
+    let d = with_vca
+        .push(ParamAddr::new(
+            BlockRef::Env(EnvSlot::Env2),
+            EnvParams::RISE,
+        ))
+        .unwrap();
+    with_vca.set_route(ModSource::Lfo1.index(), d, 64);
+    assert_eq!(
+        M::cost(&p, &with_vca),
+        M::BASE + M::CLAMP + M::ENV_A + M::SLIDE
+    );
 }
 
 /// What the 7,000-cycle budget allows with the FX bus (the whole bus at
