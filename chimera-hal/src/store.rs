@@ -12,6 +12,8 @@ pub struct VolumeId {
 pub enum Unsupported {
     Exfat,
     NoPartitionTable,
-    /// The first partition's type byte.
+    /// The MBR type byte, for the log only.
     NotFat(u8),
+    /// A FAT volume whose boot sector fails validation.
+    BadBootSector,
 }
