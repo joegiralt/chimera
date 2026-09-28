@@ -134,12 +134,6 @@ where
         crate::clocks::delay_us(cpu_hz, 150_000);
         self.cmd(0x29);
     }
-
-    fn set_window(&mut self) {
-        self.cmd_data(0x2A, &[0x00, 0x00, 0x00, 0xEF]);
-        self.cmd_data(0x2B, &[0x00, 0x00, 0x01, 0x3F]);
-        self.cmd(0x2C);
-    }
 }
 
 impl<SPI, DC, RST, CS> DrawTarget for Stm32Display<SPI, DC, RST, CS>
@@ -162,14 +156,7 @@ where
     where
         I: IntoIterator<Item = Pixel<Rgb565>>,
     {
-        for Pixel(point, color) in pixels {
-            let x = point.x;
-            let y = point.y;
-            if x >= 0 && x < SCREEN_WIDTH as i32 && y >= 0 && y < SCREEN_HEIGHT as i32 {
-                let idx = (y as usize) * (SCREEN_WIDTH as usize) + (x as usize);
-                self.fb[idx] = RawU16::from(color).into_inner();
-            }
-        }
+        chimera_hal::draw_into_fb(self.fb, pixels);
         Ok(())
     }
 }
@@ -187,11 +174,6 @@ where
     RST: OutputPin,
     CS: OutputPin,
 {
-    fn flush(&mut self) {
-        self.set_window();
-        self.write_pixels(0, FB_SIZE);
-    }
-
     fn flush_region(&mut self, y_start: u16, y_end: u16) {
         self.cmd_data(0x2A, &[0x00, 0x00, 0x00, 0xEF]);
         let ys = y_start.to_be_bytes();

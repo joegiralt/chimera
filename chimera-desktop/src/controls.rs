@@ -78,14 +78,8 @@ impl Controls for DesktopControls {
     }
 
     fn button_state(&self, id: ButtonId) -> ButtonState {
-        let curr = self.button_current[id as usize];
-        let prev = self.button_previous[id as usize];
-        match (prev, curr) {
-            (false, true) => ButtonState::Pressed,
-            (true, true) => ButtonState::Held,
-            (true, false) => ButtonState::Released,
-            (false, false) => ButtonState::Up,
-        }
+        let i = id as usize;
+        ButtonState::from_levels(self.button_previous[i], self.button_current[i])
     }
 }
 

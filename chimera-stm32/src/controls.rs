@@ -247,14 +247,6 @@ impl Controls for Stm32Controls {
 
     fn button_state(&self, id: ButtonId) -> ButtonState {
         let i = id as usize;
-        if i >= NUM_BUTTONS {
-            return ButtonState::Up;
-        }
-        match (self.btn_prev[i], self.btn_cur[i]) {
-            (false, true) => ButtonState::Pressed,
-            (true, true) => ButtonState::Held,
-            (true, false) => ButtonState::Released,
-            (false, false) => ButtonState::Up,
-        }
+        ButtonState::from_levels(self.btn_prev[i], self.btn_cur[i])
     }
 }
