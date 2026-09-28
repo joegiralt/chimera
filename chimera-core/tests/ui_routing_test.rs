@@ -333,6 +333,18 @@ fn priming_after_a_stale_cursor_does_not_inherit_a_phantom_amount() {
         [(CUTOFF, 50), (drive, 0), (mix, 0)],
         "the E turn must edit Part 2's own route, not a discarded phantom column"
     );
+
+    // Prime TONE: column 3, where Part 1's cursor stood, becomes real and
+    // must start empty (no phantom amount or route).
+    let tone = ParamAddr::new(BlockRef::Drive, DriveParams::TONE);
+    prime_slot(&mut ui, EncoderId::B);
+    assert_eq!(ui.matrix_state.num_dests, 4);
+    let ms = &ui.performance.parts[1].sound.mod_state;
+    assert_eq!(ms.dest(3), tone);
+    assert!((0..ms.num_sources()).all(|s| ms.amount(s, 3) == 0));
+    assert_eq!(ms.present(3), 0);
+    assert!((0..ui.matrix_state.num_sources).all(|r| ui.matrix_state.amounts[r][3] == 0));
+    assert_eq!(ui.matrix_state.present[3], 0);
 }
 
 /// Issue #11, regression 2: un-priming rebuilt the destination list (shifted

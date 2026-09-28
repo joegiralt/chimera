@@ -164,7 +164,10 @@ fn mix_minus_deletes_and_the_knob_recreates() {
     assert_eq!(ui.matrix_state.route(0, CUTOFF), Some(0));
     feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Minus));
     assert_eq!(ui.matrix_state.route(0, CUTOFF), None, "deleted");
-    assert_eq!(ui.mod_state().present(0) & 1, 0);
+    // Deleting the route, not un-priming the column: LF1 and NTE stay.
+    assert_eq!(ui.mod_state().present(0), 1 << 1 | 1 << 7);
+    assert_eq!(ui.mod_state().find(CUTOFF), Some(0), "the column stays");
+    assert_eq!(ui.matrix_state.col_of(CUTOFF), Some(0));
     feed(&mut ui, Input::press(ButtonId::B1));
     for _ in 0..flt_node(EngineType::Algo) {
         feed(&mut ui, Input::press(ButtonId::Plus));
@@ -175,4 +178,128 @@ fn mix_minus_deletes_and_the_knob_recreates() {
         Some(3),
         "created at 0, then turned"
     );
+}
+
+/// Back to FLT (B1 then PLUS), or on to FLT › MODE with `sub`.
+fn back_to_flt(ui: &mut UiState, sub: bool) {
+    feed(ui, Input::press(ButtonId::B1));
+    for _ in 0..flt_node(EngineType::Algo) {
+        feed(ui, Input::press(ButtonId::Plus));
+    }
+    if sub {
+        feed(ui, Input::press(ButtonId::Edit));
+    }
+}
+
+/// Rows `y0..y1`, columns `x0..x1` of two frames agree.
+fn same_rect(a: &Fb, b: &Fb, (x0, x1): (i32, i32), (y0, y1): (i32, i32)) -> bool {
+    (y0..y1).all(|y| (x0..x1).all(|x| a.at(x, y) == b.at(x, y)))
+}
+
+/// The "—" knob: with E1 → CUTOFF deleted, FLT's focused ENV cell draws a
+/// dash where the value goes (no value, no bar) and the viz readout reads
+/// `--`, through the dirty render the desktop and firmware use.
+#[test]
+fn an_absent_route_knob_shows_a_dash() {
+    use chimera_core::ui::components::{self, Cell, Look};
+    use chimera_core::ui::perf::PerfStats;
+    use chimera_core::ui::{theme, viz};
+    let mut ui = on_flt(EngineType::Algo);
+    feed(&mut ui, Input::turn(EncoderId::E, 1)); // focus ENV
+    feed(&mut ui, Input::turn(EncoderId::E, -1)); // back to 0, still present
+    to_matrix(&mut ui);
+    let (mut fb, perf, scope) = (Fb::new(), PerfStats::zero(), scope_fixture());
+    ui.render_dirty_with_audio(&mut fb, &perf, None, &scope);
+    feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Minus));
+    back_to_flt(&mut ui, false);
+    settle(&mut ui);
+    ui.render_dirty_with_audio(&mut fb, &perf, None, &scope);
+
+    let slot = &FILTER.params[4];
+    let (x, y) = (
+        theme::MARGIN_X + theme::CELL_COL_W,
+        theme::CELL_LABEL_Y + theme::CELL_ROW_H,
+    );
+    for dx in 0..12 {
+        for dy in 0..2 {
+            assert_eq!(
+                fb.at(x + dx, y + theme::CELL_VALUE_DY - 5 + dy),
+                theme::INK2
+            );
+        }
+    }
+    let mut want = Fb::new();
+    want.px.fill(fb.px[0]);
+    let c = Cell {
+        label: slot.label(),
+        text: "",
+        value: 0.0,
+        fmt: slot.format(),
+        active: true,
+        mod_amount: None,
+        look: Look::Absent,
+    };
+    components::cell(&mut want, 4, theme::CELL_LABEL_Y, Some(&c));
+    assert!(
+        same_rect(
+            &fb,
+            &want,
+            (x, x + theme::CELL_COL_W),
+            (y - 8, theme::CELLS_BOTTOM)
+        ),
+        "the ENV cell is a dash: no value text, no bar"
+    );
+
+    let mut want = Fb::new();
+    want.px.fill(fb.px[0]);
+    let a = |i: usize| ui.renderer.anim[i].current();
+    viz::filter(&mut want, a(1), a(2), Some((slot.label(), "--")));
+    assert!(
+        same_rect(
+            &fb,
+            &want,
+            (0, 240),
+            (theme::HEADER_BOTTOM, theme::BIGVIZ_BOTTOM)
+        ),
+        "the readout reads --"
+    );
+}
+
+/// On a CellGrid page (FLT › MODE's LFO knob) the focus band reads `--`.
+#[test]
+fn an_absent_route_knob_reads_dashes_in_the_focus_band() {
+    use chimera_core::ui::block_registry::FILTER_MODE;
+    use chimera_core::ui::components;
+    use chimera_core::ui::perf::PerfStats;
+    use chimera_core::ui::theme;
+    let mut ui = on_flt(EngineType::Algo);
+    feed(&mut ui, Input::press(ButtonId::Edit));
+    feed(&mut ui, Input::turn(EncoderId::C, 1)); // focus LFO
+    feed(&mut ui, Input::turn(EncoderId::C, -1));
+    to_matrix(&mut ui);
+    feed(&mut ui, Input::turn(EncoderId::A, 1)); // row LF1
+    feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Minus));
+    assert_eq!(ui.matrix_state.route(1, CUTOFF), None);
+    back_to_flt(&mut ui, true);
+    settle(&mut ui);
+    let mut fb = Fb::new();
+    ui.render_with_scope(&mut fb, &PerfStats::zero(), &scope_fixture());
+
+    let slot = &FILTER_MODE.params[2];
+    let mut want = Fb::new();
+    want.px.fill(fb.px[0]);
+    components::focus_band(
+        &mut want,
+        slot.label(),
+        "--",
+        ui.renderer.anim[2].current(),
+        slot.format().is_bipolar(),
+        None,
+    );
+    assert!(same_rect(
+        &fb,
+        &want,
+        (0, 240),
+        (theme::HEADER_BOTTOM, theme::FOCUS_BOTTOM)
+    ));
 }
