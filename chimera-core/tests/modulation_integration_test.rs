@@ -58,7 +58,6 @@ fn voice_render_with_mod_offset_changes_filter() {
     let mut voice_mod = Voice::new(chimera_hal::SAMPLE_RATE);
     let mut params = tri();
     params.filter.cutoff = 2000.0;
-    params.filter.mode = 2; // LP4
 
     // Set up LFO: fast rate so it clearly modulates within a few blocks
     params.lfo.rate = 10.0;
@@ -195,7 +194,6 @@ fn matrix_state_rebuild_dests_from_registry() {
 fn env_source_moves_on_an_algo_sound() {
     let mut params = ParamSnapshot::for_engine(EngineType::Algo);
     params.filter.cutoff = 8000.0;
-    params.filter.mode = 2;
     let mut registry = chimera_core::mod_path::ModDestRegistry::new();
     registry.add(CUTOFF, *b"FLTCUT\0\0").unwrap();
     let mut routed = ModState::from_registry(&registry, 2);
@@ -225,7 +223,6 @@ fn env_source_moves_on_an_algo_sound() {
 fn env_source_moves_on_a_modal_sound() {
     let mut params = ParamSnapshot::for_engine(EngineType::Modal);
     params.filter.cutoff = 8000.0;
-    params.filter.mode = 2;
     let mut registry = chimera_core::mod_path::ModDestRegistry::new();
     registry.add(CUTOFF, *b"FLTCUT\0\0").unwrap();
     let mut routed = ModState::from_registry(&registry, 2);

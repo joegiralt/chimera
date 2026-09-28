@@ -59,7 +59,7 @@ fn part_chains_offer_env_and_lfo_sources() {
 
 #[test]
 fn block_def_ids_are_unique() {
-    let all: [&BlockDef; 38] = [
+    let all: [&BlockDef; 39] = [
         &reg::MODAL_1,
         &reg::MODAL_2,
         &reg::ALGO_WAVE,
@@ -68,6 +68,7 @@ fn block_def_ids_are_unique() {
         &reg::DRIVE,
         &reg::FOLDER,
         &reg::FILTER,
+        &reg::FILTER_MODE,
         &reg::ENVELOPE,
         &reg::LFO,
         &reg::ENV_AMP,
@@ -162,12 +163,15 @@ fn part_pages_display_like_before() {
         (
             &reg::FILTER,
             [
+                ("--", Uni),
                 ("CUTOFF", Uni),
                 ("RESO", Uni),
-                ("DRIVE", Uni),
-                ("FM", Uni),
-                ("ENV", Bi),
-                ("TRACK", Uni),
+                (
+                    "MODE",
+                    ValFmt::Names(&chimera_core::dsp::filter::SVF_MODE_NAMES),
+                ),
+                ("--", Uni),
+                ("--", Uni),
             ],
         ),
         (

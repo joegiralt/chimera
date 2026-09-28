@@ -382,7 +382,8 @@ fn priming_on_main_page_registers_focused_param() {
     press(&mut ui, ButtonId::Plus);
     press(&mut ui, ButtonId::Plus);
     press(&mut ui, ButtonId::Plus); // node 3: Filter
-    prime(&mut ui); // slot 0: cutoff
+    ui.handle_input(&MockControls::new().encoder(EncoderId::B, 1));
+    prime(&mut ui); // slot 1: cutoff
     assert_eq!(
         primed(&ui),
         [chimera_core::addr::ParamAddr::new(

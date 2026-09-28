@@ -255,8 +255,8 @@ pub const CASES: &[ScreenCase] = &[
     }),
     ("bigviz_filter", |ui| {
         plus(ui, 3);
-        feed(ui, Input::turn(EncoderId::B, 80)); // resonance
-        feed(ui, Input::turn(EncoderId::A, -60)); // cutoff, focused
+        feed(ui, Input::turn(EncoderId::C, 80)); // resonance
+        feed(ui, Input::turn(EncoderId::B, -60)); // cutoff, focused
     }),
     ("bigviz_env", |ui| {
         plus(ui, 5);
@@ -304,7 +304,7 @@ pub const CASES: &[ScreenCase] = &[
     }),
     ("mod_matrix", |ui| {
         plus(ui, 3);
-        feed(ui, Input::turn(EncoderId::A, 1)); // focus CUTOFF
+        feed(ui, Input::turn(EncoderId::B, 1)); // focus CUTOFF
         prime(ui);
         plus(ui, 1);
         feed(ui, Input::turn(EncoderId::A, 1)); // focus FOLD

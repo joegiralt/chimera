@@ -175,7 +175,7 @@ fn filter_page() -> UiState {
     feed(&mut ui, Input::press(ButtonId::Plus));
     feed(&mut ui, Input::press(ButtonId::Plus));
     feed(&mut ui, Input::press(ButtonId::Plus));
-    feed(&mut ui, Input::turn(EncoderId::A, 1));
+    feed(&mut ui, Input::turn(EncoderId::B, 1));
     settle(&mut ui);
     ui
 }
@@ -313,10 +313,11 @@ fn prime_every_slot(ui: &mut UiState, slots: &[EncoderId], out: &mut Vec<PrimeSt
     }
 }
 
-/// The Algo chain alone reaches 17 modulatable addresses (six LEVELs, MORPH,
-/// VOL, Drive, Filter and Folder), one more than the matrix holds. Priming
-/// them all through real input: exactly `MAX_MOD_DESTS` report ADDED, the
-/// next distinct one reports MATRIX FULL, and the matrix holds every added one.
+/// The Algo chain alone reaches 17 modulatable addresses (MORPH, VOL, six
+/// LEVELs, Drive's three, CUTOFF, RESO, the filter's DRIVE on FLT › MODE,
+/// Folder's three), one more than the matrix holds. Priming them all through
+/// real input: exactly `MAX_MOD_DESTS` report ADDED, the next distinct one
+/// reports MATRIX FULL, and the matrix holds every added one.
 #[test]
 fn priming_past_matrix_capacity_on_the_algo_chain_reports_full() {
     use chimera_core::modulation::MAX_MOD_DESTS;
@@ -326,10 +327,14 @@ fn priming_past_matrix_capacity_on_the_algo_chain_reports_full() {
     prime_every_slot(&mut ui, &ALL_SLOTS[2..5], &mut seen); // ALGO: MORPH, TRNSP (refused), VOL
     to_level_page(&mut ui);
     prime_every_slot(&mut ui, &ALL_SLOTS, &mut seen); // six LEVELs
-    for _ in 0..3 {
-        feed(&mut ui, Input::press(ButtonId::Plus)); // Drive, Filter, Folder
-        prime_every_slot(&mut ui, &ALL_SLOTS, &mut seen);
-    }
+    feed(&mut ui, Input::press(ButtonId::Plus)); // Drive
+    prime_every_slot(&mut ui, &ALL_SLOTS, &mut seen);
+    feed(&mut ui, Input::press(ButtonId::Plus)); // Filter: CUTOFF, RESO (MODE refused)
+    prime_every_slot(&mut ui, &ALL_SLOTS, &mut seen);
+    feed(&mut ui, Input::press(ButtonId::Edit)); // FLT › MODE: the filter's DRIVE
+    prime_every_slot(&mut ui, &ALL_SLOTS, &mut seen);
+    feed(&mut ui, Input::press(ButtonId::Plus)); // Folder
+    prime_every_slot(&mut ui, &ALL_SLOTS, &mut seen);
 
     let added = seen.iter().filter(|&&s| s == PrimeStatus::Added).count();
     assert_eq!(added, MAX_MOD_DESTS, "{seen:?}");

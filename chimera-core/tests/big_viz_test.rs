@@ -38,11 +38,11 @@ fn filter_curve_keeps_its_shape() {
 #[test]
 fn filter_readout_rides_the_focused_value() {
     let mut ui = ui_for("bigviz_filter");
-    feed(&mut ui, Input::turn(EncoderId::B, -1)); // RESO
+    feed(&mut ui, Input::turn(EncoderId::C, -1)); // RESO
     settle(&mut ui);
     let mut fb = Fb::new();
     ui.render_with_scope(&mut fb, &PerfStats::zero(), &scope_fixture());
-    let (cutoff, reso) = (ui.renderer.anim[0].current(), ui.renderer.anim[1].current());
+    let (cutoff, reso) = (ui.renderer.anim[1].current(), ui.renderer.anim[2].current());
     let mut text = FmtBuf::new();
     fmt_val(&mut text, reso, ValFmt::Uni);
     let mut want = Fb::new();

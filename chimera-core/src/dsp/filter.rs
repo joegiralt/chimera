@@ -1,32 +1,58 @@
 use crate::params::FilterParams;
 
+/// The SVF's modes. The discriminants are the old `mode` byte (#111), so
+/// every Sound keeps its mode (LP24 = 2).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum FilterMode {
-    Lp1 = 0,
-    Lp2 = 1,
-    Lp4 = 2,
-    Bp2 = 3,
-    Bp4 = 4,
-    Hp4 = 5,
-    Nt2 = 6,
-    Phazor = 7,
+    Lp6 = 0,
+    Lp12 = 1,
+    Lp24 = 2,
+    Bp12 = 3,
+    Bp24 = 4,
+    Hp24 = 5,
+    Notch = 6,
+    Phaser = 7,
 }
 
 impl FilterMode {
-    pub fn from_u8(v: u8) -> Self {
-        match v % 8 {
-            0 => FilterMode::Lp1,
-            1 => FilterMode::Lp2,
-            2 => FilterMode::Lp4,
-            3 => FilterMode::Bp2,
-            4 => FilterMode::Bp4,
-            5 => FilterMode::Hp4,
-            6 => FilterMode::Nt2,
-            _ => FilterMode::Phazor,
-        }
+    /// In discriminant order.
+    pub const ALL: [FilterMode; 8] = [
+        FilterMode::Lp6,
+        FilterMode::Lp12,
+        FilterMode::Lp24,
+        FilterMode::Bp12,
+        FilterMode::Bp24,
+        FilterMode::Hp24,
+        FilterMode::Notch,
+        FilterMode::Phaser,
+    ];
+
+    pub const fn label(self) -> &'static str {
+        SVF_MODE_NAMES_BY_ID[self as usize]
     }
 }
+
+/// The SVF's modes as its MODE knob steps them, the default first (spec § 7).
+pub const SVF_MODES: [FilterMode; 8] = [
+    FilterMode::Lp24,
+    FilterMode::Lp6,
+    FilterMode::Lp12,
+    FilterMode::Bp12,
+    FilterMode::Bp24,
+    FilterMode::Hp24,
+    FilterMode::Notch,
+    FilterMode::Phaser,
+];
+
+/// `SVF_MODES`' names, for MODE's spec.
+pub static SVF_MODE_NAMES: [&str; 8] = [
+    "LP24", "LP6", "LP12", "BP12", "BP24", "HP24", "NOTCH", "PHASER",
+];
+
+const SVF_MODE_NAMES_BY_ID: [&str; 8] = [
+    "LP6", "LP12", "LP24", "BP12", "BP24", "HP24", "NOTCH", "PHASER",
+];
 
 /// 2-pole state variable filter with nonlinear feedback.
 /// The saturation is INSIDE the feedback loop — this is what gives
@@ -53,7 +79,7 @@ impl SvfFilter {
     }
 
     pub fn process(&mut self, buf: &mut [f32], params: &FilterParams, sample_rate: u32) {
-        let mode = FilterMode::from_u8(params.mode);
+        let mode = params.mode();
         let cutoff = params.cutoff;
         let reso = params.resonance;
         let drive = params.drive;
@@ -69,39 +95,39 @@ impl SvfFilter {
             let input = *sample * (1.0 + drive * 4.0);
 
             let out = match mode {
-                FilterMode::Lp1 => self.tick_onepole(input, g, 0),
-                FilterMode::Lp2 => {
+                FilterMode::Lp6 => self.tick_onepole(input, g, 0),
+                FilterMode::Lp12 => {
                     let (lp, _, _) = self.tick_svf_nonlinear(input, g, k, 0);
                     lp
                 }
-                FilterMode::Lp4 => {
+                FilterMode::Lp24 => {
                     // Cascaded: lower resonance on second stage to prevent blowup
                     let (lp1, _, _) = self.tick_svf_nonlinear(input, g, k, 0);
                     let k2 = k * 1.2 + 0.3; // second stage less resonant
                     let (lp2, _, _) = self.tick_svf_nonlinear(lp1, g, k2, 1);
                     lp2
                 }
-                FilterMode::Bp2 => {
+                FilterMode::Bp12 => {
                     let (_, bp, _) = self.tick_svf_nonlinear(input, g, k, 0);
                     bp * 2.0 // boost BP output for presence
                 }
-                FilterMode::Bp4 => {
+                FilterMode::Bp24 => {
                     let (_, bp1, _) = self.tick_svf_nonlinear(input, g, k, 0);
                     let k2 = k * 1.2 + 0.3;
                     let (_, bp2, _) = self.tick_svf_nonlinear(bp1, g, k2, 1);
                     bp2 * 2.0
                 }
-                FilterMode::Hp4 => {
+                FilterMode::Hp24 => {
                     let (_, _, hp1) = self.tick_svf_nonlinear(input, g, k, 0);
                     let k2 = k * 1.2 + 0.3;
                     let (_, _, hp2) = self.tick_svf_nonlinear(hp1, g, k2, 1);
                     hp2
                 }
-                FilterMode::Nt2 => {
+                FilterMode::Notch => {
                     let (lp, _, hp) = self.tick_svf_nonlinear(input, g, k, 0);
                     lp + hp
                 }
-                FilterMode::Phazor => {
+                FilterMode::Phaser => {
                     let (_, bp1, _) = self.tick_svf_nonlinear(input, g, k, 0);
                     let ap1 = input - 2.0 * k * bp1;
                     let (_, bp2, _) = self.tick_svf_nonlinear(ap1, g, k, 1);

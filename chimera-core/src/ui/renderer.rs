@@ -94,12 +94,25 @@ impl Renderer {
         let a = |i: usize| self.anim[i].current();
         match f.def.viz {
             VizType::FilterResponse => {
+                // By address, not slot (spec § UI "Vizzes read by address").
+                let at = |id| {
+                    let addr = crate::addr::ParamAddr::new(crate::addr::BlockRef::Filter, id);
+                    (0..f.def.params.len())
+                        .find(|&i| slot_addr(f.def, i, f.sel_op) == Some(addr))
+                        .map_or(0.0, a)
+                };
+                use crate::params::FilterParams;
                 let slot = &f.def.params[f.focus];
                 let mut buf = FmtBuf::new();
                 fmt::fmt_val(&mut buf, a(f.focus), slot.format());
                 let readout =
                     (slot.binding != SlotBinding::Empty).then(|| (slot.label(), buf.as_str()));
-                viz::filter(display, a(0), a(1), readout);
+                viz::filter(
+                    display,
+                    at(FilterParams::CUTOFF),
+                    at(FilterParams::RESONANCE),
+                    readout,
+                );
             }
             VizType::Adsr => {
                 let (atk, dec, sus, rel) = (a(0).max(0.02), a(1).max(0.02), a(2), a(3).max(0.02));

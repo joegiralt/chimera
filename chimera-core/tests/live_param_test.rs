@@ -86,7 +86,6 @@ fn test_filter_cutoff_sweep_mid_note() {
         |p| {
             *p = tri();
             p.filter.cutoff = 10000.0;
-            p.filter.mode = 2; // LP4
         },
         |p| {
             p.filter.cutoff = 200.0;
@@ -108,7 +107,8 @@ fn test_filter_resonance_mid_note() {
         |p| {
             *p = tri();
             p.filter.cutoff = 1000.0;
-            p.filter.mode = 1; // LP2
+            p.filter
+                .set_mode(chimera_core::dsp::filter::FilterMode::Lp12);
             p.filter.resonance = 0.0;
         },
         |p| {
