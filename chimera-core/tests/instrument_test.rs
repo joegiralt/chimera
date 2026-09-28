@@ -36,12 +36,11 @@ const BUDGET: SampleBudget = budget_for(VOICE_SHARE);
 
 const SR: u32 = chimera_hal::SAMPLE_RATE;
 
-/// `Voice::cost` of factory Sound `i`'s algorithm, no mod routing (the
-/// factory bank routes nothing into VCA).
+/// `Voice::cost` of factory Sound `i`, its own params and mod routing —
+/// exactly what the allocator prices it at.
 fn factory_voice_cost(i: usize) -> u32 {
-    let mut p = ParamSnapshot::for_engine(EngineType::Algo);
-    p.algo = chimera_core::factory::factory_sound(i).unwrap().params.algo;
-    chimera_core::dsp::voice::Voice::cost(&p, &ModState::new()).0
+    let s = chimera_core::factory::factory_sound(i).unwrap();
+    chimera_core::dsp::voice::Voice::cost(&s.params, &s.mod_state).0
 }
 
 /// Room for the four MORPH PAD voices a SAW LEAD chord's patch edit leaves

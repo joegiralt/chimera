@@ -8,7 +8,7 @@
 use crate::addr::{BlockRef, ParamAddr};
 use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::algo::plan::OPS;
-use crate::dsp::modulator::{EnvType, FuncMode};
+use crate::dsp::modulator::{EnvSlot, EnvType, FuncMode};
 use crate::hw::Cost;
 use crate::mod_path::{LABEL_LEN, ModDestRegistry};
 use crate::params::{EnvParams, FilterParams, ParamSnapshot};
@@ -312,40 +312,72 @@ impl ModRouting {
     /// More for B in ENV mode with SHAPE off centre, or with a route into
     /// its SHAPE: a divide per sample.
     pub const CURVE: Cost = Cost(15);
+    /// More for B in BURST mode, on top of `ENV_B` (billing BURST at 70): a
+    /// `tilt` divide, `fast_sin` and the burst step. The review estimated
+    /// 55–65 for AD/AHR and 50–55 for CYCLE; Task 13 benches it.
+    pub const BURST: Cost = Cost(30);
     /// Each other VCA route's ramp: an int→float conversion and two
     /// multiply-adds (Task 10 review). Billed at 5, not the spec's 3.
     pub const OTHER: Cost = Cost(5);
     /// The VCA's clamp and multiply, with any route.
     pub const CLAMP: Cost = Cost(3);
+    /// A route into an ENV slot's TIME, RISE, FALL or SHAPE rebuilds that
+    /// slot's coefficients every block (~200–250 cycles/block, ~3–5
+    /// cycles/sample): billed once per slot with any such route, whether or
+    /// not that slot feeds the VCA. Task 13 benches it.
+    pub const SLIDE: Cost = Cost(5);
 
     pub fn cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
+        let slide = EnvSlot::ALL
+            .iter()
+            .filter(|&&slot| Self::slot_slides(mods, slot))
+            .fold(Cost::ZERO, |a, _| a + Self::SLIDE);
+        Self::BASE + Self::vca_cost(p, mods) + slide
+    }
+
+    /// The VCA's own routes: 0 without one, else `CLAMP` plus each source's
+    /// per-sample term.
+    fn vca_cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
         let bits = mods.routes_into(VCA);
         if bits == 0 {
-            return Self::BASE;
+            return Cost::ZERO;
         }
         ModSource::ALL
             .iter()
             .filter(|s| bits & (1 << s.index()) != 0)
             .map(|s| match s.env_slot() {
                 None => Self::OTHER,
-                Some(slot) => {
-                    let e = &p.envelopes[slot.index()];
-                    // A SHAPE route moves a centred SHAPE off 0.5: the divide runs.
-                    let shape_routed = mods
-                        .routes_into(ParamAddr::new(BlockRef::Env(slot), EnvParams::SHAPE))
-                        != 0;
-                    match e.env_type {
-                        EnvType::A => Self::ENV_A,
-                        EnvType::B
-                            if e.func.mode == FuncMode::Env
-                                && (e.func.shape != 0.5 || shape_routed) =>
-                        {
-                            Self::ENV_B + Self::CURVE
-                        }
-                        EnvType::B => Self::ENV_B,
-                    }
-                }
+                Some(slot) => Self::env_slot_cost(p, mods, slot),
             })
-            .fold(Self::BASE + Self::CLAMP, |a, b| a + b)
+            .fold(Self::CLAMP, |a, b| a + b)
+    }
+
+    /// `slot`'s per-sample term, feeding the VCA.
+    fn env_slot_cost(p: &ParamSnapshot, mods: &ModState, slot: EnvSlot) -> Cost {
+        let e = &p.envelopes[slot.index()];
+        // A SHAPE route moves a centred SHAPE off 0.5: the divide runs.
+        let shape_routed =
+            mods.routes_into(ParamAddr::new(BlockRef::Env(slot), EnvParams::SHAPE)) != 0;
+        match e.env_type {
+            EnvType::A => Self::ENV_A,
+            EnvType::B if e.func.mode == FuncMode::Burst => Self::ENV_B + Self::BURST,
+            EnvType::B if e.func.mode == FuncMode::Env && (e.func.shape != 0.5 || shape_routed) => {
+                Self::ENV_B + Self::CURVE
+            }
+            EnvType::B => Self::ENV_B,
+        }
+    }
+
+    /// Whether `slot` has a route into TIME, RISE, FALL or SHAPE: its
+    /// coefficients rebuild every block, on top of any VCA term above.
+    fn slot_slides(mods: &ModState, slot: EnvSlot) -> bool {
+        [
+            EnvParams::TIME,
+            EnvParams::RISE,
+            EnvParams::FALL,
+            EnvParams::SHAPE,
+        ]
+        .into_iter()
+        .any(|param| mods.routes_into(ParamAddr::new(BlockRef::Env(slot), param)) != 0)
     }
 }
