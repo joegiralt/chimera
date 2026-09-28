@@ -40,3 +40,4 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0032](0032-modal-code-provenance.md) | Modal's string is the owner's own code; Rings-derived parts keep Mutable's MIT notice | Accepted |
 | [0033](0033-theme-applied-in-the-display-shell.md) | The theme is applied in the display shell, not the renderer | Proposed |
 | [0034](0034-watchdog-kicked-by-audio-heartbeat.md) | The IWDG resets on a stalled audio interrupt, kicked from the controls tick | Proposed |
+| [0036](0036-delay-sat-zero-still-saturates.md) | The delay's feedback loop saturates at every SAT, SAT 0 included | Proposed |
