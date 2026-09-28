@@ -69,3 +69,26 @@ fn rev_send_is_param_6_and_off_by_default() {
         ("REV", 0.0, 1.0, 0.0, 1.0 / 128.0)
     );
 }
+
+/// The loop saturates even at SAT 0: held DC at FDBK 1 stays within
+/// |input| + FDBK instead of adding a repeat every 10 ms.
+#[test]
+fn full_feedback_with_no_saturation_stays_bounded() {
+    let p = DelayParams {
+        time_ms: 10.0,
+        feedback: 1.0,
+        wow_flutter: 0.0,
+        saturation: 0.0,
+        tone: 1.0,
+        mix: 1.0,
+        rev_send: 0.0,
+    };
+    let mut d = Box::new(TapeDelay::new());
+    let mut peak = 0.0f32;
+    for _ in 0..(5 * 48_000 / BLOCK_SIZE) {
+        let mut block = [0.5; BLOCK_SIZE];
+        d.process_wet(&mut block, &p, 48_000);
+        peak = block.iter().fold(peak, |m, s| m.max(s.abs()));
+    }
+    assert!(peak <= 1.5, "peak {peak}");
+}
