@@ -71,7 +71,7 @@ impl ChorusParams {
     pub const MIX: ParamId = ParamId(3);
 }
 
-/// Chorus runs outside `Voice` (desktop only): nothing is modulatable.
+/// Chorus runs outside `Voice`, on the FX bus: nothing is modulatable.
 pub static CHORUS_SPECS: [ParamSpec; 4] = [
     ParamSpec::choice(0, "MODE", ValFmt::Int(3), 3.0, 0.0),
     ParamSpec::continuous(1, "RATE", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false),

@@ -60,7 +60,7 @@ impl DelayParams {
     pub const REV_SEND: ParamId = ParamId(6);
 }
 
-/// Delay runs outside `Voice` (desktop only): nothing is modulatable.
+/// Delay runs outside `Voice`, on the FX bus: nothing is modulatable.
 pub static DELAY_SPECS: [ParamSpec; 7] = [
     ParamSpec::continuous(0, "TIME", ValFmt::Uni, 10.0, 500.0, 375.0, 8.0, false),
     ParamSpec::continuous(1, "FDBK", ValFmt::Uni, 0.0, 1.0, 0.4, 1.0 / 128.0, false),
