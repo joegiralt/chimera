@@ -22,11 +22,13 @@ use embedded_graphics::prelude::*;
 pub const W: usize = 240;
 pub const H: usize = 320;
 
-/// A 240×320 framebuffer that counts writes outside the screen.
+/// A 240×320 framebuffer that counts its pixel writes.
 pub struct Fb {
     pub px: Vec<u16>,
     /// Pixels drawn outside 240×320 (must stay 0).
     pub oob: usize,
+    /// Pixels drawn through `draw_iter`, on screen or off.
+    pub drawn: usize,
 }
 
 impl Fb {
@@ -34,6 +36,7 @@ impl Fb {
         Self {
             px: vec![0; W * H],
             oob: 0,
+            drawn: 0,
         }
     }
 
@@ -87,6 +90,7 @@ impl DrawTarget for Fb {
         pixels: I,
     ) -> Result<(), Self::Error> {
         for Pixel(p, c) in pixels {
+            self.drawn += 1;
             if (0..W as i32).contains(&p.x) && (0..H as i32).contains(&p.y) {
                 self.px[p.y as usize * W + p.x as usize] = RawU16::from(c).into_inner();
             } else {

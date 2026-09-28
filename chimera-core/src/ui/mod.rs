@@ -681,6 +681,7 @@ impl UiState {
             scroll,
         } = self.ui_mode
         {
+            let _ = display.clear(theme::BG);
             browser::draw(display, &self.pool, part, cursor, scroll);
             return;
         }
