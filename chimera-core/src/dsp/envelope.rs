@@ -126,7 +126,7 @@ pub struct Envelope {
     /// A change's leftover, gliding out.
     glide: Glide,
     /// The glided output's floor: the old and new kinds' ranges joined
-    /// (−1 if either is an LFO, else 0); the ceiling is 1.
+    /// (−1 if either is an LFO, else 0, or `old` if lower); the ceiling is 1.
     glide_lo: f32,
 }
 
@@ -313,10 +313,11 @@ impl Envelope {
             // After the note-on, so the glide ends where the new kind starts.
             self.glide.start(old - self.raw());
             let lfo = |k: Option<Kind>| matches!(k, Some(Kind::B(Func::Lfo(_))));
+            // `old` may still be gliding up from an LFO: below 0.
             self.glide_lo = if lfo(prev) || lfo(Some(kind)) {
                 -1.0
             } else {
-                0.0
+                old.min(0.0)
             };
         }
         if let Coefs::B(_) = c

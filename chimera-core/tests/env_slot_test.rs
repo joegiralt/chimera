@@ -92,11 +92,13 @@ fn spinning_type_every_block_stays_bounded() {
     e.note_on();
     for blk in 0..1000 {
         let p = &k[blk % k.len()];
+        let before = e.output();
         let v = e.run_block(p, &EnvMods::NONE, blk % 97 < 60, SR, None);
         assert!(
             v.is_finite() && (-1.0 - 1e-6..=1.0 + 1e-6).contains(&v),
             "block {blk}: {v}"
         );
+        assert!((v - before).abs() < 1e-6, "block {blk}: {before} → {v}");
     }
 }
 
@@ -218,6 +220,26 @@ fn a_negative_lfo_into_a_glides_from_where_it_was() {
     let before = e.output();
     assert!(before < -0.9, "the LFO is near −1: {before}");
     let start = e.run_block(&a(), &EnvMods::NONE, true, SR, None);
+    assert!((start - before).abs() < 1e-6, "{before} → {start}");
+}
+
+/// A second change inside the glide from a negative LFO: A still below 0
+/// hands over to B ENV without a step.
+#[test]
+fn a_change_mid_glide_continues_below_zero() {
+    let mut lfo = b(Func::Lfo(LfoForm::Free));
+    lfo.func.fall = 0.0; // PHASE 0: the ramp's bottom
+    let mut e = Envelope::new();
+    e.note_on();
+    e.run_block(&lfo, &EnvMods::NONE, true, SR, None);
+    e.run_block(&a(), &EnvMods::NONE, true, SR, None);
+    assert!(e.gliding());
+    let before = e.output();
+    assert!(
+        before < -0.1,
+        "A is still gliding up from the LFO: {before}"
+    );
+    let start = e.run_block(&b(Func::Env(EnvForm::Ad)), &EnvMods::NONE, true, SR, None);
     assert!((start - before).abs() < 1e-6, "{before} → {start}");
 }
 

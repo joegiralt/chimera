@@ -89,8 +89,10 @@ impl AudioShared {
         // pointer before `assume_init_mut`.
         unsafe {
             let parts = addr_of_mut!((*p).parts).cast::<PartAudio>();
-            for (i, part) in perf.parts.iter().enumerate() {
-                parts.add(i).write(PartAudio::of(part));
+            // The destination's length bounds the writes, not the source's.
+            #[allow(clippy::needless_range_loop)]
+            for i in 0..MAX_PARTS {
+                parts.add(i).write(PartAudio::of(&perf.parts[i]));
             }
             addr_of_mut!((*p).fx).write(perf.fx);
             slot.assume_init_mut()
