@@ -27,7 +27,8 @@ register; the real LSI rate only stretches or shrinks the time.
 
 The watchdog is frozen while a debugger halts the core. A halt after a
 panic, HardFault or DMA error therefore ends in a reboot, not a permanent
-halt.
+halt; the boot reads and clears RCC_RSR, and the AUDIO page shows the last
+reset's cause (RST WDOG after a watchdog reset).
 
 ## Alternatives considered
 - Kick from the main loop, as the audit suggested: the loop's slowest pass
@@ -40,7 +41,7 @@ halt.
 Nothing may mask interrupts, or hold the audio interrupt and SysTick off, for
 the timeout or longer; up to 100 ms of buzz can play before the reset; a future flash or SD write that must, has to kick or
 revisit this. A UI-only hang is not caught. The panic LED shows only until
-the reset.
+the reset; RST WDOG on the AUDIO page is the lasting trace.
 
 ## Sources
 RM0433: the independent watchdog and DMA error management chapters;

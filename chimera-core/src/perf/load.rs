@@ -1,6 +1,7 @@
 use crate::clock_plan::SiliconRev;
 use crate::hw::BlockBudget;
 use crate::note_queue::MAX_NOTE_SOURCES;
+use crate::reset::ResetCause;
 
 pub const AVG_BLOCKS: u32 = 64;
 
@@ -20,12 +21,15 @@ pub struct AudioStats {
     pub stack_used: u32,
     pub rev: SiliconRev,
     pub cpu_hz: u32,
+    /// Why the chip last reset: a watchdog reset is otherwise a silent
+    /// reboot.
+    pub reset: ResetCause,
     window_sum: u32,
     window_len: u32,
 }
 
 impl AudioStats {
-    pub const fn new(rev: SiliconRev, cpu_hz: u32) -> Self {
+    pub const fn new(rev: SiliconRev, cpu_hz: u32, reset: ResetCause) -> Self {
         Self {
             load_avg: 0,
             load_peak: 0,
@@ -36,6 +40,7 @@ impl AudioStats {
             stack_used: 0,
             rev,
             cpu_hz,
+            reset,
             window_sum: 0,
             window_len: 0,
         }

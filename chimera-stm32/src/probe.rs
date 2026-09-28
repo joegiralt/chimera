@@ -12,13 +12,14 @@ mod imp {
     use chimera_core::hw::BlockBudget;
     use chimera_core::perf::load::AudioStats;
     use chimera_core::perf::stack::{STACK_PAINT, untouched_words};
+    use chimera_core::reset::ResetCause;
     use chimera_core::triple::{Reader, TripleBuffer, Writer};
     use cortex_m::peripheral::{DCB, DWT};
 
     use crate::audio::{dma, engine};
     use crate::clocks::Clocks;
 
-    const BLANK: AudioStats = AudioStats::new(SiliconRev::Unknown(0), 0);
+    const BLANK: AudioStats = AudioStats::new(SiliconRev::Unknown(0), 0, ResetCause::Unknown);
     const PAINT_MARGIN: usize = 256;
 
     static mut STATS_BUF: TripleBuffer<AudioStats> = TripleBuffer::new(BLANK, BLANK, BLANK);
@@ -82,14 +83,19 @@ mod imp {
         DWT::cycle_count() != start
     }
 
-    pub fn init(dcb: &mut DCB, dwt: &mut DWT, clocks: Clocks) -> Option<Reader<AudioStats>> {
+    pub fn init(
+        dcb: &mut DCB,
+        dwt: &mut DWT,
+        clocks: Clocks,
+        reset: ResetCause,
+    ) -> Option<Reader<AudioStats>> {
         if !enable_cycle_counter(dcb, dwt) || TAKEN.swap(true, Ordering::AcqRel) {
             return None;
         }
         // SAFETY: the flag lets one caller past, before the audio interrupt is
         // unmasked, so nothing else touches these statics yet.
         unsafe {
-            *addr_of_mut!(STATS) = AudioStats::new(clocks.rev, clocks.cpu_hz);
+            *addr_of_mut!(STATS) = AudioStats::new(clocks.rev, clocks.cpu_hz, reset);
             *addr_of_mut!(BUDGET) = BlockBudget::for_cpu(clocks.cpu_hz);
             let (w, r) = (&mut *addr_of_mut!(STATS_BUF)).split();
             *addr_of_mut!(WRITER) = Some(w);
@@ -135,6 +141,7 @@ mod imp {
 #[cfg(not(feature = "perf-probe"))]
 mod stub {
     use chimera_core::perf::load::AudioStats;
+    use chimera_core::reset::ResetCause;
     use chimera_core::triple::Reader;
     use cortex_m::peripheral::{DCB, DWT};
 
@@ -146,7 +153,7 @@ mod stub {
         0
     }
 
-    pub fn init(_: &mut DCB, _: &mut DWT, _: Clocks) -> Option<Reader<AudioStats>> {
+    pub fn init(_: &mut DCB, _: &mut DWT, _: Clocks, _: ResetCause) -> Option<Reader<AudioStats>> {
         None
     }
 
