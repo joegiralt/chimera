@@ -4,7 +4,7 @@
 mod screen;
 
 use chimera_core::ui::draw;
-use chimera_core::ui::mod_grid::{CELL_H, CELL_W, GRID_BOTTOM, READOUT_Y, cell_origin};
+use chimera_core::ui::mod_grid::{AMOUNT_Y, CELL_H, CELL_W, GRID_BOTTOM, READOUT_Y, cell_origin};
 use chimera_core::ui::perf::PerfStats;
 use chimera_core::ui::renderer::{MATRIX_AMOUNT_SLOT, amount_of, amount_value};
 use chimera_core::ui::theme;
@@ -32,34 +32,81 @@ fn rows(fb: &Fb, y0: i32, y1: i32) -> &[u16] {
 }
 
 /// The fixture: ENV1→CUTOFF +20, ENV1→FOLD −30, LFO1→CUTOFF +42
-/// (selected). One line, block tag included: `LFO1 → FLT CUTOFF`.
+/// (selected). Full names, then the amount and its effect in octaves.
 #[test]
 fn the_readout_names_the_selected_route() {
     let fb = render("mod_matrix");
     let want = drawn(fb.px[0], |d| {
-        let x = theme::MARGIN_X;
-        let x =
-            x + draw::text_tracked(
-                d,
-                &theme::FONT_LABEL,
-                "LFO1",
-                x,
-                READOUT_Y,
-                theme::ACCENT,
-                1,
-            ) + 4;
+        let t = |d: &mut Fb, s: &str, x: i32| {
+            x + draw::text_tracked(d, &theme::FONT_LABEL, s, x, READOUT_Y, theme::ACCENT, 1)
+        };
+        let x = t(d, "LFO 1", theme::MARGIN_X) + 5;
         let x = x + draw::arrow(d, x, READOUT_Y, theme::ACCENT) + 5;
-        draw::text_tracked(
+        t(d, "FILTER CUTOFF", x);
+        draw::text(
             d,
-            &theme::FONT_LABEL,
-            "FLT CUTOFF",
-            x,
-            READOUT_Y,
-            theme::ACCENT,
-            1,
+            &theme::FONT_VALUE,
+            "+42 = +3.3 oct",
+            theme::MARGIN_X,
+            AMOUNT_Y,
+            theme::INK,
         );
     });
-    assert!(rows(&fb, GRID_BOTTOM, READOUT_Y + 3) == rows(&want, GRID_BOTTOM, READOUT_Y + 3));
+    assert!(rows(&fb, GRID_BOTTOM, AMOUNT_Y + 3) == rows(&want, GRID_BOTTOM, AMOUNT_Y + 3));
+}
+
+/// The effect follows the destination's offset law: octaves for CUTOFF,
+/// a percentage of the span for VCA and the linear params.
+#[test]
+fn the_readout_states_the_effect_in_the_destinations_units() {
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::params::{FilterParams, FolderParams, OutParams};
+    use chimera_core::ui::fmt::FmtBuf;
+    use chimera_core::ui::mod_grid::fmt_route_effect;
+    let effect = |b, id, a| {
+        let mut buf = FmtBuf::new();
+        fmt_route_effect(&mut buf, ParamAddr::new(b, id).spec().unwrap(), a);
+        buf.as_str().to_string()
+    };
+    let cutoff = FilterParams::CUTOFF;
+    assert_eq!(effect(BlockRef::Filter, cutoff, 42), "+42 = +3.3 oct");
+    assert_eq!(effect(BlockRef::Filter, cutoff, -127), "-127 = -10.0 oct");
+    assert_eq!(effect(BlockRef::Filter, cutoff, 0), "0 = 0 oct");
+    assert_eq!(effect(BlockRef::Out, OutParams::VCA, 64), "+64 = +50%");
+    assert_eq!(effect(BlockRef::Out, OutParams::VCA, 127), "+127 = +100%");
+    assert_eq!(
+        effect(BlockRef::Folder, FolderParams::FOLD, -30),
+        "-30 = -24%"
+    );
+    assert_eq!(effect(BlockRef::Folder, FolderParams::FOLD, 0), "0 = 0%");
+}
+
+/// A cell with no route names it and shows `--` for the amount.
+#[test]
+fn an_absent_route_reads_dashes() {
+    let mut ui = ui_for("mod_matrix");
+    feed(&mut ui, Input::turn(EncoderId::B, 1)); // LFO1 → FOLD: none
+    assert!(!ui.matrix_state.is_present(1, 1));
+    settle(&mut ui);
+    let mut fb = Fb::new();
+    ui.render_with_scope(&mut fb, &PerfStats::zero(), &scope_fixture());
+    let want = drawn(fb.px[0], |d| {
+        let t = |d: &mut Fb, s: &str, x: i32| {
+            x + draw::text_tracked(d, &theme::FONT_LABEL, s, x, READOUT_Y, theme::ACCENT, 1)
+        };
+        let x = t(d, "LFO 1", theme::MARGIN_X) + 5;
+        let x = x + draw::arrow(d, x, READOUT_Y, theme::ACCENT) + 5;
+        t(d, "FOLDER FOLD", x);
+        draw::text(
+            d,
+            &theme::FONT_VALUE,
+            "--",
+            theme::MARGIN_X,
+            AMOUNT_Y,
+            theme::MID,
+        );
+    });
+    assert!(rows(&fb, GRID_BOTTOM, AMOUNT_Y + 3) == rows(&want, GRID_BOTTOM, AMOUNT_Y + 3));
 }
 
 /// Cell (`ci`, `vi`) as drawn: `edge` outline, and a route's fill and amount.
@@ -114,8 +161,8 @@ fn cells_print_their_amounts_and_the_cursor_is_outlined() {
     for (ci, vi, edge, route) in [
         (0, 0, theme::FAINT, Some("+20")),
         (1, 0, theme::FAINT, Some("-30")),
-        (0, 1, theme::ACCENT, Some("+42")),
-        (1, 1, theme::FAINT, None),
+        (0, 3, theme::ACCENT, Some("+42")), // LFO1, fourth row
+        (1, 3, theme::FAINT, None),
         (0, 7, theme::FAINT, Some("0")), // NOTE → CUTOFF, the default pitch route
     ] {
         assert!(
@@ -460,7 +507,7 @@ fn the_selected_amount_lerps() {
         fb
     };
     let shows =
-        |fb: &Fb, t: &str| same_cell(fb, &cell_as(fb.px[0], 0, 1, theme::ACCENT, Some(t)), 0, 1);
+        |fb: &Fb, t: &str| same_cell(fb, &cell_as(fb.px[0], 0, 3, theme::ACCENT, Some(t)), 0, 3);
     assert!(shows(&full(&ui), "+42"));
     feed(&mut ui, Input::turn(EncoderId::E, 85)); // +42 → +127
     let mut shown = vec![];
@@ -513,15 +560,29 @@ fn matrix_edits_redraw_through_the_region_keys() {
         "readout follows the cursor"
     );
     feed(&mut ui, Input::turn(EncoderId::E, 12));
-    check(&mut ui, &mut dirty, "amount");
+    let set = check(&mut ui, &mut dirty, "amount");
+    feed(&mut ui, Input::turn(EncoderId::E, 30));
+    ui.update(); // mid-lerp: the readout's amount alone moves
+    ui.render_dirty_with_scope(&mut dirty, &PerfStats::zero(), &scope_fixture());
+    let mut fb = Fb::new();
+    ui.render_with_scope(&mut fb, &PerfStats::zero(), &scope_fixture());
+    assert!(
+        dirty.px == fb.px,
+        "amount lerp: dirty render == full render"
+    );
+    assert!(
+        rows(&set, READOUT_Y + 3, AMOUNT_Y + 3) != rows(&fb, READOUT_Y + 3, AMOUNT_Y + 3),
+        "the readout's amount follows the lerp"
+    );
+    check(&mut ui, &mut dirty, "amount settled");
     feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Minus));
     assert!(!ui.matrix_state.is_present(1, 1), "MIX+MINUS deletes");
     let fb = check(&mut ui, &mut dirty, "delete");
     assert!(same_cell(
         &fb,
-        &cell_as(fb.px[0], 1, 1, theme::ACCENT, None),
+        &cell_as(fb.px[0], 1, 3, theme::ACCENT, None),
         1,
-        1
+        3
     ));
     // MIX+PLUS on DRV's three knobs and FLT's C: six columns, one past
     // the visible five, so the grid scrolls sideways.
@@ -557,19 +618,25 @@ fn matrix_edits_redraw_through_the_region_keys() {
     assert_eq!(fb.at(x, y), theme::ACCENT, "cursor on screen");
 }
 
-/// The readout's destination is `TAG NAME`, the column header's two lines,
-/// so OP1 LEVEL and OP2 LEVEL read apart. Every destination fits its buffer
-/// untruncated, and the longest route stays inside the margins.
+/// `fmt_route_dest` (`TAG NAME`) never truncates. Every source with every
+/// modulatable destination fits the readout: the full block name where it
+/// fits (`ENV 3 → FILTER CUTOFF`), else the tag, the param name whole.
 #[test]
-fn route_destination_names_the_block_and_fits() {
+fn every_route_readout_fits_its_line() {
     use chimera_core::addr::{BlockRef, ParamAddr};
-    use chimera_core::ui::block_registry::PART_MOD_SOURCES;
+    use chimera_core::modulation::ModSource;
     use chimera_core::ui::fmt::FmtBuf;
     use chimera_core::ui::mod_grid::{
-        MatrixState, ModDest, block_tag, draw_readout, fmt_route_dest,
+        MatrixState, ModDest, block_tag, draw_readout, fmt_readout_dest, fmt_route_dest,
     };
-    let width = |s: &str| draw::text_width(&theme::FONT_LABEL, s, theme::LABEL_TRACKING);
-    let mut longest = (0, None);
+    let mut full = FmtBuf::new();
+    let cutoff = ModDest {
+        addr: ParamAddr::new(BlockRef::Filter, chimera_core::params::FilterParams::CUTOFF),
+        label: [0; 8],
+    };
+    fmt_readout_dest(&mut full, "ENV 3", &cutoff);
+    assert_eq!(full.as_str(), "FILTER CUTOFF");
+    let mut widest = 0;
     for b in BlockRef::ALL {
         for spec in b.specs() {
             let dest = ModDest {
@@ -578,29 +645,38 @@ fn route_destination_names_the_block_and_fits() {
             };
             let mut buf = FmtBuf::new();
             fmt_route_dest(&mut buf, &dest);
-            let want = format!("{} {}", block_tag(b), spec.label);
-            assert_eq!(buf.as_str(), want, "untruncated");
-            if width(&want) > longest.0 {
-                longest = (width(&want), Some(dest));
+            assert_eq!(buf.as_str(), format!("{} {}", block_tag(b), spec.label));
+            if !dest.addr.modulatable() {
+                continue;
+            }
+            for src in ModSource::ALL.iter() {
+                let mut name = FmtBuf::new();
+                fmt_readout_dest(&mut name, src.name(), &dest);
+                assert!(name.as_str().ends_with(spec.label), "{}", name.as_str());
+                let mut m = MatrixState::new();
+                m.rebuild_sources(&chimera_core::ui::block_registry::PART_MOD_SOURCES);
+                m.dests[0] = Some(dest);
+                m.num_dests = 1;
+                m.set(src.index(), 0, -127);
+                m.sel_row = (0..8).find(|&r| m.row_source(r) == src.index()).unwrap();
+                let mut fb = Fb::new();
+                draw_readout(&mut fb, &m, -127);
+                assert_eq!(fb.oob, 0);
+                let right = (0..theme::SCREEN_W)
+                    .rev()
+                    .find(|&x| (READOUT_Y - 9..=AMOUNT_Y).any(|y| fb.at(x, y) != fb.at(0, 0)))
+                    .unwrap();
+                assert!(
+                    right < theme::SCREEN_W - theme::MARGIN_X,
+                    "{} -> {} ends at x={right}",
+                    src.name(),
+                    name.as_str()
+                );
+                widest = widest.max(right);
             }
         }
     }
-    let src = *PART_MOD_SOURCES.iter().max_by_key(|s| width(s)).unwrap();
-    let mut m = MatrixState::new();
-    m.rebuild_sources(&[src]);
-    m.dests[0] = longest.1;
-    m.num_dests = 1;
-    let mut fb = Fb::new();
-    draw_readout(&mut fb, &m);
-    assert_eq!(fb.oob, 0);
-    let right = (0..theme::SCREEN_W)
-        .rev()
-        .find(|&x| (READOUT_Y - 9..=READOUT_Y).any(|y| fb.at(x, y) != fb.at(0, 0)))
-        .unwrap();
-    assert!(
-        right < theme::SCREEN_W - theme::MARGIN_X,
-        "readout ends at x={right}"
-    );
+    assert!(widest > 0);
 }
 
 /// Issue #15 fix round 1: the `>` scroll-more hint moved from the name row
@@ -742,20 +818,36 @@ fn the_widest_amount_fits_its_cell() {
     }
 }
 
-/// The owner's row labels, in `ModSource` order (#161).
+/// Rows read envelopes, then LFOs, VELO, NOTE (the mockup's grouping);
+/// the cursor walks them in that order; amounts stay by `ModSource` index.
 #[test]
-fn rows_read_env1_to_note_in_source_order() {
-    let ui = ui_for("mod_matrix");
+fn rows_read_envs_then_lfos_then_velo_and_note() {
+    use chimera_core::modulation::ModSource;
+    let mut ui = ui_for("mod_matrix");
     let m = &ui.matrix_state;
-    let names: Vec<_> = m.sources[..m.num_sources]
-        .iter()
-        .map(|s| s.unwrap().name)
+    let rows: Vec<_> = (0..m.num_sources)
+        .map(|r| m.sources[m.row_source(r)].unwrap().name)
         .collect();
     assert_eq!(
-        names,
+        rows,
         [
-            "ENV1", "LFO1", "ENV2", "ENV3", "LFO2", "LFO3", "VELO", "NOTE"
+            "ENV1", "ENV2", "ENV3", "LFO1", "LFO2", "LFO3", "VELO", "NOTE"
         ]
+    );
+    feed(&mut ui, Input::turn(EncoderId::A, -3)); // LFO1 → ENV1
+    assert_eq!(ui.matrix_state.sel_source(), ModSource::Env1.index());
+    feed(&mut ui, Input::turn(EncoderId::A, 1));
+    assert_eq!(ui.matrix_state.sel_source(), ModSource::Env2.index());
+    feed(&mut ui, Input::turn(EncoderId::E, 10));
+    let sound = &ui.performance.parts[0].sound;
+    let d = sound
+        .mod_state
+        .find(chimera_core::modulation::CUTOFF)
+        .unwrap();
+    assert_eq!(
+        sound.mod_state.amount(ModSource::Env2.index(), d),
+        10,
+        "saved by source"
     );
 }
 

@@ -290,7 +290,7 @@ fn an_absent_route_knob_reads_dashes_in_the_focus_band() {
     feed(&mut ui, Input::turn(EncoderId::C, 1)); // focus LFO
     feed(&mut ui, Input::turn(EncoderId::C, -1));
     to_matrix(&mut ui);
-    feed(&mut ui, Input::turn(EncoderId::A, 1)); // row LF1
+    feed(&mut ui, Input::turn(EncoderId::A, 3)); // row LFO1
     feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Minus));
     assert_eq!(ui.matrix_state.route(1, CUTOFF), None);
     back_to_flt(&mut ui, true);

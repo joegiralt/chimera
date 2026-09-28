@@ -54,11 +54,13 @@ pub enum RegionData {
         look: Look,
         status: Option<PrimeStatus>,
     },
-    /// The mod matrix readout: the selected route and the route count.
+    /// The mod matrix readout: the selected route, its animated amount and
+    /// the route count.
     Route {
         row: u8,
         col: u8,
         dests: u8,
+        value: u16,
         /// `MatrixState::rev`: a deleted route redraws.
         matrix_rev: u16,
     },
@@ -295,11 +297,16 @@ impl RegionData {
                 matrix_rev,
             },
             Self::Route {
-                row, col, dests, ..
+                row,
+                col,
+                dests,
+                value,
+                ..
             } => Self::Route {
                 row,
                 col,
                 dests,
+                value,
                 matrix_rev,
             },
             other => other,

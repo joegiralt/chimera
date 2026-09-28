@@ -350,20 +350,23 @@ fn matrix_regions_tile_grid_then_readout() {
 }
 
 /// The readout's key carries `MatrixState.rev` (a delete changes the route
-/// count) and the grid's the scroll (the cursor can stay put).
+/// count) and the lerped amount it prints; the grid's the scroll (the
+/// cursor can stay put).
 #[test]
-fn matrix_keys_carry_rev_and_scroll() {
-    let route = |rev| {
+fn matrix_keys_carry_rev_amount_and_scroll() {
+    let route = |value, rev| {
         RegionData::Route {
             row: 1,
             col: 0,
             dests: 2,
+            value,
             matrix_rev: 0,
         }
         .keyed(rev, 0)
     };
-    assert_eq!(route(3), route(3));
-    assert_ne!(route(3), route(4));
+    assert_eq!(route(500, 3), route(500, 3));
+    assert_ne!(route(500, 3), route(500, 4));
+    assert_ne!(route(500, 3), route(501, 3));
     let grid = |sx, rev| RegionData::grid(1, 0, sx).keyed(rev, 0);
     assert_ne!(grid(0, 3), grid(1, 3));
     assert_ne!(grid(0, 3), grid(0, 4));
