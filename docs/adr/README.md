@@ -41,3 +41,4 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0033](0033-theme-applied-in-the-display-shell.md) | The theme is applied in the display shell, not the renderer | Proposed |
 | [0034](0034-watchdog-kicked-by-audio-heartbeat.md) | The IWDG resets on a stalled audio interrupt, kicked from the controls tick | Proposed |
 | [0038](0038-delay-sat-zero-still-saturates.md) | The delay's feedback loop saturates at every SAT, SAT 0 included | Proposed |
+| [0039](0039-six-encoders-no-main-encoder.md) | Six encoders; no main encoder | Proposed |

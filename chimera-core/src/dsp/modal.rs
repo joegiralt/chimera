@@ -321,7 +321,7 @@ pub const MAX_STRING_DELAY: usize = 1200;
 /// body: 0..1 (half-delay comb resonance)
 /// stiffness: 0..1 (allpass dispersion for bell character)
 /// feedback: 0..1 (sustain boost)
-/// ens_rate/ens_depth/ens_spread/ens_mix: ensemble chorus parameters
+/// ens_rate/ens_depth/ens_mix: ensemble chorus parameters
 #[derive(Clone, Copy)]
 pub struct KsRenderParams {
     pub damping: f32,
@@ -331,9 +331,11 @@ pub struct KsRenderParams {
     pub feedback: f32,
     pub ens_rate: f32,
     pub ens_depth: f32,
-    pub ens_spread: f32,
     pub ens_mix: f32,
 }
+
+/// The third ensemble head's fixed offset from the second.
+const ENS_SPREAD: f32 = 0.3;
 
 struct KsString {
     buffer: [f32; MAX_STRING_DELAY],
@@ -480,7 +482,7 @@ impl KsString {
             };
 
             let offset2 = (lfo_val * p.ens_depth * self.delay_len as f32 * 0.05) as i32;
-            let offset3 = -offset2 + (p.ens_spread * self.delay_len as f32 * 0.02) as i32;
+            let offset3 = -offset2 + (ENS_SPREAD * self.delay_len as f32 * 0.02) as i32;
 
             let p2 = ((read_pos as i32 + offset2).rem_euclid(self.delay_len as i32)) as usize;
             let p3 = ((read_pos as i32 + offset3).rem_euclid(self.delay_len as i32)) as usize;
@@ -507,8 +509,6 @@ pub struct ModalEngine {
     string: KsString,
     // Sympathetic strings (7 additional resonators)
     sym_strings: [KsString; NUM_SYMPATHETIC],
-    // Bowed model state
-    bow_state: f32,
     // Shared
     frequency: f32,
     active_mode: ResonatorMode,
@@ -523,7 +523,7 @@ pub struct ModalEngine {
 
 crate::in_place::field_list!(KsString => KsString { buffer, write_pos, delay_len, ens_lfo_phase, noise_state });
 crate::in_place::field_list!(ModalEngine => ModalEngine {
-    filters, cos_osc, resolution, string, sym_strings, bow_state, frequency, active_mode,
+    filters, cos_osc, resolution, string, sym_strings, frequency, active_mode,
     released, exciter_remaining, exciter_amp, noise_state, exciter_lp, active, silence_counter,
 });
 
@@ -555,7 +555,6 @@ impl ModalEngine {
             for i in 0..NUM_SYMPATHETIC {
                 KsString::init_in_place(uninit_at(sym.add(i)));
             }
-            addr_of_mut!((*p).bow_state).write(0.0);
             addr_of_mut!((*p).frequency).write(220.0 / 48000.0);
             addr_of_mut!((*p).active_mode).write(ResonatorMode::Modal);
             addr_of_mut!((*p).released).write(false);
@@ -598,7 +597,6 @@ impl ModalEngine {
                 for s in self.string.buffer.iter_mut() {
                     *s = 0.0;
                 }
-                self.bow_state = 0.0;
                 self.exciter_amp = vel * params.bow_force;
             }
             ResonatorMode::Sympathetic => {
@@ -819,7 +817,6 @@ impl ModalEngine {
             feedback: fb,
             ens_rate: params.ks_ens_rate,
             ens_depth: params.ks_ens_depth,
-            ens_spread: 0.3, // fixed for now
             ens_mix: params.ks_ens_mix,
         };
         for s in output.iter_mut() {
@@ -897,7 +894,6 @@ impl ModalEngine {
             feedback: fb,
             ens_rate: params.ks_ens_rate,
             ens_depth: params.ks_ens_depth,
-            ens_spread: 0.3,
             ens_mix: params.ks_ens_mix,
         };
         let sym_params = KsRenderParams {
@@ -908,7 +904,6 @@ impl ModalEngine {
             feedback: 0.0, // no body/stiff/feedback
             ens_rate: 0.0,
             ens_depth: 0.0,
-            ens_spread: 0.0,
             ens_mix: 0.0, // no ensemble
         };
 

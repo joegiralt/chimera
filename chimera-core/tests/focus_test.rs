@@ -4,7 +4,6 @@
 mod screen;
 
 use chimera_core::ui::UiState;
-use chimera_core::ui::block_def::ChainDef2;
 use chimera_core::ui::block_registry as reg;
 use chimera_core::ui::focus::{FocusMemory, MAX_PAGES};
 use chimera_hal::{ButtonId, EncoderId};
@@ -69,17 +68,7 @@ fn out_of_range_page_ids_are_ignored() {
 
 #[test]
 fn every_page_id_fits_the_focus_table() {
-    let chains: [&ChainDef2; 8] = [
-        &reg::KICK_CHAIN,
-        &reg::MODAL_PLUCK_CHAIN,
-        &reg::MIX_CHAIN,
-        &reg::ENVELOPE_CHAIN,
-        &reg::MIXER_CHANNEL_CHAIN,
-        &reg::SYSTEM_CHAIN,
-        &reg::DEMO_CHAIN,
-        &reg::ALGO_CHAIN,
-    ];
-    for chain in chains {
+    for chain in reg::ALL_CHAINS {
         for block in chain.blocks {
             for def in core::iter::once(block.def).chain(block.sub_pages.iter().copied()) {
                 assert!((def.id as usize) < MAX_PAGES, "{} id {}", def.name, def.id);

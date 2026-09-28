@@ -22,7 +22,7 @@ const HC165_HALF_PERIOD_NS: u32 = 250;
 static HC165_DELAY: AtomicU32 = AtomicU32::new(100);
 
 /// Encoder bit pairs from PreenFM3 (1-indexed pins → 0-indexed masks)
-const ENC_BITS: [(u32, u32); 6] = [
+const ENC_BITS: [(u32, u32); NUM_ENCODERS] = [
     (1 << 16, 1 << 17),
     (1 << 14, 1 << 15),
     (1 << 8, 1 << 9),
@@ -52,34 +52,17 @@ const QUAD: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 0];
 
 // Shared ISR ↔ main state
 static READY: AtomicBool = AtomicBool::new(false);
-static ENC_DELTA: [AtomicI8; 7] = [
-    AtomicI8::new(0),
-    AtomicI8::new(0),
-    AtomicI8::new(0),
-    AtomicI8::new(0),
-    AtomicI8::new(0),
-    AtomicI8::new(0),
-    AtomicI8::new(0),
-];
+static ENC_DELTA: [AtomicI8; NUM_ENCODERS] = [const { AtomicI8::new(0) }; NUM_ENCODERS];
 static BTN_LATCH: AtomicU32 = AtomicU32::new(0);
-static RAW: AtomicU32 = AtomicU32::new(0xFFFFFFFF);
-static mut ENC_STATE: [u8; 6] = [0; 6];
-static mut ENC_DEBOUNCE: [u8; 6] = [0; 6];
+static mut ENC_STATE: [u8; NUM_ENCODERS] = [0; NUM_ENCODERS];
+static mut ENC_DEBOUNCE: [u8; NUM_ENCODERS] = [0; NUM_ENCODERS];
 /// Button debounce: tracks how many consecutive ISR ticks a button has been stable.
 /// Only latches as pressed after BTN_DEBOUNCE_TICKS consecutive "pressed" reads.
 static mut BTN_DEBOUNCE: [u8; NUM_BUTTONS] = [0; NUM_BUTTONS];
 static mut BTN_STATE: [bool; NUM_BUTTONS] = [false; NUM_BUTTONS];
 const BTN_DEBOUNCE_TICKS: u8 = 3; // 6ms at 500Hz
 static ISR_TICK: AtomicU32 = AtomicU32::new(0);
-static ENC_LAST_EDGE: [AtomicU32; NUM_ENCODERS] = [
-    AtomicU32::new(0),
-    AtomicU32::new(0),
-    AtomicU32::new(0),
-    AtomicU32::new(0),
-    AtomicU32::new(0),
-    AtomicU32::new(0),
-    AtomicU32::new(0),
-];
+static ENC_LAST_EDGE: [AtomicU32; NUM_ENCODERS] = [const { AtomicU32::new(0) }; NUM_ENCODERS];
 
 /// Arms SysTick at `CONTROLS_HZ`, its priority set first so the first tick
 /// cannot run at the reset priority (0, the audio level).
@@ -110,7 +93,7 @@ pub fn isr_tick() {
     ISR_TICK.fetch_add(1, Ordering::Relaxed);
 
     let d = HC165_DELAY.load(Ordering::Relaxed);
-    // Read HC165 via raw register access (same GPIO that diagnostic proved works)
+    // Shift the HC165 chain in: LOAD on PF1, CLK on PF0, DATA on PF2.
     // SAFETY: GPIOF_IDR/BSRR are PF's fixed memory-mapped registers; only
     // this ISR (single, non-reentrant) drives PF0/PF1 and reads PF2.
     let bits = unsafe {
@@ -133,8 +116,6 @@ pub fn isr_tick() {
         }
         b
     };
-
-    RAW.store(bits, Ordering::Relaxed);
 
     // Buttons: active low, debounced to stable level
     // SAFETY: only accessed from this ISR
@@ -162,7 +143,7 @@ pub fn isr_tick() {
     }
 
     // Encoders: quadrature decode with debounce
-    for i in 0..6 {
+    for i in 0..NUM_ENCODERS {
         // SAFETY: only accessed from this ISR (single-threaded)
         unsafe {
             if ENC_DEBOUNCE[i] > 0 {
@@ -249,12 +230,6 @@ impl Stm32Controls {
         }
     }
 
-    /// Current ISR tick count (500 Hz). For UI timing (double-tap, etc.)
-    #[allow(dead_code)] // polling API for the double-tap timing the preset browser needs; no caller until that lands
-    pub fn tick(&self) -> u32 {
-        ISR_TICK.load(Ordering::Relaxed)
-    }
-
     /// Returns true if any button changed state or any encoder moved this frame.
     pub fn has_activity(&self) -> bool {
         // Any button pressed or just released (need Released event for UI)
@@ -267,8 +242,7 @@ impl Stm32Controls {
 
 impl Controls for Stm32Controls {
     fn encoder_delta(&self, id: EncoderId) -> i8 {
-        let i = id as usize;
-        if i < NUM_ENCODERS { self.enc[i] } else { 0 }
+        self.enc[id as usize]
     }
 
     fn button_state(&self, id: ButtonId) -> ButtonState {

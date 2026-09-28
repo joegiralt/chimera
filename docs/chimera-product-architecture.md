@@ -460,7 +460,7 @@ Changing a Part's chain is equivalent to loading a different instrument. The UI 
 ### Hardware Constraints
 
 - **Display**: ILI9341 240×320 TFT (portrait orientation, taller than wide)
-- **Encoders**: 6 parameter encoders + 1 main encoder
+- **Encoders**: 6 parameter encoders, no main encoder (ADR 0039)
 - **Buttons**: 6 parameter buttons + 6 navigation buttons (Menu, Minus, Plus, Mix, Edit, Seq)
 - **No velocity-sensitive keys, no pads, no faders**
 
@@ -480,7 +480,7 @@ This is a screen-driven instrument. The screen does all the heavy lifting. The e
 
 **Chimera-specific:**
 - **6 encoders = 6 parameters per page.** Every page shows exactly 6 editable parameters, one per encoder. This creates a consistent interaction pattern.
-- **Parameter buttons = page selection.** The 6 parameter buttons (B1-B6) select pages within the current context.
+- **Parameter buttons = Part selection.** Bn selects Part n; MIX + Bn opens Part n's mixer (MIX + B6 the demo chain).
 - **Nav buttons = context switching.** Menu, Mix, Edit navigate between top-level modes.
 
 ### Page Structure — Chain-Driven
@@ -489,24 +489,22 @@ Pages are generated from the chain. Each block in the chain becomes a page. The 
 
 **Example: "FM Poly" chain (FM Osc → Drive → Filter → Wavefolder → VCA)**
 ```
-[PART SELECT]  ← Main encoder selects active Part (1-4)
-     │
-     ├── (B1) [FM OSC]      Operator config: algorithm, ratios, levels, waveforms
-     ├── (B2) [DRIVE]       Drive amount, tone, mix, env amt, lfo amt
-     ├── (B3) [FILTER]      Cutoff, resonance, mode, env amt, lfo amt, key track
-     ├── (B4) [WAVEFOLD]    Fold amount, symmetry, mix, env amt, lfo amt
-     ├── (B5) [VCA]         Volume, pan, env ADSR, velocity sensitivity
-     └── (B6) [MOD]         Mod matrix grid (page 1) + modulator settings (pages 2+)
+[PART n]  ← Bn (no main encoder, ADR 0039)
+     │         Minus/Plus step along the chain; Seq/Edit through sub-pages
+     ├── [FM OSC]      Operator config: algorithm, ratios, levels, waveforms
+     ├── [DRIVE]       Drive amount, tone, mix, env amt, lfo amt
+     ├── [FILTER]      Cutoff, resonance, mode, env amt, lfo amt, key track
+     ├── [WAVEFOLD]    Fold amount, symmetry, mix, env amt, lfo amt
+     ├── [VCA]         Volume, pan, env ADSR, velocity sensitivity
+     └── [MOD]         Mod matrix grid (page 1) + modulator settings (pages 2+)
 ```
 
 **Example: "Kick" chain (Noise Exciter → Tuned Resonator → Low Pass Gate)**
 ```
-     ├── (B1) [EXCITER]     Noise type, pitch sweep, sweep time
-     ├── (B2) [RESONATOR]   Tuning, decay, tone
-     ├── (B3) [LPG]         Cutoff, response, decay
-     ├── (B4) [MOD]         Mod matrix grid + modulators
-     ├── (B5) —             (unused — fewer blocks = fewer pages)
-     └── (B6) —
+     ├── [EXCITER]     Noise type, pitch sweep, sweep time
+     ├── [RESONATOR]   Tuning, decay, tone
+     ├── [LPG]         Cutoff, response, decay
+     └── [MOD]         Mod matrix grid + modulators (fewer blocks = fewer pages)
 ```
 
 The page labels change depending on the chain. A user on the "Kick" preset sees Exciter / Resonator / LPG / Mod. A user on "FM Poly" sees FM Osc / Drive / Filter / Wavefold / VCA / Mod. Each page is complete — all parameters for that block, including modulation depth controls.
@@ -520,18 +518,18 @@ The page labels change depending on the chain. A user on the "Kick" preset sees 
 
 ### Navigation Model
 
-1. **Main encoder** always selects the active Part (top-level context).
-2. **B1-B6** select block pages within the chain (auto-mapped to the chain's blocks + mod matrix).
+1. **Bn** selects Part n, the top-level context; there is no main encoder (ADR 0039).
+2. **Minus/Plus** step left and right through the chain's block pages (its blocks + mod matrix).
 3. **Param encoders (A-F)** edit the 6 parameters shown on the current page.
-4. **Minus/Plus** scroll sub-pages when a block has more than 6 parameters (e.g., FM operator editing has 4 operators).
-5. **Mix button** jumps to the mixer view.
+4. **Seq/Edit** step up and down through sub-pages when a block has more than 6 parameters (e.g., FM operator editing has 4 operators).
+5. **MIX + Bn** opens Part n's mixer.
 
 ### Multi-Part Workflow
 
-Switching Parts is one turn of the main encoder. The selected Part is always visible at the top of the screen. All B1-B6 pages are scoped to the selected Part — and the page labels update to reflect that Part's chain.
+Switching Parts is one button press (Bn for Part n in the built UI; there is no main encoder, ADR 0039). The selected Part is always visible at the top of the screen. All pages are scoped to the selected Part — and the page labels update to reflect that Part's chain.
 
-- Turn main encoder to Part 1 (FM Poly) → B1 shows "FM OSC"
-- Turn main encoder to Part 2 (Kick) → B1 shows "EXCITER"
+- Select Part 1 (FM Poly) → the first page shows "FM OSC"
+- Select Part 2 (Kick) → the first page shows "EXCITER"
 
 No mode switching. No "enter Part edit mode." Just select and edit.
 

@@ -158,7 +158,7 @@ fn algo_matrix_rows_are_env_and_lfo() {
             .button(ButtonId::Edit, ButtonState::Held)
             .button(ButtonId::B1, ButtonState::Pressed),
     );
-    ui.handle_input(&MockControls::new().encoder(EncoderId::Main, POOL_SIZE as i8));
+    ui.handle_input(&MockControls::new().encoder(EncoderId::A, POOL_SIZE as i8));
     press(&mut ui, ButtonId::Edit); // load "(init) Algo"
     let rows: Vec<&str> = (0..ui.matrix_state.num_sources)
         .map(|i| ui.matrix_state.sources[i].unwrap().name)
