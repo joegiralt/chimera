@@ -3,13 +3,14 @@ use core::ptr::addr_of_mut;
 
 use crate::addr::{BlockRef, Blocks};
 use crate::block::Block;
+use crate::block::ParamId;
 use crate::dsp::fx_bus::FxParams;
 use crate::hw::MAX_PARTS;
 use crate::in_place::by_value;
 use crate::mod_path::ModDestRegistry;
 use crate::modulation::ModState;
 use crate::params::{EngineType, ParamSnapshot};
-use crate::part::PartParams;
+use crate::part::{CHANNEL_SPECS, PartParams};
 
 pub const POOL_SIZE: usize = 32;
 pub const NAME_LEN: usize = 16;
@@ -107,6 +108,25 @@ pub struct Part {
     pub mix: PartParams,
 }
 
+/// System › MIDI Setup: every Part's channel, param `n` for Part n + 1.
+impl Block for [Part; MAX_PARTS] {
+    fn specs(&self) -> &'static [crate::block::ParamSpec] {
+        &CHANNEL_SPECS
+    }
+
+    fn get(&self, id: ParamId) -> f32 {
+        self.as_slice()
+            .get(id.0 as usize)
+            .map_or(0.0, |p| p.mix.get(PartParams::CHANNEL))
+    }
+
+    fn write(&mut self, id: ParamId, v: f32) {
+        if let Some(p) = self.as_mut_slice().get_mut(id.0 as usize) {
+            p.mix.write(PartParams::CHANNEL, v);
+        }
+    }
+}
+
 impl Part {
     /// An init Sound of `engine` with part 1's mix settings.
     pub fn new(engine: EngineType) -> Self {
@@ -180,48 +200,62 @@ pub struct PartEdit<'a> {
 
 impl Blocks for PartEdit<'_> {
     fn block(&self, b: BlockRef) -> Option<&dyn Block> {
-        match b {
-            BlockRef::Chorus => Some(&self.fx.chorus),
-            BlockRef::Delay => Some(&self.fx.delay),
-            BlockRef::Reverb => Some(&self.fx.reverb),
-            BlockRef::Tape => Some(&self.fx.tape),
-            BlockRef::Comp => Some(&self.fx.comp),
-            BlockRef::Part => Some(&self.part.mix),
-            BlockRef::Theme => None,
-            BlockRef::Modal
-            | BlockRef::Algo
-            | BlockRef::AlgoOp(_)
-            | BlockRef::Drive
-            | BlockRef::Filter
-            | BlockRef::Folder
-            | BlockRef::AmpEnv
-            | BlockRef::FilterEnv
-            | BlockRef::AuxEnv
-            | BlockRef::Lfo
-            | BlockRef::Out => self.part.sound.params.block(b),
-        }
+        part_block(self.part, self.fx, b)
     }
 
     fn block_mut(&mut self, b: BlockRef) -> Option<&mut dyn Block> {
-        match b {
-            BlockRef::Chorus => Some(&mut self.fx.chorus),
-            BlockRef::Delay => Some(&mut self.fx.delay),
-            BlockRef::Reverb => Some(&mut self.fx.reverb),
-            BlockRef::Tape => Some(&mut self.fx.tape),
-            BlockRef::Comp => Some(&mut self.fx.comp),
-            BlockRef::Part => Some(&mut self.part.mix),
-            BlockRef::Theme => None,
-            BlockRef::Modal
-            | BlockRef::Algo
-            | BlockRef::AlgoOp(_)
-            | BlockRef::Drive
-            | BlockRef::Filter
-            | BlockRef::Folder
-            | BlockRef::AmpEnv
-            | BlockRef::FilterEnv
-            | BlockRef::AuxEnv
-            | BlockRef::Lfo
-            | BlockRef::Out => self.part.sound.params.block_mut(b),
-        }
+        part_block_mut(self.part, self.fx, b)
+    }
+}
+
+/// `part`'s block `b`, or the FX's; `None` for the blocks the UI holds.
+pub fn part_block<'a>(part: &'a Part, fx: &'a FxParams, b: BlockRef) -> Option<&'a dyn Block> {
+    match b {
+        BlockRef::Chorus => Some(&fx.chorus),
+        BlockRef::Delay => Some(&fx.delay),
+        BlockRef::Reverb => Some(&fx.reverb),
+        BlockRef::Tape => Some(&fx.tape),
+        BlockRef::Comp => Some(&fx.comp),
+        BlockRef::Part => Some(&part.mix),
+        BlockRef::Theme | BlockRef::Channels => None,
+        BlockRef::Modal
+        | BlockRef::Algo
+        | BlockRef::AlgoOp(_)
+        | BlockRef::Drive
+        | BlockRef::Filter
+        | BlockRef::Folder
+        | BlockRef::AmpEnv
+        | BlockRef::FilterEnv
+        | BlockRef::AuxEnv
+        | BlockRef::Lfo
+        | BlockRef::Out => part.sound.params.block(b),
+    }
+}
+
+/// `part_block`, mutable.
+pub fn part_block_mut<'a>(
+    part: &'a mut Part,
+    fx: &'a mut FxParams,
+    b: BlockRef,
+) -> Option<&'a mut dyn Block> {
+    match b {
+        BlockRef::Chorus => Some(&mut fx.chorus),
+        BlockRef::Delay => Some(&mut fx.delay),
+        BlockRef::Reverb => Some(&mut fx.reverb),
+        BlockRef::Tape => Some(&mut fx.tape),
+        BlockRef::Comp => Some(&mut fx.comp),
+        BlockRef::Part => Some(&mut part.mix),
+        BlockRef::Theme | BlockRef::Channels => None,
+        BlockRef::Modal
+        | BlockRef::Algo
+        | BlockRef::AlgoOp(_)
+        | BlockRef::Drive
+        | BlockRef::Filter
+        | BlockRef::Folder
+        | BlockRef::AmpEnv
+        | BlockRef::FilterEnv
+        | BlockRef::AuxEnv
+        | BlockRef::Lfo
+        | BlockRef::Out => part.sound.params.block_mut(b),
     }
 }
