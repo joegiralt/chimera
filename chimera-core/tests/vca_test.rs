@@ -1,5 +1,7 @@
 //! The VCA destination (filter-routing spec § 4, § Tests "VCA").
 
+mod common;
+
 use chimera_core::addr::ParamAddr;
 use chimera_core::dsp::envelope::{EnvMods, Envelope};
 use chimera_core::dsp::voice::Voice;
@@ -188,5 +190,209 @@ fn a_negative_vca_route_never_inverts() {
     assert!(
         neg.iter().any(|&x| x != 0.0),
         "the negative half of the LFO opens it"
+    );
+}
+
+use chimera_core::dsp::modulator::{EnvForm, EnvType, Func, LfoForm};
+
+/// `blocks` of note 60, key up at `off`; `(output, active after each block)`.
+fn life(p: &ParamSnapshot, ms: &ModState, off: usize, blocks: usize) -> (Vec<f32>, Vec<bool>) {
+    let mut v = Voice::new(SR);
+    v.note_on(MidiNote::new(60).unwrap(), Velocity::DEFAULT, p);
+    let (mut out, mut alive) = (Vec::new(), Vec::new());
+    let mut b = [0.0f32; BLOCK_SIZE];
+    for i in 0..blocks {
+        if i == off {
+            v.note_off();
+        }
+        v.render(&mut b, p, ms);
+        out.extend_from_slice(&b);
+        alive.push(v.is_active());
+    }
+    (out, alive)
+}
+
+/// An Algo Sound whose engine outlives any envelope here (RR 1, the slowest).
+fn long() -> ParamSnapshot {
+    let mut p = init(EngineType::Algo);
+    p.algo.ops[0].rr = 1;
+    p
+}
+
+fn with_env3(f: Func, fall: f32) -> ParamSnapshot {
+    let mut p = long();
+    let e = &mut p.envelopes[2];
+    (e.env_type, e.func.fall) = (EnvType::B, fall);
+    e.func.set_func(f);
+    p
+}
+
+/// ENV 2 → VCA: the voice ends at the end of the block in which ENV 2 goes idle.
+#[test]
+fn env2_on_the_vca_ends_the_voice_when_it_idles() {
+    let p = long();
+    let (_, alive) = life(&p, &mods(&[(ModSource::Env2, VCA, 127)]), 20, 400);
+    let (_, plain) = life(&p, &ModState::new(), 20, 400);
+    let mut env = Envelope::new();
+    env.note_on();
+    // Ticked per sample, as the voice runs a slot routed to its VCA.
+    let idle = (0..400)
+        .find(|&b| {
+            let mut g = [0.0f32; BLOCK_SIZE];
+            env.run_block(
+                &p.envelopes[1],
+                &EnvMods::NONE,
+                b < 20,
+                SR,
+                Some((&mut g, 1.0)),
+            );
+            env.is_idle()
+        })
+        .unwrap();
+    assert!(alive[idle - 1] && !alive[idle], "ends at block {idle}");
+    assert!(plain[idle], "the engine alone would have kept it");
+}
+
+/// No drone: a source that doesn't end holds the voice only while the key
+/// is held; after key-up it ends through the 128-sample fade.
+#[test]
+fn nothing_drones_after_key_up() {
+    let e3 = |f| (with_env3(f, 0.2), ModSource::Env3);
+    for (p, s) in [
+        e3(Func::Lfo(LfoForm::Free)),
+        e3(Func::Env(EnvForm::Cycle)),
+        (long(), ModSource::Lfo1),
+        (long(), ModSource::Vel),
+    ] {
+        let (out, alive) = life(&p, &mods(&[(s, VCA, 127)]), 30, 60);
+        let gone = alive.iter().position(|a| !a).expect("the voice ends");
+        // At once (gain 0 at key-up) or after the two-block fade.
+        assert!((30..=33).contains(&gone), "{s:?}: ended at block {gone}");
+        assert!(out[(gone + 1) * BLOCK_SIZE..].iter().all(|&x| x == 0.0));
+    }
+}
+
+/// A cycling burst ends after the burst running at key-up; a one-shot
+/// burst ends after its burst, key held or not.
+#[test]
+fn bursts_end_when_their_burst_does() {
+    let len = |fall: f32| {
+        (chimera_core::dsp::modulator::law::BURST_LEN.at(fall) * SR as f32) as usize / BLOCK_SIZE
+    };
+    let p = with_env3(Func::Burst(EnvForm::Cycle), 0.2);
+    let (_, alive) = life(&p, &mods(&[(ModSource::Env3, VCA, 127)]), 30, 200);
+    let gone = alive.iter().position(|a| !a).expect("ends");
+    assert!(
+        gone > 30 && gone <= 30 + len(0.2) + 3,
+        "cycle burst: {gone}"
+    );
+    let p = with_env3(Func::Burst(EnvForm::Ad), 0.2);
+    let (_, alive) = life(&p, &mods(&[(ModSource::Env3, VCA, 127)]), usize::MAX, 200);
+    let gone = alive
+        .iter()
+        .position(|a| !a)
+        .expect("ends with the key held");
+    assert!(gone <= len(0.2) + 3, "AD burst: {gone}");
+}
+
+/// Under every configuration an inactive engine ends the voice: a fast
+/// engine release ends it while ENV 1 (60 s release) still holds.
+#[test]
+fn an_inactive_engine_always_ends_the_voice() {
+    let mut p = init(EngineType::Algo);
+    p.algo.ops[0].rr = 15;
+    p.envelopes[0].speed = chimera_core::dsp::modulator::EnvSpeed::Slow;
+    p.envelopes[0].release = 1.0;
+    let (_, alive) = life(&p, &mods(&[(ModSource::Env1, VCA, 127)]), 20, 400);
+    assert!(alive.iter().any(|a| !a), "the engine's end ends the voice");
+}
+
+/// Review Focus 5: the Sound switches engine mid-note; the fade keeps the
+/// old VCA routes, stays finite, and the held note restarts on Modal.
+#[test]
+fn an_engine_switch_fades_with_the_old_vca_routes() {
+    let algo = long();
+    let modal = init(EngineType::Modal);
+    let routed = mods(&[(ModSource::Env2, VCA, 127)]);
+    let mut v = Voice::new(SR);
+    v.note_on(MidiNote::new(60).unwrap(), Velocity::DEFAULT, &algo);
+    let mut b = [0.0f32; BLOCK_SIZE];
+    let mut peak = 0.0f32;
+    for _ in 0..30 {
+        v.render(&mut b, &algo, &routed);
+        peak = b.iter().fold(peak, |m, x| m.max(x.abs()));
+    }
+    for i in 0..10 {
+        v.render(&mut b, &modal, &ModState::new());
+        assert!(b.iter().all(|x| x.is_finite()), "block {i}");
+        if i < 2 {
+            assert!(
+                b.iter().all(|x| x.abs() <= peak * 1.01),
+                "the fade never gets louder"
+            );
+        }
+    }
+    assert!(v.is_active(), "the held note restarted on Modal");
+}
+
+/// A voice an ENV → VCA release holds is not idle: it keeps its slot for
+/// as long as the release sounds, and a new note takes another voice.
+#[test]
+fn a_release_the_vca_holds_is_not_idle() {
+    use chimera_core::MidiChannel;
+    use chimera_core::dsp::fx_bus::FxBus;
+    use chimera_core::hw::{CPU_HZ_REV_V, DAC_PAIRS, SampleBudget};
+    use chimera_core::instrument::{AudioShared, Instrument};
+    use chimera_core::note_queue::{NoteEvent, NoteKind};
+    let ev = |note, kind| NoteEvent {
+        channel: MidiChannel::new(0).unwrap(),
+        note: MidiNote::new(note).unwrap(),
+        kind,
+    };
+    let mut shared = AudioShared::default();
+    shared.parts[0].params = long();
+    shared.parts[0].mod_state = mods(&[(ModSource::Env2, VCA, 127)]);
+    // Note 60 released at block 20; another note at `other`. Per block:
+    // (part 0 sounds, voice 0 still holds note 60).
+    let run = |other: Option<usize>| {
+        let mut inst = Box::new(Instrument::new(SR, SampleBudget::for_cpu(CPU_HZ_REV_V)));
+        let mut fx = Box::new(FxBus::new());
+        let mut out = [[0.0f32; BLOCK_SIZE * 2]; DAC_PAIRS];
+        let mut scope = common::scope_writer();
+        inst.handle(ev(60, NoteKind::On(Velocity::DEFAULT)), &shared);
+        let mut log = Vec::new();
+        for b in 0..400 {
+            if b == 20 {
+                inst.handle(ev(60, NoteKind::Off), &shared);
+            }
+            if Some(b) == other {
+                inst.handle(ev(64, NoteKind::On(Velocity::DEFAULT)), &shared);
+                assert_eq!(inst.allocator().slots()[1].note(), MidiNote::new(64));
+            }
+            inst.render(&mut fx, &mut out, &shared, &mut scope);
+            let v0 = inst.allocator().slots()[0];
+            log.push((
+                inst.part_bus(0).iter().any(|&x| x != 0.0),
+                !v0.is_free() && v0.note() == MidiNote::new(60),
+            ));
+        }
+        log
+    };
+    let alone = run(None);
+    // `last`: the block in which the release reaches 0 and the voice ends.
+    let last = alone.iter().rposition(|&(s, _)| s).unwrap();
+    assert!(
+        last > 22 && last < 399,
+        "the release sounds past block 22, then ends"
+    );
+    assert!(
+        alone[..last].iter().all(|&(_, kept)| kept),
+        "held while audible"
+    );
+    assert!(!alone[last].1, "freed once silent");
+    let both = run(Some(22));
+    assert!(
+        both[..last].iter().all(|&(_, kept)| kept),
+        "not cut off by note 64"
     );
 }

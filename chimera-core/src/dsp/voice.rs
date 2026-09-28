@@ -39,7 +39,8 @@ pub struct Voice {
     mod_values: [f32; MAX_MOD_SOURCES],
     /// The routes into VCA this voice plays.
     vca: VcaRoutes,
-    /// The last sample's VCA gain (0 without a route).
+    /// The last block's last routed VCA gain, × AMP's VEL; 0 without a
+    /// route. Whether the lifetime check ends the voice through a fade.
     last_gain: f32,
     /// A note-on since the last block: its ENV destinations are recomputed
     /// with its own VEL and NOTE before the modulators run.
@@ -207,7 +208,8 @@ impl Voice {
         if !self.active {
             self.filter.hold(); // a fresh note: no ramp from the last note's cutoff
             // An idle voice's ENV slots and last source values start as a
-            // fresh voice's: a release the engine outlived is not resumed.
+            // fresh voice's. Idle is silent: a release its VCA routes still
+            // hold keeps the voice active (`vca_holds`).
             self.envs = [Envelope::new(); 3];
             self.mod_values = [0.0; MAX_MOD_SOURCES];
         }
@@ -280,8 +282,23 @@ impl Voice {
         unsafe { Self::init_chain(self) }
     }
 
+    /// Sounding: its engine is active and, with routes into VCA, one of
+    /// them holds it (spec § 4).
     pub fn is_active(&self) -> bool {
         self.active
+    }
+
+    /// A VCA source still holds the voice (spec § 4): an ENV slot per its
+    /// TYPE and FORM, anything else while the key is held.
+    fn vca_holds(&self) -> bool {
+        let key = self.held;
+        ModSource::ALL
+            .iter()
+            .filter(|s| self.vca.has(s.index()))
+            .any(|s| match s.env_slot() {
+                Some(e) => self.envs[e.index()].holds(key),
+                None => key,
+            })
     }
 
     pub fn render(
@@ -421,6 +438,7 @@ impl Voice {
                     }
                 }
             }
+            self.last_gain = 0.0;
         } else {
             let vel = 1.0 - m.out.vca_vel + m.out.vca_vel * self.last_velocity.unit();
             let k = volume * vel;
@@ -443,6 +461,17 @@ impl Voice {
             }
             if self.fade == 0 || !self.active {
                 self.fade_ended(params);
+            }
+        }
+
+        // Lifetime by the VCA's routes (spec § 4), once per block: a voice
+        // no routed source holds ends, through the fade if it still sounds.
+        if self.active && self.fade == 0 && self.vca.bits != 0 && !self.vca_holds() {
+            if self.last_gain != 0.0 {
+                self.after_fade = AfterFade::Idle;
+                self.fade = Self::FADE;
+            } else {
+                self.active = false;
             }
         }
     }
