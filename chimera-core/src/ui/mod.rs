@@ -23,9 +23,7 @@ pub mod viz;
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 
-use chimera_hal::{
-    ALL_BUTTONS, ALL_ENCODERS, ButtonId, ButtonState, Controls, EncoderId, PART_BUTTONS,
-};
+use chimera_hal::{ALL_BUTTONS, ALL_ENCODERS, ButtonId, ButtonState, Controls, PART_BUTTONS};
 
 use crate::addr::{BlockRef, Blocks, Op, ParamAddr};
 use crate::block::Block;
@@ -332,6 +330,62 @@ impl UiState {
         label
     }
 
+    /// One frame of input while the sound browser for `part` is open.
+    fn browser_input(
+        &mut self,
+        controls: &impl Controls,
+        part: usize,
+        cursor: usize,
+        scroll: usize,
+    ) {
+        let (cursor, scroll, act) = browser::handle(controls, cursor, scroll);
+        if self.ui_mode
+            != (UiMode::SoundBrowser {
+                part,
+                cursor,
+                scroll,
+            })
+        {
+            self.ui_mode = UiMode::SoundBrowser {
+                part,
+                cursor,
+                scroll,
+            };
+            self.browser_dirty = true;
+        }
+        match act {
+            Some(browser::BrowserAct::Load) => {
+                if cursor < POOL_SIZE {
+                    if let Some(sound) = self.pool.get(cursor) {
+                        self.performance.parts[part].sound = sound.clone();
+                        self.performance.parts[part].loaded_from = Some(cursor as u8);
+                    }
+                } else if let Some(&engine) = browser::INIT_TYPES.get(cursor - POOL_SIZE) {
+                    // Init entries follow the pool slots.
+                    self.performance.parts[part].load_init(engine);
+                }
+                self.active_part = part;
+                self.nav.chain_id = ChainId::Part(part);
+                self.nav.node = 0;
+                self.nav.sub_page = 0;
+                self.nav.engine = self.performance.parts[part].sound.engine();
+                self.load_matrix(part);
+                self.enter_page();
+                self.ui_mode = UiMode::Normal;
+                self.browser_dirty = true;
+            }
+            Some(browser::BrowserAct::Save) => {
+                if cursor < POOL_SIZE {
+                    let sound = self.performance.parts[part].sound.clone();
+                    self.pool.store(cursor, sound);
+                }
+                self.browser_dirty = true;
+            }
+            Some(browser::BrowserAct::Cancel) => self.ui_mode = UiMode::Normal,
+            None => {}
+        }
+    }
+
     /// Process one frame of input: navigation + encoder deltas.
     pub fn handle_input(&mut self, controls: &impl Controls) {
         // Any encoder turn or button press retires the last prime-status
@@ -341,88 +395,14 @@ impl UiState {
             self.prime_status = None;
         }
 
-        // ── Sound Browser mode input ─────────────────────────────────
         if let UiMode::SoundBrowser {
             part,
-            ref mut cursor,
-            ref mut scroll,
+            cursor,
+            scroll,
         } = self.ui_mode
         {
-            let total = browser::TOTAL_ENTRIES;
-            let visible = browser::VISIBLE_ROWS.min(total);
-
-            // Encoder A scrolls the cursor.
-            let delta = i32::from(controls.encoder_delta(EncoderId::A));
-            if delta != 0 {
-                let new_cursor = (*cursor as i32 + delta).clamp(0, total as i32 - 1) as usize;
-                *cursor = new_cursor;
-                // Adjust scroll to keep cursor visible
-                if new_cursor < *scroll {
-                    *scroll = new_cursor;
-                } else if new_cursor >= *scroll + visible {
-                    *scroll = new_cursor + 1 - visible;
-                }
-                self.browser_dirty = true;
-            }
-
-            // Edit button: confirm selection / load
-            if controls.button_state(ButtonId::Edit) == ButtonState::Pressed {
-                let sel_cursor = *cursor;
-                let sel_part = part;
-                if sel_cursor < POOL_SIZE {
-                    // Load from pool — clone sound first to avoid borrow conflict
-                    if let Some(sound) = self.pool.get(sel_cursor) {
-                        let loaded = sound.clone();
-                        self.performance.parts[sel_part].sound = loaded;
-                        self.performance.parts[sel_part].loaded_from = Some(sel_cursor as u8);
-                    }
-                } else {
-                    // Init entries follow the pool slots.
-                    if let Some(&engine) = browser::INIT_TYPES.get(sel_cursor - POOL_SIZE) {
-                        self.performance.parts[sel_part].load_init(engine);
-                    }
-                }
-                // Switch to the loaded part and return to normal mode
-                self.active_part = sel_part;
-                self.nav.chain_id = ChainId::Part(sel_part);
-                self.nav.node = 0;
-                self.nav.sub_page = 0;
-                self.nav.engine = self.performance.parts[sel_part].sound.engine();
-                self.load_matrix(sel_part);
-                self.enter_page();
-                self.ui_mode = UiMode::Normal;
-                self.browser_dirty = true;
-                return;
-            }
-
-            // Seq button: save current part's sound into highlighted pool slot
-            if controls.button_state(ButtonId::Seq) == ButtonState::Pressed {
-                let save_cursor = *cursor;
-                let save_part = part;
-                if save_cursor < POOL_SIZE {
-                    let sound = self.performance.parts[save_part].sound.clone();
-                    self.pool.store(save_cursor, sound);
-                }
-                // Stay in browser mode so the user can see the saved slot
-                self.browser_dirty = true;
-                return;
-            }
-
-            // Any B-button press: cancel browser
-            for &btn in &PART_BUTTONS {
-                if controls.button_state(btn) == ButtonState::Pressed {
-                    self.ui_mode = UiMode::Normal;
-                    return;
-                }
-            }
-
-            // Menu button also cancels
-            if controls.button_state(ButtonId::Menu) == ButtonState::Pressed {
-                self.ui_mode = UiMode::Normal;
-                return;
-            }
-
-            // Consume all other input — don't pass to normal handlers
+            // The browser takes every input while it is open.
+            self.browser_input(controls, part, cursor, scroll);
             return;
         }
 
