@@ -1263,7 +1263,7 @@ use chimera_core::dsp::voice::Voice;
 use chimera_core::mod_path::ModDestRegistry;
 use chimera_core::modulation::{ModSource, ModState, note_source};
 use chimera_core::params::{EngineType, FilterParams, ParamSnapshot};
-use chimera_core::preset::ChainType;
+use chimera_core::params::EngineType;
 use chimera_core::ui::block_registry::PART_MOD_SOURCES;
 use chimera_core::ui::chain::chain_def_for;
 use chimera_core::{MidiNote, Velocity};
@@ -1280,7 +1280,7 @@ fn sources_are_in_spec_order() {
         assert!(s.tag().len() <= 3, "#15");
     }
     assert_eq!(PART_MOD_SOURCES, tags);
-    for ct in ChainType::ALL {
+    for ct in EngineType::ALL {
         assert_eq!(chain_def_for(ct).mod_sources, tags, "{ct:?}");
     }
     // A two-source `ModState` still maps 0 → ENV1 and 1 → LFO1.
@@ -1354,7 +1354,7 @@ use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::modulation::ModSource;
 use chimera_core::params::FilterParams;
-use chimera_core::preset::ChainType;
+use chimera_core::params::EngineType;
 use chimera_core::ui::block_registry::FILTER;
 use chimera_core::ui::chain::chain_def_for;
 use chimera_core::ui::renderer::amount_of;
@@ -1373,7 +1373,7 @@ const ENC: [EncoderId; 6] = [
     EncoderId::F,
 ];
 
-fn flt_node(ct: ChainType) -> usize {
+fn flt_node(ct: EngineType) -> usize {
     chain_def_for(ct)
         .blocks
         .iter()
@@ -1382,7 +1382,7 @@ fn flt_node(ct: ChainType) -> usize {
 }
 
 /// Part 1 on `ct`'s init Sound with a held saw worth filtering, on FLT.
-fn on_flt(ct: ChainType) -> UiState {
+fn on_flt(ct: EngineType) -> UiState {
     let mut ui = UiState::new();
     load_init(&mut ui, ct);
     let p = ui.params_mut();
@@ -1411,7 +1411,7 @@ fn render(ui: &UiState) -> Vec<f32> {
 /// Modal once turned (a route knob once its route is nonzero).
 #[test]
 fn every_flt_knob_changes_a_held_note() {
-    for ct in ChainType::ALL {
+    for ct in EngineType::ALL {
         for (sub, slots) in [(0, &[1usize, 2, 3, 4, 5][..]), (1, &[0usize, 1, 2][..])] {
             for &slot in slots {
                 let mut ui = on_flt(ct);
@@ -1443,14 +1443,14 @@ fn without_cutoff(ui: &mut UiState, fill: bool) {
     // The audio-side matrix follows the registry (no routes kept).
     sound.mod_state = chimera_core::modulation::ModState::from_registry(&sound.dest_registry, 8);
     feed(ui, Input::press(ButtonId::B1));
-    for _ in 0..flt_node(ChainType::Algo) {
+    for _ in 0..flt_node(EngineType::Algo) {
         feed(ui, Input::press(ButtonId::Plus));
     }
 }
 
 #[test]
 fn a_route_knob_creates_its_column() {
-    let mut ui = on_flt(ChainType::Algo);
+    let mut ui = on_flt(EngineType::Algo);
     without_cutoff(&mut ui, false);
     let col = |ui: &UiState| (0..ui.mod_state().num_dests()).find(|&d| ui.mod_state().dest(d) == CUTOFF);
     assert_eq!(col(&ui), None);
@@ -1464,7 +1464,7 @@ fn a_route_knob_creates_its_column() {
 
 #[test]
 fn a_full_matrix_keeps_the_route_knob_off() {
-    let mut ui = on_flt(ChainType::Algo);
+    let mut ui = on_flt(EngineType::Algo);
     without_cutoff(&mut ui, true);
     feed(&mut ui, Input::turn(EncoderId::F, 5)); // KEY
     assert_eq!(ui.prime_status(), Some(PrimeStatus::Full));
@@ -5004,7 +5004,7 @@ fn presence_is_apart_from_the_amount() {
 
 #[test]
 fn presence_survives_sync_from_matrix() {
-    let sound = Sound::init(ChainType::Algo);
+    let sound = Sound::init(EngineType::Algo);
     let mut m = MatrixState::new();
     m.rebuild_sources(&PART_MOD_SOURCES);
     m.rebuild_dests_from_registry(&sound.dest_registry);
@@ -5018,7 +5018,7 @@ fn presence_survives_sync_from_matrix() {
 /// Spec § Tests "Defaults": exactly the three CUTOFF routes at 0.
 #[test]
 fn a_new_sound_has_the_default_routes() {
-    for ct in ChainType::ALL {
+    for ct in EngineType::ALL {
         let s = Sound::init(ct);
         assert_eq!(s.dest_registry.len(), 1, "{ct:?}");
         assert_eq!(s.dest_registry.get(0).unwrap().addr, CUTOFF_ADDR);
@@ -5046,14 +5046,14 @@ fn to_matrix(ui: &mut UiState) {
 /// until it is turned, and turning it creates the route.
 #[test]
 fn mix_minus_deletes_and_the_knob_recreates() {
-    let mut ui = on_flt(ChainType::Algo);
+    let mut ui = on_flt(EngineType::Algo);
     to_matrix(&mut ui); // cursor on E1 → FLT CUTOFF
     assert_eq!(ui.matrix_state.route(0, CUTOFF), Some(0));
     feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Minus));
     assert_eq!(ui.matrix_state.route(0, CUTOFF), None, "deleted");
     assert_eq!(ui.mod_state().present(0) & 1, 0);
     feed(&mut ui, Input::press(ButtonId::B1));
-    for _ in 0..flt_node(ChainType::Algo) {
+    for _ in 0..flt_node(EngineType::Algo) {
         feed(&mut ui, Input::press(ButtonId::Plus));
     }
     feed(&mut ui, Input::turn(EncoderId::E, 3)); // ENV
@@ -5131,7 +5131,7 @@ Add the field `present: [u8; MAX_MOD_DESTS],` to `ModState` (doc: `/// Route pre
 In `chimera-core/src/preset.rs`, `Sound::init`:
 
 ```rust
-    pub fn init(chain_type: ChainType) -> Self {
+    pub fn init(chain_type: EngineType) -> Self {
         let mut name = [0u8; NAME_LEN];
         let tag = b"(init)";
         name[..tag.len()].copy_from_slice(tag);
@@ -6218,7 +6218,7 @@ fn mod_routing_bills_the_spec_shape() {
     use chimera_core::dsp::modulator::{EnvType, FuncMode};
     use ModRouting as M;
     let p = ParamSnapshot::for_engine(EngineType::Algo);
-    let defaults = chimera_core::preset::Sound::init(chimera_core::preset::ChainType::Algo).mod_state;
+    let defaults = chimera_core::preset::Sound::init(chimera_core::params::EngineType::Algo).mod_state;
     assert_eq!(M::cost(&p, &defaults), M::BASE);
     assert_eq!(M::cost(&p, &routed(&[ModSource::Env2])), M::BASE + M::CLAMP + M::ENV_A);
     let mut worst = p.clone();
@@ -6540,7 +6540,7 @@ mod screen;
 use chimera_core::addr::{BlockRef, ParamAddr};
 use chimera_core::modulation::{ModSource, VCA};
 use chimera_core::params::OutParams;
-use chimera_core::preset::{ChainType, Sound};
+use chimera_core::preset::{EngineType, Sound};
 use chimera_core::ui::block_registry::FOLDER;
 use chimera_core::ui::chain::chain_def_for;
 use chimera_core::ui::{PrimeStatus, UiState, view};
@@ -6551,7 +6551,7 @@ const VEL: ParamAddr = ParamAddr::new(BlockRef::Out, OutParams::VCA_VEL);
 
 #[test]
 fn every_part_chain_has_amp_last_before_mod() {
-    for ct in ChainType::ALL {
+    for ct in EngineType::ALL {
         let blocks = chain_def_for(ct).blocks;
         assert_eq!(blocks[blocks.len() - 2].def.id, FOLDER.id, "{ct:?}");
     }
@@ -6560,7 +6560,7 @@ fn every_part_chain_has_amp_last_before_mod() {
 
 #[test]
 fn vel_is_dimmed_until_a_vca_route_exists() {
-    let s = Sound::init(ChainType::Algo);
+    let s = Sound::init(EngineType::Algo);
     assert!(view::dimmed(VEL, &s));
     let mut r = s.clone();
     let d = r.mod_state.push(VCA).unwrap();
@@ -6727,7 +6727,7 @@ In the MIX+PLUS branch, a dimmed slot whose prime target is itself reports NOT M
         feed(ui, Input::press(ButtonId::Minus)); // back to AMP: VEL live
     }),
     ("modal_amp", |ui| {
-        load_init(ui, ChainType::Modal);
+        load_init(ui, EngineType::Modal);
         plus(ui, 2); // MDL · FLT · AMP
     }),
 ```
@@ -6837,10 +6837,10 @@ fn applies_matches_the_panel() {
 #[test]
 fn kind_is_fixed_and_never_edits_the_matrix() {
     use chimera_core::ui::view::{self, SlotCtx};
-    let s = chimera_core::preset::Sound::init(ChainType::Algo);
+    let s = chimera_core::preset::Sound::init(EngineType::Algo);
     let ctx = SlotCtx::read(&s.params, chimera_core::addr::Op::A);
     assert!(view::is_dimmed(&view::view(&chimera_core::ui::block_registry::FILTER, 0, &ctx), &s));
-    let mut ui = on_flt(ChainType::Algo);
+    let mut ui = on_flt(EngineType::Algo);
     let before = format!("{:?}", ui.mod_state());
     feed(&mut ui, Input::turn(EncoderId::A, 3));
     assert_eq!(ui.params().filter.kind(), FilterKind::Svf);
@@ -8181,7 +8181,7 @@ Append to `chimera-core/tests/mod_pages_test.rs`:
 
 ```rust
 use chimera_core::dsp::modulator::LfoType;
-use chimera_core::preset::{ChainType, Sound};
+use chimera_core::preset::{EngineType, Sound};
 use chimera_core::ui::block_registry::{ENV_SPEED, LFO, LFO_2, LFO_3};
 use chimera_core::ui::view::{View, is_dimmed};
 
@@ -8211,7 +8211,7 @@ fn lfo_pages_show_classic_or_func() {
 /// SPD: a type-B slot's two cells are dimmed and inert (ENV 3 is B).
 #[test]
 fn spd_dims_a_type_b_slot() {
-    let s = Sound::init(ChainType::Algo);
+    let s = Sound::init(EngineType::Algo);
     let ctx = SlotCtx::read(&s.params, Op::A);
     let dim: Vec<bool> = (0..6).map(|i| is_dimmed(&view(&ENV_SPEED, i, &ctx), &s)).collect();
     assert_eq!(dim, [false, false, false, false, true, true]);
