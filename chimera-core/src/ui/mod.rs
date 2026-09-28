@@ -592,18 +592,11 @@ impl UiState {
         // Apply mod offsets for display — makes bars and vizzes animate with modulation.
         // Skip the LFO tick entirely when no modulation is active.
         if sound.mod_state.num_dests() > 0 {
-            // Tick the display-side LFO for visual modulation feedback.
-            // LFO.process() advances phase by: rate / sample_rate * BLOCK_SIZE
-            // We want phase to advance by: rate / ui_fps per call.
-            // So: rate / sample_rate * BLOCK_SIZE = rate / ui_fps
-            //     sample_rate = BLOCK_SIZE * ui_fps
-            // Display-side LFO: advance phase by rate/fps per frame.
-            // The audio LFO.process() uses rate/sample_rate*BLOCK_SIZE internally.
-            // For the display we call once per UI frame. To get the same real-time rate,
-            // pass sample_rate such that: rate/sr * BLOCK_SIZE = rate/fps
-            // sr = BLOCK_SIZE * fps. At variable fps, assume ~30.
-            // If animations look too slow/fast, this constant needs tuning.
-            const UI_FPS: u32 = 20; // tuned to match audio-side LFO rate
+            // The display LFO ticks once per UI frame. `process` steps its
+            // phase by rate · BLOCK_SIZE / sample_rate, so a sample rate of
+            // BLOCK_SIZE · UI_FPS steps it by rate / UI_FPS: real time if
+            // the loop runs at UI_FPS frames a second.
+            const UI_FPS: u32 = 20;
             let lfo_val = self
                 .display_lfo
                 .process(&sound.params.lfo, chimera_hal::BLOCK_SIZE as u32 * UI_FPS);
@@ -647,7 +640,6 @@ impl UiState {
         };
         self.renderer.branch_scroll.set_target(target_scroll);
         self.renderer.branch_scroll.update();
-        // Force nav region redraw while scroll is animating
     }
 
     /// Render full screen with `scope` as the live output (tests pass a
