@@ -47,13 +47,6 @@ pub fn fast_sin(theta: f32) -> f32 {
     a + (b - a) * frac
 }
 
-/// Fast absolute-value sine: |sin(theta)|.
-#[inline(always)]
-pub fn fast_sin_abs(theta: f32) -> f32 {
-    let s = fast_sin(theta);
-    if s < 0.0 { -s } else { s }
-}
-
 /// sin(2π·phase) for phase in [0, 1): a parabola with one correction step
 /// on the folded phase; absolute error below 0.001. `f32` only.
 #[inline(always)]

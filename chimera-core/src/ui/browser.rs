@@ -35,12 +35,12 @@ pub fn row_y(i: usize) -> i32 {
     LIST_TOP + i as i32 * ROW_H
 }
 
-/// The full-screen browser for Part `part` (0-based).
+/// The full-screen browser for Part `part` (0-based), on a screen the
+/// caller has cleared to `theme::BG`.
 pub fn draw<D>(d: &mut D, pool: &SoundPool, part: usize, cursor: usize, scroll: usize)
 where
     D: DrawTarget<Color = Rgb565>,
 {
-    draw::fill_rect(d, 0, 0, theme::SCREEN_W, theme::SCREEN_H, theme::BG);
     let mut name = FmtBuf::new();
     let _ = write!(name, "PART {}", part + 1);
     components::title_to(d, "LOAD SOUND", name.as_str());
@@ -89,7 +89,7 @@ where
     draw::text(
         d,
         &theme::FONT_LABEL,
-        "MAIN SCROLLS",
+        "A SCROLLS",
         theme::MARGIN_X,
         INFO_Y,
         theme::MID,

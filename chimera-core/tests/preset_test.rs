@@ -19,7 +19,7 @@ impl MockControls {
         Self {
             buttons: [(ButtonId::B1, ButtonState::Up); 16],
             button_count: 0,
-            encoder_deltas: [(EncoderId::Main, 0); 4],
+            encoder_deltas: [(EncoderId::A, 0); 4],
             delta_count: 0,
         }
     }
@@ -265,7 +265,7 @@ fn browser_load_copies_patch_to_part() {
     ));
 
     // Scroll down to slot 2
-    ui.handle_input(&MockControls::new().encoder(EncoderId::Main, 2));
+    ui.handle_input(&MockControls::new().encoder(EncoderId::A, 2));
 
     // Confirm selection
     ui.handle_input(&MockControls::new().button(ButtonId::Edit, ButtonState::Pressed));
@@ -305,7 +305,7 @@ fn browser_save_to_pool() {
     assert!(matches!(ui.ui_mode, UiMode::SoundBrowser { .. }));
 
     // Scroll to slot 5 and save
-    ui.handle_input(&MockControls::new().encoder(EncoderId::Main, 5));
+    ui.handle_input(&MockControls::new().encoder(EncoderId::A, 5));
     ui.handle_input(&MockControls::new().button(ButtonId::Seq, ButtonState::Pressed));
 
     // Should stay in browser, and pool slot 5 now has our sound
@@ -319,7 +319,7 @@ fn browser_init_entries_set_the_engine() {
 
     // Open browser, scroll to "(init) Modal" (POOL_SIZE + 1)
     open_browser(&mut ui, ButtonId::B1);
-    ui.handle_input(&MockControls::new().encoder(EncoderId::Main, (POOL_SIZE + 1) as i8));
+    ui.handle_input(&MockControls::new().encoder(EncoderId::A, (POOL_SIZE + 1) as i8));
     ui.handle_input(&MockControls::new().button(ButtonId::Edit, ButtonState::Pressed));
 
     assert!(matches!(ui.ui_mode, UiMode::Normal));
@@ -333,7 +333,7 @@ fn browser_init_entries_set_the_engine() {
 
     // Open browser again, scroll to "(init) Algo" (POOL_SIZE)
     open_browser(&mut ui, ButtonId::B1);
-    ui.handle_input(&MockControls::new().encoder(EncoderId::Main, POOL_SIZE as i8));
+    ui.handle_input(&MockControls::new().encoder(EncoderId::A, POOL_SIZE as i8));
     ui.handle_input(&MockControls::new().button(ButtonId::Edit, ButtonState::Pressed));
 
     assert!(matches!(ui.ui_mode, UiMode::Normal));
@@ -348,7 +348,7 @@ fn browser_load_keeps_part_mix() {
     ui.performance.parts[2].mix.channel = chimera_core::MidiChannel::new(9).unwrap();
     ui.performance.parts[2].mix.level = 0.3;
     open_browser(&mut ui, ButtonId::B3);
-    ui.handle_input(&MockControls::new().encoder(EncoderId::Main, (POOL_SIZE + 1) as i8));
+    ui.handle_input(&MockControls::new().encoder(EncoderId::A, (POOL_SIZE + 1) as i8));
     ui.handle_input(&MockControls::new().button(ButtonId::Edit, ButtonState::Pressed));
     assert_eq!(ui.performance.parts[2].sound.engine(), EngineType::Modal);
     assert_eq!(ui.performance.parts[2].mix.channel.get(), 9);
