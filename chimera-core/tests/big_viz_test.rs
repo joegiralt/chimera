@@ -249,12 +249,35 @@ fn lit_h_width(hold: i8) -> i32 {
     xs.iter().max().unwrap() - xs.iter().min().unwrap() + 1
 }
 
-/// ENV A draws H between A and D: a segment even at 0 (as A, D and R
-/// are), widening as HOLD turns up.
+/// The stage labels under E1's plot, DECAY focused, as glyph runs
+/// (columns with ink, split by blank ones).
+fn stage_labels_at_hold_0(hold_pos: chimera_core::dsp::modulator::HoldPos) -> usize {
+    let mut ui = chimera_core::ui::UiState::new();
+    ui.params_mut().envelopes[0].hold_pos = hold_pos;
+    to_mod_sub(&mut ui, 1, &chimera_core::ui::block_registry::ENVELOPE);
+    feed(&mut ui, Input::turn(EncoderId::B, 1));
+    feed(&mut ui, Input::turn(EncoderId::B, -1));
+    settle(&mut ui);
+    let mut fb = Fb::new();
+    ui.render_with_scope(&mut fb, &PerfStats::zero(), &scope_fixture());
+    let bg = fb.at(0, 0);
+    let base = PLOT_BASE - 8;
+    let inked: Vec<bool> = (0..240)
+        .map(|x| (base + 4..base + 16).any(|y| fb.at(x, y) != bg))
+        .collect();
+    inked.windows(2).filter(|w| w[1] && !w[0]).count() + inked[0] as usize
+}
+
+/// ENV A draws H between A and D: a labelled segment even at 0,
+/// widening as HOLD turns up; under OFF and GATE EXT there is no H.
 #[test]
 fn hold_is_a_segment_of_env_a() {
+    use chimera_core::dsp::modulator::HoldPos;
     let dot = 5;
     let (h0, h20, h60) = (lit_h_width(0), lit_h_width(20), lit_h_width(60));
     assert!(h0 > dot, "H at 0 is a segment: {h0}");
     assert!(h0 < h20 && h20 < h60, "{h0} {h20} {h60}");
+    assert_eq!(stage_labels_at_hold_0(HoldPos::Ahdsr), 5, "A H D S R");
+    assert_eq!(stage_labels_at_hold_0(HoldPos::Off), 4, "A D S R");
+    assert_eq!(stage_labels_at_hold_0(HoldPos::GateExt), 4, "A D S R");
 }

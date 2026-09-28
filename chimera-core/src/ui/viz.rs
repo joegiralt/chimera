@@ -319,6 +319,16 @@ where
 /// Horizontal gap kept between two stage labels.
 const STAGE_LABEL_GAP: i32 = 2;
 
+/// The least width, in the units of `rest` (the other stages' widths
+/// summed), that gives a stage room for `label` and the gaps either side.
+pub fn label_floor(label: &str, rest: f32) -> f32 {
+    let m = (draw::text_width(&theme::FONT_LABEL, label, theme::LABEL_TRACKING)
+        + 2
+        + 2 * STAGE_LABEL_GAP
+        + 2) as f32;
+    m * rest / ((theme::VIZ_RIGHT - theme::VIZ_LEFT) as f32 - m)
+}
+
 /// Where each stage label of `envelope` goes, as `(left, right)` columns
 /// (inclusive), centred under its segment `xs[s]..xs[s + 1]`; `None` = left
 /// out. The lit stage's label is always drawn. Any other is drawn only when

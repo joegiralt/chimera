@@ -19,7 +19,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("algo_osc_last", 0xe14e98097058782e),
     ("bigviz_filter", 0xb50c845f7f09909e),
     ("flt_mode", 0x7bb550d437421757),
-    ("env_a", 0xe78819ee2e6459cb),
+    ("env_a", 0x83a56036fe4bec0e),
     ("env_b_env_ad", 0x8c13c7f2b2b13a2c),
     ("env_b_env_ahr", 0x239b8de9de91ae55),
     ("env_b_env_cycle", 0x8661f41e9aaba3bb),
