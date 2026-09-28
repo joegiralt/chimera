@@ -79,10 +79,6 @@ pub trait Controls {
     fn button_state(&self, id: ButtonId) -> ButtonState;
 }
 
-pub trait MidiIn {
-    fn read(&mut self) -> Option<MidiMessage>;
-}
-
 /// MIDI note number, 0..=127. Built at the MIDI trust boundary (the parser,
 /// the desktop keyboard), so the audio path only ever sees valid notes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]

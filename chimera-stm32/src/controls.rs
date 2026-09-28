@@ -54,7 +54,6 @@ const QUAD: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 0];
 static READY: AtomicBool = AtomicBool::new(false);
 static ENC_DELTA: [AtomicI8; NUM_ENCODERS] = [const { AtomicI8::new(0) }; NUM_ENCODERS];
 static BTN_LATCH: AtomicU32 = AtomicU32::new(0);
-static RAW: AtomicU32 = AtomicU32::new(0xFFFFFFFF);
 static mut ENC_STATE: [u8; NUM_ENCODERS] = [0; NUM_ENCODERS];
 static mut ENC_DEBOUNCE: [u8; NUM_ENCODERS] = [0; NUM_ENCODERS];
 /// Button debounce: tracks how many consecutive ISR ticks a button has been stable.
@@ -94,7 +93,7 @@ pub fn isr_tick() {
     ISR_TICK.fetch_add(1, Ordering::Relaxed);
 
     let d = HC165_DELAY.load(Ordering::Relaxed);
-    // Read HC165 via raw register access (same GPIO that diagnostic proved works)
+    // Shift the HC165 chain in: LOAD on PF1, CLK on PF0, DATA on PF2.
     // SAFETY: GPIOF_IDR/BSRR are PF's fixed memory-mapped registers; only
     // this ISR (single, non-reentrant) drives PF0/PF1 and reads PF2.
     let bits = unsafe {
@@ -117,8 +116,6 @@ pub fn isr_tick() {
         }
         b
     };
-
-    RAW.store(bits, Ordering::Relaxed);
 
     // Buttons: active low, debounced to stable level
     // SAFETY: only accessed from this ISR
@@ -231,12 +228,6 @@ impl Stm32Controls {
                 self.enc[i] = 0;
             }
         }
-    }
-
-    /// Current ISR tick count (500 Hz). For UI timing (double-tap, etc.)
-    #[allow(dead_code)] // polling API for the double-tap timing the preset browser needs; no caller until that lands
-    pub fn tick(&self) -> u32 {
-        ISR_TICK.load(Ordering::Relaxed)
     }
 
     /// Returns true if any button changed state or any encoder moved this frame.
