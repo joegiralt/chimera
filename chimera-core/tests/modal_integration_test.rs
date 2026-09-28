@@ -54,7 +54,7 @@ fn test_modal_string_through_voice() {
     let empty_mod = ModState::new();
     let mut voice = Voice::new(SR);
     let mut params = ParamSnapshot::for_engine(EngineType::Modal);
-    params.modal.mode = ResonatorMode::Modal; // String mode
+    params.modal.mode = ResonatorMode::Modal;
 
     voice.note_on(
         MidiNote::new(60).unwrap(),

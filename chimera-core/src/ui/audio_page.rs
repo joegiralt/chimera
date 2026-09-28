@@ -117,8 +117,14 @@ where
 {
     let mut line = FmtBuf::new();
     let _ = match s {
-        Some(s) => write!(line, "REV {}   {} MHZ", s.rev.label(), s.cpu_hz / 1_000_000),
-        None => write!(line, "REV {NONE}   {NONE} MHZ"),
+        Some(s) => write!(
+            line,
+            "REV {}   {} MHZ   RST {}",
+            s.rev.label(),
+            s.cpu_hz / 1_000_000,
+            s.reset.label()
+        ),
+        None => write!(line, "REV {NONE}   {NONE} MHZ   RST {NONE}"),
     };
     draw::text_tracked(
         d,
@@ -192,6 +198,7 @@ pub fn viz_key(s: Option<&AudioStats>) -> u32 {
             s.cpu_hz / 1_000_000,
             s.load_avg as u32,
             s.load_peak as u32,
+            s.reset as u32,
         ]
         .iter()
         .fold(0x811c_9dc5u32, |h, &v| (h ^ v).wrapping_mul(0x0100_0193))

@@ -14,20 +14,20 @@ mod panic;
 mod priority;
 mod probe;
 mod shared;
+mod watchdog;
 
+use chimera_core::audio_out::Heartbeat;
 use chimera_core::clock_plan::pll3_for;
 use chimera_core::hw::SampleBudget;
+use chimera_core::reset::ResetCause;
 use chimera_core::ui::perf::PerfTracker;
+use chimera_core::ui::theme_settings::ThemeSettings;
 use chimera_hal::ChimeraDisplay;
 use controls::Stm32Controls;
 use cortex_m_rt::{entry, exception, pre_init};
 use display::Stm32Display;
-use priority::Priority;
 use stm32h7xx_hal::gpio::Speed;
 use stm32h7xx_hal::{pac, prelude::*, spi};
-
-/// Backlight duty. ponytail: fixed, a UI brightness param when someone wants one.
-const BACKLIGHT_PERCENT: u16 = 75;
 
 #[pre_init]
 unsafe fn before_main() {
@@ -58,7 +58,9 @@ fn fp_flush_to_zero(fpu: &mut cortex_m::peripheral::FPU) {
 
 #[exception]
 fn SysTick() {
+    static mut HEARTBEAT: Heartbeat = Heartbeat::new();
     controls::isr_tick();
+    watchdog::kick_if_audio_alive(HEARTBEAT);
 }
 
 #[entry]
@@ -67,6 +69,10 @@ fn main() -> ! {
     let mut cp = cortex_m::Peripherals::take().unwrap();
     fp_flush_to_zero(&mut cp.FPU);
     let dp = pac::Peripherals::take().unwrap();
+
+    // RCC_RSR survives the reset it records; clear it for the next one.
+    let reset_cause = ResetCause::from_rsr(dp.RCC.rsr.read().bits());
+    dp.RCC.rsr.modify(|_, w| w.rmvf().set_bit());
 
     cache::enable_d2_sram();
     let rev = clocks::read_rev(&dp.DBGMCU);
@@ -90,14 +96,16 @@ fn main() -> ! {
 
     let mut led = gpioe.pe1.into_push_pull_output();
     // TIM1 CH2 PWM, above hearing so the backlight driver cannot whine.
-    // Full brightness lifts a TN panel's blacks; tune the duty by eye.
+    // Full brightness lifts a TN panel's blacks; System › Theme's BRIGHT
+    // sets the duty (70 % at boot: no storage yet).
     let mut backlight = dp.TIM1.pwm(
         gpioe.pe11.into_alternate::<1>(),
         20.kHz(),
         ccdr.peripheral.TIM1,
         &ccdr.clocks,
     );
-    backlight.set_duty(backlight.get_max_duty() * BACKLIGHT_PERCENT / 100);
+    let mut theme = ThemeSettings::DEFAULT;
+    backlight.set_duty(theme.bright.duty(backlight.get_max_duty()));
     backlight.enable();
 
     let mut sai_mclk = gpioe.pe2.into_alternate::<6>();
@@ -131,10 +139,16 @@ fn main() -> ! {
         &ccdr.clocks,
     );
 
-    let mut display = Stm32Display::new(spi, dc, reset, cs);
+    let fb = display::take_framebuffer().expect("framebuffer taken once");
+    let mut display = Stm32Display::new(spi, dc, reset, cs, fb);
     clocks::delay_us(clk.cpu_hz, 250_000);
     display.init(clk.cpu_hz);
-    let mut stats_r = probe::init(&mut cp.DCB, &mut cp.DWT, clk);
+    // The boot theme is no longer the panel's own reset state (PUNCH, not
+    // PANEL; ground −2, not 0), so push it explicitly instead of waiting for
+    // the first change the main loop notices.
+    display.set_gamma(theme.gamma.tables());
+    display.set_palette(theme.palette());
+    let mut stats_r = probe::init(&mut cp.DCB, &mut cp.DWT, clk, reset_cause);
 
     let mut controls = Stm32Controls::new();
     let ui = shared::take_ui().expect("UI state taken once");
@@ -142,8 +156,7 @@ fn main() -> ! {
     #[cfg(feature = "bench")]
     bench::run(&mut display, clk, &ui.performance);
 
-    controls::start_systick(clk.cpu_hz);
-    priority::set_systick(&mut cp.SCB, Priority::SYSTICK);
+    controls::start_systick(cp.SYST, &mut cp.SCB, clk.cpu_hz);
     controls::enable();
 
     let (scope_w, mut scope_r) = shared::take_scope().expect("scope buffer taken once");
@@ -156,6 +169,7 @@ fn main() -> ! {
     audio::sai::init(clk.rev.new_sai(), pll3.mckdiv);
     audio::dma::clear();
     audio::prefill();
+    watchdog::start(dp.IWDG, &dp.DBGMCU);
     audio::dma::init(&mut cp.NVIC);
     audio::dma::start();
     audio::sai::start();
@@ -174,6 +188,17 @@ fn main() -> ! {
         if controls.has_activity() {
             ui.handle_input(&controls);
         }
+        // System › Theme: the UI loop owns the display and the backlight.
+        let new_theme = ui.theme();
+        let recolour = new_theme != theme && new_theme.palette() != theme.palette();
+        if new_theme != theme {
+            backlight.set_duty(new_theme.bright.duty(backlight.get_max_duty()));
+            if new_theme.gamma != theme.gamma {
+                display.set_gamma(new_theme.gamma.tables());
+            }
+            display.set_palette(new_theme.palette());
+            theme = new_theme;
+        }
         ui.update();
         shared_w.publish(|b| b.update_from(&ui.performance));
         let stats = stats_r.as_mut().map(|r| {
@@ -183,9 +208,14 @@ fn main() -> ! {
         });
         let flush_list =
             ui.render_dirty_with_audio(&mut display, &perf.stats, stats.as_ref(), scope_r.read());
-        for &(ys, ye) in &flush_list {
-            if ys != ye {
-                display.flush_region(ys, ye);
+        if recolour {
+            // A new palette recolours rows that did not redraw.
+            display.flush();
+        } else {
+            for &(ys, ye) in &flush_list {
+                if ys != ye {
+                    display.flush_region(ys, ye);
+                }
             }
         }
     }

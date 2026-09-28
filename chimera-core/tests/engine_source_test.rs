@@ -1,22 +1,22 @@
 //! One source of truth for engine choice (spec §6).
 
 use chimera_core::params::{EngineType, ParamSnapshot};
-use chimera_core::preset::{ChainType, Sound};
-
-/// `ChainType::engine` is usable in const context.
-const ALGO_ENGINE: EngineType = ChainType::Algo.engine();
+use chimera_core::preset::Sound;
 
 #[test]
-fn chain_type_names_its_engine() {
-    assert_eq!(ALGO_ENGINE, EngineType::Algo);
-    assert_eq!(ChainType::Modal.engine(), EngineType::Modal);
+fn sound_init_plays_its_engine() {
+    for e in EngineType::ALL {
+        assert_eq!(Sound::init(e).engine(), e, "{e:?}");
+    }
 }
 
+/// A Sound holds its engine once, in its params: replacing them replaces
+/// the engine the UI reads too (#105).
 #[test]
-fn patch_init_takes_its_engine_from_the_chain() {
-    for ct in ChainType::ALL {
-        assert_eq!(Sound::init(ct).params.engine(), ct.engine(), "{ct:?}");
-    }
+fn a_sounds_engine_is_its_params_engine() {
+    let mut s = Sound::init(EngineType::Algo);
+    s.params = ParamSnapshot::for_engine(EngineType::Modal);
+    assert_eq!(s.engine(), EngineType::Modal);
 }
 
 #[test]

@@ -14,7 +14,7 @@ use chimera_core::modulation::ModState;
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::part::{DacPair, PartMode};
-use chimera_core::preset::{ChainType, Performance};
+use chimera_core::preset::Performance;
 use chimera_core::{MidiChannel, MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
 use common::fnv1a;
@@ -430,7 +430,7 @@ fn chord() -> Vec<f32> {
 /// Part 2 plays Modal out of pair 2.
 fn two_parts() -> Vec<f32> {
     let mut perf = Performance::new();
-    perf.parts[1].load_init(ChainType::Modal);
+    perf.parts[1].load_init(EngineType::Modal);
     perf.parts[1].mix.output = DacPair::P2;
     perf.parts[1].mix.pan = 0.5;
     render_perf(&perf, &[(0, 60), (1, 67)], 200)

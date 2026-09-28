@@ -16,7 +16,7 @@
 
 mod screen;
 
-use chimera_core::preset::ChainType;
+use chimera_core::params::EngineType;
 use chimera_core::scope::SCOPE_LEN;
 use chimera_core::ui::UiState;
 use chimera_core::ui::perf::PerfStats;
@@ -43,8 +43,8 @@ const B: [ButtonId; 6] = [
 /// Which chain a walk starts from.
 #[derive(Clone, Copy, Debug)]
 enum Context {
-    /// Part 1 with `ChainType`'s init Sound loaded.
-    Part(ChainType),
+    /// Part 1 with `EngineType`'s init Sound loaded.
+    Part(EngineType),
     /// MIX + B<n> (0-based).
     Mixer(usize),
     /// MIX + B6.
@@ -66,8 +66,8 @@ impl Context {
 
     fn start(self) -> UiState {
         let mut ui = UiState::new();
-        if let Context::Part(ct) = self {
-            load_init(&mut ui, ct);
+        if let Context::Part(engine) = self {
+            load_init(&mut ui, engine);
         }
         self.home(&mut ui);
         ui
@@ -193,7 +193,10 @@ fn walk(
 }
 
 fn every_context() -> Vec<Context> {
-    let mut all: Vec<Context> = ChainType::ALL.iter().map(|&ct| Context::Part(ct)).collect();
+    let mut all: Vec<Context> = EngineType::ALL
+        .iter()
+        .map(|&engine| Context::Part(engine))
+        .collect();
     all.extend((0..5).map(Context::Mixer));
     all.extend([Context::Demo, Context::System]);
     all
@@ -219,8 +222,27 @@ fn every_page_walk() {
 #[test]
 fn representative_pages_walk() {
     let enc = [EncoderId::A, EncoderId::E];
-    walk(Context::Part(ChainType::Algo), 2, &enc, |_, sub| sub <= 1);
+    walk(Context::Part(EngineType::Algo), 2, &enc, |_, sub| sub <= 1);
     walk(Context::Mixer(0), 2, &enc, |_, _| true);
     walk(Context::Demo, 2, &enc, |node, _| node == 0);
     walk(Context::System, 2, &enc, |node, _| node == 0);
+}
+
+/// PLUS alone between System pages redraws each one (#69): they share a
+/// layout and read no values, so only their def tells them apart.
+#[test]
+fn system_pages_redraw_on_plus_alone() {
+    use chimera_core::ui::block_registry::SYSTEM_CHAIN;
+    let (perf, scope, audio) = (PerfStats::zero(), scope_fixture(), audio_fixture());
+    let mut ui = UiState::new();
+    feed(&mut ui, Input::press(ButtonId::Menu));
+    let mut fb = Fb::new();
+    for node in 0..SYSTEM_CHAIN.blocks.len() {
+        settle(&mut ui);
+        ui.render_dirty_with_audio(&mut fb, &perf, Some(&audio), &scope);
+        let mut full = Fb::new();
+        ui.render_with_audio(&mut full, &perf, Some(&audio), &scope);
+        assert!(fb.px == full.px, "System node {node}");
+        feed(&mut ui, Input::press(ButtonId::Plus));
+    }
 }

@@ -2,7 +2,8 @@
 
 mod screen;
 
-use chimera_core::preset::{ChainType, Sound, SoundPool};
+use chimera_core::params::EngineType;
+use chimera_core::preset::{Sound, SoundPool};
 use chimera_core::ui::UiMode;
 use chimera_core::ui::browser::{
     self, INIT_TYPES, SCROLL_TOP, SCROLL_X, TOTAL_ENTRIES, VISIBLE_ROWS, row_y,
@@ -34,7 +35,7 @@ fn the_selected_row_is_an_accent_pill() {
 #[test]
 fn empty_slots_are_dimmed_and_saved_ones_bright() {
     let mut pool = SoundPool::new();
-    pool.store(0, Sound::init(ChainType::Algo));
+    pool.store(0, Sound::init(EngineType::Algo));
     let fb = drawn(&pool, 5, 0);
     assert!(row_has(&fb, 0, theme::INK), "saved slot name in ink");
     assert!(
@@ -96,7 +97,7 @@ fn init_rows_end_the_list_and_load() {
         "last visible row selected"
     );
     feed(&mut ui, Input::press(ButtonId::Edit)); // the last of the two INIT rows
-    assert_eq!(ui.performance.parts[1].sound.chain_type, ChainType::Modal);
+    assert_eq!(ui.performance.parts[1].sound.engine(), EngineType::Modal);
 }
 
 fn render_ui(ui: &chimera_core::ui::UiState) -> Fb {
@@ -161,10 +162,26 @@ fn the_longest_sound_name_is_not_truncated() {
     use chimera_core::preset::NAME_LEN;
 
     let mut pool = SoundPool::new();
-    let mut s = Sound::init(ChainType::Algo);
+    let mut s = Sound::init(EngineType::Algo);
     s.name = *b"ABCDEFGHIJKLMNOP"; // exactly NAME_LEN bytes, no trailing 0
     assert_eq!(s.name.len(), NAME_LEN);
     pool.store(0, s);
     let fb = drawn(&pool, 5, 0); // drawn() asserts fb.oob == 0 (nothing clipped off-screen)
     assert!(row_has(&fb, 0, theme::INK), "16-char name drawn in full");
+}
+
+/// Main and A both turned hard in one frame scroll by their sum, which does
+/// not fit an i8 (#80).
+#[test]
+fn main_and_a_together_scroll_past_an_i8() {
+    let mut ui = chimera_core::ui::UiState::new();
+    feed(&mut ui, Input::chord(ButtonId::Edit, ButtonId::B1));
+    feed(
+        &mut ui,
+        Input::turns(&[(EncoderId::Main, 127), (EncoderId::A, 127)]),
+    );
+    assert!(matches!(
+        ui.ui_mode,
+        UiMode::SoundBrowser { cursor, .. } if cursor == TOTAL_ENTRIES - 1
+    ));
 }

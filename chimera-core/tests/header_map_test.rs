@@ -195,10 +195,10 @@ fn the_map_draws_only_in_its_band_on_every_chain() {
 /// and so does entering another Part's chain or pressing its button again.
 #[test]
 fn a_fresh_algo_part_lands_on_the_algo_page() {
-    use chimera_core::preset::ChainType;
+    use chimera_core::params::EngineType;
     use chimera_core::ui::block_registry::ALGO_ALG;
     let mut ui = UiState::new();
-    assert_eq!(ui.nav.chain_type, ChainType::Algo);
+    assert_eq!(ui.nav.engine, EngineType::Algo);
     assert_eq!(ui.nav.active_block_def().id, ALGO_ALG.id);
     feed(&mut ui, Input::press(ButtonId::Plus));
     feed(&mut ui, Input::press(ButtonId::B2));
