@@ -131,6 +131,13 @@ impl Input {
             ..Self::default()
         }
     }
+    /// Several encoders turned in the same frame.
+    pub fn turns(encoders: &[(EncoderId, i8)]) -> Self {
+        Self {
+            encoders: encoders.to_vec(),
+            ..Self::default()
+        }
+    }
 }
 
 impl Controls for Input {

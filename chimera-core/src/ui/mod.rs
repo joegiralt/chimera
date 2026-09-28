@@ -349,11 +349,10 @@ impl UiState {
             let visible = browser::VISIBLE_ROWS.min(total);
 
             // Encoder A or Main: scroll cursor
-            let delta =
-                controls.encoder_delta(EncoderId::Main) + controls.encoder_delta(EncoderId::A);
+            let delta = i32::from(controls.encoder_delta(EncoderId::Main))
+                + i32::from(controls.encoder_delta(EncoderId::A));
             if delta != 0 {
-                let new_cursor =
-                    (*cursor as i32 + delta as i32).clamp(0, total as i32 - 1) as usize;
+                let new_cursor = (*cursor as i32 + delta).clamp(0, total as i32 - 1) as usize;
                 *cursor = new_cursor;
                 // Adjust scroll to keep cursor visible
                 if new_cursor < *scroll {
