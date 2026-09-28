@@ -8,13 +8,13 @@
 
 **Tech Stack:** Rust 2024 (`no_std` core, `f32` only in DSP), embedded-graphics with u8g2 ASCII fonts, the DWT cycle counter on the chip, and `just`.
 
-**Spec:** `docs/superpowers/specs/2026-09-27-filter-routing-design.md` (binding). Epic https://github.com/joegiralt/chimera/issues/120; this plan closes #121, #140, the routing part of #122, #111, #112's filter and envelope items, #57 (doc), #53 for the filter, and #48 if its fix keeps the factory goldens (Task 2).
+**Spec:** `docs/superpowers/specs/2026-09-27-filter-routing-design.md` (binding). Epic https://github.com/joegiralt/chimera/issues/120; this plan closes #121, #140, the routing part of #122, #111, #112's filter and envelope items, #57 (doc) and #53 for the filter. #48 (the saturator) is deferred to the filter-model work: its fix changes high-resonance levels, which needs a deliberate re-record.
 
-> **Out of scope.** The filter MODELS (Moog #123, MS-20 #124, SH-101 #125, Prophet-5 #126 and TB-303 #127) are not built here: each needs its own spec under #128 (topology, references, cost, the KIND crossfade) before it is built. This plan builds only the machinery a model plugs into. The VA engine does not exist on `main`, so its no-route gate and its default ENV 2 → VCA route land with the VA engine's own plan (see "Spec gaps" at the end).
+> **Out of scope.** The filter MODELS (Moog #123, MS-20 #124, SH-101 #125, Prophet-5 #126 and TB-303 #127) are not built here: each needs its own spec under #128 (topology, references, cost, the KIND crossfade) before it is built. This plan builds only the machinery a model plugs into. The VA engine does not exist on `main` (#118), so its no-route gate and its default ENV 2 → VCA route are https://github.com/joegiralt/chimera/issues/148; the no-route rule here is an exhaustive `match` on the engine, so VA cannot compile without its gate.
 
 ## Global Constraints
 
-Every task's requirements include this section. Numbers are the spec's, verbatim.
+Every task's requirements include this section. Numbers are the spec's, verbatim, except where the owner's rulings on the plan review override them (marked **Ruling**).
 
 **Modulator pool (spec § 1)**
 - Every voice runs six modulators, always: ENV 1, ENV 2, ENV 3 (`EnvSlot`) and LFO 1, LFO 2, LFO 3 (`LfoSlot`). There is no add or remove, and the MOD page lists all six. A slot is wired to nothing: it drives what the matrix routes from it.
@@ -33,7 +33,7 @@ Every task's requirements include this section. Numbers are the spec's, verbatim
 | MED | 0.001 ms – 10 s | 2 ms – 10 s | 3.5 ms – 10 s |
 | SLOW | 0.001 ms – 60 s | 9.3 ms – 60 s | 30 ms – 60 s |
 
-- **A's shape:** `L += c · (T − L)` per sample, `c = 1 − 2^(−1/(τ·fs·ln 2))` computed once per block. Attack aims at T = 1.3 and ends at 1: τ = A / ln(1.3 / 0.3) = A / 1.466. Decay aims at T = S − 0.01 and ends at S; Release aims at T = −0.01 and ends at 0: τ = time / ln(1.01 / 0.01) = time / 4.615. Per sample: one multiply-add and a compare. `advance(n)` is closed form, `L_n = T + (L − T)·2^(−n/(τ·fs·ln 2))`, with a `fast_log2` to place a stage end inside the block.
+- **A's shape:** `L += c · (T − L)` per sample, `c = 1 − 2^(−1/(τ·fs·ln 2))` computed once per block. Attack aims at T = 1.3 and ends at 1: τ = A / ln(1.3 / 0.3) = A / 1.466. Decay aims at T = S − 0.01 and ends at S; Release aims at T = −0.01 and ends at 0: τ = time / ln(1.01 / 0.01) = time / 4.615. Per sample: one multiply-add and a compare. `advance(n)` is closed form, `L_n = T + (L − T)·2^(−n/(τ·fs·ln 2))`, with a `fast_log2` to place a stage end inside the block. **Ruling (supersedes the spec's "within 1e-6"):** the per-sample path and `advance` each match an f64 reference within 1e-4 absolute, with stage changes within ±1 sample (ADR 0036).
 - **ENV n LEVEL:** with no route into it, the envelope peaks at 1; with a route, its peak is `clamp(Σ, 0, 1)`. **ENV n TIME:** every stage's time (H, A, D, R) is scaled by `2^(−5·Σ)`. Both are read per block and are inert on a type-B slot.
 - **Envelope B:** MODE ENV, LFO or BURST; FORM CYCLE, AHR or AD in ENV and BURST; FREE, SYNC or LFV in LFO.
 
@@ -49,7 +49,7 @@ Every task's requirements include this section. Numbers are the spec's, verbatim
 - **LFO FREE tilt:** `r` = TILT position, `u = φ/r` for φ < r, `(1 − φ)/(1 − r)` after (r = 0: `1 − φ`; r = 1: `φ`), out = `2u − 1`. SYNC resets φ at each note-on until #44.
 - **LFV:** `t_k = clamp(t_{k−1} + DELTA · r_k, −1, 1)`, `r_k` uniform in −1..1 from the slot's PRNG, linear from `t_{k−1}` to `t_k` across the cycle; SLEW is a one-pole low-pass of time constant SLEW × one cycle.
 - **BURST:** output 0..1; the burst envelope rises over p·LENGTH and falls over (1 − p)·LENGTH (p = TILT); pulses under AD and AHR are `(1 − m)·square + m·sine`, `m = 1 − |2p − 1|`, `sine = ½ − ½·cos 2πφ`; under CYCLE, the tilting saw, unipolar. AD: one burst per note-on; AHR: rises, holds at its peak while the key is held, falls after key-up; CYCLE: repeats while held, the running burst finishes at key-up.
-- **Rates:** a B slot routed to VCA runs per sample with the manual's full ranges; a B slot evaluated per block clamps any rate to 93.75 Hz (block rate ÷ 8).
+- **Rates:** a B slot routed to VCA runs per sample with the manual's full ranges; a B slot evaluated per block clamps any rate to the block rate ÷ 8. **Ruling:** the clamp is derived, `sample_rate / BLOCK_SIZE / 8` (93.75 Hz at 48 kHz, 86.1 Hz at 44.1 kHz), and it covers LFO RATE, BURST's pulse RATE and the repeat rates of ENV CYCLE (`1 / (RISE + FALL)`) and BURST CYCLE (`1 / LENGTH`); one-shot AD and AHR times are not clamped.
 - **TYPE, MODE or FORM change mid-note:** into A with the key up, Release from the current level; with the key down, from a rising segment Attack, else Decay if L > S, else Sustain at L. Into B ENV: rising → rise from the current level, else fall from it. Into anything else, the difference `d` glides linearly to 0 over 256 samples.
 - **LFO slots:** CLASSIC is today's LFO, its value taken before the block's advance with today's arithmetic, so LFO 1 is bit-identical; OFFSET is stored but no longer applied. FUNC is Envelope B locked to LFO mode, FORM FREE, SYNC or LFV (default FREE); DEPTH is not applied under FUNC.
 
@@ -62,8 +62,8 @@ Every task's requirements include this section. Numbers are the spec's, verbatim
 - **KIND never edits the matrix.**
 
 **VCA (spec § 4)**
-- VCA's value is `clamp(0 + Σ, 0, 1)`. Per sample: `g[n] = clamp(Σ_ENV routes aᵢ · eᵢ[n] + Σ_other routes aⱼ · lerp(prevⱼ, curⱼ, n/64), 0, 1) · vel`, `vel = 1 − VEL + VEL · v`.
-- No route into VCA on Algo and Modal: `sample · volume`, today's expression, bit for bit; AMP's VEL dimmed and unread.
+- VCA's value is `clamp(0 + Σ, 0, 1)`. Per sample: `g[n] = clamp(Σ_ENV routes aᵢ · eᵢ[n] + Σ_other routes aⱼ · lerp(prevⱼ, curⱼ, n/64), 0, 1) · vel`, `vel = 1 − VEL + VEL · v`. **Ruling:** an ENV slot's LEVEL peak is ramped per sample across the block on this path, like the other sources, so an LFO → LEVEL route doesn't zipper the VCA.
+- No route into VCA on Algo and Modal: `sample · volume`, today's expression, bit for bit; AMP's VEL dimmed and unread. The rule is an exhaustive `match` on `EngineType` (VA's gate: #148).
 - **Lifetime:** with routes into VCA, the voice ends at the end of the first block in which no routed source holds it or the engine is inactive. A type A slot, or B with FORM AD or AHR, holds it until idle; a B slot in CYCLE or LFO holds it only while the key is held (BURST CYCLE: until the burst running at key-up ends); an LFO slot, VEL or NOTE holds it while the key is held. If the gain isn't 0 then, it ends through ADR 0027's fade (`FADE`, 128 samples). An inactive engine always ends the voice.
 
 **Pages (spec § 5–7, § UI)**
@@ -81,13 +81,14 @@ Every task's requirements include this section. Numbers are the spec's, verbatim
 
 **CPU and RAM (spec § CPU)**
 - `Voice::cost = Engines::cost + CHAIN_COST + FilterKind::cost(kind, mode) + ModRouting::cost(p, mods)`.
-- `ModRouting::cost`: a base of 8; plus, per ENV slot routed to VCA, 6 for type A and 10 for type B, with 14 more in ENV mode with SHAPE off centre; plus 1 for each other route into VCA, and 2 for the VCA's clamp and multiply when any route exists. Examples: an Algo or Modal Sound with the defaults, 8; VA with the defaults (ENV 2, type A, on VCA), 16; the worst case, 8 + 72 + 5 + 2 = 87.
+- `ModRouting::cost` has the spec's shape: a base, plus per ENV slot routed to VCA a term for type A or type B (and more for B in ENV mode with SHAPE off centre), plus a term per other VCA route and one for the clamp and multiply. **Ruling:** the model must never undercount, so until the bench measures each term (Task 13) it bills the plan review's estimates, not the spec's: BASE 30, ENV_A 30, ENV_B 40, CURVE 15 more, OTHER 3, CLAMP 3. Examples: an Algo or Modal Sound with the defaults, 30; ENV 2 (type A) on the VCA, 63; the worst case (three curved B slots and five other sources on the VCA), 30 + 3 + 3·55 + 5·3 = 213. The costliest patch (842) then bills 872, and 6 × 872 + 1,360 = 6,592 ≤ 7,000 keeps six voices on rev V.
 - `FilterKind::cost(Svf, _)` is 0 until the bench's SVF row (1 OP at PHASER, minus the 1 OP row) settles it. `CHAIN_COST` is not lowered until the bench shows it.
 - RAM: `Instrument` from 246,728 to about 250,000 B of 286,720; the VCA buffer is on the audio stack (256 B). The existing `const` asserts hold (`[Voice; MAX_VOICES]`, `Instrument`, `AXI_RESIDENT`).
 
 **Migration and goldens**
 - Before any change, one audio golden per factory Sound (8). They stay bit-identical through this work.
-- The `*_lfo_cutoff` goldens change and are re-recorded after the sanity gate (ADR 0011). Every other audio golden stays bit-identical.
+- The `*_lfo_cutoff` goldens change and are re-recorded after the sanity gate (ADR 0011) in the task that changes them, Task 3. **Ruling:** nothing is parked. Every other audio golden stays bit-identical.
+- Every task ends green: each task lists every existing test it turns red and that test's new expectation.
 - Screen goldens that show the matrix and the Algo map (AMP) are re-recorded, plus the new pages' goldens.
 
 **Project rules**
@@ -107,7 +108,7 @@ Every task's requirements include this section. Numbers are the spec's, verbatim
 Inputs the spec implies but no spec test covers, most likely to bite first. Each has its test in the named task.
 
 1. **Several routes into one destination summing far past ±1** (three sources at +127 into CUTOFF, or into TIME). `exp2` must not overflow to a non-finite `fc` or time; CUTOFF clamps to 20 Hz..0.49·fs and TIME clamps Σ to ±1. Task 3, `routed_cutoff_survives_huge_sums`; Task 5, `time_route_sums_clamp`.
-2. **The desktop at 44.1 kHz** (cpal picks the device rate). Envelope A's times must follow `fs` (a MED 10 ms attack takes 441 samples, not 480), and the per-block rate clamp stays 93.75 Hz. Task 5, `stage_times_follow_the_sample_rate`; Task 6, `per_block_rates_stop_at_93_75_hz` (run at 48 and 44.1 kHz).
+2. **The desktop at 44.1 kHz** (cpal picks the device rate). Envelope A's times must follow `fs` (a MED 10 ms attack takes 441 samples, not 480), and the per-block rate clamp follows it (`block_rate_max`: 86.1 Hz there). Task 5, `stage_times_follow_the_sample_rate`; Task 6, `per_block_rates_stop_at_an_eighth_of_the_block_rate` (run at 48 and 44.1 kHz).
 3. **TYPE, MODE or FORM spun one step every block** (a fast encoder). Glides must not stack past the output range, and the output must stay finite and within ±1. Task 6, `spinning_type_every_block_stays_bounded`.
 4. **A route into VCA at a negative amount, or from a negative source** (LFO 1 → VCA at −127). The gain clamps at 0; the output never inverts. Task 10, `a_negative_vca_route_never_inverts`.
 5. **The Sound changes engine while a VCA-routed voice sounds.** The fade keeps the old routes (not the new Sound's pass-through), stays finite, and the held note restarts on the new engine. Task 11, `an_engine_switch_fades_with_the_old_vca_routes`.
@@ -121,33 +122,42 @@ The executor must not re-decide these; the reviewer checks them against the spec
 | `fast_exp2`, `fast_log2` | re-exports of `algo::math::exp2` and `log2` (exact at integers, rel. error < 1e-6; abs. error < 3e-5) | Task 3 |
 | CUTOFF offset law | `ParamSpec.law: OffsetLaw { Linear, Octaves(f32) }`; `ParamSpec::offset(v, off)` is the one formula, used by `apply_offset`, `routed_cutoff` and the UI's mod bars | Task 3 |
 | Cutoff ramp | `SvfFilter` keeps the last block's `g` (`None` on a fresh voice); the ramp reaches the new `g` on the block's last sample | Task 3 |
-| Phase-1 sources | the matrix has its eight rows from Task 4; ENV 2, ENV 3, LFO 2 and LFO 3 output 0 until Tasks 5 and 7 run them | Tasks 4–7 |
+| Phase-1 sources | the matrix has its eight rows from Task 4; ENV 2, ENV 3, LFO 2 and LFO 3 output 0 until Tasks 5 and 7 run them, so the first shippable slice (#121) ends after Task 7 | Tasks 4–7 |
 | Route knob step | one amount unit (1/127) per detent; MIX + turn snaps to −127, 0, +127 | Task 4 |
 | Route knob readout | `ValFmt::Route`: the amount as a percentage, `+47%`; an absent route draws a dash where the value goes, since the u8g2 `_tr` fonts have no "—" | Tasks 4, 8 |
-| Missing fonts glyphs | "°", "·" and "→" are not in the `_tr` fonts: PHASE shows plain degrees (`90`), the ENV page title reads `ENV 1 / A`, and the route caption draws `draw::arrow` | Tasks 15, 16 |
-| Hidden destinations | VCA, ENV n LEVEL and ENV n TIME are on no page, so MIX+PLUS on their owning cell primes them: AMP's VEL → VCA; an A page's A, D, R and H cells → TIME; S → LEVEL. The spec gives no way to reach them; this needs the owner's word | Tasks 9, 13; ADR 0035 |
-| FORM storage | `FuncParams.forms: [u8; 3]`, the FORM index per MODE, so switching MODE back restores its FORM; `FuncMode::forms()[0]` is the default (ENV and BURST: AD, AHR, CYCLE; LFO: FREE, SYNC, LFV) | Task 6 |
-| MODE and FORM as `Block` values | `get`/`write` use the index in `kind.modes()` / `mode.forms()`, so an encoder steps the kind's own list; the typed `set_mode`/`set_kind` keep the invariant | Tasks 2, 6, 14 |
-| Sustain below S | Sustain holds its level; a lowered S sends a level above it back to Decay; a raised S does not lift it | Task 5 |
+| Missing fonts glyphs | "°", "·" and "→" are not in the `_tr` fonts: PHASE shows plain degrees (`90`) and the ENV page title reads `ENV 1 / A`. The mockup's route caption is not built | Tasks 16, 17 |
+| Hidden destinations | **Owner's decision:** VCA, ENV n LEVEL and ENV n TIME are on no page, so MIX+PLUS on their owning cell primes them: AMP's VEL → VCA, even while VEL is dimmed (the one exception to the dimming rule, ADR 0037); an A page's A, D, R and H cells → TIME; S → LEVEL | Tasks 9, 14; ADRs 0035, 0037 |
+| FORM types | **Ruling:** `EnvForm { Ad, Ahr, Cycle }` (ENV and BURST) and `LfoForm { Free, Sync, Lfv }`, default first; `FuncParams` holds `env_form`, `burst_form` and `lfo_form`, so each MODE keeps its FORM; `Func { Env(EnvForm), Lfo(LfoForm), Burst(EnvForm) }` is what B runs, so no MODE/FORM mismatch is representable | Task 6 |
+| MODE and FORM as `Block` values | `get`/`write` use the index in `kind.modes()` / the MODE's FORM enum, so an encoder steps the kind's own list; the typed `set_mode`/`set_kind`/`set_func` keep the invariant | Tasks 2, 6, 15 |
+| Sustain below S | Sustain holds its level; a lowered S sends a level above it back to Decay; a raised S does not lift it, in Sustain or mid-Decay (a Decay at or below S becomes Sustain at its level) | Task 5 |
 | TIME's Σ | clamped to −1..1 (32 × either way) | Task 5 |
-| ENV-mode times per block | not clamped: the 93.75 Hz clamp applies to LFO RATE and BURST pulse RATE | Task 6 |
+| Per-block clamp | **Ruling:** `block_rate_max(sr) = sr / BLOCK_SIZE / 8`; it caps LFO RATE, BURST pulse RATE, ENV CYCLE's `1/(RISE+FALL)` (both segments slow by the same factor) and BURST CYCLE's `1/LENGTH`; AD and AHR times are not clamped | Task 6 |
 | LFV slew per block | closed form toward the block-end target (approximate; per sample it is exact) | Task 6 |
-| Glide | every TYPE/MODE/FORM change sets `d = old − new`; into A or B ENV `d` is 0 by construction (a clamp into A's 0..1 leaves a remainder that glides) | Task 6 |
+| Glide | one `Glide` type shared by `Envelope` and `Lfo`; every TYPE/MODE/FORM change sets `d = old − new` (below 1e-6 is none); into A or B ENV `d` is 0 by construction (a clamp into A's 0..1 leaves a remainder that glides); a change seen first at a note-on takes over the same way | Tasks 6, 7 |
+| Kinds in types | **Ruling:** `envelope::Kind { A, B(Func) }`, `view::EnvKind { A(EnvSpeed), B(Func) }`, `view::LfoKind { Classic, Func(LfoForm) }`: no dummy fields on A | Tasks 6, 16, 17 |
+| Per-sample paths | `EnvA::fill` and `FuncGen::fill` write a block of levels in tight per-stage loops (one output evaluation per sample, curve divide once); `Envelope` then adds `amount · (level · peak[n]) + glide[n]` into the VCA's gain, the peak ramped per sample and the glide in its own loop | Tasks 5, 6 |
+| Coefficients per block | only the running TYPE's (`ACoefs` or `BCoefs`), and reused while their inputs are unchanged | Tasks 5, 6 |
+| Matrix amount scale | `amount / 127` read from a `const` table of 255 values (bit-identical to the divide), not divided per cell | Task 4 |
+| Tick vs advance tolerance | **Ruling:** each path within 1e-4 of an f64 reference, stage changes within ±1 sample (ADR 0036) | Tasks 5, 6 |
 | Modulators during a fade | they keep running from the `played` settings; the VCA keeps the routes of the last block before the fade (`VcaRoutes`) | Tasks 5, 10 |
 | Lifetime fade start | set after the block's fade step, so the fade starts on the next block | Task 11 |
 | Other VCA sources' ramp | `prev` is the previous block's value, 0 on a fresh voice (a VEL route fades in over the first block) | Task 10 |
-| CLASSIC SYNC | a note-on retriggers a CLASSIC LFO with SYNC 1 at its PHASE (today nothing called `retrigger`); FREE, LFV and BURST phases run free | Task 9 |
+| No-route VCA | an exhaustive `match` on `EngineType` (Algo, Modal: pass-through) | Task 10 |
+| Cutoff ramp on a note-on | a note-on to an inactive voice drops the ramp (`SvfFilter::hold`); a retrigger of a sounding voice ramps from its last cutoff | Task 3 |
+| CLASSIC SYNC | a note-on retriggers a CLASSIC LFO with SYNC 1 at its PHASE (today nothing called `retrigger`); FREE, LFV and BURST phases run free | Task 7 |
 | `FilterMode` Lp18, Hp12 | not added: they land with their kinds (#127, #124); `FilterMode` has today's eight | Task 2 |
-| Filter panel data | `ui/filter_panel.rs` (`KindPanel`, `SVF_PANEL`, `panel(kind)`, `applies(kind, id)`), not a method on the DSP enum; `PanelTarget` has `Filter` and `Route` only (TB-303's `Env1` and Prophet's stepped view land with #127, #126) | Task 14 |
-| Slot bindings | `SlotBinding::Route(ModSource)` (Task 4, removed in 14), `FilterPanel(u8)` (main 0–4, extras 5–6), `EnvPanel(EnvSlot, u8)`, `LfoPanel(LfoSlot, u8)` | Tasks 4, 14–16 |
-| `SlotCtx` | read from any `Blocks` through `Block::get`, so `part_page`'s signatures stay | Task 14 |
-| Dimming | `ui/view.rs::dimmed(&View, &Sound)`: a panel's fixed cell, KIND while one kind is built, a single-mode MODE, AMP VEL with no VCA route, SPD cells of a type-B slot | Tasks 13–16 |
-| Map label of the MOD node | `ChainBlock.map: Option<&'static str>` ("MOD"); the sub-list keeps each def's short (E1…MTX) | Task 15 |
-| `MAX_PAGES` | 64 → 72 (L2 and L3 take 64 and 65) | Task 16 |
+| Filter panel data | `ui/filter_panel.rs` (`KindPanel`, `SVF_PANEL`, `panel(kind)`, `applies(kind, id)`), not a method on the DSP enum; `PanelTarget` has `Filter` and `Route` only (TB-303's `Env1` and Prophet's stepped view land with #127, #126) | Task 15 |
+| Slot bindings | `SlotBinding::Route(ModSource)` (Task 4, removed in 14), `FilterPanel(u8)` (main 0–4, extras 5–6), `EnvPanel(EnvSlot, u8)`, `LfoPanel(LfoSlot, u8)` | Tasks 4, 15–17 |
+| `SlotCtx` | read from any `Blocks` through `Block::get`, so `part_page`'s signatures stay | Task 15 |
+| Dimming | `ui/view.rs::dimmed(addr, &Sound)` and `is_dimmed(&View, &Sound)`: a `View::Text` cell, KIND while one kind is built, a single-mode MODE, AMP VEL with no VCA route, SPD cells of a type-B slot | Tasks 14–17 |
+| Dirty regions | `MatrixState.rev` (bumped on every amount, presence or column change) joins the Grid, Route and Cells keys; the Cells key also packs the six cells' `Look`s | Tasks 8, 14 |
+| Source row name | `mod_grid::ModSource` becomes `SourceRow`, so `modulation::ModSource` is the one `ModSource` | Task 4 |
+| Map label of the MOD node | `ChainBlock.map: Option<&'static str>` ("MOD"); the sub-list keeps each def's short (E1…MTX) | Task 16 |
+| `MAX_PAGES` | 64 → 72 (L2 and L3 take 64 and 65) | Task 17 |
 | `MatrixState::MAX_SOURCES` | 16 → `MAX_MOD_SOURCES` (8): presence is a `u8` | Task 8 |
 | Matrix hint | `PRIME MIX+PLUS  DELETE MIX+MINUS` | Task 8 |
-| Bench layout | two rows more (MODS, SVF), `ROW_H` 25 → 20 | Task 19 |
-| `ModRouting` after the bench | `BASE` = max(8, (MODS − 1 OP) − 26) rounded up; the per-VCA terms stay estimates | Task 19 |
+| Bench layout | a second 30-second screen, ROUTING, with eight rows (1 OP, MODS, SVF, A VCA, B VCA, B CRV, VEL VCA, 2 VCA), each `/VOICE` only | Task 13 |
+| `ModRouting` after the bench | **Ruling:** each term is measured on its own (Task 13): OTHER = 2 VCA − VEL VCA; CLAMP = VEL VCA − 1 OP − OTHER; ENV_A = A VCA − 1 OP − CLAMP; ENV_B = B VCA − 1 OP − CLAMP; CURVE = B CRV − B VCA; BASE = 1 OP − 436 (the 1 OP row before the pool, 2026-09-27). Each is rounded up (a term that reads 0 or below is billed 1), and the model is checked to bill the MODS row at least as measured: after measuring, the measured values are billed, and the MODS check keeps them from undercounting | Task 13 |
 
 ## File structure
 
@@ -155,39 +165,39 @@ New:
 
 | File | Responsibility |
 |---|---|
-| `chimera-core/src/dsp/modulator/mod.rs` | `EnvSlot`, `LfoSlot`, `EnvType`, `EnvSpeed`, `HoldPos`, `FuncMode`, `FuncForm`, `LfoType`, `FuncParams`, `pick` |
+| `chimera-core/src/dsp/modulator/mod.rs` | `EnvSlot`, `LfoSlot`, `EnvType`, `EnvSpeed`, `HoldPos`, `FuncMode`, `EnvForm`, `LfoForm`, `Func`, `LfoType`, `FuncParams`, `Glide`, `pick` |
 | `chimera-core/src/dsp/modulator/law.rs` | `Range`, `speed_ranges`, B's ranges, `rc_k`, `rc_coeff`, `curve`, `curve_inv`, `shape_w`, `tilt` |
-| `chimera-core/src/dsp/modulator/env_a.rs` | `ACoefs`, `EnvA` (tick, closed-form advance, TYPE-change entry) |
-| `chimera-core/src/dsp/modulator/func.rs` | `Slides`, `BCoefs`, `FuncGen` (ENV, LFO, BURST) |
+| `chimera-core/src/dsp/modulator/env_a.rs` | `ACoefs`, `EnvA` (tick, per-sample `fill`, closed-form advance, TYPE-change entry) |
+| `chimera-core/src/dsp/modulator/func.rs` | `Slides`, `BCoefs`, `FuncGen` (ENV, LFO, BURST; tick, `fill`, advance) |
 | `chimera-core/src/ui/view.rs` | `SlotCtx`, `View`, `view`, `slot_addr`, `dimmed`, `prime_target` |
 | `chimera-core/src/ui/filter_panel.rs` | `PanelTarget`, `PanelKnob`, `KindPanel`, `SVF_PANEL`, `panel`, `applies` |
 | `chimera-core/src/ui/mod_panel.rs` | `PanelSlot`, `ModPanel`, `env_panel`, `lfo_panel` |
-| `chimera-core/tests/env_a_test.rs`, `func_gen_test.rs`, `env_slot_test.rs`, `lfo_slot_test.rs`, `routing_test.rs`, `vca_test.rs`, `flt_page_test.rs`, `mod_pages_test.rs` | Tests |
+| `chimera-core/tests/filter_test.rs`, `env_a_test.rs`, `func_gen_test.rs`, `env_slot_test.rs`, `lfo_slot_test.rs`, `routing_test.rs`, `vca_test.rs`, `flt_page_test.rs`, `amp_page_test.rs`, `mod_pages_test.rs` | Tests |
 | `docs/adr/0035-every-connection-is-a-matrix-route.md`, `0036-cascadia-style-modulators.md`, `0037-kind-lays-out-the-filter-panel.md` | ADRs |
 
-Modified: `dsp/mod.rs`, `dsp/filter.rs`, `dsp/envelope.rs`, `dsp/lfo.rs`, `dsp/voice.rs`, `block.rs`, `addr.rs`, `params.rs`, `modulation.rs`, `preset.rs`, `factory.rs`, `ui/block_def.rs`, `ui/block_registry.rs`, `ui/chain.rs`, `ui/dungeon_map.rs`, `ui/components.rs`, `ui/fmt.rs`, `ui/focus.rs`, `ui/mod.rs`, `ui/mod_grid.rs`, `ui/page.rs`, `ui/part_page.rs`, `ui/renderer.rs`, `ui/viz.rs`, `chimera-stm32/src/bench.rs`, and the tests named in each task.
+Modified: `dsp/mod.rs`, `dsp/filter.rs`, `dsp/envelope.rs`, `dsp/lfo.rs`, `dsp/voice.rs`, `block.rs`, `addr.rs`, `params.rs`, `modulation.rs`, `preset.rs`, `factory.rs`, `ui/block_def.rs`, `ui/block_registry.rs`, `ui/chain.rs`, `ui/dungeon_map.rs`, `ui/components.rs`, `ui/fmt.rs`, `ui/focus.rs`, `ui/mod.rs`, `ui/mod_grid.rs`, `ui/page.rs`, `ui/part_page.rs`, `ui/region.rs`, `ui/renderer.rs`, `ui/viz.rs`, `chimera-stm32/src/bench.rs`, and the tests named in each task.
 
 ## Task order
 
 1. Lock the factory Sounds
-2. Typed MODE on FLT › MODE; FM, ENV and KEY leave the filter (#111, #57, #48)
-3. CUTOFF in octaves; the cutoff ramps across the block (#53)
-4. Eight matrix sources; ENV, KEY and LFO as route knobs — **end of the first shippable slice (#121)**
+2. Typed MODE on FLT › MODE; FM, ENV and KEY leave the filter (#111, #57)
+3. CUTOFF in octaves; the cutoff ramps across the block (#53); the `*_lfo_cutoff` goldens re-recorded
+4. Eight matrix sources; ENV, KEY and LFO as route knobs
 5. Envelope A, and ENV 1–3 on it
 6. Envelope B and the ENV slot's TYPE changes
-7. LFO slots: CLASSIC and FUNC
+7. LFO slots: CLASSIC and FUNC — **end of the first shippable slice (#121)**
 8. Route presence, the default routes, MIX+MINUS and the "—" knob
-9. ENV destinations; every slot live; the UI's stand-in sources
+9. ENV destinations; the UI's stand-in sources
 10. VCA as a destination
 11. Voice lifetime by the VCA's routes
 12. `ModRouting::cost`
-13. FLD / VCA (AMP) on every chain, and dimmed cells
-14. KIND and the filter panel
-15. The MOD node and the ENV pages
-16. The SPD page and the LFO pages
-17. The sanity gate and the `*_lfo_cutoff` goldens
+13. Bench the modulator pool — **hardware STOP**
+14. FLD / VCA (AMP) on every chain, and dimmed cells
+15. KIND and the filter panel
+16. The MOD node and the ENV pages
+17. The SPD page and the LFO pages
 18. ADRs 0035, 0036 and 0037
-19. Bench rows and costs — **hardware STOP**
+19. Play the pages; the load check — **hardware STOP**
 
 ---
 
@@ -205,15 +215,15 @@ cd /tmp/claude-1000/-home-carcosa-dev-chimera/05a415fc-f8d7-4033-943f-e96e5bd74f
 
 ### Task 1: Lock the factory Sounds
 
-The spec's migration check: before anything changes, one audio golden per factory Sound. They must stay bit-identical to the end of this plan. This task also adds a `PENDING` list, which later tasks use to park the two `*_lfo_cutoff` goldens until Task 17 re-records them.
+The spec's migration check: before anything changes, one audio golden per factory Sound. They must stay bit-identical to the end of this plan.
 
 **Files:**
 - Modify: `chimera-core/tests/common/mod.rs` (`Case::Factory`)
-- Modify: `chimera-core/tests/golden_test.rs` (8 rows, `PENDING`, a coverage test)
+- Modify: `chimera-core/tests/golden_test.rs` (8 rows, a coverage test)
 
 **Interfaces:**
 - Consumes: `chimera_core::factory::{factory_sound, FACTORY_LEN}`.
-- Produces: `common::Case::Factory(u8)` named `factory_0` … `factory_7`; `golden_test::PENDING: &[&str]`, the goldens `goldens_match` and `goldens_match_through_the_instrument` skip until Task 17.
+- Produces: `common::Case::Factory(u8)` named `factory_0` … `factory_7`.
 
 - [ ] **Step 1: Add the case**
 
@@ -263,15 +273,7 @@ In `setup`:
 
 - [ ] **Step 2: Write the failing coverage test**
 
-In `chimera-core/tests/golden_test.rs`, after `KNOWN_BROKEN`:
-
-```rust
-/// Goldens an intended change is waiting on, skipped until Task 17 of the
-/// filter-routing plan re-records them after the sanity gate (ADR 0011).
-const PENDING: &[&str] = &[];
-```
-
-and at the end of the file:
+In `chimera-core/tests/golden_test.rs`, at the end of the file:
 
 ```rust
 /// Filter-routing spec § Migration: every factory Sound is locked.
@@ -283,16 +285,6 @@ fn every_factory_sound_has_a_golden() {
     }
 }
 ```
-
-In `goldens_match`, first thing inside `for case in Case::ALL {`:
-
-```rust
-        if PENDING.contains(&case.name()) {
-            continue;
-        }
-```
-
-and the same three lines first inside the loop of `goldens_match_through_the_instrument`.
 
 - [ ] **Step 3: Run it to see it fail**
 
@@ -319,19 +311,19 @@ git commit -m "Lock the eight factory Sounds with audio goldens"
 
 ---
 
-### Task 2: Typed MODE on FLT › MODE; FM, ENV and KEY leave the filter (#111, #57, #48)
+### Task 2: Typed MODE on FLT › MODE; FM, ENV and KEY leave the filter (#111, #57)
 
-`FilterParams.mode` becomes a private `FilterMode` (#111) and MODE gets a spec (id 7) and a page. The three never-read fields (FM, ENV, KEY; ids 3–5) are deleted and their ids retired (#112). The FLT page takes its final SVF layout minus KIND, and the ENV and KEY cells stay empty until Task 4. FLT › MODE (id 59) is the new sub-page. `fast_tan`'s doc stops overclaiming (#57). #48's saturator fix is attempted last, as its own commit, and kept only if every audio golden stays bit-identical.
+`FilterParams.mode` becomes a private `FilterMode` (#111) and MODE gets a spec (id 7) and a page. The three never-read fields (FM, ENV, KEY; ids 3–5) are deleted and their ids retired (#112). The FLT page takes its final SVF layout minus KIND, and the ENV and KEY cells stay empty until Task 4. FLT › MODE (id 59) is the new sub-page. `fast_tan`'s doc stops overclaiming (#57). #48 (the saturator) is not touched: its fix changes high-resonance levels and waits for the filter-model work (commented on #48).
 
 **Files:**
-- Modify: `chimera-core/src/dsp/filter.rs` (`FilterMode`, `SVF_MODES`, `SVF_MODE_NAMES`, `process` via `mode()`, `saturate`)
+- Modify: `chimera-core/src/dsp/filter.rs` (`FilterMode`, `SVF_MODES`, `SVF_MODE_NAMES`, `process` via `mode()`)
 - Modify: `chimera-core/src/dsp/mod.rs:97-106` (`fast_tan` doc)
 - Modify: `chimera-core/src/params.rs:5-88` (`FilterParams`, `FILTER_SPECS`)
 - Modify: `chimera-core/src/ui/block_registry.rs` (`FILTER`, new `FILTER_MODE`, `FILTER_SUB_PAGES`)
 - Modify: `chimera-core/src/ui/renderer.rs:96-103` (FilterResponse reads CUTOFF and RES by address)
 - Modify: `chimera-core/src/ui/page.rs` (the two demo bindings to FM and ENV)
 - Create: `chimera-core/tests/filter_test.rs`
-- Modify tests: `stress_test.rs`, `live_param_test.rs`, `property_test.rs`, `desktop_sim_test.rs`, `modal_integration_test.rs`, `signal_chain_test.rs`, `chain_spectral_test.rs`, `modulation_integration_test.rs`, `part_page_test.rs`, `binding_test.rs`, `ui_test.rs`, `mod_registry_test.rs`, `screen/mod.rs`, `screen_golden_test.rs`
+- Modify tests: `stress_test.rs`, `live_param_test.rs`, `property_test.rs`, `desktop_sim_test.rs`, `modal_integration_test.rs`, `signal_chain_test.rs`, `chain_spectral_test.rs`, `modulation_integration_test.rs`, `part_page_test.rs`, `binding_test.rs`, `ui_test.rs`, `mod_registry_test.rs`, `prime_status_test.rs`, `preset_test.rs`, `screen/mod.rs`, `screen_golden_test.rs`
 
 **Interfaces:**
 - Consumes: nothing new.
@@ -340,14 +332,13 @@ git commit -m "Lock the eight factory Sounds with audio goldens"
   - `dsp::filter::SVF_MODES: [FilterMode; 8]` (LP24 first) and `SVF_MODE_NAMES: [&str; 8]`.
   - `FilterParams::mode(&self) -> FilterMode`, `FilterParams::set_mode(&mut self, FilterMode) -> bool`, `FilterParams::MODE = ParamId(7)`; the `Block` value of MODE is the index in `SVF_MODES`.
   - `ui::block_registry::FILTER_MODE` (id 59, "Filter Mode", short "MODE").
-  - `dsp::filter::saturate(x: f32) -> f32` is `pub` (tests).
 
 - [ ] **Step 1: Write the failing tests**
 
 Create `chimera-core/tests/filter_test.rs`:
 
 ```rust
-//! The filter: typed modes (#111), retired ids (#112), the saturator (#48).
+//! The filter: typed modes (#111) and retired ids (#112).
 
 use chimera_core::addr::{BlockRef, ParamAddr};
 use chimera_core::block::{Block, ParamId};
@@ -681,7 +672,7 @@ In `chimera-core/src/dsp/mod.rs`, replace the doc of `fast_tan` with:
 - [ ] **Step 9: Update the tests that wrote the old fields**
 
 - Delete every line `p.filter.mode = 2;`, `params.filter.mode = 2;`, `params_closed.filter.mode = 2;` and `ui.params_mut().filter.mode = 2;` (LP24 is the default), with its trailing comment: `sed -i '/\.filter\.mode = 2;/d' chimera-core/tests/{stress_test,live_param_test,property_test,desktop_sim_test,modal_integration_test,signal_chain_test,chain_spectral_test,modulation_integration_test}.rs`.
-- `live_param_test.rs` and `property_test.rs`: `p.filter.mode = 1; // LP2` becomes `p.filter.set_mode(chimera_core::dsp::filter::FilterMode::Lp12);`.
+- `live_param_test.rs:111` (`p.filter.mode = 1; // LP2`) and `property_test.rs:451` (`p.filter.mode = 1;`, no comment): each becomes `p.filter.set_mode(chimera_core::dsp::filter::FilterMode::Lp12);` (`sed -i 's/p\.filter\.mode = 1;.*$/p.filter.set_mode(chimera_core::dsp::filter::FilterMode::Lp12);/' chimera-core/tests/{live_param_test,property_test}.rs`).
 - `property_test.rs:98`: `p.filter.mode = rng.u8(7);` becomes `p.filter.set_mode(chimera_core::dsp::filter::FilterMode::ALL[rng.u8(7) as usize]);`.
 - `part_page_test.rs`, `drive_filter_folder_pages`, the FILTER lines become:
 
@@ -724,16 +715,30 @@ fn test_filter_mode_is_named_in_registry() {
 
   and in `mod_matrix` the first `feed(ui, Input::turn(EncoderId::A, 1)); // focus CUTOFF` becomes `feed(ui, Input::turn(EncoderId::B, 1)); // focus CUTOFF`.
 - CUTOFF left slot a, so tests that primed it from the default focus now focus slot b first: in `prime_status_test.rs`, `filter_page()` turns `EncoderId::B` instead of `EncoderId::A`; in `preset_test.rs`, `priming_on_main_page_registers_focused_param` calls `ui.handle_input(&MockControls::new().encoder(EncoderId::B, 1));` before `prime(&mut ui)`.
+- `prime_status_test.rs`, `priming_past_matrix_capacity_on_the_algo_chain_reports_full`: DRIVE moved from FLT to FLT › MODE, so the walk (ALG, LEVEL, DRV, FLT, FLD) now reaches only 16 addresses and never reports MATRIX FULL (`added_before` would be `None`). The walk also visits FLT › MODE, which keeps 17 addresses (MORPH, VOL, six LEVELs, DRV's three, CUTOFF, RESO, the filter's DRIVE, FLD's three). Its loop over the three nodes becomes:
+
+```rust
+    feed(&mut ui, Input::press(ButtonId::Plus)); // Drive
+    prime_every_slot(&mut ui, &ALL_SLOTS, &mut seen);
+    feed(&mut ui, Input::press(ButtonId::Plus)); // Filter: CUTOFF, RESO (MODE refused)
+    prime_every_slot(&mut ui, &ALL_SLOTS, &mut seen);
+    feed(&mut ui, Input::press(ButtonId::Edit)); // FLT › MODE: the filter's DRIVE
+    prime_every_slot(&mut ui, &ALL_SLOTS, &mut seen);
+    feed(&mut ui, Input::press(ButtonId::Plus)); // Folder
+    prime_every_slot(&mut ui, &ALL_SLOTS, &mut seen);
+```
+
+  and its doc reads "reaches 17 modulatable addresses (MORPH, VOL, six LEVELs, Drive's three, CUTOFF, RESO, the filter's DRIVE on FLT › MODE, Folder's three)". Its expectations stay: exactly `MAX_MOD_DESTS` ADDED, the next reports MATRIX FULL.
 - Run `header_map_test` too: FLT's new sub-list (FLT, MODE) must not run into the next node's label.
 
 - [ ] **Step 10: Run the tests**
 
-Run: `env $T cargo test -p chimera-core --test filter_test --test golden_test --test part_page_test --test binding_test --test prime_status_test --test preset_test --test header_map_test --test ui_test --test mod_registry_test`
-Expected: PASS. Every audio golden (factory included) is bit-identical: LP24 is discriminant 2, so the arithmetic path is unchanged.
+Run: `env $T cargo test -p chimera-core` (the whole crate; these edits reach every test that named a filter field).
+Expected: PASS except `screen_goldens_match` (next step). Every audio golden (factory included) is bit-identical: LP24 is discriminant 2, so the arithmetic path is unchanged.
 
 - [ ] **Step 11: Look at the FLT page and re-record its golden**
 
-Look at `bigviz_filter`: the first cell is a dash, then CUTOFF, RESO, MODE reading `LP24`, then two dashes. The curve follows the cutoff and resonance (a peak about a third of the way across). The map has FLT lit. Then `SCREEN_RECORD=1 env $T cargo test -p chimera-core --test screen_golden_test screen_goldens_match -- --nocapture` and paste only the `bigviz_filter` and `mod_matrix` rows over theirs. (`mod_matrix` changes only because CUTOFF was primed from slot b, which nudged it one step.)
+Look at `bigviz_filter`: the first cell is a dash, then CUTOFF, RESO, MODE reading `LP24`, then two dashes. The curve follows the cutoff and resonance (a peak about a third of the way across). The map has FLT lit. Then `SCREEN_RECORD=1 env $T cargo test -p chimera-core --test screen_golden_test screen_goldens_match -- --nocapture` and paste the `bigviz_filter` row over its own. `mod_matrix` primes CUTOFF from slot b now, which nudges it one step just as slot a did, so it should still match; re-record it only if it mismatches, after looking at it.
 
 - [ ] **Step 12: Commit**
 
@@ -746,88 +751,26 @@ git add chimera-core/src/dsp/filter.rs chimera-core/src/dsp/mod.rs chimera-core/
   chimera-core/tests/modal_integration_test.rs chimera-core/tests/signal_chain_test.rs \
   chimera-core/tests/chain_spectral_test.rs chimera-core/tests/modulation_integration_test.rs \
   chimera-core/tests/part_page_test.rs chimera-core/tests/binding_test.rs chimera-core/tests/ui_test.rs \
-  chimera-core/tests/mod_registry_test.rs chimera-core/tests/screen/mod.rs \
+  chimera-core/tests/mod_registry_test.rs chimera-core/tests/prime_status_test.rs \
+  chimera-core/tests/preset_test.rs chimera-core/tests/screen/mod.rs \
   chimera-core/tests/screen_golden_test.rs
 git commit -m "Typed filter MODE on FLT › MODE; FM, ENV and KEY retire from the filter"
 ```
-
-- [ ] **Step 13: The saturator kink (#48), kept only if the goldens hold**
-
-Add to `filter_test.rs`:
-
-```rust
-/// #48: continuous and monotonic across ±1, ±1.5 and ±2.
-#[test]
-fn saturate_is_continuous_and_monotonic() {
-    use chimera_core::dsp::filter::saturate;
-    let mut x = -3.0f32;
-    let mut prev = saturate(x);
-    while x < 3.0 {
-        x += 1e-4;
-        let y = saturate(x);
-        assert!(y >= prev, "not monotonic at {x}");
-        assert!(y - prev <= 1.5e-4, "jumps at {x}: {prev} to {y}");
-        prev = y;
-    }
-    assert_eq!(saturate(0.5), 0.5, "linear below 1");
-    assert_eq!(saturate(2.5), 1.5);
-    assert_eq!(saturate(-2.5), -1.5);
-}
-
-/// A driven, resonant sine stays finite and bounded.
-#[test]
-fn a_driven_resonant_filter_stays_bounded() {
-    let mut p = FilterParams::default();
-    (p.cutoff, p.resonance, p.drive) = (800.0, 0.95, 1.0);
-    let mut f = SvfFilter::new();
-    for b in 0..200 {
-        let mut buf: Vec<f32> = (0..BLOCK_SIZE)
-            .map(|i| {
-                (core::f32::consts::TAU * 200.0 * (b * BLOCK_SIZE + i) as f32 / SR as f32).sin()
-            })
-            .collect();
-        f.process(&mut buf, &p, SR);
-        assert!(buf.iter().all(|y| y.is_finite() && y.abs() < 20.0), "block {b}");
-    }
-}
-```
-
-In `filter.rs`, replace `saturate` with:
-
-```rust
-/// C1 soft clip (#48): linear to ±1, then `1 + u − u²/2` (u = |x| − 1) up
-/// to ±1.5 at |x| = 2, flat beyond. Continuous in value and slope, and
-/// bit-identical to the old curve wherever the states stay within ±1.
-#[inline]
-pub fn saturate(x: f32) -> f32 {
-    let a = x.abs();
-    if a <= 1.0 {
-        return x;
-    }
-    let u = (a - 1.0).min(1.0);
-    let y = 1.0 + u - 0.5 * u * u;
-    if x < 0.0 { -y } else { y }
-}
-```
-
-Run: `env $T cargo test -p chimera-core --test filter_test --test golden_test`
-
-- If everything passes, commit: `git add chimera-core/src/dsp/filter.rs chimera-core/tests/filter_test.rs && git commit -m "A continuous SVF saturator (#48)"`.
-- If **any** golden mismatches (the states cross ±1 in that case, so the fix changes its sound), discard the step with `git checkout -- chimera-core/src/dsp/filter.rs chimera-core/tests/filter_test.rs`. Then leave #48 open with a comment naming the goldens that moved: `GH_TOKEN=$(gh auth token -u joegiralt) gh issue comment 48 -R joegiralt/chimera --body "Tried a C1 clip (linear to ±1, 1+u−u²/2 to ±1.5 at |x|=2) in the filter-routing branch: it moves <names>, so it waits for the filter-model work, where those Sounds get re-recorded on purpose."`
 
 ---
 
 ### Task 3: CUTOFF in octaves; the cutoff ramps across the block (#53)
 
-CUTOFF's matrix routes apply in octaves (spec § 3) through a new offset law on `ParamSpec`. The SVF ramps its coefficient across a block whenever the cutoff changed, which fixes #53 for the filter only. The two `*_lfo_cutoff` goldens move and are parked in `PENDING` until Task 17.
+CUTOFF's matrix routes apply in octaves (spec § 3) through a new offset law on `ParamSpec`. The SVF ramps its coefficient across a block whenever the cutoff changed, which fixes #53 for the filter only; a note-on to a voice that isn't sounding starts without a ramp. The two `*_lfo_cutoff` goldens move: this task passes them through the sanity gate, writes them out for a listen and re-records them (ADR 0011), so no golden is ever parked.
 
 **Files:**
 - Modify: `chimera-core/src/dsp/mod.rs` (`fast_exp2`, `fast_log2`)
 - Modify: `chimera-core/src/block.rs` (`OffsetLaw`, `ParamSpec.law`, `octaves`, `offset`, `offset_normalized`, `apply_offset`)
 - Modify: `chimera-core/src/params.rs` (CUTOFF's spec `.octaves(CUTOFF_OCTAVES)`)
-- Modify: `chimera-core/src/dsp/filter.rs` (`CUTOFF_OCTAVES`, `routed_cutoff`, `SvfFilter.g`, `hold`, `tick`)
+- Modify: `chimera-core/src/dsp/filter.rs` (`CUTOFF_OCTAVES`, `routed_cutoff`, `g_at`, `SvfFilter.g`, `hold`, `last_g`, `tick`)
+- Modify: `chimera-core/src/dsp/voice.rs` (`trigger` drops the ramp on a fresh note; a unit test)
 - Modify: `chimera-core/src/ui/mod.rs` (`update`: mod bars through `offset_normalized`)
-- Modify: `chimera-core/tests/golden_test.rs` (`PENDING`)
+- Modify: `chimera-core/tests/golden_test.rs` (the two `*_lfo_cutoff` rows, re-recorded)
 - Test: `chimera-core/tests/filter_test.rs`
 
 **Interfaces:**
@@ -836,7 +779,8 @@ CUTOFF's matrix routes apply in octaves (spec § 3) through a new offset law on 
   - `chimera_core::dsp::{fast_exp2, fast_log2}` (`fn(f32) -> f32`).
   - `block::OffsetLaw { Linear, Octaves(f32) }`; `ParamSpec.law`; `ParamSpec::octaves(self, f32) -> Self` (const); `ParamSpec::offset(&self, v: f32, off: f32) -> f32`; `ParamSpec::offset_normalized(&self, n: f32, off: f32) -> f32`.
   - `dsp::filter::CUTOFF_OCTAVES: f32 = 10.0`; `dsp::filter::routed_cutoff(base: f32, sum: f32) -> f32`.
-  - `SvfFilter::hold(&mut self)`: the next block starts without a ramp.
+  - `SvfFilter::hold(&mut self)`: the next block starts without a ramp; `pub(crate) SvfFilter::last_g(&self) -> Option<f32>`.
+  - `dsp::filter::g_at(from: f32, step: f32, i: usize) -> f32`: sample `i`'s coefficient on a ramp (`from + step·(i + 1)`).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -887,25 +831,34 @@ fn routed_cutoff_survives_huge_sums() {
 /// Spec § Tests "Clicks": an ENV sweep on CUTOFF (attack 1 ms and 50 ms,
 /// route ±100 %, RES 0.5) has a largest second difference at most 1.5 ×
 /// that of the same render with each block's cutoff held at the block's
-/// mean.
+/// mean. And #53 itself: with the fast attack, the ramp removes at least
+/// half the largest second difference of the same targets stepped per
+/// block (a filter without the ramp fails this; the spec's own ratio would
+/// not tell the two apart).
 #[test]
 fn a_cutoff_sweep_does_not_click() {
+    #[derive(Clone, Copy, PartialEq)]
+    enum How {
+        Ramped,
+        HeldAtMean,
+        Stepped,
+    }
     for attack in [0.001f32, 0.05] {
         for amount in [1.0f32, -1.0] {
             let env = |b: usize| ((b * BLOCK_SIZE) as f32 / (attack * SR as f32)).min(1.0);
             let fc = |b: usize| routed_cutoff(1000.0, amount * env(b));
-            let render = |held: bool| {
+            let render = |how: How| {
                 let mut f = SvfFilter::new();
                 let mut p = FilterParams::default();
                 p.resonance = 0.5;
                 let mut out = Vec::new();
                 for b in 0..40 {
-                    p.cutoff = if held {
+                    p.cutoff = if how == How::HeldAtMean {
                         0.5 * (fc(b.saturating_sub(1)) + fc(b))
                     } else {
                         fc(b)
                     };
-                    if held {
+                    if how != How::Ramped {
                         f.hold();
                     }
                     let mut buf: Vec<f32> = (0..BLOCK_SIZE)
@@ -924,12 +877,38 @@ fn a_cutoff_sweep_does_not_click() {
                     .map(|w| (w[2] - 2.0 * w[1] + w[0]).abs())
                     .fold(0.0f32, f32::max)
             };
-            let (ramped, held) = (d2(&render(false)), d2(&render(true)));
+            let ramped = d2(&render(How::Ramped));
+            let held = d2(&render(How::HeldAtMean));
             assert!(
                 ramped <= 1.5 * held,
                 "attack {attack}, amount {amount}: {ramped} vs {held}"
             );
+            // A 50 ms sweep moves a quarter octave a block: its steps hide
+            // under the sine's own curvature, so only the fast one is checked.
+            if attack < 0.01 {
+                let stepped = d2(&render(How::Stepped));
+                assert!(
+                    ramped <= 0.5 * stepped,
+                    "attack {attack}, amount {amount}: {ramped} vs stepped {stepped}"
+                );
+            }
         }
+    }
+}
+
+/// Within a block, `g` moves by the same step every sample and lands on
+/// the new value on the last one.
+#[test]
+fn g_ramps_evenly_to_the_new_value() {
+    use chimera_core::dsp::filter::g_at;
+    let (from, to) = (0.1f32, 0.9f32);
+    let step = (to - from) / BLOCK_SIZE as f32;
+    let g: Vec<f32> = (0..BLOCK_SIZE).map(|i| g_at(from, step, i)).collect();
+    assert!((g[BLOCK_SIZE - 1] - to).abs() < 1e-6);
+    let mut prev = from;
+    for (i, &x) in g.iter().enumerate() {
+        assert!((x - prev - step).abs() < 1e-6, "sample {i}");
+        prev = x;
     }
 }
 
@@ -1080,7 +1059,7 @@ pub struct SvfFilter {
             // #53: `g` ramps to this block's value, reached on the last sample.
             let step = (g - from) / buf.len() as f32;
             for (i, sample) in buf.iter_mut().enumerate() {
-                let gi = from + step * (i + 1) as f32;
+                let gi = g_at(from, step, i);
                 *sample = self.tick(mode, *sample * (1.0 + drive * 4.0), gi, k);
             }
         }
@@ -1091,6 +1070,11 @@ pub struct SvfFilter {
         self.g = None;
     }
 
+    /// The last block's `g` (`None`: no ramp next block).
+    pub(crate) fn last_g(&self) -> Option<f32> {
+        self.g
+    }
+
     fn tick(&mut self, mode: FilterMode, input: f32, g: f32, k: f32) -> f32 {
         match mode {
             // … the eight arms moved here from `process`, unchanged …
@@ -1098,7 +1082,52 @@ pub struct SvfFilter {
     }
 ```
 
-Move the `match mode { … }` block from the old loop into `tick` verbatim (each arm already returns the sample).
+Move the `match mode { … }` block from the old loop into `tick` verbatim (each arm already returns the sample). Beside `routed_cutoff`:
+
+```rust
+/// Sample `i`'s coefficient on a ramp from `from` by `step` a sample: the
+/// block's last sample lands on the new `g` (#53).
+#[inline(always)]
+pub fn g_at(from: f32, step: f32, i: usize) -> f32 {
+    from + step * (i + 1) as f32
+}
+```
+
+In `chimera-core/src/dsp/voice.rs`, `trigger` starts a note that follows silence without a ramp (spec § 3: "on a fresh note there is no ramp"; a voice that ended on its own is inactive but not reset, so its `g` would survive). Its first line becomes:
+
+```rust
+        if !self.active {
+            self.filter.hold(); // a fresh note: no ramp from the last note's cutoff
+        }
+```
+
+A retrigger of a sounding voice keeps the ramp from its last cutoff (Decisions table). Add at the end of `voice.rs`:
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Spec § 3: a fresh note starts without a ramp, even on a voice
+    /// whose engine went quiet on its own (inactive, never reset).
+    #[test]
+    fn a_note_after_silence_starts_without_a_ramp() {
+        let p = ParamSnapshot::default();
+        let mut v = Voice::new(chimera_hal::SAMPLE_RATE);
+        v.note_on(MidiNote::A4, Velocity::DEFAULT, &p);
+        let mut b = [0.0f32; BLOCK_SIZE];
+        v.render(&mut b, &p, &ModState::new());
+        assert!(v.filter.last_g().is_some());
+        v.active = false; // its engine went quiet
+        v.note_on(MidiNote::A4, Velocity::DEFAULT, &p);
+        assert!(v.filter.last_g().is_none());
+        // A retrigger of a sounding voice keeps it.
+        v.render(&mut b, &p, &ModState::new());
+        v.note_on(MidiNote::A4, Velocity::DEFAULT, &p);
+        assert!(v.filter.last_g().is_some());
+    }
+}
+```
 
 - [ ] **Step 6: The mod bars use the law**
 
@@ -1118,22 +1147,64 @@ In `chimera-core/src/ui/mod.rs`, `update`, replace the loop `// Apply offsets to
             }
 ```
 
-- [ ] **Step 7: Park the two goldens**
+- [ ] **Step 7: Run the tests**
 
-In `golden_test.rs`: `const PENDING: &[&str] = &["algo_lfo_cutoff", "modal_lfo_cutoff"];` with the comment `// CUTOFF in octaves, ramped (spec § 3): re-recorded in Task 17.`
+Run: `env $T cargo test -p chimera-core`
+Expected: PASS except `golden_test`'s `goldens_match` and `goldens_match_through_the_instrument`, which report exactly `algo_lfo_cutoff` and `modal_lfo_cutoff` (their LFO → CUTOFF route is in octaves now, and ramped). Any other mismatch, a factory golden above all, is a bug to fix before going on.
 
-- [ ] **Step 8: Run the tests**
+- [ ] **Step 8: The sanity gate**
 
-Run: `env $T cargo test -p chimera-core --test filter_test --test golden_test --test modulation_integration_test --test live_param_test --test modulatable_test`
-Expected: PASS; every golden but the two parked ones is bit-identical.
+Run: `env $T cargo test -p chimera-core --test sanity_test`
+Expected: PASS. `every_algo_case_is_finite_bounded_audible_and_ends` covers `algo_lfo_cutoff` (finite, within ±1, audible, silent after note-off). `modal_lfo_cutoff` is Modal's known-broken case (#10) and is not gated.
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 9: Write the two cases out for a listen**
+
+Add this test to `golden_test.rs` for the step, run it with `env $T cargo test -p chimera-core --test golden_test write_lfo_cutoff_wavs -- --ignored`, and delete it again (it is not committed):
+
+```rust
+#[test]
+#[ignore = "listening aid"]
+fn write_lfo_cutoff_wavs() {
+    for case in [Case::AlgoLfoCutoff, Case::ModalLfoCutoff] {
+        let out = render_case(case);
+        let n = out.len() as u32 * 2;
+        let mut w = Vec::new();
+        w.extend_from_slice(b"RIFF");
+        w.extend_from_slice(&(36 + n).to_le_bytes());
+        w.extend_from_slice(b"WAVEfmt ");
+        // chunk 16, PCM mono, rate, byte rate, block align 2 and 16 bits
+        for x in [16u32, 1 | 1 << 16, SR, SR * 2, 2 | 16 << 16] {
+            w.extend_from_slice(&x.to_le_bytes());
+        }
+        w.extend_from_slice(b"data");
+        w.extend_from_slice(&n.to_le_bytes());
+        for s in out {
+            w.extend_from_slice(&((s.clamp(-1.0, 1.0) * 32767.0) as i16).to_le_bytes());
+        }
+        let dir = "/tmp/claude-1000/-home-carcosa-dev-chimera/05a415fc-f8d7-4033-943f-e96e5bd74fff/scratchpad";
+        std::fs::write(format!("{dir}/{}.wav", case.name()), w).unwrap();
+    }
+}
+```
+
+Name the two files in this task's report so the owner can listen: a cutoff wobbling by about ±5 octaves (64/127 × 10) at 5 Hz, smooth, with no zipper. If the owner hears a problem, the re-record below is reverted and the ramp revisited.
+
+- [ ] **Step 10: Re-record the two rows**
+
+Run: `GOLDEN_RECORD=1 env $T cargo test -p chimera-core --test golden_test goldens_match -- --nocapture`. Paste only the `algo_lfo_cutoff` and `modal_lfo_cutoff` rows over theirs, with the comment `// Re-recorded: CUTOFF routes in octaves, g ramped per block (filter-routing spec § 3).`
+
+- [ ] **Step 11: Run every test**
+
+Run: `env $T cargo test -p chimera-core`
+Expected: PASS, including `modulated_cases_differ_from_unmodulated` and every factory golden.
+
+- [ ] **Step 12: Commit**
 
 ```bash
 cargo fmt --all && just check
 git add chimera-core/src/dsp/mod.rs chimera-core/src/block.rs chimera-core/src/params.rs \
-  chimera-core/src/dsp/filter.rs chimera-core/src/ui/mod.rs chimera-core/tests/filter_test.rs \
-  chimera-core/tests/golden_test.rs
+  chimera-core/src/dsp/filter.rs chimera-core/src/dsp/voice.rs chimera-core/src/ui/mod.rs \
+  chimera-core/tests/filter_test.rs chimera-core/tests/golden_test.rs
 git commit -m "CUTOFF routes in octaves; the SVF ramps g across a block (#53)"
 ```
 
@@ -1141,26 +1212,27 @@ git commit -m "CUTOFF routes in octaves; the SVF ramps g across a block (#53)"
 
 ### Task 4: Eight matrix sources; ENV, KEY and LFO as route knobs
 
-The matrix takes its eight source rows (spec § 2), and `Voice` fills ENV 1 (the envelope's raw contour, no velocity), LFO 1 (now always running), VEL and NOTE. ENV 2, ENV 3, LFO 2 and LFO 3 read 0 until Tasks 5 and 7 run them. The FLT page's ENV and KEY, and FLT › MODE's LFO, become views of the routes ENV 1 → CUTOFF, NOTE → CUTOFF and LFO 1 → CUTOFF. This task ends the first shippable slice: every FLT knob now changes the sound (#121).
+The matrix takes its eight source rows (spec § 2), and `Voice` fills ENV 1 (the envelope's raw contour, no velocity), LFO 1 (now always running), VEL and NOTE. ENV 2, ENV 3, LFO 2 and LFO 3 read 0 until Tasks 5 and 7 run them. The FLT page's ENV and KEY, and FLT › MODE's LFO, become views of the routes ENV 1 → CUTOFF, NOTE → CUTOFF and LFO 1 → CUTOFF, so every FLT knob changes the sound. The slice ships after Task 7, once the other four rows run. The matrix sum reads `amount / 127` from a table, not a divide, since it now sums eight rows.
 
 **Files:**
-- Modify: `chimera-core/src/modulation.rs` (`ModSource`, `note_source`)
+- Modify: `chimera-core/src/modulation.rs` (`ModSource`, `note_source`, `amount_scale`, `sum_for`)
 - Modify: `chimera-core/src/dsp/voice.rs:254-263` (the eight source values)
 - Modify: `chimera-core/src/dsp/envelope.rs` (`level()` replaces `current_level()`)
 - Modify: `chimera-core/src/block.rs` (`ValFmt::Route`)
 - Modify: `chimera-core/src/ui/fmt.rs` (`Route` readout)
 - Modify: `chimera-core/src/ui/block_def.rs` (`SlotBinding::Route`, `ParamSlot::route`)
 - Modify: `chimera-core/src/ui/block_registry.rs` (`PART_MOD_SOURCES`, FILTER's ENV/KEY, FILTER_MODE's LFO)
-- Modify: `chimera-core/src/ui/mod_grid.rs` (`col_of`, `route`, `set`)
+- Modify: `chimera-core/src/ui/mod_grid.rs` (`col_of`, `route`, `set`; its row struct `ModSource` renamed `SourceRow`)
 - Modify: `chimera-core/src/ui/mod.rs` (`CUTOFF`, `edit_route`, the encoder loop, `display_values`)
 - Create: `chimera-core/tests/routing_test.rs`, `chimera-core/tests/flt_page_test.rs`
-- Modify tests: `binding_test.rs` (`part_chains_offer_env_and_lfo_sources`), `screen_golden_test.rs`
+- Modify tests: `binding_test.rs` (`part_chains_offer_env_and_lfo_sources`), `matrix_view_test.rs`, `ui_routing_test.rs`, `screen_golden_test.rs`
 
 **Interfaces:**
 - Consumes: `routed_cutoff`, `CUTOFF_OCTAVES` (Task 3).
 - Produces:
   - `modulation::ModSource { Env1 = 0, Lfo1 = 1, Env2 = 2, Env3 = 3, Lfo2 = 4, Lfo3 = 5, Vel = 6, Note = 7 }` with `ALL`, `index(self) -> usize`, `tag(self) -> &'static str`.
-  - `modulation::note_source(note: MidiNote) -> f32`.
+  - `modulation::note_source(note: MidiNote) -> f32`; `modulation::amount_scale(a: i8) -> f32` (`a / 127`, from a table).
+  - `ui::mod_grid::SourceRow { name }` (was `mod_grid::ModSource`).
   - `block::ValFmt::Route` (a route amount as `amount_value`, shown as `+47%`).
   - `ui::block_def::SlotBinding::Route(ModSource)`; `ParamSlot::route(src: ModSource, label: &'static str) -> ParamSlot` (const).
   - `MatrixState::col_of(&self, ParamAddr) -> Option<usize>`, `MatrixState::route(&self, row: usize, addr: ParamAddr) -> Option<i8>`, `MatrixState::set(&mut self, row: usize, col: usize, amount: i8)`.
@@ -1242,7 +1314,8 @@ fn env1_lfo1_vel_and_note_move_their_destination() {
             "{source:?}"
         );
     }
-    // VEL follows the velocity; ENV 1 does not (spec § 1: no velocity).
+    // VEL follows the velocity. (ENV 1 carries none: `envelope.rs`'s
+    // `the_env1_source_ignores_velocity`.)
     assert_ne!(render(ModSource::Vel, 100, 60, 30), render(ModSource::Vel, 100, 60, 120));
 }
 ```
@@ -1464,6 +1537,29 @@ In `chimera-core/src/dsp/envelope.rs`, replace `current_level` with:
     }
 ```
 
+and at the end of `envelope.rs`, the check that ENV 1 carries no velocity (a render can't show it: the engine's own level follows velocity). Task 5 replaces the file, and from there `note_on` takes no velocity, so the signature carries the rule:
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_env1_source_ignores_velocity() {
+        let p = EnvParams::default();
+        let (mut soft, mut hard) = (Envelope::new(), Envelope::new());
+        soft.note_on(0.2);
+        hard.note_on(1.0);
+        for _ in 0..200 {
+            soft.process(&p, 48_000);
+            hard.process(&p, 48_000);
+        }
+        assert!(soft.level() > 0.0);
+        assert_eq!(soft.level(), hard.level());
+    }
+}
+```
+
 In `chimera-core/src/dsp/voice.rs`, import `use crate::modulation::{MAX_MOD_SOURCES, ModSource, ModState, note_source};` and replace the two `// Source 0` / `// Source 1` blocks with:
 
 ```rust
@@ -1527,9 +1623,9 @@ In `spec` and `slot_addr`, add `SlotBinding::Route(_)` to the arm returning `Non
 
 In `block_registry.rs`, FILTER's slots e and f become `ParamSlot::route(ModSource::Env1, "ENV")` and `ParamSlot::route(ModSource::Note, "KEY")`. FILTER_MODE's slot c becomes `ParamSlot::route(ModSource::Lfo1, "LFO")`. Add `use crate::modulation::ModSource;`.
 
-- [ ] **Step 7: The matrix's cell helpers**
+- [ ] **Step 7: The matrix's cell helpers, and one `ModSource`**
 
-In `chimera-core/src/ui/mod_grid.rs`, `impl MatrixState`:
+In `chimera-core/src/ui/mod_grid.rs`, rename the row struct `ModSource` to `SourceRow` (its three uses in that file: the struct, `sources: [Option<SourceRow>; MAX_SOURCES]` and `rebuild_sources`), so `modulation::ModSource` is the one type of that name. Then in `impl MatrixState`:
 
 ```rust
     /// The column of destination `addr`, if the matrix has one.
@@ -1635,16 +1731,50 @@ In `display_values`, before `if def.layout == PageLayout::Matrix`:
 
 `update` calls `display_values`, so the knob follows edits made on the matrix page too.
 
+- [ ] **Step 8b: The sum reads a table**
+
+With eight rows, the matrix pass could divide up to 128 times a block. In `modulation.rs`:
+
+```rust
+/// `amount / 127` for every amount (index `amount + 127`): the same f32 the
+/// divide gives (const float arithmetic is IEEE), read instead of divided.
+static AMOUNT_SCALE: [f32; 255] = {
+    let mut t = [0.0f32; 255];
+    let mut i = 0;
+    while i < 255 {
+        t[i] = (i as i32 - 127) as f32 / 127.0;
+        i += 1;
+    }
+    t
+};
+
+/// `a / 127` (−128 reads as −127).
+pub fn amount_scale(a: i8) -> f32 {
+    AMOUNT_SCALE[(a.max(-127) as i32 + 127) as usize]
+}
+```
+
+and in `sum_for`, `total += source_values[si] * (amt as f32 / 127.0);` becomes `total += source_values[si] * amount_scale(amt);` (the same value, so every golden stays bit-identical). `routing_test.rs` gains:
+
+```rust
+#[test]
+fn the_amount_table_is_the_divide() {
+    for a in -127i8..=127 {
+        assert_eq!(chimera_core::modulation::amount_scale(a).to_bits(), (a as f32 / 127.0).to_bits(), "{a}");
+    }
+}
+```
+
 - [ ] **Step 9: Run the tests**
 
-Run: `env $T cargo test -p chimera-core --test routing_test --test flt_page_test --test binding_test --test golden_test --test matrix_view_test`
-Expected: PASS; every golden but the parked two is bit-identical (ENV 1's velocity factor and the always-running LFO reach no golden's route).
+Run: `env $T cargo test -p chimera-core`
+Expected: PASS except `screen_goldens_match` (next step). Every audio golden is bit-identical: ENV 1's velocity factor and the always-running LFO reach no golden's route, and the table is the divide.
 
 - [ ] **Step 10: Look at the screens and re-record**
 
 Look at `bigviz_filter`: the dash in slot a, then CUTOFF, RESO and MODE `LP24`, then ENV `0%` and KEY `0%` with centred bipolar bars. Look at `mod_matrix`: rows E1, LF1, E2 (three visible; the column shows its routes), and the focus band reads `LF1 → FLT CUTOFF`. Re-record only those two rows (`SCREEN_RECORD=1 …`).
 
-- [ ] **Step 11: Commit, and mark the slice**
+- [ ] **Step 11: Commit**
 
 ```bash
 cargo fmt --all && just check
@@ -1652,17 +1782,16 @@ git add chimera-core/src/modulation.rs chimera-core/src/dsp/voice.rs chimera-cor
   chimera-core/src/block.rs chimera-core/src/ui/fmt.rs chimera-core/src/ui/block_def.rs \
   chimera-core/src/ui/block_registry.rs chimera-core/src/ui/mod_grid.rs chimera-core/src/ui/mod.rs \
   chimera-core/tests/routing_test.rs chimera-core/tests/flt_page_test.rs chimera-core/tests/binding_test.rs \
+  chimera-core/tests/matrix_view_test.rs chimera-core/tests/ui_routing_test.rs \
   chimera-core/tests/screen_golden_test.rs
 git commit -m "Eight matrix sources; FLT's ENV, KEY and LFO are views of their CUTOFF routes"
-GH_TOKEN=$(gh auth token -u joegiralt) gh issue comment 121 -R joegiralt/chimera \
-  --body "First slice on filter-routing (Tasks 1–4 of docs/superpowers/plans/2026-09-28-filter-routing.md): MODE on FLT and FLT › MODE, FM retired (ids 3–5), ENV / KEY / LFO are the routes ENV 1 / NOTE / LFO 1 → CUTOFF, CUTOFF in octaves, g ramped per block. Factory Sounds bit-identical."
 ```
 
 ---
 
 ### Task 5: Envelope A, and ENV 1–3 on it
 
-Envelope A is built as a pure core (`dsp/modulator/`), and `Envelope` becomes the ENV slot running it. `EnvParams` takes its new fields: A, D and R become positions, and H, TYPE, SPEED, HOLD and TIME arrive. All three ENV slots run per block, which fills sources 0, 2 and 3 and removes today's per-sample amp-envelope tick and its divide. The role-named `BlockRef`s become `BlockRef::Env(EnvSlot)`, and the three unreachable envelope pages and `ENVELOPE_CHAIN` retire. TYPE B is not on a page until Task 15; until Task 6 a slot runs A whatever its TYPE.
+Envelope A is built as a pure core (`dsp/modulator/`), and `Envelope` becomes the ENV slot running it. `EnvParams` takes its new fields: A, D and R become positions, and H, TYPE, SPEED, HOLD and TIME arrive. All three ENV slots run per block, which fills sources 0, 2 and 3 and removes today's per-sample amp-envelope tick and its divide. The role-named `BlockRef`s become `BlockRef::Env(EnvSlot)`, and the three unreachable envelope pages and `ENVELOPE_CHAIN` retire. TYPE B is not on a page until Task 16; until Task 6 a slot runs A whatever its TYPE. Each path (per sample and per block) is held to an f64 reference of the spec's formulas (ADR 0036), and the per-sample path used on the VCA runs each stage in a tight loop.
 
 **Files:**
 - Create: `chimera-core/src/dsp/modulator/mod.rs`, `chimera-core/src/dsp/modulator/law.rs`, `chimera-core/src/dsp/modulator/env_a.rs`
@@ -1684,8 +1813,8 @@ Envelope A is built as a pure core (`dsp/modulator/`), and `Envelope` becomes th
 - Produces:
   - `dsp::modulator::{EnvSlot, EnvType, EnvSpeed, HoldPos, pick}`: `EnvSlot::{ALL, index()}`; each choice enum `#[repr(u8)]` with `ALL`; `pick<T: Copy>(all: &[T], v: f32) -> T`.
   - `dsp::modulator::law::{Range { min, oct }, Range::at(self, p) -> f32, SpeedRanges { hold, attack, dec_rel }, speed_ranges(EnvSpeed) -> SpeedRanges, rc_k(tau, fs) -> f32, rc_coeff(k) -> f32}`.
-  - `dsp::modulator::env_a::{Stage, ACoefs, ACoefs::new(&EnvParams, time: f32, sample_rate: u32), EnvA}`; `EnvA::{new, stage, level, is_idle, rising, note_on, tick(&mut self, &ACoefs, key: bool) -> f32, advance(&mut self, &ACoefs, key: bool, n: u32), stage_samples(&self, &ACoefs) -> u32, enter(&mut self, level: f32, rising: bool, key: bool, &ACoefs)}`.
-  - `dsp::envelope::{EnvMods { level: Option<f32>, time, rise, fall, shape }, EnvMods::NONE, Envelope}`; `Envelope::{new, note_on(&mut self, &EnvParams), output(&self) -> f32, is_idle(&self) -> bool, run_block(&mut self, &EnvParams, &EnvMods, key: bool, sample_rate: u32, vca: Option<(&mut [f32; BLOCK_SIZE], f32)>) -> f32}`. `run_block` returns the block-start output; with `vca` it ticks per sample adding `amount · output` into the buffer.
+  - `dsp::modulator::env_a::{Stage, ACoefs, ACoefs::new(&EnvParams, time: f32, sample_rate: u32), EnvA}`; `EnvA::{new, stage, level, is_idle, rising, note_on, tick(&mut self, &ACoefs, key: bool) -> f32, fill(&mut self, &ACoefs, key: bool, out: &mut [f32]), advance(&mut self, &ACoefs, key: bool, n: u32), stage_samples(&self, &ACoefs) -> u32, enter(&mut self, level: f32, rising: bool, key: bool, sus: f32)}`. `fill` writes the levels `tick` would, with the same arithmetic.
+  - `dsp::envelope::{EnvMods { level: Option<f32>, time }, EnvMods::NONE, Envelope}`; `Envelope::{new, note_on(&mut self, &EnvParams), output(&self) -> f32, is_idle(&self) -> bool, run_block(&mut self, &EnvParams, &EnvMods, key: bool, sample_rate: u32, vca: Option<(&mut [f32; BLOCK_SIZE], f32)>) -> f32}`. `run_block` returns the block-start output; with `vca` it fills a block of levels and adds `amount · level[n] · peak[n]` into the buffer, the peak ramped from the last block's LEVEL to this one's.
   - `EnvParams` ids `ATTACK 0, DECAY 1, SUSTAIN 2, RELEASE 3, LEVEL 4, VEL_SENS 5, HOLD 6, TYPE 7, SPEED 8, HOLD_POS 9, TIME 10`; fields `attack, decay, sustain, release, level, vel_sens, hold, env_type, speed, hold_pos, time`.
   - `addr::BlockRef::Env(EnvSlot)`; `ModSource::of_env(EnvSlot) -> ModSource`.
 
@@ -1798,7 +1927,7 @@ fn stage_times_follow_the_sample_rate() {
 #[test]
 fn hold_positions() {
     let mut p = params(EnvSpeed::Med);
-    p.hold = 0.8; // about 0.57 s
+    p.hold = 0.8; // about 0.40 s
     let hold = (speed_ranges(EnvSpeed::Med).hold.at(0.8) * SR as f32) as u32;
     let stages = |p: &EnvParams, key_for: usize| {
         let c = ACoefs::new(p, 0.0, SR);
@@ -1814,10 +1943,12 @@ fn hold_positions() {
     // OFF: no hold stage, whatever H.
     p.hold_pos = HoldPos::Off;
     assert!(!stages(&p, 100_000).contains(&Stage::Hold));
-    // AHDSR: holds 1 for H after the attack.
+    // AHDSR: holds 1 for H after the attack. The tick that ends the attack
+    // already reports Hold (at level 1, the attack's last sample), then H's
+    // `hold` samples follow.
     p.hold_pos = HoldPos::Ahdsr;
     let s = stages(&p, 100_000);
-    assert_eq!(s.iter().filter(|&&x| x == Stage::Hold).count() as u32, hold);
+    assert_eq!(s.iter().filter(|&&x| x == Stage::Hold).count() as u32, hold + 1);
     // GATE EXT: a one-sample gate still plays attack and decay, and
     // releases H after the note-on.
     p.hold_pos = HoldPos::GateExt;
@@ -1840,9 +1971,110 @@ fn tick_is_a_geometric_step() {
     assert!((r1 - r2).abs() < 1e-4, "{r1} {r2}");
 }
 
-/// `advance(64)` equals 64 ticks across every stage boundary.
+/// Envelope A from the spec's formulas in f64: the reference both f32
+/// paths are held to (ADR 0036). Same stages, gate and settling as `EnvA`.
+struct RefA {
+    stage: Stage,
+    level: f64,
+    hold_left: u64,
+    since_on: u64,
+    ca: f64,
+    cd: f64,
+    cr: f64,
+    sus: f64,
+    hold: u64,
+    hold_pos: HoldPos,
+}
+
+impl RefA {
+    fn new(p: &EnvParams, sr: u32) -> Self {
+        let fs = sr as f64;
+        // The manual's ranges in seconds; a position p is min·(max/min)^p.
+        let (h, a, dr) = match p.speed {
+            EnvSpeed::Fast => ((1e-6, 2.5), (2e-4, 1.5), (6e-4, 2.5)),
+            EnvSpeed::Med => ((1e-6, 10.0), (2e-3, 10.0), (3.5e-3, 10.0)),
+            EnvSpeed::Slow => ((1e-6, 60.0), (9.3e-3, 60.0), (3e-2, 60.0)),
+        };
+        let at = |(lo, hi): (f64, f64), x: f32| lo * (hi / lo).powf(x as f64);
+        // c = 1 − e^(−1/(τ·fs)), τ = time / ln(the stage's overshoot ratio).
+        let c = |secs: f64, ln: f64| 1.0 - (-ln / (secs * fs)).exp();
+        Self {
+            stage: Stage::Idle,
+            level: 0.0,
+            hold_left: 0,
+            since_on: u64::MAX,
+            ca: c(at(a, p.attack), (1.3f64 / 0.3).ln()),
+            cd: c(at(dr, p.decay), 101f64.ln()),
+            cr: c(at(dr, p.release), 101f64.ln()),
+            sus: p.sustain as f64,
+            hold: (at(h, p.hold) * fs) as u64,
+            hold_pos: p.hold_pos,
+        }
+    }
+
+    fn note_on(&mut self) {
+        self.stage = Stage::Attack;
+        self.since_on = 0;
+    }
+
+    fn tick(&mut self, key: bool) -> f64 {
+        let gate = key || (self.hold_pos == HoldPos::GateExt && self.since_on < self.hold);
+        self.since_on = self.since_on.saturating_add(1);
+        let running = matches!(
+            self.stage,
+            Stage::Attack | Stage::Hold | Stage::Decay | Stage::Sustain
+        );
+        if running && !gate {
+            self.stage = Stage::Release;
+        } else if self.stage == Stage::Hold && self.hold_left == 0 {
+            self.stage = Stage::Decay;
+        } else if self.stage == Stage::Sustain && self.level > self.sus {
+            self.stage = Stage::Decay;
+        } else if self.stage == Stage::Decay && self.level <= self.sus {
+            self.stage = Stage::Sustain;
+        }
+        let (c, t, end, rising) = match self.stage {
+            Stage::Hold => {
+                self.hold_left -= 1;
+                return self.level;
+            }
+            Stage::Attack => (self.ca, 1.3, 1.0, true),
+            Stage::Decay => (self.cd, self.sus - 0.01, self.sus, false),
+            Stage::Release => (self.cr, -0.01, 0.0, false),
+            _ => return self.level,
+        };
+        let l = self.level + c * (t - self.level);
+        if (rising && l >= end) || (!rising && l <= end) {
+            self.level = end;
+            self.stage = match self.stage {
+                Stage::Attack if self.hold_pos == HoldPos::Ahdsr && self.hold > 0 => {
+                    self.hold_left = self.hold;
+                    Stage::Hold
+                }
+                Stage::Attack => Stage::Decay,
+                Stage::Decay => Stage::Sustain,
+                _ => Stage::Idle,
+            };
+        } else {
+            self.level = l;
+        }
+        self.level
+    }
+}
+
+/// `level` (and `stage`, if given) at sample `n` match the reference at
+/// n − 1, n or n + 1 within 1e-4: ADR 0036's tolerance, which supersedes
+/// the spec's 1e-6 (f32 cannot hold it).
+fn near(refs: &[(Stage, f64)], n: usize, stage: Option<Stage>, level: f32) -> bool {
+    (n.saturating_sub(1)..=(n + 1).min(refs.len() - 1)).any(|m| {
+        stage.is_none_or(|s| s == refs[m].0) && (refs[m].1 - level as f64).abs() <= 1e-4
+    })
+}
+
+/// The per-sample paths (`tick`, `fill`) and the per-block path
+/// (`advance`) each match the f64 reference across every stage boundary.
 #[test]
-fn advance_matches_ticks() {
+fn each_path_matches_an_f64_reference() {
     for (speed, hold_pos, hold, a, d, s, r) in [
         (EnvSpeed::Fast, HoldPos::Off, 0.0, 0.0, 0.3, 0.5, 0.3), // attack ends mid-block
         (EnvSpeed::Med, HoldPos::Ahdsr, 0.55, 0.19, 0.4, 0.2, 0.4), // a hold stage
@@ -1859,25 +2091,63 @@ fn advance_matches_ticks() {
             release: r,
             ..EnvParams::default()
         };
+        const BLOCKS: usize = 300;
+        let key = |b: usize| b < 150;
+        let mut reference = RefA::new(&p, SR);
+        reference.note_on();
+        let refs: Vec<(Stage, f64)> = (0..BLOCKS * BLOCK_SIZE)
+            .map(|n| {
+                let l = reference.tick(key(n / BLOCK_SIZE));
+                (reference.stage, l)
+            })
+            .collect();
         let c = ACoefs::new(&p, 0.0, SR);
-        let (mut blocked, mut ticked) = (EnvA::new(), EnvA::new());
-        blocked.note_on();
-        ticked.note_on();
-        for b in 0..300 {
-            let key = b < 150;
-            blocked.advance(&c, key, BLOCK_SIZE as u32);
-            for _ in 0..BLOCK_SIZE {
-                ticked.tick(&c, key);
+        let (mut ticked, mut filled, mut blocked) = (EnvA::new(), EnvA::new(), EnvA::new());
+        for e in [&mut ticked, &mut filled, &mut blocked] {
+            e.note_on();
+        }
+        for b in 0..BLOCKS {
+            let mut buf = [0.0f32; BLOCK_SIZE];
+            filled.fill(&c, key(b), &mut buf);
+            blocked.advance(&c, key(b), BLOCK_SIZE as u32);
+            for (i, &f) in buf.iter().enumerate() {
+                let n = b * BLOCK_SIZE + i;
+                let t = ticked.tick(&c, key(b));
+                assert!(near(&refs, n, Some(ticked.stage()), t), "tick {speed:?} {hold_pos:?} {n}: {t} vs {:?}", refs[n]);
+                assert!(near(&refs, n, None, f), "fill {speed:?} {hold_pos:?} {n}: {f} vs {:?}", refs[n]);
             }
-            assert_eq!(blocked.stage(), ticked.stage(), "{speed:?} {hold_pos:?} block {b}");
+            let n = (b + 1) * BLOCK_SIZE - 1;
             assert!(
-                (blocked.level() - ticked.level()).abs() < 2e-6,
-                "{speed:?} {hold_pos:?} block {b}: {} vs {}",
+                near(&refs, n, Some(blocked.stage()), blocked.level()),
+                "advance {speed:?} {hold_pos:?} block {b}: {} vs {:?}",
                 blocked.level(),
-                ticked.level()
+                refs[n]
             );
+            assert!(near(&refs, n, Some(filled.stage()), filled.level()), "fill's stage, block {b}");
         }
     }
+}
+
+/// A raised S doesn't lift a decaying level: it sustains where it is.
+#[test]
+fn raising_s_mid_decay_holds_the_level() {
+    let mut p = params(EnvSpeed::Med);
+    p.sustain = 0.2;
+    let c = ACoefs::new(&p, 0.0, SR);
+    let mut e = EnvA::new();
+    e.note_on();
+    while e.stage() != Stage::Decay {
+        e.tick(&c, true);
+    }
+    for _ in 0..2000 {
+        e.tick(&c, true); // decaying toward 0.2
+    }
+    let before = e.level();
+    p.sustain = 0.9;
+    let c = ACoefs::new(&p, 0.0, SR);
+    let after = e.tick(&c, true);
+    assert_eq!(e.stage(), Stage::Sustain);
+    assert_eq!(after, before);
 }
 
 /// A release during the attack and a note-on during the release leave the
@@ -1919,6 +2189,28 @@ fn level_sets_the_peak() {
         // Block starts sample the peak within 0.01 (the decay has begun).
         assert!((peak - want).abs() < 0.01, "{level:?}: {peak}");
     }
+}
+
+/// On the VCA path a LEVEL change ramps across the block instead of
+/// stepping (no zipper from an LFO → LEVEL route).
+#[test]
+fn a_level_change_ramps_on_the_vca_path() {
+    let p = EnvParams { sustain: 0.7, ..EnvParams::default() };
+    let full = EnvMods { level: Some(1.0), ..EnvMods::NONE };
+    let half = EnvMods { level: Some(0.5), ..EnvMods::NONE };
+    let mut e = Envelope::new();
+    e.note_on(&p);
+    for _ in 0..1000 {
+        e.run_block(&p, &full, true, SR, None); // well into sustain at 0.7
+    }
+    let mut g = [0.0f32; BLOCK_SIZE];
+    e.run_block(&p, &full, true, SR, Some((&mut g, 1.0)));
+    let mut g = [0.0f32; BLOCK_SIZE];
+    e.run_block(&p, &half, true, SR, Some((&mut g, 1.0)));
+    let step = 0.7 * 0.5 / BLOCK_SIZE as f32;
+    assert!((g[BLOCK_SIZE - 1] - 0.35).abs() < 1e-4, "{}", g[BLOCK_SIZE - 1]);
+    assert!((g[0] - (0.7 - step)).abs() < 1e-4, "{}", g[0]);
+    assert!(g.windows(2).all(|w| (w[0] - w[1] - step).abs() < 1e-5), "an even ramp");
 }
 
 /// TIME +100 % makes every stage 32 × shorter; −100 % 32 × longer.
@@ -2229,14 +2521,15 @@ impl EnvA {
     }
 
     /// Take over at `level` after a TYPE change (spec § 1): the level stays.
-    pub fn enter(&mut self, level: f32, rising: bool, key: bool, c: &ACoefs) {
+    /// `sus` is S, 0..1.
+    pub fn enter(&mut self, level: f32, rising: bool, key: bool, sus: f32) {
         self.level = level.max(0.0).min(1.0);
         self.since_on = u32::MAX;
         self.stage = match (key, rising) {
             (false, _) if self.level > 0.0 => Stage::Release,
             (false, _) => Stage::Idle,
             (true, true) => Stage::Attack,
-            (true, false) if self.level > c.sus => Stage::Decay,
+            (true, false) if self.level > sus => Stage::Decay,
             (true, false) => Stage::Sustain,
         };
     }
@@ -2246,7 +2539,7 @@ impl EnvA {
     }
 
     /// The stage changes that take no time: a fallen gate, a finished
-    /// hold, a sustain above a lowered S.
+    /// hold, a sustain above a lowered S, a decay under a raised S.
     fn settle(&mut self, c: &ACoefs, gate: bool) {
         let running = matches!(
             self.stage,
@@ -2258,6 +2551,9 @@ impl EnvA {
             self.stage = Stage::Decay;
         } else if self.stage == Stage::Sustain && self.level > c.sus {
             self.stage = Stage::Decay;
+        } else if self.stage == Stage::Decay && self.level <= c.sus {
+            // A raised S doesn't lift a decaying level: sustain where it is.
+            self.stage = Stage::Sustain;
         }
     }
 
@@ -2304,8 +2600,58 @@ impl EnvA {
         self.level
     }
 
+    /// A block of per-sample levels, as `tick` would give them (the same
+    /// arithmetic), for the VCA: one tight loop per stretch of a stage, the
+    /// gate and settling checked once per stretch, not per sample.
+    pub fn fill(&mut self, c: &ACoefs, key: bool, out: &mut [f32]) {
+        let mut i = 0;
+        while i < out.len() {
+            let gate = self.gate(c, key);
+            self.settle(c, gate);
+            let left = (out.len() - i) as u32;
+            // GATE EXT's own gate falls inside this stretch: stop there.
+            let span = (if gate && !key { left.min(c.hold - self.since_on) } else { left }) as usize;
+            let used = match self.rc(c) {
+                None => {
+                    let m = if self.stage == Stage::Hold {
+                        let m = span.min(self.hold_left as usize);
+                        self.hold_left -= m as u32;
+                        m
+                    } else {
+                        span
+                    };
+                    out[i..i + m].fill(self.level);
+                    m
+                }
+                Some((rc, t, end, rising)) => {
+                    let mut l = self.level;
+                    let mut m = 0;
+                    let mut ended = false;
+                    while m < span {
+                        l += rc.c * (t - l);
+                        m += 1;
+                        if (rising && l >= end) || (!rising && l <= end) {
+                            ended = true;
+                            break;
+                        }
+                        out[i + m - 1] = l;
+                    }
+                    if ended {
+                        self.finish(c, end);
+                        out[i + m - 1] = end;
+                    } else {
+                        self.level = l;
+                    }
+                    m
+                }
+            };
+            self.since_on = self.since_on.saturating_add(used as u32);
+            i += used;
+        }
+    }
+
     /// `n` samples in closed form, `L_n = T + (L − T)·2^(k·n)`, stage ends
-    /// placed inside the block; equals `n` ticks.
+    /// placed inside the block (within ±1 sample of the ticks, ADR 0036).
     pub fn advance(&mut self, c: &ACoefs, key: bool, mut n: u32) {
         while n > 0 {
             let gate = self.gate(c, key);
@@ -2533,34 +2879,69 @@ use crate::dsp::modulator::env_a::{ACoefs, EnvA};
 use crate::params::EnvParams;
 
 /// What the matrix feeds an ENV slot, from the previous block (spec
-/// § Signal flow 1), so a slot never waits on the matrix it feeds.
+/// § Signal flow 1), so a slot never waits on the matrix it feeds. Task 6
+/// adds RISE, FALL and SHAPE as `slides`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct EnvMods {
     /// The peak with a route into LEVEL, `clamp(Σ, 0, 1)`; `None` without one (peak 1).
     pub level: Option<f32>,
     /// TIME's Σ.
     pub time: f32,
-    /// RISE, FALL and SHAPE's Σ, added to their positions (type B).
-    pub rise: f32,
-    pub fall: f32,
-    pub shape: f32,
 }
 
 impl EnvMods {
     pub const NONE: Self = Self {
         level: None,
         time: 0.0,
-        rise: 0.0,
-        fall: 0.0,
-        shape: 0.0,
     };
+}
+
+/// What an A slot's coefficients were built from: equal inputs reuse them.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct AKey {
+    stages: [f32; 5], // attack, decay, sustain, release, hold
+    speed: crate::dsp::modulator::EnvSpeed,
+    hold_pos: crate::dsp::modulator::HoldPos,
+    time: f32,
+    sample_rate: u32,
+}
+
+impl AKey {
+    fn of(p: &EnvParams, time: f32, sample_rate: u32) -> Self {
+        Self {
+            stages: [p.attack, p.decay, p.sustain, p.release, p.hold],
+            speed: p.speed,
+            hold_pos: p.hold_pos,
+            time,
+            sample_rate,
+        }
+    }
+}
+
+/// `gain[n] += amount · level[n] · peak[n]`, the peak ramped from `from` to
+/// `to` across the block, so a route into LEVEL doesn't zipper the VCA.
+fn add_ramped(gain: &mut [f32; BLOCK_SIZE], level: &[f32; BLOCK_SIZE], amount: f32, from: f32, to: f32) {
+    if from == to {
+        let a = amount * to;
+        for (g, l) in gain.iter_mut().zip(level) {
+            *g += a * l;
+        }
+    } else {
+        let step = (to - from) / BLOCK_SIZE as f32;
+        for (n, (g, l)) in gain.iter_mut().zip(level).enumerate() {
+            *g += amount * l * (from + step * (n + 1) as f32);
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
 pub struct Envelope {
     a: EnvA,
-    /// This block's peak (LEVEL).
+    /// The last A coefficients and their inputs.
+    ac: Option<(AKey, ACoefs)>,
+    /// This block's peak (LEVEL) and the last block's.
     peak: f32,
+    prev_peak: f32,
 }
 
 impl Default for Envelope {
@@ -2573,7 +2954,22 @@ impl Envelope {
     pub const fn new() -> Self {
         Self {
             a: EnvA::new(),
+            ac: None,
             peak: 1.0,
+            prev_peak: 1.0,
+        }
+    }
+
+    /// This block's A coefficients, rebuilt only when an input changed.
+    fn a_coefs(&mut self, p: &EnvParams, time: f32, sample_rate: u32) -> ACoefs {
+        let key = AKey::of(p, time, sample_rate);
+        match self.ac {
+            Some((k, c)) if k == key => c,
+            _ => {
+                let c = ACoefs::new(p, time, sample_rate);
+                self.ac = Some((key, c));
+                c
+            }
         }
     }
 
@@ -2591,8 +2987,9 @@ impl Envelope {
     }
 
     /// One block. Returns the output at the block's start. With `vca`, the
-    /// slot ticks per sample and adds `amount ·` each output into the
-    /// buffer (the VCA's sum); otherwise it advances in closed form.
+    /// slot fills a block of levels and adds `amount · level · peak` into
+    /// the buffer (the VCA's sum), the peak ramped per sample; otherwise it
+    /// advances in closed form.
     pub fn run_block(
         &mut self,
         p: &EnvParams,
@@ -2601,14 +2998,15 @@ impl Envelope {
         sample_rate: u32,
         vca: Option<(&mut [f32; BLOCK_SIZE], f32)>,
     ) -> f32 {
-        let c = ACoefs::new(p, m.time, sample_rate);
+        let c = self.a_coefs(p, m.time, sample_rate);
+        self.prev_peak = self.peak;
         self.peak = m.level.unwrap_or(1.0);
         let start = self.output();
         match vca {
             Some((gain, amount)) => {
-                for g in gain.iter_mut() {
-                    *g += amount * self.a.tick(&c, key) * self.peak;
-                }
+                let mut level = [0.0f32; BLOCK_SIZE];
+                self.a.fill(&c, key, &mut level);
+                add_ramped(gain, &level, amount, self.prev_peak, self.peak);
             }
             None => self.a.advance(&c, key, BLOCK_SIZE as u32),
         }
@@ -2703,8 +3101,8 @@ Every file that names `EnvSlot` imports `chimera_core::dsp::modulator::EnvSlot`.
 
 - [ ] **Step 11: Run the tests**
 
-Run: `env $T cargo test -p chimera-core --test env_a_test --test golden_test --test routing_test --test flt_page_test --test addr_test --test page_block_test --test part_page_test --test binding_test`
-Expected: PASS; the goldens (the factory eight too) are bit-identical: no Sound or golden routes an ENV source.
+Run: `env $T cargo test -p chimera-core`
+Expected: PASS except `screen_goldens_match` (`bigviz_env`, next step). The goldens (the factory eight too) are bit-identical: no Sound or golden routes an ENV source.
 
 - [ ] **Step 12: Look at the ENV page and re-record**
 
@@ -2728,25 +3126,25 @@ git commit -m "Envelope A: SPEED ranges, HOLD POSITION, one RC shape; ENV 1–3 
 
 ### Task 6: Envelope B and the ENV slot's TYPE changes
 
-Envelope B (`FuncGen`) is the Cascadia's function generator: ENV, LFO and BURST modes, each with its FORMs, and RISE, FALL and SHAPE sliders whose meaning follows MODE and FORM. `EnvParams` gains MODE, FORM, RISE, FALL and SHAPE (ids 11–15). `Envelope` runs A or B by TYPE and handles a TYPE, MODE or FORM change without a jump (spec § 1). ENV 3 defaults to B (ENV, AD).
+Envelope B (`FuncGen`) is the Cascadia's function generator: ENV, LFO and BURST modes, each with its FORMs, and RISE, FALL and SHAPE sliders whose meaning follows MODE and FORM. `EnvParams` gains MODE, FORM, RISE, FALL and SHAPE (ids 11–15). `Envelope` runs A or B by TYPE and handles a TYPE, MODE or FORM change without a jump (spec § 1). ENV 3 defaults to B (ENV, AD). MODE and FORM live in types: each MODE has its own FORM enum and its own stored FORM, and `Func` names what B runs, so a mismatch can't be represented. Per block, every rate, including the repeat of ENV CYCLE and BURST CYCLE, stops at the block rate ÷ 8 of the running sample rate. The slot computes only the running TYPE's coefficients, reuses them while their inputs hold, and its per-sample path fills a block of levels in tight loops.
 
 **Files:**
-- Modify: `chimera-core/src/dsp/modulator/mod.rs` (`FuncMode`, `FuncForm`, `FuncParams`; `pub mod func;`)
-- Modify: `chimera-core/src/dsp/modulator/law.rs` (B's ranges, `BLOCK_RATE_MAX`, `curve`, `curve_inv`, `shape_w`, `tilt`)
-- Create: `chimera-core/src/dsp/modulator/func.rs` (`Slides`, `BCoefs`, `FuncGen`)
-- Modify: `chimera-core/src/dsp/envelope.rs` (A or B, `GLIDE`, the change rules)
+- Modify: `chimera-core/src/dsp/modulator/mod.rs` (`FuncMode`, `EnvForm`, `LfoForm`, `Func`, `FuncParams`, `Glide`; `pub mod func;`)
+- Modify: `chimera-core/src/dsp/modulator/law.rs` (B's ranges, `block_rate_max`, `curve`, `curve_inv`, `shape_w`, `tilt`)
+- Create: `chimera-core/src/dsp/modulator/func.rs` (`Slides`, `BCoefs`, `FuncGen`, and a unit test of the clamp)
+- Modify: `chimera-core/src/dsp/envelope.rs` (`EnvMods.slides`; A or B; the change rules; coefficient caches)
 - Modify: `chimera-core/src/params.rs` (`EnvParams.func`, ids 11–15, `ParamSnapshot::default` ENV 3 = B)
 - Create: `chimera-core/tests/func_gen_test.rs`, `chimera-core/tests/env_slot_test.rs`
 
 **Interfaces:**
 - Consumes: Task 5's `EnvA`, `ACoefs`, `Range`, `rc_k`, `rc_coeff`, `EnvMods`.
 - Produces:
-  - `dsp::modulator::FuncMode { Env = 0, Lfo = 1, Burst = 2 }` with `ALL` and `forms(self) -> &'static [FuncForm; 3]` (`[0]` is the default: ENV and BURST `[Ad, Ahr, Cycle]`, LFO `[Free, Sync, Lfv]`).
-  - `dsp::modulator::FuncForm { Cycle = 0, Ahr = 1, Ad = 2, Free = 3, Sync = 4, Lfv = 5 }`.
-  - `dsp::modulator::FuncParams { mode, forms: [u8; 3], rise, fall, shape }` with `FuncParams::ENV`, `FuncParams::LFO`, `form(&self) -> FuncForm`, `form_index(&self) -> f32`, `set_form_index(&mut self, f32)`.
-  - `law::{B_TIME, B_RATE, BURST_RATE, BURST_LEN: Range, BLOCK_RATE_MAX: f32, curve(x, w), curve_inv(y, w), shape_w(shape), tilt(p, r)}`.
-  - `func::{Slides { rise, fall, shape }, BCoefs::new(&FuncParams, &Slides, sample_rate: u32, per_sample: bool), FuncGen}`; `FuncGen::{new, set(&mut self, &BCoefs), note_on(&mut self, FuncMode, FuncForm), key_up(&mut self), output(&self) -> f32, tick(&mut self, &BCoefs, key) -> f32, advance(&mut self, &BCoefs, key, n: u32), holds(&self, key) -> bool, is_idle(&self) -> bool, rising(&self) -> bool, enter_env(&mut self, level, rising), enter_burst(&mut self, key)}`.
-  - `envelope::GLIDE: u16 = 256`; `Envelope::{holds(&self, key: bool) -> bool, gliding(&self) -> bool}`.
+  - `dsp::modulator::FuncMode { Env = 0, Lfo = 1, Burst = 2 }`, `EnvForm { Ad = 0, Ahr = 1, Cycle = 2 }` (ENV's and BURST's FORMs), `LfoForm { Free = 0, Sync = 1, Lfv = 2 }`, each with `ALL`, default first; `Func { Env(EnvForm), Lfo(LfoForm), Burst(EnvForm) }` with `mode(self) -> FuncMode`.
+  - `dsp::modulator::FuncParams { mode, env_form, lfo_form, burst_form, rise, fall, shape }` with `FuncParams::ENV`, `FuncParams::LFO`, `func(&self) -> Func`, `set_func(&mut self, Func)`, `form_index(&self) -> f32`, `set_form_index(&mut self, f32)`.
+  - `dsp::modulator::Glide` (`SAMPLES = 256`; `start(&mut self, d)`, `value(&self)`, `at(&self, n)`, `advance(&mut self, n)`, `active(&self)`), shared with Task 7's `Lfo`.
+  - `law::{B_TIME, B_RATE, BURST_RATE, BURST_LEN: Range, block_rate_max(sample_rate: u32) -> f32, curve(x, w), curve_inv(y, w), shape_w(shape), tilt(p, r)}`.
+  - `func::{Slides { rise, fall, shape }, BCoefs::new(&FuncParams, &Slides, sample_rate: u32, per_sample: bool), FuncGen}`; `FuncGen::{new, set(&mut self, &BCoefs), note_on(&mut self, Func), key_up(&mut self), output(&self) -> f32, tick(&mut self, &BCoefs, key) -> f32, fill(&mut self, &BCoefs, key, out: &mut [f32]), advance(&mut self, &BCoefs, key, n: u32), holds(&self, key) -> bool, is_idle(&self) -> bool, rising(&self) -> bool, enter_env(&mut self, level, rising), enter_burst(&mut self, key)}`.
+  - `envelope::EnvMods` gains `slides: Slides`; `Envelope::{holds(&self, key: bool) -> bool, gliding(&self) -> bool}`.
   - `EnvParams` ids `MODE 11, FORM 12, RISE 13, FALL 14, SHAPE 15`; field `func: FuncParams`.
 
 - [ ] **Step 1: Write the failing tests**
@@ -2757,17 +3155,16 @@ Create `chimera-core/tests/func_gen_test.rs`:
 //! Envelope B (filter-routing spec § Envelope B, § Tests "Envelope B").
 
 use chimera_core::dsp::modulator::func::{BCoefs, FuncGen, Slides};
-use chimera_core::dsp::modulator::law::{B_RATE, B_TIME, BLOCK_RATE_MAX, BURST_LEN};
-use chimera_core::dsp::modulator::{FuncForm, FuncMode, FuncParams};
+use chimera_core::dsp::modulator::law::{B_RATE, B_TIME, BURST_LEN, block_rate_max};
+use chimera_core::dsp::modulator::{EnvForm, Func, FuncParams, LfoForm};
 use chimera_hal::BLOCK_SIZE;
 
 const SR: u32 = 48_000;
 
-/// `FuncParams` for `mode` with `form` chosen and the three sliders.
-fn fp(mode: FuncMode, form: FuncForm, rise: f32, fall: f32, shape: f32) -> FuncParams {
-    let mut p = FuncParams { mode, rise, fall, shape, ..FuncParams::ENV };
-    let i = mode.forms().iter().position(|&f| f == form).expect("form of mode");
-    p.set_form_index(i as f32);
+/// `FuncParams` running `f`, with the three sliders.
+fn fp(f: Func, rise: f32, fall: f32, shape: f32) -> FuncParams {
+    let mut p = FuncParams { rise, fall, shape, ..FuncParams::ENV };
+    p.set_func(f);
     p
 }
 
@@ -2780,7 +3177,7 @@ fn run(p: &FuncParams, n: usize, key_for: usize) -> (Vec<f32>, FuncGen) {
     let c = coefs(p, true);
     let mut g = FuncGen::new();
     g.set(&c);
-    g.note_on(p.mode, p.form());
+    g.note_on(p.func());
     let out = (0..n)
         .map(|i| {
             let key = i < key_for;
@@ -2799,7 +3196,7 @@ fn secs(n: usize) -> f32 {
 
 #[test]
 fn ad_ignores_key_up_and_ends_idle() {
-    let p = fp(FuncMode::Env, FuncForm::Ad, 0.2, 0.3, 0.5);
+    let p = fp(Func::Env(EnvForm::Ad), 0.2, 0.3, 0.5);
     let (out, g) = run(&p, SR as usize, 10);
     let top = out
         .iter()
@@ -2815,7 +3212,7 @@ fn ad_ignores_key_up_and_ends_idle() {
 
 #[test]
 fn ahr_holds_while_held_then_falls() {
-    let p = fp(FuncMode::Env, FuncForm::Ahr, 0.1, 0.2, 0.5);
+    let p = fp(Func::Env(EnvForm::Ahr), 0.1, 0.2, 0.5);
     let (out, g) = run(&p, 30_000, 20_000);
     assert!(out[5_000..20_000].iter().all(|&v| v == 1.0), "holds at 1");
     let gone = out.iter().rposition(|&v| v > 0.0).unwrap() + 1;
@@ -2828,7 +3225,7 @@ fn ahr_holds_while_held_then_falls() {
 
 #[test]
 fn cycle_period_is_rise_plus_fall() {
-    let p = fp(FuncMode::Env, FuncForm::Cycle, 0.1, 0.15, 0.5);
+    let p = fp(Func::Env(EnvForm::Cycle), 0.1, 0.15, 0.5);
     let (out, g) = run(&p, 4 * SR as usize, usize::MAX);
     let lows: Vec<usize> = (1..out.len() - 1)
         .filter(|&i| out[i] < out[i - 1] && out[i] <= out[i + 1])
@@ -2843,7 +3240,7 @@ fn cycle_period_is_rise_plus_fall() {
 #[test]
 fn shape_bends_the_segments() {
     for (shape, want) in [(0.0f32, 16.0 / 17.0), (0.5, 0.5), (1.0, 1.0 / 17.0)] {
-        let p = fp(FuncMode::Env, FuncForm::Ad, 0.3, 0.3, shape);
+        let p = fp(Func::Env(EnvForm::Ad), 0.3, 0.3, shape);
         let half = (B_TIME.at(0.3) * SR as f32 / 2.0) as usize;
         let (out, _) = run(&p, half, usize::MAX);
         assert!((out[half - 1] - want).abs() < 0.01, "SHAPE {shape}: {}", out[half - 1]);
@@ -2855,7 +3252,7 @@ fn shape_bends_the_segments() {
 #[test]
 fn lfo_free_tilts_and_offsets() {
     let at = |tilt: f32, phase_off: f32, phase: f32| {
-        let p = fp(FuncMode::Lfo, FuncForm::Free, 0.3, phase_off, tilt);
+        let p = fp(Func::Lfo(LfoForm::Free), 0.3, phase_off, tilt);
         let c = coefs(&p, true);
         let mut g = FuncGen::new();
         g.set(&c);
@@ -2871,19 +3268,19 @@ fn lfo_free_tilts_and_offsets() {
 
 #[test]
 fn sync_resets_the_phase_at_note_on() {
-    let p = fp(FuncMode::Lfo, FuncForm::Sync, 0.5, 0.0, 0.5);
+    let p = fp(Func::Lfo(LfoForm::Sync), 0.5, 0.0, 0.5);
     let c = coefs(&p, false);
     let mut g = FuncGen::new();
     g.set(&c);
     g.advance(&c, true, 1_000);
-    g.note_on(FuncMode::Lfo, FuncForm::Sync);
+    g.note_on(Func::Lfo(LfoForm::Sync));
     assert!((g.output() + 1.0).abs() < 1e-6, "the wave restarts at PHASE 0");
 }
 
 #[test]
 fn lfv_is_bounded_steps_by_delta_and_slews() {
     let steps = |slew: f32| {
-        let p = fp(FuncMode::Lfo, FuncForm::Lfv, 0.6, 0.4, slew);
+        let p = fp(Func::Lfo(LfoForm::Lfv), 0.6, 0.4, slew);
         let (out, _) = run(&p, 5 * SR as usize, usize::MAX);
         assert!(out.iter().all(|v| (-1.0..=1.0).contains(v)), "within ±1");
         let cycle = (SR as f32 / B_RATE.at(0.6)) as usize;
@@ -2899,17 +3296,17 @@ fn lfv_is_bounded_steps_by_delta_and_slews() {
 fn burst_forms() {
     let len = |fall: f32| (BURST_LEN.at(fall) * SR as f32) as usize;
     // AD: one burst LENGTH long, key held or not.
-    let p = fp(FuncMode::Burst, FuncForm::Ad, 0.9, 0.2, 0.5);
+    let p = fp(Func::Burst(EnvForm::Ad), 0.9, 0.2, 0.5);
     let (out, g) = run(&p, 3 * len(0.2), usize::MAX);
     let last = out.iter().rposition(|&v| v > 0.0).unwrap();
     assert!((last as i64 - len(0.2) as i64).abs() < 64, "{last}");
     assert!(g.is_idle());
     // AHR: sustains while held.
-    let p = fp(FuncMode::Burst, FuncForm::Ahr, 0.9, 0.2, 0.5);
+    let p = fp(Func::Burst(EnvForm::Ahr), 0.9, 0.2, 0.5);
     let (out, _) = run(&p, 4 * len(0.2), 3 * len(0.2));
     assert!(out[2 * len(0.2)..3 * len(0.2)].iter().any(|&v| v > 0.5), "pulses while held");
     // CYCLE: repeats while held; the running burst ends after key-up.
-    let p = fp(FuncMode::Burst, FuncForm::Cycle, 0.9, 0.2, 0.5);
+    let p = fp(Func::Burst(EnvForm::Cycle), 0.9, 0.2, 0.5);
     let (out, g) = run(&p, 6 * len(0.2), 3 * len(0.2) + len(0.2) / 2);
     assert!(out[2 * len(0.2)..3 * len(0.2)].iter().any(|&v| v > 0.3));
     assert!(out[5 * len(0.2)..].iter().all(|&v| v == 0.0));
@@ -2921,7 +3318,7 @@ fn burst_forms() {
 #[test]
 fn burst_tilt_moves_the_loudest_pulse() {
     for (tilt, where_) in [(0.0f32, 0.0f32), (0.5, 0.5), (1.0, 1.0)] {
-        let p = fp(FuncMode::Burst, FuncForm::Ad, 0.9, 0.3, tilt);
+        let p = fp(Func::Burst(EnvForm::Ad), 0.9, 0.3, tilt);
         let n = (BURST_LEN.at(0.3) * SR as f32) as usize;
         let (out, _) = run(&p, n, usize::MAX);
         let loudest = out
@@ -2933,44 +3330,93 @@ fn burst_tilt_moves_the_loudest_pulse() {
     }
 }
 
-/// Also at the desktop's 44.1 kHz (Review Focus 2).
+/// The block rate ÷ 8 (93.75 Hz at 48 kHz), and at the desktop's 44.1 kHz
+/// its own 86.1 Hz (Review Focus 2).
 #[test]
-fn per_block_rates_stop_at_93_75_hz() {
+fn per_block_rates_stop_at_an_eighth_of_the_block_rate() {
     for sr in [48_000u32, 44_100] {
-        let p = fp(FuncMode::Lfo, FuncForm::Free, 1.0, 0.0, 1.0); // 800 Hz asked
+        let p = fp(Func::Lfo(LfoForm::Free), 1.0, 0.0, 1.0); // 800 Hz asked
         let c = BCoefs::new(&p, &Slides::default(), sr, false);
         let mut g = FuncGen::new();
         g.set(&c);
         let v0 = g.output();
         g.advance(&c, true, BLOCK_SIZE as u32);
-        // A ramp moves 2·rate/fs per sample: 93.75 Hz over a block.
+        // A ramp moves 2·rate/fs per sample: the clamp over a block.
         let moved = g.output() - v0;
-        let want = 2.0 * BLOCK_RATE_MAX * BLOCK_SIZE as f32 / sr as f32;
+        assert_eq!(block_rate_max(sr), sr as f32 / BLOCK_SIZE as f32 / 8.0);
+        let want = 2.0 * block_rate_max(sr) * BLOCK_SIZE as f32 / sr as f32;
         assert!((moved - want).abs() < 1e-4, "{sr}: {moved} vs {want}");
     }
 }
 
-/// `advance(64)` equals 64 ticks (the linear `x` or φ) within 1e-6.
-#[test]
-fn advance_matches_ticks() {
-    for p in [
-        fp(FuncMode::Env, FuncForm::Cycle, 0.05, 0.08, 0.7),
-        fp(FuncMode::Env, FuncForm::Ad, 0.02, 0.1, 0.2),
-        fp(FuncMode::Lfo, FuncForm::Free, 0.4, 0.1, 0.3),
-        fp(FuncMode::Burst, FuncForm::Cycle, 0.5, 0.1, 0.6),
-    ] {
-        let c = coefs(&p, true);
-        let (mut a, mut t) = (FuncGen::new(), FuncGen::new());
-        for g in [&mut a, &mut t] {
-            g.set(&c);
-            g.note_on(p.mode, p.form());
-        }
-        for b in 0..200 {
-            a.advance(&c, true, BLOCK_SIZE as u32);
-            for _ in 0..BLOCK_SIZE {
-                t.tick(&c, true);
+/// Envelope B from the spec's formulas in f64, `t` samples after a
+/// note-on from silence (ADR 0036's reference).
+fn reference(f: Func, rise: f32, fall: f32, shape: f32, t: f64) -> f64 {
+    let fs = SR as f64;
+    let law = |lo: f64, hi: f64, x: f32| lo * (hi / lo).powf(x as f64);
+    let frac = |x: f64| x - x.floor();
+    let w = 2f64.powf(4.0 * (2.0 * shape as f64 - 1.0));
+    let curve = |x: f64| x / (x + (1.0 - x) * w);
+    let r = shape as f64;
+    let tilt = |p: f64| if p < r { p / r } else if r < 1.0 { (1.0 - p) / (1.0 - r) } else { p };
+    match f {
+        Func::Env(form) => {
+            let (tr, tf) = (law(2e-3, 5.0, rise) * fs, law(2e-3, 5.0, fall) * fs);
+            let t = if form == EnvForm::Cycle { t % (tr + tf) } else { t };
+            if t < tr {
+                curve(t / tr)
+            } else if t < tr + tf {
+                1.0 - curve((t - tr) / tf)
+            } else {
+                0.0
             }
-            assert!((a.output() - t.output()).abs() < 1e-6, "{:?} block {b}", p.mode);
+        }
+        Func::Lfo(_) => 2.0 * tilt(frac(t * law(0.05, 800.0, rise) / fs + fall as f64)) - 1.0,
+        // CYCLE: the burst repeats every LENGTH; its pulses are the tilting saw.
+        Func::Burst(_) => {
+            tilt(frac(t / (law(0.01, 20.0, fall) * fs))) * tilt(frac(t * law(0.05, 1000.0, rise) / fs))
+        }
+    }
+}
+
+/// The per-sample paths (`tick`, `fill`) and the per-block path
+/// (`advance`) each stay within 1e-4 of the f64 reference, allowing ±1
+/// sample at a turn (ADR 0036, superseding the spec's 1e-6).
+#[test]
+fn each_path_matches_an_f64_reference() {
+    for (f, rise, fall, shape) in [
+        (Func::Env(EnvForm::Cycle), 0.05, 0.08, 0.7),
+        (Func::Env(EnvForm::Ad), 0.02, 0.1, 0.2),
+        (Func::Lfo(LfoForm::Free), 0.4, 0.1, 0.3),
+        (Func::Burst(EnvForm::Cycle), 0.5, 0.1, 0.6),
+    ] {
+        const BLOCKS: usize = 300;
+        let refs: Vec<f64> = (0..BLOCKS * BLOCK_SIZE)
+            .map(|n| reference(f, rise, fall, shape, (n + 1) as f64))
+            .collect();
+        let near = |n: usize, v: f32| {
+            (n.saturating_sub(1)..=(n + 1).min(refs.len() - 1))
+                .any(|m| (refs[m] - v as f64).abs() <= 1e-4)
+        };
+        let p = fp(f, rise, fall, shape);
+        let c = BCoefs::new(&p, &Slides::default(), SR, true);
+        let (mut ticked, mut filled, mut blocked) = (FuncGen::new(), FuncGen::new(), FuncGen::new());
+        for g in [&mut ticked, &mut filled, &mut blocked] {
+            g.set(&c);
+            g.note_on(f);
+        }
+        for b in 0..BLOCKS {
+            let mut buf = [0.0f32; BLOCK_SIZE];
+            filled.fill(&c, true, &mut buf);
+            blocked.advance(&c, true, BLOCK_SIZE as u32);
+            for (i, &v) in buf.iter().enumerate() {
+                let n = b * BLOCK_SIZE + i;
+                let t = ticked.tick(&c, true);
+                assert!(near(n, t), "tick {f:?} {n}: {t} vs {}", refs[n]);
+                assert!(near(n, v), "fill {f:?} {n}: {v} vs {}", refs[n]);
+            }
+            let n = (b + 1) * BLOCK_SIZE - 1;
+            assert!(near(n, blocked.output()), "advance {f:?} block {b}: {} vs {}", blocked.output(), refs[n]);
         }
     }
 }
@@ -2978,7 +3424,7 @@ fn advance_matches_ticks() {
 /// RISE, FALL and SHAPE routes move their sliders' positions.
 #[test]
 fn slides_move_the_sliders() {
-    let p = fp(FuncMode::Env, FuncForm::Ad, 0.3, 0.3, 0.5);
+    let p = fp(Func::Env(EnvForm::Ad), 0.3, 0.3, 0.5);
     let plain = BCoefs::new(&p, &Slides::default(), SR, true);
     for s in [
         Slides { rise: 0.2, ..Slides::default() },
@@ -2997,7 +3443,8 @@ Create `chimera-core/tests/env_slot_test.rs`:
 //! (filter-routing spec § 1, § Tests "TYPE, MODE and FORM changes").
 
 use chimera_core::dsp::envelope::{EnvMods, Envelope};
-use chimera_core::dsp::modulator::{EnvType, FuncForm, FuncMode};
+use chimera_core::dsp::modulator::func::Slides;
+use chimera_core::dsp::modulator::{EnvForm, EnvType, Func, FuncMode, LfoForm};
 use chimera_core::params::{EnvParams, ParamSnapshot};
 
 const SR: u32 = 48_000;
@@ -3006,24 +3453,22 @@ fn a() -> EnvParams {
     EnvParams::default()
 }
 
-fn b(mode: FuncMode, form: FuncForm) -> EnvParams {
+fn b(f: Func) -> EnvParams {
     let mut p = EnvParams { env_type: EnvType::B, ..EnvParams::default() };
-    p.func.mode = mode;
-    let i = mode.forms().iter().position(|&f| f == form).unwrap();
-    p.func.set_form_index(i as f32);
+    p.func.set_func(f);
     p
 }
 
 fn kinds() -> Vec<EnvParams> {
     vec![
         a(),
-        b(FuncMode::Env, FuncForm::Ad),
-        b(FuncMode::Env, FuncForm::Ahr),
-        b(FuncMode::Env, FuncForm::Cycle),
-        b(FuncMode::Lfo, FuncForm::Free),
-        b(FuncMode::Lfo, FuncForm::Lfv),
-        b(FuncMode::Burst, FuncForm::Ad),
-        b(FuncMode::Burst, FuncForm::Cycle),
+        b(Func::Env(EnvForm::Ad)),
+        b(Func::Env(EnvForm::Ahr)),
+        b(Func::Env(EnvForm::Cycle)),
+        b(Func::Lfo(LfoForm::Free)),
+        b(Func::Lfo(LfoForm::Lfv)),
+        b(Func::Burst(EnvForm::Ad)),
+        b(Func::Burst(EnvForm::Cycle)),
     ]
 }
 
@@ -3033,7 +3478,9 @@ fn env3_defaults_to_b_env_ad() {
     assert_eq!(p.envelopes[0].env_type, EnvType::A);
     assert_eq!(p.envelopes[1].env_type, EnvType::A);
     let e3 = &p.envelopes[2];
-    assert_eq!((e3.env_type, e3.func.mode, e3.func.form()), (EnvType::B, FuncMode::Env, FuncForm::Ad));
+    assert_eq!((e3.env_type, e3.func.func()), (EnvType::B, Func::Env(EnvForm::Ad)));
+    // Each MODE keeps its own FORM: LFO's default is FREE, not ENV's AD.
+    assert_eq!(e3.func.lfo_form, LfoForm::Free);
 }
 
 /// Every change between the kinds, mid-note, key down and up: the first
@@ -3085,14 +3532,36 @@ fn a_and_b_destinations_are_inert_on_the_other_type() {
         e.note_on(p);
         (0..50).map(|_| e.run_block(p, m, true, SR, None)).collect::<Vec<_>>()
     };
-    let slides = EnvMods { rise: 0.3, fall: -0.2, shape: 0.4, ..EnvMods::NONE };
+    let slides = EnvMods { slides: Slides { rise: 0.3, fall: -0.2, shape: 0.4 }, ..EnvMods::NONE };
     let ctrl = EnvMods { level: Some(0.3), time: 0.5, ..EnvMods::NONE };
     let pa = a();
-    let pb = b(FuncMode::Env, FuncForm::Ad);
+    let pb = b(Func::Env(EnvForm::Ad));
     assert_eq!(render(&pa, &slides), render(&pa, &EnvMods::NONE));
     assert_eq!(render(&pb, &ctrl), render(&pb, &EnvMods::NONE));
     assert_ne!(render(&pb, &slides), render(&pb, &EnvMods::NONE));
     assert_ne!(render(&pa, &ctrl), render(&pa, &EnvMods::NONE));
+}
+
+/// A FORM change first seen at a note-on (no block ran in between) runs
+/// the new FORM's note-on: an LFO switched to SYNC restarts at its PHASE.
+#[test]
+fn a_change_seen_at_a_note_on_runs_the_new_note_on() {
+    let (free, sync) = (b(Func::Lfo(LfoForm::Free)), b(Func::Lfo(LfoForm::Sync)));
+    let mut e = Envelope::new();
+    e.note_on(&free);
+    for _ in 0..20 {
+        e.run_block(&free, &EnvMods::NONE, true, SR, None);
+    }
+    e.note_on(&sync);
+    let mut fresh = Envelope::new();
+    fresh.note_on(&sync);
+    let (mut x, mut y) = (0.0, 0.0);
+    for _ in 0..6 {
+        x = e.run_block(&sync, &EnvMods::NONE, true, SR, None);
+        y = fresh.run_block(&sync, &EnvMods::NONE, true, SR, None);
+    }
+    assert!(!e.gliding(), "the glide is over");
+    assert!((x - y).abs() < 1e-6, "{x} vs {y}: SYNC restarted at the note-on");
 }
 
 #[test]
@@ -3100,9 +3569,9 @@ fn holds_follow_the_lifetime_rule() {
     // A and B AD/AHR hold until idle; B CYCLE and B LFO only while held.
     for (p, holds_after_key_up) in [
         (a(), true),
-        (b(FuncMode::Env, FuncForm::Ad), true),
-        (b(FuncMode::Env, FuncForm::Cycle), false),
-        (b(FuncMode::Lfo, FuncForm::Free), false),
+        (b(Func::Env(EnvForm::Ad)), true),
+        (b(Func::Env(EnvForm::Cycle)), false),
+        (b(Func::Lfo(LfoForm::Free)), false),
     ] {
         let mut e = Envelope::new();
         e.note_on(&p);
@@ -3118,7 +3587,7 @@ fn holds_follow_the_lifetime_rule() {
 Run: `env $T cargo test -p chimera-core --test func_gen_test --test env_slot_test`
 Expected: FAIL to compile: no `FuncMode`, `func`, `EnvParams::func`.
 
-- [ ] **Step 3: B's types**
+- [ ] **Step 3: B's types, and the glide**
 
 Append to `chimera-core/src/dsp/modulator/mod.rs` (and add `pub mod func;` beside `pub mod env_a;`):
 
@@ -3134,37 +3603,63 @@ pub enum FuncMode {
 
 impl FuncMode {
     pub const ALL: [FuncMode; 3] = [FuncMode::Env, FuncMode::Lfo, FuncMode::Burst];
+}
 
-    /// The FORMs this MODE offers, as its knob steps them; `[0]` is the default.
-    pub const fn forms(self) -> &'static [FuncForm; 3] {
+/// ENV's and BURST's FORMs (the Cascadia's TYPE SELECT, renamed so it
+/// doesn't clash with the slot's TYPE), as the knob steps them, default first.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum EnvForm {
+    Ad = 0,
+    Ahr = 1,
+    Cycle = 2,
+}
+
+impl EnvForm {
+    pub const ALL: [EnvForm; 3] = [EnvForm::Ad, EnvForm::Ahr, EnvForm::Cycle];
+}
+
+/// LFO's FORMs, default first.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum LfoForm {
+    Free = 0,
+    Sync = 1,
+    Lfv = 2,
+}
+
+impl LfoForm {
+    pub const ALL: [LfoForm; 3] = [LfoForm::Free, LfoForm::Sync, LfoForm::Lfv];
+}
+
+/// What Envelope B runs: a MODE and one of that MODE's FORMs, so a
+/// mismatch can't be represented.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Func {
+    Env(EnvForm),
+    Lfo(LfoForm),
+    Burst(EnvForm),
+}
+
+impl Func {
+    pub const fn mode(self) -> FuncMode {
         match self {
-            FuncMode::Env | FuncMode::Burst => &[FuncForm::Ad, FuncForm::Ahr, FuncForm::Cycle],
-            FuncMode::Lfo => &[FuncForm::Free, FuncForm::Sync, FuncForm::Lfv],
+            Func::Env(_) => FuncMode::Env,
+            Func::Lfo(_) => FuncMode::Lfo,
+            Func::Burst(_) => FuncMode::Burst,
         }
     }
 }
 
-/// The Cascadia's TYPE SELECT, renamed FORM so it doesn't clash with the
-/// slot's TYPE. ENV and BURST use Cycle, Ahr, Ad; LFO uses Free, Sync, Lfv.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(u8)]
-pub enum FuncForm {
-    Cycle = 0,
-    Ahr = 1,
-    Ad = 2,
-    Free = 3,
-    Sync = 4,
-    Lfv = 5,
-}
-
 /// Envelope B's switches and sliders; also a FUNC LFO's, whose MODE is
-/// always LFO. Sliders are positions, 0..1.
+/// always LFO. Each MODE keeps its own FORM, so a MODE switched away and
+/// back finds its FORM again. Sliders are positions, 0..1.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FuncParams {
     pub mode: FuncMode,
-    /// The FORM chosen in each MODE, as an index into `mode.forms()`, so a
-    /// MODE switched away and back keeps its FORM.
-    pub forms: [u8; 3],
+    pub env_form: EnvForm,
+    pub lfo_form: LfoForm,
+    pub burst_form: EnvForm,
     pub rise: f32,
     pub fall: f32,
     pub shape: f32,
@@ -3174,7 +3669,9 @@ impl FuncParams {
     /// ENV 3's default: ENV, AD, 10 ms rise, 300 ms fall, linear.
     pub const ENV: Self = Self {
         mode: FuncMode::Env,
-        forms: [0; 3],
+        env_form: EnvForm::Ad,
+        lfo_form: LfoForm::Free,
+        burst_form: EnvForm::Ad,
         rise: 0.206,
         fall: 0.640,
         shape: 0.5,
@@ -3182,23 +3679,83 @@ impl FuncParams {
     /// A FUNC LFO's default: FREE at 1 Hz, PHASE 0, TILT centre (triangle).
     pub const LFO: Self = Self {
         mode: FuncMode::Lfo,
-        forms: [0; 3],
         rise: 0.309,
         fall: 0.0,
-        shape: 0.5,
+        ..Self::ENV
     };
 
-    pub fn form(&self) -> FuncForm {
-        self.mode.forms()[(self.forms[self.mode as usize] as usize).min(2)]
+    pub fn func(&self) -> Func {
+        match self.mode {
+            FuncMode::Env => Func::Env(self.env_form),
+            FuncMode::Lfo => Func::Lfo(self.lfo_form),
+            FuncMode::Burst => Func::Burst(self.burst_form),
+        }
     }
 
-    /// FORM as a `Block` value: its index in the MODE's list.
+    /// Run `f`: its MODE, with that MODE's FORM set.
+    pub fn set_func(&mut self, f: Func) {
+        match f {
+            Func::Env(x) => (self.mode, self.env_form) = (FuncMode::Env, x),
+            Func::Lfo(x) => (self.mode, self.lfo_form) = (FuncMode::Lfo, x),
+            Func::Burst(x) => (self.mode, self.burst_form) = (FuncMode::Burst, x),
+        }
+    }
+
+    /// FORM as a `Block` value: the index in its MODE's list.
     pub fn form_index(&self) -> f32 {
-        self.forms[self.mode as usize] as f32
+        match self.func() {
+            Func::Env(x) | Func::Burst(x) => x as u8 as f32,
+            Func::Lfo(x) => x as u8 as f32,
+        }
     }
 
     pub fn set_form_index(&mut self, v: f32) {
-        self.forms[self.mode as usize] = (v.max(0.0) as u8).min(2);
+        match self.mode {
+            FuncMode::Env => self.env_form = pick(&EnvForm::ALL, v),
+            FuncMode::Lfo => self.lfo_form = pick(&LfoForm::ALL, v),
+            FuncMode::Burst => self.burst_form = pick(&EnvForm::ALL, v),
+        }
+    }
+}
+
+/// A TYPE, MODE or FORM change's leftover `d`, gliding linearly to 0 over
+/// 256 samples (spec § 1). Shared by the ENV and LFO slots.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Glide {
+    d: f32,
+    left: u16,
+}
+
+impl Glide {
+    pub const SAMPLES: u16 = 256;
+    pub const NONE: Self = Self { d: 0.0, left: 0 };
+
+    /// Glide `d` out; below 1e-6 there is nothing to glide.
+    pub fn start(&mut self, d: f32) {
+        *self = if d.abs() > 1e-6 {
+            Self { d, left: Self::SAMPLES }
+        } else {
+            Self::default()
+        };
+    }
+
+    /// The leftover now.
+    pub fn value(&self) -> f32 {
+        self.at(0)
+    }
+
+    /// The leftover `n` samples on.
+    pub fn at(&self, n: usize) -> f32 {
+        let left = (self.left as usize).saturating_sub(n);
+        if left == 0 { 0.0 } else { self.d * (left as f32 / Self::SAMPLES as f32) }
+    }
+
+    pub fn advance(&mut self, n: u16) {
+        self.left = self.left.saturating_sub(n);
+    }
+
+    pub fn active(&self) -> bool {
+        self.left > 0
     }
 }
 ```
@@ -3216,8 +3773,11 @@ pub const B_RATE: Range = Range { min: 0.05, oct: 13.965_784 };
 pub const BURST_RATE: Range = Range { min: 0.05, oct: 14.287_712 };
 /// BURST LENGTH, 10 ms – 20 s.
 pub const BURST_LEN: Range = Range { min: 0.01, oct: 10.965_784 };
-/// A B slot evaluated per block stops here: the block rate ÷ 8.
-pub const BLOCK_RATE_MAX: f32 = 93.75;
+/// A B slot evaluated per block stops its rates here: the block rate ÷ 8
+/// (spec § Rates), 93.75 Hz at 48 kHz and 86.1 Hz at 44.1 kHz.
+pub fn block_rate_max(sample_rate: u32) -> f32 {
+    sample_rate as f32 / chimera_hal::BLOCK_SIZE as f32 / 8.0
+}
 
 /// SHAPE's curve, `f(x) = x / (x + (1 − x)·w)`; linear (and no divide) at `w` = 1.
 pub fn curve(x: f32, w: f32) -> f32 {
@@ -3258,10 +3818,10 @@ Create `chimera-core/src/dsp/modulator/func.rs`:
 use core::f32::consts::{FRAC_PI_2, TAU};
 
 use crate::dsp::modulator::law::{
-    B_RATE, B_TIME, BLOCK_RATE_MAX, BURST_LEN, BURST_RATE, curve, curve_inv, rc_coeff, rc_k,
+    B_RATE, B_TIME, BURST_LEN, BURST_RATE, block_rate_max, curve, curve_inv, rc_coeff, rc_k,
     shape_w, tilt,
 };
-use crate::dsp::modulator::{FuncForm, FuncMode, FuncParams};
+use crate::dsp::modulator::{EnvForm, Func, FuncParams, LfoForm};
 use crate::dsp::{fast_exp2, fast_sin};
 
 /// The matrix's offsets into RISE, FALL and SHAPE, added to their positions.
@@ -3275,8 +3835,7 @@ pub struct Slides {
 /// B's constants for one block.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BCoefs {
-    mode: FuncMode,
-    form: FuncForm,
+    func: Func,
     /// Per sample: the rise's `x` step (ENV), φ's (LFO), the pulse phase's (BURST).
     rise: f32,
     /// Per sample: the fall's `x` step (ENV); the burst's, a fraction of LENGTH (BURST).
@@ -3297,22 +3856,30 @@ pub struct BCoefs {
 
 impl BCoefs {
     /// `per_sample`: the slot feeds the VCA, so its rates keep the manual's
-    /// full range; per block they stop at 93.75 Hz (spec § Rates).
+    /// full range. Per block, every rate stops at the block rate ÷ 8: LFO
+    /// RATE, BURST's pulse RATE, and the repeats of ENV CYCLE
+    /// (`1/(RISE + FALL)`, both segments slowed alike) and BURST CYCLE
+    /// (`1/LENGTH`). One-shot AD and AHR times are not clamped.
     pub fn new(p: &FuncParams, s: &Slides, sample_rate: u32, per_sample: bool) -> Self {
         let fs = sample_rate as f32;
         let pos = |v: f32, off: f32| (v + off).max(0.0).min(1.0);
         let (rise_pos, fall_pos, shape) = (pos(p.rise, s.rise), pos(p.fall, s.fall), pos(p.shape, s.shape));
-        let cap = |hz: f32| if per_sample { hz } else { hz.min(BLOCK_RATE_MAX) };
-        let (mode, form) = (p.mode, p.form());
-        let (rise, fall) = match mode {
-            FuncMode::Env => (1.0 / (B_TIME.at(rise_pos) * fs), 1.0 / (B_TIME.at(fall_pos) * fs)),
-            FuncMode::Lfo => (cap(B_RATE.at(rise_pos)) / fs, 0.0),
-            FuncMode::Burst => (
-                cap(BURST_RATE.at(rise_pos)) / fs,
-                1.0 / (BURST_LEN.at(fall_pos) * fs),
-            ),
+        let max = if per_sample { f32::INFINITY } else { block_rate_max(sample_rate) };
+        let func = p.func();
+        let (rise, fall) = match func {
+            Func::Env(form) => {
+                let (tr, tf) = (B_TIME.at(rise_pos), B_TIME.at(fall_pos));
+                let slow = if form == EnvForm::Cycle { ((tr + tf) * max).recip().max(1.0) } else { 1.0 };
+                (1.0 / (tr * slow * fs), 1.0 / (tf * slow * fs))
+            }
+            Func::Lfo(_) => (B_RATE.at(rise_pos).min(max) / fs, 0.0),
+            Func::Burst(form) => {
+                let len = BURST_LEN.at(fall_pos);
+                let len = if form == EnvForm::Cycle { len.max(max.recip()) } else { len };
+                (BURST_RATE.at(rise_pos).min(max) / fs, 1.0 / (len * fs))
+            }
         };
-        let (slew_c, slew_k) = if mode == FuncMode::Lfo && form == FuncForm::Lfv && shape > 0.0 {
+        let (slew_c, slew_k) = if func == Func::Lfo(LfoForm::Lfv) && shape > 0.0 {
             // τ = SLEW × one cycle.
             let k = rc_k(shape / (rise * fs), fs);
             (rc_coeff(k), k)
@@ -3320,8 +3887,7 @@ impl BCoefs {
             (1.0, f32::NEG_INFINITY)
         };
         Self {
-            mode,
-            form,
+            func,
             rise,
             fall,
             fall_per_rise: if rise > 0.0 { fall / rise } else { 0.0 },
@@ -3346,8 +3912,7 @@ enum Seg {
 /// Envelope B's state.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FuncGen {
-    mode: FuncMode,
-    form: FuncForm,
+    func: Func,
     seg: Seg,
     /// ENV: the running segment's linear position, 0..1 (a fall runs 1 → 0).
     /// BURST: time into the burst, a fraction of LENGTH.
@@ -3376,8 +3941,7 @@ impl Default for FuncGen {
 impl FuncGen {
     pub const fn new() -> Self {
         Self {
-            mode: FuncMode::Env,
-            form: FuncForm::Ad,
+            func: Func::Env(EnvForm::Ad),
             seg: Seg::Idle,
             x: 0.0,
             phase: 0.0,
@@ -3394,40 +3958,38 @@ impl FuncGen {
 
     /// Take a block's MODE, FORM and shape.
     pub fn set(&mut self, c: &BCoefs) {
-        (self.mode, self.form) = (c.mode, c.form);
+        self.func = c.func;
         (self.w, self.tilt, self.phase_off) = (c.w, c.shape, c.fall_pos);
     }
 
     /// A note-on: AD and AHR rise from the current level, CYCLE restarts its
     /// rise, SYNC resets φ, BURST starts a burst; FREE, LFV and the pulse
     /// phase run on (spec, Defaults chosen 18).
-    pub fn note_on(&mut self, mode: FuncMode, form: FuncForm) {
-        (self.mode, self.form) = (mode, form);
-        match (mode, form) {
-            (FuncMode::Env, FuncForm::Cycle) => (self.seg, self.x) = (Seg::Rise, 0.0),
-            (FuncMode::Env, _) => {
+    pub fn note_on(&mut self, f: Func) {
+        self.func = f;
+        match f {
+            Func::Env(EnvForm::Cycle) => (self.seg, self.x) = (Seg::Rise, 0.0),
+            Func::Env(_) => {
                 let l = self.env_level();
                 (self.seg, self.x) = (Seg::Rise, curve_inv(l, self.w));
             }
-            (FuncMode::Lfo, FuncForm::Sync) => self.phase = 0.0,
-            (FuncMode::Lfo, _) => {}
-            (FuncMode::Burst, _) => {
-                (self.seg, self.x, self.last_burst) = (Seg::Rise, 0.0, false);
-            }
+            Func::Lfo(LfoForm::Sync) => self.phase = 0.0,
+            Func::Lfo(_) => {}
+            Func::Burst(_) => (self.seg, self.x, self.last_burst) = (Seg::Rise, 0.0, false),
         }
     }
 
     /// The key is up this block: AHR falls, a held burst goes on, a
     /// cycling burst finishes.
     pub fn key_up(&mut self) {
-        match (self.mode, self.form, self.seg) {
-            (FuncMode::Env, FuncForm::Ahr, Seg::Rise) => {
+        match (self.func, self.seg) {
+            (Func::Env(EnvForm::Ahr), Seg::Rise) => {
                 let l = self.env_level();
                 self.fall_from(l);
             }
-            (FuncMode::Env, FuncForm::Ahr, Seg::Hold) => (self.seg, self.x) = (Seg::Fall, 1.0),
-            (FuncMode::Burst, FuncForm::Ahr, Seg::Hold) => self.seg = Seg::Rise,
-            (FuncMode::Burst, FuncForm::Cycle, Seg::Rise) => self.last_burst = true,
+            (Func::Env(EnvForm::Ahr), Seg::Hold) => (self.seg, self.x) = (Seg::Fall, 1.0),
+            (Func::Burst(EnvForm::Ahr), Seg::Hold) => self.seg = Seg::Rise,
+            (Func::Burst(EnvForm::Cycle), Seg::Rise) => self.last_burst = true,
             _ => {}
         }
     }
@@ -3446,25 +4008,20 @@ impl FuncGen {
         }
     }
 
-    /// The output now: 0..1 (ENV, BURST) or −1..1 (LFO).
-    pub fn output(&self) -> f32 {
-        match (self.mode, self.form) {
-            (FuncMode::Env, _) => self.env_level(),
-            (FuncMode::Lfo, FuncForm::Lfv) => self.slewed,
-            (FuncMode::Lfo, _) => {
-                let p = self.phase + self.phase_off;
-                2.0 * tilt(p - (p as u32) as f32, self.tilt) - 1.0
-            }
-            (FuncMode::Burst, _) => self.burst_level(),
+    fn lfo_level(&self, form: LfoForm) -> f32 {
+        if form == LfoForm::Lfv {
+            return self.slewed;
         }
+        let p = self.phase + self.phase_off;
+        2.0 * tilt(p - (p as u32) as f32, self.tilt) - 1.0
     }
 
-    fn burst_level(&self) -> f32 {
+    fn burst_level(&self, form: EnvForm) -> f32 {
         if self.seg == Seg::Idle {
             return 0.0;
         }
         let env = tilt(self.x.min(1.0), self.tilt);
-        let pulse = if self.form == FuncForm::Cycle {
+        let pulse = if form == EnvForm::Cycle {
             tilt(self.phase, self.tilt)
         } else {
             let m = 1.0 - (2.0 * self.tilt - 1.0).abs();
@@ -3475,26 +4032,62 @@ impl FuncGen {
         env * pulse
     }
 
-    /// One sample; returns the output after it. No divide.
+    /// The output now: 0..1 (ENV, BURST) or −1..1 (LFO).
+    pub fn output(&self) -> f32 {
+        match self.func {
+            Func::Env(_) => self.env_level(),
+            Func::Lfo(form) => self.lfo_level(form),
+            Func::Burst(form) => self.burst_level(form),
+        }
+    }
+
+    /// One sample; returns the output after it.
     pub fn tick(&mut self, c: &BCoefs, key: bool) -> f32 {
         self.step(c, key, 1.0, true);
         self.output()
     }
 
-    /// `n` samples at once: linear in `x` and φ, so it equals `n` ticks.
+    /// A block of per-sample outputs, as `tick` would give them, for the
+    /// VCA: the MODE matched once, one output evaluation (one curve
+    /// divide) per sample.
+    pub fn fill(&mut self, c: &BCoefs, key: bool, out: &mut [f32]) {
+        match c.func {
+            Func::Env(form) => {
+                for o in out.iter_mut() {
+                    self.env_step(c, form, key, 1.0);
+                    *o = self.env_level();
+                }
+            }
+            Func::Lfo(form) => {
+                for o in out.iter_mut() {
+                    self.lfo_step(c, form, 1.0, true);
+                    *o = self.lfo_level(form);
+                }
+            }
+            Func::Burst(form) => {
+                for o in out.iter_mut() {
+                    self.burst_step(c, form, key, 1.0);
+                    *o = self.burst_level(form);
+                }
+            }
+        }
+    }
+
+    /// `n` samples at once: linear in `x` and φ, so within ±1 sample of `n`
+    /// ticks (ADR 0036).
     pub fn advance(&mut self, c: &BCoefs, key: bool, n: u32) {
         self.step(c, key, n as f32, false);
     }
 
     fn step(&mut self, c: &BCoefs, key: bool, n: f32, tick: bool) {
-        match c.mode {
-            FuncMode::Env => self.env_step(c, key, n),
-            FuncMode::Lfo => self.lfo_step(c, n, tick),
-            FuncMode::Burst => self.burst_step(c, key, n),
+        match c.func {
+            Func::Env(form) => self.env_step(c, form, key, n),
+            Func::Lfo(form) => self.lfo_step(c, form, n, tick),
+            Func::Burst(form) => self.burst_step(c, form, key, n),
         }
     }
 
-    fn env_step(&mut self, c: &BCoefs, key: bool, n: f32) {
+    fn env_step(&mut self, c: &BCoefs, form: EnvForm, key: bool, n: f32) {
         match self.seg {
             Seg::Rise => self.x += n * c.rise,
             Seg::Fall => self.x -= n * c.fall,
@@ -3504,14 +4097,14 @@ impl FuncGen {
         for _ in 0..4 {
             match self.seg {
                 Seg::Rise if self.x >= 1.0 => {
-                    if c.form == FuncForm::Ahr && key {
+                    if form == EnvForm::Ahr && key {
                         (self.seg, self.x) = (Seg::Hold, 1.0);
                         return;
                     }
                     (self.seg, self.x) = (Seg::Fall, 1.0 - (self.x - 1.0) * c.fall_per_rise);
                 }
                 Seg::Fall if self.x <= 0.0 => {
-                    if c.form != FuncForm::Cycle {
+                    if form != EnvForm::Cycle {
                         (self.seg, self.x) = (Seg::Idle, 0.0);
                         return;
                     }
@@ -3522,15 +4115,15 @@ impl FuncGen {
         }
     }
 
-    fn lfo_step(&mut self, c: &BCoefs, n: f32, tick: bool) {
+    fn lfo_step(&mut self, c: &BCoefs, form: LfoForm, n: f32, tick: bool) {
         self.phase += n * c.rise;
         if self.phase >= 1.0 {
             self.phase -= (self.phase as u32) as f32;
-            if c.form == FuncForm::Lfv {
+            if form == LfoForm::Lfv {
                 self.next_target(c.fall_pos);
             }
         }
-        if c.form == FuncForm::Lfv {
+        if form == LfoForm::Lfv {
             let lin = self.from + (self.to - self.from) * self.phase;
             self.slewed = if tick {
                 self.slewed + c.slew_c * (lin - self.slewed)
@@ -3552,7 +4145,7 @@ impl FuncGen {
         self.to = (self.to + delta * r).max(-1.0).min(1.0);
     }
 
-    fn burst_step(&mut self, c: &BCoefs, key: bool, n: f32) {
+    fn burst_step(&mut self, c: &BCoefs, form: EnvForm, key: bool, n: f32) {
         self.phase += n * c.rise;
         self.phase -= (self.phase as u32) as f32;
         if matches!(self.seg, Seg::Idle | Seg::Hold) {
@@ -3560,10 +4153,10 @@ impl FuncGen {
         }
         let before = self.x;
         self.x += n * c.fall;
-        if c.form == FuncForm::Ahr && key && before <= c.shape && self.x >= c.shape {
+        if form == EnvForm::Ahr && key && before <= c.shape && self.x >= c.shape {
             (self.seg, self.x) = (Seg::Hold, c.shape);
         } else if self.x >= 1.0 {
-            if c.form == FuncForm::Cycle && !self.last_burst {
+            if form == EnvForm::Cycle && !self.last_burst {
                 self.x -= 1.0;
             } else {
                 (self.seg, self.x) = (Seg::Idle, 0.0);
@@ -3575,29 +4168,26 @@ impl FuncGen {
     /// ENV CYCLE and LFO while the key is held; BURST CYCLE until its last
     /// burst ends.
     pub fn holds(&self, key: bool) -> bool {
-        match (self.mode, self.form) {
-            (FuncMode::Lfo, _) | (FuncMode::Env, FuncForm::Cycle) => key,
+        match self.func {
+            Func::Lfo(_) | Func::Env(EnvForm::Cycle) => key,
             _ => self.seg != Seg::Idle,
         }
     }
 
     /// Done: ENV CYCLE and LFO never are.
     pub fn is_idle(&self) -> bool {
-        !matches!(
-            (self.mode, self.form),
-            (FuncMode::Lfo, _) | (FuncMode::Env, FuncForm::Cycle)
-        ) && self.seg == Seg::Idle
+        !matches!(self.func, Func::Lfo(_) | Func::Env(EnvForm::Cycle)) && self.seg == Seg::Idle
     }
 
     /// On a rising segment, for a TYPE change into A or B ENV.
     pub fn rising(&self) -> bool {
-        match self.mode {
-            FuncMode::Env => self.seg == Seg::Rise,
-            FuncMode::Lfo => {
+        match self.func {
+            Func::Env(_) => self.seg == Seg::Rise,
+            Func::Lfo(_) => {
                 let p = self.phase + self.phase_off;
                 p - (p as u32) as f32 < self.tilt
             }
-            FuncMode::Burst => self.seg != Seg::Idle && self.x < self.tilt,
+            Func::Burst(_) => self.seg != Seg::Idle && self.x < self.tilt,
         }
     }
 
@@ -3617,6 +4207,34 @@ impl FuncGen {
     pub fn enter_burst(&mut self, key: bool) {
         self.seg = if key { Seg::Rise } else { Seg::Idle };
         (self.x, self.last_burst) = (0.0, false);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Per block, the cycling forms repeat no faster than the block rate ÷ 8
+    /// (spec § Rates, gap 8's ruling); per sample, and in one-shot forms,
+    /// nothing is clamped.
+    #[test]
+    fn cycles_repeat_no_faster_than_the_clamp() {
+        let sr = 48_000;
+        let max = block_rate_max(sr) / sr as f32; // cycles per sample
+        let fastest = |f| {
+            let mut p = FuncParams { rise: 0.0, fall: 0.0, ..FuncParams::ENV };
+            p.set_func(f);
+            p
+        };
+        let coefs = |f, per_sample| BCoefs::new(&fastest(f), &Slides::default(), sr, per_sample);
+        // ENV CYCLE at 2 ms + 2 ms (250 Hz): one period is 1/rise + 1/fall samples.
+        let env = coefs(Func::Env(EnvForm::Cycle), false);
+        assert!(1.0 / (1.0 / env.rise + 1.0 / env.fall) <= max * 1.0001);
+        // BURST CYCLE at 10 ms (100 Hz) with 50 Hz pulses.
+        let burst = coefs(Func::Burst(EnvForm::Cycle), false);
+        assert!(burst.fall <= max * 1.0001);
+        assert!(coefs(Func::Env(EnvForm::Cycle), true).rise > max);
+        assert!(coefs(Func::Env(EnvForm::Ad), false).rise > max);
     }
 }
 ```
@@ -3647,35 +4265,46 @@ In `params.rs`: `EnvParams` gains `pub func: FuncParams,` (doc: `/// Envelope B'
 
 `get`: `Self::MODE => self.func.mode as u8 as f32, Self::FORM => self.func.form_index(), Self::RISE => self.func.rise, Self::FALL => self.func.fall, Self::SHAPE => self.func.shape,`. `write`: `Self::MODE => self.func.mode = pick(&FuncMode::ALL, v), Self::FORM => self.func.set_form_index(v), Self::RISE => self.func.rise = v, Self::FALL => self.func.fall = v, Self::SHAPE => self.func.shape = v,`.
 
-`ParamSnapshot::default()`: `envelopes: [EnvParams::default(), EnvParams::default(), EnvParams { env_type: EnvType::B, ..EnvParams::default() }],` (its `func` is already `FuncParams::ENV`: ENV, AD).
+`ParamSnapshot::default()`: `envelopes: [EnvParams::default(), EnvParams::default(), EnvParams { env_type: EnvType::B, ..EnvParams::default() }],` (its `func` is already `FuncParams::ENV`: ENV, AD). `use crate::dsp::modulator::{FuncMode, FuncParams};` joins the imports.
 
 - [ ] **Step 7: The slot runs A or B**
 
-Replace `Envelope` in `chimera-core/src/dsp/envelope.rs` (keep `EnvMods`) with:
+In `chimera-core/src/dsp/envelope.rs`, `EnvMods` gains B's inputs:
+
+```rust
+    /// RISE, FALL and SHAPE's Σ, added to their positions (type B).
+    pub slides: Slides,
+```
+
+(and `slides: Slides { rise: 0.0, fall: 0.0, shape: 0.0 }` in `NONE`). Keep `AKey` and `add_ramped` from Task 5, and replace `Envelope` with:
 
 ```rust
 use crate::dsp::modulator::func::{BCoefs, FuncGen, Slides};
-use crate::dsp::modulator::{EnvType, FuncForm, FuncMode};
+use crate::dsp::modulator::{EnvType, Func, FuncParams, Glide};
 
-/// A TYPE, MODE or FORM change's leftover glides to 0 over this many
-/// samples (spec § 1).
-pub const GLIDE: u16 = 256;
-
-/// What a slot runs: its TYPE, and B's MODE and FORM (unused under A).
+/// What a slot runs (spec § 1): Envelope A, or B with its MODE and FORM.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Kind {
-    ty: EnvType,
-    mode: FuncMode,
-    form: FuncForm,
+enum Kind {
+    A,
+    B(Func),
 }
 
 impl Kind {
     fn of(p: &EnvParams) -> Self {
         match p.env_type {
-            EnvType::A => Self { ty: EnvType::A, mode: FuncMode::Env, form: FuncForm::Ad },
-            EnvType::B => Self { ty: EnvType::B, mode: p.func.mode, form: p.func.form() },
+            EnvType::A => Kind::A,
+            EnvType::B => Kind::B(p.func.func()),
         }
     }
+}
+
+/// What a B slot's coefficients were built from.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct BKey {
+    func: FuncParams,
+    slides: Slides,
+    sample_rate: u32,
+    per_sample: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -3684,11 +4313,15 @@ pub struct Envelope {
     b: FuncGen,
     /// What ran last block; `None` before the first.
     kind: Option<Kind>,
-    /// This block's peak (LEVEL; 1 under B).
+    /// The running TYPE's coefficients and their inputs, reused while
+    /// the inputs hold.
+    ac: Option<(AKey, ACoefs)>,
+    bc: Option<(BKey, BCoefs)>,
+    /// This block's peak (LEVEL; 1 under B) and the last block's.
     peak: f32,
-    /// A change's leftover `d`, and the samples its glide has left.
-    glide: f32,
-    glide_left: u16,
+    prev_peak: f32,
+    /// A change's leftover, gliding out.
+    glide: Glide,
 }
 
 impl Default for Envelope {
@@ -3699,18 +4332,65 @@ impl Default for Envelope {
 
 impl Envelope {
     pub const fn new() -> Self {
-        Self { a: EnvA::new(), b: FuncGen::new(), kind: None, peak: 1.0, glide: 0.0, glide_left: 0 }
+        Self {
+            a: EnvA::new(),
+            b: FuncGen::new(),
+            kind: None,
+            ac: None,
+            bc: None,
+            peak: 1.0,
+            prev_peak: 1.0,
+            glide: Glide { d: 0.0, left: 0 },
+        }
+    }
+```
+
+(`Glide`'s fields are private to `modulator`; give it `pub const NONE: Self = Self { d: 0.0, left: 0 };` in Task 6's Step 3 and write `glide: Glide::NONE` here.)
+
+```rust
+    /// This block's A coefficients, rebuilt only when an input changed.
+    fn a_coefs(&mut self, p: &EnvParams, time: f32, sample_rate: u32) -> ACoefs {
+        let key = AKey::of(p, time, sample_rate);
+        match self.ac {
+            Some((k, c)) if k == key => c,
+            _ => {
+                let c = ACoefs::new(p, time, sample_rate);
+                self.ac = Some((key, c));
+                c
+            }
+        }
+    }
+
+    /// This block's B coefficients, rebuilt only when an input changed.
+    fn b_coefs(&mut self, p: &EnvParams, slides: &Slides, sample_rate: u32, per_sample: bool) -> BCoefs {
+        let key = BKey { func: p.func, slides: *slides, sample_rate, per_sample };
+        match self.bc {
+            Some((k, c)) if k == key => c,
+            _ => {
+                let c = BCoefs::new(&p.func, slides, sample_rate, per_sample);
+                self.bc = Some((key, c));
+                c
+            }
+        }
     }
 
     fn is_b(&self) -> bool {
-        self.kind.is_some_and(|k| k.ty == EnvType::B)
+        matches!(self.kind, Some(Kind::B(_)))
     }
 
+    /// A note-on. A TYPE, MODE or FORM change not yet seen by a block (the
+    /// slot sat idle) takes over first, so the new kind's note-on runs.
     pub fn note_on(&mut self, p: &EnvParams) {
-        let k = *self.kind.get_or_insert(Kind::of(p));
-        match k.ty {
-            EnvType::A => self.a.note_on(),
-            EnvType::B => self.b.note_on(k.mode, k.form),
+        let k = Kind::of(p);
+        if self.kind.is_some_and(|was| was != k) {
+            let (old, rising) = (self.output(), self.rising());
+            self.kind = Some(k);
+            self.take_over(k, old, rising, true, p.sustain);
+        }
+        self.kind = Some(k);
+        match k {
+            Kind::A => self.a.note_on(),
+            Kind::B(f) => self.b.note_on(f),
         }
     }
 
@@ -3720,7 +4400,7 @@ impl Envelope {
 
     /// The output now: 0..1, or −1..1 for B in LFO mode. No velocity.
     pub fn output(&self) -> f32 {
-        self.raw() + self.glide * (self.glide_left as f32 / GLIDE as f32)
+        self.raw() + self.glide.value()
     }
 
     pub fn is_idle(&self) -> bool {
@@ -3734,16 +4414,32 @@ impl Envelope {
 
     /// A change's leftover is still gliding out.
     pub fn gliding(&self) -> bool {
-        self.glide_left > 0
+        self.glide.active()
     }
 
     fn rising(&self) -> bool {
         if self.is_b() { self.b.rising() } else { self.a.rising() }
     }
 
+    /// The new kind takes over at the old output `old` (spec § 1): A and B
+    /// ENV enter at that level; the rest start where they would, and the
+    /// difference glides out.
+    fn take_over(&mut self, k: Kind, old: f32, rising: bool, key: bool, sus: f32) {
+        let level = old.max(0.0).min(1.0);
+        match k {
+            Kind::A => self.a.enter(level, rising, key, sus),
+            Kind::B(Func::Env(_)) => self.b.enter_env(level, rising),
+            Kind::B(Func::Burst(_)) => self.b.enter_burst(key),
+            Kind::B(Func::Lfo(_)) => {}
+        }
+        self.glide.start(old - self.raw());
+    }
+
     /// One block. Returns the output at the block's start. With `vca`, the
-    /// slot ticks per sample and adds `amount ·` each output into the
-    /// buffer; otherwise it advances in closed form.
+    /// slot fills a block of outputs and adds `amount ·` each into the
+    /// buffer (the peak ramped, the glide in its own loop); otherwise it
+    /// advances in closed form. Only the running TYPE's coefficients are
+    /// computed.
     pub fn run_block(
         &mut self,
         p: &EnvParams,
@@ -3753,60 +4449,60 @@ impl Envelope {
         vca: Option<(&mut [f32; BLOCK_SIZE], f32)>,
     ) -> f32 {
         let kind = Kind::of(p);
-        let ac = ACoefs::new(p, m.time, sample_rate);
-        let slides = Slides { rise: m.rise, fall: m.fall, shape: m.shape };
-        let bc = BCoefs::new(&p.func, &slides, sample_rate, vca.is_some());
         let (old, rising) = (self.output(), self.rising());
         let prev = self.kind.replace(kind);
-        self.b.set(&bc);
-        self.peak = if kind.ty == EnvType::A { m.level.unwrap_or(1.0) } else { 1.0 };
-        if prev.is_some_and(|k| k != kind) {
-            // The new shape takes over at the old output (spec § 1).
-            let level = old.max(0.0).min(1.0);
-            match (kind.ty, kind.mode) {
-                (EnvType::A, _) => self.a.enter(level, rising, key, &ac),
-                (EnvType::B, FuncMode::Env) => self.b.enter_env(level, rising),
-                (EnvType::B, FuncMode::Burst) => self.b.enter_burst(key),
-                (EnvType::B, FuncMode::Lfo) => {}
-            }
-            // A float remainder below 1e-6 is no step: into A or B ENV nothing glides.
-            self.glide = old - self.raw();
-            self.glide_left = if self.glide.abs() > 1e-6 { GLIDE } else { 0 };
+        self.prev_peak = self.peak;
+        self.peak = if kind == Kind::A { m.level.unwrap_or(1.0) } else { 1.0 };
+        let (ac, bc) = match kind {
+            Kind::A => (Some(self.a_coefs(p, m.time, sample_rate)), None),
+            Kind::B(_) => (None, Some(self.b_coefs(p, &m.slides, sample_rate, vca.is_some()))),
+        };
+        if let Some(c) = &bc {
+            self.b.set(c);
         }
-        if kind.ty == EnvType::B && !key {
+        if prev.is_some_and(|k| k != kind) {
+            self.take_over(kind, old, rising, key, p.sustain);
+        }
+        if bc.is_some() && !key {
             self.b.key_up();
         }
         let start = self.output();
         match vca {
             Some((gain, amount)) => {
-                for g in gain.iter_mut() {
-                    if kind.ty == EnvType::B {
-                        self.b.tick(&bc, key);
-                    } else {
-                        self.a.tick(&ac, key);
+                let mut level = [0.0f32; BLOCK_SIZE];
+                if let Some(c) = &ac {
+                    self.a.fill(c, key, &mut level);
+                    add_ramped(gain, &level, amount, self.prev_peak, self.peak);
+                } else if let Some(c) = &bc {
+                    self.b.fill(c, key, &mut level);
+                    add_ramped(gain, &level, amount, 1.0, 1.0);
+                }
+                if self.glide.active() {
+                    for (n, g) in gain.iter_mut().enumerate() {
+                        *g += amount * self.glide.at(n + 1);
                     }
-                    self.glide_left = self.glide_left.saturating_sub(1);
-                    *g += amount * self.output();
                 }
             }
             None => {
-                if kind.ty == EnvType::B {
-                    self.b.advance(&bc, key, BLOCK_SIZE as u32);
-                } else {
-                    self.a.advance(&ac, key, BLOCK_SIZE as u32);
+                if let Some(c) = &ac {
+                    self.a.advance(c, key, BLOCK_SIZE as u32);
+                } else if let Some(c) = &bc {
+                    self.b.advance(c, key, BLOCK_SIZE as u32);
                 }
-                self.glide_left = self.glide_left.saturating_sub(BLOCK_SIZE as u16);
             }
         }
+        self.glide.advance(BLOCK_SIZE as u16);
         start
     }
 }
 ```
 
+Task 5's `a_coefs` moves into this `impl` unchanged. `ACoefs` and `BCoefs` are `Copy`, so the caches return copies.
+
 - [ ] **Step 8: Run the tests**
 
-Run: `env $T cargo test -p chimera-core --test func_gen_test --test env_slot_test --test env_a_test --test golden_test`
-Expected: PASS; goldens bit-identical (ENV 3 is B now, but nothing routes it).
+Run: `env $T cargo test -p chimera-core` (with the `func.rs` unit test)
+Expected: PASS; goldens bit-identical (ENV 3 is B now, but nothing routes it). Task 5's `level_sets_the_peak` still builds its `EnvMods` with `..EnvMods::NONE`, so it needs no change.
 
 - [ ] **Step 9: Commit**
 
@@ -3821,7 +4517,7 @@ git commit -m "Envelope B: ENV, LFO and BURST; an ENV slot changes TYPE without 
 
 ### Task 7: LFO slots: CLASSIC and FUNC
 
-`ParamSnapshot.lfo` becomes `lfos: [LfoParams; 3]` and `BlockRef::Lfo` becomes `BlockRef::Lfo(LfoSlot)`. `Lfo` runs CLASSIC (today's arithmetic, OFFSET no longer applied) or FUNC (`FuncGen` in LFO mode, DEPTH not applied), and glides across a TYPE or FORM change. `Voice` runs all three, which fills sources 4 and 5, and a note-on retriggers a CLASSIC LFO with SYNC 1 and a FUNC LFO on SYNC.
+`ParamSnapshot.lfo` becomes `lfos: [LfoParams; 3]` and `BlockRef::Lfo` becomes `BlockRef::Lfo(LfoSlot)`. `Lfo` runs CLASSIC (today's arithmetic, OFFSET no longer applied) or FUNC (`FuncGen` in LFO mode, DEPTH not applied), and glides across a TYPE or FORM change. `Voice` runs all three, which fills sources 4 and 5, and a note-on retriggers a CLASSIC LFO with SYNC 1 and a FUNC LFO on SYNC. With all six slots running, every matrix row moves its destination: this task ends the first shippable slice (#121).
 
 **Files:**
 - Modify: `chimera-core/src/dsp/modulator/mod.rs` (`LfoSlot`, `LfoType`)
@@ -3831,10 +4527,10 @@ git commit -m "Envelope B: ENV, LFO and BURST; an ENV slot changes TYPE without 
 - Modify: `chimera-core/src/modulation.rs` (`ModSource::of_lfo`)
 - Modify: `chimera-core/src/preset.rs`, `chimera-core/src/factory.rs`, `chimera-core/src/dsp/voice.rs`, `chimera-core/src/ui/mod.rs`, `chimera-core/src/ui/mod_grid.rs`, `chimera-core/src/ui/block_registry.rs` (LFO page on `Lfo(Lfo1)`, OFST off it)
 - Create: `chimera-core/tests/lfo_slot_test.rs`
-- Modify tests: `lfo_test.rs`, `common/mod.rs`, `modulation_integration_test.rs`, `modulatable_test.rs`, `factory_test.rs`, `part_page_test.rs`, `binding_test.rs`, `addr_test.rs`
+- Modify tests: `routing_test.rs`, `lfo_test.rs`, `common/mod.rs`, `modulation_integration_test.rs`, `modulatable_test.rs`, `factory_test.rs`, `part_page_test.rs`, `binding_test.rs`, `addr_test.rs`
 
 **Interfaces:**
-- Consumes: Task 6's `FuncGen`, `BCoefs`, `Slides`, `FuncParams::LFO`, `GLIDE`.
+- Consumes: Task 6's `FuncGen`, `BCoefs`, `Slides`, `Func`, `LfoForm`, `FuncParams::LFO`, `Glide`.
 - Produces:
   - `dsp::modulator::LfoSlot { Lfo1, Lfo2, Lfo3 }` (`ALL`, `index()`); `LfoType { Classic = 0, Func = 1 }` (`ALL`).
   - `LfoParams` fields `lfo_type: LfoType`, `func: FuncParams`; ids `TYPE 6, FORM 7, RISE 8, FALL 9, SHAPE 10`.
@@ -3949,6 +4645,20 @@ fn a_type_change_glides_out() {
 }
 ```
 
+Append to `chimera-core/tests/routing_test.rs` (red until this task runs LFO 2 and 3):
+
+```rust
+/// Spec § Tests "Matrix": a route from each of the eight sources moves its
+/// destination (NOTE at note 72, where it isn't 0).
+#[test]
+fn every_source_moves_cutoff() {
+    for s in ModSource::ALL {
+        let note = if s == ModSource::Note { 72 } else { 60 };
+        assert_ne!(render(s, 127, note, 100), render(s, 0, note, 100), "{s:?}");
+    }
+}
+```
+
 In `lfo_test.rs`, replace `lfo_offset_shifts_output` with:
 
 ```rust
@@ -4039,19 +4749,26 @@ pub struct Lfo {
     random_value: f32,
     /// Simple PRNG state for random
     rng_state: u32,
-    /// FUNC's generator.
+    /// FUNC's generator, and its coefficients with the inputs they came from.
     func: FuncGen,
-    /// TYPE and FUNC's FORM last block; `None` before the first.
-    kind: Option<(LfoType, FuncForm)>,
-    /// A change's leftover and the samples its glide has left.
-    glide: f32,
-    glide_left: u16,
+    bc: Option<(FuncParams, u32, BCoefs)>,
+    /// What ran last block; `None` before the first.
+    kind: Option<Kind>,
+    /// A TYPE or FORM change's leftover, gliding out.
+    glide: Glide,
     /// Last block's output, for the glide.
     last: f32,
 }
+
+/// What an LFO slot runs: today's LFO, or B locked to LFO mode with a FORM.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Kind {
+    Classic,
+    Func(LfoForm),
+}
 ```
 
-  (`new` adds `func: FuncGen::new(), kind: None, glide: 0.0, glide_left: 0, last: 0.0`), and:
+  (`new` adds `func: FuncGen::new(), bc: None, kind: None, glide: Glide::NONE, last: 0.0`), and:
 
 ```rust
     /// A note-on: a CLASSIC LFO with SYNC 1 restarts at its PHASE; FUNC
@@ -4060,7 +4777,7 @@ pub struct Lfo {
         match p.lfo_type {
             LfoType::Classic if p.sync == 1 => self.retrigger(p.phase_offset),
             LfoType::Classic => {}
-            LfoType::Func => self.func.note_on(FuncMode::Lfo, p.func.form()),
+            LfoType::Func => self.func.note_on(Func::Lfo(p.func.lfo_form)),
         }
     }
 
@@ -4068,13 +4785,21 @@ pub struct Lfo {
     /// the advance. CLASSIC is today's arithmetic, bit for bit.
     pub fn run_block(&mut self, p: &LfoParams, sample_rate: u32) -> f32 {
         let kind = match p.lfo_type {
-            LfoType::Classic => (LfoType::Classic, FuncForm::Free),
-            LfoType::Func => (LfoType::Func, p.func.form()),
+            LfoType::Classic => Kind::Classic,
+            LfoType::Func => Kind::Func(p.func.lfo_form),
         };
         let raw = match p.lfo_type {
             LfoType::Classic => self.process(p, sample_rate),
             LfoType::Func => {
-                let c = BCoefs::new(&p.func, &Slides::default(), sample_rate, false);
+                // Reused while FUNC's inputs hold (it runs per block).
+                let c = match self.bc {
+                    Some((f, sr, c)) if f == p.func && sr == sample_rate => c,
+                    _ => {
+                        let c = BCoefs::new(&p.func, &Slides::default(), sample_rate, false);
+                        self.bc = Some((p.func, sample_rate, c));
+                        c
+                    }
+                };
                 self.func.set(&c);
                 let v = self.func.output();
                 self.func.advance(&c, false, BLOCK_SIZE as u32);
@@ -4082,21 +4807,17 @@ pub struct Lfo {
             }
         };
         if self.kind.replace(kind).is_some_and(|k| k != kind) {
-            self.glide = self.last - raw;
-            self.glide_left = GLIDE;
+            self.glide.start(self.last - raw);
         }
-        let out = if self.glide_left == 0 {
-            raw
-        } else {
-            raw + self.glide * (self.glide_left as f32 / GLIDE as f32)
-        };
-        self.glide_left = self.glide_left.saturating_sub(BLOCK_SIZE as u16);
+        // No glide: `raw` itself, so CLASSIC stays bit for bit.
+        let out = if self.glide.active() { raw + self.glide.value() } else { raw };
+        self.glide.advance(BLOCK_SIZE as u16);
         self.last = out;
         out
     }
 ```
 
-  with `use chimera_hal::BLOCK_SIZE; use crate::dsp::envelope::GLIDE; use crate::dsp::modulator::func::{BCoefs, FuncGen, Slides}; use crate::dsp::modulator::{FuncForm, FuncMode, FuncParams, LfoType, pick};`. (`FuncParams::LFO`'s mode is LFO and no LFO id writes it, so `BCoefs` runs LFO mode.)
+  with `use chimera_hal::BLOCK_SIZE; use crate::dsp::modulator::func::{BCoefs, FuncGen, Slides}; use crate::dsp::modulator::{Func, FuncParams, Glide, LfoForm, LfoType, pick};`. (`FuncParams::LFO`'s mode is LFO and no LFO id writes it, so `BCoefs` runs LFO mode.)
 
 - [ ] **Step 5: Three LFOs everywhere**
 
@@ -4120,8 +4841,8 @@ pub struct Lfo {
 
 - [ ] **Step 6: Run the tests**
 
-Run: `env $T cargo test -p chimera-core --test lfo_slot_test --test lfo_test --test golden_test --test factory_test --test addr_test --test part_page_test --test binding_test --test memory_budget_test`
-Expected: PASS. `algo_morph_sweep` and `factory_6` (MORPH PAD, LFO 1 → MORPH) are bit-identical: CLASSIC's value is still taken before the advance, with today's arithmetic.
+Run: `env $T cargo test -p chimera-core`
+Expected: PASS, `every_source_moves_cutoff` included. `algo_morph_sweep` and `factory_6` (MORPH PAD, LFO 1 → MORPH) are bit-identical: CLASSIC's value is still taken before the advance, with today's arithmetic.
 
 - [ ] **Step 7: Commit**
 
@@ -4133,8 +4854,17 @@ git add chimera-core/src/dsp/modulator/mod.rs chimera-core/src/dsp/lfo.rs chimer
   chimera-core/src/ui/block_registry.rs chimera-core/tests/lfo_slot_test.rs chimera-core/tests/lfo_test.rs \
   chimera-core/tests/common/mod.rs chimera-core/tests/modulation_integration_test.rs \
   chimera-core/tests/modulatable_test.rs chimera-core/tests/factory_test.rs chimera-core/tests/part_page_test.rs \
-  chimera-core/tests/binding_test.rs
+  chimera-core/tests/binding_test.rs chimera-core/tests/routing_test.rs
 git commit -m "Three LFO slots, CLASSIC or FUNC; OFFSET no longer applied"
+```
+
+- [ ] **Step 8: Mark the slice**
+
+Tasks 1–7 are the first shippable slice: every FLT knob is honest and every matrix row runs.
+
+```bash
+GH_TOKEN=$(gh auth token -u joegiralt) gh issue comment 121 -R joegiralt/chimera \
+  --body "First slice on filter-routing (Tasks 1–7 of docs/superpowers/plans/2026-09-28-filter-routing.md): MODE on FLT and FLT › MODE, FM retired (ids 3–5), ENV / KEY / LFO are the routes ENV 1 / NOTE / LFO 1 → CUTOFF, CUTOFF in octaves, g ramped per block, and the six modulators (ENV 1–3 as Cascadia A or B, LFO 1–3 CLASSIC or FUNC) feed the eight matrix rows. Factory Sounds bit-identical."
 ```
 
 ---
@@ -4149,7 +4879,8 @@ A route exists apart from its amount (spec § 2), so a route at 0 and a deleted 
 - Modify: `chimera-core/src/factory.rs` (MORPH PAD builds on the defaults)
 - Modify: `chimera-core/src/ui/mod_grid.rs` (`MAX_SOURCES`, `present`, `set`, `route`, `is_present`, `delete_selected`, `load_amounts`, `draw_grid`, `HINT`)
 - Modify: `chimera-core/src/ui/components.rs` (`Look` on `Cell`)
-- Modify: `chimera-core/src/ui/renderer.rs` (route cells and focus band read presence), `chimera-core/src/ui/audio_page.rs` (`look: Look::Live`)
+- Modify: `chimera-core/src/ui/renderer.rs` (`look`: route cells and the focus band read presence), `chimera-core/src/ui/audio_page.rs` (`look: Look::Live`)
+- Modify: `chimera-core/src/ui/region.rs` (`matrix_rev` and `looks` in the Grid, Route and Cells keys; `keyed`)
 - Modify: `chimera-core/src/ui/mod.rs` (MIX+MINUS on the matrix; `CUTOFF` from `modulation`)
 - Modify tests: `routing_test.rs`, `flt_page_test.rs`, `binding_test.rs`, `factory_test.rs`, `mixer_page_test.rs`, `preset_test.rs`, `prime_status_test.rs`, `matrix_view_test.rs`, `cell_grid_test.rs`, `screen_golden_test.rs`
 
@@ -4160,7 +4891,8 @@ A route exists apart from its amount (spec § 2), so a route at 0 and a deleted 
   - `ModState::{present(&self, d: usize) -> u8, find(&self, ParamAddr) -> Option<usize>, routes_into(&self, ParamAddr) -> u8, set_route(&mut self, source: usize, dest: usize, amount: i8), push(&mut self, ParamAddr) -> Option<usize>}`; `set_amount` sets the bit when the amount is nonzero.
   - `MatrixState::{present: [u8; MAX_DESTS], is_present(&self, row, col) -> bool, delete_selected(&mut self)}`; `set` marks presence; `route` is `None` for an absent route.
   - `mod_grid::HINT: &str`; `mod_grid::MAX_SOURCES == MAX_MOD_SOURCES`.
-  - `components::Look { Live, Absent, Dimmed }` and `Cell.look`.
+  - `components::Look { Live = 0, Absent = 1, Dimmed = 2 }` (`#[repr(u8)]`) and `Cell.look`; `renderer::look(f: &Frame, i: usize) -> Look`, the one place a cell's look is decided (Tasks 14–17 add their rules to it).
+  - `MatrixState.rev: u16`, bumped on every amount, presence or column change; `RegionData::keyed(self, matrix_rev: u16, looks: u16) -> RegionData`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -4220,7 +4952,7 @@ Append to `chimera-core/tests/flt_page_test.rs`:
 
 ```rust
 /// Plus five times from Part 1's home: the MOD node (the matrix, until
-/// Task 15 puts E1 there).
+/// Task 16 puts E1 there).
 fn to_matrix(ui: &mut UiState) {
     feed(ui, Input::press(ButtonId::B1));
     for _ in 0..5 {
@@ -4413,31 +5145,38 @@ pub const HINT: &str = "PRIME MIX+PLUS  DELETE MIX+MINUS";
 In `chimera-core/src/ui/components.rs`:
 
 ```rust
-/// How a cell reads (spec § UI).
+/// How a cell reads (spec § UI). The discriminants pack into the Cells
+/// region's key.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
 pub enum Look {
-    Live,
+    Live = 0,
     /// A route knob with no route: a dash where the value goes, no bar.
-    Absent,
+    Absent = 1,
     /// Fixed or inapplicable: label and value in MID, no bar.
-    Dimmed,
+    Dimmed = 2,
 }
 ```
 
-`Cell` gains `pub look: Look,`. In `cell`, when `c.look == Look::Absent`, draw the label as usual, then instead of the value text and bar draw `draw::fill_rect(d, x, y + theme::CELL_VALUE_DY - 5, 12, 2, theme::INK2);` and return. (`Dimmed` is drawn from Task 13.) Every `Cell { … }` literal gains `look: Look::Live` (`renderer.rs`, `audio_page.rs`, `cell_grid_test.rs`).
+`Cell` gains `pub look: Look,`. In `cell`, when `c.look == Look::Absent`, draw the label as usual, then instead of the value text and bar draw `draw::fill_rect(d, x, y + theme::CELL_VALUE_DY - 5, 12, 2, theme::INK2);` and return. (`Dimmed` is drawn from Task 14.) Every `Cell { … }` literal gains `look: Look::Live` (`renderer.rs`, `audio_page.rs`, `cell_grid_test.rs`).
 
-In `chimera-core/src/ui/renderer.rs`, `draw_cells` sets the look of a route slot:
+In `chimera-core/src/ui/renderer.rs`, one function decides a cell's look, for drawing and for the dirty-region key:
 
 ```rust
-            let look = match slot.binding {
-                SlotBinding::Route(src)
-                    if f.matrix.route(src.index(), crate::modulation::CUTOFF).is_none() =>
-                {
-                    components::Look::Absent
-                }
-                _ => components::Look::Live,
-            };
+/// How cell `i` of the page reads now.
+pub fn look(f: &Frame, i: usize) -> components::Look {
+    match f.def.params[i].binding {
+        SlotBinding::Route(src)
+            if f.matrix.route(src.index(), crate::modulation::CUTOFF).is_none() =>
+        {
+            components::Look::Absent
+        }
+        _ => components::Look::Live,
+    }
+}
 ```
+
+and `draw_cells` sets `look: look(f, i)` on each `Cell`.
 
 and `draw_focus` shows `--` as the value text for an absent route (the focus font has `-`):
 
@@ -4450,6 +5189,61 @@ and `draw_focus` shows `--` as the value text for an absent route (the focus fon
         } else {
             fmt::fmt_val(&mut buf, v, slot.format());
         }
+```
+
+- [ ] **Step 6b: The dirty-region keys see presence**
+
+Deleting a route at 0 changes no amount, so today's Grid, Route and Cells keys wouldn't redraw (the goldens render in full and wouldn't notice). In `mod_grid.rs`, `MatrixState` gains `pub rev: u16,` (doc: `/// Bumped on every amount, presence or column change: part of the dirty-region keys.`), `rev: 0` in `new`, and `self.rev = self.rev.wrapping_add(1);` at the end of `set`, `delete_selected`, `load_amounts` and `rebuild_dests_from_registry`.
+
+In `region.rs`, `Cells` gains `matrix_rev: u16, looks: u16`, and `Grid` and `Route` gain `matrix_rev: u16`. `cells`, `grid` and `grid_with_value` set them to 0, and the sentinels to `u16::MAX`. Add:
+
+```rust
+    /// With the matrix's revision (and the cells' looks) in the key, so a
+    /// deleted route or a dimmed cell redraws.
+    pub fn keyed(self, matrix_rev: u16, looks: u16) -> Self {
+        match self {
+            Self::Cells { page, values, focus, dest_count, .. } => {
+                Self::Cells { page, values, focus, dest_count, matrix_rev, looks }
+            }
+            Self::Grid { sel_row, sel_col, scroll_x, scroll_y, sel_value, .. } => {
+                Self::Grid { sel_row, sel_col, scroll_x, scroll_y, sel_value, matrix_rev }
+            }
+            Self::Route { row, col, dests, value, .. } => Self::Route { row, col, dests, value, matrix_rev },
+            other => other,
+        }
+    }
+```
+
+In `ui/mod.rs`, `region_data` keys them: the Route literal gains `matrix_rev: self.matrix_state.rev`; the Cells arm ends `.keyed(self.matrix_state.rev, looks)` with
+
+```rust
+        let looks = (0..6).fold(0u16, |k, i| k | (renderer::look(f, i) as u16) << (2 * i));
+```
+
+and the Grid arm ends `.keyed(self.matrix_state.rev, 0)`. `region_tests.rs` builds `RegionData::cells(…)` as before; no change.
+
+Append to `flt_page_test.rs` (after `to_matrix`):
+
+```rust
+/// Deleting a route at 0 changes no amount, but the dirty render redraws
+/// the grid (the desktop and the firmware draw through `render_dirty`).
+#[test]
+fn deleting_a_route_at_zero_redraws_the_grid() {
+    use chimera_core::ui::page::PageLayout;
+    use chimera_core::ui::perf::PerfStats;
+    use chimera_core::ui::region::{RegionKind, layout_regions};
+    let mut ui = UiState::new();
+    to_matrix(&mut ui); // E1 → CUTOFF, present at 0
+    let (mut fb, perf, scope) = (Fb::new(), PerfStats::zero(), scope_fixture());
+    ui.render_dirty_with_audio(&mut fb, &perf, None, &scope);
+    feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Minus));
+    let flushed = ui.render_dirty_with_audio(&mut fb, &perf, None, &scope);
+    let &(_, y0, y1) = layout_regions(PageLayout::Matrix)
+        .iter()
+        .find(|r| r.0 == RegionKind::Grid)
+        .unwrap();
+    assert!(flushed.contains(&(y0, y1)), "{flushed:?}");
+}
 ```
 
 - [ ] **Step 7: MIX+MINUS on the matrix**
@@ -4472,7 +5266,7 @@ In `chimera-core/src/ui/mod.rs`, delete the local `CUTOFF` const and `use crate:
 - `factory_test.rs`: `assert_eq!(pad.mod_state.num_dests(), 2);` and `assert_ne!(pad.mod_state.amount(1, 1), 0, "LFO 1 moves MORPH");`; in `morph_pad_lfo_sweep_stays_inside_morph_range`, `sum_for(0, …)` becomes `sum_for(1, …)`.
 - `mixer_page_test.rs:199`: `assert_eq!(ui.performance.parts[0].sound.dest_registry.len(), 1, "only the default CUTOFF");`.
 - `preset_test.rs`: the two `assert!(primed(&ui).is_empty());` become `assert_eq!(primed(&ui), [chimera_core::modulation::CUTOFF]);`.
-- `prime_status_test.rs`, `priming_past_matrix_capacity_on_the_algo_chain_reports_full`: CUTOFF is already a column, so priming it reports ALREADY ROUTED. `assert_eq!(added, MAX_MOD_DESTS - 1, …)` and `Some(MAX_MOD_DESTS - 1)` for `added_before`; the doc says "exactly `MAX_MOD_DESTS − 1` report ADDED (CUTOFF is a default column)".
+- `prime_status_test.rs`, `priming_past_matrix_capacity_on_the_algo_chain_reports_full`: CUTOFF is already a column, so priming it reports ALREADY ROUTED. The walk (Task 2's, through FLT › MODE) still meets 16 other addresses: 15 are ADDED, filling the registry, and the 16th reports MATRIX FULL. So `assert_eq!(added, MAX_MOD_DESTS - 1, …)` and `Some(MAX_MOD_DESTS - 1)` for `added_before`, and the matrix and registry still hold `MAX_MOD_DESTS`. The doc says "exactly `MAX_MOD_DESTS − 1` report ADDED (CUTOFF is a default column), then MATRIX FULL".
 - `matrix_view_test.rs`, `an_empty_matrix_says_so`: after `UiState::new()`, empty Part 1's matrix first: `ui.performance.parts[0].sound.dest_registry.remove(chimera_core::modulation::CUTOFF); feed(&mut ui, Input::press(ButtonId::B1));`, then the five PLUS.
 - `prime_status_test.rs:107` measures the old hint: measure `chimera_core::ui::mod_grid::HINT` instead, and assert it fits `theme::SCREEN_W - 2 * theme::MARGIN_X`.
 
@@ -4495,7 +5289,7 @@ Look at `bigviz_filter`: CUTOFF's cell has its mod indicator (a column exists), 
 cargo fmt --all && just check
 git add chimera-core/src/modulation.rs chimera-core/src/preset.rs chimera-core/src/factory.rs \
   chimera-core/src/ui/mod_grid.rs chimera-core/src/ui/components.rs chimera-core/src/ui/renderer.rs \
-  chimera-core/src/ui/audio_page.rs chimera-core/src/ui/mod.rs chimera-core/tests/routing_test.rs \
+  chimera-core/src/ui/region.rs chimera-core/src/ui/audio_page.rs chimera-core/src/ui/mod.rs chimera-core/tests/routing_test.rs \
   chimera-core/tests/flt_page_test.rs chimera-core/tests/binding_test.rs chimera-core/tests/factory_test.rs \
   chimera-core/tests/mixer_page_test.rs chimera-core/tests/preset_test.rs chimera-core/tests/prime_status_test.rs \
   chimera-core/tests/matrix_view_test.rs chimera-core/tests/cell_grid_test.rs \
@@ -4505,7 +5299,7 @@ git commit -m "Route presence; a new Sound's three CUTOFF routes; MIX+MINUS dele
 
 ---
 
-### Task 9: ENV destinations; every slot live; the UI's stand-in sources
+### Task 9: ENV destinations; the UI's stand-in sources
 
 ENV n LEVEL, TIME, RISE, FALL and SHAPE become modulatable. `Voice` collects their sums in the matrix pass and feeds them to their slot on the next block (spec § Signal flow 1). The hidden LEVEL and TIME get primed from the cells that own them (see Decisions). The UI's stand-in source values cover all eight sources.
 
@@ -4558,18 +5352,6 @@ fn plain() -> ParamSnapshot {
     let mut p = ParamSnapshot::for_engine(EngineType::Algo);
     p.filter.cutoff = 1000.0;
     p
-}
-
-/// Spec § Tests "Matrix": a route from each of the eight sources moves its destination.
-#[test]
-fn every_source_moves_cutoff() {
-    for s in ModSource::ALL {
-        assert_ne!(
-            render_with(&plain(), &[(s, CUTOFF, 127)], 100),
-            render_with(&plain(), &[(s, CUTOFF, 0)], 100),
-            "{s:?}"
-        );
-    }
 }
 
 #[test]
@@ -4632,7 +5414,7 @@ fn stage_cells_prime_time_and_sustain_primes_level() {
     assert_eq!(ui.prime_status(), Some(PrimeStatus::Added));
     prime(&mut ui, EncoderId::C); // SUSTAIN
     assert_eq!(ui.prime_status(), Some(PrimeStatus::Added));
-    // Whichever ENV slot the page shows (E1 here; E2 once Task 15 moves E1 home).
+    // Whichever ENV slot the page shows (E1 here; E2 once Task 16 moves E1 home).
     let reg = &ui.performance.parts[0].sound.dest_registry;
     let primed: Vec<ParamAddr> = (0..reg.len()).map(|i| reg.get(i).unwrap().addr).collect();
     let has = |id| primed.iter().any(|a| matches!(a.block, BlockRef::Env(_)) && a.param == id);
@@ -4643,7 +5425,7 @@ fn stage_cells_prime_time_and_sustain_primes_level() {
 - [ ] **Step 2: Run them to see them fail**
 
 Run: `env $T cargo test -p chimera-core --test routing_test --test prime_status_test`
-Expected: FAIL: `env_destinations_are_modulatable`, `vel_to_level_scales_env1`, `time_and_rise_reach_their_slots`, `every_source_moves_cutoff` (ENV 2 and 3 already move it; this passes) and the priming test.
+Expected: FAIL: `env_destinations_are_modulatable`, `vel_to_level_scales_env1`, `time_and_rise_reach_their_slots` and the priming test.
 
 - [ ] **Step 3: Open the destinations**
 
@@ -4670,9 +5452,9 @@ In `voice.rs`, add the field `env_mods: [EnvMods; 3],` (doc: `/// The ENV destin
                             n.level = Some(sum.max(0.0).min(1.0));
                         }
                         EnvParams::TIME => n.time = sum,
-                        EnvParams::RISE => n.rise = sum,
-                        EnvParams::FALL => n.fall = sum,
-                        EnvParams::SHAPE => n.shape = sum,
+                        EnvParams::RISE => n.slides.rise = sum,
+                        EnvParams::FALL => n.slides.fall = sum,
+                        EnvParams::SHAPE => n.slides.shape = sum,
                         _ => {}
                     }
                     continue;
@@ -4770,7 +5552,7 @@ git commit -m "ENV n LEVEL, TIME, RISE, FALL and SHAPE as destinations; all six 
 
 ### Task 10: VCA as a destination
 
-`OutParams` gains the hidden VCA destination (id 2) and AMP's VEL (id 3). With a route into VCA, the voice's output is `sample · volume · g[n]` (spec § 4). Every ENV slot routed to the VCA ticks per sample into one 64-sample stack buffer, and the other routed sources ramp from their last block's value. With no route, Algo and Modal pass through bit for bit. The routes a voice uses are kept across a fade.
+`OutParams` gains the hidden VCA destination (id 2) and AMP's VEL (id 3). With a route into VCA, the voice's output is `sample · volume · g[n]` (spec § 4). Every ENV slot routed to the VCA fills a block of per-sample levels into one 64-sample stack buffer (its LEVEL ramped, Task 5), and the other routed sources ramp from their last block's value. With no route, Algo and Modal pass through bit for bit, through an exhaustive `match` on the engine, so a new engine (VA, #148) must say what it does without a route. The routes a voice uses are kept across a fade.
 
 **Files:**
 - Modify: `chimera-core/src/params.rs` (`OutParams.vca`, `vca_vel`, `OUT_SPECS`)
@@ -4920,10 +5702,12 @@ fn vel_scales_the_vca() {
         let mut p = init(EngineType::Algo);
         p.out.vca_vel = vca_vel;
         let ms = mods(&[(ModSource::Env2, VCA, 127)]);
+        // Over a whole block (a single sample may sit near a zero crossing).
         let ratio = |vel| {
             let (r, q) = (render(&p, &ms, 60, 60, vel), render(&p, &ModState::new(), 60, 60, vel));
-            let i = 40 * BLOCK_SIZE + 7;
-            r[i] / q[i]
+            let block = 40 * BLOCK_SIZE..41 * BLOCK_SIZE;
+            let sum = |v: &[f32]| v[block.clone()].iter().map(|x| x.abs()).sum::<f32>();
+            sum(&r) / sum(&q)
         };
         let (lo, hi) = (ratio(40), ratio(120));
         if same {
@@ -5013,7 +5797,7 @@ impl VcaRoutes {
         if let Some(d) = m.find(VCA) {
             r.bits = m.present(d);
             for (s, a) in r.amount.iter_mut().enumerate() {
-                *a = m.amount(s, d) as f32 / 127.0;
+                *a = crate::modulation::amount_scale(m.amount(s, d));
             }
         }
         r
@@ -5073,9 +5857,15 @@ In the matrix pass, first thing in the loop body after `let a = mod_state.dest(d
         // 5. The VCA, after the fold.
         let volume = m.out.volume;
         if vca.bits == 0 {
-            // No route: Algo and Modal pass through (spec § 4), bit for bit.
-            for sample in output.iter_mut() {
-                *sample *= volume;
+            // No route: the engine decides (spec § 4). No wildcard, so a new
+            // engine can't inherit the pass-through (VA gates: #148).
+            match self.active_engine {
+                EngineType::Algo | EngineType::Modal => {
+                    // Its own envelopes shape the sound: today's expression, bit for bit.
+                    for sample in output.iter_mut() {
+                        *sample *= volume;
+                    }
+                }
             }
         } else {
             let vel = 1.0 - m.out.vca_vel + m.out.vca_vel * self.last_velocity.unit();
@@ -5119,7 +5909,7 @@ With routes into VCA, a voice ends at the end of the first block in which no rou
 Append to `chimera-core/tests/vca_test.rs`:
 
 ```rust
-use chimera_core::dsp::modulator::{EnvType, FuncForm, FuncMode};
+use chimera_core::dsp::modulator::{EnvForm, EnvType, Func, LfoForm};
 
 /// `blocks` of note 60, key up at `off`; `(output, active after each block)`.
 fn life(p: &ParamSnapshot, ms: &ModState, off: usize, blocks: usize) -> (Vec<f32>, Vec<bool>) {
@@ -5145,12 +5935,11 @@ fn long() -> ParamSnapshot {
     p
 }
 
-fn with_env3(mode: FuncMode, form: FuncForm, fall: f32) -> ParamSnapshot {
+fn with_env3(f: Func, fall: f32) -> ParamSnapshot {
     let mut p = long();
     let e = &mut p.envelopes[2];
-    (e.env_type, e.func.mode, e.func.fall) = (EnvType::B, mode, fall);
-    let i = mode.forms().iter().position(|&f| f == form).unwrap();
-    e.func.set_form_index(i as f32);
+    (e.env_type, e.func.fall) = (EnvType::B, fall);
+    e.func.set_func(f);
     p
 }
 
@@ -5178,10 +5967,10 @@ fn env2_on_the_vca_ends_the_voice_when_it_idles() {
 /// is held; after key-up it ends through the 128-sample fade.
 #[test]
 fn nothing_drones_after_key_up() {
-    let e3 = |mode, form| (with_env3(mode, form, 0.2), ModSource::Env3);
+    let e3 = |f| (with_env3(f, 0.2), ModSource::Env3);
     for (p, s) in [
-        e3(FuncMode::Lfo, FuncForm::Free),
-        e3(FuncMode::Env, FuncForm::Cycle),
+        e3(Func::Lfo(LfoForm::Free)),
+        e3(Func::Env(EnvForm::Cycle)),
         (long(), ModSource::Lfo1),
         (long(), ModSource::Vel),
     ] {
@@ -5200,11 +5989,11 @@ fn bursts_end_when_their_burst_does() {
     let len = |fall: f32| {
         (chimera_core::dsp::modulator::law::BURST_LEN.at(fall) * SR as f32) as usize / BLOCK_SIZE
     };
-    let p = with_env3(FuncMode::Burst, FuncForm::Cycle, 0.2);
+    let p = with_env3(Func::Burst(EnvForm::Cycle), 0.2);
     let (_, alive) = life(&p, &mods(&[(ModSource::Env3, VCA, 127)]), 30, 200);
     let gone = alive.iter().position(|a| !a).expect("ends");
     assert!(gone > 30 && gone <= 30 + len(0.2) + 3, "cycle burst: {gone}");
-    let p = with_env3(FuncMode::Burst, FuncForm::Ad, 0.2);
+    let p = with_env3(Func::Burst(EnvForm::Ad), 0.2);
     let (_, alive) = life(&p, &mods(&[(ModSource::Env3, VCA, 127)]), usize::MAX, 200);
     let gone = alive.iter().position(|a| !a).expect("ends with the key held");
     assert!(gone <= len(0.2) + 3, "AD burst: {gone}");
@@ -5306,7 +6095,7 @@ git commit -m "A voice lives as long as a source routed to its VCA holds it: no 
 
 ### Task 12: `ModRouting::cost`
 
-`Voice::cost` bills the modulator pool as a function of the Sound (spec § CPU), the way `Engines::cost` bills the engine. The numbers are the spec's estimate until Task 19's bench.
+`Voice::cost` bills the modulator pool as a function of the Sound (spec § CPU), the way `Engines::cost` bills the engine. **Ruling:** the model must never undercount, so until Task 13's bench measures each term it bills the plan review's estimates: BASE 30, ENV_A 30, ENV_B 40, CURVE 15 more, OTHER 3 and CLAMP 3. The spec's 8/6/10/14/1/2 would bill the worst routing about 125 cycles low, and the allocator would overrun instead of dropping a voice.
 
 **Files:**
 - Modify: `chimera-core/src/modulation.rs` (`ModRouting`)
@@ -5315,7 +6104,7 @@ git commit -m "A voice lives as long as a source routed to its VCA holds it: no 
 
 **Interfaces:**
 - Consumes: `routes_into`, `VCA`, `env_slot` (Tasks 8, 10).
-- Produces: `modulation::ModRouting` with `BASE = Cost(8)`, `ENV_A = Cost(6)`, `ENV_B = Cost(10)`, `CURVE = Cost(14)`, `OTHER = Cost(1)`, `CLAMP = Cost(2)` and `cost(p: &ParamSnapshot, mods: &ModState) -> Cost`.
+- Produces: `modulation::ModRouting` with `BASE = Cost(30)`, `ENV_A = Cost(30)`, `ENV_B = Cost(40)`, `CURVE = Cost(15)`, `OTHER = Cost(3)`, `CLAMP = Cost(3)` and `cost(p: &ParamSnapshot, mods: &ModState) -> Cost`; Task 13 replaces the six numbers with bench readings.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -5332,26 +6121,35 @@ fn routed(routes: &[ModSource]) -> ModState {
     ms
 }
 
-/// Spec § CPU: the defaults 8; ENV 2 (A) on the VCA 16; the worst case 87.
+/// The spec's shape, billed high: the defaults `BASE`; ENV 2 (A) on the
+/// VCA `BASE + CLAMP + ENV_A`; the worst case, three curved B slots and the
+/// five other sources, `BASE + CLAMP + 3·(ENV_B + CURVE) + 5·OTHER`.
 #[test]
-fn mod_routing_bills_the_spec_examples() {
+fn mod_routing_bills_the_spec_shape() {
     use chimera_core::dsp::modulator::{EnvType, FuncMode};
+    use ModRouting as M;
     let p = ParamSnapshot::for_engine(EngineType::Algo);
     let defaults = chimera_core::preset::Sound::init(chimera_core::preset::ChainType::Algo).mod_state;
-    assert_eq!(ModRouting::cost(&p, &defaults), Cost(8));
-    assert_eq!(ModRouting::cost(&p, &routed(&[ModSource::Env2])), Cost(16));
+    assert_eq!(M::cost(&p, &defaults), M::BASE);
+    assert_eq!(M::cost(&p, &routed(&[ModSource::Env2])), M::BASE + M::CLAMP + M::ENV_A);
     let mut worst = p.clone();
     for e in worst.envelopes.iter_mut() {
         (e.env_type, e.func.mode, e.func.shape) = (EnvType::B, FuncMode::Env, 0.8);
     }
-    assert_eq!(ModRouting::cost(&worst, &routed(&ModSource::ALL)), Cost(87));
+    let three_b = M::ENV_B + M::CURVE + M::ENV_B + M::CURVE + M::ENV_B + M::CURVE;
+    let five_other = Cost(5 * M::OTHER.0);
+    assert_eq!(M::cost(&worst, &routed(&ModSource::ALL)), M::BASE + M::CLAMP + three_b + five_other);
+    // The review's estimates, until the bench (Task 13): 30, 63 and 213.
+    assert_eq!((M::BASE, M::cost(&p, &routed(&[ModSource::Env2]))), (Cost(30), Cost(63)));
+    assert_eq!(M::cost(&worst, &routed(&ModSource::ALL)), Cost(213));
 }
 ```
 
-and change these existing tests:
-- `voice_costs_are_the_bench_measurements`: `assert_eq!(voice_cost(EngineType::Modal), Cost(408));` and the loop's right side `Engines::cost(&p, &mods) + Voice::CHAIN_COST + ModRouting::BASE`;
+and change these existing tests (each turns red otherwise):
+- `voice_costs_are_the_bench_measurements`: `assert_eq!(voice_cost(EngineType::Modal), Cost(400) + ModRouting::BASE);` and the loop's right side `Engines::cost(&p, &mods) + Voice::CHAIN_COST + ModRouting::BASE`;
 - `voices_at`: `let voice = Voice::CHAIN_COST.0 + ModRouting::BASE.0 + cost(p);`;
-- `the_costliest_patch_gets_six_voices_on_rev_v`: keep `842` for the engine and chain, add `assert_eq!(Voice::CHAIN_COST.0 + ModRouting::BASE.0 + cost(&p), 850);`; the doc reads "6 × 850 + 1,360 = 6,460 ≤ 7,000; rev Y (5,833 − 1,360) / 850 = 5.3". The factory test (six voices each) needs no change.
+- `the_costliest_patch_gets_six_voices_on_rev_v`: keep `842` for the engine and chain, add `assert_eq!(Voice::CHAIN_COST.0 + ModRouting::BASE.0 + cost(&p), 872);`; the doc reads "6 × 872 + 1,360 = 6,592 ≤ 7,000; rev Y (5,833 − 1,360) / 872 = 5.1". Its `voices_at(CPU_HZ_REV_Y, &p) == 5` still holds.
+- `every_factory_sound_gets_six_voices_on_rev_v` needs no change (every factory patch bills at most 872).
 
 - [ ] **Step 2: Run them to see them fail**
 
@@ -5367,23 +6165,23 @@ use crate::dsp::modulator::{EnvType, FuncMode};
 use crate::hw::Cost;
 use crate::params::ParamSnapshot;
 
-/// The modulator pool's cycles per sample (spec § CPU): an estimate
-/// rounded high, until the bench's MODS row settles it.
+/// The modulator pool's cycles per sample (spec § CPU). Never low: the
+/// plan review's estimates until the bench measures each term.
 pub struct ModRouting;
 
 impl ModRouting {
     /// Six per-block modulators, the eight-row matrix sum and `fast_exp2`.
-    pub const BASE: Cost = Cost(8);
-    /// An ENV slot of type A ticking into the VCA: divide-free.
-    pub const ENV_A: Cost = Cost(6);
-    /// Type B ticking into the VCA.
-    pub const ENV_B: Cost = Cost(10);
-    /// B in ENV mode with SHAPE off centre: a divide per sample.
-    pub const CURVE: Cost = Cost(14);
+    pub const BASE: Cost = Cost(30);
+    /// An ENV slot of type A filling the VCA's buffer.
+    pub const ENV_A: Cost = Cost(30);
+    /// Type B filling it.
+    pub const ENV_B: Cost = Cost(40);
+    /// More for B in ENV mode with SHAPE off centre: a divide per sample.
+    pub const CURVE: Cost = Cost(15);
     /// Each other VCA route's ramp.
-    pub const OTHER: Cost = Cost(1);
+    pub const OTHER: Cost = Cost(3);
     /// The VCA's clamp and multiply, with any route.
-    pub const CLAMP: Cost = Cost(2);
+    pub const CLAMP: Cost = Cost(3);
 
     pub fn cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
         let bits = mods.routes_into(VCA);
@@ -5410,8 +6208,8 @@ In `voice.rs`, `Voice::cost` becomes `Engines::cost(p, mods) + Self::CHAIN_COST 
 
 - [ ] **Step 4: Run the tests**
 
-Run: `env $T cargo test -p chimera-core --test cost_test --test instrument_test --test voice_alloc_test`
-Expected: PASS.
+Run: `env $T cargo test -p chimera-core`
+Expected: PASS (the allocator's own tests use literal costs; nothing else pins `Voice::cost`).
 
 - [ ] **Step 5: Commit**
 
@@ -5423,7 +6221,182 @@ git commit -m "Voice::cost bills the modulator pool and the VCA's routes"
 
 ---
 
-### Task 13: FLD / VCA (AMP) on every chain, and dimmed cells
+### Task 13: Bench the modulator pool (hardware STOP)
+
+The cost model went live in Task 12 on estimates; the UI tasks after this build on it. This stop measures each term on the chip before going on: the pool's base and each per-VCA term on its own row, plus the spec's MODS and SVF rows. They run as a second bench screen, ROUTING, after the existing one.
+
+**Files:**
+- Modify: `chimera-stm32/src/bench.rs` (the ROUTING rows and their screen)
+- Modify (after the STOP): `chimera-core/src/modulation.rs` (`ModRouting`'s six numbers), `chimera-core/tests/cost_test.rs`, `docs/superpowers/plans/2026-09-28-filter-routing.md` (a `## Measured` section at the end)
+
+**Interfaces:**
+- Consumes: `ModState::{find, set_route}`, `ModRouting`, `FilterMode::Phaser`.
+- Produces: `bench::ROUTING: [RoutingRow; 8]`, `RoutingRow = (&'static str, fn(&mut PartAudio))`; the readings, recorded for Task 15's `FilterKind::cost`.
+
+- [ ] **Step 1: The rows**
+
+In `chimera-stm32/src/bench.rs` (`use chimera_core::instrument::PartAudio;` and the core types named below):
+
+```rust
+const ROUTING_ROWS: usize = 8;
+
+/// A ROUTING row: its label and the Part it plays (params and matrix). Each
+/// per-VCA row is 1 OP plus one routing, so its reading less 1 OP (and
+/// less the clamp) is that term alone.
+type RoutingRow = (&'static str, fn(&mut PartAudio));
+const ROUTING: [RoutingRow; ROUTING_ROWS] = [
+    ("1 OP", |p| p.params = algo(AlgoId::A1, 0b1, 0)),
+    ("MODS", mods),
+    ("SVF", |p| {
+        p.params = algo(AlgoId::A1, 0b1, 0);
+        p.params.filter.set_mode(FilterMode::Phaser); // the SVF's costliest mode
+    }),
+    ("A VCA", |p| on_vca(p, &[ModSource::Env2], None)),
+    ("B VCA", |p| on_vca(p, &[ModSource::Env2], Some(0.5))),
+    ("B CRV", |p| on_vca(p, &[ModSource::Env2], Some(0.8))),
+    ("VEL VCA", |p| on_vca(p, &[ModSource::Vel], None)),
+    ("2 VCA", |p| on_vca(p, &[ModSource::Vel, ModSource::Note], None)),
+];
+
+/// 1 OP with `sources` routed to the VCA at 127; with `b_shape`, ENV 2 is
+/// type B in ENV mode at that SHAPE (0.5 linear, 0.8 curved).
+fn on_vca(p: &mut PartAudio, sources: &[ModSource], b_shape: Option<f32>) {
+    p.params = algo(AlgoId::A1, 0b1, 0);
+    if let Some(shape) = b_shape {
+        let e2 = &mut p.params.envelopes[1];
+        e2.env_type = EnvType::B;
+        e2.func.set_func(Func::Env(EnvForm::Ad));
+        e2.func.shape = shape;
+    }
+    let mut reg = ModDestRegistry::new();
+    let _ = reg.add(VCA, *b"BENCH\0\0\0");
+    let mut ms = ModState::from_registry(&reg, MAX_MOD_SOURCES);
+    for s in sources {
+        ms.set_route(s.index(), 0, 127);
+    }
+    p.mod_state = ms;
+}
+
+/// Spec § Tests "Bench": 1 OP; ENV 2 type B, ENV mode, SHAPE off centre →
+/// VCA; ENV 1 → CUTOFF; every source routed; all three LFOs FUNC.
+fn mods(p: &mut PartAudio) {
+    p.params = algo(AlgoId::A1, 0b1, 0);
+    let e2 = &mut p.params.envelopes[1];
+    e2.env_type = EnvType::B;
+    e2.func.set_func(Func::Env(EnvForm::Ad));
+    e2.func.shape = 0.8;
+    for l in p.params.lfos.iter_mut() {
+        l.lfo_type = LfoType::Func;
+    }
+    let res = ParamAddr::new(BlockRef::Filter, FilterParams::RESONANCE);
+    let drive = ParamAddr::new(BlockRef::Filter, FilterParams::DRIVE);
+    let fold = ParamAddr::new(BlockRef::Folder, FolderParams::FOLD);
+    let morph = ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH);
+    let level = ParamAddr::new(BlockRef::Out, OutParams::VOLUME);
+    let routes = [
+        (ModSource::Env1, CUTOFF),
+        (ModSource::Env2, VCA),
+        (ModSource::Env3, res),
+        (ModSource::Lfo1, morph),
+        (ModSource::Lfo2, drive),
+        (ModSource::Lfo3, fold),
+        (ModSource::Vel, level),
+        (ModSource::Note, CUTOFF),
+    ];
+    let mut reg = ModDestRegistry::new();
+    for (_, a) in routes {
+        let _ = reg.add(a, *b"BENCH\0\0\0");
+    }
+    let mut ms = ModState::from_registry(&reg, MAX_MOD_SOURCES);
+    for (s, a) in routes {
+        if let Some(d) = ms.find(a) {
+            ms.set_route(s.index(), d, 64);
+        }
+    }
+    p.mod_state = ms;
+}
+
+/// The ROUTING screen, in the first screen's `voice_row`s: eight rows from
+/// y 46 at `ROW_H` 25 end at 233.
+fn show_routing(display: &mut impl ChimeraDisplay, rows: &[[u32; MAX_VOICES]; ROUTING_ROWS]) {
+    draw::fill_rect(display, 0, 0, theme::SCREEN_W, theme::SCREEN_H, theme::BG);
+    draw::text(display, &theme::FONT_VALUE, "ROUTING", 4, 16, theme::INK);
+    let mut line = FmtBuf::new();
+    for (i, (&(label, _), c)) in ROUTING.iter().zip(rows).enumerate() {
+        voice_row(display, &mut line, 46 + i as i32 * ROW_H, label, c);
+    }
+    display.flush();
+}
+```
+
+(`use chimera_core::addr::{BlockRef, ParamAddr}; use chimera_core::dsp::algo::params::AlgoParams; use chimera_core::dsp::filter::FilterMode; use chimera_core::dsp::modulator::{EnvForm, EnvType, Func, LfoType}; use chimera_core::mod_path::ModDestRegistry; use chimera_core::modulation::{CUTOFF, MAX_MOD_SOURCES, ModSource, ModState, VCA}; use chimera_core::params::{FilterParams, FolderParams, OutParams};`.) In `run`, after the first screen's hold loop:
+
+```rust
+    let mut routing = [[0u32; MAX_VOICES]; ROUTING_ROWS];
+    for (row, &(_, part)) in routing.iter_mut().zip(&ROUTING) {
+        for n in 1..=MAX_VOICES {
+            row[n - 1] = rig.time(
+                |s| {
+                    part(&mut s.parts[0]);
+                    black_box(&s.parts[0]);
+                },
+                n,
+                36,
+                12,
+            );
+        }
+    }
+    show_routing(display, &routing);
+    for _ in 0..HOLD_SECONDS {
+        crate::clocks::delay_us(clocks.cpu_hz, 1_000_000);
+    }
+```
+
+Run: `cargo fmt --all && just check` (it builds and lints the bench feature and runs the stack check; `routing` is 192 B on the stack). Commit:
+
+```bash
+git add chimera-stm32/src/bench.rs
+git commit -m "Bench: a ROUTING screen, each modulator cost term on its own row"
+```
+
+- [ ] **Step 2: STOP. Ask the owner to run the bench, and wait**
+
+Send the owner this, then wait for the numbers:
+
+> The modulator pool and the VCA routes are in (filter-routing Tasks 1–12). Please bench them:
+> 1. Put the synth in DFU mode and run `just flash-bench`. The first screen shows as before for 30 s. Please read `1 OP /VOICE` there too.
+> 2. A second screen, ROUTING, follows for 30 s. Please read all eight `/VOICE` numbers: 1 OP, MODS, SVF, A VCA, B VCA, B CRV, VEL VCA, 2 VCA.
+> 3. `just flash` to put the normal firmware back, and reply with the numbers.
+
+- [ ] **Step 3: Bill what was measured**
+
+Record the raw readings, with the date, in a new `## Measured` section at the end of this plan. From the ROUTING screen (all per voice, rev V, 480 MHz), each term is rounded up:
+- OTHER = 2 VCA − VEL VCA;
+- CLAMP = VEL VCA − 1 OP − OTHER;
+- ENV_A = A VCA − 1 OP − CLAMP;
+- ENV_B = B VCA − 1 OP − CLAMP;
+- CURVE = B CRV − B VCA;
+- BASE = 1 OP − 436 (the 1 OP row before the pool, measured 2026-09-27, in `cost_test`'s `the_model_bills_every_bench_row_high`).
+
+A term that reads 0 or below is billed 1: noise must never make the model cheaper than the work. Put the six numbers into `ModRouting`, and replace the doc line on each with `measured <date>, bench ROUTING row, rev V at 480 MHz`.
+
+Check the MODS row against the model: `CHAIN_COST + AlgoEngine::cost(1 OP) + ModRouting::cost(MODS)` must be at least the MODS reading. If it isn't, raise `BASE` by the difference, rounded up, and note it in `## Measured`. Also record `SVF − 1 OP` there: Task 15 bills it as `FilterKind::cost(Svf, _)`.
+
+In `cost_test.rs`:
+- `mod_routing_bills_the_spec_shape`'s last two asserts get the new totals.
+- Add `the_model_bills_the_mods_row_high`, the check above with the recorded MODS reading, in the style of `the_model_bills_every_bench_row_high`.
+- Recompute the costliest patch's bill (842 + BASE) in `the_costliest_patch_gets_six_voices_on_rev_v`.
+- `every_factory_sound_gets_six_voices_on_rev_v` must stay true. If a factory Sound falls below six on rev V, stop and tell the owner (ADR 0031 promises six).
+
+```bash
+cargo fmt --all && just check
+git add chimera-core/src/modulation.rs chimera-core/tests/cost_test.rs docs/superpowers/plans/2026-09-28-filter-routing.md
+git commit -m "ModRouting bills the bench's measured terms"
+```
+
+---
+
+### Task 14: FLD / VCA (AMP) on every chain, and dimmed cells
 
 The FLD block becomes FLD / VCA (spec § 5): "Fold / VCA", short AMP, with FOLD · SYM · MIX · VEL. It ends the Algo chain (where FLD was) and the Modal chain (which gains it), last before MOD. A slot that is fixed or inapplicable draws dimmed and ignores its encoder. Here that is VEL under the Algo/Modal pass-through. MIX+PLUS on VEL primes the hidden VCA (see Decisions).
 
@@ -5436,8 +6409,8 @@ The FLD block becomes FLD / VCA (spec § 5): "Fold / VCA", short AMP, with FOLD 
 - Modify tests: `block_def_tests.rs`, `binding_test.rs`, `part_page_test.rs`, `screen/mod.rs`, `screen_golden_test.rs`
 
 **Interfaces:**
-- Consumes: `VCA`, `routes_into` (Tasks 8, 10), `Look` (Task 8).
-- Produces: `ui::view::dimmed(addr: ParamAddr, sound: &Sound) -> bool` (Tasks 14–16 add rules to its match); `FOLDER` binds `ParamAddr(Out, OutParams::VCA_VEL)` in slot d.
+- Consumes: `VCA`, `routes_into` (Tasks 8, 10), `Look` and `renderer::look` (Task 8).
+- Produces: `ui::view::dimmed(addr: ParamAddr, sound: &Sound) -> bool` (Tasks 15–17 add rules to its match); `FOLDER` binds `ParamAddr(Out, OutParams::VCA_VEL)` in slot d.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -5570,15 +6543,14 @@ In `components.rs`, `cell` draws `Look::Dimmed` with label and value in `theme::
 
   and the value colour is `theme::MID` when `dim`; the `if !c.fmt.is_discrete()` bar block becomes `if !c.fmt.is_discrete() && !dim`, and the mod bar is skipped when `dim`.
 
-In `renderer.rs`, `draw_cells`' `look` gains the dimmed arm before `_ => Live`:
+In `renderer.rs`, Task 8's `look` gains the dimmed arm before `_ => Live`, so drawing and the dirty-region key (its `looks` field) both see it:
 
 ```rust
-                _ if slot_addr(f.def, i, f.sel_op).is_some_and(|a| {
-                    crate::ui::view::dimmed(a, &f.parts[f.active_part].sound)
-                }) =>
-                {
-                    components::Look::Dimmed
-                }
+        _ if slot_addr(f.def, i, f.sel_op)
+            .is_some_and(|a| crate::ui::view::dimmed(a, &f.parts[f.active_part].sound)) =>
+        {
+            components::Look::Dimmed
+        }
 ```
 
 - [ ] **Step 5: The encoder and MIX+PLUS on a dimmed slot**
@@ -5668,7 +6640,7 @@ git commit -m "FLD / VCA ends every Part chain; VEL dims under the pass-through"
 
 ---
 
-### Task 14: KIND and the filter panel
+### Task 15: KIND and the filter panel
 
 This task adds `FilterKind`, with the SVF as its one variant, and the KIND parameter (id 6). `FilterParams` keeps `mode ∈ kind.modes()` on every write. The FLT page becomes KIND · then the kind's five knobs, and FLT › MODE becomes MODE · the kind's two extras. Both are read from `const` panel data (spec § 6). Slots now resolve through `ui::view`: a filter-panel knob resolves against the Sound's KIND, and a route view resolves to a matrix cell, so pages, vizzes and encoders read by address. KIND is dimmed while it is the only built kind. `Voice::cost` adds `FilterKind::cost`.
 
@@ -5682,15 +6654,15 @@ This task adds `FilterKind`, with the SVF as its one variant, and the KIND param
 - Modify: `chimera-core/src/ui/block_registry.rs` (FILTER, FILTER_MODE)
 - Modify: `chimera-core/src/ui/part_page.rs`, `chimera-core/src/ui/renderer.rs`, `chimera-core/src/ui/mod.rs`, `chimera-core/src/ui/viz.rs` (`Response`)
 - Modify: `chimera-core/src/preset.rs` (NOTE's default from the kind), `chimera-core/src/dsp/voice.rs` (`Voice::cost`)
-- Modify tests: `flt_page_test.rs`, `filter_test.rs`, `big_viz_test.rs`, `part_page_test.rs`, `binding_test.rs`, `ui_test.rs`, `screen/mod.rs`, `screen_golden_test.rs`, and every test calling `slot_addr`
+- Modify tests: `flt_page_test.rs`, `filter_test.rs`, `big_viz_test.rs`, `part_page_test.rs`, `binding_test.rs`, `ui_test.rs`, `cost_test.rs`, `screen/mod.rs`, `screen_golden_test.rs`
 
 **Interfaces:**
-- Consumes: Tasks 4, 8 and 13 (routes, presence, `Look`, `view::dimmed`).
+- Consumes: Tasks 4, 8 and 14 (routes, presence, `Look`, `renderer::look`, `view::dimmed`); Task 13's SVF reading.
 - Produces:
   - `dsp::filter::FilterKind { Svf = 0 }` (`Default`), with `BUILT: [FilterKind; 1]`, `modes(self) -> &'static [FilterMode]`, `key_default(self) -> i8`, `cost(self, FilterMode) -> Cost`, `from_index(f32) -> FilterKind`; `KIND_NAMES`; `kind_change(p: FilterParams, new: FilterKind) -> FilterParams`.
   - `FilterParams::{KIND = ParamId(6), kind(&self) -> FilterKind, set_kind(&mut self, FilterKind)}`; `set_mode` refuses a mode the kind lacks.
   - `ui::filter_panel::{PanelTarget { Filter(ParamId), Route(ModSource) }, PanelKnob { target, label }, KindPanel { main: [PanelKnob; 5], extras: [Option<PanelKnob>; 2] }, SVF_PANEL, panel(FilterKind) -> &'static KindPanel, knob(FilterKind, k: u8) -> Option<&'static PanelKnob>, applies(FilterKind, ParamId) -> bool}`.
-  - `ui::view::{SlotCtx { sel_op: Op, kind: FilterKind }, SlotCtx::read(&impl Blocks, Op) -> SlotCtx, View { Empty, SelectOp, Legacy { label, fmt }, Param { addr, label, fmt, fixed }, Route { source, label } }, View::{label, fmt, addr}, view(&BlockDef, usize, &SlotCtx) -> View}`.
+  - `ui::view::{SlotCtx { sel_op: Op, kind: FilterKind }, SlotCtx::read(&impl Blocks, Op) -> SlotCtx, View { Empty, SelectOp, Legacy { label, fmt }, Param { addr, label, fmt }, Route { source, label } }, View::{label, fmt, addr}, view(&BlockDef, usize, &SlotCtx) -> View}`.
   - `SlotBinding::FilterPanel(u8)` (0–4 main, 5–6 extras); `block_def::slot_addr(def: &BlockDef, slot: usize, ctx: &SlotCtx) -> Option<ParamAddr>`.
   - `viz::Response { Low, High, Band, Notch }`, `viz::response_y(t, cutoff, reso, Response) -> i32`, `viz::filter(d, cutoff, reso, Response, readout)`.
   - `renderer::Frame.ctx: SlotCtx`.
@@ -5718,10 +6690,9 @@ fn every_kind_keeps_its_mode_in_its_list() {
             assert_eq!(took, k.modes().contains(&m), "{k:?} {m:?}");
             assert!(k.modes().contains(&p.mode()));
         }
-        if k.modes().len() == 1 {
-            p.set(FilterParams::MODE, 5.0);
-            assert_eq!(p.mode(), k.modes()[0], "a single-mode kind stays put");
-        }
+        // A MODE write past the list lands on its last mode.
+        p.set(FilterParams::MODE, 99.0);
+        assert_eq!(p.mode(), *k.modes().last().unwrap(), "{k:?}");
         // A KIND change keeps MODE if the new kind has it, else its default.
         let q = kind_change(p, k);
         assert_eq!(q.mode(), p.mode());
@@ -5744,9 +6715,15 @@ fn applies_matches_the_panel() {
 }
 
 /// KIND is dimmed while the SVF is the one built kind: its encoder does
-/// nothing, and a KIND "change" leaves the matrix byte-identical.
+/// nothing, and a KIND "change" leaves the matrix byte-identical. (KIND is
+/// an enum the registry already refuses to prime, so the dimming is
+/// asserted on its own.)
 #[test]
 fn kind_is_fixed_and_never_edits_the_matrix() {
+    use chimera_core::ui::view::{self, SlotCtx};
+    let s = chimera_core::preset::Sound::init(ChainType::Algo);
+    let ctx = SlotCtx::read(&s.params, chimera_core::addr::Op::A);
+    assert!(view::is_dimmed(&view::view(&chimera_core::ui::block_registry::FILTER, 0, &ctx), &s));
     let mut ui = on_flt(ChainType::Algo);
     let before = format!("{:?}", ui.mod_state());
     feed(&mut ui, Input::turn(EncoderId::A, 3));
@@ -5754,14 +6731,6 @@ fn kind_is_fixed_and_never_edits_the_matrix() {
     assert_eq!(format!("{:?}", ui.mod_state()), before);
     feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Plus));
     assert_eq!(ui.prime_status(), Some(PrimeStatus::NotModulatable));
-}
-
-/// A new Sound's NOTE → CUTOFF is its kind's key default.
-#[test]
-fn note_to_cutoff_starts_at_the_kinds_key_default() {
-    let s = chimera_core::preset::Sound::init(ChainType::Algo);
-    let d = s.mod_state.find(CUTOFF).unwrap();
-    assert_eq!(s.mod_state.amount(ModSource::Note.index(), d), FilterKind::Svf.key_default());
 }
 ```
 
@@ -5808,11 +6777,12 @@ impl FilterKind {
         }
     }
 
-    /// Cycles per sample over `CHAIN_COST` (spec § CPU): the SVF ran inside
-    /// the chain `CHAIN_COST` was measured over, so 0 until the bench's SVF row.
+    /// Cycles per sample over `CHAIN_COST` (spec § CPU). The SVF ran inside
+    /// the chain `CHAIN_COST` was measured over, at LP24; this is the bench's
+    /// SVF row (PHASER, its costliest mode) less 1 OP, billed for every mode.
     pub const fn cost(self, _mode: FilterMode) -> Cost {
         match self {
-            FilterKind::Svf => Cost(0),
+            FilterKind::Svf => Cost(SVF_COST),
         }
     }
 
@@ -5833,7 +6803,7 @@ pub fn kind_change(p: FilterParams, new: FilterKind) -> FilterParams {
 }
 ```
 
-`hw::Cost` is `Copy` with a public field, so `Cost(0)` is a const expression.
+`hw::Cost` is `Copy` with a public field, so `Cost(SVF_COST)` is a const expression. Above `FilterKind`: `const SVF_COST: u32 = n;` with `n` the Task 13 reading `SVF − 1 OP` from `## Measured`, rounded up (0 if it reads 0 or below), and the doc `measured <date>, bench ROUTING SVF row, rev V at 480 MHz`.
 
 - [ ] **Step 4: `FilterParams` by kind**
 
@@ -5974,8 +6944,8 @@ pub fn applies(kind: FilterKind, id: ParamId) -> bool {
 Replace `chimera-core/src/ui/view.rs` with:
 
 ```rust
-//! A page slot as it reads now (filter-routing spec § UI): fixed params,
-//! the filter kind's panel and route views resolve here against the
+//! A page slot as it reads now (filter-routing spec § UI): params, the
+//! filter kind's panel and route views resolve here against the
 //! Sound, so pages, vizzes and encoders all read by address.
 
 use crate::addr::{BlockRef, Blocks, Op, ParamAddr};
@@ -6011,8 +6981,8 @@ pub enum View {
     Empty,
     SelectOp,
     Legacy { label: &'static str, fmt: ValFmt },
-    /// A parameter; `fixed` draws dimmed whatever the Sound.
-    Param { addr: ParamAddr, label: &'static str, fmt: ValFmt, fixed: bool },
+    /// A parameter; `dimmed` decides from the Sound whether it is inert.
+    Param { addr: ParamAddr, label: &'static str, fmt: ValFmt },
     /// The route `source → CUTOFF` (spec § 6).
     Route { source: ModSource, label: &'static str },
 }
@@ -6044,7 +7014,7 @@ impl View {
 }
 
 fn param(addr: ParamAddr, label: &'static str, fmt: ValFmt) -> View {
-    View::Param { addr, label, fmt, fixed: false }
+    View::Param { addr, label, fmt }
 }
 
 /// Slot `i` of `def` as it reads under `ctx`.
@@ -6089,7 +7059,7 @@ pub fn dimmed(addr: ParamAddr, sound: &Sound) -> bool {
 
 /// The view is drawn dimmed and inert.
 pub fn is_dimmed(v: &View, sound: &Sound) -> bool {
-    matches!(*v, View::Param { addr, fixed, .. } if fixed || dimmed(addr, sound))
+    matches!(*v, View::Param { addr, .. } if dimmed(addr, sound))
 }
 ```
 
@@ -6160,25 +7130,31 @@ pub fn read_values(def: &BlockDef, params: &impl Blocks, sel_op: Op) -> [f32; 6]
 `chimera-core/src/ui/renderer.rs`:
 - `Frame` gains `pub ctx: crate::ui::view::SlotCtx,`; `UiState::frame` fills it with `SlotCtx::read(&self.performance.parts[self.active_part].sound.params, self.sel_op)`.
 - Every `slot_addr(…, f.sel_op)` and `slot_addr(…, Op::A)` becomes `slot_addr(…, &f.ctx)`; `cell_mod_info` goes (its call becomes `v.addr().and_then(|a| f.matrix.mod_info_for(a))`).
+- `look` resolves by view (drawing and the region key still share it):
+
+```rust
+pub fn look(f: &Frame, i: usize) -> components::Look {
+    match view::view(f.def, i, &f.ctx) {
+        View::Route { source, .. }
+            if f.matrix.route(source.index(), crate::modulation::CUTOFF).is_none() =>
+        {
+            components::Look::Absent
+        }
+        v if view::is_dimmed(&v, &f.parts[f.active_part].sound) => components::Look::Dimmed,
+        _ => components::Look::Live,
+    }
+}
+```
+
 - `draw_cells` loops over views:
 
 ```rust
-        let sound = &f.parts[f.active_part].sound;
         for i in 0..f.def.params.len() {
             let v = view::view(f.def, i, &f.ctx);
             if v == View::Empty {
                 components::cell(display, i, top, None);
                 continue;
             }
-            let look = match v {
-                View::Route { source, .. }
-                    if f.matrix.route(source.index(), crate::modulation::CUTOFF).is_none() =>
-                {
-                    components::Look::Absent
-                }
-                _ if view::is_dimmed(&v, sound) => components::Look::Dimmed,
-                _ => components::Look::Live,
-            };
             let value = self.anim[i].current();
             let mut buf = FmtBuf::new();
             fmt::fmt_val(&mut buf, value, v.fmt());
@@ -6189,7 +7165,7 @@ pub fn read_values(def: &BlockDef, params: &impl Blocks, sel_op: Op) -> [f32; 6]
                 fmt: v.fmt(),
                 active: i == f.focus,
                 mod_amount: v.addr().and_then(|a| f.matrix.mod_info_for(a)),
-                look,
+                look: look(f, i),
             };
             components::cell(display, i, top, Some(&c));
         }
@@ -6317,7 +7293,7 @@ pub fn response_y(t: f32, cutoff: f32, reso: f32, r: Response) -> i32 {
 
 - [ ] **Step 9: The kind's key default and cost**
 
-In `preset.rs`, `Sound::init` sets NOTE's route to `crate::dsp::filter::FilterKind::default().key_default()` instead of `0`. In `voice.rs`, `Voice::cost` becomes:
+In `preset.rs`, `Sound::init` sets NOTE's route to `crate::dsp::filter::FilterKind::default().key_default()` instead of `0` (untested while it is 0: the kind that brings a nonzero default adds the check). In `voice.rs`, `Voice::cost` becomes:
 
 ```rust
     pub fn cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
@@ -6330,7 +7306,8 @@ In `preset.rs`, `Sound::init` sets NOTE's route to `crate::dsp::filter::FilterKi
 
 - [ ] **Step 10: Update the tests**
 
-- Every test calling `slot_addr(def, i, Op::A)` (or another operator) passes `&SlotCtx::read(&ParamSnapshot::default(), Op::A)` instead (`use chimera_core::ui::view::SlotCtx;`); `grep -rln "slot_addr(" chimera-core/tests` lists them (`filter_test.rs`, `part_page_test.rs` among them).
+- `binding_test.rs`, `part_page_test.rs` and `filter_test.rs` call `slot_addr(def, i, Op::A)` (or another operator); each passes `&SlotCtx::read(&ParamSnapshot::default(), Op::A)` instead (`use chimera_core::ui::view::SlotCtx;`).
+- `cost_test.rs`: `assert_eq!(FilterKind::Svf.cost(FilterMode::Phaser), Cost(n))` with Task 13's `n`; the six-voice tests add `n` to their per-voice sums and must stay true (if a factory Sound falls below six on rev V, stop and tell the owner).
 - `part_page_test.rs`, `drive_filter_folder_pages`: `read(&reg::FILTER, &p)` is `[0.0, 1.0, 0.0, 0.0, 0.0, 0.0]` (KIND, CUTOFF, RES, MODE, then the route views, which `part_page` reads as 0; the UI overlays them); MODE is slot 3 as before.
 - `binding_test.rs`, `part_pages_display_like_before`: a panel slot's own `label()`/`format()` are the empty ones, so the FILTER row checks views instead: build `let ctx = SlotCtx::read(&ParamSnapshot::default(), Op::A);` and compare `(view(&reg::FILTER, i, &ctx).label(), view(…).fmt())` with `("KIND", Names(&KIND_NAMES)), ("CUTOFF", Uni), ("RES", Uni), ("MODE", Names(&SVF_MODE_NAMES)), ("ENV", ValFmt::Route), ("KEY", ValFmt::Route)`. The other rows keep `ParamSlot::label()`/`format()`.
 - `ui_test.rs`, `test_filter_mode_is_named_in_registry`: `assert!(matches!(view(&block_registry::FILTER, 3, &ctx).fmt(), ValFmt::Names(_)));`.
@@ -6364,16 +7341,17 @@ git add chimera-core/src/dsp/filter.rs chimera-core/src/params.rs chimera-core/s
   chimera-core/src/ui/filter_panel.rs chimera-core/src/ui/view.rs chimera-core/src/ui/block_def.rs \
   chimera-core/src/ui/block_registry.rs chimera-core/src/ui/part_page.rs chimera-core/src/ui/renderer.rs \
   chimera-core/src/ui/mod.rs chimera-core/src/ui/viz.rs chimera-core/src/preset.rs chimera-core/src/dsp/voice.rs \
-  chimera-core/tests
-git status --short   # every staged path is chimera-core/tests/* or listed above; never docs/chimera-ui-ux-spec.md
+  chimera-core/tests/flt_page_test.rs chimera-core/tests/filter_test.rs chimera-core/tests/big_viz_test.rs \
+  chimera-core/tests/part_page_test.rs chimera-core/tests/binding_test.rs chimera-core/tests/ui_test.rs \
+  chimera-core/tests/cost_test.rs chimera-core/tests/screen/mod.rs chimera-core/tests/screen_golden_test.rs
 git commit -m "KIND and per-kind filter panels, with the SVF as the one kind; slots resolve through views"
 ```
 
 ---
 
-### Task 15: The MOD node and the ENV pages
+### Task 16: The MOD node and the ENV pages
 
-The MOD node's home becomes E1 (id 11, formerly ENVELOPE), and the matrix moves to the end of its sub-list. Each ENV page shows its TYPE's panel: A · D · S / R · H · TYPE, or MODE · RISE · FALL / SHAPE · FORM · TYPE, with MODE's and FORM's labels (spec § 1). The time, rate and shape cells read in milliseconds, hertz and percent. The ENV viz draws the TYPE's shape by address, and B's MODE shows as tabs. The map's MOD node keeps its "MOD" label. This task builds E1–E3; Task 16 adds SPD, L2 and L3.
+The MOD node's home becomes E1 (id 11, formerly ENVELOPE), and the matrix moves to the end of its sub-list. Each ENV page shows its TYPE's panel: A · D · S / R · H · TYPE, or MODE · RISE · FALL / SHAPE · FORM · TYPE, with MODE's and FORM's labels (spec § 1). The time, rate and shape cells read in milliseconds, hertz and percent. The ENV viz draws the TYPE's shape by address, and B's MODE shows as tabs. The map's MOD node keeps its "MOD" label. This task builds E1–E3; Task 17 adds SPD, L2 and L3.
 
 **Files:**
 - Create: `chimera-core/src/ui/mod_panel.rs` (`PanelSlot`, `ModPanel`, `env_panel`)
@@ -6384,17 +7362,17 @@ The MOD node's home becomes E1 (id 11, formerly ENVELOPE), and the matrix moves 
 - Modify: `chimera-core/src/ui/block_registry.rs` (E1 on ENVELOPE, ENV_2 id 60, ENV_3 id 61, the MOD node, MOD_MATRIX short MTX; `map: None` on every other `ChainBlock`)
 - Modify: `chimera-core/src/ui/dungeon_map.rs` (the node label), `chimera-core/src/ui/renderer.rs` (the ENV viz, the header's TYPE), `chimera-core/src/ui/viz.rs` (`envelope` over slices, `func`, `func_shape`)
 - Create: `chimera-core/tests/mod_pages_test.rs`
-- Modify tests: `ui_test.rs`, `ui_routing_test.rs`, `prime_status_test.rs`, `preset_test.rs`, `block_def_tests.rs`, `header_map_test.rs`, `big_viz_test.rs`, `binding_test.rs`, `screen/mod.rs`, `screen_golden_test.rs`
+- Modify tests: `ui_test.rs`, `ui_routing_test.rs`, `prime_status_test.rs`, `preset_test.rs`, `block_def_tests.rs`, `header_map_test.rs`, `big_viz_test.rs`, `binding_test.rs`, `flt_page_test.rs`, `matrix_view_test.rs`, `focus_test.rs`, `screen/mod.rs`, `screen_golden_test.rs`
 
 **Interfaces:**
-- Consumes: `EnvParams` ids (Tasks 5–6), the laws (Tasks 5–6), `view` (Task 14).
+- Consumes: `EnvParams` ids (Tasks 5–6), the laws (Tasks 5–6), `view` (Task 15).
 - Produces:
   - `law::Law { Hold(EnvSpeed), Attack(EnvSpeed), DecRel(EnvSpeed), BTime, BRate, BurstRate, BurstLen, Phase, Pct, Curve, Tilt }` with `range(self) -> Option<Range>`; `ValFmt::Law(Law)`.
   - `ui::mod_panel::{PanelSlot { Param { id, label, fmt }, Fixed { label, text } }, ModPanel { slots: [Option<PanelSlot>; 6] }, env_panel(EnvKind) -> &'static ModPanel}`.
-  - `ui::view::EnvKind { ty: EnvType, speed: EnvSpeed, mode: FuncMode, form: FuncForm }`; `SlotCtx.envs: [EnvKind; 3]`; `View::Text { label, text }`.
+  - `ui::view::EnvKind { A(EnvSpeed), B(Func) }` (A's panel follows SPEED, B's its `Func`; nothing else is stored); `SlotCtx.envs: [EnvKind; 3]`; `View::Text { label, text }`.
   - `SlotBinding::EnvPanel(EnvSlot, u8)`, `ParamSlot::env_panel(EnvSlot, u8)` (const); `ChainBlock.map: Option<&'static str>`.
   - `block_registry::{ENVELOPE (E1), ENV_2, ENV_3}`.
-  - `viz::{envelope(d, widths: &[f32], heights: &[f32], labels: &[&str], lit), stage_label_spans(xs: &[i32], labels: &[&str], lit) -> [Option<(i32, i32)>; MAX_STAGES], MAX_STAGES = 5, func(d, FuncMode, FuncForm, rise, fall, shape), func_shape(FuncMode, FuncForm, rise, fall, shape, t) -> f32}`.
+  - `viz::{envelope(d, widths: &[f32], heights: &[f32], labels: &[&str], lit), stage_label_spans(xs: &[i32], labels: &[&str], lit) -> [Option<(i32, i32)>; MAX_STAGES], MAX_STAGES = 5, func(d, Func, rise, fall, shape), func_shape(Func, rise, fall, shape, t) -> f32}`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -6406,7 +7384,7 @@ Create `chimera-core/tests/mod_pages_test.rs`:
 mod screen;
 
 use chimera_core::addr::Op;
-use chimera_core::dsp::modulator::{EnvType, FuncMode};
+use chimera_core::dsp::modulator::{EnvForm, EnvType, Func, LfoForm};
 use chimera_core::params::ParamSnapshot;
 use chimera_core::ui::block_registry::{ALGO_CHAIN, ENV_2, ENV_3, ENVELOPE, MOD_MATRIX};
 use chimera_core::ui::fmt::{FmtBuf, fmt_val};
@@ -6440,15 +7418,13 @@ fn an_env_page_shows_its_types_panel() {
     let mut p = ParamSnapshot::default();
     assert_eq!(labels(&p, &ENVELOPE), ["ATTACK", "DECAY", "SUSTAIN", "RELEASE", "HOLD", "TYPE"]);
     assert_eq!(labels(&p, &ENV_3), ["MODE", "RISE", "FALL", "SHAPE", "FORM", "TYPE"]);
-    let e = &mut p.envelopes[2];
-    for (mode, form_i, want) in [
-        (FuncMode::Lfo, 0, ["MODE", "RATE", "PHASE", "TILT", "FORM", "TYPE"]),
-        (FuncMode::Lfo, 2, ["MODE", "RATE", "DELTA", "SLEW", "FORM", "TYPE"]),
-        (FuncMode::Burst, 0, ["MODE", "RATE", "LENGTH", "TILT", "FORM", "TYPE"]),
+    for (f, want) in [
+        (Func::Lfo(LfoForm::Free), ["MODE", "RATE", "PHASE", "TILT", "FORM", "TYPE"]),
+        (Func::Lfo(LfoForm::Lfv), ["MODE", "RATE", "DELTA", "SLEW", "FORM", "TYPE"]),
+        (Func::Burst(EnvForm::Ad), ["MODE", "RATE", "LENGTH", "TILT", "FORM", "TYPE"]),
     ] {
-        e.func.mode = mode;
-        e.func.set_form_index(form_i as f32);
-        assert_eq!(labels(&p, &ENV_3), want, "{mode:?}");
+        p.envelopes[2].func.set_func(f);
+        assert_eq!(labels(&p, &ENV_3), want, "{f:?}");
     }
     p.envelopes[0].env_type = EnvType::B;
     assert_eq!(labels(&p, &ENVELOPE)[0], "MODE", "any ENV slot can be B");
@@ -6467,6 +7443,7 @@ fn slider_cells_read_in_units() {
     assert_eq!(text(&ENVELOPE, 0, 0.189), "10 ms", "MED attack at its default");
     assert_eq!(text(&ENVELOPE, 1, 1.0), "10.0 s");
     assert_eq!(text(&ENVELOPE, 2, 0.55), "55%");
+    assert_eq!(text(&ENVELOPE, 4, 0.0), "0.0 ms", "the integer formatter pads");
     assert_eq!(text(&ENV_3, 3, 0.5), "LIN");
     assert_eq!(text(&ENV_3, 3, 0.8), "EXP 60");
 }
@@ -6534,6 +7511,15 @@ In `block.rs`, `ValFmt` gains `/// A slider shown in its unit (spec § 1's laws)
 In `ui/fmt.rs`, `fmt_val` gains `ValFmt::Law(law) => fmt_law(buf, val, law),` and:
 
 ```rust
+/// `x ≥ 0` to `places` decimals in integers: `{:.1}` would link core's
+/// float formatting, several KB of flash.
+fn fixed(buf: &mut FmtBuf, x: f32, places: u32, unit: &str) {
+    use core::fmt::Write;
+    let k = 10i32.pow(places);
+    let n = libm::roundf(x * k as f32) as i32;
+    let _ = write!(buf, "{}.{:02$} {unit}", n / k, n % k, places as usize);
+}
+
 fn fmt_law(buf: &mut FmtBuf, v: f32, law: crate::dsp::modulator::law::Law) {
     use crate::dsp::modulator::law::Law;
     use core::fmt::Write;
@@ -6558,23 +7544,23 @@ fn fmt_law(buf: &mut FmtBuf, v: f32, law: crate::dsp::modulator::law::Law) {
         Law::Tilt => bend(buf, "SAW", "TRI", "RAMP"),
         Law::BRate | Law::BurstRate => {
             let hz = law.range().map_or(0.0, |r| r.at(v));
-            let _ = if hz < 10.0 {
-                write!(buf, "{hz:.2} Hz")
+            if hz < 10.0 {
+                fixed(buf, hz, 2, "Hz");
             } else if hz < 100.0 {
-                write!(buf, "{hz:.1} Hz")
+                fixed(buf, hz, 1, "Hz");
             } else {
-                write!(buf, "{} Hz", round(hz))
-            };
+                let _ = write!(buf, "{} Hz", round(hz));
+            }
         }
         _ => {
             let s = law.range().map_or(0.0, |r| r.at(v));
-            let _ = if s >= 1.0 {
-                write!(buf, "{s:.1} s")
+            if s >= 1.0 {
+                fixed(buf, s, 1, "s");
             } else if s >= 0.01 {
-                write!(buf, "{} ms", round(s * 1000.0))
+                let _ = write!(buf, "{} ms", round(s * 1000.0));
             } else {
-                write!(buf, "{:.1} ms", s * 1000.0)
-            };
+                fixed(buf, s * 1000.0, 1, "ms");
+            }
         }
     }
 }
@@ -6590,7 +7576,7 @@ Create `chimera-core/src/ui/mod_panel.rs`:
 
 use crate::block::{ParamId, ValFmt};
 use crate::dsp::modulator::law::Law;
-use crate::dsp::modulator::{EnvSpeed, EnvType, FuncForm, FuncMode};
+use crate::dsp::modulator::{EnvSpeed, Func, LfoForm};
 use crate::params::EnvParams as E;
 use crate::ui::view::EnvKind;
 
@@ -6613,7 +7599,9 @@ const fn p(id: ParamId, label: &'static str, fmt: ValFmt) -> Option<PanelSlot> {
 
 const TYPE: Option<PanelSlot> = p(E::TYPE, "TYPE", ValFmt::Names(&["A", "B"]));
 const MODE: Option<PanelSlot> = p(E::MODE, "MODE", ValFmt::Names(&["ENV", "LFO", "BURST"]));
+/// In `EnvForm::ALL`'s order.
 const FORM_ENV: Option<PanelSlot> = p(E::FORM, "FORM", ValFmt::Names(&["AD", "AHR", "CYCLE"]));
+/// In `LfoForm::ALL`'s order.
 const FORM_LFO: Option<PanelSlot> = p(E::FORM, "FORM", ValFmt::Names(&["FREE", "SYNC", "LFV"]));
 
 /// A · D · S / R · H · TYPE, times on SPEED's ranges.
@@ -6678,16 +7666,14 @@ static B_BURST: ModPanel = ModPanel {
 };
 
 pub fn env_panel(k: EnvKind) -> &'static ModPanel {
-    match (k.ty, k.mode, k.form) {
-        (EnvType::A, ..) => match k.speed {
-            EnvSpeed::Fast => &A_FAST,
-            EnvSpeed::Med => &A_MED,
-            EnvSpeed::Slow => &A_SLOW,
-        },
-        (EnvType::B, FuncMode::Env, _) => &B_ENV,
-        (EnvType::B, FuncMode::Lfo, FuncForm::Lfv) => &B_LFV,
-        (EnvType::B, FuncMode::Lfo, _) => &B_LFO,
-        (EnvType::B, FuncMode::Burst, _) => &B_BURST,
+    match k {
+        EnvKind::A(EnvSpeed::Fast) => &A_FAST,
+        EnvKind::A(EnvSpeed::Med) => &A_MED,
+        EnvKind::A(EnvSpeed::Slow) => &A_SLOW,
+        EnvKind::B(Func::Env(_)) => &B_ENV,
+        EnvKind::B(Func::Lfo(LfoForm::Lfv)) => &B_LFV,
+        EnvKind::B(Func::Lfo(_)) => &B_LFO,
+        EnvKind::B(Func::Burst(_)) => &B_BURST,
     }
 }
 ```
@@ -6699,17 +7685,25 @@ pub fn env_panel(k: EnvKind) -> &'static ModPanel {
 In `view.rs`:
 
 ```rust
-use crate::dsp::modulator::{EnvSlot, EnvSpeed, EnvType, FuncForm, FuncMode, pick};
+use crate::dsp::modulator::{EnvForm, EnvSlot, EnvSpeed, EnvType, Func, FuncMode, LfoForm, pick};
 use crate::params::EnvParams;
 use crate::ui::mod_panel::{self, PanelSlot};
 
-/// What an ENV slot's page resolves against.
+/// What an ENV slot's page resolves against: type A's panel follows its
+/// SPEED, type B's its MODE and that MODE's FORM.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct EnvKind {
-    pub ty: EnvType,
-    pub speed: EnvSpeed,
-    pub mode: FuncMode,
-    pub form: FuncForm,
+pub enum EnvKind {
+    A(EnvSpeed),
+    B(Func),
+}
+
+/// B's `Func` from its MODE and FORM values (FORM indexes MODE's list).
+fn func_at(mode: f32, form: f32) -> Func {
+    match pick(&FuncMode::ALL, mode) {
+        FuncMode::Env => Func::Env(pick(&EnvForm::ALL, form)),
+        FuncMode::Lfo => Func::Lfo(pick(&LfoForm::ALL, form)),
+        FuncMode::Burst => Func::Burst(pick(&EnvForm::ALL, form)),
+    }
 }
 ```
 
@@ -6718,12 +7712,9 @@ pub struct EnvKind {
 ```rust
             envs: EnvSlot::ALL.map(|s| {
                 let at = |id| get(BlockRef::Env(s), id);
-                let mode = pick(&FuncMode::ALL, at(EnvParams::MODE));
-                EnvKind {
-                    ty: pick(&EnvType::ALL, at(EnvParams::TYPE)),
-                    speed: pick(&EnvSpeed::ALL, at(EnvParams::SPEED)),
-                    mode,
-                    form: pick(mode.forms(), at(EnvParams::FORM)),
+                match pick(&EnvType::ALL, at(EnvParams::TYPE)) {
+                    EnvType::A => EnvKind::A(pick(&EnvSpeed::ALL, at(EnvParams::SPEED))),
+                    EnvType::B => EnvKind::B(func_at(at(EnvParams::MODE), at(EnvParams::FORM))),
                 }
             }),
 ```
@@ -6803,15 +7794,15 @@ Add B's picture:
 /// Envelope B's shape for the viz: 0..1 across `t` (0..1). ENV: one
 /// rise-and-fall (AHR holds a quarter; CYCLE twice); LFO: three cycles, or
 /// a fixed walk for LFV; BURST: eight pulses under the burst.
-pub fn func_shape(mode: FuncMode, form: FuncForm, rise: f32, fall: f32, shape: f32, t: f32) -> f32 {
+pub fn func_shape(f: Func, rise: f32, fall: f32, shape: f32, t: f32) -> f32 {
     use crate::dsp::modulator::law::{B_TIME, curve, shape_w, tilt};
     let frac = |x: f32| x - (x as u32) as f32;
-    match (mode, form) {
-        (FuncMode::Env, f) => {
-            let (cycles, hold) = match f {
-                FuncForm::Cycle => (2.0, 0.0),
-                FuncForm::Ahr => (1.0, 0.25),
-                _ => (1.0, 0.0),
+    match f {
+        Func::Env(e) => {
+            let (cycles, hold) = match e {
+                EnvForm::Cycle => (2.0, 0.0),
+                EnvForm::Ahr => (1.0, 0.25),
+                EnvForm::Ad => (1.0, 0.0),
             };
             let x = frac(t * cycles);
             let (tr, tf) = (B_TIME.at(rise), B_TIME.at(fall));
@@ -6825,7 +7816,7 @@ pub fn func_shape(mode: FuncMode, form: FuncForm, rise: f32, fall: f32, shape: f
                 1.0 - curve((x - r - hold) / (1.0 - r - hold), w)
             }
         }
-        (FuncMode::Lfo, FuncForm::Lfv) => {
+        Func::Lfo(LfoForm::Lfv) => {
             const WALK: [f32; 9] = [0.0, 0.7, -0.4, 0.9, -0.8, 0.3, -0.2, 0.6, -0.5];
             let x = t * 8.0;
             let k = (x as usize).min(7);
@@ -6836,10 +7827,10 @@ pub fn func_shape(mode: FuncMode, form: FuncForm, rise: f32, fall: f32, shape: f
             let mid = 0.5 * (at(k) + at(k + 1));
             lin + (mid - lin) * shape * (1.0 - (2.0 * u - 1.0).abs())
         }
-        (FuncMode::Lfo, _) => tilt(frac(t * 3.0 + fall), shape),
-        (FuncMode::Burst, f) => {
+        Func::Lfo(_) => tilt(frac(t * 3.0 + fall), shape),
+        Func::Burst(e) => {
             let p = frac(t * 8.0);
-            let pulse = if f == FuncForm::Cycle {
+            let pulse = if e == EnvForm::Cycle {
                 tilt(p, shape)
             } else {
                 let m = 1.0 - (2.0 * shape - 1.0).abs();
@@ -6855,13 +7846,13 @@ pub fn func_shape(mode: FuncMode, form: FuncForm, rise: f32, fall: f32, shape: f
 pub const TAB_Y: i32 = 48;
 
 /// B's viz: ENV · LFO · BURST tabs (MODE lit), then the shape, filled.
-pub fn func<D>(d: &mut D, mode: FuncMode, form: FuncForm, rise: f32, fall: f32, shape: f32)
+pub fn func<D>(d: &mut D, f: Func, rise: f32, fall: f32, shape: f32)
 where
     D: DrawTarget<Color = Rgb565>,
 {
     for (i, name) in ["ENV", "LFO", "BURST"].iter().enumerate() {
         let x = theme::VIZ_LEFT + i as i32 * 52;
-        let on = i == mode as usize;
+        let on = i == f.mode() as usize;
         if on {
             draw::pill(d, x, TAB_Y - 11, 46, 14, theme::ACCENT);
         } else {
@@ -6874,13 +7865,13 @@ where
     let (w, h) = ((theme::VIZ_RIGHT - theme::VIZ_LEFT) as f32, (PLOT_BASE - top) as f32);
     let y = |x: i32| {
         let t = (x - theme::VIZ_LEFT) as f32 / w;
-        PLOT_BASE - (h * func_shape(mode, form, rise, fall, shape, t).clamp(0.0, 1.0)) as i32
+        PLOT_BASE - (h * func_shape(f, rise, fall, shape, t).clamp(0.0, 1.0)) as i32
     };
     filled_curve(d, theme::VIZ_LEFT, theme::VIZ_RIGHT, PLOT_BASE, y);
 }
 ```
 
-(imports `crate::dsp::modulator::{FuncForm, FuncMode}`; `libm::cosf` in the UI is allowed.)
+(imports `crate::dsp::modulator::{EnvForm, Func, LfoForm}`; `libm::cosf` in the UI is allowed.)
 
 In `renderer.rs`, the `VizType::Adsr` arm reads its values by address from the page's own slots:
 
@@ -6897,8 +7888,8 @@ In `renderer.rs`, the `VizType::Adsr` arm reads its values by address from the p
                 };
                 use crate::params::EnvParams as E;
                 let p = &f.parts[f.active_part].sound.params.envelopes[s.index()];
-                match f.ctx.envs[s.index()].ty {
-                    EnvType::A => {
+                match f.ctx.envs[s.index()] {
+                    EnvKind::A(_) => {
                         let hold = if p.hold_pos == HoldPos::Ahdsr { at(E::HOLD).unwrap_or(0.0) } else { 0.0 };
                         let (atk, dec, sus, rel) = (
                             at(E::ATTACK).unwrap_or(0.0).max(0.02),
@@ -6924,12 +7915,10 @@ In `renderer.rs`, the `VizType::Adsr` arm reads its values by address from the p
                             lit,
                         );
                     }
-                    EnvType::B => {
-                        let k = f.ctx.envs[s.index()];
+                    EnvKind::B(func) => {
                         viz::func(
                             display,
-                            k.mode,
-                            k.form,
+                            func,
                             at(E::RISE).unwrap_or(p.func.rise),
                             at(E::FALL).unwrap_or(p.func.fall),
                             at(E::SHAPE).unwrap_or(p.func.shape),
@@ -6939,20 +7928,32 @@ In `renderer.rs`, the `VizType::Adsr` arm reads its values by address from the p
             }
 ```
 
-(`return` skips the prime-status line only on a malformed page; place the status draw before the `match` if you prefer.) In `draw_header`, append the slot's TYPE after `components::header_text`:
+(`use crate::ui::view::EnvKind;` in `renderer.rs`. `return` skips the prime-status line only on a malformed page; place the status draw before the `match` if you prefer.) In `draw_header`, append the slot's TYPE after `components::header_text`:
 
 ```rust
         let (context, mut name) = components::header_text(f.nav, f.def);
         if let Some(SlotBinding::EnvPanel(s, _)) = f.def.params.first().map(|p| p.binding) {
-            let ty = ["A", "B"][f.ctx.envs[s.index()].ty as usize];
+            let ty = match f.ctx.envs[s.index()] {
+                EnvKind::A(_) => "A",
+                EnvKind::B(_) => "B",
+            };
             let _ = core::fmt::Write::write_fmt(&mut name, format_args!(" / {ty}"));
         }
 ```
 
 - [ ] **Step 8: Update the tests for the new node**
 
+E1 as the node's home turns red every test that reached the matrix, or a MOD sub-page, by PLUS alone. Each is listed here with its new path (the matrix is sub-page 4, LFO sub-page 3, and MINUS leaves the node from any sub-page, so the ways back are unchanged):
+
 - `ui_test.rs`, `test_page_from_nav_part_chain`: node 5 is `reg::ENVELOPE`; `sub_page = 1` is `reg::ENV_2`, `sub_page = 2` is `reg::ENV_3`, `sub_page = 3` is `reg::LFO`.
-- `prime_status_test.rs` (`mix_plus_on_a_non_modulatable_param_reports_not_modulatable`), `ui_routing_test.rs` (`priming_a_non_modulatable_param_is_refused`) and `preset_test.rs` (`priming_on_the_lfo_sub_page_registers_nothing`) press EDIT three times to reach the LFO page. `ui_routing_test.rs`'s `set_first_amount` presses EDIT four times after the five PLUS to reach MTX.
+- `prime_status_test.rs` (`mix_plus_on_a_non_modulatable_param_reports_not_modulatable`), `ui_routing_test.rs` (`priming_a_non_modulatable_param_is_refused`) and `preset_test.rs` (`priming_on_the_lfo_sub_page_registers_nothing`) press EDIT three times to reach the LFO page.
+- EDIT ×4 after the PLUS presses, to reach MTX:
+  - `ui_routing_test.rs`'s `set_first_amount` (after the five PLUS) and `enter_matrix` (after its three);
+  - `flt_page_test.rs`'s `to_matrix` (its doc: "the MOD node, then EDIT ×4 to the matrix");
+  - `matrix_view_test.rs`'s `an_empty_matrix_says_so`;
+  - `focus_test.rs`'s `mixer_part_and_matrix_pages_use_the_same_mechanism`.
+- `prime_status_test.rs`: `envelope_page` drops its EDIT press (E1 is the home; its doc reads "The MOD node's home, E1"), and Task 9's `stage_cells_prime_time_and_sustain_primes_level` drops its `// the ENV 1 page` EDIT press.
+- `screen/mod.rs`, `amp_vel_live`: after `plus(ui, 1)`, four `feed(ui, Input::press(ButtonId::Edit));` (MTX), so E2 → VCA is made and VEL is live.
 - `block_def_tests.rs`, `algo_chain_is_alg_osc_then_the_voice_chain`: the labels are `chain.blocks.iter().map(|b| b.map.unwrap_or(b.def.short))`, still `["ALG", "OSC", "DRV", "FLT", "AMP", "MOD"]`; `chain.blocks[5].sub_pages.len()` is 4.
 - `header_map_test.rs`: the node labels read `b.map.unwrap_or(b.def.short)`.
 - `binding_test.rs`: `block_def_ids_are_unique` gains `&reg::ENV_2, &reg::ENV_3`; the ENVELOPE row of `part_pages_display_like_before` compares views (as FILTER's does): `("ATTACK", Law(Attack(Med))), ("DECAY", Law(DecRel(Med))), ("SUSTAIN", Law(Pct)), ("RELEASE", Law(DecRel(Med))), ("HOLD", Law(Hold(Med))), ("TYPE", Names(&["A", "B"]))`.
@@ -6984,6 +7985,7 @@ Expected: PASS except `screen_goldens_match`.
 - `env_b_lfo_free`, `_sync`: the LFO tab lit, three triangle cycles, cells RATE · PHASE · TILT `TRI`. `_lfv`: the walk; DELTA and SLEW.
 - The three BURST screens: pulses under a triangle, cells RATE · LENGTH · TILT.
 - `mod_matrix`: as before, with MTX lit in the sub-list.
+- `amp_vel_live`: must still show VEL drawn live with its bar (its golden would otherwise lock a dimmed VEL under a name that says live). `amp_vel_dimmed` and `modal_amp`: unchanged but for the map's sub-list.
 
 Nothing may overlap the tabs, the header or the map. Re-record the mismatches and the new cases.
 
@@ -6994,14 +7996,18 @@ cargo fmt --all && just check
 git add chimera-core/src/ui/mod_panel.rs chimera-core/src/dsp/modulator/law.rs chimera-core/src/block.rs \
   chimera-core/src/ui/fmt.rs chimera-core/src/ui/view.rs chimera-core/src/ui/block_def.rs \
   chimera-core/src/ui/block_registry.rs chimera-core/src/ui/dungeon_map.rs chimera-core/src/ui/renderer.rs \
-  chimera-core/src/ui/viz.rs chimera-core/src/ui/mod.rs chimera-core/tests
-git status --short   # never docs/chimera-ui-ux-spec.md
+  chimera-core/src/ui/viz.rs chimera-core/src/ui/mod.rs \
+  chimera-core/tests/mod_pages_test.rs chimera-core/tests/ui_test.rs chimera-core/tests/ui_routing_test.rs \
+  chimera-core/tests/prime_status_test.rs chimera-core/tests/preset_test.rs chimera-core/tests/block_def_tests.rs \
+  chimera-core/tests/header_map_test.rs chimera-core/tests/big_viz_test.rs chimera-core/tests/binding_test.rs \
+  chimera-core/tests/flt_page_test.rs chimera-core/tests/matrix_view_test.rs chimera-core/tests/focus_test.rs \
+  chimera-core/tests/screen/mod.rs chimera-core/tests/screen_golden_test.rs
 git commit -m "The MOD node's ENV pages: each slot's TYPE panel, its shape and units"
 ```
 
 ---
 
-### Task 16: The SPD page and the LFO pages
+### Task 17: The SPD page and the LFO pages
 
 This task adds the rest of the MOD sub-list: SPD (id 62), a shared page for type A's switches, one parameter pair per slot (spec § UI), and LFO 1–3 (ids 12, 64, 65), each showing its CLASSIC or FUNC panel with TYPE in the last cell. The sub-list becomes E1 · E2 · E3 · SPD · L1 · L2 · L3 · MTX. A type-B slot's SPD cells are dimmed. `MAX_PAGES` grows to 72 because L2 and L3 take ids 64 and 65.
 
@@ -7012,11 +8018,11 @@ This task adds the rest of the MOD sub-list: SPD (id 62), a shared page for type
 - Modify: `chimera-core/src/ui/block_registry.rs` (`ENV_SPEED` 62, `LFO` as L1, `LFO_2` 64, `LFO_3` 65, `MOD_SUB_PAGES` of 7)
 - Modify: `chimera-core/src/ui/focus.rs` (`MAX_PAGES = 72`)
 - Modify: `chimera-core/src/ui/viz.rs` (`env_speed`), `chimera-core/src/ui/renderer.rs` (the SPD viz)
-- Modify tests: `mod_pages_test.rs`, `ui_test.rs`, `ui_routing_test.rs`, `prime_status_test.rs`, `preset_test.rs`, `block_def_tests.rs`, `binding_test.rs`, `focus_test.rs`, `part_page_test.rs`, `screen/mod.rs`, `screen_golden_test.rs`
+- Modify tests: `mod_pages_test.rs`, `ui_test.rs`, `ui_routing_test.rs`, `prime_status_test.rs`, `preset_test.rs`, `block_def_tests.rs`, `binding_test.rs`, `focus_test.rs`, `part_page_test.rs`, `flt_page_test.rs`, `matrix_view_test.rs`, `screen/mod.rs`, `screen_golden_test.rs`
 
 **Interfaces:**
-- Consumes: Task 15's panels and views; `LfoParams` ids (Task 7).
-- Produces: `ui::view::LfoKind { ty: LfoType, form: FuncForm }`, `SlotCtx.lfos: [LfoKind; 3]`; `mod_panel::lfo_panel(LfoKind) -> &'static ModPanel`; `SlotBinding::LfoPanel(LfoSlot, u8)`, `ParamSlot::lfo_panel`; `block_registry::{ENV_SPEED, LFO_2, LFO_3}`; `VizType::EnvSpeed`; `viz::env_speed(d, [(bool, EnvSpeed, HoldPos); 3])`.
+- Consumes: Task 16's panels and views; `LfoParams` ids (Task 7).
+- Produces: `ui::view::LfoKind { Classic, Func(LfoForm) }`, `SlotCtx.lfos: [LfoKind; 3]`; `mod_panel::lfo_panel(LfoKind) -> &'static ModPanel`; `SlotBinding::LfoPanel(LfoSlot, u8)`, `ParamSlot::lfo_panel`; `block_registry::{ENV_SPEED, LFO_2, LFO_3}`; `VizType::EnvSpeed`; `viz::env_speed(d, [(bool, EnvSpeed, HoldPos); 3])`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -7045,7 +8051,7 @@ fn lfo_pages_show_classic_or_func() {
     assert_eq!(labels(&p, &LFO), ["RATE", "SHAPE", "SYNC", "PHASE", "DEPTH", "TYPE"]);
     p.lfos[1].lfo_type = LfoType::Func;
     assert_eq!(labels(&p, &LFO_2), ["MODE", "RATE", "PHASE", "TILT", "FORM", "TYPE"]);
-    p.lfos[1].func.set_form_index(2.0); // LFV
+    p.lfos[1].func.lfo_form = LfoForm::Lfv;
     assert_eq!(labels(&p, &LFO_2), ["MODE", "RATE", "DELTA", "SLEW", "FORM", "TYPE"]);
     let ctx = SlotCtx::read(&p, Op::A);
     assert!(matches!(view(&LFO_2, 0, &ctx), View::Text { text: "LFO", .. }), "MODE is fixed");
@@ -7072,7 +8078,6 @@ Append to `mod_panel.rs`:
 
 ```rust
 use crate::dsp::lfo::LfoParams as L;
-use crate::dsp::modulator::LfoType;
 use crate::ui::view::LfoKind;
 
 /// CLASSIC: RATE · SHAPE · SYNC / PHASE · DEPTH · TYPE (OFST's cell is TYPE's).
@@ -7087,6 +8092,7 @@ static CLASSIC: ModPanel = ModPanel {
     ],
 };
 const LFO_TYPE: Option<PanelSlot> = p(L::TYPE, "TYPE", ValFmt::Names(&["CLASSIC", "FUNC"]));
+/// In `LfoForm::ALL`'s order.
 const LFO_FORM: Option<PanelSlot> = p(L::FORM, "FORM", ValFmt::Names(&["FREE", "SYNC", "LFV"]));
 const FUNC_MODE: Option<PanelSlot> = Some(PanelSlot::Fixed { label: "MODE", text: "LFO" });
 
@@ -7113,10 +8119,10 @@ static FUNC_LFV: ModPanel = ModPanel {
 };
 
 pub fn lfo_panel(k: LfoKind) -> &'static ModPanel {
-    match (k.ty, k.form) {
-        (LfoType::Classic, _) => &CLASSIC,
-        (LfoType::Func, FuncForm::Lfv) => &FUNC_LFV,
-        (LfoType::Func, _) => &FUNC,
+    match k {
+        LfoKind::Classic => &CLASSIC,
+        LfoKind::Func(LfoForm::Lfv) => &FUNC_LFV,
+        LfoKind::Func(_) => &FUNC,
     }
 }
 ```
@@ -7128,15 +8134,28 @@ pub fn lfo_panel(k: LfoKind) -> &'static ModPanel {
 In `view.rs`:
 
 ```rust
-/// What an LFO slot's page resolves against.
+/// What an LFO slot's page resolves against: CLASSIC, or FUNC and its
+/// FORM (FUNC's MODE is always LFO).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct LfoKind {
-    pub ty: LfoType,
-    pub form: FuncForm,
+pub enum LfoKind {
+    Classic,
+    Func(LfoForm),
 }
 ```
 
-`SlotCtx` gains `pub lfos: [LfoKind; 3],` read as `LfoSlot::ALL.map(|s| { let at = |id| get(BlockRef::Lfo(s), id); LfoKind { ty: pick(&LfoType::ALL, at(LfoParams::TYPE)), form: pick(FuncMode::Lfo.forms(), at(LfoParams::FORM)) } })`. `view` gains `SlotBinding::LfoPanel(s, k)`, resolved like `EnvPanel` against `mod_panel::lfo_panel(ctx.lfos[s.index()])` with `BlockRef::Lfo(s)`. `dimmed` gains:
+`SlotCtx` gains `pub lfos: [LfoKind; 3],` read as:
+
+```rust
+            lfos: LfoSlot::ALL.map(|s| {
+                let at = |id| get(BlockRef::Lfo(s), id);
+                match pick(&LfoType::ALL, at(LfoParams::TYPE)) {
+                    LfoType::Classic => LfoKind::Classic,
+                    LfoType::Func => LfoKind::Func(pick(&LfoForm::ALL, at(LfoParams::FORM))),
+                }
+            }),
+```
+
+(`use crate::dsp::lfo::LfoParams; use crate::dsp::modulator::{LfoSlot, LfoType};`.) `view` gains `SlotBinding::LfoPanel(s, k)`, resolved like `EnvPanel` against `mod_panel::lfo_panel(ctx.lfos[s.index()])` with `BlockRef::Lfo(s)`. `dimmed` gains:
 
 ```rust
         // SPD: a type-B slot's SPEED and HOLD (spec § UI).
@@ -7250,11 +8269,19 @@ and in `renderer.rs`'s `draw_band_viz`:
 
 - [ ] **Step 7: Update the tests for the full sub-list**
 
-- The LFO page is now sub-page 4: `prime_status_test.rs`, `ui_routing_test.rs` and `preset_test.rs` press EDIT four times; `set_first_amount` and the `mod_matrix` case press it seven times.
+The sub-list now reads E1 · E2 · E3 · SPD · L1 · L2 · L3 · MTX, so every path Task 16 set turns red again. Each is listed with its new path:
+
+- The LFO page is now sub-page 4: `prime_status_test.rs` (`mix_plus_on_a_non_modulatable_param_reports_not_modulatable`), `ui_routing_test.rs` (`priming_a_non_modulatable_param_is_refused`) and `preset_test.rs` (`priming_on_the_lfo_sub_page_registers_nothing`) press EDIT four times.
+- MTX is now sub-page 7. These press EDIT seven times where Task 16 pressed it four:
+  - `ui_routing_test.rs`: `set_first_amount` and `enter_matrix`;
+  - `flt_page_test.rs`: `to_matrix`;
+  - `matrix_view_test.rs`: `an_empty_matrix_says_so`;
+  - `focus_test.rs`: `mixer_part_and_matrix_pages_use_the_same_mechanism`;
+  - `screen/mod.rs`: `amp_vel_live` and `mod_matrix`.
 - `ui_test.rs`, `test_page_from_nav_part_chain`: sub-pages 1–7 are ENV_2, ENV_3, ENV_SPEED, LFO, LFO_2, LFO_3, MOD_MATRIX.
 - `block_def_tests.rs`: `chain.blocks[5].sub_pages.len()` is 7.
 - `binding_test.rs`: `block_def_ids_are_unique` gains ENV_SPEED, LFO_2, LFO_3; the LFO row compares views: `("RATE", Uni), ("SHAPE", Names(…)), ("SYNC", Names(&["FREE", "RETRIG"])), ("PHASE", Uni), ("DEPTH", Uni), ("TYPE", Names(&["CLASSIC", "FUNC"]))`.
-- `focus_test.rs` needs no change (it checks ids against `MAX_PAGES`).
+- `focus_test.rs`'s id check against `MAX_PAGES` needs no change.
 - `part_page_test.rs`, `envelope_and_lfo_pages`: LFO slot 2 turned by 1 reads `p.lfos[0].sync == 1` as before; `snap` on slot 1 still reaches SINE.
 - `screen/mod.rs`, new cases with rows in `GOLDENS`:
 
@@ -7293,6 +8320,7 @@ Expected: PASS except `screen_goldens_match`.
 - `lfo_classic`: RATE · SHAPE `SINE` · SYNC `FREE` / PHASE · DEPTH · TYPE `CLASSIC`.
 - `lfo_func`: MODE `LFO` dimmed · RATE `0.99 Hz` · PHASE `0` / TILT `TRI` · FORM `FREE` · TYPE `FUNC`; the animators re-seeded (no sweep).
 - `mod_matrix`: the sub-list scrolled so MTX is lit on screen.
+- `amp_vel_live`: VEL still live, with its bar.
 
 Re-record the mismatches and the new cases.
 
@@ -7302,78 +8330,13 @@ Re-record the mismatches and the new cases.
 cargo fmt --all && just check
 git add chimera-core/src/ui/mod_panel.rs chimera-core/src/ui/view.rs chimera-core/src/ui/block_def.rs \
   chimera-core/src/ui/block_registry.rs chimera-core/src/ui/focus.rs chimera-core/src/ui/viz.rs \
-  chimera-core/src/ui/renderer.rs chimera-core/tests
-git status --short   # never docs/chimera-ui-ux-spec.md
+  chimera-core/src/ui/renderer.rs \
+  chimera-core/tests/mod_pages_test.rs chimera-core/tests/ui_test.rs chimera-core/tests/ui_routing_test.rs \
+  chimera-core/tests/prime_status_test.rs chimera-core/tests/preset_test.rs chimera-core/tests/block_def_tests.rs \
+  chimera-core/tests/binding_test.rs chimera-core/tests/part_page_test.rs chimera-core/tests/flt_page_test.rs \
+  chimera-core/tests/matrix_view_test.rs chimera-core/tests/focus_test.rs \
+  chimera-core/tests/screen/mod.rs chimera-core/tests/screen_golden_test.rs
 git commit -m "SPD and LFO 1–3 pages; the MOD sub-list E1 · E2 · E3 · SPD · L1 · L2 · L3 · MTX"
-```
-
----
-
-### Task 17: The sanity gate and the `*_lfo_cutoff` goldens
-
-ADR 0011: an intended sound change re-records only its goldens, after the sanity gate. Here the only such change is CUTOFF in octaves with the ramp (Task 3), which moves `algo_lfo_cutoff` and `modal_lfo_cutoff`. Every other audio golden, including the eight factory Sounds, must still match the values recorded before the change.
-
-**Files:**
-- Modify: `chimera-core/tests/golden_test.rs` (two rows, `PENDING` empty)
-
-**Interfaces:**
-- Consumes: everything above.
-- Produces: `PENDING` is `&[]` again.
-
-- [ ] **Step 1: The gate**
-
-Run: `env $T cargo test -p chimera-core --test sanity_test --test golden_test --test fx_golden_test`
-Expected: PASS. `every_algo_case_is_finite_bounded_audible_and_ends` covers `algo_lfo_cutoff` (finite, within ±1, audible, silent after note-off). `goldens_match` passes with the two parked cases skipped, so all other goldens, `factory_0`–`factory_7` included, are bit-identical to Task 1's recording. A failure here is a regression to find and fix, not a golden to re-record.
-
-- [ ] **Step 2: Hear the change**
-
-Render both parked cases to WAV and listen. Add this test temporarily to `golden_test.rs`:
-
-```rust
-#[test]
-#[ignore = "listening aid for Task 17"]
-fn write_lfo_cutoff_wavs() {
-    for case in [Case::AlgoLfoCutoff, Case::ModalLfoCutoff] {
-        let out = render_case(case);
-        let mut w = Vec::new();
-        let n = out.len() as u32 * 2;
-        for (tag, v) in [(b"RIFF", 36 + n), (b"WAVE", 0)] {
-            w.extend_from_slice(tag);
-            if tag == b"RIFF" {
-                w.extend_from_slice(&v.to_le_bytes());
-            }
-        }
-        w.extend_from_slice(b"fmt ");
-        for x in [16u32, 1 | 1 << 16, SR, SR * 2, 2 | 16 << 16] {
-            w.extend_from_slice(&x.to_le_bytes());
-        }
-        w.extend_from_slice(b"data");
-        w.extend_from_slice(&n.to_le_bytes());
-        for s in out {
-            w.extend_from_slice(&((s.clamp(-1.0, 1.0) * 32767.0) as i16).to_le_bytes());
-        }
-        std::fs::write(format!("/tmp/claude-1000/-home-carcosa-dev-chimera/05a415fc-f8d7-4033-943f-e96e5bd74fff/scratchpad/{}.wav", case.name()), w).unwrap();
-    }
-}
-```
-
-Run it with `-- --ignored` and listen to both files. Expect a cutoff wobbling by about ±5 octaves (64/127 × 10) at 5 Hz, smooth with no zipper. Delete the test afterwards (it does not get committed).
-
-- [ ] **Step 3: Re-record the two rows**
-
-Run: `GOLDEN_RECORD=1 env $T cargo test -p chimera-core --test golden_test goldens_match -- --nocapture`. Paste only the `algo_lfo_cutoff` and `modal_lfo_cutoff` rows over theirs, with the comment `// Re-recorded: CUTOFF routes in octaves, g ramped per block (filter-routing spec § 3).`, and set `const PENDING: &[&str] = &[];`.
-
-- [ ] **Step 4: Run every audio golden**
-
-Run: `env $T cargo test -p chimera-core --test golden_test --test sanity_test --test fx_golden_test`
-Expected: PASS, including `modulated_cases_differ_from_unmodulated`.
-
-- [ ] **Step 5: Commit**
-
-```bash
-cargo fmt --all && just check
-git add chimera-core/tests/golden_test.rs
-git commit -m "Re-record the two LFO → CUTOFF goldens after the sanity gate"
 ```
 
 ---
@@ -7397,7 +8360,7 @@ Create `docs/adr/0035-every-connection-is-a-matrix-route.md`:
 # 0035. Every connection from a modulator to the sound is a matrix route
 
 - **Status:** Proposed
-- **Deciders:** project owner (2026-09-27, the filter-routing spec); the defaults marked below await the owner's word
+- **Deciders:** project owner (2026-09-27, the filter-routing spec; 2026-09-28, priming the hidden destinations)
 
 ## Context
 The FLT page showed ENV, KEY and FM knobs the DSP never read (#121, #112), the amp envelope ran as a mod source that nothing put on the VCA (ADR 0022), and routing lived in two places: a few fixed knobs and the matrix. The filter models (#123–#127) each want a different panel over the same connections.
@@ -7407,11 +8370,11 @@ The FLT page showed ENV, KEY and FM knobs the DSP never read (#121, #112), the a
 - The matrix has eight sources in this stored order: ENV1, LFO1, ENV2, ENV3, LFO2, LFO3, VEL, NOTE; indices 0 and 1 keep their old meaning. NOTE is (note − 60) / 120.
 - A route exists apart from its amount (a presence bit per cell): a route at 0 is not a deleted route. MIX+MINUS on a matrix cell deletes a route; the audio thread's sums ignore the bits.
 - CUTOFF's routes sum in octaves: `fc = clamp(base · 2^(10·Σ), 20 Hz, min(20 kHz, 0.49·fs))`; Σ = 0 leaves `base` bit for bit. This supersedes ADR 0010's linear law for CUTOFF only. The filter ramps `g` across a block.
-- The VCA is a hidden destination on the Out block: the sum of its routes, clamped 0..1, applied per sample and times AMP's VEL term. It is a sum, not a product. With no route, Algo and Modal pass through (today's expression, bit for bit); VA gates (built with VA). With routes, the voice ends at the end of the first block in which no routed source holds it, through ADR 0027's 128-sample fade if its gain isn't 0; an inactive engine always ends it. This supersedes, in part, ADR 0022's note that no engine puts the amp envelope on the VCA.
-- Every new Sound carries ENV 1, LFO 1 and NOTE → CUTOFF at 0 (NOTE at the kind's key default); VA adds ENV 2 → VCA at 100 %.
+- The VCA is a hidden destination on the Out block: the sum of its routes, clamped 0..1, applied per sample and times AMP's VEL term. It is a sum, not a product. Its gain ramps per sample, a LEVEL change on a routed ENV slot included, so no block edge steps it. The no-route rule is an exhaustive match on the engine: Algo and Modal pass through (today's expression, bit for bit). VA's arm (a gate) and its default route are #148, so adding VA does not compile until they are decided. With routes, the voice ends at the end of the first block in which no routed source holds it, through ADR 0027's 128-sample fade if its gain isn't 0; an inactive engine always ends it. This supersedes, in part, ADR 0022's note that no engine puts the amp envelope on the VCA.
+- Every new Sound carries ENV 1, LFO 1 and NOTE → CUTOFF at 0 (NOTE at the kind's key default); VA's ENV 2 → VCA at 100 % comes with VA (#148).
 - The filter page's ENV, LFO and KEY knobs are views of those routes: an absent route shows a dash; turning it creates it (and the CUTOFF column, or reports MATRIX FULL). KIND never edits the matrix.
-- The hidden destinations are primed from the cells that own them: AMP's VEL primes VCA (even while VEL is dimmed), an A page's A, D, R and H prime that slot's TIME, and its S primes LEVEL. **Pending the owner's word:** the spec gives them no page.
-- `Voice::cost` adds `ModRouting::cost` (a base of 8; per ENV slot on the VCA 6 for A, 10 for B, 14 more for a curved B ENV; 1 per other VCA route; 2 for the clamp).
+- The hidden destinations, which the spec gives no page, are primed from the cells that own them (owner's decision): AMP's VEL primes VCA, even while VEL is dimmed (the one exception to ADR 0037's dimming rule). An A page's A, D, R and H prime that slot's TIME, and its S primes LEVEL.
+- `Voice::cost` adds `ModRouting::cost`: a base, then for each ENV slot on the VCA a term for A, one for B, and more for a curved B ENV, plus a term per other VCA route and one for the clamp. The model must never undercount. Until the bench measures each term on its own row, it bills the plan review's estimates, not the spec's (BASE 30, ENV_A 30, ENV_B 40, CURVE 15, OTHER 3, CLAMP 3). After that it bills the measured values, rounded up, and a test checks that it bills the bench's MODS row at least as measured.
 
 ## Alternatives considered
 - **Fixed ENV/LFO SOURCE selectors on the filter** (the spec's first version): two sources of truth for routing.
@@ -7446,11 +8409,12 @@ Chimera had one linear amp envelope with a per-sample divide, two envelopes noth
 - Provenance: the behaviour and ranges of the Cascadia manual v1.2 (2023-10-15), pp. 28–39 and 82–97; none of its code.
 - Every time or rate slider is a position 0..1 on `q = q_min · (q_max/q_min)^p` (one `fast_exp2` per block); a matrix route adds to the position, so it acts in octaves.
 - **Envelope A:** AHDSR with HOLD POSITION (OFF, AHDSR, GATE EXT) and SPEED (FAST, MED, SLOW) at the manual's ranges. One fixed RC shape: attack aims at 1.3 and stops at 1; decay and release aim 0.01 past their end, so a full swing takes the slider's time. Per sample it is one multiply-add, with no divide; per block it is closed form. ENV n LEVEL (the peak, `clamp(Σ, 0, 1)` when routed) and ENV n TIME (× `2^(−5·Σ)`) are its destinations, the Cascadia's CTRL SOURCE done in the matrix.
-- **Envelope B:** MODE ENV, LFO or BURST; FORM (the Cascadia's TYPE SELECT) CYCLE, AHR or AD, or FREE, SYNC or LFV. RISE, FALL and SHAPE follow MODE and FORM. SHAPE's curve is `x / (x + (1 − x)·2^(4·(2·SHAPE − 1)))`, linear at the centre. LFV is a clamped random walk with a slew. BURST is pulses under a TILT-shaped burst. SYNC resets at each note-on until #44 gives a clock. A B slot run per block clamps its rates to 93.75 Hz; only a slot on the VCA runs per sample at the full ranges. ENV n RISE, FALL and SHAPE are its destinations.
+- **Envelope B:** MODE ENV, LFO or BURST; FORM (the Cascadia's TYPE SELECT) AD, AHR or CYCLE, or FREE, SYNC or LFV, default first. RISE, FALL and SHAPE follow MODE and FORM. SHAPE's curve is `x / (x + (1 − x)·2^(4·(2·SHAPE − 1)))`, linear at the centre. LFV is a clamped random walk with a slew. BURST is pulses under a TILT-shaped burst. SYNC resets at each note-on until #44 gives a clock. A B slot run per block clamps its rates to block rate ÷ 8 (`block_rate_max(sr)`: 93.75 Hz at 48 kHz, 86.1 Hz at the desktop's 44.1 kHz). The clamp covers RATE, BURST's pulse RATE and the repeat rates of ENV CYCLE (1/(RISE + FALL)) and BURST CYCLE (1/LENGTH); one-shot AD and AHR times are not clamped. Only a slot on the VCA runs per sample at the full ranges. ENV n RISE, FALL and SHAPE are its destinations.
 - **LFO slots:** CLASSIC is today's LFO, bit for bit, with OFFSET stored but no longer applied. FUNC is Envelope B locked to LFO mode, with DEPTH not applied.
-- A TYPE, MODE or FORM change never jumps the level: into A or B ENV the new shape enters at the current level; otherwise the difference glides to 0 over 256 samples.
+- A TYPE, MODE or FORM change never jumps the level: into A or B ENV the new shape enters at the current level; otherwise the difference glides to 0 over 256 samples (one `Glide` type, shared by ENV and LFO slots).
 - Outputs carry no velocity; VEL reaches the sound as a source, through AMP's VEL and through ENV n LEVEL.
-- The FORM chosen is kept per MODE; a value a TYPE, MODE or FORM doesn't use is kept.
+- The FORM chosen is kept per MODE, in types: `EnvForm` (ENV and BURST) and `LfoForm`, stored as `env_form`, `lfo_form` and `burst_form`. What runs is `Func { Env(EnvForm), Lfo(LfoForm), Burst(EnvForm) }`, so a MODE/FORM mismatch can't be represented. A value a TYPE, MODE or FORM doesn't use is kept.
+- **Accuracy:** both paths (the per-sample tick and the per-block closed form) are tested against an f64 reference, to about 1e-4 absolute, with stage changes within ±1 sample. This supersedes the spec's 1e-6, which f32 cannot meet over a long stage.
 
 ## Alternatives considered
 - **A curve control on Envelope A:** the Cascadia has none; A stays divide-free.
@@ -7458,7 +8422,7 @@ Chimera had one linear amp envelope with a per-sample divide, two envelopes noth
 - **Resetting FREE, LFV and BURST phases on note-on** (the Cascadia's default gate behaviour): it would make FREE and SYNC the same until #44.
 
 ## Consequences
-- In f32, an RC stage placed by closed form is exact to about a sample at 10 s and to a few ppm at 60 s.
+- In f32, the two paths can differ by up to 1e-4 and a sample at a stage change; the f64 reference tests hold them there.
 - Per-block B rates stop far below the Cascadia's 800 Hz LFO and 1 kHz bursts; audio-rate modulation of other destinations needs per-sample routing, not built.
 - `played` grows about 210 B per voice; the RAM asserts hold.
 
@@ -7485,8 +8449,8 @@ The filter models (#123–#127) each bring a classic synth's panel and their own
 - MODE (ParamId 7) is a typed `FilterMode` whose discriminants 0–7 are the old byte. `mode ∈ kind.modes()` holds on every write of KIND or MODE. A KIND change keeps MODE if the new kind has it, else takes its default. A single-mode kind shows MODE fixed and dimmed.
 - The matrix always applies; "not shown, not applied" covers only the filter's own parameters.
 - Filter ParamIds 3 (FM), 4 (ENV) and 5 (KEY) are retired and never reused (ADR 0009).
-- A fixed or inapplicable slot draws dimmed (label and value in MID, no bar); its encoder is ignored.
-- `FilterKind::cost(kind, mode)` bills each kind like an engine (ADR 0026); the SVF's is measured by the bench's SVF row.
+- A fixed or inapplicable slot draws dimmed (label and value in MID, no bar); its encoder is ignored. One exception, the owner's decision: a dimmed cell whose MIX+PLUS primes a different, hidden destination still primes it. AMP's VEL, dimmed under the pass-through, primes the VCA (ADR 0035), since there is no other way in.
+- `FilterKind::cost(kind, mode)` bills each kind like an engine (ADR 0026); the SVF's is measured by the bench's SVF row (PHASER, less 1 OP).
 
 ## Alternatives considered
 - **KIND rewriting routes on a change** (the SH-101 kind setting ENV 1 → VCA): it would destroy the user's routing.
@@ -7525,120 +8489,39 @@ git commit -m "ADRs 0035–0037: routing, the Cascadia-style modulators, KIND's 
 
 ---
 
-### Task 19: Bench rows and costs (hardware STOP)
+### Task 19: Play the pages; the load check (hardware STOP)
 
-The spec's bench rows (§ Tests "Bench"): MODS (1 OP; ENV 2 type B in ENV mode with SHAPE off centre → VCA; ENV 1 → CUTOFF; every source routed somewhere; all three LFOs FUNC) and SVF (1 OP at PHASER), each read minus the 1 OP row. Their readings replace `ModRouting::BASE`'s estimate and set `FilterKind::cost(Svf, _)`. Then the owner plays the new pages on the synth and runs a load check.
+The costs were measured at Task 13. Here the owner plays the new pages on the synth and runs a load check. No code changes unless the owner finds something.
 
 **Files:**
-- Modify: `chimera-stm32/src/bench.rs` (rows take a `PartAudio`; MODS and SVF rows; `ROW_H`)
-- Modify (after the STOP): `chimera-core/src/modulation.rs` (`ModRouting::BASE`), `chimera-core/src/dsp/filter.rs` (`FilterKind::cost`), `chimera-core/tests/cost_test.rs`, `docs/superpowers/plans/2026-09-28-filter-routing.md` (§ Measured, at the end)
+- Modify (after the STOP, if the owner accepts): `docs/adr/0035-every-connection-is-a-matrix-route.md`, `docs/adr/0036-cascadia-style-modulators.md`, `docs/adr/0037-kind-lays-out-the-filter-panel.md`, `docs/adr/README.md`
 
-**Interfaces:**
-- Consumes: `ModState::{find, set_route}`, `ModRouting`, `FilterKind::cost`.
-- Produces: `bench::PATCHES` rows `(label, fn(&mut PartAudio), low, step)`, 11 of them.
+- [ ] **Step 1: STOP. Ask the owner to play the pages and check the load, and wait**
 
-- [ ] **Step 1: The rows**
+Send the owner this, then wait for the reply:
 
-In `chimera-stm32/src/bench.rs`:
-- `const ROWS: usize = 11;`, and `type Row = (&'static str, fn(&mut PartAudio), u8, u8);` (`use chimera_core::instrument::PartAudio;`);
-- each existing row's closure becomes `|p| p.params = <the old expression>` (for example `("1 OP", |p| p.params = algo(AlgoId::A1, 0b1, 0), 36, 12)`), and two rows follow `A16+17`:
-
-```rust
-    ("MODS", mods, 36, 12),
-    ("SVF", |p| {
-        p.params = algo(AlgoId::A1, 0b1, 0);
-        p.params.filter.set_mode(FilterMode::Phaser); // the SVF's costliest mode
-    }, 36, 12),
-```
-
-- the timing loop's setup becomes `|s| { patch(&mut s.parts[0]); black_box(&s.parts[0]); }`;
-- the MODS setup:
-
-```rust
-/// Spec § Tests "Bench": 1 OP; ENV 2 type B, ENV mode, SHAPE off centre →
-/// VCA (ticked per sample, a divide per sample); ENV 1 → CUTOFF; every
-/// source routed; all three LFOs FUNC.
-fn mods(p: &mut PartAudio) {
-    use chimera_core::addr::{BlockRef, ParamAddr};
-    use chimera_core::dsp::algo::params::AlgoParams;
-    use chimera_core::dsp::modulator::{EnvType, FuncMode, LfoType};
-    use chimera_core::mod_path::ModDestRegistry;
-    use chimera_core::modulation::{CUTOFF, MAX_MOD_SOURCES, ModSource, ModState, VCA};
-    use chimera_core::params::{FilterParams, FolderParams, OutParams};
-    p.params = algo(AlgoId::A1, 0b1, 0);
-    let e2 = &mut p.params.envelopes[1];
-    (e2.env_type, e2.func.mode, e2.func.shape) = (EnvType::B, FuncMode::Env, 0.8);
-    for l in p.params.lfos.iter_mut() {
-        l.lfo_type = LfoType::Func;
-    }
-    let res = ParamAddr::new(BlockRef::Filter, FilterParams::RESONANCE);
-    let drive = ParamAddr::new(BlockRef::Filter, FilterParams::DRIVE);
-    let fold = ParamAddr::new(BlockRef::Folder, FolderParams::FOLD);
-    let morph = ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH);
-    let level = ParamAddr::new(BlockRef::Out, OutParams::VOLUME);
-    let routes = [
-        (ModSource::Env1, CUTOFF),
-        (ModSource::Env2, VCA),
-        (ModSource::Env3, res),
-        (ModSource::Lfo1, morph),
-        (ModSource::Lfo2, drive),
-        (ModSource::Lfo3, fold),
-        (ModSource::Vel, level),
-        (ModSource::Note, CUTOFF),
-    ];
-    let mut reg = ModDestRegistry::new();
-    for (_, a) in routes {
-        let _ = reg.add(a, *b"BENCH\0\0\0");
-    }
-    let mut ms = ModState::from_registry(&reg, MAX_MOD_SOURCES);
-    for (s, a) in routes {
-        if let Some(d) = ms.find(a) {
-            ms.set_route(s.index(), d, 64);
-        }
-    }
-    p.mod_state = ms;
-}
-```
-
-- `const ROW_H: i32 = 20;` (eleven rows from y 46 reach 266; the kernel line and the three FX lines end at 302, under 310).
-
-Run: `cargo fmt --all && just check` (it builds and lints the bench feature and runs the stack check). Commit:
-
-```bash
-git add chimera-stm32/src/bench.rs
-git commit -m "Bench: MODS and SVF rows"
-```
-
-- [ ] **Step 2: STOP. Ask the owner to run the bench, play the pages and check the load, and wait**
-
-Send the owner this, then wait for the numbers:
-
-> The filter-routing branch is ready for the chip.
-> 1. Put the synth in DFU mode and run `just flash-bench`. About 10 s after the reset the bench shows for 30 s. Please read `1 OP /VOICE`, `MODS /VOICE` and `SVF /VOICE` (and check the screen fits: 11 rows, then the kernel line and three FX lines).
-> 2. DFU mode again, `just flash`, and play:
+> The filter-routing branch is ready to play (Tasks 1–18).
+> 1. Put the synth in DFU mode, run `just flash`, and play:
 >    - FLT: KIND (fixed, SVF), CUTOFF, RES, MODE, ENV, KEY; FLT › MODE: MODE, DRIVE, LFO. Delete ENV's route in MTX (MIX+MINUS), check the knob shows a dash, and turn it back.
->    - AMP: VEL dim; route E2 → VCA in MTX (MIX+PLUS on VEL first) and hear the note follow ENV 2; then the SH-101 feel (E1 → VCA and CUTOFF, E2's VCA route deleted).
->    - The MOD list E1 E2 E3 SPD L1 L2 L3 MTX; flip E1's TYPE to B and back mid-note (no click); ENV 3's modes and forms; FUNC on an LFO.
+>    - AMP: VEL is dimmed and still primes VCA; route E2 → VCA in MTX (MIX+PLUS on VEL first) and hear the note follow ENV 2. Then the SH-101 feel: E1 → VCA and CUTOFF, E2's VCA route deleted.
+>    - The MOD list E1 E2 E3 SPD L1 L2 L3 MTX. Flip E1's TYPE to B and back mid-note (no click). Try ENV 3's modes and forms, then FUNC on an LFO.
 >    - Hold a chord and release: no note drones on with an LFO or E3 (B, CYCLE) routed to the VCA.
-> 3. Load check: the costliest factory Sound with the MODS routing, six voices held, then open MENU › ABT › AUDIO and read LOAD, PEAK, OVER and DROPS.
-> 4. Reply with the three bench numbers, the AUDIO readings, anything that looked or sounded wrong, and whether ADRs 0035–0037 (and the priming of VCA, LEVEL and TIME from their cells) can be marked Accepted.
+> 2. Load check: the costliest factory Sound with the MODS routing, six voices held, then open MENU › ABT › AUDIO and read LOAD, PEAK, OVER and DROPS.
+> 3. Reply with the AUDIO readings and anything that looked or sounded wrong. Also say whether ADRs 0035–0037 can be marked Accepted, including the dimming exception (AMP VEL primes VCA while dimmed; A, D, R and H prime TIME; S primes LEVEL).
 
-- [ ] **Step 3: Commit the measured costs**
+- [ ] **Step 2: Record the load check**
 
-With the owner's numbers:
-- `ModRouting::BASE = Cost(max(8, (MODS − 1 OP) − 26))`, rounding up. 26 is the estimated per-VCA share of the MODS row: 24 for ENV 2 as a curved B, plus 2 for the clamp. The per-VCA terms stay estimates. Its doc says `measured <date>, bench MODS row, rev V at 480 MHz`.
-- `FilterKind::cost(Svf, _) = Cost(max(0, SVF − 1 OP))`, rounding up, for every mode (PHASER is the costliest), with the same kind of doc.
-- `cost_test.rs`: pin both (`assert_eq!(ModRouting::BASE, Cost(n))`, `assert_eq!(FilterKind::Svf.cost(FilterMode::Lp24), Cost(m))`), recompute `voices_at`'s sums and the six-voices tests' numbers, and keep `every_factory_sound_gets_six_voices_on_rev_v` true. If a factory Sound falls below six on rev V, stop and tell the owner (ADR 0031 promises six).
-- Add a `## Measured` section at the end of this plan with the raw readings and the date.
-- If the owner accepted the ADRs, change their Status to `Accepted (<date>)` in the three files and in `README.md`.
+Add the AUDIO readings, with the date, to `## Measured`. If OVER or DROPS is above 0, stop and tell the owner: the cost model undercounts somewhere, and Task 13's terms need a second look before merging.
+
+- [ ] **Step 3: Accept the ADRs**
+
+If the owner accepted the ADRs, change their Status to `Accepted (<date>)` in the three files and in `README.md`.
 
 ```bash
-cargo fmt --all && just check
-git add chimera-core/src/modulation.rs chimera-core/src/dsp/filter.rs chimera-core/tests/cost_test.rs \
-  docs/superpowers/plans/2026-09-28-filter-routing.md docs/adr/README.md \
+git add docs/superpowers/plans/2026-09-28-filter-routing.md docs/adr/README.md \
   docs/adr/0035-every-connection-is-a-matrix-route.md docs/adr/0036-cascadia-style-modulators.md \
   docs/adr/0037-kind-lays-out-the-filter-panel.md
-git commit -m "Measured costs for the modulator pool and the SVF"
+git commit -m "Filter routing played on the chip; ADRs 0035-0037 accepted"
 ```
 
 - [ ] **Step 4: File what the owner found**
@@ -7649,14 +8532,14 @@ Each problem the owner reports that this plan does not fix becomes a GitHub issu
 
 ## Spec gaps found while planning
 
-Each one is decided in this plan where needed, and each needs the owner's word:
+Each one is settled in this plan as noted:
 
-1. **No way to reach the hidden destinations.** VCA, ENV n LEVEL and ENV n TIME are on no page, and a column is added only when a parameter is primed or a route knob creates one, so on Algo and Modal nobody could create E1 → VCA (the SH-101 feel) or VEL → LEVEL. The plan primes them from their owning cells (Decisions table; ADR 0035), including AMP's VEL while it is dimmed, which the spec's dimming rule forbids.
-2. **The VA engine is not on `main`.** The VA no-route gate, its 64-sample edges and VA's default ENV 2 → VCA route cannot be built or tested here; they belong to the VA plan. The VA spec already matches this spec. Its own ADR is numbered 0033 there, which the theme page has taken.
-3. **"Within one sample" at 60 s is beyond f32.** A 60 s SLOW stage placed in closed form (or ticked) is exact to a few ppm, not one sample. The test allows 1 sample or 2 ppm. `advance(n)` matches ticks within 2e-6, not 1e-6 (`fast_exp2`'s own error is 1e-6 relative on a swing up to 1.3).
+1. **No way to reach the hidden destinations.** VCA, ENV n LEVEL and ENV n TIME are on no page, and a column is added only when a parameter is primed or a route knob creates one. So on Algo and Modal nobody could create E1 → VCA (the SH-101 feel) or VEL → LEVEL. **Owner's decision:** each is primed from the cell that owns it. AMP VEL primes VCA even while dimmed, A, D, R and H prime TIME, and S primes LEVEL. ADRs 0035 and 0037 record this as the one exception to the dimming rule.
+2. **The VA engine is not on `main`.** VA's no-route gate, its 64-sample edges and its default ENV 2 → VCA route can't be built or tested here. They are #148 (linked to #118 and #120). Task 10's rule is an exhaustive match on the engine, so adding VA fails to compile until #148 decides its arm.
+3. **"Within 1e-6" is beyond f32.** A 60 s stage accumulates f32 error well past 1e-6. Both paths (tick and `fill`) are tested against an f64 reference to 1e-4 absolute, with stage changes within ±1 sample. ADR 0036 records that this supersedes the spec's 1e-6.
 4. **`MAX_PAGES` is 64,** so ids 64 and 65 (L2, L3) do not fit; it rises to 72.
-5. **#48 and #57 would move the factory goldens.** A real `fast_tan` fix changes every Sound, so #57 gets its doc only. #48's C1 clip is kept only if every golden holds; otherwise it waits for the model work.
-6. **The approved mockups use glyphs and words the fonts and spec don't.** The u8g2 `_tr` faces lack "°", "·" and "→". The mockups' LFV cell reads VARY where the spec says DELTA (the plan follows the spec). Their "→ CUTOFF" caption over the ENV viz is not in the spec and is not built.
-7. **The spec's `forms()[0]` default contradicts its listed order.** ENV and BURST default to AD, but the spec lists "CYCLE, AHR or AD", so the knob steps AD · AHR · CYCLE. The FORM is also stored per MODE (`forms: [u8; 3]`) so switching MODE back restores it, where the spec's data model has one `form`.
-8. **Per-block B rate clamp in ENV mode:** "clamps any rate" is read as RATE (LFO) and pulse RATE (BURST); ENV-mode rise and fall times are not clamped.
-9. **ENV 3 FORM default under LFO.** The ParamIds table gives LFO a default FORM of FREE, while one stored FORM would carry AD across. The per-MODE storage settles it.
+5. **#48 and #57 would move the factory goldens.** A real `fast_tan` fix changes every Sound, so #57 gets its doc only. #48 is deferred to the model work (commented on #48).
+6. **The approved mockups use glyphs and words the fonts and spec don't.** The u8g2 `_tr` faces lack "°", "·" and "→". The mockups' LFV cell reads VARY where the spec says DELTA; the plan follows the spec. Their "→ CUTOFF" caption over the ENV viz is not in the spec and is not built.
+7. **The spec's one `form` field.** The FORM is stored per MODE (`env_form`, `lfo_form`, `burst_form`, each its own enum), so switching MODE back restores it. The ENV and BURST knob steps AD · AHR · CYCLE (AD first, the default).
+8. **The per-block B rate clamp.** It covers RATE (LFO), pulse RATE (BURST) and the repeat rates of ENV CYCLE and BURST CYCLE, at `block_rate_max(sr) = sr / BLOCK_SIZE / 8`. ENV-mode AD and AHR rise and fall times are not clamped.
+9. **Where the slice ships.** The shippable slice (#121) ends after Task 7, not after the UI tasks.
