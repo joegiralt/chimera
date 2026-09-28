@@ -75,3 +75,12 @@ fn transfers_restart_on_a_block_and_cap() {
     assert_eq!(d.tick(0, true), Err(Over));
     assert_eq!(d.max_gap(), 0);
 }
+
+#[test]
+fn a_block_ending_a_long_gap_does_not_trip() {
+    // The gap is caught by the `tick(false)` before the transfer, not by
+    // the block that ends it.
+    let mut d = Deadline::arm(0, IDLE, CAP);
+    assert_eq!(d.tick(1_500, true), Ok(()));
+    assert_eq!(d.max_gap(), 1_500);
+}
