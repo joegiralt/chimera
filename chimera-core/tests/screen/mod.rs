@@ -379,7 +379,7 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::D, 1));
         prime(ui); // VEL primes the VCA
         plus(ui, 1);
-        to_matrix(ui); // E1 → FLT CUTOFF
+        to_matrix(ui); // ENV1 → FLT CUTOFF
         feed(ui, Input::turn(EncoderId::A, 2)); // E2
         feed(ui, Input::turn(EncoderId::B, 1)); // OUT VCA
         feed(ui, Input::turn(EncoderId::E, 100)); // E2 → VCA
@@ -450,7 +450,7 @@ pub const CASES: &[ScreenCase] = &[
         plus(ui, 1);
         to_matrix(ui);
         feed(ui, Input::turn(EncoderId::B, 5)); // col 5: scrolled one, `<` and `>`
-        feed(ui, Input::turn(EncoderId::A, 5)); // VEL
+        feed(ui, Input::turn(EncoderId::A, 5)); // VELO
         feed(ui, Input::turn(EncoderId::E, -127));
     }),
     ("sound_browser", |ui| {

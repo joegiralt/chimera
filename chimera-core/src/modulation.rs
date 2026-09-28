@@ -76,17 +76,17 @@ impl ModSource {
         }
     }
 
-    /// The matrix row's tag (≤ 3 characters, #15).
+    /// The matrix row's tag (4 characters).
     pub const fn tag(self) -> &'static str {
         match self {
-            ModSource::Env1 => "E1",
-            ModSource::Lfo1 => "LF1",
-            ModSource::Env2 => "E2",
-            ModSource::Env3 => "E3",
-            ModSource::Lfo2 => "LF2",
-            ModSource::Lfo3 => "LF3",
-            ModSource::Vel => "VEL",
-            ModSource::Note => "NTE",
+            ModSource::Env1 => "ENV1",
+            ModSource::Lfo1 => "LFO1",
+            ModSource::Env2 => "ENV2",
+            ModSource::Env3 => "ENV3",
+            ModSource::Lfo2 => "LFO2",
+            ModSource::Lfo3 => "LFO3",
+            ModSource::Vel => "VELO",
+            ModSource::Note => "NOTE",
         }
     }
 }

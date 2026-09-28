@@ -31,16 +31,23 @@ fn rows(fb: &Fb, y0: i32, y1: i32) -> &[u16] {
     &fb.px[y0 as usize * W..y1 as usize * W]
 }
 
-/// The fixture: E1→CUTOFF +20, E1→FOLD −30, LF1→CUTOFF +42 (selected).
-/// One line, block tag included: `LF1 → FLT CUTOFF`.
+/// The fixture: ENV1→CUTOFF +20, ENV1→FOLD −30, LFO1→CUTOFF +42
+/// (selected). One line, block tag included: `LFO1 → FLT CUTOFF`.
 #[test]
 fn the_readout_names_the_selected_route() {
     let fb = render("mod_matrix");
     let want = drawn(fb.px[0], |d| {
         let x = theme::MARGIN_X;
-        let x = x
-            + draw::text_tracked(d, &theme::FONT_LABEL, "LF1", x, READOUT_Y, theme::ACCENT, 1)
-            + 4;
+        let x =
+            x + draw::text_tracked(
+                d,
+                &theme::FONT_LABEL,
+                "LFO1",
+                x,
+                READOUT_Y,
+                theme::ACCENT,
+                1,
+            ) + 4;
         let x = x + draw::arrow(d, x, READOUT_Y, theme::ACCENT) + 5;
         draw::text_tracked(
             d,
@@ -109,7 +116,7 @@ fn cells_print_their_amounts_and_the_cursor_is_outlined() {
         (1, 0, theme::FAINT, Some("-30")),
         (0, 1, theme::ACCENT, Some("+42")),
         (1, 1, theme::FAINT, None),
-        (0, 7, theme::FAINT, Some("0")), // NTE → CUTOFF, the default pitch route
+        (0, 7, theme::FAINT, Some("0")), // NOTE → CUTOFF, the default pitch route
     ] {
         assert!(
             same_cell(&fb, &cell_as(bg, ci, vi, edge, route), ci, vi),
@@ -732,5 +739,32 @@ fn the_widest_amount_fits_its_cell() {
     for a in ["-127", "+127"] {
         let w = draw::text_width(&theme::FONT_LABEL_BOLD, a, 0);
         assert!(w <= CELL_W - 4, "{a} is {w}px in a {CELL_W}px cell");
+    }
+}
+
+/// The owner's row labels, in `ModSource` order (#161).
+#[test]
+fn rows_read_env1_to_note_in_source_order() {
+    let ui = ui_for("mod_matrix");
+    let m = &ui.matrix_state;
+    let names: Vec<_> = m.sources[..m.num_sources]
+        .iter()
+        .map(|s| s.unwrap().name)
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "ENV1", "LFO1", "ENV2", "ENV3", "LFO2", "LFO3", "VELO", "NOTE"
+        ]
+    );
+}
+
+/// Every row label ends at least 3 px left of the first cell.
+#[test]
+fn row_labels_fit_left_of_the_grid() {
+    use chimera_core::ui::block_registry::PART_MOD_SOURCES;
+    for s in PART_MOD_SOURCES {
+        let right = theme::MARGIN_X + draw::text_width(&theme::FONT_LABEL_BOLD, s, 0);
+        assert!(right + 3 <= cell_origin(0, 0).0, "{s} ends at {right}");
     }
 }
