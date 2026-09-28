@@ -11,7 +11,7 @@ const SCALE: usize = 2;
 
 pub struct DesktopDisplay {
     window: Window,
-    fb: Vec<u16>,
+    fb: Box<[u16; FB_SIZE]>,
     window_buf: Vec<u32>,
     /// System › Theme: the palette swap, and BRIGHT as a dimming of the
     /// window. GAMMA has no desktop equivalent and is ignored here.
@@ -31,7 +31,7 @@ impl DesktopDisplay {
 
         Self {
             window,
-            fb: vec![0u16; FB_SIZE],
+            fb: vec![0u16; FB_SIZE].try_into().expect("FB_SIZE pixels"),
             window_buf: vec![0u32; FB_SIZE * SCALE * SCALE],
             palette: Palette::IDENTITY,
             bright_pct: ThemeSettings::DEFAULT.bright.percent() as u32,
@@ -118,6 +118,6 @@ impl ChimeraDisplay for DesktopDisplay {
     }
 
     fn pixel_buffer(&mut self) -> &mut [u16] {
-        &mut self.fb
+        &mut self.fb[..]
     }
 }

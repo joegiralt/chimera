@@ -198,7 +198,7 @@ pub const FB_SIZE: usize = (SCREEN_WIDTH as usize) * (SCREEN_HEIGHT as usize);
 /// Write `pixels` into a row-major 240×320 RGB565 framebuffer, dropping any
 /// off screen: both displays' `DrawTarget::draw_iter`.
 pub fn draw_into_fb(
-    fb: &mut [u16],
+    fb: &mut [u16; FB_SIZE],
     pixels: impl IntoIterator<Item = embedded_graphics_core::Pixel<Rgb565>>,
 ) {
     use embedded_graphics_core::pixelcolor::raw::{RawData, RawU16};
