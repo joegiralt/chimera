@@ -303,3 +303,28 @@ fn an_absent_route_knob_reads_dashes_in_the_focus_band() {
         (theme::HEADER_BOTTOM, theme::FOCUS_BOTTOM)
     ));
 }
+
+/// The Cells key carries the real looks: FLT's ENV (slot 4) absent, KEY
+/// (slot 5) live, and the matrix's revision.
+#[test]
+fn the_cells_key_carries_the_looks() {
+    use chimera_core::ui::components::Look;
+    use chimera_core::ui::perf::PerfStats;
+    use chimera_core::ui::region::{RegionData, RegionKind};
+    let mut ui = on_flt(EngineType::Algo);
+    to_matrix(&mut ui); // E1 → CUTOFF
+    feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Minus));
+    back_to_flt(&mut ui, false);
+    let mut fb = Fb::new();
+    ui.render_dirty_with_audio(&mut fb, &PerfStats::zero(), None, &scope_fixture());
+    let Some(RegionData::Cells {
+        looks, matrix_rev, ..
+    }) = ui.drawn_key(RegionKind::Cells)
+    else {
+        panic!("FLT has cells");
+    };
+    assert_eq!(looks >> 8 & 3, Look::Absent as u16, "ENV");
+    assert_eq!(looks >> 10 & 3, Look::Live as u16, "KEY");
+    assert_eq!(looks & 0xff, 0, "the other slots are live");
+    assert_eq!(matrix_rev, ui.matrix_state.rev);
+}

@@ -284,3 +284,27 @@ fn animation_settling_produces_dirty_then_clean() {
         "settled animation should produce stable values"
     );
 }
+
+fn cells_keyed(matrix_rev: u16, looks: u16) -> RegionData {
+    RegionData::cells(
+        PageKey::Legacy(PageId::DemoWaves),
+        [500; 6],
+        0,
+        0,
+        [None; 6],
+    )
+    .keyed(matrix_rev, looks)
+}
+
+/// A cell turning absent (or dimmed) alone redraws the cells.
+#[test]
+fn region_data_cell_looks_differ() {
+    assert_eq!(cells_keyed(0, 0), cells_keyed(0, 0));
+    assert_ne!(cells_keyed(0, 0), cells_keyed(0, 1 << 8));
+}
+
+/// A matrix change alone (a route deleted at 0) redraws the cells.
+#[test]
+fn region_data_cell_matrix_rev_differs() {
+    assert_ne!(cells_keyed(0, 0), cells_keyed(1, 0));
+}

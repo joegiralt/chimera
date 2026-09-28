@@ -856,6 +856,15 @@ impl UiState {
         }
     }
 
+    /// The key region `kind` was last drawn with, if the page has it.
+    pub fn drawn_key(&self, kind: region::RegionKind) -> Option<region::RegionData> {
+        self.region_set
+            .active_regions()
+            .iter()
+            .find(|r| r.kind == kind)
+            .map(|r| r.prev_data)
+    }
+
     /// Render only dirty regions, with `scope` as the live output and
     /// `audio` behind the AUDIO sub-page. Returns list of (y_start, y_end)
     /// pairs to flush. Slots with (0, 0) are unused.
