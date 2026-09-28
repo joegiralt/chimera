@@ -284,9 +284,15 @@ impl EnvA {
                 m
             }
             _ => {
-                let Some((rc, t, end, _)) = self.rc(c) else {
+                let Some((rc, t, end, rising)) = self.rc(c) else {
                     return span;
                 };
+                // Mid-stage: `steps_to` would place the end past `span`, so
+                // skip it (bit for bit, `far`'s margin).
+                if far(self.level, t, end, rc.k, span, rising) {
+                    self.level = t + (self.level - t) * fast_exp2(rc.k * span as f32);
+                    return span;
+                }
                 let m = steps_to(self.level, t, end, rc.k);
                 if m <= span {
                     self.finish(c, end);
@@ -329,6 +335,19 @@ fn steps_to(l: f32, t: f32, end: f32, k: f32) -> u32 {
     if (i as f32) < m { i + 1 } else { i.max(1) }
 }
 
+/// The stage from `l` toward `t` is still short of `end` 2 samples past
+/// `span`, with a 1e-4 margin; no `exp2`, no divide: `2^x ≥ 1 + x·ln 2`
+/// bounds what is left of `l − t`. `steps_to`'s errors (`fast_exp2`'s 1e-6,
+/// f32 rounding) are far inside that margin, so it would return more than
+/// `span`. NaN is never far.
+fn far(l: f32, t: f32, end: f32, k: f32, span: u32, rising: bool) -> bool {
+    let left = 1.0 + k * (span + 2) as f32 * LN_2 - FAR_MARGIN;
+    let past = t + (l - t) * left;
+    if rising { past < end } else { past > end }
+}
+
+const FAR_MARGIN: f32 = 1e-4;
+
 /// `l += c · (t − l)` into `seg` until `done(l)`: the index where it ended
 /// (unwritten), or `None`. Generic in `done`, so each direction's loop is
 /// its own, the bounds checked once.
@@ -348,4 +367,57 @@ fn curve(
         *o = *l;
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `far` never skips a stage end `steps_to` would place inside the
+    /// span: every stage shape, τ from 0.1 ms to past the slowest SPEED at
+    /// TIME −1, half the levels with the end right around the span.
+    #[test]
+    fn far_implies_steps_to_past_the_span() {
+        let mut x = 0x2545_f491u32;
+        let mut rnd = || {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            x as f32 / u32::MAX as f32
+        };
+        let (mut skipped, mut near) = (0u32, 0u32);
+        for _ in 0..2_000_000 {
+            // τ from 0.1 ms to 1000 s at 48 kHz.
+            let tau = 1e-4 * fast_exp2(rnd() * 23.3);
+            let k = rc_k(tau, 48_000.0);
+            let (t, end, rising) = match (rnd() * 3.0) as u32 {
+                0 => (ATTACK_TARGET, 1.0, true),
+                1 => {
+                    let sus = rnd();
+                    (sus - OVERSHOOT, sus, false)
+                }
+                _ => (-OVERSHOOT, 0.0, false),
+            };
+            let span = 1 + (rnd() * 63.0) as u32;
+            let l = if rnd() < 0.5 {
+                if rising {
+                    rnd()
+                } else {
+                    end + rnd() * (1.0 - end)
+                }
+            } else {
+                // The end within 4 samples (plus twice the margin) of the span.
+                let m = span as f32 + (rnd() * 2.0 - 1.0) * (4.0 - 2.0 * FAR_MARGIN / k);
+                t + (end - t) * fast_exp2(-k * m)
+            };
+            if far(l, t, end, k, span, rising) {
+                skipped += 1;
+                let m = steps_to(l, t, end, k);
+                assert!(m > span, "l {l} t {t} end {end} k {k} span {span}: {m}");
+                near += u32::from(m <= span + 64);
+            }
+        }
+        // The test reaches both far stages and ones just past the span.
+        assert!(skipped > 900_000 && near > 100_000, "{skipped} {near}");
+    }
 }
