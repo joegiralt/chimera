@@ -8,7 +8,7 @@ use chimera_core::dsp::Stereo;
 use chimera_core::dsp::chorus::ChorusParams;
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus};
 use chimera_core::dsp::ring::{first_reflection, size_step};
-use chimera_core::hw::{DAC_PAIRS, MAX_PARTS};
+use chimera_core::hw::{DAC_PAIRS, MAX_PARTS, MAX_VOICES};
 use chimera_core::instrument::{AudioShared, DacOut, Instrument, PanCache, mix_parts, pan_gains};
 use chimera_core::modulation::ModState;
 use chimera_core::note_queue::{NoteEvent, NoteKind};
@@ -43,14 +43,14 @@ fn factory_voice_cost(i: usize) -> u32 {
     chimera_core::dsp::voice::Voice::cost(&s.params, &s.mod_state).0
 }
 
-/// Room for the four MORPH PAD voices a SAW LEAD chord's patch edit leaves
-/// (two of six shed) plus the SQR BASS note that steals in next: just
+/// Room for the MORPH PAD voices a full-pool SAW LEAD chord's patch edit
+/// leaves (two shed) plus the SQR BASS note that steals in next: just
 /// enough that the note reuses the dying slot it waits on (ADR 0027)
 /// instead of stealing a held one. Derived from `Voice::cost`, not a fixed
 /// margin, so a future change to the cost model can't silently flip which
 /// slot the note lands on.
 fn morph_pad_plus_sqr_bass_budget() -> SampleBudget {
-    budget_for(4 * factory_voice_cost(6) + factory_voice_cost(5))
+    budget_for((MAX_VOICES as u32 - 2) * factory_voice_cost(6) + factory_voice_cost(5))
 }
 
 fn on(ch: u8, note: u8) -> NoteEvent {
@@ -84,6 +84,13 @@ impl Rig {
             out: [[0.0; BLOCK_SIZE * 2]; DAC_PAIRS],
             scope: common::scope_writer(),
         }
+    }
+    /// The chip's own budget, for tests that fill the pool rather than the
+    /// pre-diet voice share.
+    fn rev_v() -> Self {
+        let mut rig = Self::new();
+        *rig.inst = Instrument::new(SR, SampleBudget::for_cpu(CPU_HZ_REV_V));
+        rig
     }
     fn render(&mut self, shared: &AudioShared) -> &DacOut {
         self.inst
@@ -406,14 +413,23 @@ fn tails_ring_out_then_free_the_voice() {
     );
 }
 
+/// Six Mono Parts of the costliest factory Sound, MORPH KEYS, spend the
+/// rev V budget with two voices still free: a Poly note on top would go over
+/// it, and every sounding voice is mono, so nothing can be stolen.
 #[test]
 fn refused_notes_are_counted_and_silent() {
-    let mut rig = Rig::new();
-    let mut shared = AudioShared::default();
-    for p in 0..6 {
+    let mut rig = Rig::rev_v();
+    let mut perf = Performance::new();
+    for part in perf.parts.iter_mut() {
+        part.sound = chimera_core::factory::factory_sound(7).unwrap();
+    }
+    let mut shared = AudioShared::from_performance(&perf);
+    for p in 0..MAX_PARTS {
         shared.parts[p].mix.mode = PartMode::Mono;
         rig.inst.handle(on(p as u8, 60), &shared);
     }
+    assert_eq!(rig.inst.allocator().refused(), 0);
+    assert!(rig.inst.allocator().slots().iter().any(|s| s.is_free()));
     shared.parts[0].mix.mode = PartMode::Poly;
     shared.parts[0].mix.channel = MidiChannel::new(9).unwrap();
     rig.inst.handle(on(9, 72), &shared);
@@ -479,6 +495,8 @@ fn reverb_send_on_passes_the_sanity_gate() {
 }
 
 const CHORD6: [u8; 6] = [48, 55, 60, 64, 67, 72];
+/// One note per voice: the pool full.
+const CHORD_FULL: [u8; MAX_VOICES] = [48, 52, 55, 60, 64, 67, 72, 76];
 
 fn factory(i: usize) -> Performance {
     let mut perf = Performance::new();
@@ -534,8 +552,28 @@ fn the_test_budget_keeps_the_pre_diet_voice_share() {
     assert_eq!(BUDGET.as_cost().0, FxBus::COST.0 + VOICE_SHARE);
 }
 
-/// Spec "Done when": on rev V the allocator grants the costliest patch,
-/// A16 ∪ A17, six voices.
+/// ADR 0040: on rev V a light patch (SAW LEAD, 553) plays every voice of the
+/// pool; the budget would allow ten.
+#[test]
+fn a_light_patch_plays_every_voice_on_rev_v() {
+    let shared = AudioShared::from_performance(&factory(4));
+    let mut rig = Rig::rev_v();
+    for n in CHORD_FULL {
+        rig.inst.handle(on(0, n), &shared);
+    }
+    rig.render(&shared);
+    let a = rig.inst.allocator();
+    assert_eq!(a.refused(), 0);
+    assert_eq!(
+        a.slots().iter().filter(|s| !s.is_free()).count(),
+        MAX_VOICES
+    );
+    assert!(a.sounding_cost() + FxBus::COST <= SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost());
+}
+
+/// Spec "Done when" and ADR 0040: on rev V the allocator grants the
+/// costliest patch, A16 ∪ A17, six voices: a full-pool chord steals, so six
+/// of its notes sound and none is refused.
 #[test]
 fn the_costliest_patch_plays_six_voices_on_rev_v() {
     use chimera_core::dsp::algo::algorithms::AlgoId;
@@ -545,15 +583,15 @@ fn the_costliest_patch_plays_six_voices_on_rev_v() {
     for op in a.ops.iter_mut() {
         (op.level, op.feedback) = (99, 7);
     }
-    let mut rig = Rig::new();
-    *rig.inst = Instrument::new(SR, SampleBudget::for_cpu(CPU_HZ_REV_V));
-    for n in CHORD6 {
+    let mut rig = Rig::rev_v();
+    for n in CHORD_FULL {
         rig.inst.handle(on(0, n), &shared);
     }
     rig.render(&shared);
     let a = rig.inst.allocator();
     assert_eq!(a.refused(), 0);
     assert_eq!(a.slots().iter().filter(|s| !s.is_free()).count(), 6);
+    assert!(a.sounding_cost() + FxBus::COST <= SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost());
 }
 
 /// Recorded when the instrument path landed (plan Task 12). Re-record only
@@ -635,18 +673,17 @@ fn note_off_follows_the_note_on_channel() {
     assert!(!rig.inst.allocator().slots()[0].held());
 }
 
-/// Review Focus: switching a held chord to a costlier Sound must not push
-/// the pool over the CPU budget; any voices over budget are cut. At the
-/// bench-measured costs, six Modal voices plus the FX bus still fit, so
-/// none are.
+/// Review Focus: switching a held chord that fills the pool to a costlier
+/// Sound must not push it over the CPU budget; the voices over budget are
+/// cut, and as many as the Modal default's cost allows keep sounding.
 #[test]
 fn sound_change_mid_chord_stays_in_budget() {
     use chimera_core::dsp::voice::Voice;
-    use chimera_core::hw::MAX_VOICES;
     use chimera_core::params::{EngineType, ParamSnapshot};
-    let mut rig = Rig::new();
+    let budget = SampleBudget::for_cpu(CPU_HZ_REV_V);
+    let mut rig = Rig::rev_v();
     let mut shared = AudioShared::default();
-    for n in 0..6 {
+    for n in 0..MAX_VOICES as u8 {
         rig.inst.handle(on(0, 60 + n), &shared);
     }
     rig.render(&shared);
@@ -657,13 +694,13 @@ fn sound_change_mid_chord_stays_in_budget() {
             .iter()
             .filter(|s| !s.is_free())
             .count(),
-        6
+        MAX_VOICES
     );
     shared.parts[0].params = ParamSnapshot::for_engine(EngineType::Modal);
     rig.render(&shared);
     let a = rig.inst.allocator();
-    assert!(a.sounding_cost() + FxBus::COST <= BUDGET.as_cost());
-    let expected = ((BUDGET.as_cost().0 - FxBus::COST.0)
+    assert!(a.sounding_cost() + FxBus::COST <= budget.as_cost());
+    let expected = ((budget.as_cost().0 - FxBus::COST.0)
         / Voice::cost(
             &ParamSnapshot::for_engine(EngineType::Modal),
             &ModState::new(),
@@ -719,9 +756,9 @@ fn stealing_a_releasing_voice_does_not_free_the_new_note() {
         .into_iter()
         .flat_map(|a| [(a, 0), (a, 20)])
     {
-        let mut rig = Rig::new();
-        for k in 0..6 {
-            rig.inst.handle(on(0, 60 + k), &shared); // voices 0..5, voice 0 oldest
+        let mut rig = Rig::rev_v();
+        for k in 0..MAX_VOICES as u8 {
+            rig.inst.handle(on(0, 60 + k), &shared); // the pool full, voice 0 oldest
         }
         for _ in 0..20 {
             rig.render(&shared);
@@ -986,17 +1023,17 @@ fn a_note_on_waits_out_a_fade_before_stealing_a_held_note() {
         p.parts[1].sound = chimera_core::factory::factory_sound(5).unwrap(); // SQR BASS
         AudioShared::from_performance(&p)
     };
-    let (light, heavy) = (perf(4), perf(6)); // SAW LEAD fits six, MORPH PAD four
+    let (light, heavy) = (perf(4), perf(6)); // SAW LEAD fills the pool, MORPH PAD two short
     let mut rig = Rig::new();
     *rig.inst = Instrument::new(SR, morph_pad_plus_sqr_bass_budget());
-    for n in CHORD6 {
+    for n in CHORD_FULL {
         rig.inst.handle(on(0, n), &light);
     }
     for _ in 0..4 {
         rig.render(&light);
     }
-    rig.render(&heavy); // four fit: two are shed
-    let dying: Vec<usize> = (0..6)
+    rig.render(&heavy); // two are shed
+    let dying: Vec<usize> = (0..MAX_VOICES)
         .filter(|&v| rig.inst.allocator().slots()[v].dying())
         .collect();
     assert_eq!(dying.len(), 2);
@@ -1008,7 +1045,7 @@ fn a_note_on_waits_out_a_fade_before_stealing_a_held_note() {
         .iter()
         .filter(|s| s.part() == Some(0) && s.held() && !s.dying())
         .collect();
-    assert_eq!(held.len(), 4, "no held note stolen");
+    assert_eq!(held.len(), MAX_VOICES - 2, "no held note stolen");
     let (v, d) = slots_of(&rig, 40)[0];
     assert!(dying.contains(&v) && !d);
     rig.render(&heavy); // the fade's second block: bass still silent
@@ -1033,7 +1070,7 @@ fn a_shed_waiting_note_counts_as_refused() {
     let mut rig = Rig::new();
     *rig.inst = Instrument::new(SR, morph_pad_plus_sqr_bass_budget());
     let light = perf(4, 5);
-    for n in CHORD6 {
+    for n in CHORD_FULL {
         rig.inst.handle(on(0, n), &light);
     }
     for _ in 0..4 {
