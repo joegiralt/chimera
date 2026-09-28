@@ -76,6 +76,20 @@ impl ModSource {
         }
     }
 
+    /// The full name, as the matrix readout spells it.
+    pub const fn name(self) -> &'static str {
+        match self {
+            ModSource::Env1 => "ENV 1",
+            ModSource::Lfo1 => "LFO 1",
+            ModSource::Env2 => "ENV 2",
+            ModSource::Env3 => "ENV 3",
+            ModSource::Lfo2 => "LFO 2",
+            ModSource::Lfo3 => "LFO 3",
+            ModSource::Vel => "VELOCITY",
+            ModSource::Note => "NOTE",
+        }
+    }
+
     /// The matrix row's tag (4 characters).
     pub const fn tag(self) -> &'static str {
         match self {

@@ -254,8 +254,7 @@ fn to_e3(ui: &mut UiState) {
     to_mod_sub(ui, 3, &reg::ENV_3);
 }
 
-/// Prime the focused slot for modulation (MIX + PLUS).
-/// ENV→CUTOFF +20, ENV→FOLD −30, LFO→CUTOFF +42 (selected).
+/// ENV1→CUTOFF +20, ENV1→FOLD −30, LFO1→CUTOFF +42 (selected).
 fn mod_matrix(ui: &mut UiState) {
     plus(ui, 3);
     feed(ui, Input::turn(EncoderId::B, 1)); // focus CUTOFF
@@ -268,11 +267,12 @@ fn mod_matrix(ui: &mut UiState) {
     feed(ui, Input::turn(EncoderId::E, 20)); // ENV → CUTOFF
     feed(ui, Input::turn(EncoderId::B, 1));
     feed(ui, Input::turn(EncoderId::E, -30)); // ENV → FOLD
-    feed(ui, Input::turn(EncoderId::A, 1));
+    feed(ui, Input::turn(EncoderId::A, 3)); // LFO1
     feed(ui, Input::turn(EncoderId::B, -1));
     feed(ui, Input::turn(EncoderId::E, 42)); // LFO → CUTOFF, selected
 }
 
+/// Prime the focused slot for modulation (MIX + PLUS).
 fn prime(ui: &mut UiState) {
     feed(ui, Input::chord(ButtonId::Mix, ButtonId::Plus));
 }
@@ -380,7 +380,7 @@ pub const CASES: &[ScreenCase] = &[
         prime(ui); // VEL primes the VCA
         plus(ui, 1);
         to_matrix(ui); // ENV1 → FLT CUTOFF
-        feed(ui, Input::turn(EncoderId::A, 2)); // E2
+        feed(ui, Input::turn(EncoderId::A, 1)); // ENV2
         feed(ui, Input::turn(EncoderId::B, 1)); // OUT VCA
         feed(ui, Input::turn(EncoderId::E, 100)); // E2 → VCA
         feed(ui, Input::press(ButtonId::Minus)); // back to AMP: VEL live
@@ -450,7 +450,7 @@ pub const CASES: &[ScreenCase] = &[
         plus(ui, 1);
         to_matrix(ui);
         feed(ui, Input::turn(EncoderId::B, 5)); // col 5: scrolled one, `<` and `>`
-        feed(ui, Input::turn(EncoderId::A, 5)); // VELO
+        feed(ui, Input::turn(EncoderId::A, 3)); // LFO1 → VELO
         feed(ui, Input::turn(EncoderId::E, -127));
     }),
     ("sound_browser", |ui| {

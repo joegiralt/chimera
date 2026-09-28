@@ -349,7 +349,11 @@ impl Renderer {
         D: DrawTarget<Color = Rgb565>,
     {
         if f.def.layout == PageLayout::Matrix {
-            return crate::ui::mod_grid::draw_readout(display, f.matrix);
+            return crate::ui::mod_grid::draw_readout(
+                display,
+                f.matrix,
+                amount_of(self.anim[MATRIX_AMOUNT_SLOT].current()),
+            );
         }
         if f.def.viz == VizType::AudioStats {
             return audio_page::draw_focus(display, f.def, f.audio);

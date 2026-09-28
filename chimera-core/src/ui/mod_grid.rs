@@ -27,9 +27,29 @@ pub const GRID_ROW_H: i32 = 17;
 const CELL_INSET: i32 = 4;
 pub const GRID_BOTTOM: i32 = 190;
 /// The readout band below the grid (`GRID_BOTTOM`..cells bottom).
-pub const READOUT_Y: i32 = 208;
-pub const HINT_Y: i32 = 228;
-pub const STATS_Y: i32 = 246;
+/// Readout: the route's names, then its amount and what it means.
+pub const READOUT_Y: i32 = 206;
+pub const AMOUNT_Y: i32 = 223;
+pub const HINT_Y: i32 = 241;
+pub const STATS_Y: i32 = 257;
+/// Widest readout line: the screen less both margins.
+pub const READOUT_MAX_W: i32 = theme::SCREEN_W - 2 * theme::MARGIN_X;
+
+/// Rows top to bottom as `ModSource` indices: envelopes, then LFOs, VELO,
+/// NOTE (the mockup's grouping). Amounts and presence stay by source index.
+pub const ROW_ORDER: [usize; MAX_SOURCES] = {
+    use crate::modulation::ModSource as S;
+    [
+        S::Env1 as usize,
+        S::Env2 as usize,
+        S::Env3 as usize,
+        S::Lfo1 as usize,
+        S::Lfo2 as usize,
+        S::Lfo3 as usize,
+        S::Vel as usize,
+        S::Note as usize,
+    ]
+};
 const VISIBLE_COLS: usize = 5;
 
 /// Max sources and destinations for the amounts grid (presence is a `u8`).
@@ -149,9 +169,25 @@ impl MatrixState {
         self.rev = self.rev.wrapping_add(1);
     }
 
+    /// The source index at display row `row`: `ROW_ORDER` over the
+    /// sources this matrix has.
+    pub fn row_source(&self, row: usize) -> usize {
+        ROW_ORDER
+            .iter()
+            .copied()
+            .filter(|&s| s < self.num_sources)
+            .nth(row)
+            .unwrap_or(row)
+    }
+
+    /// The source under the cursor.
+    pub fn sel_source(&self) -> usize {
+        self.row_source(self.sel_row)
+    }
+
     /// Get the amount at the current cursor position.
     pub fn current_amount(&self) -> i8 {
-        self.amounts[self.sel_row][self.sel_col]
+        self.amounts[self.sel_source()][self.sel_col]
     }
 
     /// Whether `addr` is a mod destination, and its summed amount (−1..1).
@@ -181,9 +217,10 @@ impl MatrixState {
         if self.sel_col >= self.num_dests {
             return;
         }
-        let a = self.amounts[self.sel_row][self.sel_col];
+        let src = self.sel_source();
+        let a = self.amounts[src][self.sel_col];
         self.set(
-            self.sel_row,
+            src,
             self.sel_col,
             (a as i16 + delta as i16).clamp(-127, 127) as i8,
         );
@@ -216,9 +253,10 @@ impl MatrixState {
 
     /// MIX+MINUS: delete the route under the cursor.
     pub fn delete_selected(&mut self) {
-        if self.sel_col < self.num_dests && self.sel_row < self.num_sources {
-            self.amounts[self.sel_row][self.sel_col] = 0;
-            self.present[self.sel_col] &= !(1 << self.sel_row);
+        let src = self.sel_source();
+        if self.sel_col < self.num_dests && src < self.num_sources {
+            self.amounts[src][self.sel_col] = 0;
+            self.present[self.sel_col] &= !(1 << src);
             self.bump();
         }
     }
@@ -336,6 +374,71 @@ pub fn fmt_route_dest(buf: &mut FmtBuf, d: &ModDest) {
     let _ = write!(buf, "{} {}", block_tag(d.addr.block), dest_name(d));
 }
 
+/// A block's full name, for the readout (`FILTER`; `block_tag` is `FLT`).
+pub fn block_name(b: BlockRef) -> &'static str {
+    match b {
+        BlockRef::Modal => "MODAL",
+        BlockRef::AlgoOp(op) => [
+            "OPERATOR 1",
+            "OPERATOR 2",
+            "OPERATOR 3",
+            "OPERATOR 4",
+            "OPERATOR 5",
+            "OPERATOR 6",
+        ][op.index()],
+        BlockRef::Algo => "ALGO",
+        BlockRef::Drive => "DRIVE",
+        BlockRef::Filter => "FILTER",
+        BlockRef::Folder => "FOLDER",
+        BlockRef::Env(s) => ["ENV 1", "ENV 2", "ENV 3"][s.index()],
+        BlockRef::Lfo(s) => ["LFO 1", "LFO 2", "LFO 3"][s.index()],
+        BlockRef::Out => "OUTPUT",
+        BlockRef::Chorus => "CHORUS",
+        BlockRef::Delay => "DELAY",
+        BlockRef::Reverb => "REVERB",
+        BlockRef::Tape => "TAPE",
+        BlockRef::Comp => "COMP",
+        BlockRef::Part => "PART",
+        BlockRef::Theme => "THEME",
+        BlockRef::Channels => "MIDI",
+    }
+}
+
+/// Readout line width: `source`, the arrow, `dest`.
+fn names_width(source: &str, dest: &str) -> i32 {
+    let w = |s| draw::text_width(&theme::FONT_LABEL, s, theme::LABEL_TRACKING);
+    w(source) + ARROW_GAP + 8 + ARROW_GAP + w(dest)
+}
+const ARROW_GAP: i32 = 5;
+
+/// The readout's destination: `FILTER CUTOFF`, or `FLT CUTOFF` when the
+/// full block name would push the line past `READOUT_MAX_W`. The param
+/// name is never cut.
+pub fn fmt_readout_dest(buf: &mut FmtBuf, source: &str, d: &ModDest) {
+    let _ = write!(buf, "{} {}", block_name(d.addr.block), dest_name(d));
+    if names_width(source, buf.as_str()) > READOUT_MAX_W {
+        *buf = FmtBuf::new();
+        fmt_route_dest(buf, d);
+    }
+}
+
+/// A route's amount and what it does to `spec`, by its offset law:
+/// `+42 = +3.3 oct` (octaves), else `+42 = +33%` of the param's span.
+pub fn fmt_route_effect(buf: &mut FmtBuf, spec: &crate::block::ParamSpec, amount: i8) {
+    fmt_amount(buf, amount);
+    let a = amount as i32;
+    let _ = match spec.law {
+        crate::block::OffsetLaw::Octaves(_) if a == 0 => write!(buf, " = 0 oct"),
+        crate::block::OffsetLaw::Octaves(n) => {
+            write!(buf, " = {:+.1} oct", a as f32 / 127.0 * n)
+        }
+        crate::block::OffsetLaw::Linear if a == 0 => write!(buf, " = 0%"),
+        crate::block::OffsetLaw::Linear => {
+            write!(buf, " = {:+}%", (a * 100 + a.signum() * 63) / 127)
+        }
+    };
+}
+
 /// Amount as shown: `+42`, `-30`, `0`.
 pub fn fmt_amount(buf: &mut FmtBuf, amount: i8) {
     let _ = if amount > 0 {
@@ -439,10 +542,11 @@ where
             theme::MID,
         );
     }
-    for ri in 0..state.num_sources.min(MAX_SOURCES) {
-        let (_, y) = cell_origin(0, ri);
-        let name = state.sources[ri].map_or("?", |s| s.name);
-        let color = if ri == state.sel_row {
+    for row in 0..state.num_sources.min(MAX_SOURCES) {
+        let si = state.row_source(row);
+        let (_, y) = cell_origin(0, row);
+        let name = state.sources[si].map_or("?", |s| s.name);
+        let color = if row == state.sel_row {
             theme::INK
         } else {
             theme::MID
@@ -460,17 +564,17 @@ where
             if di >= state.num_dests {
                 break;
             }
-            let selected = ri == state.sel_row && di == state.sel_col;
+            let selected = row == state.sel_row && di == state.sel_col;
             let amount = if selected {
                 sel_amount
             } else {
-                state.amounts[ri][di]
+                state.amounts[si][di]
             };
             draw_cell(
                 d,
                 ci,
-                ri,
-                state.is_present(ri, di).then_some(amount),
+                row,
+                state.is_present(si, di).then_some(amount),
                 selected,
             );
         }
@@ -510,9 +614,11 @@ where
     );
 }
 
-/// The band under the grid: the cursor's route on one line (`LF1 → FLT
-/// CUTOFF`, `NO DESTINATIONS` without one), the hint and the route count.
-pub fn draw_readout<D>(d: &mut D, state: &MatrixState)
+/// The band under the grid: the cursor's route by full names (`ENV 3 →
+/// FILTER CUTOFF`), then its lerped amount and effect (`+42 = +3.3 oct`,
+/// `--` with no route), the hint and the route count. `NO DESTINATIONS`
+/// without one.
+pub fn draw_readout<D>(d: &mut D, state: &MatrixState, sel_amount: i8)
 where
     D: DrawTarget<Color = Rgb565>,
 {
@@ -522,12 +628,10 @@ where
         .copied()
         .flatten()
         .filter(|_| state.sel_col < state.num_dests);
-    let src = state
-        .sources
-        .get(state.sel_row)
-        .copied()
-        .flatten()
-        .filter(|_| state.sel_row < state.num_sources);
+    let si = state.sel_source();
+    let src = crate::modulation::ModSource::ALL
+        .get(si)
+        .filter(|_| si < state.num_sources);
     let label = |d: &mut D, s: &str, x: i32, color| {
         x + draw::text_tracked(
             d,
@@ -541,11 +645,30 @@ where
     };
     match (src, dest) {
         (Some(src), Some(dest)) => {
-            let x = label(d, src.name, theme::MARGIN_X, theme::ACCENT) + 4;
-            let x = x + draw::arrow(d, x, READOUT_Y, theme::ACCENT) + 5;
+            let x = label(d, src.name(), theme::MARGIN_X, theme::ACCENT) + ARROW_GAP;
+            let x = x + draw::arrow(d, x, READOUT_Y, theme::ACCENT) + ARROW_GAP;
             let mut name = FmtBuf::new();
-            fmt_route_dest(&mut name, &dest);
+            fmt_readout_dest(&mut name, src.name(), &dest);
             label(d, name.as_str(), x, theme::ACCENT);
+            let mut effect = FmtBuf::new();
+            let color = match dest.addr.spec() {
+                Some(spec) if state.is_present(si, state.sel_col) => {
+                    fmt_route_effect(&mut effect, spec, sel_amount);
+                    theme::INK
+                }
+                _ => {
+                    let _ = effect.write_str("--");
+                    theme::MID
+                }
+            };
+            draw::text(
+                d,
+                &theme::FONT_VALUE,
+                effect.as_str(),
+                theme::MARGIN_X,
+                AMOUNT_Y,
+                color,
+            );
         }
         _ => {
             label(d, "NO DESTINATIONS", theme::MARGIN_X, theme::MID);
