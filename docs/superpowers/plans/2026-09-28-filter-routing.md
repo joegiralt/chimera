@@ -8693,3 +8693,80 @@ Each one is settled in this plan as noted:
 7. **The spec's one `form` field.** The FORM is stored per MODE (`env_form`, `lfo_form`, `burst_form`, each its own enum), so switching MODE back restores it. The ENV and BURST knob steps AD · AHR · CYCLE (AD first, the default).
 8. **The per-block B rate clamp.** It covers RATE (LFO), pulse RATE (BURST) and the repeat rates of ENV CYCLE and BURST CYCLE, at `block_rate_max(sr) = sr / BLOCK_SIZE / 8`. ENV-mode AD and AHR rise and fall times are not clamped.
 9. **Where the slice ships.** The shippable slice (#121) ends after Task 7, not after the UI tasks.
+
+---
+
+## Measured
+
+**Task 13 bench, 2026-09-28, rev V at 480 MHz**, in cycles/sample/voice (six voices less one, over five). The readings are from the build with Task 13b's three fixes: `b8e97fc`, `d6af77b` and `a0473ff`.
+
+**BENCH screen** (the owner read these two rows): 1 OP 481, A16+17 861.
+
+**ROUTING 1/2:**
+
+| Row | Reading |
+|---|---|
+| MODS | 644 |
+| SVF | 490 |
+| A VCA | 530 |
+| B VCA | 592 |
+| B CURVE | 592 |
+| B LFO | 565 |
+| B GLIDE | 601 |
+| BURST AD | 671 |
+| BURST CYC | 624 |
+
+**ROUTING 2/2:**
+
+| Row | Reading |
+|---|---|
+| VEL VCA | 511 |
+| 2 VCA | 519 |
+| LFO VCA | 511 |
+| A SLIDE | 561 |
+| B SLIDE | 616 |
+
+**`ModRouting`'s terms.** Each is rounded up, and a term that reads 0 or below is billed 1.
+
+| Term | From | Billed |
+|---|---|---|
+| OTHER | 2 VCA − VEL VCA = 519 − 511 | 8 |
+| CLAMP | VEL VCA − 1 OP − OTHER = 511 − 481 − 8 | 22 |
+| (check) | LFO VCA − 1 OP = 30 ≤ CLAMP + OTHER = 30 | ok |
+| ENV_A | A VCA − 1 OP − CLAMP = 530 − 481 − 22 | 27 |
+| ENV_B | max(B VCA, B LFO, B GLIDE) − 1 OP − CLAMP = 601 − 503 | 98 |
+| CURVE | B CURVE − B VCA = 0 | 1 |
+| BURST | max(BURST AD, BURST CYC) − 1 OP − CLAMP − ENV_B = 671 − 503 − 98 | 70 |
+| SLIDE | max(A SLIDE − A VCA, B SLIDE − B CURVE) = max(31, 24) | 31 |
+| BASE | 1 OP − 436 (1 OP before the pool, 2026-09-27) | 45 |
+| DEST | the MODS gap (below), over its six routed destinations: 38 / 6 | 7 |
+
+**B GLIDE sets ENV_B (controller's ruling).** B GLIDE is LFO FREE with a FORM change's glide always running. The row is an upper bound: one block in four runs LFV, and two blocks in four rebuild the coefficients. Glide may get its own transient term later.
+
+**The MODS row.** Without DEST the model bills:
+- `CHAIN_COST + AlgoEngine::cost(1 OP) + BASE + CLAMP + ENV_B + CURVE`
+- 10 + 430 + 45 + 22 + 98 + 1 = 606, against the 644 read.
+
+The controller ruled that the 38 over is not raised into BASE, which every voice pays; it is billed where it arises.
+
+- **Where the gap comes from.** The instruction profile (unicorn, MODS against the same patch with only ENV 2 → VCA) puts the extra work in the per-block offsets of the routed destinations: `Voice::render`'s sums, `ParamSpec::offset` and `AlgoLive::offset`, about 18 instructions/sample. It adds about 2 more for the three FUNC LFOs, and some I-cache misses.
+- **Not the wavefolder, not the filter.** In this run LFO 3's FUNC triangle starts at −1, so FOLD stays at 0 and the wavefolder never runs. The filter's `g` ramp costs no more than its steady path.
+- **The term.** So the gap is billed as `ModRouting::DEST`: 7 per destination with a route of nonzero amount, other than the VCA and the ENV slots' own (which SLIDE covers). It is keyed on the condition that makes the offset run, and the FUNC LFOs' share is folded in.
+- **The check.** MODS is billed 606 + 6 × 7 = 648 ≥ 644 (`the_model_bills_the_mods_row_high`).
+
+**Every ROUTING row and both BENCH rows are billed at or above their reading** (`the_model_bills_every_routing_row_high`).
+
+**The SVF, for Task 15.** SVF − 1 OP = 490 − 481 = 9.
+- This is PHASER's cost over LP24, not the SVF's whole cost. The 1 OP row already runs the SVF in its default LP24.
+- `FilterKind::cost(Svf, _)` needs the SVF's own cost on top of the Algo terms. The Algo terms were measured with LP24 in, so they already carry it.
+- Billing SVF at PHASER − LP24 (9), or as the worst SVF mode over LP24, is the consistent choice.
+
+**Voice counts.** The costliest patch (A16 ∪ A17) is billed 842 + BASE = 887.
+- Rev V: floor((7,000 − 1,360) / 887) = floor(6.36) = 6.
+- Rev Y: floor((5,833 − 1,360) / 887) = floor(5.04) = 5.
+- Both hold what ADR 0031 promises.
+- Every factory Sound keeps six voices on rev V.
+
+**KERNEL 463 (350).**
+- The "(350)" is the algo-engine spec's original target, fixed in the label, not a reading.
+- Past readings were 493, 469 and 478. The kernel bench runs `Kernel::render` alone, so the modulator pool can't move it.
