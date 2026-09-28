@@ -32,6 +32,9 @@ pub enum SlotBinding {
         label: &'static str,
         fmt: ValFmt,
     },
+    /// A view of the matrix route `source → CUTOFF` (spec § 6): the knob
+    /// shows and edits the route's amount.
+    Route(crate::modulation::ModSource),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -76,6 +79,13 @@ impl ParamSlot {
         }
     }
 
+    pub const fn route(source: crate::modulation::ModSource, label: &'static str) -> Self {
+        Self {
+            binding: SlotBinding::Route(source),
+            label_override: Some(label),
+        }
+    }
+
     pub const fn with_label(self, label: &'static str) -> Self {
         Self {
             label_override: Some(label),
@@ -89,7 +99,10 @@ impl ParamSlot {
             SlotBinding::Param(a) => a.spec(),
             // All six operators share one spec table, so AlgoOp(Op::A) stands in.
             SlotBinding::SelectedOp(id) => find_spec(BlockRef::AlgoOp(Op::A).specs(), id),
-            SlotBinding::Empty | SlotBinding::SelectOp | SlotBinding::Legacy { .. } => None,
+            SlotBinding::Empty
+            | SlotBinding::SelectOp
+            | SlotBinding::Legacy { .. }
+            | SlotBinding::Route(_) => None,
         }
     }
 
@@ -101,6 +114,7 @@ impl ParamSlot {
             SlotBinding::Empty => "--",
             SlotBinding::SelectOp => "OP",
             SlotBinding::Legacy { label, .. } => label,
+            SlotBinding::Route(s) => s.tag(),
             SlotBinding::Param(_) | SlotBinding::SelectedOp(_) => {
                 self.spec().map_or("??", |s| s.label)
             }
@@ -112,6 +126,7 @@ impl ParamSlot {
             SlotBinding::Empty => ValFmt::Uni,
             SlotBinding::SelectOp => ValFmt::OneBased(Op::ALL.len() as u8 - 1),
             SlotBinding::Legacy { fmt, .. } => fmt,
+            SlotBinding::Route(_) => ValFmt::Route,
             SlotBinding::Param(_) | SlotBinding::SelectedOp(_) => {
                 self.spec().map_or(ValFmt::Uni, |s| s.fmt)
             }
@@ -125,7 +140,10 @@ pub fn slot_addr(def: &BlockDef, slot: usize, sel_op: Op) -> Option<ParamAddr> {
     match def.params.get(slot)?.binding {
         SlotBinding::Param(a) => Some(a),
         SlotBinding::SelectedOp(id) => Some(ParamAddr::new(BlockRef::AlgoOp(sel_op), id)),
-        SlotBinding::Empty | SlotBinding::SelectOp | SlotBinding::Legacy { .. } => None,
+        SlotBinding::Empty
+        | SlotBinding::SelectOp
+        | SlotBinding::Legacy { .. }
+        | SlotBinding::Route(_) => None,
     }
 }
 

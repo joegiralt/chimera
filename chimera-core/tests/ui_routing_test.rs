@@ -172,10 +172,11 @@ fn priming_a_non_modulatable_param_is_refused() {
     assert!(primed(&ui).is_empty());
 }
 
-/// Spec §4: after loading the Algo init sound the matrix rows are ENV and LFO
-/// (they used to be "Op1 Env".."Op4 Env", of which only two produced values).
+/// Spec §4: after loading the Algo init sound the matrix rows are the eight
+/// `ModSource`s (they used to be "Op1 Env".."Op4 Env", of which only two
+/// produced values).
 #[test]
-fn algo_matrix_rows_are_env_and_lfo() {
+fn algo_matrix_rows_are_the_eight_sources() {
     use chimera_core::preset::POOL_SIZE;
 
     let mut ui = UiState::new();
@@ -189,7 +190,7 @@ fn algo_matrix_rows_are_env_and_lfo() {
     let rows: Vec<&str> = (0..ui.matrix_state.num_sources)
         .map(|i| ui.matrix_state.sources[i].unwrap().name)
         .collect();
-    assert_eq!(rows, ["ENV", "LFO"]);
+    assert_eq!(rows, chimera_core::ui::block_registry::PART_MOD_SOURCES);
     assert_eq!(ui.matrix_state.num_dests, 0);
 }
 

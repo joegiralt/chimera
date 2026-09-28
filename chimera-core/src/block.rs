@@ -22,6 +22,9 @@ pub enum ValFmt {
     Names(&'static [&'static str]),
     /// Stereo position: bipolar like `Bi`, shown as `L64`..`C`..`R63`.
     Pan,
+    /// A matrix route's amount (`amount_value`, 0.5 = 0), shown as a
+    /// percentage of 127 (spec § 6).
+    Route,
 }
 
 impl ValFmt {
@@ -29,7 +32,9 @@ impl ValFmt {
     pub fn snap_points(self) -> &'static [f32] {
         match self {
             ValFmt::Uni => &[0.0, 100.0 / 127.0, 1.0],
-            ValFmt::Bi | ValFmt::Pan => &[0.0, 20.0 / 127.0, 64.0 / 127.0, 107.0 / 127.0, 1.0],
+            ValFmt::Bi | ValFmt::Pan | ValFmt::Route => {
+                &[0.0, 20.0 / 127.0, 64.0 / 127.0, 107.0 / 127.0, 1.0]
+            }
             // Discrete: shift-encoder jumps to 0 or max
             ValFmt::Int(_) | ValFmt::OneBased(_) | ValFmt::Names(_) => &[0.0, 1.0],
             ValFmt::Signed(_) => &[0.0, 0.5, 1.0],
@@ -37,7 +42,10 @@ impl ValFmt {
     }
 
     pub fn is_bipolar(self) -> bool {
-        matches!(self, ValFmt::Bi | ValFmt::Pan | ValFmt::Signed(_))
+        matches!(
+            self,
+            ValFmt::Bi | ValFmt::Pan | ValFmt::Route | ValFmt::Signed(_)
+        )
     }
 
     /// A choice among a few values (channel, mode, output, type): shown as

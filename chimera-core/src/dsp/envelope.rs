@@ -46,9 +46,9 @@ impl Envelope {
         self.stage != Stage::Idle
     }
 
-    /// Current envelope level (pre-VCA snapshot for mod sources).
-    pub fn current_level(&self) -> f32 {
-        self.level * self.velocity
+    /// The raw contour, 0..1: the ENV 1 source (spec § 1, no velocity).
+    pub fn level(&self) -> f32 {
+        self.level
     }
 
     /// Process one sample. Returns envelope level 0.0..1.0.
@@ -86,5 +86,24 @@ impl Envelope {
                 self.level * self.velocity
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_env1_source_ignores_velocity() {
+        let p = EnvParams::default();
+        let (mut soft, mut hard) = (Envelope::new(), Envelope::new());
+        soft.note_on(0.2);
+        hard.note_on(1.0);
+        for _ in 0..200 {
+            soft.process(&p, 48_000);
+            hard.process(&p, 48_000);
+        }
+        assert!(soft.level() > 0.0);
+        assert_eq!(soft.level(), hard.level());
     }
 }

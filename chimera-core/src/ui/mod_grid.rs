@@ -46,7 +46,7 @@ impl ModDest {
 
 /// A source row in the mod matrix.
 #[derive(Clone, Copy, Debug)]
-pub struct ModSource {
+pub struct SourceRow {
     pub name: &'static str,
 }
 
@@ -63,7 +63,7 @@ pub struct MatrixState {
     pub dests: [Option<ModDest>; MAX_DESTS],
     pub num_dests: usize,
     /// Source list — built from mod matrix sub-pages.
-    pub sources: [Option<ModSource>; MAX_SOURCES],
+    pub sources: [Option<SourceRow>; MAX_SOURCES],
     pub num_sources: usize,
 }
 
@@ -91,7 +91,7 @@ impl MatrixState {
         self.num_sources = 0;
         for &name in names {
             if self.num_sources < MAX_SOURCES {
-                self.sources[self.num_sources] = Some(ModSource { name });
+                self.sources[self.num_sources] = Some(SourceRow { name });
                 self.num_sources += 1;
             }
         }
@@ -162,9 +162,29 @@ impl MatrixState {
         if self.sel_col >= self.num_dests {
             return;
         }
-        let current = self.amounts[self.sel_row][self.sel_col] as i16;
-        let new = (current + delta as i16).clamp(-127, 127) as i8;
-        self.amounts[self.sel_row][self.sel_col] = new;
+        let a = self.amounts[self.sel_row][self.sel_col];
+        self.set(
+            self.sel_row,
+            self.sel_col,
+            (a as i16 + delta as i16).clamp(-127, 127) as i8,
+        );
+    }
+
+    /// The column of destination `addr`, if the matrix has one.
+    pub fn col_of(&self, addr: ParamAddr) -> Option<usize> {
+        (0..self.num_dests).find(|&c| self.dests[c].is_some_and(|d| d.addr == addr))
+    }
+
+    /// The amount of route `row → addr`; `None` without a column.
+    pub fn route(&self, row: usize, addr: ParamAddr) -> Option<i8> {
+        self.col_of(addr).map(|c| self.amounts[row][c])
+    }
+
+    /// Set cell (`row`, `col`); out of range does nothing.
+    pub fn set(&mut self, row: usize, col: usize, amount: i8) {
+        if row < self.num_sources && col < self.num_dests {
+            self.amounts[row][col] = amount;
+        }
     }
 
     /// Clamp the cursor and scroll position to the current source/

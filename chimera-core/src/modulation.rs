@@ -14,6 +14,75 @@ use crate::ui::mod_grid::MatrixState;
 pub const MAX_MOD_SOURCES: usize = 8;
 pub const MAX_MOD_DESTS: usize = 16;
 
+/// The matrix's source rows, in `Voice`'s order (spec § 2). Indices are
+/// stored: 0 and 1 keep their old meaning (the envelope and the LFO).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ModSource {
+    Env1 = 0,
+    Lfo1 = 1,
+    Env2 = 2,
+    Env3 = 3,
+    Lfo2 = 4,
+    Lfo3 = 5,
+    Vel = 6,
+    Note = 7,
+}
+
+impl ModSource {
+    pub const ALL: [ModSource; MAX_MOD_SOURCES] = [
+        ModSource::Env1,
+        ModSource::Lfo1,
+        ModSource::Env2,
+        ModSource::Env3,
+        ModSource::Lfo2,
+        ModSource::Lfo3,
+        ModSource::Vel,
+        ModSource::Note,
+    ];
+
+    pub const fn index(self) -> usize {
+        self as usize
+    }
+
+    /// The matrix row's tag (≤ 3 characters, #15).
+    pub const fn tag(self) -> &'static str {
+        match self {
+            ModSource::Env1 => "E1",
+            ModSource::Lfo1 => "LF1",
+            ModSource::Env2 => "E2",
+            ModSource::Env3 => "E3",
+            ModSource::Lfo2 => "LF2",
+            ModSource::Lfo3 => "LF3",
+            ModSource::Vel => "VEL",
+            ModSource::Note => "NTE",
+        }
+    }
+}
+
+/// The NOTE source: `(note − 60) / 120`, clamped to −1..1, so a route at
+/// 127 into CUTOFF tracks one octave per octave (spec § 2, § 3).
+pub fn note_source(note: crate::MidiNote) -> f32 {
+    ((note.get() as f32 - 60.0) / 120.0).clamp(-1.0, 1.0)
+}
+
+/// `amount / 127` for every amount (index `amount + 127`): the same f32 the
+/// divide gives (const float arithmetic is IEEE), read instead of divided.
+static AMOUNT_SCALE: [f32; 255] = {
+    let mut t = [0.0f32; 255];
+    let mut i = 0;
+    while i < 255 {
+        t[i] = (i as i32 - 127) as f32 / 127.0;
+        i += 1;
+    }
+    t
+};
+
+/// `a / 127` (−128 reads as −127).
+pub fn amount_scale(a: i8) -> f32 {
+    AMOUNT_SCALE[(a.max(-127) as i32 + 127) as usize]
+}
+
 /// Fills unused dest slots; never read (only `d < num_dests` is).
 const UNUSED: ParamAddr = ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH);
 
@@ -88,7 +157,7 @@ impl ModState {
         for si in 0..self.num_sources {
             let amt = self.amounts[si][d];
             if amt != 0 {
-                total += source_values[si] * (amt as f32 / 127.0);
+                total += source_values[si] * amount_scale(amt);
             }
         }
         total

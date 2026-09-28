@@ -45,6 +45,19 @@ use perf::PerfStats;
 use renderer::Renderer;
 use theme_settings::ThemeSettings;
 
+/// CUTOFF: the destination the filter's route knobs view (spec § 6).
+const CUTOFF: ParamAddr = ParamAddr::new(BlockRef::Filter, crate::params::FilterParams::CUTOFF);
+
+/// MIX + turn on a route knob: the next of −127, 0, +127 that way.
+fn snap_amount(a: i8, delta: i8) -> i8 {
+    match (delta > 0, a) {
+        (true, a) if a < 0 => 0,
+        (true, _) => 127,
+        (false, a) if a > 0 => 0,
+        (false, _) => -127,
+    }
+}
+
 /// UI mode — Normal chain navigation vs overlay screens.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UiMode {
@@ -262,6 +275,13 @@ impl UiState {
         let def = self.nav.active_block_def();
         let (page, sel_op) = (self.page, self.sel_op);
         let mut values = page_values(page, def, &self.blocks(self.active_part), sel_op);
+        for (i, slot) in def.params.iter().enumerate() {
+            if let block_def::SlotBinding::Route(src) = slot.binding {
+                values[i] = renderer::amount_value(
+                    self.matrix_state.route(src.index(), CUTOFF).unwrap_or(0),
+                );
+            }
+        }
         if def.layout == PageLayout::Matrix {
             values[renderer::MATRIX_AMOUNT_SLOT] =
                 renderer::amount_value(self.matrix_state.current_amount());
@@ -283,6 +303,28 @@ impl UiState {
         // The cursor may be left over from a Part with more destinations
         // than this one (issue #11).
         self.matrix_state.clamp_cursor();
+    }
+
+    /// A route knob turned: create CUTOFF's column if needed (MATRIX FULL
+    /// when there is no room), then set `source → CUTOFF` to `f(amount)`.
+    fn edit_route(&mut self, source: crate::modulation::ModSource, f: impl FnOnce(i8) -> i8) {
+        let at = self.active_part;
+        let sound = &mut self.performance.parts[at].sound;
+        if !sound.dest_registry.is_primed(CUTOFF) {
+            if let Err(e) = sound.dest_registry.add(CUTOFF, *b"FLTCUTOF") {
+                self.prime_status = Some(e.into());
+                return;
+            }
+            self.matrix_state
+                .rebuild_dests_from_registry(&sound.dest_registry);
+            self.matrix_state.load_amounts(&sound.mod_state);
+        }
+        if let Some(col) = self.matrix_state.col_of(CUTOFF) {
+            let row = source.index();
+            let a = self.matrix_state.amounts[row][col];
+            self.matrix_state.set(row, col, f(a));
+            self.sync_mod_state(at);
+        }
     }
 
     /// Rebuild a part's audio-side `ModState` from the matrix.
@@ -515,6 +557,16 @@ impl UiState {
                     // An empty slot edits nothing, so it does not take the focus.
                     if def.params[i].binding != block_def::SlotBinding::Empty {
                         self.focus.touch(def.id, i);
+                    }
+                    if let block_def::SlotBinding::Route(src) = def.params[i].binding {
+                        self.edit_route(src, |a| {
+                            if shift {
+                                snap_amount(a, delta)
+                            } else {
+                                (a as i16 + delta as i16).clamp(-127, 127) as i8
+                            }
+                        });
+                        continue;
                     }
                     let params = &mut UiBlocks {
                         part: self.performance.edit(at),
