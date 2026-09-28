@@ -19,6 +19,7 @@ pub mod part_page;
 pub mod perf;
 pub mod region;
 pub mod renderer;
+pub mod splash;
 pub mod theme;
 pub mod theme_settings;
 pub mod view;
