@@ -54,12 +54,11 @@ pub enum RegionData {
         look: Look,
         status: Option<PrimeStatus>,
     },
-    /// The mod matrix focus band: the selected route and its animated amount.
+    /// The mod matrix readout: the selected route and the route count.
     Route {
         row: u8,
         col: u8,
         dests: u8,
-        value: u16,
         /// `MatrixState::rev`: a deleted route redraws.
         matrix_rev: u16,
     },
@@ -308,16 +307,11 @@ impl RegionData {
                 matrix_rev,
             },
             Self::Route {
-                row,
-                col,
-                dests,
-                value,
-                ..
+                row, col, dests, ..
             } => Self::Route {
                 row,
                 col,
                 dests,
-                value,
                 matrix_rev,
             },
             other => other,
@@ -406,6 +400,7 @@ const BAND: u16 = theme::VIZ_BAND_BOTTOM as u16;
 const CELLS: u16 = theme::CELLS_BOTTOM as u16;
 const SCREEN: u16 = theme::SCREEN_H as u16;
 const BIG_VIZ_END: u16 = theme::BIGVIZ_BOTTOM as u16;
+const MATRIX_GRID: u16 = crate::ui::mod_grid::GRID_BOTTOM as u16;
 
 /// CellGrid (UI refresh spec § Page types): header, focus band, viz band,
 /// cells, map.
@@ -423,11 +418,11 @@ const BIG_VIZ: [(RegionKind, u16, u16); 4] = [
     (K::Cells, BIG_VIZ_END, CELLS),
     (K::Nav, CELLS, SCREEN),
 ];
-/// Mod matrix: header, the selected route, dot grid, map.
+/// Mod matrix: header, amount grid, the selected route's readout, map.
 const MATRIX: [(RegionKind, u16, u16); 4] = [
     (K::Header, 0, HEADER),
-    (K::Focus, HEADER, FOCUS),
-    (K::Grid, FOCUS, CELLS),
+    (K::Grid, HEADER, MATRIX_GRID),
+    (K::Focus, MATRIX_GRID, CELLS),
     (K::Nav, CELLS, SCREEN),
 ];
 

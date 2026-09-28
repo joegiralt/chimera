@@ -13,7 +13,6 @@ use crate::ui::audio_page;
 use crate::ui::block_def::{BlockDef, FxFlow, SlotBinding, VizType, slot_addr};
 use crate::ui::chain::ChainNav;
 use crate::ui::components;
-use crate::ui::draw;
 use crate::ui::dungeon_map;
 use crate::ui::fmt::{self, FmtBuf};
 use crate::ui::mod_grid::MatrixState;
@@ -350,7 +349,7 @@ impl Renderer {
         D: DrawTarget<Color = Rgb565>,
     {
         if f.def.layout == PageLayout::Matrix {
-            return self.draw_route(display, f.matrix);
+            return crate::ui::mod_grid::draw_readout(display, f.matrix);
         }
         if f.def.viz == VizType::AudioStats {
             return audio_page::draw_focus(display, f.def, f.audio);
@@ -370,39 +369,6 @@ impl Renderer {
             look(f, f.focus),
             f.prime_status,
         );
-    }
-
-    /// Mod matrix focus band: the selected route (`SRC → TAG DEST`); the amount lerps through
-    /// slot e's animated value (the amount encoder).
-    fn draw_route<D>(&self, display: &mut D, m: &MatrixState)
-    where
-        D: DrawTarget<Color = Rgb565>,
-    {
-        let dest = m
-            .dests
-            .get(m.sel_col)
-            .copied()
-            .flatten()
-            .filter(|_| m.sel_col < m.num_dests);
-        let (Some(dest), Some(src)) = (dest, m.sources.get(m.sel_row).copied().flatten()) else {
-            let label = "NO DESTINATIONS";
-            draw::text_tracked(
-                display,
-                &theme::FONT_VALUE,
-                label,
-                theme::MARGIN_X,
-                theme::FOCUS_LABEL_Y,
-                theme::MID,
-                theme::LABEL_TRACKING,
-            );
-            return;
-        };
-        let v = self.anim[MATRIX_AMOUNT_SLOT].current();
-        let mut buf = FmtBuf::new();
-        crate::ui::mod_grid::fmt_amount(&mut buf, amount_of(v));
-        let mut name = FmtBuf::new();
-        crate::ui::mod_grid::fmt_route_dest(&mut name, &dest);
-        components::focus_route(display, src.name, name.as_str(), buf.as_str(), v);
     }
 
     /// The six cells, first row's labels at `top`.

@@ -46,3 +46,4 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0038](0038-delay-sat-zero-still-saturates.md) | The delay's feedback loop saturates at every SAT, SAT 0 included | Proposed |
 | [0039](0039-six-encoders-no-main-encoder.md) | Six encoders; no main encoder | Proposed |
 | [0040](0040-eight-voices-modal-strings-to-g1.md) | Eight voices in D2; Modal strings sized to G1 (supersedes in part 0014 and 0031) | Accepted |
+| [0041](0041-mod-matrix-amount-grid.md) | The mod matrix is an amount grid of outlined cells (supersedes in part 0016) | Proposed |
