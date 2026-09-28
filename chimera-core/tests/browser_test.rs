@@ -185,3 +185,21 @@ fn main_and_a_together_scroll_past_an_i8() {
         UiMode::SoundBrowser { cursor, .. } if cursor == TOTAL_ENTRIES - 1
     ));
 }
+
+/// A browser redraw clears the screen once, with the framebuffer fill, and
+/// draws only its contents through `draw_iter` (#82).
+#[test]
+fn browser_redraw_does_not_fill_the_screen_again() {
+    let mut ui = chimera_core::ui::UiState::new();
+    feed(&mut ui, Input::chord(ButtonId::Edit, ButtonId::B1));
+    let (perf, scope) = (PerfStats::zero(), scope_fixture());
+    let mut fb = Fb::new();
+    ui.render_dirty_with_scope(&mut fb, &perf, &scope);
+    fb.drawn = 0;
+    feed(&mut ui, Input::turn(EncoderId::A, 1));
+    ui.render_dirty_with_scope(&mut fb, &perf, &scope);
+    assert!(fb.drawn < W * H, "{} pixels drawn", fb.drawn);
+    let mut full = Fb::new();
+    ui.render_with_scope(&mut full, &perf, &scope);
+    assert!(fb.px == full.px);
+}
