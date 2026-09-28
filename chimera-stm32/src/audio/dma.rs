@@ -118,7 +118,7 @@ fn configure_stream(
             .pl()
             .very_high();
         if interrupts {
-            w.htie().enabled().tcie().enabled()
+            w.htie().enabled().tcie().enabled().teie().enabled()
         } else {
             w
         }
@@ -167,6 +167,12 @@ fn DMA1_STR0() {
     // only reads the streams' NDTR.
     let dma1 = unsafe { &*pac::DMA1::ptr() };
     let lisr = dma1.lisr.read();
+    // A transfer error clears stream 0's EN (RM0433, DMA error management):
+    // no more HT or TC, so nothing renders while streams 1 and 2 loop their
+    // last ring.
+    if lisr.teif0().is_error() {
+        crate::panic::silence_and_halt();
+    }
     let (half_done, full_done) = (lisr.htif0().is_half(), lisr.tcif0().is_complete());
     dma1.lifcr.write(|w| {
         if half_done {
