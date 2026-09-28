@@ -125,13 +125,12 @@ impl Voice {
     /// A `kill` ramps to silence over this many samples (ADR 0027).
     pub const FADE: u16 = 2 * BLOCK_SIZE as u16;
 
-    /// Provisional, until the bench's FOLD row: the wavefolder, which runs
-    /// once FOLD is 0.001 or more. The emulator puts it at 42 (FOLD less
-    /// 1 OP, 1.36 cycles/instruction and 38 per I-miss).
-    pub const FOLD_COST: Cost = Cost(50);
-    /// Provisional, until the bench's DRIVE row: the drive stage, which runs
-    /// once DRIVE is 0.001 or more. The emulator puts it at 40.
-    pub const DRIVE_COST: Cost = Cost(50);
+    /// The wavefolder, which runs once FOLD is 0.001 or more: the bench's
+    /// FOLD row less 1 OP (measured 2026-09-28, rev V at 480 MHz).
+    pub const FOLD_COST: Cost = Cost(43);
+    /// The drive stage, which runs once DRIVE is 0.001 or more: DRIVE less
+    /// 1 OP (measured 2026-09-28, rev V at 480 MHz).
+    pub const DRIVE_COST: Cost = Cost(57);
 
     /// Cycles/sample of a voice playing `p` under `mods`.
     pub fn cost(p: &ParamSnapshot, mods: &ModState) -> Cost {

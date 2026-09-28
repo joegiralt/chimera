@@ -309,54 +309,50 @@ impl Default for ModState {
 }
 
 /// The modulator pool's cycles per sample (spec § CPU). Each term is
-/// measured 2026-09-28, bench ROUTING row, rev V at 480 MHz, rounded up,
-/// but those marked provisional, estimated high until the bench reads
-/// them; the derivations are in the filter-routing plan's `## Measured`.
+/// measured 2026-09-28 on the bench-t13c run, ROUTING rows, rev V at 480
+/// MHz, rounded up, never below 1; the derivations are in the
+/// filter-routing plan's `## Measured`.
 pub struct ModRouting;
 
 impl ModRouting {
     /// Six per-block modulators, the eight-row matrix sum and `fast_exp2`:
     /// 1 OP less its 436 before the pool.
-    pub const BASE: Cost = Cost(45);
+    pub const BASE: Cost = Cost(47);
     /// An ENV slot of type A filling the VCA's buffer: A VCA less 1 OP and CLAMP.
-    pub const ENV_A: Cost = Cost(27);
+    pub const ENV_A: Cost = Cost(28);
     /// Type B filling it: the costliest of B VCA, B LFO and B GLIDE (LFO
     /// FREE with a FORM change's glide always running) less 1 OP and CLAMP.
     pub const ENV_B: Cost = Cost(98);
     /// More for B in ENV mode with SHAPE off centre, or with a route into
-    /// its SHAPE: B CURVE read the same as B VCA; billed the floor, 1.
+    /// its SHAPE: B CURVE less B VCA.
     pub const CURVE: Cost = Cost(1);
     /// More for B in BURST mode, on top of `ENV_B`: BURST AD (above BURST
     /// CYC) less 1 OP, CLAMP and the steady B's costliest (B VCA, B LFO:
-    /// 89), so BURST keeps B GLIDE's margin.
-    pub const BURST: Cost = Cost(79);
+    /// 90), so BURST keeps B GLIDE's margin.
+    pub const BURST: Cost = Cost(76);
     /// Each other VCA route's ramp: 2 VCA less VEL VCA.
     pub const OTHER: Cost = Cost(8);
     /// The VCA's clamp and multiply, with any route: VEL VCA less 1 OP and OTHER.
-    pub const CLAMP: Cost = Cost(22);
+    pub const CLAMP: Cost = Cost(24);
     /// A route into an ENV slot's TIME, RISE, FALL or SHAPE rebuilds that
     /// slot's coefficients every block: billed once per slot with any such
     /// route, whether or not that slot feeds the VCA. The costlier of A
     /// SLIDE less A VCA and B SLIDE less B CURVE.
-    pub const SLIDE: Cost = Cost(31);
-    /// Provisional, until the bench's 1 DEST row: the first destination
-    /// other than the VCA with a route of nonzero amount, its sum and its
-    /// offset through the block's spec every block. The emulator puts it at
-    /// 3 (1 DEST less 1 OP, 1.36 cycles/instruction and 38 per I-miss).
-    pub const DEST_FIRST: Cost = Cost(10);
-    /// Each such destination after the first. Before `DEST_FIRST` and
-    /// `FUNC`, the MODS row's 38 over the rest of the model, over its six
-    /// destinations, read 7: an upper bound, kept until the bench splits it.
-    pub const DEST: Cost = Cost(7);
-    /// Provisional, until the bench's FUNC LFO row: each LFO slot of type
-    /// FUNC, routed or not (every slot runs every block), over a CLASSIC
-    /// one. The emulator puts it at 7.
-    pub const FUNC: Cost = Cost(10);
-    /// Provisional, until the bench's A LEVEL row: an ENV slot feeding the
-    /// VCA with a route of nonzero amount into its LEVEL, whose peak then
-    /// ramps across each block (`add_ramped`). The emulator puts it at 14
-    /// on top of `DEST_FIRST`.
-    pub const LEVEL: Cost = Cost(20);
+    pub const SLIDE: Cost = Cost(33);
+    /// The first destination other than the VCA with a route of nonzero
+    /// amount, its sum and its offset through the block's spec every
+    /// block: 1 DEST less 1 OP.
+    pub const DEST_FIRST: Cost = Cost(3);
+    /// Each such destination after the first: what the MODS row leaves over
+    /// every other term, over its five further destinations (0.2; the floor).
+    pub const DEST: Cost = Cost(1);
+    /// Each LFO slot of type FUNC, routed or not (every slot runs every
+    /// block), over a CLASSIC one: FUNC LFO less 1 DEST.
+    pub const FUNC: Cost = Cost(5);
+    /// An ENV slot feeding the VCA with a route of nonzero amount into its
+    /// LEVEL, whose peak then ramps across each block (`add_ramped`): A
+    /// LEVEL less A VCA and `DEST_FIRST`.
+    pub const LEVEL: Cost = Cost(10);
 
     pub fn cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
         let slide = EnvSlot::ALL

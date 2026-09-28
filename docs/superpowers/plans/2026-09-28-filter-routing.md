@@ -8831,3 +8831,84 @@ The costliest-patch voice counts assume no FOLD or DRIVE. No factory Sound store
 | SQR BASS | 543, DRIVE in | 6 | 6 |
 | MORPH PAD | 835 | 6 | 5 |
 | MORPH KEYS | 842 | 6 | 5 |
+
+### The bench-t13c run: every term measured (2026-09-28)
+
+**The readings.** The owner read all 20 ROUTING rows from `bench-t13c.bin` (rev V, 480 MHz). Every term is re-derived from this one run: 1 OP moved 481 → 483, so earlier differences don't mix in.
+
+**ROUTING 1/2:**
+
+| Row | Reading |
+|---|---|
+| 1 OP | 483 |
+| MODS (FOLD stored at 1) | 668 |
+| SVF | 500 |
+| A VCA | 535 |
+| B VCA | 597 |
+| B CURVE | 598 |
+| B LFO | 570 |
+| B GLIDE | 605 |
+| BURST AD | 673 |
+| BURST CYC | 628 |
+
+**ROUTING 2/2:**
+
+| Row | Reading |
+|---|---|
+| VEL VCA | 515 |
+| 2 VCA | 523 |
+| LFO VCA | 514 |
+| A SLIDE | 568 |
+| B SLIDE | 616 |
+| FOLD | 526 |
+| DRIVE | 540 |
+| 1 DEST | 486 |
+| FUNC LFO | 491 |
+| A LEVEL | 548 |
+
+**Final terms.** Each is rounded up, and a term that reads 0 or below is billed 1. They replace every table above.
+
+| Term | From | Billed |
+|---|---|---|
+| BASE | 1 OP − 436 = 483 − 436 | 47 |
+| OTHER | 2 VCA − VEL VCA = 523 − 515 | 8 |
+| CLAMP | VEL VCA − 1 OP − OTHER = 515 − 483 − 8 | 24 |
+| (check) | LFO VCA − 1 OP = 31 ≤ CLAMP + OTHER = 32 | ok |
+| ENV_A | A VCA − 1 OP − CLAMP = 535 − 507 | 28 |
+| ENV_B | max(B VCA, B LFO, B GLIDE) − 507 = 605 − 507 | 98 |
+| CURVE | B CURVE − B VCA = 598 − 597 | 1 |
+| BURST | max(BURST AD, BURST CYC) − 507 − steady B, where steady B = max(597, 570) − 507 = 90: 673 − 507 − 90 | 76 |
+| SLIDE | max(A SLIDE − A VCA, B SLIDE − B CURVE) = max(33, 18) | 33 |
+| FOLD (`Voice::FOLD_COST`) | FOLD − 1 OP = 526 − 483 | 43 |
+| DRIVE (`Voice::DRIVE_COST`) | DRIVE − 1 OP = 540 − 483 | 57 |
+| DEST_FIRST | 1 DEST − 1 OP = 486 − 483 | 3 |
+| FUNC | FUNC LFO − 1 DEST = 491 − 486 | 5 |
+| LEVEL | A LEVEL − A VCA − DEST_FIRST = 548 − 535 − 3 | 10 |
+| DEST | (MODS − 1 OP − CLAMP − ENV_B − CURVE − FOLD − DEST_FIRST − 3·FUNC) / 5 = (668 − 667) / 5 = 0.2 | 1 |
+
+**The MODS check.** MODS is billed 10 + 430 + 47 + 24 + 98 + 1 + 43 + 3 + 5·1 + 3·5 = 676 ≥ 668. Every ROUTING row but SVF is billed at or above its reading (`the_model_bills_every_routing_row_high`).
+
+**SVF, for Task 15.** SVF − 1 OP = 500 − 483 = 17. This is PHASER over LP24, not the whole SVF.
+
+**Voice counts.** The costliest patch (A16 ∪ A17) costs 842 + BASE.
+
+| Case | Cost | Rev V | Rev Y |
+|---|---|---|---|
+| Plain | 889 | 6 | 5 |
+| + FOLD | 932 | 6 | 4 |
+| + FOLD + DRIVE | 989 | 5 | 4 |
+
+The plain case holds ADR 0031. The other two are shapes no factory Sound has.
+
+**Factory Sounds, billed as they play.**
+
+| Sound | Cost | Rev V | Rev Y |
+|---|---|---|---|
+| TX BASS | 684 | 6 | 6 |
+| TX EPIANO | 683 | 6 | 6 |
+| TX BRASS | 692 | 6 | 6 |
+| TX BELL | 683 | 6 | 6 |
+| SAW LEAD | 555 | 6 | 6 |
+| SQR BASS (DRIVE 0.3) | 552 | 6 | 6 |
+| MORPH PAD | 830 | 6 | 5 |
+| MORPH KEYS | 844 | 6 | 5 |
