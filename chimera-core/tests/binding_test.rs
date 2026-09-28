@@ -152,7 +152,7 @@ fn part_pages_display_like_before() {
                 ("FOLD", Uni),
                 ("SYM", Bi),
                 ("MIX", Bi),
-                ("--", Uni),
+                ("VEL", Uni),
                 ("--", Uni),
                 ("--", Uni),
             ],

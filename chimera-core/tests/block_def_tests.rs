@@ -88,7 +88,7 @@ fn about_has_the_audio_sub_page() {
 fn algo_chain_is_alg_osc_then_the_voice_chain() {
     let chain = &block_registry::ALGO_CHAIN;
     let shorts: Vec<&str> = chain.blocks.iter().map(|b| b.def.short).collect();
-    assert_eq!(shorts, ["ALG", "OSC", "DRV", "FLT", "FLD", "MOD"]);
+    assert_eq!(shorts, ["ALG", "OSC", "DRV", "FLT", "AMP", "MOD"]);
     assert_eq!(chain.active_def(1, 0).unwrap().name, "Wave");
     assert!(chain.blocks[1].sub_pages.iter().any(|d| d.name == "Level"));
     assert_eq!(chain.blocks[5].sub_pages.len(), 2);

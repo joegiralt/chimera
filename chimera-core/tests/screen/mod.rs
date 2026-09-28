@@ -260,6 +260,25 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::press(ButtonId::Edit));
         feed(ui, Input::turn(EncoderId::B, 6));
     }),
+    ("amp_vel_dimmed", |ui| {
+        plus(ui, 4);
+        feed(ui, Input::turn(EncoderId::A, 20)); // FOLD
+        feed(ui, Input::turn(EncoderId::D, 1)); // VEL focused, dimmed
+    }),
+    ("amp_vel_live", |ui| {
+        plus(ui, 4);
+        feed(ui, Input::turn(EncoderId::D, 1));
+        prime(ui); // VEL primes the VCA
+        plus(ui, 1); // the matrix: E1 → FLT CUTOFF
+        feed(ui, Input::turn(EncoderId::A, 2)); // E2
+        feed(ui, Input::turn(EncoderId::B, 1)); // OUT VCA
+        feed(ui, Input::turn(EncoderId::E, 100)); // E2 → VCA
+        feed(ui, Input::press(ButtonId::Minus)); // back to AMP: VEL live
+    }),
+    ("modal_amp", |ui| {
+        load_init(ui, EngineType::Modal);
+        plus(ui, 2); // MDL · FLT · AMP
+    }),
     ("mixer_part", |ui| {
         feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
         feed(ui, Input::turn(EncoderId::D, -8));
