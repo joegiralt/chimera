@@ -19,7 +19,7 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0011](0011-goldens-are-a-refactor-lock.md) | Golden recordings are a refactor lock, not a quality claim | Accepted |
 | [0012](0012-type-driven-development.md) | Type-driven development where it pays | Accepted |
 | [0013](0013-hardware-parity-budgets.md) | The simulator enforces the chip's limits | Accepted; budget clause superseded by 0020 |
-| [0014](0014-audio-memory-map.md) | Voices in D2, FX bus in AXI; buffers sized to the range they serve | Accepted; 16-bit-line rejection and FX totals superseded in part by 0028 |
+| [0014](0014-audio-memory-map.md) | Voices in D2, FX bus in AXI; buffers sized to the range they serve | Accepted; 16-bit-line rejection and FX totals superseded in part by 0028; string sizing by [0040](0040-eight-voices-modal-strings-to-g1.md) |
 | [0015](0015-voice-steal-and-fx-returns.md) | Steal released voices first; FX sends return wet only | Accepted; mono-return clause superseded in part by 0029 |
 | [0016](0016-visual-direction-refined-elektron.md) | Visual direction: refined Elektron | Accepted |
 | [0017](0017-prime-status-feedback.md) | MIX+PLUS reports its outcome in place, until the next input | Accepted |
@@ -36,10 +36,10 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0028](0028-one-alesis-style-reverb.md) | One Alesis-style ring is the reverb; Plate, FDN and MidiVerb retire | Accepted |
 | [0029](0029-stereo-fx-returns.md) | The reverb and chorus return stereo; the delay stays mono | Accepted |
 | [0030](0030-master-section.md) | REV SEND feeds the delay into the reverb; tape on pair 1; a compressor linked across the pairs, last | Accepted |
-| [0031](0031-six-voices-on-rev-v.md) | Every patch gets six voices on rev V | Accepted |
+| [0031](0031-six-voices-on-rev-v.md) | Every patch gets six voices on rev V | Accepted; six as the pool superseded in part by [0040](0040-eight-voices-modal-strings-to-g1.md) |
 | [0032](0032-modal-code-provenance.md) | Modal's string is the owner's own code; Rings-derived parts keep Mutable's MIT notice | Accepted |
 | [0033](0033-theme-applied-in-the-display-shell.md) | The theme is applied in the display shell, not the renderer | Proposed |
 | [0034](0034-watchdog-kicked-by-audio-heartbeat.md) | The IWDG resets on a stalled audio interrupt, kicked from the controls tick | Proposed |
 | [0038](0038-delay-sat-zero-still-saturates.md) | The delay's feedback loop saturates at every SAT, SAT 0 included | Proposed |
 | [0039](0039-six-encoders-no-main-encoder.md) | Six encoders; no main encoder | Proposed |
-| [0040](0040-eight-voices-modal-strings-to-g1.md) | Eight voices in D2; Modal strings sized to G1 (would supersede in part 0014 and 0031) | Proposed |
+| [0040](0040-eight-voices-modal-strings-to-g1.md) | Eight voices in D2; Modal strings sized to G1 (supersedes in part 0014 and 0031) | Accepted |
