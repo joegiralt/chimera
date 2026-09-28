@@ -125,6 +125,9 @@ pub struct Envelope {
     prev_peak: f32,
     /// A change's leftover, gliding out.
     glide: Glide,
+    /// The glided output's floor: the old and new kinds' ranges joined
+    /// (−1 if either is an LFO, else 0); the ceiling is 1.
+    glide_lo: f32,
 }
 
 impl Default for Envelope {
@@ -145,6 +148,7 @@ impl Envelope {
             peak: 1.0,
             prev_peak: 1.0,
             glide: Glide::NONE,
+            glide_lo: 0.0,
         }
     }
 
@@ -185,6 +189,11 @@ impl Envelope {
         }
     }
 
+    /// `raw` plus the leftover `n` samples on, within the glide's range.
+    fn glided(&self, raw: f32, n: usize) -> f32 {
+        (raw + self.glide.at(n)).clamp(self.glide_lo, 1.0)
+    }
+
     fn is_b(&self) -> bool {
         matches!(self.kind, Some(Kind::B(_)))
     }
@@ -206,7 +215,11 @@ impl Envelope {
 
     /// The output now: 0..1, or −1..1 for B in LFO mode. No velocity.
     pub fn output(&self) -> f32 {
-        self.raw() + self.glide.value()
+        if self.glide.active() {
+            self.glided(self.raw(), 0)
+        } else {
+            self.raw()
+        }
     }
 
     pub fn is_idle(&self) -> bool {
@@ -299,6 +312,12 @@ impl Envelope {
         if changed {
             // After the note-on, so the glide ends where the new kind starts.
             self.glide.start(old - self.raw());
+            let lfo = |k: Option<Kind>| matches!(k, Some(Kind::B(Func::Lfo(_))));
+            self.glide_lo = if lfo(prev) || lfo(Some(kind)) {
+                -1.0
+            } else {
+                0.0
+            };
         }
         if let Coefs::B(_) = c
             && !key
@@ -309,19 +328,23 @@ impl Envelope {
         match (vca, &c) {
             (Some((gain, amount)), c) => {
                 let mut level = [0.0f32; BLOCK_SIZE];
-                match c {
+                let (from, to) = match c {
                     Coefs::A(c) => {
                         self.a.fill(c, key, &mut level);
-                        add_ramped(gain, &level, amount, self.prev_peak, self.peak);
+                        (self.prev_peak, self.peak)
                     }
                     Coefs::B(c) => {
                         self.b.fill(c, key, &mut level);
-                        add_ramped(gain, &level, amount, 1.0, 1.0);
+                        (1.0, 1.0)
                     }
-                }
+                };
+                add_ramped(gain, &level, amount, from, to);
                 if self.glide.active() {
-                    for (n, g) in gain.iter_mut().enumerate() {
-                        *g += amount * self.glide.at(n + 1);
+                    // Each sample's raw output as `add_ramped` added it.
+                    let step = (to - from) / BLOCK_SIZE as f32;
+                    for (n, (g, l)) in gain.iter_mut().zip(&level).enumerate() {
+                        let raw = l * (from + step * (n + 1) as f32);
+                        *g += amount * (self.glided(raw, n + 1) - raw);
                     }
                 }
             }
