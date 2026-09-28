@@ -111,16 +111,35 @@ impl SvfFilter {
         // Let it go all the way — the nonlinear feedback keeps it stable.
         let k = 2.0 * (1.0 - params.resonance) + 0.01;
 
+        let pre = 1.0 + drive * 4.0;
+        // The mode matched once a block: each mode's loop is its own, `tick`
+        // inlined into it.
+        match mode {
+            FilterMode::Lp6 => self.run::<0>(buf, pre, from, g, k),
+            FilterMode::Lp12 => self.run::<1>(buf, pre, from, g, k),
+            FilterMode::Lp24 => self.run::<2>(buf, pre, from, g, k),
+            FilterMode::Bp12 => self.run::<3>(buf, pre, from, g, k),
+            FilterMode::Bp24 => self.run::<4>(buf, pre, from, g, k),
+            FilterMode::Hp24 => self.run::<5>(buf, pre, from, g, k),
+            FilterMode::Notch => self.run::<6>(buf, pre, from, g, k),
+            FilterMode::Phaser => self.run::<7>(buf, pre, from, g, k),
+        }
+    }
+
+    /// One block in mode `M` (a `FilterMode` discriminant).
+    #[inline(always)]
+    fn run<const M: u8>(&mut self, buf: &mut [f32], pre: f32, from: f32, g: f32, k: f32) {
+        let mode = FilterMode::ALL[M as usize];
         if from == g {
             for sample in buf.iter_mut() {
-                *sample = self.tick(mode, *sample * (1.0 + drive * 4.0), g, k);
+                *sample = self.tick(mode, *sample * pre, g, k);
             }
         } else {
             // #53: `g` ramps to this block's value, reached on the last sample.
             let step = (g - from) / buf.len() as f32;
             for (i, sample) in buf.iter_mut().enumerate() {
                 let gi = g_at(from, step, i);
-                *sample = self.tick(mode, *sample * (1.0 + drive * 4.0), gi, k);
+                *sample = self.tick(mode, *sample * pre, gi, k);
             }
         }
     }
@@ -137,6 +156,7 @@ impl SvfFilter {
         self.g
     }
 
+    #[inline(always)]
     fn tick(&mut self, mode: FilterMode, input: f32, g: f32, k: f32) -> f32 {
         match mode {
             FilterMode::Lp6 => self.tick_onepole(input, g, 0),
@@ -180,6 +200,7 @@ impl SvfFilter {
         }
     }
 
+    #[inline(always)]
     fn tick_onepole(&mut self, input: f32, g: f32, stage: usize) -> f32 {
         let v = (input - self.ic1eq[stage]) * g / (1.0 + g);
         let lp = v + self.ic1eq[stage];
@@ -190,6 +211,7 @@ impl SvfFilter {
     /// SVF with nonlinear saturation in the feedback path.
     /// The tanh inside the loop is what gives it analog character —
     /// resonance builds up but saturates naturally instead of exploding.
+    #[inline(always)]
     fn tick_svf_nonlinear(&mut self, input: f32, g: f32, k: f32, stage: usize) -> (f32, f32, f32) {
         // Saturate the integrator states — this is the "analog" part.
         // The nonlinearity inside the loop means the filter self-limits
@@ -212,7 +234,7 @@ impl SvfFilter {
 /// Soft saturation — gentle curve that limits amplitude while preserving
 /// small signals. This is milder than tanh, letting the resonance peak
 /// ring out before clamping. Sounds more like analog capacitor saturation.
-#[inline]
+#[inline(always)]
 fn saturate(x: f32) -> f32 {
     // Cubic soft clip: linear for |x| < 1, soft limit beyond
     if x > 1.5 {
