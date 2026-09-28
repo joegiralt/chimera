@@ -276,7 +276,7 @@ impl UiState {
     fn load_matrix(&mut self, part: usize) {
         let sound = &self.performance.parts[part].sound;
         self.matrix_state
-            .rebuild_sources(chain::chain_def_for(sound.chain_type).mod_sources);
+            .rebuild_sources(chain::chain_def_for(sound.engine()).mod_sources);
         self.matrix_state
             .rebuild_dests_from_registry(&sound.dest_registry);
         self.matrix_state.load_amounts(&sound.mod_state);
@@ -386,7 +386,7 @@ impl UiState {
                 self.nav.chain_id = ChainId::Part(sel_part);
                 self.nav.node = 0;
                 self.nav.sub_page = 0;
-                self.nav.chain_type = self.performance.parts[sel_part].sound.chain_type;
+                self.nav.engine = self.performance.parts[sel_part].sound.engine();
                 self.load_matrix(sel_part);
                 self.enter_page();
                 self.ui_mode = UiMode::Normal;
@@ -468,7 +468,7 @@ impl UiState {
             // B<n> and MIX + B<n> both select Part n for editing.
             if let ChainId::Part(i) | ChainId::Mixer(i) = self.nav.chain_id {
                 self.active_part = i;
-                self.nav.chain_type = self.performance.parts[i].sound.chain_type;
+                self.nav.engine = self.performance.parts[i].sound.engine();
                 self.load_matrix(i);
             }
             self.enter_page();

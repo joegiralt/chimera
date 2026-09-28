@@ -7,7 +7,8 @@ use core::fmt::Write;
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::Rgb565;
 
-use crate::preset::{ChainType, POOL_SIZE, SoundPool};
+use crate::params::EngineType;
+use crate::preset::{POOL_SIZE, SoundPool};
 use crate::ui::chain::chain_def_for;
 use crate::ui::components;
 use crate::ui::draw;
@@ -16,9 +17,9 @@ use crate::ui::theme;
 
 /// Rows on screen.
 pub const VISIBLE_ROWS: usize = 8;
-/// The pool's slots, then one init Sound per chain type, in `ChainType::ALL`
+/// The pool's slots, then one init Sound per engine, in `EngineType::ALL`
 /// order.
-pub const INIT_TYPES: [ChainType; ChainType::ALL.len()] = ChainType::ALL;
+pub const INIT_TYPES: [EngineType; EngineType::ALL.len()] = EngineType::ALL;
 pub const TOTAL_ENTRIES: usize = POOL_SIZE + INIT_TYPES.len();
 
 pub const LIST_TOP: i32 = 44;
@@ -114,7 +115,7 @@ where
     let (name, chain, saved) = if entry < POOL_SIZE {
         let _ = write!(slot, "{:02}", entry + 1);
         match pool.get(entry) {
-            Some(s) => (components::upper(s.name_str()), Some(s.chain_type), true),
+            Some(s) => (components::upper(s.name_str()), Some(s.engine()), true),
             None => (FmtBuf::new(), None, false),
         }
     } else {

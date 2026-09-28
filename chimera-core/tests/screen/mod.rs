@@ -7,8 +7,9 @@
 #![allow(dead_code)]
 
 use chimera_core::clock_plan::SiliconRev;
+use chimera_core::params::EngineType;
 use chimera_core::perf::load::AudioStats;
-use chimera_core::preset::{ChainType, POOL_SIZE, Sound};
+use chimera_core::preset::{POOL_SIZE, Sound};
 use chimera_core::scope::SCOPE_LEN;
 use chimera_core::ui::UiState;
 use chimera_core::ui::perf::PerfStats;
@@ -170,8 +171,8 @@ pub fn scope_fixture() -> [f32; SCOPE_LEN] {
 
 /// Load `ct`'s init Sound into Part 1 through the sound browser (EDIT + B1,
 /// scroll to the init row, EDIT).
-pub fn load_init(ui: &mut UiState, ct: ChainType) {
-    let row = POOL_SIZE + ChainType::ALL.iter().position(|&c| c == ct).unwrap();
+pub fn load_init(ui: &mut UiState, ct: EngineType) {
+    let row = POOL_SIZE + EngineType::ALL.iter().position(|&c| c == ct).unwrap();
     feed(ui, Input::chord(ButtonId::Edit, ButtonId::B1));
     feed(ui, Input::turn(EncoderId::Main, row as i8));
     feed(ui, Input::press(ButtonId::Edit));
@@ -309,11 +310,11 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::E, 42)); // LFO → CUTOFF, selected
     }),
     ("sound_browser", |ui| {
-        let mut s = Sound::init(ChainType::Algo);
+        let mut s = Sound::init(EngineType::Algo);
         s.name = [0; 16];
         s.name[..9].copy_from_slice(b"WARM BASS");
         ui.pool.store(0, s);
-        let mut s = Sound::init(ChainType::Modal);
+        let mut s = Sound::init(EngineType::Modal);
         s.name = [0; 16];
         s.name[..11].copy_from_slice(b"GLASS PLUCK");
         ui.pool.store(1, s);
