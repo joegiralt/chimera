@@ -51,6 +51,13 @@ fn mix_plus_on_a_non_modulatable_param_reports_not_modulatable() {
     for _ in 0..3 {
         feed(&mut ui, Input::press(ButtonId::Edit)); // E2, E3, LFO
     }
+    assert_eq!(
+        ui.page(),
+        chimera_core::ui::page::PageKey::Part {
+            def: chimera_core::ui::block_registry::LFO.id,
+            op: chimera_core::addr::Op::A
+        }
+    );
     prime(&mut ui, EncoderId::A);
     assert_eq!(ui.prime_status(), Some(PrimeStatus::NotModulatable));
 }

@@ -3,11 +3,13 @@
 mod screen;
 
 use chimera_core::addr::Op;
-use chimera_core::dsp::modulator::{EnvForm, EnvType, Func, LfoForm};
+use chimera_core::dsp::modulator::law::Law;
+use chimera_core::dsp::modulator::{EnvForm, EnvSpeed, EnvType, Func, LfoForm};
 use chimera_core::params::ParamSnapshot;
 use chimera_core::ui::UiState;
 use chimera_core::ui::block_registry::{ALGO_CHAIN, ENV_2, ENV_3, ENVELOPE, MOD_MATRIX};
 use chimera_core::ui::fmt::{FmtBuf, fmt_val};
+use chimera_core::ui::page::ValFmt;
 use chimera_core::ui::view::{SlotCtx, view};
 use chimera_hal::{ButtonId, EncoderId};
 use screen::*;
@@ -88,6 +90,37 @@ fn slider_cells_read_in_units() {
     );
     assert_eq!(text(&ENV_3, 3, 0.5), "LIN");
     assert_eq!(text(&ENV_3, 3, 0.8), "EXP 60");
+
+    // The unit follows the value as printed: just under a boundary rounds
+    // up into the next unit, never "1000 ms" or "10.00 Hz".
+    let hold = Law::Hold(EnvSpeed::Med);
+    for (law, lo, hi, want) in [
+        (hold, 0.9995, 1.0, "1.0 s"),
+        (hold, 0.00995, 0.01, "10 ms"),
+        (Law::BRate, 9.995, 10.0, "10.0 Hz"),
+        (Law::BRate, 99.95, 100.0, "100 Hz"),
+    ] {
+        let mut b = FmtBuf::new();
+        fmt_val(&mut b, position_in(law, lo, hi), ValFmt::Law(law));
+        assert_eq!(b.as_str(), want, "{law:?} in [{lo}, {hi})");
+    }
+}
+
+/// A slider position whose quantity lies in `[lo, hi)`, by bisection.
+fn position_in(law: Law, lo: f32, hi: f32) -> f32 {
+    let r = law.range().unwrap();
+    let (mut a, mut b) = (0.0f32, 1.0f32);
+    for _ in 0..60 {
+        let m = 0.5 * (a + b);
+        if r.at(m) < 0.5 * (lo + hi) {
+            a = m
+        } else {
+            b = m
+        }
+    }
+    let q = r.at(b);
+    assert!((lo..hi).contains(&q), "{law:?}: {q} not in [{lo}, {hi})");
+    b
 }
 
 /// A TYPE flip redraws the header, whose title reads `ENV 1 / B` now.
