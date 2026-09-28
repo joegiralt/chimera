@@ -1,4 +1,4 @@
-// The SVF bandpass, fast tangent, cosine oscillator and bow table follow
+// The SVF bandpass, fast tangent, cosine oscillator and stiffness table follow
 // Mutable Instruments Rings and stmlib (ADR 0032):
 //
 // Copyright 2014-2015 Emilie Gillet.
