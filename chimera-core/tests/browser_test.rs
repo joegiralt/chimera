@@ -81,7 +81,7 @@ fn the_scroll_thumb_follows_the_list() {
 fn init_rows_end_the_list_and_load() {
     let mut ui = chimera_core::ui::UiState::new();
     feed(&mut ui, Input::chord(ButtonId::Edit, ButtonId::B2));
-    feed(&mut ui, Input::turn(EncoderId::Main, 100)); // clamps to the last row
+    feed(&mut ui, Input::turn(EncoderId::A, 100)); // clamps to the last row
     assert_eq!(
         ui.ui_mode,
         UiMode::SoundBrowser {
@@ -139,7 +139,7 @@ fn cursor_move_redraws_and_matches_a_full_render() {
     let mut fb = Fb::new();
     let scope = scope_fixture();
     ui.render_dirty_with_scope(&mut fb, &PerfStats::zero(), &scope); // consume the open-time redraw
-    feed(&mut ui, Input::turn(EncoderId::Main, 1));
+    feed(&mut ui, Input::turn(EncoderId::A, 1));
     let flushed = ui.render_dirty_with_scope(&mut fb, &PerfStats::zero(), &scope);
     assert!(
         flushed.iter().any(|&(a, b)| a != b),
@@ -168,22 +168,6 @@ fn the_longest_sound_name_is_not_truncated() {
     pool.store(0, s);
     let fb = drawn(&pool, 5, 0); // drawn() asserts fb.oob == 0 (nothing clipped off-screen)
     assert!(row_has(&fb, 0, theme::INK), "16-char name drawn in full");
-}
-
-/// Main and A both turned hard in one frame scroll by their sum, which does
-/// not fit an i8 (#80).
-#[test]
-fn main_and_a_together_scroll_past_an_i8() {
-    let mut ui = chimera_core::ui::UiState::new();
-    feed(&mut ui, Input::chord(ButtonId::Edit, ButtonId::B1));
-    feed(
-        &mut ui,
-        Input::turns(&[(EncoderId::Main, 127), (EncoderId::A, 127)]),
-    );
-    assert!(matches!(
-        ui.ui_mode,
-        UiMode::SoundBrowser { cursor, .. } if cursor == TOTAL_ENTRIES - 1
-    ));
 }
 
 /// A browser redraw clears the screen once, with the framebuffer fill, and

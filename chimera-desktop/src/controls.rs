@@ -18,7 +18,6 @@ use minifb::Key;
 ///   R/F -> Encoder D
 ///   T/G -> Encoder E
 ///   Y/H -> Encoder F
-///   U/J -> Main encoder
 pub struct DesktopControls {
     encoder_deltas: [i8; NUM_ENCODERS],
     button_current: [bool; NUM_BUTTONS],
@@ -69,8 +68,6 @@ impl DesktopControls {
                 Key::G => self.encoder_deltas[EncoderId::E as usize] -= 1,
                 Key::Y => self.encoder_deltas[EncoderId::F as usize] += 1,
                 Key::H => self.encoder_deltas[EncoderId::F as usize] -= 1,
-                Key::U => self.encoder_deltas[EncoderId::Main as usize] += 1,
-                Key::J => self.encoder_deltas[EncoderId::Main as usize] -= 1,
                 _ => {}
             }
         }

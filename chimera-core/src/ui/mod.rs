@@ -23,7 +23,7 @@ pub mod viz;
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 
-use chimera_hal::{ALL_BUTTONS, ButtonId, ButtonState, Controls, EncoderId};
+use chimera_hal::{ALL_BUTTONS, ALL_ENCODERS, ButtonId, ButtonState, Controls, EncoderId};
 
 use crate::addr::{BlockRef, Blocks, Op, ParamAddr};
 use crate::block::Block;
@@ -348,9 +348,8 @@ impl UiState {
             let total = browser::TOTAL_ENTRIES;
             let visible = browser::VISIBLE_ROWS.min(total);
 
-            // Encoder A or Main: scroll cursor
-            let delta = i32::from(controls.encoder_delta(EncoderId::Main))
-                + i32::from(controls.encoder_delta(EncoderId::A));
+            // Encoder A scrolls the cursor.
+            let delta = i32::from(controls.encoder_delta(EncoderId::A));
             if delta != 0 {
                 let new_cursor = (*cursor as i32 + delta).clamp(0, total as i32 - 1) as usize;
                 *cursor = new_cursor;
@@ -886,16 +885,7 @@ impl UiState {
 /// Whether `controls` reports an encoder turn or a button press this frame —
 /// any of which retires the last prime-status message (issue #21).
 fn any_input(controls: &impl Controls) -> bool {
-    const ENCODERS: [EncoderId; 7] = [
-        EncoderId::A,
-        EncoderId::B,
-        EncoderId::C,
-        EncoderId::D,
-        EncoderId::E,
-        EncoderId::F,
-        EncoderId::Main,
-    ];
-    ENCODERS.iter().any(|&e| controls.encoder_delta(e) != 0)
+    ALL_ENCODERS.iter().any(|&e| controls.encoder_delta(e) != 0)
         || ALL_BUTTONS
             .iter()
             .any(|&b| controls.button_state(b) == ButtonState::Pressed)
