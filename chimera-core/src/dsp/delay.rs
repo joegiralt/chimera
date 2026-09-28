@@ -19,7 +19,7 @@ pub struct DelayParams {
     /// Wow & flutter depth (0..1) — tape speed instability
     pub wow_flutter: f32,
     /// Tape saturation amount (0..1) — soft clipping in feedback path; 0 is
-    /// the gentlest, never none
+    /// the gentlest, never none (ADR 0036)
     pub saturation: f32,
     /// Tone: high-frequency rolloff in feedback (0..1, 0=dark, 1=bright)
     pub tone: f32,
@@ -178,7 +178,6 @@ impl TapeDelay {
         // Tone: LP coefficient (higher = brighter)
         let lp_coeff = 0.2 + params.tone * 0.75;
         let sat_gain = 1.0 + params.saturation * 3.0;
-        let sat_inv = 1.0 / sat_gain;
 
         for s in buf.iter_mut() {
             let dry = *s;
@@ -218,11 +217,11 @@ impl TapeDelay {
             self.lp_state += lp_coeff * (delayed - self.lp_state);
             let filtered = self.lp_state;
 
-            // Tape saturation in the feedback path, always on: at SAT 0 the
-            // loop is otherwise linear with unity DC gain, so FDBK 1 grows
-            // without bound. Bounded by 1 / gain, the write stays within
-            // |dry| + FDBK.
-            let saturated = crate::dsp::fast_tanh(filtered * sat_gain) * sat_inv;
+            // Tape saturation in the feedback path, always on (ADR 0036): at
+            // SAT 0 the loop is otherwise linear with unity DC gain, so FDBK
+            // 1 grows without bound. Bounded by 1 / gain, the write stays
+            // within |dry| + FDBK.
+            let saturated = libm::tanhf(filtered * sat_gain) / sat_gain;
 
             // Write: input + feedback
             self.buffer[self.write_pos] = dry + saturated * params.feedback;
