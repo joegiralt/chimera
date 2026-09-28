@@ -59,7 +59,7 @@ fn random_params(rng: &mut Rng) -> ParamSnapshot {
     );
 
     // Modal params
-    p.modal.mode = ResonatorMode::from_u8(rng.u8(2));
+    p.modal.mode = ResonatorMode::from_u8(rng.u8(3)); // all four models
     p.modal.excite = rng.f32();
     p.modal.decay = rng.f32();
     p.modal.brightness = rng.f32();
