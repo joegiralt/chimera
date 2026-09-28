@@ -1,4 +1,4 @@
-use crate::preset::ChainType;
+use crate::params::EngineType;
 use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2};
 use crate::ui::block_registry;
 use chimera_hal::{ButtonId, ButtonState, Controls};
@@ -16,8 +16,8 @@ pub struct ChainNav {
     pub chain_id: ChainId,
     pub node: usize,
     pub sub_page: usize,
-    /// Engine/chain type for the active Part (used to resolve ChainId::Part to a chain def).
-    pub chain_type: ChainType,
+    /// The active Part's engine (resolves ChainId::Part to its chain def).
+    pub engine: EngineType,
 }
 
 impl Default for ChainNav {
@@ -32,15 +32,15 @@ impl ChainNav {
             chain_id: ChainId::Part(0),
             node: 0,
             sub_page: 0,
-            chain_type: ChainType::Algo,
+            engine: EngineType::Algo,
         }
     }
 
     /// Get the chain definition for the current ChainId.
-    /// For `Part(_)`, resolves via the stored `chain_type` (set by UiState from the active part).
+    /// For `Part(_)`, resolves via the stored `engine` (set by UiState from the active part).
     pub fn active_chain(&self) -> &'static ChainDef2 {
         match self.chain_id {
-            ChainId::Part(_) => chain_def_for(self.chain_type),
+            ChainId::Part(_) => chain_def_for(self.engine),
             ChainId::Mixer(_) => &block_registry::MIXER_CHANNEL_CHAIN,
             ChainId::System => &block_registry::SYSTEM_CHAIN,
             ChainId::Demo => &block_registry::DEMO_CHAIN,
@@ -150,10 +150,10 @@ impl ChainNav {
     }
 }
 
-/// Resolve a `ChainType` to the corresponding static chain definition.
-pub fn chain_def_for(ct: ChainType) -> &'static ChainDef2 {
+/// Resolve a `EngineType` to the corresponding static chain definition.
+pub fn chain_def_for(ct: EngineType) -> &'static ChainDef2 {
     match ct {
-        ChainType::Algo => &block_registry::ALGO_CHAIN,
-        ChainType::Modal => &block_registry::MODAL_PLUCK_CHAIN,
+        EngineType::Algo => &block_registry::ALGO_CHAIN,
+        EngineType::Modal => &block_registry::MODAL_PLUCK_CHAIN,
     }
 }

@@ -2,7 +2,8 @@
 
 use chimera_core::dsp::voice::Voice;
 use chimera_core::factory::{FACTORY_LEN, factory_sound, load_factory};
-use chimera_core::preset::{ChainType, SoundPool};
+use chimera_core::params::EngineType;
+use chimera_core::preset::SoundPool;
 use chimera_core::ui::UiState;
 use chimera_core::{MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
@@ -55,7 +56,7 @@ fn eight_algo_sounds_with_distinct_names() {
     let names: Vec<String> = (0..FACTORY_LEN)
         .map(|i| {
             let s = factory_sound(i).unwrap();
-            assert_eq!(s.chain_type, ChainType::Algo);
+            assert_eq!(s.engine(), EngineType::Algo);
             s.name_str().to_string()
         })
         .collect();

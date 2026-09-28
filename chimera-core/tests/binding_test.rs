@@ -3,7 +3,7 @@
 use chimera_core::addr::{BlockRef, Op, ParamAddr};
 use chimera_core::block::ParamId;
 use chimera_core::dsp::algo::params::AlgoOpParams;
-use chimera_core::preset::ChainType;
+use chimera_core::params::EngineType;
 use chimera_core::ui::block_def::{BlockDef, SlotBinding, slot_addr};
 use chimera_core::ui::block_registry as reg;
 use chimera_core::ui::chain::chain_def_for;
@@ -12,7 +12,7 @@ use chimera_core::ui::page::ValFmt;
 /// Every page reachable from a Part chain (main pages and sub-pages).
 fn part_defs() -> Vec<&'static BlockDef> {
     let mut defs = Vec::new();
-    for ct in ChainType::ALL {
+    for ct in EngineType::ALL {
         for block in chain_def_for(ct).blocks {
             defs.push(block.def);
             defs.extend(block.sub_pages.iter().copied());
@@ -42,7 +42,7 @@ fn every_part_slot_resolves_to_a_spec() {
 /// every Part chain.
 #[test]
 fn part_chains_offer_env_and_lfo_sources() {
-    for ct in ChainType::ALL {
+    for ct in EngineType::ALL {
         assert_eq!(chain_def_for(ct).mod_sources, ["ENV", "LFO"], "{ct:?}");
         let sound = chimera_core::preset::Sound::init(ct);
         assert!(

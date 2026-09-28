@@ -14,58 +14,34 @@ use crate::part::PartParams;
 pub const POOL_SIZE: usize = 32;
 pub const NAME_LEN: usize = 16;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-#[repr(u8)]
-pub enum ChainType {
-    #[default]
-    Algo = 0,
-    Modal = 1,
-}
-
-impl ChainType {
-    pub const ALL: [ChainType; 2] = [ChainType::Algo, ChainType::Modal];
-
-    /// Short display label for the chain type.
-    pub fn label(self) -> &'static str {
-        match self {
-            ChainType::Algo => "Algo",
-            ChainType::Modal => "Modal",
-        }
-    }
-
-    /// The engine this chain plays (spec §6).
-    pub const fn engine(self) -> EngineType {
-        match self {
-            ChainType::Algo => EngineType::Algo,
-            ChainType::Modal => EngineType::Modal,
-        }
-    }
-}
-
 #[derive(Clone)]
 #[repr(C)]
 pub struct Sound {
     pub name: [u8; NAME_LEN],
-    pub chain_type: ChainType,
+    /// Carries the engine: `engine()` reads it from here, the one place.
     pub params: ParamSnapshot,
     pub mod_state: ModState,
     pub dest_registry: ModDestRegistry,
 }
 
 impl Sound {
-    pub fn init(chain_type: ChainType) -> Self {
+    pub fn init(engine: EngineType) -> Self {
         let mut name = [0u8; NAME_LEN];
         let tag = b"(init)";
         name[..tag.len()].copy_from_slice(tag);
         Self {
             name,
-            chain_type,
-            params: ParamSnapshot::for_engine(chain_type.engine()),
+            params: ParamSnapshot::for_engine(engine),
             // No pre-wired routes: the matrix starts empty on every chain
             // (spec §4 "FM pre-wire removed").
             mod_state: ModState::new(),
             dest_registry: ModDestRegistry::new(),
         }
+    }
+
+    /// The engine this Sound plays, and so the chain the UI shows for it.
+    pub fn engine(&self) -> EngineType {
+        self.params.engine()
     }
 
     pub fn name_str(&self) -> &str {
@@ -132,18 +108,18 @@ pub struct Part {
 }
 
 impl Part {
-    /// An init Sound of `chain_type` with part 1's mix settings.
-    pub fn new(chain_type: ChainType) -> Self {
+    /// An init Sound of `engine` with part 1's mix settings.
+    pub fn new(engine: EngineType) -> Self {
         Self {
-            sound: Sound::init(chain_type),
+            sound: Sound::init(engine),
             loaded_from: None,
             mix: PartParams::default(),
         }
     }
 
     /// Replace the Sound with an init one; channel and mix stay.
-    pub fn load_init(&mut self, chain_type: ChainType) {
-        self.sound = Sound::init(chain_type);
+    pub fn load_init(&mut self, engine: EngineType) {
+        self.sound = Sound::init(engine);
         self.loaded_from = None;
     }
 
@@ -180,7 +156,7 @@ impl Performance {
             name: *b"New Performance\0",
             parts: core::array::from_fn(|i| Part {
                 mix: PartParams::for_part(i),
-                ..Part::new(ChainType::Algo)
+                ..Part::new(EngineType::Algo)
             }),
             fx: FxParams::default(),
         }

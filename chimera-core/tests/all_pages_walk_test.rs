@@ -16,7 +16,7 @@
 
 mod screen;
 
-use chimera_core::preset::ChainType;
+use chimera_core::params::EngineType;
 use chimera_core::scope::SCOPE_LEN;
 use chimera_core::ui::UiState;
 use chimera_core::ui::perf::PerfStats;
@@ -43,8 +43,8 @@ const B: [ButtonId; 6] = [
 /// Which chain a walk starts from.
 #[derive(Clone, Copy, Debug)]
 enum Context {
-    /// Part 1 with `ChainType`'s init Sound loaded.
-    Part(ChainType),
+    /// Part 1 with `EngineType`'s init Sound loaded.
+    Part(EngineType),
     /// MIX + B<n> (0-based).
     Mixer(usize),
     /// MIX + B6.
@@ -193,7 +193,10 @@ fn walk(
 }
 
 fn every_context() -> Vec<Context> {
-    let mut all: Vec<Context> = ChainType::ALL.iter().map(|&ct| Context::Part(ct)).collect();
+    let mut all: Vec<Context> = EngineType::ALL
+        .iter()
+        .map(|&ct| Context::Part(ct))
+        .collect();
     all.extend((0..5).map(Context::Mixer));
     all.extend([Context::Demo, Context::System]);
     all
@@ -219,7 +222,7 @@ fn every_page_walk() {
 #[test]
 fn representative_pages_walk() {
     let enc = [EncoderId::A, EncoderId::E];
-    walk(Context::Part(ChainType::Algo), 2, &enc, |_, sub| sub <= 1);
+    walk(Context::Part(EngineType::Algo), 2, &enc, |_, sub| sub <= 1);
     walk(Context::Mixer(0), 2, &enc, |_, _| true);
     walk(Context::Demo, 2, &enc, |node, _| node == 0);
     walk(Context::System, 2, &enc, |node, _| node == 0);
