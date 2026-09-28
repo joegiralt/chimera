@@ -144,6 +144,14 @@ pub fn view(def: &BlockDef, i: usize, ctx: &SlotCtx) -> View {
         SlotBinding::Empty => View::Empty,
         SlotBinding::SelectOp => View::SelectOp,
         SlotBinding::Legacy { label, fmt } => View::Legacy { label, fmt },
+        // SPD: a type-B slot's SPEED and HOLD read TYPE B (spec § UI).
+        SlotBinding::Param(ParamAddr {
+            block: BlockRef::Env(s),
+            param: EnvParams::SPEED | EnvParams::HOLD_POS,
+        }) if matches!(ctx.envs[s.index()], EnvKind::B(_)) => View::Text {
+            label: slot.label(),
+            text: "TYPE B",
+        },
         SlotBinding::Param(addr) => param(addr, slot.label(), slot.format()),
         SlotBinding::SelectedOp(id) => param(
             ParamAddr::new(BlockRef::AlgoOp(ctx.sel_op), id),
@@ -196,10 +204,6 @@ pub fn dimmed(addr: ParamAddr, sound: &Sound) -> bool {
         (BlockRef::Filter, FilterParams::KIND) => FilterKind::BUILT.len() == 1,
         // A single-mode kind shows its mode fixed (spec § 7).
         (BlockRef::Filter, FilterParams::MODE) => sound.params.filter.kind().modes().len() == 1,
-        // SPD: a type-B slot's SPEED and HOLD (spec § UI).
-        (BlockRef::Env(s), EnvParams::SPEED | EnvParams::HOLD_POS) => {
-            sound.params.envelopes[s.index()].env_type == EnvType::B
-        }
         _ => false,
     }
 }
