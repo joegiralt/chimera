@@ -39,8 +39,8 @@ reset's cause (RST WDOG after a watchdog reset).
 
 ## Consequences
 Nothing may mask interrupts, or hold the audio interrupt and SysTick off, for
-the timeout or longer; up to 100 ms of buzz can play before the reset; a future flash or SD write that must, has to kick or
-revisit this. A UI-only hang is not caught. The panic LED shows only until
+the timeout or longer; up to 100 ms of buzz can play before the reset; a
+future flash or SD write that must, has to kick or revisit this. A UI-only hang is not caught. The panic LED shows only until
 the reset; RST WDOG on the AUDIO page is the lasting trace.
 
 ## Sources
