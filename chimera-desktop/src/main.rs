@@ -9,7 +9,7 @@ use chimera_core::project::LOAD_LINK;
 use chimera_core::scope::scope_buffer;
 use chimera_core::storage::{Card, SystemSettings, SystemSync};
 use chimera_core::ui::UiState;
-use chimera_core::ui::busy::{ToastStep, draw_busy, draw_toast};
+use chimera_core::ui::busy::{ToastStep, draw_toast};
 use chimera_core::ui::perf::PerfTracker;
 use chimera_hal::store::Store;
 use chimera_hal::{ChimeraDisplay, MidiChannel, MidiNote, Velocity};
@@ -56,12 +56,19 @@ fn main() {
 
     let mut ui = UiState::new();
 
-    // Boot step 1: SYSTEM behind BUSY, then its theme.
-    draw_busy(&mut display);
+    // Boot: SYSTEM and the last project behind the splash, held 1 s from
+    // first light as on the chip; then the splash again in the card's theme.
+    let first_light = std::time::Instant::now();
+    display.set_theme(&ui.theme());
+    let _ = chimera_core::ui::splash::draw(&mut display);
     display.flush();
     let mut store = DirStore::new(card_dir());
     let mut card = Card::new();
     let (mut sync, mut settings) = boot(&mut ui, &mut card, &mut store);
+    display.set_theme(&ui.theme());
+    let _ = chimera_core::ui::splash::draw(&mut display);
+    display.flush();
+    std::thread::sleep(std::time::Duration::from_secs(1).saturating_sub(first_light.elapsed()));
     let mut perf = PerfTracker::new();
     // The held key and the channel it was sent on, so its note-off follows
     // it even if the selected Part changes while it is held.
