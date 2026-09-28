@@ -10,7 +10,7 @@ use chimera_core::ui::page::ValFmt;
 use chimera_core::ui::perf::PerfStats;
 use chimera_core::ui::theme;
 use chimera_core::ui::viz;
-use chimera_hal::EncoderId;
+use chimera_hal::{ButtonId, EncoderId};
 use screen::*;
 
 fn band(fb: &Fb, y0: i32, y1: i32) -> Vec<u16> {
@@ -195,4 +195,35 @@ fn non_finite_live_output_is_flat() {
     let mut fb = Fb::new();
     viz::live_output(&mut fb, &buf);
     assert_eq!(fb.oob, 0);
+}
+
+/// A Part switch redraws the cells when only their mod bars differ (#74):
+/// both Parts prime MORPH at 0 with different cuts, so the shown values
+/// both clamp to 0.
+#[test]
+fn part_switch_redraws_mod_bars_that_differ() {
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::dsp::algo::params::AlgoParams;
+    use chimera_core::modulation::ModState;
+    let addr = ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH);
+    let mut ui = chimera_core::ui::UiState::new();
+    ui.performance.parts[1].sound = ui.performance.parts[0].sound.clone();
+    for (part, amount) in [(0, -64), (1, -40)] {
+        let s = &mut ui.performance.parts[part].sound;
+        s.dest_registry.add(addr, *b"MORPH\0\0\0").unwrap();
+        s.mod_state = ModState::from_registry(&s.dest_registry, 2);
+        s.mod_state.set_amount(0, 0, amount);
+    }
+    let (perf, scope) = (PerfStats::zero(), scope_fixture());
+    feed(&mut ui, Input::press(ButtonId::B2));
+    feed(&mut ui, Input::press(ButtonId::B1));
+    settle(&mut ui);
+    let mut fb = Fb::new();
+    ui.render_dirty_with_scope(&mut fb, &perf, &scope);
+    feed(&mut ui, Input::press(ButtonId::B2));
+    settle(&mut ui);
+    ui.render_dirty_with_scope(&mut fb, &perf, &scope);
+    let mut full = Fb::new();
+    ui.render_with_scope(&mut full, &perf, &scope);
+    assert!(fb.px == full.px);
 }
