@@ -24,7 +24,7 @@
 //! themselves and for each side reading back its *own* index, since only
 //! one thread ever writes `head` and only one thread ever writes `tail`.
 
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use chimera_hal::MidiMessage;
 
@@ -88,8 +88,9 @@ impl NoteEvent {
     }
 }
 
-/// One producer (`push`) and one consumer (`pop`). Head and tail are
-/// free-running counters; the slot is `counter % NOTE_QUEUE_LEN`.
+/// One producer and one consumer, each a handle `split` hands out once.
+/// Head and tail are free-running counters; the slot is
+/// `counter % NOTE_QUEUE_LEN`.
 pub struct NoteQueue {
     slots: [AtomicU32; NOTE_QUEUE_LEN],
     /// Next event to pop (written by the consumer only).
@@ -97,6 +98,26 @@ pub struct NoteQueue {
     /// Next slot to push (written by the producer only).
     tail: AtomicU32,
     dropped: AtomicU32,
+    split: AtomicBool,
+}
+
+/// The queue's only writer.
+pub struct NoteProducer<'a>(&'a NoteQueue);
+
+/// The queue's only reader.
+pub struct NoteConsumer<'a>(&'a NoteQueue);
+
+impl NoteProducer<'_> {
+    /// `false`: the queue was full and the event was dropped.
+    pub fn push(&mut self, ev: NoteEvent) -> bool {
+        self.0.push(ev)
+    }
+}
+
+impl NoteConsumer<'_> {
+    pub fn pop(&mut self) -> Option<NoteEvent> {
+        self.0.pop()
+    }
 }
 
 impl Default for NoteQueue {
@@ -112,7 +133,14 @@ impl NoteQueue {
             head: AtomicU32::new(0),
             tail: AtomicU32::new(0),
             dropped: AtomicU32::new(0),
+            split: AtomicBool::new(false),
         }
+    }
+
+    /// The producer and consumer ends, once.
+    pub fn split(&self) -> Option<(NoteProducer<'_>, NoteConsumer<'_>)> {
+        (!self.split.swap(true, Ordering::AcqRel))
+            .then_some((NoteProducer(self), NoteConsumer(self)))
     }
 
     /// Producer side. `false`: the queue was full and the event was dropped.
@@ -124,7 +152,7 @@ impl NoteQueue {
     /// is published by the `Release` store to `tail` right after it, which
     /// is what `pop`'s `Acquire` load of `tail` synchronizes with, so the
     /// slot write always happens-before the matching read in `pop`.
-    pub fn push(&self, ev: NoteEvent) -> bool {
+    fn push(&self, ev: NoteEvent) -> bool {
         let tail = self.tail.load(Ordering::Relaxed);
         let head = self.head.load(Ordering::Acquire);
         if tail.wrapping_sub(head) as usize >= NOTE_QUEUE_LEN {
@@ -145,7 +173,7 @@ impl NoteQueue {
     /// `Release` store to `head` afterward is what `push`'s `Acquire` load
     /// of `head` pairs with, so the producer never reuses this slot before
     /// this read of it has completed.
-    pub fn pop(&self) -> Option<NoteEvent> {
+    fn pop(&self) -> Option<NoteEvent> {
         let head = self.head.load(Ordering::Relaxed);
         if head == self.tail.load(Ordering::Acquire) {
             return None;
@@ -177,12 +205,26 @@ impl<const N: usize> SourceId<N> {
     }
 }
 
-/// One `NoteQueue` per note source; each queue has exactly one producer.
-/// `drain` empties every queue in source order (source 0 first) so a
-/// caller processing note-offs before note-ons within a block sees a
-/// deterministic, if not timestamped, order.
+/// One `NoteQueue` per note source. `split` hands out one producer per
+/// source and the one `NoteDrain`, which empties every queue in source
+/// order (source 0 first) so a caller processing note-offs before note-ons
+/// within a block sees a deterministic, if not timestamped, order.
 pub struct NoteSources<const N: usize> {
     queues: [NoteQueue; N],
+    split: AtomicBool,
+}
+
+/// Every source's consumer.
+pub struct NoteDrain<'a, const N: usize>(&'a NoteSources<N>);
+
+impl<const N: usize> NoteDrain<'_, N> {
+    pub fn drain(&mut self, mut f: impl FnMut(NoteEvent)) {
+        for q in &self.0.queues {
+            while let Some(ev) = q.pop() {
+                f(ev);
+            }
+        }
+    }
 }
 
 impl<const N: usize> Default for NoteSources<N> {
@@ -199,19 +241,20 @@ impl<const N: usize> NoteSources<N> {
         }
         Self {
             queues: [const { NoteQueue::new() }; N],
+            split: AtomicBool::new(false),
         }
     }
 
-    pub fn source(&self, id: SourceId<N>) -> &NoteQueue {
-        &self.queues[id.0]
-    }
-
-    pub fn drain(&self, mut f: impl FnMut(NoteEvent)) {
-        for q in &self.queues {
-            while let Some(ev) = q.pop() {
-                f(ev);
-            }
+    /// Each source's producer, indexed by `SourceId`, and the drain; once.
+    /// The queues are private, so this is their only split.
+    pub fn split(&self) -> Option<([NoteProducer<'_>; N], NoteDrain<'_, N>)> {
+        if self.split.swap(true, Ordering::AcqRel) {
+            return None;
         }
+        Some((
+            core::array::from_fn(|i| NoteProducer(&self.queues[i])),
+            NoteDrain(self),
+        ))
     }
 
     pub fn drops(&self) -> [u32; N] {
