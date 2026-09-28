@@ -1,6 +1,8 @@
 //! The shared FX bus (instrument-core spec § Audio path, FX diet spec
 //! § Bus): each effect runs once on the sum of the parts' sends; the return
 //! is the sum of the wet outputs of the effects that are on.
+mod common;
+use common::SR;
 
 use chimera_core::dsp::Stereo;
 use chimera_core::dsp::chorus::{ChorusParams, JunoChorus};
@@ -9,8 +11,6 @@ use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
 use chimera_core::dsp::ring::{RingReverb, first_reflection, size_step};
 use chimera_core::hw::DAC_PAIRS;
 use chimera_hal::BLOCK_SIZE;
-
-const SR: u32 = 48_000;
 
 fn burst() -> [f32; BLOCK_SIZE] {
     core::array::from_fn(|i| if i % 16 == 0 { 0.5 } else { -0.1 })

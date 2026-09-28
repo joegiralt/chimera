@@ -1,9 +1,9 @@
 //! Tape on DAC pair 1 (FX diet spec § Tape, § Testing).
 
+mod common;
 use chimera_core::dsp::tape::{DRY_TAP, ENGAGE, Tape, TapeParams};
 use chimera_hal::BLOCK_SIZE;
-
-const SR: u32 = 48_000;
+use common::{SR, peak, rms};
 
 type Pair = [f32; 2 * BLOCK_SIZE];
 
@@ -35,10 +35,6 @@ fn run(tape: &mut Tape, x: &[f32], p: impl Fn(usize) -> TapeParams) -> Vec<f32> 
         out.extend((0..BLOCK_SIZE).map(|i| pair[2 * i]));
     }
     out
-}
-
-fn rms(x: &[f32]) -> f32 {
-    (x.iter().map(|s| s * s).sum::<f32>() / x.len() as f32).sqrt()
 }
 
 fn db(x: f32) -> f32 {
@@ -415,11 +411,6 @@ fn the_half_band_meets_its_bands() {
         assert!(h(pass).abs() < 0.05, "{pass} Hz: {} dB", h(pass));
         assert!(h(stop) < -49.0, "{stop} Hz: {} dB", h(stop));
     }
-}
-
-/// Peak of `x`.
-fn peak(x: &[f32]) -> f32 {
-    x.iter().fold(0.0f32, |m, s| m.max(s.abs()))
 }
 
 /// How far the output's peak rises, dB, when plucks peaking at −6 dBFS

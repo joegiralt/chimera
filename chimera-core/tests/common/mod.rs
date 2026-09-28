@@ -28,7 +28,7 @@ pub fn scope_writer() -> ScopeWriter {
     ScopeWriter::new(w)
 }
 
-pub const SR: u32 = 48_000;
+pub const SR: u32 = chimera_hal::SAMPLE_RATE;
 pub const NOTE: u8 = 60;
 pub const VEL: u8 = 100;
 pub const ON_BLOCKS: usize = 200;
@@ -269,3 +269,32 @@ pub fn expects_sound(e: EngineType) -> bool {
         EngineType::Algo | EngineType::Modal => true,
     }
 }
+
+/// Operator 1 alone on the triangle.
+pub fn tri() -> ParamSnapshot {
+    let mut p = ParamSnapshot::for_engine(EngineType::Algo);
+    p.algo = AlgoParams::single(WaveId::TRI);
+    p
+}
+
+/// Goertzel: the magnitude of `buf` at the bin nearest `hz`.
+pub fn goertzel(buf: &[f32], hz: f32, sample_rate: u32) -> f32 {
+    let n = buf.len() as f32;
+    let k = (hz * n / sample_rate as f32).round();
+    let coeff = 2.0 * libm::cosf(2.0 * core::f32::consts::PI * k / n);
+    let (mut s1, mut s2) = (0.0f32, 0.0f32);
+    for &x in buf {
+        let s0 = x + coeff * s1 - s2;
+        s2 = s1;
+        s1 = s0;
+    }
+    libm::sqrtf((s1 * s1 + s2 * s2 - coeff * s1 * s2).abs()) / n
+}
+
+/// Root mean square, summed in f64.
+pub fn rms(x: &[f32]) -> f32 {
+    (x.iter().map(|&s| s as f64 * s as f64).sum::<f64>() / x.len() as f64).sqrt() as f32
+}
+
+#[allow(unused_imports)] // each test binary uses some of these
+pub use chimera_core::scope::peak;

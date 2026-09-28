@@ -1,10 +1,10 @@
 //! Verify no clicks/discontinuities in audio output.
 //! Simulates the desktop audio callback pattern: rendering blocks
 //! and scattering to variable-size output buffers.
+mod common;
+use common::{SR, tri};
 
 use chimera_core::dsp::Stereo;
-use chimera_core::dsp::algo::params::AlgoParams;
-use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::fx_bus::FxParams;
 use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::dsp::reverb::ReverbParams;
@@ -14,15 +14,6 @@ use chimera_core::modulation::ModState;
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::{MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
-
-const SR: u32 = 48000;
-
-/// Operator 1 alone on the triangle.
-fn tri() -> ParamSnapshot {
-    let mut p = ParamSnapshot::for_engine(EngineType::Algo);
-    p.algo = AlgoParams::single(WaveId::TRI);
-    p
-}
 
 /// Simulate the audio callback: render blocks, scatter to output buffer,
 /// check for discontinuities (clicks) in the output stream.

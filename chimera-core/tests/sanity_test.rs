@@ -5,6 +5,7 @@
 //! marked `#[ignore = "known broken: …"]`. It is not fixed in this refactor.
 
 mod common;
+use common::peak;
 
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_hal::BLOCK_SIZE;
@@ -16,10 +17,6 @@ const AUDIBLE: f32 = 1e-3;
 const SILENT: f32 = 1e-4;
 /// Trailing blocks of the render that must be silent.
 const TAIL_BLOCKS: usize = 10;
-
-fn peak(s: &[f32]) -> f32 {
-    s.iter().fold(0.0f32, |m, x| m.max(x.abs()))
-}
 
 /// Perceived fundamental via normalized autocorrelation: the shortest lag in
 /// 40..=1200 Hz whose correlation is within 90 % of the best lag, refined to

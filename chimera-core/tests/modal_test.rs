@@ -1,22 +1,6 @@
+mod common;
 use chimera_core::dsp::modal::{ModalEngine, ModalParams, ResonatorMode};
-
-const SR: u32 = 48000;
-
-fn goertzel(buf: &[f32], target_freq: f32, sample_rate: u32) -> f32 {
-    let n = buf.len() as f32;
-    let k = (target_freq * n / sample_rate as f32).round();
-    let w = 2.0 * core::f32::consts::PI * k / n;
-    let coeff = 2.0 * libm::cosf(w);
-    let mut s1 = 0.0f32;
-    let mut s2 = 0.0f32;
-    for &sample in buf {
-        let s0 = sample + coeff * s1 - s2;
-        s2 = s1;
-        s1 = s0;
-    }
-    let power = s1 * s1 + s2 * s2 - coeff * s1 * s2;
-    libm::sqrtf(power.abs()) / n
-}
+use common::{SR, goertzel};
 
 fn modal_params() -> ModalParams {
     ModalParams {

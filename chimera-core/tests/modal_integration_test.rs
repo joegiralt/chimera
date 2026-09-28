@@ -1,10 +1,10 @@
+mod common;
 use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::modulation::ModState;
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::{MidiNote, Velocity};
-
-const SR: u32 = 48000;
+use common::SR;
 
 /// Simulate exactly what the desktop runtime does:
 /// 1. Set engine type in params

@@ -2,24 +2,14 @@
 //! Uses a simple xorshift PRNG instead of proptest (no_std compatible).
 
 mod common;
+use common::{SR, tri};
 
-use chimera_core::dsp::algo::params::AlgoParams;
-use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::modulation::ModState;
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::{MidiNote, Velocity};
 use common::expects_sound;
-
-const SR: u32 = 48000;
-
-/// Operator 1 alone on the triangle.
-fn tri() -> ParamSnapshot {
-    let mut p = ParamSnapshot::for_engine(EngineType::Algo);
-    p.algo = AlgoParams::single(WaveId::TRI);
-    p
-}
 
 struct Rng(u64);
 
