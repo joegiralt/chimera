@@ -436,12 +436,15 @@ fn mixer_part_dirty_render_equals_full_render() {
 #[test]
 fn sound_browser_title_names_the_part() {
     use chimera_core::preset::SoundPool;
-    use chimera_core::ui::{browser, components};
+    use chimera_core::ui::{browser, components, theme};
+    use embedded_graphics::draw_target::DrawTarget;
 
+    // `draw` expects a screen cleared to the ground.
     let mut got = screen::Fb::new();
+    let _ = got.clear(theme::BG);
     browser::draw(&mut got, &SoundPool::new(), 1, 0, 0);
     let mut want = screen::Fb::new();
-    want.px.fill(got.px[0]); // the ground
+    let _ = want.clear(theme::BG);
     components::title_to(&mut want, "LOAD SOUND", "PART 2");
     assert!(
         got.px[..28 * 240] == want.px[..28 * 240],

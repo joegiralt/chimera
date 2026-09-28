@@ -13,8 +13,11 @@ use chimera_core::ui::theme;
 use chimera_hal::{ButtonId, EncoderId};
 use screen::*;
 
+/// `draw` on a screen cleared to the ground, as it expects.
 fn drawn(pool: &SoundPool, cursor: usize, scroll: usize) -> Fb {
+    use embedded_graphics::draw_target::DrawTarget;
     let mut fb = Fb::new();
+    let _ = fb.clear(theme::BG);
     browser::draw(&mut fb, pool, 0, cursor, scroll);
     assert_eq!(fb.oob, 0);
     fb
