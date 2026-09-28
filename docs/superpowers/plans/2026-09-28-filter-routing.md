@@ -8945,6 +8945,34 @@ The 1 DEST row (MORPH) never reached either: `AlgoLive::offset` returns before `
 
 All factory Sounds keep 6 on rev V.
 
+### bench-t13d: DRIVE and DEST_FIRST measured (2026-09-28)
+
+**The readings.** The owner read the two rows Review fix 2 left provisional, from the bench-t13d build (rev V, 480 MHz), all in one run.
+
+| Row | Screen | Reading |
+|---|---|---|
+| 1 OP | ROUTING 1/2 row 1 | 488 |
+| DRIVE LO | ROUTING 3/3 row 1 | 541 |
+| 1 CUTOFF | ROUTING 3/3 row 2 | 494 |
+
+The bench-t13c run had 1 OP 483, DRIVE 540, 1 DEST 486.
+
+**Derivations.** Rounded up, never billed below 1, each run's own 1 OP subtracted:
+- DRIVE (`Voice::DRIVE_COST`) = max(DRIVE − 1 OP, DRIVE LO − 1 OP) = max(540 − 483, 541 − 488) = max(57, 53) = **57**.
+- DEST_FIRST (`ModRouting::DEST_FIRST`) = max(1 DEST − 1 OP, 1 CUTOFF − 1 OP) = max(486 − 483, 494 − 488) = max(3, 6) = **6**.
+
+These replace the emulator estimates (65, 12) Review fix 2 held, and both are no longer provisional.
+
+**Voice counts.**
+
+| Case | Cost | Rev V | Rev Y |
+|---|---|---|---|
+| Costliest patch (A16 ∪ A17), plain | 889 | 6 | 5 |
+| + FOLD | 932 | 6 | 4 |
+| + FOLD + DRIVE | 989 | 5 | 4 |
+
+Rev V: floor((7,000 − 1,360) / 989) = floor(5.70) = 5. Rev Y: floor((5,833 − 1,360) / 989) = floor(4.52) = 4. Unchanged from Review fix 2's provisional figures (997 rounded to the same floor on both revs). Every factory Sound still keeps at least 6 voices on rev V (`every_factory_sound_gets_at_least_six_voices_on_rev_v`).
+
 ### Task 15: the SVF's per-mode cost (2026-09-28)
 
 `FilterKind::cost(Svf, mode)` bills each mode's delta over LP24, never below 0. The engine terms were solved from rows that already run LP24, and `recost` re-prices at every note-on.

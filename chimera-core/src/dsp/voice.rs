@@ -128,12 +128,11 @@ impl Voice {
     /// The wavefolder, which runs once FOLD is 0.001 or more: the bench's
     /// FOLD row less 1 OP (measured 2026-09-28, rev V at 480 MHz).
     pub const FOLD_COST: Cost = Cost(43);
-    /// The drive stage, which runs once DRIVE is 0.001 or more.
-    /// Provisional, until the bench's DRIVE LO row. DRIVE (1.0) read 57
-    /// over 1 OP, but there `fast_tanh` skips its divide on about 1 sample
-    /// in 8 (|x| > 3). DRIVE LO (0.05) divides on every sample, which the
-    /// emulator puts at about 2 more. Billed as the larger, generously.
-    pub const DRIVE_COST: Cost = Cost(65);
+    /// The drive stage, which runs once DRIVE is 0.001 or more. Measured:
+    /// bench-t13d's DRIVE LO row (541) less that run's 1 OP (488) = 53;
+    /// bench-t13c's DRIVE row (540) less that run's 1 OP (483) = 57.
+    /// Billed as the larger: 57.
+    pub const DRIVE_COST: Cost = Cost(57);
 
     /// Cycles/sample of a voice playing `p` under `mods`.
     pub fn cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
