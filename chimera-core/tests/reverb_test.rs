@@ -1,14 +1,15 @@
 //! The reverb (FX diet spec § Reverb, § Testing). GRIT 0 wherever RT60
 //! or stereo is measured.
 
+mod common;
 use chimera_core::block::{Block, ParamId};
 use chimera_core::dsp::Stereo;
 use chimera_core::dsp::halfband::HALF;
 use chimera_core::dsp::reverb::{REVERB_SPECS, ReverbParams};
 use chimera_core::dsp::ring::*;
 use chimera_hal::BLOCK_SIZE;
+use common::{SR, rms};
 
-const SR: u32 = 48_000;
 const FS_RING: f32 = 24_000.0;
 
 #[test]
@@ -210,10 +211,6 @@ fn impulse(n: usize) -> f32 {
 
 fn energy(x: &[f32]) -> f64 {
     x.iter().map(|&s| s as f64 * s as f64).sum()
-}
-
-fn rms(x: &[f32]) -> f32 {
-    (energy(x) / x.len() as f64).sqrt() as f32
 }
 
 /// 1 s of noise, 3 s of silence: finite, within ±12·`WET_GAIN`, and the

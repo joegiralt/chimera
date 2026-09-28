@@ -3,6 +3,7 @@
 //! sends into the FX bus, FX return into DAC pair 1.
 
 mod common;
+use common::{SR, peak};
 
 use chimera_core::dsp::Stereo;
 use chimera_core::dsp::chorus::ChorusParams;
@@ -27,8 +28,6 @@ use chimera_core::hw::{CPU_HZ_REV_V, SampleBudget};
 const VOICE_SHARE: u32 = 3_690;
 const BUDGET: SampleBudget =
     SampleBudget::for_cpu(((FxBus::COST.0 + VOICE_SHARE) as u64 * 480_000).div_ceil(7) as u32);
-
-const SR: u32 = chimera_hal::SAMPLE_RATE;
 
 fn on(ch: u8, note: u8) -> NoteEvent {
     NoteEvent {
@@ -67,10 +66,6 @@ impl Rig {
             .render(&mut self.fx, &mut self.out, shared, &mut self.scope);
         &self.out
     }
-}
-
-fn peak(x: &[f32]) -> f32 {
-    x.iter().fold(0.0, |m, s| m.max(s.abs()))
 }
 
 /// Left and right halves of an interleaved pair.
