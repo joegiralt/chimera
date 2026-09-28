@@ -474,3 +474,36 @@ fn a_note_on_mid_fade_starts_clean_after_it() {
     }
     assert!(out == want);
 }
+
+/// A note-off releases through the envelope: no step after it is larger
+/// than the held note's own largest step (#68). The fixed 0.15 threshold
+/// above misses a full mute of this triangle. Modal's release is #51.
+#[test]
+fn a_released_note_steps_no_more_than_the_held_note() {
+    let saw = chimera_core::factory::factory_sound(4).unwrap(); // SAW LEAD
+    for (name, p, m) in [
+        ("triangle", tri(), ModState::new()),
+        ("SAW LEAD", saw.params.clone(), saw.mod_state.clone()),
+    ] {
+        let mut v = Voice::new(SR);
+        let mut block = [0.0f32; BLOCK_SIZE];
+        v.note_on(MidiNote::new(60).unwrap(), Velocity::DEFAULT, &p);
+        let mut held = Vec::new();
+        for _ in 0..32 {
+            v.render(&mut block, &p, &m);
+            held.extend_from_slice(&block);
+        }
+        v.note_off();
+        let mut released = vec![*held.last().unwrap()];
+        while v.is_active() {
+            v.render(&mut block, &p, &m);
+            released.extend_from_slice(&block);
+            assert!(
+                released.len() < 10 * SR as usize,
+                "{name}: release never ends"
+            );
+        }
+        let (h, r) = (max_step(&held), max_step(&released));
+        assert!(r <= h, "{name}: release steps {r}, held {h}");
+    }
+}
