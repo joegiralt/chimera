@@ -25,13 +25,15 @@ pub enum ValFmt {
     /// A matrix route's amount (`amount_value`, 0.5 = 0), shown as a
     /// percentage of 127 (spec § 6).
     Route,
+    /// A slider shown in its unit (spec § 1's laws).
+    Law(crate::dsp::modulator::law::Law),
 }
 
 impl ValFmt {
     /// Coarse snap points in normalized 0..1 space.
     pub fn snap_points(self) -> &'static [f32] {
         match self {
-            ValFmt::Uni => &[0.0, 100.0 / 127.0, 1.0],
+            ValFmt::Uni | ValFmt::Law(_) => &[0.0, 100.0 / 127.0, 1.0],
             ValFmt::Bi | ValFmt::Pan | ValFmt::Route => {
                 &[0.0, 20.0 / 127.0, 64.0 / 127.0, 107.0 / 127.0, 1.0]
             }

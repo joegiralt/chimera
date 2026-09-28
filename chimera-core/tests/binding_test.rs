@@ -27,7 +27,10 @@ fn every_part_slot_resolves_to_a_spec() {
     for def in part_defs() {
         for (i, slot) in def.params.iter().enumerate() {
             match slot.binding {
-                SlotBinding::Empty | SlotBinding::SelectOp | SlotBinding::FilterPanel(_) => {}
+                SlotBinding::Empty
+                | SlotBinding::SelectOp
+                | SlotBinding::FilterPanel(_)
+                | SlotBinding::EnvPanel(..) => {}
                 SlotBinding::Param(_) | SlotBinding::SelectedOp(_) => {
                     assert!(slot.spec().is_some(), "{} slot {i}: no spec", def.name)
                 }
@@ -112,7 +115,9 @@ fn all_chains_holds_every_reachable_chain() {
 /// bindings (spec labels + the two plan-D6 overrides; plan D5 BODY fix).
 #[test]
 fn part_pages_display_like_before() {
-    use ValFmt::{Bi, Int, Uni};
+    use ValFmt::{Bi, Int, Law, Names, Uni};
+    use chimera_core::dsp::modulator::EnvSpeed::Med;
+    use chimera_core::dsp::modulator::law::Law::{Attack, DecRel, Hold, Pct};
     let want: [(&BlockDef, [(&str, ValFmt); 6]); 7] = [
         (
             &reg::MODAL_1,
@@ -178,12 +183,12 @@ fn part_pages_display_like_before() {
         (
             &reg::ENVELOPE,
             [
-                ("ATK", Uni),
-                ("DEC", Uni),
-                ("SUS", Uni),
-                ("REL", Uni),
-                ("H", Uni),
-                ("--", Uni),
+                ("ATTACK", Law(Attack(Med))),
+                ("DECAY", Law(DecRel(Med))),
+                ("SUSTAIN", Law(Pct)),
+                ("RELEASE", Law(DecRel(Med))),
+                ("HOLD", Law(Hold(Med))),
+                ("TYPE", Names(&["A", "B"])),
             ],
         ),
         (
@@ -198,11 +203,11 @@ fn part_pages_display_like_before() {
             ],
         ),
     ];
-    // A panel slot's own label and format are empty: FLT reads its views.
+    // A panel slot's own label and format are empty: FLT and ENV read their views.
     let ctx = ctx();
     for (def, slots) in want {
         for (i, (label, fmt)) in slots.iter().enumerate() {
-            let got = if core::ptr::eq(def, &reg::FILTER) {
+            let got = if core::ptr::eq(def, &reg::FILTER) || core::ptr::eq(def, &reg::ENVELOPE) {
                 let v = view(def, i, &ctx);
                 (v.label(), v.fmt())
             } else {

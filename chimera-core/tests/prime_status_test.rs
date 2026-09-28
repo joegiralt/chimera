@@ -48,8 +48,9 @@ fn mix_plus_on_a_non_modulatable_param_reports_not_modulatable() {
     for _ in 0..5 {
         feed(&mut ui, Input::press(ButtonId::Plus)); // -> MOD node
     }
-    feed(&mut ui, Input::press(ButtonId::Edit)); // Envelope sub-page
-    feed(&mut ui, Input::press(ButtonId::Edit)); // LFO sub-page
+    for _ in 0..3 {
+        feed(&mut ui, Input::press(ButtonId::Edit)); // E2, E3, LFO
+    }
     prime(&mut ui, EncoderId::A);
     assert_eq!(ui.prime_status(), Some(PrimeStatus::NotModulatable));
 }
@@ -180,13 +181,12 @@ fn filter_page() -> UiState {
     ui
 }
 
-/// The MOD node's ADSR sub-page (BigViz), slot C focused.
+/// The MOD node's home, E1 (BigViz), slot C focused.
 fn envelope_page() -> UiState {
     let mut ui = UiState::new();
     for _ in 0..5 {
         feed(&mut ui, Input::press(ButtonId::Plus));
     }
-    feed(&mut ui, Input::press(ButtonId::Edit));
     feed(&mut ui, Input::turn(EncoderId::C, 1));
     settle(&mut ui);
     ui
@@ -363,23 +363,22 @@ fn priming_past_matrix_capacity_on_the_algo_chain_reports_full() {
 #[test]
 fn stage_cells_prime_time_and_sustain_primes_level() {
     use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::dsp::modulator::EnvSlot;
     use chimera_core::params::EnvParams;
     let mut ui = UiState::new();
     for _ in 0..5 {
-        feed(&mut ui, Input::press(ButtonId::Plus)); // MOD node
+        feed(&mut ui, Input::press(ButtonId::Plus)); // MOD node: E1
     }
-    feed(&mut ui, Input::press(ButtonId::Edit)); // the ENV 1 page
     prime(&mut ui, EncoderId::A); // ATTACK
     assert_eq!(ui.prime_status(), Some(PrimeStatus::Added));
     prime(&mut ui, EncoderId::C); // SUSTAIN
     assert_eq!(ui.prime_status(), Some(PrimeStatus::Added));
-    // Whichever ENV slot the page shows (E1 here; E2 once Task 16 moves E1 home).
     let reg = &ui.performance.parts[0].sound.dest_registry;
     let primed: Vec<ParamAddr> = (0..reg.len()).map(|i| reg.get(i).unwrap().addr).collect();
     let has = |id| {
         primed
             .iter()
-            .any(|a| matches!(a.block, BlockRef::Env(_)) && a.param == id)
+            .any(|a| a.block == BlockRef::Env(EnvSlot::Env1) && a.param == id)
     };
     assert!(has(EnvParams::TIME) && has(EnvParams::LEVEL), "{primed:?}");
 }

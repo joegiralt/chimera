@@ -5,17 +5,37 @@
 use crate::addr::{BlockRef, Blocks, Op, ParamAddr};
 use crate::block::ValFmt;
 use crate::dsp::filter::FilterKind;
+use crate::dsp::modulator::{EnvForm, EnvSlot, EnvSpeed, EnvType, Func, FuncMode, LfoForm, pick};
 use crate::modulation::{ModSource, VCA};
-use crate::params::{FilterParams, OutParams};
+use crate::params::{EnvParams, FilterParams, OutParams};
 use crate::preset::Sound;
 use crate::ui::block_def::{BlockDef, SlotBinding};
 use crate::ui::filter_panel::{self, PanelKnob, PanelTarget};
+use crate::ui::mod_panel::{self, PanelSlot};
+
+/// What an ENV slot's page resolves against: type A's panel follows its
+/// SPEED, type B's its MODE and that MODE's FORM.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EnvKind {
+    A(EnvSpeed),
+    B(Func),
+}
+
+/// B's `Func` from its MODE and FORM values (FORM indexes MODE's list).
+fn func_at(mode: f32, form: f32) -> Func {
+    match pick(&FuncMode::ALL, mode) {
+        FuncMode::Env => Func::Env(pick(&EnvForm::ALL, form)),
+        FuncMode::Lfo => Func::Lfo(pick(&LfoForm::ALL, form)),
+        FuncMode::Burst => Func::Burst(pick(&EnvForm::ALL, form)),
+    }
+}
 
 /// What a page's panels resolve against (spec § UI "Slot binding").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SlotCtx {
     pub sel_op: Op,
     pub kind: FilterKind,
+    pub envs: [EnvKind; 3],
 }
 
 impl SlotCtx {
@@ -25,6 +45,13 @@ impl SlotCtx {
         Self {
             sel_op,
             kind: FilterKind::from_index(get(BlockRef::Filter, FilterParams::KIND)),
+            envs: EnvSlot::ALL.map(|s| {
+                let at = |id| get(BlockRef::Env(s), id);
+                match pick(&EnvType::ALL, at(EnvParams::TYPE)) {
+                    EnvType::A => EnvKind::A(pick(&EnvSpeed::ALL, at(EnvParams::SPEED))),
+                    EnvType::B => EnvKind::B(func_at(at(EnvParams::MODE), at(EnvParams::FORM))),
+                }
+            }),
         }
     }
 }
@@ -49,6 +76,11 @@ pub enum View {
         source: ModSource,
         label: &'static str,
     },
+    /// A fixed readout, dimmed and inert.
+    Text {
+        label: &'static str,
+        text: &'static str,
+    },
 }
 
 impl View {
@@ -56,15 +88,16 @@ impl View {
         match *self {
             View::Empty => "--",
             View::SelectOp => "OP",
-            View::Legacy { label, .. } | View::Param { label, .. } | View::Route { label, .. } => {
-                label
-            }
+            View::Legacy { label, .. }
+            | View::Param { label, .. }
+            | View::Route { label, .. }
+            | View::Text { label, .. } => label,
         }
     }
 
     pub fn fmt(&self) -> ValFmt {
         match *self {
-            View::Empty => ValFmt::Uni,
+            View::Empty | View::Text { .. } => ValFmt::Uni,
             View::SelectOp => ValFmt::OneBased(Op::ALL.len() as u8 - 1),
             View::Legacy { fmt, .. } | View::Param { fmt, .. } => fmt,
             View::Route { .. } => ValFmt::Route,
@@ -112,6 +145,15 @@ pub fn view(def: &BlockDef, i: usize, ctx: &SlotCtx) -> View {
                 label,
             }) => View::Route { source, label },
         },
+        SlotBinding::EnvPanel(s, k) => {
+            match mod_panel::env_panel(ctx.envs[s.index()]).slots[k as usize] {
+                None => View::Empty,
+                Some(PanelSlot::Param { id, label, fmt }) => {
+                    param(ParamAddr::new(BlockRef::Env(s), id), label, fmt)
+                }
+                Some(PanelSlot::Fixed { label, text }) => View::Text { label, text },
+            }
+        }
     }
 }
 

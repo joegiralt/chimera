@@ -9,7 +9,7 @@ use crate::dsp::modal::ModalParams;
 use crate::dsp::modulator::{EnvSlot, LfoSlot};
 use crate::dsp::reverb::ReverbParams;
 use crate::dsp::tape::TapeParams;
-use crate::params::{DriveParams, EnvParams, FilterParams, FolderParams, OutParams};
+use crate::params::{DriveParams, FilterParams, FolderParams, OutParams};
 use crate::part::PartParams;
 use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2, ParamSlot, VizType};
 use crate::ui::page::{PageLayout, ValFmt};
@@ -114,7 +114,7 @@ pub static FILTER: BlockDef = BlockDef {
 
 /// FLT › MODE: MODE and the kind's extras (spec § UI). `short` is "MDE", not
 /// "MODE": on the Algo map the full word overlaps the next node's label
-/// (`MOD` is already MOD_MATRIX's); this abbreviation is only
+/// (`MOD` is already the MOD node's); this abbreviation is only
 /// the map's branch label, not the MODE param's own spec name.
 pub static FILTER_MODE: BlockDef = BlockDef {
     id: 59,
@@ -138,23 +138,28 @@ static FILTER_SUB_PAGES: [&BlockDef; 1] = [&FILTER_MODE];
 // Modulators — envelopes, LFOs, etc.
 // ---------------------------------------------------------------------------
 
-/// ADSR Envelope modulator — the template for all envelope modulators.
-/// Not an audio block — it's a modulation source that appears in the mod matrix Y-axis.
-pub static ENVELOPE: BlockDef = BlockDef {
-    id: 11,
-    name: "Envelope",
-    short: "ENV",
-    layout: PageLayout::BigViz,
-    viz: VizType::Adsr,
-    params: [
-        ParamSlot::param(BlockRef::Env(EnvSlot::Env1), EnvParams::ATTACK),
-        ParamSlot::param(BlockRef::Env(EnvSlot::Env1), EnvParams::DECAY),
-        ParamSlot::param(BlockRef::Env(EnvSlot::Env1), EnvParams::SUSTAIN),
-        ParamSlot::param(BlockRef::Env(EnvSlot::Env1), EnvParams::RELEASE),
-        ParamSlot::param(BlockRef::Env(EnvSlot::Env1), EnvParams::HOLD),
-        EMPTY,
-    ],
-};
+const fn env_page(id: u16, name: &'static str, short: &'static str, s: EnvSlot) -> BlockDef {
+    BlockDef {
+        id,
+        name,
+        short,
+        layout: PageLayout::BigViz,
+        viz: VizType::Adsr,
+        params: [
+            ParamSlot::env_panel(s, 0),
+            ParamSlot::env_panel(s, 1),
+            ParamSlot::env_panel(s, 2),
+            ParamSlot::env_panel(s, 3),
+            ParamSlot::env_panel(s, 4),
+            ParamSlot::env_panel(s, 5),
+        ],
+    }
+}
+
+/// E1: the MOD node's home (id 11, once the amp envelope's page).
+pub static ENVELOPE: BlockDef = env_page(11, "Env 1", "E1", EnvSlot::Env1);
+pub static ENV_2: BlockDef = env_page(60, "Env 2", "E2", EnvSlot::Env2);
+pub static ENV_3: BlockDef = env_page(61, "Env 3", "E3", EnvSlot::Env3);
 
 /// LFO modulator — cyclical modulation source.
 pub static LFO: BlockDef = BlockDef {
@@ -341,7 +346,7 @@ pub static NOISE: BlockDef = BlockDef {
 pub static MOD_MATRIX: BlockDef = BlockDef {
     id: 22,
     name: "Mod Matrix",
-    short: "MOD",
+    short: "MTX",
     layout: PageLayout::Matrix,
     viz: VizType::None,
     params: [EMPTY; 6],
@@ -412,20 +417,24 @@ pub static ALGO_ALG: BlockDef = BlockDef {
 pub static PART_MOD_SOURCES: [&str; crate::modulation::MAX_MOD_SOURCES] =
     ["E1", "LF1", "E2", "E3", "LF2", "LF3", "VEL", "NTE"];
 
-static MOD_MATRIX_SUB_PAGES: [&BlockDef; 2] = [&ENVELOPE, &LFO];
+/// The MOD node's sub-list after its home E1 (spec § UI).
+static MOD_SUB_PAGES: [&BlockDef; 4] = [&ENV_2, &ENV_3, &LFO, &MOD_MATRIX];
 
 static KICK_BLOCKS: [ChainBlock; 3] = [
     ChainBlock {
         def: &NOISE,
         sub_pages: &[],
+        map: None,
     },
     ChainBlock {
         def: &FILTER,
         sub_pages: &FILTER_SUB_PAGES,
+        map: None,
     },
     ChainBlock {
-        def: &MOD_MATRIX,
-        sub_pages: &MOD_MATRIX_SUB_PAGES,
+        def: &ENVELOPE,
+        sub_pages: &MOD_SUB_PAGES,
+        map: Some("MOD"),
     },
 ];
 
@@ -441,18 +450,22 @@ static MODAL_PLUCK_BLOCKS: [ChainBlock; 4] = [
     ChainBlock {
         def: &MODAL_1,
         sub_pages: &MODAL_SUB_PAGES,
+        map: None,
     },
     ChainBlock {
         def: &FILTER,
         sub_pages: &FILTER_SUB_PAGES,
+        map: None,
     },
     ChainBlock {
         def: &FOLDER,
         sub_pages: &[],
+        map: None,
     },
     ChainBlock {
-        def: &MOD_MATRIX,
-        sub_pages: &MOD_MATRIX_SUB_PAGES,
+        def: &ENVELOPE,
+        sub_pages: &MOD_SUB_PAGES,
+        map: Some("MOD"),
     },
 ];
 
@@ -484,26 +497,32 @@ static ALGO_BLOCKS: [ChainBlock; 6] = [
     ChainBlock {
         def: &ALGO_ALG,
         sub_pages: &[],
+        map: None,
     },
     ChainBlock {
         def: &ALGO_WAVE,
         sub_pages: &ALGO_OSC_SUB_PAGES,
+        map: None,
     },
     ChainBlock {
         def: &DRIVE,
         sub_pages: &[],
+        map: None,
     },
     ChainBlock {
         def: &FILTER,
         sub_pages: &FILTER_SUB_PAGES,
+        map: None,
     },
     ChainBlock {
         def: &FOLDER,
         sub_pages: &[],
+        map: None,
     },
     ChainBlock {
-        def: &MOD_MATRIX,
-        sub_pages: &MOD_MATRIX_SUB_PAGES,
+        def: &ENVELOPE,
+        sub_pages: &MOD_SUB_PAGES,
+        map: Some("MOD"),
     },
 ];
 
@@ -517,26 +536,32 @@ static MIX_BLOCKS: [ChainBlock; 6] = [
     ChainBlock {
         def: &MIXER,
         sub_pages: &[],
+        map: None,
     },
     ChainBlock {
         def: &CHORUS,
         sub_pages: &[],
+        map: None,
     },
     ChainBlock {
         def: &DELAY,
         sub_pages: &DELAY_SUB_PAGES,
+        map: None,
     },
     ChainBlock {
         def: &EFX,
         sub_pages: &[],
+        map: None,
     },
     ChainBlock {
         def: &TAPE,
         sub_pages: &[],
+        map: None,
     },
     ChainBlock {
         def: &MASTER,
         sub_pages: &MASTER_SUB_PAGES,
+        map: None,
     },
 ];
 
@@ -620,30 +645,37 @@ static MIXER_CHANNEL_BLOCKS: [ChainBlock; 7] = [
     ChainBlock {
         def: &PART,
         sub_pages: &[],
+        map: None,
     },
     ChainBlock {
         def: &SENDS,
         sub_pages: &[],
+        map: None,
     },
     ChainBlock {
         def: &CHORUS,
         sub_pages: &[],
+        map: None,
     },
     ChainBlock {
         def: &DELAY,
         sub_pages: &DELAY_SUB_PAGES,
+        map: None,
     },
     ChainBlock {
         def: &EFX,
         sub_pages: &[],
+        map: None,
     },
     ChainBlock {
         def: &TAPE,
         sub_pages: &[],
+        map: None,
     },
     ChainBlock {
         def: &MASTER,
         sub_pages: &MASTER_SUB_PAGES,
+        map: None,
     },
 ];
 
@@ -744,22 +776,27 @@ static SYSTEM_BLOCKS: [ChainBlock; 5] = [
     ChainBlock {
         def: &SYS_MIDI,
         sub_pages: &[],
+        map: None,
     },
     ChainBlock {
         def: &SYS_TUNING,
         sub_pages: &[],
+        map: None,
     },
     ChainBlock {
         def: &SYS_THEME,
         sub_pages: &[],
+        map: None,
     },
     ChainBlock {
         def: &SYS_UPDATES,
         sub_pages: &[],
+        map: None,
     },
     ChainBlock {
         def: &SYS_ABOUT,
         sub_pages: &[&SYS_AUDIO],
+        map: None,
     },
 ];
 
@@ -850,22 +887,27 @@ static DEMO_BLOCKS: [ChainBlock; 5] = [
     ChainBlock {
         def: &DEMO_WAVES,
         sub_pages: &[],
+        map: None,
     },
     ChainBlock {
         def: &DEMO_SHAPES,
         sub_pages: &[],
+        map: None,
     },
     ChainBlock {
         def: &DEMO_MOTION,
         sub_pages: &[],
+        map: None,
     },
     ChainBlock {
         def: &DEMO_FM,
         sub_pages: &[],
+        map: None,
     },
     ChainBlock {
         def: &DEMO_MATRIX,
         sub_pages: &[],
+        map: None,
     },
 ];
 

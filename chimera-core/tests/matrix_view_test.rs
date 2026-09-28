@@ -71,6 +71,9 @@ fn an_empty_matrix_says_so() {
     for _ in 0..5 {
         feed(&mut ui, Input::press(ButtonId::Plus));
     }
+    for _ in 0..4 {
+        feed(&mut ui, Input::press(ButtonId::Edit)); // E1 → MTX
+    }
     settle(&mut ui);
     let mut fb = Fb::new();
     ui.render_with_scope(&mut fb, &PerfStats::zero(), &scope_fixture());

@@ -120,3 +120,35 @@ pub fn tilt(p: f32, r: f32) -> f32 {
         p
     }
 }
+
+/// How a slider cell reads (the approved mockups): a time or rate on its
+/// range, or a percentage, phase or bend.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Law {
+    Hold(EnvSpeed),
+    Attack(EnvSpeed),
+    DecRel(EnvSpeed),
+    BTime,
+    BRate,
+    BurstRate,
+    BurstLen,
+    Phase,
+    Pct,
+    Curve,
+    Tilt,
+}
+
+impl Law {
+    pub fn range(self) -> Option<Range> {
+        Some(match self {
+            Law::Hold(s) => speed_ranges(s).hold,
+            Law::Attack(s) => speed_ranges(s).attack,
+            Law::DecRel(s) => speed_ranges(s).dec_rel,
+            Law::BTime => B_TIME,
+            Law::BRate => B_RATE,
+            Law::BurstRate => BURST_RATE,
+            Law::BurstLen => BURST_LEN,
+            Law::Phase | Law::Pct | Law::Curve | Law::Tilt => return None,
+        })
+    }
+}

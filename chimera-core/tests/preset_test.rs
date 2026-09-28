@@ -402,7 +402,8 @@ fn priming_on_the_lfo_sub_page_registers_nothing() {
         press(&mut ui, ButtonId::Plus);
     }
     press(&mut ui, ButtonId::Edit);
-    press(&mut ui, ButtonId::Edit); // sub-page 2: LFO
+    press(&mut ui, ButtonId::Edit);
+    press(&mut ui, ButtonId::Edit); // sub-page 3: LFO
     assert_eq!(
         ui.page(),
         PageKey::Part {
