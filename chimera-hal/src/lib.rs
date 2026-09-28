@@ -10,7 +10,8 @@ pub const SCREEN_WIDTH: u16 = 240;
 pub const SCREEN_HEIGHT: u16 = 320;
 pub const SAMPLE_RATE: u32 = 48_000;
 
-pub const NUM_ENCODERS: usize = 7; // 6 param + 1 main
+/// The PreenFM3's six encoders, one per parameter cell.
+pub const NUM_ENCODERS: usize = 6;
 pub const NUM_BUTTONS: usize = 12; // 6 param + 6 nav
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -22,8 +23,16 @@ pub enum EncoderId {
     D = 3,
     E = 4,
     F = 5,
-    Main = 6,
 }
+
+pub const ALL_ENCODERS: [EncoderId; NUM_ENCODERS] = [
+    EncoderId::A,
+    EncoderId::B,
+    EncoderId::C,
+    EncoderId::D,
+    EncoderId::E,
+    EncoderId::F,
+];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
