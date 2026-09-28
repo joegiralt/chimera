@@ -1,11 +1,18 @@
 //! LFO slots (filter-routing spec § LFO slots).
 
+use chimera_core::addr::{BlockRef, ParamAddr};
 use chimera_core::dsp::lfo::{Lfo, LfoParams};
 use chimera_core::dsp::modulator::func::{BCoefs, FuncGen, Slides};
-use chimera_core::dsp::modulator::{FuncParams, LfoType};
+use chimera_core::dsp::modulator::{FuncParams, LfoForm, LfoType};
+use chimera_core::dsp::voice::Voice;
+use chimera_core::mod_path::ModDestRegistry;
+use chimera_core::modulation::{ModSource, ModState};
+use chimera_core::params::{EngineType, FilterParams, ParamSnapshot};
+use chimera_core::{MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
 
 const SR: u32 = 48_000;
+const CUTOFF: ParamAddr = ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF);
 
 /// Today's LFO, verbatim (with OFFSET at its only value, 0).
 struct Reference {
@@ -144,4 +151,85 @@ fn a_type_change_glides_out() {
             assert_eq!(x, y, "block {b}: the glide is over");
         }
     }
+}
+
+/// Spec § LFO slots: a note-on resets FUNC's φ on SYNC; FREE runs on.
+#[test]
+fn func_note_on_resets_phase_on_sync_only() {
+    for (form, resets) in [(LfoForm::Sync, true), (LfoForm::Free, false)] {
+        let p = LfoParams {
+            lfo_type: LfoType::Func,
+            func: FuncParams {
+                lfo_form: form,
+                ..FuncParams::LFO
+            },
+            ..LfoParams::default()
+        };
+        let (mut l, mut run_on, mut fresh) = (Lfo::new(), Lfo::new(), Lfo::new());
+        for _ in 0..100 {
+            l.run_block(&p, SR);
+            run_on.run_block(&p, SR);
+        }
+        l.note_on(&p);
+        let (x, y, z) = (
+            l.run_block(&p, SR),
+            run_on.run_block(&p, SR),
+            fresh.run_block(&p, SR),
+        );
+        assert_ne!(y, z, "{form:?}: 100 blocks in, φ has moved");
+        assert_eq!(x, if resets { z } else { y }, "{form:?}");
+    }
+}
+
+/// Two voices whose LFO 1 ran at different rates (route at 0, unheard),
+/// then a note-on with LFO 1 → CUTOFF at 16 (not pinned to the range's edge): with SYNC 1 both restart at
+/// PHASE and render alike; with SYNC 0 their phases still differ.
+fn after_retrigger(sync: u8, phase: f32, pre_rate: f32) -> Vec<f32> {
+    let mut p = ParamSnapshot::for_engine(EngineType::Algo);
+    p.filter.cutoff = 1000.0;
+    p.lfos[0] = LfoParams {
+        shape: 2,
+        rate: pre_rate,
+        sync,
+        phase_offset: phase,
+        ..LfoParams::default()
+    };
+    let mut reg = ModDestRegistry::new();
+    reg.add(CUTOFF, *b"FLTCUTOF").unwrap();
+    let mut ms = ModState::from_registry(&reg, 8);
+    let mut v = Voice::new(SR);
+    let (n, vel) = (MidiNote::new(60).unwrap(), Velocity::new(100).unwrap());
+    let mut b = [0.0f32; BLOCK_SIZE];
+    v.note_on(n, vel, &p);
+    for _ in 0..7 {
+        v.render(&mut b, &p, &ms);
+    }
+    p.lfos[0].rate = 3.0;
+    ms.set_amount(ModSource::Lfo1.index(), 0, 16);
+    v.note_on(n, vel, &p);
+    let mut out = Vec::new();
+    for _ in 0..24 {
+        v.render(&mut b, &p, &ms);
+        out.extend_from_slice(&b);
+    }
+    out
+}
+
+#[test]
+fn classic_sync_retriggers_at_phase() {
+    assert_eq!(
+        after_retrigger(1, 0.25, 1.0),
+        after_retrigger(1, 0.25, 9.0),
+        "SYNC 1 restarts"
+    );
+    assert_ne!(
+        after_retrigger(0, 0.0, 1.0),
+        after_retrigger(0, 0.0, 9.0),
+        "SYNC 0 runs on"
+    );
+    assert_ne!(
+        after_retrigger(1, 0.25, 1.0),
+        after_retrigger(1, 0.5, 1.0),
+        "PHASE is the restart point"
+    );
 }
