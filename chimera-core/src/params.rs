@@ -1,16 +1,15 @@
 use crate::addr::{BlockRef, Blocks};
 use crate::block::{Block, ParamId, ParamSpec, ValFmt};
+use crate::dsp::filter::{FilterMode, SVF_MODE_NAMES, SVF_MODES};
 
-/// Parameters for one voice's filter
+/// Parameters for one voice's filter.
 #[derive(Clone, Copy, Debug)]
 pub struct FilterParams {
     pub cutoff: f32,
     pub resonance: f32,
     pub drive: f32,
-    pub fm_amount: f32,
-    pub env_amount: f32,
-    pub key_track: f32,
-    pub mode: u8,
+    /// Private: `set_mode` keeps it in the SVF's list (spec § 7).
+    mode: FilterMode,
 }
 
 impl Default for FilterParams {
@@ -19,10 +18,7 @@ impl Default for FilterParams {
             cutoff: 1000.0,
             resonance: 0.0,
             drive: 0.0,
-            fm_amount: 0.0,
-            env_amount: 0.0,
-            key_track: 0.0,
-            mode: 2, // LP4
+            mode: FilterMode::Lp24,
         }
     }
 }
@@ -31,15 +27,25 @@ impl FilterParams {
     pub const CUTOFF: ParamId = ParamId(0);
     pub const RESONANCE: ParamId = ParamId(1);
     pub const DRIVE: ParamId = ParamId(2);
-    pub const FM_AMOUNT: ParamId = ParamId(3);
-    pub const ENV_AMOUNT: ParamId = ParamId(4);
-    pub const KEY_TRACK: ParamId = ParamId(5);
+    // 3 (FM), 4 (ENV) and 5 (KEY) are retired, never reused (ADR 0009).
+    pub const MODE: ParamId = ParamId(7);
+
+    pub fn mode(&self) -> FilterMode {
+        self.mode
+    }
+
+    /// Sets `m` if the SVF has it; returns whether it did.
+    pub fn set_mode(&mut self, m: FilterMode) -> bool {
+        let ok = SVF_MODES.contains(&m);
+        if ok {
+            self.mode = m;
+        }
+        ok
+    }
 }
 
-/// Cutoff, resonance and drive are read by `Voice` every block. FM amount,
-/// env amount and key track are never read (spec § Current state).
-/// `mode` has no spec (not on any page; plan D16).
-pub static FILTER_SPECS: [ParamSpec; 6] = [
+/// Every one read by `Voice` per block; MODE is an Enum, so not modulatable.
+pub static FILTER_SPECS: [ParamSpec; 4] = [
     ParamSpec::continuous(
         0,
         "CUTOFF",
@@ -52,9 +58,7 @@ pub static FILTER_SPECS: [ParamSpec; 6] = [
     ),
     ParamSpec::continuous(1, "RESO", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, true),
     ParamSpec::continuous(2, "DRIVE", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, true),
-    ParamSpec::continuous(3, "FM", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false),
-    ParamSpec::continuous(4, "ENV", ValFmt::Bi, -1.0, 1.0, 0.0, 2.0 / 128.0, false),
-    ParamSpec::continuous(5, "TRACK", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false),
+    ParamSpec::choice(7, "MODE", ValFmt::Names(&SVF_MODE_NAMES), 7.0, 0.0),
 ];
 
 impl Block for FilterParams {
@@ -67,9 +71,7 @@ impl Block for FilterParams {
             Self::CUTOFF => self.cutoff,
             Self::RESONANCE => self.resonance,
             Self::DRIVE => self.drive,
-            Self::FM_AMOUNT => self.fm_amount,
-            Self::ENV_AMOUNT => self.env_amount,
-            Self::KEY_TRACK => self.key_track,
+            Self::MODE => SVF_MODES.iter().position(|&m| m == self.mode).unwrap_or(0) as f32,
             _ => 0.0,
         }
     }
@@ -79,9 +81,9 @@ impl Block for FilterParams {
             Self::CUTOFF => self.cutoff = v,
             Self::RESONANCE => self.resonance = v,
             Self::DRIVE => self.drive = v,
-            Self::FM_AMOUNT => self.fm_amount = v,
-            Self::ENV_AMOUNT => self.env_amount = v,
-            Self::KEY_TRACK => self.key_track = v,
+            Self::MODE => {
+                self.set_mode(SVF_MODES[(v.max(0.0) as usize).min(SVF_MODES.len() - 1)]);
+            }
             _ => {}
         }
     }

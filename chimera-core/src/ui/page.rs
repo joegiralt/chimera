@@ -151,7 +151,7 @@ const DEMO_WAVES: [ParamAddr; 6] = [
     ParamAddr::new(BlockRef::Drive, DriveParams::TONE),
     ParamAddr::new(BlockRef::Folder, FolderParams::FOLD),
     ParamAddr::new(BlockRef::Folder, FolderParams::SYMMETRY),
-    ParamAddr::new(BlockRef::Filter, FilterParams::ENV_AMOUNT),
+    ParamAddr::new(BlockRef::Folder, FolderParams::MIX),
     ParamAddr::new(BlockRef::Out, OutParams::PAN),
 ];
 const DEMO_SHAPES: [ParamAddr; 6] = [
@@ -160,7 +160,7 @@ const DEMO_SHAPES: [ParamAddr; 6] = [
     ParamAddr::new(BlockRef::Out, OutParams::PAN),
     ParamAddr::new(BlockRef::Filter, FilterParams::DRIVE),
     ParamAddr::new(BlockRef::Filter, FilterParams::RESONANCE),
-    ParamAddr::new(BlockRef::Filter, FilterParams::FM_AMOUNT),
+    ParamAddr::new(BlockRef::Drive, DriveParams::MIX),
 ];
 const DEMO_MOTION: [ParamAddr; 6] = [
     ParamAddr::new(BlockRef::AmpEnv, EnvParams::ATTACK),

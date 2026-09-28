@@ -92,6 +92,8 @@ pub static FOLDER: BlockDef = BlockDef {
 // Filter
 // ---------------------------------------------------------------------------
 
+/// SVF: — · CUTOFF · RES / MODE · ENV · KEY (KIND and the route knobs come
+/// later in the filter-routing plan; spec § 6).
 pub static FILTER: BlockDef = BlockDef {
     id: 10,
     name: "Filter",
@@ -99,14 +101,36 @@ pub static FILTER: BlockDef = BlockDef {
     layout: PageLayout::BigViz,
     viz: VizType::FilterResponse,
     params: [
+        EMPTY,
         ParamSlot::param(BlockRef::Filter, FilterParams::CUTOFF),
         ParamSlot::param(BlockRef::Filter, FilterParams::RESONANCE),
-        ParamSlot::param(BlockRef::Filter, FilterParams::DRIVE),
-        ParamSlot::param(BlockRef::Filter, FilterParams::FM_AMOUNT),
-        ParamSlot::param(BlockRef::Filter, FilterParams::ENV_AMOUNT),
-        ParamSlot::param(BlockRef::Filter, FilterParams::KEY_TRACK),
+        ParamSlot::param(BlockRef::Filter, FilterParams::MODE),
+        EMPTY,
+        EMPTY,
     ],
 };
+
+/// FLT › MODE: MODE and the SVF's extras (spec § UI). `short` is "MDE", not
+/// "MODE": on the Algo map that reaches FOLDER, the full word overlaps FLD's
+/// label by 2px (`MOD` is already MOD_MATRIX's); this abbreviation is only
+/// the map's branch label, not the MODE param's own spec name.
+pub static FILTER_MODE: BlockDef = BlockDef {
+    id: 59,
+    name: "Filter Mode",
+    short: "MDE",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::param(BlockRef::Filter, FilterParams::MODE),
+        ParamSlot::param(BlockRef::Filter, FilterParams::DRIVE),
+        EMPTY,
+        EMPTY,
+        EMPTY,
+        EMPTY,
+    ],
+};
+
+static FILTER_SUB_PAGES: [&BlockDef; 1] = [&FILTER_MODE];
 
 // ---------------------------------------------------------------------------
 // Modulators — envelopes, LFOs, etc.
@@ -443,7 +467,7 @@ static KICK_BLOCKS: [ChainBlock; 3] = [
     },
     ChainBlock {
         def: &FILTER,
-        sub_pages: &[],
+        sub_pages: &FILTER_SUB_PAGES,
     },
     ChainBlock {
         def: &MOD_MATRIX,
@@ -466,7 +490,7 @@ static MODAL_PLUCK_BLOCKS: [ChainBlock; 3] = [
     },
     ChainBlock {
         def: &FILTER,
-        sub_pages: &[],
+        sub_pages: &FILTER_SUB_PAGES,
     },
     ChainBlock {
         def: &MOD_MATRIX,
@@ -513,7 +537,7 @@ static ALGO_BLOCKS: [ChainBlock; 6] = [
     },
     ChainBlock {
         def: &FILTER,
-        sub_pages: &[],
+        sub_pages: &FILTER_SUB_PAGES,
     },
     ChainBlock {
         def: &FOLDER,

@@ -82,7 +82,6 @@ fn stress_algo_full_with_chain() {
         p.drive.mix = 1.0;
         p.filter.cutoff = 2000.0;
         p.filter.resonance = 0.7;
-        p.filter.mode = 2; // LP4
         p.folder.fold = 0.5;
         p.folder.mix = 1.0;
     });
@@ -152,7 +151,6 @@ fn stress_sympathetic_with_chain() {
         p.drive.mix = 1.0;
         p.filter.cutoff = 3000.0;
         p.filter.resonance = 0.5;
-        p.filter.mode = 2;
         p.folder.fold = 0.3;
         p.folder.mix = 1.0;
     });
@@ -169,7 +167,6 @@ fn stress_worst_case() {
         p.drive.mix = 1.0;
         p.filter.cutoff = 1000.0;
         p.filter.resonance = 0.9;
-        p.filter.mode = 2; // LP4 (two cascaded SVFs)
         p.folder.fold = 1.0;
         p.folder.mix = 1.0;
     });
@@ -237,7 +234,6 @@ fn stress_summary() {
     bench_render("+ Filter LP4", |p| {
         *p = tri();
         p.filter.cutoff = 2000.0;
-        p.filter.mode = 2;
     });
     bench_render("+ Wavefolder", |p| {
         *p = tri();

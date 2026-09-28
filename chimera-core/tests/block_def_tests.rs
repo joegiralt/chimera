@@ -4,8 +4,8 @@ use chimera_core::ui::page::PageLayout;
 #[test]
 fn filter_block_params() {
     let def = &block_registry::FILTER;
-    assert_eq!(def.params[0].label(), "CUTOFF");
-    assert_eq!(def.params[1].label(), "RESO");
+    assert_eq!(def.params[1].label(), "CUTOFF");
+    assert_eq!(def.params[2].label(), "RESO");
     assert_eq!(def.layout, PageLayout::BigViz);
 }
 

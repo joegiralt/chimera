@@ -4,6 +4,7 @@
 
 use chimera_core::addr::{BlockRef, Op, ParamAddr};
 use chimera_core::dsp::algo::params::AlgoOpParams;
+use chimera_core::dsp::filter::FilterMode;
 use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::ui::block_def::{BlockDef, ParamSlot, VizType, slot_addr};
@@ -57,11 +58,17 @@ fn drive_filter_folder_pages() {
     snap(&reg::DRIVE, 1, 1, &mut p);
     assert_eq!(p.drive.tone, 107.0 / 127.0);
 
-    assert_eq!(read(&reg::FILTER, &p), [1.0, 0.0, 0.0, 0.0, 0.5, 0.0]);
-    turn(&reg::FILTER, 0, -1, &mut p);
+    assert_eq!(read(&reg::FILTER, &p), [0.0, 1.0, 0.0, 0.0, 0.0, 0.0]);
+    turn(&reg::FILTER, 1, -1, &mut p);
     assert_eq!(p.filter.cutoff, 20000.0 - (20000.0 - 20.0) / 128.0);
-    turn(&reg::FILTER, 4, 1, &mut p);
-    assert_eq!(p.filter.env_amount, (1.0 - -1.0) / 128.0);
+    turn(&reg::FILTER, 3, 1, &mut p);
+    assert_eq!(
+        p.filter.mode(),
+        FilterMode::Lp6,
+        "the next in the SVF's list"
+    );
+    turn(&reg::FILTER, 3, 20, &mut p);
+    assert_eq!(p.filter.mode(), FilterMode::Phaser, "clamps at the last");
 
     assert_eq!(read(&reg::FOLDER, &p), [0.0, 0.5, 0.5, 0.0, 0.0, 0.0]);
     turn(&reg::FOLDER, 0, 4, &mut p);

@@ -232,11 +232,13 @@ fn test_drive_block_formats_in_registry() {
 }
 
 #[test]
-fn test_filter_env_amount_bipolar_in_registry() {
+fn test_filter_mode_is_named_in_registry() {
     use chimera_core::ui::block_registry;
     use chimera_core::ui::page::ValFmt;
-    let def = &block_registry::FILTER;
-    assert_eq!(def.params[4].format(), ValFmt::Bi); // ENV amount
+    assert!(matches!(
+        block_registry::FILTER.params[3].format(),
+        ValFmt::Names(_)
+    ));
 }
 
 #[test]
