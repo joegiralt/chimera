@@ -123,7 +123,7 @@ These are the failure modes the spec implies but no spec'd test exercises, most 
 - **Volume serial and the boot-sector gate.** `embedded-sdmmc` 0.10 doesn't expose the serial, and its `Bpb::create_from_bytes` divides by sectors-per-cluster and subtracts the metadata from the total unchecked; a zero root cluster underflows later. `chimera_fat::volume` parses the MBR and the boot sector itself, validates every field the library divides by or trusts, and classifies FAT16/FAT32 by cluster count exactly as the library does (< 4085 unsupported, < 65 525 FAT16, else FAT32 with version 0). `FatStore::mount` runs it before `open_raw_volume`. The same parse detects exFAT, in a 0x07 partition or with no MBR.
 - **Error classification lives in the medium.** `embedded-sdmmc` maps every `SpiDevice` error to `Error::Transport`, and `FatStore<D: Medium>` can't read a generic `D::Error`. So `Medium::classify(&self, &Self::Error) -> StoreError` classifies device errors, and `Medium::fault(&self) -> Option<StoreError>` reports a fault the medium saw during the operation, which the library may have hidden behind `DiskFull`. The SD adapter keeps a `timed_out` flag and a `BusPhase` (`Acquire` or `Data`): a failure while acquiring is `NoCard`; a timeout after it is `Timeout`.
 - **Timeouts.** One deadline per whole operation is wrong both ways: a missing card would take seconds of CMD0 retries, and a FAT scan or plan 2's 60 KB save can legitimately pass 2 s. So:
-  - `SD_ACQUIRE_MS = 250`: the whole acquire (`AcquireOpts { acquire_retries: SD_ACQUIRE_RETRIES = 3, use_crc: true }`); a missing card is `NoCard` within it;
+  - `SD_ACQUIRE_MS = 1000`: the whole acquire (`AcquireOpts { acquire_retries: SD_ACQUIRE_RETRIES = 3, use_crc: true }`); a missing card is `NoCard` within it;
   - `SD_IDLE_MS = 600`: no 512 B block moved for this long is `Timeout` (above SDHC's 500 ms write busy);
   - `SD_OP_CAP_MS = 10_000`: a backstop per operation.
 
@@ -275,7 +275,7 @@ What changes versus 099f251, and nothing else:
   - `pub const SD_INIT_HZ: u32 = 400_000;`
   - `pub const SD_FAST_HZ: u32` (12 500 000 until the STOP decides);
   - `pub const SD_MODE: spi::Mode` (`MODE_0` until the STOP decides);
-  - `pub const SD_ACQUIRE_RETRIES: u32 = 3;`, `pub const SD_ACQUIRE_MS: u32 = 250;`, `pub const SD_IDLE_MS: u32 = 600;`, `pub const SD_OP_CAP_MS: u32 = 10_000;`
+  - `pub const SD_ACQUIRE_RETRIES: u32 = 3;`, `pub const SD_ACQUIRE_MS: u32 = 1_000;`, `pub const SD_IDLE_MS: u32 = 600;`, `pub const SD_OP_CAP_MS: u32 = 10_000;`
   - `pub struct SdSpi`: owns `Spi<SPI2, Enabled>`, CS `PE12`, the SPI2 `rec` and a private `Deadline` (`enum { Cycles { .. }, Transfers { left } }`, the second when the DWT won't count); implements `embedded_hal::spi::SpiDevice<u8>`, with `ErrorType::Error = SdSpiError { Spi, Timeout }`;
   - `impl SdSpi { pub fn new(..) -> Self; pub fn set_hz(&mut self, hz: u32); pub fn set_mode(&mut self, m: spi::Mode); pub fn wake(&mut self); pub fn arm(&mut self, idle_ms: u32); pub fn timed_out(&self) -> bool; }`
     - `set_hz`/`set_mode` do `free()` and rebuild with `spi_unchecked`;
@@ -308,7 +308,7 @@ What changes versus 099f251, and nothing else:
   - which SPI mode acquired and which fast clock passed readback;
   - the no-card acquire time (must be ≤ `SD_ACQUIRE_MS` plus the wake) and the worst `max_gap_us`.
 
-  Record the answers under `## Measured`. Set `SD_FAST_HZ` to the fastest clock that passed (never above 25 MHz), `SD_MODE` to the mode that acquired, and `SD_IDLE_MS` to at least twice the worst gap if 600 ms is too tight. If CS isn't PE12, fix it before Task 13. If Task 6 has already written ADR 0045, fill its pending pin section now. Commit `git commit -m "SD clock, mode and pins from the probe"`.
+  Record the answers under `## Measured`. Set `SD_FAST_HZ` to the fastest clock that passed (never above 25 MHz), `SD_MODE` to the mode that acquired, and `SD_IDLE_MS` to at least twice the worst gap if 600 ms is too tight. `SD_IDLE_MS` never goes below 600. If CS isn't PE12, fix it before Task 13. If Task 6 has already written ADR 0045, fill its pending pin section now. Commit `git commit -m "SD clock, mode and pins from the probe"`.
 
 ### Task 3: The `Store` trait, `MemStore` and the conformance suite
 
@@ -973,6 +973,7 @@ pub fn draw_busy<D: DrawTarget<Color = Rgb565>>(d: &mut D, label: BusyLabel) -> 
   - `pub fn take_store(..) -> Option<&'static mut SdStore>`, a take-once `static mut MaybeUninit` in AXI, as `shared.rs` does (`// SAFETY:` on the one `unsafe`).
 - Modify: `chimera-stm32/src/main.rs`:
   - `mod sd;` loses its `cfg(feature = "sd-probe")`;
+  - `clocks::enable_cycle_counter` and `counting` lose their `cfg(any(feature = "perf-probe", feature = "sd-probe"))` gate (`sd::init` now calls them in every build);
   - after `display.init` with the default theme: `draw_busy(Busy)` and flush, then `sd::take_store`, then `SystemSync::boot(&mut card, store)`, then apply `settings.theme` through the same path the loop uses (backlight duty, gamma, palette) and `ui.set_theme`. The boot read is thus behind a visible overlay and inside the timeouts; it still runs before `watchdog::start`, which is safe because every card path is bounded (`SD_OP_CAP_MS`) and panic-free (Task 1's gate);
   - in the loop after `handle_input`: `if sync.wants_write(ui.in_system(), &settings) { draw_busy(Saving) → flush_region → sync.write }`;
   - `settings.theme = ui.theme()` each frame.

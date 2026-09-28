@@ -1,36 +1,40 @@
 #![no_std]
 #![no_main]
 
+// The SD probe build halts after `boot`: nothing of the synth is built.
+#[cfg(not(feature = "sd-probe"))]
 mod audio;
-#[cfg(feature = "bench")]
+#[cfg(all(feature = "bench", not(feature = "sd-probe")))]
 mod bench;
 mod cache;
 mod clocks;
+#[cfg(not(feature = "sd-probe"))]
 mod controls;
 mod display;
-#[cfg(feature = "midi-din")]
+#[cfg(all(feature = "midi-din", not(feature = "sd-probe")))]
 mod midi_din;
 mod panic;
+#[cfg(not(feature = "sd-probe"))]
 mod priority;
+#[cfg(not(feature = "sd-probe"))]
 mod probe;
 #[cfg(feature = "sd-probe")]
 mod sd;
 #[cfg(feature = "sd-probe")]
 mod sd_probe;
+#[cfg(not(feature = "sd-probe"))]
 mod shared;
+#[cfg(not(feature = "sd-probe"))]
 mod watchdog;
 
-use chimera_core::audio_out::Heartbeat;
-use chimera_core::clock_plan::pll3_for;
-use chimera_core::hw::SampleBudget;
+#[cfg(not(feature = "sd-probe"))]
 use chimera_core::reset::ResetCause;
-use chimera_core::ui::perf::PerfTracker;
 use chimera_core::ui::theme_settings::ThemeSettings;
-use chimera_hal::ChimeraDisplay;
-use controls::Stm32Controls;
-use cortex_m_rt::{entry, exception};
+use cortex_m_rt::entry;
 use display::Stm32Display;
-use stm32h7xx_hal::gpio::Speed;
+use stm32h7xx_hal::gpio::{Output, PD8, PD9, PD10, PushPull, Speed};
+#[cfg(any(feature = "midi-din", feature = "sd-probe"))]
+use stm32h7xx_hal::rcc::CoreClocks;
 use stm32h7xx_hal::{pac, prelude::*, spi};
 
 /// Flush-to-zero and default NaN, in this context (FPSCR) and in every
@@ -49,27 +53,71 @@ fn fp_flush_to_zero(fpu: &mut cortex_m::peripheral::FPU) {
     }
 }
 
-#[exception]
+#[cfg(not(feature = "sd-probe"))]
+#[cortex_m_rt::exception]
 fn SysTick() {
-    static mut HEARTBEAT: Heartbeat = Heartbeat::new();
+    static mut HEARTBEAT: chimera_core::audio_out::Heartbeat =
+        chimera_core::audio_out::Heartbeat::new();
     controls::isr_tick();
     watchdog::kick_if_audio_alive(HEARTBEAT);
 }
 
-// The SD probe halts before the synth starts: the rest of `main` is dead
-// there.
+type Display = Stm32Display<
+    spi::Spi<pac::SPI1, spi::Enabled>,
+    PD8<Output<PushPull>>,
+    PD9<Output<PushPull>>,
+    PD10<Output<PushPull>>,
+>;
+#[cfg(not(feature = "sd-probe"))]
+type Backlight = stm32h7xx_hal::pwm::Pwm<pac::TIM1, 1, stm32h7xx_hal::pwm::ComplementaryDisabled>;
+
+/// The unit with the display up, as both builds start.
+struct Board {
+    cp: cortex_m::Peripherals,
+    clk: clocks::Clocks,
+    display: Display,
+    #[cfg(any(feature = "midi-din", feature = "sd-probe"))]
+    clocks: CoreClocks,
+    #[cfg(not(feature = "sd-probe"))]
+    synth: SynthParts,
+    #[cfg(feature = "sd-probe")]
+    sd: sd::SdParts,
+}
+
+#[cfg(not(feature = "sd-probe"))]
+struct SynthParts {
+    reset_cause: ResetCause,
+    led: stm32h7xx_hal::gpio::PE1<Output<PushPull>>,
+    backlight: Backlight,
+    theme: ThemeSettings,
+    iwdg: pac::IWDG,
+    dbgmcu: pac::DBGMCU,
+}
+
 #[entry]
-#[cfg_attr(
-    feature = "sd-probe",
-    allow(unreachable_code, unused_variables, unused_mut)
-)]
 fn main() -> ! {
+    let board = boot();
+    #[cfg(feature = "sd-probe")]
+    probe_card(board);
+    #[cfg(not(feature = "sd-probe"))]
+    synth(board);
+}
+
+#[cfg(feature = "sd-probe")]
+fn probe_card(mut b: Board) -> ! {
+    let sd = sd::init(b.sd, &mut b.cp.DCB, &mut b.cp.DWT, &b.clocks, b.clk.cpu_hz);
+    sd_probe::run(&mut b.display, b.clk, sd)
+}
+
+fn boot() -> Board {
+    #[cfg(not(feature = "sd-probe"))]
     probe::paint_stack();
     let mut cp = cortex_m::Peripherals::take().unwrap();
     fp_flush_to_zero(&mut cp.FPU);
     let dp = pac::Peripherals::take().unwrap();
 
     // RCC_RSR survives the reset it records; clear it for the next one.
+    #[cfg(not(feature = "sd-probe"))]
     let reset_cause = ResetCause::from_rsr(dp.RCC.rsr.read().bits());
     dp.RCC.rsr.modify(|_, w| w.rmvf().set_bit());
 
@@ -77,6 +125,7 @@ fn main() -> ! {
     let rev = clocks::read_rev(&dp.DBGMCU);
     let (ccdr, clk) = clocks::freeze(dp.PWR, dp.RCC, &dp.SYSCFG, rev);
     cache::init(&mut cp.MPU, &mut cp.SCB, &mut cp.CPUID);
+    #[cfg(not(feature = "sd-probe"))]
     shared::copy_waves();
 
     let gpioa = dp.GPIOA.split(ccdr.peripheral.GPIOA);
@@ -101,7 +150,7 @@ fn main() -> ! {
         ccdr.peripheral.TIM1,
         &ccdr.clocks,
     );
-    let mut theme = ThemeSettings::DEFAULT;
+    let theme = ThemeSettings::DEFAULT;
     backlight.set_duty(theme.bright.duty(backlight.get_max_duty()));
     backlight.enable();
 
@@ -145,23 +194,57 @@ fn main() -> ! {
     // the first change the main loop notices.
     display.set_gamma(theme.gamma.tables());
     display.set_palette(theme.palette());
-    #[cfg(feature = "sd-probe")]
-    sd_probe::run(
-        &mut display,
+    Board {
+        cp,
         clk,
-        sd::init(
-            dp.SPI2,
-            ccdr.peripheral.SPI2,
-            gpioa.pa9,
-            gpiob.pb14,
-            gpiob.pb15,
-            gpioe.pe12,
-            &mut cp.DCB,
-            &mut cp.DWT,
-            &ccdr.clocks,
-            clk.cpu_hz,
-        ),
-    );
+        display,
+        #[cfg(any(feature = "midi-din", feature = "sd-probe"))]
+        clocks: ccdr.clocks,
+        #[cfg(not(feature = "sd-probe"))]
+        synth: SynthParts {
+            reset_cause,
+            led,
+            backlight,
+            theme,
+            iwdg: dp.IWDG,
+            dbgmcu: dp.DBGMCU,
+        },
+        #[cfg(feature = "sd-probe")]
+        sd: sd::SdParts {
+            spi2: dp.SPI2,
+            rec: ccdr.peripheral.SPI2,
+            sck: gpioa.pa9,
+            miso: gpiob.pb14,
+            mosi: gpiob.pb15,
+            cs: gpioe.pe12,
+        },
+    }
+}
+
+#[cfg(not(feature = "sd-probe"))]
+fn synth(board: Board) -> ! {
+    use chimera_core::clock_plan::pll3_for;
+    use chimera_core::hw::SampleBudget;
+    use chimera_core::ui::perf::PerfTracker;
+    use chimera_hal::ChimeraDisplay;
+    use controls::Stm32Controls;
+
+    let Board {
+        mut cp,
+        clk,
+        mut display,
+        #[cfg(feature = "midi-din")]
+        clocks,
+        synth:
+            SynthParts {
+                reset_cause,
+                mut led,
+                mut backlight,
+                mut theme,
+                iwdg,
+                dbgmcu,
+            },
+    } = board;
     let mut stats_r = probe::init(&mut cp.DCB, &mut cp.DWT, clk, reset_cause);
 
     let mut controls = Stm32Controls::new();
@@ -188,7 +271,7 @@ fn main() -> ! {
     audio::sai::init(clk.rev.new_sai(), pll3.mckdiv);
     audio::dma::clear();
     audio::prefill();
-    watchdog::start(dp.IWDG, &dp.DBGMCU);
+    watchdog::start(iwdg, &dbgmcu);
     audio::dma::init(&mut cp.NVIC);
     audio::dma::start();
     audio::sai::start();
@@ -196,7 +279,7 @@ fn main() -> ! {
     #[cfg(feature = "midi-din")]
     midi_din::init(
         &mut cp.NVIC,
-        ccdr.clocks.pclk2().raw(),
+        clocks.pclk2().raw(),
         producers
             .take(audio::engine::DIN)
             .expect("DIN producer taken once"),

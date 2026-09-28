@@ -1,4 +1,6 @@
-use chimera_core::clock_plan::{Pll3Config, PllRange, SiliconRev, VcoRange, cycles_for_us};
+#[cfg(not(feature = "sd-probe"))]
+use chimera_core::clock_plan::{Pll3Config, PllRange, VcoRange};
+use chimera_core::clock_plan::{SiliconRev, cycles_for_us};
 #[cfg(any(feature = "perf-probe", feature = "sd-probe"))]
 use cortex_m::peripheral::{DCB, DWT};
 use stm32h7xx_hal::pac;
@@ -80,6 +82,7 @@ fn counting() -> bool {
     DWT::cycle_count() != start
 }
 
+#[cfg(not(feature = "sd-probe"))]
 pub fn init_pll3(cfg: &Pll3Config) {
     // SAFETY: single-threaded init after the HAL's `freeze` (which leaves
     // PLL3 alone) and before any SAI runs; nothing else touches PLL3.
