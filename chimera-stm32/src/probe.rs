@@ -28,13 +28,20 @@ mod imp {
     static READY: AtomicBool = AtomicBool::new(false);
     static TAKEN: AtomicBool = AtomicBool::new(false);
 
+    // Linker symbols: only their addresses mean anything. The stack between
+    // them is no Rust object, so pointers into it are built from the bare
+    // address, not from these zero-sized statics.
     unsafe extern "C" {
-        static _stack_start: u32;
-        static _stack_end: u32;
+        static _stack_start: [u32; 0];
+        static _stack_end: [u32; 0];
+    }
+
+    fn stack_bottom() -> *mut u32 {
+        core::ptr::with_exposed_provenance_mut((&raw const _stack_end).addr())
     }
 
     pub fn paint_stack() {
-        let bottom = (&raw const _stack_end) as *mut u32;
+        let bottom = stack_bottom();
         let limit = cortex_m::register::msp::read() as usize - PAINT_MARGIN;
         let mut p = bottom;
         while (p as usize) < limit {
@@ -48,8 +55,8 @@ mod imp {
     }
 
     pub fn stack_used() -> u32 {
-        let bottom = &raw const _stack_end;
-        let words = ((&raw const _stack_start) as usize - bottom as usize) / 4;
+        let bottom = stack_bottom().cast_const();
+        let words = ((&raw const _stack_start).addr() - bottom.addr()) / 4;
         // SAFETY: volatile reads inside the linker's stack region; a read that
         // races an interrupt's frame only moves the mark by that word.
         let untouched =
