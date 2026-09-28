@@ -376,8 +376,8 @@ impl UiState {
                     }
                 } else {
                     // Init entries follow the pool slots.
-                    if let Some(&ct) = browser::INIT_TYPES.get(sel_cursor - POOL_SIZE) {
-                        self.performance.parts[sel_part].load_init(ct);
+                    if let Some(&engine) = browser::INIT_TYPES.get(sel_cursor - POOL_SIZE) {
+                        self.performance.parts[sel_part].load_init(engine);
                     }
                 }
                 // Switch to the loaded part and return to normal mode

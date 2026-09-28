@@ -177,10 +177,10 @@ pub fn scope_fixture() -> [f32; SCOPE_LEN] {
     })
 }
 
-/// Load `ct`'s init Sound into Part 1 through the sound browser (EDIT + B1,
+/// Load `engine`'s init Sound into Part 1 through the sound browser (EDIT + B1,
 /// scroll to the init row, EDIT).
-pub fn load_init(ui: &mut UiState, ct: EngineType) {
-    let row = POOL_SIZE + EngineType::ALL.iter().position(|&c| c == ct).unwrap();
+pub fn load_init(ui: &mut UiState, engine: EngineType) {
+    let row = POOL_SIZE + EngineType::ALL.iter().position(|&c| c == engine).unwrap();
     feed(ui, Input::chord(ButtonId::Edit, ButtonId::B1));
     feed(ui, Input::turn(EncoderId::Main, row as i8));
     feed(ui, Input::press(ButtonId::Edit));

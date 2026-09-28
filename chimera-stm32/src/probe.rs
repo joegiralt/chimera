@@ -30,8 +30,9 @@ mod imp {
     static TAKEN: AtomicBool = AtomicBool::new(false);
 
     // Linker symbols: only their addresses mean anything. The stack between
-    // them is no Rust object, so pointers into it are built from the bare
-    // address, not from these zero-sized statics.
+    // them is not one Rust allocation (only the live frames in it are), so
+    // pointers into it are built from the bare address, not from these
+    // zero-sized statics.
     unsafe extern "C" {
         static _stack_start: [u32; 0];
         static _stack_end: [u32; 0];
