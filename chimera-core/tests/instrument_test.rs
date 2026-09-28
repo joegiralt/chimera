@@ -21,14 +21,38 @@ use common::fnv1a;
 
 use chimera_core::hw::{CPU_HZ_REV_V, SampleBudget};
 
+/// The budget a voice share of `voice_share` cycles/sample gives, the FX
+/// bus's own cost folded in: the smallest `cpu_hz` whose `SampleBudget`
+/// rounds up to at least `FxBus::COST + voice_share` (`for_cpu` truncates).
+const fn budget_for(voice_share: u32) -> SampleBudget {
+    SampleBudget::for_cpu(((FxBus::COST.0 + voice_share) as u64 * 480_000).div_ceil(7) as u32)
+}
+
 /// The voices' share before the FX diet (7,000 − 3,310). After the diet
 /// nothing sheds on rev V, so the allocation, stealing and shedding tests
 /// here keep the share they were written against, whatever the bus costs.
 const VOICE_SHARE: u32 = 3_690;
-const BUDGET: SampleBudget =
-    SampleBudget::for_cpu(((FxBus::COST.0 + VOICE_SHARE) as u64 * 480_000).div_ceil(7) as u32);
+const BUDGET: SampleBudget = budget_for(VOICE_SHARE);
 
 const SR: u32 = chimera_hal::SAMPLE_RATE;
+
+/// `Voice::cost` of factory Sound `i`'s algorithm, no mod routing (the
+/// factory bank routes nothing into VCA).
+fn factory_voice_cost(i: usize) -> u32 {
+    let mut p = ParamSnapshot::for_engine(EngineType::Algo);
+    p.algo = chimera_core::factory::factory_sound(i).unwrap().params.algo;
+    chimera_core::dsp::voice::Voice::cost(&p, &ModState::new()).0
+}
+
+/// Room for the four MORPH PAD voices a SAW LEAD chord's patch edit leaves
+/// (two of six shed) plus the SQR BASS note that steals in next: just
+/// enough that the note reuses the dying slot it waits on (ADR 0027)
+/// instead of stealing a held one. Derived from `Voice::cost`, not a fixed
+/// margin, so a future change to the cost model can't silently flip which
+/// slot the note lands on.
+fn morph_pad_plus_sqr_bass_budget() -> SampleBudget {
+    budget_for(4 * factory_voice_cost(6) + factory_voice_cost(5))
+}
 
 fn on(ch: u8, note: u8) -> NoteEvent {
     NoteEvent {
@@ -965,6 +989,7 @@ fn a_note_on_waits_out_a_fade_before_stealing_a_held_note() {
     };
     let (light, heavy) = (perf(4), perf(6)); // SAW LEAD fits six, MORPH PAD four
     let mut rig = Rig::new();
+    *rig.inst = Instrument::new(SR, morph_pad_plus_sqr_bass_budget());
     for n in CHORD6 {
         rig.inst.handle(on(0, n), &light);
     }
@@ -1007,6 +1032,7 @@ fn a_shed_waiting_note_counts_as_refused() {
         AudioShared::from_performance(&p)
     };
     let mut rig = Rig::new();
+    *rig.inst = Instrument::new(SR, morph_pad_plus_sqr_bass_budget());
     let light = perf(4, 5);
     for n in CHORD6 {
         rig.inst.handle(on(0, n), &light);

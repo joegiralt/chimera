@@ -8,8 +8,10 @@
 use crate::addr::{BlockRef, ParamAddr};
 use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::algo::plan::OPS;
+use crate::dsp::modulator::{EnvType, FuncMode};
+use crate::hw::Cost;
 use crate::mod_path::{LABEL_LEN, ModDestRegistry};
-use crate::params::FilterParams;
+use crate::params::{EnvParams, FilterParams, ParamSnapshot};
 use crate::ui::mod_grid::MatrixState;
 
 pub const MAX_MOD_SOURCES: usize = 8;
@@ -293,5 +295,57 @@ impl ModState {
 impl Default for ModState {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// The modulator pool's cycles per sample (spec § CPU). Never low: the
+/// plan review's estimates until the bench measures each term.
+pub struct ModRouting;
+
+impl ModRouting {
+    /// Six per-block modulators, the eight-row matrix sum and `fast_exp2`.
+    pub const BASE: Cost = Cost(30);
+    /// An ENV slot of type A filling the VCA's buffer.
+    pub const ENV_A: Cost = Cost(30);
+    /// Type B filling it.
+    pub const ENV_B: Cost = Cost(40);
+    /// More for B in ENV mode with SHAPE off centre, or with a route into
+    /// its SHAPE: a divide per sample.
+    pub const CURVE: Cost = Cost(15);
+    /// Each other VCA route's ramp: an int→float conversion and two
+    /// multiply-adds (Task 10 review). Billed at 5, not the spec's 3.
+    pub const OTHER: Cost = Cost(5);
+    /// The VCA's clamp and multiply, with any route.
+    pub const CLAMP: Cost = Cost(3);
+
+    pub fn cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
+        let bits = mods.routes_into(VCA);
+        if bits == 0 {
+            return Self::BASE;
+        }
+        ModSource::ALL
+            .iter()
+            .filter(|s| bits & (1 << s.index()) != 0)
+            .map(|s| match s.env_slot() {
+                None => Self::OTHER,
+                Some(slot) => {
+                    let e = &p.envelopes[slot.index()];
+                    // A SHAPE route moves a centred SHAPE off 0.5: the divide runs.
+                    let shape_routed = mods
+                        .routes_into(ParamAddr::new(BlockRef::Env(slot), EnvParams::SHAPE))
+                        != 0;
+                    match e.env_type {
+                        EnvType::A => Self::ENV_A,
+                        EnvType::B
+                            if e.func.mode == FuncMode::Env
+                                && (e.func.shape != 0.5 || shape_routed) =>
+                        {
+                            Self::ENV_B + Self::CURVE
+                        }
+                        EnvType::B => Self::ENV_B,
+                    }
+                }
+            })
+            .fold(Self::BASE + Self::CLAMP, |a, b| a + b)
     }
 }
