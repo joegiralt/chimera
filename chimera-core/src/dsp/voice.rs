@@ -34,6 +34,11 @@ pub struct Voice {
     lfos: [Lfo; 3],
     /// The ENV destinations' sums from the last block's matrix (spec § Signal flow 1).
     env_mods: [EnvMods; 3],
+    /// The sources' values from the last block.
+    mod_values: [f32; MAX_MOD_SOURCES],
+    /// A note-on since the last block: its ENV destinations are recomputed
+    /// with its own VEL and NOTE before the modulators run.
+    retrigger: bool,
     active_engine: EngineType,
     active: bool,
     last_note: MidiNote,
@@ -129,6 +134,8 @@ impl Voice {
                 envs: [Envelope::new(); 3],
                 lfos: [Lfo::new(); 3],
                 env_mods: [EnvMods::NONE; 3],
+                mod_values: [0.0; MAX_MOD_SOURCES],
+                retrigger: false,
                 active_engine: EngineType::Algo,
                 active: false,
                 last_note: MidiNote::A4,
@@ -166,7 +173,12 @@ impl Voice {
     fn trigger(&mut self, note: MidiNote, velocity: Velocity, params: &ParamSnapshot) {
         if !self.active {
             self.filter.hold(); // a fresh note: no ramp from the last note's cutoff
+            // An idle voice's ENV slots and last source values start as a
+            // fresh voice's: a release the engine outlived is not resumed.
+            self.envs = [Envelope::new(); 3];
+            self.mod_values = [0.0; MAX_MOD_SOURCES];
         }
+        self.retrigger = true;
         // The engine left behind starts clean when it next plays.
         if params.engine() != self.active_engine {
             self.engines.reset(self.active_engine);
@@ -265,6 +277,19 @@ impl Voice {
         // the voice plays (spec § Signal flow 1).
         let src = if self.fade == 0 { params } else { &self.played };
         let key = self.held;
+        if core::mem::take(&mut self.retrigger) {
+            // The last block's ENV and LFO values; the new note's VEL and NOTE.
+            let mut v = self.mod_values;
+            v[ModSource::Vel.index()] = self.last_velocity.unit();
+            v[ModSource::Note.index()] = note_source(self.last_note);
+            let mut next = [EnvMods::NONE; 3];
+            for d in 0..mod_state.num_dests() {
+                if let BlockRef::Env(s) = mod_state.dest(d).block {
+                    env_mod(&mut next[s.index()], mod_state, d, &v);
+                }
+            }
+            self.env_mods = next;
+        }
         let mut mod_values = [0.0f32; MAX_MOD_SOURCES];
         for (s, env) in EnvSlot::ALL.iter().zip(self.envs.iter_mut()) {
             mod_values[ModSource::of_env(*s).index()] = env.run_block(
@@ -295,20 +320,7 @@ impl Voice {
                 let a = mod_state.dest(d);
                 if let BlockRef::Env(s) = a.block {
                     // ENV destinations reach their slot next block.
-                    let sum = mod_state.sum_for(d, &mod_values);
-                    let n = &mut next[s.index()];
-                    match a.param {
-                        EnvParams::LEVEL if mod_state.present(d) != 0 => {
-                            #[allow(clippy::manual_clamp)] // max/min, not clamp: NaN clamps too
-                            let peak = sum.max(0.0).min(1.0);
-                            n.level = Some(peak);
-                        }
-                        EnvParams::TIME => n.time = sum,
-                        EnvParams::RISE => n.slides.rise = sum,
-                        EnvParams::FALL => n.slides.fall = sum,
-                        EnvParams::SHAPE => n.slides.shape = sum,
-                        _ => {}
-                    }
+                    env_mod(&mut next[s.index()], mod_state, d, &mod_values);
                     continue;
                 }
                 let off = mod_state.sum_for(d, &mod_values);
@@ -324,6 +336,7 @@ impl Voice {
             }
             self.env_mods = next;
         }
+        self.mod_values = mod_values;
         let (m, live) = (&self.played, &self.played_live);
 
         // 1. Engine → raw oscillator output
@@ -356,6 +369,23 @@ impl Voice {
                 self.fade_ended(params);
             }
         }
+    }
+}
+
+/// ENV destination `d`'s sum under `values`, into its slot's `n`.
+fn env_mod(n: &mut EnvMods, mod_state: &ModState, d: usize, values: &[f32; MAX_MOD_SOURCES]) {
+    let sum = mod_state.sum_for(d, values);
+    match mod_state.dest(d).param {
+        EnvParams::LEVEL if mod_state.present(d) != 0 => {
+            #[allow(clippy::manual_clamp)] // max/min, not clamp: NaN clamps too
+            let peak = sum.max(0.0).min(1.0);
+            n.level = Some(peak);
+        }
+        EnvParams::TIME => n.time = sum,
+        EnvParams::RISE => n.slides.rise = sum,
+        EnvParams::FALL => n.slides.fall = sum,
+        EnvParams::SHAPE => n.slides.shape = sum,
+        _ => {}
     }
 }
 

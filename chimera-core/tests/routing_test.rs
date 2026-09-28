@@ -177,8 +177,8 @@ fn env(s: EnvSlot, id: chimera_core::block::ParamId) -> ParamAddr {
     ParamAddr::new(BlockRef::Env(s), id)
 }
 
-/// 24 blocks at note 72 under `routes` (source, destination, amount).
-fn render_with(p: &ParamSnapshot, routes: &[(ModSource, ParamAddr, i8)], vel: u8) -> Vec<f32> {
+/// `routes` (source, destination, amount) as a matrix.
+fn routed(routes: &[(ModSource, ParamAddr, i8)]) -> ModState {
     let mut reg = ModDestRegistry::new();
     for &(_, a, _) in routes {
         let _ = reg.add(a, *b"TEST\0\0\0\0");
@@ -188,15 +188,25 @@ fn render_with(p: &ParamSnapshot, routes: &[(ModSource, ParamAddr, i8)], vel: u8
         let d = ms.find(a).unwrap();
         ms.set_route(s.index(), d, amt);
     }
-    let mut v = Voice::new(chimera_hal::SAMPLE_RATE);
-    v.note_on(MidiNote::new(72).unwrap(), Velocity::new(vel).unwrap(), p);
+    ms
+}
+
+/// `blocks` blocks of `v` from now.
+fn run(v: &mut Voice, p: &ParamSnapshot, ms: &ModState, blocks: usize) -> Vec<f32> {
     let mut out = Vec::new();
     let mut b = [0.0f32; BLOCK_SIZE];
-    for _ in 0..24 {
-        v.render(&mut b, p, &ms);
+    for _ in 0..blocks {
+        v.render(&mut b, p, ms);
         out.extend_from_slice(&b);
     }
     out
+}
+
+/// 24 blocks at note 72 under `routes` (source, destination, amount).
+fn render_with(p: &ParamSnapshot, routes: &[(ModSource, ParamAddr, i8)], vel: u8) -> Vec<f32> {
+    let mut v = Voice::new(chimera_hal::SAMPLE_RATE);
+    v.note_on(MidiNote::new(72).unwrap(), Velocity::new(vel).unwrap(), p);
+    run(&mut v, p, &routed(routes), 24)
 }
 
 fn plain() -> ParamSnapshot {
@@ -274,4 +284,71 @@ fn time_and_rise_reach_their_slots() {
         render_with(&plain(), &[e1, rise1], 100),
         render_with(&plain(), &[e1], 100)
     );
+}
+
+/// An ENV destination on a slot of the other TYPE does nothing: LEVEL and
+/// TIME act on A, RISE, FALL and SHAPE on B.
+#[test]
+fn env_destinations_are_inert_on_the_other_type() {
+    use chimera_core::dsp::modulator::EnvType;
+    let e1 = (ModSource::Env1, CUTOFF, 127);
+    for (ty, id) in [
+        (EnvType::B, EnvParams::LEVEL),
+        (EnvType::B, EnvParams::TIME),
+        (EnvType::A, EnvParams::FALL),
+        (EnvType::A, EnvParams::SHAPE),
+    ] {
+        let mut p = plain();
+        p.envelopes[0].env_type = ty;
+        let with = render_with(
+            &p,
+            &[e1, (ModSource::Vel, env(EnvSlot::Env1, id), 127)],
+            100,
+        );
+        assert_eq!(with, render_with(&p, &[e1], 100), "{ty:?} {id:?}");
+    }
+}
+
+/// A note on a voice that played before starts as on a fresh voice: its
+/// first block's ENV destinations come from its own VEL, not the last note's.
+fn reused_voice_starts_fresh(stale_vel: u8, vel: u8) {
+    let p = plain();
+    let ms = routed(&[
+        (ModSource::Vel, env(EnvSlot::Env1, EnvParams::TIME), 127),
+        (ModSource::Env1, CUTOFF, 127),
+    ]);
+    let note = MidiNote::new(72).unwrap();
+    let mut v = Voice::new(chimera_hal::SAMPLE_RATE);
+    v.note_on(note, Velocity::new(stale_vel).unwrap(), &p);
+    run(&mut v, &p, &ms, 24);
+    v.note_off();
+    for _ in 0..20_000 {
+        if !v.is_active() {
+            break;
+        }
+        run(&mut v, &p, &ms, 1);
+    }
+    assert!(!v.is_active(), "the stale note ends");
+    v.note_on(note, Velocity::new(vel).unwrap(), &p);
+    let mut fresh = Voice::new(chimera_hal::SAMPLE_RATE);
+    fresh.note_on(note, Velocity::new(vel).unwrap(), &p);
+    let (got, want) = (run(&mut v, &p, &ms, 8), run(&mut fresh, &p, &ms, 8));
+    // The stale note's drive, filter and folder tail, below the engine's
+    // idle threshold, stays in the output (about 3e-5 here); a stale ENV
+    // destination is ~1e-1 off.
+    let diff = got
+        .iter()
+        .zip(&want)
+        .fold(0.0f32, |m, (a, b)| m.max((a - b).abs()));
+    assert!(diff < 1e-4, "max diff {diff}");
+}
+
+#[test]
+fn a_soft_note_after_a_hard_one_starts_fresh() {
+    reused_voice_starts_fresh(127, 10);
+}
+
+#[test]
+fn a_hard_note_after_a_soft_one_starts_fresh() {
+    reused_voice_starts_fresh(10, 127);
 }
