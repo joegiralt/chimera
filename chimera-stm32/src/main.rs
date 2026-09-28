@@ -164,10 +164,10 @@ fn main() -> ! {
     audio::sai::init(clk.rev.new_sai(), pll3.mckdiv);
     audio::dma::clear();
     audio::prefill();
+    watchdog::start(dp.IWDG, &dp.DBGMCU);
     audio::dma::init(&mut cp.NVIC);
     audio::dma::start();
     audio::sai::start();
-    watchdog::start(dp.IWDG, &dp.DBGMCU);
 
     #[cfg(feature = "midi-din")]
     midi_din::init(&mut cp.NVIC, ccdr.clocks.pclk2().raw());
