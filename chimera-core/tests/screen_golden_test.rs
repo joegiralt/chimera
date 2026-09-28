@@ -20,7 +20,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("algo_level", 0x8129f2285f9620fb),
     ("algo_osc_last", 0x4fd82a2e09729f46),
     ("bigviz_filter", 0x640722cfc10353bc),
-    ("bigviz_env", 0xdbaee1e6ec98e456),
+    ("bigviz_env", 0x6ec81850142c237b),
     ("mixer_part", 0x87ab4a2a75c3d238),
     ("mixer_sends", 0x650322c12ad0b389),
     ("mixer_fx_delay", 0xd13240ab6a9b4ead),

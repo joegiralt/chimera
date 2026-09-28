@@ -8,9 +8,10 @@ use crate::block::apply_offset;
 use crate::dsp::algo::engine::AlgoLive;
 use crate::dsp::drive::Drive;
 use crate::dsp::engines::Engines;
-use crate::dsp::envelope::Envelope;
+use crate::dsp::envelope::{EnvMods, Envelope};
 use crate::dsp::filter::SvfFilter;
 use crate::dsp::lfo::Lfo;
+use crate::dsp::modulator::EnvSlot;
 use crate::dsp::wavefolder::Wavefolder;
 use crate::hw::{Cost, MAX_VOICES, VOICE_RAM_BUDGET};
 use crate::in_place::{by_value, uninit_at};
@@ -29,7 +30,7 @@ pub struct Voice {
     drive: Drive,
     filter: SvfFilter,
     folder: Wavefolder,
-    amp_env: Envelope,
+    envs: [Envelope; 3],
     pub lfo: Lfo,
     active_engine: EngineType,
     active: bool,
@@ -123,7 +124,7 @@ impl Voice {
                 drive: Drive::new(),
                 filter: SvfFilter::new(),
                 folder: Wavefolder::new(),
-                amp_env: Envelope::new(),
+                envs: [Envelope::new(); 3],
                 lfo: Lfo::new(),
                 active_engine: EngineType::Algo,
                 active: false,
@@ -172,7 +173,9 @@ impl Voice {
         self.last_velocity = velocity;
         self.engines
             .note_on(self.active_engine, note, velocity, params);
-        self.amp_env.note_on(velocity.unit());
+        for (e, p) in self.envs.iter_mut().zip(&params.envelopes) {
+            e.note_on(p);
+        }
         self.active = true;
         // Until the first block renders, a fade has these to keep.
         self.played.clone_from(params);
@@ -185,7 +188,6 @@ impl Voice {
             self.after_fade = AfterFade::Idle;
         }
         self.engines.note_off(self.active_engine);
-        self.amp_env.note_off();
     }
 
     /// Fade to silence over `FADE` samples, then go idle as a fresh voice.
@@ -253,13 +255,26 @@ impl Voice {
             return;
         }
 
+        // The modulators run every block, fading or not, from the settings
+        // the voice plays (spec § Signal flow 1).
+        let src = if self.fade == 0 { params } else { &self.played };
+        let key = self.held;
+        let mut mod_values = [0.0f32; MAX_MOD_SOURCES];
+        for (s, env) in EnvSlot::ALL.iter().zip(self.envs.iter_mut()) {
+            mod_values[ModSource::of_env(*s).index()] = env.run_block(
+                &src.envelopes[s.index()],
+                &EnvMods::NONE,
+                key,
+                sample_rate,
+                None,
+            );
+        }
+        mod_values[ModSource::Lfo1.index()] = self.lfo.process(&src.lfo, sample_rate);
+        mod_values[ModSource::Vel.index()] = self.last_velocity.unit();
+        mod_values[ModSource::Note.index()] = note_source(self.last_note);
+
         // A fading voice keeps the settings it last played.
         if self.fade == 0 {
-            let mut mod_values = [0.0f32; MAX_MOD_SOURCES];
-            mod_values[ModSource::Env1.index()] = self.amp_env.level();
-            mod_values[ModSource::Lfo1.index()] = self.lfo.process(&params.lfo, sample_rate);
-            mod_values[ModSource::Vel.index()] = self.last_velocity.unit();
-            mod_values[ModSource::Note.index()] = note_source(self.last_note);
             // Every routed destination gets its offset through its block's
             // spec (spec §4).
             let (m, live) = (&mut self.played, &mut self.played_live);
@@ -294,11 +309,9 @@ impl Voice {
         // 4. Wavefolder
         self.folder.process(output, &m.folder);
 
-        // 5. Volume. The amp envelope does not shape the output; it runs as
-        //    the ENV mod source.
+        // 5. Volume. No engine puts an envelope on the VCA yet.
         let volume = m.out.volume;
         for sample in output.iter_mut() {
-            self.amp_env.process(&m.envelopes[0], sample_rate);
             *sample *= volume;
         }
 

@@ -1,6 +1,7 @@
 use crate::addr::{BlockRef, Blocks};
 use crate::block::{Block, ParamId, ParamSpec, ValFmt};
 use crate::dsp::filter::{FilterMode, SVF_MODE_NAMES, SVF_MODES};
+use crate::dsp::modulator::{EnvSpeed, EnvType, HoldPos, pick};
 
 /// Parameters for one voice's filter.
 #[derive(Clone, Copy, Debug)]
@@ -90,26 +91,42 @@ impl Block for FilterParams {
     }
 }
 
-/// Parameters for one envelope
+/// One ENV slot's parameters (spec § Data model).
 #[derive(Clone, Copy, Debug)]
 pub struct EnvParams {
+    /// A, D, R and H: positions 0..1 on SPEED's exponential ranges.
     pub attack: f32,
     pub decay: f32,
-    pub sustain: f32,
     pub release: f32,
+    pub hold: f32,
+    /// S: a level, 0..1.
+    pub sustain: f32,
+    /// LEVEL destination's stored value; the peak comes from its routes.
     pub level: f32,
+    /// Unread and off the pages (#112).
     pub vel_sens: f32,
+    pub env_type: EnvType,
+    pub speed: EnvSpeed,
+    pub hold_pos: HoldPos,
+    /// TIME destination's stored 0.
+    pub time: f32,
 }
 
 impl Default for EnvParams {
+    /// Today's times at MED: A 10 ms, D and R 300 ms, S 0.7; H 0.001 ms.
     fn default() -> Self {
         Self {
-            attack: 0.01,
-            decay: 0.3,
+            attack: 0.189,
+            decay: 0.559,
+            release: 0.559,
+            hold: 0.0,
             sustain: 0.7,
-            release: 0.3,
             level: 1.0,
             vel_sens: 0.5,
+            env_type: EnvType::A,
+            speed: EnvSpeed::Med,
+            hold_pos: HoldPos::Ahdsr,
+            time: 0.0,
         }
     }
 }
@@ -121,46 +138,39 @@ impl EnvParams {
     pub const RELEASE: ParamId = ParamId(3);
     pub const LEVEL: ParamId = ParamId(4);
     pub const VEL_SENS: ParamId = ParamId(5);
+    pub const HOLD: ParamId = ParamId(6);
+    pub const TYPE: ParamId = ParamId(7);
+    pub const SPEED: ParamId = ParamId(8);
+    pub const HOLD_POS: ParamId = ParamId(9);
+    pub const TIME: ParamId = ParamId(10);
 }
 
-/// Shared by all three envelopes. A/D/S/R are read by `Voice` every block
-/// for the amp envelope (`envelopes[0]`); level and vel_sens are never read.
-/// `envelopes[1..2]` are never read at all — `ParamAddr::modulatable`
-/// excludes them (plan D7).
-pub static ENV_SPECS: [ParamSpec; 6] = [
-    ParamSpec::continuous(
-        0,
-        "ATK",
-        ValFmt::Uni,
-        0.001,
-        10.0,
-        0.01,
-        (10.0 - 0.001) / 128.0,
-        true,
-    ),
-    ParamSpec::continuous(
-        1,
-        "DEC",
-        ValFmt::Uni,
-        0.001,
-        10.0,
-        0.3,
-        (10.0 - 0.001) / 128.0,
-        true,
-    ),
-    ParamSpec::continuous(2, "SUS", ValFmt::Uni, 0.0, 1.0, 0.7, 1.0 / 128.0, true),
-    ParamSpec::continuous(
-        3,
-        "REL",
-        ValFmt::Uni,
-        0.001,
-        10.0,
-        0.3,
-        (10.0 - 0.001) / 128.0,
-        true,
-    ),
+/// Positions and levels, per block. LEVEL and TIME are hidden destinations
+/// (Task 9 of the filter-routing plan makes them modulatable).
+pub static ENV_SPECS: [ParamSpec; 11] = [
+    ParamSpec::continuous(0, "ATK", ValFmt::Uni, 0.0, 1.0, 0.189, 1.0 / 128.0, false),
+    ParamSpec::continuous(1, "DEC", ValFmt::Uni, 0.0, 1.0, 0.559, 1.0 / 128.0, false),
+    ParamSpec::continuous(2, "SUS", ValFmt::Uni, 0.0, 1.0, 0.7, 1.0 / 128.0, false),
+    ParamSpec::continuous(3, "REL", ValFmt::Uni, 0.0, 1.0, 0.559, 1.0 / 128.0, false),
     ParamSpec::continuous(4, "LEVEL", ValFmt::Uni, 0.0, 1.0, 1.0, 1.0 / 128.0, false),
     ParamSpec::continuous(5, "VEL", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false),
+    ParamSpec::continuous(6, "H", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false),
+    ParamSpec::choice(7, "TYPE", ValFmt::Names(&["A", "B"]), 1.0, 0.0),
+    ParamSpec::choice(
+        8,
+        "SPEED",
+        ValFmt::Names(&["FAST", "MED", "SLOW"]),
+        2.0,
+        1.0,
+    ),
+    ParamSpec::choice(
+        9,
+        "HOLD",
+        ValFmt::Names(&["OFF", "AHDSR", "GATE EXT"]),
+        2.0,
+        1.0,
+    ),
+    ParamSpec::continuous(10, "TIME", ValFmt::Bi, -1.0, 1.0, 0.0, 2.0 / 128.0, false),
 ];
 
 impl Block for EnvParams {
@@ -176,6 +186,11 @@ impl Block for EnvParams {
             Self::RELEASE => self.release,
             Self::LEVEL => self.level,
             Self::VEL_SENS => self.vel_sens,
+            Self::HOLD => self.hold,
+            Self::TYPE => self.env_type as u8 as f32,
+            Self::SPEED => self.speed as u8 as f32,
+            Self::HOLD_POS => self.hold_pos as u8 as f32,
+            Self::TIME => self.time,
             _ => 0.0,
         }
     }
@@ -188,6 +203,11 @@ impl Block for EnvParams {
             Self::RELEASE => self.release = v,
             Self::LEVEL => self.level = v,
             Self::VEL_SENS => self.vel_sens = v,
+            Self::HOLD => self.hold = v,
+            Self::TYPE => self.env_type = pick(&EnvType::ALL, v),
+            Self::SPEED => self.speed = pick(&EnvSpeed::ALL, v),
+            Self::HOLD_POS => self.hold_pos = pick(&HoldPos::ALL, v),
+            Self::TIME => self.time = v,
             _ => {}
         }
     }
@@ -416,9 +436,7 @@ impl Blocks for ParamSnapshot {
             BlockRef::Drive => &self.drive,
             BlockRef::Filter => &self.filter,
             BlockRef::Folder => &self.folder,
-            BlockRef::AmpEnv => &self.envelopes[0],
-            BlockRef::FilterEnv => &self.envelopes[1],
-            BlockRef::AuxEnv => &self.envelopes[2],
+            BlockRef::Env(s) => &self.envelopes[s.index()],
             BlockRef::Lfo => &self.lfo,
             BlockRef::Out => &self.out,
             BlockRef::Chorus
@@ -439,9 +457,7 @@ impl Blocks for ParamSnapshot {
             BlockRef::Drive => &mut self.drive,
             BlockRef::Filter => &mut self.filter,
             BlockRef::Folder => &mut self.folder,
-            BlockRef::AmpEnv => &mut self.envelopes[0],
-            BlockRef::FilterEnv => &mut self.envelopes[1],
-            BlockRef::AuxEnv => &mut self.envelopes[2],
+            BlockRef::Env(s) => &mut self.envelopes[s.index()],
             BlockRef::Lfo => &mut self.lfo,
             BlockRef::Out => &mut self.out,
             BlockRef::Chorus

@@ -3,6 +3,7 @@
 //! cells or reordering blocks never remaps a mod route.
 
 use crate::block::{Block, ParamId, ParamSpec, find_spec};
+use crate::dsp::modulator::EnvSlot;
 
 /// An operator of the Algo engine. `TryFrom<u8>` rejects values above 5, so an out-of-range
 /// operator (bad sound or SysEx data) is unrepresentable.
@@ -54,12 +55,8 @@ pub enum BlockRef {
     Drive,
     Filter,
     Folder,
-    /// `envelopes[0]`
-    AmpEnv,
-    /// `envelopes[1]`
-    FilterEnv,
-    /// `envelopes[2]`
-    AuxEnv,
+    /// ENV slot `n`: `envelopes[n]`.
+    Env(crate::dsp::modulator::EnvSlot),
     Lfo,
     /// `OutParams { volume, pan }`
     Out,
@@ -89,9 +86,9 @@ impl BlockRef {
         BlockRef::Drive,
         BlockRef::Filter,
         BlockRef::Folder,
-        BlockRef::AmpEnv,
-        BlockRef::FilterEnv,
-        BlockRef::AuxEnv,
+        BlockRef::Env(EnvSlot::Env1),
+        BlockRef::Env(EnvSlot::Env2),
+        BlockRef::Env(EnvSlot::Env3),
         BlockRef::Lfo,
         BlockRef::Out,
         BlockRef::Chorus,
@@ -112,7 +109,7 @@ impl BlockRef {
             BlockRef::Drive => &crate::params::DRIVE_SPECS,
             BlockRef::Filter => &crate::params::FILTER_SPECS,
             BlockRef::Folder => &crate::params::FOLDER_SPECS,
-            BlockRef::AmpEnv | BlockRef::FilterEnv | BlockRef::AuxEnv => &crate::params::ENV_SPECS,
+            BlockRef::Env(_) => &crate::params::ENV_SPECS,
             BlockRef::Lfo => &crate::dsp::lfo::LFO_SPECS,
             BlockRef::Out => &crate::params::OUT_SPECS,
             BlockRef::Chorus => &crate::dsp::chorus::CHORUS_SPECS,
@@ -126,9 +123,9 @@ impl BlockRef {
     }
 
     /// Whether `Voice::render` reads this block from its modulated copy and
-    /// hears it without a route of its own. The amp envelope only shapes the
-    /// ENV source (no engine puts it on the VCA, ADR 0022); filter/aux
-    /// envelopes are never read; the LFO is read unmodulated; FX run outside
+    /// hears it without a route of its own. ENV slots feed the matrix and are
+    /// not read as destinations until their LEVEL, TIME, RISE, FALL and SHAPE
+    /// open (filter-routing Task 9); the LFO is read unmodulated; FX run outside
     /// `Voice`.
     pub const fn voice_reads(self) -> bool {
         match self {
@@ -139,9 +136,7 @@ impl BlockRef {
             | BlockRef::Filter
             | BlockRef::Folder
             | BlockRef::Out => true,
-            BlockRef::AmpEnv
-            | BlockRef::FilterEnv
-            | BlockRef::AuxEnv
+            BlockRef::Env(_)
             | BlockRef::Lfo
             | BlockRef::Chorus
             | BlockRef::Delay

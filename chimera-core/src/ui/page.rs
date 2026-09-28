@@ -1,6 +1,6 @@
 use crate::addr::{BlockRef, Blocks, Op, ParamAddr};
-use crate::block::ParamId;
 use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
+use crate::dsp::modulator::EnvSlot;
 use crate::params::{DriveParams, EnvParams, FilterParams, FolderParams, OutParams};
 use crate::ui::block_def::SlotBinding;
 use crate::ui::chain::ChainNav;
@@ -23,10 +23,6 @@ pub enum PageLayout {
 /// `BlockDef` slot bindings (`ui::part_page`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PageId {
-    /// Standalone envelope pages (not reachable from any chain today).
-    EnvAmp,
-    EnvFilter,
-    EnvAux,
     /// A System chain page with no bound slots, by `BlockDef::id`: the
     /// pages read no values, so only the def tells them apart.
     System(u16),
@@ -90,14 +86,7 @@ impl PageId {
 
     /// The parameter bound to encoder `idx` on this page, if any.
     pub fn binding(&self, idx: usize) -> Option<ParamAddr> {
-        use BlockRef as B;
-        let at = |block: BlockRef, ids: &[ParamId]| {
-            ids.get(idx).map(|&param| ParamAddr::new(block, param))
-        };
         match self {
-            PageId::EnvAmp => at(B::AmpEnv, &ENV_PAGE),
-            PageId::EnvFilter => at(B::FilterEnv, &ENV_PAGE),
-            PageId::EnvAux => at(B::AuxEnv, &ENV_PAGE),
             PageId::DemoWaves => DEMO_WAVES.get(idx).copied(),
             PageId::DemoShapes => DEMO_SHAPES.get(idx).copied(),
             PageId::DemoMotion => DEMO_MOTION.get(idx).copied(),
@@ -134,18 +123,8 @@ impl PageId {
     }
 }
 
-/// Encoder slot → param id, for pages bound to a single block.
-const ENV_PAGE: [ParamId; 6] = [
-    EnvParams::ATTACK,
-    EnvParams::DECAY,
-    EnvParams::SUSTAIN,
-    EnvParams::RELEASE,
-    EnvParams::LEVEL,
-    EnvParams::VEL_SENS,
-];
-
 /// Demo pages borrow params from several blocks (spec §5: `envelopes[1]` is
-/// addressed as `FilterEnv`).
+/// addressed as `Env(Env2)`).
 const DEMO_WAVES: [ParamAddr; 6] = [
     ParamAddr::new(BlockRef::Drive, DriveParams::DRIVE),
     ParamAddr::new(BlockRef::Drive, DriveParams::TONE),
@@ -163,12 +142,12 @@ const DEMO_SHAPES: [ParamAddr; 6] = [
     ParamAddr::new(BlockRef::Drive, DriveParams::MIX),
 ];
 const DEMO_MOTION: [ParamAddr; 6] = [
-    ParamAddr::new(BlockRef::AmpEnv, EnvParams::ATTACK),
-    ParamAddr::new(BlockRef::AmpEnv, EnvParams::DECAY),
-    ParamAddr::new(BlockRef::AmpEnv, EnvParams::SUSTAIN),
-    ParamAddr::new(BlockRef::AmpEnv, EnvParams::RELEASE),
-    ParamAddr::new(BlockRef::FilterEnv, EnvParams::ATTACK),
-    ParamAddr::new(BlockRef::FilterEnv, EnvParams::DECAY),
+    ParamAddr::new(BlockRef::Env(EnvSlot::Env1), EnvParams::ATTACK),
+    ParamAddr::new(BlockRef::Env(EnvSlot::Env1), EnvParams::DECAY),
+    ParamAddr::new(BlockRef::Env(EnvSlot::Env1), EnvParams::SUSTAIN),
+    ParamAddr::new(BlockRef::Env(EnvSlot::Env1), EnvParams::RELEASE),
+    ParamAddr::new(BlockRef::Env(EnvSlot::Env2), EnvParams::ATTACK),
+    ParamAddr::new(BlockRef::Env(EnvSlot::Env2), EnvParams::DECAY),
 ];
 const DEMO_FM: [ParamAddr; 4] = [
     ParamAddr::new(BlockRef::Algo, AlgoParams::ALG_A),

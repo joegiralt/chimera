@@ -6,6 +6,7 @@ use crate::dsp::comp::CompParams;
 use crate::dsp::delay::DelayParams;
 use crate::dsp::lfo::LfoParams;
 use crate::dsp::modal::ModalParams;
+use crate::dsp::modulator::EnvSlot;
 use crate::dsp::reverb::ReverbParams;
 use crate::dsp::tape::TapeParams;
 use crate::modulation::ModSource;
@@ -146,12 +147,12 @@ pub static ENVELOPE: BlockDef = BlockDef {
     layout: PageLayout::BigViz,
     viz: VizType::Adsr,
     params: [
-        ParamSlot::param(BlockRef::AmpEnv, EnvParams::ATTACK),
-        ParamSlot::param(BlockRef::AmpEnv, EnvParams::DECAY),
-        ParamSlot::param(BlockRef::AmpEnv, EnvParams::SUSTAIN),
-        ParamSlot::param(BlockRef::AmpEnv, EnvParams::RELEASE),
-        ParamSlot::param(BlockRef::AmpEnv, EnvParams::LEVEL).with_label("DEPTH"),
-        ParamSlot::param(BlockRef::AmpEnv, EnvParams::VEL_SENS),
+        ParamSlot::param(BlockRef::Env(EnvSlot::Env1), EnvParams::ATTACK),
+        ParamSlot::param(BlockRef::Env(EnvSlot::Env1), EnvParams::DECAY),
+        ParamSlot::param(BlockRef::Env(EnvSlot::Env1), EnvParams::SUSTAIN),
+        ParamSlot::param(BlockRef::Env(EnvSlot::Env1), EnvParams::RELEASE),
+        ParamSlot::param(BlockRef::Env(EnvSlot::Env1), EnvParams::HOLD),
+        EMPTY,
     ],
 };
 
@@ -169,54 +170,6 @@ pub static LFO: BlockDef = BlockDef {
         ParamSlot::param(BlockRef::Lfo, LfoParams::PHASE),
         ParamSlot::param(BlockRef::Lfo, LfoParams::DEPTH),
         ParamSlot::param(BlockRef::Lfo, LfoParams::OFFSET),
-    ],
-};
-
-pub static ENV_AMP: BlockDef = BlockDef {
-    id: 13,
-    name: "Env Amp",
-    short: "ENV",
-    layout: PageLayout::BigViz,
-    viz: VizType::Adsr,
-    params: [
-        ParamSlot::legacy("ATK", ValFmt::Uni),
-        ParamSlot::legacy("DEC", ValFmt::Uni),
-        ParamSlot::legacy("SUS", ValFmt::Uni),
-        ParamSlot::legacy("REL", ValFmt::Uni),
-        ParamSlot::legacy("LEVEL", ValFmt::Uni),
-        ParamSlot::legacy("VEL", ValFmt::Uni),
-    ],
-};
-
-pub static ENV_FILTER: BlockDef = BlockDef {
-    id: 14,
-    name: "Env Filter",
-    short: "E.F",
-    layout: PageLayout::BigViz,
-    viz: VizType::Adsr,
-    params: [
-        ParamSlot::legacy("ATK", ValFmt::Uni),
-        ParamSlot::legacy("DEC", ValFmt::Uni),
-        ParamSlot::legacy("SUS", ValFmt::Uni),
-        ParamSlot::legacy("REL", ValFmt::Uni),
-        ParamSlot::legacy("LEVEL", ValFmt::Uni),
-        ParamSlot::legacy("VEL", ValFmt::Uni),
-    ],
-};
-
-pub static ENV_AUX: BlockDef = BlockDef {
-    id: 15,
-    name: "Env Aux",
-    short: "E.X",
-    layout: PageLayout::BigViz,
-    viz: VizType::Adsr,
-    params: [
-        ParamSlot::legacy("ATK", ValFmt::Uni),
-        ParamSlot::legacy("DEC", ValFmt::Uni),
-        ParamSlot::legacy("SUS", ValFmt::Uni),
-        ParamSlot::legacy("REL", ValFmt::Uni),
-        ParamSlot::legacy("LEVEL", ValFmt::Uni),
-        ParamSlot::legacy("VEL", ValFmt::Uni),
     ],
 };
 
@@ -586,27 +539,6 @@ static MIX_BLOCKS: [ChainBlock; 6] = [
 pub static MIX_CHAIN: ChainDef2 = ChainDef2 {
     name: "Mix",
     blocks: &MIX_BLOCKS,
-    mod_sources: &[],
-};
-
-static ENVELOPE_BLOCKS: [ChainBlock; 3] = [
-    ChainBlock {
-        def: &ENV_AMP,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &ENV_FILTER,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &ENV_AUX,
-        sub_pages: &[],
-    },
-];
-
-pub static ENVELOPE_CHAIN: ChainDef2 = ChainDef2 {
-    name: "Envelopes",
-    blocks: &ENVELOPE_BLOCKS,
     mod_sources: &[],
 };
 
