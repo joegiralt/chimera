@@ -18,12 +18,12 @@ The FLT page showed ENV, KEY and FM knobs the DSP never read (#121, #112), the a
 - Every new Sound carries ENV 1, LFO 1 and NOTE → CUTOFF at 0 (NOTE at the kind's key default).
 - The filter page's ENV, LFO and KEY knobs are views of those routes: an absent route shows a dash; turning it creates it (and the CUTOFF column, or reports MATRIX FULL). KIND never edits the matrix.
 - The hidden destinations, which have no page, are primed from the cells that own them (owner's decision): on an A page, MIX+PLUS on A, D, R or H primes that slot's TIME, and on S its LEVEL. AMP's VEL primes the VCA, even while VEL is dimmed: the one exception to ADR 0037's dimming rule, since there is no other way in.
-- `Voice::cost` adds `ModRouting::cost`, and bills the folder (43) and drive (65) stages once stored at 0.001 or more or routed. The model must never undercount. Each term was measured on the bench-t13c run (rev V, 480 MHz), rounded up and never below 1; the derivations are in the plan's `## Measured`:
+- `Voice::cost` adds `ModRouting::cost`, and bills the folder (43) and drive (57) stages once stored at 0.001 or more or routed. The model must never undercount. Each term was measured on the bench-t13c and bench-t13d runs (rev V, 480 MHz), rounded up and never below 1; the derivations are in the plan's `## Measured`:
   - every voice: BASE 47; FUNC 5 per LFO slot of type FUNC, routed or not;
   - SLIDE 33 per ENV slot with a moving route into TIME, RISE, FALL or SHAPE;
-  - DEST_FIRST 12 for the first destination other than the VCA with a nonzero route, then DEST 1 for each further one;
+  - DEST_FIRST 6 for the first destination other than the VCA with a nonzero route, then DEST 1 for each further one;
   - with any VCA route, CLAMP 24, then per routed source: ENV_A 28; ENV_B 98 (the costliest of B VCA, B LFO and B GLIDE, so it carries the glide), plus CURVE 1 for ENV mode with SHAPE off centre or routed, or BURST 76 for BURST mode (over the steady B); LEVEL 10 for a moving route into that slot's LEVEL; OTHER 8 for a non-ENV source.
-  - DRIVE 65 and DEST_FIRST 12 are billed high until the bench's DRIVE LO and 1 CUTOFF rows are read. `the_model_bills_every_routing_row_high` checks each ROUTING row is billed at or above its reading.
+  - `the_model_bills_every_routing_row_high` checks each ROUTING row is billed at or above its reading.
 
 ## Alternatives considered
 - **Fixed ENV/LFO SOURCE selectors on the filter** (the spec's first version): two sources of truth for routing.

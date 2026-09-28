@@ -621,7 +621,7 @@ fn the_costliest_patch_gets_six_voices_on_rev_v() {
     assert_eq!(MAX_VOICES, 8, "the budget stops it short of the pool");
     assert_eq!(voices_at(CPU_HZ_REV_Y, &p), 5);
     // With the folder on (43): 932, still six on rev V, four on rev Y; the
-    // drive stage too (997, DRIVE provisional): five on rev V, four on rev Y.
+    // drive stage too (989): five on rev V, four on rev Y.
     // No factory Sound does either with this shape.
     let fits = |hz, voice: u32| (SampleBudget::for_cpu(hz).as_cost().0 - FxBus::COST.0) / voice;
     let fold = plain + Voice::FOLD_COST.0;
