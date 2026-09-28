@@ -238,11 +238,14 @@ name = "chimera-stm32"
 version = "0.1.0"
 dependencies = [
  "chimera-core",
+ "chimera-fat",
  "chimera-hal",
  "cortex-m",
  "cortex-m-rt",
  "embedded-graphics",
  "embedded-graphics-core",
+ "embedded-hal 1.0.0",
+ "embedded-sdmmc",
  "libm",
  "stm32h7xx-hal",
 ]

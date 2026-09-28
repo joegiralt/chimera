@@ -13,6 +13,10 @@ mod midi_din;
 mod panic;
 mod priority;
 mod probe;
+#[cfg(feature = "sd-probe")]
+mod sd;
+#[cfg(feature = "sd-probe")]
+mod sd_probe;
 mod shared;
 mod watchdog;
 
@@ -52,7 +56,13 @@ fn SysTick() {
     watchdog::kick_if_audio_alive(HEARTBEAT);
 }
 
+// The SD probe halts before the synth starts: the rest of `main` is dead
+// there.
 #[entry]
+#[cfg_attr(
+    feature = "sd-probe",
+    allow(unreachable_code, unused_variables, unused_mut)
+)]
 fn main() -> ! {
     probe::paint_stack();
     let mut cp = cortex_m::Peripherals::take().unwrap();
@@ -73,12 +83,10 @@ fn main() -> ! {
     let gpiod = dp.GPIOD.split(ccdr.peripheral.GPIOD);
     let gpioe = dp.GPIOE.split(ccdr.peripheral.GPIOE);
     let gpiof = dp.GPIOF.split(ccdr.peripheral.GPIOF);
+    #[cfg(any(feature = "midi-din", feature = "sd-probe"))]
+    let gpiob = dp.GPIOB.split(ccdr.peripheral.GPIOB);
     #[cfg(feature = "midi-din")]
-    let _midi_rx = dp
-        .GPIOB
-        .split(ccdr.peripheral.GPIOB)
-        .pb7
-        .into_alternate::<7>();
+    let _midi_rx = gpiob.pb7.into_alternate::<7>();
     let _hc_data = gpiof.pf2.into_floating_input();
     let _hc_load = gpiof.pf1.into_push_pull_output();
     let _hc_clk = gpiof.pf0.into_push_pull_output();
@@ -137,6 +145,23 @@ fn main() -> ! {
     // the first change the main loop notices.
     display.set_gamma(theme.gamma.tables());
     display.set_palette(theme.palette());
+    #[cfg(feature = "sd-probe")]
+    sd_probe::run(
+        &mut display,
+        clk,
+        sd::init(
+            dp.SPI2,
+            ccdr.peripheral.SPI2,
+            gpioa.pa9,
+            gpiob.pb14,
+            gpiob.pb15,
+            gpioe.pe12,
+            &mut cp.DCB,
+            &mut cp.DWT,
+            &ccdr.clocks,
+            clk.cpu_hz,
+        ),
+    );
     let mut stats_r = probe::init(&mut cp.DCB, &mut cp.DWT, clk, reset_cause);
 
     let mut controls = Stm32Controls::new();
