@@ -62,3 +62,61 @@ pub fn rc_k(tau: f32, fs: f32) -> f32 {
 pub fn rc_coeff(k: f32) -> f32 {
     1.0 - fast_exp2(k)
 }
+
+/// Envelope B's ranges (spec § Envelope B): ENV RISE and FALL 2 ms – 5 s.
+pub const B_TIME: Range = Range {
+    min: 2e-3,
+    oct: 11.287_712,
+};
+/// LFO RATE, 0.05 – 800 Hz.
+pub const B_RATE: Range = Range {
+    min: 0.05,
+    oct: 13.965_784,
+};
+/// BURST pulse RATE, 0.05 Hz – 1 kHz.
+pub const BURST_RATE: Range = Range {
+    min: 0.05,
+    oct: 14.287_712,
+};
+/// BURST LENGTH, 10 ms – 20 s.
+pub const BURST_LEN: Range = Range {
+    min: 0.01,
+    oct: 10.965_784,
+};
+/// A B slot evaluated per block stops its rates here: the block rate ÷ 8
+/// (spec § Rates), 93.75 Hz at 48 kHz and 86.1 Hz at 44.1 kHz.
+pub fn block_rate_max(sample_rate: u32) -> f32 {
+    sample_rate as f32 / chimera_hal::BLOCK_SIZE as f32 / 8.0
+}
+
+/// SHAPE's curve, `f(x) = x / (x + (1 − x)·w)`; linear (and no divide) at `w` = 1.
+pub fn curve(x: f32, w: f32) -> f32 {
+    if w == 1.0 { x } else { x / (x + (1.0 - x) * w) }
+}
+
+/// `f⁻¹(y) = w·y / (1 − y + w·y)`.
+pub fn curve_inv(y: f32, w: f32) -> f32 {
+    if w == 1.0 {
+        y
+    } else {
+        w * y / (1.0 - y + w * y)
+    }
+}
+
+/// SHAPE's position to `w = 2^(4·(2·SHAPE − 1))`; exactly 1 at the centre.
+#[allow(clippy::manual_clamp)] // max/min, not clamp: NaN clamps too
+pub fn shape_w(shape: f32) -> f32 {
+    fast_exp2(4.0 * (2.0 * shape.max(0.0).min(1.0) - 1.0))
+}
+
+/// TILT: rise over the fraction `r` of a cycle, fall over the rest.
+/// `u = p/r` rising, `(1 − p)/(1 − r)` falling; r = 0 is `1 − p`, r = 1 is `p`.
+pub fn tilt(p: f32, r: f32) -> f32 {
+    if p < r {
+        p / r
+    } else if r < 1.0 {
+        (1.0 - p) / (1.0 - r)
+    } else {
+        p
+    }
+}

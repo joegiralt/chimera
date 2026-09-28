@@ -4,23 +4,31 @@
 use chimera_hal::BLOCK_SIZE;
 
 use crate::dsp::modulator::env_a::{ACoefs, EnvA};
+use crate::dsp::modulator::func::{BCoefs, FuncGen, Slides};
+use crate::dsp::modulator::{EnvType, Func, FuncParams, Glide};
 use crate::params::EnvParams;
 
 /// What the matrix feeds an ENV slot, from the previous block (spec
-/// § Signal flow 1), so a slot never waits on the matrix it feeds. Task 6
-/// adds RISE, FALL and SHAPE as `slides`.
+/// § Signal flow 1), so a slot never waits on the matrix it feeds.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct EnvMods {
     /// The peak with a route into LEVEL, `clamp(Σ, 0, 1)`; `None` without one (peak 1).
     pub level: Option<f32>,
     /// TIME's Σ.
     pub time: f32,
+    /// RISE, FALL and SHAPE's Σ, added to their positions (type B).
+    pub slides: Slides,
 }
 
 impl EnvMods {
     pub const NONE: Self = Self {
         level: None,
         time: 0.0,
+        slides: Slides {
+            rise: 0.0,
+            fall: 0.0,
+            shape: 0.0,
+        },
     };
 }
 
@@ -68,14 +76,46 @@ fn add_ramped(
     }
 }
 
+/// What a slot runs (spec § 1): Envelope A, or B with its MODE and FORM.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Kind {
+    A,
+    B(Func),
+}
+
+impl Kind {
+    fn of(p: &EnvParams) -> Self {
+        match p.env_type {
+            EnvType::A => Kind::A,
+            EnvType::B => Kind::B(p.func.func()),
+        }
+    }
+}
+
+/// What a B slot's coefficients were built from.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct BKey {
+    func: FuncParams,
+    slides: Slides,
+    sample_rate: u32,
+    per_sample: bool,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Envelope {
     a: EnvA,
-    /// The last A coefficients and their inputs.
+    b: FuncGen,
+    /// What ran last block; `None` before the first.
+    kind: Option<Kind>,
+    /// The running TYPE's coefficients and their inputs, reused while
+    /// the inputs hold.
     ac: Option<(AKey, ACoefs)>,
-    /// This block's peak (LEVEL) and the last block's.
+    bc: Option<(BKey, BCoefs)>,
+    /// This block's peak (LEVEL; 1 under B) and the last block's.
     peak: f32,
     prev_peak: f32,
+    /// A change's leftover, gliding out.
+    glide: Glide,
 }
 
 impl Default for Envelope {
@@ -88,9 +128,13 @@ impl Envelope {
     pub const fn new() -> Self {
         Self {
             a: EnvA::new(),
+            b: FuncGen::new(),
+            kind: None,
             ac: None,
+            bc: None,
             peak: 1.0,
             prev_peak: 1.0,
+            glide: Glide::NONE,
         }
     }
 
@@ -107,23 +151,113 @@ impl Envelope {
         }
     }
 
-    pub fn note_on(&mut self, _p: &EnvParams) {
-        self.a.note_on();
+    /// This block's B coefficients, rebuilt only when an input changed.
+    fn b_coefs(
+        &mut self,
+        p: &EnvParams,
+        slides: &Slides,
+        sample_rate: u32,
+        per_sample: bool,
+    ) -> BCoefs {
+        let key = BKey {
+            func: p.func,
+            slides: *slides,
+            sample_rate,
+            per_sample,
+        };
+        match self.bc {
+            Some((k, c)) if k == key => c,
+            _ => {
+                let c = BCoefs::new(&p.func, slides, sample_rate, per_sample);
+                self.bc = Some((key, c));
+                c
+            }
+        }
     }
 
-    /// The raw contour, 0..1: no velocity (spec § 1).
+    fn is_b(&self) -> bool {
+        matches!(self.kind, Some(Kind::B(_)))
+    }
+
+    /// A note-on. A TYPE, MODE or FORM change not yet seen by a block (the
+    /// slot sat idle) takes over first, so the new kind's note-on runs.
+    pub fn note_on(&mut self, p: &EnvParams) {
+        let k = Kind::of(p);
+        if self.kind.is_some_and(|was| was != k) {
+            let (old, rising) = (self.output(), self.rising());
+            self.kind = Some(k);
+            self.take_over(k, old, rising, true, p.sustain);
+        }
+        self.kind = Some(k);
+        match k {
+            Kind::A => self.a.note_on(),
+            Kind::B(f) => self.b.note_on(f),
+        }
+    }
+
+    fn raw(&self) -> f32 {
+        if self.is_b() {
+            self.b.output()
+        } else {
+            self.a.level() * self.peak
+        }
+    }
+
+    /// The output now: 0..1, or −1..1 for B in LFO mode. No velocity.
     pub fn output(&self) -> f32 {
-        self.a.level() * self.peak
+        self.raw() + self.glide.value()
     }
 
     pub fn is_idle(&self) -> bool {
-        self.a.is_idle()
+        if self.is_b() {
+            self.b.is_idle()
+        } else {
+            self.a.is_idle()
+        }
+    }
+
+    /// Whether this slot, routed to the VCA, still holds the voice (spec § 4).
+    pub fn holds(&self, key: bool) -> bool {
+        if self.is_b() {
+            self.b.holds(key)
+        } else {
+            !self.a.is_idle()
+        }
+    }
+
+    /// A change's leftover is still gliding out.
+    pub fn gliding(&self) -> bool {
+        self.glide.active()
+    }
+
+    fn rising(&self) -> bool {
+        if self.is_b() {
+            self.b.rising()
+        } else {
+            self.a.rising()
+        }
+    }
+
+    /// The new kind takes over at the old output `old` (spec § 1): A and B
+    /// ENV enter at that level; the rest start where they would, and the
+    /// difference glides out.
+    #[allow(clippy::manual_clamp)] // max/min, not clamp: NaN clamps too
+    fn take_over(&mut self, k: Kind, old: f32, rising: bool, key: bool, sus: f32) {
+        let level = old.max(0.0).min(1.0);
+        match k {
+            Kind::A => self.a.enter(level, rising, key, sus),
+            Kind::B(Func::Env(_)) => self.b.enter_env(level, rising),
+            Kind::B(Func::Burst(_)) => self.b.enter_burst(key),
+            Kind::B(Func::Lfo(_)) => {}
+        }
+        self.glide.start(old - self.raw());
     }
 
     /// One block. Returns the output at the block's start. With `vca`, the
-    /// slot fills a block of levels and adds `amount · level · peak` into
-    /// the buffer (the VCA's sum), the peak ramped per sample; otherwise it
-    /// advances in closed form.
+    /// slot fills a block of outputs and adds `amount ·` each into the
+    /// buffer (the peak ramped, the glide in its own loop); otherwise it
+    /// advances in closed form. Only the running TYPE's coefficients are
+    /// computed.
     pub fn run_block(
         &mut self,
         p: &EnvParams,
@@ -132,18 +266,57 @@ impl Envelope {
         sample_rate: u32,
         vca: Option<(&mut [f32; BLOCK_SIZE], f32)>,
     ) -> f32 {
-        let c = self.a_coefs(p, m.time, sample_rate);
+        let kind = Kind::of(p);
+        let (old, rising) = (self.output(), self.rising());
+        let prev = self.kind.replace(kind);
         self.prev_peak = self.peak;
-        self.peak = m.level.unwrap_or(1.0);
+        self.peak = if kind == Kind::A {
+            m.level.unwrap_or(1.0)
+        } else {
+            1.0
+        };
+        let (ac, bc) = match kind {
+            Kind::A => (Some(self.a_coefs(p, m.time, sample_rate)), None),
+            Kind::B(_) => (
+                None,
+                Some(self.b_coefs(p, &m.slides, sample_rate, vca.is_some())),
+            ),
+        };
+        if let Some(c) = &bc {
+            self.b.set(c);
+        }
+        if prev.is_some_and(|k| k != kind) {
+            self.take_over(kind, old, rising, key, p.sustain);
+        }
+        if bc.is_some() && !key {
+            self.b.key_up();
+        }
         let start = self.output();
         match vca {
             Some((gain, amount)) => {
                 let mut level = [0.0f32; BLOCK_SIZE];
-                self.a.fill(&c, key, &mut level);
-                add_ramped(gain, &level, amount, self.prev_peak, self.peak);
+                if let Some(c) = &ac {
+                    self.a.fill(c, key, &mut level);
+                    add_ramped(gain, &level, amount, self.prev_peak, self.peak);
+                } else if let Some(c) = &bc {
+                    self.b.fill(c, key, &mut level);
+                    add_ramped(gain, &level, amount, 1.0, 1.0);
+                }
+                if self.glide.active() {
+                    for (n, g) in gain.iter_mut().enumerate() {
+                        *g += amount * self.glide.at(n + 1);
+                    }
+                }
             }
-            None => self.a.advance(&c, key, BLOCK_SIZE as u32),
+            None => {
+                if let Some(c) = &ac {
+                    self.a.advance(c, key, BLOCK_SIZE as u32);
+                } else if let Some(c) = &bc {
+                    self.b.advance(c, key, BLOCK_SIZE as u32);
+                }
+            }
         }
+        self.glide.advance(BLOCK_SIZE as u16);
         start
     }
 }

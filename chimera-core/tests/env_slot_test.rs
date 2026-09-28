@@ -1,0 +1,174 @@
+//! The ENV slot: A or B, the matrix's inputs, TYPE/MODE/FORM changes
+//! (filter-routing spec § 1, § Tests "TYPE, MODE and FORM changes").
+
+use chimera_core::dsp::envelope::{EnvMods, Envelope};
+use chimera_core::dsp::modulator::func::Slides;
+use chimera_core::dsp::modulator::{EnvForm, EnvType, Func, FuncMode, LfoForm};
+use chimera_core::params::{EnvParams, ParamSnapshot};
+
+const SR: u32 = 48_000;
+
+fn a() -> EnvParams {
+    EnvParams::default()
+}
+
+fn b(f: Func) -> EnvParams {
+    let mut p = EnvParams {
+        env_type: EnvType::B,
+        ..EnvParams::default()
+    };
+    p.func.set_func(f);
+    p
+}
+
+fn kinds() -> Vec<EnvParams> {
+    vec![
+        a(),
+        b(Func::Env(EnvForm::Ad)),
+        b(Func::Env(EnvForm::Ahr)),
+        b(Func::Env(EnvForm::Cycle)),
+        b(Func::Lfo(LfoForm::Free)),
+        b(Func::Lfo(LfoForm::Lfv)),
+        b(Func::Burst(EnvForm::Ad)),
+        b(Func::Burst(EnvForm::Cycle)),
+    ]
+}
+
+#[test]
+fn env3_defaults_to_b_env_ad() {
+    let p = ParamSnapshot::default();
+    assert_eq!(p.envelopes[0].env_type, EnvType::A);
+    assert_eq!(p.envelopes[1].env_type, EnvType::A);
+    let e3 = &p.envelopes[2];
+    assert_eq!(
+        (e3.env_type, e3.func.func()),
+        (EnvType::B, Func::Env(EnvForm::Ad))
+    );
+    // Each MODE keeps its own FORM: LFO's default is FREE, not ENV's AD.
+    assert_eq!(e3.func.lfo_form, LfoForm::Free);
+}
+
+/// Every change between the kinds, mid-note, key down and up: the first
+/// output after it is the last before it; into A or B ENV nothing glides.
+#[test]
+fn type_mode_and_form_changes_never_step() {
+    for from in kinds() {
+        for to in kinds() {
+            for key_down in [true, false] {
+                let mut e = Envelope::new();
+                e.note_on(&from);
+                for blk in 0..12 {
+                    e.run_block(&from, &EnvMods::NONE, key_down || blk < 6, SR, None);
+                }
+                let before = e.output();
+                let start = e.run_block(&to, &EnvMods::NONE, key_down, SR, None);
+                assert!((start - before).abs() < 1e-6, "{from:?} → {to:?}");
+                let into_env = to.env_type == EnvType::A || to.func.mode == FuncMode::Env;
+                if into_env && (0.0..=1.0).contains(&before) {
+                    assert!(!e.gliding(), "{from:?} → {to:?} glides");
+                }
+                let mut last = [0.0f32; 4];
+                for l in last.iter_mut() {
+                    *l = e.run_block(&to, &EnvMods::NONE, key_down, SR, None);
+                }
+                assert!(!e.gliding(), "the glide lasts 256 samples");
+                // A held CYCLE never parks, whatever level it was entered at.
+                if key_down
+                    && to.env_type == EnvType::B
+                    && to.func.func() == Func::Env(EnvForm::Cycle)
+                {
+                    assert_ne!(last[2], last[3], "{from:?} → CYCLE is moving");
+                }
+            }
+        }
+    }
+}
+
+/// Review Focus 3: TYPE, MODE and FORM spun one step every block.
+#[test]
+fn spinning_type_every_block_stays_bounded() {
+    let k = kinds();
+    let mut e = Envelope::new();
+    e.note_on(&k[0]);
+    for blk in 0..1000 {
+        let p = &k[blk % k.len()];
+        let v = e.run_block(p, &EnvMods::NONE, blk % 97 < 60, SR, None);
+        assert!(
+            v.is_finite() && (-1.0 - 1e-6..=1.0 + 1e-6).contains(&v),
+            "block {blk}: {v}"
+        );
+    }
+}
+
+/// LEVEL and TIME are inert on B; RISE, FALL and SHAPE on A.
+#[test]
+fn a_and_b_destinations_are_inert_on_the_other_type() {
+    let render = |p: &EnvParams, m: &EnvMods| {
+        let mut e = Envelope::new();
+        e.note_on(p);
+        (0..50)
+            .map(|_| e.run_block(p, m, true, SR, None))
+            .collect::<Vec<_>>()
+    };
+    let slides = EnvMods {
+        slides: Slides {
+            rise: 0.3,
+            fall: -0.2,
+            shape: 0.4,
+        },
+        ..EnvMods::NONE
+    };
+    let ctrl = EnvMods {
+        level: Some(0.3),
+        time: 0.5,
+        ..EnvMods::NONE
+    };
+    let pa = a();
+    let pb = b(Func::Env(EnvForm::Ad));
+    assert_eq!(render(&pa, &slides), render(&pa, &EnvMods::NONE));
+    assert_eq!(render(&pb, &ctrl), render(&pb, &EnvMods::NONE));
+    assert_ne!(render(&pb, &slides), render(&pb, &EnvMods::NONE));
+    assert_ne!(render(&pa, &ctrl), render(&pa, &EnvMods::NONE));
+}
+
+/// A FORM change first seen at a note-on (no block ran in between) runs
+/// the new FORM's note-on: an LFO switched to SYNC restarts at its PHASE.
+#[test]
+fn a_change_seen_at_a_note_on_runs_the_new_note_on() {
+    let (free, sync) = (b(Func::Lfo(LfoForm::Free)), b(Func::Lfo(LfoForm::Sync)));
+    let mut e = Envelope::new();
+    e.note_on(&free);
+    for _ in 0..20 {
+        e.run_block(&free, &EnvMods::NONE, true, SR, None);
+    }
+    e.note_on(&sync);
+    let mut fresh = Envelope::new();
+    fresh.note_on(&sync);
+    let (mut x, mut y) = (0.0, 0.0);
+    for _ in 0..6 {
+        x = e.run_block(&sync, &EnvMods::NONE, true, SR, None);
+        y = fresh.run_block(&sync, &EnvMods::NONE, true, SR, None);
+    }
+    assert!(!e.gliding(), "the glide is over");
+    assert!(
+        (x - y).abs() < 1e-6,
+        "{x} vs {y}: SYNC restarted at the note-on"
+    );
+}
+
+#[test]
+fn holds_follow_the_lifetime_rule() {
+    // A and B AD/AHR hold until idle; B CYCLE and B LFO only while held.
+    for (p, holds_after_key_up) in [
+        (a(), true),
+        (b(Func::Env(EnvForm::Ad)), true),
+        (b(Func::Env(EnvForm::Cycle)), false),
+        (b(Func::Lfo(LfoForm::Free)), false),
+    ] {
+        let mut e = Envelope::new();
+        e.note_on(&p);
+        e.run_block(&p, &EnvMods::NONE, true, SR, None);
+        e.run_block(&p, &EnvMods::NONE, false, SR, None);
+        assert_eq!(e.holds(false), holds_after_key_up, "{p:?}");
+    }
+}

@@ -1,7 +1,7 @@
 use crate::addr::{BlockRef, Blocks};
 use crate::block::{Block, ParamId, ParamSpec, ValFmt};
 use crate::dsp::filter::{FilterMode, SVF_MODE_NAMES, SVF_MODES};
-use crate::dsp::modulator::{EnvSpeed, EnvType, HoldPos, pick};
+use crate::dsp::modulator::{EnvSpeed, EnvType, FuncMode, FuncParams, HoldPos, pick};
 
 /// Parameters for one voice's filter.
 #[derive(Clone, Copy, Debug)]
@@ -110,6 +110,8 @@ pub struct EnvParams {
     pub hold_pos: HoldPos,
     /// TIME destination's stored 0.
     pub time: f32,
+    /// Envelope B's MODE, FORM, RISE, FALL and SHAPE.
+    pub func: FuncParams,
 }
 
 impl Default for EnvParams {
@@ -127,6 +129,7 @@ impl Default for EnvParams {
             speed: EnvSpeed::Med,
             hold_pos: HoldPos::Ahdsr,
             time: 0.0,
+            func: FuncParams::ENV,
         }
     }
 }
@@ -143,11 +146,16 @@ impl EnvParams {
     pub const SPEED: ParamId = ParamId(8);
     pub const HOLD_POS: ParamId = ParamId(9);
     pub const TIME: ParamId = ParamId(10);
+    pub const MODE: ParamId = ParamId(11);
+    pub const FORM: ParamId = ParamId(12);
+    pub const RISE: ParamId = ParamId(13);
+    pub const FALL: ParamId = ParamId(14);
+    pub const SHAPE: ParamId = ParamId(15);
 }
 
 /// Positions and levels, per block. LEVEL and TIME are hidden destinations
 /// (Task 9 of the filter-routing plan makes them modulatable).
-pub static ENV_SPECS: [ParamSpec; 11] = [
+pub static ENV_SPECS: [ParamSpec; 16] = [
     ParamSpec::continuous(0, "ATK", ValFmt::Uni, 0.0, 1.0, 0.189, 1.0 / 128.0, false),
     ParamSpec::continuous(1, "DEC", ValFmt::Uni, 0.0, 1.0, 0.559, 1.0 / 128.0, false),
     ParamSpec::continuous(2, "SUS", ValFmt::Uni, 0.0, 1.0, 0.7, 1.0 / 128.0, false),
@@ -171,6 +179,17 @@ pub static ENV_SPECS: [ParamSpec; 11] = [
         1.0,
     ),
     ParamSpec::continuous(10, "TIME", ValFmt::Bi, -1.0, 1.0, 0.0, 2.0 / 128.0, false),
+    ParamSpec::choice(
+        11,
+        "MODE",
+        ValFmt::Names(&["ENV", "LFO", "BURST"]),
+        2.0,
+        0.0,
+    ),
+    ParamSpec::choice(12, "FORM", ValFmt::Names(&["AD", "AHR", "CYCLE"]), 2.0, 0.0),
+    ParamSpec::continuous(13, "RISE", ValFmt::Uni, 0.0, 1.0, 0.206, 1.0 / 128.0, false),
+    ParamSpec::continuous(14, "FALL", ValFmt::Uni, 0.0, 1.0, 0.640, 1.0 / 128.0, false),
+    ParamSpec::continuous(15, "SHAPE", ValFmt::Bi, 0.0, 1.0, 0.5, 1.0 / 128.0, false),
 ];
 
 impl Block for EnvParams {
@@ -191,6 +210,11 @@ impl Block for EnvParams {
             Self::SPEED => self.speed as u8 as f32,
             Self::HOLD_POS => self.hold_pos as u8 as f32,
             Self::TIME => self.time,
+            Self::MODE => self.func.mode as u8 as f32,
+            Self::FORM => self.func.form_index(),
+            Self::RISE => self.func.rise,
+            Self::FALL => self.func.fall,
+            Self::SHAPE => self.func.shape,
             _ => 0.0,
         }
     }
@@ -208,6 +232,11 @@ impl Block for EnvParams {
             Self::SPEED => self.speed = pick(&EnvSpeed::ALL, v),
             Self::HOLD_POS => self.hold_pos = pick(&HoldPos::ALL, v),
             Self::TIME => self.time = v,
+            Self::MODE => self.func.mode = pick(&FuncMode::ALL, v),
+            Self::FORM => self.func.set_form_index(v),
+            Self::RISE => self.func.rise = v,
+            Self::FALL => self.func.fall = v,
+            Self::SHAPE => self.func.shape = v,
             _ => {}
         }
     }
@@ -481,7 +510,14 @@ impl Default for ParamSnapshot {
             },
             drive: DriveParams::default(),
             folder: FolderParams::default(),
-            envelopes: [EnvParams::default(); 3],
+            envelopes: [
+                EnvParams::default(),
+                EnvParams::default(),
+                EnvParams {
+                    env_type: EnvType::B,
+                    ..EnvParams::default()
+                },
+            ],
             algo: crate::dsp::algo::params::AlgoParams::default(),
             modal: crate::dsp::modal::ModalParams::default(),
             lfo: crate::dsp::lfo::LfoParams::default(),
