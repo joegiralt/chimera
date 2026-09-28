@@ -24,16 +24,16 @@ fn voice_pool_fits_d2() {
     );
 }
 
-/// ADR 0014: Modal's string buffers hold the period of E1 (MIDI 28, 41.2 Hz)
+/// ADR 0040: Modal's string buffers hold the period of G1 (MIDI 31, 49.0 Hz)
 /// at 48 kHz exactly; lower notes clamp to the buffer.
 #[test]
-fn modal_strings_cover_e1_and_no_lower() {
+fn modal_strings_cover_g1_and_no_lower() {
     let period = |n: u8| (hw::SAMPLE_RATE as f32 / note_to_freq(n)) as usize;
-    assert_eq!(period(28), 1164);
-    assert!(period(28) < MAX_STRING_DELAY, "E1 must not clamp");
+    assert_eq!(period(31), 979);
+    assert!(period(31) < MAX_STRING_DELAY, "G1 must not clamp");
     assert!(
-        period(27) > MAX_STRING_DELAY - 1,
-        "buffer is larger than E1 needs"
+        period(30) > MAX_STRING_DELAY - 1,
+        "buffer is larger than G1 needs"
     );
 }
 

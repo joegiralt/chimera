@@ -95,6 +95,7 @@ fn focus_band_shows_the_last_touched_slot() {
         text.as_str(),
         v,
         slot.format().is_bipolar(),
+        components::Look::Live,
         None,
     );
     assert!(
@@ -140,6 +141,7 @@ fn empty_slots_are_a_dim_dash_and_choices_have_no_bar() {
         fmt: ValFmt::Names(&["MONO", "POLY"]),
         active: false,
         mod_amount: None,
+        look: components::Look::Live,
     };
     let mut fb = Fb::new();
     components::cell(&mut fb, 1, 200, Some(&c));

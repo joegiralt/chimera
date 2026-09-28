@@ -59,11 +59,8 @@ fn test_drive_output_bounded() {
 #[test]
 fn test_filter_lowpass_attenuates_high_freq() {
     let mut filter = SvfFilter::new();
-    let params = FilterParams {
-        cutoff: 200.0, // very low cutoff
-        mode: 2,       // LP4
-        ..Default::default()
-    };
+    let mut params = FilterParams::default();
+    params.cutoff = 200.0; // very low cutoff
 
     // Generate a high-frequency signal (5kHz at 48kHz = fast oscillation)
     let mut buf = [0.0f32; 64];
@@ -86,11 +83,8 @@ fn test_filter_lowpass_attenuates_high_freq() {
 #[test]
 fn test_filter_passes_low_freq() {
     let mut filter = SvfFilter::new();
-    let params = FilterParams {
-        cutoff: 5000.0,
-        mode: 2, // LP4
-        ..Default::default()
-    };
+    let mut params = FilterParams::default();
+    params.cutoff = 5000.0;
 
     // Low frequency signal: one cycle over 128 samples ≈ 375Hz at 48kHz
     let mut buf = [0.0f32; 64];
@@ -113,12 +107,9 @@ fn test_filter_passes_low_freq() {
 #[test]
 fn test_filter_output_stable() {
     let mut filter = SvfFilter::new();
-    let params = FilterParams {
-        resonance: 0.99, // near self-oscillation
-        cutoff: 1000.0,
-        mode: 2, // LP4
-        ..Default::default()
-    };
+    let mut params = FilterParams::default();
+    params.resonance = 0.99; // near self-oscillation
+    params.cutoff = 1000.0;
 
     let mut buf = [0.0f32; 64];
     buf[0] = 1.0; // impulse
@@ -267,7 +258,6 @@ fn test_voice_filter_shapes_sound() {
     // One with open filter, one with very closed filter
     params_open.filter.cutoff = 15000.0;
     params_closed.filter.cutoff = 100.0;
-    params_closed.filter.mode = 2; // LP4
 
     voice_open.note_on(
         MidiNote::new(60).unwrap(),

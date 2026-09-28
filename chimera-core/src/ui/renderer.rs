@@ -5,6 +5,7 @@ use embedded_graphics::primitives::{PrimitiveStyle, Rectangle, StyledDrawable};
 
 use crate::addr::Op;
 use crate::dsp::algo::algorithms::AlgoId;
+use crate::dsp::modulator::{EnvType, HoldPos};
 use crate::perf::load::AudioStats;
 use crate::ui::PrimeStatus;
 use crate::ui::animation::AnimatedValue;
@@ -12,7 +13,6 @@ use crate::ui::audio_page;
 use crate::ui::block_def::{BlockDef, FxFlow, SlotBinding, VizType, slot_addr};
 use crate::ui::chain::ChainNav;
 use crate::ui::components;
-use crate::ui::draw;
 use crate::ui::dungeon_map;
 use crate::ui::fmt::{self, FmtBuf};
 use crate::ui::mod_grid::MatrixState;
@@ -20,6 +20,7 @@ use crate::ui::page::PageLayout;
 use crate::ui::perf::PerfStats;
 use crate::ui::region::{self, RegionKind};
 use crate::ui::theme;
+use crate::ui::view::{self, EnvKind, SlotCtx, View};
 use crate::ui::viz;
 
 /// Everything one frame draws from, besides the renderer's own animation.
@@ -29,6 +30,8 @@ pub struct Frame<'a> {
     pub perf: &'a PerfStats,
     pub matrix: &'a MatrixState,
     pub sel_op: Op,
+    /// What the page's slots resolve against.
+    pub ctx: SlotCtx,
     /// Slot the focus band shows: the last one touched on this page.
     pub focus: usize,
     /// Live output (the oscilloscope buffer).
@@ -76,16 +79,6 @@ impl Renderer {
         }
     }
 
-    /// Mod-bar amount for slot `i` of `def`, if that param is a destination.
-    pub(crate) fn cell_mod_info(
-        def: &BlockDef,
-        i: usize,
-        sel_op: Op,
-        matrix_state: &MatrixState,
-    ) -> Option<f32> {
-        slot_addr(def, i, sel_op).and_then(|a| matrix_state.mod_info_for(a))
-    }
-
     /// BigViz: the page's visualization with the touched value riding on it.
     fn draw_big_viz<D>(&self, display: &mut D, f: &Frame)
     where
@@ -94,28 +87,101 @@ impl Renderer {
         let a = |i: usize| self.anim[i].current();
         match f.def.viz {
             VizType::FilterResponse => {
-                let slot = &f.def.params[f.focus];
-                let mut buf = FmtBuf::new();
-                fmt::fmt_val(&mut buf, a(f.focus), slot.format());
-                let readout =
-                    (slot.binding != SlotBinding::Empty).then(|| (slot.label(), buf.as_str()));
-                viz::filter(display, a(0), a(1), readout);
+                // By address, not slot (spec § UI "Vizzes read by address").
+                let at = |id| {
+                    let addr = crate::addr::ParamAddr::new(crate::addr::BlockRef::Filter, id);
+                    (0..f.def.params.len())
+                        .find(|&i| slot_addr(f.def, i, &f.ctx) == Some(addr))
+                        .map_or(0.0, a)
+                };
+                use crate::params::FilterParams;
+                let mode = f.parts[f.active_part].sound.params.filter.mode();
+                let v = view::view(f.def, f.focus, &f.ctx);
+                let buf = value_text(f, f.focus, a(f.focus));
+                let readout = (v != View::Empty).then(|| (v.label(), buf.as_str()));
+                viz::filter(
+                    display,
+                    at(FilterParams::CUTOFF),
+                    at(FilterParams::RESONANCE),
+                    viz::Response::of(mode),
+                    readout,
+                );
             }
             VizType::Adsr => {
-                let (atk, dec, sus, rel) = (a(0).max(0.02), a(1).max(0.02), a(2), a(3).max(0.02));
-                let total = atk + dec + 0.3 + rel;
-                viz::envelope(
-                    display,
-                    &[atk / total, dec / total, 0.3 / total, rel / total],
-                    &[0.0, 1.0, sus, sus, 0.0],
-                    &["ATK", "DEC", "SUS", "REL"],
-                    (f.focus < 4).then_some(f.focus),
-                );
+                let Some(SlotBinding::EnvPanel(s, _)) = f.def.params.first().map(|p| p.binding)
+                else {
+                    return;
+                };
+                let addr = |id| crate::addr::ParamAddr::new(crate::addr::BlockRef::Env(s), id);
+                let at = |id| {
+                    (0..f.def.params.len())
+                        .find(|&i| slot_addr(f.def, i, &f.ctx) == Some(addr(id)))
+                        .map(a)
+                };
+                use crate::params::EnvParams as E;
+                let p = &f.parts[f.active_part].sound.params.envelopes[s.index()];
+                match f.ctx.envs[s.index()] {
+                    EnvKind::A(_) => {
+                        let (atk, dec, sus, rel) = (
+                            at(E::ATTACK).unwrap_or(0.0).max(0.02),
+                            at(E::DECAY).unwrap_or(0.0).max(0.02),
+                            at(E::SUSTAIN).unwrap_or(0.0),
+                            at(E::RELEASE).unwrap_or(0.0).max(0.02),
+                        );
+                        // H is a stage under AHDSR only, wide enough for its
+                        // label even at 0.
+                        let hold = if p.hold_pos == HoldPos::Ahdsr {
+                            let floor = viz::label_floor("H", atk + dec + 0.3 + rel);
+                            at(E::HOLD).unwrap_or(0.0).max(floor)
+                        } else {
+                            0.0
+                        };
+                        let total = atk + hold + dec + 0.3 + rel;
+                        let focus = view::view(f.def, f.focus, &f.ctx).addr().map(|x| x.param);
+                        let lit = match focus {
+                            Some(E::ATTACK) => Some(0),
+                            Some(E::HOLD) => Some(1),
+                            Some(E::DECAY) => Some(2),
+                            Some(E::SUSTAIN) => Some(3),
+                            Some(E::RELEASE) => Some(4),
+                            _ => None,
+                        };
+                        viz::envelope(
+                            display,
+                            &[
+                                atk / total,
+                                hold / total,
+                                dec / total,
+                                0.3 / total,
+                                rel / total,
+                            ],
+                            &[0.0, 1.0, 1.0, sus, sus, 0.0],
+                            &["A", "H", "D", "S", "R"],
+                            lit,
+                        );
+                    }
+                    EnvKind::B(func) => viz::func(
+                        display,
+                        func,
+                        at(E::RISE).unwrap_or(p.func.rise),
+                        at(E::FALL).unwrap_or(p.func.fall),
+                        at(E::SHAPE).unwrap_or(p.func.shape),
+                    ),
+                }
             }
             VizType::CompressorCurve => {
                 use crate::dsp::comp::RATIOS;
                 let ratio = RATIOS[((a(1) * 7.0 + 0.5) as usize).min(RATIOS.len() - 1)];
                 viz::compressor(display, -40.0 + 40.0 * a(0), ratio, f.master_gr_db);
+            }
+            VizType::EnvSpeed => {
+                let e = &f.parts[f.active_part].sound.params.envelopes;
+                viz::env_speed(
+                    display,
+                    core::array::from_fn(|i| {
+                        (e[i].env_type == EnvType::A, e[i].speed, e[i].hold_pos)
+                    }),
+                );
             }
             _ => {}
         }
@@ -150,7 +216,7 @@ impl Renderer {
                     crate::dsp::algo::params::AlgoParams::MORPH,
                 );
                 let slot = (0..f.def.params.len())
-                    .find(|&i| slot_addr(f.def, i, Op::A) == Some(morph))
+                    .find(|&i| slot_addr(f.def, i, &f.ctx) == Some(morph))
                     .expect("ALG page binds MORPH");
                 viz::algo_diagram(
                     display,
@@ -168,7 +234,7 @@ impl Renderer {
     fn strips(&self, f: &Frame) -> [viz::Strip; crate::hw::MAX_PARTS] {
         let slot = |id| {
             let addr = crate::addr::ParamAddr::new(crate::addr::BlockRef::Part, id);
-            (0..f.def.params.len()).find(|&i| slot_addr(f.def, i, Op::A) == Some(addr))
+            (0..f.def.params.len()).find(|&i| slot_addr(f.def, i, &f.ctx) == Some(addr))
         };
         let (level, pan) = (
             slot(crate::part::PartParams::LEVEL),
@@ -283,59 +349,30 @@ impl Renderer {
         D: DrawTarget<Color = Rgb565>,
     {
         if f.def.layout == PageLayout::Matrix {
-            return self.draw_route(display, f.matrix);
+            return crate::ui::mod_grid::draw_readout(
+                display,
+                f.matrix,
+                amount_of(self.anim[MATRIX_AMOUNT_SLOT].current()),
+            );
         }
         if f.def.viz == VizType::AudioStats {
             return audio_page::draw_focus(display, f.def, f.audio);
         }
-        let slot = &f.def.params[f.focus];
-        if slot.binding == SlotBinding::Empty {
+        let view = view::view(f.def, f.focus, &f.ctx);
+        if view == View::Empty {
             return;
         }
         let v = self.anim[f.focus].current();
-        let mut buf = FmtBuf::new();
-        fmt::fmt_val(&mut buf, v, slot.format());
+        let buf = value_text(f, f.focus, v);
         components::focus_band(
             display,
-            slot.label(),
+            view.label(),
             buf.as_str(),
             v,
-            slot.format().is_bipolar(),
+            view.fmt().is_bipolar(),
+            look(f, f.focus),
             f.prime_status,
         );
-    }
-
-    /// Mod matrix focus band: the selected route (`SRC → TAG DEST`); the amount lerps through
-    /// slot e's animated value (the amount encoder).
-    fn draw_route<D>(&self, display: &mut D, m: &MatrixState)
-    where
-        D: DrawTarget<Color = Rgb565>,
-    {
-        let dest = m
-            .dests
-            .get(m.sel_col)
-            .copied()
-            .flatten()
-            .filter(|_| m.sel_col < m.num_dests);
-        let (Some(dest), Some(src)) = (dest, m.sources.get(m.sel_row).copied().flatten()) else {
-            let label = "NO DESTINATIONS";
-            draw::text_tracked(
-                display,
-                &theme::FONT_VALUE,
-                label,
-                theme::MARGIN_X,
-                theme::FOCUS_LABEL_Y,
-                theme::MID,
-                theme::LABEL_TRACKING,
-            );
-            return;
-        };
-        let v = self.anim[MATRIX_AMOUNT_SLOT].current();
-        let mut buf = FmtBuf::new();
-        crate::ui::mod_grid::fmt_amount(&mut buf, amount_of(v));
-        let mut name = FmtBuf::new();
-        crate::ui::mod_grid::fmt_route_dest(&mut name, &dest);
-        components::focus_route(display, src.name, name.as_str(), buf.as_str(), v);
     }
 
     /// The six cells, first row's labels at `top`.
@@ -346,21 +383,28 @@ impl Renderer {
         if f.def.viz == VizType::AudioStats {
             return audio_page::draw_cells(display, f.def, f.audio, top);
         }
-        for (i, slot) in f.def.params.iter().enumerate() {
-            if slot.binding == SlotBinding::Empty {
+        for (i, anim) in self.anim.iter().enumerate() {
+            let v = view::view(f.def, i, &f.ctx);
+            if v == View::Empty {
                 components::cell(display, i, top, None);
                 continue;
             }
-            let v = self.anim[i].current();
+            let value = anim.current();
             let mut buf = FmtBuf::new();
-            fmt::fmt_val(&mut buf, v, slot.format());
+            match v {
+                View::Text { text, .. } => {
+                    let _ = core::fmt::Write::write_str(&mut buf, text);
+                }
+                _ => fmt::fmt_val(&mut buf, value, v.fmt()),
+            }
             let c = components::Cell {
-                label: slot.label(),
+                label: v.label(),
                 text: buf.as_str(),
-                value: v,
-                fmt: slot.format(),
+                value,
+                fmt: v.fmt(),
                 active: i == f.focus,
-                mod_amount: Self::cell_mod_info(f.def, i, f.sel_op, f.matrix),
+                mod_amount: mod_info(f, i),
+                look: look(f, i),
             };
             components::cell(display, i, top, Some(&c));
         }
@@ -371,7 +415,10 @@ impl Renderer {
     where
         D: DrawTarget<Color = Rgb565>,
     {
-        let (context, name) = components::header_text(f.nav, f.def);
+        let (context, mut name) = components::header_text(f.nav, f.def);
+        if let Some(ty) = ["", " / A", " / B"].get(title_type(f) as usize) {
+            let _ = core::fmt::Write::write_str(&mut name, ty);
+        }
         components::header(
             display,
             context.as_str(),
@@ -391,6 +438,55 @@ impl Renderer {
         let end = y_end as usize * theme::SCREEN_W as usize;
         fb[start..end].fill(bg);
     }
+}
+
+/// The ENV page title's TYPE suffix: 0 none, 1 A, 2 B.
+pub fn title_type(f: &Frame) -> u8 {
+    match f.def.params.first().map(|p| p.binding) {
+        Some(SlotBinding::EnvPanel(s, _)) => match f.ctx.envs[s.index()] {
+            EnvKind::A(_) => 1,
+            EnvKind::B(_) => 2,
+        },
+        _ => 0,
+    }
+}
+
+/// How cell `i` of the page reads now: the one place a cell's look is
+/// decided, for drawing and for the dirty-region key. Both looks read the
+/// Sound's `mod_state`, which every matrix edit syncs, not the UI's mirror.
+pub fn look(f: &Frame, i: usize) -> components::Look {
+    let sound = &f.parts[f.active_part].sound;
+    match view::view(f.def, i, &f.ctx) {
+        View::Route { source, .. }
+            if sound.mod_state.routes_into(crate::modulation::CUTOFF) & (1 << source.index())
+                == 0 =>
+        {
+            components::Look::Absent
+        }
+        v if view::is_dimmed(&v, sound) => components::Look::Dimmed,
+        _ => components::Look::Live,
+    }
+}
+
+/// Mod-bar amount for cell `i`, if its param is a destination.
+pub(crate) fn mod_info(f: &Frame, i: usize) -> Option<f32> {
+    slot_addr(f.def, i, &f.ctx).and_then(|a| f.matrix.mod_info_for(a))
+}
+
+/// Slot `i`'s value as a cell, the focus band and a viz readout show it:
+/// `--` for an absent route, a fixed readout's text.
+fn value_text(f: &Frame, i: usize, v: f32) -> FmtBuf {
+    let mut buf = FmtBuf::new();
+    match view::view(f.def, i, &f.ctx) {
+        View::Text { text, .. } => {
+            let _ = core::fmt::Write::write_str(&mut buf, text);
+        }
+        _ if look(f, i) == components::Look::Absent => {
+            let _ = core::fmt::Write::write_str(&mut buf, "--");
+        }
+        view => fmt::fmt_val(&mut buf, v, view.fmt()),
+    }
+    buf
 }
 
 /// Fingerprint of the Mixer overview (quantized levels and pans, selection).

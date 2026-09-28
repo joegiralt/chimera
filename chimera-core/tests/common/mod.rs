@@ -61,14 +61,27 @@ pub enum Case {
     AlgoMorphSweep,
     /// Algo init; engine switched to Modal at block ON_BLOCKS / 2 (mid-note).
     AlgoToModalSwitch,
+    /// Factory Sound `i` (0–7) as the bank builds it, its own matrix included.
+    Factory(u8),
 }
 
 static TX_NAMES: [&str; 8] = [
     "algo_t1", "algo_t2", "algo_t3", "algo_t4", "algo_t5", "algo_t6", "algo_t7", "algo_t8",
 ];
 
+static FACTORY_NAMES: [&str; 8] = [
+    "factory_0",
+    "factory_1",
+    "factory_2",
+    "factory_3",
+    "factory_4",
+    "factory_5",
+    "factory_6",
+    "factory_7",
+];
+
 impl Case {
-    pub const ALL: [Case; 15] = [
+    pub const ALL: [Case; 23] = [
         Case::ModalInit,
         Case::ModalLfoCutoff,
         Case::AlgoInit,
@@ -84,6 +97,14 @@ impl Case {
         Case::AlgoMorphStatic,
         Case::AlgoMorphSweep,
         Case::AlgoToModalSwitch,
+        Case::Factory(0),
+        Case::Factory(1),
+        Case::Factory(2),
+        Case::Factory(3),
+        Case::Factory(4),
+        Case::Factory(5),
+        Case::Factory(6),
+        Case::Factory(7),
     ];
 
     pub fn name(self) -> &'static str {
@@ -96,6 +117,7 @@ impl Case {
             Case::AlgoMorphStatic => "algo_morph_static",
             Case::AlgoMorphSweep => "algo_morph_sweep",
             Case::AlgoToModalSwitch => "algo_to_modal_switch",
+            Case::Factory(i) => FACTORY_NAMES[i as usize % 8],
         }
     }
 }
@@ -156,7 +178,7 @@ pub fn lfo_route(dest: ParamAddr) -> ModState {
 pub fn setup(case: Case) -> (ParamSnapshot, ModState) {
     let with_lfo = |engine: EngineType, dest: ParamAddr| {
         let mut p = init_params(engine);
-        p.lfo.rate = MOD_LFO_RATE;
+        p.lfos[0].rate = MOD_LFO_RATE;
         (p, lfo_route(dest))
     };
     match case {
@@ -168,10 +190,14 @@ pub fn setup(case: Case) -> (ParamSnapshot, ModState) {
         Case::AlgoMorphStatic => (morph_patch(), ModState::new()),
         Case::AlgoMorphSweep => {
             let mut p = morph_patch();
-            p.lfo.rate = MOD_LFO_RATE;
+            p.lfos[0].rate = MOD_LFO_RATE;
             (p, lfo_route(MORPH))
         }
         Case::AlgoToModalSwitch => (init_params(EngineType::Algo), ModState::new()),
+        Case::Factory(i) => {
+            let s = chimera_core::factory::factory_sound(i as usize).expect("factory sound");
+            (s.params, s.mod_state)
+        }
     }
 }
 

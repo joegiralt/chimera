@@ -1,7 +1,7 @@
 //! What crosses from the UI to the audio thread (spec § Threading).
 
 use chimera_core::addr::{BlockRef, ParamAddr};
-use chimera_core::instrument::AudioShared;
+use chimera_core::instrument::{AudioShared, PartAudio};
 use chimera_core::mod_path::ModDestRegistry;
 use chimera_core::modulation::ModState;
 use chimera_core::params::EngineType;
@@ -9,8 +9,7 @@ use chimera_core::params::FilterParams;
 use chimera_core::part::PartMode;
 use chimera_core::preset::Performance;
 
-#[test]
-fn snapshot_copies_every_part_and_the_fx() {
+fn non_default_performance() -> Performance {
     let mut perf = Performance::new();
     perf.parts[4].load_init(EngineType::Algo);
     perf.parts[4].mix.mode = PartMode::Mono;
@@ -24,7 +23,13 @@ fn snapshot_copies_every_part_and_the_fx() {
     let mut mod_state = ModState::from_registry(&registry, 1);
     mod_state.set_amount(0, 0, 42);
     perf.parts[4].sound.mod_state = mod_state;
+    perf
+}
 
+#[test]
+fn snapshot_copies_every_part_and_the_fx() {
+    let perf = non_default_performance();
+    let cutoff = ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF);
     let shared = AudioShared::from_performance(&perf);
     assert_eq!(
         shared.parts[4].params.engine(),
@@ -75,4 +80,34 @@ fn update_from_overwrites_in_place() {
     assert_eq!(shared.parts[0].mod_state.num_dests(), 1);
     assert_eq!(shared.parts[0].mod_state.dest(0), cutoff);
     assert_eq!(shared.parts[0].mod_state.amount(0, 0), 17);
+}
+
+/// Built in a slot full of garbage, `init_in_place` matches both
+/// `from_performance` and a field-by-field copy of the Performance.
+#[test]
+fn init_in_place_matches_from_performance() {
+    let perf = non_default_performance();
+    let mut slot = Box::new(core::mem::MaybeUninit::<AudioShared>::uninit());
+    // SAFETY: filling a `MaybeUninit`'s bytes is always sound.
+    unsafe { slot.as_mut_ptr().write_bytes(0xA5, 1) };
+    let placed = AudioShared::init_in_place(&mut slot, &perf);
+
+    let expected = AudioShared {
+        parts: core::array::from_fn(|i| {
+            let p = &perf.parts[i];
+            PartAudio {
+                params: p.sound.params.clone(),
+                mod_state: p.sound.mod_state.clone(),
+                mix: p.mix,
+            }
+        }),
+        fx: perf.fx,
+    };
+    let placed = format!("{placed:?}");
+    assert_eq!(placed, format!("{expected:?}"));
+    assert_eq!(
+        placed,
+        format!("{:?}", AudioShared::from_performance(&perf))
+    );
+    assert_ne!(placed, format!("{:?}", AudioShared::default()));
 }

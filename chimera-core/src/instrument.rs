@@ -20,7 +20,7 @@ use crate::note_queue::{NoteEvent, NoteKind};
 use crate::params::ParamSnapshot;
 use crate::part::PartParams;
 use crate::perf::load::AudioStats;
-use crate::preset::{Performance, SoundPool};
+use crate::preset::{Part, Performance, SoundPool};
 use crate::scope::{ScopeFrame, ScopeWriter};
 use crate::triple::TripleBuffer;
 use crate::voice_alloc::{Alloc, Allocator};
@@ -61,27 +61,54 @@ impl Default for AudioShared {
     }
 }
 
+impl PartAudio {
+    fn of(p: &Part) -> Self {
+        Self {
+            params: p.sound.params.clone(),
+            mod_state: p.sound.mod_state.clone(),
+            mix: p.mix,
+        }
+    }
+}
+
+crate::in_place::field_list!(AudioShared => AudioShared { parts, fx });
+
 impl AudioShared {
     pub fn from_performance(perf: &Performance) -> Self {
-        Self {
-            parts: core::array::from_fn(|i| {
-                let p = &perf.parts[i];
-                PartAudio {
-                    params: p.sound.params.clone(),
-                    mod_state: p.sound.mod_state.clone(),
-                    mix: p.mix,
-                }
-            }),
-            fx: perf.fx,
+        // SAFETY: `init_in_place` writes every field of the slot.
+        unsafe { by_value(|slot| Self::init_in_place(slot, perf)) }
+    }
+
+    /// Build from `perf` in `slot`, one `PartAudio` at a time: the stack
+    /// never holds the whole struct.
+    pub fn init_in_place<'s>(slot: &'s mut MaybeUninit<Self>, perf: &Performance) -> &'s mut Self {
+        let p = slot.as_mut_ptr();
+        // SAFETY: `p` comes from a live `&mut MaybeUninit<Self>`, so it is
+        // valid, aligned and unaliased. `field_list!` above fails to compile
+        // if a field is added; each field is written once through a raw
+        // pointer before `assume_init_mut`.
+        unsafe {
+            let parts = addr_of_mut!((*p).parts).cast::<PartAudio>();
+            // The destination's length bounds the writes, not the source's.
+            #[allow(clippy::needless_range_loop)]
+            for i in 0..MAX_PARTS {
+                parts.add(i).write(PartAudio::of(&perf.parts[i]));
+            }
+            addr_of_mut!((*p).fx).write(perf.fx);
+            slot.assume_init_mut()
         }
     }
 
-    /// Overwrite with `perf` (the UI's per-frame publish). Built through
-    /// `from_performance` so there is exactly one place that lists
-    /// `AudioShared`'s fields; the fresh copy is a stack temporary (~3 KB)
-    /// that replaces `*self` in one move, never the heap.
+    /// Overwrite with `perf` (the UI's per-frame publish), one Part at a
+    /// time in place: the stack holds one `PartAudio`, not the whole
+    /// struct. The destructuring lists every field, so a new one fails to
+    /// compile here.
     pub fn update_from(&mut self, perf: &Performance) {
-        *self = Self::from_performance(perf);
+        let Self { parts, fx } = self;
+        for (d, p) in parts.iter_mut().zip(&perf.parts) {
+            *d = PartAudio::of(p);
+        }
+        *fx = perf.fx;
     }
 }
 
@@ -262,7 +289,7 @@ impl Instrument {
         budget: SampleBudget,
     ) -> &mut Self {
         let p = slot.as_mut_ptr();
-        // SAFETY: `p` is valid and unaliased; the six voices are built in
+        // SAFETY: `p` is valid and unaliased; the voices are built in
         // place and the rest (the largest, `buses`, is 1.5 KB) written once
         // by value before `assume_init_mut`.
         unsafe {
@@ -349,7 +376,9 @@ impl Instrument {
         });
         for v in 0..MAX_VOICES {
             if let Some(p) = self.alloc.slots()[v].part() {
-                self.alloc.recost(v, costs[p as usize % MAX_PARTS]);
+                let p = p as usize % MAX_PARTS;
+                let held = self.voices[v].held_model_extra(&shared.parts[p].params);
+                self.alloc.recost(v, costs[p] + held);
             }
         }
         while let Some(v) = self.alloc.shed(FxBus::COST) {

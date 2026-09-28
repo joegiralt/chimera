@@ -4,12 +4,14 @@
 
 use chimera_core::addr::{BlockRef, Op, ParamAddr};
 use chimera_core::dsp::algo::params::AlgoOpParams;
+use chimera_core::dsp::filter::FilterMode;
 use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::ui::block_def::{BlockDef, ParamSlot, VizType, slot_addr};
 use chimera_core::ui::block_registry as reg;
 use chimera_core::ui::page::PageLayout;
 use chimera_core::ui::part_page;
+use chimera_core::ui::view::SlotCtx;
 
 /// One encoder turn with operator A selected.
 fn turn(def: &BlockDef, slot: usize, delta: i8, p: &mut ParamSnapshot) {
@@ -57,13 +59,19 @@ fn drive_filter_folder_pages() {
     snap(&reg::DRIVE, 1, 1, &mut p);
     assert_eq!(p.drive.tone, 107.0 / 127.0);
 
-    assert_eq!(read(&reg::FILTER, &p), [1.0, 0.0, 0.0, 0.0, 0.5, 0.0]);
-    turn(&reg::FILTER, 0, -1, &mut p);
+    assert_eq!(read(&reg::FILTER, &p), [0.0, 1.0, 0.0, 0.0, 0.0, 0.0]);
+    turn(&reg::FILTER, 1, -1, &mut p);
     assert_eq!(p.filter.cutoff, 20000.0 - (20000.0 - 20.0) / 128.0);
-    turn(&reg::FILTER, 4, 1, &mut p);
-    assert_eq!(p.filter.env_amount, (1.0 - -1.0) / 128.0);
+    turn(&reg::FILTER, 3, 1, &mut p);
+    assert_eq!(
+        p.filter.mode(),
+        FilterMode::Lp6,
+        "the next in the SVF's list"
+    );
+    turn(&reg::FILTER, 3, 20, &mut p);
+    assert_eq!(p.filter.mode(), FilterMode::Phaser, "clamps at the last");
 
-    assert_eq!(read(&reg::FOLDER, &p), [0.0, 0.5, 0.5, 0.0, 0.0, 0.0]);
+    assert_eq!(read(&reg::FOLDER, &p), [0.0, 0.5, 0.5, 1.0, 0.0, 0.0]);
     turn(&reg::FOLDER, 0, 4, &mut p);
     assert_eq!(p.folder.fold, 4.0 / 128.0);
 }
@@ -73,31 +81,22 @@ fn envelope_and_lfo_pages() {
     let mut p = ParamSnapshot::default();
     assert_eq!(
         read(&reg::ENVELOPE, &p),
-        [
-            (0.01 - 0.001) / (10.0 - 0.001),
-            (0.3 - 0.001) / (10.0 - 0.001),
-            0.7,
-            (0.3 - 0.001) / (10.0 - 0.001),
-            1.0,
-            0.5
-        ]
+        [0.189, 0.559, 0.7, 0.559, 0.0, 0.0]
     );
     turn(&reg::ENVELOPE, 0, 1, &mut p);
-    assert_eq!(p.envelopes[0].attack, 0.01 + (10.0 - 0.001) / 128.0);
+    assert_eq!(p.envelopes[0].attack, 0.189 + 1.0 / 128.0);
     turn(&reg::ENVELOPE, 2, -1, &mut p);
     assert_eq!(p.envelopes[0].sustain, 0.7 - 1.0 / 128.0);
 
     assert_eq!(read(&reg::LFO, &p)[0], (1.0 - 0.01) / (20.0 - 0.01));
     turn(&reg::LFO, 0, 2, &mut p);
-    assert_eq!(p.lfo.rate, 1.0 + 2.0 * 0.15);
+    assert_eq!(p.lfos[0].rate, 1.0 + 2.0 * 0.15);
     turn(&reg::LFO, 1, 9, &mut p);
-    assert_eq!(p.lfo.shape, 4);
+    assert_eq!(p.lfos[0].shape, 4);
     turn(&reg::LFO, 2, 1, &mut p); // SYNC: free-running -> retrigger
-    assert_eq!(p.lfo.sync, 1);
-    turn(&reg::LFO, 5, 3, &mut p);
-    assert_eq!(p.lfo.offset, 3.0 * (1.0 / 128.0) * 2.0);
+    assert_eq!(p.lfos[0].sync, 1);
     snap(&reg::LFO, 1, -1, &mut p); // shift-snap works on LFO (spec)
-    assert_eq!(p.lfo.shape, 0);
+    assert_eq!(p.lfos[0].shape, 0);
 }
 
 /// The selector machinery sub-project 4's per-operator pages will use.
@@ -143,9 +142,10 @@ fn select_op_page_follows_the_selection() {
 #[test]
 fn a_selected_op_slot_resolves_to_the_operator_selected_now() {
     let level = |op| Some(ParamAddr::new(BlockRef::AlgoOp(op), AlgoOpParams::LEVEL));
-    assert_eq!(slot_addr(&OP_PAGE, 1, Op::B), level(Op::B));
-    assert_eq!(slot_addr(&OP_PAGE, 1, Op::F), level(Op::F));
-    assert_eq!(slot_addr(&OP_PAGE, 0, Op::B), None);
+    let on = |op| SlotCtx::read(&ParamSnapshot::default(), op);
+    assert_eq!(slot_addr(&OP_PAGE, 1, &on(Op::B)), level(Op::B));
+    assert_eq!(slot_addr(&OP_PAGE, 1, &on(Op::F)), level(Op::F));
+    assert_eq!(slot_addr(&OP_PAGE, 0, &on(Op::B)), None);
 }
 
 #[test]

@@ -3,19 +3,23 @@ use core::ptr::addr_of_mut;
 
 use chimera_hal::BLOCK_SIZE;
 
-use crate::addr::Blocks;
+use crate::addr::{BlockRef, Blocks, ParamAddr};
 use crate::block::apply_offset;
 use crate::dsp::algo::engine::AlgoLive;
 use crate::dsp::drive::Drive;
 use crate::dsp::engines::Engines;
-use crate::dsp::envelope::Envelope;
+use crate::dsp::envelope::{EnvMods, Envelope};
 use crate::dsp::filter::SvfFilter;
 use crate::dsp::lfo::Lfo;
+use crate::dsp::modal::{ModalEngine, ModalParams};
+use crate::dsp::modulator::{EnvSlot, LfoSlot};
 use crate::dsp::wavefolder::Wavefolder;
 use crate::hw::{Cost, MAX_VOICES, VOICE_RAM_BUDGET};
 use crate::in_place::{by_value, uninit_at};
-use crate::modulation::{MAX_MOD_SOURCES, ModState};
-use crate::params::{EngineType, ParamSnapshot};
+use crate::modulation::{
+    MAX_MOD_SOURCES, ModRouting, ModSource, ModState, VCA, amount_scale, note_source,
+};
+use crate::params::{DriveParams, EngineType, EnvParams, FolderParams, ParamSnapshot};
 use crate::{MidiNote, Velocity};
 
 // ADR 0013: the voice pool fits D2 SRAM beside the DMA buffers, on both targets.
@@ -23,14 +27,24 @@ const _: () = assert!(core::mem::size_of::<[Voice; MAX_VOICES]>() <= VOICE_RAM_B
 
 /// Complete voice signal chain:
 /// [Engine] → [Drive] → [Filter] → [Wavefolder] → [VCA]
-/// Modulators: Envelope + LFO
+/// Modulators: three envelopes, three LFOs
 pub struct Voice {
     engines: Engines,
     drive: Drive,
     filter: SvfFilter,
     folder: Wavefolder,
-    amp_env: Envelope,
-    pub lfo: Lfo,
+    envs: [Envelope; 3],
+    lfos: [Lfo; 3],
+    /// The ENV destinations' sums from the last block's matrix (spec § Signal flow 1).
+    env_mods: [EnvMods; 3],
+    /// The sources' values from the last block; the VCA's other routes
+    /// ramp from them.
+    mod_values: [f32; MAX_MOD_SOURCES],
+    /// The routes into VCA this voice plays.
+    vca: VcaRoutes,
+    /// A note-on since the last block: its ENV destinations are recomputed
+    /// with its own VEL and NOTE before the modulators run.
+    retrigger: bool,
     active_engine: EngineType,
     active: bool,
     last_note: MidiNote,
@@ -55,6 +69,32 @@ enum AfterFade {
     Restart,
     /// A note-on that came mid-fade: `last_note`.
     Note,
+}
+
+/// The routes into VCA a voice plays, kept from the last block before a
+/// fade (spec § 4; a fading voice keeps its routes).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct VcaRoutes {
+    bits: u8,
+    /// `amount / 127` per source.
+    amount: [f32; MAX_MOD_SOURCES],
+}
+
+impl VcaRoutes {
+    fn of(m: &ModState) -> Self {
+        let mut r = Self::default();
+        if let Some(d) = m.find(VCA) {
+            r.bits = m.present(d);
+            for (s, a) in r.amount.iter_mut().enumerate() {
+                *a = amount_scale(m.amount(s, d));
+            }
+        }
+        r
+    }
+
+    fn has(&self, source: usize) -> bool {
+        self.bits & (1 << source) != 0
+    }
 }
 
 // `reset` overwrites fields in place without dropping them.
@@ -86,9 +126,49 @@ impl Voice {
     /// A `kill` ramps to silence over this many samples (ADR 0027).
     pub const FADE: u16 = 2 * BLOCK_SIZE as u16;
 
+    /// The wavefolder, which runs once FOLD is 0.001 or more: the bench's
+    /// FOLD row less 1 OP (measured 2026-09-28, rev V at 480 MHz).
+    pub const FOLD_COST: Cost = Cost(43);
+    /// The drive stage, which runs once DRIVE is 0.001 or more. Measured:
+    /// bench-t13d's DRIVE LO row (541) less that run's 1 OP (488) = 53;
+    /// bench-t13c's DRIVE row (540) less that run's 1 OP (483) = 57.
+    /// Billed as the larger: 57.
+    pub const DRIVE_COST: Cost = Cost(57);
+
     /// Cycles/sample of a voice playing `p` under `mods`.
     pub fn cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
-        Engines::cost(p, mods) + Self::CHAIN_COST
+        Engines::cost(p, mods)
+            + Self::CHAIN_COST
+            + p.filter.kind().cost(p.filter.mode())
+            + ModRouting::cost(p, mods)
+            + Self::stage_cost(p, mods)
+    }
+
+    /// What this voice's note-on Modal model costs over `p`'s stored one
+    /// while it still plays it (#183): the model is fixed per note, so a
+    /// MODE edit under a sounding voice is billed at the costlier of the two.
+    pub fn held_model_extra(&self, p: &ParamSnapshot) -> Cost {
+        match self.engines.modal_playing() {
+            Some(mode) if self.active_engine == EngineType::Modal && mode != p.modal.mode => {
+                let held = ModalEngine::cost(&ModalParams { mode, ..p.modal });
+                Cost(held.0.saturating_sub(ModalEngine::cost(&p.modal).0))
+            }
+            _ => Cost::ZERO,
+        }
+    }
+
+    /// The folder and the drive stage, each once its stored amount runs it
+    /// or a route of nonzero amount may.
+    fn stage_cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
+        let runs = |stored: f32, block, param| {
+            stored >= 0.001 || mods.moves_addr(ParamAddr::new(block, param))
+        };
+        let fold = runs(p.folder.fold, BlockRef::Folder, FolderParams::FOLD);
+        let drive = runs(p.drive.drive, BlockRef::Drive, DriveParams::DRIVE);
+        [(fold, Self::FOLD_COST), (drive, Self::DRIVE_COST)]
+            .into_iter()
+            .filter(|&(on, _)| on)
+            .fold(Cost::ZERO, |a, (_, c)| a + c)
     }
 
     /// The sample rate is stored once (spec §3), not passed per call.
@@ -123,8 +203,12 @@ impl Voice {
                 drive: Drive::new(),
                 filter: SvfFilter::new(),
                 folder: Wavefolder::new(),
-                amp_env: Envelope::new(),
-                lfo: Lfo::new(),
+                envs: [Envelope::new(); 3],
+                lfos: [Lfo::new(); 3],
+                env_mods: [EnvMods::NONE; 3],
+                mod_values: [0.0; MAX_MOD_SOURCES],
+                vca: VcaRoutes::default(),
+                retrigger: false,
                 active_engine: EngineType::Algo,
                 active: false,
                 last_note: MidiNote::A4,
@@ -160,6 +244,15 @@ impl Voice {
     }
 
     fn trigger(&mut self, note: MidiNote, velocity: Velocity, params: &ParamSnapshot) {
+        if !self.active {
+            self.filter.hold(); // a fresh note: no ramp from the last note's cutoff
+            // An idle voice's ENV slots and last source values start as a
+            // fresh voice's. Idle is silent: a release its VCA routes still
+            // hold keeps the voice active (`vca_holds`).
+            self.envs = [Envelope::new(); 3];
+            self.mod_values = [0.0; MAX_MOD_SOURCES];
+        }
+        self.retrigger = true;
         // The engine left behind starts clean when it next plays.
         if params.engine() != self.active_engine {
             self.engines.reset(self.active_engine);
@@ -169,7 +262,12 @@ impl Voice {
         self.last_velocity = velocity;
         self.engines
             .note_on(self.active_engine, note, velocity, params);
-        self.amp_env.note_on(velocity.unit());
+        for e in &mut self.envs {
+            e.note_on();
+        }
+        for (l, p) in self.lfos.iter_mut().zip(&params.lfos) {
+            l.note_on(p);
+        }
         self.active = true;
         // Until the first block renders, a fade has these to keep.
         self.played.clone_from(params);
@@ -182,7 +280,6 @@ impl Voice {
             self.after_fade = AfterFade::Idle;
         }
         self.engines.note_off(self.active_engine);
-        self.amp_env.note_off();
     }
 
     /// Fade to silence over `FADE` samples, then go idle as a fresh voice.
@@ -224,8 +321,23 @@ impl Voice {
         unsafe { Self::init_chain(self) }
     }
 
+    /// Sounding: its engine is active and, with routes into VCA, one of
+    /// them holds it (spec § 4).
     pub fn is_active(&self) -> bool {
         self.active
+    }
+
+    /// A VCA source still holds the voice (spec § 4): an ENV slot per its
+    /// TYPE and FORM, anything else while the key is held.
+    fn vca_holds(&self) -> bool {
+        let key = self.held;
+        ModSource::ALL
+            .iter()
+            .filter(|s| self.vca.has(s.index()))
+            .any(|s| match s.env_slot() {
+                Some(e) => self.envs[e.index()].holds(key),
+                None => key,
+            })
     }
 
     pub fn render(
@@ -250,27 +362,88 @@ impl Voice {
             return;
         }
 
+        // The modulators run every block, fading or not, from the settings
+        // the voice plays (spec § Signal flow 1).
+        let src = if self.fade == 0 { params } else { &self.played };
+        let key = self.held;
+        if self.fade == 0 {
+            self.vca = VcaRoutes::of(mod_state);
+        }
+        let vca = self.vca;
+        // The VCA's gain (spec § 4): 64 samples on the audio stack, zeroed
+        // only with a route into VCA.
+        let mut gain = (vca.bits != 0).then_some([0.0f32; BLOCK_SIZE]);
+        if core::mem::take(&mut self.retrigger) {
+            // The last block's ENV and LFO values; the new note's VEL and NOTE.
+            let mut v = self.mod_values;
+            v[ModSource::Vel.index()] = self.last_velocity.unit();
+            v[ModSource::Note.index()] = note_source(self.last_note);
+            let mut next = [EnvMods::NONE; 3];
+            for d in 0..mod_state.num_dests() {
+                if let BlockRef::Env(s) = mod_state.dest(d).block {
+                    env_mod(&mut next[s.index()], mod_state, d, &v);
+                }
+            }
+            self.env_mods = next;
+        }
+        let mut mod_values = [0.0f32; MAX_MOD_SOURCES];
+        for (s, env) in EnvSlot::ALL.iter().zip(self.envs.iter_mut()) {
+            let i = ModSource::of_env(*s).index();
+            let feed = gain
+                .as_mut()
+                .filter(|_| vca.has(i))
+                .map(|g| (g, vca.amount[i]));
+            mod_values[i] = env.run_block(
+                &src.envelopes[s.index()],
+                &self.env_mods[s.index()],
+                key,
+                sample_rate,
+                feed,
+            );
+        }
+        for (s, lfo) in LfoSlot::ALL.iter().zip(self.lfos.iter_mut()) {
+            mod_values[ModSource::of_lfo(*s).index()] =
+                lfo.run_block(&src.lfos[s.index()], sample_rate);
+        }
+        mod_values[ModSource::Vel.index()] = self.last_velocity.unit();
+        mod_values[ModSource::Note.index()] = note_source(self.last_note);
+        // The other VCA sources ramp from their last block's value.
+        for (s, &cur) in mod_values.iter().enumerate() {
+            if let Some(gain) = gain.as_mut().filter(|_| vca.has(s))
+                && ModSource::ALL[s].env_slot().is_none()
+            {
+                let a = vca.amount[s];
+                let (from, step) = (
+                    a * self.mod_values[s],
+                    a * (cur - self.mod_values[s]) / BLOCK_SIZE as f32,
+                );
+                for (n, g) in gain.iter_mut().enumerate() {
+                    *g += from + step * n as f32;
+                }
+            }
+        }
+
         // A fading voice keeps the settings it last played.
         if self.fade == 0 {
-            let mut mod_values = [0.0f32; MAX_MOD_SOURCES];
-            // Source 0 = Envelope
-            if mod_state.num_sources() > 0 {
-                mod_values[0] = self.amp_env.current_level();
-            }
-            // Source 1 = LFO
-            if mod_state.num_sources() > 1 {
-                mod_values[1] = self.lfo.process(&params.lfo, sample_rate);
-            }
             // Every routed destination gets its offset through its block's
             // spec (spec §4).
             let (m, live) = (&mut self.played, &mut self.played_live);
             m.clone_from(params);
             *live = AlgoLive::from_params(&params.algo);
             live.routed = mod_state.algo_levels_routed();
+            let mut next = [EnvMods::NONE; 3];
             for d in 0..mod_state.num_dests() {
+                let a = mod_state.dest(d);
+                if a == VCA {
+                    continue; // per sample, above
+                }
+                if let BlockRef::Env(s) = a.block {
+                    // ENV destinations reach their slot next block.
+                    env_mod(&mut next[s.index()], mod_state, d, &mod_values);
+                    continue;
+                }
                 let off = mod_state.sum_for(d, &mod_values);
                 if off != 0.0 {
-                    let a = mod_state.dest(d);
                     if live.offset(a, off) {
                         continue;
                     }
@@ -280,7 +453,9 @@ impl Voice {
                     }
                 }
             }
+            self.env_mods = next;
         }
+        self.mod_values = mod_values;
         let (m, live) = (&self.played, &self.played_live);
 
         // 1. Engine → raw oscillator output
@@ -295,12 +470,35 @@ impl Voice {
         // 4. Wavefolder
         self.folder.process(output, &m.folder);
 
-        // 5. Volume. The amp envelope does not shape the output; it runs as
-        //    the ENV mod source.
+        // 5. The VCA, after the fold.
         let volume = m.out.volume;
-        for sample in output.iter_mut() {
-            self.amp_env.process(&m.envelopes[0], sample_rate);
-            *sample *= volume;
+        // The block's last routed gain, × AMP's VEL: whether the lifetime
+        // check below ends the voice through a fade.
+        let mut last_gain = 0.0;
+        match &gain {
+            None => {
+                // No route: the engine decides (spec § 4). No wildcard, so a new
+                // engine can't inherit the pass-through (VA gates: #148).
+                match self.active_engine {
+                    EngineType::Algo | EngineType::Modal => {
+                        // Its own envelopes shape the sound: today's expression, bit for bit.
+                        for sample in output.iter_mut() {
+                            *sample *= volume;
+                        }
+                    }
+                }
+            }
+            Some(gain) => {
+                let vel = 1.0 - m.out.vca_vel + m.out.vca_vel * self.last_velocity.unit();
+                let k = volume * vel;
+                #[allow(clippy::manual_clamp)] // max/min, not clamp: NaN clamps too
+                for (sample, g) in output.iter_mut().zip(gain) {
+                    *sample *= k * g.max(0.0).min(1.0);
+                }
+                #[allow(clippy::manual_clamp)]
+                let g = gain[BLOCK_SIZE - 1].max(0.0).min(1.0);
+                last_gain = g * vel;
+            }
         }
 
         // Check if done
@@ -315,5 +513,58 @@ impl Voice {
                 self.fade_ended(params);
             }
         }
+
+        // Lifetime by the VCA's routes (spec § 4), once per block: a voice
+        // no routed source holds ends, through the fade if it still sounds.
+        if self.active && self.fade == 0 && self.vca.bits != 0 && !self.vca_holds() {
+            if last_gain != 0.0 {
+                self.after_fade = AfterFade::Idle;
+                self.fade = Self::FADE;
+            } else {
+                // Silent, but the engine may still sound: back to fresh.
+                self.reset();
+            }
+        }
+    }
+}
+
+/// ENV destination `d`'s sum under `values`, into its slot's `n`.
+fn env_mod(n: &mut EnvMods, mod_state: &ModState, d: usize, values: &[f32; MAX_MOD_SOURCES]) {
+    let sum = mod_state.sum_for(d, values);
+    match mod_state.dest(d).param {
+        EnvParams::LEVEL if mod_state.present(d) != 0 => {
+            #[allow(clippy::manual_clamp)] // max/min, not clamp: NaN clamps too
+            let peak = sum.max(0.0).min(1.0);
+            n.level = Some(peak);
+        }
+        EnvParams::TIME => n.time = sum,
+        EnvParams::RISE => n.slides.rise = sum,
+        EnvParams::FALL => n.slides.fall = sum,
+        EnvParams::SHAPE => n.slides.shape = sum,
+        _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Spec § 3: a fresh note starts without a ramp, even on a voice
+    /// whose engine went quiet on its own (inactive, never reset).
+    #[test]
+    fn a_note_after_silence_starts_without_a_ramp() {
+        let p = ParamSnapshot::default();
+        let mut v = Voice::new(chimera_hal::SAMPLE_RATE);
+        v.note_on(MidiNote::A4, Velocity::DEFAULT, &p);
+        let mut b = [0.0f32; BLOCK_SIZE];
+        v.render(&mut b, &p, &ModState::new());
+        assert!(v.filter.last_g().is_some());
+        v.active = false; // its engine went quiet
+        v.note_on(MidiNote::A4, Velocity::DEFAULT, &p);
+        assert!(v.filter.last_g().is_none());
+        // A retrigger of a sounding voice keeps it.
+        v.render(&mut b, &p, &ModState::new());
+        v.note_on(MidiNote::A4, Velocity::DEFAULT, &p);
+        assert!(v.filter.last_g().is_some());
     }
 }

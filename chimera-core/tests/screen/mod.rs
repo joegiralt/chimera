@@ -13,6 +13,7 @@ use chimera_core::preset::{POOL_SIZE, Sound};
 use chimera_core::reset::ResetCause;
 use chimera_core::scope::SCOPE_LEN;
 use chimera_core::ui::UiState;
+use chimera_core::ui::block_registry as reg;
 use chimera_core::ui::perf::PerfStats;
 use chimera_hal::{ButtonId, ButtonState, ChimeraDisplay, Controls, EncoderId};
 use embedded_graphics::pixelcolor::Rgb565;
@@ -213,10 +214,88 @@ pub fn to_level_page(ui: &mut UiState) {
     }
 }
 
+/// From Part 1's home (the engine's node), EDIT down its sub-list to PIT.
+pub fn to_pitch(ui: &mut UiState, engine: EngineType) {
+    use chimera_core::ui::block_registry::{ALGO_CHAIN, MODAL_PLUCK_CHAIN, PITCH};
+    let chain = match engine {
+        EngineType::Algo => &ALGO_CHAIN,
+        EngineType::Modal => &MODAL_PLUCK_CHAIN,
+    };
+    let n = chain.blocks[0]
+        .sub_pages
+        .iter()
+        .position(|d| d.id == PITCH.id)
+        .expect("PIT is a sub-page of the engine's node")
+        + 1;
+    for _ in 0..n {
+        feed(ui, Input::press(ButtonId::Edit));
+    }
+    assert_eq!(
+        ui.page(),
+        chimera_core::ui::page::PageKey::Part {
+            def: PITCH.id,
+            op: chimera_core::addr::Op::A
+        },
+        "{engine:?}"
+    );
+}
+
 fn plus(ui: &mut UiState, n: usize) {
     for _ in 0..n {
         feed(ui, Input::press(ButtonId::Plus));
     }
+}
+
+/// At the MOD node: its home is the matrix.
+fn to_matrix(ui: &mut UiState) {
+    assert_eq!(
+        ui.page(),
+        chimera_core::ui::page::PageKey::Part {
+            def: chimera_core::ui::block_registry::MOD_MATRIX.id,
+            op: chimera_core::addr::Op::A
+        }
+    );
+}
+
+/// From Part 1's home to the MOD node (MTX), then EDIT ×`n` down its sub-list
+/// to `def`.
+pub fn to_mod_sub(ui: &mut UiState, n: usize, def: &chimera_core::ui::block_def::BlockDef) {
+    plus(ui, 5);
+    for _ in 0..n {
+        feed(ui, Input::press(ButtonId::Edit));
+    }
+    assert_eq!(
+        ui.page(),
+        chimera_core::ui::page::PageKey::Part {
+            def: def.id,
+            op: chimera_core::addr::Op::A
+        },
+        "{}",
+        def.name
+    );
+}
+
+/// From Part 1's home to E3: type B, ENV · AD by default.
+fn to_e3(ui: &mut UiState) {
+    to_mod_sub(ui, 3, &reg::ENV_3);
+}
+
+/// ENV1→CUTOFF +20, ENV1→FOLD −30, LFO1→CUTOFF +42 (selected).
+fn mod_matrix(ui: &mut UiState) {
+    plus(ui, 3);
+    feed(ui, Input::turn(EncoderId::B, 1)); // focus CUTOFF
+    prime(ui);
+    plus(ui, 1);
+    feed(ui, Input::turn(EncoderId::A, 1)); // focus FOLD
+    prime(ui);
+    plus(ui, 1);
+    to_matrix(ui);
+    feed(ui, Input::turn(EncoderId::E, 20)); // ENV → CUTOFF
+    feed(ui, Input::turn(EncoderId::B, 1));
+    feed(ui, Input::turn(EncoderId::E, -30)); // ENV → FOLD
+    feed(ui, Input::turn(EncoderId::A, 3)); // LFO1
+    feed(ui, Input::turn(EncoderId::B, -1));
+    feed(ui, Input::turn(EncoderId::E, 42)); // LFO → CUTOFF, selected
 }
 
 /// Prime the focused slot for modulation (MIX + PLUS).
@@ -252,13 +331,99 @@ pub const CASES: &[ScreenCase] = &[
     }),
     ("bigviz_filter", |ui| {
         plus(ui, 3);
-        feed(ui, Input::turn(EncoderId::B, 80)); // resonance
-        feed(ui, Input::turn(EncoderId::A, -60)); // cutoff, focused
+        feed(ui, Input::turn(EncoderId::C, 80)); // resonance
+        feed(ui, Input::turn(EncoderId::B, -60)); // cutoff, focused
     }),
-    ("bigviz_env", |ui| {
-        plus(ui, 5);
-        feed(ui, Input::press(ButtonId::Edit));
+    ("flt_mode", |ui| {
+        plus(ui, 3);
+        feed(ui, Input::press(ButtonId::Edit)); // FLT › MODE
+        feed(ui, Input::turn(EncoderId::A, 3)); // MODE: BP12
+    }),
+    ("env_a", |ui| {
+        to_mod_sub(ui, 1, &reg::ENVELOPE);
         feed(ui, Input::turn(EncoderId::B, 6));
+    }),
+    ("env_b_env_ad", |ui| {
+        to_e3(ui);
+        feed(ui, Input::turn(EncoderId::B, 10)); // RISE
+    }),
+    ("env_b_env_ahr", |ui| {
+        to_e3(ui);
+        feed(ui, Input::turn(EncoderId::E, 1));
+    }),
+    ("env_b_env_cycle", |ui| {
+        to_e3(ui);
+        feed(ui, Input::turn(EncoderId::E, 2));
+    }),
+    ("env_b_lfo_free", |ui| {
+        to_e3(ui);
+        feed(ui, Input::turn(EncoderId::A, 1));
+    }),
+    ("env_b_lfo_sync", |ui| {
+        to_e3(ui);
+        feed(ui, Input::turn(EncoderId::A, 1));
+        feed(ui, Input::turn(EncoderId::E, 1));
+    }),
+    ("env_b_lfo_lfv", |ui| {
+        to_e3(ui);
+        feed(ui, Input::turn(EncoderId::A, 1));
+        feed(ui, Input::turn(EncoderId::E, 2));
+    }),
+    ("env_b_burst_ad", |ui| {
+        to_e3(ui);
+        feed(ui, Input::turn(EncoderId::A, 2));
+    }),
+    ("env_b_burst_ahr", |ui| {
+        to_e3(ui);
+        feed(ui, Input::turn(EncoderId::A, 2));
+        feed(ui, Input::turn(EncoderId::E, 1));
+    }),
+    ("env_b_burst_cycle", |ui| {
+        to_e3(ui);
+        feed(ui, Input::turn(EncoderId::A, 2));
+        feed(ui, Input::turn(EncoderId::E, 2));
+    }),
+    ("spd", |ui| {
+        to_mod_sub(ui, 4, &reg::ENV_SPEED);
+        feed(ui, Input::turn(EncoderId::B, -1)); // E2 SPEED → FAST
+    }),
+    ("lfo_classic", |ui| {
+        to_mod_sub(ui, 5, &reg::LFO);
+        feed(ui, Input::turn(EncoderId::A, 5)); // RATE
+    }),
+    ("lfo_func", |ui| {
+        to_mod_sub(ui, 5, &reg::LFO);
+        feed(ui, Input::turn(EncoderId::F, 1)); // TYPE → FUNC
+    }),
+    ("amp_vel_dimmed", |ui| {
+        plus(ui, 4);
+        feed(ui, Input::turn(EncoderId::A, 20)); // FOLD
+        feed(ui, Input::turn(EncoderId::D, 1)); // VEL focused, dimmed
+    }),
+    ("amp_vel_live", |ui| {
+        plus(ui, 4);
+        feed(ui, Input::turn(EncoderId::D, 1));
+        prime(ui); // VEL primes the VCA
+        plus(ui, 1);
+        to_matrix(ui); // ENV1 → FLT CUTOFF
+        feed(ui, Input::turn(EncoderId::A, 1)); // ENV2
+        feed(ui, Input::turn(EncoderId::B, 1)); // OUT VCA
+        feed(ui, Input::turn(EncoderId::E, 100)); // E2 → VCA
+        feed(ui, Input::press(ButtonId::Minus)); // back to AMP: VEL live
+    }),
+    ("algo_pitch", |ui| {
+        to_pitch(ui, EngineType::Algo);
+        feed(ui, Input::turn(EncoderId::A, 7)); // PITCH +7
+        feed(ui, Input::turn(EncoderId::B, -25)); // FINE -25, focused
+    }),
+    ("modal_pitch", |ui| {
+        load_init(ui, EngineType::Modal);
+        to_pitch(ui, EngineType::Modal);
+        feed(ui, Input::turn(EncoderId::A, -12)); // PITCH -12, focused
+    }),
+    ("modal_amp", |ui| {
+        load_init(ui, EngineType::Modal);
+        plus(ui, 2); // MDL · FLT · AMP
     }),
     ("mixer_part", |ui| {
         feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
@@ -299,20 +464,30 @@ pub const CASES: &[ScreenCase] = &[
         plus(ui, 6);
         feed(ui, Input::press(ButtonId::Edit)); // MST › LEVEL
     }),
-    ("mod_matrix", |ui| {
-        plus(ui, 3);
-        feed(ui, Input::turn(EncoderId::A, 1)); // focus CUTOFF
-        prime(ui);
+    ("mod_matrix", mod_matrix),
+    ("mod_matrix_wide", |ui| {
+        mod_matrix(ui);
+        // DRV's three knobs, FLT's C, and B and C where FOLD is: eight
+        // columns.
+        for _ in 0..3 {
+            feed(ui, Input::press(ButtonId::Minus)); // → DRV
+        }
+        let prime_all = |ui: &mut UiState, encs: &[EncoderId]| {
+            for &enc in encs {
+                feed(ui, Input::turn(enc, 1));
+                prime(ui);
+            }
+        };
+        prime_all(ui, &[EncoderId::A, EncoderId::B, EncoderId::C]);
         plus(ui, 1);
-        feed(ui, Input::turn(EncoderId::A, 1)); // focus FOLD
-        prime(ui);
+        prime_all(ui, &[EncoderId::C]);
         plus(ui, 1);
-        feed(ui, Input::turn(EncoderId::E, 20)); // ENV → CUTOFF
-        feed(ui, Input::turn(EncoderId::B, 1));
-        feed(ui, Input::turn(EncoderId::E, -30)); // ENV → FOLD
-        feed(ui, Input::turn(EncoderId::A, 1));
-        feed(ui, Input::turn(EncoderId::B, -1));
-        feed(ui, Input::turn(EncoderId::E, 42)); // LFO → CUTOFF, selected
+        prime_all(ui, &[EncoderId::B, EncoderId::C]);
+        plus(ui, 1);
+        to_matrix(ui);
+        feed(ui, Input::turn(EncoderId::B, 5)); // col 5: scrolled one, `<` and `>`
+        feed(ui, Input::turn(EncoderId::A, 3)); // LFO1 → VELO
+        feed(ui, Input::turn(EncoderId::E, -127));
     }),
     ("sound_browser", |ui| {
         let mut s = Sound::init(EngineType::Algo);

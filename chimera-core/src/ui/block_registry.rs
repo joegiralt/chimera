@@ -4,11 +4,12 @@ use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::chorus::ChorusParams;
 use crate::dsp::comp::CompParams;
 use crate::dsp::delay::DelayParams;
-use crate::dsp::lfo::LfoParams;
 use crate::dsp::modal::ModalParams;
+use crate::dsp::modulator::{EnvSlot, LfoSlot};
 use crate::dsp::reverb::ReverbParams;
 use crate::dsp::tape::TapeParams;
-use crate::params::{DriveParams, EnvParams, FilterParams, FolderParams, OutParams};
+use crate::modulation::{MAX_MOD_SOURCES, ModSource};
+use crate::params::{DriveParams, EnvParams, FilterParams, FolderParams, OutParams, PitchParams};
 use crate::part::PartParams;
 use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2, FxFlow, FxNode, ParamSlot, VizType};
 use crate::ui::page::{PageLayout, ValFmt};
@@ -53,6 +54,27 @@ pub static MODAL_2: BlockDef = BlockDef {
 };
 
 // ---------------------------------------------------------------------------
+// Voice pitch (ADR 0042): a sub-page of every engine's node
+// ---------------------------------------------------------------------------
+
+/// PIT: the voice's PITCH and FINE; C–F are kept for GLIDE and SLEW.
+pub static PITCH: BlockDef = BlockDef {
+    id: 66,
+    name: "Pitch",
+    short: "PIT",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::param(BlockRef::Pitch, PitchParams::PITCH),
+        ParamSlot::param(BlockRef::Pitch, PitchParams::FINE),
+        EMPTY,
+        EMPTY,
+        EMPTY,
+        EMPTY,
+    ],
+};
+
+// ---------------------------------------------------------------------------
 // Drive / Folder
 // ---------------------------------------------------------------------------
 
@@ -72,17 +94,19 @@ pub static DRIVE: BlockDef = BlockDef {
     ],
 };
 
+/// FLD / VCA (spec § 5): the fold, then the VCA; last before MOD on every
+/// Part chain.
 pub static FOLDER: BlockDef = BlockDef {
     id: 9,
-    name: "Folder",
-    short: "FLD",
+    name: "Fold / VCA",
+    short: "AMP",
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
         ParamSlot::param(BlockRef::Folder, FolderParams::FOLD),
         ParamSlot::param(BlockRef::Folder, FolderParams::SYMMETRY),
         ParamSlot::param(BlockRef::Folder, FolderParams::MIX),
-        EMPTY,
+        ParamSlot::param(BlockRef::Out, OutParams::VCA_VEL),
         EMPTY,
         EMPTY,
     ],
@@ -92,6 +116,7 @@ pub static FOLDER: BlockDef = BlockDef {
 // Filter
 // ---------------------------------------------------------------------------
 
+/// FLT: KIND, then the kind's panel (spec § 6).
 pub static FILTER: BlockDef = BlockDef {
     id: 10,
     name: "Filter",
@@ -99,99 +124,103 @@ pub static FILTER: BlockDef = BlockDef {
     layout: PageLayout::BigViz,
     viz: VizType::FilterResponse,
     params: [
-        ParamSlot::param(BlockRef::Filter, FilterParams::CUTOFF),
-        ParamSlot::param(BlockRef::Filter, FilterParams::RESONANCE),
-        ParamSlot::param(BlockRef::Filter, FilterParams::DRIVE),
-        ParamSlot::param(BlockRef::Filter, FilterParams::FM_AMOUNT),
-        ParamSlot::param(BlockRef::Filter, FilterParams::ENV_AMOUNT),
-        ParamSlot::param(BlockRef::Filter, FilterParams::KEY_TRACK),
+        ParamSlot::param(BlockRef::Filter, FilterParams::KIND),
+        ParamSlot::filter_panel(0),
+        ParamSlot::filter_panel(1),
+        ParamSlot::filter_panel(2),
+        ParamSlot::filter_panel(3),
+        ParamSlot::filter_panel(4),
     ],
 };
+
+/// FLT › MODE: MODE and the kind's extras (spec § UI). `short` is "MDE", not
+/// "MODE": on the Algo map the full word overlaps the next node's label
+/// (`MOD` is already the MOD node's); this abbreviation is only
+/// the map's branch label, not the MODE param's own spec name.
+pub static FILTER_MODE: BlockDef = BlockDef {
+    id: 59,
+    name: "Filter Mode",
+    short: "MDE",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::param(BlockRef::Filter, FilterParams::MODE),
+        ParamSlot::filter_panel(5),
+        ParamSlot::filter_panel(6),
+        EMPTY,
+        EMPTY,
+        EMPTY,
+    ],
+};
+
+static FILTER_SUB_PAGES: [&BlockDef; 1] = [&FILTER_MODE];
 
 // ---------------------------------------------------------------------------
 // Modulators — envelopes, LFOs, etc.
 // ---------------------------------------------------------------------------
 
-/// ADSR Envelope modulator — the template for all envelope modulators.
-/// Not an audio block — it's a modulation source that appears in the mod matrix Y-axis.
-pub static ENVELOPE: BlockDef = BlockDef {
-    id: 11,
-    name: "Envelope",
-    short: "ENV",
-    layout: PageLayout::BigViz,
-    viz: VizType::Adsr,
-    params: [
-        ParamSlot::param(BlockRef::AmpEnv, EnvParams::ATTACK),
-        ParamSlot::param(BlockRef::AmpEnv, EnvParams::DECAY),
-        ParamSlot::param(BlockRef::AmpEnv, EnvParams::SUSTAIN),
-        ParamSlot::param(BlockRef::AmpEnv, EnvParams::RELEASE),
-        ParamSlot::param(BlockRef::AmpEnv, EnvParams::LEVEL).with_label("DEPTH"),
-        ParamSlot::param(BlockRef::AmpEnv, EnvParams::VEL_SENS),
-    ],
-};
+const fn env_page(id: u16, name: &'static str, short: &'static str, s: EnvSlot) -> BlockDef {
+    BlockDef {
+        id,
+        name,
+        short,
+        layout: PageLayout::BigViz,
+        viz: VizType::Adsr,
+        params: [
+            ParamSlot::env_panel(s, 0),
+            ParamSlot::env_panel(s, 1),
+            ParamSlot::env_panel(s, 2),
+            ParamSlot::env_panel(s, 3),
+            ParamSlot::env_panel(s, 4),
+            ParamSlot::env_panel(s, 5),
+        ],
+    }
+}
 
-/// LFO modulator — cyclical modulation source.
-pub static LFO: BlockDef = BlockDef {
-    id: 12,
-    name: "LFO",
-    short: "LFO",
-    layout: PageLayout::CellGrid,
-    viz: VizType::None,
-    params: [
-        ParamSlot::param(BlockRef::Lfo, LfoParams::RATE),
-        ParamSlot::param(BlockRef::Lfo, LfoParams::SHAPE),
-        ParamSlot::param(BlockRef::Lfo, LfoParams::SYNC),
-        ParamSlot::param(BlockRef::Lfo, LfoParams::PHASE),
-        ParamSlot::param(BlockRef::Lfo, LfoParams::DEPTH),
-        ParamSlot::param(BlockRef::Lfo, LfoParams::OFFSET),
-    ],
-};
+/// E1: first of the MOD node's sub-list (id 11, once the amp envelope's page).
+pub static ENVELOPE: BlockDef = env_page(11, "Env 1", "E1", EnvSlot::Env1);
+pub static ENV_2: BlockDef = env_page(60, "Env 2", "E2", EnvSlot::Env2);
+pub static ENV_3: BlockDef = env_page(61, "Env 3", "E3", EnvSlot::Env3);
 
-pub static ENV_AMP: BlockDef = BlockDef {
-    id: 13,
-    name: "Env Amp",
-    short: "ENV",
-    layout: PageLayout::BigViz,
-    viz: VizType::Adsr,
-    params: [
-        ParamSlot::legacy("ATK", ValFmt::Uni),
-        ParamSlot::legacy("DEC", ValFmt::Uni),
-        ParamSlot::legacy("SUS", ValFmt::Uni),
-        ParamSlot::legacy("REL", ValFmt::Uni),
-        ParamSlot::legacy("LEVEL", ValFmt::Uni),
-        ParamSlot::legacy("VEL", ValFmt::Uni),
-    ],
-};
+const fn lfo_page(id: u16, name: &'static str, short: &'static str, s: LfoSlot) -> BlockDef {
+    BlockDef {
+        id,
+        name,
+        short,
+        layout: PageLayout::CellGrid,
+        viz: VizType::None,
+        params: [
+            ParamSlot::lfo_panel(s, 0),
+            ParamSlot::lfo_panel(s, 1),
+            ParamSlot::lfo_panel(s, 2),
+            ParamSlot::lfo_panel(s, 3),
+            ParamSlot::lfo_panel(s, 4),
+            ParamSlot::lfo_panel(s, 5),
+        ],
+    }
+}
 
-pub static ENV_FILTER: BlockDef = BlockDef {
-    id: 14,
-    name: "Env Filter",
-    short: "E.F",
-    layout: PageLayout::BigViz,
-    viz: VizType::Adsr,
-    params: [
-        ParamSlot::legacy("ATK", ValFmt::Uni),
-        ParamSlot::legacy("DEC", ValFmt::Uni),
-        ParamSlot::legacy("SUS", ValFmt::Uni),
-        ParamSlot::legacy("REL", ValFmt::Uni),
-        ParamSlot::legacy("LEVEL", ValFmt::Uni),
-        ParamSlot::legacy("VEL", ValFmt::Uni),
-    ],
-};
+/// L1 (id 12, once the one LFO's page).
+pub static LFO: BlockDef = lfo_page(12, "LFO 1", "L1", LfoSlot::Lfo1);
+pub static LFO_2: BlockDef = lfo_page(64, "LFO 2", "L2", LfoSlot::Lfo2);
+pub static LFO_3: BlockDef = lfo_page(65, "LFO 3", "L3", LfoSlot::Lfo3);
 
-pub static ENV_AUX: BlockDef = BlockDef {
-    id: 15,
-    name: "Env Aux",
-    short: "E.X",
+/// SPD: type A's SPEED and HOLD POSITION for the three ENV slots (spec § UI).
+pub static ENV_SPEED: BlockDef = BlockDef {
+    id: 62,
+    name: "Env Speed",
+    short: "SPD",
+    // BigViz, as E1–E3: the three pill columns need the tall plot.
     layout: PageLayout::BigViz,
-    viz: VizType::Adsr,
+    viz: VizType::EnvSpeed,
+    // A column per slot, under its pills: SPEED on top, HOLD below.
     params: [
-        ParamSlot::legacy("ATK", ValFmt::Uni),
-        ParamSlot::legacy("DEC", ValFmt::Uni),
-        ParamSlot::legacy("SUS", ValFmt::Uni),
-        ParamSlot::legacy("REL", ValFmt::Uni),
-        ParamSlot::legacy("LEVEL", ValFmt::Uni),
-        ParamSlot::legacy("VEL", ValFmt::Uni),
+        ParamSlot::param(BlockRef::Env(EnvSlot::Env1), EnvParams::SPEED).with_label("E1 SPEED"),
+        ParamSlot::param(BlockRef::Env(EnvSlot::Env2), EnvParams::SPEED).with_label("E2 SPEED"),
+        ParamSlot::param(BlockRef::Env(EnvSlot::Env3), EnvParams::SPEED).with_label("E3 SPEED"),
+        ParamSlot::param(BlockRef::Env(EnvSlot::Env1), EnvParams::HOLD_POS).with_label("E1 HOLD"),
+        ParamSlot::param(BlockRef::Env(EnvSlot::Env2), EnvParams::HOLD_POS).with_label("E2 HOLD"),
+        ParamSlot::param(BlockRef::Env(EnvSlot::Env3), EnvParams::HOLD_POS).with_label("E3 HOLD"),
     ],
 };
 
@@ -327,7 +356,7 @@ static MASTER_SUB_PAGES: [&BlockDef; 1] = [&MASTER_LEVEL];
 pub static MOD_MATRIX: BlockDef = BlockDef {
     id: 22,
     name: "Mod Matrix",
-    short: "MOD",
+    short: "MTX",
     layout: PageLayout::Matrix,
     viz: VizType::None,
     params: [EMPTY; 6],
@@ -394,18 +423,32 @@ pub static ALGO_ALG: BlockDef = BlockDef {
 // Chain templates
 // ---------------------------------------------------------------------------
 
-/// Mod sources every Part voice produces: source 0 = amp envelope, 1 = LFO
-/// (`Voice::render`).
-pub static PART_MOD_SOURCES: [&str; 2] = ["ENV", "LFO"];
+/// Mod sources every Part voice produces, in `ModSource` order (spec § 2).
+pub static PART_MOD_SOURCES: [&str; MAX_MOD_SOURCES] = {
+    let mut tags = [""; MAX_MOD_SOURCES];
+    let mut i = 0;
+    while i < MAX_MOD_SOURCES {
+        tags[i] = ModSource::ALL[i].tag();
+        i += 1;
+    }
+    tags
+};
 
-static MOD_MATRIX_SUB_PAGES: [&BlockDef; 2] = [&ENVELOPE, &LFO];
+/// The MOD node's sub-list after its home MTX (spec § UI).
+static MOD_SUB_PAGES: [&BlockDef; 7] =
+    [&ENVELOPE, &ENV_2, &ENV_3, &ENV_SPEED, &LFO, &LFO_2, &LFO_3];
 
-static MODAL_SUB_PAGES: [&BlockDef; 1] = [&MODAL_2];
+static MODAL_SUB_PAGES: [&BlockDef; 2] = [&MODAL_2, &PITCH];
 
-static MODAL_PLUCK_BLOCKS: [ChainBlock; 3] = [
+static MODAL_PLUCK_BLOCKS: [ChainBlock; 4] = [
     ChainBlock::with_subs(&MODAL_1, &MODAL_SUB_PAGES),
-    ChainBlock::page(&FILTER),
-    ChainBlock::with_subs(&MOD_MATRIX, &MOD_MATRIX_SUB_PAGES),
+    ChainBlock::with_subs(&FILTER, &FILTER_SUB_PAGES),
+    ChainBlock::page(&FOLDER),
+    ChainBlock {
+        def: &MOD_MATRIX,
+        sub_pages: &MOD_SUB_PAGES,
+        map: Some("MOD"),
+    },
 ];
 
 pub static MODAL_PLUCK_CHAIN: ChainDef2 = ChainDef2 {
@@ -433,30 +476,22 @@ static ALGO_OSC_SUB_PAGES: [&BlockDef; 12] = [
 
 /// ALGO is the engine's home: first on the map, where entering the chain lands.
 static ALGO_BLOCKS: [ChainBlock; 6] = [
-    ChainBlock::page(&ALGO_ALG),
+    ChainBlock::with_subs(&ALGO_ALG, &[&PITCH]),
     ChainBlock::with_subs(&ALGO_WAVE, &ALGO_OSC_SUB_PAGES),
     ChainBlock::page(&DRIVE),
-    ChainBlock::page(&FILTER),
+    ChainBlock::with_subs(&FILTER, &FILTER_SUB_PAGES),
     ChainBlock::page(&FOLDER),
-    ChainBlock::with_subs(&MOD_MATRIX, &MOD_MATRIX_SUB_PAGES),
+    ChainBlock {
+        def: &MOD_MATRIX,
+        sub_pages: &MOD_SUB_PAGES,
+        map: Some("MOD"),
+    },
 ];
 
 pub static ALGO_CHAIN: ChainDef2 = ChainDef2 {
     name: "Algo",
     blocks: &ALGO_BLOCKS,
     mod_sources: &PART_MOD_SOURCES,
-};
-
-static ENVELOPE_BLOCKS: [ChainBlock; 3] = [
-    ChainBlock::page(&ENV_AMP),
-    ChainBlock::page(&ENV_FILTER),
-    ChainBlock::page(&ENV_AUX),
-];
-
-pub static ENVELOPE_CHAIN: ChainDef2 = ChainDef2 {
-    name: "Envelopes",
-    blocks: &ENVELOPE_BLOCKS,
-    mod_sources: &[],
 };
 
 // ---------------------------------------------------------------------------
@@ -706,11 +741,10 @@ pub static DEMO_CHAIN: ChainDef2 = ChainDef2 {
 };
 
 /// Every chain, for whole-registry checks (unique ids, the focus table).
-pub static ALL_CHAINS: [&ChainDef2; 6] = [
+pub static ALL_CHAINS: [&ChainDef2; 5] = [
     &ALGO_CHAIN,
     &MODAL_PLUCK_CHAIN,
     &MIXER_CHANNEL_CHAIN,
     &SYSTEM_CHAIN,
     &DEMO_CHAIN,
-    &ENVELOPE_CHAIN,
 ];

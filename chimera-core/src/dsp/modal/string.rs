@@ -6,10 +6,10 @@ use core::ptr::addr_of_mut;
 
 // ── Karplus-Strong delay line (from the owner's Carcosa firmware) ───
 
-/// String delay-line length (ADR 0014): the period of E1 (MIDI 28, 41.2 Hz)
-/// at 48 kHz is 1,164 samples, so E1 and above play at their exact period;
-/// lower notes clamp to 1,199 samples (~40 Hz). Sized so six voices fit D2.
-pub const MAX_STRING_DELAY: usize = 1200;
+/// String delay-line length (ADR 0040): the period of G1 (MIDI 31, 49.0 Hz)
+/// at 48 kHz is 979 samples, so G1 and above play at their exact period;
+/// lower notes clamp to 983 samples (~48.8 Hz). Sized so eight voices fit D2.
+pub const MAX_STRING_DELAY: usize = 984;
 
 /// Parameters for `KsString::tick_full`, built once per render block (not
 /// per sample) at each call site.
@@ -45,7 +45,7 @@ pub(super) struct KsString {
 impl KsString {
     pub(super) fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
         let p = slot.as_mut_ptr();
-        // SAFETY: `p` is valid and unaliased; the 4.8 KB `[f32]` buffer is
+        // SAFETY: `p` is valid and unaliased; the 3.9 KB `[f32]` buffer is
         // zero-filled (zero bytes are 0.0) and every other field is written
         // once by value before `assume_init_mut`.
         unsafe {

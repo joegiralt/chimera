@@ -90,6 +90,7 @@ where
             fmt: slot.format(),
             active: false,
             mod_amount: None,
+            look: components::Look::Live,
         };
         components::cell(d, i, top, Some(&cell));
     }
@@ -107,6 +108,7 @@ where
         texts[0].as_str(),
         value,
         false,
+        components::Look::Live,
         None,
     );
 }
