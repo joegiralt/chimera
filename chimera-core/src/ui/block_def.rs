@@ -15,6 +15,8 @@ pub enum VizType {
     AudioStats,
     /// ALG A's diagram moving to ALG B's with MORPH.
     AlgoDiagram,
+    /// SPD: each slot's SPEED and HOLD POSITION.
+    EnvSpeed,
 }
 
 /// A node of the FX flow; the value is its index in `viz::effects_flow`.
@@ -48,6 +50,13 @@ pub enum SlotBinding {
         label: &'static str,
         fmt: ValFmt,
     },
+    /// Knob `k` of the Sound's filter KIND's panel (spec § 6): 0–4 FLT's
+    /// knobs 2–6, 5–6 FLT › MODE's extras.
+    FilterPanel(u8),
+    /// Cell k of ENV slot s's page, per its TYPE, MODE and FORM.
+    EnvPanel(crate::dsp::modulator::EnvSlot, u8),
+    /// Cell k of LFO slot s's page, per its TYPE and FORM.
+    LfoPanel(crate::dsp::modulator::LfoSlot, u8),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -92,6 +101,27 @@ impl ParamSlot {
         }
     }
 
+    pub const fn filter_panel(k: u8) -> Self {
+        Self {
+            binding: SlotBinding::FilterPanel(k),
+            label_override: None,
+        }
+    }
+
+    pub const fn env_panel(s: crate::dsp::modulator::EnvSlot, k: u8) -> Self {
+        Self {
+            binding: SlotBinding::EnvPanel(s, k),
+            label_override: None,
+        }
+    }
+
+    pub const fn lfo_panel(s: crate::dsp::modulator::LfoSlot, k: u8) -> Self {
+        Self {
+            binding: SlotBinding::LfoPanel(s, k),
+            label_override: None,
+        }
+    }
+
     pub const fn with_label(self, label: &'static str) -> Self {
         Self {
             label_override: Some(label),
@@ -105,7 +135,12 @@ impl ParamSlot {
             SlotBinding::Param(a) => a.spec(),
             // All six operators share one spec table, so AlgoOp(Op::A) stands in.
             SlotBinding::SelectedOp(id) => find_spec(BlockRef::AlgoOp(Op::A).specs(), id),
-            SlotBinding::Empty | SlotBinding::SelectOp | SlotBinding::Legacy { .. } => None,
+            SlotBinding::Empty
+            | SlotBinding::SelectOp
+            | SlotBinding::Legacy { .. }
+            | SlotBinding::FilterPanel(_)
+            | SlotBinding::EnvPanel(..)
+            | SlotBinding::LfoPanel(..) => None,
         }
     }
 
@@ -114,7 +149,11 @@ impl ParamSlot {
             return label;
         }
         match self.binding {
-            SlotBinding::Empty => "--",
+            // Views resolve a panel knob.
+            SlotBinding::Empty
+            | SlotBinding::FilterPanel(_)
+            | SlotBinding::EnvPanel(..)
+            | SlotBinding::LfoPanel(..) => "--",
             SlotBinding::SelectOp => "OP",
             SlotBinding::Legacy { label, .. } => label,
             SlotBinding::Param(_) | SlotBinding::SelectedOp(_) => {
@@ -125,7 +164,10 @@ impl ParamSlot {
 
     pub fn format(&self) -> ValFmt {
         match self.binding {
-            SlotBinding::Empty => ValFmt::Uni,
+            SlotBinding::Empty
+            | SlotBinding::FilterPanel(_)
+            | SlotBinding::EnvPanel(..)
+            | SlotBinding::LfoPanel(..) => ValFmt::Uni,
             SlotBinding::SelectOp => ValFmt::OneBased(Op::ALL.len() as u8 - 1),
             SlotBinding::Legacy { fmt, .. } => fmt,
             SlotBinding::Param(_) | SlotBinding::SelectedOp(_) => {
@@ -135,14 +177,10 @@ impl ParamSlot {
     }
 }
 
-/// The address slot `slot` of `def` edits. `SelectedOp` resolves to the
-/// operator selected *now*, so a saved route always names a concrete operator.
-pub fn slot_addr(def: &BlockDef, slot: usize, sel_op: Op) -> Option<ParamAddr> {
-    match def.params.get(slot)?.binding {
-        SlotBinding::Param(a) => Some(a),
-        SlotBinding::SelectedOp(id) => Some(ParamAddr::new(BlockRef::AlgoOp(sel_op), id)),
-        SlotBinding::Empty | SlotBinding::SelectOp | SlotBinding::Legacy { .. } => None,
-    }
+/// The address slot `slot` of `def` edits under `ctx`: operator slots name
+/// the selected operator, panel knobs the Sound's kind's parameter.
+pub fn slot_addr(def: &BlockDef, slot: usize, ctx: &crate::ui::view::SlotCtx) -> Option<ParamAddr> {
+    crate::ui::view::view(def, slot, ctx).addr()
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -160,6 +198,9 @@ pub struct BlockDef {
 pub struct ChainBlock {
     pub def: &'static BlockDef,
     pub sub_pages: &'static [&'static BlockDef],
+    /// The map's label for this node when it isn't the home page's short
+    /// (the MOD node's home is MTX).
+    pub map: Option<&'static str>,
 }
 
 impl ChainBlock {
@@ -168,6 +209,7 @@ impl ChainBlock {
         Self {
             def,
             sub_pages: &[],
+            map: None,
         }
     }
 
@@ -175,7 +217,11 @@ impl ChainBlock {
         def: &'static BlockDef,
         sub_pages: &'static [&'static BlockDef],
     ) -> Self {
-        Self { def, sub_pages }
+        Self {
+            def,
+            sub_pages,
+            map: None,
+        }
     }
 
     pub fn active_def(&self, sub_page: usize) -> &'static BlockDef {

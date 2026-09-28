@@ -47,12 +47,11 @@ fn voice_render_with_mod_offset_changes_filter() {
     let mut voice_mod = Voice::new(chimera_hal::SAMPLE_RATE);
     let mut params = tri();
     params.filter.cutoff = 2000.0;
-    params.filter.mode = 2; // LP4
 
     // Set up LFO: fast rate so it clearly modulates within a few blocks
-    params.lfo.rate = 10.0;
-    params.lfo.depth = 1.0;
-    params.lfo.shape = 0; // sine
+    params.lfos[0].rate = 10.0;
+    params.lfos[0].depth = 1.0;
+    params.lfos[0].shape = 0; // sine
 
     // Dry: no modulation
     let empty_mod = ModState::new();
@@ -178,13 +177,11 @@ fn matrix_state_rebuild_dests_from_registry() {
     assert_eq!(dest1.label_str(), "FLT Freq");
 }
 
-/// Review Focus 1: the Algo engine keeps the amp envelope off the VCA, but
-/// the envelope still drives the ENV mod source.
+/// Review Focus 1: ENV 1 (source 0) drives its route on an Algo sound.
 #[test]
 fn env_source_moves_on_an_algo_sound() {
     let mut params = ParamSnapshot::for_engine(EngineType::Algo);
     params.filter.cutoff = 8000.0;
-    params.filter.mode = 2;
     let mut registry = chimera_core::mod_path::ModDestRegistry::new();
     registry.add(CUTOFF, *b"FLTCUT\0\0").unwrap();
     let mut routed = ModState::from_registry(&registry, 2);
@@ -209,12 +206,11 @@ fn env_source_moves_on_an_algo_sound() {
     assert!(diff > 0.01, "the ENV route changed nothing ({diff})");
 }
 
-/// #33: the amp envelope also drives the ENV mod source on a Modal sound.
+/// #33: ENV 1 (source 0) drives its route on a Modal sound too.
 #[test]
 fn env_source_moves_on_a_modal_sound() {
     let mut params = ParamSnapshot::for_engine(EngineType::Modal);
     params.filter.cutoff = 8000.0;
-    params.filter.mode = 2;
     let mut registry = chimera_core::mod_path::ModDestRegistry::new();
     registry.add(CUTOFF, *b"FLTCUT\0\0").unwrap();
     let mut routed = ModState::from_registry(&registry, 2);
@@ -245,8 +241,8 @@ fn env_source_moves_on_a_modal_sound() {
 fn a_routed_carrier_at_level_zero_sounds() {
     let mut params = tri();
     params.algo.ops[0].level = 0;
-    params.lfo.rate = 5.0;
-    params.lfo.depth = 1.0;
+    params.lfos[0].rate = 5.0;
+    params.lfos[0].depth = 1.0;
     let mut registry = chimera_core::mod_path::ModDestRegistry::new();
     registry.add(OP1_LEVEL, *b"OP1LEV\0\0").unwrap();
     for source in [0, 1] {

@@ -1,16 +1,18 @@
 use crate::addr::{BlockRef, Blocks};
 use crate::block::{Block, ParamId, ParamSpec, ValFmt};
+use crate::dsp::filter::{FilterKind, FilterMode, KIND_NAMES, SVF_MODE_NAMES};
+use crate::dsp::modulator::{EnvSpeed, EnvType, FuncMode, FuncParams, HoldPos, pick};
 
-/// Parameters for one voice's filter
+/// Parameters for one voice's filter.
 #[derive(Clone, Copy, Debug)]
 pub struct FilterParams {
     pub cutoff: f32,
     pub resonance: f32,
     pub drive: f32,
-    pub fm_amount: f32,
-    pub env_amount: f32,
-    pub key_track: f32,
-    pub mode: u8,
+    /// Private: kept consistent with mode through set_kind and set_mode.
+    kind: FilterKind,
+    /// Private: `set_mode` keeps it in the kind's list (spec § 7).
+    mode: FilterMode,
 }
 
 impl Default for FilterParams {
@@ -19,10 +21,8 @@ impl Default for FilterParams {
             cutoff: 1000.0,
             resonance: 0.0,
             drive: 0.0,
-            fm_amount: 0.0,
-            env_amount: 0.0,
-            key_track: 0.0,
-            mode: 2, // LP4
+            kind: FilterKind::Svf,
+            mode: FilterMode::Lp24,
         }
     }
 }
@@ -31,15 +31,40 @@ impl FilterParams {
     pub const CUTOFF: ParamId = ParamId(0);
     pub const RESONANCE: ParamId = ParamId(1);
     pub const DRIVE: ParamId = ParamId(2);
-    pub const FM_AMOUNT: ParamId = ParamId(3);
-    pub const ENV_AMOUNT: ParamId = ParamId(4);
-    pub const KEY_TRACK: ParamId = ParamId(5);
+    // 3 (FM), 4 (ENV) and 5 (KEY) are retired, never reused (ADR 0009).
+    pub const KIND: ParamId = ParamId(6);
+    pub const MODE: ParamId = ParamId(7);
+
+    pub fn mode(&self) -> FilterMode {
+        self.mode
+    }
+
+    pub fn kind(&self) -> FilterKind {
+        self.kind
+    }
+
+    /// Change KIND (spec § 7): MODE stays if the new kind has it.
+    pub fn set_kind(&mut self, k: FilterKind) {
+        *self = crate::dsp::filter::kind_change(*self, k);
+    }
+
+    /// Only `kind_change` calls this; MODE is fixed up there.
+    pub(crate) fn set_kind_raw(&mut self, k: FilterKind) {
+        self.kind = k;
+    }
+
+    /// Sets `m` if the kind has it; returns whether it did.
+    pub fn set_mode(&mut self, m: FilterMode) -> bool {
+        let ok = self.kind.modes().contains(&m);
+        if ok {
+            self.mode = m;
+        }
+        ok
+    }
 }
 
-/// Cutoff, resonance and drive are read by `Voice` every block. FM amount,
-/// env amount and key track are never read (spec § Current state).
-/// `mode` has no spec (not on any page; plan D16).
-pub static FILTER_SPECS: [ParamSpec; 6] = [
+/// Every one read by `Voice` per block; MODE is an Enum, so not modulatable.
+pub static FILTER_SPECS: [ParamSpec; 5] = [
     ParamSpec::continuous(
         0,
         "CUTOFF",
@@ -49,12 +74,14 @@ pub static FILTER_SPECS: [ParamSpec; 6] = [
         1000.0,
         (20000.0 - 20.0) / 128.0,
         true,
-    ),
+    )
+    .octaves(crate::dsp::filter::CUTOFF_OCTAVES)
+    .short("CUT"),
     ParamSpec::continuous(1, "RESO", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, true),
     ParamSpec::continuous(2, "DRIVE", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, true),
-    ParamSpec::continuous(3, "FM", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false),
-    ParamSpec::continuous(4, "ENV", ValFmt::Bi, -1.0, 1.0, 0.0, 2.0 / 128.0, false),
-    ParamSpec::continuous(5, "TRACK", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false),
+    // A choice among the one built kind.
+    ParamSpec::choice(6, "KIND", ValFmt::Names(&KIND_NAMES), 0.0, 0.0),
+    ParamSpec::choice(7, "MODE", ValFmt::Names(&SVF_MODE_NAMES), 7.0, 0.0),
 ];
 
 impl Block for FilterParams {
@@ -67,9 +94,16 @@ impl Block for FilterParams {
             Self::CUTOFF => self.cutoff,
             Self::RESONANCE => self.resonance,
             Self::DRIVE => self.drive,
-            Self::FM_AMOUNT => self.fm_amount,
-            Self::ENV_AMOUNT => self.env_amount,
-            Self::KEY_TRACK => self.key_track,
+            Self::KIND => FilterKind::BUILT
+                .iter()
+                .position(|&k| k == self.kind)
+                .unwrap_or(0) as f32,
+            Self::MODE => self
+                .kind
+                .modes()
+                .iter()
+                .position(|&m| m == self.mode)
+                .unwrap_or(0) as f32,
             _ => 0.0,
         }
     }
@@ -79,34 +113,55 @@ impl Block for FilterParams {
             Self::CUTOFF => self.cutoff = v,
             Self::RESONANCE => self.resonance = v,
             Self::DRIVE => self.drive = v,
-            Self::FM_AMOUNT => self.fm_amount = v,
-            Self::ENV_AMOUNT => self.env_amount = v,
-            Self::KEY_TRACK => self.key_track = v,
+            Self::KIND => self.set_kind(FilterKind::from_index(v)),
+            Self::MODE => {
+                let m = self.kind.modes();
+                self.set_mode(m[(v.max(0.0) as usize).min(m.len() - 1)]);
+            }
             _ => {}
         }
     }
 }
 
-/// Parameters for one envelope
+/// One ENV slot's parameters (spec § Data model).
 #[derive(Clone, Copy, Debug)]
 pub struct EnvParams {
+    /// A, D, R and H: positions 0..1 on SPEED's exponential ranges.
     pub attack: f32,
     pub decay: f32,
-    pub sustain: f32,
     pub release: f32,
+    pub hold: f32,
+    /// S: a level, 0..1.
+    pub sustain: f32,
+    /// LEVEL destination's stored value; the peak comes from its routes.
     pub level: f32,
+    /// Unread and off the pages (#112).
     pub vel_sens: f32,
+    pub env_type: EnvType,
+    pub speed: EnvSpeed,
+    pub hold_pos: HoldPos,
+    /// TIME destination's stored 0.
+    pub time: f32,
+    /// Envelope B's MODE, FORM, RISE, FALL and SHAPE.
+    pub func: FuncParams,
 }
 
 impl Default for EnvParams {
+    /// Today's times at MED: A 10 ms, D and R 300 ms, S 0.7; H 0.001 ms.
     fn default() -> Self {
         Self {
-            attack: 0.01,
-            decay: 0.3,
+            attack: 0.189,
+            decay: 0.559,
+            release: 0.559,
+            hold: 0.0,
             sustain: 0.7,
-            release: 0.3,
             level: 1.0,
             vel_sens: 0.5,
+            env_type: EnvType::A,
+            speed: EnvSpeed::Med,
+            hold_pos: HoldPos::Ahdsr,
+            time: 0.0,
+            func: FuncParams::ENV,
         }
     }
 }
@@ -118,46 +173,55 @@ impl EnvParams {
     pub const RELEASE: ParamId = ParamId(3);
     pub const LEVEL: ParamId = ParamId(4);
     pub const VEL_SENS: ParamId = ParamId(5);
+    pub const HOLD: ParamId = ParamId(6);
+    pub const TYPE: ParamId = ParamId(7);
+    pub const SPEED: ParamId = ParamId(8);
+    pub const HOLD_POS: ParamId = ParamId(9);
+    pub const TIME: ParamId = ParamId(10);
+    pub const MODE: ParamId = ParamId(11);
+    pub const FORM: ParamId = ParamId(12);
+    pub const RISE: ParamId = ParamId(13);
+    pub const FALL: ParamId = ParamId(14);
+    pub const SHAPE: ParamId = ParamId(15);
 }
 
-/// Shared by all three envelopes. A/D/S/R are read by `Voice` every block
-/// for the amp envelope (`envelopes[0]`); level and vel_sens are never read.
-/// `envelopes[1..2]` are never read at all — `ParamAddr::modulatable`
-/// excludes them (plan D7).
-pub static ENV_SPECS: [ParamSpec; 6] = [
-    ParamSpec::continuous(
-        0,
-        "ATK",
-        ValFmt::Uni,
-        0.001,
-        10.0,
-        0.01,
-        (10.0 - 0.001) / 128.0,
-        true,
-    ),
-    ParamSpec::continuous(
-        1,
-        "DEC",
-        ValFmt::Uni,
-        0.001,
-        10.0,
-        0.3,
-        (10.0 - 0.001) / 128.0,
-        true,
-    ),
-    ParamSpec::continuous(2, "SUS", ValFmt::Uni, 0.0, 1.0, 0.7, 1.0 / 128.0, true),
-    ParamSpec::continuous(
-        3,
-        "REL",
-        ValFmt::Uni,
-        0.001,
-        10.0,
-        0.3,
-        (10.0 - 0.001) / 128.0,
-        true,
-    ),
-    ParamSpec::continuous(4, "LEVEL", ValFmt::Uni, 0.0, 1.0, 1.0, 1.0 / 128.0, false),
+/// Positions and levels, per block. LEVEL and TIME (hidden, primed from the
+/// stage cells), RISE, FALL and SHAPE are modulatable.
+pub static ENV_SPECS: [ParamSpec; 16] = [
+    ParamSpec::continuous(0, "ATK", ValFmt::Uni, 0.0, 1.0, 0.189, 1.0 / 128.0, false),
+    ParamSpec::continuous(1, "DEC", ValFmt::Uni, 0.0, 1.0, 0.559, 1.0 / 128.0, false),
+    ParamSpec::continuous(2, "SUS", ValFmt::Uni, 0.0, 1.0, 0.7, 1.0 / 128.0, false),
+    ParamSpec::continuous(3, "REL", ValFmt::Uni, 0.0, 1.0, 0.559, 1.0 / 128.0, false),
+    ParamSpec::continuous(4, "LEVEL", ValFmt::Uni, 0.0, 1.0, 1.0, 1.0 / 128.0, true),
     ParamSpec::continuous(5, "VEL", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false),
+    ParamSpec::continuous(6, "H", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false),
+    ParamSpec::choice(7, "TYPE", ValFmt::Names(&["A", "B"]), 1.0, 0.0),
+    ParamSpec::choice(
+        8,
+        "SPEED",
+        ValFmt::Names(&["FAST", "MED", "SLOW"]),
+        2.0,
+        1.0,
+    ),
+    ParamSpec::choice(
+        9,
+        "HOLD",
+        ValFmt::Names(&["OFF", "AHDSR", "GATE EXT"]),
+        2.0,
+        1.0,
+    ),
+    ParamSpec::continuous(10, "TIME", ValFmt::Bi, -1.0, 1.0, 0.0, 2.0 / 128.0, true),
+    ParamSpec::choice(
+        11,
+        "MODE",
+        ValFmt::Names(&["ENV", "LFO", "BURST"]),
+        2.0,
+        0.0,
+    ),
+    ParamSpec::choice(12, "FORM", ValFmt::Names(&["AD", "AHR", "CYCLE"]), 2.0, 0.0),
+    ParamSpec::continuous(13, "RISE", ValFmt::Uni, 0.0, 1.0, 0.206, 1.0 / 128.0, true),
+    ParamSpec::continuous(14, "FALL", ValFmt::Uni, 0.0, 1.0, 0.640, 1.0 / 128.0, true),
+    ParamSpec::continuous(15, "SHAPE", ValFmt::Bi, 0.0, 1.0, 0.5, 1.0 / 128.0, true).short("SHAP"),
 ];
 
 impl Block for EnvParams {
@@ -173,6 +237,16 @@ impl Block for EnvParams {
             Self::RELEASE => self.release,
             Self::LEVEL => self.level,
             Self::VEL_SENS => self.vel_sens,
+            Self::HOLD => self.hold,
+            Self::TYPE => self.env_type as u8 as f32,
+            Self::SPEED => self.speed as u8 as f32,
+            Self::HOLD_POS => self.hold_pos as u8 as f32,
+            Self::TIME => self.time,
+            Self::MODE => self.func.mode as u8 as f32,
+            Self::FORM => self.func.form_index(),
+            Self::RISE => self.func.rise,
+            Self::FALL => self.func.fall,
+            Self::SHAPE => self.func.shape,
             _ => 0.0,
         }
     }
@@ -185,6 +259,16 @@ impl Block for EnvParams {
             Self::RELEASE => self.release = v,
             Self::LEVEL => self.level = v,
             Self::VEL_SENS => self.vel_sens = v,
+            Self::HOLD => self.hold = v,
+            Self::TYPE => self.env_type = pick(&EnvType::ALL, v),
+            Self::SPEED => self.speed = pick(&EnvSpeed::ALL, v),
+            Self::HOLD_POS => self.hold_pos = pick(&HoldPos::ALL, v),
+            Self::TIME => self.time = v,
+            Self::MODE => self.func.mode = pick(&FuncMode::ALL, v),
+            Self::FORM => self.func.set_form_index(v),
+            Self::RISE => self.func.rise = v,
+            Self::FALL => self.func.fall = v,
+            Self::SHAPE => self.func.shape = v,
             _ => {}
         }
     }
@@ -327,6 +411,10 @@ impl EngineType {
 pub struct OutParams {
     pub volume: f32,
     pub pan: f32,
+    /// The VCA destination's stored 0 (spec § 4): its value is the sum of its routes.
+    pub vca: f32,
+    /// AMP's VEL: the VCA's velocity sensitivity, 0..1.
+    pub vca_vel: f32,
 }
 
 impl Default for OutParams {
@@ -334,6 +422,8 @@ impl Default for OutParams {
         Self {
             volume: 0.8,
             pan: 0.0,
+            vca: 0.0,
+            vca_vel: 1.0,
         }
     }
 }
@@ -341,13 +431,17 @@ impl Default for OutParams {
 impl OutParams {
     pub const VOLUME: ParamId = ParamId(0);
     pub const PAN: ParamId = ParamId(1);
+    pub const VCA: ParamId = ParamId(2);
+    pub const VCA_VEL: ParamId = ParamId(3);
 }
 
-/// Volume is read by `Voice`'s VCA every block (newly modulatable); pan is
-/// not used by `Voice`.
-pub static OUT_SPECS: [ParamSpec; 2] = [
+/// Volume and VEL are read by `Voice`'s VCA every block, VCA is a hidden
+/// destination; pan is not used by `Voice`.
+pub static OUT_SPECS: [ParamSpec; 4] = [
     ParamSpec::continuous(0, "LEVEL", ValFmt::Uni, 0.0, 1.0, 0.8, 1.0 / 128.0, true),
     ParamSpec::continuous(1, "PAN", ValFmt::Pan, -1.0, 1.0, 0.0, 2.0 / 128.0, false),
+    ParamSpec::continuous(2, "VCA", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, true),
+    ParamSpec::continuous(3, "VEL", ValFmt::Uni, 0.0, 1.0, 1.0, 1.0 / 128.0, false),
 ];
 
 impl Block for OutParams {
@@ -359,6 +453,8 @@ impl Block for OutParams {
         match id {
             Self::VOLUME => self.volume,
             Self::PAN => self.pan,
+            Self::VCA => self.vca,
+            Self::VCA_VEL => self.vca_vel,
             _ => 0.0,
         }
     }
@@ -367,6 +463,67 @@ impl Block for OutParams {
         match id {
             Self::VOLUME => self.volume = v,
             Self::PAN => self.pan = v,
+            Self::VCA => self.vca = v,
+            Self::VCA_VEL => self.vca_vel = v,
+            _ => {}
+        }
+    }
+}
+
+/// The voice's pitch offset (ADR 0042): one block for every engine, so a
+/// route to it survives an engine switch.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PitchParams {
+    /// Semitones, −24..=24; a modulated copy stays fractional.
+    pub pitch: f32,
+    /// Cents, −100..=100.
+    pub fine: f32,
+}
+
+impl PitchParams {
+    pub const PITCH: ParamId = ParamId(0);
+    pub const FINE: ParamId = ParamId(1);
+
+    /// The whole offset in semitones.
+    pub fn semitones(&self) -> f32 {
+        self.pitch + self.fine / 100.0
+    }
+
+    /// The frequency ratio, exactly 1 at no offset (no maths: the goldens);
+    /// `fast_exp2`, within 0.1 cent, as it runs every block.
+    pub fn ratio(&self) -> f32 {
+        let st = self.semitones();
+        if st == 0.0 {
+            1.0
+        } else {
+            crate::dsp::fast_exp2(st / 12.0)
+        }
+    }
+}
+
+/// Both read by the engine every block.
+pub static PITCH_SPECS: [ParamSpec; 2] = [
+    ParamSpec::stepped(0, "PITCH", ValFmt::Signed(24), -24.0, 24.0, 0.0, true).semitones(24.0),
+    ParamSpec::stepped(1, "FINE", ValFmt::Signed(100), -100.0, 100.0, 0.0, true).cents(100.0),
+];
+
+impl Block for PitchParams {
+    fn specs(&self) -> &'static [ParamSpec] {
+        &PITCH_SPECS
+    }
+
+    fn get(&self, id: ParamId) -> f32 {
+        match id {
+            Self::PITCH => self.pitch,
+            Self::FINE => self.fine,
+            _ => 0.0,
+        }
+    }
+
+    fn write(&mut self, id: ParamId, v: f32) {
+        match id {
+            Self::PITCH => self.pitch = v,
+            Self::FINE => self.fine = v,
             _ => {}
         }
     }
@@ -383,8 +540,9 @@ pub struct ParamSnapshot {
     pub envelopes: [EnvParams; 3],
     pub algo: crate::dsp::algo::params::AlgoParams,
     pub modal: crate::dsp::modal::ModalParams,
-    pub lfo: crate::dsp::lfo::LfoParams,
+    pub lfos: [crate::dsp::lfo::LfoParams; 3],
     pub out: OutParams,
+    pub pitch: PitchParams,
 }
 
 impl ParamSnapshot {
@@ -413,11 +571,10 @@ impl Blocks for ParamSnapshot {
             BlockRef::Drive => &self.drive,
             BlockRef::Filter => &self.filter,
             BlockRef::Folder => &self.folder,
-            BlockRef::AmpEnv => &self.envelopes[0],
-            BlockRef::FilterEnv => &self.envelopes[1],
-            BlockRef::AuxEnv => &self.envelopes[2],
-            BlockRef::Lfo => &self.lfo,
+            BlockRef::Env(s) => &self.envelopes[s.index()],
+            BlockRef::Lfo(s) => &self.lfos[s.index()],
             BlockRef::Out => &self.out,
+            BlockRef::Pitch => &self.pitch,
             BlockRef::Chorus
             | BlockRef::Delay
             | BlockRef::Reverb
@@ -437,11 +594,10 @@ impl Blocks for ParamSnapshot {
             BlockRef::Drive => &mut self.drive,
             BlockRef::Filter => &mut self.filter,
             BlockRef::Folder => &mut self.folder,
-            BlockRef::AmpEnv => &mut self.envelopes[0],
-            BlockRef::FilterEnv => &mut self.envelopes[1],
-            BlockRef::AuxEnv => &mut self.envelopes[2],
-            BlockRef::Lfo => &mut self.lfo,
+            BlockRef::Env(s) => &mut self.envelopes[s.index()],
+            BlockRef::Lfo(s) => &mut self.lfos[s.index()],
             BlockRef::Out => &mut self.out,
+            BlockRef::Pitch => &mut self.pitch,
             BlockRef::Chorus
             | BlockRef::Delay
             | BlockRef::Reverb
@@ -464,11 +620,19 @@ impl Default for ParamSnapshot {
             },
             drive: DriveParams::default(),
             folder: FolderParams::default(),
-            envelopes: [EnvParams::default(); 3],
+            envelopes: [
+                EnvParams::default(),
+                EnvParams::default(),
+                EnvParams {
+                    env_type: EnvType::B,
+                    ..EnvParams::default()
+                },
+            ],
             algo: crate::dsp::algo::params::AlgoParams::default(),
             modal: crate::dsp::modal::ModalParams::default(),
-            lfo: crate::dsp::lfo::LfoParams::default(),
+            lfos: [crate::dsp::lfo::LfoParams::default(); 3],
             out: OutParams::default(),
+            pitch: PitchParams::default(),
         }
     }
 }

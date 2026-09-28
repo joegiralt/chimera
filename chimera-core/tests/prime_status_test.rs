@@ -48,8 +48,16 @@ fn mix_plus_on_a_non_modulatable_param_reports_not_modulatable() {
     for _ in 0..5 {
         feed(&mut ui, Input::press(ButtonId::Plus)); // -> MOD node
     }
-    feed(&mut ui, Input::press(ButtonId::Edit)); // Envelope sub-page
-    feed(&mut ui, Input::press(ButtonId::Edit)); // LFO sub-page
+    for _ in 0..5 {
+        feed(&mut ui, Input::press(ButtonId::Edit)); // E1, E2, E3, SPD, L1
+    }
+    assert_eq!(
+        ui.page(),
+        chimera_core::ui::page::PageKey::Part {
+            def: chimera_core::ui::block_registry::LFO.id,
+            op: chimera_core::addr::Op::A
+        }
+    );
     prime(&mut ui, EncoderId::A);
     assert_eq!(ui.prime_status(), Some(PrimeStatus::NotModulatable));
 }
@@ -104,9 +112,9 @@ fn un_priming_also_clears_the_status() {
 /// other row is checked against).
 #[test]
 fn matrix_hint_fits_its_row() {
-    let w = draw::text_width(&theme::FONT_LABEL, "PRIME: MIX+PLUS ON A PARAM", 0);
+    let w = draw::text_width(&theme::FONT_LABEL, chimera_core::ui::mod_grid::HINT, 0);
     assert!(
-        w <= theme::SCREEN_W - theme::MARGIN_X * 2,
+        w <= theme::SCREEN_W - 2 * theme::MARGIN_X,
         "hint is {w}px wide"
     );
 }
@@ -175,18 +183,15 @@ fn filter_page() -> UiState {
     feed(&mut ui, Input::press(ButtonId::Plus));
     feed(&mut ui, Input::press(ButtonId::Plus));
     feed(&mut ui, Input::press(ButtonId::Plus));
-    feed(&mut ui, Input::turn(EncoderId::A, 1));
+    feed(&mut ui, Input::turn(EncoderId::B, 1));
     settle(&mut ui);
     ui
 }
 
-/// The MOD node's ADSR sub-page (BigViz), slot C focused.
+/// E1 (BigViz), slot C focused.
 fn envelope_page() -> UiState {
     let mut ui = UiState::new();
-    for _ in 0..5 {
-        feed(&mut ui, Input::press(ButtonId::Plus));
-    }
-    feed(&mut ui, Input::press(ButtonId::Edit));
+    to_mod_sub(&mut ui, 1, &chimera_core::ui::block_registry::ENVELOPE);
     feed(&mut ui, Input::turn(EncoderId::C, 1));
     settle(&mut ui);
     ui
@@ -313,10 +318,12 @@ fn prime_every_slot(ui: &mut UiState, slots: &[EncoderId], out: &mut Vec<PrimeSt
     }
 }
 
-/// The Algo chain alone reaches 17 modulatable addresses (six LEVELs, MORPH,
-/// VOL, Drive, Filter and Folder), one more than the matrix holds. Priming
-/// them all through real input: exactly `MAX_MOD_DESTS` report ADDED, the
-/// next distinct one reports MATRIX FULL, and the matrix holds every added one.
+/// The Algo chain alone reaches 17 modulatable addresses (MORPH, VOL, six
+/// LEVELs, Drive's three, CUTOFF, RESO, the filter's DRIVE on FLT › MODE,
+/// Folder's three), one more than the matrix holds. CUTOFF is a default
+/// column, so priming it reports ALREADY ROUTED. Priming them all through
+/// real input: exactly `MAX_MOD_DESTS − 1` report ADDED (CUTOFF is a default
+/// column), then MATRIX FULL, and the matrix holds every added one.
 #[test]
 fn priming_past_matrix_capacity_on_the_algo_chain_reports_full() {
     use chimera_core::modulation::MAX_MOD_DESTS;
@@ -326,13 +333,17 @@ fn priming_past_matrix_capacity_on_the_algo_chain_reports_full() {
     prime_every_slot(&mut ui, &ALL_SLOTS[2..5], &mut seen); // ALGO: MORPH, TRNSP (refused), VOL
     to_level_page(&mut ui);
     prime_every_slot(&mut ui, &ALL_SLOTS, &mut seen); // six LEVELs
-    for _ in 0..3 {
-        feed(&mut ui, Input::press(ButtonId::Plus)); // Drive, Filter, Folder
-        prime_every_slot(&mut ui, &ALL_SLOTS, &mut seen);
-    }
+    feed(&mut ui, Input::press(ButtonId::Plus)); // Drive
+    prime_every_slot(&mut ui, &ALL_SLOTS, &mut seen);
+    feed(&mut ui, Input::press(ButtonId::Plus)); // Filter: CUTOFF, RESO (MODE refused)
+    prime_every_slot(&mut ui, &ALL_SLOTS, &mut seen);
+    feed(&mut ui, Input::press(ButtonId::Edit)); // FLT › MODE: the filter's DRIVE
+    prime_every_slot(&mut ui, &ALL_SLOTS, &mut seen);
+    feed(&mut ui, Input::press(ButtonId::Plus)); // Folder
+    prime_every_slot(&mut ui, &ALL_SLOTS, &mut seen);
 
     let added = seen.iter().filter(|&&s| s == PrimeStatus::Added).count();
-    assert_eq!(added, MAX_MOD_DESTS, "{seen:?}");
+    assert_eq!(added, MAX_MOD_DESTS - 1, "{seen:?}");
     let first_full = seen.iter().position(|&s| s == PrimeStatus::Full);
     let added_before = first_full.map(|i| {
         seen[..i]
@@ -342,7 +353,7 @@ fn priming_past_matrix_capacity_on_the_algo_chain_reports_full() {
     });
     assert_eq!(
         added_before,
-        Some(MAX_MOD_DESTS),
+        Some(MAX_MOD_DESTS - 1),
         "the 17th distinct address must report MATRIX FULL: {seen:?}"
     );
     assert_eq!(ui.matrix_state.num_dests, MAX_MOD_DESTS);
@@ -350,4 +361,27 @@ fn priming_past_matrix_capacity_on_the_algo_chain_reports_full() {
         ui.performance.parts[0].sound.dest_registry.len(),
         MAX_MOD_DESTS
     );
+}
+
+/// The hidden LEVEL and TIME are primed from the cells that own them: A,
+/// D, R and H prime TIME; S primes LEVEL (Decisions table).
+#[test]
+fn stage_cells_prime_time_and_sustain_primes_level() {
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::dsp::modulator::EnvSlot;
+    use chimera_core::params::EnvParams;
+    let mut ui = UiState::new();
+    to_mod_sub(&mut ui, 1, &chimera_core::ui::block_registry::ENVELOPE);
+    prime(&mut ui, EncoderId::A); // ATTACK
+    assert_eq!(ui.prime_status(), Some(PrimeStatus::Added));
+    prime(&mut ui, EncoderId::C); // SUSTAIN
+    assert_eq!(ui.prime_status(), Some(PrimeStatus::Added));
+    let reg = &ui.performance.parts[0].sound.dest_registry;
+    let primed: Vec<ParamAddr> = (0..reg.len()).map(|i| reg.get(i).unwrap().addr).collect();
+    let has = |id| {
+        primed
+            .iter()
+            .any(|a| a.block == BlockRef::Env(EnvSlot::Env1) && a.param == id)
+    };
+    assert!(has(EnvParams::TIME) && has(EnvParams::LEVEL), "{primed:?}");
 }

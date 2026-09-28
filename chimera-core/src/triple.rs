@@ -3,6 +3,8 @@ use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 use core::sync::atomic::{AtomicU8, Ordering};
 
+use crate::in_place::uninit_at;
+
 // The reader's `front`, the writer's `back` and `latest` are always a
 // permutation of 0..3. Both swaps are AcqRel on `latest`: the writer's
 // Release publishes its slot, the reader's Release hands its old front back
@@ -29,15 +31,33 @@ impl<T> TripleBuffer<T> {
     }
 
     pub fn init_in_place(slot: &mut MaybeUninit<Self>, mut init: impl FnMut() -> T) -> &mut Self {
+        // SAFETY: `MaybeUninit::write` initialises the whole slot.
+        unsafe {
+            Self::init_slots_in_place(slot, |s| {
+                s.write(init());
+            })
+        }
+    }
+
+    /// As `init_in_place`, but `init` builds each slot where it lies, so a
+    /// large `T` never sits on the stack.
+    ///
+    /// # Safety
+    /// `init` must initialise the whole slot it is given.
+    pub unsafe fn init_slots_in_place(
+        slot: &mut MaybeUninit<Self>,
+        mut init: impl FnMut(&mut MaybeUninit<T>),
+    ) -> &mut Self {
         let p = slot.as_mut_ptr();
         // SAFETY: `p` comes from a live `&mut MaybeUninit<Self>`, so it is
-        // valid, aligned and unaliased. Each of the three slots and `latest`
-        // is written exactly once, through raw field pointers (no reference
-        // to uninitialised memory is made), before `assume_init_mut`.
+        // valid, aligned and unaliased. `UnsafeCell<T>` is `repr(transparent)`
+        // over `T`, so each slot is a `T`; the caller's `init` initialises
+        // each of the three, and `latest` is written once, before
+        // `assume_init_mut`.
         unsafe {
-            let slots = addr_of_mut!((*p).slots).cast::<UnsafeCell<T>>();
+            let slots = addr_of_mut!((*p).slots).cast::<T>();
             for i in 0..3 {
-                slots.add(i).write(UnsafeCell::new(init()));
+                init(uninit_at(slots.add(i)));
             }
             addr_of_mut!((*p).latest).write(AtomicU8::new(1));
             slot.assume_init_mut()

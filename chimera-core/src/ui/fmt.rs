@@ -57,6 +57,15 @@ pub fn fmt_val(buf: &mut FmtBuf, val: f32, fmt: ValFmt) {
                 v => write!(buf, "R{}", v),
             };
         }
+        ValFmt::Route => {
+            let a = crate::ui::renderer::amount_of(val) as i32;
+            let pct = (a * 100 + a.signum() * 63) / 127;
+            let _ = if pct > 0 {
+                write!(buf, "+{pct}%")
+            } else {
+                write!(buf, "{pct}%")
+            };
+        }
         ValFmt::Int(max) => {
             let _ = write!(buf, "{}", discrete(val, max));
         }
@@ -74,6 +83,63 @@ pub fn fmt_val(buf: &mut FmtBuf, val: f32, fmt: ValFmt) {
         ValFmt::Names(names) => {
             if let Some(name) = names.get(discrete(val, fmt.max_int()) as usize) {
                 let _ = buf.write_str(name);
+            }
+        }
+        ValFmt::Law(law) => fmt_law(buf, val, law),
+    }
+}
+
+/// `x ≥ 0` to `places` decimals in integers: `{:.1}` would link core's
+/// float formatting, several KB of flash.
+pub(crate) fn fixed(buf: &mut FmtBuf, x: f32, places: u32, unit: &str) {
+    use core::fmt::Write;
+    let k = 10i32.pow(places);
+    let n = libm::roundf(x * k as f32) as i32;
+    let _ = write!(buf, "{}.{:02$} {unit}", n / k, n % k, places as usize);
+}
+
+fn fmt_law(buf: &mut FmtBuf, v: f32, law: crate::dsp::modulator::law::Law) {
+    use crate::dsp::modulator::law::Law;
+    use core::fmt::Write;
+    let round = |x: f32| libm::roundf(x) as i32;
+    let bend = |buf: &mut FmtBuf, lo: &str, mid: &str, hi: &str| {
+        let n = round((2.0 * v - 1.0) * 100.0);
+        let _ = match n {
+            0 => buf.write_str(mid),
+            n if n < 0 => write!(buf, "{lo} {}", -n),
+            n => write!(buf, "{hi} {n}"),
+        };
+    };
+    match law {
+        Law::Pct => {
+            let _ = write!(buf, "{}%", round(v * 100.0));
+        }
+        // Degrees; the u8g2 face has no "°".
+        Law::Phase => {
+            let _ = write!(buf, "{}", round(v * 360.0));
+        }
+        Law::Curve => bend(buf, "LOG", "LIN", "EXP"),
+        Law::Tilt => bend(buf, "SAW", "TRI", "RAMP"),
+        Law::BRate | Law::BurstRate => {
+            // Each unit is picked from the value as it would print.
+            let hz = law.range().map_or(0.0, |r| r.at(v));
+            if round(hz * 100.0) < 1000 {
+                fixed(buf, hz, 2, "Hz");
+            } else if round(hz * 10.0) < 1000 {
+                fixed(buf, hz, 1, "Hz");
+            } else {
+                let _ = write!(buf, "{} Hz", round(hz));
+            }
+        }
+        _ => {
+            let s = law.range().map_or(0.0, |r| r.at(v));
+            let ms = s * 1000.0;
+            if round(ms * 10.0) < 100 {
+                fixed(buf, ms, 1, "ms");
+            } else if round(ms) < 1000 {
+                let _ = write!(buf, "{} ms", round(ms));
+            } else {
+                fixed(buf, s, 1, "s");
             }
         }
     }

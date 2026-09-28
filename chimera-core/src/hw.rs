@@ -6,7 +6,7 @@ use core::ops::Add;
 
 pub use chimera_hal::{BLOCK_SIZE, SAMPLE_RATE};
 
-pub const MAX_VOICES: usize = 6;
+pub const MAX_VOICES: usize = 8;
 pub const MAX_PARTS: usize = 6;
 pub const DAC_PAIRS: usize = 3;
 

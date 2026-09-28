@@ -382,7 +382,8 @@ fn priming_on_main_page_registers_focused_param() {
     press(&mut ui, ButtonId::Plus);
     press(&mut ui, ButtonId::Plus);
     press(&mut ui, ButtonId::Plus); // node 3: Filter
-    prime(&mut ui); // slot 0: cutoff
+    ui.handle_input(&MockControls::new().encoder(EncoderId::B, 1));
+    prime(&mut ui); // slot 1: cutoff
     assert_eq!(
         primed(&ui),
         [chimera_core::addr::ParamAddr::new(
@@ -392,7 +393,7 @@ fn priming_on_main_page_registers_focused_param() {
     );
 }
 
-/// LFO sub-page (node 5, sub-page 2): slot 0 is LFO rate, which is not
+/// L1 (node 5, sub-page 5): slot 0 is LFO rate, which is not
 /// modulatable, so the registry refuses it.
 #[test]
 fn priming_on_the_lfo_sub_page_registers_nothing() {
@@ -400,8 +401,9 @@ fn priming_on_the_lfo_sub_page_registers_nothing() {
     for _ in 0..5 {
         press(&mut ui, ButtonId::Plus);
     }
-    press(&mut ui, ButtonId::Edit);
-    press(&mut ui, ButtonId::Edit); // sub-page 2: LFO
+    for _ in 0..5 {
+        press(&mut ui, ButtonId::Edit); // E1, E2, E3, SPD, L1
+    }
     assert_eq!(
         ui.page(),
         PageKey::Part {
@@ -410,7 +412,7 @@ fn priming_on_the_lfo_sub_page_registers_nothing() {
         }
     );
     prime(&mut ui);
-    assert!(primed(&ui).is_empty());
+    assert_eq!(primed(&ui), [chimera_core::modulation::CUTOFF]);
 }
 
 /// The WAVE page's slots are Enums, never modulatable, so the registry
@@ -428,7 +430,7 @@ fn priming_a_wave_registers_nothing() {
     );
     ui.handle_input(&MockControls::new().encoder(EncoderId::C, 1)); // focus slot 2
     prime(&mut ui);
-    assert!(primed(&ui).is_empty());
+    assert_eq!(primed(&ui), [chimera_core::modulation::CUTOFF]);
 }
 
 /// `Performance::default()` is `Performance::new()` (clippy new_without_default).

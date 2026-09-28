@@ -4,7 +4,7 @@
 **Status:** Draft rev 2 (after adversarial self-review), awaiting user review
 **Tracks:** epic #118.
 **Builds after:** the FX diet (#36), for its CPU headroom.
-**Supersedes in part:** ADR 0022's engine-set clause (`EngineType` and `ChainType` are `{Algo, Modal}`). What drives the VCA is the routing spec's concern (`2026-09-27-filter-routing-design.md`), which supersedes 0022's VCA note. The rest of 0022 stands; the old VA placeholder it removed stays removed.
+**Supersedes in part:** ADR 0022's engine-set clause (`EngineType` and `ChainType` are `{Algo, Modal}`). What drives the VCA is the routing spec's concern (`2026-09-27-filter-routing-design.md`); ADR 0035 supersedes 0022's VCA note in part. The rest of 0022 stands; the old VA placeholder it removed stays removed.
 
 ## Intent
 
@@ -347,7 +347,7 @@ chimera-core/src/dsp/va/
   - The band-limiting method (polyBLEP, polyBLAMP, segment shapes, no wavetables) and its provenance. The code is our own, from the cited papers and Szabo's published supersaw measurements; no Mutable or other synth code is used (ADR 0002).
   - VA's notes end through the routing spec's VCA: the default route ENV 2 → VCA, or the gate when there's no VCA route.
   - The shared engine slot.
-  - It supersedes ADR 0022's `{Algo, Modal}` clause. The VCA note is superseded by the routing spec's ADR.
+  - It supersedes ADR 0022's `{Algo, Modal}` clause. The VCA note is superseded in part by ADR 0035.
   - 0028–0031 are reserved by the FX diet, and 0032 exists.
   - It goes in `docs/adr/README.md` with the template. It isn't written until the build starts.
 

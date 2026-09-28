@@ -137,6 +137,8 @@ where
 
 /// Focus band (y 28..118): the focused slot's label, its value large, and an
 /// arc gauge (from 12:00 for bipolar params). `value` is the animated 0..1.
+/// A dimmed or absent slot reads as its cell does, with no arc: a dimmed
+/// value in MID, an absent route's dash in INK2.
 ///
 /// While a MIX+PLUS `status` is pending (issue #21) the value readout — the
 /// large numerals and the arc gauge — is replaced by the status word(s) at
@@ -149,6 +151,7 @@ pub fn focus_band<D>(
     value_text: &str,
     value: f32,
     bipolar: bool,
+    look: Look,
     status: Option<PrimeStatus>,
 ) where
     D: DrawTarget<Color = Rgb565>,
@@ -164,6 +167,20 @@ pub fn focus_band<D>(
                 theme::FOCUS_VALUE_Y,
                 theme::INK,
                 theme::LABEL_TRACKING,
+            );
+        }
+        None if look != Look::Live => {
+            let color = match look {
+                Look::Absent => theme::INK2,
+                _ => theme::MID,
+            };
+            draw::text(
+                d,
+                &theme::FONT_FOCUS,
+                value_text,
+                theme::FOCUS_VALUE_X,
+                theme::FOCUS_VALUE_Y,
+                color,
             );
         }
         None => focus_value(d, value_text, value, bipolar),
@@ -241,16 +258,16 @@ where
     );
 }
 
-/// Mod matrix focus band: the selected route `SOURCE → DEST` (`LFO → OP1
-/// LEVEL`) and its bipolar amount.
-pub fn focus_route<D>(d: &mut D, source: &str, dest: &str, value_text: &str, value: f32)
-where
-    D: DrawTarget<Color = Rgb565>,
-{
-    let x = focus_label(d, source, theme::MARGIN_X) + 6;
-    let x = x + draw::arrow(d, x, theme::FOCUS_LABEL_Y, theme::MID) + 6;
-    focus_label(d, dest, x);
-    focus_value(d, value_text, value, true);
+/// How a cell reads (spec § UI). The discriminants pack into the Cells
+/// region's key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Look {
+    Live = 0,
+    /// A route knob with no route: a dash where the value goes, no bar.
+    Absent = 1,
+    /// Fixed or inapplicable: label and value in MID, no bar.
+    Dimmed = 2,
 }
 
 /// One cell of the 3×2 grid.
@@ -265,6 +282,7 @@ pub struct Cell<'a> {
     pub active: bool,
     /// Summed mod amount (−1..1) when the param is a mod destination.
     pub mod_amount: Option<f32>,
+    pub look: Look,
 }
 
 /// Draw cell `i` (knob order a–f, 3×2) with its label baseline `top + row·36`.
@@ -279,7 +297,12 @@ where
         draw::fill_rect(d, x, y - 3, 8, 1, theme::FAINT);
         return;
     };
-    let label_color = if c.active { theme::ACCENT } else { theme::MID };
+    let dim = c.look == Look::Dimmed;
+    let label_color = if c.active && !dim {
+        theme::ACCENT
+    } else {
+        theme::MID
+    };
     draw::text_tracked(
         d,
         &theme::FONT_LABEL,
@@ -289,7 +312,15 @@ where
         label_color,
         theme::LABEL_TRACKING,
     );
-    let value_color = if c.active { theme::INK } else { theme::INK2 };
+    if c.look == Look::Absent {
+        draw::fill_rect(d, x, y + theme::CELL_VALUE_DY - 5, 12, 2, theme::INK2);
+        return;
+    }
+    let value_color = match (dim, c.active) {
+        (true, _) => theme::MID,
+        (false, true) => theme::INK,
+        (false, false) => theme::INK2,
+    };
     draw::text(
         d,
         &theme::FONT_VALUE,
@@ -298,7 +329,7 @@ where
         y + theme::CELL_VALUE_DY,
         value_color,
     );
-    if !c.fmt.is_discrete() {
+    if !c.fmt.is_discrete() && !dim {
         let fill = if c.active {
             theme::ACCENT
         } else {
@@ -316,7 +347,7 @@ where
             fill,
         );
     }
-    if let Some(m) = c.mod_amount {
+    if let Some(m) = c.mod_amount.filter(|_| !dim) {
         let mid = x + theme::CELL_BAR_W / 2;
         let len = (m.clamp(-1.0, 1.0) * (theme::CELL_BAR_W / 2) as f32) as i32;
         let (x0, x1) = if len >= 0 {

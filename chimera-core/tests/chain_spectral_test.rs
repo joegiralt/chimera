@@ -1,6 +1,6 @@
 mod common;
 use chimera_core::dsp::drive::Drive;
-use chimera_core::dsp::filter::SvfFilter;
+use chimera_core::dsp::filter::{FilterMode, SvfFilter};
 use chimera_core::dsp::voice::Voice;
 use chimera_core::dsp::wavefolder::Wavefolder;
 use chimera_core::modulation::ModState;
@@ -135,11 +135,9 @@ fn test_drive_tone_changes_spectrum() {
 #[test]
 fn test_filter_lp_removes_highs() {
     let mut filter = SvfFilter::new();
-    let params = FilterParams {
-        cutoff: 500.0,
-        mode: 2, // LP4
-        ..Default::default()
-    };
+    let mut params = FilterParams::default();
+    params.cutoff = 500.0;
+    params.set_mode(FilterMode::Lp24);
 
     // Mix of 200Hz (below cutoff) and 2000Hz (above cutoff)
     let mut buf: Vec<f32> = (0..4096)
@@ -175,11 +173,9 @@ fn test_filter_lp_removes_highs() {
 #[test]
 fn test_filter_hp_removes_lows() {
     let mut filter = SvfFilter::new();
-    let params = FilterParams {
-        cutoff: 1000.0,
-        mode: 5, // HP4
-        ..Default::default()
-    };
+    let mut params = FilterParams::default();
+    params.cutoff = 1000.0;
+    params.set_mode(FilterMode::Hp24);
 
     let mut buf: Vec<f32> = (0..4096)
         .map(|i| {
@@ -214,12 +210,10 @@ fn test_filter_hp_removes_lows() {
 #[test]
 fn test_filter_bp_passes_center() {
     let mut filter = SvfFilter::new();
-    let params = FilterParams {
-        cutoff: 1000.0,
-        resonance: 0.7,
-        mode: 3, // BP2
-        ..Default::default()
-    };
+    let mut params = FilterParams::default();
+    params.cutoff = 1000.0;
+    params.resonance = 0.7;
+    params.set_mode(FilterMode::Bp12);
 
     let mut buf: Vec<f32> = (0..4096)
         .map(|i| {
@@ -251,12 +245,10 @@ fn test_filter_resonance_boosts_cutoff() {
 
     let measure_peak = |reso: f32| -> f32 {
         let mut filter = SvfFilter::new();
-        let params = FilterParams {
-            cutoff: freq,
-            resonance: reso,
-            mode: 1, // LP2
-            ..Default::default()
-        };
+        let mut params = FilterParams::default();
+        params.cutoff = freq;
+        params.resonance = reso;
+        params.set_mode(FilterMode::Lp12);
 
         // White-ish noise (sum of many sines)
         let mut buf: Vec<f32> = (0..4096)
@@ -289,11 +281,9 @@ fn test_filter_resonance_boosts_cutoff() {
 fn test_filter_cutoff_sweep_changes_brightness() {
     let measure_brightness = |cutoff: f32| -> f32 {
         let mut filter = SvfFilter::new();
-        let params = FilterParams {
-            cutoff,
-            mode: 2, // LP4
-            ..Default::default()
-        };
+        let mut params = FilterParams::default();
+        params.cutoff = cutoff;
+        params.set_mode(FilterMode::Lp24);
 
         // Rich signal (square-ish wave with harmonics)
         let mut buf: Vec<f32> = (0..4096)
@@ -396,7 +386,6 @@ fn test_voice_filter_sweep_audible() {
         let mut params = tri();
         // the triangle's odd harmonics
         params.filter.cutoff = cutoff;
-        params.filter.mode = 2; // LP4
 
         voice.note_on(
             MidiNote::new(60).unwrap(),

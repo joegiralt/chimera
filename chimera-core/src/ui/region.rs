@@ -5,6 +5,7 @@
 
 use crate::ui::PrimeStatus;
 use crate::ui::animation::AnimatedValue;
+use crate::ui::components::Look;
 use crate::ui::page::{PageId, PageKey, PageLayout};
 use crate::ui::theme;
 
@@ -40,6 +41,8 @@ pub enum RegionData {
         /// Audio load shown in the header (0 = not measured).
         load_pct: u8,
         sounding: bool,
+        /// The ENV title's TYPE suffix (`renderer::title_type`).
+        title_type: u8,
     },
     /// The focus band: which slot, its animated value, and any pending
     /// prime-status message (issue #21) shown in the value's place.
@@ -47,14 +50,19 @@ pub enum RegionData {
         page: PageKey,
         slot: u8,
         value: u16,
+        /// The slot's look: it can change without a `matrix_rev` bump.
+        look: Look,
         status: Option<PrimeStatus>,
     },
-    /// The mod matrix focus band: the selected route and its animated amount.
+    /// The mod matrix readout: the selected route, its animated amount and
+    /// the route count.
     Route {
         row: u8,
         col: u8,
         dests: u8,
         value: u16,
+        /// `MatrixState::rev`: a deleted route redraws.
+        matrix_rev: u16,
     },
     Viz {
         page: PageKey,
@@ -73,6 +81,9 @@ pub enum RegionData {
         /// Each cell's mod bar (its amount's f32 bits), which a Part switch
         /// can change alone.
         mods: [Option<u32>; 6],
+        /// `MatrixState::rev`, and each cell's `Look` in two bits.
+        matrix_rev: u16,
+        looks: u16,
     },
     Nav {
         chain_idx: u8,
@@ -84,28 +95,43 @@ pub enum RegionData {
         sel_row: u8,
         sel_col: u8,
         scroll_x: u8,
-        scroll_y: u8,
         /// The selected route's animated amount (quantized display value).
         sel_value: u16,
+        matrix_rev: u16,
     },
 }
 
 impl RegionData {
-    pub fn header(chain_idx: u8, node_idx: u8, sub_page: u8, load_pct: u8, sounding: bool) -> Self {
+    pub fn header(
+        chain_idx: u8,
+        node_idx: u8,
+        sub_page: u8,
+        load_pct: u8,
+        sounding: bool,
+        title_type: u8,
+    ) -> Self {
         Self::Header {
             chain_idx,
             node_idx,
             sub_page,
             load_pct,
             sounding,
+            title_type,
         }
     }
 
-    pub fn focus(page: PageKey, slot: u8, value: u16, status: Option<PrimeStatus>) -> Self {
+    pub fn focus(
+        page: PageKey,
+        slot: u8,
+        value: u16,
+        look: Look,
+        status: Option<PrimeStatus>,
+    ) -> Self {
         Self::Focus {
             page,
             slot,
             value,
+            look,
             status,
         }
     }
@@ -142,6 +168,8 @@ impl RegionData {
             focus,
             dest_count,
             mods,
+            matrix_rev: 0,
+            looks: 0,
         }
     }
 
@@ -161,6 +189,7 @@ impl RegionData {
             sub_page: 255,
             load_pct: u8::MAX,
             sounding: false,
+            title_type: u8::MAX,
         }
     }
 
@@ -169,6 +198,7 @@ impl RegionData {
             page: SENTINEL_PAGE,
             slot: u8::MAX,
             value: SENTINEL,
+            look: Look::Live,
             status: None,
         }
     }
@@ -189,6 +219,8 @@ impl RegionData {
             focus: u8::MAX,
             dest_count: u16::MAX,
             mods: [Some(u32::MAX); 6],
+            matrix_rev: u16::MAX,
+            looks: u16::MAX,
         }
     }
 
@@ -201,29 +233,23 @@ impl RegionData {
         }
     }
 
-    pub fn grid(sel_row: u8, sel_col: u8, scroll_x: u8, scroll_y: u8) -> Self {
+    pub fn grid(sel_row: u8, sel_col: u8, scroll_x: u8) -> Self {
         Self::Grid {
             sel_row,
             sel_col,
             scroll_x,
-            scroll_y,
             sel_value: 0,
+            matrix_rev: 0,
         }
     }
 
-    pub fn grid_with_value(
-        sel_row: u8,
-        sel_col: u8,
-        scroll_x: u8,
-        scroll_y: u8,
-        sel_value: u16,
-    ) -> Self {
+    pub fn grid_with_value(sel_row: u8, sel_col: u8, scroll_x: u8, sel_value: u16) -> Self {
         Self::Grid {
             sel_row,
             sel_col,
             scroll_x,
-            scroll_y,
             sel_value,
+            matrix_rev: 0,
         }
     }
 
@@ -232,8 +258,58 @@ impl RegionData {
             sel_row: 255,
             sel_col: 255,
             scroll_x: 255,
-            scroll_y: 255,
             sel_value: SENTINEL,
+            matrix_rev: u16::MAX,
+        }
+    }
+
+    /// With the matrix's revision (and the cells' looks) in the key, so a
+    /// deleted route or a dimmed cell redraws.
+    pub fn keyed(self, matrix_rev: u16, looks: u16) -> Self {
+        match self {
+            Self::Cells {
+                page,
+                values,
+                focus,
+                dest_count,
+                mods,
+                ..
+            } => Self::Cells {
+                page,
+                values,
+                focus,
+                dest_count,
+                mods,
+                matrix_rev,
+                looks,
+            },
+            Self::Grid {
+                sel_row,
+                sel_col,
+                scroll_x,
+                sel_value,
+                ..
+            } => Self::Grid {
+                sel_row,
+                sel_col,
+                scroll_x,
+                sel_value,
+                matrix_rev,
+            },
+            Self::Route {
+                row,
+                col,
+                dests,
+                value,
+                ..
+            } => Self::Route {
+                row,
+                col,
+                dests,
+                value,
+                matrix_rev,
+            },
+            other => other,
         }
     }
 }
@@ -319,6 +395,7 @@ const BAND: u16 = theme::VIZ_BAND_BOTTOM as u16;
 const CELLS: u16 = theme::CELLS_BOTTOM as u16;
 const SCREEN: u16 = theme::SCREEN_H as u16;
 const BIG_VIZ_END: u16 = theme::BIGVIZ_BOTTOM as u16;
+const MATRIX_GRID: u16 = crate::ui::mod_grid::GRID_BOTTOM as u16;
 
 /// CellGrid (UI refresh spec § Page types): header, focus band, viz band,
 /// cells, map.
@@ -336,11 +413,11 @@ const BIG_VIZ: [(RegionKind, u16, u16); 4] = [
     (K::Cells, BIG_VIZ_END, CELLS),
     (K::Nav, CELLS, SCREEN),
 ];
-/// Mod matrix: header, the selected route, dot grid, map.
+/// Mod matrix: header, amount grid, the selected route's readout, map.
 const MATRIX: [(RegionKind, u16, u16); 4] = [
     (K::Header, 0, HEADER),
-    (K::Focus, HEADER, FOCUS),
-    (K::Grid, FOCUS, CELLS),
+    (K::Grid, HEADER, MATRIX_GRID),
+    (K::Focus, MATRIX_GRID, CELLS),
     (K::Nav, CELLS, SCREEN),
 ];
 

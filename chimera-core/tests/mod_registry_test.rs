@@ -2,8 +2,9 @@ use chimera_core::addr::{BlockRef, Op, ParamAddr};
 use chimera_core::block::ParamId;
 use chimera_core::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use chimera_core::dsp::modal::ModalParams;
+use chimera_core::dsp::modulator::EnvSlot;
 use chimera_core::mod_path::{ModDestRegistry, RegistryError};
-use chimera_core::params::{DriveParams, EnvParams, FilterParams};
+use chimera_core::params::{DriveParams, EnvParams};
 
 fn op_level(op: Op) -> ParamAddr {
     ParamAddr::new(BlockRef::AlgoOp(op), AlgoOpParams::LEVEL)
@@ -65,10 +66,10 @@ fn registry_refuses_non_modulatable() {
         ParamAddr::new(BlockRef::AlgoOp(Op::A), AlgoOpParams::WAVE), // Enum
         ParamAddr::new(BlockRef::AlgoOp(Op::A), AlgoOpParams::AR), // note-on only
         ParamAddr::new(BlockRef::AlgoOp(Op::A), AlgoOpParams::FEEDBACK), // not a destination yet
-        ParamAddr::new(BlockRef::AmpEnv, EnvParams::ATTACK),  // off the VCA
-        ParamAddr::new(BlockRef::Filter, FilterParams::FM_AMOUNT), // never read
-        ParamAddr::new(BlockRef::FilterEnv, EnvParams::ATTACK), // never read (plan D7)
-        ParamAddr::new(BlockRef::Algo, ParamId(99)),          // no such param
+        ParamAddr::new(BlockRef::Env(EnvSlot::Env1), EnvParams::ATTACK), // a slider, not a destination
+        ParamAddr::new(BlockRef::Filter, ParamId(3)),                    // retired (FM)
+        ParamAddr::new(BlockRef::Env(EnvSlot::Env2), EnvParams::SUSTAIN), // a level, not a destination
+        ParamAddr::new(BlockRef::Algo, ParamId(99)),                      // no such param
     ];
     for addr in refused {
         assert_eq!(
@@ -98,5 +99,5 @@ fn registry_accepts_exactly_the_modulatable_addresses() {
             accepted += addr.modulatable() as usize;
         }
     }
-    assert_eq!(accepted, 17);
+    assert_eq!(accepted, 17 + 3 * 5 + 1 + 2); // + ENV n LEVEL, TIME, RISE, FALL, SHAPE; VCA; PITCH, FINE
 }

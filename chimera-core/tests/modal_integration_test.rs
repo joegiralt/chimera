@@ -166,7 +166,6 @@ fn test_modal_signal_chain_affects_output() {
 
     let mut params_closed = ParamSnapshot::for_engine(EngineType::Modal);
     params_closed.filter.cutoff = 200.0;
-    params_closed.filter.mode = 2; // LP4
 
     voice_open.note_on(
         MidiNote::new(60).unwrap(),

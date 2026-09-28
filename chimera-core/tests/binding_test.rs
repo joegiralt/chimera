@@ -3,11 +3,12 @@
 use chimera_core::addr::{BlockRef, Op, ParamAddr};
 use chimera_core::block::ParamId;
 use chimera_core::dsp::algo::params::AlgoOpParams;
-use chimera_core::params::EngineType;
+use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::ui::block_def::{BlockDef, SlotBinding, slot_addr};
 use chimera_core::ui::block_registry as reg;
 use chimera_core::ui::chain::chain_def_for;
 use chimera_core::ui::page::ValFmt;
+use chimera_core::ui::view::{SlotCtx, view};
 
 /// Every page reachable from a Part chain (main pages and sub-pages).
 fn part_defs() -> Vec<&'static BlockDef> {
@@ -26,7 +27,11 @@ fn every_part_slot_resolves_to_a_spec() {
     for def in part_defs() {
         for (i, slot) in def.params.iter().enumerate() {
             match slot.binding {
-                SlotBinding::Empty | SlotBinding::SelectOp => {}
+                SlotBinding::Empty
+                | SlotBinding::SelectOp
+                | SlotBinding::FilterPanel(_)
+                | SlotBinding::EnvPanel(..)
+                | SlotBinding::LfoPanel(..) => {}
                 SlotBinding::Param(_) | SlotBinding::SelectedOp(_) => {
                     assert!(slot.spec().is_some(), "{} slot {i}: no spec", def.name)
                 }
@@ -38,22 +43,23 @@ fn every_part_slot_resolves_to_a_spec() {
     }
 }
 
-/// Spec §4: matrix source rows are what `Voice` produces — ENV and LFO on
-/// every Part chain.
+/// Spec §4: matrix source rows are what `Voice` produces — the eight
+/// `ModSource`s on every Part chain.
 #[test]
-fn part_chains_offer_env_and_lfo_sources() {
+fn part_chains_offer_the_eight_sources() {
     for engine in EngineType::ALL {
         assert_eq!(
             chain_def_for(engine).mod_sources,
-            ["ENV", "LFO"],
+            chimera_core::ui::block_registry::PART_MOD_SOURCES,
             "{engine:?}"
         );
         let sound = chimera_core::preset::Sound::init(engine);
-        assert!(
-            sound.dest_registry.is_empty(),
-            "{engine:?}: no pre-wired destinations"
+        assert_eq!(
+            sound.dest_registry.len(),
+            1,
+            "{engine:?}: the default CUTOFF column"
         );
-        assert_eq!(sound.mod_state.num_dests(), 0, "{engine:?}");
+        assert_eq!(sound.mod_state.num_dests(), 1, "{engine:?}");
     }
 }
 
@@ -110,7 +116,9 @@ fn all_chains_holds_every_reachable_chain() {
 /// bindings (spec labels + the two plan-D6 overrides; plan D5 BODY fix).
 #[test]
 fn part_pages_display_like_before() {
-    use ValFmt::{Bi, Int, Uni};
+    use ValFmt::{Bi, Int, Law, Names, Uni};
+    use chimera_core::dsp::modulator::EnvSpeed::Med;
+    use chimera_core::dsp::modulator::law::Law::{Attack, DecRel, Hold, Pct};
     let want: [(&BlockDef, [(&str, ValFmt); 6]); 7] = [
         (
             &reg::MODAL_1,
@@ -151,7 +159,7 @@ fn part_pages_display_like_before() {
                 ("FOLD", Uni),
                 ("SYM", Bi),
                 ("MIX", Bi),
-                ("--", Uni),
+                ("VEL", Uni),
                 ("--", Uni),
                 ("--", Uni),
             ],
@@ -159,41 +167,56 @@ fn part_pages_display_like_before() {
         (
             &reg::FILTER,
             [
+                (
+                    "KIND",
+                    ValFmt::Names(&chimera_core::dsp::filter::KIND_NAMES),
+                ),
                 ("CUTOFF", Uni),
-                ("RESO", Uni),
-                ("DRIVE", Uni),
-                ("FM", Uni),
-                ("ENV", Bi),
-                ("TRACK", Uni),
+                ("RES", Uni),
+                (
+                    "MODE",
+                    ValFmt::Names(&chimera_core::dsp::filter::SVF_MODE_NAMES),
+                ),
+                ("ENV", ValFmt::Route),
+                ("KEY", ValFmt::Route),
             ],
         ),
         (
             &reg::ENVELOPE,
             [
-                ("ATK", Uni),
-                ("DEC", Uni),
-                ("SUS", Uni),
-                ("REL", Uni),
-                ("DEPTH", Uni),
-                ("VEL", Uni),
+                ("ATTACK", Law(Attack(Med))),
+                ("DECAY", Law(DecRel(Med))),
+                ("SUSTAIN", Law(Pct)),
+                ("RELEASE", Law(DecRel(Med))),
+                ("HOLD", Law(Hold(Med))),
+                ("TYPE", Names(&["A", "B"])),
             ],
         ),
         (
             &reg::LFO,
             [
                 ("RATE", Uni),
-                ("SHAPE", Int(4)),
-                ("SYNC", Int(1)),
+                ("SHAPE", Names(&["SINE", "TRI", "SAW", "SQR", "S&H"])),
+                ("SYNC", Names(&["FREE", "RETRIG"])),
                 ("PHASE", Uni),
                 ("DEPTH", Uni),
-                ("OFST", Bi),
+                ("TYPE", Names(&["CLASSIC", "FUNC"])),
             ],
         ),
     ];
+    // A panel slot's own label and format are empty: FLT, ENV and LFO read
+    // their views.
+    let ctx = ctx();
+    let panels: [&BlockDef; 3] = [&reg::FILTER, &reg::ENVELOPE, &reg::LFO];
     for (def, slots) in want {
         for (i, (label, fmt)) in slots.iter().enumerate() {
-            assert_eq!(def.params[i].label(), *label, "{} slot {i}", def.name);
-            assert_eq!(def.params[i].format(), *fmt, "{} slot {i}", def.name);
+            let got = if panels.iter().any(|p| core::ptr::eq(*p, def)) {
+                let v = view(def, i, &ctx);
+                (v.label(), v.fmt())
+            } else {
+                (def.params[i].label(), def.params[i].format())
+            };
+            assert_eq!(got, (*label, *fmt), "{} slot {i}", def.name);
         }
     }
 }
@@ -203,11 +226,16 @@ fn part_pages_display_like_before() {
 #[test]
 fn slot_addr_resolves_fixed_bindings() {
     let level = |op| Some(ParamAddr::new(BlockRef::AlgoOp(op), AlgoOpParams::LEVEL));
-    assert_eq!(slot_addr(&reg::ALGO_LEVEL, 3, Op::A), level(Op::D));
-    assert_eq!(slot_addr(&reg::ALGO_LEVEL, 3, Op::F), level(Op::D));
-    assert_eq!(slot_addr(&reg::ALGO_ALG, 5, Op::A), None); // empty
-    assert_eq!(slot_addr(&reg::DEMO_WAVES, 0, Op::A), None); // legacy
-    assert_eq!(slot_addr(&reg::ALGO_ALG, 9, Op::A), None); // out of range
+    let on = |op| SlotCtx::read(&ParamSnapshot::default(), op);
+    assert_eq!(slot_addr(&reg::ALGO_LEVEL, 3, &on(Op::A)), level(Op::D));
+    assert_eq!(slot_addr(&reg::ALGO_LEVEL, 3, &on(Op::F)), level(Op::D));
+    assert_eq!(slot_addr(&reg::ALGO_ALG, 5, &ctx()), None); // empty
+    assert_eq!(slot_addr(&reg::DEMO_WAVES, 0, &ctx()), None); // legacy
+    assert_eq!(slot_addr(&reg::ALGO_ALG, 9, &ctx()), None); // out of range
+}
+
+fn ctx() -> SlotCtx {
+    SlotCtx::read(&ParamSnapshot::default(), Op::A)
 }
 
 /// Each column of a group page edits its own operator; a copy-paste slip
@@ -221,7 +249,7 @@ fn group_pages_bind_each_column_to_its_operator() {
     for (def, id) in pages {
         for (i, op) in Op::ALL.into_iter().enumerate() {
             assert_eq!(
-                slot_addr(def, i, Op::A),
+                slot_addr(def, i, &ctx()),
                 Some(ParamAddr::new(BlockRef::AlgoOp(op), id)),
                 "{} slot {i}",
                 def.name
