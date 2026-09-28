@@ -660,13 +660,12 @@ pub static SYS_MIDI: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
-        // 1-based (CH 1..16), matching the Mixer PART page's CH formatter.
-        ParamSlot::legacy("P1 CH", ValFmt::OneBased(15)),
-        ParamSlot::legacy("P2 CH", ValFmt::OneBased(15)),
-        ParamSlot::legacy("P3 CH", ValFmt::OneBased(15)),
-        ParamSlot::legacy("P4 CH", ValFmt::OneBased(15)),
-        ParamSlot::legacy("P5 CH", ValFmt::OneBased(15)),
-        ParamSlot::legacy("P6 CH", ValFmt::OneBased(15)),
+        ParamSlot::param(BlockRef::Channels, ParamId(0)),
+        ParamSlot::param(BlockRef::Channels, ParamId(1)),
+        ParamSlot::param(BlockRef::Channels, ParamId(2)),
+        ParamSlot::param(BlockRef::Channels, ParamId(3)),
+        ParamSlot::param(BlockRef::Channels, ParamId(4)),
+        ParamSlot::param(BlockRef::Channels, ParamId(5)),
     ],
 };
 

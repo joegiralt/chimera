@@ -488,7 +488,8 @@ impl Blocks for ParamSnapshot {
             | BlockRef::Tape
             | BlockRef::Comp
             | BlockRef::Part
-            | BlockRef::Theme => return None,
+            | BlockRef::Theme
+            | BlockRef::Channels => return None,
         })
     }
 
@@ -509,7 +510,8 @@ impl Blocks for ParamSnapshot {
             | BlockRef::Tape
             | BlockRef::Comp
             | BlockRef::Part
-            | BlockRef::Theme => return None,
+            | BlockRef::Theme
+            | BlockRef::Channels => return None,
         })
     }
 }
