@@ -6,7 +6,7 @@ use crate::dsp::comp::CompParams;
 use crate::dsp::delay::DelayParams;
 use crate::dsp::lfo::LfoParams;
 use crate::dsp::modal::ModalParams;
-use crate::dsp::modulator::EnvSlot;
+use crate::dsp::modulator::{EnvSlot, LfoSlot};
 use crate::dsp::reverb::ReverbParams;
 use crate::dsp::tape::TapeParams;
 use crate::modulation::ModSource;
@@ -164,12 +164,12 @@ pub static LFO: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
-        ParamSlot::param(BlockRef::Lfo, LfoParams::RATE),
-        ParamSlot::param(BlockRef::Lfo, LfoParams::SHAPE),
-        ParamSlot::param(BlockRef::Lfo, LfoParams::SYNC),
-        ParamSlot::param(BlockRef::Lfo, LfoParams::PHASE),
-        ParamSlot::param(BlockRef::Lfo, LfoParams::DEPTH),
-        ParamSlot::param(BlockRef::Lfo, LfoParams::OFFSET),
+        ParamSlot::param(BlockRef::Lfo(LfoSlot::Lfo1), LfoParams::RATE),
+        ParamSlot::param(BlockRef::Lfo(LfoSlot::Lfo1), LfoParams::SHAPE),
+        ParamSlot::param(BlockRef::Lfo(LfoSlot::Lfo1), LfoParams::SYNC),
+        ParamSlot::param(BlockRef::Lfo(LfoSlot::Lfo1), LfoParams::PHASE),
+        ParamSlot::param(BlockRef::Lfo(LfoSlot::Lfo1), LfoParams::DEPTH),
+        EMPTY,
     ],
 };
 

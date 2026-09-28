@@ -176,7 +176,7 @@ pub fn lfo_route(dest: ParamAddr) -> ModState {
 pub fn setup(case: Case) -> (ParamSnapshot, ModState) {
     let with_lfo = |engine: EngineType, dest: ParamAddr| {
         let mut p = init_params(engine);
-        p.lfo.rate = MOD_LFO_RATE;
+        p.lfos[0].rate = MOD_LFO_RATE;
         (p, lfo_route(dest))
     };
     match case {
@@ -188,7 +188,7 @@ pub fn setup(case: Case) -> (ParamSnapshot, ModState) {
         Case::AlgoMorphStatic => (morph_patch(), ModState::new()),
         Case::AlgoMorphSweep => {
             let mut p = morph_patch();
-            p.lfo.rate = MOD_LFO_RATE;
+            p.lfos[0].rate = MOD_LFO_RATE;
             (p, lfo_route(MORPH))
         }
         Case::AlgoToModalSwitch => (init_params(EngineType::Algo), ModState::new()),

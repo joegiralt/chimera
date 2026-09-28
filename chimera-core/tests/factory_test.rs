@@ -106,10 +106,10 @@ fn morph_pad_lfo_sweep_stays_inside_morph_range() {
     assert_eq!(s.name_str(), "MORPH PAD");
     let base = s.params.algo.morph as f32;
     let mut lfo = Lfo::new();
-    let period = (chimera_hal::SAMPLE_RATE as f32 / s.params.lfo.rate).ceil() as usize;
+    let period = (chimera_hal::SAMPLE_RATE as f32 / s.params.lfos[0].rate).ceil() as usize;
     for _ in 0..period {
         let mut sources = [0.0f32; MAX_MOD_SOURCES];
-        sources[1] = lfo.process(&s.params.lfo, chimera_hal::SAMPLE_RATE);
+        sources[1] = lfo.process(&s.params.lfos[0], chimera_hal::SAMPLE_RATE);
         let off = s.mod_state.sum_for(0, &sources);
         let morph = base + off * 127.0; // MORPH's range is 0..=127
         assert!((0.0..=127.0).contains(&morph), "morph {morph} clips");

@@ -194,7 +194,7 @@ pub fn factory_sound(i: usize) -> Option<Sound> {
             const MORPH_BASE: u8 = 40;
             let ops = core::array::from_fn(|i| op(w1, COARSE[i], LEVEL[i], [12, 0, 15, 0, 5]));
             let mut s = named("MORPH PAD", algo(AlgoId::A1, AlgoId::A17, MORPH_BASE, ops));
-            s.params.lfo.rate = 0.2;
+            s.params.lfos[0].rate = 0.2;
             s.params.filter.cutoff = 4000.0;
             let mut reg = ModDestRegistry::new();
             if reg
@@ -208,7 +208,7 @@ pub fn factory_sound(i: usize) -> Option<Sound> {
                 // Full LFO swing (± `depth`) must land inside MORPH's 0..=127
                 // range from its base, or the sweep clips flat at an end.
                 let headroom = MORPH_BASE.min(127 - MORPH_BASE) as f32;
-                let amount = (headroom / s.params.lfo.depth) as i8;
+                let amount = (headroom / s.params.lfos[0].depth) as i8;
                 s.mod_state.set_amount(1, 0, amount); // LFO → MORPH
                 s.dest_registry = reg;
             }

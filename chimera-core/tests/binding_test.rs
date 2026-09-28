@@ -190,7 +190,7 @@ fn part_pages_display_like_before() {
                 ("SYNC", Int(1)),
                 ("PHASE", Uni),
                 ("DEPTH", Uni),
-                ("OFST", Bi),
+                ("--", Uni),
             ],
         ),
     ];
