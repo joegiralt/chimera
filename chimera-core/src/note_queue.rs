@@ -217,6 +217,16 @@ pub struct NoteSources<const N: usize> {
 /// Every source's consumer.
 pub struct NoteDrain<'a, const N: usize>(&'a NoteSources<N>);
 
+/// The sources' producers, each taken once by its `SourceId`.
+pub struct NoteProducers<'a, const N: usize>([Option<NoteProducer<'a>>; N]);
+
+impl<'a, const N: usize> NoteProducers<'a, N> {
+    /// Source `id`'s producer; `None` once taken.
+    pub fn take(&mut self, id: SourceId<N>) -> Option<NoteProducer<'a>> {
+        self.0[id.0].take()
+    }
+}
+
 impl<const N: usize> NoteDrain<'_, N> {
     pub fn drain(&mut self, mut f: impl FnMut(NoteEvent)) {
         for q in &self.0.queues {
@@ -245,14 +255,16 @@ impl<const N: usize> NoteSources<N> {
         }
     }
 
-    /// Each source's producer, indexed by `SourceId`, and the drain; once.
-    /// The queues are private, so this is their only split.
-    pub fn split(&self) -> Option<([NoteProducer<'_>; N], NoteDrain<'_, N>)> {
+    /// The producers, taken by `SourceId`, and the drain; once. The
+    /// queues are private, so this is their only split.
+    pub fn split(&self) -> Option<(NoteProducers<'_, N>, NoteDrain<'_, N>)> {
         if self.split.swap(true, Ordering::AcqRel) {
             return None;
         }
         Some((
-            core::array::from_fn(|i| NoteProducer(&self.queues[i])),
+            NoteProducers(core::array::from_fn(|i| {
+                Some(NoteProducer(&self.queues[i]))
+            })),
             NoteDrain(self),
         ))
     }

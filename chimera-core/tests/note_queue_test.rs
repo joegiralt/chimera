@@ -131,7 +131,8 @@ const B: SourceId<2> = SourceId::new(1);
 #[test]
 fn drain_pops_every_source_in_fixed_order() {
     let s: NoteSources<2> = NoteSources::new();
-    let ([mut a, mut b], mut drain) = s.split().unwrap();
+    let (mut producers, mut drain) = s.split().unwrap();
+    let (mut a, mut b) = (producers.take(A).unwrap(), producers.take(B).unwrap());
     b.push(ev(1, 61, 100));
     a.push(ev(0, 60, 100));
     b.push(ev(1, 62, 0));
@@ -144,7 +145,8 @@ fn drain_pops_every_source_in_fixed_order() {
 #[test]
 fn drops_are_counted_per_source() {
     let s: NoteSources<2> = NoteSources::new();
-    let ([_, mut b], _) = s.split().unwrap();
+    let (mut producers, _) = s.split().unwrap();
+    let mut b = producers.take(B).unwrap();
     for i in 0..NOTE_QUEUE_LEN + 3 {
         b.push(ev(0, (i % 128) as u8, 100));
     }
@@ -172,6 +174,8 @@ fn queues_and_sources_split_once() {
     assert!(q.split().is_some());
     assert!(q.split().is_none());
     let s: NoteSources<2> = NoteSources::new();
-    assert!(s.split().is_some());
+    let (mut producers, _) = s.split().unwrap();
     assert!(s.split().is_none());
+    assert!(producers.take(A).is_some());
+    assert!(producers.take(A).is_none());
 }

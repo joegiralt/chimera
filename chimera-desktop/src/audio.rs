@@ -6,7 +6,7 @@
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::hw::{BLOCK_SIZE, CPU_HZ_REV_V, DAC_PAIRS, SAMPLE_RATE, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacOut, Instrument};
-use chimera_core::note_queue::{NoteEvent, NoteKind, NoteProducer, NoteSources};
+use chimera_core::note_queue::{NoteEvent, NoteKind, NoteProducer, NoteSources, SourceId};
 use chimera_core::preset::Performance;
 use chimera_core::scope::{ScopeFrame, ScopeWriter};
 use chimera_core::triple::{TripleBuffer, Writer};
@@ -21,6 +21,10 @@ const N_SOURCES: usize = 2;
 #[cfg(not(feature = "midi"))]
 const N_SOURCES: usize = 1;
 
+const KEYS: SourceId<N_SOURCES> = SourceId::new(0);
+#[cfg(feature = "midi")]
+const MIDI: SourceId<N_SOURCES> = SourceId::new(1);
+
 /// 0 = all pairs, 1..=3 = only that DAC pair; shared with the audio callback.
 struct SharedState {
     solo: AtomicU8,
@@ -29,7 +33,7 @@ struct SharedState {
 pub struct DesktopAudio {
     _stream: Stream,
     shared: Arc<SharedState>,
-    /// The computer keyboard's note source: source 0.
+    /// The computer keyboard's note source.
     keys: NoteProducer<'static>,
     shared_audio: Writer<AudioShared>,
     #[cfg(feature = "midi")]
@@ -57,10 +61,8 @@ impl DesktopAudio {
         // Leaked like the triple buffer: one per process, and the producers
         // it splits into must outlive the threads they move to.
         let notes: &'static NoteSources<N_SOURCES> = Box::leak(Box::new(NoteSources::new()));
-        #[cfg(feature = "midi")]
-        let ([keys, midi], mut drain) = notes.split().expect("note sources split once");
-        #[cfg(not(feature = "midi"))]
-        let ([keys], mut drain) = notes.split().expect("note sources split once");
+        let (mut producers, mut drain) = notes.split().expect("note sources split once");
+        let keys = producers.take(KEYS).expect("keyboard producer taken once");
         let shared = Arc::new(SharedState {
             solo: AtomicU8::new(0),
         });
@@ -110,7 +112,7 @@ impl DesktopAudio {
         Self {
             _stream: stream,
             #[cfg(feature = "midi")]
-            _midi: connect_midi(midi),
+            _midi: connect_midi(producers.take(MIDI).expect("MIDI producer taken once")),
             shared,
             keys,
             shared_audio,
