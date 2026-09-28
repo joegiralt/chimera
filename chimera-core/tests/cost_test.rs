@@ -9,7 +9,7 @@ use chimera_core::dsp::engines::Engines;
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::hw::{CPU_HZ_REV_V, CPU_HZ_REV_Y, Cost, MAX_VOICES, SampleBudget};
-use chimera_core::modulation::ModState;
+use chimera_core::modulation::{ModRouting, ModSource, ModState, VCA};
 use chimera_core::params::{EngineType, ParamSnapshot};
 
 const UNROUTED: [bool; OPS] = [false; OPS];
@@ -38,16 +38,79 @@ fn worst() -> AlgoParams {
 #[test]
 fn voice_costs_are_the_bench_measurements() {
     assert_eq!(Voice::CHAIN_COST, Cost(10));
-    assert_eq!(voice_cost(EngineType::Modal), Cost(400));
+    assert_eq!(voice_cost(EngineType::Modal), Cost(400) + ModRouting::BASE);
     let mods = ModState::new();
     for e in EngineType::ALL {
         let p = ParamSnapshot::for_engine(e);
         assert_eq!(
             Voice::cost(&p, &mods),
-            Engines::cost(&p, &mods) + Voice::CHAIN_COST,
+            Engines::cost(&p, &mods) + Voice::CHAIN_COST + ModRouting::BASE,
             "{e:?}"
         );
     }
+}
+
+fn routed(routes: &[ModSource]) -> ModState {
+    let mut reg = chimera_core::mod_path::ModDestRegistry::new();
+    reg.add(VCA, *b"OUT VCA\0").unwrap();
+    let mut ms = ModState::from_registry(&reg, 8);
+    for s in routes {
+        ms.set_route(s.index(), 0, 127);
+    }
+    ms
+}
+
+/// The spec's shape, billed high: the defaults `BASE`; ENV 2 (A) on the
+/// VCA `BASE + CLAMP + ENV_A`; the worst case, three curved B slots and the
+/// five other sources, `BASE + CLAMP + 3·(ENV_B + CURVE) + 5·OTHER`.
+#[test]
+fn mod_routing_bills_the_spec_shape() {
+    use ModRouting as M;
+    use chimera_core::dsp::modulator::{EnvType, FuncMode};
+    let p = ParamSnapshot::for_engine(EngineType::Algo);
+    let defaults =
+        chimera_core::preset::Sound::init(chimera_core::params::EngineType::Algo).mod_state;
+    assert_eq!(M::cost(&p, &defaults), M::BASE);
+    assert_eq!(
+        M::cost(&p, &routed(&[ModSource::Env2])),
+        M::BASE + M::CLAMP + M::ENV_A
+    );
+    let mut worst = p.clone();
+    for e in worst.envelopes.iter_mut() {
+        (e.env_type, e.func.mode, e.func.shape) = (EnvType::B, FuncMode::Env, 0.8);
+    }
+    let three_b = M::ENV_B + M::CURVE + M::ENV_B + M::CURVE + M::ENV_B + M::CURVE;
+    let five_other = Cost(5 * M::OTHER.0);
+    assert_eq!(
+        M::cost(&worst, &routed(&ModSource::ALL)),
+        M::BASE + M::CLAMP + three_b + five_other
+    );
+    // A route into ENV 2's SHAPE bills the curve on a centred B ENV.
+    let mut b2 = p.clone();
+    (b2.envelopes[1].env_type, b2.envelopes[1].func.mode) = (EnvType::B, FuncMode::Env);
+    let mut shaped = routed(&[ModSource::Env2]);
+    let d = shaped
+        .push(chimera_core::addr::ParamAddr::new(
+            chimera_core::addr::BlockRef::Env(chimera_core::dsp::modulator::EnvSlot::Env2),
+            chimera_core::params::EnvParams::SHAPE,
+        ))
+        .unwrap();
+    shaped.set_route(ModSource::Lfo1.index(), d, 64);
+    assert_eq!(
+        M::cost(&b2, &routed(&[ModSource::Env2])),
+        M::BASE + M::CLAMP + M::ENV_B
+    );
+    assert_eq!(
+        M::cost(&b2, &shaped),
+        M::BASE + M::CLAMP + M::ENV_B + M::CURVE
+    );
+    // The review's estimates, until the bench (Task 13): 30, 63 and 223
+    // (OTHER billed at 5, not the spec's 3: Task 10 review).
+    assert_eq!(
+        (M::BASE, M::cost(&p, &routed(&[ModSource::Env2]))),
+        (Cost(30), Cost(63))
+    );
+    assert_eq!(M::cost(&worst, &routed(&ModSource::ALL)), Cost(223));
 }
 
 /// What the 7,000-cycle budget allows with the FX bus (the whole bus at
@@ -124,7 +187,7 @@ fn voices_beside_fx(p: &AlgoParams) -> u32 {
 
 fn voices_at(cpu_hz: u32, p: &AlgoParams) -> u32 {
     let budget = SampleBudget::for_cpu(cpu_hz).as_cost().0;
-    let voice = Voice::CHAIN_COST.0 + cost(p);
+    let voice = Voice::CHAIN_COST.0 + ModRouting::BASE.0 + cost(p);
     ((budget - FxBus::COST.0) / voice).min(MAX_VOICES as u32)
 }
 
@@ -143,13 +206,15 @@ fn a16_a17() -> AlgoParams {
     p
 }
 
-/// FX diet spec § Intent: with the bus measured at 1,360 the costliest
-/// patch still gets six voices on rev V (6 × 842 + 1,360 = 6,412 ≤ 7,000),
-/// and five on rev Y (5,833 − 1,360 = 4,473; 4,473 / 842 = 5.3).
+/// FX diet spec § Intent: with the bus measured at 1,360 and the modulator
+/// pool's floor (`ModRouting::BASE`) added, the costliest patch still gets
+/// six voices on rev V (6 × 872 + 1,360 = 6,592 ≤ 7,000), and five on rev Y
+/// ((5,833 − 1,360) / 872 = 5.1).
 #[test]
 fn the_costliest_patch_gets_six_voices_on_rev_v() {
     let p = a16_a17();
     assert_eq!(Voice::CHAIN_COST.0 + cost(&p), 842);
+    assert_eq!(Voice::CHAIN_COST.0 + ModRouting::BASE.0 + cost(&p), 872);
     assert_eq!(cost(&costliest()), cost(&p), "no pair has more links");
     assert_eq!(FxBus::COST.0, 1_360, "{:?}", FxBus::COST);
     assert_eq!(voices_at(CPU_HZ_REV_V, &p), MAX_VOICES as u32);

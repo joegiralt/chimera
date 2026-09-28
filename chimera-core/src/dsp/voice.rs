@@ -15,7 +15,9 @@ use crate::dsp::modulator::{EnvSlot, LfoSlot};
 use crate::dsp::wavefolder::Wavefolder;
 use crate::hw::{Cost, MAX_VOICES, VOICE_RAM_BUDGET};
 use crate::in_place::{by_value, uninit_at};
-use crate::modulation::{MAX_MOD_SOURCES, ModSource, ModState, VCA, amount_scale, note_source};
+use crate::modulation::{
+    MAX_MOD_SOURCES, ModRouting, ModSource, ModState, VCA, amount_scale, note_source,
+};
 use crate::params::{EngineType, EnvParams, ParamSnapshot};
 use crate::{MidiNote, Velocity};
 
@@ -125,7 +127,7 @@ impl Voice {
 
     /// Cycles/sample of a voice playing `p` under `mods`.
     pub fn cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
-        Engines::cost(p, mods) + Self::CHAIN_COST
+        Engines::cost(p, mods) + Self::CHAIN_COST + ModRouting::cost(p, mods)
     }
 
     /// The sample rate is stored once (spec §3), not passed per call.
