@@ -344,7 +344,7 @@ pub const CASES: &[ScreenCase] = &[
     }),
     ("spd", |ui| {
         to_mod_sub(ui, 3, &reg::ENV_SPEED);
-        feed(ui, Input::turn(EncoderId::C, -1)); // E2 SPEED → FAST
+        feed(ui, Input::turn(EncoderId::B, -1)); // E2 SPEED → FAST
     }),
     ("lfo_classic", |ui| {
         to_mod_sub(ui, 4, &reg::LFO);
