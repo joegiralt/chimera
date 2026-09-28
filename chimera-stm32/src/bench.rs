@@ -126,7 +126,7 @@ fn worst_comp(s: &mut AudioShared) {
     (c.thresh, c.ratio, c.attack, c.release, c.makeup, c.mix) = (0.0, 7, 0.0, 0.0, 0.5, 1.0);
 }
 
-const ROUTING_ROWS: usize = 20;
+const ROUTING_ROWS: usize = 22;
 /// Rows per ROUTING screen: ten from y 46 at `ROW_H` 25 end at 283.
 const ROUTING_PAGE: usize = 10;
 
@@ -197,6 +197,17 @@ const ROUTING: [RoutingRow; ROUTING_ROWS] = [
     ("1 DEST", |p| one_dest(p, LfoType::Classic), STILL),
     ("FUNC LFO", |p| one_dest(p, LfoType::Func), STILL),
     ("A LEVEL", a_level, STILL),
+    // |x| ≤ 1.4·|dry|: every sample takes `fast_tanh`'s divide.
+    ("DRIVE LO", |p| one_op(p).drive.drive = 0.05, STILL),
+    // `apply_offset`, and the SVF's ramped `g` every block.
+    (
+        "1 CUTOFF",
+        |p| {
+            one_op(p);
+            p.mod_state = matrix(&[(ModSource::Lfo1, CUTOFF, 127)]);
+        },
+        STILL,
+    ),
 ];
 
 /// 1 OP, no routes.

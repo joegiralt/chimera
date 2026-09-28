@@ -6773,6 +6773,12 @@ This task adds `FilterKind`, with the SVF as its one variant, and the KIND param
 
 **Interfaces:**
 - Consumes: Tasks 4, 8 and 14 (routes, presence, `Look`, `renderer::look`, `view::dimmed`); Task 13's SVF reading.
+
+**Handoff from Task 13 (SVF cost).**
+- `FilterKind::cost(Svf, Phaser)` must bill at least 17. SVF − 1 OP read 500 − 483 on the bench-t13c run.
+- Today the model bills the SVF row at 487 against its 500 reading, so it undercounts until this task lands.
+- The 17 is PHASER over LP24. The Algo terms already carry LP24, because the 1 OP row runs it.
+- Task 15's bench row must drive the signal hard enough that `saturate`/`soft_clip`'s costlier branch runs. The 1 OP row's level may not reach it, so the 17 may read low.
 - Produces:
   - `dsp::filter::FilterKind { Svf = 0 }` (`Default`), with `BUILT: [FilterKind; 1]`, `modes(self) -> &'static [FilterMode]`, `key_default(self) -> i8`, `cost(self, FilterMode) -> Cost`, `from_index(f32) -> FilterKind`; `KIND_NAMES`; `kind_change(p: FilterParams, new: FilterKind) -> FilterParams`.
   - `FilterParams::{KIND = ParamId(6), kind(&self) -> FilterKind, set_kind(&mut self, FilterKind)}`; `set_mode` refuses a mode the kind lacks.
@@ -8752,7 +8758,7 @@ The controller ruled that the 38 over is not raised into BASE, which every voice
 - **Where the gap comes from.** The instruction profile (unicorn, MODS against the same patch with only ENV 2 → VCA) puts the extra work in the per-block offsets of the routed destinations: `Voice::render`'s sums, `ParamSpec::offset` and `AlgoLive::offset`, about 18 instructions/sample. It adds about 2 more for the three FUNC LFOs, and some I-cache misses.
 - **Not the wavefolder, not the filter.** In this run LFO 3's FUNC triangle starts at −1, so FOLD stays at 0 and the wavefolder never runs. The filter's `g` ramp costs no more than its steady path.
 - **The term (superseded by review fix 1, below).** At first the whole gap was billed as `DEST`, 7 per routed destination.
-- **The check.** MODS (as read, FOLD stored at 0) is now billed 731 ≥ 644 (`the_model_bills_the_mods_row_high`).
+- **The check (superseded by the bench-t13c run below, where MODS is billed 676 ≥ 668).** MODS (as read, FOLD stored at 0) was billed 731 ≥ 644 under the provisional terms.
 
 **Every ROUTING row and both BENCH rows are billed at or above their reading** (`the_model_bills_every_routing_row_high`).
 
@@ -8912,3 +8918,29 @@ The plain case holds ADR 0031. The other two are shapes no factory Sound has.
 | SQR BASS (DRIVE 0.3) | 552 | 6 | 6 |
 | MORPH PAD | 830 | 6 | 5 |
 | MORPH KEYS | 844 | 6 | 5 |
+
+### Review fix 2: DRIVE LO and 1 CUTOFF (2026-09-28)
+
+**Two new bench rows (ROUTING 3/3):**
+- DRIVE LO: 1 OP with DRIVE 0.05, TONE 0.5, so |x| ≤ 1.4·|dry| and every sample takes `fast_tanh`'s divide.
+- 1 CUTOFF: 1 OP plus LFO 1 → CUTOFF at 127, so `apply_offset` runs and the SVF's `g` ramps every block.
+
+The 1 DEST row (MORPH) never reached either: `AlgoLive::offset` returns before `apply_offset`.
+
+**Derivations once read:**
+- DRIVE = max(DRIVE, DRIVE LO) − 1 OP.
+- DEST_FIRST = max(1 DEST, 1 CUTOFF) − 1 OP.
+
+**Provisional until then.** Emulator on bench-t13d's layout:
+- At DRIVE 1.0, 56 of 64 samples per block take the divide. At 0.05 all 64 do. The 8 extra VDIVs are about 2 cycles/sample, so DRIVE ≈ 59; billed 65.
+- 1 CUTOFF runs the same divides as 1 DEST. It adds 1.3 instructions and 6 I-misses per block over 1 OP, so ≈ 7; DEST_FIRST billed 12.
+
+**Voice counts:**
+
+| Case | Cost | Rev V | Rev Y |
+|---|---|---|---|
+| Costliest patch (A16 ∪ A17), plain | 889 | 6 | 5 |
+| + FOLD | 932 | 6 | 4 |
+| + FOLD + DRIVE | 997 | 5 | 4 |
+
+All factory Sounds keep 6 on rev V.

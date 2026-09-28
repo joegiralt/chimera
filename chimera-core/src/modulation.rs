@@ -340,9 +340,12 @@ impl ModRouting {
     /// SLIDE less A VCA and B SLIDE less B CURVE.
     pub const SLIDE: Cost = Cost(33);
     /// The first destination other than the VCA with a route of nonzero
-    /// amount, its sum and its offset through the block's spec every
-    /// block: 1 DEST less 1 OP.
-    pub const DEST_FIRST: Cost = Cost(3);
+    /// amount: its sum every block, and its offset. Provisional, until the
+    /// bench's 1 CUTOFF row. 1 DEST (LFO 1 → MORPH) read 3 over 1 OP, but
+    /// MORPH goes through `AlgoLive::offset` and never runs `apply_offset`.
+    /// 1 CUTOFF runs `apply_offset` and the SVF's ramped `g` every block,
+    /// and the emulator puts it at 7. Billed as the larger, generously.
+    pub const DEST_FIRST: Cost = Cost(12);
     /// Each such destination after the first: what the MODS row leaves over
     /// every other term, over its five further destinations (0.2; the floor).
     pub const DEST: Cost = Cost(1);
