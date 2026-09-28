@@ -24,21 +24,10 @@ use chimera_core::ui::perf::PerfTracker;
 use chimera_core::ui::theme_settings::ThemeSettings;
 use chimera_hal::ChimeraDisplay;
 use controls::Stm32Controls;
-use cortex_m_rt::{entry, exception, pre_init};
+use cortex_m_rt::{entry, exception};
 use display::Stm32Display;
 use stm32h7xx_hal::gpio::Speed;
 use stm32h7xx_hal::{pac, prelude::*, spi};
-
-#[pre_init]
-unsafe fn before_main() {
-    // SAFETY: runs once, before `main` and before interrupts are enabled, on
-    // a single core. 0xE000_ED08 is the SCB->VTOR register (a valid, aligned,
-    // memory-mapped address on every Cortex-M7), and 0x0802_0000 is our
-    // linked vector table's flash address.
-    unsafe {
-        core::ptr::write_volatile(0xE000_ED08 as *mut u32, 0x0802_0000);
-    }
-}
 
 /// Flush-to-zero and default NaN, in this context (FPSCR) and in every
 /// exception's (FPDSCR, which the audio ISR starts from; it resets to
@@ -162,7 +151,12 @@ fn main() -> ! {
     let (scope_w, mut scope_r) = shared::take_scope().expect("scope buffer taken once");
     let (mut shared_w, shared_r) =
         shared::take_audio(&ui.performance).expect("audio buffer taken once");
-    audio::engine::init(SampleBudget::for_cpu(clk.cpu_hz), shared_r, scope_w);
+    // Without MIDI DIN nothing takes a producer.
+    #[cfg_attr(not(feature = "midi-din"), allow(unused_mut, unused_variables))]
+    let (mut producers, notes) = audio::engine::NOTES
+        .split()
+        .expect("note sources split once");
+    audio::engine::init(SampleBudget::for_cpu(clk.cpu_hz), shared_r, notes, scope_w);
 
     let pll3 = pll3_for(clocks::HSE_HZ, chimera_hal::SAMPLE_RATE, clk.rev);
     clocks::init_pll3(&pll3);
@@ -175,7 +169,13 @@ fn main() -> ! {
     audio::sai::start();
 
     #[cfg(feature = "midi-din")]
-    midi_din::init(&mut cp.NVIC, ccdr.clocks.pclk2().raw());
+    midi_din::init(
+        &mut cp.NVIC,
+        ccdr.clocks.pclk2().raw(),
+        producers
+            .take(audio::engine::DIN)
+            .expect("DIN producer taken once"),
+    );
 
     ui.update();
     ui.render_with_audio(&mut display, &perf.stats, None, scope_r.read());

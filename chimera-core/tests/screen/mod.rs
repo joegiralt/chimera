@@ -22,11 +22,13 @@ use embedded_graphics::prelude::*;
 pub const W: usize = 240;
 pub const H: usize = 320;
 
-/// A 240×320 framebuffer that counts writes outside the screen.
+/// A 240×320 framebuffer that counts its pixel writes.
 pub struct Fb {
     pub px: Vec<u16>,
     /// Pixels drawn outside 240×320 (must stay 0).
     pub oob: usize,
+    /// Pixels drawn through `draw_iter`, on screen or off.
+    pub drawn: usize,
 }
 
 impl Fb {
@@ -34,6 +36,7 @@ impl Fb {
         Self {
             px: vec![0; W * H],
             oob: 0,
+            drawn: 0,
         }
     }
 
@@ -87,6 +90,7 @@ impl DrawTarget for Fb {
         pixels: I,
     ) -> Result<(), Self::Error> {
         for Pixel(p, c) in pixels {
+            self.drawn += 1;
             if (0..W as i32).contains(&p.x) && (0..H as i32).contains(&p.y) {
                 self.px[p.y as usize * W + p.x as usize] = RawU16::from(c).into_inner();
             } else {
@@ -129,13 +133,6 @@ impl Input {
     pub fn turn(e: EncoderId, delta: i8) -> Self {
         Self {
             encoders: vec![(e, delta)],
-            ..Self::default()
-        }
-    }
-    /// Several encoders turned in the same frame.
-    pub fn turns(encoders: &[(EncoderId, i8)]) -> Self {
-        Self {
-            encoders: encoders.to_vec(),
             ..Self::default()
         }
     }
@@ -182,7 +179,7 @@ pub fn scope_fixture() -> [f32; SCOPE_LEN] {
 pub fn load_init(ui: &mut UiState, engine: EngineType) {
     let row = POOL_SIZE + EngineType::ALL.iter().position(|&c| c == engine).unwrap();
     feed(ui, Input::chord(ButtonId::Edit, ButtonId::B1));
-    feed(ui, Input::turn(EncoderId::Main, row as i8));
+    feed(ui, Input::turn(EncoderId::A, row as i8));
     feed(ui, Input::press(ButtonId::Edit));
 }
 
@@ -327,7 +324,7 @@ pub const CASES: &[ScreenCase] = &[
         s.name[..11].copy_from_slice(b"GLASS PLUCK");
         ui.pool.store(1, s);
         feed(ui, Input::chord(ButtonId::Edit, ButtonId::B1));
-        feed(ui, Input::turn(EncoderId::Main, 1));
+        feed(ui, Input::turn(EncoderId::A, 1));
     }),
     ("system", |ui| feed(ui, Input::press(ButtonId::Menu))),
     ("system_theme", |ui| {

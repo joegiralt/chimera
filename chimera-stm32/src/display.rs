@@ -152,6 +152,12 @@ where
     type Color = Rgb565;
     type Error = core::convert::Infallible;
 
+    /// A fill of the framebuffer, not 76,800 `draw_iter` pixels.
+    fn clear(&mut self, color: Rgb565) -> Result<(), Self::Error> {
+        self.fb.fill(RawU16::from(color).into_inner());
+        Ok(())
+    }
+
     fn draw_iter<I>(&mut self, pixels: I) -> Result<(), Self::Error>
     where
         I: IntoIterator<Item = Pixel<Rgb565>>,

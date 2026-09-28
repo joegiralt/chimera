@@ -4,7 +4,7 @@
 //! chains (FILTER) keeps one focus, and the operator selection does not
 //! reset it.
 
-/// One entry per `BlockDef::id`; ids are 0..=55 today (test-checked).
+/// One entry per `BlockDef::id`; every id is below this (test-checked).
 pub const MAX_PAGES: usize = 64;
 
 #[derive(Clone, Copy, Debug)]

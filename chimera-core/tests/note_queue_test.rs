@@ -54,43 +54,47 @@ fn only_note_on_and_off_become_note_events() {
 #[test]
 fn empty_queue_pops_nothing() {
     let q = NoteQueue::new();
-    assert_eq!(q.pop(), None);
+    let (_, mut rx) = q.split().unwrap();
+    assert_eq!(rx.pop(), None);
 }
 
 #[test]
 fn events_come_out_in_order_and_intact() {
     let q = NoteQueue::new();
+    let (mut tx, mut rx) = q.split().unwrap();
     let evs = [ev(0, 60, 100), ev(15, 127, 127), ev(9, 0, 1), ev(3, 64, 0)];
     for e in evs {
-        assert!(q.push(e));
+        assert!(tx.push(e));
     }
     for e in evs {
-        assert_eq!(q.pop(), Some(e));
+        assert_eq!(rx.pop(), Some(e));
     }
-    assert_eq!(q.pop(), None);
+    assert_eq!(rx.pop(), None);
 }
 
 #[test]
 fn full_queue_drops_and_counts() {
     let q = NoteQueue::new();
+    let (mut tx, mut rx) = q.split().unwrap();
     for i in 0..NOTE_QUEUE_LEN {
-        assert!(q.push(ev(0, i as u8, 100)), "slot {i}");
+        assert!(tx.push(ev(0, i as u8, 100)), "slot {i}");
     }
-    assert!(!q.push(ev(0, 100, 100)));
-    assert!(!q.push(ev(0, 101, 100)));
+    assert!(!tx.push(ev(0, 100, 100)));
+    assert!(!tx.push(ev(0, 101, 100)));
     assert_eq!(q.dropped(), 2);
     // The queued events are untouched by the drops.
-    assert_eq!(q.pop(), Some(ev(0, 0, 100)));
-    assert!(q.push(ev(0, 102, 100)), "room again after a pop");
+    assert_eq!(rx.pop(), Some(ev(0, 0, 100)));
+    assert!(tx.push(ev(0, 102, 100)), "room again after a pop");
 }
 
 #[test]
 fn indices_wrap_around() {
     let q = NoteQueue::new();
+    let (mut tx, mut rx) = q.split().unwrap();
     for i in 0..10 * NOTE_QUEUE_LEN {
         let e = ev((i % 16) as u8, (i % 128) as u8, (i % 128) as u8);
-        assert!(q.push(e));
-        assert_eq!(q.pop(), Some(e), "event {i}");
+        assert!(tx.push(e));
+        assert_eq!(rx.pop(), Some(e), "event {i}");
     }
     assert_eq!(q.dropped(), 0);
 }
@@ -99,12 +103,12 @@ fn indices_wrap_around() {
 #[test]
 fn producer_and_consumer_threads() {
     const N: usize = 20_000;
-    let q = std::sync::Arc::new(NoteQueue::new());
+    let q: &'static NoteQueue = Box::leak(Box::new(NoteQueue::new()));
+    let (mut tx, mut rx) = q.split().unwrap();
     let producer = {
-        let q = std::sync::Arc::clone(&q);
         std::thread::spawn(move || {
             for i in 0..N {
-                while !q.push(ev(0, (i % 128) as u8, 1 + (i % 127) as u8)) {
+                while !tx.push(ev(0, (i % 128) as u8, 1 + (i % 127) as u8)) {
                     std::thread::yield_now();
                 }
             }
@@ -112,13 +116,13 @@ fn producer_and_consumer_threads() {
     };
     let mut got = 0;
     while got < N {
-        if let Some(e) = q.pop() {
+        if let Some(e) = rx.pop() {
             assert_eq!(e, ev(0, (got % 128) as u8, 1 + (got % 127) as u8));
             got += 1;
         }
     }
     producer.join().unwrap();
-    assert_eq!(q.pop(), None);
+    assert_eq!(rx.pop(), None);
 }
 
 const A: SourceId<2> = SourceId::new(0);
@@ -127,20 +131,24 @@ const B: SourceId<2> = SourceId::new(1);
 #[test]
 fn drain_pops_every_source_in_fixed_order() {
     let s: NoteSources<2> = NoteSources::new();
-    s.source(B).push(ev(1, 61, 100));
-    s.source(A).push(ev(0, 60, 100));
-    s.source(B).push(ev(1, 62, 0));
+    let (mut producers, mut drain) = s.split().unwrap();
+    let (mut a, mut b) = (producers.take(A).unwrap(), producers.take(B).unwrap());
+    b.push(ev(1, 61, 100));
+    a.push(ev(0, 60, 100));
+    b.push(ev(1, 62, 0));
     let mut got = Vec::new();
-    s.drain(|e| got.push(e));
+    drain.drain(|e| got.push(e));
     assert_eq!(got, [ev(0, 60, 100), ev(1, 61, 100), ev(1, 62, 0)]);
-    s.drain(|_| panic!("already drained"));
+    drain.drain(|_| panic!("already drained"));
 }
 
 #[test]
 fn drops_are_counted_per_source() {
     let s: NoteSources<2> = NoteSources::new();
+    let (mut producers, _) = s.split().unwrap();
+    let mut b = producers.take(B).unwrap();
     for i in 0..NOTE_QUEUE_LEN + 3 {
-        s.source(B).push(ev(0, (i % 128) as u8, 100));
+        b.push(ev(0, (i % 128) as u8, 100));
     }
     assert_eq!(s.drops(), [0, 3]);
 }
@@ -156,4 +164,18 @@ fn source_ids_are_positions_in_the_drain_order() {
 fn a_runtime_source_id_past_n_panics() {
     let i = std::hint::black_box(2);
     let _ = SourceId::<2>::new(i);
+}
+
+/// Each end exists once (#116): a second split gets nothing, so no second
+/// producer or consumer can share a queue.
+#[test]
+fn queues_and_sources_split_once() {
+    let q = NoteQueue::new();
+    assert!(q.split().is_some());
+    assert!(q.split().is_none());
+    let s: NoteSources<2> = NoteSources::new();
+    let (mut producers, _) = s.split().unwrap();
+    assert!(s.split().is_none());
+    assert!(producers.take(A).is_some());
+    assert!(producers.take(A).is_none());
 }

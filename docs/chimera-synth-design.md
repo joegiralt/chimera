@@ -63,13 +63,13 @@ Note: D2 SRAM cacheability/bufferability is configured by MPU, not fixed by addr
 - 6 rotary encoders (a-f, 3x2 grid, no push) — continuous parameter adjustment
 - 6 parameter buttons (1-6, 3x2 grid) — chain head jump
 - 6 navigation buttons: MENU, -, +, MIX, EDIT, SEQ
-- 1 main rotary encoder (no push)
+- No main encoder: the HC165 chain's 24 bits are the six encoders and twelve buttons (ADR 0039)
 - GPIO polled at 500 Hz
 
 ### Firmware Loading
 - Stock bootloader reads firmware from SD card or USB DFU
 - Normal update: copy .bin to SD card, hold Menu on boot, select, flash
-- Recovery: bridge Boot0 to Vcc, USB DFU via `dfu-util -a0 -d 0x0483:0xdf11 -D chimera.bin -s 0x8020000`
+- Recovery: bridge Boot0 to Vcc, USB DFU via `dfu-util -a0 -d 0x0483:0xdf11 -D target/chimera.bin -s 0x8020000`
 - Revert to stock: flash original PreenFM3 .bin via same process
 
 ---
@@ -178,7 +178,6 @@ Inspired by LSDJ. No menus, no trees. Pure 2D spatial navigation.
 | MIX | Shift modifier (hold) |
 | MENU | System chain |
 | Buttons 1-6 | Jump to chain head |
-| Main encoder | Patch select / fine-tune |
 
 ### Chain Definitions
 
@@ -535,14 +534,13 @@ No libc.
 - **Patch format:** Binary, versioned header, forward-compatible
 - **Filter mode "Phazor":** Allpass cascade producing phaser effect (per Cascadia/Polaris naming)
 - **Framebuffer strategy:** Double-buffered RGB565 in D1 AXI-SRAM (~300 KB). Use DMA2D for fills/blits to reduce CPU cost. If memory proves tight, fall back to single-buffered with dirty-rectangle partial updates.
-- **Encoder behavior:** Clamped at min/max (no wrap). Acceleration curve for fast turns. ~128 ticks full range by default, configurable per parameter. Main encoder provides fine-tune (1:1 resolution, no acceleration).
+- **Encoder behavior:** Clamped at min/max (no wrap). Acceleration curve for fast turns. ~128 ticks full range by default, configurable per parameter.
 
 ---
 
 ## Open Questions (post-V1)
 - Chains 4-6: modulation chain? performance chain? arpeggiator?
 - MIX+button shift combos: what do they access?
-- Main encoder role: patch browsing? value fine-tune? context-dependent?
 - Additional engines: wavetable, additive, noise/texture, granular
 - Microtuning support
 - MPE support

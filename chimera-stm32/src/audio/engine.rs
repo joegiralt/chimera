@@ -6,9 +6,9 @@ use chimera_core::audio_out::{Half, interleave};
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::hw::{BLOCK_SIZE, DAC_PAIRS, SAMPLE_RATE, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacOut, Instrument};
-use chimera_core::note_queue::NoteSources;
 #[cfg(feature = "midi-din")]
 use chimera_core::note_queue::SourceId;
+use chimera_core::note_queue::{NoteDrain, NoteSources};
 use chimera_core::part::DacPair;
 use chimera_core::scope::{ScopeFrame, ScopeWriter};
 use chimera_core::triple::{Reader, Writer};
@@ -32,6 +32,7 @@ struct Engine {
     inst: &'static mut Instrument,
     fx: &'static mut FxBus,
     shared: Reader<AudioShared>,
+    notes: NoteDrain<'static, NOTE_SOURCES>,
     scope: ScopeWriter,
     dac: DacOut,
 }
@@ -50,7 +51,12 @@ pub unsafe fn slots() -> (
     unsafe { (&mut *addr_of_mut!(INSTRUMENT), &mut *addr_of_mut!(FX)) }
 }
 
-pub fn init(budget: SampleBudget, shared: Reader<AudioShared>, scope: Writer<ScopeFrame>) {
+pub fn init(
+    budget: SampleBudget,
+    shared: Reader<AudioShared>,
+    notes: NoteDrain<'static, NOTE_SOURCES>,
+    scope: Writer<ScopeFrame>,
+) {
     if ENGINE_TAKEN.swap(true, Ordering::AcqRel) {
         return;
     }
@@ -66,6 +72,7 @@ pub fn init(budget: SampleBudget, shared: Reader<AudioShared>, scope: Writer<Sco
             inst,
             fx,
             shared,
+            notes,
             scope: ScopeWriter::new(scope),
             dac: [[0.0; BLOCK_SIZE * 2]; DAC_PAIRS],
         });
@@ -83,7 +90,7 @@ pub fn render_half(half: Half) {
     // this is the only live reference to `ENGINE`.
     let e = unsafe { (*addr_of_mut!(ENGINE)).assume_init_mut() };
     let shared = e.shared.read();
-    NOTES.drain(|ev| e.inst.handle(ev, shared));
+    e.notes.drain(|ev| e.inst.handle(ev, shared));
     e.inst.render(e.fx, &mut e.dac, shared, &mut e.scope);
     for pair in DacPair::ALL {
         // SAFETY: `main` runs `dma::clear` before `prefill`; the caller is

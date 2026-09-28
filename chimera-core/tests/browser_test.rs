@@ -13,8 +13,11 @@ use chimera_core::ui::theme;
 use chimera_hal::{ButtonId, EncoderId};
 use screen::*;
 
+/// `draw` on a screen cleared to the ground, as it expects.
 fn drawn(pool: &SoundPool, cursor: usize, scroll: usize) -> Fb {
+    use embedded_graphics::draw_target::DrawTarget;
     let mut fb = Fb::new();
+    let _ = fb.clear(theme::BG);
     browser::draw(&mut fb, pool, 0, cursor, scroll);
     assert_eq!(fb.oob, 0);
     fb
@@ -81,7 +84,7 @@ fn the_scroll_thumb_follows_the_list() {
 fn init_rows_end_the_list_and_load() {
     let mut ui = chimera_core::ui::UiState::new();
     feed(&mut ui, Input::chord(ButtonId::Edit, ButtonId::B2));
-    feed(&mut ui, Input::turn(EncoderId::Main, 100)); // clamps to the last row
+    feed(&mut ui, Input::turn(EncoderId::A, 100)); // clamps to the last row
     assert_eq!(
         ui.ui_mode,
         UiMode::SoundBrowser {
@@ -139,7 +142,7 @@ fn cursor_move_redraws_and_matches_a_full_render() {
     let mut fb = Fb::new();
     let scope = scope_fixture();
     ui.render_dirty_with_scope(&mut fb, &PerfStats::zero(), &scope); // consume the open-time redraw
-    feed(&mut ui, Input::turn(EncoderId::Main, 1));
+    feed(&mut ui, Input::turn(EncoderId::A, 1));
     let flushed = ui.render_dirty_with_scope(&mut fb, &PerfStats::zero(), &scope);
     assert!(
         flushed.iter().any(|&(a, b)| a != b),
@@ -170,18 +173,20 @@ fn the_longest_sound_name_is_not_truncated() {
     assert!(row_has(&fb, 0, theme::INK), "16-char name drawn in full");
 }
 
-/// Main and A both turned hard in one frame scroll by their sum, which does
-/// not fit an i8 (#80).
+/// A browser redraw clears the screen once, with the framebuffer fill, and
+/// draws only its contents through `draw_iter` (#82).
 #[test]
-fn main_and_a_together_scroll_past_an_i8() {
+fn browser_redraw_does_not_fill_the_screen_again() {
     let mut ui = chimera_core::ui::UiState::new();
     feed(&mut ui, Input::chord(ButtonId::Edit, ButtonId::B1));
-    feed(
-        &mut ui,
-        Input::turns(&[(EncoderId::Main, 127), (EncoderId::A, 127)]),
-    );
-    assert!(matches!(
-        ui.ui_mode,
-        UiMode::SoundBrowser { cursor, .. } if cursor == TOTAL_ENTRIES - 1
-    ));
+    let (perf, scope) = (PerfStats::zero(), scope_fixture());
+    let mut fb = Fb::new();
+    ui.render_dirty_with_scope(&mut fb, &perf, &scope);
+    fb.drawn = 0;
+    feed(&mut ui, Input::turn(EncoderId::A, 1));
+    ui.render_dirty_with_scope(&mut fb, &perf, &scope);
+    assert!(fb.drawn < W * H, "{} pixels drawn", fb.drawn);
+    let mut full = Fb::new();
+    ui.render_with_scope(&mut full, &perf, &scope);
+    assert!(fb.px == full.px);
 }
