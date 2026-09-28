@@ -30,7 +30,8 @@ fn every_part_slot_resolves_to_a_spec() {
                 SlotBinding::Empty
                 | SlotBinding::SelectOp
                 | SlotBinding::FilterPanel(_)
-                | SlotBinding::EnvPanel(..) => {}
+                | SlotBinding::EnvPanel(..)
+                | SlotBinding::LfoPanel(..) => {}
                 SlotBinding::Param(_) | SlotBinding::SelectedOp(_) => {
                     assert!(slot.spec().is_some(), "{} slot {i}: no spec", def.name)
                 }
@@ -195,19 +196,21 @@ fn part_pages_display_like_before() {
             &reg::LFO,
             [
                 ("RATE", Uni),
-                ("SHAPE", Int(4)),
-                ("SYNC", Int(1)),
+                ("SHAPE", Names(&["SINE", "TRI", "SAW", "SQR", "S&H"])),
+                ("SYNC", Names(&["FREE", "RETRIG"])),
                 ("PHASE", Uni),
                 ("DEPTH", Uni),
-                ("--", Uni),
+                ("TYPE", Names(&["CLASSIC", "FUNC"])),
             ],
         ),
     ];
-    // A panel slot's own label and format are empty: FLT and ENV read their views.
+    // A panel slot's own label and format are empty: FLT, ENV and LFO read
+    // their views.
     let ctx = ctx();
+    let panels: [&BlockDef; 3] = [&reg::FILTER, &reg::ENVELOPE, &reg::LFO];
     for (def, slots) in want {
         for (i, (label, fmt)) in slots.iter().enumerate() {
-            let got = if core::ptr::eq(def, &reg::FILTER) || core::ptr::eq(def, &reg::ENVELOPE) {
+            let got = if panels.iter().any(|p| core::ptr::eq(*p, def)) {
                 let v = view(def, i, &ctx);
                 (v.label(), v.fmt())
             } else {

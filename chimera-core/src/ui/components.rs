@@ -137,6 +137,7 @@ where
 
 /// Focus band (y 28..118): the focused slot's label, its value large, and an
 /// arc gauge (from 12:00 for bipolar params). `value` is the animated 0..1.
+/// A `Look::Dimmed` slot reads as its cell does: the value in MID, no arc.
 ///
 /// While a MIX+PLUS `status` is pending (issue #21) the value readout — the
 /// large numerals and the arc gauge — is replaced by the status word(s) at
@@ -149,6 +150,7 @@ pub fn focus_band<D>(
     value_text: &str,
     value: f32,
     bipolar: bool,
+    look: Look,
     status: Option<PrimeStatus>,
 ) where
     D: DrawTarget<Color = Rgb565>,
@@ -164,6 +166,16 @@ pub fn focus_band<D>(
                 theme::FOCUS_VALUE_Y,
                 theme::INK,
                 theme::LABEL_TRACKING,
+            );
+        }
+        None if look == Look::Dimmed => {
+            draw::text(
+                d,
+                &theme::FONT_FOCUS,
+                value_text,
+                theme::FOCUS_VALUE_X,
+                theme::FOCUS_VALUE_Y,
+                theme::MID,
             );
         }
         None => focus_value(d, value_text, value, bipolar),

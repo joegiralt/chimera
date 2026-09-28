@@ -5,7 +5,10 @@
 use crate::addr::{BlockRef, Blocks, Op, ParamAddr};
 use crate::block::ValFmt;
 use crate::dsp::filter::FilterKind;
-use crate::dsp::modulator::{EnvForm, EnvSlot, EnvSpeed, EnvType, Func, FuncMode, LfoForm, pick};
+use crate::dsp::lfo::LfoParams;
+use crate::dsp::modulator::{
+    EnvForm, EnvSlot, EnvSpeed, EnvType, Func, FuncMode, LfoForm, LfoSlot, LfoType, pick,
+};
 use crate::modulation::{ModSource, VCA};
 use crate::params::{EnvParams, FilterParams, OutParams};
 use crate::preset::Sound;
@@ -19,6 +22,14 @@ use crate::ui::mod_panel::{self, PanelSlot};
 pub enum EnvKind {
     A(EnvSpeed),
     B(Func),
+}
+
+/// What an LFO slot's page resolves against: CLASSIC, or FUNC and its
+/// FORM (FUNC's MODE is always LFO).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LfoKind {
+    Classic,
+    Func(LfoForm),
 }
 
 /// B's `Func` from its MODE and FORM values (FORM indexes MODE's list).
@@ -36,6 +47,7 @@ pub struct SlotCtx {
     pub sel_op: Op,
     pub kind: FilterKind,
     pub envs: [EnvKind; 3],
+    pub lfos: [LfoKind; 3],
 }
 
 impl SlotCtx {
@@ -50,6 +62,13 @@ impl SlotCtx {
                 match pick(&EnvType::ALL, at(EnvParams::TYPE)) {
                     EnvType::A => EnvKind::A(pick(&EnvSpeed::ALL, at(EnvParams::SPEED))),
                     EnvType::B => EnvKind::B(func_at(at(EnvParams::MODE), at(EnvParams::FORM))),
+                }
+            }),
+            lfos: LfoSlot::ALL.map(|s| {
+                let at = |id| get(BlockRef::Lfo(s), id);
+                match pick(&LfoType::ALL, at(LfoParams::TYPE)) {
+                    LfoType::Classic => LfoKind::Classic,
+                    LfoType::Func => LfoKind::Func(pick(&LfoForm::ALL, at(LfoParams::FORM))),
                 }
             }),
         }
@@ -145,15 +164,25 @@ pub fn view(def: &BlockDef, i: usize, ctx: &SlotCtx) -> View {
                 label,
             }) => View::Route { source, label },
         },
-        SlotBinding::EnvPanel(s, k) => {
-            match mod_panel::env_panel(ctx.envs[s.index()]).slots[k as usize] {
-                None => View::Empty,
-                Some(PanelSlot::Param { id, label, fmt }) => {
-                    param(ParamAddr::new(BlockRef::Env(s), id), label, fmt)
-                }
-                Some(PanelSlot::Fixed { label, text }) => View::Text { label, text },
-            }
-        }
+        SlotBinding::EnvPanel(s, k) => panel_view(
+            mod_panel::env_panel(ctx.envs[s.index()]),
+            k,
+            BlockRef::Env(s),
+        ),
+        SlotBinding::LfoPanel(s, k) => panel_view(
+            mod_panel::lfo_panel(ctx.lfos[s.index()]),
+            k,
+            BlockRef::Lfo(s),
+        ),
+    }
+}
+
+/// Cell `k` of a modulator panel, its params in `block`.
+fn panel_view(panel: &mod_panel::ModPanel, k: u8, block: BlockRef) -> View {
+    match panel.slots[k as usize] {
+        None => View::Empty,
+        Some(PanelSlot::Param { id, label, fmt }) => param(ParamAddr::new(block, id), label, fmt),
+        Some(PanelSlot::Fixed { label, text }) => View::Text { label, text },
     }
 }
 
@@ -167,6 +196,10 @@ pub fn dimmed(addr: ParamAddr, sound: &Sound) -> bool {
         (BlockRef::Filter, FilterParams::KIND) => FilterKind::BUILT.len() == 1,
         // A single-mode kind shows its mode fixed (spec § 7).
         (BlockRef::Filter, FilterParams::MODE) => sound.params.filter.kind().modes().len() == 1,
+        // SPD: a type-B slot's SPEED and HOLD (spec § UI).
+        (BlockRef::Env(s), EnvParams::SPEED | EnvParams::HOLD_POS) => {
+            sound.params.envelopes[s.index()].env_type == EnvType::B
+        }
         _ => false,
     }
 }

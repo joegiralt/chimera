@@ -5,6 +5,7 @@
 
 use crate::ui::PrimeStatus;
 use crate::ui::animation::AnimatedValue;
+use crate::ui::components::Look;
 use crate::ui::page::{PageId, PageKey, PageLayout};
 use crate::ui::theme;
 
@@ -49,6 +50,8 @@ pub enum RegionData {
         page: PageKey,
         slot: u8,
         value: u16,
+        /// The slot's look: it can change without a `matrix_rev` bump.
+        look: Look,
         status: Option<PrimeStatus>,
     },
     /// The mod matrix focus band: the selected route and its animated amount.
@@ -117,11 +120,18 @@ impl RegionData {
         }
     }
 
-    pub fn focus(page: PageKey, slot: u8, value: u16, status: Option<PrimeStatus>) -> Self {
+    pub fn focus(
+        page: PageKey,
+        slot: u8,
+        value: u16,
+        look: Look,
+        status: Option<PrimeStatus>,
+    ) -> Self {
         Self::Focus {
             page,
             slot,
             value,
+            look,
             status,
         }
     }
@@ -188,6 +198,7 @@ impl RegionData {
             page: SENTINEL_PAGE,
             slot: u8::MAX,
             value: SENTINEL,
+            look: Look::Live,
             status: None,
         }
     }

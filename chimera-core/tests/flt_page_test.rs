@@ -126,16 +126,23 @@ fn a_full_matrix_keeps_the_route_knob_off() {
     assert!((0..ui.mod_state().num_dests()).all(|d| ui.mod_state().dest(d) != CUTOFF));
 }
 
-/// Plus five times from Part 1's home: the MOD node, then EDIT ×4 to the
+/// Plus five times from Part 1's home: the MOD node, then EDIT ×7 to the
 /// matrix.
 fn to_matrix(ui: &mut UiState) {
     feed(ui, Input::press(ButtonId::B1));
     for _ in 0..5 {
         feed(ui, Input::press(ButtonId::Plus));
     }
-    for _ in 0..4 {
-        feed(ui, Input::press(ButtonId::Edit));
+    for _ in 0..7 {
+        feed(ui, Input::press(ButtonId::Edit)); // E2, E3, SPD, L1, L2, L3, MTX
     }
+    assert_eq!(
+        ui.page(),
+        chimera_core::ui::page::PageKey::Part {
+            def: chimera_core::ui::block_registry::MOD_MATRIX.id,
+            op: chimera_core::addr::Op::A
+        }
+    );
 }
 
 /// Deleting a route at 0 changes no amount, but the dirty render redraws
@@ -301,6 +308,7 @@ fn an_absent_route_knob_reads_dashes_in_the_focus_band() {
         "--",
         ui.renderer.anim[2].current(),
         chimera_core::ui::page::ValFmt::Route.is_bipolar(),
+        components::Look::Absent,
         None,
     );
     assert!(same_rect(

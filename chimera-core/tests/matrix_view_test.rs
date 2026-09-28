@@ -71,9 +71,16 @@ fn an_empty_matrix_says_so() {
     for _ in 0..5 {
         feed(&mut ui, Input::press(ButtonId::Plus));
     }
-    for _ in 0..4 {
+    for _ in 0..7 {
         feed(&mut ui, Input::press(ButtonId::Edit)); // E1 → MTX
     }
+    assert_eq!(
+        ui.page(),
+        chimera_core::ui::page::PageKey::Part {
+            def: chimera_core::ui::block_registry::MOD_MATRIX.id,
+            op: chimera_core::addr::Op::A
+        }
+    );
     settle(&mut ui);
     let mut fb = Fb::new();
     ui.render_with_scope(&mut fb, &PerfStats::zero(), &scope_fixture());

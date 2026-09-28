@@ -15,6 +15,8 @@ pub enum VizType {
     AudioStats,
     /// ALG A's diagram moving to ALG B's with MORPH.
     AlgoDiagram,
+    /// SPD: each slot's SPEED and HOLD POSITION.
+    EnvSpeed,
 }
 
 /// What an encoder slot edits (spec §5).
@@ -37,6 +39,8 @@ pub enum SlotBinding {
     FilterPanel(u8),
     /// Cell k of ENV slot s's page, per its TYPE, MODE and FORM.
     EnvPanel(crate::dsp::modulator::EnvSlot, u8),
+    /// Cell k of LFO slot s's page, per its TYPE and FORM.
+    LfoPanel(crate::dsp::modulator::LfoSlot, u8),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -95,6 +99,13 @@ impl ParamSlot {
         }
     }
 
+    pub const fn lfo_panel(s: crate::dsp::modulator::LfoSlot, k: u8) -> Self {
+        Self {
+            binding: SlotBinding::LfoPanel(s, k),
+            label_override: None,
+        }
+    }
+
     pub const fn with_label(self, label: &'static str) -> Self {
         Self {
             label_override: Some(label),
@@ -112,7 +123,8 @@ impl ParamSlot {
             | SlotBinding::SelectOp
             | SlotBinding::Legacy { .. }
             | SlotBinding::FilterPanel(_)
-            | SlotBinding::EnvPanel(..) => None,
+            | SlotBinding::EnvPanel(..)
+            | SlotBinding::LfoPanel(..) => None,
         }
     }
 
@@ -122,7 +134,10 @@ impl ParamSlot {
         }
         match self.binding {
             // Views resolve a panel knob.
-            SlotBinding::Empty | SlotBinding::FilterPanel(_) | SlotBinding::EnvPanel(..) => "--",
+            SlotBinding::Empty
+            | SlotBinding::FilterPanel(_)
+            | SlotBinding::EnvPanel(..)
+            | SlotBinding::LfoPanel(..) => "--",
             SlotBinding::SelectOp => "OP",
             SlotBinding::Legacy { label, .. } => label,
             SlotBinding::Param(_) | SlotBinding::SelectedOp(_) => {
@@ -133,9 +148,10 @@ impl ParamSlot {
 
     pub fn format(&self) -> ValFmt {
         match self.binding {
-            SlotBinding::Empty | SlotBinding::FilterPanel(_) | SlotBinding::EnvPanel(..) => {
-                ValFmt::Uni
-            }
+            SlotBinding::Empty
+            | SlotBinding::FilterPanel(_)
+            | SlotBinding::EnvPanel(..)
+            | SlotBinding::LfoPanel(..) => ValFmt::Uni,
             SlotBinding::SelectOp => ValFmt::OneBased(Op::ALL.len() as u8 - 1),
             SlotBinding::Legacy { fmt, .. } => fmt,
             SlotBinding::Param(_) | SlotBinding::SelectedOp(_) => {

@@ -4,8 +4,8 @@
 //! chains (FILTER) keeps one focus, and the operator selection does not
 //! reset it.
 
-/// One entry per `BlockDef::id`; every id is below this (test-checked).
-pub const MAX_PAGES: usize = 64;
+/// One entry per `BlockDef::id`; ids are 0..=65 today (test-checked).
+pub const MAX_PAGES: usize = 72;
 
 #[derive(Clone, Copy, Debug)]
 pub struct FocusMemory {
