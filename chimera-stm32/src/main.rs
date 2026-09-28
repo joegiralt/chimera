@@ -25,7 +25,6 @@ use chimera_hal::ChimeraDisplay;
 use controls::Stm32Controls;
 use cortex_m_rt::{entry, exception, pre_init};
 use display::Stm32Display;
-use priority::Priority;
 use stm32h7xx_hal::gpio::Speed;
 use stm32h7xx_hal::{pac, prelude::*, spi};
 
@@ -152,8 +151,7 @@ fn main() -> ! {
     #[cfg(feature = "bench")]
     bench::run(&mut display, clk, &ui.performance);
 
-    controls::start_systick(clk.cpu_hz);
-    priority::set_systick(&mut cp.SCB, Priority::SYSTICK);
+    controls::start_systick(cp.SYST, &mut cp.SCB, clk.cpu_hz);
     controls::enable();
 
     let (scope_w, mut scope_r) = shared::take_scope().expect("scope buffer taken once");
