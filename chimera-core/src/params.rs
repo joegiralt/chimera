@@ -489,13 +489,14 @@ impl PitchParams {
         self.pitch + self.fine / 100.0
     }
 
-    /// The frequency ratio, exactly 1 at no offset (no maths: the goldens).
+    /// The frequency ratio, exactly 1 at no offset (no maths: the goldens);
+    /// `fast_exp2`, within 0.1 cent, as it runs every block.
     pub fn ratio(&self) -> f32 {
         let st = self.semitones();
         if st == 0.0 {
             1.0
         } else {
-            libm::exp2f(st / 12.0)
+            crate::dsp::fast_exp2(st / 12.0)
         }
     }
 }

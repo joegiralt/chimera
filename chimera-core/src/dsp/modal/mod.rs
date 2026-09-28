@@ -60,6 +60,8 @@ pub struct ModalEngine {
     string: KsString,
     // Sympathetic strings (7 additional resonators)
     sym_strings: [KsString; NUM_SYMPATHETIC],
+    /// Each sympathetic string's ratio to the main one, set at note-on.
+    sym_ratios: [f32; NUM_SYMPATHETIC],
     // Shared
     /// The note's frequency per sample, before the pitch offset.
     frequency: f32,
@@ -78,7 +80,7 @@ pub struct ModalEngine {
 }
 
 crate::in_place::field_list!(ModalEngine => ModalEngine {
-    filters, cos_osc, resolution, string, sym_strings, frequency, pitch, tuned, active_mode,
+    filters, cos_osc, resolution, string, sym_strings, sym_ratios, frequency, pitch, tuned, active_mode,
     released, exciter_remaining, exciter_amp, noise_state, exciter_lp, active, silence_counter,
 });
 
@@ -90,6 +92,12 @@ impl Default for ModalEngine {
 
 impl ModalEngine {
     pub const COST: Cost = Cost(390); // measured 2026-09-27, bench, rev V at 480 MHz
+    /// More with a route into PITCH or FINE: `retune`'s eight divides a
+    /// block, the per-block `fast_exp2` and the retune's I-cache lines.
+    /// Provisional, pending a bench row (#182): the emulator's Sympathetic row
+    /// with an LFO on PITCH less the unrouted one: 3 instructions a sample
+    /// and 9 I-cache misses a block, per voice (2026-09-28). Billed at 12.
+    pub const PITCH: Cost = Cost(12);
 
     pub fn new() -> Self {
         // SAFETY: `init_in_place` writes every field of the slot.
@@ -110,6 +118,7 @@ impl ModalEngine {
             for i in 0..NUM_SYMPATHETIC {
                 KsString::init_in_place(uninit_at(sym.add(i)));
             }
+            addr_of_mut!((*p).sym_ratios).write([1.0; NUM_SYMPATHETIC]);
             addr_of_mut!((*p).frequency).write(220.0 / 48000.0);
             addr_of_mut!((*p).pitch).write(1.0);
             addr_of_mut!((*p).tuned).write(1.0);
@@ -178,7 +187,8 @@ impl ModalEngine {
                     params.ks_color,
                     params.position,
                 );
-                self.tune_sympathetic(freq, params.inharm, sample_rate);
+                self.sym_ratios = sympathetic_ratios(params.inharm);
+                self.tune_sympathetic(freq, sample_rate);
                 for sym in self.sym_strings.iter_mut() {
                     // Sympathetic strings start silent — energy comes from main
                     for s in sym.buffer[..sym.delay_len].iter_mut() {
@@ -194,18 +204,16 @@ impl ModalEngine {
         self.silence_counter = 0;
     }
 
-    /// Sympathetic strings tuned to harmonics/intervals of `freq`: inharm
-    /// controls spread, 0 unison, 1 a wide harmonic series.
-    fn tune_sympathetic(&mut self, freq: f32, inharm: f32, sample_rate: u32) {
-        let intervals = [0.0, 12.0, 7.02, 12.0, 19.02, 24.0, 7.02];
-        for (i, sym) in self.sym_strings.iter_mut().enumerate() {
-            let detune = intervals[i] * inharm;
-            sym.set_freq(freq * semitones_to_ratio(detune), sample_rate);
+    /// The sympathetic strings at their note-on ratios to `freq`.
+    fn tune_sympathetic(&mut self, freq: f32, sample_rate: u32) {
+        for (sym, r) in self.sym_strings.iter_mut().zip(self.sym_ratios) {
+            sym.set_freq(freq * r, sample_rate);
         }
     }
 
-    /// The strings follow a changed pitch ratio (per block, at a change only).
-    fn retune(&mut self, params: &ModalParams, sample_rate: u32) {
+    /// The strings follow a changed pitch ratio (per block, at a change
+    /// only): a divide per string (`ModalEngine::PITCH`).
+    fn retune(&mut self, sample_rate: u32) {
         if self.pitch == self.tuned {
             return;
         }
@@ -216,7 +224,7 @@ impl ModalEngine {
             ResonatorMode::String | ResonatorMode::Bowed => self.string.set_freq(freq, sample_rate),
             ResonatorMode::Sympathetic => {
                 self.string.set_freq(freq, sample_rate);
-                self.tune_sympathetic(freq, params.inharm, sample_rate);
+                self.tune_sympathetic(freq, sample_rate);
             }
         }
     }
@@ -333,7 +341,7 @@ impl ModalEngine {
             self.compute_filters(params, self.pitched(self.frequency));
             self.cos_osc.init(params.position);
         }
-        self.retune(params, sample_rate);
+        self.retune(sample_rate);
 
         match self.active_mode {
             ResonatorMode::String => self.render_string(output, params, &mut max_level),
@@ -528,6 +536,9 @@ impl ModalEngine {
 
 use super::note_to_freq;
 
-fn semitones_to_ratio(semitones: f32) -> f32 {
-    libm::powf(2.0, semitones / 12.0)
+/// The sympathetic strings' ratios to the main one: harmonics/intervals
+/// spread by `inharm`, 0 unison, 1 a wide harmonic series.
+fn sympathetic_ratios(inharm: f32) -> [f32; NUM_SYMPATHETIC] {
+    let intervals = [0.0, 12.0, 7.02, 12.0, 19.02, 24.0, 7.02];
+    intervals.map(|st| libm::powf(2.0, st * inharm / 12.0))
 }

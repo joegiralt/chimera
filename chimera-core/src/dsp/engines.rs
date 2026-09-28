@@ -17,8 +17,9 @@ use crate::in_place::{by_value, uninit_at};
 // `reset` rebuilds an engine over the old one without dropping it.
 const _: () =
     assert!(!core::mem::needs_drop::<AlgoEngine>() && !core::mem::needs_drop::<ModalEngine>());
+use crate::addr::{BlockRef, ParamAddr};
 use crate::modulation::ModState;
-use crate::params::{EngineType, ParamSnapshot};
+use crate::params::{EngineType, ParamSnapshot, PitchParams};
 use crate::{MidiNote, Velocity};
 
 pub struct Engines {
@@ -115,6 +116,7 @@ impl Engines {
     pub fn cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
         match p.engine() {
             EngineType::Algo => AlgoEngine::cost(&p.algo, &mods.algo_levels_routed()),
+            EngineType::Modal if pitch_routed(mods) => ModalEngine::COST + ModalEngine::PITCH,
             EngineType::Modal => ModalEngine::COST,
         }
     }
@@ -126,4 +128,11 @@ impl Engines {
             EngineType::Modal => self.modal.is_active(),
         }
     }
+}
+
+/// A route, of any amount, into the voice's PITCH or FINE.
+fn pitch_routed(mods: &ModState) -> bool {
+    [PitchParams::PITCH, PitchParams::FINE]
+        .into_iter()
+        .any(|q| mods.routes_into(ParamAddr::new(BlockRef::Pitch, q)) != 0)
 }
