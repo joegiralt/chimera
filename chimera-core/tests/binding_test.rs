@@ -206,7 +206,7 @@ fn slot_addr_resolves_fixed_bindings() {
     assert_eq!(slot_addr(&reg::ALGO_LEVEL, 3, Op::A), level(Op::D));
     assert_eq!(slot_addr(&reg::ALGO_LEVEL, 3, Op::F), level(Op::D));
     assert_eq!(slot_addr(&reg::ALGO_ALG, 5, Op::A), None); // empty
-    assert_eq!(slot_addr(&reg::MIXER, 0, Op::A), None); // legacy
+    assert_eq!(slot_addr(&reg::DEMO_WAVES, 0, Op::A), None); // legacy
     assert_eq!(slot_addr(&reg::ALGO_ALG, 9, Op::A), None); // out of range
 }
 

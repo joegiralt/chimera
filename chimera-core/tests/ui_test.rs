@@ -246,14 +246,6 @@ fn test_filter_env_amount_bipolar_in_registry() {
 }
 
 #[test]
-fn test_mixer_pan_bipolar_in_registry() {
-    use chimera_core::ui::block_registry;
-    use chimera_core::ui::page::ValFmt;
-    let def = &block_registry::MIXER;
-    assert_eq!(def.params[1].format(), ValFmt::Bi); // PAN
-}
-
-#[test]
 fn test_fmt_one_based() {
     let mut buf = FmtBuf::new();
     fmt_val(&mut buf, 0.0, ValFmt::OneBased(15));

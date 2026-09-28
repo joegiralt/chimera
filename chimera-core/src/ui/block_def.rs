@@ -7,7 +7,6 @@ pub enum VizType {
     None,
     FilterResponse,
     Adsr,
-    LpgResponse,
     Logo,
     /// IN → CHR → DLY → REV → OUT, lighting this page's part of it.
     EffectsFlow(FxFlow),
