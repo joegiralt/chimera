@@ -33,7 +33,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("sound_browser", 0xdc94376f632eebac),
     ("system", 0x66ca9f7c486d2749),
     ("system_theme", 0x6f46ed28ddb10559),
-    ("system_audio", 0x425eb6d9e5f0d9d0),
+    ("system_audio", 0x281985b580ac2fb1),
 ];
 
 #[test]

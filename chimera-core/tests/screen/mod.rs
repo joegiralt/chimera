@@ -10,6 +10,7 @@ use chimera_core::clock_plan::SiliconRev;
 use chimera_core::params::EngineType;
 use chimera_core::perf::load::AudioStats;
 use chimera_core::preset::{POOL_SIZE, Sound};
+use chimera_core::reset::ResetCause;
 use chimera_core::scope::SCOPE_LEN;
 use chimera_core::ui::UiState;
 use chimera_core::ui::perf::PerfStats;
@@ -343,7 +344,7 @@ pub const CASES: &[ScreenCase] = &[
 
 /// `AudioStats` fixture for the AUDIO sub-page's goldens and tests.
 pub fn audio_fixture() -> AudioStats {
-    let mut s = AudioStats::new(SiliconRev::V, 480_000_000);
+    let mut s = AudioStats::new(SiliconRev::V, 480_000_000, ResetCause::Watchdog);
     s.load_avg = 23;
     s.load_peak = 41;
     s.overruns = 2;

@@ -19,6 +19,7 @@ mod watchdog;
 use chimera_core::audio_out::Heartbeat;
 use chimera_core::clock_plan::pll3_for;
 use chimera_core::hw::SampleBudget;
+use chimera_core::reset::ResetCause;
 use chimera_core::ui::perf::PerfTracker;
 use chimera_core::ui::theme_settings::ThemeSettings;
 use chimera_hal::ChimeraDisplay;
@@ -68,6 +69,10 @@ fn main() -> ! {
     let mut cp = cortex_m::Peripherals::take().unwrap();
     fp_flush_to_zero(&mut cp.FPU);
     let dp = pac::Peripherals::take().unwrap();
+
+    // RCC_RSR survives the reset it records; clear it for the next one.
+    let reset_cause = ResetCause::from_rsr(dp.RCC.rsr.read().bits());
+    dp.RCC.rsr.modify(|_, w| w.rmvf().set_bit());
 
     cache::enable_d2_sram();
     let rev = clocks::read_rev(&dp.DBGMCU);
@@ -143,7 +148,7 @@ fn main() -> ! {
     // the first change the main loop notices.
     display.set_gamma(theme.gamma.tables());
     display.set_palette(theme.palette());
-    let mut stats_r = probe::init(&mut cp.DCB, &mut cp.DWT, clk);
+    let mut stats_r = probe::init(&mut cp.DCB, &mut cp.DWT, clk, reset_cause);
 
     let mut controls = Stm32Controls::new();
     let ui = shared::take_ui().expect("UI state taken once");
