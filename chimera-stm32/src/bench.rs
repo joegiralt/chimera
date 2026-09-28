@@ -13,6 +13,7 @@ use chimera_core::dsp::algo::tx::FEEDBACK_CYCLES;
 use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::filter::FilterMode;
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus};
+use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::dsp::modulator::{EnvForm, EnvSlot, EnvType, Func, Glide, LfoForm, LfoType};
 use chimera_core::hw::{BLOCK_SIZE, DAC_PAIRS, MAX_PARTS, MAX_VOICES, SAMPLE_RATE, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacOut, Instrument, PanCache, PartAudio, mix_parts};
@@ -126,7 +127,7 @@ fn worst_comp(s: &mut AudioShared) {
     (c.thresh, c.ratio, c.attack, c.release, c.makeup, c.mix) = (0.0, 7, 0.0, 0.0, 0.5, 1.0);
 }
 
-const ROUTING_ROWS: usize = 24;
+const ROUTING_ROWS: usize = 28;
 /// Rows per ROUTING screen: ten from y 46 at `ROW_H` 25 end at 283.
 const ROUTING_PAGE: usize = 10;
 
@@ -212,7 +213,18 @@ const ROUTING: [RoutingRow; ROUTING_ROWS] = [
     // the SVF row's level never reaches. HOT − 1 OP is the hot LP24 term.
     ("LP24 HOT", |p| hot(p, FilterMode::Lp24), STILL),
     ("SVF HOT", |p| hot(p, FilterMode::Phaser), STILL),
+    // Each Modal model, the default Sound otherwise: `ModalEngine::cost`.
+    ("MDL STR", |p| modal(p, ResonatorMode::String), STILL),
+    ("MDL BOW", |p| modal(p, ResonatorMode::Bowed), STILL),
+    ("MDL SYM", |p| modal(p, ResonatorMode::Sympathetic), STILL),
+    ("MDL RES", |p| modal(p, ResonatorMode::Modal), STILL),
 ];
+
+/// The Modal Sound with its model set to `mode`.
+fn modal(p: &mut PartAudio, mode: ResonatorMode) {
+    p.params = ParamSnapshot::for_engine(EngineType::Modal);
+    p.params.modal.mode = mode;
+}
 
 /// 1 OP through the SVF in `mode` at DRIVE 1, RES 1 and CUTOFF 1000 Hz
 /// (not the Sound's 20 kHz: the host sweep's worst for `saturate`).

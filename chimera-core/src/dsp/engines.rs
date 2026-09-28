@@ -116,8 +116,10 @@ impl Engines {
     pub fn cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
         match p.engine() {
             EngineType::Algo => AlgoEngine::cost(&p.algo, &mods.algo_levels_routed()),
-            EngineType::Modal if pitch_routed(mods) => ModalEngine::COST + ModalEngine::PITCH,
-            EngineType::Modal => ModalEngine::COST,
+            EngineType::Modal if pitch_routed(mods) => {
+                ModalEngine::cost(&p.modal) + ModalEngine::PITCH
+            }
+            EngineType::Modal => ModalEngine::cost(&p.modal),
         }
     }
 
