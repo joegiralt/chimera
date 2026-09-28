@@ -1,10 +1,10 @@
 //! Verify no clicks/discontinuities in audio output.
 //! Simulates the desktop audio callback pattern: rendering blocks
 //! and scattering to variable-size output buffers.
+mod common;
+use common::{SR, tri};
 
 use chimera_core::dsp::Stereo;
-use chimera_core::dsp::algo::params::AlgoParams;
-use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::fx_bus::FxParams;
 use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::dsp::reverb::ReverbParams;
@@ -14,15 +14,6 @@ use chimera_core::modulation::ModState;
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::{MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
-
-const SR: u32 = 48000;
-
-/// Operator 1 alone on the triangle.
-fn tri() -> ParamSnapshot {
-    let mut p = ParamSnapshot::for_engine(EngineType::Algo);
-    p.algo = AlgoParams::single(WaveId::TRI);
-    p
-}
 
 /// Simulate the audio callback: render blocks, scatter to output buffer,
 /// check for discontinuities (clicks) in the output stream.
@@ -190,7 +181,7 @@ fn test_no_clicks_odd_buffer_sizes() {
         |p, _| {
             *p = tri();
         },
-        // Deliberately misaligned with BLOCK_SIZE=128
+        // Deliberately misaligned with BLOCK_SIZE (64)
         &[100, 200, 50, 300, 150, 75, 250, 100, 400, 50],
     );
 }
@@ -473,4 +464,37 @@ fn a_note_on_mid_fade_starts_clean_after_it() {
         want.extend(block.iter().map(|s| s.to_bits()));
     }
     assert!(out == want);
+}
+
+/// A note-off releases through the envelope: no step after it is larger
+/// than the held note's own largest step (#68). The fixed 0.15 threshold
+/// above misses a full mute of this triangle. Modal's release is #51.
+#[test]
+fn a_released_note_steps_no_more_than_the_held_note() {
+    let saw = chimera_core::factory::factory_sound(4).unwrap(); // SAW LEAD
+    for (name, p, m) in [
+        ("triangle", tri(), ModState::new()),
+        ("SAW LEAD", saw.params.clone(), saw.mod_state.clone()),
+    ] {
+        let mut v = Voice::new(SR);
+        let mut block = [0.0f32; BLOCK_SIZE];
+        v.note_on(MidiNote::new(60).unwrap(), Velocity::DEFAULT, &p);
+        let mut held = Vec::new();
+        for _ in 0..32 {
+            v.render(&mut block, &p, &m);
+            held.extend_from_slice(&block);
+        }
+        v.note_off();
+        let mut released = vec![*held.last().unwrap()];
+        while v.is_active() {
+            v.render(&mut block, &p, &m);
+            released.extend_from_slice(&block);
+            assert!(
+                released.len() < 10 * SR as usize,
+                "{name}: release never ends"
+            );
+        }
+        let (h, r) = (max_step(&held), max_step(&released));
+        assert!(r <= h, "{name}: release steps {r}, held {h}");
+    }
 }

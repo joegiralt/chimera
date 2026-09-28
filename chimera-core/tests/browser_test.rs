@@ -190,3 +190,32 @@ fn browser_redraw_does_not_fill_the_screen_again() {
     ui.render_with_scope(&mut full, &perf, &scope);
     assert!(fb.px == full.px);
 }
+
+/// Browser input is a pure function of the controls and the cursor (#75).
+#[test]
+fn browser_handle_moves_then_acts() {
+    use browser::{BrowserAct, handle};
+    let last = TOTAL_ENTRIES - 1;
+    assert_eq!(handle(&Input::turn(EncoderId::A, 3), 0, 0), (3, 0, None));
+    // The list clamps, and scrolling keeps the cursor on screen.
+    assert_eq!(
+        handle(&Input::turn(EncoderId::A, 100), 0, 0),
+        (last, last + 1 - VISIBLE_ROWS, None)
+    );
+    assert_eq!(handle(&Input::turn(EncoderId::A, -2), 5, 5), (3, 3, None));
+    assert_eq!(
+        handle(&Input::press(ButtonId::Edit), 4, 0),
+        (4, 0, Some(BrowserAct::Load))
+    );
+    assert_eq!(
+        handle(&Input::press(ButtonId::Seq), 4, 0),
+        (4, 0, Some(BrowserAct::Save))
+    );
+    for b in [ButtonId::B3, ButtonId::Menu] {
+        assert_eq!(
+            handle(&Input::press(b), 4, 0),
+            (4, 0, Some(BrowserAct::Cancel))
+        );
+    }
+    assert_eq!(handle(&Input::press(ButtonId::Plus), 4, 0), (4, 0, None));
+}

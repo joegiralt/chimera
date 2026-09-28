@@ -10,7 +10,7 @@ use crate::dsp::reverb::ReverbParams;
 use crate::dsp::tape::TapeParams;
 use crate::params::{DriveParams, EnvParams, FilterParams, FolderParams, OutParams};
 use crate::part::PartParams;
-use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2, ParamSlot, VizType};
+use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2, FxFlow, FxNode, ParamSlot, VizType};
 use crate::ui::page::{PageLayout, ValFmt};
 use crate::ui::theme_settings::ThemeSettings;
 
@@ -204,7 +204,7 @@ pub static EFX: BlockDef = BlockDef {
     name: "Reverb",
     short: "REV",
     layout: PageLayout::CellGrid,
-    viz: VizType::EffectsFlow,
+    viz: VizType::EffectsFlow(FxFlow::Effect(FxNode::Reverb)),
     params: [
         ParamSlot::param(BlockRef::Reverb, ReverbParams::GRIT),
         ParamSlot::param(BlockRef::Reverb, ReverbParams::TIME),
@@ -215,28 +215,12 @@ pub static EFX: BlockDef = BlockDef {
     ],
 };
 
-pub static MIXER: BlockDef = BlockDef {
-    id: 17,
-    name: "Mixer",
-    short: "MIX",
-    layout: PageLayout::CellGrid,
-    viz: VizType::MixerLevels,
-    params: [
-        ParamSlot::legacy("VOL", ValFmt::Uni),
-        ParamSlot::legacy("PAN", ValFmt::Bi),
-        ParamSlot::legacy("VOICES", ValFmt::Uni),
-        ParamSlot::legacy("MIDI", ValFmt::Uni),
-        ParamSlot::legacy("PITCH", ValFmt::Bi),
-        ParamSlot::legacy("GLIDE", ValFmt::Uni),
-    ],
-};
-
 pub static CHORUS: BlockDef = BlockDef {
     id: 18,
     name: "Chorus",
     short: "CHR",
     layout: PageLayout::CellGrid,
-    viz: VizType::EffectsFlow,
+    viz: VizType::EffectsFlow(FxFlow::Effect(FxNode::Chorus)),
     params: [
         ParamSlot::param(BlockRef::Chorus, ChorusParams::MODE),
         ParamSlot::param(BlockRef::Chorus, ChorusParams::RATE),
@@ -252,7 +236,7 @@ pub static DELAY: BlockDef = BlockDef {
     name: "Delay",
     short: "DLY",
     layout: PageLayout::CellGrid,
-    viz: VizType::EffectsFlow,
+    viz: VizType::EffectsFlow(FxFlow::Effect(FxNode::Delay)),
     params: [
         ParamSlot::param(BlockRef::Delay, DelayParams::TIME_MS),
         ParamSlot::param(BlockRef::Delay, DelayParams::FEEDBACK),
@@ -270,7 +254,7 @@ pub static DELAY_CHAR: BlockDef = BlockDef {
     name: "Delay Char",
     short: "CHAR",
     layout: PageLayout::CellGrid,
-    viz: VizType::EffectsFlow,
+    viz: VizType::EffectsFlow(FxFlow::Effect(FxNode::Delay)),
     params: [
         ParamSlot::param(BlockRef::Delay, DelayParams::WOW_FLUTTER),
         ParamSlot::param(BlockRef::Delay, DelayParams::SATURATION),
@@ -335,26 +319,6 @@ pub static MASTER_LEVEL: BlockDef = BlockDef {
 };
 
 static MASTER_SUB_PAGES: [&BlockDef; 1] = [&MASTER_LEVEL];
-
-// ---------------------------------------------------------------------------
-// Noise (new — not in current PageId)
-// ---------------------------------------------------------------------------
-
-pub static NOISE: BlockDef = BlockDef {
-    id: 21,
-    name: "Noise",
-    short: "NSE",
-    layout: PageLayout::CellGrid,
-    viz: VizType::None,
-    params: [
-        ParamSlot::legacy("COLOR", ValFmt::Uni),
-        ParamSlot::legacy("PITCH", ValFmt::Uni),
-        ParamSlot::legacy("DECAY", ValFmt::Uni),
-        ParamSlot::legacy("CLICK", ValFmt::Uni),
-        ParamSlot::legacy("TONE", ValFmt::Uni),
-        ParamSlot::legacy("LEVEL", ValFmt::Uni),
-    ],
-};
 
 // ---------------------------------------------------------------------------
 // Mod Matrix (new placeholder)
@@ -436,42 +400,12 @@ pub static PART_MOD_SOURCES: [&str; 2] = ["ENV", "LFO"];
 
 static MOD_MATRIX_SUB_PAGES: [&BlockDef; 2] = [&ENVELOPE, &LFO];
 
-static KICK_BLOCKS: [ChainBlock; 3] = [
-    ChainBlock {
-        def: &NOISE,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &FILTER,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &MOD_MATRIX,
-        sub_pages: &MOD_MATRIX_SUB_PAGES,
-    },
-];
-
-pub static KICK_CHAIN: ChainDef2 = ChainDef2 {
-    name: "Kick",
-    blocks: &KICK_BLOCKS,
-    mod_sources: &PART_MOD_SOURCES,
-};
-
 static MODAL_SUB_PAGES: [&BlockDef; 1] = [&MODAL_2];
 
 static MODAL_PLUCK_BLOCKS: [ChainBlock; 3] = [
-    ChainBlock {
-        def: &MODAL_1,
-        sub_pages: &MODAL_SUB_PAGES,
-    },
-    ChainBlock {
-        def: &FILTER,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &MOD_MATRIX,
-        sub_pages: &MOD_MATRIX_SUB_PAGES,
-    },
+    ChainBlock::with_subs(&MODAL_1, &MODAL_SUB_PAGES),
+    ChainBlock::page(&FILTER),
+    ChainBlock::with_subs(&MOD_MATRIX, &MOD_MATRIX_SUB_PAGES),
 ];
 
 pub static MODAL_PLUCK_CHAIN: ChainDef2 = ChainDef2 {
@@ -499,30 +433,12 @@ static ALGO_OSC_SUB_PAGES: [&BlockDef; 12] = [
 
 /// ALGO is the engine's home: first on the map, where entering the chain lands.
 static ALGO_BLOCKS: [ChainBlock; 6] = [
-    ChainBlock {
-        def: &ALGO_ALG,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &ALGO_WAVE,
-        sub_pages: &ALGO_OSC_SUB_PAGES,
-    },
-    ChainBlock {
-        def: &DRIVE,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &FILTER,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &FOLDER,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &MOD_MATRIX,
-        sub_pages: &MOD_MATRIX_SUB_PAGES,
-    },
+    ChainBlock::page(&ALGO_ALG),
+    ChainBlock::with_subs(&ALGO_WAVE, &ALGO_OSC_SUB_PAGES),
+    ChainBlock::page(&DRIVE),
+    ChainBlock::page(&FILTER),
+    ChainBlock::page(&FOLDER),
+    ChainBlock::with_subs(&MOD_MATRIX, &MOD_MATRIX_SUB_PAGES),
 ];
 
 pub static ALGO_CHAIN: ChainDef2 = ChainDef2 {
@@ -531,52 +447,10 @@ pub static ALGO_CHAIN: ChainDef2 = ChainDef2 {
     mod_sources: &PART_MOD_SOURCES,
 };
 
-static MIX_BLOCKS: [ChainBlock; 6] = [
-    ChainBlock {
-        def: &MIXER,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &CHORUS,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &DELAY,
-        sub_pages: &DELAY_SUB_PAGES,
-    },
-    ChainBlock {
-        def: &EFX,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &TAPE,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &MASTER,
-        sub_pages: &MASTER_SUB_PAGES,
-    },
-];
-
-pub static MIX_CHAIN: ChainDef2 = ChainDef2 {
-    name: "Mix",
-    blocks: &MIX_BLOCKS,
-    mod_sources: &[],
-};
-
 static ENVELOPE_BLOCKS: [ChainBlock; 3] = [
-    ChainBlock {
-        def: &ENV_AMP,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &ENV_FILTER,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &ENV_AUX,
-        sub_pages: &[],
-    },
+    ChainBlock::page(&ENV_AMP),
+    ChainBlock::page(&ENV_FILTER),
+    ChainBlock::page(&ENV_AUX),
 ];
 
 pub static ENVELOPE_CHAIN: ChainDef2 = ChainDef2 {
@@ -606,44 +480,12 @@ pub static PART: BlockDef = BlockDef {
     ],
 };
 
-pub static MIDI_CFG: BlockDef = BlockDef {
-    id: 28,
-    name: "MIDI",
-    short: "MID",
-    layout: PageLayout::CellGrid,
-    viz: VizType::None,
-    params: [
-        ParamSlot::legacy("CH", ValFmt::Int(16)),
-        ParamSlot::legacy("PGM", ValFmt::Int(1)),
-        ParamSlot::legacy("CC.RX", ValFmt::Int(1)),
-        ParamSlot::legacy("BEND", ValFmt::Int(12)),
-        ParamSlot::legacy("TRNS", ValFmt::Bi),
-        EMPTY,
-    ],
-};
-
-pub static EQ: BlockDef = BlockDef {
-    id: 29,
-    name: "EQ",
-    short: "EQ",
-    layout: PageLayout::BigViz,
-    viz: VizType::None,
-    params: [
-        ParamSlot::legacy("LOW", ValFmt::Bi),
-        ParamSlot::legacy("L.FRQ", ValFmt::Uni),
-        ParamSlot::legacy("MID", ValFmt::Bi),
-        ParamSlot::legacy("M.FRQ", ValFmt::Uni),
-        ParamSlot::legacy("HIGH", ValFmt::Bi),
-        ParamSlot::legacy("H.FRQ", ValFmt::Uni),
-    ],
-};
-
 pub static SENDS: BlockDef = BlockDef {
     id: 30,
     name: "Sends",
     short: "SND",
     layout: PageLayout::CellGrid,
-    viz: VizType::EffectsFlow,
+    viz: VizType::EffectsFlow(FxFlow::Sends),
     params: [
         ParamSlot::param(BlockRef::Part, PartParams::SEND_CHORUS),
         ParamSlot::param(BlockRef::Part, PartParams::SEND_DELAY),
@@ -656,34 +498,13 @@ pub static SENDS: BlockDef = BlockDef {
 
 /// MIX + B<n>: Part n's mix settings, then the shared FX (spec § UI).
 static MIXER_CHANNEL_BLOCKS: [ChainBlock; 7] = [
-    ChainBlock {
-        def: &PART,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &SENDS,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &CHORUS,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &DELAY,
-        sub_pages: &DELAY_SUB_PAGES,
-    },
-    ChainBlock {
-        def: &EFX,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &TAPE,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &MASTER,
-        sub_pages: &MASTER_SUB_PAGES,
-    },
+    ChainBlock::page(&PART),
+    ChainBlock::page(&SENDS),
+    ChainBlock::page(&CHORUS),
+    ChainBlock::with_subs(&DELAY, &DELAY_SUB_PAGES),
+    ChainBlock::page(&EFX),
+    ChainBlock::page(&TAPE),
+    ChainBlock::with_subs(&MASTER, &MASTER_SUB_PAGES),
 ];
 
 pub static MIXER_CHANNEL_CHAIN: ChainDef2 = ChainDef2 {
@@ -780,26 +601,11 @@ pub static SYS_AUDIO: BlockDef = BlockDef {
 };
 
 static SYSTEM_BLOCKS: [ChainBlock; 5] = [
-    ChainBlock {
-        def: &SYS_MIDI,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &SYS_TUNING,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &SYS_THEME,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &SYS_UPDATES,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &SYS_ABOUT,
-        sub_pages: &[&SYS_AUDIO],
-    },
+    ChainBlock::page(&SYS_MIDI),
+    ChainBlock::page(&SYS_TUNING),
+    ChainBlock::page(&SYS_THEME),
+    ChainBlock::page(&SYS_UPDATES),
+    ChainBlock::with_subs(&SYS_ABOUT, &[&SYS_AUDIO]),
 ];
 
 pub static SYSTEM_CHAIN: ChainDef2 = ChainDef2 {
@@ -886,26 +692,11 @@ pub static DEMO_FM: BlockDef = BlockDef {
 };
 
 static DEMO_BLOCKS: [ChainBlock; 5] = [
-    ChainBlock {
-        def: &DEMO_WAVES,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &DEMO_SHAPES,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &DEMO_MOTION,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &DEMO_FM,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &DEMO_MATRIX,
-        sub_pages: &[],
-    },
+    ChainBlock::page(&DEMO_WAVES),
+    ChainBlock::page(&DEMO_SHAPES),
+    ChainBlock::page(&DEMO_MOTION),
+    ChainBlock::page(&DEMO_FM),
+    ChainBlock::page(&DEMO_MATRIX),
 ];
 
 pub static DEMO_CHAIN: ChainDef2 = ChainDef2 {
@@ -915,13 +706,11 @@ pub static DEMO_CHAIN: ChainDef2 = ChainDef2 {
 };
 
 /// Every chain, for whole-registry checks (unique ids, the focus table).
-pub static ALL_CHAINS: [&ChainDef2; 8] = [
+pub static ALL_CHAINS: [&ChainDef2; 6] = [
     &ALGO_CHAIN,
     &MODAL_PLUCK_CHAIN,
     &MIXER_CHANNEL_CHAIN,
     &SYSTEM_CHAIN,
     &DEMO_CHAIN,
-    &KICK_CHAIN,
-    &MIX_CHAIN,
     &ENVELOPE_CHAIN,
 ];

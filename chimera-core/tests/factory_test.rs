@@ -1,5 +1,6 @@
 //! Spec § Replacing the old engines: a bank of eight Algo Sounds that plays.
 
+mod common;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::factory::{FACTORY_LEN, factory_sound, load_factory};
 use chimera_core::params::EngineType;
@@ -7,6 +8,7 @@ use chimera_core::preset::SoundPool;
 use chimera_core::ui::UiState;
 use chimera_core::{MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
+use common::peak;
 
 /// One second held, then three seconds of release.
 fn play(i: usize) -> (Vec<f32>, Vec<f32>) {
@@ -29,10 +31,6 @@ fn play(i: usize) -> (Vec<f32>, Vec<f32>) {
         tail.extend_from_slice(&b);
     }
     (held, tail)
-}
-
-fn peak(s: &[f32]) -> f32 {
-    s.iter().fold(0.0f32, |m, x| m.max(x.abs()))
 }
 
 /// RMS of a one-pole high-pass at `cutoff_hz`: crude, but a smothering

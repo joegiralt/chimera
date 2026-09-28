@@ -1,14 +1,14 @@
 //! Spec § Rendering, § Plan and morph, § Testing: pitch, ends of the morph
 //! bit-identical to each algorithm alone, equal loudness, nothing snaps.
 
+mod common;
 use chimera_core::dsp::algo::algorithms::AlgoId;
 use chimera_core::dsp::algo::engine::{AlgoEngine, AlgoLive};
 use chimera_core::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use chimera_core::dsp::algo::waves::{WaveId, mip_step};
 use chimera_core::{MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
-
-const SR: u32 = 48_000;
+use common::{SR, peak};
 
 fn render_with(
     p: &AlgoParams,
@@ -65,10 +65,6 @@ fn sines(p: AlgoParams, level: u8) -> AlgoParams {
         (o.wave, o.feedback, o.level) = (WaveId::W1.get(), 0, level);
     }
     p
-}
-
-fn peak(s: &[f32]) -> f32 {
-    s.iter().fold(0.0f32, |m, x| m.max(x.abs()))
 }
 
 fn rms_db(s: &[f32]) -> f64 {

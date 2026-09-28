@@ -1,9 +1,9 @@
+mod common;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::modulation::ModState;
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::{MidiNote, Velocity};
-
-const SR: u32 = 48000;
+use common::SR;
 
 fn render_voice(engine: EngineType, note: u8, blocks: usize) -> Vec<f32> {
     let empty_mod = ModState::new();

@@ -1,4 +1,4 @@
-//! Desktop audio: the same `Instrument` the firmware will run (ADR 0013),
+//! Desktop audio: the same `Instrument` the firmware runs (ADR 0013),
 //! fed by `NoteSources` (the keyboard, and midir when feature `midi` is on)
 //! and an `AudioShared` published through a `TripleBuffer`, summed from
 //! three DAC pairs to the speakers.

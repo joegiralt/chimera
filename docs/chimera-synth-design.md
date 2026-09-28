@@ -1,7 +1,7 @@
 # Chimera: Multi-Engine Digital Synthesizer
 
 **Date:** 2026-04-18
-**Status:** Draft
+**Status:** Draft, superseded in parts: the engines by ADR 0022 (Algo) and 0004 (Modal), and every later decision by `docs/adr/`
 **Repo:** github.com/joegiralt/chimera (to be created)
 
 ---
@@ -21,7 +21,7 @@ Chimera is a custom firmware for the PreenFM3 hardware platform, replacing the s
 ### MCU
 - STM32H750 Cortex-M7 @ 480 MHz (HSE, PLL: PLLN=120, PLLP=2)
 - Hardware FPU, DSP instructions
-- 128KB internal flash (firmware at 0x08020000, bootloader at 0x08000000)
+- Flash bank 1: the stock bootloader's 128 KB at 0x08000000, then the firmware's 896 KB from 0x08020000 (`chimera-stm32/memory.x`)
 
 ### Memory Regions
 | Address | Size | Region | Usage |
@@ -34,7 +34,7 @@ Chimera is a custom firmware for the PreenFM3 hardware platform, replacing the s
 | 0x30040000 | 32 KB | D2 SRAM3 | Spare |
 | 0x38000000 | 64 KB | D3 SRAM | Low-power accessible |
 
-Note: D2 SRAM cacheability/bufferability is configured by MPU, not fixed by address. Audio DMA buffers (3 SAI streams x 256 samples x 2 channels x 4 bytes = ~6 KB total) are a small fraction of D2.
+Note: D2 SRAM cacheability/bufferability is configured by MPU, not fixed by address. Audio DMA rings (3 SAI streams x 2 halves x 64 frames x 2 channels x 4 bytes = 3 KB, `chimera-stm32/src/audio/dma.rs`) are a small fraction of D2.
 
 ### Audio — SAI (Serial Audio Interface)
 - SAI1 Block A: PE2(MCLK) PE4(FS) PE5(SCK) PE6(SD) — DAC pair 1
@@ -42,8 +42,8 @@ Note: D2 SRAM cacheability/bufferability is configured by MPU, not fixed by addr
 - SAI2 Block A: PD11(SD) — DAC pair 3
 - 48 kHz, 32-bit, circular DMA (DMA1 streams 0-2)
 - 3x CS4344 DACs = 6 mono outputs (3 stereo pairs)
-- DMA buffer: 256 samples per half-transfer = ~5.3 ms latency
-- Render block size: 128 samples (half-buffer, processed in DMA half-transfer ISR)
+- DMA buffer: 64 frames per half-transfer = ~1.33 ms latency
+- Render block size: 64 samples (half-buffer, processed in DMA half-transfer ISR)
 
 ### Display
 - ILI9341 240x320 color TFT, SPI1
@@ -369,7 +369,7 @@ chimera/
 
 ### Key Traits
 ```rust
-/// Block-based rendering. BLOCK_SIZE = 128 samples (matches DMA half-buffer).
+/// Block-based rendering. BLOCK_SIZE = 64 samples (matches DMA half-buffer).
 /// Output is mono f32; stereo panning happens at the mixer stage.
 trait SynthEngine {
     fn render(&mut self, output: &mut [f32; BLOCK_SIZE], params: &EngineParams, sample_rate: u32);
@@ -401,7 +401,7 @@ trait MidiIn {
 ```
 
 ### Audio/UI Separation
-- Audio callback at 48 kHz (128-sample blocks via DMA half-transfer ISR) — never blocks, never allocates
+- Audio callback at 48 kHz (64-sample blocks via DMA half-transfer ISR) — never blocks, never allocates
 - UI loop at 30 fps — reads controls, updates chain state machine, renders framebuffer
 - Audio thread has absolute priority; UI is best-effort
 

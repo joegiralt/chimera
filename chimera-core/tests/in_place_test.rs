@@ -1,11 +1,10 @@
 mod common;
+use common::{SR, tri};
 
 use std::mem::MaybeUninit;
 
 use chimera_core::dsp::Stereo;
 use chimera_core::dsp::algo::algorithms::AlgoId;
-use chimera_core::dsp::algo::params::AlgoParams;
-use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus};
 use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::dsp::voice::Voice;
@@ -16,7 +15,6 @@ use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::{MidiChannel, MidiNote, Velocity};
 
-const SR: u32 = chimera_hal::SAMPLE_RATE;
 const BUDGET: SampleBudget = SampleBudget::for_cpu(CPU_HZ_REV_V);
 
 // On the chip the slots are NOLOAD statics holding boot garbage, so a
@@ -35,13 +33,6 @@ fn event(ch: u8, note: u8, kind: NoteKind) -> NoteEvent {
         note: MidiNote::new(note).unwrap(),
         kind,
     }
-}
-
-/// Operator 1 alone on the triangle.
-fn tri() -> ParamSnapshot {
-    let mut p = ParamSnapshot::for_engine(EngineType::Algo);
-    p.algo = AlgoParams::single(WaveId::TRI);
-    p
 }
 
 fn every_engine_and_every_effect() -> AudioShared {

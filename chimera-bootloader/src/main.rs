@@ -1,5 +1,5 @@
-//! Chimera bootloader — minimal jump to firmware at 0x08020000.
-//! Replaces the PreenFM3 bootloader to give firmware a clean peripheral state.
+//! Chimera bootloader — minimal jump to firmware at 0x08020000, an
+//! alternative to the stock PreenFM3 bootloader that the unit keeps today.
 
 #![no_std]
 #![no_main]

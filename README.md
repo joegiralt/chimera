@@ -2,29 +2,24 @@
 
 Multi-engine digital synthesizer firmware for PreenFM3.
 
-Three engines. One beast.
+Two engines, six Parts, one screen-driven chain UI.
 
 ## Screens
 
 Rendered by the firmware's own renderer (`chimera-core`) at the display's native 240×320, shown at 2×. Regenerate with `just screens` after any UI change.
 
-| Engine (Pizza) | Filter | Envelope |
+| Algorithm | Operator waves | Filter |
 |---|---|---|
-| ![Pizza engine page](docs/screens/engine_pizza.png) | ![Filter page](docs/screens/bigviz_filter.png) | ![Amp envelope page](docs/screens/bigviz_env.png) |
+| ![Algorithm page](docs/screens/algo_alg.png) | ![Wave page](docs/screens/algo_wave.png) | ![Filter page](docs/screens/bigviz_filter.png) |
 
-| FM algorithm | FM operator | Mod matrix |
+| Mod matrix | Mixer · Part | Sound browser |
 |---|---|---|
-| ![FM algorithm page](docs/screens/engine_fm_alg.png) | ![FM operator page](docs/screens/engine_fm_op.png) | ![Mod matrix page](docs/screens/mod_matrix.png) |
-
-| Mixer · Part | Mixer · Sends | Sound browser |
-|---|---|---|
-| ![Mixer part page](docs/screens/mixer_part.png) | ![Mixer sends page](docs/screens/mixer_sends.png) | ![Sound browser](docs/screens/sound_browser.png) |
+| ![Mod matrix page](docs/screens/mod_matrix.png) | ![Mixer part page](docs/screens/mixer_part.png) | ![Sound browser](docs/screens/sound_browser.png) |
 
 ## Engines
 
-- **4-op FM** — TX81Z style, Digitone ergonomics
-- **Physical Modeling** — Karplus-Strong, modal resonators (MI Elements/Rings inspired)
-- **VA Polymod** — Prophet-5 style, oscillator sync, cross-modulation
+- **Algo** — one algorithmic six-operator engine, two algorithms morphed (ADR 0022)
+- **Modal** — physical modelling: Karplus-Strong strings and a modal resonator bank, Rings/Elements as the reference (ADR 0004)
 
 ## Architecture
 
@@ -32,7 +27,7 @@ Custom Rust firmware replacing stock PreenFM3 firmware. Swappable synthesis engi
 
 ## Building
 
-Requires Rust nightly + `thumbv7em-none-eabihf` target for firmware, or just stable Rust for the desktop simulator.
+Stable Rust (edition 2024) for everything; add the `thumbv7em-none-eabihf` target for the firmware and the `llvm-tools` component for `just stack-check`.
 
 ```bash
 # Desktop simulator
@@ -47,4 +42,4 @@ just flash
 
 ## Status
 
-Phase 0: Hardware bringup — in progress.
+Runs on the PreenFM3: audio on all three DAC pairs, display, encoders and buttons, MIDI DIN. Design decisions live in `docs/adr/`; open work in the GitHub issue tracker.
