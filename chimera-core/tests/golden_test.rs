@@ -206,7 +206,9 @@ fn goldens_match_through_the_instrument() {
             (case.name(), (fnv1a(&out), spots(&out)))
         })
         .collect();
-    golden::check(GOLDENS, &got);
+    // Compares even under GOLDEN_RECORD; `goldens_match` alone records.
+    let failures = golden::mismatches(GOLDENS, &got);
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
 #[test]
@@ -265,15 +267,16 @@ fn the_eight_tx_algorithms_render_differently() {
 /// or deleted case, and a case with no row (#108).
 #[test]
 fn golden_check_catches_every_disagreement() {
-    let table = [("a", 1u64), ("b", 2), ("d", 4)];
+    let table = [("a", 1u64), ("b", 2), ("d", 4), ("a", 1)];
     let got = [("a", 1u64), ("c", 3), ("d", 5)];
     assert_eq!(
         golden::mismatches(&table, &got),
         [
-            "c: no golden recorded",
+            "c: no golden recorded (run with GOLDEN_RECORD=1)",
             "d: 0x0000000000000005 (want 0x0000000000000004)",
             "b: recorded, but no such case",
+            "a: recorded twice",
         ]
     );
-    assert!(golden::mismatches(&table, &table).is_empty());
+    assert!(golden::mismatches(&table[..3], &table[..3]).is_empty());
 }

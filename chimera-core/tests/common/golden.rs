@@ -45,12 +45,14 @@ pub fn check<V: Golden>(table: &[(&str, V)], got: &[(&str, V)]) {
 }
 
 /// Every way `got` and `table` disagree: a value that differs, a case with
-/// no row, a row with no case.
+/// no row, a row with no case, a row repeated.
 pub fn mismatches<V: Golden>(table: &[(&str, V)], got: &[(&str, V)]) -> Vec<String> {
     let mut failures = Vec::new();
     for &(name, v) in got {
         match table.iter().find(|r| r.0 == name) {
-            None => failures.push(format!("{name}: no golden recorded")),
+            None => failures.push(format!(
+                "{name}: no golden recorded (run with GOLDEN_RECORD=1)"
+            )),
             Some(&(_, want)) if want != v => {
                 failures.push(format!("{name}: {} (want {})", v.literal(), want.literal()))
             }
@@ -60,6 +62,11 @@ pub fn mismatches<V: Golden>(table: &[(&str, V)], got: &[(&str, V)]) -> Vec<Stri
     for &(name, _) in table {
         if !got.iter().any(|g| g.0 == name) {
             failures.push(format!("{name}: recorded, but no such case"));
+        }
+    }
+    for (i, &(name, _)) in table.iter().enumerate() {
+        if table[..i].iter().any(|r| r.0 == name) {
+            failures.push(format!("{name}: recorded twice"));
         }
     }
     failures
