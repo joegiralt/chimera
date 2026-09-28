@@ -106,14 +106,42 @@ fn mod_routing_bills_the_spec_shape() {
         M::cost(&b2, &shaped),
         M::BASE + M::CLAMP + M::ENV_B + M::CURVE + M::SLIDE
     );
-    // The review's estimates, until the bench (Task 13): 30, 63 and 268
-    // (OTHER billed at 5, not the spec's 3: Task 10 review; BURST added on
-    // top of ENV_B for B in BURST mode: Task 12 fix round 1).
+    // Measured 2026-09-28 (Task 13): 45, 45 + 22 + 27, and
+    // 45 + 22 + 3·(98 + 70) + 5·8.
     assert_eq!(
         (M::BASE, M::cost(&p, &routed(&[ModSource::Env2]))),
-        (Cost(30), Cost(63))
+        (Cost(45), Cost(94))
     );
-    assert_eq!(M::cost(&worst, &routed(&ModSource::ALL)), Cost(268));
+    assert_eq!(M::cost(&worst, &routed(&ModSource::ALL)), Cost(611));
+}
+
+/// Each destination other than the VCA and the ENV slots' own bills
+/// `DEST` once it has a route of nonzero amount; the default routes, at 0,
+/// bill nothing.
+#[test]
+fn mod_routing_bills_each_routed_destination() {
+    use ModRouting as M;
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::dsp::modulator::EnvSlot;
+    use chimera_core::params::{EnvParams, FolderParams};
+    let p = ParamSnapshot::for_engine(EngineType::Algo);
+    let fold = ParamAddr::new(BlockRef::Folder, FolderParams::FOLD);
+    let level = ParamAddr::new(BlockRef::Env(EnvSlot::Env1), EnvParams::LEVEL);
+    let mut ms = chimera_core::preset::Sound::init(EngineType::Algo).mod_state;
+    let (f, l) = (ms.push(fold).unwrap(), ms.push(level).unwrap());
+    ms.set_route(ModSource::Lfo3.index(), f, 0);
+    ms.set_route(ModSource::Vel.index(), l, 64);
+    assert_eq!(M::cost(&p, &ms), M::BASE, "amount 0 and ENV LEVEL");
+    ms.set_route(ModSource::Lfo3.index(), f, 64);
+    assert_eq!(M::cost(&p, &ms), M::BASE + M::DEST);
+    let cutoff = ms.find(chimera_core::modulation::CUTOFF).unwrap();
+    ms.set_route(ModSource::Env1.index(), cutoff, 32);
+    ms.set_route(ModSource::Note.index(), cutoff, 32);
+    assert_eq!(
+        M::cost(&p, &ms),
+        M::BASE + M::DEST + M::DEST,
+        "one per column"
+    );
 }
 
 /// BURST mode adds `BURST` on top of `ENV_B` (70 total); B in ENV or LFO
@@ -254,6 +282,173 @@ fn the_model_bills_every_bench_row_high() {
     }
 }
 
+/// The Task 13 bench (rev V, 480 MHz, 2026-09-28): each ROUTING row, and
+/// the BENCH rows read with the pool in, billed at or above its reading.
+/// Every row is 1 OP (A1) but A16+17. SVF is left to Task 15's
+/// `FilterKind::cost`.
+#[test]
+fn the_model_bills_every_routing_row_high() {
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::dsp::modulator::{EnvForm, EnvSlot, EnvType, Func, LfoForm};
+    use chimera_core::params::EnvParams;
+    let one = || {
+        let mut p = ParamSnapshot::for_engine(EngineType::Algo);
+        for (i, op) in p.algo.ops.iter_mut().enumerate() {
+            op.level = if i == 0 { 99 } else { 0 };
+        }
+        p
+    };
+    let b = |f: Func, shape: f32| {
+        let mut p = one();
+        let e2 = &mut p.envelopes[1];
+        (e2.env_type, e2.func.shape) = (EnvType::B, shape);
+        e2.func.set_func(f);
+        p
+    };
+    let env2 = |q| ParamAddr::new(BlockRef::Env(EnvSlot::Env2), q);
+    let slide = || {
+        let mut ms = routed(&[ModSource::Env2]);
+        for q in [
+            EnvParams::TIME,
+            EnvParams::RISE,
+            EnvParams::FALL,
+            EnvParams::SHAPE,
+        ] {
+            let d = ms.push(env2(q)).unwrap();
+            ms.set_route(ModSource::Lfo1.index(), d, 32);
+        }
+        ms
+    };
+    let mut a16 = ParamSnapshot::for_engine(EngineType::Algo);
+    a16.algo = a16_a17();
+    let env_b = |f| b(f, 0.8);
+    for (name, p, ms, measured) in [
+        ("1 OP", one(), ModState::new(), 481),
+        ("A16+17", a16, ModState::new(), 861),
+        ("MODS", mods_row().0, mods_row().1, 644),
+        ("A VCA", one(), routed(&[ModSource::Env2]), 530),
+        (
+            "B VCA",
+            b(Func::Env(EnvForm::Ad), 0.5),
+            routed(&[ModSource::Env2]),
+            592,
+        ),
+        (
+            "B CURVE",
+            env_b(Func::Env(EnvForm::Ad)),
+            routed(&[ModSource::Env2]),
+            592,
+        ),
+        (
+            "B LFO",
+            env_b(Func::Lfo(LfoForm::Free)),
+            routed(&[ModSource::Env2]),
+            565,
+        ),
+        // Billed as B LFO: the glide is not a term of its own.
+        (
+            "B GLIDE",
+            env_b(Func::Lfo(LfoForm::Free)),
+            routed(&[ModSource::Env2]),
+            601,
+        ),
+        (
+            "BURST AD",
+            env_b(Func::Burst(EnvForm::Ad)),
+            routed(&[ModSource::Env2]),
+            671,
+        ),
+        (
+            "BURST CYC",
+            env_b(Func::Burst(EnvForm::Cycle)),
+            routed(&[ModSource::Env2]),
+            624,
+        ),
+        ("VEL VCA", one(), routed(&[ModSource::Vel]), 511),
+        (
+            "2 VCA",
+            one(),
+            routed(&[ModSource::Vel, ModSource::Note]),
+            519,
+        ),
+        ("LFO VCA", one(), routed(&[ModSource::Lfo1]), 511),
+        ("A SLIDE", one(), slide(), 561),
+        ("B SLIDE", env_b(Func::Env(EnvForm::Ad)), slide(), 616),
+    ] {
+        let billed = Voice::cost(&p, &ms).0;
+        assert!(billed >= measured, "{name}: {billed} < {measured}");
+    }
+}
+
+/// The MODS row (spec § Tests "Bench"), measured 644: 1 OP; ENV 2 type B,
+/// ENV AD, SHAPE 0.8 → VCA; every source routed at 64; all three LFOs FUNC.
+fn mods_row() -> (ParamSnapshot, ModState) {
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::dsp::modulator::{EnvForm, EnvType, Func, LfoType};
+    use chimera_core::params::{FilterParams, FolderParams, OutParams};
+    let mut p = ParamSnapshot::for_engine(EngineType::Algo);
+    for (i, op) in p.algo.ops.iter_mut().enumerate() {
+        op.level = if i == 0 { 99 } else { 0 };
+    }
+    let e2 = &mut p.envelopes[1];
+    (e2.env_type, e2.func.shape) = (EnvType::B, 0.8);
+    e2.func.set_func(Func::Env(EnvForm::Ad));
+    for l in p.lfos.iter_mut() {
+        l.lfo_type = LfoType::Func;
+    }
+    let routes = [
+        (ModSource::Env1, chimera_core::modulation::CUTOFF),
+        (ModSource::Env2, VCA),
+        (
+            ModSource::Env3,
+            ParamAddr::new(BlockRef::Filter, FilterParams::RESONANCE),
+        ),
+        (
+            ModSource::Lfo1,
+            ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH),
+        ),
+        (
+            ModSource::Lfo2,
+            ParamAddr::new(BlockRef::Filter, FilterParams::DRIVE),
+        ),
+        (
+            ModSource::Lfo3,
+            ParamAddr::new(BlockRef::Folder, FolderParams::FOLD),
+        ),
+        (
+            ModSource::Vel,
+            ParamAddr::new(BlockRef::Out, OutParams::VOLUME),
+        ),
+        (ModSource::Note, chimera_core::modulation::CUTOFF),
+    ];
+    let empty = chimera_core::mod_path::ModDestRegistry::new();
+    let mut ms = ModState::from_registry(&empty, 8);
+    for (s, a) in routes {
+        let d = ms.find(a).or_else(|| ms.push(a)).unwrap();
+        ms.set_route(s.index(), d, 64);
+    }
+    (p, ms)
+}
+
+/// The brief's MODS check: `CHAIN_COST + AlgoEngine::cost(1 OP) +
+/// ModRouting::cost(MODS)` at or above the 644 read; six `DEST`s bill the
+/// 38 the other terms leave.
+#[test]
+fn the_model_bills_the_mods_row_high() {
+    let (p, ms) = mods_row();
+    let billed =
+        Voice::CHAIN_COST + AlgoEngine::cost(&p.algo, &UNROUTED) + ModRouting::cost(&p, &ms);
+    assert!(billed.0 >= 644, "{billed:?}");
+    assert_eq!(
+        ModRouting::cost(&p, &ms),
+        ModRouting::BASE
+            + ModRouting::CLAMP
+            + ModRouting::ENV_B
+            + ModRouting::CURVE
+            + Cost(6 * ModRouting::DEST.0)
+    );
+}
+
 /// The patch the model prices highest: all six operators with feedback on
 /// the algorithm pair whose union has the most links.
 fn costliest() -> AlgoParams {
@@ -295,15 +490,15 @@ fn a16_a17() -> AlgoParams {
     p
 }
 
-/// FX diet spec § Intent: with the bus measured at 1,360 and the modulator
-/// pool's floor (`ModRouting::BASE`) added, the costliest patch still gets
-/// six voices on rev V (6 × 872 + 1,360 = 6,592 ≤ 7,000), and five on rev Y
-/// ((5,833 − 1,360) / 872 = 5.1).
+/// FX diet spec § Intent and ADR 0031: with the bus measured at 1,360 and
+/// the modulator pool's floor (`ModRouting::BASE`, 45) added, the costliest
+/// patch still gets six voices on rev V (6 × 887 + 1,360 = 6,682 ≤ 7,000),
+/// and five on rev Y ((5,833 − 1,360) / 887 = 5.04).
 #[test]
 fn the_costliest_patch_gets_six_voices_on_rev_v() {
     let p = a16_a17();
     assert_eq!(Voice::CHAIN_COST.0 + cost(&p), 842);
-    assert_eq!(Voice::CHAIN_COST.0 + ModRouting::BASE.0 + cost(&p), 872);
+    assert_eq!(Voice::CHAIN_COST.0 + ModRouting::BASE.0 + cost(&p), 887);
     assert_eq!(cost(&costliest()), cost(&p), "no pair has more links");
     assert_eq!(FxBus::COST.0, 1_360, "{:?}", FxBus::COST);
     assert_eq!(voices_at(CPU_HZ_REV_V, &p), MAX_VOICES as u32);

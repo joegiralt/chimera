@@ -298,41 +298,62 @@ impl Default for ModState {
     }
 }
 
-/// The modulator pool's cycles per sample (spec § CPU). Never low: the
-/// plan review's estimates until the bench measures each term.
+/// The modulator pool's cycles per sample (spec § CPU). Each term is
+/// measured 2026-09-28, bench ROUTING row, rev V at 480 MHz, rounded up;
+/// the derivations are in the filter-routing plan's `## Measured`.
 pub struct ModRouting;
 
 impl ModRouting {
-    /// Six per-block modulators, the eight-row matrix sum and `fast_exp2`.
-    pub const BASE: Cost = Cost(30);
-    /// An ENV slot of type A filling the VCA's buffer.
-    pub const ENV_A: Cost = Cost(30);
-    /// Type B filling it.
-    pub const ENV_B: Cost = Cost(40);
+    /// Six per-block modulators, the eight-row matrix sum and `fast_exp2`:
+    /// 1 OP less its 436 before the pool.
+    pub const BASE: Cost = Cost(45);
+    /// An ENV slot of type A filling the VCA's buffer: A VCA less 1 OP and CLAMP.
+    pub const ENV_A: Cost = Cost(27);
+    /// Type B filling it: the costliest of B VCA, B LFO and B GLIDE (LFO
+    /// FREE with a FORM change's glide always running) less 1 OP and CLAMP.
+    pub const ENV_B: Cost = Cost(98);
     /// More for B in ENV mode with SHAPE off centre, or with a route into
-    /// its SHAPE: a divide per sample.
-    pub const CURVE: Cost = Cost(15);
-    /// More for B in BURST mode, on top of `ENV_B` (billing BURST at 70): a
-    /// `tilt` divide, `fast_sin` and the burst step. The review estimated
-    /// 55–65 for AD/AHR and 50–55 for CYCLE; Task 13 benches it.
-    pub const BURST: Cost = Cost(30);
-    /// Each other VCA route's ramp: an int→float conversion and two
-    /// multiply-adds (Task 10 review). Billed at 5, not the spec's 3.
-    pub const OTHER: Cost = Cost(5);
-    /// The VCA's clamp and multiply, with any route.
-    pub const CLAMP: Cost = Cost(3);
+    /// its SHAPE: B CURVE read the same as B VCA; billed the floor, 1.
+    pub const CURVE: Cost = Cost(1);
+    /// More for B in BURST mode, on top of `ENV_B`: BURST AD (above BURST
+    /// CYC) less 1 OP, CLAMP and ENV_B.
+    pub const BURST: Cost = Cost(70);
+    /// Each other VCA route's ramp: 2 VCA less VEL VCA.
+    pub const OTHER: Cost = Cost(8);
+    /// The VCA's clamp and multiply, with any route: VEL VCA less 1 OP and OTHER.
+    pub const CLAMP: Cost = Cost(22);
     /// A route into an ENV slot's TIME, RISE, FALL or SHAPE rebuilds that
-    /// slot's coefficients every block (~200–250 cycles/block, ~3–5
-    /// cycles/sample): billed once per slot with any such route, whether or
-    /// not that slot feeds the VCA. Task 13 benches it.
-    pub const SLIDE: Cost = Cost(5);
+    /// slot's coefficients every block: billed once per slot with any such
+    /// route, whether or not that slot feeds the VCA. The costlier of A
+    /// SLIDE less A VCA and B SLIDE less B CURVE.
+    pub const SLIDE: Cost = Cost(31);
+    /// Each destination other than the VCA and the ENV slots' own with a
+    /// route of nonzero amount: its offset through the block's spec every
+    /// block. The MODS row's 38 over the rest of the model, across its six
+    /// such destinations. The profile puts the gap there and in the three
+    /// FUNC LFOs (about a tenth), not in the wavefolder (FOLD stayed below
+    /// 0 in the run) or the filter's `g` ramp; the FUNC LFOs are billed here.
+    pub const DEST: Cost = Cost(7);
 
     pub fn cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
         let slide = EnvSlot::ALL
             .iter()
             .filter(|&&slot| Self::slot_slides(mods, slot))
             .fold(Cost::ZERO, |a, _| a + Self::SLIDE);
-        Self::BASE + Self::vca_cost(p, mods) + slide
+        Self::BASE + Self::vca_cost(p, mods) + slide + Self::dest_cost(mods)
+    }
+
+    /// `DEST` for each destination, not the VCA or an ENV slot's, with a
+    /// route of nonzero amount.
+    fn dest_cost(mods: &ModState) -> Cost {
+        (0..mods.num_dests())
+            .filter(|&d| {
+                let a = mods.dest(d);
+                a != VCA
+                    && !matches!(a.block, BlockRef::Env(_))
+                    && (0..MAX_MOD_SOURCES).any(|s| mods.amount(s, d) != 0)
+            })
+            .fold(Cost::ZERO, |c, _| c + Self::DEST)
     }
 
     /// The VCA's own routes: 0 without one, else `CLAMP` plus each source's
