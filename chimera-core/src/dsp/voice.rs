@@ -39,9 +39,6 @@ pub struct Voice {
     mod_values: [f32; MAX_MOD_SOURCES],
     /// The routes into VCA this voice plays.
     vca: VcaRoutes,
-    /// The last block's last routed VCA gain, × AMP's VEL; 0 without a
-    /// route. Whether the lifetime check ends the voice through a fade.
-    last_gain: f32,
     /// A note-on since the last block: its ENV destinations are recomputed
     /// with its own VEL and NOTE before the modulators run.
     retrigger: bool,
@@ -168,7 +165,6 @@ impl Voice {
                 env_mods: [EnvMods::NONE; 3],
                 mod_values: [0.0; MAX_MOD_SOURCES],
                 vca: VcaRoutes::default(),
-                last_gain: 0.0,
                 retrigger: false,
                 active_engine: EngineType::Algo,
                 active: false,
@@ -427,6 +423,9 @@ impl Voice {
 
         // 5. The VCA, after the fold.
         let volume = m.out.volume;
+        // The block's last routed gain, × AMP's VEL: whether the lifetime
+        // check below ends the voice through a fade.
+        let mut last_gain = 0.0;
         if vca.bits == 0 {
             // No route: the engine decides (spec § 4). No wildcard, so a new
             // engine can't inherit the pass-through (VA gates: #148).
@@ -438,7 +437,6 @@ impl Voice {
                     }
                 }
             }
-            self.last_gain = 0.0;
         } else {
             let vel = 1.0 - m.out.vca_vel + m.out.vca_vel * self.last_velocity.unit();
             let k = volume * vel;
@@ -447,8 +445,8 @@ impl Voice {
                 *sample *= k * g.max(0.0).min(1.0);
             }
             #[allow(clippy::manual_clamp)]
-            let last = gain[BLOCK_SIZE - 1].max(0.0).min(1.0) * vel;
-            self.last_gain = last;
+            let g = gain[BLOCK_SIZE - 1].max(0.0).min(1.0);
+            last_gain = g * vel;
         }
 
         // Check if done
@@ -467,11 +465,12 @@ impl Voice {
         // Lifetime by the VCA's routes (spec § 4), once per block: a voice
         // no routed source holds ends, through the fade if it still sounds.
         if self.active && self.fade == 0 && self.vca.bits != 0 && !self.vca_holds() {
-            if self.last_gain != 0.0 {
+            if last_gain != 0.0 {
                 self.after_fade = AfterFade::Idle;
                 self.fade = Self::FADE;
             } else {
-                self.active = false;
+                // Silent, but the engine may still sound: back to fresh.
+                self.reset();
             }
         }
     }

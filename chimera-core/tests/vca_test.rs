@@ -4,6 +4,7 @@ mod common;
 
 use chimera_core::addr::ParamAddr;
 use chimera_core::dsp::envelope::{EnvMods, Envelope};
+use chimera_core::dsp::modulator::{EnvForm, EnvType, Func, LfoForm};
 use chimera_core::dsp::voice::Voice;
 use chimera_core::mod_path::ModDestRegistry;
 use chimera_core::modulation::{CUTOFF, MAX_MOD_SOURCES, ModSource, ModState, VCA};
@@ -193,8 +194,6 @@ fn a_negative_vca_route_never_inverts() {
     );
 }
 
-use chimera_core::dsp::modulator::{EnvForm, EnvType, Func, LfoForm};
-
 /// `blocks` of note 60, key up at `off`; `(output, active after each block)`.
 fn life(p: &ParamSnapshot, ms: &ModState, off: usize, blocks: usize) -> (Vec<f32>, Vec<bool>) {
     let mut v = Voice::new(SR);
@@ -262,13 +261,88 @@ fn nothing_drones_after_key_up() {
         e3(Func::Lfo(LfoForm::Free)),
         e3(Func::Env(EnvForm::Cycle)),
         (long(), ModSource::Lfo1),
-        (long(), ModSource::Vel),
     ] {
         let (out, alive) = life(&p, &mods(&[(s, VCA, 127)]), 30, 60);
         let gone = alive.iter().position(|a| !a).expect("the voice ends");
         // At once (gain 0 at key-up) or after the two-block fade.
         assert!((30..=33).contains(&gone), "{s:?}: ended at block {gone}");
         assert!(out[(gone + 1) * BLOCK_SIZE..].iter().all(|&x| x == 0.0));
+    }
+}
+
+/// VEL holds at a non-zero gain: key-up ends the voice through the
+/// two-block fade, a steady ramp to silence.
+#[test]
+fn a_sounding_voice_ends_through_the_fade() {
+    let p = long();
+    let (out, alive) = life(&p, &mods(&[(ModSource::Vel, VCA, 127)]), 30, 60);
+    let (plain, _) = life(&p, &ModState::new(), 30, 60);
+    assert_eq!(
+        alive.iter().position(|a| !a),
+        Some(32),
+        "fades blocks 31-32"
+    );
+    let blk = |i: usize| i * BLOCK_SIZE..(i + 1) * BLOCK_SIZE;
+    let level = out[blk(29)].iter().fold(0.0f32, |m, x| m.max(x.abs()));
+    // The routed gain is steady, so out / plain is the fade's envelope.
+    let held = out[blk(30)][0] / plain[blk(30)][0];
+    let env: Vec<f32> = (blk(31).start..blk(32).end)
+        .filter(|&i| plain[i].abs() > 1e-3)
+        .map(|i| out[i] / plain[i] / held)
+        .collect();
+    assert!(env.windows(2).all(|w| w[1] < w[0]), "falls monotonically");
+    assert!(env[0] < 1.0 && env[env.len() - 1] < 0.02, "{env:?}");
+    let last = out[..blk(33).start]
+        .iter()
+        .rposition(|&x| x != 0.0)
+        .unwrap();
+    assert!(last >= blk(32).start, "sounds into the fade's last block");
+    assert!(out[last].abs() < level / 128.0, "{} vs {level}", out[last]);
+    assert!(out[blk(33).start..].iter().all(|&x| x == 0.0));
+}
+
+/// A voice that ended at gain 0 starts its next note as a fresh voice
+/// does, with or without a VCA route.
+#[test]
+fn a_voice_ended_at_gain_0_is_fresh() {
+    let p = long();
+    let routed = mods(&[(ModSource::Env2, VCA, 127)]);
+    let note = MidiNote::new(64).unwrap();
+    let run = |v: &mut Voice, ms: &ModState| {
+        v.note_on(note, Velocity::DEFAULT, &p);
+        let mut out = Vec::new();
+        let mut b = [0.0f32; BLOCK_SIZE];
+        for _ in 0..8 {
+            v.render(&mut b, &p, ms);
+            out.extend_from_slice(&b);
+        }
+        out
+    };
+    for ms in [ModState::new(), routed.clone()] {
+        // Note 60 until ENV 2 ends it, the engine still sounding (RR 1).
+        let mut v = Voice::new(SR);
+        v.note_on(MidiNote::new(60).unwrap(), Velocity::DEFAULT, &p);
+        let mut b = [0.0f32; BLOCK_SIZE];
+        for i in 0..400 {
+            if i == 20 {
+                v.note_off();
+            }
+            v.render(&mut b, &p, &routed);
+            if !v.is_active() {
+                break;
+            }
+        }
+        assert!(!v.is_active(), "ENV 2 ended it");
+        let (got, want) = (run(&mut v, &ms), run(&mut Voice::new(SR), &ms));
+        let diff = got
+            .iter()
+            .zip(&want)
+            .fold(0.0f32, |m, (a, b)| m.max((a - b).abs()));
+        assert!(
+            diff < 1e-4,
+            "routed {}: max diff {diff}",
+            ms.num_dests() > 0
+        );
     }
 }
 
@@ -304,7 +378,23 @@ fn an_inactive_engine_always_ends_the_voice() {
     p.envelopes[0].speed = chimera_core::dsp::modulator::EnvSpeed::Slow;
     p.envelopes[0].release = 1.0;
     let (_, alive) = life(&p, &mods(&[(ModSource::Env1, VCA, 127)]), 20, 400);
-    assert!(alive.iter().any(|a| !a), "the engine's end ends the voice");
+    let gone = alive
+        .iter()
+        .position(|a| !a)
+        .expect("the engine's end ends the voice");
+    let mut env = Envelope::new();
+    env.note_on();
+    for b in 0..=gone {
+        let mut g = [0.0f32; BLOCK_SIZE];
+        env.run_block(
+            &p.envelopes[0],
+            &EnvMods::NONE,
+            b < 20,
+            SR,
+            Some((&mut g, 1.0)),
+        );
+    }
+    assert!(env.holds(false), "ENV 1 still held it at block {gone}");
 }
 
 /// Review Focus 5: the Sound switches engine mid-note; the fade keeps the
