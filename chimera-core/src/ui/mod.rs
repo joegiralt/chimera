@@ -129,7 +129,7 @@ pub struct UiState {
     /// Last-touched slot per page: the focus band and MIX + Plus/Minus.
     focus: focus::FocusMemory,
     /// Display-side LFO for animating modulated parameters
-    display_lfo: Lfo,
+    display_lfos: [Lfo; 3],
     /// The last MIX+PLUS outcome; `None` once retired (issue #21).
     prime_status: Option<PrimeStatus>,
     /// System › Theme. Not stored yet: every boot starts at the default.
@@ -149,7 +149,7 @@ crate::in_place::field_list!(UiState => UiState {
     sel_op,
     region_set,
     focus,
-    display_lfo,
+    display_lfos,
     prime_status,
     theme,
 });
@@ -198,7 +198,7 @@ impl UiState {
             addr_of_mut!((*p).sel_op).write(Op::A);
             addr_of_mut!((*p).region_set).write(region::RegionSet::new());
             addr_of_mut!((*p).focus).write(focus::FocusMemory::new());
-            addr_of_mut!((*p).display_lfo).write(Lfo::new());
+            addr_of_mut!((*p).display_lfos).write([Lfo::new(); 3]);
             addr_of_mut!((*p).prime_status).write(None);
             addr_of_mut!((*p).theme).write(ThemeSettings::DEFAULT);
             let ui = slot.assume_init_mut();
@@ -658,9 +658,10 @@ impl UiState {
             // sr = BLOCK_SIZE * fps. At variable fps, assume ~30.
             // If animations look too slow/fast, this constant needs tuning.
             const UI_FPS: u32 = 20; // tuned to match audio-side LFO rate
-            let lfo_val = self
-                .display_lfo
-                .process(&sound.params.lfo, chimera_hal::BLOCK_SIZE as u32 * UI_FPS);
+            let lfo_val = self.display_lfos[0].run_block(
+                &sound.params.lfos[0],
+                chimera_hal::BLOCK_SIZE as u32 * UI_FPS,
+            );
 
             let mut mod_sources = [0.0f32; MAX_MOD_SOURCES];
             // Source 0 = Envelope (use sustain level as approximation for display)

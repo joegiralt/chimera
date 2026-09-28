@@ -301,7 +301,7 @@ pub fn block_tag(b: BlockRef) -> &'static str {
         BlockRef::Filter => "FLT",
         BlockRef::Folder => "FLD",
         BlockRef::Env(s) => ["E1", "E2", "E3"][s.index()],
-        BlockRef::Lfo => "LFO",
+        BlockRef::Lfo(s) => ["LF1", "LF2", "LF3"][s.index()],
         BlockRef::Out => "OUT",
         BlockRef::Chorus => "CHR",
         BlockRef::Delay => "DLY",

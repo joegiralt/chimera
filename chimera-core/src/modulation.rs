@@ -46,6 +46,11 @@ impl ModSource {
         [ModSource::Env1, ModSource::Env2, ModSource::Env3][s.index()]
     }
 
+    /// The source LFO slot `s` feeds.
+    pub const fn of_lfo(s: crate::dsp::modulator::LfoSlot) -> Self {
+        [ModSource::Lfo1, ModSource::Lfo2, ModSource::Lfo3][s.index()]
+    }
+
     pub const fn index(self) -> usize {
         self as usize
     }

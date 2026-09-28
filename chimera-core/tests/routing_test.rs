@@ -103,3 +103,13 @@ fn the_amount_table_is_the_divide() {
         );
     }
 }
+
+/// Spec § Tests "Matrix": a route from each of the eight sources moves its
+/// destination (NOTE at note 72, where it isn't 0).
+#[test]
+fn every_source_moves_cutoff() {
+    for s in ModSource::ALL {
+        let note = if s == ModSource::Note { 72 } else { 60 };
+        assert_ne!(render(s, 127, note, 100), render(s, 0, note, 100), "{s:?}");
+    }
+}

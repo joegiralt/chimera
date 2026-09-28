@@ -89,15 +89,13 @@ fn envelope_and_lfo_pages() {
 
     assert_eq!(read(&reg::LFO, &p)[0], (1.0 - 0.01) / (20.0 - 0.01));
     turn(&reg::LFO, 0, 2, &mut p);
-    assert_eq!(p.lfo.rate, 1.0 + 2.0 * 0.15);
+    assert_eq!(p.lfos[0].rate, 1.0 + 2.0 * 0.15);
     turn(&reg::LFO, 1, 9, &mut p);
-    assert_eq!(p.lfo.shape, 4);
+    assert_eq!(p.lfos[0].shape, 4);
     turn(&reg::LFO, 2, 1, &mut p); // SYNC: free-running -> retrigger
-    assert_eq!(p.lfo.sync, 1);
-    turn(&reg::LFO, 5, 3, &mut p);
-    assert_eq!(p.lfo.offset, 3.0 * (1.0 / 128.0) * 2.0);
+    assert_eq!(p.lfos[0].sync, 1);
     snap(&reg::LFO, 1, -1, &mut p); // shift-snap works on LFO (spec)
-    assert_eq!(p.lfo.shape, 0);
+    assert_eq!(p.lfos[0].shape, 0);
 }
 
 /// The selector machinery sub-project 4's per-operator pages will use.

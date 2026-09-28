@@ -3,7 +3,7 @@
 //! cells or reordering blocks never remaps a mod route.
 
 use crate::block::{Block, ParamId, ParamSpec, find_spec};
-use crate::dsp::modulator::EnvSlot;
+use crate::dsp::modulator::{EnvSlot, LfoSlot};
 
 /// An operator of the Algo engine. `TryFrom<u8>` rejects values above 5, so an out-of-range
 /// operator (bad sound or SysEx data) is unrepresentable.
@@ -57,7 +57,8 @@ pub enum BlockRef {
     Folder,
     /// ENV slot `n`: `envelopes[n]`.
     Env(crate::dsp::modulator::EnvSlot),
-    Lfo,
+    /// LFO slot `n`: `lfos[n]`.
+    Lfo(crate::dsp::modulator::LfoSlot),
     /// `OutParams { volume, pan }`
     Out,
     /// Chorus, delay, reverb, tape and the master compressor: the Performance's shared FX.
@@ -74,7 +75,7 @@ pub enum BlockRef {
 }
 
 impl BlockRef {
-    pub const ALL: [BlockRef; 23] = [
+    pub const ALL: [BlockRef; 25] = [
         BlockRef::Modal,
         BlockRef::Algo,
         BlockRef::AlgoOp(Op::A),
@@ -89,7 +90,9 @@ impl BlockRef {
         BlockRef::Env(EnvSlot::Env1),
         BlockRef::Env(EnvSlot::Env2),
         BlockRef::Env(EnvSlot::Env3),
-        BlockRef::Lfo,
+        BlockRef::Lfo(LfoSlot::Lfo1),
+        BlockRef::Lfo(LfoSlot::Lfo2),
+        BlockRef::Lfo(LfoSlot::Lfo3),
         BlockRef::Out,
         BlockRef::Chorus,
         BlockRef::Delay,
@@ -110,7 +113,7 @@ impl BlockRef {
             BlockRef::Filter => &crate::params::FILTER_SPECS,
             BlockRef::Folder => &crate::params::FOLDER_SPECS,
             BlockRef::Env(_) => &crate::params::ENV_SPECS,
-            BlockRef::Lfo => &crate::dsp::lfo::LFO_SPECS,
+            BlockRef::Lfo(_) => &crate::dsp::lfo::LFO_SPECS,
             BlockRef::Out => &crate::params::OUT_SPECS,
             BlockRef::Chorus => &crate::dsp::chorus::CHORUS_SPECS,
             BlockRef::Delay => &crate::dsp::delay::DELAY_SPECS,
@@ -137,7 +140,7 @@ impl BlockRef {
             | BlockRef::Folder
             | BlockRef::Out => true,
             BlockRef::Env(_)
-            | BlockRef::Lfo
+            | BlockRef::Lfo(_)
             | BlockRef::Chorus
             | BlockRef::Delay
             | BlockRef::Reverb

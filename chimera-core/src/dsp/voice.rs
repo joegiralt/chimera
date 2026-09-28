@@ -11,7 +11,7 @@ use crate::dsp::engines::Engines;
 use crate::dsp::envelope::{EnvMods, Envelope};
 use crate::dsp::filter::SvfFilter;
 use crate::dsp::lfo::Lfo;
-use crate::dsp::modulator::EnvSlot;
+use crate::dsp::modulator::{EnvSlot, LfoSlot};
 use crate::dsp::wavefolder::Wavefolder;
 use crate::hw::{Cost, MAX_VOICES, VOICE_RAM_BUDGET};
 use crate::in_place::{by_value, uninit_at};
@@ -24,14 +24,14 @@ const _: () = assert!(core::mem::size_of::<[Voice; MAX_VOICES]>() <= VOICE_RAM_B
 
 /// Complete voice signal chain:
 /// [Engine] → [Drive] → [Filter] → [Wavefolder] → [VCA]
-/// Modulators: Envelope + LFO
+/// Modulators: three envelopes, three LFOs
 pub struct Voice {
     engines: Engines,
     drive: Drive,
     filter: SvfFilter,
     folder: Wavefolder,
     envs: [Envelope; 3],
-    pub lfo: Lfo,
+    lfos: [Lfo; 3],
     active_engine: EngineType,
     active: bool,
     last_note: MidiNote,
@@ -125,7 +125,7 @@ impl Voice {
                 filter: SvfFilter::new(),
                 folder: Wavefolder::new(),
                 envs: [Envelope::new(); 3],
-                lfo: Lfo::new(),
+                lfos: [Lfo::new(); 3],
                 active_engine: EngineType::Algo,
                 active: false,
                 last_note: MidiNote::A4,
@@ -175,6 +175,9 @@ impl Voice {
             .note_on(self.active_engine, note, velocity, params);
         for e in &mut self.envs {
             e.note_on();
+        }
+        for (l, p) in self.lfos.iter_mut().zip(&params.lfos) {
+            l.note_on(p);
         }
         self.active = true;
         // Until the first block renders, a fade has these to keep.
@@ -269,7 +272,10 @@ impl Voice {
                 None,
             );
         }
-        mod_values[ModSource::Lfo1.index()] = self.lfo.process(&src.lfo, sample_rate);
+        for (s, lfo) in LfoSlot::ALL.iter().zip(self.lfos.iter_mut()) {
+            mod_values[ModSource::of_lfo(*s).index()] =
+                lfo.run_block(&src.lfos[s.index()], sample_rate);
+        }
         mod_values[ModSource::Vel.index()] = self.last_velocity.unit();
         mod_values[ModSource::Note.index()] = note_source(self.last_note);
 

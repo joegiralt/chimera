@@ -60,9 +60,9 @@ fn voice_render_with_mod_offset_changes_filter() {
     params.filter.cutoff = 2000.0;
 
     // Set up LFO: fast rate so it clearly modulates within a few blocks
-    params.lfo.rate = 10.0;
-    params.lfo.depth = 1.0;
-    params.lfo.shape = 0; // sine
+    params.lfos[0].rate = 10.0;
+    params.lfos[0].depth = 1.0;
+    params.lfos[0].shape = 0; // sine
 
     // Dry: no modulation
     let empty_mod = ModState::new();
@@ -253,8 +253,8 @@ fn env_source_moves_on_a_modal_sound() {
 fn a_routed_carrier_at_level_zero_sounds() {
     let mut params = tri();
     params.algo.ops[0].level = 0;
-    params.lfo.rate = 5.0;
-    params.lfo.depth = 1.0;
+    params.lfos[0].rate = 5.0;
+    params.lfos[0].depth = 1.0;
     let mut registry = chimera_core::mod_path::ModDestRegistry::new();
     registry.add(OP1_LEVEL, *b"OP1LEV\0\0").unwrap();
     for source in [0, 1] {

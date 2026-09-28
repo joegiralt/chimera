@@ -435,7 +435,7 @@ pub struct ParamSnapshot {
     pub envelopes: [EnvParams; 3],
     pub algo: crate::dsp::algo::params::AlgoParams,
     pub modal: crate::dsp::modal::ModalParams,
-    pub lfo: crate::dsp::lfo::LfoParams,
+    pub lfos: [crate::dsp::lfo::LfoParams; 3],
     pub out: OutParams,
 }
 
@@ -466,7 +466,7 @@ impl Blocks for ParamSnapshot {
             BlockRef::Filter => &self.filter,
             BlockRef::Folder => &self.folder,
             BlockRef::Env(s) => &self.envelopes[s.index()],
-            BlockRef::Lfo => &self.lfo,
+            BlockRef::Lfo(s) => &self.lfos[s.index()],
             BlockRef::Out => &self.out,
             BlockRef::Chorus
             | BlockRef::Delay
@@ -487,7 +487,7 @@ impl Blocks for ParamSnapshot {
             BlockRef::Filter => &mut self.filter,
             BlockRef::Folder => &mut self.folder,
             BlockRef::Env(s) => &mut self.envelopes[s.index()],
-            BlockRef::Lfo => &mut self.lfo,
+            BlockRef::Lfo(s) => &mut self.lfos[s.index()],
             BlockRef::Out => &mut self.out,
             BlockRef::Chorus
             | BlockRef::Delay
@@ -520,7 +520,7 @@ impl Default for ParamSnapshot {
             ],
             algo: crate::dsp::algo::params::AlgoParams::default(),
             modal: crate::dsp::modal::ModalParams::default(),
-            lfo: crate::dsp::lfo::LfoParams::default(),
+            lfos: [crate::dsp::lfo::LfoParams::default(); 3],
             out: OutParams::default(),
         }
     }

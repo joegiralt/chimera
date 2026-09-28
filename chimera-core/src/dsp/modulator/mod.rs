@@ -237,3 +237,31 @@ impl Glide {
         self.left > 0
     }
 }
+
+/// An LFO slot of the pool.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LfoSlot {
+    Lfo1,
+    Lfo2,
+    Lfo3,
+}
+
+impl LfoSlot {
+    pub const ALL: [LfoSlot; 3] = [LfoSlot::Lfo1, LfoSlot::Lfo2, LfoSlot::Lfo3];
+
+    pub const fn index(self) -> usize {
+        self as usize
+    }
+}
+
+/// An LFO slot's TYPE: today's LFO, or Envelope B locked to LFO mode.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum LfoType {
+    Classic = 0,
+    Func = 1,
+}
+
+impl LfoType {
+    pub const ALL: [LfoType; 2] = [LfoType::Classic, LfoType::Func];
+}

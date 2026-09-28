@@ -195,7 +195,7 @@ impl Blocks for PartEdit<'_> {
             | BlockRef::Filter
             | BlockRef::Folder
             | BlockRef::Env(_)
-            | BlockRef::Lfo
+            | BlockRef::Lfo(_)
             | BlockRef::Out => self.part.sound.params.block(b),
         }
     }
@@ -216,7 +216,7 @@ impl Blocks for PartEdit<'_> {
             | BlockRef::Filter
             | BlockRef::Folder
             | BlockRef::Env(_)
-            | BlockRef::Lfo
+            | BlockRef::Lfo(_)
             | BlockRef::Out => self.part.sound.params.block_mut(b),
         }
     }

@@ -23,7 +23,7 @@ fn recipe(block: BlockRef) -> ParamSnapshot {
         EngineType::Algo
     };
     let mut p = ParamSnapshot::for_engine(engine);
-    p.lfo.rate = 5.0; // swings both ways within the render
+    p.lfos[0].rate = 5.0; // swings both ways within the render
     match block {
         BlockRef::Algo | BlockRef::AlgoOp(_) => {
             p.algo.alg_a = AlgoId::A1.get();
