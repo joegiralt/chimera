@@ -1,5 +1,6 @@
 use chimera_core::audio_out::{
-    DacSample, Half, HalfPlan, desynced, interleave, plan_halves, to_dac,
+    DacSample, Half, HalfPlan, Heartbeat, desynced, interleave, plan_halves, to_dac,
+    watchdog_timeout_ms,
 };
 use chimera_core::hw::{BLOCK_SIZE, DAC_PAIRS};
 use chimera_core::instrument::DacOut;
@@ -117,4 +118,20 @@ fn desync_tolerates_16_words_either_way_across_the_wrap() {
     assert!(!desynced(4, 244, 256, 16));
     assert!(desynced(128, 145, 256, 16));
     assert!(desynced(0, 128, 256, 16));
+}
+
+#[test]
+fn heartbeat_is_alive_only_when_the_block_count_moves() {
+    let mut h = Heartbeat::default();
+    assert!(!h.advanced(0));
+    assert!(h.advanced(1));
+    assert!(!h.advanced(1));
+    assert!(h.advanced(u32::MAX));
+    assert!(h.advanced(0));
+}
+
+#[test]
+fn watchdog_outlasts_two_kick_gaps_of_a_500_hz_tick_and_64_sample_blocks() {
+    // 2 ms tick + 1.334 ms block, doubled: 6.668 ms, rounded up.
+    assert_eq!(watchdog_timeout_ms(500, 64, 48_000), 7);
 }
