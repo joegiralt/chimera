@@ -8,6 +8,7 @@ use crate::dsp::modal::ModalParams;
 use crate::dsp::modulator::{EnvSlot, LfoSlot};
 use crate::dsp::reverb::ReverbParams;
 use crate::dsp::tape::TapeParams;
+use crate::modulation::{MAX_MOD_SOURCES, ModSource};
 use crate::params::{DriveParams, EnvParams, FilterParams, FolderParams, OutParams, PitchParams};
 use crate::part::PartParams;
 use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2, FxFlow, FxNode, ParamSlot, VizType};
@@ -423,9 +424,15 @@ pub static ALGO_ALG: BlockDef = BlockDef {
 // ---------------------------------------------------------------------------
 
 /// Mod sources every Part voice produces, in `ModSource` order (spec § 2).
-pub static PART_MOD_SOURCES: [&str; crate::modulation::MAX_MOD_SOURCES] = [
-    "ENV1", "LFO1", "ENV2", "ENV3", "LFO2", "LFO3", "VELO", "NOTE",
-];
+pub static PART_MOD_SOURCES: [&str; MAX_MOD_SOURCES] = {
+    let mut tags = [""; MAX_MOD_SOURCES];
+    let mut i = 0;
+    while i < MAX_MOD_SOURCES {
+        tags[i] = ModSource::ALL[i].tag();
+        i += 1;
+    }
+    tags
+};
 
 /// The MOD node's sub-list after its home MTX (spec § UI).
 static MOD_SUB_PAGES: [&BlockDef; 7] =
