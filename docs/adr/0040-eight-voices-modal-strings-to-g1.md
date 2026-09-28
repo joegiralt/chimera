@@ -1,6 +1,6 @@
 # 0040. Eight voices in D2; Modal strings sized to G1
 
-- **Status:** Proposed (2026-09-28)
+- **Status:** Accepted (2026-09-28)
 - **Deciders:** project owner
 - Supersedes in part [0014](0014-audio-memory-map.md) (Modal strings sized
   to E1) and [0031](0031-six-voices-on-rev-v.md) (six voices as the pool).
@@ -56,6 +56,10 @@ build until something gives: the Modal 2 engine (Elements exciters, Rings
 resonators) is the natural point to revisit string sizing. Eight voices
 of a light patch are about two more voices of CPU than six; heavy patches
 are billed as before.
+
+Stress run on rev V hardware: eight-note TX chords on three Parts, reverb,
+delay and tape on, every panel edited meanwhile. LOAD 13% average, 87%
+peak; OVER 0, DROPS 0, DESYNC 0; stack 15K.
 
 ## Sources
 `chimera-core/tests/memory_budget_test.rs`, `cost_test.rs`,
