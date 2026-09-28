@@ -160,6 +160,9 @@ impl Voice {
     }
 
     fn trigger(&mut self, note: MidiNote, velocity: Velocity, params: &ParamSnapshot) {
+        if !self.active {
+            self.filter.hold(); // a fresh note: no ramp from the last note's cutoff
+        }
         // The engine left behind starts clean when it next plays.
         if params.engine() != self.active_engine {
             self.engines.reset(self.active_engine);
@@ -315,5 +318,29 @@ impl Voice {
                 self.fade_ended(params);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Spec § 3: a fresh note starts without a ramp, even on a voice
+    /// whose engine went quiet on its own (inactive, never reset).
+    #[test]
+    fn a_note_after_silence_starts_without_a_ramp() {
+        let p = ParamSnapshot::default();
+        let mut v = Voice::new(chimera_hal::SAMPLE_RATE);
+        v.note_on(MidiNote::A4, Velocity::DEFAULT, &p);
+        let mut b = [0.0f32; BLOCK_SIZE];
+        v.render(&mut b, &p, &ModState::new());
+        assert!(v.filter.last_g().is_some());
+        v.active = false; // its engine went quiet
+        v.note_on(MidiNote::A4, Velocity::DEFAULT, &p);
+        assert!(v.filter.last_g().is_none());
+        // A retrigger of a sounding voice keeps it.
+        v.render(&mut b, &p, &ModState::new());
+        v.note_on(MidiNote::A4, Velocity::DEFAULT, &p);
+        assert!(v.filter.last_g().is_some());
     }
 }

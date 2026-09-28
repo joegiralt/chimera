@@ -622,10 +622,14 @@ impl UiState {
 
             // Apply offsets to the 6 display values
             for (i, value) in values.iter_mut().enumerate() {
-                let offset = slot_addr(def, i, self.sel_op)
-                    .map_or(0.0, |a| sound.mod_state.offset_for(a, &mod_sources));
-                if offset != 0.0 {
-                    *value = (*value + offset).clamp(0.0, 1.0);
+                let Some(addr) = slot_addr(def, i, self.sel_op) else {
+                    continue;
+                };
+                let offset = sound.mod_state.offset_for(addr, &mod_sources);
+                if offset != 0.0
+                    && let Some(spec) = addr.spec()
+                {
+                    *value = spec.offset_normalized(*value, offset);
                 }
             }
         }

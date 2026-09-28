@@ -77,6 +77,15 @@ pub enum ParamKind {
     Enum,
 }
 
+/// How a matrix offset moves a value (spec § 3; ADR 0010 for `Linear`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum OffsetLaw {
+    /// `v + off·(max − min)`.
+    Linear,
+    /// `v · 2^(n·off)`: `n` octaves at a full offset (CUTOFF).
+    Octaves(f32),
+}
+
 /// Description of one parameter. Lives in flash (`static` tables).
 #[derive(Clone, Copy, Debug)]
 pub struct ParamSpec {
@@ -94,6 +103,8 @@ pub struct ParamSpec {
     pub kind: ParamKind,
     /// True only if `Voice` reads the param per block (see `ParamAddr::modulatable`).
     pub modulatable: bool,
+    /// How a matrix offset applies.
+    pub law: OffsetLaw,
 }
 
 impl ParamSpec {
@@ -118,6 +129,7 @@ impl ParamSpec {
             step,
             kind: ParamKind::Continuous,
             modulatable,
+            law: OffsetLaw::Linear,
         }
     }
 
@@ -141,6 +153,7 @@ impl ParamSpec {
             step: 1.0,
             kind: ParamKind::Stepped,
             modulatable,
+            law: OffsetLaw::Linear,
         }
     }
 
@@ -156,6 +169,7 @@ impl ParamSpec {
             step: 1.0,
             kind: ParamKind::Enum,
             modulatable: false,
+            law: OffsetLaw::Linear,
         }
     }
 
@@ -171,6 +185,32 @@ impl ParamSpec {
     /// `v` mapped to 0..1 over the range.
     pub fn normalize(&self, v: f32) -> f32 {
         (v - self.min) / (self.max - self.min)
+    }
+
+    /// This spec with the octave law.
+    pub const fn octaves(self, n: f32) -> Self {
+        Self {
+            law: OffsetLaw::Octaves(n),
+            ..self
+        }
+    }
+
+    /// `v` moved by a matrix offset `off`, clamped to the range.
+    pub fn offset(&self, v: f32, off: f32) -> f32 {
+        match self.law {
+            OffsetLaw::Linear => (v + off * (self.max - self.min)).clamp(self.min, self.max),
+            OffsetLaw::Octaves(n) => (v * crate::dsp::fast_exp2(n * off)).clamp(self.min, self.max),
+        }
+    }
+
+    /// `offset` on a 0..1 display value (the UI's mod bars).
+    pub fn offset_normalized(&self, n: f32, off: f32) -> f32 {
+        match self.law {
+            OffsetLaw::Linear => (n + off).clamp(0.0, 1.0),
+            OffsetLaw::Octaves(_) => {
+                self.normalize(self.offset(self.min + n * (self.max - self.min), off))
+            }
+        }
     }
 }
 
@@ -235,12 +275,11 @@ pub trait Block {
     }
 }
 
-/// Apply a modulation offset (spec §4): `(v + off * (max - min)).clamp(min, max)`,
-/// written raw. Bit-identical to the former `Param::apply_mod_offset`; never
-/// rounds (a Stepped value stays fractional). Audio-thread safe: no allocation.
+/// Apply a modulation offset (spec §4) by the spec's law, written raw.
+/// Bit-identical to the former `Param::apply_mod_offset`; never rounds (a
+/// Stepped value stays fractional). Audio-thread safe: no allocation.
 pub fn apply_offset(blk: &mut dyn Block, id: ParamId, off: f32) {
     if let Some(s) = blk.spec(id) {
-        let v = (blk.get(id) + off * (s.max - s.min)).clamp(s.min, s.max);
-        blk.write(id, v);
+        blk.write(id, s.offset(blk.get(id), off));
     }
 }

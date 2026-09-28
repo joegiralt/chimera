@@ -55,7 +55,8 @@ pub static FILTER_SPECS: [ParamSpec; 4] = [
         1000.0,
         (20000.0 - 20.0) / 128.0,
         true,
-    ),
+    )
+    .octaves(crate::dsp::filter::CUTOFF_OCTAVES),
     ParamSpec::continuous(1, "RESO", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, true),
     ParamSpec::continuous(2, "DRIVE", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, true),
     ParamSpec::choice(7, "MODE", ValFmt::Names(&SVF_MODE_NAMES), 7.0, 0.0),
