@@ -41,6 +41,30 @@ Chimera is multitimbral, and today nothing it plays can be saved. Turn the synth
 | **Library** | Every Sound on the SD card | Sounds only. It is browsed by tag and filtered by engine. |
 | **System (global)** | The synth's own setup, never part of a project | THEME, master tuning, MIDI clock in/out and thru. |
 
+### Types decide what's possible (owner's rule)
+
+Every rule in this spec is carried by a type, so breaking it doesn't compile. What a screen offers comes from what the type allows, never from an `if` that checks a flag. All of these are pure `chimera-core` types.
+
+| Type | Shape | What it rules out |
+|---|---|---|
+| `SlotId` | Newtype over `u8`. The only constructor is `SlotId::new(n) -> Option<SlotId>` for `n < 32`, plus `SlotId::ALL`. | A slot index out of range. A raw `usize` pool index. |
+| `PartId` | The existing `PartId`, 0–5. | Same as `SlotId`, for Parts. |
+| `PoolSlot` | `enum { Empty, Filled(Sound) }`. `Pool` is `[PoolSlot; 32]` and is indexed only by `SlotId`. | Loading an empty slot: `load(slot)` takes `&Sound`, which only a `Filled` slot yields. |
+| `Origin` | `enum { Slot(SlotId), Init }`: where a Part's copy came from. | A Part pointing at nothing, or at a slot number that doesn't exist. |
+| `PartSound` | `enum { Clean { origin, sound }, Edited { origin, sound }, Stale { origin, sound } }`. Editing a param consumes `Clean` or `Stale` and returns `Edited`. Saving or reverting returns `Clean`. Saving over a slot turns other `Clean` Parts on that slot into `Stale`. | A separate `modified: bool` that could drift from the sound. |
+| `SaveAction` | `enum { OverSlot(SlotId), NewSlot(SlotId), ToLibrary, Revert(SlotId) }`. `PartSound::save_actions() -> ArrayVec<SaveAction, 4>` lists only what the state allows: `Clean` offers no `Revert` and no `OverSlot`, and `NewSlot` appears only when the pool has a free `SlotId`. | The save menu drawing an option that can't apply. The menu is built from this list. |
+| `ProjectState` | `enum { Saved(ProjectName), Unsaved(Option<ProjectName>) }`. `Unsaved(None)` is a new project that has never been saved. | A `*` that disagrees with reality, and saving without a name. `save` needs a `ProjectName`, so a never-saved project must go through SAVE AS. |
+| `LoadGuard` | `load_project` on an `Unsaved` project returns `NeedsConfirm(PendingLoad)`, not a loaded project. Only `PendingLoad::{save_then_load, load_anyway, cancel}` can finish it. | Losing unsaved work silently. You can't write a path that skips the prompt. |
+| `Name` | `Name<const N>`: validated A–Z, a–z, 0–9, space and `-`, 1..=N characters. `ProjectName` is `Name<16>` and `SoundName` is `Name<16>`. | Unprintable, empty or over-length names, and names the u8g2 fonts can't draw. |
+| `Tag` | `enum Tag { Builtin(BuiltinTag), Custom(CustomTag) }`. `BuiltinTag` is a closed 16-variant enum. `CustomTag` is a newtype 0–7. `TagSet` is a `u32` bit set, and its only ops are insert, remove and contains. | A 17th built-in tag, a 9th custom tag, and tags stored as strings in a Sound. |
+| `EngineFilter` | `enum { All, Engine(EngineType) }`. | An engine filter value that no engine matches. |
+| `Rung` | `enum { Projects, Project, Part(PartId), Sound(PartId, SoundTab) }`, with `SoundTab = { Project, Library }`. Two pure functions, `Rung::down(focus) -> Option<Rung>` and `Rung::up() -> Option<Rung>`, are the only transitions. The breadcrumb is `Rung::crumbs()`. | A second route anywhere. EDIT + Bn is `Rung::Sound(part, Project)` built directly, and it lands on a rung the ladder also reaches. |
+| `Card` | `enum { Absent, Ready(Volume), Failed(CardError) }`. Library and project listing only exist on `Ready`. | Browsing or saving with no card. The UI matches on `Card` to show NO CARD. |
+| `FileFormat` | `Version` newtype. `RecordTag` is a closed enum of the tags this version knows, plus `Unknown(u16)`, which the reader skips. `ParamRecord { addr: ParamAddr, value }` is built only from a real `ParamAddr`. | Writing a record the reader doesn't know how to skip, and writing raw memory. |
+| `Swap` | A project load produces a `StagedPerformance` that only `AudioShared` can consume, at a block boundary, after the voice fade. | Swapping mid-block, or while voices are still sounding at full level. |
+
+The plan must show each type's constructor, and a compile-fail test (for example with `trybuild`) or a doc test where the type is the only thing enforcing a rule. Examples: loading an empty slot, and saving an unnamed project.
+
 ### Copy rules (owner's decisions)
 
 - **Library → Pool** is a copy. A project owns its sounds. Later edits to the library never change a project.
