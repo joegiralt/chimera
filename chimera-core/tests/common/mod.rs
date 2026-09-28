@@ -6,6 +6,8 @@
 //! note 60 vel 100 on, ON_BLOCKS blocks, note off, OFF_BLOCKS blocks.
 #![allow(dead_code)]
 
+pub mod golden;
+
 use chimera_core::addr::{BlockRef, ParamAddr};
 use chimera_core::dsp::algo::algorithms::AlgoId;
 use chimera_core::dsp::algo::params::AlgoParams;
