@@ -1,6 +1,6 @@
 # 0037. KIND lays out the filter panel; MODE follows KIND
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-09-28)
 - **Deciders:** project owner (2026-09-27; 2026-09-28, AMP VEL's priming and the saturator's hot path)
 
 ## Context

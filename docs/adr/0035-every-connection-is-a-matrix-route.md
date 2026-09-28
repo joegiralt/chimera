@@ -1,6 +1,6 @@
 # 0035. Every connection from a modulator to the sound is a matrix route
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-09-28)
 - **Deciders:** project owner (2026-09-27, the filter-routing spec; 2026-09-28, priming the hidden destinations)
 
 ## Context

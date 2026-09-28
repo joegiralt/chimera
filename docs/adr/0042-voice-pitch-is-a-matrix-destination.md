@@ -1,6 +1,6 @@
 # 0042. Voice pitch is a matrix destination on each engine's PITCH page
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-09-28)
 - **Deciders:** owner (#162, 2026-09-28), firmware
 
 ## Context

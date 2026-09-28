@@ -1,6 +1,6 @@
 # 0041. The mod matrix is an amount grid of outlined cells (supersedes in part 0016)
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-09-28)
 - **Deciders:** owner (mockup review, 2026-09-28), firmware (#161)
 
 ## Context

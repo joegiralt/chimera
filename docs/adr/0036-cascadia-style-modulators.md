@@ -1,6 +1,6 @@
 # 0036. ENV slots follow the Cascadia's Envelopes A and B; LFO slots are CLASSIC or FUNC
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-09-28)
 - **Deciders:** project owner (2026-09-27); the "Defaults chosen" of the spec await the owner's word
 
 ## Context
