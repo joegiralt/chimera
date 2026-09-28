@@ -17,7 +17,7 @@ fn band(fb: &Fb, y0: i32, y1: i32) -> Vec<u16> {
 
 #[test]
 fn dirty_render_from_scratch_equals_full_render() {
-    for name in ["bigviz_filter", "bigviz_env"] {
+    for name in ["bigviz_filter", "env_a"] {
         assert!(render(name).px == render_dirty(name).px, "{name}");
     }
 }
@@ -112,20 +112,20 @@ fn accent_pixels(ui: &mut chimera_core::ui::UiState) -> usize {
 }
 
 fn accent_in_viz(name_setup: impl FnOnce(&mut chimera_core::ui::UiState)) -> usize {
-    let mut ui = ui_for("bigviz_env");
+    let mut ui = ui_for("env_a");
     name_setup(&mut ui);
     settle(&mut ui);
     accent_pixels(&mut ui)
 }
 
-/// Envelope: the segment the focused slot edits is lit; LEVEL/VEL light none.
+/// Envelope: the segment the focused slot edits is lit; TYPE lights none.
 #[test]
 fn envelope_lights_the_edited_segment() {
     assert!(accent_in_viz(|_| {}) > 0, "DEC lit");
     assert_eq!(
-        accent_in_viz(|ui| feed(ui, Input::turn(EncoderId::E, -1))),
+        accent_in_viz(|ui| feed(ui, Input::turn(EncoderId::F, -1))),
         0,
-        "DEPTH lights no segment"
+        "TYPE (still A) lights no segment"
     );
 }
 

@@ -171,15 +171,20 @@ fn test_page_from_nav_part_chain() {
         (2, &reg::DRIVE),
         (3, &reg::FILTER),
         (4, &reg::FOLDER),
-        (5, &reg::MOD_MATRIX),
+        (5, &reg::ENVELOPE),
     ] {
         nav.node = node;
         assert_eq!(PageKey::from_nav(&nav, Op::A), part(def), "node {node}");
     }
-    nav.sub_page = 1;
-    assert_eq!(PageKey::from_nav(&nav, Op::A), part(&reg::ENVELOPE)); // Envelope at sub_page 1
-    nav.sub_page = 2;
-    assert_eq!(PageKey::from_nav(&nav, Op::A), part(&reg::LFO)); // LFO at sub_page 2
+    for (sub, def) in [
+        (1, &reg::ENV_2),
+        (2, &reg::ENV_3),
+        (3, &reg::LFO),
+        (4, &reg::MOD_MATRIX),
+    ] {
+        nav.sub_page = sub;
+        assert_eq!(PageKey::from_nav(&nav, Op::A), part(def), "sub-page {sub}");
+    }
     // The operator selection is part of a Part page's identity.
     assert_ne!(
         PageKey::from_nav(&nav, Op::B),

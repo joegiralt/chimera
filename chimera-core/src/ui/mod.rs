@@ -12,6 +12,7 @@ pub mod filter_panel;
 pub mod fmt;
 pub mod focus;
 pub mod mod_grid;
+pub mod mod_panel;
 pub mod page;
 pub mod part_page;
 pub mod perf;
@@ -607,7 +608,9 @@ impl UiState {
                     });
                     continue;
                 }
-                if view::is_dimmed(&v, &self.performance.parts[at].sound) {
+                if matches!(v, View::Text { .. })
+                    || view::is_dimmed(&v, &self.performance.parts[at].sound)
+                {
                     continue; // dimmed: the encoder is ignored
                 }
                 let params = &mut UiBlocks {
@@ -626,7 +629,7 @@ impl UiState {
                     (PageKey::Legacy(p), false) => p.apply_encoder(i, delta, params),
                 }
             }
-            // A KIND or operator change re-seeds the page's animators: a lerp
+            // A KIND, TYPE or operator change re-seeds the page's animators: a lerp
             // between two parameters' values would draw a meaningless sweep.
             if self.ctx() != before {
                 let values = self.display_values();
@@ -835,9 +838,14 @@ impl UiState {
         let audio_page = f.def.viz == VizType::AudioStats;
         let (chain, node, sub) = nav_tag(&self.nav);
         match kind {
-            RegionKind::Header => {
-                RegionData::header(chain, node, sub, f.perf.audio_load_pct, f.sounding)
-            }
+            RegionKind::Header => RegionData::header(
+                chain,
+                node,
+                sub,
+                f.perf.audio_load_pct,
+                f.sounding,
+                renderer::title_type(f),
+            ),
             RegionKind::Focus if f.def.layout == PageLayout::Matrix => RegionData::Route {
                 row: self.matrix_state.sel_row as u8,
                 col: self.matrix_state.sel_col as u8,

@@ -219,6 +219,20 @@ fn plus(ui: &mut UiState, n: usize) {
     }
 }
 
+/// From the MOD node's home E1, EDIT down to the matrix, its last sub-page.
+fn to_matrix(ui: &mut UiState) {
+    for _ in 0..4 {
+        feed(ui, Input::press(ButtonId::Edit));
+    }
+}
+
+/// From Part 1's home to E3: type B, ENV · AD by default.
+fn to_e3(ui: &mut UiState) {
+    plus(ui, 5);
+    feed(ui, Input::press(ButtonId::Edit));
+    feed(ui, Input::press(ButtonId::Edit));
+}
+
 /// Prime the focused slot for modulation (MIX + PLUS).
 fn prime(ui: &mut UiState) {
     feed(ui, Input::chord(ButtonId::Mix, ButtonId::Plus));
@@ -260,10 +274,49 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::press(ButtonId::Edit)); // FLT › MODE
         feed(ui, Input::turn(EncoderId::A, 3)); // MODE: BP12
     }),
-    ("bigviz_env", |ui| {
-        plus(ui, 5);
-        feed(ui, Input::press(ButtonId::Edit));
+    ("env_a", |ui| {
+        plus(ui, 5); // E1, the MOD node's home
         feed(ui, Input::turn(EncoderId::B, 6));
+    }),
+    ("env_b_env_ad", |ui| {
+        to_e3(ui);
+        feed(ui, Input::turn(EncoderId::B, 10)); // RISE
+    }),
+    ("env_b_env_ahr", |ui| {
+        to_e3(ui);
+        feed(ui, Input::turn(EncoderId::E, 1));
+    }),
+    ("env_b_env_cycle", |ui| {
+        to_e3(ui);
+        feed(ui, Input::turn(EncoderId::E, 2));
+    }),
+    ("env_b_lfo_free", |ui| {
+        to_e3(ui);
+        feed(ui, Input::turn(EncoderId::A, 1));
+    }),
+    ("env_b_lfo_sync", |ui| {
+        to_e3(ui);
+        feed(ui, Input::turn(EncoderId::A, 1));
+        feed(ui, Input::turn(EncoderId::E, 1));
+    }),
+    ("env_b_lfo_lfv", |ui| {
+        to_e3(ui);
+        feed(ui, Input::turn(EncoderId::A, 1));
+        feed(ui, Input::turn(EncoderId::E, 2));
+    }),
+    ("env_b_burst_ad", |ui| {
+        to_e3(ui);
+        feed(ui, Input::turn(EncoderId::A, 2));
+    }),
+    ("env_b_burst_ahr", |ui| {
+        to_e3(ui);
+        feed(ui, Input::turn(EncoderId::A, 2));
+        feed(ui, Input::turn(EncoderId::E, 1));
+    }),
+    ("env_b_burst_cycle", |ui| {
+        to_e3(ui);
+        feed(ui, Input::turn(EncoderId::A, 2));
+        feed(ui, Input::turn(EncoderId::E, 2));
     }),
     ("amp_vel_dimmed", |ui| {
         plus(ui, 4);
@@ -274,7 +327,8 @@ pub const CASES: &[ScreenCase] = &[
         plus(ui, 4);
         feed(ui, Input::turn(EncoderId::D, 1));
         prime(ui); // VEL primes the VCA
-        plus(ui, 1); // the matrix: E1 → FLT CUTOFF
+        plus(ui, 1);
+        to_matrix(ui); // E1 → FLT CUTOFF
         feed(ui, Input::turn(EncoderId::A, 2)); // E2
         feed(ui, Input::turn(EncoderId::B, 1)); // OUT VCA
         feed(ui, Input::turn(EncoderId::E, 100)); // E2 → VCA
@@ -331,6 +385,7 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::A, 1)); // focus FOLD
         prime(ui);
         plus(ui, 1);
+        to_matrix(ui);
         feed(ui, Input::turn(EncoderId::E, 20)); // ENV → CUTOFF
         feed(ui, Input::turn(EncoderId::B, 1));
         feed(ui, Input::turn(EncoderId::E, -30)); // ENV → FOLD

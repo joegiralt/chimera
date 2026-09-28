@@ -126,12 +126,15 @@ fn a_full_matrix_keeps_the_route_knob_off() {
     assert!((0..ui.mod_state().num_dests()).all(|d| ui.mod_state().dest(d) != CUTOFF));
 }
 
-/// Plus five times from Part 1's home: the MOD node (the matrix, until
-/// Task 16 puts E1 there).
+/// Plus five times from Part 1's home: the MOD node, then EDIT ×4 to the
+/// matrix.
 fn to_matrix(ui: &mut UiState) {
     feed(ui, Input::press(ButtonId::B1));
     for _ in 0..5 {
         feed(ui, Input::press(ButtonId::Plus));
+    }
+    for _ in 0..4 {
+        feed(ui, Input::press(ButtonId::Edit));
     }
 }
 

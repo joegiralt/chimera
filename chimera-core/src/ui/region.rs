@@ -40,6 +40,8 @@ pub enum RegionData {
         /// Audio load shown in the header (0 = not measured).
         load_pct: u8,
         sounding: bool,
+        /// The ENV title's TYPE suffix (`renderer::title_type`).
+        title_type: u8,
     },
     /// The focus band: which slot, its animated value, and any pending
     /// prime-status message (issue #21) shown in the value's place.
@@ -97,13 +99,21 @@ pub enum RegionData {
 }
 
 impl RegionData {
-    pub fn header(chain_idx: u8, node_idx: u8, sub_page: u8, load_pct: u8, sounding: bool) -> Self {
+    pub fn header(
+        chain_idx: u8,
+        node_idx: u8,
+        sub_page: u8,
+        load_pct: u8,
+        sounding: bool,
+        title_type: u8,
+    ) -> Self {
         Self::Header {
             chain_idx,
             node_idx,
             sub_page,
             load_pct,
             sounding,
+            title_type,
         }
     }
 
@@ -169,6 +179,7 @@ impl RegionData {
             sub_page: 255,
             load_pct: u8::MAX,
             sounding: false,
+            title_type: u8::MAX,
         }
     }
 

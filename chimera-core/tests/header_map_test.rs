@@ -223,7 +223,8 @@ fn the_algo_map_has_no_overlapping_nodes() {
                 if i == cur {
                     (x - theme::PILL_W / 2, x + theme::PILL_W / 2)
                 } else {
-                    let h = half(ALGO_CHAIN.blocks[i].def.short);
+                    let b = &ALGO_CHAIN.blocks[i];
+                    let h = half(b.map.unwrap_or(b.def.short));
                     (x - h, x + h)
                 }
             })

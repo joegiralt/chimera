@@ -35,6 +35,8 @@ pub enum SlotBinding {
     /// Knob `k` of the Sound's filter KIND's panel (spec § 6): 0–4 FLT's
     /// knobs 2–6, 5–6 FLT › MODE's extras.
     FilterPanel(u8),
+    /// Cell k of ENV slot s's page, per its TYPE, MODE and FORM.
+    EnvPanel(crate::dsp::modulator::EnvSlot, u8),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -86,6 +88,13 @@ impl ParamSlot {
         }
     }
 
+    pub const fn env_panel(s: crate::dsp::modulator::EnvSlot, k: u8) -> Self {
+        Self {
+            binding: SlotBinding::EnvPanel(s, k),
+            label_override: None,
+        }
+    }
+
     pub const fn with_label(self, label: &'static str) -> Self {
         Self {
             label_override: Some(label),
@@ -102,7 +111,8 @@ impl ParamSlot {
             SlotBinding::Empty
             | SlotBinding::SelectOp
             | SlotBinding::Legacy { .. }
-            | SlotBinding::FilterPanel(_) => None,
+            | SlotBinding::FilterPanel(_)
+            | SlotBinding::EnvPanel(..) => None,
         }
     }
 
@@ -112,7 +122,7 @@ impl ParamSlot {
         }
         match self.binding {
             // Views resolve a panel knob.
-            SlotBinding::Empty | SlotBinding::FilterPanel(_) => "--",
+            SlotBinding::Empty | SlotBinding::FilterPanel(_) | SlotBinding::EnvPanel(..) => "--",
             SlotBinding::SelectOp => "OP",
             SlotBinding::Legacy { label, .. } => label,
             SlotBinding::Param(_) | SlotBinding::SelectedOp(_) => {
@@ -123,7 +133,9 @@ impl ParamSlot {
 
     pub fn format(&self) -> ValFmt {
         match self.binding {
-            SlotBinding::Empty | SlotBinding::FilterPanel(_) => ValFmt::Uni,
+            SlotBinding::Empty | SlotBinding::FilterPanel(_) | SlotBinding::EnvPanel(..) => {
+                ValFmt::Uni
+            }
             SlotBinding::SelectOp => ValFmt::OneBased(Op::ALL.len() as u8 - 1),
             SlotBinding::Legacy { fmt, .. } => fmt,
             SlotBinding::Param(_) | SlotBinding::SelectedOp(_) => {
@@ -154,6 +166,9 @@ pub struct BlockDef {
 pub struct ChainBlock {
     pub def: &'static BlockDef,
     pub sub_pages: &'static [&'static BlockDef],
+    /// The map's label for this node when it isn't the home page's short
+    /// (the MOD node's home is E1).
+    pub map: Option<&'static str>,
 }
 
 impl ChainBlock {
