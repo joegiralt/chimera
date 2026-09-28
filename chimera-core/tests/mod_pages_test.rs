@@ -216,6 +216,36 @@ fn spd_dims_a_type_b_slot() {
     assert_eq!(dim, [false, false, true, false, false, true]);
 }
 
+/// SPD: a type-B slot's cells read TYPE B (fixed, so dimmed); a type-A
+/// slot's read its values.
+#[test]
+fn spd_reads_type_b_on_a_type_b_slot() {
+    use chimera_core::addr::Blocks;
+    let s = Sound::init(EngineType::Algo);
+    let ctx = SlotCtx::read(&s.params, Op::A);
+    for (i, label) in [(2, "E3 SPEED"), (5, "E3 HOLD")] {
+        assert_eq!(
+            view(&ENV_SPEED, i, &ctx),
+            View::Text {
+                label,
+                text: "TYPE B"
+            }
+        );
+    }
+    let text = |i: usize| {
+        let v = view(&ENV_SPEED, i, &ctx);
+        let addr = v.addr().expect("E1 is a param");
+        let mut b = FmtBuf::new();
+        fmt_val(
+            &mut b,
+            s.params.block(addr.block).unwrap().get(addr.param) / 2.0,
+            v.fmt(),
+        );
+        b.as_str().to_owned()
+    };
+    assert_eq!((text(0), text(3)), ("MED".to_owned(), "AHDSR".to_owned()));
+}
+
 /// FUNC's fixed MODE takes the focus but reads dimmed in the focus band as
 /// in its cell: label and value in MID, no arc (#123).
 #[test]

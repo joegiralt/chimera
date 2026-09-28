@@ -29,7 +29,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("env_b_burst_ad", 0x85aa6fdb690493dd),
     ("env_b_burst_ahr", 0xf18a55e8ad5fed5a),
     ("env_b_burst_cycle", 0x45af240dacae29a6),
-    ("spd", 0xa8d5c1a085a62975),
+    ("spd", 0xc4f026243b3d0db5),
     ("lfo_classic", 0x4e9744d2d0d414fd),
     ("lfo_func", 0x125c4f66cf905b5b),
     ("amp_vel_dimmed", 0x906c5da68f92294b),
