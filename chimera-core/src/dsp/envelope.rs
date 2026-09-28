@@ -192,7 +192,7 @@ impl Envelope {
     /// A note-on, run by the next block: a TYPE, MODE or FORM change not
     /// yet seen takes over first, with the new kind's coefficients, then
     /// the new kind's note-on runs.
-    pub fn note_on(&mut self, _p: &EnvParams) {
+    pub fn note_on(&mut self) {
         self.note_on = true;
     }
 

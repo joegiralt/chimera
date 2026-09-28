@@ -56,7 +56,7 @@ fn type_mode_and_form_changes_never_step() {
         for to in kinds() {
             for key_down in [true, false] {
                 let mut e = Envelope::new();
-                e.note_on(&from);
+                e.note_on();
                 for blk in 0..12 {
                     e.run_block(&from, &EnvMods::NONE, key_down || blk < 6, SR, None);
                 }
@@ -89,7 +89,7 @@ fn type_mode_and_form_changes_never_step() {
 fn spinning_type_every_block_stays_bounded() {
     let k = kinds();
     let mut e = Envelope::new();
-    e.note_on(&k[0]);
+    e.note_on();
     for blk in 0..1000 {
         let p = &k[blk % k.len()];
         let v = e.run_block(p, &EnvMods::NONE, blk % 97 < 60, SR, None);
@@ -105,7 +105,7 @@ fn spinning_type_every_block_stays_bounded() {
 fn a_and_b_destinations_are_inert_on_the_other_type() {
     let render = |p: &EnvParams, m: &EnvMods| {
         let mut e = Envelope::new();
-        e.note_on(p);
+        e.note_on();
         (0..50)
             .map(|_| e.run_block(p, m, true, SR, None))
             .collect::<Vec<_>>()
@@ -137,13 +137,13 @@ fn a_and_b_destinations_are_inert_on_the_other_type() {
 fn a_change_seen_at_a_note_on_runs_the_new_note_on() {
     let (free, sync) = (b(Func::Lfo(LfoForm::Free)), b(Func::Lfo(LfoForm::Sync)));
     let mut e = Envelope::new();
-    e.note_on(&free);
+    e.note_on();
     for _ in 0..20 {
         e.run_block(&free, &EnvMods::NONE, true, SR, None);
     }
-    e.note_on(&sync);
+    e.note_on();
     let mut fresh = Envelope::new();
-    fresh.note_on(&sync);
+    fresh.note_on();
     let (mut x, mut y) = (0.0, 0.0);
     for _ in 0..6 {
         x = e.run_block(&sync, &EnvMods::NONE, true, SR, None);
@@ -166,7 +166,7 @@ fn holds_follow_the_lifetime_rule() {
         (b(Func::Lfo(LfoForm::Free)), false),
     ] {
         let mut e = Envelope::new();
-        e.note_on(&p);
+        e.note_on();
         e.run_block(&p, &EnvMods::NONE, true, SR, None);
         e.run_block(&p, &EnvMods::NONE, false, SR, None);
         assert_eq!(e.holds(false), holds_after_key_up, "{p:?}");
@@ -178,13 +178,13 @@ fn holds_follow_the_lifetime_rule() {
 fn note_on_takes_over_a_sounding_a(to: EnvParams) {
     let from = a();
     let mut e = Envelope::new();
-    e.note_on(&from);
+    e.note_on();
     for _ in 0..20 {
         e.run_block(&from, &EnvMods::NONE, true, SR, None);
     }
     let before = e.output();
     assert!(before > 0.5, "A is sounding: {before}");
-    e.note_on(&to);
+    e.note_on();
     let start = e.run_block(&to, &EnvMods::NONE, true, SR, None);
     assert!((start - before).abs() < 1e-6, "{before} → {start}");
     for blk in 0..8 {
