@@ -1,10 +1,9 @@
-//! RAM-disk card images: FAT16, FAT32, exFAT and a superfloppy.
-#![allow(dead_code)]
+//! RAM-disk card images: FAT16, FAT32, exFAT and the superfloppies.
 
 use core::cell::{Cell, RefCell};
 use embedded_sdmmc::{Block, BlockCount, BlockDevice, BlockIdx, TimeSource, Timestamp};
 
-const PART_LBA: u32 = 2048;
+pub const PART_LBA: u32 = 2048;
 
 #[derive(Debug)]
 pub struct DiskError;
@@ -55,11 +54,13 @@ impl BlockDevice for RamDisk {
 
 /// A card pulled mid-write: every write fails once `writes_left` reaches 0.
 /// `None` never fails.
+#[allow(dead_code)]
 pub struct CutDisk {
     pub inner: RamDisk,
     pub writes_left: Cell<Option<u32>>,
 }
 
+#[allow(dead_code)]
 impl BlockDevice for CutDisk {
     type Error = DiskError;
 
@@ -141,71 +142,109 @@ fn ebpb(b: &mut [u8; 512], at: usize, serial: u32, fs: &[u8; 8]) {
     b[at + 18..at + 26].copy_from_slice(fs);
 }
 
-/// A FAT16 volume over all of `vol`, whose first block sits at LBA `hidden`.
-fn fat16_volume(vol: &mut [[u8; 512]], hidden: u32, serial: u32) {
-    const RESERVED: u32 = 1;
-    const ROOT_ENTRIES: u32 = 512;
+const RESERVED16: u32 = 1;
+const ROOT_ENTRIES: u32 = 512;
+const ROOT_SECTORS: u32 = ROOT_ENTRIES * 32 / 512;
+const RESERVED32: u32 = 32;
+
+fn fat16_size(clusters: u32) -> u32 {
+    ((clusters + 2) * 2).div_ceil(512)
+}
+
+fn fat32_size(clusters: u32) -> u32 {
+    ((clusters + 2) * 4).div_ceil(512)
+}
+
+/// A FAT16-layout volume over all of `vol` (first block at LBA `hidden`),
+/// with FATs of `fat_sz` sectors.
+fn fat16_volume(vol: &mut [[u8; 512]], hidden: u32, serial: u32, fat_sz: u32) {
     let total = vol.len() as u32;
-    let fat_sz = (total * 2).div_ceil(512);
-    let clusters = total - RESERVED - 2 * fat_sz - ROOT_ENTRIES * 32 / 512;
-    assert!(
-        (4085..65525).contains(&clusters),
-        "{clusters} clusters is not FAT16"
-    );
     let b = &mut vol[0];
-    bpb(b, 0x3C, RESERVED as u16, hidden, total);
+    bpb(b, 0x3C, RESERVED16 as u16, hidden, total);
     put16(b, 17, ROOT_ENTRIES as u16);
     put16(b, 22, fat_sz as u16);
     ebpb(b, 0x24, serial, b"FAT16   ");
     for fat in 0..2 {
-        let f = &mut vol[(RESERVED + fat * fat_sz) as usize];
+        let f = &mut vol[(RESERVED16 + fat * fat_sz) as usize];
         put32(f, 0, 0xFFFF_FFF8);
     }
 }
 
+/// A FAT32-layout volume over all of `vol`, with FATs of `fat_sz` sectors.
+fn fat32_volume(vol: &mut [[u8; 512]], hidden: u32, serial: u32, fat_sz: u32) {
+    let total = vol.len() as u32;
+    let b = &mut vol[0];
+    bpb(b, 0x58, RESERVED32 as u16, hidden, total);
+    put32(b, 36, fat_sz);
+    put32(b, 44, 2); // root directory cluster
+    put16(b, 48, 1); // FSInfo sector
+    put16(b, 50, 6); // backup boot sector
+    ebpb(b, 0x40, serial, b"FAT32   ");
+    vol[6] = vol[0];
+    let info = &mut vol[1];
+    put32(info, 0, 0x4161_5252);
+    put32(info, 484, 0x6141_7272);
+    put32(info, 488, 0xFFFF_FFFF);
+    put32(info, 492, 0xFFFF_FFFF);
+    put32(info, 508, 0xAA55_0000);
+    for fat in 0..2 {
+        let f = &mut vol[(RESERVED32 + fat * fat_sz) as usize];
+        put32(f, 0, 0x0FFF_FFF8);
+        put32(f, 4, 0x0FFF_FFFF);
+        put32(f, 8, 0x0FFF_FFFF); // root directory: one cluster, end of chain
+    }
+}
+
+/// A FAT16 card of `blocks` blocks, type 0x0E.
 pub fn fat16(blocks: u32, serial: u32) -> RamDisk {
     let d = RamDisk::zeroed(blocks);
     {
         let mut disk = d.0.borrow_mut();
         mbr(&mut disk, 0x0E);
-        fat16_volume(&mut disk[PART_LBA as usize..], PART_LBA, serial);
+        let fat_sz = fat16_size(blocks - PART_LBA);
+        fat16_volume(&mut disk[PART_LBA as usize..], PART_LBA, serial, fat_sz);
     }
     d
 }
 
-/// A FAT32 volume of 66 000 clusters, over the 65 525 floor.
-pub fn fat32(serial: u32) -> RamDisk {
-    const RESERVED: u32 = 32;
-    const CLUSTERS: u32 = 66_000;
-    let fat_sz = ((CLUSTERS + 2) * 4).div_ceil(512);
-    let total = RESERVED + 2 * fat_sz + CLUSTERS;
-    let d = RamDisk::zeroed(PART_LBA + total);
+/// A card of exactly `clusters` clusters: FAT16 layout (type 0x0E) below
+/// 65 525, FAT32 layout (type 0x0C) from it. Below 4 085 it is FAT12-sized.
+pub fn with_clusters(clusters: u32, serial: u32) -> RamDisk {
+    if clusters >= 65_525 {
+        return fat32_layout(clusters, serial);
+    }
+    let fat_sz = fat16_size(clusters);
+    let d = RamDisk::zeroed(PART_LBA + RESERVED16 + 2 * fat_sz + ROOT_SECTORS + clusters);
+    {
+        let mut disk = d.0.borrow_mut();
+        mbr(&mut disk, 0x0E);
+        fat16_volume(&mut disk[PART_LBA as usize..], PART_LBA, serial, fat_sz);
+    }
+    d
+}
+
+/// A FAT32-layout card (type 0x0C) of exactly `clusters` clusters, whatever
+/// the count.
+pub fn fat32_layout(clusters: u32, serial: u32) -> RamDisk {
+    let fat_sz = fat32_size(clusters);
+    let d = RamDisk::zeroed(PART_LBA + RESERVED32 + 2 * fat_sz + clusters);
     {
         let mut disk = d.0.borrow_mut();
         mbr(&mut disk, 0x0C);
-        let vol = &mut disk[PART_LBA as usize..];
-        let b = &mut vol[0];
-        bpb(b, 0x58, RESERVED as u16, PART_LBA, total);
-        put32(b, 36, fat_sz);
-        put32(b, 44, 2); // root directory cluster
-        put16(b, 48, 1); // FSInfo sector
-        put16(b, 50, 6); // backup boot sector
-        ebpb(b, 0x40, serial, b"FAT32   ");
-        vol[6] = vol[0];
-        let info = &mut vol[1];
-        put32(info, 0, 0x4161_5252);
-        put32(info, 484, 0x6141_7272);
-        put32(info, 488, 0xFFFF_FFFF);
-        put32(info, 492, 0xFFFF_FFFF);
-        put32(info, 508, 0xAA55_0000);
-        for fat in 0..2 {
-            let f = &mut vol[(RESERVED + fat * fat_sz) as usize];
-            put32(f, 0, 0x0FFF_FFF8);
-            put32(f, 4, 0x0FFF_FFFF);
-            put32(f, 8, 0x0FFF_FFFF); // root directory: one cluster, end of chain
-        }
+        fat32_volume(&mut disk[PART_LBA as usize..], PART_LBA, serial, fat_sz);
     }
     d
+}
+
+/// A FAT32 card of 66 000 clusters, over the 65 525 floor.
+pub fn fat32(serial: u32) -> RamDisk {
+    with_clusters(66_000, serial)
+}
+
+fn exfat_boot_sector(b: &mut [u8; 512]) {
+    b[0..3].copy_from_slice(&[0xEB, 0x76, 0x90]);
+    b[3..11].copy_from_slice(b"EXFAT   ");
+    put16(b, 510, 0xAA55);
 }
 
 /// Partition type 0x07 holding an exFAT boot sector.
@@ -214,17 +253,21 @@ pub fn exfat() -> RamDisk {
     {
         let mut disk = d.0.borrow_mut();
         mbr(&mut disk, 0x07);
-        let b = &mut disk[PART_LBA as usize];
-        b[0..3].copy_from_slice(&[0xEB, 0x76, 0x90]);
-        b[3..11].copy_from_slice(b"EXFAT   ");
-        put16(b, 510, 0xAA55);
+        exfat_boot_sector(&mut disk[PART_LBA as usize]);
     }
+    d
+}
+
+/// exFAT written from block 0, with no MBR.
+pub fn exfat_superfloppy() -> RamDisk {
+    let d = RamDisk::zeroed(64);
+    exfat_boot_sector(&mut d.0.borrow_mut()[0]);
     d
 }
 
 /// FAT16 written from block 0, with no MBR.
 pub fn superfloppy() -> RamDisk {
     let d = RamDisk::zeroed(16_384);
-    fat16_volume(&mut d.0.borrow_mut(), 0, 0x1234_5678);
+    fat16_volume(&mut d.0.borrow_mut(), 0, 0x1234_5678, fat16_size(16_384));
     d
 }
