@@ -16,7 +16,7 @@ fn button_state_follows_the_two_levels() {
 
 #[test]
 fn pixels_land_row_major_and_off_screen_ones_drop() {
-    let mut fb = vec![0u16; FB_SIZE];
+    let mut fb: Box<[u16; FB_SIZE]> = vec![0u16; FB_SIZE].try_into().unwrap();
     let red = RawU16::from(Rgb565::new(31, 0, 0)).into_inner();
     draw_into_fb(
         &mut fb,
