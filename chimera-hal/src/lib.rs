@@ -4,6 +4,7 @@ use embedded_graphics_core::draw_target::DrawTarget;
 use embedded_graphics_core::pixelcolor::Rgb565;
 
 pub mod midi;
+pub mod store;
 
 pub const BLOCK_SIZE: usize = 64;
 pub const SCREEN_WIDTH: u16 = 240;

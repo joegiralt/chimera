@@ -19,7 +19,7 @@ build:
 # pkg-config file; point PKG_CONFIG_PATH at it if it is not installed
 # system-wide.
 check:
-    cargo test -p chimera-core -p chimera-hal -p chimera-waves
+    cargo test -p chimera-core -p chimera-hal -p chimera-waves -p chimera-fat
     cargo test -p chimera-desktop
     cargo build -p chimera-desktop --no-default-features
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf
@@ -56,11 +56,11 @@ stack-check:
 
 # Run tests
 test:
-    cargo test -p chimera-core -p chimera-hal -p chimera-waves
+    cargo test -p chimera-core -p chimera-hal -p chimera-waves -p chimera-fat
 
 # Clippy on every target and feature set `check` builds, test targets included
 clippy:
-    cargo clippy -p chimera-core -p chimera-hal -p chimera-desktop -p chimera-waves --all-targets -- -D warnings
+    cargo clippy -p chimera-core -p chimera-hal -p chimera-desktop -p chimera-waves -p chimera-fat --all-targets -- -D warnings
     cargo clippy -p chimera-desktop --no-default-features --all-targets -- -D warnings
     cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf -- -D warnings
     cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features -- -D warnings
