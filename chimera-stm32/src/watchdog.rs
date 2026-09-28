@@ -4,30 +4,32 @@
 
 use core::sync::atomic::Ordering;
 
-use chimera_core::audio_out::{Heartbeat, watchdog_timeout_ms};
-use chimera_core::hw::{BLOCK_SIZE, SAMPLE_RATE};
+use chimera_core::audio_out::{Heartbeat, WATCHDOG_TIMEOUT_MS, iwdg_reload_at_div4};
 use stm32h7xx_hal::independent_watchdog::IndependentWatchdog;
 use stm32h7xx_hal::{pac, prelude::*};
 
 use crate::audio::dma::BLOCKS;
-use crate::controls::CONTROLS_HZ;
 
-const TIMEOUT_MS: u32 = watchdog_timeout_ms(CONTROLS_HZ, BLOCK_SIZE as u32, SAMPLE_RATE);
+// The HAL picks the finest prescaler that fits: /4, whose 12-bit reload
+// holds the timeout.
+const _: () = assert!(iwdg_reload_at_div4(WATCHDOG_TIMEOUT_MS) <= 0xFFF);
 
-/// Once the audio interrupt runs. The IWDG cannot be stopped again; it is
-/// frozen while a debugger halts the core.
+/// Before the audio interrupt is unmasked: the block count cannot move yet,
+/// so no kick lands while the HAL writes PR and RLR. The IWDG cannot be
+/// stopped again; it is frozen while a debugger halts the core.
 pub fn start(iwdg: pac::IWDG, dbgmcu: &pac::DBGMCU) {
     dbgmcu.apb4fz1.modify(|_, w| w.dbg_iwdg1().set_bit());
-    IndependentWatchdog::new(iwdg).start(TIMEOUT_MS.millis());
+    IndependentWatchdog::new(iwdg).start(WATCHDOG_TIMEOUT_MS.millis());
 }
 
 /// From the controls tick, which runs below the audio interrupt: kick only
 /// if audio has rendered since the last tick.
 pub fn kick_if_audio_alive(heartbeat: &mut Heartbeat) {
     if heartbeat.advanced(BLOCKS.load(Ordering::Relaxed)) {
-        // SAFETY: IWDG_KR is write-only and 0xAAAA only reloads the counter;
-        // `start` has taken the peripheral and no longer touches it, so this
-        // is its only writer.
+        // SAFETY: IWDG_KR is write-only and 0xAAAA only reloads the counter.
+        // The block count first moves once the audio interrupt is unmasked,
+        // after `start` has returned, so this never interleaves with its
+        // writes and is then the IWDG's only writer.
         unsafe { (*pac::IWDG::ptr()).kr.write(|w| w.key().reset()) };
     }
 }

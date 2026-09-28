@@ -99,11 +99,24 @@ impl Heartbeat {
     }
 }
 
-/// The watchdog timeout in ms. A kick is due every controls tick and can lag
-/// one audio block behind it, since the tick runs below the audio interrupt.
-/// Twice that lets one kick slip and absorbs the LSI's spread around the
-/// 32 kHz the timeout is computed from.
-pub const fn watchdog_timeout_ms(controls_hz: u32, block: u32, sample_rate: u32) -> u32 {
-    let gap_us = 1_000_000_u32.div_ceil(controls_hz) + (block * 1_000_000).div_ceil(sample_rate);
-    (2 * gap_us).div_ceil(1000)
+/// The watchdog timeout in ms: the longest the audio interrupt may starve
+/// the controls tick, a hang or a sustained overrun alike, before the unit
+/// resets (ADR 0034). The IWDG counts it on the LSI's nominal 32 kHz.
+pub const WATCHDOG_TIMEOUT_MS: u32 = 100;
+/// The LSI's nominal and fastest rates (STM32H750 datasheet): the fastest
+/// gives the shortest real timeout.
+pub const LSI_NOMINAL_HZ: u32 = 32_000;
+pub const LSI_MAX_HZ: u32 = 33_600;
+
+/// The longest healthy gap between kicks, in µs: one tick may find no new
+/// block and slip, and the next can lag an audio block behind, since the
+/// tick runs below the audio interrupt.
+pub const fn kick_gap_us(controls_hz: u32, block: u32, sample_rate: u32) -> u32 {
+    2 * 1_000_000_u32.div_ceil(controls_hz) + (block * 1_000_000).div_ceil(sample_rate)
+}
+
+/// The IWDG's counts for `timeout_ms` at its finest prescaler (/4): the
+/// reload register holds 12 bits.
+pub const fn iwdg_reload_at_div4(timeout_ms: u32) -> u32 {
+    timeout_ms * (LSI_NOMINAL_HZ / 1000) / 4
 }
