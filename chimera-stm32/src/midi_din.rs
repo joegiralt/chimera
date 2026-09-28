@@ -1,5 +1,5 @@
 use core::ptr::addr_of_mut;
-use core::sync::atomic::AtomicU32;
+use core::sync::atomic::{AtomicU32, Ordering, compiler_fence};
 
 use chimera_core::note_queue::{NoteEvent, NoteProducer};
 use chimera_hal::midi::MidiParser;
@@ -34,6 +34,8 @@ pub fn init(nvic: &mut NVIC, pclk2_hz: u32, notes: NoteProducer<'static>) {
     // SAFETY: USART1's interrupt is still masked, so nothing reads
     // `DIN_NOTES` yet; from then on only the handler does.
     unsafe { *addr_of_mut!(DIN_NOTES) = Some(notes) };
+    // The plain store above must not sink past the unmask's volatile write.
+    compiler_fence(Ordering::SeqCst);
     priority::set_irq(nvic, pac::Interrupt::USART1, Priority::MIDI);
     // SAFETY: the handler touches only USART1, its own `PARSER` and
     // `DIN_NOTES`, the DIN queue's producer.
