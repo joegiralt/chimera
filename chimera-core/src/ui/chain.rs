@@ -1,7 +1,7 @@
 use crate::params::EngineType;
 use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2};
 use crate::ui::block_registry;
-use chimera_hal::{ButtonId, ButtonState, Controls};
+use chimera_hal::{ButtonId, ButtonState, Controls, PART_BUTTONS};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ChainId {
@@ -72,28 +72,15 @@ impl ChainNav {
             ButtonState::Pressed | ButtonState::Held
         );
 
-        // MENU = System
+        // MENU = System (again: home)
         if controls.button_state(ButtonId::Menu) == ButtonState::Pressed {
-            if self.chain_id == ChainId::System {
-                self.node = 0;
-                self.sub_page = 0;
-            } else {
-                self.chain_id = ChainId::System;
-                self.node = 0;
-                self.sub_page = 0;
-            }
+            self.chain_id = ChainId::System;
+            self.node = 0;
+            self.sub_page = 0;
         }
 
-        // B1-B6: Part or Mixer depending on MIX modifier
-        let chain_buttons = [
-            ButtonId::B1,
-            ButtonId::B2,
-            ButtonId::B3,
-            ButtonId::B4,
-            ButtonId::B5,
-            ButtonId::B6,
-        ];
-        for (i, &btn) in chain_buttons.iter().enumerate() {
+        // B1-B6: Part or Mixer depending on MIX modifier (again: home)
+        for (i, &btn) in PART_BUTTONS.iter().enumerate() {
             if controls.button_state(btn) == ButtonState::Pressed {
                 let target = if mix_held {
                     if i == 5 {
@@ -105,15 +92,9 @@ impl ChainNav {
                     ChainId::Part(i)
                 };
 
-                if self.chain_id == target {
-                    // Same chain pressed again = snap home
-                    self.node = 0;
-                    self.sub_page = 0;
-                } else {
-                    self.chain_id = target;
-                    self.node = 0;
-                    self.sub_page = 0;
-                }
+                self.chain_id = target;
+                self.node = 0;
+                self.sub_page = 0;
             }
         }
 

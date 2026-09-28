@@ -1,14 +1,10 @@
 //! The Juno chorus (FX diet spec § Chorus).
 
+mod common;
 use chimera_core::dsp::Stereo;
 use chimera_core::dsp::chorus::{ChorusParams, JunoChorus};
 use chimera_hal::BLOCK_SIZE;
-
-const SR: u32 = 48_000;
-
-fn rms(x: &[f32]) -> f32 {
-    (x.iter().map(|&s| s as f64 * s as f64).sum::<f64>() / x.len() as f64).sqrt() as f32
-}
+use common::{SR, rms};
 
 /// `seconds` of a 220 Hz sine at 0.5 through the chorus.
 fn render(p: &ChorusParams, seconds: f32) -> (Vec<f32>, Vec<f32>) {

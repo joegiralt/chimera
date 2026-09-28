@@ -1,9 +1,10 @@
 //! The master compressor (FX diet spec § Master comp, § Testing).
 
+mod common;
 use chimera_core::dsp::comp::{CompParams, MasterComp, STEP};
 use chimera_hal::BLOCK_SIZE;
+use common::SR;
 
-const SR: u32 = 48_000;
 const PAIRS: usize = 3;
 
 type Out = [[f32; 2 * BLOCK_SIZE]; PAIRS];

@@ -4,7 +4,7 @@
 use chimera_core::addr::{BlockRef, Op, ParamAddr};
 use chimera_core::part::{DacPair, PartMode, PartParams};
 use chimera_core::preset::Performance;
-use chimera_core::ui::block_def::{BlockDef, SlotBinding};
+use chimera_core::ui::block_def::{BlockDef, FxFlow, FxNode, SlotBinding, VizType};
 use chimera_core::ui::block_registry as reg;
 use chimera_core::ui::page::PageKey;
 use chimera_core::ui::{UiState, part_page};
@@ -324,10 +324,7 @@ fn the_flow_node_is_not_a_second_accent_pill() {
 fn fx_pages_light_their_effect_in_the_flow() {
     let fb = screen::render("mixer_fx_delay");
     assert_eq!(flow_lit(&fb), [1], "Delay page lights DLY");
-    assert!(matches!(
-        reg::SENDS.viz,
-        chimera_core::ui::block_def::VizType::EffectsFlow
-    ));
+    assert_eq!(reg::SENDS.viz, VizType::EffectsFlow(FxFlow::Sends));
     assert_eq!(
         flow_lit(&screen::render("mixer_fx_delay_char")),
         [1],
@@ -369,15 +366,14 @@ fn the_delay_page_is_time_fdbk_tone_rev_mix_with_char_below() {
             None
         ]
     );
-    for chain in [&reg::MIX_CHAIN, &reg::MIXER_CHANNEL_CHAIN] {
-        let dly = chain
-            .blocks
-            .iter()
-            .find(|b| b.def.id == reg::DELAY.id)
-            .unwrap();
-        let subs: Vec<u16> = dly.sub_pages.iter().map(|d| d.id).collect();
-        assert_eq!(subs, [reg::DELAY_CHAR.id], "{}", chain.name);
-    }
+    let chain = &reg::MIXER_CHANNEL_CHAIN;
+    let dly = chain
+        .blocks
+        .iter()
+        .find(|b| b.def.id == reg::DELAY.id)
+        .unwrap();
+    let subs: Vec<u16> = dly.sub_pages.iter().map(|d| d.id).collect();
+    assert_eq!(subs, [reg::DELAY_CHAR.id], "{}", chain.name);
 }
 
 /// FX diet spec § UI: TYPE's slot is GRIT; the rest keep their order.
@@ -396,10 +392,10 @@ fn the_reverb_page_is_grit_time_damp_size_mix() {
             None
         ]
     );
-    assert!(matches!(
+    assert_eq!(
         reg::EFX.viz,
-        chimera_core::ui::block_def::VizType::EffectsFlow
-    ));
+        VizType::EffectsFlow(FxFlow::Effect(FxNode::Reverb))
+    );
 }
 
 #[test]
@@ -508,11 +504,10 @@ fn the_tape_page_is_drive_tone_wow_mix() {
             None
         ]
     );
-    for chain in [&reg::MIX_CHAIN, &reg::MIXER_CHANNEL_CHAIN] {
-        let ids: Vec<u16> = chain.blocks.iter().map(|b| b.def.id).collect();
-        let rev = ids.iter().position(|&i| i == reg::EFX.id).unwrap();
-        assert_eq!(ids[rev + 1], reg::TAPE.id, "{}", chain.name);
-    }
+    let chain = &reg::MIXER_CHANNEL_CHAIN;
+    let ids: Vec<u16> = chain.blocks.iter().map(|b| b.def.id).collect();
+    let rev = ids.iter().position(|&i| i == reg::EFX.id).unwrap();
+    assert_eq!(ids[rev + 1], reg::TAPE.id, "{}", chain.name);
     let mut perf = Performance::new();
     turn_def(&reg::TAPE, 0, 64, &mut perf);
     turn_def(&reg::TAPE, 3, 32, &mut perf);
@@ -539,12 +534,11 @@ fn the_master_page_is_the_compressor_with_level_below() {
     );
     let labels: Vec<&str> = reg::MASTER_LEVEL.params.iter().map(|s| s.label()).collect();
     assert_eq!(labels[..2], ["VOL", "PAN"]);
-    for chain in [&reg::MIX_CHAIN, &reg::MIXER_CHANNEL_CHAIN] {
-        let last = chain.blocks.last().unwrap();
-        assert_eq!(last.def.id, reg::MASTER.id, "{}", chain.name);
-        let subs: Vec<u16> = last.sub_pages.iter().map(|d| d.id).collect();
-        assert_eq!(subs, [reg::MASTER_LEVEL.id], "{}", chain.name);
-    }
+    let chain = &reg::MIXER_CHANNEL_CHAIN;
+    let last = chain.blocks.last().unwrap();
+    assert_eq!(last.def.id, reg::MASTER.id, "{}", chain.name);
+    let subs: Vec<u16> = last.sub_pages.iter().map(|d| d.id).collect();
+    assert_eq!(subs, [reg::MASTER_LEVEL.id], "{}", chain.name);
     let mut perf = Performance::new();
     assert!(!perf.fx.comp.is_on());
     turn_def(&reg::MASTER, 1, 4, &mut perf);
