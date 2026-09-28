@@ -34,7 +34,7 @@ use crate::mod_path::{LABEL_LEN, RegistryError};
 use crate::modulation::{CUTOFF, CUTOFF_LABEL, MAX_MOD_SOURCES, ModSource, ModState};
 use crate::params::ParamSnapshot;
 use crate::perf::load::AudioStats;
-use crate::preset::{POOL_SIZE, PartEdit, Performance, SoundPool};
+use crate::preset::{POOL_SIZE, Performance, SoundPool, part_block, part_block_mut};
 use crate::scope::SCOPE_LEN;
 use block_def::BlockDef;
 use block_def::VizType;
@@ -229,10 +229,11 @@ impl UiState {
         self.theme
     }
 
-    /// The edited Part's blocks and the UI's own (THEME), as one `Blocks`.
+    /// The edited Part's blocks and the System pages' (THEME, MIDI), as one `Blocks`.
     fn blocks(&mut self, part: usize) -> UiBlocks<'_> {
         UiBlocks {
-            part: self.performance.edit(part),
+            perf: &mut self.performance,
+            at: part,
             theme: &mut self.theme,
         }
     }
@@ -589,7 +590,8 @@ impl UiState {
                         continue;
                     }
                     let params = &mut UiBlocks {
-                        part: self.performance.edit(at),
+                        perf: &mut self.performance,
+                        at,
                         theme: &mut self.theme,
                     };
                     match (self.page, shift) {
@@ -983,10 +985,11 @@ fn any_input(controls: &impl Controls) -> bool {
             .any(|&b| controls.button_state(b) == ButtonState::Pressed)
 }
 
-/// A Part's blocks plus the settings the UI holds itself (System › Theme),
-/// so the Theme page edits through the same slot bindings as any other.
+/// A Part's blocks plus the ones the System pages edit (Theme, every
+/// Part's channel), so they edit through the same slot bindings as any other.
 struct UiBlocks<'a> {
-    part: PartEdit<'a>,
+    perf: &'a mut Performance,
+    at: usize,
     theme: &'a mut ThemeSettings,
 }
 
@@ -994,14 +997,16 @@ impl Blocks for UiBlocks<'_> {
     fn block(&self, b: BlockRef) -> Option<&dyn Block> {
         match b {
             BlockRef::Theme => Some(&*self.theme),
-            _ => self.part.block(b),
+            BlockRef::Channels => Some(&self.perf.parts),
+            _ => part_block(&self.perf.parts[self.at], &self.perf.fx, b),
         }
     }
 
     fn block_mut(&mut self, b: BlockRef) -> Option<&mut dyn Block> {
         match b {
             BlockRef::Theme => Some(self.theme),
-            _ => self.part.block_mut(b),
+            BlockRef::Channels => Some(&mut self.perf.parts),
+            _ => part_block_mut(&mut self.perf.parts[self.at], &mut self.perf.fx, b),
         }
     }
 }
