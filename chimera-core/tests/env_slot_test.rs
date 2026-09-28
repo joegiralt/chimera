@@ -206,3 +206,44 @@ fn a_note_on_into_b_env_enters_at_the_level_with_its_shape() {
     ahr.func.shape = 0.9;
     note_on_takes_over_a_sounding_a(ahr);
 }
+
+/// A B LFO near −1 switched to A glides up from there: no step to A's 0.
+#[test]
+fn a_negative_lfo_into_a_glides_from_where_it_was() {
+    let mut lfo = b(Func::Lfo(LfoForm::Free));
+    lfo.func.fall = 0.0; // PHASE 0: the ramp's bottom
+    let mut e = Envelope::new();
+    e.note_on();
+    e.run_block(&lfo, &EnvMods::NONE, true, SR, None);
+    let before = e.output();
+    assert!(before < -0.9, "the LFO is near −1: {before}");
+    let start = e.run_block(&a(), &EnvMods::NONE, true, SR, None);
+    assert!((start - before).abs() < 1e-6, "{before} → {start}");
+}
+
+/// A fast B LFO switched in at +1: the leftover plus the LFO stays within
+/// ±1 through the glide, block starts and on the VCA path.
+#[test]
+fn a_fast_lfo_glide_stays_within_bounds() {
+    let mut lfo = b(Func::Lfo(LfoForm::Free));
+    lfo.func.rise = 1.0; // the top rate
+    for vca in [false, true] {
+        let mut e = Envelope::new();
+        e.note_on();
+        for _ in 0..20 {
+            e.run_block(&a(), &EnvMods::NONE, true, SR, None);
+        }
+        assert!(e.output() > 0.9, "A is near +1: {}", e.output());
+        let mut worst = 0.0f32;
+        for _ in 0..((256 / chimera_hal::BLOCK_SIZE) + 1) {
+            let mut g = [0.0f32; chimera_hal::BLOCK_SIZE];
+            let v = if vca {
+                e.run_block(&lfo, &EnvMods::NONE, true, SR, Some((&mut g, 1.0)))
+            } else {
+                e.run_block(&lfo, &EnvMods::NONE, true, SR, None)
+            };
+            worst = g.iter().fold(worst.max(v.abs()), |w, x| w.max(x.abs()));
+        }
+        assert!(worst <= 1.0 + 1e-6, "vca {vca}: {worst}");
+    }
+}
