@@ -3,17 +3,26 @@ use core::hint::black_box;
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 
+use chimera_core::addr::{BlockRef, ParamAddr};
 use chimera_core::dsp::algo::algorithms::AlgoId;
 use chimera_core::dsp::algo::env::{EnvCoefs, EnvRates, OpEnv};
 use chimera_core::dsp::algo::kernel::{Kernel, KernelBlock, OpBlock, SAMPLE_SCALE};
+use chimera_core::dsp::algo::params::AlgoParams;
 use chimera_core::dsp::algo::plan::{EvalPlan, OPS};
 use chimera_core::dsp::algo::tx::FEEDBACK_CYCLES;
 use chimera_core::dsp::algo::waves::WaveId;
+use chimera_core::dsp::filter::FilterMode;
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus};
+use chimera_core::dsp::modal::ResonatorMode;
+use chimera_core::dsp::modulator::{EnvForm, EnvSlot, EnvType, Func, Glide, LfoForm, LfoType};
 use chimera_core::hw::{BLOCK_SIZE, DAC_PAIRS, MAX_PARTS, MAX_VOICES, SAMPLE_RATE, SampleBudget};
-use chimera_core::instrument::{AudioShared, DacOut, Instrument, PanCache, mix_parts};
+use chimera_core::instrument::{AudioShared, DacOut, Instrument, PanCache, PartAudio, mix_parts};
+use chimera_core::mod_path::ModDestRegistry;
+use chimera_core::modulation::{CUTOFF, MAX_MOD_SOURCES, ModSource, ModState, VCA};
 use chimera_core::note_queue::{NoteEvent, NoteKind};
-use chimera_core::params::{EngineType, ParamSnapshot};
+use chimera_core::params::{
+    EngineType, EnvParams, FilterParams, FolderParams, OutParams, ParamSnapshot,
+};
 use chimera_core::preset::Performance;
 use chimera_core::scope::{ScopeFrame, ScopeWriter, scope_buffer};
 use chimera_core::triple::TripleBuffer;
@@ -118,6 +127,227 @@ fn worst_comp(s: &mut AudioShared) {
     (c.thresh, c.ratio, c.attack, c.release, c.makeup, c.mix) = (0.0, 7, 0.0, 0.0, 0.5, 1.0);
 }
 
+const ROUTING_ROWS: usize = 28;
+/// Rows per ROUTING screen: ten from y 46 at `ROW_H` 25 end at 283.
+const ROUTING_PAGE: usize = 10;
+
+/// A ROUTING row: its label, the Part it plays (params and matrix), set
+/// before the notes, and what it changes before every block. Each VCA row
+/// is 1 OP plus its routes, so each `ModRouting` term is one row less
+/// another.
+type RoutingRow = (&'static str, fn(&mut PartAudio), Each);
+type Each = fn(&mut PartAudio, u32);
+const STILL: Each = |_, _| {};
+const ROUTING: [RoutingRow; ROUTING_ROWS] = [
+    ("1 OP", |p| p.params = algo(AlgoId::A1, 0b1, 0), STILL),
+    ("MODS", mods, STILL),
+    (
+        "SVF",
+        |p| {
+            p.params = algo(AlgoId::A1, 0b1, 0);
+            // The SVF's costliest mode.
+            let _ = p.params.filter.set_mode(FilterMode::Phaser);
+        },
+        STILL,
+    ),
+    ("A VCA", |p| on_vca(p, &[ModSource::Env2], None), STILL),
+    ("B VCA", |p| b_on_vca(p, Func::Env(EnvForm::Ad), 0.5), STILL),
+    // ENV with SHAPE off centre: a curve divide per sample.
+    (
+        "B CURVE",
+        |p| b_on_vca(p, Func::Env(EnvForm::Ad), 0.8),
+        STILL,
+    ),
+    // LFO FREE: a `tilt` divide and a wrap per sample.
+    (
+        "B LFO",
+        |p| b_on_vca(p, Func::Lfo(LfoForm::Free), 0.8),
+        STILL,
+    ),
+    (
+        "B GLIDE",
+        |p| b_on_vca(p, Func::Lfo(LfoForm::Free), 0.8),
+        glide,
+    ),
+    // BURST with TILT off centre: `fast_sin`, square and two `tilt` divides.
+    (
+        "BURST AD",
+        |p| b_on_vca(p, Func::Burst(EnvForm::Ad), 0.8),
+        STILL,
+    ),
+    (
+        "BURST CYC",
+        |p| b_on_vca(p, Func::Burst(EnvForm::Cycle), 0.8),
+        STILL,
+    ),
+    ("VEL VCA", |p| on_vca(p, &[ModSource::Vel], None), STILL),
+    (
+        "2 VCA",
+        |p| on_vca(p, &[ModSource::Vel, ModSource::Note], None),
+        STILL,
+    ),
+    ("LFO VCA", |p| on_vca(p, &[ModSource::Lfo1], None), STILL),
+    ("A SLIDE", |p| slide(p, None), STILL),
+    (
+        "B SLIDE",
+        |p| slide(p, Some((Func::Env(EnvForm::Ad), 0.8))),
+        STILL,
+    ),
+    ("FOLD", |p| one_op(p).folder.fold = 1.0, STILL),
+    ("DRIVE", |p| one_op(p).drive.drive = 1.0, STILL),
+    ("1 DEST", |p| one_dest(p, LfoType::Classic), STILL),
+    ("FUNC LFO", |p| one_dest(p, LfoType::Func), STILL),
+    ("A LEVEL", a_level, STILL),
+    // |x| ≤ 1.4·|dry|: every sample takes `fast_tanh`'s divide.
+    ("DRIVE LO", |p| one_op(p).drive.drive = 0.05, STILL),
+    // `apply_offset`, and the SVF's ramped `g` every block.
+    (
+        "1 CUTOFF",
+        |p| {
+            one_op(p);
+            p.mod_state = matrix(&[(ModSource::Lfo1, CUTOFF, 127)]);
+        },
+        STILL,
+    ),
+    // Driven hard: `saturate` takes its divide on about 1 call in 6, which
+    // the SVF row's level never reaches. HOT − 1 OP is the hot LP24 term.
+    ("LP24 HOT", |p| hot(p, FilterMode::Lp24), STILL),
+    ("SVF HOT", |p| hot(p, FilterMode::Phaser), STILL),
+    // Each Modal model, the default Sound otherwise: `ModalEngine::cost`.
+    ("MDL STR", |p| modal(p, ResonatorMode::String), STILL),
+    ("MDL BOW", |p| modal(p, ResonatorMode::Bowed), STILL),
+    ("MDL SYM", |p| modal(p, ResonatorMode::Sympathetic), STILL),
+    ("MDL RES", |p| modal(p, ResonatorMode::Modal), STILL),
+];
+
+/// The Modal Sound with its model set to `mode`.
+fn modal(p: &mut PartAudio, mode: ResonatorMode) {
+    p.params = ParamSnapshot::for_engine(EngineType::Modal);
+    p.params.modal.mode = mode;
+}
+
+/// 1 OP through the SVF in `mode` at DRIVE 1, RES 1 and CUTOFF 1000 Hz
+/// (not the Sound's 20 kHz: the host sweep's worst for `saturate`).
+fn hot(p: &mut PartAudio, mode: FilterMode) {
+    let f = &mut one_op(p).filter;
+    let _ = f.set_mode(mode);
+    (f.drive, f.cutoff, f.resonance) = (1.0, 1000.0, 1.0);
+}
+
+/// 1 OP, no routes.
+fn one_op(p: &mut PartAudio) -> &mut ParamSnapshot {
+    p.params = algo(AlgoId::A1, 0b1, 0);
+    &mut p.params
+}
+
+/// 1 OP with LFO 1, of type `t`, into MORPH at 127: one destination's
+/// per-block offset.
+fn one_dest(p: &mut PartAudio, t: LfoType) {
+    one_op(p).lfos[0].lfo_type = t;
+    let morph = ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH);
+    p.mod_state = matrix(&[(ModSource::Lfo1, morph, 127)]);
+}
+
+/// A VCA with LFO 1 (1 Hz sine, so moving) into ENV 2's LEVEL: the peak
+/// ramps across every block.
+fn a_level(p: &mut PartAudio) {
+    one_op(p);
+    let level = ParamAddr::new(BlockRef::Env(EnvSlot::Env2), EnvParams::LEVEL);
+    p.mod_state = matrix(&[(ModSource::Env2, VCA, 127), (ModSource::Lfo1, level, 127)]);
+}
+
+/// `routes` as the Part's matrix, each destination primed.
+fn matrix(routes: &[(ModSource, ParamAddr, i8)]) -> ModState {
+    let mut reg = ModDestRegistry::new();
+    for &(_, a, _) in routes {
+        let _ = reg.add(a, *b"BENCH\0\0\0");
+    }
+    let mut ms = ModState::from_registry(&reg, MAX_MOD_SOURCES);
+    for &(s, a, amount) in routes {
+        if let Some(d) = ms.find(a) {
+            ms.set_route(s.index(), d, amount);
+        }
+    }
+    ms
+}
+
+/// 1 OP with `sources` routed to the VCA at 127; with `b`, ENV 2 is type
+/// B running that `Func` at that SHAPE (0.5 linear, 0.8 curved or tilted).
+fn on_vca(p: &mut PartAudio, sources: &[ModSource], b: Option<(Func, f32)>) {
+    p.params = algo(AlgoId::A1, 0b1, 0);
+    if let Some((f, shape)) = b {
+        let e2 = &mut p.params.envelopes[1];
+        e2.env_type = EnvType::B;
+        e2.func.set_func(f);
+        e2.func.shape = shape;
+    }
+    let mut routes = [(ModSource::Env1, VCA, 127); 2];
+    for (r, &s) in routes.iter_mut().zip(sources) {
+        r.0 = s;
+    }
+    p.mod_state = matrix(&routes[..sources.len()]);
+}
+
+/// ENV 2, type B running `f` at `shape`, alone on the VCA.
+fn b_on_vca(p: &mut PartAudio, f: Func, shape: f32) {
+    on_vca(p, &[ModSource::Env2], Some((f, shape)));
+}
+
+/// LFO FREE with a FORM change's glide always running: every
+/// `Glide::SAMPLES` one block runs LFV, so FREE takes over again and a
+/// fresh glide starts before the last one ends. Each change also rebuilds
+/// the coefficients that block.
+fn glide(p: &mut PartAudio, block: u32) {
+    let every = u32::from(Glide::SAMPLES) / BLOCK_SIZE as u32;
+    let form = if block.is_multiple_of(every) {
+        LfoForm::Lfv
+    } else {
+        LfoForm::Free
+    };
+    p.params.envelopes[1].func.set_func(Func::Lfo(form));
+}
+
+/// ENV 2 alone on the VCA (type A, or B per `b`), LFO 1 (1 Hz sine, so
+/// moving) into ENV 2's TIME, RISE, FALL and SHAPE: its coefficients
+/// rebuild every block. At 32 the times move little, so no AD ends early.
+fn slide(p: &mut PartAudio, b: Option<(Func, f32)>) {
+    on_vca(p, &[ModSource::Env2], b);
+    let env2 = |q| ParamAddr::new(BlockRef::Env(EnvSlot::Env2), q);
+    p.mod_state = matrix(&[
+        (ModSource::Env2, VCA, 127),
+        (ModSource::Lfo1, env2(EnvParams::TIME), 32),
+        (ModSource::Lfo1, env2(EnvParams::RISE), 32),
+        (ModSource::Lfo1, env2(EnvParams::FALL), 32),
+        (ModSource::Lfo1, env2(EnvParams::SHAPE), 32),
+    ]);
+}
+
+/// Spec § Tests "Bench": 1 OP; ENV 2 type B, ENV mode, SHAPE off centre →
+/// VCA; ENV 1 → CUTOFF; every source routed; all three LFOs FUNC. FOLD is
+/// stored at 1, so the folder runs whatever LFO 3 does.
+fn mods(p: &mut PartAudio) {
+    b_on_vca(p, Func::Env(EnvForm::Ad), 0.8);
+    p.params.folder.fold = 1.0;
+    for l in p.params.lfos.iter_mut() {
+        l.lfo_type = LfoType::Func;
+    }
+    let res = ParamAddr::new(BlockRef::Filter, FilterParams::RESONANCE);
+    let drive = ParamAddr::new(BlockRef::Filter, FilterParams::DRIVE);
+    let fold = ParamAddr::new(BlockRef::Folder, FolderParams::FOLD);
+    let morph = ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH);
+    let level = ParamAddr::new(BlockRef::Out, OutParams::VOLUME);
+    p.mod_state = matrix(&[
+        (ModSource::Env1, CUTOFF, 64),
+        (ModSource::Env2, VCA, 64),
+        (ModSource::Env3, res, 64),
+        (ModSource::Lfo1, morph, 64),
+        (ModSource::Lfo2, drive, 64),
+        (ModSource::Lfo3, fold, 64),
+        (ModSource::Vel, level, 64),
+        (ModSource::Note, CUTOFF, 64),
+    ]);
+}
+
 static mut SCOPE: TripleBuffer<ScopeFrame> = scope_buffer();
 // A static, not a local: `AudioShared` is 3 KB (ADR 0020).
 static mut SHARED: MaybeUninit<AudioShared> = MaybeUninit::uninit();
@@ -154,23 +384,52 @@ pub fn run(display: &mut impl ChimeraDisplay, clocks: Clocks, perf: &Performance
     let mut rows = [[0u32; MAX_VOICES]; ROWS];
     for (row, &(_, patch, low, step)) in rows.iter_mut().zip(&PATCHES) {
         for n in 1..=MAX_VOICES {
-            row[n - 1] = rig.time(|s| s.parts[0].params = black_box(patch()), n, low, step);
+            let setup = |s: &mut AudioShared| s.parts[0].params = black_box(patch());
+            row[n - 1] = rig.time(setup, |_, _| {}, n, low, step);
         }
     }
     let fx: [u32; FX_ROWS] = core::array::from_fn(|i| rig.time_bus(FX[i].1));
     let kernel = time_kernel();
     show(display, clocks, &rows, kernel, &fx);
+    hold(clocks);
+    let mut routing = [[0u32; MAX_VOICES]; ROUTING_ROWS];
+    for (row, &(_, part, each)) in routing.iter_mut().zip(&ROUTING) {
+        for n in 1..=MAX_VOICES {
+            row[n - 1] = rig.time(
+                |s| {
+                    part(&mut s.parts[0]);
+                    black_box(&s.parts[0]);
+                },
+                |s, b| each(&mut s.parts[0], b),
+                n,
+                36,
+                12,
+            );
+        }
+    }
+    let pages = ROUTING
+        .chunks(ROUTING_PAGE)
+        .zip(routing.chunks(ROUTING_PAGE));
+    for (page, (labels, cycles)) in pages.enumerate() {
+        show_routing(display, page, labels, cycles);
+        hold(clocks);
+    }
+}
+
+fn hold(clocks: Clocks) {
     for _ in 0..HOLD_SECONDS {
         crate::clocks::delay_us(clocks.cpu_hz, 1_000_000);
     }
 }
 
 impl Rig<'_> {
-    /// Voice `v` plays note `low + step * v`.
+    /// Voice `v` plays note `low + step * v`; `each` runs before every
+    /// block, its time counted (a few cycles a block).
     #[inline(never)]
     fn time(
         &mut self,
         setup: impl FnOnce(&mut AudioShared),
+        mut each: impl FnMut(&mut AudioShared, u32),
         voices: usize,
         low: u8,
         step: u8,
@@ -179,9 +438,7 @@ impl Rig<'_> {
         let budget = SampleBudget::for_cpu(u32::MAX);
         let inst = Instrument::init_in_place(self.inst_slot, SAMPLE_RATE, budget);
         let fx = FxBus::init_in_place(self.fx_slot);
-        let shared = self
-            .shared_slot
-            .write(AudioShared::from_performance(self.perf));
+        let shared = AudioShared::init_in_place(self.shared_slot, self.perf);
         setup(shared);
         for v in 0..voices {
             let note = MidiNote::new(low + step * v as u8).unwrap_or(MidiNote::A4);
@@ -192,11 +449,13 @@ impl Rig<'_> {
             };
             inst.handle(ev, shared);
         }
-        for _ in 0..WARM_BLOCKS {
+        for b in 0..WARM_BLOCKS {
+            each(shared, b);
             inst.render(fx, &mut self.dac, shared, &mut self.scope);
         }
         let start = DWT::cycle_count();
-        for _ in 0..TIMED_BLOCKS {
+        for b in 0..TIMED_BLOCKS {
+            each(shared, WARM_BLOCKS + b);
             inst.render(fx, &mut self.dac, shared, &mut self.scope);
         }
         DWT::cycle_count().wrapping_sub(start) / (TIMED_BLOCKS * BLOCK_SIZE as u32)
@@ -207,9 +466,7 @@ impl Rig<'_> {
     #[inline(never)]
     fn time_bus(&mut self, each: fn(&mut AudioShared, u32)) -> u32 {
         let fx = FxBus::init_in_place(self.fx_slot);
-        let shared = self
-            .shared_slot
-            .write(AudioShared::from_performance(self.perf));
+        let shared = AudioShared::init_in_place(self.shared_slot, self.perf);
         for part in shared.parts.iter_mut() {
             part.mix.sends = [0.5; FX_SENDS];
         }
@@ -250,7 +507,8 @@ impl Rig<'_> {
 
 /// Spec § Budget worst case, one kernel per voice: six operators, all with
 /// feedback, six distinct waves crossfading mips `v` and `v + 1` in voice `v`
-/// (about 21 KB of tables, read from their uncached, zero-wait DTCM copy
+/// (the top mip clamps: about 21 KB of tables at six voices, all 64 KB at
+/// eight, read from their uncached, zero-wait DTCM copy
 /// as in the running synth), MORPH moving through 0.5
 /// between A14 and A22 (the masks are written here, before the algorithm
 /// tables exist). The inputs pass through `black_box` so nothing folds.
@@ -341,7 +599,8 @@ fn algo_pair(a: AlgoId, b: AlgoId) -> ParamSnapshot {
 }
 
 const ROW_H: i32 = 25;
-const CELL_W: i32 = 38;
+/// One count per voice across the screen: 29 px holds five digits at eight.
+const CELL_W: i32 = (theme::SCREEN_W - 8) / MAX_VOICES as i32;
 
 fn show(
     display: &mut impl ChimeraDisplay,
@@ -366,10 +625,12 @@ fn show(
         16,
         theme::INK,
     );
+    line.clear();
+    let _ = write!(line, "CYCLES/SAMPLE, 1..{MAX_VOICES} VOICES");
     draw::text(
         display,
         &theme::FONT_LABEL,
-        "CYCLES/SAMPLE, 1..6 VOICES",
+        line.as_str(),
         4,
         30,
         theme::MID,
@@ -407,7 +668,33 @@ fn show(
     display.flush();
 }
 
-/// `label`'s per-voice cost (six voices minus one, over five) and its six counts.
+/// ROUTING screen `page` (from 0): `rows`' labels and their counts.
+fn show_routing(
+    display: &mut impl ChimeraDisplay,
+    page: usize,
+    rows: &[RoutingRow],
+    cycles: &[[u32; MAX_VOICES]],
+) {
+    draw::fill_rect(display, 0, 0, theme::SCREEN_W, theme::SCREEN_H, theme::BG);
+    let mut line = FmtBuf::new();
+    let pages = ROUTING_ROWS.div_ceil(ROUTING_PAGE);
+    let _ = write!(line, "ROUTING {}/{pages}", page + 1);
+    draw::text(
+        display,
+        &theme::FONT_VALUE,
+        line.as_str(),
+        4,
+        16,
+        theme::INK,
+    );
+    for (i, (&(label, ..), c)) in rows.iter().zip(cycles).enumerate() {
+        voice_row(display, &mut line, 46 + i as i32 * ROW_H, label, c);
+    }
+    display.flush();
+}
+
+/// `label`'s per-voice cost (the full pool minus one voice, over one fewer
+/// than the pool) and its count at each voice count.
 fn voice_row(
     display: &mut impl ChimeraDisplay,
     line: &mut FmtBuf,
@@ -419,7 +706,7 @@ fn voice_row(
     line.clear();
     let _ = write!(line, "{label} /VOICE {per_voice}");
     draw::text(display, &theme::FONT_VALUE, line.as_str(), 4, y, theme::INK);
-    // One cell per count: six five-digit counts overflow a `FmtBuf`.
+    // One cell per count: the counts together overflow a `FmtBuf`.
     for (i, c) in cycles.iter().enumerate() {
         line.clear();
         let _ = write!(line, "{c}");

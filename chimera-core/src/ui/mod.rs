@@ -8,9 +8,11 @@ pub mod chain;
 pub mod components;
 pub mod draw;
 pub mod dungeon_map;
+pub mod filter_panel;
 pub mod fmt;
 pub mod focus;
 pub mod mod_grid;
+pub mod mod_panel;
 pub mod page;
 pub mod part_page;
 pub mod perf;
@@ -18,6 +20,7 @@ pub mod region;
 pub mod renderer;
 pub mod theme;
 pub mod theme_settings;
+pub mod view;
 pub mod viz;
 
 use core::mem::MaybeUninit;
@@ -28,10 +31,11 @@ use chimera_hal::{ALL_BUTTONS, ALL_ENCODERS, ButtonId, ButtonState, Controls, PA
 use crate::addr::{BlockRef, Blocks, Op, ParamAddr};
 use crate::block::Block;
 use crate::dsp::lfo::Lfo;
+use crate::dsp::modulator::{EnvSlot, EnvType, LfoSlot, LfoType};
 use crate::in_place::{by_value, uninit_at};
 use crate::mod_path::{LABEL_LEN, RegistryError};
-use crate::modulation::{MAX_MOD_SOURCES, ModState};
-use crate::params::{EnvParams, ParamSnapshot};
+use crate::modulation::{CUTOFF, CUTOFF_LABEL, MAX_MOD_SOURCES, ModSource, ModState};
+use crate::params::ParamSnapshot;
 use crate::perf::load::AudioStats;
 use crate::preset::{POOL_SIZE, Performance, SoundPool, part_block, part_block_mut};
 use crate::scope::SCOPE_LEN;
@@ -44,6 +48,31 @@ use page::{PageKey, PageLayout};
 use perf::PerfStats;
 use renderer::Renderer;
 use theme_settings::ThemeSettings;
+use view::{SlotCtx, View};
+
+/// MIX + turn on a route knob: the next of −127, 0, +127 that way.
+fn snap_amount(a: i8, delta: i8) -> i8 {
+    match (delta > 0, a) {
+        (true, a) if a < 0 => 0,
+        (true, _) => 127,
+        (false, a) if a > 0 => 0,
+        (false, _) => -127,
+    }
+}
+
+/// The address MIX+PLUS primes for a slot's `addr` (Decisions table): an
+/// A stage's time primes the slot's TIME, S its LEVEL; the rest themselves.
+fn prime_target(addr: ParamAddr) -> ParamAddr {
+    use crate::params::EnvParams as E;
+    match (addr.block, addr.param) {
+        (BlockRef::Env(_), E::ATTACK | E::DECAY | E::RELEASE | E::HOLD) => {
+            ParamAddr::new(addr.block, E::TIME)
+        }
+        (BlockRef::Env(_), E::SUSTAIN) => ParamAddr::new(addr.block, E::LEVEL),
+        (BlockRef::Out, crate::params::OutParams::VCA_VEL) => crate::modulation::VCA,
+        _ => addr,
+    }
+}
 
 /// UI mode — Normal chain navigation vs overlay screens.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -116,7 +145,7 @@ pub struct UiState {
     /// Last-touched slot per page: the focus band and MIX + Plus/Minus.
     focus: focus::FocusMemory,
     /// Display-side LFO for animating modulated parameters
-    display_lfo: Lfo,
+    display_lfos: [Lfo; 3],
     /// The last MIX+PLUS outcome; `None` once retired (issue #21).
     prime_status: Option<PrimeStatus>,
     /// System › Theme. Not stored yet: every boot starts at the default.
@@ -136,7 +165,7 @@ crate::in_place::field_list!(UiState => UiState {
     sel_op,
     region_set,
     focus,
-    display_lfo,
+    display_lfos,
     prime_status,
     theme,
 });
@@ -185,7 +214,7 @@ impl UiState {
             addr_of_mut!((*p).sel_op).write(Op::A);
             addr_of_mut!((*p).region_set).write(region::RegionSet::new());
             addr_of_mut!((*p).focus).write(focus::FocusMemory::new());
-            addr_of_mut!((*p).display_lfo).write(Lfo::new());
+            addr_of_mut!((*p).display_lfos).write([Lfo::new(); 3]);
             addr_of_mut!((*p).prime_status).write(None);
             addr_of_mut!((*p).theme).write(ThemeSettings::DEFAULT);
             let ui = slot.assume_init_mut();
@@ -250,6 +279,14 @@ impl UiState {
         self.sel_op
     }
 
+    /// What the edited Part's page slots resolve against.
+    fn ctx(&self) -> SlotCtx {
+        SlotCtx::read(
+            &self.performance.parts[self.active_part].sound.params,
+            self.sel_op,
+        )
+    }
+
     /// Recompute the page identity and jump the display to its values.
     fn enter_page(&mut self) {
         self.page = PageKey::from_nav(&self.nav, self.sel_op);
@@ -263,6 +300,14 @@ impl UiState {
         let def = self.nav.active_block_def();
         let (page, sel_op) = (self.page, self.sel_op);
         let mut values = page_values(page, def, &self.blocks(self.active_part), sel_op);
+        let ctx = self.ctx();
+        for (i, value) in values.iter_mut().enumerate() {
+            if let View::Route { source, .. } = view::view(def, i, &ctx) {
+                *value = renderer::amount_value(
+                    self.matrix_state.route(source.index(), CUTOFF).unwrap_or(0),
+                );
+            }
+        }
         if def.layout == PageLayout::Matrix {
             values[renderer::MATRIX_AMOUNT_SLOT] =
                 renderer::amount_value(self.matrix_state.current_amount());
@@ -286,6 +331,28 @@ impl UiState {
         self.matrix_state.clamp_cursor();
     }
 
+    /// A route knob turned: create CUTOFF's column if needed (MATRIX FULL
+    /// when there is no room), then set `source → CUTOFF` to `f(amount)`.
+    fn edit_route(&mut self, source: crate::modulation::ModSource, f: impl FnOnce(i8) -> i8) {
+        let at = self.active_part;
+        let sound = &mut self.performance.parts[at].sound;
+        if !sound.dest_registry.is_primed(CUTOFF) {
+            if let Err(e) = sound.dest_registry.add(CUTOFF, CUTOFF_LABEL) {
+                self.prime_status = Some(e.into());
+                return;
+            }
+            self.matrix_state
+                .rebuild_dests_from_registry(&sound.dest_registry);
+            self.matrix_state.load_amounts(&sound.mod_state);
+        }
+        if let Some(col) = self.matrix_state.col_of(CUTOFF) {
+            let row = source.index();
+            let a = self.matrix_state.amounts[row][col];
+            self.matrix_state.set(row, col, f(a));
+            self.sync_mod_state(at);
+        }
+    }
+
     /// Rebuild a part's audio-side `ModState` from the matrix.
     fn sync_mod_state(&mut self, part: usize) {
         let sound = &mut self.performance.parts[part].sound;
@@ -299,13 +366,15 @@ impl UiState {
         slot_addr(
             self.nav.active_block_def(),
             self.focused_slot(),
-            self.sel_op,
+            &self.ctx(),
         )
+        .map(prime_target)
     }
 
     /// 8-byte matrix column label for a primed destination: `O<n> ` + spec
-    /// label for operator params, else the page's short name (≤ 3 chars)
-    /// + the slot label.
+    /// label for operator params, else the address's block tag (≤ 3 chars,
+    /// `mod_grid::block_tag` — the page can be a sub-page with a different
+    /// short name, e.g. FLT › MODE for the filter's DRIVE) + the slot label.
     fn mod_label(&self, addr: ParamAddr) -> [u8; LABEL_LEN] {
         let def = self.nav.active_block_def();
         let op_prefix;
@@ -314,11 +383,16 @@ impl UiState {
                 op_prefix = [b'O', b'1' + op.index() as u8, b' '];
                 (&op_prefix, addr.spec().map_or("", |s| s.label))
             }
+            BlockRef::Env(s) => {
+                op_prefix = [b'E', b'1' + s.index() as u8, b' '];
+                (&op_prefix, addr.spec().map_or("", |s| s.label))
+            }
+            _ if addr == crate::modulation::VCA => (b"OUT ".as_slice(), "VCA"),
             _ => {
-                let short = def.short.as_bytes();
+                let short = mod_grid::block_tag(addr.block).as_bytes();
                 (
                     &short[..short.len().min(3)],
-                    def.params[self.focused_slot()].label(),
+                    view::view(def, self.focused_slot(), &self.ctx()).label(),
                 )
             }
         };
@@ -454,7 +528,6 @@ impl UiState {
                     match i {
                         0 => self.matrix_state.move_row(delta),
                         1 => self.matrix_state.move_col(delta),
-                        2 => self.matrix_state.scroll_v(delta),
                         3 => self.matrix_state.scroll_h(delta),
                         4 => {
                             self.matrix_state.adjust_amount(delta);
@@ -464,31 +537,58 @@ impl UiState {
                     }
                 }
             }
+            // MIX + Minus deletes the route under the cursor (spec § 2).
+            if shift && controls.button_state(ButtonId::Minus) == ButtonState::Pressed {
+                self.matrix_state.delete_selected();
+                self.sync_mod_state(self.active_part);
+            }
         } else {
             let at = self.active_part;
+            let before = self.ctx();
             for (i, &enc) in ALL_ENCODERS.iter().enumerate() {
                 let delta = controls.encoder_delta(enc);
-                if delta != 0 {
-                    // An empty slot edits nothing, so it does not take the focus.
-                    if def.params[i].binding != block_def::SlotBinding::Empty {
-                        self.focus.touch(def.id, i);
-                    }
-                    let params = &mut UiBlocks {
-                        perf: &mut self.performance,
-                        at,
-                        theme: &mut self.theme,
-                    };
-                    match (self.page, shift) {
-                        (PageKey::Part { .. }, true) => {
-                            part_page::snap_encoder(def, i, delta, params, self.sel_op)
-                        }
-                        (PageKey::Part { .. }, false) => {
-                            part_page::apply_encoder(def, i, delta, params, &mut self.sel_op)
-                        }
-                        (PageKey::Legacy(p), true) => p.snap_encoder(i, delta, params),
-                        (PageKey::Legacy(p), false) => p.apply_encoder(i, delta, params),
-                    }
+                if delta == 0 {
+                    continue;
                 }
+                let v = view::view(def, i, &self.ctx());
+                // An empty slot edits nothing, so it does not take the focus.
+                if v != View::Empty {
+                    self.focus.touch(def.id, i);
+                }
+                if let View::Route { source, .. } = v {
+                    self.edit_route(source, |a| {
+                        if shift {
+                            snap_amount(a, delta)
+                        } else {
+                            (a as i16 + delta as i16).clamp(-127, 127) as i8
+                        }
+                    });
+                    continue;
+                }
+                if view::is_dimmed(&v, &self.performance.parts[at].sound) {
+                    continue; // dimmed: the encoder is ignored
+                }
+                let params = &mut UiBlocks {
+                    perf: &mut self.performance,
+                    at,
+                    theme: &mut self.theme,
+                };
+                match (self.page, shift) {
+                    (PageKey::Part { .. }, true) => {
+                        part_page::snap_encoder(def, i, delta, params, self.sel_op)
+                    }
+                    (PageKey::Part { .. }, false) => {
+                        part_page::apply_encoder(def, i, delta, params, &mut self.sel_op)
+                    }
+                    (PageKey::Legacy(p), true) => p.snap_encoder(i, delta, params),
+                    (PageKey::Legacy(p), false) => p.apply_encoder(i, delta, params),
+                }
+            }
+            // A KIND, TYPE or operator change re-seeds the page's animators: a lerp
+            // between two parameters' values would draw a meaningless sweep.
+            if self.ctx() != before {
+                let values = self.display_values();
+                self.renderer.snap_to_current(values);
             }
             // The operator selection is part of the page identity.
             self.page = PageKey::from_nav(&self.nav, self.sel_op);
@@ -501,7 +601,16 @@ impl UiState {
                     // refused. Report the outcome in the focus band (#21):
                     // an already-primed address is a silent `Ok` from
                     // `add`, so it must be checked for before calling it.
-                    if let Some(addr) = self.current_param_addr() {
+                    // A dimmed slot that primes itself is refused; one that
+                    // primes elsewhere (AMP's VEL: the VCA) still primes.
+                    let v = view::view(def, self.focused_slot(), &self.ctx());
+                    let sound = &self.performance.parts[at].sound;
+                    if let Some(a) = v.addr()
+                        && prime_target(a) == a
+                        && view::is_dimmed(&v, sound)
+                    {
+                        self.prime_status = Some(PrimeStatus::NotModulatable);
+                    } else if let Some(addr) = self.current_param_addr() {
                         let label = self.mod_label(addr);
                         let sound = &mut self.performance.parts[at].sound;
                         self.prime_status = Some(if sound.dest_registry.is_primed(addr) {
@@ -547,6 +656,7 @@ impl UiState {
         // Read base param values
         let def = self.nav.active_block_def();
         let mut values = self.display_values();
+        let ctx = self.ctx();
         let sound = &self.performance.parts[at].sound;
 
         // Apply mod offsets for display — makes bars and vizzes animate with modulation.
@@ -557,26 +667,37 @@ impl UiState {
             // BLOCK_SIZE · UI_FPS steps it by rate / UI_FPS: real time if
             // the loop runs at UI_FPS frames a second.
             const UI_FPS: u32 = 20;
-            let lfo_val = self
-                .display_lfo
-                .process(&sound.params.lfo, chimera_hal::BLOCK_SIZE as u32 * UI_FPS);
-
+            let p = &sound.params;
             let mut mod_sources = [0.0f32; MAX_MOD_SOURCES];
-            // Source 0 = Envelope (use sustain level as approximation for display)
-            if sound.mod_state.num_sources() > 0 {
-                mod_sources[0] = sound.params.envelopes[0].normalized(EnvParams::SUSTAIN);
+            // Spec § UI: an A slot stands in with its SUS, a B slot with ½;
+            // each CLASSIC LFO its own display LFO, a FUNC LFO 0; VEL 1; NOTE 0.
+            for s in EnvSlot::ALL {
+                let e = &p.envelopes[s.index()];
+                mod_sources[ModSource::of_env(s).index()] = match e.env_type {
+                    EnvType::A => e.sustain,
+                    EnvType::B => 0.5,
+                };
             }
-            // Source 1 = LFO
-            if sound.mod_state.num_sources() > 1 {
-                mod_sources[1] = lfo_val;
+            for s in LfoSlot::ALL {
+                let l = &p.lfos[s.index()];
+                // FUNC is not run: its stand-in is 0, whatever the rate.
+                if l.lfo_type == LfoType::Classic {
+                    mod_sources[ModSource::of_lfo(s).index()] = self.display_lfos[s.index()]
+                        .run_block(l, chimera_hal::BLOCK_SIZE as u32 * UI_FPS);
+                }
             }
+            mod_sources[ModSource::Vel.index()] = 1.0;
 
             // Apply offsets to the 6 display values
             for (i, value) in values.iter_mut().enumerate() {
-                let offset = slot_addr(def, i, self.sel_op)
-                    .map_or(0.0, |a| sound.mod_state.offset_for(a, &mod_sources));
-                if offset != 0.0 {
-                    *value = (*value + offset).clamp(0.0, 1.0);
+                let Some(addr) = slot_addr(def, i, &ctx) else {
+                    continue;
+                };
+                let offset = sound.mod_state.offset_for(addr, &mod_sources);
+                if offset != 0.0
+                    && let Some(spec) = addr.spec()
+                {
+                    *value = spec.offset_normalized(*value, offset);
                 }
             }
         }
@@ -653,6 +774,7 @@ impl UiState {
             perf,
             matrix: &self.matrix_state,
             sel_op: self.sel_op,
+            ctx: self.ctx(),
             focus: self.focused_slot(),
             scope,
             sounding: crate::scope::peak(scope) > crate::scope::SOUNDING_PEAK,
@@ -671,14 +793,20 @@ impl UiState {
         let audio_page = f.def.viz == VizType::AudioStats;
         let (chain, node, sub) = nav_tag(&self.nav);
         match kind {
-            RegionKind::Header => {
-                RegionData::header(chain, node, sub, f.perf.audio_load_pct, f.sounding)
-            }
+            RegionKind::Header => RegionData::header(
+                chain,
+                node,
+                sub,
+                f.perf.audio_load_pct,
+                f.sounding,
+                renderer::title_type(f),
+            ),
             RegionKind::Focus if f.def.layout == PageLayout::Matrix => RegionData::Route {
                 row: self.matrix_state.sel_row as u8,
                 col: self.matrix_state.sel_col as u8,
                 dests: self.matrix_state.num_dests as u8,
                 value: qvalues[renderer::MATRIX_AMOUNT_SLOT],
+                matrix_rev: self.matrix_state.rev,
             },
             RegionKind::Focus => RegionData::focus(
                 self.page,
@@ -688,6 +816,7 @@ impl UiState {
                 } else {
                     qvalues[f.focus]
                 },
+                renderer::look(f, f.focus),
                 self.prime_status,
             ),
             RegionKind::Viz => {
@@ -699,19 +828,21 @@ impl UiState {
                     .filter(|_| f.def.layout == PageLayout::BigViz);
                 RegionData::viz_with_status(self.page, values, live, status)
             }
-            RegionKind::Cells => RegionData::cells(
-                self.page,
-                if audio_page {
-                    audio_page::cells_key(f.audio)
-                } else {
-                    qvalues
-                },
-                f.focus as u8,
-                self.matrix_state.num_dests as u16,
-                core::array::from_fn(|i| {
-                    Renderer::cell_mod_info(f.def, i, f.sel_op, f.matrix).map(f32::to_bits)
-                }),
-            ),
+            RegionKind::Cells => {
+                let looks = (0..6).fold(0u16, |k, i| k | (renderer::look(f, i) as u16) << (2 * i));
+                RegionData::cells(
+                    self.page,
+                    if audio_page {
+                        audio_page::cells_key(f.audio)
+                    } else {
+                        qvalues
+                    },
+                    f.focus as u8,
+                    self.matrix_state.num_dests as u16,
+                    core::array::from_fn(|i| renderer::mod_info(f, i).map(f32::to_bits)),
+                )
+                .keyed(self.matrix_state.rev, looks)
+            }
             RegionKind::Nav => RegionData::nav(
                 chain,
                 node,
@@ -722,9 +853,9 @@ impl UiState {
                 self.matrix_state.sel_row as u8,
                 self.matrix_state.sel_col as u8,
                 self.matrix_state.scroll_x as u8,
-                self.matrix_state.scroll_y as u8,
                 qvalues[renderer::MATRIX_AMOUNT_SLOT],
-            ),
+            )
+            .keyed(self.matrix_state.rev, 0),
         }
     }
 
@@ -748,6 +879,15 @@ impl UiState {
         for (r, d) in self.region_set.active_regions_mut().iter_mut().zip(data) {
             r.prev_data = d;
         }
+    }
+
+    /// The key region `kind` was last drawn with, if the page has it.
+    pub fn drawn_key(&self, kind: region::RegionKind) -> Option<region::RegionData> {
+        self.region_set
+            .active_regions()
+            .iter()
+            .find(|r| r.kind == kind)
+            .map(|r| r.prev_data)
     }
 
     /// Render only dirty regions, with `scope` as the live output and

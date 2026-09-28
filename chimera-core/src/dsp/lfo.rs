@@ -1,8 +1,12 @@
 //! LFO — Low Frequency Oscillator for modulation.
 //! Outputs -1.0 to +1.0 (bipolar) at sub-audio rates.
 
+use chimera_hal::BLOCK_SIZE;
+
 use crate::block::{Block, ParamId, ParamSpec, ValFmt};
 use crate::dsp::fast_sin;
+use crate::dsp::modulator::func::{BCoefs, FuncGen, Slides};
+use crate::dsp::modulator::{Func, FuncParams, Glide, LfoForm, LfoType, pick};
 
 /// LFO waveform shapes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -40,8 +44,11 @@ pub struct LfoParams {
     pub phase_offset: f32,
     /// Output depth multiplier (0.0 to 1.0)
     pub depth: f32,
-    /// DC offset (-1.0 to 1.0) — shifts the output range
+    /// Stored, no longer applied (spec § LFO slots).
     pub offset: f32,
+    pub lfo_type: LfoType,
+    /// FUNC's FORM and sliders; its MODE is always LFO.
+    pub func: FuncParams,
 }
 
 impl Default for LfoParams {
@@ -53,6 +60,8 @@ impl Default for LfoParams {
             phase_offset: 0.0,
             depth: 1.0,  // full depth
             offset: 0.0, // centered (bipolar)
+            lfo_type: LfoType::Classic,
+            func: FuncParams::LFO,
         }
     }
 }
@@ -64,17 +73,28 @@ impl LfoParams {
     pub const PHASE: ParamId = ParamId(3);
     pub const DEPTH: ParamId = ParamId(4);
     pub const OFFSET: ParamId = ParamId(5);
+    pub const TYPE: ParamId = ParamId(6);
+    pub const FORM: ParamId = ParamId(7);
+    pub const RISE: ParamId = ParamId(8);
+    pub const FALL: ParamId = ParamId(9);
+    /// FUNC's SHAPE; `SHAPE` is CLASSIC's wave.
+    pub const SHAPE_B: ParamId = ParamId(10);
 }
 
-/// The LFO source is computed from the unmodulated `params.lfo`; modulating
-/// the LFO itself is out of scope, so nothing here is modulatable.
-pub static LFO_SPECS: [ParamSpec; 6] = [
+/// The LFO sources are computed from the unmodulated `params.lfos`;
+/// modulating an LFO itself is out of scope, so nothing here is modulatable.
+pub static LFO_SPECS: [ParamSpec; 11] = [
     ParamSpec::continuous(0, "RATE", ValFmt::Uni, 0.01, 20.0, 1.0, 0.15, false),
     ParamSpec::choice(1, "SHAPE", ValFmt::Int(4), 4.0, 0.0),
     ParamSpec::choice(2, "SYNC", ValFmt::Int(1), 1.0, 0.0),
     ParamSpec::continuous(3, "PHASE", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false),
     ParamSpec::continuous(4, "DEPTH", ValFmt::Uni, 0.0, 1.0, 1.0, 1.0 / 128.0, false),
     ParamSpec::continuous(5, "OFST", ValFmt::Bi, -1.0, 1.0, 0.0, 2.0 / 128.0, false),
+    ParamSpec::choice(6, "TYPE", ValFmt::Names(&["CLASSIC", "FUNC"]), 1.0, 0.0),
+    ParamSpec::choice(7, "FORM", ValFmt::Names(&["FREE", "SYNC", "LFV"]), 2.0, 0.0),
+    ParamSpec::continuous(8, "RISE", ValFmt::Uni, 0.0, 1.0, 0.309, 1.0 / 128.0, false),
+    ParamSpec::continuous(9, "FALL", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false),
+    ParamSpec::continuous(10, "SHAPE", ValFmt::Bi, 0.0, 1.0, 0.5, 1.0 / 128.0, false),
 ];
 
 impl Block for LfoParams {
@@ -90,6 +110,11 @@ impl Block for LfoParams {
             Self::PHASE => self.phase_offset,
             Self::DEPTH => self.depth,
             Self::OFFSET => self.offset,
+            Self::TYPE => self.lfo_type as u8 as f32,
+            Self::FORM => self.func.form_index(),
+            Self::RISE => self.func.rise,
+            Self::FALL => self.func.fall,
+            Self::SHAPE_B => self.func.shape,
             _ => 0.0,
         }
     }
@@ -102,13 +127,18 @@ impl Block for LfoParams {
             Self::PHASE => self.phase_offset = v,
             Self::DEPTH => self.depth = v,
             Self::OFFSET => self.offset = v,
+            Self::TYPE => self.lfo_type = pick(&LfoType::ALL, v),
+            Self::FORM => self.func.set_form_index(v),
+            Self::RISE => self.func.rise = v,
+            Self::FALL => self.func.fall = v,
+            Self::SHAPE_B => self.func.shape = v,
             _ => {}
         }
     }
 }
 
 /// LFO state.
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct Lfo {
     /// Phase accumulator (0.0 to 1.0)
     phase: f32,
@@ -118,6 +148,22 @@ pub struct Lfo {
     random_value: f32,
     /// Simple PRNG state for random
     rng_state: u32,
+    /// FUNC's generator, and its coefficients with the inputs they came from.
+    func: FuncGen,
+    bc: Option<(FuncParams, u32, BCoefs)>,
+    /// What ran last block; `None` before the first.
+    kind: Option<Kind>,
+    /// A TYPE or FORM change's leftover, gliding out.
+    glide: Glide,
+    /// Last block's output, for the glide.
+    last: f32,
+}
+
+/// What an LFO slot runs: today's LFO, or B locked to LFO mode with a FORM.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Kind {
+    Classic,
+    Func(LfoForm),
 }
 
 impl Default for Lfo {
@@ -127,13 +173,67 @@ impl Default for Lfo {
 }
 
 impl Lfo {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             phase: 0.0,
             output: 0.0,
             random_value: 0.0,
             rng_state: 12345,
+            func: FuncGen::new(),
+            bc: None,
+            kind: None,
+            glide: Glide::NONE,
+            last: 0.0,
         }
+    }
+
+    /// A note-on: a CLASSIC LFO with SYNC 1 restarts at its PHASE; FUNC
+    /// resets on SYNC; FREE and LFV run on.
+    pub fn note_on(&mut self, p: &LfoParams) {
+        match p.lfo_type {
+            LfoType::Classic if p.sync == 1 => self.retrigger(p.phase_offset),
+            LfoType::Classic => {}
+            LfoType::Func => self.func.note_on(Func::Lfo(p.func.lfo_form)),
+        }
+    }
+
+    /// One block (spec § LFO slots): the value at the block's start, then
+    /// the advance. CLASSIC is today's arithmetic, bit for bit.
+    pub fn run_block(&mut self, p: &LfoParams, sample_rate: u32) -> f32 {
+        let kind = match p.lfo_type {
+            LfoType::Classic => Kind::Classic,
+            LfoType::Func => Kind::Func(p.func.lfo_form),
+        };
+        let raw = match p.lfo_type {
+            LfoType::Classic => self.process(p, sample_rate),
+            LfoType::Func => {
+                // Reused while FUNC's inputs hold (it runs per block).
+                let c = match self.bc {
+                    Some((f, sr, c)) if f == p.func && sr == sample_rate => c,
+                    _ => {
+                        let c = BCoefs::new(&p.func, &Slides::default(), sample_rate, false);
+                        self.bc = Some((p.func, sample_rate, c));
+                        c
+                    }
+                };
+                self.func.set(&c);
+                let v = self.func.output();
+                self.func.advance(&c, false, BLOCK_SIZE as u32);
+                v
+            }
+        };
+        if self.kind.replace(kind).is_some_and(|k| k != kind) {
+            self.glide.start(self.last - raw);
+        }
+        // No glide: `raw` itself, so CLASSIC stays bit for bit.
+        let out = if self.glide.active() {
+            (raw + self.glide.value()).clamp(-1.0, 1.0)
+        } else {
+            raw
+        };
+        self.glide.advance(BLOCK_SIZE as u16);
+        self.last = out;
+        out
     }
 
     /// Reset phase (called on note-on if sync mode)
@@ -181,14 +281,13 @@ impl Lfo {
             }
         };
 
-        // Apply depth and offset
-        self.output = raw * params.depth + params.offset;
-        self.output = self.output.clamp(-1.0, 1.0);
+        // Depth; OFFSET is no longer applied (spec § LFO slots).
+        self.output = (raw * params.depth).clamp(-1.0, 1.0);
 
         // Advance phase
         let phase_inc = params.rate / sample_rate as f32;
         // LFO runs at block rate, so multiply by block size
-        self.phase += phase_inc * chimera_hal::BLOCK_SIZE as f32;
+        self.phase += phase_inc * BLOCK_SIZE as f32;
 
         // Wrap phase
         if self.phase >= 1.0 {

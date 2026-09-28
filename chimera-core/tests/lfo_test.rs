@@ -171,45 +171,20 @@ fn lfo_depth_scales_output() {
     );
 }
 
+/// Spec § LFO slots: OFFSET is stored but no longer applied.
 #[test]
-fn lfo_offset_shifts_output() {
-    let mut lfo = Lfo::new();
-    let params = LfoParams {
-        shape: 0, // sine
-        rate: 3.0,
-        depth: 0.5,
+fn lfo_offset_is_not_applied() {
+    let (mut a, mut b) = (Lfo::new(), Lfo::new());
+    let p = LfoParams {
         offset: 0.5,
+        depth: 0.5,
+        rate: 5.0,
         ..Default::default()
     };
-
-    let mut min_out = f32::MAX;
-    let mut max_out = f32::MIN;
-
-    for _ in 0..1000 {
-        let out = lfo.process(&params, SAMPLE_RATE);
-        min_out = min_out.min(out);
-        max_out = max_out.max(out);
+    let q = LfoParams { offset: 0.0, ..p };
+    for _ in 0..500 {
+        assert_eq!(a.process(&p, SAMPLE_RATE), b.process(&q, SAMPLE_RATE));
     }
-
-    // depth=0.5 raw range is -0.5..0.5, offset=0.5 shifts to 0.0..1.0
-    assert!(
-        min_out >= -1.0 && max_out <= 1.0,
-        "output should be clamped to -1..1: min={} max={}",
-        min_out,
-        max_out
-    );
-    // With offset=0.5 and depth=0.5, minimum should be around 0.0
-    assert!(
-        min_out > -0.1,
-        "offset should shift minimum up: min={}",
-        min_out
-    );
-    // Maximum should be around 1.0
-    assert!(
-        max_out > 0.8,
-        "offset should shift maximum up: max={}",
-        max_out
-    );
 }
 
 #[test]

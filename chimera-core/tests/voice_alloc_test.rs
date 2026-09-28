@@ -33,8 +33,11 @@ fn poly_takes_free_voices_round_robin() {
     a.release_finished(0);
     // The next notes continue after the last voice used, wrapping, instead
     // of reusing the just-freed voice 0.
-    let got: Vec<usize> = (70..74).map(|i| voice(on(&mut a, 0, Poly, i))).collect();
-    assert_eq!(got, [3, 4, 5, 0]);
+    let got: Vec<usize> = (0..MAX_VOICES as u8 - 2)
+        .map(|i| voice(on(&mut a, 0, Poly, 70 + i)))
+        .collect();
+    let want: Vec<usize> = (3..MAX_VOICES).chain([0]).collect();
+    assert_eq!(got, want);
 }
 
 #[test]
@@ -305,27 +308,27 @@ fn recost_sheds_a_tail_before_a_held_note() {
 fn a_dying_voice_keeps_its_slot_until_freed() {
     let mut a = Allocator::new(BUDGET);
     let fx = Cost(600);
-    for i in 0..6 {
+    for i in 0..MAX_VOICES as u8 {
         on(&mut a, 0, Poly, 60 + i);
     }
     a.release(2);
-    for v in 0..6 {
+    for v in 0..MAX_VOICES {
         a.recost(v, Cost(1_210));
     }
     assert_eq!(a.shed(fx), Some(2));
     // More over budget: the next shed takes another voice, never 2.
     let mut shed = vec![2];
-    for v in 0..6 {
+    for v in 0..MAX_VOICES {
         a.recost(v, Cost(1_500));
     }
     while let Some(v) = a.shed(fx) {
         assert_ne!(v, 2, "shed twice");
         shed.push(v);
     }
-    for v in 0..6 {
+    for v in 0..MAX_VOICES {
         a.recost(v, Cost(100)); // room again
     }
-    let live = (0..6).find(|v| !shed.contains(v)).unwrap();
+    let live = (0..MAX_VOICES).find(|v| !shed.contains(v)).unwrap();
     a.release(live);
     a.release_finished(live);
     assert_eq!(voice(on(&mut a, 1, Poly, 80)), live, "a free voice first");
@@ -448,20 +451,24 @@ fn allocator_honours_the_budget_it_was_given() {
 fn a_note_on_takes_the_dying_voice_shed_first() {
     let mut a = Allocator::new(BUDGET);
     let fx = Cost(600);
-    for i in 0..6 {
+    // A cost at which `live` voices are just over the budget and one fewer fit.
+    let room = BUDGET.as_cost().0 - fx.0;
+    let one_over = |live: usize| Cost(room / (live as u32 - 1));
+    for i in 0..MAX_VOICES as u8 {
         on(&mut a, 0, Poly, 60 + i);
     }
-    for v in 0..6 {
-        a.recost(v, Cost(1_100)); // 7,200: one must go
+    for v in 0..MAX_VOICES {
+        a.recost(v, one_over(MAX_VOICES)); // one must go
     }
     let first = a.shed(fx).unwrap();
     assert_eq!(a.shed(fx), None);
-    for v in 0..6 {
-        a.recost(v, Cost(1_300)); // another must go
+    for v in 0..MAX_VOICES {
+        a.recost(v, one_over(MAX_VOICES - 1)); // another must go
     }
     let second = a.shed(fx).unwrap();
+    assert_eq!(a.shed(fx), None);
     assert_ne!(first, second);
-    for v in 0..6 {
+    for v in 0..MAX_VOICES {
         a.recost(v, Cost(100));
     }
     assert_eq!(voice(on(&mut a, 1, Poly, 80)), first);

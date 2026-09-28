@@ -10,15 +10,16 @@ use core::ptr::addr_of_mut;
 use chimera_hal::BLOCK_SIZE;
 
 use crate::dsp::algo::engine::{AlgoEngine, AlgoLive};
-use crate::dsp::modal::ModalEngine;
+use crate::dsp::modal::{ModalEngine, ResonatorMode};
 use crate::hw::Cost;
 use crate::in_place::{by_value, uninit_at};
 
 // `reset` rebuilds an engine over the old one without dropping it.
 const _: () =
     assert!(!core::mem::needs_drop::<AlgoEngine>() && !core::mem::needs_drop::<ModalEngine>());
+use crate::addr::{BlockRef, ParamAddr};
 use crate::modulation::ModState;
-use crate::params::{EngineType, ParamSnapshot};
+use crate::params::{EngineType, ParamSnapshot, PitchParams};
 use crate::{MidiNote, Velocity};
 
 pub struct Engines {
@@ -52,6 +53,7 @@ impl Engines {
     }
 
     pub fn note_on(&mut self, kind: EngineType, note: MidiNote, vel: Velocity, p: &ParamSnapshot) {
+        self.set_pitch(kind, p);
         match kind {
             EngineType::Algo => self.algo.note_on(note, vel, &p.algo, self.sample_rate),
             EngineType::Modal => {
@@ -95,9 +97,18 @@ impl Engines {
         p: &ParamSnapshot,
         live: &AlgoLive,
     ) {
+        self.set_pitch(kind, p);
         match kind {
             EngineType::Algo => self.algo.render(out, &p.algo, live, self.sample_rate),
             EngineType::Modal => self.modal.render(out, &p.modal, self.sample_rate),
+        }
+    }
+
+    /// `p`'s pitch offset (ADR 0042) to the engine about to play.
+    fn set_pitch(&mut self, kind: EngineType, p: &ParamSnapshot) {
+        match kind {
+            EngineType::Algo => self.algo.set_pitch(p.pitch.semitones()),
+            EngineType::Modal => self.modal.set_pitch(p.pitch.ratio()),
         }
     }
 
@@ -105,8 +116,16 @@ impl Engines {
     pub fn cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
         match p.engine() {
             EngineType::Algo => AlgoEngine::cost(&p.algo, &mods.algo_levels_routed()),
-            EngineType::Modal => ModalEngine::COST,
+            EngineType::Modal if pitch_routed(mods) => {
+                ModalEngine::cost(&p.modal) + ModalEngine::PITCH
+            }
+            EngineType::Modal => ModalEngine::cost(&p.modal),
         }
+    }
+
+    /// The Modal model the sounding note plays, if Modal is sounding.
+    pub fn modal_playing(&self) -> Option<ResonatorMode> {
+        self.modal.playing()
     }
 
     /// Voice lifetime: is this engine still sounding?
@@ -116,4 +135,11 @@ impl Engines {
             EngineType::Modal => self.modal.is_active(),
         }
     }
+}
+
+/// A route, of any amount, into the voice's PITCH or FINE.
+fn pitch_routed(mods: &ModState) -> bool {
+    [PitchParams::PITCH, PitchParams::FINE]
+        .into_iter()
+        .any(|q| mods.routes_into(ParamAddr::new(BlockRef::Pitch, q)) != 0)
 }

@@ -1,6 +1,7 @@
 //! Direction A drawing primitives (ADR 0016): text in the u8g2 faces, thin
-//! bars, arc gauges, pills, dots and rings. No outline boxes. Every function
-//! ignores draw errors (the targets are infallible framebuffers).
+//! bars, arc gauges, pills, dots and rings. No outline boxes but the matrix
+//! grid's (ADR 0041). Every function ignores draw errors (the targets are
+//! infallible framebuffers).
 
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::geometry::{AngleUnit, Point, Size};

@@ -22,14 +22,21 @@ pub enum ValFmt {
     Names(&'static [&'static str]),
     /// Stereo position: bipolar like `Bi`, shown as `L64`..`C`..`R63`.
     Pan,
+    /// A matrix route's amount (`amount_value`, 0.5 = 0), shown as a
+    /// percentage of 127 (spec § 6).
+    Route,
+    /// A slider shown in its unit (spec § 1's laws).
+    Law(crate::dsp::modulator::law::Law),
 }
 
 impl ValFmt {
     /// Coarse snap points in normalized 0..1 space.
     pub fn snap_points(self) -> &'static [f32] {
         match self {
-            ValFmt::Uni => &[0.0, 100.0 / 127.0, 1.0],
-            ValFmt::Bi | ValFmt::Pan => &[0.0, 20.0 / 127.0, 64.0 / 127.0, 107.0 / 127.0, 1.0],
+            ValFmt::Uni | ValFmt::Law(_) => &[0.0, 100.0 / 127.0, 1.0],
+            ValFmt::Bi | ValFmt::Pan | ValFmt::Route => {
+                &[0.0, 20.0 / 127.0, 64.0 / 127.0, 107.0 / 127.0, 1.0]
+            }
             // Discrete: shift-encoder jumps to 0 or max
             ValFmt::Int(_) | ValFmt::OneBased(_) | ValFmt::Names(_) => &[0.0, 1.0],
             ValFmt::Signed(_) => &[0.0, 0.5, 1.0],
@@ -37,7 +44,10 @@ impl ValFmt {
     }
 
     pub fn is_bipolar(self) -> bool {
-        matches!(self, ValFmt::Bi | ValFmt::Pan | ValFmt::Signed(_))
+        matches!(
+            self,
+            ValFmt::Bi | ValFmt::Pan | ValFmt::Route | ValFmt::Signed(_)
+        )
     }
 
     /// A choice among a few values (channel, mode, output, type): shown as
@@ -77,11 +87,26 @@ pub enum ParamKind {
     Enum,
 }
 
+/// How a matrix offset moves a value (spec § 3; ADR 0010 for `Linear`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum OffsetLaw {
+    /// `v + off·(max − min)`.
+    Linear,
+    /// `v · 2^(n·off)`: `n` octaves at a full offset (CUTOFF).
+    Octaves(f32),
+    /// `v + n·off`: `n` semitones at a full offset (PITCH, ADR 0042).
+    Semitones(f32),
+    /// `v + n·off`: `n` cents at a full offset (FINE, ADR 0042).
+    Cents(f32),
+}
+
 /// Description of one parameter. Lives in flash (`static` tables).
 #[derive(Clone, Copy, Debug)]
 pub struct ParamSpec {
     pub id: ParamId,
     pub label: &'static str,
+    /// Matrix column header when `label` is too wide for it (`CUT`).
+    pub short: Option<&'static str>,
     /// Display format, set explicitly to today's per-slot format.
     pub fmt: ValFmt,
     pub min: f32,
@@ -94,6 +119,8 @@ pub struct ParamSpec {
     pub kind: ParamKind,
     /// True only if `Voice` reads the param per block (see `ParamAddr::modulatable`).
     pub modulatable: bool,
+    /// How a matrix offset applies.
+    pub law: OffsetLaw,
 }
 
 impl ParamSpec {
@@ -111,6 +138,7 @@ impl ParamSpec {
         Self {
             id: ParamId(id),
             label,
+            short: None,
             fmt,
             min,
             max,
@@ -118,6 +146,7 @@ impl ParamSpec {
             step,
             kind: ParamKind::Continuous,
             modulatable,
+            law: OffsetLaw::Linear,
         }
     }
 
@@ -134,6 +163,7 @@ impl ParamSpec {
         Self {
             id: ParamId(id),
             label,
+            short: None,
             fmt,
             min,
             max,
@@ -141,6 +171,7 @@ impl ParamSpec {
             step: 1.0,
             kind: ParamKind::Stepped,
             modulatable,
+            law: OffsetLaw::Linear,
         }
     }
 
@@ -149,6 +180,7 @@ impl ParamSpec {
         Self {
             id: ParamId(id),
             label,
+            short: None,
             fmt,
             min: 0.0,
             max,
@@ -156,6 +188,7 @@ impl ParamSpec {
             step: 1.0,
             kind: ParamKind::Enum,
             modulatable: false,
+            law: OffsetLaw::Linear,
         }
     }
 
@@ -170,7 +203,63 @@ impl ParamSpec {
 
     /// `v` mapped to 0..1 over the range.
     pub fn normalize(&self, v: f32) -> f32 {
+        if self.max == self.min {
+            return 0.0;
+        }
         (v - self.min) / (self.max - self.min)
+    }
+
+    /// This spec with a short column header.
+    pub const fn short(self, short: &'static str) -> Self {
+        Self {
+            short: Some(short),
+            ..self
+        }
+    }
+
+    /// This spec with the octave law.
+    pub const fn octaves(self, n: f32) -> Self {
+        Self {
+            law: OffsetLaw::Octaves(n),
+            ..self
+        }
+    }
+
+    /// This spec with the semitone law.
+    pub const fn semitones(self, n: f32) -> Self {
+        Self {
+            law: OffsetLaw::Semitones(n),
+            ..self
+        }
+    }
+
+    /// This spec with the cent law.
+    pub const fn cents(self, n: f32) -> Self {
+        Self {
+            law: OffsetLaw::Cents(n),
+            ..self
+        }
+    }
+
+    /// `v` moved by a matrix offset `off`, clamped to the range.
+    pub fn offset(&self, v: f32, off: f32) -> f32 {
+        match self.law {
+            OffsetLaw::Linear => (v + off * (self.max - self.min)).clamp(self.min, self.max),
+            OffsetLaw::Octaves(n) => (v * crate::dsp::fast_exp2(n * off)).clamp(self.min, self.max),
+            OffsetLaw::Semitones(n) | OffsetLaw::Cents(n) => {
+                (v + off * n).clamp(self.min, self.max)
+            }
+        }
+    }
+
+    /// `offset` on a 0..1 display value (the UI's mod bars).
+    pub fn offset_normalized(&self, n: f32, off: f32) -> f32 {
+        match self.law {
+            OffsetLaw::Linear => (n + off).clamp(0.0, 1.0),
+            OffsetLaw::Octaves(_) | OffsetLaw::Semitones(_) | OffsetLaw::Cents(_) => {
+                self.normalize(self.offset(self.min + n * (self.max - self.min), off))
+            }
+        }
     }
 }
 
@@ -235,12 +324,11 @@ pub trait Block {
     }
 }
 
-/// Apply a modulation offset (spec §4): `(v + off * (max - min)).clamp(min, max)`,
-/// written raw. Bit-identical to the former `Param::apply_mod_offset`; never
-/// rounds (a Stepped value stays fractional). Audio-thread safe: no allocation.
+/// Apply a modulation offset (spec §4) by the spec's law, written raw.
+/// Bit-identical to the former `Param::apply_mod_offset`; never rounds (a
+/// Stepped value stays fractional). Audio-thread safe: no allocation.
 pub fn apply_offset(blk: &mut dyn Block, id: ParamId, off: f32) {
     if let Some(s) = blk.spec(id) {
-        let v = (blk.get(id) + off * (s.max - s.min)).clamp(s.min, s.max);
-        blk.write(id, v);
+        blk.write(id, s.offset(blk.get(id), off));
     }
 }

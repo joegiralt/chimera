@@ -196,7 +196,11 @@ fn priming_a_part_param_is_refused() {
             .button(ButtonId::Mix, ButtonState::Held)
             .button(ButtonId::Plus, ButtonState::Pressed),
     );
-    assert!(ui.performance.parts[0].sound.dest_registry.is_empty());
+    assert_eq!(
+        ui.performance.parts[0].sound.dest_registry.len(),
+        1,
+        "only the default CUTOFF"
+    );
 }
 
 mod screen;

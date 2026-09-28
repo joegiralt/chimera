@@ -247,7 +247,6 @@ fn test_desktop_filter_affects_output() {
             *ui.params_mut() = tri();
 
             ui.params_mut().filter.cutoff = 200.0;
-            ui.params_mut().filter.mode = 2;
         },
         60,
         16,
@@ -362,7 +361,6 @@ fn test_desktop_mid_note_filter_sweep() {
     *ui.params_mut() = tri();
 
     ui.params_mut().filter.cutoff = 10000.0;
-    ui.params_mut().filter.mode = 2;
 
     let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
     voice.note_on(

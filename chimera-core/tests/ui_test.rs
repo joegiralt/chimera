@@ -176,10 +176,18 @@ fn test_page_from_nav_part_chain() {
         nav.node = node;
         assert_eq!(PageKey::from_nav(&nav, Op::A), part(def), "node {node}");
     }
-    nav.sub_page = 1;
-    assert_eq!(PageKey::from_nav(&nav, Op::A), part(&reg::ENVELOPE)); // Envelope at sub_page 1
-    nav.sub_page = 2;
-    assert_eq!(PageKey::from_nav(&nav, Op::A), part(&reg::LFO)); // LFO at sub_page 2
+    for (sub, def) in [
+        (1, &reg::ENVELOPE),
+        (2, &reg::ENV_2),
+        (3, &reg::ENV_3),
+        (4, &reg::ENV_SPEED),
+        (5, &reg::LFO),
+        (6, &reg::LFO_2),
+        (7, &reg::LFO_3),
+    ] {
+        nav.sub_page = sub;
+        assert_eq!(PageKey::from_nav(&nav, Op::A), part(def), "sub-page {sub}");
+    }
     // The operator selection is part of a Part page's identity.
     assert_ne!(
         PageKey::from_nav(&nav, Op::B),
@@ -238,11 +246,18 @@ fn test_drive_block_formats_in_registry() {
 }
 
 #[test]
-fn test_filter_env_amount_bipolar_in_registry() {
+fn test_filter_mode_is_named_in_registry() {
     use chimera_core::ui::block_registry;
     use chimera_core::ui::page::ValFmt;
-    let def = &block_registry::FILTER;
-    assert_eq!(def.params[4].format(), ValFmt::Bi); // ENV amount
+    use chimera_core::ui::view::{SlotCtx, view};
+    let ctx = SlotCtx::read(
+        &chimera_core::params::ParamSnapshot::default(),
+        chimera_core::addr::Op::A,
+    );
+    assert!(matches!(
+        view(&block_registry::FILTER, 3, &ctx).fmt(),
+        ValFmt::Names(_)
+    ));
 }
 
 #[test]
