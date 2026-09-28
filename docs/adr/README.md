@@ -40,11 +40,11 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0032](0032-modal-code-provenance.md) | Modal's string is the owner's own code; Rings-derived parts keep Mutable's MIT notice | Accepted |
 | [0033](0033-theme-applied-in-the-display-shell.md) | The theme is applied in the display shell, not the renderer | Proposed |
 | [0034](0034-watchdog-kicked-by-audio-heartbeat.md) | The IWDG resets on a stalled audio interrupt, kicked from the controls tick | Proposed |
-| [0035](0035-every-connection-is-a-matrix-route.md) | Every connection from a modulator to the sound is a matrix route | Proposed |
-| [0036](0036-cascadia-style-modulators.md) | ENV slots follow the Cascadia's Envelopes A and B; LFO slots are CLASSIC or FUNC | Proposed |
-| [0037](0037-kind-lays-out-the-filter-panel.md) | KIND lays out the filter panel; MODE follows KIND | Proposed |
+| [0035](0035-every-connection-is-a-matrix-route.md) | Every connection from a modulator to the sound is a matrix route | Accepted |
+| [0036](0036-cascadia-style-modulators.md) | ENV slots follow the Cascadia's Envelopes A and B; LFO slots are CLASSIC or FUNC | Accepted |
+| [0037](0037-kind-lays-out-the-filter-panel.md) | KIND lays out the filter panel; MODE follows KIND | Accepted |
 | [0038](0038-delay-sat-zero-still-saturates.md) | The delay's feedback loop saturates at every SAT, SAT 0 included | Proposed |
 | [0039](0039-six-encoders-no-main-encoder.md) | Six encoders; no main encoder | Proposed |
 | [0040](0040-eight-voices-modal-strings-to-g1.md) | Eight voices in D2; Modal strings sized to G1 (supersedes in part 0014 and 0031) | Accepted |
-| [0041](0041-mod-matrix-amount-grid.md) | The mod matrix is an amount grid of outlined cells (supersedes in part 0016) | Proposed |
-| [0042](0042-voice-pitch-is-a-matrix-destination.md) | Voice pitch is a matrix destination on each engine's PITCH page | Proposed |
+| [0041](0041-mod-matrix-amount-grid.md) | The mod matrix is an amount grid of outlined cells (supersedes in part 0016) | Accepted |
+| [0042](0042-voice-pitch-is-a-matrix-destination.md) | Voice pitch is a matrix destination on each engine's PITCH page | Accepted |
