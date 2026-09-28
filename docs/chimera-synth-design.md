@@ -34,7 +34,7 @@ Chimera is a custom firmware for the PreenFM3 hardware platform, replacing the s
 | 0x30040000 | 32 KB | D2 SRAM3 | Spare |
 | 0x38000000 | 64 KB | D3 SRAM | Low-power accessible |
 
-Note: D2 SRAM cacheability/bufferability is configured by MPU, not fixed by address. Audio DMA buffers (3 SAI streams x 256 samples x 2 channels x 4 bytes = ~6 KB total) are a small fraction of D2.
+Note: D2 SRAM cacheability/bufferability is configured by MPU, not fixed by address. Audio DMA rings (3 SAI streams x 2 halves x 64 frames x 2 channels x 4 bytes = 3 KB, `chimera-stm32/src/audio/dma.rs`) are a small fraction of D2.
 
 ### Audio — SAI (Serial Audio Interface)
 - SAI1 Block A: PE2(MCLK) PE4(FS) PE5(SCK) PE6(SD) — DAC pair 1
@@ -42,7 +42,7 @@ Note: D2 SRAM cacheability/bufferability is configured by MPU, not fixed by addr
 - SAI2 Block A: PD11(SD) — DAC pair 3
 - 48 kHz, 32-bit, circular DMA (DMA1 streams 0-2)
 - 3x CS4344 DACs = 6 mono outputs (3 stereo pairs)
-- DMA buffer: 256 samples per half-transfer = ~5.3 ms latency
+- DMA buffer: 64 frames per half-transfer = ~1.33 ms latency
 - Render block size: 64 samples (half-buffer, processed in DMA half-transfer ISR)
 
 ### Display
