@@ -66,6 +66,23 @@ fixing that needs fractional delay reads (#163). Algo's pitch steps per
 block, as the note does (#164). The PIT page has four free cells for GLIDE
 and SLEW.
 
+The sympathetic ratios are fixed at note-on, so an INHARM edit mid-note
+does not retune a sounding Sympathetic voice. That matches main, where
+Modal's settings are read at note-on and none is modulatable; only this
+branch's first cut retuned them, and only on a pitch change.
+
+Measuring the retune showed Modal's flat `ModalEngine::COST` (390, benched
+on String) undercounted the other models several times over (#49). Modal
+is now billed per model (`ModalEngine::cost`): String 390 as benched;
+Bowed 620, Sympathetic 1,400 and the resonator bank 460 + 45 a mode (1,900
+at its 32) provisional, from the emulator scaled to String's bench reading
+and rounded up about 10 %, until the bench's MDL rows (ROUTING 3/3) read
+them. Beside the whole FX bus that gives, on rev V and rev Y: String 8
+and 8 voices, Bowed 8 and 6, Sympathetic 3 and 3, the bank 2 and 2. No
+factory Sound is Modal, so their counts are unchanged. The bill follows
+the Part's stored model, while a sounding voice keeps its note-on model
+until its next note (#183).
+
 RAM, measured with `memory_budget_test` after this change: `PitchParams`
 adds 8 B to `ParamSnapshot`; the engines' pitch state and Modal's seven
 sympathetic ratios take `Voice` to 35,248 B. `[Voice; 8]` is 281,984 B of
