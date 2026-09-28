@@ -104,6 +104,11 @@ pub fn fast_tan(x: f32) -> f32 {
     x * (1.0 + x2 * (1.0 / 3.0 + x2 * (2.0 / 15.0)))
 }
 
+/// `2^x`, exact at integers, relative error below 1e-6 (spec § Signal flow).
+pub use self::algo::math::exp2 as fast_exp2;
+/// `log2(x)` for `x > 0`, absolute error below 3e-5.
+pub use self::algo::math::log2 as fast_log2;
+
 pub mod algo;
 pub mod chorus;
 pub mod comp;
