@@ -52,6 +52,7 @@ impl Engines {
     }
 
     pub fn note_on(&mut self, kind: EngineType, note: MidiNote, vel: Velocity, p: &ParamSnapshot) {
+        self.set_pitch(kind, p);
         match kind {
             EngineType::Algo => self.algo.note_on(note, vel, &p.algo, self.sample_rate),
             EngineType::Modal => {
@@ -95,9 +96,18 @@ impl Engines {
         p: &ParamSnapshot,
         live: &AlgoLive,
     ) {
+        self.set_pitch(kind, p);
         match kind {
             EngineType::Algo => self.algo.render(out, &p.algo, live, self.sample_rate),
             EngineType::Modal => self.modal.render(out, &p.modal, self.sample_rate),
+        }
+    }
+
+    /// `p`'s pitch offset (ADR 0042) to the engine about to play.
+    fn set_pitch(&mut self, kind: EngineType, p: &ParamSnapshot) {
+        match kind {
+            EngineType::Algo => self.algo.set_pitch(p.pitch.semitones()),
+            EngineType::Modal => self.modal.set_pitch(p.pitch.ratio()),
         }
     }
 

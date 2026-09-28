@@ -8,7 +8,7 @@ use crate::dsp::modal::ModalParams;
 use crate::dsp::modulator::{EnvSlot, LfoSlot};
 use crate::dsp::reverb::ReverbParams;
 use crate::dsp::tape::TapeParams;
-use crate::params::{DriveParams, EnvParams, FilterParams, FolderParams, OutParams};
+use crate::params::{DriveParams, EnvParams, FilterParams, FolderParams, OutParams, PitchParams};
 use crate::part::PartParams;
 use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2, FxFlow, FxNode, ParamSlot, VizType};
 use crate::ui::page::{PageLayout, ValFmt};
@@ -49,6 +49,27 @@ pub static MODAL_2: BlockDef = BlockDef {
         ParamSlot::param(BlockRef::Modal, ModalParams::KS_ENS_DEPTH),
         ParamSlot::param(BlockRef::Modal, ModalParams::KS_ENS_RATE),
         ParamSlot::param(BlockRef::Modal, ModalParams::KS_ENS_MIX),
+    ],
+};
+
+// ---------------------------------------------------------------------------
+// Voice pitch (ADR 0042): a sub-page of every engine's node
+// ---------------------------------------------------------------------------
+
+/// PIT: the voice's PITCH and FINE; C–F are kept for GLIDE and SLEW.
+pub static PITCH: BlockDef = BlockDef {
+    id: 66,
+    name: "Pitch",
+    short: "PIT",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::param(BlockRef::Pitch, PitchParams::PITCH),
+        ParamSlot::param(BlockRef::Pitch, PitchParams::FINE),
+        EMPTY,
+        EMPTY,
+        EMPTY,
+        EMPTY,
     ],
 };
 
@@ -410,7 +431,7 @@ pub static PART_MOD_SOURCES: [&str; crate::modulation::MAX_MOD_SOURCES] = [
 static MOD_SUB_PAGES: [&BlockDef; 7] =
     [&ENVELOPE, &ENV_2, &ENV_3, &ENV_SPEED, &LFO, &LFO_2, &LFO_3];
 
-static MODAL_SUB_PAGES: [&BlockDef; 1] = [&MODAL_2];
+static MODAL_SUB_PAGES: [&BlockDef; 2] = [&MODAL_2, &PITCH];
 
 static MODAL_PLUCK_BLOCKS: [ChainBlock; 4] = [
     ChainBlock::with_subs(&MODAL_1, &MODAL_SUB_PAGES),
@@ -448,7 +469,7 @@ static ALGO_OSC_SUB_PAGES: [&BlockDef; 12] = [
 
 /// ALGO is the engine's home: first on the map, where entering the chain lands.
 static ALGO_BLOCKS: [ChainBlock; 6] = [
-    ChainBlock::page(&ALGO_ALG),
+    ChainBlock::with_subs(&ALGO_ALG, &[&PITCH]),
     ChainBlock::with_subs(&ALGO_WAVE, &ALGO_OSC_SUB_PAGES),
     ChainBlock::page(&DRIVE),
     ChainBlock::with_subs(&FILTER, &FILTER_SUB_PAGES),

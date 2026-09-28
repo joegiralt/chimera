@@ -82,12 +82,15 @@ pub struct AlgoEngine {
     norm: f32,
     swap: Swap,
     note: MidiNote,
+    /// The voice's pitch offset in semitones (`set_pitch`, ADR 0042).
+    pitch: f32,
     velocity: f32,
     active: bool,
 }
 
 crate::in_place::field_list!(AlgoEngine => AlgoEngine {
-    kernel, env, plan, plan_key, waves, rates, gain, mip, morph, norm, swap, note, velocity, active,
+    kernel, env, plan, plan_key, waves, rates, gain, mip, morph, norm, swap, note, pitch, velocity,
+    active,
 });
 
 impl Default for AlgoEngine {
@@ -167,6 +170,7 @@ impl AlgoEngine {
             addr_of_mut!((*p).norm).write(1.0);
             addr_of_mut!((*p).swap).write(Swap::Idle);
             addr_of_mut!((*p).note).write(MidiNote::A4);
+            addr_of_mut!((*p).pitch).write(0.0);
             addr_of_mut!((*p).velocity).write(1.0);
             addr_of_mut!((*p).active).write(false);
             slot.assume_init_mut()
@@ -208,6 +212,12 @@ impl AlgoEngine {
             self.env[i].note_on(EnvCoefs::new(self.rates[i], note, sr));
         }
         self.active = true;
+    }
+
+    /// The voice's pitch offset in semitones, for the next `note_on` or
+    /// `render`: every operator's frequency, stepped per block as the note is.
+    pub fn set_pitch(&mut self, semitones: f32) {
+        self.pitch = semitones;
     }
 
     pub fn note_off(&mut self) {
@@ -285,7 +295,11 @@ impl AlgoEngine {
 
     /// Cycles per sample of a ratio-1 operator.
     fn cycles(&self, p: &AlgoParams, sr: f32) -> f32 {
-        440.0 * exp2((self.note.get() as f32 + p.transpose as f32 - 69.0) / 12.0) / sr
+        let mut st = self.note.get() as f32 + p.transpose as f32 - 69.0;
+        if self.pitch != 0.0 {
+            st += self.pitch;
+        }
+        440.0 * exp2(st / 12.0) / sr
     }
 
     fn mip_target(

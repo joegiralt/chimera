@@ -237,7 +237,8 @@ pub fn part_block<'a>(part: &'a Part, fx: &'a FxParams, b: BlockRef) -> Option<&
         | BlockRef::Folder
         | BlockRef::Env(_)
         | BlockRef::Lfo(_)
-        | BlockRef::Out => part.sound.params.block(b),
+        | BlockRef::Out
+        | BlockRef::Pitch => part.sound.params.block(b),
     }
 }
 
@@ -263,6 +264,7 @@ pub fn part_block_mut<'a>(
         | BlockRef::Folder
         | BlockRef::Env(_)
         | BlockRef::Lfo(_)
-        | BlockRef::Out => part.sound.params.block_mut(b),
+        | BlockRef::Out
+        | BlockRef::Pitch => part.sound.params.block_mut(b),
     }
 }

@@ -79,6 +79,37 @@ fn the_readout_states_the_effect_in_the_destinations_units() {
         "-30 = -24%"
     );
     assert_eq!(effect(BlockRef::Folder, FolderParams::FOLD, 0), "0 = 0%");
+    use chimera_core::params::PitchParams;
+    let pitch = PitchParams::PITCH;
+    assert_eq!(effect(BlockRef::Pitch, pitch, 32), "+32 = +6.0 st");
+    assert_eq!(effect(BlockRef::Pitch, pitch, -127), "-127 = -24.0 st");
+    assert_eq!(effect(BlockRef::Pitch, pitch, 0), "0 = 0 st");
+    assert_eq!(
+        effect(BlockRef::Pitch, PitchParams::FINE, 32),
+        "+32 = +25 ct"
+    );
+    assert_eq!(
+        effect(BlockRef::Pitch, PitchParams::FINE, -127),
+        "-127 = -100 ct"
+    );
+    assert_eq!(effect(BlockRef::Pitch, PitchParams::FINE, 0), "0 = 0 ct");
+}
+
+/// The voice's pitch reads `VOICE PITCH` in full: `PITCH PITCH` would repeat.
+#[test]
+fn the_readout_names_the_voice_pitch() {
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::params::PitchParams;
+    use chimera_core::ui::fmt::FmtBuf;
+    use chimera_core::ui::mod_grid::{ModDest, block_tag, fmt_readout_dest};
+    let dest = ModDest {
+        addr: ParamAddr::new(BlockRef::Pitch, PitchParams::PITCH),
+        label: [0; 8],
+    };
+    let mut buf = FmtBuf::new();
+    fmt_readout_dest(&mut buf, "LFO 1", &dest);
+    assert_eq!(buf.as_str(), "VOICE PITCH");
+    assert_eq!(block_tag(BlockRef::Pitch), "PIT");
 }
 
 /// A cell with no route names it and shows `--` for the amount.

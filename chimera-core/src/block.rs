@@ -94,6 +94,10 @@ pub enum OffsetLaw {
     Linear,
     /// `v · 2^(n·off)`: `n` octaves at a full offset (CUTOFF).
     Octaves(f32),
+    /// `v + n·off`: `n` semitones at a full offset (PITCH, ADR 0042).
+    Semitones(f32),
+    /// `v + n·off`: `n` cents at a full offset (FINE, ADR 0042).
+    Cents(f32),
 }
 
 /// Description of one parameter. Lives in flash (`static` tables).
@@ -221,11 +225,30 @@ impl ParamSpec {
         }
     }
 
+    /// This spec with the semitone law.
+    pub const fn semitones(self, n: f32) -> Self {
+        Self {
+            law: OffsetLaw::Semitones(n),
+            ..self
+        }
+    }
+
+    /// This spec with the cent law.
+    pub const fn cents(self, n: f32) -> Self {
+        Self {
+            law: OffsetLaw::Cents(n),
+            ..self
+        }
+    }
+
     /// `v` moved by a matrix offset `off`, clamped to the range.
     pub fn offset(&self, v: f32, off: f32) -> f32 {
         match self.law {
             OffsetLaw::Linear => (v + off * (self.max - self.min)).clamp(self.min, self.max),
             OffsetLaw::Octaves(n) => (v * crate::dsp::fast_exp2(n * off)).clamp(self.min, self.max),
+            OffsetLaw::Semitones(n) | OffsetLaw::Cents(n) => {
+                (v + off * n).clamp(self.min, self.max)
+            }
         }
     }
 
@@ -233,7 +256,7 @@ impl ParamSpec {
     pub fn offset_normalized(&self, n: f32, off: f32) -> f32 {
         match self.law {
             OffsetLaw::Linear => (n + off).clamp(0.0, 1.0),
-            OffsetLaw::Octaves(_) => {
+            OffsetLaw::Octaves(_) | OffsetLaw::Semitones(_) | OffsetLaw::Cents(_) => {
                 self.normalize(self.offset(self.min + n * (self.max - self.min), off))
             }
         }

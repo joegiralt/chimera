@@ -61,7 +61,12 @@ pub struct ModalEngine {
     // Sympathetic strings (7 additional resonators)
     sym_strings: [KsString; NUM_SYMPATHETIC],
     // Shared
+    /// The note's frequency per sample, before the pitch offset.
     frequency: f32,
+    /// The voice's pitch ratio (`set_pitch`, ADR 0042), and the one the
+    /// strings are tuned to.
+    pitch: f32,
+    tuned: f32,
     active_mode: ResonatorMode,
     released: bool, // true after note_off
     exciter_remaining: usize,
@@ -73,7 +78,7 @@ pub struct ModalEngine {
 }
 
 crate::in_place::field_list!(ModalEngine => ModalEngine {
-    filters, cos_osc, resolution, string, sym_strings, frequency, active_mode,
+    filters, cos_osc, resolution, string, sym_strings, frequency, pitch, tuned, active_mode,
     released, exciter_remaining, exciter_amp, noise_state, exciter_lp, active, silence_counter,
 });
 
@@ -106,6 +111,8 @@ impl ModalEngine {
                 KsString::init_in_place(uninit_at(sym.add(i)));
             }
             addr_of_mut!((*p).frequency).write(220.0 / 48000.0);
+            addr_of_mut!((*p).pitch).write(1.0);
+            addr_of_mut!((*p).tuned).write(1.0);
             addr_of_mut!((*p).active_mode).write(ResonatorMode::Modal);
             addr_of_mut!((*p).released).write(false);
             addr_of_mut!((*p).exciter_remaining).write(0);
@@ -118,15 +125,28 @@ impl ModalEngine {
         }
     }
 
+    /// The voice's pitch ratio, for the next `note_on` or `render`: the
+    /// resonators' and strings' frequency, per block.
+    pub fn set_pitch(&mut self, ratio: f32) {
+        self.pitch = ratio;
+    }
+
+    /// `f` under the pitch ratio; untouched at 1 (the goldens).
+    fn pitched(&self, f: f32) -> f32 {
+        if self.pitch == 1.0 { f } else { f * self.pitch }
+    }
+
     pub fn note_on(&mut self, note: u8, velocity: u8, params: &ModalParams, sample_rate: u32) {
         self.active_mode = params.mode;
         let vel = velocity as f32 / 127.0;
         let freq = note_to_freq(note);
         self.frequency = freq / sample_rate as f32;
+        let freq = self.pitched(freq);
+        self.tuned = self.pitch;
 
         match self.active_mode {
             ResonatorMode::Modal => {
-                self.compute_filters(params, self.frequency);
+                self.compute_filters(params, self.pitched(self.frequency));
                 self.cos_osc.init(params.position);
                 let burst_ms = 2.0 + params.excite * 4.0;
                 self.exciter_remaining = (burst_ms * sample_rate as f32 / 1000.0) as usize;
@@ -158,13 +178,8 @@ impl ModalEngine {
                     params.ks_color,
                     params.position,
                 );
-                // Sympathetic strings tuned to harmonics/intervals
-                // inharm controls spread: 0=unison, 1=wide harmonic series
-                let intervals = [0.0, 12.0, 7.02, 12.0, 19.02, 24.0, 7.02];
-                for (i, sym) in self.sym_strings.iter_mut().enumerate() {
-                    let detune = intervals[i] * params.inharm;
-                    let sym_freq = freq * semitones_to_ratio(detune);
-                    sym.set_freq(sym_freq, sample_rate);
+                self.tune_sympathetic(freq, params.inharm, sample_rate);
+                for sym in self.sym_strings.iter_mut() {
                     // Sympathetic strings start silent — energy comes from main
                     for s in sym.buffer[..sym.delay_len].iter_mut() {
                         *s = 0.0;
@@ -177,6 +192,33 @@ impl ModalEngine {
         self.active = true;
         self.released = false;
         self.silence_counter = 0;
+    }
+
+    /// Sympathetic strings tuned to harmonics/intervals of `freq`: inharm
+    /// controls spread, 0 unison, 1 a wide harmonic series.
+    fn tune_sympathetic(&mut self, freq: f32, inharm: f32, sample_rate: u32) {
+        let intervals = [0.0, 12.0, 7.02, 12.0, 19.02, 24.0, 7.02];
+        for (i, sym) in self.sym_strings.iter_mut().enumerate() {
+            let detune = intervals[i] * inharm;
+            sym.set_freq(freq * semitones_to_ratio(detune), sample_rate);
+        }
+    }
+
+    /// The strings follow a changed pitch ratio (per block, at a change only).
+    fn retune(&mut self, params: &ModalParams, sample_rate: u32) {
+        if self.pitch == self.tuned {
+            return;
+        }
+        self.tuned = self.pitch;
+        let freq = self.pitched(self.frequency * sample_rate as f32);
+        match self.active_mode {
+            ResonatorMode::Modal => {}
+            ResonatorMode::String | ResonatorMode::Bowed => self.string.set_freq(freq, sample_rate),
+            ResonatorMode::Sympathetic => {
+                self.string.set_freq(freq, sample_rate);
+                self.tune_sympathetic(freq, params.inharm, sample_rate);
+            }
+        }
     }
 
     pub fn note_off(&mut self) {
@@ -275,7 +317,7 @@ impl ModalEngine {
         &mut self,
         output: &mut [f32; BLOCK_SIZE],
         params: &ModalParams,
-        _sample_rate: u32,
+        sample_rate: u32,
     ) {
         if !self.active {
             for s in output.iter_mut() {
@@ -288,9 +330,10 @@ impl ModalEngine {
 
         // Recompute filters every block (Rings does this — allows live parameter changes)
         if self.active_mode == ResonatorMode::Modal {
-            self.compute_filters(params, self.frequency);
+            self.compute_filters(params, self.pitched(self.frequency));
             self.cos_osc.init(params.position);
         }
+        self.retune(params, sample_rate);
 
         match self.active_mode {
             ResonatorMode::String => self.render_string(output, params, &mut max_level),

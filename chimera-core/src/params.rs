@@ -470,6 +470,64 @@ impl Block for OutParams {
     }
 }
 
+/// The voice's pitch offset (ADR 0042): one block for every engine, so a
+/// route to it survives an engine switch.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PitchParams {
+    /// Semitones, −24..=24; a modulated copy stays fractional.
+    pub pitch: f32,
+    /// Cents, −100..=100.
+    pub fine: f32,
+}
+
+impl PitchParams {
+    pub const PITCH: ParamId = ParamId(0);
+    pub const FINE: ParamId = ParamId(1);
+
+    /// The whole offset in semitones.
+    pub fn semitones(&self) -> f32 {
+        self.pitch + self.fine / 100.0
+    }
+
+    /// The frequency ratio, exactly 1 at no offset (no maths: the goldens).
+    pub fn ratio(&self) -> f32 {
+        let st = self.semitones();
+        if st == 0.0 {
+            1.0
+        } else {
+            libm::exp2f(st / 12.0)
+        }
+    }
+}
+
+/// Both read by the engine every block.
+pub static PITCH_SPECS: [ParamSpec; 2] = [
+    ParamSpec::stepped(0, "PITCH", ValFmt::Signed(24), -24.0, 24.0, 0.0, true).semitones(24.0),
+    ParamSpec::stepped(1, "FINE", ValFmt::Signed(100), -100.0, 100.0, 0.0, true).cents(100.0),
+];
+
+impl Block for PitchParams {
+    fn specs(&self) -> &'static [ParamSpec] {
+        &PITCH_SPECS
+    }
+
+    fn get(&self, id: ParamId) -> f32 {
+        match id {
+            Self::PITCH => self.pitch,
+            Self::FINE => self.fine,
+            _ => 0.0,
+        }
+    }
+
+    fn write(&mut self, id: ParamId, v: f32) {
+        match id {
+            Self::PITCH => self.pitch = v,
+            Self::FINE => self.fine = v,
+            _ => {}
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ParamSnapshot {
     /// Private: set only through `for_engine` (and so `Sound::init`) — one
@@ -483,6 +541,7 @@ pub struct ParamSnapshot {
     pub modal: crate::dsp::modal::ModalParams,
     pub lfos: [crate::dsp::lfo::LfoParams; 3],
     pub out: OutParams,
+    pub pitch: PitchParams,
 }
 
 impl ParamSnapshot {
@@ -514,6 +573,7 @@ impl Blocks for ParamSnapshot {
             BlockRef::Env(s) => &self.envelopes[s.index()],
             BlockRef::Lfo(s) => &self.lfos[s.index()],
             BlockRef::Out => &self.out,
+            BlockRef::Pitch => &self.pitch,
             BlockRef::Chorus
             | BlockRef::Delay
             | BlockRef::Reverb
@@ -536,6 +596,7 @@ impl Blocks for ParamSnapshot {
             BlockRef::Env(s) => &mut self.envelopes[s.index()],
             BlockRef::Lfo(s) => &mut self.lfos[s.index()],
             BlockRef::Out => &mut self.out,
+            BlockRef::Pitch => &mut self.pitch,
             BlockRef::Chorus
             | BlockRef::Delay
             | BlockRef::Reverb
@@ -570,6 +631,7 @@ impl Default for ParamSnapshot {
             modal: crate::dsp::modal::ModalParams::default(),
             lfos: [crate::dsp::lfo::LfoParams::default(); 3],
             out: OutParams::default(),
+            pitch: PitchParams::default(),
         }
     }
 }
