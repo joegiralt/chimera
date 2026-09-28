@@ -28,10 +28,11 @@ use chimera_hal::{ALL_BUTTONS, ALL_ENCODERS, ButtonId, ButtonState, Controls, En
 use crate::addr::{BlockRef, Blocks, Op, ParamAddr};
 use crate::block::Block;
 use crate::dsp::lfo::Lfo;
+use crate::dsp::modulator::{EnvSlot, EnvType, LfoSlot, LfoType};
 use crate::in_place::{by_value, uninit_at};
 use crate::mod_path::{LABEL_LEN, RegistryError};
-use crate::modulation::{CUTOFF, CUTOFF_LABEL, MAX_MOD_SOURCES, ModState};
-use crate::params::{EnvParams, ParamSnapshot};
+use crate::modulation::{CUTOFF, CUTOFF_LABEL, MAX_MOD_SOURCES, ModSource, ModState};
+use crate::params::ParamSnapshot;
 use crate::perf::load::AudioStats;
 use crate::preset::{POOL_SIZE, PartEdit, Performance, SoundPool};
 use crate::scope::SCOPE_LEN;
@@ -52,6 +53,19 @@ fn snap_amount(a: i8, delta: i8) -> i8 {
         (true, _) => 127,
         (false, a) if a > 0 => 0,
         (false, _) => -127,
+    }
+}
+
+/// The address MIX+PLUS primes for a slot's `addr` (Decisions table): an
+/// A stage's time primes the slot's TIME, S its LEVEL; the rest themselves.
+fn prime_target(addr: ParamAddr) -> ParamAddr {
+    use crate::params::EnvParams as E;
+    match (addr.block, addr.param) {
+        (BlockRef::Env(_), E::ATTACK | E::DECAY | E::RELEASE | E::HOLD) => {
+            ParamAddr::new(addr.block, E::TIME)
+        }
+        (BlockRef::Env(_), E::SUSTAIN) => ParamAddr::new(addr.block, E::LEVEL),
+        _ => addr,
     }
 }
 
@@ -339,6 +353,7 @@ impl UiState {
             self.focused_slot(),
             self.sel_op,
         )
+        .map(prime_target)
     }
 
     /// 8-byte matrix column label for a primed destination: `O<n> ` + spec
@@ -351,6 +366,10 @@ impl UiState {
         let (prefix, name): (&[u8], &str) = match addr.block {
             BlockRef::AlgoOp(op) => {
                 op_prefix = [b'O', b'1' + op.index() as u8, b' '];
+                (&op_prefix, addr.spec().map_or("", |s| s.label))
+            }
+            BlockRef::Env(s) => {
+                op_prefix = [b'E', b'1' + s.index() as u8, b' '];
                 (&op_prefix, addr.spec().map_or("", |s| s.label))
             }
             _ => {
@@ -652,20 +671,26 @@ impl UiState {
             // BLOCK_SIZE · UI_FPS steps it by rate / UI_FPS: real time if
             // the loop runs at UI_FPS frames a second.
             const UI_FPS: u32 = 20;
-            let lfo_val = self.display_lfos[0].run_block(
-                &sound.params.lfos[0],
-                chimera_hal::BLOCK_SIZE as u32 * UI_FPS,
-            );
-
+            let p = &sound.params;
             let mut mod_sources = [0.0f32; MAX_MOD_SOURCES];
-            // Source 0 = Envelope (use sustain level as approximation for display)
-            if sound.mod_state.num_sources() > 0 {
-                mod_sources[0] = sound.params.envelopes[0].normalized(EnvParams::SUSTAIN);
+            // Spec § UI: an A slot stands in with its SUS, a B slot with ½;
+            // each CLASSIC LFO its own display LFO, a FUNC LFO 0; VEL 1; NOTE 0.
+            for s in EnvSlot::ALL {
+                let e = &p.envelopes[s.index()];
+                mod_sources[ModSource::of_env(s).index()] = match e.env_type {
+                    EnvType::A => e.sustain,
+                    EnvType::B => 0.5,
+                };
             }
-            // Source 1 = LFO
-            if sound.mod_state.num_sources() > 1 {
-                mod_sources[1] = lfo_val;
+            for s in LfoSlot::ALL {
+                let l = &p.lfos[s.index()];
+                // FUNC is not run: its stand-in is 0, whatever the rate.
+                if l.lfo_type == LfoType::Classic {
+                    mod_sources[ModSource::of_lfo(s).index()] = self.display_lfos[s.index()]
+                        .run_block(l, chimera_hal::BLOCK_SIZE as u32 * UI_FPS);
+                }
             }
+            mod_sources[ModSource::Vel.index()] = 1.0;
 
             // Apply offsets to the 6 display values
             for (i, value) in values.iter_mut().enumerate() {

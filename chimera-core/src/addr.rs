@@ -126,10 +126,9 @@ impl BlockRef {
     }
 
     /// Whether `Voice::render` reads this block from its modulated copy and
-    /// hears it without a route of its own. ENV slots feed the matrix and are
-    /// not read as destinations until their LEVEL, TIME, RISE, FALL and SHAPE
-    /// open (filter-routing Task 9); the LFO is read unmodulated; FX run outside
-    /// `Voice`.
+    /// hears it without a route of its own. ENV slots read their LEVEL, TIME,
+    /// RISE, FALL and SHAPE sums per block; the LFO is read unmodulated; FX run
+    /// outside `Voice`.
     pub const fn voice_reads(self) -> bool {
         match self {
             BlockRef::Modal
@@ -138,9 +137,9 @@ impl BlockRef {
             | BlockRef::Drive
             | BlockRef::Filter
             | BlockRef::Folder
-            | BlockRef::Out => true,
-            BlockRef::Env(_)
-            | BlockRef::Lfo(_)
+            | BlockRef::Out
+            | BlockRef::Env(_) => true,
+            BlockRef::Lfo(_)
             | BlockRef::Chorus
             | BlockRef::Delay
             | BlockRef::Reverb

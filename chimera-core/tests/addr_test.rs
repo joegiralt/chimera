@@ -103,6 +103,17 @@ fn modulatable_addresses_are_exactly_the_spec_list() {
     for op in Op::ALL {
         want.push(ParamAddr::new(BlockRef::AlgoOp(op), AlgoOpParams::LEVEL));
     }
+    for s in EnvSlot::ALL {
+        for id in [
+            EnvParams::LEVEL,
+            EnvParams::TIME,
+            EnvParams::RISE,
+            EnvParams::FALL,
+            EnvParams::SHAPE,
+        ] {
+            want.push(ParamAddr::new(BlockRef::Env(s), id));
+        }
+    }
     let got: Vec<ParamAddr> = BlockRef::ALL
         .iter()
         .flat_map(|&b| b.specs().iter().map(move |s| ParamAddr::new(b, s.id)))

@@ -169,3 +169,109 @@ fn a_new_sound_has_the_default_routes() {
         assert!((0..MAX_MOD_SOURCES).all(|src| s.mod_state.amount(src, 0) == 0));
     }
 }
+
+use chimera_core::dsp::modulator::EnvSlot;
+use chimera_core::params::EnvParams;
+
+fn env(s: EnvSlot, id: chimera_core::block::ParamId) -> ParamAddr {
+    ParamAddr::new(BlockRef::Env(s), id)
+}
+
+/// 24 blocks at note 72 under `routes` (source, destination, amount).
+fn render_with(p: &ParamSnapshot, routes: &[(ModSource, ParamAddr, i8)], vel: u8) -> Vec<f32> {
+    let mut reg = ModDestRegistry::new();
+    for &(_, a, _) in routes {
+        let _ = reg.add(a, *b"TEST\0\0\0\0");
+    }
+    let mut ms = ModState::from_registry(&reg, MAX_MOD_SOURCES);
+    for &(s, a, amt) in routes {
+        let d = ms.find(a).unwrap();
+        ms.set_route(s.index(), d, amt);
+    }
+    let mut v = Voice::new(chimera_hal::SAMPLE_RATE);
+    v.note_on(MidiNote::new(72).unwrap(), Velocity::new(vel).unwrap(), p);
+    let mut out = Vec::new();
+    let mut b = [0.0f32; BLOCK_SIZE];
+    for _ in 0..24 {
+        v.render(&mut b, p, &ms);
+        out.extend_from_slice(&b);
+    }
+    out
+}
+
+fn plain() -> ParamSnapshot {
+    let mut p = ParamSnapshot::for_engine(EngineType::Algo);
+    p.filter.cutoff = 1000.0;
+    p
+}
+
+#[test]
+fn env_destinations_are_modulatable() {
+    for s in EnvSlot::ALL {
+        for id in [
+            EnvParams::LEVEL,
+            EnvParams::TIME,
+            EnvParams::RISE,
+            EnvParams::FALL,
+            EnvParams::SHAPE,
+        ] {
+            assert!(env(s, id).modulatable(), "{s:?} {id:?}");
+        }
+        for id in [
+            EnvParams::ATTACK,
+            EnvParams::SUSTAIN,
+            EnvParams::TYPE,
+            EnvParams::HOLD,
+        ] {
+            assert!(!env(s, id).modulatable(), "{s:?} {id:?}");
+        }
+    }
+}
+
+/// VEL → ENV 1 LEVEL at 100 %: ENV 1's peak is the velocity. A LEVEL
+/// route at 0 makes the peak 0, so ENV 1 → CUTOFF then does nothing.
+#[test]
+fn vel_to_level_scales_env1() {
+    let e1_cut = (ModSource::Env1, CUTOFF, 127);
+    let level = |amt| (ModSource::Vel, env(EnvSlot::Env1, EnvParams::LEVEL), amt);
+    // Against the same velocity without the LEVEL route, so the engine's
+    // own velocity response cancels: at full velocity the peak is exactly 1
+    // (1.0 × 127/127), a soft note lowers it.
+    let no_level = |vel| render_with(&plain(), &[e1_cut], vel);
+    assert_eq!(
+        render_with(&plain(), &[e1_cut, level(127)], 127),
+        no_level(127),
+        "full velocity: peak 1"
+    );
+    assert_ne!(
+        render_with(&plain(), &[e1_cut, level(127)], 30),
+        no_level(30),
+        "a soft note: a lower peak"
+    );
+    assert_eq!(
+        render_with(&plain(), &[e1_cut, level(0)], 100),
+        render_with(&plain(), &[(ModSource::Env1, CUTOFF, 0), level(0)], 100)
+    );
+}
+
+/// TIME acts on A; RISE acts on B and not on A.
+#[test]
+fn time_and_rise_reach_their_slots() {
+    let time = (ModSource::Vel, env(EnvSlot::Env1, EnvParams::TIME), 127);
+    let e1 = (ModSource::Env1, CUTOFF, 127);
+    assert_ne!(
+        render_with(&plain(), &[e1, time], 100),
+        render_with(&plain(), &[e1], 100)
+    );
+    let e3 = (ModSource::Env3, CUTOFF, 127); // ENV 3 is B (ENV, AD)
+    let rise3 = (ModSource::Vel, env(EnvSlot::Env3, EnvParams::RISE), 127);
+    assert_ne!(
+        render_with(&plain(), &[e3, rise3], 100),
+        render_with(&plain(), &[e3], 100)
+    );
+    let rise1 = (ModSource::Vel, env(EnvSlot::Env1, EnvParams::RISE), 127);
+    assert_eq!(
+        render_with(&plain(), &[e1, rise1], 100),
+        render_with(&plain(), &[e1], 100)
+    );
+}
