@@ -23,7 +23,9 @@ pub mod viz;
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 
-use chimera_hal::{ALL_BUTTONS, ALL_ENCODERS, ButtonId, ButtonState, Controls, EncoderId};
+use chimera_hal::{
+    ALL_BUTTONS, ALL_ENCODERS, ButtonId, ButtonState, Controls, EncoderId, PART_BUTTONS,
+};
 
 use crate::addr::{BlockRef, Blocks, Op, ParamAddr};
 use crate::block::Block;
@@ -407,15 +409,7 @@ impl UiState {
             }
 
             // Any B-button press: cancel browser
-            let b_buttons = [
-                ButtonId::B1,
-                ButtonId::B2,
-                ButtonId::B3,
-                ButtonId::B4,
-                ButtonId::B5,
-                ButtonId::B6,
-            ];
-            for &btn in &b_buttons {
+            for &btn in &PART_BUTTONS {
                 if controls.button_state(btn) == ButtonState::Pressed {
                     self.ui_mode = UiMode::Normal;
                     return;
@@ -440,15 +434,7 @@ impl UiState {
             ButtonState::Pressed | ButtonState::Held
         );
         if edit_held {
-            let b_buttons = [
-                ButtonId::B1,
-                ButtonId::B2,
-                ButtonId::B3,
-                ButtonId::B4,
-                ButtonId::B5,
-                ButtonId::B6,
-            ];
-            for (i, &btn) in b_buttons.iter().enumerate() {
+            for (i, &btn) in PART_BUTTONS.iter().enumerate() {
                 if controls.button_state(btn) == ButtonState::Pressed {
                     self.ui_mode = UiMode::SoundBrowser {
                         part: i,
@@ -479,17 +465,9 @@ impl UiState {
             ButtonState::Pressed | ButtonState::Held
         );
 
-        let encoder_ids = [
-            EncoderId::A,
-            EncoderId::B,
-            EncoderId::C,
-            EncoderId::D,
-            EncoderId::E,
-            EncoderId::F,
-        ];
         let def = self.nav.active_block_def();
         if def.layout == PageLayout::Matrix {
-            for (i, &enc) in encoder_ids.iter().enumerate() {
+            for (i, &enc) in ALL_ENCODERS.iter().enumerate() {
                 let delta = controls.encoder_delta(enc);
                 if delta != 0 {
                     self.focus.touch(def.id, i);
@@ -508,7 +486,7 @@ impl UiState {
             }
         } else {
             let at = self.active_part;
-            for (i, &enc) in encoder_ids.iter().enumerate() {
+            for (i, &enc) in ALL_ENCODERS.iter().enumerate() {
                 let delta = controls.encoder_delta(enc);
                 if delta != 0 {
                     // An empty slot edits nothing, so it does not take the focus.

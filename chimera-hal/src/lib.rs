@@ -51,6 +51,16 @@ pub enum ButtonId {
     Seq = 11,
 }
 
+/// B1–B6: Part n's button, or with MIX its mixer.
+pub const PART_BUTTONS: [ButtonId; 6] = [
+    ButtonId::B1,
+    ButtonId::B2,
+    ButtonId::B3,
+    ButtonId::B4,
+    ButtonId::B5,
+    ButtonId::B6,
+];
+
 pub const ALL_BUTTONS: [ButtonId; NUM_BUTTONS] = [
     ButtonId::B1,
     ButtonId::B2,

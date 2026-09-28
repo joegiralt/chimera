@@ -403,18 +403,9 @@ static MOD_MATRIX_SUB_PAGES: [&BlockDef; 2] = [&ENVELOPE, &LFO];
 static MODAL_SUB_PAGES: [&BlockDef; 1] = [&MODAL_2];
 
 static MODAL_PLUCK_BLOCKS: [ChainBlock; 3] = [
-    ChainBlock {
-        def: &MODAL_1,
-        sub_pages: &MODAL_SUB_PAGES,
-    },
-    ChainBlock {
-        def: &FILTER,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &MOD_MATRIX,
-        sub_pages: &MOD_MATRIX_SUB_PAGES,
-    },
+    ChainBlock::with_subs(&MODAL_1, &MODAL_SUB_PAGES),
+    ChainBlock::page(&FILTER),
+    ChainBlock::with_subs(&MOD_MATRIX, &MOD_MATRIX_SUB_PAGES),
 ];
 
 pub static MODAL_PLUCK_CHAIN: ChainDef2 = ChainDef2 {
@@ -442,30 +433,12 @@ static ALGO_OSC_SUB_PAGES: [&BlockDef; 12] = [
 
 /// ALGO is the engine's home: first on the map, where entering the chain lands.
 static ALGO_BLOCKS: [ChainBlock; 6] = [
-    ChainBlock {
-        def: &ALGO_ALG,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &ALGO_WAVE,
-        sub_pages: &ALGO_OSC_SUB_PAGES,
-    },
-    ChainBlock {
-        def: &DRIVE,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &FILTER,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &FOLDER,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &MOD_MATRIX,
-        sub_pages: &MOD_MATRIX_SUB_PAGES,
-    },
+    ChainBlock::page(&ALGO_ALG),
+    ChainBlock::with_subs(&ALGO_WAVE, &ALGO_OSC_SUB_PAGES),
+    ChainBlock::page(&DRIVE),
+    ChainBlock::page(&FILTER),
+    ChainBlock::page(&FOLDER),
+    ChainBlock::with_subs(&MOD_MATRIX, &MOD_MATRIX_SUB_PAGES),
 ];
 
 pub static ALGO_CHAIN: ChainDef2 = ChainDef2 {
@@ -475,18 +448,9 @@ pub static ALGO_CHAIN: ChainDef2 = ChainDef2 {
 };
 
 static ENVELOPE_BLOCKS: [ChainBlock; 3] = [
-    ChainBlock {
-        def: &ENV_AMP,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &ENV_FILTER,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &ENV_AUX,
-        sub_pages: &[],
-    },
+    ChainBlock::page(&ENV_AMP),
+    ChainBlock::page(&ENV_FILTER),
+    ChainBlock::page(&ENV_AUX),
 ];
 
 pub static ENVELOPE_CHAIN: ChainDef2 = ChainDef2 {
@@ -534,34 +498,13 @@ pub static SENDS: BlockDef = BlockDef {
 
 /// MIX + B<n>: Part n's mix settings, then the shared FX (spec § UI).
 static MIXER_CHANNEL_BLOCKS: [ChainBlock; 7] = [
-    ChainBlock {
-        def: &PART,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &SENDS,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &CHORUS,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &DELAY,
-        sub_pages: &DELAY_SUB_PAGES,
-    },
-    ChainBlock {
-        def: &EFX,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &TAPE,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &MASTER,
-        sub_pages: &MASTER_SUB_PAGES,
-    },
+    ChainBlock::page(&PART),
+    ChainBlock::page(&SENDS),
+    ChainBlock::page(&CHORUS),
+    ChainBlock::with_subs(&DELAY, &DELAY_SUB_PAGES),
+    ChainBlock::page(&EFX),
+    ChainBlock::page(&TAPE),
+    ChainBlock::with_subs(&MASTER, &MASTER_SUB_PAGES),
 ];
 
 pub static MIXER_CHANNEL_CHAIN: ChainDef2 = ChainDef2 {
@@ -658,26 +601,11 @@ pub static SYS_AUDIO: BlockDef = BlockDef {
 };
 
 static SYSTEM_BLOCKS: [ChainBlock; 5] = [
-    ChainBlock {
-        def: &SYS_MIDI,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &SYS_TUNING,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &SYS_THEME,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &SYS_UPDATES,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &SYS_ABOUT,
-        sub_pages: &[&SYS_AUDIO],
-    },
+    ChainBlock::page(&SYS_MIDI),
+    ChainBlock::page(&SYS_TUNING),
+    ChainBlock::page(&SYS_THEME),
+    ChainBlock::page(&SYS_UPDATES),
+    ChainBlock::with_subs(&SYS_ABOUT, &[&SYS_AUDIO]),
 ];
 
 pub static SYSTEM_CHAIN: ChainDef2 = ChainDef2 {
@@ -764,26 +692,11 @@ pub static DEMO_FM: BlockDef = BlockDef {
 };
 
 static DEMO_BLOCKS: [ChainBlock; 5] = [
-    ChainBlock {
-        def: &DEMO_WAVES,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &DEMO_SHAPES,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &DEMO_MOTION,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &DEMO_FM,
-        sub_pages: &[],
-    },
-    ChainBlock {
-        def: &DEMO_MATRIX,
-        sub_pages: &[],
-    },
+    ChainBlock::page(&DEMO_WAVES),
+    ChainBlock::page(&DEMO_SHAPES),
+    ChainBlock::page(&DEMO_MOTION),
+    ChainBlock::page(&DEMO_FM),
+    ChainBlock::page(&DEMO_MATRIX),
 ];
 
 pub static DEMO_CHAIN: ChainDef2 = ChainDef2 {

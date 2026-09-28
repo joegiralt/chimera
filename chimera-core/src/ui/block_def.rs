@@ -163,6 +163,21 @@ pub struct ChainBlock {
 }
 
 impl ChainBlock {
+    /// A page with no sub-pages.
+    pub const fn page(def: &'static BlockDef) -> Self {
+        Self {
+            def,
+            sub_pages: &[],
+        }
+    }
+
+    pub const fn with_subs(
+        def: &'static BlockDef,
+        sub_pages: &'static [&'static BlockDef],
+    ) -> Self {
+        Self { def, sub_pages }
+    }
+
     pub fn active_def(&self, sub_page: usize) -> &'static BlockDef {
         if self.sub_pages.is_empty() || sub_page == 0 {
             self.def
