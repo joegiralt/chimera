@@ -122,13 +122,6 @@ static mut SCOPE: TripleBuffer<ScopeFrame> = scope_buffer();
 // A static, not a local: `AudioShared` is 3 KB (ADR 0020).
 static mut SHARED: MaybeUninit<AudioShared> = MaybeUninit::uninit();
 
-/// `AudioShared` from `perf` into `slot`; not inlined, so its 3 KB
-/// temporary stays out of the timing loops' frames.
-#[inline(never)]
-fn seed<'s>(slot: &'s mut MaybeUninit<AudioShared>, perf: &Performance) -> &'s mut AudioShared {
-    slot.write(AudioShared::from_performance(perf))
-}
-
 struct Rig<'p> {
     inst_slot: &'static mut MaybeUninit<Instrument>,
     fx_slot: &'static mut MaybeUninit<FxBus>,
@@ -186,7 +179,7 @@ impl Rig<'_> {
         let budget = SampleBudget::for_cpu(u32::MAX);
         let inst = Instrument::init_in_place(self.inst_slot, SAMPLE_RATE, budget);
         let fx = FxBus::init_in_place(self.fx_slot);
-        let shared = seed(self.shared_slot, self.perf);
+        let shared = AudioShared::init_in_place(self.shared_slot, self.perf);
         setup(shared);
         for v in 0..voices {
             let note = MidiNote::new(low + step * v as u8).unwrap_or(MidiNote::A4);
@@ -212,7 +205,7 @@ impl Rig<'_> {
     #[inline(never)]
     fn time_bus(&mut self, each: fn(&mut AudioShared, u32)) -> u32 {
         let fx = FxBus::init_in_place(self.fx_slot);
-        let shared = seed(self.shared_slot, self.perf);
+        let shared = AudioShared::init_in_place(self.shared_slot, self.perf);
         for part in shared.parts.iter_mut() {
             part.mix.sends = [0.5; FX_SENDS];
         }

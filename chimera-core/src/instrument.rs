@@ -71,11 +71,29 @@ impl PartAudio {
     }
 }
 
+crate::in_place::field_list!(AudioShared => AudioShared { parts, fx });
+
 impl AudioShared {
     pub fn from_performance(perf: &Performance) -> Self {
-        Self {
-            parts: core::array::from_fn(|i| PartAudio::of(&perf.parts[i])),
-            fx: perf.fx,
+        // SAFETY: `init_in_place` writes every field of the slot.
+        unsafe { by_value(|slot| Self::init_in_place(slot, perf)) }
+    }
+
+    /// Build from `perf` in `slot`, one `PartAudio` at a time: the stack
+    /// never holds the whole struct.
+    pub fn init_in_place<'s>(slot: &'s mut MaybeUninit<Self>, perf: &Performance) -> &'s mut Self {
+        let p = slot.as_mut_ptr();
+        // SAFETY: `p` comes from a live `&mut MaybeUninit<Self>`, so it is
+        // valid, aligned and unaliased. `field_list!` above fails to compile
+        // if a field is added; each field is written once through a raw
+        // pointer before `assume_init_mut`.
+        unsafe {
+            let parts = addr_of_mut!((*p).parts).cast::<PartAudio>();
+            for (i, part) in perf.parts.iter().enumerate() {
+                parts.add(i).write(PartAudio::of(part));
+            }
+            addr_of_mut!((*p).fx).write(perf.fx);
+            slot.assume_init_mut()
         }
     }
 

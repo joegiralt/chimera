@@ -60,8 +60,14 @@ pub fn take_audio(perf: &Performance) -> Option<(Writer<AudioShared>, Reader<Aud
         return None;
     }
     // SAFETY: the flag lets exactly one caller past, so this is the only
-    // reference to `AUDIO` ever made; it is built in place, one 3 KB copy
-    // at a time.
+    // reference to `AUDIO` ever made.
     let slot = unsafe { &mut *addr_of_mut!(AUDIO) };
-    Some(TripleBuffer::init_in_place(slot, || AudioShared::from_performance(perf)).split())
+    // SAFETY: `AudioShared::init_in_place` writes every field of each slot,
+    // one Part at a time, so no whole `AudioShared` is ever on the stack.
+    let buf = unsafe {
+        TripleBuffer::init_slots_in_place(slot, |s| {
+            AudioShared::init_in_place(s, perf);
+        })
+    };
+    Some(buf.split())
 }
