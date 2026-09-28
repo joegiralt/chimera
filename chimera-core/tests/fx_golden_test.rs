@@ -1,8 +1,6 @@
 //! FX refactor lock (ADR 0011, ADR 0014): chorus, delay and reverb output
 //! frozen bit-for-bit before their buffers were trimmed to what their ranges
-//! need. Re-record only for an intended sound change:
-//!
-//!     GOLDEN_RECORD=1 cargo test -p chimera-core --test fx_golden_test -- --nocapture
+//! need. Re-record only for an intended sound change (`common::golden`).
 
 mod common;
 
@@ -133,27 +131,11 @@ const GOLDENS: &[(&str, u64)] = &[
 
 #[test]
 fn fx_goldens_match() {
-    let record = std::env::var_os("GOLDEN_RECORD").is_some();
-    let mut failures = Vec::new();
-    for (name, fx) in cases() {
-        let hash = fnv1a(&render(fx));
-        if record {
-            println!("    (\"{name}\", 0x{hash:016x}),");
-            continue;
-        }
-        match GOLDENS.iter().find(|g| g.0 == name) {
-            Some(&(_, want)) if want == hash => {}
-            Some(&(_, want)) => {
-                failures.push(format!("{name}: 0x{hash:016x} (want 0x{want:016x})"))
-            }
-            None => failures.push(format!("{name}: no golden recorded")),
-        }
-    }
-    assert!(
-        failures.is_empty(),
-        "fx golden mismatch:\n{}",
-        failures.join("\n")
-    );
+    let got: Vec<_> = cases()
+        .into_iter()
+        .map(|(name, fx)| (name, fnv1a(&render(fx))))
+        .collect();
+    common::golden::check(GOLDENS, &got);
 }
 
 /// ADR 0011's gate for the FX cases, run before their goldens are
