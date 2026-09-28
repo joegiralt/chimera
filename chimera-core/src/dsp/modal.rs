@@ -471,7 +471,7 @@ impl KsString {
             let lfo_inc = ((p.ens_rate + 0.01) * 1000.0) as u32;
             self.ens_lfo_phase = self.ens_lfo_phase.wrapping_add(lfo_inc);
 
-            // Triangle LFO: 0..1..0..-1..0
+            // Unipolar triangle: 0..1..0
             let lfo_raw = (self.ens_lfo_phase >> 16) as i16;
             let lfo_val = if self.ens_lfo_phase & 0x80000000 != 0 {
                 -(lfo_raw as f32 / 32768.0)

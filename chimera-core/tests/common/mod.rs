@@ -18,7 +18,7 @@ use chimera_core::mod_path::ModDestRegistry;
 use chimera_core::modulation::ModState;
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::{EngineType, FilterParams, ParamSnapshot};
-use chimera_core::preset::{ChainType, Sound};
+use chimera_core::preset::Sound;
 use chimera_core::scope::{ScopeWriter, scope_buffer};
 use chimera_core::{MidiChannel, MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
@@ -101,8 +101,8 @@ impl Case {
 /// Init params per engine: the chain's `Sound::init` params.
 pub fn init_params(engine: EngineType) -> ParamSnapshot {
     match engine {
-        EngineType::Algo => Sound::init(ChainType::Algo).params,
-        EngineType::Modal => Sound::init(ChainType::Modal).params,
+        EngineType::Algo => Sound::init(EngineType::Algo).params,
+        EngineType::Modal => Sound::init(EngineType::Modal).params,
     }
 }
 

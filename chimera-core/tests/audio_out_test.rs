@@ -1,5 +1,6 @@
 use chimera_core::audio_out::{
-    DacSample, Half, HalfPlan, desynced, interleave, plan_halves, to_dac,
+    DacSample, Half, HalfPlan, Heartbeat, LSI_MAX_HZ, LSI_NOMINAL_HZ, WATCHDOG_TIMEOUT_MS,
+    desynced, interleave, iwdg_reload_at_div4, kick_gap_us, plan_halves, to_dac,
 };
 use chimera_core::hw::{BLOCK_SIZE, DAC_PAIRS};
 use chimera_core::instrument::DacOut;
@@ -117,4 +118,33 @@ fn desync_tolerates_16_words_either_way_across_the_wrap() {
     assert!(!desynced(4, 244, 256, 16));
     assert!(desynced(128, 145, 256, 16));
     assert!(desynced(0, 128, 256, 16));
+}
+
+#[test]
+fn heartbeat_is_alive_only_when_the_block_count_moves() {
+    let mut h = Heartbeat::default();
+    assert!(!h.advanced(0));
+    assert!(h.advanced(1));
+    assert!(!h.advanced(1));
+    assert!(h.advanced(u32::MAX));
+    assert!(h.advanced(0));
+}
+
+#[test]
+fn watchdog_outlasts_the_healthy_kick_gap_at_the_fastest_lsi() {
+    // 2 × 2 ms ticks + a 1.334 ms block.
+    assert_eq!(kick_gap_us(500, 64, 48_000), 5_334);
+    let shortest_us = WATCHDOG_TIMEOUT_MS as u64 * 1000 * LSI_NOMINAL_HZ as u64 / LSI_MAX_HZ as u64;
+    assert!(
+        shortest_us > kick_gap_us(500, 64, 48_000) as u64,
+        "{shortest_us}"
+    );
+}
+
+/// The count does not depend on the real LSI rate, which only stretches or
+/// shrinks the time it takes.
+#[test]
+fn watchdog_timeout_fits_the_12_bit_reload_at_div4() {
+    assert_eq!(iwdg_reload_at_div4(WATCHDOG_TIMEOUT_MS), 800);
+    assert!(iwdg_reload_at_div4(WATCHDOG_TIMEOUT_MS) <= 0xFFF);
 }

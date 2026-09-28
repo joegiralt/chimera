@@ -27,8 +27,9 @@ pub enum PageId {
     EnvAmp,
     EnvFilter,
     EnvAux,
-    /// System chain pages with no bound slots.
-    System,
+    /// A System chain page with no bound slots, by `BlockDef::id`: the
+    /// pages read no values, so only the def tells them apart.
+    System(u16),
     DemoWaves,
     DemoShapes,
     DemoMotion,
@@ -76,7 +77,7 @@ impl PageId {
             {
                 return None;
             }
-            ChainId::System => PageId::System,
+            ChainId::System => PageId::System(nav.active_block_def().id),
             ChainId::Demo => match nav.node {
                 0 => PageId::DemoWaves,
                 1 => PageId::DemoShapes,
@@ -101,7 +102,7 @@ impl PageId {
             PageId::DemoShapes => DEMO_SHAPES.get(idx).copied(),
             PageId::DemoMotion => DEMO_MOTION.get(idx).copied(),
             PageId::DemoFm => DEMO_FM.get(idx).copied(),
-            PageId::DemoMatrix | PageId::System => None,
+            PageId::DemoMatrix | PageId::System(_) => None,
         }
     }
 

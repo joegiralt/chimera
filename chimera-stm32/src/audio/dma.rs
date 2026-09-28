@@ -26,6 +26,8 @@ static mut RINGS: MaybeUninit<Rings> = MaybeUninit::uninit();
 
 pub static OVERRUNS: AtomicU32 = AtomicU32::new(0);
 pub static DESYNCS: AtomicU32 = AtomicU32::new(0);
+/// Halves rendered, wrapping: the watchdog's audio heartbeat.
+pub static BLOCKS: AtomicU32 = AtomicU32::new(0);
 // Streams 1 and 2 may trail stream 0 by the SAI FIFO (8 words) plus the DMA's.
 const DESYNC_TOLERANCE: u16 = 16;
 
@@ -118,7 +120,7 @@ fn configure_stream(
             .pl()
             .very_high();
         if interrupts {
-            w.htie().enabled().tcie().enabled()
+            w.htie().enabled().tcie().enabled().teie().enabled()
         } else {
             w
         }
@@ -167,6 +169,12 @@ fn DMA1_STR0() {
     // only reads the streams' NDTR.
     let dma1 = unsafe { &*pac::DMA1::ptr() };
     let lisr = dma1.lisr.read();
+    // A transfer error clears stream 0's EN (RM0433, DMA error management):
+    // no more HT or TC, so nothing renders while streams 1 and 2 loop their
+    // last ring.
+    if lisr.teif0().is_error() {
+        crate::panic::silence_and_halt();
+    }
     let (half_done, full_done) = (lisr.htif0().is_half(), lisr.tcif0().is_complete());
     dma1.lifcr.write(|w| {
         if half_done {
@@ -189,6 +197,7 @@ fn DMA1_STR0() {
     let plan = plan_halves(half_done, full_done);
     for half in plan.halves.into_iter().flatten() {
         crate::probe::measure(|| super::render_half(half));
+        BLOCKS.fetch_add(1, Ordering::Relaxed);
     }
     let after = dma1.lisr.read();
     let late = after.htif0().is_half() || after.tcif0().is_complete();

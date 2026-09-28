@@ -14,16 +14,18 @@ mod panic;
 mod priority;
 mod probe;
 mod shared;
+mod watchdog;
 
+use chimera_core::audio_out::Heartbeat;
 use chimera_core::clock_plan::pll3_for;
 use chimera_core::hw::SampleBudget;
+use chimera_core::reset::ResetCause;
 use chimera_core::ui::perf::PerfTracker;
 use chimera_core::ui::theme_settings::ThemeSettings;
 use chimera_hal::ChimeraDisplay;
 use controls::Stm32Controls;
 use cortex_m_rt::{entry, exception, pre_init};
 use display::Stm32Display;
-use priority::Priority;
 use stm32h7xx_hal::gpio::Speed;
 use stm32h7xx_hal::{pac, prelude::*, spi};
 
@@ -56,7 +58,9 @@ fn fp_flush_to_zero(fpu: &mut cortex_m::peripheral::FPU) {
 
 #[exception]
 fn SysTick() {
+    static mut HEARTBEAT: Heartbeat = Heartbeat::new();
     controls::isr_tick();
+    watchdog::kick_if_audio_alive(HEARTBEAT);
 }
 
 #[entry]
@@ -65,6 +69,10 @@ fn main() -> ! {
     let mut cp = cortex_m::Peripherals::take().unwrap();
     fp_flush_to_zero(&mut cp.FPU);
     let dp = pac::Peripherals::take().unwrap();
+
+    // RCC_RSR survives the reset it records; clear it for the next one.
+    let reset_cause = ResetCause::from_rsr(dp.RCC.rsr.read().bits());
+    dp.RCC.rsr.modify(|_, w| w.rmvf().set_bit());
 
     cache::enable_d2_sram();
     let rev = clocks::read_rev(&dp.DBGMCU);
@@ -131,7 +139,8 @@ fn main() -> ! {
         &ccdr.clocks,
     );
 
-    let mut display = Stm32Display::new(spi, dc, reset, cs);
+    let fb = display::take_framebuffer().expect("framebuffer taken once");
+    let mut display = Stm32Display::new(spi, dc, reset, cs, fb);
     clocks::delay_us(clk.cpu_hz, 250_000);
     display.init(clk.cpu_hz);
     // The boot theme is no longer the panel's own reset state (PUNCH, not
@@ -139,7 +148,7 @@ fn main() -> ! {
     // the first change the main loop notices.
     display.set_gamma(theme.gamma.tables());
     display.set_palette(theme.palette());
-    let mut stats_r = probe::init(&mut cp.DCB, &mut cp.DWT, clk);
+    let mut stats_r = probe::init(&mut cp.DCB, &mut cp.DWT, clk, reset_cause);
 
     let mut controls = Stm32Controls::new();
     let ui = shared::take_ui().expect("UI state taken once");
@@ -147,8 +156,7 @@ fn main() -> ! {
     #[cfg(feature = "bench")]
     bench::run(&mut display, clk, &ui.performance);
 
-    controls::start_systick(clk.cpu_hz);
-    priority::set_systick(&mut cp.SCB, Priority::SYSTICK);
+    controls::start_systick(cp.SYST, &mut cp.SCB, clk.cpu_hz);
     controls::enable();
 
     let (scope_w, mut scope_r) = shared::take_scope().expect("scope buffer taken once");
@@ -161,6 +169,7 @@ fn main() -> ! {
     audio::sai::init(clk.rev.new_sai(), pll3.mckdiv);
     audio::dma::clear();
     audio::prefill();
+    watchdog::start(dp.IWDG, &dp.DBGMCU);
     audio::dma::init(&mut cp.NVIC);
     audio::dma::start();
     audio::sai::start();
