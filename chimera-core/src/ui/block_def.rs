@@ -7,9 +7,9 @@ pub enum VizType {
     None,
     FilterResponse,
     Adsr,
-    LpgResponse,
     Logo,
-    EffectsFlow,
+    /// IN → CHR → DLY → REV → OUT, lighting this page's part of it.
+    EffectsFlow(FxFlow),
     MixerLevels,
     CompressorCurve,
     AudioStats,
@@ -17,6 +17,22 @@ pub enum VizType {
     AlgoDiagram,
     /// SPD: each slot's SPEED and HOLD POSITION.
     EnvSpeed,
+}
+
+/// A node of the FX flow; the value is its index in `viz::effects_flow`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FxNode {
+    Chorus = 0,
+    Delay = 1,
+    Reverb = 2,
+}
+
+/// What an FX page's flow lights: its effect, or on SENDS the focused
+/// send, with every send's level.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FxFlow {
+    Effect(FxNode),
+    Sends,
 }
 
 /// What an encoder slot edits (spec §5).
@@ -188,6 +204,26 @@ pub struct ChainBlock {
 }
 
 impl ChainBlock {
+    /// A page with no sub-pages.
+    pub const fn page(def: &'static BlockDef) -> Self {
+        Self {
+            def,
+            sub_pages: &[],
+            map: None,
+        }
+    }
+
+    pub const fn with_subs(
+        def: &'static BlockDef,
+        sub_pages: &'static [&'static BlockDef],
+    ) -> Self {
+        Self {
+            def,
+            sub_pages,
+            map: None,
+        }
+    }
+
     pub fn active_def(&self, sub_page: usize) -> &'static BlockDef {
         if self.sub_pages.is_empty() || sub_page == 0 {
             self.def

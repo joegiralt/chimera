@@ -3,6 +3,7 @@
 //! sends into the FX bus, FX return into DAC pair 1.
 
 mod common;
+use common::{SR, peak};
 
 use chimera_core::dsp::Stereo;
 use chimera_core::dsp::chorus::ChorusParams;
@@ -33,8 +34,6 @@ const fn budget_for(voice_share: u32) -> SampleBudget {
 /// here keep the share they were written against, whatever the bus costs.
 const VOICE_SHARE: u32 = 3_690;
 const BUDGET: SampleBudget = budget_for(VOICE_SHARE);
-
-const SR: u32 = chimera_hal::SAMPLE_RATE;
 
 /// `Voice::cost` of factory Sound `i`, its own params and mod routing —
 /// exactly what the allocator prices it at.
@@ -97,10 +96,6 @@ impl Rig {
             .render(&mut self.fx, &mut self.out, shared, &mut self.scope);
         &self.out
     }
-}
-
-fn peak(x: &[f32]) -> f32 {
-    x.iter().fold(0.0, |m, s| m.max(s.abs()))
 }
 
 /// Left and right halves of an interleaved pair.
@@ -595,8 +590,7 @@ fn the_costliest_patch_plays_six_voices_on_rev_v() {
 }
 
 /// Recorded when the instrument path landed (plan Task 12). Re-record only
-/// for an intended sound change:
-///     GOLDEN_RECORD=1 cargo test -p chimera-core --test instrument_test -- --nocapture
+/// for an intended sound change (`common::golden`).
 const GOLDENS: &[(&str, u64)] = &[
     ("poly_chord", 0x508049a56f63be65), // re-recorded: the default Sound is Algo
     ("two_parts_two_pairs", 0x98262aa38f73b0af), // re-recorded: part 1 is Algo
@@ -617,21 +611,11 @@ fn instrument_goldens_match() {
         ("reverb_send_on", || reverb_send(0.5)),
         ("six_voice_chord", six_voice_chord),
     ];
-    let record = std::env::var_os("GOLDEN_RECORD").is_some();
-    let mut failures = Vec::new();
-    for (name, render) in cases {
-        let hash = fnv1a(&render());
-        if record {
-            println!("    (\"{name}\", 0x{hash:016x}),");
-        } else if GOLDENS.iter().find(|g| g.0 == name).map(|g| g.1) != Some(hash) {
-            failures.push(format!("{name}: 0x{hash:016x}"));
-        }
-    }
-    assert!(
-        failures.is_empty(),
-        "instrument golden mismatch:\n{}",
-        failures.join("\n")
-    );
+    let got: Vec<_> = cases
+        .into_iter()
+        .map(|(name, render)| (name, fnv1a(&render())))
+        .collect();
+    common::golden::check(GOLDENS, &got);
 }
 
 /// What the goldens lock is what the spec asks for.

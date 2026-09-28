@@ -1,6 +1,9 @@
 use chimera_hal::{ButtonId, ButtonState, Controls, EncoderId, NUM_BUTTONS, NUM_ENCODERS};
 use minifb::Key;
 
+/// Encoder A-F's keys, in `EncoderId` order.
+const ENCODER_KEYS: [Key; NUM_ENCODERS] = [Key::Q, Key::W, Key::E, Key::R, Key::T, Key::Y];
+
 /// Maps keyboard to PreenFM3 controls.
 ///
 /// Buttons:
@@ -11,13 +14,9 @@ use minifb::Key;
 ///   Down       -> Edit (down in chain)
 ///   Space      -> Mix (shift, hold)
 ///
-/// Encoders (keyboard approximation):
-///   Q/A -> Encoder A (up/down)
-///   W/S -> Encoder B
-///   E/D -> Encoder C
-///   R/F -> Encoder D
-///   T/G -> Encoder E
-///   Y/H -> Encoder F
+/// Encoders (keyboard approximation): Q W E R T Y turn A-F up, with Shift
+/// down. The row below is the piano's black keys (`main.rs`), so no key
+/// both plays a note and turns an encoder.
 pub struct DesktopControls {
     encoder_deltas: [i8; NUM_ENCODERS],
     button_current: [bool; NUM_BUTTONS],
@@ -38,6 +37,19 @@ impl DesktopControls {
         self.button_previous = self.button_current;
         self.button_current = [false; NUM_BUTTONS];
         self.encoder_deltas = [0; NUM_ENCODERS];
+        let step = if keys
+            .iter()
+            .any(|k| matches!(k, Key::LeftShift | Key::RightShift))
+        {
+            -1
+        } else {
+            1
+        };
+        for (i, key) in ENCODER_KEYS.iter().enumerate() {
+            if keys.contains(key) {
+                self.encoder_deltas[i] = step;
+            }
+        }
 
         for key in keys {
             match key {
@@ -54,20 +66,6 @@ impl DesktopControls {
                 Key::Space => self.button_current[ButtonId::Mix as usize] = true,
                 Key::Up => self.button_current[ButtonId::Seq as usize] = true,
                 Key::Down => self.button_current[ButtonId::Edit as usize] = true,
-
-                // Encoders (up = +1, down = -1)
-                Key::Q => self.encoder_deltas[EncoderId::A as usize] += 1,
-                Key::A => self.encoder_deltas[EncoderId::A as usize] -= 1,
-                Key::W => self.encoder_deltas[EncoderId::B as usize] += 1,
-                Key::S => self.encoder_deltas[EncoderId::B as usize] -= 1,
-                Key::E => self.encoder_deltas[EncoderId::C as usize] += 1,
-                Key::D => self.encoder_deltas[EncoderId::C as usize] -= 1,
-                Key::R => self.encoder_deltas[EncoderId::D as usize] += 1,
-                Key::F => self.encoder_deltas[EncoderId::D as usize] -= 1,
-                Key::T => self.encoder_deltas[EncoderId::E as usize] += 1,
-                Key::G => self.encoder_deltas[EncoderId::E as usize] -= 1,
-                Key::Y => self.encoder_deltas[EncoderId::F as usize] += 1,
-                Key::H => self.encoder_deltas[EncoderId::F as usize] -= 1,
                 _ => {}
             }
         }
@@ -80,13 +78,26 @@ impl Controls for DesktopControls {
     }
 
     fn button_state(&self, id: ButtonId) -> ButtonState {
-        let curr = self.button_current[id as usize];
-        let prev = self.button_previous[id as usize];
-        match (prev, curr) {
-            (false, true) => ButtonState::Pressed,
-            (true, true) => ButtonState::Held,
-            (true, false) => ButtonState::Released,
-            (false, false) => ButtonState::Up,
-        }
+        let i = id as usize;
+        ButtonState::from_levels(self.button_previous[i], self.button_current[i])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn deltas(keys: &[Key]) -> [i8; NUM_ENCODERS] {
+        let mut c = DesktopControls::new();
+        c.update(keys);
+        chimera_hal::ALL_ENCODERS.map(|e| c.encoder_delta(e))
+    }
+
+    /// The piano's black keys turn nothing (#93); Q-Y turn A-F, Shift down.
+    #[test]
+    fn piano_keys_turn_no_encoder() {
+        assert_eq!(deltas(&[Key::S, Key::D, Key::G, Key::H]), [0; NUM_ENCODERS]);
+        assert_eq!(deltas(&[Key::Q]), [1, 0, 0, 0, 0, 0]);
+        assert_eq!(deltas(&[Key::LeftShift, Key::Y]), [0, 0, 0, 0, 0, -1]);
     }
 }

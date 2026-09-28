@@ -1,22 +1,6 @@
+mod common;
 use chimera_core::dsp::modal::{ModalEngine, ModalParams, ResonatorMode};
-
-const SR: u32 = 48000;
-
-fn goertzel(buf: &[f32], target_freq: f32, sample_rate: u32) -> f32 {
-    let n = buf.len() as f32;
-    let k = (target_freq * n / sample_rate as f32).round();
-    let w = 2.0 * core::f32::consts::PI * k / n;
-    let coeff = 2.0 * libm::cosf(w);
-    let mut s1 = 0.0f32;
-    let mut s2 = 0.0f32;
-    for &sample in buf {
-        let s0 = sample + coeff * s1 - s2;
-        s2 = s1;
-        s1 = s0;
-    }
-    let power = s1 * s1 + s2 * s2 - coeff * s1 * s2;
-    libm::sqrtf(power.abs()) / n
-}
+use common::{SR, goertzel};
 
 fn modal_params() -> ModalParams {
     ModalParams {
@@ -324,44 +308,54 @@ fn test_inharm_spreads_spectrum() {
     );
 }
 
+/// Sympathetic mode (#68): at full feedback the output stays finite and
+/// inside its tanh's ±1, held and released, and after note-off the engine
+/// falls silent. The slowest released loop is the unison sympathetic
+/// string: `tick_full`'s gain 0.999 − 0.009 · decay at decay 0.8 · ½,
+/// applied once per trip round the f0-period line, so −60 dB takes at most
+/// ln 1000 / −ln 0.9954 trips; the 2-point average only shortens that.
 #[test]
-fn test_modal_debug_output() {
-    // Debug: just print what the modal engine actually produces
-    let mut params = modal_params();
-    params.brightness = 1.0;
-    params.decay = 0.8;
-    params.inharm = 0.0;
-
-    let f0 = note_freq(48);
-    let buf = render_modal(&params, 48, 64);
-
-    eprintln!("\n=== Modal spectrum (inharm=0, harmonic) ===");
-    for h in 1..=12 {
-        let freq = f0 * h as f32;
-        let energy = goertzel(&buf, freq, SR);
-        eprintln!("  {}Hz (H{}): {:.6}", freq as i32, h, energy);
+fn sympathetic_mode_is_bounded_and_falls_silent() {
+    let p = ModalParams {
+        mode: ResonatorMode::Sympathetic,
+        ks_feedback: 1.0,
+        inharm: 1.0,
+        ..Default::default()
+    };
+    let bounded = |b: &[f32; 64]| b.iter().all(|s| s.is_finite() && s.abs() <= 1.0);
+    let mut engine = ModalEngine::new();
+    engine.note_on(48, 127, &p, SR);
+    let mut block = [0.0f32; 64];
+    for _ in 0..2 * SR as usize / 64 {
+        engine.render(&mut block, &p, SR);
+        assert!(bounded(&block), "held: {block:?}");
     }
-
-    // Also check some non-harmonic frequencies
-    eprintln!("\n  Non-harmonic frequencies:");
-    for f in &[f0 * 1.5, f0 * 2.5, f0 * 3.5, f0 * 4.7] {
-        let energy = goertzel(&buf, *f, SR);
-        eprintln!("  {}Hz: {:.6}", *f as i32, energy);
+    assert!(engine.is_active(), "held note rings");
+    engine.note_off();
+    let gain: f32 = 0.999 - 0.009 * (0.8 * 0.5);
+    let trips = libm::logf(1000.0) / -libm::logf(gain);
+    let limit = (trips / note_freq(48) * SR as f32) as usize / 64 + 11; // + the silence count
+    let mut blocks = 0;
+    while engine.is_active() {
+        engine.render(&mut block, &p, SR);
+        assert!(bounded(&block), "released: {block:?}");
+        blocks += 1;
+        assert!(blocks <= limit, "still sounding after {limit} blocks");
     }
+    engine.render(&mut block, &p, SR);
+    assert!(block.iter().all(|&s| s == 0.0));
+}
 
-    let max = buf.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
-    let rms = libm::sqrtf(buf.iter().map(|s| s * s).sum::<f32>() / buf.len() as f32);
-    eprintln!("\n  Max: {:.4}, RMS: {:.4}", max, rms);
-    eprintln!("  Samples: {}", buf.len());
-
-    // Now with inharm
-    params.inharm = 1.0;
-    let buf2 = render_modal(&params, 48, 64);
-
-    eprintln!("\n=== Modal spectrum (inharm=1, metallic) ===");
-    for h in 1..=12 {
-        let freq = f0 * h as f32;
-        let energy = goertzel(&buf2, freq, SR);
-        eprintln!("  {}Hz (H{}): {:.6}", freq as i32, h, energy);
-    }
+/// The modal bank at its full size, 48 modes (the deleted stress test's
+/// case): every sample finite and within `render_modal`'s 2·tanh bound.
+#[test]
+fn modal_bank_at_full_size_is_finite_and_bounded() {
+    let p = ModalParams {
+        num_modes: chimera_core::dsp::modal::MAX_MODES as u8,
+        decay: 1.0,
+        ..modal_params()
+    };
+    let buf = render_modal(&p, 36, 400);
+    assert!(buf.iter().all(|s| s.is_finite() && s.abs() <= 2.0));
+    assert!(buf.iter().any(|&s| s != 0.0), "it rings");
 }

@@ -1,14 +1,12 @@
 //! Screen goldens (UI refresh spec § Testing): one FNV-1a hash per screen.
 //!
-//! Every case must match bit-for-bit. Re-record a case ONLY for a change
-//! that is meant to alter that screen, in the commit that makes it:
-//!
-//!     SCREEN_RECORD=1 cargo test -p chimera-core --test screen_golden_test -- --nocapture
-//!
-//! and paste the printed row over the case's entry. To look at the screens:
+//! Every case must match bit-for-bit. Re-record ONLY for a change that is
+//! meant to alter a screen, in the commit that makes it (`common::golden`).
+//! To look at the screens:
 //!
 //!     SCREEN_DUMP=/tmp/screens cargo test -p chimera-core --test screen_golden_test
 
+mod common;
 mod screen;
 
 use screen::*;
@@ -53,31 +51,12 @@ const GOLDENS: &[(&str, u64)] = &[
 ];
 
 #[test]
-fn every_case_has_a_golden_entry() {
-    let names: Vec<&str> = CASES.iter().map(|c| c.0).collect();
-    let goldens: Vec<&str> = GOLDENS.iter().map(|g| g.0).collect();
-    assert_eq!(names, goldens);
-}
-
-#[test]
 fn screen_goldens_match() {
-    let record = std::env::var_os("SCREEN_RECORD").is_some();
-    let mut failures = Vec::new();
-    for &(name, want) in GOLDENS {
-        let hash = render(name).hash();
-        if record {
-            println!("    (\"{name}\", 0x{hash:016x}),");
-            continue;
-        }
-        if hash != want {
-            failures.push(format!("{name}: 0x{hash:016x} (want 0x{want:016x})"));
-        }
-    }
-    assert!(
-        failures.is_empty(),
-        "screen golden mismatch:\n{}",
-        failures.join("\n")
-    );
+    let got: Vec<_> = CASES
+        .iter()
+        .map(|&(name, _)| (name, render(name).hash()))
+        .collect();
+    common::golden::check(GOLDENS, &got);
 }
 
 #[test]
