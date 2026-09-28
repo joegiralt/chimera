@@ -230,3 +230,39 @@ fn a_steady_cutoff_does_not_ramp() {
         assert_eq!(x, y, "block {blk}");
     }
 }
+
+/// Every mode's output, steady and ramped, hot enough to saturate, bit for
+/// bit as recorded before `tick` was inlined into per-mode loops.
+#[test]
+fn every_mode_renders_as_recorded() {
+    const WANT: [u64; 8] = [
+        0x31ba_0de6_59aa_bd16,
+        0x8881_22f4_1133_37c5,
+        0xefd7_edba_5eab_f5ec,
+        0x0ebe_833a_a4b4_21d0,
+        0x9531_72d7_34b8_27cc,
+        0xe9e1_2b33_8060_4879,
+        0xeaac_ffc4_00fb_ef23,
+        0x2a19_e4cc_f46f_f16a,
+    ];
+    let got = FilterMode::ALL.map(|m| {
+        let mut p = FilterParams::default();
+        p.set_mode(m);
+        (p.resonance, p.drive) = (0.9, 0.5);
+        let mut f = SvfFilter::new();
+        let mut h = 0xcbf2_9ce4_8422_2325u64;
+        for b in 0..24 {
+            // Steady blocks, then a cutoff change every other block (ramps).
+            p.cutoff = if b < 8 || b % 2 == 0 { 800.0 } else { 3000.0 };
+            let mut buf: Vec<f32> = (0..BLOCK_SIZE)
+                .map(|i| ((b * BLOCK_SIZE + i) % 150) as f32 / 75.0 - 1.0)
+                .collect();
+            f.process(&mut buf, &p, SR);
+            for x in buf {
+                h = (h ^ u64::from(x.to_bits())).wrapping_mul(0x100_0000_01b3);
+            }
+        }
+        h
+    });
+    assert_eq!(got, WANT, "{got:#x?}");
+}
