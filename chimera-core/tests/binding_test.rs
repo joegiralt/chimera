@@ -59,7 +59,7 @@ fn part_chains_offer_the_eight_sources() {
 
 #[test]
 fn block_def_ids_are_unique() {
-    let all: [&BlockDef; 39] = [
+    let all: [&BlockDef; 36] = [
         &reg::MODAL_1,
         &reg::MODAL_2,
         &reg::ALGO_WAVE,
@@ -71,9 +71,6 @@ fn block_def_ids_are_unique() {
         &reg::FILTER_MODE,
         &reg::ENVELOPE,
         &reg::LFO,
-        &reg::ENV_AMP,
-        &reg::ENV_FILTER,
-        &reg::ENV_AUX,
         &reg::EFX,
         &reg::MIXER,
         &reg::CHORUS,
@@ -181,8 +178,8 @@ fn part_pages_display_like_before() {
                 ("DEC", Uni),
                 ("SUS", Uni),
                 ("REL", Uni),
-                ("DEPTH", Uni),
-                ("VEL", Uni),
+                ("H", Uni),
+                ("--", Uni),
             ],
         ),
         (

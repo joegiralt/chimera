@@ -2,6 +2,7 @@
 
 use chimera_core::addr::{BlockRef, Blocks, Op, OpOutOfRange, ParamAddr};
 use chimera_core::dsp::algo::params::{AlgoOpParams, AlgoParams};
+use chimera_core::dsp::modulator::EnvSlot;
 use chimera_core::params::{
     DriveParams, EnvParams, FilterParams, FolderParams, OutParams, ParamSnapshot,
 };
@@ -71,11 +72,11 @@ fn block_mut_reaches_the_named_instance() {
         .unwrap()
         .set(AlgoOpParams::LEVEL, 42.0);
     assert_eq!(p.algo.ops[2].level, 42);
-    p.block_mut(BlockRef::FilterEnv)
+    p.block_mut(BlockRef::Env(EnvSlot::Env2))
         .unwrap()
-        .set(EnvParams::ATTACK, 2.0);
-    assert_eq!(p.envelopes[1].attack, 2.0);
-    assert_eq!(p.envelopes[0].attack, 0.01);
+        .set(EnvParams::ATTACK, 0.5);
+    assert_eq!(p.envelopes[1].attack, 0.5);
+    assert_eq!(p.envelopes[0].attack, 0.189);
     p.block_mut(BlockRef::Out)
         .unwrap()
         .set(OutParams::VOLUME, 0.25);

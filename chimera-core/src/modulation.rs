@@ -41,6 +41,11 @@ impl ModSource {
         ModSource::Note,
     ];
 
+    /// The source ENV slot `s` feeds.
+    pub const fn of_env(s: crate::dsp::modulator::EnvSlot) -> Self {
+        [ModSource::Env1, ModSource::Env2, ModSource::Env3][s.index()]
+    }
+
     pub const fn index(self) -> usize {
         self as usize
     }

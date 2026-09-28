@@ -80,17 +80,10 @@ fn envelope_and_lfo_pages() {
     let mut p = ParamSnapshot::default();
     assert_eq!(
         read(&reg::ENVELOPE, &p),
-        [
-            (0.01 - 0.001) / (10.0 - 0.001),
-            (0.3 - 0.001) / (10.0 - 0.001),
-            0.7,
-            (0.3 - 0.001) / (10.0 - 0.001),
-            1.0,
-            0.5
-        ]
+        [0.189, 0.559, 0.7, 0.559, 0.0, 0.0]
     );
     turn(&reg::ENVELOPE, 0, 1, &mut p);
-    assert_eq!(p.envelopes[0].attack, 0.01 + (10.0 - 0.001) / 128.0);
+    assert_eq!(p.envelopes[0].attack, 0.189 + 1.0 / 128.0);
     turn(&reg::ENVELOPE, 2, -1, &mut p);
     assert_eq!(p.envelopes[0].sustain, 0.7 - 1.0 / 128.0);
 

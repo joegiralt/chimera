@@ -194,9 +194,7 @@ impl Blocks for PartEdit<'_> {
             | BlockRef::Drive
             | BlockRef::Filter
             | BlockRef::Folder
-            | BlockRef::AmpEnv
-            | BlockRef::FilterEnv
-            | BlockRef::AuxEnv
+            | BlockRef::Env(_)
             | BlockRef::Lfo
             | BlockRef::Out => self.part.sound.params.block(b),
         }
@@ -217,9 +215,7 @@ impl Blocks for PartEdit<'_> {
             | BlockRef::Drive
             | BlockRef::Filter
             | BlockRef::Folder
-            | BlockRef::AmpEnv
-            | BlockRef::FilterEnv
-            | BlockRef::AuxEnv
+            | BlockRef::Env(_)
             | BlockRef::Lfo
             | BlockRef::Out => self.part.sound.params.block_mut(b),
         }

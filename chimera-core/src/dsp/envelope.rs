@@ -1,19 +1,81 @@
+//! An ENV slot of the modulator pool (spec § 1): runs its TYPE from
+//! `EnvParams` and the matrix's inputs, once per block or per sample.
+
+use chimera_hal::BLOCK_SIZE;
+
+use crate::dsp::modulator::env_a::{ACoefs, EnvA};
 use crate::params::EnvParams;
 
+/// What the matrix feeds an ENV slot, from the previous block (spec
+/// § Signal flow 1), so a slot never waits on the matrix it feeds. Task 6
+/// adds RISE, FALL and SHAPE as `slides`.
 #[derive(Clone, Copy, Debug, PartialEq)]
-enum Stage {
-    Idle,
-    Attack,
-    Decay,
-    Sustain,
-    Release,
+pub struct EnvMods {
+    /// The peak with a route into LEVEL, `clamp(Σ, 0, 1)`; `None` without one (peak 1).
+    pub level: Option<f32>,
+    /// TIME's Σ.
+    pub time: f32,
 }
 
-#[derive(Clone, Debug)]
+impl EnvMods {
+    pub const NONE: Self = Self {
+        level: None,
+        time: 0.0,
+    };
+}
+
+/// What an A slot's coefficients were built from: equal inputs reuse them.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct AKey {
+    stages: [f32; 5], // attack, decay, sustain, release, hold
+    speed: crate::dsp::modulator::EnvSpeed,
+    hold_pos: crate::dsp::modulator::HoldPos,
+    time: f32,
+    sample_rate: u32,
+}
+
+impl AKey {
+    fn of(p: &EnvParams, time: f32, sample_rate: u32) -> Self {
+        Self {
+            stages: [p.attack, p.decay, p.sustain, p.release, p.hold],
+            speed: p.speed,
+            hold_pos: p.hold_pos,
+            time,
+            sample_rate,
+        }
+    }
+}
+
+/// `gain[n] += amount · level[n] · peak[n]`, the peak ramped from `from` to
+/// `to` across the block, so a route into LEVEL doesn't zipper the VCA.
+fn add_ramped(
+    gain: &mut [f32; BLOCK_SIZE],
+    level: &[f32; BLOCK_SIZE],
+    amount: f32,
+    from: f32,
+    to: f32,
+) {
+    if from == to {
+        let a = amount * to;
+        for (g, l) in gain.iter_mut().zip(level) {
+            *g += a * l;
+        }
+    } else {
+        let step = (to - from) / BLOCK_SIZE as f32;
+        for (n, (g, l)) in gain.iter_mut().zip(level).enumerate() {
+            *g += amount * l * (from + step * (n + 1) as f32);
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
 pub struct Envelope {
-    stage: Stage,
-    level: f32,
-    velocity: f32,
+    a: EnvA,
+    /// The last A coefficients and their inputs.
+    ac: Option<(AKey, ACoefs)>,
+    /// This block's peak (LEVEL) and the last block's.
+    peak: f32,
+    prev_peak: f32,
 }
 
 impl Default for Envelope {
@@ -23,87 +85,65 @@ impl Default for Envelope {
 }
 
 impl Envelope {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
-            stage: Stage::Idle,
-            level: 0.0,
-            velocity: 1.0,
+            a: EnvA::new(),
+            ac: None,
+            peak: 1.0,
+            prev_peak: 1.0,
         }
     }
 
-    pub fn note_on(&mut self, velocity: f32) {
-        self.stage = Stage::Attack;
-        self.velocity = velocity;
-    }
-
-    pub fn note_off(&mut self) {
-        if self.stage != Stage::Idle {
-            self.stage = Stage::Release;
-        }
-    }
-
-    pub fn is_active(&self) -> bool {
-        self.stage != Stage::Idle
-    }
-
-    /// The raw contour, 0..1: the ENV 1 source (spec § 1, no velocity).
-    pub fn level(&self) -> f32 {
-        self.level
-    }
-
-    /// Process one sample. Returns envelope level 0.0..1.0.
-    pub fn process(&mut self, params: &EnvParams, sample_rate: u32) -> f32 {
-        let sr = sample_rate as f32;
-        match self.stage {
-            Stage::Idle => 0.0,
-            Stage::Attack => {
-                let rate = 1.0 / (params.attack * sr);
-                self.level += rate;
-                if self.level >= 1.0 {
-                    self.level = 1.0;
-                    self.stage = Stage::Decay;
-                }
-                self.level * self.velocity
-            }
-            Stage::Decay => {
-                let target = params.sustain;
-                let rate = 1.0 / (params.decay * sr);
-                self.level -= rate;
-                if self.level <= target {
-                    self.level = target;
-                    self.stage = Stage::Sustain;
-                }
-                self.level * self.velocity
-            }
-            Stage::Sustain => self.level * self.velocity,
-            Stage::Release => {
-                let rate = 1.0 / (params.release * sr);
-                self.level -= rate;
-                if self.level <= 0.0 {
-                    self.level = 0.0;
-                    self.stage = Stage::Idle;
-                }
-                self.level * self.velocity
+    /// This block's A coefficients, rebuilt only when an input changed.
+    fn a_coefs(&mut self, p: &EnvParams, time: f32, sample_rate: u32) -> ACoefs {
+        let key = AKey::of(p, time, sample_rate);
+        match self.ac {
+            Some((k, c)) if k == key => c,
+            _ => {
+                let c = ACoefs::new(p, time, sample_rate);
+                self.ac = Some((key, c));
+                c
             }
         }
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+    pub fn note_on(&mut self, _p: &EnvParams) {
+        self.a.note_on();
+    }
 
-    #[test]
-    fn the_env1_source_ignores_velocity() {
-        let p = EnvParams::default();
-        let (mut soft, mut hard) = (Envelope::new(), Envelope::new());
-        soft.note_on(0.2);
-        hard.note_on(1.0);
-        for _ in 0..200 {
-            soft.process(&p, 48_000);
-            hard.process(&p, 48_000);
+    /// The raw contour, 0..1: no velocity (spec § 1).
+    pub fn output(&self) -> f32 {
+        self.a.level() * self.peak
+    }
+
+    pub fn is_idle(&self) -> bool {
+        self.a.is_idle()
+    }
+
+    /// One block. Returns the output at the block's start. With `vca`, the
+    /// slot fills a block of levels and adds `amount · level · peak` into
+    /// the buffer (the VCA's sum), the peak ramped per sample; otherwise it
+    /// advances in closed form.
+    pub fn run_block(
+        &mut self,
+        p: &EnvParams,
+        m: &EnvMods,
+        key: bool,
+        sample_rate: u32,
+        vca: Option<(&mut [f32; BLOCK_SIZE], f32)>,
+    ) -> f32 {
+        let c = self.a_coefs(p, m.time, sample_rate);
+        self.prev_peak = self.peak;
+        self.peak = m.level.unwrap_or(1.0);
+        let start = self.output();
+        match vca {
+            Some((gain, amount)) => {
+                let mut level = [0.0f32; BLOCK_SIZE];
+                self.a.fill(&c, key, &mut level);
+                add_ramped(gain, &level, amount, self.prev_peak, self.peak);
+            }
+            None => self.a.advance(&c, key, BLOCK_SIZE as u32),
         }
-        assert!(soft.level() > 0.0);
-        assert_eq!(soft.level(), hard.level());
+        start
     }
 }

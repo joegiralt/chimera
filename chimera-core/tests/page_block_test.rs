@@ -3,6 +3,7 @@
 
 use chimera_core::addr::{BlockRef, Blocks, Op, ParamAddr};
 use chimera_core::dsp::algo::params::AlgoOpParams;
+use chimera_core::dsp::modulator::EnvSlot;
 use chimera_core::params::{EnvParams, FilterParams, ParamSnapshot};
 use chimera_core::ui::page::PageId;
 
@@ -16,11 +17,9 @@ fn demo_pages_step_like_before() {
     PageId::DemoShapes.apply_encoder(4, 3, &mut p);
     assert_eq!(p.filter.resonance, 3.0 / 128.0);
     PageId::DemoMotion.apply_encoder(4, 1, &mut p);
-    assert_eq!(p.envelopes[1].attack, 0.01 + (10.0 - 0.001) / 128.0);
+    assert_eq!(p.envelopes[1].attack, 0.189 + 1.0 / 128.0);
     PageId::DemoFm.apply_encoder(3, 2, &mut p);
     assert_eq!(p.algo.ops[2].feedback, 2);
-    PageId::EnvAux.apply_encoder(3, -128, &mut p);
-    assert_eq!(p.envelopes[2].release, 0.001);
 }
 
 /// A Sound carries no FX blocks any more.
@@ -40,10 +39,13 @@ fn a_sound_has_no_fx_blocks() {
 
 #[test]
 fn legacy_bindings_name_semantic_addresses() {
-    // Spec §5: Demo pages address envelopes[1] via FilterEnv.
+    // Spec §5: Demo pages address envelopes[1] via Env(Env2).
     assert_eq!(
         PageId::DemoMotion.binding(4),
-        Some(ParamAddr::new(BlockRef::FilterEnv, EnvParams::ATTACK))
+        Some(ParamAddr::new(
+            BlockRef::Env(EnvSlot::Env2),
+            EnvParams::ATTACK
+        ))
     );
     assert_eq!(
         PageId::DemoFm.binding(1),
@@ -69,9 +71,6 @@ fn legacy_bindings_name_semantic_addresses() {
 #[test]
 fn every_legacy_binding_has_a_spec() {
     let pages = [
-        PageId::EnvAmp,
-        PageId::EnvFilter,
-        PageId::EnvAux,
         PageId::DemoWaves,
         PageId::DemoShapes,
         PageId::DemoMotion,
