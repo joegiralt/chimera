@@ -153,8 +153,8 @@ impl EnvParams {
     pub const SHAPE: ParamId = ParamId(15);
 }
 
-/// Positions and levels, per block. LEVEL and TIME are hidden destinations
-/// (Task 9 of the filter-routing plan makes them modulatable).
+/// Positions and levels, per block. LEVEL and TIME (hidden, primed from the
+/// stage cells), RISE, FALL and SHAPE are modulatable.
 pub static ENV_SPECS: [ParamSpec; 16] = [
     ParamSpec::continuous(0, "ATK", ValFmt::Uni, 0.0, 1.0, 0.189, 1.0 / 128.0, false),
     ParamSpec::continuous(1, "DEC", ValFmt::Uni, 0.0, 1.0, 0.559, 1.0 / 128.0, false),

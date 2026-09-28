@@ -328,3 +328,33 @@ fn the_cells_key_carries_the_looks() {
     assert_eq!(looks & 0xff, 0, "the other slots are live");
     assert_eq!(matrix_rev, ui.matrix_state.rev);
 }
+
+/// The UI's stand-ins (spec § UI): VEL stands in at 1, a B slot at ½; the
+/// CUTOFF bar moves by the octave law at that value. From 20 Hz, so no
+/// offset here reaches the top.
+#[test]
+fn stand_ins_move_the_cutoff_bar() {
+    use chimera_core::dsp::modulator::EnvType;
+    use chimera_core::modulation::amount_scale;
+    let mut ui = on_flt(EngineType::Algo);
+    ui.params_mut().filter.cutoff = 20.0;
+    ui.update();
+    let base = ui.renderer.anim[1].target();
+    let spec = CUTOFF.spec().unwrap();
+    let d = ui.mod_state().find(CUTOFF).unwrap();
+    let bar = |ui: &mut UiState, src: ModSource, amount: i8| {
+        ui.mod_state_mut().set_route(src.index(), d, amount);
+        ui.update();
+        let t = ui.renderer.anim[1].target();
+        ui.mod_state_mut().set_route(src.index(), d, 0);
+        t
+    };
+    let vel = spec.offset_normalized(base, amount_scale(100));
+    assert!(vel > base && vel < 1.0);
+    assert_eq!(bar(&mut ui, ModSource::Vel, 100), vel, "VEL at 1");
+
+    assert_eq!(ui.params().envelopes[2].env_type, EnvType::B);
+    let half = spec.offset_normalized(base, 0.5 * amount_scale(127));
+    assert!(half > base && half < 1.0);
+    assert_eq!(bar(&mut ui, ModSource::Env3, 127), half, "ENV 3 (B) at 1/2");
+}
