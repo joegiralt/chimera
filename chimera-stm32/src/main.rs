@@ -135,7 +135,8 @@ fn main() -> ! {
         &ccdr.clocks,
     );
 
-    let mut display = Stm32Display::new(spi, dc, reset, cs);
+    let fb = display::take_framebuffer().expect("framebuffer taken once");
+    let mut display = Stm32Display::new(spi, dc, reset, cs, fb);
     clocks::delay_us(clk.cpu_hz, 250_000);
     display.init(clk.cpu_hz);
     // The boot theme is no longer the panel's own reset state (PUNCH, not
