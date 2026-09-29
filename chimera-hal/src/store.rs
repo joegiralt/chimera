@@ -150,7 +150,8 @@ pub trait Store {
         sink: &mut dyn ReadSink,
     ) -> Result<(), StoreError>;
     /// Replaces the file; returns the bytes written. What `body` put before an
-    /// `Err` stays. A `file.dir()` that was never made is `NotFound`.
+    /// `Err` stays: not atomic, so callers needing atomicity write the side
+    /// nobody reads. A `file.dir()` that was never made is `NotFound`.
     fn write(
         &mut self,
         vol: VolumeId,
