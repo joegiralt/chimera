@@ -55,7 +55,7 @@ fn eight_algo_sounds_with_distinct_names() {
         .map(|i| {
             let s = factory_sound(i).unwrap();
             assert_eq!(s.engine(), EngineType::Algo);
-            s.name_str().to_string()
+            s.name.as_str().to_string()
         })
         .collect();
     for (i, n) in names.iter().enumerate() {
@@ -67,7 +67,7 @@ fn eight_algo_sounds_with_distinct_names() {
 #[test]
 fn every_factory_sound_is_audible_finite_bounded_and_ends() {
     for i in 0..FACTORY_LEN {
-        let name = factory_sound(i).unwrap().name_str().to_string();
+        let name = factory_sound(i).unwrap().name.as_str().to_string();
         let (held, tail) = play(i);
         assert!(held.iter().chain(&tail).all(|x| x.is_finite()), "{name}");
         assert!(
@@ -86,7 +86,12 @@ fn every_factory_sound_is_audible_finite_bounded_and_ends() {
 fn the_morph_showcases_morph() {
     for i in [6, 7] {
         let s = factory_sound(i).unwrap();
-        assert_ne!(s.params.algo.alg_a, s.params.algo.alg_b, "{}", s.name_str());
+        assert_ne!(
+            s.params.algo.alg_a,
+            s.params.algo.alg_b,
+            "{}",
+            s.name.as_str()
+        );
     }
     let pad = factory_sound(6).unwrap();
     assert_eq!(pad.mod_state.num_dests(), 2);
@@ -101,7 +106,7 @@ fn morph_pad_lfo_sweep_stays_inside_morph_range() {
     use chimera_core::modulation::MAX_MOD_SOURCES;
 
     let s = factory_sound(6).unwrap();
-    assert_eq!(s.name_str(), "MORPH PAD");
+    assert_eq!(s.name.as_str(), "MORPH PAD");
     let base = s.params.algo.morph as f32;
     let mut lfo = Lfo::new();
     let period = (chimera_hal::SAMPLE_RATE as f32 / s.params.lfos[0].rate).ceil() as usize;
@@ -117,7 +122,7 @@ fn morph_pad_lfo_sweep_stays_inside_morph_range() {
 #[test]
 fn tx_epiano_bark_survives_the_filter() {
     let s = factory_sound(1).unwrap();
-    assert_eq!(s.name_str(), "TX EPIANO");
+    assert_eq!(s.name.as_str(), "TX EPIANO");
     let mut v = Voice::new(chimera_hal::SAMPLE_RATE);
     v.note_on(
         MidiNote::new(60).unwrap(),
@@ -147,7 +152,7 @@ fn the_ui_starts_with_the_bank_in_the_pool() {
     let ui = UiState::new();
     for i in 0..FACTORY_LEN {
         let want = factory_sound(i).unwrap();
-        assert_eq!(ui.pool.get(i).unwrap().name_str(), want.name_str());
+        assert_eq!(ui.pool.get(i).unwrap().name.as_str(), want.name.as_str());
     }
     assert!(ui.pool.get(FACTORY_LEN).is_none());
     let mut pool = SoundPool::new();

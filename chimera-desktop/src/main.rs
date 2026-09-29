@@ -3,14 +3,33 @@ mod controls;
 mod display;
 #[cfg(feature = "midi")]
 mod midi;
+mod store;
 
 use chimera_core::scope::scope_buffer;
+use chimera_core::storage::{Card, SystemSync};
 use chimera_core::ui::UiState;
+use chimera_core::ui::busy::{ToastStep, draw_busy, draw_toast};
 use chimera_core::ui::perf::PerfTracker;
 use chimera_hal::{ChimeraDisplay, MidiChannel, MidiNote, Velocity};
 use controls::DesktopControls;
 use display::DesktopDisplay;
+use std::path::PathBuf;
 use std::time::Instant;
+use store::DirStore;
+
+/// The card: `CHIMERA_CARD`, or `chimera-card` made on first run. A
+/// `CHIMERA_CARD` that doesn't exist is an empty slot.
+fn card_dir() -> PathBuf {
+    std::env::var_os("CHIMERA_CARD").map_or_else(
+        || {
+            let dir = PathBuf::from("chimera-card");
+            // A failure shows as no card.
+            let _ = std::fs::create_dir_all(&dir);
+            dir
+        },
+        PathBuf::from,
+    )
+}
 
 fn main() {
     let mut display = DesktopDisplay::new();
@@ -19,12 +38,24 @@ fn main() {
     let mut audio = audio::DesktopAudio::new(scope_w);
 
     let mut ui = UiState::new();
+
+    // Boot step 1: SYSTEM behind BUSY, then its theme.
+    draw_busy(&mut display);
+    display.flush();
+    let mut store = DirStore::new(card_dir());
+    let mut card = Card::new();
+    // Why the defaults applied is not shown yet:
+    // https://github.com/joegiralt/chimera/issues/197
+    let (mut sync, mut settings, _) = SystemSync::boot(&mut card, &mut store);
+    ui.set_theme(settings.theme);
     let mut perf = PerfTracker::new();
     // The held key and the channel it was sent on, so its note-off follows
     // it even if the selected Part changes while it is held.
     let mut current_note: Option<(MidiChannel, MidiNote)> = None;
     let mut octave: i8 = 0; // -2 to +2
     let mut frame_start = Instant::now();
+    // The toast's clock, read after the card work, as the firmware's is.
+    let mut toast_at = Instant::now();
 
     while display.is_open() {
         let now = Instant::now();
@@ -69,6 +100,8 @@ fn main() {
 
         // UI framework handles navigation + encoder -> param binding
         ui.handle_input(&controls);
+        // Leaving System syncs SYSTEM; a toast says how it went.
+        ui.sync_system(&mut sync, &mut card, &mut store, &mut settings);
         display.set_theme(&ui.theme());
         ui.update();
 
@@ -76,6 +109,12 @@ fn main() {
         audio.update(&ui.performance);
 
         ui.render_with_scope(&mut display, &perf.stats, scope_r.read());
+        let now = Instant::now();
+        let toast_ms = now.duration_since(toast_at).as_millis() as u32;
+        toast_at = now;
+        if let ToastStep::Show(text) = ui.step_toast(toast_ms) {
+            draw_toast(&mut display, text);
+        }
 
         perf.record(frame_us, 0);
 

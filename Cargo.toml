@@ -7,12 +7,15 @@ members = [
     "chimera-desktop",
     "chimera-bootloader",
     "chimera-waves",
+    "chimera-fat",
 ]
+exclude = ["chimera-core/fuzz"]
 default-members = [
     "chimera-core",
     "chimera-hal",
     "chimera-desktop",
     "chimera-waves",
+    "chimera-fat",
 ]
 
 [workspace.package]

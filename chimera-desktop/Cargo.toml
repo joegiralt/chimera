@@ -15,3 +15,6 @@ embedded-graphics-core = "0.4"
 [features]
 default = ["midi"]
 midi = ["dep:midir"]
+
+[dev-dependencies]
+chimera-hal = { path = "../chimera-hal", features = ["testkit"] }

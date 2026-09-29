@@ -1,32 +1,41 @@
 #![no_std]
 #![no_main]
 
+#[cfg(all(feature = "bench", feature = "sd-probe"))]
+compile_error!("bench and sd-probe both take over after boot: pick one");
+
+// The SD probe build halts after `boot`: nothing of the synth is built.
+#[cfg(not(feature = "sd-probe"))]
 mod audio;
-#[cfg(feature = "bench")]
+#[cfg(all(feature = "bench", not(feature = "sd-probe")))]
 mod bench;
 mod cache;
 mod clocks;
+#[cfg(not(feature = "sd-probe"))]
 mod controls;
 mod display;
-#[cfg(feature = "midi-din")]
+#[cfg(all(feature = "midi-din", not(feature = "sd-probe")))]
 mod midi_din;
 mod panic;
+#[cfg(not(feature = "sd-probe"))]
 mod priority;
+#[cfg(not(feature = "sd-probe"))]
 mod probe;
+mod sd;
+#[cfg(feature = "sd-probe")]
+mod sd_probe;
+#[cfg(not(feature = "sd-probe"))]
 mod shared;
+#[cfg(not(feature = "sd-probe"))]
 mod watchdog;
 
-use chimera_core::audio_out::Heartbeat;
-use chimera_core::clock_plan::pll3_for;
-use chimera_core::hw::SampleBudget;
+#[cfg(not(feature = "sd-probe"))]
 use chimera_core::reset::ResetCause;
-use chimera_core::ui::perf::PerfTracker;
 use chimera_core::ui::theme_settings::ThemeSettings;
-use chimera_hal::ChimeraDisplay;
-use controls::Stm32Controls;
-use cortex_m_rt::{entry, exception};
+use cortex_m_rt::entry;
 use display::Stm32Display;
-use stm32h7xx_hal::gpio::Speed;
+use stm32h7xx_hal::gpio::{Output, PD8, PD9, PD10, PushPull, Speed};
+use stm32h7xx_hal::rcc::CoreClocks;
 use stm32h7xx_hal::{pac, prelude::*, spi};
 
 /// Flush-to-zero and default NaN, in this context (FPSCR) and in every
@@ -45,21 +54,70 @@ fn fp_flush_to_zero(fpu: &mut cortex_m::peripheral::FPU) {
     }
 }
 
-#[exception]
+#[cfg(not(feature = "sd-probe"))]
+#[cortex_m_rt::exception]
 fn SysTick() {
-    static mut HEARTBEAT: Heartbeat = Heartbeat::new();
+    static mut HEARTBEAT: chimera_core::audio_out::Heartbeat =
+        chimera_core::audio_out::Heartbeat::new();
     controls::isr_tick();
     watchdog::kick_if_audio_alive(HEARTBEAT);
 }
 
+type Display = Stm32Display<
+    spi::Spi<pac::SPI1, spi::Enabled>,
+    PD8<Output<PushPull>>,
+    PD9<Output<PushPull>>,
+    PD10<Output<PushPull>>,
+>;
+#[cfg(not(feature = "sd-probe"))]
+type Backlight = stm32h7xx_hal::pwm::Pwm<pac::TIM1, 1, stm32h7xx_hal::pwm::ComplementaryDisabled>;
+
+/// The unit with the display up, as both builds start.
+struct Board {
+    cp: cortex_m::Peripherals,
+    clk: clocks::Clocks,
+    display: Display,
+    clocks: CoreClocks,
+    #[cfg(not(feature = "sd-probe"))]
+    synth: SynthParts,
+    sd: sd::SdParts,
+}
+
+#[cfg(not(feature = "sd-probe"))]
+struct SynthParts {
+    reset_cause: ResetCause,
+    led: stm32h7xx_hal::gpio::PE1<Output<PushPull>>,
+    backlight: Backlight,
+    theme: ThemeSettings,
+    iwdg: pac::IWDG,
+    dbgmcu: pac::DBGMCU,
+}
+
 #[entry]
 fn main() -> ! {
+    let board = boot();
+    #[cfg(feature = "sd-probe")]
+    probe_card(board);
+    #[cfg(not(feature = "sd-probe"))]
+    synth(board);
+}
+
+#[cfg(feature = "sd-probe")]
+fn probe_card(mut b: Board) -> ! {
+    let sd = sd::init(b.sd, &mut b.cp.DCB, &mut b.cp.DWT, &b.clocks, b.clk.cpu_hz);
+    let store = sd::take_store(sd).expect("store taken once");
+    sd_probe::run(&mut b.display, b.clk, store)
+}
+
+fn boot() -> Board {
+    #[cfg(not(feature = "sd-probe"))]
     probe::paint_stack();
     let mut cp = cortex_m::Peripherals::take().unwrap();
     fp_flush_to_zero(&mut cp.FPU);
     let dp = pac::Peripherals::take().unwrap();
 
     // RCC_RSR survives the reset it records; clear it for the next one.
+    #[cfg(not(feature = "sd-probe"))]
     let reset_cause = ResetCause::from_rsr(dp.RCC.rsr.read().bits());
     dp.RCC.rsr.modify(|_, w| w.rmvf().set_bit());
 
@@ -67,18 +125,16 @@ fn main() -> ! {
     let rev = clocks::read_rev(&dp.DBGMCU);
     let (ccdr, clk) = clocks::freeze(dp.PWR, dp.RCC, &dp.SYSCFG, rev);
     cache::init(&mut cp.MPU, &mut cp.SCB, &mut cp.CPUID);
+    #[cfg(not(feature = "sd-probe"))]
     shared::copy_waves();
 
     let gpioa = dp.GPIOA.split(ccdr.peripheral.GPIOA);
     let gpiod = dp.GPIOD.split(ccdr.peripheral.GPIOD);
     let gpioe = dp.GPIOE.split(ccdr.peripheral.GPIOE);
     let gpiof = dp.GPIOF.split(ccdr.peripheral.GPIOF);
+    let gpiob = dp.GPIOB.split(ccdr.peripheral.GPIOB);
     #[cfg(feature = "midi-din")]
-    let _midi_rx = dp
-        .GPIOB
-        .split(ccdr.peripheral.GPIOB)
-        .pb7
-        .into_alternate::<7>();
+    let _midi_rx = gpiob.pb7.into_alternate::<7>();
     let _hc_data = gpiof.pf2.into_floating_input();
     let _hc_load = gpiof.pf1.into_push_pull_output();
     let _hc_clk = gpiof.pf0.into_push_pull_output();
@@ -86,14 +142,14 @@ fn main() -> ! {
     let mut led = gpioe.pe1.into_push_pull_output();
     // TIM1 CH2 PWM, above hearing so the backlight driver cannot whine.
     // Full brightness lifts a TN panel's blacks; System › Theme's BRIGHT
-    // sets the duty (70 % at boot: no storage yet).
+    // sets the duty: the default until SYSTEM is read.
     let mut backlight = dp.TIM1.pwm(
         gpioe.pe11.into_alternate::<1>(),
         20.kHz(),
         ccdr.peripheral.TIM1,
         &ccdr.clocks,
     );
-    let mut theme = ThemeSettings::DEFAULT;
+    let theme = ThemeSettings::DEFAULT;
     backlight.set_duty(theme.bright.duty(backlight.get_max_duty()));
     backlight.enable();
 
@@ -137,10 +193,75 @@ fn main() -> ! {
     // the first change the main loop notices.
     display.set_gamma(theme.gamma.tables());
     display.set_palette(theme.palette());
+    Board {
+        cp,
+        clk,
+        display,
+        clocks: ccdr.clocks,
+        #[cfg(not(feature = "sd-probe"))]
+        synth: SynthParts {
+            reset_cause,
+            led,
+            backlight,
+            theme,
+            iwdg: dp.IWDG,
+            dbgmcu: dp.DBGMCU,
+        },
+        sd: sd::SdParts {
+            spi2: dp.SPI2,
+            rec: ccdr.peripheral.SPI2,
+            sck: gpioa.pa9,
+            miso: gpiob.pb14,
+            mosi: gpiob.pb15,
+            cs: gpioe.pe12,
+        },
+    }
+}
+
+#[cfg(not(feature = "sd-probe"))]
+fn synth(board: Board) -> ! {
+    use chimera_core::clock_plan::pll3_for;
+    use chimera_core::hw::SampleBudget;
+    use chimera_core::storage::{Card, SystemSync};
+    use chimera_core::ui::busy::{ToastStep, draw_busy, draw_toast};
+    use chimera_core::ui::perf::PerfTracker;
+    use chimera_hal::ChimeraDisplay;
+    use controls::Stm32Controls;
+
+    let Board {
+        mut cp,
+        clk,
+        mut display,
+        clocks,
+        synth:
+            SynthParts {
+                reset_cause,
+                mut led,
+                mut backlight,
+                mut theme,
+                iwdg,
+                dbgmcu,
+            },
+        sd,
+    } = board;
     let mut stats_r = probe::init(&mut cp.DCB, &mut cp.DWT, clk, reset_cause);
 
     let mut controls = Stm32Controls::new();
     let ui = shared::take_ui().expect("UI state taken once");
+
+    // Boot step 1: SYSTEM behind BUSY, then its theme. Card work runs only
+    // here and in the UI loop, never on the audio path, and every card
+    // path is bounded, so it can run before the watchdog starts.
+    draw_busy(&mut display);
+    display.flush();
+    let sd = sd::init(sd, &mut cp.DCB, &mut cp.DWT, &clocks, clk.cpu_hz);
+    let store = sd::take_store(sd).expect("store taken once");
+    let mut card = Card::new();
+    // Why the defaults applied is not shown yet:
+    // https://github.com/joegiralt/chimera/issues/197
+    let (mut sync, mut settings, _) = SystemSync::boot(&mut card, store);
+    ui.set_theme(settings.theme);
+    apply_theme(settings.theme, &mut theme, &mut backlight, &mut display);
     let perf = PerfTracker::new();
     #[cfg(feature = "bench")]
     bench::run(&mut display, clk, &ui.performance);
@@ -163,7 +284,7 @@ fn main() -> ! {
     audio::sai::init(clk.rev.new_sai(), pll3.mckdiv);
     audio::dma::clear();
     audio::prefill();
-    watchdog::start(dp.IWDG, &dp.DBGMCU);
+    watchdog::start(iwdg, &dbgmcu);
     audio::dma::init(&mut cp.NVIC);
     audio::dma::start();
     audio::sai::start();
@@ -171,7 +292,7 @@ fn main() -> ! {
     #[cfg(feature = "midi-din")]
     midi_din::init(
         &mut cp.NVIC,
-        ccdr.clocks.pclk2().raw(),
+        clocks.pclk2().raw(),
         producers
             .take(audio::engine::DIN)
             .expect("DIN producer taken once"),
@@ -183,22 +304,17 @@ fn main() -> ! {
     ui.prime_regions(&perf.stats, None, scope_r.read());
     led.set_low();
 
+    let mut last_tick = controls::ticks();
     loop {
         controls.snapshot();
         if controls.has_activity() {
             ui.handle_input(&controls);
         }
+        // Leaving System syncs SYSTEM, with no overlay first: a save is
+        // quicker than BUSY can be read. A toast says how it went.
+        ui.sync_system(&mut sync, &mut card, store, &mut settings);
         // System › Theme: the UI loop owns the display and the backlight.
-        let new_theme = ui.theme();
-        let recolour = new_theme != theme && new_theme.palette() != theme.palette();
-        if new_theme != theme {
-            backlight.set_duty(new_theme.bright.duty(backlight.get_max_duty()));
-            if new_theme.gamma != theme.gamma {
-                display.set_gamma(new_theme.gamma.tables());
-            }
-            display.set_palette(new_theme.palette());
-            theme = new_theme;
-        }
+        let recolour = apply_theme(ui.theme(), &mut theme, &mut backlight, &mut display);
         ui.update();
         shared_w.publish(|b| b.update_from(&ui.performance));
         let stats = stats_r.as_mut().map(|r| {
@@ -206,17 +322,56 @@ fn main() -> ! {
             s.stack_used = probe::stack_used();
             s
         });
+        // Read after the card work; the toast's first step ignores it.
+        let now = controls::ticks();
+        let elapsed_ms = now.wrapping_sub(last_tick) * 1_000 / controls::CONTROLS_HZ;
+        last_tick = now;
+        let toast = ui.step_toast(elapsed_ms);
+        if toast == ToastStep::Ended {
+            // The toast covered rows the dirty regions don't know about.
+            ui.render_with_audio(&mut display, &perf.stats, stats.as_ref(), scope_r.read());
+            display.flush();
+            ui.prime_regions(&perf.stats, stats.as_ref(), scope_r.read());
+            continue;
+        }
         let flush_list =
             ui.render_dirty_with_audio(&mut display, &perf.stats, stats.as_ref(), scope_r.read());
+        // Over whatever redrew beneath it, before anything is flushed.
+        let band = match toast {
+            ToastStep::Show(text) => Some(draw_toast(&mut display, text)),
+            _ => None,
+        };
         if recolour {
             // A new palette recolours rows that did not redraw.
             display.flush();
         } else {
-            for &(ys, ye) in &flush_list {
+            for &(ys, ye) in flush_list.iter().chain(&band) {
                 if ys != ye {
                     display.flush_region(ys, ye);
                 }
             }
         }
     }
+}
+
+/// Pushes `new` to the backlight and the panel. True when the palette
+/// changed, which recolours rows that did not redraw.
+#[cfg(not(feature = "sd-probe"))]
+fn apply_theme(
+    new: ThemeSettings,
+    theme: &mut ThemeSettings,
+    backlight: &mut Backlight,
+    display: &mut Display,
+) -> bool {
+    if new == *theme {
+        return false;
+    }
+    let recolour = new.palette() != theme.palette();
+    backlight.set_duty(new.bright.duty(backlight.get_max_duty()));
+    if new.gamma != theme.gamma {
+        display.set_gamma(new.gamma.tables());
+    }
+    display.set_palette(new.palette());
+    *theme = new;
+    recolour
 }

@@ -13,18 +13,20 @@ build:
     cargo build -p chimera-core -p chimera-hal -p chimera-desktop
 
 # Everything must pass before a commit (ADR 0013): core + hal tests, desktop
-# tests and its no-MIDI build, the firmware built and linked with default
-# features, with none, and with the bench, clippy on host and firmware (every
-# feature set), rustfmt and the stack check. The desktop needs ALSA's
+# tests and its no-MIDI build, the dosfstools cross-checks, the firmware built and linked with default
+# features, with none, with the bench and with the SD probe, clippy on host
+# and firmware (every feature set), rustfmt and the stack check. The desktop needs ALSA's
 # pkg-config file; point PKG_CONFIG_PATH at it if it is not installed
 # system-wide.
 check:
-    cargo test -p chimera-core -p chimera-hal -p chimera-waves
+    cargo test -p chimera-core -p chimera-hal -p chimera-waves -p chimera-fat --features chimera-hal/testkit
+    just test-fat-tools
     cargo test -p chimera-desktop
     cargo build -p chimera-desktop --no-default-features
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --features bench
+    cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --features sd-probe
     cargo build -p chimera-bootloader --target thumbv7em-none-eabihf
     just clippy
     cargo fmt --all -- --check
@@ -32,17 +34,17 @@ check:
 
 # The stack is the 63.75 KB of DTCM below the wave tables (ADR 0025): fail if any release function moves
 # SP by 8 KB or more in one step, or by a register (a large value built on
-# the stack instead of in a static), checked for the default, no-default and
-# bench feature sets. Needs the llvm-tools rustup component; a missing
-# llvm-objdump or an unreadable ELF fails the recipe instead of passing
-# silently.
+# the stack instead of in a static), checked for the default, no-default,
+# bench and sd-probe feature sets. Needs the llvm-tools rustup component; a
+# missing llvm-objdump or an unreadable ELF fails the recipe instead of
+# passing silently.
 stack-check:
     #!/usr/bin/env bash
     set -euo pipefail
     objdump="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin/llvm-objdump"
     test -x "$objdump"
     elf=target/thumbv7em-none-eabihf/release/chimera-stm32
-    for features in "" "--no-default-features" "--features bench"; do
+    for features in "" "--no-default-features" "--features bench" "--features sd-probe"; do
         cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf $features
         test -r "$elf"
         if "$objdump" -d --no-show-raw-insn -C "$elf" \
@@ -56,15 +58,24 @@ stack-check:
 
 # Run tests
 test:
-    cargo test -p chimera-core -p chimera-hal -p chimera-waves
+    cargo test -p chimera-core -p chimera-hal -p chimera-waves -p chimera-fat --features chimera-hal/testkit
+    just test-fat-tools
+
+# The FAT layer checked by dosfstools (ADR 0048): mkfs.fat images must read
+# back and fsck.fat -n must pass. The tests are #[ignore]d so a plain
+# `cargo test` stays hermetic; without dosfstools this fails with an install
+# message, it never skips.
+test-fat-tools:
+    cargo test -p chimera-fat --features chimera-hal/testkit --test dosfstools_test -- --ignored
 
 # Clippy on every target and feature set `check` builds, test targets included
 clippy:
-    cargo clippy -p chimera-core -p chimera-hal -p chimera-desktop -p chimera-waves --all-targets -- -D warnings
+    cargo clippy -p chimera-core -p chimera-hal -p chimera-desktop -p chimera-waves -p chimera-fat --features chimera-hal/testkit --all-targets -- -D warnings
     cargo clippy -p chimera-desktop --no-default-features --all-targets -- -D warnings
     cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf -- -D warnings
     cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features -- -D warnings
     cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --features bench -- -D warnings
+    cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --features sd-probe -- -D warnings
     cargo clippy -p chimera-bootloader --target thumbv7em-none-eabihf -- -D warnings
 
 # Render every screen-golden case with the real renderer and write
@@ -87,3 +98,16 @@ flash-bench:
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --features bench
     rust-objcopy -O binary target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-bench.bin
     dfu-util -a0 -d 0x0483:0xdf11 -D target/chimera-bench.bin -s 0x8020000:leave
+
+# Flash the SD bring-up probe (--features sd-probe) to PreenFM3 via DFU
+flash-sd-probe:
+    cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --features sd-probe
+    rust-objcopy -O binary target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-sd-probe.bin
+    dfu-util -a0 -d 0x0483:0xdf11 -D target/chimera-sd-probe.bin -s 0x8020000:leave
+
+# Coverage-guided fuzz of the Sound decoder, seeded with the v1 fixtures
+# (needs nightly and cargo-fuzz)
+fuzz:
+    mkdir -p chimera-core/fuzz/corpus/decode_sound
+    cp chimera-core/tests/fixtures/v1/*.snd chimera-core/fuzz/corpus/decode_sound/
+    cd chimera-core/fuzz && cargo +nightly fuzz run decode_sound -- -max_total_time=300
