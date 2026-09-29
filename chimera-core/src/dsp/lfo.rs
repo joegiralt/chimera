@@ -84,17 +84,21 @@ impl LfoParams {
 /// The LFO sources are computed from the unmodulated `params.lfos`;
 /// modulating an LFO itself is out of scope, so nothing here is modulatable.
 pub static LFO_SPECS: [ParamSpec; 11] = [
-    ParamSpec::continuous(0, "RATE", ValFmt::Uni, 0.01, 20.0, 1.0, 0.15, false),
-    ParamSpec::choice(1, "SHAPE", ValFmt::Int(4), 4.0, 0.0),
-    ParamSpec::choice(2, "SYNC", ValFmt::Int(1), 1.0, 0.0),
-    ParamSpec::continuous(3, "PHASE", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false),
-    ParamSpec::continuous(4, "DEPTH", ValFmt::Uni, 0.0, 1.0, 1.0, 1.0 / 128.0, false),
-    ParamSpec::continuous(5, "OFST", ValFmt::Bi, -1.0, 1.0, 0.0, 2.0 / 128.0, false),
-    ParamSpec::choice(6, "TYPE", ValFmt::Names(&["CLASSIC", "FUNC"]), 1.0, 0.0),
-    ParamSpec::choice(7, "FORM", ValFmt::Names(&["FREE", "SYNC", "LFV"]), 2.0, 0.0),
-    ParamSpec::continuous(8, "RISE", ValFmt::Uni, 0.0, 1.0, 0.309, 1.0 / 128.0, false),
-    ParamSpec::continuous(9, "FALL", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false),
-    ParamSpec::continuous(10, "SHAPE", ValFmt::Bi, 0.0, 1.0, 0.5, 1.0 / 128.0, false),
+    ParamSpec::continuous(0, "RATE", ValFmt::Uni, 0.01, 20.0, 1.0, 0.15, false).ident("RATE"),
+    ParamSpec::choice(1, "SHAPE", ValFmt::Int(4), 4.0, 0.0).ident("SHAPE"),
+    ParamSpec::choice(2, "SYNC", ValFmt::Int(1), 1.0, 0.0).ident("SYNC"),
+    ParamSpec::continuous(3, "PHASE", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false)
+        .ident("PHASE"),
+    ParamSpec::continuous(4, "DEPTH", ValFmt::Uni, 0.0, 1.0, 1.0, 1.0 / 128.0, false)
+        .ident("DEPTH"),
+    ParamSpec::continuous(5, "OFST", ValFmt::Bi, -1.0, 1.0, 0.0, 2.0 / 128.0, false).ident("OFST"),
+    ParamSpec::choice(6, "TYPE", ValFmt::Names(&["CLASSIC", "FUNC"]), 1.0, 0.0).ident("TYPE"),
+    ParamSpec::choice(7, "FORM", ValFmt::Names(&["FREE", "SYNC", "LFV"]), 2.0, 0.0).ident("FORM"),
+    ParamSpec::continuous(8, "RISE", ValFmt::Uni, 0.0, 1.0, 0.309, 1.0 / 128.0, false)
+        .ident("RISE"),
+    ParamSpec::continuous(9, "FALL", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false).ident("FALL"),
+    ParamSpec::continuous(10, "SHAPE", ValFmt::Bi, 0.0, 1.0, 0.5, 1.0 / 128.0, false)
+        .ident("SHAPE_B"),
 ];
 
 impl Block for LfoParams {
@@ -142,6 +146,18 @@ impl Block for LfoParams {
             Self::SYNC => Some(self.sync),
             Self::TYPE => Some(self.lfo_type.disk_code()),
             Self::FORM => Some(self.func.lfo_form.disk_code()),
+            _ => None,
+        }
+    }
+
+    fn enum_ident(&self, id: ParamId) -> Option<&'static str> {
+        const SHAPES: [&str; 5] = ["SINE", "TRIANGLE", "SAW", "SQUARE", "RANDOM"];
+        const SYNCS: [&str; 2] = ["FREE", "RETRIG"];
+        match id {
+            Self::SHAPE => SHAPES.get(usize::from(self.shape)).copied(),
+            Self::SYNC => SYNCS.get(usize::from(self.sync)).copied(),
+            Self::TYPE => Some(self.lfo_type.disk_ident()),
+            Self::FORM => Some(self.func.lfo_form.disk_ident()),
             _ => None,
         }
     }

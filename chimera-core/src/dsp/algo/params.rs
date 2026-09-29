@@ -75,7 +75,7 @@ impl AlgoOpParams {
 /// it is the one operator destination (ADR 0010). FINE and FEEDBACK are
 /// not: FINE's 104-cent steps would zipper.
 pub static ALGO_OP_SPECS: [ParamSpec; 13] = [
-    ParamSpec::choice(0, "WAVE", ValFmt::Names(&WAVE_NAMES), 15.0, 0.0),
+    ParamSpec::choice(0, "WAVE", ValFmt::Names(&WAVE_NAMES), 15.0, 0.0).ident("WAVE"),
     ParamSpec::stepped(
         1,
         "CRSE",
@@ -84,18 +84,19 @@ pub static ALGO_OP_SPECS: [ParamSpec; 13] = [
         63.0,
         4.0,
         false,
-    ),
-    ParamSpec::stepped(2, "FINE", ValFmt::Int(15), 0.0, 15.0, 0.0, false),
-    ParamSpec::stepped(3, "DETUN", ValFmt::Signed(3), -3.0, 3.0, 0.0, false),
-    ParamSpec::stepped(4, "LEVEL", ValFmt::Int(99), 0.0, 99.0, 0.0, true),
-    ParamSpec::stepped(5, "AR", ValFmt::Int(31), 0.0, 31.0, 31.0, false),
-    ParamSpec::stepped(6, "D1R", ValFmt::Int(31), 0.0, 31.0, 0.0, false),
-    ParamSpec::stepped(7, "D1L", ValFmt::Int(15), 0.0, 15.0, 15.0, false),
-    ParamSpec::stepped(8, "D2R", ValFmt::Int(31), 0.0, 31.0, 0.0, false),
-    ParamSpec::stepped(9, "RR", ValFmt::OneBased(14), 1.0, 15.0, 8.0, false),
-    ParamSpec::stepped(10, "RS", ValFmt::Int(3), 0.0, 3.0, 0.0, false),
-    ParamSpec::stepped(11, "FDBK", ValFmt::Int(7), 0.0, 7.0, 0.0, false),
-    ParamSpec::stepped(12, "VEL", ValFmt::Int(7), 0.0, 7.0, 0.0, false),
+    )
+    .ident("CRSE"),
+    ParamSpec::stepped(2, "FINE", ValFmt::Int(15), 0.0, 15.0, 0.0, false).ident("FINE"),
+    ParamSpec::stepped(3, "DETUN", ValFmt::Signed(3), -3.0, 3.0, 0.0, false).ident("DETUN"),
+    ParamSpec::stepped(4, "LEVEL", ValFmt::Int(99), 0.0, 99.0, 0.0, true).ident("LEVEL"),
+    ParamSpec::stepped(5, "AR", ValFmt::Int(31), 0.0, 31.0, 31.0, false).ident("AR"),
+    ParamSpec::stepped(6, "D1R", ValFmt::Int(31), 0.0, 31.0, 0.0, false).ident("D1R"),
+    ParamSpec::stepped(7, "D1L", ValFmt::Int(15), 0.0, 15.0, 15.0, false).ident("D1L"),
+    ParamSpec::stepped(8, "D2R", ValFmt::Int(31), 0.0, 31.0, 0.0, false).ident("D2R"),
+    ParamSpec::stepped(9, "RR", ValFmt::OneBased(14), 1.0, 15.0, 8.0, false).ident("RR"),
+    ParamSpec::stepped(10, "RS", ValFmt::Int(3), 0.0, 3.0, 0.0, false).ident("RS"),
+    ParamSpec::stepped(11, "FDBK", ValFmt::Int(7), 0.0, 7.0, 0.0, false).ident("FDBK"),
+    ParamSpec::stepped(12, "VEL", ValFmt::Int(7), 0.0, 7.0, 0.0, false).ident("VEL"),
 ];
 
 // An Enum's `max` is its last code: a longer table needs the spec to grow too.
@@ -149,6 +150,13 @@ impl Block for AlgoOpParams {
         (id == Self::WAVE).then_some(self.wave)
     }
 
+    /// A wave's ident is its name.
+    fn enum_ident(&self, id: ParamId) -> Option<&'static str> {
+        (id == Self::WAVE)
+            .then(|| WAVE_NAMES.get(usize::from(self.wave)).copied())
+            .flatten()
+    }
+
     fn set_enum_code(&mut self, id: ParamId, code: u8) -> bool {
         id == Self::WAVE
             && WaveId::from_index(code)
@@ -193,10 +201,12 @@ impl AlgoParams {
 }
 
 pub static ALGO_SPECS: [ParamSpec; 4] = [
-    ParamSpec::choice(0, "ALG A", ValFmt::Names(&ALGO_NAMES), 31.0, 0.0),
-    ParamSpec::choice(1, "ALG B", ValFmt::Names(&ALGO_NAMES), 31.0, 0.0),
-    ParamSpec::stepped(2, "MORPH", ValFmt::Uni, 0.0, 127.0, 0.0, true).short("MRPH"),
-    ParamSpec::stepped(3, "TRNSP", ValFmt::Signed(24), -24.0, 24.0, 0.0, false),
+    ParamSpec::choice(0, "ALG A", ValFmt::Names(&ALGO_NAMES), 31.0, 0.0).ident("ALG_A"),
+    ParamSpec::choice(1, "ALG B", ValFmt::Names(&ALGO_NAMES), 31.0, 0.0).ident("ALG_B"),
+    ParamSpec::stepped(2, "MORPH", ValFmt::Uni, 0.0, 127.0, 0.0, true)
+        .ident("MORPH")
+        .short("MRPH"),
+    ParamSpec::stepped(3, "TRNSP", ValFmt::Signed(24), -24.0, 24.0, 0.0, false).ident("TRNSP"),
 ];
 
 const _: () = assert!(ALGO_SPECS[0].max as usize == ALGO_COUNT - 1);
@@ -234,6 +244,16 @@ impl Block for AlgoParams {
             Self::ALG_B => Some(self.alg_b),
             _ => None,
         }
+    }
+
+    /// An algorithm's ident is its name.
+    fn enum_ident(&self, id: ParamId) -> Option<&'static str> {
+        let i = match id {
+            Self::ALG_A => self.alg_a,
+            Self::ALG_B => self.alg_b,
+            _ => return None,
+        };
+        ALGO_NAMES.get(usize::from(i)).copied()
     }
 
     fn set_enum_code(&mut self, id: ParamId, code: u8) -> bool {

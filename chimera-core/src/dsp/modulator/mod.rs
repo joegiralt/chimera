@@ -48,6 +48,13 @@ impl DiskCode for EnvType {
         }
     }
 
+    fn disk_ident(self) -> &'static str {
+        match self {
+            EnvType::A => "A",
+            EnvType::B => "B",
+        }
+    }
+
     fn from_disk_code(c: u8) -> Option<Self> {
         match c {
             0 => Some(EnvType::A),
@@ -76,6 +83,14 @@ impl DiskCode for EnvSpeed {
             EnvSpeed::Fast => 0,
             EnvSpeed::Med => 1,
             EnvSpeed::Slow => 2,
+        }
+    }
+
+    fn disk_ident(self) -> &'static str {
+        match self {
+            EnvSpeed::Fast => "FAST",
+            EnvSpeed::Med => "MED",
+            EnvSpeed::Slow => "SLOW",
         }
     }
 
@@ -111,6 +126,14 @@ impl DiskCode for HoldPos {
         }
     }
 
+    fn disk_ident(self) -> &'static str {
+        match self {
+            HoldPos::Off => "OFF",
+            HoldPos::Ahdsr => "AHDSR",
+            HoldPos::GateExt => "GATE_EXT",
+        }
+    }
+
     fn from_disk_code(c: u8) -> Option<Self> {
         match c {
             0 => Some(HoldPos::Off),
@@ -140,6 +163,14 @@ impl DiskCode for FuncMode {
             FuncMode::Env => 0,
             FuncMode::Lfo => 1,
             FuncMode::Burst => 2,
+        }
+    }
+
+    fn disk_ident(self) -> &'static str {
+        match self {
+            FuncMode::Env => "ENV",
+            FuncMode::Lfo => "LFO",
+            FuncMode::Burst => "BURST",
         }
     }
 
@@ -176,6 +207,14 @@ impl DiskCode for EnvForm {
         }
     }
 
+    fn disk_ident(self) -> &'static str {
+        match self {
+            EnvForm::Ad => "AD",
+            EnvForm::Ahr => "AHR",
+            EnvForm::Cycle => "CYCLE",
+        }
+    }
+
     fn from_disk_code(c: u8) -> Option<Self> {
         match c {
             0 => Some(EnvForm::Ad),
@@ -205,6 +244,14 @@ impl DiskCode for LfoForm {
             LfoForm::Free => 0,
             LfoForm::Sync => 1,
             LfoForm::Lfv => 2,
+        }
+    }
+
+    fn disk_ident(self) -> &'static str {
+        match self {
+            LfoForm::Free => "FREE",
+            LfoForm::Sync => "SYNC",
+            LfoForm::Lfv => "LFV",
         }
     }
 
@@ -385,6 +432,13 @@ impl DiskCode for LfoType {
         match self {
             LfoType::Classic => 0,
             LfoType::Func => 1,
+        }
+    }
+
+    fn disk_ident(self) -> &'static str {
+        match self {
+            LfoType::Classic => "CLASSIC",
+            LfoType::Func => "FUNC",
         }
     }
 

@@ -24,6 +24,13 @@ impl DiskCode for PartMode {
         }
     }
 
+    fn disk_ident(self) -> &'static str {
+        match self {
+            PartMode::Mono => "MONO",
+            PartMode::Poly => "POLY",
+        }
+    }
+
     fn from_disk_code(c: u8) -> Option<Self> {
         match c {
             0 => Some(PartMode::Mono),
@@ -57,6 +64,14 @@ impl DiskCode for DacPair {
             DacPair::P1 => 0,
             DacPair::P2 => 1,
             DacPair::P3 => 2,
+        }
+    }
+
+    fn disk_ident(self) -> &'static str {
+        match self {
+            DacPair::P1 => "P1",
+            DacPair::P2 => "P2",
+            DacPair::P3 => "P3",
         }
     }
 
@@ -131,25 +146,26 @@ impl Default for PartParams {
 
 /// Nothing here is modulatable: the mixer applies these, not the voice (ADR 0010).
 pub static PART_SPECS: [ParamSpec; 8] = [
-    ParamSpec::choice(0, "CH", ValFmt::OneBased(15), 15.0, 0.0),
-    ParamSpec::choice(1, "MODE", ValFmt::Names(&["MONO", "POLY"]), 1.0, 1.0),
-    ParamSpec::choice(2, "OUT", ValFmt::Names(&["P1", "P2", "P3"]), 2.0, 0.0),
-    ParamSpec::continuous(3, "LEVEL", ValFmt::Uni, 0.0, 1.0, 0.8, 1.0 / 128.0, false),
-    ParamSpec::continuous(4, "PAN", ValFmt::Pan, -1.0, 1.0, 0.0, 2.0 / 128.0, false),
-    ParamSpec::continuous(5, "CHR", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false),
-    ParamSpec::continuous(6, "DLY", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false),
-    ParamSpec::continuous(7, "REV", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false),
+    ParamSpec::choice(0, "CH", ValFmt::OneBased(15), 15.0, 0.0).ident("CH"),
+    ParamSpec::choice(1, "MODE", ValFmt::Names(&["MONO", "POLY"]), 1.0, 1.0).ident("MODE"),
+    ParamSpec::choice(2, "OUT", ValFmt::Names(&["P1", "P2", "P3"]), 2.0, 0.0).ident("OUT"),
+    ParamSpec::continuous(3, "LEVEL", ValFmt::Uni, 0.0, 1.0, 0.8, 1.0 / 128.0, false)
+        .ident("LEVEL"),
+    ParamSpec::continuous(4, "PAN", ValFmt::Pan, -1.0, 1.0, 0.0, 2.0 / 128.0, false).ident("PAN"),
+    ParamSpec::continuous(5, "CHR", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false).ident("CHR"),
+    ParamSpec::continuous(6, "DLY", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false).ident("DLY"),
+    ParamSpec::continuous(7, "REV", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false).ident("REV"),
 ];
 
 /// Every Part's `CHANNEL` side by side (System › MIDI Setup); param `n`
 /// is Part n + 1's.
 pub static CHANNEL_SPECS: [ParamSpec; MAX_PARTS] = [
-    ParamSpec::choice(0, "P1 CH", ValFmt::OneBased(15), 15.0, 0.0),
-    ParamSpec::choice(1, "P2 CH", ValFmt::OneBased(15), 15.0, 1.0),
-    ParamSpec::choice(2, "P3 CH", ValFmt::OneBased(15), 15.0, 2.0),
-    ParamSpec::choice(3, "P4 CH", ValFmt::OneBased(15), 15.0, 3.0),
-    ParamSpec::choice(4, "P5 CH", ValFmt::OneBased(15), 15.0, 4.0),
-    ParamSpec::choice(5, "P6 CH", ValFmt::OneBased(15), 15.0, 5.0),
+    ParamSpec::choice(0, "P1 CH", ValFmt::OneBased(15), 15.0, 0.0).ident("P1_CH"),
+    ParamSpec::choice(1, "P2 CH", ValFmt::OneBased(15), 15.0, 1.0).ident("P2_CH"),
+    ParamSpec::choice(2, "P3 CH", ValFmt::OneBased(15), 15.0, 2.0).ident("P3_CH"),
+    ParamSpec::choice(3, "P4 CH", ValFmt::OneBased(15), 15.0, 3.0).ident("P4_CH"),
+    ParamSpec::choice(4, "P5 CH", ValFmt::OneBased(15), 15.0, 4.0).ident("P5_CH"),
+    ParamSpec::choice(5, "P6 CH", ValFmt::OneBased(15), 15.0, 5.0).ident("P6_CH"),
 ];
 
 impl Block for PartParams {
@@ -191,6 +207,18 @@ impl Block for PartParams {
             Self::CHANNEL => Some(self.channel.get()),
             Self::MODE => Some(self.mode.disk_code()),
             Self::OUTPUT => Some(self.output.disk_code()),
+            _ => None,
+        }
+    }
+
+    fn enum_ident(&self, id: ParamId) -> Option<&'static str> {
+        const CHANNELS: [&str; 16] = [
+            "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15",
+        ];
+        match id {
+            Self::CHANNEL => CHANNELS.get(usize::from(self.channel.get())).copied(),
+            Self::MODE => Some(self.mode.disk_ident()),
+            Self::OUTPUT => Some(self.output.disk_ident()),
             _ => None,
         }
     }

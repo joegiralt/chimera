@@ -32,6 +32,19 @@ impl DiskCode for FilterMode {
         }
     }
 
+    fn disk_ident(self) -> &'static str {
+        match self {
+            FilterMode::Lp6 => "LP6",
+            FilterMode::Lp12 => "LP12",
+            FilterMode::Lp24 => "LP24",
+            FilterMode::Bp12 => "BP12",
+            FilterMode::Bp24 => "BP24",
+            FilterMode::Hp24 => "HP24",
+            FilterMode::Notch => "NOTCH",
+            FilterMode::Phaser => "PHASER",
+        }
+    }
+
     fn from_disk_code(c: u8) -> Option<Self> {
         match c {
             0 => Some(FilterMode::Lp6),
@@ -107,6 +120,12 @@ impl DiskCode for FilterKind {
     fn disk_code(self) -> u8 {
         match self {
             FilterKind::Svf => 0,
+        }
+    }
+
+    fn disk_ident(self) -> &'static str {
+        match self {
+            FilterKind::Svf => "SVF",
         }
     }
 
