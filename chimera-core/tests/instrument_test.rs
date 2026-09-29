@@ -10,7 +10,9 @@ use chimera_core::dsp::chorus::ChorusParams;
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus};
 use chimera_core::dsp::ring::{first_reflection, size_step};
 use chimera_core::hw::{DAC_PAIRS, MAX_PARTS, MAX_VOICES};
-use chimera_core::instrument::{AudioShared, DacOut, Instrument, PanCache, mix_parts, pan_gains};
+use chimera_core::instrument::{
+    AudioShared, DacOut, Instrument, PanCache, VOICE_SUM_TRIM, mix_parts, pan_gains,
+};
 use chimera_core::modulation::ModState;
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::{EngineType, ParamSnapshot};
@@ -124,7 +126,8 @@ fn pan_law_is_constant_power() {
     }
 }
 
-/// The DAC pair gets the part's mono bus × pan gain × level.
+/// The DAC pair gets the part's mono bus × pan gain × level × the
+/// voice-sum trim, one limiter lookahead (a block) later.
 #[test]
 fn part_bus_is_panned_and_levelled_into_its_pair() {
     let mut rig = Rig::new();
@@ -136,10 +139,11 @@ fn part_bus_is_panned_and_levelled_into_its_pair() {
         rig.render(&shared);
     }
     let bus = *rig.inst.part_bus(0);
+    rig.render(&shared);
     let (l, r) = lr(&rig.out[0]);
     assert!(peak(&bus) > 0.01);
     for i in 0..BLOCK_SIZE {
-        assert_eq!(l[i], bus[i] * 0.5, "sample {i}");
+        assert_eq!(l[i], bus[i] * (0.5 * VOICE_SUM_TRIM), "sample {i}");
         assert_eq!(r[i], 0.0);
     }
     assert_eq!(
@@ -182,7 +186,8 @@ fn mix_parts_alone_is_renders_mix() {
     assert_eq!(out, rig.out);
 }
 
-/// `mix_parts` as first written: each Part added into zeroed buffers.
+/// `mix_parts` as first written: each Part added into zeroed buffers, then
+/// the master section and the limiter.
 fn mix_parts_reference(
     buses: &[[f32; BLOCK_SIZE]; MAX_PARTS],
     written: &[bool; MAX_PARTS],
@@ -200,7 +205,8 @@ fn mix_parts_reference(
         }
         let bus = &buses[p];
         let (gl, gr) = pan_gains(part.mix.pan);
-        let (gl, gr) = (gl * part.mix.level, gr * part.mix.level);
+        let g = part.mix.level * VOICE_SUM_TRIM;
+        let (gl, gr) = (gl * g, gr * g);
         let pair = &mut out[part.mix.output.index()];
         for i in 0..BLOCK_SIZE {
             pair[2 * i] += bus[i] * gl;
@@ -209,7 +215,7 @@ fn mix_parts_reference(
         }
         for (send, &amount) in sends.iter_mut().zip(&part.mix.sends) {
             for (s, &b) in send.iter_mut().zip(bus) {
-                *s += b * amount;
+                *s += b * (amount * VOICE_SUM_TRIM);
             }
         }
     }
@@ -219,6 +225,8 @@ fn mix_parts_reference(
         out[0][2 * i] += l;
         out[0][2 * i + 1] += r;
     }
+    fx.master(out, &shared.fx, SR);
+    fx.limit(out, SR);
     scope
 }
 
@@ -296,8 +304,8 @@ fn mix_parts_is_bit_identical_to_the_reference() {
 }
 
 /// Send/return: a Part on pair 3, panned hard left, with a reverb send puts
-/// no dry signal on pair 1 — pair 1 carries exactly the FX return, which is
-/// silent until its first reflection.
+/// no dry signal on pair 1 — pair 1 carries exactly the FX return, a
+/// limiter lookahead late, which is silent until its first reflection.
 #[test]
 fn fx_send_puts_no_dry_signal_on_pair_1() {
     let mut rig = Rig::new();
@@ -309,18 +317,21 @@ fn fx_send_puts_no_dry_signal_on_pair_1() {
     shared.parts[0].mix.sends[2] = 0.5;
     let mut fx = Box::new(FxBus::new());
     rig.inst.handle(on(0, 60), &shared);
+    let mut last = Stereo::SILENT;
     for b in 0..120 {
         rig.render(&shared);
         let bus = *rig.inst.part_bus(0);
-        let mut sends = [[0.0; BLOCK_SIZE], [0.0; BLOCK_SIZE], bus.map(|s| s * 0.5)];
+        let send = bus.map(|s| s * (0.5 * VOICE_SUM_TRIM));
+        let mut sends = [[0.0; BLOCK_SIZE], [0.0; BLOCK_SIZE], send];
         let mut ret = Stereo::SILENT;
         fx.process(&mut sends, &shared.fx, SR, &mut ret);
         let (l, r) = lr(&rig.out[0]);
         assert_eq!(
             (l, r),
-            (ret.l, ret.r),
+            (last.l, last.r),
             "block {b}: pair 1 is the return only"
         );
+        last = ret;
         let (l3, r3) = lr(&rig.out[2]);
         assert_eq!(peak(&r3), 0.0, "block {b}: hard left");
         if b < first_reflection(size_step(shared.fx.reverb.size)) / BLOCK_SIZE {
@@ -591,12 +602,16 @@ fn the_costliest_patch_plays_six_voices_on_rev_v() {
 
 /// Recorded when the instrument path landed (plan Task 12). Re-record only
 /// for an intended sound change (`common::golden`).
+///
+/// Re-recorded for ADR 0050: each is the last recording × 1/√8 (within
+/// 1.6e-7), one block late; `reverb_send_on` besides moves by the ring's
+/// fixed-point grid, which is not scale-invariant (0.7 % of the return).
 const GOLDENS: &[(&str, u64)] = &[
-    ("poly_chord", 0x508049a56f63be65), // re-recorded: the default Sound is Algo
-    ("two_parts_two_pairs", 0x98262aa38f73b0af), // re-recorded: part 1 is Algo
-    ("reverb_send_off", 0x74703404aa517989), // re-recorded: the default Sound is Algo
-    ("reverb_send_on", 0x051f724346259a5a), // re-recorded: the reverb ring (FX diet)
-    ("six_voice_chord", 0xf6e19895e1a40915), // recorded after the Algo cost was measured
+    ("poly_chord", 0x4dd60530a4325afd),
+    ("two_parts_two_pairs", 0x26c7a28fdac635b4),
+    ("reverb_send_off", 0xab56791b4b86ba21),
+    ("reverb_send_on", 0xc855df79783f4f9d),
+    ("six_voice_chord", 0x176c7c512cef19a5),
 ];
 
 /// A named golden case: a case name paired with its render function.
@@ -1198,7 +1213,8 @@ fn the_master_comp_ducks_pair_2_with_pair_1() {
         shared.parts[1].mix.output = DacPair::P2;
         (shared.fx.comp.thresh, shared.fx.comp.ratio) = (0.25, ratio);
         let buses: [[f32; BLOCK_SIZE]; MAX_PARTS] = core::array::from_fn(|p| match p {
-            0 => [0.9; BLOCK_SIZE],
+            // 0.9 on pair 1 after the voice-sum trim.
+            0 => [0.9 / VOICE_SUM_TRIM; BLOCK_SIZE],
             1 => core::array::from_fn(|i| 0.01 * (i as f32 * 0.3).sin()),
             _ => [0.0; BLOCK_SIZE],
         });

@@ -3,6 +3,7 @@
 //! and an `AudioShared` published through a `TripleBuffer`, summed from
 //! three DAC pairs to the speakers.
 
+use chimera_core::audio_out::to_dac;
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::hw::{BLOCK_SIZE, CPU_HZ_REV_V, DAC_PAIRS, SAMPLE_RATE, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacOut, Instrument};
@@ -90,7 +91,6 @@ impl DesktopAudio {
                             block_pos = 0;
                         }
                         let (l, r) = stereo_frame(&dac, solo, block_pos);
-                        let (l, r) = (libm::tanhf(l * 0.7), libm::tanhf(r * 0.7));
                         match frame {
                             [mono] => *mono = 0.5 * (l + r),
                             [fl, fr, rest @ ..] => {
@@ -163,15 +163,16 @@ fn stereo_48k(device: &cpal::Device) -> Option<cpal::SupportedStreamConfig> {
         .map(|c| c.with_sample_rate(cpal::SampleRate(SAMPLE_RATE)))
 }
 
-/// Frame `i` of the three pairs summed to one stereo pair, or only pair
+/// Frame `i` of the three pairs as their DACs play them (`to_dac`, the
+/// firmware's clamp: ADR 0050), summed to one stereo pair, or only pair
 /// `solo` (1..=3) when `solo` is not 0.
 fn stereo_frame(dac: &DacOut, solo: u8, i: usize) -> (f32, f32) {
     let mut l = 0.0;
     let mut r = 0.0;
     for (p, pair) in dac.iter().enumerate() {
         if solo == 0 || solo as usize == p + 1 {
-            l += pair[2 * i];
-            r += pair[2 * i + 1];
+            l += to_dac(pair[2 * i]).level();
+            r += to_dac(pair[2 * i + 1]).level();
         }
     }
     (l, r)
@@ -222,20 +223,38 @@ mod tests {
     fn dac() -> DacOut {
         let mut d = [[0.0; BLOCK_SIZE * 2]; DAC_PAIRS];
         for (p, pair) in d.iter_mut().enumerate() {
-            pair[0] = (p + 1) as f32; // L of frame 0
-            pair[1] = 10.0 * (p + 1) as f32; // R of frame 0
+            pair[0] = 0.1 * (p + 1) as f32; // L of frame 0
+            pair[1] = -0.2 * (p + 1) as f32; // R of frame 0
         }
         d
     }
 
+    /// What pair `p`'s DAC plays for frame 0.
+    fn played(p: usize) -> (f32, f32) {
+        let d = dac();
+        (to_dac(d[p][0]).level(), to_dac(d[p][1]).level())
+    }
+
     #[test]
     fn pairs_sum_to_stereo() {
-        assert_eq!(stereo_frame(&dac(), 0, 0), (6.0, 60.0));
+        let (a, b, c) = (played(0), played(1), played(2));
+        assert_eq!(
+            stereo_frame(&dac(), 0, 0),
+            (a.0 + b.0 + c.0, a.1 + b.1 + c.1)
+        );
     }
 
     #[test]
     fn solo_hears_one_pair() {
-        assert_eq!(stereo_frame(&dac(), 2, 0), (2.0, 20.0));
-        assert_eq!(stereo_frame(&dac(), 3, 0), (3.0, 30.0));
+        assert_eq!(stereo_frame(&dac(), 2, 0), played(1));
+        assert_eq!(stereo_frame(&dac(), 3, 0), played(2));
+    }
+
+    /// ADR 0050: the desktop clamps where the DACs do, no softer curve.
+    #[test]
+    fn each_pair_clamps_as_its_dac_does() {
+        let mut d = dac();
+        (d[1][0], d[1][1]) = (3.0, -0.5);
+        assert_eq!(stereo_frame(&d, 2, 0), (1.0, to_dac(-0.5).level()));
     }
 }

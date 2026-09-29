@@ -6,7 +6,7 @@
 //! DAC pair 1 at unity. The delay's return can feed the reverb's send (REV
 //! SEND), in the same block. After the pairs are summed, `master` runs the
 //! master section: the tape on DAC pair 1, then the compressor linked
-//! across all three pairs.
+//! across all three pairs; `limit` then runs the output limiter (ADR 0050).
 
 use chimera_hal::BLOCK_SIZE;
 use core::f32::consts::LOG2_E;
@@ -18,6 +18,7 @@ use crate::dsp::algo::math::exp2;
 use crate::dsp::chorus::{ChorusParams, JunoChorus};
 use crate::dsp::comp::{CompParams, MasterComp};
 use crate::dsp::delay::{DelayParams, TapeDelay};
+use crate::dsp::limiter::Limiter;
 use crate::dsp::reverb::ReverbParams;
 use crate::dsp::ring::RingReverb;
 use crate::dsp::tape::{Tape, TapeParams};
@@ -59,11 +60,12 @@ pub struct FxBus {
     reverb: RingReverb,
     tape: Tape,
     comp: MasterComp,
+    limiter: Limiter,
     /// REV SEND, smoothed: where this block's ramp starts.
     rev_send: f32,
 }
 
-crate::in_place::field_list!(FxBus => FxBus { chorus, delay, reverb, tape, comp, rev_send });
+crate::in_place::field_list!(FxBus => FxBus { chorus, delay, reverb, tape, comp, limiter, rev_send });
 
 impl Default for FxBus {
     fn default() -> Self {
@@ -72,8 +74,10 @@ impl Default for FxBus {
 }
 
 impl FxBus {
-    /// The whole bus at its worst settings, with the Instrument's mixing;
-    /// reserved from the voice budget whether or not an effect is on.
+    /// The whole bus at its worst settings, with the Instrument's mixing
+    /// and the output limiter; reserved from the voice budget whether or
+    /// not an effect is on. The bench's BUS row runs `mix_parts`, so it
+    /// times the limiter too; the reading below predates it (ADR 0050).
     pub const COST: Cost = Cost(1360); // BUS 1356, measured 2026-09-27, bench, rev V at 480 MHz; rounded up
 
     pub fn new() -> Self {
@@ -83,6 +87,7 @@ impl FxBus {
             reverb: RingReverb::new(),
             tape: Tape::new(),
             comp: MasterComp::new(),
+            limiter: Limiter::new(),
             rev_send: 0.0,
         }
     }
@@ -98,6 +103,7 @@ impl FxBus {
             RingReverb::init_in_place(uninit_at(addr_of_mut!((*p).reverb)));
             Tape::init_in_place(uninit_at(addr_of_mut!((*p).tape)));
             MasterComp::init_in_place(uninit_at(addr_of_mut!((*p).comp)));
+            Limiter::init_in_place(uninit_at(addr_of_mut!((*p).limiter)));
             addr_of_mut!((*p).rev_send).write(0.0);
             slot.assume_init_mut()
         }
@@ -171,6 +177,22 @@ impl FxBus {
     ) {
         self.tape.process(&mut out[0], &params.tape, sample_rate);
         self.comp.process(out, &params.comp, sample_rate);
+    }
+
+    /// The output stage, after the master section: the peak limiter, one
+    /// block late (ADR 0050).
+    pub fn limit(&mut self, out: &mut [[f32; 2 * BLOCK_SIZE]; DAC_PAIRS], sample_rate: u32) {
+        self.limiter.process(out, sample_rate);
+    }
+
+    /// The reverb, for reading its ring.
+    pub fn reverb(&self) -> &RingReverb {
+        &self.reverb
+    }
+
+    /// The final limiter, for reading what it was fed.
+    pub fn limiter(&self) -> &Limiter {
+        &self.limiter
     }
 
     /// The compressor's gain reduction, dB, for the GR meter.
