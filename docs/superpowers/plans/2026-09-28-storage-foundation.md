@@ -14,13 +14,17 @@
   - SYSTEM.
 
   All of it sees only bytes in and bytes out through the `Store` trait.
-- **Portable shell** (`chimera-fat`, a new `no_std` crate): `embedded-sdmmc` 0.10 behind `Store`, plus a pure MBR and boot-sector parser that yields the volume serial and rejects anything the library would panic on. It is host-tested on a RAM disk.
+- **Portable shell** (`chimera-fat`, a new `no_std` crate), host-tested on a RAM disk and cross-checked with dosfstools. It holds:
+  - our own FAT16/FAT32 layer (ADR 0048): a pure MBR and boot-sector parser, then a FAT core over a `Blocks` trait;
+  - `FatStore`, a thin shell that puts the core behind `Store`.
+
+  `embedded-sdmmc` 0.10 is kept only as the SD block driver (`SdCard`).
 - **Hardware shell** (`chimera-stm32/src/sd.rs`): SPI2 polled, with embedded-hal 1.0 adapters over `stm32h7xx-hal` 0.16's embedded-hal 0.2 SPI.
 - **Desktop shell** (`chimera-desktop/src/store.rs`): a directory.
 
-**Tech Stack:** Rust 2024 (`no_std` core), `embedded-sdmmc` 0.10 (`default-features = false`), `embedded-hal` 1.0 (`chimera-fat`'s `Medium` impl and the chip adapter), `stm32h7xx-hal` 0.16, `just`. No new dependency in `chimera-core`.
+**Tech Stack:** Rust 2024 (`no_std` core), `embedded-sdmmc` 0.10 (`default-features = false`; its `SdCard` block driver only, ADR 0048), dosfstools 4.2 (`mkfs.fat`, `fsck.fat`) for the host cross-checks, `embedded-hal` 1.0 (`chimera-fat`'s `Medium` impl and the chip adapter), `stm32h7xx-hal` 0.16, `just`. No new dependency in `chimera-core`.
 
-**Spec:** `docs/superpowers/specs/2026-09-28-projects-storage-design.md` (binding) at 12fa052, amended with this revision: `Card::Failed { err, last }` and the lent `&Ready`, the A/B pick rule, and the atomic-512 B-block assumption. Sections: § Plans item 1, § Types, § Storage, § Boot step 1, § Tests. The review it answers: `projects-spec-review.md` (C1, C2, H2, H6, H7, M1, M3, M6, M9). This revision answers the plan's adversarial review (see § Review response).
+**Spec:** `docs/superpowers/specs/2026-09-28-projects-storage-design.md` (binding) at 12fa052, amended with this revision: `Card::Failed { err, last }` and the lent `&Ready`, the A/B pick rule, and the atomic-512 B-block assumption. Sections: § Plans item 1, § Types, § Storage, § Boot step 1, § Tests. The review it answers: `projects-spec-review.md` (C1, C2, H2, H6, H7, M1, M3, M6, M9). This revision answers the plan's adversarial review (see § Review response). A later revision replaces Task 4 with the owned FAT layer (ADR 0048), after the review of b1ee1c9; the spec's `embedded-sdmmc` lines are amended to match.
 
 > **Out of scope.** These belong to plan 2 (projects and the ladder):
 > - `Project`, `Pool`, `SlotId`, `PartId`, `Origin`, the project records and the load protocol;
@@ -44,7 +48,13 @@ Copied from the spec. Every task's requirements include this section.
   - `Failed` or `Absent` becomes `Ready` only after a fresh init and mount.
   - Each mount compares the volume serial and label with the cached `VolumeId`, which `Failed` keeps.
   - Store operations take a `&Ready`, lent only inside `Card::run`.
-- FAT16 and FAT32 only, classified by cluster count as `embedded-sdmmc` does. exFAT shows "CARD IS EXFAT: FORMAT FAT32". A boot sector the library can't read safely never reaches the library.
+- FAT16 and FAT32 only, classified by cluster count by the FAT spec's rule: under 4 085 is FAT12 and refused, under 65 525 is FAT16, else FAT32. exFAT shows "CARD IS EXFAT: FORMAT FAT32". A boot sector that fails validation never reaches the FAT layer.
+- **The FAT layer is ours** (`chimera-fat`, ADR 0048); `embedded-sdmmc` is only the SD block driver.
+  - Clusters are data clusters only in `2..count + 2`, and the last free one is usable.
+  - Every chain walk is bounded by the cluster count and checked link by link.
+  - Every FAT change goes to every FAT copy, and the FAT is flushed before any directory entry that points into it.
+  - Read-only operations write no block. FSInfo is advisory: it is written at most once per card, to mark the free count unknown.
+  - 8.3 names only, no LFN.
 
 **Files**
 - Layout: `/CHIMERA/SYSTEM.A` and `.B`, with global settings; `/CHIMERA/PROJECTS/P0000001.A` and `.B`, a project. The names are 8.3.
@@ -80,6 +90,7 @@ Copied from the spec. Every task's requirements include this section.
 **RAM**
 - There is no staging copy and no serialised buffer. Saves stream from live state, and loads use two passes. Nothing new goes in D2.
 - Every new static is added to `AXI_RESIDENT`. Fix the stale stack comment on `UI_RESERVE` (ADR 0025).
+- The card's only RAM is `SdStore`, one AXI static under `STORE_RESERVE` (2 KB). It holds a 512 B block buffer, a 512 B FAT-sector cache, the allocation hint and the driver state. The FAT layer borrows those buffers and puts no block on the stack.
 - No stack frame of 8 KB or more (`just stack-check`).
 
 **SYSTEM**
@@ -98,14 +109,27 @@ Copied from the spec. Every task's requirements include this section.
 
 These are the failure modes the spec implies but no spec'd test exercises, most likely first. Each has a test in the task named.
 
-1. **A corrupt or odd boot sector.** Zero sectors per cluster, a total below the metadata, a root cluster of 0, a FAT32 type byte over a FAT16 layout, an exFAT card with no MBR. The parser rejects or classifies it exactly as `embedded-sdmmc` would, before the library can divide by zero or underflow; the unit never halts on a card. Task 1: `corrupt_boot_sector_is_rejected_not_panic`, `fat32_type_byte_with_fat16_layout_is_fat16`, `exfat_superfloppy_is_exfat`. Task 4: `mutated_images_never_panic`.
-2. **A card pulled mid-save, then put back, on the truncate path as well as the create path.** A cut between the FAT truncation and the size-0 entry write leaves an old length over a short chain; the reader sees that as a torn side, not a card fault. The next operation re-inits; the event is `Same`; a generation loads and the next save succeeds. Task 11: `cut_at_every_block_write_keeps_a_generation`, `repeated_cuts_keep_a_generation`, `cut_then_reinsert_loads_previous_generation`.
+1. **A corrupt or odd boot sector.** Zero sectors per cluster, a total below the metadata, a root cluster of 0, a FAT32 type byte over a FAT16 layout, an exFAT card with no MBR. The parser rejects or classifies it by the FAT spec's cluster-count rule. Nothing downstream divides by, or trusts, a field it hasn't checked, and the unit never halts on a card. Task 1: `corrupt_boot_sector_is_rejected_not_panic`, `fat32_type_byte_with_fat16_layout_is_fat16`, `exfat_superfloppy_is_exfat`. Task 4b: `mutated_images_never_panic`.
+2. **A card pulled mid-save, then put back, on the truncate path as well as the create path.** The write order leaves an empty or short file and lost clusters, never an old length over a short chain and never a cross-link. The order is: reset the entry, free the old chain, write the data, flush the FAT, write the entry. A hostile image with a short chain still reads as `Corrupt`, which the reader takes as a torn side, not a card fault. The next operation re-inits; the event is `Same`; a generation loads and the next save succeeds. Task 4b: `write_order_is_cut_safe`. Task 11: `cut_at_every_block_write_keeps_a_generation`, `repeated_cuts_keep_a_generation`, `cut_then_reinsert_loads_previous_generation`, `cut_images_pass_fsck`.
 3. **No card.** The mount fails with `NoCard` within `SD_ACQUIRE_MS`, not `Io` after seconds. Leaving System tries exactly once, and the next exit tries again. Task 4: `no_card_is_no_card`; Task 12: `no_card_exit_tries_once`; Task 13 STOP check 2.
 4. **A card swapped while idle.** The first operation on the new card succeeds: the mount re-inits and retries once. Task 4: `mount_retries_once_after_reinit`; Task 13 STOP check 4.
-5. **A card that fills mid-save,** and a device error during allocation that the library reports as full. `save_ab` returns `Full` and the older generation loads; a pulled card during allocation reads as the fault it is. Task 4: `full_maps_both_library_errors`, `alloc_device_error_is_not_full`; Task 11: `full_card_keeps_previous_generation`.
+5. **A card that fills mid-save, and the FAT's last sector.** The allocator never hands out a cluster at or past `count + 2`, even where the FAT's zeroed tail looks free, and it uses the last free cluster. `save_ab` returns `Full` and the older generation loads. A pulled card during allocation is `Io`, not `Full`. Task 4a: `alloc_never_passes_the_last_cluster`, `tail_zeros_are_not_free`, `last_free_cluster_is_allocated`. Task 4b: `fill_until_full_stays_in_the_partition`, `last_free_cluster_is_used`, `alloc_device_error_is_io`. Task 11: `full_card_keeps_previous_generation`.
 6. **A torn 512 B write in the directory or FAT sector the pair shares.** It pins the atomic-block assumption: a torn data or entry block never loses the kept side, and no torn block ever loads wrong data. Task 11: `torn_block_breaks_only_shared_sectors`.
 7. **Both files of a pair at the same generation** (a user copied `.A` over `.B` on a computer). The newer is chosen deterministically (A), and the next save goes to B with generation + 1. Task 11: `tied_generations_prefer_a_then_write_b`.
 8. **A card with no partition table** ("superfloppy" FAT). The clear error `Unsupported::NoPartitionTable`, not `Io` or a panic. Task 1: `superfloppy_is_no_partition_table`.
+9. **Our own FAT bookkeeping drifting from what a computer expects.** The failure modes: FAT copies out of sync, a delete that leaks its chain, a read that writes, FSInfo rewritten or trusted, an allocation outside the partition. Task 4a:
+   - `fat_copies_are_written_together`;
+   - `read_only_ops_write_nothing`;
+   - `mkfs_layouts_match`.
+
+   Task 4b:
+   - the suite's `consistent` check;
+   - `delete_frees_the_chain_in_every_fat`;
+   - `fsinfo_is_written_at_most_once`;
+   - `bad_fsinfo_is_left_alone`;
+   - `mkfs_images_pass_suite_and_fsck`.
+
+   Task 13: STOP check 7.
 
 ## Decisions this plan makes where the spec is silent
 
@@ -120,8 +144,17 @@ These are the failure modes the spec implies but no spec'd test exercises, most 
   - The plan builds on PE12 and on "no card-detect": `Absent` is inferred from an acquire failure (`StoreError::NoCard`).
   - The owner confirms both at the Task 2 STOP, against `MX_SPI2_Init` and `MX_GPIO_Init` in the stock firmware's CubeMX `main.c` (github.com/Ixox/preenfm3), or the schematic. Until then no ADR records them as fact. A card-detect line, if there is one, is filed as a follow-up issue, not built here.
 - **SPI mode.** MODE 0, the SD standard. If the card doesn't acquire, try MODE 3 (SD's other SPI mode), then MODE 1 (the stock firmware's CPHA = 2EDGE). The probe tries all three in that order.
-- **Volume serial and the boot-sector gate.** `embedded-sdmmc` 0.10 doesn't expose the serial, and its `Bpb::create_from_bytes` divides by sectors-per-cluster and subtracts the metadata from the total unchecked; a zero root cluster underflows later. `chimera_fat::volume` parses the MBR and the boot sector itself, validates every field the library divides by or trusts, and classifies FAT16/FAT32 by cluster count exactly as the library does (< 4085 unsupported, < 65 525 FAT16, else FAT32 with version 0). `FatStore::mount` runs it before `open_raw_volume`. The same parse detects exFAT, in a 0x07 partition or with no MBR.
-- **Error classification lives in the medium.** `embedded-sdmmc` maps every `SpiDevice` error to `Error::Transport`, and `FatStore<D: Medium>` can't read a generic `D::Error`. So `Medium::classify(&self, &Self::Error) -> StoreError` classifies device errors, and `Medium::fault(&self) -> Option<StoreError>` reports a fault the medium saw during the operation, which the library may have hidden behind `DiskFull`. The SD adapter keeps a `timed_out` flag and a `BusPhase` (`Acquire` or `Data`): a failure while acquiring is `NoCard`; a timeout after it is `Timeout`.
+- **Own the FAT layer (ADR 0048).** Task 4's first build (b1ee1c9) wrapped `embedded-sdmmc`'s `VolumeManager`. Its review found:
+  - an allocator that returns clusters past the volume (C1);
+  - a delete that never frees the chain (I1);
+  - an FSInfo rewrite on every operation (I2);
+  - a panic on links to 0 or 1;
+  - a last free cluster that is never used.
+
+  The owner chose to own the FAT layer. `embedded-sdmmc` stays as the SD block driver (`SdCard`, a `BlockDevice`), the part that works. Task 4 is split into 4a (the core and read path) and 4b (the write path and the shell).
+- **Volume serial and the boot-sector gate.** `chimera_fat::volume` parses the MBR and the boot sector. It validates every field the layer divides by or trusts, including a BPB total that must fit the MBR's partition. It classifies FAT16/FAT32 by cluster count: under 4 085 is unsupported, under 65 525 is FAT16, else FAT32 with version 0. The same parse detects exFAT, in a 0x07 partition or with no MBR. Its `Layout` is the only source of block numbers, and the `Part` adapter refuses any block at or past the volume's end.
+- **dosfstools cross-checks.** `mkfs.fat` makes images our layer must read, and `fsck.fat -n` must pass images our layer wrote. The tests are `#[ignore]`d and run by `just test-fat-tools`, which `just test` and `just check` include. A machine without dosfstools fails `just test` with an install message; it never skips silently (Task 4a).
+- **Error classification lives in the medium.** `embedded-sdmmc` maps every `SpiDevice` error to `Error::Transport`, and `FatStore<D: Medium>` can't read a generic `D::Error`. So `Medium::classify(&self, &Self::Error) -> StoreError` classifies device errors. Our layer passes every device error up as `FsError::Dev`, so nothing hides one behind "full", and b1ee1c9's `Medium::fault` goes. The SD adapter keeps a `timed_out` flag and a `BusPhase` (`Acquire` or `Data`): a failure while acquiring is `NoCard`; a timeout after it is `Timeout`.
 - **Timeouts.** One deadline per whole operation is wrong both ways: a missing card would take seconds of CMD0 retries, and a FAT scan or plan 2's 60 KB save can legitimately pass 2 s. So:
   - `SD_ACQUIRE_MS = 1500`: one whole acquire; the shell tries a second acquire (fresh `wake`) when the first fails with a card present, after the #186 presence check (`AcquireOpts { acquire_retries: SD_ACQUIRE_RETRIES = 3, use_crc: true }`); a missing card is `NoCard` within it;
   - `SD_IDLE_MS = 600`: no 512 B block moved for this long is `Timeout` (above SDHC's 500 ms write busy);
@@ -129,7 +162,7 @@ These are the failure modes the spec implies but no spec'd test exercises, most 
 
   The adapter counts on the DWT cycle counter, which `sd::init` enables itself (it isn't running without `perf-probe`). If the counter won't start, the deadline counts transactions instead (each moves ≥ 8 bits at ≤ SCK, so the count bounds time from below). The probe measures the worst gap and the Task 2 STOP confirms the numbers.
 - **Idle swaps.** `reinit` runs only after an error, so after a quiet swap the next operation talks to a card that is still in SD mode. `FatStore::mount` re-inits and retries once when its first block-0 read fails.
-- **Chain inconsistency is a file error.** A cut on the truncate path can leave an old length over a one-cluster chain; `read` then fails with `EndOfFile`, `BadCluster` or `UnterminatedFatChain`. `FatStore` maps those to `StoreError::Corrupt`, `check_file` to a torn side, and `Card` doesn't count it as a card fault.
+- **Chain inconsistency is a file error.** Our write order means a cut no longer leaves an old length over a short chain, but a card from elsewhere can hold one, or any broken link. `read` checks the chain against the length before the first byte and gives `StoreError::Corrupt`. `check_file` maps that to a torn side, and `Card` doesn't count it as a card fault. `write` and `delete` over a broken chain free its valid prefix and succeed, so a torn side is always writable again.
 - **`Ready` is a capability.** It is neither `Copy` nor `Clone`, its field is private, and `Card::run` lends it as `&Ready` for one closure; the borrow is its lifetime bound. `CardError` has no NO CARD variant, so `Failed(NoCard)` can't be built. The optional `Busy` token (drawing BUSY as a precondition of `run`) is not taken: it would force every core test to draw, and the two call sites are checked by the Task 13 STOP.
 - **The A/B pick rule.** `pick` loads the newest side that decodes; a side that needs newer firmware is refused rather than shadowed; both sides broken gives the newest error, not "missing". `write_target` writes the side `pick` doesn't keep. `save_ab` classifies sides by framing only (KIND, header, CRC, the must-understand bit), because it has no decoder.
 - **The streaming serialiser is push, not pull.** The spec says "an iterator of ≤ 512 B chunks". Instead, the encoder writes records into a `ByteSink` that the store buffers in one 512 B block and flushes per block. The streaming, no-copy and running-CRC properties are the same, and there's no resumable state machine. Records are ≤ `MAX_RECORD_LEN` = 512 B and are built on the stack.
@@ -146,7 +179,7 @@ These are the failure modes the spec implies but no spec'd test exercises, most 
 |---|---|
 | `chimera-hal/src/store.rs` | `Store` trait and its vocabulary: `VolumeId`, `Unsupported`, `Dir`, `FileName`, `StoreError`, `ReadSink`, `ByteSink`, `CHUNK`. |
 | `chimera-hal/src/testkit.rs` (feature `testkit`) | `MemStore`, and `store_suite`, the conformance suite every `Store` passes. |
-| `chimera-fat/` (new crate) | `volume.rs`, a pure MBR and boot-sector parser and validator; `store.rs`, `FatStore` over `embedded-sdmmc`, plus `Medium`, `SdBus` and `BusPhase`. `tests/common/image.rs` is a FAT16/FAT32/exFAT image builder, with `RamDisk` and `CutDisk`. |
+| `chimera-fat/` (new crate) | The owned FAT layer (ADR 0048). Pure: `volume.rs`, the MBR and boot-sector parser and `Layout`; `dir.rs`, the entry codec; `fsinfo.rs`. Core over `Blocks`: `blocks.rs`, `fat.rs` (`Table`, the allocator) and `fs.rs` (`Fs`: list, read, write, delete, make_dir). Shell: `store.rs`, with `FatStore`, `Medium`, `SdBus` and `BusPhase`. `deadline.rs`. Tests: `tests/common/image.rs`, the FAT16/FAT32/exFAT image builder with `RamDisk`, `CutDisk`, `Rec` and `Overlay`; `tests/common/tools.rs`, the dosfstools harness. |
 | `chimera-stm32/src/sd.rs` | SPI2 pins and clock; `SdSpi` (a 1.0 `SpiDevice` with idle and acquire deadlines); `CycleDelay`; `SdStore`; `take_store`. |
 | `chimera-stm32/src/sd_probe.rs` (feature `sd-probe`) | The bench-style bring-up probe. |
 | `chimera-desktop/src/store.rs` | `DirStore`. |
@@ -164,13 +197,14 @@ These are the failure modes the spec implies but no spec'd test exercises, most 
 | `chimera-core/src/ui/busy.rs` | `draw_busy`. |
 | `chimera-core/tests/fixtures/disk_codes_v1.txt`, `tests/fixtures/v1/*` | The frozen code table and the v1 files. |
 | `docs/adr/0045-card-format.md` | The format and card-access ADR. |
+| `docs/adr/0048-own-fat-layer.md` | Own the FAT layer; `embedded-sdmmc` only as the SD block driver (written with this revision). |
 
 ## Task order
 
 1. Volume parser and the `chimera-fat` crate (committed at 099f251; reopened for a fix round).
 2. SD on the chip: SPI2 and the probe. **Hardware STOP.**
 3. The `Store` trait, `MemStore` and the conformance suite.
-4. `FatStore` passes the suite on a RAM disk.
+4. The owned FAT layer (ADR 0048): 4a, the core and the read path; 4b, the write path, and `FatStore` passes the suite on a RAM disk.
 5. `DirStore` passes the suite.
 6. Framing: CRC, `Name`, header, records, the framer, and ADR 0045.
 7. Frozen code tables.
@@ -372,77 +406,304 @@ pub trait Store {
 - [ ] **Step 5: Run** `cargo test -p chimera-hal --features testkit` → PASS. In `Justfile`, the multi-package `test`, `check` and `clippy` lines gain `--features chimera-hal/testkit` (a bare `--features` is rejected with several `-p`). Then `just check` → PASS.
 - [ ] **Step 6: Commit** `git commit -m "Store trait, MemStore and the conformance suite"`
 
-### Task 4: `FatStore` passes the suite on a RAM disk
+### Task 4: The owned FAT layer (ADR 0048)
+
+**Why this task changed.** b1ee1c9 put `embedded-sdmmc` 0.10's `VolumeManager` behind `Store`. Its review found library defects that no wrapper fixes without re-implementing the allocator:
+- **C1.** The free-cluster scan returns a zero entry at or past `count + 2` in the FAT's last block, because it checks the end only once per block. That hits about 255/256 of FAT16 cards and 127/128 of FAT32 cards, whose formatters zero the FAT's tail.
+- **I1.** Delete writes 0xE5 and never frees the chain.
+- **I2.** On FAT32, `close_volume` rewrites FSInfo on every operation, reads included.
+- A link to cluster 0 or 1 panics (`c - 2`). The last free cluster is never used, and a failed allocation leaks one cluster. A bad FSInfo becomes an endless `Io`/reinit loop.
+
+The owner decided: **own the FAT layer.** `embedded-sdmmc` stays only as the SD block driver (`SdCard`, a `BlockDevice`). ADR 0048 records the decision. The task is split in two, so each half can be reviewed on its own:
+- **4a** is the core and the read path: layout, the FAT table, the allocator, directories, `list` and `read`, and the dosfstools harness. It lands beside b1ee1c9's `FatStore`, which stays in use until 4b, so `just check` stays green.
+- **4b** is the write path and the shell: `write`, `delete`, `make_dir` and FSInfo. `FatStore` moves onto the core and passes the suite.
+
+**What happens to b1ee1c9.** It stays in history, and 4a and 4b build on it.
+- **Carried over:**
+  - `volume.rs` (`Layout`, `Link`, `layout()`, `boot_sector`, `first_partition`), which 4a extends;
+  - `deadline.rs`;
+  - `Medium`, `BusPhase`, `SdBus` and `impl Medium for SdCard`, less `Medium::fault` (4b);
+  - `tests/common/image.rs`: the builders, `RamDisk` and `CutDisk`;
+  - `sd_medium_test.rs`;
+  - `fat_store_test.rs`: the `Probe` medium and the tests `fat16_passes_suite`, `fat32_passes_suite`, `exfat_mount_is_unsupported`, `exfat_superfloppy_mount_is_unsupported`, `superfloppy_mount_is_unsupported`, `corrupt_bpb_mount_is_unsupported`, `mutated_images_never_panic` (extended), `error_calls_reinit`, `mount_retries_once_after_reinit` and `chain_errors_read_as_corrupt`;
+  - all of `volume_test.rs`. `images_open_in_embedded_sdmmc` and `classification_matches_embedded_sdmmc` now check against a second implementation.
+- **Deleted in 4b:**
+  - `FatStore`'s `VolumeManager` body: `with_dir`, `walk`, `check_chain`, the `RawFile` `BlockSink` and the error table over `embedded_sdmmc::Error`;
+  - `FixedTime`. The entry stamp becomes a constant, and the second-reader tests get a test-local `TimeSource` in `tests/common`;
+  - `has_open_handles`, since there are no handles;
+  - `Medium::fault` and `CutDisk`'s `fault()`. No library hides a device error any more;
+  - the tests `full_maps_both_library_errors` and `alloc_device_error_is_not_full`, with their `raw`/`raw_write` helpers. They pinned library errors;
+  - `fault_is_the_deadline`, which folds into `classify_table`.
+- **Replaced:** `broken_chains_are_corrupt_before_the_library_walks_them` becomes `broken_chains_are_bounded` (4a, core) and `broken_chains_read_corrupt_and_stay_writable` (4b, store).
+
+**Shape: functional core, imperative shell.**
+- **Pure:**
+  - `volume.rs`: layout arithmetic, FAT entry read and write, region lookups;
+  - `dir.rs`: the 32 B entry codec, `ShortName` and the LFN checksum;
+  - `fsinfo.rs`: the signature check, the hint and the one patch.
+- **Core over a block trait**, host-tested on a RAM partition with no `Medium`:
+  - `blocks.rs`: `Blocks`, volume-relative 512 B reads and writes;
+  - `fat.rs`: `Table`, with one cached FAT sector that flushes to every copy, bounded chain walks and the allocator;
+  - `fs.rs`: `Fs`, which does directories, `list`, `read`, `write`, `delete` and `make_dir`.
+- **Shell** (`store.rs`): `FatStore<D: Medium>`. It handles the mount, the idle-swap retry and the `VolumeId` check. Its `Part` adapter bounds every block to the partition. It maps errors and calls `reinit`.
+
+**The rules the layer keeps.** Each has a named test below.
+1. **Clusters.** A data cluster is one in `2..count + 2`, and nothing else. The allocator scans exactly that range, the last free cluster included. It gives `Full` only when no cluster is free, and a failed allocation writes nothing.
+2. **Chain walks.** Every chain walk is bounded by the cluster count and checked link by link: `Link::Broken`, or a step past the bound (a loop), is `Corrupt`. No arithmetic touches a cluster number before `Layout::holds` accepts it.
+3. **FAT copies.** Every FAT change goes to every FAT copy, FAT 1 first. The FAT is flushed before any directory entry that points into it is written. A FAT sector is written only when an entry in it changed value.
+4. **Read-only operations write nothing.** That covers `mount`, `list` and `read`, and any operation that fails before it changes anything (`NotFound`, `VolumeChanged`, `Corrupt` on the path).
+5. **Write order, for cut safety.**
+   1. The entry is reset to length 0 and start cluster 0, or created that way in a free slot.
+   2. The old chain is freed.
+   3. The data streams into newly allocated clusters.
+   4. The FAT is flushed.
+   5. The entry gets its start cluster and length.
+
+   A cut leaves an empty or short file plus lost clusters. It never leaves a length over a short chain, and never a cross-link. Delete follows the same rule: the entry becomes 0xE5 first, and so does the LFN run just before it if its checksum matches; the chain is freed after. On a `body` error or `Full`, what was written stays: the tail block, the FAT and the entry with the bytes so far are written, then the error returns.
+6. **FSInfo (FAT32) is advisory and never trusted.** `layout()` records only its sector number.
+   - **Validation.** FSInfo is valid when its three signatures match (0x4161_5252 at 0, 0x6141_7272 at 484, 0xAA55_0000 at 508). A bad FSInfo is never read for hints and never written, and the card still mounts: it is not `Unsupported`. Why: FSInfo is advisory in Microsoft's FAT spec, Windows and `fsck.fat` accept a card whose FSInfo is bad, and refusing such a card would refuse a card a computer reads fine. Ignoring it removes the whole class the library's I2 and its `FormatError` loop came from.
+   - **The one write.** On the first FAT-changing operation on a valid FSInfo whose free count isn't already 0xFFFF_FFFF, the free count becomes 0xFFFF_FFFF ("unknown"; `fsck.fat -n` exits 0 on it, checked with dosfstools 4.2). Nothing else in FSInfo is ever written, so a card's FSInfo is written at most once. Keeping an exact free count would mean trusting the count already there; a wrong count is an `fsck.fat` error (exit 1).
+   - **The hint.** FSInfo's next-free is only the allocator's first start point, and only when FSInfo is valid and the value is a held cluster. After that, the start point is a RAM hint in `FatStore`, keyed by `VolumeId`. The scan checks every entry it takes, so no hint is trusted.
+7. **8.3 names only.** Entries with the LFN, volume-label or directory `.`/`..` attributes are skipped, and so is any name `FileName::new` refuses. Such names are never listed and never matched. Every stamp is 2026-01-01 00:00, since there is no clock.
+8. **Missing directories and wrong kinds.**
+   - A directory the operation needs that doesn't exist is `NotFound`: `list` and `write` in it, and `make_dir(Projects | Sounds)` before `Chimera`.
+   - A directory under the file's name is `NotFound` for `read` and `delete`, which never touch it. For `write` it is `Corrupt`, and nothing is written.
+   - A file under a directory's name is `Corrupt` for `make_dir`, and for any operation whose path runs through it. Neither case is a card fault.
+9. **The FAT16 root is fixed.** When it has no free slot, `make_dir(Chimera)` is `Full`. A cluster directory (FAT32's root, or a subdirectory) grows by one zeroed cluster when it has no free slot.
+
+#### Task 4a: FAT core and the read path
 
 **Files:**
-- Create: `chimera-fat/src/store.rs`, `chimera-fat/tests/fat_store_test.rs`, `chimera-fat/tests/sd_medium_test.rs`
-- Modify: `chimera-fat/src/lib.rs`, `chimera-fat/Cargo.toml` (dev-dep `chimera-hal` with `testkit`), `chimera-fat/tests/common/image.rs` (`impl Medium for RamDisk {}`; `impl Medium for CutDisk` with `fault()` → `Some(Io)` once cut; its `#[allow(dead_code)]` stays, since volume_test doesn't use it)
+- Create: `chimera-fat/src/{blocks,fat,dir,fsinfo,fs}.rs`, `chimera-fat/tests/fat_core_test.rs`, `chimera-fat/tests/fat_read_test.rs`, `chimera-fat/tests/dosfstools_test.rs`, `chimera-fat/tests/common/tools.rs`
+- Modify: `chimera-fat/src/volume.rs` (the `Layout` fields below; `Partition::blocks`), `chimera-fat/src/lib.rs` (the new modules are `pub`), `chimera-fat/tests/volume_test.rs`, `chimera-fat/tests/common/image.rs` (`Rec`, a recording `Blocks` view of a `RamDisk` partition)
+- Modify: `Justfile`: a new `test-fat-tools` recipe, which `test` and `check` run
 
 **Interfaces:**
-- Consumes: `Store` and everything in `chimera_hal::store` (Task 3); `volume::*` (Task 1).
+- Consumes: `Dir`, `FileName`, `ReadSink`, `ByteSink`, `StoreError`, `Unsupported` and `VolumeId` (Task 3); `volume::*` (Task 1, b1ee1c9).
 - Produces, in `chimera_fat`:
 
 ```rust
-pub trait Medium: embedded_sdmmc::BlockDevice {
-    fn start_op(&self) {}                                     // arm the medium's deadline for one Store op
-    fn reinit(&self) {}                                       // after an error: wake, slow clock, re-acquire next access
-    fn mounted(&self) {}                                      // volume opened: fast clock
-    fn classify(&self, _e: &Self::Error) -> StoreError { StoreError::Io }
-    fn fault(&self) -> Option<StoreError> { None }            // a fault seen since start_op (the library may hide it)
+// volume.rs — extends b1ee1c9's Layout; fields stay private, only layout() builds one
+pub struct Partition { pub lba: u32, pub blocks: u32, pub kind: PartitionType }  // + the MBR entry's sector count
+pub enum Root { Fixed { first: u32, blocks: u32 }, Cluster(u32) }               // FAT16 region | FAT32 cluster
+pub fn layout(bs: &[u8; 512], part: Partition) -> Result<(Layout, VolumeId), Unsupported>;
+    // + BPB total > part.blocks → BadBootSector. boot_sector(bs, kind) keeps its signature.
+impl Layout {
+    pub const fn blocks(&self) -> u32;                          // the volume's blocks: every I/O is below this
+    pub const fn root(&self) -> Root;                           // replaces Option<u32>
+    pub const fn blocks_per_cluster(&self) -> u32;
+    pub fn cluster_block(&self, c: u32) -> Option<u32>;         // None unless holds(c)
+    pub fn fat_copies(&self, fat1_block: u32) -> impl Iterator<Item = u32>; // the same block in every FAT, FAT 1 first
+    pub const fn fs_info(&self) -> Option<u32>;
+    pub fn entry(&self, block: &[u8; 512], c: u32) -> u32;       // raw; FAT32 masked to 28 bits
+    pub fn put_entry(&self, block: &mut [u8; 512], c: u32, v: u32); // FAT32 keeps the top nibble
 }
-pub enum BusPhase { Acquire, Data }                           // Acquire: init clock, SD_ACQUIRE_MS; Data: fast clock, SD_IDLE_MS
-pub trait SdBus {
-    fn wake(&mut self);                                       // ≥ 74 clocks, CS high, at the init clock
-    fn set_phase(&mut self, p: BusPhase);
-    fn phase(&self) -> BusPhase;
-    fn start_op(&mut self);
-    fn timed_out(&self) -> bool;
+
+// blocks.rs
+pub const BLOCK: usize = 512;
+pub trait Blocks {                                   // volume-relative block numbers
+    type Error;
+    fn read(&mut self, lba: u32, buf: &mut [u8; BLOCK]) -> Result<(), Self::Error>;
+    fn write(&mut self, lba: u32, buf: &[u8; BLOCK]) -> Result<(), Self::Error>;
 }
-impl<S: SpiDevice<u8> + SdBus, D: DelayNs> Medium for SdCard<S, D> {
-    // start_op: spi(start_op). reinit: spi(set_phase(Acquire)), spi(wake), mark_card_uninit.
-    // mounted: spi(set_phase(Data)).
-    // classify: CardNotFound → NoCard; Transport or a Timeout* error with timed_out() → NoCard in Acquire,
-    //           Timeout in Data; the rest → Io.
-    // fault: timed_out() → Some(the same classification), else None.
+pub enum FsError<E> { Dev(E), NotFound, Full, Corrupt, Body(StoreError) }
+
+// fat.rs
+pub struct FatCache { /* sector: Option<u32>, dirty: bool, buf: [u8; BLOCK] */ }
+impl FatCache { pub const fn new() -> Self; }
+pub struct Table<'a, B: Blocks> { /* blocks: &'a mut B, layout: &'a Layout, cache: &'a mut FatCache */ }
+impl<'a, B: Blocks> Table<'a, B> {
+    pub fn new(blocks: &'a mut B, layout: &'a Layout, cache: &'a mut FatCache) -> Self; // empties the cache
+    pub fn link(&mut self, c: u32) -> Result<Link, FsError<B::Error>>;      // c not held → Corrupt
+    pub fn set(&mut self, c: u32, v: u32) -> Result<(), FsError<B::Error>>; // dirty only if the value changes
+    pub fn flush(&mut self) -> Result<(), FsError<B::Error>>;               // a dirty sector → every copy; eviction flushes
+    pub fn alloc(&mut self, from: u32, prev: Option<u32>) -> Result<u32, FsError<B::Error>>;
+        // scans [from, count+2) then [2, from); marks EOC, links prev → new; Full writes nothing
+    pub fn chain_len(&mut self, start: u32) -> Result<u32, FsError<B::Error>>; // ≤ count steps; Broken or a loop → Corrupt
+    pub fn free_chain(&mut self, start: u32) -> Result<u32, FsError<B::Error>>; // frees the valid prefix, ≤ count steps
+    pub fn free_count(&mut self) -> Result<u32, FsError<B::Error>>;          // for the Full path and tests
 }
-pub struct FatStore<D: Medium, T: TimeSource> { /* VolumeManager */ }
-impl<D: Medium, T: TimeSource> FatStore<D, T> { pub fn new(dev: D, time: T) -> Self; pub fn has_open_handles(&self) -> bool; }
-pub struct FixedTime;                                         // 2026-01-01 00:00, impl TimeSource
+
+// dir.rs
+pub struct ShortName([u8; 11]);                      // space-padded 8.3, A–Z 0–9
+impl ShortName { pub fn file(f: &FileName) -> Self; pub fn dir(d: Dir) -> Self; pub fn to_file(&self, dir: Dir) -> Option<FileName>; }
+pub struct Entry { pub name: ShortName, pub start: u32, pub len: u32 }
+pub enum Slot { End, Free, Lfn, Other, File(Entry), Dir(Entry) }   // Other: label, dot entries, names FileName refuses
+pub fn parse(raw: &[u8; 32], kind: FsKind) -> Slot;                 // the cluster's high half on FAT32 only
+pub fn encode(e: &Entry, is_dir: bool, kind: FsKind, raw: &mut [u8; 32]); // attr 0x20 or 0x10, the fixed stamp
+pub fn lfn_checksum(name: &ShortName) -> u8;
+
+// fsinfo.rs
+pub fn valid(b: &[u8; 512]) -> bool;                 // the three signatures
+pub fn hint(b: &[u8; 512], l: &Layout) -> Option<u32>;  // next-free, only if valid and held
+
+// fs.rs — borrows its buffers from the caller, so they live in FatStore, not on the stack
+pub struct Fs<'a, B: Blocks> { /* blocks, layout, fat: &'a mut FatCache, buf: &'a mut [u8; BLOCK], hint: &'a mut Option<u32> */ }
+impl<'a, B: Blocks> Fs<'a, B> {
+    pub fn new(blocks: &'a mut B, layout: Layout, fat: &'a mut FatCache,
+               buf: &'a mut [u8; BLOCK], hint: &'a mut Option<u32>) -> Self;
+    pub fn list(&mut self, dir: Dir, f: &mut dyn FnMut(FileName, u32)) -> Result<(), FsError<B::Error>>;
+    pub fn read(&mut self, file: FileName, sink: &mut dyn ReadSink) -> Result<(), FsError<B::Error>>;
+        // the chain must hold the entry's length before the first byte reaches the sink
+}
 ```
 
-- [ ] **Step 1: Write the failing tests** in `fat_store_test.rs` (FAT16 images unless named):
-  - `fat16_passes_suite` and `fat32_passes_suite`: `store_suite(&mut || FatStore::new(fat16(16_384, 1), FixedTime), &mut |s| *s = FatStore::new(fat16(16_384, 2), FixedTime), &mut |s| assert!(!s.has_open_handles()))`.
-  - `exfat_mount_is_unsupported`, `exfat_superfloppy_mount_is_unsupported`: `Err(StoreError::Unsupported(Unsupported::Exfat))`.
-  - `superfloppy_mount_is_unsupported`: `NoPartitionTable`.
-  - `corrupt_bpb_mount_is_unsupported`: sectors per cluster 0 → `Unsupported(BadBootSector)`, and `open_raw_volume` is never reached (no panic).
-  - `mutated_images_never_panic`: 2 000 xorshift seeds; a FAT16 image holding one 3-cluster file; 1–8 random byte mutations in the MBR, boot sector, FATs or root directory; then `mount`, `list`, `read` and `write`. Each returns (any `Result`); none panics. If a seed panics inside `embedded-sdmmc`, add a guard in `FatStore` before that call if the bytes allow one; otherwise file an upstream issue and a GitHub issue, and exclude that mutation class with a comment naming both.
-  - `error_calls_reinit`: a `Medium` wrapper that counts `reinit`. A `CutDisk` write failure → `Err(Io)` and `reinit` count 1; the next `mount` → `Ok`.
-  - `mount_retries_once_after_reinit` (Review Focus 4): a wrapper whose first block read fails → `mount` is `Ok` with `reinit` count 1; one whose first two reads fail → `Err`, `reinit` count 2 (the retry's own error), and no third read.
-  - `full_maps_both_library_errors` (Review Focus 5): a card with no free cluster; writing a new 1 B file (`NotEnoughSpace` in the library) → `Full`; a card with one free cluster; writing 2 clusters (`DiskFull`) → `Full`.
-  - `alloc_device_error_is_not_full`: a `CutDisk` cut during cluster allocation, which the library reports as `DiskFull` → `Io`, from `fault()`.
-  - `chain_errors_read_as_corrupt`: a hand-edited image whose entry says 3 clusters over a 1-cluster chain → `read` gives `Err(Corrupt)`, and `reinit` isn't called.
-- [ ] **Step 2: Write the failing tests** in `sd_medium_test.rs`. `FakeBus` implements `SpiDevice<u8>` + `SdBus`; `NoDelay` implements `DelayNs`. Both log calls.
-  - `no_card_is_no_card` (Review Focus 3): MISO reads 0xFF; `timed_out` goes true after N transactions. `FatStore::new(SdCard::new_with_options(FakeBus, NoDelay, AcquireOpts { acquire_retries: 3, .. }), FixedTime).mount()` → `Err(NoCard)`, within a bounded number of transactions.
-  - `classify_table`: `CardNotFound` → `NoCard`; `Transport` with `timed_out` in `Acquire` → `NoCard`, in `Data` → `Timeout`; `Transport` without `timed_out` → `Io`; `CrcError` → `Io`.
-  - `reinit_wakes_at_init_clock`: the log after `reinit` is `set_phase(Acquire)` then `wake`; after `mounted`, `set_phase(Data)`.
-- [ ] **Step 3: Run** `cargo test -p chimera-fat` → FAIL.
-- [ ] **Step 4: Implement `FatStore`.**
-  - `mount`: `start_op`; read block 0 and the boot sector through `vm.device(|d| d.read(..))`. If that first read fails: `reinit`, `start_op`, read once more (the idle swap). Then Task 1's parser (a rejection returns before the library sees the volume); `open_raw_volume(VolumeIdx(0))`; `close_volume`; `mounted()`.
-  - Each op: `start_op`, open the volume, compare the `VolumeId` from the boot sector, then open the dir chain (`CHIMERA`, then `PROJECTS`/`SOUNDS`). Every opened handle is closed in reverse on every path, through one private `with_dir(vol, dir, |vm, raw_dir| ..)`.
-  - `write` uses `Mode::ReadWriteCreateOrTruncate`, buffers `put` bytes in one `[u8; CHUNK]` and writes per full block, then `flush_file` and `close_file`.
-  - Error mapping:
+- Produces for tests:
+  - `tests/common/image.rs`: `Rec<'a> { disk: &'a RamDisk, lba: u32, pub reads: u32, pub writes: Vec<(u32, bool)> }`, which implements `Blocks`. Each write logs `(lba, same)`, where `same` means the bytes equal the block already there.
+  - `tests/common/tools.rs`:
+    - `pub fn tool(name: &str) -> PathBuf` looks in `$PATH`, then `/usr/sbin`, then `/sbin`. When the tool is missing it **panics** with "dosfstools missing: install dosfstools (e.g. `apt install dosfstools`); `just test` needs it". It never skips.
+    - `pub fn mkfs(kind: FsKind, blocks: u32, spc: u8, serial: u32) -> RamDisk` writes the MBR as `image::mbr` does, then runs `mkfs.fat --offset 2048 -F {16|32} -s {spc} -i {serial} -n CHIMERA` on a file in `env!("CARGO_TARGET_TMPDIR")` and loads it.
+    - `pub fn fsck(disk: &RamDisk) -> Fsck` writes the partition's blocks alone to a file and runs `fsck.fat -n` on it.
+    - `pub struct Fsck { pub code: i32, pub out: String, pub used: u32, pub total: u32 }` holds `used` and `total` from the summary line (`N files, used/total clusters`).
 
-    | From `embedded_sdmmc::Error` | `StoreError` | `reinit` |
-    |---|---|---|
-    | `DeviceError(e)` | `dev.classify(&e)` | yes |
-    | `NotEnoughSpace`, `DiskFull` | `dev.fault()`, else `Full` | only on a fault |
-    | `NotFound` | `NotFound` | no |
-    | `EndOfFile` before the entry's length, `BadCluster`, `UnterminatedFatChain` | `Corrupt` | no |
-    | the rest | `Io` | yes |
+**How the tests use dosfstools.** There is no CI, and `mkfs.fat`/`fsck.fat` (dosfstools 4.2) are at `/usr/sbin` on the owner's machine.
+- **dosfstools is a hard requirement of `just test` and `just check`.** Every test in `dosfstools_test.rs` is `#[ignore = "needs dosfstools: just test-fat-tools"]`. The recipe is `test-fat-tools: cargo test -p chimera-fat --features chimera-hal/testkit --test dosfstools_test -- --ignored`, and `test` and `check` run it.
+- On a machine without dosfstools, `just test` fails with the install message.
+- A plain `cargo test` (an IDE run, or a quick loop) lists the tests as ignored. It never passes them silently.
+- Why: a second, independent implementation is the only check that our FAT is FAT. Skipping when the tool is missing would make the check optional, which the quality bar rules out. `#[ignore]` keeps plain `cargo test` hermetic.
+- `embedded-sdmmc` is also used in tests as a second implementation, reading and writing well away from the free-space edge where its defects live.
 
-    The library turns any `alloc_cluster` failure into `DiskFull`; `fault()` recovers a pulled card from it.
-- [ ] **Step 5: Run** `cargo test -p chimera-fat` → PASS. Then `just check` → PASS.
-- [ ] **Step 6: Commit** `git commit -m "FatStore: embedded-sdmmc behind Store, mounted per operation"`
+- [ ] **Step 1: Write the failing tests.**
+  - `volume_test.rs`:
+    - `partition_bounds_the_volume`: a BPB total one block over the MBR entry's count → `BadBootSector`;
+    - `layout_regions`: on `fat16(16_384, 1)` and `fat32(1)`, `fat_copies`, `root` and `cluster_block` give the builder's blocks, and `cluster_block(count + 2)` and `cluster_block(1)` are `None`;
+    - `entry_widths`: `entry`/`put_entry` on FAT16 and FAT32, and FAT32's top nibble is kept.
+  - `fat_core_test.rs` (the core on `Rec`):
+    - `alloc_never_passes_the_last_cluster` (a): for FAT16 at 4 085, 5 000 and 65 524 clusters and FAT32 at 65 525 and 66 000, each asserted to leave the last FAT sector partial (the builder zeroes the tail), `alloc` until `Full`. Every cluster returned is in `2..count + 2` and comes once. The number allocated equals `free_count` before. No write is at or past `layout.blocks()`.
+    - `tail_zeros_are_not_free`: a FAT whose only zero entries lie past `count + 2` → `alloc` is `Full`, and `Rec` logged no write.
+    - `last_free_cluster_is_allocated` (g): with one free cluster, `alloc` returns it. The next `alloc` is `Full` and writes nothing, and both FATs' bytes are unchanged, so nothing leaked.
+    - `hint_is_only_a_start`: `alloc(from)` with `from` on a used cluster, on `count + 1` and on `u32::MAX` → a free held cluster (the scan wraps).
+    - `fat_copies_are_written_together` (h): after `set` and `flush`, FAT 1 and FAT 2 are byte-equal. Touching another sector flushes the dirty one to both. A `set` to the value already there leaves the sector clean: `flush` writes nothing, and no logged write is `same`.
+    - `broken_chains_are_bounded` (e): links to 0, 1, `count + 2` and the bad mark (0xFFF7, 0x0FFF_FFF7), a 2-cycle and a self-loop. `chain_len` gives `Corrupt`; `free_chain` frees exactly the valid prefix and stops. Both finish within `count` FAT reads, with no panic.
+    - `entry_codec_round_trips`: `encode` then `parse` gives the entry back, on FAT16 and FAT32 (the high half). An LFN (0x0F), a label (0x08), `.` and `..`, 0xE5 and 0x00 parse as `Lfn`, `Other`, `Other`, `Free` and `End`. A lowercase or `~` name is `Other`.
+    - `lfn_checksum_known_answer`: `README  TXT` → 0x73, by the fatgen103 algorithm.
+  - `fat_read_test.rs`:
+    - `read_only_ops_write_nothing` (c, core half): on a populated FAT16 and FAT32 image, `Rec` logs no write across: `list` of each `Dir`, `list` of a missing dir, `read` of every file (whole, and with a sink that breaks after one chunk), and `read` of a missing file.
+    - `reads_what_embedded_sdmmc_wrote`: `embedded-sdmmc` writes `/CHIMERA/PROJECTS` files of 0, 1, 511, 512, 513 and 5 000 bytes and 3 × the cluster size into `fat16(16_384, 1)` and `fat32(1)`. `list` gives our names and sizes, and `read` gives the bytes.
+    - `chain_errors_read_as_corrupt_before_the_sink`: an entry saying 3 clusters over a 1-cluster chain, and each broken link class above → `Corrupt`, with no `begin` on the sink.
+    - `lfn_labels_and_odd_names_are_skipped`: a hand-built directory holding an LFN run, a label and a lowercase entry. `list` yields only the 8.3 files.
+  - `dosfstools_test.rs` (all `#[ignore]`d, as above):
+    - `mkfs_layouts_match`: mkfs images: FAT16 at `-s 1` and `-s 4`; FAT32 at `-s 1`, two sizes. Each size is picked so `count + 2` isn't a multiple of the entries per FAT sector, and the test asserts that. `layout()` gives the kind, and `clusters()` equals `fsck`'s `total`. The serial is mkfs's `-i`, and the label is `CHIMERA    `.
+    - `mkfs_images_read_back`: `embedded-sdmmc` writes the same files into each mkfs image; ours reads them identically, and `fsck` gives `code == 0`.
+    - `fsck_harness_catches_damage`: a cross-linked image → `code != 0`. This proves the harness really runs `fsck.fat`.
+- [ ] **Step 2: Run** `cargo test -p chimera-fat --features chimera-hal/testkit` and `just test-fat-tools` → FAIL.
+- [ ] **Step 3: Implement** `volume.rs` additions, `blocks.rs`, `fat.rs`, `dir.rs`, `fsinfo.rs` (`valid`, `hint`), `fs.rs` (`list`, `read`), `Rec`, `tools.rs` and the `Justfile` recipe. b1ee1c9's `FatStore` is untouched; its `layout(bs, kind)` call becomes `layout(bs, partition)`.
+- [ ] **Step 4: Run** both → PASS. Then `just check` → PASS.
+- [ ] **Step 5: Commit** `git commit -m "chimera-fat: own FAT core and read path, checked by dosfstools"`
+
+#### Task 4b: Write, delete, make_dir, FSInfo and the `FatStore` shell
+
+**Files:**
+- Modify: `chimera-fat/src/fs.rs` (`write`, `delete`, `make_dir`), `chimera-fat/src/fsinfo.rs` (`patch`), `chimera-fat/src/store.rs` (rewritten over `Fs`), `chimera-fat/src/lib.rs`
+- Modify: `chimera-fat/tests/fat_store_test.rs`, `chimera-fat/tests/sd_medium_test.rs`, `chimera-fat/tests/dosfstools_test.rs`, `chimera-fat/tests/volume_test.rs` (test-local `TimeSource`), `chimera-fat/tests/common/image.rs` (`CutDisk` loses `fault`; a new `Overlay` disk: a `HashMap` of changed blocks over a shared `Rc<RamDisk>` base, so a FAT32 fuzz seed doesn't copy 33 MB)
+- `chimera-fat/Cargo.toml`: `embedded-sdmmc` stays (`SdCard`, `BlockDevice`, `AcquireOpts`), still `default-features = false`
+
+**Interfaces:**
+- Consumes: 4a; `Store` (Task 3).
+- Produces:
+
+```rust
+// fs.rs
+impl<'a, B: Blocks> Fs<'a, B> {
+    pub fn write(&mut self, file: FileName,
+                 body: &mut dyn FnMut(&mut dyn ByteSink) -> Result<(), StoreError>) -> Result<u32, FsError<B::Error>>;
+        // rule 5's order; the sink buffers one block in `buf`; a device error or Full is sticky in the sink
+        // (body sees Io or Full) and outranks body's own error; body's error → Body(e)
+    pub fn delete(&mut self, file: FileName) -> Result<(), FsError<B::Error>>;
+    pub fn make_dir(&mut self, dir: Dir) -> Result<(), FsError<B::Error>>;
+        // exists → Ok with no write; new: zeroed cluster with . and .. (.. = 0 under the root), FAT flushed, then the parent entry
+}
+// fsinfo.rs
+pub fn patch(b: &mut [u8; 512]) -> bool;          // free count → 0xFFFF_FFFF; true if a byte changed
+
+// store.rs
+pub trait Medium: embedded_sdmmc::BlockDevice {   // `fault` removed
+    fn start_op(&self) {}
+    fn reinit(&self) {}
+    fn mounted(&self) {}
+    fn classify(&self, _e: &Self::Error) -> StoreError { StoreError::Io }
+}
+pub struct FatStore<D: Medium> { /* dev: D, buf: [u8; BLOCK], fat: FatCache, hint: Option<(VolumeId, u32)> */ }
+impl<D: Medium> FatStore<D> { pub fn new(dev: D) -> Self; pub fn device(&self) -> &D; }
+impl<D: Medium> Store for FatStore<D> { .. }
+// private: struct Part<'a, D> { dev: &'a D, lba: u32, blocks: u32 } implements Blocks;
+// an lba ≥ blocks is PartError::Outside and never reaches the device.
+```
+
+- Each operation:
+  1. `start_op`, then read the MBR and the boot sector. `mount` alone keeps the one reinit-and-retry when its first read fails (the idle swap).
+  2. Build the `Layout` and compare the `VolumeId`. A mismatch is `VolumeChanged(now)`, and nothing is written.
+  3. Clear the hint if the id changed, then run one `Fs` call over `Part`, borrowing `buf`, `fat` and the hint.
+  4. `mounted()` on `mount`.
+- `SdStore`'s RAM is `buf` (512 B), plus `FatCache` (≈ 520 B), plus the hint (≈ 20 B), plus the `SdCard` (Task 13 asserts the total).
+- Error mapping (i):
+
+  | From | `StoreError` | `reinit` |
+  |---|---|---|
+  | a device error (`Part`'s `Dev(e)`, or the boot reads) | `dev.classify(&e)`: `NoCard`, `Timeout` or `Io` | yes |
+  | `Outside` (unreachable while rules 1–2 hold) | `Corrupt` | no |
+  | `Full` | `Full` | no |
+  | `NotFound` | `NotFound` | no |
+  | `Corrupt` | `Corrupt` | no |
+  | `Body(e)` | `e` | no |
+  | the id differs | `VolumeChanged(now)` | no |
+  | `first_partition`/`layout` rejects | `Unsupported(u)` | no |
+
+- [ ] **Step 1: Write the failing tests** in `fat_store_test.rs`. The `Probe` medium records each write as `(lba, same)`, counts reads and reinits, and panics after 10⁶ device calls, which turns a loop into a failure.
+  - `fat16_passes_suite` and `fat32_passes_suite`: `store_suite(make, swap, eject, after_op)`, where `after_op` is `consistent(&store)`. It asserts:
+    - FAT 1 and FAT 2 are byte-equal (h);
+    - every write so far lies in `[PART_LBA, PART_LBA + layout.blocks())` (a);
+    - no write in the reserved or FAT region was `same` (d).
+  - `fill_until_full_stays_in_the_partition` (a): on FAT16 at 4 085 and 5 000 clusters and FAT32 at 66 000 (all with a partial last FAT sector), write 2-cluster files until `Full`.
+    - Every write is in the partition, and the first write that can't allocate gives `Full`.
+    - The partial last file keeps the bytes it got.
+    - Delete one file, and a new write succeeds.
+  - `last_free_cluster_is_used` (g): with one free cluster, a write of exactly one cluster succeeds and a 1 B write is then `Full`. After deleting that partial file, both FATs' free counts equal their values before it: no leak.
+  - `delete_frees_the_chain_in_every_fat` (b): on FAT16 and FAT32, FAT 1's and FAT 2's free counts before writing a 5 000 B file equal those after deleting it, and both FATs are byte-equal to before.
+  - `overwrite_frees_the_old_chain`: 5 000 B, then 10 B over it → the free count is one cluster less than before the first write.
+  - `read_only_ops_write_nothing` (c, store half): on FAT16 and FAT32, `mount`, `list`, `read`, and the ops that end `NotFound` or `VolumeChanged` log no write, so FSInfo is untouched.
+  - `fsinfo_is_written_at_most_once` (d): a FAT32 image with a valid FSInfo and a real free count. Across a whole suite run, FSInfo is written exactly once, by the first write, and only bytes 488..492 change, to 0xFFFF_FFFF. On an image already at 0xFFFF_FFFF, it is never written.
+  - `bad_fsinfo_is_left_alone` (f):
+    - with FSInfo's lead signature zeroed, `mount` is `Ok`, the suite passes, and the FSInfo block's bytes never change;
+    - with valid signatures and a next-free of 1, of `count + 2`, or on a used cluster, allocation stays correct.
+  - `error_mapping_table` (i): each of `Full` (a full card), `Corrupt` (a broken chain), `NotFound`, `Io` (a `CutDisk` cut), `NoCard` (the `Probe` slot emptied) and `VolumeChanged` (a swapped image) gives the table's `StoreError` and reinit count. After each, the next op on a good image works.
+  - `alloc_device_error_is_io`: a `CutDisk` cut at the allocation's FAT write → `Io` with 1 reinit, never `Full`.
+  - `write_order_is_cut_safe`: over an overwrite of a 3-cluster file with 2 clusters, the recorded writes show rule 5's order. The entry block's length-0 write comes before any FAT write that frees. Every FAT write for the new chain, in both copies, comes before the final entry write. (Task 11's power-cut test checks the outcome; this test pins the order.)
+  - `broken_chains_read_corrupt_and_stay_writable` (e): for each broken-link class from 4a:
+    - `read` is `Corrupt`, with an empty sink and no reinit;
+    - `write` over the file succeeds and reads back;
+    - `delete` succeeds.
+
+    A looping directory chain makes `list` and `write` in it `Corrupt`. A FAT32 root chain with a free link makes `make_dir` `Corrupt`.
+  - `lfn_run_is_deleted_with_its_entry`: a hand-built LFN run before `P0000001.A`, with the right checksum and crossing a block boundary. `delete` marks the run and the entry 0xE5. A run with the wrong checksum is left alone.
+  - `wrong_kinds_are_refused`: a directory named `SYSTEM.A` → `read`/`delete` `NotFound` and `write` `Corrupt`, with no write logged. A file named `CHIMERA` → `make_dir(Chimera)` `Corrupt`.
+  - `fat16_root_full_is_full`: a FAT16 root with every slot used → `make_dir(Chimera)` `Full`.
+  - `mutated_images_never_panic` (e), extended from b1ee1c9: 2 000 seeds on FAT16 and 500 on FAT32, on `Overlay` disks.
+    - Each seed makes 1–8 random byte mutations in the MBR, the boot sector, FSInfo, FAT 1, FAT 2, **the FAT's last sector (its tail past `count + 2`)**, the root directory or `/CHIMERA`'s cluster.
+    - Then `mount`, `list`, `read`, `write`, `delete` and `make_dir`.
+    - Nothing panics, and nothing trips the call limit.
+    - Every write lands in `[PART_LBA, PART_LBA + blocks)` of the layout that operation accepted, and never below `PART_LBA`.
+  - Carried from b1ee1c9 as they are: the exFAT and superfloppy mounts, `corrupt_bpb_mount_is_unsupported`, `error_calls_reinit`, `mount_retries_once_after_reinit` and `chain_errors_read_as_corrupt`.
+- [ ] **Step 2: Write the failing tests** in `dosfstools_test.rs` (`#[ignore]`d, as in 4a):
+  - `mkfs_images_pass_suite_and_fsck`: `store_suite` on each 4a mkfs image, with `make` a fresh image and `swap` one with another serial. Then a workload runs in phases:
+    1. make the dirs;
+    2. write 40 files of 0–20 KB (a seeded xorshift);
+    3. overwrite each with another size;
+    4. delete every third;
+    5. fill until `Full`;
+    6. delete two;
+    7. write again.
+
+    After each phase:
+    - `fsck` gives `code == 0`;
+    - its `used` equals the number of non-free FAT entries we count;
+    - `embedded-sdmmc` reads every file and gets our bytes.
+  - `builder_images_pass_fsck_after_the_suite`: the same check on `fat16(16_384, 1)` and `fat32(1)` after `fat16_passes_suite`'s steps.
+- [ ] **Step 3: Update `sd_medium_test.rs`:** `fault_is_the_deadline`'s cases move into `classify_table` (`Transport` with `timed_out` in each phase), since `fault` is no longer a trait method. `SdCard`'s `classify` keeps a private helper for it.
+- [ ] **Step 4: Run** `cargo test -p chimera-fat --features chimera-hal/testkit` and `just test-fat-tools` → FAIL.
+- [ ] **Step 5: Implement** `write`, `delete`, `make_dir` and `fsinfo::patch`, then rewrite `store.rs` over `Fs`, and delete what "What happens to b1ee1c9" lists. `grep -rn "VolumeManager\|RawFile\|RawDirectory" chimera-fat/src` finds nothing.
+- [ ] **Step 6: Run** both → PASS. Then `just check` → PASS.
+- [ ] **Step 7: Commit** `git commit -m "FatStore on the owned FAT layer: write, delete, make_dir"`
 
 ### Task 5: `DirStore` passes the suite
 
@@ -810,6 +1071,11 @@ impl Card {
     - any + `Err(NoCard)` → `Absent`, `None`;
     - `Ready(v)` + `Err(Io)` → `Failed { err: Io, last: Some(v) }`; `Failed { last, .. }` + `Err(Io)` keeps `last`; `Absent` + `Err(Io)` → `last: None`.
   - `file_errors_leave_the_card`: `after_error(Ready(v), NotFound)` and `after_error(Ready(v), Corrupt)` → `Ready(v)`.
+  - `from_store_table`: every `StoreError` variant, checked against the Task 4b mapping table:
+    - `NoCard`, `NotFound` and `Corrupt` → `None`;
+    - `Full`, `Timeout`, `Io`, `VolumeChanged(_)` and every `Unsupported(_)` → `Some`.
+
+    `Corrupt` is a file error from our FAT layer: a broken chain, or a name taken by the wrong kind. It never fails the card.
   - `op_error_fails_card`: an `op` returning `Err(Io)` leaves `Card::Failed { err: Io, last: Some(v) }`.
   - `eject_then_insert`: on a `MemStore`, `eject()` → `run` gives `Err(NoCard)` and `Absent`; after re-insert → `Mounted`.
   - `swap_between_ops`: `MemStore::swap(2)` between two `run`s → the second event is `Swapped { old }`.
@@ -829,7 +1095,7 @@ impl Card {
 - Create: `chimera-fat/tests/power_cut_test.rs`; Modify: `chimera-fat/Cargo.toml` (dev-dep `chimera-core`)
 - Modify: `chimera-fat/tests/common/image.rs`:
   - `CutDisk` counts and cuts **per block**, not per call: `writes: Cell<u32>` (blocks written) and `cut: Cell<Cut>` with `pub enum Cut { Never, After(u32), TornAfter(u32, Tear) }`, `pub enum Tear { HalfOld, Garbage }`. `TornAfter(k, t)` writes block `k` torn (first 256 B new and the rest old, or xorshift garbage) and fails it;
-  - `pub fn fat_check(disk: &RamDisk) -> FatReport`: walks both FATs and the `/CHIMERA` entries; reports cross-linked chains, chains shorter than their entry's length, and each entry's raw 32 B and chain;
+  - `pub fn fat_check(disk: &RamDisk) -> FatReport`: walks both FATs and the `/CHIMERA` entries. It reports cross-linked chains, chains shorter than their entry's length, FAT copies that differ, and each entry's raw 32 B and chain. It is written independently of `chimera_fat::fat`: test code doesn't check the code under test with itself;
   - the builders `power_cut_test` doesn't use (`fat32`, `exfat`, `exfat_superfloppy`, `superfloppy`) get item-level `#[allow(dead_code)]`, as `CutDisk` has, because each test binary compiles `common` separately.
 - Modify: `chimera-core/src/storage/sound.rs` (`impl Decode for SoundDecoder`)
 
@@ -864,7 +1130,7 @@ pub fn delete_ab<S: Store>(s: &mut S, r: &Ready, f: AbFile) -> Result<(), StoreE
 The rules:
 - `check_file` and `check_frame` give:
   - `Missing` on `NotFound`;
-  - `Torn(e)` on a torn `FileError` (`is_torn`), and `Torn(Truncated)` on `StoreError::Corrupt` (an old length over a short chain after a cut);
+  - `Torn(e)` on a torn `FileError` (`is_torn`), and `Torn(Truncated)` on `StoreError::Corrupt` (a broken or short chain, which a card written elsewhere can hold; our own write order never leaves one, Task 4b);
   - `Present { gen, err: Some(e) }` on any other `FileError`, such as `NeedsNewerFirmware` or `Bounds`, when the header was read;
   - `Present { gen, err: None }` when the pass passes.
 
@@ -893,14 +1159,15 @@ The rules:
   - `load_leaves_target_on_error`: a corrupt newest with a missing older → `Err`, and the target is unchanged.
 - [ ] **Step 2: Write the failing tests** in `chimera-fat/tests/power_cut_test.rs`, on `FatStore<CutDisk>` over **FAT16** images (cheap to clone; FAT32's 33 MB images stay in the suite):
   - `cut_at_every_block_write_keeps_a_generation` (Review Focus 2): for each of saves 2 (creates B), 3 (truncates A) and 4 (truncates B): count the blocks `n` the save writes, then for every `k in 0..n`: restore the image from before that save, `Cut::After(k)`, save (it errors), then on a fresh `FatStore` over the image:
-    - `fat_check` finds no cross-linked chain, and the kept side's entry bytes and chain equal their values before the save;
+    - `fat_check` finds no cross-linked chain, no length over its chain and no FAT copies that differ, and the kept side's entry bytes and chain equal their values before the save;
     - `load_ab` gives the previous generation's Sound or, for high `k`, the new one; never an error;
     - the next full save succeeds, and `load_ab` then gives it.
   - `repeated_cuts_keep_a_generation`: 200 xorshift seeds; each runs 6 rounds of: save with a random cut, remount, check the three invariants above. A final uncut save loads as newest.
   - `torn_block_breaks_only_shared_sectors` (Review Focus 6): save 3 with `TornAfter(k, t)` for every `k` and both `Tear`s. `load_ab` never panics and never returns content other than generation 2's or 3's. Every case that loads neither is on a block holding both directory entries or a FAT sector both chains use (the atomic-block assumption of ADR 0045); the test prints the tally.
   - `cut_then_reinsert_loads_previous_generation`: through `Card::run`. The cut save leaves `Card::Failed { err: Io, last: Some(v) }`; the next `run` gives `CardEvent::Same`, and `load_ab` gives generation 1.
-  - `full_card_keeps_previous_generation` (Review Focus 5): A and B exist; a padding file fills the card to one free cluster. A save whose body adds 4 KB of non-critical padding records (so it needs more than the target's freed clusters plus the spare) returns `SaveError::Store(Full)`, and `load_ab` gives the previous generation.
-- [ ] **Step 3: Run** `cargo test -p chimera-core --test storage_ab_test && cargo test -p chimera-fat --test power_cut_test` → FAIL.
+  - `full_card_keeps_previous_generation` (Review Focus 5): A and B exist, and a padding file leaves exactly one free cluster. A save whose body adds 4 KB of non-critical padding records (more than the target side's freed clusters plus that one) returns `SaveError::Store(Full)`, and `load_ab` gives the previous generation. The last free cluster is used (Task 4b). After `delete` of the torn target side, the free count equals the count before the save plus the target's old clusters: `Full` leaks nothing.
+- [ ] **Step 2b: Write the failing test** `cut_images_pass_fsck` in `chimera-fat/tests/dosfstools_test.rs` (`#[ignore]`d, run by `just test-fat-tools`). For save 3 and every `k`, run Step 2's cut, then `fsck` the image. Every finding is a lost or unused cluster, never a cross-link, a bad chain or a wrong size. After the next full save, `load_ab` gives it. This is the power-cut claim checked by a second implementation.
+- [ ] **Step 3: Run** `cargo test -p chimera-core --test storage_ab_test && cargo test -p chimera-fat --test power_cut_test && just test-fat-tools` → FAIL.
 - [ ] **Step 4: Implement** `file.rs` and `impl Decode for SoundDecoder` (`KIND = FileKind::Sound`).
 - [ ] **Step 5: Run** both tests → PASS. Then `just check` → PASS.
 - [ ] **Step 6: Commit** `git commit -m "A/B generations: streamed saves, two-pass loads, safe at every cut"`
@@ -962,14 +1229,15 @@ pub fn draw_busy<D: DrawTarget<Color = Rgb565>>(d: &mut D, label: BusyLabel) -> 
 
 **Files:**
 - Modify: `chimera-core/src/hw.rs:61-66`:
-  - `pub const STORE_RESERVE: usize = 4 * 1024;`, covering the `VolumeManager` (one 512 B block cache and the handle tables) and `FatStore`'s 512 B buffer;
+  - `pub const STORE_RESERVE: usize = 2 * 1024;`, covering `SdStore`: `FatStore`'s 512 B block buffer, its `FatCache` (a 512 B FAT sector plus its tag, ≈ 520 B), the allocation hint (≈ 20 B) and the `SdCard` driver state (`SdSpi` with its `Deadline`, `CycleDelay` and the card type, on the order of 100–200 B). That totals ≈ 1.2 KB; the margin covers the driver, which is measured, not guessed, by the `const` assert below. There is no heap, no `VolumeManager` and no handle table. The plan's earlier figure was 4 KB, for `VolumeManager`;
   - fix the `UI_RESERVE` comment. The stack is in DTCM (ADR 0025), so the reserve covers renderer and navigation state, not "`main`'s stack temporaries and the interrupt stacks".
 - Modify: `chimera-core/src/instrument.rs:32-40` (`+ STORE_RESERVE` in `AXI_RESIDENT`)
+- Modify: `chimera-stm32/src/sd_probe.rs`: lines 4 and 5 go through `SdStore`. Line 4 is `mount` and `list(Chimera)`. Line 5 is `make_dir(Chimera)`, then write, read back and delete `/CHIMERA/CHIMPROB.TXT`. The probe then measures the owned layer, and no build links `VolumeManager`.
 - Modify: `chimera-core/tests/memory_budget_test.rs`: add the `STORE_RESERVE` row to `axi_residents_fit`'s list (its `assert_eq!(total, AXI_RESIDENT)` needs it), and assert that the AXI left over is ≥ 64 KB (it was ~91 KB before this plan; the SYSTEM path adds no other static)
 - Modify: `chimera-stm32/src/sd.rs`:
   - Presence check before acquire (#186): pure `chimera_fat::sd::r1_within_ncr(&[u8]) -> Option<u8>` with host tests; the shell sends CMD0 (`40 00 00 00 00 95`) with CS low, reads ≤ 8 bytes, three tries; all 0xFF → `NoCard` in ~2 ms. With a card present, a failed acquire gets one fresh `wake` + acquire (the probe's first cold acquire failed, the second passed).
   - `impl chimera_fat::SdBus for SdSpi`: `Acquire` → `set_hz(SD_INIT_HZ.Hz())` and `SD_ACQUIRE_MS`; `Data` → `set_hz(SD_FAST_HZ.Hz())` and `SD_IDLE_MS`; `start_op` → `arm(phase's ms)`; `wake` and `timed_out` forward;
-  - `pub type SdStore = FatStore<SdDevice, FixedTime>`;
+  - `pub type SdStore = FatStore<SdDevice>`;
   - `const _: () = assert!(size_of::<SdStore>() <= STORE_RESERVE);`;
   - `pub fn take_store(..) -> Option<&'static mut SdStore>`, a take-once `static mut MaybeUninit` in AXI, as `shared.rs` does (`// SAFETY:` on the one `unsafe`).
 - Modify: `chimera-stm32/src/main.rs`:
@@ -981,7 +1249,7 @@ pub fn draw_busy<D: DrawTarget<Color = Rgb565>>(d: &mut D, label: BusyLabel) -> 
 - Modify: `chimera-desktop/src/main.rs`: `mod store;` loses its `cfg_attr`; the same wiring, with `DirStore::new(env CHIMERA_CARD or "chimera-card")`. The default dir is created if missing; a `CHIMERA_CARD` that doesn't exist stays "no card".
 
 **Interfaces:**
-- Consumes: `SystemSync`, `SystemSettings`, `draw_busy`, `Card` (Tasks 10–12); `FatStore`, `SdBus`, `BusPhase` (Task 4); `SdDevice`, `SdSpi`, the `SD_*` constants (Task 2); `DirStore` (Task 5).
+- Consumes: `SystemSync`, `SystemSettings`, `draw_busy`, `Card` (Tasks 10–12); `FatStore`, `SdBus`, `BusPhase` (Task 4b); `SdDevice`, `SdSpi`, the `SD_*` constants (Task 2); `DirStore` (Task 5).
 - Produces, for plan 2:
   - the shell owns one `Card` and one `&mut impl Store` beside `UiState`;
   - `UiState::in_system` is replaced by `Location` in plan 2, and `SystemSync::write` is called on project save and load for `last_project`.
@@ -1000,8 +1268,9 @@ pub fn draw_busy<D: DrawTarget<Color = Rgb565>>(d: &mut D, label: BusyLabel) -> 
   4. Swap to a different FAT32 card while running, then leave System: it saves to the new card on the first try. The next boot with the first card shows its own theme.
   5. Pull the card during SAVING (repeat until it lands mid-save): the next boot loads the earlier theme or the new one, never the defaults, unless the card has no SYSTEM file.
   6. An exFAT card: the defaults apply at boot, with no hang.
+  7. Put the card from checks 1–5 in a computer and run `fsck.fat -n` on its partition (or Windows' disk check). The only findings allowed are lost clusters from check 5's cuts. The computer lists `/CHIMERA/SYSTEM.A` and `.B`, and copies them off intact.
 
-  Record the results under `## Measured`. File any failure as a GitHub issue before fixing it. Move ADR 0045 to Accepted once it holds no pending item.
+  Record the results under `## Measured`, with the firmware's `.text` size before and after the owned layer (the old build linked `VolumeManager`; the 128 KB flash is the budget). File any failure as a GitHub issue before fixing it. Move ADR 0045 to Accepted once it holds no pending item, and move ADR 0048 to Accepted once check 7 passes.
 
 ---
 
@@ -1036,11 +1305,11 @@ Answers the adversarial review of this plan at 98ef236.
 | H1 | 2, 4, 13 | `Medium::classify`/`fault` plus `SdBus::timed_out`/`phase`; 3 acquire retries under `SD_ACQUIRE_MS`; failure while acquiring is `NoCard`; MISO pull-up; host tests `no_card_is_no_card`, `classify_table`. |
 | H2 | 2, 13 | `enable_cycle_counter` moves to `clocks.rs`; `sd::init` enables the DWT itself, and the deadline falls back to counting transactions. |
 | H3 | 10, 11 | `Card::Failed { err, last }`; `Failed{last: v}` + Ok(v) → `Same`; table test updated. |
-| H4 | 4, 11 | Chain errors on read → `StoreError::Corrupt` → torn side, not a card fault; cuts cover saves 2, 3 and 4, then a FAT check and a next save. |
-| H5 | 1 (fix round), 4 | The boot sector is validated and classified by cluster count as the library does, before `open_raw_volume`; corrupt-BPB, FAT32-byte/FAT16-layout and mutated-image tests. |
+| H4 | 4b, 11 | Chain errors on read → `StoreError::Corrupt` → torn side, not a card fault. The owned layer's write order leaves no length over a short chain after a cut; write and delete over a broken chain succeed. Cuts cover saves 2, 3 and 4, then a FAT check, `fsck.fat` and a next save. |
+| H5 | 1 (fix round), 4a, 4b | The boot sector is validated and classified by cluster count (the FAT spec's rule) before any FAT access. `Layout` bounds every block, and `Part` refuses one past the volume. Tests: corrupt BPB, FAT32 byte over a FAT16 layout, mutated images, and mkfs layouts matching `fsck.fat`. |
 | H6 | 2, 4 | `SdBus::wake()` (≥ 74 clocks, CS high) in `sd::init` and in `reinit` before `mark_card_uninit`. |
 | M1 | 4 | `mount` re-inits and retries once when its first read fails; `mount_retries_once_after_reinit`; STOP check 4 wants a first-try save. |
-| M2 | 4, 11 | `NotEnoughSpace` and `DiskFull` → `Full` unless `fault()` reports a device fault; the full-card save is 4 KB bigger than the freed clusters. |
+| M2 | 4b, 11 | Superseded by ADR 0048. The allocator gives `Full` only when no cluster in `2..count + 2` is free, and a device error during allocation is `Dev` → `Io`, so `fault()` is gone. The full-card save is 4 KB bigger than the freed clusters and leaks nothing. |
 | M3 | 2, 5, 13 | `mod sd` behind `sd-probe` until Task 13; desktop `mod store` under `cfg_attr(not(test), allow(dead_code))` until Task 13. |
 | M4 | 11, 12 | `pick` falls back on every error except `NeedsNewerFirmware`; both broken gives the error, `Missing` only for no files; spec § A/B items 2 and 4 amended. |
 | M5 | 10, 11, 12 | `Ready` not Copy/Clone, lent as `&Ready` inside `run`; `Card::ready()` gone; `CardError` has no `NoCard`; three compile-fail doc tests. The optional `Busy` token is not taken (Decisions). |
@@ -1060,3 +1329,17 @@ Answers the adversarial review of this plan at 98ef236.
 | L10 | 2 | `CycleDelay` uses `clocks::delay_us`. |
 | L11 | — | Declined (YAGNI): a GPT card shows "CARD IS NOT FAT16/FAT32", which already says what to do. |
 | L12 | 11 | Power-cut loops run on FAT16 images; FAT32 stays in the suite. |
+
+### Task 4 review (b1ee1c9): the owned FAT layer
+
+The review of b1ee1c9 found defects in `embedded-sdmmc` 0.10 itself. The owner decided to own the FAT layer (ADR 0048), and Task 4 is rewritten as 4a and 4b.
+
+| Finding | Task(s) | Resolution |
+|---|---|---|
+| C1: the free scan returns a cluster past the volume | 4a, 4b | `Table::alloc` scans exactly `2..count + 2`; `Part` refuses any block past the volume. Tests `alloc_never_passes_the_last_cluster`, `tail_zeros_are_not_free`, `fill_until_full_stays_in_the_partition`, and the fuzz mutates the FAT's tail sector. |
+| I1: delete never frees the chain | 4b | Entry 0xE5 first (with its LFN run), then `free_chain` in every FAT copy. Tests `delete_frees_the_chain_in_every_fat`, `lfn_run_is_deleted_with_its_entry`. |
+| I2: FSInfo rewritten on every op, reads included | 4a, 4b | Read-only ops write nothing, and FSInfo is written at most once per card (free count → unknown). Tests `read_only_ops_write_nothing` (core and store), `fsinfo_is_written_at_most_once`. |
+| A link to cluster 0 or 1 panics | 4a, 4b | No arithmetic on an unchecked cluster, and bounded, checked walks. Tests `broken_chains_are_bounded`, `broken_chains_read_corrupt_and_stay_writable`, `mutated_images_never_panic`. |
+| The last free cluster is never used; a failed allocation leaks one | 4a, 4b, 11 | Tests `last_free_cluster_is_allocated`, `last_free_cluster_is_used`, and the no-leak check in `full_card_keeps_previous_generation`. |
+| A bad FSInfo is an endless `Io`/reinit loop | 4b | FSInfo is never needed to mount. A bad one is ignored and never written. Test `bad_fsinfo_is_left_alone`. |
+| No second opinion on our FAT | 4a, 4b, 11, 13 | dosfstools is a hard requirement of `just test`. Tests `mkfs_layouts_match`, `mkfs_images_pass_suite_and_fsck`, `cut_images_pass_fsck`, and STOP check 7 on a real card. |
