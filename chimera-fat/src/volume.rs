@@ -88,6 +88,9 @@ const BPB_TOTAL16: usize = 19;
 const BPB_FAT_SIZE16: usize = 22;
 const BPB_TOTAL32: usize = 32;
 const BPB_FAT_SIZE32: usize = 36;
+/// FAT32: bit 7 set turns mirroring off; bits 0-3 name the active FAT.
+const BPB_EXT_FLAGS: usize = 40;
+const MIRRORING_OFF: u16 = 0x80;
 const BPB_FS_VER: usize = 42;
 const BPB_ROOT_CLUSTER: usize = 44;
 const BPB_FS_INFO: usize = 48;
@@ -248,6 +251,11 @@ impl Layout {
         // `layout` checked data + clusters × blocks per cluster ≤ blocks.
         self.holds(cluster)
             .then(|| self.data + (cluster - FIRST_CLUSTER) * self.blocks_per_cluster)
+    }
+
+    /// FAT 1's blocks.
+    pub fn fat1(&self) -> Range<u32> {
+        self.fat..self.fat + self.fat_blocks
     }
 
     /// `fat1_block`, a FAT 1 block, in every FAT, FAT 1 first.
@@ -414,6 +422,11 @@ pub fn layout(bs: &[u8; SECTOR], part: Partition) -> Result<(Layout, VolumeId), 
             || clusters > FAT32_MAX_CLUSTERS
         {
             return bad;
+        }
+        // One active FAT the others don't follow: FAT 1 may be stale, and
+        // every write goes to every copy.
+        if u16_at(bs, BPB_EXT_FLAGS) & MIRRORING_OFF != 0 {
+            return Err(Unsupported::FatNotMirrored);
         }
         let root = Root::Cluster(root_cluster);
         (FsKind::Fat32, BS_VOL_ID32, BS_LABEL32, root, fs_info)

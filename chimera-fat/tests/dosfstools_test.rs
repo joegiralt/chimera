@@ -333,8 +333,8 @@ fn builder_images_pass_fsck_after_the_suite() {
 }
 
 /// The cut `fat_store_test` makes, FAT 1 written and FAT 2's write failed,
-/// seen by `fsck.fat`: it reports the FATs differ until the next change
-/// to that sector writes both again, and then passes.
+/// seen by `fsck.fat`: it reports the FATs differ, and after one following
+/// change, one that touches no FAT entry of its own, it passes.
 #[test]
 #[ignore = "needs dosfstools: just test-fat-tools"]
 fn a_failed_fat2_write_heals_for_fsck() {
@@ -344,6 +344,8 @@ fn a_failed_fat2_write_heals_for_fsck() {
     s.make_dir(vol, Dir::Chimera).unwrap();
     let data = FileName::new(Dir::Chimera, b"DATA", b"BIN").unwrap();
     s.write(vol, data, &mut |w| w.put(&[1; 3 * BLOCK])).unwrap();
+    let empty = FileName::new(Dir::Chimera, b"EMPTY", b"BIN").unwrap();
+    s.write(vol, empty, &mut |_| Ok(())).unwrap();
     let (_, fat2) = fats(&layout_of(&disk));
     log(&s).fail_write.set(Some(PART_LBA + fat2));
     assert_eq!(
@@ -353,7 +355,7 @@ fn a_failed_fat2_write_heals_for_fsck() {
     log(&s).fail_write.set(None);
     let f = fsck(&disk);
     assert_ne!(f.code, 0, "the FATs differ: {}", f.out);
-    s.write(vol, data, &mut |w| w.put(&[3; 2 * BLOCK])).unwrap();
+    s.delete(vol, empty).unwrap();
     let f = fsck(&disk);
     assert_eq!(f.code, 0, "healed: {}", f.out);
 }

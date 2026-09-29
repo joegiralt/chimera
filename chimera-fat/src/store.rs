@@ -130,12 +130,14 @@ impl<D: BlockDevice> Blocks for Part<'_, D> {
 }
 
 /// A FAT16/FAT32 card behind `Store`. Its RAM: one block buffer, the FAT
-/// cache, and the allocator's hint for the card it was taken on.
+/// cache, and, each for the volume it was taken on, the allocator's hint
+/// and a FAT sector FAT 2 missed.
 pub struct FatStore<D: Medium> {
     dev: D,
     buf: [u8; BLOCK],
     fat: FatCache,
     hint: Option<(VolumeId, u32)>,
+    stale: Option<(VolumeId, u32)>,
 }
 
 type FsResult<T, D> = Result<T, FsError<PartError<<D as BlockDevice>::Error>>>;
@@ -147,6 +149,7 @@ impl<D: Medium> FatStore<D> {
             buf: [0; BLOCK],
             fat: FatCache::new(),
             hint: None,
+            stale: None,
         }
     }
 
@@ -199,7 +202,10 @@ impl<D: Medium> FatStore<D> {
         if now != vol {
             return Err(StoreError::VolumeChanged(now));
         }
-        let mut hint = self.hint.filter(|&(id, _)| id == now).map(|(_, c)| c);
+        let ours =
+            |kept: Option<(VolumeId, u32)>| kept.filter(|&(id, _)| id == now).map(|(_, v)| v);
+        let mut hint = ours(self.hint);
+        self.fat.stale = ours(self.stale);
         let mut part = Part {
             dev: &self.dev,
             lba,
@@ -213,6 +219,7 @@ impl<D: Medium> FatStore<D> {
             &mut hint,
         ));
         self.hint = hint.map(|c| (now, c));
+        self.stale = self.fat.stale.take().map(|s| (now, s));
         r.map_err(|e| match e {
             FsError::Dev(PartError::Dev(e)) => self.fault(&e),
             FsError::Dev(PartError::Outside) | FsError::Corrupt => StoreError::Corrupt,

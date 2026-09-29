@@ -202,10 +202,11 @@ impl<'a, B: Blocks> Fs<'a, B> {
         self.settle(r)
     }
 
-    /// Ends a changing operation: a device error drops what the FAT cache
-    /// held unflushed. Every other outcome has flushed already.
+    /// Ends a changing operation: an error drops what the FAT cache held
+    /// unflushed. After a device error that is the rule; the other errors
+    /// flush before they return, so for them it only empties the cache.
     fn settle<T>(&mut self, r: Result<T, FsError<B::Error>>) -> Result<T, FsError<B::Error>> {
-        if let Err(FsError::Dev(_)) = r {
+        if r.is_err() {
             self.table.discard();
         }
         r
@@ -318,8 +319,14 @@ impl<'a, B: Blocks> Fs<'a, B> {
 
     /// Before an operation's first write. FAT32's FSInfo gets its one patch
     /// (the free count to unknown), and, with no hint in RAM yet, its
-    /// next-free seeds the hint. FSInfo is only ever a start point.
+    /// next-free seeds the hint. FSInfo is only ever a start point. Then a
+    /// FAT sector an earlier failure left stale in FAT 2 is healed.
     fn will_change(&mut self) -> Result<(), FsError<B::Error>> {
+        self.patch_fs_info()?;
+        self.table.heal()
+    }
+
+    fn patch_fs_info(&mut self) -> Result<(), FsError<B::Error>> {
         let layout = *self.table.layout();
         let Some(at) = layout.fs_info() else {
             return Ok(());
