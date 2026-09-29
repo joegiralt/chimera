@@ -1,0 +1,833 @@
+# Modal 2 Resonators (Step A) Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Modal's four models are rebuilt in place so every string loop is stable by construction and in tune, every model reads the same four modulatable macros (STRUCTURE, BRIGHT, DAMP, POS) in its own way, and old patches load translated.
+
+**Architecture:** The loop parts are small pure types in `dsp/modal/loop_parts.rs` (ours: `LoopGain`, `DcBlocker`, the fractional `Allpass1` and its exact phase-delay maths, the release ramp) and `dsp/modal/dispersion.rs` and `dsp/modal/chords.rs` (Rings-derived, MIT notice). `KsString` becomes a ring whose read tap sits a fractional delay behind the write, with a symmetric 3-tap loop low-pass, a DC blocker and a fractional allpass in the loop; every other in-loop delay is computed exactly at f0 and taken off the line. `ModalEngine` eases the four macros once per block from the voice's modulated `ModalParams`; the model-page settings are read at note-on. One pure table, `modal::reads(mode, id)`, decides what each model reads; the page cells, `view::dimmed` and the audio test all use it. Old files translate once, in `decode_block`, through a new `Translation` hook beside `Migration`.
+
+**Tech Stack:** Rust 2024, `no_std` `chimera-core` (f32 DSP, `libm`), `thumbv7em-none-eabihf` firmware, `just`.
+
+**Spec:** `docs/superpowers/specs/2026-09-29-modal-2-resonators-design.md` (owner-approved, binding). Read it with this plan; § numbers below are the spec's.
+
+**Where it runs:** worktree `$SP/wt-m2`, branch `modal2-resonators`, based on `exclusive-state` (PR #213), where `SP=/tmp/claude-1000/-home-carcosa-dev-chimera/05a415fc-f8d7-4033-943f-e96e5bd74fff/scratchpad`. Every command runs from the worktree root.
+
+## Global Constraints
+
+- **Stability (§ 2):** `LoopGain::MAX = 0.9995`; its only constructors clamp to `[0, MAX]` (NaN → 0). No string loop multiplies by anything but a `LoopGain` and filters whose gain is ≤ 1 at every frequency. The DC blocker's corner is `DC_HZ = 10.0`, in every string loop: STRING, the SYMP main string, each halo string and BOWED. FDBK and the `±1.5` clamp are deleted.
+- **Timing constants:** release ramp `RELEASE_SAMPLES = 240` (5 ms), chord glide `CHORD_GLIDE_SAMPLES = 960` (20 ms), macro easing `EASE = 0.3` per block, ensemble LFO 0.1–6 Hz, detune up to ±15 cents, `ENS_HEADS = 3`.
+- **Defaults carry today's sound:** COUPLE 0.25 maps to today's 0.025 (`coupling = 0.1 · couple`); HALO 0.25 maps to today's 0.15 (`level = 0.6 · halo`); MODES defaults to 32. `ModalParams::default()` is exactly what the v1 translation makes of today's default (Task 4 pins it bit for bit).
+- **Disk (ADR 0045):** kept ids and idents: MODE 0 `MODE`, EXCITE 1, BRIGHT 3, POS 4, BODY 6, E.DPT 9, E.RAT 10, E.MIX 11. Retired: `(1, 2)` DECAY, `(1, 5)` INHARM, `(1, 7)` STIFF, `(1, 8)` FDBK. New: DAMP 12 `DAMP`, STRUCTURE 13 `STRUCTURE`, COUPLE 14 `COUPLE`, HALO 15 `HALO`, MODES 16 `MODES` (Enum, codes 0–3, idents `M16 M24 M32 M48`). `ResonatorMode`'s codes and idents are untouched. The fixture is only appended to.
+- **Modulation (ADR 0010, superseded in part by ADR 0056):** exactly STRUCTURE, BRIGHT, DAMP and POS are `modulatable`. Model-page settings and MODEL are not.
+- **Memory:** no new buffers. `MAX_STRING_DELAY` goes from 984 to 1016 (Task 2, the one growth, about 4.6 KB of D2, recorded in ADR 0056). `size_of::<Instrument>() <= VOICE_RAM_BUDGET` stays asserted.
+- **Audio thread:** no heap, no blocking. Transcendentals (`atan2f`, `sinf`, `expf`, `powf`) run per note-on or per block, never per sample. `just stack-check` stays green.
+- **Goldens (ADR 0011):** Task 1 moves the four Modal rows (`modal_init`, `modal_lfo_cutoff`, `modal_sympathetic`, `algo_to_modal_switch`) and the `init_modal.snd` render row into a `PENDING` list that the checks skip. Task 11 re-records them once and empties `PENDING` and `KNOWN_BROKEN`. Every other golden stays bit-identical in every task.
+- **ADR:** `docs/adr/0056-modal-resonators-share-four-macros.md` (the next free number), `Status: Proposed`, from `0000-template.md`, with a row in `docs/adr/README.md`. Task 1 creates it; later tasks amend it while it is Proposed. Never edit an accepted ADR.
+- **Provenance (ADR 0032):** `chords.rs` and `dispersion.rs` carry Mutable Instruments' MIT notice (Copyright 2015 Emilie Gillet); `loop_parts.rs`, the body filter, the ensemble and the macro mapping are ours and say so.
+- **Green gate per task:** `just check` exits 0 (it runs the tests, the firmware builds, `just clippy`, `cargo fmt --check` and `just stack-check`). If ALSA's pkg-config is missing, set `PKG_CONFIG_PATH` as the Justfile says.
+- **Commits:** a terse plain sentence, no type prefix, never a Co-Authored-By or other attribution line. Stage named paths only. Never stage `docs/chimera-ui-ux-spec.md` or `chimera.bin`.
+- **Hardware:** no flash until Task 12. Between tasks, the owner listens on the desktop (the demo renderer steps below, or `just desktop`).
+
+## Review Focus
+
+1. **DAMP modulated to its top during a release.** An LFO or ENV sweeps DAMP to 1 while a released STRING note dies. It should still die: the release gain wins over the macro. Test: `a_released_note_ends_with_damp_at_its_top` (Task 7).
+2. **The widest chord at the lowest note.** SYMP at STRUCTURE 1 (and every other chord) on G1: Rings' −12 interval asks for a period twice the line. Each halo string should fold up an octave until it fits, never index past `MAX_STRING_DELAY`, and play its folded pitch. Test: `every_chord_fits_the_line_at_g1` (Task 10).
+3. **MODES changed while bank notes sound.** A ringing 48-mode note should keep 48 modes (no click from stale filters) and be billed at 48 until it ends. Test: `modes_change_keeps_sounding_notes_and_their_bill` (Task 5).
+4. **An old patch with FDBK at 1.** A v1 STRING patch with FDBK 1 and DECAY 0 (today's runaway) should load and play bounded, with no DC. Test: `an_old_fdbk_1_patch_loads_stable` (Task 4).
+5. **The ensemble at full depth on G1.** DEPTH 1 at 0.1 Hz and at 6 Hz on the longest loop: the heads must stay inside the loop, with no clicks and a bounded output. Test: `ensemble_at_full_depth_on_g1_stays_in_the_line` (Task 9).
+
+## Spec ambiguities ruled here
+
+- **DECAY → DAMP direction.** DAMP runs short → long on every model (§ 1). Today's bank DECAY already did, and today's string DECAY ran the other way. So the translation is DAMP = DECAY on BANK, and DAMP = 1 − DECAY on STRING, SYMP and BOWED. BRIGHT carries over as-is, as § 3 says. Today's string BRIGHT ran dark at the top, so an old string patch's tone flips. That fixes the knob to match its name.
+- **The 10 Hz DC blocker vs G1.** In the loop, at 49 Hz, the blocker is a 31-sample phase advance. Keeping G1 in tune (±2 cents) needs a 1,011-sample line. The line grows to 1,016 samples, not the corner down. That costs about 4.6 KB of the ~126 KB D2 headroom. It is the plan's one departure from "no D2 growth", and it partly supersedes ADR 0040 (in ADR 0056).
+- **"No duplicate intervals".** The halo table is Rings' single-voice chords with the 0.0 dropped, since the main string plays that note. That leaves 7 distinct intervals per chord. Rings' 0.01-apart pairs (3.0 / 3.01) are its detuned chorus, and they stay.
+- **MODEL order.** The encoder keeps today's value order (STRING, BANK, BOWED, SYMP). Only the shown names change. § 1's list is names, not an order.
+- **SYMP ensemble rate.** ENS RATE isn't on SYMP's page, so SYMP runs a fixed `SYMP_ENS_RATE = 0.3` (normalized, ≈ 0.34 Hz). The stored ENS RATE changes nothing there.
+- **BANK note-off.** § 2 keeps the bank unchanged, so it rings out on DAMP after note-off. The release ramp applies to string loops. BOWED's bow force ramps instead.
+- **SYMP chord reads un-eased STRUCTURE.** Chords are discrete, and the 20 ms glide is their easing. Easing the index too would miss the 25 ms bound.
+- **Sympathetic's size.** SYMP's main string is STRING's full string (body, ensemble, dispersion), so `SympatheticVoice` is at most `StringVoice` plus one align, not Bowed's size. That replaces ADR 0054's const assert, and ADR 0056 records the change.
+- **Cost.** SYMP's host estimate (950) is above the +30–60 the spec expected: the halo's seven fractional allpasses and blockers add about 80. Unless the ship bench reads ≤ 883, SYMP gets 5 voices on rev V instead of 6. The bench decides (Task 12).
+
+## Files
+
+| File | Responsibility | Tasks |
+|---|---|---|
+| `chimera-core/src/dsp/modal/loop_parts.rs` (new, ours) | `LoopGain`, `DcBlocker`, `Allpass1`, `dc_phase_delay`, `allpass_phase_delay`, `eta_for`, `split`, `Release` | 1, 2, 7 |
+| `chimera-core/src/dsp/modal/string.rs` | `KsString`: ring + fractional tap, 3-tap low-pass, DC blocker; `StringVoice` (body, ensemble, dispersion) | 1, 2, 8, 9 |
+| `chimera-core/src/dsp/modal/dispersion.rs` (new, MIT) | `Dispersion`: 4 first-order allpasses, Rings' `ap_gain` law | 8 |
+| `chimera-core/src/dsp/modal/body.rs` (new, ours) | `Body`: three fixed SVF resonances on the output | 8 |
+| `chimera-core/src/dsp/modal/ensemble.rs` (new, ours) | `Ensemble`: quadrature LFO, 3 interpolated heads | 9 |
+| `chimera-core/src/dsp/modal/chords.rs` (new, MIT) | `CHORDS: [[f32; 7]; 11]`, `chord_of`, `fold` | 10 |
+| `chimera-core/src/dsp/modal/params.rs` | the new `ModalParams`, `BankModes`, `MODAL_SPECS`, `reads`, `page_cells`, `translate_v1` | 3, 4, 5 |
+| `chimera-core/src/dsp/modal/mod.rs` | `ModalEngine` (eased macros, deferred pluck, release, playing cost), models' render | 1–10 |
+| `chimera-core/src/storage/{codes,block_codec,sound,system}.rs` | `RETIRED`, `Translation`, `Retired`, `TRANSLATIONS` | 3, 4 |
+| `chimera-core/src/dsp/voice.rs:162-170` | `held_model_extra` through `playing_cost` | 5 |
+| `chimera-core/src/ui/{block_def,view,block_registry}.rs` | `SlotBinding::ModalPanel`, `SlotCtx::model`, MDL/MDL2 pages, SPACE, dimming | 6 |
+| `chimera-core/tests/modal_resonator_test.rs` (new) | the spec's audio tests, plus Review Focus 1, 2, 3, 5 | 1–10 |
+| `chimera-core/tests/common/mod.rs` | `clicks`, `modal_engine`, `play_modal` | 1 |
+| `chimera-core/tests/{golden,codec_compat,modulatable,click_free,sanity,memory_budget,cost,disk_codes,part_page,mod_registry,modal,modal_integration,exclusive_state,screen_golden}_test.rs`, `tests/screen/mod.rs`, `tests/fixtures/disk_codes_v1.txt` | pins moved, rows appended, goldens re-recorded | 1–11 |
+| `chimera-stm32/src/bench.rs:231-262` | new MDL rows | 11 |
+| `docs/adr/0056-modal-resonators-share-four-macros.md`, `docs/adr/README.md`, `THIRD_PARTY.md` | the ADR, provenance | 1, 2, 5, 8, 10, 11, 12 |
+
+---
+
+### Task 1: Stable loops: `LoopGain`, the DC blocker, FDBK out of the DSP
+
+**Files:**
+- Create: `chimera-core/src/dsp/modal/loop_parts.rs`, `chimera-core/tests/modal_resonator_test.rs`, `docs/adr/0056-modal-resonators-share-four-macros.md`
+- Modify: `chimera-core/src/dsp/modal/string.rs:216-234` (`KsRenderParams`), `:405-529` (`damp`, `tick_full`, `tick_coupled`, `lowpass`); `chimera-core/src/dsp/modal/mod.rs:814-957` (the three string renders), `:87-93` (`BowedString`); `chimera-core/tests/common/mod.rs`; `chimera-core/tests/click_free_test.rs:21-84`; `chimera-core/tests/golden_test.rs:263-312`; `chimera-core/tests/codec_compat_test.rs:140-170`; `docs/adr/README.md`
+
+**Interfaces:**
+- Produces, in `modal::loop_parts` (`pub(super)`):
+
+```rust
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
+pub struct LoopGain(f32);
+impl LoopGain {
+    pub const MAX: f32 = 0.9995;
+    pub fn new(g: f32) -> Self;                      // clamps to [0, MAX]; NaN → 0
+    pub fn from_t60(t60_s: f32, freq_hz: f32) -> Self; // new(0.001^(1 / (t60_s · freq_hz)))
+    pub fn get(self) -> f32;
+    pub fn min(self, o: Self) -> Self;
+}
+pub const DC_HZ: f32 = 10.0;
+pub struct DcBlocker { r: f32, g: f32, x1: f32, y1: f32 }
+impl DcBlocker {
+    pub fn new(sample_rate: u32) -> Self;            // state 0
+    pub fn process(&mut self, x: f32) -> f32;
+    pub fn r(&self) -> f32;
+    pub fn reset(&mut self);
+}
+```
+
+  The blocker is normalized so its gain is at most 1 at every frequency. The implementer can't derive this from the tests:
+
+```rust
+// y = g·(x − x1) + r·y1,  r = e^(−2π·DC_HZ/fs),  g = (1 + r) / 2   (|H| = 1 at Nyquist, < 1 elsewhere)
+```
+
+- `KsRenderParams` loses `feedback`. It gains `gain: LoopGain`, which replaces the in-loop `0.999 - decay * 0.009`, now `LoopGain::new(0.999 - decay * 0.009)` at each call site. `decay` stays until Task 3.
+- `KsString` gains `dc: DcBlocker`, applied to the filtered sample before it is written back (`tick_full`, `tick_coupled`). `BowedString` gains `dc: DcBlocker` on the pushed sample.
+- Test support in `tests/common/mod.rs`:
+  - `pub fn clicks(out: &[f32]) -> Vec<(usize, f32)>`: `click_free_test`'s detector, moved here unchanged. It flags each `i` where `|tanh(0.4·out[i]) − tanh(0.4·out[i−1])| > 0.15`.
+  - `pub fn play_modal(p: &ModalParams, note: u8, on_blocks: usize, off_blocks: usize) -> Vec<f32>`: a boxed `SymPool` and `ModalEngine::new_in`, rendered block by block with `note_off` after `on_blocks`.
+
+- [ ] **Step 1: Write the failing test** `every_model_is_stable_at_every_extreme` in `modal_resonator_test.rs`.
+  - For each of the four modes and each spec in `MODAL_SPECS` other than MODE, render at `spec.min` and at `spec.max`, the others at their defaults. Hold note 36 (C2) for 30 s (`30 * SR / BLOCK_SIZE` blocks).
+  - It iterates the spec table, so it follows Tasks 3–10's params unchanged.
+  - Assertions, with `last` the final second and `second` the samples of seconds 1–2:
+
+```rust
+assert!(out.iter().all(|x| x.is_finite() && x.abs() <= 4.0), "{mode:?} {} = {v}: bounded", s.label);
+assert!(rms(last) <= rms(second) * 1.001 + 1e-6, "{mode:?} {} = {v}: grows", s.label);
+assert!((last.iter().sum::<f32>() / last.len() as f32).abs() < 1e-3, "{mode:?} {} = {v}: DC", s.label);
+```
+
+- [ ] **Step 2: Run it to verify it fails.** Run `cargo test -p chimera-core --test modal_resonator_test every_model_is_stable_at_every_extreme`. Expected: FAIL on STRING, FDBK = 1 ("grows" or "DC").
+- [ ] **Step 3: Implement.**
+  - Write `loop_parts.rs` as in Interfaces, with unit tests:
+    - `loop_gain_never_reaches_one`: `new(1.0)`, `new(2.0)`, `from_t60(1e9, 49.0)` and `new(f32::NAN)` are all `<= MAX`, and NaN gives 0.
+    - `dc_blocker_gain_is_at_most_one`: `|H(e^{jω})| <= 1 + 1e-6` over 512 ω from 0 to π.
+  - Delete the FDBK branch and the clamp from `tick_full`; `KsRenderParams.feedback` goes.
+  - Run every string loop through its `dc` and its `LoopGain`.
+  - In `render_bowed`, push `b.dc.process(clamped)`.
+  - `ModalParams::ks_feedback` stays, unread, until Task 3.
+- [ ] **Step 4: Move today's Modal pins aside.**
+  - In `golden_test.rs`, add `const PENDING: &[&str] = &["modal_init", "modal_lfo_cutoff", "modal_sympathetic", "algo_to_modal_switch"];`, with a comment: "re-recorded once, in Modal 2 step A's last task". `goldens_match` and `goldens_match_through_the_instrument` drop those names from both the rows and `got` before comparing.
+  - In `codec_compat_test.rs`, `v1_fixtures_render_identically` skips `init_modal.snd` for the same reason.
+  - Move `click_free_test`'s detector to `common::clicks` and call it from there.
+- [ ] **Step 5: Run the tests to verify they pass.** Run `cargo test -p chimera-core --test modal_resonator_test --test golden_test --test codec_compat_test --test click_free_test --test sanity_test --test modal_test --lib modal`. Expected: PASS. Only Modal output moved. If a non-Modal golden fails, stop and investigate.
+- [ ] **Step 6: Write ADR 0056** (Proposed, Deciders: project owner).
+  - **Context:** #191's survey, where FDBK above ~0.012 made the loop gain >1, a clamp latched DC, and no DC blocker existed.
+  - **Decision (so far):** `LoopGain` capped at 0.9995 by its constructor; a 10 Hz normalized DC blocker in every string loop; FDBK and its clamp deleted.
+  - **Sources:** the spec and this plan.
+  - In the README, add row 0056: "Modal's resonators share four modulatable macros; loops are stable by construction (supersedes in part 0010, 0040, 0054)" | Proposed.
+- [ ] **Step 7: Run the green gate.** Run `just check`. Expected: exit 0.
+- [ ] **Step 8: Commit.**
+
+```bash
+git add chimera-core/src/dsp/modal/loop_parts.rs chimera-core/src/dsp/modal/string.rs chimera-core/src/dsp/modal/mod.rs chimera-core/tests/modal_resonator_test.rs chimera-core/tests/common/mod.rs chimera-core/tests/click_free_test.rs chimera-core/tests/golden_test.rs chimera-core/tests/codec_compat_test.rs docs/adr/0056-modal-resonators-share-four-macros.md docs/adr/README.md
+git commit -m "Modal's string loops cannot run away: LoopGain, a DC blocker, no FDBK"
+```
+
+---
+
+### Task 2: Fractional tuning (#163)
+
+**Files:**
+- Modify: `chimera-core/src/dsp/modal/string.rs:211-403` (`MAX_STRING_DELAY`, the ring, `set_freq`, `trigger`, `clear`, `ring_tap`), `:415-529` (the ticks, the low-pass); `chimera-core/src/dsp/modal/loop_parts.rs`; `chimera-core/src/dsp/modal/mod.rs:465-484` (`retune`), `:772-777` (`SympatheticSet::tune`); `chimera-core/tests/memory_budget_test.rs:69-79`; `docs/adr/0056-*.md`
+- Test: `chimera-core/tests/modal_resonator_test.rs`, `loop_parts.rs` unit tests
+
+**Interfaces:**
+- Consumes: `DcBlocker::r` (Task 1).
+- Produces, in `loop_parts`:
+
+```rust
+pub struct Allpass1 { eta: f32, x1: f32, y1: f32 }      // (η + z⁻¹)/(1 + η z⁻¹)
+impl Allpass1 { pub fn set(&mut self, eta: f32); pub fn process(&mut self, x: f32) -> f32; pub fn reset(&mut self); }
+pub fn allpass_phase_delay(eta: f32, w: f32) -> f32;    // samples, at ω rad/sample
+pub fn dc_phase_delay(r: f32, w: f32) -> f32;           // samples; negative (an advance)
+pub fn eta_for(frac: f32, w: f32) -> f32;               // exact: the η whose phase delay at ω is `frac`
+pub fn split(period: f32, other: f32, w: f32) -> (usize, f32); // (line delay, η)
+pub const MIN_LINE: usize = 2;
+```
+
+  These formulas are not determined by the signatures; use them exactly:
+
+```rust
+// allpass_phase_delay: 1 − 2·atan2(η·sin ω, 1 + η·cos ω) / ω
+// dc_phase_delay:      −((π − ω)/2 − atan2(r·sin ω, 1 − r·cos ω)) / ω
+// eta_for:             θ = ω·(1 − frac)/2;  η = sin θ / sin(ω − θ)          (frac = 1 → η = 0)
+// split:               d = period − other;  n = floor(d − 0.5).max(MIN_LINE);  (n, eta_for(d − n, ω))
+//                      so frac ∈ [0.5, 1.5) wherever n isn't clamped
+```
+
+- `pub const MAX_STRING_DELAY: usize = 1016`. G1's 979.6-sample period plus the blocker's 31.4-sample advance needs a 1,011-sample line.
+- `KsString` fields:
+  - `buffer`, `write_pos`, `dirty`, `noise_state` stay.
+  - `ring_len: usize` (the wrap), `delay: usize` (the line delay) and `frac: Allpass1` replace `delay_len`.
+  - `dc` is from Task 1.
+  - `ens_lfo_phase` goes to Task 9's `Ensemble`.
+  - Invariants: `MIN_LINE <= delay`, `delay + 2 <= ring_len <= MAX_STRING_DELAY`, `ring_len <= dirty` and `write_pos < dirty`.
+- `KsString::set_period(&mut self, period: f32, other: f32, w: f32)` replaces `set_freq`. It sets `delay` and η through `split`, clamped so `delay + 2 <= MAX_STRING_DELAY`. It grows `ring_len` to `delay + 2` if needed (never shrinks it mid-note) and raises `dirty` to `ring_len`. Its callers compute `other = dc_phase_delay(self.dc.r(), w)`; Task 8 adds the dispersion term.
+- The loop low-pass becomes the linear-phase 3-tap `y = c/2·(x[d−1] + x[d+1]) + (1 − c)·x[d]`, centred on the line delay, so it adds no delay. `c = lp_coeff(bright) = 0.02 + 0.48·(1 − bright)`. Until Task 3, `bright` is today's `1 − brightness`, which keeps today's tone direction.
+- `ring_tap` (Bowed) reads `delay` behind the write over `ring_len`.
+
+- [ ] **Step 1: Write the failing tests.**
+  - In `loop_parts.rs`:
+    - `eta_for_inverts_the_phase_delay`: for ω in {2π·49/48000, 2π·2093/48000} and frac in {0.5, 0.75, 1.0, 1.49}, `(allpass_phase_delay(eta_for(frac, w), w) - frac).abs() < 1e-4`.
+    - `split_keeps_the_fraction_in_range`: `split(979.59, dc_phase_delay(r, w), w).0 == 1010` at G1, and `frac ∈ [0.5, 1.5)` for periods 22.9 to 979.6.
+  - In `modal_resonator_test.rs`:
+    - `strings_are_in_tune`: for STRING and for SYMP (the main string, halo bare), every note 31..=96 (G1..C7) at velocity 100, DAMP longest, BRIGHT brightest (today's `decay = 0.0`, `brightness = 0.0`). Render 3 s. `common::period_hz(&out[SR as usize / 4..])` must be within ±2 cents of `note_to_freq(n)`:
+
+```rust
+let cents = 1200.0 * (period_hz(&out[SR as usize / 4..]) / note_to_freq(n) as f64).log2();
+assert!(cents.abs() < 2.0, "{mode:?} note {n}: {cents:+.2} cents");
+```
+
+- [ ] **Step 2: Run them to verify they fail.** Run `cargo test -p chimera-core --lib modal::loop_parts && cargo test -p chimera-core --test modal_resonator_test strings_are_in_tune`. Expected: compile errors, then after stubs, whole-sample tuning fails high notes by more than 2 cents.
+- [ ] **Step 3: Implement** the Interfaces.
+  - `trigger` fills `delay` samples.
+  - `clear` keeps the dirty-extent contract (ADR 0054): every sample at or past `dirty` reads 0.0.
+  - `retune` and `SympatheticSet::tune` call `set_period`.
+  - Keep the exclusive-state tests in `modal/mod.rs` green (`dirty_clear_is_bit_identical_to_the_full_clear`, `note_on_clear_is_what_the_note_on_clears`, …). They compare paths, not values.
+- [ ] **Step 4: Update `modal_strings_cover_g1_and_no_lower`.** G1's period plus the blocker's advance fits: `979.59 - dc_phase_delay(r, w_g1) + 2.0 <= MAX_STRING_DELAY as f32`. F♯1 (MIDI 30) does not. Print `Instrument`'s size and what is left of D2.
+- [ ] **Step 5: Run the tests to verify they pass.** Run `cargo test -p chimera-core --lib modal && cargo test -p chimera-core --test modal_resonator_test --test memory_budget_test --test sym_pool_test --test exclusive_state_test --test click_free_test`. Expected: PASS.
+- [ ] **Step 6: Amend ADR 0056.** Add fractional tuning by an exact first-order allpass and exact compensation of every in-loop phase delay at f0. Add the 1,016-sample line, which supersedes in part ADR 0040's 984, with its D2 cost and the reason (the blocker's 31-sample advance at G1).
+- [ ] **Step 7: Listen on the desktop.**
+  - Once: `cp -r $SP/demo $SP/demo-m2`. In `$SP/demo-m2/Cargo.toml`, point `chimera-core`'s path at `$SP/wt-m2/chimera-core`. Leave `$SP/demo` on `wt-demo`.
+  - Run `cd $SP/demo-m2 && cargo run -q --release --bin demo -- modal-string && cargo run -q --release --bin demo -- modal-sympathetic`. Expected: WAVs in `$SP/demo-m2/out`. Tell the owner they are there.
+- [ ] **Step 8: Run the green gate.** Run `just check`. Expected: exit 0.
+- [ ] **Step 9: Commit.**
+
+```bash
+git add chimera-core/src/dsp/modal/loop_parts.rs chimera-core/src/dsp/modal/string.rs chimera-core/src/dsp/modal/mod.rs chimera-core/tests/modal_resonator_test.rs chimera-core/tests/memory_budget_test.rs docs/adr/0056-modal-resonators-share-four-macros.md
+git commit -m "Strings tune to a fraction of a sample, compensated at f0"
+```
+
+---
+
+### Task 3: The new `ModalParams`, its disk codes, and what each model reads
+
+**Files:**
+- Modify: `chimera-core/src/dsp/modal/params.rs` (whole file); `chimera-core/src/dsp/modal/mod.rs` (every `params.*` read: `:305-314`, `:394-463`, `:600-650`, `:814-971`); `chimera-core/src/storage/codes.rs:125`; `chimera-core/tests/fixtures/disk_codes_v1.txt` (append); `chimera-core/src/ui/block_registry.rs:25-54` (field renames only; Task 6 lays the pages out); `chimera-stm32/src/bench.rs`, `chimera-core/tests/{common/mod,modal,modal_integration,exclusive_state,part_page,block,sanity,click_free}_test.rs` (field renames)
+- Test: `chimera-core/tests/modal_resonator_test.rs`, `params.rs` unit tests
+
+**Interfaces:**
+- Produces, in `dsp::modal`:
+
+```rust
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BankModes { M16, M24, M32, M48 }          // DiskCode: codes 0..=3, idents "M16".."M48"
+impl BankModes { pub const fn count(self) -> usize; pub fn from_index(v: u8) -> Self; }
+
+pub struct ModalParams {
+    pub mode: ResonatorMode,
+    pub structure: f32, pub bright: f32, pub damp: f32, pub pos: f32,   // home
+    pub excite: f32, pub body: f32, pub ens_depth: f32, pub ens_rate: f32, pub ens_mix: f32,
+    pub couple: f32, pub halo: f32, pub modes: BankModes,               // model page
+}
+impl ModalParams {
+    pub const MODE: ParamId = ParamId(0);   pub const EXCITE: ParamId = ParamId(1);
+    pub const BRIGHT: ParamId = ParamId(3); pub const POS: ParamId = ParamId(4);
+    pub const BODY: ParamId = ParamId(6);   pub const ENS_DEPTH: ParamId = ParamId(9);
+    pub const ENS_RATE: ParamId = ParamId(10); pub const ENS_MIX: ParamId = ParamId(11);
+    pub const DAMP: ParamId = ParamId(12);  pub const STRUCTURE: ParamId = ParamId(13);
+    pub const COUPLE: ParamId = ParamId(14); pub const HALO: ParamId = ParamId(15);
+    pub const MODES: ParamId = ParamId(16);
+}
+pub static MODAL_SPECS: [ParamSpec; 13];   // MODE, STRUCTURE, BRIGHT, DAMP, POS, EXCITE, BODY,
+                                           // ENS_DEPTH, ENS_RATE, ENS_MIX, COUPLE, HALO, MODES
+pub const MODEL_NAMES: [&str; 4] = ["STRING", "BANK", "BOWED", "SYMP"]; // by value (ResonatorMode as u8)
+/// Whether `mode` reads `id`: the one table for page cells, dimming and the audio test.
+pub fn reads(mode: ResonatorMode, id: ParamId) -> bool;
+/// MDL2's six cells for `mode` (§ 1's model-page table).
+pub fn page_cells(mode: ResonatorMode) -> [Option<ParamId>; 6];
+```
+
+- The specs:
+  - MODE: `choice(0, "MODEL", ValFmt::Names(&MODEL_NAMES), 3.0, 0.0).ident("MODE")`.
+  - STRUCTURE, BRIGHT, DAMP, POS: continuous 0..1, step 1/128, labels `STRUCT BRIGHT DAMP POS`, shorts `STR BRT DMP POS`, `modulatable: false` until Task 5.
+  - EXCITE, BODY: continuous. ENS_DEPTH, ENS_RATE, ENS_MIX: labels `ENS.D ENS.R ENS.M`, idents unchanged (`E.DPT E.RAT E.MIX`). COUPLE, HALO: continuous.
+  - MODES: `choice(16, "MODES", ValFmt::Names(&["16", "24", "32", "48"]), 3.0, 2.0).ident("MODES")`.
+- The defaults. They are today's default translated (Task 4 proves it bit for bit):
+  - MODE String, STRUCTURE 0.0, BRIGHT 0.7, DAMP `1.0 - 0.3` (write it as that expression), POS 0.0.
+  - EXCITE 0.8, BODY 0.3, ENS_DEPTH 0.0, ENS_RATE 0.3, ENS_MIX 0.0.
+  - COUPLE 0.25, HALO 0.25, MODES `M32`.
+- `reads` (MODE is read by every model):
+
+| id | BANK | STRING | SYMP | BOWED |
+|---|---|---|---|---|
+| STRUCTURE, BRIGHT, DAMP, POS, EXCITE | ✓ | ✓ | ✓ | |
+| BODY, ENS_DEPTH, ENS_MIX | | ✓ | ✓ | |
+| ENS_RATE | | ✓ | | |
+| COUPLE, HALO | | | ✓ | |
+| MODES | ✓ | | | |
+
+- `page_cells`, in order, with the rest `None`: STRING `EXCITE BODY ENS_DEPTH ENS_RATE ENS_MIX`; SYMP `EXCITE COUPLE HALO BODY ENS_DEPTH ENS_MIX`; BANK `EXCITE MODES`; BOWED all `None`.
+- The DSP reads the new fields.
+  - **BANK:**
+    - `structure` where it read `inharm`, `bright` where it read `brightness`, `damp` where it read `decay`. Bank DAMP keeps DECAY's direction.
+    - `pos` and `excite`.
+    - `modes.count()` replaces `num_modes`. Resolution is latched at note-on into `ModalBank::resolution`, and `compute_filters` uses `self.resolution`.
+  - **STRING and the SYMP main string:**
+    - `LoopGain::from_t60(t60(damp), f0)`, with `pub(super) fn t60(damp: f32) -> f32 { 0.05 * libm::powf(400.0, damp) }` (0.05 s to 20 s).
+    - The low-pass is `lp_coeff(bright)`: 1 is bright, the new direction.
+    - `structure` drives today's STIFF two-sample mix until Task 8.
+    - `body` drives today's comb until Task 8. `ens_*` drive today's ensemble until Task 9, with SYMP's rate fixed at `SYMP_ENS_RATE = 0.3`.
+  - **SYMP halo:**
+    - `LoopGain::from_t60(2.0 * t60(damp), f)` and `lp_coeff(bright * 0.7)`.
+    - Ratios from `structure` through today's `sympathetic_ratios` until Task 10.
+    - Coupling `0.1 * couple` and level `0.6 * halo`.
+  - **BOWED:** reads no `ModalParams` field. Its excitation uses the constants `BOW_VELOCITY = 0.5` and `BOW_FORCE = 0.5`, today's hidden defaults.
+- `ks_excitation`, `ks_color`, `bow_velocity`, `bow_force`, `note`, `num_modes`, `inharm`, `decay`, `ks_stiffness` and `ks_feedback` leave the struct. The pluck is today's noise excitation (`excitation 0`) at colour 0.8.
+- `storage::RETIRED` becomes `&[(10, 3), (10, 4), (10, 5), (1, 2), (1, 5), (1, 7), (1, 8)]`.
+
+- [ ] **Step 1: Write the failing tests.**
+  - In `params.rs`:
+    - `page_cells_are_what_the_model_reads`: for each mode, every `Some(id)` in `page_cells(mode)` has `reads(mode, id)`. Every non-macro id the mode reads appears in its cells.
+    - `macros_are_dimmed_only_on_bowed`: the four macros are read by BANK, STRING and SYMP, and not by BOWED.
+  - In `modal_resonator_test.rs`, `live_knobs_move_dimmed_knobs_do_not`. For each mode:
+    - The base is every continuous param at 0.5 and MODES at `M32`. Hold note 48 for 1 s.
+    - For each spec other than MODE, render with that param at min and at max.
+    - A param the mode reads changes the output measurably. A param it doesn't read changes nothing, bit for bit:
+
+```rust
+if reads(mode, s.id) {
+    assert!(rms_diff(&lo, &hi) > 1e-3, "{mode:?} {}: live but inaudible", s.label);
+} else {
+    assert!(lo.iter().zip(&hi).all(|(a, b)| a.to_bits() == b.to_bits()), "{mode:?} {}: dimmed but heard", s.label);
+}
+```
+
+- [ ] **Step 2: Run them to verify they fail.** Run `cargo test -p chimera-core --lib modal::params && cargo test -p chimera-core --test modal_resonator_test live_knobs_move_dimmed_knobs_do_not`. Expected: compile errors (`reads`, `ModalParams::DAMP` not found).
+- [ ] **Step 3: Implement** the Interfaces and rename every field use.
+- [ ] **Step 4: Append the fixture lines.** Run `cargo test -p chimera-core --test disk_codes_test`. It prints each missing line ("append this line to the fixture"). Append exactly those lines: B 1 12..16, and E 1 16 0..3 `M16..M48`. The readable column of the kept B lines may change (labels); keys don't.
+- [ ] **Step 5: Run the tests to verify they pass.** Run `cargo test -p chimera-core --lib modal && cargo test -p chimera-core --test modal_resonator_test --test disk_codes_test --test codec_compat_test --test block_test --test part_page_test --test modal_test --test modal_integration_test --test exclusive_state_test --test sanity_test`.
+  - Expected: PASS. `v1_fixtures_equal_factory` holds: the retired ids are skipped and the defaults are their translation.
+  - `modal_test`'s `test_modal_inharm_*` become `test_modal_structure_*` (the same assertions on `structure`). `part_page_test::modal_pages` reads the new cells (Task 6 rewrites it; here, update its field names only).
+- [ ] **Step 6: Listen on the desktop.**
+  - In `$SP/demo-m2/src/clips.rs`, rename the Modal fields to the new struct: `decay → damp` (`1 − old` on string models, as-is on the bank), `brightness → bright`, `position → pos`, `inharm → structure` (bank and SYMP), `ks_stiffness → structure` (string), `ks_body → body`, `ks_ens_* → ens_*`, `num_modes = 16 → modes = BankModes::M16`. Delete `ks_feedback`, `ks_excitation`, `ks_color` and `bow_*`.
+  - Run `cd $SP/demo-m2 && cargo run -q --release --bin demo -- modal`. Tell the owner which files changed.
+- [ ] **Step 7: Run the green gate.** Run `just check`. Expected: exit 0.
+- [ ] **Step 8: Commit.**
+
+```bash
+git add chimera-core/src/dsp/modal/params.rs chimera-core/src/dsp/modal/mod.rs chimera-core/src/dsp/modal/string.rs chimera-core/src/storage/codes.rs chimera-core/src/ui/block_registry.rs chimera-core/tests/fixtures/disk_codes_v1.txt chimera-core/tests/modal_resonator_test.rs chimera-core/tests/common/mod.rs chimera-core/tests/modal_test.rs chimera-core/tests/modal_integration_test.rs chimera-core/tests/exclusive_state_test.rs chimera-core/tests/part_page_test.rs chimera-core/tests/block_test.rs chimera-core/tests/sanity_test.rs chimera-core/tests/click_free_test.rs chimera-stm32/src/bench.rs
+git commit -m "Modal's shared macros: STRUCTURE, BRIGHT, DAMP, POS, and what each model reads"
+```
+
+---
+
+### Task 4: Old patches translate at decode
+
+**Files:**
+- Modify: `chimera-core/src/storage/codes.rs:136-145` (beside `Migration`), `chimera-core/src/storage/block_codec.rs:41-107`, `chimera-core/src/storage/sound.rs:232-237`, `chimera-core/src/storage/system.rs:122`, `chimera-core/src/storage/mod.rs:15-17`, `chimera-core/src/dsp/modal/params.rs`; `chimera-core/tests/sound_codec_test.rs:267-293` (new argument)
+- Test: `chimera-core/tests/codec_compat_test.rs`
+
+**Interfaces:**
+- Consumes: `RETIRED`, `ModalParams` (Task 3).
+- Produces, in `storage`:
+
+```rust
+/// A block's retired values from one file, by old `ParamId`.
+pub struct Retired([Option<f32>; MAX_BLOCK_PARAMS]);
+impl Retired { pub fn get(&self, id: ParamId) -> Option<f32>; pub fn any(&self) -> bool; }
+/// Live params several retired ones derive from together (spec § 3): run once
+/// the file's live values are written, only when the file held a retired id of `block`.
+pub struct Translation { pub block: u8, pub apply: fn(&Retired, &mut dyn Block) }
+pub const TRANSLATIONS: &[Translation] = &[Translation { block: 1, apply: crate::dsp::modal::translate_v1 }];
+pub fn decode_block(payload: &[u8], migrations: &[Migration], translations: &[Translation],
+                    target: Option<&mut dyn Blocks>) -> Result<(), FileError>;
+```
+
+- `decode_block` collects a finite entry whose `(code, id)` is in `RETIRED` into `Retired` rather than skipping it. After the spec-order writes, it runs the matching `Translation` if `retired.any()`.
+- `pub fn translate_v1(old: &Retired, blk: &mut dyn Block)` in `modal/params.rs` reads MODE from `blk` (already written). Each rule applies only when its source is present, through `blk.set`:
+  - DAMP: `decay` on BANK (`ResonatorMode::Modal`); `1.0 - decay` on STRING, SYMP and BOWED.
+  - STRUCTURE: `stiff` on STRING and BOWED; `inharm` on BANK and SYMP.
+  - FDBK is ignored.
+
+- [ ] **Step 1: Write the failing tests** in `codec_compat_test.rs`.
+  - `old_modal_patches_translate`:
+    - (a) `decode(&fixture("init_modal.snd"))` is `bits_eq` to `Sound::init(EngineType::Modal)`.
+    - (b) For each mode, decode a hand-built v1 Block payload: code 1, then `(0, mode code)`, `(1, 0.6)`, `(2, 0.2)`, `(3, 0.9)`, `(4, 0.4)`, `(5, 0.7)`, `(6, 0.5)`, `(7, 0.35)`, `(8, 1.0)`, `(9, 0.1)`, `(10, 0.2)`, `(11, 0.3)` as `(id u8, f32 LE)`. Decode it with `decode_block(&payload, MIGRATIONS, TRANSLATIONS, Some(&mut snap))` into `ParamSnapshot::for_engine(Modal)`. Assert:
+
+```rust
+let m = &snap.modal;
+let (damp, structure) = match mode { Modal => (0.2, 0.7), String | Bowed => (1.0 - 0.2, 0.35), Sympathetic => (1.0 - 0.2, 0.7) };
+assert_eq!((m.damp, m.structure), (damp, structure), "{mode:?}");
+assert_eq!((m.excite, m.bright, m.pos, m.body), (0.6, 0.9, 0.4, 0.5));
+assert_eq!((m.ens_depth, m.ens_rate, m.ens_mix), (0.1, 0.2, 0.3));
+assert_eq!((m.couple, m.halo, m.modes), (0.25, 0.25, BankModes::M32));
+```
+
+  - Review Focus 4, `an_old_fdbk_1_patch_loads_stable`: the STRING payload above with `(2, 0.0)` (DECAY 0, today's longest) and FDBK 1. Decode it, then `common::play_modal` note 36 for 30 s. It must be finite, `peak <= 1.0`, with |mean of the last second| < 1e-3 and the last second's RMS ≤ the second second's.
+- [ ] **Step 2: Run them to verify they fail.** Run `cargo test -p chimera-core --test codec_compat_test old_modal_patches_translate an_old_fdbk_1_patch_loads_stable`. Expected: compile error (`TRANSLATIONS`), then (b) fails with the defaults.
+- [ ] **Step 3: Implement** the Interfaces. Add `translations_target_live_blocks` to `block_codec`'s unit tests: every `Translation::block` is a live block code, and has at least one `RETIRED` id.
+- [ ] **Step 4: Run the tests to verify they pass.** Run `cargo test -p chimera-core --test codec_compat_test --test sound_codec_test --test disk_codes_test --lib storage`. Expected: PASS.
+- [ ] **Step 5: Run the green gate.** Run `just check`. Expected: exit 0.
+- [ ] **Step 6: Commit.**
+
+```bash
+git add chimera-core/src/storage/codes.rs chimera-core/src/storage/block_codec.rs chimera-core/src/storage/sound.rs chimera-core/src/storage/system.rs chimera-core/src/storage/mod.rs chimera-core/src/dsp/modal/params.rs chimera-core/tests/codec_compat_test.rs chimera-core/tests/sound_codec_test.rs
+git commit -m "Old Modal patches translate once, at decode"
+```
+
+---
+
+### Task 5: The macros are modulatable, read every block and eased
+
+**Files:**
+- Modify: `chimera-core/src/dsp/modal/params.rs` (the four specs' `modulatable`); `chimera-core/src/dsp/modal/mod.rs:236-278` (fields, `models_are_exclusive`), `:394-463` (`note_on`), `:518-577` (`render`); `chimera-core/src/dsp/modal/string.rs:291-355` (`trigger` split); `chimera-core/src/dsp/engines.rs:243-249`; `chimera-core/src/dsp/voice.rs:162-170`; `chimera-core/tests/modulatable_test.rs:71-110`; `docs/adr/0056-*.md`
+- Test: `chimera-core/tests/modal_resonator_test.rs`
+
+**Interfaces:**
+- Consumes: `ModalParams`, `reads` (Task 3).
+- Produces:
+
+```rust
+/// The four macros as the loops play them: eased toward the block's
+/// modulated values by EASE a block, snapped at note-on.
+#[derive(Clone, Copy)]
+pub(super) struct Macros { pub structure: f32, pub bright: f32, pub damp: f32, pub pos: f32 }
+impl Macros { pub fn of(p: &ModalParams) -> Self; pub fn ease(&mut self, to: &Self); }
+pub(super) const EASE: f32 = 0.3;
+impl KsString {
+    pub(super) fn excite(&mut self, (period, other, w): (f32, f32, f32), amplitude: f32); // clear, set_period, noise fill
+    pub(super) fn shape(&mut self, position: f32);  // today's pluck comb and colour passes, in place
+}
+impl ModalEngine { pub fn playing_cost(&self) -> Option<Cost>; }   // the sounding note's model and latched MODES
+impl EngineSlot { pub fn modal_playing_cost(&self) -> Option<Cost>; }
+```
+
+- `ModalEngine` gains `macros: Macros` and `shape_pending: bool`.
+  - `note_on` snaps `macros` to `Macros::of(params)`, excites the string(s) and sets `shape_pending`.
+  - `render` eases `macros` toward `Macros::of(params)` (the voice's modulated copy) first. If `shape_pending`, it runs `shape(macros.pos)` on STRING's or SYMP's main string before the first tick, and clears the flag.
+  - So POS takes effect at the pluck, from the first block's modulated POS (VEL and NOTE routes included). With no route, the result is bit-identical to shaping at note-on.
+  - The loops read `macros`, never `params`, for the four.
+- `voice.rs::held_model_extra` becomes `self.slot.modal_playing_cost().map_or(Cost::ZERO, |held| Cost(held.0.saturating_sub(ModalEngine::cost(&p.modal).0)))`. That covers a MODE switch's fade, as before, and a MODES change under a sounding bank note.
+
+- [ ] **Step 1: Write the failing tests.**
+  - In `modal_resonator_test.rs`, `macros_are_routable`. For BANK, STRING and SYMP, and each macro:
+    - Route `LFO1 → (Modal, macro)` at 127 through `ModDestRegistry` (as `modulatable_test::routes`), with `lfos[0].rate = 5.0`.
+    - Play note 48 through `common::Rig` for 2 s. Re-pluck at 1 s, so POS is heard at a pluck.
+    - Assert `rms_diff(dry, wet) > 1e-3` against amount 0, and `common::clicks(&wet).is_empty()`.
+  - Review Focus 3, `modes_change_keeps_sounding_notes_and_their_bill`:
+    - BANK at `M48`, note 60 held. At block 50, set `modes = M16` on the params the voice renders.
+    - The next 50 blocks are bit-identical to a run with no change.
+    - `voice.held_model_extra(&p16) == Cost(ModalEngine::COST_MODE.0 * 32)` while the note sounds.
+    - The next note-on plays 16 modes, and `held_model_extra` is `Cost::ZERO` after it.
+  - In `modulatable_test.rs`:
+    - The count becomes `17 + 3 * 5 + 1 + 2 + 4` (+ the four Modal macros).
+    - `render` re-plucks at block 50 when `addr.block == BlockRef::Modal`, so POS is heard at its next pluck.
+- [ ] **Step 2: Run them to verify they fail.** Run `cargo test -p chimera-core --test modal_resonator_test macros_are_routable modes_change_keeps_sounding_notes_and_their_bill && cargo test -p chimera-core --test modulatable_test`. Expected: FAIL. The registry refuses the macros, so there is no route.
+- [ ] **Step 3: Implement** the Interfaces. Set `modulatable: true` on STRUCTURE, BRIGHT, DAMP and POS only. `mod_registry_test::registry_refuses_non_modulatable` keeps EXCITE refused.
+- [ ] **Step 4: Run the tests to verify they pass.** Run `cargo test -p chimera-core --test modal_resonator_test --test modulatable_test --test mod_registry_test --test cost_test --test instrument_test --test exclusive_state_test --lib modal`. Expected: PASS.
+- [ ] **Step 5: Amend ADR 0056.**
+  - The four macros are read every block from the voice's modulated params and eased (`EASE` 0.3 a block).
+  - This partially supersedes ADR 0010's "Modal settings are read only at note-on" for these four. The model page stays note-on.
+  - POS shapes the pluck from the first block's modulated value.
+  - MODES latches at note-on and is billed while it sounds.
+  - Mark 0010's README row "Superseded in part by 0056". Don't edit 0010's file.
+- [ ] **Step 6: Listen on the desktop.** Run `cd $SP/demo-m2 && cargo run -q --release --bin demo -- modal-bank`. Tell the owner: the bank now answers its knobs live.
+- [ ] **Step 7: Run the green gate.** Run `just check`. Expected: exit 0.
+- [ ] **Step 8: Commit.**
+
+```bash
+git add chimera-core/src/dsp/modal/params.rs chimera-core/src/dsp/modal/mod.rs chimera-core/src/dsp/modal/string.rs chimera-core/src/dsp/engines.rs chimera-core/src/dsp/voice.rs chimera-core/tests/modal_resonator_test.rs chimera-core/tests/modulatable_test.rs docs/adr/0056-modal-resonators-share-four-macros.md docs/adr/README.md
+git commit -m "Modal's four macros are mod destinations, read every block"
+```
+
+---
+
+### Task 6: The pages: MODEL by name, MDL2 follows MODEL, SPACE, dimming
+
+**Files:**
+- Modify: `chimera-core/src/ui/block_def.rs:38-58,131-174` (`SlotBinding`, `spec`, `label`, `format`), `chimera-core/src/ui/view.rs:46-81` (`SlotCtx`), `:146-193` (`view`), `:211-223` (`dimmed`), `chimera-core/src/ui/block_registry.rs:25-54`
+- Test: `chimera-core/tests/part_page_test.rs:31-52`, `chimera-core/tests/screen/mod.rs`, `chimera-core/tests/screen_golden_test.rs`, `chimera-core/src/ui/mod_grid.rs` (tests)
+
+**Interfaces:**
+- Consumes: `reads`, `page_cells`, `MODEL_NAMES` (Task 3).
+- Produces:
+  - `SlotBinding::ModalPanel(u8)` and `ParamSlot::modal_panel(k: u8)`.
+  - `SlotCtx` gains `pub model: ResonatorMode`, read from `(Modal, MODE)`.
+  - `view` resolves `ModalPanel(k)` to `page_cells(ctx.model)[k]`: a `Param` with its spec's label and format, or `View::Empty`.
+  - `dimmed` gains `(BlockRef::Modal, id) => !reads(sound.params.modal.mode, id)`.
+- The pages:
+  - `MODAL_1` (MDL): `MODE, STRUCTURE, BRIGHT, DAMP, POS`, then `ParamSlot::param(BlockRef::Part, PartParams::SEND_REVERB).with_label("SPACE")`.
+  - `MODAL_2` (MDL2): `modal_panel(0..=5)`.
+  - SPACE resolves through `UiBlocks`/`part_block` (`ui/mod.rs:1042-1057`), which already serves `BlockRef::Part` on any page. So it is the Part's REV send, not a copy, and no new plumbing is needed.
+
+- [ ] **Step 1: Write the failing tests.**
+  - Rewrite `part_page_test::modal_pages`.
+    - A SYMP `ParamSnapshot`: `read(&MODAL_2)` is `[excite, couple, halo, body, ens_depth, ens_mix]`. Turning slot 1 moves `couple` by 1/128.
+    - On BANK: slot 1 is MODES, and slot 2 is `View::Empty` (its turn changes nothing).
+    - On BOWED: every MDL2 slot is `View::Empty`.
+    - MODE still steps 0..3 and clamps at SYMP.
+  - `space_is_the_parts_reverb_send`, through the screen harness's `Ui`:
+    - Load init Modal and turn MDL's slot F by +10. `performance.parts[0].mix.sends[2]` rises by 10/128.
+    - The SENDS page's REV slot reads the same normalized value.
+  - `bowed_dims_the_macros_and_their_columns`, in `mod_grid`'s tests:
+    - On BOWED, `view::dimmed` is true for the four macros and false for MODE and SPACE.
+    - `inert_dests` sets the bit of a `(Modal, DAMP)` column. On STRING it doesn't.
+  - Add screen cases to `tests/screen/mod.rs`: `modal_home` (init Modal, MDL), `modal_mdl2_symp` (MODEL → SYMP, then MDL2) and `modal_home_bowed` (MODEL → BOWED: four dimmed cells).
+- [ ] **Step 2: Run them to verify they fail.** Run `cargo test -p chimera-core --test part_page_test --test screen_golden_test --lib ui::mod_grid`. Expected: FAIL (`modal_panel` not found; new screens have no row).
+- [ ] **Step 3: Implement** the Interfaces. Any `match` on `SlotBinding` gets the new arm; there is no wildcard.
+- [ ] **Step 4: Record the screen goldens.** Run `GOLDEN_RECORD=1 cargo test -p chimera-core --test screen_golden_test`. Paste the rows for the three new cases, and for `modal_pitch` and `modal_amp` only if they changed. Open them with `SCREEN_DUMP=$SP/screens cargo test -p chimera-core --test screen_golden_test` and check each by eye: MODEL shows `STRING`/`SYMP`/`BOWED`, SPACE sits in slot F, and BOWED's four macros are dimmed.
+- [ ] **Step 5: Run the tests to verify they pass.** Run `cargo test -p chimera-core --test part_page_test --test screen_golden_test --test all_pages_walk_test --test binding_test --lib ui`. Expected: PASS.
+- [ ] **Step 6: Run the green gate.** Run `just check`. Expected: exit 0. Tell the owner the pages can be tried with `just desktop`.
+- [ ] **Step 7: Commit.**
+
+```bash
+git add chimera-core/src/ui/block_def.rs chimera-core/src/ui/view.rs chimera-core/src/ui/block_registry.rs chimera-core/src/ui/mod_grid.rs chimera-core/tests/part_page_test.rs chimera-core/tests/screen/mod.rs chimera-core/tests/screen_golden_test.rs
+git commit -m "MDL shows the macros and SPACE; MDL2 follows the model"
+```
+
+---
+
+### Task 7: The release ramp (#51) and Bowed's low notes (#206)
+
+**Files:**
+- Modify: `chimera-core/src/dsp/modal/loop_parts.rs`, `chimera-core/src/dsp/modal/mod.rs:486-512` (`note_off`), `:539-567` (`exciting`), `:847-883` (`render_bowed`), `:87-93` (`BowedString`); `chimera-core/src/dsp/modal/string.rs:405-413` (`damp` deleted)
+- Test: `chimera-core/tests/modal_resonator_test.rs`
+
+**Interfaces:**
+- Produces, in `loop_parts`:
+
+```rust
+pub const RELEASE_SAMPLES: u32 = 240;
+pub const RELEASE_T60: f32 = 0.12;           // seconds, a released string's ring
+/// A note-off's ramp from the held gain to the released one, a sample at a time.
+pub struct Release { left: u32, from: f32, to: f32 }
+impl Release {
+    pub fn start(&mut self, from: LoopGain, to: LoopGain);
+    pub fn gain(&mut self, held: LoopGain) -> LoopGain;  // per sample
+    pub fn idle(&self) -> bool;
+}
+```
+
+  `gain`'s rule is not determined by the signature: `from + (to − from)·(1 − left/RELEASE_SAMPLES)` while ramping, then `held.min(to)`. The release never gives the gain back, so DAMP modulated upward can't hold a released note.
+- STRING and the SYMP main string: at note-off, `Release::start(current, LoopGain::from_t60(RELEASE_T60, f0))`. Each halo string starts one with `2.0 * RELEASE_T60`. `KsString::damp` and every buffer scaling go.
+- BOWED: `BowedString` gains `force_to: f32` and `written: u32`.
+  - At note-off, the force ramps linearly to 0 over `RELEASE_SAMPLES`. Today's `release_decay` 0.995 applies once it reaches 0.
+  - The #206 fix: `ring_tap` reads `min(delay, written.max(1))` behind the write. So a note sounds from its first samples, and the tap reaches its full period after one period.
+  - BOWED's `exciting` is `force > 0.0`, so a bowed note is never freed for silence while bowing.
+
+- [ ] **Step 1: Write the failing tests** in `modal_resonator_test.rs`.
+  - `release_does_not_click`: for each mode, note 60 at velocity 127, 0.5 s held and 0.5 s released through `common::Rig`, with the default Modal Sound (no VCA route). `common::clicks(&out).is_empty()`.
+  - `bowed_low_notes_sound`: BOWED, note 31 (G1), held 2 s through `Rig`. The first block's peak is > 1e-3, `rig.is_active()` after every block, and the last block's peak is > 1e-3.
+  - Review Focus 1, `a_released_note_ends_with_damp_at_its_top`: STRING note 48, held 0.5 s, then released. From note-off on, render with `damp = 1.0` on the params the voice renders: the value a route at its top produces. The voice goes inactive within 2 s of note-off, and the last 0.1 s before that has peak < 1e-3.
+- [ ] **Step 2: Run them to verify they fail.** Run `cargo test -p chimera-core --test modal_resonator_test release_does_not_click bowed_low_notes_sound a_released_note_ends_with_damp_at_its_top`. Expected: STRING and BOWED click, and Bowed G1 is silent in its first block.
+- [ ] **Step 3: Implement** the Interfaces.
+- [ ] **Step 4: Run the tests to verify they pass.** Run `cargo test -p chimera-core --test modal_resonator_test --test click_free_test --test sanity_test --test modal_integration_test --test exclusive_state_test --test sym_pool_test --lib modal`. Expected: PASS.
+- [ ] **Step 5: Listen on the desktop.** Run `cd $SP/demo-m2 && cargo run -q --release --bin demo -- modal-bowed && cargo run -q --release --bin demo -- modal-string`.
+- [ ] **Step 6: Run the green gate.** Run `just check`. Expected: exit 0.
+- [ ] **Step 7: Commit.**
+
+```bash
+git add chimera-core/src/dsp/modal/loop_parts.rs chimera-core/src/dsp/modal/mod.rs chimera-core/src/dsp/modal/string.rs chimera-core/tests/modal_resonator_test.rs
+git commit -m "Note-off ramps the loop over 5 ms; low bowed notes sound at once"
+```
+
+---
+
+### Task 8: Dispersion from STRUCTURE, and BODY as an output body (#10)
+
+**Files:**
+- Create: `chimera-core/src/dsp/modal/dispersion.rs` (Mutable's MIT notice, as `rings.rs`), `chimera-core/src/dsp/modal/body.rs` (ours)
+- Modify: `chimera-core/src/dsp/modal/string.rs` (`StringVoice`; the STIFF mix and the body comb in `tick_full` go), `chimera-core/src/dsp/modal/mod.rs` (`ModelSlot::String(StringVoice)`, `SympatheticVoice { main: StringVoice, halo }`, the size assert `:141-147`, `layout`), `chimera-core/tests/sanity_test.rs:97-101`, `chimera-core/tests/memory_budget_test.rs:175-179`, `THIRD_PARTY.md:10`, `docs/adr/0056-*.md`
+- Test: `chimera-core/tests/modal_resonator_test.rs`, unit tests in both new files
+
+**Interfaces:**
+- Consumes: `Allpass1`, `allpass_phase_delay`, `split` (Task 2); `Macros` (Task 5).
+- Produces:
+
+```rust
+// dispersion.rs
+pub const DISPERSION_STAGES: usize = 4;
+pub struct Dispersion { stages: [Allpass1; DISPERSION_STAGES] }
+impl Dispersion {
+    /// Rings' `ap_gain` law (string.cc), limited so the chain's DC delay is at most half the period.
+    pub fn coeff(structure: f32, period: f32) -> f32;
+    pub fn set(&mut self, a: f32);
+    pub fn process(&mut self, x: f32) -> f32;
+    pub fn phase_delay(a: f32, w: f32) -> f32;       // DISPERSION_STAGES · allpass_phase_delay(a, w)
+}
+// body.rs
+pub const BODY_MODES: [(f32, f32, f32); 3] = [(102.0, 3.0, 1.0), (236.0, 4.0, 0.7), (517.0, 3.0, 0.5)]; // Hz, Q, gain
+pub struct Body { modes: [Svf; 3] }
+impl Body { pub fn tune(&mut self, sample_rate: u32); pub fn process(&mut self, x: f32, amount: f32) -> f32; }
+// string.rs
+pub(super) struct StringVoice { string: KsString, disp: Dispersion, body: Body, ens: Ensemble /* Task 9 */, release: Release }
+```
+
+  The coefficient law and the output mix, which the signatures leave open:
+
+```rust
+// coeff:  a = −0.618·s / (0.15 + s);  D = period / (2·STAGES);  a.max((1 − D) / (1 + D))
+// Body::process:  (x + amount · Σ gᵢ · bpᵢ(x)) / (1 + 0.5 · amount)      // outside the loop
+```
+
+- The loop runs the dispersion chain on the filtered sample, before the DC blocker. Each block, when the eased STRUCTURE moved (`!= last`), the string re-splits with `other = dc_phase_delay(r, w) + Dispersion::phase_delay(a, w)`, so the fundamental stays put.
+- `Svf` is `rings::Svf`; `Body::tune` calls `set(f / sr, q)` once at note-on.
+- The size rule: `const _: () = assert!(size_of::<SympatheticVoice>() <= size_of::<StringVoice>() + align_of::<StringVoice>());`, replacing ADR 0054's Bowed bound. `memory_budget_test::sympathetic_pool_fits_d2` asserts `MODEL_SLOT <= max(SYMPATHETIC_VOICE, BOWED).next_multiple_of(align) + align`.
+
+- [ ] **Step 1: Write the failing tests.**
+  - `dispersion.rs`: `coeff_is_rings_law_within_the_period_limit`. `coeff(0.0, 979.0) == 0.0`. `coeff(1.0, 979.0)` equals `-0.618 / 1.15` to 1e-6. For each period in {6.0, 22.9, 979.0}, `phase_delay(coeff(1.0, p), 1e-4) <= p / 2 + 1e-3`.
+  - `body.rs`: `body_gain_is_bounded`. The impulse response's peak magnitude response at amount 1 is ≤ 2.0 over 20 Hz–20 kHz.
+  - `modal_resonator_test.rs`:
+    - `dispersion_keeps_pitch`: STRING at notes 36, 60 and 84, BRIGHT 0, DAMP 1. `period_hz` at STRUCTURE 0 and at 1 differ by < 2 cents.
+    - `body_does_not_transpose`: STRING note 48, BODY 0 vs 1. `period_hz` within 2 cents, and within 2 cents of `note_to_freq(48)`.
+    - `dispersion_stretches_the_partials`: STRING note 48 at STRUCTURE 1. The 8th partial's peak (Goertzel search ±3 % around 8·f0) sits above 8·f0 by > 5 cents, and is within 1 cent of it at STRUCTURE 0.
+  - In `sanity_test.rs`, remove `#[ignore]` from `modal_is_pitched` (#10).
+- [ ] **Step 2: Run them to verify they fail.** Run `cargo test -p chimera-core --lib modal::dispersion modal::body && cargo test -p chimera-core --test modal_resonator_test dispersion_keeps_pitch body_does_not_transpose dispersion_stretches_the_partials && cargo test -p chimera-core --test sanity_test modal_is_pitched`. Expected: compile errors, then the comb's octave fails `body_does_not_transpose` and `modal_is_pitched`.
+- [ ] **Step 3: Implement** the Interfaces. `live_knobs_move_dimmed_knobs_do_not` must stay green: STRUCTURE and BODY stay live on STRING and SYMP.
+- [ ] **Step 4: Run the tests to verify they pass.** Run `cargo test -p chimera-core --lib modal && cargo test -p chimera-core --test modal_resonator_test --test sanity_test --test memory_budget_test --test sym_pool_test`. Expected: PASS.
+- [ ] **Step 5: Provenance and ADR.**
+  - In `THIRD_PARTY.md`'s Modal line, list `dispersion.rs`.
+  - Amend ADR 0056:
+    - STRUCTURE's dispersion is a 4-stage first-order allpass chain using Rings' `ap_gain` law (MIT). Its phase delay at f0 is taken off the line, so pitch holds. There is no new buffer.
+    - BODY is an output body of three fixed resonances.
+    - Sympathetic is sized within one align of String, superseding in part ADR 0054's const assert.
+- [ ] **Step 6: Listen on the desktop.** Run `cd $SP/demo-m2 && cargo run -q --release --bin demo -- modal-string`.
+- [ ] **Step 7: Run the green gate.** Run `just check`. Expected: exit 0.
+- [ ] **Step 8: Commit.**
+
+```bash
+git add chimera-core/src/dsp/modal/dispersion.rs chimera-core/src/dsp/modal/body.rs chimera-core/src/dsp/modal/string.rs chimera-core/src/dsp/modal/mod.rs chimera-core/tests/modal_resonator_test.rs chimera-core/tests/sanity_test.rs chimera-core/tests/memory_budget_test.rs THIRD_PARTY.md docs/adr/0056-modal-resonators-share-four-macros.md
+git commit -m "STRUCTURE stiffens the string in tune; BODY colours without transposing"
+```
+
+---
+
+### Task 9: The ensemble, rebuilt (#50)
+
+**Files:**
+- Create: `chimera-core/src/dsp/modal/ensemble.rs` (ours)
+- Modify: `chimera-core/src/dsp/modal/string.rs` (today's heads and `ENS_SPREAD` go; `StringVoice.ens`), `chimera-core/src/dsp/modal/mod.rs` (render reads it)
+- Test: `chimera-core/tests/modal_resonator_test.rs`, `ensemble.rs` unit tests
+
+**Interfaces:**
+- Consumes: `StringVoice`, `KsString`'s ring (Task 2).
+- Produces:
+
+```rust
+pub const ENS_HEADS: usize = 3;
+pub const ENS_MAX_CENTS: f32 = 15.0;
+pub fn rate_hz(ens_rate: f32) -> f32;                  // 0.1 · 60^ens_rate  (0.1–6 Hz)
+pub struct Ensemble { cos: f32, sin: f32, rot_c: f32, rot_s: f32, amp: f32 }
+impl Ensemble {
+    pub fn set(&mut self, depth: f32, rate: f32, delay: usize, sample_rate: u32); // per block
+    /// Head k's delay behind the write, this sample: within [2, delay − 2].
+    pub fn head_delays(&self, delay: usize) -> [f32; ENS_HEADS];
+    pub fn advance(&mut self);                          // per sample
+}
+impl KsString { pub(super) fn read_frac(&self, delay: f32) -> f32; } // linear interpolation
+```
+
+  The head law, which the signatures leave open:
+
+```rust
+// A quadrature oscillator: (c, s) rotated by (rot_c, rot_s) = (cos, sin)(2π·rate/fs) each sample,
+// renormalised once per block. Head k's phase is k·120°: sₖ = s·cos(2πk/3) + c·sin(2πk/3).
+// oₖ = delay/2 + A·sₖ,  A = min((2^(ENS_MAX_CENTS·depth/1200) − 1) · fs / (2π·rate), delay/2 − 2)
+// out = dry·(1 − mix) + mix · (Σ read_frac(oₖ)) / ENS_HEADS          // on the output, not in the loop
+```
+
+  The Doppler of `oₖ` is the detune: ±15 cents at DEPTH 1 wherever `A` isn't capped by the loop. Capped at slow rates on short loops, it is less. There are no new buffers.
+- SYMP's main string uses `rate_hz(SYMP_ENS_RATE)`.
+
+- [ ] **Step 1: Write the failing tests.**
+  - `ensemble.rs`, `heads_stay_inside_the_loop`: for delay ∈ {3, 23, 1010}, depth ∈ {0, 1} and rate ∈ {0, 1}, over 10⁵ `advance`s every head delay is in `[2.0, delay as f32 - 2.0]` (for delay 3: exactly 1.5, and depth has no effect).
+  - `modal_resonator_test.rs`:
+    - `ensemble_is_audible`: STRING note 48, DAMP 1, BRIGHT 0.7, ENS RATE 0.5 (≈ 0.77 Hz), 4 s. ENS on is DEPTH 1 and MIX 0.5; off is MIX 0.
+      - Spectral spread: `sideband(on) - sideband(off) > 6.0` dB, where `sideband` is `20·log10` of the mean of the Goertzel magnitudes at `f0·2^(±10/1200)` over the fundamental's.
+      - Amplitude movement: the 10 ms-window RMS envelope over seconds 1–4, detrended by a straight line in dB, has a standard deviation > 3× off's.
+    - Review Focus 5, `ensemble_at_full_depth_on_g1_stays_in_the_line`: STRING note 31, DAMP 1, ENS DEPTH 1, MIX 1, at ENS RATE 0 and at 1, for 30 s. Finite, peak ≤ 1.5, `common::clicks(&out).is_empty()`.
+- [ ] **Step 2: Run them to verify they fail.** Run `cargo test -p chimera-core --lib modal::ensemble && cargo test -p chimera-core --test modal_resonator_test ensemble_is_audible ensemble_at_full_depth_on_g1_stays_in_the_line`. Expected: compile error, then today's frozen LFO fails `ensemble_is_audible`.
+- [ ] **Step 3: Implement** the Interfaces.
+- [ ] **Step 4: Run the tests to verify they pass.** Run `cargo test -p chimera-core --lib modal && cargo test -p chimera-core --test modal_resonator_test`. Expected: PASS, `live_knobs_move_dimmed_knobs_do_not` included (ENS RATE live on STRING only).
+- [ ] **Step 5: Listen on the desktop.** Run `cd $SP/demo-m2 && cargo run -q --release --bin demo -- modal-string`.
+- [ ] **Step 6: Run the green gate.** Run `just check`. Expected: exit 0.
+- [ ] **Step 7: Commit.**
+
+```bash
+git add chimera-core/src/dsp/modal/ensemble.rs chimera-core/src/dsp/modal/string.rs chimera-core/src/dsp/modal/mod.rs chimera-core/tests/modal_resonator_test.rs
+git commit -m "A real ensemble: three heads, 0.1 to 6 Hz, up to 15 cents"
+```
+
+---
+
+### Task 10: SYMP's chords, their glide, COUPLE and HALO
+
+**Files:**
+- Create: `chimera-core/src/dsp/modal/chords.rs` (Mutable's MIT notice, citing `rings/dsp/part.cc`, Copyright 2015 Emilie Gillet)
+- Modify: `chimera-core/src/dsp/modal/mod.rs:95-107` (`SympatheticSet`), `:436-456` (SYMP note-on), `:885-957` (`render_sympathetic`), `:966-971` (`sympathetic_ratios` deleted); `THIRD_PARTY.md:10`; `docs/adr/0056-*.md`
+- Test: `chimera-core/tests/modal_resonator_test.rs`, `chords.rs` unit tests
+
+**Interfaces:**
+- Consumes: `KsString::set_period`, `split`, `dc_phase_delay` (Task 2); `Release` (Task 7).
+- Produces:
+
+```rust
+pub const CHORD_COUNT: usize = 11;
+pub const CHORD_GLIDE_SAMPLES: u32 = 960;
+/// Rings' single-voice chords (part.cc, `chords[0]`), the 0.0 the main string plays dropped.
+pub static CHORDS: [[f32; 7]; CHORD_COUNT] = [
+    [-12.0, 0.01, 0.02, 0.03, 11.98, 11.99, 12.0],
+    [-12.0, 3.0, 3.01, 7.0, 9.99, 10.0, 19.0],
+    [-12.0, 3.0, 3.01, 7.0, 11.99, 12.0, 19.0],
+    [-12.0, 3.0, 3.01, 7.0, 13.99, 14.0, 19.0],
+    [-12.0, 3.0, 3.01, 7.0, 16.99, 17.0, 19.0],
+    [-12.0, 6.98, 6.99, 7.0, 12.0, 18.99, 19.0],
+    [-12.0, 3.99, 4.0, 7.0, 16.99, 17.0, 19.0],
+    [-12.0, 3.99, 4.0, 7.0, 13.99, 14.0, 19.0],
+    [-12.0, 3.99, 4.0, 7.0, 11.99, 12.0, 19.0],
+    [-12.0, 3.99, 4.0, 7.0, 10.99, 11.0, 19.0],
+    [-12.0, 4.99, 5.0, 7.0, 11.99, 12.0, 17.0],
+];
+pub fn chord_of(structure: f32) -> usize;               // min((structure · 11) as usize, 10)
+/// `period` raised by octaves (halved) until its line fits: period − dc_phase_delay + 2 ≤ MAX_STRING_DELAY.
+pub fn fold(period: f32, r: f32, sample_rate: u32) -> f32;
+```
+
+- `SympatheticSet` gains `chord: u8`, `from: [f32; 7]`, `to: [f32; 7]` and `glide: u32` (samples left). The halo's glide state lives with its strings, in the pool.
+- Note-on:
+  - Each halo string gets `ring_len` for the longest folded period any chord gives it at this note. That keeps a glide from ever growing a ring mid-note.
+  - It tunes to `chord_of(params.structure)` at once.
+- Each block:
+  - `chord_of` reads the block's modulated STRUCTURE un-eased (the glide is the easing).
+  - On a change, `from` = the current periods, `to` = the new folded ones, and `glide = CHORD_GLIDE_SAMPLES`.
+  - While gliding, each string re-splits every block at `from + (to − from)·(1 − glide/CHORD_GLIDE_SAMPLES)`.
+- The coupling is `0.1 * m.couple` and the halo level is `0.6 * m.halo`, read at note-on.
+
+- [ ] **Step 1: Write the failing tests.**
+  - `chords.rs`: `every_chord_has_seven_distinct_intervals`, where no row repeats a value.
+  - `modal_resonator_test.rs`:
+    - `chord_change_glides`. SYMP note 48, STRUCTURE 0.1 (chord 1), held.
+      - At block 100, set STRUCTURE 0.3 (chord 3) on the rendered params.
+      - `common::clicks(&out).is_empty()`.
+      - From block 100 + 19 (25 ms, 1,216 samples) on, the test-support accessor `ModalEngine::halo_periods(&self, &SymPool) -> Option<[f32; 7]>` equals the folded chord-3 periods to 1e-3 samples.
+    - Review Focus 2, `every_chord_fits_the_line_at_g1`: SYMP note 31, each STRUCTURE `(k as f32 + 0.5) / 11.0` for k in 0..11. For every halo string:
+      - `ring_len <= MAX_STRING_DELAY` and `delay + 2 <= ring_len`, through the accessor `ModalEngine::halo_lines(&self, &SymPool) -> Option<[(usize, usize); 7]>` (delay, ring_len).
+      - Its period is `note_period · 2^(−interval/12) / 2^k` for the least k that fits (−12 folds to unison at G1).
+      - 2 s of audio are finite and bounded.
+- [ ] **Step 2: Run them to verify they fail.** Run `cargo test -p chimera-core --lib modal::chords && cargo test -p chimera-core --test modal_resonator_test chord_change_glides every_chord_fits_the_line_at_g1`. Expected: compile errors (`CHORDS`, `halo_periods`).
+- [ ] **Step 3: Implement** the Interfaces. Exclusive state's pool, leases and no-steal rule stay untouched (ADR 0054). `SymPool::note_on_clear` stays exact, and `note_on_clear_is_what_the_note_on_clears` stays green.
+- [ ] **Step 4: Run the tests to verify they pass.** Run `cargo test -p chimera-core --lib modal && cargo test -p chimera-core --test modal_resonator_test --test sym_pool_test --test exclusive_state_test --test instrument_test`. Expected: PASS.
+- [ ] **Step 5: Provenance and ADR.**
+  - In `THIRD_PARTY.md`, list `chords.rs`.
+  - Amend ADR 0056:
+    - SYMP steps Rings' chord table (MIT) adapted to 7 strings, glides 20 ms, and folds low strings by octaves to fit the line.
+    - COUPLE and HALO replace 0.025 and 0.15.
+    - The provenance split: from Rings, the chords and the `ap_gain` law; ours, `LoopGain`, the blocker's placement, the fractional tuning, the body, the ensemble, the release and the macro mapping.
+- [ ] **Step 6: Listen on the desktop.** Run `cd $SP/demo-m2 && cargo run -q --release --bin demo -- modal-sympathetic`.
+- [ ] **Step 7: Run the green gate.** Run `just check`. Expected: exit 0.
+- [ ] **Step 8: Commit.**
+
+```bash
+git add chimera-core/src/dsp/modal/chords.rs chimera-core/src/dsp/modal/mod.rs chimera-core/tests/modal_resonator_test.rs THIRD_PARTY.md docs/adr/0056-modal-resonators-share-four-macros.md
+git commit -m "Sympathetic steps Rings' chords and glides between them"
+```
+
+---
+
+### Task 11: Costs, bench rows, memory, and the goldens re-recorded once
+
+**Files:**
+- Modify: `chimera-core/src/dsp/modal/mod.rs:280-320` (`COST_*`, doc comments), `chimera-stm32/src/bench.rs:231-262`, `chimera-core/tests/cost_test.rs:36-54,743-765`, `chimera-core/tests/memory_budget_test.rs`, `chimera-core/tests/golden_test.rs` (rows, `PENDING`, `KNOWN_BROKEN`), `chimera-core/tests/codec_compat_test.rs:140-170`, `docs/adr/0056-*.md`
+
+**Interfaces:**
+- The provisional costs, estimated on the host until Task 12's bench. Each estimate is the count of f32 operations the new per-sample code adds, × 1.5 cycles, + 10 %:
+  - `COST_STRING` 460: 390, plus 4 allpasses, the fractional allpass, the blocker, 3 body SVFs and 3 interpolated heads.
+  - `COST_BOWED` 640: 620, plus the blocker and the ramp.
+  - `COST_SYMPATHETIC` 950: 809, plus the main string's additions and 7 × (fractional allpass + blocker).
+  - `COST_BANK` 480: 460, plus the easing. `COST_MODE` stays 45.
+- New bench rows in `ROUTING`:
+  - `("MDL STR+", |p| modal_full(p, ResonatorMode::String), STILL)`: STRUCTURE 1, BODY 1, ENS DEPTH 1, MIX 0.5, LFO1 → each macro at 64.
+  - `("MDL SYM+", |p| modal_full(p, ResonatorMode::Sympathetic), chord_storm)`: STRUCTURE stepped across a chord every 8 blocks.
+  - `("MDL RES48", |p| { modal(p, ResonatorMode::Modal); p.params.modal.modes = BankModes::M48 }, STILL)`.
+
+- [ ] **Step 1: Write the failing tests.**
+  - In `cost_test.rs`:
+    - `voice_costs_are_the_bench_measurements` expects `Cost(ModalEngine::COST_STRING.0 + 10)`.
+    - New `modal_costs_are_the_host_estimates`: `assert_eq!` the four values above, and that `cost` of BANK at `M48` is `480 + 45·48`.
+  - In `golden_test.rs`: `PENDING` is empty. `KNOWN_BROKEN` drops its four #10 entries, and its doc comment says why (Modal 2 step A closes #10). `known_broken` accepts an empty list.
+- [ ] **Step 2: Run them to verify they fail.** Run `cargo test -p chimera-core --test cost_test --test golden_test`. Expected: the cost asserts fail, and the four Modal rows mismatch.
+- [ ] **Step 3: Implement.**
+  - Set the `COST_*`. Each doc comment says "host estimate, provisional until the bench row (Task 12)", with its arithmetic.
+  - Add the bench rows and their builders `modal_full` and `chord_storm`.
+- [ ] **Step 4: Re-record the Modal goldens, once.**
+  - Run `GOLDEN_RECORD=1 cargo test -p chimera-core --test golden_test goldens_match -- --nocapture`. Paste only the four Modal rows, each with the comment "Re-recorded: Modal 2 step A's resonators (spec § Tests)".
+  - Compute `init_modal.snd`'s render hash with `fnv1a(render_sound(...))`, printed by a temporary `eprintln!`. Paste it into `FIXTURE_RENDERS` with the same comment, and remove the skip.
+  - No non-Modal row may change.
+- [ ] **Step 5: Run the tests to verify they pass.** Run `cargo test -p chimera-core --test golden_test --test codec_compat_test --test cost_test --test memory_budget_test -- --nocapture`. Expected: PASS. `instrument_fits_d2` and `sympathetic_pool_fits_d2` print the sizes; put them in the ADR.
+- [ ] **Step 6: Amend ADR 0056** with the costs and host sizes (`Voice`, `ModelSlot`, `SymPool`, `Instrument`, D2 left). Note that SYMP bills 5 voices on rev V at 950. Until the bench, name 883 as the most that keeps 6.
+- [ ] **Step 7: Run the green gate.** Run `just check`. Expected: exit 0.
+- [ ] **Step 8: Commit.**
+
+```bash
+git add chimera-core/src/dsp/modal/mod.rs chimera-stm32/src/bench.rs chimera-core/tests/cost_test.rs chimera-core/tests/memory_budget_test.rs chimera-core/tests/golden_test.rs chimera-core/tests/codec_compat_test.rs docs/adr/0056-modal-resonators-share-four-macros.md
+git commit -m "Modal's costs re-estimated, bench rows added, goldens re-recorded once"
+```
+
+---
+
+### Task 12: Ship: one flash, the bench and the ears
+
+**Files:**
+- Modify: `chimera-core/src/dsp/modal/mod.rs` (`COST_*` to the bench figures), `chimera-core/tests/cost_test.rs` (a measured row per MDL bench row), `docs/adr/0056-*.md` (Consequences: chip figures)
+
+This is the only task that touches hardware. Run it with the owner, on one combined flash of the branch.
+
+- [ ] **Step 1: Build and flash.** Run `just flash-bench` for Steps 2 and 3, then `just flash` for the play test in Step 3 (l).
+- [ ] **Step 2: Read the bench rows.** Record each `/VOICE` and voice count on rev V at 480 MHz:
+  - `MDL STR`, `MDL STR+`, `MDL BOW`, `MDL SYM` (1–4 notes and flat past 4), `MDL SYM+`, `MDL RES`, `MDL RES48`, `SWITCH`.
+  - `SYM NOTE-ON` and `SYM NOTE-ON LOW`, which grew with the 1,016-sample line.
+  - The MEMORY screen's `Voice`, `MODAL` and `SYM POOL`, and D2 left.
+- [ ] **Step 3: Listen, by ear, with the owner.** Check:
+  - (a) Each model at G1, C4 and C6: in tune, and STRING distinct from Bowed.
+  - (b) DAMP swept 0 → 1 on STRING: a short pluck to near-endless, never a runaway or a DC thump.
+  - (c) STRUCTURE on STRING: nylon to wire, the pitch unmoved. On BANK: harmonic to bell. On SYMP: the chords step and glide.
+  - (d) BRIGHT and POS on each model.
+  - (e) Releases: no click on any model.
+  - (f) Bowed below C2: sounds at once and holds.
+  - (g) The ensemble at DEPTH 1 on low and high notes.
+  - (h) BODY: colour, with no octave jump.
+  - (i) An LFO on each macro.
+  - (j) SPACE and the Part's REV send move together.
+  - (k) An old v1 Modal patch with FDBK 1 loads and plays calmly.
+  - (l) An eight-note chord on STRING and on SYMP, with reverb, delay and every page edited: record LOAD, OVER and DROPS.
+- [ ] **Step 4: Bill the measurements.**
+  - Set each `COST_*` to its bench slope less the Modal Sound's chain (57), as ADR 0054 did.
+  - In `cost_test.rs`, add `the_model_bills_every_modal_row_high` with the measured rows. If `MDL SYM` bills 883 or less, SYMP keeps 6 voices on rev V: note it.
+  - Run `just check`. Expected: exit 0.
+- [ ] **Step 5: Finish ADR 0056.** Add the chip figures and the owner's by-ear verdict to Consequences. It stays Proposed until the owner accepts it; only then does the status become `Accepted (date)`, in the file and the README.
+- [ ] **Step 6: Commit.**
+
+```bash
+git add chimera-core/src/dsp/modal/mod.rs chimera-core/tests/cost_test.rs docs/adr/0056-modal-resonators-share-four-macros.md docs/adr/README.md
+git commit -m "Modal 2 resonators billed at the ship bench's figures"
+```
+
+- [ ] **Step 7: Close the issues.** In the PR description, reference #191, #10, #50, #51, #163 and #206 as closed. File any by-ear finding as a new GitHub issue; don't write it into the repo.
