@@ -4,6 +4,9 @@
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 
+use super::q16::{StepBudget, Store};
+use crate::in_place::uninit_at;
+
 // ── Karplus-Strong delay line (from the owner's Carcosa firmware) ───
 
 /// String delay-line length (ADR 0040): the period of G1 (MIDI 31, 49.0 Hz)
@@ -34,22 +37,24 @@ pub struct KsRenderParams {
 /// The third ensemble head's fixed offset from the second.
 const ENS_SPREAD: f32 = 0.3;
 
-pub(super) struct KsString {
-    pub(super) buffer: [f32; MAX_STRING_DELAY],
+/// A string, its delay line stored as `S`.
+pub(super) struct KsString<S: Store = [f32; MAX_STRING_DELAY]> {
+    pub(super) line: S,
     pub(super) write_pos: usize,
     pub(super) delay_len: usize,
     ens_lfo_phase: u32,
     noise_state: u32,
 }
 
-impl KsString {
+impl<S: Store> KsString<S> {
     pub(super) fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
         let p = slot.as_mut_ptr();
-        // SAFETY: `p` is valid and unaliased; the 3.9 KB `[f32]` buffer is
-        // zero-filled (zero bytes are 0.0) and every other field is written
-        // once by value before `assume_init_mut`.
+        // SAFETY: `p` is valid and unaliased; the line is built in place
+        // (`Store` is sealed: each `init_in_place` writes every field) and
+        // every other field is written once by value, before
+        // `assume_init_mut`.
         unsafe {
-            addr_of_mut!((*p).buffer).write_bytes(0, 1);
+            S::init_in_place(uninit_at(addr_of_mut!((*p).line)));
             addr_of_mut!((*p).write_pos).write(0);
             addr_of_mut!((*p).delay_len).write(100);
             addr_of_mut!((*p).ens_lfo_phase).write(0);
@@ -66,6 +71,7 @@ impl KsString {
     /// Excite the string (Carcosa's Trigger).
     /// excitation: 0=noise, 1=click, 2=bright, 3=dark
     pub(super) fn trigger(&mut self, amplitude: f32, excitation: u8, color: f32, position: f32) {
+        self.line.restart();
         // Fill delay line based on excitation type
         let mut prev = 0.0_f32;
         for i in 0..self.delay_len {
@@ -91,7 +97,7 @@ impl KsString {
                     xorshift_noise(&mut self.noise_state) * amplitude
                 }
             };
-            self.buffer[i] = sample;
+            self.line.store(i, sample);
         }
 
         // Pluck position: comb notch at position harmonics
@@ -99,7 +105,8 @@ impl KsString {
             let notch_period = ((self.delay_len as f32 * position) as usize).max(2);
             if notch_period < self.delay_len {
                 for i in 0..self.delay_len - notch_period {
-                    self.buffer[i] = (self.buffer[i] + self.buffer[i + notch_period]) * 0.5;
+                    let v = (self.line.load(i) + self.line.load(i + notch_period)) * 0.5;
+                    self.line.store(i, v);
                 }
             }
         }
@@ -108,7 +115,8 @@ impl KsString {
         let filter_passes = ((1.0 - color) * 7.0) as usize;
         for _ in 0..filter_passes {
             for i in 1..self.delay_len {
-                self.buffer[i] = (self.buffer[i] + self.buffer[i - 1]) * 0.5;
+                let v = (self.line.load(i) + self.line.load(i - 1)) * 0.5;
+                self.line.store(i, v);
             }
         }
 
@@ -116,14 +124,27 @@ impl KsString {
         self.ens_lfo_phase = 0;
     }
 
+    /// Damps the loop, each sample by 0.2 `passes` times: read and written
+    /// once, the same f32 arithmetic as a pass at a time.
+    pub(super) fn damp(&mut self, passes: u32) {
+        for i in 0..self.delay_len {
+            let mut x = self.line.load(i);
+            for _ in 0..passes {
+                x *= 0.2;
+            }
+            self.line.store(i, x);
+        }
+    }
+
     /// Full render with all the KS+ features. See `KsRenderParams` for
-    /// the field meanings.
+    /// the field meanings. A wrap may step the line's exponent, if the
+    /// voice's `budget` for the block allows.
     #[inline]
-    pub(super) fn tick_full(&mut self, p: &KsRenderParams) -> f32 {
+    pub(super) fn tick_full(&mut self, p: &KsRenderParams, budget: &mut StepBudget) -> f32 {
         // Read position: one ahead of write
         let read_pos = (self.write_pos + 1) % self.delay_len;
-        let current = self.buffer[read_pos];
-        let next = self.buffer[(read_pos + 1) % self.delay_len];
+        let current = self.line.load(read_pos);
+        let next = self.line.load((read_pos + 1) % self.delay_len);
 
         // KS low-pass averaging: blend between current and next sample.
         // Higher coeff = more averaging = darker sound.
@@ -142,14 +163,14 @@ impl KsString {
         // Stiffness: mix with a sample from +7 offset (allpass-like dispersion)
         if p.stiffness > 0.01 {
             let stiff_pos = (read_pos + 7) % self.delay_len;
-            let stiff_sample = self.buffer[stiff_pos];
+            let stiff_sample = self.line.load(stiff_pos);
             filtered = filtered * (1.0 - p.stiffness) + stiff_sample * p.stiffness;
         }
 
         // Body resonance: comb filter at half-delay
         if p.body > 0.03 {
             let body_pos = (read_pos + self.delay_len / 2) % self.delay_len;
-            let body_sample = self.buffer[body_pos];
+            let body_sample = self.line.load(body_pos);
             filtered = filtered * (1.0 - p.body * 0.5) + body_sample * p.body * 0.5;
         }
 
@@ -161,8 +182,12 @@ impl KsString {
         }
 
         // Write back
-        self.buffer[read_pos] = filtered;
+        let wrapped = read_pos <= self.write_pos;
+        self.line.store(read_pos, filtered);
         self.write_pos = read_pos;
+        if wrapped {
+            self.line.wrapped(budget);
+        }
 
         // Ensemble: three read heads with LFO detuning
         let mut output = filtered;
@@ -184,8 +209,8 @@ impl KsString {
             let p2 = ((read_pos as i32 + offset2).rem_euclid(self.delay_len as i32)) as usize;
             let p3 = ((read_pos as i32 + offset3).rem_euclid(self.delay_len as i32)) as usize;
 
-            let head2 = self.buffer[p2];
-            let head3 = self.buffer[p3];
+            let head2 = self.line.load(p2);
+            let head3 = self.line.load(p3);
 
             output = filtered * (1.0 - p.ens_mix) + (head2 + head3) * 0.5 * p.ens_mix;
         }
@@ -194,7 +219,7 @@ impl KsString {
     }
 }
 
-crate::in_place::field_list!(KsString => KsString { buffer, write_pos, delay_len, ens_lfo_phase, noise_state });
+crate::in_place::field_list!(KsString => KsString { line, write_pos, delay_len, ens_lfo_phase, noise_state });
 
 #[inline]
 pub(super) fn xorshift_noise(state: &mut u32) -> f32 {
