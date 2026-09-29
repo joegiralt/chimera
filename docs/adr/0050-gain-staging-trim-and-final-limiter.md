@@ -147,6 +147,11 @@ types and the real `Instrument` (#190) measured:
 - Memory: `Limiter` is 1,688 bytes inside `FxBus`, in AXI SRAM: one block
   of all three pairs (1,536 B) and the gain state. No heap. Flash grows by
   about 2.7 KB.
+  - Since 2026-09-29 the lookahead block is the DAC's second block
+    (`DacBlocks`, owned by the shell beside the first): the limiter scales
+    the older block in place instead of copying through its own, so
+    `Limiter` keeps only the gain state (152 B) and the output is
+    unchanged, bit for bit.
 - The five instrument goldens were re-recorded. Each is exactly its old
   render × 1/√8 (one f32 multiply per sample), one block late. Main's
   hashes are kept as the pre-limiter check. The per-voice and FX goldens
