@@ -51,13 +51,13 @@ const GOLDENS: &[(&str, u64)] = &[
     ("system", 0xbadd5e55da36c80d),
     ("system_theme", 0x6f46ed28ddb10559),
     ("system_audio", 0x281985b580ac2fb1),
+    ("busy_saving", 0x4336441a840d1c44),
 ];
 
 #[test]
 fn screen_goldens_match() {
-    let got: Vec<_> = CASES
-        .iter()
-        .map(|&(name, _)| (name, render(name).hash()))
+    let got: Vec<_> = case_names()
+        .map(|name| (name, render(name).hash()))
         .collect();
     common::golden::check(GOLDENS, &got);
 }
@@ -73,5 +73,21 @@ fn rendering_is_deterministic() {
 fn no_screen_draws_outside_240x320() {
     for &(name, _) in GOLDENS {
         assert_eq!(render(name).oob, 0, "{name}");
+    }
+}
+
+/// BUSY and SAVING draw only inside the band they report, which the shell
+/// flushes, and draw something in every row of it.
+#[test]
+fn busy_draws_only_its_band() {
+    use chimera_core::ui::busy::BusyLabel;
+    for label in [BusyLabel::Busy, BusyLabel::Saving] {
+        let (fb, (y0, y1)) = render_overlay(label);
+        assert!(y0 < y1 && y1 as usize <= H, "{label:?}: {y0}..{y1}");
+        for y in 0..H {
+            let row = &fb.px[y * W..(y + 1) * W];
+            let inside = (y0 as usize..y1 as usize).contains(&y);
+            assert_eq!(row.iter().any(|&p| p != 0), inside, "{label:?} row {y}");
+        }
     }
 }

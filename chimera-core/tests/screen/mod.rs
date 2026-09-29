@@ -14,6 +14,7 @@ use chimera_core::reset::ResetCause;
 use chimera_core::scope::SCOPE_LEN;
 use chimera_core::ui::UiState;
 use chimera_core::ui::block_registry as reg;
+use chimera_core::ui::busy::{BusyLabel, draw_busy};
 use chimera_core::ui::perf::PerfStats;
 use chimera_hal::{ButtonId, ButtonState, ChimeraDisplay, Controls, EncoderId};
 use embedded_graphics::pixelcolor::Rgb565;
@@ -537,8 +538,32 @@ pub fn ui_for(name: &str) -> UiState {
     ui
 }
 
+/// Overlays the goldens lock, each drawn alone on a blank screen: on the
+/// device it lands on whatever the last frame left.
+pub const OVERLAYS: &[(&str, BusyLabel)] = &[("busy_saving", BusyLabel::Saving)];
+
+/// Every case name: the screens, then the overlays.
+pub fn case_names() -> impl Iterator<Item = &'static str> {
+    CASES
+        .iter()
+        .map(|c| c.0)
+        .chain(OVERLAYS.iter().map(|o| o.0))
+}
+
+/// Overlay `label` on a blank screen, and the band it reports.
+pub fn render_overlay(label: BusyLabel) -> (Fb, (u16, u16)) {
+    let mut fb = Fb::new();
+    let band = draw_busy(&mut fb, label);
+    (fb, band)
+}
+
 /// Full render of case `name`.
 pub fn render(name: &str) -> Fb {
+    if let Some(&(_, label)) = OVERLAYS.iter().find(|o| o.0 == name) {
+        let (fb, _) = render_overlay(label);
+        fb.dump(name);
+        return fb;
+    }
     let ui = ui_for(name);
     let mut fb = Fb::new();
     ui.render_with_audio(

@@ -1,6 +1,7 @@
-//! Sound-file helpers shared by the codec compat and fuzz tests and the
-//! `cargo fuzz` target (which includes this file by path): two-pass decode,
-//! CRC repair and the bounds every decoded Sound must keep.
+//! Card-file helpers shared by the codec compat, SYSTEM and fuzz tests and
+//! the `cargo fuzz` target (which includes this file by path): two-pass
+//! decode, CRC repair, the bounds every decoded Sound must keep, and the
+//! SYSTEM fixture.
 #![allow(dead_code)]
 
 use chimera_core::addr::{BlockRef, Blocks};
@@ -11,9 +12,10 @@ use chimera_core::name::SoundName;
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
 use chimera_core::storage::{
-    Check, Crc32, Decode, FileError, FileKind, Framer, Generation, Header, SoundDecoder,
-    encode_sound, write_file,
+    Check, Crc32, Decode, FileError, FileKind, Framer, Generation, Header, ProjectId, SoundDecoder,
+    SystemSettings, encode_sound, encode_system, write_file,
 };
+use chimera_core::ui::theme_settings::{Accent, Black, Bright, Gamma, ThemeSettings};
 use chimera_hal::store::{ByteSink, StoreError};
 
 pub struct VecSink(pub Vec<u8>);
@@ -35,6 +37,34 @@ pub fn encode(s: &Sound) -> Vec<u8> {
     let mut sink = VecSink(Vec::new());
     write_file(&mut sink, &h, &mut |w| encode_sound(s, w)).unwrap();
     sink.0
+}
+
+/// `s` as a SYSTEM file at `Generation::FIRST`, as `SystemSync::write` names it.
+pub fn system_file(s: &SystemSettings) -> Vec<u8> {
+    let h = Header {
+        kind: FileKind::System,
+        generation: Generation::FIRST,
+        name: None,
+    };
+    let mut sink = VecSink(Vec::new());
+    write_file(&mut sink, &h, &mut |w| encode_system(s, w)).unwrap();
+    sink.0
+}
+
+/// The v1 SYSTEM fixture, under `tests/fixtures/v1/`.
+pub const SYSTEM_FIXTURE: &str = "system.sys";
+
+/// What the SYSTEM fixture was written from: every field off its default.
+pub fn system_fixture_settings() -> SystemSettings {
+    SystemSettings {
+        theme: ThemeSettings {
+            bright: Bright::new(85),
+            gamma: Gamma::Panel,
+            accent: Accent::Rose,
+            black: Black::new(3),
+        },
+        last_project: ProjectId::new(1_234_567),
+    }
 }
 
 /// One pass onto `target`; `apply` false only checks.

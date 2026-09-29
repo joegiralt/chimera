@@ -7,7 +7,8 @@
 //! GAMMA are hardware: the shell turns them into PWM duty and ILI9341
 //! commands. Nothing here touches the audio thread.
 //!
-//! No storage yet: the settings reset at boot to the owner's pick, 70 / PUNCH / TEAL / −2.
+//! Stored in SYSTEM (`storage::SystemSettings`); with no card, no file or an
+//! error, boot takes the owner's pick, 70 / PUNCH / TEAL / −2.
 
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::pixelcolor::raw::{RawData, RawU16};
@@ -384,7 +385,7 @@ fn raw(c: Rgb565) -> u16 {
 }
 
 impl ThemeSettings {
-    /// Boot state (no storage yet): the owner's pick, 70 %, PUNCH, TEAL, −2.
+    /// Boot state without a SYSTEM file: the owner's pick, 70 %, PUNCH, TEAL, −2.
     pub const DEFAULT: ThemeSettings = ThemeSettings {
         bright: Bright::DEFAULT,
         gamma: Gamma::Punch,

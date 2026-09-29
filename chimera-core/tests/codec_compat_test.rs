@@ -9,7 +9,10 @@ use chimera_core::factory::{FACTORY_LEN, factory_sound};
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
 use chimera_core::storage::FileError;
-use common::codec_util::{decode, decode_into, encode, fix_crc, record_offsets};
+use common::codec_util::{
+    SYSTEM_FIXTURE, decode, decode_into, encode, fix_crc, record_offsets, system_file,
+    system_fixture_settings,
+};
 use common::{fnv1a, render_sound};
 
 /// The v1 corpus: name, and the Sound it was written from.
@@ -43,9 +46,22 @@ fn write_new(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
         .write_all(bytes)
 }
 
+/// Creates `name` unless it exists; `false` when it was already there.
+fn write_fixture(name: &str, bytes: &[u8]) -> bool {
+    match write_new(&path(name), bytes) {
+        Ok(()) => true,
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            println!("kept   {name}");
+            false
+        }
+        Err(e) => panic!("{name}: {e}"),
+    }
+}
+
 /// Run once with `FIXTURE_WRITE=1 cargo test -p chimera-core --test
 /// codec_compat_test -- --ignored --nocapture`, then commit the files and
-/// paste the printed rows into the tables. Frozen from there on.
+/// paste the printed rows into the tables. Frozen from there on: a fixture
+/// that exists is kept, so a later one is added by the same run.
 #[test]
 #[ignore]
 fn write_v1_fixtures() {
@@ -53,9 +69,15 @@ fn write_v1_fixtures() {
         std::env::var_os("FIXTURE_WRITE").is_some(),
         "FIXTURE_WRITE=1"
     );
+    let sys = system_file(&system_fixture_settings());
+    if write_fixture(SYSTEM_FIXTURE, &sys) {
+        println!("system ({}, {:#018x}),", sys.len(), fnv1a_bytes(&sys));
+    }
     for (name, s) in sources() {
         let bytes = encode(&s);
-        write_new(&path(&name), &bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
+        if !write_fixture(&name, &bytes) {
+            continue;
+        }
         let d = decode(&bytes).unwrap();
         let h = fnv1a(&render_sound(&d.params, &d.mod_state));
         println!("render (\"{name}\", {h:#018x}),");
@@ -98,10 +120,17 @@ const FIXTURE_BYTES: &[(&str, usize, u64)] = &[
     ("init_modal.snd", 1159, 0xa3012ac211ae8e98),
 ];
 
+/// `system.sys`'s length and FNV-1a.
+const SYSTEM_FIXTURE_BYTES: (usize, u64) = (65, 0xf544fe6fdcbdda8c);
+
 #[test]
 fn v1_fixture_bytes_are_frozen() {
     assert_eq!(FIXTURE_BYTES.len(), sources().len());
-    for &(name, len, h) in FIXTURE_BYTES {
+    for &(name, len, h) in FIXTURE_BYTES.iter().chain([&(
+        SYSTEM_FIXTURE,
+        SYSTEM_FIXTURE_BYTES.0,
+        SYSTEM_FIXTURE_BYTES.1,
+    )]) {
         let f = fixture(name);
         assert_eq!((f.len(), fnv1a_bytes(&f)), (len, h), "{name}");
     }
