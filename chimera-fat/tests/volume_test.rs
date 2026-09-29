@@ -1,14 +1,17 @@
 #[path = "common/image.rs"]
 mod image;
 
-use chimera_fat::volume::{FsKind, PartitionType, boot_sector, first_partition};
+use chimera_fat::FixedTime;
+use chimera_fat::volume::{
+    FsKind, Layout, Link, PartitionType, boot_sector, first_partition, layout,
+};
 use chimera_hal::store::{Unsupported, VolumeId};
 use core::num::NonZeroU8;
 use core::ops::ControlFlow;
 use embedded_sdmmc::{VolumeIdx, VolumeManager};
 use image::{
-    FixedTime, PART_LBA, RamDisk, exfat, exfat_superfloppy, fat16, fat32, fat32_layout,
-    superfloppy, with_clusters,
+    PART_LBA, RamDisk, exfat, exfat_superfloppy, fat16, fat32, fat32_layout, superfloppy,
+    with_clusters,
 };
 
 /// The first partition, then its boot sector.
@@ -258,4 +261,68 @@ fn classification_matches_embedded_sdmmc() {
 fn images_open_in_embedded_sdmmc() {
     assert_eq!(sdmmc_kind(fat16(16_384, 1)), FsKind::Fat16);
     assert_eq!(sdmmc_kind(fat32(2)), FsKind::Fat32);
+}
+
+fn layout_of(disk: &RamDisk) -> Layout {
+    let p = first_partition(&disk.block(0)).unwrap();
+    layout(&disk.block(p.lba), p.kind).unwrap().0
+}
+
+/// Cluster `c`'s entry set to `v` in a FAT block, read back as a link.
+fn link_of(l: &Layout, c: u32, v: u32) -> Link {
+    let mut block = [0; 512];
+    let at = (c * if l.kind() == FsKind::Fat16 { 2 } else { 4 }) as usize % 512;
+    match l.kind() {
+        FsKind::Fat16 => block[at..at + 2].copy_from_slice(&(v as u16).to_le_bytes()),
+        FsKind::Fat32 => block[at..at + 4].copy_from_slice(&v.to_le_bytes()),
+    }
+    l.link(&block, c)
+}
+
+#[test]
+fn layout_reads_links_only_onto_the_volume() {
+    let l = layout_of(&with_clusters(4_094, 1));
+    assert_eq!(
+        (l.kind(), l.clusters(), l.cluster_bytes(), l.root()),
+        (FsKind::Fat16, 4_094, 512, None)
+    );
+    assert_eq!(l.fat_block(255), 1);
+    assert_eq!(l.fat_block(256), 2);
+    for (v, link) in [
+        (0, Link::Broken),
+        (1, Link::Broken),
+        (2, Link::Next(2)),
+        (4_095, Link::Next(4_095)),
+        (4_096, Link::Broken),
+        (0xFFF7, Link::Broken),
+        (0xFFF8, Link::End),
+        (0xFFFF, Link::End),
+    ] {
+        assert_eq!(link_of(&l, 300, v), link, "FAT16 {v:#x}");
+    }
+
+    let l = layout_of(&fat32(1));
+    assert_eq!((l.kind(), l.root()), (FsKind::Fat32, Some(2)));
+    assert_eq!(l.fat_block(127), 32);
+    assert_eq!(l.fat_block(128), 33);
+    for (v, link) in [
+        (0, Link::Broken),
+        (1, Link::Broken),
+        (0xF000_0003, Link::Next(3)),
+        (66_001, Link::Next(66_001)),
+        (66_002, Link::Broken),
+        (0x0FFF_FFF7, Link::Broken),
+        (0x0FFF_FFF8, Link::End),
+    ] {
+        assert_eq!(link_of(&l, 700, v), link, "FAT32 {v:#x}");
+    }
+}
+
+#[test]
+fn start_cluster_takes_the_high_half_on_fat32_only() {
+    let mut block = [0; 512];
+    block[64 + 20..64 + 22].copy_from_slice(&1u16.to_le_bytes());
+    block[64 + 26..64 + 28].copy_from_slice(&5u16.to_le_bytes());
+    assert_eq!(layout_of(&fat16(16_384, 1)).start_cluster(&block, 64), 5);
+    assert_eq!(layout_of(&fat32(1)).start_cluster(&block, 64), 0x1_0005);
 }
