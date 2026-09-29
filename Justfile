@@ -104,3 +104,7 @@ flash-sd-probe:
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --features sd-probe
     rust-objcopy -O binary target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-sd-probe.bin
     dfu-util -a0 -d 0x0483:0xdf11 -D target/chimera-sd-probe.bin -s 0x8020000:leave
+
+# Coverage-guided fuzz of the Sound decoder (needs nightly and cargo-fuzz)
+fuzz:
+    cd chimera-core/fuzz && cargo fuzz run decode_sound -- -max_total_time=300
