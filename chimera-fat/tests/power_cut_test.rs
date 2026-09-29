@@ -12,13 +12,15 @@ mod probe;
 
 use ab::{Slot, copy, file, load, name83, save, save_on, slot, sound, target};
 use chimera_core::addr::BlockRef;
+use chimera_core::block::DiskCode;
+use chimera_core::mod_path::MAX_REGISTRY_DESTS;
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
 use chimera_core::storage::{
-    Card, CardError, CardEvent, FileKind, Generation, RecordTag, RecordWriter, SaveError, Side,
-    SoundDecoder, encode_sound, load_ab, save_ab,
+    Card, CardError, CardEvent, FileKind, Generation, Header, RecordTag, RecordWriter, SaveError,
+    Side, SoundDecoder, encode_sound, load_ab, save_ab, write_file,
 };
-use chimera_hal::store::{Dir, FileName, Store, StoreError};
+use chimera_hal::store::{ByteSink, Dir, FileName, Store, StoreError};
 use image::{Cut, FatEntry, RamDisk, Tear, fat_check, with_clusters};
 use probe::{XorShift, free, log, probed};
 use std::collections::HashSet;
@@ -234,9 +236,11 @@ fn cut_then_reinsert_loads_previous_generation() {
 
     disk.cut.set(Cut::After(3));
     let snd = sound(2);
+    let mut scratch = Sound::neutral(EngineType::Algo);
+    let mut d = SoundDecoder::new(&mut scratch);
     let out = card
         .run(&mut s, |s, r| {
-            save_ab(s, r, file(), FileKind::Sound, Some(snd.name), &mut |w| {
+            save_ab(s, r, file(), &mut d, Some(snd.name), &mut |w| {
                 encode_sound(&snd, w)
             })
         })
@@ -262,6 +266,61 @@ fn cut_then_reinsert_loads_previous_generation() {
     assert_eq!(out.result.map(|h| h.generation), Ok(Generation::FIRST));
     assert!(t.bits_eq(&sound(1)));
     assert_eq!(card, Card::Ready(v));
+}
+
+struct Bytes(Vec<u8>);
+
+impl ByteSink for Bytes {
+    fn put(&mut self, b: &[u8]) -> Result<(), StoreError> {
+        self.0.extend_from_slice(b);
+        Ok(())
+    }
+}
+
+/// A = generation 1, valid; B = generation 2 under a good CRC, which the
+/// decoder rejects (a Registry past `MAX_REGISTRY_DESTS`). Save 2 writes
+/// over B, never A: A loads at every cut.
+#[test]
+fn decoder_invalid_newest_is_written_over_at_every_cut() {
+    let base = slot(first_card());
+    let h = Header {
+        kind: FileKind::Sound,
+        generation: Generation::new(2),
+        name: None,
+    };
+    let mut bad = Bytes(Vec::new());
+    write_file(&mut bad, &h, &mut |w| {
+        w.put(RecordTag::Engine, &[EngineType::Algo.disk_code()])?;
+        w.put(RecordTag::Registry, &[0; (MAX_REGISTRY_DESTS + 1) * 10])
+    })
+    .unwrap();
+    ab::op(&mut probed(&base), |s, r| {
+        s.write(r.volume(), file().side(Side::B), &mut |w| w.put(&bad.0))
+    })
+    .unwrap();
+    assert!(load(&base).unwrap().bits_eq(&sound(1)), "A loads");
+    assert_eq!(target(&base), Side::B, "B is invalid to save too");
+
+    let before = copy(&base.inner);
+    let kept = kept(&base);
+    let blocks = writes_of(&before, 2);
+    for (k, &block) in blocks.iter().enumerate() {
+        let what = format!("save 2 over an invalid B cut at write {k} (block {block})");
+        let cut = slot(copy(&before));
+        cut.cut.set(Cut::After(k as u32));
+        let (r, failed) = save(&cut, 2);
+        assert!(r.is_err(), "{what}");
+        cut.cut.set(Cut::Never);
+        assert_safe(&what, &cut.inner, &kept, &[block]);
+        assert_eq!(failed, Some(block), "{what}");
+        let got = load(&cut).unwrap_or_else(|e| panic!("{what}: {e:?}"));
+        assert!(
+            got.bits_eq(&sound(1)) || got.bits_eq(&sound(2)),
+            "{what}: loaded {:?}",
+            got.name
+        );
+        assert_recovers(&what, &cut, 100 + k as u32);
+    }
 }
 
 /// 8 non-critical `Block` records of block codes this firmware doesn't
