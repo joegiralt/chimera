@@ -355,11 +355,11 @@ fn entry_codec_round_trips() {
     );
 
     for (what, r, slot) in [
-        ("LFN", raw(b"A\0B\0C\0D\0E\0\0", 0x0F), Slot::Lfn),
+        ("LFN", raw(b"A\0B\0C\0D\0E\0\0", 0x0F), Slot::Lfn(0)),
         (
             "LFN, reserved bits set",
             raw(b"A\0B\0C\0D\0E\0\0", 0xCF),
-            Slot::Lfn,
+            Slot::Lfn(0),
         ),
         (
             "LFN bits and archive",

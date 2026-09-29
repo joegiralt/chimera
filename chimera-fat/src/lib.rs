@@ -1,6 +1,6 @@
 //! FAT16/FAT32 behind `chimera_hal::store`: the volume parser, the FAT
 //! core (`blocks`, `fat`, `dir`, `fsinfo`, `fs`), the card deadline, and the
-//! `embedded-sdmmc` store.
+//! `Store` over them.
 #![no_std]
 
 pub mod blocks;
@@ -12,4 +12,4 @@ pub mod fsinfo;
 mod store;
 pub mod volume;
 
-pub use store::{BusPhase, FatStore, FixedTime, Medium, SdBus};
+pub use store::{BusPhase, FatStore, Medium, SdBus};

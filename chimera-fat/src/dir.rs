@@ -9,6 +9,8 @@ pub const ENTRY: usize = 32;
 const NAME_LEN: usize = 11;
 const STEM_LEN: usize = 8;
 const ATTR: usize = 11;
+/// In a long-name slot: the checksum of the short name it belongs to.
+const LFN_SUM: usize = 13;
 const CREATE_TIME: usize = 14;
 const CREATE_DATE: usize = 16;
 const ACCESS_DATE: usize = 18;
@@ -41,6 +43,11 @@ impl ShortName {
         n[STEM_LEN..STEM_LEN + ext.len()].copy_from_slice(ext);
         Self(n)
     }
+
+    /// A directory's own entry, `.`.
+    pub const DOT: Self = Self(*b".          ");
+    /// Its parent's, `..`.
+    pub const DOT_DOT: Self = Self(*b"..         ");
 
     pub fn file(f: &FileName) -> Self {
         Self::padded(f.stem(), f.ext())
@@ -83,7 +90,8 @@ pub enum Slot {
     /// No entry here or after.
     End,
     Free,
-    Lfn,
+    /// A long-name slot, with its short name's checksum.
+    Lfn(u8),
     /// A label, a dot entry, or a name `FileName` refuses: never listed or
     /// matched.
     Other,
@@ -104,7 +112,7 @@ pub fn parse(raw: &[u8; ENTRY], kind: FsKind) -> Slot {
     match raw[0] {
         END => return Slot::End,
         FREE => return Slot::Free,
-        _ if attr & ATTR_LFN_MASK == ATTR_LFN => return Slot::Lfn,
+        _ if attr & ATTR_LFN_MASK == ATTR_LFN => return Slot::Lfn(raw[LFN_SUM]),
         _ if attr & ATTR_LABEL != 0 => return Slot::Other,
         _ => {}
     }
@@ -149,6 +157,11 @@ pub fn encode(e: &Entry, is_dir: bool, kind: FsKind, raw: &mut [u8; ENTRY]) {
     put16(raw, CLUSTER_LO, e.start as u16);
     let len = if is_dir { 0 } else { e.len };
     raw[SIZE..].copy_from_slice(&len.to_le_bytes());
+}
+
+/// Marks the slot deleted.
+pub fn free(raw: &mut [u8; ENTRY]) {
+    raw[0] = FREE;
 }
 
 /// The checksum a long-name run carries of its short name (fatgen103).

@@ -1,15 +1,20 @@
 //! RAM-disk card images: FAT16, FAT32, exFAT and the superfloppies; `Rec`,
-//! a recording view of one's partition; and files written by
-//! `embedded-sdmmc`, a second FAT implementation.
+//! a recording view of one's partition; `Overlay`, a copy-on-write view of
+//! one; and `embedded-sdmmc`, a second FAT implementation, over them.
 // Each test binary uses its own part of this module.
 #![allow(dead_code)]
 
+use chimera_fat::Medium;
 use chimera_fat::blocks::{BLOCK, Blocks};
+use chimera_fat::volume::Root;
 use chimera_fat::volume::{Layout, first_partition, layout};
-use chimera_fat::{FixedTime, Medium};
-use chimera_hal::store::{Dir, StoreError};
+use chimera_hal::store::Dir;
 use core::cell::{Cell, RefCell};
-use embedded_sdmmc::{Block, BlockCount, BlockDevice, BlockIdx, Mode, VolumeIdx, VolumeManager};
+use embedded_sdmmc::{
+    Block, BlockCount, BlockDevice, BlockIdx, Mode, TimeSource, Timestamp, VolumeIdx, VolumeManager,
+};
+use std::collections::HashMap;
+use std::rc::Rc;
 
 pub const PART_LBA: u32 = 2048;
 
@@ -90,12 +95,62 @@ impl BlockDevice for CutDisk {
     }
 }
 
-impl Medium for CutDisk {
-    /// Once cut, a fault, even where the library reports `DiskFull`.
-    fn fault(&self) -> Option<StoreError> {
-        (self.writes_left.get() == Some(0)).then_some(StoreError::Io)
+impl Medium for CutDisk {}
+
+/// A shared base image with this view's own changes over it, so a fuzz
+/// seed on a 33 MB FAT32 card copies nothing.
+pub struct Overlay {
+    base: Rc<RamDisk>,
+    changed: RefCell<HashMap<u32, [u8; 512]>>,
+}
+
+impl Overlay {
+    pub fn new(base: &Rc<RamDisk>) -> Self {
+        Self {
+            base: base.clone(),
+            changed: RefCell::new(HashMap::new()),
+        }
+    }
+
+    /// Block `idx`, if the card has it.
+    pub fn block(&self, idx: u32) -> Option<[u8; 512]> {
+        let changed = self.changed.borrow().get(&idx).copied();
+        changed.or_else(|| self.base.0.borrow().get(idx as usize).copied())
+    }
+
+    /// Sets byte `at` of block `idx`, which the card has.
+    pub fn poke(&self, idx: u32, at: usize, v: u8) {
+        let mut b = self.block(idx).expect("a block on the card");
+        b[at] = v;
+        self.changed.borrow_mut().insert(idx, b);
     }
 }
+
+impl BlockDevice for Overlay {
+    type Error = DiskError;
+
+    fn read(&self, blocks: &mut [Block], start: BlockIdx) -> Result<(), DiskError> {
+        for (i, b) in blocks.iter_mut().enumerate() {
+            b.contents = self.block(start.0 + i as u32).ok_or(DiskError)?;
+        }
+        Ok(())
+    }
+
+    fn write(&self, blocks: &[Block], start: BlockIdx) -> Result<(), DiskError> {
+        for (i, b) in blocks.iter().enumerate() {
+            let idx = start.0 + i as u32;
+            self.block(idx).ok_or(DiskError)?;
+            self.changed.borrow_mut().insert(idx, b.contents);
+        }
+        Ok(())
+    }
+
+    fn num_blocks(&self) -> Result<BlockCount, DiskError> {
+        self.base.num_blocks()
+    }
+}
+
+impl Medium for Overlay {}
 
 fn put16(b: &mut [u8; 512], at: usize, v: u16) {
     b[at..at + 2].copy_from_slice(&v.to_le_bytes());
@@ -134,6 +189,12 @@ fn bpb(b: &mut [u8; 512], jump: u8, reserved: u16, hidden: u32, total: u32) {
     put16(b, 510, 0xAA55);
 }
 
+/// The root's volume label entry, matching the boot sector's.
+fn label(root: &mut [u8; 512]) {
+    root[..11].copy_from_slice(b"CHIMERA    ");
+    root[11] = 0x08;
+}
+
 /// The extended BPB: drive, signature, serial, label, FS type.
 fn ebpb(b: &mut [u8; 512], at: usize, serial: u32, fs: &[u8; 8]) {
     b[at] = 0x80;
@@ -169,6 +230,7 @@ fn fat16_volume(vol: &mut [[u8; 512]], hidden: u32, serial: u32, fat_sz: u32) {
         let f = &mut vol[(RESERVED16 + fat * fat_sz) as usize];
         put32(f, 0, 0xFFFF_FFF8);
     }
+    label(&mut vol[(RESERVED16 + 2 * fat_sz) as usize]);
 }
 
 /// A FAT32-layout volume over all of `vol`, with FATs of `fat_sz` sectors.
@@ -194,6 +256,7 @@ fn fat32_volume(vol: &mut [[u8; 512]], hidden: u32, serial: u32, fat_sz: u32) {
         put32(f, 4, 0x0FFF_FFFF);
         put32(f, 8, 0x0FFF_FFFF); // root directory: one cluster, end of chain
     }
+    label(&mut vol[(RESERVED32 + 2 * fat_sz) as usize]);
 }
 
 /// A FAT16 card of `blocks` blocks, type 0x0E.
@@ -340,11 +403,58 @@ pub fn pattern(seed: u8, n: usize) -> Vec<u8> {
     (0..n).map(|i| (i as u8).wrapping_mul(31) ^ seed).collect()
 }
 
+/// 2026-01-01 00:00, for `embedded-sdmmc`'s stamps.
+pub struct FixedTime;
+
+impl TimeSource for FixedTime {
+    fn get_timestamp(&self) -> Timestamp {
+        Timestamp {
+            year_since_1970: 56,
+            zero_indexed_month: 0,
+            zero_indexed_day: 0,
+            hours: 0,
+            minutes: 0,
+            seconds: 0,
+        }
+    }
+}
+
+pub type Sdmmc = VolumeManager<RamDisk, FixedTime>;
+
+/// Runs `f` on `embedded-sdmmc` over `disk`. The library (0.10) takes the
+/// root's volume label entry `CHIMERA` for a file of that name, and then
+/// can't open or make the directory `/CHIMERA`, so the label's first byte
+/// is changed meanwhile.
+pub fn sdmmc<R>(disk: RamDisk, f: impl FnOnce(&Sdmmc) -> R) -> (RamDisk, R) {
+    let l = layout_of(&disk);
+    let root = PART_LBA
+        + match l.root() {
+            Root::Fixed { first, .. } => first,
+            Root::Cluster(c) => l.cluster_block(c).unwrap(),
+        };
+    let at = disk
+        .block(root)
+        .as_chunks::<32>()
+        .0
+        .iter()
+        .position(|e| e[..11] == *b"CHIMERA    " && e[11] & 0x08 != 0);
+    let poke = |disk: &RamDisk, v| {
+        if let Some(at) = at {
+            disk.0.borrow_mut()[root as usize][at * 32] = v;
+        }
+    };
+    poke(&disk, b'X');
+    let vm = VolumeManager::new(disk, FixedTime);
+    let r = f(&vm);
+    let disk = vm.free().0;
+    poke(&disk, b'C');
+    (disk, r)
+}
+
 /// Writes each `(dir, name, bytes)` through `embedded-sdmmc`, making the
 /// directories it needs.
 pub fn sdmmc_write(disk: RamDisk, files: &[(Dir, &str, &[u8])]) -> RamDisk {
-    let vm: VolumeManager<_, _> = VolumeManager::new(disk, FixedTime);
-    {
+    sdmmc(disk, |vm| {
         let vol = vm.open_volume(VolumeIdx(0)).unwrap();
         let root = vol.open_root_dir().unwrap();
         for &(dir, name, bytes) in files {
@@ -366,6 +476,6 @@ pub fn sdmmc_write(disk: RamDisk, files: &[(Dir, &str, &[u8])]) -> RamDisk {
                 f.write(chunk).unwrap();
             }
         }
-    }
-    vm.free().0
+    })
+    .0
 }
