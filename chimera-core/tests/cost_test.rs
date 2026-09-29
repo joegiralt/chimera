@@ -5,7 +5,7 @@ use chimera_core::dsp::algo::algorithms::AlgoId;
 use chimera_core::dsp::algo::engine::AlgoEngine;
 use chimera_core::dsp::algo::params::AlgoParams;
 use chimera_core::dsp::algo::plan::OPS;
-use chimera_core::dsp::engines::Engines;
+use chimera_core::dsp::engines::EngineSlot;
 use chimera_core::dsp::filter::{FilterKind, FilterMode};
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::voice::Voice;
@@ -48,7 +48,7 @@ fn voice_costs_are_the_bench_measurements() {
         let p = ParamSnapshot::for_engine(e);
         assert_eq!(
             Voice::cost(&p, &mods),
-            Engines::cost(&p, &mods) + Voice::CHAIN_COST + LP24 + ModRouting::BASE,
+            EngineSlot::cost(&p, &mods) + Voice::CHAIN_COST + LP24 + ModRouting::BASE,
             "{e:?}"
         );
     }
@@ -743,20 +743,20 @@ fn a_pitch_route_on_modal_bills_the_retune() {
         ms
     };
     let modal = ParamSnapshot::for_engine(EngineType::Modal);
-    let bare = Engines::cost(&modal, &ModState::new());
+    let bare = EngineSlot::cost(&modal, &ModState::new());
     assert_eq!(bare, ModalEngine::COST_STRING);
     for q in [PitchParams::PITCH, PitchParams::FINE] {
         for amount in [127, 0] {
             assert_eq!(
-                Engines::cost(&modal, &routed(q, amount)),
+                EngineSlot::cost(&modal, &routed(q, amount)),
                 bare + ModalEngine::PITCH
             );
         }
     }
     let algo = ParamSnapshot::for_engine(EngineType::Algo);
     assert_eq!(
-        Engines::cost(&algo, &routed(PitchParams::PITCH, 127)),
-        Engines::cost(&algo, &ModState::new())
+        EngineSlot::cost(&algo, &routed(PitchParams::PITCH, 127)),
+        EngineSlot::cost(&algo, &ModState::new())
     );
 }
 
@@ -780,7 +780,7 @@ fn modal_bills_each_model() {
         (ResonatorMode::Modal, 1_900, 1_703, 2, 2),
     ] {
         let p = sound(mode);
-        let engine = Engines::cost(&p, &ModState::new());
+        let engine = EngineSlot::cost(&p, &ModState::new());
         assert_eq!(engine, ModalEngine::cost(&p.modal), "{mode:?}");
         assert_eq!(engine, Cost(billed), "{mode:?}");
         assert!(billed >= estimate, "{mode:?}: {billed} < {estimate}");

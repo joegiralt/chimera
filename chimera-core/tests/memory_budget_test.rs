@@ -4,7 +4,9 @@
 
 use core::mem::size_of;
 
-use chimera_core::dsp::modal::MAX_STRING_DELAY;
+use chimera_core::dsp::algo::engine::AlgoEngine;
+use chimera_core::dsp::engines::EngineSlot;
+use chimera_core::dsp::modal::{MAX_STRING_DELAY, ModalEngine};
 use chimera_core::dsp::note_to_freq;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::hw;
@@ -21,6 +23,38 @@ fn voice_pool_fits_d2() {
         size <= hw::VOICE_RAM_BUDGET,
         "[Voice; {}] = {size} B",
         hw::MAX_VOICES
+    );
+}
+
+/// ADR 0051: a voice holds its chain and one engine, never the sum of
+/// engines; the chain can't grow unnoticed.
+#[test]
+fn voice_is_its_chain_plus_one_slot() {
+    use core::mem::align_of;
+    let (algo, modal, slot) = (
+        size_of::<AlgoEngine>(),
+        size_of::<ModalEngine>(),
+        size_of::<EngineSlot>(),
+    );
+    let chain = size_of::<Voice>() - slot;
+    for (name, size) in [
+        ("AlgoEngine", algo),
+        ("ModalEngine", modal),
+        ("EngineSlot", slot),
+        ("chain", chain),
+        ("Voice", size_of::<Voice>()),
+        ("[Voice; 8]", size_of::<[Voice; 8]>()),
+    ] {
+        eprintln!("{name:>12} {size:>7} B");
+    }
+    assert!(
+        chain <= hw::VOICE_CHAIN_BYTES,
+        "chain = {chain} B, budget {} B",
+        hw::VOICE_CHAIN_BYTES
+    );
+    assert!(
+        slot <= algo.max(modal) + align_of::<EngineSlot>(),
+        "EngineSlot = {slot} B"
     );
 }
 

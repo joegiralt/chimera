@@ -84,12 +84,6 @@ crate::in_place::field_list!(ModalEngine => ModalEngine {
     released, exciter_remaining, exciter_amp, noise_state, exciter_lp, active, silence_counter,
 });
 
-impl Default for ModalEngine {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl ModalEngine {
     /// Cycles/sample per model (ADR 0013), at the chain's LP24. String is
     /// measured (bench `MODAL`, 2026-09-27, rev V at 480 MHz). The others
@@ -128,12 +122,13 @@ impl ModalEngine {
     /// and 9 I-cache misses a block, per voice (2026-09-28). Billed at 12.
     pub const PITCH: Cost = Cost(12);
 
-    pub fn new() -> Self {
+    /// An idle engine set to play `mode`.
+    pub fn new(mode: ResonatorMode) -> Self {
         // SAFETY: `init_in_place` writes every field of the slot.
-        unsafe { by_value(Self::init_in_place) }
+        unsafe { by_value(|slot| Self::init_in_place(slot, mode)) }
     }
 
-    pub fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
+    pub fn init_in_place(slot: &mut MaybeUninit<Self>, mode: ResonatorMode) -> &mut Self {
         let p = slot.as_mut_ptr();
         // SAFETY: `p` is valid and unaliased; the eight strings are built in
         // place, every other field (the largest, `filters`, is 960 B) is
@@ -151,7 +146,7 @@ impl ModalEngine {
             addr_of_mut!((*p).frequency).write(220.0 / 48000.0);
             addr_of_mut!((*p).pitch).write(1.0);
             addr_of_mut!((*p).tuned).write(1.0);
-            addr_of_mut!((*p).active_mode).write(ResonatorMode::Modal);
+            addr_of_mut!((*p).active_mode).write(mode);
             addr_of_mut!((*p).released).write(false);
             addr_of_mut!((*p).exciter_remaining).write(0);
             addr_of_mut!((*p).exciter_amp).write(0.0);
@@ -161,6 +156,12 @@ impl ModalEngine {
             addr_of_mut!((*p).silence_counter).write(0);
             slot.assume_init_mut()
         }
+    }
+
+    /// The model this engine plays: its last note-on's, else the one it
+    /// was built for.
+    pub fn mode(&self) -> ResonatorMode {
+        self.active_mode
     }
 
     /// The model the sounding note plays, set at its note-on.

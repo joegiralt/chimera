@@ -13,7 +13,7 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0005](0005-engine-selection-is-patch-based.md) | Engine selection is patch-based | Accepted |
 | [0006](0006-sub-project-decomposition.md) | Decompose the pivot into five sub-projects | Accepted |
 | [0007](0007-per-block-param-specs.md) | Each block owns its values and a const description | Accepted |
-| [0008](0008-persistent-engine-instances.md) | Engines are persistent; never constructed in the audio interrupt | Accepted |
+| [0008](0008-persistent-engine-instances.md) | Engines are persistent; never constructed in the audio interrupt | Superseded by [0051](0051-a-voice-holds-one-engine-rebuilt-in-place.md) |
 | [0009](0009-semantic-parameter-addresses.md) | Address parameters by what they are, not where they sit | Accepted |
 | [0010](0010-modulation-targets-are-honest.md) | Only parameters the voice reads per block are modulatable | Accepted; linear law superseded for CUTOFF by [0035](0035-every-connection-is-a-matrix-route.md), and for PITCH and FINE by [0042](0042-voice-pitch-is-a-matrix-destination.md) |
 | [0011](0011-goldens-are-a-refactor-lock.md) | Golden recordings are a refactor lock, not a quality claim | Accepted |
@@ -48,3 +48,4 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0040](0040-eight-voices-modal-strings-to-g1.md) | Eight voices in D2; Modal strings sized to G1 (supersedes in part 0014 and 0031) | Accepted |
 | [0041](0041-mod-matrix-amount-grid.md) | The mod matrix is an amount grid of outlined cells (supersedes in part 0016) | Accepted |
 | [0042](0042-voice-pitch-is-a-matrix-destination.md) | Voice pitch is a matrix destination on each engine's PITCH page | Accepted |
+| [0051](0051-a-voice-holds-one-engine-rebuilt-in-place.md) | A voice holds one engine, rebuilt in place (supersedes 0008) | Proposed |

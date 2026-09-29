@@ -43,7 +43,6 @@ pub(crate) use field_list;
 //
 // The grammar is narrow on purpose: at most one generic parameter with a
 // single path bound (`<S: Store>`), and tuple variants of one payload each.
-#[cfg_attr(not(test), expect(unused_macros, reason = "used from Task 2"))]
 macro_rules! in_place_enum {
     (
         $(#[$meta:meta])*
@@ -164,7 +163,6 @@ macro_rules! in_place_enum {
         };
     };
 }
-#[expect(unused_imports, reason = "used from Task 2")]
 pub(crate) use in_place_enum;
 
 #[cfg(test)]
