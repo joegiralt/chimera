@@ -105,6 +105,9 @@ flash-sd-probe:
     rust-objcopy -O binary target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-sd-probe.bin
     dfu-util -a0 -d 0x0483:0xdf11 -D target/chimera-sd-probe.bin -s 0x8020000:leave
 
-# Coverage-guided fuzz of the Sound decoder (needs nightly and cargo-fuzz)
+# Coverage-guided fuzz of the Sound decoder, seeded with the v1 fixtures
+# (needs nightly and cargo-fuzz)
 fuzz:
-    cd chimera-core/fuzz && cargo fuzz run decode_sound -- -max_total_time=300
+    mkdir -p chimera-core/fuzz/corpus/decode_sound
+    cp chimera-core/tests/fixtures/v1/*.snd chimera-core/fuzz/corpus/decode_sound/
+    cd chimera-core/fuzz && cargo +nightly fuzz run decode_sound -- -max_total_time=300
