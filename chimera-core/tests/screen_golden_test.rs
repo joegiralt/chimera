@@ -12,10 +12,12 @@ mod screen;
 use screen::*;
 
 const GOLDENS: &[(&str, u64)] = &[
-    ("engine_algo", 0x8f01be1d8f9a59b9),
+    ("engine_algo", 0x2fc2acd0ca736b91),
     ("algo_alg", 0x7d93a049d17ce0d4),
+    ("algo_alg_morph_dimmed", 0x897c253790c1a56a),
+    ("mod_matrix_morph_inert", 0xcb22cbb86571bf4e),
     ("algo_wave", 0x077421b3106b8510),
-    ("algo_level", 0xd71899ea7d4a4d2b),
+    ("algo_level", 0xbf166056bf540001),
     ("algo_osc_last", 0xe14e98097058782e),
     ("bigviz_filter", 0xb50c845f7f09909e),
     ("flt_mode", 0x7bb550d437421757),
