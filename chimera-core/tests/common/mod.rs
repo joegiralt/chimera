@@ -139,6 +139,7 @@ pub const MORPH: ParamAddr = ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH);
 /// Four TX-style operators on T1–T8 (`t` 0–7); operators 5 and 6 silent.
 pub fn tx_patch(alg: AlgoId) -> ParamSnapshot {
     let mut p = init_params(EngineType::Algo);
+    p.algo = AlgoParams::single(WaveId::W1);
     (p.algo.alg_a, p.algo.alg_b) = (alg.get(), alg.get());
     let ops = [
         (WaveId::W1, 4, 99, 0),
@@ -317,6 +318,51 @@ pub fn goertzel(buf: &[f32], hz: f32, sample_rate: u32) -> f32 {
         s1 = s0;
     }
     libm::sqrtf((s1 * s1 + s2 * s2 - coeff * s1 * s2).abs()) / n
+}
+
+/// The repeat rate of a steady periodic `s`, whatever its waveform: the
+/// first dip where it nearly repeats, refined to a parabola's minimum, then
+/// the same about 100 periods on for a hundredfold precision.
+pub fn period_hz(s: &[f32]) -> f64 {
+    let diff = |lag: usize, n: usize| -> f64 {
+        (0..n)
+            .map(|i| (s[i] as f64 - s[i + lag] as f64).powi(2))
+            .sum::<f64>()
+    };
+    let refine = |l: usize, n: usize| {
+        let (a, b, c) = (diff(l - 1, n), diff(l, n), diff(l + 1, n));
+        l as f64 + 0.5 * (a - c) / (a - 2.0 * b + c)
+    };
+    let energy: f64 = s[..4800].iter().map(|&x| (x as f64).powi(2)).sum();
+    let mut p = (20..2000)
+        .find(|&l| diff(l, 4800) < 0.01 * energy)
+        .expect("periodic");
+    while diff(p + 1, 4800) < diff(p, 4800) {
+        p += 1;
+    }
+    let near = (100.0 * refine(p, 4800)).round() as usize;
+    let n = s.len() - near - p;
+    let l = (near - p / 2..=near + p / 2)
+        .min_by(|&a, &b| diff(a, n).total_cmp(&diff(b, n)))
+        .unwrap();
+    let f = SR as f64 * 100.0 / refine(l, n);
+    // A period that is a multiple of the true one (an octave down) has no
+    // energy at its own frequency.
+    let (w, mut re, mut im, mut sw) = (core::f64::consts::TAU * f / SR as f64, 0.0, 0.0, 0.0);
+    for (i, &x) in s[..4800].iter().enumerate() {
+        let h = 0.5 - 0.5 * (core::f64::consts::TAU * i as f64 / 4800.0).cos();
+        (re, im, sw) = (
+            re + x as f64 * h * (w * i as f64).cos(),
+            im + x as f64 * h * (w * i as f64).sin(),
+            sw + h,
+        );
+    }
+    let fundamental = 2.0 * re.hypot(im) / sw;
+    assert!(
+        fundamental > 1e-3 * (energy / 4800.0).sqrt(),
+        "{f} Hz is a subharmonic"
+    );
+    f
 }
 
 /// Root mean square, summed in f64.

@@ -77,6 +77,7 @@ pub fn factory_sound(i: usize) -> Option<Sound> {
                 ),
             );
             s.params.filter.cutoff = OPEN;
+            s.params.out.volume = 0.470_479_88; // 0.8 × old / new norm (ADR 0049)
             s
         }
         1 => {
@@ -89,7 +90,7 @@ pub fn factory_sound(i: usize) -> Option<Sound> {
                     [
                         AlgoOpParams {
                             velocity: 3,
-                            ..op(w1, 4, 99, [31, 6, 9, 3, 8])
+                            ..op(w1, 4, 93, [31, 6, 9, 3, 8])
                         },
                         AlgoOpParams {
                             velocity: 5,
@@ -97,7 +98,7 @@ pub fn factory_sound(i: usize) -> Option<Sound> {
                         },
                         AlgoOpParams {
                             velocity: 3,
-                            ..op(w1, 4, 92, [31, 5, 10, 3, 8])
+                            ..op(w1, 4, 86, [31, 5, 10, 3, 8])
                         },
                         AlgoOpParams {
                             velocity: 5,
@@ -109,6 +110,9 @@ pub fn factory_sound(i: usize) -> Option<Sound> {
                 ),
             );
             s.params.filter.cutoff = OPEN;
+            // Carriers 6 LEVELs (4.5 dB) down: the SVF sees the old level to
+            // 0.27 dB; VOLUME takes the rest (ADR 0049).
+            s.params.out.volume = 0.775_405_6;
             s
         }
         2 => {
@@ -132,6 +136,7 @@ pub fn factory_sound(i: usize) -> Option<Sound> {
                 ),
             );
             s.params.filter.cutoff = OPEN;
+            s.params.out.volume = 0.565_685_33; // 0.8 × old / new norm (ADR 0049)
             s
         }
         3 => {
@@ -142,9 +147,9 @@ pub fn factory_sound(i: usize) -> Option<Sound> {
                     AlgoId::T5,
                     0,
                     [
-                        op(w1, 4, 99, [31, 4, 0, 0, 5]),
+                        op(w1, 4, 93, [31, 4, 0, 0, 5]),
                         op(w1, 12, 72, [31, 6, 0, 0, 5]),
-                        op(w1, 11, 88, [31, 5, 0, 0, 5]),
+                        op(w1, 11, 82, [31, 5, 0, 0, 5]),
                         op(w1, 23, 66, [31, 7, 0, 0, 5]),
                         off,
                         off,
@@ -152,6 +157,8 @@ pub fn factory_sound(i: usize) -> Option<Sound> {
                 ),
             );
             s.params.filter.cutoff = OPEN;
+            // Carriers 6 LEVELs down, as TX EPIANO's (ADR 0049).
+            s.params.out.volume = 0.775_405_6;
             s
         }
         4 => {
@@ -162,10 +169,10 @@ pub fn factory_sound(i: usize) -> Option<Sound> {
                     AlgoId::A2,
                     0,
                     [
-                        op(WaveId::SAW, 4, 99, [31, 0, 15, 0, 8]),
+                        op(WaveId::SAW, 4, 90, [31, 0, 15, 0, 8]),
                         AlgoOpParams {
                             detune: 3,
-                            ..op(WaveId::SAW, 4, 95, [31, 0, 15, 0, 8])
+                            ..op(WaveId::SAW, 4, 86, [31, 0, 15, 0, 8])
                         },
                         off,
                         off,
@@ -175,16 +182,21 @@ pub fn factory_sound(i: usize) -> Option<Sound> {
                 ),
             );
             (s.params.filter.cutoff, s.params.filter.resonance) = (6000.0, 0.3);
+            // Carriers 9 LEVELs (6.7 dB) down: the SVF sees the old level to
+            // 0.24 dB; VOLUME takes the rest (ADR 0049).
+            s.params.out.volume = 0.778_224_6;
             s
         }
         5 => {
-            let sqr = op(WaveId::SQR, 0, 99, [31, 8, 12, 0, 9]);
+            // LEVEL 95: -3.0 dB, T1's old 1 / √2, into DRIVE (ADR 0049).
+            let sqr = op(WaveId::SQR, 0, 95, [31, 8, 12, 0, 9]);
             let mut s = named(
                 "SQR BASS",
                 algo(AlgoId::T1, AlgoId::T1, 0, [sqr, off, off, off, off, off]),
             );
             (s.params.filter.cutoff, s.params.filter.resonance) = (900.0, 0.4);
-            s.params.drive.drive = 0.3;
+            // DRIVE 0.3 trimmed for LEVEL 95's +0.01 dB: the clipper's input is unchanged.
+            s.params.drive.drive = 0.299_496_26;
             s
         }
         6 => {
@@ -195,6 +207,7 @@ pub fn factory_sound(i: usize) -> Option<Sound> {
             let mut s = named("MORPH PAD", algo(AlgoId::A1, AlgoId::A17, MORPH_BASE, ops));
             s.params.lfos[0].rate = 0.2;
             s.params.filter.cutoff = 4000.0;
+            s.params.out.volume = 0.380_297_63; // at MORPH 40 (ADR 0049)
             let morph = ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH);
             if s.dest_registry.add(morph, *b"ALGMORPH").is_ok()
                 && let Some(d) = s.mod_state.push(morph)
@@ -231,6 +244,7 @@ pub fn factory_sound(i: usize) -> Option<Sound> {
                 ),
             );
             s.params.filter.cutoff = OPEN;
+            s.params.out.volume = 0.506_361_07; // 0.8 × old / new norm (ADR 0049)
             s
         }
         _ => return None,

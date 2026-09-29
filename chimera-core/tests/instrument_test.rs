@@ -6,6 +6,8 @@ mod common;
 use common::{SR, peak};
 
 use chimera_core::dsp::Stereo;
+use chimera_core::dsp::algo::params::AlgoParams;
+use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::chorus::ChorusParams;
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus};
 use chimera_core::dsp::limiter::OUTPUT_TRIM;
@@ -495,12 +497,20 @@ fn two_parts_perf() -> Performance {
     perf
 }
 
+/// Part 1 on a lone sine: the reverb scenes lock the FX, not INIT's
+/// voicing (INIT through this reverb peaks at 1.55: #193).
+fn sine_perf() -> Performance {
+    let mut perf = Performance::new();
+    perf.parts[0].sound.params.algo = AlgoParams::single(WaveId::W1);
+    perf
+}
+
 fn reverb_send(send: f32) -> Vec<f32> {
     render_perf(&reverb_perf(send), &[(0, 60)], 300)
 }
 
 fn reverb_perf(send: f32) -> Performance {
-    let mut perf = Performance::new();
+    let mut perf = sine_perf();
     perf.fx.reverb.mix = 0.5;
     perf.fx.reverb.time = 0.7;
     perf.parts[0].mix.sends[2] = send;
@@ -621,21 +631,22 @@ fn the_costliest_patch_plays_six_voices_on_rev_v() {
 /// Recorded when the instrument path landed (plan Task 12). Re-record only
 /// for an intended sound change (`common::golden`).
 const GOLDENS: &[(&str, u64)] = &[
-    ("poly_chord", 0x0a13a4fc59de97e5), // re-recorded: old×1/√8, one block late (ADR 0050)
-    ("two_parts_two_pairs", 0xb865c6141ef783ca), // re-recorded: old×1/√8, one block late (ADR 0050)
-    ("reverb_send_off", 0x6b1c722b362c4ae5), // re-recorded: old×1/√8, one block late (ADR 0050)
-    ("reverb_send_on", 0x49c5b6ba083c87f7), // re-recorded: old×1/√8, one block late (ADR 0050)
-    ("six_voice_chord", 0x2b79abe5f6e9301d), // re-recorded: old×1/√8, one block late (ADR 0050)
+    ("poly_chord", 0x6876d7661e044851), // ADR 0049 INIT, then the ADR 0050 output trim
+    ("two_parts_two_pairs", 0x851eab45ed8a2f86), // ADR 0049 INIT, then the ADR 0050 output trim
+    ("reverb_send_off", 0x0e7a98bc151a775d), // ADR 0049 INIT, then the ADR 0050 output trim
+    ("reverb_send_on", 0xa0e1bc2dec7668d9), // ADR 0049 INIT, then the ADR 0050 output trim
+    ("six_voice_chord", 0xc2673515ab48c0c9), // ADR 0049 INIT, then the ADR 0050 output trim
 ];
 
-/// ADR 0050: everything before the limiter is main's mix, bit for bit.
-/// These are `GOLDENS` as main recorded them, before the output trim.
+/// ADR 0050: everything before the limiter is the mix unchanged by it,
+/// bit for bit. These are the goldens as ADR 0049's INIT recorded them,
+/// before the output trim.
 const PRE_LIMITER: &[(&str, u64)] = &[
-    ("poly_chord", 0x508049a56f63be65),
-    ("two_parts_two_pairs", 0x98262aa38f73b0af),
-    ("reverb_send_off", 0x74703404aa517989),
-    ("reverb_send_on", 0x051f724346259a5a),
-    ("six_voice_chord", 0xf6e19895e1a40915),
+    ("poly_chord", 0x2c57afe8baf00119),
+    ("two_parts_two_pairs", 0x016712a2b7e18d83),
+    ("reverb_send_off", 0xf40c677a4633ad69),
+    ("reverb_send_on", 0x5e7b5f6ed1eedd52),
+    ("six_voice_chord", 0x241436b65cc7a435),
 ];
 
 /// A named golden case: a case name paired with its render function.
@@ -710,7 +721,7 @@ fn golden_scenes_do_what_they_say() {
     assert_ne!(fnv1a(&dry), fnv1a(&wet));
     assert_eq!(
         fnv1a(&dry),
-        fnv1a(&render_perf(&Performance::new(), &[(0, 60)], 300))
+        fnv1a(&render_perf(&sine_perf(), &[(0, 60)], 300))
     );
 }
 
@@ -772,6 +783,28 @@ fn sound_change_mid_chord_stays_in_budget() {
                 &ParamSnapshot::for_engine(EngineType::Modal),
                 &ModState::new()
             )));
+}
+
+/// ADR 0040, 0049: eight held INIT notes all sound at rev V's budget.
+#[test]
+fn eight_init_voices_fit_rev_v() {
+    let mut rig = Rig::rev_v();
+    let shared = AudioShared::default();
+    for n in 0..MAX_VOICES as u8 {
+        rig.inst.handle(on(0, 60 + n), &shared);
+    }
+    for _ in 0..4 {
+        rig.render(&shared);
+    }
+    let a = rig.inst.allocator();
+    assert_eq!(MAX_VOICES, 8);
+    assert_eq!(a.slots().iter().filter(|s| !s.is_free()).count(), 8);
+    let budget = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost();
+    assert!(
+        a.sounding_cost() + FxBus::COST <= budget,
+        "{:?}",
+        a.sounding_cost()
+    );
 }
 
 /// Blocks after a lone note-off (note 60, default Sound) until the voice's

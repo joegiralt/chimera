@@ -143,9 +143,9 @@ fn clamped(dac: &DacOut) -> usize {
 }
 
 /// #190, for typical chords only: eight saw-lead or init voices at
-/// velocity 127, LEVEL 1, typical FX. At every send the pairs, after the
-/// output trim, sum to at most full scale, so the limiter does no more
-/// than the trim, and nothing reaches the final clamp. At the typical
+/// velocity 127, LEVEL 1, typical FX. Nothing reaches the final clamp;
+/// saw-lead pairs also sum to at most full scale after the output trim,
+/// so the limiter does no more than the trim (INIT does more: #193). At the typical
 /// send (0.3) the reverb's ring stays off its i16 rail; at send 1 it may
 /// reach it, as on main (#142).
 #[test]
@@ -168,10 +168,15 @@ fn no_stage_exceeds_ceiling() {
             eprintln!(
                 "{voices:?} send {send}: trimmed peak {pre}, ring peak {ring}, rail words {rails}"
             );
-            assert!(
-                pre <= 1.0,
-                "{voices:?} send {send}: pair peak after the trim {pre}"
-            );
+            // ADR 0049's routed INIT sums past full scale at eight voices
+            // (#193), so only the limiter keeps it off the clamp; SAW LEAD
+            // still fits under the trim alone.
+            if matches!(voices, Voices::Saw) {
+                assert!(
+                    pre <= 1.0,
+                    "{voices:?} send {send}: pair peak after the trim {pre}"
+                );
+            }
             assert_eq!(
                 over, 0,
                 "{voices:?} send {send}: samples clamped at the DAC"

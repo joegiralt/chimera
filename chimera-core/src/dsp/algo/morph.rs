@@ -21,16 +21,21 @@ impl Morph {
     }
 }
 
-pub fn carrier_sum(plan: &EvalPlan, m: Morph) -> f32 {
+/// The carriers' power: `Σ c·g²`, each carrier's blended weight `c` times
+/// its gain squared; the engine passes the stored LEVELs' gains (ADR 0049).
+/// Continuous in every gain, so a carrier's LEVEL going to 0 moves the
+/// scale smoothly; at unit gains it is the carrier count of ADR 0024.
+pub fn carrier_power(plan: &EvalPlan, m: Morph, gain: &[f32; OPS]) -> f32 {
     (0..OPS)
-        .map(|i| blend(plan.carrier_a[i], plan.carrier_b[i], m.get()))
+        .map(|i| blend(plan.carrier_a[i], plan.carrier_b[i], m.get()) * gain[i] * gain[i])
         .sum()
 }
 
-/// Equal loudness for uncorrelated carriers, whatever their number.
-pub fn carrier_norm(plan: &EvalPlan, m: Morph) -> f32 {
-    let sum = carrier_sum(plan, m);
-    if sum <= 1.0 { 1.0 } else { inv_sqrt(sum) }
+/// Equal loudness for uncorrelated carriers, never a boost:
+/// `1 / sqrt(max(1, carrier_power))`.
+pub fn carrier_norm(plan: &EvalPlan, m: Morph, gain: &[f32; OPS]) -> f32 {
+    let power = carrier_power(plan, m, gain);
+    if power <= 1.0 { 1.0 } else { inv_sqrt(power) }
 }
 
 /// The modulation depth into `op` the mip choice allows for.
