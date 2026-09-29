@@ -311,7 +311,7 @@ pub type ScreenCase = (&'static str, fn(&mut UiState));
 pub const CASES: &[ScreenCase] = &[
     ("engine_algo", |ui| feed(ui, Input::turn(EncoderId::A, 2))),
     ("algo_alg", |ui| {
-        feed(ui, Input::turn(EncoderId::B, 24)); // ALG B = A17
+        feed(ui, Input::turn(EncoderId::B, 16)); // ALG B = A17, from INIT's A1
         feed(ui, Input::turn(EncoderId::C, 50)); // MORPH 50: the diagrams blend
     }),
     ("algo_wave", |ui| {
