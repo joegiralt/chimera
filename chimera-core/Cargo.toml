@@ -3,6 +3,11 @@ name = "chimera-core"
 version.workspace = true
 edition.workspace = true
 
+[features]
+# The master tape stage on DAC pair 1 (ADR 0055: off the chain by default;
+# its parameters and disk codes stay either way).
+master-tape = []
+
 [dependencies]
 chimera-hal = { path = "../chimera-hal" }
 libm = "0.2"

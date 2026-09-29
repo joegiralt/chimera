@@ -17,6 +17,10 @@
 //! within the lookahead and no sample passes the ceiling. The average is
 //! summed in fixed point: it never drifts, and at rest the gain is exactly
 //! the trim.
+//!
+//! The lookahead is the DAC's own two blocks (`DacBlocks`): the mix lands
+//! in one while the other still holds the block before it, which the
+//! limiter scales in place and puts out. Nothing is copied.
 
 use chimera_hal::BLOCK_SIZE;
 use core::f32::consts::LOG2_E;
@@ -55,9 +59,56 @@ const SNAP: f32 = 1.0e-4;
 
 type Pairs = [[f32; 2 * BLOCK_SIZE]; DAC_PAIRS];
 
+/// The DAC's blocks, two, for the limiter's one-block lookahead: the one
+/// the mix writes and the one it wrote a render ago. Which is which is this
+/// type's alone; a shell hands it to `Instrument::render` and reads `out`.
+#[derive(Clone)]
+pub struct DacBlocks {
+    blocks: [Pairs; 2],
+    /// The block last put out, and so the next one mixed over; the other
+    /// holds the last block in.
+    out: usize,
+}
+
+impl Default for DacBlocks {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl DacBlocks {
+    /// Silence in both: the first block out is silent, as the lookahead
+    /// has nothing yet.
+    pub const fn new() -> Self {
+        Self {
+            blocks: [[[0.0; 2 * BLOCK_SIZE]; DAC_PAIRS]; 2],
+            out: 0,
+        }
+    }
+
+    /// The block the next render mixes into, over the last one out.
+    pub fn mix(&mut self) -> &mut Pairs {
+        &mut self.blocks[self.out]
+    }
+
+    /// The last block out, limited: what the DACs play.
+    pub fn out(&self) -> &Pairs {
+        &self.blocks[self.out]
+    }
+
+    /// The last block in, before any gain: the pairs as the mix summed them.
+    pub fn input(&self) -> &Pairs {
+        &self.blocks[self.out ^ 1]
+    }
+
+    /// The block just mixed, to read, and the one before it, to scale.
+    fn split(&mut self) -> (&Pairs, &mut Pairs) {
+        let [a, b] = &mut self.blocks;
+        if self.out == 0 { (a, b) } else { (b, a) }
+    }
+}
+
 pub struct Limiter {
-    /// The last block in, the one this block puts out.
-    delayed: Pairs,
     /// Suffix minima of the last block's per-chunk gains: `tail[c]` is the
     /// least any of its chunks `c..` asks for, a chunk bounded by its
     /// neighbour before it.
@@ -77,7 +128,7 @@ pub struct Limiter {
     rate: u32,
 }
 
-crate::in_place::field_list!(Limiter => Limiter { delayed, tail, last, rel, held, sum, gain, k, rate });
+crate::in_place::field_list!(Limiter => Limiter { tail, last, rel, held, sum, gain, k, rate });
 
 impl Default for Limiter {
     fn default() -> Self {
@@ -88,7 +139,6 @@ impl Default for Limiter {
 impl Limiter {
     pub const fn new() -> Self {
         Self {
-            delayed: [[0.0; 2 * BLOCK_SIZE]; DAC_PAIRS],
             tail: [1.0; CHUNKS],
             last: 1.0,
             rel: 1.0,
@@ -104,23 +154,19 @@ impl Limiter {
         slot.write(Self::new())
     }
 
-    /// The last block in, before any gain: the pairs as the mix summed them.
-    pub fn input(&self) -> &Pairs {
-        &self.delayed
-    }
-
-    /// Put out the last block, limited, and keep this one.
-    pub fn process(&mut self, out: &mut Pairs, sample_rate: u32) {
+    /// Put out the last block, limited, and keep the one just mixed.
+    pub fn process(&mut self, dac: &mut DacBlocks, sample_rate: u32) {
         if sample_rate != self.rate {
             let per_fs = 1.0 / sample_rate.max(1) as f32;
             self.k = exp2(-LOG2_E * STEP as f32 / RELEASE_S * per_fs);
             self.rate = sample_rate;
         }
+        let (fresh, held) = dac.split();
         let mut m = [0.0f32; CHUNKS];
         let (mut prev, mut head, mut e0) = (self.last, 1.0f32, self.gain);
         for (c, mc) in m.iter_mut().enumerate() {
             let i0 = c * STEP;
-            let peak = chunk_peak(out, i0);
+            let peak = chunk_peak(fresh, i0);
             // The share of the trim this chunk keeps: `AIM / (peak · trim)`.
             let r = if peak > THRESHOLD {
                 (AIM / OUTPUT_TRIM) / peak
@@ -146,17 +192,18 @@ impl Limiter {
             self.held[slot] = q;
             // The trim times the average: exactly the trim at rest.
             let e1 = self.sum as f32 * (OUTPUT_TRIM / FULL as f32);
-            // The chunk in is kept; the one kept a block ago goes out.
+            // The chunk in stays where it is; the one in a block ago is
+            // scaled in place and goes out.
             for (j, g) in ramp_gains(e0, e1).into_iter().enumerate() {
                 let k = 2 * (i0 + j);
-                for (o, d) in out.iter_mut().zip(self.delayed.iter_mut()) {
-                    let (l, r) = (d[k], d[k + 1]);
-                    (d[k], d[k + 1]) = (o[k], o[k + 1]);
-                    (o[k], o[k + 1]) = (l * g, r * g);
+                for pair in held.iter_mut() {
+                    pair[k] *= g;
+                    pair[k + 1] *= g;
                 }
             }
             e0 = e1;
         }
+        dac.out ^= 1;
         self.gain = e0;
         self.last = prev;
         let mut t = 1.0f32;

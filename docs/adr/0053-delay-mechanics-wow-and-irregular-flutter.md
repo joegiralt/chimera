@@ -39,6 +39,15 @@ dirt).
 - **Cost.** About +15–25 cycles per sample (xorshift, two one-poles, a
   clamp, a blend); the capstan sine costs what the 6 Hz one did. Not benched.
   `FxBus::COST` stays at its bench reading until the next bench.
+  - Latest bench (2026-09-29, rev V at 480 MHz, with the delay's state in
+    locals and the limiter on `DacBlocks`): DELAY 200 against ADR 0031's
+    183, so MECHANICS is 17 cycles per sample; BUS 1,469. The SAT
+    reciprocal (below) came after this reading.
+  - Then BUS 1,468 with the SAT reciprocal (87c2930), and 1,155 with the
+    master tape off the chain (b34a66a, ADR 0055).
+  - The saturation divides once a block and multiplies per sample: within
+    1 ulp of the old divide, so `delay_feedback_100ms` and the WOW 0
+    reference hashes were re-recorded; no other golden moved.
 
 ## Alternatives considered
 - **A separate FLUTTER knob.** More control, but two knobs for one tape

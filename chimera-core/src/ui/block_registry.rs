@@ -7,6 +7,7 @@ use crate::dsp::delay::DelayParams;
 use crate::dsp::modal::ModalParams;
 use crate::dsp::modulator::{EnvSlot, LfoSlot};
 use crate::dsp::reverb::ReverbParams;
+#[cfg(feature = "master-tape")]
 use crate::dsp::tape::TapeParams;
 use crate::modulation::{MAX_MOD_SOURCES, ModSource};
 use crate::params::{DriveParams, EnvParams, FilterParams, FolderParams, OutParams, PitchParams};
@@ -296,7 +297,9 @@ pub static DELAY_CHAR: BlockDef = BlockDef {
 
 static DELAY_SUB_PAGES: [&BlockDef; 1] = [&DELAY_CHAR];
 
-/// Tape on DAC pair 1 (FX diet spec § Tape).
+/// Tape on DAC pair 1 (FX diet spec § Tape); only with `master-tape`
+/// (ADR 0055).
+#[cfg(feature = "master-tape")]
 pub static TAPE: BlockDef = BlockDef {
     id: 57,
     name: "Tape",
@@ -532,19 +535,21 @@ pub static SENDS: BlockDef = BlockDef {
 };
 
 /// MIX + B<n>: Part n's mix settings, then the shared FX (spec § UI).
-static MIXER_CHANNEL_BLOCKS: [ChainBlock; 7] = [
+/// TAPE sits before MASTER only with `master-tape` (ADR 0055).
+static MIXER_CHANNEL_BLOCKS: &[ChainBlock] = &[
     ChainBlock::page(&PART),
     ChainBlock::page(&SENDS),
     ChainBlock::page(&CHORUS),
     ChainBlock::with_subs(&DELAY, &DELAY_SUB_PAGES),
     ChainBlock::page(&EFX),
+    #[cfg(feature = "master-tape")]
     ChainBlock::page(&TAPE),
     ChainBlock::with_subs(&MASTER, &MASTER_SUB_PAGES),
 ];
 
 pub static MIXER_CHANNEL_CHAIN: ChainDef2 = ChainDef2 {
     name: "Mixer",
-    blocks: &MIXER_CHANNEL_BLOCKS,
+    blocks: MIXER_CHANNEL_BLOCKS,
     mod_sources: &[],
 };
 

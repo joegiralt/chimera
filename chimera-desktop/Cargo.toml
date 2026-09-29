@@ -15,6 +15,8 @@ embedded-graphics-core = "0.4"
 [features]
 default = ["midi"]
 midi = ["dep:midir"]
+# The master tape stage back on the chain (ADR 0055).
+master-tape = ["chimera-core/master-tape"]
 
 [dev-dependencies]
 chimera-hal = { path = "../chimera-hal", features = ["testkit"] }

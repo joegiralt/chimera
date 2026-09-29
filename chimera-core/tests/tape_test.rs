@@ -1,4 +1,6 @@
-//! Tape on DAC pair 1 (FX diet spec § Tape, § Testing).
+//! Tape on DAC pair 1 (FX diet spec § Tape, § Testing). Only with the
+//! `master-tape` feature (ADR 0055).
+#![cfg(feature = "master-tape")]
 
 mod common;
 use chimera_core::dsp::tape::{DRY_TAP, ENGAGE, Tape, TapeParams};

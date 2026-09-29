@@ -115,6 +115,7 @@ impl AudioShared {
 
 /// One block for each DAC pair, interleaved L, R.
 pub type DacOut = [[f32; BLOCK_SIZE * 2]; DAC_PAIRS];
+pub use crate::dsp::limiter::DacBlocks;
 
 // ADR 0013/0014: the voice pool (and its small bookkeeping) lives in D2.
 const _: () = assert!(size_of::<Instrument>() <= VOICE_RAM_BUDGET);
@@ -179,7 +180,7 @@ pub fn mix_parts(
     fx: &mut FxBus,
     shared: &AudioShared,
     sample_rate: u32,
-    out: &mut DacOut,
+    dac: &mut DacBlocks,
 ) -> [f32; BLOCK_SIZE] {
     // The written Parts in order, gains hoisted; by pair for the dry mix.
     let mut src = [(&buses[0], [0.0f32; FX_SENDS]); MAX_PARTS];
@@ -225,6 +226,7 @@ pub fn mix_parts(
     let mut ret = Stereo::SILENT;
     fx.process(sends, &shared.fx, sample_rate, &mut ret);
 
+    let out = dac.mix();
     for (k, pair) in out.iter_mut().enumerate() {
         let parts = &dry[k][..dry_n[k]];
         for c in 0..BLOCK_SIZE / PAIR_STEP {
@@ -247,7 +249,7 @@ pub fn mix_parts(
     }
     // The master section, after every pair is summed; then the output stage.
     fx.master(out, &shared.fx, sample_rate);
-    fx.limit(out, sample_rate);
+    fx.limit(dac, sample_rate);
     scope
 }
 
@@ -393,11 +395,11 @@ impl Instrument {
         }
     }
 
-    /// Render one block into the three DAC pairs.
+    /// Render one block into the three DAC pairs: `dac.out()` after.
     pub fn render(
         &mut self,
         fx: &mut FxBus,
-        out: &mut DacOut,
+        dac: &mut DacBlocks,
         shared: &AudioShared,
         scope: &mut ScopeWriter,
     ) {
@@ -455,7 +457,7 @@ impl Instrument {
             fx,
             shared,
             self.sample_rate,
-            out,
+            dac,
         );
         // The MST page's GR meter: one relaxed store, never blocks.
         crate::meter::MASTER_GR.publish(fx.master_gr_db());

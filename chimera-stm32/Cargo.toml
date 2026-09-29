@@ -10,6 +10,8 @@ perf-probe = []
 bench = ["perf-probe"]
 # On-unit SD bring-up: prints the card probe and halts; no audio.
 sd-probe = []
+# The master tape stage back on the chain, with its bench row (ADR 0055).
+master-tape = ["chimera-core/master-tape"]
 
 [dependencies]
 chimera-core = { path = "../chimera-core" }

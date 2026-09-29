@@ -603,12 +603,17 @@ fn a16_a17() -> AlgoParams {
     p
 }
 
-/// FX diet spec § Intent and ADR 0031: with the bus measured at 1,360 and
-/// the modulator pool's floor (`ModRouting::BASE`, 47) added, the costliest
-/// patch still gets six voices on rev V (6 × 889 + 1,360 = 6,694 ≤ 7,000;
-/// a seventh would be 7,583), and five on rev Y ((5,833 − 1,360) / 889 =
-/// 5.03), without FOLD or DRIVE, at LP24 (its SVF term 0). ADR 0040: the
-/// budget, not the eight-voice pool, is what stops it.
+/// The master tape is on the chain (ADR 0055): the bus costs more, and
+/// some counts below are one fewer.
+const TAPE: bool = cfg!(feature = "master-tape");
+
+/// FX diet spec § Intent and ADR 0031: with the bus measured at 1,160
+/// (ADR 0055; 1,470 with the master tape) and the modulator pool's floor
+/// (`ModRouting::BASE`, 47) added, the costliest patch gets six voices on
+/// rev V (6 × 889 + 1,160 = 6,494 ≤ 7,000; a seventh would be 7,383), and
+/// five on rev Y ((5,833 − 1,160) / 889 = 5.26; four with the tape),
+/// without FOLD or DRIVE, at LP24 (its SVF term 0). ADR 0040: the budget,
+/// not the eight-voice pool, is what stops it.
 #[test]
 fn the_costliest_patch_gets_six_voices_on_rev_v() {
     let p = a16_a17();
@@ -616,28 +621,36 @@ fn the_costliest_patch_gets_six_voices_on_rev_v() {
     assert_eq!(Voice::CHAIN_COST.0 + ModRouting::BASE.0 + cost(&p), 889);
     let plain = 889 + LP24.0;
     assert_eq!(cost(&costliest()), cost(&p), "no pair has more links");
-    assert_eq!(FxBus::COST.0, 1_360, "{:?}", FxBus::COST);
+    let bus = if TAPE { 1_470 } else { 1_160 };
+    assert_eq!(FxBus::COST.0, bus, "{:?}", FxBus::COST);
     assert_eq!(voices_at(CPU_HZ_REV_V, &p), 6);
     assert_eq!(MAX_VOICES, 8, "the budget stops it short of the pool");
-    assert_eq!(voices_at(CPU_HZ_REV_Y, &p), 5);
-    // With the folder on (43): 932, still six on rev V, four on rev Y; the
-    // drive stage too (989): five on rev V, four on rev Y.
-    // No factory Sound does either with this shape.
+    assert_eq!(voices_at(CPU_HZ_REV_Y, &p), if TAPE { 4 } else { 5 });
+    // With the folder on (43): 932, six on rev V and five on rev Y (five
+    // and four with the tape); the drive stage too (989): five on rev V,
+    // four on rev Y. No factory Sound does either with this shape.
     let fits = |hz, voice: u32| (SampleBudget::for_cpu(hz).as_cost().0 - FxBus::COST.0) / voice;
     let fold = plain + Voice::FOLD_COST.0;
-    assert_eq!((fits(CPU_HZ_REV_V, fold), fits(CPU_HZ_REV_Y, fold)), (6, 4));
+    let want = if TAPE { (5, 4) } else { (6, 5) };
+    assert_eq!((fits(CPU_HZ_REV_V, fold), fits(CPU_HZ_REV_Y, fold)), want);
     let both = fold + Voice::DRIVE_COST.0;
     assert_eq!((fits(CPU_HZ_REV_V, both), fits(CPU_HZ_REV_Y, both)), (5, 4));
 }
 
 /// Spec § Intent and ADR 0031, 0040: every factory Sound gets at least six
 /// voices on rev V and at least five on rev Y, billed as it plays (its
-/// routes, FOLD and DRIVE in; all at LP24). The TX and single-oscillator
-/// Sounds (555–692) get all eight on rev V; MORPH PAD (839) and MORPH KEYS
-/// (844) six, and five on rev Y.
+/// routes, FOLD and DRIVE in; all at LP24). With the bus at 1,160 (ADR
+/// 0055) the TX and single-oscillator Sounds (552–692) get all eight on
+/// rev V, MORPH PAD (833) seven and MORPH KEYS (844) six, both five on
+/// rev Y. With the master tape (1,470) the 692 gets seven and MORPH PAD
+/// six.
 #[test]
 fn every_factory_sound_gets_at_least_six_voices_on_rev_v() {
-    const REV_V: [u32; 8] = [8, 8, 8, 8, 8, 8, 6, 6];
+    const REV_V: [u32; 8] = if TAPE {
+        [8, 8, 7, 8, 8, 8, 6, 6]
+    } else {
+        [8, 8, 8, 8, 8, 8, 7, 6]
+    };
     for (i, want) in REV_V.into_iter().enumerate() {
         let s = chimera_core::factory::factory_sound(i).unwrap();
         let voice = Voice::cost(&s.params, &s.mod_state).0;
@@ -773,10 +786,19 @@ fn modal_bills_each_model() {
         p.modal.mode = mode;
         p
     };
+    // Sympathetic gets one more on rev V without the master tape, one
+    // fewer on rev Y with it (ADR 0055).
+    let sympathetic = if TAPE { (3, 2) } else { (4, 3) };
     for (mode, billed, estimate, rev_v, rev_y) in [
         (ResonatorMode::String, 390, 390, 8, 8),
         (ResonatorMode::Bowed, 620, 565, 8, 6),
-        (ResonatorMode::Sympathetic, 1_400, 1_274, 3, 3),
+        (
+            ResonatorMode::Sympathetic,
+            1_400,
+            1_274,
+            sympathetic.0,
+            sympathetic.1,
+        ),
         (ResonatorMode::Modal, 1_900, 1_703, 2, 2),
     ] {
         let p = sound(mode);
