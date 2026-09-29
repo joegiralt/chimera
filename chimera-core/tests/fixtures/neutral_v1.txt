@@ -209,7 +209,7 @@ Sound {
             mode: String,
             structure: 0.0,
             bright: 0.3,
-            damp: 0.7,
+            damp: 0.9433774,
             pos: 0.0,
             excite: 0.8,
             body: 0.3,
