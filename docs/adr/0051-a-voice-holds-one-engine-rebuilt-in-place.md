@@ -28,6 +28,15 @@ largest engine rounded up to the slot's align, plus that align, and a
 `Voice` at most `VOICE_CHAIN_BYTES` (2,048 B) plus its slot; both are
 asserted.
 
+A switch is a change to the Sound's `SlotKind`, its engine or its Modal
+MODE (`SlotKind::of`, which reads those two fields only). It fades that
+Part's sounding voices over `Voice::FADE` (128 samples), and each is
+rebuilt once silent; a held key restarts on the new kind after the fade.
+An idle voice switches at its next note, rebuilt in the same block it
+plays. Other Parts and the FX bus are untouched. Knob moves never rebuild.
+`Voice::rebuild` is the one path to `EngineSlot::rebuild` and counts it
+(`Voice::rebuilds`, wrapping; `reset` keeps it).
+
 ## Alternatives considered
 - **Keep `Engines`** (one instance of each) — memory is the sum, and it grows
   with every engine and every Modal 2 exciter.
@@ -39,12 +48,13 @@ asserted.
 ## Consequences
 Memory is the largest engine, not the sum: a `Voice` is 33,584 B on the
 host, and Modal holds only the model it plays (`ModelSlot`, the same
-in-place enum). A voice rebuilds at most three times per block: a fade end
-and a VCA-lifetime reset in its render, and one trigger before it.
-`Voice::note_on` triggers an active voice of the same engine too, so a MODE
-change rebuilds the model of a ringing voice; but a trigger rebuilds only
-into its params' kind, and params are fixed within a block, so later
-triggers in that block find the slot already holding it. Until the 16-bit
+in-place enum). A voice rebuilds at most twice per block: a fade end then
+the note that waited for it (a steal across kinds), or an idle trigger then
+a VCA-lifetime reset. A MODE edit now fades ringing notes, where it used to
+leave them on their old model, or, on a retrigger, rebuild the ringing
+model unfaded: a sounding voice of another kind makes `note_on` wait for
+the fade. `Voice::held_model_extra` (#183) bills the old model for the
+fade's ≤ 2 blocks. Until the 16-bit
 strings (spec § 4), a Sympathetic rebuild writes about 31.7 KB, ~2.6 % of
 a block. The rebuilds are not billed in `Cost`, as the resets they replace
 weren't. The new `unsafe` lives
