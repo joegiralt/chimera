@@ -136,6 +136,10 @@ types and the real `Instrument` (#190) measured:
   per sample on the M7 (static count of the release build), all three
   pairs every block, so an estimated 50–65 cycles per sample, pending a
   bench reading.
+  - Latest bench (2026-09-29, rev V at 480 MHz, the limiter on
+    `DacBlocks`): MIX 223 against ADR 0031's 148, so the limiter is 75
+    cycles per sample; BUS 1,469 (1,495 before `DacBlocks` and the delay's
+    loop state in locals), before the delay's SAT reciprocal.
   - The bench's BUS row runs `mix_parts`, so it times the limiter.
   - `FxBus::COST` (1,360) is the reading from before the limiter and stays
     until a bench run replaces it.

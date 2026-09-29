@@ -298,6 +298,8 @@ impl TapeDelay {
         // Tone: LP coefficient (higher = brighter)
         let lp_coeff = 0.2 + params.tone * 0.75;
         let sat_gain = 1.0 + params.saturation * 3.0;
+        // Once a block: the loop multiplies, never divides (within 1 ulp).
+        let sat_inv = 1.0 / sat_gain;
 
         // The loop's state in locals: the stores into the line cannot then
         // make the compiler reload and store it every sample.
@@ -333,7 +335,7 @@ impl TapeDelay {
             // SAT 0 the loop is otherwise linear with unity DC gain, so FDBK
             // 1 grows without bound. Bounded by 1 / gain, the write stays
             // within |dry| + FDBK.
-            let saturated = libm::tanhf(filtered * sat_gain) / sat_gain;
+            let saturated = libm::tanhf(filtered * sat_gain) * sat_inv;
 
             // Write: input + feedback
             self.buffer[write_pos] = dry + saturated * params.feedback;
