@@ -55,6 +55,18 @@ impl Svf {
         self.h = 1.0 / (1.0 + self.r * self.g + self.g * self.g);
     }
 
+    /// Silent, its tuning kept.
+    pub(super) fn reset(&mut self) {
+        self.state_1 = 0.0;
+        self.state_2 = 0.0;
+    }
+
+    /// `tan(π·f)` as set: for the tests.
+    #[cfg(test)]
+    pub(super) fn g(&self) -> f32 {
+        self.g
+    }
+
     /// Process one sample, return bandpass output.
     #[inline]
     pub(super) fn process_bp(&mut self, input: f32) -> f32 {
@@ -68,7 +80,7 @@ impl Svf {
 }
 
 /// Fast tangent approximation (matches Rings' FREQUENCY_FAST).
-fn tan_approx(f: f32) -> f32 {
+pub(super) fn tan_approx(f: f32) -> f32 {
     let pi = core::f32::consts::PI;
     let f2 = f * f;
     f * (pi + f2 * (0.326 * pi * pi * pi + 0.1823 * pi * pi * pi * pi * pi * f2))
