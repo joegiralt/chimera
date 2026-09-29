@@ -1,4 +1,4 @@
-use chimera_fat::{BusPhase, FatStore, FixedTime, Medium, SdBus};
+use chimera_fat::{BusPhase, FatStore, Medium, SdBus};
 use chimera_hal::store::{Store, StoreError};
 use core::cell::{Cell, RefCell};
 use embedded_hal::delay::DelayNs;
@@ -115,7 +115,7 @@ fn card(log: &Rc<Log>, limit: u32) -> SdCard<FakeBus, NoDelay> {
 fn no_card_is_no_card() {
     const LIMIT: u32 = 50;
     let log = Rc::new(Log::default());
-    let mut s = FatStore::new(card(&log, LIMIT), FixedTime);
+    let mut s = FatStore::new(card(&log, LIMIT));
     assert_eq!(s.mount(), Err(StoreError::NoCard));
     // Two acquires (the mount retries once), each cut off one transaction
     // past the deadline, plus the read the library does after it.
@@ -137,6 +137,8 @@ fn no_card_is_no_card() {
     assert!(!calls.contains(&Call::SetPhase(BusPhase::Data)));
 }
 
+/// A transport error or timeout is the deadline's, when it passed: no card
+/// while acquiring, a timeout after. Otherwise it is `Io`.
 #[test]
 fn classify_table() {
     let log = Rc::new(Log::default());
@@ -162,6 +164,14 @@ fn classify_table() {
         with(Data, true, SdCardError::TimeoutReadBuffer),
         StoreError::Timeout
     );
+    assert_eq!(
+        with(Acquire, true, SdCardError::TimeoutReadBuffer),
+        StoreError::NoCard
+    );
+    assert_eq!(
+        with(Data, true, SdCardError::TimeoutWaitNotBusy),
+        StoreError::Timeout
+    );
     assert_eq!(with(Acquire, false, SdCardError::Transport), StoreError::Io);
     assert_eq!(with(Data, false, SdCardError::Transport), StoreError::Io);
     assert_eq!(
@@ -172,17 +182,6 @@ fn classify_table() {
         with(Data, true, SdCardError::CrcError(1, 2)),
         StoreError::Io
     );
-}
-
-#[test]
-fn fault_is_the_deadline() {
-    let log = Rc::new(Log::default());
-    let sd = card(&log, u32::MAX);
-    assert_eq!(sd.fault(), None);
-    sd.spi(|b| b.timed_out = true);
-    assert_eq!(sd.fault(), Some(StoreError::NoCard));
-    sd.spi(|b| b.phase = BusPhase::Data);
-    assert_eq!(sd.fault(), Some(StoreError::Timeout));
 }
 
 #[test]

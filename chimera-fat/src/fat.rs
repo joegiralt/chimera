@@ -125,6 +125,14 @@ impl<'a, B: Blocks> Table<'a, B> {
         Ok(())
     }
 
+    /// Drops an unflushed change: after a device error the operation is
+    /// over, the card's state is unknown and the next operation reads it
+    /// again. Nothing retries a flush.
+    pub fn discard(&mut self) {
+        self.cache.sector = None;
+        self.cache.dirty = false;
+    }
+
     /// The first free cluster from `from` (any value: an unheld one starts
     /// at cluster 2), wrapping once. It becomes the end of a chain, and
     /// `prev`, if any, links to it. `Full` changes nothing.

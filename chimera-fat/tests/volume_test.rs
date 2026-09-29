@@ -1,16 +1,15 @@
 #[path = "common/image.rs"]
 mod image;
 
-use chimera_fat::FixedTime;
 use chimera_fat::volume::{
     FsKind, Layout, Link, PartitionType, Root, boot_sector, first_partition, layout,
 };
 use chimera_hal::store::{Unsupported, VolumeId};
 use core::num::NonZeroU8;
 use core::ops::ControlFlow;
-use embedded_sdmmc::{VolumeIdx, VolumeManager};
+use embedded_sdmmc::VolumeIdx;
 use image::{
-    PART_LBA, RamDisk, exfat, exfat_superfloppy, fat16, fat32, fat32_layout, layout_of,
+    PART_LBA, RamDisk, exfat, exfat_superfloppy, fat16, fat32, fat32_layout, layout_of, sdmmc,
     superfloppy, with_clusters,
 };
 
@@ -228,8 +227,7 @@ fn fat32_type_byte_with_fat16_layout_is_fat16() {
 /// `iterate_dir`, and returns the FAT type the library used, read from the
 /// width of the FAT entry it wrote for the new directory's cluster.
 fn sdmmc_kind(disk: RamDisk) -> FsKind {
-    let mgr: VolumeManager<_, _> = VolumeManager::new(disk, FixedTime);
-    {
+    let (disk, ()) = sdmmc(disk, |mgr| {
         let vol = mgr.open_volume(VolumeIdx(0)).unwrap();
         let root = vol.open_root_dir().unwrap();
         root.make_dir_in_dir("CHIMERA").unwrap();
@@ -240,8 +238,7 @@ fn sdmmc_kind(disk: RamDisk) -> FsKind {
         })
         .unwrap();
         assert!(found, "CHIMERA not listed");
-    }
-    let (disk, _) = mgr.free();
+    });
     let bs = disk.block(PART_LBA);
     let fat = disk.block(PART_LBA + u32::from(u16::from_le_bytes([bs[14], bs[15]])));
     // FAT16 gives the new directory cluster 2 (a 16-bit entry at byte 4);
