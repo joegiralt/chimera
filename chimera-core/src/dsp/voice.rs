@@ -11,7 +11,7 @@ use crate::dsp::engines::{EngineSlot, SlotKind};
 use crate::dsp::envelope::{EnvMods, Envelope};
 use crate::dsp::filter::SvfFilter;
 use crate::dsp::lfo::Lfo;
-use crate::dsp::modal::{ModalEngine, ModalParams, ResonatorMode, SymPool};
+use crate::dsp::modal::{ModalEngine, ResonatorMode, SymPool};
 use crate::dsp::modulator::{EnvSlot, LfoSlot};
 use crate::dsp::wavefolder::Wavefolder;
 use crate::hw::{Cost, MAX_VOICES, VOICE_CHAIN_BYTES, VOICE_RAM_BUDGET};
@@ -156,17 +156,13 @@ impl Voice {
             + Self::stage_cost(p, mods)
     }
 
-    /// What this voice's note-on Modal model costs over `p`'s stored one
-    /// while it still plays it (#183): the model is fixed per note, so a
-    /// MODE edit under a sounding voice is billed at the costlier of the two.
+    /// What this voice's sounding Modal note costs over `p`'s stored
+    /// model (#183): MODE and MODES are fixed per note, so an edit under a
+    /// sounding voice is billed at the costlier of the two.
     pub fn held_model_extra(&self, p: &ParamSnapshot) -> Cost {
-        match self.slot.modal_playing() {
-            Some(mode) if mode != p.modal.mode => {
-                let held = ModalEngine::cost(&ModalParams { mode, ..p.modal });
-                Cost(held.0.saturating_sub(ModalEngine::cost(&p.modal).0))
-            }
-            _ => Cost::ZERO,
-        }
+        self.slot.modal_playing_cost().map_or(Cost::ZERO, |held| {
+            Cost(held.0.saturating_sub(ModalEngine::cost(&p.modal).0))
+        })
     }
 
     /// The folder and the drive stage, each once its stored amount runs it

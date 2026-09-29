@@ -175,6 +175,41 @@ impl ModalParams {
     pub const MODES: ParamId = ParamId(16);
 }
 
+/// The four macros as the loops play them: eased toward the block's
+/// modulated values by `EASE` a block, snapped at a note's first block.
+#[derive(Clone, Copy)]
+pub(super) struct Macros {
+    pub structure: f32,
+    pub bright: f32,
+    pub damp: f32,
+    pub pos: f32,
+}
+
+/// The share of the way to the block's value each block eases.
+pub(super) const EASE: f32 = 0.3;
+
+impl Macros {
+    pub fn of(p: &ModalParams) -> Self {
+        Self {
+            structure: p.structure,
+            bright: p.bright,
+            damp: p.damp,
+            pos: p.pos,
+        }
+    }
+
+    pub fn ease(&mut self, to: &Self) {
+        for (x, t) in [
+            (&mut self.structure, to.structure),
+            (&mut self.bright, to.bright),
+            (&mut self.damp, to.damp),
+            (&mut self.pos, to.pos),
+        ] {
+            *x += EASE * (t - *x);
+        }
+    }
+}
+
 /// MODEL's names, by `ResonatorMode as u8`.
 pub const MODEL_NAMES: [&str; 4] = ["STRING", "BANK", "BOWED", "SYMP"];
 
@@ -244,14 +279,21 @@ const fn unit(id: u8, label: &'static str, default: f32) -> ParamSpec {
     )
 }
 
-/// Read at note-on or per block from the unmodulated snapshot: none are
-/// modulatable yet. Retired ids 2, 5, 7 and 8 are never reused.
+/// A home macro: read every block from the modulated params.
+const fn macro_(id: u8, label: &'static str, default: f32) -> ParamSpec {
+    let mut s = unit(id, label, default);
+    s.modulatable = true;
+    s
+}
+
+/// The four macros are modulatable (`Macros`); the model page is read at
+/// note-on. Retired ids 2, 5, 7 and 8 are never reused.
 pub static MODAL_SPECS: [ParamSpec; 13] = [
     ParamSpec::choice(0, "MODEL", ValFmt::Names(&MODEL_NAMES), 3.0, 0.0).ident("MODE"),
-    unit(13, "STRUCT", 0.0).short("STR").ident("STRUCTURE"),
-    unit(3, "BRIGHT", 1.0 - 0.7).short("BRT").ident("BRIGHT"),
-    unit(12, "DAMP", INIT_DAMP).short("DMP").ident("DAMP"),
-    unit(4, "POS", 0.0).short("POS").ident("POS"),
+    macro_(13, "STRUCT", 0.0).short("STR").ident("STRUCTURE"),
+    macro_(3, "BRIGHT", 1.0 - 0.7).short("BRT").ident("BRIGHT"),
+    macro_(12, "DAMP", INIT_DAMP).short("DMP").ident("DAMP"),
+    macro_(4, "POS", 0.0).short("POS").ident("POS"),
     unit(1, "EXCITE", 0.8).ident("EXCITE"),
     unit(6, "BODY", 0.3).ident("BODY"),
     unit(9, "ENS.D", 0.0).ident("E.DPT"),
@@ -434,6 +476,26 @@ mod tests {
             .find(|s| s.id == ModalParams::DAMP)
             .unwrap();
         assert_eq!(spec.default, init);
+    }
+
+    /// Each block eases `EASE` of the way; at its target, no bit moves.
+    #[test]
+    fn macros_ease_a_share_a_block() {
+        let p = ModalParams::default();
+        let mut m = Macros::of(&p);
+        let held = m;
+        m.ease(&Macros::of(&p));
+        assert_eq!(m.damp.to_bits(), held.damp.to_bits());
+        let to = Macros {
+            pos: 1.0,
+            ..Macros::of(&p)
+        };
+        m.ease(&to);
+        assert!((m.pos - EASE).abs() < 1e-6, "{}", m.pos);
+        for _ in 0..40 {
+            m.ease(&to);
+        }
+        assert!((m.pos - 1.0).abs() < 1e-5, "{}", m.pos);
     }
 
     #[test]

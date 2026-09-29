@@ -111,8 +111,8 @@ impl KsString {
     /// Tunes the loop to `freq`: the line and the allpass, nothing else
     /// in the loop delaying.
     pub(super) fn tune(&mut self, freq: f32, sample_rate: u32) {
-        let w = core::f32::consts::TAU * freq / sample_rate as f32;
-        self.set_period(sample_rate as f32 / freq, 0.0, w);
+        let (period, other, w) = loop_at(freq, sample_rate);
+        self.set_period(period, other, w);
     }
 
     #[cfg(test)]
@@ -149,25 +149,28 @@ impl KsString {
         c * 0.5 * (self.behind(d - 2) + self.behind(d)) + (1.0 - c) * self.behind(d - 1)
     }
 
-    /// Pluck the string at `freq` with white noise (Carcosa's Trigger).
-    /// The line is cleared first, before the new loop's length widens its
-    /// extent: the clear writes `clear_bytes`, and the old note's samples
-    /// past the new loop are never read back, even by a pitch drop that
-    /// lengthens it.
-    pub(super) fn trigger(
-        &mut self,
-        (freq, sample_rate): (f32, u32),
-        amplitude: f32,
-        position: f32,
-    ) {
+    /// Plucks the string with white noise on a loop of `period` samples
+    /// (`set_period`), unshaped until `shape`. The line is cleared first,
+    /// before the new loop's length widens its extent: the clear writes
+    /// `clear_bytes`, and the old note's samples past the new loop are
+    /// never read back, even by a pitch drop that lengthens it.
+    pub(super) fn excite(&mut self, (period, other, w): (f32, f32, f32), amplitude: f32) {
         self.clear();
-        self.tune(freq, sample_rate);
+        self.set_period(period, other, w);
         let len = self.delay;
         for i in 0..len {
             self.buffer[i] = xorshift_noise(&mut self.noise_state) * amplitude;
         }
+        // The oldest sample first.
+        self.write_pos = len - 1;
+        self.ens_lfo_phase = 0;
+    }
 
-        // Pluck position: comb notch at position harmonics
+    /// Shapes the pluck `excite` wrote, in place, before the loop reads
+    /// it: a comb notched at `position`'s harmonics, then one smoothing
+    /// pass (the old colour 0.8).
+    pub(super) fn shape(&mut self, position: f32) {
+        let len = self.delay;
         if position > 0.03 {
             let notch_period = ((len as f32 * position) as usize).max(2);
             if notch_period < len {
@@ -176,15 +179,9 @@ impl KsString {
                 }
             }
         }
-
-        // One smoothing pass: the old colour 0.8.
         for i in 1..len {
             self.buffer[i] = (self.buffer[i] + self.buffer[i - 1]) * 0.5;
         }
-
-        // The oldest sample first.
-        self.write_pos = len - 1;
-        self.ens_lfo_phase = 0;
     }
 
     /// Zeros the whole line and starts the shortest ring from the start:
@@ -316,6 +313,13 @@ impl KsString {
         *pending = filtered;
         filtered
     }
+}
+
+/// `freq`'s loop for `set_period`: its period, nothing else delaying,
+/// and its angular frequency.
+pub(super) fn loop_at(freq: f32, sample_rate: u32) -> (f32, f32, f32) {
+    let w = core::f32::consts::TAU * freq / sample_rate as f32;
+    (sample_rate as f32 / freq, 0.0, w)
 }
 
 /// The loop low-pass's side taps at `bright`, 1 brightest: the old
