@@ -27,6 +27,8 @@ pub mod viz;
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 
+use crate::storage::{Card, Exit, SystemSettings, SystemSync};
+use chimera_hal::store::Store;
 use chimera_hal::{ALL_BUTTONS, ALL_ENCODERS, ButtonId, ButtonState, Controls, PART_BUTTONS};
 
 use crate::addr::{BlockRef, Blocks, Op, ParamAddr};
@@ -151,6 +153,8 @@ pub struct UiState {
     prime_status: Option<PrimeStatus>,
     /// System › Theme; boot sets it from SYSTEM (`set_theme`).
     theme: ThemeSettings,
+    /// What the last card operation said, for a moment.
+    toast: busy::ToastTimer,
 }
 
 crate::in_place::field_list!(UiState => UiState {
@@ -169,6 +173,7 @@ crate::in_place::field_list!(UiState => UiState {
     display_lfos,
     prime_status,
     theme,
+    toast,
 });
 
 impl Default for UiState {
@@ -218,6 +223,7 @@ impl UiState {
             addr_of_mut!((*p).display_lfos).write([Lfo::new(); 3]);
             addr_of_mut!((*p).prime_status).write(None);
             addr_of_mut!((*p).theme).write(ThemeSettings::DEFAULT);
+            addr_of_mut!((*p).toast).write(busy::ToastTimer::new());
             let ui = slot.assume_init_mut();
             ui.load_matrix(0);
             ui
@@ -238,6 +244,35 @@ impl UiState {
     /// The theme SYSTEM held, set at boot before the first frame.
     pub fn set_theme(&mut self, t: ThemeSettings) {
         self.theme = t;
+    }
+
+    /// Once a frame, after input: on leaving System, syncs SYSTEM (one
+    /// mount, which may load or save) and puts up what came of it. It draws
+    /// nothing, so no BUSY covers a save too quick to read; a `Loaded`
+    /// theme is applied here.
+    pub fn sync_system<S: Store>(
+        &mut self,
+        sync: &mut SystemSync,
+        card: &mut Card,
+        store: &mut S,
+        s: &mut SystemSettings,
+    ) {
+        s.theme = self.theme;
+        if !sync.left_system(self.in_system(), s) {
+            return;
+        }
+        let r = sync.on_exit(card, store, s);
+        if r == Ok(Exit::Loaded) {
+            self.theme = s.theme;
+        }
+        if let Some(t) = busy::toast_for(&r) {
+            self.toast.show(t);
+        }
+    }
+
+    /// Once a frame: the toast, `elapsed_ms` after the last frame.
+    pub fn step_toast(&mut self, elapsed_ms: u32) -> busy::ToastStep {
+        self.toast.step(elapsed_ms)
     }
 
     /// On the System chain, any of its pages or sub-pages: moving between
@@ -479,6 +514,7 @@ impl UiState {
         // it when this same frame is itself a prime attempt.
         if any_input(controls) {
             self.prime_status = None;
+            self.toast.dismiss();
         }
 
         if let UiMode::SoundBrowser {

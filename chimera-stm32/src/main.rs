@@ -222,8 +222,8 @@ fn boot() -> Board {
 fn synth(board: Board) -> ! {
     use chimera_core::clock_plan::pll3_for;
     use chimera_core::hw::SampleBudget;
-    use chimera_core::storage::{Card, Exit, SystemSync};
-    use chimera_core::ui::busy::{BusyLabel, draw_busy};
+    use chimera_core::storage::{Card, SystemSync};
+    use chimera_core::ui::busy::{BusyLabel, ToastStep, draw_busy, draw_toast};
     use chimera_core::ui::perf::PerfTracker;
     use chimera_hal::ChimeraDisplay;
     use controls::Stm32Controls;
@@ -302,23 +302,15 @@ fn synth(board: Board) -> ! {
     ui.prime_regions(&perf.stats, None, scope_r.read());
     led.set_low();
 
+    let mut last_tick = controls::ticks();
     loop {
         controls.snapshot();
         if controls.has_activity() {
             ui.handle_input(&controls);
         }
-        settings.theme = ui.theme();
-        // Leaving System syncs SYSTEM: one mount, which may load or save,
-        // so the overlay says BUSY. A failure keeps RAM; the next exit
-        // tries again.
-        let repaint = sync.left_system(ui.in_system(), &settings);
-        if repaint {
-            let (y0, y1) = draw_busy(&mut display, BusyLabel::Busy);
-            display.flush_region(y0, y1);
-            if let Ok(Exit::Loaded) = sync.on_exit(&mut card, store, &mut settings) {
-                ui.set_theme(settings.theme);
-            }
-        }
+        // Leaving System syncs SYSTEM, with no overlay first: a save is
+        // quicker than BUSY can be read. A toast says how it went.
+        ui.sync_system(&mut sync, &mut card, store, &mut settings);
         // System › Theme: the UI loop owns the display and the backlight.
         let recolour = apply_theme(ui.theme(), &mut theme, &mut backlight, &mut display);
         ui.update();
@@ -328,8 +320,12 @@ fn synth(board: Board) -> ! {
             s.stack_used = probe::stack_used();
             s
         });
-        if repaint {
-            // The overlay covered rows the dirty regions don't know about.
+        let now = controls::ticks();
+        let elapsed_ms = now.wrapping_sub(last_tick) * 1_000 / controls::CONTROLS_HZ;
+        last_tick = now;
+        let toast = ui.step_toast(elapsed_ms);
+        if toast == ToastStep::Ended {
+            // The toast covered rows the dirty regions don't know about.
             ui.render_with_audio(&mut display, &perf.stats, stats.as_ref(), scope_r.read());
             display.flush();
             ui.prime_regions(&perf.stats, stats.as_ref(), scope_r.read());
@@ -337,11 +333,16 @@ fn synth(board: Board) -> ! {
         }
         let flush_list =
             ui.render_dirty_with_audio(&mut display, &perf.stats, stats.as_ref(), scope_r.read());
+        // Over whatever redrew beneath it, before anything is flushed.
+        let band = match toast {
+            ToastStep::Show(text) => Some(draw_toast(&mut display, text)),
+            _ => None,
+        };
         if recolour {
             // A new palette recolours rows that did not redraw.
             display.flush();
         } else {
-            for &(ys, ye) in &flush_list {
+            for &(ys, ye) in flush_list.iter().chain(&band) {
                 if ys != ye {
                     display.flush_region(ys, ye);
                 }

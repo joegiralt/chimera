@@ -52,6 +52,8 @@ const GOLDENS: &[(&str, u64)] = &[
     ("system_theme", 0x6f46ed28ddb10559),
     ("system_audio", 0x281985b580ac2fb1),
     ("busy_saving", 0xc66240f665a10644),
+    ("toast_saved", 0xe344dd99a47d0dad),
+    ("toast_exfat", 0xfc0cb3b4feb1a1b5),
 ];
 
 #[test]
@@ -76,13 +78,54 @@ fn no_screen_draws_outside_240x320() {
     }
 }
 
-/// BUSY and SAVING draw only inside the band they report, which the shell
-/// flushes, and draw something in every row of it.
+/// BUSY, SAVING and every toast draw only inside the band they report,
+/// which the shell flushes, and draw something in every row of it.
 #[test]
 fn busy_draws_only_its_band() {
+    use chimera_core::storage::FileError;
     use chimera_core::ui::busy::BusyLabel;
-    for label in [BusyLabel::Busy, BusyLabel::Saving] {
+    use chimera_hal::store::{StoreError, Unsupported};
+    let messages = [
+        StoreError::NoCard,
+        StoreError::Unsupported(Unsupported::Exfat),
+        StoreError::Unsupported(Unsupported::NoPartitionTable),
+        StoreError::Unsupported(Unsupported::NotFat(0)),
+        StoreError::Unsupported(Unsupported::BadBootSector),
+        StoreError::Unsupported(Unsupported::FatNotMirrored),
+        StoreError::NotFound,
+        StoreError::Full,
+        StoreError::Timeout,
+        StoreError::Corrupt,
+        StoreError::Io,
+    ]
+    .map(StoreError::message)
+    .into_iter()
+    .chain(
+        [
+            FileError::Truncated,
+            FileError::BadMagic,
+            FileError::BadCrc,
+            FileError::NeedsNewerFirmware,
+            FileError::WrongKind,
+            FileError::Bounds,
+            FileError::BadName,
+            FileError::Corrupt,
+        ]
+        .map(FileError::message),
+    );
+    let overlays = [
+        Overlay::Busy(BusyLabel::Busy),
+        Overlay::Busy(BusyLabel::Saving),
+    ]
+    .into_iter()
+    .chain(
+        core::iter::once("SAVED")
+            .chain(messages)
+            .map(Overlay::Toast),
+    );
+    for label in overlays {
         let (fb, (y0, y1)) = render_overlay(label);
+        assert_eq!(fb.oob, 0, "{label:?} draws off screen");
         assert!(y0 < y1 && y1 as usize <= H, "{label:?}: {y0}..{y1}");
         for y in 0..H {
             let row = &fb.px[y * W..(y + 1) * W];

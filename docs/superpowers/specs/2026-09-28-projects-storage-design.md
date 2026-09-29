@@ -340,7 +340,7 @@ Every rung has a one-line footer, and the screen goldens include it:
   - Add the `embedded-sdmmc` dependency **as the SD block driver only** (`SdCard`). The FAT16/FAT32 file layer is our own (`chimera-fat`, ADR 0048): 8.3 names in the fixed folders, streamed read and write, delete, make_dir and list. Check that `stm32h7xx-hal` 0.16 provides embedded-hal 1.0 `SpiDevice` and `DelayNs`, or wrap them.
   - Transfers are **polled**, with no DMA. The stack is in DTCM, which DMA1 and DMA2 can't reach, and D2 is full. This supersedes the design doc's DMA2 note.
 - **Blocking.** Card I/O runs in the UI loop, never on the audio path.
-  - A BUSY/SAVING overlay is drawn before any card operation.
+  - Boot draws BUSY before the SYSTEM read, which can take a cold acquire of up to about 3 s. Leaving System draws nothing first, since the save is quicker than BUSY can be read. It then shows a toast in the same box: SAVED for about 600 ms after a write, or the error's message for about 1.2 s. A load (the theme changing is the feedback) or nothing to do shows no toast. The toast blocks nothing, and new input takes it down.
   - Every operation has a timeout.
   - Audio and the watchdog run above the main loop and aren't affected. Button edges are latched, so no press is lost.
 - **States.** `Absent`, `Ready(VolumeId)` and `Failed(CardError)`:

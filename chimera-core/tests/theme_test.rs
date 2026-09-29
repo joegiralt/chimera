@@ -298,3 +298,22 @@ fn in_system_and_set_theme() {
     ui.set_theme(t);
     assert_eq!(ui.theme(), t);
 }
+
+/// A press after leaving System takes the toast down before its time.
+#[test]
+fn input_dismisses_the_toast() {
+    use chimera_core::storage::{Card, SystemSync};
+    use chimera_core::ui::busy::ToastStep;
+    let mut s = chimera_hal::testkit::MemStore::new(1);
+    let mut card = Card::new();
+    let (mut sync, mut cur, _) = SystemSync::boot(&mut card, &mut s);
+    let mut ui = chimera_core::ui::UiState::new();
+    feed(&mut ui, Input::press(ButtonId::Menu));
+    ui.sync_system(&mut sync, &mut card, &mut s, &mut cur);
+    feed(&mut ui, Input::press(ButtonId::B1));
+    ui.sync_system(&mut sync, &mut card, &mut s, &mut cur);
+    assert_eq!(ui.step_toast(16), ToastStep::Show("SAVED"));
+    feed(&mut ui, Input::press(ButtonId::B2));
+    assert_eq!(ui.step_toast(16), ToastStep::Ended);
+    assert_eq!(ui.step_toast(16), ToastStep::Idle);
+}

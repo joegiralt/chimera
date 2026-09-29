@@ -6,9 +6,9 @@ mod midi;
 mod store;
 
 use chimera_core::scope::scope_buffer;
-use chimera_core::storage::{Card, Exit, SystemSync};
+use chimera_core::storage::{Card, SystemSync};
 use chimera_core::ui::UiState;
-use chimera_core::ui::busy::{BusyLabel, draw_busy};
+use chimera_core::ui::busy::{BusyLabel, ToastStep, draw_busy, draw_toast};
 use chimera_core::ui::perf::PerfTracker;
 use chimera_hal::{ChimeraDisplay, MidiChannel, MidiNote, Velocity};
 use controls::DesktopControls;
@@ -96,15 +96,8 @@ fn main() {
 
         // UI framework handles navigation + encoder -> param binding
         ui.handle_input(&controls);
-        settings.theme = ui.theme();
-        // Leaving System syncs SYSTEM (one mount: a load or a save).
-        if sync.left_system(ui.in_system(), &settings) {
-            draw_busy(&mut display, BusyLabel::Busy);
-            display.flush();
-            if let Ok(Exit::Loaded) = sync.on_exit(&mut card, &mut store, &mut settings) {
-                ui.set_theme(settings.theme);
-            }
-        }
+        // Leaving System syncs SYSTEM; a toast says how it went.
+        ui.sync_system(&mut sync, &mut card, &mut store, &mut settings);
         display.set_theme(&ui.theme());
         ui.update();
 
@@ -112,6 +105,9 @@ fn main() {
         audio.update(&ui.performance);
 
         ui.render_with_scope(&mut display, &perf.stats, scope_r.read());
+        if let ToastStep::Show(text) = ui.step_toast(frame_us / 1_000) {
+            draw_toast(&mut display, text);
+        }
 
         perf.record(frame_us, 0);
 

@@ -14,7 +14,7 @@ use chimera_core::reset::ResetCause;
 use chimera_core::scope::SCOPE_LEN;
 use chimera_core::ui::UiState;
 use chimera_core::ui::block_registry as reg;
-use chimera_core::ui::busy::{BusyLabel, draw_busy};
+use chimera_core::ui::busy::{BusyLabel, draw_busy, draw_toast};
 use chimera_core::ui::perf::PerfStats;
 use chimera_hal::{ButtonId, ButtonState, ChimeraDisplay, Controls, EncoderId};
 use embedded_graphics::pixelcolor::Rgb565;
@@ -540,7 +540,18 @@ pub fn ui_for(name: &str) -> UiState {
 
 /// Overlays the goldens lock, each drawn alone on a blank screen: on the
 /// device it lands on whatever the last frame left.
-pub const OVERLAYS: &[(&str, BusyLabel)] = &[("busy_saving", BusyLabel::Saving)];
+pub const OVERLAYS: &[(&str, Overlay)] = &[
+    ("busy_saving", Overlay::Busy(BusyLabel::Saving)),
+    ("toast_saved", Overlay::Toast("SAVED")),
+    ("toast_exfat", Overlay::Toast("CARD IS EXFAT: FORMAT FAT32")),
+];
+
+/// The two faces of the one overlay component.
+#[derive(Clone, Copy, Debug)]
+pub enum Overlay {
+    Busy(BusyLabel),
+    Toast(&'static str),
+}
 
 /// Every case name: the screens, then the overlays.
 pub fn case_names() -> impl Iterator<Item = &'static str> {
@@ -550,10 +561,13 @@ pub fn case_names() -> impl Iterator<Item = &'static str> {
         .chain(OVERLAYS.iter().map(|o| o.0))
 }
 
-/// Overlay `label` on a blank screen, and the band it reports.
-pub fn render_overlay(label: BusyLabel) -> (Fb, (u16, u16)) {
+/// Overlay `o` on a blank screen, and the band it reports.
+pub fn render_overlay(o: Overlay) -> (Fb, (u16, u16)) {
     let mut fb = Fb::new();
-    let band = draw_busy(&mut fb, label);
+    let band = match o {
+        Overlay::Busy(label) => draw_busy(&mut fb, label),
+        Overlay::Toast(text) => draw_toast(&mut fb, text),
+    };
     (fb, band)
 }
 
