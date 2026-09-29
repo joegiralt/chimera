@@ -77,6 +77,7 @@ pub fn factory_sound(i: usize) -> Option<Sound> {
                 ),
             );
             s.params.filter.cutoff = OPEN;
+            s.params.out.volume = 0.470_479_88; // 0.8 × old / new norm (ADR 0049)
             s
         }
         1 => {
@@ -109,6 +110,7 @@ pub fn factory_sound(i: usize) -> Option<Sound> {
                 ),
             );
             s.params.filter.cutoff = OPEN;
+            s.params.out.volume = 0.526_327_9; // 0.8 × old / new norm (ADR 0049)
             s
         }
         2 => {
@@ -132,6 +134,7 @@ pub fn factory_sound(i: usize) -> Option<Sound> {
                 ),
             );
             s.params.filter.cutoff = OPEN;
+            s.params.out.volume = 0.565_685_33; // 0.8 × old / new norm (ADR 0049)
             s
         }
         3 => {
@@ -152,6 +155,7 @@ pub fn factory_sound(i: usize) -> Option<Sound> {
                 ),
             );
             s.params.filter.cutoff = OPEN;
+            s.params.out.volume = 0.495_229_78; // 0.8 × old / new norm (ADR 0049)
             s
         }
         4 => {
@@ -175,16 +179,19 @@ pub fn factory_sound(i: usize) -> Option<Sound> {
                 ),
             );
             (s.params.filter.cutoff, s.params.filter.resonance) = (6000.0, 0.3);
+            s.params.out.volume = 0.438_352_64; // 0.8 × old / new norm (ADR 0049)
             s
         }
         5 => {
-            let sqr = op(WaveId::SQR, 0, 99, [31, 8, 12, 0, 9]);
+            // LEVEL 95: -3.0 dB, T1's old 1 / √2, into DRIVE (ADR 0049).
+            let sqr = op(WaveId::SQR, 0, 95, [31, 8, 12, 0, 9]);
             let mut s = named(
                 "SQR BASS",
                 algo(AlgoId::T1, AlgoId::T1, 0, [sqr, off, off, off, off, off]),
             );
             (s.params.filter.cutoff, s.params.filter.resonance) = (900.0, 0.4);
-            s.params.drive.drive = 0.3;
+            // DRIVE 0.3 trimmed for LEVEL 95's +0.01 dB: the clipper's input is unchanged.
+            s.params.drive.drive = 0.299_496_26;
             s
         }
         6 => {
@@ -195,6 +202,7 @@ pub fn factory_sound(i: usize) -> Option<Sound> {
             let mut s = named("MORPH PAD", algo(AlgoId::A1, AlgoId::A17, MORPH_BASE, ops));
             s.params.lfos[0].rate = 0.2;
             s.params.filter.cutoff = 4000.0;
+            s.params.out.volume = 0.380_297_63; // at MORPH 40 (ADR 0049)
             let morph = ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH);
             if s.dest_registry.add(morph, *b"ALGMORPH").is_ok()
                 && let Some(d) = s.mod_state.push(morph)
@@ -231,6 +239,7 @@ pub fn factory_sound(i: usize) -> Option<Sound> {
                 ),
             );
             s.params.filter.cutoff = OPEN;
+            s.params.out.volume = 0.506_361_07; // 0.8 × old / new norm (ADR 0049)
             s
         }
         _ => return None,

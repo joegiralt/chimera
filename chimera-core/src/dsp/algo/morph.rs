@@ -21,35 +21,21 @@ impl Morph {
     }
 }
 
-/// The operators with a gain above 0: bit `i`, operator `i + 1`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Sounding(u8);
-
-impl Sounding {
-    pub const ALL: Sounding = Sounding((1 << OPS) - 1);
-
-    pub fn from_gains(gain: &[f32; OPS]) -> Self {
-        Sounding((0..OPS).fold(0, |m, i| m | ((gain[i] > 0.0) as u8) << i))
-    }
-
-    pub fn has(self, op: usize) -> bool {
-        self.0 & (1 << op) != 0
-    }
-}
-
-/// The blended carrier gains of the sounding operators (#189: a silent
-/// carrier adds nothing, so it takes no share of the output).
-pub fn carrier_sum(plan: &EvalPlan, m: Morph, on: Sounding) -> f32 {
+/// The carriers' power: `Σ c·g²`, each carrier's blended weight `c` times
+/// its LEVEL gain squared (ADR 0049). Continuous in every gain, so a
+/// carrier fading to 0 moves the scale smoothly; at unit gains it is the
+/// carrier count of ADR 0024.
+pub fn carrier_power(plan: &EvalPlan, m: Morph, gain: &[f32; OPS]) -> f32 {
     (0..OPS)
-        .filter(|&i| on.has(i))
-        .map(|i| blend(plan.carrier_a[i], plan.carrier_b[i], m.get()))
+        .map(|i| blend(plan.carrier_a[i], plan.carrier_b[i], m.get()) * gain[i] * gain[i])
         .sum()
 }
 
-/// Equal loudness for uncorrelated carriers, whatever their number.
-pub fn carrier_norm(plan: &EvalPlan, m: Morph, on: Sounding) -> f32 {
-    let sum = carrier_sum(plan, m, on);
-    if sum <= 1.0 { 1.0 } else { inv_sqrt(sum) }
+/// Equal loudness for uncorrelated carriers, never a boost:
+/// `1 / sqrt(max(1, carrier_power))`.
+pub fn carrier_norm(plan: &EvalPlan, m: Morph, gain: &[f32; OPS]) -> f32 {
+    let power = carrier_power(plan, m, gain);
+    if power <= 1.0 { 1.0 } else { inv_sqrt(power) }
 }
 
 /// The modulation depth into `op` the mip choice allows for.

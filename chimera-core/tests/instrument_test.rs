@@ -473,7 +473,7 @@ fn two_parts() -> Vec<f32> {
 }
 
 /// Part 1 on a lone sine: the reverb scenes lock the FX, not INIT's
-/// voicing (routed INIT's tail through this reverb peaks at 1.11).
+/// voicing (INIT through this reverb peaks at 1.55: #193).
 fn sine_perf() -> Performance {
     let mut perf = Performance::new();
     perf.parts[0].sound.params.algo = AlgoParams::single(WaveId::W1);
@@ -602,11 +602,11 @@ fn the_costliest_patch_plays_six_voices_on_rev_v() {
 /// Recorded when the instrument path landed (plan Task 12). Re-record only
 /// for an intended sound change (`common::golden`).
 const GOLDENS: &[(&str, u64)] = &[
-    ("poly_chord", 0xd51f8a580dcd63c1), // re-recorded: INIT is routed FM (ADR 0049)
-    ("two_parts_two_pairs", 0xa1e63d9bd732a82f), // re-recorded: INIT is routed FM (ADR 0049)
-    ("reverb_send_off", 0xf40c677a4633ad69), // re-recorded: the default Sound is Algo
-    ("reverb_send_on", 0x5e7b5f6ed1eedd52), // re-recorded: the reverb ring (FX diet)
-    ("six_voice_chord", 0x639319f0ab86499d), // recorded after the Algo cost was measured
+    ("poly_chord", 0x2c57afe8baf00119), // INIT: four routed operators, power norm (ADR 0049)
+    ("two_parts_two_pairs", 0x016712a2b7e18d83), // INIT: four routed operators, power norm (ADR 0049)
+    ("reverb_send_off", 0xf40c677a4633ad69), // part 1 a lone sine (ADR 0049; INIT peaks past 1: #193)
+    ("reverb_send_on", 0x5e7b5f6ed1eedd52), // part 1 a lone sine (ADR 0049; INIT peaks past 1: #193)
+    ("six_voice_chord", 0x159319f4ade1692d), // SAW LEAD under the power norm, off by up to 0.54 dB (#192)
 ];
 
 /// A named golden case: a case name paired with its render function.
@@ -676,7 +676,7 @@ fn sound_change_mid_chord_stays_in_budget() {
     use chimera_core::params::{EngineType, ParamSnapshot};
     let budget = SampleBudget::for_cpu(CPU_HZ_REV_V);
     let mut rig = Rig::rev_v();
-    let mut shared = sine_shared();
+    let mut shared = AudioShared::default();
     for n in 0..MAX_VOICES as u8 {
         rig.inst.handle(on(0, 60 + n), &shared);
     }
@@ -713,19 +713,33 @@ fn sound_change_mid_chord_stays_in_budget() {
             )));
 }
 
-/// Part 1 on a lone sine, cheap enough that a chord fills the pool at rev
-/// V (eight routed INITs do not fit its budget).
-fn sine_shared() -> AudioShared {
-    let mut shared = AudioShared::default();
-    shared.parts[0].params.algo = AlgoParams::single(WaveId::W1);
-    shared
+/// ADR 0040, 0049: eight held INIT notes all sound at rev V's budget.
+#[test]
+fn eight_init_voices_fit_rev_v() {
+    let mut rig = Rig::rev_v();
+    let shared = AudioShared::default();
+    for n in 0..MAX_VOICES as u8 {
+        rig.inst.handle(on(0, 60 + n), &shared);
+    }
+    for _ in 0..4 {
+        rig.render(&shared);
+    }
+    let a = rig.inst.allocator();
+    assert_eq!(MAX_VOICES, 8);
+    assert_eq!(a.slots().iter().filter(|s| !s.is_free()).count(), 8);
+    let budget = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost();
+    assert!(
+        a.sounding_cost() + FxBus::COST <= budget,
+        "{:?}",
+        a.sounding_cost()
+    );
 }
 
-/// Blocks after a lone note-off (note 60, a lone sine) until the voice's
+/// Blocks after a lone note-off (note 60, default Sound) until the voice's
 /// engine goes quiet and the allocator frees it.
 fn blocks_until_free() -> usize {
     let mut rig = Rig::new();
-    let shared = sine_shared();
+    let shared = AudioShared::default();
     rig.inst.handle(on(0, 60), &shared);
     for _ in 0..20 {
         rig.render(&shared);
@@ -752,7 +766,7 @@ fn blocks_until_free() -> usize {
 fn stealing_a_releasing_voice_does_not_free_the_new_note() {
     let n = blocks_until_free();
     assert!(n > 2);
-    let mut shared = sine_shared();
+    let mut shared = AudioShared::default();
     shared.parts[1].params = ParamSnapshot::for_engine(EngineType::Modal);
     for (after_off, held) in [n - 2, n - 1, n, n + 1]
         .into_iter()

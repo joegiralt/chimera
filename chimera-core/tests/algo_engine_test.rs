@@ -524,3 +524,49 @@ fn init_algorithms_differ() {
     let (t1, a1) = (c[AlgoId::T1.get() as usize], c[AlgoId::A1.get() as usize]);
     assert!(t1 - a1 > 2.0, "T1 {t1:.2}, A1 {a1:.2} × f0");
 }
+
+/// RMS of the last ten periods of A4 (1091 samples) in `s`.
+fn a4_rms(s: &[f32]) -> f64 {
+    let t = &s[s.len() - 1091..];
+    (t.iter().map(|&x| (x as f64).powi(2)).sum::<f64>() / t.len() as f64).sqrt()
+}
+
+/// The output scale is continuous in a carrier's gain: operator 2 (A1, a
+/// second carrier) fading through LEVEL 0 moves operator 1 by nothing
+/// audible, where a count of sounding carriers stepped it 3 dB.
+#[test]
+fn the_output_scale_is_continuous_as_a_carrier_fades_out() {
+    let mut p = sines(stack(AlgoId::A1, AlgoId::A1, 0), 0);
+    (p.ops[0].level, p.ops[1].level) = (99, 99);
+    let mut e = AlgoEngine::new();
+    e.note_on(MidiNote::A4, Velocity::DEFAULT, &p, SR);
+    let mut blk = [0.0; BLOCK_SIZE];
+    let db: Vec<f64> = [2.0f32, 1.0, 0.5, 0.0]
+        .iter()
+        .map(|&l| {
+            let mut live = AlgoLive::from_params(&p);
+            live.level[1] = l;
+            let mut out = Vec::new();
+            for _ in 0..40 {
+                e.render(&mut blk, &p, &live, SR);
+                out.extend_from_slice(&blk);
+            }
+            20.0 * a4_rms(&out).log10()
+        })
+        .collect();
+    for w in db.windows(2) {
+        assert!((w[1] - w[0]).abs() < 0.01, "{db:?} dB");
+    }
+}
+
+/// A soft note under an operator's VELOCITY never makes another carrier
+/// louder (INIT on A1, operator 2 a quiet carrier at 2 × f0).
+#[test]
+fn a_soft_note_never_makes_another_carrier_louder() {
+    let mut p = AlgoParams::default();
+    (p.alg_a, p.alg_b) = (AlgoId::A1.get(), AlgoId::A1.get());
+    (p.ops[1].coarse, p.ops[1].level, p.ops[1].velocity) = (8, 20, 7);
+    let loud = a4_rms(&render_with(&p, 69, 127, 60, |_, _| {}));
+    let soft = a4_rms(&render_with(&p, 69, 1, 60, |_, _| {}));
+    assert!(soft <= loud * (1.0 + 1e-4), "soft {soft}, loud {loud}");
+}

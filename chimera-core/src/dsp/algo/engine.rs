@@ -8,7 +8,7 @@ use crate::dsp::algo::algorithms::{ALGORITHMS, AlgoId, plan};
 use crate::dsp::algo::env::{EnvCoefs, EnvRates, OpEnv};
 use crate::dsp::algo::kernel::{Kernel, KernelBlock, OpBlock, SAMPLE_SCALE};
 use crate::dsp::algo::math::exp2;
-use crate::dsp::algo::morph::{Morph, Sounding, carrier_norm, incoming};
+use crate::dsp::algo::morph::{Morph, carrier_norm, incoming};
 use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::algo::plan::{EvalPlan, MAX_EDGES, OPS};
 use crate::dsp::algo::tx::{FEEDBACK_CYCLES, detune_factor, level_gain, ratio};
@@ -192,14 +192,14 @@ impl AlgoEngine {
         self.note = note;
         self.velocity = velocity.unit();
         let m = Morph::from_param(live.morph);
+        let level = level_gains(&live);
         if !self.active {
             self.adopt_alg(p);
             self.swap = Swap::Idle;
             self.env = [OpEnv::IDLE; OPS];
             self.morph = m.get();
-            self.norm = carrier_norm(&self.plan, m, self.sounding(p, &live));
+            self.norm = carrier_norm(&self.plan, m, &level);
         }
-        let level = level_gains(&live);
         let cycles = self.cycles(p, sr);
         for i in 0..OPS {
             self.rates[i] = p.ops[i].rates();
@@ -270,7 +270,8 @@ impl AlgoEngine {
                 xfade_to,
             }
         });
-        let norm = carrier_norm(&self.plan, m, self.sounding(p, live)) * self.alg_duck();
+        // LEVEL gains, not the note's: velocity never moves another carrier.
+        let norm = carrier_norm(&self.plan, m, &level) * self.alg_duck();
         let blk = KernelBlock {
             plan: &self.plan,
             ops,
@@ -313,12 +314,6 @@ impl AlgoEngine {
     ) -> f32 {
         let bandwidth = op_cycles(cycles, p, i) * sr * (1.0 + incoming(&self.plan, m, i, level));
         mip_position(bandwidth)
-    }
-
-    /// The operators the patch has sounding, before any duck: a wave swap
-    /// must not move the other carriers' level.
-    fn sounding(&self, p: &AlgoParams, live: &AlgoLive) -> Sounding {
-        Sounding::from_gains(&core::array::from_fn(|i| self.target_gain(p, live, i)))
     }
 
     fn target_gain(&self, p: &AlgoParams, live: &AlgoLive, i: usize) -> f32 {

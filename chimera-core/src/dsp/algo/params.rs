@@ -151,20 +151,22 @@ pub struct AlgoParams {
     pub ops: [AlgoOpParams; OPS],
 }
 
-/// INIT's operators 2–6 (ADR 0049). At 72 T1 keeps a strong fundamental
-/// (0.39, beside 0.33 0.21 0.48 for harmonics 2–4); 66–70 all but cancel it
-/// and INIT reads an octave up.
+/// INIT's operators 2–4 (ADR 0049). At 72 T1's stack keeps a strong
+/// fundamental (0.60, beside 0.40 0.34 0.66 for harmonics 2–4); 66–70 all
+/// but cancel it and INIT reads an octave up.
 const INIT_LEVEL: u8 = 72;
+/// Operators routed on INIT: four, so eight INIT voices fit rev V (ADR 0040).
+const INIT_OPS: usize = 4;
 const INIT_A: AlgoId = AlgoId::T1;
 const INIT_B: AlgoId = AlgoId::A1;
 
 impl Default for AlgoParams {
-    /// INIT (ADR 0049): every operator sounding at ratio 1, so each
+    /// INIT (ADR 0049): operators 1–4 sounding at ratio 1, so each
     /// algorithm is its own timbre, and ALG B is A1, so MORPH is live: from
-    /// T1's FM stacks down to their clean additive twin.
+    /// T1's four-deep stack down to its clean additive twin.
     fn default() -> Self {
         let mut p = Self::single(WaveId::W1);
-        for o in &mut p.ops[1..] {
+        for o in &mut p.ops[1..INIT_OPS] {
             o.level = INIT_LEVEL;
         }
         (p.alg_a, p.alg_b) = (INIT_A.get(), INIT_B.get());
