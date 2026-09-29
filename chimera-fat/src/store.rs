@@ -3,7 +3,7 @@
 //! mapped here, and a device error re-inits the card.
 
 use crate::blocks::{BLOCK, Blocks, FsError};
-use crate::fat::FatCache;
+use crate::fat::{FatCache, Stale};
 use crate::fs::Fs;
 use crate::volume::{Layout, first_partition, layout};
 use chimera_hal::store::{ByteSink, Dir, FileName, ReadSink, Store, StoreError, VolumeId};
@@ -129,6 +129,24 @@ impl<D: BlockDevice> Blocks for Part<'_, D> {
     }
 }
 
+/// A value that holds only for the volume it was taken on.
+struct Keyed<T>(Option<(VolumeId, T)>);
+
+impl<T> Keyed<T> {
+    const fn new() -> Self {
+        Self(None)
+    }
+
+    /// Takes the value if it is `id`'s; another volume's is dropped.
+    fn for_volume(&mut self, id: VolumeId) -> Option<T> {
+        self.0.take().filter(|(of, _)| *of == id).map(|(_, v)| v)
+    }
+
+    fn set(&mut self, id: VolumeId, v: T) {
+        self.0 = Some((id, v));
+    }
+}
+
 /// A FAT16/FAT32 card behind `Store`. Its RAM: one block buffer, the FAT
 /// cache, and, each for the volume it was taken on, the allocator's hint
 /// and a FAT sector FAT 2 missed.
@@ -136,8 +154,8 @@ pub struct FatStore<D: Medium> {
     dev: D,
     buf: [u8; BLOCK],
     fat: FatCache,
-    hint: Option<(VolumeId, u32)>,
-    stale: Option<(VolumeId, u32)>,
+    hint: Keyed<u32>,
+    stale: Keyed<Stale>,
 }
 
 type FsResult<T, D> = Result<T, FsError<PartError<<D as BlockDevice>::Error>>>;
@@ -148,8 +166,8 @@ impl<D: Medium> FatStore<D> {
             dev,
             buf: [0; BLOCK],
             fat: FatCache::new(),
-            hint: None,
-            stale: None,
+            hint: Keyed::new(),
+            stale: Keyed::new(),
         }
     }
 
@@ -202,10 +220,8 @@ impl<D: Medium> FatStore<D> {
         if now != vol {
             return Err(StoreError::VolumeChanged(now));
         }
-        let ours =
-            |kept: Option<(VolumeId, u32)>| kept.filter(|&(id, _)| id == now).map(|(_, v)| v);
-        let mut hint = ours(self.hint);
-        self.fat.stale = ours(self.stale);
+        let mut hint = self.hint.for_volume(now);
+        self.fat.keep_stale(self.stale.for_volume(now));
         let mut part = Part {
             dev: &self.dev,
             lba,
@@ -218,8 +234,12 @@ impl<D: Medium> FatStore<D> {
             &mut self.buf,
             &mut hint,
         ));
-        self.hint = hint.map(|c| (now, c));
-        self.stale = self.fat.stale.take().map(|s| (now, s));
+        if let Some(c) = hint {
+            self.hint.set(now, c);
+        }
+        if let Some(s) = self.fat.take_stale() {
+            self.stale.set(now, s);
+        }
         r.map_err(|e| match e {
             FsError::Dev(PartError::Dev(e)) => self.fault(&e),
             FsError::Dev(PartError::Outside) | FsError::Corrupt => StoreError::Corrupt,

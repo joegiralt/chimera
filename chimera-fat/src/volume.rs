@@ -423,8 +423,11 @@ pub fn layout(bs: &[u8; SECTOR], part: Partition) -> Result<(Layout, VolumeId), 
         {
             return bad;
         }
-        // One active FAT the others don't follow: FAT 1 may be stale, and
-        // every write goes to every copy.
+        // Mirroring off: only the active FAT (bits 0-3) is the card's. With
+        // FAT 1 active it is authoritative and writing every copy would be
+        // harmless, but such cards are rare, and refusing every one, with a
+        // message that says to reformat, is simpler and safer than a second
+        // write mode. With another FAT active, FAT 1 may be stale.
         if u16_at(bs, BPB_EXT_FLAGS) & MIRRORING_OFF != 0 {
             return Err(Unsupported::FatNotMirrored);
         }
