@@ -9,7 +9,7 @@ use chimera_core::factory::{FACTORY_LEN, factory_sound};
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
 use chimera_core::storage::FileError;
-use common::codec_util::{decode, decode_into, encode, fix_crc};
+use common::codec_util::{decode, decode_into, encode, fix_crc, record_offsets};
 use common::{fnv1a, render_sound};
 
 /// The v1 corpus: name, and the Sound it was written from.
@@ -32,9 +32,20 @@ fn fixture(name: &str) -> Vec<u8> {
     std::fs::read(path(name)).unwrap_or_else(|e| panic!("{name}: {e}"))
 }
 
+/// Creates `path` with `bytes`, refusing an existing file: re-recording a
+/// frozen fixture means deleting it on purpose.
+fn write_new(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)?
+        .write_all(bytes)
+}
+
 /// Run once with `FIXTURE_WRITE=1 cargo test -p chimera-core --test
-/// codec_compat_test -- --ignored`, then commit the files. Frozen from
-/// there on: a later change never rewrites them.
+/// codec_compat_test -- --ignored --nocapture`, then commit the files and
+/// paste the printed rows into the tables. Frozen from there on.
 #[test]
 #[ignore]
 fn write_v1_fixtures() {
@@ -43,10 +54,56 @@ fn write_v1_fixtures() {
         "FIXTURE_WRITE=1"
     );
     for (name, s) in sources() {
-        std::fs::write(path(&name), encode(&s)).unwrap();
-        let d = decode(&encode(&s)).unwrap();
+        let bytes = encode(&s);
+        write_new(&path(&name), &bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let d = decode(&bytes).unwrap();
         let h = fnv1a(&render_sound(&d.params, &d.mod_state));
-        println!("    (\"{name}\", {h:#018x}),");
+        println!("render (\"{name}\", {h:#018x}),");
+        println!(
+            "bytes  (\"{name}\", {}, {:#018x}),",
+            bytes.len(),
+            fnv1a_bytes(&bytes)
+        );
+    }
+}
+
+#[test]
+fn write_new_refuses_an_existing_file() {
+    let p = std::env::temp_dir().join(format!("chimera_fixture_{}", std::process::id()));
+    write_new(&p, b"x").unwrap();
+    let e = write_new(&p, b"y").unwrap_err();
+    assert_eq!(e.kind(), std::io::ErrorKind::AlreadyExists);
+    assert_eq!(std::fs::read(&p).unwrap(), b"x");
+    std::fs::remove_file(&p).unwrap();
+}
+
+fn fnv1a_bytes(b: &[u8]) -> u64 {
+    b.iter().fold(0xcbf2_9ce4_8422_2325, |h, &c| {
+        (h ^ u64::from(c)).wrapping_mul(0x0000_0100_0000_01b3)
+    })
+}
+
+/// Each fixture's length and FNV-1a over its bytes: a file regenerated in a
+/// newer format fails here, whatever it decodes to.
+const FIXTURE_BYTES: &[(&str, usize, u64)] = &[
+    ("factory_0.snd", 1159, 0x0438b772728c7c2d),
+    ("factory_1.snd", 1159, 0xadc0bd6040a10c81),
+    ("factory_2.snd", 1159, 0xa1e317d09c0bffd4),
+    ("factory_3.snd", 1159, 0x4170cb887c528b4e),
+    ("factory_4.snd", 1159, 0x03dd31d4fea2fd6c),
+    ("factory_5.snd", 1159, 0x971f22e85f225417),
+    ("factory_6.snd", 1175, 0x18f8e86f142c7fcb),
+    ("factory_7.snd", 1159, 0x44cac2e23cd1f2d9),
+    ("init_algo.snd", 1159, 0x09c128653fac1423),
+    ("init_modal.snd", 1159, 0xa3012ac211ae8e98),
+];
+
+#[test]
+fn v1_fixture_bytes_are_frozen() {
+    assert_eq!(FIXTURE_BYTES.len(), sources().len());
+    for &(name, len, h) in FIXTURE_BYTES {
+        let f = fixture(name);
+        assert_eq!((f.len(), fnv1a_bytes(&f)), (len, h), "{name}");
     }
 }
 
@@ -91,34 +148,54 @@ fn v1_fixtures_equal_factory() {
     }
 }
 
-/// The Engine record ends at 28 + 4 + 1.
-const AFTER_ENGINE: usize = 33;
-
-fn with_record(mut f: Vec<u8>, tag: u16, len: usize) -> Vec<u8> {
+/// `f` with an unknown record of `len` payload bytes inserted at `at`.
+fn with_record(f: &[u8], at: usize, tag: u16, len: usize) -> Vec<u8> {
+    let mut f = f.to_vec();
     let mut rec = tag.to_le_bytes().to_vec();
     rec.extend((len as u16).to_le_bytes());
     rec.extend(std::iter::repeat_n(0xA5, len));
-    f.splice(AFTER_ENGINE..AFTER_ENGINE, rec);
+    f.splice(at..at, rec);
     fix_crc(&mut f);
     f
+}
+
+/// Every record boundary after `Engine` (the first record), and the end.
+fn after_engine(f: &[u8]) -> Vec<usize> {
+    record_offsets(f)[1..].to_vec()
 }
 
 #[test]
 fn unknown_non_critical_skipped() {
     for (name, s) in sources() {
-        let d = decode(&with_record(fixture(&name), 0x0070, 40)).unwrap();
-        assert!(d.bits_eq(&s), "{name}");
+        let f = fixture(&name);
+        for at in after_engine(&f) {
+            let d = decode(&with_record(&f, at, 0x0070, 40)).unwrap();
+            assert!(d.bits_eq(&s), "{name} at {at}");
+        }
+        // Before Engine no record is understood yet.
+        let mut t = Sound::neutral(EngineType::Algo);
+        let before = record_offsets(&f)[0];
+        let f = with_record(&f, before, 0x0070, 40);
+        assert_eq!(decode_into(&mut t, &f), Err(FileError::Corrupt), "{name}");
     }
 }
 
 #[test]
 fn unknown_critical_greys() {
-    let f = with_record(fixture("factory_0.snd"), 0x8070, 40);
-    let mut t = factory_sound(3).unwrap();
-    assert_eq!(decode_into(&mut t, &f), Err(FileError::NeedsNewerFirmware));
-    assert!(t.bits_eq(&factory_sound(3).unwrap()));
+    for (name, _) in sources() {
+        let f = fixture(&name);
+        for at in record_offsets(&f) {
+            let f = with_record(&f, at, 0x8070, 40);
+            let mut t = factory_sound(3).unwrap();
+            assert_eq!(
+                decode_into(&mut t, &f),
+                Err(FileError::NeedsNewerFirmware),
+                "{name} at {at}"
+            );
+            assert!(t.bits_eq(&factory_sound(3).unwrap()), "{name} at {at}");
+        }
+    }
 }
-
 #[test]
 fn truncated_bad_crc_bad_magic_leave_target() {
     for (name, _) in sources() {
