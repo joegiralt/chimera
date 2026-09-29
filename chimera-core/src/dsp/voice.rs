@@ -264,7 +264,7 @@ impl Voice {
     }
 
     /// Idle, and no note waits for it: a Sympathetic slot rests and gives
-    /// its lease back, and any promise it held is freed. For an engine
+    /// its lease back, and any promise or claim it held is cancelled. For an engine
     /// that went quiet on its own; every other way to idle rebuilds.
     pub fn rest(&mut self, pool: &mut SymPool) {
         debug_assert!(!self.active);
@@ -272,7 +272,7 @@ impl Voice {
         if kind != kind.resting() {
             let _ = self.rebuild(kind.resting(), pool);
         }
-        pool.alloc_mut().forfeit(self.id);
+        pool.alloc_mut().cancel(self.id);
     }
 
     /// `params` plays another engine or Modal model than the slot holds.
@@ -322,8 +322,8 @@ impl Voice {
             return;
         }
         if kind != SlotKind::Modal(ResonatorMode::Sympathetic) {
-            // A promise made for a note since replaced doesn't outlive it.
-            pool.alloc_mut().forfeit(self.id);
+            // A promise or claim made for a note since replaced doesn't outlive it.
+            pool.alloc_mut().cancel(self.id);
         }
         if !self.active {
             self.filter.hold(); // a fresh note: no ramp from the last note's cutoff

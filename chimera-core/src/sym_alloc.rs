@@ -258,13 +258,29 @@ impl SymAlloc {
         (0..SYM_SLOTS).any(|s| self.waiter(s) == Some(voice))
     }
 
-    /// Frees `voice`'s promise, if it has one.
-    pub fn forfeit(&mut self, voice: VoiceIdx) {
-        if let Some(s) = self.slot_of(voice)
-            && matches!(self.slots[s], State::Promised { .. })
-        {
-            self.slots[s] = State::Free;
-        }
+    /// `voice` wants no slot now: its promise is freed, and a lent slot
+    /// bound for it goes free when its lease comes back. Its own lease, if
+    /// it holds one, is untouched: only `give_back` ends that.
+    pub fn cancel(&mut self, voice: VoiceIdx) {
+        let Some(s) = self.slot_of(voice) else {
+            return;
+        };
+        self.slots[s] = match self.slots[s] {
+            State::Promised { .. } => State::Free,
+            State::Lent { voice: u, age, .. } if u != voice => State::Lent {
+                voice: u,
+                age,
+                then: Then::Free,
+            },
+            other => other,
+        };
+    }
+
+    /// Some slot is promised to `voice`.
+    pub fn promised(&self, voice: VoiceIdx) -> bool {
+        self.slots
+            .iter()
+            .any(|s| matches!(*s, State::Promised { voice: v, .. } if v == voice))
     }
 
     /// The voice a slot is promised or lent to.
@@ -561,14 +577,36 @@ mod tests {
     }
 
     #[test]
-    fn forfeit_frees_only_a_promise() {
+    fn cancel_frees_a_promise_and_a_claim_never_a_lease() {
+        let mut a = SymAlloc::new();
+        let mut ls = hold(&mut a, &[0, 1, 2, 3]);
+        assert_eq!(a.restart(v(4), 5), claimed(Some(0)));
+        assert!(a.awaits(v(4)));
+        a.cancel(v(4));
+        assert!(!a.awaits(v(4)), "the claim is gone");
+        a.cancel(v(1));
+        assert_eq!(a.lent(), 4, "its own lease is untouched");
+        a.give_back(ls.remove(0));
+        assert_eq!(a.free(), 1, "the evicted slot comes back free");
+        assert!(!a.promised(v(4)) && !a.promised(v(0)));
+
+        assert_eq!(a.place(Some(v(5)), 6), on(5));
+        assert!(a.promised(v(5)));
+        a.cancel(v(5));
+        assert!(!a.promised(v(5)));
+        assert_eq!(a.free(), 1);
+        ls.into_iter().for_each(|l| a.give_back(l));
+    }
+
+    #[test]
+    fn cancel_frees_only_a_promise_of_its_own() {
         let mut a = SymAlloc::new();
         assert_eq!(a.place(Some(v(0)), 1), on(0));
         assert_eq!(a.place(Some(v(1)), 2), on(1));
         let l1 = a.lend(v(1)).expect("promised");
-        a.forfeit(v(1));
+        a.cancel(v(1));
         assert_eq!((a.lent(), a.free()), (1, 2));
-        a.forfeit(v(0));
+        a.cancel(v(0));
         assert_eq!(a.free(), 3);
         a.give_back(l1);
     }
@@ -596,7 +634,7 @@ mod tests {
         let mut held: Vec<Lease> = Vec::new();
         let mut age = 0u32;
         // What the walk reached: it must reach each.
-        let (mut steals, mut evicts, mut dropped) = (0, 0, 0);
+        let (mut steals, mut evicts, mut dropped, mut cancels) = (0, 0, 0, 0);
         for step in 0..100_000 {
             age += 1;
             let voice = v(next() as usize % MAX_VOICES);
@@ -607,6 +645,7 @@ mod tests {
             let ages: Vec<_> = ages.collect();
             let mut drops = None;
             let mut returned = None;
+            let mut cancelled = None;
             match next() % 5 {
                 0 => {
                     let pick = (next() % 8 != 0).then_some(voice);
@@ -644,7 +683,12 @@ mod tests {
                     a.give_back(lease);
                 }
                 3 => {}
-                _ => a.forfeit(voice),
+                _ => {
+                    a.cancel(voice);
+                    assert!(!a.awaits(voice) && !a.promised(voice), "step {step}");
+                    cancelled = Some(voice);
+                    cancels += 1;
+                }
             }
 
             if let Some(d) = drops {
@@ -667,7 +711,7 @@ mod tests {
                         matches!(a.slots[s.index()], State::Promised { voice, .. } if voice == u)
                     });
                     assert!(
-                        drops == Some(u) || promised,
+                        drops == Some(u) || promised || cancelled == Some(u),
                         "step {step}: {u:?} lost unreported"
                     );
                 }
@@ -677,8 +721,8 @@ mod tests {
         held.into_iter().for_each(|l| a.give_back(l));
         assert_eq!(a.lent(), 0);
         assert!(
-            steals > 0 && evicts > 0 && dropped > 0,
-            "{steals} {evicts} {dropped}"
+            steals > 0 && evicts > 0 && dropped > 0 && cancels > 0,
+            "{steals} {evicts} {dropped} {cancels}"
         );
     }
 }
