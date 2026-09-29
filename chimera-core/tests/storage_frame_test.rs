@@ -251,11 +251,44 @@ fn bad_crc() {
     for i in [0, 8, 32, 34, bytes.len() - 1] {
         let mut b = bytes.clone();
         b[i] ^= 0x01;
-        let got = read(&b, 512);
-        if i == 0 {
-            assert_eq!(got, Err(FileError::BadMagic));
-        } else {
-            assert_eq!(got, Err(FileError::BadCrc), "byte {i}");
+        assert_eq!(read(&b, 512), Err(FileError::BadCrc), "byte {i}");
+    }
+}
+
+/// Every verdict waits for the CRC: a flipped bit is torn, never a verdict
+/// that would shadow the other side.
+#[test]
+fn stale_crc_beats_every_verdict() {
+    let bytes = file(&[(RecordTag::Block, vec![1, 2, 3])]);
+    let flip = |i: usize, x: u8| {
+        let mut b = bytes.clone();
+        b[i] ^= x;
+        b
+    };
+    // Tag 0x0001 → 0x8001, an unknown critical tag.
+    assert_eq!(read(&flip(29, 0x80), 1), Err(FileError::BadCrc));
+    // Version 1 → 3.
+    assert_eq!(read(&flip(4, 0x02), 1), Err(FileError::BadCrc));
+    // Length 3 → 0x0103, past the end.
+    assert_eq!(read(&flip(31, 0x01), 1), Err(FileError::BadCrc));
+    // Kind, flags and name.
+    for i in [6, 7, 12] {
+        assert_eq!(read(&flip(i, 0x40), 7), Err(FileError::BadCrc), "byte {i}");
+    }
+}
+
+#[test]
+fn every_single_bit_flip_is_torn() {
+    let bytes = file(&[
+        (RecordTag::Engine, vec![2]),
+        (RecordTag::Block, (0..200).map(|i| i as u8).collect()),
+        (RecordTag::LastProject, 42u32.to_le_bytes().to_vec()),
+    ]);
+    for bit in 0..bytes.len() * 8 {
+        let mut b = bytes.clone();
+        b[bit / 8] ^= 1 << (bit % 8);
+        for chunk in [1, 512] {
+            assert_eq!(read(&b, chunk), Err(FileError::BadCrc), "bit {bit}");
         }
     }
 }
@@ -319,13 +352,24 @@ fn bad_name() {
 fn errors_stick_and_callbacks_can_stop() {
     let bytes = file(&[(RecordTag::Block, vec![1])]);
     let mut f = Framer::new(bytes.len() as u32).unwrap();
-    let stop = f.push(&bytes, &mut |e| match e {
-        Event::Record(..) => Err(FileError::Bounds),
+    let records = std::cell::Cell::new(0);
+    let (head, tail) = bytes.split_at(34);
+    let mut on = |e: Event<'_>| match e {
+        Event::Record(..) => {
+            records.set(records.get() + 1);
+            Err(FileError::Bounds)
+        }
         Event::Header(_) => Ok(()),
-    });
-    assert_eq!(stop, Err(FileError::Bounds));
-    assert_eq!(f.push(&[], &mut |_| Ok(())), Err(FileError::Bounds));
+    };
+    // The verdict is deferred to `finish`, which checks the CRC first.
+    assert_eq!(f.push(head, &mut on), Ok(()));
+    assert_eq!(f.push(tail, &mut on), Ok(()));
+    assert_eq!(records.get(), 1);
     assert_eq!(f.finish(), Err(FileError::Bounds));
+    // Bytes past the length stick.
+    assert_eq!(f.push(&[0], &mut on), Err(FileError::Corrupt));
+    assert_eq!(f.push(&[], &mut on), Err(FileError::Corrupt));
+    assert_eq!(f.finish(), Err(FileError::Corrupt));
 }
 
 #[test]
@@ -342,7 +386,7 @@ fn torn_errors_and_messages() {
         Corrupt,
     ];
     for e in all {
-        assert_eq!(e.is_torn(), matches!(e, Truncated | BadMagic | BadCrc));
+        assert_eq!(e.is_torn(), matches!(e, Truncated | BadCrc));
         let m = e.message();
         assert!(!m.is_empty() && m.bytes().all(|b| !b.is_ascii_lowercase()));
     }

@@ -190,12 +190,11 @@ impl FileError {
         }
     }
 
-    /// What a cut write leaves: the A/B reader treats the side as torn.
+    /// A side a cut write could have left: its bytes fail the CRC, or stop
+    /// short of the length. Every other error is a verdict on bytes whose CRC
+    /// matched, because the framer defers every verdict until the CRC is known.
     pub fn is_torn(self) -> bool {
-        matches!(
-            self,
-            FileError::Truncated | FileError::BadMagic | FileError::BadCrc
-        )
+        matches!(self, FileError::Truncated | FileError::BadCrc)
     }
 }
 
@@ -211,18 +210,34 @@ pub enum Event<'a> {
 enum State {
     Header,
     RecordHead,
-    RecordBody { tag: RecordTag, len: usize },
-    Skip { len: usize },
+    RecordBody {
+        tag: RecordTag,
+        len: usize,
+    },
+    /// Hashed, not parsed: an unknown record, or the rest of the body once a
+    /// verdict is in.
+    Skip {
+        len: usize,
+    },
     Trailer,
     Done,
     Failed(FileError),
 }
 
 /// Checks a file pushed in chunks of any size, handing out the header, then
-/// each record. The CRC is only known at `finish`, so a caller applies what it
-/// heard only after `finish` is Ok (a second pass).
+/// each record.
+///
+/// Events are provisional: the CRC is only known at `finish`, so a decoder
+/// applies what it heard only after `finish` is Ok (a second pass). Every
+/// verdict waits for the CRC too. The first error, the framer's or the
+/// callback's, stops the events; the rest of the body is hashed unparsed, and
+/// `finish` gives `BadCrc` if the CRC fails, else that error. So one flipped
+/// bit reads as torn, never as a verdict (`NeedsNewerFirmware`) that would
+/// shadow the other A/B side.
 pub struct Framer {
     state: State,
+    /// The first error; `finish` gives it once the CRC matches.
+    verdict: Option<FileError>,
     crc: Crc32,
     pos: usize,
     file_len: usize,
@@ -234,7 +249,8 @@ pub struct Framer {
 }
 
 impl Framer {
-    /// `file_len` is the length the store reports.
+    /// `file_len` is the length the store reports. Under 32 B there is no
+    /// header and trailer to check, so the file is `Truncated`: torn.
     pub fn new(file_len: u32) -> Result<Self, FileError> {
         let file_len = file_len as usize;
         if file_len < HEADER_LEN + TRAILER_LEN {
@@ -242,6 +258,7 @@ impl Framer {
         }
         Ok(Framer {
             state: State::Header,
+            verdict: None,
             crc: Crc32::new(),
             pos: 0,
             file_len,
@@ -251,7 +268,9 @@ impl Framer {
         })
     }
 
-    /// Errors stick: once one is returned, every later call returns it.
+    /// Errs only on bytes past `file_len` (`Corrupt`, sticky): the stream
+    /// disagrees with its own length. Every verdict on the file comes from
+    /// `finish`.
     pub fn push(
         &mut self,
         chunk: &[u8],
@@ -267,19 +286,28 @@ impl Framer {
         r
     }
 
-    /// Ok when exactly `file_len` bytes arrived and the trailer matches.
+    /// `Truncated` short of `file_len`; else `BadCrc` if the trailer doesn't
+    /// match; else the first deferred error, if any.
     pub fn finish(&self) -> Result<(), FileError> {
         match self.state {
             State::Failed(e) => Err(e),
             State::Done => {
                 let t = &self.head[..TRAILER_LEN];
-                if u32::from_le_bytes([t[0], t[1], t[2], t[3]]) == self.crc.finish() {
-                    Ok(())
-                } else {
-                    Err(FileError::BadCrc)
+                if u32::from_le_bytes([t[0], t[1], t[2], t[3]]) != self.crc.finish() {
+                    return Err(FileError::BadCrc);
                 }
+                self.verdict.map_or(Ok(()), Err)
             }
             _ => Err(FileError::Truncated),
+        }
+    }
+
+    /// Record the first verdict, then hash the rest of the body unparsed.
+    fn defer(&mut self, e: FileError) {
+        self.verdict.get_or_insert(e);
+        match self.body_end() - self.pos {
+            0 => self.start(State::Trailer),
+            len => self.start(State::Skip { len }),
         }
     }
 
@@ -315,8 +343,10 @@ impl Framer {
             }
             self.pos += n;
             self.have += n;
-            if self.have == unit {
-                self.complete(on)?;
+            if self.have == unit
+                && let Err(e) = self.complete(on)
+            {
+                self.defer(e);
             }
         }
         Ok(())
