@@ -7,7 +7,7 @@ use crate::addr::{BlockRef, Blocks, ParamAddr};
 use crate::block::apply_offset;
 use crate::dsp::algo::engine::AlgoLive;
 use crate::dsp::drive::Drive;
-use crate::dsp::engines::{EngineSlot, Rebuilt, SlotKind};
+use crate::dsp::engines::{EngineSlot, SlotKind};
 use crate::dsp::envelope::{EnvMods, Envelope};
 use crate::dsp::filter::SvfFilter;
 use crate::dsp::lfo::Lfo;
@@ -248,9 +248,14 @@ impl Voice {
     }
 
     /// The one path to `slot.rebuild`, counted.
-    fn rebuild(&mut self, kind: SlotKind, pool: &mut SymPool) -> Rebuilt {
+    fn rebuild(&mut self, kind: SlotKind, pool: &mut SymPool) {
         self.rebuilds = self.rebuilds.wrapping_add(1);
         self.slot.rebuild(kind, pool.alloc_mut(), self.id)
+    }
+
+    /// Its slot rings a pool set (Sympathetic with a halo).
+    pub fn rings(&self) -> bool {
+        self.slot.rings()
     }
 
     /// The kind its slot holds.
@@ -264,13 +269,13 @@ impl Voice {
     }
 
     /// Idle, and no note waits for it: a Sympathetic slot rests and gives
-    /// its lease back, and any promise or claim it held is cancelled. For an engine
+    /// its lease back, and any promise it held is cancelled. For an engine
     /// that went quiet on its own; every other way to idle rebuilds.
     pub fn rest(&mut self, pool: &mut SymPool) {
         debug_assert!(!self.active);
         let kind = self.slot.kind();
         if kind != kind.resting() {
-            let _ = self.rebuild(kind.resting(), pool);
+            self.rebuild(kind.resting(), pool);
         }
         pool.alloc_mut().cancel(self.id);
     }
@@ -284,10 +289,17 @@ impl Voice {
         self.sample_rate
     }
 
+    /// A note on `params` needs its slot rebuilt: another engine or model,
+    /// or a bare Sympathetic slot whose new note was promised a set.
+    fn stale(&self, params: &ParamSnapshot, pool: &SymPool) -> bool {
+        self.switched(params) || (self.slot.is_bare() && pool.alloc().promised(self.id))
+    }
+
     /// A note-on on `params` starts now: the voice isn't fading, nor
-    /// sounding another engine or model (`note_on` then waits the fade).
-    pub fn starts_now(&self, params: &ParamSnapshot) -> bool {
-        self.fade == 0 && !(self.active && self.switched(params))
+    /// sounding a slot the note must rebuild (`note_on` then waits the
+    /// fade).
+    pub fn starts_now(&self, params: &ParamSnapshot, pool: &SymPool) -> bool {
+        self.fade == 0 && !(self.active && self.stale(params, pool))
     }
 
     /// The bytes a Sympathetic note-on here clears: pure, for the
@@ -308,7 +320,7 @@ impl Voice {
     ) -> bool {
         let replaced = self.after_fade == AfterFade::Note;
         self.held = true;
-        if self.fade > 0 || (self.active && self.switched(params)) {
+        if self.fade > 0 || (self.active && self.stale(params, pool)) {
             self.last_note = note;
             self.last_velocity = velocity;
             self.after_fade = AfterFade::Note;
@@ -326,17 +338,16 @@ impl Voice {
         params: &ParamSnapshot,
         pool: &mut SymPool,
     ) {
-        // Another engine or model starts clean, in place. Sympathetic
-        // without a slot doesn't start. The `Instrument` places every
-        // Sympathetic note before it triggers it, in `handle` and, for a
-        // note that waited across a switch, in `start`; so only a lone
-        // voice, driven without that placement, can meet it.
+        // Another engine or model starts clean, in place; so does a bare
+        // Sympathetic slot whose new note has a set. A Sympathetic note
+        // rings the set promised to its voice (the `Instrument` places each
+        // as it starts), or plays bare.
         let kind = SlotKind::of(params);
-        if self.switched(params) && self.rebuild(kind, pool) == Rebuilt::NoSlot {
-            return;
+        if self.stale(params, pool) {
+            self.rebuild(kind, pool);
         }
         if kind != SlotKind::Modal(ResonatorMode::Sympathetic) {
-            // A promise or claim made for a note since replaced doesn't outlive it.
+            // A promise made for a note since replaced doesn't outlive it.
             pool.alloc_mut().cancel(self.id);
         }
         if !self.active {
@@ -393,7 +404,8 @@ impl Voice {
         let (after, held) = (self.after_fade, self.held);
         let (note, velocity) = (self.last_note, self.last_velocity);
         let then_plays = after != AfterFade::Idle;
-        if self.reset(params, then_plays, pool) == Rebuilt::Built && then_plays {
+        self.reset(params, then_plays, pool);
+        if then_plays {
             // The slot holds `params`' kind, clean: `trigger` has none to rebuild.
             self.held = true;
             self.trigger(note, velocity, params, pool);
@@ -405,12 +417,11 @@ impl Voice {
 
     /// Back to the state `new` builds, in place: holding `params`' kind if
     /// a note follows, else its resting kind (no pool slot while idle).
-    fn reset(&mut self, params: &ParamSnapshot, then_plays: bool, pool: &mut SymPool) -> Rebuilt {
+    fn reset(&mut self, params: &ParamSnapshot, then_plays: bool, pool: &mut SymPool) {
         let kind = SlotKind::of(params);
-        let built = self.rebuild(if then_plays { kind } else { kind.resting() }, pool);
+        self.rebuild(if then_plays { kind } else { kind.resting() }, pool);
         // SAFETY: `self` is a valid, aligned, unaliased `Voice`.
         unsafe { Self::init_chain(self) }
-        built
     }
 
     /// Sounding: its engine is active and, with routes into VCA, one of
@@ -615,7 +626,7 @@ impl Voice {
                 self.fade = Self::FADE;
             } else {
                 // Silent, but the engine may still sound: back to fresh.
-                let _ = self.reset(params, false, pool);
+                self.reset(params, false, pool);
             }
         }
     }

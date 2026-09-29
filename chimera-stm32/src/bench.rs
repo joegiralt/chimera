@@ -11,7 +11,7 @@ use chimera_core::dsp::algo::params::AlgoParams;
 use chimera_core::dsp::algo::plan::{EvalPlan, OPS};
 use chimera_core::dsp::algo::tx::FEEDBACK_CYCLES;
 use chimera_core::dsp::algo::waves::WaveId;
-use chimera_core::dsp::engines::{EngineSlot, Rebuilt, SlotKind};
+use chimera_core::dsp::engines::{EngineSlot, SlotKind};
 use chimera_core::dsp::filter::FilterMode;
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus};
 use chimera_core::dsp::modal::{ModalEngine, ResonatorMode, SymPool};
@@ -224,7 +224,7 @@ const ROUTING: [RoutingRow; ROUTING_ROWS] = [
     ("MDL BOW", |p| modal(p, ResonatorMode::Bowed), STILL),
     ("MDL SYM", |p| modal(p, ResonatorMode::Sympathetic), STILL),
     ("MDL RES", |p| modal(p, ResonatorMode::Modal), STILL),
-    // MODE flipped every 4 blocks: restarts, steals and rests every flip.
+    // MODE flipped every 4 blocks: restarts and rests every flip.
     ("SWITCH", |p| modal(p, ResonatorMode::String), switch_storm),
 ];
 
@@ -475,44 +475,49 @@ fn time_rebuild() -> u32 {
     let sym = black_box(SlotKind::Modal(ResonatorMode::Sympathetic));
     let mut cycles = 0u32;
     for _ in 0..ROUNDS {
-        let _ = slot.rebuild(SlotKind::Algo, pool, voice);
+        slot.rebuild(SlotKind::Algo, pool, voice);
+        // Promised, as the `Instrument` places a note: it lends that slot.
+        pool.place(voice);
         let start = DWT::cycle_count();
-        let built = black_box(slot.rebuild(sym, pool, voice));
+        slot.rebuild(sym, pool, voice);
         cycles = cycles.wrapping_add(DWT::cycle_count().wrapping_sub(start));
-        // The pool is free each round: a `NoSlot` would time String.
-        assert_eq!(built, Rebuilt::Built);
+        black_box(&*slot);
+        // The pool is free each round: a bare build would time no lend.
+        assert!(slot.rings());
     }
-    let _ = slot.rebuild(SlotKind::Algo, pool, voice);
+    slot.rebuild(SlotKind::Algo, pool, voice);
     cycles / ROUNDS
 }
 
 /// A row's cycles per sample at 1..=`MAX_VOICES` notes, and how many
-/// voices sounded at the most notes.
+/// voices its per-voice figure spans: those that rang a Sympathetic set at
+/// the most notes, or with none ringing, those that sounded.
 #[derive(Clone, Copy)]
 struct Counts {
     cycles: [u32; MAX_VOICES],
-    sounding: usize,
+    spans: usize,
 }
 
 impl Default for Counts {
     fn default() -> Self {
         Self {
             cycles: [0; MAX_VOICES],
-            sounding: MAX_VOICES,
+            spans: MAX_VOICES,
         }
     }
 }
 
 impl Counts {
-    fn add(&mut self, notes: usize, (cycles, sounding): (u32, usize)) {
+    fn add(&mut self, notes: usize, (cycles, spans): (u32, usize)) {
         self.cycles[notes - 1] = cycles;
-        self.sounding = sounding;
+        self.spans = spans;
     }
 
-    /// The cost of a voice that sounds: from one note to as many as sound
-    /// (Sympathetic's pool caps them at 4; the notes past are stolen).
+    /// The cost of a voice that sounds, or for Sympathetic that rings:
+    /// from one note to as many as that (the pool rings at most 4; the
+    /// notes past play bare, cheaper, and would dilute the slope).
     fn per_voice(&self) -> u32 {
-        let k = self.sounding.clamp(2, MAX_VOICES);
+        let k = self.spans.clamp(2, MAX_VOICES);
         self.cycles[k - 1].saturating_sub(self.cycles[0]) / (k as u32 - 1)
     }
 }
@@ -526,7 +531,7 @@ fn hold(clocks: Clocks) {
 impl Rig<'_> {
     /// Voice `v` plays note `low + step * v`; `each` runs before every
     /// block, its time counted (a few cycles a block). Returns the cycles
-    /// per sample and the voices sounding at the end.
+    /// per sample and the voices its per-voice figure spans (`Counts`).
     #[inline(never)]
     fn time(
         &mut self,
@@ -561,7 +566,11 @@ impl Rig<'_> {
             inst.render(fx, &mut self.dac, shared, &mut self.scope);
         }
         let cycles = DWT::cycle_count().wrapping_sub(start);
-        (cycles / (TIMED_BLOCKS * BLOCK_SIZE as u32), inst.sounding())
+        let spans = match inst.ringing() {
+            0 => inst.sounding(),
+            ringing => ringing,
+        };
+        (cycles / (TIMED_BLOCKS * BLOCK_SIZE as u32), spans)
     }
 
     /// Cycles of `Instrument::handle` for one Sympathetic note-on of
@@ -868,8 +877,8 @@ fn voice_row(
 ) {
     line.clear();
     let _ = write!(line, "{label} /VOICE {}", counts.per_voice());
-    if counts.sounding < MAX_VOICES {
-        let _ = write!(line, " ({} V)", counts.sounding);
+    if counts.spans < MAX_VOICES {
+        let _ = write!(line, " ({} V)", counts.spans);
     }
     draw::text(display, &theme::FONT_VALUE, line.as_str(), 4, y, theme::INK);
     // One cell per count: the counts together overflow a `FmtBuf`.
