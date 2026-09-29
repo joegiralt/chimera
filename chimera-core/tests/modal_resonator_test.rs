@@ -19,7 +19,7 @@ const MODES: [ResonatorMode; 4] = [
 const BOW_MARGIN: f32 = 1.02;
 
 /// Each model, each setting at its min and max, C2 held 30 s: bounded, no
-/// growth, no DC. Bowed also at C3: its C2 is silent until #206's fix.
+/// growth, no DC at the output. Bowed also at C3: its C2 is silent until #206's fix.
 #[test]
 fn every_model_is_stable_at_every_extreme() {
     let sr = SR as usize;
@@ -50,8 +50,11 @@ fn every_model_is_stable_at_every_extreme() {
                             "{mode:?} {note} {} = {v}: grows",
                             s.label
                         );
+                        // Over 10 s: a high-passed output's 1 s mean is
+                        // its edge samples', up to about 1e-2.
+                        let tail = &out[out.len() - 10 * sr..];
                         assert!(
-                            (last.iter().sum::<f32>() / last.len() as f32).abs() < 1e-3,
+                            (tail.iter().sum::<f32>() / tail.len() as f32).abs() < 1e-3,
                             "{mode:?} {note} {} = {v}: DC",
                             s.label
                         );
@@ -64,8 +67,9 @@ fn every_model_is_stable_at_every_extreme() {
 
 /// STRING and the SYMP main string (halo bare), G1 to C7, DAMP longest and
 /// BRIGHT brightest, BODY off (its interim half-delay comb kills the odd
-/// partials until Task 8): the fundamental within ±2 cents. Whole-sample
-/// tuning fails it.
+/// partials until Task 8): the fundamental within ±2 cents, and at G1 and C3
+/// partials 2 to 4 within ±5 cents of its multiples. Whole-sample tuning
+/// fails the first; a DC blocker in the loop, the second.
 #[test]
 fn strings_are_in_tune() {
     let blocks = 3 * SR as usize / BLOCK_SIZE;
@@ -86,8 +90,17 @@ fn strings_are_in_tune() {
                     };
                     let f0 = note_to_freq(n) as f64;
                     let s = &out[SR as usize / 4..SR as usize * 5 / 4];
-                    let cents = 1200.0 * (fundamental_hz(s, f0) / f0).log2();
+                    let f1 = fundamental_hz(s, f0);
+                    let cents = 1200.0 * (f1 / f0).log2();
                     assert!(cents.abs() < 2.0, "{mode:?} note {n}: {cents:+.2} cents");
+                    // Harmonic, not just f0: partials 2..4 on multiples of it.
+                    if matches!(n, 31 | 48) {
+                        for k in 2..=4 {
+                            let h = k as f64 * f1;
+                            let off = 1200.0 * (fundamental_hz(s, h) / h).log2();
+                            assert!(off.abs() < 5.0, "{mode:?} note {n} h{k}: {off:+.2} cents");
+                        }
+                    }
                 }
             });
         }

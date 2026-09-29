@@ -4,17 +4,15 @@
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 
-use super::loop_parts::{Allpass1, DcBlocker, LoopGain, MIN_LINE, dc_phase_delay, split};
+use super::loop_parts::{Allpass1, LoopGain, MIN_LINE, split};
 use crate::dsp::xorshift_noise;
-use crate::hw::SAMPLE_RATE;
 
 // ── Karplus-Strong delay line (from the owner's Carcosa firmware) ───
 
 /// String ring length (ADR 0040, 0056): G1 (MIDI 31, 979.6 samples at
-/// 48 kHz) plus the DC blocker's 31.4-sample advance needs a 1,011-sample
-/// line and two more for the low-pass, so G1 and above play in tune; lower
-/// notes clamp.
-pub const MAX_STRING_DELAY: usize = 1016;
+/// 48 kHz) needs a 979-sample line and two more for the low-pass, so G1
+/// and above play in tune; lower notes clamp.
+pub const MAX_STRING_DELAY: usize = 981;
 
 /// The longest line: the ring less the low-pass's two taps.
 const MAX_LINE: usize = MAX_STRING_DELAY - 2;
@@ -65,7 +63,6 @@ pub(super) struct KsString {
     ens_lfo_phase: u32,
     noise_state: u32,
     frac: Allpass1,
-    dc: DcBlocker,
 }
 
 impl KsString {
@@ -83,7 +80,6 @@ impl KsString {
             addr_of_mut!((*p).ens_lfo_phase).write(0);
             addr_of_mut!((*p).noise_state).write(0x8765_4321);
             addr_of_mut!((*p).frac).write(Allpass1::default());
-            addr_of_mut!((*p).dc).write(DcBlocker::new(SAMPLE_RATE));
             slot.assume_init_mut()
         }
     }
@@ -112,10 +108,11 @@ impl KsString {
         }
     }
 
-    /// Tunes the loop to `freq`, net of the DC blocker's advance at f0.
+    /// Tunes the loop to `freq`: the line and the allpass, nothing else
+    /// in the loop delaying.
     pub(super) fn tune(&mut self, freq: f32, sample_rate: u32) {
         let w = core::f32::consts::TAU * freq / sample_rate as f32;
-        self.set_period(sample_rate as f32 / freq, dc_phase_delay(self.dc.r(), w), w);
+        self.set_period(sample_rate as f32 / freq, 0.0, w);
     }
 
     #[cfg(test)]
@@ -233,7 +230,6 @@ impl KsString {
         self.ring_len = MIN_LINE + 2;
         self.dirty = self.ring_len;
         self.frac.reset();
-        self.dc.reset();
     }
 
     /// What the next `clear` writes.
@@ -295,7 +291,7 @@ impl KsString {
         }
 
         // The gain last, so no tap bypasses it.
-        let filtered = self.dc.process(self.frac.process(filtered * p.gain.get()));
+        let filtered = self.frac.process(filtered * p.gain.get());
         self.advance();
         self.buffer[self.write_pos] = filtered;
 
@@ -339,9 +335,7 @@ impl KsString {
         debug_assert!(p.stiffness <= 0.01 && p.body <= 0.03);
         debug_assert!(p.ens_mix <= 0.01 || p.ens_depth <= 0.01);
         self.buffer[self.write_pos] = *pending + input;
-        let filtered = self
-            .dc
-            .process(self.frac.process(self.lowpass(p) * p.gain.get()));
+        let filtered = self.frac.process(self.lowpass(p) * p.gain.get());
         self.advance();
         *pending = filtered;
         filtered
@@ -354,7 +348,7 @@ fn lp_coeff(bright: f32) -> f32 {
     0.02 + 0.48 * (1.0 - bright)
 }
 
-crate::in_place::field_list!(KsString => KsString { buffer, write_pos, ring_len, delay, dirty, ens_lfo_phase, noise_state, frac, dc });
+crate::in_place::field_list!(KsString => KsString { buffer, write_pos, ring_len, delay, dirty, ens_lfo_phase, noise_state, frac });
 
 /// Bytes `KsString::clear` has written on this thread: for the tests.
 #[cfg(any(test, feature = "test-support"))]

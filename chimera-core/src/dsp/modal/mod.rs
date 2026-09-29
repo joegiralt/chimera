@@ -34,7 +34,6 @@ mod params;
 mod rings;
 mod string;
 
-pub use loop_parts::{DcBlocker, dc_phase_delay};
 pub use params::*;
 pub use string::{KsRenderParams, MAX_STRING_DELAY};
 
@@ -48,7 +47,7 @@ use crate::hw::{Cost, SAMPLE_RATE};
 use crate::in_place::{in_place_enum, uninit_at};
 use crate::sym_alloc::{Lease, SYM_SLOTS, SymAlloc, SymSlot};
 use crate::voice_alloc::VoiceIdx;
-use loop_parts::LoopGain;
+use loop_parts::{DcBlocker, LoopGain};
 use rings::{CosineOsc, Svf, stiffness_from_structure};
 use string::{FRESH_CLEAR_BYTES, KsString, RING_BYTES};
 
@@ -87,15 +86,13 @@ crate::in_place::field_list!(ModalBank => ModalBank {
     filters, cos_osc, resolution, burst_remaining, burst_amp, noise_state, burst_lp,
 });
 
-/// The bowed string, the bow's force on it, 0 once the bow lifts, and
-/// its loop's DC blocker.
+/// The bowed string and the bow's force on it, 0 once the bow lifts.
 struct BowedString {
     string: KsString,
     force: f32,
-    dc: DcBlocker,
 }
 
-crate::in_place::field_list!(BowedString => BowedString { string, force, dc });
+crate::in_place::field_list!(BowedString => BowedString { string, force });
 
 /// One pool slot (exclusive-state spec § 4.2): the seven strings a
 /// Sympathetic note's main string sets ringing. The main string is the
@@ -250,14 +247,18 @@ pub struct ModalEngine {
     released: bool, // true after note_off
     active: bool,
     silence_counter: u32,
+    /// On a string model's output, not in its loop, where its phase would
+    /// detune the upper partials.
+    dc: DcBlocker,
 }
 
 crate::in_place::field_list!(ModalEngine => ModalEngine {
-    model, frequency, pitch, tuned, released, active, silence_counter,
+    model, frequency, pitch, tuned, released, active, silence_counter, dc,
 });
 
 // A `ModalEngine` is its largest model plus the fields every model shares
-// (`frequency`, `pitch`, `tuned`, `released`, `active`, `silence_counter`),
+// (`frequency`, `pitch`, `tuned`, `released`, `active`, `silence_counter`,
+// `dc`),
 // never the sum of models. The slot's tag takes one align (`in_place_enum!`).
 const fn models_are_exclusive() -> bool {
     use core::mem::{align_of, size_of};
@@ -276,7 +277,7 @@ const fn models_are_exclusive() -> bool {
         i += 1;
     }
     let align = align_of::<ModalEngine>();
-    let shared = size_of::<(f32, f32, f32, bool, bool, u32)>();
+    let shared = size_of::<(f32, f32, f32, bool, bool, u32, DcBlocker)>();
     size_of::<ModalEngine>()
         <= (largest.next_multiple_of(align) + align + shared).next_multiple_of(align)
 }
@@ -353,6 +354,7 @@ impl ModalEngine {
             addr_of_mut!((*p).released).write(false);
             addr_of_mut!((*p).active).write(false);
             addr_of_mut!((*p).silence_counter).write(0);
+            addr_of_mut!((*p).dc).write(DcBlocker::new(SAMPLE_RATE));
             slot.assume_init_mut()
         }
     }
@@ -435,7 +437,6 @@ impl ModalEngine {
             }
             ModelSlot::Bowed(b) => {
                 b.string.clear();
-                b.dc.reset();
                 b.string.tune(freq, sample_rate);
                 b.force = vel * params.bow_force;
             }
@@ -463,6 +464,7 @@ impl ModalEngine {
             }
         }
 
+        self.dc.reset();
         self.active = true;
         self.released = false;
         self.silence_counter = 0;
@@ -549,11 +551,11 @@ impl ModalEngine {
                 bank.burst_remaining > 0
             }
             ModelSlot::String(string) => {
-                render_string(string, output, params, self.released, &mut max_level);
+                render_string(string, output, params, self.released);
                 false
             }
             ModelSlot::Bowed(b) => {
-                render_bowed(b, output, params, &mut max_level);
+                render_bowed(b, output, params);
                 false
             }
             ModelSlot::Sympathetic(m) => {
@@ -564,11 +566,17 @@ impl ModalEngine {
                     output,
                     params,
                     self.released,
-                    &mut max_level,
                 );
                 false
             }
         };
+        // A string's silence is judged on what is heard: after the blocker.
+        if !matches!(self.model, ModelSlot::Bank(_)) {
+            for s in output.iter_mut() {
+                *s = self.dc.process(*s);
+                max_level = max_level.max(libm::fabsf(*s));
+            }
+        }
 
         if max_level < 0.001 && !exciting {
             self.silence_counter += 1;
@@ -658,11 +666,10 @@ impl BowedString {
     fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
         let p = slot.as_mut_ptr();
         // SAFETY: `p` is valid and unaliased; the string is built in place
-        // and `force` and `dc` written by value, before `assume_init_mut`.
+        // and `force` written by value, before `assume_init_mut`.
         unsafe {
             KsString::init_in_place(uninit_at(addr_of_mut!((*p).string)));
             addr_of_mut!((*p).force).write(0.0);
-            addr_of_mut!((*p).dc).write(DcBlocker::new(SAMPLE_RATE));
             slot.assume_init_mut()
         }
     }
@@ -821,7 +828,6 @@ fn render_string(
     output: &mut [f32; BLOCK_SIZE],
     params: &ModalParams,
     released: bool,
-    max_level: &mut f32,
 ) {
     let (body, stiff, decay) = if released {
         (0.0, 0.0, 0.8_f32.max(params.decay)) // fast decay on release
@@ -840,16 +846,10 @@ fn render_string(
     };
     for s in output.iter_mut() {
         *s = string.tick_full(&render_params);
-        *max_level = max_level.max(libm::fabsf(*s));
     }
 }
 
-fn render_bowed(
-    b: &mut BowedString,
-    output: &mut [f32; BLOCK_SIZE],
-    params: &ModalParams,
-    max_level: &mut f32,
-) {
+fn render_bowed(b: &mut BowedString, output: &mut [f32; BLOCK_SIZE], params: &ModalParams) {
     let (string, exciter_amp) = (&mut b.string, b.force);
     let bow_vel = if exciter_amp > 0.001 {
         params.bow_velocity * 0.3
@@ -876,10 +876,9 @@ fn render_bowed(
         // Soft-limit to prevent blowup
         let clamped = libm::tanhf(feedback);
 
-        string.ring_push(b.dc.process(clamped));
+        string.ring_push(clamped);
 
         *s = string_vel;
-        *max_level = max_level.max(libm::fabsf(*s));
     }
 }
 
@@ -891,7 +890,6 @@ fn render_sympathetic(
     output: &mut [f32; BLOCK_SIZE],
     params: &ModalParams,
     released: bool,
-    max_level: &mut f32,
 ) {
     let (body, stiff) = if released {
         (0.0, 0.0)
@@ -931,7 +929,6 @@ fn render_sympathetic(
     let Some(set) = set else {
         for s in output.iter_mut() {
             *s = libm::tanhf(main.tick_full(&main_params));
-            *max_level = max_level.max(libm::fabsf(*s));
         }
         return;
     };
@@ -953,7 +950,6 @@ fn render_sympathetic(
         // 4. Mix: main + sympathetic
         let mixed = main_out + sym_sum * 0.15;
         *s = libm::tanhf(mixed);
-        *max_level = max_level.max(libm::fabsf(*s));
     }
 }
 

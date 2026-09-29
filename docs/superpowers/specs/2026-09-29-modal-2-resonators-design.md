@@ -65,7 +65,7 @@ A control the current model ignores is dimmed through `view::dimmed` (`ui/view.r
 ### Stability by construction
 
 - **`LoopGain`**, a newtype whose constructor caps it at 0.9995. DAMP maps into it; no code path makes a string loop gain of 1 or more.
-- **A DC blocker**, a one-pole high-pass at about 10 Hz, inside every string loop: STRING, the SYMP main string, each halo string and BOWED.
+- **A DC blocker**, a one-pole high-pass at about 10 Hz, on each string model's output, one per voice: STRING, SYMP after the main-and-halo mix, and BOWED after its ring. It stays out of the loops because there its phase detunes the upper partials, and `LoopGain` < 1 already keeps DC from growing inside them.
 - FDBK and its `±1.5` clamp are deleted.
 
 ### String
