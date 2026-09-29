@@ -201,10 +201,14 @@ impl Allocator {
         cost: Cost,
     ) -> Option<usize> {
         let mono = mode == PartMode::Mono;
-        let other = (0..MAX_VOICES).find(|&u| {
-            let s = &self.slots[u];
-            mono && u != v && s.mono && !s.dying() && s.part == Some(part)
-        });
+        let other = if mono {
+            (0..MAX_VOICES).find(|&u| {
+                let s = &self.slots[u];
+                u != v && s.mono && !s.dying() && s.part == Some(part)
+            })
+        } else {
+            None
+        };
         if let Some(u) = other {
             self.sheds = self.sheds.wrapping_add(1);
             self.slots[u].dying = Some(self.sheds);

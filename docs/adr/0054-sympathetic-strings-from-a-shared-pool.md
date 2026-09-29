@@ -58,16 +58,19 @@ pool of four slots, lent to the voices that play it (exclusive-state spec
 - **`cancel(v)`**: `v` wants no slot any more. Its promise is freed, and a
   slot lent to another voice but bound for `v` goes free when that lease
   comes back. `v`'s own lease is never touched: only `give_back` ends it.
-  `v` cancels when it triggers another kind, when it rests, when the
-  `Instrument` books it for a note of another kind or sheds it for the
-  budget, and when its restart goes `Silent`. So no slot is ever promised
-  or bound to a voice the `Allocator` holds free.
+  The voice owns it, at two sites: `Voice::trigger`, where every note
+  starts (for any kind but Sympathetic), and `Voice::rest`, where every
+  voice is freed (render step 5's only path to `release_finished` calls
+  it). So no slot is ever promised or bound to a voice the `Allocator`
+  holds free.
 - **Waiting notes, and what drops them.** A note placed on a voice that
   still `awaits` another's fade (a restart's claim) waits as a stolen note
   does, and is tried after each block's render. A newer note can take the
   slot a waiting note was bound for: `place` and `restart` report that
   waiter in `drops`, and the `Instrument` clears its waiting note and
-  counts it in `Allocator::dropped_unheard`, as ADR 0027 counts a shed one.
+  counts it in `Allocator::dropped_unheard`. A note shed for the budget,
+  or by the Mono rule below, before it sounded is counted there too (ADR
+  0027).
 - **A note-on clears every line it starts** (spec § 4.8), so a set handed
   to another voice carries nothing of its last note: a note on a reused
   slot sounds exactly as on a fresh pool.
@@ -131,6 +134,8 @@ pool of four slots, lent to the voices that play it (exclusive-state spec
     fade ends leaves no promise behind.
   - A Mono Part whose held note went `Silent` on a switch, then plays, sheds
     that silent voice and sounds on the stolen one.
+- A pool steal plays the new note on the stolen slot's voice after a
+  fade: a future glide (portamento) will not carry across it.
 - `Voice::trigger` can still meet `Rebuilt::NoSlot`, but only for a lone
   `Voice` driven without the `Instrument`'s placement: the note does not
   start.
