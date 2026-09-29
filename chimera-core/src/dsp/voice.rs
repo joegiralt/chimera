@@ -37,6 +37,8 @@ pub struct Voice {
     /// The engine it plays, and so the engine it last played.
     slot: EngineSlot,
     sample_rate: u32,
+    /// Slot rebuilds since `init_in_place`, wrapping: `reset` keeps it.
+    rebuilds: u16,
     drive: Drive,
     filter: SvfFilter,
     folder: Wavefolder,
@@ -55,7 +57,7 @@ pub struct Voice {
     active: bool,
     last_note: MidiNote,
     last_velocity: Velocity,
-    /// Samples left of a fade-out (`kill`, an engine change); 0 when not
+    /// Samples left of a fade-out (`kill`, a switch); 0 when not
     /// fading. Never set on an inactive voice.
     fade: u16,
     /// What starts when the fade ends.
@@ -71,7 +73,7 @@ pub struct Voice {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AfterFade {
     Idle,
-    /// The held note, on the Sound's new engine; a key up cancels it.
+    /// The held note, on the Sound's new kind; a key up cancels it.
     Restart,
     /// A note-on that came mid-fade: `last_note`.
     Note,
@@ -106,12 +108,13 @@ impl VcaRoutes {
 // `reset` overwrites fields in place without dropping them.
 const _: () = assert!(!core::mem::needs_drop::<Voice>());
 
-/// Writes every field of `*p` but `slot` and `sample_rate`. The pattern is
-/// exhaustive, so a new field fails to build until it is written here.
+/// Writes every field of `*p` but `slot`, `sample_rate` and `rebuilds`. The
+/// pattern is exhaustive, so a new field fails to build until it is written
+/// here.
 macro_rules! write_chain {
     ($p:ident, { $($f:ident: $v:expr),* $(,)? }) => {{
         let _every_field = |v: &Voice| {
-            let Voice { slot: _, sample_rate: _, $($f: _),* } = v;
+            let Voice { slot: _, sample_rate: _, rebuilds: _, $($f: _),* } = v;
         };
         $(addr_of_mut!((*$p).$f).write($v);)*
     }};
@@ -191,13 +194,14 @@ impl Voice {
         unsafe {
             EngineSlot::init_in_place(uninit_at(addr_of_mut!((*p).slot)), SlotKind::Algo);
             addr_of_mut!((*p).sample_rate).write(sample_rate);
+            addr_of_mut!((*p).rebuilds).write(0);
             Self::init_chain(p);
             slot.assume_init_mut()
         }
     }
 
-    /// Every field but `slot` and `sample_rate`, as `new` builds it: the one
-    /// list that `init_in_place` and `reset` share.
+    /// Every field but `slot`, `sample_rate` and `rebuilds`, as `new` builds
+    /// it: the one list that `init_in_place` and `reset` share.
     ///
     /// # Safety
     /// `p` must be valid for writes, aligned and unaliased.
@@ -228,17 +232,34 @@ impl Voice {
         }
     }
 
+    /// Slot rebuilds since the voice was built, wrapping: for the tests
+    /// and the bench.
+    pub fn rebuilds(&self) -> u16 {
+        self.rebuilds
+    }
+
+    /// The one path to `slot.rebuild`, counted.
+    fn rebuild(&mut self, kind: SlotKind) {
+        self.slot.rebuild(kind);
+        self.rebuilds = self.rebuilds.wrapping_add(1);
+    }
+
+    /// `params` plays another engine or Modal model than the slot holds.
+    fn switched(&self, params: &ParamSnapshot) -> bool {
+        SlotKind::of(params) != self.slot.kind()
+    }
+
     pub fn sample_rate(&self) -> u32 {
         self.sample_rate
     }
 
-    /// On a fading voice, or one sounding another engine, the note waits
-    /// for the fade-out and then starts clean. Returns whether it replaced
+    /// On a fading voice, or one sounding another engine or model, the note
+    /// waits for the fade-out and then starts clean. Returns whether it replaced
     /// a note still waiting, unheard.
     pub fn note_on(&mut self, note: MidiNote, velocity: Velocity, params: &ParamSnapshot) -> bool {
         let replaced = self.after_fade == AfterFade::Note;
         self.held = true;
-        if self.fade > 0 || (self.active && params.engine() != self.slot.kind().engine()) {
+        if self.fade > 0 || (self.active && self.switched(params)) {
             self.last_note = note;
             self.last_velocity = velocity;
             self.after_fade = AfterFade::Note;
@@ -259,9 +280,9 @@ impl Voice {
             self.mod_values = [0.0; MAX_MOD_SOURCES];
         }
         self.retrigger = true;
-        // Another engine starts clean, in place.
-        if params.engine() != self.slot.kind().engine() {
-            self.slot.rebuild(SlotKind::of(params));
+        // Another engine or model starts clean, in place.
+        if self.switched(params) {
+            self.rebuild(SlotKind::of(params));
         }
         self.last_note = note;
         self.last_velocity = velocity;
@@ -308,7 +329,7 @@ impl Voice {
         let (note, velocity) = (self.last_note, self.last_velocity);
         self.reset(params);
         if after != AfterFade::Idle {
-            // The slot holds `params`' engine, clean: `trigger` has none to rebuild.
+            // The slot holds `params`' kind, clean: `trigger` has none to rebuild.
             self.held = true;
             self.trigger(note, velocity, params);
             if !held {
@@ -317,9 +338,9 @@ impl Voice {
         }
     }
 
-    /// Back to the state `new` builds, in place, holding `params`' engine.
+    /// Back to the state `new` builds, in place, holding `params`' kind.
     fn reset(&mut self, params: &ParamSnapshot) {
-        self.slot.rebuild(SlotKind::of(params));
+        self.rebuild(SlotKind::of(params));
         // SAFETY: `self` is a valid, aligned, unaliased `Voice`.
         unsafe { Self::init_chain(self) }
     }
@@ -351,9 +372,9 @@ impl Voice {
     ) {
         let sample_rate = self.sample_rate();
 
-        // The Sound changed engine: fade the old one out; a held note then
-        // restarts on the new one.
-        if self.active && self.fade == 0 && params.engine() != self.slot.kind().engine() {
+        // The Sound changed engine or model: fade the old one out; a held
+        // note then restarts on the new one.
+        if self.active && self.fade == 0 && self.switched(params) {
             if self.held {
                 self.after_fade = AfterFade::Restart;
             }

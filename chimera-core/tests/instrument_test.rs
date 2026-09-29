@@ -1224,9 +1224,10 @@ fn the_master_comp_ducks_pair_2_with_pair_1() {
     assert!(gr > 15.0, "{gr}");
 }
 
-/// #183: a Modal voice keeps its note-on model. Sympathetic tails ringing
-/// when the Part switches to String still cost Sympathetic, so the new
-/// String notes are admitted against that, not against String's price.
+/// #183: Sympathetic tails ringing when the Part switches to String fade
+/// out on their own model (exclusive-state § 3) and cost Sympathetic until
+/// the fade ends, so String notes played mid-fade are admitted against
+/// that, not against String's price.
 #[test]
 fn a_mode_switch_bills_sounding_tails_at_their_own_model() {
     use chimera_core::dsp::modal::ResonatorMode;
@@ -1252,20 +1253,29 @@ fn a_mode_switch_bills_sounding_tails_at_their_own_model() {
         rig.inst.handle(off(0, n), &shared);
     }
     rig.render(&shared);
+    let tail_voices: Vec<usize> = (0..MAX_VOICES)
+        .filter(|&v| {
+            rig.inst.allocator().slots()[v]
+                .note()
+                .is_some_and(|n| tails.contains(&n.get()))
+        })
+        .collect();
+    assert_eq!(tail_voices.len(), tails.len());
     shared.parts[0].params.modal.mode = ResonatorMode::String;
+    // The switch's first block: the tails are one block into their fade.
     rig.render(&shared);
     // Five fill the pool beside the tails: the budget alone decides.
     for n in 60..65 {
         rig.inst.handle(on(0, n), &shared);
     }
-    rig.render(&shared);
-    // What the allocated voices really cost: each tail its own model.
+    // What the next block's voices really cost: a tail's voice, stolen or
+    // not, fades out on its own model, and a note it took waits for that.
     let slots = rig.inst.allocator().slots();
-    let ringing = slots
-        .iter()
-        .filter(|s| s.note().is_some_and(|n| tails.contains(&n.get())))
-        .count();
-    assert!(ringing > 0, "the tails still ring");
+    assert!(
+        tail_voices.iter().all(|&v| !slots[v].is_free()),
+        "the tails still fade"
+    );
+    let ringing = tail_voices.len();
     let strings = slots.iter().filter(|s| !s.is_free()).count() - ringing;
     let real = sym.0 * ringing as u32 + string.0 * strings as u32;
     let budget = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0;
