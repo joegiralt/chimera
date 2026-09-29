@@ -1,5 +1,9 @@
 #![no_std]
 
+// `SymPool::boxed`, for tests.
+#[cfg(any(test, feature = "test-support"))]
+extern crate alloc;
+
 pub use chimera_hal::{MidiChannel, MidiNote, Velocity};
 
 pub mod addr;

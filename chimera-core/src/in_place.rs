@@ -20,6 +20,17 @@ pub(crate) unsafe fn by_value<T>(init: impl FnOnce(&mut MaybeUninit<T>) -> &mut 
     unsafe { slot.assume_init() }
 }
 
+/// Moves `*r` out, leaving a stale copy behind (exclusive-state spec § 4.4):
+/// how a rebuild takes a `Lease` out of the payload it overwrites.
+///
+/// # Safety
+/// The caller overwrites `*r` before it is read or dropped again.
+pub(crate) unsafe fn move_out<T>(r: &mut T) -> T {
+    // SAFETY: `r` is valid and aligned for a read; the caller overwrites
+    // the stale copy before anything reads or drops it.
+    unsafe { core::ptr::read(r) }
+}
+
 /// An `in_place_enum!` variant's payload. Its field is private to this
 /// module, so nothing else can make one: a variant is only ever built in
 /// place, never on the stack and moved in (ADR 0008). A variant-level

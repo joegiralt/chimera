@@ -43,6 +43,7 @@ use chimera_hal::BLOCK_SIZE;
 
 use crate::hw::Cost;
 use crate::in_place::{in_place_enum, uninit_at};
+use crate::sym_alloc::{Lease, SYM_SLOTS, SymAlloc};
 use rings::{CosineOsc, Svf, stiffness_from_structure};
 use string::{KsString, xorshift_noise};
 
@@ -78,9 +79,10 @@ struct BowedString {
 
 crate::in_place::field_list!(BowedString => BowedString { string, force });
 
-/// The main string and the seven it sets ringing.
-struct SympatheticStrings {
-    main: KsString,
+/// One pool slot (exclusive-state spec § 4.2): the seven strings a
+/// Sympathetic note's main string sets ringing. The main string is the
+/// voice's (`SympatheticVoice`).
+pub struct SympatheticSet {
     strings: [KsString; NUM_SYMPATHETIC],
     /// Each sympathetic string's ratio to the main one, set at note-on.
     ratios: [f32; NUM_SYMPATHETIC],
@@ -89,54 +91,107 @@ struct SympatheticStrings {
     pending: [f32; NUM_SYMPATHETIC],
 }
 
-crate::in_place::field_list!(SympatheticStrings => SympatheticStrings {
-    main, strings, ratios, pending,
-});
+crate::in_place::field_list!(SympatheticSet => SympatheticSet { strings, ratios, pending });
+
+/// Sympathetic's sets, one per slot of `SymAlloc`, which lends them to
+/// voices (ADR 0054). One per `Instrument`, in D2 beside the voices.
+pub struct SymPool {
+    alloc: SymAlloc,
+    sets: [SympatheticSet; SYM_SLOTS],
+}
+
+crate::in_place::field_list!(SymPool => SymPool { alloc, sets });
+
+/// Sympathetic's voice side: the main string, and the lease on the set it
+/// sets ringing. A Sympathetic voice can't exist without a slot.
+struct SympatheticVoice {
+    main: KsString,
+    lease: Lease,
+}
+
+crate::in_place::field_list!(SympatheticVoice => SympatheticVoice { main, lease });
+
+// Sympathetic never sizes the voice (spec § 4.2): Bowed or String does.
+const _: () =
+    assert!(size_of::<SympatheticVoice>() <= max(size_of::<BowedString>(), size_of::<KsString>()));
+
+const fn max(a: usize, b: usize) -> usize {
+    if a > b { a } else { b }
+}
+
+/// Host sizes of the private model types, for `memory_budget_test`.
+#[cfg(any(test, feature = "test-support"))]
+pub mod layout {
+    use core::mem::{align_of, size_of};
+
+    pub const MODEL_SLOT: usize = size_of::<super::ModelSlot>();
+    pub const MODEL_SLOT_ALIGN: usize = align_of::<super::ModelSlot>();
+    pub const BOWED: usize = size_of::<super::BowedString>();
+    pub const SYMPATHETIC_VOICE: usize = size_of::<super::SympatheticVoice>();
+}
+
+/// The model a `ModalEngine` is built to play. Sympathetic takes the lease
+/// on its set by value: no lease, no Sympathetic.
+pub enum Model {
+    Bank,
+    String,
+    Bowed,
+    Sympathetic(Lease),
+}
+
+impl Model {
+    /// `mode`'s model without a lease: Sympathetic rests as String, its
+    /// main string without the set (`SlotKind::resting`).
+    pub fn resting(mode: ResonatorMode) -> Self {
+        match mode {
+            ResonatorMode::Modal => Self::Bank,
+            ResonatorMode::String | ResonatorMode::Sympathetic => Self::String,
+            ResonatorMode::Bowed => Self::Bowed,
+        }
+    }
+}
 
 in_place_enum! {
     /// The one model an engine holds: the variant is the mode.
-    #[expect(
-        clippy::large_enum_variant,
-        reason = "one model per engine, built in place: boxing needs a heap"
-    )]
     enum ModelSlot {
         Bank(ModalBank) => rebuild_bank, init_bank;
         String(KsString) => rebuild_string, init_string;
         Bowed(BowedString) => rebuild_bowed, init_bowed;
-        Sympathetic(SympatheticStrings) => rebuild_sympathetic, init_sympathetic;
+        Sympathetic(SympatheticVoice) => rebuild_sympathetic, init_sympathetic;
     }
 }
 
 impl ModelSlot {
-    fn init_in_place(slot: &mut MaybeUninit<Self>, mode: ResonatorMode) -> &mut Self {
-        match mode {
+    fn init_in_place(slot: &mut MaybeUninit<Self>, model: Model) -> &mut Self {
+        match model {
             // SAFETY: `ModalBank::init_in_place` writes every field.
-            ResonatorMode::Modal => unsafe { Self::init_bank(slot, ModalBank::init_in_place) },
+            Model::Bank => unsafe { Self::init_bank(slot, ModalBank::init_in_place) },
             // SAFETY: `KsString::init_in_place` writes every field.
-            ResonatorMode::String => unsafe { Self::init_string(slot, KsString::init_in_place) },
+            Model::String => unsafe { Self::init_string(slot, KsString::init_in_place) },
             // SAFETY: `BowedString::init_in_place` writes every field.
-            ResonatorMode::Bowed => unsafe { Self::init_bowed(slot, BowedString::init_in_place) },
-            // SAFETY: `SympatheticStrings::init_in_place` writes every field.
-            ResonatorMode::Sympathetic => unsafe {
-                Self::init_sympathetic(slot, SympatheticStrings::init_in_place)
+            Model::Bowed => unsafe { Self::init_bowed(slot, BowedString::init_in_place) },
+            // SAFETY: `SympatheticVoice::init_in_place` writes every field.
+            Model::Sympathetic(lease) => unsafe {
+                Self::init_sympathetic(slot, |s| SympatheticVoice::init_in_place(s, lease))
             },
         }
     }
 
-    /// `mode`'s model, fresh, in place: the layout test's. A voice rebuilds
-    /// its whole slot instead (`Voice::rebuild`, the one counted path).
+    /// `model`, fresh, in place: the layout test's. A voice rebuilds its
+    /// whole slot instead (`Voice::rebuild`, the one counted path), which
+    /// takes a Sympathetic lease out first; this drops it.
     #[cfg(test)]
-    fn rebuild(&mut self, mode: ResonatorMode) {
-        match mode {
+    fn rebuild(&mut self, model: Model) {
+        match model {
             // SAFETY: `ModalBank::init_in_place` writes every field.
-            ResonatorMode::Modal => unsafe { self.rebuild_bank(ModalBank::init_in_place) },
+            Model::Bank => unsafe { self.rebuild_bank(ModalBank::init_in_place) },
             // SAFETY: `KsString::init_in_place` writes every field.
-            ResonatorMode::String => unsafe { self.rebuild_string(KsString::init_in_place) },
+            Model::String => unsafe { self.rebuild_string(KsString::init_in_place) },
             // SAFETY: `BowedString::init_in_place` writes every field.
-            ResonatorMode::Bowed => unsafe { self.rebuild_bowed(BowedString::init_in_place) },
-            // SAFETY: `SympatheticStrings::init_in_place` writes every field.
-            ResonatorMode::Sympathetic => unsafe {
-                self.rebuild_sympathetic(SympatheticStrings::init_in_place)
+            Model::Bowed => unsafe { self.rebuild_bowed(BowedString::init_in_place) },
+            // SAFETY: `SympatheticVoice::init_in_place` writes every field.
+            Model::Sympathetic(lease) => unsafe {
+                self.rebuild_sympathetic(|s| SympatheticVoice::init_in_place(s, lease))
             },
         }
     }
@@ -178,7 +233,7 @@ const fn models_are_exclusive() -> bool {
         size_of::<ModalBank>(),
         size_of::<KsString>(),
         size_of::<BowedString>(),
-        size_of::<SympatheticStrings>(),
+        size_of::<SympatheticVoice>(),
     ];
     let mut largest = 0;
     let mut i = 0;
@@ -234,20 +289,27 @@ impl ModalEngine {
     pub const PITCH: Cost = Cost(12);
 
     /// An idle engine set to play `mode`, by value, through the stack:
-    /// tests only.
+    /// tests only. Sympathetic borrows a slot of `pool` for voice 0.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn new(mode: ResonatorMode) -> Self {
+    pub fn new_in(pool: &mut SymPool, mode: ResonatorMode) -> Self {
+        let model = match mode {
+            ResonatorMode::Sympathetic => {
+                let v0 = crate::voice_alloc::VoiceIdx::ALL[0];
+                Model::Sympathetic(pool.alloc.lend(v0).expect("a free slot"))
+            }
+            other => Model::resting(other),
+        };
         // SAFETY: `init_in_place` writes every field of the slot.
-        unsafe { crate::in_place::by_value(|slot| Self::init_in_place(slot, mode)) }
+        unsafe { crate::in_place::by_value(|slot| Self::init_in_place(slot, model)) }
     }
 
-    pub fn init_in_place(slot: &mut MaybeUninit<Self>, mode: ResonatorMode) -> &mut Self {
+    pub fn init_in_place(slot: &mut MaybeUninit<Self>, model: Model) -> &mut Self {
         let p = slot.as_mut_ptr();
         // SAFETY: `p` is valid and unaliased; the model is built in place,
         // every other field is written once by value, before
         // `assume_init_mut`.
         unsafe {
-            ModelSlot::init_in_place(uninit_at(addr_of_mut!((*p).model)), mode);
+            ModelSlot::init_in_place(uninit_at(addr_of_mut!((*p).model)), model);
             addr_of_mut!((*p).frequency).write(220.0 / 48000.0);
             addr_of_mut!((*p).pitch).write(1.0);
             addr_of_mut!((*p).tuned).write(1.0);
@@ -280,9 +342,26 @@ impl ModalEngine {
         if self.pitch == 1.0 { f } else { f * self.pitch }
     }
 
+    /// The lease a Sympathetic engine holds: for `EngineSlot::rebuild`,
+    /// which moves it out before the payload is overwritten.
+    pub(crate) fn lease_mut(&mut self) -> Option<&mut Lease> {
+        match &mut self.model {
+            ModelSlot::Sympathetic(m) => Some(&mut m.lease),
+            ModelSlot::Bank(_) | ModelSlot::String(_) | ModelSlot::Bowed(_) => None,
+        }
+    }
+
     /// `params.mode` must be the model this engine holds: a voice rebuilds
-    /// its slot into another (`Voice::rebuild`, ADR 0051).
-    pub fn note_on(&mut self, note: u8, velocity: u8, params: &ModalParams, sample_rate: u32) {
+    /// its slot into another (`Voice::rebuild`, ADR 0051). Sympathetic
+    /// reads its set from `pool`.
+    pub fn note_on(
+        &mut self,
+        note: u8,
+        velocity: u8,
+        params: &ModalParams,
+        sample_rate: u32,
+        pool: &mut SymPool,
+    ) {
         debug_assert_eq!(params.mode, self.mode());
         let vel = velocity as f32 / 127.0;
         let freq = note_to_freq(note);
@@ -315,6 +394,7 @@ impl ModalEngine {
                 b.force = vel * params.bow_force;
             }
             ModelSlot::Sympathetic(m) => {
+                let set = pool.set(&m.lease);
                 // Main string gets excitation
                 m.main.set_freq(freq, sample_rate);
                 m.main.trigger(
@@ -323,14 +403,16 @@ impl ModalEngine {
                     params.ks_color,
                     params.position,
                 );
-                m.ratios = sympathetic_ratios(params.inharm);
-                m.tune(freq, sample_rate);
-                for sym in m.strings.iter_mut() {
-                    // Sympathetic strings start silent — energy comes from main
+                set.ratios = sympathetic_ratios(params.inharm);
+                set.tune(freq, sample_rate);
+                for sym in set.strings.iter_mut() {
+                    // Sympathetic strings start silent — energy comes from
+                    // main. A handed-over slot carries nothing of its last
+                    // note (spec § 4.8).
                     sym.clear();
                     sym.write_pos = 0;
                 }
-                m.pending = [0.0; NUM_SYMPATHETIC];
+                set.pending = [0.0; NUM_SYMPATHETIC];
             }
         }
 
@@ -341,7 +423,7 @@ impl ModalEngine {
 
     /// The strings follow a changed pitch ratio (per block, at a change
     /// only): a divide per string (`ModalEngine::PITCH`).
-    fn retune(&mut self, sample_rate: u32) {
+    fn retune(&mut self, sample_rate: u32, pool: &mut SymPool) {
         if self.pitch == self.tuned {
             return;
         }
@@ -353,12 +435,12 @@ impl ModalEngine {
             ModelSlot::Bowed(b) => b.string.set_freq(freq, sample_rate),
             ModelSlot::Sympathetic(m) => {
                 m.main.set_freq(freq, sample_rate);
-                m.tune(freq, sample_rate);
+                pool.set(&m.lease).tune(freq, sample_rate);
             }
         }
     }
 
-    pub fn note_off(&mut self) {
+    pub fn note_off(&mut self, pool: &mut SymPool) {
         self.released = true;
         match &mut self.model {
             ModelSlot::String(string) => {
@@ -372,9 +454,9 @@ impl ModalEngine {
             }
             ModelSlot::Bank(_) => {}
             ModelSlot::Sympathetic(m) => {
-                let m = &mut **m;
                 m.main.damp(1);
-                for (sym, pending) in m.strings.iter_mut().zip(&mut m.pending) {
+                let set = pool.set(&m.lease);
+                for (sym, pending) in set.strings.iter_mut().zip(&mut set.pending) {
                     sym.damp(1);
                     // Its write position's sample, were it stored.
                     if sym.write_pos < sym.delay_len {
@@ -394,6 +476,7 @@ impl ModalEngine {
         output: &mut [f32; BLOCK_SIZE],
         params: &ModalParams,
         sample_rate: u32,
+        pool: &mut SymPool,
     ) {
         if !self.active {
             for s in output.iter_mut() {
@@ -405,7 +488,7 @@ impl ModalEngine {
         let mut max_level = 0.0_f32;
 
         let bank_freq = self.pitched(self.frequency);
-        self.retune(sample_rate);
+        self.retune(sample_rate, pool);
 
         // Whether the model is still exciting itself: silent or not, the
         // note sounds on.
@@ -426,7 +509,16 @@ impl ModalEngine {
                 false
             }
             ModelSlot::Sympathetic(m) => {
-                render_sympathetic(m, output, params, self.released, &mut max_level);
+                let m = &mut **m;
+                let set = pool.set(&m.lease);
+                render_sympathetic(
+                    &mut m.main,
+                    set,
+                    output,
+                    params,
+                    self.released,
+                    &mut max_level,
+                );
                 false
             }
         };
@@ -528,14 +620,69 @@ impl BowedString {
     }
 }
 
-impl SympatheticStrings {
-    fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
+impl SympatheticVoice {
+    fn init_in_place(slot: &mut MaybeUninit<Self>, lease: Lease) -> &mut Self {
         let p = slot.as_mut_ptr();
-        // SAFETY: `p` is valid and unaliased; the eight strings are built in
-        // place and `ratios` and `pending` are written by value, before
+        // SAFETY: `p` is valid and unaliased; the main string is built in
+        // place and the lease (one byte) written by value, before
         // `assume_init_mut`.
         unsafe {
             KsString::init_in_place(uninit_at(addr_of_mut!((*p).main)));
+            addr_of_mut!((*p).lease).write(lease);
+            slot.assume_init_mut()
+        }
+    }
+}
+
+impl SymPool {
+    /// Built once, where the `Instrument` lives: the sets in place, the
+    /// allocator by value.
+    pub fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
+        let p = slot.as_mut_ptr();
+        // SAFETY: `p` is valid and unaliased; each set is built in place and
+        // the allocator (a few bytes) written by value, before
+        // `assume_init_mut`.
+        unsafe {
+            addr_of_mut!((*p).alloc).write(SymAlloc::new());
+            let sets = addr_of_mut!((*p).sets).cast::<SympatheticSet>();
+            for i in 0..SYM_SLOTS {
+                SympatheticSet::init_in_place(uninit_at(sets.add(i)));
+            }
+            slot.assume_init_mut()
+        }
+    }
+
+    /// A pool on the heap, built in place: tests only.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn boxed() -> alloc::boxed::Box<Self> {
+        let mut raw = alloc::boxed::Box::<Self>::new_uninit();
+        Self::init_in_place(&mut raw);
+        // SAFETY: `init_in_place` built a valid pool in the box.
+        unsafe { raw.assume_init() }
+    }
+
+    pub fn alloc(&self) -> &SymAlloc {
+        &self.alloc
+    }
+
+    pub(crate) fn alloc_mut(&mut self) -> &mut SymAlloc {
+        &mut self.alloc
+    }
+
+    /// The set `lease` names. It borrows the pool and the lease, so no
+    /// other set is reachable meanwhile and the lease can't go back.
+    fn set(&mut self, lease: &Lease) -> &mut SympatheticSet {
+        &mut self.sets[lease.slot().index()]
+    }
+}
+
+impl SympatheticSet {
+    fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
+        let p = slot.as_mut_ptr();
+        // SAFETY: `p` is valid and unaliased; the seven strings are built
+        // in place and `ratios` and `pending` are written by value, before
+        // `assume_init_mut`.
+        unsafe {
             let sym = addr_of_mut!((*p).strings).cast::<KsString>();
             for i in 0..NUM_SYMPATHETIC {
                 KsString::init_in_place(uninit_at(sym.add(i)));
@@ -662,7 +809,8 @@ fn render_bowed(
 }
 
 fn render_sympathetic(
-    m: &mut SympatheticStrings,
+    main: &mut KsString,
+    set: &mut SympatheticSet,
     output: &mut [f32; BLOCK_SIZE],
     params: &ModalParams,
     released: bool,
@@ -705,14 +853,14 @@ fn render_sympathetic(
 
     for s in output.iter_mut() {
         // 1. Main string tick
-        let main_out = m.main.tick_full(&main_params);
+        let main_out = main.tick_full(&main_params);
 
         // 2. Couple main string output into sympathetic strings
         let sym_input = main_out * coupling;
 
         // 3. Tick all sympathetic strings, sum their output
         let mut sym_sum = 0.0_f32;
-        for (sym, pending) in m.strings.iter_mut().zip(&mut m.pending) {
+        for (sym, pending) in set.strings.iter_mut().zip(&mut set.pending) {
             // Inject coupled energy from the main string at the write
             // position, and tick with gentler damping.
             sym_sum += sym.tick_coupled(&sym_params, sym_input, pending);
@@ -746,6 +894,7 @@ mod tests {
     use std::vec::Vec;
 
     use super::*;
+    use crate::voice_alloc::VoiceIdx;
 
     /// In `ModelSlot`'s declaration order: the tag.
     const MODES: [ResonatorMode; 4] = [
@@ -764,6 +913,16 @@ mod tests {
         }
     }
 
+    /// `mode`'s model; Sympathetic's lease is from a pool of its own.
+    fn model(mode: ResonatorMode) -> Model {
+        match mode {
+            ResonatorMode::Sympathetic => {
+                Model::Sympathetic(SymAlloc::new().lend(VoiceIdx::ALL[0]).expect("free"))
+            }
+            other => Model::resting(other),
+        }
+    }
+
     #[test]
     fn model_slot_layout_matches_repr() {
         for (from, first) in MODES.into_iter().enumerate() {
@@ -774,14 +933,14 @@ mod tests {
                     .cast::<u8>()
                     .write_bytes(0xA5, size_of::<ModelSlot>())
             };
-            ModelSlot::init_in_place(&mut raw, first);
+            ModelSlot::init_in_place(&mut raw, model(first));
             // SAFETY: `init_in_place` built a valid slot in the box.
             let mut slot = unsafe { raw.assume_init() };
             // From each model to every other, and back.
             for k in 0..=MODES.len() {
                 let i = (from + k) % MODES.len();
                 if k > 0 {
-                    slot.rebuild(MODES[i]);
+                    slot.rebuild(model(MODES[i]));
                 }
                 assert_eq!(slot.mode(), MODES[i]);
                 let (tag, payload) = slot.mirror_parts();
@@ -795,9 +954,15 @@ mod tests {
     /// Blocks in a second.
     const SECOND: usize = SR as usize / BLOCK_SIZE;
 
-    fn engine(mode: ResonatorMode) -> Box<ModalEngine> {
+    fn engine(pool: &mut SymPool, mode: ResonatorMode) -> Box<ModalEngine> {
+        let model = match mode {
+            ResonatorMode::Sympathetic => {
+                Model::Sympathetic(pool.alloc.lend(VoiceIdx::ALL[0]).expect("free"))
+            }
+            other => Model::resting(other),
+        };
         let mut raw = Box::<ModalEngine>::new_uninit();
-        ModalEngine::init_in_place(&mut raw, mode);
+        ModalEngine::init_in_place(&mut raw, model);
         // SAFETY: `init_in_place` built a valid engine in the box.
         unsafe { raw.assume_init() }
     }
@@ -821,22 +986,26 @@ mod tests {
             ks_feedback: 0.0,
             ..Default::default()
         };
-        let mut e = engine(p.mode);
-        e.note_on(31, 100, &p, SR);
+        let mut pool = SymPool::boxed();
+        let mut e = engine(&mut pool, p.mode);
+        e.note_on(31, 100, &p, SR, &mut pool);
         for _ in 0..SECOND {
             let mut out = [0.0; BLOCK_SIZE];
-            e.render(&mut out, &p, SR);
+            e.render(&mut out, &p, SR, &mut pool);
         }
-        let lines = |e: &ModalEngine| match &e.model {
+        let lines = |e: &ModalEngine, pool: &SymPool| match &e.model {
             ModelSlot::Sympathetic(m) => core::iter::once(&m.main)
-                .chain(&m.strings)
+                .chain(&pool.sets[m.lease.slot().index()].strings)
                 .map(|s| (s.buffer.iter().any(|&x| x != 0.0), tail_is_silent(s)))
                 .collect::<Vec<_>>(),
             _ => unreachable!(),
         };
-        assert!(lines(&e).iter().all(|(rings, _)| *rings), "every line rang");
-        e.note_on(96, 100, &p, SR);
-        for (i, (_, silent)) in lines(&e).into_iter().enumerate() {
+        assert!(
+            lines(&e, &pool).iter().all(|(rings, _)| *rings),
+            "every line rang"
+        );
+        e.note_on(96, 100, &p, SR, &mut pool);
+        for (i, (_, silent)) in lines(&e, &pool).into_iter().enumerate() {
             assert!(silent, "line {i}");
         }
     }

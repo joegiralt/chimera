@@ -1,11 +1,11 @@
 mod common;
 use chimera_core::dsp::drive::Drive;
 use chimera_core::dsp::filter::SvfFilter;
-use chimera_core::dsp::voice::Voice;
 use chimera_core::dsp::wavefolder::Wavefolder;
 use chimera_core::modulation::ModState;
 use chimera_core::params::{DriveParams, FilterParams, FolderParams, ParamSnapshot};
 use chimera_core::{MidiNote, Velocity};
+use common::Rig;
 use common::tri;
 
 // ── Drive ───────────────────────────────────────────────────────────
@@ -211,7 +211,7 @@ fn test_folder_adds_harmonics() {
 #[test]
 fn test_voice_silent_when_idle() {
     let empty_mod = ModState::new();
-    let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
+    let mut voice = Rig::new(chimera_hal::SAMPLE_RATE);
     let params = ParamSnapshot::default();
     let mut output = [0.0f32; 64];
     voice.render(&mut output, &params, &empty_mod);
@@ -222,7 +222,7 @@ fn test_voice_silent_when_idle() {
 #[test]
 fn test_voice_produces_sound() {
     let empty_mod = ModState::new();
-    let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
+    let mut voice = Rig::new(chimera_hal::SAMPLE_RATE);
     let params = tri();
     // Algo produces sound by default
 
@@ -248,8 +248,8 @@ fn test_voice_produces_sound() {
 #[test]
 fn test_voice_filter_shapes_sound() {
     let empty_mod = ModState::new();
-    let mut voice_open = Voice::new(chimera_hal::SAMPLE_RATE);
-    let mut voice_closed = Voice::new(chimera_hal::SAMPLE_RATE);
+    let mut voice_open = Rig::new(chimera_hal::SAMPLE_RATE);
+    let mut voice_closed = Rig::new(chimera_hal::SAMPLE_RATE);
     let mut params_open = tri();
     let mut params_closed = tri();
 
@@ -293,7 +293,7 @@ fn test_voice_filter_shapes_sound() {
 #[test]
 fn test_voice_output_bounded() {
     let empty_mod = ModState::new();
-    let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
+    let mut voice = Rig::new(chimera_hal::SAMPLE_RATE);
     let mut params = tri();
     params.algo.ops[1].level = 70;
     params.drive.drive = 1.0;

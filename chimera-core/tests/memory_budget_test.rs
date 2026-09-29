@@ -150,3 +150,37 @@ fn ui_state_fits_the_ui_reserve() {
         "UiState grew to {rest} B besides its Performance and SoundPool"
     );
 }
+
+/// Exclusive-state spec § Memory: Sympathetic's seven lines live in a pool
+/// of four slots inside the `Instrument`, in D2; the voice is sized for
+/// Bowed, never for Sympathetic.
+#[test]
+fn sympathetic_pool_fits_d2() {
+    use chimera_core::dsp::modal::{SymPool, SympatheticSet, layout};
+    use chimera_core::instrument::Instrument;
+    let inst = size_of::<Instrument>();
+    for (name, size) in [
+        ("SympatheticVoice", layout::SYMPATHETIC_VOICE),
+        ("BowedString", layout::BOWED),
+        ("ModelSlot", layout::MODEL_SLOT),
+        ("SympatheticSet", size_of::<SympatheticSet>()),
+        ("SymPool", size_of::<SymPool>()),
+        ("Voice", size_of::<Voice>()),
+        ("[Voice; 8]", size_of::<[Voice; hw::MAX_VOICES]>()),
+        ("Instrument", inst),
+        ("left in D2", hw::VOICE_RAM_BUDGET.saturating_sub(inst)),
+    ] {
+        eprintln!("{name:>16} {size:>7} B");
+    }
+    let align = layout::MODEL_SLOT_ALIGN;
+    assert!(
+        layout::MODEL_SLOT <= layout::BOWED.next_multiple_of(align) + align,
+        "ModelSlot = {} B: Sympathetic sizes the voice",
+        layout::MODEL_SLOT
+    );
+    assert!(
+        inst <= hw::VOICE_RAM_BUDGET,
+        "Instrument = {inst} B, budget {} B",
+        hw::VOICE_RAM_BUDGET
+    );
+}

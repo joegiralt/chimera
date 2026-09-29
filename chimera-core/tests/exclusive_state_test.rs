@@ -2,6 +2,7 @@
 //! or of Modal MODE fades the Part's sounding voices and rebuilds each once
 //! silent; idle voices switch at their next note; knobs never rebuild.
 mod common;
+use common::Rig;
 use common::{SR, peak, scope_writer, tri};
 
 use chimera_core::addr::{BlockRef, Blocks};
@@ -49,7 +50,7 @@ fn max_step(x: &[f32]) -> f32 {
         .fold(0.0, f32::max)
 }
 
-fn render(v: &mut Voice, p: &ParamSnapshot) -> Block {
+fn render(v: &mut Rig, p: &ParamSnapshot) -> Block {
     let mut b = [0.0; BLOCK_SIZE];
     v.render(&mut b, p, &ModState::new());
     b
@@ -60,8 +61,8 @@ fn bits(b: &Block) -> [u32; BLOCK_SIZE] {
 }
 
 /// A voice sounding note `n` on `p`.
-fn playing(n: u8, p: &ParamSnapshot) -> Voice {
-    let mut v = Voice::new(SR);
+fn playing(n: u8, p: &ParamSnapshot) -> Rig {
+    let mut v = Rig::new(SR);
     v.note_on(note(n), vel(), p);
     v
 }
@@ -73,7 +74,7 @@ fn fresh(n: u8, p: &ParamSnapshot, blocks: usize) -> Vec<Block> {
 }
 
 /// `v`'s next `blocks` blocks on `p` equal a fresh voice's first ones.
-fn assert_fresh(v: &mut Voice, n: u8, p: &ParamSnapshot, blocks: usize, what: &str) {
+fn assert_fresh(v: &mut Rig, n: u8, p: &ParamSnapshot, blocks: usize, what: &str) {
     for (i, want) in fresh(n, p, blocks).iter().enumerate() {
         assert_eq!(bits(&render(v, p)), bits(want), "{what}: block {i}");
     }
@@ -137,7 +138,7 @@ fn a_mode_change_at_note_on_plays_like_a_fresh_voice() {
         render(&mut v, &sym());
     }
     assert_eq!(v.rebuilds(), r.wrapping_add(1));
-    let mut f = Voice::new(SR);
+    let mut f = Rig::new(SR);
     f.note_on(note(62), Velocity::new(110).unwrap(), &sym());
     for block in 0..20 {
         assert_eq!(
@@ -159,7 +160,7 @@ fn bank() -> ParamSnapshot {
 #[test]
 fn a_bank_note_after_another_model_plays_like_the_first() {
     // A note on `p` over the ringing one, and its fade.
-    let retrigger = |v: &mut Voice, n, vel, p: &ParamSnapshot| {
+    let retrigger = |v: &mut Rig, n, vel, p: &ParamSnapshot| {
         v.note_on(note(n), Velocity::new(vel).unwrap(), p);
         for _ in 0..FADE_BLOCKS {
             render(v, p);
@@ -174,7 +175,7 @@ fn a_bank_note_after_another_model_plays_like_the_first() {
         render(&mut v, &string());
     }
     retrigger(&mut v, 60, 90, &bank());
-    let mut f = Voice::new(SR);
+    let mut f = Rig::new(SR);
     f.note_on(note(60), Velocity::new(90).unwrap(), &bank());
     for block in 0..20 {
         let (a, b) = (render(&mut v, &bank()), render(&mut f, &bank()));

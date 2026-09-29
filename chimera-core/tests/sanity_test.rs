@@ -5,6 +5,7 @@
 //! marked `#[ignore = "known broken: …"]`. It is not fixed in this refactor.
 
 mod common;
+use common::Rig;
 use common::peak;
 
 use chimera_core::params::{EngineType, ParamSnapshot};
@@ -105,12 +106,11 @@ fn modal_is_pitched() {
 /// sanity cases use — Modal bypasses the amp envelope and rings on its own
 /// decay/damping (#10), so it needs enough tail to actually reach silence.
 fn modal_tail_windows(params: &ParamSnapshot, off_blocks: usize, window_blocks: usize) -> Vec<f32> {
-    use chimera_core::dsp::voice::Voice;
     use chimera_core::modulation::ModState;
     use chimera_core::{MidiNote, Velocity};
 
     let mod_state = ModState::new();
-    let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
+    let mut voice = Rig::new(chimera_hal::SAMPLE_RATE);
     voice.note_on(
         MidiNote::new(NOTE).unwrap(),
         Velocity::new(VEL).unwrap(),
@@ -202,11 +202,10 @@ fn algo_is_pitched() {
 /// within one cent through the whole voice.
 #[test]
 fn algo_plays_a4_within_a_cent() {
-    use chimera_core::dsp::voice::Voice;
     use chimera_core::modulation::ModState;
     use chimera_core::{MidiNote, Velocity};
     let params = init_params(EngineType::Algo);
-    let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
+    let mut voice = Rig::new(chimera_hal::SAMPLE_RATE);
     voice.note_on(MidiNote::A4, Velocity::DEFAULT, &params);
     let mut out = Vec::new();
     let mut block = [0.0f32; BLOCK_SIZE];

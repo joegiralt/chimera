@@ -8,6 +8,9 @@
 
 pub mod codec_util;
 pub mod golden;
+pub mod rig;
+
+pub use rig::Rig;
 
 use chimera_core::addr::{BlockRef, ParamAddr};
 use chimera_core::dsp::algo::algorithms::AlgoId;
@@ -15,7 +18,6 @@ use chimera_core::dsp::algo::params::AlgoParams;
 use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::modal::ResonatorMode;
-use chimera_core::dsp::voice::Voice;
 use chimera_core::hw::DAC_PAIRS;
 use chimera_core::instrument::{AudioShared, Instrument};
 use chimera_core::mod_path::ModDestRegistry;
@@ -233,7 +235,7 @@ fn render_with(
     mod_state: &ModState,
     switch: Option<&ParamSnapshot>,
 ) -> Vec<f32> {
-    let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
+    let mut voice = Rig::new(chimera_hal::SAMPLE_RATE);
     voice.note_on(
         MidiNote::new(NOTE).unwrap(),
         Velocity::new(VEL).unwrap(),

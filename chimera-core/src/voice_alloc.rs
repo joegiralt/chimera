@@ -66,6 +66,12 @@ impl VoiceSlot {
         self.note
     }
 
+    /// `Allocator`'s clock at the note-on: lower is older. The sympathetic
+    /// pool ranks its slots by the same ages.
+    pub fn age(&self) -> u32 {
+        self.age
+    }
+
     /// Key still down (no note-off yet).
     pub fn held(&self) -> bool {
         self.held
@@ -159,14 +165,35 @@ impl Allocator {
         cost: Cost,
         reserved: Cost,
     ) -> Alloc {
-        let v = match self.pick(part, mode, cost, reserved) {
-            Some(v) => v,
-            None => {
-                self.refused = self.refused.wrapping_add(1);
-                return Alloc::Refused;
-            }
-        };
-        self.clock = self.clock.wrapping_add(1);
+        match self.pick(part, mode, cost, reserved) {
+            Some(v) => self.book(v, part, mode, note, cost),
+            None => self.refuse(),
+        }
+    }
+
+    /// A note the budget gave no voice: counted, `Refused`.
+    pub fn refuse(&mut self) -> Alloc {
+        self.refused = self.refused.wrapping_add(1);
+        Alloc::Refused
+    }
+
+    /// The age `book` gives the next note.
+    pub fn next_age(&self) -> u32 {
+        self.clock.wrapping_add(1)
+    }
+
+    /// Books `note` on voice `v`, whatever it held: `pick`'s voice, or the
+    /// sympathetic pool's steal, which overwrites a Mono voice like any
+    /// other (exclusive-state spec § 4.5).
+    pub fn book(
+        &mut self,
+        v: usize,
+        part: u8,
+        mode: PartMode,
+        note: MidiNote,
+        cost: Cost,
+    ) -> Alloc {
+        self.clock = self.next_age();
         self.rr = (v + 1) % MAX_VOICES;
         self.slots[v] = VoiceSlot {
             part: Some(part),
@@ -230,7 +257,8 @@ impl Allocator {
         }
     }
 
-    fn pick(&self, part: u8, mode: PartMode, cost: Cost, reserved: Cost) -> Option<usize> {
+    /// The voice `note_on` would book, without booking it: rules 1–4.
+    pub fn pick(&self, part: u8, mode: PartMode, cost: Cost, reserved: Cost) -> Option<usize> {
         let fits = |freed: Cost| {
             let total = reserved.0 + self.live_cost().0 + cost.0;
             total.saturating_sub(freed.0) <= self.budget.as_cost().0
