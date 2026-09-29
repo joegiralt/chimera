@@ -123,7 +123,7 @@ These are the failure modes the spec implies but no spec'd test exercises, most 
 - **Volume serial and the boot-sector gate.** `embedded-sdmmc` 0.10 doesn't expose the serial, and its `Bpb::create_from_bytes` divides by sectors-per-cluster and subtracts the metadata from the total unchecked; a zero root cluster underflows later. `chimera_fat::volume` parses the MBR and the boot sector itself, validates every field the library divides by or trusts, and classifies FAT16/FAT32 by cluster count exactly as the library does (< 4085 unsupported, < 65 525 FAT16, else FAT32 with version 0). `FatStore::mount` runs it before `open_raw_volume`. The same parse detects exFAT, in a 0x07 partition or with no MBR.
 - **Error classification lives in the medium.** `embedded-sdmmc` maps every `SpiDevice` error to `Error::Transport`, and `FatStore<D: Medium>` can't read a generic `D::Error`. So `Medium::classify(&self, &Self::Error) -> StoreError` classifies device errors, and `Medium::fault(&self) -> Option<StoreError>` reports a fault the medium saw during the operation, which the library may have hidden behind `DiskFull`. The SD adapter keeps a `timed_out` flag and a `BusPhase` (`Acquire` or `Data`): a failure while acquiring is `NoCard`; a timeout after it is `Timeout`.
 - **Timeouts.** One deadline per whole operation is wrong both ways: a missing card would take seconds of CMD0 retries, and a FAT scan or plan 2's 60 KB save can legitimately pass 2 s. So:
-  - `SD_ACQUIRE_MS = 1000`: the whole acquire (`AcquireOpts { acquire_retries: SD_ACQUIRE_RETRIES = 3, use_crc: true }`); a missing card is `NoCard` within it;
+  - `SD_ACQUIRE_MS = 1500`: one whole acquire; the shell tries a second acquire (fresh `wake`) when the first fails with a card present, after the #186 presence check (`AcquireOpts { acquire_retries: SD_ACQUIRE_RETRIES = 3, use_crc: true }`); a missing card is `NoCard` within it;
   - `SD_IDLE_MS = 600`: no 512 B block moved for this long is `Timeout` (above SDHC's 500 ms write busy);
   - `SD_OP_CAP_MS = 10_000`: a backstop per operation.
 
@@ -275,7 +275,7 @@ What changes versus 099f251, and nothing else:
   - `pub const SD_INIT_HZ: u32 = 400_000;`
   - `pub const SD_FAST_HZ: u32` (12 500 000 until the STOP decides);
   - `pub const SD_MODE: spi::Mode` (`MODE_0` until the STOP decides);
-  - `pub const SD_ACQUIRE_RETRIES: u32 = 3;`, `pub const SD_ACQUIRE_MS: u32 = 1_000;`, `pub const SD_IDLE_MS: u32 = 600;`, `pub const SD_OP_CAP_MS: u32 = 10_000;`
+  - `pub const SD_ACQUIRE_RETRIES: u32 = 3;`, `pub const SD_ACQUIRE_MS: u32 = 1_500;`, `pub const SD_IDLE_MS: u32 = 600;`, `pub const SD_OP_CAP_MS: u32 = 10_000;`
   - `pub struct SdSpi`: owns `Spi<SPI2, Enabled>`, CS `PE12`, the SPI2 `rec` (returned by `free()`) and a `chimera_fat::deadline::Deadline` (`arm` on DWT cycles, `arm_transfers` budgeted from SCK when the DWT won't count); implements `embedded_hal::spi::SpiDevice<u8>`, with `ErrorType::Error = SdSpiError { Spi, Timeout }`;
   - `impl SdSpi { pub fn new(..) -> Self; pub fn set_hz(&mut self, hz: Hertz); pub fn set_mode(&mut self, m: spi::Mode); pub fn wake(&mut self); pub fn arm(&mut self, idle_ms: u32); pub fn timed_out(&self) -> bool; }`
     - `set_hz`/`set_mode` do `free()` and rebuild with `spi_unchecked`;
@@ -967,6 +967,7 @@ pub fn draw_busy<D: DrawTarget<Color = Rgb565>>(d: &mut D, label: BusyLabel) -> 
 - Modify: `chimera-core/src/instrument.rs:32-40` (`+ STORE_RESERVE` in `AXI_RESIDENT`)
 - Modify: `chimera-core/tests/memory_budget_test.rs`: add the `STORE_RESERVE` row to `axi_residents_fit`'s list (its `assert_eq!(total, AXI_RESIDENT)` needs it), and assert that the AXI left over is ≥ 64 KB (it was ~91 KB before this plan; the SYSTEM path adds no other static)
 - Modify: `chimera-stm32/src/sd.rs`:
+  - Presence check before acquire (#186): pure `chimera_fat::sd::r1_within_ncr(&[u8]) -> Option<u8>` with host tests; the shell sends CMD0 (`40 00 00 00 00 95`) with CS low, reads ≤ 8 bytes, three tries; all 0xFF → `NoCard` in ~2 ms. With a card present, a failed acquire gets one fresh `wake` + acquire (the probe's first cold acquire failed, the second passed).
   - `impl chimera_fat::SdBus for SdSpi`: `Acquire` → `set_hz(SD_INIT_HZ.Hz())` and `SD_ACQUIRE_MS`; `Data` → `set_hz(SD_FAST_HZ.Hz())` and `SD_IDLE_MS`; `start_op` → `arm(phase's ms)`; `wake` and `timed_out` forward;
   - `pub type SdStore = FatStore<SdDevice, FixedTime>`;
   - `const _: () = assert!(size_of::<SdStore>() <= STORE_RESERVE);`;
@@ -1006,7 +1007,23 @@ pub fn draw_busy<D: DrawTarget<Color = Rgb565>>(d: &mut D, label: BusyLabel) -> 
 
 ## Measured
 
-*(Filled in at the Task 2 and Task 13 STOPs: the probe's lines, CS and card-detect, `SD_MODE`, `SD_FAST_HZ`, the acquire time and worst idle gap, the chip `size_of` figures and the hardware checks.)*
+### Task 2 probe (2026-09-29, rev V, 480 MHz, FAT32 SDHC 15 193 MB)
+
+| Reading | Value |
+|---|---|
+| Kernel / init SCK | 100 MHz / 390 625 Hz, OK; DWT runs |
+| No card | every mode ran the full 1 000 ms budget, NO MODE ACQUIRED (#186) |
+| Cold acquire | first M0 FAIL at 1 360 ms (library gave up, 5 s budget); M3 then OK in 140 ms; M1 (not an SD mode) TO |
+| Partition | LBA 8192, type 0C, Fat32, serial 37376530, NO NAME; mount 1 ms |
+| 12.5 MHz | OK, write 326 KB/s, read 888 KB/s, worst gap 2 721 µs |
+| 25 MHz | OK, write 363 KB/s, read 1 333 KB/s, worst gap 2 336 µs |
+| Sizes | SOUND 872, POOL 27 904, PERF 5 520, UI 34 900, AUDIO3 12 916, AXI free 91 828, VOICE free 2 728 |
+| CS | PE12 (the card answered on it) |
+| Card-detect | unknown; exFAT run not done (host tests cover it) |
+
+Set: `SD_MODE = MODE_3` (SD-legal, measured), `SD_FAST_HZ = 25 MHz`, `SD_IDLE_MS` stays 600, `SD_ACQUIRE_MS = 1500` per attempt with one fresh retry. Whether the first cold acquire always fails, or MODE_0 is at fault, is unsettled; MODE_3 plus the retry holds in both cases.
+
+*(Task 13's STOP adds the on-unit checks.)*
 
 ---
 
