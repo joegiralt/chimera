@@ -30,10 +30,12 @@
 //! (`rings`) and Karplus-Strong strings (`string`) in four models.
 
 mod params;
+mod q16;
 mod rings;
 mod string;
 
 pub use params::*;
+pub use q16::{Exp, Q16, StepBudget, Store};
 pub use string::{KsRenderParams, MAX_STRING_DELAY};
 
 use core::mem::MaybeUninit;
@@ -71,22 +73,22 @@ crate::in_place::field_list!(ModalBank => ModalBank {
 });
 
 /// The bowed string and the bow's force on it, 0 once the bow lifts.
-struct BowedString {
-    string: KsString,
+struct BowedString<S: Store> {
+    string: KsString<S>,
     force: f32,
 }
 
-crate::in_place::field_list!(BowedString => BowedString { string, force });
+crate::in_place::field_list!(BowedString<F32> => BowedString { string, force });
 
 /// The main string and the seven it sets ringing.
-struct SympatheticStrings {
-    main: KsString,
-    strings: [KsString; NUM_SYMPATHETIC],
+struct SympatheticStrings<S: Store> {
+    main: KsString<S>,
+    strings: [KsString<S>; NUM_SYMPATHETIC],
     /// Each sympathetic string's ratio to the main one, set at note-on.
     ratios: [f32; NUM_SYMPATHETIC],
 }
 
-crate::in_place::field_list!(SympatheticStrings => SympatheticStrings { main, strings, ratios });
+crate::in_place::field_list!(SympatheticStrings<F32> => SympatheticStrings { main, strings, ratios });
 
 in_place_enum! {
     /// The one model an engine holds: the variant is the mode.
@@ -94,15 +96,15 @@ in_place_enum! {
         clippy::large_enum_variant,
         reason = "one model per engine, built in place: boxing needs a heap"
     )]
-    enum ModelSlot {
+    enum ModelSlot<S: Store> {
         Bank(ModalBank) => rebuild_bank, init_bank;
-        String(KsString) => rebuild_string, init_string;
-        Bowed(BowedString) => rebuild_bowed, init_bowed;
-        Sympathetic(SympatheticStrings) => rebuild_sympathetic, init_sympathetic;
+        String(KsString<S>) => rebuild_string, init_string;
+        Bowed(BowedString<S>) => rebuild_bowed, init_bowed;
+        Sympathetic(SympatheticStrings<S>) => rebuild_sympathetic, init_sympathetic;
     }
 }
 
-impl ModelSlot {
+impl<S: Store> ModelSlot<S> {
     fn init_in_place(slot: &mut MaybeUninit<Self>, mode: ResonatorMode) -> &mut Self {
         match mode {
             // SAFETY: `ModalBank::init_in_place` writes every field.
@@ -146,9 +148,10 @@ impl ModelSlot {
     }
 }
 
-pub struct ModalEngine {
+/// Modal, its strings' delay lines stored as `S` (ADR 0052).
+pub struct ModalEngine<S: Store = F32> {
     /// The model it plays, and all of that model's state.
-    model: ModelSlot,
+    model: ModelSlot<S>,
     /// The note's frequency per sample, before the pitch offset.
     frequency: f32,
     /// The voice's pitch ratio (`set_pitch`, ADR 0042), and the one the
@@ -167,13 +170,13 @@ crate::in_place::field_list!(ModalEngine => ModalEngine {
 // A `ModalEngine` is its largest model plus the fields every model shares
 // (`frequency`, `pitch`, `tuned`, `released`, `active`, `silence_counter`),
 // never the sum of models. The slot's tag takes one align (`in_place_enum!`).
-const _: () = {
+const fn models_are_exclusive<S: Store>() -> bool {
     use core::mem::{align_of, size_of};
     let models = [
         size_of::<ModalBank>(),
-        size_of::<KsString>(),
-        size_of::<BowedString>(),
-        size_of::<SympatheticStrings>(),
+        size_of::<KsString<S>>(),
+        size_of::<BowedString<S>>(),
+        size_of::<SympatheticStrings<S>>(),
     ];
     let mut largest = 0;
     let mut i = 0;
@@ -183,13 +186,15 @@ const _: () = {
         }
         i += 1;
     }
-    let align = align_of::<ModalEngine>();
+    let align = align_of::<ModalEngine<S>>();
     let shared = size_of::<(f32, f32, f32, bool, bool, u32)>();
-    assert!(
-        size_of::<ModalEngine>()
-            <= (largest.next_multiple_of(align) + align + shared).next_multiple_of(align)
-    );
-};
+    size_of::<ModalEngine<S>>()
+        <= (largest.next_multiple_of(align) + align + shared).next_multiple_of(align)
+}
+const _: () = assert!(models_are_exclusive::<F32>() && models_are_exclusive::<Q16>());
+
+/// The f32 line: the store the 16-bit one is measured against.
+type F32 = [f32; MAX_STRING_DELAY];
 
 impl ModalEngine {
     /// Cycles/sample per model (ADR 0013), at the chain's LP24. String is
@@ -236,7 +241,9 @@ impl ModalEngine {
         // SAFETY: `init_in_place` writes every field of the slot.
         unsafe { crate::in_place::by_value(|slot| Self::init_in_place(slot, mode)) }
     }
+}
 
+impl<S: Store> ModalEngine<S> {
     pub fn init_in_place(slot: &mut MaybeUninit<Self>, mode: ResonatorMode) -> &mut Self {
         let p = slot.as_mut_ptr();
         // SAFETY: `p` is valid and unaliased; the model is built in place,
@@ -307,9 +314,7 @@ impl ModalEngine {
             }
             ModelSlot::Bowed(b) => {
                 b.string.set_freq(freq, sample_rate);
-                for s in b.string.buffer.iter_mut() {
-                    *s = 0.0;
-                }
+                b.string.line.clear();
                 b.force = vel * params.bow_force;
             }
             ModelSlot::Sympathetic(m) => {
@@ -325,8 +330,9 @@ impl ModalEngine {
                 m.tune(freq, sample_rate);
                 for sym in m.strings.iter_mut() {
                     // Sympathetic strings start silent — energy comes from main
-                    for s in sym.buffer[..sym.delay_len].iter_mut() {
-                        *s = 0.0;
+                    sym.line.restart();
+                    for i in 0..sym.delay_len {
+                        sym.line.store(i, 0.0);
                     }
                     sym.write_pos = 0;
                 }
@@ -362,30 +368,18 @@ impl ModalEngine {
         match &mut self.model {
             ModelSlot::String(string) => {
                 // Dampen the buffer heavily
-                for _ in 0..3 {
-                    for i in 0..string.delay_len {
-                        string.buffer[i] *= 0.2;
-                    }
-                }
+                string.damp(3);
             }
             ModelSlot::Bowed(b) => {
                 // Stop the bow — zero exciter, heavily dampen string
                 b.force = 0.0;
-                for _ in 0..5 {
-                    for i in 0..b.string.delay_len {
-                        b.string.buffer[i] *= 0.2;
-                    }
-                }
+                b.string.damp(5);
             }
             ModelSlot::Bank(_) => {}
             ModelSlot::Sympathetic(m) => {
-                for i in 0..m.main.delay_len {
-                    m.main.buffer[i] *= 0.2;
-                }
+                m.main.damp(1);
                 for sym in &mut m.strings {
-                    for i in 0..sym.delay_len {
-                        sym.buffer[i] *= 0.2;
-                    }
+                    sym.damp(1);
                 }
             }
         }
@@ -412,6 +406,8 @@ impl ModalEngine {
 
         let bank_freq = self.pitched(self.frequency);
         self.retune(sample_rate);
+        // Every string of the voice shares it: one exponent step a block.
+        let mut budget = StepBudget::one();
 
         // Whether the model is still exciting itself: silent or not, the
         // note sounds on.
@@ -424,15 +420,29 @@ impl ModalEngine {
                 bank.burst_remaining > 0
             }
             ModelSlot::String(string) => {
-                render_string(string, output, params, self.released, &mut max_level);
+                render_string(
+                    string,
+                    output,
+                    params,
+                    self.released,
+                    &mut max_level,
+                    &mut budget,
+                );
                 false
             }
             ModelSlot::Bowed(b) => {
-                render_bowed(b, output, params, &mut max_level);
+                render_bowed(b, output, params, &mut max_level, &mut budget);
                 false
             }
             ModelSlot::Sympathetic(m) => {
-                render_sympathetic(m, output, params, self.released, &mut max_level);
+                render_sympathetic(
+                    m,
+                    output,
+                    params,
+                    self.released,
+                    &mut max_level,
+                    &mut budget,
+                );
                 false
             }
         };
@@ -521,7 +531,7 @@ impl ModalBank {
     }
 }
 
-impl BowedString {
+impl<S: Store> BowedString<S> {
     fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
         let p = slot.as_mut_ptr();
         // SAFETY: `p` is valid and unaliased; the string is built in place
@@ -534,14 +544,14 @@ impl BowedString {
     }
 }
 
-impl SympatheticStrings {
+impl<S: Store> SympatheticStrings<S> {
     fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
         let p = slot.as_mut_ptr();
         // SAFETY: `p` is valid and unaliased; the eight strings are built in
         // place and `ratios` is written by value, before `assume_init_mut`.
         unsafe {
             KsString::init_in_place(uninit_at(addr_of_mut!((*p).main)));
-            let sym = addr_of_mut!((*p).strings).cast::<KsString>();
+            let sym = addr_of_mut!((*p).strings).cast::<KsString<S>>();
             for i in 0..NUM_SYMPATHETIC {
                 KsString::init_in_place(uninit_at(sym.add(i)));
             }
@@ -592,12 +602,13 @@ fn render_modal(bank: &mut ModalBank, output: &mut [f32; BLOCK_SIZE], max_level:
     }
 }
 
-fn render_string(
-    string: &mut KsString,
+fn render_string<S: Store>(
+    string: &mut KsString<S>,
     output: &mut [f32; BLOCK_SIZE],
     params: &ModalParams,
     released: bool,
     max_level: &mut f32,
+    budget: &mut StepBudget,
 ) {
     let (fb, body, stiff, decay) = if released {
         (0.0, 0.0, 0.0, 0.8_f32.max(params.decay)) // fast decay on release
@@ -620,16 +631,17 @@ fn render_string(
         ens_mix: params.ks_ens_mix,
     };
     for s in output.iter_mut() {
-        *s = string.tick_full(&render_params);
+        *s = string.tick_full(&render_params, budget);
         *max_level = max_level.max(libm::fabsf(*s));
     }
 }
 
-fn render_bowed(
-    b: &mut BowedString,
+fn render_bowed<S: Store>(
+    b: &mut BowedString<S>,
     output: &mut [f32; BLOCK_SIZE],
     params: &ModalParams,
     max_level: &mut f32,
+    budget: &mut StepBudget,
 ) {
     let (string, exciter_amp) = (&mut b.string, b.force);
     let bow_vel = if exciter_amp > 0.001 {
@@ -644,7 +656,7 @@ fn render_bowed(
     for s in output.iter_mut() {
         // Read from delay line
         let read_pos = (string.write_pos + MAX_STRING_DELAY - string.delay_len) % MAX_STRING_DELAY;
-        let string_vel = string.buffer[read_pos];
+        let string_vel = string.line.load(read_pos);
 
         // Bow friction: stick-slip model.
         // When |delta_v| is small, bow sticks (high friction → energy in).
@@ -657,20 +669,24 @@ fn render_bowed(
         // Soft-limit to prevent blowup
         let clamped = libm::tanhf(feedback);
 
-        string.buffer[string.write_pos] = clamped;
+        string.line.store(string.write_pos, clamped);
         string.write_pos = (string.write_pos + 1) % MAX_STRING_DELAY;
+        if string.write_pos == 0 {
+            string.line.wrapped(budget);
+        }
 
         *s = string_vel;
         *max_level = max_level.max(libm::fabsf(*s));
     }
 }
 
-fn render_sympathetic(
-    m: &mut SympatheticStrings,
+fn render_sympathetic<S: Store>(
+    m: &mut SympatheticStrings<S>,
     output: &mut [f32; BLOCK_SIZE],
     params: &ModalParams,
     released: bool,
     max_level: &mut f32,
+    budget: &mut StepBudget,
 ) {
     let (fb, body, stiff) = if released {
         (0.0, 0.0, 0.0)
@@ -709,7 +725,7 @@ fn render_sympathetic(
 
     for s in output.iter_mut() {
         // 1. Main string tick
-        let main_out = m.main.tick_full(&main_params);
+        let main_out = m.main.tick_full(&main_params, budget);
 
         // 2. Couple main string output into sympathetic strings
         let sym_input = main_out * coupling;
@@ -719,9 +735,9 @@ fn render_sympathetic(
         for sym in &mut m.strings {
             // Inject coupled energy from main string into delay line
             let wp = sym.write_pos;
-            sym.buffer[wp] += sym_input;
+            sym.line.store(wp, sym.line.load(wp) + sym_input);
             // Tick the sympathetic string (with gentler damping)
-            let sym_out = sym.tick_full(&sym_params);
+            let sym_out = sym.tick_full(&sym_params, budget);
             sym_sum += sym_out;
         }
 
@@ -750,6 +766,8 @@ fn sympathetic_ratios(inharm: f32) -> [f32; NUM_SYMPATHETIC] {
 mod tests {
     extern crate std;
     use std::boxed::Box;
+    use std::format;
+    use std::vec::Vec;
 
     use super::*;
 
@@ -761,7 +779,7 @@ mod tests {
         ResonatorMode::Sympathetic,
     ];
 
-    fn payload_addr(slot: &ModelSlot) -> *const u8 {
+    fn payload_addr<S: Store>(slot: &ModelSlot<S>) -> *const u8 {
         match slot {
             ModelSlot::Bank(b) => core::ptr::from_ref(b).cast(),
             ModelSlot::String(s) => core::ptr::from_ref(s).cast(),
@@ -773,12 +791,12 @@ mod tests {
     #[test]
     fn model_slot_layout_matches_repr() {
         for (from, first) in MODES.into_iter().enumerate() {
-            let mut raw = Box::<ModelSlot>::new_uninit();
+            let mut raw = Box::<ModelSlot<Q16>>::new_uninit();
             // SAFETY: the box is valid for `size_of::<ModelSlot>()` byte writes.
             unsafe {
                 raw.as_mut_ptr()
                     .cast::<u8>()
-                    .write_bytes(0xA5, size_of::<ModelSlot>())
+                    .write_bytes(0xA5, size_of::<ModelSlot<Q16>>())
             };
             ModelSlot::init_in_place(&mut raw, first);
             // SAFETY: `init_in_place` built a valid slot in the box.
@@ -795,5 +813,241 @@ mod tests {
                 assert_eq!(payload_addr(&slot), payload, "{:?}", MODES[i]);
             }
         }
+    }
+
+    const SR: u32 = 48_000;
+    /// Blocks in a second, and samples in the 10 ms envelope window.
+    const SECOND: usize = SR as usize / BLOCK_SIZE;
+    const WINDOW: usize = 480;
+
+    fn engine<S: Store>(mode: ResonatorMode) -> Box<ModalEngine<S>> {
+        let mut raw = Box::<ModalEngine<S>>::new_uninit();
+        ModalEngine::init_in_place(&mut raw, mode);
+        // SAFETY: `init_in_place` built a valid engine in the box.
+        unsafe { raw.assume_init() }
+    }
+
+    fn block<S: Store>(e: &mut ModalEngine<S>, p: &ModalParams) -> [f32; BLOCK_SIZE] {
+        let mut out = [0.0; BLOCK_SIZE];
+        e.render(&mut out, p, SR);
+        out
+    }
+
+    /// `note` at velocity 100 for `blocks`, released before `release_block`:
+    /// the output and the first block after which the voice is free.
+    fn play<S: Store>(
+        p: &ModalParams,
+        note: u8,
+        release_block: Option<usize>,
+        blocks: usize,
+    ) -> (Vec<f32>, Option<usize>) {
+        let mut e = engine::<S>(p.mode);
+        e.note_on(note, 100, p, SR);
+        let (mut out, mut quiet) = (Vec::with_capacity(blocks * BLOCK_SIZE), None);
+        for b in 0..blocks {
+            if release_block == Some(b) {
+                e.note_off();
+            }
+            out.extend(block(&mut e, p));
+            if quiet.is_none() && !e.is_active() {
+                quiet = Some(b);
+            }
+        }
+        (out, quiet)
+    }
+
+    fn db(x: f32) -> f32 {
+        20.0 * libm::log10f(x)
+    }
+
+    fn peak(x: &[f32]) -> f32 {
+        x.iter().fold(0.0, |m, v| m.max(v.abs()))
+    }
+
+    /// The largest envelope gap in dB, over windows where f32 reads above
+    /// -60 dBFS.
+    fn envelope_gap(q: &[f32], f: &[f32]) -> f32 {
+        q.chunks(WINDOW)
+            .zip(f.chunks(WINDOW))
+            .filter(|(_, f)| peak(f) > 0.001)
+            .map(|(q, f)| db(peak(q) / peak(f)).abs())
+            .fold(0.0, f32::max)
+    }
+
+    /// ADR 0052's error bound: RMS of Q16 − f32 re full scale over the
+    /// first second, FDBK 0.
+    const ERROR_DBFS: f32 = -90.0;
+
+    /// Sympathetic's own bound, for the high notes whose loops ring loud
+    /// (ADR 0052). Its seven lines resonate at 0.65–0.8, so they sit at
+    /// `Exp::START` (14), one LSB 6.1e-5 at every level. Each pass rounds
+    /// in about 0.29 LSB RMS, and a 0.999 loop builds that power by
+    /// 1/(1 − g²) ≈ 500: about 4e-4 a string, times 0.15 · √7 at the mix,
+    /// a floor near −76 dBFS (C6 measures −73.9). A limit of 16-bit
+    /// storage in that model, not of the exponent's steps.
+    const SYMPATHETIC_ERROR_DBFS: f32 = -72.0;
+
+    /// ADR 0052's gate: with FDBK 0, the 16-bit strings play what f32 ones
+    /// do, to their error bound over a second, within 0.1 dB of envelope,
+    /// and go quiet with them.
+    #[test]
+    fn strings_i16_match_f32() {
+        let mut cases = Vec::new();
+        for mode in [
+            ResonatorMode::String,
+            ResonatorMode::Bowed,
+            ResonatorMode::Sympathetic,
+        ] {
+            for note in [31, 69, 84] {
+                for decay in [0.0, 0.3] {
+                    // Only the Sympathetic cases that measure below -90.
+                    let loud_loops = mode == ResonatorMode::Sympathetic
+                        && (note == 84 || (note == 69 && decay == 0.0));
+                    let bound = if loud_loops {
+                        SYMPATHETIC_ERROR_DBFS
+                    } else {
+                        ERROR_DBFS
+                    };
+                    let p = ModalParams {
+                        mode,
+                        decay,
+                        ks_feedback: 0.0,
+                        ..Default::default()
+                    };
+                    cases.push((p, note, bound));
+                }
+            }
+        }
+        let ensemble = ModalParams {
+            ks_feedback: 0.0,
+            ks_ens_mix: 0.5,
+            ks_ens_depth: 0.5,
+            ..Default::default()
+        };
+        cases.push((ensemble, 45, ERROR_DBFS));
+
+        let mut misses = Vec::new();
+
+        for (p, note, bound) in cases {
+            let release = (p.mode == ResonatorMode::Bowed).then_some(SECOND / 2);
+            let (q, q_quiet) = play::<Q16>(&p, note, release, 10 * SECOND);
+            let (f, f_quiet) = play::<F32>(&p, note, release, 10 * SECOND);
+            let n = SECOND * BLOCK_SIZE;
+            let err = q[..n]
+                .iter()
+                .zip(&f[..n])
+                .map(|(q, f)| (q - f) * (q - f))
+                .sum::<f32>();
+            let err = db(libm::sqrtf(err / n as f32));
+            let gap = envelope_gap(&q, &f);
+            let case = format!("{:?} {note} decay {}", p.mode, p.decay);
+            let quiet = match (q_quiet, f_quiet) {
+                (None, None) => true,
+                (Some(q), Some(f)) => q.abs_diff(f) <= 15,
+                _ => false,
+            };
+            let row = format!(
+                "{case:<24} {err:7.2} dBFS  env {gap:.3} dB  quiet {q_quiet:?} / {f_quiet:?}"
+            );
+            std::eprintln!("{row}");
+            if err > bound || gap > 0.1 || !quiet {
+                misses.push(row);
+            }
+        }
+        assert!(misses.is_empty(), "missed the gate: {misses:#?}");
+    }
+
+    /// With feedback the loop self-oscillates and amplifies any difference,
+    /// so the gate is bounds and envelope, not samples.
+    #[test]
+    fn strings_i16_with_feedback_stay_bounded() {
+        for ks_feedback in [0.2, 1.0] {
+            for (mode, note) in [
+                (ResonatorMode::String, 69),
+                (ResonatorMode::Sympathetic, 57),
+            ] {
+                let p = ModalParams {
+                    mode,
+                    ks_feedback,
+                    ..Default::default()
+                };
+                let (q, _) = play::<Q16>(&p, note, None, SECOND);
+                let (f, _) = play::<F32>(&p, note, None, SECOND);
+                let gap = envelope_gap(&q, &f);
+                std::eprintln!("{mode:?} {note} fdbk {ks_feedback}  env {gap:.3} dB");
+                assert!(
+                    q.iter().all(|y| y.is_finite() && y.abs() <= 1.5),
+                    "{mode:?} {ks_feedback}"
+                );
+                assert!(gap <= 2.0, "{mode:?} {ks_feedback}: envelope {gap} dB");
+            }
+        }
+    }
+
+    /// Samples past a short loop keep the level of the note before: a new
+    /// note's restart rescales them, so a pitch drop that reads them back
+    /// hears no burst.
+    #[test]
+    fn pitch_down_after_a_long_tail_reads_no_burst() {
+        fn run<S: Store>(check: impl Fn(&ModalEngine<S>)) -> f32 {
+            let p = ModalParams {
+                decay: 0.0,
+                ks_feedback: 0.0,
+                ..Default::default()
+            };
+            let mut e = engine::<S>(p.mode);
+            e.note_on(31, 100, &p, SR);
+            for _ in 0..3 * SECOND {
+                block(&mut e, &p);
+            }
+            check(&e);
+            e.note_on(69, 100, &p, SR);
+            block(&mut e, &p);
+            e.set_pitch(0.25);
+            (0..8).map(|_| peak(&block(&mut e, &p))).fold(0.0, f32::max)
+        }
+        let q = run::<Q16>(|e| match &e.model {
+            ModelSlot::String(s) => {
+                assert!(s.line.exp().get() > Exp::START.get(), "the tail stepped up")
+            }
+            _ => unreachable!(),
+        });
+        let f = run::<F32>(|_| {});
+        assert!((q - f).abs() <= 0.01, "peak {q} / {f}");
+    }
+
+    /// Eight short loops wrap every block, but a voice steps at most one
+    /// string's exponent a block.
+    #[test]
+    fn a_short_loop_steps_at_most_once_a_block() {
+        let p = ModalParams {
+            mode: ResonatorMode::Sympathetic,
+            ..Default::default()
+        };
+        let mut e = engine::<Q16>(p.mode);
+        e.note_on(96, 100, &p, SR);
+        let exps = |e: &ModalEngine<Q16>| match &e.model {
+            ModelSlot::Sympathetic(m) => core::array::from_fn::<_, 8, _>(|i| {
+                if i == 0 {
+                    m.main.line.exp()
+                } else {
+                    m.strings[i - 1].line.exp()
+                }
+            }),
+            _ => unreachable!(),
+        };
+        let mut most = 0;
+        for b in 0..2 * SECOND {
+            let before = exps(&e);
+            block(&mut e, &p);
+            let stepped = before
+                .iter()
+                .zip(exps(&e))
+                .filter(|(a, b)| **a != *b)
+                .count();
+            assert!(stepped <= 1, "block {b}: {stepped} strings stepped");
+            most = most.max(stepped);
+        }
+        assert_eq!(most, 1, "no string ever stepped");
     }
 }
