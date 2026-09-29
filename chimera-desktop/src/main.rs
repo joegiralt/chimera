@@ -3,6 +3,8 @@ mod controls;
 mod display;
 #[cfg(feature = "midi")]
 mod midi;
+#[cfg_attr(not(test), allow(dead_code))]
+mod store;
 
 use chimera_core::scope::scope_buffer;
 use chimera_core::ui::UiState;
