@@ -307,6 +307,8 @@ pub struct SystemSync {
     /// The volume and `body_crc` last loaded from or saved to it.
     known: Option<(VolumeId, u32)>,
     /// RAM holds defaults that no card gave and the user hasn't changed.
+    /// `write` leaves it: the next `left_system` frame clears it, as what was
+    /// written then differs from DEFAULT.
     untouched: bool,
     was_in: bool,
 }

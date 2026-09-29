@@ -466,6 +466,52 @@ fn unreadable_card_with_untouched_defaults_writes_nothing() {
     assert_eq!(cur, SystemSettings::DEFAULT);
 }
 
+/// Case 8: a card whose SYSTEM needs newer firmware, with no header this
+/// firmware reads (version 2) or with one (an unknown critical record).
+/// Neither untouched defaults nor a change go over it, and RAM keeps its own.
+#[test]
+fn newer_firmware_system_is_never_written() {
+    let f = system_file(&settings());
+    let mut headerless = f.clone();
+    headerless[4..6].copy_from_slice(&2u16.to_le_bytes());
+    fix_crc(&mut headerless);
+    let end = *record_offsets(&f).last().unwrap();
+    let present = with_record(&f, end, 0x8071, &[0; 4]);
+    let nnf = Err(SyncError::File(FileError::NeedsNewerFirmware));
+
+    for (shape, bytes) in [("headerless", headerless), ("present", present)] {
+        for change in [false, true] {
+            let mut s = MemStore::new(1);
+            put(&mut s, Side::A, &bytes);
+            let before = sides(&mut s);
+            let mut card = Card::new();
+            let (mut sync, mut cur, note) = SystemSync::boot(&mut card, &mut s);
+            assert_eq!(
+                note,
+                Some(BootNote::Error(LoadError::File(
+                    FileError::NeedsNewerFirmware
+                ))),
+                "{shape}"
+            );
+
+            assert!(!sync.left_system(true, &cur));
+            if change {
+                cur.theme.bright = Bright::new(90);
+            }
+            let want = cur;
+            assert!(sync.left_system(false, &cur));
+            assert_eq!(
+                sync.on_exit(&mut card, &mut s, &mut cur),
+                nnf,
+                "{shape} {change}"
+            );
+            assert_eq!(sides(&mut s), before, "{shape} {change}: written");
+            assert_eq!(cur, want, "{shape} {change}: RAM changed");
+            assert!(matches!(card, Card::Ready(_)), "{shape} {change}: {card:?}");
+        }
+    }
+}
+
 #[test]
 fn no_file_boot_creates_on_first_exit() {
     let mut s = MemStore::new(1);
