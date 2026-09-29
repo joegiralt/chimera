@@ -57,6 +57,10 @@ All integers are little-endian.
   newer firmware". Torn means exactly `BadCrc`, or `Truncated`: a file under
   32 B, or a stream shorter than its length. A bad magic under a valid CRC is
   `BadMagic`; with a failing one it is `BadCrc`, torn.
+  The file's length comes from the directory entry, never from its own
+  bytes, so every file can be hashed. A foreign file therefore reads as
+  "FILE CHECKSUM FAILED", not "NOT A CHIMERA FILE"; `BadMagic` needs a CRC
+  that happens to match.
 - **Two passes.** Record events before the CRC is checked are provisional.
   A decoder applies them only on a second pass, after the first pass's
   `finish` is Ok.
