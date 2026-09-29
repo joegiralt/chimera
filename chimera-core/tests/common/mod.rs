@@ -14,6 +14,7 @@ use chimera_core::dsp::algo::algorithms::AlgoId;
 use chimera_core::dsp::algo::params::AlgoParams;
 use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::fx_bus::FxBus;
+use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::hw::DAC_PAIRS;
 use chimera_core::instrument::{AudioShared, Instrument};
@@ -49,6 +50,8 @@ pub const MOD_AMOUNT: i8 = 64;
 pub enum Case {
     ModalInit,
     ModalLfoCutoff,
+    /// Modal init on the Sympathetic model.
+    ModalSympathetic,
     /// The Algo init Sound: operator 1 on W1 at LEVEL 99, T1.
     AlgoInit,
     /// Algo init with the LFO on filter cutoff: the chain lock Pizza's
@@ -82,9 +85,10 @@ static FACTORY_NAMES: [&str; 8] = [
 ];
 
 impl Case {
-    pub const ALL: [Case; 23] = [
+    pub const ALL: [Case; 24] = [
         Case::ModalInit,
         Case::ModalLfoCutoff,
+        Case::ModalSympathetic,
         Case::AlgoInit,
         Case::AlgoLfoCutoff,
         Case::AlgoTx(0),
@@ -112,6 +116,7 @@ impl Case {
         match self {
             Case::ModalInit => "modal_init",
             Case::ModalLfoCutoff => "modal_lfo_cutoff",
+            Case::ModalSympathetic => "modal_sympathetic",
             Case::AlgoInit => "algo_init",
             Case::AlgoLfoCutoff => "algo_lfo_cutoff",
             Case::AlgoTx(t) => TX_NAMES[t as usize % 8],
@@ -186,6 +191,11 @@ pub fn setup(case: Case) -> (ParamSnapshot, ModState) {
     match case {
         Case::ModalInit => (init_params(EngineType::Modal), ModState::new()),
         Case::ModalLfoCutoff => with_lfo(EngineType::Modal, CUTOFF),
+        Case::ModalSympathetic => {
+            let mut p = init_params(EngineType::Modal);
+            p.modal.mode = ResonatorMode::Sympathetic;
+            (p, ModState::new())
+        }
         Case::AlgoInit => (init_params(EngineType::Algo), ModState::new()),
         Case::AlgoLfoCutoff => with_lfo(EngineType::Algo, CUTOFF),
         Case::AlgoTx(t) => (tx_patch(AlgoId::clamped(t)), ModState::new()),
