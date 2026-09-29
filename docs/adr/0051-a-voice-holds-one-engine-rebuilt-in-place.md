@@ -62,9 +62,9 @@ fade end, or a VCA-lifetime end). Each stage allows at most one:
 - **Its render: at most one.** This is a fade end or a VCA-lifetime reset,
   never both, because the fade end's reset clears the VCA routes that the
   lifetime check reads.
-- **After its render: at most one.** Render step 5 either plays a waiting
-  note on the now idle voice (`Instrument::start`) or, with none waiting,
-  rests it (`Voice::rest`, which gives a Sympathetic lease back), never
+- **After its render: at most one.** With no note waiting, render step
+  5 rests the now idle voice (`Voice::rest`, which gives a Sympathetic
+  lease back); with one, step 6 plays it (`Instrument::start`), never
   both. A note still waiting, on the clear budget or on another Part's
   fade, spends no rebuild.
 - **Render step 0 takes the drain's place.** At the top of

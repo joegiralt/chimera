@@ -457,6 +457,29 @@ impl Instrument {
         }
     }
 
+    /// Starts the waiting notes on idle voices oldest first, by `Allocator`
+    /// age, while the clear budget takes them: the first that doesn't fit
+    /// queues the rest (`admit`).
+    fn start_waiting(&mut self, shared: &AudioShared) {
+        let mut queue = [(u32::MAX, 0usize); MAX_VOICES];
+        let mut n = 0;
+        for v in 0..MAX_VOICES {
+            if !self.voices[v].is_active() && self.waiting[v].is_some() {
+                queue[n] = (self.alloc.slots()[v].age(), v);
+                n += 1;
+            }
+        }
+        queue[..n].sort_unstable();
+        for &(_, v) in &queue[..n] {
+            let s = self.alloc.slots()[v];
+            if let (Some(vel), Some(q), Some(note)) = (self.waiting[v], s.part(), s.note())
+                && self.start(v, (vel, q, note, s.held()), shared)
+            {
+                self.waiting[v] = None;
+            }
+        }
+    }
+
     /// Starts idle voice `v`'s waiting note, velocity `vel` on Part `q`,
     /// released at once unless `held`, if the block's clear budget lets it:
     /// false if it must wait on. A Sympathetic note is placed as it starts
@@ -536,9 +559,10 @@ impl Instrument {
 
     /// A Part whose Sound has just become Sympathetic: its held, sounding
     /// notes restart on it, each fading first and waiting as another
-    /// Part's steal does. Newest first, they are promised the free slots,
-    /// so the last four played ring and the rest play bare (the owner's
-    /// rule, 2026-09-29, spec § 4.5). Nothing is evicted.
+    /// Part's steal does, so each restart's clear goes through the budget.
+    /// Newest first, they are promised the free slots, so the last four
+    /// played ring and the rest play bare (the owner's rule, 2026-09-29,
+    /// spec § 4.5). Nothing is evicted.
     fn restart_switched(&mut self, shared: &AudioShared) {
         for (p, part) in shared.parts.iter().enumerate() {
             let kind = SlotKind::of(&part.params);
@@ -548,7 +572,9 @@ impl Instrument {
                 continue;
             }
             // A note already Sympathetic (a note-on since the switch) keeps
-            // what it has; a shed note stays shed.
+            // what it has, unless it fades toward its own restart (MODE
+            // flipped away and back within the fade); a shed note stays
+            // shed.
             let mut held = [(VoiceIdx::ALL[0], 0u32); MAX_VOICES];
             let mut n = 0;
             for (v, s) in self.alloc.slots().iter().enumerate() {
@@ -558,7 +584,7 @@ impl Instrument {
                     && s.part() == Some(p as u8)
                     && self.sounding[v] as usize == p
                     && voice.is_active()
-                    && voice.kind() != SYMPATHETIC
+                    && (voice.kind() != SYMPATHETIC || voice.restarts())
                 {
                     held[n] = (VoiceIdx::ALL[v], s.age());
                     n += 1;
@@ -597,27 +623,9 @@ impl Instrument {
         }
         let mut block = [0.0f32; BLOCK_SIZE];
         // 0. Notes that waited on the clear budget, their voices idle, start
-        //    oldest first before the voices render: let in this block, one
-        //    sounds in it. The first that doesn't fit queues the rest again.
-        let mut queue = [(u32::MAX, 0usize); MAX_VOICES];
-        let mut n = 0;
-        for v in 0..MAX_VOICES {
-            let s = self.alloc.slots()[v];
-            if !self.voices[v].is_active() && self.waiting[v].is_some() {
-                queue[n] = (s.age(), v);
-                n += 1;
-            }
-        }
-        queue[..n].sort_unstable();
+        //    before the voices render: let in this block, one sounds in it.
         self.clear_backlog = false;
-        for &(_, v) in &queue[..n] {
-            let s = self.alloc.slots()[v];
-            if let (Some(vel), Some(q), Some(note)) = (self.waiting[v], s.part(), s.note())
-                && self.start(v, (vel, q, note, s.held()), shared)
-            {
-                self.waiting[v] = None;
-            }
-        }
+        self.start_waiting(shared);
         for v in 0..MAX_VOICES {
             if self.alloc.slots()[v].is_free() {
                 continue;
@@ -638,22 +646,18 @@ impl Instrument {
             //    Read right after rendering the note the voice plays *now*,
             //    so a steal or retrigger since the last block is never freed
             //    by a report about the note it replaced.
-            if !self.voices[v].is_active() {
-                let s = self.alloc.slots()[v];
-                match (self.waiting[v].take(), s.part(), s.note()) {
-                    (Some(vel), Some(q), Some(note)) => {
-                        // Past the block's clear budget: the next block.
-                        if !self.start(v, (vel, q, note, s.held()), shared) {
-                            self.waiting[v] = Some(vel);
-                        }
-                    }
-                    _ => {
-                        self.alloc.release_finished(v);
-                        self.voices[v].rest(&mut self.sym);
-                    }
-                }
+            //    A voice with a note waiting keeps it for step 6.
+            if !self.voices[v].is_active()
+                && (self.waiting[v].is_none() || self.alloc.slots()[v].note().is_none())
+            {
+                self.waiting[v] = None;
+                self.alloc.release_finished(v);
+                self.voices[v].rest(&mut self.sym);
             }
         }
+        // 6. Waiting notes whose voices went idle this block start, oldest
+        //    first, behind any the budget still queues.
+        self.start_waiting(shared);
 
         self.clear_left = SYM_CLEAR_BUDGET;
 
