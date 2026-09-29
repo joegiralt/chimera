@@ -5,7 +5,7 @@ mod common;
 use common::Rig;
 use common::{SR, tri};
 
-use chimera_core::dsp::modal::ResonatorMode;
+use chimera_core::dsp::modal::{BankModes, ResonatorMode};
 use chimera_core::modulation::ModState;
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::{MidiNote, Velocity};
@@ -51,18 +51,17 @@ fn random_params(rng: &mut Rng) -> ParamSnapshot {
     // Modal params
     p.modal.mode = ResonatorMode::from_u8(rng.u8(3)); // all four models
     p.modal.excite = rng.f32();
-    p.modal.decay = rng.f32();
-    p.modal.brightness = rng.f32();
-    p.modal.inharm = rng.f32();
-    p.modal.position = rng.f32();
-    p.modal.ks_excitation = rng.u8(3);
-    p.modal.ks_color = rng.f32();
-    p.modal.ks_body = rng.f32();
-    p.modal.ks_stiffness = rng.f32();
-    p.modal.ks_feedback = rng.f32();
-    p.modal.ks_ens_rate = rng.f32();
-    p.modal.ks_ens_depth = rng.f32();
-    p.modal.ks_ens_mix = rng.f32();
+    p.modal.structure = rng.f32();
+    p.modal.bright = rng.f32();
+    p.modal.damp = rng.f32();
+    p.modal.pos = rng.f32();
+    p.modal.body = rng.f32();
+    p.modal.ens_depth = rng.f32();
+    p.modal.ens_rate = rng.f32();
+    p.modal.ens_mix = rng.f32();
+    p.modal.couple = rng.f32();
+    p.modal.halo = rng.f32();
+    p.modal.modes = BankModes::from_index(rng.u8(3));
 
     // Algo params (release 8–15 so a note ends inside the note-off property's window)
     p.algo.alg_a = rng.u8(31);
@@ -307,8 +306,7 @@ fn prop_note_off_eventually_silences() {
     for trial in 0..50 {
         let mut params = random_params(&mut rng);
         // Tame params so note actually decays
-        params.modal.ks_feedback *= 0.1;
-        params.modal.decay *= 0.2;
+        params.modal.damp *= 0.2;
         // Force bowed mode (2) to not self-sustain
         if params.modal.mode == ResonatorMode::Bowed {
             params.modal.mode = ResonatorMode::Modal; // use resonator instead
@@ -493,75 +491,75 @@ fn prop_volume_full_sweep() {
 }
 
 #[test]
-fn prop_ks_body_full_sweep() {
+fn prop_string_body_full_sweep() {
     verify_full_sweep(
-        "KS body",
+        "STRING BODY",
         |p| {
             *p = ParamSnapshot::for_engine(EngineType::Modal);
             p.modal.mode = ResonatorMode::String;
         },
         |p, v| {
-            p.modal.ks_body = v;
+            p.modal.body = v;
         },
         16,
     );
 }
 
 #[test]
-fn prop_ks_stiffness_full_sweep() {
+fn prop_string_structure_full_sweep() {
     verify_full_sweep(
-        "KS stiffness",
+        "STRING STRUCTURE",
         |p| {
             *p = ParamSnapshot::for_engine(EngineType::Modal);
             p.modal.mode = ResonatorMode::String;
         },
         |p, v| {
-            p.modal.ks_stiffness = v;
+            p.modal.structure = v;
         },
         16,
     );
 }
 
 #[test]
-fn prop_ks_brightness_full_sweep() {
+fn prop_string_bright_full_sweep() {
     verify_full_sweep(
-        "KS brightness",
+        "STRING BRIGHT",
         |p| {
             *p = ParamSnapshot::for_engine(EngineType::Modal);
             p.modal.mode = ResonatorMode::String;
         },
         |p, v| {
-            p.modal.brightness = v;
+            p.modal.bright = v;
         },
         16,
     );
 }
 
 #[test]
-fn prop_modal_decay_full_sweep() {
+fn prop_bank_damp_full_sweep() {
     verify_full_sweep(
-        "Modal decay",
+        "BANK DAMP",
         |p| {
             *p = ParamSnapshot::for_engine(EngineType::Modal);
             p.modal.mode = ResonatorMode::Modal;
         },
         |p, v| {
-            p.modal.decay = v;
+            p.modal.damp = v;
         },
         16,
     );
 }
 
 #[test]
-fn prop_modal_brightness_full_sweep() {
+fn prop_bank_bright_full_sweep() {
     verify_full_sweep(
-        "Modal brightness",
+        "BANK BRIGHT",
         |p| {
             *p = ParamSnapshot::for_engine(EngineType::Modal);
             p.modal.mode = ResonatorMode::Modal;
         },
         |p, v| {
-            p.modal.brightness = v;
+            p.modal.bright = v;
         },
         16,
     );

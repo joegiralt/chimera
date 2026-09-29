@@ -34,8 +34,8 @@ fn modal_pages() {
     turn(&reg::MODAL_1, 1, 2, &mut p);
     assert_eq!(p.modal.excite, 0.8 + 2.0 * (1.0 / 128.0));
     turn(&reg::MODAL_2, 5, -1, &mut p);
-    assert_eq!(p.modal.ks_ens_mix, 0.0);
-    assert_eq!(read(&reg::MODAL_2, &p), [0.3, 0.0, 0.2, 0.0, 0.3, 0.0]);
+    assert_eq!(p.modal.ens_mix, 0.0);
+    assert_eq!(read(&reg::MODAL_2, &p), [0.3, 0.25, 0.25, 0.0, 0.3, 0.0]);
     // Plan D3: MODE reaches Sympathetic; Review Focus 3: snap lands on a choice.
     p.modal.mode = ResonatorMode::Bowed;
     assert_eq!(read(&reg::MODAL_1, &p)[0], 2.0 / 3.0);

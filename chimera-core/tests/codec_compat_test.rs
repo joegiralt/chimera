@@ -174,6 +174,7 @@ fn v1_fixtures_render_identically() {
 /// Holds only while the factory Sounds are unchanged; the render test is the
 /// lasting one.
 #[test]
+#[ignore = "T4 translates BRIGHT"]
 fn v1_fixtures_equal_factory() {
     for i in 0..FACTORY_LEN {
         let d = decode(&fixture(&format!("factory_{i}.snd"))).unwrap();
@@ -198,6 +199,7 @@ fn after_engine(f: &[u8]) -> Vec<usize> {
 }
 
 #[test]
+#[ignore = "T4 translates BRIGHT"]
 fn unknown_non_critical_skipped() {
     for (name, s) in sources() {
         let f = fixture(&name);

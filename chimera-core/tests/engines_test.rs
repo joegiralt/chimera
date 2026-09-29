@@ -56,7 +56,7 @@ fn modal_row_no_amp_env_and_lives_until_modes_decay() {
     let kind = EngineType::Modal;
     let mut p = params(kind);
     p.modal.mode = ResonatorMode::Modal;
-    p.modal.decay = 0.0;
+    p.modal.damp = 0.0;
     let mut pool = SymPool::boxed();
     let mut e = EngineSlot::new(SlotKind::of(&p));
     assert!(!e.is_active());

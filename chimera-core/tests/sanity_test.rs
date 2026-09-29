@@ -138,7 +138,7 @@ fn modal_tail_windows(params: &ParamSnapshot, off_blocks: usize, window_blocks: 
 /// Physics-correct replacement for the old "silent within TAIL_BLOCKS" check:
 /// the tail's windowed RMS trends down over the release (several-window
 /// averages, not a strict per-block decrease), and a patch with a faster
-/// DECAY setting reaches silence sooner than the default.
+/// DAMP reaches silence sooner than the default.
 #[test]
 fn modal_tail_decays_after_note_off() {
     // ~1.6 s of release — long enough for both patches below to cross SILENT.
@@ -165,10 +165,10 @@ fn modal_tail_decays_after_note_off() {
         "modal_init: tail did not decay (early avg {early:.6}, late avg {late:.6})"
     );
 
-    // A patch with a faster decay setting must reach silence sooner than the
-    // default (DECAY spec default 0.3; 1.0 is its max — still a valid patch).
+    // A patch with a shorter DAMP must reach silence sooner than the
+    // default (DAMP 0.7; 0.0, its min, is the shortest — still a valid patch).
     let mut faster_decay = default_params.clone();
-    faster_decay.modal.decay = 1.0;
+    faster_decay.modal.damp = 0.0;
     let faster_windows = modal_tail_windows(&faster_decay, OFF_BLOCKS_LONG, WINDOW_BLOCKS);
 
     let silent_at = |windows: &[f32]| {
@@ -181,7 +181,7 @@ fn modal_tail_decays_after_note_off() {
     let faster_at = silent_at(&faster_windows);
     assert!(
         faster_at < default_at,
-        "higher decay should reach silence sooner: default window {default_at}, decay=1.0 window {faster_at}"
+        "shorter DAMP should reach silence sooner: default window {default_at}, DAMP 0 window {faster_at}"
     );
 }
 

@@ -55,51 +55,106 @@ impl ResonatorMode {
     }
 }
 
+/// The bank's size: MODES, the billed cost with it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BankModes {
+    M16,
+    M24,
+    M32,
+    M48,
+}
+
+impl BankModes {
+    const ALL: [Self; 4] = [Self::M16, Self::M24, Self::M32, Self::M48];
+
+    /// Modes rung: even, at most `MAX_MODES`.
+    pub const fn count(self) -> usize {
+        match self {
+            Self::M16 => 16,
+            Self::M24 => 24,
+            Self::M32 => 32,
+            Self::M48 => 48,
+        }
+    }
+
+    /// By the choice's value; past the end, the largest.
+    pub fn from_index(v: u8) -> Self {
+        Self::ALL[usize::from(v).min(Self::ALL.len() - 1)]
+    }
+}
+
+const _: () = assert!(BankModes::M48.count() <= super::MAX_MODES);
+
+impl DiskCode for BankModes {
+    fn disk_code(self) -> u8 {
+        match self {
+            Self::M16 => 0,
+            Self::M24 => 1,
+            Self::M32 => 2,
+            Self::M48 => 3,
+        }
+    }
+
+    fn disk_ident(self) -> &'static str {
+        match self {
+            Self::M16 => "M16",
+            Self::M24 => "M24",
+            Self::M32 => "M32",
+            Self::M48 => "M48",
+        }
+    }
+
+    fn from_disk_code(c: u8) -> Option<Self> {
+        match c {
+            0 => Some(Self::M16),
+            1 => Some(Self::M24),
+            2 => Some(Self::M32),
+            3 => Some(Self::M48),
+            _ => None,
+        }
+    }
+}
+
+/// Home: MODEL and the four macros every model but BOWED reads its own
+/// way. The rest is the model page (MDL2).
 #[derive(Clone, Copy, Debug)]
 pub struct ModalParams {
     pub mode: ResonatorMode,
+    pub structure: f32,
+    /// 1 is brightest.
+    pub bright: f32,
+    /// 1 rings longest.
+    pub damp: f32,
+    pub pos: f32,
     pub excite: f32,
-    pub decay: f32,
-    pub brightness: f32,
-    pub inharm: f32,   // Modal: stiffness. String: not used.
-    pub position: f32, // Modal: excitation position. String: pluck position.
-    pub note: f32,
-    pub num_modes: u8,
-    // String (KS+) params
-    pub ks_excitation: u8, // 0=noise, 1=click, 2=bright, 3=dark
-    pub ks_color: f32,     // excitation brightness
-    pub ks_body: f32,      // body resonance (half-delay comb)
-    pub ks_stiffness: f32, // allpass dispersion (bell character)
-    pub ks_feedback: f32,  // sustain boost
-    pub ks_ens_rate: f32,  // ensemble LFO rate
-    pub ks_ens_depth: f32, // ensemble detuning depth
-    pub ks_ens_mix: f32,   // ensemble dry/wet
-    // Bowed params
-    pub bow_velocity: f32,
-    pub bow_force: f32,
+    pub body: f32,
+    pub ens_depth: f32,
+    pub ens_rate: f32,
+    pub ens_mix: f32,
+    /// How hard SYMP's main string drives its halo.
+    pub couple: f32,
+    /// SYMP's halo level.
+    pub halo: f32,
+    pub modes: BankModes,
 }
 
 impl Default for ModalParams {
     fn default() -> Self {
         Self {
             mode: ResonatorMode::String,
+            structure: 0.0,
+            // Today's INIT tone and ring, in the new direction.
+            bright: 1.0 - 0.7,
+            damp: 1.0 - 0.3,
+            pos: 0.0,
             excite: 0.8,
-            decay: 0.3,
-            brightness: 0.7,
-            inharm: 0.25,
-            position: 0.0, // bridge position
-            note: 60.0,
-            num_modes: 32,
-            ks_excitation: 0, // noise
-            ks_color: 0.8,
-            ks_body: 0.3,
-            ks_stiffness: 0.0,
-            ks_feedback: 0.2,
-            ks_ens_rate: 0.3,
-            ks_ens_depth: 0.0,
-            ks_ens_mix: 0.0,
-            bow_velocity: 0.5,
-            bow_force: 0.5,
+            body: 0.3,
+            ens_depth: 0.0,
+            ens_rate: 0.3,
+            ens_mix: 0.0,
+            couple: 0.25,
+            halo: 0.25,
+            modes: BankModes::M32,
         }
     }
 }
@@ -107,43 +162,100 @@ impl Default for ModalParams {
 impl ModalParams {
     pub const MODE: ParamId = ParamId(0);
     pub const EXCITE: ParamId = ParamId(1);
-    pub const DECAY: ParamId = ParamId(2);
-    pub const BRIGHTNESS: ParamId = ParamId(3);
-    pub const POSITION: ParamId = ParamId(4);
-    pub const INHARM: ParamId = ParamId(5);
-    pub const KS_BODY: ParamId = ParamId(6);
-    pub const KS_STIFFNESS: ParamId = ParamId(7);
-    pub const KS_FEEDBACK: ParamId = ParamId(8);
-    pub const KS_ENS_DEPTH: ParamId = ParamId(9);
-    pub const KS_ENS_RATE: ParamId = ParamId(10);
-    pub const KS_ENS_MIX: ParamId = ParamId(11);
+    pub const BRIGHT: ParamId = ParamId(3);
+    pub const POS: ParamId = ParamId(4);
+    pub const BODY: ParamId = ParamId(6);
+    pub const ENS_DEPTH: ParamId = ParamId(9);
+    pub const ENS_RATE: ParamId = ParamId(10);
+    pub const ENS_MIX: ParamId = ParamId(11);
+    pub const DAMP: ParamId = ParamId(12);
+    pub const STRUCTURE: ParamId = ParamId(13);
+    pub const COUPLE: ParamId = ParamId(14);
+    pub const HALO: ParamId = ParamId(15);
+    pub const MODES: ParamId = ParamId(16);
 }
 
-/// Modal params are read at note-on (or by the engine from the unmodulated
-/// snapshot), never from `Voice`'s modulated copy: none are modulatable.
-/// Only UI-bound params have specs (plan D16). MODE max 3 is plan D3.
-pub static MODAL_SPECS: [ParamSpec; 12] = [
-    ParamSpec::choice(0, "MODE", ValFmt::Int(3), 3.0, 0.0).ident("MODE"),
-    ParamSpec::continuous(1, "EXCITE", ValFmt::Uni, 0.0, 1.0, 0.8, 1.0 / 128.0, false)
-        .ident("EXCITE"),
-    ParamSpec::continuous(2, "DECAY", ValFmt::Uni, 0.0, 1.0, 0.3, 1.0 / 128.0, false)
-        .ident("DECAY"),
-    ParamSpec::continuous(3, "BRIGHT", ValFmt::Uni, 0.0, 1.0, 0.7, 1.0 / 128.0, false)
-        .ident("BRIGHT"),
-    ParamSpec::continuous(4, "POS", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false).ident("POS"),
-    ParamSpec::continuous(5, "INHARM", ValFmt::Uni, 0.0, 1.0, 0.25, 1.0 / 128.0, false)
-        .ident("INHARM"),
-    ParamSpec::continuous(6, "BODY", ValFmt::Uni, 0.0, 1.0, 0.3, 1.0 / 128.0, false).ident("BODY"),
-    ParamSpec::continuous(7, "STIFF", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false)
-        .ident("STIFF"),
-    ParamSpec::continuous(8, "FDBK", ValFmt::Uni, 0.0, 1.0, 0.2, 1.0 / 128.0, false).ident("FDBK"),
-    ParamSpec::continuous(9, "E.DPT", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false)
-        .ident("E.DPT"),
-    ParamSpec::continuous(10, "E.RAT", ValFmt::Uni, 0.0, 1.0, 0.3, 1.0 / 128.0, false)
-        .ident("E.RAT"),
-    ParamSpec::continuous(11, "E.MIX", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false)
-        .ident("E.MIX"),
+/// MODEL's names, by `ResonatorMode as u8`.
+pub const MODEL_NAMES: [&str; 4] = ["STRING", "BANK", "BOWED", "SYMP"];
+
+const fn unit(id: u8, label: &'static str, default: f32) -> ParamSpec {
+    ParamSpec::continuous(
+        id,
+        label,
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        default,
+        1.0 / 128.0,
+        false,
+    )
+}
+
+/// Read at note-on or per block from the unmodulated snapshot: none are
+/// modulatable yet. Retired ids 2, 5, 7 and 8 are never reused.
+pub static MODAL_SPECS: [ParamSpec; 13] = [
+    ParamSpec::choice(0, "MODEL", ValFmt::Names(&MODEL_NAMES), 3.0, 0.0).ident("MODE"),
+    unit(13, "STRUCT", 0.0).short("STR").ident("STRUCTURE"),
+    unit(3, "BRIGHT", 1.0 - 0.7).short("BRT").ident("BRIGHT"),
+    unit(12, "DAMP", 1.0 - 0.3).short("DMP").ident("DAMP"),
+    unit(4, "POS", 0.0).short("POS").ident("POS"),
+    unit(1, "EXCITE", 0.8).ident("EXCITE"),
+    unit(6, "BODY", 0.3).ident("BODY"),
+    unit(9, "ENS.D", 0.0).ident("E.DPT"),
+    unit(10, "ENS.R", 0.3).ident("E.RAT"),
+    unit(11, "ENS.M", 0.0).ident("E.MIX"),
+    unit(14, "COUPLE", 0.25).ident("COUPLE"),
+    unit(15, "HALO", 0.25).ident("HALO"),
+    ParamSpec::choice(
+        16,
+        "MODES",
+        ValFmt::Names(&["16", "24", "32", "48"]),
+        3.0,
+        2.0,
+    )
+    .ident("MODES"),
 ];
+
+/// Whether `mode` reads `id`: the one table for page cells, dimming and
+/// the audio test.
+pub fn reads(mode: ResonatorMode, id: ParamId) -> bool {
+    use ResonatorMode::{Bowed, Modal as Bank, String, Sympathetic as Symp};
+    type P = ModalParams;
+    match id {
+        P::MODE => true,
+        P::STRUCTURE | P::BRIGHT | P::DAMP | P::POS | P::EXCITE => mode != Bowed,
+        P::BODY | P::ENS_DEPTH | P::ENS_MIX => matches!(mode, String | Symp),
+        P::ENS_RATE => mode == String,
+        P::COUPLE | P::HALO => mode == Symp,
+        P::MODES => mode == Bank,
+        _ => false,
+    }
+}
+
+/// MDL2's six cells for `mode`.
+pub fn page_cells(mode: ResonatorMode) -> [Option<ParamId>; 6] {
+    type P = ModalParams;
+    match mode {
+        ResonatorMode::String => [
+            Some(P::EXCITE),
+            Some(P::BODY),
+            Some(P::ENS_DEPTH),
+            Some(P::ENS_RATE),
+            Some(P::ENS_MIX),
+            None,
+        ],
+        ResonatorMode::Sympathetic => [
+            Some(P::EXCITE),
+            Some(P::COUPLE),
+            Some(P::HALO),
+            Some(P::BODY),
+            Some(P::ENS_DEPTH),
+            Some(P::ENS_MIX),
+        ],
+        ResonatorMode::Modal => [Some(P::EXCITE), Some(P::MODES), None, None, None, None],
+        ResonatorMode::Bowed => [None; 6],
+    }
+}
 
 impl Block for ModalParams {
     fn specs(&self) -> &'static [ParamSpec] {
@@ -153,17 +265,18 @@ impl Block for ModalParams {
     fn get(&self, id: ParamId) -> f32 {
         match id {
             Self::MODE => self.mode as u8 as f32,
+            Self::STRUCTURE => self.structure,
+            Self::BRIGHT => self.bright,
+            Self::DAMP => self.damp,
+            Self::POS => self.pos,
             Self::EXCITE => self.excite,
-            Self::DECAY => self.decay,
-            Self::BRIGHTNESS => self.brightness,
-            Self::POSITION => self.position,
-            Self::INHARM => self.inharm,
-            Self::KS_BODY => self.ks_body,
-            Self::KS_STIFFNESS => self.ks_stiffness,
-            Self::KS_FEEDBACK => self.ks_feedback,
-            Self::KS_ENS_DEPTH => self.ks_ens_depth,
-            Self::KS_ENS_RATE => self.ks_ens_rate,
-            Self::KS_ENS_MIX => self.ks_ens_mix,
+            Self::BODY => self.body,
+            Self::ENS_DEPTH => self.ens_depth,
+            Self::ENS_RATE => self.ens_rate,
+            Self::ENS_MIX => self.ens_mix,
+            Self::COUPLE => self.couple,
+            Self::HALO => self.halo,
+            Self::MODES => self.modes as u8 as f32,
             _ => 0.0,
         }
     }
@@ -171,30 +284,90 @@ impl Block for ModalParams {
     fn write(&mut self, id: ParamId, v: f32) {
         match id {
             Self::MODE => self.mode = ResonatorMode::from_u8(v as u8),
+            Self::STRUCTURE => self.structure = v,
+            Self::BRIGHT => self.bright = v,
+            Self::DAMP => self.damp = v,
+            Self::POS => self.pos = v,
             Self::EXCITE => self.excite = v,
-            Self::DECAY => self.decay = v,
-            Self::BRIGHTNESS => self.brightness = v,
-            Self::POSITION => self.position = v,
-            Self::INHARM => self.inharm = v,
-            Self::KS_BODY => self.ks_body = v,
-            Self::KS_STIFFNESS => self.ks_stiffness = v,
-            Self::KS_FEEDBACK => self.ks_feedback = v,
-            Self::KS_ENS_DEPTH => self.ks_ens_depth = v,
-            Self::KS_ENS_RATE => self.ks_ens_rate = v,
-            Self::KS_ENS_MIX => self.ks_ens_mix = v,
+            Self::BODY => self.body = v,
+            Self::ENS_DEPTH => self.ens_depth = v,
+            Self::ENS_RATE => self.ens_rate = v,
+            Self::ENS_MIX => self.ens_mix = v,
+            Self::COUPLE => self.couple = v,
+            Self::HALO => self.halo = v,
+            Self::MODES => self.modes = BankModes::from_index(v as u8),
             _ => {}
         }
     }
 
     fn enum_code(&self, id: ParamId) -> Option<u8> {
-        (id == Self::MODE).then(|| self.mode.disk_code())
+        match id {
+            Self::MODE => Some(self.mode.disk_code()),
+            Self::MODES => Some(self.modes.disk_code()),
+            _ => None,
+        }
     }
 
     fn enum_ident(&self, id: ParamId) -> Option<&'static str> {
-        (id == Self::MODE).then(|| self.mode.disk_ident())
+        match id {
+            Self::MODE => Some(self.mode.disk_ident()),
+            Self::MODES => Some(self.modes.disk_ident()),
+            _ => None,
+        }
     }
 
     fn set_enum_code(&mut self, id: ParamId, code: u8) -> bool {
-        id == Self::MODE && apply_code(ResonatorMode::from_disk_code(code), |m| self.mode = m)
+        match id {
+            Self::MODE => apply_code(ResonatorMode::from_disk_code(code), |m| self.mode = m),
+            Self::MODES => apply_code(BankModes::from_disk_code(code), |m| self.modes = m),
+            _ => false,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MODES: [ResonatorMode; 4] = [
+        ResonatorMode::String,
+        ResonatorMode::Modal,
+        ResonatorMode::Bowed,
+        ResonatorMode::Sympathetic,
+    ];
+    const MACROS: [ParamId; 4] = [
+        ModalParams::STRUCTURE,
+        ModalParams::BRIGHT,
+        ModalParams::DAMP,
+        ModalParams::POS,
+    ];
+
+    #[test]
+    fn page_cells_are_what_the_model_reads() {
+        for mode in MODES {
+            let cells = page_cells(mode);
+            for id in cells.iter().flatten() {
+                assert!(reads(mode, *id), "{mode:?} shows {id:?}, unread");
+            }
+            for s in &MODAL_SPECS {
+                let home = s.id == ModalParams::MODE || MACROS.contains(&s.id);
+                if !home && reads(mode, s.id) {
+                    assert!(cells.contains(&Some(s.id)), "{mode:?} hides {}", s.label);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn macros_are_dimmed_only_on_bowed() {
+        for id in MACROS {
+            for mode in MODES {
+                assert_eq!(
+                    reads(mode, id),
+                    mode != ResonatorMode::Bowed,
+                    "{mode:?} {id:?}"
+                );
+            }
+        }
     }
 }

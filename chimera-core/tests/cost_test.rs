@@ -813,6 +813,6 @@ fn modal_bills_each_model() {
     }
     // The bank scales with its modes: 48, the most, is 16 more than 32.
     let mut bank = sound(ResonatorMode::Modal);
-    bank.modal.num_modes = 48;
+    bank.modal.modes = chimera_core::dsp::modal::BankModes::M48;
     assert_eq!(ModalEngine::cost(&bank.modal), Cost(1_900 + 16 * 45));
 }

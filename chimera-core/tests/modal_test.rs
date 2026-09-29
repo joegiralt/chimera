@@ -1,5 +1,5 @@
 mod common;
-use chimera_core::dsp::modal::{ModalEngine, ModalParams, ResonatorMode, SymPool};
+use chimera_core::dsp::modal::{BankModes, ModalEngine, ModalParams, ResonatorMode, SymPool};
 use common::{SR, goertzel};
 
 fn modal_params() -> ModalParams {
@@ -110,8 +110,8 @@ fn test_modal_silent_when_idle() {
 fn test_modal_output_bounded() {
     let mut params = modal_params();
     params.excite = 1.0;
-    params.decay = 1.0;
-    params.brightness = 1.0;
+    params.damp = 1.0;
+    params.bright = 1.0;
     let buf = render_modal(&params, 60, 32);
     let max = buf.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
     assert!(
@@ -122,12 +122,12 @@ fn test_modal_output_bounded() {
 }
 
 #[test]
-fn test_modal_inharm_changes_spectrum() {
+fn test_modal_structure_changes_spectrum() {
     let f0 = note_freq(48);
 
-    let spectrum = |inharm: f32| -> f32 {
+    let spectrum = |structure: f32| -> f32 {
         let mut params = modal_params();
-        params.inharm = inharm;
+        params.structure = structure;
         let buf = render_modal(&params, 48, 32);
         // Measure energy at exact harmonics — inharmonic modes will miss these
         let mut energy = 0.0;
@@ -142,7 +142,7 @@ fn test_modal_inharm_changes_spectrum() {
 
     assert!(
         (harmonic - inharmonic).abs() > 0.0001,
-        "inharm should change spectrum: harmonic={} inharmonic={}",
+        "structure should change spectrum: harmonic={} inharmonic={}",
         harmonic,
         inharmonic
     );
@@ -152,9 +152,9 @@ fn test_modal_inharm_changes_spectrum() {
 fn test_modal_brightness_changes_spectrum() {
     let f0 = note_freq(48);
 
-    let high_harmonic_energy = |brightness: f32| -> f32 {
+    let high_harmonic_energy = |bright: f32| -> f32 {
         let mut params = modal_params();
-        params.brightness = brightness;
+        params.bright = bright;
         let buf = render_modal(&params, 48, 16);
         // Energy in harmonics 4-8 only (high partials)
         (4..=8).map(|h| goertzel(&buf, f0 * h as f32, SR)).sum()
@@ -198,7 +198,7 @@ fn test_modal_position_changes_spectrum() {
 
     let second_harmonic = |pos: f32| -> f32 {
         let mut params = modal_params();
-        params.position = pos;
+        params.pos = pos;
         let buf = render_modal(&params, 48, 16);
         goertzel(&buf, f0 * 2.0, SR)
     };
@@ -221,14 +221,14 @@ fn test_modal_position_changes_spectrum() {
 }
 
 #[test]
-fn test_inharm_actually_shifts_modes() {
+fn test_structure_actually_shifts_modes() {
     let f0 = note_freq(48); // ~130 Hz, low note for clear spectrum
 
-    let measure_mode_freqs = |inharm: f32| -> Vec<f32> {
+    let measure_mode_freqs = |structure: f32| -> Vec<f32> {
         let mut params = modal_params();
-        params.inharm = inharm;
-        params.brightness = 1.0; // keep all modes bright
-        params.decay = 0.8;
+        params.structure = structure;
+        params.bright = 1.0; // keep all modes bright
+        params.damp = 0.8;
         let buf = render_modal(&params, 48, 64);
 
         // Check energy at exact harmonics and some shifted frequencies
@@ -246,17 +246,17 @@ fn test_inharm_actually_shifts_modes() {
     let harmonic = measure_mode_freqs(0.25); // harmonic plateau
     let inharmonic = measure_mode_freqs(1.0);
 
-    eprintln!("Harmonic (inharm=0) energies at exact harmonics:");
+    eprintln!("Harmonic (structure=0.25) energies at exact harmonics:");
     for (i, e) in harmonic.iter().enumerate() {
         eprintln!("  H{}: {:.6}", i + 1, e);
     }
-    eprintln!("Inharmonic (inharm=1) energies at exact harmonics:");
+    eprintln!("Inharmonic (structure=1) energies at exact harmonics:");
     for (i, e) in inharmonic.iter().enumerate() {
         eprintln!("  H{}: {:.6}", i + 1, e);
     }
 
-    // With inharm=0, modes should be AT the harmonics (high energy)
-    // With inharm=1, modes should be SHIFTED AWAY from exact harmonics (lower energy at those freqs)
+    // With structure 0.25, modes should be AT the harmonics (high energy)
+    // With structure 1, modes should be SHIFTED AWAY from exact harmonics (lower energy at those freqs)
     let harmonic_total: f32 = harmonic[2..].iter().sum(); // harmonics 3+
     let inharmonic_total: f32 = inharmonic[2..].iter().sum();
 
@@ -269,22 +269,22 @@ fn test_inharm_actually_shifts_modes() {
     // because its modes are shifted to non-harmonic positions
     assert!(
         harmonic_total > inharmonic_total * 1.1,
-        "inharm should shift modes away from exact harmonics: harmonic={} inharmonic={}",
+        "structure should shift modes away from exact harmonics: harmonic={} inharmonic={}",
         harmonic_total,
         inharmonic_total
     );
 }
 
 #[test]
-fn test_inharm_spreads_spectrum() {
+fn test_structure_spreads_spectrum() {
     // Inharmonic modes should have energy at non-harmonic frequencies
     let f0 = note_freq(48);
 
-    let non_harmonic_energy = |inharm: f32| -> f32 {
+    let non_harmonic_energy = |structure: f32| -> f32 {
         let mut params = modal_params();
-        params.inharm = inharm;
-        params.brightness = 1.0;
-        params.decay = 0.8;
+        params.structure = structure;
+        params.bright = 1.0;
+        params.damp = 0.8;
         let buf = render_modal(&params, 48, 64);
         // Measure energy between harmonics
         let mut energy = 0.0;
@@ -302,27 +302,28 @@ fn test_inharm_spreads_spectrum() {
         harmonic_between, inharmonic_between
     );
 
-    // Inharm should change the spectral distribution measurably
+    // STRUCTURE should change the spectral distribution measurably
     assert!(
         (harmonic_between - inharmonic_between).abs() > 0.0001,
-        "inharm should change energy between harmonics: h={} ih={}",
+        "structure should change energy between harmonics: h={} ih={}",
         harmonic_between,
         inharmonic_between
     );
 }
 
-/// Sympathetic mode (#68): at full feedback the output stays finite and
-/// inside its tanh's ±1, held and released, and after note-off the engine
-/// falls silent. The slowest released loop is the unison sympathetic
-/// string: `tick_full`'s gain 0.999 − 0.009 · decay at decay 0.8 · ½,
-/// applied once per trip round the f0-period line, so −60 dB takes at most
-/// ln 1000 / −ln 0.9954 trips; the 2-point average only shortens that.
+/// Sympathetic mode (#68): at DAMP and STRUCTURE's top the output stays
+/// finite and inside its tanh's ±1, held and released, and after note-off
+/// the engine falls silent. The slowest released loop is the unison halo
+/// string: until Task 7's release, its gain is at most the old DECAY law's
+/// 0.999 − 0.009 · 0.8 · ½, applied once per trip round the f0-period
+/// line, so −60 dB takes at most ln 1000 / −ln of it trips; the loop
+/// low-pass only shortens that.
 #[test]
 fn sympathetic_mode_is_bounded_and_falls_silent() {
     let p = ModalParams {
         mode: ResonatorMode::Sympathetic,
-        ks_feedback: 1.0,
-        inharm: 1.0,
+        damp: 1.0,
+        structure: 1.0,
         ..Default::default()
     };
     let bounded = |b: &[f32; 64]| b.iter().all(|s| s.is_finite() && s.abs() <= 1.0);
@@ -355,8 +356,8 @@ fn sympathetic_mode_is_bounded_and_falls_silent() {
 #[test]
 fn modal_bank_at_full_size_is_finite_and_bounded() {
     let p = ModalParams {
-        num_modes: chimera_core::dsp::modal::MAX_MODES as u8,
-        decay: 1.0,
+        modes: BankModes::M48,
+        damp: 1.0,
         ..modal_params()
     };
     let buf = render_modal(&p, 36, 400);
