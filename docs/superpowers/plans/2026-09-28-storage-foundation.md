@@ -765,7 +765,7 @@ pub struct ProjectId(u32);
 impl ProjectId { pub fn new(n: u32) -> Option<Self> /* 1..=9_999_999 */; pub fn get(self) -> u32; pub fn stem(self) -> [u8; 8] /* b"P0000001" */; }
 pub struct Header { pub kind: FileKind, pub generation: Generation, pub name: Option<Name<16>> }
 pub enum FileError { Truncated, BadMagic, BadCrc, NeedsNewerFirmware, WrongKind, Bounds, BadName, Corrupt }
-impl FileError { pub fn message(self) -> &'static str; pub fn is_torn(self) -> bool /* Truncated | BadMagic | BadCrc */; }
+impl FileError { pub fn message(self) -> &'static str; pub fn is_torn(self) -> bool /* Truncated | BadCrc: every other verdict waits for the CRC */; }
 pub enum Event<'a> { Header(Header), Record(ReadTag, &'a [u8]) }
 pub struct Framer { /* state, Crc32, pos, file_len, rec_buf [u8; MAX_RECORD_LEN] */ }
 impl Framer {
@@ -1019,7 +1019,7 @@ Sound decoding rules:
   - `v1_fixtures_equal_factory`: `decode(factory_i.snd).bits_eq(&factory_sound(i))`. A comment says this holds only while the factory Sounds are unchanged; the render test is the lasting one.
   - `unknown_non_critical_skipped`: insert tag 0x0070 (40 B) after `Engine`, and fix the CRC. It decodes `bits_eq` to the original.
   - `unknown_critical_greys`: tag 0x8070 → `NeedsNewerFirmware`, and the target is unchanged.
-  - `truncated_bad_crc_bad_magic_leave_target`: for each corruption, the error is `Truncated`/`BadCrc`/`BadMagic`, and the target still `bits_eq`s its value from before the call, because pass 1 fails before pass 2 runs.
+  - `truncated_bad_crc_bad_magic_leave_target`: for each corruption under a stale CRC, the error is `Truncated` or `BadCrc` (a bad magic with a recomputed CRC is `BadMagic`), and the target still `bits_eq`s its value from before the call, because pass 1 fails before pass 2 runs.
 - [ ] **Step 3: Write the failing test** in `codec_fuzz_test.rs`:
   - `mutated_files_never_panic_or_escape_specs`: for 20 000 xorshift seeds, take a random fixture and apply 1–8 mutations (byte flip, byte insert, byte delete, record-length poke, count poke), then **fix the CRC trailer**, so the parser gets past the framing.
   - Decode through both passes into `Sound::neutral(Algo)`. It must not panic.
