@@ -75,6 +75,20 @@ fn toast_expires_after_its_time() {
     assert_eq!(t.step(16), ToastStep::Idle);
 }
 
+/// The timer starts when the toast is shown: the first step spans the card
+/// work that made it, however long that took, and doesn't count.
+#[test]
+fn a_slow_operation_does_not_eat_the_toast() {
+    let mut t = ToastTimer::new();
+    t.show(Toast {
+        text: "CARD TIMEOUT",
+        ms: Toast::ERROR_MS,
+    });
+    assert_eq!(t.step(10_000), ToastStep::Show("CARD TIMEOUT"));
+    assert_eq!(t.step(Toast::ERROR_MS - 1), ToastStep::Show("CARD TIMEOUT"));
+    assert_eq!(t.step(1), ToastStep::Ended);
+}
+
 #[test]
 fn dismiss_ends_it_early_once() {
     let mut t = ToastTimer::new();
@@ -104,7 +118,8 @@ fn frame(
     cur: &mut SystemSettings,
 ) -> ToastStep {
     ui.sync_system(sync, card, s, cur);
-    ui.step_toast(16)
+    // The step after the card work spans it: a slow one must not count.
+    ui.step_toast(5_000)
 }
 
 #[test]
@@ -182,7 +197,7 @@ fn a_failed_exit_toasts_its_message() {
         ToastStep::Show("NO CARD")
     );
     assert_eq!(
-        ui.step_toast(Toast::ERROR_MS - 16 - 1),
+        ui.step_toast(Toast::ERROR_MS - 1),
         ToastStep::Show("NO CARD")
     );
     assert_eq!(ui.step_toast(1), ToastStep::Ended);

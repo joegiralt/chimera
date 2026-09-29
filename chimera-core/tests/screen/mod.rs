@@ -14,7 +14,7 @@ use chimera_core::reset::ResetCause;
 use chimera_core::scope::SCOPE_LEN;
 use chimera_core::ui::UiState;
 use chimera_core::ui::block_registry as reg;
-use chimera_core::ui::busy::{BusyLabel, draw_busy, draw_toast};
+use chimera_core::ui::busy::{draw_busy, draw_toast};
 use chimera_core::ui::perf::PerfStats;
 use chimera_hal::{ButtonId, ButtonState, ChimeraDisplay, Controls, EncoderId};
 use embedded_graphics::pixelcolor::Rgb565;
@@ -541,7 +541,7 @@ pub fn ui_for(name: &str) -> UiState {
 /// Overlays the goldens lock, each drawn alone on a blank screen: on the
 /// device it lands on whatever the last frame left.
 pub const OVERLAYS: &[(&str, Overlay)] = &[
-    ("busy_saving", Overlay::Busy(BusyLabel::Saving)),
+    ("busy", Overlay::Busy),
     ("toast_saved", Overlay::Toast("SAVED")),
     ("toast_exfat", Overlay::Toast("CARD IS EXFAT: FORMAT FAT32")),
 ];
@@ -549,7 +549,7 @@ pub const OVERLAYS: &[(&str, Overlay)] = &[
 /// The two faces of the one overlay component.
 #[derive(Clone, Copy, Debug)]
 pub enum Overlay {
-    Busy(BusyLabel),
+    Busy,
     Toast(&'static str),
 }
 
@@ -565,7 +565,7 @@ pub fn case_names() -> impl Iterator<Item = &'static str> {
 pub fn render_overlay(o: Overlay) -> (Fb, (u16, u16)) {
     let mut fb = Fb::new();
     let band = match o {
-        Overlay::Busy(label) => draw_busy(&mut fb, label),
+        Overlay::Busy => draw_busy(&mut fb),
         Overlay::Toast(text) => draw_toast(&mut fb, text),
     };
     (fb, band)
