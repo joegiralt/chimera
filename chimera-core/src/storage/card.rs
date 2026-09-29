@@ -59,6 +59,17 @@ impl From<CardError> for StoreError {
 /// });
 /// ```
 ///
+/// Nor cloned (a bare `r.clone()` would clone the reference):
+/// ```compile_fail,E0599
+/// use chimera_core::storage::Card;
+/// use chimera_hal::{store::StoreError, testkit::MemStore};
+/// let (mut card, mut s) = (Card::new(), MemStore::new(1));
+/// let _ = card.run(&mut s, |_, r| {
+///     let owned = (*r).clone();
+///     Ok::<_, StoreError>(())
+/// });
+/// ```
+///
 /// And the loan can't leave `run` (a lifetime error, which has no stable code):
 /// ```compile_fail
 /// use chimera_core::storage::Card;
@@ -79,6 +90,8 @@ impl Ready {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Card {
+    /// No card. The last volume is forgotten, so even the same card put back
+    /// mounts as `Mounted` and everything cached is rebuilt: conservative.
     Absent,
     Ready(VolumeId),
     Failed {
@@ -124,31 +137,38 @@ impl Card {
 
     /// Mounts, lends `&Ready` to `op`, and records any store error. The
     /// `Ready` lives on this stack frame, so it can't outlive the mount.
+    ///
+    /// `Err` is a failed mount. Once mounted, the event comes back whatever
+    /// `op` returns: a swap is news even when the op on the new card fails.
     pub fn run<S: Store, R, E: CardFault + From<StoreError>>(
         &mut self,
         store: &mut S,
         op: impl FnOnce(&mut S, &Ready) -> Result<R, E>,
-    ) -> Result<(R, CardEvent), E> {
+    ) -> Result<Outcome<R, E>, E> {
         let vol = match store.mount() {
             Ok(v) => v,
             Err(e) => {
-                *self = after_error(*self, e);
+                *self = mount_failed(*self, e);
                 return Err(e.into());
             }
         };
         let (card, event) = mounted(*self, vol);
         *self = card;
         let ready = Ready { vol };
-        match op(store, &ready) {
-            Ok(r) => Ok((r, event)),
-            Err(e) => {
-                if let Some(se) = e.store_error() {
-                    *self = after_error(*self, se);
-                }
-                Err(e)
-            }
+        let result = op(store, &ready);
+        if let Some(e) = result.as_ref().err().and_then(CardFault::store_error) {
+            *self = after_error(*self, e);
         }
+        Ok(Outcome { event, result })
     }
+}
+
+/// A mounted `Card::run`: what the mount found, and what `op` returned.
+#[must_use]
+#[derive(Debug, PartialEq)]
+pub struct Outcome<R, E> {
+    pub event: CardEvent,
+    pub result: Result<R, E>,
 }
 
 impl Default for Card {
@@ -166,6 +186,19 @@ fn mounted(card: Card, vol: VolumeId) -> (Card, CardEvent) {
     (Card::Ready(vol), event)
 }
 
+/// A failed mount fails closed: anything but NO CARD is a card fault, and
+/// one that names no card fault (a file error from `mount`) is `Io`. The
+/// type-driven fix is a `MountError`: https://github.com/joegiralt/chimera/issues/196
+fn mount_failed(card: Card, e: StoreError) -> Card {
+    if e == StoreError::NoCard {
+        return Card::Absent;
+    }
+    Card::Failed {
+        err: CardError::from_store(e).unwrap_or(CardError::Io),
+        last: card.last(),
+    }
+}
+
 /// The card after a mount: an event on success, none on failure.
 pub fn after_mount(card: Card, r: Result<VolumeId, StoreError>) -> (Card, Option<CardEvent>) {
     match r {
@@ -173,7 +206,7 @@ pub fn after_mount(card: Card, r: Result<VolumeId, StoreError>) -> (Card, Option
             let (card, event) = mounted(card, vol);
             (card, Some(event))
         }
-        Err(e) => (after_error(card, e), None),
+        Err(e) => (mount_failed(card, e), None),
     }
 }
 
