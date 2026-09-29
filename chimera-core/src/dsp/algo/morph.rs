@@ -22,9 +22,9 @@ impl Morph {
 }
 
 /// The carriers' power: `Σ c·g²`, each carrier's blended weight `c` times
-/// its LEVEL gain squared (ADR 0049). Continuous in every gain, so a
-/// carrier fading to 0 moves the scale smoothly; at unit gains it is the
-/// carrier count of ADR 0024.
+/// its gain squared; the engine passes the stored LEVELs' gains (ADR 0049).
+/// Continuous in every gain, so a carrier's LEVEL going to 0 moves the
+/// scale smoothly; at unit gains it is the carrier count of ADR 0024.
 pub fn carrier_power(plan: &EvalPlan, m: Morph, gain: &[f32; OPS]) -> f32 {
     (0..OPS)
         .map(|i| blend(plan.carrier_a[i], plan.carrier_b[i], m.get()) * gain[i] * gain[i])

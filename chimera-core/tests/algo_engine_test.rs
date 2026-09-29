@@ -531,24 +531,23 @@ fn a4_rms(s: &[f32]) -> f64 {
     (t.iter().map(|&x| (x as f64).powi(2)).sum::<f64>() / t.len() as f64).sqrt()
 }
 
-/// The output scale is continuous in a carrier's gain: operator 2 (A1, a
-/// second carrier) fading through LEVEL 0 moves operator 1 by nothing
-/// audible, where a count of sounding carriers stepped it 3 dB.
+/// The output scale is continuous in a carrier's stored LEVEL: operator 2
+/// (A1, a second carrier) stepped down through LEVEL 0 moves operator 1 by
+/// nothing audible, where a count of sounding carriers stepped it 3 dB.
 #[test]
 fn the_output_scale_is_continuous_as_a_carrier_fades_out() {
     let mut p = sines(stack(AlgoId::A1, AlgoId::A1, 0), 0);
-    (p.ops[0].level, p.ops[1].level) = (99, 99);
+    (p.ops[0].level, p.ops[1].level) = (99, 3);
     let mut e = AlgoEngine::new();
     e.note_on(MidiNote::A4, Velocity::DEFAULT, &p, SR);
     let mut blk = [0.0; BLOCK_SIZE];
-    let db: Vec<f64> = [2.0f32, 1.0, 0.5, 0.0]
+    let db: Vec<f64> = [3u8, 2, 1, 0]
         .iter()
         .map(|&l| {
-            let mut live = AlgoLive::from_params(&p);
-            live.level[1] = l;
+            p.ops[1].level = l;
             let mut out = Vec::new();
             for _ in 0..40 {
-                e.render(&mut blk, &p, &live, SR);
+                e.render(&mut blk, &p, &AlgoLive::from_params(&p), SR);
                 out.extend_from_slice(&blk);
             }
             20.0 * a4_rms(&out).log10()
