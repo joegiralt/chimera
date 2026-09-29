@@ -21,15 +21,34 @@ impl Morph {
     }
 }
 
-pub fn carrier_sum(plan: &EvalPlan, m: Morph) -> f32 {
+/// The operators with a gain above 0: bit `i`, operator `i + 1`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Sounding(u8);
+
+impl Sounding {
+    pub const ALL: Sounding = Sounding((1 << OPS) - 1);
+
+    pub fn from_gains(gain: &[f32; OPS]) -> Self {
+        Sounding((0..OPS).fold(0, |m, i| m | ((gain[i] > 0.0) as u8) << i))
+    }
+
+    pub fn has(self, op: usize) -> bool {
+        self.0 & (1 << op) != 0
+    }
+}
+
+/// The blended carrier gains of the sounding operators (#189: a silent
+/// carrier adds nothing, so it takes no share of the output).
+pub fn carrier_sum(plan: &EvalPlan, m: Morph, on: Sounding) -> f32 {
     (0..OPS)
+        .filter(|&i| on.has(i))
         .map(|i| blend(plan.carrier_a[i], plan.carrier_b[i], m.get()))
         .sum()
 }
 
 /// Equal loudness for uncorrelated carriers, whatever their number.
-pub fn carrier_norm(plan: &EvalPlan, m: Morph) -> f32 {
-    let sum = carrier_sum(plan, m);
+pub fn carrier_norm(plan: &EvalPlan, m: Morph, on: Sounding) -> f32 {
+    let sum = carrier_sum(plan, m, on);
     if sum <= 1.0 { 1.0 } else { inv_sqrt(sum) }
 }
 
