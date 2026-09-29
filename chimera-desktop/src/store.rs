@@ -165,9 +165,11 @@ impl Store for DirStore {
         let mut fh = File::create(self.file_path(file)).map_err(io_err)?;
         // What the body wrote stays on Err.
         let r = body(&mut FileSink(&mut fh));
-        fh.sync_all().map_err(io_err)?;
+        let synced = fh.sync_all().map_err(io_err);
+        r?;
+        synced?;
         let len = fh.metadata().map_err(io_err)?.len();
-        r.map(|()| len as u32)
+        Ok(len as u32)
     }
 
     fn delete(&mut self, vol: VolumeId, file: FileName) -> Result<(), StoreError> {
@@ -190,18 +192,13 @@ impl Store for DirStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chimera_hal::store::{Store, StoreError};
     use chimera_hal::testkit::store_suite;
-    use std::cell::Cell;
-    use std::fs;
-    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU32, Ordering};
 
     fn unique_root() -> PathBuf {
-        thread_local!(static N: Cell<u32> = const { Cell::new(0) });
-        let n = N.with(|n| {
-            n.set(n.get() + 1);
-            n.get()
-        });
+        // Tests run on their own threads: one counter for the process.
+        static N: AtomicU32 = AtomicU32::new(0);
+        let n = N.fetch_add(1, Ordering::Relaxed) + 1;
         let root = std::env::temp_dir().join(format!("chimera-card-{}-{n}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
