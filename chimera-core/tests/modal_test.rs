@@ -149,7 +149,7 @@ fn test_modal_structure_changes_spectrum() {
 }
 
 #[test]
-fn test_modal_brightness_changes_spectrum() {
+fn test_modal_bright_changes_spectrum() {
     let f0 = note_freq(48);
 
     let high_harmonic_energy = |bright: f32| -> f32 {

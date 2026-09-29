@@ -178,14 +178,27 @@ impl ModalParams {
 /// MODEL's names, by `ResonatorMode as u8`.
 pub const MODEL_NAMES: [&str; 4] = ["STRING", "BANK", "BOWED", "SYMP"];
 
+/// DAMP's law on a string: T60 from `T60_MIN` at 0, ×`T60_SPAN` at 1.
+const T60_MIN: f32 = 0.05;
+const T60_SPAN: f32 = 400.0;
+
+/// DAMP's T60 on a string, in seconds: 0.05 at 0 to 20 at 1.
+pub(super) fn t60(damp: f32) -> f32 {
+    T60_MIN * libm::powf(T60_SPAN, damp)
+}
+
+/// `t60`'s inverse, held to DAMP's range.
+fn damp_for(t60_s: f32) -> f32 {
+    (libm::logf(t60_s / T60_MIN) / libm::logf(T60_SPAN)).clamp(0.0, 1.0)
+}
+
 /// The old loop's gain per pass at `decay`, rung at C3, as DAMP: old
 /// string patches keep their ring time. The one v1 DECAY → DAMP map on
 /// STRING, SYMP and BOWED; BANK's DAMP is its DECAY.
 pub fn damp_from_v1_decay(decay: f32) -> f32 {
     const C3_HZ: f32 = 130.81;
     let g = 0.999 - 0.009 * decay;
-    let t60 = -3.0 / (C3_HZ * libm::log10f(g));
-    (libm::logf(t60 / 0.05) / libm::logf(400.0)).clamp(0.0, 1.0)
+    damp_for(-3.0 / (C3_HZ * libm::log10f(g)))
 }
 
 /// `damp_from_v1_decay(0.3)`, for the const spec table: a test pins it.
@@ -369,11 +382,6 @@ mod tests {
                 }
             }
         }
-    }
-
-    /// DAMP's T60 on a string, as `super::super::t60`.
-    fn t60(damp: f32) -> f32 {
-        0.05 * libm::powf(400.0, damp)
     }
 
     #[test]

@@ -92,7 +92,7 @@ fn test_desktop_algo_modulation_works() {
 // ── KS+ String through UiState ─────────────────────────────────────
 
 #[test]
-fn test_desktop_ks_produces_sound() {
+fn test_desktop_string_produces_sound() {
     let buf = sim_render(
         |ui| {
             *ui.params_mut() = ParamSnapshot::for_engine(EngineType::Modal);

@@ -166,7 +166,7 @@ fn modal_tail_decays_after_note_off() {
     );
 
     // A patch with a shorter DAMP must reach silence sooner than the
-    // default (DAMP 0.7; 0.0, its min, is the shortest — still a valid patch).
+    // default (INIT's, the old DECAY 0.3; 0.0, its min, is the shortest).
     let mut faster_decay = default_params.clone();
     faster_decay.modal.damp = 0.0;
     let faster_windows = modal_tail_windows(&faster_decay, OFF_BLOCKS_LONG, WINDOW_BLOCKS);
