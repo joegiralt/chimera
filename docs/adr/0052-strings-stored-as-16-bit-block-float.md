@@ -1,8 +1,19 @@
 # 0052. Store Modal's string delay lines as 16-bit block float
 
-- **Status:** Proposed. Before acceptance, the owner compares Sympathetic's
-  high notes against f32 by ear on the unit.
+- **Status:** Superseded by 0053 (2026-09-29, never accepted). ADR 0053
+  (the sympathetic slot pool) is written in exclusive-state plan Task 9.
 - **Deciders:** project owner
+
+**Why superseded (owner, 2026-09-29).** A shared pool of four f32
+sympathetic slots, after Rings (`kMaxPolyphony = 4`), makes 16-bit storage
+unnecessary. With the pool, voices are sized for Bowed, and D2 keeps about
+126 KB free, against Q16's 141 KB. Every string stays f32, so there is no
+precision loss: this ADR's −80 dBFS Sympathetic bound, and its ear test,
+go with it. Strings are f32 again (plan Task 7), and the goldens return to
+their earlier values. Of this ADR's changes, three stay because they are
+bit-identical in f32: the fused injection, the one-pass damp and the note-on
+clear (exclusive-state spec § 4.8). The rest of this record is kept as it
+stood.
 
 ## Context
 Every `KsString` holds a 984-sample delay line (ADR 0040). In f32 that is

@@ -2,9 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** A voice holds only the engine it plays, Modal holds only the model it plays, and string delay lines are stored in 16 bits, with no audible change.
+**Goal:** A voice holds only the engine it plays, Modal holds only the model it plays, and Sympathetic's seven sympathetic strings live in a shared pool of four f32 slots, with no audible change.
 
-**Architecture:** One macro in `in_place.rs`, `in_place_enum!`, declares a `#[repr(C, u8)]` enum and generates in-place constructors for each variant. Two slots use it: `EngineSlot` (Algo | Modal), which replaces `Engines` in `Voice`, and `ModelSlot` (Bank | String | Bowed | Sympathetic) inside `ModalEngine`. `Voice` widens its existing 128-sample engine-change fade to any `SlotKind` change and rebuilds the slot in place when the fade ends. Strings store `i16` with a per-string block exponent. The functional core is pure and host-tested (`SlotKind::of`, `q16::{store, load, next_exp}`), and the voice's switch logic is a thin shell over it.
+**Revised 2026-09-29 (owner).** Task 5 (16-bit strings) and Task 6 are replaced by Tasks 7–10: strings go back to f32 and Sympathetic borrows its seven lines from a pool of four (spec § 4). Tasks 1–4 stand as built.
+
+**Architecture:** One macro in `in_place.rs`, `in_place_enum!`, declares a `#[repr(C, u8)]` enum and generates in-place constructors for each variant. Two slots use it: `EngineSlot` (Algo | Modal), which replaces `Engines` in `Voice`, and `ModelSlot` (Bank | String | Bowed | Sympathetic) inside `ModalEngine`. `Voice` widens its existing 128-sample engine-change fade to any `SlotKind` change and rebuilds the slot in place when the fade ends. The `Instrument` owns a `SymPool` in D2: four `SympatheticSet`s (seven f32 strings each) and a pure allocator, `SymAlloc`, that lends each a non-`Copy` `Lease`. `ModelSlot::Sympathetic` holds the main string and its `Lease`. The functional core is pure and host-tested (`SlotKind::of`, `SlotKind::resting`, `SymAlloc`), and the voice's switch logic and the Instrument's placement are thin shells over it.
 
 **Tech Stack:** Rust 2024, `no_std` `chimera-core` (f32 DSP, `libm`), `thumbv7em-none-eabihf` firmware, `just`.
 
@@ -14,25 +16,26 @@
 
 ## Global Constraints
 
-- **Unchanged:** `MAX_VOICES` 8, `MAX_STRING_DELAY` 984 (ADR 0040), `VOICE_RAM_BUDGET` 286,720, `Voice::FADE` = 128 samples, all `ModalEngine::COST_*` and `PITCH`, the UI, and the #191 behaviours. `ResonatorMode` keeps its four variants and codes, and `modal/params.rs` is not touched.
+- **Unchanged:** `MAX_VOICES` 8, `MAX_STRING_DELAY` 984 (ADR 0040), `VOICE_RAM_BUDGET` 286,720, `Voice::FADE` = 128 samples, all `ModalEngine::COST_*` and `PITCH`, the UI, and the #191 behaviours. `ResonatorMode` keeps its four variants and codes, and `modal/params.rs` is not touched. `SYM_SLOTS` = 4 (spec § 4); the per-Part VOICES control that will show it is #207, not built here.
 - **Types decide (ADR 0012):** a slot's variant *is* its engine or model. No field records which one is active. Render dispatches with a `match` on the slot, so each arm sees only its own payload. There is no wildcard arm on either slot.
-- **Functional core, imperative shell:** `SlotKind::of`, `q16::store`, `q16::load` and `q16::next_exp` are pure and have unit tests. `Voice` only calls them.
+- **Functional core, imperative shell:** `SlotKind::of`, `SlotKind::resting` and every `SymAlloc` method are pure and have unit tests. `Voice` and `Instrument` only call them.
 - **Audio thread:** no heap, no blocking, and no engine-sized value on the stack. Every rebuild writes through a pointer into the slot. `just stack-check` must stay green.
-- **`unsafe`:** new `unsafe` goes only into `in_place.rs`, inside `in_place_enum!` and following the pattern of `uninit_at`/`by_value`. Each caller of a generated `unsafe fn` gets one `// SAFETY:` line. No other new `unsafe`.
+- **`unsafe`:** new `unsafe` goes only into `in_place.rs`, inside `in_place_enum!` or beside `uninit_at`/`by_value` (Task 9's `move_out`). Each caller of an `in_place.rs` `unsafe fn` gets one `// SAFETY:` line. No other new `unsafe`.
 - **Sizes (spec § Memory):** `pub const VOICE_CHAIN_BYTES: usize = 2048` in `hw.rs`. Assert that a slot is at most its largest payload plus `align_of` of the slot, and that `size_of::<Voice>() <= VOICE_CHAIN_BYTES + size_of::<EngineSlot>()`. The `[Voice; MAX_VOICES] <= VOICE_RAM_BUDGET` assert stays.
-- **Block exponent (§ 4):** `e` starts every note at 14 and stays in `14..=24`. It steps up when the peak is below ¼ full scale (|q| < 8192) and down when the peak is above ½ (|q| > 16384). At most one string per voice steps per block.
-- **Goldens (ADR 0011):** Tasks 1–4 and Task 5's first commit keep every golden bit-identical. Task 5's second commit re-records exactly `modal_init`, `modal_lfo_cutoff` and `algo_to_modal_switch` (no factory Sound plays Modal), each with the comment `// Re-recorded: Modal strings stored as 16-bit block float (exclusive-state spec § 4).`
-- **ADRs:** `docs/adr/0051-*.md` supersedes 0008 and `docs/adr/0052-*.md` covers the 16-bit block-float strings. Both use `0000-template.md`, carry `Status: Proposed`, and get a row in `docs/adr/README.md`. Never edit an accepted ADR. 0008's file stays as it is, and only its README row's status changes.
+- **The pool (§ 4):** a `Lease` is never `Clone` or `Copy` and has no public constructor; only `SymAlloc::lend` makes one and only `SymAlloc::give_back` takes one. A Sympathetic model can't be built without one. An idle voice never holds one. The pool is built once, in place, and never rebuilt.
+- **Goldens (ADR 0011):** Tasks 1–4 keep every golden bit-identical. Task 7 restores the rows Task 5 re-recorded to their pre-Task-5 values, byte for byte (spec § 4.8), and records one new row, `modal_sympathetic`. Tasks 8–10 keep every golden bit-identical, `modal_sympathetic` included. Nothing is re-recorded after Task 7.
+- **ADRs:** `docs/adr/0051-*.md` supersedes 0008. `docs/adr/0052-*.md` (16-bit strings) is `Superseded by 0053` since the spec revision; its file stays. `docs/adr/0053-*.md`, written in Task 9, covers the sympathetic slot pool. Each uses `0000-template.md`, carries `Status: Proposed`, and has a row in `docs/adr/README.md`. Never edit an accepted ADR. 0008's file stays as it is, and only its README row's status changes.
 - **Green gate per task:** `just check` passes. It runs the core, HAL and desktop tests, all firmware builds, `just clippy` and `just stack-check`. If ALSA's pkg-config is missing, set `PKG_CONFIG_PATH` as the Justfile says.
 - **Commits:** terse, no type prefix, and never a Co-Authored-By or other AI attribution line. Stage named paths only. Never stage `docs/chimera-ui-ux-spec.md` or `chimera.bin`.
 
 ## Review Focus
 
-1. **Pitch bent down after a long tail.** A string note decays until its exponent has climbed, then a new note restarts `e` at 14. If a PITCH route later lengthens the loop, it reads samples written under the old exponent. The player should hear no burst: the Q16 engine's peak must stay within 0.01 of the f32 engine's. Test: `pitch_down_after_a_long_tail_reads_no_burst` (Task 5).
+1. **A fifth Sympathetic note.** Four Sympathetic notes hold every slot, and a fifth arrives. The oldest should fade over `FADE` and the new note play on that voice, in that slot, with no other voice able to take the slot in between. Test: `a_fifth_sympathetic_note_steals_the_oldest` (Task 9).
 2. **Switching back before the fade ends.** A player turns MODE String → Sympathetic → String within one block. There should be one fade and one rebuild, and the held note should restart on the Sound's kind. Test: `a_switch_back_mid_fade_restarts_on_the_sounds_kind` (Task 4).
 3. **A steal across Parts of different kinds.** With the pool full on an Algo Part, a note on a Sympathetic Part steals a voice. The new note should play exactly as on a fresh voice, with at most 2 rebuilds in that block. Test: `a_steal_across_kinds_plays_the_new_kind_clean` (Task 4).
 4. **Several switches while a voice is idle.** An idle voice should rebuild once, at its next note-on, not once per edit. This is folded into `idle_voice_switches_in_the_same_block` (Task 4).
-5. **High notes wrap several times a block.** A C7 string's write position wraps several times per block. Spikes should stay bounded: at most one exponent step per voice per block, across all eight strings. Test: `a_short_loop_steps_at_most_once_a_block` (Task 5).
+5. **A lease that never comes home.** Kills, steals, MODE and ENGINE flips, natural decays and project loads all end Sympathetic notes. Every slot must be free again once the voices are idle. Test: `every_lease_comes_home` (Task 9).
+6. **Eight held notes switched to Sympathetic.** Four restart; four end silent until key-up; no restart steals. Test: `a_mode_switch_to_sympathetic_restarts_at_most_four` (Task 9).
 
 ## Files
 
@@ -42,19 +45,23 @@
 | `chimera-core/src/dsp/engines.rs` | `EngineSlot`, `SlotKind` (replaces `Engines`) | 2 |
 | `chimera-core/src/dsp/voice.rs` | `slot`, `sample_rate`, `rebuilds`; the switch rule | 2, 4 |
 | `chimera-core/src/hw.rs` | `VOICE_CHAIN_BYTES` | 2 |
-| `chimera-core/src/dsp/modal/mod.rs` | `ModelSlot`, `ModalBank`, `SympatheticStrings`; `ModalEngine<S>` | 2, 3, 5 |
-| `chimera-core/src/dsp/modal/string.rs` | `KsString<S: Store>` | 5 |
-| `chimera-core/src/dsp/modal/q16.rs` (new) | pure core `Exp`, `store`, `load`, `next_exp`; `Store`, `Q16`, `StepBudget` | 5 |
-| `chimera-core/tests/exclusive_state_test.rs` (new) | the switch tests of spec § Tests | 4 |
-| `chimera-core/tests/rebuild_stack_test.rs` (new) | `rebuild_fits_a_small_stack`, alone in its binary because a stack overflow aborts the process | 4 |
-| `chimera-core/tests/{engines,cost,modal,memory_budget,golden}_test.rs` | API moves, size prints, the re-record | 2, 3, 5 |
-| `chimera-stm32/src/bench.rs` | REBUILD, EXP STEP, SWITCH storm, MEMORY screen | 6 |
-| `docs/adr/0051-*.md`, `0052-*.md`, `README.md` | the two ADRs | 2, 4, 5, 6 |
+| `chimera-core/src/dsp/modal/mod.rs` | `ModelSlot`, `ModalBank`, `SympatheticVoice`, `SympatheticSet`, `SymPool` | 2, 3, 7, 9 |
+| `chimera-core/src/dsp/modal/string.rs` | `KsString` (f32 again) | 7 |
+| `chimera-core/src/dsp/modal/q16.rs` | deleted | 7 |
+| `chimera-core/src/sym_alloc.rs` (new) | pure core: `SymAlloc`, `Lease`, `SymSlot`, `Place`, `SYM_SLOTS` | 8 |
+| `chimera-core/src/voice_alloc.rs` | `VoiceIdx`; `pick` public, `book` | 8, 9 |
+| `chimera-core/src/instrument.rs` | `sym: SymPool`; Sympathetic placement; `rest` at step 5 | 9 |
+| `chimera-core/tests/exclusive_state_test.rs` (new) | the switch tests of spec § Tests | 4, 9 |
+| `chimera-core/tests/sym_pool_test.rs` (new) | the pool's Instrument tests of spec § Tests | 9 |
+| `chimera-core/tests/rebuild_stack_test.rs` (new) | `rebuild_fits_a_small_stack`, alone in its binary because a stack overflow aborts the process | 4, 9 |
+| `chimera-core/tests/common/{mod,rig}.rs` | `Case::ModalSympathetic`; `Rig` (a boxed `Voice` and `SymPool` with the old call signatures) | 7, 9 |
+| `chimera-core/tests/{engines,cost,modal,memory_budget,golden,instrument,codec_compat}_test.rs` | API moves, size prints, goldens restored | 2, 3, 7, 9 |
+| `chimera-stm32/src/bench.rs` | REBUILD, SYM NOTE-ON, SWITCH storm, MEMORY screen | 10 |
+| `docs/adr/0051-*.md`, `0052-*.md`, `0053-*.md`, `README.md` | the ADRs | 2, 4, 9, 10 |
 
-**Deviations from the spec's Plan order:** there are three, and each is argued in its task.
-- The ADRs are written in the tasks that make them real (0051 in Task 2, amended in 4; 0052 in Task 5). Task 6 only adds the chip figures. This follows the owner rule.
-- `in_place_enum!` takes one optional generic parameter from Task 1, because Task 5 needs `ModelSlot<S>`.
-- `strings_i16_match_f32` lives in `modal/mod.rs`, not `string.rs`, because Bowed and Sympathetic render there. It compares `ModalEngine<[f32; 984]>` with `ModalEngine<Q16>`, so `ModalEngine` is generic over the store and defaults to `Q16`.
+**Deviations from the spec's Plan order:** there are two, and each is argued in its task.
+- The ADRs are written in the tasks that make them real (0051 in Task 2, amended in 4; 0053 in Task 9). Task 10 only adds the chip figures. This follows the owner rule.
+- `in_place_enum!` takes one optional generic parameter from Task 1, for Task 5's `ModelSlot<S>`. Task 7 drops the generic store, and the macro's parameter stays (Task 1's, tested by its toy slot; spec § 4.8).
 
 ---
 
@@ -273,172 +280,405 @@ git commit -m "A MODE change fades and rebuilds, as an engine change does"
 
 ---
 
-### Task 5: 16-bit block-float strings
+---
+
+### Task 5: 16-bit block-float strings — REPLACED (owner, 2026-09-29)
+
+Done as a32923e, 6a3269d, c3194bc and cf3a23f, then replaced by the owner's sympathetic-pool decision (spec § 4). It made `KsString` and `ModalEngine` generic over a `Store`, shipped `Q16` (a per-line block exponent), re-recorded the Modal goldens, and wrote ADR 0052. Sympathetic's high notes missed the −90 dBFS gate (−83.7 dBFS at C6), and the owner chose f32 in a shared pool over a looser bound.
+
+Task 7 undoes it, and keeps three pieces that are bit-identical in f32: the fused injection (`pending`, `tick_coupled`), one-pass `damp`, and the note-on clear (spec § 4.8). ADR 0052 stays on file as `Superseded by 0053`.
+
+---
+
+### Task 6: Chip figures — REPLACED by Task 10
+
+Its bench rows timed the Q16 exponent step and its figures went to ADR 0052. Task 10 is the same task for the pool.
+
+---
+
+### Task 7: Strings back to f32; the 16-bit store goes
 
 **Files:**
-- Create: `chimera-core/src/dsp/modal/q16.rs`
-- Modify: `chimera-core/src/dsp/modal/string.rs` (the whole `KsString`), `chimera-core/src/dsp/modal/mod.rs` (generic over `S`, every buffer access)
-- Test: `q16.rs` and `modal/mod.rs` test modules, `chimera-core/tests/golden_test.rs`
-- Create: `docs/adr/0052-strings-stored-as-16-bit-block-float.md`. Modify: `docs/adr/README.md`
+- Delete: `chimera-core/src/dsp/modal/q16.rs`
+- Modify: `chimera-core/src/dsp/modal/string.rs` (the whole `KsString`), `chimera-core/src/dsp/modal/mod.rs` (drop `S` everywhere, the `F32` alias and the Q16 tests)
+- Restore: `chimera-core/tests/golden_test.rs`, `chimera-core/tests/instrument_test.rs`, `chimera-core/tests/codec_compat_test.rs` to 0a7d468
+- Modify: `chimera-core/tests/common/mod.rs` (`Case::ModalSympathetic`), then `chimera-core/tests/golden_test.rs` (its one new row)
 
 **Interfaces:**
-- Consumes: `ModelSlot`, `ModalBank`, `SympatheticStrings` (Task 3); `in_place_enum!`'s generic form (Task 1).
-- Produces the following in `q16.rs`. `Exp`, `Q16`, `StepBudget` and `Store` are `pub` and re-exported from `chimera_core::dsp::modal`, because they bound public generics and the bench uses them in Task 6. `store`, `load` and `next_exp` are `pub` within the private `q16` module.
+- Consumes: `ModelSlot`, `ModalBank`, `BowedString`, `SympatheticStrings` as Task 5 left them.
+- Produces, all non-generic again:
 
 ```rust
-pub struct Exp(u8);                       // private field: always 14..=24
-impl Exp { pub const START: Exp; pub const MAX: Exp; pub fn get(self) -> u8; }
-pub fn store(x: f32, e: Exp) -> i16;
-pub fn load(q: i16, e: Exp) -> f32;
-pub fn next_exp(peak: u16, e: Exp) -> Exp;
-pub struct StepBudget(bool);
-impl StepBudget { pub const fn one() -> Self; pub fn take(&mut self) -> bool; }
-pub trait Store {
-    fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self where Self: Sized; // zeros, e = START
-    fn load(&self, i: usize) -> f32;
-    fn store(&mut self, i: usize, x: f32);
-    fn wrapped(&mut self, budget: &mut StepBudget);  // the write position wrapped
-    fn restart(&mut self);                           // a note starts: e back to START, values kept
-    fn clear(&mut self);                             // zeros, e = START
+pub(super) struct KsString {
+    pub(super) buffer: [f32; MAX_STRING_DELAY],
+    pub(super) write_pos: usize,
+    pub(super) delay_len: usize,
+    ens_lfo_phase: u32,
+    noise_state: u32,
 }
-impl Store for [f32; MAX_STRING_DELAY]   // today's arithmetic; wrapped/restart are no-ops
-pub struct Q16 { q: [i16; MAX_STRING_DELAY], e: Exp, peak: u16 }
-impl Q16 { pub fn exp(&self) -> Exp; }
+impl KsString {
+    pub(super) fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self;   // buffer zeroed in place
+    pub(super) fn tick_full(&mut self, p: &KsRenderParams) -> f32;
+    pub(super) fn tick_coupled(&mut self, p: &KsRenderParams, input: f32, pending: &mut f32) -> f32; // kept from c3194bc
+    pub(super) fn damp(&mut self, passes: u32);    // one load, `passes` multiplies, one store: kept
+    pub(super) fn clear(&mut self);                // the whole ring: kept
+}
+struct BowedString { string: KsString, force: f32 }
+struct SympatheticStrings { main: KsString, strings: [KsString; NUM_SYMPATHETIC], ratios: [f32; NUM_SYMPATHETIC], pending: [f32; NUM_SYMPATHETIC] }
+enum ModelSlot { Bank(ModalBank), String(KsString), Bowed(BowedString), Sympathetic(SympatheticStrings) }   // via in_place_enum!, no generic
+pub struct ModalEngine { /* unchanged fields */ }
 ```
 
-- `KsString<S: Store = Q16>` has a `line: S` field in place of `buffer`. `tick_full(&mut self, p, budget: &mut StepBudget) -> f32`, and `damp(&mut self, passes: u32)` loads each of `[..delay_len]` once, multiplies it by `0.2` `passes` times in f32, and stores it once. That is bit-identical to today's repeated passes under f32. `SympatheticStrings<S>`, `ModelSlot<S: Store>` and `ModalEngine<S: Store = Q16>` are generic too. `EngineSlot` keeps plain `ModalEngine`.
+- `pub use q16::{Exp, Q16, StepBudget, Store}` goes, and so does every `StepBudget` argument.
+- `models_are_exclusive` loses its type parameter. Its assert becomes `const _: () = assert!(models_are_exclusive());`.
+- `in_place_enum!` keeps its optional generic parameter (Task 1). Its toy test still exercises it.
 
-**The algorithm (§ 4; the signature does not decide it):**
+**Why the generic store goes rather than stays:** one store is left, and the only test that needed two (`strings_i16_match_f32`) goes with Q16. A type parameter on five types for one instantiation is dead flexibility (spec § 4.8).
 
-```rust
-// q16.rs — full scale at e is 2^(15−e); ¼ FS is |q| 8192, ½ FS is |q| 16384.
-fn pow2(e: i32) -> f32 { f32::from_bits(((127 + e) as u32) << 23) }   // exact
-pub fn store(x: f32, e: Exp) -> i16 { libm::roundf(x * pow2(e.0 as i32)) as i16 } // `as`: saturates, NaN → 0
-pub fn load(q: i16, e: Exp) -> f32 { f32::from(q) * pow2(-(e.0 as i32)) }
-pub fn next_exp(peak: u16, e: Exp) -> Exp {
-    if peak < 8192 && e.0 < 24 { Exp(e.0 + 1) }
-    else if peak > 16384 && e.0 > 14 { Exp(e.0 - 1) }
-    else { e }
-}
-impl Store for Q16 {
-    fn store(&mut self, i, x) { let v = store(x, self.e); self.q[i] = v; self.peak = self.peak.max(v.unsigned_abs()); }
-    fn wrapped(&mut self, budget) {
-        let next = next_exp(self.peak, self.e);
-        if next != self.e && budget.take() {
-            if next.0 > self.e.0 { for v in &mut self.q { *v = v.saturating_mul(2) } }        // exact below ½ FS
-            else { for v in &mut self.q { *v = ((i32::from(*v) + 1) >> 1) as i16 } }         // round half up
-            self.e = next;
-        }
-        self.peak = 0;                         // a denied step waits for the next wrap
-    }
-    fn restart(&mut self) {                    // stale samples keep their level (Review Focus 1)
-        let k = u32::from(self.e.0 - 14);
-        if k > 0 { for v in &mut self.q { *v = ((i32::from(*v) + (1 << (k - 1))) >> k) as i16 } }
-        self.e = Exp::START; self.peak = 0;
-    }
-}
-```
+- [ ] **Step 1: Write the failing test (restore the goldens).** Run `git checkout 0a7d468 -- chimera-core/tests/golden_test.rs chimera-core/tests/instrument_test.rs chimera-core/tests/codec_compat_test.rs`. Then run `git diff 0a7d468 -- chimera-core/tests/golden_test.rs chimera-core/tests/instrument_test.rs chimera-core/tests/codec_compat_test.rs`. Expected: empty. Task 5 changed only golden rows in those files.
+- [ ] **Step 2: Run it to verify it fails.** Run `cargo test -p chimera-core --test golden_test --test instrument_test --test codec_compat_test`. Expected: exactly these fail, on the Q16 hashes:
+  - `goldens_match` and `goldens_match_through_the_instrument`, on `modal_init`, `modal_lfo_cutoff` and `algo_to_modal_switch`;
+  - `instrument_goldens_match` and `the_mix_before_the_limiter_is_mains`, on `two_parts_two_pairs`;
+  - `v1_fixtures_render_identically`, on `init_modal.snd`.
+- [ ] **Step 3: Implement.**
+  - Delete `q16.rs`, and remove its `mod` and `pub use`.
+  - Make `KsString` and every type above non-generic, with `buffer: [f32; MAX_STRING_DELAY]` read and written directly.
+  - Delete `strings_i16_match_f32`, `strings_i16_with_feedback_stay_bounded`, `pitch_down_after_a_long_tail_reads_no_burst` and `a_short_loop_steps_at_most_once_a_block`. `q16_saturates_and_steps` goes with its file.
+  - Keep `note_on_clears_every_line_at_a_fixed_cost`, with its type parameter dropped.
+  - Replace every "ADR 0052" comment with the spec's § 4.8 wording, or drop it.
+- [ ] **Step 4: Run the tests to verify they pass.** Run `cargo test -p chimera-core --lib modal && cargo test -p chimera-core --test golden_test --test instrument_test --test codec_compat_test --test modal_test --test modal_integration_test --test in_place_test`. Expected: PASS. The six renders read their pre-Task-5 values:
+  - `modal_init` 0x90f1197c153d0b05
+  - `modal_lfo_cutoff` 0xe9e4fe3dda9b0262
+  - `algo_to_modal_switch` 0x501ad70c947a9c4d
+  - `two_parts_two_pairs` 0x851eab45ed8a2f86, and 0x016712a2b7e18d83 before the limiter
+  - `init_modal.snd` 0x90f1197c153d0b05
 
-Steps run over the whole 984-sample ring, so samples past `delay_len` stay at the line's exponent if a retune lengthens the loop.
-
-Where the calls go:
-- `tick_full` calls `wrapped` when the new write position `<=` the old one.
-- `render_bowed` calls `wrapped` when `write_pos` returns to 0.
-- `trigger` calls `restart` first.
-- Bowed's note-on calls `clear`.
-- Sympathetic's note-on calls `restart` on each of the seven strings, then stores `0.0` over `[..delay_len]`.
-- The sympathetic injection becomes `store(wp, load(wp) + sym_input)`.
-- `note_off` becomes `damp(3)` for String, `damp(5)` for Bowed and `damp(1)` for Sympathetic.
-- `ModalEngine::render` makes one `StepBudget::one()` per block and passes it to every string of the voice.
-
-- [ ] **Step 1: Write the failing tests.**
-  - In `q16.rs`, write `q16_saturates_and_steps`. At `Exp::START`, `store` of `3.0`, `f32::INFINITY`, `-3.0`, `f32::NEG_INFINITY` and `f32::NAN` gives `32767, 32767, -32768, -32768, 0`. `load(store(0.5, START), START) == 0.5`. `next_exp(8191, Exp(14)) == Exp(15)`, `next_exp(8192, Exp(14)) == Exp(14)`, `next_exp(16385, Exp(20)) == Exp(19)` and `next_exp(16384, Exp(20)) == Exp(20)`. Over every `peak` in `0..=32768` and every `e` in `14..=24`, `next_exp` stays in `14..=24`. A `Q16` holding `q = 4000` at `e = 14` whose `wrapped` takes a step reads back `load == 4000.0 * 2^-14` exactly at `e = 15`. With the budget already taken, `e` is unchanged.
-  - In `modal/mod.rs`, write `strings_i16_match_f32`. Use `fn play<S: Store>(p: &ModalParams, note: u8, release_block: Option<usize>, blocks: usize) -> (Vec<f32>, Option<usize>)`, which returns the output and the first block with `!is_active()`. Velocity is 100 and the default params apply except as listed.
-    - With `ks_feedback = 0.0`, each of String, Bowed and Sympathetic plays notes 31 (G1), 69 (A4) and 84 (C6) at `decay` 0.0 and 0.3. Add String note 45 (A2) with `ks_ens_mix = 0.5, ks_ens_depth = 0.5`. Bowed releases at 0.5 s, and every run lasts 10 s.
-    - Over the first second, `20·log10(rms(q − f)) <= -90.0`.
-    - Over 480-sample windows, `|20·log10(peak_q / peak_f)| <= 0.1` wherever `peak_f > 0.001`.
-    - The quiet blocks differ by no more than 15 (20 ms), or both are `None`.
-    - With `ks_feedback` 0.2 and 1.0, String A4 and Sympathetic A3 (57) run for 1 s. Every sample is finite and `|y| <= 1.5`, and the window peaks are within 2 dB.
-  - In `modal/mod.rs`, write `pitch_down_after_a_long_tail_reads_no_burst` (Review Focus 1). Each engine plays String G1 at `decay` 0 for 3 s, then `note_on` A4, renders 1 block, calls `set_pitch(0.25)` and renders 8 blocks. The peaks of `Q16` and `[f32; 984]` over those 8 blocks differ by at most 0.01.
-  - In `modal/mod.rs`, write `a_short_loop_steps_at_most_once_a_block` (Review Focus 5). A `Q16` Sympathetic engine plays C7 (96) for 2 s, rendered block by block. The number of strings whose `line.exp()` changed during a block is at most 1 every block, and it is at least 1 in some block.
-- [ ] **Step 2: Run the tests to verify they fail.** Run `cargo test -p chimera-core --lib modal`. Expected: compile errors (`q16` and `Store` not found).
-- [ ] **Step 3: Implement `q16.rs`, the generic `KsString<S>` and the generic `ModalEngine<S>`, with both defaults set to `[f32; MAX_STRING_DELAY]` for now** (`KsString<S: Store = [f32; MAX_STRING_DELAY]>`, and the same for `ModalEngine`). This first commit proves that the generic refactor alone changes nothing. In `modal/mod.rs`, add `mod q16; pub use q16::{Exp, Q16, StepBudget, Store};`. The pure functions stay reachable as `q16::…` inside `modal` only.
-- [ ] **Step 4: Run the tests and goldens.** Run `cargo test -p chimera-core --lib modal && cargo test -p chimera-core --test golden_test --test modal_test --test modal_integration_test --test in_place_test`. Expected: PASS, and every golden is bit-identical. If a gate figure misses, STOP and report the measured numbers: do not loosen a bound, and do not change the algorithm silently.
-- [ ] **Step 5: Run the green gate.** Run `just check`. Expected: exit 0.
-- [ ] **Step 6: Commit.**
+  These were measured on cf3a23f with both defaults set to f32 during the spec revision. If any differs, STOP and report which, with the measured hash. Never re-record here.
+- [ ] **Step 5: Record the Sympathetic pin.**
+  - Add `Case::ModalSympathetic` to `tests/common/mod.rs`: `ModalInit`'s Sound with `modal.mode = ResonatorMode::Sympathetic`, the same note and harness. `Case::ALL` grows to 24.
+  - Run `GOLDEN_RECORD=1 cargo test -p chimera-core --test golden_test -- goldens_match --nocapture`. Paste only the new `modal_sympathetic` row, with the comment `// Recorded: pins Sympathetic before its set moves to the pool (exclusive-state spec § 4.8).`
+  - `git diff chimera-core/tests/golden_test.rs` must show that row alone.
+  - Run `cargo test -p chimera-core --test golden_test`. Expected: PASS, `goldens_match_through_the_instrument` included.
+- [ ] **Step 6: Check the sizes.** Run `cargo test -p chimera-core --test memory_budget_test -- --nocapture`. Expected (host): `ModalEngine` 31,768, `Voice` 33,608 and `[Voice; 8]` 268,864, under 286,720. Then run `grep -rn "Q16\|StepBudget\|ADR 0052" chimera-core/src`. Expected: no hits.
+- [ ] **Step 7: Run the green gate.** Run `just check`. Expected: exit 0.
+- [ ] **Step 8: Commit.**
 
 ```bash
-git add chimera-core/src/dsp/modal/q16.rs chimera-core/src/dsp/modal/string.rs chimera-core/src/dsp/modal/mod.rs
-git commit -m "Modal generic over its string store; Q16 gated against f32"
-```
-
-- [ ] **Step 7: Switch the default to `Q16`.** Change both defaults, `ModalEngine<S: Store = Q16>` and `KsString<S: Store = Q16>`. Run `cargo test -p chimera-core --test golden_test -- goldens_match`. Expected: exactly `modal_init`, `modal_lfo_cutoff` and `algo_to_modal_switch` mismatch. If any other case mismatches, STOP.
-- [ ] **Step 8: Re-record the three.** Run `GOLDEN_RECORD=1 cargo test -p chimera-core --test golden_test -- goldens_match --nocapture` and paste only those three rows. Each row's comment becomes `// Re-recorded: Modal strings stored as 16-bit block float (exclusive-state spec § 4).` Every other row stays byte-identical, which `git diff` must show. Then run `cargo test -p chimera-core --test golden_test`. Expected: PASS, `goldens_match_through_the_instrument` included.
-  - **If `algo-init-morph` is already on `main` when this branch rebases:** re-record `algo_to_modal_switch` once more after the rebase, and give its comment both reasons. Whichever branch lands second does this (spec § Interactions).
-- [ ] **Step 9: Check the sizes.** Run `cargo test -p chimera-core --test memory_budget_test -- --nocapture`. Expected (host): `ModalEngine` ≈ 16,080, `Voice` ≈ 17,928 and `[Voice; 8]` ≈ 143,424. If any is more than 5 % above, STOP and report.
-- [ ] **Step 10: Write ADR 0052** (Proposed).
-  - **Context:** the spec's prototype numbers. Round-to-nearest Q1.14 never goes quiet, and truncation halves the tails.
-  - **Decision:** the block exponent above, with the gate (RMS error re full scale over 1 s with FDBK 0, plus envelope and bounds checks with feedback).
-  - **Alternatives:** f32 strings (~13 KB freed); plain Q1.14; truncation.
-  - **Consequences:** about 15,680 B freed per voice; a step costs ≤ 984 halfword shifts and happens at most once per voice per block.
-  - **Sources:** the spec § 4 and this plan.
-
-  Add its README row.
-- [ ] **Step 11: Run the green gate.** Run `just check`. Expected: exit 0.
-- [ ] **Step 12: Commit.**
-
-```bash
-git add chimera-core/src/dsp/modal/string.rs chimera-core/src/dsp/modal/mod.rs chimera-core/tests/golden_test.rs docs/adr/0052-strings-stored-as-16-bit-block-float.md docs/adr/README.md
-git commit -m "Strings stored as 16-bit block float; Modal goldens re-recorded"
+git rm chimera-core/src/dsp/modal/q16.rs
+git add chimera-core/src/dsp/modal/string.rs chimera-core/src/dsp/modal/mod.rs chimera-core/tests/golden_test.rs chimera-core/tests/instrument_test.rs chimera-core/tests/codec_compat_test.rs chimera-core/tests/common/mod.rs
+git commit -m "Strings back to f32; the 16-bit store goes"
 ```
 
 ---
 
-### Task 6: Chip figures
+### Task 8: `SymAlloc`, the pure pool allocator
+
+**Files:**
+- Create: `chimera-core/src/sym_alloc.rs`
+- Modify: `chimera-core/src/lib.rs` (`pub mod sym_alloc;`), `chimera-core/src/voice_alloc.rs` (`VoiceIdx`)
+- Test: `sym_alloc.rs` (`#[cfg(test)] mod tests` and doc tests), `voice_alloc.rs`
+
+**Interfaces:**
+- Produces, in `chimera_core::voice_alloc`:
+
+```rust
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VoiceIdx(u8);                                  // private: always < MAX_VOICES
+impl VoiceIdx { pub const ALL: [VoiceIdx; MAX_VOICES]; pub fn index(self) -> usize; }
+```
+
+- Produces, in `chimera_core::sym_alloc` (pure: no DSP, no `unsafe`):
+
+```rust
+pub const SYM_SLOTS: usize = 4;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SymSlot(u8);                                   // private: always < SYM_SLOTS
+impl SymSlot { pub fn index(self) -> usize; }
+#[must_use = "a dropped Lease leaks its slot; give it back"]
+#[derive(Debug)]
+pub struct Lease(SymSlot);                                // no Clone, no Copy, no public ctor
+impl Lease { pub fn slot(&self) -> SymSlot; }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Place { On(VoiceIdx), Steal(VoiceIdx), Refused }
+pub struct SymAlloc { slots: [State; SYM_SLOTS], clock: u32 }
+impl SymAlloc {
+    pub const fn new() -> Self;
+    pub fn place(&mut self, pick: Option<VoiceIdx>, stealable: impl Fn(VoiceIdx) -> bool) -> Place;
+    pub fn lend(&mut self, voice: VoiceIdx) -> Option<Lease>;
+    pub fn give_back(&mut self, lease: Lease);
+    pub fn forfeit(&mut self, voice: VoiceIdx);
+    pub fn holder(&self, slot: SymSlot) -> Option<VoiceIdx>;
+    pub fn free(&self) -> usize;
+    pub fn lent(&self) -> usize;
+}
+```
+
+**The algorithm (spec § 4.5; the signature does not decide it):**
+
+```rust
+#[derive(Clone, Copy)] enum Then { Free, Promise }
+#[derive(Clone, Copy)] enum State { Free, Promised { voice: VoiceIdx, age: u32 }, Lent { voice: VoiceIdx, age: u32, then: Then } }
+// `now()` ticks `clock` (wrapping) and returns it; lower age is older, as in `Allocator`.
+fn place(&mut self, pick, stealable) -> Place {
+    let Some(pick) = pick else { return Place::Refused };
+    let now = self.now();
+    if let Some(s) = self.slot_of(pick) { self.refresh(s, now); return Place::On(pick) }   // refresh: age = now; Lent → then = Promise
+    if let Some(s) = self.first_free() { self.slots[s] = State::Promised { voice: pick, age: now }; return Place::On(pick) }
+    match self.oldest(|v| stealable(v)) {            // over Promised and Lent, by age
+        Some(s) => { let u = self.voice_at(s); self.refresh(s, now); Place::Steal(u) }
+        None => Place::Refused,
+    }
+}
+fn lend(&mut self, voice) -> Option<Lease> {
+    let s = self.promised_to(voice).or_else(|| self.first_free())?;
+    self.slots[s] = State::Lent { voice, age: self.now(), then: Then::Free };
+    Some(Lease(SymSlot(s as u8)))
+}
+fn give_back(&mut self, lease: Lease) {
+    let s = lease.0.index();
+    self.slots[s] = match self.slots[s] {
+        State::Lent { voice, age, then: Then::Promise } => State::Promised { voice, age },
+        State::Lent { .. } => State::Free,
+        other => { debug_assert!(false, "a lease for a slot not lent"); other }
+    };
+}
+fn forfeit(&mut self, voice) { if let Some(s) = self.promised_to(voice) { self.slots[s] = State::Free } }
+```
+
+- [ ] **Step 1: Write the failing tests** in `sym_alloc.rs`. `v(i)` is `VoiceIdx::ALL[i]`, and `all` is `|_| true`.
+  - `a_free_slot_is_promised_to_the_pick`: `place(Some(v(0)), all) == On(v(0))`, then `free() == 3` and `lent() == 0`. Then `lend(v(0))` is `Some`, with `slot().index() == 0` and `lent() == 1`.
+  - `a_retrigger_keeps_its_slot`: `v(0)` holds a lease. `place(Some(v(0)), all) == On(v(0))`, `free() == 3`, and `holder(slot 0) == Some(v(0))`.
+  - `the_fifth_steals_the_oldest`: `v(0)`–`v(3)` each `place` and `lend`. Then:
+    - `place(Some(v(4)))` is `Steal(v(0))`, then `Steal(v(1))` for `v(5)`, `Steal(v(2))` for `v(6)` and `Steal(v(3))` for `v(7)`.
+    - A ninth, `place(Some(v(4)))`, is `Steal(v(0))`: the first steal refreshed `v(0)`'s age, and it is the oldest again.
+    - `free() == 0` and `lent() == 4` throughout.
+  - `a_mono_voice_is_never_stolen`: `v(0)`–`v(3)` hold leases.
+    - `place(Some(v(4)), |u| u != v(0)) == Steal(v(1))`.
+    - `place(Some(v(5)), |_| false) == Refused`.
+    - `place(None, all) == Refused`.
+  - `a_stolen_slot_comes_back_promised`: `v(0)`–`v(3)` hold leases, and `place(Some(v(4)), all) == Steal(v(0))`. After `give_back(l0)`: `holder(slot 0) == Some(v(0))`, `free() == 0`, `lend(v(5)).is_none()`, and `lend(v(0))` is slot 0.
+  - `lend_takes_the_promise_first`: `place(Some(v(2)))` promises slot 0 and `place(Some(v(3)))` slot 1. `lend(v(3))` is slot 1, and `lend(v(2))` is slot 0.
+  - `forfeit_frees_only_a_promise`: `v(0)` is promised slot 0; `v(1)` holds slot 1. `forfeit(v(1))` changes nothing (`lent() == 1`, `free() == 2`). Then `forfeit(v(0))` gives `free() == 3`.
+  - `sym_alloc_never_gives_a_voice_two_slots`: a local xorshift32 seeded `0x9E37_79B9` drives 100,000 steps over `v(0)`–`v(7)`.
+    - Each step, uniformly: `place` for a random pick, with each voice stealable with probability ¾; `lend` for a random voice; `give_back` of a random held lease; or `forfeit` of a random voice.
+    - The test keeps held leases in a `Vec<Lease>`.
+    - After each step: each voice is the holder of at most one slot; `lent()` equals the `Vec`'s length; and `free()` plus the promised count plus `lent()` equals 4.
+  - Doc tests on `Lease`:
+    - `compile_fail,E0599`: `let b = lease.clone();`.
+    - `compile_fail,E0382`: `alloc.give_back(lease); let _ = lease.slot();`.
+    - `compile_fail,E0423`: `let _ = chimera_core::sym_alloc::Lease(slot);`, a private tuple-struct constructor, as in `storage/frame.rs`.
+  - In `voice_alloc.rs`: `voice_idx_all_counts_up`. `VoiceIdx::ALL[i].index() == i` for every `i`.
+- [ ] **Step 2: Run the tests to verify they fail.** Run `cargo test -p chimera-core --lib sym_alloc voice_alloc && cargo test -p chimera-core --doc sym_alloc`. Expected: compile errors (`sym_alloc`, `VoiceIdx` not found).
+- [ ] **Step 3: Implement the Interfaces and algorithm above.**
+- [ ] **Step 4: Run the tests to verify they pass.** Same commands. Expected: PASS.
+- [ ] **Step 5: Run the green gate.** Run `just check`. Expected: exit 0.
+- [ ] **Step 6: Commit.**
+
+```bash
+git add chimera-core/src/sym_alloc.rs chimera-core/src/lib.rs chimera-core/src/voice_alloc.rs
+git commit -m "SymAlloc: four sympathetic slots, each lent by one Lease"
+```
+
+---
+
+### Task 9: Sympathetic borrows its strings from the pool
+
+**Files:**
+- Modify: `chimera-core/src/dsp/modal/mod.rs` (`SympatheticSet`, `SymPool`, `SympatheticVoice`, `Model`; pool arguments), `chimera-core/src/dsp/engines.rs` (`rebuild`'s leases, `Rebuilt`, `SlotKind::resting`), `chimera-core/src/in_place.rs` (`move_out`), `chimera-core/src/dsp/voice.rs` (`id`, pool arguments, `reset`'s choice, `rest`), `chimera-core/src/voice_alloc.rs` (`pick` public, `book`), `chimera-core/src/instrument.rs` (`sym`, placement, step 5)
+- Create: `chimera-core/tests/sym_pool_test.rs`, `chimera-core/tests/common/rig.rs`
+- Modify: every test that drives a `Voice` or `ModalEngine` directly, moved to `common::Rig` or `SymPool::boxed()`: `chain_spectral`, `click_free`, `desktop_sim`, `engines`, `engine_switch`, `exclusive_state`, `factory_level`, `factory`, `flt_page`, `in_place`, `lfo_slot`, `live_param`, `modal_integration`, `modal`, `modulatable`, `modulation_integration`, `pitch`, `property`, `rebuild_stack`, `reverb`, `routing`, `sanity`, `signal_chain` and `vca` (`*_test.rs`), plus `common/mod.rs`; and `memory_budget_test.rs`
+- Create: `docs/adr/0053-sympathetic-strings-from-a-shared-pool.md`. Modify: `docs/adr/README.md`
+
+**Interfaces:**
+- Consumes: `SymAlloc`, `Lease`, `Place`, `SYM_SLOTS`, `VoiceIdx` (Task 8); `in_place_enum!` (Task 1); `Voice::rebuild` (Task 4).
+- Produces, in `chimera_core::dsp::modal`:
+
+```rust
+pub struct SympatheticSet { strings: [KsString; NUM_SYMPATHETIC], ratios: [f32; NUM_SYMPATHETIC], pending: [f32; NUM_SYMPATHETIC] }
+pub struct SymPool { alloc: SymAlloc, sets: [SympatheticSet; SYM_SLOTS] }
+impl SymPool {
+    pub fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self;   // sets through uninit_at, alloc by value
+    pub fn alloc(&self) -> &SymAlloc;
+    pub(crate) fn alloc_mut(&mut self) -> &mut SymAlloc;
+    fn set(&mut self, lease: &Lease) -> &mut SympatheticSet;
+    #[cfg(any(test, feature = "test-support"))] pub fn boxed() -> Box<Self>;  // new_uninit + init_in_place
+}
+struct SympatheticVoice { main: KsString, lease: Lease }
+pub enum Model { Bank, String, Bowed, Sympathetic(Lease) }            // not Copy
+enum ModelSlot { Bank(ModalBank), String(KsString), Bowed(BowedString), Sympathetic(SympatheticVoice) }
+impl ModalEngine {
+    pub fn init_in_place(slot: &mut MaybeUninit<Self>, model: Model) -> &mut Self;
+    pub fn note_on(&mut self, note: u8, velocity: u8, params: &ModalParams, sample_rate: u32, pool: &mut SymPool);
+    pub fn note_off(&mut self, pool: &mut SymPool);
+    pub fn render(&mut self, out: &mut [f32; BLOCK_SIZE], params: &ModalParams, sample_rate: u32, pool: &mut SymPool);
+    pub(crate) fn lease_mut(&mut self) -> Option<&mut Lease>;         // for EngineSlot::rebuild's move_out only
+    #[cfg(any(test, feature = "test-support"))] pub fn new_in(pool: &mut SymPool, mode: ResonatorMode) -> Self; // lends for v0
+}
+const _: () = assert!(size_of::<SympatheticVoice>() <= max(size_of::<BowedString>(), size_of::<KsString>()));
+```
+
+- In `chimera_core::dsp::engines`:
+
+```rust
+impl SlotKind { pub fn resting(self) -> Self; }                        // Modal(Sympathetic) → Modal(String); else self
+#[must_use] #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Rebuilt { Built, NoSlot }                                     // NoSlot: built `kind.resting()` instead
+impl EngineSlot {
+    pub fn init_in_place(slot: &mut MaybeUninit<Self>, kind: SlotKind) -> &mut Self;   // builds kind.resting(): no lease
+    pub fn rebuild(&mut self, kind: SlotKind, pool: &mut SymAlloc, voice: VoiceIdx) -> Rebuilt; // spec § 4.4's table
+    // note_on / note_off / render gain `pool: &mut SymPool`
+}
+```
+
+- In `chimera_core::in_place`: `pub(crate) unsafe fn move_out<T>(r: &mut T) -> T` (spec § 4.4, with its `# Safety`).
+- In `Voice`:
+  - `id: VoiceIdx`, written once in `init_in_place(slot, sample_rate, id)` and skipped by `write_chain!`. `Voice::new(sample_rate)` uses `VoiceIdx::ALL[0]`.
+  - `note_on(…, pool: &mut SymPool) -> bool`, `note_off(&mut self, pool: &mut SymPool)` and `render(…, pool: &mut SymPool)`.
+  - `pub fn rest(&mut self, pool: &mut SymPool)`: idle and no note waits. It rebuilds a Sympathetic slot into `resting()`, then calls `forfeit(id)`.
+  - `reset(&mut self, params, then_plays: bool)`: `then_plays` rebuilds into `SlotKind::of(params)`, otherwise into `SlotKind::of(params).resting()`. `fade_ended` passes `after != AfterFade::Idle`, and the VCA-lifetime reset passes `false`.
+  - `trigger`: a `NoSlot` rebuild leaves the voice idle and returns before the note starts. A kind other than `Modal(Sympathetic)` calls `pool.alloc_mut().forfeit(self.id)`.
+- In `Allocator`: `pub fn pick(&self, part, mode, cost, reserved) -> Option<usize>` (unchanged body), and `pub fn book(&mut self, v: usize, part, mode, note, cost) -> Alloc`. `note_on` becomes `pick` then `book`, with the same behaviour.
+- In `Instrument`: a `sym: SymPool` field, built in place in `init_in_place` and listed in `field_list!`, plus `pub fn sym(&self) -> &SymAlloc` and `pub fn slot_kinds(&self) -> [SlotKind; MAX_VOICES]` for tests.
+  - `handle`, for a Part whose `SlotKind::of` is `Modal(Sympathetic)`:
+    - `place(pick, |u| !slots[u].mono)`, then `book` the voice it names.
+    - `Steal(u)` sets `waiting[u] = Some(vel)` and calls `voices[u].kill()`, even for the same Part and kind.
+    - Every other kind skips `place`.
+  - Render step 5 calls `voices[v].rest(&mut self.sym)` in the `release_finished` branch.
+
+**Keeping sound identical.** `render_sympathetic` runs the same arithmetic on the same state. Only the main string's owner and the set's owner change. `modal_sympathetic` (Task 7) and every other golden must stay bit-identical. A fresh pool's sets are zeroed as a fresh engine's were, and a note-on clears every line it starts (spec § 4.8).
+
+- [ ] **Step 1: Write the failing tests.**
+  - **`engines.rs`: `resting_maps_only_sympathetic`.** For all four modes and Algo, `resting()` is identity, except `Modal(Sympathetic)`, which gives `Modal(String)`.
+  - **`engines.rs`: `rebuild_moves_leases_as_the_table_says`.** One boxed slot, one `SymAlloc` and voice `v(0)`:
+    - Algo → Sympathetic: `Built`, `lent() == 1`.
+    - Sympathetic → Sympathetic: `Built`, `lent() == 1`, same `slot()`.
+    - Sympathetic → String: `lent() == 0`, `free() == 4`.
+    - With all four slots lent to other voices, String → Sympathetic: `NoSlot`, `kind() == Modal(String)`.
+  - **`sym_pool_test.rs`.** Use `Instrument` with the `common` helpers. `sym` is `for_engine(Modal)` with `modal.mode = Sympathetic`.
+    - `a_fifth_sympathetic_note_steals_the_oldest` (Review Focus 1). Parts 1 and 2 = `sym`, Poly, on channels 0 and 1.
+      - Part 1 holds notes 48, 50, 52 and 53, on in blocks 0–3.
+      - At block 10, Part 2 plays 55. Just before it, record the voice `u` sounding 48 (`allocator().slots()`) and `r = rebuilds()[u]`.
+      - Over the next `FADE / BLOCK_SIZE` blocks, Part 1's bus's largest step is ≤ S + A / `FADE`, with S and A from block 9, as in `switch_never_clicks`.
+      - `rebuilds()[u] == r + 2` after the fade-end block, and 55 sounds on `u`.
+      - From Part 2's first non-zero block, its bus is bit-identical, for 8 blocks, to 55 alone on a fresh `Instrument`.
+      - Every block: the count of `Modal(Sympathetic)` in `slot_kinds()` is at most 4 and equals `sym().lent()`.
+    - `other_models_keep_eight_voices`. For each of String, Bowed and the bank: 8 held notes all sound (`part_bus` non-zero with every voice active, via `allocator().slots()`), and `sym().free() == 4`.
+    - `four_sympathetic_notes_sound_as_alone`. Parts 1–4 = `sym`, one note each, on four channels. Each `part_bus(p)` is bit-identical to that note alone in a fresh `Instrument`.
+    - `a_handed_over_slot_carries_nothing`. Note A (60) plays 20 blocks, goes off, and renders until idle. Then a note-off, and note B (67) on a second Part, so that B lands on another voice and takes slot 0: assert `holder(slot 0)` names B's voice. B's 16 blocks are bit-identical to B in a fresh `Instrument`.
+    - `every_lease_comes_home` (Review Focus 5). Parts 1–3; a local xorshift32 seeded `0xC0FF_EE11`, over 2,000 blocks. Each block, with probability ¼ each:
+      - a note-on (random Part, note 36–84);
+      - a note-off of a random held note;
+      - a MODE change on a random Part (random of four);
+      - an ENGINE flip on a random Part.
+
+      At every block, the count of `Modal(Sympathetic)` in `slot_kinds()` equals `sym().lent()` and is ≤ 4. Then all notes go off, and it renders until every voice is idle (≤ 2,000 blocks). Then `sym().free() == 4`.
+    - `a_mode_switch_to_sympathetic_restarts_at_most_four` (Review Focus 6). Part 1 = String, eight held notes. MODE becomes Sympathetic.
+      - After `FADE / BLOCK_SIZE + 1` blocks, exactly 4 voices are `Modal(Sympathetic)` and active, and 4 are idle and held (`allocator().slots()[v].held()`).
+      - In the fade-end block, each voice's `rebuilds` rose by exactly 1.
+      - Then all keys go up and it renders until idle: `sym().free() == 4`.
+    - `a_resting_voice_gives_its_slot_back`. A `sym` note 60 with `decay` 0.3 renders until the voice goes idle. In that block, `rebuilds` rises by 1, `slot_kinds()[v] == Modal(String)` and `sym().free() == 4`.
+    - `a_mono_sympathetic_voice_is_never_stolen`. Part 1 = `sym`, Mono, holds 48. Parts 2–4 = `sym`, Poly, each hold one note. Part 2 plays another note: the stolen voice is the oldest Poly one, never Part 1's.
+  - **`memory_budget_test.rs`: `sympathetic_pool_fits_d2`.** It prints `SympatheticVoice`, `SympatheticSet`, `SymPool`, `Voice`, `[Voice; 8]`, `Instrument` and `VOICE_RAM_BUDGET − Instrument`. It asserts `size_of::<ModelSlot>()` is at most `BowedString` rounded up to align, plus align (Sympathetic doesn't size the voice), and that `Instrument <= VOICE_RAM_BUDGET`.
+  - **`rebuild_stack_test.rs`.** The thread's stack becomes `size_of::<SympatheticSet>()`. It uses a `Rig`, and its switch run includes Sympathetic.
+- [ ] **Step 2: Run the tests to verify they fail.** Run `cargo test -p chimera-core --lib engines && cargo test -p chimera-core --test sym_pool_test`. Expected: compile errors (`SymPool`, `resting`, `Rebuilt`, `sym` not found).
+- [ ] **Step 3: Implement the Interfaces.**
+  - Write `common/rig.rs` first. `pub struct Rig { pub voice: Box<Voice>, pub pool: Box<SymPool> }` offers `new(sr)`, and `note_on`, `note_off` and `render` with the pre-Task-9 signatures, forwarding the pool. It derefs to `Voice` for `kill`, `is_active`, `rebuilds` and `cost`.
+  - Move each listed test file from `Voice::new(SR)` to `Rig::new(SR)`, mechanically. Tests on `ModalEngine::new(mode)` use `ModalEngine::new_in(&mut pool, mode)`.
+  - `EngineSlot::rebuild` is the one caller of `move_out`, with one `// SAFETY:` line: "the payload is rebuilt below in every arm, and `rebuild_*` aborts rather than unwinds".
+- [ ] **Step 4: Run the tests to verify they pass.** Run `cargo test -p chimera-core`, which covers the lib, every test binary and the doc tests. Expected: PASS, with every golden bit-identical, `modal_sympathetic` included. Any golden mismatch means the move changed state: fix it, and never re-record. Also check:
+  - `memory_budget_test -- --nocapture` prints (host): `Voice` ≈ 5,840 (at most 5,848 with `id`), `SymPool` ≈ 111,168 and `Instrument` ≈ 160,544, which leaves ≈ 126,176.
+  - If any is more than 5 % above, STOP and report.
+- [ ] **Step 5: Prove the stack test can fail.** Temporarily make Sympathetic's note-on overwrite its set by value: `*pool.set(&lease) = SympatheticSet::new()`, with a test-support `new` through `by_value`. Run `cargo test -p chimera-core --test rebuild_stack_test`. Expected: the process aborts with "has overflowed its stack". Revert, and confirm `git diff chimera-core/src/dsp/modal/mod.rs` shows only this task's changes. If it doesn't overflow, STOP and report.
+- [ ] **Step 6: Write ADR 0053**, `sympathetic-strings-from-a-shared-pool` (Proposed; Deciders: project owner).
+  - **Context:** Sympathetic was eight strings to every other model's one. Q16 (ADR 0052) missed −90 dBFS at C6. Rings caps polyphony at 4 and shares 8 strings.
+  - **Decision:** spec § 4.2–4.6, stated so it can be checked against the code:
+    - the slot is 7 lines, 7 ratios and 7 pending values;
+    - the main string stays in the voice;
+    - the pool is in D2, inside the `Instrument`;
+    - the `Lease`;
+    - `place`, `lend`, `give_back` and `forfeit`, and the steal onto the slot's own voice;
+    - `resting`, restarts never steal, and Mono is never stolen.
+  - **Alternatives:**
+    - Q16 strings (0052): precision.
+    - f32 in every voice: 271,520 B, which leaves 15,200 B.
+    - The main string in the pool too: +15,840 B for no voice saving.
+    - Slot `s` bound to voice `s`: a Sympathetic note would steal an Algo note on voices 0–3 while 4–7 sit free.
+    - A registry without a token: a Sympathetic model without a slot becomes representable.
+    - The pool in AXI: 111,104 B against about 24.9 KB spare.
+  - **Consequences:**
+    - § Memory's numbers.
+    - At most 4 Sympathetic notes, with a steal that fades.
+    - One `rest` rebuild at a natural end.
+    - The ADR 0051 bound is unchanged.
+    - One `move_out`.
+    - Its cap is what #207 shows.
+  - **Sources:** the spec; this plan, Tasks 7–9; `rings/dsp/part.h` and `part.cc` (MIT, Emilie Gillet; the design idea only); ADRs 0051 and 0052.
+
+  In the README, add row 0053, and link 0052's status cell: `Superseded by [0053](0053-sympathetic-strings-from-a-shared-pool.md)`. 0052's own Status line gets the same link. The file is Proposed, never accepted, so it is editable.
+- [ ] **Step 7: Run the green gate.** Run `just check`. Expected: exit 0 (stack-check included).
+- [ ] **Step 8: Commit.**
+
+```bash
+git add chimera-core/src chimera-core/tests docs/adr/0052-strings-stored-as-16-bit-block-float.md docs/adr/0053-sympathetic-strings-from-a-shared-pool.md docs/adr/README.md
+git status --short   # must list no docs/chimera-ui-ux-spec.md and no chimera.bin
+git commit -m "Sympathetic borrows its strings from a pool of four"
+```
+
+---
+
+### Task 10: Chip figures
 
 **Files:**
 - Modify: `chimera-stm32/src/bench.rs`
-- Modify: `docs/adr/0051-…md`, `docs/adr/0052-…md` (figures only, still Proposed)
+- Modify: `docs/adr/0051-…md` and `docs/adr/0053-…md` (figures only, still Proposed)
 
 **Interfaces:**
-- Consumes: `EngineSlot::{init_in_place, rebuild}`, `SlotKind` (Task 2), `Q16`, `Store`, `StepBudget` (Task 5), `Voice`.
+- Consumes: `EngineSlot::{init_in_place, rebuild}`, `SlotKind` (Task 2), `SymAlloc`, `VoiceIdx` (Task 8), `SymPool`, `Instrument::sym` (Task 9), `Voice`.
 - Produces three bench additions:
-  - `#[inline(never)] fn time_rebuild() -> u32` gives the cycles per `rebuild(SlotKind::Modal(Sympathetic))`, averaged over 16 rebuilds that alternate with `rebuild(SlotKind::Algo)`. Only the Sympathetic ones are timed. It runs on a `static mut MaybeUninit<EngineSlot>` in the voices' D2 section (`.ram_d2.voices`, as in `audio/engine.rs`).
-  - `#[inline(never)] fn time_exp_step() -> u32` gives the cycles of one `Q16::wrapped` that steps. It runs on a static `Q16` built with `Store::init_in_place`, with every index filled by `Store::store(line, i, 0.01)`, so the peak is below ¼ full scale and the step goes up.
-  - A `ROUTING` row `("SWITCH", |p| modal(p, ResonatorMode::String), switch_storm)`. `switch_storm` flips `p.params.modal.mode` between String and Sympathetic every 4 blocks. `ROUTING_ROWS` becomes 29.
-  - `fn show_memory(display, rebuild: u32, step: u32)` draws one more held screen, titled `MEMORY`, with these lines:
+  - `#[inline(never)] fn time_rebuild() -> u32` gives the cycles per `rebuild(SlotKind::Modal(Sympathetic), …)`. It averages 16 rebuilds that alternate with `rebuild(SlotKind::Algo, …)`, timing only the Sympathetic ones.
+    - It runs on a `static mut MaybeUninit<EngineSlot>` and a `static mut SymAlloc`. A Sympathetic rebuild writes only the main string and the lease, so no set is needed.
+    - The slot goes in `.ram_d2.voices` with the `Instrument`, as in `audio/engine.rs`: 4,008 B more, inside the ≈ 126 KB headroom.
+  - `#[inline(never)] fn time_sym_note_on(inst: &mut Instrument, shared: &AudioShared) -> u32` gives the cycles of `Instrument::handle` for one Sympathetic note-on on an idle voice. That covers `place`, `lend`, the rebuild, and the note-on's clear and excitation. It averages 16 note-on / kill / render-to-idle rounds on the bench's own `Instrument`.
+  - A `ROUTING` row `("SWITCH", |p| modal(p, ResonatorMode::String), switch_storm)`. `switch_storm` flips `p.params.modal.mode` between String and Sympathetic every 4 blocks, so it steals and rests too. `ROUTING_ROWS` becomes 29.
+  - `fn show_memory(display, rebuild: u32, note_on: u32)` draws one held screen, titled `MEMORY`, shown after the ROUTING pages. Its lines:
     - `VOICE {size_of::<Voice>()}`
     - `SLOT {size_of::<EngineSlot>()}`
     - `MODAL {size_of::<ModalEngine>()}`
-    - `POOL {size_of::<[Voice; MAX_VOICES]>()}/{VOICE_RAM_BUDGET}`
+    - `SYM POOL {size_of::<SymPool>()}`
+    - `INSTR {size_of::<Instrument>()}/{VOICE_RAM_BUDGET}`
     - `REBUILD {rebuild} CYC`
-    - `EXP STEP {step} CYC`
+    - `SYM NOTE-ON {note_on} CYC`
 
-    It is shown after the ROUTING pages.
-
-- [ ] **Step 1: Implement the bench additions.** Put a `// SAFETY:` comment on each new `static mut` access, as for `SCOPE`/`SHARED`. Nothing large may go on the stack: the slot and the line are statics.
-- [ ] **Step 2: Run the green gate and record the target's section sizes.** Run `just check && cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --features bench && "$(rustc --print sysroot)/lib/rustlib/x86_64-unknown-linux-gnu/bin/llvm-size" -A target/thumbv7em-none-eabihf/release/chimera-stm32`. Expected: exit 0. Keep the `.ram_d2*` section size for the ADR.
+- [ ] **Step 1: Implement the bench additions.** Put a `// SAFETY:` comment on each new `static mut` access, as for `SCOPE`/`SHARED`. Nothing large may go on the stack: the slot and the allocator are statics, and the `Instrument` is the bench's own.
+- [ ] **Step 2: Run the green gate and record the target's section sizes.** Run `just check && cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --features bench && "$(rustc --print sysroot)/lib/rustlib/x86_64-unknown-linux-gnu/bin/llvm-size" -A target/thumbv7em-none-eabihf/release/chimera-stm32`. Expected: exit 0. Keep the `.ram_d2*` section size for the ADRs.
 - [ ] **Step 3: Commit.**
 
 ```bash
 git add chimera-stm32/src/bench.rs
-git commit -m "Bench: rebuild, exponent step, switch storm, memory"
+git commit -m "Bench: rebuild, Sympathetic note-on, switch storm, memory"
 ```
 
 - [ ] **Step 4: STOP. The owner measures on hardware.** Hand the owner this checklist and wait for the figures:
-  1. **Baseline.** In a scratch worktree of `main` (937b89f), run `just flash-bench`. Let the bench pages run through. On the normal UI, load a Modal Sound and hold an 8-note chord. Flip MODE String ↔ Sympathetic 5 times, then ENGINE Algo ↔ Modal 5 times. Open System › AUDIO and read **STACK** (K).
+  1. **Baseline.** In a scratch worktree of `main`, run `just flash-bench`. Let the bench pages run through. On the normal UI, load a Modal Sound and hold an 8-note chord. Flip MODE String ↔ Sympathetic 5 times, then ENGINE Algo ↔ Modal 5 times. Open System › AUDIO and read **STACK** (K).
   2. **Branch.** From this worktree, run `just flash-bench` and read the following:
      - First screen: **MODAL /VOICE**. It must be ≤ 447, today's billed `Voice::cost` for the default Modal Sound.
      - ROUTING pages: **MDL SYM /VOICE** (≤ 1,457 billed), **MDL STR /VOICE** and **SWITCH /VOICE** with its 8 counts.
-     - MEMORY screen: **VOICE, SLOT, MODAL, POOL, REBUILD, EXP STEP**.
-  3. Repeat the chord and MODE/ENGINE flips from step 1, then read AUDIO **STACK**. It must be ≤ the baseline + 1 K (§ Tests: at most 1 KB of growth; the page shows whole KB).
+     - MEMORY screen: **VOICE, SLOT, MODAL, SYM POOL, INSTR, REBUILD, SYM NOTE-ON**.
+  3. Repeat the chord and the MODE and ENGINE flips from step 1.
+     - On Sympathetic, the 8-note chord should sound 4 notes.
+     - Play a fifth, then a sixth note over four held Sympathetic notes. Each steals the oldest with a short fade, and there should be no click.
+     - Then read AUDIO **STACK**. It must be ≤ the baseline + 1 K (spec § Tests: at most 1 KB of growth; the page shows whole KB).
   4. Run `just flash` to restore the normal firmware.
 
   If MODAL or MDL SYM exceeds its billed figure, or STACK grows by more than 1 K, STOP and report to the owner. Do not raise a `COST_*` constant or change the design.
-- [ ] **Step 5: Record the figures.** Add a "Measured on the chip (rev V, 480 MHz, 2026-MM-DD)" paragraph to ADR 0051 (VOICE, SLOT, POOL, `.ram_d2*` size, REBUILD, SWITCH, and STACK before/after) and to ADR 0052 (MODAL, MDL STR, MDL SYM, EXP STEP) with the owner's readings. Run `just check`. Expected: exit 0.
+- [ ] **Step 5: Record the figures.** Add a "Measured on the chip (rev V, 480 MHz, 2026-MM-DD)" paragraph, with the owner's readings:
+  - to ADR 0051: VOICE, SLOT, INSTR, the `.ram_d2*` size, REBUILD, SWITCH, and STACK before and after;
+  - to ADR 0053: SYM POOL, SYM NOTE-ON, MDL SYM and MDL STR.
+
+  Run `just check`. Expected: exit 0.
 - [ ] **Step 6: Commit.**
 
 ```bash
-git add docs/adr/0051-a-voice-holds-one-engine-rebuilt-in-place.md docs/adr/0052-strings-stored-as-16-bit-block-float.md
-git commit -m "Chip figures for ADRs 0051 and 0052"
+git add docs/adr/0051-a-voice-holds-one-engine-rebuilt-in-place.md docs/adr/0053-sympathetic-strings-from-a-shared-pool.md
+git commit -m "Chip figures for ADRs 0051 and 0053"
 ```
