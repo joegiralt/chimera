@@ -1,9 +1,9 @@
 mod common;
 use chimera_core::dsp::modal::ResonatorMode;
-use chimera_core::dsp::voice::Voice;
 use chimera_core::modulation::ModState;
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::{MidiNote, Velocity};
+use common::Rig;
 use common::SR;
 
 /// Simulate exactly what the desktop runtime does:
@@ -15,7 +15,7 @@ use common::SR;
 #[test]
 fn test_modal_through_voice_produces_sound() {
     let empty_mod = ModState::new();
-    let mut voice = Voice::new(SR);
+    let mut voice = Rig::new(SR);
     let params = ParamSnapshot::for_engine(EngineType::Modal);
 
     // Verify engine type is set
@@ -52,7 +52,7 @@ fn test_modal_through_voice_produces_sound() {
 #[test]
 fn test_modal_string_through_voice() {
     let empty_mod = ModState::new();
-    let mut voice = Voice::new(SR);
+    let mut voice = Rig::new(SR);
     let mut params = ParamSnapshot::for_engine(EngineType::Modal);
     params.modal.mode = ResonatorMode::Modal;
 
@@ -82,7 +82,7 @@ fn test_modal_string_through_voice() {
 #[test]
 fn test_modal_bowed_through_voice() {
     let empty_mod = ModState::new();
-    let mut voice = Voice::new(SR);
+    let mut voice = Rig::new(SR);
     let mut params = ParamSnapshot::for_engine(EngineType::Modal);
     params.modal.mode = ResonatorMode::Bowed; // Bowed mode
 
@@ -113,7 +113,7 @@ fn test_modal_bowed_through_voice() {
 fn test_modal_different_from_algo_through_voice() {
     let empty_mod = ModState::new();
     let render = |engine: EngineType| -> Vec<f32> {
-        let mut voice = Voice::new(SR);
+        let mut voice = Rig::new(SR);
         let params = ParamSnapshot::for_engine(engine);
         voice.note_on(
             MidiNote::new(60).unwrap(),
@@ -158,8 +158,8 @@ fn test_modal_different_from_algo_through_voice() {
 fn test_modal_signal_chain_affects_output() {
     let empty_mod = ModState::new();
     // Modal through filter should be different from modal without filter
-    let mut voice_open = Voice::new(SR);
-    let mut voice_closed = Voice::new(SR);
+    let mut voice_open = Rig::new(SR);
+    let mut voice_closed = Rig::new(SR);
 
     let mut params_open = ParamSnapshot::for_engine(EngineType::Modal);
     params_open.filter.cutoff = 20000.0;

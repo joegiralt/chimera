@@ -1,19 +1,19 @@
 //! Spec § Replacing the old engines: a bank of eight Algo Sounds that plays.
 
 mod common;
-use chimera_core::dsp::voice::Voice;
 use chimera_core::factory::{FACTORY_LEN, factory_sound, load_factory};
 use chimera_core::params::EngineType;
 use chimera_core::preset::SoundPool;
 use chimera_core::ui::UiState;
 use chimera_core::{MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
+use common::Rig;
 use common::peak;
 
 /// One second held, then three seconds of release.
 fn play(i: usize) -> (Vec<f32>, Vec<f32>) {
     let s = factory_sound(i).unwrap();
-    let mut v = Voice::new(chimera_hal::SAMPLE_RATE);
+    let mut v = Rig::new(chimera_hal::SAMPLE_RATE);
     v.note_on(
         MidiNote::new(60).unwrap(),
         Velocity::new(100).unwrap(),
@@ -123,7 +123,7 @@ fn morph_pad_lfo_sweep_stays_inside_morph_range() {
 fn tx_epiano_bark_survives_the_filter() {
     let s = factory_sound(1).unwrap();
     assert_eq!(s.name.as_str(), "TX EPIANO");
-    let mut v = Voice::new(chimera_hal::SAMPLE_RATE);
+    let mut v = Rig::new(chimera_hal::SAMPLE_RATE);
     v.note_on(
         MidiNote::new(60).unwrap(),
         Velocity::new(100).unwrap(),

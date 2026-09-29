@@ -7,11 +7,11 @@ use crate::addr::{BlockRef, Blocks, ParamAddr};
 use crate::block::apply_offset;
 use crate::dsp::algo::engine::AlgoLive;
 use crate::dsp::drive::Drive;
-use crate::dsp::engines::{EngineSlot, SlotKind};
+use crate::dsp::engines::{EngineSlot, Rebuilt, SlotKind};
 use crate::dsp::envelope::{EnvMods, Envelope};
 use crate::dsp::filter::SvfFilter;
 use crate::dsp::lfo::Lfo;
-use crate::dsp::modal::{ModalEngine, ModalParams};
+use crate::dsp::modal::{ModalEngine, ModalParams, ResonatorMode, SymPool};
 use crate::dsp::modulator::{EnvSlot, LfoSlot};
 use crate::dsp::wavefolder::Wavefolder;
 use crate::hw::{Cost, MAX_VOICES, VOICE_CHAIN_BYTES, VOICE_RAM_BUDGET};
@@ -20,6 +20,7 @@ use crate::modulation::{
     MAX_MOD_SOURCES, ModRouting, ModSource, ModState, VCA, amount_scale, note_source,
 };
 use crate::params::{DriveParams, EnvParams, FolderParams, ParamSnapshot};
+use crate::voice_alloc::VoiceIdx;
 use crate::{MidiNote, Velocity};
 
 // ADR 0013: the voice pool fits D2 SRAM beside the DMA buffers, on both targets.
@@ -36,6 +37,8 @@ const _: () = assert!(
 pub struct Voice {
     /// The engine it plays, and so the engine it last played.
     slot: EngineSlot,
+    /// Its place in the pool: whom the sympathetic slots are lent to.
+    id: VoiceIdx,
     sample_rate: u32,
     /// Slot rebuilds since `init_in_place`, wrapping: `reset` keeps it.
     rebuilds: u16,
@@ -108,13 +111,13 @@ impl VcaRoutes {
 // `reset` overwrites fields in place without dropping them.
 const _: () = assert!(!core::mem::needs_drop::<Voice>());
 
-/// Writes every field of `*p` but `slot`, `sample_rate` and `rebuilds`. The
+/// Writes every field of `*p` but `slot`, `id`, `sample_rate` and `rebuilds`. The
 /// pattern is exhaustive, so a new field fails to build until it is written
 /// here.
 macro_rules! write_chain {
     ($p:ident, { $($f:ident: $v:expr),* $(,)? }) => {{
         let _every_field = |v: &Voice| {
-            let Voice { slot: _, sample_rate: _, rebuilds: _, $($f: _),* } = v;
+            let Voice { slot: _, id: _, sample_rate: _, rebuilds: _, $($f: _),* } = v;
         };
         $(addr_of_mut!((*$p).$f).write($v);)*
     }};
@@ -180,19 +183,25 @@ impl Voice {
             .fold(Cost::ZERO, |a, (_, c)| a + c)
     }
 
-    /// The sample rate is stored once (spec §3), not passed per call.
+    /// The sample rate is stored once (spec §3), not passed per call. A
+    /// lone voice is voice 0.
     pub fn new(sample_rate: u32) -> Self {
         // SAFETY: `init_in_place` writes every field of the slot.
-        unsafe { by_value(|slot| Self::init_in_place(slot, sample_rate)) }
+        unsafe { by_value(|slot| Self::init_in_place(slot, sample_rate, VoiceIdx::ALL[0])) }
     }
 
-    pub fn init_in_place(slot: &mut MaybeUninit<Self>, sample_rate: u32) -> &mut Self {
+    pub fn init_in_place(
+        slot: &mut MaybeUninit<Self>,
+        sample_rate: u32,
+        id: VoiceIdx,
+    ) -> &mut Self {
         let p = slot.as_mut_ptr();
         // SAFETY: `p` is valid and unaliased; the slot is built in place
         // and every other (small) field is written once before
         // `assume_init_mut`.
         unsafe {
             EngineSlot::init_in_place(uninit_at(addr_of_mut!((*p).slot)), SlotKind::Algo);
+            addr_of_mut!((*p).id).write(id);
             addr_of_mut!((*p).sample_rate).write(sample_rate);
             addr_of_mut!((*p).rebuilds).write(0);
             Self::init_chain(p);
@@ -200,7 +209,7 @@ impl Voice {
         }
     }
 
-    /// Every field but `slot`, `sample_rate` and `rebuilds`, as `new` builds
+    /// Every field but `slot`, `id`, `sample_rate` and `rebuilds`, as `new` builds
     /// it: the one list that `init_in_place` and `reset` share.
     ///
     /// # Safety
@@ -239,9 +248,31 @@ impl Voice {
     }
 
     /// The one path to `slot.rebuild`, counted.
-    fn rebuild(&mut self, kind: SlotKind) {
-        self.slot.rebuild(kind);
+    fn rebuild(&mut self, kind: SlotKind, pool: &mut SymPool) -> Rebuilt {
         self.rebuilds = self.rebuilds.wrapping_add(1);
+        self.slot.rebuild(kind, pool.alloc_mut(), self.id)
+    }
+
+    /// The kind its slot holds.
+    pub fn kind(&self) -> SlotKind {
+        self.slot.kind()
+    }
+
+    /// The sounding (or last) note's velocity.
+    pub fn velocity(&self) -> Velocity {
+        self.last_velocity
+    }
+
+    /// Idle, and no note waits for it: a Sympathetic slot rests and gives
+    /// its lease back, and any promise it held is freed. For an engine
+    /// that went quiet on its own; every other way to idle rebuilds.
+    pub fn rest(&mut self, pool: &mut SymPool) {
+        debug_assert!(!self.active);
+        let kind = self.slot.kind();
+        if kind != kind.resting() {
+            let _ = self.rebuild(kind.resting(), pool);
+        }
+        pool.alloc_mut().forfeit(self.id);
     }
 
     /// `params` plays another engine or Modal model than the slot holds.
@@ -256,7 +287,13 @@ impl Voice {
     /// On a fading voice, or one sounding another engine or model, the note
     /// waits for the fade-out and then starts clean. Returns whether it replaced
     /// a note still waiting, unheard.
-    pub fn note_on(&mut self, note: MidiNote, velocity: Velocity, params: &ParamSnapshot) -> bool {
+    pub fn note_on(
+        &mut self,
+        note: MidiNote,
+        velocity: Velocity,
+        params: &ParamSnapshot,
+        pool: &mut SymPool,
+    ) -> bool {
         let replaced = self.after_fade == AfterFade::Note;
         self.held = true;
         if self.fade > 0 || (self.active && self.switched(params)) {
@@ -266,11 +303,28 @@ impl Voice {
             self.fade_out();
             return replaced;
         }
-        self.trigger(note, velocity, params);
+        self.trigger(note, velocity, params, pool);
         replaced
     }
 
-    fn trigger(&mut self, note: MidiNote, velocity: Velocity, params: &ParamSnapshot) {
+    fn trigger(
+        &mut self,
+        note: MidiNote,
+        velocity: Velocity,
+        params: &ParamSnapshot,
+        pool: &mut SymPool,
+    ) {
+        // Another engine or model starts clean, in place. Sympathetic
+        // without a slot doesn't start: only a lone voice, driven without
+        // the `Instrument`'s placement, can meet that.
+        let kind = SlotKind::of(params);
+        if self.switched(params) && self.rebuild(kind, pool) == Rebuilt::NoSlot {
+            return;
+        }
+        if kind != SlotKind::Modal(ResonatorMode::Sympathetic) {
+            // A promise made for a note since replaced doesn't outlive it.
+            pool.alloc_mut().forfeit(self.id);
+        }
         if !self.active {
             self.filter.hold(); // a fresh note: no ramp from the last note's cutoff
             // An idle voice's ENV slots and last source values start as a
@@ -280,13 +334,10 @@ impl Voice {
             self.mod_values = [0.0; MAX_MOD_SOURCES];
         }
         self.retrigger = true;
-        // Another engine or model starts clean, in place.
-        if self.switched(params) {
-            self.rebuild(SlotKind::of(params));
-        }
         self.last_note = note;
         self.last_velocity = velocity;
-        self.slot.note_on(note, velocity, params, self.sample_rate);
+        self.slot
+            .note_on(note, velocity, params, self.sample_rate, pool);
         for e in &mut self.envs {
             e.note_on();
         }
@@ -299,12 +350,12 @@ impl Voice {
         self.played_live = AlgoLive::from_params(&params.algo);
     }
 
-    pub fn note_off(&mut self) {
+    pub fn note_off(&mut self, pool: &mut SymPool) {
         self.held = false;
         if self.after_fade == AfterFade::Restart {
             self.after_fade = AfterFade::Idle;
         }
-        self.slot.note_off();
+        self.slot.note_off(pool);
     }
 
     /// Fade to silence over `FADE` samples, then go idle as a fresh voice.
@@ -324,25 +375,28 @@ impl Voice {
     }
 
     /// The fade is over: back to fresh, then start a queued note.
-    fn fade_ended(&mut self, params: &ParamSnapshot) {
+    fn fade_ended(&mut self, params: &ParamSnapshot, pool: &mut SymPool) {
         let (after, held) = (self.after_fade, self.held);
         let (note, velocity) = (self.last_note, self.last_velocity);
-        self.reset(params);
-        if after != AfterFade::Idle {
+        let then_plays = after != AfterFade::Idle;
+        if self.reset(params, then_plays, pool) == Rebuilt::Built && then_plays {
             // The slot holds `params`' kind, clean: `trigger` has none to rebuild.
             self.held = true;
-            self.trigger(note, velocity, params);
+            self.trigger(note, velocity, params, pool);
             if !held {
-                self.note_off();
+                self.note_off(pool);
             }
         }
     }
 
-    /// Back to the state `new` builds, in place, holding `params`' kind.
-    fn reset(&mut self, params: &ParamSnapshot) {
-        self.rebuild(SlotKind::of(params));
+    /// Back to the state `new` builds, in place: holding `params`' kind if
+    /// a note follows, else its resting kind (no pool slot while idle).
+    fn reset(&mut self, params: &ParamSnapshot, then_plays: bool, pool: &mut SymPool) -> Rebuilt {
+        let kind = SlotKind::of(params);
+        let built = self.rebuild(if then_plays { kind } else { kind.resting() }, pool);
         // SAFETY: `self` is a valid, aligned, unaliased `Voice`.
         unsafe { Self::init_chain(self) }
+        built
     }
 
     /// Sounding: its engine is active and, with routes into VCA, one of
@@ -369,6 +423,7 @@ impl Voice {
         output: &mut [f32; BLOCK_SIZE],
         params: &ParamSnapshot,
         mod_state: &ModState,
+        pool: &mut SymPool,
     ) {
         let sample_rate = self.sample_rate();
 
@@ -483,7 +538,7 @@ impl Voice {
         let (m, live) = (&self.played, &self.played_live);
 
         // 1. Engine → raw oscillator output
-        self.slot.render(output, m, live, sample_rate);
+        self.slot.render(output, m, live, sample_rate, pool);
 
         // 2. Drive
         self.drive.process(output, &m.drive);
@@ -534,7 +589,7 @@ impl Voice {
                 *sample *= f32::from(self.fade) / f32::from(Self::FADE);
             }
             if self.fade == 0 || !self.active {
-                self.fade_ended(params);
+                self.fade_ended(params, pool);
             }
         }
 
@@ -546,7 +601,7 @@ impl Voice {
                 self.fade = Self::FADE;
             } else {
                 // Silent, but the engine may still sound: back to fresh.
-                self.reset(params);
+                let _ = self.reset(params, false, pool);
             }
         }
     }
@@ -578,17 +633,18 @@ mod tests {
     #[test]
     fn a_note_after_silence_starts_without_a_ramp() {
         let p = ParamSnapshot::default();
+        let mut pool = SymPool::boxed();
         let mut v = Voice::new(chimera_hal::SAMPLE_RATE);
-        v.note_on(MidiNote::A4, Velocity::DEFAULT, &p);
+        v.note_on(MidiNote::A4, Velocity::DEFAULT, &p, &mut pool);
         let mut b = [0.0f32; BLOCK_SIZE];
-        v.render(&mut b, &p, &ModState::new());
+        v.render(&mut b, &p, &ModState::new(), &mut pool);
         assert!(v.filter.last_g().is_some());
         v.active = false; // its engine went quiet
-        v.note_on(MidiNote::A4, Velocity::DEFAULT, &p);
+        v.note_on(MidiNote::A4, Velocity::DEFAULT, &p, &mut pool);
         assert!(v.filter.last_g().is_none());
         // A retrigger of a sounding voice keeps it.
-        v.render(&mut b, &p, &ModState::new());
-        v.note_on(MidiNote::A4, Velocity::DEFAULT, &p);
+        v.render(&mut b, &p, &ModState::new(), &mut pool);
+        v.note_on(MidiNote::A4, Velocity::DEFAULT, &p, &mut pool);
         assert!(v.filter.last_g().is_some());
     }
 }

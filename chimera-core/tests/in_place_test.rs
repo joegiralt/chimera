@@ -6,13 +6,14 @@ use std::mem::MaybeUninit;
 use chimera_core::dsp::Stereo;
 use chimera_core::dsp::algo::algorithms::AlgoId;
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus};
-use chimera_core::dsp::modal::ResonatorMode;
+use chimera_core::dsp::modal::{ResonatorMode, SymPool};
 use chimera_core::dsp::voice::Voice;
 use chimera_core::hw::{BLOCK_SIZE, CPU_HZ_REV_V, DAC_PAIRS, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacOut, Instrument};
 use chimera_core::modulation::ModState;
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::{EngineType, ParamSnapshot};
+use chimera_core::voice_alloc::VoiceIdx;
 use chimera_core::{MidiChannel, MidiNote, Velocity};
 
 const BUDGET: SampleBudget = SampleBudget::for_cpu(CPU_HZ_REV_V);
@@ -131,16 +132,17 @@ fn voice_built_in_place_renders_like_new_for_every_engine() {
         for mode in modes {
             let mut params = ParamSnapshot::for_engine(engine);
             params.modal.mode = mode;
+            let (mut pa, mut pb) = (SymPool::boxed(), SymPool::boxed());
             let mut a = Box::new(Voice::new(SR));
             let mut slot = poisoned::<Voice>();
-            let b = Voice::init_in_place(&mut slot, SR);
+            let b = Voice::init_in_place(&mut slot, SR, VoiceIdx::ALL[0]);
             let note = MidiNote::new(52).unwrap();
-            a.note_on(note, Velocity::DEFAULT, &params);
-            b.note_on(note, Velocity::DEFAULT, &params);
+            a.note_on(note, Velocity::DEFAULT, &params, &mut pa);
+            b.note_on(note, Velocity::DEFAULT, &params, &mut pb);
             let (mut xa, mut xb) = ([0.0f32; BLOCK_SIZE], [0.0f32; BLOCK_SIZE]);
             for block in 0..60 {
-                a.render(&mut xa, &params, &ModState::new());
-                b.render(&mut xb, &params, &ModState::new());
+                a.render(&mut xa, &params, &ModState::new(), &mut pa);
+                b.render(&mut xb, &params, &ModState::new(), &mut pb);
                 assert_eq!(
                     xa.map(f32::to_bits),
                     xb.map(f32::to_bits),

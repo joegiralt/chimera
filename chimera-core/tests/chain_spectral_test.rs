@@ -1,11 +1,11 @@
 mod common;
 use chimera_core::dsp::drive::Drive;
 use chimera_core::dsp::filter::{FilterMode, SvfFilter};
-use chimera_core::dsp::voice::Voice;
 use chimera_core::dsp::wavefolder::Wavefolder;
 use chimera_core::modulation::ModState;
 use chimera_core::params::{DriveParams, FilterParams, FolderParams, ParamSnapshot};
 use chimera_core::{MidiNote, Velocity};
+use common::Rig;
 use common::{SR, goertzel, tri};
 
 /// Generate a sine wave buffer.
@@ -382,7 +382,7 @@ fn test_voice_filter_sweep_audible() {
     let f0 = freq;
 
     let measure = |cutoff: f32| -> f32 {
-        let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
+        let mut voice = Rig::new(chimera_hal::SAMPLE_RATE);
         let mut params = tri();
         // the triangle's odd harmonics
         params.filter.cutoff = cutoff;
@@ -419,7 +419,7 @@ fn test_voice_drive_adds_grit() {
     let freq = 261.6;
 
     let measure = |drive_amount: f32| -> f32 {
-        let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
+        let mut voice = Rig::new(chimera_hal::SAMPLE_RATE);
         let mut params = ParamSnapshot::default();
         params.drive.drive = drive_amount;
         params.drive.mix = 1.0;

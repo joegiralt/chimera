@@ -1,5 +1,5 @@
 mod common;
-use chimera_core::dsp::modal::{ModalEngine, ModalParams, ResonatorMode};
+use chimera_core::dsp::modal::{ModalEngine, ModalParams, ResonatorMode, SymPool};
 use common::{SR, goertzel};
 
 fn modal_params() -> ModalParams {
@@ -10,12 +10,13 @@ fn modal_params() -> ModalParams {
 }
 
 fn render_modal(params: &ModalParams, note: u8, blocks: usize) -> Vec<f32> {
-    let mut engine = ModalEngine::new(params.mode);
-    engine.note_on(note, 100, params, SR);
+    let mut pool = SymPool::boxed();
+    let mut engine = ModalEngine::new_in(&mut pool, params.mode);
+    engine.note_on(note, 100, params, SR, &mut pool);
     let mut all = Vec::new();
     let mut block = [0.0f32; 64];
     for _ in 0..blocks {
-        engine.render(&mut block, params, SR);
+        engine.render(&mut block, params, SR, &mut pool);
         all.extend_from_slice(&block);
     }
     all
@@ -69,19 +70,20 @@ fn test_modal_has_harmonics() {
 #[test]
 fn test_modal_decays() {
     let params = modal_params();
-    let mut engine = ModalEngine::new(params.mode);
-    engine.note_on(60, 100, &params, SR);
+    let mut pool = SymPool::boxed();
+    let mut engine = ModalEngine::new_in(&mut pool, params.mode);
+    engine.note_on(60, 100, &params, SR, &mut pool);
 
     let mut block = [0.0f32; 64];
 
     // Measure energy in early block
-    engine.render(&mut block, &params, SR);
-    engine.render(&mut block, &params, SR);
+    engine.render(&mut block, &params, SR, &mut pool);
+    engine.render(&mut block, &params, SR, &mut pool);
     let early_rms: f32 = libm::sqrtf(block.iter().map(|s| s * s).sum::<f32>() / 128.0);
 
     // Skip ahead
     for _ in 0..100 {
-        engine.render(&mut block, &params, SR);
+        engine.render(&mut block, &params, SR, &mut pool);
     }
     let late_rms: f32 = libm::sqrtf(block.iter().map(|s| s * s).sum::<f32>() / 128.0);
 
@@ -96,9 +98,10 @@ fn test_modal_decays() {
 #[test]
 fn test_modal_silent_when_idle() {
     let params = modal_params();
-    let mut engine = ModalEngine::new(params.mode);
+    let mut pool = SymPool::boxed();
+    let mut engine = ModalEngine::new_in(&mut pool, params.mode);
     let mut block = [0.0f32; 64];
-    engine.render(&mut block, &params, SR);
+    engine.render(&mut block, &params, SR, &mut pool);
     let max = block.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
     assert!(max < 0.001, "idle modal should be silent");
 }
@@ -323,26 +326,27 @@ fn sympathetic_mode_is_bounded_and_falls_silent() {
         ..Default::default()
     };
     let bounded = |b: &[f32; 64]| b.iter().all(|s| s.is_finite() && s.abs() <= 1.0);
-    let mut engine = ModalEngine::new(p.mode);
-    engine.note_on(48, 127, &p, SR);
+    let mut pool = SymPool::boxed();
+    let mut engine = ModalEngine::new_in(&mut pool, p.mode);
+    engine.note_on(48, 127, &p, SR, &mut pool);
     let mut block = [0.0f32; 64];
     for _ in 0..2 * SR as usize / 64 {
-        engine.render(&mut block, &p, SR);
+        engine.render(&mut block, &p, SR, &mut pool);
         assert!(bounded(&block), "held: {block:?}");
     }
     assert!(engine.is_active(), "held note rings");
-    engine.note_off();
+    engine.note_off(&mut pool);
     let gain: f32 = 0.999 - 0.009 * (0.8 * 0.5);
     let trips = libm::logf(1000.0) / -libm::logf(gain);
     let limit = (trips / note_freq(48) * SR as f32) as usize / 64 + 11; // + the silence count
     let mut blocks = 0;
     while engine.is_active() {
-        engine.render(&mut block, &p, SR);
+        engine.render(&mut block, &p, SR, &mut pool);
         assert!(bounded(&block), "released: {block:?}");
         blocks += 1;
         assert!(blocks <= limit, "still sounding after {limit} blocks");
     }
-    engine.render(&mut block, &p, SR);
+    engine.render(&mut block, &p, SR, &mut pool);
     assert!(block.iter().all(|&s| s == 0.0));
 }
 

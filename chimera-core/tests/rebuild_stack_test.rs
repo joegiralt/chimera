@@ -1,11 +1,11 @@
-//! Rebuilds build in place (ADR 0051): engine and model switches run on a
-//! thread whose whole stack is one `ModalEngine`, so a by-value engine on
-//! the stack overflows it. Its own binary: an overflow aborts the process.
+//! Rebuilds build in place (ADR 0051): engine and model switches,
+//! Sympathetic included, run on a thread whose whole stack is one
+//! `SympatheticSet`, so a set or an engine built by value on the stack
+//! overflows it. Its own binary: an overflow aborts the process.
 mod common;
-use common::{SR, tri};
+use common::{Rig, SR, tri};
 
-use chimera_core::dsp::modal::{ModalEngine, ResonatorMode};
-use chimera_core::dsp::voice::Voice;
+use chimera_core::dsp::modal::{ResonatorMode, SympatheticSet};
 use chimera_core::modulation::ModState;
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::{MidiNote, Velocity};
@@ -20,12 +20,9 @@ fn modal(mode: ResonatorMode) -> ParamSnapshot {
 #[test]
 fn rebuild_fits_a_small_stack() {
     let t = std::thread::Builder::new()
-        .stack_size(size_of::<ModalEngine>())
+        .stack_size(size_of::<SympatheticSet>())
         .spawn(|| {
-            let mut raw = Box::<Voice>::new_uninit();
-            Voice::init_in_place(&mut raw, SR);
-            // SAFETY: `init_in_place` built a valid voice in the box.
-            let mut v = unsafe { raw.assume_init() };
+            let mut v = Rig::new(SR);
             let sounds = [
                 tri(),
                 modal(ResonatorMode::String),

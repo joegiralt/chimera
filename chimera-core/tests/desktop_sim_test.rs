@@ -6,10 +6,10 @@
 //! without threads). It verifies that UiState.params flows
 //! correctly through Voice.render().
 mod common;
+use common::Rig;
 use common::{SR, goertzel, rms, tri};
 
 use chimera_core::dsp::modal::ResonatorMode;
-use chimera_core::dsp::voice::Voice;
 use chimera_core::modulation::ModState;
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::ui::UiState;
@@ -21,7 +21,7 @@ fn sim_render(setup_ui: impl FnOnce(&mut UiState), note: u8, blocks: usize) -> V
     let mut ui = UiState::new();
     setup_ui(&mut ui);
 
-    let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
+    let mut voice = Rig::new(chimera_hal::SAMPLE_RATE);
     // This is what the audio callback does: read params, note_on, render
     voice.note_on(
         MidiNote::new(note).unwrap(),
@@ -362,7 +362,7 @@ fn test_desktop_mid_note_filter_sweep() {
 
     ui.params_mut().filter.cutoff = 10000.0;
 
-    let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
+    let mut voice = Rig::new(chimera_hal::SAMPLE_RATE);
     voice.note_on(
         MidiNote::new(60).unwrap(),
         Velocity::new(100).unwrap(),

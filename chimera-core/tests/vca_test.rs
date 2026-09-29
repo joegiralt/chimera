@@ -1,11 +1,11 @@
 //! The VCA destination (filter-routing spec § 4, § Tests "VCA").
 
 mod common;
+use common::Rig;
 
 use chimera_core::addr::ParamAddr;
 use chimera_core::dsp::envelope::{EnvMods, Envelope};
 use chimera_core::dsp::modulator::{EnvForm, EnvType, Func, LfoForm};
-use chimera_core::dsp::voice::Voice;
 use chimera_core::mod_path::ModDestRegistry;
 use chimera_core::modulation::{CUTOFF, MAX_MOD_SOURCES, ModSource, ModState, VCA};
 use chimera_core::params::{EngineType, ParamSnapshot};
@@ -29,7 +29,7 @@ pub fn mods(routes: &[(ModSource, ParamAddr, i8)]) -> ModState {
 
 /// `blocks` blocks of note 60 at `vel`, key up at `off`; the output.
 fn render(p: &ParamSnapshot, ms: &ModState, off: usize, blocks: usize, vel: u8) -> Vec<f32> {
-    let mut v = Voice::new(SR);
+    let mut v = Rig::new(SR);
     v.note_on(MidiNote::new(60).unwrap(), Velocity::new(vel).unwrap(), p);
     let mut out = Vec::new();
     let mut b = [0.0f32; BLOCK_SIZE];
@@ -196,7 +196,7 @@ fn a_negative_vca_route_never_inverts() {
 
 /// `blocks` of note 60, key up at `off`; `(output, active after each block)`.
 fn life(p: &ParamSnapshot, ms: &ModState, off: usize, blocks: usize) -> (Vec<f32>, Vec<bool>) {
-    let mut v = Voice::new(SR);
+    let mut v = Rig::new(SR);
     v.note_on(MidiNote::new(60).unwrap(), Velocity::DEFAULT, p);
     let (mut out, mut alive) = (Vec::new(), Vec::new());
     let mut b = [0.0f32; BLOCK_SIZE];
@@ -308,7 +308,7 @@ fn a_voice_ended_at_gain_0_is_fresh() {
     let p = long();
     let routed = mods(&[(ModSource::Env2, VCA, 127)]);
     let note = MidiNote::new(64).unwrap();
-    let run = |v: &mut Voice, ms: &ModState| {
+    let run = |v: &mut Rig, ms: &ModState| {
         v.note_on(note, Velocity::DEFAULT, &p);
         let mut out = Vec::new();
         let mut b = [0.0f32; BLOCK_SIZE];
@@ -320,7 +320,7 @@ fn a_voice_ended_at_gain_0_is_fresh() {
     };
     for ms in [ModState::new(), routed.clone()] {
         // Note 60 until ENV 2 ends it, the engine still sounding (RR 1).
-        let mut v = Voice::new(SR);
+        let mut v = Rig::new(SR);
         v.note_on(MidiNote::new(60).unwrap(), Velocity::DEFAULT, &p);
         let mut b = [0.0f32; BLOCK_SIZE];
         for i in 0..400 {
@@ -333,7 +333,7 @@ fn a_voice_ended_at_gain_0_is_fresh() {
             }
         }
         assert!(!v.is_active(), "ENV 2 ended it");
-        let (got, want) = (run(&mut v, &ms), run(&mut Voice::new(SR), &ms));
+        let (got, want) = (run(&mut v, &ms), run(&mut Rig::new(SR), &ms));
         let diff = got
             .iter()
             .zip(&want)
@@ -404,7 +404,7 @@ fn an_engine_switch_fades_with_the_old_vca_routes() {
     let algo = long();
     let modal = init(EngineType::Modal);
     let routed = mods(&[(ModSource::Env2, VCA, 127)]);
-    let mut v = Voice::new(SR);
+    let mut v = Rig::new(SR);
     v.note_on(MidiNote::new(60).unwrap(), Velocity::DEFAULT, &algo);
     let mut b = [0.0f32; BLOCK_SIZE];
     let mut peak = 0.0f32;

@@ -1,12 +1,12 @@
 mod common;
 use chimera_core::addr::{BlockRef, Op, ParamAddr};
 use chimera_core::dsp::algo::params::{AlgoOpParams, AlgoParams};
-use chimera_core::dsp::voice::Voice;
 use chimera_core::modulation::ModState;
 use chimera_core::params::ParamSnapshot;
 use chimera_core::params::{DriveParams, EngineType, FilterParams};
 use chimera_core::ui::mod_grid::MatrixState;
 use chimera_core::{MidiNote, Velocity};
+use common::Rig;
 use common::{rms, tri};
 
 use chimera_hal::BLOCK_SIZE;
@@ -19,7 +19,7 @@ const OP1_LEVEL: ParamAddr = ParamAddr::new(BlockRef::AlgoOp(Op::A), AlgoOpParam
 #[test]
 fn voice_render_with_empty_mod_state() {
     let empty_mod = ModState::new();
-    let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
+    let mut voice = Rig::new(chimera_hal::SAMPLE_RATE);
     let params = tri();
 
     voice.note_on(
@@ -43,8 +43,8 @@ fn voice_render_with_empty_mod_state() {
 #[test]
 fn voice_render_with_mod_offset_changes_filter() {
     // Render two voices identically, except one has an LFO modulating filter cutoff.
-    let mut voice_dry = Voice::new(chimera_hal::SAMPLE_RATE);
-    let mut voice_mod = Voice::new(chimera_hal::SAMPLE_RATE);
+    let mut voice_dry = Rig::new(chimera_hal::SAMPLE_RATE);
+    let mut voice_mod = Rig::new(chimera_hal::SAMPLE_RATE);
     let mut params = tri();
     params.filter.cutoff = 2000.0;
 
@@ -187,7 +187,7 @@ fn env_source_moves_on_an_algo_sound() {
     let mut routed = ModState::from_registry(&registry, 2);
     routed.set_amount(0, 0, -100); // ENV → cutoff
     let render = |ms: &ModState| {
-        let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
+        let mut voice = Rig::new(chimera_hal::SAMPLE_RATE);
         voice.note_on(
             MidiNote::new(60).unwrap(),
             Velocity::new(100).unwrap(),
@@ -216,7 +216,7 @@ fn env_source_moves_on_a_modal_sound() {
     let mut routed = ModState::from_registry(&registry, 2);
     routed.set_amount(0, 0, -100); // ENV → cutoff
     let render = |ms: &ModState| {
-        let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
+        let mut voice = Rig::new(chimera_hal::SAMPLE_RATE);
         voice.note_on(
             MidiNote::new(60).unwrap(),
             Velocity::new(100).unwrap(),
@@ -248,7 +248,7 @@ fn a_routed_carrier_at_level_zero_sounds() {
     for source in [0, 1] {
         let mut mod_state = ModState::from_registry(&registry, 2);
         mod_state.set_amount(source, 0, 127);
-        let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
+        let mut voice = Rig::new(chimera_hal::SAMPLE_RATE);
         voice.note_on(MidiNote::new(60).unwrap(), Velocity::DEFAULT, &params);
         let mut out = [0.0f32; BLOCK_SIZE];
         let mut peak = 0.0f32;

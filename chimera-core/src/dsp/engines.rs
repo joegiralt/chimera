@@ -9,11 +9,13 @@ use chimera_hal::BLOCK_SIZE;
 
 use crate::addr::{BlockRef, ParamAddr};
 use crate::dsp::algo::engine::{AlgoEngine, AlgoLive};
-use crate::dsp::modal::{ModalEngine, ResonatorMode};
+use crate::dsp::modal::{ModalEngine, Model, ResonatorMode, SymPool};
 use crate::hw::Cost;
-use crate::in_place::in_place_enum;
+use crate::in_place::{in_place_enum, move_out};
 use crate::modulation::ModState;
 use crate::params::{EngineType, ParamSnapshot, PitchParams};
+use crate::sym_alloc::{Lease, SymAlloc};
+use crate::voice_alloc::VoiceIdx;
 use crate::{MidiNote, Velocity};
 
 /// What a slot holds: the engine and, for Modal, its model.
@@ -38,6 +40,26 @@ impl SlotKind {
             Self::Modal(_) => EngineType::Modal,
         }
     }
+
+    /// What an idle voice holds for this kind: never a pool slot.
+    /// Sympathetic rests as String, its main string without the set.
+    pub fn resting(self) -> Self {
+        match self {
+            Self::Modal(ResonatorMode::Sympathetic) => Self::Modal(ResonatorMode::String),
+            other => other,
+        }
+    }
+}
+
+/// What `EngineSlot::rebuild` built.
+#[must_use]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Rebuilt {
+    /// The kind asked for.
+    Built,
+    /// Sympathetic, but the pool had no slot for the voice: it built
+    /// `kind.resting()` instead.
+    NoSlot,
 }
 
 in_place_enum! {
@@ -49,15 +71,17 @@ in_place_enum! {
     ///
     /// ```compile_fail,E0308
     /// use chimera_core::dsp::engines::EngineSlot;
-    /// use chimera_core::dsp::modal::{ModalEngine, ResonatorMode};
-    /// let _ = EngineSlot::Modal(ModalEngine::new(ResonatorMode::Modal));
+    /// use chimera_core::dsp::modal::{ModalEngine, ResonatorMode, SymPool};
+    /// let e = ModalEngine::new_in(&mut SymPool::boxed(), ResonatorMode::Modal);
+    /// let _ = EngineSlot::Modal(e);
     /// ```
     ///
     /// Nor can the seal be named, to wrap an engine in it:
     ///
     /// ```compile_fail,E0603
-    /// use chimera_core::dsp::modal::{ModalEngine, ResonatorMode};
-    /// let _ = chimera_core::in_place::Sealed(ModalEngine::new(ResonatorMode::Modal));
+    /// use chimera_core::dsp::modal::{ModalEngine, ResonatorMode, SymPool};
+    /// let e = ModalEngine::new_in(&mut SymPool::boxed(), ResonatorMode::Modal);
+    /// let _ = chimera_core::in_place::Sealed(e);
     /// ```
     #[expect(
         clippy::large_enum_variant,
@@ -78,13 +102,16 @@ impl EngineSlot {
         unsafe { crate::in_place::by_value(|slot| Self::init_in_place(slot, kind)) }
     }
 
+    /// `kind.resting()`, in place: a slot is built holding no lease.
     pub fn init_in_place(slot: &mut MaybeUninit<Self>, kind: SlotKind) -> &mut Self {
-        match kind {
+        match kind.resting() {
             // SAFETY: `AlgoEngine::init_in_place` writes every field.
             SlotKind::Algo => unsafe { Self::init_algo(slot, AlgoEngine::init_in_place) },
             // SAFETY: `ModalEngine::init_in_place` writes every field.
             SlotKind::Modal(mode) => unsafe {
-                Self::init_modal(slot, |m| ModalEngine::init_in_place(m, mode))
+                Self::init_modal(slot, |m| {
+                    ModalEngine::init_in_place(m, Model::resting(mode))
+                })
             },
         }
     }
@@ -96,33 +123,80 @@ impl EngineSlot {
         }
     }
 
-    /// Back to the idle `kind` that `new` builds, in place: no stack copy
-    /// of an engine.
-    pub fn rebuild(&mut self, kind: SlotKind) {
-        match kind {
-            // SAFETY: `AlgoEngine::init_in_place` writes every field.
-            SlotKind::Algo => unsafe { self.rebuild_algo(AlgoEngine::init_in_place) },
+    /// An idle `kind`, fresh, in place: no stack copy of an engine. The
+    /// one place a lease moves (exclusive-state spec § 4.4):
+    ///
+    /// | From | Into | Lease |
+    /// |---|---|---|
+    /// | Sympathetic | Sympathetic | kept |
+    /// | Sympathetic | another kind | given back |
+    /// | another kind | Sympathetic | `pool.lend(voice)`; none: `kind.resting()` and `NoSlot` |
+    /// | another kind | another kind | none |
+    pub fn rebuild(&mut self, kind: SlotKind, pool: &mut SymAlloc, voice: VoiceIdx) -> Rebuilt {
+        let sympathetic = kind == SlotKind::Modal(ResonatorMode::Sympathetic);
+        let old = match self {
+            // SAFETY: the payload is rebuilt below in every arm, and
+            // `rebuild_*` aborts rather than unwinds.
+            Self::Modal(m) => m.lease_mut().map(|l| unsafe { move_out(l) }),
+            Self::Algo(_) => None,
+        };
+        // Nothing between the move and the rebuild can panic: a lend only
+        // when there was no old lease, a give-back only after.
+        let (lease, back) = match old {
+            Some(l) if sympathetic => (Some(l), None),
+            Some(l) => (None, Some(l)),
+            None if sympathetic => (pool.lend(voice), None),
+            None => (None, None),
+        };
+        let built = if sympathetic && lease.is_none() {
+            Rebuilt::NoSlot
+        } else {
+            Rebuilt::Built
+        };
+        self.build(kind, lease);
+        if let Some(l) = back {
+            pool.give_back(l);
+        }
+        built
+    }
+
+    /// `kind` with `lease`; without one, `kind.resting()`.
+    fn build(&mut self, kind: SlotKind, lease: Option<Lease>) {
+        match (kind.resting(), lease) {
             // SAFETY: `ModalEngine::init_in_place` writes every field.
-            SlotKind::Modal(mode) => unsafe {
-                self.rebuild_modal(|m| ModalEngine::init_in_place(m, mode))
+            (_, Some(l)) => unsafe {
+                self.rebuild_modal(|m| ModalEngine::init_in_place(m, Model::Sympathetic(l)))
+            },
+            // SAFETY: `AlgoEngine::init_in_place` writes every field.
+            (SlotKind::Algo, None) => unsafe { self.rebuild_algo(AlgoEngine::init_in_place) },
+            // SAFETY: `ModalEngine::init_in_place` writes every field.
+            (SlotKind::Modal(mode), None) => unsafe {
+                self.rebuild_modal(|m| ModalEngine::init_in_place(m, Model::resting(mode)))
             },
         }
     }
 
     /// `p` must play this slot's engine.
-    pub fn note_on(&mut self, note: MidiNote, vel: Velocity, p: &ParamSnapshot, sample_rate: u32) {
+    pub fn note_on(
+        &mut self,
+        note: MidiNote,
+        vel: Velocity,
+        p: &ParamSnapshot,
+        sample_rate: u32,
+        pool: &mut SymPool,
+    ) {
         debug_assert_eq!(p.engine(), self.kind().engine());
         self.set_pitch(p);
         match self {
             Self::Algo(a) => a.note_on(note, vel, &p.algo, sample_rate),
-            Self::Modal(m) => m.note_on(note.get(), vel.get(), &p.modal, sample_rate),
+            Self::Modal(m) => m.note_on(note.get(), vel.get(), &p.modal, sample_rate, pool),
         }
     }
 
-    pub fn note_off(&mut self) {
+    pub fn note_off(&mut self, pool: &mut SymPool) {
         match self {
             Self::Algo(a) => a.note_off(),
-            Self::Modal(m) => m.note_off(),
+            Self::Modal(m) => m.note_off(pool),
         }
     }
 
@@ -134,12 +208,13 @@ impl EngineSlot {
         p: &ParamSnapshot,
         live: &AlgoLive,
         sample_rate: u32,
+        pool: &mut SymPool,
     ) {
         debug_assert_eq!(p.engine(), self.kind().engine());
         self.set_pitch(p);
         match self {
             Self::Algo(a) => a.render(out, &p.algo, live, sample_rate),
-            Self::Modal(m) => m.render(out, &p.modal, sample_rate),
+            Self::Modal(m) => m.render(out, &p.modal, sample_rate, pool),
         }
     }
 
@@ -192,6 +267,8 @@ mod tests {
     use std::boxed::Box;
 
     use super::*;
+    use crate::sym_alloc::{SYM_SLOTS, SymAlloc, SymSlot};
+    use crate::voice_alloc::VoiceIdx;
 
     const MODES: [ResonatorMode; 4] = [
         ResonatorMode::String,
@@ -226,11 +303,12 @@ mod tests {
         EngineSlot::init_in_place(&mut raw, SlotKind::Algo);
         // SAFETY: `init_in_place` built a valid slot in the box.
         let mut slot = unsafe { raw.assume_init() };
+        let mut pool = SymAlloc::new();
         let kinds = [SlotKind::Algo]
             .into_iter()
             .chain(MODES.map(SlotKind::Modal));
         for k in kinds {
-            slot.rebuild(k);
+            assert_eq!(slot.rebuild(k, &mut pool, VoiceIdx::ALL[0]), Rebuilt::Built);
             assert_eq!(slot.kind(), k);
             let (tag, payload) = slot.mirror_parts();
             let addr = match &*slot {
@@ -245,5 +323,55 @@ mod tests {
             };
             assert_eq!(addr, payload, "{k:?}");
         }
+    }
+
+    #[test]
+    fn resting_maps_only_sympathetic() {
+        assert_eq!(SlotKind::Algo.resting(), SlotKind::Algo);
+        for mode in MODES {
+            let want = match mode {
+                ResonatorMode::Sympathetic => ResonatorMode::String,
+                other => other,
+            };
+            assert_eq!(SlotKind::Modal(mode).resting(), SlotKind::Modal(want));
+        }
+    }
+
+    /// The lease `slot`'s engine holds, if it holds one.
+    fn lease_slot(slot: &mut EngineSlot) -> Option<SymSlot> {
+        match slot {
+            EngineSlot::Algo(_) => None,
+            EngineSlot::Modal(m) => m.lease_mut().map(|l| l.slot()),
+        }
+    }
+
+    #[test]
+    fn rebuild_moves_leases_as_the_table_says() {
+        let v = |i: usize| VoiceIdx::ALL[i];
+        let sym = SlotKind::Modal(ResonatorMode::Sympathetic);
+        let string = SlotKind::Modal(ResonatorMode::String);
+        let mut raw = Box::<EngineSlot>::new_uninit();
+        EngineSlot::init_in_place(&mut raw, SlotKind::Algo);
+        // SAFETY: `init_in_place` built a valid slot in the box.
+        let mut slot = unsafe { raw.assume_init() };
+        let mut pool = SymAlloc::new();
+
+        assert_eq!(slot.rebuild(sym, &mut pool, v(0)), Rebuilt::Built);
+        assert_eq!((slot.kind(), pool.lent()), (sym, 1));
+        let held = lease_slot(&mut slot).expect("a lease");
+
+        assert_eq!(slot.rebuild(sym, &mut pool, v(0)), Rebuilt::Built);
+        assert_eq!(pool.lent(), 1);
+        assert_eq!(lease_slot(&mut slot), Some(held), "kept, not lent again");
+
+        assert_eq!(slot.rebuild(string, &mut pool, v(0)), Rebuilt::Built);
+        assert_eq!((pool.lent(), pool.free()), (0, SYM_SLOTS));
+
+        let others: std::vec::Vec<_> = (1..=SYM_SLOTS)
+            .map(|i| pool.lend(v(i)).expect("free"))
+            .collect();
+        assert_eq!(slot.rebuild(sym, &mut pool, v(0)), Rebuilt::NoSlot);
+        assert_eq!(slot.kind(), string, "no slot: it rests");
+        others.into_iter().for_each(|l| pool.give_back(l));
     }
 }

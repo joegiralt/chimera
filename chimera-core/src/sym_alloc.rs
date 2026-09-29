@@ -18,6 +18,16 @@ pub const SYM_SLOTS: usize = 4;
 pub struct SymSlot(u8);
 
 impl SymSlot {
+    pub const ALL: [SymSlot; SYM_SLOTS] = {
+        let mut all = [SymSlot(0); SYM_SLOTS];
+        let mut i = 0;
+        while i < SYM_SLOTS {
+            all[i] = SymSlot(i as u8);
+            i += 1;
+        }
+        all
+    };
+
     pub fn index(self) -> usize {
         self.0 as usize
     }
