@@ -24,6 +24,26 @@ use crate::MidiNote;
 use crate::hw::{Cost, MAX_VOICES, SampleBudget};
 use crate::part::PartMode;
 
+/// A voice's index in the pool: always `< MAX_VOICES`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VoiceIdx(u8);
+
+impl VoiceIdx {
+    pub const ALL: [VoiceIdx; MAX_VOICES] = {
+        let mut all = [VoiceIdx(0); MAX_VOICES];
+        let mut i = 0;
+        while i < MAX_VOICES {
+            all[i] = VoiceIdx(i as u8);
+            i += 1;
+        }
+        all
+    };
+
+    pub fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct VoiceSlot {
     part: Option<u8>,
@@ -246,5 +266,17 @@ impl Allocator {
             .filter(|&v| !self.slots[v].is_free() && !self.slots[v].mono && !self.slots[v].dying())
             .min_by_key(|&v| (self.slots[v].held, self.slots[v].age))?;
         fits(self.slots[oldest].cost).then_some(oldest)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn voice_idx_all_counts_up() {
+        for (i, v) in VoiceIdx::ALL.iter().enumerate() {
+            assert_eq!(v.index(), i);
+        }
     }
 }
