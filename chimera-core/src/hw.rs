@@ -57,6 +57,9 @@ pub const DTCM: usize = 128 * 1024; // tables, audio stack
 pub const D2_DMA_RESERVE: usize = 8 * 1024;
 /// `[Voice; MAX_VOICES]` lives in D2 beside the DMA buffers.
 pub const VOICE_RAM_BUDGET: usize = D2_SRAM - D2_DMA_RESERVE; // 286_720
+/// A `Voice` less its `EngineSlot`: the chain, modulators and bookkeeping
+/// (ADR 0051).
+pub const VOICE_CHAIN_BYTES: usize = 2048;
 
 /// Framebuffer: 240 × 320 RGB565, one static in AXI (`chimera-stm32/src/display.rs`).
 pub const FB_BYTES: usize = chimera_hal::FB_SIZE * 2; // 153_600

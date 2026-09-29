@@ -5,10 +5,10 @@
 //! (origin/main before #188/#189).
 
 mod common;
-use chimera_core::dsp::voice::Voice;
 use chimera_core::factory::factory_sound;
 use chimera_core::{MidiNote, Velocity};
 use chimera_hal::{BLOCK_SIZE, SAMPLE_RATE};
+use common::Rig;
 use common::{Case, render_case};
 
 const OLD_RMS: [[f32; 50]; 8] = [
@@ -592,7 +592,7 @@ const PAD_OLD_RMS: [f32; 120] = [
 
 fn pad_sweep() -> Vec<f32> {
     let s = factory_sound(6).unwrap();
-    let mut v = Voice::new(SAMPLE_RATE);
+    let mut v = Rig::new(SAMPLE_RATE);
     v.note_on(
         MidiNote::new(60).unwrap(),
         Velocity::new(100).unwrap(),

@@ -2,11 +2,11 @@
 //! every engine's PIT page.
 
 mod common;
+use common::Rig;
 
 use chimera_core::addr::{BlockRef, ParamAddr};
 use chimera_core::dsp::algo::params::AlgoParams;
 use chimera_core::dsp::algo::waves::WaveId;
-use chimera_core::dsp::voice::Voice;
 use chimera_core::modulation::ModState;
 use chimera_core::params::{EngineType, ParamSnapshot, PitchParams};
 use chimera_core::{MidiNote, Velocity};
@@ -18,7 +18,7 @@ const FINE: ParamAddr = ParamAddr::new(BlockRef::Pitch, PitchParams::FINE);
 
 /// Note 60 held for `blocks` blocks.
 fn render(p: &ParamSnapshot, mods: &ModState, blocks: usize) -> Vec<f32> {
-    let mut v = Voice::new(SR);
+    let mut v = Rig::new(SR);
     v.note_on(MidiNote::new(60).unwrap(), Velocity::DEFAULT, p);
     let mut out = Vec::with_capacity(blocks * BLOCK_SIZE);
     let mut blk = [0.0f32; BLOCK_SIZE];

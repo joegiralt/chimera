@@ -14,7 +14,6 @@ use crate::dsp::algo::plan::{EvalPlan, MAX_EDGES, OPS};
 use crate::dsp::algo::tx::{FEEDBACK_CYCLES, LEVEL_GAIN, detune_factor, level_gain, ratio};
 use crate::dsp::algo::waves::{WaveId, mip_position, mip_step};
 use crate::hw::{BLOCK_SIZE, Cost};
-use crate::in_place::by_value;
 use crate::{MidiNote, Velocity};
 
 /// LEVEL steps (3 dB) one VELOCITY step takes off at velocity 0.
@@ -93,6 +92,7 @@ crate::in_place::field_list!(AlgoEngine => AlgoEngine {
     active,
 });
 
+#[cfg(any(test, feature = "test-support"))]
 impl Default for AlgoEngine {
     fn default() -> Self {
         Self::new()
@@ -143,9 +143,11 @@ impl AlgoEngine {
         )
     }
 
+    /// By value, through the stack: tests only.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn new() -> Self {
         // SAFETY: `init_in_place` writes every field of the slot.
-        unsafe { by_value(Self::init_in_place) }
+        unsafe { crate::in_place::by_value(Self::init_in_place) }
     }
 
     pub fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {

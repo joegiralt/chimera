@@ -2,6 +2,7 @@
 //! Simulates the desktop audio callback pattern: rendering blocks
 //! and scattering to variable-size output buffers.
 mod common;
+use common::Rig;
 use common::{SR, tri};
 
 use chimera_core::dsp::Stereo;
@@ -23,7 +24,7 @@ fn check_no_clicks(
     callback_sizes: &[usize], // simulate varying cpal buffer sizes
 ) {
     let empty_mod = ModState::new();
-    let mut voice = Voice::new(SR);
+    let mut voice = Rig::new(SR);
     let mut reverb = Box::new(RingReverb::new());
     let mut params = ParamSnapshot::default();
     let mut rv = FxParams::default().reverb;
@@ -141,7 +142,7 @@ fn test_no_clicks_modal() {
     // these are the character of struck metal, not clicks.
     // Use a higher threshold than other engines.
     let empty_mod = ModState::new();
-    let mut voice = Voice::new(SR);
+    let mut voice = Rig::new(SR);
     let mut params = ParamSnapshot::for_engine(EngineType::Modal);
     params.modal.mode = ResonatorMode::Modal;
     voice.note_on(
@@ -216,7 +217,7 @@ fn test_no_clicks_single_sample_buffers() {
 fn a_killed_voice_fades_out() {
     let sound = chimera_core::factory::factory_sound(4).unwrap(); // SAW LEAD
     let (p, m) = (&sound.params, &sound.mod_state);
-    let (mut a, mut b) = (Voice::new(SR), Voice::new(SR));
+    let (mut a, mut b) = (Rig::new(SR), Rig::new(SR));
     let mut block = [0.0f32; BLOCK_SIZE];
     let mut last = 0.0;
     for v in [&mut a, &mut b] {
@@ -250,7 +251,7 @@ fn a_killed_voice_fades_out() {
     assert!(block.iter().all(|&s| s == 0.0));
 }
 
-fn first_blocks(v: &mut Voice, note: u8, p: &ParamSnapshot, m: &ModState) -> Vec<u32> {
+fn first_blocks(v: &mut Rig, note: u8, p: &ParamSnapshot, m: &ModState) -> Vec<u32> {
     let mut block = [0.0f32; BLOCK_SIZE];
     let mut out = Vec::new();
     v.note_on(MidiNote::new(note).unwrap(), Velocity::DEFAULT, p);
@@ -261,7 +262,7 @@ fn first_blocks(v: &mut Voice, note: u8, p: &ParamSnapshot, m: &ModState) -> Vec
     out
 }
 
-fn play_then_kill(v: &mut Voice, p: &ParamSnapshot, m: &ModState) {
+fn play_then_kill(v: &mut Rig, p: &ParamSnapshot, m: &ModState) {
     let mut block = [0.0f32; BLOCK_SIZE];
     v.note_on(MidiNote::new(60).unwrap(), Velocity::DEFAULT, p);
     for _ in 0..40 {
@@ -291,9 +292,9 @@ fn a_killed_voice_restarts_like_a_fresh_one() {
         )])
         .collect();
     for (name, p, m) in &sounds {
-        let mut v = Voice::new(SR);
+        let mut v = Rig::new(SR);
         play_then_kill(&mut v, p, m);
-        let fresh = first_blocks(&mut Voice::new(SR), 64, p, m);
+        let fresh = first_blocks(&mut Rig::new(SR), 64, p, m);
         assert!(
             fresh.iter().any(|&b| f32::from_bits(b) != 0.0),
             "{name} silent"
@@ -312,14 +313,14 @@ fn an_engine_round_trip_leaves_no_stale_state() {
     let s = chimera_core::factory::factory_sound(5).unwrap(); // SQR BASS
     let (p, m) = (&s.params, &s.mod_state);
     let modal = ParamSnapshot::for_engine(EngineType::Modal);
-    let mut v = Voice::new(SR);
+    let mut v = Rig::new(SR);
     let mut block = [0.0f32; BLOCK_SIZE];
     v.note_on(MidiNote::new(60).unwrap(), Velocity::DEFAULT, p);
     for _ in 0..40 {
         v.render(&mut block, p, m);
     }
     play_then_kill(&mut v, &modal, &ModState::new());
-    assert!(first_blocks(&mut v, 64, p, m) == first_blocks(&mut Voice::new(SR), 64, p, m));
+    assert!(first_blocks(&mut v, 64, p, m) == first_blocks(&mut Rig::new(SR), 64, p, m));
 }
 
 fn max_step(x: &[f32]) -> f32 {
@@ -347,7 +348,7 @@ fn an_engine_switch_fades_out_then_starts_clean() {
         ("MORPH PAD→Modal", factory(6), modal.clone()),
         ("Modal→TRI", modal, tri),
     ] {
-        let mut v = [Voice::new(SR), Voice::new(SR), Voice::new(SR)];
+        let mut v = [Rig::new(SR), Rig::new(SR), Rig::new(SR)];
         let mut block = [0.0f32; BLOCK_SIZE];
         let mut last = 0.0;
         for v in v.iter_mut() {
@@ -380,7 +381,7 @@ fn an_engine_switch_fades_out_then_starts_clean() {
             max_step(&rb),
             max_step(&ra)
         );
-        let mut fresh = Voice::new(SR);
+        let mut fresh = Rig::new(SR);
         fresh.note_on(MidiNote::new(60).unwrap(), Velocity::DEFAULT, &to);
         for i in 0..8 {
             let mut f = [0.0f32; BLOCK_SIZE];
@@ -400,7 +401,7 @@ fn an_engine_switch_fades_out_then_starts_clean() {
 fn a_key_up_mid_switch_ends_the_note() {
     let modal = ParamSnapshot::for_engine(EngineType::Modal);
     let m = ModState::new();
-    let mut v = Voice::new(SR);
+    let mut v = Rig::new(SR);
     let mut block = [0.0f32; BLOCK_SIZE];
     v.note_on(MidiNote::new(60).unwrap(), Velocity::DEFAULT, &tri());
     for _ in 0..20 {
@@ -420,7 +421,7 @@ fn a_key_up_mid_switch_ends_the_note() {
 fn an_engine_switch_ends_a_released_tail() {
     let modal = ParamSnapshot::for_engine(EngineType::Modal);
     let m = ModState::new();
-    let mut v = Voice::new(SR);
+    let mut v = Rig::new(SR);
     let mut block = [0.0f32; BLOCK_SIZE];
     v.note_on(MidiNote::new(60).unwrap(), Velocity::DEFAULT, &tri());
     for _ in 0..20 {
@@ -440,7 +441,7 @@ fn an_engine_switch_ends_a_released_tail() {
 fn a_note_on_mid_fade_starts_clean_after_it() {
     let s = chimera_core::factory::factory_sound(4).unwrap(); // SAW LEAD
     let (p, m) = (&s.params, &s.mod_state);
-    let mut v = Voice::new(SR);
+    let mut v = Rig::new(SR);
     let mut block = [0.0f32; BLOCK_SIZE];
     v.note_on(MidiNote::new(60).unwrap(), Velocity::DEFAULT, p);
     for _ in 0..20 {
@@ -456,7 +457,7 @@ fn a_note_on_mid_fade_starts_clean_after_it() {
         v.render(&mut block, p, m);
         out.extend(block.iter().map(|s| s.to_bits()));
     }
-    let mut fresh = Voice::new(SR);
+    let mut fresh = Rig::new(SR);
     fresh.note_on(MidiNote::new(64).unwrap(), Velocity::DEFAULT, p);
     let mut want = Vec::new();
     for _ in 0..8 {
@@ -476,7 +477,7 @@ fn a_released_note_steps_no_more_than_the_held_note() {
         ("triangle", tri(), ModState::new()),
         ("SAW LEAD", saw.params.clone(), saw.mod_state.clone()),
     ] {
-        let mut v = Voice::new(SR);
+        let mut v = Rig::new(SR);
         let mut block = [0.0f32; BLOCK_SIZE];
         v.note_on(MidiNote::new(60).unwrap(), Velocity::DEFAULT, &p);
         let mut held = Vec::new();

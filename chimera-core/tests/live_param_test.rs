@@ -2,10 +2,10 @@ mod common;
 use chimera_core::dsp::algo::params::AlgoParams;
 use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::modal::ResonatorMode;
-use chimera_core::dsp::voice::Voice;
 use chimera_core::modulation::ModState;
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::{MidiNote, Velocity};
+use common::Rig;
 use common::{SR, goertzel, tri};
 
 /// Render a voice, then change a parameter mid-note, render more.
@@ -17,7 +17,7 @@ fn render_with_param_change(
     blocks_after: usize,
 ) -> (f32, f32, Vec<f32>, Vec<f32>) {
     let empty_mod = ModState::new();
-    let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
+    let mut voice = Rig::new(chimera_hal::SAMPLE_RATE);
     let mut params = ParamSnapshot::default();
     setup(&mut params);
 

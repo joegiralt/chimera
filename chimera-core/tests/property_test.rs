@@ -2,10 +2,10 @@
 //! Uses a simple xorshift PRNG instead of proptest (no_std compatible).
 
 mod common;
+use common::Rig;
 use common::{SR, tri};
 
 use chimera_core::dsp::modal::ResonatorMode;
-use chimera_core::dsp::voice::Voice;
 use chimera_core::modulation::ModState;
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::{MidiNote, Velocity};
@@ -115,7 +115,7 @@ fn prop_output_always_finite() {
         let params = random_params(&mut rng);
         let note = rng.note();
 
-        let mut voice = Voice::new(SR);
+        let mut voice = Rig::new(SR);
         voice.note_on(
             MidiNote::new(note).unwrap(),
             Velocity::new(100).unwrap(),
@@ -152,7 +152,7 @@ fn prop_output_bounded() {
         let params = random_params(&mut rng);
         let note = rng.note();
 
-        let mut voice = Voice::new(SR);
+        let mut voice = Rig::new(SR);
         voice.note_on(
             MidiNote::new(note).unwrap(),
             Velocity::new(127).unwrap(),
@@ -190,7 +190,7 @@ fn prop_note_on_produces_sound() {
             continue;
         }
 
-        let mut voice = Voice::new(SR);
+        let mut voice = Rig::new(SR);
         voice.note_on(
             MidiNote::new(note).unwrap(),
             Velocity::new(100).unwrap(),
@@ -252,7 +252,7 @@ fn prop_param_change_changes_output() {
         }
 
         // Render A
-        let mut voice_a = Voice::new(SR);
+        let mut voice_a = Rig::new(SR);
         voice_a.note_on(
             MidiNote::new(note).unwrap(),
             Velocity::new(100).unwrap(),
@@ -264,7 +264,7 @@ fn prop_param_change_changes_output() {
         }
 
         // Render B
-        let mut voice_b = Voice::new(SR);
+        let mut voice_b = Rig::new(SR);
         voice_b.note_on(
             MidiNote::new(note).unwrap(),
             Velocity::new(100).unwrap(),
@@ -317,7 +317,7 @@ fn prop_note_off_eventually_silences() {
         params.folder.fold = 0.0; // disable folder feedback path
         let note = rng.note();
 
-        let mut voice = Voice::new(SR);
+        let mut voice = Rig::new(SR);
         voice.note_on(
             MidiNote::new(note).unwrap(),
             Velocity::new(100).unwrap(),
@@ -374,7 +374,7 @@ fn verify_full_sweep(
         setup(&mut params);
         sweep(&mut params, val);
 
-        let mut voice = Voice::new(SR);
+        let mut voice = Rig::new(SR);
         voice.note_on(
             MidiNote::new(60).unwrap(),
             Velocity::new(100).unwrap(),

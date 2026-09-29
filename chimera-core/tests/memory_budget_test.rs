@@ -4,7 +4,9 @@
 
 use core::mem::size_of;
 
-use chimera_core::dsp::modal::MAX_STRING_DELAY;
+use chimera_core::dsp::algo::engine::AlgoEngine;
+use chimera_core::dsp::engines::EngineSlot;
+use chimera_core::dsp::modal::{MAX_STRING_DELAY, ModalEngine};
 use chimera_core::dsp::note_to_freq;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::hw;
@@ -21,6 +23,45 @@ fn voice_pool_fits_d2() {
         size <= hw::VOICE_RAM_BUDGET,
         "[Voice; {}] = {size} B",
         hw::MAX_VOICES
+    );
+}
+
+/// ADR 0051: a voice holds its chain and one engine, never the sum of
+/// engines; the chain can't grow unnoticed.
+#[test]
+fn voice_is_its_chain_plus_one_slot() {
+    use core::mem::align_of;
+    let (algo, modal, slot) = (
+        size_of::<AlgoEngine>(),
+        size_of::<ModalEngine>(),
+        size_of::<EngineSlot>(),
+    );
+    let chain = size_of::<Voice>() - slot;
+    for (name, size) in [
+        ("AlgoEngine", algo),
+        ("ModalEngine", modal),
+        ("EngineSlot", slot),
+        ("chain", chain),
+        ("Voice", size_of::<Voice>()),
+    ] {
+        eprintln!("{name:>12} {size:>7} B");
+    }
+    eprintln!(
+        "{:>12} {:>7} B",
+        format!("[Voice; {}]", hw::MAX_VOICES),
+        size_of::<[Voice; hw::MAX_VOICES]>()
+    );
+    assert!(
+        chain <= hw::VOICE_CHAIN_BYTES,
+        "chain = {chain} B, budget {} B",
+        hw::VOICE_CHAIN_BYTES
+    );
+    // `in_place_enum!`'s bound: the largest payload rounded up to the
+    // slot's align, plus one align for the tag.
+    let align = align_of::<EngineSlot>();
+    assert!(
+        slot <= algo.max(modal).next_multiple_of(align) + align,
+        "EngineSlot = {slot} B"
     );
 }
 
@@ -107,5 +148,39 @@ fn ui_state_fits_the_ui_reserve() {
     assert!(
         rest <= 2 * 1024,
         "UiState grew to {rest} B besides its Performance and SoundPool"
+    );
+}
+
+/// Exclusive-state spec § Memory: Sympathetic's seven lines live in a pool
+/// of four slots inside the `Instrument`, in D2; the voice is sized for
+/// Bowed, never for Sympathetic.
+#[test]
+fn sympathetic_pool_fits_d2() {
+    use chimera_core::dsp::modal::{SymPool, SympatheticSet, layout};
+    use chimera_core::instrument::Instrument;
+    let inst = size_of::<Instrument>();
+    for (name, size) in [
+        ("SympatheticVoice", layout::SYMPATHETIC_VOICE),
+        ("BowedString", layout::BOWED),
+        ("ModelSlot", layout::MODEL_SLOT),
+        ("SympatheticSet", size_of::<SympatheticSet>()),
+        ("SymPool", size_of::<SymPool>()),
+        ("Voice", size_of::<Voice>()),
+        ("[Voice; 8]", size_of::<[Voice; hw::MAX_VOICES]>()),
+        ("Instrument", inst),
+        ("left in D2", hw::VOICE_RAM_BUDGET.saturating_sub(inst)),
+    ] {
+        eprintln!("{name:>16} {size:>7} B");
+    }
+    let align = layout::MODEL_SLOT_ALIGN;
+    assert!(
+        layout::MODEL_SLOT <= layout::BOWED.next_multiple_of(align) + align,
+        "ModelSlot = {} B: Sympathetic sizes the voice",
+        layout::MODEL_SLOT
+    );
+    assert!(
+        inst <= hw::VOICE_RAM_BUDGET,
+        "Instrument = {inst} B, budget {} B",
+        hw::VOICE_RAM_BUDGET
     );
 }
