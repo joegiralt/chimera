@@ -6,7 +6,7 @@
 //! Mode II: triangle LFO at 0.863 Hz, depth ~2.3ms
 //! Mode I+II: both lines; each side averages its two taps
 
-use crate::block::{Block, ParamId, ParamSpec, ValFmt};
+use crate::block::{Block, ParamId, ParamSpec, ValFmt, apply_code, identity_code};
 use crate::dsp::Stereo;
 use chimera_hal::BLOCK_SIZE;
 use core::mem::MaybeUninit;
@@ -102,6 +102,15 @@ impl Block for ChorusParams {
             Self::MIX => self.mix = v,
             _ => {}
         }
+    }
+
+    /// MODE's code is the stored byte.
+    fn enum_code(&self, id: ParamId) -> Option<u8> {
+        (id == Self::MODE).then_some(self.mode)
+    }
+
+    fn set_enum_code(&mut self, id: ParamId, code: u8) -> bool {
+        id == Self::MODE && apply_code(identity_code(&CHORUS_SPECS, id, code), |c| self.mode = c)
     }
 }
 

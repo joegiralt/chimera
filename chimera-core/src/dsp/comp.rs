@@ -6,7 +6,7 @@
 use chimera_hal::BLOCK_SIZE;
 use core::mem::MaybeUninit;
 
-use crate::block::{Block, ParamId, ParamSpec, ValFmt};
+use crate::block::{Block, ParamId, ParamSpec, ValFmt, apply_code, identity_code};
 use crate::dsp::algo::math::exp2;
 
 /// Samples per gain computation.
@@ -143,6 +143,15 @@ impl Block for CompParams {
             Self::MIX => self.mix = v,
             _ => {}
         }
+    }
+
+    /// RATIO's code is its index into `RATIOS`, stored as is.
+    fn enum_code(&self, id: ParamId) -> Option<u8> {
+        (id == Self::RATIO).then_some(self.ratio)
+    }
+
+    fn set_enum_code(&mut self, id: ParamId, code: u8) -> bool {
+        id == Self::RATIO && apply_code(identity_code(&COMP_SPECS, id, code), |c| self.ratio = c)
     }
 }
 

@@ -5,6 +5,8 @@ pub mod env_a;
 pub mod func;
 pub mod law;
 
+use crate::block::{DiskCode, apply_code};
+
 /// The choice at `v` among `all` (a `Block` write), clamped.
 pub fn pick<T: Copy>(all: &[T], v: f32) -> T {
     all[(v.max(0.0) as usize).min(all.len() - 1)]
@@ -38,6 +40,23 @@ impl EnvType {
     pub const ALL: [EnvType; 2] = [EnvType::A, EnvType::B];
 }
 
+impl DiskCode for EnvType {
+    fn disk_code(self) -> u8 {
+        match self {
+            EnvType::A => 0,
+            EnvType::B => 1,
+        }
+    }
+
+    fn from_disk_code(c: u8) -> Option<Self> {
+        match c {
+            0 => Some(EnvType::A),
+            1 => Some(EnvType::B),
+            _ => None,
+        }
+    }
+}
+
 /// Envelope A's SPEED: the manual's time ranges.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -49,6 +68,25 @@ pub enum EnvSpeed {
 
 impl EnvSpeed {
     pub const ALL: [EnvSpeed; 3] = [EnvSpeed::Fast, EnvSpeed::Med, EnvSpeed::Slow];
+}
+
+impl DiskCode for EnvSpeed {
+    fn disk_code(self) -> u8 {
+        match self {
+            EnvSpeed::Fast => 0,
+            EnvSpeed::Med => 1,
+            EnvSpeed::Slow => 2,
+        }
+    }
+
+    fn from_disk_code(c: u8) -> Option<Self> {
+        match c {
+            0 => Some(EnvSpeed::Fast),
+            1 => Some(EnvSpeed::Med),
+            2 => Some(EnvSpeed::Slow),
+            _ => None,
+        }
+    }
 }
 
 /// Envelope A's HOLD POSITION.
@@ -64,6 +102,25 @@ impl HoldPos {
     pub const ALL: [HoldPos; 3] = [HoldPos::Off, HoldPos::Ahdsr, HoldPos::GateExt];
 }
 
+impl DiskCode for HoldPos {
+    fn disk_code(self) -> u8 {
+        match self {
+            HoldPos::Off => 0,
+            HoldPos::Ahdsr => 1,
+            HoldPos::GateExt => 2,
+        }
+    }
+
+    fn from_disk_code(c: u8) -> Option<Self> {
+        match c {
+            0 => Some(HoldPos::Off),
+            1 => Some(HoldPos::Ahdsr),
+            2 => Some(HoldPos::GateExt),
+            _ => None,
+        }
+    }
+}
+
 /// Envelope B's MODE.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -75,6 +132,25 @@ pub enum FuncMode {
 
 impl FuncMode {
     pub const ALL: [FuncMode; 3] = [FuncMode::Env, FuncMode::Lfo, FuncMode::Burst];
+}
+
+impl DiskCode for FuncMode {
+    fn disk_code(self) -> u8 {
+        match self {
+            FuncMode::Env => 0,
+            FuncMode::Lfo => 1,
+            FuncMode::Burst => 2,
+        }
+    }
+
+    fn from_disk_code(c: u8) -> Option<Self> {
+        match c {
+            0 => Some(FuncMode::Env),
+            1 => Some(FuncMode::Lfo),
+            2 => Some(FuncMode::Burst),
+            _ => None,
+        }
+    }
 }
 
 /// ENV's and BURST's FORMs (the Cascadia's TYPE SELECT, renamed so it
@@ -91,6 +167,25 @@ impl EnvForm {
     pub const ALL: [EnvForm; 3] = [EnvForm::Ad, EnvForm::Ahr, EnvForm::Cycle];
 }
 
+impl DiskCode for EnvForm {
+    fn disk_code(self) -> u8 {
+        match self {
+            EnvForm::Ad => 0,
+            EnvForm::Ahr => 1,
+            EnvForm::Cycle => 2,
+        }
+    }
+
+    fn from_disk_code(c: u8) -> Option<Self> {
+        match c {
+            0 => Some(EnvForm::Ad),
+            1 => Some(EnvForm::Ahr),
+            2 => Some(EnvForm::Cycle),
+            _ => None,
+        }
+    }
+}
+
 /// LFO's FORMs, default first.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -102,6 +197,25 @@ pub enum LfoForm {
 
 impl LfoForm {
     pub const ALL: [LfoForm; 3] = [LfoForm::Free, LfoForm::Sync, LfoForm::Lfv];
+}
+
+impl DiskCode for LfoForm {
+    fn disk_code(self) -> u8 {
+        match self {
+            LfoForm::Free => 0,
+            LfoForm::Sync => 1,
+            LfoForm::Lfv => 2,
+        }
+    }
+
+    fn from_disk_code(c: u8) -> Option<Self> {
+        match c {
+            0 => Some(LfoForm::Free),
+            1 => Some(LfoForm::Sync),
+            2 => Some(LfoForm::Lfv),
+            _ => None,
+        }
+    }
 }
 
 /// What Envelope B runs: a MODE and one of that MODE's FORMs, so a
@@ -178,6 +292,24 @@ impl FuncParams {
         match self.func() {
             Func::Env(x) | Func::Burst(x) => x as u8 as f32,
             Func::Lfo(x) => x as u8 as f32,
+        }
+    }
+
+    /// FORM's disk code: the current MODE's FORM.
+    pub fn form_code(&self) -> u8 {
+        match self.func() {
+            Func::Env(x) | Func::Burst(x) => x.disk_code(),
+            Func::Lfo(x) => x.disk_code(),
+        }
+    }
+
+    /// Set the current MODE's FORM from its code (so MODE goes first);
+    /// `false`, nothing written, if that MODE has no such FORM.
+    pub fn set_form_code(&mut self, c: u8) -> bool {
+        match self.mode {
+            FuncMode::Env => apply_code(EnvForm::from_disk_code(c), |x| self.env_form = x),
+            FuncMode::Lfo => apply_code(LfoForm::from_disk_code(c), |x| self.lfo_form = x),
+            FuncMode::Burst => apply_code(EnvForm::from_disk_code(c), |x| self.burst_form = x),
         }
     }
 
@@ -264,4 +396,21 @@ pub enum LfoType {
 
 impl LfoType {
     pub const ALL: [LfoType; 2] = [LfoType::Classic, LfoType::Func];
+}
+
+impl DiskCode for LfoType {
+    fn disk_code(self) -> u8 {
+        match self {
+            LfoType::Classic => 0,
+            LfoType::Func => 1,
+        }
+    }
+
+    fn from_disk_code(c: u8) -> Option<Self> {
+        match c {
+            0 => Some(LfoType::Classic),
+            1 => Some(LfoType::Func),
+            _ => None,
+        }
+    }
 }

@@ -1,7 +1,7 @@
 //! The Algo Sound's parameters, stored as bytes (spec § Voice model).
 
 use crate::block::{Block, ParamId, ParamSpec, ValFmt};
-use crate::dsp::algo::algorithms::ALGO_NAMES;
+use crate::dsp::algo::algorithms::{ALGO_COUNT, ALGO_NAMES};
 use crate::dsp::algo::env::EnvRates;
 use crate::dsp::algo::plan::OPS;
 use crate::dsp::algo::tx::COARSE_NAMES;
@@ -140,6 +140,18 @@ impl Block for AlgoOpParams {
             _ => {}
         }
     }
+
+    /// WAVE's code is its `WaveId` index.
+    fn enum_code(&self, id: ParamId) -> Option<u8> {
+        (id == Self::WAVE).then_some(self.wave)
+    }
+
+    fn set_enum_code(&mut self, id: ParamId, code: u8) -> bool {
+        id == Self::WAVE
+            && WaveId::from_index(code)
+                .map(|w| self.wave = w.get())
+                .is_some()
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -207,5 +219,26 @@ impl Block for AlgoParams {
             Self::TRANSPOSE => self.transpose = v as i8,
             _ => {}
         }
+    }
+
+    /// ALG A and B's codes are their `AlgoId` indices.
+    fn enum_code(&self, id: ParamId) -> Option<u8> {
+        match id {
+            Self::ALG_A => Some(self.alg_a),
+            Self::ALG_B => Some(self.alg_b),
+            _ => None,
+        }
+    }
+
+    fn set_enum_code(&mut self, id: ParamId, code: u8) -> bool {
+        if usize::from(code) >= ALGO_COUNT {
+            return false;
+        }
+        match id {
+            Self::ALG_A => self.alg_a = code,
+            Self::ALG_B => self.alg_b = code,
+            _ => return false,
+        }
+        true
     }
 }

@@ -3,7 +3,7 @@
 
 use chimera_hal::BLOCK_SIZE;
 
-use crate::block::{Block, ParamId, ParamSpec, ValFmt};
+use crate::block::{Block, DiskCode, ParamId, ParamSpec, ValFmt, apply_code, identity_code};
 use crate::dsp::fast_sin;
 use crate::dsp::modulator::func::{BCoefs, FuncGen, Slides};
 use crate::dsp::modulator::{Func, FuncParams, Glide, LfoForm, LfoType, pick};
@@ -133,6 +133,26 @@ impl Block for LfoParams {
             Self::FALL => self.func.fall = v,
             Self::SHAPE_B => self.func.shape = v,
             _ => {}
+        }
+    }
+
+    fn enum_code(&self, id: ParamId) -> Option<u8> {
+        match id {
+            Self::SHAPE => Some(self.shape),
+            Self::SYNC => Some(self.sync),
+            Self::TYPE => Some(self.lfo_type.disk_code()),
+            Self::FORM => Some(self.func.form_code()),
+            _ => None,
+        }
+    }
+
+    fn set_enum_code(&mut self, id: ParamId, code: u8) -> bool {
+        match id {
+            Self::SHAPE => apply_code(identity_code(&LFO_SPECS, id, code), |c| self.shape = c),
+            Self::SYNC => apply_code(identity_code(&LFO_SPECS, id, code), |c| self.sync = c),
+            Self::TYPE => apply_code(LfoType::from_disk_code(code), |t| self.lfo_type = t),
+            Self::FORM => self.func.set_form_code(code),
+            _ => false,
         }
     }
 }
