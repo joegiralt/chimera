@@ -59,7 +59,7 @@ otherwise it plays bare. Nothing is stolen for the pool (the owner's rule,
   promise. A `Promised` slot is reserved for a note that waits, on another
   Part's fade or on the clear budget, before it starts.
 - **Who places.** `Instrument::handle` places a Sympathetic note on the
-  voice `Allocator::pick` chose. `Instrument::start` (render steps 0 and 5)
+  voice `Allocator::pick` chose. `Instrument::start` (render steps 0 and 6)
   places a waiting note as it starts, since its Part may have become
   Sympathetic while it waited. A bare Sympathetic voice whose new note is
   promised a slot is rebuilt as that note starts (`Voice::trigger`), never
@@ -84,8 +84,12 @@ otherwise it plays bare. Nothing is stolen for the pool (the owner's rule,
   `Instrument` spends `SYM_CLEAR_BUDGET` a block: one worst-case note-on,
   eight whole rings, 31,488 B. A note-on past what is left waits a block on
   the waiting path, its slot still promised, and so does one behind a note
-  already waiting on the budget. Waiting notes start oldest first, before
-  their voices render, in the block that lets them in. A chord of four
+  already waiting on the budget. Waiting notes start oldest first, by
+  `Allocator` age: at step 0, before their voices render, and at step 6,
+  after the voices whose fades end this block. A held note whose voice
+  fades toward its own restart when MODE flips away from Sympathetic and
+  back within the fade restarts through the same waiting path, so a toggle
+  storm keeps the budget too (`a_mode_toggle_storm_keeps_the_clear_budget`). A chord of four
   slots last played low starts over four blocks (5.3 ms), and a typical one
   at once. A bare note clears only its main string. Nothing is refused.
 - **`SlotKind::resting`** maps `Modal(Sympathetic)` to `Modal(String)`: an

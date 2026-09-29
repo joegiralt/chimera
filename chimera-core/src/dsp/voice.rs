@@ -253,6 +253,12 @@ impl Voice {
         self.slot.rebuild(kind, pool.alloc_mut(), self.id)
     }
 
+    /// Fading toward a restart of its held note on a changed Sound
+    /// (`AfterFade::Restart`).
+    pub fn restarts(&self) -> bool {
+        self.after_fade == AfterFade::Restart
+    }
+
     /// Its slot rings a pool set (Sympathetic with a halo).
     pub fn rings(&self) -> bool {
         self.slot.rings()

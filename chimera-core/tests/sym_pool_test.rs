@@ -762,3 +762,157 @@ fn notes_waiting_on_the_clear_budget_keep_their_order() {
         assert!(c <= SYM_CLEAR_BUDGET, "block {b}: {c}");
     }
 }
+
+/// As above, but with every slot free: the waiting note, placed as it
+/// starts on its now Sympathetic Part, rings.
+#[test]
+fn a_note_waiting_across_a_switch_takes_a_free_slot() {
+    let mut s = Stage::new(&[
+        (modal(ResonatorMode::String), PartMode::Poly),
+        (modal(ResonatorMode::String), PartMode::Poly),
+        (modal(ResonatorMode::String), PartMode::Poly),
+    ]);
+    for n in [36, 40, 43, 47] {
+        s.on(2, n);
+    }
+    s.block();
+    for n in [60, 64, 67, 71] {
+        s.on(0, n);
+    }
+    s.block();
+    assert_eq!(s.inst.sym().lent(), 0);
+    s.on(1, 50);
+    let v = s.voice_of(1, 50);
+    assert!(
+        s.inst.active()[v],
+        "50 waits for Part 3's fade on its voice"
+    );
+    s.shared.parts[1].params = sym();
+    for _ in 0..FADE_BLOCKS + 3 {
+        s.block();
+    }
+    assert!(s.inst.active()[v], "50 sounds");
+    assert!(s.inst.rings()[v], "50 started with slots free: it rings");
+}
+
+/// Round-robin wrapped, so the chord lands on voices 6, 7, 0 and 1: the
+/// budget's queue still starts them in the order they came, not by voice.
+#[test]
+fn the_budget_queue_is_served_by_age_not_voice_index() {
+    let mut parts = vec![(sym(), PartMode::Poly); 4];
+    parts.push((ParamSnapshot::for_engine(EngineType::Algo), PartMode::Poly));
+    let mut s = Stage::new(&parts);
+    short_sym(&mut s, 4);
+    for part in 0..4 {
+        s.on(part, 0);
+    }
+    s.block();
+    for part in 0..4 {
+        s.off(part, 0);
+    }
+    s.until_idle(50);
+    // Two Algo notes move round-robin on by two.
+    s.on(4, 60);
+    s.on(4, 62);
+    s.block();
+    s.off(4, 60);
+    s.off(4, 62);
+    s.until_idle(20_000);
+    let _ = take_cleared_bytes();
+    let (buses, cleared, _) = chord(s, 8);
+    assert_eq!(starts(&buses), [0, 1, 2, 3]);
+    assert!(
+        cleared.iter().all(|&c| c <= SYM_CLEAR_BUDGET),
+        "{cleared:?}"
+    );
+}
+
+/// MODE flipped Sympathetic → String → Sympathetic, each within the last
+/// flip's fade, over four held low notes: every restart goes through the
+/// clear budget, so no block clears more than it, and all four ring again.
+#[test]
+fn a_mode_toggle_storm_keeps_the_clear_budget() {
+    let mut s = Stage::new(&[(sym(), PartMode::Poly)]);
+    for n in [0, 1, 2, 3] {
+        s.on(0, n);
+    }
+    for _ in 0..6 {
+        s.block();
+    }
+    let _ = take_cleared_bytes();
+    let mut cleared = Vec::new();
+    for b in 0..40 {
+        s.shared.parts[0].params = match b {
+            0 | 3 | 5 => modal(ResonatorMode::String),
+            _ => sym(),
+        };
+        s.block();
+        cleared.push(take_cleared_bytes());
+    }
+    for (b, &c) in cleared.iter().enumerate() {
+        assert!(c <= SYM_CLEAR_BUDGET, "block {b}: {c} > {SYM_CLEAR_BUDGET}");
+    }
+    let voices = [0, 1, 2, 3].map(|n| s.voice_of(0, n));
+    for v in voices {
+        assert!(
+            s.inst.active()[v] && s.inst.rings()[v],
+            "voice {v} rings again"
+        );
+    }
+    assert_eq!(s.inst.allocator().refused(), 0, "nothing refused or lost");
+}
+
+/// Four held String notes, on Parts 1 to 4 and on voices 6, 7, 0 and 1
+/// (round-robin wrapped), switch to Sympathetic together over slots last
+/// played low: their fades end in one block, and the budget lets their
+/// restarts in oldest first, a block apart, not by voice index.
+#[test]
+fn restarts_whose_fades_end_together_start_oldest_first() {
+    let mut parts = vec![(sym(), PartMode::Poly); 4];
+    parts.push((ParamSnapshot::for_engine(EngineType::Algo), PartMode::Poly));
+    let mut s = Stage::new(&parts);
+    short_sym(&mut s, 4);
+    for part in 0..4 {
+        s.on(part, 0);
+    }
+    s.block();
+    for part in 0..4 {
+        s.off(part, 0);
+    }
+    s.until_idle(50);
+    s.on(4, 60);
+    s.on(4, 62);
+    s.block();
+    s.off(4, 60);
+    s.off(4, 62);
+    s.until_idle(20_000);
+    for part in &mut s.shared.parts[..4] {
+        part.params.modal.mode = ResonatorMode::String;
+    }
+    for (part, &n) in CHORD.iter().enumerate() {
+        s.on(part, n);
+    }
+    s.block();
+    let voices: Vec<usize> = CHORD
+        .iter()
+        .enumerate()
+        .map(|(p, &n)| s.voice_of(p, n))
+        .collect();
+    assert_eq!(voices, [6, 7, 0, 1], "round-robin wrapped");
+    let _ = take_cleared_bytes();
+    for part in &mut s.shared.parts[..4] {
+        part.params.modal.mode = ResonatorMode::Sympathetic;
+    }
+    let mut rang = [None; 4];
+    for b in 0..FADE_BLOCKS + 8 {
+        s.block();
+        assert!(take_cleared_bytes() <= SYM_CLEAR_BUDGET, "block {b}");
+        for (i, &v) in voices.iter().enumerate() {
+            if rang[i].is_none() && s.inst.rings()[v] {
+                rang[i] = Some(b);
+            }
+        }
+    }
+    let rang = rang.map(|b| b.expect("each restart rings"));
+    assert!(rang.windows(2).all(|w| w[1] == w[0] + 1), "{rang:?}");
+}
