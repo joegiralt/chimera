@@ -792,7 +792,7 @@ fn modal_bills_each_model() {
     for (mode, billed, estimate, rev_v, rev_y) in [
         (ResonatorMode::String, 390, 390, 8, 8),
         (ResonatorMode::Bowed, 620, 565, 8, 6),
-        (ResonatorMode::Sympathetic, 802, 802, 6, 5),
+        (ResonatorMode::Sympathetic, 809, 809, 6, 5),
         (ResonatorMode::Modal, 1_900, 1_703, 2, 2),
     ] {
         let p = sound(mode);

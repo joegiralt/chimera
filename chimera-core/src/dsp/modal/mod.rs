@@ -291,12 +291,11 @@ impl ModalEngine {
     pub const COST_STRING: Cost = Cost(390);
     /// Estimated 565.
     pub const COST_BOWED: Cost = Cost(620);
-    /// Measured 2026-09-29, bench f59bc92, rev V at 480 MHz: MDL SYM's
-    /// totals 1120 1974 2830 3698 at one to four notes, a slope of 859 a
-    /// voice, taken over the first four because the pool sounds at most
-    /// four (the totals are flat past it); 859 − 57 = 802. (Estimated
-    /// 1,274 from the emulator.)
-    pub const COST_SYMPATHETIC: Cost = Cost(802);
+    /// Measured 2026-09-29, bench 2df4100 (the ship build), rev V at 480
+    /// MHz: MDL SYM's totals 1122 1983 2844 3721 at one to four ringing
+    /// notes, a slope of 866 a voice; 866 − 57 = 809. (859 at f59bc92;
+    /// estimated 1,274 from the emulator.)
+    pub const COST_SYMPATHETIC: Cost = Cost(809);
     /// The resonator bank: this plus `COST_MODE` per mode. Estimated 1,703
     /// at 32 modes and 40 a mode; billed 1,900 at 32.
     pub const COST_BANK: Cost = Cost(460);
