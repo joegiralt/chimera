@@ -261,8 +261,9 @@ const GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
 ];
 
 /// Goldens whose locked output no longer reflects intended behaviour, each
-/// tracked at an issue: Modal failed the sanity gate (#10), and the switch
-/// case's second half is Modal's.
+/// tracked at an issue: Modal failed the sanity gate (#10), the switch
+/// case's second half is Modal's, and Sympathetic rings on the same KS
+/// main string.
 const KNOWN_BROKEN: &[(&str, &str)] = &[
     (
         "modal_init",
@@ -274,6 +275,10 @@ const KNOWN_BROKEN: &[(&str, &str)] = &[
     ),
     (
         "algo_to_modal_switch",
+        "https://github.com/joegiralt/chimera/issues/10",
+    ),
+    (
+        "modal_sympathetic",
         "https://github.com/joegiralt/chimera/issues/10",
     ),
 ];
