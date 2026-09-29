@@ -84,6 +84,13 @@ So at most two of a voice's rebuilds in one block write a Modal model. Until
 the 16-bit strings (spec § 4), a Sympathetic rebuild writes about 31.7 KB,
 ~2.6 % of a block, so a voice's worst block is about 63.4 KB, ~5.2 %.
 
+*Note (2026-09-29, spec § 4 revised).* Sympathetic's seven lines move to a
+pool of four slots, so a rebuild writes at most 3,968 B (main string and
+lease), and a `Voice` is about 5,840 B. The bound of three holds: a voice
+that goes idle with no note waiting gives its lease back by one more rebuild
+(`Voice::rest`), in the "after its render" stage in place of the waiting
+note, and a steal is the cross-Part steal above (spec § 4.6).
+
 A MODE edit now fades ringing notes. It used to leave them on their old
 model, or, on a retrigger, rebuild the ringing model unfaded: now a sounding
 voice of another kind makes `note_on` wait for the fade.
