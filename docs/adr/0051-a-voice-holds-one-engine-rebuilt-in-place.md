@@ -65,8 +65,8 @@ fade end, or a VCA-lifetime end). Each stage allows at most one:
 - **After its render: at most one.** Render step 5 either plays a waiting
   note on the now idle voice (`Instrument::start`) or, with none waiting,
   rests it (`Voice::rest`, which gives a Sympathetic lease back), never
-  both. A note still waiting, on the clear budget or on a fade the pool
-  awaits, spends no rebuild.
+  both. A note still waiting, on the clear budget or on another Part's
+  fade, spends no rebuild.
 - **Render step 0 takes the drain's place.** At the top of
   `Instrument::render`, before the voices render, a note that waited on
   the clear budget starts (ADR 0054). That needs an idle voice, and a
@@ -94,10 +94,11 @@ Before the pool (spec § 4), a Sympathetic rebuild wrote about 31.7 KB,
 
 *Note (2026-09-29, spec § 4 revised).* Sympathetic's seven lines move to a
 pool of four slots, so a rebuild writes at most 3,968 B (main string and
-lease), and a `Voice` is about 5,840 B. The bound of three holds: a voice
+halo), and a `Voice` is about 5,840 B. The bound of three holds: a voice
 that goes idle with no note waiting gives its lease back by one more rebuild
 (`Voice::rest`), in the "after its render" stage in place of the waiting
-note, and a steal is the cross-Part steal above (spec § 4.6).
+note, and a restart on a switch has the cross-Part steal's shape above
+(spec § 4.6). The pool steals nothing (ADR 0054).
 
 A MODE edit now fades ringing notes. It used to leave them on their old
 model, or, on a retrigger, rebuild the ringing model unfaded: now a sounding

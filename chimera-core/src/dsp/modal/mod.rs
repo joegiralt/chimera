@@ -114,14 +114,28 @@ pub struct SymPool {
 
 crate::in_place::field_list!(SymPool => SymPool { alloc, sets });
 
-/// Sympathetic's voice side: the main string, and the lease on the set it
-/// sets ringing. A Sympathetic voice can't exist without a slot.
+/// Sympathetic's voice side: the main string, and its halo.
 struct SympatheticVoice {
     main: KsString,
-    lease: Lease,
+    halo: Halo,
 }
 
-crate::in_place::field_list!(SympatheticVoice => SympatheticVoice { main, lease });
+crate::in_place::field_list!(SympatheticVoice => SympatheticVoice { main, halo });
+
+/// A Sympathetic note's seven sympathetic lines, fixed when it starts
+/// (the owner's rule, 2026-09-29): a slot's set, or none.
+///
+/// An enum, not `Option<Lease>`: there is no `insert`, `get_or_insert` or
+/// `replace` to attach a lease to a sounding note, and `SympatheticVoice`
+/// has no setter. Only an in-place rebuild writes a halo, so a bare note
+/// never borrows mid-note, and `Full` holds a `Lease`, which only a slot
+/// promised to the voice yields: no lease without a slot.
+pub enum Halo {
+    /// It rings a pool slot's set.
+    Full(Lease),
+    /// No slot was free when it started: the main string alone.
+    Bare,
+}
 
 // Sympathetic never sizes the voice (spec § 4.2): Bowed or String does.
 const _: () =
@@ -142,13 +156,13 @@ pub mod layout {
     pub const SYMPATHETIC_VOICE: usize = size_of::<super::SympatheticVoice>();
 }
 
-/// The model a `ModalEngine` is built to play. Sympathetic takes the lease
-/// on its set by value: no lease, no Sympathetic.
+/// The model a `ModalEngine` is built to play. Sympathetic takes its
+/// halo by value.
 pub enum Model {
     Bank,
     String,
     Bowed,
-    Sympathetic(Lease),
+    Sympathetic(Halo),
 }
 
 impl Model {
@@ -183,8 +197,8 @@ impl ModelSlot {
             // SAFETY: `BowedString::init_in_place` writes every field.
             Model::Bowed => unsafe { Self::init_bowed(slot, BowedString::init_in_place) },
             // SAFETY: `SympatheticVoice::init_in_place` writes every field.
-            Model::Sympathetic(lease) => unsafe {
-                Self::init_sympathetic(slot, |s| SympatheticVoice::init_in_place(s, lease))
+            Model::Sympathetic(halo) => unsafe {
+                Self::init_sympathetic(slot, |s| SympatheticVoice::init_in_place(s, halo))
             },
         }
     }
@@ -202,8 +216,8 @@ impl ModelSlot {
             // SAFETY: `BowedString::init_in_place` writes every field.
             Model::Bowed => unsafe { self.rebuild_bowed(BowedString::init_in_place) },
             // SAFETY: `SympatheticVoice::init_in_place` writes every field.
-            Model::Sympathetic(lease) => unsafe {
-                self.rebuild_sympathetic(|s| SympatheticVoice::init_in_place(s, lease))
+            Model::Sympathetic(halo) => unsafe {
+                self.rebuild_sympathetic(|s| SympatheticVoice::init_in_place(s, halo))
             },
         }
     }
@@ -312,7 +326,8 @@ impl ModalEngine {
         let model = match mode {
             ResonatorMode::Sympathetic => {
                 let v0 = crate::voice_alloc::VoiceIdx::ALL[0];
-                Model::Sympathetic(pool.alloc.lend(v0).expect("a free slot"))
+                assert!(pool.alloc.place(v0), "a free slot");
+                Model::Sympathetic(Halo::Full(pool.alloc.lend(v0).expect("promised")))
             }
             other => Model::resting(other),
         };
@@ -363,9 +378,17 @@ impl ModalEngine {
     /// which moves it out before the payload is overwritten.
     pub(crate) fn lease_mut(&mut self) -> Option<&mut Lease> {
         match &mut self.model {
-            ModelSlot::Sympathetic(m) => Some(&mut m.lease),
+            ModelSlot::Sympathetic(m) => match &mut m.halo {
+                Halo::Full(l) => Some(l),
+                Halo::Bare => None,
+            },
             ModelSlot::Bank(_) | ModelSlot::String(_) | ModelSlot::Bowed(_) => None,
         }
+    }
+
+    /// Sympathetic without a halo.
+    pub fn is_bare(&self) -> bool {
+        matches!(&self.model, ModelSlot::Sympathetic(m) if matches!(m.halo, Halo::Bare))
     }
 
     /// `params.mode` must be the model this engine holds: a voice rebuilds
@@ -411,7 +434,6 @@ impl ModalEngine {
                 b.force = vel * params.bow_force;
             }
             ModelSlot::Sympathetic(m) => {
-                let set = pool.set(&m.lease);
                 // Main string gets excitation
                 m.main.trigger(
                     (freq, sample_rate),
@@ -420,16 +442,18 @@ impl ModalEngine {
                     params.ks_color,
                     params.position,
                 );
-                for sym in set.strings.iter_mut() {
-                    // Sympathetic strings start silent — energy comes from
-                    // main. A handed-over slot carries nothing of its last
-                    // note (spec § 4.8). Cleared before the retune, so the
-                    // clear is `SymPool::note_on_clear`'s.
-                    sym.restart();
+                if let Some(set) = pool.halo(&m.halo) {
+                    for sym in set.strings.iter_mut() {
+                        // Sympathetic strings start silent — energy comes
+                        // from main. A handed-over slot carries nothing of
+                        // its last note (spec § 4.8). Cleared before the
+                        // retune, so the clear is `SymPool::note_on_clear`'s.
+                        sym.restart();
+                    }
+                    set.ratios = sympathetic_ratios(params.inharm);
+                    set.tune(freq, sample_rate);
+                    set.pending = [0.0; NUM_SYMPATHETIC];
                 }
-                set.ratios = sympathetic_ratios(params.inharm);
-                set.tune(freq, sample_rate);
-                set.pending = [0.0; NUM_SYMPATHETIC];
             }
         }
 
@@ -452,7 +476,9 @@ impl ModalEngine {
             ModelSlot::Bowed(b) => b.string.set_freq(freq, sample_rate),
             ModelSlot::Sympathetic(m) => {
                 m.main.set_freq(freq, sample_rate);
-                pool.set(&m.lease).tune(freq, sample_rate);
+                if let Some(set) = pool.halo(&m.halo) {
+                    set.tune(freq, sample_rate);
+                }
             }
         }
     }
@@ -472,12 +498,13 @@ impl ModalEngine {
             ModelSlot::Bank(_) => {}
             ModelSlot::Sympathetic(m) => {
                 m.main.damp(1);
-                let set = pool.set(&m.lease);
-                for (sym, pending) in set.strings.iter_mut().zip(&mut set.pending) {
-                    sym.damp(1);
-                    // Its write position's sample, were it stored.
-                    if sym.write_pos() < sym.delay_len() {
-                        *pending *= 0.2;
+                if let Some(set) = pool.halo(&m.halo) {
+                    for (sym, pending) in set.strings.iter_mut().zip(&mut set.pending) {
+                        sym.damp(1);
+                        // Its write position's sample, were it stored.
+                        if sym.write_pos() < sym.delay_len() {
+                            *pending *= 0.2;
+                        }
                     }
                 }
             }
@@ -527,10 +554,9 @@ impl ModalEngine {
             }
             ModelSlot::Sympathetic(m) => {
                 let m = &mut **m;
-                let set = pool.set(&m.lease);
                 render_sympathetic(
                     &mut m.main,
-                    set,
+                    pool.halo(&m.halo),
                     output,
                     params,
                     self.released,
@@ -638,14 +664,14 @@ impl BowedString {
 }
 
 impl SympatheticVoice {
-    fn init_in_place(slot: &mut MaybeUninit<Self>, lease: Lease) -> &mut Self {
+    fn init_in_place(slot: &mut MaybeUninit<Self>, halo: Halo) -> &mut Self {
         let p = slot.as_mut_ptr();
         // SAFETY: `p` is valid and unaliased; the main string is built in
-        // place and the lease (one byte) written by value, before
+        // place and the halo (two bytes) written by value, before
         // `assume_init_mut`.
         unsafe {
             KsString::init_in_place(uninit_at(addr_of_mut!((*p).main)));
-            addr_of_mut!((*p).lease).write(lease);
+            addr_of_mut!((*p).halo).write(halo);
             slot.assume_init_mut()
         }
     }
@@ -682,6 +708,11 @@ impl SymPool {
         &self.alloc
     }
 
+    /// A Sympathetic note starts on `voice`: `SymAlloc::place`.
+    pub fn place(&mut self, voice: VoiceIdx) -> bool {
+        self.alloc.place(voice)
+    }
+
     pub(crate) fn alloc_mut(&mut self) -> &mut SymAlloc {
         &mut self.alloc
     }
@@ -689,8 +720,9 @@ impl SymPool {
     /// The bytes a Sympathetic note-on on `voice`, whose engine is
     /// `engine`, clears (spec § 4.8): its main string and its set, each
     /// line up to its dirty extent. An engine already Sympathetic keeps
-    /// both; any other is rebuilt, its main string fresh, and lent the
-    /// slot `voice` would be. At most `SYM_NOTE_ON_CLEAR_MAX`.
+    /// its halo, unless it is bare and a slot is now promised to `voice`;
+    /// any other is rebuilt, its main string fresh, and lent that promise
+    /// if any. At most `SYM_NOTE_ON_CLEAR_MAX`.
     pub fn note_on_clear(&self, engine: Option<&ModalEngine>, voice: VoiceIdx) -> usize {
         let set = |s: SymSlot| -> usize {
             self.sets[s.index()]
@@ -699,16 +731,24 @@ impl SymPool {
                 .map(KsString::clear_bytes)
                 .sum()
         };
+        let promise = self.alloc.promise_of(voice);
         match engine.map(|e| &e.model) {
-            Some(ModelSlot::Sympathetic(m)) => m.main.clear_bytes() + set(m.lease.slot()),
-            _ => FRESH_CLEAR_BYTES + self.alloc.lend_slot(voice).map_or(0, set),
+            Some(ModelSlot::Sympathetic(m)) => match &m.halo {
+                Halo::Full(l) => m.main.clear_bytes() + set(l.slot()),
+                Halo::Bare if promise.is_none() => m.main.clear_bytes(),
+                Halo::Bare => FRESH_CLEAR_BYTES + promise.map_or(0, set),
+            },
+            _ => FRESH_CLEAR_BYTES + promise.map_or(0, set),
         }
     }
 
-    /// The set `lease` names. It borrows the pool and the lease, so no
-    /// other set is reachable meanwhile and the lease can't go back.
-    fn set(&mut self, lease: &Lease) -> &mut SympatheticSet {
-        &mut self.sets[lease.slot().index()]
+    /// The set `halo` rings, if any. It borrows the pool and the lease, so
+    /// no other set is reachable meanwhile and the lease can't go back.
+    fn halo(&mut self, halo: &Halo) -> Option<&mut SympatheticSet> {
+        match halo {
+            Halo::Full(lease) => Some(&mut self.sets[lease.slot().index()]),
+            Halo::Bare => None,
+        }
     }
 }
 
@@ -842,9 +882,11 @@ fn render_bowed(
     }
 }
 
+/// The main string and, with a halo, the seven it sets ringing; bare, the
+/// main string alone.
 fn render_sympathetic(
     main: &mut KsString,
-    set: &mut SympatheticSet,
+    set: Option<&mut SympatheticSet>,
     output: &mut [f32; BLOCK_SIZE],
     params: &ModalParams,
     released: bool,
@@ -885,6 +927,13 @@ fn render_sympathetic(
         ens_mix: 0.0, // no ensemble
     };
 
+    let Some(set) = set else {
+        for s in output.iter_mut() {
+            *s = libm::tanhf(main.tick_full(&main_params));
+            *max_level = max_level.max(libm::fabsf(*s));
+        }
+        return;
+    };
     for s in output.iter_mut() {
         // 1. Main string tick
         let main_out = main.tick_full(&main_params);
@@ -951,7 +1000,9 @@ mod tests {
     fn model(mode: ResonatorMode) -> Model {
         match mode {
             ResonatorMode::Sympathetic => {
-                Model::Sympathetic(SymAlloc::new().lend(VoiceIdx::ALL[0]).expect("free"))
+                let mut alloc = SymAlloc::new();
+                assert!(alloc.place(VoiceIdx::ALL[0]));
+                Model::Sympathetic(Halo::Full(alloc.lend(VoiceIdx::ALL[0]).expect("promised")))
             }
             other => Model::resting(other),
         }
@@ -991,7 +1042,10 @@ mod tests {
     fn engine(pool: &mut SymPool, mode: ResonatorMode) -> Box<ModalEngine> {
         let model = match mode {
             ResonatorMode::Sympathetic => {
-                Model::Sympathetic(pool.alloc.lend(VoiceIdx::ALL[0]).expect("free"))
+                assert!(pool.alloc.place(VoiceIdx::ALL[0]));
+                Model::Sympathetic(Halo::Full(
+                    pool.alloc.lend(VoiceIdx::ALL[0]).expect("promised"),
+                ))
             }
             other => Model::resting(other),
         };
@@ -1005,9 +1059,17 @@ mod tests {
     fn lines<'a>(e: &'a ModalEngine, pool: &'a SymPool) -> Vec<&'a KsString> {
         match &e.model {
             ModelSlot::Sympathetic(m) => core::iter::once(&m.main)
-                .chain(&pool.sets[m.lease.slot().index()].strings)
+                .chain(&pool.sets[set_of(m).index()].strings)
                 .collect(),
             _ => unreachable!(),
+        }
+    }
+
+    /// The slot a Sympathetic voice's halo rings.
+    fn set_of(m: &SympatheticVoice) -> SymSlot {
+        match &m.halo {
+            Halo::Full(l) => l.slot(),
+            Halo::Bare => panic!("bare"),
         }
     }
 
@@ -1017,7 +1079,7 @@ mod tests {
             unreachable!()
         };
         m.main.soil();
-        for s in pool.sets[m.lease.slot().index()].strings.iter_mut() {
+        for s in pool.sets[set_of(m).index()].strings.iter_mut() {
             s.soil();
         }
     }
@@ -1161,9 +1223,13 @@ mod tests {
             assert!(want <= SYM_NOTE_ON_CLEAR_MAX);
             play(&mut e, &mut pool, &p, SECOND / 8, (1, pitch));
         }
-        // Voice 1 would be lent a slot never played: eight fresh lines.
+        // Voice 1, unplaced, plays bare: a fresh main string. Placed, it
+        // is promised a slot never played: eight fresh lines.
+        let v1 = VoiceIdx::ALL[1];
+        assert_eq!(pool.note_on_clear(None, v1), FRESH_CLEAR_BYTES);
+        assert!(pool.alloc.place(v1));
         let fresh = (1 + NUM_SYMPATHETIC) * FRESH_CLEAR_BYTES;
-        assert_eq!(pool.note_on_clear(None, VoiceIdx::ALL[1]), fresh);
+        assert_eq!(pool.note_on_clear(None, v1), fresh);
     }
 
     /// Bowed writes round its whole ring; its extent follows the bow, so

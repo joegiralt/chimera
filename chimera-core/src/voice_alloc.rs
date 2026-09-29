@@ -167,9 +167,7 @@ impl Allocator {
     ) -> Alloc {
         match self.pick(part, mode, cost, reserved) {
             Some(v) => {
-                // Rule 1 picked the Part's own Mono voice, if it had one.
-                let other = self.book(v, part, mode, note, cost);
-                debug_assert!(other.is_none(), "a second Mono voice");
+                self.book(v, part, mode, note, cost);
                 Alloc::Voice(v)
             }
             None => self.refuse(),
@@ -183,36 +181,13 @@ impl Allocator {
     }
 
     /// The age `book` gives the next note.
-    pub fn next_age(&self) -> u32 {
+    fn next_age(&self) -> u32 {
         self.clock.wrapping_add(1)
     }
 
-    /// Books `note` on voice `v`, whatever it held: `pick`'s voice, or the
-    /// sympathetic pool's steal, which overwrites a Mono voice like any
-    /// other (exclusive-state spec § 4.5). A Mono Part keeps one voice: a
-    /// steal away from its own sheds that one, returned for the caller to
-    /// fade out.
-    pub fn book(
-        &mut self,
-        v: usize,
-        part: u8,
-        mode: PartMode,
-        note: MidiNote,
-        cost: Cost,
-    ) -> Option<usize> {
+    /// Books `note` on `pick`'s voice `v`, whatever it held.
+    pub fn book(&mut self, v: usize, part: u8, mode: PartMode, note: MidiNote, cost: Cost) {
         let mono = mode == PartMode::Mono;
-        let other = if mono {
-            (0..MAX_VOICES).find(|&u| {
-                let s = &self.slots[u];
-                u != v && s.mono && !s.dying() && s.part == Some(part)
-            })
-        } else {
-            None
-        };
-        if let Some(u) = other {
-            self.sheds = self.sheds.wrapping_add(1);
-            self.slots[u].dying = Some(self.sheds);
-        }
         self.clock = self.next_age();
         self.rr = (v + 1) % MAX_VOICES;
         self.slots[v] = VoiceSlot {
@@ -224,7 +199,6 @@ impl Allocator {
             dying: None,
             cost,
         };
-        other
     }
 
     /// Key up on `voice`: it is no longer held (its tail keeps the slot
