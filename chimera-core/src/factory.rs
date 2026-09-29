@@ -90,7 +90,7 @@ pub fn factory_sound(i: usize) -> Option<Sound> {
                     [
                         AlgoOpParams {
                             velocity: 3,
-                            ..op(w1, 4, 99, [31, 6, 9, 3, 8])
+                            ..op(w1, 4, 93, [31, 6, 9, 3, 8])
                         },
                         AlgoOpParams {
                             velocity: 5,
@@ -98,7 +98,7 @@ pub fn factory_sound(i: usize) -> Option<Sound> {
                         },
                         AlgoOpParams {
                             velocity: 3,
-                            ..op(w1, 4, 92, [31, 5, 10, 3, 8])
+                            ..op(w1, 4, 86, [31, 5, 10, 3, 8])
                         },
                         AlgoOpParams {
                             velocity: 5,
@@ -110,7 +110,9 @@ pub fn factory_sound(i: usize) -> Option<Sound> {
                 ),
             );
             s.params.filter.cutoff = OPEN;
-            s.params.out.volume = 0.526_327_9; // 0.8 × old / new norm (ADR 0049)
+            // Carriers 6 LEVELs (4.5 dB) down: the SVF sees the old level to
+            // 0.27 dB; VOLUME takes the rest (ADR 0049).
+            s.params.out.volume = 0.775_405_6;
             s
         }
         2 => {
@@ -145,9 +147,9 @@ pub fn factory_sound(i: usize) -> Option<Sound> {
                     AlgoId::T5,
                     0,
                     [
-                        op(w1, 4, 99, [31, 4, 0, 0, 5]),
+                        op(w1, 4, 93, [31, 4, 0, 0, 5]),
                         op(w1, 12, 72, [31, 6, 0, 0, 5]),
-                        op(w1, 11, 88, [31, 5, 0, 0, 5]),
+                        op(w1, 11, 82, [31, 5, 0, 0, 5]),
                         op(w1, 23, 66, [31, 7, 0, 0, 5]),
                         off,
                         off,
@@ -155,7 +157,8 @@ pub fn factory_sound(i: usize) -> Option<Sound> {
                 ),
             );
             s.params.filter.cutoff = OPEN;
-            s.params.out.volume = 0.495_229_78; // 0.8 × old / new norm (ADR 0049)
+            // Carriers 6 LEVELs down, as TX EPIANO's (ADR 0049).
+            s.params.out.volume = 0.775_405_6;
             s
         }
         4 => {
@@ -166,10 +169,10 @@ pub fn factory_sound(i: usize) -> Option<Sound> {
                     AlgoId::A2,
                     0,
                     [
-                        op(WaveId::SAW, 4, 99, [31, 0, 15, 0, 8]),
+                        op(WaveId::SAW, 4, 90, [31, 0, 15, 0, 8]),
                         AlgoOpParams {
                             detune: 3,
-                            ..op(WaveId::SAW, 4, 95, [31, 0, 15, 0, 8])
+                            ..op(WaveId::SAW, 4, 86, [31, 0, 15, 0, 8])
                         },
                         off,
                         off,
@@ -179,7 +182,9 @@ pub fn factory_sound(i: usize) -> Option<Sound> {
                 ),
             );
             (s.params.filter.cutoff, s.params.filter.resonance) = (6000.0, 0.3);
-            s.params.out.volume = 0.438_352_64; // 0.8 × old / new norm (ADR 0049)
+            // Carriers 9 LEVELs (6.7 dB) down: the SVF sees the old level to
+            // 0.24 dB; VOLUME takes the rest (ADR 0049).
+            s.params.out.volume = 0.778_224_6;
             s
         }
         5 => {
