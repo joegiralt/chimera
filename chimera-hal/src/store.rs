@@ -150,7 +150,7 @@ pub trait Store {
         sink: &mut dyn ReadSink,
     ) -> Result<(), StoreError>;
     /// Replaces the file; returns the bytes written. What `body` put before an
-    /// `Err` stays.
+    /// `Err` stays. A `file.dir()` that was never made is `NotFound`.
     fn write(
         &mut self,
         vol: VolumeId,
@@ -158,6 +158,7 @@ pub trait Store {
         body: &mut dyn FnMut(&mut dyn ByteSink) -> Result<(), StoreError>,
     ) -> Result<u32, StoreError>;
     fn delete(&mut self, vol: VolumeId, file: FileName) -> Result<(), StoreError>;
-    /// An existing directory is `Ok`.
+    /// An existing directory is `Ok`. Making `Projects` or `Sounds` before `Chimera`
+    /// exists is `NotFound`.
     fn make_dir(&mut self, vol: VolumeId, dir: Dir) -> Result<(), StoreError>;
 }

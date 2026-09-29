@@ -149,6 +149,7 @@ struct Collect {
     data: Vec<u8>,
     /// Break after this many chunks.
     stop_after: Option<usize>,
+    break_in_begin: bool,
     chunks: usize,
 }
 
@@ -158,6 +159,7 @@ impl Collect {
             len: None,
             data: Vec::new(),
             stop_after,
+            break_in_begin: false,
             chunks: 0,
         }
     }
@@ -166,11 +168,22 @@ impl Collect {
 impl ReadSink for Collect {
     fn begin(&mut self, len: u32) -> ControlFlow<()> {
         self.len = Some(len);
-        ControlFlow::Continue(())
+        if self.break_in_begin {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
+        }
     }
 
     fn chunk(&mut self, bytes: &[u8]) -> ControlFlow<()> {
         assert!(bytes.len() <= CHUNK);
+        if self.chunks > 0 {
+            assert_eq!(
+                self.data.len(),
+                self.chunks * CHUNK,
+                "every chunk but the last is full"
+            );
+        }
         self.data.extend_from_slice(bytes);
         self.chunks += 1;
         if self.stop_after == Some(self.chunks) {
@@ -189,11 +202,38 @@ fn name(stem: &[u8]) -> FileName {
     FileName::new(Dir::Chimera, stem, b"BIN").unwrap()
 }
 
+fn read_all<S: Store>(
+    s: &mut S,
+    vol: VolumeId,
+    f: FileName,
+    stop: Option<usize>,
+) -> (Result<(), StoreError>, Collect) {
+    let mut c = Collect::new(stop);
+    let r = s.read(vol, f, &mut c);
+    (r, c)
+}
+
+fn listing<S: Store>(
+    s: &mut S,
+    vol: VolumeId,
+    dir: Dir,
+) -> Result<Vec<(FileName, usize)>, StoreError> {
+    let mut v = Vec::new();
+    s.list(vol, dir, &mut |n, len| v.push((n, len as usize)))?;
+    v.sort();
+    Ok(v)
+}
+
 /// Run every `Store` requirement against stores from `make`. `swap` puts a
-/// different, empty card in the slot; `after_op` runs after every step.
+/// different, empty card in the slot, `eject` takes the card out, and
+/// `after_op` runs after every step.
+///
+/// `Full` and `Corrupt` need a real medium (a full card, a damaged chain), so
+/// Task 4 pins them in the FAT stores' own tests, not here.
 pub fn store_suite<S: Store>(
     make: &mut dyn FnMut() -> S,
     swap: &mut dyn FnMut(&mut S),
+    eject: &mut dyn FnMut(&mut S),
     after_op: &mut dyn FnMut(&S),
 ) {
     let mut s = make();
@@ -202,21 +242,38 @@ pub fn store_suite<S: Store>(
     assert_eq!(s.mount().unwrap(), vol, "mount is stable");
     after_op(&s);
 
-    // A directory that was never made.
+    // Directories must exist: a write into an unmade one, or a child made
+    // before its parent, is NotFound.
     assert_eq!(
-        s.list(vol, Dir::Chimera, &mut |_, _| {}),
+        listing(&mut s, vol, Dir::Chimera),
         Err(StoreError::NotFound)
     );
     after_op(&s);
-    s.make_dir(vol, Dir::Chimera).unwrap();
+    let r = s.write(vol, name(b"EARLY"), &mut |w| w.put(b"x"));
+    assert_eq!(r, Err(StoreError::NotFound));
+    after_op(&s);
+    assert_eq!(s.make_dir(vol, Dir::Projects), Err(StoreError::NotFound));
+    after_op(&s);
     s.make_dir(vol, Dir::Chimera).unwrap();
     after_op(&s);
-
-    let read_all = |s: &mut S, f: FileName, stop: Option<usize>| {
-        let mut c = Collect::new(stop);
-        let r = s.read(vol, f, &mut c);
-        (r, c)
-    };
+    s.make_dir(vol, Dir::Projects).unwrap();
+    after_op(&s);
+    s.make_dir(vol, Dir::Chimera).unwrap();
+    s.make_dir(vol, Dir::Projects).unwrap();
+    after_op(&s);
+    assert_eq!(
+        listing(&mut s, vol, Dir::Chimera),
+        Ok(Vec::new()),
+        "the failed write left nothing"
+    );
+    assert_eq!(
+        listing(&mut s, vol, Dir::Projects),
+        Ok(Vec::new()),
+        "an empty directory lists"
+    );
+    after_op(&s);
+    assert_eq!(listing(&mut s, vol, Dir::Sounds), Err(StoreError::NotFound));
+    after_op(&s);
 
     // Round trips across the chunk boundaries.
     let mut written = Vec::new();
@@ -226,7 +283,7 @@ pub fn store_suite<S: Store>(
         let got = s.write(vol, f, &mut |w| w.put(&data)).unwrap();
         assert_eq!(got as usize, n);
         after_op(&s);
-        let (r, c) = read_all(&mut s, f, None);
+        let (r, c) = read_all(&mut s, vol, f, None);
         r.unwrap();
         after_op(&s);
         assert_eq!(c.len, Some(n as u32), "begin gets the exact length");
@@ -238,26 +295,40 @@ pub fn store_suite<S: Store>(
     let f = written[5].0;
     s.write(vol, f, &mut |w| w.put(&[9; 10])).unwrap();
     after_op(&s);
-    let (r, c) = read_all(&mut s, f, None);
+    let (r, c) = read_all(&mut s, vol, f, None);
     r.unwrap();
     after_op(&s);
     assert_eq!((c.len, c.data), (Some(10), std::vec![9; 10]));
     written[5].1 = 10;
 
     // list gives each name with its size.
-    let mut listed = Vec::new();
-    s.list(vol, Dir::Chimera, &mut |n, len| {
-        listed.push((n, len as usize))
-    })
-    .unwrap();
-    after_op(&s);
-    listed.sort();
     written.sort();
-    assert_eq!(listed, written);
+    assert_eq!(listing(&mut s, vol, Dir::Chimera), Ok(written.clone()));
+    after_op(&s);
+
+    // The same name in another directory is another file.
+    let other = FileName::new(Dir::Projects, b"F1", b"BIN").unwrap();
+    s.write(vol, other, &mut |w| w.put(b"projects")).unwrap();
+    after_op(&s);
+    assert_eq!(
+        listing(&mut s, vol, Dir::Projects),
+        Ok(std::vec![(other, 8)])
+    );
+    assert_eq!(listing(&mut s, vol, Dir::Chimera), Ok(written.clone()));
+    after_op(&s);
+    let (r, c) = read_all(&mut s, vol, name(b"F1"), None);
+    r.unwrap();
+    assert_eq!(c.data, pattern(1));
+    after_op(&s);
+    s.delete(vol, other).unwrap();
+    after_op(&s);
 
     // Missing files.
     let missing = name(b"NOPE");
-    assert_eq!(read_all(&mut s, missing, None).0, Err(StoreError::NotFound));
+    assert_eq!(
+        read_all(&mut s, vol, missing, None).0,
+        Err(StoreError::NotFound)
+    );
     after_op(&s);
     assert_eq!(s.delete(vol, missing), Err(StoreError::NotFound));
     after_op(&s);
@@ -266,34 +337,55 @@ pub fn store_suite<S: Store>(
     assert_eq!(s.delete(vol, written[0].0), Err(StoreError::NotFound));
     after_op(&s);
 
-    // A sink that stops early is not an error, and leaves nothing open.
+    // A sink that stops early, in begin or in a chunk, is not an error and
+    // leaves nothing open.
     let big = name(b"F4");
-    let (r, c) = read_all(&mut s, big, Some(1));
+    let (r, c) = read_all(&mut s, vol, big, Some(1));
     assert_eq!(r, Ok(()));
     assert_eq!(c.data.len(), CHUNK);
     after_op(&s);
-    let (r, c) = read_all(&mut s, big, None);
+    let mut c = Collect::new(None);
+    c.break_in_begin = true;
+    assert_eq!(s.read(vol, big, &mut c), Ok(()));
+    assert_eq!((c.len, c.chunks), (Some(513), 0));
+    after_op(&s);
+    let (r, c) = read_all(&mut s, vol, big, None);
     r.unwrap();
     assert_eq!(c.data, pattern(513));
     after_op(&s);
 
-    // A body that fails mid-file propagates, and the store still works.
-    let f = name(b"FAILS");
-    let r = s.write(vol, f, &mut |w| {
+    // What a failing body wrote stays, over a new file and over an old one,
+    // and the store still works.
+    let fails = name(b"FAILS");
+    let r = s.write(vol, fails, &mut |w| {
         w.put(&[1; 700])?;
         Err(StoreError::Io)
     });
     assert_eq!(r, Err(StoreError::Io));
     after_op(&s);
+    let (r, c) = read_all(&mut s, vol, fails, None);
+    r.unwrap();
+    after_op(&s);
+    assert_eq!((c.len, c.data), (Some(700), std::vec![1; 700]));
+    let r = s.write(vol, fails, &mut |w| {
+        w.put(&[2; 5])?;
+        Err(StoreError::Io)
+    });
+    assert_eq!(r, Err(StoreError::Io));
+    after_op(&s);
+    let (r, c) = read_all(&mut s, vol, fails, None);
+    r.unwrap();
+    after_op(&s);
+    assert_eq!((c.len, c.data), (Some(5), std::vec![2; 5]));
     let ok = name(b"AFTER");
     s.write(vol, ok, &mut |w| w.put(b"ok")).unwrap();
     after_op(&s);
-    let (r, c) = read_all(&mut s, ok, None);
+    let (r, c) = read_all(&mut s, vol, ok, None);
     r.unwrap();
     assert_eq!(c.data, b"ok");
     after_op(&s);
 
-    // A swapped card: the old id is refused and nothing is written.
+    // A swapped card: every op refuses the old id and touches nothing.
     swap(&mut s);
     after_op(&s);
     let stale = name(b"STALE");
@@ -303,11 +395,39 @@ pub fn store_suite<S: Store>(
     };
     after_op(&s);
     assert_ne!(new, vol);
+    let changed = Err(StoreError::VolumeChanged(new));
+    assert_eq!(s.list(vol, Dir::Chimera, &mut |_, _| {}), changed);
+    after_op(&s);
+    assert_eq!(read_all(&mut s, vol, ok, None).0, changed);
+    after_op(&s);
+    assert_eq!(s.delete(vol, ok), changed);
+    after_op(&s);
+    assert_eq!(s.make_dir(vol, Dir::Chimera), changed);
+    after_op(&s);
     assert_eq!(s.mount().unwrap(), new);
     after_op(&s);
     s.make_dir(new, Dir::Chimera).unwrap();
-    let mut seen = 0;
-    s.list(new, Dir::Chimera, &mut |_, _| seen += 1).unwrap();
     after_op(&s);
-    assert_eq!(seen, 0, "the stale write touched nothing");
+    assert_eq!(
+        listing(&mut s, new, Dir::Chimera),
+        Ok(Vec::new()),
+        "the stale ops touched nothing"
+    );
+    after_op(&s);
+
+    // No card: every op says so.
+    let mut s = make();
+    let vol = s.mount().unwrap();
+    s.make_dir(vol, Dir::Chimera).unwrap();
+    s.write(vol, ok, &mut |w| w.put(b"ok")).unwrap();
+    eject(&mut s);
+    after_op(&s);
+    let no_card = Some(StoreError::NoCard);
+    assert_eq!((s.mount()).err(), no_card);
+    assert_eq!((s.list(vol, Dir::Chimera, &mut |_, _| {})).err(), no_card);
+    assert_eq!(read_all(&mut s, vol, ok, None).0.err(), no_card);
+    assert_eq!((s.write(vol, ok, &mut |w| w.put(b"x"))).err(), no_card);
+    assert_eq!((s.delete(vol, ok)).err(), no_card);
+    assert_eq!((s.make_dir(vol, Dir::Chimera)).err(), no_card);
+    after_op(&s);
 }
