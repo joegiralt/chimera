@@ -23,7 +23,7 @@ A chord ring (key, scale, a progression over 1–8 bars) turns outside five rhyt
 ## Principles (binding)
 
 - **Functional core, imperative shell.** `chimera-theory` and `chimera-core::orbit` are pure: no hardware, no threads, no time source but their arguments. The shells (the audio callback, the UI pages, the desktop) are thin.
-- **Types decide what's possible** (ADR 0012): `PitchClass`, `PcSet`, `RingIdx`, `SceneIdx`, `Steps`, `HitMask` and the rest are newtypes or enums, so an out-of-range ring, step or scene can't be built.
+- **Types decide what's possible** (ADR 0012): `PitchClass`, `Degree`, `Quality`, `SnapTo`, `Scale`, `Fill`, `Pool`, `RingIdx`, `SceneIdx`, `Steps`, `HitMask` and the rest are enums or checked newtypes, so an out-of-range pitch, degree, ring, step, fill, pool or scene can't be built.
 - **The audio thread never allocates or blocks.** ORBIT's per-block work is bounded: at most two events per ring per block (one note-off, one note-on), in a fixed array.
 - **Parts can't tell ORBIT from a keyboard.** ORBIT's notes enter `Instrument::handle` like any MIDI note and take voices by the same rules.
 - **Deterministic.** Every random choice comes from a seeded PRNG. The same scene, from the same Start, emits the same events, sample for sample, in tests and in desktop renders.
@@ -74,147 +74,177 @@ desktop keys ────────────────┤ NoteSources    
 
 ## 2. `chimera-theory`
 
-A workspace crate beside `chimera-fat` and `chimera-waves`: `#![no_std]`, zero dependencies, const tables in flash, no heap, a few hundred bytes. `chimera-core` depends on it. ORBIT, per-Part live snapping, KIT (#215) and possibly Modal's Sympathetic chords use it. It owns no disk codes; `chimera-core` implements `DiskCode` for its enums.
+A workspace crate beside `chimera-fat` and `chimera-waves`: `#![no_std]`, zero dependencies, const tables in flash (289 B, const-asserted ≤ 512 B), no heap. `chimera-core` depends on it. ORBIT, per-Part live snapping, KIT (#215) and possibly Modal's Sympathetic chords use it. It owns no disk codes; `chimera-core` implements `DiskCode` for its types. Built on `orbit-core` (c25126d, f107ff7, e725387).
 
-Interface (the final names are settled on `orbit-core`):
+Every value it hands out is valid by construction: a pitch class, a degree, a quality and a snap target are enums, and a scale always holds its root.
 
 ```rust
-pub struct PitchClass(u8);                 // 0..=11, C = 0
-pub struct PcSet(u16);                     // 12-bit set of pitch classes
-pub struct Note(u8);                       // 0..=127, C4 = 60; From/Into MidiNote in chimera-core
+#[repr(u8)] pub enum PitchClass { C, Cs, D, Ds, E, F, Fs, G, Gs, A, As, B }  // + Interval wraps; − gives the upward Interval
+pub struct Interval(u8);                  // mod 12; UNISON … MAJOR_SEVENTH
+pub struct Note(u8);                      // 0..=127, C4 = 60; new -> Option, pc()
 
-pub struct Scale(u16);                     // pitch classes above the tonic; bit 0 (the root) always set
+pub struct Scale(u16);                    // tonic-relative set; the root bit is always set
 impl Scale {
-    pub const MAJOR: Scale; pub const MINOR: Scale;         // the named scales
-    pub const fn new(mask: u16) -> Scale;                   // sets bit 0: a scale without its root can't exist
-    pub fn toggle(self, pc: PitchClass) -> Scale;           // the root is a no-op
-    pub fn len(self) -> u8;                                  // 1..=12
+    pub const MAJOR, MINOR /* natural */, DORIAN, PHRYGIAN, LYDIAN, MIXOLYDIAN, LOCRIAN,
+              HARMONIC_MINOR, PENTATONIC_MAJOR, PENTATONIC_MINOR: Scale;   // ALL: [Scale; 10]
+    pub const fn custom(mask: u16) -> Scale;       // forces the root on, drops bits above 11: total
+    pub const fn toggle(self, i: Interval) -> Scale;   // the root is a no-op
+    pub const fn contains(self, i: Interval) -> bool;
+    pub const fn degree_count(self) -> usize;      // 1..=12
 }
+pub enum Degree { I, II, III, IV, V, VI, VII }
+pub enum Stack { Triad, Seventh }
 pub struct Key { pub tonic: PitchClass, pub scale: Scale }
-pub struct Degree(u8);                     // 0-based, < the scale's len: I..VII for 7 notes, I..V for 5
-pub enum Quality { Major, Minor, Diminished, Augmented, /* sevenths, sus: the naming table */ }
-pub struct Chord { pub root: PitchClass, pub tones: PcSet }
-
 impl Key {
-    pub const fn pcs(self) -> PcSet;               // the scale's classes, rotated to the tonic
-    pub fn degrees(self) -> u8;                    // = scale.len()
-    pub fn triad(self, d: Degree) -> Chord;        // § 2.1
-    pub fn degree_label(self, d: Degree) -> DegreeLabel;    // "i", "iv", "V", "vii°"; case from the quality
+    pub const fn chord(self, d: Degree, st: Stack) -> Chord;           // total
+    pub const fn triad(self, d: Degree) -> Chord;
+    pub const fn degree_label(self, d: Degree, st: Stack) -> DegreeLabel;
 }
+pub enum Quality { Maj, Min, Dim, Aug, Sus2, Sus4, Maj6, Min6, Dom7, Maj7, Min7,
+                   HalfDim7, Dim7, MinMaj7, AugMaj7, Dom7Sus4 }          // ALL: 16; tones() derived
+pub struct Chord { root: PitchClass, quality: Quality }                 // tones derived, never stored
 impl Chord {
-    pub fn from_notes(notes: &[Note]) -> Option<Chord>;     // root = lowest note; None under 2 classes
-    pub fn quality(self) -> Option<Quality>;                // from the const interval table
-    pub fn name(self) -> ChordName;                         // "Am", "E7"; root + "?" if unnamed
+    pub const fn new(root: PitchClass, quality: Quality) -> Chord;
+    pub fn tones(self) -> impl ExactSizeIterator<Item = PitchClass>;
+    pub const fn contains(self, pc: PitchClass) -> bool;
+    pub fn from_notes(notes: &[Note]) -> Option<Chord>;  // root = lowest note; None under 2 classes
 }
-pub fn snap(note: Note, to: PcSet) -> Note;                 // § 5
-pub fn note_name(n: Note) -> NoteName;                      // "A3", "C#4"
+pub enum SnapTo { Scale(Key), Chord(Chord) }
+pub const fn snap(note: Note, to: SnapTo) -> Note;       // total; ties go down (§ 5.1)
 ```
 
-`ChordName`, `NoteName` and `DegreeLabel` are fixed-size, stack-only strings.
+Names come through `Display`, with no heap: `Note` ("A3", "C#4"), `PitchClass`, `Chord` ("Am", "E7", "Bm7b5") and `DegreeLabel` ("iv", "V7", "iio", "III+"). There is no unnamed chord, so no "?".
+
+Compile-time checks: every named scale holds its root and has 5 or 7 notes; every named 7-note scale's degrees stack to an exact quality, triads and sevenths; every quality has its root and 3 or 4 tones, and no two share a set.
 
 ### 2.1 Custom scales (owner, 2026-09-30)
 
-A scale is a `Scale(u16)`: a set of pitch classes counted from the tonic, which always holds the root (`Scale::new` sets bit 0 and `toggle` never clears it). MAJOR and MINOR are two named values of it; a CUSTOM scale is any other set the user picks. Snapping, degree-to-chord and naming don't know the difference.
+A scale is a `Scale(u16)`: a set of pitch classes counted from the tonic that always holds the root (`Scale::custom` sets bit 0 and `toggle` never clears it). The ten named scales are values of it; CUSTOM is any other set the user picks. Snapping, degree-to-chord and naming don't know the difference.
 
-- **Degrees** are the scale's own notes, ascending from the root: degree n is the set's n-th note, so a 7-note set has I–VII and a 5-note set I–V.
-- **A degree's chord** stacks every other note of the set: the degree's note and the notes two and four places further up, wrapping an octave. For a 7-note set this is stacking thirds within the set, so MAJOR and MINOR give their usual triads; for fewer than 7 notes it is the owner's every-other-note rule. A set of more than 7 notes uses the same rule.
-- A set of one or two notes gives one-class chords; `snap` works on any set, which always holds the root.
+- **Degrees** are the scale's own notes, ascending from the root: degree n is the set's n-th note. `Degree` stops at VII; on a set of fewer notes a degree wraps round the set (degree VI of a 5-note set is its I).
+- **A degree's chord** stacks every other note of the set: the degree's note and the notes two and four places up (and six for a seventh), wrapping an octave. For a 7-note set this is stacking thirds within the set; for fewer notes it is the owner's every-other-note rule; a set of more than 7 uses the same rule.
+- The stack is then named as the nearest `Quality` (§ 2.2, choice 1).
 - Microtuning (Scala `.scl`/`.kbm`, the MIDI Tuning Standard) is not this: it is private issue #217.
+
+### 2.2 Choices made on `orbit-core`, adopted here
+
+1. **Nearest quality.** `Chord::from_notes` and `Key::chord` name a set as the nearest `Quality`: 2 points per shared tone, −1 per missing or extra tone, ties to table order. **For the owner:** see § Conflicts.
+2. Custom and pentatonic sets stack every other note, as the owner ruled: A minor pentatonic gives A7sus4, C6 and D7sus4 on I–III.
+3. Names are ASCII, sharps only: "dim"/"o" for diminished, "m7b5"/"7b5" for half-diminished.
+4. Octaves are named with C4 = 60.
+5. RANDOM draws uniformly over the whole walk (pool × (RANGE + 1)); a note RANGE pushes past 127 folds down an octave at a time.
+6. PING-PONG over a walk of one note stays put.
+7. MUTATE's swap takes a random note **of the key** in `[C(OCTAVE), C(OCTAVE + RANGE + 1))`, capped at 127, stored unsnapped.
+8. A nudge picks uniformly among the hits with a free neighbour, then uniformly between its free sides.
+9. On every hit, the CHANCE draw comes first, then the walk's; CHANCE fires when `below(100) < p`.
+10. A ring's `Rng` is xorshift32 seeded by SplitMix32 of `seed + (ring + 1) · 0x9E3779B9`.
+11. `Ring::new` defaults: CHANCE 100 %, MUTATE 0, GATE 50 %, VEL 100, ACCENT 0, RANGE 0, SNAP SCALE, POOL, UP, a one-note pool at OCTAVE's C.
+12. A STEP ring plays `notes[i % steps]` as stored; OCTAVE transposes the stored notes when turned (§ 3.4), not at play time.
 
 ## 3. The pure core: `chimera-core::orbit`
 
-### 3.1 Settings (UI-owned, saved)
+Built on `orbit-core` (1a53721, a6d3ac8, 48f0a9e): the fill, the pool, the walk, the ring's `play`, `mutate` and the dice. `Scene`, `ChordRing`, `harmony`, `segment_at` and `block` are not built yet; § 3.1's scene types and § 3.6 are this spec's.
+
+### 3.1 Types
+
+Built:
 
 ```rust
-pub const RINGS: usize = 5;
-pub const SCENES: usize = 8;
-pub const MAX_STEPS: u8 = 32;     // the RHYTHM page's STEPS bar is drawn over 32 (mockup)
-pub const MAX_POOL: usize = 8;
-pub const MAX_SEGS: usize = 8;
-
-pub struct Scene {
-    pub chords: ChordRing,
-    pub rings: [Ring; RINGS],
-    pub seed: u32,
-}
-pub struct ChordRing {
-    pub tonic: PitchClass,                  // KEY
-    pub scale: ScaleKind,                   // SCALE: Major, Minor or Custom
-    pub custom: Scale,                      // the CUSTOM set, kept while a named scale is picked
-    pub bars: Bars,                         // 1..=8: the loop
-    pub segs: Segs,                         // 1..=8, split evenly over the loop
-    pub degrees: [Degree; MAX_SEGS],
-    pub played: [Option<Chord>; MAX_SEGS],  // a played chord overrides the degree
-}
+pub const RINGS: usize = 5; pub const MAX_STEPS: u8 = 32; pub const MAX_POOL: usize = 8;
+pub struct RingIdx(u8);                   // 0..5
+pub struct Steps(u8);                     // 1..=32 (the RHYTHM page's STEPS bar is drawn over 32)
+pub struct Fill { .. }                    // STEPS, HITS ≤ STEPS, ROTATE mod STEPS: new -> Option
+pub struct HitMask { bits: u32, steps: Steps }   // is_hit, hit_index, moved(from, to) -> Option
+pub struct Pct(u8);                       // 0..=100
+pub struct Rng(u32);                      // xorshift32; for_ring(seed, RingIdx)
+pub struct Pool { .. }                    // 1..=8 notes, kept sorted
+pub enum Walk { Up, Down, Random, PingPong }
+pub struct Octave(u8);                    // 0..=8; low() = MIDI 12·(n+1)
+pub enum Range { Zero, One, Two, Three }
+pub enum SnapTo { Scale, Chord }          // the ring's setting; resolved to theory's SnapTo by Harmony
+pub enum NoteMode { Step, Pool }
+pub struct Harmony { pub key: Key, pub chord: Chord }
 pub struct Ring {
-    // RHYTHM
-    pub steps: Steps, pub hits: u8, pub rotate: u8,  // Euclidean fill
+    fill: Fill, hits_mask: HitMask,       // private, kept in step: with_fill re-lays the mask
     pub chance: Pct, pub mutate: Pct, pub mute: bool,
-    // VOICE
     pub gate: Pct, pub velocity: Velocity, pub accent: u8,
     pub octave: Octave, pub range: Range, pub snap: SnapTo,
-    // NOTES
-    pub mode: NoteMode, pub walk: Walk, pub target: Target,
-    // realised pattern and notes: what MUTATE drifts
-    pub hits_mask: HitMask,               // u32, bit i = step i is a hit
-    pub notes: [Note; MAX_STEPS as usize],// STEP: one per step; POOL: the first pool_len, sorted
-    pub pool_len: u8,
+    pub mode: NoteMode, pub walk: Walk,
+    pub notes: [Note; 32],                // STEP: one per step
+    pub pool: Pool,                       // POOL
+}
+pub enum Mutation { Swap { index: usize, note: Note }, Nudge { from: usize, to: usize } }
+pub struct NoteOut { pub note: Note, pub velocity: Velocity, pub gate_fraction: Pct, pub accent: bool }
+pub const ACCENT_BOOST: u8 = 30;          // the VOICE mockup's "+30 VEL"
+```
+
+This spec's (not built):
+
+```rust
+pub const SCENES: usize = 8;
+pub const MAX_SEGS: usize = 8;
+pub struct Scene { pub chords: ChordRing, pub rings: [SceneRing; RINGS], pub seed: u32 }
+pub struct SceneRing {                    // the shell's view of a ring
+    pub ring: Ring,
+    pub target: Target,
     pub rhythm_rev: u8, pub notes_rev: u8,// bumped by the UI when it re-lays either
 }
-pub enum SnapTo { Scale, Chord }
-pub enum NoteMode { Step, Pool }
-pub enum Walk { Up, Down, Random, PingPong }
+pub struct ChordRing {
+    pub tonic: PitchClass,                // KEY
+    pub scale: ScaleKind,                 // SCALE: one of the 10 named, or Custom
+    pub custom: Scale,                    // the CUSTOM set, kept while a named scale is picked
+    pub bars: Bars,                       // 1..=8: the loop
+    pub segs: Segs,                       // 1..=8, split evenly over the loop
+    pub degrees: [Degree; MAX_SEGS],
+    pub played: [Option<Chord>; MAX_SEGS],// a played chord overrides the degree
+}
+pub enum ScaleKind { Major, Minor, Dorian, Phrygian, Lydian, Mixolydian, Locrian,
+                      HarmonicMinor, PentatonicMajor, PentatonicMinor, Custom }  // scale(custom) -> Scale
 pub enum Target { Part(PartId) /* Kit(PartId, KitKey): slice 3 */ }
 ```
 
-Editing STEPS, HITS or ROTATE re-lays `hits_mask = euclid(…)` and bumps `rhythm_rev`, so any nudges MUTATE made to that ring's hits are replaced. Capturing, picking or clearing notes bumps `notes_rev`.
+Editing STEPS, HITS or ROTATE builds a new `Fill`, `Ring::with_fill` re-lays the mask, and `rhythm_rev` bumps, so any nudges MUTATE made are replaced. Capturing, picking or clearing notes bumps `notes_rev`.
 
 ### 3.2 Pure functions
 
-| Function | Does |
-|---|---|
-| `euclid(steps, hits, rotate) -> HitMask` | Step `i` is a hit when `((i + rotate) · hits) mod steps < hits`: the mockup's formula, an even spread (E(3,8) = `x..x..x.`). |
-| `accents(mask, accent) -> HitMask` | The ACCENT fill: `euclid(k, accent, 0)` laid over the ring's `k` hits in order. |
-| `segment_at(phase, segs) -> usize` | The chord segment at a loop phase. |
-| `ChordRing::key() -> Key` | The tonic with `Scale::MAJOR`, `Scale::MINOR` or `custom`, by SCALE. |
-| `harmony(chords, seg) -> Harmony` | `{ scale: key.pcs(), chord: played[seg].unwrap_or(key.triad(degrees[seg])) }`. A degree past a smaller custom set's last clamps to it. |
-| `walk_next(ring, &mut WalkState, &mut Rng) -> Note` | The next pool note: § 3.4. |
-| `mutate(ring, &Harmony, &mut Rng) -> Option<Mutation>` | At a loop boundary: § 3.5. |
-| `block(&mut OrbitState, &Scene, Span, &ClockOut) -> Events` | One block's events: § 3.6. |
+| Function | Does | Built |
+|---|---|---|
+| `euclid(steps, hits, rotate) -> HitMask` | Bjorklund's even spread, rotated so step i plays step i + ROTATE (the mockup formula's direction). Total: HITS clamps, ROTATE wraps. E(3,8) = `x..x..x.`, E(5,8) = `x.xx.xx.`. | yes |
+| `accents(mask, accent) -> HitMask` | The ACCENT fill: `euclid(k, accent, 0)` laid over the ring's k hits in order. | yes |
+| `walk_next(ring, &mut WalkState, &mut Rng) -> Note` | The next pool note: § 3.4. | yes |
+| `Ring::play(i, &mut WalkState, &Harmony, &mut Rng) -> Option<NoteOut>` | One step: § 3.3. | yes |
+| `mutate(ring, &Harmony, &mut Rng) -> Option<Mutation>`, `Ring::apply` | At a loop boundary: § 3.5. | yes |
+| `ChordRing::key() -> Key` | The tonic with the named scale or `custom`, by SCALE. | no |
+| `segment_at(phase, segs) -> usize` | The chord segment at a loop phase. | no |
+| `harmony(chords, seg) -> Harmony` | `{ key, chord: played[seg].unwrap_or(key.triad(degrees[seg])) }`; a degree past a small set wraps (§ 2.1). | no |
+| `block(&mut OrbitState, &Scene, Span, &ClockOut) -> Events` | One block's events: § 3.6. | no |
 
-`Rng` is xorshift32 (4 B), one per ring, seeded at Start and at a scene switch by SplitMix32 from `(scene.seed, ring)`. A separate stream per ring means editing or muting ring 2 never changes ring 4's dice.
+One `Rng` per ring (§ 2.2, choice 10), reseeded from `(scene.seed, ring)` at Start and at a scene switch. A separate stream per ring means editing or muting ring 2 never changes ring 4's dice.
 
-### 3.3 A step's note
+### 3.3 A step's note: `Ring::play`
 
-- **STEP ring:** the step's own `notes[step]`.
-- **POOL ring:** `walk_next`. The walk advances on every hit, sounded or not, so the pool's phase against the hits holds (a 3-note pool on 5 hits comes round in 15, as the NOTES mockup says).
-- Then OCTAVE and RANGE (§ 3.4), then `snap` to the ring's SNAP target (§ 5).
+On a hit, in order: the CHANCE draw; then the note, the step's own `notes[i % steps]` in STEP or `walk_next` in POOL. The draw and the walk happen whether or not the note sounds, so the pool's phase against the hits holds (a 3-note pool on 5 hits comes round in 15, as the NOTES mockup says). A miss or a muted ring returns `None`. Otherwise the note snaps to the ring's SNAP, resolved through `Harmony` to theory's `SnapTo::Scale(key)` or `SnapTo::Chord(chord)` (§ 5), and takes VEL, or `min(VEL + ACCENT_BOOST, 127)` on an accented hit.
 
 ### 3.4 Register and the walk
 
-- A note is stored as a MIDI note. **OCTAVE** (0–8; octave n starts at C of octave n, MIDI 12·(n+1)) is the octave of the ring's lowest note. Turning OCTAVE transposes the ring by whole octaves; capturing notes sets it to the lowest captured note's octave.
+- A note is stored as a MIDI note. **OCTAVE** (0–8; octave n starts at MIDI 12·(n+1)) is the octave of the ring's lowest note. Turning OCTAVE transposes the stored notes by whole octaves; capturing notes sets it to the lowest captured note's octave.
 - **RANGE** (0–3 octaves): a pool walk runs over the sorted pool repeated RANGE more octaves up, arpeggiator style. RANGE 0 is the pool as it is. Mutation picks new notes in `[C(OCTAVE), C(OCTAVE + RANGE + 1))`.
-- **UP** climbs the walk, **DOWN** descends it, **PING-PONG** climbs then descends without repeating the ends, **RANDOM** picks uniformly from the ring's `Rng`.
-- Walk positions reset at Start and at a scene switch, never at a loop boundary, so pools phase freely across loops.
-- The NOTES page's "COMES ROUND IN" figure is `lcm(pool_len · (RANGE + 1), hits)`. The mockup pairs 15 with RANGE 1 OCT; with this rule that page reads 30 at RANGE 1 and 15 at RANGE 0.
+- **UP** climbs the walk, **DOWN** descends it, **PING-PONG** climbs then descends without repeating the ends, **RANDOM** picks uniformly over the whole walk.
+- Walk positions reset at Start and at a scene switch, never at a loop boundary, so pools phase freely across loops. A walk survives its pool shrinking.
+- The NOTES page's "COMES ROUND IN" figure is `lcm(pool.len() · (RANGE + 1), hits)`: 15 at RANGE 0 and 30 at RANGE 1 for the mockup's pool of 3 on 5 hits. The mockup pairs 15 with RANGE 1 OCT; the page follows this rule.
 
 ### 3.5 MUTATE
 
 At each loop boundary, for each ring with MUTATE > 0, one draw: with probability MUTATE the ring changes once, else not at all. A second draw picks the kind, half and half:
 
-- **Swap a note.** A POOL ring replaces one pool note, a STEP ring one step's note, with a random note in the ring's register (§ 3.4). The pool is re-sorted. The new note is stored unsnapped; it snaps when it plays, so it follows the chord.
-- **Nudge a hit.** One hit moves one step earlier or later, wrapping, into a step that is not a hit. The hit count stays. With no free neighbour, nothing moves.
+- **Swap a note.** A POOL ring replaces one pool note (the pool re-sorts), a STEP ring one step's note, with a random note of the key in the ring's register (§ 2.2, choice 7). It is stored unsnapped and snaps when it plays, so it follows the chord.
+- **Nudge a hit.** One hit with a free neighbour moves one step into it, wrapping (`HitMask::moved`). The hit count stays. A full ring has nowhere to nudge.
 
 MUTATE at 0 draws nothing: the ring is locked, and back at 0 it keeps what it became. A scene's first loop after it is adopted is not mutated at that boundary: it plays once as saved.
 
 ### 3.6 `block`
 
-Per block, for each ring in order, `block` finds the step boundaries in the block's window (§ 6.2). For a step that is a hit:
-
-1. The ring's pending note-off, if any, fires first.
-2. CHANCE: one draw from the ring's `Rng`; a miss sounds nothing (but still advances the walk).
-3. A muted ring draws and walks the same, and sounds nothing, so it stays in phase and unmuting changes nothing else.
-4. Else a note-on: the note of § 3.3; velocity VEL, or `min(VEL + 30, 127)` on an accented hit (the VOICE mockup's "+30 VEL"); on the target Part's MIDI channel. The note-off is scheduled GATE × the step's length later.
+Per block, for each ring in order, `block` finds the step boundaries in the block's window (§ 6.2). For each, the ring's pending note-off fires first, then `Ring::play`; a `NoteOut` becomes a note-on on the target Part's MIDI channel, and its note-off is scheduled `gate_fraction` × the step's length later.
 
 Each block's events go out note-offs first, then note-ons, in ring order. `Events` is a fixed array of 2 × `RINGS` entries.
 
@@ -245,7 +275,7 @@ Edits made while a switch is queued go to the queued scene, and apply when it la
 
 ### 4.2 Report (audio → UI)
 
-`OrbitView`, through a take-once triple buffer (ADR 0021), as the scope and `AudioStats` are: running, clock source and measured BPM, loop phase, bar and beat counters, the playing scene and any queued one, the current segment and its chord, and per ring the current step, a fired counter (the dots flash on its change), and the working `hits_mask`, `notes` and `pool_len`. The pages draw the drift from here, and SAVE copies it.
+`OrbitView`, through a take-once triple buffer (ADR 0021), as the scope and `AudioStats` are: running, clock source and measured BPM, loop phase, bar and beat counters, the playing scene and any queued one, the current segment and its chord, and per ring the current step, a fired counter (the dots flash on its change), and the working `hits_mask`, `notes` and `pool`. The pages draw the drift from here, and SAVE copies it.
 
 Capture results come back here too: a counter and the captured notes (§ 5.3).
 
@@ -253,7 +283,7 @@ Capture results come back here too: a counter and the captured notes (§ 5.3).
 
 ### 5.1 The rule
 
-`snap(note, set)`: a note whose pitch class is in the set is unchanged. Otherwise it moves to the nearest note whose class is in the set; **a tie goes down**. A result outside 0..=127 takes the nearest in-set note on the other side. The set is `Harmony.scale` for SNAP SCALE and `Harmony.chord.tones` for SNAP CHORD.
+`snap(note, to: SnapTo)`: a note whose pitch class `to` contains is unchanged. Otherwise it moves to the nearest note whose class it contains; **a tie goes down** (`chimera_theory::TIE`). A result outside 0..=127 takes the nearest member on the other side. `to` is `SnapTo::Scale(harmony.key)` for SNAP SCALE and `SnapTo::Chord(harmony.chord)` for SNAP CHORD; a chord's tones are derived from its root and quality.
 
 ORBIT notes snap once, in the ring, to the ring's SNAP. A note already sounding keeps its pitch until its gate ends.
 
@@ -362,7 +392,7 @@ Settings save with the project through the existing storage layer (ADR 0045). Th
 | 27 | `ORBIT` | `BlockRef::OrbitChords`: KEY, SCALE (MAJOR, MINOR, CUSTOM), BARS, SEGS |
 | 28–32 | `RING1`–`RING5` | `BlockRef::OrbitRing(RingIdx)`: every scalar and enum field of `Ring` |
 
-The PART block (25) gains **SNAP** (ParamId 8) and **HELD** (ParamId 9). `ScaleKind` (MAJOR 0 `MAJOR`, MINOR 1 `MINOR`, CUSTOM 2 `CUSTOM`), `SnapTo`, `NoteMode`, `Walk`, `Target`'s kind and the PART block's SNAP and HELD get exhaustive `DiskCode` tables, pinned in `tests/fixtures/disk_codes_v1.txt`.
+The PART block (25) gains **SNAP** (ParamId 8) and **HELD** (ParamId 9). `ScaleKind` (codes 0–10 in the enum's order, idents `MAJOR` … `PENT_MINOR`, `CUSTOM`), `PitchClass`, `Degree`, `Quality` (16), `Range`, `SnapTo`, `NoteMode`, `Walk`, `Target`'s kind and the PART block's SNAP and HELD get exhaustive `DiskCode` tables, pinned in `tests/fixtures/disk_codes_v1.txt`.
 
 **Records** (all non-critical, so a reader without them still loads the Sounds; each well under `MAX_RECORD_LEN` = 512 B):
 
@@ -370,8 +400,8 @@ The PART block (25) gains **SNAP** (ParamId 8) and **HELD** (ParamId 9). `ScaleK
 |---|---|---|
 | 0x0007 | `Tempo` | BPM as `f32` LE: the tempo record the projects spec reserves |
 | 0x0008 | `OrbitBlock` | scene `u8`, then a `Block` payload (block code, (ParamId, value)*) |
-| 0x0009 | `OrbitNotes` | scene `u8`, ring `u8`, `hits_mask` `u32` LE, `pool_len` `u8`, 32 notes |
-| 0x000A | `OrbitChord` | scene `u8`, segment `u8`, degree code `u8`, played root `u8` (0xFF: none), played `PcSet` `u16` LE |
+| 0x0009 | `OrbitNotes` | scene `u8`, ring `u8`, `hits_mask` `u32` LE, pool length `u8` (1–8), the pool's notes, then 32 step notes; a reader rebuilds `Pool` and `HitMask` through their checked constructors and takes the default on a bad one |
+| 0x000A | `OrbitChord` | scene `u8`, segment `u8`, degree code `u8`, played root code `u8` (0xFF: none), played `Quality` code `u8` |
 | 0x000B | `Orbit` | current scene `u8`, then each scene's seed as `u32` LE (9 of them) |
 | 0x000C | `OrbitScale` | scene `u8`, the CUSTOM set as `u16` LE (bit 0 the root; a reader sets it whatever the file says) |
 
@@ -393,18 +423,18 @@ Estimates for `thumbv7em`; the plan measures them and asserts the engine's size.
 
 | What | Where | Bytes |
 |---|---|---|
-| `Ring` (16 knob bytes, 2 revs, mask 4, notes 32, `pool_len`) | | ≈ 56 |
+| `SceneRing` (`Ring`: fill, mask, knobs, 32 step notes, `Pool`; target, 2 revs) | | ≈ 64 |
 | `ChordRing` (tonic, scale, custom set, bars, segs, 8 degrees, 8 × `Option<Chord>`) | | ≈ 46 |
-| `Scene` (chord ring, 5 rings, seed) | | ≈ 330 |
-| **Engine** (`OrbitRunner`: working `Scene` 330; per ring `Rng`, walk, pending note-off ≈ 16 × 5; clock ≈ 40; capture ≈ 28) | audio shell | **≈ 480** |
+| `Scene` (chord ring, 5 rings, seed) | | ≈ 370 |
+| **Engine** (`OrbitRunner`: working `Scene` 370; per ring `Rng`, walk, pending note-off ≈ 16 × 5; clock ≈ 40; capture ≈ 28) | audio shell | **≈ 520** |
 | `Instrument`: each voice's key and `Origin` | D2 | 16 |
-| `OrbitShared` in `TripleBuffer<AudioShared>` (≈ 340 × 3) | AXI | ≈ 1,020 |
+| `OrbitShared` in `TripleBuffer<AudioShared>` (≈ 380 × 3) | AXI | ≈ 1,140 |
 | `TripleBuffer<OrbitView>` (≈ 224 × 3) | AXI | ≈ 672 |
-| UI: 8 scenes, the live scene, nav and hold state | AXI | ≈ 2,970 |
-| **Total** | | **≈ 5.2 KB** |
+| UI: 8 scenes, the live scene, nav and hold state | AXI | ≈ 3,350 |
+| **Total** | | **≈ 5.7 KB** |
 
-- The engine, all of ORBIT's audio-thread state, is under 512 B: well under 1 KB. `const _: () = assert!(size_of::<OrbitRunner>() <= 512)`.
-- Most of the rest is the eight saved scenes, which are project data like the Sound pool. AXI had 88,892 B free at ADR 0045's measurement; ORBIT takes about 4.7 KB of it. Every new static is added to `AXI_RESIDENT` (`instrument.rs:35-45`).
+- The engine, all of ORBIT's audio-thread state, is about 520 B: well under 1 KB. `orbit-core` measures its part, `STATE_BYTES` (5 rings, walks, `Rng`s and a `Harmony`), at 356 B on the host and asserts it under 1,024. The runner asserts `size_of::<OrbitRunner>() <= 1024`.
+- Most of the rest is the eight saved scenes, which are project data like the Sound pool. AXI had 88,892 B free at ADR 0045's measurement; ORBIT takes about 5.2 KB of it. Every new static is added to `AXI_RESIDENT` (`instrument.rs:35-45`).
 - `chimera-theory`'s tables are a few hundred bytes of flash.
 
 ## CPU
@@ -416,27 +446,27 @@ Per block: a clock step (a `u64` multiply and divide), five step lookups (a `u64
 | Test | Asserts |
 |---|---|
 | **Slice 1** | |
-| `theory::*` (pure, on `orbit-core`) | Every key's scale classes; every degree's triad in MAJOR and MINOR (A minor: i Am, iv Dm, v Em); `Chord::from_notes` roots on the lowest note and returns `None` under two classes; names for the naming table; `snap` for every note against every scale and triad, pinned against a brute-force nearest search. |
-| `scale_always_holds_its_root` | `Scale::new(0)` holds the root; `toggle(root)` is a no-op; every other class toggles; `compile_fail`: building `Scale` from a bare `u16` outside `chimera-theory`. |
-| `named_scales_are_scale_values` | `Scale::MAJOR` and `MINOR` are the expected masks; a CUSTOM set equal to MAJOR gives the same degrees, triads, names and snaps. |
-| `custom_degrees_stack_every_other_note` | C D E G A (5 notes): degrees I–V are C, D, E, G, A; I's chord is C E A, V's is A D G, wrapped; a 7-note custom set's chords are its stacked thirds; a 9-note set follows the same rule. |
-| `snap_to_custom_sets` | Snapping against 1-, 2-, 5- and 12-note sets, pinned against the brute-force search; the 12-note set never moves a note. |
+| `chimera-theory/tests/theory_test.rs` (23, built) | `note_is_checked`, `pitch_class_arithmetic_wraps`, `note_names_c4_is_60`, `scales`, `major_diatonic_triads_and_sevenths`, `harmonic_minor_degrees`, `heptatonic_degrees_name_exact_chords`, `numerals_follow_quality`, `chord_tones_are_derived`, `played_chords_map_to_the_nearest_quality` (root on the lowest note, `None` under two classes), `snap_to_scale`, `snap_to_chord`, `snap_is_pinned_to_brute_force` (every note × 12 roots × 10 scales, 16 qualities and 5 custom sets), `tables_stay_small`. |
+| `scale_always_holds_its_root`, `custom_forces_the_root_and_drops_high_bits` (built) | `Scale::custom(0)` holds the root; `toggle` of the root is a no-op; bits above 11 are dropped; every other interval toggles. |
+| `named_scales_are_scale_values` | The ten named scales are the expected masks; a CUSTOM set equal to MAJOR gives the same degrees, chords, names and snaps. |
+| `pentatonic_stacks_every_other_note`, `custom_pentatonic_sized_set`, `custom_two_note_set`, `custom_chromatic_set` (built) | A 5-note set's degrees are its notes and wrap past V; its chords stack every other note and are named by the nearest quality (A minor pentatonic: A7sus4, C6, D7sus4); 2- and 12-note sets stay total. |
+| `snap_to_a_custom_set` (built) | Snapping to a custom key, pinned against the brute-force search; the 12-note set never moves a note. |
 | `chrd_custom_circle` | Turning SCALE to CUSTOM opens the circle; encoder A moves the cursor, encoder B and EDIT toggle, the root can't be cleared; screen golden. |
 | `custom_scale_round_trips` | `OrbitScale` encodes and decodes every set; a file with bit 0 clear loads with the root set; SCALE's codes are pinned. |
-| `snap_ties_go_down` | D against {C, E} gives C; against {C, E} an octave up, the lower. |
-| `snap_stays_in_midi_range` | Note 127 against a set whose nearest upward member is past 127 snaps down; the same at 0. |
-| `euclid_spreads_evenly` | E(3,8) = `x..x..x.`, E(5,13) and E(9,16) against Bjorklund up to rotation; hits = 0 and hits = steps; ROTATE shifts. |
-| `accents_ride_the_hits` | ACCENT 2 over 5 hits marks hits 0 and 2 in order, whatever the mask's nudges. |
+| `snap_ties_go_down` (built) | D against C and E snaps to C. |
+| `snap_stays_in_midi_range` (built) | A note whose nearest member is past 127 (or below 0) takes the one on the other side. |
+| `known_euclidean_rhythms`, `every_fill_is_even`, `rotate_shifts_like_the_spec_formula`, `steps_past_the_bar_wrap`, `hit_index_counts_hits`, `ranges_are_types` (built) | Tresillo `x..x..x.`, cinquillo `x.xx.xx.`, 4/16, 5/12, 5/13, 0 and full; every n ≤ 32 and k is even; ROTATE's direction; `Fill::new` refuses HITS > STEPS. |
+| `accents_ride_the_hits`, `accents_play_louder` (built) | ACCENT 2 over 5 hits marks hits 0 and 2 in order, whatever the mask's nudges; an accented hit plays `min(VEL + 30, 127)`. |
 | `step_index_is_exact_for_any_count` | For every count 1–32, step boundaries from `phase` land on `k/n` of a bar to within one 2⁻³² unit, and a bar holds exactly n steps. |
 | `internal_clock_never_drifts` | One hour at 97.3 BPM: bar `n` starts at sample `round(n · bar_len)` ± 0. |
 | `steps_fire_within_half_a_block` | Every event's block start is within ±32 samples of its exact time, for 13 steps at 137 BPM over 100 bars. |
-| `pool_walks_phase` | A 3-note pool UP on 5 hits repeats every 15 hits; with RANGE 1 every 30; PING-PONG doesn't repeat its ends; DOWN mirrors UP. |
-| `the_walk_advances_on_a_missed_hit` | CHANCE 50%: the notes of the hits that sounded are the UP sequence's at those hit indices. |
-| `mute_changes_nothing_else` | Two runs, ring 2 muted in one: rings 1, 3, 4 and 5 emit identical events; unmuting ring 2 mid-run gives it the notes the unmuted run had from that step. |
+| `pool_is_one_to_eight_sorted_notes`, `walk_modes`, `range_walks_the_pool_up_octaves`, `pool_walks_phase`, `walk_survives_a_shrinking_pool` (built) | `Pool::new` refuses 0 or 9 notes and sorts; UP, DOWN, PING-PONG (no repeated ends), RANDOM over the whole walk; a 3-note pool on 5 hits repeats every 15 hits, 30 at RANGE 1. |
+| `the_walk_advances_on_a_missed_hit`, `chance_full_always_fires_and_zero_never`, `step_rings_play_each_steps_note`, `notes_snap_to_the_ring_target` (built) | The walk and the draw run on every hit; CHANCE 100 % always and 0 % never; a STEP ring plays each step's note; `play` snaps to the key or the chord. |
+| `mute_sounds_nothing_and_keeps_the_dice` (built); `mute_changes_nothing_else` | A muted ring draws and walks as unmuted; two runs, ring 2 muted in one, give identical events on the other rings, and unmuting ring 2 gives it the unmuted run's notes from that step. |
 | `rings_have_their_own_dice` | Changing ring 2's CHANCE leaves ring 4's events unchanged. |
-| `mutate_zero_locks` | MUTATE 0 for 100 loops: the ring's mask and notes never change. |
-| `mutate_keeps_count_and_register` | MUTATE 100% for 1,000 loops: the hit count is constant, every note stays in the register, and every sounded note is in the snap set. |
-| `mutate_back_to_zero_freezes` | MUTATE 100% for 10 loops, then 0: the mask and notes from then on equal those at loop 10. |
+| `mutate_zero_locks` (built) | 10,000 calls at MUTATE 0 draw nothing; 100 loops leave the ring unchanged. |
+| `mutate_keeps_count_and_register`, `a_full_ring_has_nowhere_to_nudge` (built) | 1,000 loops in POOL and STEP, OCTAVE 0, 3 and 8, RANGE 0, 1 and 3: the hit count holds, every swapped note is in the key and the register; a full ring never nudges. |
+| `mutate_back_to_zero_freezes`, `a_fixed_seed_replays_exactly`, `rng_is_seeded`, `rng_below_and_chance`, `state_fits_in_a_kilobyte` (built) | Back at 0 the ring keeps what it became; a seed replays exactly; `STATE_BYTES < 1024`. |
 | `gate_off_precedes_the_next_on` | GATE 100% on a ring whose notes repeat: each block orders the off before the on, and no voice is released by the wrong event. |
 | `orbit_events_reach_parts_like_midi` | An ORBIT note-on for Part 2 renders bit-identically to the same `NoteEvent` from a keyboard. |
 | `orbit_off_never_releases_a_held_key` | A live key held on note 60, ring on Part 1 playing 60: the ring's note-offs leave the live voice held. |
@@ -469,7 +499,7 @@ Per block: a clock step (a `u64` multiply and divide), five step lookups (a `u64
 | `orbit_off_keeps_orbit_records` | A build without `orbit` loads and re-saves a project with ORBIT records unchanged. |
 | `part_snap_default_is_neutral` | A PART block without SNAP and HELD decodes to OFF and STAY. |
 | **Every slice** | |
-| Size assert | `OrbitRunner <= 512` B, printed in `memory_budget_test`; `AXI_RESIDENT` still fits. |
+| Size assert | `STATE_BYTES < 1024` (built) and `OrbitRunner <= 1024` B, printed in `memory_budget_test`; `AXI_RESIDENT` still fits. |
 | Existing suites | Goldens, instrument, allocator, codec and page tests pass unchanged; the SEQ tests move from press to tap. |
 
 ## Slices and plan order
@@ -508,7 +538,7 @@ Each task leaves the tree green. ADRs are written where the decision lands, at t
 ## Out of scope
 
 - Per-step probability: floated, not agreed.
-- More named scales than MAJOR and MINOR (a CUSTOM set covers any other), and progression chords beyond three notes. Filed as a follow-up when the owner asks.
+- Named scales beyond the ten built (a CUSTOM set covers any other), and progression chords beyond triads (`Stack::Seventh` exists in theory; no page offers it). Filed as a follow-up when the owner asks.
 - Microtuning: Scala `.scl`/`.kbm` files and the MIDI Tuning Standard, private issue #217.
 - Morphing between scenes (the owner chose no morph).
 - Sending MIDI clock, and Song Position Pointer.
@@ -561,7 +591,7 @@ Each task leaves the tree green. ADRs are written where the decision lands, at t
 - **The engine owns the drift; the UI owns the knobs; revs say who wins:** MUTATE is sample-exact on the audio thread, and edits still apply at once (§ 4.1).
 - **One `Rng` per ring:** editing one ring never reshuffles another (§ 3.2).
 - **A missed or muted hit still walks and draws:** the phase between rings and pools is kept (§ 3.6).
-- **Memory: engine ≤ 512 B; about 5.2 KB in all, mostly saved scenes in AXI** (§ Memory).
+- **Memory: engine ≈ 520 B, asserted under 1 KB; about 5.7 KB in all, mostly saved scenes in AXI** (§ Memory).
 - **The live scene saves as scene 8:** a project reloads exactly where it was (§ 8).
 - **Codes and codec outside the `orbit` feature:** a firmware with ORBIT off never drops a project's ORBIT data (§ 8).
 
@@ -569,7 +599,7 @@ Each task leaves the tree green. ADRs are written where the decision lands, at t
 
 These fill gaps in the mockups and the owner's decisions. Each is the smallest choice that makes the pages work; any can change without touching the rest.
 
-- **Named scales:** MAJOR and MINOR (natural), the two in the owner's examples, beside CUSTOM; progression chords are three notes, as the CHORDS mockup shows (Am, Dm).
+- **Named scales:** the ten built on `orbit-core` (MAJOR, MINOR, the five other modes, HARMONIC MINOR, the two pentatonics), beside CUSTOM; progression chords are triads, as the CHORDS mockup shows (Am, Dm).
 - **Custom sets of more than 7 notes** use the every-other-note rule too, so an 8-note diminished set gives diminished triads and a 12-note set gives clusters.
 - **The CUSTOM circle:** turning SCALE to CUSTOM opens it as a CHRD sub-page; encoder A moves the cursor and encoder B or EDIT toggles. A fresh CUSTOM set starts as the named scale picked before it.
 - **Ranges:** STEPS 1–32 (the mockup's bar is drawn over 32); SEGS 1–8 (drawn over 8); OCTAVE 0–8 (drawn over 8, with C4 = 60); internal BPM 30–300 in steps of 1, default 120.
@@ -585,6 +615,10 @@ These fill gaps in the mockups and the owner's decisions. Each is the smallest c
 - **PART SNAP and HELD** sit on the Part's mixer page with its other per-Part settings; HELD's values read STAY and RE-SNAP.
 - **The init scene** starts from the ORB mockup's rings (4/4, 3/3, 5 in 13 rotated 2, 3 in 8 muted, 9 in 16 rotated 1) in A minor, i–iv–v–i over one bar; ring n targets Part n; pools are the tonic triad in each ring's octave. It is tuned with the owner in slice 1, task 4.
 
+## Conflicts for the owner
+
+- **Nearest-quality naming changes a chord's tones** (§ 2.2, choice 1). The owner ruled that a custom set's chord stacks every other note, and that a played chord's tones are what snapping uses. `orbit-core` stores a chord as a root and a `Quality`, so a stack or a played chord that names no quality becomes the nearest named one, with different tones: C D E G A's stack C E A becomes C6 (C E G A), adding G; a played C E A snaps to C E G A too. The alternatives: keep it (names always exist, one more tone), or give `Chord` a third form holding the exact set, unnamed. The spec keeps the built behaviour until the owner rules.
+
 ## Open questions
 
-None.
+None beyond § Conflicts.
