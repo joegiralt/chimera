@@ -38,7 +38,7 @@
 
 ## Spec ambiguities ruled here
 
-- **DECAY → DAMP direction.** DAMP runs short → long on every model (§ 1). Today's bank DECAY already did, and today's string DECAY ran the other way. So the translation is DAMP = DECAY on BANK, and DAMP = 1 − DECAY on STRING, SYMP and BOWED. BRIGHT carries over as-is, as § 3 says. Today's string BRIGHT ran dark at the top, so an old string patch's tone flips. That fixes the knob to match its name.
+- **DECAY → DAMP direction.** DAMP runs short → long on every model (§ 1). Today's bank DECAY already did, and today's string DECAY ran the other way. So the translation is DAMP = DECAY on BANK, and DAMP = 1 − DECAY on STRING, SYMP and BOWED. Today's string BRIGHT ran dark at the top. The knob now runs dark → bright on every model, and an old patch must keep its tone (owner, spec § 3: old patches load and keep their sound where the fix allows), so BRIGHT = 1 − BRIGHT on STRING, SYMP and BOWED and as-is on BANK. INIT's BRIGHT becomes 0.3, today's INIT tone in the new direction.
 - **The 10 Hz DC blocker vs G1.** In the loop, at 49 Hz, the blocker is a 31-sample phase advance. Keeping G1 in tune (±2 cents) needs a 1,011-sample line. The line grows to 1,016 samples, not the corner down. That costs about 4.6 KB of the ~126 KB D2 headroom. It is the plan's one departure from "no D2 growth", and it partly supersedes ADR 0040 (in ADR 0056).
 - **"No duplicate intervals".** The halo table is Rings' single-voice chords with the 0.0 dropped, since the main string plays that note. That leaves 7 distinct intervals per chord. Rings' 0.01-apart pairs (3.0 / 3.01) are its detuned chorus, and they stay.
 - **MODEL order.** The encoder keeps today's value order (STRING, BANK, BOWED, SYMP). Only the shown names change. § 1's list is names, not an order.
@@ -271,7 +271,7 @@ pub fn page_cells(mode: ResonatorMode) -> [Option<ParamId>; 6];
   - EXCITE, BODY: continuous. ENS_DEPTH, ENS_RATE, ENS_MIX: labels `ENS.D ENS.R ENS.M`, idents unchanged (`E.DPT E.RAT E.MIX`). COUPLE, HALO: continuous.
   - MODES: `choice(16, "MODES", ValFmt::Names(&["16", "24", "32", "48"]), 3.0, 2.0).ident("MODES")`.
 - The defaults. They are today's default translated (Task 4 proves it bit for bit):
-  - MODE String, STRUCTURE 0.0, BRIGHT 0.7, DAMP `1.0 - 0.3` (write it as that expression), POS 0.0.
+  - MODE String, STRUCTURE 0.0, BRIGHT `1.0 - 0.7` (write it as that expression: today's INIT tone, new direction), DAMP `1.0 - 0.3` (likewise), POS 0.0.
   - EXCITE 0.8, BODY 0.3, ENS_DEPTH 0.0, ENS_RATE 0.3, ENS_MIX 0.0.
   - COUPLE 0.25, HALO 0.25, MODES `M32`.
 - `reads` (MODE is read by every model):
@@ -365,6 +365,7 @@ pub fn decode_block(payload: &[u8], migrations: &[Migration], translations: &[Tr
 - `pub fn translate_v1(old: &Retired, blk: &mut dyn Block)` in `modal/params.rs` reads MODE from `blk` (already written). Each rule applies only when its source is present, through `blk.set`:
   - DAMP: `decay` on BANK (`ResonatorMode::Modal`); `1.0 - decay` on STRING, SYMP and BOWED.
   - STRUCTURE: `stiff` on STRING and BOWED; `inharm` on BANK and SYMP.
+  - BRIGHT (a kept id, already written live): `1.0 - bright` on STRING, SYMP and BOWED; untouched on BANK. It runs only inside the translation, so a new-format file is never inverted.
   - FDBK is ignored.
 
 - [ ] **Step 1: Write the failing tests** in `codec_compat_test.rs`.
@@ -376,7 +377,8 @@ pub fn decode_block(payload: &[u8], migrations: &[Migration], translations: &[Tr
 let m = &snap.modal;
 let (damp, structure) = match mode { Modal => (0.2, 0.7), String | Bowed => (1.0 - 0.2, 0.35), Sympathetic => (1.0 - 0.2, 0.7) };
 assert_eq!((m.damp, m.structure), (damp, structure), "{mode:?}");
-assert_eq!((m.excite, m.bright, m.pos, m.body), (0.6, 0.9, 0.4, 0.5));
+let bright = if mode == Modal { 0.9 } else { 1.0 - 0.9 };
+assert_eq!((m.excite, m.bright, m.pos, m.body), (0.6, bright, 0.4, 0.5), "{mode:?}");
 assert_eq!((m.ens_depth, m.ens_rate, m.ens_mix), (0.1, 0.2, 0.3));
 assert_eq!((m.couple, m.halo, m.modes), (0.25, 0.25, BankModes::M32));
 ```
