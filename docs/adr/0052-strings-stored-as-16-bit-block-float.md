@@ -1,6 +1,6 @@
 # 0052. Store Modal's string delay lines as 16-bit block float
 
-- **Status:** Superseded by 0053 (2026-09-29, never accepted). ADR 0053
+- **Status:** Superseded by 0054 (2026-09-29, never accepted). ADR 0054
   (the sympathetic slot pool) is written in exclusive-state plan Task 9.
 - **Deciders:** project owner
 
