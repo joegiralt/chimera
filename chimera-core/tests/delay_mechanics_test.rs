@@ -51,10 +51,11 @@ fn transport(p: &DelayParams, n: usize) -> Vec<f32> {
 
 #[test]
 fn mech_zero_is_todays_delay_at_wow_zero() {
-    // Recorded from the delay before MECHANICS (ff02c75) at WOW 0.
+    // Recorded from the delay before MECHANICS (ff02c75) at WOW 0, its
+    // SAT divide replaced by the same once-a-block reciprocal (ADR 0053).
     let today = [
-        (10.0, 0x64a203f883890bd1),
-        (120.0, 0x496dcfdfed4ba0ab),
+        (10.0, 0x6282170d7779ab0f),
+        (120.0, 0x84225d77f1a9d766),
         (375.0, 0x108cf3247927e80d),
         (500.0, 0xf16f40ef5151fc0d),
     ];
