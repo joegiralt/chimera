@@ -338,6 +338,7 @@ impl Renderer {
                 dungeon_map::draw(
                     display,
                     nav,
+                    f.ctx.model,
                     (self.branch_scroll.current() * theme::BRANCH_LINE_HEIGHT as f32) as i32,
                 );
             }

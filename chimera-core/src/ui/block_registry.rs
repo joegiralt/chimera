@@ -26,7 +26,7 @@ const EMPTY: ParamSlot = ParamSlot::EMPTY;
 pub static MODAL_1: BlockDef = BlockDef {
     id: 2,
     name: "Modal",
-    short: "MDL",
+    short: "RES",
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [

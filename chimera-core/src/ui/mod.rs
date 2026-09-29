@@ -896,6 +896,7 @@ impl UiState {
                 node,
                 sub,
                 region::quantize(self.renderer.branch_scroll.current()),
+                f.ctx.model as u8,
             ),
             RegionKind::Grid => RegionData::grid_with_value(
                 self.matrix_state.sel_row as u8,

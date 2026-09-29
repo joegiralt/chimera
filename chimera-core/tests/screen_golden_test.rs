@@ -37,11 +37,11 @@ const GOLDENS: &[(&str, u64)] = &[
     ("amp_vel_dimmed", 0x906c5da68f92294b),
     ("amp_vel_live", 0xe969b1ab3a3e37fb),
     ("algo_pitch", 0x90d2841bef4b43a6),
-    ("modal_pitch", 0xecd2cbfd3f40c2e6),
-    ("modal_home", 0x79a986c68cffa28e),
-    ("modal_mdl2_symp", 0x63de2e02e6d7a52c),
-    ("modal_home_bowed", 0x228b228d8ef59bb7),
-    ("modal_amp", 0xad2feb025c2dfa59),
+    ("modal_pitch", 0x5328efddda86574b),
+    ("modal_home", 0x0fbdc9c730c39a81),
+    ("modal_mdl2_symp", 0x6b93570620208bbf),
+    ("modal_home_bowed", 0x5d03666d65823f51),
+    ("modal_amp", 0x75fb1c0ad4baef3c),
     // The Mix chain's map loses its TAPE node without `master-tape`
     // (ADR 0055); with it, the screens are as before.
     #[cfg(not(feature = "master-tape"))]
@@ -76,7 +76,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("mixer_master_level", 0x7554d112cc792b98),
     ("mod_matrix", 0x1ac795629104192b),
     ("mod_matrix_wide", 0x4605f59b8c26e5b8),
-    ("sound_browser", 0xaf0c38105a4aee59),
+    ("sound_browser", 0xc1a53459edabbb6b),
     ("system", 0xbadd5e55da36c80d),
     ("system_theme", 0x6f46ed28ddb10559),
     ("system_audio", 0x281985b580ac2fb1),
