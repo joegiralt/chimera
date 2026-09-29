@@ -231,13 +231,14 @@ Each task leaves the tree green.
 - Exclusive state is sub-project 1 of Modal 2. Modal 2 follows in its own spec.
 - A voice holds only its active engine, in an exclusive slot rebuilt in place. This supersedes ADR 0008.
 - Modal holds only its active model's state (bank, single string, or sympathetic strings). Bowed stays as it is here and becomes an exciter in Modal 2.
-- An engine or MODE change fades that Part's sounding voices over about 3 ms (the existing 128-sample fade). Each slot is rebuilt once silent, and the new kind plays from the next note. An idle voice switches at once. Other Parts and the FX tails are untouched.
+- An engine or MODE change fades that Part's sounding voices over about 3 ms (the existing 128-sample fade). Each slot is rebuilt once silent, and the new kind plays from the next note; a held key restarts on it. An idle voice switches at once. Other Parts and the FX tails are untouched.
 - Knob moves never rebuild; they reshape ringing notes, as today and as in Rings.
 - String and sympathetic delay lines are stored as i16, computed in f32, saturating at write, and tested against f32 at −90 dB.
 - Engine sound, the cost model, 8 voices, the UI and the #191 behaviours don't change here.
 - The freed memory is headroom for Modal 2's exciters and is not spent here.
+- The 16-bit strings use a per-string block exponent (§ 4), with the gate defined as RMS error re full scale over one second with FDBK 0, plus envelope and bounds checks for self-oscillating feedback. Chosen over f32 strings, which would free only ~13 KB.
+- A held key restarts its note on the new engine or model after the fade, as engine changes already do.
 
 ## Open questions
 
-1. **The 16-bit gate.** Plain Q1.14 can't meet −90 dB, and with rounding the strings never go quiet (§ 4). This spec adds a per-string block exponent, which meets it. It also defines the gate as RMS error re full scale over one second with FDBK 0, plus envelope and bounds checks for self-oscillating feedback. Bowed passes with 0.6 dB to spare. Accept this, or keep the strings in f32 and bank only exclusivity's ~13 KB?
-2. **Held keys on a switch.** Today a held key restarts its note on the new engine after the fade, and this spec extends that to MODE. Should a held key instead stay silent until the next note-on, a literal reading of "plays from the next note"?
+None.
