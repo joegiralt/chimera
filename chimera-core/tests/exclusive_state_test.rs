@@ -9,8 +9,8 @@ use chimera_core::addr::{BlockRef, Blocks};
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::modal::{ModalParams, ResonatorMode};
 use chimera_core::dsp::voice::Voice;
-use chimera_core::hw::{CPU_HZ_REV_V, DAC_PAIRS, MAX_VOICES, SampleBudget};
-use chimera_core::instrument::{AudioShared, Instrument};
+use chimera_core::hw::{CPU_HZ_REV_V, MAX_VOICES, SampleBudget};
+use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
 use chimera_core::modulation::ModState;
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::{EngineType, ParamSnapshot};
@@ -254,7 +254,7 @@ fn other_parts_are_untouched_by_a_switch() {
     let run = |switch: bool| {
         let (mut inst, mut fx) = instrument();
         let mut scope = scope_writer();
-        let mut dac = [[0.0f32; BLOCK_SIZE * 2]; DAC_PAIRS];
+        let mut dac = Box::new(DacBlocks::new());
         let (mut bus, mut outs) = (Vec::new(), Vec::new());
         for b in 0..60 {
             let s = if switch && b >= 21 {
@@ -272,7 +272,7 @@ fn other_parts_are_untouched_by_a_switch() {
             }
             inst.render(&mut fx, &mut dac, s, &mut scope);
             bus.push(bits(inst.part_bus(1)));
-            outs.push(dac.map(|pair| pair.map(f32::to_bits)));
+            outs.push(dac.out().map(|pair| pair.map(f32::to_bits)));
         }
         (bus, outs)
     };
@@ -372,7 +372,7 @@ fn a_steal_across_kinds_plays_the_new_kind_clean() {
     shared.parts[1].params = sym();
     let (mut inst, mut fx) = instrument();
     let mut scope = scope_writer();
-    let mut dac = [[0.0f32; BLOCK_SIZE * 2]; DAC_PAIRS];
+    let mut dac = Box::new(DacBlocks::new());
     for n in 0..MAX_VOICES as u8 {
         inst.handle(event(0, 60 + n, NoteKind::On(vel())), &shared);
     }
@@ -436,7 +436,7 @@ fn a_voice_rebuilds_at_most_three_times_a_block() {
     let mut inst = Box::new(Instrument::new(SR, SampleBudget::for_cpu(u32::MAX)));
     let mut fx = Box::new(FxBus::new());
     let mut scope = scope_writer();
-    let mut dac = [[0.0f32; BLOCK_SIZE * 2]; DAC_PAIRS];
+    let mut dac = Box::new(DacBlocks::new());
     // Seven held tri notes; the eighth voice ends idle on String.
     for n in 0..MAX_VOICES as u8 - 1 {
         inst.handle(event(2, 60 + n, NoteKind::On(vel())), &shared);
@@ -488,7 +488,7 @@ fn a_switch_storm_never_rebuilds_a_voice_more_than_three_times_a_block() {
     let mut inst = Box::new(Instrument::new(SR, SampleBudget::for_cpu(u32::MAX)));
     let mut fx = Box::new(FxBus::new());
     let mut scope = scope_writer();
-    let mut dac = [[0.0f32; BLOCK_SIZE * 2]; DAC_PAIRS];
+    let mut dac = Box::new(DacBlocks::new());
     let mut worst = 0;
     for _ in 0..3000 {
         let before = inst.rebuilds();

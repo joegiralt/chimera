@@ -136,6 +136,13 @@ types and the real `Instrument` (#190) measured:
   per sample on the M7 (static count of the release build), all three
   pairs every block, so an estimated 50–65 cycles per sample, pending a
   bench reading.
+  - Latest bench (2026-09-29, rev V at 480 MHz, the limiter on
+    `DacBlocks`): MIX 223 against ADR 0031's 148, so the limiter is 75
+    cycles per sample; BUS 1,469 (1,495 before `DacBlocks` and the delay's
+    loop state in locals), before the delay's SAT reciprocal.
+  - Then BUS 1,468 with the SAT reciprocal (87c2930), and 1,155 with the
+    master tape off the chain (b34a66a, ADR 0055): `FxBus::COST` 1,160
+    (1,470 with `master-tape`).
   - The bench's BUS row runs `mix_parts`, so it times the limiter.
   - `FxBus::COST` (1,360) is the reading from before the limiter and stays
     until a bench run replaces it.
@@ -147,6 +154,11 @@ types and the real `Instrument` (#190) measured:
 - Memory: `Limiter` is 1,688 bytes inside `FxBus`, in AXI SRAM: one block
   of all three pairs (1,536 B) and the gain state. No heap. Flash grows by
   about 2.7 KB.
+  - Since 2026-09-29 the lookahead block is the DAC's second block
+    (`DacBlocks`, owned by the shell beside the first): the limiter scales
+    the older block in place instead of copying through its own, so
+    `Limiter` keeps only the gain state (152 B) and the output is
+    unchanged, bit for bit.
 - The five instrument goldens were re-recorded. Each is exactly its old
   render × 1/√8 (one f32 multiply per sample), one block late. Main's
   hashes are kept as the pre-limiter check. The per-voice and FX goldens

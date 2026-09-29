@@ -1,13 +1,33 @@
-//! Tape-style delay with wow/flutter, saturation, and high-frequency rolloff.
-//! Inspired by Roland Space Echo / analog tape delay character.
+//! Tape-style delay with MECHANICS (wow and flutter), saturation, and
+//! high-frequency rolloff. Inspired by Roland Space Echo / analog tape delay
+//! character.
 
 use crate::block::{Block, ParamId, ParamSpec, ValFmt};
+use crate::dsp::{sin_turns, xorshift_noise};
 use chimera_hal::BLOCK_SIZE;
 use core::mem::MaybeUninit;
+use core::ptr::addr_of_mut;
 
-/// 500 ms at 48 kHz plus headroom for the ±20-sample wow/flutter swing
+/// 500 ms at 48 kHz plus headroom for the transport's swing
 /// (ADR 0014: the delay's range is 10..500 ms so the FX bus fits AXI).
-const MAX_DELAY_SAMPLES: usize = 24_064;
+pub const MAX_DELAY_SAMPLES: usize = 24_064;
+
+/// MECHANICS (ADR 0053), each depth linear in the knob. The slow wow is
+/// today's: 0.5 Hz, ±14 samples at full.
+pub const WOW_HZ: f32 = 0.5;
+pub const WOW_SAMPLES: f32 = 14.0;
+/// The flutter: half a capstan sine, half band-limited noise, ±8 samples
+/// at full.
+pub const FLUTTER_SAMPLES: f32 = 8.0;
+pub const CAPSTAN_HZ: f32 = 9.0;
+/// The noise: white through two one-poles at this corner, scaled to this
+/// RMS of its ±1 range, then limited to it.
+pub const JITTER_HZ: f32 = 10.0;
+pub const JITTER_RMS: f32 = 0.4;
+
+/// The read never leaves the line: 500 ms plus both excursions, with the
+/// interpolator's second tap.
+const _: () = assert!(24_000 + (WOW_SAMPLES + FLUTTER_SAMPLES) as usize + 2 <= MAX_DELAY_SAMPLES);
 
 /// Tape delay parameters.
 #[derive(Clone, Copy, Debug)]
@@ -16,7 +36,8 @@ pub struct DelayParams {
     pub time_ms: f32,
     /// Feedback amount (0..1)
     pub feedback: f32,
-    /// Wow & flutter depth (0..1) — tape speed instability
+    /// MECHANICS (0..1): tape speed instability, a slow wow and an
+    /// irregular flutter (ADR 0053); the field and disk ident predate it.
     pub wow_flutter: f32,
     /// Tape saturation amount (0..1) — soft clipping in feedback path; 0 is
     /// the gentlest, never none (ADR 0038)
@@ -64,7 +85,18 @@ impl DelayParams {
 pub static DELAY_SPECS: [ParamSpec; 7] = [
     ParamSpec::continuous(0, "TIME", ValFmt::Uni, 10.0, 500.0, 375.0, 8.0, false).ident("TIME"),
     ParamSpec::continuous(1, "FDBK", ValFmt::Uni, 0.0, 1.0, 0.4, 1.0 / 128.0, false).ident("FDBK"),
-    ParamSpec::continuous(2, "WOW", ValFmt::Uni, 0.0, 1.0, 0.15, 1.0 / 128.0, false).ident("WOW"),
+    ParamSpec::continuous(
+        2,
+        "MECHANICS",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.15,
+        1.0 / 128.0,
+        false,
+    )
+    .ident("WOW")
+    .short("MECH"),
     ParamSpec::continuous(3, "SAT", ValFmt::Uni, 0.0, 1.0, 0.2, 1.0 / 128.0, false).ident("SAT"),
     ParamSpec::continuous(4, "TONE", ValFmt::Uni, 0.0, 1.0, 0.6, 1.0 / 128.0, false).ident("TONE"),
     ParamSpec::continuous(5, "MIX", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false).ident("MIX"),
@@ -103,18 +135,107 @@ impl Block for DelayParams {
     }
 }
 
+/// One block's constants for the transport: the base delay, the depths
+/// and the per-sample rates.
+#[derive(Clone, Copy, Debug)]
+pub struct Tap {
+    base: f32,
+    /// The wow's peak excursion, `wow_flutter × WOW_SAMPLES`.
+    wow: f32,
+    wow_rate: f32,
+    /// The flutter's peak excursion, `wow_flutter × FLUTTER_SAMPLES`.
+    flutter: f32,
+    capstan_rate: f32,
+    jitter_coeff: f32,
+    jitter_gain: f32,
+}
+
+impl Tap {
+    pub fn new(params: &DelayParams, sample_rate: u32) -> Self {
+        let sr = sample_rate as f32;
+        let jitter_coeff = core::f32::consts::TAU * JITTER_HZ / sr;
+        Self {
+            base: (params.time_ms * sr / 1000.0).clamp(1.0, (MAX_DELAY_SAMPLES - 2) as f32),
+            wow: params.wow_flutter * WOW_SAMPLES,
+            wow_rate: WOW_HZ / sr,
+            flutter: params.wow_flutter * FLUTTER_SAMPLES,
+            capstan_rate: CAPSTAN_HZ / sr,
+            jitter_coeff,
+            // Two one-poles pass a/4 of uniform noise's 1/3 variance.
+            jitter_gain: JITTER_RMS / libm::sqrtf(jitter_coeff / 12.0),
+        }
+    }
+
+    /// The read delay in samples before the transport moves it.
+    pub fn base(&self) -> f32 {
+        self.base
+    }
+}
+
+/// The tape transport under MECHANICS: a slow wow plus an irregular
+/// flutter. Pure state; `TapeDelay` reads the line where it points.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Transport {
+    wow_phase: f32,
+    capstan_phase: f32,
+    /// The jitter's two one-poles
+    jitter: [f32; 2],
+    rng: u32,
+}
+
+impl Default for Transport {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Transport {
+    pub const fn new() -> Self {
+        Self {
+            wow_phase: 0.0,
+            capstan_phase: 0.0,
+            jitter: [0.0; 2],
+            rng: 0x2545_f491,
+        }
+    }
+
+    /// One sample: the read delay in samples, before the line's clamp.
+    #[inline(always)]
+    pub fn next(&mut self, tap: &Tap) -> f32 {
+        let wow = lfo(&mut self.wow_phase, tap.wow_rate);
+        let capstan = lfo(&mut self.capstan_phase, tap.capstan_rate);
+        let [a, b] = &mut self.jitter;
+        *a += tap.jitter_coeff * (xorshift_noise(&mut self.rng) - *a);
+        *b += tap.jitter_coeff * (*a - *b);
+        // `max`/`min`, not `clamp`: `b` is never NaN, and they skip the
+        // FPU's flag round trip.
+        #[allow(clippy::manual_clamp)]
+        let jitter = (*b * tap.jitter_gain).max(-1.0).min(1.0);
+        let flutter = 0.5 * capstan + 0.5 * jitter;
+        // MECH 0 adds two exact zeros: today's delay at WOW 0, bit for bit.
+        tap.base + wow * tap.wow + flutter * tap.flutter
+    }
+}
+
+/// sin(2π·phase), then the phase advanced by `rate` turns.
+#[inline(always)]
+fn lfo(phase: &mut f32, rate: f32) -> f32 {
+    *phase += rate;
+    if *phase >= 1.0 {
+        *phase -= 1.0;
+    }
+    sin_turns(*phase)
+}
+
 pub struct TapeDelay {
     buffer: [f32; MAX_DELAY_SAMPLES],
     write_pos: usize,
     /// LP filter state for tone control in feedback
     lp_state: f32,
-    /// Wow LFO (slow, ~0.5Hz)
-    wow_phase: f32,
-    /// Flutter LFO (faster, ~6Hz)
-    flutter_phase: f32,
+    transport: Transport,
 }
 
-crate::in_place::field_list!(TapeDelay => TapeDelay { buffer, write_pos, lp_state, wow_phase, flutter_phase });
+crate::in_place::field_list!(TapeDelay => TapeDelay { buffer, write_pos, lp_state, transport });
 
 impl Default for TapeDelay {
     fn default() -> Self {
@@ -128,16 +249,19 @@ impl TapeDelay {
             buffer: [0.0; MAX_DELAY_SAMPLES],
             write_pos: 0,
             lp_state: 0.0,
-            wow_phase: 0.0,
-            flutter_phase: 0.0,
+            transport: Transport::new(),
         }
     }
 
     pub fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
-        // SAFETY: every field (`[f32; N]`, `usize`, three `f32`) is valid as
-        // zero bytes, and zero is exactly `new()`'s state.
+        let p = slot.as_mut_ptr();
+        // SAFETY: `p` is valid for writes of one `Self`. Every field is
+        // valid as zero bytes and all but the transport's seed are zero in
+        // `new()`; the transport is written whole before the slot is
+        // assumed initialised.
         unsafe {
-            slot.as_mut_ptr().write_bytes(0, 1);
+            p.write_bytes(0, 1);
+            addr_of_mut!((*p).transport).write(Transport::new());
             slot.assume_init_mut()
         }
     }
@@ -169,42 +293,32 @@ impl TapeDelay {
             return;
         }
 
-        let base_delay = (params.time_ms * sample_rate as f32 / 1000.0)
-            .clamp(1.0, (MAX_DELAY_SAMPLES - 2) as f32);
-
-        let wow_rate = 0.5 / sample_rate as f32; // ~0.5 Hz
-        let flutter_rate = 6.0 / sample_rate as f32; // ~6 Hz
+        let tap = Tap::new(params, sample_rate);
 
         // Tone: LP coefficient (higher = brighter)
         let lp_coeff = 0.2 + params.tone * 0.75;
         let sat_gain = 1.0 + params.saturation * 3.0;
+        // Once a block: the loop multiplies, never divides (within 1 ulp).
+        let sat_inv = 1.0 / sat_gain;
 
+        // The loop's state in locals: the stores into the line cannot then
+        // make the compiler reload and store it every sample.
+        let (mut transport, mut write_pos, mut lp_state) =
+            (self.transport, self.write_pos, self.lp_state);
         for s in buf.iter_mut() {
             let dry = *s;
 
-            // Wow & flutter: modulate delay time
-            self.wow_phase += wow_rate;
-            if self.wow_phase >= 1.0 {
-                self.wow_phase -= 1.0;
-            }
-            self.flutter_phase += flutter_rate;
-            if self.flutter_phase >= 1.0 {
-                self.flutter_phase -= 1.0;
-            }
-
-            let wow = crate::dsp::sin_turns(self.wow_phase);
-            let flutter = crate::dsp::sin_turns(self.flutter_phase);
-            let mod_amount = params.wow_flutter * 20.0; // up to ±20 samples modulation
-            let delay = base_delay + wow * mod_amount * 0.7 + flutter * mod_amount * 0.3;
-            let delay = delay.clamp(1.0, (MAX_DELAY_SAMPLES - 2) as f32);
+            let delay = transport
+                .next(&tap)
+                .clamp(1.0, (MAX_DELAY_SAMPLES - 2) as f32);
 
             // Interpolated read from delay line
             let d_int = delay as usize;
             let d_frac = delay - d_int as f32;
-            let pos_a = if self.write_pos >= d_int {
-                self.write_pos - d_int
+            let pos_a = if write_pos >= d_int {
+                write_pos - d_int
             } else {
-                self.write_pos + MAX_DELAY_SAMPLES - d_int
+                write_pos + MAX_DELAY_SAMPLES - d_int
             };
             let pos_b = if pos_a == 0 {
                 MAX_DELAY_SAMPLES - 1
@@ -214,24 +328,25 @@ impl TapeDelay {
             let delayed = self.buffer[pos_a] * (1.0 - d_frac) + self.buffer[pos_b] * d_frac;
 
             // Tone: one-pole LP in feedback path (tape loses highs each pass)
-            self.lp_state += lp_coeff * (delayed - self.lp_state);
-            let filtered = self.lp_state;
+            lp_state += lp_coeff * (delayed - lp_state);
+            let filtered = lp_state;
 
             // Tape saturation in the feedback path, always on (ADR 0038): at
             // SAT 0 the loop is otherwise linear with unity DC gain, so FDBK
             // 1 grows without bound. Bounded by 1 / gain, the write stays
             // within |dry| + FDBK.
-            let saturated = libm::tanhf(filtered * sat_gain) / sat_gain;
+            let saturated = libm::tanhf(filtered * sat_gain) * sat_inv;
 
             // Write: input + feedback
-            self.buffer[self.write_pos] = dry + saturated * params.feedback;
-            self.write_pos += 1;
-            if self.write_pos == MAX_DELAY_SAMPLES {
-                self.write_pos = 0;
+            self.buffer[write_pos] = dry + saturated * params.feedback;
+            write_pos += 1;
+            if write_pos == MAX_DELAY_SAMPLES {
+                write_pos = 0;
             }
 
             // Mix
             *s = dry * dry_gain + delayed * params.mix;
         }
+        (self.transport, self.write_pos, self.lp_state) = (transport, write_pos, lp_state);
     }
 }

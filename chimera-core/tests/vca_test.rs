@@ -431,7 +431,7 @@ fn an_engine_switch_fades_with_the_old_vca_routes() {
 fn a_release_the_vca_holds_is_not_idle() {
     use chimera_core::MidiChannel;
     use chimera_core::dsp::fx_bus::FxBus;
-    use chimera_core::hw::{CPU_HZ_REV_V, DAC_PAIRS, SampleBudget};
+    use chimera_core::hw::{CPU_HZ_REV_V, SampleBudget};
     use chimera_core::instrument::{AudioShared, Instrument};
     use chimera_core::note_queue::{NoteEvent, NoteKind};
     let ev = |note, kind| NoteEvent {
@@ -447,7 +447,7 @@ fn a_release_the_vca_holds_is_not_idle() {
     let run = |other: Option<usize>| {
         let mut inst = Box::new(Instrument::new(SR, SampleBudget::for_cpu(CPU_HZ_REV_V)));
         let mut fx = Box::new(FxBus::new());
-        let mut out = [[0.0f32; BLOCK_SIZE * 2]; DAC_PAIRS];
+        let mut out = Box::new(chimera_core::instrument::DacBlocks::new());
         let mut scope = common::scope_writer();
         inst.handle(ev(60, NoteKind::On(Velocity::DEFAULT)), &shared);
         let mut log = Vec::new();

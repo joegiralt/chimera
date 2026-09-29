@@ -11,7 +11,7 @@ use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::modal::{ResonatorMode, take_cleared_bytes};
 use chimera_core::dsp::voice::Voice;
 use chimera_core::hw::{CPU_HZ_REV_V, MAX_VOICES, SampleBudget};
-use chimera_core::instrument::{AudioShared, DacOut, Instrument, SYM_CLEAR_BUDGET};
+use chimera_core::instrument::{AudioShared, DacBlocks, Instrument, SYM_CLEAR_BUDGET};
 use chimera_core::mod_path::ModDestRegistry;
 use chimera_core::modulation::{MAX_MOD_SOURCES, ModSource, ModState, VCA};
 use chimera_core::note_queue::{NoteEvent, NoteKind};
@@ -54,7 +54,7 @@ fn max_step(x: &[f32]) -> f32 {
 struct Stage {
     inst: Box<Instrument>,
     fx: Box<FxBus>,
-    dac: DacOut,
+    dac: Box<DacBlocks>,
     scope: ScopeWriter,
     shared: AudioShared,
 }
@@ -73,7 +73,7 @@ impl Stage {
         Self {
             inst: Box::new(Instrument::new(SR, budget)),
             fx: Box::new(FxBus::new()),
-            dac: [[0.0; BLOCK_SIZE * 2]; _],
+            dac: Box::new(DacBlocks::new()),
             scope: scope_writer(),
             shared,
         }
