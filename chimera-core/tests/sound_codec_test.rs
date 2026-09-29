@@ -10,8 +10,8 @@ use chimera_core::modulation::{CUTOFF, MAX_MOD_DESTS, MAX_MOD_SOURCES, ModState}
 use chimera_core::params::{EngineType, FilterParams, ParamSnapshot, PitchParams};
 use chimera_core::preset::Sound;
 use chimera_core::storage::{
-    FileError, FileKind, Framer, Generation, Header, Migration, RecordBuf, RecordTag, SoundDecoder,
-    ValidAddr, decode_block, encode_block, encode_sound, write_file,
+    Decode, FileError, FileKind, Framer, Generation, Header, Migration, RecordBuf, RecordTag,
+    SoundDecoder, ValidAddr, decode_block, encode_block, encode_sound, write_file,
 };
 use chimera_hal::store::{ByteSink, StoreError};
 

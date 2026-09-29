@@ -13,6 +13,7 @@ use crate::preset::Sound;
 
 use super::block_codec::{ByteSet, decode_block, encode_block};
 use super::codes::{MIGRATIONS, ValidAddr};
+use super::file::Decode;
 use super::frame::{Event, FileError, FileKind};
 use super::record::{MAX_RECORD_LEN, ReadTag, RecordBuf, RecordTag, RecordWriter};
 
@@ -98,9 +99,11 @@ const fn once_bit(tag: RecordTag) -> u8 {
 }
 
 /// Decodes a Sound file's events onto `target`, one pass at a time: with
-/// `apply` false it only checks, and a pass starts at the header.
+/// `apply` false it only checks, and a pass starts at the header. Pass 2
+/// builds the Sound in `staged` and swaps it into `target` at `end(true)`.
 pub struct SoundDecoder<'a> {
     target: &'a mut Sound,
+    staged: Sound,
     name: Option<SoundName>,
     /// The Engine record was read: every other record may follow.
     engine: bool,
@@ -117,6 +120,7 @@ impl<'a> SoundDecoder<'a> {
     pub fn new(target: &'a mut Sound) -> Self {
         SoundDecoder {
             target,
+            staged: Sound::neutral(EngineType::Algo),
             name: None,
             engine: false,
             seen: 0,
@@ -127,12 +131,14 @@ impl<'a> SoundDecoder<'a> {
     }
 }
 
-impl SoundDecoder<'_> {
+impl Decode for SoundDecoder<'_> {
+    const KIND: FileKind = FileKind::Sound;
+
     /// `NeedsNewerFirmware`: an unknown engine. `Corrupt`: a record before
     /// `Engine`, or one we write once read twice. `Bounds`: a payload of the
     /// wrong shape, or more entries than the Sound holds. `WrongKind`: not a
     /// Sound file.
-    pub fn event(&mut self, e: Event<'_>, apply: bool) -> Result<(), FileError> {
+    fn event(&mut self, e: Event<'_>, apply: bool) -> Result<(), FileError> {
         let (tag, p) = match e {
             Event::Header(h) => {
                 if h.kind != FileKind::Sound {
@@ -169,7 +175,7 @@ impl SoundDecoder<'_> {
             RecordTag::Engine => self.engine_record(p, apply),
             RecordTag::Block => {
                 let target: Option<&mut dyn Blocks> = if apply {
-                    Some(&mut self.target.params)
+                    Some(&mut self.staged.params)
                 } else {
                     None
                 };
@@ -189,13 +195,14 @@ impl SoundDecoder<'_> {
         }
     }
 
-    /// `Corrupt` without an Engine record. Applies the routes.
-    pub fn end(&mut self, apply: bool) -> Result<(), FileError> {
+    /// `Corrupt` without an Engine record. With `apply`, adds the routes
+    /// and commits: the staged Sound becomes the target.
+    fn end(&mut self, apply: bool) -> Result<(), FileError> {
         if !self.engine {
             return Err(FileError::Corrupt);
         }
         if apply {
-            let m = &mut self.target.mod_state;
+            let m = &mut self.staged.mod_state;
             let (routes, _) = self.routes[..self.routes_len].as_chunks::<ROUTE_LEN>();
             for &[src, block, id, amount] in routes {
                 let (Some(src), Some(addr)) = (ModSource::from_disk_code(src), addr_of(block, id))
@@ -206,10 +213,13 @@ impl SoundDecoder<'_> {
                     m.set_route(src.index(), d, amount as i8);
                 }
             }
+            core::mem::swap(self.target, &mut self.staged);
         }
         Ok(())
     }
+}
 
+impl SoundDecoder<'_> {
     fn engine_record(&mut self, p: &[u8], apply: bool) -> Result<(), FileError> {
         let &[code] = p else {
             return Err(FileError::Bounds);
@@ -217,9 +227,9 @@ impl SoundDecoder<'_> {
         let engine = EngineType::from_disk_code(code).ok_or(FileError::NeedsNewerFirmware)?;
         self.engine = true;
         if apply {
-            *self.target = Sound::neutral(engine);
+            self.staged = Sound::neutral(engine);
             if let Some(n) = self.name {
-                self.target.name = n;
+                self.staged.name = n;
             }
         }
         Ok(())
@@ -238,7 +248,7 @@ impl SoundDecoder<'_> {
                     continue;
                 };
                 // Refused when not modulatable: skipped.
-                let _ = self.target.dest_registry.add(addr, *label);
+                let _ = self.staged.dest_registry.add(addr, *label);
             }
         }
         Ok(())
@@ -260,7 +270,7 @@ impl SoundDecoder<'_> {
                     m.push(addr);
                 }
             }
-            self.target.mod_state = m;
+            self.staged.mod_state = m;
         }
         Ok(())
     }

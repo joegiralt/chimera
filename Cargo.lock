@@ -221,6 +221,7 @@ dependencies = [
 name = "chimera-fat"
 version = "0.1.0"
 dependencies = [
+ "chimera-core",
  "chimera-hal",
  "embedded-hal 1.0.0",
  "embedded-sdmmc",

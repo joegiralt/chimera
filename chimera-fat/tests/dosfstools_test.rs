@@ -3,6 +3,8 @@
 //! layer wrote. Ignored by a plain `cargo test`; `just test-fat-tools` (in
 //! `just test` and `just check`) runs them, and fails without dosfstools.
 
+#[path = "common/ab.rs"]
+mod ab;
 #[path = "common/image.rs"]
 mod image;
 #[path = "common/probe.rs"]
@@ -358,4 +360,63 @@ fn a_failed_fat2_write_heals_for_fsck() {
     s.delete(vol, empty).unwrap();
     let f = fsck(&disk);
     assert_eq!(f.code, 0, "healed: {}", f.out);
+}
+
+/// Findings `fsck.fat -n` may make on an image a power cut left: lost
+/// clusters, and FATs that differ where the cut hit FAT 2. Never a
+/// cross-link, a bad chain or a wrong size.
+fn allowed_finding(line: &str) -> bool {
+    let line = line.trim();
+    line.is_empty()
+        || line.starts_with("fsck.fat ")
+        || (line.contains(" files, ") && line.ends_with(" clusters"))
+        || (line.starts_with("Reclaimed ") && line.contains(" unused cluster"))
+        || line == "FATs differ but appear to be intact."
+        || line == "Using first FAT."
+        || line == "Leaving filesystem unchanged."
+}
+
+/// The power-cut claim checked by a second implementation: every image a
+/// cut in saves 2 (creates B), 3 (truncates A) and 4 (truncates B) leaves,
+/// and the image after the next save, has only lost clusters or a stale
+/// FAT 2 block for `fsck.fat -n` to find.
+#[test]
+#[ignore = "needs dosfstools: just test-fat-tools"]
+fn cut_images_pass_fsck() {
+    use image::Cut;
+    let base = ab::slot(mkfs(FsKind::Fat16, 30_000, 1, 0x1600_00AB));
+    ab::make_dir(&base);
+    ab::save(&base, 1).0.unwrap();
+    let (mut clean, mut findings) = (0, 0);
+    for n in 2..=4 {
+        let f = fsck(&base.inner);
+        assert_eq!(f.code, 0, "before save {n}: {}", f.out);
+        let before = copy(&base.inner);
+        let dry = ab::slot(copy(&before));
+        ab::save(&dry, n).0.unwrap();
+        for k in 0..dry.writes.get() {
+            let what = format!("save {n} cut at write {k}");
+            let cut = ab::slot(copy(&before));
+            cut.cut.set(Cut::After(k));
+            assert!(ab::save(&cut, n).0.is_err(), "{what}");
+            cut.cut.set(Cut::Never);
+            for when in ["after the cut", "after the next save"] {
+                let f = fsck(&cut.inner);
+                let bad: Vec<&str> = f.out.lines().filter(|l| !allowed_finding(l)).collect();
+                assert!(bad.is_empty(), "{what}, {when}: {bad:?}\n{}", f.out);
+                if f.code == 0 {
+                    clean += 1;
+                } else {
+                    findings += 1;
+                }
+                if when == "after the cut" {
+                    let next = 100 * n + k;
+                    ab::save(&cut, next).0.unwrap();
+                    assert!(ab::load(&cut).unwrap().bits_eq(&ab::sound(next)), "{what}");
+                }
+            }
+        }
+        ab::save(&base, n).0.unwrap();
+    }
+    println!("cut images: {clean} clean, {findings} with lost clusters or a stale FAT 2");
 }

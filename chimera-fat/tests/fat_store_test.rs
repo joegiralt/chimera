@@ -7,10 +7,10 @@ use chimera_fat::FatStore;
 use chimera_fat::dir::{ShortName, Slot, lfn_checksum, parse};
 use chimera_fat::volume::{FsKind, Layout, Link, Root, first_partition, layout};
 use chimera_hal::store::{Dir, FileName, Store, StoreError, Unsupported, VolumeId};
-use core::cell::{Cell, RefCell};
+use core::cell::RefCell;
 use embedded_sdmmc::BlockDevice;
 use image::{
-    CutDisk, DiskError, Overlay, PART_LBA, RamDisk, exfat, exfat_superfloppy, fat16, fat32,
+    Cut, CutDisk, DiskError, Overlay, PART_LBA, RamDisk, exfat, exfat_superfloppy, fat16, fat32,
     layout_of, pattern, superfloppy, with_clusters,
 };
 use probe::{Probed, Sink, XorShift, consistent, fats, fats_equal, free, log, probed, suite};
@@ -503,10 +503,7 @@ fn error_mapping_table() {
     assert_eq!(list(&mut s, vol), Ok(()));
 
     let (disk, vol) = card();
-    let cut = Rc::new(CutDisk {
-        inner: copy(&disk),
-        writes_left: Cell::new(Some(0)),
-    });
+    let cut = Rc::new(CutDisk::new(copy(&disk), Cut::After(0)));
     let mut s = probed(&cut);
     let r = s.write(vol, name(b"NEW"), &mut |w| w.put(b"x")).map(|_| ());
     check("a cut card", r, StoreError::Io, &s, 1);
@@ -568,10 +565,7 @@ fn alloc_device_error_is_io() {
         "the second cluster's sector is written after"
     );
 
-    let cut = Rc::new(CutDisk {
-        inner: copy(&disk),
-        writes_left: Cell::new(Some(first_fat as u32)),
-    });
+    let cut = Rc::new(CutDisk::new(copy(&disk), Cut::After(first_fat as u32)));
     let mut s = probed(&cut);
     assert_eq!(
         s.write(vol, name(b"NEW"), &mut |w| w.put(&[1; 1024])),
@@ -600,16 +594,13 @@ fn a_device_error_drops_the_unflushed_fat_change() {
         .position(|&(b, _)| b == PART_LBA + fat1)
         .expect("a FAT write");
 
-    let cut = Rc::new(CutDisk {
-        inner: copy(&disk),
-        writes_left: Cell::new(Some(first_fat as u32 - 1)),
-    });
+    let cut = Rc::new(CutDisk::new(copy(&disk), Cut::After(first_fat as u32 - 1)));
     let mut s = probed(&cut);
     assert_eq!(
         s.write(vol, name(b"NEW"), &mut |w| w.put(&[1; 1024])),
         Err(StoreError::Io)
     );
-    cut.writes_left.set(None);
+    cut.cut.set(Cut::Never);
     assert_eq!(read_back(&mut s, vol, name(b"NEW")), []);
     assert_eq!(free(&cut.inner), before, "nothing reached the FAT");
     s.write(vol, name(b"NEW"), &mut |w| w.put(&[2; 1024]))
@@ -718,10 +709,7 @@ fn write_order_is_cut_safe() {
     assert!(fat[0] > 0 && fat[3] < w.len() - 1, "{w:?}");
 
     // Cut after the reset: an empty file, no chain.
-    let cut = Rc::new(CutDisk {
-        inner: before,
-        writes_left: Cell::new(Some(1)),
-    });
+    let cut = Rc::new(CutDisk::new(before, Cut::After(1)));
     let mut s = probed(&cut);
     assert_eq!(
         s.write(vol, name(b"DATA"), &mut |w| w.put(&[2; 2 * 512])),
@@ -1050,10 +1038,7 @@ fn mutated_images_never_panic() {
 #[test]
 fn error_calls_reinit() {
     let (disk, vol) = card();
-    let cut = Rc::new(CutDisk {
-        inner: copy(&disk),
-        writes_left: Cell::new(Some(0)),
-    });
+    let cut = Rc::new(CutDisk::new(copy(&disk), Cut::After(0)));
     let mut s = probed(&cut);
     assert_eq!(
         s.write(vol, name(b"F"), &mut |w| w.put(b"x")),
