@@ -34,16 +34,23 @@ impl Exp {
 }
 
 /// `2^e`, exact: `e` is well inside f32's normal exponents.
+#[inline]
 fn pow2(e: i32) -> f32 {
     f32::from_bits(((127 + e) as u32) << 23)
 }
 
-/// `x` at `e`, rounded to nearest. `as` saturates and maps NaN to 0, so an
-/// overshoot clips, never wraps.
+/// `x` at `e`, rounded to nearest, ties away from zero: `as` truncates, so
+/// adding ±0.5 first rounds without `roundf`'s bit twiddling. It differs
+/// from `roundf` only within an f32 epsilon of a tie. An overshoot clips,
+/// never wraps, and NaN stores 0: `as i32` saturates and maps NaN to 0
+/// (one `vcvt` on the M7), and the clamp to i16 is one `ssat`.
+#[inline]
 pub fn store(x: f32, e: Exp) -> i16 {
-    libm::roundf(x * pow2(i32::from(e.0))) as i16
+    let q = (x * pow2(i32::from(e.0)) + 0.5_f32.copysign(x)) as i32;
+    q.clamp(i16::MIN.into(), i16::MAX.into()) as i16
 }
 
+#[inline]
 pub fn load(q: i16, e: Exp) -> f32 {
     f32::from(q) * pow2(-i32::from(e.0))
 }
@@ -92,9 +99,8 @@ pub trait Store: sealed::Sealed {
     fn store(&mut self, i: usize, x: f32);
     /// The write position wrapped: a period ended.
     fn wrapped(&mut self, budget: &mut StepBudget);
-    /// A note starts: back to `Exp::START`, every sample at its level.
-    fn restart(&mut self);
-    /// Zeros, at `Exp::START`.
+    /// Zeros, at `Exp::START`: a note starts on a silent line. One memset
+    /// of the ring, whatever came before (ADR 0052).
     fn clear(&mut self);
 }
 
@@ -121,8 +127,6 @@ impl Store for [f32; MAX_STRING_DELAY] {
 
     #[inline]
     fn wrapped(&mut self, _: &mut StepBudget) {}
-
-    fn restart(&mut self) {}
 
     fn clear(&mut self) {
         self.fill(0.0);
@@ -178,7 +182,9 @@ impl Store for Q16 {
         let next = next_exp(self.peak, self.e);
         if next != self.e && budget.take() {
             if next.0 > self.e.0 {
-                // Exact: the peak was below ½ full scale.
+                // Exact for this period's samples: their peak was below ¼
+                // full scale. A stale one past a loop a retune shortened
+                // can be louder, and clips at full scale: never a burst.
                 for v in &mut self.q {
                     *v = v.saturating_mul(2);
                 }
@@ -190,20 +196,6 @@ impl Store for Q16 {
             }
             self.e = next;
         }
-        self.peak = 0;
-    }
-
-    /// Rescales every sample, not just the new loop's: a stale one a later
-    /// pitch drop reads back keeps its level instead of bursting 2^(e−14)
-    /// louder.
-    fn restart(&mut self) {
-        let k = u32::from(self.e.0 - Exp::START.0);
-        if k > 0 {
-            for v in &mut self.q {
-                *v = ((i32::from(*v) + (1 << (k - 1))) >> k) as i16;
-            }
-        }
-        self.e = Exp::START;
         self.peak = 0;
     }
 
