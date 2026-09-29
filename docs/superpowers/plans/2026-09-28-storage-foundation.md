@@ -1153,7 +1153,7 @@ The rules:
   - `torn_newest_falls_back`: truncate the newest file by 10 B; `load_ab` gives the older content.
   - `invalid_newest_falls_back`: the newest has a `Registry` record over `MAX_REGISTRY_DESTS` (`Bounds`, CRC fixed) → `load_ab` gives the older content; the next `save_ab` writes over the invalid side.
   - `newer_firmware_newest_does_not_fall_back`: the newest file has a critical unknown record → `Err(File(NeedsNewerFirmware))`; the next `save_ab` writes the other side.
-  - `both_torn_is_the_error_not_missing`: both sides truncated → `Err(File(Truncated))`; no files → `Err(Missing)`.
+  - `both_torn_is_the_error_not_missing`: both sides truncated → `Err(File(BadCrc))` (every verdict waits for the CRC, ADR 0045); no files → `Err(Missing)`.
   - `delete_older_first`: a `MemStore` wrapper logs deletes. The order is the older side, then the newer; after the first delete, `load_ab` still loads.
   - `save_streams_in_chunks`: a wrapper sink records the size of each `put`. None exceeds `MAX_RECORD_LEN + 4`.
   - `load_leaves_target_on_error`: a corrupt newest with a missing older → `Err`, and the target is unchanged.

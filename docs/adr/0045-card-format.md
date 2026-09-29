@@ -41,8 +41,25 @@ All integers are little-endian.
 - The trailer is CRC-32/ISO-HDLC (reflected poly 0xEDB88320, init and
   xorout 0xFFFF_FFFF) over bytes `0..len − 4`. It is a trailer so the writer
   streams and never seeks back.
+- **The envelope is frozen.** The magic at offset 0, the version at offset 4
+  and the CRC-32 trailer over `0..len − 4` never change, in any version, so
+  every reader can verify every file before judging it.
+- **The version bumps only for a framing change that breaks compatibility.**
+  New content is a new record, and the critical bit when an older reader
+  must not load the file without it.
 - A version above 1 is `NeedsNewerFirmware`; version 0 or flags ≠ 0 is
   `Corrupt`. A kind this firmware doesn't know is `WrongKind`.
+- **The CRC comes first.** Every verdict above and below (`NeedsNewerFirmware`,
+  `Bounds`, `WrongKind`, `BadName`, `Corrupt`, a decoder's own) waits until
+  the CRC is known. After the first one the reader hashes the rest of the
+  body unparsed. A CRC failure is `BadCrc` whatever else was found, so one
+  flipped bit reads as torn and never shadows the other A/B side as "needs
+  newer firmware". Torn means exactly `BadCrc`, or `Truncated`: a file under
+  32 B, or a stream shorter than its length. A bad magic under a valid CRC is
+  `BadMagic`; with a failing one it is `BadCrc`, torn.
+- **Two passes.** Record events before the CRC is checked are provisional.
+  A decoder applies them only on a second pass, after the first pass's
+  `finish` is Ok.
 - The name follows `Name<16>`: A–Z a–z 0–9, space and `-`, no leading or
   trailing space, no byte after the first NUL.
 - `FileKind`: 1 Sound, 3 System. **Reserved:** 2 Project, 4 Tags, 5 Index.
