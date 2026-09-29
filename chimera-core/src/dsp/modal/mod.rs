@@ -73,7 +73,11 @@ pub const SYM_NOTE_ON_CLEAR_MAX: usize = (1 + NUM_SYMPATHETIC) * RING_BYTES;
 struct ModalBank {
     filters: [Svf; MAX_MODES],
     cos_osc: CosineOsc,
+    /// MODES, latched at note-on: the bill.
     resolution: usize,
+    /// How many of them, from the first, lie below 0.49 of the rate: the
+    /// ones rendered. The rest are dropped, as Rings does, and rest silent.
+    sounding: usize,
     /// Samples of burst left; the note sounds while any are.
     burst_remaining: usize,
     burst_amp: f32,
@@ -83,7 +87,7 @@ struct ModalBank {
 }
 
 crate::in_place::field_list!(ModalBank => ModalBank {
-    filters, cos_osc, resolution, burst_remaining, burst_amp, noise_state, burst_lp,
+    filters, cos_osc, resolution, sounding, burst_remaining, burst_amp, noise_state, burst_lp,
 });
 
 /// The bowed string and the bow's force on it, 0 once the bow lifts.
@@ -632,6 +636,7 @@ impl ModalBank {
             addr_of_mut!((*p).filters).write(core::array::from_fn(|_| Svf::new()));
             addr_of_mut!((*p).cos_osc).write(CosineOsc::new());
             addr_of_mut!((*p).resolution).write(0);
+            addr_of_mut!((*p).sounding).write(0);
             addr_of_mut!((*p).burst_remaining).write(0);
             addr_of_mut!((*p).burst_amp).write(0.0);
             addr_of_mut!((*p).noise_state).write(0x1234_5678);
@@ -668,8 +673,13 @@ impl ModalBank {
         let mut harmonic = frequency;
         let mut stretch_factor = 1.0_f32;
 
-        for filter in self.filters.iter_mut().take(num) {
-            let partial_freq = (harmonic * stretch_factor).min(0.49);
+        let mut sounding = num;
+        for (i, filter) in self.filters.iter_mut().take(num).enumerate() {
+            let partial_freq = harmonic * stretch_factor;
+            if partial_freq >= 0.49 {
+                sounding = i;
+                break;
+            }
 
             // Per-mode Q (Rings: 1.0 + partial_freq * q)
             let mode_q = 1.0 + partial_freq * q;
@@ -690,6 +700,11 @@ impl ModalBank {
 
             harmonic += frequency;
         }
+        // Newly dropped modes fall silent, so they return from rest.
+        for f in &mut self.filters[sounding..self.sounding.max(sounding)] {
+            f.reset();
+        }
+        self.sounding = sounding;
     }
 }
 
@@ -821,7 +836,7 @@ impl SympatheticSet {
 }
 
 fn render_modal(bank: &mut ModalBank, output: &mut [f32; BLOCK_SIZE], max_level: &mut f32) {
-    let num = bank.resolution;
+    let num = bank.sounding;
     for s in output.iter_mut() {
         let excite = if bank.burst_remaining > 0 {
             bank.burst_remaining -= 1;
@@ -846,6 +861,9 @@ fn render_modal(bank: &mut ModalBank, output: &mut [f32; BLOCK_SIZE], max_level:
             odd += bank.cos_osc.next() * bank.filters[i].process_bp(input);
             even += bank.cos_osc.next() * bank.filters[i + 1].process_bp(input);
             i += 2;
+        }
+        if i < num {
+            odd += bank.cos_osc.next() * bank.filters[i].process_bp(input);
         }
 
         // Sum to mono, scale up, soft-limit
@@ -1306,6 +1324,36 @@ mod tests {
         assert!(pool.alloc.place(v1));
         let fresh = (1 + NUM_SYMPATHETIC) * FRESH_CLEAR_BYTES;
         assert_eq!(pool.note_on_clear(None, v1), fresh);
+    }
+
+    /// The modes a bank renders, after its last `compute_filters`.
+    fn rendered(b: &ModalBank) -> &[Svf] {
+        &b.filters[..b.sounding]
+    }
+
+    /// No mode rings at or past 0.49 of the rate: the bank drops them, as
+    /// Rings does, not clamps them.
+    #[test]
+    fn no_bank_mode_reaches_nyquist() {
+        let p = ModalParams {
+            mode: ResonatorMode::Modal,
+            structure: 1.0,
+            modes: BankModes::M48,
+            ..Default::default()
+        };
+        let mut pool = SymPool::boxed();
+        let mut e = engine(&mut pool, p.mode);
+        e.note_on(96, 127, &p, SR, &mut pool);
+        let mut out = [0.0; BLOCK_SIZE];
+        e.render(&mut out, &p, SR, &mut pool);
+        let ModelSlot::Bank(b) = &e.model else {
+            unreachable!()
+        };
+        let ceiling = rings::tan_approx(0.49);
+        assert!(!rendered(b).is_empty());
+        for (i, f) in rendered(b).iter().enumerate() {
+            assert!(f.g() < ceiling, "mode {i}: g {}", f.g());
+        }
     }
 
     /// Bowed writes round its ring, the loop and two; its note-on still

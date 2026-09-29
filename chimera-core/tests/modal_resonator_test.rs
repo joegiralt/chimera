@@ -206,22 +206,23 @@ fn play_voice(p: &ParamSnapshot, mods: &ModState, blocks: usize, plucks: &[usize
 /// LFO 1 on each macro, at full depth, moves every live model's sound
 /// and adds no click past a strike. Plucked again just after 1 s, where
 /// the LFO is near +0.5: POS is heard at a pluck, and its ends null alike.
-/// The bank's modes flag the detector by themselves once STRUCTURE
-/// stretches them (F6), so it may flag no more than the macro held at
-/// either end.
+/// The bank, at 48 modes, flags nothing on DAMP or POS, held at either end
+/// or routed. Interim, until its output level is ruled: its high STRUCTURE
+/// and BRIGHT drive the output tanh and flag by themselves, so there it may
+/// flag no more than the macro held at either end.
 #[test]
 fn macros_are_routable() {
     let second = SR as usize / BLOCK_SIZE;
     let pluck = second + second / 60;
     let strikes = [0, pluck];
-    let flags = |out: &[f32]| {
+    let flags = |out: &[f32]| -> Vec<(usize, f32)> {
         clicks(out)
             .into_iter()
             .filter(|&(i, _)| {
                 let b = i / BLOCK_SIZE;
                 !strikes.iter().any(|&s| (s..s + ATTACK_BLOCKS).contains(&b))
             })
-            .count()
+            .collect()
     };
     for mode in [
         ResonatorMode::Modal,
@@ -230,6 +231,7 @@ fn macros_are_routable() {
     ] {
         let mut p = ParamSnapshot::for_engine(EngineType::Modal);
         p.modal.mode = mode;
+        p.modal.modes = BankModes::M48;
         p.lfos[0].rate = 5.0;
         for id in MACROS {
             let addr = ParamAddr::new(BlockRef::Modal, id);
@@ -237,12 +239,12 @@ fn macros_are_routable() {
                 [0, 127].map(|a| play_voice(&p, &routes(addr, a), 2 * second, &[pluck]));
             let d = rms_diff(&dry, &wet);
             assert!(d > 1e-3, "{mode:?} {id:?}: the route changes nothing ({d})");
-            let allowed = if mode == ResonatorMode::Modal {
+            let held = if mode == ResonatorMode::Modal {
                 [0.0, 1.0]
                     .map(|v| {
                         let mut held = p.clone();
                         held.modal.set(id, v);
-                        flags(&play_voice(&held, &ModState::new(), 2 * second, &[pluck]))
+                        flags(&play_voice(&held, &ModState::new(), 2 * second, &[pluck])).len()
                     })
                     .into_iter()
                     .max()
@@ -250,8 +252,14 @@ fn macros_are_routable() {
             } else {
                 0
             };
-            let n = flags(&wet);
-            assert!(n <= allowed, "{mode:?} {id:?}: {n} clicks, {allowed} held");
+            let hot = mode == ResonatorMode::Modal
+                && (id == ModalParams::STRUCTURE || id == ModalParams::BRIGHT);
+            assert!(hot || held == 0, "{mode:?} {id:?}: held, {held} clicks");
+            let n = flags(&wet).len();
+            assert!(
+                n <= held,
+                "{mode:?} {id:?}: routed, {n} clicks, {held} held"
+            );
         }
     }
 }
