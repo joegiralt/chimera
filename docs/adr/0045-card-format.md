@@ -113,6 +113,14 @@ All integers are little-endian.
   `NeedsNewerFirmware`: a file that needs newer firmware is refused, never
   shadowed by an older one. Both sides broken gives the newest side's error,
   not "missing"; missing means neither file exists.
+- **A side with no header.** A file whose CRC matches but whose header this
+  firmware can't read (a newer format version, a bad magic, kind or name)
+  has no generation to order it by. One that needs newer firmware is taken
+  as the newest: refused, and never written over. Any other falls back.
+- **Two passes, staged.** Pass 2 applies only if its CRC equals pass 1's; a
+  decoder stages pass 2 and commits it to the target at its `end`, so a
+  card changed between the passes reads as `BadCrc` and leaves the target
+  as it was.
 - **`write_target`.** A save truncates and rewrites the side the reader
   doesn't keep (the older, missing or broken one) with the newest generation
   + 1, then flushes.

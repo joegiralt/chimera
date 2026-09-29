@@ -67,11 +67,61 @@ impl BlockDevice for RamDisk {
 
 impl Medium for RamDisk {}
 
-/// A card pulled mid-write: every write fails once `writes_left` reaches 0.
-/// `None` never fails.
+/// Where a `CutDisk` is pulled, counted in blocks, not calls.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Cut {
+    Never,
+    /// Blocks `0..k` land whole; block `k` and every one after fail.
+    After(u32),
+    /// Blocks `0..k` land whole; block `k` lands torn and fails, and every
+    /// one after fails.
+    TornAfter(u32, Tear),
+}
+
+/// What a torn block holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Tear {
+    /// The first 256 B new, the rest old.
+    HalfOld,
+    /// Noise.
+    Garbage,
+}
+
+/// A card pulled mid-write. Reads keep working, so a test can look at
+/// what the cut left.
 pub struct CutDisk {
     pub inner: RamDisk,
-    pub writes_left: Cell<Option<u32>>,
+    /// Blocks the card took, a torn one included.
+    pub writes: Cell<u32>,
+    pub cut: Cell<Cut>,
+}
+
+impl CutDisk {
+    pub fn new(inner: RamDisk, cut: Cut) -> Self {
+        Self {
+            inner,
+            writes: Cell::new(0),
+            cut: Cell::new(cut),
+        }
+    }
+}
+
+/// Block `new` torn over `old` as `t` says; the noise is seeded by `lba`.
+fn tear(old: &[u8; 512], new: &[u8; 512], t: Tear, lba: u32) -> [u8; 512] {
+    let mut b = *old;
+    match t {
+        Tear::HalfOld => b[..256].copy_from_slice(&new[..256]),
+        Tear::Garbage => {
+            let mut x = u64::from(lba).wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+            for v in &mut b {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                *v = x as u8;
+            }
+        }
+    }
+    b
 }
 
 impl BlockDevice for CutDisk {
@@ -82,12 +132,25 @@ impl BlockDevice for CutDisk {
     }
 
     fn write(&self, blocks: &[Block], start: BlockIdx) -> Result<(), DiskError> {
-        match self.writes_left.get() {
-            Some(0) => return Err(DiskError),
-            Some(n) => self.writes_left.set(Some(n - 1)),
-            None => {}
+        for (i, b) in blocks.iter().enumerate() {
+            let (n, at) = (self.writes.get(), start.0 + i as u32);
+            let torn = match self.cut.get() {
+                Cut::After(k) if n >= k => return Err(DiskError),
+                Cut::TornAfter(k, _) if n > k => return Err(DiskError),
+                Cut::TornAfter(k, t) if n == k => Some(t),
+                _ => None,
+            };
+            let contents = match torn {
+                Some(t) => tear(&self.inner.block(at), &b.contents, t, at),
+                None => b.contents,
+            };
+            self.inner.write(&[Block { contents }], BlockIdx(at))?;
+            self.writes.set(n + 1);
+            if torn.is_some() {
+                return Err(DiskError);
+            }
         }
-        self.inner.write(blocks, start)
+        Ok(())
     }
 
     fn num_blocks(&self) -> Result<BlockCount, DiskError> {
@@ -478,4 +541,199 @@ pub fn sdmmc_write(disk: RamDisk, files: &[(Dir, &str, &[u8])]) -> RamDisk {
         }
     })
     .0
+}
+
+/// One live entry of `/CHIMERA`, as `fat_check` found it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FatEntry {
+    pub name: [u8; 11],
+    pub raw: [u8; 32],
+    /// The absolute block holding the entry.
+    pub block: u32,
+    /// Its clusters, as far as the chain goes.
+    pub chain: Vec<u32>,
+}
+
+/// What `fat_check` found. It reads the image by its own BPB parse and
+/// chain walk, not through `chimera_fat`: the code under test isn't its
+/// own judge.
+#[derive(Debug)]
+pub struct FatReport {
+    /// Clusters in more than one chain.
+    pub cross_linked: Vec<u32>,
+    /// Files whose length is over their chain, or whose chain breaks (a
+    /// free, reserved or out-of-range link, or a loop) before an end mark.
+    pub short: Vec<[u8; 11]>,
+    /// Absolute blocks of FAT 2 that differ from FAT 1's.
+    pub fats_differ: Vec<u32>,
+    pub entries: Vec<FatEntry>,
+    /// Absolute first blocks of FAT 1 and FAT 2, and bytes per FAT entry.
+    fats: [u32; 2],
+    entry_bytes: u32,
+}
+
+impl FatReport {
+    pub fn entry(&self, name: &[u8; 11]) -> Option<&FatEntry> {
+        self.entries.iter().find(|e| e.name == *name)
+    }
+
+    /// The absolute FAT 1 and FAT 2 blocks holding `chain`'s entries.
+    pub fn fat_blocks(&self, chain: &[u32]) -> Vec<u32> {
+        let mut v: Vec<u32> = chain
+            .iter()
+            .flat_map(|&c| self.fats.map(|f| f + c * self.entry_bytes / 512))
+            .collect();
+        v.sort_unstable();
+        v.dedup();
+        v
+    }
+}
+
+/// Walks `disk`'s FATs, root and `/CHIMERA`: see `FatReport`.
+pub fn fat_check(disk: &RamDisk) -> FatReport {
+    let u16_at = |b: &[u8; 512], at: usize| u32::from(u16::from_le_bytes([b[at], b[at + 1]]));
+    let u32_at = |b: &[u8; 512], at: usize| u32::from_le_bytes(b[at..at + 4].try_into().unwrap());
+    let part = u32_at(&disk.block(0), 446 + 8);
+    let bpb = disk.block(part);
+    assert_eq!(u16_at(&bpb, 11), 512, "512 B sectors");
+    let spc = u32::from(bpb[13]);
+    let reserved = u16_at(&bpb, 14);
+    let copies = u32::from(bpb[16]);
+    let root_entries = u16_at(&bpb, 17);
+    let total = match u16_at(&bpb, 19) {
+        0 => u32_at(&bpb, 32),
+        n => n,
+    };
+    let fat_size = match u16_at(&bpb, 22) {
+        0 => u32_at(&bpb, 36),
+        n => n,
+    };
+    let root_blocks = (root_entries * 32).div_ceil(512);
+    let data = reserved + copies * fat_size + root_blocks;
+    let clusters = (total - data) / spc;
+    let fat32 = clusters >= 65_525;
+    let (entry_bytes, end_mark, mask) = if fat32 {
+        (4, 0x0FFF_FFF8, 0x0FFF_FFFF)
+    } else {
+        (2, 0xFFF8, 0xFFFF)
+    };
+    let fats = [part + reserved, part + reserved + fat_size];
+    let link = |c: u32| {
+        let b = disk.block(fats[0] + c * entry_bytes / 512);
+        let at = (c * entry_bytes % 512) as usize;
+        let v = if fat32 {
+            u32_at(&b, at)
+        } else {
+            u16_at(&b, at)
+        };
+        v & mask
+    };
+    let held = |c: u32| (2..clusters + 2).contains(&c);
+    // The chain from `start` (0 is none), and whether it ended on an end mark.
+    let walk = |start: u32| {
+        let mut chain = Vec::new();
+        if start == 0 {
+            return (chain, true);
+        }
+        let mut c = start;
+        loop {
+            // Longer than the volume: a loop.
+            if !held(c) || chain.len() as u32 == clusters {
+                return (chain, false);
+            }
+            chain.push(c);
+            match link(c) {
+                v if v >= end_mark => return (chain, true),
+                v => c = v,
+            }
+        }
+    };
+    let first_block = |c: u32| part + data + (c - 2) * spc;
+    let blocks_of = |chain: &[u32]| -> Vec<u32> {
+        chain
+            .iter()
+            .flat_map(|&c| (0..spc).map(move |i| first_block(c) + i))
+            .collect()
+    };
+    let entries_in = |blocks: &[u32]| -> Vec<(u32, [u8; 32])> {
+        let mut out = Vec::new();
+        for &b in blocks {
+            for e in disk.block(b).as_chunks::<32>().0 {
+                match e[0] {
+                    0 => return out,
+                    0xE5 | b'.' => {}
+                    _ if e[11] == 0x0F || e[11] & 0x08 != 0 => {}
+                    _ => out.push((b, *e)),
+                }
+            }
+        }
+        out
+    };
+    let start_of = |e: &[u8; 32]| {
+        let hi = if fat32 {
+            u32::from(u16::from_le_bytes([e[20], e[21]])) << 16
+        } else {
+            0
+        };
+        hi | u32::from(u16::from_le_bytes([e[26], e[27]]))
+    };
+
+    let mut used: HashMap<u32, u32> = HashMap::new();
+    let mut count = |chain: &[u32]| {
+        for &c in chain {
+            *used.entry(c).or_default() += 1;
+        }
+    };
+    let root = if fat32 {
+        let (chain, _) = walk(u32_at(&bpb, 44));
+        count(&chain);
+        blocks_of(&chain)
+    } else {
+        (0..root_blocks)
+            .map(|i| part + reserved + copies * fat_size + i)
+            .collect()
+    };
+    let chimera = entries_in(&root)
+        .into_iter()
+        .find(|(_, e)| e[..11] == *b"CHIMERA    " && e[11] & 0x10 != 0);
+    let (mut entries, mut short) = (Vec::new(), Vec::new());
+    if let Some((_, dir)) = chimera {
+        let (dir_chain, _) = walk(start_of(&dir));
+        count(&dir_chain);
+        for (block, raw) in entries_in(&blocks_of(&dir_chain)) {
+            let name: [u8; 11] = raw[..11].try_into().unwrap();
+            let (chain, ended) = walk(start_of(&raw));
+            count(&chain);
+            let is_dir = raw[11] & 0x10 != 0;
+            let len = u32::from_le_bytes(raw[28..32].try_into().unwrap());
+            let need = len.div_ceil(spc * 512) as usize;
+            if !ended || (!is_dir && chain.len() < need) {
+                short.push(name);
+            }
+            entries.push(FatEntry {
+                name,
+                raw,
+                block,
+                chain,
+            });
+        }
+    }
+    let mut cross_linked: Vec<u32> = used
+        .into_iter()
+        .filter(|&(_, n)| n > 1)
+        .map(|(c, _)| c)
+        .collect();
+    cross_linked.sort_unstable();
+    let fats_differ = (0..fat_size)
+        .filter(|&i| disk.block(fats[0] + i) != disk.block(fats[1] + i))
+        .map(|i| fats[1] + i)
+        .collect();
+    FatReport {
+        cross_linked,
+        short,
+        fats_differ,
+        entries,
+        fats,
+        entry_bytes,
+    }
 }

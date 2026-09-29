@@ -11,7 +11,8 @@ use chimera_core::name::SoundName;
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
 use chimera_core::storage::{
-    Crc32, FileError, FileKind, Framer, Generation, Header, SoundDecoder, encode_sound, write_file,
+    Crc32, Decode, FileError, FileKind, Framer, Generation, Header, SoundDecoder, encode_sound,
+    write_file,
 };
 use chimera_hal::store::{ByteSink, StoreError};
 

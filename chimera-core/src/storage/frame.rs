@@ -302,6 +302,11 @@ impl Framer {
         }
     }
 
+    /// The CRC of the body hashed so far: once `finish` is Ok, the file's.
+    pub fn crc(&self) -> u32 {
+        self.crc.finish()
+    }
+
     /// Record the first verdict, then hash the rest of the body unparsed.
     fn defer(&mut self, e: FileError) {
         self.verdict.get_or_insert(e);
