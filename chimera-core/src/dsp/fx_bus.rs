@@ -85,8 +85,12 @@ impl FxBus {
     /// The whole bus at its worst settings, with the Instrument's mixing
     /// and the output limiter; reserved from the voice budget whether or
     /// not an effect is on. The bench's BUS row runs `mix_parts`, so it
-    /// times the limiter too; the reading below predates it (ADR 0050).
-    pub const COST: Cost = Cost(1360); // BUS 1356, measured 2026-09-27, bench, rev V at 480 MHz; rounded up
+    /// times the limiter too (ADR 0050); the master tape counts only in
+    /// the build that runs it (ADR 0055).
+    #[cfg(not(feature = "master-tape"))]
+    pub const COST: Cost = Cost(1160); // BUS 1155, measured 2026-09-29, bench, rev V at 480 MHz, b34a66a; rounded up
+    #[cfg(feature = "master-tape")]
+    pub const COST: Cost = Cost(1470); // BUS 1468, measured 2026-09-29, bench, rev V at 480 MHz, 87c2930 (tape in); rounded up
 
     pub fn new() -> Self {
         Self {

@@ -140,6 +140,9 @@ types and the real `Instrument` (#190) measured:
     `DacBlocks`): MIX 223 against ADR 0031's 148, so the limiter is 75
     cycles per sample; BUS 1,469 (1,495 before `DacBlocks` and the delay's
     loop state in locals), before the delay's SAT reciprocal.
+  - Then BUS 1,468 with the SAT reciprocal (87c2930), and 1,155 with the
+    master tape off the chain (b34a66a, ADR 0055): `FxBus::COST` 1,160
+    (1,470 with `master-tape`).
   - The bench's BUS row runs `mix_parts`, so it times the limiter.
   - `FxBus::COST` (1,360) is the reading from before the limiter and stays
     until a bench run replaces it.
