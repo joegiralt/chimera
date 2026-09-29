@@ -11,7 +11,7 @@ use chimera_core::params::{EngineType, FilterParams, ParamSnapshot, PitchParams}
 use chimera_core::preset::Sound;
 use chimera_core::storage::{
     FileError, FileKind, Framer, Generation, Header, Migration, RecordBuf, RecordTag, SoundDecoder,
-    decode_block, encode_block, encode_sound, write_file,
+    ValidAddr, decode_block, encode_block, encode_sound, write_file,
 };
 use chimera_hal::store::{ByteSink, StoreError};
 
@@ -299,5 +299,95 @@ fn init_is_named_init() {
     for e in EngineType::ALL {
         assert_eq!(Sound::init(e).name.as_str(), "INIT");
         assert_eq!(Sound::neutral(e).name.as_str(), "INIT");
+    }
+}
+
+/// xorshift32: the same Sounds every run.
+struct Rng(u32);
+
+impl Rng {
+    fn next(&mut self) -> u32 {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 17;
+        self.0 ^= self.0 << 5;
+        self.0
+    }
+
+    fn below(&mut self, n: usize) -> usize {
+        self.next() as usize % n
+    }
+
+    fn unit(&mut self) -> f32 {
+        (self.next() >> 8) as f32 / (1 << 24) as f32
+    }
+}
+
+/// Every stored param of every voice block at a random value in range (an
+/// enum at a random code it accepts), random primed dests and routes.
+fn random_sound(e: EngineType, rng: &mut Rng) -> Sound {
+    let mut s = Sound::neutral(e);
+    for b in BlockRef::ALL {
+        let Some(blk) = s.params.block_mut(b) else {
+            continue;
+        };
+        for a in ValidAddr::of_block(b) {
+            let spec = a.spec();
+            if a.coded() {
+                // Codes this value accepts now (KIND already set: MODE's
+                // list is the KIND's). A refused code writes nothing.
+                let ok: Vec<u8> = (0..=u8::MAX)
+                    .filter(|&c| blk.set_enum_code(spec.id, c))
+                    .collect();
+                assert!(blk.set_enum_code(spec.id, ok[rng.below(ok.len())]));
+            } else {
+                blk.set(spec.id, spec.min + rng.unit() * (spec.max - spec.min));
+            }
+        }
+    }
+    let mut addrs = modulatable(usize::MAX);
+    let n = rng.below(MAX_MOD_DESTS + 1);
+    for i in 0..n {
+        let a = addrs.swap_remove(rng.below(addrs.len()));
+        let label = [b'A' + i as u8; LABEL_LEN];
+        s.dest_registry.add(a, label).unwrap();
+    }
+    s.mod_state = ModState::from_registry(&s.dest_registry, 1 + rng.below(MAX_MOD_SOURCES));
+    for src in 0..s.mod_state.num_sources() {
+        for d in 0..s.mod_state.num_dests() {
+            if rng.below(2) == 0 {
+                s.mod_state.set_route(src, d, rng.next() as u8 as i8);
+            }
+        }
+    }
+    s
+}
+
+#[test]
+fn random_sounds_round_trip() {
+    let mut rng = Rng(0xC0DE_CAFE);
+    for e in EngineType::ALL {
+        for _ in 0..150 {
+            assert_round_trip(&random_sound(e, &mut rng));
+        }
+    }
+}
+
+#[test]
+fn a_block_record_twice_is_corrupt() {
+    let s = Sound::init(EngineType::Algo);
+    let f = (RecordTag::Block, block(BlockRef::Filter, &s));
+    let bytes = file(&[engine(EngineType::Algo), f.clone(), f]);
+    assert_eq!(decode(&bytes).err(), Some(FileError::Corrupt));
+}
+
+/// The frozen base, pinned per engine: a change to a default moves every
+/// old file's sound.
+#[test]
+fn neutral_is_pinned() {
+    let golden = include_str!("fixtures/neutral_v1.txt");
+    for e in EngineType::ALL {
+        let want = golden.replace("engine: ENGINE,", &format!("engine: {e:?},"));
+        let got = format!("{:#?}\n", Sound::neutral(e));
+        assert!(got == want, "neutral {e:?} moved; now:\n{got}");
     }
 }
