@@ -240,7 +240,8 @@ impl UiState {
         self.theme = t;
     }
 
-    /// On the System chain: leaving it saves SYSTEM.
+    /// On the System chain, any of its pages or sub-pages: moving between
+    /// them is no exit. Leaving the chain is when SYSTEM syncs.
     pub fn in_system(&self) -> bool {
         self.nav.chain_id == ChainId::System
     }

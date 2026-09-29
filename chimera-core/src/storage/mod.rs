@@ -30,5 +30,6 @@ pub use record::{
 };
 pub use sound::{SoundCheck, SoundDecoder, encode_sound};
 pub use system::{
-    BootNote, SystemCheck, SystemDecoder, SystemSettings, SystemSync, body_crc, encode_system,
+    BootNote, Exit, ExitPlan, SyncError, SystemCheck, SystemDecoder, SystemSettings, SystemSync,
+    body_crc, encode_system, exit_plan,
 };

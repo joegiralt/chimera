@@ -431,6 +431,7 @@ This assumes a 512 B block write is atomic: a cut leaves each block wholly old o
 - **When it's written:**
   - on leaving System, only if the bytes changed;
   - on a project save or load, for the last project id.
+- **Write rule.** SYSTEM is written exactly when RAM differs from what the card in the slot is known to hold, keyed by volume. Untouched defaults never go over a card's SYSTEM: leaving System loads that card's file instead, and creates it only when it has none.
 - It uses A/B like every other file.
 - This implicit save is the owner's ruling. "Saves are explicit" applies to projects and sounds.
 
