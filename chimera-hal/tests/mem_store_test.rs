@@ -27,6 +27,7 @@ fn messages() {
         StoreError::Unsupported(Unsupported::NoPartitionTable),
         StoreError::Unsupported(Unsupported::NotFat(0x83)),
         StoreError::Unsupported(Unsupported::BadBootSector),
+        StoreError::Unsupported(Unsupported::FatNotMirrored),
         StoreError::NotFound,
         StoreError::Full,
         StoreError::Timeout,

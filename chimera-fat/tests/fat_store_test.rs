@@ -4,8 +4,8 @@ mod image;
 mod probe;
 
 use chimera_fat::FatStore;
-use chimera_fat::dir::{ShortName, lfn_checksum};
-use chimera_fat::volume::{FsKind, Root, first_partition, layout};
+use chimera_fat::dir::{ShortName, Slot, lfn_checksum, parse};
+use chimera_fat::volume::{FsKind, Layout, Link, Root, first_partition, layout};
 use chimera_hal::store::{Dir, FileName, Store, StoreError, Unsupported, VolumeId};
 use core::cell::{Cell, RefCell};
 use embedded_sdmmc::BlockDevice;
@@ -14,6 +14,7 @@ use image::{
     layout_of, pattern, superfloppy, with_clusters,
 };
 use probe::{Probed, Sink, XorShift, consistent, fats, fats_equal, free, log, probed, suite};
+use std::collections::HashSet;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::rc::Rc;
 
@@ -46,6 +47,19 @@ fn superfloppy_mount_is_unsupported() {
         s.mount(),
         Err(StoreError::Unsupported(Unsupported::NoPartitionTable))
     );
+}
+
+/// Mirroring off: refused at mount, before anything is written.
+#[test]
+fn unmirrored_fat32_mount_is_unsupported() {
+    let disk = Rc::new(fat32(1));
+    disk.0.borrow_mut()[PART_LBA as usize][40] = 0x80;
+    let mut s = probed(&disk);
+    assert_eq!(
+        s.mount(),
+        Err(StoreError::Unsupported(Unsupported::FatNotMirrored))
+    );
+    assert_eq!(*log(&s).writes.borrow(), []);
 }
 
 /// Sectors per cluster 0 is refused before anything divides by it.
@@ -604,16 +618,15 @@ fn a_device_error_drops_the_unflushed_fat_change() {
     assert!(fats_equal(&cut.inner));
 }
 
-/// FAT 1's write lands, FAT 2's fails: the op is `Io`. The next op after
-/// the reinit sees a consistent volume, FAT 1's: the file is empty and its
-/// old chain free. FAT 2 stays stale until that sector next changes; then
-/// both copies are written from FAT 1's again.
-#[test]
-fn a_failed_fat2_write_is_io_and_heals() {
+/// `DATA.BIN` (3 clusters) and an empty `EMPTY.BIN`, then an overwrite of
+/// `DATA` whose FAT 2 write fails after FAT 1's landed. Returns the store
+/// that saw the failure, and the free counts before it.
+fn failed_fat2_write() -> (Rc<RamDisk>, VolumeId, Probed<RamDisk>, (u32, u32)) {
     let (disk, vol) = card();
-    probed(&disk)
-        .write(vol, name(b"DATA"), &mut |w| w.put(&[1; 3 * 512]))
+    let mut s = probed(&disk);
+    s.write(vol, name(b"DATA"), &mut |w| w.put(&[1; 3 * 512]))
         .unwrap();
+    s.write(vol, name(b"EMPTY"), &mut |_| Ok(())).unwrap();
     let before = free(&disk);
     let (_, fat2) = fats(&layout_of(&disk));
     let mut s = probed(&disk);
@@ -625,14 +638,55 @@ fn a_failed_fat2_write_is_io_and_heals() {
     assert_eq!(log(&s).reinits.get(), 1);
     assert!(!fats_equal(&disk), "FAT 2 missed the change");
     log(&s).fail_write.set(None);
+    (disk, vol, s, before)
+}
 
+/// FAT 1's write lands, FAT 2's fails: the op is `Io`, and the store keeps
+/// the sector. A read sees FAT 1's volume, consistent (the file empty, its
+/// old chain free), and writes nothing. The next op that changes the
+/// volume first copies the sector from FAT 1 to FAT 2, even when its own
+/// change is elsewhere: deleting an empty file touches no FAT entry.
+#[test]
+fn a_failed_fat2_write_is_healed_by_the_next_change() {
+    let (disk, vol, mut s, before) = failed_fat2_write();
+    let writes = log(&s).writes.borrow().len();
     assert_eq!(read_back(&mut s, vol, name(b"DATA")), []);
     assert_eq!(free(&disk).0, before.0 + 3, "FAT 1: the old chain is free");
-    s.write(vol, name(b"DATA"), &mut |w| w.put(&[3; 2 * 512]))
-        .unwrap();
-    assert_eq!(read_back(&mut s, vol, name(b"DATA")), [3; 2 * 512]);
+    assert_eq!(
+        log(&s).writes.borrow().len(),
+        writes,
+        "a read heals nothing"
+    );
+
+    s.delete(vol, name(b"EMPTY")).unwrap();
     assert!(fats_equal(&disk), "healed");
-    assert_eq!(free(&disk), (before.0 + 1, before.0 + 1));
+    assert_eq!(free(&disk), (before.0 + 3, before.0 + 3));
+    consistent(&s);
+    let writes = log(&s).writes.borrow().len();
+    s.delete(vol, name(b"DATA")).unwrap();
+    let fat2 = PART_LBA + fats(&layout_of(&disk)).1;
+    assert!(
+        log(&s).writes.borrow()[writes..]
+            .iter()
+            .all(|w| w.0 != fat2),
+        "healed once"
+    );
+}
+
+/// The kept sector is its volume's: a card with another id isn't touched,
+/// and the record is dropped.
+#[test]
+fn a_stale_fat_sector_is_healed_on_its_own_volume_only() {
+    let (disk, _, mut s, _) = failed_fat2_write();
+    // The same image under another serial: another volume.
+    disk.0.borrow_mut()[PART_LBA as usize][0x27] ^= 1;
+    let other = s.mount().unwrap();
+    s.delete(other, name(b"EMPTY")).unwrap();
+    assert!(!fats_equal(&disk), "not healed on another volume");
+    disk.0.borrow_mut()[PART_LBA as usize][0x27] ^= 1;
+    let vol = s.mount().unwrap();
+    s.write(vol, name(b"NEW"), &mut |_| Ok(())).unwrap();
+    assert!(!fats_equal(&disk), "the record went with the other volume");
 }
 
 /// An overwrite of a 3-cluster file with 2: the entry's reset comes before
@@ -857,9 +911,59 @@ fn fat16_root_full_is_full() {
     assert_eq!(*log(&s).writes.borrow(), []);
 }
 
+/// FAT 1's chains, as the card's directory tree names them: each one held
+/// and ended, and no cluster in two (no cross-link, no loop). `None` if the
+/// card doesn't mount.
+fn sound(disk: &Overlay) -> Option<bool> {
+    let p = first_partition(&disk.block(0)?).ok()?;
+    let (l, _) = layout(&disk.block(p.lba)?, p).ok()?;
+    Some(walk(disk, p.lba, &l).is_some())
+}
+
+/// `None` at the first unsound chain.
+fn walk(disk: &Overlay, lba: u32, l: &Layout) -> Option<()> {
+    let block = |b: u32| disk.block(lba.checked_add(b)?);
+    let mut seen = HashSet::new();
+    // A chain's blocks, its clusters marked seen.
+    let mut chain = |start: u32| -> Option<Vec<u32>> {
+        let (mut c, mut blocks) = (start, Vec::new());
+        loop {
+            if !seen.insert(c) {
+                return None;
+            }
+            let first = l.cluster_block(c)?;
+            blocks.extend(first..first + l.blocks_per_cluster());
+            match l.link(&block(l.fat_block(c))?, c) {
+                Link::End => return Some(blocks),
+                Link::Next(next) => c = next,
+                Link::Broken => return None,
+            }
+        }
+    };
+    let mut dirs = vec![match l.root() {
+        Root::Fixed { first, blocks } => (first..first + blocks).collect(),
+        Root::Cluster(c) => chain(c)?,
+    }];
+    while let Some(blocks) = dirs.pop() {
+        'dir: for b in blocks {
+            for raw in block(b)?.as_chunks::<32>().0 {
+                match parse(raw, l.kind()) {
+                    Slot::End => break 'dir,
+                    Slot::File(e) if e.start != 0 => _ = chain(e.start)?,
+                    Slot::Dir(e) => dirs.push(chain(e.start)?),
+                    _ => {}
+                }
+            }
+        }
+    }
+    Some(())
+}
+
 /// `seeds` seeds of 1-8 byte mutations in the MBR, the boot sector,
 /// FSInfo, FAT 1, FAT 2, the FAT's last sector, the root and `/CHIMERA`,
-/// then every operation, on an `Overlay` of `image`.
+/// then every operation, on an `Overlay` of `image`. Nothing panics or
+/// loops, every write is in the partition, and a card whose chains were
+/// sound (`sound`) still has sound chains after.
 fn fuzz(what: &str, image: RamDisk, seeds: u64) {
     let base = Rc::new(image);
     let vol = {
@@ -883,7 +987,7 @@ fn fuzz(what: &str, image: RamDisk, seeds: u64) {
         PART_LBA + chimera,
     ];
     targets.extend(l.fs_info().map(|b| PART_LBA + b));
-    let mut wrote = 0;
+    let (mut wrote, mut sound_seeds) = (0, 0);
     for seed in 1..=seeds {
         let mut rng = XorShift(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15));
         let disk = Rc::new(Overlay::new(&base));
@@ -897,6 +1001,7 @@ fn fuzz(what: &str, image: RamDisk, seeds: u64) {
             let (l, _) = layout(&disk.block(p.lba)?, p).ok()?;
             Some(u64::from(p.lba)..u64::from(p.lba) + u64::from(l.blocks()))
         });
+        let was_sound = sound(&disk);
         let mut s = probed(&disk);
         let run = catch_unwind(AssertUnwindSafe(|| {
             let vol = s.mount().unwrap_or(vol);
@@ -908,6 +1013,14 @@ fn fuzz(what: &str, image: RamDisk, seeds: u64) {
             let _ = s.write(vol, name(b"DATA"), &mut |w| w.put(&[0x3C; 1_500]));
         }));
         assert!(run.is_ok(), "{what}: seed {seed} panicked");
+        if was_sound == Some(true) {
+            sound_seeds += 1;
+            assert_eq!(
+                sound(&disk),
+                Some(true),
+                "{what}: seed {seed} broke FAT 1's chains"
+            );
+        }
         let writes = log(&s).writes.borrow();
         for &(lba, _) in writes.iter() {
             let inside = bounds.as_ref().is_some_and(|r| r.contains(&u64::from(lba)));
@@ -921,6 +1034,10 @@ fn fuzz(what: &str, image: RamDisk, seeds: u64) {
     assert!(
         wrote > seeds / 2,
         "{what}: {wrote} of {seeds} seeds still write"
+    );
+    assert!(
+        sound_seeds > seeds * 3 / 4,
+        "{what}: {sound_seeds} of {seeds} seeds start sound"
     );
 }
 

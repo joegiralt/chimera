@@ -415,6 +415,37 @@ fn entry_widths() {
     assert_eq!(l.entry(&block, 700), 5, "masked to 28 bits");
 }
 
+/// FAT32's BPB_ExtFlags (offset 40): bit 7 set turns mirroring off, and
+/// the active FAT (bits 0-3) alone is the card's. We read FAT 1 and write
+/// every copy, so any such card is refused. Bits 0-3 without bit 7 mean
+/// nothing: the card mounts.
+#[test]
+fn unmirrored_fat32_is_unsupported() {
+    let disk = fat32(1);
+    let p = first_partition(&disk.block(0)).unwrap();
+    for (flags, ok) in [
+        (0x0000u16, true),
+        (0x0001, true),
+        (0x0080, false),
+        (0x0081, false),
+    ] {
+        let mut bs = disk.block(PART_LBA);
+        bs[40..42].copy_from_slice(&flags.to_le_bytes());
+        let got = layout(&bs, p).map(|_| ());
+        let want = if ok {
+            Ok(())
+        } else {
+            Err(Unsupported::FatNotMirrored)
+        };
+        assert_eq!(got, want, "ExtFlags {flags:#06x}");
+    }
+    // On FAT16, byte 40 is the serial's: nothing to do with mirroring.
+    let disk = fat16(16_384, 0x0000_8000);
+    let p = first_partition(&disk.block(0)).unwrap();
+    assert_eq!(disk.block(PART_LBA)[40], 0x80);
+    assert!(layout(&disk.block(PART_LBA), p).is_ok());
+}
+
 /// BPB_FSInfo 0 or 0xFFFF: the volume has no FSInfo, and still mounts.
 #[test]
 fn no_fs_info_mounts_without_one() {

@@ -18,6 +18,9 @@ pub enum Unsupported {
     NotFat(u8),
     /// A FAT volume whose boot sector fails validation.
     BadBootSector,
+    /// FAT32 with mirroring off (BPB_ExtFlags bit 7): one active FAT that
+    /// the others don't follow. Chimera keeps every FAT in step.
+    FatNotMirrored,
 }
 
 /// Bytes per `ReadSink::chunk`, one SD block.
@@ -110,6 +113,9 @@ impl StoreError {
             StoreError::Unsupported(Unsupported::NoPartitionTable) => "CARD HAS NO PARTITION TABLE",
             StoreError::Unsupported(Unsupported::NotFat(_)) => "CARD IS NOT FAT16/FAT32",
             StoreError::Unsupported(Unsupported::BadBootSector) => "CARD FORMAT IS DAMAGED",
+            StoreError::Unsupported(Unsupported::FatNotMirrored) => {
+                "CARD FAT NOT MIRRORED: FORMAT IT"
+            }
             StoreError::NotFound => "FILE NOT FOUND",
             StoreError::Full => "CARD FULL",
             StoreError::Timeout => "CARD TIMEOUT",

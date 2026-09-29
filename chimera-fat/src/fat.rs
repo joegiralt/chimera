@@ -13,6 +13,10 @@ pub struct FatCache {
     sector: Option<u32>,
     dirty: bool,
     buf: [u8; BLOCK],
+    /// A FAT 1 sector whose write reached FAT 1 but not every other copy.
+    /// It outlives the operation: the store keeps it for its volume, and
+    /// the next change there copies it over first (`Table::heal`).
+    pub stale: Option<u32>,
 }
 
 impl FatCache {
@@ -21,6 +25,7 @@ impl FatCache {
             sector: None,
             dirty: false,
             buf: [0; BLOCK],
+            stale: None,
         }
     }
 }
@@ -110,18 +115,48 @@ impl<'a, B: Blocks> Table<'a, B> {
 
     /// Writes a dirty sector to every FAT, FAT 1 first. A failed write
     /// empties the cache: what the card holds is unknown, so it is read
-    /// again.
+    /// again. One that fails after FAT 1's landed leaves the sector `stale`.
     pub fn flush(&mut self) -> Result<(), FsError<B::Error>> {
         let Some(sector) = self.cache.sector.filter(|_| self.cache.dirty) else {
             return Ok(());
         };
         self.cache.dirty = false;
-        for copy in self.layout.fat_copies(sector) {
+        for (i, copy) in self.layout.fat_copies(sector).enumerate() {
+            if let Err(e) = self.blocks.write(copy, &self.cache.buf) {
+                self.cache.sector = None;
+                if i > 0 {
+                    self.cache.stale = Some(sector);
+                }
+                return Err(FsError::Dev(e));
+            }
+        }
+        Ok(())
+    }
+
+    /// Copies the `stale` sector from FAT 1 to every other FAT, then
+    /// forgets it; before an operation's first FAT change. A sector outside
+    /// this volume's FAT 1 is forgotten unwritten. A failed write keeps it.
+    pub fn heal(&mut self) -> Result<(), FsError<B::Error>> {
+        let Some(sector) = self.cache.stale else {
+            return Ok(());
+        };
+        if !self.layout.fat1().contains(&sector) {
+            self.cache.stale = None;
+            return Ok(());
+        }
+        self.flush()?;
+        self.cache.sector = None;
+        self.blocks
+            .read(sector, &mut self.cache.buf)
+            .map_err(FsError::Dev)?;
+        self.cache.sector = Some(sector);
+        for copy in self.layout.fat_copies(sector).skip(1) {
             if let Err(e) = self.blocks.write(copy, &self.cache.buf) {
                 self.cache.sector = None;
                 return Err(FsError::Dev(e));
             }
         }
+        self.cache.stale = None;
         Ok(())
     }
 
