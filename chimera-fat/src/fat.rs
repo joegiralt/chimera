@@ -40,8 +40,11 @@ pub struct Table<'a, B: Blocks> {
 }
 
 impl<'a, B: Blocks> Table<'a, B> {
-    /// Empties `cache`: what it held may be from another card.
+    /// Empties `cache`: what it held may be from another card. A dirty
+    /// cache here is a bug: a `Table` dropped with a change unflushed (a
+    /// failed flush empties it).
     pub fn new(blocks: &'a mut B, layout: &Layout, cache: &'a mut FatCache) -> Self {
+        debug_assert!(!cache.dirty, "unflushed FAT change");
         cache.sector = None;
         cache.dirty = false;
         Self {
@@ -106,17 +109,19 @@ impl<'a, B: Blocks> Table<'a, B> {
     }
 
     /// Writes a dirty sector to every FAT, FAT 1 first. A failed write
-    /// leaves it dirty.
+    /// empties the cache: what the card holds is unknown, so it is read
+    /// again.
     pub fn flush(&mut self) -> Result<(), FsError<B::Error>> {
         let Some(sector) = self.cache.sector.filter(|_| self.cache.dirty) else {
             return Ok(());
         };
-        for copy in self.layout.fat_copies(sector) {
-            self.blocks
-                .write(copy, &self.cache.buf)
-                .map_err(FsError::Dev)?;
-        }
         self.cache.dirty = false;
+        for copy in self.layout.fat_copies(sector) {
+            if let Err(e) = self.blocks.write(copy, &self.cache.buf) {
+                self.cache.sector = None;
+                return Err(FsError::Dev(e));
+            }
+        }
         Ok(())
     }
 
@@ -160,12 +165,13 @@ impl<'a, B: Blocks> Table<'a, B> {
 
     /// Frees the chain from `start` up to its end or first bad link, in at
     /// most `clusters` steps, and returns how many clusters it freed. A
-    /// loop stops where it meets a cluster it already freed.
+    /// loop stops where it meets a cluster it already freed. A cluster
+    /// marked bad or reserved is bad media, not the chain's: it stays.
     pub fn free_chain(&mut self, start: u32) -> Result<u32, FsError<B::Error>> {
         let (mut c, mut n) = (start, 0);
         while n < self.layout.clusters() && self.layout.holds(c) {
             let v = self.entry(c)?;
-            if v == FREE {
+            if v == FREE || self.layout.is_reserved(v) {
                 break;
             }
             self.set(c, FREE)?;

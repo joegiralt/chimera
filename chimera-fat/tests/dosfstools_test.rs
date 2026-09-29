@@ -11,10 +11,10 @@ mod tools;
 use chimera_fat::blocks::BLOCK;
 use chimera_fat::fat::FatCache;
 use chimera_fat::fs::Fs;
-use chimera_fat::volume::{FsKind, first_partition, layout};
+use chimera_fat::volume::{FsKind, Root, first_partition, layout};
 use chimera_hal::store::{Dir, FileName, ReadSink};
 use core::ops::ControlFlow;
-use image::{PART_LBA, RamDisk, Rec, pattern, sdmmc_write};
+use image::{PART_LBA, RamDisk, Rec, fat16, fat32, layout_of, pattern, sdmmc_write, with_clusters};
 use tools::{fsck, mkfs};
 
 /// (kind, disk blocks, sectors per cluster, serial)
@@ -166,4 +166,36 @@ fn fsck_harness_catches_damage() {
     disk.0.borrow_mut()[b][at_b + 26..at_b + 28].copy_from_slice(&start_a);
     let f = fsck(&disk);
     assert_ne!(f.code, 0, "a cross-link: {}", f.out);
+}
+
+/// The RAM-image builders every other test starts from are FAT a computer
+/// accepts, at each classification edge. The builders leave out the root's
+/// label entry, which `fsck.fat` wants beside the boot sector's label:
+/// `embedded-sdmmc` 0.10, still `FatStore`'s engine, takes that entry for a
+/// file named `CHIMERA` (see `sdmmc_write_labelled`). It is added here.
+#[test]
+#[ignore = "needs dosfstools: just test-fat-tools"]
+fn builder_images_pass_fsck() {
+    let images = [
+        ("fat16(16 384)", fat16(16_384, 1)),
+        ("fat32", fat32(1)),
+        ("with_clusters(4 085)", with_clusters(4_085, 1)),
+        ("with_clusters(65 524)", with_clusters(65_524, 1)),
+        ("with_clusters(65 525)", with_clusters(65_525, 1)),
+    ];
+    for (what, disk) in images {
+        let l = layout_of(&disk);
+        let root = match l.root() {
+            Root::Fixed { first, .. } => first,
+            Root::Cluster(c) => l.cluster_block(c).unwrap(),
+        };
+        {
+            let slot = &mut disk.0.borrow_mut()[(PART_LBA + root) as usize][..32];
+            assert_eq!(slot[0], 0, "{what}: an empty root");
+            slot[..11].copy_from_slice(b"CHIMERA    ");
+            slot[11] = 0x08;
+        }
+        let f = fsck(&disk);
+        assert_eq!(f.code, 0, "{what}: {}", f.out);
+    }
 }

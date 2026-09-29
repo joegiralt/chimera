@@ -287,6 +287,8 @@ pub struct Rec<'a> {
     lba: u32,
     pub bound: u32,
     pub reads: u32,
+    /// Every write fails while set.
+    pub fail_writes: bool,
     /// Each write's block, and whether it held these bytes already.
     pub writes: Vec<(u32, bool)>,
 }
@@ -299,6 +301,7 @@ impl<'a> Rec<'a> {
             lba: p.lba,
             bound: p.blocks,
             reads: 0,
+            fail_writes: false,
             writes: Vec::new(),
         }
     }
@@ -321,6 +324,9 @@ impl Blocks for Rec<'_> {
 
     fn write(&mut self, lba: u32, buf: &[u8; BLOCK]) -> Result<(), DiskError> {
         let at = self.at(lba);
+        if self.fail_writes {
+            return Err(DiskError);
+        }
         let mut disk = self.disk.0.borrow_mut();
         let block = disk.get_mut(at).ok_or(DiskError)?;
         self.writes.push((lba, block == buf));
