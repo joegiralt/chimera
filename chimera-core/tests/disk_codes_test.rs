@@ -1,12 +1,16 @@
 //! Frozen disk codes (ADR 0045): every stored enum's code is permanent.
 
 use chimera_core::addr::{BlockRef, Blocks};
-use chimera_core::block::{Block, ParamId, ParamKind, ValFmt};
+use chimera_core::block::{Block, ParamId, ValFmt};
 use chimera_core::dsp::fx_bus::FxParams;
+use chimera_core::dsp::modulator::{EnvForm, EnvSlot, FuncMode, LfoForm};
 use chimera_core::modulation::ModSource;
+use chimera_core::params::EnvParams;
 use chimera_core::params::{FilterParams, ParamSnapshot};
 use chimera_core::part::PartParams;
-use chimera_core::storage::{DiskValue, RETIRED, ValidAddr, read_value};
+use chimera_core::storage::{
+    Crc32, DiskValue, RETIRED, RETIRED_CODES, RETIRED_SOURCES, ValidAddr, read_value,
+};
 use chimera_core::ui::theme_settings::ThemeSettings;
 
 /// One of each block's owner, so any stored `BlockRef` resolves.
@@ -56,71 +60,197 @@ fn shown(fmt: ValFmt, v: u8) -> String {
     }
 }
 
+/// WAVE and ALG: the index is the code and the name is the only record of
+/// what it means, so the name is part of the frozen key.
+fn name_is_key(block: u8, id: ParamId) -> bool {
+    matches!((block, id.0), (3..=8, 0) | (2, 0 | 1))
+}
+
+/// Every stored fact, as `key`, or `key # readable` when the readable part
+/// (a label, a display text) isn't written to the card and so isn't frozen.
 fn table() -> Vec<String> {
     let mut out = Vec::new();
     for (b, code) in stored() {
         let mut bank = Bank::new();
-        for s in b.specs() {
-            out.push(format!("B {code} {} {}", s.id.0, s.label));
-            if s.kind != ParamKind::Enum {
+        for a in ValidAddr::of_block(b) {
+            let s = a.spec();
+            out.push(format!("B {code} {} # {}", s.id.0, s.label));
+            if !a.coded() {
                 continue;
             }
             for v in 0..=s.max as u8 {
                 let blk = bank.block(b);
                 blk.set(s.id, f32::from(v));
                 let c = blk.enum_code(s.id).expect("an Enum has a code");
-                out.push(format!("E {code} {} {c} {}", s.id.0, shown(s.fmt, v)));
+                let text = shown(s.fmt, v);
+                out.push(if name_is_key(code, s.id) {
+                    format!("E {code} {} {c} {text}", s.id.0)
+                } else {
+                    format!("E {code} {} {c} # {text}", s.id.0)
+                });
             }
         }
+    }
+    for s in ModSource::ALL {
+        out.push(format!("S {} # {}", s.disk_code(), s.name()));
     }
     out
 }
 
+fn key(line: &str) -> &str {
+    line.split(" # ").next().unwrap()
+}
+
+/// A frozen key the RETIRED lists give up on.
+fn retired(key: &str) -> bool {
+    let t: Vec<u8> = key
+        .split(' ')
+        .skip(1)
+        .map_while(|x| x.parse().ok())
+        .collect();
+    match (key.as_bytes()[0], t.as_slice()) {
+        (b'B', [b, id]) | (b'E', [b, id, ..]) if RETIRED.contains(&(*b, *id)) => true,
+        (b'E', [b, id, c, ..]) => RETIRED_CODES.contains(&(*b, *id, *c)),
+        (b'S', [c]) => RETIRED_SOURCES.contains(c),
+        _ => false,
+    }
+}
+
+/// The first `V1_LEN` bytes of the fixture are frozen: appending lines passes,
+/// any edit inside them changes the CRC. (Lines appended later go after.)
+const V1_LEN: usize = 7956;
+const V1_CRC: u32 = 0x1757_82c6;
+
 #[test]
 fn table_matches_golden() {
-    // Every frozen line must still be produced. New lines are appended to the
-    // fixture by hand, never edited in and never removed.
     let golden = include_str!("fixtures/disk_codes_v1.txt");
+    let head = &golden.as_bytes()[..V1_LEN.min(golden.len())];
+    let mut crc = Crc32::new();
+    crc.update(head);
+    assert!(
+        golden.len() >= V1_LEN && head.last() == Some(&b'\n') && crc.finish() == V1_CRC,
+        "the frozen v1 part of the fixture was edited"
+    );
+
     let now = table();
-    for line in golden.lines() {
+    let frozen: Vec<&str> = golden.lines().map(key).collect();
+    for (i, k) in frozen.iter().enumerate() {
+        assert!(!frozen[..i].contains(k), "fixture repeats {k}");
+    }
+    for line in &now {
         assert!(
-            now.iter().any(|l| l == line),
-            "frozen line changed or gone: {line}"
+            !retired(key(line)),
+            "retired but produced again (codes are never reused): {line}"
+        );
+        assert!(
+            frozen.contains(&key(line)),
+            "append this line to the fixture: {line}"
+        );
+    }
+    for k in &frozen {
+        assert!(
+            now.iter().any(|l| key(l) == *k) || retired(k),
+            "frozen line no longer produced; if it is gone for good, add it to RETIRED*: {k}"
         );
     }
 }
 
+/// Load `from`'s stored values into a fresh block the way a loader does: in
+/// `ValidAddr::of_block` order, coded params by their code.
+fn load(b: BlockRef, from: &mut Bank) -> Bank {
+    let mut to = Bank::new();
+    for a in ValidAddr::of_block(b) {
+        let id = a.spec().id;
+        match read_value(from.block(b), a) {
+            DiskValue::Code(c) => {
+                assert!(
+                    to.block(b).set_enum_code(id, c),
+                    "{b:?} {} {c}",
+                    a.spec().label
+                )
+            }
+            DiskValue::Real(v) => to.block(b).write(id, v),
+        }
+    }
+    to
+}
+
 #[test]
-fn every_enum_param_has_codes() {
+fn every_enum_param_round_trips_in_loader_order() {
     for (b, _) in stored() {
-        for s in b.specs().iter().filter(|s| s.kind == ParamKind::Enum) {
+        for e in ValidAddr::of_block(b).filter(|a| a.coded()) {
+            let s = e.spec();
             for v in 0..=s.max as u8 {
                 let mut a = Bank::new();
                 a.block(b).set(s.id, f32::from(v));
-                let c = a.block(b).enum_code(s.id);
-                let c = c.unwrap_or_else(|| panic!("{b:?} {} has no code", s.label));
-                let mut fresh = Bank::new();
-                // Order matters for FORM (its MODE first), so load in table order.
-                for earlier in b.specs().iter().filter(|e| e.id.0 < s.id.0) {
-                    if earlier.kind == ParamKind::Enum {
-                        let ec = a.block(b).enum_code(earlier.id).unwrap();
-                        assert!(fresh.block(b).set_enum_code(earlier.id, ec));
-                    }
+                assert!(a.block(b).enum_code(s.id).is_some(), "{b:?} {}", s.label);
+                let mut to = load(b, &mut a);
+                for x in ValidAddr::of_block(b) {
+                    let id = x.spec().id;
+                    assert_eq!(
+                        to.block(b).get(id),
+                        a.block(b).get(id),
+                        "{b:?} {} after setting {} to {v}",
+                        x.spec().label,
+                        s.label
+                    );
                 }
-                assert!(
-                    fresh.block(b).set_enum_code(s.id, c),
-                    "{b:?} {} {c}",
-                    s.label
-                );
-                assert_eq!(
-                    fresh.block(b).get(s.id),
-                    f32::from(v),
-                    "{b:?} {} {c}",
-                    s.label
-                );
             }
         }
     }
+}
+
+/// A param whose decoding needs another param loaded first comes after it.
+#[test]
+fn dependents_follow_their_parents() {
+    let deps = [(BlockRef::Filter, FilterParams::MODE, FilterParams::KIND)];
+    for (b, child, parent) in deps {
+        let order: Vec<ParamId> = ValidAddr::of_block(b).map(|a| a.spec().id).collect();
+        let at = |id| order.iter().position(|&x| x == id).unwrap();
+        assert!(at(parent) < at(child), "{b:?}");
+    }
+}
+
+#[test]
+fn modulator_forms_are_stored_per_mode() {
+    let env = BlockRef::Env(EnvSlot::Env1);
+    // The live FORM is a view of the current MODE's slot, not stored.
+    assert!(ValidAddr::find(env, EnvParams::FORM).is_none());
+    let mut e = EnvParams::default();
+    e.set(EnvParams::FORM_ENV, 2.0);
+    e.set(EnvParams::FORM_LFO, 1.0);
+    e.set(EnvParams::FORM_BURST, 1.0);
+    for (mode, want) in [(0.0, 2.0), (1.0, 1.0), (2.0, 1.0)] {
+        e.set(EnvParams::MODE, mode);
+        assert_eq!(e.get(EnvParams::FORM), want);
+    }
+    e.set(EnvParams::FORM, 0.0); // MODE is Burst
+    assert_eq!(e.get(EnvParams::FORM_BURST), 0.0);
+    assert_eq!(e.get(EnvParams::FORM_LFO), 1.0);
+}
+
+#[test]
+fn unknown_mode_code_keeps_every_form() {
+    let env = BlockRef::Env(EnvSlot::Env1);
+    let mut src = EnvParams::default();
+    src.set(EnvParams::MODE, 1.0);
+    src.set(EnvParams::FORM_ENV, 2.0);
+    src.set(EnvParams::FORM_LFO, 1.0);
+    src.set(EnvParams::FORM_BURST, 1.0);
+    let mut dst = EnvParams::default();
+    for a in ValidAddr::of_block(env).filter(|a| a.coded()) {
+        let id = a.spec().id;
+        let code = if id == EnvParams::MODE {
+            250
+        } else {
+            src.enum_code(id).unwrap()
+        };
+        assert_eq!(dst.set_enum_code(id, code), id != EnvParams::MODE);
+    }
+    assert_eq!(dst.func.mode, FuncMode::Env, "MODE keeps its default");
+    assert_eq!(dst.func.env_form, EnvForm::Cycle);
+    assert_eq!(dst.func.lfo_form, LfoForm::Sync);
+    assert_eq!(dst.func.burst_form, EnvForm::Ahr);
 }
 
 #[test]
@@ -140,7 +270,10 @@ fn unknown_code_writes_nothing() {
     assert!(!f.set_enum_code(FilterParams::KIND, 250));
     // 250 and 200 (two's complement −6, −56) are no enum's value: refused, no panic.
     for (b, _) in stored() {
-        for s in b.specs().iter().filter(|s| s.kind == ParamKind::Enum) {
+        for s in ValidAddr::of_block(b)
+            .filter(|a| a.coded())
+            .map(|a| a.spec())
+        {
             let mut bank = Bank::new();
             let blk = bank.block(b);
             let was = blk.get(s.id);
@@ -190,11 +323,41 @@ fn mod_source_codes_round_trip() {
 #[test]
 fn retired_never_live() {
     assert_eq!(RETIRED, &[(10, 3), (10, 4), (10, 5)]);
+    assert!(RETIRED_CODES.is_empty() && RETIRED_SOURCES.is_empty());
     for &(block, id) in RETIRED {
-        let b = BlockRef::from_disk_code(block).expect("a stored block");
-        assert!(b.specs().iter().all(|s| s.id.0 != id), "{b:?} {id} is live");
-        assert!(ValidAddr::find(b, ParamId(id)).is_none());
+        for b in BlockRef::ALL
+            .into_iter()
+            .filter(|b| b.disk_code() == Some(block))
+        {
+            assert!(
+                ValidAddr::find(b, ParamId(id)).is_none(),
+                "{b:?} {id} is live"
+            );
+        }
     }
+    for &(block, id, code) in RETIRED_CODES {
+        for b in BlockRef::ALL
+            .into_iter()
+            .filter(|b| b.disk_code() == Some(block))
+        {
+            let mut bank = Bank::new();
+            assert!(
+                !bank.block(b).set_enum_code(ParamId(id), code),
+                "{b:?} {id} {code}"
+            );
+        }
+    }
+    for &c in RETIRED_SOURCES {
+        assert_eq!(ModSource::from_disk_code(c), None);
+    }
+}
+
+#[test]
+#[cfg(debug_assertions)]
+#[should_panic(expected = "block does not match")]
+fn read_value_checks_the_block() {
+    let a = ValidAddr::find(BlockRef::Drive, ParamId(0)).unwrap();
+    read_value(&FilterParams::default(), a);
 }
 
 #[test]

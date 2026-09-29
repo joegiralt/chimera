@@ -141,7 +141,7 @@ impl Block for LfoParams {
             Self::SHAPE => Some(self.shape),
             Self::SYNC => Some(self.sync),
             Self::TYPE => Some(self.lfo_type.disk_code()),
-            Self::FORM => Some(self.func.form_code()),
+            Self::FORM => Some(self.func.lfo_form.disk_code()),
             _ => None,
         }
     }
@@ -151,7 +151,8 @@ impl Block for LfoParams {
             Self::SHAPE => apply_code(identity_code(&LFO_SPECS, id, code), |c| self.shape = c),
             Self::SYNC => apply_code(identity_code(&LFO_SPECS, id, code), |c| self.sync = c),
             Self::TYPE => apply_code(LfoType::from_disk_code(code), |t| self.lfo_type = t),
-            Self::FORM => self.func.set_form_code(code),
+            // An LFO's MODE is always LFO, so FORM is its lfo_form, whatever else is loaded.
+            Self::FORM => apply_code(LfoForm::from_disk_code(code), |f| self.func.lfo_form = f),
             _ => false,
         }
     }

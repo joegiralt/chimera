@@ -49,6 +49,9 @@ const fn classic(name: &'static str, shape: Shape) -> Recipe {
     }
 }
 
+/// Append-only: a recipe's index is its wave's disk code (ADR 0045), frozen
+/// with its name in `chimera-core/tests/fixtures/disk_codes_v1.txt`. Never
+/// reorder or remove.
 pub const RECIPES: [Recipe; 16] = [
     tx("W1", |t| (TAU * t).sin()),
     tx("W2", w2),

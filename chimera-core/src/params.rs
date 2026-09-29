@@ -1,7 +1,9 @@
 use crate::addr::{BlockRef, Blocks};
 use crate::block::{Block, DiskCode, ParamId, ParamSpec, ValFmt, apply_code};
 use crate::dsp::filter::{FilterKind, FilterMode, KIND_NAMES, SVF_MODE_NAMES};
-use crate::dsp::modulator::{EnvSpeed, EnvType, FuncMode, FuncParams, HoldPos, pick};
+use crate::dsp::modulator::{
+    EnvForm, EnvSpeed, EnvType, FuncMode, FuncParams, HoldPos, LfoForm, pick,
+};
 
 /// Parameters for one voice's filter.
 #[derive(Clone, Copy, Debug)]
@@ -200,11 +202,17 @@ impl EnvParams {
     pub const RISE: ParamId = ParamId(13);
     pub const FALL: ParamId = ParamId(14);
     pub const SHAPE: ParamId = ParamId(15);
+    /// The three FORMs, one per MODE and each stored on its own, so decoding
+    /// never depends on MODE and a MODE's remembered FORM survives a reload.
+    /// `FORM` is the live view of the current MODE's.
+    pub const FORM_ENV: ParamId = ParamId(16);
+    pub const FORM_LFO: ParamId = ParamId(17);
+    pub const FORM_BURST: ParamId = ParamId(18);
 }
 
 /// Positions and levels, per block. LEVEL and TIME (hidden, primed from the
 /// stage cells), RISE, FALL and SHAPE are modulatable.
-pub static ENV_SPECS: [ParamSpec; 16] = [
+pub static ENV_SPECS: [ParamSpec; 19] = [
     ParamSpec::continuous(0, "ATK", ValFmt::Uni, 0.0, 1.0, 0.189, 1.0 / 128.0, false),
     ParamSpec::continuous(1, "DEC", ValFmt::Uni, 0.0, 1.0, 0.559, 1.0 / 128.0, false),
     ParamSpec::continuous(2, "SUS", ValFmt::Uni, 0.0, 1.0, 0.7, 1.0 / 128.0, false),
@@ -235,10 +243,32 @@ pub static ENV_SPECS: [ParamSpec; 16] = [
         2.0,
         0.0,
     ),
-    ParamSpec::choice(12, "FORM", ValFmt::Names(&["AD", "AHR", "CYCLE"]), 2.0, 0.0),
+    // Live: the current MODE's FORM slot (16..=18), which is what is stored.
+    ParamSpec::choice(12, "FORM", ValFmt::Names(&["AD", "AHR", "CYCLE"]), 2.0, 0.0).live(),
     ParamSpec::continuous(13, "RISE", ValFmt::Uni, 0.0, 1.0, 0.206, 1.0 / 128.0, true),
     ParamSpec::continuous(14, "FALL", ValFmt::Uni, 0.0, 1.0, 0.640, 1.0 / 128.0, true),
     ParamSpec::continuous(15, "SHAPE", ValFmt::Bi, 0.0, 1.0, 0.5, 1.0 / 128.0, true).short("SHAP"),
+    ParamSpec::choice(
+        16,
+        "ENV FORM",
+        ValFmt::Names(&["AD", "AHR", "CYCLE"]),
+        2.0,
+        0.0,
+    ),
+    ParamSpec::choice(
+        17,
+        "LFO FORM",
+        ValFmt::Names(&["FREE", "SYNC", "LFV"]),
+        2.0,
+        0.0,
+    ),
+    ParamSpec::choice(
+        18,
+        "BRST FORM",
+        ValFmt::Names(&["AD", "AHR", "CYCLE"]),
+        2.0,
+        0.0,
+    ),
 ];
 
 impl Block for EnvParams {
@@ -264,6 +294,9 @@ impl Block for EnvParams {
             Self::RISE => self.func.rise,
             Self::FALL => self.func.fall,
             Self::SHAPE => self.func.shape,
+            Self::FORM_ENV => self.func.env_form as u8 as f32,
+            Self::FORM_LFO => self.func.lfo_form as u8 as f32,
+            Self::FORM_BURST => self.func.burst_form as u8 as f32,
             _ => 0.0,
         }
     }
@@ -286,6 +319,9 @@ impl Block for EnvParams {
             Self::RISE => self.func.rise = v,
             Self::FALL => self.func.fall = v,
             Self::SHAPE => self.func.shape = v,
+            Self::FORM_ENV => self.func.env_form = pick(&EnvForm::ALL, v),
+            Self::FORM_LFO => self.func.lfo_form = pick(&LfoForm::ALL, v),
+            Self::FORM_BURST => self.func.burst_form = pick(&EnvForm::ALL, v),
             _ => {}
         }
     }
@@ -296,19 +332,24 @@ impl Block for EnvParams {
             Self::SPEED => Some(self.speed.disk_code()),
             Self::HOLD_POS => Some(self.hold_pos.disk_code()),
             Self::MODE => Some(self.func.mode.disk_code()),
-            Self::FORM => Some(self.func.form_code()),
+            Self::FORM_ENV => Some(self.func.env_form.disk_code()),
+            Self::FORM_LFO => Some(self.func.lfo_form.disk_code()),
+            Self::FORM_BURST => Some(self.func.burst_form.disk_code()),
             _ => None,
         }
     }
 
-    /// FORM belongs to the current MODE, so a loader sets MODE first.
     fn set_enum_code(&mut self, id: ParamId, code: u8) -> bool {
         match id {
             Self::TYPE => apply_code(EnvType::from_disk_code(code), |t| self.env_type = t),
             Self::SPEED => apply_code(EnvSpeed::from_disk_code(code), |s| self.speed = s),
             Self::HOLD_POS => apply_code(HoldPos::from_disk_code(code), |h| self.hold_pos = h),
             Self::MODE => apply_code(FuncMode::from_disk_code(code), |m| self.func.mode = m),
-            Self::FORM => self.func.set_form_code(code),
+            Self::FORM_ENV => apply_code(EnvForm::from_disk_code(code), |f| self.func.env_form = f),
+            Self::FORM_LFO => apply_code(LfoForm::from_disk_code(code), |f| self.func.lfo_form = f),
+            Self::FORM_BURST => {
+                apply_code(EnvForm::from_disk_code(code), |f| self.func.burst_form = f)
+            }
             _ => false,
         }
     }
