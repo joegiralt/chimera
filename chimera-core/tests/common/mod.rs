@@ -391,6 +391,37 @@ pub fn period_hz(s: &[f32]) -> f64 {
     f
 }
 
+/// `s`'s strongest frequency within ±100 cents of `near`, Hann-windowed,
+/// to 0.05 cents: its fundamental, however its upper partials are tuned.
+pub fn fundamental_hz(s: &[f32], near: f64) -> f64 {
+    let n = s.len() as f64;
+    let x: Vec<f64> = s
+        .iter()
+        .enumerate()
+        .map(|(i, &x)| x as f64 * (0.5 - 0.5 * (core::f64::consts::TAU * i as f64 / n).cos()))
+        .collect();
+    let at = |cents: f64| near * 2f64.powf(cents / 1200.0);
+    let mag = |cents: f64| {
+        let w = core::f64::consts::TAU * at(cents) / SR as f64;
+        let (c, s) = (w.cos(), w.sin());
+        let (mut re, mut im, mut pr, mut pi) = (0.0, 0.0, 1.0, 0.0);
+        for &x in &x {
+            re += x * pr;
+            im += x * pi;
+            (pr, pi) = (pr * c - pi * s, pr * s + pi * c);
+        }
+        re.hypot(im)
+    };
+    let peak = |from: f64, step: f64, steps: usize| {
+        (0..=steps)
+            .map(|k| from + k as f64 * step)
+            .max_by(|&a, &b| mag(a).total_cmp(&mag(b)))
+            .unwrap()
+    };
+    let coarse = peak(-100.0, 1.0, 200);
+    at(peak(coarse - 1.0, 0.05, 40))
+}
+
 /// Root mean square, summed in f64.
 pub fn rms(x: &[f32]) -> f32 {
     (x.iter().map(|&s| s as f64 * s as f64).sum::<f64>() / x.len() as f64).sqrt() as f32

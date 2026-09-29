@@ -15,7 +15,12 @@ impl LoopGain {
 
     /// The gain that falls 60 dB in `t60_s` at `freq_hz` passes a second.
     pub fn from_t60(t60_s: f32, freq_hz: f32) -> Self {
-        Self::new(libm::powf(0.001, 1.0 / (t60_s * freq_hz)))
+        // Not above 0: a negative T60 would ring longest.
+        if t60_s > 0.0 {
+            Self::new(libm::powf(0.001, 1.0 / (t60_s * freq_hz)))
+        } else {
+            Self(0.0)
+        }
     }
 
     pub fn get(self) -> f32 {
@@ -60,7 +65,6 @@ impl DcBlocker {
     }
 
     /// The pole, for the loop's phase delay.
-    #[allow(dead_code)] // read by the string's tuning, next
     pub fn r(&self) -> f32 {
         self.r
     }
@@ -71,9 +75,104 @@ impl DcBlocker {
     }
 }
 
+/// The shortest line the loop's three-tap low-pass reads.
+pub const MIN_LINE: usize = 2;
+
+/// A first-order allpass, `(η + z⁻¹)/(1 + η z⁻¹)`: the loop's fraction of
+/// a sample. Stable for `|η| < 1`.
+#[derive(Default)]
+pub struct Allpass1 {
+    eta: f32,
+    x1: f32,
+    y1: f32,
+}
+
+impl Allpass1 {
+    pub fn set(&mut self, eta: f32) {
+        self.eta = eta;
+    }
+
+    #[inline]
+    pub fn process(&mut self, x: f32) -> f32 {
+        let y = self.eta * (x - self.y1) + self.x1;
+        self.x1 = x;
+        self.y1 = y;
+        y
+    }
+
+    pub fn reset(&mut self) {
+        self.x1 = 0.0;
+        self.y1 = 0.0;
+    }
+}
+
+/// `Allpass1`'s phase delay at `w` rad/sample, in samples.
+#[cfg_attr(not(test), allow(dead_code))] // the dispersion's, next
+pub fn allpass_phase_delay(eta: f32, w: f32) -> f32 {
+    1.0 - 2.0 * libm::atan2f(eta * libm::sinf(w), 1.0 + eta * libm::cosf(w)) / w
+}
+
+/// `DcBlocker`'s phase delay at `w`, in samples: negative, an advance.
+pub fn dc_phase_delay(r: f32, w: f32) -> f32 {
+    let pi = core::f32::consts::PI;
+    -((pi - w) * 0.5 - libm::atan2f(r * libm::sinf(w), 1.0 - r * libm::cosf(w))) / w
+}
+
+/// The η whose phase delay at `w` is `frac`, exactly.
+pub fn eta_for(frac: f32, w: f32) -> f32 {
+    let theta = w * (1.0 - frac) * 0.5;
+    libm::sinf(theta) / libm::sinf(w - theta)
+}
+
+/// A loop of `period` samples whose other parts delay `other` at `w`: the
+/// line delay and the allpass's η. The fraction is in `[0.5, 1.5)` unless
+/// the line clamps to `MIN_LINE`.
+pub fn split(period: f32, other: f32, w: f32) -> (usize, f32) {
+    let d = period - other;
+    let n = (libm::floorf(d - 0.5) as usize).max(MIN_LINE);
+    (n, eta_for(d - n as f32, w))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const SR: f32 = 48_000.0;
+    fn w_of(hz: f32) -> f32 {
+        core::f32::consts::TAU * hz / SR
+    }
+
+    #[test]
+    fn eta_for_inverts_the_phase_delay() {
+        for w in [w_of(49.0), w_of(2093.0)] {
+            for frac in [0.5, 0.75, 1.0, 1.49] {
+                let got = allpass_phase_delay(eta_for(frac, w), w);
+                assert!((got - frac).abs() < 1e-4, "ω {w}, {frac}: {got}");
+            }
+        }
+    }
+
+    #[test]
+    fn split_keeps_the_fraction_in_range() {
+        let r = DcBlocker::new(48_000).r();
+        let w = w_of(SR / 979.59);
+        assert_eq!(split(979.59, dc_phase_delay(r, w), w).0, 1010);
+        let mut period = 22.9_f32;
+        while period <= 979.6 {
+            let w = w_of(SR / period);
+            let other = dc_phase_delay(r, w);
+            let (n, eta) = split(period, other, w);
+            let frac = allpass_phase_delay(eta, w);
+            assert!((0.5 - 1e-3..1.5).contains(&frac), "{period}: {frac}");
+            assert!((n as f32 + frac + other - period).abs() < 1e-3, "{period}");
+            period *= 1.0007;
+        }
+    }
+
+    #[test]
+    fn loop_gain_from_a_negative_t60_is_the_shortest() {
+        assert_eq!(LoopGain::from_t60(-1.0, 49.0).get(), 0.0);
+    }
 
     #[test]
     fn loop_gain_never_reaches_one() {
