@@ -6,7 +6,7 @@ use core::mem::size_of;
 
 use chimera_core::dsp::algo::engine::AlgoEngine;
 use chimera_core::dsp::engines::EngineSlot;
-use chimera_core::dsp::modal::{DcBlocker, MAX_STRING_DELAY, ModalEngine, dc_phase_delay};
+use chimera_core::dsp::modal::{MAX_STRING_DELAY, ModalEngine};
 use chimera_core::dsp::note_to_freq;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::hw;
@@ -66,19 +66,14 @@ fn voice_is_its_chain_plus_one_slot() {
 }
 
 /// ADR 0040, 0056: Modal's string lines hold G1 (MIDI 31, 49.0 Hz) at
-/// 48 kHz, its period plus the DC blocker's advance and the low-pass's two
-/// taps; F♯1 and lower clamp.
+/// 48 kHz, its period's whole samples and the low-pass's two taps, and no
+/// more: F♯1 and lower clamp.
 #[test]
 fn modal_strings_cover_g1_and_no_lower() {
-    let r = DcBlocker::new(hw::SAMPLE_RATE).r();
-    let ring = |n: u8| {
-        let f = note_to_freq(n);
-        let w = core::f32::consts::TAU * f / hw::SAMPLE_RATE as f32;
-        hw::SAMPLE_RATE as f32 / f - dc_phase_delay(r, w) + 2.0
-    };
-    assert!((ring(31) - 1013.0).abs() < 0.1, "{}", ring(31));
-    assert!(ring(31) <= MAX_STRING_DELAY as f32, "G1 must not clamp");
-    assert!(ring(30) > MAX_STRING_DELAY as f32, "the line fits F♯1");
+    let ring = |n: u8| (hw::SAMPLE_RATE as f32 / note_to_freq(n) - 0.5) as usize + 2;
+    assert_eq!(ring(31), 981);
+    assert_eq!(ring(31), MAX_STRING_DELAY, "G1 fits, exactly");
+    assert!(ring(30) > MAX_STRING_DELAY, "the line fits F♯1");
     let inst = size_of::<chimera_core::instrument::Instrument>();
     eprintln!(
         "Instrument = {inst} B, {} B left in D2",

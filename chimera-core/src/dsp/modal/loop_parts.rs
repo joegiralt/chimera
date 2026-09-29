@@ -32,7 +32,8 @@ impl LoopGain {
     }
 }
 
-/// The DC blocker's corner.
+/// The DC blocker's corner. It sits on a string model's output, not in the
+/// loop, where its phase would detune the upper partials (ADR 0056).
 pub const DC_HZ: f32 = 10.0;
 
 /// A one-pole high-pass at `DC_HZ`, normalized so its gain is at most 1
@@ -62,11 +63,6 @@ impl DcBlocker {
         self.x1 = x;
         self.y1 = y;
         y
-    }
-
-    /// The pole, for the loop's phase delay.
-    pub fn r(&self) -> f32 {
-        self.r
     }
 
     pub fn reset(&mut self) {
@@ -112,12 +108,6 @@ pub fn allpass_phase_delay(eta: f32, w: f32) -> f32 {
     1.0 - 2.0 * libm::atan2f(eta * libm::sinf(w), 1.0 + eta * libm::cosf(w)) / w
 }
 
-/// `DcBlocker`'s phase delay at `w`, in samples: negative, an advance.
-pub fn dc_phase_delay(r: f32, w: f32) -> f32 {
-    let pi = core::f32::consts::PI;
-    -((pi - w) * 0.5 - libm::atan2f(r * libm::sinf(w), 1.0 - r * libm::cosf(w))) / w
-}
-
 /// The η whose phase delay at `w` is `frac`, exactly.
 pub fn eta_for(frac: f32, w: f32) -> f32 {
     let theta = w * (1.0 - frac) * 0.5;
@@ -154,17 +144,15 @@ mod tests {
 
     #[test]
     fn split_keeps_the_fraction_in_range() {
-        let r = DcBlocker::new(48_000).r();
         let w = w_of(SR / 979.59);
-        assert_eq!(split(979.59, dc_phase_delay(r, w), w).0, 1010);
+        assert_eq!(split(979.59, 0.0, w).0, 979);
         let mut period = 22.9_f32;
         while period <= 979.6 {
             let w = w_of(SR / period);
-            let other = dc_phase_delay(r, w);
-            let (n, eta) = split(period, other, w);
+            let (n, eta) = split(period, 0.0, w);
             let frac = allpass_phase_delay(eta, w);
             assert!((0.5 - 1e-3..1.5).contains(&frac), "{period}: {frac}");
-            assert!((n as f32 + frac + other - period).abs() < 1e-3, "{period}");
+            assert!((n as f32 + frac - period).abs() < 1e-3, "{period}");
             period *= 1.0007;
         }
     }
@@ -190,7 +178,7 @@ mod tests {
     #[test]
     fn dc_blocker_gain_is_at_most_one() {
         let dc = DcBlocker::new(48_000);
-        let (r, g) = (dc.r() as f64, dc.g as f64);
+        let (r, g) = (dc.r as f64, dc.g as f64);
         for k in 0..512 {
             let w = core::f64::consts::PI * k as f64 / 511.0;
             // H = g·(1 − e^{−jω}) / (1 − r·e^{−jω})
