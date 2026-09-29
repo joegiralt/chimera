@@ -3,7 +3,7 @@
 //! pan and FX sends. One `Block`, so it gets pages and snap like any other.
 
 use crate::MidiChannel;
-use crate::block::{Block, ParamId, ParamSpec, ValFmt};
+use crate::block::{Block, DiskCode, ParamId, ParamSpec, ValFmt, apply_code};
 use crate::dsp::fx_bus::FX_SENDS;
 use crate::hw::MAX_PARTS;
 
@@ -14,6 +14,23 @@ pub enum PartMode {
     Mono = 0,
     /// Voices from the shared pool.
     Poly = 1,
+}
+
+impl DiskCode for PartMode {
+    fn disk_code(self) -> u8 {
+        match self {
+            PartMode::Mono => 0,
+            PartMode::Poly => 1,
+        }
+    }
+
+    fn from_disk_code(c: u8) -> Option<Self> {
+        match c {
+            0 => Some(PartMode::Mono),
+            1 => Some(PartMode::Poly),
+            _ => None,
+        }
+    }
 }
 
 impl PartMode {
@@ -32,6 +49,25 @@ pub enum DacPair {
     P1 = 0,
     P2 = 1,
     P3 = 2,
+}
+
+impl DiskCode for DacPair {
+    fn disk_code(self) -> u8 {
+        match self {
+            DacPair::P1 => 0,
+            DacPair::P2 => 1,
+            DacPair::P3 => 2,
+        }
+    }
+
+    fn from_disk_code(c: u8) -> Option<Self> {
+        match c {
+            0 => Some(DacPair::P1),
+            1 => Some(DacPair::P2),
+            2 => Some(DacPair::P3),
+            _ => None,
+        }
+    }
 }
 
 impl DacPair {
@@ -146,6 +182,25 @@ impl Block for PartParams {
             Self::SEND_DELAY => self.sends[1] = v,
             Self::SEND_REVERB => self.sends[2] = v,
             _ => {}
+        }
+    }
+
+    /// CH's code is the channel, 0..=15.
+    fn enum_code(&self, id: ParamId) -> Option<u8> {
+        match id {
+            Self::CHANNEL => Some(self.channel.get()),
+            Self::MODE => Some(self.mode.disk_code()),
+            Self::OUTPUT => Some(self.output.disk_code()),
+            _ => None,
+        }
+    }
+
+    fn set_enum_code(&mut self, id: ParamId, code: u8) -> bool {
+        match id {
+            Self::CHANNEL => apply_code(MidiChannel::new(code), |c| self.channel = c),
+            Self::MODE => apply_code(PartMode::from_disk_code(code), |m| self.mode = m),
+            Self::OUTPUT => apply_code(DacPair::from_disk_code(code), |o| self.output = o),
+            _ => false,
         }
     }
 }

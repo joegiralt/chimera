@@ -1,6 +1,6 @@
 //! Modal's parameters and their specs.
 
-use crate::block::{Block, ParamId, ParamSpec, ValFmt};
+use crate::block::{Block, DiskCode, ParamId, ParamSpec, ValFmt, apply_code};
 
 // ── Modal Params ────────────────────────────────────────────────────
 
@@ -12,6 +12,27 @@ pub enum ResonatorMode {
     Modal = 1,       // SVF bandpass bank (Rings-style)
     Bowed = 2,       // Sustained bow friction
     Sympathetic = 3, // Multiple resonating strings (Rings-style)
+}
+
+impl DiskCode for ResonatorMode {
+    fn disk_code(self) -> u8 {
+        match self {
+            ResonatorMode::String => 0,
+            ResonatorMode::Modal => 1,
+            ResonatorMode::Bowed => 2,
+            ResonatorMode::Sympathetic => 3,
+        }
+    }
+
+    fn from_disk_code(c: u8) -> Option<Self> {
+        match c {
+            0 => Some(ResonatorMode::String),
+            1 => Some(ResonatorMode::Modal),
+            2 => Some(ResonatorMode::Bowed),
+            3 => Some(ResonatorMode::Sympathetic),
+            _ => None,
+        }
+    }
 }
 
 impl ResonatorMode {
@@ -146,5 +167,13 @@ impl Block for ModalParams {
             Self::KS_ENS_MIX => self.ks_ens_mix = v,
             _ => {}
         }
+    }
+
+    fn enum_code(&self, id: ParamId) -> Option<u8> {
+        (id == Self::MODE).then(|| self.mode.disk_code())
+    }
+
+    fn set_enum_code(&mut self, id: ParamId, code: u8) -> bool {
+        id == Self::MODE && apply_code(ResonatorMode::from_disk_code(code), |m| self.mode = m)
     }
 }

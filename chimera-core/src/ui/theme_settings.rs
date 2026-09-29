@@ -13,7 +13,7 @@ use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::pixelcolor::raw::{RawData, RawU16};
 use embedded_graphics::prelude::RgbColor;
 
-use crate::block::{Block, ParamId, ParamSpec, ValFmt};
+use crate::block::{Block, DiskCode, ParamId, ParamSpec, ValFmt, apply_code};
 use crate::ui::theme;
 
 /// Backlight duty, percent: 10..=100 in steps of 5.
@@ -58,6 +58,19 @@ impl Bright {
     }
 }
 
+/// The code is the percent itself, 10..=100 in steps of 5.
+impl DiskCode for Bright {
+    fn disk_code(self) -> u8 {
+        self.0
+    }
+
+    fn from_disk_code(c: u8) -> Option<Self> {
+        let on_step =
+            (Self::MIN..=Self::MAX).contains(&c) && (c - Self::MIN).is_multiple_of(Self::STEP);
+        on_step.then_some(Bright(c))
+    }
+}
+
 /// Panel gamma: which 0xE0/0xE1 tables the ILI9341 gets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Gamma {
@@ -67,6 +80,25 @@ pub enum Gamma {
     Soft,
     /// Adafruit's tables: deeper blacks, more contrast, a muted teal.
     Punch,
+}
+
+impl DiskCode for Gamma {
+    fn disk_code(self) -> u8 {
+        match self {
+            Gamma::Panel => 0,
+            Gamma::Soft => 1,
+            Gamma::Punch => 2,
+        }
+    }
+
+    fn from_disk_code(c: u8) -> Option<Self> {
+        match c {
+            0 => Some(Gamma::Panel),
+            1 => Some(Gamma::Soft),
+            2 => Some(Gamma::Punch),
+            _ => None,
+        }
+    }
 }
 
 /// Positive (0xE0) and negative (0xE1) gamma correction, 15 bytes each.
@@ -142,6 +174,29 @@ pub enum Accent {
     Rose,
     Lime,
     Ice,
+}
+
+impl DiskCode for Accent {
+    fn disk_code(self) -> u8 {
+        match self {
+            Accent::Teal => 0,
+            Accent::Amber => 1,
+            Accent::Rose => 2,
+            Accent::Lime => 3,
+            Accent::Ice => 4,
+        }
+    }
+
+    fn from_disk_code(c: u8) -> Option<Self> {
+        match c {
+            0 => Some(Accent::Teal),
+            1 => Some(Accent::Amber),
+            2 => Some(Accent::Rose),
+            3 => Some(Accent::Lime),
+            4 => Some(Accent::Ice),
+            _ => None,
+        }
+    }
 }
 
 /// The ground `#0a0b0d` the soft accent mixes over.
@@ -224,6 +279,18 @@ impl Black {
     pub const fn ground(self) -> Rgb565 {
         let g = (2 + self.0) as u8;
         Rgb565::new(g / 2, g, g / 2)
+    }
+}
+
+/// The code is the lift itself as a two's-complement byte, −2..=4.
+impl DiskCode for Black {
+    fn disk_code(self) -> u8 {
+        self.0 as u8
+    }
+
+    fn from_disk_code(c: u8) -> Option<Self> {
+        let v = c as i8;
+        (Self::MIN..=Self::MAX).contains(&v).then_some(Black(v))
     }
 }
 
@@ -361,6 +428,26 @@ impl Block for ThemeSettings {
             Self::ACCENT => self.accent = Accent::ALL[(i as usize).min(Accent::ALL.len() - 1)],
             Self::BLACK => self.black = Black::new(Black::MIN.saturating_add(i.min(127) as i8)),
             _ => {}
+        }
+    }
+
+    fn enum_code(&self, id: ParamId) -> Option<u8> {
+        match id {
+            Self::BRIGHT => Some(self.bright.disk_code()),
+            Self::GAMMA => Some(self.gamma.disk_code()),
+            Self::ACCENT => Some(self.accent.disk_code()),
+            Self::BLACK => Some(self.black.disk_code()),
+            _ => None,
+        }
+    }
+
+    fn set_enum_code(&mut self, id: ParamId, code: u8) -> bool {
+        match id {
+            Self::BRIGHT => apply_code(Bright::from_disk_code(code), |b| self.bright = b),
+            Self::GAMMA => apply_code(Gamma::from_disk_code(code), |g| self.gamma = g),
+            Self::ACCENT => apply_code(Accent::from_disk_code(code), |a| self.accent = a),
+            Self::BLACK => apply_code(Black::from_disk_code(code), |b| self.black = b),
+            _ => false,
         }
     }
 }

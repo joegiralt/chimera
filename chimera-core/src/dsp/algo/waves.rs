@@ -58,6 +58,15 @@ impl WaveId {
     pub const RSQR: WaveId = WaveId(14);
     pub const SSAW: WaveId = WaveId(15);
 
+    /// `v` if it names a wave.
+    pub const fn from_index(v: u8) -> Option<Self> {
+        if (v as usize) < WAVE_COUNT {
+            Some(WaveId(v))
+        } else {
+            None
+        }
+    }
+
     pub const fn clamped(v: u8) -> Self {
         if (v as usize) < WAVE_COUNT {
             WaveId(v)

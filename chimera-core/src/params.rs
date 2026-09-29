@@ -1,5 +1,5 @@
 use crate::addr::{BlockRef, Blocks};
-use crate::block::{Block, ParamId, ParamSpec, ValFmt};
+use crate::block::{Block, DiskCode, ParamId, ParamSpec, ValFmt, apply_code};
 use crate::dsp::filter::{FilterKind, FilterMode, KIND_NAMES, SVF_MODE_NAMES};
 use crate::dsp::modulator::{EnvSpeed, EnvType, FuncMode, FuncParams, HoldPos, pick};
 
@@ -119,6 +119,23 @@ impl Block for FilterParams {
                 self.set_mode(m[(v.max(0.0) as usize).min(m.len() - 1)]);
             }
             _ => {}
+        }
+    }
+
+    fn enum_code(&self, id: ParamId) -> Option<u8> {
+        match id {
+            Self::KIND => Some(self.kind.disk_code()),
+            Self::MODE => Some(self.mode.disk_code()),
+            _ => None,
+        }
+    }
+
+    /// MODE's code is the mode's own, and it is refused if the KIND lacks it.
+    fn set_enum_code(&mut self, id: ParamId, code: u8) -> bool {
+        match id {
+            Self::KIND => apply_code(FilterKind::from_disk_code(code), |k| self.set_kind(k)),
+            Self::MODE => FilterMode::from_disk_code(code).is_some_and(|m| self.set_mode(m)),
+            _ => false,
         }
     }
 }
@@ -272,6 +289,29 @@ impl Block for EnvParams {
             _ => {}
         }
     }
+
+    fn enum_code(&self, id: ParamId) -> Option<u8> {
+        match id {
+            Self::TYPE => Some(self.env_type.disk_code()),
+            Self::SPEED => Some(self.speed.disk_code()),
+            Self::HOLD_POS => Some(self.hold_pos.disk_code()),
+            Self::MODE => Some(self.func.mode.disk_code()),
+            Self::FORM => Some(self.func.form_code()),
+            _ => None,
+        }
+    }
+
+    /// FORM belongs to the current MODE, so a loader sets MODE first.
+    fn set_enum_code(&mut self, id: ParamId, code: u8) -> bool {
+        match id {
+            Self::TYPE => apply_code(EnvType::from_disk_code(code), |t| self.env_type = t),
+            Self::SPEED => apply_code(EnvSpeed::from_disk_code(code), |s| self.speed = s),
+            Self::HOLD_POS => apply_code(HoldPos::from_disk_code(code), |h| self.hold_pos = h),
+            Self::MODE => apply_code(FuncMode::from_disk_code(code), |m| self.func.mode = m),
+            Self::FORM => self.func.set_form_code(code),
+            _ => false,
+        }
+    }
 }
 
 /// Parameters for pre-filter drive stage
@@ -390,6 +430,23 @@ pub enum EngineType {
     #[default]
     Algo = 0,
     Modal = 1,
+}
+
+impl DiskCode for EngineType {
+    fn disk_code(self) -> u8 {
+        match self {
+            EngineType::Algo => 0,
+            EngineType::Modal => 1,
+        }
+    }
+
+    fn from_disk_code(c: u8) -> Option<Self> {
+        match c {
+            0 => Some(EngineType::Algo),
+            1 => Some(EngineType::Modal),
+            _ => None,
+        }
+    }
 }
 
 impl EngineType {
