@@ -118,6 +118,10 @@ otherwise it plays bare. Nothing is stolen for the pool (the owner's rule,
   play bare while slots sat free.
 - **`Option<Lease>` for the halo** — the same two states, but with
   `insert` and `get_or_insert` at hand to attach a lease to a sounding note.
+- **Freeing the slot at note-off** — the next new note would get its halo
+  sooner, but a released note's halo would be cut short. Rejected by the
+  owner: sympathetic strings are like a sitar's, they ring until touched,
+  so a slot comes home only when its note's tail has died out.
 - **Refusing a fifth note** — a key that makes no sound; bare keeps the note
   and loses only its halo.
 - **The pool in AXI** — 111,104 B of sets against about 24.9 KB of AXI kept
