@@ -259,7 +259,9 @@ impl<D: Medium> Store for FatStore<D> {
             self.dev.start_op();
             self.read(0).map_err(|e| self.fault(&e))?;
         }
-        let (_, _, id) = self.identify()?;
+        // No volume to use (unsupported, exFAT): back to acquiring, so the
+        // medium's phase and the driver agree the card needs re-init.
+        let (_, _, id) = self.identify().inspect_err(|_| self.dev.reinit())?;
         self.dev.mounted();
         Ok(id)
     }
