@@ -400,7 +400,7 @@ impl Renderer {
                 _ => fmt::fmt_val(&mut buf, value, v.fmt()),
             }
             let c = components::Cell {
-                label: v.label(),
+                label: cell_label(&v),
                 text: buf.as_str(),
                 value,
                 fmt: v.fmt(),
@@ -515,4 +515,19 @@ pub fn amount_value(amount: i8) -> f32 {
 /// Inverse of `amount_value`, rounded.
 pub fn amount_of(v: f32) -> i8 {
     libm::roundf((v - 0.5) * 254.0).clamp(-127.0, 127.0) as i8
+}
+
+/// A cell's label: the spec's short form when the full one would outrun
+/// the cell's bar into the next column.
+fn cell_label(v: &View) -> &'static str {
+    let label = v.label();
+    match v.short() {
+        Some(short)
+            if crate::ui::draw::text_width(&theme::FONT_LABEL, label, theme::LABEL_TRACKING)
+                > theme::CELL_BAR_W =>
+        {
+            short
+        }
+        _ => label,
+    }
 }
