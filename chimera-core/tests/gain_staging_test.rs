@@ -142,26 +142,42 @@ fn clamped(dac: &DacOut) -> usize {
     dac.iter().flatten().filter(|x| x.abs() >= 1.0).count()
 }
 
-/// #190: eight full-level saws, every LEVEL and send at 1, typical FX. The
-/// pairs sum to at most full scale before the limiter, the reverb's ring
-/// never sits on its i16 rail, and nothing reaches the final clamp.
+/// #190: eight saw-lead or init voices at velocity 127, LEVEL 1, typical
+/// FX. At every send the pairs sum to at most full scale before the
+/// limiter and nothing reaches the final clamp. At the typical send (0.3)
+/// the reverb's ring stays off its i16 rail; at send 1 it may reach it, as
+/// it did before the trim (the ring hears untrimmed sends; #142).
 #[test]
 fn no_stage_exceeds_ceiling() {
     for voices in [Voices::Saw, Voices::Init] {
-        let (mut pre, mut rails, mut over) = (0.0f32, 0usize, 0usize);
-        chord(voices, typical(), 1.0, 1.0, |_, fx, dac| {
-            let input = fx.limiter().input();
-            pre = input.iter().flatten().fold(pre, |m, x| m.max(x.abs()));
-            let lines = fx.reverb().ring().lines();
-            rails += lines
-                .iter()
-                .filter(|&&v| v == i16::MAX || v == i16::MIN)
-                .count();
-            over += clamped(dac);
-        });
-        assert!(pre <= 1.0, "{voices:?}: pair peak before the limiter {pre}");
-        assert_eq!(rails, 0, "{voices:?}: ring words on the i16 rail");
-        assert_eq!(over, 0, "{voices:?}: samples clamped at the DAC");
+        for send in [0.3, 1.0] {
+            let (mut pre, mut ring, mut rails, mut over) = (0.0f32, 0i32, 0usize, 0usize);
+            chord(voices, typical(), 1.0, send, |_, fx, dac| {
+                let input = fx.limiter().input();
+                pre = input.iter().flatten().fold(pre, |m, x| m.max(x.abs()));
+                let lines = fx.reverb().ring().lines();
+                ring = lines.iter().fold(ring, |m, &v| m.max((v as i32).abs()));
+                rails += lines
+                    .iter()
+                    .filter(|&&v| v == i16::MAX || v == i16::MIN)
+                    .count();
+                over += clamped(dac);
+            });
+            eprintln!(
+                "{voices:?} send {send}: pre-limiter peak {pre}, ring peak {ring}, rail words {rails}"
+            );
+            assert!(
+                pre <= 1.0,
+                "{voices:?} send {send}: pair peak before the limiter {pre}"
+            );
+            assert_eq!(
+                over, 0,
+                "{voices:?} send {send}: samples clamped at the DAC"
+            );
+            if send < 1.0 {
+                assert_eq!(rails, 0, "{voices:?}: ring words on the i16 rail");
+            }
+        }
     }
 }
 
@@ -280,4 +296,100 @@ fn limiter_catches_a_step_and_releases() {
     }
     assert!(peak <= CEILING, "{peak}");
     assert_eq!(last, 0.25, "released to unity");
+}
+
+/// Fix round 1: the trim goes around the FX bus. Every effect is fed the
+/// untrimmed sends, so the reverb's i16 ring (and the delay's saturation)
+/// sees exactly what it did before the trim; only its return is trimmed.
+/// Pair 1 is the dry path plus the return × the trim, one block late, bit
+/// for bit, and the ring holds the same words as a bus fed untrimmed.
+#[test]
+fn the_fx_bus_sees_the_untrimmed_sends() {
+    let mut fxp = typical();
+    fxp.tape = TapeParams::default();
+    fxp.delay.rev_send = 0.5;
+    fxp.reverb.time = 0.7;
+    let (gl, gr) = pan_gains(0.0);
+    let g = 0.35 * VOICE_SUM_TRIM;
+    let (gl, gr) = (gl * g, gr * g);
+    let mut reference = Box::new(FxBus::new());
+    let mut want = [[0.0f32; 2 * BLOCK_SIZE]; 2];
+    let (mut blocks, mut peak) = (0, 0.0f32);
+    chord(Voices::Init, fxp, 0.35, 0.1, |inst, fx, dac| {
+        let bus = inst.part_bus(0);
+        let mut sends = [bus.map(|b| b * 0.1); 3];
+        let mut ret = chimera_core::dsp::Stereo::SILENT;
+        reference.process(&mut sends, &fxp, SAMPLE_RATE, &mut ret);
+        assert_eq!(
+            fx.reverb().ring().lines(),
+            reference.reverb().ring().lines()
+        );
+        let input = fx.limiter().input().iter().flatten();
+        peak = input.fold(peak, |m, x| m.max(x.abs()));
+        // Below the ceiling, so the limiter passes it exactly.
+        assert_eq!(
+            dac[0].map(f32::to_bits),
+            want[blocks % 2].map(f32::to_bits),
+            "block {blocks} peak {peak}"
+        );
+        want[(blocks + 1) % 2] = core::array::from_fn(|k| {
+            let (i, (d, r)) = (
+                k / 2,
+                if k % 2 == 0 {
+                    (gl, &ret.l)
+                } else {
+                    (gr, &ret.r)
+                },
+            );
+            bus[i] * d + r[i] * VOICE_SUM_TRIM
+        });
+        blocks += 1;
+    });
+    assert!(blocks > 0);
+    assert!(peak < CEILING, "{peak}");
+}
+
+/// A non-finite sample reads as full scale: it asks for no more than the
+/// ceiling's 1 dB, so it cannot mute the music around it, while a finite
+/// over in the same chunk is still caught.
+#[test]
+fn a_non_finite_sample_reads_as_full_scale() {
+    for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+        let mut lim = Box::new(Limiter::new());
+        let mut out = [[0.0f32; 2 * BLOCK_SIZE]; DAC_PAIRS];
+        let (mut least, mut peak) = (f32::MAX, 0.0f32);
+        for b in 0..20 {
+            for pair in out.iter_mut() {
+                pair.fill(0.25);
+            }
+            if b == 5 {
+                out[0][40] = bad;
+            }
+            if b == 9 {
+                (out[2][41], out[2][42]) = (bad, 3.0);
+            }
+            lim.process(&mut out, SAMPLE_RATE);
+            for &x in out.iter().flatten().filter(|x| x.is_finite()) {
+                peak = peak.max(x.abs());
+                if b >= 1 {
+                    least = least.min(x.abs());
+                }
+            }
+        }
+        assert!(peak <= CEILING, "{bad}: {peak}");
+        // Only the 3.0 asks for more than the ceiling's 1 dB.
+        let mut calm = Box::new(Limiter::new());
+        let mut out = [[0.25f32; 2 * BLOCK_SIZE]; DAC_PAIRS];
+        out[1][9] = bad;
+        calm.process(&mut out, SAMPLE_RATE);
+        let mut out = [[0.25f32; 2 * BLOCK_SIZE]; DAC_PAIRS];
+        calm.process(&mut out, SAMPLE_RATE);
+        let quiet = out
+            .iter()
+            .flatten()
+            .filter(|x| x.is_finite())
+            .fold(1.0f32, |m, x| m.min(x.abs()));
+        assert!(quiet >= 0.25 * CEILING * 0.999, "{bad}: dipped to {quiet}");
+        assert!(least > 0.0, "{bad}: muted");
+    }
 }

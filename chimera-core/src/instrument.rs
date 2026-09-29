@@ -119,8 +119,10 @@ pub type DacOut = [[f32; BLOCK_SIZE * 2]; DAC_PAIRS];
 const _: () = assert!(size_of::<Instrument>() <= VOICE_RAM_BUDGET);
 
 /// The voice-sum trim (ADR 0050): 1/√8, −9.03 dB, so eight voices summed
-/// at random phase land where one voice did. Folded into each Part's
-/// hoisted dry and send gains, so it costs nothing per sample.
+/// at random phase land where one voice did. It goes around the FX bus,
+/// not into it: the dry path takes it in each Part's hoisted gains, the
+/// sends stay untrimmed and the bus's return takes it instead, so the
+/// reverb's i16 ring and the delay's saturation hear what they always did.
 pub const VOICE_SUM_TRIM: f32 = 0.353_553_38;
 
 /// Constant-power pan: (left, right) gains for `pan` in -1..1. Centre is
@@ -164,7 +166,7 @@ const _: () = assert!(BLOCK_SIZE.is_multiple_of(SEND_STEP) && BLOCK_SIZE.is_mult
 
 /// Steps 2–4 of `render`: each written Part's bus, trimmed, panned and
 /// levelled, into its pair and, by its sends, into the FX sends; then the
-/// FX bus once, its return on pair 1; then the master section
+/// FX bus once, its return trimmed onto pair 1; then the master section
 /// (`FxBus::master`) and the output limiter (`FxBus::limit`), which puts
 /// out the block before this one.
 /// Returns the scope block (the written buses summed). Separate so the
@@ -199,7 +201,7 @@ pub fn mix_parts(
         let (gl, gr) = pans.gains(p, part.mix.pan);
         let g = part.mix.level * VOICE_SUM_TRIM;
         let (gl, gr) = (gl * g, gr * g);
-        src[n] = (bus, part.mix.sends.map(|s| s * VOICE_SUM_TRIM));
+        src[n] = (bus, part.mix.sends);
         n += 1;
         let k = part.mix.output.index();
         dry[k][dry_n[k]] = (bus, gl, gr);
@@ -243,8 +245,8 @@ pub fn mix_parts(
             }
             if k == 0 {
                 for j in 0..PAIR_STEP {
-                    a[2 * j] += ret.l[i + j];
-                    a[2 * j + 1] += ret.r[i + j];
+                    a[2 * j] += ret.l[i + j] * VOICE_SUM_TRIM;
+                    a[2 * j + 1] += ret.r[i + j] * VOICE_SUM_TRIM;
                 }
             }
             pair[2 * i..2 * (i + PAIR_STEP)].copy_from_slice(&a);

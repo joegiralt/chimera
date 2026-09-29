@@ -161,17 +161,35 @@ fn least(a: f32, b: f32) -> f32 {
 /// The largest magnitude in chunk `i0..i0 + STEP` of any pair or side
 /// (the compressor's detector sums the pairs; this one bounds each). On
 /// the bits: a float's magnitude orders as its bits do, and integer
-/// compares skip the FPU's flag round trip. NaN reads as infinity.
+/// compares skip the FPU's flag round trip.
+///
+/// A non-finite sample reads as full scale. It has no level to measure,
+/// and the DAC plays it at full scale at most (`to_dac`: ±inf clamps, NaN
+/// is silence), so it asks for the ceiling's 1 dB and no more: a fault
+/// upstream never mutes the music around it, and a finite over beside it
+/// is still measured. Rare, so it costs a second look only then.
 #[inline(always)]
 fn chunk_peak(x: &Pairs, i0: usize) -> f32 {
-    const MAG: u32 = 0x7fff_ffff;
+    let peak = chunk_max(x, i0, |b| b);
+    if peak < INF {
+        return f32::from_bits(peak);
+    }
+    f32::from_bits(chunk_max(x, i0, |b| if b < INF { b } else { FULL_SCALE }))
+}
+
+const INF: u32 = 0x7f80_0000;
+/// 1.0's bits.
+const FULL_SCALE: u32 = 0x3f80_0000;
+
+/// The largest `read(|s| bits)` over the chunk.
+#[inline(always)]
+fn chunk_max(x: &Pairs, i0: usize, read: impl Fn(u32) -> u32) -> u32 {
+    let bits = |s: f32| read(s.to_bits() & 0x7fff_ffff);
     let mut peak = 0u32;
     for i in i0..i0 + STEP {
         for pair in x {
-            peak = peak
-                .max(pair[2 * i].to_bits() & MAG)
-                .max(pair[2 * i + 1].to_bits() & MAG);
+            peak = peak.max(bits(pair[2 * i])).max(bits(pair[2 * i + 1]));
         }
     }
-    f32::from_bits(peak.min(f32::INFINITY.to_bits()))
+    peak
 }
