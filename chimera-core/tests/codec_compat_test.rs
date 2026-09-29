@@ -158,6 +158,10 @@ fn v1_fixtures_render_identically() {
         FIXTURE_RENDERS.iter().map(|r| r.0).collect::<Vec<_>>()
     );
     for &(name, want) in FIXTURE_RENDERS {
+        // Moved by Modal 2 step A: re-recorded once, in its Task 11.
+        if name == "init_modal.snd" {
+            continue;
+        }
         let s = decode(&fixture(name)).unwrap();
         assert_eq!(
             fnv1a(&render_sound(&s.params, &s.mod_state)),

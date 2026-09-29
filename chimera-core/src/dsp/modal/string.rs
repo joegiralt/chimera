@@ -4,7 +4,9 @@
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 
+use super::loop_parts::{DcBlocker, LoopGain};
 use crate::dsp::xorshift_noise;
+use crate::hw::SAMPLE_RATE;
 
 // ── Karplus-Strong delay line (from the owner's Carcosa firmware) ───
 
@@ -17,17 +19,17 @@ pub const MAX_STRING_DELAY: usize = 984;
 /// per sample) at each call site.
 /// damping: 0..1 (lowpass coefficient)
 /// decay: 0..1 (AC attenuation rate)
+/// gain: the loop's gain per pass
 /// body: 0..1 (half-delay comb resonance)
 /// stiffness: 0..1 (allpass dispersion for bell character)
-/// feedback: 0..1 (sustain boost)
 /// ens_rate/ens_depth/ens_mix: ensemble chorus parameters
 #[derive(Clone, Copy)]
 pub struct KsRenderParams {
     pub damping: f32,
     pub decay: f32,
+    pub gain: LoopGain,
     pub body: f32,
     pub stiffness: f32,
-    pub feedback: f32,
     pub ens_rate: f32,
     pub ens_depth: f32,
     pub ens_mix: f32,
@@ -55,6 +57,7 @@ pub(super) struct KsString {
     dirty: usize,
     ens_lfo_phase: u32,
     noise_state: u32,
+    dc: DcBlocker,
 }
 
 impl KsString {
@@ -70,6 +73,7 @@ impl KsString {
             addr_of_mut!((*p).dirty).write(INIT_LEN);
             addr_of_mut!((*p).ens_lfo_phase).write(0);
             addr_of_mut!((*p).noise_state).write(0x8765_4321);
+            addr_of_mut!((*p).dc).write(DcBlocker::new(SAMPLE_RATE));
             slot.assume_init_mut()
         }
     }
@@ -163,6 +167,7 @@ impl KsString {
         cleared::add(self.clear_bytes());
         self.buffer[..self.dirty].fill(0.0);
         self.dirty = self.delay_len.max(self.write_pos + 1);
+        self.dc.reset();
     }
 
     /// What the next `clear` writes.
@@ -236,14 +241,8 @@ impl KsString {
             filtered = filtered * (1.0 - p.body * 0.5) + body_sample * p.body * 0.5;
         }
 
-        // Feedback boost for sustain (adds energy back, fights decay)
-        // Only at high values does it approach infinite sustain.
-        if p.feedback > 0.01 {
-            filtered += filtered * p.feedback * 0.3;
-            filtered = filtered.clamp(-1.5, 1.5);
-        }
-
-        // Write back
+        // The gain last, so no tap bypasses it.
+        let filtered = self.dc.process(filtered * p.gain.get());
         self.buffer[read_pos] = filtered;
         self.write_pos = read_pos;
 
@@ -276,8 +275,8 @@ impl KsString {
         output
     }
 
-    /// `tick_full` for a sympathetic string, which has no body, stiffness,
-    /// feedback or ensemble, and which `input` excites at its write
+    /// `tick_full` for a sympathetic string, which has no body, stiffness
+    /// or ensemble, and which `input` excites at its write
     /// position. The last tick's output waits in `pending` and is stored
     /// with this tick's input: one store a sample instead of a store, a
     /// load and a store again, bit-identical to storing it, then adding the
@@ -289,7 +288,7 @@ impl KsString {
         input: f32,
         pending: &mut f32,
     ) -> f32 {
-        debug_assert!(p.stiffness <= 0.01 && p.body <= 0.03 && p.feedback <= 0.01);
+        debug_assert!(p.stiffness <= 0.01 && p.body <= 0.03);
         debug_assert!(p.ens_mix <= 0.01 || p.ens_depth <= 0.01);
         let wp = self.write_pos;
         let injected = *pending + input;
@@ -302,7 +301,7 @@ impl KsString {
         } else {
             self.buffer[next_pos]
         };
-        let filtered = lowpass(p, current, next);
+        let filtered = self.dc.process(lowpass(p, current, next) * p.gain.get());
         self.buffer[wp] = injected;
         *pending = filtered;
         self.write_pos = read_pos;
@@ -310,7 +309,7 @@ impl KsString {
     }
 }
 
-/// The loop's filter: a two-point average and a gain below 1.
+/// The loop's filter: a two-point average.
 #[inline]
 fn lowpass(p: &KsRenderParams, current: f32, next: f32) -> f32 {
     // KS low-pass averaging: blend between current and next sample.
@@ -318,17 +317,10 @@ fn lowpass(p: &KsRenderParams, current: f32, next: f32) -> f32 {
     // damping=0 (bright): coeff=0.05 (barely any filtering)
     // damping=1 (dark): coeff=0.5 (heavy filtering, fast decay)
     let coeff = 0.05 + p.damping * 0.45;
-    let filtered = current * (1.0 - coeff) + next * coeff;
-
-    // The 2-point average inherently decays the signal.
-    // Apply a per-sample gain < 1.0 to control decay time.
-    // decay=0 → gain=0.9990 (very long ring, ~7 seconds)
-    // decay=1 → gain=0.9900 (short pluck, ~100ms)
-    let gain = 0.999 - p.decay * 0.009;
-    filtered * gain
+    current * (1.0 - coeff) + next * coeff
 }
 
-crate::in_place::field_list!(KsString => KsString { buffer, write_pos, delay_len, dirty, ens_lfo_phase, noise_state });
+crate::in_place::field_list!(KsString => KsString { buffer, write_pos, delay_len, dirty, ens_lfo_phase, noise_state, dc });
 
 /// Bytes `KsString::clear` has written on this thread: for the tests.
 #[cfg(any(test, feature = "test-support"))]

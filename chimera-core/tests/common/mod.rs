@@ -17,7 +17,7 @@ use chimera_core::dsp::algo::algorithms::AlgoId;
 use chimera_core::dsp::algo::params::AlgoParams;
 use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::fx_bus::FxBus;
-use chimera_core::dsp::modal::ResonatorMode;
+use chimera_core::dsp::modal::{Halo, ModalEngine, ModalParams, Model, ResonatorMode, SymPool};
 use chimera_core::instrument::{AudioShared, Instrument};
 use chimera_core::mod_path::ModDestRegistry;
 use chimera_core::modulation::ModState;
@@ -394,6 +394,95 @@ pub fn period_hz(s: &[f32]) -> f64 {
 /// Root mean square, summed in f64.
 pub fn rms(x: &[f32]) -> f32 {
     (x.iter().map(|&s| s as f64 * s as f64).sum::<f64>() / x.len() as f64).sqrt() as f32
+}
+
+/// RMS of `a − b`.
+pub fn rms_diff(a: &[f32], b: &[f32]) -> f32 {
+    assert_eq!(a.len(), b.len());
+    let d: Vec<f32> = a.iter().zip(b).map(|(x, y)| x - y).collect();
+    rms(&d)
+}
+
+/// Each `(i, jump)` where `tanh(0.4·x)` jumps more than 0.15 from the
+/// sample before: the desktop's output stage, clicking.
+pub fn clicks(out: &[f32]) -> Vec<(usize, f32)> {
+    let soft = |x: f32| libm::tanhf(x * 0.4);
+    (1..out.len())
+        .map(|i| (i, (soft(out[i]) - soft(out[i - 1])).abs()))
+        .filter(|&(_, jump)| jump > 0.15)
+        .collect()
+}
+
+/// One Modal note at `VEL`: `on_blocks` held, then `off_blocks` released.
+/// Sympathetic rings a full halo.
+pub fn play_modal(p: &ModalParams, note: u8, on_blocks: usize, off_blocks: usize) -> Vec<f32> {
+    play_modal_at(p, note, VEL, on_blocks, off_blocks)
+}
+
+/// `play_modal` at `velocity`.
+pub fn play_modal_at(
+    p: &ModalParams,
+    note: u8,
+    velocity: u8,
+    on_blocks: usize,
+    off_blocks: usize,
+) -> Vec<f32> {
+    let mut pool = SymPool::boxed();
+    let mut e = Box::new(ModalEngine::new_in(&mut pool, p.mode));
+    play(
+        &mut e,
+        &mut pool,
+        p,
+        (note, velocity),
+        on_blocks,
+        off_blocks,
+    )
+}
+
+/// `play_modal_at` for Sympathetic with a bare halo: the main string alone.
+pub fn play_modal_bare(
+    p: &ModalParams,
+    note: u8,
+    velocity: u8,
+    on_blocks: usize,
+    off_blocks: usize,
+) -> Vec<f32> {
+    assert_eq!(p.mode, ResonatorMode::Sympathetic);
+    let mut pool = SymPool::boxed();
+    let mut raw = Box::<ModalEngine>::new_uninit();
+    ModalEngine::init_in_place(&mut raw, Model::Sympathetic(Halo::Bare));
+    // SAFETY: `init_in_place` built a valid engine in the box.
+    let mut e = unsafe { raw.assume_init() };
+    assert!(e.is_bare());
+    play(
+        &mut e,
+        &mut pool,
+        p,
+        (note, velocity),
+        on_blocks,
+        off_blocks,
+    )
+}
+
+fn play(
+    e: &mut ModalEngine,
+    pool: &mut SymPool,
+    p: &ModalParams,
+    (note, velocity): (u8, u8),
+    on_blocks: usize,
+    off_blocks: usize,
+) -> Vec<f32> {
+    e.note_on(note, velocity, p, SR, pool);
+    let mut out = Vec::with_capacity((on_blocks + off_blocks) * BLOCK_SIZE);
+    let mut block = [0.0; BLOCK_SIZE];
+    for i in 0..on_blocks + off_blocks {
+        if i == on_blocks {
+            e.note_off(pool);
+        }
+        e.render(&mut block, p, SR, pool);
+        out.extend_from_slice(&block);
+    }
+    out
 }
 
 #[allow(unused_imports)] // each test binary uses some of these

@@ -212,30 +212,6 @@ fn test_ks_stiffness_mid_note() {
 }
 
 #[test]
-fn test_ks_feedback_mid_note() {
-    let (before_rms, after_rms, _, _) = render_with_param_change(
-        |p| {
-            *p = ParamSnapshot::for_engine(EngineType::Modal);
-            p.modal.mode = ResonatorMode::String;
-            p.modal.ks_feedback = 0.0;
-        },
-        |p| {
-            p.modal.ks_feedback = 0.9;
-        },
-        8,
-        16,
-    );
-    // Higher feedback should sustain longer — after_rms should be higher
-    // relative to what it would be without feedback
-    assert!(
-        after_rms > before_rms,
-        "feedback should help sustain: before_rms={} after_rms={}",
-        before_rms,
-        after_rms
-    );
-}
-
-#[test]
 fn test_ks_brightness_mid_note() {
     let (_, _, before, after) = render_with_param_change(
         |p| {
