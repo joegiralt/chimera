@@ -6,14 +6,14 @@ mod common;
 mod screen;
 
 use chimera_core::dsp::fx_bus::FxBus;
-use chimera_core::hw::{CPU_HZ_REV_V, DAC_PAIRS, MAX_PARTS, SampleBudget};
+use chimera_core::hw::{CPU_HZ_REV_V, MAX_PARTS, SampleBudget};
 use chimera_core::instrument::{AudioShared, Instrument};
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::ui::UiState;
 use chimera_core::ui::block_registry::SYS_MIDI;
 use chimera_core::ui::fmt::{FmtBuf, fmt_val};
 use chimera_core::{MidiChannel, MidiNote, Velocity};
-use chimera_hal::{BLOCK_SIZE, ButtonId, EncoderId, SAMPLE_RATE};
+use chimera_hal::{ButtonId, EncoderId, SAMPLE_RATE};
 use screen::*;
 
 const ENC: [EncoderId; 6] = [
@@ -42,7 +42,7 @@ fn parts_hearing(ui: &UiState, ch: u8) -> Vec<usize> {
         SampleBudget::for_cpu(CPU_HZ_REV_V),
     ));
     let mut fx = Box::new(FxBus::new());
-    let mut out = [[0.0; BLOCK_SIZE * 2]; DAC_PAIRS];
+    let mut out = Box::new(chimera_core::instrument::DacBlocks::new());
     let mut scope = common::scope_writer();
     inst.handle(
         NoteEvent {

@@ -8,8 +8,8 @@ use chimera_core::dsp::algo::algorithms::AlgoId;
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus};
 use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::dsp::voice::Voice;
-use chimera_core::hw::{BLOCK_SIZE, CPU_HZ_REV_V, DAC_PAIRS, SampleBudget};
-use chimera_core::instrument::{AudioShared, DacOut, Instrument};
+use chimera_core::hw::{BLOCK_SIZE, CPU_HZ_REV_V, SampleBudget};
+use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
 use chimera_core::modulation::ModState;
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::{EngineType, ParamSnapshot};
@@ -61,7 +61,7 @@ fn every_engine_and_every_effect() -> AudioShared {
 fn play(inst: &mut Instrument, fx: &mut FxBus) -> Vec<u32> {
     let shared = every_engine_and_every_effect();
     let notes = [(0, 60), (1, 64), (2, 40), (3, 45)];
-    let mut out: DacOut = [[0.0; BLOCK_SIZE * 2]; DAC_PAIRS];
+    let mut out = Box::new(DacBlocks::new());
     let mut bits = Vec::new();
     let mut scope = common::scope_writer();
     for b in 0..200 {
@@ -74,7 +74,7 @@ fn play(inst: &mut Instrument, fx: &mut FxBus) -> Vec<u32> {
             }
         }
         inst.render(fx, &mut out, &shared, &mut scope);
-        bits.extend(out.iter().flatten().map(|s| s.to_bits()));
+        bits.extend(out.out().iter().flatten().map(|s| s.to_bits()));
     }
     bits
 }

@@ -19,7 +19,7 @@ use crate::dsp::algo::math::exp2;
 use crate::dsp::chorus::{ChorusParams, JunoChorus};
 use crate::dsp::comp::{CompParams, MasterComp};
 use crate::dsp::delay::{DelayParams, TapeDelay};
-use crate::dsp::limiter::Limiter;
+use crate::dsp::limiter::{DacBlocks, Limiter};
 use crate::dsp::reverb::ReverbParams;
 use crate::dsp::ring::RingReverb;
 use crate::dsp::tape::{Tape, TapeParams};
@@ -181,19 +181,15 @@ impl FxBus {
     }
 
     /// The output stage, after the master section: the output trim and the
-    /// peak limiter, one block late (ADR 0050).
-    pub fn limit(&mut self, out: &mut [[f32; 2 * BLOCK_SIZE]; DAC_PAIRS], sample_rate: u32) {
-        self.limiter.process(out, sample_rate);
+    /// peak limiter, one block late (ADR 0050). `dac.out()` is then the
+    /// block for the DACs.
+    pub fn limit(&mut self, dac: &mut DacBlocks, sample_rate: u32) {
+        self.limiter.process(dac, sample_rate);
     }
 
     /// The reverb, for reading its ring.
     pub fn reverb(&self) -> &RingReverb {
         &self.reverb
-    }
-
-    /// The final limiter, for reading what it was fed.
-    pub fn limiter(&self) -> &Limiter {
-        &self.limiter
     }
 
     /// The compressor's gain reduction, dB, for the GR meter.

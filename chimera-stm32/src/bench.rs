@@ -15,8 +15,10 @@ use chimera_core::dsp::filter::FilterMode;
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus};
 use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::dsp::modulator::{EnvForm, EnvSlot, EnvType, Func, Glide, LfoForm, LfoType};
-use chimera_core::hw::{BLOCK_SIZE, DAC_PAIRS, MAX_PARTS, MAX_VOICES, SAMPLE_RATE, SampleBudget};
-use chimera_core::instrument::{AudioShared, DacOut, Instrument, PanCache, PartAudio, mix_parts};
+use chimera_core::hw::{BLOCK_SIZE, MAX_PARTS, MAX_VOICES, SAMPLE_RATE, SampleBudget};
+use chimera_core::instrument::{
+    AudioShared, DacBlocks, Instrument, PanCache, PartAudio, mix_parts,
+};
 use chimera_core::mod_path::ModDestRegistry;
 use chimera_core::modulation::{CUTOFF, MAX_MOD_SOURCES, ModSource, ModState, VCA};
 use chimera_core::note_queue::{NoteEvent, NoteKind};
@@ -75,7 +77,10 @@ const PATCHES: [Row; ROWS] = [
 ];
 
 /// Label and per-block FX setup of each FX row. Every row runs the same
-/// noise through `mix_parts`, six Parts written, no voices.
+/// noise through `mix_parts`, six Parts written, no voices. MIX is the mix
+/// and the output limiter, the others their effect over it; against ADR
+/// 0031's readings (MIX 148, DELAY 183, before the limiter and MECHANICS),
+/// MIX − 148 is the limiter and DELAY − 183 is MECHANICS.
 type FxRow = (&'static str, fn(&mut AudioShared, u32));
 const FX: [FxRow; FX_ROWS] = [
     ("MIX", |_, _| {}),
@@ -358,7 +363,7 @@ struct Rig<'p> {
     shared_slot: &'static mut MaybeUninit<AudioShared>,
     perf: &'p Performance,
     scope: ScopeWriter,
-    dac: DacOut,
+    dac: DacBlocks,
 }
 
 // Not inlined, so its frame never adds to `main`'s.
@@ -379,7 +384,7 @@ pub fn run(display: &mut impl ChimeraDisplay, clocks: Clocks, perf: &Performance
         shared_slot,
         perf,
         scope: ScopeWriter::new(scope_w),
-        dac: [[0.0; BLOCK_SIZE * 2]; DAC_PAIRS],
+        dac: DacBlocks::new(),
     };
     let mut rows = [[0u32; MAX_VOICES]; ROWS];
     for (row, &(_, patch, low, step)) in rows.iter_mut().zip(&PATCHES) {
@@ -482,7 +487,7 @@ impl Rig<'_> {
         let written = [true; MAX_PARTS];
         let mut sends = [[0.0; BLOCK_SIZE]; FX_SENDS];
         let mut pans = PanCache::default();
-        let mut block = |shared: &mut AudioShared, fx: &mut FxBus, dac: &mut DacOut, b: u32| {
+        let mut block = |shared: &mut AudioShared, fx: &mut FxBus, dac: &mut DacBlocks, b: u32| {
             each(shared, b);
             black_box(mix_parts(
                 black_box(&buses),

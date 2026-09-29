@@ -13,7 +13,9 @@ use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus};
 use chimera_core::dsp::limiter::OUTPUT_TRIM;
 use chimera_core::dsp::ring::{first_reflection, size_step};
 use chimera_core::hw::{DAC_PAIRS, MAX_PARTS, MAX_VOICES};
-use chimera_core::instrument::{AudioShared, DacOut, Instrument, PanCache, mix_parts, pan_gains};
+use chimera_core::instrument::{
+    AudioShared, DacBlocks, DacOut, Instrument, PanCache, mix_parts, pan_gains,
+};
 use chimera_core::modulation::ModState;
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::{EngineType, ParamSnapshot};
@@ -74,7 +76,7 @@ fn off(ch: u8, note: u8) -> NoteEvent {
 struct Rig {
     inst: Box<Instrument>,
     fx: Box<FxBus>,
-    out: DacOut,
+    dac: Box<DacBlocks>,
     scope: chimera_core::scope::ScopeWriter,
 }
 
@@ -83,7 +85,7 @@ impl Rig {
         Self {
             inst: Box::new(Instrument::new(SR, BUDGET)),
             fx: Box::new(FxBus::new()),
-            out: [[0.0; BLOCK_SIZE * 2]; DAC_PAIRS],
+            dac: Box::new(DacBlocks::new()),
             scope: common::scope_writer(),
         }
     }
@@ -96,8 +98,12 @@ impl Rig {
     }
     fn render(&mut self, shared: &AudioShared) -> &DacOut {
         self.inst
-            .render(&mut self.fx, &mut self.out, shared, &mut self.scope);
-        &self.out
+            .render(&mut self.fx, &mut self.dac, shared, &mut self.scope);
+        self.dac.out()
+    }
+    /// The last block out, limited.
+    fn out(&self) -> &DacOut {
+        self.dac.out()
     }
 }
 
@@ -141,14 +147,14 @@ fn part_bus_is_panned_and_levelled_into_its_pair() {
     }
     let bus = *rig.inst.part_bus(0);
     rig.render(&shared);
-    let (l, r) = lr(&rig.out[0]);
+    let (l, r) = lr(&rig.out()[0]);
     assert!(peak(&bus) > 0.01);
     for i in 0..BLOCK_SIZE {
         assert_eq!(l[i], bus[i] * 0.5 * OUTPUT_TRIM, "sample {i}");
         assert_eq!(r[i], 0.0);
     }
     assert_eq!(
-        peak(&rig.out[1]) + peak(&rig.out[2]),
+        peak(&rig.out()[1]) + peak(&rig.out()[2]),
         0.0,
         "other pairs silent"
     );
@@ -172,7 +178,8 @@ fn mix_parts_alone_is_renders_mix() {
     written[0] = true;
     let mut fx = Box::new(FxBus::new());
     let mut sends = [[0.0; BLOCK_SIZE]; FX_SENDS];
-    let mut out: DacOut = [[1.0; BLOCK_SIZE * 2]; DAC_PAIRS];
+    let mut out = Box::new(DacBlocks::new());
+    *out.mix() = [[1.0; BLOCK_SIZE * 2]; DAC_PAIRS];
     let scope = mix_parts(
         &buses,
         &written,
@@ -184,7 +191,7 @@ fn mix_parts_alone_is_renders_mix() {
         &mut out,
     );
     assert_eq!(scope, bus);
-    assert_eq!(out, rig.out);
+    assert_eq!(out.out(), rig.out());
 }
 
 /// `mix_parts` as first written: each Part added into zeroed buffers, then
@@ -195,8 +202,9 @@ fn mix_parts_reference(
     sends: &mut [[f32; BLOCK_SIZE]; FX_SENDS],
     fx: &mut FxBus,
     shared: &AudioShared,
-    out: &mut DacOut,
+    dac: &mut DacBlocks,
 ) -> [f32; BLOCK_SIZE] {
+    let out = dac.mix();
     *out = [[0.0; BLOCK_SIZE * 2]; DAC_PAIRS];
     *sends = [[0.0; BLOCK_SIZE]; FX_SENDS];
     let mut scope = [0.0f32; BLOCK_SIZE];
@@ -226,7 +234,7 @@ fn mix_parts_reference(
         out[0][2 * i + 1] += r;
     }
     fx.master(out, &shared.fx, SR);
-    fx.limit(out, SR);
+    fx.limit(dac, SR);
     scope
 }
 
@@ -253,8 +261,9 @@ fn mix_parts_is_bit_identical_to_the_reference() {
     let (mut fx, mut fx_ref) = (Box::new(FxBus::new()), Box::new(FxBus::new()));
     let mut pans = PanCache::default();
     let (mut sends, mut sends_ref) = ([[0.0; BLOCK_SIZE]; FX_SENDS], [[0.0; BLOCK_SIZE]; FX_SENDS]);
-    let mut out: DacOut = [[1.0; BLOCK_SIZE * 2]; DAC_PAIRS];
-    let mut out_ref: DacOut = [[0.0; BLOCK_SIZE * 2]; DAC_PAIRS];
+    let mut out = Box::new(DacBlocks::new());
+    *out.mix() = [[1.0; BLOCK_SIZE * 2]; DAC_PAIRS];
+    let mut out_ref = Box::new(DacBlocks::new());
     let pairs = [DacPair::P1, DacPair::P2, DacPair::P3];
     for block in 0..200 {
         for part in shared.parts.iter_mut() {
@@ -291,7 +300,11 @@ fn mix_parts_is_bit_identical_to_the_reference() {
         );
         assert_eq!(bits(&scope), bits(&scope_ref), "block {block}: scope");
         for k in 0..DAC_PAIRS {
-            assert_eq!(bits(&out[k]), bits(&out_ref[k]), "block {block}: pair {k}");
+            assert_eq!(
+                bits(&out.out()[k]),
+                bits(&out_ref.out()[k]),
+                "block {block}: pair {k}"
+            );
         }
         for k in 0..FX_SENDS {
             assert_eq!(
@@ -325,7 +338,7 @@ fn fx_send_puts_no_dry_signal_on_pair_1() {
         let mut sends = [[0.0; BLOCK_SIZE], [0.0; BLOCK_SIZE], bus.map(|s| s * 0.5)];
         let mut ret = Stereo::SILENT;
         fx.process(&mut sends, &shared.fx, SR, &mut ret);
-        let (l, r) = lr(&rig.out[0]);
+        let (l, r) = lr(&rig.out()[0]);
         assert_eq!(
             (l, r),
             (last.l, last.r),
@@ -335,17 +348,17 @@ fn fx_send_puts_no_dry_signal_on_pair_1() {
             l: ret.l.map(|x| x * OUTPUT_TRIM),
             r: ret.r.map(|x| x * OUTPUT_TRIM),
         };
-        let (l3, r3) = lr(&rig.out[2]);
+        let (l3, r3) = lr(&rig.out()[2]);
         assert_eq!(peak(&r3), 0.0, "block {b}: hard left");
         if b < first_reflection(size_step(shared.fx.reverb.size)) / BLOCK_SIZE {
             assert!(
                 b < 2 || peak(&l3) > 0.01,
                 "block {b}: the part sounds on pair 3"
             );
-            assert_eq!(peak(&rig.out[0]), 0.0, "block {b}: no dry on pair 1");
+            assert_eq!(peak(&rig.out()[0]), 0.0, "block {b}: no dry on pair 1");
         }
     }
-    assert!(peak(&rig.out[0]) > 1e-4, "the wet return arrived");
+    assert!(peak(&rig.out()[0]) > 1e-4, "the wet return arrived");
 }
 
 /// FX diet spec § Bus: the chorus returns stereo on pair 1, and the mono
@@ -366,7 +379,7 @@ fn the_chorus_returns_stereo_on_pair_1() {
     let (mut l, mut r) = (Vec::new(), Vec::new());
     for _ in 0..100 {
         rig.render(&shared);
-        let (a, b) = lr(&rig.out[0]);
+        let (a, b) = lr(&rig.out()[0]);
         l.extend(a);
         r.extend(b);
     }
@@ -448,7 +461,7 @@ fn refused_notes_are_counted_and_silent() {
 /// A performance-level render for the new goldens: `blocks` blocks, notes
 /// on at block 0 and off at `blocks / 2`, every DAC sample hashed.
 fn render_perf(perf: &Performance, notes: &[(u8, u8)], blocks: usize) -> Vec<f32> {
-    render_tap(perf, notes, blocks, |rig| &rig.out)
+    render_tap(perf, notes, blocks, |rig| rig.out())
 }
 
 /// `render_perf`, each block read from `tap` after `render`.
@@ -671,7 +684,7 @@ fn instrument_goldens_match() {
 #[test]
 fn the_mix_before_the_limiter_is_mains() {
     fn pre(rig: &Rig) -> &DacOut {
-        rig.fx.limiter().input()
+        rig.dac.input()
     }
     let cases: [(&str, Vec<f32>); 5] = [
         (
@@ -1273,13 +1286,13 @@ fn the_tape_is_on_pair_1_only() {
         let mut sends = [[0.0; BLOCK_SIZE]; FX_SENDS];
         let mut pans = PanCache::default();
         let mut fx = Box::new(FxBus::new());
-        let mut out: DacOut = [[0.0; BLOCK_SIZE * 2]; DAC_PAIRS];
+        let mut out = Box::new(DacBlocks::new());
         let mut blocks = Vec::new();
         for _ in 0..32 {
             mix_parts(
                 &buses, &written, &mut sends, &mut pans, &mut fx, &shared, SR, &mut out,
             );
-            blocks.push(out);
+            blocks.push(*out.out());
         }
         blocks
     };
@@ -1310,14 +1323,14 @@ fn the_master_comp_ducks_pair_2_with_pair_1() {
         let mut sends = [[0.0; BLOCK_SIZE]; FX_SENDS];
         let mut pans = PanCache::default();
         let mut fx = Box::new(FxBus::new());
-        let mut out: DacOut = [[0.0; BLOCK_SIZE * 2]; DAC_PAIRS];
+        let mut out = Box::new(DacBlocks::new());
         let mut energy = 0.0f32;
         for b in 0..128 {
             mix_parts(
                 &buses, &written, &mut sends, &mut pans, &mut fx, &shared, SR, &mut out,
             );
             if b >= 64 {
-                energy += out[1].iter().map(|s| s * s).sum::<f32>();
+                energy += out.out()[1].iter().map(|s| s * s).sum::<f32>();
             }
         }
         (energy, fx.master_gr_db())
