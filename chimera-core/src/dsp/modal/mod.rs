@@ -34,6 +34,7 @@ mod params;
 mod rings;
 mod string;
 
+pub use loop_parts::{DcBlocker, dc_phase_delay};
 pub use params::*;
 pub use string::{KsRenderParams, MAX_STRING_DELAY};
 
@@ -47,7 +48,7 @@ use crate::hw::{Cost, SAMPLE_RATE};
 use crate::in_place::{in_place_enum, uninit_at};
 use crate::sym_alloc::{Lease, SYM_SLOTS, SymAlloc, SymSlot};
 use crate::voice_alloc::VoiceIdx;
-use loop_parts::{DcBlocker, LoopGain};
+use loop_parts::LoopGain;
 use rings::{CosineOsc, Svf, stiffness_from_structure};
 use string::{FRESH_CLEAR_BYTES, KsString, RING_BYTES};
 
@@ -435,7 +436,7 @@ impl ModalEngine {
             ModelSlot::Bowed(b) => {
                 b.string.clear();
                 b.dc.reset();
-                b.string.set_freq(freq, sample_rate);
+                b.string.tune(freq, sample_rate);
                 b.force = vel * params.bow_force;
             }
             ModelSlot::Sympathetic(m) => {
@@ -453,7 +454,7 @@ impl ModalEngine {
                         // from main. A handed-over slot carries nothing of
                         // its last note (spec § 4.8). Cleared before the
                         // retune, so the clear is `SymPool::note_on_clear`'s.
-                        sym.restart();
+                        sym.clear();
                     }
                     set.ratios = sympathetic_ratios(params.inharm);
                     set.tune(freq, sample_rate);
@@ -477,10 +478,10 @@ impl ModalEngine {
         let freq = self.pitched(self.frequency * sample_rate as f32);
         match &mut self.model {
             ModelSlot::Bank(_) => {}
-            ModelSlot::String(string) => string.set_freq(freq, sample_rate),
-            ModelSlot::Bowed(b) => b.string.set_freq(freq, sample_rate),
+            ModelSlot::String(string) => string.tune(freq, sample_rate),
+            ModelSlot::Bowed(b) => b.string.tune(freq, sample_rate),
             ModelSlot::Sympathetic(m) => {
-                m.main.set_freq(freq, sample_rate);
+                m.main.tune(freq, sample_rate);
                 if let Some(set) = pool.halo(&m.halo) {
                     set.tune(freq, sample_rate);
                 }
@@ -507,9 +508,7 @@ impl ModalEngine {
                     for (sym, pending) in set.strings.iter_mut().zip(&mut set.pending) {
                         sym.damp(1);
                         // Its write position's sample, were it stored.
-                        if sym.write_pos() < sym.delay_len() {
-                            *pending *= 0.2;
-                        }
+                        *pending *= 0.2;
                     }
                 }
             }
@@ -778,7 +777,7 @@ impl SympatheticSet {
     /// The sympathetic strings at their note-on ratios to `freq`.
     fn tune(&mut self, freq: f32, sample_rate: u32) {
         for (sym, r) in self.strings.iter_mut().zip(self.ratios) {
-            sym.set_freq(freq * r, sample_rate);
+            sym.tune(freq * r, sample_rate);
         }
     }
 }
@@ -1170,7 +1169,7 @@ mod tests {
         e.note_on(84, 100, &p, SR, &mut pool);
         for (i, s) in lines(&e, &pool).into_iter().enumerate() {
             let (buf, _) = s.line();
-            assert!(buf[s.delay_len()..].iter().all(|&x| x == 0.0), "line {i}");
+            assert!(buf[s.delay()..].iter().all(|&x| x == 0.0), "line {i}");
             if i > 0 {
                 assert!(buf.iter().all(|&x| x == 0.0), "set line {i}");
             }
@@ -1196,9 +1195,9 @@ mod tests {
         // A4: every loop at most 110 samples.
         let high = cleared_after(69);
         assert!(high <= (1 + NUM_SYMPATHETIC) * 110, "{high}");
-        // MIDI 0: every loop clamps to the ring less one sample.
+        // MIDI 0: every loop clamps to the whole ring.
         let low = cleared_after(0);
-        assert_eq!(low, ring - (1 + NUM_SYMPATHETIC));
+        assert_eq!(low, ring);
         assert!(high * 8 < low);
         // The dirty extent is only ever the clear's upper bound: past it
         // every sample is silent.
@@ -1239,8 +1238,8 @@ mod tests {
         assert_eq!(pool.note_on_clear(None, v1), fresh);
     }
 
-    /// Bowed writes round its whole ring; its extent follows the bow, so
-    /// its note-on still starts silent.
+    /// Bowed writes round its ring, the loop and two; its note-on still
+    /// starts silent.
     #[test]
     fn bowed_clears_the_ring_it_wrote() {
         let p = ModalParams {
@@ -1255,7 +1254,7 @@ mod tests {
             unreachable!()
         };
         let (buf, dirty) = b.string.line();
-        assert_eq!(dirty, MAX_STRING_DELAY);
+        assert_eq!(dirty, b.string.delay() + 2);
         assert!(buf.iter().any(|&x| x != 0.0));
         e.note_on(96, 100, &p, SR, &mut pool);
         let ModelSlot::Bowed(b) = &e.model else {

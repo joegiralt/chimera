@@ -3,8 +3,9 @@ mod common;
 
 use chimera_core::block::Block;
 use chimera_core::dsp::modal::{MODAL_SPECS, ModalParams, ResonatorMode};
+use chimera_core::dsp::note_to_freq;
 use chimera_hal::BLOCK_SIZE;
-use common::{SR, play_modal, rms};
+use common::{SR, fundamental_hz, play_modal, play_modal_at, play_modal_bare, rms};
 
 const MODES: [ResonatorMode; 4] = [
     ResonatorMode::String,
@@ -55,6 +56,38 @@ fn every_model_is_stable_at_every_extreme() {
                             s.label
                         );
                     }
+                }
+            });
+        }
+    });
+}
+
+/// STRING and the SYMP main string (halo bare), G1 to C7, DAMP longest and
+/// BRIGHT brightest, BODY off (its interim half-delay comb kills the odd
+/// partials until Task 8): the fundamental within ±2 cents. Whole-sample
+/// tuning fails it.
+#[test]
+fn strings_are_in_tune() {
+    let blocks = 3 * SR as usize / BLOCK_SIZE;
+    std::thread::scope(|scope| {
+        for mode in [ResonatorMode::String, ResonatorMode::Sympathetic] {
+            scope.spawn(move || {
+                let p = ModalParams {
+                    mode,
+                    decay: 0.0,
+                    brightness: 0.0,
+                    ks_body: 0.0,
+                    ..Default::default()
+                };
+                for n in 31..=96 {
+                    let out = match mode {
+                        ResonatorMode::Sympathetic => play_modal_bare(&p, n, 100, blocks, 0),
+                        _ => play_modal_at(&p, n, 100, blocks, 0),
+                    };
+                    let f0 = note_to_freq(n) as f64;
+                    let s = &out[SR as usize / 4..SR as usize * 5 / 4];
+                    let cents = 1200.0 * (fundamental_hz(s, f0) / f0).log2();
+                    assert!(cents.abs() < 2.0, "{mode:?} note {n}: {cents:+.2} cents");
                 }
             });
         }
