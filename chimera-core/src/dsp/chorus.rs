@@ -73,10 +73,11 @@ impl ChorusParams {
 
 /// Chorus runs outside `Voice`, on the FX bus: nothing is modulatable.
 pub static CHORUS_SPECS: [ParamSpec; 4] = [
-    ParamSpec::choice(0, "MODE", ValFmt::Int(3), 3.0, 0.0),
-    ParamSpec::continuous(1, "RATE", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false),
-    ParamSpec::continuous(2, "DEPTH", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false),
-    ParamSpec::continuous(3, "MIX", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false),
+    ParamSpec::choice(0, "MODE", ValFmt::Int(3), 3.0, 0.0).ident("MODE"),
+    ParamSpec::continuous(1, "RATE", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false).ident("RATE"),
+    ParamSpec::continuous(2, "DEPTH", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false)
+        .ident("DEPTH"),
+    ParamSpec::continuous(3, "MIX", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false).ident("MIX"),
 ];
 
 impl Block for ChorusParams {
@@ -107,6 +108,13 @@ impl Block for ChorusParams {
     /// MODE's code is the stored byte.
     fn enum_code(&self, id: ParamId) -> Option<u8> {
         (id == Self::MODE).then_some(self.mode)
+    }
+
+    fn enum_ident(&self, id: ParamId) -> Option<&'static str> {
+        const MODES: [&str; 4] = ["OFF", "JUNO_I", "JUNO_II", "JUNO_BOTH"];
+        (id == Self::MODE)
+            .then(|| MODES.get(usize::from(self.mode)).copied())
+            .flatten()
     }
 
     fn set_enum_code(&mut self, id: ParamId, code: u8) -> bool {

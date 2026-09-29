@@ -6,8 +6,8 @@ mod frame;
 mod record;
 
 pub use codes::{
-    DiskValue, MIGRATIONS, Migration, RETIRED, RETIRED_CODES, RETIRED_SOURCES, ValidAddr,
-    read_value,
+    DiskValue, MIGRATIONS, Migration, RETIRED, RETIRED_BLOCKS, RETIRED_CODES, RETIRED_SOURCES,
+    ValidAddr, read_value,
 };
 pub use crc::Crc32;
 pub use frame::{

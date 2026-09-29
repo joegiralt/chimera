@@ -64,6 +64,14 @@ impl DiskCode for Bright {
         self.0
     }
 
+    fn disk_ident(self) -> &'static str {
+        const IDENTS: [&str; 19] = [
+            "10", "15", "20", "25", "30", "35", "40", "45", "50", "55", "60", "65", "70", "75",
+            "80", "85", "90", "95", "100",
+        ];
+        IDENTS[self.index() as usize]
+    }
+
     fn from_disk_code(c: u8) -> Option<Self> {
         let on_step =
             (Self::MIN..=Self::MAX).contains(&c) && (c - Self::MIN).is_multiple_of(Self::STEP);
@@ -88,6 +96,14 @@ impl DiskCode for Gamma {
             Gamma::Panel => 0,
             Gamma::Soft => 1,
             Gamma::Punch => 2,
+        }
+    }
+
+    fn disk_ident(self) -> &'static str {
+        match self {
+            Gamma::Panel => "PANEL",
+            Gamma::Soft => "SOFT",
+            Gamma::Punch => "PUNCH",
         }
     }
 
@@ -184,6 +200,16 @@ impl DiskCode for Accent {
             Accent::Rose => 2,
             Accent::Lime => 3,
             Accent::Ice => 4,
+        }
+    }
+
+    fn disk_ident(self) -> &'static str {
+        match self {
+            Accent::Teal => "TEAL",
+            Accent::Amber => "AMBER",
+            Accent::Rose => "ROSE",
+            Accent::Lime => "LIME",
+            Accent::Ice => "ICE",
         }
     }
 
@@ -286,6 +312,11 @@ impl Black {
 impl DiskCode for Black {
     fn disk_code(self) -> u8 {
         self.0 as u8
+    }
+
+    fn disk_ident(self) -> &'static str {
+        const IDENTS: [&str; 7] = ["-2", "-1", "0", "+1", "+2", "+3", "+4"];
+        IDENTS[(self.0 - Self::MIN) as usize]
     }
 
     fn from_disk_code(c: u8) -> Option<Self> {
@@ -399,10 +430,10 @@ const BLACK_NAMES: [&str; 7] = ["-2", "-1", "0", "+1", "+2", "+3", "+4"];
 /// Choices by index: BRIGHT 0..=18 (10..100 %), BLACK 0..=6 (−2..+4). The
 /// defaults are the owner's pick: 70, PUNCH, TEAL, −2.
 pub static THEME_SPECS: [ParamSpec; 4] = [
-    ParamSpec::choice(0, "BRIGHT", ValFmt::Names(&BRIGHT_NAMES), 18.0, 12.0),
-    ParamSpec::choice(1, "GAMMA", ValFmt::Names(&GAMMA_NAMES), 2.0, 2.0),
-    ParamSpec::choice(2, "ACCENT", ValFmt::Names(&ACCENT_NAMES), 4.0, 0.0),
-    ParamSpec::choice(3, "BLACK", ValFmt::Names(&BLACK_NAMES), 6.0, 0.0),
+    ParamSpec::choice(0, "BRIGHT", ValFmt::Names(&BRIGHT_NAMES), 18.0, 12.0).ident("BRIGHT"),
+    ParamSpec::choice(1, "GAMMA", ValFmt::Names(&GAMMA_NAMES), 2.0, 2.0).ident("GAMMA"),
+    ParamSpec::choice(2, "ACCENT", ValFmt::Names(&ACCENT_NAMES), 4.0, 0.0).ident("ACCENT"),
+    ParamSpec::choice(3, "BLACK", ValFmt::Names(&BLACK_NAMES), 6.0, 0.0).ident("BLACK"),
 ];
 
 impl Block for ThemeSettings {
@@ -437,6 +468,16 @@ impl Block for ThemeSettings {
             Self::GAMMA => Some(self.gamma.disk_code()),
             Self::ACCENT => Some(self.accent.disk_code()),
             Self::BLACK => Some(self.black.disk_code()),
+            _ => None,
+        }
+    }
+
+    fn enum_ident(&self, id: ParamId) -> Option<&'static str> {
+        match id {
+            Self::BRIGHT => Some(self.bright.disk_ident()),
+            Self::GAMMA => Some(self.gamma.disk_ident()),
+            Self::ACCENT => Some(self.accent.disk_ident()),
+            Self::BLACK => Some(self.black.disk_ident()),
             _ => None,
         }
     }

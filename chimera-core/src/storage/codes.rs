@@ -43,6 +43,40 @@ impl BlockRef {
         })
     }
 
+    /// The block's frozen ident, an explicit literal; the fixture pins it
+    /// beside the code, so swapping two blocks' codes (ENV 1 and 2) is caught.
+    pub const fn disk_ident(self) -> Option<&'static str> {
+        Some(match self {
+            BlockRef::Modal => "MODAL",
+            BlockRef::Algo => "ALGO",
+            BlockRef::AlgoOp(Op::A) => "OP_A",
+            BlockRef::AlgoOp(Op::B) => "OP_B",
+            BlockRef::AlgoOp(Op::C) => "OP_C",
+            BlockRef::AlgoOp(Op::D) => "OP_D",
+            BlockRef::AlgoOp(Op::E) => "OP_E",
+            BlockRef::AlgoOp(Op::F) => "OP_F",
+            BlockRef::Drive => "DRIVE",
+            BlockRef::Filter => "FILTER",
+            BlockRef::Folder => "FOLDER",
+            BlockRef::Env(EnvSlot::Env1) => "ENV1",
+            BlockRef::Env(EnvSlot::Env2) => "ENV2",
+            BlockRef::Env(EnvSlot::Env3) => "ENV3",
+            BlockRef::Lfo(LfoSlot::Lfo1) => "LFO1",
+            BlockRef::Lfo(LfoSlot::Lfo2) => "LFO2",
+            BlockRef::Lfo(LfoSlot::Lfo3) => "LFO3",
+            BlockRef::Out => "OUT",
+            BlockRef::Pitch => "PITCH",
+            BlockRef::Chorus => "CHORUS",
+            BlockRef::Delay => "DELAY",
+            BlockRef::Reverb => "REVERB",
+            BlockRef::Tape => "TAPE",
+            BlockRef::Comp => "COMP",
+            BlockRef::Part => "PART",
+            BlockRef::Theme => "THEME",
+            BlockRef::Channels => return None,
+        })
+    }
+
     /// The block with code `c`; `None`: retired or from a newer firmware.
     pub fn from_disk_code(c: u8) -> Option<BlockRef> {
         BlockRef::ALL.into_iter().find(|b| b.disk_code() == Some(c))
@@ -63,6 +97,21 @@ impl ModSource {
         }
     }
 
+    /// The source's frozen ident, an explicit literal (not `name` or `tag`,
+    /// which are display text).
+    pub const fn disk_ident(self) -> &'static str {
+        match self {
+            ModSource::Env1 => "ENV1",
+            ModSource::Lfo1 => "LFO1",
+            ModSource::Env2 => "ENV2",
+            ModSource::Env3 => "ENV3",
+            ModSource::Lfo2 => "LFO2",
+            ModSource::Lfo3 => "LFO3",
+            ModSource::Vel => "VEL",
+            ModSource::Note => "NOTE",
+        }
+    }
+
     pub fn from_disk_code(c: u8) -> Option<ModSource> {
         ModSource::ALL.into_iter().find(|s| s.disk_code() == c)
     }
@@ -74,6 +123,9 @@ impl ModSource {
 /// the fixture check fails a gone line that isn't listed, and a listed one
 /// that is produced again. A retired block lists each of its params.
 pub const RETIRED: &[(u8, u8)] = &[(10, 3), (10, 4), (10, 5)];
+
+/// Block codes that are gone for good (each of its params is in `RETIRED`).
+pub const RETIRED_BLOCKS: &[u8] = &[];
 
 /// `(block code, param id, value code)`: one enum value that is gone for good.
 pub const RETIRED_CODES: &[(u8, u8, u8)] = &[];

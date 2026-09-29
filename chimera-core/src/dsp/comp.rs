@@ -108,12 +108,14 @@ impl CompParams {
 
 /// The compressor runs outside `Voice`: nothing is modulatable.
 pub static COMP_SPECS: [ParamSpec; 6] = [
-    ParamSpec::continuous(0, "THRESH", ValFmt::Uni, 0.0, 1.0, 0.7, 1.0 / 128.0, false),
-    ParamSpec::choice(1, "RATIO", ValFmt::Names(&RATIO_NAMES), 7.0, 0.0),
-    ParamSpec::continuous(2, "ATK", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false),
-    ParamSpec::continuous(3, "REL", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false),
-    ParamSpec::continuous(4, "MAKEUP", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false),
-    ParamSpec::continuous(5, "MIX", ValFmt::Uni, 0.0, 1.0, 1.0, 1.0 / 128.0, false),
+    ParamSpec::continuous(0, "THRESH", ValFmt::Uni, 0.0, 1.0, 0.7, 1.0 / 128.0, false)
+        .ident("THRESH"),
+    ParamSpec::choice(1, "RATIO", ValFmt::Names(&RATIO_NAMES), 7.0, 0.0).ident("RATIO"),
+    ParamSpec::continuous(2, "ATK", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false).ident("ATK"),
+    ParamSpec::continuous(3, "REL", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false).ident("REL"),
+    ParamSpec::continuous(4, "MAKEUP", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false)
+        .ident("MAKEUP"),
+    ParamSpec::continuous(5, "MIX", ValFmt::Uni, 0.0, 1.0, 1.0, 1.0 / 128.0, false).ident("MIX"),
 ];
 
 impl Block for CompParams {
@@ -148,6 +150,13 @@ impl Block for CompParams {
     /// RATIO's code is its index into `RATIOS`, stored as is.
     fn enum_code(&self, id: ParamId) -> Option<u8> {
         (id == Self::RATIO).then_some(self.ratio)
+    }
+
+    fn enum_ident(&self, id: ParamId) -> Option<&'static str> {
+        const RATIOS: [&str; 8] = ["1:1", "1.5:1", "2:1", "3:1", "4:1", "6:1", "10:1", "20:1"];
+        (id == Self::RATIO)
+            .then(|| RATIOS.get(usize::from(self.ratio)).copied())
+            .flatten()
     }
 
     fn set_enum_code(&mut self, id: ParamId, code: u8) -> bool {

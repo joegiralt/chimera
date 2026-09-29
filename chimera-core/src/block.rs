@@ -121,6 +121,9 @@ pub struct ParamSpec {
     pub modulatable: bool,
     /// How a matrix offset applies.
     pub law: OffsetLaw,
+    /// The param's frozen identity: one token, an explicit literal, never the
+    /// label. The fixture pins `(id, ident)`, so swapping two ids is caught.
+    pub ident: &'static str,
     /// Written to the card. False for a live view of other stored params
     /// (ENV's FORM reads the current MODE's slot), so nothing is stored twice.
     pub stored: bool,
@@ -151,6 +154,7 @@ impl ParamSpec {
             modulatable,
             law: OffsetLaw::Linear,
             stored: true,
+            ident: "",
         }
     }
 
@@ -177,6 +181,7 @@ impl ParamSpec {
             modulatable,
             law: OffsetLaw::Linear,
             stored: true,
+            ident: "",
         }
     }
 
@@ -195,6 +200,7 @@ impl ParamSpec {
             modulatable: false,
             law: OffsetLaw::Linear,
             stored: true,
+            ident: "",
         }
     }
 
@@ -213,6 +219,11 @@ impl ParamSpec {
             return 0.0;
         }
         (v - self.min) / (self.max - self.min)
+    }
+
+    /// This spec with its frozen identity.
+    pub const fn ident(self, ident: &'static str) -> Self {
+        Self { ident, ..self }
     }
 
     /// This spec as a live view of stored params: never written to the card.
@@ -283,6 +294,10 @@ impl ParamSpec {
 /// Codes are frozen by `tests/fixtures/disk_codes_v1.txt` and never reused.
 pub trait DiskCode: Sized + Copy {
     fn disk_code(self) -> u8;
+    /// What the value is, as an explicit literal per variant (`"LP24"`): one
+    /// token, never from `Debug` or a label, so a cosmetic rename can't move
+    /// it. The fixture pins `(code, ident)`, so swapping two codes is caught.
+    fn disk_ident(self) -> &'static str;
     /// `None`: this firmware has no variant with code `c`.
     fn from_disk_code(c: u8) -> Option<Self>;
 }
@@ -320,6 +335,12 @@ pub trait Block {
 
     /// The disk code of Enum `id`'s current value; `None` for any other param.
     fn enum_code(&self, _id: ParamId) -> Option<u8> {
+        None
+    }
+
+    /// The frozen ident of Enum `id`'s current value (see `DiskCode`); `None`
+    /// for any other param.
+    fn enum_ident(&self, _id: ParamId) -> Option<&'static str> {
         None
     }
 

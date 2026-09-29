@@ -9,7 +9,8 @@ use chimera_core::params::EnvParams;
 use chimera_core::params::{FilterParams, ParamSnapshot};
 use chimera_core::part::PartParams;
 use chimera_core::storage::{
-    Crc32, DiskValue, RETIRED, RETIRED_CODES, RETIRED_SOURCES, ValidAddr, read_value,
+    Crc32, DiskValue, RETIRED, RETIRED_BLOCKS, RETIRED_CODES, RETIRED_SOURCES, ValidAddr,
+    read_value,
 };
 use chimera_core::ui::theme_settings::ThemeSettings;
 
@@ -60,21 +61,18 @@ fn shown(fmt: ValFmt, v: u8) -> String {
     }
 }
 
-/// WAVE and ALG: the index is the code and the name is the only record of
-/// what it means, so the name is part of the frozen key.
-fn name_is_key(block: u8, id: ParamId) -> bool {
-    matches!((block, id.0), (3..=8, 0) | (2, 0 | 1))
-}
-
-/// Every stored fact, as `key`, or `key # readable` when the readable part
-/// (a label, a display text) isn't written to the card and so isn't frozen.
+/// Every stored fact as `key # readable`. The key is frozen: a code and the
+/// explicit identity (`disk_ident`, `ParamSpec::ident`) it stands for, so
+/// swapping two codes changes a key. The readable part (a label, a display
+/// text) isn't written to the card, isn't frozen, and the check ignores it.
 fn table() -> Vec<String> {
     let mut out = Vec::new();
     for (b, code) in stored() {
+        out.push(format!("K {code} {} # {b:?}", b.disk_ident().unwrap()));
         let mut bank = Bank::new();
         for a in ValidAddr::of_block(b) {
             let s = a.spec();
-            out.push(format!("B {code} {} # {}", s.id.0, s.label));
+            out.push(format!("B {code} {} {} # {}", s.id.0, s.ident, s.label));
             if !a.coded() {
                 continue;
             }
@@ -82,17 +80,22 @@ fn table() -> Vec<String> {
                 let blk = bank.block(b);
                 blk.set(s.id, f32::from(v));
                 let c = blk.enum_code(s.id).expect("an Enum has a code");
-                let text = shown(s.fmt, v);
-                out.push(if name_is_key(code, s.id) {
-                    format!("E {code} {} {c} {text}", s.id.0)
-                } else {
-                    format!("E {code} {} {c} # {text}", s.id.0)
-                });
+                let ident = blk.enum_ident(s.id).expect("an Enum has an ident");
+                out.push(format!(
+                    "E {code} {} {c} {ident} # {}",
+                    s.id.0,
+                    shown(s.fmt, v)
+                ));
             }
         }
     }
     for s in ModSource::ALL {
-        out.push(format!("S {} # {}", s.disk_code(), s.name()));
+        out.push(format!(
+            "S {} {} # {}",
+            s.disk_code(),
+            s.disk_ident(),
+            s.name()
+        ));
     }
     out
 }
@@ -109,31 +112,37 @@ fn retired(key: &str) -> bool {
         .map_while(|x| x.parse().ok())
         .collect();
     match (key.as_bytes()[0], t.as_slice()) {
-        (b'B', [b, id]) | (b'E', [b, id, ..]) if RETIRED.contains(&(*b, *id)) => true,
-        (b'E', [b, id, c, ..]) => RETIRED_CODES.contains(&(*b, *id, *c)),
-        (b'S', [c]) => RETIRED_SOURCES.contains(c),
+        (b'K', [b, ..]) => RETIRED_BLOCKS.contains(b),
+        (b'B', [b, id, ..]) => RETIRED.contains(&(*b, *id)),
+        (b'E', [b, id, c, ..]) => {
+            RETIRED.contains(&(*b, *id)) || RETIRED_CODES.contains(&(*b, *id, *c))
+        }
+        (b'S', [c, ..]) => RETIRED_SOURCES.contains(c),
         _ => false,
     }
 }
 
-/// The first `V1_LEN` bytes of the fixture are frozen: appending lines passes,
-/// any edit inside them changes the CRC. (Lines appended later go after.)
-const V1_LEN: usize = 7956;
-const V1_CRC: u32 = 0x1757_82c6;
+/// The first `V1_LINES` keys of the fixture are frozen: appending lines
+/// passes, any edit to a key inside them changes the CRC. The readable
+/// column is outside it, so a typo in a note can be fixed.
+const V1_LINES: usize = 606;
+const V1_CRC: u32 = 0x8154_6aa2;
 
 #[test]
 fn table_matches_golden() {
     let golden = include_str!("fixtures/disk_codes_v1.txt");
-    let head = &golden.as_bytes()[..V1_LEN.min(golden.len())];
+    let frozen: Vec<&str> = golden.lines().map(key).collect();
     let mut crc = Crc32::new();
-    crc.update(head);
+    for k in frozen.iter().take(V1_LINES) {
+        crc.update(k.as_bytes());
+        crc.update(b"\n");
+    }
     assert!(
-        golden.len() >= V1_LEN && head.last() == Some(&b'\n') && crc.finish() == V1_CRC,
-        "the frozen v1 part of the fixture was edited"
+        frozen.len() >= V1_LINES && crc.finish() == V1_CRC,
+        "a frozen v1 key was edited or removed from the fixture"
     );
 
     let now = table();
-    let frozen: Vec<&str> = golden.lines().map(key).collect();
     for (i, k) in frozen.iter().enumerate() {
         assert!(!frozen[..i].contains(k), "fixture repeats {k}");
     }
@@ -152,6 +161,63 @@ fn table_matches_golden() {
             now.iter().any(|l| key(l) == *k) || retired(k),
             "frozen line no longer produced; if it is gone for good, add it to RETIRED*: {k}"
         );
+    }
+}
+
+/// Idents are one token, and a param's is its own within its block.
+#[test]
+fn idents_are_tokens_and_unique() {
+    for (b, _) in stored() {
+        let mut seen: Vec<&str> = Vec::new();
+        for a in ValidAddr::of_block(b) {
+            let i = a.spec().ident;
+            assert!(!i.is_empty() && !i.contains([' ', '#']), "{b:?} {i:?}");
+            assert!(!seen.contains(&i), "{b:?} repeats {i}");
+            seen.push(i);
+        }
+    }
+}
+
+/// A live param is a view: never stored, and everything it reads is.
+#[test]
+fn live_params_are_backed_by_stored_slots() {
+    let backing: Vec<_> = EnvSlot::ALL
+        .into_iter()
+        .map(|e| {
+            (
+                BlockRef::Env(e),
+                EnvParams::FORM,
+                [
+                    EnvParams::FORM_ENV,
+                    EnvParams::FORM_LFO,
+                    EnvParams::FORM_BURST,
+                ],
+            )
+        })
+        .collect();
+    let live: Vec<(BlockRef, ParamId)> = BlockRef::ALL
+        .into_iter()
+        .flat_map(|b| {
+            b.specs()
+                .iter()
+                .filter(|s| !s.stored)
+                .map(move |s| (b, s.id))
+        })
+        .collect();
+    for (b, id) in &live {
+        assert!(
+            backing.iter().any(|(bb, l, _)| bb == b && l == id),
+            "{b:?} {id:?} is live with no declared backing"
+        );
+    }
+    for (b, l, slots) in backing {
+        assert!(ValidAddr::find(b, l).is_none());
+        for slot in slots {
+            assert!(
+                ValidAddr::of_block(b).any(|a| a.spec().id == slot),
+                "{slot:?}"
+            );
+        }
     }
 }
 
@@ -323,7 +389,7 @@ fn mod_source_codes_round_trip() {
 #[test]
 fn retired_never_live() {
     assert_eq!(RETIRED, &[(10, 3), (10, 4), (10, 5)]);
-    assert!(RETIRED_CODES.is_empty() && RETIRED_SOURCES.is_empty());
+    assert!(RETIRED_CODES.is_empty() && RETIRED_SOURCES.is_empty() && RETIRED_BLOCKS.is_empty());
     for &(block, id) in RETIRED {
         for b in BlockRef::ALL
             .into_iter()
