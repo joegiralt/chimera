@@ -277,3 +277,24 @@ fn theme_page_is_reachable_and_edits_the_settings() {
     feed(&mut ui, Input::turn(EncoderId::F, 3));
     assert_eq!(ui.theme(), t);
 }
+
+/// SYSTEM's hooks: `in_system` follows MENU and the Part buttons, and
+/// `set_theme` is what `theme` then reports.
+#[test]
+fn in_system_and_set_theme() {
+    let mut ui = chimera_core::ui::UiState::new();
+    assert!(!ui.in_system());
+    feed(&mut ui, Input::press(ButtonId::Menu));
+    assert!(ui.in_system());
+    feed(&mut ui, Input::press(ButtonId::B1));
+    assert!(!ui.in_system());
+
+    let t = ThemeSettings {
+        bright: Bright::new(40),
+        gamma: Gamma::Soft,
+        accent: Accent::Lime,
+        black: Black::new(1),
+    };
+    ui.set_theme(t);
+    assert_eq!(ui.theme(), t);
+}

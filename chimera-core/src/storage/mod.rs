@@ -8,6 +8,7 @@ mod file;
 mod frame;
 mod record;
 mod sound;
+mod system;
 
 pub use block_codec::{decode_block, encode_block};
 pub use card::{Card, CardError, CardEvent, CardFault, Outcome, Ready, after_error, after_mount};
@@ -28,3 +29,6 @@ pub use record::{
     CRITICAL, MAX_RECORD_LEN, ReadTag, RecordBuf, RecordTag, RecordWriter, write_file,
 };
 pub use sound::{SoundCheck, SoundDecoder, encode_sound};
+pub use system::{
+    BootNote, SystemCheck, SystemDecoder, SystemSettings, SystemSync, body_crc, encode_system,
+};

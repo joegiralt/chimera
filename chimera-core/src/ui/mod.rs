@@ -4,6 +4,7 @@ pub mod audio_page;
 pub mod block_def;
 pub mod block_registry;
 pub mod browser;
+pub mod busy;
 pub mod chain;
 pub mod components;
 pub mod draw;
@@ -148,7 +149,7 @@ pub struct UiState {
     display_lfos: [Lfo; 3],
     /// The last MIX+PLUS outcome; `None` once retired (issue #21).
     prime_status: Option<PrimeStatus>,
-    /// System › Theme. Not stored yet: every boot starts at the default.
+    /// System › Theme; boot sets it from SYSTEM (`set_theme`).
     theme: ThemeSettings,
 }
 
@@ -232,6 +233,16 @@ impl UiState {
     /// System › Theme as last edited; the display shell applies it.
     pub fn theme(&self) -> ThemeSettings {
         self.theme
+    }
+
+    /// The theme SYSTEM held, set at boot before the first frame.
+    pub fn set_theme(&mut self, t: ThemeSettings) {
+        self.theme = t;
+    }
+
+    /// On the System chain: leaving it saves SYSTEM.
+    pub fn in_system(&self) -> bool {
+        self.nav.chain_id == ChainId::System
     }
 
     /// The edited Part's blocks and the System pages' (THEME, MIDI), as one `Blocks`.

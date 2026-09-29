@@ -118,7 +118,15 @@ pub struct RecordWriter<'s> {
     crc: Crc32,
 }
 
-impl RecordWriter<'_> {
+impl<'s> RecordWriter<'s> {
+    /// A writer with a fresh CRC: the file's, or a body's alone.
+    pub(super) fn new(sink: &'s mut dyn ByteSink) -> Self {
+        RecordWriter {
+            sink,
+            crc: Crc32::new(),
+        }
+    }
+
     fn raw(&mut self, b: &[u8]) -> Result<(), StoreError> {
         self.crc.update(b);
         self.sink.put(b)
@@ -152,10 +160,7 @@ pub fn write_file(
     h: &Header,
     body: &mut dyn FnMut(&mut RecordWriter<'_>) -> Result<(), StoreError>,
 ) -> Result<(), StoreError> {
-    let mut w = RecordWriter {
-        sink,
-        crc: Crc32::new(),
-    };
+    let mut w = RecordWriter::new(sink);
     w.raw(&h.encode())?;
     body(&mut w)?;
     let trailer = w.crc.finish().to_le_bytes();
