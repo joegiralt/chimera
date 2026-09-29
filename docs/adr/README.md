@@ -57,3 +57,4 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0053](0053-delay-mechanics-wow-and-irregular-flutter.md) | The delay's WOW becomes MECHANICS: a slow wow and an irregular flutter | Proposed |
 | [0054](0054-sympathetic-strings-from-a-shared-pool.md) | Sympathetic borrows its strings from a shared pool of four (supersedes 0052) | Accepted |
 | [0055](0055-master-tape-off-the-chain.md) | The master tape stage is off the chain, kept behind `master-tape` (supersedes in part 0030) | Proposed |
+| [0056](0056-modal-resonators-share-four-macros.md) | Modal's resonators share four modulatable macros; loops are stable by construction (supersedes in part 0010, 0040, 0054) | Proposed |

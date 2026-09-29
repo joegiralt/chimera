@@ -283,16 +283,35 @@ const KNOWN_BROKEN: &[(&str, &str)] = &[
     ),
 ];
 
+/// Modal's goldens, moved by Modal 2 step A (spec 2026-09-29): re-recorded
+/// once, in Modal 2 step A's last task.
+const PENDING: &[&str] = &[
+    "modal_init",
+    "modal_lfo_cutoff",
+    "modal_sympathetic",
+    "algo_to_modal_switch",
+];
+
+/// `GOLDENS` less the pending rows.
+fn settled() -> Vec<(&'static str, (u64, [u32; 8]))> {
+    GOLDENS
+        .iter()
+        .filter(|r| !PENDING.contains(&r.0))
+        .copied()
+        .collect()
+}
+
 #[test]
 fn goldens_match() {
     let got: Vec<_> = Case::ALL
         .iter()
+        .filter(|c| !PENDING.contains(&c.name()))
         .map(|&case| {
             let out = render_case(case);
             (case.name(), (fnv1a(&out), spots(&out)))
         })
         .collect();
-    golden::check(GOLDENS, &got);
+    golden::check(&settled(), &got);
 }
 
 /// Spec § Testing: part 1's mono bus through the voice pool matches every
@@ -301,13 +320,14 @@ fn goldens_match() {
 fn goldens_match_through_the_instrument() {
     let got: Vec<_> = Case::ALL
         .iter()
+        .filter(|c| !PENDING.contains(&c.name()))
         .map(|&case| {
             let out = render_case_through_instrument(case);
             (case.name(), (fnv1a(&out), spots(&out)))
         })
         .collect();
     // Compares even under GOLDEN_RECORD; `goldens_match` alone records.
-    let failures = golden::mismatches(GOLDENS, &got);
+    let failures = golden::mismatches(&settled(), &got);
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 

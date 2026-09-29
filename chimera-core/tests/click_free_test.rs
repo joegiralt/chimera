@@ -3,7 +3,7 @@
 //! and scattering to variable-size output buffers.
 mod common;
 use common::Rig;
-use common::{SR, tri};
+use common::{SR, clicks, tri};
 
 use chimera_core::dsp::Stereo;
 use chimera_core::dsp::fx_bus::FxParams;
@@ -55,23 +55,12 @@ fn check_no_clicks(
                 }
                 block_pos = 0;
             }
-            let s = libm::tanhf(block[block_pos] * 0.4);
-            all_samples.push(s);
+            all_samples.push(block[block_pos]);
             block_pos += 1;
         }
     }
 
-    // Check for clicks: sample-to-sample jumps > threshold
-    let click_threshold = 0.15; // max allowed jump between adjacent samples
-    let mut clicks = Vec::new();
-
-    for i in 1..all_samples.len() {
-        let jump = (all_samples[i] - all_samples[i - 1]).abs();
-        if jump > click_threshold {
-            clicks.push((i, all_samples[i - 1], all_samples[i], jump));
-        }
-    }
-
+    let clicks = clicks(&all_samples);
     assert!(
         clicks.is_empty(),
         "{}: found {} clicks. First 5: {:?}",

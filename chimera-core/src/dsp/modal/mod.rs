@@ -29,6 +29,7 @@
 //! Modal, the physical-modelling engine (ADR 0004): a modal resonator bank
 //! (`rings`) and Karplus-Strong strings (`string`) in four models.
 
+mod loop_parts;
 mod params;
 mod rings;
 mod string;
@@ -42,10 +43,11 @@ use core::ptr::addr_of_mut;
 use chimera_hal::BLOCK_SIZE;
 
 use super::xorshift_noise;
-use crate::hw::Cost;
+use crate::hw::{Cost, SAMPLE_RATE};
 use crate::in_place::{in_place_enum, uninit_at};
 use crate::sym_alloc::{Lease, SYM_SLOTS, SymAlloc, SymSlot};
 use crate::voice_alloc::VoiceIdx;
+use loop_parts::{DcBlocker, LoopGain};
 use rings::{CosineOsc, Svf, stiffness_from_structure};
 use string::{FRESH_CLEAR_BYTES, KsString, RING_BYTES};
 
@@ -84,13 +86,15 @@ crate::in_place::field_list!(ModalBank => ModalBank {
     filters, cos_osc, resolution, burst_remaining, burst_amp, noise_state, burst_lp,
 });
 
-/// The bowed string and the bow's force on it, 0 once the bow lifts.
+/// The bowed string, the bow's force on it, 0 once the bow lifts, and
+/// its loop's DC blocker.
 struct BowedString {
     string: KsString,
     force: f32,
+    dc: DcBlocker,
 }
 
-crate::in_place::field_list!(BowedString => BowedString { string, force });
+crate::in_place::field_list!(BowedString => BowedString { string, force, dc });
 
 /// One pool slot (exclusive-state spec § 4.2): the seven strings a
 /// Sympathetic note's main string sets ringing. The main string is the
@@ -430,6 +434,7 @@ impl ModalEngine {
             }
             ModelSlot::Bowed(b) => {
                 b.string.clear();
+                b.dc.reset();
                 b.string.set_freq(freq, sample_rate);
                 b.force = vel * params.bow_force;
             }
@@ -654,10 +659,11 @@ impl BowedString {
     fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
         let p = slot.as_mut_ptr();
         // SAFETY: `p` is valid and unaliased; the string is built in place
-        // and `force` written by value, before `assume_init_mut`.
+        // and `force` and `dc` written by value, before `assume_init_mut`.
         unsafe {
             KsString::init_in_place(uninit_at(addr_of_mut!((*p).string)));
             addr_of_mut!((*p).force).write(0.0);
+            addr_of_mut!((*p).dc).write(DcBlocker::new(SAMPLE_RATE));
             slot.assume_init_mut()
         }
     }
@@ -818,22 +824,17 @@ fn render_string(
     released: bool,
     max_level: &mut f32,
 ) {
-    let (fb, body, stiff, decay) = if released {
-        (0.0, 0.0, 0.0, 0.8_f32.max(params.decay)) // fast decay on release
+    let (body, stiff, decay) = if released {
+        (0.0, 0.0, 0.8_f32.max(params.decay)) // fast decay on release
     } else {
-        (
-            params.ks_feedback,
-            params.ks_body,
-            params.ks_stiffness,
-            params.decay,
-        )
+        (params.ks_body, params.ks_stiffness, params.decay)
     };
     let render_params = KsRenderParams {
         damping: params.brightness,
         decay,
+        gain: decay_gain(decay),
         body,
         stiffness: stiff,
-        feedback: fb,
         ens_rate: params.ks_ens_rate,
         ens_depth: params.ks_ens_depth,
         ens_mix: params.ks_ens_mix,
@@ -859,6 +860,7 @@ fn render_bowed(
     let bow_force = exciter_amp * 4.0;
     // When bow is released, apply decay
     let release_decay = if exciter_amp < 0.001 { 0.995 } else { 1.0 };
+    let gain = LoopGain::new(0.9995 * release_decay);
 
     for s in output.iter_mut() {
         // Read from delay line
@@ -870,12 +872,12 @@ fn render_bowed(
         let delta_v = bow_vel - string_vel;
         let friction = bow_force * libm::tanhf(delta_v * 8.0);
 
-        let feedback = string_vel * 0.9995 * release_decay + friction * 0.4;
+        let feedback = string_vel * gain.get() + friction * 0.4;
 
         // Soft-limit to prevent blowup
         let clamped = libm::tanhf(feedback);
 
-        string.ring_push(clamped);
+        string.ring_push(b.dc.process(clamped));
 
         *s = string_vel;
         *max_level = max_level.max(libm::fabsf(*s));
@@ -892,10 +894,10 @@ fn render_sympathetic(
     released: bool,
     max_level: &mut f32,
 ) {
-    let (fb, body, stiff) = if released {
-        (0.0, 0.0, 0.0)
+    let (body, stiff) = if released {
+        (0.0, 0.0)
     } else {
-        (params.ks_feedback, params.ks_body, params.ks_stiffness)
+        (params.ks_body, params.ks_stiffness)
     };
     let decay = if released {
         0.8_f32.max(params.decay)
@@ -909,9 +911,9 @@ fn render_sympathetic(
     let main_params = KsRenderParams {
         damping: params.brightness,
         decay,
+        gain: decay_gain(decay),
         body,
         stiffness: stiff,
-        feedback: fb,
         ens_rate: params.ks_ens_rate,
         ens_depth: params.ks_ens_depth,
         ens_mix: params.ks_ens_mix,
@@ -919,9 +921,9 @@ fn render_sympathetic(
     let sym_params = KsRenderParams {
         damping: params.brightness * 0.7, // darker
         decay: decay * 0.5,               // slower decay
+        gain: decay_gain(decay * 0.5),
         body: 0.0,
-        stiffness: 0.0,
-        feedback: 0.0, // no body/stiff/feedback
+        stiffness: 0.0, // no body/stiff
         ens_rate: 0.0,
         ens_depth: 0.0,
         ens_mix: 0.0, // no ensemble
@@ -957,6 +959,11 @@ fn render_sympathetic(
 }
 
 use super::note_to_freq;
+
+/// DECAY's loop gain: 0 rings longest, 1 is a short pluck.
+fn decay_gain(decay: f32) -> LoopGain {
+    LoopGain::new(0.999 - decay * 0.009)
+}
 
 /// The bank's mode count: `num_modes`, even, at most `MAX_MODES`.
 fn resolution(p: &ModalParams) -> usize {
