@@ -3,15 +3,15 @@ mod image;
 
 use chimera_fat::FixedTime;
 use chimera_fat::volume::{
-    FsKind, Layout, Link, PartitionType, boot_sector, first_partition, layout,
+    FsKind, Layout, Link, PartitionType, Root, boot_sector, first_partition, layout,
 };
 use chimera_hal::store::{Unsupported, VolumeId};
 use core::num::NonZeroU8;
 use core::ops::ControlFlow;
 use embedded_sdmmc::{VolumeIdx, VolumeManager};
 use image::{
-    PART_LBA, RamDisk, exfat, exfat_superfloppy, fat16, fat32, fat32_layout, superfloppy,
-    with_clusters,
+    PART_LBA, RamDisk, exfat, exfat_superfloppy, fat16, fat32, fat32_layout, layout_of,
+    superfloppy, with_clusters,
 };
 
 /// The first partition, then its boot sector.
@@ -152,7 +152,7 @@ fn every_fat_partition_type_is_accepted() {
 #[test]
 fn corrupt_boot_sector_is_rejected_not_panic() {
     type Mutation = fn(&mut [u8; 512]);
-    let cases: [(&str, RamDisk, Mutation); 11] = [
+    let cases: [(&str, RamDisk, Mutation); 13] = [
         ("bytes per sector 1024", fat16(16_384, 1), |b| {
             b[11..13].copy_from_slice(&1024u16.to_le_bytes())
         }),
@@ -174,6 +174,13 @@ fn corrupt_boot_sector_is_rejected_not_panic() {
         }),
         ("FAT32 root cluster 0", fat32(1), |b| b[44..48].fill(0)),
         ("FAT32 FSInfo 0", fat32(1), |b| b[48..50].fill(0)),
+        ("FAT too small for the clusters", fat16(16_384, 1), |b| {
+            b[22..24].copy_from_slice(&10u16.to_le_bytes())
+        }),
+        ("FAT32 clusters past 0x0FFF_FFF5", fat32(1), |b| {
+            b[32..36].copy_from_slice(&u32::MAX.to_le_bytes());
+            b[36..40].copy_from_slice(&0x0200_0000u32.to_le_bytes());
+        }),
     ];
     for (what, disk, mutate) in cases {
         let kind = first_partition(&disk.block(0)).unwrap().kind;
@@ -263,11 +270,6 @@ fn images_open_in_embedded_sdmmc() {
     assert_eq!(sdmmc_kind(fat32(2)), FsKind::Fat32);
 }
 
-fn layout_of(disk: &RamDisk) -> Layout {
-    let p = first_partition(&disk.block(0)).unwrap();
-    layout(&disk.block(p.lba), p.kind).unwrap().0
-}
-
 /// Cluster `c`'s entry set to `v` in a FAT block, read back as a link.
 fn link_of(l: &Layout, c: u32, v: u32) -> Link {
     let mut block = [0; 512];
@@ -284,7 +286,15 @@ fn layout_reads_links_only_onto_the_volume() {
     let l = layout_of(&with_clusters(4_094, 1));
     assert_eq!(
         (l.kind(), l.clusters(), l.cluster_bytes(), l.root()),
-        (FsKind::Fat16, 4_094, 512, None)
+        (
+            FsKind::Fat16,
+            4_094,
+            512,
+            Root::Fixed {
+                first: 33,
+                blocks: 32
+            }
+        )
     );
     assert_eq!(l.fat_block(255), 1);
     assert_eq!(l.fat_block(256), 2);
@@ -302,7 +312,7 @@ fn layout_reads_links_only_onto_the_volume() {
     }
 
     let l = layout_of(&fat32(1));
-    assert_eq!((l.kind(), l.root()), (FsKind::Fat32, Some(2)));
+    assert_eq!((l.kind(), l.root()), (FsKind::Fat32, Root::Cluster(2)));
     assert_eq!(l.fat_block(127), 32);
     assert_eq!(l.fat_block(128), 33);
     for (v, link) in [
@@ -325,4 +335,83 @@ fn start_cluster_takes_the_high_half_on_fat32_only() {
     block[64 + 26..64 + 28].copy_from_slice(&5u16.to_le_bytes());
     assert_eq!(layout_of(&fat16(16_384, 1)).start_cluster(&block, 64), 5);
     assert_eq!(layout_of(&fat32(1)).start_cluster(&block, 64), 0x1_0005);
+}
+
+/// The MBR entry's count bounds the volume: a BPB one block larger is bad.
+#[test]
+fn partition_bounds_the_volume() {
+    for disk in [fat16(16_384, 1), fat32(1)] {
+        let p = first_partition(&disk.block(0)).unwrap();
+        let mut bs = disk.block(PART_LBA);
+        let total = u32::from_le_bytes(bs[32..36].try_into().unwrap());
+        assert_eq!(total, p.blocks, "the builder fills its partition");
+        assert_eq!(layout(&bs, p).unwrap().0.blocks(), total);
+        bs[32..36].copy_from_slice(&(total + 1).to_le_bytes());
+        assert_eq!(layout(&bs, p), Err(Unsupported::BadBootSector));
+    }
+}
+
+#[test]
+fn layout_regions() {
+    // FAT16 over 14 336 blocks: 1 reserved, two 57-block FATs, a 32-block
+    // root, then 14 189 one-block clusters.
+    let l = layout_of(&fat16(16_384, 1));
+    assert_eq!(
+        (l.blocks(), l.clusters(), l.blocks_per_cluster()),
+        (14_336, 14_189, 1)
+    );
+    assert_eq!(l.fat_copies(1).collect::<Vec<_>>(), [1, 58]);
+    assert_eq!(l.fat_copies(57).collect::<Vec<_>>(), [57, 114]);
+    assert_eq!(
+        l.root(),
+        Root::Fixed {
+            first: 115,
+            blocks: 32
+        }
+    );
+    assert_eq!(l.fs_info(), None);
+    assert_eq!(l.cluster_block(2), Some(147));
+    assert_eq!(l.cluster_block(14_190), Some(14_335));
+    assert_eq!(l.cluster_block(14_191), None);
+    assert_eq!(l.cluster_block(1), None);
+    assert_eq!(l.cluster_block(0), None);
+
+    // FAT32 of 66 000 clusters: 32 reserved, two 516-block FATs.
+    let l = layout_of(&fat32(1));
+    assert_eq!((l.blocks(), l.clusters()), (67_064, 66_000));
+    assert_eq!(l.fat_copies(32).collect::<Vec<_>>(), [32, 548]);
+    assert_eq!(l.root(), Root::Cluster(2));
+    assert_eq!(l.fs_info(), Some(1));
+    assert_eq!(l.cluster_block(2), Some(1_064));
+    assert_eq!(l.cluster_block(66_001), Some(67_063));
+    assert_eq!(l.cluster_block(66_002), None);
+    assert_eq!(l.cluster_block(1), None);
+    assert_eq!(l.cluster_block(u32::MAX), None);
+}
+
+#[test]
+fn entry_widths() {
+    let l = layout_of(&fat16(16_384, 1));
+    let mut block = [0xAA; 512];
+    l.put_entry(&mut block, 300, 0x1234);
+    assert_eq!(block[88..90], [0x34, 0x12], "cluster 300: byte 600 mod 512");
+    assert_eq!((block[87], block[90]), (0xAA, 0xAA), "neighbours kept");
+    assert_eq!(l.entry(&block, 300), 0x1234);
+    assert_eq!(l.link(&block, 300), Link::Next(0x1234));
+
+    let l = layout_of(&fat32(1));
+    let mut block = [0; 512];
+    block[240..244].copy_from_slice(&0xF000_0000u32.to_le_bytes());
+    l.put_entry(&mut block, 700, 0xFABC_DEF0);
+    assert_eq!(
+        u32::from_le_bytes(block[240..244].try_into().unwrap()),
+        0xFABC_DEF0,
+        "cluster 700: byte 2 800 mod 512; the top nibble is the card's"
+    );
+    l.put_entry(&mut block, 700, 5);
+    assert_eq!(
+        u32::from_le_bytes(block[240..244].try_into().unwrap()),
+        0xF000_0005
+    );
+    assert_eq!(l.entry(&block, 700), 5, "masked to 28 bits");
 }
