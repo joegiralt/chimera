@@ -37,12 +37,17 @@ asserted.
   voice still needs its own state for the engine it plays.
 
 ## Consequences
-Memory is the largest engine, not the sum: a `Voice` is 33,600 B on the
+Memory is the largest engine, not the sum: a `Voice` is 33,584 B on the
 host, and Modal holds only the model it plays (`ModelSlot`, the same
 in-place enum). A voice rebuilds at most three times per block: a fade end
-and a VCA-lifetime reset in its render, and a MIDI note-on's trigger
-(another engine, or another Modal model) before it. The rebuilds are not
-billed in `Cost`, as the resets they replace weren't. The new `unsafe` lives
+and a VCA-lifetime reset in its render, and one trigger before it.
+`Voice::note_on` triggers an active voice of the same engine too, so a MODE
+change rebuilds the model of a ringing voice; but a trigger rebuilds only
+into its params' kind, and params are fixed within a block, so later
+triggers in that block find the slot already holding it. Until the 16-bit
+strings (spec § 4), a Sympathetic rebuild writes about 31.7 KB, ~2.6 % of
+a block. The rebuilds are not billed in `Cost`, as the resets they replace
+weren't. The new `unsafe` lives
 in `in_place.rs` only: callers pass an in-place constructor, one
 `// SAFETY:` line per arm. Each variant's payload is `Sealed`, which only
 `in_place.rs` can make, so no code builds a variant by value.

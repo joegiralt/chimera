@@ -11,7 +11,13 @@ embedded-graphics-core = "0.4"
 # Bitmap fonts from U8g2 (crate MIT OR Apache-2.0; font licences in ADR 0016).
 u8g2-fonts = "=0.8.0"
 
+[features]
+# The by-value engine constructors (`AlgoEngine::new`, `ModalEngine::new`,
+# `EngineSlot::new`), for tests only: firmware builds every engine in place.
+test-support = []
+
 [dev-dependencies]
+chimera-core = { path = ".", features = ["test-support"] }
 
 [build-dependencies]
 chimera-waves = { path = "../chimera-waves" }

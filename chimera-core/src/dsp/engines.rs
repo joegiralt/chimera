@@ -11,7 +11,7 @@ use crate::addr::{BlockRef, ParamAddr};
 use crate::dsp::algo::engine::{AlgoEngine, AlgoLive};
 use crate::dsp::modal::{ModalEngine, ResonatorMode};
 use crate::hw::Cost;
-use crate::in_place::{by_value, in_place_enum};
+use crate::in_place::in_place_enum;
 use crate::modulation::ModState;
 use crate::params::{EngineType, ParamSnapshot, PitchParams};
 use crate::{MidiNote, Velocity};
@@ -70,12 +70,12 @@ in_place_enum! {
 }
 
 impl EngineSlot {
-    /// By value, through the stack: for tests. A voice builds its slot in
+    /// By value, through the stack: tests only. A voice builds its slot in
     /// place (`init_in_place`).
-    #[doc(hidden)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn new(kind: SlotKind) -> Self {
         // SAFETY: `init_in_place` writes the whole slot.
-        unsafe { by_value(|slot| Self::init_in_place(slot, kind)) }
+        unsafe { crate::in_place::by_value(|slot| Self::init_in_place(slot, kind)) }
     }
 
     pub fn init_in_place(slot: &mut MaybeUninit<Self>, kind: SlotKind) -> &mut Self {
