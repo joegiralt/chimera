@@ -8,15 +8,20 @@ use crate::volume::{Layout, Link};
 const FIRST_CLUSTER: u32 = 2;
 const FREE: u32 = 0;
 
+/// A FAT 1 sector whose write reached FAT 1 but not every other copy.
+/// Only a failed `Table::flush` makes one, so no caller can name a sector
+/// to be copied over.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Stale(u32);
+
 /// One FAT 1 sector, and whether it differs from the card.
 pub struct FatCache {
     sector: Option<u32>,
     dirty: bool,
     buf: [u8; BLOCK],
-    /// A FAT 1 sector whose write reached FAT 1 but not every other copy.
-    /// It outlives the operation: the store keeps it for its volume, and
-    /// the next change there copies it over first (`Table::heal`).
-    pub stale: Option<u32>,
+    /// Outlives the operation: the store carries it for its volume, and the
+    /// next change there copies it over first (`Table::heal`).
+    stale: Option<Stale>,
 }
 
 impl FatCache {
@@ -27,6 +32,18 @@ impl FatCache {
             buf: [0; BLOCK],
             stale: None,
         }
+    }
+}
+
+impl FatCache {
+    /// The sector a failed flush left stale, for the store to keep.
+    pub fn take_stale(&mut self) -> Option<Stale> {
+        self.stale.take()
+    }
+
+    /// Hands back what `take_stale` gave, for the volume it came from.
+    pub fn keep_stale(&mut self, stale: Option<Stale>) {
+        self.stale = stale;
     }
 }
 
@@ -125,7 +142,7 @@ impl<'a, B: Blocks> Table<'a, B> {
             if let Err(e) = self.blocks.write(copy, &self.cache.buf) {
                 self.cache.sector = None;
                 if i > 0 {
-                    self.cache.stale = Some(sector);
+                    self.cache.stale = Some(Stale(sector));
                 }
                 return Err(FsError::Dev(e));
             }
@@ -137,7 +154,7 @@ impl<'a, B: Blocks> Table<'a, B> {
     /// forgets it; before an operation's first FAT change. A sector outside
     /// this volume's FAT 1 is forgotten unwritten. A failed write keeps it.
     pub fn heal(&mut self) -> Result<(), FsError<B::Error>> {
-        let Some(sector) = self.cache.stale else {
+        let Some(Stale(sector)) = self.cache.stale else {
             return Ok(());
         };
         if !self.layout.fat1().contains(&sector) {
