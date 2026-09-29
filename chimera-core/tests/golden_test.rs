@@ -11,24 +11,25 @@ use common::*;
 
 /// (case name, FNV-1a 64 over every sample's bits, sample bits at SPOT_IDX).
 const GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
+    // Re-recorded: Modal strings stored as 16-bit block float (exclusive-state spec § 4).
     (
         "modal_init",
         (
-            0x90f1197c153d0b05,
+            0x1e64209d8d2cbc05,
             [
-                3146805428, 3183273506, 3195882399, 1063217482, 3191764060, 3172592491, 993906163,
-                1000698095,
+                3146802812, 3183276482, 3195875405, 1063217477, 3191746008, 3172523726, 993931707,
+                1000702696,
             ],
         ),
     ),
-    // Re-recorded: CUTOFF routes in octaves, g ramped per block (filter-routing spec § 3).
+    // Re-recorded: Modal strings stored as 16-bit block float (exclusive-state spec § 4).
     (
         "modal_lfo_cutoff",
         (
-            0xe9e4fe3dda9b0262,
+            0x17519e94203abdb7,
             [
-                3146805428, 3183273506, 3198007719, 1063217482, 3191764060, 3172592491, 992207671,
-                3142402426,
+                3146802812, 3183276482, 3198004599, 1063217477, 3191746008, 3172523726, 992235376,
+                3142405389,
             ],
         ),
     ),
@@ -157,14 +158,15 @@ const GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
             ],
         ),
     ),
-    // Re-recorded: the switch fades Algo out, then Modal starts (#33 M6).
+    // Re-recorded: Modal strings stored as 16-bit block float (exclusive-state spec § 4).
+    // Its Algo half is ADR 0049's INIT and carrier norm, recorded before.
     (
         "algo_to_modal_switch",
         (
-            0x501ad70c947a9c4d,
+            0x0ded25e9ac96bb51,
             [
-                979028267, 3207916546, 1058702061, 3198051069, 3178790723, 3188171051, 3137935627,
-                3125743219,
+                979028267, 3207916546, 1058702061, 3198050161, 3178773159, 3188167929, 3137913587,
+                3125729912,
             ],
         ),
     ),

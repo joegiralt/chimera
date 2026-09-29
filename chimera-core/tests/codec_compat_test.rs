@@ -147,7 +147,8 @@ const FIXTURE_RENDERS: &[(&str, u64)] = &[
     ("factory_6.snd", 0x2cf3c112b967ff6f),
     ("factory_7.snd", 0x7ef436e312c3c9e6),
     ("init_algo.snd", 0xfd37f75c4096594b),
-    ("init_modal.snd", 0x90f1197c153d0b05),
+    // Re-recorded: Modal strings stored as 16-bit block float (exclusive-state spec § 4).
+    ("init_modal.snd", 0x1e64209d8d2cbc05),
 ];
 
 #[test]

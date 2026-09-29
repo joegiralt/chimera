@@ -78,7 +78,7 @@ struct BowedString<S: Store> {
     force: f32,
 }
 
-crate::in_place::field_list!(BowedString<F32> => BowedString { string, force });
+crate::in_place::field_list!(BowedString<Q16> => BowedString { string, force });
 
 /// The main string and the seven it sets ringing.
 struct SympatheticStrings<S: Store> {
@@ -88,7 +88,7 @@ struct SympatheticStrings<S: Store> {
     ratios: [f32; NUM_SYMPATHETIC],
 }
 
-crate::in_place::field_list!(SympatheticStrings<F32> => SympatheticStrings { main, strings, ratios });
+crate::in_place::field_list!(SympatheticStrings<Q16> => SympatheticStrings { main, strings, ratios });
 
 in_place_enum! {
     /// The one model an engine holds: the variant is the mode.
@@ -149,7 +149,7 @@ impl<S: Store> ModelSlot<S> {
 }
 
 /// Modal, its strings' delay lines stored as `S` (ADR 0052).
-pub struct ModalEngine<S: Store = F32> {
+pub struct ModalEngine<S: Store = Q16> {
     /// The model it plays, and all of that model's state.
     model: ModelSlot<S>,
     /// The note's frequency per sample, before the pitch offset.

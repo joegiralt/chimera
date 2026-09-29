@@ -4,7 +4,7 @@
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 
-use super::q16::{StepBudget, Store};
+use super::q16::{Q16, StepBudget, Store};
 use crate::in_place::uninit_at;
 
 // ── Karplus-Strong delay line (from the owner's Carcosa firmware) ───
@@ -38,7 +38,7 @@ pub struct KsRenderParams {
 const ENS_SPREAD: f32 = 0.3;
 
 /// A string, its delay line stored as `S`.
-pub(super) struct KsString<S: Store = [f32; MAX_STRING_DELAY]> {
+pub(super) struct KsString<S: Store = Q16> {
     pub(super) line: S,
     pub(super) write_pos: usize,
     pub(super) delay_len: usize,

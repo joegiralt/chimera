@@ -53,3 +53,4 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0049](0049-algo-init-routed-morph-dims.md) | Algo INIT is audibly routed; MORPH dims when A = B (supersedes in part 0024) | Proposed |
 | [0050](0050-gain-staging-trim-and-final-limiter.md) | Gain staging: a 1/√8 output trim and one peak limiter at −1 dBFS, last | Proposed |
 | [0051](0051-a-voice-holds-one-engine-rebuilt-in-place.md) | A voice holds one engine, rebuilt in place (supersedes 0008) | Proposed |
+| [0052](0052-strings-stored-as-16-bit-block-float.md) | Store Modal's string delay lines as 16-bit block float | Proposed |
