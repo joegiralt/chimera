@@ -9,6 +9,7 @@ members = [
     "chimera-waves",
     "chimera-fat",
 ]
+exclude = ["chimera-core/fuzz"]
 default-members = [
     "chimera-core",
     "chimera-hal",
