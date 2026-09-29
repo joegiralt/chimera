@@ -9,16 +9,17 @@ use crate::hw::MAX_PARTS;
 use crate::in_place::by_value;
 use crate::mod_path::ModDestRegistry;
 use crate::modulation::{CUTOFF, CUTOFF_LABEL, MAX_MOD_SOURCES, ModSource, ModState};
+use crate::name::SoundName;
 use crate::params::{EngineType, ParamSnapshot};
 use crate::part::{CHANNEL_SPECS, PartParams};
 
 pub const POOL_SIZE: usize = 32;
 pub const NAME_LEN: usize = 16;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[repr(C)]
 pub struct Sound {
-    pub name: [u8; NAME_LEN],
+    pub name: SoundName,
     /// Carries the engine: `engine()` reads it from here, the one place.
     pub params: ParamSnapshot,
     pub mod_state: ModState,
@@ -27,9 +28,6 @@ pub struct Sound {
 
 impl Sound {
     pub fn init(engine: EngineType) -> Self {
-        let mut name = [0u8; NAME_LEN];
-        let tag = b"(init)";
-        name[..tag.len()].copy_from_slice(tag);
         // The default routes (spec § 2): ENV 1, LFO 1 and NOTE → CUTOFF at
         // 0, NOTE at the kind's key default, on every engine.
         let mut dest_registry = ModDestRegistry::new();
@@ -44,7 +42,7 @@ impl Sound {
             mod_state.set_route(s.index(), 0, a);
         }
         Self {
-            name,
+            name: Self::init_name(),
             params: ParamSnapshot::for_engine(engine),
             mod_state,
             dest_registry,
@@ -56,9 +54,27 @@ impl Sound {
         self.params.engine()
     }
 
-    pub fn name_str(&self) -> &str {
-        let end = self.name.iter().position(|&b| b == 0).unwrap_or(NAME_LEN);
-        core::str::from_utf8(&self.name[..end]).unwrap_or("???")
+    /// An init or neutral Sound's name.
+    pub fn init_name() -> SoundName {
+        SoundName::new("INIT").expect("a valid name")
+    }
+
+    /// Same name, engine, voice-block params (by bits), routes and
+    /// registry: what a card round trip must keep. Unused slots don't count.
+    pub fn bits_eq(&self, o: &Sound) -> bool {
+        self.name == o.name
+            && self.engine() == o.engine()
+            && BlockRef::ALL
+                .into_iter()
+                .all(|b| match (self.params.block(b), o.params.block(b)) {
+                    (Some(x), Some(y)) => x
+                        .specs()
+                        .iter()
+                        .all(|s| x.get(s.id).to_bits() == y.get(s.id).to_bits()),
+                    (x, y) => x.is_none() && y.is_none(),
+                })
+            && self.mod_state.bits_eq(&o.mod_state)
+            && self.dest_registry.bits_eq(&o.dest_registry)
     }
 }
 

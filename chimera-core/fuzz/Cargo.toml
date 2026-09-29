@@ -1,0 +1,22 @@
+[package]
+name = "chimera-core-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+chimera-core = { path = ".." }
+chimera-hal = { path = "../../chimera-hal" }
+
+[[bin]]
+name = "decode_sound"
+path = "fuzz_targets/decode_sound.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]

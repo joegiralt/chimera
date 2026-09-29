@@ -1,6 +1,6 @@
 //! Modal's parameters and their specs.
 
-use crate::block::{Block, ParamId, ParamSpec, ValFmt};
+use crate::block::{Block, DiskCode, ParamId, ParamSpec, ValFmt, apply_code};
 
 // ── Modal Params ────────────────────────────────────────────────────
 
@@ -12,6 +12,36 @@ pub enum ResonatorMode {
     Modal = 1,       // SVF bandpass bank (Rings-style)
     Bowed = 2,       // Sustained bow friction
     Sympathetic = 3, // Multiple resonating strings (Rings-style)
+}
+
+impl DiskCode for ResonatorMode {
+    fn disk_code(self) -> u8 {
+        match self {
+            ResonatorMode::String => 0,
+            ResonatorMode::Modal => 1,
+            ResonatorMode::Bowed => 2,
+            ResonatorMode::Sympathetic => 3,
+        }
+    }
+
+    fn disk_ident(self) -> &'static str {
+        match self {
+            ResonatorMode::String => "STRING",
+            ResonatorMode::Modal => "MODAL",
+            ResonatorMode::Bowed => "BOWED",
+            ResonatorMode::Sympathetic => "SYMPATHETIC",
+        }
+    }
+
+    fn from_disk_code(c: u8) -> Option<Self> {
+        match c {
+            0 => Some(ResonatorMode::String),
+            1 => Some(ResonatorMode::Modal),
+            2 => Some(ResonatorMode::Bowed),
+            3 => Some(ResonatorMode::Sympathetic),
+            _ => None,
+        }
+    }
 }
 
 impl ResonatorMode {
@@ -93,18 +123,26 @@ impl ModalParams {
 /// snapshot), never from `Voice`'s modulated copy: none are modulatable.
 /// Only UI-bound params have specs (plan D16). MODE max 3 is plan D3.
 pub static MODAL_SPECS: [ParamSpec; 12] = [
-    ParamSpec::choice(0, "MODE", ValFmt::Int(3), 3.0, 0.0),
-    ParamSpec::continuous(1, "EXCITE", ValFmt::Uni, 0.0, 1.0, 0.8, 1.0 / 128.0, false),
-    ParamSpec::continuous(2, "DECAY", ValFmt::Uni, 0.0, 1.0, 0.3, 1.0 / 128.0, false),
-    ParamSpec::continuous(3, "BRIGHT", ValFmt::Uni, 0.0, 1.0, 0.7, 1.0 / 128.0, false),
-    ParamSpec::continuous(4, "POS", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false),
-    ParamSpec::continuous(5, "INHARM", ValFmt::Uni, 0.0, 1.0, 0.25, 1.0 / 128.0, false),
-    ParamSpec::continuous(6, "BODY", ValFmt::Uni, 0.0, 1.0, 0.3, 1.0 / 128.0, false),
-    ParamSpec::continuous(7, "STIFF", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false),
-    ParamSpec::continuous(8, "FDBK", ValFmt::Uni, 0.0, 1.0, 0.2, 1.0 / 128.0, false),
-    ParamSpec::continuous(9, "E.DPT", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false),
-    ParamSpec::continuous(10, "E.RAT", ValFmt::Uni, 0.0, 1.0, 0.3, 1.0 / 128.0, false),
-    ParamSpec::continuous(11, "E.MIX", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false),
+    ParamSpec::choice(0, "MODE", ValFmt::Int(3), 3.0, 0.0).ident("MODE"),
+    ParamSpec::continuous(1, "EXCITE", ValFmt::Uni, 0.0, 1.0, 0.8, 1.0 / 128.0, false)
+        .ident("EXCITE"),
+    ParamSpec::continuous(2, "DECAY", ValFmt::Uni, 0.0, 1.0, 0.3, 1.0 / 128.0, false)
+        .ident("DECAY"),
+    ParamSpec::continuous(3, "BRIGHT", ValFmt::Uni, 0.0, 1.0, 0.7, 1.0 / 128.0, false)
+        .ident("BRIGHT"),
+    ParamSpec::continuous(4, "POS", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false).ident("POS"),
+    ParamSpec::continuous(5, "INHARM", ValFmt::Uni, 0.0, 1.0, 0.25, 1.0 / 128.0, false)
+        .ident("INHARM"),
+    ParamSpec::continuous(6, "BODY", ValFmt::Uni, 0.0, 1.0, 0.3, 1.0 / 128.0, false).ident("BODY"),
+    ParamSpec::continuous(7, "STIFF", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false)
+        .ident("STIFF"),
+    ParamSpec::continuous(8, "FDBK", ValFmt::Uni, 0.0, 1.0, 0.2, 1.0 / 128.0, false).ident("FDBK"),
+    ParamSpec::continuous(9, "E.DPT", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false)
+        .ident("E.DPT"),
+    ParamSpec::continuous(10, "E.RAT", ValFmt::Uni, 0.0, 1.0, 0.3, 1.0 / 128.0, false)
+        .ident("E.RAT"),
+    ParamSpec::continuous(11, "E.MIX", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false)
+        .ident("E.MIX"),
 ];
 
 impl Block for ModalParams {
@@ -146,5 +184,17 @@ impl Block for ModalParams {
             Self::KS_ENS_MIX => self.ks_ens_mix = v,
             _ => {}
         }
+    }
+
+    fn enum_code(&self, id: ParamId) -> Option<u8> {
+        (id == Self::MODE).then(|| self.mode.disk_code())
+    }
+
+    fn enum_ident(&self, id: ParamId) -> Option<&'static str> {
+        (id == Self::MODE).then(|| self.mode.disk_ident())
+    }
+
+    fn set_enum_code(&mut self, id: ParamId, code: u8) -> bool {
+        id == Self::MODE && apply_code(ResonatorMode::from_disk_code(code), |m| self.mode = m)
     }
 }

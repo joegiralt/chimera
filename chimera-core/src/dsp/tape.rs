@@ -101,10 +101,11 @@ impl TapeParams {
 
 /// The tape runs outside `Voice`: nothing is modulatable.
 pub static TAPE_SPECS: [ParamSpec; 4] = [
-    ParamSpec::continuous(0, "DRIVE", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false),
-    ParamSpec::continuous(1, "TONE", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false),
-    ParamSpec::continuous(2, "WOW", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false),
-    ParamSpec::continuous(3, "MIX", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false),
+    ParamSpec::continuous(0, "DRIVE", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false)
+        .ident("DRIVE"),
+    ParamSpec::continuous(1, "TONE", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false).ident("TONE"),
+    ParamSpec::continuous(2, "WOW", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false).ident("WOW"),
+    ParamSpec::continuous(3, "MIX", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false).ident("MIX"),
 ];
 
 impl Block for TapeParams {

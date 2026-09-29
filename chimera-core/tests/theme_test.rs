@@ -277,3 +277,43 @@ fn theme_page_is_reachable_and_edits_the_settings() {
     feed(&mut ui, Input::turn(EncoderId::F, 3));
     assert_eq!(ui.theme(), t);
 }
+
+/// SYSTEM's hooks: `in_system` follows MENU and the Part buttons, and
+/// `set_theme` is what `theme` then reports.
+#[test]
+fn in_system_and_set_theme() {
+    let mut ui = chimera_core::ui::UiState::new();
+    assert!(!ui.in_system());
+    feed(&mut ui, Input::press(ButtonId::Menu));
+    assert!(ui.in_system());
+    feed(&mut ui, Input::press(ButtonId::B1));
+    assert!(!ui.in_system());
+
+    let t = ThemeSettings {
+        bright: Bright::new(40),
+        gamma: Gamma::Soft,
+        accent: Accent::Lime,
+        black: Black::new(1),
+    };
+    ui.set_theme(t);
+    assert_eq!(ui.theme(), t);
+}
+
+/// A press after leaving System takes the toast down before its time.
+#[test]
+fn input_dismisses_the_toast() {
+    use chimera_core::storage::{Card, SystemSync};
+    use chimera_core::ui::busy::ToastStep;
+    let mut s = chimera_hal::testkit::MemStore::new(1);
+    let mut card = Card::new();
+    let (mut sync, mut cur, _) = SystemSync::boot(&mut card, &mut s);
+    let mut ui = chimera_core::ui::UiState::new();
+    feed(&mut ui, Input::press(ButtonId::Menu));
+    ui.sync_system(&mut sync, &mut card, &mut s, &mut cur);
+    feed(&mut ui, Input::press(ButtonId::B1));
+    ui.sync_system(&mut sync, &mut card, &mut s, &mut cur);
+    assert_eq!(ui.step_toast(16), ToastStep::Show("SAVED"));
+    feed(&mut ui, Input::press(ButtonId::B2));
+    assert_eq!(ui.step_toast(16), ToastStep::Ended);
+    assert_eq!(ui.step_toast(16), ToastStep::Idle);
+}

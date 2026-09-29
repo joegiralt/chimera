@@ -85,6 +85,12 @@ pub fn enable() {
     READY.store(true, Ordering::Release);
 }
 
+/// SysTick ticks since controls started, at `CONTROLS_HZ`: the UI loop's
+/// clock for anything timed.
+pub fn ticks() -> u32 {
+    ISR_TICK.load(Ordering::Relaxed)
+}
+
 /// SysTick ISR handler. Reads HC165 and decodes inputs.
 pub fn isr_tick() {
     if !READY.load(Ordering::Acquire) {

@@ -156,6 +156,28 @@ impl ModState {
         }
     }
 
+    /// `n` sources (at most `MAX_MOD_SOURCES`), no destinations.
+    pub fn with_sources(n: usize) -> Self {
+        Self {
+            num_sources: n.min(MAX_MOD_SOURCES),
+            ..Self::new()
+        }
+    }
+
+    /// Same sources, destinations and routes (amount and present bit) in
+    /// the live range; slots past `num_sources` and `num_dests` don't count.
+    pub fn bits_eq(&self, o: &Self) -> bool {
+        let (ns, nd) = (self.num_sources, self.num_dests);
+        let live = (1u16 << ns) - 1;
+        ns == o.num_sources
+            && nd == o.num_dests
+            && self.dests[..nd] == o.dests[..nd]
+            && (0..nd).all(|d| {
+                (u16::from(self.present[d]) ^ u16::from(o.present[d])) & live == 0
+                    && (0..ns).all(|s| self.amounts[s][d] == o.amounts[s][d])
+            })
+    }
+
     pub fn num_sources(&self) -> usize {
         self.num_sources
     }
@@ -263,8 +285,7 @@ impl ModState {
     /// Destinations from the registry (in order, at most `MAX_MOD_DESTS`),
     /// all amounts zero. `num_sources` is clamped to `MAX_MOD_SOURCES`.
     pub fn from_registry(registry: &ModDestRegistry, num_sources: usize) -> Self {
-        let mut ms = Self::new();
-        ms.num_sources = num_sources.min(MAX_MOD_SOURCES);
+        let mut ms = Self::with_sources(num_sources);
         for i in 0..registry.len() {
             let Some(entry) = registry.get(i) else {
                 continue;
@@ -448,5 +469,25 @@ impl ModRouting {
         ]
         .into_iter()
         .any(|param| mods.routes_into(ParamAddr::new(BlockRef::Env(slot), param)) != 0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bits_eq_ignores_dead_slots() {
+        let mut a = ModState::with_sources(2);
+        a.push(CUTOFF);
+        let mut b = a.clone();
+        b.dests[1] = VCA;
+        b.amounts[0][1] = 7;
+        b.amounts[5][0] = 7;
+        b.present[0] |= 1 << 5;
+        b.present[1] = 0xFF;
+        assert!(a.bits_eq(&b));
+        b.set_route(1, 0, 0);
+        assert!(!a.bits_eq(&b));
     }
 }

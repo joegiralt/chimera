@@ -11,8 +11,8 @@ use crate::dsp::Stereo;
 use crate::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
 use crate::dsp::voice::Voice;
 use crate::hw::{
-    AXI_SRAM, Cost, DAC_PAIRS, FB_BYTES, MAX_PARTS, MAX_VOICES, SampleBudget, UI_RESERVE,
-    VOICE_RAM_BUDGET,
+    AXI_SRAM, Cost, DAC_PAIRS, FB_BYTES, MAX_PARTS, MAX_VOICES, STORE_RESERVE, SampleBudget,
+    UI_RESERVE, VOICE_RAM_BUDGET,
 };
 use crate::in_place::{by_value, uninit_at};
 use crate::modulation::ModState;
@@ -28,9 +28,10 @@ use crate::{MidiChannel, Velocity};
 
 /// Everything the port places in AXI SRAM (ADR 0014): framebuffer, UI,
 /// Performance, SoundPool, the `AudioShared`, scope and `AudioStats` triple
-/// buffers (the scope's writer besides), and the FX bus.
+/// buffers (the scope's writer besides), the FX bus, and the card's store.
 pub const AXI_RESIDENT: usize = FB_BYTES
     + UI_RESERVE
+    + STORE_RESERVE
     + size_of::<Performance>()
     + size_of::<SoundPool>()
     + size_of::<TripleBuffer<AudioShared>>()

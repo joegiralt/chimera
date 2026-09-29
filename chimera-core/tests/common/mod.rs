@@ -6,6 +6,7 @@
 //! note 60 vel 100 on, ON_BLOCKS blocks, note off, OFF_BLOCKS blocks.
 #![allow(dead_code)]
 
+pub mod codec_util;
 pub mod golden;
 
 use chimera_core::addr::{BlockRef, ParamAddr};
@@ -207,11 +208,26 @@ pub fn render_case(case: Case) -> Vec<f32> {
     let (params, mod_state) = setup(case);
     // Algo→Modal: from block ON_BLOCKS / 2 the Modal init params.
     let switched = init_params(EngineType::Modal);
+    let switch = (case == Case::AlgoToModalSwitch).then_some(&switched);
+    render_with(&params, &mod_state, switch)
+}
+
+/// The fixed harness for any Sound's params and matrix.
+pub fn render_sound(params: &ParamSnapshot, mods: &ModState) -> Vec<f32> {
+    render_with(params, mods, None)
+}
+
+/// `switch`: the params from block ON_BLOCKS / 2 on.
+fn render_with(
+    params: &ParamSnapshot,
+    mod_state: &ModState,
+    switch: Option<&ParamSnapshot>,
+) -> Vec<f32> {
     let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
     voice.note_on(
         MidiNote::new(NOTE).unwrap(),
         Velocity::new(VEL).unwrap(),
-        &params,
+        params,
     );
     let mut out = Vec::with_capacity(TOTAL_SAMPLES);
     let mut block = [0.0f32; BLOCK_SIZE];
@@ -219,12 +235,11 @@ pub fn render_case(case: Case) -> Vec<f32> {
         if b == ON_BLOCKS {
             voice.note_off();
         }
-        let p = if case == Case::AlgoToModalSwitch && b >= ON_BLOCKS / 2 {
-            &switched
-        } else {
-            &params
+        let p = match switch {
+            Some(s) if b >= ON_BLOCKS / 2 => s,
+            _ => params,
         };
-        voice.render(&mut block, p, &mod_state);
+        voice.render(&mut block, p, mod_state);
         out.extend_from_slice(&block);
     }
     out

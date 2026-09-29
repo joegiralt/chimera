@@ -157,7 +157,7 @@ where
     let (name, chain, saved) = if entry < POOL_SIZE {
         let _ = write!(slot, "{:02}", entry + 1);
         match pool.get(entry) {
-            Some(s) => (components::upper(s.name_str()), Some(s.engine()), true),
+            Some(s) => (components::upper(s.name.as_str()), Some(s.engine()), true),
             None => (FmtBuf::new(), None, false),
         }
     } else {
