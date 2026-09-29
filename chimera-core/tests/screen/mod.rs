@@ -491,12 +491,10 @@ pub const CASES: &[ScreenCase] = &[
     }),
     ("sound_browser", |ui| {
         let mut s = Sound::init(EngineType::Algo);
-        s.name = [0; 16];
-        s.name[..9].copy_from_slice(b"WARM BASS");
+        s.name = chimera_core::name::Name::new("WARM BASS").unwrap();
         ui.pool.store(0, s);
         let mut s = Sound::init(EngineType::Modal);
-        s.name = [0; 16];
-        s.name[..11].copy_from_slice(b"GLASS PLUCK");
+        s.name = chimera_core::name::Name::new("GLASS PLUCK").unwrap();
         ui.pool.store(1, s);
         feed(ui, Input::chord(ButtonId::Edit, ButtonId::B1));
         feed(ui, Input::turn(EncoderId::A, 1));
