@@ -820,7 +820,7 @@ fn render_string(
     f0: f32,
     released: bool,
 ) {
-    let p = main_string(params, params.ens_rate, f0, released);
+    let p = main_string(params, (params.structure, params.ens_rate), f0, released);
     for s in output.iter_mut() {
         *s = string.tick_full(&p);
     }
@@ -834,13 +834,19 @@ fn release_gain(held: LoopGain, damp: f32, scale: f32) -> LoopGain {
     ))
 }
 
-/// The block's STRING or SYMP main string at `f0` Hz.
-fn main_string(params: &ModalParams, ens_rate: f32, f0: f32, released: bool) -> KsRenderParams {
+/// The block's STRING or SYMP main string at `f0` Hz, with its own
+/// stiffness and ensemble rate.
+fn main_string(
+    params: &ModalParams,
+    (stiffness, ens_rate): (f32, f32),
+    f0: f32,
+    released: bool,
+) -> KsRenderParams {
     let held = LoopGain::from_t60(t60(params.damp), f0);
     let (body, stiffness, gain) = if released {
         (0.0, 0.0, release_gain(held, params.damp, 1.0))
     } else {
-        (params.body, params.structure, held)
+        (params.body, stiffness, held)
     };
     KsRenderParams {
         lp: lp_coeff(params.bright),
@@ -903,7 +909,8 @@ fn render_sympathetic(
     f0: f32,
     released: bool,
 ) {
-    let main_params = main_string(params, SYMP_ENS_RATE, f0, released);
+    // STRUCTURE tunes the halo only: the main string has no stiffness.
+    let main_params = main_string(params, (0.0, SYMP_ENS_RATE), f0, released);
     let coupling = 0.1 * params.couple;
     let level = 0.6 * params.halo;
 

@@ -158,3 +158,28 @@ fn live_knobs_move_dimmed_knobs_do_not() {
         }
     }
 }
+
+/// SYMP's STRUCTURE tunes the halo only: bare, it changes no bit of the
+/// main string; with a halo, it changes the sound.
+#[test]
+fn symp_structure_tunes_only_the_halo() {
+    let blocks = SR as usize / BLOCK_SIZE;
+    let at = |structure: f32| ModalParams {
+        mode: ResonatorMode::Sympathetic,
+        structure,
+        ..Default::default()
+    };
+    let bare = [0.0, 1.0].map(|s| play_modal_bare(&at(s), 48, 100, blocks, 0));
+    assert!(
+        bare[0]
+            .iter()
+            .zip(&bare[1])
+            .all(|(a, b)| a.to_bits() == b.to_bits()),
+        "bare: STRUCTURE moved the main string"
+    );
+    let full = [0.0, 1.0].map(|s| play_modal(&at(s), 48, blocks, 0));
+    assert!(
+        rms_diff(&full[0], &full[1]) > 1e-3,
+        "halo: STRUCTURE inaudible"
+    );
+}
