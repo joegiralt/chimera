@@ -1,6 +1,7 @@
 //! On-unit SD bring-up (`--features sd-probe`): clocks, acquire in each SPI
-//! mode, the volume, a root listing, a 16 KB write/read/delete at two
-//! clocks, and the RAM sizes plan 1 re-measures. Then halts, LED on.
+//! mode, the volume, then through `SdStore` (our FAT layer, ADR 0048) a
+//! mount and a `/CHIMERA` listing, a 16 KB write/read/delete at two clocks,
+//! and the RAM sizes plan 1 re-measures. Then halts, LED on.
 
 use core::fmt::Write as _;
 use core::ops::ControlFlow;
@@ -13,22 +14,21 @@ use chimera_core::ui::UiState;
 use chimera_core::ui::fmt::FmtBuf;
 use chimera_core::ui::{draw, theme};
 use chimera_fat::volume::{PartitionType, boot_sector, first_partition};
+use chimera_fat::{BusPhase, SdBus};
 use chimera_hal::ChimeraDisplay;
+use chimera_hal::store::{ByteSink, CHUNK, Dir, FileName, ReadSink, Store};
 use cortex_m::peripheral::DWT;
-use embedded_sdmmc::{
-    Block, BlockDevice, BlockIdx, Mode, SdCardError, TimeSource, Timestamp, VolumeIdx,
-};
+use embedded_sdmmc::{Block, BlockDevice, BlockIdx, SdCardError};
 use stm32h7xx_hal::spi;
 use stm32h7xx_hal::time::Hertz;
 
 use crate::clocks::{self, Clocks};
-use crate::sd::{SD_ACQUIRE_MS, SD_FAST_HZ, SD_IDLE_MS, SD_INIT_HZ, SdDevice};
+use crate::sd::{SD_ACQUIRE_MS, SD_INIT_HZ, SdDevice, SdStore};
 
 const LINE_H: i32 = 10;
 /// Long enough to photograph a full page before the next one clears it.
 const PAGE_HOLD_S: u32 = 15;
 const LIST_MAX: usize = 8;
-const PROBE_FILE: &str = "CHIMPROB.TXT";
 const PROBE_BLOCKS: u32 = 32;
 const PROBE_KB: u32 = PROBE_BLOCKS / 2;
 const TEST_HZ: [u32; 2] = [12_500_000, 25_000_000];
@@ -79,33 +79,37 @@ impl<D: ChimeraDisplay> Console<'_, D> {
     }
 }
 
-/// No RTC yet: every probe file carries this date.
-struct Fixed;
-
-impl TimeSource for Fixed {
-    fn get_timestamp(&self) -> Timestamp {
-        Timestamp {
-            year_since_1970: 56,
-            zero_indexed_month: 8,
-            zero_indexed_day: 28,
-            hours: 0,
-            minutes: 0,
-            seconds: 0,
-        }
-    }
-}
-
 fn ms_since(cpu_hz: u32, start: u32) -> u32 {
     (u64::from(DWT::cycle_count().wrapping_sub(start)) * 1_000 / u64::from(cpu_hz)) as u32
 }
 
-fn pattern(block: u32, buf: &mut [u8; 512]) {
-    for (i, b) in buf.iter_mut().enumerate() {
-        *b = (block as usize * 7 + i) as u8;
+/// The probe file's byte at `at`: each 512 B block shifted by its index.
+fn pattern(at: u32) -> u8 {
+    ((at / 512) * 7 + at % 512) as u8
+}
+
+/// Compares a read against `pattern`, byte by byte.
+struct Compare {
+    at: u32,
+    same: bool,
+}
+
+impl ReadSink for Compare {
+    fn begin(&mut self, len: u32) -> ControlFlow<()> {
+        self.same = len == PROBE_BLOCKS * 512;
+        ControlFlow::Continue(())
+    }
+
+    fn chunk(&mut self, bytes: &[u8]) -> ControlFlow<()> {
+        for &b in bytes {
+            self.same &= b == pattern(self.at);
+            self.at += 1;
+        }
+        ControlFlow::Continue(())
     }
 }
 
-pub fn run(display: &mut impl ChimeraDisplay, clk: Clocks, sd: SdDevice) -> ! {
+pub fn run(display: &mut impl ChimeraDisplay, clk: Clocks, store: &mut SdStore) -> ! {
     let cpu_hz = clk.cpu_hz;
     let mut c = Console {
         display,
@@ -115,6 +119,7 @@ pub fn run(display: &mut impl ChimeraDisplay, clk: Clocks, sd: SdDevice) -> ! {
     };
     c.clear();
 
+    let sd = store.device();
     let (ker, sck, counts) = sd.spi(|s| {
         let (ker, sck) = s.sck_hz();
         (ker, sck, s.counts_cycles())
@@ -128,8 +133,8 @@ pub fn run(display: &mut impl ChimeraDisplay, clk: Clocks, sd: SdDevice) -> ! {
         cpu_hz / 1_000_000
     ));
 
-    if acquire(&mut c, &sd) {
-        card(&mut c, sd);
+    if acquire(&mut c, sd) && volume(&mut c, sd) {
+        files(&mut c, store);
     }
     sizes(&mut c);
     c.line(format_args!("DONE"));
@@ -188,42 +193,55 @@ fn cold_acquire(
     (bytes, ms, sd.spi(|s| s.timed_out()))
 }
 
-fn card<D: ChimeraDisplay>(c: &mut Console<D>, sd: SdDevice) {
+/// The MBR and the partition's boot sector, read raw: true if both read.
+fn volume<D: ChimeraDisplay>(c: &mut Console<D>, sd: &SdDevice) -> bool {
+    // Acquired: the bus is in its data phase, which `SdStore` goes on from.
     sd.spi(|s| {
-        s.set_hz(Hertz::from_raw(SD_FAST_HZ));
-        s.arm(SD_IDLE_MS);
+        s.set_phase(BusPhase::Data);
+        s.start_op();
     });
     let mut blk = [Block::new()];
     if let Err(e) = sd.read(&mut blk, BlockIdx(0)) {
         c.line(format_args!("MBR {e:?}"));
-        return;
+        return false;
     }
-    match first_partition(&blk[0].contents) {
-        Ok(p) => {
-            let ty = match p.kind {
-                PartitionType::Fat(b) => b.get(),
-                PartitionType::ExfatOrNtfs => 0x07,
-                PartitionType::Other(b) => b.get(),
-            };
-            c.line(format_args!("P1 LBA {} TYPE {ty:02X}", p.lba));
-            match sd.read(&mut blk, BlockIdx(p.lba)) {
-                Ok(()) => match boot_sector(&blk[0].contents, p.kind) {
-                    Ok((kind, id)) => {
-                        let label = core::str::from_utf8(&id.label).unwrap_or("?");
-                        c.line(format_args!("{kind:?} {:08X} {label}", id.serial));
-                    }
-                    Err(e) => c.line(format_args!("BOOT {e:?}")),
-                },
-                Err(e) => c.line(format_args!("BOOT {e:?}")),
-            }
+    let p = match first_partition(&blk[0].contents) {
+        Ok(p) => p,
+        Err(e) => {
+            c.line(format_args!("MBR {e:?}"));
+            return false;
         }
-        Err(e) => c.line(format_args!("MBR {e:?}")),
+    };
+    let ty = match p.kind {
+        PartitionType::Fat(b) => b.get(),
+        PartitionType::ExfatOrNtfs => 0x07,
+        PartitionType::Other(b) => b.get(),
+    };
+    c.line(format_args!("P1 LBA {} TYPE {ty:02X}", p.lba));
+    match sd.read(&mut blk, BlockIdx(p.lba)) {
+        Ok(()) => match boot_sector(&blk[0].contents, p.kind) {
+            Ok((kind, id)) => {
+                let label = core::str::from_utf8(&id.label).unwrap_or("?");
+                c.line(format_args!("{kind:?} {:08X} {label}", id.serial));
+                true
+            }
+            Err(e) => {
+                c.line(format_args!("BOOT {e:?}"));
+                false
+            }
+        },
+        Err(e) => {
+            c.line(format_args!("BOOT {e:?}"));
+            false
+        }
     }
+}
 
-    let vm: embedded_sdmmc::VolumeManager<_, _> = embedded_sdmmc::VolumeManager::new(sd, Fixed);
-    vm.device(|d| d.spi(|s| s.arm(SD_IDLE_MS)));
+/// Lines 4 and 5, through `SdStore`: mount and list `/CHIMERA`, then write,
+/// read back and delete `/CHIMERA/CHIMPROB.TXT` at each of `TEST_HZ`.
+fn files<D: ChimeraDisplay>(c: &mut Console<D>, store: &mut SdStore) {
     let t = DWT::cycle_count();
-    let vol = match vm.open_volume(VolumeIdx(0)) {
+    let vol = match store.mount() {
         Ok(v) => v,
         Err(e) => {
             c.line(format_args!("MOUNT {e:?}"));
@@ -231,23 +249,15 @@ fn card<D: ChimeraDisplay>(c: &mut Console<D>, sd: SdDevice) {
         }
     };
     c.line(format_args!("MOUNT {} MS", ms_since(c.cpu_hz, t)));
-    let root = match vol.open_root_dir() {
-        Ok(r) => r,
-        Err(e) => {
-            c.line(format_args!("ROOT {e:?}"));
-            return;
-        }
-    };
     // Listed first, drawn after: no flush inside the directory walk.
     let mut names: [FmtBuf; LIST_MAX] = core::array::from_fn(|_| FmtBuf::new());
     let mut n = 0;
-    let listed = root.iterate_dir(|e| {
-        let _ = write!(names[n], "  {} {}", e.name, e.size);
-        n += 1;
+    let listed = store.list(vol, Dir::Chimera, &mut |f, len| {
         if n < LIST_MAX {
-            ControlFlow::Continue(())
-        } else {
-            ControlFlow::Break(())
+            let stem = core::str::from_utf8(f.stem()).unwrap_or("?");
+            let ext = core::str::from_utf8(f.ext()).unwrap_or("?");
+            let _ = write!(names[n], "  {stem}.{ext} {len}");
+            n += 1;
         }
     });
     for name in &names[..n] {
@@ -256,52 +266,52 @@ fn card<D: ChimeraDisplay>(c: &mut Console<D>, sd: SdDevice) {
     if let Err(e) = listed {
         c.line(format_args!("LIST {e:?}"));
     }
+    if let Err(e) = store.make_dir(vol, Dir::Chimera) {
+        c.line(format_args!("MKDIR {e:?}"));
+        return;
+    }
+    let Some(file) = FileName::new(Dir::Chimera, b"CHIMPROB", b"TXT") else {
+        return;
+    };
 
     for hz in TEST_HZ {
-        vm.device(|d| {
-            d.spi(|s| {
-                s.set_hz(Hertz::from_raw(hz));
-                s.arm(SD_IDLE_MS);
-            })
-        });
-        let mut buf = [0u8; 512];
-        let mut expect = [0u8; 512];
+        store.device().spi(|s| s.set_hz(Hertz::from_raw(hz)));
+        let mut gap = 0;
+        let mut gap_since = |store: &SdStore| {
+            gap = gap.max(store.device().spi(|s| s.max_gap_us()));
+        };
         let t = DWT::cycle_count();
-        let wrote = root
-            .open_file_in_dir(PROBE_FILE, Mode::ReadWriteCreateOrTruncate)
-            .and_then(|f| {
-                for b in 0..PROBE_BLOCKS {
-                    pattern(b, &mut buf);
-                    f.write(&buf)?;
+        let wrote = store.write(vol, file, &mut |sink: &mut dyn ByteSink| {
+            let mut buf = [0u8; CHUNK];
+            for block in 0..PROBE_BLOCKS {
+                for (i, b) in buf.iter_mut().enumerate() {
+                    *b = pattern(block * 512 + i as u32);
                 }
-                f.close()
-            });
-        let w_ms = ms_since(c.cpu_hz, t).max(1);
-        let t = DWT::cycle_count();
-        let read = wrote.and_then(|()| {
-            let f = root.open_file_in_dir(PROBE_FILE, Mode::ReadOnly)?;
-            let mut same = true;
-            for b in 0..PROBE_BLOCKS {
-                pattern(b, &mut expect);
-                let got = f.read(&mut buf)?;
-                same &= got == buf.len() && buf == expect;
+                sink.put(&buf)?;
             }
-            f.close()?;
-            Ok(same)
+            Ok(())
         });
+        let w_ms = ms_since(c.cpu_hz, t).max(1);
+        gap_since(store);
+        let t = DWT::cycle_count();
+        let mut cmp = Compare { at: 0, same: false };
+        let read = wrote.and_then(|_| store.read(vol, file, &mut cmp));
         let r_ms = ms_since(c.cpu_hz, t).max(1);
-        let deleted = root.delete_entry_in_dir(PROBE_FILE);
-        let gap = vm.device(|d| d.spi(|s| s.max_gap_us()));
+        gap_since(store);
+        let deleted = store.delete(vol, file);
+        gap_since(store);
         let mhz10 = hz / 100_000;
         let (w, r) = (PROBE_KB * 1_000 / w_ms, PROBE_KB * 1_000 / r_ms);
-        match (read, deleted) {
-            (Ok(true), Ok(())) => c.line(format_args!(
+        match (read, deleted, cmp.same) {
+            (Ok(()), Ok(()), true) => c.line(format_args!(
                 "{}.{}M OK W{w} R{r} KB/S",
                 mhz10 / 10,
                 mhz10 % 10
             )),
-            (Ok(false), _) => c.line(format_args!("{}.{}M FAIL MISMATCH", mhz10 / 10, mhz10 % 10)),
-            (Err(e), _) | (Ok(true), Err(e)) => {
+            (Ok(()), _, false) => {
+                c.line(format_args!("{}.{}M FAIL MISMATCH", mhz10 / 10, mhz10 % 10))
+            }
+            (Err(e), _, _) | (Ok(()), Err(e), true) => {
                 c.line(format_args!("{}.{}M FAIL", mhz10 / 10, mhz10 % 10));
                 c.line(format_args!("  {e:?}"));
             }

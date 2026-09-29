@@ -37,6 +37,14 @@ impl Deadline {
         Self::new(Clock::Transfers, idle, cap)
     }
 
+    /// Already over: an operation with no time, such as one on an empty
+    /// slot. Its first tick fails.
+    pub const fn passed() -> Self {
+        let mut d = Self::new(Clock::Transfers, 0, 0);
+        d.over = true;
+        d
+    }
+
     const fn new(clock: Clock, idle_max: u64, cap: u64) -> Self {
         Self {
             clock,

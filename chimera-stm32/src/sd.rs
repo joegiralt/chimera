@@ -1,7 +1,16 @@
 //! SD card in SPI mode on SPI2, polled (spec § Card): SCK PA9, MISO PB14,
 //! MOSI PB15, CS PE12. Every transaction checks the operation's deadline.
+//! An acquire first asks whether a card is there (#186), so an empty slot
+//! fails in about a millisecond instead of at `SD_ACQUIRE_MS`.
 
+use core::mem::{MaybeUninit, size_of};
+use core::ptr::addr_of_mut;
+use core::sync::atomic::{AtomicBool, Ordering};
+
+use chimera_core::hw::STORE_RESERVE;
 use chimera_fat::deadline::{Deadline, Over};
+use chimera_fat::sd::{CMD0, NCR_BYTES, PRESENCE_TRIES, r1_within_ncr};
+use chimera_fat::{BusPhase, FatStore, SdBus};
 use cortex_m::peripheral::{DCB, DWT};
 use embedded_hal::delay::DelayNs;
 use embedded_hal::spi::{self as ehspi, ErrorKind, ErrorType, Operation, SpiDevice};
@@ -54,6 +63,7 @@ pub struct SdSpi {
     counting: bool,
     hz: Hertz,
     mode: spi::Mode,
+    phase: BusPhase,
     deadline: Deadline,
 }
 
@@ -76,6 +86,7 @@ impl SdSpi {
             counting,
             hz,
             mode,
+            phase: BusPhase::Acquire,
             deadline: Deadline::arm_transfers(0, 0),
         };
         s.arm(SD_IDLE_MS);
@@ -83,9 +94,13 @@ impl SdSpi {
     }
 
     pub fn set_hz(&mut self, hz: Hertz) {
-        self.rebuild(hz, self.mode);
+        if hz != self.hz {
+            self.rebuild(hz, self.mode);
+        }
     }
 
+    /// The probe's mode search; the card runs at `SD_MODE`.
+    #[cfg(feature = "sd-probe")]
     pub fn set_mode(&mut self, m: spi::Mode) {
         self.rebuild(self.hz, m);
     }
@@ -128,6 +143,20 @@ impl SdSpi {
 
     pub fn timed_out(&self) -> bool {
         self.deadline.is_over()
+    }
+
+    /// #186: CMD0 with CS low, `PRESENCE_TRIES` times at most; an R1 within
+    /// NCR is a card. About 0.3 ms a try at the init clock.
+    fn card_answers(&mut self) -> bool {
+        (0..PRESENCE_TRIES).any(|_| {
+            let mut r = [0xFF; NCR_BYTES];
+            self.cs.set_low();
+            let sent = self.spi.write(&CMD0).is_ok() && self.spi.transfer(&mut r).is_ok();
+            self.cs.set_high();
+            // A byte with CS high lets the card release DO.
+            let _ = self.spi.write(&[0xFF]);
+            sent && r1_within_ncr(&r).is_some()
+        })
     }
 
     /// The longest time between blocks since `arm`, in µs (0 without the
@@ -193,6 +222,44 @@ impl SdSpi {
     }
 }
 
+impl SdBus for SdSpi {
+    fn wake(&mut self) {
+        SdSpi::wake(self);
+    }
+
+    fn set_phase(&mut self, p: BusPhase) {
+        self.set_hz(Hertz::from_raw(match p {
+            BusPhase::Acquire => SD_INIT_HZ,
+            BusPhase::Data => SD_FAST_HZ,
+        }));
+        self.phase = p;
+    }
+
+    fn phase(&self) -> BusPhase {
+        self.phase
+    }
+
+    /// An acquire on an empty slot starts with its deadline passed: the
+    /// driver's first transaction fails, and `FatStore` reads `NoCard`.
+    fn start_op(&mut self) {
+        match self.phase {
+            BusPhase::Data => self.arm(SD_IDLE_MS),
+            // Only an acquire asks: CMD0 would reset a mounted card.
+            BusPhase::Acquire => {
+                if self.card_answers() {
+                    self.arm(SD_ACQUIRE_MS);
+                } else {
+                    self.deadline = Deadline::passed();
+                }
+            }
+        }
+    }
+
+    fn timed_out(&self) -> bool {
+        SdSpi::timed_out(self)
+    }
+}
+
 impl ErrorType for SdSpi {
     type Error = SdSpiError;
 }
@@ -238,6 +305,24 @@ impl DelayNs for CycleDelay {
 }
 
 pub type SdDevice = SdCard<SdSpi, CycleDelay>;
+
+/// The card behind `Store`: our FAT layer over the SD driver (ADR 0048).
+pub type SdStore = FatStore<SdDevice>;
+
+const _: () = assert!(size_of::<SdStore>() <= STORE_RESERVE);
+
+static mut STORE: MaybeUninit<SdStore> = MaybeUninit::uninit();
+static STORE_TAKEN: AtomicBool = AtomicBool::new(false);
+
+/// The one `SdStore`, an AXI static (`STORE_RESERVE`), over `dev`.
+pub fn take_store(dev: SdDevice) -> Option<&'static mut SdStore> {
+    if STORE_TAKEN.swap(true, Ordering::AcqRel) {
+        return None;
+    }
+    // SAFETY: the flag lets exactly one caller past, so this is the only
+    // reference to `STORE` ever made.
+    Some(unsafe { &mut *addr_of_mut!(STORE) }.write(FatStore::new(dev)))
+}
 
 /// What the card needs from `boot`.
 pub struct SdParts {

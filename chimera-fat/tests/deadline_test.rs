@@ -84,3 +84,12 @@ fn a_block_ending_a_long_gap_does_not_trip() {
     assert_eq!(d.tick(1_500, true), Ok(()));
     assert_eq!(d.max_gap(), 1_500);
 }
+
+/// No card: the operation has no time at all, so its first transaction
+/// fails and the fault reads as the deadline's.
+#[test]
+fn passed_is_over_before_any_tick() {
+    let mut d = Deadline::passed();
+    assert!(d.is_over());
+    assert_eq!(d.tick(0, true), Err(Over));
+}

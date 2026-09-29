@@ -137,6 +137,19 @@ fn no_card_is_no_card() {
     assert!(!calls.contains(&Call::SetPhase(BusPhase::Data)));
 }
 
+/// #186: when the presence check finds the slot empty, the bus starts the
+/// acquire with its deadline already passed. The mount then fails as
+/// `NoCard` at each acquire's first transaction: no library retry, no delay.
+#[test]
+fn passed_deadline_is_no_card_at_once() {
+    let log = Rc::new(Log::default());
+    let mut s = FatStore::new(card(&log, 0));
+    assert_eq!(s.mount(), Err(StoreError::NoCard));
+    // Per acquire: the failed CMD0 and the library's trailing read.
+    assert_eq!(log.transactions.get(), 4);
+    assert_eq!(log.delays.get(), 0);
+}
+
 /// A transport error or timeout is the deadline's, when it passed: no card
 /// while acquiring, a timeout after. Otherwise it is `Io`.
 #[test]
