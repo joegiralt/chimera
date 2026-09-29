@@ -5,8 +5,9 @@ use crate::dsp::algo::algorithms::AlgoId;
 use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::algo::waves::WaveId;
 use crate::modulation::ModSource;
+use crate::name::SoundName;
 use crate::params::EngineType;
-use crate::preset::{NAME_LEN, Sound, SoundPool};
+use crate::preset::{Sound, SoundPool};
 
 pub const FACTORY_LEN: usize = 8;
 
@@ -42,8 +43,7 @@ fn algo(a: AlgoId, b: AlgoId, morph: u8, ops: [AlgoOpParams; 6]) -> AlgoParams {
 
 fn named(name: &str, algo: AlgoParams) -> Sound {
     let mut s = Sound::init(EngineType::Algo);
-    s.name = [0; NAME_LEN];
-    s.name[..name.len()].copy_from_slice(name.as_bytes());
+    s.name = SoundName::new(name).expect("a valid factory name");
     s.params.algo = algo;
     s
 }
