@@ -2,6 +2,7 @@
 
 mod screen;
 
+use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::ui::UiState;
 use chimera_core::ui::block_registry::ALGO_CHAIN;
 use chimera_core::ui::chain::{ChainId, ChainNav};
@@ -125,7 +126,7 @@ fn current_block_is_an_accent_pill_others_are_rings() {
     let mut nav = ChainNav::new();
     nav.node = 3; // FLT of OSC ALG DRV FLT FLD MOD
     let mut fb = Fb::new();
-    dungeon_map::draw(&mut fb, &nav, 0);
+    dungeon_map::draw(&mut fb, &nav, ResonatorMode::String, 0);
     let (pill, other) = (node_x(3, 6), node_x(0, 6));
     assert_eq!(
         fb.at(pill - 14, theme::MAP_LINE_Y),
@@ -149,7 +150,7 @@ fn sub_pages_hang_under_the_pill_with_the_current_one_lit() {
     nav.node = 5; // MOD: MOD, ENV, LFO
     nav.sub_page = 1;
     let mut fb = Fb::new();
-    dungeon_map::draw(&mut fb, &nav, 0);
+    dungeon_map::draw(&mut fb, &nav, ResonatorMode::String, 0);
     let x = node_x(5, 6) - 8;
     let lit_row = theme::BRANCH_START_Y + theme::BRANCH_LINE_HEIGHT + theme::BRANCH_LINE_HEIGHT / 2;
     assert_eq!(fb.at(x, lit_row), theme::ACCENT, "ENV lit");
@@ -178,7 +179,7 @@ fn the_map_draws_only_in_its_band_on_every_chain() {
             for sub in 0..subs.max(1) {
                 nav.sub_page = sub;
                 let mut fb = Fb::new();
-                dungeon_map::draw(&mut fb, &nav, 0);
+                dungeon_map::draw(&mut fb, &nav, ResonatorMode::String, 0);
                 assert!(
                     fb.px[..theme::MAP_TOP as usize * 240]
                         .iter()
@@ -284,4 +285,37 @@ fn every_osc_sub_page_is_reachable_and_lit_on_the_map() {
         block.sub_page_count() - 1,
         "EDIT stops at the last"
     );
+}
+
+/// Modal's home reads RES; its model page is named after MODEL (the
+/// approved mockups: RES · STRING · PIT).
+#[test]
+fn the_model_page_is_named_after_the_model() {
+    use chimera_core::dsp::modal::{MODEL_NAMES, ResonatorMode as M};
+    use chimera_core::ui::block_registry::{MODAL_1, MODAL_2, PITCH};
+    for m in [M::String, M::Modal, M::Bowed, M::Sympathetic] {
+        let label = |def| dungeon_map::page_label(def, m);
+        assert_eq!(label(&MODAL_1), "RES");
+        assert_eq!(label(&MODAL_2), MODEL_NAMES[m as usize]);
+        assert_eq!(label(&PITCH), "PIT");
+    }
+}
+
+/// A MODEL change redraws the map's sub-row through the dirty render.
+#[test]
+fn a_model_change_redraws_the_map() {
+    use chimera_core::params::EngineType;
+    use chimera_hal::EncoderId;
+    let mut ui = UiState::new();
+    screen::load_init(&mut ui, EngineType::Modal);
+    settle(&mut ui);
+    let (mut fb, perf, scope) = (Fb::new(), PerfStats::zero(), scope_fixture());
+    ui.render_dirty_with_audio(&mut fb, &perf, None, &scope);
+    feed(&mut ui, Input::turn(EncoderId::A, 3)); // MODEL → SYMP
+    settle(&mut ui);
+    ui.render_dirty_with_audio(&mut fb, &perf, None, &scope);
+    let mut full = Fb::new();
+    ui.render_with_audio(&mut full, &perf, None, &scope);
+    let band = theme::MAP_TOP as usize * 240..;
+    assert!(fb.px[band.clone()] == full.px[band], "stale map");
 }

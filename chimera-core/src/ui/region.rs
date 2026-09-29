@@ -92,6 +92,8 @@ pub enum RegionData {
         node_idx: u8,
         sub_page: u8,
         branch_scroll: u16,
+        /// MODEL: MDL2's name on the map.
+        model: u8,
     },
     Grid {
         sel_row: u8,
@@ -177,12 +179,13 @@ impl RegionData {
         }
     }
 
-    pub fn nav(chain_idx: u8, node_idx: u8, sub_page: u8, branch_scroll: u16) -> Self {
+    pub fn nav(chain_idx: u8, node_idx: u8, sub_page: u8, branch_scroll: u16, model: u8) -> Self {
         Self::Nav {
             chain_idx,
             node_idx,
             sub_page,
             branch_scroll,
+            model,
         }
     }
 
@@ -234,6 +237,7 @@ impl RegionData {
             node_idx: 255,
             sub_page: 255,
             branch_scroll: SENTINEL,
+            model: 255,
         }
     }
 
