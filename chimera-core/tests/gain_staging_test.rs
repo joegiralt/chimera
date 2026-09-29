@@ -144,8 +144,9 @@ fn clamped(dac: &DacOut) -> usize {
 
 /// #190, for typical chords only: eight saw-lead or init voices at
 /// velocity 127, LEVEL 1, typical FX. Nothing reaches the final clamp;
-/// saw-lead pairs also sum to at most full scale after the output trim,
-/// so the limiter does no more than the trim (INIT does more: #193). At the typical
+/// saw-lead pairs also sum to at most full scale after the output trim
+/// (at send 1 only with the master tape, ADR 0055), so the limiter does no
+/// more than the trim (INIT does more: #193). At the typical
 /// send (0.3) the reverb's ring stays off its i16 rail; at send 1 it may
 /// reach it, as on main (#142).
 #[test]
@@ -170,8 +171,10 @@ fn no_stage_exceeds_ceiling() {
             );
             // ADR 0049's routed INIT sums past full scale at eight voices
             // (#193), so only the limiter keeps it off the clamp; SAW LEAD
-            // still fits under the trim alone.
-            if matches!(voices, Voices::Saw) {
+            // still fits under the trim alone, at send 1 only through the
+            // master tape's clip: off the chain (ADR 0055) it reaches 1.50
+            // there and the limiter carries it too.
+            if matches!(voices, Voices::Saw) && (cfg!(feature = "master-tape") || send < 1.0) {
                 assert!(
                     pre <= 1.0,
                     "{voices:?} send {send}: pair peak after the trim {pre}"
@@ -451,7 +454,8 @@ fn random_spikes_never_pass_the_ceiling() {
 /// knee, where slope and curvature are already zero: no hard corner. The
 /// second difference stays within the quintic's own curvature bound
 /// (|f''| ≤ 1.54) everywhere, the knee included; a corner would read
-/// about 1/h = 1000.
+/// about 1/h = 1000. Only with `master-tape` (ADR 0055).
+#[cfg(feature = "master-tape")]
 #[test]
 fn the_tapes_clip_has_no_hard_corner() {
     use chimera_core::dsp::tape::soft_clip;

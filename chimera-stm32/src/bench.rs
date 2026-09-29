@@ -41,7 +41,8 @@ const WARM_BLOCKS: u32 = 8;
 const TIMED_BLOCKS: u32 = 64;
 const HOLD_SECONDS: u32 = 30;
 const ROWS: usize = 9;
-const FX_ROWS: usize = 7;
+/// The TAPE row only with `master-tape` (ADR 0055).
+const FX_ROWS: usize = if cfg!(feature = "master-tape") { 7 } else { 6 };
 
 /// Each Algo row plays six distinct waves; voices sit an octave apart so
 /// each reads its own mips (a D-cache worst case).
@@ -87,12 +88,14 @@ const FX: [FxRow; FX_ROWS] = [
     ("CHORUS", |s, _| worst_chorus(s)),
     ("DELAY", |s, _| worst_delay(s)),
     ("REVERB", worst_reverb),
+    #[cfg(feature = "master-tape")]
     ("TAPE", |s, _| worst_tape(s)),
     ("COMP", |s, _| worst_comp(s)),
     ("BUS", |s, b| {
         worst_chorus(s);
         worst_delay(s);
         worst_reverb(s, b);
+        #[cfg(feature = "master-tape")]
         worst_tape(s);
         worst_comp(s);
     }),
@@ -119,6 +122,7 @@ fn worst_reverb(s: &mut AudioShared, block: u32) {
 
 /// Full DRIVE and WOW (its interpolated, most expensive tap), full MIX:
 /// fully engaged and steady once warm, never fading.
+#[cfg(feature = "master-tape")]
 fn worst_tape(s: &mut AudioShared) {
     let t = &mut s.fx.tape;
     (t.drive, t.tone, t.wow, t.mix) = (1.0, 0.5, 1.0, 1.0);

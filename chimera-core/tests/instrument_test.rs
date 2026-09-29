@@ -1271,7 +1271,9 @@ fn a_steal_of_a_waiting_note_counts_it_as_refused() {
 }
 
 /// FX diet spec § Tape: on pair 1 only, after its sum. With the tape up,
-/// pair 1 changes and pairs 2 and 3 stay bit-identical.
+/// pair 1 changes and pairs 2 and 3 stay bit-identical. Without
+/// `master-tape` (ADR 0055) the tape is off the chain: every pair stays
+/// bit-identical.
 #[test]
 fn the_tape_is_on_pair_1_only() {
     let render = |mix: f32| {
@@ -1302,7 +1304,10 @@ fn the_tape_is_on_pair_1_only() {
             .zip(&on)
             .all(|(a, b)| a[1] == b[1] && a[2] == b[2])
     );
+    #[cfg(feature = "master-tape")]
     assert!(off.iter().zip(&on).any(|(a, b)| a[0] != b[0]));
+    #[cfg(not(feature = "master-tape"))]
+    assert!(off.iter().zip(&on).all(|(a, b)| a[0] == b[0]));
 }
 
 /// FX diet spec § Master comp: one gain for every pair. A quiet Part on
