@@ -11,7 +11,7 @@ use crate::dsp::algo::math::exp2;
 use crate::dsp::algo::morph::{Morph, carrier_norm, incoming};
 use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::algo::plan::{EvalPlan, MAX_EDGES, OPS};
-use crate::dsp::algo::tx::{FEEDBACK_CYCLES, detune_factor, level_gain, ratio};
+use crate::dsp::algo::tx::{FEEDBACK_CYCLES, LEVEL_GAIN, detune_factor, level_gain, ratio};
 use crate::dsp::algo::waves::{WaveId, mip_position, mip_step};
 use crate::hw::{BLOCK_SIZE, Cost};
 use crate::in_place::by_value;
@@ -198,7 +198,7 @@ impl AlgoEngine {
             self.swap = Swap::Idle;
             self.env = [OpEnv::IDLE; OPS];
             self.morph = m.get();
-            self.norm = carrier_norm(&self.plan, m, &level);
+            self.norm = carrier_norm(&self.plan, m, &stored_gains(p));
         }
         let cycles = self.cycles(p, sr);
         for i in 0..OPS {
@@ -270,8 +270,7 @@ impl AlgoEngine {
                 xfade_to,
             }
         });
-        // LEVEL gains, not the note's: velocity never moves another carrier.
-        let norm = carrier_norm(&self.plan, m, &level) * self.alg_duck();
+        let norm = carrier_norm(&self.plan, m, &stored_gains(p)) * self.alg_duck();
         let blk = KernelBlock {
             plan: &self.plan,
             ops,
@@ -376,6 +375,12 @@ impl AlgoEngine {
             _ => 1.0,
         }
     }
+}
+
+/// The stored LEVELs' gains, for the output scale: a property of the patch,
+/// so no route, VELOCITY or note on one carrier moves another (ADR 0049).
+fn stored_gains(p: &AlgoParams) -> [f32; OPS] {
+    core::array::from_fn(|i| LEVEL_GAIN[p.ops[i].level.min(99) as usize])
 }
 
 fn level_gains(live: &AlgoLive) -> [f32; OPS] {
