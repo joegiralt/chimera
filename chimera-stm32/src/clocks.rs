@@ -1,6 +1,10 @@
-use chimera_core::clock_plan::{Pll3Config, PllRange, SiliconRev, VcoRange, cycles_for_us};
+#[cfg(not(feature = "sd-probe"))]
+use chimera_core::clock_plan::{Pll3Config, PllRange, VcoRange};
+use chimera_core::clock_plan::{SiliconRev, cycles_for_us};
+use cortex_m::peripheral::{DCB, DWT};
 use stm32h7xx_hal::pac;
 use stm32h7xx_hal::prelude::*;
+use stm32h7xx_hal::rcc::rec::Spi123ClkSel;
 use stm32h7xx_hal::rcc::{Ccdr, PllConfigStrategy};
 
 pub const HSE_HZ: u32 = 8_000_000;
@@ -37,12 +41,17 @@ pub fn freeze(
         .pclk2(pclk.Hz())
         .pclk3(pclk.Hz())
         .pclk4(pclk.Hz())
-        .pll1_q_ck(200.MHz());
+        .pll2_p_ck(100.MHz());
     let rcc = match rev {
         SiliconRev::V => rcc.pll1_strategy(PllConfigStrategy::Iterative),
         SiliconRev::Y | SiliconRev::Unknown(_) => rcc,
     };
-    let ccdr = rcc.freeze(pwrcfg, syscfg);
+    let mut ccdr = rcc.freeze(pwrcfg, syscfg);
+    // SPI1/2/3 run from PLL2_P, which no core clock choice can move: the
+    // display's 50 MHz is /2 and the SD's 25, 12.5 and 0.39 MHz are /4, /8
+    // and /256 of it.
+    ccdr.peripheral.kernel_spi123_clk_mux(Spi123ClkSel::Pll2P);
+    assert!(ccdr.clocks.pll2_p_ck() == Some(100.MHz()));
     let cpu_hz = ccdr.clocks.c_ck().raw();
     (ccdr, Clocks { cpu_hz, rev })
 }
@@ -51,6 +60,26 @@ pub fn delay_us(cpu_hz: u32, us: u32) {
     cortex_m::asm::delay(cycles_for_us(cpu_hz, us));
 }
 
+/// Starts the DWT cycle counter; false if it will not count.
+pub fn enable_cycle_counter(dcb: &mut DCB, dwt: &mut DWT) -> bool {
+    dcb.enable_trace();
+    dwt.enable_cycle_counter();
+    if counting() {
+        return true;
+    }
+    // Without a debugger the M7's DWT can come up software-locked.
+    DWT::unlock();
+    dwt.enable_cycle_counter();
+    counting()
+}
+
+fn counting() -> bool {
+    let start = DWT::cycle_count();
+    cortex_m::asm::delay(1_000);
+    DWT::cycle_count() != start
+}
+
+#[cfg(not(feature = "sd-probe"))]
 pub fn init_pll3(cfg: &Pll3Config) {
     // SAFETY: single-threaded init after the HAL's `freeze` (which leaves
     // PLL3 alone) and before any SAI runs; nothing else touches PLL3.

@@ -64,8 +64,12 @@ pub const VOICE_CHAIN_BYTES: usize = 2048;
 /// Framebuffer: 240 × 320 RGB565, one static in AXI (`chimera-stm32/src/display.rs`).
 pub const FB_BYTES: usize = chimera_hal::FB_SIZE * 2; // 153_600
 /// AXI kept for the UI besides the Performance and SoundPool: renderer and
-/// navigation state, `main`'s stack temporaries and the interrupt stacks.
+/// navigation state. The stack is in DTCM (ADR 0025), not here.
 pub const UI_RESERVE: usize = 64 * 1024;
+/// AXI for the card's `SdStore` (`chimera-stm32/src/sd.rs`, which asserts
+/// it fits): a 512 B block buffer, the 512 B FAT sector cache and its tag,
+/// the allocator hint and the SD driver's state. No heap, no handle table.
+pub const STORE_RESERVE: usize = 2 * 1024;
 
 /// AXI share for the FX bus (ADR 0014). `instrument.rs` asserts the sum of
 /// everything placed in AXI.

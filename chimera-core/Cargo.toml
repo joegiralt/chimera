@@ -18,6 +18,7 @@ test-support = []
 
 [dev-dependencies]
 chimera-core = { path = ".", features = ["test-support"] }
+chimera-hal = { path = "../chimera-hal", features = ["testkit"] }
 
 [build-dependencies]
 chimera-waves = { path = "../chimera-waves" }

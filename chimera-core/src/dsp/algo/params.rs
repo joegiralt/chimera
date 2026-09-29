@@ -1,11 +1,11 @@
 //! The Algo Sound's parameters, stored as bytes (spec § Voice model).
 
 use crate::block::{Block, ParamId, ParamSpec, ValFmt};
-use crate::dsp::algo::algorithms::ALGO_NAMES;
+use crate::dsp::algo::algorithms::{ALGO_COUNT, ALGO_IDENTS, ALGO_NAMES, AlgoId};
 use crate::dsp::algo::env::EnvRates;
 use crate::dsp::algo::plan::OPS;
 use crate::dsp::algo::tx::COARSE_NAMES;
-use crate::dsp::algo::waves::{WAVE_NAMES, WaveId};
+use crate::dsp::algo::waves::{WAVE_COUNT, WAVE_IDENTS, WAVE_NAMES, WaveId};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AlgoOpParams {
@@ -75,7 +75,7 @@ impl AlgoOpParams {
 /// it is the one operator destination (ADR 0010). FINE and FEEDBACK are
 /// not: FINE's 104-cent steps would zipper.
 pub static ALGO_OP_SPECS: [ParamSpec; 13] = [
-    ParamSpec::choice(0, "WAVE", ValFmt::Names(&WAVE_NAMES), 15.0, 0.0),
+    ParamSpec::choice(0, "WAVE", ValFmt::Names(&WAVE_NAMES), 15.0, 0.0).ident("WAVE"),
     ParamSpec::stepped(
         1,
         "CRSE",
@@ -84,19 +84,24 @@ pub static ALGO_OP_SPECS: [ParamSpec; 13] = [
         63.0,
         4.0,
         false,
-    ),
-    ParamSpec::stepped(2, "FINE", ValFmt::Int(15), 0.0, 15.0, 0.0, false),
-    ParamSpec::stepped(3, "DETUN", ValFmt::Signed(3), -3.0, 3.0, 0.0, false),
-    ParamSpec::stepped(4, "LEVEL", ValFmt::Int(99), 0.0, 99.0, 0.0, true),
-    ParamSpec::stepped(5, "AR", ValFmt::Int(31), 0.0, 31.0, 31.0, false),
-    ParamSpec::stepped(6, "D1R", ValFmt::Int(31), 0.0, 31.0, 0.0, false),
-    ParamSpec::stepped(7, "D1L", ValFmt::Int(15), 0.0, 15.0, 15.0, false),
-    ParamSpec::stepped(8, "D2R", ValFmt::Int(31), 0.0, 31.0, 0.0, false),
-    ParamSpec::stepped(9, "RR", ValFmt::OneBased(14), 1.0, 15.0, 8.0, false),
-    ParamSpec::stepped(10, "RS", ValFmt::Int(3), 0.0, 3.0, 0.0, false),
-    ParamSpec::stepped(11, "FDBK", ValFmt::Int(7), 0.0, 7.0, 0.0, false),
-    ParamSpec::stepped(12, "VEL", ValFmt::Int(7), 0.0, 7.0, 0.0, false),
+    )
+    .ident("CRSE"),
+    ParamSpec::stepped(2, "FINE", ValFmt::Int(15), 0.0, 15.0, 0.0, false).ident("FINE"),
+    ParamSpec::stepped(3, "DETUN", ValFmt::Signed(3), -3.0, 3.0, 0.0, false).ident("DETUN"),
+    ParamSpec::stepped(4, "LEVEL", ValFmt::Int(99), 0.0, 99.0, 0.0, true).ident("LEVEL"),
+    ParamSpec::stepped(5, "AR", ValFmt::Int(31), 0.0, 31.0, 31.0, false).ident("AR"),
+    ParamSpec::stepped(6, "D1R", ValFmt::Int(31), 0.0, 31.0, 0.0, false).ident("D1R"),
+    ParamSpec::stepped(7, "D1L", ValFmt::Int(15), 0.0, 15.0, 15.0, false).ident("D1L"),
+    ParamSpec::stepped(8, "D2R", ValFmt::Int(31), 0.0, 31.0, 0.0, false).ident("D2R"),
+    ParamSpec::stepped(9, "RR", ValFmt::OneBased(14), 1.0, 15.0, 8.0, false).ident("RR"),
+    ParamSpec::stepped(10, "RS", ValFmt::Int(3), 0.0, 3.0, 0.0, false).ident("RS"),
+    ParamSpec::stepped(11, "FDBK", ValFmt::Int(7), 0.0, 7.0, 0.0, false).ident("FDBK"),
+    ParamSpec::stepped(12, "VEL", ValFmt::Int(7), 0.0, 7.0, 0.0, false).ident("VEL"),
 ];
+
+// An Enum's `max` is its last code: a longer table needs the spec to grow too.
+const _: () = assert!(ALGO_OP_SPECS[0].max as usize == WAVE_COUNT - 1);
+const _: () = assert!(WAVE_IDENTS.len() == WAVE_COUNT && WAVE_NAMES.len() == WAVE_COUNT);
 
 impl Block for AlgoOpParams {
     fn specs(&self) -> &'static [ParamSpec] {
@@ -140,6 +145,25 @@ impl Block for AlgoOpParams {
             _ => {}
         }
     }
+
+    /// WAVE's code is its `WaveId` index.
+    fn enum_code(&self, id: ParamId) -> Option<u8> {
+        (id == Self::WAVE).then_some(self.wave)
+    }
+
+    /// A wave's ident is its own literal (`Recipe::ident`), not its label.
+    fn enum_ident(&self, id: ParamId) -> Option<&'static str> {
+        (id == Self::WAVE)
+            .then(|| WAVE_IDENTS.get(usize::from(self.wave)).copied())
+            .flatten()
+    }
+
+    fn set_enum_code(&mut self, id: ParamId, code: u8) -> bool {
+        id == Self::WAVE
+            && WaveId::from_index(code)
+                .map(|w| self.wave = w.get())
+                .is_some()
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -151,9 +175,26 @@ pub struct AlgoParams {
     pub ops: [AlgoOpParams; OPS],
 }
 
+/// INIT's operators 2–4 (ADR 0049). At 72 T1's stack keeps a strong
+/// fundamental (0.60, beside 0.40 0.34 0.66 for harmonics 2–4); 66–70 all
+/// but cancel it and INIT reads an octave up.
+const INIT_LEVEL: u8 = 72;
+/// Operators routed on INIT: four, so eight INIT voices fit rev V (ADR 0040).
+const INIT_OPS: usize = 4;
+const INIT_A: AlgoId = AlgoId::T1;
+const INIT_B: AlgoId = AlgoId::A1;
+
 impl Default for AlgoParams {
+    /// INIT (ADR 0049): operators 1–4 sounding at ratio 1, so each
+    /// algorithm is its own timbre, and ALG B is A1, so MORPH is live: from
+    /// T1's four-deep stack down to its clean additive twin.
     fn default() -> Self {
-        Self::single(WaveId::W1)
+        let mut p = Self::single(WaveId::W1);
+        for o in &mut p.ops[1..INIT_OPS] {
+            o.level = INIT_LEVEL;
+        }
+        (p.alg_a, p.alg_b) = (INIT_A.get(), INIT_B.get());
+        p
     }
 }
 
@@ -178,11 +219,31 @@ impl AlgoParams {
 }
 
 pub static ALGO_SPECS: [ParamSpec; 4] = [
-    ParamSpec::choice(0, "ALG A", ValFmt::Names(&ALGO_NAMES), 31.0, 0.0),
-    ParamSpec::choice(1, "ALG B", ValFmt::Names(&ALGO_NAMES), 31.0, 0.0),
-    ParamSpec::stepped(2, "MORPH", ValFmt::Uni, 0.0, 127.0, 0.0, true).short("MRPH"),
-    ParamSpec::stepped(3, "TRNSP", ValFmt::Signed(24), -24.0, 24.0, 0.0, false),
+    ParamSpec::choice(
+        0,
+        "ALG A",
+        ValFmt::Names(&ALGO_NAMES),
+        31.0,
+        INIT_A.get() as f32,
+    )
+    .ident("ALG_A"),
+    ParamSpec::choice(
+        1,
+        "ALG B",
+        ValFmt::Names(&ALGO_NAMES),
+        31.0,
+        INIT_B.get() as f32,
+    )
+    .ident("ALG_B"),
+    ParamSpec::stepped(2, "MORPH", ValFmt::Uni, 0.0, 127.0, 0.0, true)
+        .ident("MORPH")
+        .short("MRPH"),
+    ParamSpec::stepped(3, "TRNSP", ValFmt::Signed(24), -24.0, 24.0, 0.0, false).ident("TRNSP"),
 ];
+
+const _: () = assert!(ALGO_SPECS[0].max as usize == ALGO_COUNT - 1);
+const _: () = assert!(ALGO_SPECS[1].max as usize == ALGO_COUNT - 1);
+const _: () = assert!(ALGO_IDENTS.len() == ALGO_COUNT && ALGO_NAMES.len() == ALGO_COUNT);
 
 impl Block for AlgoParams {
     fn specs(&self) -> &'static [ParamSpec] {
@@ -207,5 +268,36 @@ impl Block for AlgoParams {
             Self::TRANSPOSE => self.transpose = v as i8,
             _ => {}
         }
+    }
+
+    /// ALG A and B's codes are their `AlgoId` indices.
+    fn enum_code(&self, id: ParamId) -> Option<u8> {
+        match id {
+            Self::ALG_A => Some(self.alg_a),
+            Self::ALG_B => Some(self.alg_b),
+            _ => None,
+        }
+    }
+
+    /// An algorithm's ident is its own literal (`Algorithm::ident`), not its label.
+    fn enum_ident(&self, id: ParamId) -> Option<&'static str> {
+        let i = match id {
+            Self::ALG_A => self.alg_a,
+            Self::ALG_B => self.alg_b,
+            _ => return None,
+        };
+        ALGO_IDENTS.get(usize::from(i)).copied()
+    }
+
+    fn set_enum_code(&mut self, id: ParamId, code: u8) -> bool {
+        let Some(alg) = AlgoId::from_index(code) else {
+            return false;
+        };
+        match id {
+            Self::ALG_A => self.alg_a = alg.get(),
+            Self::ALG_B => self.alg_b = alg.get(),
+            _ => return false,
+        }
+        true
     }
 }

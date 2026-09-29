@@ -7,14 +7,22 @@
 //! GAMMA are hardware: the shell turns them into PWM duty and ILI9341
 //! commands. Nothing here touches the audio thread.
 //!
-//! No storage yet: the settings reset at boot to the owner's pick, 70 / PUNCH / TEAL / −2.
+//! Stored in SYSTEM (`storage::SystemSettings`); with no card, no file or an
+//! error, boot takes the owner's pick, 70 / PUNCH / TEAL / −2.
 
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::pixelcolor::raw::{RawData, RawU16};
 use embedded_graphics::prelude::RgbColor;
 
-use crate::block::{Block, ParamId, ParamSpec, ValFmt};
+use crate::block::{Block, DiskCode, ParamId, ParamSpec, ValFmt, apply_code};
 use crate::ui::theme;
+
+/// BRIGHT's and BLACK's values, by step index (see `DiskCode`).
+const BRIGHT_IDENTS: [&str; 19] = [
+    "10", "15", "20", "25", "30", "35", "40", "45", "50", "55", "60", "65", "70", "75", "80", "85",
+    "90", "95", "100",
+];
+const BLACK_IDENTS: [&str; 7] = ["-2", "-1", "0", "+1", "+2", "+3", "+4"];
 
 /// Backlight duty, percent: 10..=100 in steps of 5.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,6 +66,23 @@ impl Bright {
     }
 }
 
+/// The code is the percent itself, 10..=100 in steps of 5.
+impl DiskCode for Bright {
+    fn disk_code(self) -> u8 {
+        self.0
+    }
+
+    fn disk_ident(self) -> &'static str {
+        BRIGHT_IDENTS[self.index() as usize]
+    }
+
+    fn from_disk_code(c: u8) -> Option<Self> {
+        let on_step =
+            (Self::MIN..=Self::MAX).contains(&c) && (c - Self::MIN).is_multiple_of(Self::STEP);
+        on_step.then_some(Bright(c))
+    }
+}
+
 /// Panel gamma: which 0xE0/0xE1 tables the ILI9341 gets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Gamma {
@@ -67,6 +92,33 @@ pub enum Gamma {
     Soft,
     /// Adafruit's tables: deeper blacks, more contrast, a muted teal.
     Punch,
+}
+
+impl DiskCode for Gamma {
+    fn disk_code(self) -> u8 {
+        match self {
+            Gamma::Panel => 0,
+            Gamma::Soft => 1,
+            Gamma::Punch => 2,
+        }
+    }
+
+    fn disk_ident(self) -> &'static str {
+        match self {
+            Gamma::Panel => "PANEL",
+            Gamma::Soft => "SOFT",
+            Gamma::Punch => "PUNCH",
+        }
+    }
+
+    fn from_disk_code(c: u8) -> Option<Self> {
+        match c {
+            0 => Some(Gamma::Panel),
+            1 => Some(Gamma::Soft),
+            2 => Some(Gamma::Punch),
+            _ => None,
+        }
+    }
 }
 
 /// Positive (0xE0) and negative (0xE1) gamma correction, 15 bytes each.
@@ -142,6 +194,39 @@ pub enum Accent {
     Rose,
     Lime,
     Ice,
+}
+
+impl DiskCode for Accent {
+    fn disk_code(self) -> u8 {
+        match self {
+            Accent::Teal => 0,
+            Accent::Amber => 1,
+            Accent::Rose => 2,
+            Accent::Lime => 3,
+            Accent::Ice => 4,
+        }
+    }
+
+    fn disk_ident(self) -> &'static str {
+        match self {
+            Accent::Teal => "TEAL",
+            Accent::Amber => "AMBER",
+            Accent::Rose => "ROSE",
+            Accent::Lime => "LIME",
+            Accent::Ice => "ICE",
+        }
+    }
+
+    fn from_disk_code(c: u8) -> Option<Self> {
+        match c {
+            0 => Some(Accent::Teal),
+            1 => Some(Accent::Amber),
+            2 => Some(Accent::Rose),
+            3 => Some(Accent::Lime),
+            4 => Some(Accent::Ice),
+            _ => None,
+        }
+    }
 }
 
 /// The ground `#0a0b0d` the soft accent mixes over.
@@ -227,6 +312,22 @@ impl Black {
     }
 }
 
+/// The code is the lift itself as a two's-complement byte, −2..=4.
+impl DiskCode for Black {
+    fn disk_code(self) -> u8 {
+        self.0 as u8
+    }
+
+    fn disk_ident(self) -> &'static str {
+        BLACK_IDENTS[(self.0 - Self::MIN) as usize]
+    }
+
+    fn from_disk_code(c: u8) -> Option<Self> {
+        let v = c as i8;
+        (Self::MIN..=Self::MAX).contains(&v).then_some(Black(v))
+    }
+}
+
 /// Everything System › Theme sets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ThemeSettings {
@@ -284,7 +385,7 @@ fn raw(c: Rgb565) -> u16 {
 }
 
 impl ThemeSettings {
-    /// Boot state (no storage yet): the owner's pick, 70 %, PUNCH, TEAL, −2.
+    /// Boot state without a SYSTEM file: the owner's pick, 70 %, PUNCH, TEAL, −2.
     pub const DEFAULT: ThemeSettings = ThemeSettings {
         bright: Bright::DEFAULT,
         gamma: Gamma::Punch,
@@ -329,13 +430,16 @@ const GAMMA_NAMES: [&str; 3] = ["PANEL", "SOFT", "PUNCH"];
 const ACCENT_NAMES: [&str; 5] = ["TEAL", "AMBER", "ROSE", "LIME", "ICE"];
 const BLACK_NAMES: [&str; 7] = ["-2", "-1", "0", "+1", "+2", "+3", "+4"];
 
+const _: () = assert!(BRIGHT_IDENTS.len() == THEME_SPECS[0].max as usize + 1);
+const _: () = assert!(BLACK_IDENTS.len() == THEME_SPECS[3].max as usize + 1);
+
 /// Choices by index: BRIGHT 0..=18 (10..100 %), BLACK 0..=6 (−2..+4). The
 /// defaults are the owner's pick: 70, PUNCH, TEAL, −2.
 pub static THEME_SPECS: [ParamSpec; 4] = [
-    ParamSpec::choice(0, "BRIGHT", ValFmt::Names(&BRIGHT_NAMES), 18.0, 12.0),
-    ParamSpec::choice(1, "GAMMA", ValFmt::Names(&GAMMA_NAMES), 2.0, 2.0),
-    ParamSpec::choice(2, "ACCENT", ValFmt::Names(&ACCENT_NAMES), 4.0, 0.0),
-    ParamSpec::choice(3, "BLACK", ValFmt::Names(&BLACK_NAMES), 6.0, 0.0),
+    ParamSpec::choice(0, "BRIGHT", ValFmt::Names(&BRIGHT_NAMES), 18.0, 12.0).ident("BRIGHT"),
+    ParamSpec::choice(1, "GAMMA", ValFmt::Names(&GAMMA_NAMES), 2.0, 2.0).ident("GAMMA"),
+    ParamSpec::choice(2, "ACCENT", ValFmt::Names(&ACCENT_NAMES), 4.0, 0.0).ident("ACCENT"),
+    ParamSpec::choice(3, "BLACK", ValFmt::Names(&BLACK_NAMES), 6.0, 0.0).ident("BLACK"),
 ];
 
 impl Block for ThemeSettings {
@@ -361,6 +465,36 @@ impl Block for ThemeSettings {
             Self::ACCENT => self.accent = Accent::ALL[(i as usize).min(Accent::ALL.len() - 1)],
             Self::BLACK => self.black = Black::new(Black::MIN.saturating_add(i.min(127) as i8)),
             _ => {}
+        }
+    }
+
+    fn enum_code(&self, id: ParamId) -> Option<u8> {
+        match id {
+            Self::BRIGHT => Some(self.bright.disk_code()),
+            Self::GAMMA => Some(self.gamma.disk_code()),
+            Self::ACCENT => Some(self.accent.disk_code()),
+            Self::BLACK => Some(self.black.disk_code()),
+            _ => None,
+        }
+    }
+
+    fn enum_ident(&self, id: ParamId) -> Option<&'static str> {
+        match id {
+            Self::BRIGHT => Some(self.bright.disk_ident()),
+            Self::GAMMA => Some(self.gamma.disk_ident()),
+            Self::ACCENT => Some(self.accent.disk_ident()),
+            Self::BLACK => Some(self.black.disk_ident()),
+            _ => None,
+        }
+    }
+
+    fn set_enum_code(&mut self, id: ParamId, code: u8) -> bool {
+        match id {
+            Self::BRIGHT => apply_code(Bright::from_disk_code(code), |b| self.bright = b),
+            Self::GAMMA => apply_code(Gamma::from_disk_code(code), |g| self.gamma = g),
+            Self::ACCENT => apply_code(Accent::from_disk_code(code), |a| self.accent = a),
+            Self::BLACK => apply_code(Black::from_disk_code(code), |b| self.black = b),
+            _ => false,
         }
     }
 }

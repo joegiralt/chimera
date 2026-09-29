@@ -5,3 +5,7 @@ edition.workspace = true
 
 [dependencies]
 embedded-graphics-core = "0.4"
+
+[features]
+# MemStore and the Store conformance suite, for host tests of stores.
+testkit = []

@@ -14,6 +14,7 @@ use chimera_core::reset::ResetCause;
 use chimera_core::scope::SCOPE_LEN;
 use chimera_core::ui::UiState;
 use chimera_core::ui::block_registry as reg;
+use chimera_core::ui::busy::{draw_busy, draw_toast};
 use chimera_core::ui::perf::PerfStats;
 use chimera_hal::{ButtonId, ButtonState, ChimeraDisplay, Controls, EncoderId};
 use embedded_graphics::pixelcolor::Rgb565;
@@ -311,7 +312,7 @@ pub type ScreenCase = (&'static str, fn(&mut UiState));
 pub const CASES: &[ScreenCase] = &[
     ("engine_algo", |ui| feed(ui, Input::turn(EncoderId::A, 2))),
     ("algo_alg", |ui| {
-        feed(ui, Input::turn(EncoderId::B, 24)); // ALG B = A17
+        feed(ui, Input::turn(EncoderId::B, 16)); // ALG B = A17, from INIT's A1
         feed(ui, Input::turn(EncoderId::C, 50)); // MORPH 50: the diagrams blend
     }),
     ("algo_wave", |ui| {
@@ -489,14 +490,30 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::A, 3)); // LFO1 → VELO
         feed(ui, Input::turn(EncoderId::E, -127));
     }),
+    ("algo_alg_morph_dimmed", |ui| {
+        feed(ui, Input::turn(EncoderId::B, -8)); // ALG B = T1 = ALG A
+        feed(ui, Input::turn(EncoderId::C, 1)); // MORPH focused, dimmed
+    }),
+    // ENV1 → MORPH primed while it was live; then ALG B = ALG A (#188).
+    ("mod_matrix_morph_inert", |ui| {
+        feed(ui, Input::turn(EncoderId::C, 1));
+        prime(ui);
+        plus(ui, 5);
+        to_matrix(ui);
+        feed(ui, Input::turn(EncoderId::B, 1)); // past FLT CUTOFF to MORPH
+        feed(ui, Input::turn(EncoderId::E, 60));
+        for _ in 0..5 {
+            feed(ui, Input::press(ButtonId::Minus));
+        }
+        feed(ui, Input::turn(EncoderId::B, -8));
+        plus(ui, 5);
+    }),
     ("sound_browser", |ui| {
         let mut s = Sound::init(EngineType::Algo);
-        s.name = [0; 16];
-        s.name[..9].copy_from_slice(b"WARM BASS");
+        s.name = chimera_core::name::Name::new("WARM BASS").unwrap();
         ui.pool.store(0, s);
         let mut s = Sound::init(EngineType::Modal);
-        s.name = [0; 16];
-        s.name[..11].copy_from_slice(b"GLASS PLUCK");
+        s.name = chimera_core::name::Name::new("GLASS PLUCK").unwrap();
         ui.pool.store(1, s);
         feed(ui, Input::chord(ButtonId::Edit, ButtonId::B1));
         feed(ui, Input::turn(EncoderId::A, 1));
@@ -539,8 +556,46 @@ pub fn ui_for(name: &str) -> UiState {
     ui
 }
 
+/// Overlays the goldens lock, each drawn alone on a blank screen: on the
+/// device it lands on whatever the last frame left.
+pub const OVERLAYS: &[(&str, Overlay)] = &[
+    ("busy", Overlay::Busy),
+    ("toast_saved", Overlay::Toast("SAVED")),
+    ("toast_exfat", Overlay::Toast("CARD IS EXFAT: FORMAT FAT32")),
+];
+
+/// The two faces of the one overlay component.
+#[derive(Clone, Copy, Debug)]
+pub enum Overlay {
+    Busy,
+    Toast(&'static str),
+}
+
+/// Every case name: the screens, then the overlays.
+pub fn case_names() -> impl Iterator<Item = &'static str> {
+    CASES
+        .iter()
+        .map(|c| c.0)
+        .chain(OVERLAYS.iter().map(|o| o.0))
+}
+
+/// Overlay `o` on a blank screen, and the band it reports.
+pub fn render_overlay(o: Overlay) -> (Fb, (u16, u16)) {
+    let mut fb = Fb::new();
+    let band = match o {
+        Overlay::Busy => draw_busy(&mut fb),
+        Overlay::Toast(text) => draw_toast(&mut fb, text),
+    };
+    (fb, band)
+}
+
 /// Full render of case `name`.
 pub fn render(name: &str) -> Fb {
+    if let Some(&(_, label)) = OVERLAYS.iter().find(|o| o.0 == name) {
+        let (fb, _) = render_overlay(label);
+        fb.dump(name);
+        return fb;
+    }
     let ui = ui_for(name);
     let mut fb = Fb::new();
     ui.render_with_audio(

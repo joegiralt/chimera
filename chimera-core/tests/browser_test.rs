@@ -157,17 +157,15 @@ fn cursor_move_redraws_and_matches_a_full_render() {
     );
 }
 
-/// A saved Sound's name fills all of `NAME_LEN` (16 bytes, no null
-/// terminator): `name_str` and the row's `FmtBuf` (32 bytes) must still
+/// A saved Sound's name fills all 16 bytes (no null terminator): the
+/// name and the row's `FmtBuf` (32 bytes) must still
 /// render it in full, not truncated, and stay inside the screen.
 #[test]
 fn the_longest_sound_name_is_not_truncated() {
-    use chimera_core::preset::NAME_LEN;
-
     let mut pool = SoundPool::new();
     let mut s = Sound::init(EngineType::Algo);
-    s.name = *b"ABCDEFGHIJKLMNOP"; // exactly NAME_LEN bytes, no trailing 0
-    assert_eq!(s.name.len(), NAME_LEN);
+    s.name = chimera_core::name::SoundName::new("ABCDEFGHIJKLMNOP").unwrap();
+    assert_eq!(s.name.as_str().len(), 16);
     pool.store(0, s);
     let fb = drawn(&pool, 5, 0); // drawn() asserts fb.oob == 0 (nothing clipped off-screen)
     assert!(row_has(&fb, 0, theme::INK), "16-char name drawn in full");

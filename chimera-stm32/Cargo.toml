@@ -8,10 +8,13 @@ default = ["midi-din", "perf-probe"]
 midi-din = []
 perf-probe = []
 bench = ["perf-probe"]
+# On-unit SD bring-up: prints the card probe and halts; no audio.
+sd-probe = []
 
 [dependencies]
 chimera-core = { path = "../chimera-core" }
 chimera-hal = { path = "../chimera-hal" }
+chimera-fat = { path = "../chimera-fat" }
 cortex-m = { version = "0.7", features = ["critical-section-single-core"] }
 # set-vtor: Reset points VTOR at the linked __vector_table (FLASH ORIGIN in
 # memory.x), whatever the bootloader left there.
@@ -22,6 +25,8 @@ stm32h7xx-hal = { version = "0.16", features = ["stm32h750v", "rt"] }
 embedded-graphics = "0.8"
 embedded-graphics-core = "0.4"
 libm = "0.2"
+embedded-sdmmc = { version = "0.10", default-features = false }
+embedded-hal = "1.0"
 
 # no_std bin, own #[panic_handler]: the test harness pulls in std's, which
 # clashes (E0152). Nothing here to unit test; chimera-core holds the logic.

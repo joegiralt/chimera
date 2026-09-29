@@ -1,0 +1,13 @@
+[package]
+name = "chimera-fat"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+chimera-hal = { path = "../chimera-hal" }
+embedded-sdmmc = { version = "0.10", default-features = false }
+embedded-hal = "1.0"
+
+[dev-dependencies]
+chimera-hal = { path = "../chimera-hal", features = ["testkit"] }
+chimera-core = { path = "../chimera-core" }

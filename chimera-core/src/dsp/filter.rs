@@ -1,3 +1,4 @@
+use crate::block::DiskCode;
 use crate::dsp::modulator::pick;
 use crate::hw::Cost;
 use crate::params::FilterParams;
@@ -15,6 +16,48 @@ pub enum FilterMode {
     Hp24 = 5,
     Notch = 6,
     Phaser = 7,
+}
+
+impl DiskCode for FilterMode {
+    fn disk_code(self) -> u8 {
+        match self {
+            FilterMode::Lp6 => 0,
+            FilterMode::Lp12 => 1,
+            FilterMode::Lp24 => 2,
+            FilterMode::Bp12 => 3,
+            FilterMode::Bp24 => 4,
+            FilterMode::Hp24 => 5,
+            FilterMode::Notch => 6,
+            FilterMode::Phaser => 7,
+        }
+    }
+
+    fn disk_ident(self) -> &'static str {
+        match self {
+            FilterMode::Lp6 => "LP6",
+            FilterMode::Lp12 => "LP12",
+            FilterMode::Lp24 => "LP24",
+            FilterMode::Bp12 => "BP12",
+            FilterMode::Bp24 => "BP24",
+            FilterMode::Hp24 => "HP24",
+            FilterMode::Notch => "NOTCH",
+            FilterMode::Phaser => "PHASER",
+        }
+    }
+
+    fn from_disk_code(c: u8) -> Option<Self> {
+        match c {
+            0 => Some(FilterMode::Lp6),
+            1 => Some(FilterMode::Lp12),
+            2 => Some(FilterMode::Lp24),
+            3 => Some(FilterMode::Bp12),
+            4 => Some(FilterMode::Bp24),
+            5 => Some(FilterMode::Hp24),
+            6 => Some(FilterMode::Notch),
+            7 => Some(FilterMode::Phaser),
+            _ => None,
+        }
+    }
 }
 
 impl FilterMode {
@@ -71,6 +114,27 @@ const SVF_PAD: u32 = 2;
 pub enum FilterKind {
     #[default]
     Svf = 0,
+}
+
+impl DiskCode for FilterKind {
+    fn disk_code(self) -> u8 {
+        match self {
+            FilterKind::Svf => 0,
+        }
+    }
+
+    fn disk_ident(self) -> &'static str {
+        match self {
+            FilterKind::Svf => "SVF",
+        }
+    }
+
+    fn from_disk_code(c: u8) -> Option<Self> {
+        match c {
+            0 => Some(FilterKind::Svf),
+            _ => None,
+        }
+    }
 }
 
 /// KIND's names, as it steps the built kinds.

@@ -3,7 +3,7 @@
 
 use chimera_hal::BLOCK_SIZE;
 
-use crate::block::{Block, ParamId, ParamSpec, ValFmt};
+use crate::block::{Block, DiskCode, ParamId, ParamSpec, ValFmt, apply_code, identity_code};
 use crate::dsp::fast_sin;
 use crate::dsp::modulator::func::{BCoefs, FuncGen, Slides};
 use crate::dsp::modulator::{Func, FuncParams, Glide, LfoForm, LfoType, pick};
@@ -27,6 +27,39 @@ impl LfoShape {
             3 => LfoShape::Square,
             4 => LfoShape::Random,
             _ => LfoShape::Sine,
+        }
+    }
+}
+
+impl DiskCode for LfoShape {
+    fn disk_code(self) -> u8 {
+        match self {
+            LfoShape::Sine => 0,
+            LfoShape::Triangle => 1,
+            LfoShape::Saw => 2,
+            LfoShape::Square => 3,
+            LfoShape::Random => 4,
+        }
+    }
+
+    fn disk_ident(self) -> &'static str {
+        match self {
+            LfoShape::Sine => "SINE",
+            LfoShape::Triangle => "TRIANGLE",
+            LfoShape::Saw => "SAW",
+            LfoShape::Square => "SQUARE",
+            LfoShape::Random => "RANDOM",
+        }
+    }
+
+    fn from_disk_code(c: u8) -> Option<Self> {
+        match c {
+            0 => Some(LfoShape::Sine),
+            1 => Some(LfoShape::Triangle),
+            2 => Some(LfoShape::Saw),
+            3 => Some(LfoShape::Square),
+            4 => Some(LfoShape::Random),
+            _ => None,
         }
     }
 }
@@ -84,18 +117,27 @@ impl LfoParams {
 /// The LFO sources are computed from the unmodulated `params.lfos`;
 /// modulating an LFO itself is out of scope, so nothing here is modulatable.
 pub static LFO_SPECS: [ParamSpec; 11] = [
-    ParamSpec::continuous(0, "RATE", ValFmt::Uni, 0.01, 20.0, 1.0, 0.15, false),
-    ParamSpec::choice(1, "SHAPE", ValFmt::Int(4), 4.0, 0.0),
-    ParamSpec::choice(2, "SYNC", ValFmt::Int(1), 1.0, 0.0),
-    ParamSpec::continuous(3, "PHASE", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false),
-    ParamSpec::continuous(4, "DEPTH", ValFmt::Uni, 0.0, 1.0, 1.0, 1.0 / 128.0, false),
-    ParamSpec::continuous(5, "OFST", ValFmt::Bi, -1.0, 1.0, 0.0, 2.0 / 128.0, false),
-    ParamSpec::choice(6, "TYPE", ValFmt::Names(&["CLASSIC", "FUNC"]), 1.0, 0.0),
-    ParamSpec::choice(7, "FORM", ValFmt::Names(&["FREE", "SYNC", "LFV"]), 2.0, 0.0),
-    ParamSpec::continuous(8, "RISE", ValFmt::Uni, 0.0, 1.0, 0.309, 1.0 / 128.0, false),
-    ParamSpec::continuous(9, "FALL", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false),
-    ParamSpec::continuous(10, "SHAPE", ValFmt::Bi, 0.0, 1.0, 0.5, 1.0 / 128.0, false),
+    ParamSpec::continuous(0, "RATE", ValFmt::Uni, 0.01, 20.0, 1.0, 0.15, false).ident("RATE"),
+    ParamSpec::choice(1, "SHAPE", ValFmt::Int(4), 4.0, 0.0).ident("SHAPE"),
+    ParamSpec::choice(2, "SYNC", ValFmt::Int(1), 1.0, 0.0).ident("SYNC"),
+    ParamSpec::continuous(3, "PHASE", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false)
+        .ident("PHASE"),
+    ParamSpec::continuous(4, "DEPTH", ValFmt::Uni, 0.0, 1.0, 1.0, 1.0 / 128.0, false)
+        .ident("DEPTH"),
+    ParamSpec::continuous(5, "OFST", ValFmt::Bi, -1.0, 1.0, 0.0, 2.0 / 128.0, false).ident("OFST"),
+    ParamSpec::choice(6, "TYPE", ValFmt::Names(&["CLASSIC", "FUNC"]), 1.0, 0.0).ident("TYPE"),
+    ParamSpec::choice(7, "FORM", ValFmt::Names(&["FREE", "SYNC", "LFV"]), 2.0, 0.0).ident("FORM"),
+    ParamSpec::continuous(8, "RISE", ValFmt::Uni, 0.0, 1.0, 0.309, 1.0 / 128.0, false)
+        .ident("RISE"),
+    ParamSpec::continuous(9, "FALL", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false).ident("FALL"),
+    ParamSpec::continuous(10, "SHAPE", ValFmt::Bi, 0.0, 1.0, 0.5, 1.0 / 128.0, false)
+        .ident("SHAPE_B"),
 ];
+
+/// SYNC's values, by the flag's byte (a flag's byte is its meaning).
+const SYNC_IDENTS: [&str; 2] = ["FREE", "RETRIG"];
+const _: () = assert!(SYNC_IDENTS.len() == LFO_SPECS[2].max as usize + 1);
+const _: () = assert!(LfoShape::Random as usize + 1 == LFO_SPECS[1].max as usize + 1);
 
 impl Block for LfoParams {
     fn specs(&self) -> &'static [ParamSpec] {
@@ -133,6 +175,38 @@ impl Block for LfoParams {
             Self::FALL => self.func.fall = v,
             Self::SHAPE_B => self.func.shape = v,
             _ => {}
+        }
+    }
+
+    fn enum_code(&self, id: ParamId) -> Option<u8> {
+        match id {
+            Self::SHAPE => Some(LfoShape::from_u8(self.shape).disk_code()),
+            // SYNC is a flag: 0 free-runs, 1 retriggers. The byte is the meaning.
+            Self::SYNC => Some(self.sync),
+            Self::TYPE => Some(self.lfo_type.disk_code()),
+            Self::FORM => Some(self.func.lfo_form.disk_code()),
+            _ => None,
+        }
+    }
+
+    fn enum_ident(&self, id: ParamId) -> Option<&'static str> {
+        match id {
+            Self::SHAPE => Some(LfoShape::from_u8(self.shape).disk_ident()),
+            Self::SYNC => SYNC_IDENTS.get(usize::from(self.sync)).copied(),
+            Self::TYPE => Some(self.lfo_type.disk_ident()),
+            Self::FORM => Some(self.func.lfo_form.disk_ident()),
+            _ => None,
+        }
+    }
+
+    fn set_enum_code(&mut self, id: ParamId, code: u8) -> bool {
+        match id {
+            Self::SHAPE => apply_code(LfoShape::from_disk_code(code), |s| self.shape = s as u8),
+            Self::SYNC => apply_code(identity_code(&LFO_SPECS, id, code), |c| self.sync = c),
+            Self::TYPE => apply_code(LfoType::from_disk_code(code), |t| self.lfo_type = t),
+            // An LFO's MODE is always LFO, so FORM is its lfo_form, whatever else is loaded.
+            Self::FORM => apply_code(LfoForm::from_disk_code(code), |f| self.func.lfo_form = f),
+            _ => false,
         }
     }
 }

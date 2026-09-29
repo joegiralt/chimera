@@ -63,7 +63,7 @@ fn patch_init_has_musically_useful_defaults() {
     assert_eq!(p.engine(), EngineType::Algo);
     assert!(p.params.out.volume > 0.0);
     assert!(p.params.filter.cutoff > 1000.0);
-    assert!(p.name_str().starts_with("(init)"));
+    assert!(p.name.as_str() == "INIT");
 }
 
 #[test]
@@ -99,13 +99,13 @@ fn part_starts_with_init_patch() {
 fn part_load_from_pool_copies() {
     let mut pool = SoundPool::new();
     let mut sound = Sound::init(EngineType::Algo);
-    sound.name = *b"Acid Bass\0\0\0\0\0\0\0";
+    sound.name = chimera_core::name::Name::new("Acid Bass").unwrap();
     pool.store(3, sound);
 
     let mut part = Part::new(EngineType::Algo);
     part.load_from_pool(&pool, 3);
 
-    assert_eq!(part.sound.name_str(), "Acid Bass");
+    assert_eq!(part.sound.name.as_str(), "Acid Bass");
     assert_eq!(part.loaded_from, Some(3));
 }
 
@@ -132,10 +132,10 @@ fn part_save_to_pool_overwrites() {
     pool.store(5, Sound::init(EngineType::Algo));
 
     let mut part = Part::new(EngineType::Modal);
-    part.sound.name = *b"My Sound\0\0\0\0\0\0\0\0";
+    part.sound.name = chimera_core::name::Name::new("My Sound").unwrap();
     part.save_to_pool(&mut pool, 5);
 
-    assert_eq!(pool.get(5).unwrap().name_str(), "My Sound");
+    assert_eq!(pool.get(5).unwrap().name.as_str(), "My Sound");
     assert_eq!(pool.get(5).unwrap().engine(), EngineType::Modal);
 }
 
@@ -250,7 +250,7 @@ fn browser_load_copies_patch_to_part() {
 
     // Store a named sound in pool slot 2
     let mut sound = Sound::init(EngineType::Algo);
-    sound.name = *b"Test Sound\0\0\0\0\0\0";
+    sound.name = chimera_core::name::Name::new("Test Sound").unwrap();
     ui.pool.store(2, sound);
 
     // Open browser for B1 (part 0)
@@ -272,7 +272,7 @@ fn browser_load_copies_patch_to_part() {
 
     // Should exit browser and load sound into part 0
     assert!(matches!(ui.ui_mode, UiMode::Normal));
-    assert_eq!(ui.performance.parts[0].sound.name_str(), "Test Sound");
+    assert_eq!(ui.performance.parts[0].sound.name.as_str(), "Test Sound");
     assert_eq!(ui.performance.parts[0].loaded_from, Some(2));
 }
 
@@ -298,7 +298,7 @@ fn browser_save_to_pool() {
     let mut ui = UiState::new();
 
     // Edit part 0's sound name
-    ui.performance.parts[0].sound.name = *b"My Bass\0\0\0\0\0\0\0\0\0";
+    ui.performance.parts[0].sound.name = chimera_core::name::Name::new("My Bass").unwrap();
 
     // Open browser for B1
     open_browser(&mut ui, ButtonId::B1);
@@ -310,28 +310,23 @@ fn browser_save_to_pool() {
 
     // Should stay in browser, and pool slot 5 now has our sound
     assert!(matches!(ui.ui_mode, UiMode::SoundBrowser { .. }));
-    assert_eq!(ui.pool.get(5).unwrap().name_str(), "My Bass");
+    assert_eq!(ui.pool.get(5).unwrap().name.as_str(), "My Bass");
 }
 
 #[test]
 fn browser_init_entries_set_the_engine() {
     let mut ui = UiState::new();
 
-    // Open browser, scroll to "(init) Modal" (POOL_SIZE + 1)
+    // Open browser, scroll to "INIT Modal" (POOL_SIZE + 1)
     open_browser(&mut ui, ButtonId::B1);
     ui.handle_input(&MockControls::new().encoder(EncoderId::A, (POOL_SIZE + 1) as i8));
     ui.handle_input(&MockControls::new().button(ButtonId::Edit, ButtonState::Pressed));
 
     assert!(matches!(ui.ui_mode, UiMode::Normal));
     assert_eq!(ui.performance.parts[0].sound.engine(), EngineType::Modal);
-    assert!(
-        ui.performance.parts[0]
-            .sound
-            .name_str()
-            .starts_with("(init)")
-    );
+    assert!(ui.performance.parts[0].sound.name.as_str() == "INIT");
 
-    // Open browser again, scroll to "(init) Algo" (POOL_SIZE)
+    // Open browser again, scroll to "INIT Algo" (POOL_SIZE)
     open_browser(&mut ui, ButtonId::B1);
     ui.handle_input(&MockControls::new().encoder(EncoderId::A, POOL_SIZE as i8));
     ui.handle_input(&MockControls::new().button(ButtonId::Edit, ButtonState::Pressed));

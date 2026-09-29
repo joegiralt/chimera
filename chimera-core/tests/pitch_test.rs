@@ -4,6 +4,8 @@
 mod common;
 
 use chimera_core::addr::{BlockRef, ParamAddr};
+use chimera_core::dsp::algo::params::AlgoParams;
+use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::modulation::ModState;
 use chimera_core::params::{EngineType, ParamSnapshot, PitchParams};
@@ -79,6 +81,7 @@ fn crossings(x: &[f32], w: usize) -> Vec<usize> {
 #[test]
 fn an_lfo_on_pitch_is_vibrato() {
     let mut p = init_params(EngineType::Algo);
+    p.algo = AlgoParams::single(WaveId::W1); // one zero crossing a period
     p.lfos[0].rate = 2.0;
     let flat = render(&p, &ModState::new(), 400);
     let vib = render(&p, &lfo_route(PITCH), 400);

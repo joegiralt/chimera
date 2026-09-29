@@ -121,6 +121,12 @@ pub struct ParamSpec {
     pub modulatable: bool,
     /// How a matrix offset applies.
     pub law: OffsetLaw,
+    /// The param's frozen identity: one token, an explicit literal, never the
+    /// label. The fixture pins `(id, ident)`, so swapping two ids is caught.
+    pub ident: &'static str,
+    /// Written to the card. False for a live view of other stored params
+    /// (ENV's FORM reads the current MODE's slot), so nothing is stored twice.
+    pub stored: bool,
 }
 
 impl ParamSpec {
@@ -147,6 +153,8 @@ impl ParamSpec {
             kind: ParamKind::Continuous,
             modulatable,
             law: OffsetLaw::Linear,
+            stored: true,
+            ident: "",
         }
     }
 
@@ -172,6 +180,8 @@ impl ParamSpec {
             kind: ParamKind::Stepped,
             modulatable,
             law: OffsetLaw::Linear,
+            stored: true,
+            ident: "",
         }
     }
 
@@ -189,6 +199,8 @@ impl ParamSpec {
             kind: ParamKind::Enum,
             modulatable: false,
             law: OffsetLaw::Linear,
+            stored: true,
+            ident: "",
         }
     }
 
@@ -207,6 +219,19 @@ impl ParamSpec {
             return 0.0;
         }
         (v - self.min) / (self.max - self.min)
+    }
+
+    /// This spec with its frozen identity.
+    pub const fn ident(self, ident: &'static str) -> Self {
+        Self { ident, ..self }
+    }
+
+    /// This spec as a live view of stored params: never written to the card.
+    pub const fn live(self) -> Self {
+        Self {
+            stored: false,
+            ..self
+        }
     }
 
     /// This spec with a short column header.
@@ -263,6 +288,32 @@ impl ParamSpec {
     }
 }
 
+/// A stored enum's permanent disk code (ADR 0045). The code is chosen here,
+/// by an exhaustive match, never read off the Rust discriminant or the
+/// variant order, so reordering or inserting a variant can't renumber a file.
+/// Codes are frozen by `tests/fixtures/disk_codes_v1.txt` and never reused.
+pub trait DiskCode: Sized + Copy {
+    fn disk_code(self) -> u8;
+    /// What the value is, as an explicit literal per variant (`"LP24"`): one
+    /// token, never from `Debug` or a label, so a cosmetic rename can't move
+    /// it. The fixture pins `(code, ident)`, so swapping two codes is caught.
+    fn disk_ident(self) -> &'static str;
+    /// `None`: this firmware has no variant with code `c`.
+    fn from_disk_code(c: u8) -> Option<Self>;
+}
+
+/// Runs `f` on a decoded code and says whether there was one: the body of a
+/// `set_enum_code` arm.
+pub fn apply_code<T>(v: Option<T>, f: impl FnOnce(T)) -> bool {
+    v.map(f).is_some()
+}
+
+/// `c` if it is a value of Enum `id` in `specs`, for the params whose code is
+/// the stored value itself (LFO SHAPE, chorus MODE, a wave index).
+pub fn identity_code(specs: &'static [ParamSpec], id: ParamId, c: u8) -> Option<u8> {
+    find_spec(specs, id).and_then(|s| (f32::from(c) <= s.max).then_some(c))
+}
+
 /// Look up a spec by id in a block's table.
 pub fn find_spec(specs: &'static [ParamSpec], id: ParamId) -> Option<&'static ParamSpec> {
     specs.iter().find(|s| s.id == id)
@@ -280,6 +331,24 @@ pub trait Block {
 
     fn spec(&self, id: ParamId) -> Option<&'static ParamSpec> {
         find_spec(self.specs(), id)
+    }
+
+    /// The disk code of Enum `id`'s current value; `None` for any other param.
+    fn enum_code(&self, _id: ParamId) -> Option<u8> {
+        None
+    }
+
+    /// The frozen ident of Enum `id`'s current value (see `DiskCode`); `None`
+    /// for any other param.
+    fn enum_ident(&self, _id: ParamId) -> Option<&'static str> {
+        None
+    }
+
+    /// Store the value with disk code `code` in Enum `id`. `false`: this
+    /// firmware doesn't know the code, or the value isn't allowed now (a MODE
+    /// its KIND lacks); nothing is written.
+    fn set_enum_code(&mut self, _id: ParamId, _code: u8) -> bool {
+        false
     }
 
     /// UI input: clamps to `min..=max`; Stepped/Enum round to nearest.
