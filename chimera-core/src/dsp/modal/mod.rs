@@ -826,8 +826,10 @@ fn render_string(
     }
 }
 
-/// A released loop's gain until Task 7's release: today's, the old DECAY
+/// A released loop's gain, interim until Task 7's release: the old DECAY
 /// law at 0.8 or more (`scale` ½ on the halo), never above the held gain.
+/// `1 − damp` stands in for the old DECAY here only: since
+/// `damp_from_v1_decay` it no longer equals it.
 fn release_gain(held: LoopGain, damp: f32, scale: f32) -> LoopGain {
     held.min(LoopGain::new(
         0.999 - 0.009 * scale * 0.8_f32.max(1.0 - damp),
@@ -920,12 +922,13 @@ fn render_sympathetic(
         }
         return;
     };
-    // Each halo string rings twice the main one's T60, darker.
-    let lp = lp_coeff(params.bright * 0.7);
+    // Each halo string rings twice the main one's T60, no darker.
+    let lp = lp_coeff(halo_bright(params.bright));
+    let halo_t60 = 2.0 * t60(params.damp);
     let halo = set.ratios.map(|r| KsRenderParams {
         lp,
         gain: {
-            let held = LoopGain::from_t60(2.0 * t60(params.damp), f0 * r);
+            let held = LoopGain::from_t60(halo_t60, f0 * r);
             if released {
                 release_gain(held, params.damp, 0.5)
             } else {
@@ -961,9 +964,9 @@ fn render_sympathetic(
 
 use super::note_to_freq;
 
-/// DAMP's T60 on a string, in seconds: 0.05 at 0 to 20 at 1.
-pub(super) fn t60(damp: f32) -> f32 {
-    0.05 * libm::powf(400.0, damp)
+/// The halo's BRIGHT: its damping 0.7× the main string's, as today.
+fn halo_bright(bright: f32) -> f32 {
+    1.0 - 0.7 * (1.0 - bright)
 }
 
 /// The sympathetic strings' ratios to the main one: harmonics/intervals
@@ -1009,6 +1012,29 @@ mod tests {
             }
             other => Model::resting(other),
         }
+    }
+
+    /// The loop gain the DSP runs at C3 is the old DECAY's gain per pass:
+    /// the DAMP law and its v1 inverse agree.
+    #[test]
+    fn old_decay_gain_survives_at_c3() {
+        for decay in [0.2, 0.3, 0.6, 1.0] {
+            let p = ModalParams {
+                damp: damp_from_v1_decay(decay),
+                ..Default::default()
+            };
+            let got = main_string(&p, (0.0, 0.0), 130.81, false).gain.get();
+            let want = 0.999 - 0.009 * decay;
+            assert!((got - want).abs() < 1e-5, "DECAY {decay}: {got} vs {want}");
+        }
+    }
+
+    /// Today's relation: the halo's damping 0.7× the main string's, so it
+    /// is no darker.
+    #[test]
+    fn the_halo_is_no_darker_than_the_main_string() {
+        let bright = ModalParams::default().bright;
+        assert!(lp_coeff(halo_bright(bright)) <= lp_coeff(bright));
     }
 
     #[test]
