@@ -409,8 +409,7 @@ impl ModalEngine {
                     // Sympathetic strings start silent — energy comes from
                     // main. A handed-over slot carries nothing of its last
                     // note (spec § 4.8).
-                    sym.clear();
-                    sym.write_pos = 0;
+                    sym.restart();
                 }
                 set.pending = [0.0; NUM_SYMPATHETIC];
             }
@@ -459,7 +458,7 @@ impl ModalEngine {
                 for (sym, pending) in set.strings.iter_mut().zip(&mut set.pending) {
                     sym.damp(1);
                     // Its write position's sample, were it stored.
-                    if sym.write_pos < sym.delay_len {
+                    if sym.write_pos() < sym.delay_len() {
                         *pending *= 0.2;
                     }
                 }
@@ -786,8 +785,7 @@ fn render_bowed(
 
     for s in output.iter_mut() {
         // Read from delay line
-        let read_pos = (string.write_pos + MAX_STRING_DELAY - string.delay_len) % MAX_STRING_DELAY;
-        let string_vel = string.buffer[read_pos];
+        let string_vel = string.ring_tap();
 
         // Bow friction: stick-slip model.
         // When |delta_v| is small, bow sticks (high friction → energy in).
@@ -800,8 +798,7 @@ fn render_bowed(
         // Soft-limit to prevent blowup
         let clamped = libm::tanhf(feedback);
 
-        string.buffer[string.write_pos] = clamped;
-        string.write_pos = (string.write_pos + 1) % MAX_STRING_DELAY;
+        string.ring_push(clamped);
 
         *s = string_vel;
         *max_level = max_level.max(libm::fabsf(*s));
@@ -967,46 +964,170 @@ mod tests {
         unsafe { raw.assume_init() }
     }
 
-    /// Every sample of a line past the loop reads silent.
-    fn tail_is_silent(s: &KsString) -> bool {
-        s.buffer[s.delay_len..].iter().all(|&x| x == 0.0)
+    /// Sympathetic's eight lines: the main string, then its set's seven.
+    fn lines<'a>(e: &'a ModalEngine, pool: &'a SymPool) -> Vec<&'a KsString> {
+        match &e.model {
+            ModelSlot::Sympathetic(m) => core::iter::once(&m.main)
+                .chain(&pool.sets[m.lease.slot().index()].strings)
+                .collect(),
+            _ => unreachable!(),
+        }
     }
 
-    /// A note-on's worst case, pinned: Sympathetic clears its eight lines,
-    /// one memset of 3,936 B each, whatever the last note left in them.
-    #[test]
-    fn note_on_clears_every_line_at_a_fixed_cost() {
-        assert_eq!(
-            (1 + NUM_SYMPATHETIC) * size_of::<[f32; MAX_STRING_DELAY]>(),
-            31_488
-        );
-        let p = ModalParams {
+    /// Every line's next clear zeros its whole ring: the full clear.
+    fn soil(e: &mut ModalEngine, pool: &mut SymPool) {
+        let ModelSlot::Sympathetic(m) = &mut e.model else {
+            unreachable!()
+        };
+        m.main.soil();
+        for s in pool.sets[m.lease.slot().index()].strings.iter_mut() {
+            s.soil();
+        }
+    }
+
+    /// Floats the next clear writes, over the eight lines.
+    fn to_clear(e: &ModalEngine, pool: &SymPool) -> usize {
+        lines(e, pool).iter().map(|s| s.line().1).sum()
+    }
+
+    /// No noise: two engines' notes excite alike.
+    fn sym_params() -> ModalParams {
+        ModalParams {
             mode: ResonatorMode::Sympathetic,
-            decay: 0.0,
-            ks_feedback: 0.0,
+            ks_excitation: 1,
+            ..Default::default()
+        }
+    }
+
+    /// `blocks` blocks, pitch ratio `pitch` from block `from` on.
+    fn play(
+        e: &mut ModalEngine,
+        pool: &mut SymPool,
+        p: &ModalParams,
+        blocks: usize,
+        (from, pitch): (usize, f32),
+    ) -> Vec<u32> {
+        let mut bits = Vec::new();
+        for b in 0..blocks {
+            if b == from {
+                e.set_pitch(pitch);
+            }
+            let mut out = [0.0; BLOCK_SIZE];
+            e.render(&mut out, p, SR, pool);
+            bits.extend(out.map(f32::to_bits));
+        }
+        bits
+    }
+
+    /// The dirty extent clears what the full ring's clear did: bit for
+    /// bit, from a slot last played at the lowest pitch or two octaves
+    /// up, with a PITCH drop in each note lengthening every loop past what
+    /// the note-on set.
+    #[test]
+    fn dirty_clear_is_bit_identical_to_the_full_clear() {
+        let p = sym_params();
+        for last in [0, 43] {
+            for (note, drop) in [(96, 0.125), (60, 0.25), (31, 0.5)] {
+                let run = |full: bool| {
+                    let mut pool = SymPool::boxed();
+                    let mut e = engine(&mut pool, p.mode);
+                    e.note_on(last, 100, &p, SR, &mut pool);
+                    play(&mut e, &mut pool, &p, SECOND / 4, (SECOND / 8, 0.5));
+                    e.set_pitch(1.0);
+                    if full {
+                        soil(&mut e, &mut pool);
+                    }
+                    e.note_on(note, 100, &p, SR, &mut pool);
+                    play(&mut e, &mut pool, &p, SECOND / 2, (SECOND / 8, drop))
+                };
+                assert!(run(false) == run(true), "last {last}, note {note}");
+            }
+        }
+    }
+
+    /// A slot handed over from a low note plays its next note as a
+    /// never-used slot does, and every line past the loop reads silent.
+    #[test]
+    fn a_reused_slot_plays_nothing_stale() {
+        let p = sym_params();
+        let fresh = {
+            let mut pool = SymPool::boxed();
+            let mut e = engine(&mut pool, p.mode);
+            e.note_on(84, 100, &p, SR, &mut pool);
+            play(&mut e, &mut pool, &p, SECOND, (SECOND / 2, 0.25))
+        };
+        let mut pool = SymPool::boxed();
+        let mut e = engine(&mut pool, p.mode);
+        e.note_on(0, 127, &p, SR, &mut pool);
+        play(&mut e, &mut pool, &p, SECOND, (0, 1.0));
+        e.set_pitch(1.0);
+        e.note_on(84, 100, &p, SR, &mut pool);
+        for (i, s) in lines(&e, &pool).into_iter().enumerate() {
+            let (buf, _) = s.line();
+            assert!(buf[s.delay_len()..].iter().all(|&x| x == 0.0), "line {i}");
+            if i > 0 {
+                assert!(buf.iter().all(|&x| x == 0.0), "set line {i}");
+            }
+        }
+        let reused = play(&mut e, &mut pool, &p, SECOND, (SECOND / 2, 0.25));
+        assert!(reused == fresh);
+    }
+
+    /// A note-on clears what the lines' last notes wrote, not the ring: a
+    /// slot last played high clears a fraction of one last played at the
+    /// lowest pitch, which clears all eight rings (the worst case).
+    #[test]
+    fn the_clear_scales_with_the_dirty_extent() {
+        let p = sym_params();
+        let ring = (1 + NUM_SYMPATHETIC) * MAX_STRING_DELAY;
+        let cleared_after = |last: u8| {
+            let mut pool = SymPool::boxed();
+            let mut e = engine(&mut pool, p.mode);
+            e.note_on(last, 100, &p, SR, &mut pool);
+            play(&mut e, &mut pool, &p, SECOND, (0, 1.0));
+            to_clear(&e, &pool)
+        };
+        // A4: every loop at most 110 samples.
+        let high = cleared_after(69);
+        assert!(high <= (1 + NUM_SYMPATHETIC) * 110, "{high}");
+        // MIDI 0: every loop clamps to the ring less one sample.
+        let low = cleared_after(0);
+        assert_eq!(low, ring - (1 + NUM_SYMPATHETIC));
+        assert!(high * 8 < low);
+        // The dirty extent is only ever the clear's upper bound: past it
+        // every sample is silent.
+        let mut pool = SymPool::boxed();
+        let mut e = engine(&mut pool, p.mode);
+        e.note_on(0, 100, &p, SR, &mut pool);
+        play(&mut e, &mut pool, &p, SECOND, (SECOND / 2, 4.0));
+        for (i, s) in lines(&e, &pool).into_iter().enumerate() {
+            let (buf, dirty) = s.line();
+            assert!(buf[dirty..].iter().all(|&x| x == 0.0), "line {i}");
+        }
+    }
+
+    /// Bowed writes round its whole ring; its extent follows the bow, so
+    /// its note-on still starts silent.
+    #[test]
+    fn bowed_clears_the_ring_it_wrote() {
+        let p = ModalParams {
+            mode: ResonatorMode::Bowed,
             ..Default::default()
         };
         let mut pool = SymPool::boxed();
         let mut e = engine(&mut pool, p.mode);
-        e.note_on(31, 100, &p, SR, &mut pool);
-        for _ in 0..SECOND {
-            let mut out = [0.0; BLOCK_SIZE];
-            e.render(&mut out, &p, SR, &mut pool);
-        }
-        let lines = |e: &ModalEngine, pool: &SymPool| match &e.model {
-            ModelSlot::Sympathetic(m) => core::iter::once(&m.main)
-                .chain(&pool.sets[m.lease.slot().index()].strings)
-                .map(|s| (s.buffer.iter().any(|&x| x != 0.0), tail_is_silent(s)))
-                .collect::<Vec<_>>(),
-            _ => unreachable!(),
-        };
-        assert!(
-            lines(&e, &pool).iter().all(|(rings, _)| *rings),
-            "every line rang"
-        );
         e.note_on(96, 100, &p, SR, &mut pool);
-        for (i, (_, silent)) in lines(&e, &pool).into_iter().enumerate() {
-            assert!(silent, "line {i}");
-        }
+        play(&mut e, &mut pool, &p, SECOND / 4, (0, 1.0));
+        let ModelSlot::Bowed(b) = &mut e.model else {
+            unreachable!()
+        };
+        let (buf, dirty) = b.string.line();
+        assert_eq!(dirty, MAX_STRING_DELAY);
+        assert!(buf.iter().any(|&x| x != 0.0));
+        e.note_on(96, 100, &p, SR, &mut pool);
+        let ModelSlot::Bowed(b) = &e.model else {
+            unreachable!()
+        };
+        assert!(b.string.line().0.iter().all(|&x| x == 0.0));
     }
 }

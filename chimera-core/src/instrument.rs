@@ -337,6 +337,12 @@ impl Instrument {
         core::array::from_fn(|v| self.voices[v].rebuilds())
     }
 
+    /// Voices whose engine sounds: for the bench, whose per-voice figures
+    /// count only these (Sympathetic sounds at most `SYM_SLOTS`).
+    pub fn sounding(&self) -> usize {
+        self.voices.iter().filter(|v| v.is_active()).count()
+    }
+
     /// The sympathetic pool's allocator: for the tests.
     #[cfg(any(test, feature = "test-support"))]
     pub fn sym(&self) -> &crate::sym_alloc::SymAlloc {
