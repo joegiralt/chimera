@@ -31,7 +31,8 @@ fn every_part_slot_resolves_to_a_spec() {
                 | SlotBinding::SelectOp
                 | SlotBinding::FilterPanel(_)
                 | SlotBinding::EnvPanel(..)
-                | SlotBinding::LfoPanel(..) => {}
+                | SlotBinding::LfoPanel(..)
+                | SlotBinding::ModalPanel(_) => {}
                 SlotBinding::Param(_) | SlotBinding::SelectedOp(_) => {
                     assert!(slot.spec().is_some(), "{} slot {i}: no spec", def.name)
                 }
@@ -124,22 +125,22 @@ fn part_pages_display_like_before() {
             &reg::MODAL_1,
             [
                 ("MODEL", Names(&chimera_core::dsp::modal::MODEL_NAMES)),
-                ("EXCITE", Uni),
-                ("DAMP", Uni),
-                ("BRIGHT", Uni),
-                ("POS", Uni),
                 ("STRUCT", Uni),
+                ("BRIGHT", Uni),
+                ("DAMP", Uni),
+                ("POS", Uni),
+                ("SPACE", Uni),
             ],
         ),
         (
             &reg::MODAL_2,
             [
+                ("EXCITE", Uni),
                 ("BODY", Uni),
-                ("COUPLE", Uni),
-                ("HALO", Uni),
                 ("ENS.D", Uni),
                 ("ENS.R", Uni),
                 ("ENS.M", Uni),
+                ("--", Uni),
             ],
         ),
         (
@@ -204,10 +205,10 @@ fn part_pages_display_like_before() {
             ],
         ),
     ];
-    // A panel slot's own label and format are empty: FLT, ENV and LFO read
-    // their views.
+    // A panel slot's own label and format are empty: FLT, ENV, LFO and
+    // MDL2 (here STRING's) read their views.
     let ctx = ctx();
-    let panels: [&BlockDef; 3] = [&reg::FILTER, &reg::ENVELOPE, &reg::LFO];
+    let panels: [&BlockDef; 4] = [&reg::FILTER, &reg::ENVELOPE, &reg::LFO, &reg::MODAL_2];
     for (def, slots) in want {
         for (i, (label, fmt)) in slots.iter().enumerate() {
             let got = if panels.iter().any(|p| core::ptr::eq(*p, def)) {

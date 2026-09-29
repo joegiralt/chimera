@@ -22,6 +22,7 @@ const EMPTY: ParamSlot = ParamSlot::EMPTY;
 // Modal engine pages
 // ---------------------------------------------------------------------------
 
+/// Home: MODEL, the four macros, and SPACE, the Part's REV send.
 pub static MODAL_1: BlockDef = BlockDef {
     id: 2,
     name: "Modal",
@@ -30,15 +31,15 @@ pub static MODAL_1: BlockDef = BlockDef {
     viz: VizType::None,
     params: [
         ParamSlot::param(BlockRef::Modal, ModalParams::MODE),
-        ParamSlot::param(BlockRef::Modal, ModalParams::EXCITE),
-        ParamSlot::param(BlockRef::Modal, ModalParams::DAMP),
-        ParamSlot::param(BlockRef::Modal, ModalParams::BRIGHT),
-        ParamSlot::param(BlockRef::Modal, ModalParams::POS),
         ParamSlot::param(BlockRef::Modal, ModalParams::STRUCTURE),
+        ParamSlot::param(BlockRef::Modal, ModalParams::BRIGHT),
+        ParamSlot::param(BlockRef::Modal, ModalParams::DAMP),
+        ParamSlot::param(BlockRef::Modal, ModalParams::POS),
+        ParamSlot::param(BlockRef::Part, PartParams::SEND_REVERB).with_label("SPACE"),
     ],
 };
 
-/// Interim until Task 6's per-model cells; MODES is off-page.
+/// The model page: its cells follow MODEL.
 pub static MODAL_2: BlockDef = BlockDef {
     id: 3,
     name: "Modal-2",
@@ -46,12 +47,12 @@ pub static MODAL_2: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
-        ParamSlot::param(BlockRef::Modal, ModalParams::BODY),
-        ParamSlot::param(BlockRef::Modal, ModalParams::COUPLE),
-        ParamSlot::param(BlockRef::Modal, ModalParams::HALO),
-        ParamSlot::param(BlockRef::Modal, ModalParams::ENS_DEPTH),
-        ParamSlot::param(BlockRef::Modal, ModalParams::ENS_RATE),
-        ParamSlot::param(BlockRef::Modal, ModalParams::ENS_MIX),
+        ParamSlot::modal_panel(0),
+        ParamSlot::modal_panel(1),
+        ParamSlot::modal_panel(2),
+        ParamSlot::modal_panel(3),
+        ParamSlot::modal_panel(4),
+        ParamSlot::modal_panel(5),
     ],
 };
 
