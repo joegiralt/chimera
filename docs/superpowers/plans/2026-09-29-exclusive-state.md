@@ -24,7 +24,7 @@
 - **Sizes (spec § Memory):** `pub const VOICE_CHAIN_BYTES: usize = 2048` in `hw.rs`. Assert that a slot is at most its largest payload plus `align_of` of the slot, and that `size_of::<Voice>() <= VOICE_CHAIN_BYTES + size_of::<EngineSlot>()`. The `[Voice; MAX_VOICES] <= VOICE_RAM_BUDGET` assert stays.
 - **The pool (§ 4):** a `Lease` is never `Clone` or `Copy` and has no public constructor; only `SymAlloc::lend` makes one and only `SymAlloc::give_back` takes one. A Sympathetic model can't be built without one. An idle voice never holds one. The pool is built once, in place, and never rebuilt.
 - **Goldens (ADR 0011):** Tasks 1–4 keep every golden bit-identical. Task 7 restores the rows Task 5 re-recorded to their pre-Task-5 values, byte for byte (spec § 4.8), and records one new row, `modal_sympathetic`. Tasks 8–10 keep every golden bit-identical, `modal_sympathetic` included. Nothing is re-recorded after Task 7.
-- **ADRs:** `docs/adr/0051-*.md` supersedes 0008. `docs/adr/0052-*.md` (16-bit strings) is `Superseded by 0053` since the spec revision; its file stays. `docs/adr/0053-*.md`, written in Task 9, covers the sympathetic slot pool. Each uses `0000-template.md`, carries `Status: Proposed`, and has a row in `docs/adr/README.md`. Never edit an accepted ADR. 0008's file stays as it is, and only its README row's status changes.
+- **ADRs:** `docs/adr/0051-*.md` supersedes 0008. `docs/adr/0052-*.md` (16-bit strings) is `Superseded by 0054` since the spec revision; its file stays. `docs/adr/0054-*.md`, written in Task 9, covers the sympathetic slot pool. Each uses `0000-template.md`, carries `Status: Proposed`, and has a row in `docs/adr/README.md`. Never edit an accepted ADR. 0008's file stays as it is, and only its README row's status changes.
 - **Green gate per task:** `just check` passes. It runs the core, HAL and desktop tests, all firmware builds, `just clippy` and `just stack-check`. If ALSA's pkg-config is missing, set `PKG_CONFIG_PATH` as the Justfile says.
 - **Commits:** terse, no type prefix, and never a Co-Authored-By or other AI attribution line. Stage named paths only. Never stage `docs/chimera-ui-ux-spec.md` or `chimera.bin`.
 
@@ -35,7 +35,7 @@
 3. **A steal across Parts of different kinds.** With the pool full on an Algo Part, a note on a Sympathetic Part steals a voice. The new note should play exactly as on a fresh voice, with at most 2 rebuilds in that block. Test: `a_steal_across_kinds_plays_the_new_kind_clean` (Task 4).
 4. **Several switches while a voice is idle.** An idle voice should rebuild once, at its next note-on, not once per edit. This is folded into `idle_voice_switches_in_the_same_block` (Task 4).
 5. **A lease that never comes home.** Kills, steals, MODE and ENGINE flips, natural decays and project loads all end Sympathetic notes. Every slot must be free again once the voices are idle. Test: `every_lease_comes_home` (Task 9).
-6. **Eight held notes switched to Sympathetic.** Four restart; four end silent until key-up; no restart steals. Test: `a_mode_switch_to_sympathetic_restarts_at_most_four` (Task 9).
+6. **Eight held notes switched to Sympathetic.** The last four played restart, evicting older holders on other Parts if need be; the other four fade and stay silent until played again. Test: `the_last_four_played_restart_through_the_instrument` (Task 9).
 
 ## Files
 
@@ -57,10 +57,10 @@
 | `chimera-core/tests/common/{mod,rig}.rs` | `Case::ModalSympathetic`; `Rig` (a boxed `Voice` and `SymPool` with the old call signatures) | 7, 9 |
 | `chimera-core/tests/{engines,cost,modal,memory_budget,golden,instrument,codec_compat}_test.rs` | API moves, size prints, goldens restored | 2, 3, 7, 9 |
 | `chimera-stm32/src/bench.rs` | REBUILD, SYM NOTE-ON, SWITCH storm, MEMORY screen | 10 |
-| `docs/adr/0051-*.md`, `0052-*.md`, `0053-*.md`, `README.md` | the ADRs | 2, 4, 9, 10 |
+| `docs/adr/0051-*.md`, `0052-*.md`, `0054-*.md`, `README.md` | the ADRs | 2, 4, 9, 10 |
 
 **Deviations from the spec's Plan order:** there are two, and each is argued in its task.
-- The ADRs are written in the tasks that make them real (0051 in Task 2, amended in 4; 0053 in Task 9). Task 10 only adds the chip figures. This follows the owner rule.
+- The ADRs are written in the tasks that make them real (0051 in Task 2, amended in 4; 0054 in Task 9). Task 10 only adds the chip figures. This follows the owner rule.
 - `in_place_enum!` takes one optional generic parameter from Task 1, for Task 5's `ModelSlot<S>`. Task 7 drops the generic store, and the macro's parameter stays (Task 1's, tested by its toy slot; spec § 4.8).
 
 ---
@@ -286,7 +286,7 @@ git commit -m "A MODE change fades and rebuilds, as an engine change does"
 
 Done as a32923e, 6a3269d, c3194bc and cf3a23f, then replaced by the owner's sympathetic-pool decision (spec § 4). It made `KsString` and `ModalEngine` generic over a `Store`, shipped `Q16` (a per-line block exponent), re-recorded the Modal goldens, and wrote ADR 0052. Sympathetic's high notes missed the −90 dBFS gate (−83.7 dBFS at C6), and the owner chose f32 in a shared pool over a looser bound.
 
-Task 7 undoes it, and keeps three pieces that are bit-identical in f32: the fused injection (`pending`, `tick_coupled`), one-pass `damp`, and the note-on clear (spec § 4.8). ADR 0052 stays on file as `Superseded by 0053`.
+Task 7 undoes it, and keeps three pieces that are bit-identical in f32: the fused injection (`pending`, `tick_coupled`), one-pass `damp`, and the note-on clear (spec § 4.8). ADR 0052 stays on file as `Superseded by 0054`.
 
 ---
 
@@ -400,12 +400,16 @@ pub struct Lease(SymSlot);                                // no Clone, no Copy, 
 impl Lease { pub fn slot(&self) -> SymSlot; }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Place { On(VoiceIdx), Steal(VoiceIdx), Refused }
-pub struct SymAlloc { slots: [State; SYM_SLOTS], clock: u32 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Restart { Claimed { evict: Option<VoiceIdx> }, Silent }
+pub struct SymAlloc { slots: [State; SYM_SLOTS] }
 impl SymAlloc {
     pub const fn new() -> Self;
-    pub fn place(&mut self, pick: Option<VoiceIdx>, stealable: impl Fn(VoiceIdx) -> bool) -> Place;
+    pub fn place(&mut self, pick: Option<VoiceIdx>, age: u32) -> Place;   // age: the note's Allocator age
+    pub fn restart(&mut self, voice: VoiceIdx, age: u32) -> Restart;    // called newest first
     pub fn lend(&mut self, voice: VoiceIdx) -> Option<Lease>;
     pub fn give_back(&mut self, lease: Lease);
+    pub fn awaits(&self, voice: VoiceIdx) -> bool;
     pub fn forfeit(&mut self, voice: VoiceIdx);
     pub fn holder(&self, slot: SymSlot) -> Option<VoiceIdx>;
     pub fn free(&self) -> usize;
@@ -413,56 +417,85 @@ impl SymAlloc {
 }
 ```
 
-**The algorithm (spec § 4.5; the signature does not decide it):**
+**The algorithm (spec § 4.5, the owner's Rings rule; the signature does not decide it):**
 
 ```rust
-#[derive(Clone, Copy)] enum Then { Free, Promise }
+#[derive(Clone, Copy)] enum Then { Free, To(VoiceIdx) }
 #[derive(Clone, Copy)] enum State { Free, Promised { voice: VoiceIdx, age: u32 }, Lent { voice: VoiceIdx, age: u32, then: Then } }
-// `now()` ticks `clock` (wrapping) and returns it; lower age is older, as in `Allocator`.
-fn place(&mut self, pick, stealable) -> Place {
-    let Some(pick) = pick else { return Place::Refused };
-    let now = self.now();
-    if let Some(s) = self.slot_of(pick) { self.refresh(s, now); return Place::On(pick) }   // refresh: age = now; Lent → then = Promise
-    if let Some(s) = self.first_free() { self.slots[s] = State::Promised { voice: pick, age: now }; return Place::On(pick) }
-    match self.oldest(|v| stealable(v)) {            // over Promised and Lent, by age
-        Some(s) => { let u = self.voice_at(s); self.refresh(s, now); Place::Steal(u) }
-        None => Place::Refused,
+// Ages are the Allocator's note ages: lower is older. No clock of its own.
+fn place(&mut self, pick, age) -> Place {
+    if let Some(p) = pick && let Some(s) = self.slot_of(p) {           // Promised or Lent to p
+        self.retarget(s, age, p); return Place::On(p)                  // retarget: age = age; Lent → then = To(p)
+    }
+    match (self.first_free(), pick) {
+        (Some(s), Some(p)) => { self.slots[s] = State::Promised { voice: p, age }; Place::On(p) }
+        (Some(_), None) => Place::Refused,                             // the CPU budget's, not the pool's
+        (None, _) => {                                                 // full: the oldest yields, Mono included
+            let s = self.oldest().expect("four slots, none free");
+            let u = self.voice_at(s); self.retarget(s, age, u); Place::Steal(u)
+        }
+    }
+}
+fn restart(&mut self, voice, age) -> Restart {
+    if self.slot_of(voice).is_some() { return Restart::Claimed { evict: None } }
+    if let Some(s) = self.first_free() { self.slots[s] = State::Promised { voice, age }; return Restart::Claimed { evict: None } }
+    match self.oldest().filter(|&s| self.age_at(s) < age) {
+        Some(s) => {
+            let evicted = self.voice_at(s);
+            self.slots[s] = match self.slots[s] {
+                State::Promised { .. } => State::Promised { voice, age },
+                State::Lent { voice: u, .. } => State::Lent { voice: u, age, then: Then::To(voice) },
+                State::Free => unreachable!(),
+            };
+            Restart::Claimed { evict: Some(evicted) }
+        }
+        None => Restart::Silent,
     }
 }
 fn lend(&mut self, voice) -> Option<Lease> {
+    if self.awaits(voice) { return None }                             // its slot is still fading out elsewhere
     let s = self.promised_to(voice).or_else(|| self.first_free())?;
-    self.slots[s] = State::Lent { voice, age: self.now(), then: Then::Free };
+    let age = self.age_at(s);                                           // 0 for a free slot taken unpromised
+    self.slots[s] = State::Lent { voice, age, then: Then::Free };
     Some(Lease(SymSlot(s as u8)))
 }
 fn give_back(&mut self, lease: Lease) {
     let s = lease.0.index();
     self.slots[s] = match self.slots[s] {
-        State::Lent { voice, age, then: Then::Promise } => State::Promised { voice, age },
+        State::Lent { age, then: Then::To(w), .. } => State::Promised { voice: w, age },
         State::Lent { .. } => State::Free,
         other => { debug_assert!(false, "a lease for a slot not lent"); other }
     };
 }
+fn awaits(&self, voice) -> bool { self.slots.iter().any(|s| matches!(s, State::Lent { voice: u, then: Then::To(w), .. } if *w == voice && *u != voice)) }
 fn forfeit(&mut self, voice) { if let Some(s) = self.promised_to(voice) { self.slots[s] = State::Free } }
 ```
 
-- [ ] **Step 1: Write the failing tests** in `sym_alloc.rs`. `v(i)` is `VoiceIdx::ALL[i]`, and `all` is `|_| true`.
-  - `a_free_slot_is_promised_to_the_pick`: `place(Some(v(0)), all) == On(v(0))`, then `free() == 3` and `lent() == 0`. Then `lend(v(0))` is `Some`, with `slot().index() == 0` and `lent() == 1`.
-  - `a_retrigger_keeps_its_slot`: `v(0)` holds a lease. `place(Some(v(0)), all) == On(v(0))`, `free() == 3`, and `holder(slot 0) == Some(v(0))`.
-  - `the_fifth_steals_the_oldest`: `v(0)`–`v(3)` each `place` and `lend`. Then:
-    - `place(Some(v(4)))` is `Steal(v(0))`, then `Steal(v(1))` for `v(5)`, `Steal(v(2))` for `v(6)` and `Steal(v(3))` for `v(7)`.
-    - A ninth, `place(Some(v(4)))`, is `Steal(v(0))`: the first steal refreshed `v(0)`'s age, and it is the oldest again.
+`slot_of(v)` is the slot `Promised` or `Lent` to `v`, or `Lent` elsewhere with `then = To(v)`. `oldest()` runs over `Promised` and `Lent` slots by age, and the lower index wins a tie.
+
+- [ ] **Step 1: Write the failing tests** in `sym_alloc.rs`. `v(i)` is `VoiceIdx::ALL[i]`, and the ages are an increasing counter `a` (1, 2, 3, …), as the `Allocator`'s clock gives them.
+  - `a_free_slot_is_promised_to_the_pick`: `place(Some(v(0)), 1) == On(v(0))`, then `free() == 3` and `lent() == 0`. Then `lend(v(0))` is `Some`, with `slot().index() == 0` and `lent() == 1`.
+  - `a_retrigger_keeps_its_slot`: `v(0)` holds a lease. `place(Some(v(0)), a) == On(v(0))`, `free() == 3`, and `holder(slot 0) == Some(v(0))`.
+  - `the_fifth_steals_the_oldest`: `v(0)`–`v(3)` each `place` (ages 1–4) and `lend`. Then:
+    - `place(Some(v(4)), 5)` is `Steal(v(0))`, then `Steal(v(1))` for `v(5)` at 6, `Steal(v(2))` for `v(6)` at 7 and `Steal(v(3))` for `v(7)` at 8.
+    - A ninth, `place(Some(v(4)), 9)`, is `Steal(v(0))`: age 5 is the oldest again.
     - `free() == 0` and `lent() == 4` throughout.
-  - `a_mono_voice_is_never_stolen`: `v(0)`–`v(3)` hold leases.
-    - `place(Some(v(4)), |u| u != v(0)) == Steal(v(1))`.
-    - `place(Some(v(5)), |_| false) == Refused`.
-    - `place(None, all) == Refused`.
-  - `a_stolen_slot_comes_back_promised`: `v(0)`–`v(3)` hold leases, and `place(Some(v(4)), all) == Steal(v(0))`. After `give_back(l0)`: `holder(slot 0) == Some(v(0))`, `free() == 0`, `lend(v(5)).is_none()`, and `lend(v(0))` is slot 0.
-  - `lend_takes_the_promise_first`: `place(Some(v(2)))` promises slot 0 and `place(Some(v(3)))` slot 1. `lend(v(3))` is slot 1, and `lend(v(2))` is slot 0.
+  - `a_full_pool_never_refuses`: `v(0)`–`v(3)` hold leases. `place(None, 5) == Steal(v(0))`. With a free slot, `place(None, a) == Refused` (the budget's refusal).
+  - `a_mono_holder_is_stolen_when_newest_arrives`: `v(0)` holds the oldest slot (age 1), and `v(1)`–`v(3)` hold the rest (ages 2–4). The pool has no notion of Mono, so the newest arrival, `place(Some(v(4)), 5)`, is `Steal(v(0))`. The Instrument half is in Task 9.
+  - `a_stolen_slot_comes_back_promised`: `v(0)`–`v(3)` hold leases, and `place(Some(v(4)), 5) == Steal(v(0))`. After `give_back(l0)`: `holder(slot 0) == Some(v(0))`, `free() == 0`, `lend(v(5)).is_none()`, and `lend(v(0))` is slot 0.
+  - `last_four_played_restart_on_switch`, in two cases.
+    - Empty pool. `restart` for `v(7)` down to `v(0)` (ages 8 down to 1, newest first) gives `Claimed { evict: None }` for `v(7)`–`v(4)` and `Silent` for `v(3)`–`v(0)`.
+    - `v(6)` and `v(7)` hold leases at ages 1 and 2 (another Part's older notes). Then `restart` for `v(5)`, `v(4)`, `v(3)`, `v(2)` at ages 10, 9, 8, 7:
+      - `Claimed { None }`, `Claimed { None }`, `Claimed { evict: Some(v(6)) }`, `Claimed { evict: Some(v(7)) }`.
+      - `awaits(v(3))` and `awaits(v(2))` are true.
+      - After `give_back` of `v(6)`'s and `v(7)`'s leases, both are false, and `lend(v(3))` and `lend(v(2))` succeed.
+    - A restart never evicts a newer note: after four claims at ages 10–7, `restart(v(1), 3)` is `Silent`.
+  - `lend_takes_the_promise_first`: `place(Some(v(2)), 1)` promises slot 0 and `place(Some(v(3)), 2)` slot 1. `lend(v(3))` is slot 1, and `lend(v(2))` is slot 0.
   - `forfeit_frees_only_a_promise`: `v(0)` is promised slot 0; `v(1)` holds slot 1. `forfeit(v(1))` changes nothing (`lent() == 1`, `free() == 2`). Then `forfeit(v(0))` gives `free() == 3`.
-  - `sym_alloc_never_gives_a_voice_two_slots`: a local xorshift32 seeded `0x9E37_79B9` drives 100,000 steps over `v(0)`–`v(7)`.
-    - Each step, uniformly: `place` for a random pick, with each voice stealable with probability ¾; `lend` for a random voice; `give_back` of a random held lease; or `forfeit` of a random voice.
+  - `sym_alloc_never_gives_a_voice_two_slots`: a local xorshift32 seeded `0x9E37_79B9` drives 100,000 steps over `v(0)`–`v(7)`, with ages from an increasing counter.
+    - Each step, uniformly: `place` for a random pick (`None` one time in eight); `restart` for a random voice; `lend` for a random voice; `give_back` of a random held lease; or `forfeit` of a random voice.
     - The test keeps held leases in a `Vec<Lease>`.
-    - After each step: each voice is the holder of at most one slot; `lent()` equals the `Vec`'s length; and `free()` plus the promised count plus `lent()` equals 4.
+    - After each step: each voice is named by at most one slot, as holder or as a `To` target; `lent()` equals the `Vec`'s length; and `free()` plus the promised count plus `lent()` equals 4.
   - Doc tests on `Lease`:
     - `compile_fail,E0599`: `let b = lease.clone();`.
     - `compile_fail,E0382`: `alloc.give_back(lease); let _ = lease.slot();`.
@@ -487,10 +520,10 @@ git commit -m "SymAlloc: four sympathetic slots, each lent by one Lease"
 - Modify: `chimera-core/src/dsp/modal/mod.rs` (`SympatheticSet`, `SymPool`, `SympatheticVoice`, `Model`; pool arguments), `chimera-core/src/dsp/engines.rs` (`rebuild`'s leases, `Rebuilt`, `SlotKind::resting`), `chimera-core/src/in_place.rs` (`move_out`), `chimera-core/src/dsp/voice.rs` (`id`, pool arguments, `reset`'s choice, `rest`), `chimera-core/src/voice_alloc.rs` (`pick` public, `book`), `chimera-core/src/instrument.rs` (`sym`, placement, step 5)
 - Create: `chimera-core/tests/sym_pool_test.rs`, `chimera-core/tests/common/rig.rs`
 - Modify: every test that drives a `Voice` or `ModalEngine` directly, moved to `common::Rig` or `SymPool::boxed()`: `chain_spectral`, `click_free`, `desktop_sim`, `engines`, `engine_switch`, `exclusive_state`, `factory_level`, `factory`, `flt_page`, `in_place`, `lfo_slot`, `live_param`, `modal_integration`, `modal`, `modulatable`, `modulation_integration`, `pitch`, `property`, `rebuild_stack`, `reverb`, `routing`, `sanity`, `signal_chain` and `vca` (`*_test.rs`), plus `common/mod.rs`; and `memory_budget_test.rs`
-- Create: `docs/adr/0053-sympathetic-strings-from-a-shared-pool.md`. Modify: `docs/adr/README.md`
+- Create: `docs/adr/0054-sympathetic-strings-from-a-shared-pool.md`. Modify: `docs/adr/README.md`
 
 **Interfaces:**
-- Consumes: `SymAlloc`, `Lease`, `Place`, `SYM_SLOTS`, `VoiceIdx` (Task 8); `in_place_enum!` (Task 1); `Voice::rebuild` (Task 4).
+- Consumes: `SymAlloc`, `Lease`, `Place`, `Restart`, `SYM_SLOTS`, `VoiceIdx` (Task 8); `in_place_enum!` (Task 1); `Voice::rebuild` (Task 4).
 - Produces, in `chimera_core::dsp::modal`:
 
 ```rust
@@ -537,13 +570,20 @@ impl EngineSlot {
   - `pub fn rest(&mut self, pool: &mut SymPool)`: idle and no note waits. It rebuilds a Sympathetic slot into `resting()`, then calls `forfeit(id)`.
   - `reset(&mut self, params, then_plays: bool)`: `then_plays` rebuilds into `SlotKind::of(params)`, otherwise into `SlotKind::of(params).resting()`. `fade_ended` passes `after != AfterFade::Idle`, and the VCA-lifetime reset passes `false`.
   - `trigger`: a `NoSlot` rebuild leaves the voice idle and returns before the note starts. A kind other than `Modal(Sympathetic)` calls `pool.alloc_mut().forfeit(self.id)`.
-- In `Allocator`: `pub fn pick(&self, part, mode, cost, reserved) -> Option<usize>` (unchanged body), and `pub fn book(&mut self, v: usize, part, mode, note, cost) -> Alloc`. `note_on` becomes `pick` then `book`, with the same behaviour.
+  - `pub fn velocity(&self) -> Velocity`: the sounding note's velocity (`last_velocity`), for the `Instrument`'s restarts.
+- In `Allocator`: `pub fn pick(&self, part, mode, cost, reserved) -> Option<usize>` (unchanged body), `pub fn next_age(&self) -> u32` (the age `book` will give), and `pub fn book(&mut self, v: usize, part, mode, note, cost) -> Alloc`. `note_on` becomes `pick` then `book`, with the same behaviour. `book` overwrites a Mono slot like any other: the pool's steal gives Mono no protection (spec § 4.5).
 - In `Instrument`: a `sym: SymPool` field, built in place in `init_in_place` and listed in `field_list!`, plus `pub fn sym(&self) -> &SymAlloc` and `pub fn slot_kinds(&self) -> [SlotKind; MAX_VOICES]` for tests.
+  - A `last_kind: [SlotKind; MAX_PARTS]` field, written in `init_in_place` from the default Sound and listed in `field_list!`.
   - `handle`, for a Part whose `SlotKind::of` is `Modal(Sympathetic)`:
-    - `place(pick, |u| !slots[u].mono)`, then `book` the voice it names.
-    - `Steal(u)` sets `waiting[u] = Some(vel)` and calls `voices[u].kill()`, even for the same Part and kind.
+    - `place(pick, alloc.next_age())`, then `book` the voice it names.
+    - `Steal(u)` sets `waiting[u] = Some(vel)` and calls `voices[u].kill()`, even for the same Part and kind, Mono included.
+    - `Refused` comes only from the CPU budget and counts as today.
     - Every other kind skips `place`.
-  - Render step 5 calls `voices[v].rest(&mut self.sym)` in the `release_finished` branch.
+  - `render`, before the voice loop: for each Part whose `SlotKind::of` became `Modal(Sympathetic)` since `last_kind`, collect its booked, held, active voices (`sounding[v] == p`) into a stack array of at most `MAX_VOICES` `(VoiceIdx, age)`, and sort it newest first. Call `restart` for each:
+    - `Claimed { evict }`: `waiting[v] = Some(voices[v].velocity())`, then `voices[v].kill()`. For `evict: Some(u)`: `voices[u].kill()`, and if `waiting[u].take()` held a note, `dropped_unheard()`.
+    - `Silent`: `voices[v].kill()`.
+    - Then update `last_kind`.
+  - Render step 5: a waiting Sympathetic note on a voice for which `sym.alloc().awaits(v)` goes back into `waiting[v]` without `note_on`. The `release_finished` branch calls `voices[v].rest(&mut self.sym)`.
 
 **Keeping sound identical.** `render_sympathetic` runs the same arithmetic on the same state. Only the main string's owner and the set's owner change. `modal_sympathetic` (Task 7) and every other golden must stay bit-identical. A fresh pool's sets are zeroed as a fresh engine's were, and a note-on clears every line it starts (spec § 4.8).
 
@@ -572,12 +612,14 @@ impl EngineSlot {
       - an ENGINE flip on a random Part.
 
       At every block, the count of `Modal(Sympathetic)` in `slot_kinds()` equals `sym().lent()` and is ≤ 4. Then all notes go off, and it renders until every voice is idle (≤ 2,000 blocks). Then `sym().free() == 4`.
-    - `a_mode_switch_to_sympathetic_restarts_at_most_four` (Review Focus 6). Part 1 = String, eight held notes. MODE becomes Sympathetic.
-      - After `FADE / BLOCK_SIZE + 1` blocks, exactly 4 voices are `Modal(Sympathetic)` and active, and 4 are idle and held (`allocator().slots()[v].held()`).
-      - In the fade-end block, each voice's `rebuilds` rose by exactly 1.
+    - `the_last_four_played_restart_through_the_instrument` (Review Focus 6). Part 1 = String, Poly: notes 60–67 go on in that order, one a block, and stay held. At block 10, MODE becomes Sympathetic.
+      - After `FADE / BLOCK_SIZE + 1` blocks, the voices of 64–67 are `Modal(Sympathetic)` and active. Those of 60–63 are idle and held (`allocator().slots()[v].held()`), and their `part_bus` contribution is zero.
+      - Each restarted voice's `rebuilds` rose by exactly 2 (the rest, then the note).
+      - Key-up and re-press 60: it sounds, and the voice of 64, now the oldest, fades over `FADE`.
+      - With Part 2 (Sympathetic) holding two older notes before the switch, the two evicted voices are Part 2's. The restarts that claimed their slots start one block after those fades end at the latest, never on a slot still `Lent`.
       - Then all keys go up and it renders until idle: `sym().free() == 4`.
     - `a_resting_voice_gives_its_slot_back`. A `sym` note 60 with `decay` 0.3 renders until the voice goes idle. In that block, `rebuilds` rises by 1, `slot_kinds()[v] == Modal(String)` and `sym().free() == 4`.
-    - `a_mono_sympathetic_voice_is_never_stolen`. Part 1 = `sym`, Mono, holds 48. Parts 2–4 = `sym`, Poly, each hold one note. Part 2 plays another note: the stolen voice is the oldest Poly one, never Part 1's.
+    - `a_mono_holder_is_stolen_when_newest_arrives`. Part 1 = `sym`, Mono, holds 48 (the oldest). Parts 2–4 = `sym`, Poly, each hold one note. Part 2 plays another note. Part 1's voice fades over `FADE` and the new note sounds on it. Part 1's next note then takes a voice as a fresh Mono note does, and sounds by stealing the now-oldest slot.
   - **`memory_budget_test.rs`: `sympathetic_pool_fits_d2`.** It prints `SympatheticVoice`, `SympatheticSet`, `SymPool`, `Voice`, `[Voice; 8]`, `Instrument` and `VOICE_RAM_BUDGET − Instrument`. It asserts `size_of::<ModelSlot>()` is at most `BowedString` rounded up to align, plus align (Sympathetic doesn't size the voice), and that `Instrument <= VOICE_RAM_BUDGET`.
   - **`rebuild_stack_test.rs`.** The thread's stack becomes `size_of::<SympatheticSet>()`. It uses a `Rig`, and its switch run includes Sympathetic.
 - [ ] **Step 2: Run the tests to verify they fail.** Run `cargo test -p chimera-core --lib engines && cargo test -p chimera-core --test sym_pool_test`. Expected: compile errors (`SymPool`, `resting`, `Rebuilt`, `sym` not found).
@@ -589,7 +631,7 @@ impl EngineSlot {
   - `memory_budget_test -- --nocapture` prints (host): `Voice` ≈ 5,840 (at most 5,848 with `id`), `SymPool` ≈ 111,168 and `Instrument` ≈ 160,544, which leaves ≈ 126,176.
   - If any is more than 5 % above, STOP and report.
 - [ ] **Step 5: Prove the stack test can fail.** Temporarily make Sympathetic's note-on overwrite its set by value: `*pool.set(&lease) = SympatheticSet::new()`, with a test-support `new` through `by_value`. Run `cargo test -p chimera-core --test rebuild_stack_test`. Expected: the process aborts with "has overflowed its stack". Revert, and confirm `git diff chimera-core/src/dsp/modal/mod.rs` shows only this task's changes. If it doesn't overflow, STOP and report.
-- [ ] **Step 6: Write ADR 0053**, `sympathetic-strings-from-a-shared-pool` (Proposed; Deciders: project owner).
+- [ ] **Step 6: Write ADR 0054**, `sympathetic-strings-from-a-shared-pool` (Proposed; Deciders: project owner).
   - **Context:** Sympathetic was eight strings to every other model's one. Q16 (ADR 0052) missed −90 dBFS at C6. Rings caps polyphony at 4 and shares 8 strings.
   - **Decision:** spec § 4.2–4.6, stated so it can be checked against the code:
     - the slot is 7 lines, 7 ratios and 7 pending values;
@@ -597,13 +639,16 @@ impl EngineSlot {
     - the pool is in D2, inside the `Instrument`;
     - the `Lease`;
     - `place`, `lend`, `give_back` and `forfeit`, and the steal onto the slot's own voice;
-    - `resting`, restarts never steal, and Mono is never stolen.
+    - `resting`;
+    - the Rings rule: the oldest yields, Mono included, and a note is never refused by the pool;
+    - on a switch, the last four held notes played restart, through `restart` and the `Instrument`'s waiting note.
   - **Alternatives:**
     - Q16 strings (0052): precision.
     - f32 in every voice: 271,520 B, which leaves 15,200 B.
     - The main string in the pool too: +15,840 B for no voice saving.
     - Slot `s` bound to voice `s`: a Sympathetic note would steal an Algo note on voices 0–3 while 4–7 sit free.
     - A registry without a token: a Sympathetic model without a slot becomes representable.
+    - Protecting Mono, or refusing a fifth note: the owner chose Rings' rule, that the oldest always yields.
     - The pool in AXI: 111,104 B against about 24.9 KB spare.
   - **Consequences:**
     - § Memory's numbers.
@@ -612,14 +657,15 @@ impl EngineSlot {
     - The ADR 0051 bound is unchanged.
     - One `move_out`.
     - Its cap is what #207 shows.
+    - A Mono voice can be stolen by the pool, an exception to the `Allocator`'s rule 1.
   - **Sources:** the spec; this plan, Tasks 7–9; `rings/dsp/part.h` and `part.cc` (MIT, Emilie Gillet; the design idea only); ADRs 0051 and 0052.
 
-  In the README, add row 0053, and link 0052's status cell: `Superseded by [0053](0053-sympathetic-strings-from-a-shared-pool.md)`. 0052's own Status line gets the same link. The file is Proposed, never accepted, so it is editable.
+  In the README, add row 0054, and link 0052's status cell: `Superseded by [0054](0054-sympathetic-strings-from-a-shared-pool.md)`. 0052's own Status line gets the same link. The file is Proposed, never accepted, so it is editable.
 - [ ] **Step 7: Run the green gate.** Run `just check`. Expected: exit 0 (stack-check included).
 - [ ] **Step 8: Commit.**
 
 ```bash
-git add chimera-core/src chimera-core/tests docs/adr/0052-strings-stored-as-16-bit-block-float.md docs/adr/0053-sympathetic-strings-from-a-shared-pool.md docs/adr/README.md
+git add chimera-core/src chimera-core/tests docs/adr/0052-strings-stored-as-16-bit-block-float.md docs/adr/0054-sympathetic-strings-from-a-shared-pool.md docs/adr/README.md
 git status --short   # must list no docs/chimera-ui-ux-spec.md and no chimera.bin
 git commit -m "Sympathetic borrows its strings from a pool of four"
 ```
@@ -630,7 +676,7 @@ git commit -m "Sympathetic borrows its strings from a pool of four"
 
 **Files:**
 - Modify: `chimera-stm32/src/bench.rs`
-- Modify: `docs/adr/0051-…md` and `docs/adr/0053-…md` (figures only, still Proposed)
+- Modify: `docs/adr/0051-…md` and `docs/adr/0054-…md` (figures only, still Proposed)
 
 **Interfaces:**
 - Consumes: `EngineSlot::{init_in_place, rebuild}`, `SlotKind` (Task 2), `SymAlloc`, `VoiceIdx` (Task 8), `SymPool`, `Instrument::sym` (Task 9), `Voice`.
@@ -673,12 +719,12 @@ git commit -m "Bench: rebuild, Sympathetic note-on, switch storm, memory"
   If MODAL or MDL SYM exceeds its billed figure, or STACK grows by more than 1 K, STOP and report to the owner. Do not raise a `COST_*` constant or change the design.
 - [ ] **Step 5: Record the figures.** Add a "Measured on the chip (rev V, 480 MHz, 2026-MM-DD)" paragraph, with the owner's readings:
   - to ADR 0051: VOICE, SLOT, INSTR, the `.ram_d2*` size, REBUILD, SWITCH, and STACK before and after;
-  - to ADR 0053: SYM POOL, SYM NOTE-ON, MDL SYM and MDL STR.
+  - to ADR 0054: SYM POOL, SYM NOTE-ON, MDL SYM and MDL STR.
 
   Run `just check`. Expected: exit 0.
 - [ ] **Step 6: Commit.**
 
 ```bash
-git add docs/adr/0051-a-voice-holds-one-engine-rebuilt-in-place.md docs/adr/0053-sympathetic-strings-from-a-shared-pool.md
-git commit -m "Chip figures for ADRs 0051 and 0053"
+git add docs/adr/0051-a-voice-holds-one-engine-rebuilt-in-place.md docs/adr/0054-sympathetic-strings-from-a-shared-pool.md
+git commit -m "Chip figures for ADRs 0051 and 0054"
 ```

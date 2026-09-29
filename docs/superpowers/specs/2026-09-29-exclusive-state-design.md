@@ -138,7 +138,7 @@ The machinery already exists. `Voice::render` fades a voice whose Sound changed 
 - **Only that Part.** The check compares each voice with the Sound of the Part it sounds for. Other Parts' voices never see the change. The FX bus is not touched, so its tails ring on.
 - **Knob moves never rebuild.** `SlotKind::of` reads exactly two fields, the engine and MODE. Every other param reaches ringing notes every block, as today, and as Rings does: patch params reach every voice each block, and only pitch is latched per voice.
 - **What changes for the player.** Today a MODE edit leaves ringing notes on their old model until they end. After this, they fade in 2.7 ms, as an engine change does. `Voice::held_model_extra` (#183) stays: it bills the old model for the ≤ 2 blocks of the fade.
-- **Held keys.** A held key restarts its note on the new kind after the fade, as an engine change does today (`AfterFade::Restart`), now for MODE too. A restart onto Sympathetic needs a free pool slot (§ 4.5).
+- **Held keys.** A held key restarts its note on the new kind after the fade, as an engine change does today (`AfterFade::Restart`), now for MODE too. A switch onto Sympathetic restarts the last four played through the `Instrument` instead (§ 4.5).
 - **A rebuild count.** `Voice` keeps `rebuilds: u16` (wrapping) with a read-only getter, for the tests and the bench.
 
 **Cost of a rebuild.** A rebuild writes the new slot, at most Bowed's 3,968 B. A Sympathetic rebuild writes its main string and its lease, also 3,968 B: its seven lines are the pool's and are not rebuilt (§ 4.4). That is about 1,000 word stores, estimated at 1,000–2,000 cycles on D2 with the D-cache. A block is 640,000 cycles at 480 MHz, so one rebuild is ≤ 0.3 % of a block. ADR 0051 proves at most three rebuilds per voice per block (§ 4.6 keeps the bound), so the worst voice-block is ≤ 6,000 cycles, and all eight voices ≤ 48,000, 7.5 %. **This is not new cost.** Today every fade end already rebuilds the whole 32,736 B `ModalEngine` in the interrupt. The rebuild is not billed in `Cost`, which is per sample, as today's reset isn't. The bench gets a REBUILD row.
@@ -154,6 +154,8 @@ Sympathetic is one main string that sets seven more ringing. In f32 that is 8 ×
 1. Voices are sized for the largest other model (Bowed, 3,968 B host).
 2. A pool of four slots, each a full f32 sympathetic set. A voice playing Sympathetic borrows a slot for as long as its note sounds, and gives it back when the voice goes idle or rebuilds.
 3. Sympathetic plays at most four notes. A fifth steals the oldest slot: that voice fades out over `Voice::FADE`, then the new note takes the slot. Other models keep eight voices. Knob moves never rebuild.
+
+**Owner ruling (2026-09-29): the Rings rule.** In Rings (`part.cc`), a new strike always takes the next voice round-robin, so the oldest yields and a note is never refused. Here that means two things. A new Sympathetic note always sounds: when every slot is held, including by a Mono Part, the oldest slot's voice fades and the new note takes the slot. And when more than four held notes switch to Sympathetic, the last four played restart; the rest fade and stay silent until they are played again.
 4. Strings go back to f32, and ADR 0052 is superseded.
 5. The per-Part VOICES control is https://github.com/joegiralt/chimera/issues/207 (MODE MONO·POLY·UNISON·PARA and VOICES 1·2·4·6·8, with Sympathetic topping out at 4). It is not built here. This spec provides the cap it will show: `SYM_SLOTS = 4`.
 
@@ -197,13 +199,15 @@ pub struct SymSlot(u8);                    // private field: always < SYM_SLOTS
 #[must_use]
 pub struct Lease(SymSlot);                 // private field; not Clone, not Copy
 pub enum Place { On(VoiceIdx), Steal(VoiceIdx), Refused }
-pub struct SymAlloc { slots: [State; SYM_SLOTS], clock: u32 }
+pub enum Restart { Claimed { evict: Option<VoiceIdx> }, Silent }
+pub struct SymAlloc { slots: [State; SYM_SLOTS] }
 enum State {
     Free,
     Promised { voice: VoiceIdx, age: u32 },           // for a note that hasn't started
     Lent { voice: VoiceIdx, age: u32, then: Then },   // a Lease is out
 }
-enum Then { Free, Promise }                // where the slot goes when the lease comes back
+enum Then { Free, To(VoiceIdx) }           // where the slot goes when the lease comes back
+// `age` is the note's `Allocator` age (its clock at note-on): lower is older.
 
 // chimera-core/src/voice_alloc.rs
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -218,7 +222,7 @@ pub struct VoiceIdx(u8);                   // private field: always < MAX_VOICES
 
 **What tests check instead,** because Rust can't express it:
 
-- **A voice holding two slots.** `place` never promises a voice that already holds or is promised a slot, and `lend` takes the voice's own promise first. `sym_alloc_never_gives_a_voice_two_slots`, a seeded random walk, checks this.
+- **A voice holding two slots.** `place` and `restart` never promise a voice that already holds or is promised a slot, and `lend` takes the voice's own promise first. `sym_alloc_never_gives_a_voice_two_slots`, a seeded random walk, checks this.
 - **A dropped `Lease` leaks its slot.** Rust has no linear types. A leak is safe: the slot stays `Lent` and nothing else can hold it. The only home of a `Lease` is a `SympatheticVoice`, and the only way out is `EngineSlot::rebuild`, which hands it to `give_back`. `every_lease_comes_home` checks that every slot is `Free` once every voice is idle.
 - **A lease used on another pool.** There is one pool per `Instrument`. A lease isn't branded to its pool; branding would put a lifetime on `Voice`. Tests that build several pools keep each one's leases to itself.
 
@@ -249,31 +253,41 @@ pub(crate) unsafe fn move_out<T>(r: &mut T) -> T { unsafe { core::ptr::read(r) }
 
 ### 4.5 Rules
 
-All of these are pure `SymAlloc` methods, except the three shells named at the end. `now` is `SymAlloc`'s own clock, which ticks once per `place` and `lend`, the way `Allocator` ages its notes.
+These are pure `SymAlloc` methods, except the shells named at the end. Ages are the `Allocator`'s note ages (`VoiceSlot::age`; `Allocator::next_age()` for a note being placed), so "oldest" and "last played" mean the same thing to both allocators.
 
-- **`place(pick, stealable) -> Place`.** The `Instrument` calls this for a note-on on a Part whose kind is `Modal(Sympathetic)`. `pick` is the voice `Allocator::pick` would use, or `None` if the budget refuses the note. `stealable(u)` is false for a Mono Part's voice.
-  1. `pick` is `None`: `Refused`.
-  2. `pick` already holds or is promised a slot: that slot's age becomes `now`. If it is `Lent`, `then = Promise`. Result: `On(pick)`. A retrigger keeps its slot.
-  3. A slot is `Free`: it becomes `Promised { pick, now }`. Result: `On(pick)`.
-  4. Otherwise, the oldest slot whose voice `u` is stealable: its age becomes `now`, and `then = Promise` if `Lent`. Result: `Steal(u)`. The note plays on `u`, the slot's own voice, so a steal never moves a slot between voices.
-  5. No stealable slot, because all four belong to Mono Parts: `Refused`.
-- **`lend(voice) -> Option<Lease>`.** First the voice's own `Promised` slot, else any `Free` slot, else `None`. The slot becomes `Lent { then: Free }`.
-- **`give_back(lease)`.** `Lent { then: Free }` becomes `Free`, and `Lent { then: Promise }` becomes `Promised` to the same voice. A stolen voice's slot is therefore still its own when its waiting note starts, and no other voice rendering in between can take it.
+- **`place(pick, age) -> Place`.** The `Instrument` calls this for a note-on on a Part whose kind is `Modal(Sympathetic)`. `pick` is the voice `Allocator::pick` would use, or `None` if the CPU budget refuses the note.
+  1. `pick` already holds or is promised a slot: that slot's age becomes `age`. If it is `Lent`, `then = To(pick)`. Result: `On(pick)`. A retrigger keeps its slot.
+  2. A slot is `Free` and `pick` is `Some`: the slot becomes `Promised { pick, age }`. Result: `On(pick)`.
+  3. No slot is `Free`: the oldest slot, whoever holds it, Mono Parts included. Its age becomes `age`, and `then = To(u)` if it is `Lent`. Result: `Steal(u)`. The note plays on `u`, the slot's own voice, so a steal never moves a slot between voices.
+  4. A slot is `Free` but `pick` is `None`: `Refused`. That is the CPU budget's refusal (ADR 0026), as for every model, never the pool's. The pool itself never refuses a note.
+- **`restart(voice, age) -> Restart`.** The `Instrument` calls this for each held note of a Part whose kind has just become `Modal(Sympathetic)`, newest first.
+  1. `voice` already holds or is promised a slot: `Claimed { evict: None }`.
+  2. A slot is `Free`: it becomes `Promised { voice, age }`. Result: `Claimed { evict: None }`.
+  3. The oldest slot whose age is below `age`. If it is `Promised { w }`, it becomes `Promised { voice, age }` and the result is `Claimed { evict: Some(w) }`. If it is `Lent { u }`, it gets `age` and `then = To(voice)`, and the result is `Claimed { evict: Some(u) }`.
+  4. Otherwise: `Silent`.
+
+  Called newest first, the newest four held notes claim slots, and no older note evicts a newer one. So the last four played restart, whatever else held the slots.
+- **`lend(voice) -> Option<Lease>`.** First the voice's own `Promised` slot, else any `Free` slot, else `None`. The slot becomes `Lent { then: Free }`, keeping its age.
+- **`give_back(lease)`.** `Lent { then: Free }` becomes `Free`, and `Lent { then: To(w) }` becomes `Promised { w }`. A stolen voice's slot is therefore still its own when its waiting note starts. An evicted slot goes to the restart that claimed it, and no other voice rendering in between can take it.
+- **`awaits(voice) -> bool`.** Some slot is `Lent` to another voice with `then = To(voice)`: that voice's restart is waiting for an eviction's fade to end.
 - **`forfeit(voice)`.** The voice's `Promised` slot becomes `Free`. Nothing else changes.
 
 **Shells:**
 
-- **`Instrument::handle`**, for a Sympathetic note: `place`, then book the note on the voice it names (`Allocator::book`). `On(v)` goes down today's path. `Steal(u)` always takes the fade path, even for the same Part and kind: `waiting[u] = Some(vel)`, then `voices[u].kill()`. So the stolen note fades over `FADE` (owner rule 3). A waiting note it replaces counts in `dropped_unheard`, as today. Other kinds skip `place`.
-- **`Voice::trigger`** rebuilds as in § 3 (`EngineSlot::rebuild` lends on the way into Sympathetic). If the rebuild returns `NoSlot`, the note does not start and the voice stays idle. Triggering any other kind calls `forfeit(id)`, so a promise made for a note that was then replaced doesn't outlive it.
+- **`Instrument::handle`**, for a Sympathetic note: `place`, then book the note on the voice it names (`Allocator::book`). `On(v)` goes down today's path. `Steal(u)` always takes the fade path, even for the same Part and kind: `waiting[u] = Some(vel)`, then `voices[u].kill()`. So the stolen note fades over `FADE` (owner rule 3). A waiting note it replaces counts in `dropped_unheard`, as today. A stolen Mono voice is booked to the new note; its Part's next note takes a voice as a fresh Mono note does. Other kinds skip `place`.
+- **`Instrument::render`, before the voices,** compares each Part's `SlotKind::of` with the last block's (`last_kind: [SlotKind; MAX_PARTS]`). For a Part that has just become `Modal(Sympathetic)`, it takes that Part's held, sounding voices, newest first by `Allocator` age, and calls `restart` for each.
+  - `Claimed { evict }`: `waiting[v] = Some(voices[v].velocity())` and `voices[v].kill()`, so the note fades out and restarts once the voice is idle, as a stolen note does. For `evict: Some(u)`, `voices[u].kill()`, and a waiting note of `u`'s is dropped, counted in `dropped_unheard`.
+  - `Silent`: `voices[v].kill()`. The voice fades and stays booked, held and silent until its key-up, as a held note whose engine goes quiet does today. Played again, it is a new note under `place`.
+  - A killed voice's fade is already running when its own render sees the switch, so no voice-level `Restart` is armed for these notes. Held keys on the other kinds keep § 3's voice-level restart.
+- **Render step 5** plays a waiting note on an idle voice, as today, except that a Sympathetic note whose voice `awaits` an eviction stays waiting. It is tried again after the next block's render, and only then does `note_on` run, so no rebuild is spent on the wait.
+- **`Voice::trigger`** rebuilds as in § 3 (`EngineSlot::rebuild` lends on the way into Sympathetic). If the rebuild returns `NoSlot`, the note does not start and the voice stays idle. That is reachable only by a lone `Voice` driven without the `Instrument`. Triggering any other kind calls `forfeit(id)`, so a promise made for a note that was then replaced doesn't outlive it.
 - **`Voice::rest`**: the voice is idle and no note waits for it. The `Instrument` calls it at render step 5, in the `release_finished` branch. It rebuilds a Sympathetic slot into `resting()` (giving the lease back), then calls `forfeit(id)`. It covers the one way to go idle without a rebuild: the engine going quiet on its own.
 
 **Resting.** An idle voice never holds a lease. `SlotKind::resting` maps `Modal(Sympathetic)` to `Modal(String)`, the same main string without the set, and leaves every other kind alone. `reset` rebuilds into `resting()` when no note follows it (a fade that ends idle, or the VCA's lifetime), and into the Sound's kind when one does (`AfterFade::Note` or `Restart`). So a fade that ends in a note is still one rebuild.
 
-**Restarts.** A MODE switch to Sympathetic under held keys restarts each held note after its fade (§ 3). A restart takes a free slot at its fade end, in voice order, and never steals: every restart lands in the same block, so stealing one would only fade a note that had just started. A held key that finds no slot ends, silent, until its key-up frees it, as a held note whose engine goes quiet does today. So at most four of eight held notes restart on Sympathetic. See Open questions.
+**Mono.** A Mono Part gets no protection from the pool (owner, 2026-09-29). A Mono Sympathetic Part retriggers its own voice and keeps its slot (`place` rule 1). When it holds the oldest slot, a newer note takes it (rule 3). The `Allocator`'s own rule 1, that a Mono voice is never stolen for budget, is unchanged. ADR 0054 records this exception.
 
-**Mono.** A Mono Part's voice is never stolen (voice allocator rule 1). A Mono Sympathetic Part retriggers its own voice and keeps its slot (rule 2 above).
-
-**Cost.** The pool does not change a voice's `Cost`. `ModalEngine::COST_SYMPATHETIC` stays 1,400, and it is billed only on the voices that play it, now at most four. `place`, `lend`, `give_back` and `forfeit` each scan four slots and run at note events and at voice ends, never per sample.
+**Cost.** The pool does not change a voice's `Cost`. `ModalEngine::COST_SYMPATHETIC` stays 1,400, and it is billed only on the voices that play it, now at most four. Every `SymAlloc` method scans four slots, and `restart` runs at most `MAX_VOICES` times per switch. All of them run at note events, switches and voice ends, never per sample.
 
 ### 4.6 The fade and the rebuild bound
 
@@ -283,7 +297,7 @@ ADR 0051 proves that a voice rebuilds at most three times between two blocks, on
 - **Its render.** `reset` rebuilds once, into the Sound's kind or `resting()`, never both: it chooses by whether a note follows.
 - **After its render.** Either the waiting note's `trigger` or `rest`, never both. `rest` runs only when no note waits, and it rebuilds only a Sympathetic slot.
 
-**A steal adds no rebuild beyond the bound.** The stolen voice, in its fade-end block, rests into String inside its render (one rebuild) and gives its slot back promised. Then, after its render, its waiting note rebuilds into Sympathetic and takes that same slot (two). That is today's cross-Part steal exactly. `a_voice_rebuilds_at_most_three_times_a_block` and the switch-storm test stay as pinned, and `a_fifth_sympathetic_note_steals_the_oldest` counts the two.
+**A steal adds no rebuild beyond the bound.** The stolen voice, in its fade-end block, rests into String inside its render (one rebuild) and gives its slot back promised. Then, after its render, its waiting note rebuilds into Sympathetic and takes that same slot (two). That is today's cross-Part steal exactly. A restart on a switch is the same shape: the voice's fade end rests (one) and its waiting note rebuilds (two). A restart that awaits an eviction spends nothing while it waits, because `note_on` doesn't run. `a_voice_rebuilds_at_most_three_times_a_block` and the switch-storm test stay as pinned, and `a_fifth_sympathetic_note_steals_the_oldest` counts the two.
 
 What the pool adds is one rebuild at a natural end. A Sympathetic note that decays to silence used to leave its model in the idle voice. Now `rest` rebuilds it into String, 3,968 B, about 1,000 cycles. It happens once per note, not per block.
 
@@ -366,15 +380,17 @@ Host sizes (64-bit), measured at cf3a23f and projected from those measurements. 
 | `other_parts_are_untouched_by_a_switch` | Parts 1 and 2 sounding; Part 1 switches engine. Part 2's bus is bit-identical to a run without the switch, block for block, and `FxBus` is never reset: a reverb tail ringing at the switch is still non-zero in the next block. |
 | `model_switch_rebuilds_once` | A ringing String note whose MODE becomes Sympathetic: `rebuilds` rises by exactly 1 from the switch through the held note's restart, and the restarted note is bit-identical to a fresh Sympathetic voice's. |
 | `knob_moves_never_rebuild` | A ringing Sympathetic note while every Modal param but MODE, and every chain param, moves each block: `rebuilds` is unchanged, the voice never fades, and the output differs from the unmoved run (the knobs reach the ringing note). |
-| `sym_alloc_*` (pure, `sym_alloc.rs`) | `place` promises a free slot to its pick; a retrigger keeps its slot; the fifth `place` steals the oldest, the sixth the next oldest (ages refresh on steal); a Mono voice is never stolen and four Mono slots refuse a fifth; `give_back` after a steal leaves the slot promised to the same voice; `lend` takes the voice's promise before a free slot; `forfeit` frees only a promise. |
-| `sym_alloc_never_gives_a_voice_two_slots` | A seeded random walk of 100,000 `place`/`lend`/`give_back`/`forfeit` calls over 8 voices. After each: every voice appears in at most one slot; the `Lent` count equals the leases the walk holds; `Free + Promised + Lent == 4`. |
+| `sym_alloc_*` (pure, `sym_alloc.rs`) | `place` promises a free slot to its pick; a retrigger keeps its slot; the fifth `place` steals the oldest, the sixth the next oldest (ages refresh on steal); a full pool steals even when `pick` is `None`; `give_back` after a steal leaves the slot promised to the same voice; `lend` takes the voice's promise before a free slot; `forfeit` frees only a promise. |
+| `a_mono_holder_is_stolen_when_newest_arrives` | Pure, and again through the `Instrument`: a Mono Part's voice holds the oldest of four slots. A new Sympathetic note on another Part steals it, the Mono voice fades over `FADE`, and the new note sounds on it. |
+| `last_four_played_restart_on_switch` | Pure: `restart` called newest first on eight held notes with four free slots claims the four newest, and the four oldest get `Silent`. With two slots held by older notes of another Part, the two evictions are those holders, and `awaits` is true for the claimers until `give_back`. |
+| `sym_alloc_never_gives_a_voice_two_slots` | A seeded random walk of 100,000 `place`/`restart`/`lend`/`give_back`/`forfeit` calls over 8 voices. After each: every voice appears in at most one slot; the `Lent` count equals the leases the walk holds; `Free + Promised + Lent == 4`. |
 | `Lease` doc tests | `compile_fail,E0599`: `lease.clone()`. `compile_fail,E0382`: `alloc.give_back(lease); pool.set(&lease)`. `compile_fail,E0423`: `Lease(…)` outside `sym_alloc`. |
-| `a_fifth_sympathetic_note_steals_the_oldest` | Part 1 (Sympathetic) holds notes 48, 50, 52 and 53; Part 2 (Sympathetic) then plays 55. The voice of 48 fades over `FADE`, and Part 1's largest step obeys `switch_never_clicks`'s bound. Then 55 sounds on that voice, and Part 2's bus is bit-identical to a lone fresh 55 from its first block. At every block, at most four voices sound Sympathetic and `lent() <= 4`. The stolen voice's `rebuilds` rise by exactly 2 in its fade-end block. |
+| `a_fifth_sympathetic_note_steals_the_oldest` | Part 1 (Sympathetic, Poly) holds notes 48, 50, 52 and 53; Part 2 (Sympathetic) then plays 55. The voice of 48 fades over `FADE`, and Part 1's largest step obeys `switch_never_clicks`'s bound. Then 55 sounds on that voice, and Part 2's bus is bit-identical to a lone fresh 55 from its first block. At every block, at most four voices sound Sympathetic and `lent() <= 4`. The stolen voice's `rebuilds` rise by exactly 2 in its fade-end block. |
 | `other_models_keep_eight_voices` | Eight held notes on String, on Bowed and on the bank each sound on eight voices while `sym.free() == 4`. |
 | `four_sympathetic_notes_sound_as_alone` | Each of four Sympathetic notes on four Parts, whose buses are recorded, is bit-identical to that note alone. The pool shares no state between slots. |
 | `a_handed_over_slot_carries_nothing` | Note A takes slot 0 on voice 0 and ends. Note B then takes slot 0 on voice 1. B is bit-identical to B on a fresh pool. |
 | `every_lease_comes_home` | A seeded storm over 3 Parts: note-ons and -offs, MODE flips among all four models, ENGINE flips and kills, for 2,000 blocks. At every block, the voices whose slot is Sympathetic number exactly `lent()`. After all notes are off and the voices are idle, `free() == 4`. |
-| `a_mode_switch_to_sympathetic_restarts_at_most_four` | Eight held String notes; MODE becomes Sympathetic. After the fade, exactly four restart on Sympathetic, the other four are idle and held, no voice was stolen, and no voice rebuilt more than once in the fade-end block. |
+| `the_last_four_played_restart_through_the_instrument` | Eight String notes, 60 to 67 in that order, are held; MODE becomes Sympathetic. After the fade, the voices of 64–67 sound Sympathetic, and those of 60–63 are idle, held and silent. Each restarted voice's `rebuilds` rose by exactly 2 (rest, then the note). Key-up and re-press 60: it sounds, and 64's voice, the oldest, fades. |
 | `a_resting_voice_gives_its_slot_back` | A Sympathetic note that decays to silence: in the block it goes idle, `rebuilds` rises by 1, its slot is `Free`, and its slot kind is `Modal(String)`. |
 | `resting_maps_only_sympathetic` | Pure: `SlotKind::resting` maps `Modal(Sympathetic)` to `Modal(String)` and returns every other kind unchanged. |
 | `modal_sympathetic` (golden) | Recorded before the pool (Task 7); bit-identical after it (Task 9). |
@@ -414,8 +430,8 @@ Each task leaves the tree green. Tasks 1–4 are done. Tasks 5 and 6 are replace
 6. ~~Chip figures~~ (replaced by 10).
 7. Strings back to f32, without the generic store. The Task 5 goldens are restored, and `modal_sympathetic` is recorded.
 8. `SymAlloc`, `Lease` and `VoiceIdx`: the pure allocator and its tests.
-9. The pool wired in: `SympatheticSet`, `SymPool`, `SympatheticVoice`, `EngineSlot::rebuild`'s leases, `rest`, the `Instrument`'s placement, and § Tests' pool tests. ADR 0053 is written here.
-10. Chip: sizes, bench rows (MODAL, SYMPATHETIC, REBUILD, SYM NOTE-ON), and the stack mark. The figures go in ADRs 0051 and 0053.
+9. The pool wired in: `SympatheticSet`, `SymPool`, `SympatheticVoice`, `EngineSlot::rebuild`'s leases, `rest`, the `Instrument`'s placement, and § Tests' pool tests. ADR 0054 is written here.
+10. Chip: sizes, bench rows (MODAL, SYMPATHETIC, REBUILD, SYM NOTE-ON), and the stack mark. The figures go in ADRs 0051 and 0054.
 
 ## Decisions made (owner, 2026-09-29)
 
@@ -430,16 +446,17 @@ Each task leaves the tree green. Tasks 1–4 are done. Tasks 5 and 6 are replace
 - **(2026-09-29, superseding the 16-bit decisions.)** Sympathetic keeps full f32 precision through a shared pool of four sympathetic slots, after Rings (`kMaxPolyphony = 4`). Voices are sized for the largest other model. A voice borrows a slot while its note sounds and gives it back when it goes idle or rebuilds. Sympathetic plays at most four notes: a fifth steals the oldest slot, whose voice fades over `FADE` before the new note takes it. Other models keep eight voices.
 - **(2026-09-29.)** The 16-bit strings are undone, and strings are f32 again. ADR 0052 is superseded, because the pool makes 16-bit storage unnecessary and it lost precision (−83.7 dBFS at worst).
 - **(2026-09-29.)** The per-Part VOICES control is #207, not built here. This project provides the cap, `SYM_SLOTS = 4`.
+- **(2026-09-29, the Rings rule.)** When more than four held notes switch to Sympathetic, the last four played restart. The rest fade and stay silent until they are played again.
+- **(2026-09-29, the Rings rule.)** A new Sympathetic note always sounds. If every slot is held, including by Mono Parts, the oldest slot's voice fades over `FADE` and the new note takes that slot. Mono gets no protection from the pool.
 
 **Design choices in § 4, for the owner's review:**
 
 - The main string stays in the voice, and a slot holds the seven lines (§ 4.2).
 - The pool is in D2, inside the `Instrument`.
 - A steal plays the new note on the stolen slot's own voice.
-- Restarts never steal.
+- A restart on a switch goes through the `Instrument`'s waiting note, ranked by `Allocator` age, not through the voice-level `Restart`.
 - The generic store is removed.
 
 ## Open questions
 
-1. **Which held notes win a MODE switch to Sympathetic** with more than four held? Proposed: the first four voices to reach their fade end, which is voice order, since all end in the same block. The alternative is the newest four, which needs the `Instrument` to rank the restarts by age. That is more code for a rare gesture.
-2. **Four Mono Sympathetic Parts** hold every slot, so a fifth Sympathetic note, on any Part, is refused (counted in `refused`). The alternative is to let a Poly note steal from a Mono Part, which breaks "a Mono voice is never stolen" (ADR 0015). Proposed: refuse.
+None.
