@@ -547,3 +547,33 @@ fn a_mono_holder_is_stolen_when_newest_arrives() {
     assert!(s.inst.active()[oldest], "Part 1's new note sounds");
     assert!(peak(s.inst.part_bus(0)) > 0.0);
 }
+
+/// The pool ranks slots by the `Allocator`'s own note ages: a Mono
+/// retrigger refreshes its slot to the age `book` gives the note, so the
+/// next steal takes the voice with the lowest `VoiceSlot::age`, not the
+/// retriggered one.
+#[test]
+fn pool_ages_are_the_allocators() {
+    let mut s = Stage::new(&[
+        (sym(), PartMode::Mono),
+        (sym(), PartMode::Poly),
+        (sym(), PartMode::Poly),
+        (sym(), PartMode::Poly),
+    ]);
+    for (part, n) in [(0, 48), (1, 55), (2, 60), (3, 67)] {
+        s.on(part, n);
+        s.block();
+    }
+    let mono = s.voice_of(0, 48);
+    s.on(0, 50);
+    assert_eq!(s.voice_of(0, 50), mono, "Mono retriggers its voice");
+    s.block();
+    let slots = s.inst.allocator().slots();
+    let oldest = (0..MAX_VOICES)
+        .filter(|&v| s.inst.slot_kinds()[v] == SYM)
+        .min_by_key(|&v| slots[v].age())
+        .unwrap();
+    assert_eq!(oldest, s.voice_of(1, 55), "55 is now the oldest by age");
+    s.on(2, 62);
+    assert_eq!(s.voice_of(2, 62), oldest, "the steal follows the ages");
+}
