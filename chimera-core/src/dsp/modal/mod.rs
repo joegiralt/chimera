@@ -700,7 +700,7 @@ impl ModalBank {
 
             harmonic += frequency;
         }
-        // Newly dropped modes fall silent, so they return from rest.
+        // Dropped modes go silent: one that returns as STRUCTURE falls restarts from rest.
         for f in &mut self.filters[sounding..self.sounding.max(sounding)] {
             f.reset();
         }

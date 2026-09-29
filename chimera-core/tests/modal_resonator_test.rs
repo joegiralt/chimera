@@ -207,9 +207,9 @@ fn play_voice(p: &ParamSnapshot, mods: &ModState, blocks: usize, plucks: &[usize
 /// and adds no click past a strike. Plucked again just after 1 s, where
 /// the LFO is near +0.5: POS is heard at a pluck, and its ends null alike.
 /// The bank, at 48 modes, flags nothing on DAMP or POS, held at either end
-/// or routed. Interim, until its output level is ruled: its high STRUCTURE
-/// and BRIGHT drive the output tanh and flag by themselves, so there it may
-/// flag no more than the macro held at either end.
+/// or routed. Its high STRUCTURE and BRIGHT drive the output tanh and flag
+/// by themselves (https://github.com/joegiralt/chimera/issues/231), so there
+/// it may flag no more than the macro held at either end.
 #[test]
 fn macros_are_routable() {
     let second = SR as usize / BLOCK_SIZE;
