@@ -15,7 +15,7 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0007](0007-per-block-param-specs.md) | Each block owns its values and a const description | Accepted |
 | [0008](0008-persistent-engine-instances.md) | Engines are persistent; never constructed in the audio interrupt | Superseded by [0051](0051-a-voice-holds-one-engine-rebuilt-in-place.md) |
 | [0009](0009-semantic-parameter-addresses.md) | Address parameters by what they are, not where they sit | Accepted |
-| [0010](0010-modulation-targets-are-honest.md) | Only parameters the voice reads per block are modulatable | Accepted; linear law superseded for CUTOFF by [0035](0035-every-connection-is-a-matrix-route.md), and for PITCH and FINE by [0042](0042-voice-pitch-is-a-matrix-destination.md) |
+| [0010](0010-modulation-targets-are-honest.md) | Only parameters the voice reads per block are modulatable | Accepted; linear law superseded for CUTOFF by [0035](0035-every-connection-is-a-matrix-route.md), and for PITCH and FINE by [0042](0042-voice-pitch-is-a-matrix-destination.md); superseded in part by [0056](0056-modal-resonators-share-four-macros.md) (Modal's four macros) |
 | [0011](0011-goldens-are-a-refactor-lock.md) | Golden recordings are a refactor lock, not a quality claim | Accepted |
 | [0012](0012-type-driven-development.md) | Type-driven development where it pays | Accepted |
 | [0013](0013-hardware-parity-budgets.md) | The simulator enforces the chip's limits | Accepted; budget clause superseded by 0020 |

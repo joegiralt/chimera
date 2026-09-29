@@ -49,7 +49,7 @@ use crate::sym_alloc::{Lease, SYM_SLOTS, SymAlloc, SymSlot};
 use crate::voice_alloc::VoiceIdx;
 use loop_parts::{DcBlocker, LoopGain};
 use rings::{CosineOsc, Svf, stiffness_from_structure};
-use string::{FRESH_CLEAR_BYTES, KsRenderParams, KsString, RING_BYTES, lp_coeff};
+use string::{FRESH_CLEAR_BYTES, KsRenderParams, KsString, RING_BYTES, loop_at, lp_coeff};
 
 /// Bytes the string lines' clears have written on this thread, since the
 /// last call: for the tests.
@@ -250,16 +250,20 @@ pub struct ModalEngine {
     /// On a string model's output, not in its loop, where its phase would
     /// detune the upper partials.
     dc: DcBlocker,
+    macros: Macros,
+    /// The note's first block is to come: it snaps `macros` to its
+    /// modulated values and shapes the pluck at its POS.
+    shape_pending: bool,
 }
 
 crate::in_place::field_list!(ModalEngine => ModalEngine {
-    model, frequency, pitch, tuned, released, active, silence_counter, dc,
+    model, frequency, pitch, tuned, released, active, silence_counter, dc, macros, shape_pending,
 });
 
 // A `ModalEngine` is its largest model plus the fields every model shares
 // (`frequency`, `pitch`, `tuned`, `released`, `active`, `silence_counter`,
-// `dc`),
-// never the sum of models. The slot's tag takes one align (`in_place_enum!`).
+// `dc`, `macros`, `shape_pending`), never the sum of models. The slot's
+// tag takes one align (`in_place_enum!`).
 const fn models_are_exclusive() -> bool {
     use core::mem::{align_of, size_of};
     let models = [
@@ -277,7 +281,7 @@ const fn models_are_exclusive() -> bool {
         i += 1;
     }
     let align = align_of::<ModalEngine>();
-    let shared = size_of::<(f32, f32, f32, bool, bool, u32, DcBlocker)>();
+    let shared = size_of::<(f32, f32, f32, bool, bool, u32, DcBlocker, Macros, bool)>();
     size_of::<ModalEngine>()
         <= (largest.next_multiple_of(align) + align + shared).next_multiple_of(align)
 }
@@ -313,11 +317,24 @@ impl ModalEngine {
             ResonatorMode::String => Self::COST_STRING,
             ResonatorMode::Bowed => Self::COST_BOWED,
             ResonatorMode::Sympathetic => Self::COST_SYMPATHETIC,
-            ResonatorMode::Modal => {
-                Cost(Self::COST_BANK.0 + Self::COST_MODE.0 * p.modes.count() as u32)
-            }
+            ResonatorMode::Modal => Self::bank_cost(p.modes.count()),
         }
     }
+
+    fn bank_cost(modes: usize) -> Cost {
+        Cost(Self::COST_BANK.0 + Self::COST_MODE.0 * modes as u32)
+    }
+
+    /// What the sounding note costs: its note-on's model and MODES.
+    pub fn playing_cost(&self) -> Option<Cost> {
+        self.active.then(|| match &self.model {
+            ModelSlot::Bank(b) => Self::bank_cost(b.resolution),
+            ModelSlot::String(_) => Self::COST_STRING,
+            ModelSlot::Bowed(_) => Self::COST_BOWED,
+            ModelSlot::Sympathetic(_) => Self::COST_SYMPATHETIC,
+        })
+    }
+
     /// More with a route into PITCH or FINE: `retune`'s eight divides a
     /// block, the per-block `fast_exp2` and the retune's I-cache lines.
     /// Provisional, pending a bench row (#182): the emulator's Sympathetic row
@@ -355,6 +372,8 @@ impl ModalEngine {
             addr_of_mut!((*p).active).write(false);
             addr_of_mut!((*p).silence_counter).write(0);
             addr_of_mut!((*p).dc).write(DcBlocker::new(SAMPLE_RATE));
+            addr_of_mut!((*p).macros).write(Macros::of(&ModalParams::default()));
+            addr_of_mut!((*p).shape_pending).write(false);
             slot.assume_init_mut()
         }
     }
@@ -363,11 +382,6 @@ impl ModalEngine {
     /// was built for.
     pub fn mode(&self) -> ResonatorMode {
         self.model.mode()
-    }
-
-    /// The model the sounding note plays, set at its note-on.
-    pub fn playing(&self) -> Option<ResonatorMode> {
-        self.active.then(|| self.model.mode())
     }
 
     /// The voice's pitch ratio, for the next `note_on` or `render`: the
@@ -416,29 +430,31 @@ impl ModalEngine {
         let freq = self.pitched(freq);
         self.tuned = self.pitch;
         let bank_freq = self.pitched(self.frequency);
+        self.macros = Macros::of(params);
+        let m = &self.macros;
 
         match &mut self.model {
             ModelSlot::Bank(bank) => {
                 bank.resolution = params.modes.count();
-                bank.compute_filters(params, bank_freq);
-                bank.cos_osc.init(params.pos);
+                bank.compute_filters(m, bank_freq);
+                bank.cos_osc.init(m.pos);
                 let burst_ms = 2.0 + params.excite * 4.0;
                 bank.burst_remaining = (burst_ms * sample_rate as f32 / 1000.0) as usize;
                 bank.burst_amp = vel * params.excite;
                 bank.burst_lp = 0.0;
             }
             ModelSlot::String(string) => {
-                string.trigger((freq, sample_rate), vel * params.excite, params.pos);
+                string.excite(loop_at(freq, sample_rate), vel * params.excite);
             }
             ModelSlot::Bowed(b) => {
                 b.string.clear();
                 b.string.tune(freq, sample_rate);
                 b.force = vel * BOW_FORCE;
             }
-            ModelSlot::Sympathetic(m) => {
-                m.main
-                    .trigger((freq, sample_rate), vel * params.excite, params.pos);
-                if let Some(set) = pool.halo(&m.halo) {
+            ModelSlot::Sympathetic(v) => {
+                v.main
+                    .excite(loop_at(freq, sample_rate), vel * params.excite);
+                if let Some(set) = pool.halo(&v.halo) {
                     for sym in set.strings.iter_mut() {
                         // Sympathetic strings start silent — energy comes
                         // from main. A handed-over slot carries nothing of
@@ -446,13 +462,14 @@ impl ModalEngine {
                         // retune, so the clear is `SymPool::note_on_clear`'s.
                         sym.clear();
                     }
-                    set.ratios = sympathetic_ratios(params.structure);
+                    set.ratios = sympathetic_ratios(m.structure);
                     set.tune(freq, sample_rate);
                     set.pending = [0.0; NUM_SYMPATHETIC];
                 }
             }
         }
 
+        self.shape_pending = true;
         self.dc.reset();
         self.active = true;
         self.released = false;
@@ -526,36 +543,60 @@ impl ModalEngine {
 
         let mut max_level = 0.0_f32;
 
+        // A note's first block takes its modulated macros whole: nothing
+        // sounds yet. Then they ease.
+        let (was, to) = (self.macros, Macros::of(params));
+        if core::mem::take(&mut self.shape_pending) {
+            self.macros = to;
+            // Before any retune: the pluck is the note-on's length.
+            match &mut self.model {
+                ModelSlot::String(s) => s.shape(to.pos),
+                ModelSlot::Sympathetic(v) => v.main.shape(to.pos),
+                ModelSlot::Bank(_) | ModelSlot::Bowed(_) => {}
+            }
+        } else {
+            self.macros.ease(&to);
+        }
+        let m = self.macros;
+
         let bank_freq = self.pitched(self.frequency);
         // The strings' f0 in Hz, for their loop gains.
         let f0 = bank_freq * sample_rate as f32;
         self.retune(sample_rate, pool);
+        if m.structure != was.structure
+            && let ModelSlot::Sympathetic(v) = &self.model
+            && let Some(set) = pool.halo(&v.halo)
+        {
+            // Interim until the chord table (Task 10): the halo follows.
+            set.ratios = sympathetic_ratios(m.structure);
+            set.tune(f0, sample_rate);
+        }
 
         // Whether the model is still exciting itself: silent or not, the
         // note sounds on.
         let exciting = match &mut self.model {
             ModelSlot::Bank(bank) => {
                 // Recompute filters every block (Rings does this — allows live parameter changes)
-                bank.compute_filters(params, bank_freq);
-                bank.cos_osc.init(params.pos);
+                bank.compute_filters(&m, bank_freq);
+                bank.cos_osc.init(m.pos);
                 render_modal(bank, output, &mut max_level);
                 bank.burst_remaining > 0
             }
             ModelSlot::String(string) => {
-                render_string(string, output, params, f0, self.released);
+                render_string(string, output, params, &m, f0, self.released);
                 false
             }
             ModelSlot::Bowed(b) => {
                 render_bowed(b, output);
                 false
             }
-            ModelSlot::Sympathetic(m) => {
-                let m = &mut **m;
+            ModelSlot::Sympathetic(v) => {
+                let v = &mut **v;
                 render_sympathetic(
-                    &mut m.main,
-                    pool.halo(&m.halo),
+                    &mut v.main,
+                    pool.halo(&v.halo),
                     output,
-                    params,
+                    (params, &m),
                     f0,
                     self.released,
                 );
@@ -601,7 +642,7 @@ impl ModalBank {
 
     /// Configure filters — called every render block (not just note_on).
     /// Matches Rings' ComputeFilters().
-    fn compute_filters(&mut self, params: &ModalParams, frequency: f32) {
+    fn compute_filters(&mut self, m: &Macros, frequency: f32) {
         let num = self.resolution;
 
         // Q from DAMP (Rings-style range).
@@ -609,9 +650,9 @@ impl ModalBank {
         //   damp=0:   q=500,    mode_q=2.5  (short ping)
         //   damp=0.5: q=50000,  mode_q=151  (nice ring)
         //   damp=1:   q=500000, mode_q=1501 (long sustain)
-        let mut q = 500.0 * libm::powf(10.0, params.damp * 3.0); // 500..500,000
+        let mut q = 500.0 * libm::powf(10.0, m.damp * 3.0); // 500..500,000
 
-        let structure = params.structure;
+        let structure = m.structure;
         let mut stiffness = stiffness_from_structure(structure);
 
         // Brightness → q_loss per mode (Rings formula)
@@ -620,7 +661,7 @@ impl ModalBank {
             let x2 = x * x;
             x2 * x2 * x2 * x2
         };
-        let brightness = params.bright * (1.0 - 0.2 * bright_atten);
+        let brightness = m.bright * (1.0 - 0.2 * bright_atten);
         let mut q_loss = brightness * (2.0 - brightness) * 0.85 + 0.15;
         let q_loss_damping_rate = structure * (2.0 - structure) * 0.1;
 
@@ -817,10 +858,11 @@ fn render_string(
     string: &mut KsString,
     output: &mut [f32; BLOCK_SIZE],
     params: &ModalParams,
+    m: &Macros,
     f0: f32,
     released: bool,
 ) {
-    let p = main_string(params, (params.structure, params.ens_rate), f0, released);
+    let p = main_string((params, m), (m.structure, params.ens_rate), f0, released);
     for s in output.iter_mut() {
         *s = string.tick_full(&p);
     }
@@ -839,19 +881,19 @@ fn release_gain(held: LoopGain, damp: f32, scale: f32) -> LoopGain {
 /// The block's STRING or SYMP main string at `f0` Hz, with its own
 /// stiffness and ensemble rate.
 fn main_string(
-    params: &ModalParams,
+    (params, m): (&ModalParams, &Macros),
     (stiffness, ens_rate): (f32, f32),
     f0: f32,
     released: bool,
 ) -> KsRenderParams {
-    let held = LoopGain::from_t60(t60(params.damp), f0);
+    let held = LoopGain::from_t60(t60(m.damp), f0);
     let (body, stiffness, gain) = if released {
-        (0.0, 0.0, release_gain(held, params.damp, 1.0))
+        (0.0, 0.0, release_gain(held, m.damp, 1.0))
     } else {
         (params.body, stiffness, held)
     };
     KsRenderParams {
-        lp: lp_coeff(params.bright),
+        lp: lp_coeff(m.bright),
         gain,
         body,
         stiffness,
@@ -907,12 +949,12 @@ fn render_sympathetic(
     main: &mut KsString,
     set: Option<&mut SympatheticSet>,
     output: &mut [f32; BLOCK_SIZE],
-    params: &ModalParams,
+    (params, m): (&ModalParams, &Macros),
     f0: f32,
     released: bool,
 ) {
     // STRUCTURE tunes the halo only: the main string has no stiffness.
-    let main_params = main_string(params, (0.0, SYMP_ENS_RATE), f0, released);
+    let main_params = main_string((params, m), (0.0, SYMP_ENS_RATE), f0, released);
     let coupling = 0.1 * params.couple;
     let level = 0.6 * params.halo;
 
@@ -923,14 +965,14 @@ fn render_sympathetic(
         return;
     };
     // Each halo string rings twice the main one's T60, no darker.
-    let lp = lp_coeff(halo_bright(params.bright));
-    let halo_t60 = 2.0 * t60(params.damp);
+    let lp = lp_coeff(halo_bright(m.bright));
+    let halo_t60 = 2.0 * t60(m.damp);
     let halo = set.ratios.map(|r| KsRenderParams {
         lp,
         gain: {
             let held = LoopGain::from_t60(halo_t60, f0 * r);
             if released {
-                release_gain(held, params.damp, 0.5)
+                release_gain(held, m.damp, 0.5)
             } else {
                 held
             }
@@ -1023,7 +1065,9 @@ mod tests {
                 damp: damp_from_v1_decay(decay),
                 ..Default::default()
             };
-            let got = main_string(&p, (0.0, 0.0), 130.81, false).gain.get();
+            let got = main_string((&p, &Macros::of(&p)), (0.0, 0.0), 130.81, false)
+                .gain
+                .get();
             let want = 0.999 - 0.009 * decay;
             assert!((got - want).abs() < 1e-5, "DECAY {decay}: {got} vs {want}");
         }

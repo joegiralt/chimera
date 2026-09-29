@@ -63,6 +63,24 @@ Task 2 adds fractional tuning (#163):
   - F♯1 and lower clamp to the longest line.
   - `Instrument` is 161,208 B, which leaves 125,512 B of D2 (task 1: 161,496 B).
 
+Task 5 makes the four macros modulatable:
+- STRUCTURE, BRIGHT, DAMP and POS are read every block from the voice's
+  modulated params. The loops read `modal::Macros`, never the params.
+  Each block eases them `EASE` = 0.3 of the way to the block's values. A
+  note's first block snaps them, since nothing sounds yet.
+- This supersedes in part ADR 0010's "Modal settings are read only at
+  note-on", for these four. The model page (EXCITE, BODY, ENS, COUPLE,
+  HALO, MODES) stays note-on and unmodulatable.
+- POS on STRING and SYMP shapes the pluck from the first block's
+  modulated value: `KsString::excite` fills the noise at note-on, and
+  `shape` combs and smooths it before the first tick. So VEL and NOTE
+  routes reach it. With no route, this is bit-identical to shaping at
+  note-on. BANK reads POS live.
+- Until the chord table (task 10), SYMP's halo retunes to the eased
+  STRUCTURE whenever it moves.
+- MODES latches at note-on. A sounding bank note keeps its modes, and the
+  voice is billed for them (`ModalEngine::playing_cost`) until it ends.
+
 ## Alternatives considered
 - Keep FDBK and clamp its range below the unity point: its useful range
   would be 0–0.012, and the knob would still be one bad mapping from a
@@ -80,6 +98,9 @@ Task 2 adds fractional tuning (#163):
 - Measured over one second, a high-passed output's mean is set by the
   window's edge samples, up to about 1e-2. The stability test measures DC
   over 10 s.
+- A macro route costs nothing extra on BANK, which already recomputes its
+  filters every block. On SYMP, a moving STRUCTURE retunes the seven halo
+  strings each block until task 10.
 - Modal's goldens and the INIT Modal fixtures move, and are re-recorded
   once, at the end of step A.
 

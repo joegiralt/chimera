@@ -1,13 +1,21 @@
 //! Modal 2's resonators (spec 2026-09-29-modal-2-resonators § Tests).
 mod common;
 
+use chimera_core::addr::{BlockRef, ParamAddr};
 use chimera_core::block::Block;
 use chimera_core::block::ParamKind;
-use chimera_core::dsp::modal::{BankModes, MODAL_SPECS, ModalParams, ResonatorMode, reads};
+use chimera_core::dsp::modal::{
+    BankModes, MODAL_SPECS, ModalEngine, ModalParams, ResonatorMode, reads,
+};
 use chimera_core::dsp::note_to_freq;
+use chimera_core::hw::Cost;
+use chimera_core::modulation::ModState;
+use chimera_core::params::{EngineType, ParamSnapshot};
+use chimera_core::{MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
 use common::{
-    SR, assert_stable, fundamental_hz, play_modal, play_modal_at, play_modal_bare, rms_diff,
+    Rig, SR, assert_stable, clicks, fundamental_hz, play_modal, play_modal_at, play_modal_bare,
+    rms_diff, routes,
 };
 
 const MODES: [ResonatorMode; 4] = [
@@ -166,4 +174,133 @@ fn symp_structure_tunes_only_the_halo() {
         rms_diff(&full[0], &full[1]) > 1e-3,
         "halo: STRUCTURE inaudible"
     );
+}
+
+const MACROS: [chimera_core::block::ParamId; 4] = [
+    ModalParams::STRUCTURE,
+    ModalParams::BRIGHT,
+    ModalParams::DAMP,
+    ModalParams::POS,
+];
+
+/// A strike's first blocks: the click detector skips them (F6).
+const ATTACK_BLOCKS: usize = 8;
+
+/// `p` through a voice: note 48 held `blocks`, plucked again at each of
+/// `plucks`.
+fn play_voice(p: &ParamSnapshot, mods: &ModState, blocks: usize, plucks: &[usize]) -> Vec<f32> {
+    let mut rig = Rig::new(SR);
+    let (note, vel) = (MidiNote::new(48).unwrap(), Velocity::new(100).unwrap());
+    let mut out = Vec::with_capacity(blocks * BLOCK_SIZE);
+    let mut block = [0.0; BLOCK_SIZE];
+    for b in 0..blocks {
+        if b == 0 || plucks.contains(&b) {
+            rig.note_on(note, vel, p);
+        }
+        rig.render(&mut block, p, mods);
+        out.extend_from_slice(&block);
+    }
+    out
+}
+
+/// LFO 1 on each macro, at full depth, moves every live model's sound
+/// and adds no click past a strike. Plucked again just after 1 s, where
+/// the LFO is near +0.5: POS is heard at a pluck, and its ends null alike.
+/// The bank's modes flag the detector by themselves once STRUCTURE
+/// stretches them (F6), so it may flag no more than the macro held at
+/// either end.
+#[test]
+fn macros_are_routable() {
+    let second = SR as usize / BLOCK_SIZE;
+    let pluck = second + second / 60;
+    let strikes = [0, pluck];
+    let flags = |out: &[f32]| {
+        clicks(out)
+            .into_iter()
+            .filter(|&(i, _)| {
+                let b = i / BLOCK_SIZE;
+                !strikes.iter().any(|&s| (s..s + ATTACK_BLOCKS).contains(&b))
+            })
+            .count()
+    };
+    for mode in [
+        ResonatorMode::Modal,
+        ResonatorMode::String,
+        ResonatorMode::Sympathetic,
+    ] {
+        let mut p = ParamSnapshot::for_engine(EngineType::Modal);
+        p.modal.mode = mode;
+        p.lfos[0].rate = 5.0;
+        for id in MACROS {
+            let addr = ParamAddr::new(BlockRef::Modal, id);
+            let [dry, wet] =
+                [0, 127].map(|a| play_voice(&p, &routes(addr, a), 2 * second, &[pluck]));
+            let d = rms_diff(&dry, &wet);
+            assert!(d > 1e-3, "{mode:?} {id:?}: the route changes nothing ({d})");
+            let allowed = if mode == ResonatorMode::Modal {
+                [0.0, 1.0]
+                    .map(|v| {
+                        let mut held = p.clone();
+                        held.modal.set(id, v);
+                        flags(&play_voice(&held, &ModState::new(), 2 * second, &[pluck]))
+                    })
+                    .into_iter()
+                    .max()
+                    .unwrap()
+            } else {
+                0
+            };
+            let n = flags(&wet);
+            assert!(n <= allowed, "{mode:?} {id:?}: {n} clicks, {allowed} held");
+        }
+    }
+}
+
+/// Review Focus 3: MODES latches at note-on. A ringing 48-mode note keeps
+/// its 48 modes and its bill until it ends; the next note plays 16.
+#[test]
+fn modes_change_keeps_sounding_notes_and_their_bill() {
+    let mut p48 = ParamSnapshot::for_engine(EngineType::Modal);
+    p48.modal.mode = ResonatorMode::Modal;
+    p48.modal.modes = BankModes::M48;
+    let mut p16 = p48.clone();
+    p16.modal.modes = BankModes::M16;
+    let mods = ModState::new();
+    let (note, vel) = (MidiNote::new(60).unwrap(), Velocity::new(100).unwrap());
+    let run = |change: bool| {
+        let mut rig = Rig::new(SR);
+        rig.note_on(note, vel, &p48);
+        let mut bits = Vec::new();
+        let mut block = [0.0; BLOCK_SIZE];
+        for b in 0..100 {
+            let p = if change && b >= 50 { &p16 } else { &p48 };
+            rig.render(&mut block, p, &mods);
+            if b >= 50 {
+                bits.extend(block.map(f32::to_bits));
+                assert!(rig.is_active(), "block {b}: the note ended");
+                let want = if change {
+                    Cost(ModalEngine::COST_MODE.0 * 32)
+                } else {
+                    Cost::ZERO
+                };
+                assert_eq!(rig.held_model_extra(p), want, "block {b}");
+            }
+        }
+        (bits, rig)
+    };
+    let (unchanged, _) = run(false);
+    let (changed, mut rig) = run(true);
+    assert!(
+        changed == unchanged,
+        "a MODES edit reached the sounding note"
+    );
+    rig.note_on(note, vel, &p16);
+    let mut block = [0.0; BLOCK_SIZE];
+    rig.render(&mut block, &p16, &mods);
+    assert_eq!(rig.held_model_extra(&p16), Cost::ZERO);
+    // Billed over a STRING edit: exactly the 16-mode bank's cost.
+    let mut string = p16.clone();
+    string.modal.mode = ResonatorMode::String;
+    let over = ModalEngine::cost(&p16.modal).0 - ModalEngine::COST_STRING.0;
+    assert_eq!(rig.held_model_extra(&string), Cost(over), "plays 16 modes");
 }

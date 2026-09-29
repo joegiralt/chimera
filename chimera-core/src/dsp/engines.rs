@@ -239,11 +239,11 @@ impl EngineSlot {
         }
     }
 
-    /// The Modal model the sounding note plays, if Modal is sounding.
-    pub fn modal_playing(&self) -> Option<ResonatorMode> {
+    /// What the sounding Modal note costs, if Modal is sounding.
+    pub fn modal_playing_cost(&self) -> Option<Cost> {
         match self {
             Self::Algo(_) => None,
-            Self::Modal(m) => m.playing(),
+            Self::Modal(m) => m.playing_cost(),
         }
     }
 
