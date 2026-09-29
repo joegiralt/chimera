@@ -1,7 +1,7 @@
 //! The Algo Sound's parameters, stored as bytes (spec § Voice model).
 
 use crate::block::{Block, ParamId, ParamSpec, ValFmt};
-use crate::dsp::algo::algorithms::ALGO_NAMES;
+use crate::dsp::algo::algorithms::{ALGO_NAMES, AlgoId};
 use crate::dsp::algo::env::EnvRates;
 use crate::dsp::algo::plan::OPS;
 use crate::dsp::algo::tx::COARSE_NAMES;
@@ -151,9 +151,26 @@ pub struct AlgoParams {
     pub ops: [AlgoOpParams; OPS],
 }
 
+/// INIT's operators 2–4 (ADR 0049). At 72 T1's stack keeps a strong
+/// fundamental (0.60, beside 0.40 0.34 0.66 for harmonics 2–4); 66–70 all
+/// but cancel it and INIT reads an octave up.
+const INIT_LEVEL: u8 = 72;
+/// Operators routed on INIT: four, so eight INIT voices fit rev V (ADR 0040).
+const INIT_OPS: usize = 4;
+const INIT_A: AlgoId = AlgoId::T1;
+const INIT_B: AlgoId = AlgoId::A1;
+
 impl Default for AlgoParams {
+    /// INIT (ADR 0049): operators 1–4 sounding at ratio 1, so each
+    /// algorithm is its own timbre, and ALG B is A1, so MORPH is live: from
+    /// T1's four-deep stack down to its clean additive twin.
     fn default() -> Self {
-        Self::single(WaveId::W1)
+        let mut p = Self::single(WaveId::W1);
+        for o in &mut p.ops[1..INIT_OPS] {
+            o.level = INIT_LEVEL;
+        }
+        (p.alg_a, p.alg_b) = (INIT_A.get(), INIT_B.get());
+        p
     }
 }
 
@@ -178,8 +195,20 @@ impl AlgoParams {
 }
 
 pub static ALGO_SPECS: [ParamSpec; 4] = [
-    ParamSpec::choice(0, "ALG A", ValFmt::Names(&ALGO_NAMES), 31.0, 0.0),
-    ParamSpec::choice(1, "ALG B", ValFmt::Names(&ALGO_NAMES), 31.0, 0.0),
+    ParamSpec::choice(
+        0,
+        "ALG A",
+        ValFmt::Names(&ALGO_NAMES),
+        31.0,
+        INIT_A.get() as f32,
+    ),
+    ParamSpec::choice(
+        1,
+        "ALG B",
+        ValFmt::Names(&ALGO_NAMES),
+        31.0,
+        INIT_B.get() as f32,
+    ),
     ParamSpec::stepped(2, "MORPH", ValFmt::Uni, 0.0, 127.0, 0.0, true).short("MRPH"),
     ParamSpec::stepped(3, "TRNSP", ValFmt::Signed(24), -24.0, 24.0, 0.0, false),
 ];

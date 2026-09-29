@@ -108,3 +108,21 @@ fn every_modulatable_param_audibly_changes_output() {
     }
     assert_eq!(checked, 17 + 3 * 5 + 1 + 2); // + VCA; PITCH, FINE
 }
+
+/// #188: ENV 2 → MORPH is heard on the INIT Sound, whose ALG B differs
+/// from its ALG A.
+#[test]
+fn env2_into_morph_is_heard_on_init() {
+    let p = ParamSnapshot::for_engine(EngineType::Algo);
+    let morph = ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH);
+    let mut reg = ModDestRegistry::new();
+    reg.add(morph, *b"ALGMORPH").unwrap();
+    let mut ms = ModState::from_registry(&reg, MAX_MOD_SOURCES);
+    let dry = render(&p, &ms);
+    ms.set_amount(ModSource::Env2.index(), 0, 127);
+    let wet = render(&p, &ms);
+    let sq = |s: &mut dyn Iterator<Item = f32>| s.map(|x| x * x).sum::<f32>();
+    let rel =
+        (sq(&mut dry.iter().zip(&wet).map(|(a, b)| a - b)) / sq(&mut dry.iter().copied())).sqrt();
+    assert!(rel > 0.1, "relative RMS change {rel}");
+}

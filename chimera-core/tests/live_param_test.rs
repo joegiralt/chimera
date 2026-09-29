@@ -1,4 +1,5 @@
 mod common;
+use chimera_core::dsp::algo::params::AlgoParams;
 use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::dsp::voice::Voice;
@@ -334,14 +335,16 @@ fn test_volume_mid_note() {
 
 // ── Algo: live parameter tests ──────────────────────────────────────
 
+/// Operator 1 alone, a sine: INIT is routed FM (ADR 0049).
+fn sine(p: &mut ParamSnapshot) {
+    *p = ParamSnapshot::for_engine(EngineType::Algo);
+    p.algo = AlgoParams::single(WaveId::W1);
+}
+
 #[test]
 fn test_algo_wave_change_mid_note() {
-    let (_, _, before, after) = render_with_param_change(
-        |p| *p = ParamSnapshot::for_engine(EngineType::Algo),
-        |p| p.algo.ops[0].wave = WaveId::SAW.get(),
-        8,
-        8,
-    );
+    let (_, _, before, after) =
+        render_with_param_change(sine, |p| p.algo.ops[0].wave = WaveId::SAW.get(), 8, 8);
     let f0 = 261.6;
     let h_before = harmonic_energy(&before, f0);
     let h_after = harmonic_energy(&after, f0);
@@ -353,11 +356,7 @@ fn test_algo_wave_change_mid_note() {
 
 #[test]
 fn test_algo_level_change_mid_note() {
-    let (before_rms, after_rms, _, _) = render_with_param_change(
-        |p| *p = ParamSnapshot::for_engine(EngineType::Algo),
-        |p| p.algo.ops[0].level = 60,
-        8,
-        64,
-    );
+    let (before_rms, after_rms, _, _) =
+        render_with_param_change(sine, |p| p.algo.ops[0].level = 60, 8, 64);
     assert!(after_rms < before_rms * 0.1, "{before_rms} → {after_rms}");
 }

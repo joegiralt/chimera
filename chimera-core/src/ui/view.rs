@@ -4,6 +4,7 @@
 
 use crate::addr::{BlockRef, Blocks, Op, ParamAddr};
 use crate::block::ValFmt;
+use crate::dsp::algo::params::AlgoParams;
 use crate::dsp::filter::FilterKind;
 use crate::dsp::lfo::LfoParams;
 use crate::dsp::modulator::{
@@ -204,6 +205,8 @@ pub fn dimmed(addr: ParamAddr, sound: &Sound) -> bool {
         (BlockRef::Filter, FilterParams::KIND) => FilterKind::BUILT.len() == 1,
         // A single-mode kind shows its mode fixed (spec § 7).
         (BlockRef::Filter, FilterParams::MODE) => sound.params.filter.kind().modes().len() == 1,
+        // MORPH blends ALG A into ALG B: one algorithm, nothing to blend (#188).
+        (BlockRef::Algo, AlgoParams::MORPH) => sound.params.algo.alg_a == sound.params.algo.alg_b,
         _ => false,
     }
 }

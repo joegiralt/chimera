@@ -332,6 +332,7 @@ impl Renderer {
                 display,
                 matrix_state,
                 amount_of(self.anim[MATRIX_AMOUNT_SLOT].current()),
+                inert(f),
             ),
             RegionKind::Nav => {
                 dungeon_map::draw(
@@ -353,6 +354,7 @@ impl Renderer {
                 display,
                 f.matrix,
                 amount_of(self.anim[MATRIX_AMOUNT_SLOT].current()),
+                inert(f),
             );
         }
         if f.def.viz == VizType::AudioStats {
@@ -466,6 +468,11 @@ pub fn look(f: &Frame, i: usize) -> components::Look {
         v if view::is_dimmed(&v, sound) => components::Look::Dimmed,
         _ => components::Look::Live,
     }
+}
+
+/// The matrix's inert columns on the edited Part (`mod_grid::inert_dests`).
+pub fn inert(f: &Frame) -> u16 {
+    crate::ui::mod_grid::inert_dests(f.matrix, &f.parts[f.active_part].sound)
 }
 
 /// Mod-bar amount for cell `i`, if its param is a destination.

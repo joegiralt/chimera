@@ -314,7 +314,7 @@ fn a_wide_matrix_scrolls_with_the_cursor() {
     m.move_col(MAX_DESTS as i8 - 1);
     assert_eq!(m.scroll_x, MAX_DESTS - m.visible_cols());
     let mut fb = Fb::new();
-    draw_grid(&mut fb, &m, m.current_amount());
+    draw_grid(&mut fb, &m, m.current_amount(), 0);
     assert_eq!(fb.oob, 0);
     let (x, y) = cell_origin(m.visible_cols() - 1, 0);
     assert_eq!(
@@ -520,7 +520,7 @@ fn stats_line_renders_at_max_counts_without_overflow() {
         }
     }
     let mut fb = Fb::new();
-    draw_grid(&mut fb, &m, m.current_amount());
+    draw_grid(&mut fb, &m, m.current_amount(), 0);
     assert_eq!(fb.oob, 0);
 }
 
@@ -691,7 +691,7 @@ fn every_route_readout_fits_its_line() {
                 m.set(src.index(), 0, -127);
                 m.sel_row = (0..8).find(|&r| m.row_source(r) == src.index()).unwrap();
                 let mut fb = Fb::new();
-                draw_readout(&mut fb, &m, -127);
+                draw_readout(&mut fb, &m, -127, 0);
                 assert_eq!(fb.oob, 0);
                 let right = (0..theme::SCREEN_W)
                     .rev()
@@ -758,7 +758,7 @@ fn scroll_hint_does_not_overlap_the_fifth_columns_tag() {
     });
     m_tag.num_dests = 5;
     let mut tag_fb = Fb::new();
-    draw_grid(&mut tag_fb, &m_tag, 0);
+    draw_grid(&mut tag_fb, &m_tag, 0, 0);
     let tag_right = (0..theme::SCREEN_W)
         .rev()
         .find(|&x| ink_at(&tag_fb, x))
@@ -768,7 +768,7 @@ fn scroll_hint_does_not_overlap_the_fifth_columns_tag() {
     m_hint.rebuild_sources(&["ENV"]);
     m_hint.num_dests = 6; // more than visible_cols(): the hint shows
     let mut hint_fb = Fb::new();
-    draw_grid(&mut hint_fb, &m_hint, 0);
+    draw_grid(&mut hint_fb, &m_hint, 0, 0);
     let hint_left = (0..theme::SCREEN_W)
         .find(|&x| ink_at(&hint_fb, x))
         .expect("the hint must draw something");
