@@ -43,8 +43,14 @@ beefier tape delay, where the tape character is heard most.
   be judged by ear; the warmth stage later is where that belongs.
 
 ## Consequences
-- The bus loses the tape's 280 cycles per sample on the bench; `FxBus::COST`
-  moves only when a bench reading (`bench-notape`) replaces it.
+- The bus loses the tape: on the bench (2026-09-29, rev V at 480 MHz) BUS
+  reads 1,155 without it (b34a66a) against 1,468 with it (87c2930), so
+  the tape costs 313 cycles per sample at this point (280 on the ADR 0031
+  bench). `FxBus::COST` is 1,160 without `master-tape` and 1,470 with it,
+  each its reading rounded up.
+- Voices: the costliest patch (889) keeps six on rev V and five on rev Y
+  (four on rev Y with the tape); every factory Sound gets at least six on
+  rev V, MORPH PAD seven.
 - AXI: `FxBus` shrinks by the tape's state, 2,536 B (162,216 → 159,680 B);
   `AXI_RESIDENT` follows `size_of::<FxBus>()`.
 - Sound: pair 1 loses the tape's saturation, head bump and roll-off. At
