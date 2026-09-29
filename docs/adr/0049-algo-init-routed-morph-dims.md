@@ -41,31 +41,42 @@ ENV 2 → MORPH could be routed to no effect (#188).
   monotonically from bright to clean.
 - **The output scale is the carrier power:**
   `1 / sqrt(max(1, Σ c·g²))`. Here `c` is each carrier's blended weight
-  (`blend(carrier_a, carrier_b, m)`), and `g` its gain from LEVEL after
-  modulation (`level_gain`), with velocity excluded.
-  - It is computed once per block, from the LEVEL gains the block already
-    has for its mip choice (`morph::carrier_power`, `carrier_norm`).
+  (`blend(carrier_a, carrier_b, m)`), and `g` the gain of its *stored*
+  LEVEL (`LEVEL_GAIN[level]`). No matrix offset and no op VELOCITY go in.
+  - The scale is a property of the patch. It changes only when a stored
+    LEVEL, ALG A/B or MORPH changes, and it ramps across the block as
+    before (`morph::carrier_power`, `carrier_norm`; `engine::stored_gains`).
+  - A route into one carrier's LEVEL, from VEL, an ENV or an LFO, never
+    moves another carrier. A soft note never makes another carrier louder.
   - At unit gains it is ADR 0024's count.
   - `max(1, ·)` means it never boosts.
-  - It is continuous in every gain, so a carrier fading through LEVEL 0
-    moves the scale smoothly.
-  - Velocity is excluded, so a soft note never makes another carrier louder.
+  - It is continuous in the stored LEVEL, so a carrier set down through
+    LEVEL 0 moves the scale smoothly.
   - INIT's loudness spread across the 32 algorithms falls from 9.0 dB (the
     count of sounding carriers, six-operator INIT) to 3.7 dB. It was 7.8 dB
     on the one-sine INIT.
 - **Factory Sounds keep their sound through their data, not code.**
-  - Each Sound's `out.volume` is 0.8 × old / new scale.
+  - TX BASS, TX BRASS and MORPH KEYS: `out.volume` is 0.8 × old / new
+    scale.
+  - TX EPIANO, TX BELL and SAW LEAD reach the SVF, whose integrator states
+    saturate, ahead of `out.volume`. So their carriers' LEVELs drop together
+    in whole steps: 6 steps (4.5 dB) for EPIANO and BELL, 9 steps (6.75 dB)
+    for SAW LEAD. The carrier power falls below 1 and the scale holds at 1,
+    so the SVF sees the old level to within 0.27 dB. `out.volume` then trims
+    the rest. No carrier of theirs has FEEDBACK, and none modulates another
+    operator, so each LEVEL is a pure output gain.
   - SQR BASS feeds DRIVE, so its op 1 LEVEL drops to 95 (−3.0 dB, T1's old
     1 / √2). DRIVE 0.3 is trimmed to 0.29950 to take out LEVEL 95's
     +0.01 dB, so the clipper's input is unchanged.
-  - TX BASS, TX BRASS, SQR BASS and MORPH KEYS then render as before, to
-    about 1e-7.
-  - Four can't match exactly (#192). TX EPIANO, TX BELL and SAW LEAD reach
-    the SVF louder, and its integrator saturation sits before `out.volume`
-    (up to 0.13, 0.83 and 0.54 dB per block).
-  - MORPH PAD's LFO sweeps MORPH, and the old scale followed that sweep
-    (up to 1.06 dB).
-  - `factory_level_test.rs` holds each Sound to its 937b89f render.
+  - Seven of the eight then render as before, to about 1e-7.
+  - MORPH PAD is accepted by ear (#192). Its LFO sweeps MORPH over 0–80,
+    and the old scale followed that sweep: six carriers at A1, one at A17.
+    The new scale holds at 1 (carrier power 0.23), which is exactly the
+    MORPH-tracking loudness this ADR removes. Its volume matches at the
+    base MORPH 40. Over the whole sweep it plays from +1.32 dB (towards
+    MORPH 0) to −1.91 dB (towards 80) against before.
+  - `factory_level_test.rs` holds each Sound to its 937b89f render, and
+    MORPH PAD to that range over the whole sweep.
 - **MORPH dims while ALG A = ALG B.**
   - `view::dimmed` rules it inapplicable. The knob and focus band draw
     dimmed, the encoder is ignored, and MIX+PLUS on it reports
@@ -83,8 +94,13 @@ ENV 2 → MORPH could be routed to no effect (#188).
   It steps the scale 3 dB as a carrier's LEVEL crosses 0. When a velocity
   drives a carrier to 0, it makes the others louder on a soft note. At ratio
   1 it also leaves INIT's loudness spread across algorithms at 9 dB.
-- **Gains that include velocity in the power.** A soft note would then
-  raise the other carriers slightly whenever the power exceeds 1.
+- **Gains after modulation (live LEVEL, velocity included).** This was
+  the second cut. A VEL, ENV or LFO route into one carrier would pump the
+  others: a soft note under VEL → LEVEL made another carrier louder, and an
+  LFO on one carrier's LEVEL swung the others by 3 dB.
+- **Factory compensation with `out.volume` alone.** It sits after the
+  nonlinear SVF, so TX EPIANO, TX BELL and SAW LEAD stayed up to 0.13,
+  0.83 and 0.54 dB off.
 - **ALG B = A17.** In a four-operator INIT, T1 and A17 are the same stack,
   so MORPH would do nothing.
 - **Hide MORPH when A = B.** The page layout would shift under the encoder.
@@ -94,8 +110,10 @@ ENV 2 → MORPH could be routed to no effect (#188).
   sit in phase at one ratio, and 1.55 through REV 0.5 (#193). #190's gain
   staging, a voice-sum trim and a final limiter, is meant to cover it. The
   reverb goldens play a lone sine meanwhile.
-- The four factory Sounds in #192 differ from their old render by up to
-  about 1 dB per block until the owner picks an option there.
+- The stored LEVELs of TX EPIANO, TX BELL, SAW LEAD and SQR BASS change,
+  so the LEVEL page shows new numbers. Their sound is unchanged. MORPH PAD
+  moves −1.91..+1.32 dB over its sweep (#192). A carrier LEVEL at a stored 0
+  but raised by a route takes no share of the scale.
 - INIT's loudness still varies 3.7 dB across algorithms. Its carriers are
   coherent at ratio 1, and the power norm assumes uncorrelated ones.
 - Tests that meant "one sine" build it with `AlgoParams::single(W1)`. The A4
@@ -108,6 +126,7 @@ ENV 2 → MORPH could be routed to no effect (#188).
 Tests: `algo_engine_test.rs` (`init_algorithms_differ`,
 `the_output_scale_is_continuous_as_a_carrier_fades_out`,
 `a_soft_note_never_makes_another_carrier_louder`), `algo_morph_test.rs`,
-`modulatable_test.rs` (`env2_into_morph_is_heard_on_init`),
+`algo_norm_test.rs`, `modulatable_test.rs`
+(`env2_into_morph_is_heard_on_init`),
 `instrument_test.rs` (`eight_init_voices_fit_rev_v`),
 `factory_level_test.rs`, `morph_dim_test.rs`.
