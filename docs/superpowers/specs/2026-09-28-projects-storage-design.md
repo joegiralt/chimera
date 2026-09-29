@@ -346,6 +346,7 @@ Every rung has a one-line footer, and the screen goldens include it:
 - **States.** `Absent`, `Ready(VolumeId)` and `Failed(CardError)`:
   - The card is **mounted per operation**. Every handle is closed on success and on error.
   - Any card error sets `Failed`, which keeps the last `VolumeId`. NO CARD sets `Absent`. A missing or damaged file is a file error and leaves the state alone.
+  - A full card is a file-level condition, not a card fault: the card is healthy and a delete makes room, so `Full` leaves the state alone too, with no re-init.
   - `Failed` or `Absent` becomes `Ready` only after a fresh init and mount.
   - `Absent` forgets the last `VolumeId`, so even the same card put back mounts as new and every cache is rebuilt. This is conservative by design.
   - Each mount compares the volume serial and label with the cached `VolumeId`. On a mismatch, the library index and project list are dropped, and any `Pending` replace re-validates.

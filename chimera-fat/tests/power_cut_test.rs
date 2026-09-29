@@ -379,9 +379,9 @@ fn full_card_keeps_previous_generation() {
         .len() as u32;
     assert!(4_096 / 512 > old + 1, "the padding alone needs more");
 
-    // Through a `Card`: `Full` is the card's state (`CardError::Full`, Task
-    // 10's table), not a device fault: no re-init, and the next operation
-    // mounts the same card and is `Ready` again.
+    // Through a `Card`: a full card is a file-level condition, not a card
+    // fault. It stays `Ready`, nothing re-inits, and generation 2 loads in
+    // the same session.
     let mut s = probed(&disk);
     let mut card = Card::Ready(v);
     let snd = sound(3);
@@ -401,13 +401,7 @@ fn full_card_keeps_previous_generation() {
         })
         .unwrap();
     assert_eq!(out.result, Err(SaveError::Store(StoreError::Full)));
-    assert_eq!(
-        card,
-        Card::Failed {
-            err: CardError::Full,
-            last: Some(v)
-        }
-    );
+    assert_eq!(card, Card::Ready(v), "Full is no card fault");
     assert_eq!(log(&s).reinits.get(), 0, "Full re-inits nothing");
     assert_eq!(free(&disk.inner), (0, 0), "the last free cluster was used");
     assert_safe("full", &disk.inner, &kept, &[]);

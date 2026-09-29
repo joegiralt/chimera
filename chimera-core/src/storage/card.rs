@@ -6,19 +6,21 @@ use chimera_hal::store::{Store, StoreError, Unsupported, VolumeId};
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum CardError {
     Unsupported(Unsupported),
-    Full,
     Timeout,
     VolumeChanged(VolumeId),
     Io,
 }
 
 impl CardError {
-    /// `None` for NO CARD and for file errors (`NotFound`, `Corrupt`).
+    /// `None` for NO CARD and for file-level conditions: `NotFound`,
+    /// `Corrupt`, and `Full`, which leaves a healthy card a delete can make
+    /// room on.
     pub fn from_store(e: StoreError) -> Option<CardError> {
         match e {
-            StoreError::NoCard | StoreError::NotFound | StoreError::Corrupt => None,
+            StoreError::NoCard | StoreError::NotFound | StoreError::Corrupt | StoreError::Full => {
+                None
+            }
             StoreError::Unsupported(u) => Some(CardError::Unsupported(u)),
-            StoreError::Full => Some(CardError::Full),
             StoreError::Timeout => Some(CardError::Timeout),
             StoreError::VolumeChanged(v) => Some(CardError::VolumeChanged(v)),
             StoreError::Io => Some(CardError::Io),
@@ -31,7 +33,6 @@ impl From<CardError> for StoreError {
     fn from(e: CardError) -> StoreError {
         match e {
             CardError::Unsupported(u) => StoreError::Unsupported(u),
-            CardError::Full => StoreError::Full,
             CardError::Timeout => StoreError::Timeout,
             CardError::VolumeChanged(v) => StoreError::VolumeChanged(v),
             CardError::Io => StoreError::Io,
@@ -211,7 +212,7 @@ pub fn after_mount(card: Card, r: Result<VolumeId, StoreError>) -> (Card, Option
 }
 
 /// NO CARD is `Absent`; a card fault is `Failed`, keeping the last volume; a
-/// file error leaves the card alone.
+/// file error or a full card leaves the card alone.
 pub fn after_error(card: Card, e: StoreError) -> Card {
     if e == StoreError::NoCard {
         return Card::Absent;
