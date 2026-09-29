@@ -43,7 +43,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("mixer_sends", 0x650322c12ad0b389),
     ("mixer_fx_delay", 0xd13240ab6a9b4ead),
     ("mixer_fx_reverb", 0x9e3a0671fa320bdf),
-    ("mixer_fx_delay_char", 0xbb2132d7ceb9c620),
+    ("mixer_fx_delay_char", 0x836df9c070860c8b),
     ("mixer_tape", 0x28a0e7569c2009be),
     ("mixer_master", 0xc1981d439df14ddd),
     ("mixer_master_level", 0x7554d112cc792b98),
