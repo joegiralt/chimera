@@ -42,7 +42,7 @@ use core::ptr::addr_of_mut;
 use chimera_hal::BLOCK_SIZE;
 
 use crate::hw::Cost;
-use crate::in_place::{by_value, in_place_enum, uninit_at};
+use crate::in_place::{in_place_enum, uninit_at};
 use rings::{CosineOsc, Svf, stiffness_from_structure};
 use string::{KsString, xorshift_noise};
 
@@ -52,14 +52,31 @@ pub const MAX_MODES: usize = 48;
 
 const NUM_SYMPATHETIC: usize = 7;
 
-/// The resonator bank (`ResonatorMode::Modal`).
+/// The resonator bank (`ResonatorMode::Modal`) and the noise burst that
+/// strikes it.
 struct ModalBank {
     filters: [Svf; MAX_MODES],
     cos_osc: CosineOsc,
     resolution: usize,
+    /// Samples of burst left; the note sounds while any are.
+    burst_remaining: usize,
+    burst_amp: f32,
+    noise_state: u32,
+    /// The burst's one-pole lowpass.
+    burst_lp: f32,
 }
 
-crate::in_place::field_list!(ModalBank => ModalBank { filters, cos_osc, resolution });
+crate::in_place::field_list!(ModalBank => ModalBank {
+    filters, cos_osc, resolution, burst_remaining, burst_amp, noise_state, burst_lp,
+});
+
+/// The bowed string and the bow's force on it, 0 once the bow lifts.
+struct BowedString {
+    string: KsString,
+    force: f32,
+}
+
+crate::in_place::field_list!(BowedString => BowedString { string, force });
 
 /// The main string and the seven it sets ringing.
 struct SympatheticStrings {
@@ -80,7 +97,7 @@ in_place_enum! {
     enum ModelSlot {
         Bank(ModalBank) => rebuild_bank, init_bank;
         String(KsString) => rebuild_string, init_string;
-        Bowed(KsString) => rebuild_bowed, init_bowed;
+        Bowed(BowedString) => rebuild_bowed, init_bowed;
         Sympathetic(SympatheticStrings) => rebuild_sympathetic, init_sympathetic;
     }
 }
@@ -92,8 +109,8 @@ impl ModelSlot {
             ResonatorMode::Modal => unsafe { Self::init_bank(slot, ModalBank::init_in_place) },
             // SAFETY: `KsString::init_in_place` writes every field.
             ResonatorMode::String => unsafe { Self::init_string(slot, KsString::init_in_place) },
-            // SAFETY: `KsString::init_in_place` writes every field.
-            ResonatorMode::Bowed => unsafe { Self::init_bowed(slot, KsString::init_in_place) },
+            // SAFETY: `BowedString::init_in_place` writes every field.
+            ResonatorMode::Bowed => unsafe { Self::init_bowed(slot, BowedString::init_in_place) },
             // SAFETY: `SympatheticStrings::init_in_place` writes every field.
             ResonatorMode::Sympathetic => unsafe {
                 Self::init_sympathetic(slot, SympatheticStrings::init_in_place)
@@ -108,8 +125,8 @@ impl ModelSlot {
             ResonatorMode::Modal => unsafe { self.rebuild_bank(ModalBank::init_in_place) },
             // SAFETY: `KsString::init_in_place` writes every field.
             ResonatorMode::String => unsafe { self.rebuild_string(KsString::init_in_place) },
-            // SAFETY: `KsString::init_in_place` writes every field.
-            ResonatorMode::Bowed => unsafe { self.rebuild_bowed(KsString::init_in_place) },
+            // SAFETY: `BowedString::init_in_place` writes every field.
+            ResonatorMode::Bowed => unsafe { self.rebuild_bowed(BowedString::init_in_place) },
             // SAFETY: `SympatheticStrings::init_in_place` writes every field.
             ResonatorMode::Sympathetic => unsafe {
                 self.rebuild_sympathetic(SympatheticStrings::init_in_place)
@@ -137,19 +154,40 @@ pub struct ModalEngine {
     pitch: f32,
     tuned: f32,
     released: bool, // true after note_off
-    // The bank's noise burst; `exciter_amp` is also Bowed's bow force.
-    exciter_remaining: usize,
-    exciter_amp: f32,
-    noise_state: u32,
-    exciter_lp: f32,
     active: bool,
     silence_counter: u32,
 }
 
 crate::in_place::field_list!(ModalEngine => ModalEngine {
-    model, frequency, pitch, tuned, released, exciter_remaining, exciter_amp, noise_state,
-    exciter_lp, active, silence_counter,
+    model, frequency, pitch, tuned, released, active, silence_counter,
 });
+
+// A `ModalEngine` is its largest model plus the fields every model shares
+// (`frequency`, `pitch`, `tuned`, `released`, `active`, `silence_counter`),
+// never the sum of models. The slot's tag takes one align (`in_place_enum!`).
+const _: () = {
+    use core::mem::{align_of, size_of};
+    let models = [
+        size_of::<ModalBank>(),
+        size_of::<KsString>(),
+        size_of::<BowedString>(),
+        size_of::<SympatheticStrings>(),
+    ];
+    let mut largest = 0;
+    let mut i = 0;
+    while i < models.len() {
+        if models[i] > largest {
+            largest = models[i];
+        }
+        i += 1;
+    }
+    let align = align_of::<ModalEngine>();
+    let shared = size_of::<(f32, f32, f32, bool, bool, u32)>();
+    assert!(
+        size_of::<ModalEngine>()
+            <= (largest.next_multiple_of(align) + align + shared).next_multiple_of(align)
+    );
+};
 
 impl ModalEngine {
     /// Cycles/sample per model (ADR 0013), at the chain's LP24. String is
@@ -189,10 +227,12 @@ impl ModalEngine {
     /// and 9 I-cache misses a block, per voice (2026-09-28). Billed at 12.
     pub const PITCH: Cost = Cost(12);
 
-    /// An idle engine set to play `mode`.
+    /// An idle engine set to play `mode`, by value, through the stack:
+    /// tests only.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn new(mode: ResonatorMode) -> Self {
         // SAFETY: `init_in_place` writes every field of the slot.
-        unsafe { by_value(|slot| Self::init_in_place(slot, mode)) }
+        unsafe { crate::in_place::by_value(|slot| Self::init_in_place(slot, mode)) }
     }
 
     pub fn init_in_place(slot: &mut MaybeUninit<Self>, mode: ResonatorMode) -> &mut Self {
@@ -206,10 +246,6 @@ impl ModalEngine {
             addr_of_mut!((*p).pitch).write(1.0);
             addr_of_mut!((*p).tuned).write(1.0);
             addr_of_mut!((*p).released).write(false);
-            addr_of_mut!((*p).exciter_remaining).write(0);
-            addr_of_mut!((*p).exciter_amp).write(0.0);
-            addr_of_mut!((*p).noise_state).write(0x1234_5678);
-            addr_of_mut!((*p).exciter_lp).write(0.0);
             addr_of_mut!((*p).active).write(false);
             addr_of_mut!((*p).silence_counter).write(0);
             slot.assume_init_mut()
@@ -255,9 +291,9 @@ impl ModalEngine {
                 bank.compute_filters(params, bank_freq);
                 bank.cos_osc.init(params.position);
                 let burst_ms = 2.0 + params.excite * 4.0;
-                self.exciter_remaining = (burst_ms * sample_rate as f32 / 1000.0) as usize;
-                self.exciter_amp = vel * params.excite;
-                self.exciter_lp = 0.0;
+                bank.burst_remaining = (burst_ms * sample_rate as f32 / 1000.0) as usize;
+                bank.burst_amp = vel * params.excite;
+                bank.burst_lp = 0.0;
             }
             ModelSlot::String(string) => {
                 string.set_freq(freq, sample_rate);
@@ -268,12 +304,12 @@ impl ModalEngine {
                     params.position,
                 );
             }
-            ModelSlot::Bowed(string) => {
-                string.set_freq(freq, sample_rate);
-                for s in string.buffer.iter_mut() {
+            ModelSlot::Bowed(b) => {
+                b.string.set_freq(freq, sample_rate);
+                for s in b.string.buffer.iter_mut() {
                     *s = 0.0;
                 }
-                self.exciter_amp = vel * params.bow_force;
+                b.force = vel * params.bow_force;
             }
             ModelSlot::Sympathetic(m) => {
                 // Main string gets excitation
@@ -311,9 +347,8 @@ impl ModalEngine {
         let freq = self.pitched(self.frequency * sample_rate as f32);
         match &mut self.model {
             ModelSlot::Bank(_) => {}
-            ModelSlot::String(string) | ModelSlot::Bowed(string) => {
-                string.set_freq(freq, sample_rate)
-            }
+            ModelSlot::String(string) => string.set_freq(freq, sample_rate),
+            ModelSlot::Bowed(b) => b.string.set_freq(freq, sample_rate),
             ModelSlot::Sympathetic(m) => {
                 m.main.set_freq(freq, sample_rate);
                 m.tune(freq, sample_rate);
@@ -332,12 +367,12 @@ impl ModalEngine {
                     }
                 }
             }
-            ModelSlot::Bowed(string) => {
+            ModelSlot::Bowed(b) => {
                 // Stop the bow — zero exciter, heavily dampen string
-                self.exciter_amp = 0.0;
+                b.force = 0.0;
                 for _ in 0..5 {
-                    for i in 0..string.delay_len {
-                        string.buffer[i] *= 0.2;
+                    for i in 0..b.string.delay_len {
+                        b.string.buffer[i] *= 0.2;
                     }
                 }
             }
@@ -377,31 +412,31 @@ impl ModalEngine {
         let bank_freq = self.pitched(self.frequency);
         self.retune(sample_rate);
 
-        match &mut self.model {
+        // Whether the model is still exciting itself: silent or not, the
+        // note sounds on.
+        let exciting = match &mut self.model {
             ModelSlot::Bank(bank) => {
                 // Recompute filters every block (Rings does this — allows live parameter changes)
                 bank.compute_filters(params, bank_freq);
                 bank.cos_osc.init(params.position);
-                let burst = Burst {
-                    remaining: &mut self.exciter_remaining,
-                    amp: self.exciter_amp,
-                    noise: &mut self.noise_state,
-                    lp: &mut self.exciter_lp,
-                };
-                render_modal(bank, burst, output, &mut max_level)
+                render_modal(bank, output, &mut max_level);
+                bank.burst_remaining > 0
             }
             ModelSlot::String(string) => {
-                render_string(string, output, params, self.released, &mut max_level)
+                render_string(string, output, params, self.released, &mut max_level);
+                false
             }
-            ModelSlot::Bowed(string) => {
-                render_bowed(string, output, params, self.exciter_amp, &mut max_level)
+            ModelSlot::Bowed(b) => {
+                render_bowed(b, output, params, &mut max_level);
+                false
             }
             ModelSlot::Sympathetic(m) => {
-                render_sympathetic(m, output, params, self.released, &mut max_level)
+                render_sympathetic(m, output, params, self.released, &mut max_level);
+                false
             }
-        }
+        };
 
-        if max_level < 0.001 && self.exciter_remaining == 0 {
+        if max_level < 0.001 && !exciting {
             self.silence_counter += 1;
             if self.silence_counter > 10 {
                 self.active = false;
@@ -422,6 +457,10 @@ impl ModalBank {
             addr_of_mut!((*p).filters).write(core::array::from_fn(|_| Svf::new()));
             addr_of_mut!((*p).cos_osc).write(CosineOsc::new());
             addr_of_mut!((*p).resolution).write(0);
+            addr_of_mut!((*p).burst_remaining).write(0);
+            addr_of_mut!((*p).burst_amp).write(0.0);
+            addr_of_mut!((*p).noise_state).write(0x1234_5678);
+            addr_of_mut!((*p).burst_lp).write(0.0);
             slot.assume_init_mut()
         }
     }
@@ -481,6 +520,19 @@ impl ModalBank {
     }
 }
 
+impl BowedString {
+    fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
+        let p = slot.as_mut_ptr();
+        // SAFETY: `p` is valid and unaliased; the string is built in place
+        // and `force` written by value, before `assume_init_mut`.
+        unsafe {
+            KsString::init_in_place(uninit_at(addr_of_mut!((*p).string)));
+            addr_of_mut!((*p).force).write(0.0);
+            slot.assume_init_mut()
+        }
+    }
+}
+
 impl SympatheticStrings {
     fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
         let p = slot.as_mut_ptr();
@@ -505,34 +557,15 @@ impl SympatheticStrings {
     }
 }
 
-/// The bank's noise burst: the engine's exciter fields, lent for a block.
-struct Burst<'a> {
-    remaining: &'a mut usize,
-    amp: f32,
-    noise: &'a mut u32,
-    lp: &'a mut f32,
-}
-
-fn render_modal(
-    bank: &mut ModalBank,
-    burst: Burst<'_>,
-    output: &mut [f32; BLOCK_SIZE],
-    max_level: &mut f32,
-) {
-    let Burst {
-        remaining,
-        amp,
-        noise,
-        lp,
-    } = burst;
+fn render_modal(bank: &mut ModalBank, output: &mut [f32; BLOCK_SIZE], max_level: &mut f32) {
     let num = bank.resolution;
     for s in output.iter_mut() {
-        let excite = if *remaining > 0 {
-            *remaining -= 1;
-            let env = (*remaining as f32 / 200.0).min(1.0);
-            let raw = xorshift_noise(noise) * amp * env;
-            *lp += 0.4 * (raw - *lp);
-            *lp
+        let excite = if bank.burst_remaining > 0 {
+            bank.burst_remaining -= 1;
+            let env = (bank.burst_remaining as f32 / 200.0).min(1.0);
+            let raw = xorshift_noise(&mut bank.noise_state) * bank.burst_amp * env;
+            bank.burst_lp += 0.4 * (raw - bank.burst_lp);
+            bank.burst_lp
         } else {
             0.0
         };
@@ -591,14 +624,13 @@ fn render_string(
     }
 }
 
-/// `exciter_amp` is the bow force: 0 once the bow lifts.
 fn render_bowed(
-    string: &mut KsString,
+    b: &mut BowedString,
     output: &mut [f32; BLOCK_SIZE],
     params: &ModalParams,
-    exciter_amp: f32,
     max_level: &mut f32,
 ) {
+    let (string, exciter_amp) = (&mut b.string, b.force);
     let bow_vel = if exciter_amp > 0.001 {
         params.bow_velocity * 0.3
     } else {
@@ -731,7 +763,8 @@ mod tests {
     fn payload_addr(slot: &ModelSlot) -> *const u8 {
         match slot {
             ModelSlot::Bank(b) => core::ptr::from_ref(b).cast(),
-            ModelSlot::String(s) | ModelSlot::Bowed(s) => core::ptr::from_ref(s).cast(),
+            ModelSlot::String(s) => core::ptr::from_ref(s).cast(),
+            ModelSlot::Bowed(b) => core::ptr::from_ref(b).cast(),
             ModelSlot::Sympathetic(m) => core::ptr::from_ref(m).cast(),
         }
     }
@@ -794,5 +827,68 @@ mod tests {
             );
         }
         assert!(out_b.iter().any(|s| *s != 0.0));
+    }
+
+    const SR: u32 = 48_000;
+
+    fn bank() -> ModalParams {
+        ModalParams {
+            mode: ResonatorMode::Modal,
+            excite: 1.0,
+            ..ModalParams::default()
+        }
+    }
+
+    fn blocks(e: &mut ModalEngine, p: &ModalParams, n: usize) -> std::vec::Vec<u32> {
+        let mut out = [0.0; BLOCK_SIZE];
+        (0..n)
+            .flat_map(|_| {
+                e.render(&mut out, p, SR);
+                out.map(f32::to_bits)
+            })
+            .collect()
+    }
+
+    /// The bank's burst (its noise, its filter) is the bank's own: a Bank
+    /// note after another model plays like the first Bank note ever.
+    #[test]
+    fn a_bank_note_after_another_model_plays_like_the_first() {
+        let (bank, string) = (
+            bank(),
+            ModalParams {
+                mode: ResonatorMode::String,
+                ..ModalParams::default()
+            },
+        );
+        let mut a = ModalEngine::new(ResonatorMode::Modal);
+        a.note_on(57, 100, &bank, SR);
+        blocks(&mut a, &bank, 10);
+        a.note_on(57, 100, &string, SR);
+        blocks(&mut a, &string, 10);
+        a.note_on(60, 90, &bank, SR);
+
+        let mut b = ModalEngine::new(ResonatorMode::Modal);
+        b.note_on(60, 90, &bank, SR);
+        let (second, first) = (blocks(&mut a, &bank, 20), blocks(&mut b, &bank, 20));
+        assert!(second == first, "the second Bank note differs from a first");
+    }
+
+    /// A MODE edit inside the bank's burst ends the burst with the bank:
+    /// the silent note after it goes idle like any other.
+    #[test]
+    fn a_mode_change_mid_burst_still_goes_idle() {
+        let mut e = ModalEngine::new(ResonatorMode::Modal);
+        let bank = bank();
+        e.note_on(57, 100, &bank, SR);
+        blocks(&mut e, &bank, 1);
+        let silent = ModalParams {
+            mode: ResonatorMode::String,
+            excite: 0.0,
+            ..ModalParams::default()
+        };
+        e.note_on(57, 100, &silent, SR);
+        // Idle after 11 silent blocks (`render`'s silence counter).
+        blocks(&mut e, &silent, 12);
+        assert!(!e.is_active());
     }
 }

@@ -85,16 +85,16 @@ enum ModelSlot {
 }
 ```
 
-One variant per `ResonatorMode`. The owner's three kinds of state (bank, single string, sympathetic strings) are the payloads; String and Bowed share a payload type, not a variant.
+One variant per `ResonatorMode`. The owner's three kinds of state (bank, single string, sympathetic strings) are the payloads. Bowed's string carries its bow force (`BowedString`), so String and Bowed share a string, not a payload type.
 
-| `ResonatorMode` | Variant | State | Host bytes |
+| `ResonatorMode` | Variant | State | Host bytes after § 4 |
 |---|---|---|---|
-| Modal | `Bank` | 48 SVFs, cosine osc, resolution | 984 |
+| Modal | `Bank` | 48 SVFs, cosine osc, resolution, noise burst | 984 |
 | String | `String` | 1 string | 2,000 |
-| Bowed | `Bowed` | 1 string | 2,000 |
+| Bowed | `Bowed` | 1 string, bow force | 2,000 |
 | Sympathetic | `Sympathetic` | 8 strings, 7 ratios | 16,032 |
 
-- `ModalEngine` keeps only what every model uses: frequency, pitch, tuned, released, the exciter fields (the bank's burst and Bowed's `exciter_amp`), active and the silence counter. `active_mode` goes: the variant is the mode. `sym_ratios` moves into `SympatheticStrings`.
+- `ModalEngine` keeps only what every model uses: frequency, pitch, tuned, released, active and the silence counter. `active_mode` goes: the variant is the mode. `sym_ratios` moves into `SympatheticStrings`. The exciter state is its model's: the bank's noise burst (remaining, amp, noise, lowpass) lives in `ModalBank` and Bowed's bow force in `BowedString`, so a rebuild starts them fresh, and a MODE change mid-burst can't leave a burst no model counts down (the voice would never go idle). The bank reports its burst to the silence check.
 - `ModalEngine::init_in_place(slot, mode)` builds the shared fields and the one model. `playing()` reads the variant.
 - Each `render_*` takes its own payload: `render_sympathetic(&mut SympatheticStrings, …)`. No model can render another's state.
 - **Sound is unchanged.** Each model's render and note-on code runs exactly as today, on the same state, just held in a variant. Today a MODE edit keeps the old model's state around, but nothing ever reads it: every note-on writes or clears what its model reads (String's `trigger` fills `[..delay_len]`, Bowed clears its whole buffer, Sympathetic clears the seven strings). The only thing that can differ is a noise seed carried over from an earlier note of another model, because a rebuild starts the seeds fresh. No golden covers that case.
