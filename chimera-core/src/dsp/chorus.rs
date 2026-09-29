@@ -6,7 +6,7 @@
 //! Mode II: triangle LFO at 0.863 Hz, depth ~2.3ms
 //! Mode I+II: both lines; each side averages its two taps
 
-use crate::block::{Block, ParamId, ParamSpec, ValFmt, apply_code, identity_code};
+use crate::block::{Block, DiskCode, ParamId, ParamSpec, ValFmt, apply_code};
 use crate::dsp::Stereo;
 use chimera_hal::BLOCK_SIZE;
 use core::mem::MaybeUninit;
@@ -30,6 +30,36 @@ impl ChorusMode {
             1 => ChorusMode::JunoI,
             2 => ChorusMode::JunoII,
             _ => ChorusMode::JunoBoth,
+        }
+    }
+}
+
+impl DiskCode for ChorusMode {
+    fn disk_code(self) -> u8 {
+        match self {
+            ChorusMode::Off => 0,
+            ChorusMode::JunoI => 1,
+            ChorusMode::JunoII => 2,
+            ChorusMode::JunoBoth => 3,
+        }
+    }
+
+    fn disk_ident(self) -> &'static str {
+        match self {
+            ChorusMode::Off => "OFF",
+            ChorusMode::JunoI => "JUNO_I",
+            ChorusMode::JunoII => "JUNO_II",
+            ChorusMode::JunoBoth => "JUNO_BOTH",
+        }
+    }
+
+    fn from_disk_code(c: u8) -> Option<Self> {
+        match c {
+            0 => Some(ChorusMode::Off),
+            1 => Some(ChorusMode::JunoI),
+            2 => Some(ChorusMode::JunoII),
+            3 => Some(ChorusMode::JunoBoth),
+            _ => None,
         }
     }
 }
@@ -105,20 +135,17 @@ impl Block for ChorusParams {
         }
     }
 
-    /// MODE's code is the stored byte.
+    /// MODE's code is `ChorusMode`'s: the byte's meaning to the DSP.
     fn enum_code(&self, id: ParamId) -> Option<u8> {
-        (id == Self::MODE).then_some(self.mode)
+        (id == Self::MODE).then(|| ChorusMode::from_u8(self.mode).disk_code())
     }
 
     fn enum_ident(&self, id: ParamId) -> Option<&'static str> {
-        const MODES: [&str; 4] = ["OFF", "JUNO_I", "JUNO_II", "JUNO_BOTH"];
-        (id == Self::MODE)
-            .then(|| MODES.get(usize::from(self.mode)).copied())
-            .flatten()
+        (id == Self::MODE).then(|| ChorusMode::from_u8(self.mode).disk_ident())
     }
 
     fn set_enum_code(&mut self, id: ParamId, code: u8) -> bool {
-        id == Self::MODE && apply_code(identity_code(&CHORUS_SPECS, id, code), |c| self.mode = c)
+        id == Self::MODE && apply_code(ChorusMode::from_disk_code(code), |m| self.mode = m as u8)
     }
 }
 

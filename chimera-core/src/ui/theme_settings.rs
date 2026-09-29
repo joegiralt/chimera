@@ -16,6 +16,13 @@ use embedded_graphics::prelude::RgbColor;
 use crate::block::{Block, DiskCode, ParamId, ParamSpec, ValFmt, apply_code};
 use crate::ui::theme;
 
+/// BRIGHT's and BLACK's values, by step index (see `DiskCode`).
+const BRIGHT_IDENTS: [&str; 19] = [
+    "10", "15", "20", "25", "30", "35", "40", "45", "50", "55", "60", "65", "70", "75", "80", "85",
+    "90", "95", "100",
+];
+const BLACK_IDENTS: [&str; 7] = ["-2", "-1", "0", "+1", "+2", "+3", "+4"];
+
 /// Backlight duty, percent: 10..=100 in steps of 5.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Bright(u8);
@@ -65,11 +72,7 @@ impl DiskCode for Bright {
     }
 
     fn disk_ident(self) -> &'static str {
-        const IDENTS: [&str; 19] = [
-            "10", "15", "20", "25", "30", "35", "40", "45", "50", "55", "60", "65", "70", "75",
-            "80", "85", "90", "95", "100",
-        ];
-        IDENTS[self.index() as usize]
+        BRIGHT_IDENTS[self.index() as usize]
     }
 
     fn from_disk_code(c: u8) -> Option<Self> {
@@ -315,8 +318,7 @@ impl DiskCode for Black {
     }
 
     fn disk_ident(self) -> &'static str {
-        const IDENTS: [&str; 7] = ["-2", "-1", "0", "+1", "+2", "+3", "+4"];
-        IDENTS[(self.0 - Self::MIN) as usize]
+        BLACK_IDENTS[(self.0 - Self::MIN) as usize]
     }
 
     fn from_disk_code(c: u8) -> Option<Self> {
@@ -426,6 +428,9 @@ const BRIGHT_NAMES: [&str; 19] = [
 const GAMMA_NAMES: [&str; 3] = ["PANEL", "SOFT", "PUNCH"];
 const ACCENT_NAMES: [&str; 5] = ["TEAL", "AMBER", "ROSE", "LIME", "ICE"];
 const BLACK_NAMES: [&str; 7] = ["-2", "-1", "0", "+1", "+2", "+3", "+4"];
+
+const _: () = assert!(BRIGHT_IDENTS.len() == THEME_SPECS[0].max as usize + 1);
+const _: () = assert!(BLACK_IDENTS.len() == THEME_SPECS[3].max as usize + 1);
 
 /// Choices by index: BRIGHT 0..=18 (10..100 %), BLACK 0..=6 (−2..+4). The
 /// defaults are the owner's pick: 70, PUNCH, TEAL, −2.

@@ -31,6 +31,39 @@ impl LfoShape {
     }
 }
 
+impl DiskCode for LfoShape {
+    fn disk_code(self) -> u8 {
+        match self {
+            LfoShape::Sine => 0,
+            LfoShape::Triangle => 1,
+            LfoShape::Saw => 2,
+            LfoShape::Square => 3,
+            LfoShape::Random => 4,
+        }
+    }
+
+    fn disk_ident(self) -> &'static str {
+        match self {
+            LfoShape::Sine => "SINE",
+            LfoShape::Triangle => "TRIANGLE",
+            LfoShape::Saw => "SAW",
+            LfoShape::Square => "SQUARE",
+            LfoShape::Random => "RANDOM",
+        }
+    }
+
+    fn from_disk_code(c: u8) -> Option<Self> {
+        match c {
+            0 => Some(LfoShape::Sine),
+            1 => Some(LfoShape::Triangle),
+            2 => Some(LfoShape::Saw),
+            3 => Some(LfoShape::Square),
+            4 => Some(LfoShape::Random),
+            _ => None,
+        }
+    }
+}
+
 /// LFO parameters.
 #[derive(Clone, Copy, Debug)]
 pub struct LfoParams {
@@ -101,6 +134,11 @@ pub static LFO_SPECS: [ParamSpec; 11] = [
         .ident("SHAPE_B"),
 ];
 
+/// SYNC's values, by the flag's byte (a flag's byte is its meaning).
+const SYNC_IDENTS: [&str; 2] = ["FREE", "RETRIG"];
+const _: () = assert!(SYNC_IDENTS.len() == LFO_SPECS[2].max as usize + 1);
+const _: () = assert!(LfoShape::Random as usize + 1 == LFO_SPECS[1].max as usize + 1);
+
 impl Block for LfoParams {
     fn specs(&self) -> &'static [ParamSpec] {
         &LFO_SPECS
@@ -142,7 +180,8 @@ impl Block for LfoParams {
 
     fn enum_code(&self, id: ParamId) -> Option<u8> {
         match id {
-            Self::SHAPE => Some(self.shape),
+            Self::SHAPE => Some(LfoShape::from_u8(self.shape).disk_code()),
+            // SYNC is a flag: 0 free-runs, 1 retriggers. The byte is the meaning.
             Self::SYNC => Some(self.sync),
             Self::TYPE => Some(self.lfo_type.disk_code()),
             Self::FORM => Some(self.func.lfo_form.disk_code()),
@@ -151,11 +190,9 @@ impl Block for LfoParams {
     }
 
     fn enum_ident(&self, id: ParamId) -> Option<&'static str> {
-        const SHAPES: [&str; 5] = ["SINE", "TRIANGLE", "SAW", "SQUARE", "RANDOM"];
-        const SYNCS: [&str; 2] = ["FREE", "RETRIG"];
         match id {
-            Self::SHAPE => SHAPES.get(usize::from(self.shape)).copied(),
-            Self::SYNC => SYNCS.get(usize::from(self.sync)).copied(),
+            Self::SHAPE => Some(LfoShape::from_u8(self.shape).disk_ident()),
+            Self::SYNC => SYNC_IDENTS.get(usize::from(self.sync)).copied(),
             Self::TYPE => Some(self.lfo_type.disk_ident()),
             Self::FORM => Some(self.func.lfo_form.disk_ident()),
             _ => None,
@@ -164,7 +201,7 @@ impl Block for LfoParams {
 
     fn set_enum_code(&mut self, id: ParamId, code: u8) -> bool {
         match id {
-            Self::SHAPE => apply_code(identity_code(&LFO_SPECS, id, code), |c| self.shape = c),
+            Self::SHAPE => apply_code(LfoShape::from_disk_code(code), |s| self.shape = s as u8),
             Self::SYNC => apply_code(identity_code(&LFO_SPECS, id, code), |c| self.sync = c),
             Self::TYPE => apply_code(LfoType::from_disk_code(code), |t| self.lfo_type = t),
             // An LFO's MODE is always LFO, so FORM is its lfo_form, whatever else is loaded.

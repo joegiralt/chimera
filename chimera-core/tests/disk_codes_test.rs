@@ -1,7 +1,9 @@
 //! Frozen disk codes (ADR 0045): every stored enum's code is permanent.
 
-use chimera_core::addr::{BlockRef, Blocks};
+use chimera_core::addr::{BlockRef, Blocks, Op};
 use chimera_core::block::{Block, ParamId, ValFmt};
+use chimera_core::dsp::algo::algorithms::{ALGO_IDENTS, ALGO_NAMES};
+use chimera_core::dsp::algo::waves::{WAVE_IDENTS, WAVE_NAMES};
 use chimera_core::dsp::fx_bus::FxParams;
 use chimera_core::dsp::modulator::{EnvForm, EnvSlot, FuncMode, LfoForm};
 use chimera_core::modulation::ModSource;
@@ -164,17 +166,54 @@ fn table_matches_golden() {
     }
 }
 
-/// Idents are one token, and a param's is its own within its block.
+fn is_token(i: &str) -> bool {
+    !i.is_empty() && !i.contains([' ', '#'])
+}
+
+/// Idents are one token, a param's is its own within its block, and so is
+/// each value's within its param.
 #[test]
 fn idents_are_tokens_and_unique() {
     for (b, _) in stored() {
         let mut seen: Vec<&str> = Vec::new();
+        let mut bank = Bank::new();
         for a in ValidAddr::of_block(b) {
-            let i = a.spec().ident;
-            assert!(!i.is_empty() && !i.contains([' ', '#']), "{b:?} {i:?}");
-            assert!(!seen.contains(&i), "{b:?} repeats {i}");
-            seen.push(i);
+            let s = a.spec();
+            assert!(is_token(s.ident), "{b:?} {:?}", s.ident);
+            assert!(!seen.contains(&s.ident), "{b:?} repeats {}", s.ident);
+            seen.push(s.ident);
+            if !a.coded() {
+                continue;
+            }
+            let mut values: Vec<&str> = Vec::new();
+            for v in 0..=s.max as u8 {
+                let blk = bank.block(b);
+                blk.set(s.id, f32::from(v));
+                let i = blk.enum_ident(s.id).expect("an Enum has an ident");
+                assert!(is_token(i), "{b:?} {} value {v}: {i:?}", s.ident);
+                assert!(!values.contains(&i), "{b:?} {} repeats {i}", s.ident);
+                values.push(i);
+            }
         }
+    }
+}
+
+/// WAVE and ALG's idents are their own literals, one per table entry, not the
+/// label tables the UI shows.
+#[test]
+fn wave_and_algo_idents_are_their_own_tables() {
+    assert_eq!(WAVE_IDENTS.len(), WAVE_NAMES.len());
+    assert_eq!(ALGO_IDENTS.len(), ALGO_NAMES.len());
+    let mut bank = Bank::new();
+    for (i, want) in WAVE_IDENTS.iter().enumerate() {
+        let blk = bank.block(BlockRef::AlgoOp(Op::A));
+        blk.set(ParamId(0), i as f32);
+        assert_eq!(blk.enum_ident(ParamId(0)), Some(*want));
+    }
+    for (i, want) in ALGO_IDENTS.iter().enumerate() {
+        let blk = bank.block(BlockRef::Algo);
+        blk.set(ParamId(1), i as f32);
+        assert_eq!(blk.enum_ident(ParamId(1)), Some(*want));
     }
 }
 
