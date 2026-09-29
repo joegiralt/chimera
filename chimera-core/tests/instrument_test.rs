@@ -6,6 +6,8 @@ mod common;
 use common::{SR, peak};
 
 use chimera_core::dsp::Stereo;
+use chimera_core::dsp::algo::params::AlgoParams;
+use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::chorus::ChorusParams;
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus};
 use chimera_core::dsp::ring::{first_reflection, size_step};
@@ -470,8 +472,16 @@ fn two_parts() -> Vec<f32> {
     render_perf(&perf, &[(0, 60), (1, 67)], 200)
 }
 
-fn reverb_send(send: f32) -> Vec<f32> {
+/// Part 1 on a lone sine: the reverb scenes lock the FX, not INIT's
+/// voicing (routed INIT's tail through this reverb peaks at 1.11).
+fn sine_perf() -> Performance {
     let mut perf = Performance::new();
+    perf.parts[0].sound.params.algo = AlgoParams::single(WaveId::W1);
+    perf
+}
+
+fn reverb_send(send: f32) -> Vec<f32> {
+    let mut perf = sine_perf();
     perf.fx.reverb.mix = 0.5;
     perf.fx.reverb.time = 0.7;
     perf.parts[0].mix.sends[2] = send;
@@ -592,8 +602,8 @@ fn the_costliest_patch_plays_six_voices_on_rev_v() {
 /// Recorded when the instrument path landed (plan Task 12). Re-record only
 /// for an intended sound change (`common::golden`).
 const GOLDENS: &[(&str, u64)] = &[
-    ("poly_chord", 0x16b393c15f7e5ba9), // re-recorded: the default Sound is Algo
-    ("two_parts_two_pairs", 0xa043a77a5592b5cb), // re-recorded: part 1 is Algo
+    ("poly_chord", 0xd51f8a580dcd63c1), // re-recorded: INIT is routed FM (ADR 0049)
+    ("two_parts_two_pairs", 0xa1e63d9bd732a82f), // re-recorded: INIT is routed FM (ADR 0049)
     ("reverb_send_off", 0xf40c677a4633ad69), // re-recorded: the default Sound is Algo
     ("reverb_send_on", 0x5e7b5f6ed1eedd52), // re-recorded: the reverb ring (FX diet)
     ("six_voice_chord", 0x639319f0ab86499d), // recorded after the Algo cost was measured
@@ -639,7 +649,7 @@ fn golden_scenes_do_what_they_say() {
     assert_ne!(fnv1a(&dry), fnv1a(&wet));
     assert_eq!(
         fnv1a(&dry),
-        fnv1a(&render_perf(&Performance::new(), &[(0, 60)], 300))
+        fnv1a(&render_perf(&sine_perf(), &[(0, 60)], 300))
     );
 }
 
@@ -666,7 +676,7 @@ fn sound_change_mid_chord_stays_in_budget() {
     use chimera_core::params::{EngineType, ParamSnapshot};
     let budget = SampleBudget::for_cpu(CPU_HZ_REV_V);
     let mut rig = Rig::rev_v();
-    let mut shared = AudioShared::default();
+    let mut shared = sine_shared();
     for n in 0..MAX_VOICES as u8 {
         rig.inst.handle(on(0, 60 + n), &shared);
     }
@@ -703,11 +713,19 @@ fn sound_change_mid_chord_stays_in_budget() {
             )));
 }
 
-/// Blocks after a lone note-off (note 60, default Sound) until the voice's
+/// Part 1 on a lone sine, cheap enough that a chord fills the pool at rev
+/// V (eight routed INITs do not fit its budget).
+fn sine_shared() -> AudioShared {
+    let mut shared = AudioShared::default();
+    shared.parts[0].params.algo = AlgoParams::single(WaveId::W1);
+    shared
+}
+
+/// Blocks after a lone note-off (note 60, a lone sine) until the voice's
 /// engine goes quiet and the allocator frees it.
 fn blocks_until_free() -> usize {
     let mut rig = Rig::new();
-    let shared = AudioShared::default();
+    let shared = sine_shared();
     rig.inst.handle(on(0, 60), &shared);
     for _ in 0..20 {
         rig.render(&shared);
@@ -734,7 +752,7 @@ fn blocks_until_free() -> usize {
 fn stealing_a_releasing_voice_does_not_free_the_new_note() {
     let n = blocks_until_free();
     assert!(n > 2);
-    let mut shared = AudioShared::default();
+    let mut shared = sine_shared();
     shared.parts[1].params = ParamSnapshot::for_engine(EngineType::Modal);
     for (after_off, held) in [n - 2, n - 1, n, n + 1]
         .into_iter()

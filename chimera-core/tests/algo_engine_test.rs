@@ -8,7 +8,7 @@ use chimera_core::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use chimera_core::dsp::algo::waves::{WaveId, mip_step};
 use chimera_core::{MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
-use common::{SR, peak};
+use common::{SR, peak, period_hz};
 
 fn render_with(
     p: &AlgoParams,
@@ -71,14 +71,6 @@ fn rms_db(s: &[f32]) -> f64 {
     10.0 * (s.iter().map(|x| (*x as f64).powi(2)).sum::<f64>() / s.len() as f64).log10()
 }
 
-fn hz(s: &[f32]) -> f64 {
-    let ups: Vec<f64> = (1..s.len())
-        .filter(|&i| s[i - 1] < 0.0 && s[i] >= 0.0)
-        .map(|i| (i - 1) as f64 + (-s[i - 1] as f64) / ((s[i] - s[i - 1]) as f64))
-        .collect();
-    (ups.len() - 1) as f64 * SR as f64 / (ups[ups.len() - 1] - ups[0])
-}
-
 fn same_bits(a: &[f32], b: &[f32]) -> bool {
     a.iter().zip(b).all(|(x, y)| x.to_bits() == y.to_bits())
 }
@@ -100,14 +92,14 @@ fn jumps(out: &[f32]) -> (f32, f32) {
 #[test]
 fn the_init_patch_plays_a4_within_a_cent() {
     let out = render(&AlgoParams::default(), 69, 750);
-    let cents = 1200.0 * (hz(&out[4800..]) / 440.0).log2();
+    let cents = 1200.0 * (period_hz(&out[4800..]) / 440.0).log2();
     assert!(cents.abs() < 1.0, "{cents} cents");
     assert!(peak(&out) <= 1.0);
 }
 
 #[test]
 fn velocity_sensitivity_lowers_the_level() {
-    let mut p = AlgoParams::default();
+    let mut p = AlgoParams::single(WaveId::W1);
     p.ops[0].velocity = 7;
     let loud = rms_db(&render_with(&p, 60, 127, 50, |_, _| {})[640..]);
     let soft = rms_db(&render_with(&p, 60, 1, 50, |_, _| {})[640..]);
@@ -264,7 +256,7 @@ fn the_highest_note_and_ratio_stay_finite() {
 
 #[test]
 fn a_release_ends_the_voice_and_a_silent_carrier_does_not_hold_it() {
-    let mut p = AlgoParams::default();
+    let mut p = AlgoParams::single(WaveId::W1);
     p.ops[4].rr = 1; // operator 5 is a T1 carrier at LEVEL 0
     let mut e = AlgoEngine::new();
     e.note_on(MidiNote::A4, Velocity::DEFAULT, &p, SR);
@@ -460,7 +452,7 @@ fn live_values_take_offsets_by_the_adr_0010_formula_and_clamp() {
     use chimera_core::params::FilterParams;
     let morph = ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH);
     let level = |op| ParamAddr::new(BlockRef::AlgoOp(op), AlgoOpParams::LEVEL);
-    let mut live = AlgoLive::from_params(&AlgoParams::default());
+    let mut live = AlgoLive::from_params(&AlgoParams::single(WaveId::W1));
     assert!(live.offset(morph, 0.5));
     assert_eq!(live.morph, 63.5);
     assert!(live.offset(morph, 2.0));
@@ -491,4 +483,44 @@ fn a_lone_carrier_is_equally_loud_under_every_algorithm() {
     for (i, l) in level.iter().enumerate() {
         assert!((l - level[0]).abs() < 0.05, "alg {i}: {level:?}");
     }
+}
+
+/// Magnitude-weighted mean harmonic of `s`, a tone at `f0`: Goertzel at
+/// each harmonic below Nyquist, under a Hann window.
+fn centroid(s: &[f32], f0: f64) -> f64 {
+    let n = s.len() as f64;
+    let (mut num, mut den) = (0.0, 0.0);
+    for k in 1..=(SR as f64 / 2.0 / f0) as usize {
+        let w = core::f64::consts::TAU * f0 * k as f64 / SR as f64;
+        let (mut re, mut im) = (0.0, 0.0);
+        for (i, &x) in s.iter().enumerate() {
+            let h = 0.5 - 0.5 * (core::f64::consts::TAU * i as f64 / n).cos();
+            re += x as f64 * h * (w * i as f64).cos();
+            im += x as f64 * h * (w * i as f64).sin();
+        }
+        let m = re.hypot(im);
+        (num, den) = (num + k as f64 * m, den + m);
+    }
+    num / den
+}
+
+/// #189: INIT is routed FM, so each algorithm is its own timbre.
+#[test]
+fn init_algorithms_differ() {
+    let c: Vec<f64> = (0..ALGO_COUNT as u8)
+        .map(|a| {
+            let p = AlgoParams {
+                alg_a: a,
+                alg_b: a,
+                ..AlgoParams::default()
+            };
+            centroid(&render(&p, 57, 7200 / BLOCK_SIZE + 1)[2400..7200], 220.0)
+        })
+        .collect();
+    let (lo, hi) = c
+        .iter()
+        .fold((f64::MAX, 0.0f64), |(l, h), &x| (l.min(x), h.max(x)));
+    assert!(hi / lo > 5.0, "centroids {lo:.2}..{hi:.2} × f0: {c:.2?}");
+    let (t1, a1) = (c[AlgoId::T1.get() as usize], c[AlgoId::A1.get() as usize]);
+    assert!(t1 - a1 > 2.0, "T1 {t1:.2}, A1 {a1:.2} × f0");
 }

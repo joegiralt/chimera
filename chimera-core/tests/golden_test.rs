@@ -34,13 +34,14 @@ const GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
     ),
     // Re-recorded, every Algo case but the morphs: silent carriers take no
     // share of the output (#189), a pure gain before the filter.
+    // INIT, LFO CUTOFF and the Modal switch again: INIT is routed FM (ADR 0049).
     // Recorded after the Algo sanity gate (ADR 0011).
     (
         "algo_init",
         (
-            0xaedfdb84c18f4460,
+            0xde8a72f6cae976e7,
             [
-                975600963, 1048072768, 1061992262, 3169663816, 3208503238, 3208476688, 3123865609,
+                975759426, 3204829857, 1053061536, 1045082777, 3201491096, 3202226391, 3121230836,
                 0,
             ],
         ),
@@ -49,9 +50,9 @@ const GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
     (
         "algo_lfo_cutoff",
         (
-            0xfd06c2bb8cc722a1,
+            0x6febb404a729912d,
             [
-                975600963, 1048072768, 1061988995, 3169663816, 3208503238, 3208476688, 3123766617,
+                975759426, 3204829857, 1053252594, 1045082776, 3201491096, 3202226391, 3121153935,
                 0,
             ],
         ),
@@ -160,9 +161,9 @@ const GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
     (
         "algo_to_modal_switch",
         (
-            0x5c20092c99ee200b,
+            0xd2c6bd5310d0f2de,
             [
-                975600963, 1048072768, 1061992262, 3198051069, 3178790723, 3188171051, 3137935627,
+                975759426, 3204829857, 1053061536, 3198051069, 3178790723, 3188171051, 3137935627,
                 3125743219,
             ],
         ),
