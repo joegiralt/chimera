@@ -65,7 +65,7 @@ pub(crate) use field_list;
 // Payloads must have no drop glue: a rebuild overwrites the old one.
 //
 // The grammar is narrow on purpose: at most one generic parameter with a
-// single path bound (`<S: Store>`), and tuple variants of one payload each.
+// single path bound (`<T: Copy>`), and tuple variants of one payload each.
 macro_rules! in_place_enum {
     (
         $(#[$meta:meta])*

@@ -11,26 +11,35 @@ use common::*;
 
 /// (case name, FNV-1a 64 over every sample's bits, sample bits at SPOT_IDX).
 const GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
-    // Re-recorded: Modal strings stored as 16-bit block float (exclusive-state spec § 4).
     (
         "modal_init",
         (
-            0x1e64209d8d2cbc05,
+            0x90f1197c153d0b05,
             [
-                3146802812, 3183276482, 3195875405, 1063217477, 3191746008, 3172523726, 993931707,
-                1000702696,
+                3146805428, 3183273506, 3195882399, 1063217482, 3191764060, 3172592491, 993906163,
+                1000698095,
             ],
         ),
     ),
     // Re-recorded: CUTOFF routes in octaves, g ramped per block (filter-routing spec § 3).
-    // Re-recorded: Modal strings stored as 16-bit block float (exclusive-state spec § 4).
     (
         "modal_lfo_cutoff",
         (
-            0x17519e94203abdb7,
+            0xe9e4fe3dda9b0262,
             [
-                3146802812, 3183276482, 3198004599, 1063217477, 3191746008, 3172523726, 992235376,
-                3142405389,
+                3146805428, 3183273506, 3198007719, 1063217482, 3191764060, 3172592491, 992207671,
+                3142402426,
+            ],
+        ),
+    ),
+    // Recorded: pins Sympathetic before its set moves to the pool (exclusive-state spec § 4.8).
+    (
+        "modal_sympathetic",
+        (
+            0x4bb5969650e6f28d,
+            [
+                3146803683, 3183282215, 3195097727, 1061213380, 3181792418, 1025081920, 1035423354,
+                1043506943,
             ],
         ),
     ),
@@ -160,15 +169,13 @@ const GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
         ),
     ),
     // Re-recorded: the switch fades Algo out, then Modal starts (#33 M6).
-    // Re-recorded: its Algo half is ADR 0049's INIT and carrier norm.
-    // Re-recorded: Modal strings stored as 16-bit block float (exclusive-state spec § 4).
     (
         "algo_to_modal_switch",
         (
-            0x0ded25e9ac96bb51,
+            0x501ad70c947a9c4d,
             [
-                979028267, 3207916546, 1058702061, 3198050161, 3178773159, 3188167929, 3137913587,
-                3125729912,
+                979028267, 3207916546, 1058702061, 3198051069, 3178790723, 3188171051, 3137935627,
+                3125743219,
             ],
         ),
     ),
