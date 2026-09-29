@@ -93,11 +93,10 @@ fn from_store_table() {
         Unsupported::BadBootSector,
         Unsupported::FatNotMirrored,
     ];
-    for e in [S::NoCard, S::NotFound, S::Corrupt] {
+    for e in [S::NoCard, S::NotFound, S::Corrupt, S::Full] {
         assert_eq!(CardError::from_store(e), None, "{e:?}");
     }
     let mut card = vec![
-        (S::Full, CardError::Full),
         (S::Timeout, CardError::Timeout),
         (S::Io, CardError::Io),
         (S::VolumeChanged(vol(9)), CardError::VolumeChanged(vol(9))),
