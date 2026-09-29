@@ -11,22 +11,6 @@ use u8g2_fonts::types::VerticalPosition;
 use crate::storage::{Exit, SyncError};
 use crate::ui::{draw, theme};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BusyLabel {
-    /// Reading the card (boot).
-    Busy,
-    Saving,
-}
-
-impl BusyLabel {
-    fn text(self) -> &'static str {
-        match self {
-            BusyLabel::Busy => "BUSY",
-            BusyLabel::Saving => "SAVING",
-        }
-    }
-}
-
 const BOX_W: i32 = 120;
 const BOX_H: i32 = 40;
 /// Ground around the panel, so it reads over any page.
@@ -51,9 +35,10 @@ const MAX_INK: i32 = theme::SCREEN_W - 2 * (EDGE + PAD);
 /// Baseline to baseline, when a message takes two lines.
 const LINE_PITCH: i32 = 14;
 
-/// Draws the overlay and returns the band to flush, rows `y0..y1`.
-pub fn draw_busy<D: DrawTarget<Color = Rgb565>>(d: &mut D, label: BusyLabel) -> (u16, u16) {
-    draw_band(d, label.text())
+/// Draws BUSY (reading the card at boot) and returns the band to flush,
+/// rows `y0..y1`.
+pub fn draw_busy<D: DrawTarget<Color = Rgb565>>(d: &mut D) -> (u16, u16) {
+    draw_band(d, "BUSY")
 }
 
 /// Draws a toast's text in the overlay's box, widened to fit it, on two
@@ -145,10 +130,14 @@ pub enum ToastStep {
 }
 
 /// The toast on screen and its time left. Counted in milliseconds the shell
-/// measures, not in frames: the UI loop has no fixed rate.
+/// measures, not in frames: the UI loop has no fixed rate. Its time starts
+/// when it is shown, so the step spanning the card work that made it, which
+/// can take seconds, doesn't count.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ToastTimer {
     on: Option<Toast>,
+    /// Shown since the last step: that step's time predates it.
+    fresh: bool,
     ended: bool,
 }
 
@@ -156,12 +145,14 @@ impl ToastTimer {
     pub const fn new() -> Self {
         Self {
             on: None,
+            fresh: false,
             ended: false,
         }
     }
 
     pub fn show(&mut self, t: Toast) {
         self.on = Some(t);
+        self.fresh = true;
         self.ended = false;
     }
 
@@ -172,6 +163,11 @@ impl ToastTimer {
 
     /// Once a frame: `elapsed_ms` since the last.
     pub fn step(&mut self, elapsed_ms: u32) -> ToastStep {
+        let elapsed_ms = if core::mem::take(&mut self.fresh) {
+            0
+        } else {
+            elapsed_ms
+        };
         match &mut self.on {
             Some(t) if t.ms > elapsed_ms => {
                 t.ms -= elapsed_ms;

@@ -95,6 +95,9 @@ pub enum StoreError {
     NoCard,
     Unsupported(Unsupported),
     NotFound,
+    /// No free cluster for the file: a file-level condition, not a card
+    /// fault. The card stays usable (a delete makes room) and nothing
+    /// re-inits.
     Full,
     Timeout,
     /// The card was swapped since `mount`; carries the id now in the slot.

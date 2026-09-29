@@ -223,7 +223,7 @@ fn synth(board: Board) -> ! {
     use chimera_core::clock_plan::pll3_for;
     use chimera_core::hw::SampleBudget;
     use chimera_core::storage::{Card, SystemSync};
-    use chimera_core::ui::busy::{BusyLabel, ToastStep, draw_busy, draw_toast};
+    use chimera_core::ui::busy::{ToastStep, draw_busy, draw_toast};
     use chimera_core::ui::perf::PerfTracker;
     use chimera_hal::ChimeraDisplay;
     use controls::Stm32Controls;
@@ -252,11 +252,13 @@ fn synth(board: Board) -> ! {
     // Boot step 1: SYSTEM behind BUSY, then its theme. Card work runs only
     // here and in the UI loop, never on the audio path, and every card
     // path is bounded, so it can run before the watchdog starts.
-    draw_busy(&mut display, BusyLabel::Busy);
+    draw_busy(&mut display);
     display.flush();
     let sd = sd::init(sd, &mut cp.DCB, &mut cp.DWT, &clocks, clk.cpu_hz);
     let store = sd::take_store(sd).expect("store taken once");
     let mut card = Card::new();
+    // Why the defaults applied is not shown yet:
+    // https://github.com/joegiralt/chimera/issues/197
     let (mut sync, mut settings, _) = SystemSync::boot(&mut card, store);
     ui.set_theme(settings.theme);
     apply_theme(settings.theme, &mut theme, &mut backlight, &mut display);
@@ -320,6 +322,7 @@ fn synth(board: Board) -> ! {
             s.stack_used = probe::stack_used();
             s
         });
+        // Read after the card work; the toast's first step ignores it.
         let now = controls::ticks();
         let elapsed_ms = now.wrapping_sub(last_tick) * 1_000 / controls::CONTROLS_HZ;
         last_tick = now;

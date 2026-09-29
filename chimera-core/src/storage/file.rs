@@ -427,7 +427,10 @@ pub fn check_file<S: Store, C: Check>(
 }
 
 /// The side's framing only: its kind, header and CRC, and the
-/// must-understand bit, which the framer enforces.
+/// must-understand bit, which the framer enforces. This is not how a save
+/// or a delete judges a side: they run the load's own `Check` (`check_file`),
+/// so a side a load rejects is never kept over the one it loads.
+#[doc(hidden)]
 pub fn check_frame<S: Store>(
     s: &mut S,
     r: &Ready,

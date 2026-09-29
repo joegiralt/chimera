@@ -8,7 +8,7 @@ mod store;
 use chimera_core::scope::scope_buffer;
 use chimera_core::storage::{Card, SystemSync};
 use chimera_core::ui::UiState;
-use chimera_core::ui::busy::{BusyLabel, ToastStep, draw_busy, draw_toast};
+use chimera_core::ui::busy::{ToastStep, draw_busy, draw_toast};
 use chimera_core::ui::perf::PerfTracker;
 use chimera_hal::{ChimeraDisplay, MidiChannel, MidiNote, Velocity};
 use controls::DesktopControls;
@@ -40,10 +40,12 @@ fn main() {
     let mut ui = UiState::new();
 
     // Boot step 1: SYSTEM behind BUSY, then its theme.
-    draw_busy(&mut display, BusyLabel::Busy);
+    draw_busy(&mut display);
     display.flush();
     let mut store = DirStore::new(card_dir());
     let mut card = Card::new();
+    // Why the defaults applied is not shown yet:
+    // https://github.com/joegiralt/chimera/issues/197
     let (mut sync, mut settings, _) = SystemSync::boot(&mut card, &mut store);
     ui.set_theme(settings.theme);
     let mut perf = PerfTracker::new();
@@ -52,6 +54,8 @@ fn main() {
     let mut current_note: Option<(MidiChannel, MidiNote)> = None;
     let mut octave: i8 = 0; // -2 to +2
     let mut frame_start = Instant::now();
+    // The toast's clock, read after the card work, as the firmware's is.
+    let mut toast_at = Instant::now();
 
     while display.is_open() {
         let now = Instant::now();
@@ -105,7 +109,10 @@ fn main() {
         audio.update(&ui.performance);
 
         ui.render_with_scope(&mut display, &perf.stats, scope_r.read());
-        if let ToastStep::Show(text) = ui.step_toast(frame_us / 1_000) {
+        let now = Instant::now();
+        let toast_ms = now.duration_since(toast_at).as_millis() as u32;
+        toast_at = now;
+        if let ToastStep::Show(text) = ui.step_toast(toast_ms) {
             draw_toast(&mut display, text);
         }
 

@@ -51,7 +51,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("system", 0xbadd5e55da36c80d),
     ("system_theme", 0x6f46ed28ddb10559),
     ("system_audio", 0x281985b580ac2fb1),
-    ("busy_saving", 0xc66240f665a10644),
+    ("busy", 0x198544cd36863145),
     ("toast_saved", 0xe344dd99a47d0dad),
     ("toast_exfat", 0xfc0cb3b4feb1a1b5),
 ];
@@ -78,12 +78,11 @@ fn no_screen_draws_outside_240x320() {
     }
 }
 
-/// BUSY, SAVING and every toast draw only inside the band they report,
+/// BUSY and every toast draw only inside the band they report,
 /// which the shell flushes, and draw something in every row of it.
 #[test]
 fn busy_draws_only_its_band() {
     use chimera_core::storage::FileError;
-    use chimera_core::ui::busy::BusyLabel;
     use chimera_hal::store::{StoreError, Unsupported};
     let messages = [
         StoreError::NoCard,
@@ -113,12 +112,7 @@ fn busy_draws_only_its_band() {
         ]
         .map(FileError::message),
     );
-    let overlays = [
-        Overlay::Busy(BusyLabel::Busy),
-        Overlay::Busy(BusyLabel::Saving),
-    ]
-    .into_iter()
-    .chain(
+    let overlays = [Overlay::Busy].into_iter().chain(
         core::iter::once("SAVED")
             .chain(messages)
             .map(Overlay::Toast),
