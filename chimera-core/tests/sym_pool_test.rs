@@ -790,14 +790,19 @@ fn short_sym(s: &mut Stage, parts: usize) {
 /// Four Parts on the short Sympathetic Sound, each having played `last`
 /// once and gone idle, so each slot's lines are dirty to `last`'s loops.
 fn after(last: u8) -> Stage {
+    after_each([last; 4])
+}
+
+/// As `after`, Part `i` (and so slot `i`) having played `last[i]`.
+fn after_each(last: [u8; 4]) -> Stage {
     let mut s = Stage::new(&vec![(sym(), PartMode::Poly); 4]);
     short_sym(&mut s, 4);
-    for part in 0..4 {
-        s.on(part, last);
+    for (part, &n) in last.iter().enumerate() {
+        s.on(part, n);
     }
     s.block();
-    for part in 0..4 {
-        s.off(part, last);
+    for (part, &n) in last.iter().enumerate() {
+        s.off(part, n);
     }
     s.until_idle(50);
     let _ = take_cleared_bytes();
@@ -892,5 +897,63 @@ fn a_spread_chord_plays_each_note_as_alone() {
             max_step(&samples(bus)) <= max_step(&alone),
             "part {part}: a click at its delayed start"
         );
+    }
+}
+
+/// The pool full, a note on Part 2 waits for Part 3's fade on its voice;
+/// then Part 2 becomes Sympathetic. `restart_switched` passes that voice
+/// by (it sounds Part 3), so the note is placed when it starts: it steals
+/// the oldest slot and sounds, or is counted. It never sits booked, held
+/// and silent.
+#[test]
+fn a_note_waiting_across_a_switch_to_sympathetic_is_placed() {
+    let mut s = Stage::new(&[
+        (sym(), PartMode::Poly),
+        (modal(ResonatorMode::String), PartMode::Poly),
+        (modal(ResonatorMode::String), PartMode::Poly),
+    ]);
+    // Part 3's four notes, the oldest, then Part 1's four Sympathetic:
+    // eight voices, the pool full.
+    for n in [36, 40, 43, 47] {
+        s.on(2, n);
+    }
+    s.block();
+    for n in [60, 64, 67, 71] {
+        s.on(0, n);
+    }
+    s.block();
+    assert_eq!(s.inst.sym().lent(), SYM_SLOTS);
+    s.on(1, 50);
+    let v = s.voice_of(1, 50);
+    assert!(
+        s.inst.active()[v],
+        "50 waits for Part 3's fade on its voice"
+    );
+    s.shared.parts[1].params = sym();
+    let mut sounded = false;
+    for _ in 0..12 {
+        s.block();
+        sounded |= peak(s.inst.part_bus(1)) > 0.0;
+    }
+    let held_silent = (0..MAX_VOICES).any(|u| {
+        let slot = s.inst.allocator().slots()[u];
+        slot.held() && slot.part() == Some(1) && !s.inst.active()[u]
+    });
+    assert!(
+        sounded || s.inst.allocator().refused() > 0,
+        "50 sounds or is counted"
+    );
+    assert!(!held_silent, "no voice booked, held and silent");
+}
+
+/// Notes wait on the clear budget in the order they came: a small clear
+/// behind two deferred worst-case ones doesn't start before them, in the
+/// drain or after it.
+#[test]
+fn notes_waiting_on_the_clear_budget_keep_their_order() {
+    let (buses, cleared, _) = chord(after_each([0, 0, 0, 69]), 8);
+    assert_eq!(starts(&buses), [0, 1, 2, 2]);
+    for (b, &c) in cleared.iter().enumerate() {
+        assert!(c <= SYM_CLEAR_BUDGET, "block {b}: {c}");
     }
 }

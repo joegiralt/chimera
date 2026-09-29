@@ -288,8 +288,8 @@ pub struct Instrument {
     last_kind: [SlotKind; MAX_PARTS],
     /// This block's Sympathetic clear budget left, in bytes.
     clear_left: usize,
-    /// A note waited on the clear budget at the last `render`: new
-    /// Sympathetic note-ons queue behind it.
+    /// A note waits on the clear budget: later Sympathetic notes queue
+    /// behind it, until render step 0 serves the queue oldest first.
     clear_backlog: bool,
 }
 
@@ -404,11 +404,7 @@ impl Instrument {
                             Place::Refused => (None, false, None),
                         };
                         // A restart waiting on that slot loses it to this note.
-                        if let Some(w) = drops
-                            && self.waiting[w.index()].take().is_some()
-                        {
-                            self.alloc.dropped_unheard();
-                        }
+                        self.drop_waiting(drops);
                         // A voice whose slot is still another's, fading,
                         // waits for it as a steal does.
                         let awaits = v.is_some_and(|v| self.sym.alloc().awaits(VoiceIdx::ALL[v]));
@@ -435,7 +431,6 @@ impl Instrument {
                     let deferred = !waits
                         && SlotKind::of(&part.params) == SYMPATHETIC
                         && !(self.voices[v].starts_now(&part.params)
-                            && !self.clear_backlog
                             && self.admit(v, &part.params));
                     let voice = &mut self.voices[v];
                     let waited = self.waiting[v].take().is_some();
@@ -470,16 +465,57 @@ impl Instrument {
         }
     }
 
-    /// Starts voice `v`'s waiting note, velocity `vel` on Part `q`, released
-    /// at once unless `held`, if the block's clear budget lets it: false
-    /// if it must wait on.
+    /// `w`'s waiting note, if any, lost its slot to a newer note: dropped
+    /// unheard.
+    fn drop_waiting(&mut self, w: Option<VoiceIdx>) {
+        if let Some(w) = w
+            && self.waiting[w.index()].take().is_some()
+        {
+            self.alloc.dropped_unheard();
+        }
+    }
+
+    /// Starts idle voice `v`'s waiting note, velocity `vel` on Part `q`,
+    /// released at once unless `held`, if the block's clear budget lets it:
+    /// false if it must wait on. A Sympathetic note with no slot promised
+    /// (its Part became Sympathetic while it waited on another Part's
+    /// fade) is placed first, at its `age`, as `handle` places one: a
+    /// steal moves it to the oldest slot's voice, to wait for that fade.
     fn start(
         &mut self,
         v: usize,
-        (vel, q, note, held): (Velocity, u8, MidiNote, bool),
+        (vel, q, note, held, age): (Velocity, u8, MidiNote, bool, u32),
         shared: &AudioShared,
     ) -> bool {
-        let params = &shared.parts[q as usize % MAX_PARTS].params;
+        let part = &shared.parts[q as usize % MAX_PARTS];
+        let params = &part.params;
+        let id = VoiceIdx::ALL[v];
+        if SlotKind::of(params) == SYMPATHETIC && !self.sym.alloc().promised(id) {
+            match self.sym.alloc_mut().place(Some(id), age) {
+                Place::On { drops, .. } => self.drop_waiting(drops),
+                Place::Steal { voice: u, drops } => {
+                    self.drop_waiting(drops);
+                    let (u, mode) = (u.index(), part.mix.mode);
+                    let cost = Voice::cost(params, &part.mod_state);
+                    self.alloc.release(v);
+                    self.alloc.release_finished(v);
+                    self.voices[v].rest(&mut self.sym);
+                    if let Some(m) = self.alloc.book(u, q, mode, note, cost) {
+                        self.shed(m);
+                    }
+                    if !held {
+                        self.alloc.release(u);
+                    }
+                    let waited = self.waiting[u].replace(vel).is_some();
+                    if waited | self.voices[u].kill() {
+                        self.alloc.dropped_unheard();
+                    }
+                    self.note_channel[u] = self.note_channel[v];
+                    return true;
+                }
+                Place::Refused => unreachable!("placed with a voice"),
+            }
+        }
         if !self.admit(v, params) {
             return false;
         }
@@ -493,19 +529,24 @@ impl Instrument {
     }
 
     /// Whether voice `v` may start a note on `params` this block: anything
-    /// but Sympathetic may; Sympathetic if its clear fits what the block's
-    /// budget has left, which it then takes.
+    /// but Sympathetic may; Sympathetic if no note waits on the clear
+    /// budget before it and its clear fits what the block has left, which
+    /// it then takes. One that doesn't fit starts the queue.
     fn admit(&mut self, v: usize, params: &ParamSnapshot) -> bool {
         if SlotKind::of(params) != SYMPATHETIC {
             return true;
         }
+        if self.clear_backlog {
+            return false;
+        }
         let bytes = self.voices[v].sym_note_on_clear(&self.sym);
         debug_assert!(bytes <= SYM_CLEAR_BUDGET);
-        let fits = bytes <= self.clear_left;
-        if fits {
-            self.clear_left -= bytes;
+        if bytes > self.clear_left {
+            self.clear_backlog = true;
+            return false;
         }
-        fits
+        self.clear_left -= bytes;
+        true
     }
 
     /// A patch edit changes its voices' cost; fade voices out if that went
@@ -617,20 +658,27 @@ impl Instrument {
             bus.fill(0.0);
         }
         let mut block = [0.0f32; BLOCK_SIZE];
-        // 0. A note that waited on the clear budget, its voice idle, starts
-        //    before the voice renders: let in this block, it sounds in it.
-        let mut backlog = false;
+        // 0. Notes that waited on the clear budget, their voices idle, start
+        //    oldest first before the voices render: let in this block, one
+        //    sounds in it. The first that doesn't fit queues the rest again.
+        let mut queue = [(u32::MAX, 0usize); MAX_VOICES];
+        let mut n = 0;
         for v in 0..MAX_VOICES {
             let s = self.alloc.slots()[v];
-            if self.voices[v].is_active() || self.sym.alloc().awaits(VoiceIdx::ALL[v]) {
-                continue;
+            let idle = !self.voices[v].is_active();
+            if idle && self.waiting[v].is_some() && !self.sym.alloc().awaits(VoiceIdx::ALL[v]) {
+                queue[n] = (s.age(), v);
+                n += 1;
             }
-            if let (Some(vel), Some(q), Some(note)) = (self.waiting[v], s.part(), s.note()) {
-                if self.start(v, (vel, q, note, s.held()), shared) {
-                    self.waiting[v] = None;
-                } else {
-                    backlog = true;
-                }
+        }
+        queue[..n].sort_unstable();
+        self.clear_backlog = false;
+        for &(_, v) in &queue[..n] {
+            let s = self.alloc.slots()[v];
+            if let (Some(vel), Some(q), Some(note)) = (self.waiting[v], s.part(), s.note())
+                && self.start(v, (vel, q, note, s.held(), s.age()), shared)
+            {
+                self.waiting[v] = None;
             }
         }
         for v in 0..MAX_VOICES {
@@ -665,9 +713,8 @@ impl Instrument {
                     }
                     (Some(vel), Some(q), Some(note)) => {
                         // Past the block's clear budget: the next block.
-                        if !self.start(v, (vel, q, note, s.held()), shared) {
+                        if !self.start(v, (vel, q, note, s.held(), s.age()), shared) {
                             self.waiting[v] = Some(vel);
-                            backlog = true;
                         }
                     }
                     _ => {
@@ -679,7 +726,6 @@ impl Instrument {
         }
 
         self.clear_left = SYM_CLEAR_BUDGET;
-        self.clear_backlog = backlog;
 
         // 2-4.
         let scope_block = mix_parts(

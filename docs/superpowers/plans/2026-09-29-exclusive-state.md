@@ -695,6 +695,10 @@ git commit -m "Sympathetic borrows its strings from a pool of four"
     - `REBUILD {rebuild} CYC`
     - `SYM NOTE-ON {note_on} CYC`
 
+- *Added during execution (2026-09-29, after the chip's first bench read SYM NOTE-ON at 40,906 cycles):*
+  - **The dirty extent** (61b2cb8). Each `KsString` keeps `dirty`: every sample at or past it reads 0.0, and `set_freq` raises it to each new loop length. `clear` zeros `[0, dirty)` only, bit-identical to the whole ring. A note-on clears each line before retuning it, so `SymPool::note_on_clear` gives the bytes exactly and purely.
+  - **The per-block clear budget** (7b40a27). The `Instrument` spends `SYM_CLEAR_BUDGET` bytes a block, one worst-case note-on (`SYM_NOTE_ON_CLEAR_MAX`, eight rings, 31,488 B). A Sympathetic note-on past it, or behind a note already waiting on it, waits on the steal's path, and render step 0 starts it before its idle voice renders. A chord of four slots last played low starts over four blocks, and a typical one at once.
+  - **Bench.** The per-voice figure counts only the voices that sound (`Instrument::sounding`), so MDL SYM and SWITCH read over four, and MEMORY adds `SYM NOTE-ON LOW`, the worst case (MIDI 0 after MIDI 0). `COST_SYMPATHETIC` is 802, from MDL SYM's slope of 859 less the chain's 57.
 - [ ] **Step 1: Implement the bench additions.** Put a `// SAFETY:` comment on each new `static mut` access, as for `SCOPE`/`SHARED`. Nothing large may go on the stack: the slot and the allocator are statics, and the `Instrument` is the bench's own.
 - [ ] **Step 2: Run the green gate and record the target's section sizes.** Run `just check && cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --features bench && "$(rustc --print sysroot)/lib/rustlib/x86_64-unknown-linux-gnu/bin/llvm-size" -A target/thumbv7em-none-eabihf/release/chimera-stm32`. Expected: exit 0. Keep the `.ram_d2*` section size for the ADRs.
 - [ ] **Step 3: Commit.**
