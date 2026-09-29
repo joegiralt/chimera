@@ -1,6 +1,6 @@
 # 0051. A voice holds one engine, rebuilt in place
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-09-29)
 - **Deciders:** project owner
 - Supersedes [0008](0008-persistent-engine-instances.md) (engines are
   persistent, one instance of each per voice).
@@ -49,6 +49,13 @@ plays. Other Parts and the FX bus are untouched. Knob moves never rebuild.
 Memory is the largest engine, not the sum: a `Voice` is 5,848 B on the
 host, Sympathetic's seven lines living in a shared pool (ADR 0054), and
 Modal holds only the model it plays (`ModelSlot`, the same in-place enum).
+
+Measured on the chip (ship build 2df4100, rev V at 480 MHz, 2026-09-29):
+`Voice` 5,820 B, `EngineSlot` 3,988 B, `ModelSlot` 3,984 B, the Sympathetic
+pool 111,000 B, and `Instrument` 160,220 of 286,720 B. A rebuild costs 2,703
+cycles. The per-voice costs: String 422, Bow 653 (7 V), Resonator 1,865,
+Sympathetic 866 (4 V, ADR 0054) and Switch 727 (4 V). The owner judged by
+ear that it plays fine.
 
 A voice rebuilds at most three times between two blocks: the note events
 drained before `Instrument::render`, plus that render. A rebuild happens in
