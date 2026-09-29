@@ -50,15 +50,12 @@ pub fn decode_block(
     let entries = entries
         .iter()
         .map(|&[id, a, b, c, d]| (ParamId(id), [a, b, c, d]));
-    let mut seen = [0u32; 8];
+    let mut seen = ByteSet::new();
     for (id, _) in entries.clone() {
-        let (word, bit) = (usize::from(id.0 / 32), 1 << (id.0 % 32));
-        if seen[word] & bit != 0 {
+        if !seen.insert(id.0) {
             return Err(FileError::Corrupt);
         }
-        seen[word] |= bit;
     }
-    let has = |id: ParamId| seen[usize::from(id.0 / 32)] & 1 << (id.0 % 32) != 0;
 
     let Some(target) = target else { return Ok(()) };
     let Some(b) = BlockRef::from_disk_code(code) else {
@@ -78,7 +75,7 @@ pub fn decode_block(
             None => {
                 let Some(m) = migrations
                     .iter()
-                    .find(|m| m.block == code && m.old == id && !has(m.new))
+                    .find(|m| m.block == code && m.old == id && !seen.contains(m.new.0))
                 else {
                     continue;
                 };
@@ -89,7 +86,7 @@ pub fn decode_block(
                 (a, v.is_finite().then_some(DiskValue::Real(v)))
             }
         };
-        if let Some(i) = slot(a.spec().id).filter(|&i| i < MAX_BLOCK_PARAMS) {
+        if let Some(i) = slot(a.spec().id) {
             vals[i] = v;
         }
     }
@@ -107,6 +104,26 @@ pub fn decode_block(
     Ok(())
 }
 
+/// A set of `u8`s: ids or codes a record may name once.
+pub(super) struct ByteSet([u32; 8]);
+
+impl ByteSet {
+    pub(super) const fn new() -> Self {
+        ByteSet([0; 8])
+    }
+
+    pub(super) fn contains(&self, b: u8) -> bool {
+        self.0[usize::from(b / 32)] & 1 << (b % 32) != 0
+    }
+
+    /// `false`: already in.
+    pub(super) fn insert(&mut self, b: u8) -> bool {
+        let fresh = !self.contains(b);
+        self.0[usize::from(b / 32)] |= 1 << (b % 32);
+        fresh
+    }
+}
+
 /// `raw` as `a`'s value; `None` when it can't be one (NaN, a code past `u8`).
 fn value(a: ValidAddr, raw: [u8; 4]) -> Option<DiskValue> {
     if a.coded() {
@@ -122,8 +139,51 @@ fn value(a: ValidAddr, raw: [u8; 4]) -> Option<DiskValue> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::block::ParamKind;
+    use crate::block::{ParamKind, ParamSpec};
+    use crate::params::{FILTER_SPECS, FilterParams};
     use crate::storage::MIGRATIONS;
+
+    /// A Filter that logs the order of its enum writes.
+    struct Order {
+        log: [ParamId; 4],
+        n: usize,
+    }
+
+    impl Block for Order {
+        fn specs(&self) -> &'static [ParamSpec] {
+            &FILTER_SPECS
+        }
+        fn get(&self, _: ParamId) -> f32 {
+            0.0
+        }
+        fn write(&mut self, _: ParamId, _: f32) {}
+        fn set_enum_code(&mut self, id: ParamId, _: u8) -> bool {
+            self.log[self.n] = id;
+            self.n += 1;
+            true
+        }
+    }
+
+    impl Blocks for Order {
+        fn block(&self, b: BlockRef) -> Option<&dyn Block> {
+            (b == BlockRef::Filter).then_some(self as &dyn Block)
+        }
+        fn block_mut(&mut self, b: BlockRef) -> Option<&mut dyn Block> {
+            (b == BlockRef::Filter).then_some(self as &mut dyn Block)
+        }
+    }
+
+    #[test]
+    fn kind_is_written_before_mode_whatever_the_file_order() {
+        let (kind, mode) = (FilterParams::KIND.0, FilterParams::MODE.0);
+        let payload = [10, mode, 3, 0, 0, 0, kind, 0, 0, 0, 0];
+        let mut o = Order {
+            log: [ParamId(0); 4],
+            n: 0,
+        };
+        decode_block(&payload, &[], Some(&mut o)).unwrap();
+        assert_eq!(o.log[..o.n], [FilterParams::KIND, FilterParams::MODE]);
+    }
 
     #[test]
     fn every_block_fits_the_value_slots() {

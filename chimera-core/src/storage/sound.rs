@@ -11,7 +11,7 @@ use crate::name::SoundName;
 use crate::params::{EngineType, ParamSnapshot};
 use crate::preset::Sound;
 
-use super::block_codec::{decode_block, encode_block};
+use super::block_codec::{ByteSet, decode_block, encode_block};
 use super::codes::{MIGRATIONS, ValidAddr};
 use super::frame::{Event, FileError, FileKind};
 use super::record::{MAX_RECORD_LEN, ReadTag, RecordBuf, RecordTag, RecordWriter};
@@ -85,6 +85,18 @@ pub fn encode_sound(s: &Sound, w: &mut RecordWriter<'_>) -> Result<(), StoreErro
     w.put(RecordTag::Routes, r.as_slice())
 }
 
+/// A record's bit in `SoundDecoder::seen`; `Block` repeats per block code.
+const fn once_bit(tag: RecordTag) -> u8 {
+    match tag {
+        RecordTag::Block => 0,
+        RecordTag::Engine => 1,
+        RecordTag::Registry => 1 << 1,
+        RecordTag::ModDests => 1 << 2,
+        RecordTag::Routes => 1 << 3,
+        RecordTag::LastProject => 1 << 4,
+    }
+}
+
 /// Decodes a Sound file's events onto `target`, one pass at a time: with
 /// `apply` false it only checks, and a pass starts at the header.
 pub struct SoundDecoder<'a> {
@@ -92,8 +104,10 @@ pub struct SoundDecoder<'a> {
     name: Option<SoundName>,
     /// The Engine record was read: every other record may follow.
     engine: bool,
-    /// Bit per `RecordTag` read, so a record we write once can't repeat.
+    /// The records read, so none we write once repeats: a bit per singleton
+    /// tag, and the block codes.
     seen: u8,
+    blocks: ByteSet,
     /// Applied in `end`, once the `ModDests` they index are known.
     routes: [u8; MAX_RECORD_LEN],
     routes_len: usize,
@@ -106,6 +120,7 @@ impl<'a> SoundDecoder<'a> {
             name: None,
             engine: false,
             seen: 0,
+            blocks: ByteSet::new(),
             routes: [0; MAX_RECORD_LEN],
             routes_len: 0,
         }
@@ -126,6 +141,7 @@ impl SoundDecoder<'_> {
                 self.name = h.name;
                 self.engine = false;
                 self.seen = 0;
+                self.blocks = ByteSet::new();
                 self.routes_len = 0;
                 return Ok(());
             }
@@ -137,11 +153,18 @@ impl SoundDecoder<'_> {
         if (tag == RecordTag::Engine) == self.engine {
             return Err(FileError::Corrupt);
         }
-        let bit = 1 << tag as u8;
-        if tag != RecordTag::Block && self.seen & bit != 0 {
+        let once = match tag {
+            RecordTag::Block => p.first().is_none_or(|&b| self.blocks.insert(b)),
+            _ => {
+                let bit = once_bit(tag);
+                let fresh = self.seen & bit == 0;
+                self.seen |= bit;
+                fresh
+            }
+        };
+        if !once {
             return Err(FileError::Corrupt);
         }
-        self.seen |= bit;
         match tag {
             RecordTag::Engine => self.engine_record(p, apply),
             RecordTag::Block => {
