@@ -606,7 +606,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("two_parts_two_pairs", 0x016712a2b7e18d83), // INIT: four routed operators, power norm (ADR 0049)
     ("reverb_send_off", 0xf40c677a4633ad69), // part 1 a lone sine (ADR 0049; INIT peaks past 1: #193)
     ("reverb_send_on", 0x5e7b5f6ed1eedd52), // part 1 a lone sine (ADR 0049; INIT peaks past 1: #193)
-    ("six_voice_chord", 0x159319f4ade1692d), // SAW LEAD under the power norm, off by up to 0.54 dB (#192)
+    ("six_voice_chord", 0x241436b65cc7a435), // SAW LEAD, its data compensated (ADR 0049)
 ];
 
 /// A named golden case: a case name paired with its render function.

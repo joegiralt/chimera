@@ -1,8 +1,14 @@
 //! Factory Sounds sound as they did before ADR 0049: its norm moves them,
-//! and each one's data compensates. The reference is every eighth block's
-//! RMS of the golden harness's render at 937b89f (origin/main before #188/#189).
+//! and each one's data compensates (carrier LEVELs in whole steps ahead of
+//! the SVF, then VOLUME; SQR BASS's LEVEL and DRIVE). The reference is
+//! every eighth block's RMS of the golden harness's render at 937b89f
+//! (origin/main before #188/#189).
 
 mod common;
+use chimera_core::dsp::voice::Voice;
+use chimera_core::factory::factory_sound;
+use chimera_core::{MidiNote, Velocity};
+use chimera_hal::{BLOCK_SIZE, SAMPLE_RATE};
 use common::{Case, render_case};
 
 const OLD_RMS: [[f32; 50]; 8] = [
@@ -433,7 +439,9 @@ fn block_rms(out: &[f32]) -> Vec<f32> {
 
 /// Sounds whose data can't restore the old render exactly (#192): the
 /// largest per-block change allowed, in dB, just above the measured one.
-const KNOWN: [(usize, f32); 4] = [(1, 0.14), (3, 0.85), (4, 0.55), (6, 1.1)];
+/// MORPH PAD only, over this harness's first 0.53 s of its sweep (1.06 dB);
+/// `morph_pad_over_its_whole_lfo_sweep` bounds the whole of it.
+const KNOWN: [(usize, f32); 1] = [(6, 1.1)];
 
 #[test]
 fn factory_sounds_render_as_before_the_new_norm() {
@@ -455,4 +463,172 @@ fn factory_sounds_render_as_before_the_new_norm() {
             }
         }
     }
+}
+
+/// MORPH PAD held for 3840 blocks (5.1 s): LFO 1 at 0.2 Hz sweeps MORPH
+/// 40 ± 40 once. Every 32nd block's RMS at 937b89f.
+const PAD_OLD_RMS: [f32; 120] = [
+    4.8131473e-2,
+    1.0301667e-1,
+    1.1276606e-1,
+    8.025646e-2,
+    7.3838495e-2,
+    1.2526001e-1,
+    1.632081e-1,
+    1.583226e-1,
+    1.1326131e-1,
+    6.8743594e-2,
+    6.77427e-2,
+    8.928609e-2,
+    1.327384e-1,
+    1.4499006e-1,
+    1.0113658e-1,
+    5.078941e-2,
+    4.9340937e-2,
+    5.1424924e-2,
+    1.048845e-1,
+    1.2277842e-1,
+    8.840446e-2,
+    4.1471407e-2,
+    4.0106736e-2,
+    4.535565e-2,
+    8.37062e-2,
+    1.0329095e-1,
+    8.0515824e-2,
+    4.4275e-2,
+    4.3296624e-2,
+    4.566457e-2,
+    8.274403e-2,
+    1.0239413e-1,
+    7.979029e-2,
+    4.475513e-2,
+    4.0855497e-2,
+    4.2172205e-2,
+    9.146881e-2,
+    1.2012152e-1,
+    1.0165167e-1,
+    4.8094787e-2,
+    4.7282316e-2,
+    4.8430786e-2,
+    1.0053945e-1,
+    1.4357643e-1,
+    1.3073437e-1,
+    8.6166635e-2,
+    6.612656e-2,
+    6.556197e-2,
+    1.09867565e-1,
+    1.5514813e-1,
+    1.6084184e-1,
+    1.2355238e-1,
+    7.543961e-2,
+    7.8094065e-2,
+    1.1767399e-1,
+    1.709024e-1,
+    1.8968394e-1,
+    1.5347375e-1,
+    9.161724e-2,
+    8.954249e-2,
+    1.2511513e-1,
+    1.7865513e-1,
+    2.039419e-1,
+    1.7220467e-1,
+    1.1188728e-1,
+    9.285282e-2,
+    1.2259225e-1,
+    1.7076296e-1,
+    1.9510551e-1,
+    1.6373128e-1,
+    1.1314e-1,
+    8.078446e-2,
+    1.0318177e-1,
+    1.5416571e-1,
+    1.7305474e-1,
+    1.4417794e-1,
+    1.0362775e-1,
+    6.0823236e-2,
+    7.892019e-2,
+    1.3448557e-1,
+    1.5219827e-1,
+    1.3177598e-1,
+    9.753226e-2,
+    4.8241206e-2,
+    6.1097562e-2,
+    1.1885717e-1,
+    1.410364e-1,
+    1.3261859e-1,
+    1.0346143e-1,
+    5.099165e-2,
+    5.4205485e-2,
+    1.1172779e-1,
+    1.4085798e-1,
+    1.4571238e-1,
+    1.2222345e-1,
+    6.747993e-2,
+    6.1005585e-2,
+    1.1435016e-1,
+    1.5043916e-1,
+    1.6811658e-1,
+    1.4772e-1,
+    9.188909e-2,
+    7.846897e-2,
+    1.2167929e-1,
+    1.6546977e-1,
+    1.9209032e-1,
+    1.680533e-1,
+    1.12580836e-1,
+    9.203938e-2,
+    1.2135799e-1,
+    1.7443244e-1,
+    2.0429465e-1,
+    1.6925205e-1,
+    1.1613819e-1,
+    9.082187e-2,
+    1.0368175e-1,
+    1.6606511e-1,
+    1.9574153e-1,
+    1.5616623e-1,
+    1.0647763e-1,
+];
+
+fn pad_sweep() -> Vec<f32> {
+    let s = factory_sound(6).unwrap();
+    let mut v = Voice::new(SAMPLE_RATE);
+    v.note_on(
+        MidiNote::new(60).unwrap(),
+        Velocity::new(100).unwrap(),
+        &s.params,
+    );
+    let mut blk = [0.0f32; BLOCK_SIZE];
+    let mut r = Vec::new();
+    for b in 0..3840 {
+        v.render(&mut blk, &s.params, &s.mod_state);
+        if b % 32 == 31 {
+            r.push((blk.iter().map(|&x| x as f64 * x as f64).sum::<f64>() / 64.0).sqrt() as f32);
+        }
+    }
+    r
+}
+
+/// MORPH PAD, accepted by ear (#192): the old scale followed MORPH (six
+/// carriers at A1, one at A17) and ADR 0049's does not, so over the whole
+/// sweep it plays within PAD_DB of before: louder towards A1 (MORPH 0),
+/// quieter towards A17 (MORPH 80).
+const PAD_DB: (f32, f32) = (-1.95, 1.35);
+
+#[test]
+fn morph_pad_over_its_whole_lfo_sweep() {
+    let db: Vec<f32> = pad_sweep()
+        .iter()
+        .zip(&PAD_OLD_RMS)
+        .map(|(a, b)| 20.0 * (a / b).log10())
+        .collect();
+    let (lo, hi) = db
+        .iter()
+        .fold((f32::MAX, f32::MIN), |(l, h), &d| (l.min(d), h.max(d)));
+    assert!(lo >= PAD_DB.0 && hi <= PAD_DB.1, "{lo:.3}..{hi:.3} dB");
+    // The sweep reaches both ends: the bound is met, not idle.
+    assert!(
+        lo < PAD_DB.0 + 0.1 && hi > PAD_DB.1 - 0.1,
+        "{lo:.3}..{hi:.3} dB"
+    );
 }
