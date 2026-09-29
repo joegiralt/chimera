@@ -63,6 +63,8 @@ pub enum RegionData {
         value: u16,
         /// `MatrixState::rev`: a deleted route redraws.
         matrix_rev: u16,
+        /// `mod_grid::inert_dests`: it can change without a `matrix_rev` bump.
+        inert: u16,
     },
     Viz {
         page: PageKey,
@@ -98,6 +100,8 @@ pub enum RegionData {
         /// The selected route's animated amount (quantized display value).
         sel_value: u16,
         matrix_rev: u16,
+        /// `mod_grid::inert_dests`.
+        inert: u16,
     },
 }
 
@@ -234,13 +238,7 @@ impl RegionData {
     }
 
     pub fn grid(sel_row: u8, sel_col: u8, scroll_x: u8) -> Self {
-        Self::Grid {
-            sel_row,
-            sel_col,
-            scroll_x,
-            sel_value: 0,
-            matrix_rev: 0,
-        }
+        Self::grid_with_value(sel_row, sel_col, scroll_x, 0)
     }
 
     pub fn grid_with_value(sel_row: u8, sel_col: u8, scroll_x: u8, sel_value: u16) -> Self {
@@ -250,6 +248,19 @@ impl RegionData {
             scroll_x,
             sel_value,
             matrix_rev: 0,
+            inert: 0,
+        }
+    }
+
+    /// The matrix readout; `keyed` adds the revision and inert columns.
+    pub fn route(row: u8, col: u8, dests: u8, value: u16) -> Self {
+        Self::Route {
+            row,
+            col,
+            dests,
+            value,
+            matrix_rev: 0,
+            inert: 0,
         }
     }
 
@@ -260,11 +271,13 @@ impl RegionData {
             scroll_x: 255,
             sel_value: SENTINEL,
             matrix_rev: u16::MAX,
+            inert: u16::MAX,
         }
     }
 
-    /// With the matrix's revision (and the cells' looks) in the key, so a
-    /// deleted route or a dimmed cell redraws.
+    /// With the matrix's revision in the key, and `looks`: the cells' looks,
+    /// or the matrix's inert columns. A deleted route, a dimmed cell or an
+    /// inert column redraws.
     pub fn keyed(self, matrix_rev: u16, looks: u16) -> Self {
         match self {
             Self::Cells {
@@ -295,6 +308,7 @@ impl RegionData {
                 scroll_x,
                 sel_value,
                 matrix_rev,
+                inert: looks,
             },
             Self::Route {
                 row,
@@ -308,6 +322,7 @@ impl RegionData {
                 dests,
                 value,
                 matrix_rev,
+                inert: looks,
             },
             other => other,
         }

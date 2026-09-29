@@ -801,13 +801,13 @@ impl UiState {
                 f.sounding,
                 renderer::title_type(f),
             ),
-            RegionKind::Focus if f.def.layout == PageLayout::Matrix => RegionData::Route {
-                row: self.matrix_state.sel_row as u8,
-                col: self.matrix_state.sel_col as u8,
-                dests: self.matrix_state.num_dests as u8,
-                value: qvalues[renderer::MATRIX_AMOUNT_SLOT],
-                matrix_rev: self.matrix_state.rev,
-            },
+            RegionKind::Focus if f.def.layout == PageLayout::Matrix => RegionData::route(
+                self.matrix_state.sel_row as u8,
+                self.matrix_state.sel_col as u8,
+                self.matrix_state.num_dests as u8,
+                qvalues[renderer::MATRIX_AMOUNT_SLOT],
+            )
+            .keyed(self.matrix_state.rev, renderer::inert(f)),
             RegionKind::Focus => RegionData::focus(
                 self.page,
                 f.focus as u8,
@@ -855,7 +855,7 @@ impl UiState {
                 self.matrix_state.scroll_x as u8,
                 qvalues[renderer::MATRIX_AMOUNT_SLOT],
             )
-            .keyed(self.matrix_state.rev, 0),
+            .keyed(self.matrix_state.rev, renderer::inert(f)),
         }
     }
 
