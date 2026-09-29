@@ -895,7 +895,8 @@ mod tests {
     /// injection once instead of twice (`tick_coupled`) took C6 from -73.9
     /// to -83.7, and with the seven lines in f32, C6 still reads -83.3 (A4
     /// -88.3). What is left is the main string's 16-bit rounding, resonated.
-    const SYMPATHETIC_ERROR_DBFS: f32 = -72.0;
+    /// -80 keeps about 4 dB of margin, so a regression can't hide in slack.
+    const SYMPATHETIC_ERROR_DBFS: f32 = -80.0;
 
     /// ADR 0052's gate: with FDBK 0, the 16-bit strings play what f32 ones
     /// do, to their error bound over a second, within 0.1 dB of envelope,

@@ -84,7 +84,7 @@ the default Modal params except as listed.
   - **Error:** the RMS of Q16 − f32, relative to full scale over the first
     second, within the case's bound.
     - **−90 dBFS** for every case except three.
-    - **−72 dBFS** (`SYMPATHETIC_ERROR_DBFS`) for Sympathetic A4 at
+    - **−80 dBFS** (`SYMPATHETIC_ERROR_DBFS`) for Sympathetic A4 at
       DECAY 0, and C6 at DECAY 0 and 0.3.
   - **Envelope:** peaks over 10 ms windows within 0.1 dB, wherever f32 is
     above −60 dBFS.
@@ -137,10 +137,10 @@ in dB, and quiet time in 64-sample blocks (Q16 / f32):
 | Bowed A4, both | **−90.01** | 0.007 | 1872 / 1872 |
 | Bowed C6, both | −91.95 | 0.007 | 999 / 999 |
 | Sympathetic G1, DECAY 0 / 0.3 | −94.02 / −93.90 | 0.003 / 0.005 | never / never |
-| Sympathetic A4, DECAY 0 | −84.45 (bound −72) | 0.034 | never / never |
+| Sympathetic A4, DECAY 0 | −84.45 (bound −80) | 0.034 | never / never |
 | Sympathetic A4, DECAY 0.3 | −93.80 | 0.003 | 4048 / 4048 |
-| Sympathetic C6, DECAY 0 | −83.69 (bound −72) | 0.058 | 6894 / 6894 |
-| Sympathetic C6, DECAY 0.3 | −84.91 (bound −72) | 0.009 | 2051 / 2051 |
+| Sympathetic C6, DECAY 0 | −83.69 (bound −80) | 0.058 | 6894 / 6894 |
+| Sympathetic C6, DECAY 0.3 | −84.91 (bound −80) | 0.009 | 2051 / 2051 |
 
 With feedback, the envelope stays within 0.057 dB: String A4 measures 0.002
 and 0.001, and Sympathetic A3 0.016 and 0.057.
@@ -150,8 +150,12 @@ and 0.001, and Sympathetic A3 0.016 and 0.057.
 - **Bowed A4 is at the edge.** It passes −90 by 0.01 dB. A later change to
   Bowed may push it over, and the fix must not be to loosen the bound
   quietly.
-- **Sympathetic sits 11.7 dB under its −72 bound** at the worst (C6,
-  DECAY 0). Before the injection fused, the margin was 1.9 dB.
+- **Sympathetic sits 3.7 dB under its −80 bound** at the worst (C6,
+  DECAY 0).
+  - The owner first set −72, when C6 measured −73.9, a 1.9 dB margin.
+  - Fusing the injection brought C6 to −83.7, which left 11.7 dB of slack
+    under −72, room for a regression to hide. The bound was tightened to
+    −80 to close it.
 - **Bowed G1** frees itself at block 10 in both stores. That bug predates
   this ADR; see https://github.com/joegiralt/chimera/issues/206.
 
@@ -224,7 +228,7 @@ and 0.001, and Sympathetic A3 0.016 and 0.057.
   the same whatever came before; `note_on_clears_every_line_at_a_fixed_cost`
   pins it. The excitation that follows costs more than the clear: up to
   seven filter passes over the loop.
-- **Sound.** Modal's sound changes below −90 dBFS, or below −72 dBFS for
+- **Sound.** Modal's sound changes below −90 dBFS, or below −80 dBFS for
   Sympathetic's loud high notes. Every render that plays Modal is
   re-recorded once (ADR 0011):
   - the goldens `modal_init`, `modal_lfo_cutoff` and `algo_to_modal_switch`;
