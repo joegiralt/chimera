@@ -60,7 +60,7 @@ What follows from these numbers:
 - There is no staging copy and no serialised buffer.
 - Saves stream from live state, and loads use two passes (§ Loading while playing).
 - Nothing new goes in D2.
-- Every new static is added to `AXI_RESIDENT` in `instrument.rs`: the `VolumeManager`, one 512 B block buffer and the library index (12–14 KB). Plan 1 also fixes the stale stack comment on `UI_RESERVE` there (ADR 0025).
+- Every new static is added to `AXI_RESIDENT` in `instrument.rs`. That means the card store (our own FAT layer, ADR 0048: one 512 B block buffer and one 512 B FAT-sector cache, under 2 KB with the driver) and the library index. Plan 1 also fixes the stale stack comment on `UI_RESERVE` there (ADR 0025).
 
 ## Model
 
@@ -337,7 +337,7 @@ Every rung has a one-line footer, and the screen goldens include it:
 
 - **Bring-up.** SD in SPI mode on SPI2: SCK PA9, MISO PB14, MOSI PB15. The CS and card-detect pins come from the PreenFM3 schematic, and plan 1 pins them down.
   - Init at ≤ 400 kHz, then switch to the fast clock.
-  - Add the `embedded-sdmmc` dependency. Check that `stm32h7xx-hal` 0.16 provides embedded-hal 1.0 `SpiDevice` and `DelayNs`, or wrap them.
+  - Add the `embedded-sdmmc` dependency **as the SD block driver only** (`SdCard`). The FAT16/FAT32 file layer is our own (`chimera-fat`, ADR 0048): 8.3 names in the fixed folders, streamed read and write, delete, make_dir and list. Check that `stm32h7xx-hal` 0.16 provides embedded-hal 1.0 `SpiDevice` and `DelayNs`, or wrap them.
   - Transfers are **polled**, with no DMA. The stack is in DTCM, which DMA1 and DMA2 can't reach, and D2 is full. This supersedes the design doc's DMA2 note.
 - **Blocking.** Card I/O runs in the UI loop, never on the audio path.
   - A BUSY/SAVING overlay is drawn before any card operation.
@@ -369,7 +369,7 @@ Every rung has a one-line footer, and the screen goldens include it:
 
 ### A/B saves (C1)
 
-`embedded-sdmmc` has no rename, and a FAT rename isn't atomic anyway. So:
+Our FAT layer (ADR 0048) has no rename, and a FAT rename isn't atomic anyway. So:
 
 1. Every file is a pair, `<ID>.A` and `<ID>.B`. The header carries a `u32` generation.
 2. A save truncates and rewrites the file the reader would not take (the older one, or the missing or broken one) with generation + 1, then flushes.
@@ -526,6 +526,7 @@ Numbers are provisional.
 - **0045 Card format.** 8.3 id names, A/B generations with a CRC trailer, frozen code tables, the must-understand bit, neutral defaults, migration by new `ParamId`, and the fixture corpus.
 - **0046 Project load protocol.** `LOAD_EPOCH` and `LOAD_ACK` alongside ADR 0021's triple buffer, the MIDI rules and FX tails.
 - **0047 Tags.** 16 built-in and 8 custom bits, with names that travel in files.
+- **0048 Own FAT layer.** Our own FAT16/FAT32 file layer over `embedded-sdmmc`'s SD block driver (added by plan 1 after the Task 4 review).
 
 ## Out of scope
 
