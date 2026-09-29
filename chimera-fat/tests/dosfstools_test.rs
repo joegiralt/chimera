@@ -12,6 +12,7 @@ mod probe;
 #[path = "common/tools.rs"]
 mod tools;
 
+use chimera_core::storage::Generation;
 use chimera_fat::blocks::BLOCK;
 use chimera_fat::fat::FatCache;
 use chimera_fat::fs::Fs;
@@ -392,6 +393,7 @@ fn cut_images_pass_fsck() {
         let f = fsck(&base.inner);
         assert_eq!(f.code, 0, "before save {n}: {}", f.out);
         let before = copy(&base.inner);
+        let kept = ab::target(&base).other();
         let dry = ab::slot(copy(&before));
         ab::save(&dry, n).0.unwrap();
         for k in 0..dry.writes.get() {
@@ -400,6 +402,13 @@ fn cut_images_pass_fsck() {
             cut.cut.set(Cut::After(k));
             assert!(ab::save(&cut, n).0.is_err(), "{what}");
             cut.cut.set(Cut::Never);
+            let got = ab::load(&cut).unwrap_or_else(|e| panic!("{what}: {e:?}"));
+            assert!(
+                got.bits_eq(&ab::sound(n - 1)) || got.bits_eq(&ab::sound(n)),
+                "{what}: loaded {:?}",
+                got.name
+            );
+            ab::assert_kept(&what, &cut, kept, Generation::new(n - 1), &ab::sound(n - 1));
             for when in ["after the cut", "after the next save"] {
                 let f = fsck(&cut.inner);
                 let bad: Vec<&str> = f.out.lines().filter(|l| !allowed_finding(l)).collect();

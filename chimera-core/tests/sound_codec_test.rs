@@ -10,8 +10,8 @@ use chimera_core::modulation::{CUTOFF, MAX_MOD_DESTS, MAX_MOD_SOURCES, ModState}
 use chimera_core::params::{EngineType, FilterParams, ParamSnapshot, PitchParams};
 use chimera_core::preset::Sound;
 use chimera_core::storage::{
-    Decode, FileError, FileKind, Framer, Generation, Header, Migration, RecordBuf, RecordTag,
-    SoundDecoder, ValidAddr, decode_block, encode_block, encode_sound, write_file,
+    Check, Decode, FileError, FileKind, Framer, Generation, Header, Migration, RecordBuf,
+    RecordTag, SoundDecoder, ValidAddr, decode_block, encode_block, encode_sound, write_file,
 };
 use chimera_hal::store::{ByteSink, StoreError};
 
@@ -55,9 +55,9 @@ fn decode(bytes: &[u8]) -> Result<Sound, FileError> {
     for apply in [false, true] {
         let mut d = SoundDecoder::new(&mut s);
         let mut f = Framer::new(bytes.len() as u32)?;
-        f.push(bytes, &mut |e| d.event(e, apply))?;
+        f.push(bytes, &mut |e| if apply { d.apply(e) } else { d.event(e) })?;
         f.finish()?;
-        d.end(apply)?;
+        if apply { d.commit() } else { d.end() }?;
     }
     Ok(s)
 }

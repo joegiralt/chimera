@@ -12,7 +12,7 @@ use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
 use chimera_core::storage::{
     AbFile, Card, CardFault, Generation, LoadError, Ready, RecordWriter, SaveError, Side,
-    SoundDecoder, check_file, encode_sound, load_ab, save_ab, write_target,
+    SoundCheck, SoundDecoder, check_file, encode_sound, load_ab, load_file, save_ab, write_target,
 };
 use chimera_hal::store::{Dir, Store, StoreError};
 use core::cell::RefCell;
@@ -67,13 +67,18 @@ pub fn save_on(
     extra: &dyn Fn(&mut RecordWriter<'_>) -> Result<(), StoreError>,
 ) -> Result<Generation, SaveError> {
     let snd = sound(n);
-    let mut scratch = Sound::neutral(EngineType::Algo);
-    let mut d = SoundDecoder::new(&mut scratch);
     op(s, |s, r| {
-        save_ab(s, r, file(), &mut d, Some(snd.name), &mut |w| {
-            encode_sound(&snd, w)?;
-            extra(w)
-        })
+        save_ab(
+            s,
+            r,
+            file(),
+            &mut SoundCheck::new(),
+            Some(snd.name),
+            &mut |w| {
+                encode_sound(&snd, w)?;
+                extra(w)
+            },
+        )
     })
 }
 
@@ -99,12 +104,28 @@ pub fn load(slot: &Slot) -> Result<Sound, LoadError> {
 /// The side the next save writes.
 pub fn target(slot: &Slot) -> Side {
     let f = file();
-    let mut scratch = Sound::neutral(EngineType::Algo);
-    let mut d = SoundDecoder::new(&mut scratch);
+    let mut c = SoundCheck::new();
     op(&mut probed(slot), |s, r| {
-        let a = check_file(s, r, f.side(Side::A), &mut d)?;
-        let b = check_file(s, r, f.side(Side::B), &mut d)?;
-        Ok::<_, StoreError>(write_target(a, b).0)
+        let a = check_file(s, r, f.side(Side::A), &mut c)?;
+        let b = check_file(s, r, f.side(Side::B), &mut c)?;
+        Ok::<_, StoreError>(write_target(a, b).unwrap().0)
     })
     .unwrap()
+}
+
+/// One side alone, through `load_file`: its generation and its Sound.
+pub fn load_side(slot: &Slot, side: Side) -> Result<(Generation, Sound), LoadError> {
+    let mut t = Sound::neutral(EngineType::Algo);
+    let h = op(&mut probed(slot), |s, r| {
+        load_file(s, r, file().side(side), &mut SoundDecoder::new(&mut t))
+    })?;
+    Ok((h.generation, t))
+}
+
+/// The side a cut save didn't target still loads alone, as it was.
+pub fn assert_kept(what: &str, slot: &Slot, side: Side, generation: Generation, snd: &Sound) {
+    let (g, got) = load_side(slot, side)
+        .unwrap_or_else(|e| panic!("{what}: the kept side {side:?} alone, {e:?}"));
+    assert_eq!(g, generation, "{what}: the kept side's generation");
+    assert!(got.bits_eq(snd), "{what}: the kept side's Sound");
 }

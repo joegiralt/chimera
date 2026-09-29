@@ -13,7 +13,7 @@ use crate::preset::Sound;
 
 use super::block_codec::{ByteSet, decode_block, encode_block};
 use super::codes::{MIGRATIONS, ValidAddr};
-use super::file::Decode;
+use super::file::{Check, Decode};
 use super::frame::{Event, FileError, FileKind};
 use super::record::{MAX_RECORD_LEN, ReadTag, RecordBuf, RecordTag, RecordWriter};
 
@@ -86,7 +86,7 @@ pub fn encode_sound(s: &Sound, w: &mut RecordWriter<'_>) -> Result<(), StoreErro
     w.put(RecordTag::Routes, r.as_slice())
 }
 
-/// A record's bit in `SoundDecoder::seen`; `Block` repeats per block code.
+/// A record's bit in `SoundCheck::seen`; `Block` repeats per block code.
 const fn once_bit(tag: RecordTag) -> u8 {
     match tag {
         RecordTag::Block => 0,
@@ -98,12 +98,10 @@ const fn once_bit(tag: RecordTag) -> u8 {
     }
 }
 
-/// Decodes a Sound file's events onto `target`, one pass at a time: with
-/// `apply` false it only checks, and a pass starts at the header. Pass 2
-/// builds the Sound in `staged` and swaps it into `target` at `end(true)`.
-pub struct SoundDecoder<'a> {
-    target: &'a mut Sound,
-    staged: Sound,
+/// Checks a Sound file's events: pass 1, which touches nothing. A pass
+/// starts at the header. `SoundDecoder` runs the same checks in pass 2,
+/// onto the Sound it stages.
+pub struct SoundCheck {
     name: Option<SoundName>,
     /// The Engine record was read: every other record may follow.
     engine: bool,
@@ -111,16 +109,14 @@ pub struct SoundDecoder<'a> {
     /// tag, and the block codes.
     seen: u8,
     blocks: ByteSet,
-    /// Applied in `end`, once the `ModDests` they index are known.
+    /// Applied at the end, once the `ModDests` they index are known.
     routes: [u8; MAX_RECORD_LEN],
     routes_len: usize,
 }
 
-impl<'a> SoundDecoder<'a> {
-    pub fn new(target: &'a mut Sound) -> Self {
-        SoundDecoder {
-            target,
-            staged: Sound::neutral(EngineType::Algo),
+impl SoundCheck {
+    pub fn new() -> Self {
+        SoundCheck {
             name: None,
             engine: false,
             seen: 0,
@@ -131,14 +127,74 @@ impl<'a> SoundDecoder<'a> {
     }
 }
 
-impl Decode for SoundDecoder<'_> {
+impl Default for SoundCheck {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Check for SoundCheck {
     const KIND: FileKind = FileKind::Sound;
 
+    fn event(&mut self, e: Event<'_>) -> Result<(), FileError> {
+        self.step(e, None)
+    }
+
+    fn end(&mut self) -> Result<(), FileError> {
+        self.finish(None)
+    }
+}
+
+/// Decodes a Sound file onto `target`: pass 1 checks, pass 2 builds the
+/// Sound in `staged`, and `commit` swaps it into `target`.
+pub struct SoundDecoder<'a> {
+    check: SoundCheck,
+    target: &'a mut Sound,
+    staged: Sound,
+}
+
+impl<'a> SoundDecoder<'a> {
+    pub fn new(target: &'a mut Sound) -> Self {
+        SoundDecoder {
+            check: SoundCheck::new(),
+            target,
+            staged: Sound::neutral(EngineType::Algo),
+        }
+    }
+}
+
+impl Check for SoundDecoder<'_> {
+    const KIND: FileKind = FileKind::Sound;
+
+    fn event(&mut self, e: Event<'_>) -> Result<(), FileError> {
+        self.check.event(e)
+    }
+
+    fn end(&mut self) -> Result<(), FileError> {
+        self.check.end()
+    }
+}
+
+impl Decode for SoundDecoder<'_> {
+    fn apply(&mut self, e: Event<'_>) -> Result<(), FileError> {
+        self.check.step(e, Some(&mut self.staged))
+    }
+
+    fn commit(&mut self) -> Result<(), FileError> {
+        self.check.finish(Some(&mut self.staged))?;
+        core::mem::swap(self.target, &mut self.staged);
+        Ok(())
+    }
+}
+
+impl SoundCheck {
+    /// One event, applied to `staged` if there is one.
+    ///
     /// `NeedsNewerFirmware`: an unknown engine. `Corrupt`: a record before
     /// `Engine`, or one we write once read twice. `Bounds`: a payload of the
     /// wrong shape, or more entries than the Sound holds. `WrongKind`: not a
     /// Sound file.
-    fn event(&mut self, e: Event<'_>, apply: bool) -> Result<(), FileError> {
+    fn step(&mut self, e: Event<'_>, staged: Option<&mut Sound>) -> Result<(), FileError> {
         let (tag, p) = match e {
             Event::Header(h) => {
                 if h.kind != FileKind::Sound {
@@ -172,17 +228,14 @@ impl Decode for SoundDecoder<'_> {
             return Err(FileError::Corrupt);
         }
         match tag {
-            RecordTag::Engine => self.engine_record(p, apply),
-            RecordTag::Block => {
-                let target: Option<&mut dyn Blocks> = if apply {
-                    Some(&mut self.staged.params)
-                } else {
-                    None
-                };
-                decode_block(p, MIGRATIONS, target)
-            }
-            RecordTag::Registry => self.registry(p, apply),
-            RecordTag::ModDests => self.mod_dests(p, apply),
+            RecordTag::Engine => self.engine_record(p, staged),
+            RecordTag::Block => decode_block(
+                p,
+                MIGRATIONS,
+                staged.map(|s| &mut s.params as &mut dyn Blocks),
+            ),
+            RecordTag::Registry => registry(p, staged),
+            RecordTag::ModDests => mod_dests(p, staged),
             RecordTag::Routes => {
                 if !p.len().is_multiple_of(ROUTE_LEN) || p.len() / ROUTE_LEN > MAX_ROUTES {
                     return Err(FileError::Bounds);
@@ -195,14 +248,13 @@ impl Decode for SoundDecoder<'_> {
         }
     }
 
-    /// `Corrupt` without an Engine record. With `apply`, adds the routes
-    /// and commits: the staged Sound becomes the target.
-    fn end(&mut self, apply: bool) -> Result<(), FileError> {
+    /// `Corrupt` without an Engine record. Adds the routes to `staged`.
+    fn finish(&mut self, staged: Option<&mut Sound>) -> Result<(), FileError> {
         if !self.engine {
             return Err(FileError::Corrupt);
         }
-        if apply {
-            let m = &mut self.staged.mod_state;
+        if let Some(s) = staged {
+            let m = &mut s.mod_state;
             let (routes, _) = self.routes[..self.routes_len].as_chunks::<ROUTE_LEN>();
             for &[src, block, id, amount] in routes {
                 let (Some(src), Some(addr)) = (ModSource::from_disk_code(src), addr_of(block, id))
@@ -213,65 +265,62 @@ impl Decode for SoundDecoder<'_> {
                     m.set_route(src.index(), d, amount as i8);
                 }
             }
-            core::mem::swap(self.target, &mut self.staged);
         }
         Ok(())
     }
-}
 
-impl SoundDecoder<'_> {
-    fn engine_record(&mut self, p: &[u8], apply: bool) -> Result<(), FileError> {
+    fn engine_record(&mut self, p: &[u8], staged: Option<&mut Sound>) -> Result<(), FileError> {
         let &[code] = p else {
             return Err(FileError::Bounds);
         };
         let engine = EngineType::from_disk_code(code).ok_or(FileError::NeedsNewerFirmware)?;
         self.engine = true;
-        if apply {
-            self.staged = Sound::neutral(engine);
+        if let Some(s) = staged {
+            *s = Sound::neutral(engine);
             if let Some(n) = self.name {
-                self.staged.name = n;
+                s.name = n;
             }
         }
         Ok(())
     }
+}
 
-    fn registry(&mut self, p: &[u8], apply: bool) -> Result<(), FileError> {
-        let (entries, []) = p.as_chunks::<REGISTRY_ENTRY_LEN>() else {
-            return Err(FileError::Bounds);
-        };
-        if entries.len() > MAX_REGISTRY_DESTS {
-            return Err(FileError::Bounds);
-        }
-        if apply {
-            for &[block, id, ref label @ ..] in entries {
-                let Some(addr) = addr_of(block, id) else {
-                    continue;
-                };
-                // Refused when not modulatable: skipped.
-                let _ = self.staged.dest_registry.add(addr, *label);
-            }
-        }
-        Ok(())
+fn registry(p: &[u8], staged: Option<&mut Sound>) -> Result<(), FileError> {
+    let (entries, []) = p.as_chunks::<REGISTRY_ENTRY_LEN>() else {
+        return Err(FileError::Bounds);
+    };
+    if entries.len() > MAX_REGISTRY_DESTS {
+        return Err(FileError::Bounds);
     }
+    if let Some(s) = staged {
+        for &[block, id, ref label @ ..] in entries {
+            let Some(addr) = addr_of(block, id) else {
+                continue;
+            };
+            // Refused when not modulatable: skipped.
+            let _ = s.dest_registry.add(addr, *label);
+        }
+    }
+    Ok(())
+}
 
-    fn mod_dests(&mut self, p: &[u8], apply: bool) -> Result<(), FileError> {
-        let (&sources, dests) = p.split_first().ok_or(FileError::Bounds)?;
-        let (dests, []) = dests.as_chunks::<2>() else {
-            return Err(FileError::Bounds);
-        };
-        if dests.len() > MAX_MOD_DESTS {
-            return Err(FileError::Bounds);
-        }
-        if apply {
-            let mut m = ModState::with_sources(sources.into());
-            for &[block, id] in dests {
-                // `push` refuses one that isn't modulatable: skipped.
-                if let Some(addr) = addr_of(block, id) {
-                    m.push(addr);
-                }
-            }
-            self.staged.mod_state = m;
-        }
-        Ok(())
+fn mod_dests(p: &[u8], staged: Option<&mut Sound>) -> Result<(), FileError> {
+    let (&sources, dests) = p.split_first().ok_or(FileError::Bounds)?;
+    let (dests, []) = dests.as_chunks::<2>() else {
+        return Err(FileError::Bounds);
+    };
+    if dests.len() > MAX_MOD_DESTS {
+        return Err(FileError::Bounds);
     }
+    if let Some(s) = staged {
+        let mut m = ModState::with_sources(sources.into());
+        for &[block, id] in dests {
+            // `push` refuses one that isn't modulatable: skipped.
+            if let Some(addr) = addr_of(block, id) {
+                m.push(addr);
+            }
+        }
+        s.mod_state = m;
+    }
+    Ok(())
 }
