@@ -115,6 +115,17 @@ impl View {
         }
     }
 
+    /// The spec's short form, for a param shown under its own label.
+    pub fn short(&self) -> Option<&'static str> {
+        match *self {
+            View::Param { addr, label, .. } => addr
+                .spec()
+                .filter(|s| s.label == label)
+                .and_then(|s| s.short),
+            _ => None,
+        }
+    }
+
     pub fn fmt(&self) -> ValFmt {
         match *self {
             View::Empty | View::Text { .. } => ValFmt::Uni,

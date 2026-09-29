@@ -4,6 +4,8 @@
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 
+use crate::dsp::xorshift_noise;
+
 // ── Karplus-Strong delay line (from the owner's Carcosa firmware) ───
 
 /// String delay-line length (ADR 0040): the period of G1 (MIDI 31, 49.0 Hz)
@@ -195,11 +197,3 @@ impl KsString {
 }
 
 crate::in_place::field_list!(KsString => KsString { buffer, write_pos, delay_len, ens_lfo_phase, noise_state });
-
-#[inline]
-pub(super) fn xorshift_noise(state: &mut u32) -> f32 {
-    *state ^= *state << 13;
-    *state ^= *state >> 17;
-    *state ^= *state << 5;
-    (*state as i32) as f32 / i32::MAX as f32
-}
