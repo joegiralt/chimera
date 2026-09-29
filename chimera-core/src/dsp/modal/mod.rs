@@ -41,10 +41,11 @@ use core::ptr::addr_of_mut;
 
 use chimera_hal::BLOCK_SIZE;
 
+use super::xorshift_noise;
 use crate::hw::Cost;
 use crate::in_place::{by_value, uninit_at};
 use rings::{CosineOsc, Svf, stiffness_from_structure};
-use string::{KsString, xorshift_noise};
+use string::KsString;
 
 pub const MAX_MODES: usize = 48;
 
