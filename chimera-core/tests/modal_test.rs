@@ -10,7 +10,7 @@ fn modal_params() -> ModalParams {
 }
 
 fn render_modal(params: &ModalParams, note: u8, blocks: usize) -> Vec<f32> {
-    let mut engine = ModalEngine::new();
+    let mut engine = ModalEngine::new(params.mode);
     engine.note_on(note, 100, params, SR);
     let mut all = Vec::new();
     let mut block = [0.0f32; 64];
@@ -69,7 +69,7 @@ fn test_modal_has_harmonics() {
 #[test]
 fn test_modal_decays() {
     let params = modal_params();
-    let mut engine = ModalEngine::new();
+    let mut engine = ModalEngine::new(params.mode);
     engine.note_on(60, 100, &params, SR);
 
     let mut block = [0.0f32; 64];
@@ -96,7 +96,7 @@ fn test_modal_decays() {
 #[test]
 fn test_modal_silent_when_idle() {
     let params = modal_params();
-    let mut engine = ModalEngine::new();
+    let mut engine = ModalEngine::new(params.mode);
     let mut block = [0.0f32; 64];
     engine.render(&mut block, &params, SR);
     let max = block.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
@@ -323,7 +323,7 @@ fn sympathetic_mode_is_bounded_and_falls_silent() {
         ..Default::default()
     };
     let bounded = |b: &[f32; 64]| b.iter().all(|s| s.is_finite() && s.abs() <= 1.0);
-    let mut engine = ModalEngine::new();
+    let mut engine = ModalEngine::new(p.mode);
     engine.note_on(48, 127, &p, SR);
     let mut block = [0.0f32; 64];
     for _ in 0..2 * SR as usize / 64 {

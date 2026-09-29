@@ -7,29 +7,36 @@ use crate::addr::{BlockRef, Blocks, ParamAddr};
 use crate::block::apply_offset;
 use crate::dsp::algo::engine::AlgoLive;
 use crate::dsp::drive::Drive;
-use crate::dsp::engines::Engines;
+use crate::dsp::engines::{EngineSlot, SlotKind};
 use crate::dsp::envelope::{EnvMods, Envelope};
 use crate::dsp::filter::SvfFilter;
 use crate::dsp::lfo::Lfo;
 use crate::dsp::modal::{ModalEngine, ModalParams};
 use crate::dsp::modulator::{EnvSlot, LfoSlot};
 use crate::dsp::wavefolder::Wavefolder;
-use crate::hw::{Cost, MAX_VOICES, VOICE_RAM_BUDGET};
+use crate::hw::{Cost, MAX_VOICES, VOICE_CHAIN_BYTES, VOICE_RAM_BUDGET};
 use crate::in_place::{by_value, uninit_at};
 use crate::modulation::{
     MAX_MOD_SOURCES, ModRouting, ModSource, ModState, VCA, amount_scale, note_source,
 };
-use crate::params::{DriveParams, EngineType, EnvParams, FolderParams, ParamSnapshot};
+use crate::params::{DriveParams, EnvParams, FolderParams, ParamSnapshot};
 use crate::{MidiNote, Velocity};
 
 // ADR 0013: the voice pool fits D2 SRAM beside the DMA buffers, on both targets.
 const _: () = assert!(core::mem::size_of::<[Voice; MAX_VOICES]>() <= VOICE_RAM_BUDGET);
+// ADR 0051: a voice is its chain plus one engine, and the chain can't grow
+// unnoticed.
+const _: () = assert!(
+    core::mem::size_of::<Voice>() <= VOICE_CHAIN_BYTES + core::mem::size_of::<EngineSlot>()
+);
 
 /// Complete voice signal chain:
 /// [Engine] → [Drive] → [Filter] → [Wavefolder] → [VCA]
 /// Modulators: three envelopes, three LFOs
 pub struct Voice {
-    engines: Engines,
+    /// The engine it plays, and so the engine it last played.
+    slot: EngineSlot,
+    sample_rate: u32,
     drive: Drive,
     filter: SvfFilter,
     folder: Wavefolder,
@@ -45,7 +52,6 @@ pub struct Voice {
     /// A note-on since the last block: its ENV destinations are recomputed
     /// with its own VEL and NOTE before the modulators run.
     retrigger: bool,
-    active_engine: EngineType,
     active: bool,
     last_note: MidiNote,
     last_velocity: Velocity,
@@ -100,12 +106,12 @@ impl VcaRoutes {
 // `reset` overwrites fields in place without dropping them.
 const _: () = assert!(!core::mem::needs_drop::<Voice>());
 
-/// Writes every field of `*p` but `engines`. The pattern is exhaustive, so
-/// a new field fails to build until it is written here.
+/// Writes every field of `*p` but `slot` and `sample_rate`. The pattern is
+/// exhaustive, so a new field fails to build until it is written here.
 macro_rules! write_chain {
     ($p:ident, { $($f:ident: $v:expr),* $(,)? }) => {{
         let _every_field = |v: &Voice| {
-            let Voice { engines: _, $($f: _),* } = v;
+            let Voice { slot: _, sample_rate: _, $($f: _),* } = v;
         };
         $(addr_of_mut!((*$p).$f).write($v);)*
     }};
@@ -137,7 +143,7 @@ impl Voice {
 
     /// Cycles/sample of a voice playing `p` under `mods`.
     pub fn cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
-        Engines::cost(p, mods)
+        EngineSlot::cost(p, mods)
             + Self::CHAIN_COST
             + p.filter.kind().cost(p.filter.mode())
             + ModRouting::cost(p, mods)
@@ -148,8 +154,8 @@ impl Voice {
     /// while it still plays it (#183): the model is fixed per note, so a
     /// MODE edit under a sounding voice is billed at the costlier of the two.
     pub fn held_model_extra(&self, p: &ParamSnapshot) -> Cost {
-        match self.engines.modal_playing() {
-            Some(mode) if self.active_engine == EngineType::Modal && mode != p.modal.mode => {
+        match self.slot.modal_playing() {
+            Some(mode) if mode != p.modal.mode => {
                 let held = ModalEngine::cost(&ModalParams { mode, ..p.modal });
                 Cost(held.0.saturating_sub(ModalEngine::cost(&p.modal).0))
             }
@@ -179,18 +185,19 @@ impl Voice {
 
     pub fn init_in_place(slot: &mut MaybeUninit<Self>, sample_rate: u32) -> &mut Self {
         let p = slot.as_mut_ptr();
-        // SAFETY: `p` is valid and unaliased; the engines are built in place
+        // SAFETY: `p` is valid and unaliased; the slot is built in place
         // and every other (small) field is written once before
         // `assume_init_mut`.
         unsafe {
-            Engines::init_in_place(uninit_at(addr_of_mut!((*p).engines)), sample_rate);
+            EngineSlot::init_in_place(uninit_at(addr_of_mut!((*p).slot)), SlotKind::Algo);
+            addr_of_mut!((*p).sample_rate).write(sample_rate);
             Self::init_chain(p);
             slot.assume_init_mut()
         }
     }
 
-    /// Every field but `engines`, as `new` builds it: the one list that
-    /// `init_in_place` and `reset` share.
+    /// Every field but `slot` and `sample_rate`, as `new` builds it: the one
+    /// list that `init_in_place` and `reset` share.
     ///
     /// # Safety
     /// `p` must be valid for writes, aligned and unaliased.
@@ -209,7 +216,6 @@ impl Voice {
                 mod_values: [0.0; MAX_MOD_SOURCES],
                 vca: VcaRoutes::default(),
                 retrigger: false,
-                active_engine: EngineType::Algo,
                 active: false,
                 last_note: MidiNote::A4,
                 last_velocity: Velocity::DEFAULT,
@@ -223,7 +229,7 @@ impl Voice {
     }
 
     pub fn sample_rate(&self) -> u32 {
-        self.engines.sample_rate()
+        self.sample_rate
     }
 
     /// On a fading voice, or one sounding another engine, the note waits
@@ -232,7 +238,7 @@ impl Voice {
     pub fn note_on(&mut self, note: MidiNote, velocity: Velocity, params: &ParamSnapshot) -> bool {
         let replaced = self.after_fade == AfterFade::Note;
         self.held = true;
-        if self.fade > 0 || (self.active && params.engine() != self.active_engine) {
+        if self.fade > 0 || (self.active && params.engine() != self.slot.kind().engine()) {
             self.last_note = note;
             self.last_velocity = velocity;
             self.after_fade = AfterFade::Note;
@@ -253,15 +259,13 @@ impl Voice {
             self.mod_values = [0.0; MAX_MOD_SOURCES];
         }
         self.retrigger = true;
-        // The engine left behind starts clean when it next plays.
-        if params.engine() != self.active_engine {
-            self.engines.reset(self.active_engine);
+        // Another engine starts clean, in place.
+        if params.engine() != self.slot.kind().engine() {
+            self.slot.rebuild(SlotKind::of(params));
         }
-        self.active_engine = params.engine();
         self.last_note = note;
         self.last_velocity = velocity;
-        self.engines
-            .note_on(self.active_engine, note, velocity, params);
+        self.slot.note_on(note, velocity, params, self.sample_rate);
         for e in &mut self.envs {
             e.note_on();
         }
@@ -279,7 +283,7 @@ impl Voice {
         if self.after_fade == AfterFade::Restart {
             self.after_fade = AfterFade::Idle;
         }
-        self.engines.note_off(self.active_engine);
+        self.slot.note_off();
     }
 
     /// Fade to silence over `FADE` samples, then go idle as a fresh voice.
@@ -302,10 +306,9 @@ impl Voice {
     fn fade_ended(&mut self, params: &ParamSnapshot) {
         let (after, held) = (self.after_fade, self.held);
         let (note, velocity) = (self.last_note, self.last_velocity);
-        self.reset();
+        self.reset(params);
         if after != AfterFade::Idle {
-            // Both engines are clean now: `trigger` has none to reset.
-            self.active_engine = params.engine();
+            // The slot holds `params`' engine, clean: `trigger` has none to rebuild.
             self.held = true;
             self.trigger(note, velocity, params);
             if !held {
@@ -314,9 +317,9 @@ impl Voice {
         }
     }
 
-    /// Back to the state `new` builds, in place.
-    fn reset(&mut self) {
-        self.engines.reset(self.active_engine);
+    /// Back to the state `new` builds, in place, holding `params`' engine.
+    fn reset(&mut self, params: &ParamSnapshot) {
+        self.slot.rebuild(SlotKind::of(params));
         // SAFETY: `self` is a valid, aligned, unaliased `Voice`.
         unsafe { Self::init_chain(self) }
     }
@@ -350,7 +353,7 @@ impl Voice {
 
         // The Sound changed engine: fade the old one out; a held note then
         // restarts on the new one.
-        if self.active && self.fade == 0 && params.engine() != self.active_engine {
+        if self.active && self.fade == 0 && params.engine() != self.slot.kind().engine() {
             if self.held {
                 self.after_fade = AfterFade::Restart;
             }
@@ -459,7 +462,7 @@ impl Voice {
         let (m, live) = (&self.played, &self.played_live);
 
         // 1. Engine → raw oscillator output
-        self.engines.render(self.active_engine, output, m, live);
+        self.slot.render(output, m, live, sample_rate);
 
         // 2. Drive
         self.drive.process(output, &m.drive);
@@ -479,8 +482,8 @@ impl Voice {
             None => {
                 // No route: the engine decides (spec § 4). No wildcard, so a new
                 // engine can't inherit the pass-through (VA gates: #148).
-                match self.active_engine {
-                    EngineType::Algo | EngineType::Modal => {
+                match &self.slot {
+                    EngineSlot::Algo(_) | EngineSlot::Modal(_) => {
                         // Its own envelopes shape the sound: today's expression, bit for bit.
                         for sample in output.iter_mut() {
                             *sample *= volume;
@@ -502,7 +505,7 @@ impl Voice {
         }
 
         // Check if done
-        self.active = self.engines.is_active(self.active_engine);
+        self.active = self.slot.is_active();
 
         if self.fade > 0 {
             for sample in output.iter_mut() {
@@ -522,7 +525,7 @@ impl Voice {
                 self.fade = Self::FADE;
             } else {
                 // Silent, but the engine may still sound: back to fresh.
-                self.reset();
+                self.reset(params);
             }
         }
     }
