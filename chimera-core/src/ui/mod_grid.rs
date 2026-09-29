@@ -741,3 +741,44 @@ pub fn inert_dests(state: &MatrixState, sound: &crate::preset::Sound) -> u16 {
         _ => m,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dsp::modal::{ModalParams, ResonatorMode};
+    use crate::mod_path::ModDestRegistry;
+    use crate::modulation::CUTOFF;
+    use crate::params::EngineType;
+    use crate::part::PartParams;
+    use crate::preset::Sound;
+    use crate::ui::view::dimmed;
+
+    const MACROS: [crate::block::ParamId; 4] = [
+        ModalParams::STRUCTURE,
+        ModalParams::BRIGHT,
+        ModalParams::DAMP,
+        ModalParams::POS,
+    ];
+
+    #[test]
+    fn bowed_dims_the_macros_and_their_columns() {
+        let modal = |id| ParamAddr::new(BlockRef::Modal, id);
+        let mut s = Sound::init(EngineType::Modal);
+        s.params.modal.mode = ResonatorMode::Bowed;
+        for id in MACROS {
+            assert!(dimmed(modal(id), &s), "{id:?}");
+        }
+        assert!(!dimmed(modal(ModalParams::MODE), &s));
+        let space = ParamAddr::new(BlockRef::Part, PartParams::SEND_REVERB);
+        assert!(!dimmed(space, &s));
+
+        let mut reg = ModDestRegistry::new();
+        reg.add(CUTOFF, *b"CUTOFF\0\0").unwrap();
+        reg.add(modal(ModalParams::DAMP), *b"MDLDAMP\0").unwrap();
+        let mut m = MatrixState::new();
+        m.rebuild_dests_from_registry(&reg);
+        assert_eq!(inert_dests(&m, &s), 0b10, "DAMP, column 2");
+        s.params.modal.mode = ResonatorMode::String;
+        assert_eq!(inert_dests(&m, &s), 0);
+    }
+}

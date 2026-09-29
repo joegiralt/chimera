@@ -7,6 +7,7 @@ use crate::block::ValFmt;
 use crate::dsp::algo::params::AlgoParams;
 use crate::dsp::filter::FilterKind;
 use crate::dsp::lfo::LfoParams;
+use crate::dsp::modal::{self, ModalParams, ResonatorMode};
 use crate::dsp::modulator::{
     EnvForm, EnvSlot, EnvSpeed, EnvType, Func, FuncMode, LfoForm, LfoSlot, LfoType, pick,
 };
@@ -49,6 +50,8 @@ pub struct SlotCtx {
     pub kind: FilterKind,
     pub envs: [EnvKind; 3],
     pub lfos: [LfoKind; 3],
+    /// MODEL: which cells MDL2 shows.
+    pub model: ResonatorMode,
 }
 
 impl SlotCtx {
@@ -72,6 +75,7 @@ impl SlotCtx {
                     LfoType::Func => LfoKind::Func(pick(&LfoForm::ALL, at(LfoParams::FORM))),
                 }
             }),
+            model: ResonatorMode::from_u8(get(BlockRef::Modal, ModalParams::MODE) as u8),
         }
     }
 }
@@ -194,6 +198,14 @@ pub fn view(def: &BlockDef, i: usize, ctx: &SlotCtx) -> View {
             k,
             BlockRef::Lfo(s),
         ),
+        SlotBinding::ModalPanel(k) => match modal::page_cells(ctx.model).get(k as usize) {
+            Some(&Some(id)) => {
+                let addr = ParamAddr::new(BlockRef::Modal, id);
+                addr.spec()
+                    .map_or(View::Empty, |s| param(addr, s.label, s.fmt))
+            }
+            _ => View::Empty,
+        },
     }
 }
 
@@ -218,6 +230,8 @@ pub fn dimmed(addr: ParamAddr, sound: &Sound) -> bool {
         (BlockRef::Filter, FilterParams::MODE) => sound.params.filter.kind().modes().len() == 1,
         // MORPH blends ALG A into ALG B: one algorithm, nothing to blend (#188).
         (BlockRef::Algo, AlgoParams::MORPH) => sound.params.algo.alg_a == sound.params.algo.alg_b,
+        // What MODEL ignores (spec § 1 Dimming).
+        (BlockRef::Modal, id) => !modal::reads(sound.params.modal.mode, id),
         _ => false,
     }
 }

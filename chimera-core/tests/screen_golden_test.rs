@@ -38,6 +38,9 @@ const GOLDENS: &[(&str, u64)] = &[
     ("amp_vel_live", 0xe969b1ab3a3e37fb),
     ("algo_pitch", 0x90d2841bef4b43a6),
     ("modal_pitch", 0xecd2cbfd3f40c2e6),
+    ("modal_home", 0x79a986c68cffa28e),
+    ("modal_mdl2_symp", 0x63de2e02e6d7a52c),
+    ("modal_home_bowed", 0x228b228d8ef59bb7),
     ("modal_amp", 0xad2feb025c2dfa59),
     // The Mix chain's map loses its TAPE node without `master-tape`
     // (ADR 0055); with it, the screens are as before.

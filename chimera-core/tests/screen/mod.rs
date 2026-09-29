@@ -426,6 +426,16 @@ pub const CASES: &[ScreenCase] = &[
         to_pitch(ui, EngineType::Modal);
         feed(ui, Input::turn(EncoderId::A, -12)); // PITCH -12, focused
     }),
+    ("modal_home", |ui| load_init(ui, EngineType::Modal)),
+    ("modal_mdl2_symp", |ui| {
+        load_init(ui, EngineType::Modal);
+        feed(ui, Input::turn(EncoderId::A, 3)); // MODEL → SYMP
+        feed(ui, Input::press(ButtonId::Edit)); // MDL2
+    }),
+    ("modal_home_bowed", |ui| {
+        load_init(ui, EngineType::Modal);
+        feed(ui, Input::turn(EncoderId::A, 2)); // MODEL → BOWED: the macros dim
+    }),
     ("modal_amp", |ui| {
         load_init(ui, EngineType::Modal);
         plus(ui, 2); // MDL · FLT · AMP
