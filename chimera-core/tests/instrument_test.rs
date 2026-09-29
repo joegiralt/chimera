@@ -215,15 +215,15 @@ fn mix_parts_reference(
         }
         for (send, &amount) in sends.iter_mut().zip(&part.mix.sends) {
             for (s, &b) in send.iter_mut().zip(bus) {
-                *s += b * (amount * VOICE_SUM_TRIM);
+                *s += b * amount;
             }
         }
     }
     let mut ret = Stereo::SILENT;
     fx.process(sends, &shared.fx, SR, &mut ret);
     for (i, (&l, &r)) in ret.l.iter().zip(&ret.r).enumerate() {
-        out[0][2 * i] += l;
-        out[0][2 * i + 1] += r;
+        out[0][2 * i] += l * VOICE_SUM_TRIM;
+        out[0][2 * i + 1] += r * VOICE_SUM_TRIM;
     }
     fx.master(out, &shared.fx, SR);
     fx.limit(out, SR);
@@ -304,8 +304,9 @@ fn mix_parts_is_bit_identical_to_the_reference() {
 }
 
 /// Send/return: a Part on pair 3, panned hard left, with a reverb send puts
-/// no dry signal on pair 1 — pair 1 carries exactly the FX return, a
-/// limiter lookahead late, which is silent until its first reflection.
+/// no dry signal on pair 1 — pair 1 carries exactly the FX return (fed the
+/// untrimmed send, trimmed after), a limiter lookahead late, which is
+/// silent until its first reflection.
 #[test]
 fn fx_send_puts_no_dry_signal_on_pair_1() {
     let mut rig = Rig::new();
@@ -321,8 +322,7 @@ fn fx_send_puts_no_dry_signal_on_pair_1() {
     for b in 0..120 {
         rig.render(&shared);
         let bus = *rig.inst.part_bus(0);
-        let send = bus.map(|s| s * (0.5 * VOICE_SUM_TRIM));
-        let mut sends = [[0.0; BLOCK_SIZE], [0.0; BLOCK_SIZE], send];
+        let mut sends = [[0.0; BLOCK_SIZE], [0.0; BLOCK_SIZE], bus.map(|s| s * 0.5)];
         let mut ret = Stereo::SILENT;
         fx.process(&mut sends, &shared.fx, SR, &mut ret);
         let (l, r) = lr(&rig.out[0]);
@@ -331,7 +331,10 @@ fn fx_send_puts_no_dry_signal_on_pair_1() {
             (last.l, last.r),
             "block {b}: pair 1 is the return only"
         );
-        last = ret;
+        last = Stereo {
+            l: ret.l.map(|x| x * VOICE_SUM_TRIM),
+            r: ret.r.map(|x| x * VOICE_SUM_TRIM),
+        };
         let (l3, r3) = lr(&rig.out[2]);
         assert_eq!(peak(&r3), 0.0, "block {b}: hard left");
         if b < first_reflection(size_step(shared.fx.reverb.size)) / BLOCK_SIZE {
@@ -603,14 +606,14 @@ fn the_costliest_patch_plays_six_voices_on_rev_v() {
 /// Recorded when the instrument path landed (plan Task 12). Re-record only
 /// for an intended sound change (`common::golden`).
 ///
-/// Re-recorded for ADR 0050: each is the last recording × 1/√8 (within
-/// 1.6e-7), one block late; `reverb_send_on` besides moves by the ring's
-/// fixed-point grid, which is not scale-invariant (0.7 % of the return).
+/// Re-recorded for ADR 0050: each is the last recording × 1/√8, one block
+/// late, within 5e-8 of full scale (the FX bus hears untrimmed sends and
+/// only its return is trimmed, so the reverb's ring is unchanged).
 const GOLDENS: &[(&str, u64)] = &[
     ("poly_chord", 0x4dd60530a4325afd),
     ("two_parts_two_pairs", 0x26c7a28fdac635b4),
     ("reverb_send_off", 0xab56791b4b86ba21),
-    ("reverb_send_on", 0xc855df79783f4f9d),
+    ("reverb_send_on", 0xf60f894cd0edb43d),
     ("six_voice_chord", 0x176c7c512cef19a5),
 ];
 
