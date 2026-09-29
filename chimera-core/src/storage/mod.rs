@@ -9,7 +9,7 @@ mod record;
 mod sound;
 
 pub use block_codec::{decode_block, encode_block};
-pub use card::{Card, CardError, CardEvent, CardFault, Ready, after_error, after_mount};
+pub use card::{Card, CardError, CardEvent, CardFault, Outcome, Ready, after_error, after_mount};
 pub use codes::{
     DiskValue, MIGRATIONS, Migration, RETIRED, RETIRED_BLOCKS, RETIRED_CODES, RETIRED_SOURCES,
     ValidAddr, read_value,

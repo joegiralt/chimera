@@ -347,6 +347,7 @@ Every rung has a one-line footer, and the screen goldens include it:
   - The card is **mounted per operation**. Every handle is closed on success and on error.
   - Any card error sets `Failed`, which keeps the last `VolumeId`. NO CARD sets `Absent`. A missing or damaged file is a file error and leaves the state alone.
   - `Failed` or `Absent` becomes `Ready` only after a fresh init and mount.
+  - `Absent` forgets the last `VolumeId`, so even the same card put back mounts as new and every cache is rebuilt. This is conservative by design.
   - Each mount compares the volume serial and label with the cached `VolumeId`. On a mismatch, the library index and project list are dropped, and any `Pending` replace re-validates.
 - **Formats.** FAT16 and FAT32 only. exFAT (the default on SDXC over 32 GB) shows "CARD IS EXFAT: FORMAT FAT32".
 - **Fresh card.** A card with no `/CHIMERA` gets the directories, the factory library (the factory Sounds plus one INIT Sound per engine) and an empty `TAGS`, with a progress bar.

@@ -40,6 +40,11 @@ impl MemStore {
         self.present = false;
     }
 
+    /// The ejected card back in the slot, files intact.
+    pub fn insert(&mut self) {
+        self.present = true;
+    }
+
     fn open(&self, vol: VolumeId) -> Result<(), StoreError> {
         if !self.present {
             Err(StoreError::NoCard)
