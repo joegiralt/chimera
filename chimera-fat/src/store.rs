@@ -2,7 +2,7 @@
 //! handle is closed on every path, and a boot sector the library can't read
 //! safely never reaches it.
 
-use crate::volume::{Layout, Link, first_partition, layout};
+use crate::volume::{Layout, Link, Root, first_partition, layout};
 use chimera_hal::store::{ByteSink, CHUNK, Dir, FileName, ReadSink, Store, StoreError, VolumeId};
 use embedded_hal::delay::DelayNs;
 use embedded_hal::spi::SpiDevice;
@@ -213,7 +213,7 @@ impl<D: Medium, T: TimeSource> FatStore<D, T> {
     fn identify(&self, mbr: &[u8; 512]) -> Result<(VolumeId, Fat), StoreError> {
         let p = first_partition(mbr).map_err(StoreError::Unsupported)?;
         let bs = self.read_fs_block(p.lba)?;
-        let (layout, id) = layout(&bs, p.kind).map_err(StoreError::Unsupported)?;
+        let (layout, id) = layout(&bs, p).map_err(StoreError::Unsupported)?;
         Ok((id, Fat { lba: p.lba, layout }))
     }
 
@@ -278,7 +278,7 @@ impl<D: Medium, T: TimeSource> FatStore<D, T> {
         if now != vol {
             return Err(StoreError::VolumeChanged(now));
         }
-        if let Some(root) = fat.layout.root() {
+        if let Root::Cluster(root) = fat.layout.root() {
             self.check_chain(&fat, root, 0)?;
         }
         let v = self

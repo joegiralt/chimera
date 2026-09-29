@@ -13,13 +13,14 @@ build:
     cargo build -p chimera-core -p chimera-hal -p chimera-desktop
 
 # Everything must pass before a commit (ADR 0013): core + hal tests, desktop
-# tests and its no-MIDI build, the firmware built and linked with default
+# tests and its no-MIDI build, the dosfstools cross-checks, the firmware built and linked with default
 # features, with none, with the bench and with the SD probe, clippy on host
 # and firmware (every feature set), rustfmt and the stack check. The desktop needs ALSA's
 # pkg-config file; point PKG_CONFIG_PATH at it if it is not installed
 # system-wide.
 check:
     cargo test -p chimera-core -p chimera-hal -p chimera-waves -p chimera-fat --features chimera-hal/testkit
+    just test-fat-tools
     cargo test -p chimera-desktop
     cargo build -p chimera-desktop --no-default-features
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf
@@ -58,6 +59,14 @@ stack-check:
 # Run tests
 test:
     cargo test -p chimera-core -p chimera-hal -p chimera-waves -p chimera-fat --features chimera-hal/testkit
+    just test-fat-tools
+
+# The FAT layer checked by dosfstools (ADR 0048): mkfs.fat images must read
+# back and fsck.fat -n must pass. The tests are #[ignore]d so a plain
+# `cargo test` stays hermetic; without dosfstools this fails with an install
+# message, it never skips.
+test-fat-tools:
+    cargo test -p chimera-fat --features chimera-hal/testkit --test dosfstools_test -- --ignored
 
 # Clippy on every target and feature set `check` builds, test targets included
 clippy:

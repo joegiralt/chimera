@@ -1,5 +1,6 @@
-//! The MBR and partition boot sector: FS type and volume serial, which
-//! `embedded-sdmmc` doesn't expose. Pure; never panics.
+//! The MBR, the partition boot sector and the volume's `Layout`: where the
+//! FATs, the root and the clusters are, and FAT entry reads and writes.
+//! Pure; never panics.
 
 use chimera_hal::store::{Unsupported, VolumeId};
 use core::num::NonZeroU8;
@@ -9,6 +10,16 @@ use core::ops::Range;
 pub enum FsKind {
     Fat16,
     Fat32,
+}
+
+impl FsKind {
+    /// Bytes per FAT entry.
+    const fn entry_bytes(self) -> u32 {
+        match self {
+            FsKind::Fat16 => 2,
+            FsKind::Fat32 => 4,
+        }
+    }
 }
 
 /// A FAT partition type byte (0x04, 0x06, 0x0E, 0x0B or 0x0C). Only
@@ -46,6 +57,8 @@ impl PartitionType {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Partition {
     pub lba: u32,
+    /// The entry's sector count: the volume must fit in it.
+    pub blocks: u32,
     pub kind: PartitionType,
 }
 
@@ -63,6 +76,7 @@ const MBR_ENTRY: usize = 446;
 const MBR_STATUS: usize = MBR_ENTRY;
 const MBR_TYPE: usize = MBR_ENTRY + 4;
 const MBR_LBA: usize = MBR_ENTRY + 8;
+const MBR_BLOCKS: usize = MBR_ENTRY + 12;
 const MBR_BOOTABLE: u8 = 0x80;
 
 const BPB_BYTES_PER_SECTOR: usize = 11;
@@ -126,32 +140,56 @@ pub fn first_partition(mbr: &[u8; SECTOR]) -> Result<Partition, Unsupported> {
                 && status & !MBR_BOOTABLE == 0
                 && lba != 0 =>
         {
-            Ok(Partition { lba, kind })
+            Ok(Partition {
+                lba,
+                blocks: u32_at(mbr, MBR_BLOCKS),
+                kind,
+            })
         }
         _ => Err(Unsupported::NoPartitionTable),
     }
 }
 
 /// The partition's FS type and identity, from its boot sector and the
-/// MBR's type.
+/// MBR's type, with no bound on the volume's size.
 pub fn boot_sector(
     bs: &[u8; SECTOR],
     kind: PartitionType,
 ) -> Result<(FsKind, VolumeId), Unsupported> {
-    layout(bs, kind).map(|(l, id)| (l.kind, id))
+    let part = Partition {
+        lba: 0,
+        blocks: u32::MAX,
+        kind,
+    };
+    layout(bs, part).map(|(l, id)| (l.kind, id))
 }
 
-/// Where a volume `boot_sector` accepts keeps its FAT, and how far its
-/// clusters run. Only `layout` builds one.
+/// Where the root directory is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Root {
+    /// FAT16: a fixed region before the clusters.
+    Fixed { first: u32, blocks: u32 },
+    /// FAT32: a cluster chain.
+    Cluster(u32),
+}
+
+/// Where a volume `layout` accepts keeps its FATs, root and clusters. Block
+/// numbers are from the partition's start. Only `layout` builds one, so
+/// every region lies below `blocks` and every FAT holds every cluster.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Layout {
     kind: FsKind,
-    /// FAT 1's first block, from the partition's start.
+    blocks: u32,
+    /// FAT 1's first block.
     fat: u32,
+    fat_blocks: u32,
+    fats: u8,
+    /// Cluster 2's first block.
+    data: u32,
     clusters: u32,
-    cluster_bytes: u32,
-    /// FAT32's root directory cluster.
-    root: Option<u32>,
+    blocks_per_cluster: u32,
+    root: Root,
+    fs_info: Option<u32>,
 }
 
 /// A FAT entry, read as a link in a chain.
@@ -166,6 +204,8 @@ pub enum Link {
 const FAT16_EOC: u32 = 0xFFF8;
 const FAT32_EOC: u32 = 0x0FFF_FFF8;
 const FAT32_MASK: u32 = 0x0FFF_FFFF;
+/// FAT32's most clusters: the highest, 0x0FFF_FFF6, stays below the bad mark.
+const FAT32_MAX_CLUSTERS: u32 = 0x0FFF_FFF5;
 const FIRST_CLUSTER: u32 = 2;
 const DIR_CLUSTER_HI: usize = 20;
 const DIR_CLUSTER_LO: usize = 26;
@@ -179,13 +219,39 @@ impl Layout {
         self.clusters
     }
 
-    pub const fn cluster_bytes(&self) -> u32 {
-        self.cluster_bytes
+    /// The volume's blocks: every block it uses is below this.
+    pub const fn blocks(&self) -> u32 {
+        self.blocks
     }
 
-    /// FAT32's root directory cluster; FAT16's root is outside the clusters.
-    pub const fn root(&self) -> Option<u32> {
+    pub const fn blocks_per_cluster(&self) -> u32 {
+        self.blocks_per_cluster
+    }
+
+    pub const fn cluster_bytes(&self) -> u32 {
+        self.blocks_per_cluster * SECTOR as u32
+    }
+
+    pub const fn root(&self) -> Root {
         self.root
+    }
+
+    /// FAT32's FSInfo block.
+    pub const fn fs_info(&self) -> Option<u32> {
+        self.fs_info
+    }
+
+    /// `cluster`'s first block; `None` unless `holds(cluster)`.
+    pub fn cluster_block(&self, cluster: u32) -> Option<u32> {
+        // `layout` checked data + clusters × blocks per cluster ≤ blocks.
+        self.holds(cluster)
+            .then(|| self.data + (cluster - FIRST_CLUSTER) * self.blocks_per_cluster)
+    }
+
+    /// `fat1_block`, a FAT 1 block, in every FAT, FAT 1 first.
+    pub fn fat_copies(&self, fat1_block: u32) -> impl Iterator<Item = u32> + use<> {
+        let size = self.fat_blocks;
+        (0..u32::from(self.fats)).map(move |i| fat1_block + i * size)
     }
 
     /// A data cluster of this volume.
@@ -193,26 +259,59 @@ impl Layout {
         cluster >= FIRST_CLUSTER && cluster - FIRST_CLUSTER < self.clusters
     }
 
-    fn entry_bytes(&self) -> u32 {
+    /// The FAT 1 block holding `cluster`'s entry, from the partition's start.
+    pub fn fat_block(&self, cluster: u32) -> u32 {
+        let at = u64::from(cluster) * u64::from(self.kind.entry_bytes()) / SECTOR as u64;
+        u32::try_from(u64::from(self.fat) + at).unwrap_or(u32::MAX)
+    }
+
+    /// Where `cluster`'s entry sits in its `fat_block`.
+    fn entry_at(&self, cluster: u32) -> usize {
+        // Wrapping keeps the offset: 2^32 is a multiple of the sector.
+        cluster.wrapping_mul(self.kind.entry_bytes()) as usize % SECTOR
+    }
+
+    /// `cluster`'s raw entry in `block`, its `fat_block`; FAT32's top
+    /// nibble is masked off. 0 is free.
+    pub fn entry(&self, block: &[u8; SECTOR], cluster: u32) -> u32 {
+        let at = self.entry_at(cluster);
         match self.kind {
-            FsKind::Fat16 => 2,
-            FsKind::Fat32 => 4,
+            FsKind::Fat16 => u32::from(u16_at(block, at)),
+            FsKind::Fat32 => u32_at(block, at) & FAT32_MASK,
         }
     }
 
-    /// The FAT 1 block holding `cluster`'s entry, from the partition's start.
-    pub fn fat_block(&self, cluster: u32) -> u32 {
-        let at = u64::from(cluster) * u64::from(self.entry_bytes()) / SECTOR as u64;
-        u32::try_from(u64::from(self.fat) + at).unwrap_or(u32::MAX)
+    /// Sets `cluster`'s entry in `block` to `v`. FAT32 keeps the entry's
+    /// top nibble, as the spec asks.
+    pub fn put_entry(&self, block: &mut [u8; SECTOR], cluster: u32, v: u32) {
+        let at = self.entry_at(cluster);
+        match self.kind {
+            FsKind::Fat16 => block[at..at + 2].copy_from_slice(&(v as u16).to_le_bytes()),
+            FsKind::Fat32 => {
+                let v = (u32_at(block, at) & !FAT32_MASK) | (v & FAT32_MASK);
+                block[at..at + 4].copy_from_slice(&v.to_le_bytes());
+            }
+        }
+    }
+
+    /// The end-of-chain mark this FAT writes.
+    pub const fn end_mark(&self) -> u32 {
+        match self.kind {
+            FsKind::Fat16 => 0xFFFF,
+            FsKind::Fat32 => FAT32_MASK,
+        }
     }
 
     /// `cluster`'s entry in `block`, its `fat_block`.
     pub fn link(&self, block: &[u8; SECTOR], cluster: u32) -> Link {
-        // Wrapping keeps the offset: 2^32 is a multiple of the sector.
-        let at = cluster.wrapping_mul(self.entry_bytes()) as usize % SECTOR;
-        let (v, eoc) = match self.kind {
-            FsKind::Fat16 => (u32::from(u16_at(block, at)), FAT16_EOC),
-            FsKind::Fat32 => (u32_at(block, at) & FAT32_MASK, FAT32_EOC),
+        self.as_link(self.entry(block, cluster))
+    }
+
+    /// A raw entry, read as a link.
+    pub fn as_link(&self, v: u32) -> Link {
+        let eoc = match self.kind {
+            FsKind::Fat16 => FAT16_EOC,
+            FsKind::Fat32 => FAT32_EOC,
         };
         if v >= eoc {
             Link::End
@@ -234,9 +333,10 @@ impl Layout {
     }
 }
 
-/// `boot_sector`, with the volume's `Layout`.
-pub fn layout(bs: &[u8; SECTOR], kind: PartitionType) -> Result<(Layout, VolumeId), Unsupported> {
-    let byte = match kind {
+/// `boot_sector`, with the volume's `Layout`. A volume larger than `part`
+/// is `BadBootSector`.
+pub fn layout(bs: &[u8; SECTOR], part: Partition) -> Result<(Layout, VolumeId), Unsupported> {
+    let byte = match part.kind {
         PartitionType::Fat(b) => b.get(),
         PartitionType::ExfatOrNtfs if &bs[OEM_NAME] == EXFAT_OEM => return Err(Unsupported::Exfat),
         PartitionType::ExfatOrNtfs => return Err(Unsupported::NotFat(EXFAT_TYPE)),
@@ -268,37 +368,55 @@ pub fn layout(bs: &[u8; SECTOR], kind: PartitionType) -> Result<(Layout, VolumeI
         || !matches!(fats, 1 | 2)
         || fat_size == 0
         || u64::from(total) <= meta
+        || total > part.blocks
     {
         return bad;
     }
     // As embedded-sdmmc 0.10 counts: meta < total, so this fits in u32.
-    let clusters = (total - meta as u32) / u32::from(spc);
-    let (kind, serial_at, label_at, root) = if clusters < FAT12_CLUSTERS {
+    let (data, spc) = (meta as u32, u32::from(spc));
+    let clusters = (total - data) / spc;
+    let (kind, serial_at, label_at, root, fs_info) = if clusters < FAT12_CLUSTERS {
         return Err(Unsupported::NotFat(byte));
     } else if clusters < FAT16_CLUSTERS {
         if root_entries == 0 {
             return bad;
         }
-        (FsKind::Fat16, BS_VOL_ID16, BS_LABEL16, None)
+        let root = Root::Fixed {
+            first: data - root_sectors,
+            blocks: root_sectors,
+        };
+        (FsKind::Fat16, BS_VOL_ID16, BS_LABEL16, root, None)
     } else {
         let root_cluster = u32_at(bs, BPB_ROOT_CLUSTER);
         let fs_info = u32::from(u16_at(bs, BPB_FS_INFO));
         if u16_at(bs, BPB_FS_VER) != 0
             || !(2..clusters.saturating_add(2)).contains(&root_cluster)
             || !(1..reserved).contains(&fs_info)
+            || clusters > FAT32_MAX_CLUSTERS
         {
             return bad;
         }
-        (FsKind::Fat32, BS_VOL_ID32, BS_LABEL32, Some(root_cluster))
+        let root = Root::Cluster(root_cluster);
+        (FsKind::Fat32, BS_VOL_ID32, BS_LABEL32, root, Some(fs_info))
     };
+    // Every cluster's entry, the two reserved ones included, is in each FAT.
+    let entries = (u64::from(clusters) + 2) * u64::from(kind.entry_bytes());
+    if u64::from(fat_size) * (SECTOR as u64) < entries {
+        return bad;
+    }
     let mut label = [0; LABEL_LEN];
     label.copy_from_slice(&bs[label_at..label_at + LABEL_LEN]);
     let layout = Layout {
         kind,
+        blocks: total,
         fat: reserved,
+        fat_blocks: fat_size,
+        fats,
+        data,
         clusters,
-        cluster_bytes: u32::from(spc) * SECTOR as u32,
+        blocks_per_cluster: spc,
         root,
+        fs_info,
     };
     Ok((
         layout,

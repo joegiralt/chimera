@@ -1,13 +1,19 @@
-//! RAM-disk card images: FAT16, FAT32, exFAT and the superfloppies.
+//! RAM-disk card images: FAT16, FAT32, exFAT and the superfloppies; `Rec`,
+//! a recording view of one's partition; and files written by
+//! `embedded-sdmmc`, a second FAT implementation.
+// Each test binary uses its own part of this module.
+#![allow(dead_code)]
 
-use chimera_fat::Medium;
-use chimera_hal::store::StoreError;
+use chimera_fat::blocks::{BLOCK, Blocks};
+use chimera_fat::volume::{Layout, first_partition, layout};
+use chimera_fat::{FixedTime, Medium};
+use chimera_hal::store::{Dir, StoreError};
 use core::cell::{Cell, RefCell};
-use embedded_sdmmc::{Block, BlockCount, BlockDevice, BlockIdx};
+use embedded_sdmmc::{Block, BlockCount, BlockDevice, BlockIdx, Mode, VolumeIdx, VolumeManager};
 
 pub const PART_LBA: u32 = 2048;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct DiskError;
 
 impl core::fmt::Display for DiskError {
@@ -21,7 +27,7 @@ impl core::error::Error for DiskError {}
 pub struct RamDisk(pub RefCell<Vec<[u8; 512]>>);
 
 impl RamDisk {
-    fn zeroed(blocks: u32) -> Self {
+    pub fn zeroed(blocks: u32) -> Self {
         Self(RefCell::new(vec![[0; 512]; blocks as usize]))
     }
 
@@ -58,13 +64,11 @@ impl Medium for RamDisk {}
 
 /// A card pulled mid-write: every write fails once `writes_left` reaches 0.
 /// `None` never fails.
-#[allow(dead_code)]
 pub struct CutDisk {
     pub inner: RamDisk,
     pub writes_left: Cell<Option<u32>>,
 }
 
-#[allow(dead_code)]
 impl BlockDevice for CutDisk {
     type Error = DiskError;
 
@@ -86,7 +90,6 @@ impl BlockDevice for CutDisk {
     }
 }
 
-#[allow(dead_code)]
 impl Medium for CutDisk {
     /// Once cut, a fault, even where the library reports `DiskFull`.
     fn fault(&self) -> Option<StoreError> {
@@ -102,7 +105,8 @@ fn put32(b: &mut [u8; 512], at: usize, v: u32) {
     b[at..at + 4].copy_from_slice(&v.to_le_bytes());
 }
 
-fn mbr(disk: &mut [[u8; 512]], kind: u8) {
+/// One partition from `PART_LBA` to the disk's end, of type `kind`.
+pub fn mbr(disk: &mut [[u8; 512]], kind: u8) {
     let len = disk.len() as u32 - PART_LBA;
     let b = &mut disk[0];
     b[446 + 1..446 + 4].copy_from_slice(&[0xFE, 0xFF, 0xFF]);
@@ -267,4 +271,95 @@ pub fn superfloppy() -> RamDisk {
     let d = RamDisk::zeroed(16_384);
     fat16_volume(&mut d.0.borrow_mut(), 0, 0x1234_5678, fat16_size(16_384));
     d
+}
+
+/// The first partition's `Layout`.
+pub fn layout_of(disk: &RamDisk) -> Layout {
+    let p = first_partition(&disk.block(0)).unwrap();
+    layout(&disk.block(p.lba), p).unwrap().0
+}
+
+/// The first partition of a `RamDisk` as `Blocks`, logging every access.
+/// I/O at or past `bound` (the partition's end, unless a test narrows it)
+/// panics.
+pub struct Rec<'a> {
+    disk: &'a RamDisk,
+    lba: u32,
+    pub bound: u32,
+    pub reads: u32,
+    /// Each write's block, and whether it held these bytes already.
+    pub writes: Vec<(u32, bool)>,
+}
+
+impl<'a> Rec<'a> {
+    pub fn new(disk: &'a RamDisk) -> Self {
+        let p = first_partition(&disk.block(0)).unwrap();
+        Self {
+            disk,
+            lba: p.lba,
+            bound: p.blocks,
+            reads: 0,
+            writes: Vec::new(),
+        }
+    }
+
+    fn at(&self, lba: u32) -> usize {
+        assert!(lba < self.bound, "block {lba} at or past {}", self.bound);
+        (self.lba + lba) as usize
+    }
+}
+
+impl Blocks for Rec<'_> {
+    type Error = DiskError;
+
+    fn read(&mut self, lba: u32, buf: &mut [u8; BLOCK]) -> Result<(), DiskError> {
+        let at = self.at(lba);
+        self.reads += 1;
+        *buf = *self.disk.0.borrow().get(at).ok_or(DiskError)?;
+        Ok(())
+    }
+
+    fn write(&mut self, lba: u32, buf: &[u8; BLOCK]) -> Result<(), DiskError> {
+        let at = self.at(lba);
+        let mut disk = self.disk.0.borrow_mut();
+        let block = disk.get_mut(at).ok_or(DiskError)?;
+        self.writes.push((lba, block == buf));
+        *block = *buf;
+        Ok(())
+    }
+}
+
+/// `n` bytes no two files share at the same offset.
+pub fn pattern(seed: u8, n: usize) -> Vec<u8> {
+    (0..n).map(|i| (i as u8).wrapping_mul(31) ^ seed).collect()
+}
+
+/// Writes each `(dir, name, bytes)` through `embedded-sdmmc`, making the
+/// directories it needs.
+pub fn sdmmc_write(disk: RamDisk, files: &[(Dir, &str, &[u8])]) -> RamDisk {
+    let vm: VolumeManager<_, _> = VolumeManager::new(disk, FixedTime);
+    {
+        let vol = vm.open_volume(VolumeIdx(0)).unwrap();
+        let root = vol.open_root_dir().unwrap();
+        for &(dir, name, bytes) in files {
+            let _ = root.make_dir_in_dir("CHIMERA");
+            let mut d = root.open_dir("CHIMERA").unwrap();
+            let sub = match dir {
+                Dir::Chimera => None,
+                Dir::Projects => Some("PROJECTS"),
+                Dir::Sounds => Some("SOUNDS"),
+            };
+            if let Some(sub) = sub {
+                let _ = d.make_dir_in_dir(sub);
+                d.change_dir(sub).unwrap();
+            }
+            let f = d
+                .open_file_in_dir(name, Mode::ReadWriteCreateOrTruncate)
+                .unwrap();
+            for chunk in bytes.chunks(BLOCK) {
+                f.write(chunk).unwrap();
+            }
+        }
+    }
+    vm.free().0
 }
