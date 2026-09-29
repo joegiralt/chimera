@@ -5,15 +5,17 @@ mod common;
 
 use std::path::PathBuf;
 
+use chimera_core::dsp::modal::{BankModes, ResonatorMode, damp_from_v1_decay};
 use chimera_core::factory::{FACTORY_LEN, factory_sound};
-use chimera_core::params::EngineType;
+use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::preset::Sound;
-use chimera_core::storage::FileError;
+use chimera_core::storage::{FileError, MIGRATIONS, TRANSLATIONS, decode_block};
+use chimera_hal::BLOCK_SIZE;
 use common::codec_util::{
     SYSTEM_FIXTURE, decode, decode_into, encode, fix_crc, record_offsets, system_file,
     system_fixture_settings,
 };
-use common::{fnv1a, render_sound};
+use common::{SR, assert_stable, fnv1a, play_modal, render_sound};
 
 /// The v1 corpus: name, and the Sound it was written from.
 fn sources() -> Vec<(String, Sound)> {
@@ -174,7 +176,6 @@ fn v1_fixtures_render_identically() {
 /// Holds only while the factory Sounds are unchanged; the render test is the
 /// lasting one.
 #[test]
-#[ignore = "T4 translates BRIGHT"]
 fn v1_fixtures_equal_factory() {
     for i in 0..FACTORY_LEN {
         let d = decode(&fixture(&format!("factory_{i}.snd"))).unwrap();
@@ -199,7 +200,6 @@ fn after_engine(f: &[u8]) -> Vec<usize> {
 }
 
 #[test]
-#[ignore = "T4 translates BRIGHT"]
 fn unknown_non_critical_skipped() {
     for (name, s) in sources() {
         let f = fixture(&name);
@@ -284,4 +284,58 @@ fn truncated_bad_crc_bad_magic_leave_target() {
         assert_eq!(decode_into(&mut t, &f), Err(FileError::BadMagic), "{name}");
         assert!(t.bits_eq(&factory_sound(3).unwrap()), "{name}");
     }
+}
+
+/// A v1 Modal block in `mode`: every old id, DECAY at `decay`.
+fn v1_modal(mode: ResonatorMode, decay: f32) -> Vec<u8> {
+    let mut p = vec![1, 0];
+    p.extend(u32::from(mode as u8).to_le_bytes());
+    let reals = [0.6, decay, 0.9, 0.4, 0.7, 0.5, 0.35, 1.0, 0.1, 0.2, 0.3];
+    for (id, v) in (1u8..).zip(reals) {
+        p.push(id);
+        p.extend(f32::to_le_bytes(v));
+    }
+    p
+}
+
+fn decode_modal(payload: &[u8]) -> ParamSnapshot {
+    let mut snap = ParamSnapshot::for_engine(EngineType::Modal);
+    decode_block(payload, MIGRATIONS, TRANSLATIONS, Some(&mut snap)).unwrap();
+    snap
+}
+
+/// Spec § 3: DECAY → DAMP, STIFF or INHARM → STRUCTURE, FDBK dropped; the
+/// string models' BRIGHT flips to the new direction.
+#[test]
+fn old_modal_patches_translate() {
+    use ResonatorMode::{Bowed, Modal, String, Sympathetic};
+    let init = decode(&fixture("init_modal.snd")).unwrap();
+    assert!(init.bits_eq(&Sound::init(EngineType::Modal)));
+    for mode in [String, Modal, Bowed, Sympathetic] {
+        let snap = decode_modal(&v1_modal(mode, 0.2));
+        let m = &snap.modal;
+        let (damp, structure) = match mode {
+            Modal => (0.2, 0.7),
+            String | Bowed => (damp_from_v1_decay(0.2), 0.35),
+            Sympathetic => (damp_from_v1_decay(0.2), 0.7),
+        };
+        assert_eq!((m.damp, m.structure), (damp, structure), "{mode:?}");
+        let bright = if mode == Modal { 0.9 } else { 1.0 - 0.9 };
+        assert_eq!(
+            (m.excite, m.bright, m.pos, m.body),
+            (0.6, bright, 0.4, 0.5),
+            "{mode:?}"
+        );
+        assert_eq!((m.ens_depth, m.ens_rate, m.ens_mix), (0.1, 0.2, 0.3));
+        assert_eq!((m.couple, m.halo, m.modes), (0.25, 0.25, BankModes::M32));
+    }
+}
+
+/// Review focus 4: FDBK 1 at DECAY 0, today's longest, once ran away. It
+/// now loads as a plain long STRING.
+#[test]
+fn an_old_fdbk_1_patch_loads_stable() {
+    let snap = decode_modal(&v1_modal(ResonatorMode::String, 0.0));
+    let out = play_modal(&snap.modal, 36, 30 * SR as usize / BLOCK_SIZE, 0);
+    assert_stable(&out, 1.0, 1.0, "STRING, FDBK 1");
 }

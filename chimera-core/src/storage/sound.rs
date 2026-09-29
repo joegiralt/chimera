@@ -12,7 +12,7 @@ use crate::params::{EngineType, ParamSnapshot};
 use crate::preset::Sound;
 
 use super::block_codec::{ByteSet, decode_block, encode_block};
-use super::codes::{MIGRATIONS, ValidAddr};
+use super::codes::{MIGRATIONS, TRANSLATIONS, ValidAddr};
 use super::file::{Check, Decode};
 use super::frame::{Event, FileError, FileKind};
 use super::record::{MAX_RECORD_LEN, ReadTag, RecordBuf, RecordTag, RecordWriter};
@@ -232,6 +232,7 @@ impl SoundCheck {
             RecordTag::Block => decode_block(
                 p,
                 MIGRATIONS,
+                TRANSLATIONS,
                 staged.map(|s| &mut s.params as &mut dyn Blocks),
             ),
             RecordTag::Registry => registry(p, staged),

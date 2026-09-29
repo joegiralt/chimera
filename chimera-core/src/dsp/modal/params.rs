@@ -201,6 +201,33 @@ pub fn damp_from_v1_decay(decay: f32) -> f32 {
     damp_for(-3.0 / (C3_HZ * libm::log10f(g)))
 }
 
+/// A v1 Modal block into today's params (spec § 3), after its live values
+/// are written: DECAY → DAMP, STIFF or INHARM → STRUCTURE, FDBK dropped.
+/// The string models' BRIGHT flips to the new direction.
+pub fn translate_v1(old: &crate::storage::Retired, blk: &mut dyn Block) {
+    const DECAY: ParamId = ParamId(2);
+    const INHARM: ParamId = ParamId(5);
+    const STIFF: ParamId = ParamId(7);
+    type P = ModalParams;
+    let mode = blk
+        .enum_code(P::MODE)
+        .and_then(ResonatorMode::from_disk_code);
+    let bank = mode == Some(ResonatorMode::Modal);
+    if let Some(d) = old.get(DECAY) {
+        blk.set(P::DAMP, if bank { d } else { damp_from_v1_decay(d) });
+    }
+    let structure = match mode {
+        Some(ResonatorMode::Modal | ResonatorMode::Sympathetic) => INHARM,
+        _ => STIFF,
+    };
+    if let Some(s) = old.get(structure) {
+        blk.set(P::STRUCTURE, s);
+    }
+    if !bank {
+        blk.set(P::BRIGHT, 1.0 - blk.get(P::BRIGHT));
+    }
+}
+
 /// `damp_from_v1_decay(0.3)`, for the const spec table: a test pins it.
 const INIT_DAMP: f32 = 0.943_377_4;
 
