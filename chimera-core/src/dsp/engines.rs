@@ -43,6 +43,22 @@ impl SlotKind {
 in_place_enum! {
     /// The one engine a voice holds: the largest engine plus a tag, never
     /// the sum.
+    ///
+    /// A variant is only built in place (`init_in_place`, `rebuild`), never
+    /// by value and moved in (ADR 0008): its payload is sealed.
+    ///
+    /// ```compile_fail,E0308
+    /// use chimera_core::dsp::engines::EngineSlot;
+    /// use chimera_core::dsp::modal::{ModalEngine, ResonatorMode};
+    /// let _ = EngineSlot::Modal(ModalEngine::new(ResonatorMode::Modal));
+    /// ```
+    ///
+    /// Nor can the seal be named, to wrap an engine in it:
+    ///
+    /// ```compile_fail,E0603
+    /// use chimera_core::dsp::modal::{ModalEngine, ResonatorMode};
+    /// let _ = chimera_core::in_place::Sealed(ModalEngine::new(ResonatorMode::Modal));
+    /// ```
     #[expect(
         clippy::large_enum_variant,
         reason = "one slot per voice, built in place: boxing needs a heap"
@@ -56,6 +72,7 @@ in_place_enum! {
 impl EngineSlot {
     /// By value, through the stack: for tests. A voice builds its slot in
     /// place (`init_in_place`).
+    #[doc(hidden)]
     pub fn new(kind: SlotKind) -> Self {
         // SAFETY: `init_in_place` writes the whole slot.
         unsafe { by_value(|slot| Self::init_in_place(slot, kind)) }

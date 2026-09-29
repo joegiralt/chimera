@@ -1,4 +1,5 @@
 use core::mem::MaybeUninit;
+use core::ops::{Deref, DerefMut};
 
 /// # Safety
 /// `p` must be non-null, aligned, valid for writes for `'a` and not aliased.
@@ -17,6 +18,26 @@ pub(crate) unsafe fn by_value<T>(init: impl FnOnce(&mut MaybeUninit<T>) -> &mut 
     init(&mut slot);
     // SAFETY: the caller guarantees `init` wrote every field of `slot`.
     unsafe { slot.assume_init() }
+}
+
+/// An `in_place_enum!` variant's payload. Its field is private to this
+/// module, so nothing else can make one: a variant is only ever built in
+/// place, never on the stack and moved in (ADR 0008). A variant-level
+/// `#[non_exhaustive]` would bind other crates only, not this one.
+#[repr(transparent)]
+pub struct Sealed<T>(T);
+
+impl<T> Deref for Sealed<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        &self.0
+    }
+}
+
+impl<T> DerefMut for Sealed<T> {
+    fn deref_mut(&mut self) -> &mut T {
+        &mut self.0
+    }
 }
 
 // Lists every field of a struct by name: adding, removing or renaming a
@@ -39,6 +60,8 @@ pub(crate) use field_list;
 // variant `V(P) => rebuild_v, init_v`:
 // - `rebuild_v(&mut self, init)` turns the enum into `V`, in place;
 // - `init_v(slot, init)` builds `V` in an uninitialised slot.
+// Each variant holds a `Sealed<P>`, which only this module can make, so
+// these are the only ways to build one.
 // Payloads must have no drop glue: a rebuild overwrites the old one.
 //
 // The grammar is narrow on purpose: at most one generic parameter with a
@@ -53,7 +76,7 @@ macro_rules! in_place_enum {
         $(#[$meta])*
         #[allow(dead_code, reason = "variants are built through the mirror")]
         #[repr(C, u8)]
-        $vis enum $Name $(<$G: $Bound>)? { $( $Variant($Payload), )+ }
+        $vis enum $Name $(<$G: $Bound>)? { $( $Variant($crate::in_place::Sealed<$Payload>), )+ }
 
         const _: () = {
             use core::mem::{align_of, needs_drop, size_of, ManuallyDrop, MaybeUninit};
@@ -137,7 +160,8 @@ macro_rules! in_place_enum {
                         // (`LAYOUT`); writing a field through a raw pointer
                         // reads nothing uninitialised, and the payload
                         // pointer is aligned, in bounds and unaliased while
-                        // `slot` is borrowed. `ManuallyDrop<P>` is `P`'s layout.
+                        // `slot` is borrowed. `ManuallyDrop<P>` and
+                        // `Sealed<P>` are `P`'s layout.
                         unsafe {
                             (&raw mut (*m).tag).write(__Tag::$Variant);
                             let payload = (&raw mut (*m).payload.$Variant).cast::<$Payload>();
@@ -171,6 +195,8 @@ mod tests {
     use core::mem::MaybeUninit;
     use std::boxed::Box;
 
+    use super::Sealed;
+
     #[derive(Clone, Copy)]
     struct Wide<T>([T; 3], u16);
 
@@ -198,8 +224,8 @@ mod tests {
         assert_eq!(slot.mirror_parts().0, 0);
         match &*slot {
             Toy::Small(p) => {
-                assert_eq!(*p, 3);
-                assert_eq!(p as *const u8, slot.mirror_parts().1)
+                assert_eq!(**p, 3);
+                assert_eq!(core::ptr::from_ref(p).cast(), slot.mirror_parts().1)
             }
             _ => panic!(),
         }
@@ -208,14 +234,15 @@ mod tests {
         assert_eq!(slot.mirror_parts().0, 1);
         match &*slot {
             Toy::Wide(w) => {
-                assert_eq!((w.0, w.1), ([7; 3], 9));
-                assert_eq!(w as *const _ as *const u8, slot.mirror_parts().1)
+                let Wide(a, b) = **w;
+                assert_eq!((a, b), ([7; 3], 9));
+                assert_eq!(core::ptr::from_ref(w).cast(), slot.mirror_parts().1)
             }
             _ => panic!(),
         }
         // SAFETY: the closure writes every field.
         unsafe { slot.rebuild_small(|p| p.write(5)) };
-        assert!(matches!(*slot, Toy::Small(5)));
+        assert!(matches!(*slot, Toy::Small(Sealed(5))));
     }
 
     in_place_enum! {
@@ -242,8 +269,8 @@ mod tests {
         assert_eq!(slot.mirror_parts().0, 1);
         match &*slot {
             Odd::Word(w) => {
-                assert_eq!(*w, u64::MAX);
-                assert_eq!(w as *const u64 as *const u8, slot.mirror_parts().1)
+                assert_eq!(**w, u64::MAX);
+                assert_eq!(core::ptr::from_ref(w).cast(), slot.mirror_parts().1)
             }
             _ => panic!(),
         }
@@ -257,7 +284,7 @@ mod tests {
     fn unwinding_init_aborts_the_rebuild() {
         const CHILD: &str = "CHIMERA_IN_PLACE_ABORT_CHILD";
         if std::env::var_os(CHILD).is_some() {
-            let mut slot = Box::new(Odd::Word(0));
+            let mut slot = Box::new(Odd::Word(Sealed(0)));
             // SAFETY: the closure never returns, so writes nothing it owes.
             unsafe { slot.rebuild_bytes(|_| panic!("init unwinds")) };
             return;

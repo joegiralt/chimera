@@ -43,17 +43,24 @@ fn voice_is_its_chain_plus_one_slot() {
         ("EngineSlot", slot),
         ("chain", chain),
         ("Voice", size_of::<Voice>()),
-        ("[Voice; 8]", size_of::<[Voice; 8]>()),
     ] {
         eprintln!("{name:>12} {size:>7} B");
     }
+    eprintln!(
+        "{:>12} {:>7} B",
+        format!("[Voice; {}]", hw::MAX_VOICES),
+        size_of::<[Voice; hw::MAX_VOICES]>()
+    );
     assert!(
         chain <= hw::VOICE_CHAIN_BYTES,
         "chain = {chain} B, budget {} B",
         hw::VOICE_CHAIN_BYTES
     );
+    // `in_place_enum!`'s bound: the largest payload rounded up to the
+    // slot's align, plus one align for the tag.
+    let align = align_of::<EngineSlot>();
     assert!(
-        slot <= algo.max(modal) + align_of::<EngineSlot>(),
+        slot <= algo.max(modal).next_multiple_of(align) + align,
         "EngineSlot = {slot} B"
     );
 }
