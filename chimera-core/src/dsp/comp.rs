@@ -6,7 +6,7 @@
 use chimera_hal::BLOCK_SIZE;
 use core::mem::MaybeUninit;
 
-use crate::block::{Block, ParamId, ParamSpec, ValFmt};
+use crate::block::{Block, ParamId, ParamSpec, ValFmt, apply_code, identity_code};
 use crate::dsp::algo::math::exp2;
 
 /// Samples per gain computation.
@@ -26,7 +26,29 @@ const LOG2_E: f32 = core::f32::consts::LOG2_E;
 /// bounded reduction and releases in a bounded time.
 const PEAK_MAX: f32 = 256.0;
 
-pub const RATIOS: [f32; 8] = [1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 10.0, 20.0];
+/// Each ratio with its frozen disk ident (ADR 0045), side by side so the
+/// stored index can't be reordered away from what it selects. Append-only.
+const RATIO_TABLE: [(f32, &str); 8] = [
+    (1.0, "1:1"),
+    (1.5, "1.5:1"),
+    (2.0, "2:1"),
+    (3.0, "3:1"),
+    (4.0, "4:1"),
+    (6.0, "6:1"),
+    (10.0, "10:1"),
+    (20.0, "20:1"),
+];
+
+/// The compression ratios, by RATIO's index.
+pub const RATIOS: [f32; 8] = {
+    let mut r = [0.0; 8];
+    let mut i = 0;
+    while i < r.len() {
+        r[i] = RATIO_TABLE[i].0;
+        i += 1;
+    }
+    r
+};
 static RATIO_NAMES: [&str; 8] = ["1:1", "1.5:1", "2:1", "3:1", "4:1", "6:1", "10:1", "20:1"];
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -106,14 +128,18 @@ impl CompParams {
     }
 }
 
+const _: () = assert!(RATIO_TABLE.len() == COMP_SPECS[1].max as usize + 1);
+
 /// The compressor runs outside `Voice`: nothing is modulatable.
 pub static COMP_SPECS: [ParamSpec; 6] = [
-    ParamSpec::continuous(0, "THRESH", ValFmt::Uni, 0.0, 1.0, 0.7, 1.0 / 128.0, false),
-    ParamSpec::choice(1, "RATIO", ValFmt::Names(&RATIO_NAMES), 7.0, 0.0),
-    ParamSpec::continuous(2, "ATK", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false),
-    ParamSpec::continuous(3, "REL", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false),
-    ParamSpec::continuous(4, "MAKEUP", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false),
-    ParamSpec::continuous(5, "MIX", ValFmt::Uni, 0.0, 1.0, 1.0, 1.0 / 128.0, false),
+    ParamSpec::continuous(0, "THRESH", ValFmt::Uni, 0.0, 1.0, 0.7, 1.0 / 128.0, false)
+        .ident("THRESH"),
+    ParamSpec::choice(1, "RATIO", ValFmt::Names(&RATIO_NAMES), 7.0, 0.0).ident("RATIO"),
+    ParamSpec::continuous(2, "ATK", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false).ident("ATK"),
+    ParamSpec::continuous(3, "REL", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false).ident("REL"),
+    ParamSpec::continuous(4, "MAKEUP", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false)
+        .ident("MAKEUP"),
+    ParamSpec::continuous(5, "MIX", ValFmt::Uni, 0.0, 1.0, 1.0, 1.0 / 128.0, false).ident("MIX"),
 ];
 
 impl Block for CompParams {
@@ -143,6 +169,21 @@ impl Block for CompParams {
             Self::MIX => self.mix = v,
             _ => {}
         }
+    }
+
+    /// RATIO's code is its index into `RATIOS`, stored as is.
+    fn enum_code(&self, id: ParamId) -> Option<u8> {
+        (id == Self::RATIO).then_some(self.ratio)
+    }
+
+    fn enum_ident(&self, id: ParamId) -> Option<&'static str> {
+        (id == Self::RATIO)
+            .then(|| RATIO_TABLE.get(usize::from(self.ratio)).map(|e| e.1))
+            .flatten()
+    }
+
+    fn set_enum_code(&mut self, id: ParamId, code: u8) -> bool {
+        id == Self::RATIO && apply_code(identity_code(&COMP_SPECS, id, code), |c| self.ratio = c)
     }
 }
 
@@ -325,17 +366,29 @@ impl MasterComp {
             } else {
                 1.0 + x * (g - 1.0)
             };
-            let step = (e1 - e0) * (1.0 / STEP as f32);
-            for j in 0..STEP {
-                let ej = e0 + step * (j + 1) as f32;
-                for pair in out.iter_mut() {
-                    pair[2 * (i0 + j)] *= ej;
-                    pair[2 * (i0 + j) + 1] *= ej;
-                }
-            }
+            ramp(out, i0, e0, e1);
             e0 = e1;
         }
         (self.gr, self.e, self.engage) = (gr, e0, engage);
+    }
+}
+
+/// A chunk's gains, ramped linearly from `e0` (the last chunk's end) to
+/// `e1`, reached on its last sample.
+#[inline(always)]
+pub(crate) fn ramp_gains(e0: f32, e1: f32) -> [f32; STEP] {
+    let step = (e1 - e0) * (1.0 / STEP as f32);
+    core::array::from_fn(|j| e0 + step * (j + 1) as f32)
+}
+
+/// Scale chunk `i0..i0 + STEP` of every pair by `ramp_gains(e0, e1)`.
+#[inline(always)]
+fn ramp<const PAIRS: usize>(out: &mut [[f32; 2 * BLOCK_SIZE]; PAIRS], i0: usize, e0: f32, e1: f32) {
+    for (j, ej) in ramp_gains(e0, e1).into_iter().enumerate() {
+        for pair in out.iter_mut() {
+            pair[2 * (i0 + j)] *= ej;
+            pair[2 * (i0 + j) + 1] *= ej;
+        }
     }
 }
 

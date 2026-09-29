@@ -3,7 +3,8 @@
 //! step sizes (plan § Encoder step audit).
 
 use chimera_core::addr::{BlockRef, Op, ParamAddr};
-use chimera_core::dsp::algo::params::AlgoOpParams;
+use chimera_core::dsp::algo::params::{AlgoOpParams, AlgoParams};
+use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::filter::FilterMode;
 use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::params::{EngineType, ParamSnapshot};
@@ -119,6 +120,7 @@ static OP_PAGE: BlockDef = BlockDef {
 #[test]
 fn select_op_page_follows_the_selection() {
     let mut p = ParamSnapshot::default();
+    p.algo = AlgoParams::single(WaveId::W1); // operators 2–6 at LEVEL 0
     let mut op = Op::A;
     part_page::apply_encoder(&OP_PAGE, 0, 1, &mut p, &mut op);
     assert_eq!(op, Op::B);
@@ -151,6 +153,7 @@ fn a_selected_op_slot_resolves_to_the_operator_selected_now() {
 #[test]
 fn algo_pages_edit_every_operator_and_the_algorithm() {
     let mut p = ParamSnapshot::for_engine(EngineType::Algo);
+    p.algo = AlgoParams::single(WaveId::W1); // LEVELs 99, 0…; ALG A = B = T1
     for slot in 0..6 {
         turn(&reg::ALGO_WAVE, slot, 1 + slot as i8, &mut p);
     }

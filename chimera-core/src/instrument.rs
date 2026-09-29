@@ -11,8 +11,8 @@ use crate::dsp::Stereo;
 use crate::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
 use crate::dsp::voice::Voice;
 use crate::hw::{
-    AXI_SRAM, Cost, DAC_PAIRS, FB_BYTES, MAX_PARTS, MAX_VOICES, SampleBudget, UI_RESERVE,
-    VOICE_RAM_BUDGET,
+    AXI_SRAM, Cost, DAC_PAIRS, FB_BYTES, MAX_PARTS, MAX_VOICES, STORE_RESERVE, SampleBudget,
+    UI_RESERVE, VOICE_RAM_BUDGET,
 };
 use crate::in_place::{by_value, uninit_at};
 use crate::modulation::ModState;
@@ -28,9 +28,10 @@ use crate::{MidiChannel, Velocity};
 
 /// Everything the port places in AXI SRAM (ADR 0014): framebuffer, UI,
 /// Performance, SoundPool, the `AudioShared`, scope and `AudioStats` triple
-/// buffers (the scope's writer besides), and the FX bus.
+/// buffers (the scope's writer besides), the FX bus, and the card's store.
 pub const AXI_RESIDENT: usize = FB_BYTES
     + UI_RESERVE
+    + STORE_RESERVE
     + size_of::<Performance>()
     + size_of::<SoundPool>()
     + size_of::<TripleBuffer<AudioShared>>()
@@ -159,7 +160,9 @@ const _: () = assert!(BLOCK_SIZE.is_multiple_of(SEND_STEP) && BLOCK_SIZE.is_mult
 
 /// Steps 2–4 of `render`: each written Part's bus, panned and levelled,
 /// into its pair and, by its sends, into the FX sends; then the FX bus
-/// once, its return on pair 1; then the master section (`FxBus::master`).
+/// once, its return on pair 1; then the master section (`FxBus::master`);
+/// then the output stage (`FxBus::limit`, ADR 0050), which trims and
+/// limits the block before this one.
 /// Returns the scope block (the written buses summed). Separate so the
 /// bench can time it without voices.
 ///
@@ -242,8 +245,9 @@ pub fn mix_parts(
             pair[2 * i..2 * (i + PAIR_STEP)].copy_from_slice(&a);
         }
     }
-    // The master section, after every pair is summed.
+    // The master section, after every pair is summed; then the output stage.
     fx.master(out, &shared.fx, sample_rate);
+    fx.limit(out, sample_rate);
     scope
 }
 

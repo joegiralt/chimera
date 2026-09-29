@@ -88,7 +88,9 @@ fn fx_bus_fits_its_axi_share() {
 
 /// Spec § Hardware parity: Performance + SoundPool + framebuffer + UI
 /// reserve (+ the AudioShared, scope and AudioStats triple buffers, the
-/// scope's writer, and the FX bus, ADR 0014 / ADR 0021) fit AXI.
+/// scope's writer, the FX bus and the card's store, ADR 0014 / ADR 0021)
+/// fit AXI, with 64 KB to spare (~91 KB before storage; SYSTEM adds no
+/// other static).
 #[test]
 fn axi_residents_fit() {
     use chimera_core::dsp::fx_bus::FxBus;
@@ -107,6 +109,7 @@ fn axi_residents_fit() {
         ("scope writer", size_of::<ScopeWriter>()),
         ("AudioStats x3", size_of::<TripleBuffer<AudioStats>>()),
         ("FxBus", size_of::<FxBus>()),
+        ("store reserve", hw::STORE_RESERVE),
     ];
     for (name, size) in parts {
         eprintln!("{name:>15} {size:>7} B");
@@ -114,7 +117,11 @@ fn axi_residents_fit() {
     let total: usize = parts.iter().map(|p| p.1).sum();
     eprintln!("{:>15} {total:>7} B of {} B", "AXI", hw::AXI_SRAM);
     assert_eq!(total, AXI_RESIDENT);
-    assert!(total <= hw::AXI_SRAM);
+    assert!(
+        hw::AXI_SRAM - total >= 64 * 1024,
+        "{} B of AXI left",
+        hw::AXI_SRAM - total
+    );
 }
 
 /// The whole pool with its bookkeeping (allocator, part buses, sends) fits D2.
@@ -125,7 +132,7 @@ fn instrument_fits_d2() {
     assert!(size <= hw::VOICE_RAM_BUDGET, "Instrument = {size} B");
 }
 
-/// UiState lives on `main`'s stack in AXI. Its Performance and SoundPool
+/// UiState is one AXI static (`chimera-stm32/src/shared.rs`). Its Performance and SoundPool
 /// are counted on their own in `axi_residents_fit`; the rest (navigation,
 /// renderer, regions, focus: 1 120 B after the UI refresh, +48 B for the
 /// per-page focus) comes out of the UI reserve.

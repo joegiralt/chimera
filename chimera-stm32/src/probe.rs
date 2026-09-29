@@ -66,31 +66,13 @@ mod imp {
         ((words - untouched) * 4) as u32
     }
 
-    pub fn enable_cycle_counter(dcb: &mut DCB, dwt: &mut DWT) -> bool {
-        dcb.enable_trace();
-        dwt.enable_cycle_counter();
-        if counting() {
-            return true;
-        }
-        // Without a debugger the M7's DWT can come up software-locked.
-        DWT::unlock();
-        dwt.enable_cycle_counter();
-        counting()
-    }
-
-    fn counting() -> bool {
-        let start = DWT::cycle_count();
-        cortex_m::asm::delay(1_000);
-        DWT::cycle_count() != start
-    }
-
     pub fn init(
         dcb: &mut DCB,
         dwt: &mut DWT,
         clocks: Clocks,
         reset: ResetCause,
     ) -> Option<Reader<AudioStats>> {
-        if !enable_cycle_counter(dcb, dwt) || TAKEN.swap(true, Ordering::AcqRel) {
+        if !crate::clocks::enable_cycle_counter(dcb, dwt) || TAKEN.swap(true, Ordering::AcqRel) {
             return None;
         }
         // SAFETY: the flag lets one caller past, before the audio interrupt is

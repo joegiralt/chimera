@@ -214,12 +214,7 @@ fn algo_plays_a4_within_a_cent() {
         voice.render(&mut block, &params, &ModState::new());
         out.extend_from_slice(&block);
     }
-    let s = &out[4800..];
-    let ups: Vec<f64> = (1..s.len())
-        .filter(|&i| s[i - 1] < 0.0 && s[i] >= 0.0)
-        .map(|i| (i - 1) as f64 + (-s[i - 1] as f64) / ((s[i] - s[i - 1]) as f64))
-        .collect();
-    let hz = (ups.len() - 1) as f64 * SR as f64 / (ups[ups.len() - 1] - ups[0]);
+    let hz = period_hz(&out[4800..]);
     let cents = 1200.0 * (hz / 440.0).log2();
     assert!(cents.abs() < 1.0, "{hz} Hz, {cents:+.3} cents");
 }

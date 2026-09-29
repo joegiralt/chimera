@@ -206,7 +206,7 @@ fn algo_matrix_rows_are_the_eight_sources() {
             .button(ButtonId::B1, ButtonState::Pressed),
     );
     ui.handle_input(&MockControls::new().encoder(EncoderId::A, POOL_SIZE as i8));
-    press(&mut ui, ButtonId::Edit); // load "(init) Algo"
+    press(&mut ui, ButtonId::Edit); // load "INIT Algo"
     let rows: Vec<&str> = (0..ui.matrix_state.num_sources)
         .map(|i| ui.matrix_state.sources[i].unwrap().name)
         .collect();

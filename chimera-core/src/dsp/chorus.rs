@@ -6,7 +6,7 @@
 //! Mode II: triangle LFO at 0.863 Hz, depth ~2.3ms
 //! Mode I+II: both lines; each side averages its two taps
 
-use crate::block::{Block, ParamId, ParamSpec, ValFmt};
+use crate::block::{Block, DiskCode, ParamId, ParamSpec, ValFmt, apply_code};
 use crate::dsp::Stereo;
 use chimera_hal::BLOCK_SIZE;
 use core::mem::MaybeUninit;
@@ -30,6 +30,36 @@ impl ChorusMode {
             1 => ChorusMode::JunoI,
             2 => ChorusMode::JunoII,
             _ => ChorusMode::JunoBoth,
+        }
+    }
+}
+
+impl DiskCode for ChorusMode {
+    fn disk_code(self) -> u8 {
+        match self {
+            ChorusMode::Off => 0,
+            ChorusMode::JunoI => 1,
+            ChorusMode::JunoII => 2,
+            ChorusMode::JunoBoth => 3,
+        }
+    }
+
+    fn disk_ident(self) -> &'static str {
+        match self {
+            ChorusMode::Off => "OFF",
+            ChorusMode::JunoI => "JUNO_I",
+            ChorusMode::JunoII => "JUNO_II",
+            ChorusMode::JunoBoth => "JUNO_BOTH",
+        }
+    }
+
+    fn from_disk_code(c: u8) -> Option<Self> {
+        match c {
+            0 => Some(ChorusMode::Off),
+            1 => Some(ChorusMode::JunoI),
+            2 => Some(ChorusMode::JunoII),
+            3 => Some(ChorusMode::JunoBoth),
+            _ => None,
         }
     }
 }
@@ -73,10 +103,11 @@ impl ChorusParams {
 
 /// Chorus runs outside `Voice`, on the FX bus: nothing is modulatable.
 pub static CHORUS_SPECS: [ParamSpec; 4] = [
-    ParamSpec::choice(0, "MODE", ValFmt::Int(3), 3.0, 0.0),
-    ParamSpec::continuous(1, "RATE", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false),
-    ParamSpec::continuous(2, "DEPTH", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false),
-    ParamSpec::continuous(3, "MIX", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false),
+    ParamSpec::choice(0, "MODE", ValFmt::Int(3), 3.0, 0.0).ident("MODE"),
+    ParamSpec::continuous(1, "RATE", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false).ident("RATE"),
+    ParamSpec::continuous(2, "DEPTH", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false)
+        .ident("DEPTH"),
+    ParamSpec::continuous(3, "MIX", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false).ident("MIX"),
 ];
 
 impl Block for ChorusParams {
@@ -102,6 +133,19 @@ impl Block for ChorusParams {
             Self::MIX => self.mix = v,
             _ => {}
         }
+    }
+
+    /// MODE's code is `ChorusMode`'s: the byte's meaning to the DSP.
+    fn enum_code(&self, id: ParamId) -> Option<u8> {
+        (id == Self::MODE).then(|| ChorusMode::from_u8(self.mode).disk_code())
+    }
+
+    fn enum_ident(&self, id: ParamId) -> Option<&'static str> {
+        (id == Self::MODE).then(|| ChorusMode::from_u8(self.mode).disk_ident())
+    }
+
+    fn set_enum_code(&mut self, id: ParamId, code: u8) -> bool {
+        id == Self::MODE && apply_code(ChorusMode::from_disk_code(code), |m| self.mode = m as u8)
     }
 }
 

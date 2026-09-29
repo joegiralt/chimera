@@ -1,7 +1,9 @@
 use crate::addr::{BlockRef, Blocks};
-use crate::block::{Block, ParamId, ParamSpec, ValFmt};
+use crate::block::{Block, DiskCode, ParamId, ParamSpec, ValFmt, apply_code};
 use crate::dsp::filter::{FilterKind, FilterMode, KIND_NAMES, SVF_MODE_NAMES};
-use crate::dsp::modulator::{EnvSpeed, EnvType, FuncMode, FuncParams, HoldPos, pick};
+use crate::dsp::modulator::{
+    EnvForm, EnvSpeed, EnvType, FuncMode, FuncParams, HoldPos, LfoForm, pick,
+};
 
 /// Parameters for one voice's filter.
 #[derive(Clone, Copy, Debug)]
@@ -75,13 +77,14 @@ pub static FILTER_SPECS: [ParamSpec; 5] = [
         (20000.0 - 20.0) / 128.0,
         true,
     )
+    .ident("CUTOFF")
     .octaves(crate::dsp::filter::CUTOFF_OCTAVES)
     .short("CUT"),
-    ParamSpec::continuous(1, "RESO", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, true),
-    ParamSpec::continuous(2, "DRIVE", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, true),
+    ParamSpec::continuous(1, "RESO", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, true).ident("RESO"),
+    ParamSpec::continuous(2, "DRIVE", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, true).ident("DRIVE"),
     // A choice among the one built kind.
-    ParamSpec::choice(6, "KIND", ValFmt::Names(&KIND_NAMES), 0.0, 0.0),
-    ParamSpec::choice(7, "MODE", ValFmt::Names(&SVF_MODE_NAMES), 7.0, 0.0),
+    ParamSpec::choice(6, "KIND", ValFmt::Names(&KIND_NAMES), 0.0, 0.0).ident("KIND"),
+    ParamSpec::choice(7, "MODE", ValFmt::Names(&SVF_MODE_NAMES), 7.0, 0.0).ident("MODE"),
 ];
 
 impl Block for FilterParams {
@@ -119,6 +122,31 @@ impl Block for FilterParams {
                 self.set_mode(m[(v.max(0.0) as usize).min(m.len() - 1)]);
             }
             _ => {}
+        }
+    }
+
+    fn enum_code(&self, id: ParamId) -> Option<u8> {
+        match id {
+            Self::KIND => Some(self.kind.disk_code()),
+            Self::MODE => Some(self.mode.disk_code()),
+            _ => None,
+        }
+    }
+
+    fn enum_ident(&self, id: ParamId) -> Option<&'static str> {
+        match id {
+            Self::KIND => Some(self.kind.disk_ident()),
+            Self::MODE => Some(self.mode.disk_ident()),
+            _ => None,
+        }
+    }
+
+    /// MODE's code is the mode's own, and it is refused if the KIND lacks it.
+    fn set_enum_code(&mut self, id: ParamId, code: u8) -> bool {
+        match id {
+            Self::KIND => apply_code(FilterKind::from_disk_code(code), |k| self.set_kind(k)),
+            Self::MODE => FilterMode::from_disk_code(code).is_some_and(|m| self.set_mode(m)),
+            _ => false,
         }
     }
 }
@@ -183,45 +211,85 @@ impl EnvParams {
     pub const RISE: ParamId = ParamId(13);
     pub const FALL: ParamId = ParamId(14);
     pub const SHAPE: ParamId = ParamId(15);
+    /// The three FORMs, one per MODE and each stored on its own, so decoding
+    /// never depends on MODE and a MODE's remembered FORM survives a reload.
+    /// `FORM` is the live view of the current MODE's.
+    pub const FORM_ENV: ParamId = ParamId(16);
+    pub const FORM_LFO: ParamId = ParamId(17);
+    pub const FORM_BURST: ParamId = ParamId(18);
 }
 
 /// Positions and levels, per block. LEVEL and TIME (hidden, primed from the
 /// stage cells), RISE, FALL and SHAPE are modulatable.
-pub static ENV_SPECS: [ParamSpec; 16] = [
-    ParamSpec::continuous(0, "ATK", ValFmt::Uni, 0.0, 1.0, 0.189, 1.0 / 128.0, false),
-    ParamSpec::continuous(1, "DEC", ValFmt::Uni, 0.0, 1.0, 0.559, 1.0 / 128.0, false),
-    ParamSpec::continuous(2, "SUS", ValFmt::Uni, 0.0, 1.0, 0.7, 1.0 / 128.0, false),
-    ParamSpec::continuous(3, "REL", ValFmt::Uni, 0.0, 1.0, 0.559, 1.0 / 128.0, false),
-    ParamSpec::continuous(4, "LEVEL", ValFmt::Uni, 0.0, 1.0, 1.0, 1.0 / 128.0, true),
-    ParamSpec::continuous(5, "VEL", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false),
-    ParamSpec::continuous(6, "H", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false),
-    ParamSpec::choice(7, "TYPE", ValFmt::Names(&["A", "B"]), 1.0, 0.0),
+pub static ENV_SPECS: [ParamSpec; 19] = [
+    ParamSpec::continuous(0, "ATK", ValFmt::Uni, 0.0, 1.0, 0.189, 1.0 / 128.0, false).ident("ATK"),
+    ParamSpec::continuous(1, "DEC", ValFmt::Uni, 0.0, 1.0, 0.559, 1.0 / 128.0, false).ident("DEC"),
+    ParamSpec::continuous(2, "SUS", ValFmt::Uni, 0.0, 1.0, 0.7, 1.0 / 128.0, false).ident("SUS"),
+    ParamSpec::continuous(3, "REL", ValFmt::Uni, 0.0, 1.0, 0.559, 1.0 / 128.0, false).ident("REL"),
+    ParamSpec::continuous(4, "LEVEL", ValFmt::Uni, 0.0, 1.0, 1.0, 1.0 / 128.0, true).ident("LEVEL"),
+    ParamSpec::continuous(5, "VEL", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false).ident("VEL"),
+    ParamSpec::continuous(6, "H", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false).ident("H"),
+    ParamSpec::choice(7, "TYPE", ValFmt::Names(&["A", "B"]), 1.0, 0.0).ident("TYPE"),
     ParamSpec::choice(
         8,
         "SPEED",
         ValFmt::Names(&["FAST", "MED", "SLOW"]),
         2.0,
         1.0,
-    ),
+    )
+    .ident("SPEED"),
     ParamSpec::choice(
         9,
         "HOLD",
         ValFmt::Names(&["OFF", "AHDSR", "GATE EXT"]),
         2.0,
         1.0,
-    ),
-    ParamSpec::continuous(10, "TIME", ValFmt::Bi, -1.0, 1.0, 0.0, 2.0 / 128.0, true),
+    )
+    .ident("HOLD"),
+    ParamSpec::continuous(10, "TIME", ValFmt::Bi, -1.0, 1.0, 0.0, 2.0 / 128.0, true).ident("TIME"),
     ParamSpec::choice(
         11,
         "MODE",
         ValFmt::Names(&["ENV", "LFO", "BURST"]),
         2.0,
         0.0,
-    ),
-    ParamSpec::choice(12, "FORM", ValFmt::Names(&["AD", "AHR", "CYCLE"]), 2.0, 0.0),
-    ParamSpec::continuous(13, "RISE", ValFmt::Uni, 0.0, 1.0, 0.206, 1.0 / 128.0, true),
-    ParamSpec::continuous(14, "FALL", ValFmt::Uni, 0.0, 1.0, 0.640, 1.0 / 128.0, true),
-    ParamSpec::continuous(15, "SHAPE", ValFmt::Bi, 0.0, 1.0, 0.5, 1.0 / 128.0, true).short("SHAP"),
+    )
+    .ident("MODE"),
+    // Live: the current MODE's FORM slot (16..=18), which is what is stored.
+    ParamSpec::choice(12, "FORM", ValFmt::Names(&["AD", "AHR", "CYCLE"]), 2.0, 0.0)
+        .ident("FORM")
+        .live(),
+    ParamSpec::continuous(13, "RISE", ValFmt::Uni, 0.0, 1.0, 0.206, 1.0 / 128.0, true)
+        .ident("RISE"),
+    ParamSpec::continuous(14, "FALL", ValFmt::Uni, 0.0, 1.0, 0.640, 1.0 / 128.0, true)
+        .ident("FALL"),
+    ParamSpec::continuous(15, "SHAPE", ValFmt::Bi, 0.0, 1.0, 0.5, 1.0 / 128.0, true)
+        .ident("SHAPE")
+        .short("SHAP"),
+    ParamSpec::choice(
+        16,
+        "ENV FORM",
+        ValFmt::Names(&["AD", "AHR", "CYCLE"]),
+        2.0,
+        0.0,
+    )
+    .ident("ENV_FORM"),
+    ParamSpec::choice(
+        17,
+        "LFO FORM",
+        ValFmt::Names(&["FREE", "SYNC", "LFV"]),
+        2.0,
+        0.0,
+    )
+    .ident("LFO_FORM"),
+    ParamSpec::choice(
+        18,
+        "BRST FORM",
+        ValFmt::Names(&["AD", "AHR", "CYCLE"]),
+        2.0,
+        0.0,
+    )
+    .ident("BRST_FORM"),
 ];
 
 impl Block for EnvParams {
@@ -247,6 +315,9 @@ impl Block for EnvParams {
             Self::RISE => self.func.rise,
             Self::FALL => self.func.fall,
             Self::SHAPE => self.func.shape,
+            Self::FORM_ENV => self.func.env_form as u8 as f32,
+            Self::FORM_LFO => self.func.lfo_form as u8 as f32,
+            Self::FORM_BURST => self.func.burst_form as u8 as f32,
             _ => 0.0,
         }
     }
@@ -269,7 +340,51 @@ impl Block for EnvParams {
             Self::RISE => self.func.rise = v,
             Self::FALL => self.func.fall = v,
             Self::SHAPE => self.func.shape = v,
+            Self::FORM_ENV => self.func.env_form = pick(&EnvForm::ALL, v),
+            Self::FORM_LFO => self.func.lfo_form = pick(&LfoForm::ALL, v),
+            Self::FORM_BURST => self.func.burst_form = pick(&EnvForm::ALL, v),
             _ => {}
+        }
+    }
+
+    fn enum_code(&self, id: ParamId) -> Option<u8> {
+        match id {
+            Self::TYPE => Some(self.env_type.disk_code()),
+            Self::SPEED => Some(self.speed.disk_code()),
+            Self::HOLD_POS => Some(self.hold_pos.disk_code()),
+            Self::MODE => Some(self.func.mode.disk_code()),
+            Self::FORM_ENV => Some(self.func.env_form.disk_code()),
+            Self::FORM_LFO => Some(self.func.lfo_form.disk_code()),
+            Self::FORM_BURST => Some(self.func.burst_form.disk_code()),
+            _ => None,
+        }
+    }
+
+    fn enum_ident(&self, id: ParamId) -> Option<&'static str> {
+        match id {
+            Self::TYPE => Some(self.env_type.disk_ident()),
+            Self::SPEED => Some(self.speed.disk_ident()),
+            Self::HOLD_POS => Some(self.hold_pos.disk_ident()),
+            Self::MODE => Some(self.func.mode.disk_ident()),
+            Self::FORM_ENV => Some(self.func.env_form.disk_ident()),
+            Self::FORM_LFO => Some(self.func.lfo_form.disk_ident()),
+            Self::FORM_BURST => Some(self.func.burst_form.disk_ident()),
+            _ => None,
+        }
+    }
+
+    fn set_enum_code(&mut self, id: ParamId, code: u8) -> bool {
+        match id {
+            Self::TYPE => apply_code(EnvType::from_disk_code(code), |t| self.env_type = t),
+            Self::SPEED => apply_code(EnvSpeed::from_disk_code(code), |s| self.speed = s),
+            Self::HOLD_POS => apply_code(HoldPos::from_disk_code(code), |h| self.hold_pos = h),
+            Self::MODE => apply_code(FuncMode::from_disk_code(code), |m| self.func.mode = m),
+            Self::FORM_ENV => apply_code(EnvForm::from_disk_code(code), |f| self.func.env_form = f),
+            Self::FORM_LFO => apply_code(LfoForm::from_disk_code(code), |f| self.func.lfo_form = f),
+            Self::FORM_BURST => {
+                apply_code(EnvForm::from_disk_code(code), |f| self.func.burst_form = f)
+            }
+            _ => false,
         }
     }
 }
@@ -300,9 +415,9 @@ impl DriveParams {
 
 /// All three are read by `Voice` every block from the modulated copy.
 pub static DRIVE_SPECS: [ParamSpec; 3] = [
-    ParamSpec::continuous(0, "DRIVE", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, true),
-    ParamSpec::continuous(1, "TONE", ValFmt::Bi, 0.0, 1.0, 0.5, 1.0 / 128.0, true),
-    ParamSpec::continuous(2, "MIX", ValFmt::Bi, 0.0, 1.0, 1.0, 1.0 / 128.0, true),
+    ParamSpec::continuous(0, "DRIVE", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, true).ident("DRIVE"),
+    ParamSpec::continuous(1, "TONE", ValFmt::Bi, 0.0, 1.0, 0.5, 1.0 / 128.0, true).ident("TONE"),
+    ParamSpec::continuous(2, "MIX", ValFmt::Bi, 0.0, 1.0, 1.0, 1.0 / 128.0, true).ident("MIX"),
 ];
 
 impl Block for DriveParams {
@@ -355,9 +470,9 @@ impl FolderParams {
 
 /// All three are read by `Voice` every block from the modulated copy.
 pub static FOLDER_SPECS: [ParamSpec; 3] = [
-    ParamSpec::continuous(0, "FOLD", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, true),
-    ParamSpec::continuous(1, "SYM", ValFmt::Bi, 0.0, 1.0, 0.5, 1.0 / 128.0, true),
-    ParamSpec::continuous(2, "MIX", ValFmt::Bi, 0.0, 1.0, 0.5, 1.0 / 128.0, true),
+    ParamSpec::continuous(0, "FOLD", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, true).ident("FOLD"),
+    ParamSpec::continuous(1, "SYM", ValFmt::Bi, 0.0, 1.0, 0.5, 1.0 / 128.0, true).ident("SYM"),
+    ParamSpec::continuous(2, "MIX", ValFmt::Bi, 0.0, 1.0, 0.5, 1.0 / 128.0, true).ident("MIX"),
 ];
 
 impl Block for FolderParams {
@@ -390,6 +505,30 @@ pub enum EngineType {
     #[default]
     Algo = 0,
     Modal = 1,
+}
+
+impl DiskCode for EngineType {
+    fn disk_code(self) -> u8 {
+        match self {
+            EngineType::Algo => 0,
+            EngineType::Modal => 1,
+        }
+    }
+
+    fn disk_ident(self) -> &'static str {
+        match self {
+            EngineType::Algo => "ALGO",
+            EngineType::Modal => "MODAL",
+        }
+    }
+
+    fn from_disk_code(c: u8) -> Option<Self> {
+        match c {
+            0 => Some(EngineType::Algo),
+            1 => Some(EngineType::Modal),
+            _ => None,
+        }
+    }
 }
 
 impl EngineType {
@@ -438,10 +577,10 @@ impl OutParams {
 /// Volume and VEL are read by `Voice`'s VCA every block, VCA is a hidden
 /// destination; pan is not used by `Voice`.
 pub static OUT_SPECS: [ParamSpec; 4] = [
-    ParamSpec::continuous(0, "LEVEL", ValFmt::Uni, 0.0, 1.0, 0.8, 1.0 / 128.0, true),
-    ParamSpec::continuous(1, "PAN", ValFmt::Pan, -1.0, 1.0, 0.0, 2.0 / 128.0, false),
-    ParamSpec::continuous(2, "VCA", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, true),
-    ParamSpec::continuous(3, "VEL", ValFmt::Uni, 0.0, 1.0, 1.0, 1.0 / 128.0, false),
+    ParamSpec::continuous(0, "LEVEL", ValFmt::Uni, 0.0, 1.0, 0.8, 1.0 / 128.0, true).ident("LEVEL"),
+    ParamSpec::continuous(1, "PAN", ValFmt::Pan, -1.0, 1.0, 0.0, 2.0 / 128.0, false).ident("PAN"),
+    ParamSpec::continuous(2, "VCA", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, true).ident("VCA"),
+    ParamSpec::continuous(3, "VEL", ValFmt::Uni, 0.0, 1.0, 1.0, 1.0 / 128.0, false).ident("VEL"),
 ];
 
 impl Block for OutParams {
@@ -503,8 +642,12 @@ impl PitchParams {
 
 /// Both read by the engine every block.
 pub static PITCH_SPECS: [ParamSpec; 2] = [
-    ParamSpec::stepped(0, "PITCH", ValFmt::Signed(24), -24.0, 24.0, 0.0, true).semitones(24.0),
-    ParamSpec::stepped(1, "FINE", ValFmt::Signed(100), -100.0, 100.0, 0.0, true).cents(100.0),
+    ParamSpec::stepped(0, "PITCH", ValFmt::Signed(24), -24.0, 24.0, 0.0, true)
+        .ident("PITCH")
+        .semitones(24.0),
+    ParamSpec::stepped(1, "FINE", ValFmt::Signed(100), -100.0, 100.0, 0.0, true)
+        .ident("FINE")
+        .cents(100.0),
 ];
 
 impl Block for PitchParams {

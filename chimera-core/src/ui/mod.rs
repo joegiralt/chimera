@@ -4,6 +4,7 @@ pub mod audio_page;
 pub mod block_def;
 pub mod block_registry;
 pub mod browser;
+pub mod busy;
 pub mod chain;
 pub mod components;
 pub mod draw;
@@ -26,6 +27,8 @@ pub mod viz;
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 
+use crate::storage::{Card, Exit, SystemSettings, SystemSync};
+use chimera_hal::store::Store;
 use chimera_hal::{ALL_BUTTONS, ALL_ENCODERS, ButtonId, ButtonState, Controls, PART_BUTTONS};
 
 use crate::addr::{BlockRef, Blocks, Op, ParamAddr};
@@ -148,8 +151,10 @@ pub struct UiState {
     display_lfos: [Lfo; 3],
     /// The last MIX+PLUS outcome; `None` once retired (issue #21).
     prime_status: Option<PrimeStatus>,
-    /// System › Theme. Not stored yet: every boot starts at the default.
+    /// System › Theme; boot sets it from SYSTEM (`set_theme`).
     theme: ThemeSettings,
+    /// What the last card operation said, for a moment.
+    toast: busy::ToastTimer,
 }
 
 crate::in_place::field_list!(UiState => UiState {
@@ -168,6 +173,7 @@ crate::in_place::field_list!(UiState => UiState {
     display_lfos,
     prime_status,
     theme,
+    toast,
 });
 
 impl Default for UiState {
@@ -217,6 +223,7 @@ impl UiState {
             addr_of_mut!((*p).display_lfos).write([Lfo::new(); 3]);
             addr_of_mut!((*p).prime_status).write(None);
             addr_of_mut!((*p).theme).write(ThemeSettings::DEFAULT);
+            addr_of_mut!((*p).toast).write(busy::ToastTimer::new());
             let ui = slot.assume_init_mut();
             ui.load_matrix(0);
             ui
@@ -232,6 +239,46 @@ impl UiState {
     /// System › Theme as last edited; the display shell applies it.
     pub fn theme(&self) -> ThemeSettings {
         self.theme
+    }
+
+    /// The theme SYSTEM held, set at boot before the first frame.
+    pub fn set_theme(&mut self, t: ThemeSettings) {
+        self.theme = t;
+    }
+
+    /// Once a frame, after input: on leaving System, syncs SYSTEM (one
+    /// mount, which may load or save) and puts up what came of it. It draws
+    /// nothing, so no BUSY covers a save too quick to read; a `Loaded`
+    /// theme is applied here.
+    pub fn sync_system<S: Store>(
+        &mut self,
+        sync: &mut SystemSync,
+        card: &mut Card,
+        store: &mut S,
+        s: &mut SystemSettings,
+    ) {
+        s.theme = self.theme;
+        if !sync.left_system(self.in_system(), s) {
+            return;
+        }
+        let r = sync.on_exit(card, store, s);
+        if r == Ok(Exit::Loaded) {
+            self.theme = s.theme;
+        }
+        if let Some(t) = busy::toast_for(&r) {
+            self.toast.show(t);
+        }
+    }
+
+    /// Once a frame: the toast, `elapsed_ms` after the last frame.
+    pub fn step_toast(&mut self, elapsed_ms: u32) -> busy::ToastStep {
+        self.toast.step(elapsed_ms)
+    }
+
+    /// On the System chain, any of its pages or sub-pages: moving between
+    /// them is no exit. Leaving the chain is when SYSTEM syncs.
+    pub fn in_system(&self) -> bool {
+        self.nav.chain_id == ChainId::System
     }
 
     /// The edited Part's blocks and the System pages' (THEME, MIDI), as one `Blocks`.
@@ -467,6 +514,7 @@ impl UiState {
         // it when this same frame is itself a prime attempt.
         if any_input(controls) {
             self.prime_status = None;
+            self.toast.dismiss();
         }
 
         if let UiMode::SoundBrowser {
@@ -801,13 +849,13 @@ impl UiState {
                 f.sounding,
                 renderer::title_type(f),
             ),
-            RegionKind::Focus if f.def.layout == PageLayout::Matrix => RegionData::Route {
-                row: self.matrix_state.sel_row as u8,
-                col: self.matrix_state.sel_col as u8,
-                dests: self.matrix_state.num_dests as u8,
-                value: qvalues[renderer::MATRIX_AMOUNT_SLOT],
-                matrix_rev: self.matrix_state.rev,
-            },
+            RegionKind::Focus if f.def.layout == PageLayout::Matrix => RegionData::route(
+                self.matrix_state.sel_row as u8,
+                self.matrix_state.sel_col as u8,
+                self.matrix_state.num_dests as u8,
+                qvalues[renderer::MATRIX_AMOUNT_SLOT],
+            )
+            .keyed(self.matrix_state.rev, renderer::inert(f)),
             RegionKind::Focus => RegionData::focus(
                 self.page,
                 f.focus as u8,
@@ -855,7 +903,7 @@ impl UiState {
                 self.matrix_state.scroll_x as u8,
                 qvalues[renderer::MATRIX_AMOUNT_SLOT],
             )
-            .keyed(self.matrix_state.rev, 0),
+            .keyed(self.matrix_state.rev, renderer::inert(f)),
         }
     }
 

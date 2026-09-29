@@ -31,7 +31,7 @@ pub enum RegistryError {
     Full,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ModDestRegistry {
     entries: [Option<ModDestEntry>; MAX_REGISTRY_DESTS],
     count: usize,
@@ -89,6 +89,18 @@ impl ModDestRegistry {
         self.find(addr).is_some()
     }
 
+    /// Same entries, address and label, up to `len`; slots past it don't count.
+    pub fn bits_eq(&self, o: &Self) -> bool {
+        self.count == o.count
+            && self.entries[..self.count]
+                .iter()
+                .zip(&o.entries[..o.count])
+                .all(|(a, b)| match (a, b) {
+                    (Some(a), Some(b)) => a.addr == b.addr && a.label == b.label,
+                    (a, b) => a.is_none() && b.is_none(),
+                })
+    }
+
     pub fn get(&self, index: usize) -> Option<&ModDestEntry> {
         if index < self.count {
             self.entries[index].as_ref()
@@ -130,5 +142,24 @@ mod tests {
         }
         assert_eq!(refused, Some((MAX_REGISTRY_DESTS, RegistryError::Full)));
         assert_eq!(reg.len(), MAX_REGISTRY_DESTS);
+    }
+
+    #[test]
+    fn bits_eq_ignores_dead_slots() {
+        let a0 = ParamAddr::new(BlockRef::Filter, crate::params::FilterParams::CUTOFF);
+        let a1 = ParamAddr::new(BlockRef::Filter, crate::params::FilterParams::RESONANCE);
+        let mut a = ModDestRegistry::new();
+        a.add(a0, [1; LABEL_LEN]).unwrap();
+        let mut b = a.clone();
+        b.entries[1] = Some(ModDestEntry {
+            addr: a1,
+            label: [2; LABEL_LEN],
+        });
+        assert!(a.bits_eq(&b));
+        b.entries[0] = Some(ModDestEntry {
+            addr: a0,
+            label: [3; LABEL_LEN],
+        });
+        assert!(!a.bits_eq(&b));
     }
 }

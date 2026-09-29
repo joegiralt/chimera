@@ -12,10 +12,12 @@ mod screen;
 use screen::*;
 
 const GOLDENS: &[(&str, u64)] = &[
-    ("engine_algo", 0x8f01be1d8f9a59b9),
+    ("engine_algo", 0x2fc2acd0ca736b91),
     ("algo_alg", 0x7d93a049d17ce0d4),
+    ("algo_alg_morph_dimmed", 0x897c253790c1a56a),
+    ("mod_matrix_morph_inert", 0xcb22cbb86571bf4e),
     ("algo_wave", 0x077421b3106b8510),
-    ("algo_level", 0xd71899ea7d4a4d2b),
+    ("algo_level", 0xbf166056bf540001),
     ("algo_osc_last", 0xe14e98097058782e),
     ("bigviz_filter", 0xb50c845f7f09909e),
     ("flt_mode", 0x7bb550d437421757),
@@ -51,13 +53,15 @@ const GOLDENS: &[(&str, u64)] = &[
     ("system", 0xbadd5e55da36c80d),
     ("system_theme", 0x6f46ed28ddb10559),
     ("system_audio", 0x281985b580ac2fb1),
+    ("busy", 0x198544cd36863145),
+    ("toast_saved", 0xe344dd99a47d0dad),
+    ("toast_exfat", 0xfc0cb3b4feb1a1b5),
 ];
 
 #[test]
 fn screen_goldens_match() {
-    let got: Vec<_> = CASES
-        .iter()
-        .map(|&(name, _)| (name, render(name).hash()))
+    let got: Vec<_> = case_names()
+        .map(|name| (name, render(name).hash()))
         .collect();
     common::golden::check(GOLDENS, &got);
 }
@@ -73,5 +77,56 @@ fn rendering_is_deterministic() {
 fn no_screen_draws_outside_240x320() {
     for &(name, _) in GOLDENS {
         assert_eq!(render(name).oob, 0, "{name}");
+    }
+}
+
+/// BUSY and every toast draw only inside the band they report,
+/// which the shell flushes, and draw something in every row of it.
+#[test]
+fn busy_draws_only_its_band() {
+    use chimera_core::storage::FileError;
+    use chimera_hal::store::{StoreError, Unsupported};
+    let messages = [
+        StoreError::NoCard,
+        StoreError::Unsupported(Unsupported::Exfat),
+        StoreError::Unsupported(Unsupported::NoPartitionTable),
+        StoreError::Unsupported(Unsupported::NotFat(0)),
+        StoreError::Unsupported(Unsupported::BadBootSector),
+        StoreError::Unsupported(Unsupported::FatNotMirrored),
+        StoreError::NotFound,
+        StoreError::Full,
+        StoreError::Timeout,
+        StoreError::Corrupt,
+        StoreError::Io,
+    ]
+    .map(StoreError::message)
+    .into_iter()
+    .chain(
+        [
+            FileError::Truncated,
+            FileError::BadMagic,
+            FileError::BadCrc,
+            FileError::NeedsNewerFirmware,
+            FileError::WrongKind,
+            FileError::Bounds,
+            FileError::BadName,
+            FileError::Corrupt,
+        ]
+        .map(FileError::message),
+    );
+    let overlays = [Overlay::Busy].into_iter().chain(
+        core::iter::once("SAVED")
+            .chain(messages)
+            .map(Overlay::Toast),
+    );
+    for label in overlays {
+        let (fb, (y0, y1)) = render_overlay(label);
+        assert_eq!(fb.oob, 0, "{label:?} draws off screen");
+        assert!(y0 < y1 && y1 as usize <= H, "{label:?}: {y0}..{y1}");
+        for y in 0..H {
+            let row = &fb.px[y * W..(y + 1) * W];
+            let inside = (y0 as usize..y1 as usize).contains(&y);
+            assert_eq!(row.iter().any(|&p| p != 0), inside, "{label:?} row {y}");
+        }
     }
 }

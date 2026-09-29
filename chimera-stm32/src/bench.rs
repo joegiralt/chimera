@@ -462,7 +462,8 @@ impl Rig<'_> {
     }
 
     /// Six Parts written with one noise block, sends 0.5, no voices:
-    /// `mix_parts` alone. `each` sets the FX before every block.
+    /// `mix_parts` alone, the output limiter included (ADR 0050). `each`
+    /// sets the FX before every block.
     #[inline(never)]
     fn time_bus(&mut self, each: fn(&mut AudioShared, u32)) -> u32 {
         let fx = FxBus::init_in_place(self.fx_slot);
