@@ -12,6 +12,7 @@ embedded-graphics-core = "0.4"
 u8g2-fonts = "=0.8.0"
 
 [dev-dependencies]
+chimera-hal = { path = "../chimera-hal", features = ["testkit"] }
 
 [build-dependencies]
 chimera-waves = { path = "../chimera-waves" }
