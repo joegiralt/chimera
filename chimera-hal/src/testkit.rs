@@ -423,11 +423,11 @@ pub fn store_suite<S: Store>(
     eject(&mut s);
     after_op(&s);
     let no_card = Some(StoreError::NoCard);
-    assert_eq!((s.mount()).err(), no_card);
-    assert_eq!((s.list(vol, Dir::Chimera, &mut |_, _| {})).err(), no_card);
+    assert_eq!(s.mount().err(), no_card);
+    assert_eq!(s.list(vol, Dir::Chimera, &mut |_, _| {}).err(), no_card);
     assert_eq!(read_all(&mut s, vol, ok, None).0.err(), no_card);
-    assert_eq!((s.write(vol, ok, &mut |w| w.put(b"x"))).err(), no_card);
-    assert_eq!((s.delete(vol, ok)).err(), no_card);
-    assert_eq!((s.make_dir(vol, Dir::Chimera)).err(), no_card);
+    assert_eq!(s.write(vol, ok, &mut |w| w.put(b"x")).err(), no_card);
+    assert_eq!(s.delete(vol, ok).err(), no_card);
+    assert_eq!(s.make_dir(vol, Dir::Chimera).err(), no_card);
     after_op(&s);
 }
