@@ -4,8 +4,8 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use chimera_core::audio_out::{Half, interleave};
 use chimera_core::dsp::fx_bus::FxBus;
-use chimera_core::hw::{BLOCK_SIZE, DAC_PAIRS, SAMPLE_RATE, SampleBudget};
-use chimera_core::instrument::{AudioShared, DacOut, Instrument};
+use chimera_core::hw::{SAMPLE_RATE, SampleBudget};
+use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
 #[cfg(feature = "midi-din")]
 use chimera_core::note_queue::SourceId;
 use chimera_core::note_queue::{NoteDrain, NoteSources};
@@ -34,7 +34,7 @@ struct Engine {
     shared: Reader<AudioShared>,
     notes: NoteDrain<'static, NOTE_SOURCES>,
     scope: ScopeWriter,
-    dac: DacOut,
+    dac: DacBlocks,
 }
 
 static mut ENGINE: MaybeUninit<Engine> = MaybeUninit::uninit();
@@ -63,7 +63,7 @@ pub fn init(
     // SAFETY: the flag lets exactly one caller past, and `render_half` does
     // not touch these statics until `ENGINE_READY` is set below, so these are
     // the only references. The Instrument (D2) and FX bus (AXI) are built in
-    // place; `Engine` (3.5 KB) is written by value.
+    // place; `Engine` (5 KB) is written by value.
     unsafe {
         let (inst_slot, fx_slot) = slots();
         let inst = Instrument::init_in_place(inst_slot, SAMPLE_RATE, budget);
@@ -74,7 +74,7 @@ pub fn init(
             shared,
             notes,
             scope: ScopeWriter::new(scope),
-            dac: [[0.0; BLOCK_SIZE * 2]; DAC_PAIRS],
+            dac: DacBlocks::new(),
         });
     }
     ENGINE_READY.store(true, Ordering::Release);
@@ -96,6 +96,6 @@ pub fn render_half(half: Half) {
         // SAFETY: `main` runs `dma::clear` before `prefill`; the caller is
         // this half's only writer while the DMA reads the other half, and the
         // reference ends with this `interleave` call.
-        interleave(&e.dac, pair, unsafe { dma::half_mut(pair, half) });
+        interleave(e.dac.out(), pair, unsafe { dma::half_mut(pair, half) });
     }
 }

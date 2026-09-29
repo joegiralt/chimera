@@ -207,7 +207,10 @@ impl Transport {
         let [a, b] = &mut self.jitter;
         *a += tap.jitter_coeff * (xorshift_noise(&mut self.rng) - *a);
         *b += tap.jitter_coeff * (*a - *b);
-        let jitter = (*b * tap.jitter_gain).clamp(-1.0, 1.0);
+        // `max`/`min`, not `clamp`: `b` is never NaN, and they skip the
+        // FPU's flag round trip.
+        #[allow(clippy::manual_clamp)]
+        let jitter = (*b * tap.jitter_gain).max(-1.0).min(1.0);
         let flutter = 0.5 * capstan + 0.5 * jitter;
         // MECH 0 adds two exact zeros: today's delay at WOW 0, bit for bit.
         tap.base + wow * tap.wow + flutter * tap.flutter
@@ -295,22 +298,27 @@ impl TapeDelay {
         // Tone: LP coefficient (higher = brighter)
         let lp_coeff = 0.2 + params.tone * 0.75;
         let sat_gain = 1.0 + params.saturation * 3.0;
+        // Once a block: the loop multiplies, never divides (within 1 ulp).
+        let sat_inv = 1.0 / sat_gain;
 
+        // The loop's state in locals: the stores into the line cannot then
+        // make the compiler reload and store it every sample.
+        let (mut transport, mut write_pos, mut lp_state) =
+            (self.transport, self.write_pos, self.lp_state);
         for s in buf.iter_mut() {
             let dry = *s;
 
-            let delay = self
-                .transport
+            let delay = transport
                 .next(&tap)
                 .clamp(1.0, (MAX_DELAY_SAMPLES - 2) as f32);
 
             // Interpolated read from delay line
             let d_int = delay as usize;
             let d_frac = delay - d_int as f32;
-            let pos_a = if self.write_pos >= d_int {
-                self.write_pos - d_int
+            let pos_a = if write_pos >= d_int {
+                write_pos - d_int
             } else {
-                self.write_pos + MAX_DELAY_SAMPLES - d_int
+                write_pos + MAX_DELAY_SAMPLES - d_int
             };
             let pos_b = if pos_a == 0 {
                 MAX_DELAY_SAMPLES - 1
@@ -320,24 +328,25 @@ impl TapeDelay {
             let delayed = self.buffer[pos_a] * (1.0 - d_frac) + self.buffer[pos_b] * d_frac;
 
             // Tone: one-pole LP in feedback path (tape loses highs each pass)
-            self.lp_state += lp_coeff * (delayed - self.lp_state);
-            let filtered = self.lp_state;
+            lp_state += lp_coeff * (delayed - lp_state);
+            let filtered = lp_state;
 
             // Tape saturation in the feedback path, always on (ADR 0038): at
             // SAT 0 the loop is otherwise linear with unity DC gain, so FDBK
             // 1 grows without bound. Bounded by 1 / gain, the write stays
             // within |dry| + FDBK.
-            let saturated = libm::tanhf(filtered * sat_gain) / sat_gain;
+            let saturated = libm::tanhf(filtered * sat_gain) * sat_inv;
 
             // Write: input + feedback
-            self.buffer[self.write_pos] = dry + saturated * params.feedback;
-            self.write_pos += 1;
-            if self.write_pos == MAX_DELAY_SAMPLES {
-                self.write_pos = 0;
+            self.buffer[write_pos] = dry + saturated * params.feedback;
+            write_pos += 1;
+            if write_pos == MAX_DELAY_SAMPLES {
+                write_pos = 0;
             }
 
             // Mix
             *s = dry * dry_gain + delayed * params.mix;
         }
+        (self.transport, self.write_pos, self.lp_state) = (transport, write_pos, lp_state);
     }
 }

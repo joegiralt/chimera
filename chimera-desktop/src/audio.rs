@@ -6,7 +6,7 @@
 use chimera_core::audio_out::to_dac;
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::hw::{BLOCK_SIZE, CPU_HZ_REV_V, DAC_PAIRS, SAMPLE_RATE, SampleBudget};
-use chimera_core::instrument::{AudioShared, DacOut, Instrument};
+use chimera_core::instrument::{AudioShared, DacBlocks, DacOut, Instrument};
 use chimera_core::note_queue::{NoteEvent, NoteKind, NoteProducer, NoteSources, SourceId};
 use chimera_core::preset::Performance;
 use chimera_core::scope::{ScopeFrame, ScopeWriter};
@@ -79,7 +79,7 @@ impl DesktopAudio {
             SampleBudget::for_cpu(CPU_HZ_REV_V),
         ));
         let mut fx = Box::new(FxBus::new());
-        let mut dac: DacOut = [[0.0; BLOCK_SIZE * 2]; DAC_PAIRS];
+        let mut dac = DacBlocks::new();
         let mut block_pos = BLOCK_SIZE;
         let mut scope = ScopeWriter::new(scope);
 
@@ -95,7 +95,7 @@ impl DesktopAudio {
                             inst.render(&mut fx, &mut dac, shared, &mut scope);
                             block_pos = 0;
                         }
-                        let ((l, r), clamped) = stereo_frame(&dac, solo, block_pos);
+                        let ((l, r), clamped) = stereo_frame(dac.out(), solo, block_pos);
                         if clamped {
                             audio.clamped.fetch_add(1, Ordering::Relaxed);
                         }

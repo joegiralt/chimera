@@ -34,8 +34,10 @@ fn mixer_channel_strip_chain() {
     let chain = &block_registry::MIXER_CHANNEL_CHAIN;
     assert_eq!(chain.blocks[0].def.name, "Part");
     assert_eq!(chain.blocks[1].def.name, "Sends");
-    assert_eq!(chain.len(), 7);
-    assert_eq!(chain.blocks[6].def.name, "Master");
+    // TAPE before MASTER only with `master-tape` (ADR 0055).
+    let len = if cfg!(feature = "master-tape") { 7 } else { 6 };
+    assert_eq!(chain.len(), len);
+    assert_eq!(chain.blocks[len - 1].def.name, "Master");
 }
 
 #[test]

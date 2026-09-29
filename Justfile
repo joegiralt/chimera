@@ -12,20 +12,24 @@ firmware:
 build:
     cargo build -p chimera-core -p chimera-hal -p chimera-desktop
 
-# Everything must pass before a commit (ADR 0013): core + hal tests, desktop
+# Everything must pass before a commit (ADR 0013): core + hal tests (and core
+# with the master tape back on, ADR 0055), desktop
 # tests and its no-MIDI build, the dosfstools cross-checks, the firmware built and linked with default
-# features, with none, with the bench and with the SD probe, clippy on host
+# features, with none, with the bench (with and without the master tape) and
+# with the SD probe, clippy on host
 # and firmware (every feature set), rustfmt and the stack check. The desktop needs ALSA's
 # pkg-config file; point PKG_CONFIG_PATH at it if it is not installed
 # system-wide.
 check:
     cargo test -p chimera-core -p chimera-hal -p chimera-waves -p chimera-fat --features chimera-hal/testkit
+    cargo test -p chimera-core --features master-tape
     just test-fat-tools
     cargo test -p chimera-desktop
     cargo build -p chimera-desktop --no-default-features
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --features bench
+    cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --features bench,master-tape
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --features sd-probe
     cargo build -p chimera-bootloader --target thumbv7em-none-eabihf
     just clippy
@@ -71,10 +75,12 @@ test-fat-tools:
 # Clippy on every target and feature set `check` builds, test targets included
 clippy:
     cargo clippy -p chimera-core -p chimera-hal -p chimera-desktop -p chimera-waves -p chimera-fat --features chimera-hal/testkit --all-targets -- -D warnings
+    cargo clippy -p chimera-core --features master-tape --all-targets -- -D warnings
     cargo clippy -p chimera-desktop --no-default-features --all-targets -- -D warnings
     cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf -- -D warnings
     cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features -- -D warnings
     cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --features bench -- -D warnings
+    cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --features bench,master-tape -- -D warnings
     cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --features sd-probe -- -D warnings
     cargo clippy -p chimera-bootloader --target thumbv7em-none-eabihf -- -D warnings
 

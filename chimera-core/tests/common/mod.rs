@@ -15,7 +15,6 @@ use chimera_core::dsp::algo::params::AlgoParams;
 use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::voice::Voice;
-use chimera_core::hw::DAC_PAIRS;
 use chimera_core::instrument::{AudioShared, Instrument};
 use chimera_core::mod_path::ModDestRegistry;
 use chimera_core::modulation::ModState;
@@ -260,7 +259,7 @@ pub fn render_case_through_instrument(case: Case) -> Vec<f32> {
         chimera_core::hw::SampleBudget::for_cpu(chimera_core::hw::CPU_HZ_REV_V),
     ));
     let mut fx = Box::new(FxBus::new());
-    let mut dac = [[0.0f32; BLOCK_SIZE * 2]; DAC_PAIRS];
+    let mut dac = Box::new(chimera_core::instrument::DacBlocks::new());
     let event = |kind| NoteEvent {
         channel: MidiChannel::new(0).unwrap(),
         note: MidiNote::new(NOTE).unwrap(),
