@@ -70,8 +70,10 @@ impl<S: Store> KsString<S> {
 
     /// Excite the string (Carcosa's Trigger).
     /// excitation: 0=noise, 1=click, 2=bright, 3=dark
+    /// The line is cleared first: the old note's samples past the new loop
+    /// are never read back, even by a pitch drop that lengthens it.
     pub(super) fn trigger(&mut self, amplitude: f32, excitation: u8, color: f32, position: f32) {
-        self.line.restart();
+        self.line.clear();
         // Fill delay line based on excitation type
         let mut prev = 0.0_f32;
         for i in 0..self.delay_len {
@@ -145,20 +147,7 @@ impl<S: Store> KsString<S> {
         let read_pos = (self.write_pos + 1) % self.delay_len;
         let current = self.line.load(read_pos);
         let next = self.line.load((read_pos + 1) % self.delay_len);
-
-        // KS low-pass averaging: blend between current and next sample.
-        // Higher coeff = more averaging = darker sound.
-        // damping=0 (bright): coeff=0.05 (barely any filtering)
-        // damping=1 (dark): coeff=0.5 (heavy filtering, fast decay)
-        let coeff = 0.05 + p.damping * 0.45;
-        let mut filtered = current * (1.0 - coeff) + next * coeff;
-
-        // The 2-point average inherently decays the signal.
-        // Apply a per-sample gain < 1.0 to control decay time.
-        // decay=0 → gain=0.9990 (very long ring, ~7 seconds)
-        // decay=1 → gain=0.9900 (short pluck, ~100ms)
-        let gain = 0.999 - p.decay * 0.009;
-        filtered *= gain;
+        let mut filtered = lowpass(p, current, next);
 
         // Stiffness: mix with a sample from +7 offset (allpass-like dispersion)
         if p.stiffness > 0.01 {
@@ -217,6 +206,61 @@ impl<S: Store> KsString<S> {
 
         output
     }
+
+    /// `tick_full` for a sympathetic string, which has no body, stiffness,
+    /// feedback or ensemble, and which `input` excites at its write
+    /// position. The last tick's output waits in `pending` and is stored
+    /// with this tick's input: one store a sample instead of a store, a
+    /// load and a store again. In f32 that is bit-identical to storing it,
+    /// then adding the input in place.
+    #[inline]
+    pub(super) fn tick_coupled(
+        &mut self,
+        p: &KsRenderParams,
+        input: f32,
+        pending: &mut f32,
+        budget: &mut StepBudget,
+    ) -> f32 {
+        debug_assert!(p.stiffness <= 0.01 && p.body <= 0.03 && p.feedback <= 0.01);
+        debug_assert!(p.ens_mix <= 0.01 || p.ens_depth <= 0.01);
+        let wp = self.write_pos;
+        let injected = *pending + input;
+        let read_pos = (wp + 1) % self.delay_len;
+        let next_pos = (read_pos + 1) % self.delay_len;
+        let current = self.line.load(read_pos);
+        // A two-sample loop reads its write position back.
+        let next = if next_pos == wp {
+            injected
+        } else {
+            self.line.load(next_pos)
+        };
+        let filtered = lowpass(p, current, next);
+        self.line.store(wp, injected);
+        *pending = filtered;
+        self.write_pos = read_pos;
+        if read_pos <= wp {
+            self.line.wrapped(budget);
+        }
+        filtered
+    }
+}
+
+/// The loop's filter: a two-point average and a gain below 1.
+#[inline]
+fn lowpass(p: &KsRenderParams, current: f32, next: f32) -> f32 {
+    // KS low-pass averaging: blend between current and next sample.
+    // Higher coeff = more averaging = darker sound.
+    // damping=0 (bright): coeff=0.05 (barely any filtering)
+    // damping=1 (dark): coeff=0.5 (heavy filtering, fast decay)
+    let coeff = 0.05 + p.damping * 0.45;
+    let filtered = current * (1.0 - coeff) + next * coeff;
+
+    // The 2-point average inherently decays the signal.
+    // Apply a per-sample gain < 1.0 to control decay time.
+    // decay=0 → gain=0.9990 (very long ring, ~7 seconds)
+    // decay=1 → gain=0.9900 (short pluck, ~100ms)
+    let gain = 0.999 - p.decay * 0.009;
+    filtered * gain
 }
 
 crate::in_place::field_list!(KsString => KsString { line, write_pos, delay_len, ens_lfo_phase, noise_state });

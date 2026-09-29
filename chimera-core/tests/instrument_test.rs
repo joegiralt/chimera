@@ -629,9 +629,9 @@ fn the_costliest_patch_plays_six_voices_on_rev_v() {
 }
 
 /// Recorded when the instrument path landed (plan Task 12). Re-record only
-/// for an intended sound change (`common::golden`).
-/// `two_parts_two_pairs` (Part 2 plays Modal INIT) re-recorded: Modal strings
-/// stored as 16-bit block float (exclusive-state spec § 4).
+/// for an intended sound change (`common::golden`). `two_parts_two_pairs`
+/// was re-recorded again for Modal strings stored as 16-bit block float
+/// (exclusive-state spec § 4): its Part 2 plays Modal INIT.
 const GOLDENS: &[(&str, u64)] = &[
     ("poly_chord", 0x6876d7661e044851), // ADR 0049 INIT, then the ADR 0050 output trim
     ("two_parts_two_pairs", 0x33f896b7cfd28294), // ADR 0049 INIT, then the ADR 0050 output trim
@@ -643,11 +643,9 @@ const GOLDENS: &[(&str, u64)] = &[
 /// ADR 0050: everything before the limiter is the mix unchanged by it,
 /// bit for bit. These are the goldens as ADR 0049's INIT recorded them,
 /// before the output trim.
-/// `two_parts_two_pairs` (Part 2 plays Modal INIT) re-recorded: Modal strings
-/// stored as 16-bit block float (exclusive-state spec § 4).
 const PRE_LIMITER: &[(&str, u64)] = &[
     ("poly_chord", 0x2c57afe8baf00119),
-    ("two_parts_two_pairs", 0x44fc47cf898f561a),
+    ("two_parts_two_pairs", 0x44fc47cf898f561a), // 16-bit strings (exclusive-state spec § 4)
     ("reverb_send_off", 0xf40c677a4633ad69),
     ("reverb_send_on", 0x5e7b5f6ed1eedd52),
     ("six_voice_chord", 0x241436b65cc7a435),

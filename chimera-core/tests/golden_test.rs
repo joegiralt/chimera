@@ -22,6 +22,7 @@ const GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
             ],
         ),
     ),
+    // Re-recorded: CUTOFF routes in octaves, g ramped per block (filter-routing spec § 3).
     // Re-recorded: Modal strings stored as 16-bit block float (exclusive-state spec § 4).
     (
         "modal_lfo_cutoff",
@@ -158,8 +159,9 @@ const GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
             ],
         ),
     ),
+    // Re-recorded: the switch fades Algo out, then Modal starts (#33 M6).
+    // Re-recorded: its Algo half is ADR 0049's INIT and carrier norm.
     // Re-recorded: Modal strings stored as 16-bit block float (exclusive-state spec § 4).
-    // Its Algo half is ADR 0049's INIT and carrier norm, recorded before.
     (
         "algo_to_modal_switch",
         (

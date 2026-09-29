@@ -86,9 +86,14 @@ struct SympatheticStrings<S: Store> {
     strings: [KsString<S>; NUM_SYMPATHETIC],
     /// Each sympathetic string's ratio to the main one, set at note-on.
     ratios: [f32; NUM_SYMPATHETIC],
+    /// Each sympathetic string's last output, not yet stored: it is stored
+    /// with the next sample's coupled input (`KsString::tick_coupled`).
+    pending: [f32; NUM_SYMPATHETIC],
 }
 
-crate::in_place::field_list!(SympatheticStrings<Q16> => SympatheticStrings { main, strings, ratios });
+crate::in_place::field_list!(SympatheticStrings<Q16> => SympatheticStrings {
+    main, strings, ratios, pending,
+});
 
 in_place_enum! {
     /// The one model an engine holds: the variant is the mode.
@@ -330,12 +335,10 @@ impl<S: Store> ModalEngine<S> {
                 m.tune(freq, sample_rate);
                 for sym in m.strings.iter_mut() {
                     // Sympathetic strings start silent — energy comes from main
-                    sym.line.restart();
-                    for i in 0..sym.delay_len {
-                        sym.line.store(i, 0.0);
-                    }
+                    sym.line.clear();
                     sym.write_pos = 0;
                 }
+                m.pending = [0.0; NUM_SYMPATHETIC];
             }
         }
 
@@ -377,9 +380,14 @@ impl<S: Store> ModalEngine<S> {
             }
             ModelSlot::Bank(_) => {}
             ModelSlot::Sympathetic(m) => {
+                let m = &mut **m;
                 m.main.damp(1);
-                for sym in &mut m.strings {
+                for (sym, pending) in m.strings.iter_mut().zip(&mut m.pending) {
                     sym.damp(1);
+                    // Its write position's sample, were it stored.
+                    if sym.write_pos < sym.delay_len {
+                        *pending *= 0.2;
+                    }
                 }
             }
         }
@@ -548,7 +556,8 @@ impl<S: Store> SympatheticStrings<S> {
     fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
         let p = slot.as_mut_ptr();
         // SAFETY: `p` is valid and unaliased; the eight strings are built in
-        // place and `ratios` is written by value, before `assume_init_mut`.
+        // place and `ratios` and `pending` are written by value, before
+        // `assume_init_mut`.
         unsafe {
             KsString::init_in_place(uninit_at(addr_of_mut!((*p).main)));
             let sym = addr_of_mut!((*p).strings).cast::<KsString<S>>();
@@ -556,6 +565,7 @@ impl<S: Store> SympatheticStrings<S> {
                 KsString::init_in_place(uninit_at(sym.add(i)));
             }
             addr_of_mut!((*p).ratios).write([1.0; NUM_SYMPATHETIC]);
+            addr_of_mut!((*p).pending).write([0.0; NUM_SYMPATHETIC]);
             slot.assume_init_mut()
         }
     }
@@ -732,13 +742,10 @@ fn render_sympathetic<S: Store>(
 
         // 3. Tick all sympathetic strings, sum their output
         let mut sym_sum = 0.0_f32;
-        for sym in &mut m.strings {
-            // Inject coupled energy from main string into delay line
-            let wp = sym.write_pos;
-            sym.line.store(wp, sym.line.load(wp) + sym_input);
-            // Tick the sympathetic string (with gentler damping)
-            let sym_out = sym.tick_full(&sym_params, budget);
-            sym_sum += sym_out;
+        for (sym, pending) in m.strings.iter_mut().zip(&mut m.pending) {
+            // Inject coupled energy from the main string at the write
+            // position, and tick with gentler damping.
+            sym_sum += sym.tick_coupled(&sym_params, sym_input, pending, budget);
         }
 
         // 4. Mix: main + sympathetic
@@ -878,13 +885,16 @@ mod tests {
     /// first second, FDBK 0.
     const ERROR_DBFS: f32 = -90.0;
 
-    /// Sympathetic's own bound, for the high notes whose loops ring loud
-    /// (ADR 0052). Its seven lines resonate at 0.65–0.8, so they sit at
-    /// `Exp::START` (14), one LSB 6.1e-5 at every level. Each pass rounds
-    /// in about 0.29 LSB RMS, and a 0.999 loop builds that power by
-    /// 1/(1 − g²) ≈ 500: about 4e-4 a string, times 0.15 · √7 at the mix,
-    /// a floor near −76 dBFS (C6 measures −73.9). A limit of 16-bit
-    /// storage in that model, not of the exponent's steps.
+    /// Sympathetic's own bound, for its high notes at DECAY 0, and C6 at 0.3
+    /// (ADR 0052). They measure -83.7 to -84.9 dBFS. Seven high-Q strings
+    /// tuned to the main string's harmonics ring at 0.65-0.8 and amplify
+    /// any error the main string hands them. The first estimate blamed
+    /// their own lines, which sit at `Exp::START` (LSB 6.1e-5), rounding
+    /// ~0.29 LSB RMS a pass that a 0.999 loop builds by 1/(1 - g^2) ≈ 500,
+    /// for a floor near -76 dBFS. Measurement moved that: storing the
+    /// injection once instead of twice (`tick_coupled`) took C6 from -73.9
+    /// to -83.7, and with the seven lines in f32, C6 still reads -83.3 (A4
+    /// -88.3). What is left is the main string's 16-bit rounding, resonated.
     const SYMPATHETIC_ERROR_DBFS: f32 = -72.0;
 
     /// ADR 0052's gate: with FDBK 0, the 16-bit strings play what f32 ones
@@ -984,9 +994,14 @@ mod tests {
         }
     }
 
-    /// Samples past a short loop keep the level of the note before: a new
-    /// note's restart rescales them, so a pitch drop that reads them back
-    /// hears no burst.
+    /// Every sample of a line past the loop reads silent.
+    fn tail_is_silent<S: Store>(s: &KsString<S>) -> bool {
+        (s.delay_len..MAX_STRING_DELAY).all(|i| s.line.load(i) == 0.0)
+    }
+
+    /// A new note starts on a cleared line, so a pitch drop that lengthens
+    /// the loop reads silence, never the last note's tail at a stale
+    /// exponent (a burst up to 2^16 louder).
     #[test]
     fn pitch_down_after_a_long_tail_reads_no_burst() {
         fn run<S: Store>(check: impl Fn(&ModalEngine<S>)) -> f32 {
@@ -1002,6 +1017,10 @@ mod tests {
             }
             check(&e);
             e.note_on(69, 100, &p, SR);
+            match &e.model {
+                ModelSlot::String(s) => assert!(tail_is_silent(s)),
+                _ => unreachable!(),
+            }
             block(&mut e, &p);
             e.set_pitch(0.25);
             (0..8).map(|_| peak(&block(&mut e, &p))).fold(0.0, f32::max)
@@ -1014,6 +1033,44 @@ mod tests {
         });
         let f = run::<F32>(|_| {});
         assert!((q - f).abs() <= 0.01, "peak {q} / {f}");
+    }
+
+    /// A note-on's worst case, pinned: Sympathetic clears its eight lines,
+    /// one memset of 1,968 B each, whatever their exponents were. No
+    /// rescale runs, so a long tail at a high exponent costs no more.
+    #[test]
+    fn note_on_clears_every_line_at_a_fixed_cost() {
+        assert_eq!(
+            (1 + NUM_SYMPATHETIC) * size_of::<[i16; MAX_STRING_DELAY]>(),
+            15_744
+        );
+        let p = ModalParams {
+            mode: ResonatorMode::Sympathetic,
+            decay: 0.0,
+            ks_feedback: 0.0,
+            ..Default::default()
+        };
+        let mut e = engine::<Q16>(p.mode);
+        e.note_on(31, 100, &p, SR);
+        for _ in 0..3 * SECOND {
+            block(&mut e, &p);
+        }
+        let lines = |e: &ModalEngine<Q16>| match &e.model {
+            ModelSlot::Sympathetic(m) => core::iter::once(&m.main)
+                .chain(&m.strings)
+                .map(|s| (s.line.exp(), tail_is_silent(s)))
+                .collect::<Vec<_>>(),
+            _ => unreachable!(),
+        };
+        assert!(
+            lines(&e).iter().any(|(x, _)| *x != Exp::START),
+            "a line stepped up"
+        );
+        e.note_on(96, 100, &p, SR);
+        for (i, (x, silent)) in lines(&e).into_iter().enumerate() {
+            assert_eq!(x, Exp::START, "line {i}");
+            assert!(silent, "line {i}");
+        }
     }
 
     /// Eight short loops wrap every block, but a voice steps at most one
