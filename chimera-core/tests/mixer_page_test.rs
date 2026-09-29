@@ -63,12 +63,15 @@ fn mixer_chain_is_part_sends_and_fx() {
         .iter()
         .map(|b| b.def.name)
         .collect();
-    assert_eq!(
-        names,
-        [
-            "Part", "Sends", "Chorus", "Delay", "Reverb", "Tape", "Master"
+    // TAPE before MASTER only with `master-tape` (ADR 0055).
+    let want: &[&str] = if cfg!(feature = "master-tape") {
+        &[
+            "Part", "Sends", "Chorus", "Delay", "Reverb", "Tape", "Master",
         ]
-    );
+    } else {
+        &["Part", "Sends", "Chorus", "Delay", "Reverb", "Master"]
+    };
+    assert_eq!(names, want);
 }
 
 /// Every slot on the Mixer chain is bound to a real spec: no Legacy slot is
@@ -491,8 +494,34 @@ fn part_page_shows_channel_mode_and_output_by_name() {
     assert_eq!(buf.as_str(), "POLY");
 }
 
+/// ADR 0055: without `master-tape` the Mix chain has no TAPE page; MST
+/// follows REV, and no page binds the tape's parameters.
+#[cfg(not(feature = "master-tape"))]
+#[test]
+fn the_mix_chain_has_no_tape_page() {
+    let chain = &reg::MIXER_CHANNEL_CHAIN;
+    let ids: Vec<u16> = chain.blocks.iter().map(|b| b.def.id).collect();
+    let rev = ids.iter().position(|&i| i == reg::EFX.id).unwrap();
+    assert_eq!(ids[rev + 1], reg::MASTER.id, "{}", chain.name);
+    for b in chain.blocks {
+        let pages = core::iter::once(b.def).chain(b.sub_pages.iter().copied());
+        for def in pages {
+            assert!(
+                bound(def)
+                    .iter()
+                    .flatten()
+                    .all(|a| a.block != BlockRef::Tape),
+                "{}",
+                def.name
+            );
+        }
+    }
+}
+
 /// FX diet spec § UI: TAPE is DRIVE, TONE, WOW, MIX, right after REV on
-/// both Mix chains; its encoders edit the Performance's tape.
+/// both Mix chains; its encoders edit the Performance's tape. Only with
+/// `master-tape` (ADR 0055).
+#[cfg(feature = "master-tape")]
 #[test]
 fn the_tape_page_is_drive_tone_wow_mix() {
     use chimera_core::dsp::tape::TapeParams as T;

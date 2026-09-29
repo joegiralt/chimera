@@ -39,13 +39,37 @@ const GOLDENS: &[(&str, u64)] = &[
     ("algo_pitch", 0x90d2841bef4b43a6),
     ("modal_pitch", 0xecd2cbfd3f40c2e6),
     ("modal_amp", 0xad2feb025c2dfa59),
+    // The Mix chain's map loses its TAPE node without `master-tape`
+    // (ADR 0055); with it, the screens are as before.
+    #[cfg(not(feature = "master-tape"))]
+    ("mixer_part", 0xb892f61925a4b666),
+    #[cfg(not(feature = "master-tape"))]
+    ("mixer_sends", 0xe0b902864ee92e77),
+    #[cfg(not(feature = "master-tape"))]
+    ("mixer_fx_delay", 0x9b978460a2ca3bfb),
+    #[cfg(not(feature = "master-tape"))]
+    ("mixer_fx_reverb", 0xd5ed45bab88ba5ed),
+    #[cfg(not(feature = "master-tape"))]
+    ("mixer_fx_delay_char", 0x537c67b32d4e0db1),
+    #[cfg(not(feature = "master-tape"))]
+    ("mixer_master", 0x2b29fc33adeaa2eb),
+    #[cfg(not(feature = "master-tape"))]
+    ("mixer_master_level", 0x144af1f49255dd52),
+    #[cfg(feature = "master-tape")]
     ("mixer_part", 0x87ab4a2a75c3d238),
+    #[cfg(feature = "master-tape")]
     ("mixer_sends", 0x650322c12ad0b389),
+    #[cfg(feature = "master-tape")]
     ("mixer_fx_delay", 0xd13240ab6a9b4ead),
+    #[cfg(feature = "master-tape")]
     ("mixer_fx_reverb", 0x9e3a0671fa320bdf),
+    #[cfg(feature = "master-tape")]
     ("mixer_fx_delay_char", 0x836df9c070860c8b),
+    #[cfg(feature = "master-tape")]
     ("mixer_tape", 0x28a0e7569c2009be),
+    #[cfg(feature = "master-tape")]
     ("mixer_master", 0xc1981d439df14ddd),
+    #[cfg(feature = "master-tape")]
     ("mixer_master_level", 0x7554d112cc792b98),
     ("mod_matrix", 0x1ac795629104192b),
     ("mod_matrix_wide", 0x4605f59b8c26e5b8),

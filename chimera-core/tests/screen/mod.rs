@@ -309,6 +309,10 @@ fn prime(ui: &mut UiState) {
 pub type ScreenCase = (&'static str, fn(&mut UiState));
 
 /// Every screen the goldens lock, one or more per page type (spec § Testing).
+/// MST's place on the Mix chain: after TAPE only with `master-tape`
+/// (ADR 0055).
+const MST: usize = if cfg!(feature = "master-tape") { 6 } else { 5 };
+
 pub const CASES: &[ScreenCase] = &[
     ("engine_algo", |ui| feed(ui, Input::turn(EncoderId::A, 2))),
     ("algo_alg", |ui| {
@@ -450,6 +454,7 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::press(ButtonId::Edit)); // DLY › CHAR
         feed(ui, Input::turn(EncoderId::A, 20)); // WOW
     }),
+    #[cfg(feature = "master-tape")]
     ("mixer_tape", |ui| {
         feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
         plus(ui, 5);
@@ -457,12 +462,12 @@ pub const CASES: &[ScreenCase] = &[
     }),
     ("mixer_master", |ui| {
         feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
-        plus(ui, 6);
+        plus(ui, MST);
         feed(ui, Input::turn(EncoderId::B, 4)); // RATIO 4:1: the curve bends
     }),
     ("mixer_master_level", |ui| {
         feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
-        plus(ui, 6);
+        plus(ui, MST);
         feed(ui, Input::press(ButtonId::Edit)); // MST › LEVEL
     }),
     ("mod_matrix", mod_matrix),
