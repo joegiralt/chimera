@@ -27,7 +27,7 @@ pool of four slots, lent to the voices that play it (exclusive-state spec
 § 4.2–4.6):
 
 - **A slot** is a `SympatheticSet` (`dsp/modal/mod.rs`): 7 lines, 7 ratios
-  and 7 pending outputs (the fused injection's), 27,776 B on the host.
+  and 7 pending outputs (the fused injection's), 27,832 B on the host.
 - **The main string stays in the voice**, in `ModelSlot::Sympathetic`'s
   `SympatheticVoice { main, lease }`, which is no larger than Bowed's
   payload (a const assert): Sympathetic never sizes the voice.
@@ -126,7 +126,7 @@ pool of four slots, lent to the voices that play it (exclusive-state spec
 
 ## Consequences
 - **Memory (host, measured 2026-09-29):** `Voice` 5,840 B (the `VoiceIdx`
-  fits its padding), `[Voice; 8]` 46,720 B, `SympatheticSet` 27,776 B,
+  fits its padding), `[Voice; 8]` 46,720 B, `SympatheticSet` 27,832 B,
   `SymPool` 111,136 B, `Instrument` 160,520 B, which leaves 126,200 B of
   D2. The spec projected 5,840, 111,104 + 64, 160,544 and 126,176. The
   chip's figures come with plan Task 10.
@@ -173,7 +173,11 @@ pool of four slots, lent to the voices that play it (exclusive-state spec
   fade: a future glide (portamento) will not carry across it.
 - `Voice::trigger` can still meet `Rebuilt::NoSlot`, but only for a lone
   `Voice` driven without the `Instrument`'s placement: the note does not
-  start.
+  start. The `Instrument` places every Sympathetic note before it triggers
+  it: in `handle`, and in `start` for a note that waited on another Part's
+  fade while its own Part became Sympathetic (`restart_switched` passes
+  that voice by). Such a note steals the oldest slot if it must, as a new
+  note does (`a_note_waiting_across_a_switch_to_sympathetic_is_placed`).
 
 ## Sources
 - `docs/superpowers/specs/2026-09-29-exclusive-state-design.md` § 4 and

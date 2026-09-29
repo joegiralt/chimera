@@ -327,8 +327,10 @@ impl Voice {
         pool: &mut SymPool,
     ) {
         // Another engine or model starts clean, in place. Sympathetic
-        // without a slot doesn't start: only a lone voice, driven without
-        // the `Instrument`'s placement, can meet that.
+        // without a slot doesn't start. The `Instrument` places every
+        // Sympathetic note before it triggers it, in `handle` and, for a
+        // note that waited across a switch, in `start`; so only a lone
+        // voice, driven without that placement, can meet it.
         let kind = SlotKind::of(params);
         if self.switched(params) && self.rebuild(kind, pool) == Rebuilt::NoSlot {
             return;

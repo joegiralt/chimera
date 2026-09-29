@@ -46,9 +46,9 @@ plays. Other Parts and the FX bus are untouched. Knob moves never rebuild.
   voice still needs its own state for the engine it plays.
 
 ## Consequences
-Memory is the largest engine, not the sum: a `Voice` is 33,584 B on the
-host, and Modal holds only the model it plays (`ModelSlot`, the same
-in-place enum).
+Memory is the largest engine, not the sum: a `Voice` is 5,848 B on the
+host, Sympathetic's seven lines living in a shared pool (ADR 0054), and
+Modal holds only the model it plays (`ModelSlot`, the same in-place enum).
 
 A voice rebuilds at most three times between two blocks: the note events
 drained before `Instrument::render`, plus that render. A rebuild happens in
@@ -62,8 +62,16 @@ fade end, or a VCA-lifetime end). Each stage allows at most one:
 - **Its render: at most one.** This is a fade end or a VCA-lifetime reset,
   never both, because the fade end's reset clears the VCA routes that the
   lifetime check reads.
-- **After its render: at most one.** `Instrument::render` plays a waiting
-  note on the now idle voice.
+- **After its render: at most one.** Render step 5 either plays a waiting
+  note on the now idle voice (`Instrument::start`) or, with none waiting,
+  rests it (`Voice::rest`, which gives a Sympathetic lease back), never
+  both. A note still waiting, on the clear budget or on a fade the pool
+  awaits, spends no rebuild.
+- **Render step 0 takes the drain's place.** At the top of
+  `Instrument::render`, before the voices render, a note that waited on
+  the clear budget starts (ADR 0054). That needs an idle voice, and a
+  trigger in the drain leaves its voice active, so one voice never
+  rebuilds in both the drain and step 0.
 
 All three are reachable on one voice
 (`a_voice_rebuilds_at_most_three_times_a_block`):
@@ -80,9 +88,9 @@ A switch storm pins the bound (`a_switch_storm_never_rebuilds_a_voice_more_than_
 
 Rebuilds 1 and 2 are into the same kind. That kind's engine fell silent in
 its first block, and only Algo can do that: Modal waits 11 silent blocks.
-So at most two of a voice's rebuilds in one block write a Modal model. Until
-the 16-bit strings (spec § 4), a Sympathetic rebuild writes about 31.7 KB,
-~2.6 % of a block, so a voice's worst block is about 63.4 KB, ~5.2 %.
+So at most two of a voice's rebuilds in one block write a Modal model.
+Before the pool (spec § 4), a Sympathetic rebuild wrote about 31.7 KB,
+~2.6 % of a block, so a voice's worst block was about 63.4 KB, ~5.2 %.
 
 *Note (2026-09-29, spec § 4 revised).* Sympathetic's seven lines move to a
 pool of four slots, so a rebuild writes at most 3,968 B (main string and
