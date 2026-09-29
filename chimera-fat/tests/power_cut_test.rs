@@ -10,7 +10,9 @@ mod image;
 #[path = "common/probe.rs"]
 mod probe;
 
-use ab::{Slot, copy, file, load, name83, save, save_on, slot, sound, target};
+use ab::{
+    Slot, assert_kept, copy, file, load, load_side, name83, save, save_on, slot, sound, target,
+};
 use chimera_core::addr::BlockRef;
 use chimera_core::block::DiskCode;
 use chimera_core::mod_path::MAX_REGISTRY_DESTS;
@@ -18,7 +20,7 @@ use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
 use chimera_core::storage::{
     Card, CardError, CardEvent, FileKind, Generation, Header, RecordTag, RecordWriter, SaveError,
-    Side, SoundDecoder, encode_sound, load_ab, save_ab, write_file,
+    Side, SoundCheck, SoundDecoder, encode_sound, load_ab, save_ab, write_file,
 };
 use chimera_hal::store::{ByteSink, Dir, FileName, Store, StoreError};
 use image::{Cut, FatEntry, RamDisk, Tear, fat_check, with_clusters};
@@ -99,6 +101,7 @@ fn cut_at_every_block_write_keeps_a_generation() {
     for n in 2..=4 {
         let before = copy(&base.inner);
         let kept = kept(&base);
+        let kept_side = target(&base).other();
         let blocks = writes_of(&before, n);
         for (k, &block) in blocks.iter().enumerate() {
             let what = format!(
@@ -112,6 +115,13 @@ fn cut_at_every_block_write_keeps_a_generation() {
             assert_eq!(failed, Some(block), "{what}");
             cut.cut.set(Cut::Never);
             assert_safe(&what, &cut.inner, &kept, &[block]);
+            assert_kept(
+                &what,
+                &cut,
+                kept_side,
+                Generation::new(n - 1),
+                &sound(n - 1),
+            );
             let got = load(&cut).unwrap_or_else(|e| panic!("{what}: {e:?}"));
             assert!(
                 got.bits_eq(&sound(n - 1)) || got.bits_eq(&sound(n)),
@@ -139,12 +149,15 @@ fn repeated_cuts_keep_a_generation() {
             let n = seed * 10 + round + 2;
             let what = format!("seed {seed} round {round}");
             let kept = kept(&card);
+            let kept_side = target(&card).other();
+            let (kept_gen, kept_snd) = load_side(&card, kept_side).unwrap();
             card.writes.set(0);
             card.cut.set(Cut::After(rng.below(24) as u32));
             let (r, failed) = save(&card, n);
             card.cut.set(Cut::Never);
             hit.extend(failed);
             assert_safe(&what, &card.inner, &kept, &hit);
+            assert_kept(&what, &card, kept_side, kept_gen, &kept_snd);
             let got = load(&card).unwrap_or_else(|e| panic!("{what}: {e:?}"));
             if r.is_ok() {
                 landed += 1;
@@ -236,13 +249,16 @@ fn cut_then_reinsert_loads_previous_generation() {
 
     disk.cut.set(Cut::After(3));
     let snd = sound(2);
-    let mut scratch = Sound::neutral(EngineType::Algo);
-    let mut d = SoundDecoder::new(&mut scratch);
     let out = card
         .run(&mut s, |s, r| {
-            save_ab(s, r, file(), &mut d, Some(snd.name), &mut |w| {
-                encode_sound(&snd, w)
-            })
+            save_ab(
+                s,
+                r,
+                file(),
+                &mut SoundCheck::new(),
+                Some(snd.name),
+                &mut |w| encode_sound(&snd, w),
+            )
         })
         .unwrap();
     assert_eq!(out.result, Err(SaveError::Store(StoreError::Io)));
@@ -266,6 +282,7 @@ fn cut_then_reinsert_loads_previous_generation() {
     assert_eq!(out.result.map(|h| h.generation), Ok(Generation::FIRST));
     assert!(t.bits_eq(&sound(1)));
     assert_eq!(card, Card::Ready(v));
+    assert_kept("reinserted", &disk, Side::A, Generation::FIRST, &sound(1));
 }
 
 struct Bytes(Vec<u8>);
@@ -313,6 +330,7 @@ fn decoder_invalid_newest_is_written_over_at_every_cut() {
         cut.cut.set(Cut::Never);
         assert_safe(&what, &cut.inner, &kept, &[block]);
         assert_eq!(failed, Some(block), "{what}");
+        assert_kept(&what, &cut, Side::A, Generation::FIRST, &sound(1));
         let got = load(&cut).unwrap_or_else(|e| panic!("{what}: {e:?}"));
         assert!(
             got.bits_eq(&sound(1)) || got.bits_eq(&sound(2)),
@@ -360,11 +378,50 @@ fn full_card_keeps_previous_generation() {
         .chain
         .len() as u32;
     assert!(4_096 / 512 > old + 1, "the padding alone needs more");
-    let r = save_on(&mut probed(&disk), 3, &padding);
-    assert_eq!(r, Err(SaveError::Store(StoreError::Full)));
+
+    // Through a `Card`: `Full` is the card's state (`CardError::Full`, Task
+    // 10's table), not a device fault: no re-init, and the next operation
+    // mounts the same card and is `Ready` again.
+    let mut s = probed(&disk);
+    let mut card = Card::Ready(v);
+    let snd = sound(3);
+    let out = card
+        .run(&mut s, |s, r| {
+            save_ab(
+                s,
+                r,
+                file(),
+                &mut SoundCheck::new(),
+                Some(snd.name),
+                &mut |w| {
+                    encode_sound(&snd, w)?;
+                    padding(w)
+                },
+            )
+        })
+        .unwrap();
+    assert_eq!(out.result, Err(SaveError::Store(StoreError::Full)));
+    assert_eq!(
+        card,
+        Card::Failed {
+            err: CardError::Full,
+            last: Some(v)
+        }
+    );
+    assert_eq!(log(&s).reinits.get(), 0, "Full re-inits nothing");
     assert_eq!(free(&disk.inner), (0, 0), "the last free cluster was used");
     assert_safe("full", &disk.inner, &kept, &[]);
-    assert!(load(&disk).unwrap().bits_eq(&sound(2)));
+    assert_kept("full", &disk, side.other(), Generation::new(2), &sound(2));
+    let mut t = Sound::neutral(EngineType::Algo);
+    let out = card
+        .run(&mut s, |s, r| {
+            load_ab(s, r, file(), &mut SoundDecoder::new(&mut t))
+        })
+        .unwrap();
+    assert_eq!(out.event, CardEvent::Same);
+    assert_eq!(out.result.map(|h| h.generation), Ok(Generation::new(2)));
+    assert!(t.bits_eq(&sound(2)));
+    assert_eq!(card, Card::Ready(v));
 
     let mut s = probed(&disk);
     s.delete(v, file().side(side)).unwrap();

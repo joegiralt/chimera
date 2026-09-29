@@ -126,6 +126,13 @@ All integers are little-endian.
   + 1, then flushes. It judges both sides by the kind's own pass 1, the
   check a load makes, so a side a load would reject is broken to the save
   too, and the side a load would keep is never written.
+- **Never shadow, never write.** When a load refuses the pair because a
+  side needs newer firmware (its header read or not), a save refuses too,
+  with `NeedsNewerFirmware`, and writes nothing: whatever it wrote would sit
+  behind that side, never loaded. The file lists greyed as "NEEDS NEWER
+  FIRMWARE"; deleting the pair, which still works, is how the user
+  overrides it. A side that needs newer firmware but is older than a valid
+  one shadows nothing, and a save writes over it.
 - **Delete.** The older side first, then the newer. A cut in between leaves
   one valid file, which reads as "not deleted".
 

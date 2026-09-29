@@ -17,8 +17,8 @@ pub use codes::{
 };
 pub use crc::Crc32;
 pub use file::{
-    AbFile, Decode, LoadError, Pick, SaveError, SideState, check_file, check_frame, delete_ab,
-    delete_order, load_ab, load_file, pick, save_ab, write_target,
+    AbFile, Check, Decode, LoadError, Pick, SaveError, SideState, check_file, check_frame,
+    delete_ab, delete_order, load_ab, load_file, pick, save_ab, write_target,
 };
 pub use frame::{
     Event, FORMAT_VERSION, FileError, FileKind, Framer, Generation, HEADER_LEN, Header, MAGIC,
@@ -27,4 +27,4 @@ pub use frame::{
 pub use record::{
     CRITICAL, MAX_RECORD_LEN, ReadTag, RecordBuf, RecordTag, RecordWriter, write_file,
 };
-pub use sound::{SoundDecoder, encode_sound};
+pub use sound::{SoundCheck, SoundDecoder, encode_sound};

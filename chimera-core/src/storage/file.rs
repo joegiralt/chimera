@@ -11,18 +11,25 @@ use super::card::{CardFault, Ready};
 use super::frame::{Event, FileError, FileKind, Framer, Generation, Header, Side};
 use super::record::{RecordWriter, write_file};
 
-/// Decodes one kind of file, a pass at a time; each pass starts at
-/// `Event::Header`, which resets the decoder.
+/// Pass 1 of one kind of file: judges it and touches nothing. A pass
+/// starts at `Event::Header`, which resets the checker. `end` runs only
+/// once the framer's `finish` is Ok.
 ///
-/// Pass 1 (`apply` false) only checks. Pass 2 (`apply` true) runs only after
-/// pass 1's `finish` and `end` were Ok, and stages what it hears: nothing
-/// reaches the target before `end(true)`, which is called only once pass
-/// 2's `finish` is Ok and its CRC equals pass 1's. So a card that changes
-/// between the passes never leaves the target half-applied.
-pub trait Decode {
+/// Saves and deletes need only this, so they take a `Check` with no target.
+pub trait Check {
     const KIND: FileKind;
-    fn event(&mut self, e: Event<'_>, apply: bool) -> Result<(), FileError>;
-    fn end(&mut self, apply: bool) -> Result<(), FileError>;
+    fn event(&mut self, e: Event<'_>) -> Result<(), FileError>;
+    fn end(&mut self) -> Result<(), FileError>;
+}
+
+/// Pass 2 on top of the check: runs only after pass 1's `finish` and `end`
+/// were Ok, and stages what it hears. Nothing reaches the target before
+/// `commit`, which is called only once pass 2's `finish` is Ok and its CRC
+/// equals pass 1's. So a card that changes between the passes never leaves
+/// the target half-applied.
+pub trait Decode: Check {
+    fn apply(&mut self, e: Event<'_>) -> Result<(), FileError>;
+    fn commit(&mut self) -> Result<(), FileError>;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -36,6 +43,10 @@ pub enum LoadError {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SaveError {
     Store(StoreError),
+    /// The side a load would keep can't be read by this firmware
+    /// (`NeedsNewerFirmware`): a save would be shadowed by it, so none is
+    /// written. Deleting the pair overrides it.
+    File(FileError),
 }
 
 impl From<StoreError> for LoadError {
@@ -62,8 +73,10 @@ impl CardFault for LoadError {
 
 impl CardFault for SaveError {
     fn store_error(&self) -> Option<StoreError> {
-        let SaveError::Store(e) = *self;
-        Some(e)
+        match *self {
+            SaveError::Store(e) => Some(e),
+            SaveError::File(_) => None,
+        }
     }
 }
 
@@ -184,17 +197,15 @@ pub fn pick(a: SideState, b: SideState) -> Pick {
         .unwrap_or(Pick::Missing)
 }
 
-/// The side a save writes, and its generation: never the side `pick`
-/// keeps (the one it loads, or refuses as needing newer firmware). With
-/// nothing kept, the side holding less: missing before torn before
-/// headerless before present, the older of two present sides (a tie
-/// writes B, as A is taken for the newer), else A. The generation is the
-/// newest present side's + 1, or `FIRST`.
-pub fn write_target(a: SideState, b: SideState) -> (Side, Generation) {
+/// The side `pick` doesn't keep (the one it loads, or refuses as needing
+/// newer firmware). With nothing kept, the side holding less: missing
+/// before torn before headerless before present, the older of two present
+/// sides (a tie gives B, as A is taken for the newer), else A.
+fn unkept(a: SideState, b: SideState) -> Side {
     use SideState::{Headerless, Missing, Present, Torn};
-    let side = match pick(a, b) {
+    match pick(a, b) {
         Pick::Load(k) | Pick::Refuse(k, NNF) => k.other(),
-        _ => {
+        Pick::Refuse(..) | Pick::Missing => {
             let rank = |s| match s {
                 Missing => 0,
                 Torn(_) => 1,
@@ -208,22 +219,39 @@ pub fn write_target(a: SideState, b: SideState) -> (Side, Generation) {
                 _ => Side::A,
             }
         }
-    };
+    }
+}
+
+/// The side a save writes, `unkept`, and its generation: the newest present
+/// side's + 1, or `FIRST`.
+///
+/// `NeedsNewerFirmware` when `pick` refuses a side as needing newer
+/// firmware, whether its header was read or not: a load would never get
+/// past that side to what the save wrote, so nothing is written. Never
+/// shadow, never write.
+pub fn write_target(a: SideState, b: SideState) -> Result<(Side, Generation), FileError> {
+    if let Pick::Refuse(_, NNF) = pick(a, b) {
+        return Err(NNF);
+    }
     let generation = |s| match s {
-        Present { generation, .. } => Some(generation),
+        SideState::Present { generation, .. } => Some(generation),
         _ => None,
     };
     let newest = match (generation(a), generation(b)) {
         (Some(x), Some(y)) if y.is_newer_than(x) => Some(y),
         (x, y) => x.or(y),
     };
-    (side, newest.map_or(Generation::FIRST, Generation::next))
+    Ok((
+        unkept(a, b),
+        newest.map_or(Generation::FIRST, Generation::next),
+    ))
 }
 
 /// The side a load wouldn't keep goes first, so a cut between the two
-/// deletes leaves the kept one: "not deleted".
+/// deletes leaves the kept one: "not deleted". A pair a save refuses
+/// deletes too: that is how the user overrides a newer file.
 pub fn delete_order(a: SideState, b: SideState) -> [Side; 2] {
-    let first = write_target(a, b).0;
+    let first = unkept(a, b);
     [first, first.other()]
 }
 
@@ -377,25 +405,25 @@ impl Checked {
     }
 }
 
-fn check<S: Store, D: Decode>(
+fn check<S: Store, C: Check>(
     s: &mut S,
     r: &Ready,
     f: FileName,
-    d: &mut D,
+    c: &mut C,
 ) -> Result<Checked, StoreError> {
-    let scan = scan(s, r, f, Some(D::KIND), &mut |e| d.event(e, false));
-    Checked::of(scan, || d.end(false))
+    let scan = scan(s, r, f, Some(C::KIND), &mut |e| c.event(e));
+    Checked::of(scan, || c.end())
 }
 
-/// Pass 1: the side as `d` judges it, the target untouched. A store error
-/// other than `NotFound` or `Corrupt` is a card fault and comes back as is.
-pub fn check_file<S: Store, D: Decode>(
+/// Pass 1: the side as `c` judges it. A store error other than `NotFound`
+/// or `Corrupt` is a card fault and comes back as is.
+pub fn check_file<S: Store, C: Check>(
     s: &mut S,
     r: &Ready,
     f: FileName,
-    d: &mut D,
+    c: &mut C,
 ) -> Result<SideState, StoreError> {
-    check(s, r, f, d).map(|c| c.state())
+    check(s, r, f, c).map(|c| c.state())
 }
 
 /// The side's framing only: its kind, header and CRC, and the
@@ -425,9 +453,9 @@ fn apply<S: Store, D: Decode>(
         Checked::Missing => return Err(LoadError::Missing),
         Checked::Failed { err, .. } => return Err(LoadError::File(err)),
     };
-    match scan(s, r, f, Some(D::KIND), &mut |e| d.event(e, true)) {
+    match scan(s, r, f, Some(D::KIND), &mut |e| d.apply(e)) {
         Ok(Scan::Passed { header, crc: again }) if again == crc => {
-            d.end(true).map_err(LoadError::File)?;
+            d.commit().map_err(LoadError::File)?;
             Ok(header)
         }
         Ok(_) | Err(StoreError::NotFound | StoreError::Corrupt) => {
@@ -450,15 +478,15 @@ pub fn load_file<S: Store, D: Decode>(
 
 /// Pass 1 on both sides: the one judgement `load_ab`, `save_ab` and
 /// `delete_ab` share.
-fn sides<S: Store, D: Decode>(
+fn sides<S: Store, C: Check>(
     s: &mut S,
     r: &Ready,
     f: AbFile,
-    d: &mut D,
+    c: &mut C,
 ) -> Result<[Checked; 2], StoreError> {
     Ok([
-        check(s, r, f.side(Side::A), d)?,
-        check(s, r, f.side(Side::B), d)?,
+        check(s, r, f.side(Side::A), c)?,
+        check(s, r, f.side(Side::B), c)?,
     ])
 }
 
@@ -479,21 +507,22 @@ pub fn load_ab<S: Store, D: Decode>(
 }
 
 /// Streams `header → body → trailer` to the side `write_target` names.
-/// The sides are judged by `d`'s pass 1, as `load_ab` judges them, so a
-/// save never writes the side a load would take; `d`'s target is never
-/// touched. Returns the generation written.
-pub fn save_ab<S: Store, D: Decode>(
+/// The sides are judged by `c`, pass 1 as `load_ab` runs it, so a save
+/// never writes the side a load would take. Returns the generation written;
+/// `File(NeedsNewerFirmware)`, with nothing written, when a load would
+/// refuse the pair as needing newer firmware.
+pub fn save_ab<S: Store, C: Check>(
     s: &mut S,
     r: &Ready,
     f: AbFile,
-    d: &mut D,
+    c: &mut C,
     name: Option<Name<16>>,
     body: &mut dyn FnMut(&mut RecordWriter<'_>) -> Result<(), StoreError>,
 ) -> Result<Generation, SaveError> {
-    let [a, b] = sides(s, r, f, d)?;
-    let (side, generation) = write_target(a.state(), b.state());
+    let [a, b] = sides(s, r, f, c)?;
+    let (side, generation) = write_target(a.state(), b.state()).map_err(SaveError::File)?;
     let h = Header {
-        kind: D::KIND,
+        kind: C::KIND,
         generation,
         name,
     };
@@ -503,15 +532,15 @@ pub fn save_ab<S: Store, D: Decode>(
     Ok(generation)
 }
 
-/// Deletes the sides there are in `delete_order`, judged by `d`'s pass 1
-/// as `load_ab` judges them.
-pub fn delete_ab<S: Store, D: Decode>(
+/// Deletes the sides there are in `delete_order`, judged by `c` as
+/// `load_ab` judges them.
+pub fn delete_ab<S: Store, C: Check>(
     s: &mut S,
     r: &Ready,
     f: AbFile,
-    d: &mut D,
+    c: &mut C,
 ) -> Result<(), StoreError> {
-    let [a, b] = sides(s, r, f, d)?.map(|c| c.state());
+    let [a, b] = sides(s, r, f, c)?.map(|c| c.state());
     for side in delete_order(a, b) {
         let state = if side == Side::A { a } else { b };
         if state != SideState::Missing {

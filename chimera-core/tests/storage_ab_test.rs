@@ -7,9 +7,9 @@ use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
 use chimera_core::storage::{
     AbFile, Card, CardFault, Crc32, FileError, FileKind, Generation, Header, LoadError,
-    MAX_RECORD_LEN, Pick, Ready, RecordTag, SaveError, Side, SideState, SoundDecoder, check_file,
-    check_frame, delete_ab, delete_order, encode_sound, load_ab, load_file, pick, save_ab,
-    write_file, write_target,
+    MAX_RECORD_LEN, Pick, Ready, RecordTag, SaveError, Side, SideState, SoundCheck, SoundDecoder,
+    check_file, check_frame, delete_ab, delete_order, encode_sound, load_ab, load_file, pick,
+    save_ab, write_file, write_target,
 };
 use chimera_hal::store::{ByteSink, Dir, FileName, ReadSink, Store, StoreError, VolumeId};
 use chimera_hal::testkit::MemStore;
@@ -41,22 +41,21 @@ fn sound(i: usize) -> Sound {
     factory_sound(i).unwrap()
 }
 
-/// Only pass 1 runs on a save's decoder: its target is scratch.
 fn save<S: Store>(s: &mut S, snd: &Sound) -> Result<Generation, SaveError> {
-    let mut scratch = Sound::neutral(EngineType::Algo);
-    let mut d = SoundDecoder::new(&mut scratch);
     run(s, |s, r| {
-        save_ab(s, r, file(), &mut d, Some(snd.name), &mut |w| {
-            encode_sound(snd, w)
-        })
+        save_ab(
+            s,
+            r,
+            file(),
+            &mut SoundCheck::new(),
+            Some(snd.name),
+            &mut |w| encode_sound(snd, w),
+        )
     })
 }
 
 fn delete<S: Store>(s: &mut S) -> Result<(), StoreError> {
-    let mut scratch = Sound::neutral(EngineType::Algo);
-    run(s, |s, r| {
-        delete_ab(s, r, file(), &mut SoundDecoder::new(&mut scratch))
-    })
+    run(s, |s, r| delete_ab(s, r, file(), &mut SoundCheck::new()))
 }
 
 /// `load_ab` onto a copy of `into`.
@@ -176,74 +175,79 @@ fn pick_and_write_target_table() {
     let bounds = FileError::Bounds;
     #[rustfmt::skip]
     let cases = [
-        (m, m, Pick::Missing, (A, 1)),
-        (m, t, Pick::Refuse(B, bad), (A, 1)),
-        (m, p1, Pick::Load(B), (A, 2)),
-        (m, p2, Pick::Load(B), (A, 3)),
-        (m, n2, Pick::Refuse(B, NNF), (A, 3)),
-        (m, x2, Pick::Refuse(B, bounds), (A, 3)),
-        (t, m, Pick::Refuse(A, bad), (B, 1)),
-        (t, t, Pick::Refuse(A, bad), (A, 1)),
-        (t, p1, Pick::Load(B), (A, 2)),
-        (t, p2, Pick::Load(B), (A, 3)),
-        (t, n2, Pick::Refuse(B, NNF), (A, 3)),
-        (t, x2, Pick::Refuse(B, bounds), (A, 3)),
-        (p1, m, Pick::Load(A), (B, 2)),
-        (p1, t, Pick::Load(A), (B, 2)),
-        (p1, p1, Pick::Load(A), (B, 2)),
-        (p1, p2, Pick::Load(B), (A, 3)),
-        (p1, n2, Pick::Refuse(B, NNF), (A, 3)),
-        (p1, x2, Pick::Load(A), (B, 3)),
-        (p2, m, Pick::Load(A), (B, 3)),
-        (p2, t, Pick::Load(A), (B, 3)),
-        (p2, p1, Pick::Load(A), (B, 3)),
-        (p2, p2, Pick::Load(A), (B, 3)),
-        (p2, n2, Pick::Load(A), (B, 3)),
-        (p2, x2, Pick::Load(A), (B, 3)),
-        (n2, m, Pick::Refuse(A, NNF), (B, 3)),
-        (n2, t, Pick::Refuse(A, NNF), (B, 3)),
-        (n2, p1, Pick::Refuse(A, NNF), (B, 3)),
-        (n2, p2, Pick::Refuse(A, NNF), (B, 3)),
-        (n2, n2, Pick::Refuse(A, NNF), (B, 3)),
-        (n2, x2, Pick::Refuse(A, NNF), (B, 3)),
-        (x2, m, Pick::Refuse(A, bounds), (B, 3)),
-        (x2, t, Pick::Refuse(A, bounds), (B, 3)),
-        (x2, p1, Pick::Load(B), (A, 3)),
-        (x2, p2, Pick::Load(B), (A, 3)),
-        (x2, n2, Pick::Refuse(B, NNF), (A, 3)),
-        (x2, x2, Pick::Refuse(A, bounds), (B, 3)),
+        (m, m, Pick::Missing, Ok((A, 1))),
+        (m, t, Pick::Refuse(B, bad), Ok((A, 1))),
+        (m, p1, Pick::Load(B), Ok((A, 2))),
+        (m, p2, Pick::Load(B), Ok((A, 3))),
+        (m, n2, Pick::Refuse(B, NNF), Err(NNF)),
+        (m, x2, Pick::Refuse(B, bounds), Ok((A, 3))),
+        (t, m, Pick::Refuse(A, bad), Ok((B, 1))),
+        (t, t, Pick::Refuse(A, bad), Ok((A, 1))),
+        (t, p1, Pick::Load(B), Ok((A, 2))),
+        (t, p2, Pick::Load(B), Ok((A, 3))),
+        (t, n2, Pick::Refuse(B, NNF), Err(NNF)),
+        (t, x2, Pick::Refuse(B, bounds), Ok((A, 3))),
+        (p1, m, Pick::Load(A), Ok((B, 2))),
+        (p1, t, Pick::Load(A), Ok((B, 2))),
+        (p1, p1, Pick::Load(A), Ok((B, 2))),
+        (p1, p2, Pick::Load(B), Ok((A, 3))),
+        (p1, n2, Pick::Refuse(B, NNF), Err(NNF)),
+        (p1, x2, Pick::Load(A), Ok((B, 3))),
+        (p2, m, Pick::Load(A), Ok((B, 3))),
+        (p2, t, Pick::Load(A), Ok((B, 3))),
+        (p2, p1, Pick::Load(A), Ok((B, 3))),
+        (p2, p2, Pick::Load(A), Ok((B, 3))),
+        (p2, n2, Pick::Load(A), Ok((B, 3))),
+        (p2, x2, Pick::Load(A), Ok((B, 3))),
+        (n2, m, Pick::Refuse(A, NNF), Err(NNF)),
+        (n2, t, Pick::Refuse(A, NNF), Err(NNF)),
+        (n2, p1, Pick::Refuse(A, NNF), Err(NNF)),
+        (n2, p2, Pick::Refuse(A, NNF), Err(NNF)),
+        (n2, n2, Pick::Refuse(A, NNF), Err(NNF)),
+        (n2, x2, Pick::Refuse(A, NNF), Err(NNF)),
+        (x2, m, Pick::Refuse(A, bounds), Ok((B, 3))),
+        (x2, t, Pick::Refuse(A, bounds), Ok((B, 3))),
+        (x2, p1, Pick::Load(B), Ok((A, 3))),
+        (x2, p2, Pick::Load(B), Ok((A, 3))),
+        (x2, n2, Pick::Refuse(B, NNF), Err(NNF)),
+        (x2, x2, Pick::Refuse(A, bounds), Ok((B, 3))),
+        (present(3, None), n2, Pick::Load(A), Ok((B, 4))),
         // The generation wraps: 0 is newer than u32::MAX.
-        (present(u32::MAX, None), m, Pick::Load(A), (B, 0)),
-        (present(u32::MAX, None), present(0, None), Pick::Load(B), (A, 1)),
-        (present(0, None), present(u32::MAX, None), Pick::Load(A), (B, 1)),
+        (present(u32::MAX, None), m, Pick::Load(A), Ok((B, 0))),
+        (present(u32::MAX, None), present(0, None), Pick::Load(B), Ok((A, 1))),
+        (present(0, None), present(u32::MAX, None), Pick::Load(A), Ok((B, 1))),
         // No header to order by: a newer format is refused, never shadowed.
-        (SideState::Headerless(NNF), p2, Pick::Refuse(A, NNF), (B, 3)),
-        (p2, SideState::Headerless(NNF), Pick::Refuse(B, NNF), (A, 3)),
-        (SideState::Headerless(FileError::BadMagic), p1, Pick::Load(B), (A, 2)),
-        (SideState::Headerless(FileError::BadMagic), m, Pick::Refuse(A, FileError::BadMagic), (B, 1)),
-        (t, SideState::Headerless(FileError::WrongKind), Pick::Refuse(B, FileError::WrongKind), (A, 1)),
+        (SideState::Headerless(NNF), p2, Pick::Refuse(A, NNF), Err(NNF)),
+        (p2, SideState::Headerless(NNF), Pick::Refuse(B, NNF), Err(NNF)),
+        (SideState::Headerless(FileError::BadMagic), p1, Pick::Load(B), Ok((A, 2))),
+        (SideState::Headerless(FileError::BadMagic), m, Pick::Refuse(A, FileError::BadMagic), Ok((B, 1))),
+        (t, SideState::Headerless(FileError::WrongKind), Pick::Refuse(B, FileError::WrongKind), Ok((A, 1))),
     ];
-    for (a, b, want_pick, (side, g)) in cases {
+    for (a, b, want_pick, want_save) in cases {
         assert_eq!(pick(a, b), want_pick, "pick({a:?}, {b:?})");
-        assert_eq!(
-            write_target(a, b),
-            (side, Generation::new(g)),
-            "write_target({a:?}, {b:?})"
-        );
+        let want_save = want_save.map(|(side, g)| (side, Generation::new(g)));
+        assert_eq!(write_target(a, b), want_save, "write_target({a:?}, {b:?})");
+        // A delete removes the side a load wouldn't keep first; with a side
+        // that needs newer firmware, that side last.
+        let first = match (want_save, want_pick) {
+            (Ok((side, _)), _) => side,
+            (Err(_), Pick::Refuse(k, NNF)) => k.other(),
+            (Err(e), p) => panic!("save refused ({e:?}) for {p:?}"),
+        };
         assert_eq!(
             delete_order(a, b),
-            [side, side.other()],
+            [first, first.other()],
             "delete_order({a:?}, {b:?})"
         );
-        if let Pick::Load(k) | Pick::Refuse(k, NNF) = want_pick {
+        if let (Pick::Load(k), Ok((side, _))) = (want_pick, want_save) {
             assert_ne!(side, k, "wrote the kept side: {a:?}, {b:?}");
         }
     }
 }
 
-/// Load and save agree on every pair of side states: the side a save
-/// writes is never the one a load returns, or refuses as needing newer
-/// firmware.
+/// Load and save agree on every pair of side states: a save never writes
+/// the side a load returns, and refuses whenever a load refuses as needing
+/// newer firmware, so no save is ever shadowed.
 #[test]
 fn save_never_writes_what_load_keeps() {
     let errs = [
@@ -270,13 +274,17 @@ fn save_never_writes_what_load_keeps() {
     }
     for &a in &states {
         for &b in &states {
-            let (side, g) = write_target(a, b);
-            match pick(a, b) {
-                Pick::Load(k) | Pick::Refuse(k, NNF) => {
-                    assert_ne!(side, k, "{a:?}, {b:?}: wrote the kept side")
+            let g = match (pick(a, b), write_target(a, b)) {
+                (Pick::Refuse(_, NNF), save) => {
+                    assert_eq!(save, Err(NNF), "{a:?}, {b:?}: saved past a newer file");
+                    continue;
                 }
-                Pick::Refuse(..) | Pick::Missing => {}
-            }
+                (_, Err(e)) => panic!("{a:?}, {b:?}: save refused, {e:?}"),
+                (Pick::Load(k), Ok((side, _))) if side == k => {
+                    panic!("{a:?}, {b:?}: wrote the kept side")
+                }
+                (_, Ok((_, g))) => g,
+            };
             for s in [a, b] {
                 if let SideState::Present { generation, .. } = s {
                     assert!(g.is_newer_than(generation), "{a:?}, {b:?}: {g:?}");
@@ -389,35 +397,103 @@ fn invalid_newest_by_bounds_is_written_over() {
     assert_loads(&mut s, &sound(2));
 }
 
-#[test]
-fn newer_firmware_newest_does_not_fall_back() {
-    let mut s = store();
-    save(&mut s, &sound(0)).unwrap();
-    let newer = with_raw_record(encoded(&sound(1), 2, &[]), 0x8077, &[1, 2, 3]);
-    put_raw(&mut s, Side::B, &newer);
-    assert_eq!(load(&mut s).err(), Some(LoadError::File(NNF)));
-    assert_eq!(save(&mut s, &sound(2)), Ok(Generation::new(3)));
-    assert_eq!(generation_of(&raw(&mut s, Side::A)), 3, "wrote A");
-    assert_eq!(raw(&mut s, Side::B), newer, "B untouched");
+/// Counts `write` calls.
+struct CountWrites {
+    inner: MemStore,
+    writes: usize,
 }
 
-/// A format version this firmware doesn't know has no header it can read:
-/// refused, never shadowed, and never written over.
+impl Store for CountWrites {
+    fn mount(&mut self) -> Result<VolumeId, StoreError> {
+        self.inner.mount()
+    }
+    fn list(
+        &mut self,
+        v: VolumeId,
+        d: Dir,
+        f: &mut dyn FnMut(FileName, u32),
+    ) -> Result<(), StoreError> {
+        self.inner.list(v, d, f)
+    }
+    fn read(&mut self, v: VolumeId, f: FileName, s: &mut dyn ReadSink) -> Result<(), StoreError> {
+        self.inner.read(v, f, s)
+    }
+    fn write(
+        &mut self,
+        v: VolumeId,
+        f: FileName,
+        b: &mut dyn FnMut(&mut dyn ByteSink) -> Result<(), StoreError>,
+    ) -> Result<u32, StoreError> {
+        self.writes += 1;
+        self.inner.write(v, f, b)
+    }
+    fn delete(&mut self, v: VolumeId, f: FileName) -> Result<(), StoreError> {
+        self.inner.delete(v, f)
+    }
+    fn make_dir(&mut self, v: VolumeId, d: Dir) -> Result<(), StoreError> {
+        self.inner.make_dir(v, d)
+    }
+}
+
+/// B, newest, needs newer firmware in both shapes: a critical record this
+/// firmware doesn't know (the header read), and a format version it
+/// doesn't know (no header). A load refuses it and never falls back; a
+/// save refuses too and writes nothing, since a save it shadows would be
+/// lost. Deleting the pair is how the user overrides it.
 #[test]
-fn newer_version_is_refused_and_kept() {
-    let mut s = store();
-    save(&mut s, &sound(0)).unwrap();
+fn newer_firmware_newest_refuses_load_and_save() {
+    let critical = with_raw_record(encoded(&sound(1), 2, &[]), 0x8077, &[1, 2, 3]);
     let mut v2 = encoded(&sound(1), 2, &[]);
     v2[4] = 2;
     fix_crc(&mut v2);
-    put_raw(&mut s, Side::B, &v2);
-    let state = run(&mut s, |s, r| {
-        check_frame(s, r, file().side(Side::B), FileKind::Sound)
-    });
-    assert_eq!(state, Ok(SideState::Headerless(NNF)));
-    assert_eq!(load(&mut s).err(), Some(LoadError::File(NNF)));
-    save(&mut s, &sound(2)).unwrap();
-    assert_eq!(raw(&mut s, Side::B), v2, "B untouched");
+    for (newer, shape) in [
+        (critical, present(2, Some(NNF))),
+        (v2, SideState::Headerless(NNF)),
+    ] {
+        let mut s = CountWrites {
+            inner: store(),
+            writes: 0,
+        };
+        save(&mut s, &sound(0)).unwrap();
+        put_raw(&mut s.inner, Side::B, &newer);
+        let state = run(&mut s, |s, r| {
+            check_file(s, r, file().side(Side::B), &mut SoundCheck::new())
+        });
+        assert_eq!(state, Ok(shape));
+        let a = raw(&mut s.inner, Side::A);
+        s.writes = 0;
+
+        assert_eq!(load(&mut s).err(), Some(LoadError::File(NNF)), "{shape:?}");
+        assert_eq!(
+            save(&mut s, &sound(2)),
+            Err(SaveError::File(NNF)),
+            "{shape:?}"
+        );
+        assert_eq!(s.writes, 0, "{shape:?}: the refused save wrote");
+        assert_eq!(raw(&mut s.inner, Side::A), a, "{shape:?}: A untouched");
+        assert_eq!(raw(&mut s.inner, Side::B), newer, "{shape:?}: B untouched");
+        assert_eq!(load(&mut s).err(), Some(LoadError::File(NNF)), "{shape:?}");
+
+        delete(&mut s).unwrap();
+        assert_eq!(load(&mut s).err(), Some(LoadError::Missing), "{shape:?}");
+        assert_eq!(save(&mut s, &sound(2)), Ok(Generation::FIRST), "{shape:?}");
+        assert_loads(&mut s, &sound(2));
+    }
+}
+
+/// An older side that needs newer firmware shadows nothing: the newer
+/// valid side loads, and the save writes over the older one.
+#[test]
+fn newer_firmware_older_side_is_written_over() {
+    let mut s = store();
+    save(&mut s, &sound(0)).unwrap();
+    save(&mut s, &sound(1)).unwrap();
+    let old = with_raw_record(encoded(&sound(0), 1, &[]), 0x8077, &[1]);
+    put_raw(&mut s, Side::A, &old);
+    assert_loads(&mut s, &sound(1));
+    assert_eq!(save(&mut s, &sound(2)), Ok(Generation::new(3)));
+    assert_eq!(generation_of(&raw(&mut s, Side::A)), 3);
+    assert_loads(&mut s, &sound(2));
 }
 
 #[test]
@@ -813,6 +889,10 @@ fn errors_expose_only_store_faults() {
     assert_eq!(
         SaveError::Store(StoreError::Full).store_error(),
         Some(StoreError::Full)
+    );
+    assert_eq!(
+        SaveError::File(FileError::NeedsNewerFirmware).store_error(),
+        None
     );
 }
 
