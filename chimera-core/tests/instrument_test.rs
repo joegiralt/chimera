@@ -592,11 +592,11 @@ fn the_costliest_patch_plays_six_voices_on_rev_v() {
 /// Recorded when the instrument path landed (plan Task 12). Re-record only
 /// for an intended sound change (`common::golden`).
 const GOLDENS: &[(&str, u64)] = &[
-    ("poly_chord", 0x508049a56f63be65), // re-recorded: the default Sound is Algo
-    ("two_parts_two_pairs", 0x98262aa38f73b0af), // re-recorded: part 1 is Algo
-    ("reverb_send_off", 0x74703404aa517989), // re-recorded: the default Sound is Algo
-    ("reverb_send_on", 0x051f724346259a5a), // re-recorded: the reverb ring (FX diet)
-    ("six_voice_chord", 0xf6e19895e1a40915), // recorded after the Algo cost was measured
+    ("poly_chord", 0x16b393c15f7e5ba9), // re-recorded: the default Sound is Algo
+    ("two_parts_two_pairs", 0xa043a77a5592b5cb), // re-recorded: part 1 is Algo
+    ("reverb_send_off", 0xf40c677a4633ad69), // re-recorded: the default Sound is Algo
+    ("reverb_send_on", 0x5e7b5f6ed1eedd52), // re-recorded: the reverb ring (FX diet)
+    ("six_voice_chord", 0x639319f0ab86499d), // recorded after the Algo cost was measured
 ];
 
 /// A named golden case: a case name paired with its render function.

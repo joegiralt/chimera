@@ -2,7 +2,7 @@
 //! bit-identical to each algorithm alone, equal loudness, nothing snaps.
 
 mod common;
-use chimera_core::dsp::algo::algorithms::AlgoId;
+use chimera_core::dsp::algo::algorithms::{ALGO_COUNT, AlgoId};
 use chimera_core::dsp::algo::engine::{AlgoEngine, AlgoLive};
 use chimera_core::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use chimera_core::dsp::algo::waves::{WaveId, mip_step};
@@ -471,4 +471,24 @@ fn live_values_take_offsets_by_the_adr_0010_formula_and_clamp() {
     assert_eq!(live.level[0], 99.0 - 24.75);
     let cutoff = ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF);
     assert!(!live.offset(cutoff, 0.5));
+}
+
+/// #189: silent carriers don't count toward the output scale, so a lone
+/// operator 1 is equally loud under every algorithm.
+#[test]
+fn a_lone_carrier_is_equally_loud_under_every_algorithm() {
+    let one = AlgoParams::single(WaveId::W1);
+    let level: Vec<f64> = (0..ALGO_COUNT as u8)
+        .map(|a| {
+            let p = AlgoParams {
+                alg_a: a,
+                alg_b: a,
+                ..one
+            };
+            rms_db(&render(&p, 57, 100)[3200..])
+        })
+        .collect();
+    for (i, l) in level.iter().enumerate() {
+        assert!((l - level[0]).abs() < 0.05, "alg {i}: {level:?}");
+    }
 }
