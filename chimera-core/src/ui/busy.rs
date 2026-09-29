@@ -2,7 +2,9 @@
 //! blocks the UI loop: a centred box over whatever the screen shows.
 
 use embedded_graphics::draw_target::DrawTarget;
+use embedded_graphics::geometry::Point;
 use embedded_graphics::pixelcolor::Rgb565;
+use u8g2_fonts::types::VerticalPosition;
 
 use crate::ui::{draw, theme};
 
@@ -28,8 +30,16 @@ const BOX_H: i32 = 40;
 const EDGE: i32 = 4;
 const X: i32 = (theme::SCREEN_W - BOX_W) / 2;
 const Y: i32 = (theme::SCREEN_H - BOX_H) / 2;
-/// Baseline of the label: Helvetica Bold 10's caps (10 px) centred.
-const BASELINE: i32 = Y + (BOX_H + 10) / 2;
+/// The baseline that centres `text`'s ink in the box, from the font's own
+/// glyph bounds.
+fn baseline(text: &str) -> i32 {
+    let ink = theme::FONT_VALUE
+        .get_rendered_dimensions(text, Point::zero(), VerticalPosition::Baseline)
+        .ok()
+        .and_then(|d| d.bounding_box)
+        .map_or(0, |b| b.top_left.y + b.size.height as i32 / 2);
+    Y + BOX_H / 2 - ink
+}
 
 /// Draws the overlay and returns the band to flush, rows `y0..y1`.
 pub fn draw_busy<D: DrawTarget<Color = Rgb565>>(d: &mut D, label: BusyLabel) -> (u16, u16) {
@@ -47,7 +57,7 @@ pub fn draw_busy<D: DrawTarget<Color = Rgb565>>(d: &mut D, label: BusyLabel) -> 
         &theme::FONT_VALUE,
         label.text(),
         theme::SCREEN_W / 2,
-        BASELINE,
+        baseline(label.text()),
         theme::ACCENT,
         theme::LABEL_TRACKING,
     );

@@ -1,11 +1,11 @@
 //! SYSTEM (ADR 0045): theme and last project, read at boot and written on
-//! leaving System, only when the bytes changed.
+//! leaving System when RAM differs from what this card is known to hold.
 
 mod common;
 
 use chimera_core::storage::{
-    AbFile, BootNote, Card, FileError, LoadError, ProjectId, SaveError, Side, SystemSettings,
-    SystemSync,
+    AbFile, BootNote, Card, Exit, ExitPlan, FileError, LoadError, ProjectId, Side, SyncError,
+    SystemSettings, SystemSync, exit_plan,
 };
 use chimera_core::ui::theme_settings::{Accent, Black, Bright, Gamma, ThemeSettings};
 use chimera_hal::store::{ByteSink, Dir, FileName, ReadSink, Store, StoreError, VolumeId};
@@ -127,9 +127,9 @@ fn boot_corrupt_defaults() {
     assert!(matches!(card, Card::Ready(_)), "{card:?}");
 }
 
-/// How the second read of SYSTEM.A fails.
+/// How the failing read of SYSTEM.A fails.
 #[derive(Clone, Copy, Debug)]
-enum Second {
+enum Fail {
     /// The card goes away mid-read.
     Io,
     /// Other bytes: the card changed between the passes. Every record
@@ -137,14 +137,26 @@ enum Second {
     Tampered,
 }
 
-/// Fails the second read of SYSTEM.A: pass 2 of the side pass 1 picked.
-struct SecondReadFails {
+/// Fails read number `at` of SYSTEM.A; every other read goes through.
+struct ReadFails {
     inner: MemStore,
     reads: u32,
-    how: Second,
+    at: u32,
+    how: Fail,
 }
 
-impl Store for SecondReadFails {
+impl ReadFails {
+    fn new(inner: MemStore, at: u32, how: Fail) -> Self {
+        ReadFails {
+            inner,
+            reads: 0,
+            at,
+            how,
+        }
+    }
+}
+
+impl Store for ReadFails {
     fn mount(&mut self) -> Result<VolumeId, StoreError> {
         self.inner.mount()
     }
@@ -166,14 +178,14 @@ impl Store for SecondReadFails {
             return self.inner.read(v, f, sink);
         }
         self.reads += 1;
-        if self.reads != 2 {
+        if self.reads != self.at {
             return self.inner.read(v, f, sink);
         }
         let mut c = Collect(Vec::new());
         self.inner.read(v, f, &mut c)?;
         match self.how {
-            Second::Io => Err(StoreError::Io),
-            Second::Tampered => {
+            Fail::Io => Err(StoreError::Io),
+            Fail::Tampered => {
                 let last = c.0.len() - 1;
                 c.0[last] ^= 0x01;
                 let _ = sink.begin(c.0.len() as u32);
@@ -201,16 +213,13 @@ impl Store for SecondReadFails {
 #[test]
 fn boot_pass_two_failure_keeps_defaults() {
     for (how, want) in [
-        (Second::Io, LoadError::Store(StoreError::Io)),
-        (Second::Tampered, LoadError::File(FileError::BadCrc)),
+        (Fail::Io, LoadError::Store(StoreError::Io)),
+        (Fail::Tampered, LoadError::File(FileError::BadCrc)),
     ] {
         let mut inner = MemStore::new(1);
         save(&mut inner, &settings());
-        let mut s = SecondReadFails {
-            inner,
-            reads: 0,
-            how,
-        };
+        // Pass 2 of the side pass 1 picked.
+        let mut s = ReadFails::new(inner, 2, how);
         let (got, note, _) = boot(&mut s);
         assert_eq!(s.reads, 2, "{how:?}");
         assert_eq!(got, SystemSettings::DEFAULT, "{how:?}");
@@ -291,37 +300,235 @@ fn record_rules() {
     assert_eq!(boot_bytes(&snd), (SystemSettings::DEFAULT, wrong));
 }
 
+/// Both sides' bytes, `None` for a missing one.
+fn sides<S: Store>(s: &mut S) -> [Option<Vec<u8>>; 2] {
+    let v = s.mount().unwrap();
+    [Side::A, Side::B].map(|side| {
+        let mut c = Collect(Vec::new());
+        match s.read(v, AbFile::SYSTEM.side(side), &mut c) {
+            Ok(()) => Some(c.0),
+            Err(StoreError::NotFound) => None,
+            Err(e) => panic!("{e:?}"),
+        }
+    })
+}
+
+/// Enter System, then leave it: the leaving frame's verdict.
+fn visit(sync: &mut SystemSync, s: &SystemSettings) -> bool {
+    assert!(!sync.left_system(true, s));
+    sync.left_system(false, s)
+}
+
 #[test]
-fn writes_only_on_exit_edge_and_change() {
+fn left_system_is_the_exit_edge() {
+    let mut s = MemStore::new(1);
+    let (mut sync, cur, _) = SystemSync::boot(&mut Card::new(), &mut s);
+    for _ in 0..3 {
+        assert!(!sync.left_system(false, &cur), "out of System");
+    }
+    for _ in 0..3 {
+        assert!(!sync.left_system(true, &cur), "in System");
+    }
+    assert!(sync.left_system(false, &cur), "the exit");
+    assert!(!sync.left_system(false, &cur), "the next frame");
+}
+
+/// On the card it came from: a change is written, no change is not.
+#[test]
+fn same_card_writes_only_a_change() {
     let mut s = MemStore::new(1);
     save(&mut s, &settings());
     let mut card = Card::new();
     let (mut sync, mut cur, note) = SystemSync::boot(&mut card, &mut s);
     assert_eq!((cur, note), (settings(), None));
 
-    for _ in 0..3 {
-        assert!(!sync.wants_write(true, &cur), "in System");
-    }
-    assert!(!sync.wants_write(false, &cur), "exit, no change");
-    assert!(!sync.wants_write(false, &cur));
+    let before = sides(&mut s);
+    assert!(visit(&mut sync, &cur));
+    assert_eq!(
+        sync.on_exit(&mut card, &mut s, &mut cur),
+        Ok(Exit::Unchanged)
+    );
+    assert_eq!(sides(&mut s), before, "no change, no write");
 
-    assert!(!sync.wants_write(true, &cur));
+    assert!(!sync.left_system(true, &cur));
     cur.theme.bright = Bright::new(90);
-    assert!(!sync.wants_write(true, &cur), "a change inside System");
-    assert!(sync.wants_write(false, &cur), "exit after a change");
-    sync.write(&mut card, &mut s, &cur).unwrap();
-    assert!(!sync.wants_write(false, &cur), "the next frame");
-
-    // Saved: the next visit with no change writes nothing.
-    assert!(!sync.wants_write(true, &cur));
-    assert!(!sync.wants_write(false, &cur));
+    assert!(sync.left_system(false, &cur));
+    assert_eq!(sync.on_exit(&mut card, &mut s, &mut cur), Ok(Exit::Wrote));
     assert_eq!(boot(&mut s).0, cur);
 
-    // A change undone before leaving is no change.
-    assert!(!sync.wants_write(true, &cur));
+    let before = sides(&mut s);
+    assert!(visit(&mut sync, &cur));
+    assert_eq!(
+        sync.on_exit(&mut card, &mut s, &mut cur),
+        Ok(Exit::Unchanged)
+    );
+    assert_eq!(
+        sides(&mut s),
+        before,
+        "saved: the next visit writes nothing"
+    );
+}
+
+/// No card at boot, then one with SYSTEM: leaving System loads it, and the
+/// untouched defaults never go over it.
+#[test]
+fn late_card_loads_its_system() {
+    let mut s = MemStore::new(1);
+    save(&mut s, &settings());
+    s.eject();
+    let mut card = Card::new();
+    let (mut sync, mut cur, note) = SystemSync::boot(&mut card, &mut s);
+    assert_eq!(
+        (cur, note),
+        (SystemSettings::DEFAULT, Some(BootNote::NoCard))
+    );
+
+    s.insert();
+    let before = sides(&mut s);
+    assert!(visit(&mut sync, &cur));
+    assert_eq!(sync.on_exit(&mut card, &mut s, &mut cur), Ok(Exit::Loaded));
+    assert_eq!(sides(&mut s), before, "the card's SYSTEM is untouched");
+    assert_eq!(cur, settings(), "RAM holds the card's");
+
+    // Loaded from this card: no change is no write.
+    assert!(visit(&mut sync, &cur));
+    assert_eq!(
+        sync.on_exit(&mut card, &mut s, &mut cur),
+        Ok(Exit::Unchanged)
+    );
+}
+
+/// Loaded from card A, then a fresh card B: A's settings go to B.
+#[test]
+fn swap_writes_to_the_new_card() {
+    let mut s = MemStore::new(1);
+    save(&mut s, &settings());
+    let mut card = Card::new();
+    let (mut sync, mut cur, _) = SystemSync::boot(&mut card, &mut s);
+
+    s.swap(2);
+    assert!(visit(&mut sync, &cur));
+    assert_eq!(sync.on_exit(&mut card, &mut s, &mut cur), Ok(Exit::Wrote));
+    assert_eq!(cur, settings());
+    assert_eq!(boot(&mut s), (settings(), None, card));
+}
+
+/// A read that fails at boot leaves the defaults untouched: leaving System
+/// with no change writes nothing and loads the card's SYSTEM; a change is
+/// written.
+#[test]
+fn transient_boot_error_writes_nothing() {
+    let mut inner = MemStore::new(1);
+    save(&mut inner, &settings());
+    let before = sides(&mut inner);
+    let mut s = ReadFails::new(inner, 1, Fail::Io);
+    let mut card = Card::new();
+    let (mut sync, mut cur, note) = SystemSync::boot(&mut card, &mut s);
+    assert_eq!(cur, SystemSettings::DEFAULT);
+    assert_eq!(
+        note,
+        Some(BootNote::Error(LoadError::Store(StoreError::Io)))
+    );
+
+    assert!(visit(&mut sync, &cur));
+    assert_eq!(sync.on_exit(&mut card, &mut s, &mut cur), Ok(Exit::Loaded));
+    assert_eq!(sides(&mut s.inner), before, "nothing written");
+    assert_eq!(cur, settings());
+
+    assert!(!sync.left_system(true, &cur));
+    cur.theme.black = Black::new(4);
+    assert!(sync.left_system(false, &cur));
+    assert_eq!(sync.on_exit(&mut card, &mut s, &mut cur), Ok(Exit::Wrote));
+    assert_eq!(boot(&mut s.inner).0, cur);
+}
+
+/// The same with a card that stays bad: nothing loads and nothing is written.
+#[test]
+fn unreadable_card_with_untouched_defaults_writes_nothing() {
+    let mut s = MemStore::new(1);
+    save(&mut s, &settings());
+    save(&mut s, &settings());
+    for side in [Side::A, Side::B] {
+        let mut f = get(&mut s, side);
+        let last = f.len() - 1;
+        f[last] ^= 0x01;
+        put(&mut s, side, &f);
+    }
+    let before = sides(&mut s);
+    let mut card = Card::new();
+    let (mut sync, mut cur, _) = SystemSync::boot(&mut card, &mut s);
+    assert!(visit(&mut sync, &cur));
+    assert_eq!(
+        sync.on_exit(&mut card, &mut s, &mut cur),
+        Err(SyncError::File(FileError::BadCrc))
+    );
+    assert_eq!(sides(&mut s), before);
+    assert_eq!(cur, SystemSettings::DEFAULT);
+}
+
+#[test]
+fn no_file_boot_creates_on_first_exit() {
+    let mut s = MemStore::new(1);
+    let mut card = Card::new();
+    let (mut sync, mut cur, note) = SystemSync::boot(&mut card, &mut s);
+    assert_eq!(note, Some(BootNote::NoFile));
+    assert!(visit(&mut sync, &cur));
+    assert_eq!(sync.on_exit(&mut card, &mut s, &mut cur), Ok(Exit::Wrote));
+    assert_eq!(boot(&mut s), (SystemSettings::DEFAULT, None, card));
+    assert!(visit(&mut sync, &cur));
+    assert_eq!(
+        sync.on_exit(&mut card, &mut s, &mut cur),
+        Ok(Exit::Unchanged)
+    );
+}
+
+/// A change undone is still the user's: it goes over another card's SYSTEM.
+#[test]
+fn a_reverted_change_is_still_a_change() {
+    let mut s = MemStore::new(1);
+    save(&mut s, &settings());
+    s.eject();
+    let mut card = Card::new();
+    let (mut sync, mut cur, _) = SystemSync::boot(&mut card, &mut s);
+    assert!(!sync.left_system(true, &cur));
     cur.theme.accent = Accent::Ice;
-    cur.theme.accent = Accent::ALL[3];
-    assert!(!sync.wants_write(false, &cur));
+    assert!(!sync.left_system(true, &cur));
+    cur.theme.accent = SystemSettings::DEFAULT.theme.accent;
+    assert!(sync.left_system(false, &cur));
+
+    s.insert();
+    assert_eq!(sync.on_exit(&mut card, &mut s, &mut cur), Ok(Exit::Wrote));
+    assert_eq!(boot(&mut s).0, SystemSettings::DEFAULT);
+}
+
+#[test]
+fn exit_plan_table() {
+    let (a, b) = (vol(1), vol(2));
+    let (crc, other) = (0x1234, 0x5678);
+    let cases = [
+        // known on this card
+        (Some((a, crc)), false, ExitPlan::Nothing),
+        (Some((a, other)), false, ExitPlan::Write),
+        // another card, or none known
+        (Some((b, crc)), false, ExitPlan::Write),
+        (None, false, ExitPlan::Write),
+        (Some((b, crc)), true, ExitPlan::Load),
+        (None, true, ExitPlan::Load),
+    ];
+    for (known, untouched, want) in cases {
+        assert_eq!(
+            exit_plan(known, untouched, a, crc),
+            want,
+            "{known:?} {untouched}"
+        );
+    }
+}
+
+fn vol(serial: u32) -> VolumeId {
+    VolumeId {
+        serial,
+        label: *b"NO NAME    ",
+    }
 }
 
 /// Review Focus 3: with no card, leaving System tries once, and the next
@@ -330,26 +537,24 @@ fn writes_only_on_exit_edge_and_change() {
 fn no_card_exit_tries_once() {
     let mut s = MemStore::new(1);
     let mut card = Card::new();
-    let (mut sync, cur, note) = SystemSync::boot(&mut card, &mut s);
+    let (mut sync, mut cur, note) = SystemSync::boot(&mut card, &mut s);
     assert_eq!(note, Some(BootNote::NoFile));
     s.eject();
 
-    assert!(!sync.wants_write(true, &cur));
-    assert!(sync.wants_write(false, &cur), "the exit edge");
+    assert!(visit(&mut sync, &cur), "the exit edge");
     assert_eq!(
-        sync.write(&mut card, &mut s, &cur),
-        Err(SaveError::Store(StoreError::NoCard))
+        sync.on_exit(&mut card, &mut s, &mut cur),
+        Err(SyncError::Store(StoreError::NoCard))
     );
     assert_eq!(card, Card::Absent);
     for _ in 0..10 {
-        assert!(!sync.wants_write(false, &cur), "out of System");
+        assert!(!sync.left_system(false, &cur), "out of System");
     }
-    assert!(!sync.wants_write(true, &cur));
-    assert!(sync.wants_write(false, &cur), "the next exit");
+    assert!(visit(&mut sync, &cur), "the next exit");
 
-    // The card back: that exit's write lands.
+    // The card back: that exit creates the file.
     s.insert();
-    sync.write(&mut card, &mut s, &cur).unwrap();
+    assert_eq!(sync.on_exit(&mut card, &mut s, &mut cur), Ok(Exit::Wrote));
     assert!(matches!(card, Card::Ready(_)), "{card:?}");
     assert_eq!(boot(&mut s), (cur, None, card));
 }

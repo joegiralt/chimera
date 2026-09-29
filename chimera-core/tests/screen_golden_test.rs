@@ -51,7 +51,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("system", 0xbadd5e55da36c80d),
     ("system_theme", 0x6f46ed28ddb10559),
     ("system_audio", 0x281985b580ac2fb1),
-    ("busy_saving", 0x4336441a840d1c44),
+    ("busy_saving", 0xc66240f665a10644),
 ];
 
 #[test]
