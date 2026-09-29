@@ -109,12 +109,12 @@ fn test_desktop_ks_produces_sound() {
 }
 
 #[test]
-fn test_desktop_ks_body_resonance_changes_sound() {
+fn test_desktop_string_body_changes_sound() {
     let no_body = sim_render(
         |ui| {
             *ui.params_mut() = ParamSnapshot::for_engine(EngineType::Modal);
             ui.params_mut().modal.mode = ResonatorMode::String;
-            ui.params_mut().modal.ks_body = 0.0;
+            ui.params_mut().modal.body = 0.0;
         },
         60,
         16,
@@ -124,7 +124,7 @@ fn test_desktop_ks_body_resonance_changes_sound() {
         |ui| {
             *ui.params_mut() = ParamSnapshot::for_engine(EngineType::Modal);
             ui.params_mut().modal.mode = ResonatorMode::String;
-            ui.params_mut().modal.ks_body = 0.8;
+            ui.params_mut().modal.body = 0.8;
         },
         60,
         16,
@@ -144,12 +144,12 @@ fn test_desktop_ks_body_resonance_changes_sound() {
 }
 
 #[test]
-fn test_desktop_ks_stiffness_changes_sound() {
+fn test_desktop_string_structure_changes_sound() {
     let no_stiff = sim_render(
         |ui| {
             *ui.params_mut() = ParamSnapshot::for_engine(EngineType::Modal);
             ui.params_mut().modal.mode = ResonatorMode::String;
-            ui.params_mut().modal.ks_stiffness = 0.0;
+            ui.params_mut().modal.structure = 0.0;
         },
         60,
         16,
@@ -159,7 +159,7 @@ fn test_desktop_ks_stiffness_changes_sound() {
         |ui| {
             *ui.params_mut() = ParamSnapshot::for_engine(EngineType::Modal);
             ui.params_mut().modal.mode = ResonatorMode::String;
-            ui.params_mut().modal.ks_stiffness = 0.7;
+            ui.params_mut().modal.structure = 0.7;
         },
         60,
         16,
@@ -171,42 +171,7 @@ fn test_desktop_ks_stiffness_changes_sound() {
         .map(|(a, b)| (a - b).abs())
         .sum::<f32>()
         / no_stiff.len() as f32;
-    assert!(diff > 0.001, "stiffness should change sound: diff={}", diff);
-}
-
-#[test]
-fn test_desktop_ks_excitation_types_differ() {
-    let noise = sim_render(
-        |ui| {
-            *ui.params_mut() = ParamSnapshot::for_engine(EngineType::Modal);
-            ui.params_mut().modal.mode = ResonatorMode::String;
-            ui.params_mut().modal.ks_excitation = 0;
-        },
-        60,
-        8,
-    );
-
-    let click = sim_render(
-        |ui| {
-            *ui.params_mut() = ParamSnapshot::for_engine(EngineType::Modal);
-            ui.params_mut().modal.mode = ResonatorMode::String;
-            ui.params_mut().modal.ks_excitation = 1;
-        },
-        60,
-        8,
-    );
-
-    let diff: f32 = noise
-        .iter()
-        .zip(click.iter())
-        .map(|(a, b)| (a - b).abs())
-        .sum::<f32>()
-        / noise.len() as f32;
-    assert!(
-        diff > 0.001,
-        "different excitation types should sound different: diff={}",
-        diff
-    );
+    assert!(diff > 0.001, "structure should change sound: diff={}", diff);
 }
 
 // ── Modal through UiState ───────────────────────────────────────────

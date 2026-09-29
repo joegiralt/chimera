@@ -2,10 +2,11 @@
 mod common;
 
 use chimera_core::block::Block;
-use chimera_core::dsp::modal::{MODAL_SPECS, ModalParams, ResonatorMode};
+use chimera_core::block::ParamKind;
+use chimera_core::dsp::modal::{BankModes, MODAL_SPECS, ModalParams, ResonatorMode, reads};
 use chimera_core::dsp::note_to_freq;
 use chimera_hal::BLOCK_SIZE;
-use common::{SR, fundamental_hz, play_modal, play_modal_at, play_modal_bare, rms};
+use common::{SR, fundamental_hz, play_modal, play_modal_at, play_modal_bare, rms, rms_diff};
 
 const MODES: [ResonatorMode; 4] = [
     ResonatorMode::String,
@@ -78,9 +79,9 @@ fn strings_are_in_tune() {
             scope.spawn(move || {
                 let p = ModalParams {
                     mode,
-                    decay: 0.0,
-                    brightness: 0.0,
-                    ks_body: 0.0,
+                    damp: 1.0,
+                    bright: 1.0,
+                    body: 0.0,
                     ..Default::default()
                 };
                 for n in 31..=96 {
@@ -105,4 +106,55 @@ fn strings_are_in_tune() {
             });
         }
     });
+}
+
+/// Held until Task 9: today's LFO moves the heads under a sample a second.
+const INAUDIBLE_UNTIL_T9: &[(ResonatorMode, chimera_core::block::ParamId)] =
+    &[(ResonatorMode::String, ModalParams::ENS_RATE)];
+
+/// Per model, from every continuous setting at 0.5 and MODES at 32, note
+/// 48 held 1 s: each setting at its min, middle and max. A setting the
+/// model reads changes the sound; one it ignores changes no bit. The
+/// middle, as POS's ends can null alike.
+#[test]
+fn live_knobs_move_dimmed_knobs_do_not() {
+    let blocks = SR as usize / BLOCK_SIZE;
+    for mode in MODES {
+        let mut base = ModalParams {
+            mode,
+            modes: BankModes::M32,
+            ..Default::default()
+        };
+        for s in MODAL_SPECS
+            .iter()
+            .filter(|s| s.kind == ParamKind::Continuous)
+        {
+            base.set(s.id, 0.5);
+        }
+        for s in MODAL_SPECS.iter().filter(|s| s.id != ModalParams::MODE) {
+            if INAUDIBLE_UNTIL_T9.contains(&(mode, s.id)) {
+                continue;
+            }
+            let [lo, mid, hi] = [s.min, s.quantize((s.min + s.max) * 0.5), s.max].map(|v| {
+                let mut p = base;
+                p.set(s.id, v);
+                play_modal(&p, 48, blocks, 0)
+            });
+            let same =
+                |a: &[f32], b: &[f32]| a.iter().zip(b).all(|(x, y)| x.to_bits() == y.to_bits());
+            if reads(mode, s.id) {
+                let moved = [(&lo, &mid), (&mid, &hi), (&lo, &hi)]
+                    .iter()
+                    .map(|(a, b)| rms_diff(a, b))
+                    .fold(0.0, f32::max);
+                assert!(moved > 1e-3, "{mode:?} {}: live but inaudible", s.label);
+            } else {
+                assert!(
+                    same(&lo, &hi) && same(&lo, &mid),
+                    "{mode:?} {}: dimmed but heard",
+                    s.label
+                );
+            }
+        }
+    }
 }

@@ -162,15 +162,15 @@ fn test_folder_mid_note() {
 // ── KS+ String: live parameter tests ────────────────────────────────
 
 #[test]
-fn test_ks_body_mid_note() {
+fn test_string_body_mid_note() {
     let (_, _, before, after) = render_with_param_change(
         |p| {
             *p = ParamSnapshot::for_engine(EngineType::Modal);
             p.modal.mode = ResonatorMode::String;
-            p.modal.ks_body = 0.0;
+            p.modal.body = 0.0;
         },
         |p| {
-            p.modal.ks_body = 0.8;
+            p.modal.body = 0.8;
         },
         8,
         8,
@@ -189,15 +189,15 @@ fn test_ks_body_mid_note() {
 }
 
 #[test]
-fn test_ks_stiffness_mid_note() {
+fn test_string_structure_mid_note() {
     let (_, _, before, after) = render_with_param_change(
         |p| {
             *p = ParamSnapshot::for_engine(EngineType::Modal);
             p.modal.mode = ResonatorMode::String;
-            p.modal.ks_stiffness = 0.0;
+            p.modal.structure = 0.0;
         },
         |p| {
-            p.modal.ks_stiffness = 0.7;
+            p.modal.structure = 0.7;
         },
         8,
         8,
@@ -208,19 +208,19 @@ fn test_ks_stiffness_mid_note() {
         .map(|(a, b)| (a - b).abs())
         .sum::<f32>()
         / before.len() as f32;
-    assert!(diff > 0.001, "stiffness should change sound: diff={}", diff);
+    assert!(diff > 0.001, "structure should change sound: diff={}", diff);
 }
 
 #[test]
-fn test_ks_brightness_mid_note() {
+fn test_string_bright_mid_note() {
     let (_, _, before, after) = render_with_param_change(
         |p| {
             *p = ParamSnapshot::for_engine(EngineType::Modal);
             p.modal.mode = ResonatorMode::String;
-            p.modal.brightness = 0.1;
+            p.modal.bright = 1.0 - 0.1;
         },
         |p| {
-            p.modal.brightness = 0.9;
+            p.modal.bright = 1.0 - 0.9;
         },
         4,
         8,
@@ -230,7 +230,7 @@ fn test_ks_brightness_mid_note() {
     let h_after = harmonic_energy(&after, f0);
     assert!(
         (h_before - h_after).abs() > 0.0001,
-        "brightness should change harmonics: before={} after={}",
+        "bright should change harmonics: before={} after={}",
         h_before,
         h_after
     );
@@ -239,38 +239,38 @@ fn test_ks_brightness_mid_note() {
 // ── Modal resonator: live parameter tests ───────────────────────────
 
 #[test]
-fn test_modal_decay_mid_note() {
+fn test_bank_damp_mid_note() {
     let (before_rms, after_rms, _, _) = render_with_param_change(
         |p| {
             *p = ParamSnapshot::for_engine(EngineType::Modal);
             p.modal.mode = ResonatorMode::Modal;
-            p.modal.decay = 0.8;
+            p.modal.damp = 0.8;
         },
         |p| {
-            p.modal.decay = 0.1;
-        }, // shorten decay dramatically
+            p.modal.damp = 0.1;
+        }, // shorten the ring dramatically
         8,
         16,
     );
-    // After shortening decay, the sound should die faster
+    // After shortening DAMP, the sound should die faster
     assert!(
         after_rms < before_rms || after_rms < 0.01,
-        "reducing decay should quiet the sound: before={} after={}",
+        "reducing DAMP should quiet the sound: before={} after={}",
         before_rms,
         after_rms
     );
 }
 
 #[test]
-fn test_modal_brightness_mid_note() {
+fn test_bank_bright_mid_note() {
     let (_, _, before, after) = render_with_param_change(
         |p| {
             *p = ParamSnapshot::for_engine(EngineType::Modal);
             p.modal.mode = ResonatorMode::Modal;
-            p.modal.brightness = 0.1;
+            p.modal.bright = 0.1;
         },
         |p| {
-            p.modal.brightness = 1.0;
+            p.modal.bright = 1.0;
         },
         4,
         8,
@@ -280,7 +280,7 @@ fn test_modal_brightness_mid_note() {
     let h_after = harmonic_energy(&after, f0);
     assert!(
         (h_before - h_after).abs() > 0.0001,
-        "modal brightness should change spectrum: before={} after={}",
+        "bank bright should change spectrum: before={} after={}",
         h_before,
         h_after
     );

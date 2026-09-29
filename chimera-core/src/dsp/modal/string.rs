@@ -19,18 +19,15 @@ const MAX_LINE: usize = MAX_STRING_DELAY - 2;
 
 /// Parameters for `KsString::tick_full`, built once per render block (not
 /// per sample) at each call site.
-/// damping: 0..1 (lowpass coefficient)
-/// decay: 0..1 (AC attenuation rate)
-/// gain: the loop's gain per pass
-/// body: 0..1 (half-delay comb resonance)
-/// stiffness: 0..1 (allpass dispersion for bell character)
-/// ens_rate/ens_depth/ens_mix: ensemble chorus parameters
 #[derive(Clone, Copy)]
-pub struct KsRenderParams {
-    pub damping: f32,
-    pub decay: f32,
+pub(super) struct KsRenderParams {
+    /// The loop low-pass's side taps (`lp_coeff`).
+    pub lp: f32,
+    /// The loop's gain per pass.
     pub gain: LoopGain,
+    /// Half-delay comb, 0..1.
     pub body: f32,
+    /// The two-sample stiffness mix, 0..1.
     pub stiffness: f32,
     pub ens_rate: f32,
     pub ens_depth: f32,
@@ -43,6 +40,9 @@ const INIT_LEN: usize = 100;
 pub(super) const FRESH_CLEAR_BYTES: usize = INIT_LEN * size_of::<f32>();
 /// The most any line's `clear` writes: its whole ring.
 pub(super) const RING_BYTES: usize = MAX_STRING_DELAY * size_of::<f32>();
+
+/// A fresh line's pluck noise.
+const NOISE_SEED: u32 = 0x8765_4321;
 
 /// The third ensemble head's fixed offset from the second.
 const ENS_SPREAD: f32 = 0.3;
@@ -78,7 +78,7 @@ impl KsString {
             addr_of_mut!((*p).delay).write(INIT_LEN - 2);
             addr_of_mut!((*p).dirty).write(INIT_LEN);
             addr_of_mut!((*p).ens_lfo_phase).write(0);
-            addr_of_mut!((*p).noise_state).write(0x8765_4321);
+            addr_of_mut!((*p).noise_state).write(NOISE_SEED);
             addr_of_mut!((*p).frac).write(Allpass1::default());
             slot.assume_init_mut()
         }
@@ -93,7 +93,7 @@ impl KsString {
             // Clamped, the fraction leaves [0.5, 1.5]: held at its edge.
             delay = delay.min(MAX_LINE);
             let frac = (period - other - delay as f32).clamp(0.5, 1.5);
-            eta = super::loop_parts::eta_for(frac, w.min(3.0));
+            eta = super::loop_parts::eta_for(frac, w);
         }
         self.delay = delay;
         self.frac.set(eta);
@@ -145,12 +145,11 @@ impl KsString {
     #[inline]
     fn lowpass(&self, p: &KsRenderParams) -> f32 {
         let d = self.delay;
-        let c = lp_coeff(1.0 - p.damping);
+        let c = p.lp;
         c * 0.5 * (self.behind(d - 2) + self.behind(d)) + (1.0 - c) * self.behind(d - 1)
     }
 
-    /// Excite the string at `freq` (Carcosa's Trigger).
-    /// excitation: 0=noise, 1=click, 2=bright, 3=dark
+    /// Pluck the string at `freq` with white noise (Carcosa's Trigger).
     /// The line is cleared first, before the new loop's length widens its
     /// extent: the clear writes `clear_bytes`, and the old note's samples
     /// past the new loop are never read back, even by a pitch drop that
@@ -159,39 +158,13 @@ impl KsString {
         &mut self,
         (freq, sample_rate): (f32, u32),
         amplitude: f32,
-        excitation: u8,
-        color: f32,
         position: f32,
     ) {
         self.clear();
         self.tune(freq, sample_rate);
         let len = self.delay;
-        // Fill delay line based on excitation type
-        let mut prev = 0.0_f32;
         for i in 0..len {
-            let sample = match excitation % 4 {
-                1 => {
-                    // Click: short impulse
-                    if i < 4 { amplitude } else { 0.0 }
-                }
-                2 => {
-                    // Bright noise
-                    let n1 = xorshift_noise(&mut self.noise_state);
-                    let n2 = xorshift_noise(&mut self.noise_state);
-                    (n1 * 0.5 + n2 * 0.25) * amplitude
-                }
-                3 => {
-                    // Dark noise: average with previous
-                    let n = xorshift_noise(&mut self.noise_state) * amplitude;
-                    prev = (n + prev) * 0.5;
-                    prev
-                }
-                _ => {
-                    // White noise
-                    xorshift_noise(&mut self.noise_state) * amplitude
-                }
-            };
-            self.buffer[i] = sample;
+            self.buffer[i] = xorshift_noise(&mut self.noise_state) * amplitude;
         }
 
         // Pluck position: comb notch at position harmonics
@@ -204,12 +177,9 @@ impl KsString {
             }
         }
 
-        // Excitation color: low-pass filter passes (lower color = darker)
-        let filter_passes = ((1.0 - color) * 7.0) as usize;
-        for _ in 0..filter_passes {
-            for i in 1..len {
-                self.buffer[i] = (self.buffer[i] + self.buffer[i - 1]) * 0.5;
-            }
+        // One smoothing pass: the old colour 0.8.
+        for i in 1..len {
+            self.buffer[i] = (self.buffer[i] + self.buffer[i - 1]) * 0.5;
         }
 
         // The oldest sample first.
@@ -252,6 +222,12 @@ impl KsString {
     #[cfg(test)]
     pub(super) fn line(&self) -> (&[f32; MAX_STRING_DELAY], usize) {
         (&self.buffer, self.dirty)
+    }
+
+    /// The pluck's noise from its first note's: for the tests.
+    #[cfg(test)]
+    pub(super) fn reseed(&mut self) {
+        self.noise_state = NOISE_SEED;
     }
 
     /// The next clear zeros the whole ring, as before the dirty extent:
@@ -342,10 +318,12 @@ impl KsString {
     }
 }
 
-/// The loop low-pass's side taps: 0.02 at `bright` 1, 0.5 at 0.
-#[inline]
-fn lp_coeff(bright: f32) -> f32 {
-    0.02 + 0.48 * (1.0 - bright)
+/// The loop low-pass's side taps at `bright`, 1 brightest: the old
+/// two-point average's loss at low frequencies, `c·(1 − c)` for its `c`,
+/// so old patches keep their tone (0.0475 to 0.25).
+pub(super) fn lp_coeff(bright: f32) -> f32 {
+    let c = 0.05 + 0.45 * (1.0 - bright);
+    c * (1.0 - c)
 }
 
 crate::in_place::field_list!(KsString => KsString { buffer, write_pos, ring_len, delay, dirty, ens_lfo_phase, noise_state, frac });

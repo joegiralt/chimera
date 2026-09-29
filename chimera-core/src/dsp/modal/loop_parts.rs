@@ -108,8 +108,10 @@ pub fn allpass_phase_delay(eta: f32, w: f32) -> f32 {
     1.0 - 2.0 * libm::atan2f(eta * libm::sinf(w), 1.0 + eta * libm::cosf(w)) / w
 }
 
-/// The η whose phase delay at `w` is `frac`, exactly.
+/// The η whose phase delay at `w` is `frac`, exactly; `w` held to
+/// `[1e-6, 3]`, so 0 Hz is not NaN.
 pub fn eta_for(frac: f32, w: f32) -> f32 {
+    let w = w.clamp(1e-6, 3.0);
     let theta = w * (1.0 - frac) * 0.5;
     libm::sinf(theta) / libm::sinf(w - theta)
 }
@@ -138,6 +140,15 @@ mod tests {
             for frac in [0.5, 0.75, 1.0, 1.49] {
                 let got = allpass_phase_delay(eta_for(frac, w), w);
                 assert!((got - frac).abs() < 1e-4, "ω {w}, {frac}: {got}");
+            }
+        }
+    }
+
+    #[test]
+    fn eta_for_is_finite_at_the_ends() {
+        for w in [0.0, 1e-9, 3.0, 4.0] {
+            for frac in [0.5, 1.0, 1.5] {
+                assert!(eta_for(frac, w).is_finite(), "ω {w}, {frac}");
             }
         }
     }

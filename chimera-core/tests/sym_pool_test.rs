@@ -524,15 +524,13 @@ fn switch_gives_the_last_four_played_a_halo() {
 #[test]
 fn a_resting_voice_gives_its_slot_back() {
     let mut p = sym();
-    p.modal.decay = 0.3;
+    p.modal.damp = 1.0 - 0.3;
     let mut s = Stage::new(&[(p, PartMode::Poly)]);
     s.on(0, 60);
     let v = s.voice_of(0, 60);
     s.block();
     assert_eq!(s.inst.sym().lent(), 1);
-    // Released, it rings down on its own: no fade, no reset. Held, the
-    // default KS feedback sustains it for good
-    // (https://github.com/joegiralt/chimera/issues/191).
+    // Released, it rings down on its own: no fade, no reset.
     s.off(0, 60);
     for _ in 0..5_000 {
         let r = s.inst.rebuilds()[v];

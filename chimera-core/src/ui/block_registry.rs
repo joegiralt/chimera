@@ -31,13 +31,14 @@ pub static MODAL_1: BlockDef = BlockDef {
     params: [
         ParamSlot::param(BlockRef::Modal, ModalParams::MODE),
         ParamSlot::param(BlockRef::Modal, ModalParams::EXCITE),
-        ParamSlot::param(BlockRef::Modal, ModalParams::DECAY),
-        ParamSlot::param(BlockRef::Modal, ModalParams::BRIGHTNESS),
-        ParamSlot::param(BlockRef::Modal, ModalParams::POSITION),
-        ParamSlot::param(BlockRef::Modal, ModalParams::INHARM),
+        ParamSlot::param(BlockRef::Modal, ModalParams::DAMP),
+        ParamSlot::param(BlockRef::Modal, ModalParams::BRIGHT),
+        ParamSlot::param(BlockRef::Modal, ModalParams::POS),
+        ParamSlot::param(BlockRef::Modal, ModalParams::STRUCTURE),
     ],
 };
 
+/// Interim until Task 6's per-model cells; MODES is off-page.
 pub static MODAL_2: BlockDef = BlockDef {
     id: 3,
     name: "Modal-2",
@@ -45,12 +46,12 @@ pub static MODAL_2: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
-        ParamSlot::param(BlockRef::Modal, ModalParams::KS_BODY),
-        ParamSlot::param(BlockRef::Modal, ModalParams::KS_STIFFNESS),
-        ParamSlot::param(BlockRef::Modal, ModalParams::KS_FEEDBACK),
-        ParamSlot::param(BlockRef::Modal, ModalParams::KS_ENS_DEPTH),
-        ParamSlot::param(BlockRef::Modal, ModalParams::KS_ENS_RATE),
-        ParamSlot::param(BlockRef::Modal, ModalParams::KS_ENS_MIX),
+        ParamSlot::param(BlockRef::Modal, ModalParams::BODY),
+        ParamSlot::param(BlockRef::Modal, ModalParams::COUPLE),
+        ParamSlot::param(BlockRef::Modal, ModalParams::HALO),
+        ParamSlot::param(BlockRef::Modal, ModalParams::ENS_DEPTH),
+        ParamSlot::param(BlockRef::Modal, ModalParams::ENS_RATE),
+        ParamSlot::param(BlockRef::Modal, ModalParams::ENS_MIX),
     ],
 };
 

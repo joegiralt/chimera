@@ -122,7 +122,7 @@ impl ModSource {
 /// A retired code goes on one of these lists, and never gets another meaning:
 /// the fixture check fails a gone line that isn't listed, and a listed one
 /// that is produced again. A retired block lists each of its params.
-pub const RETIRED: &[(u8, u8)] = &[(10, 3), (10, 4), (10, 5)];
+pub const RETIRED: &[(u8, u8)] = &[(10, 3), (10, 4), (10, 5), (1, 2), (1, 5), (1, 7), (1, 8)];
 
 /// Block codes that are gone for good (each of its params is in `RETIRED`).
 pub const RETIRED_BLOCKS: &[u8] = &[];

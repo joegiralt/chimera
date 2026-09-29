@@ -116,30 +116,30 @@ fn all_chains_holds_every_reachable_chain() {
 /// bindings (spec labels + the two plan-D6 overrides; plan D5 BODY fix).
 #[test]
 fn part_pages_display_like_before() {
-    use ValFmt::{Bi, Int, Law, Names, Uni};
+    use ValFmt::{Bi, Law, Names, Uni};
     use chimera_core::dsp::modulator::EnvSpeed::Med;
     use chimera_core::dsp::modulator::law::Law::{Attack, DecRel, Hold, Pct};
     let want: [(&BlockDef, [(&str, ValFmt); 6]); 7] = [
         (
             &reg::MODAL_1,
             [
-                ("MODE", Int(3)),
+                ("MODEL", Names(&chimera_core::dsp::modal::MODEL_NAMES)),
                 ("EXCITE", Uni),
-                ("DECAY", Uni),
+                ("DAMP", Uni),
                 ("BRIGHT", Uni),
                 ("POS", Uni),
-                ("INHARM", Uni),
+                ("STRUCT", Uni),
             ],
         ),
         (
             &reg::MODAL_2,
             [
                 ("BODY", Uni),
-                ("STIFF", Uni),
-                ("FDBK", Uni),
-                ("E.DPT", Uni),
-                ("E.RAT", Uni),
-                ("E.MIX", Uni),
+                ("COUPLE", Uni),
+                ("HALO", Uni),
+                ("ENS.D", Uni),
+                ("ENS.R", Uni),
+                ("ENS.M", Uni),
             ],
         ),
         (
