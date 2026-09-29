@@ -228,6 +228,43 @@ mod tests {
         }
     }
 
+    /// The sim's SYSTEM wiring: a theme changed in System and left behind
+    /// comes back at the next launch, from the files alone.
+    #[test]
+    fn theme_survives_a_relaunch() {
+        use chimera_core::storage::{BootNote, Card, Exit, SystemSync};
+        use chimera_core::ui::theme_settings::Bright;
+        let root = unique_root();
+        let mut store = DirStore::new(root.clone());
+        let (mut sync, mut s, note) = SystemSync::boot(&mut Card::new(), &mut store);
+        assert_eq!(note, Some(BootNote::NoFile));
+        let mut card = Card::new();
+        assert!(!sync.left_system(true, &s));
+        s.theme.bright = Bright::new(40);
+        assert!(sync.left_system(false, &s));
+        assert_eq!(sync.on_exit(&mut card, &mut store, &mut s), Ok(Exit::Wrote));
+
+        let (_, again, note) = SystemSync::boot(&mut Card::new(), &mut DirStore::new(root.clone()));
+        assert_eq!((again, note), (s, None));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// `CHIMERA_CARD` naming no directory: boot and every exit are NoCard.
+    #[test]
+    fn missing_card_dir_keeps_defaults() {
+        use chimera_core::storage::{BootNote, Card, SyncError, SystemSettings, SystemSync};
+        let mut store = DirStore::new(unique_root().join("absent"));
+        let mut card = Card::new();
+        let (mut sync, mut s, note) = SystemSync::boot(&mut card, &mut store);
+        assert_eq!((s, note), (SystemSettings::DEFAULT, Some(BootNote::NoCard)));
+        sync.left_system(true, &s);
+        assert!(sync.left_system(false, &s));
+        assert_eq!(
+            sync.on_exit(&mut card, &mut store, &mut s),
+            Err(SyncError::Store(StoreError::NoCard))
+        );
+    }
+
     #[test]
     fn missing_root_is_no_card() {
         let mut s = DirStore::new(unique_root().join("absent"));

@@ -21,7 +21,6 @@ mod panic;
 mod priority;
 #[cfg(not(feature = "sd-probe"))]
 mod probe;
-#[cfg(feature = "sd-probe")]
 mod sd;
 #[cfg(feature = "sd-probe")]
 mod sd_probe;
@@ -36,7 +35,6 @@ use chimera_core::ui::theme_settings::ThemeSettings;
 use cortex_m_rt::entry;
 use display::Stm32Display;
 use stm32h7xx_hal::gpio::{Output, PD8, PD9, PD10, PushPull, Speed};
-#[cfg(any(feature = "midi-din", feature = "sd-probe"))]
 use stm32h7xx_hal::rcc::CoreClocks;
 use stm32h7xx_hal::{pac, prelude::*, spi};
 
@@ -79,11 +77,9 @@ struct Board {
     cp: cortex_m::Peripherals,
     clk: clocks::Clocks,
     display: Display,
-    #[cfg(any(feature = "midi-din", feature = "sd-probe"))]
     clocks: CoreClocks,
     #[cfg(not(feature = "sd-probe"))]
     synth: SynthParts,
-    #[cfg(feature = "sd-probe")]
     sd: sd::SdParts,
 }
 
@@ -109,7 +105,8 @@ fn main() -> ! {
 #[cfg(feature = "sd-probe")]
 fn probe_card(mut b: Board) -> ! {
     let sd = sd::init(b.sd, &mut b.cp.DCB, &mut b.cp.DWT, &b.clocks, b.clk.cpu_hz);
-    sd_probe::run(&mut b.display, b.clk, sd)
+    let store = sd::take_store(sd).expect("store taken once");
+    sd_probe::run(&mut b.display, b.clk, store)
 }
 
 fn boot() -> Board {
@@ -135,7 +132,6 @@ fn boot() -> Board {
     let gpiod = dp.GPIOD.split(ccdr.peripheral.GPIOD);
     let gpioe = dp.GPIOE.split(ccdr.peripheral.GPIOE);
     let gpiof = dp.GPIOF.split(ccdr.peripheral.GPIOF);
-    #[cfg(any(feature = "midi-din", feature = "sd-probe"))]
     let gpiob = dp.GPIOB.split(ccdr.peripheral.GPIOB);
     #[cfg(feature = "midi-din")]
     let _midi_rx = gpiob.pb7.into_alternate::<7>();
@@ -146,7 +142,7 @@ fn boot() -> Board {
     let mut led = gpioe.pe1.into_push_pull_output();
     // TIM1 CH2 PWM, above hearing so the backlight driver cannot whine.
     // Full brightness lifts a TN panel's blacks; System › Theme's BRIGHT
-    // sets the duty (70 % at boot: no storage yet).
+    // sets the duty: the default until SYSTEM is read.
     let mut backlight = dp.TIM1.pwm(
         gpioe.pe11.into_alternate::<1>(),
         20.kHz(),
@@ -201,7 +197,6 @@ fn boot() -> Board {
         cp,
         clk,
         display,
-        #[cfg(any(feature = "midi-din", feature = "sd-probe"))]
         clocks: ccdr.clocks,
         #[cfg(not(feature = "sd-probe"))]
         synth: SynthParts {
@@ -212,7 +207,6 @@ fn boot() -> Board {
             iwdg: dp.IWDG,
             dbgmcu: dp.DBGMCU,
         },
-        #[cfg(feature = "sd-probe")]
         sd: sd::SdParts {
             spi2: dp.SPI2,
             rec: ccdr.peripheral.SPI2,
@@ -228,6 +222,8 @@ fn boot() -> Board {
 fn synth(board: Board) -> ! {
     use chimera_core::clock_plan::pll3_for;
     use chimera_core::hw::SampleBudget;
+    use chimera_core::storage::{Card, Exit, SystemSync};
+    use chimera_core::ui::busy::{BusyLabel, draw_busy};
     use chimera_core::ui::perf::PerfTracker;
     use chimera_hal::ChimeraDisplay;
     use controls::Stm32Controls;
@@ -236,7 +232,6 @@ fn synth(board: Board) -> ! {
         mut cp,
         clk,
         mut display,
-        #[cfg(feature = "midi-din")]
         clocks,
         synth:
             SynthParts {
@@ -247,11 +242,24 @@ fn synth(board: Board) -> ! {
                 iwdg,
                 dbgmcu,
             },
+        sd,
     } = board;
     let mut stats_r = probe::init(&mut cp.DCB, &mut cp.DWT, clk, reset_cause);
 
     let mut controls = Stm32Controls::new();
     let ui = shared::take_ui().expect("UI state taken once");
+
+    // Boot step 1: SYSTEM behind BUSY, then its theme. Card work runs only
+    // here and in the UI loop, never on the audio path, and every card
+    // path is bounded, so it can run before the watchdog starts.
+    draw_busy(&mut display, BusyLabel::Busy);
+    display.flush();
+    let sd = sd::init(sd, &mut cp.DCB, &mut cp.DWT, &clocks, clk.cpu_hz);
+    let store = sd::take_store(sd).expect("store taken once");
+    let mut card = Card::new();
+    let (mut sync, mut settings, _) = SystemSync::boot(&mut card, store);
+    ui.set_theme(settings.theme);
+    apply_theme(settings.theme, &mut theme, &mut backlight, &mut display);
     let perf = PerfTracker::new();
     #[cfg(feature = "bench")]
     bench::run(&mut display, clk, &ui.performance);
@@ -299,17 +307,20 @@ fn synth(board: Board) -> ! {
         if controls.has_activity() {
             ui.handle_input(&controls);
         }
-        // System › Theme: the UI loop owns the display and the backlight.
-        let new_theme = ui.theme();
-        let recolour = new_theme != theme && new_theme.palette() != theme.palette();
-        if new_theme != theme {
-            backlight.set_duty(new_theme.bright.duty(backlight.get_max_duty()));
-            if new_theme.gamma != theme.gamma {
-                display.set_gamma(new_theme.gamma.tables());
+        settings.theme = ui.theme();
+        // Leaving System syncs SYSTEM: one mount, which may load or save,
+        // so the overlay says BUSY. A failure keeps RAM; the next exit
+        // tries again.
+        let repaint = sync.left_system(ui.in_system(), &settings);
+        if repaint {
+            let (y0, y1) = draw_busy(&mut display, BusyLabel::Busy);
+            display.flush_region(y0, y1);
+            if let Ok(Exit::Loaded) = sync.on_exit(&mut card, store, &mut settings) {
+                ui.set_theme(settings.theme);
             }
-            display.set_palette(new_theme.palette());
-            theme = new_theme;
         }
+        // System › Theme: the UI loop owns the display and the backlight.
+        let recolour = apply_theme(ui.theme(), &mut theme, &mut backlight, &mut display);
         ui.update();
         shared_w.publish(|b| b.update_from(&ui.performance));
         let stats = stats_r.as_mut().map(|r| {
@@ -317,6 +328,13 @@ fn synth(board: Board) -> ! {
             s.stack_used = probe::stack_used();
             s
         });
+        if repaint {
+            // The overlay covered rows the dirty regions don't know about.
+            ui.render_with_audio(&mut display, &perf.stats, stats.as_ref(), scope_r.read());
+            display.flush();
+            ui.prime_regions(&perf.stats, stats.as_ref(), scope_r.read());
+            continue;
+        }
         let flush_list =
             ui.render_dirty_with_audio(&mut display, &perf.stats, stats.as_ref(), scope_r.read());
         if recolour {
@@ -330,4 +348,26 @@ fn synth(board: Board) -> ! {
             }
         }
     }
+}
+
+/// Pushes `new` to the backlight and the panel. True when the palette
+/// changed, which recolours rows that did not redraw.
+#[cfg(not(feature = "sd-probe"))]
+fn apply_theme(
+    new: ThemeSettings,
+    theme: &mut ThemeSettings,
+    backlight: &mut Backlight,
+    display: &mut Display,
+) -> bool {
+    if new == *theme {
+        return false;
+    }
+    let recolour = new.palette() != theme.palette();
+    backlight.set_duty(new.bright.duty(backlight.get_max_duty()));
+    if new.gamma != theme.gamma {
+        display.set_gamma(new.gamma.tables());
+    }
+    display.set_palette(new.palette());
+    *theme = new;
+    recolour
 }
