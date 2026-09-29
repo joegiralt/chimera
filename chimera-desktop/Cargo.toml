@@ -6,7 +6,6 @@ edition.workspace = true
 [dependencies]
 chimera-core = { path = "../chimera-core" }
 chimera-hal = { path = "../chimera-hal" }
-libm = "0.2"
 minifb = "0.28"
 cpal = "0.15"
 midir = { version = "0.10", optional = true }
