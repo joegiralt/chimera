@@ -1,6 +1,6 @@
 # 0048. Own the FAT layer; keep embedded-sdmmc only as the SD block driver
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Deciders:** owner (2026-09-29, after the review of b1ee1c9), firmware
 
 ## Context
@@ -106,7 +106,9 @@ a hard requirement of `just test` and `just check`.
 
   We would own most of a FAT layer and still carry the library's. A patched
   fork means maintaining the whole library. Reporting the defects upstream is
-  still worth doing (a follow-up), but a fix there can't gate this plan.
+  still worth doing (they are listed in
+  https://github.com/joegiralt/chimera/issues/187), but a fix there can't
+  gate this plan.
 - **ChaN's FatFs through C FFI.** It is mature, its license is BSD-style, and
   it keeps FSInfo right. But every card operation would cross an `unsafe` C
   boundary. The firmware and host tests would need a C toolchain (`cc`). Its
@@ -123,7 +125,7 @@ a hard requirement of `just test` and `just check`.
   gets "FORMAT FAT32").
 
 ## Consequences
-- We own about a thousand lines of FAT code and its correctness. Three
+- We own about 2 000 lines of FAT code and its correctness. Three
   things check it:
   - tests on RAM images;
   - `embedded-sdmmc` as a second reader and writer, away from the free-space
@@ -139,8 +141,10 @@ a hard requirement of `just test` and `just check`.
   or from cluster 2. On a large, nearly full card that is seconds. A 32 GB
   card with 32 KB clusters has a 4 MB FAT, about 3 s at the 1.3 MB/s the
   probe read, which is under the 10 s `SD_OP_CAP_MS`. After that, a RAM hint
-  keyed by the volume id keeps scans short. If the Task 13 STOP measures it
-  as too slow, a follow-up keeps next-free in FSInfo too.
+  keyed by the volume id keeps scans short. At the Task 13 STOP the first
+  save on the 15 GB FAT32 card was not slow; a large, nearly full card is
+  unmeasured. If one proves too slow, a follow-up keeps next-free in FSInfo
+  too.
 - Once Chimera has written to a card, a computer sees FSInfo's free count as
   unknown and recounts free space on mount. `fsck.fat -n` accepts this with
   exit 0 (checked with dosfstools 4.2).
@@ -150,16 +154,23 @@ a hard requirement of `just test` and `just check`.
 - A cut can leave lost clusters, which a computer's disk check reclaims. The
   write order means it never costs the other file of an A/B pair (spec
   § A/B saves, ADR 0045).
-- Flash: `VolumeManager` is no longer linked. Task 13's STOP records the
-  `.text` size before and after.
+- The on-card `fsck.fat` check (plan 1 Task 13, STOP check 7) wasn't run:
+  the card is inside the case. `cut_images_pass_fsck` and
+  `mkfs_images_pass_suite_and_fsck` stand in for it, and the check on the
+  real card is https://github.com/joegiralt/chimera/issues/199.
+- Flash: `VolumeManager` is no longer linked. Measured at Task 13: the
+  sd-probe build, which linked it, went from 74 824 to 65 368 B of `.text`
+  on our layer. The default firmware, which now links the whole storage
+  stack for the first time, went from 311 784 to 353 712 B (+41 928).
+  `SdStore` is 1 368 B.
 
 ## Sources
 - Plan: `docs/superpowers/plans/2026-09-28-storage-foundation.md`, Tasks 4a
   and 4b, § Review response "Task 4 review (b1ee1c9)".
 - Spec: `docs/superpowers/specs/2026-09-28-projects-storage-design.md`,
   § Storage.
-- Commit b1ee1c9 and its review (`.superpowers/sdd/2026-09-28-storage-foundation/`
-  `task-4-report.md`, `review-ff6e3d3..b1ee1c9.diff`).
+- Commit b1ee1c9 and its review; the library defects it found are in
+  https://github.com/joegiralt/chimera/issues/187.
 - `embedded-sdmmc` 0.10.0 (MIT/Apache-2.0), the files and lines cited above.
 - Microsoft, *FAT32 File System Specification* (fatgen103, 2000): cluster
   count classification, the FSInfo signatures, and 0xFFFF_FFFF as "unknown".

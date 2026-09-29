@@ -1,6 +1,6 @@
 # 0045. Store cards in 8.3 A/B files of versioned TLV records
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Deciders:** owner (projects and storage spec, 2026-09-28; plan 1 review), firmware
 
 ## Context
@@ -166,6 +166,29 @@ did, and no tear ever loaded wrong data.
   layer. A mismatched id is `VolumeChanged`.
 - **`Ready` is a capability.** Store operations take a `&Ready`, which is
   neither `Copy` nor `Clone` and is lent only inside `Card::run`.
+- **A full card is file-level.** `Full` is not a card fault: the card is
+  healthy and a delete makes room, so it leaves the card's state alone and
+  nothing re-inits. `CardError` has no `Full`.
+- **No card-detect line.** Chimera uses none. `Absent` comes from the
+  presence check before each acquire (#186): CMD0 with CS low, three tries,
+  and an empty slot (all 0xFF within NCR) fails in about a millisecond, not
+  at `SD_ACQUIRE_MS`. Confirming against the schematic that the slot has no
+  such line is tracked in https://github.com/joegiralt/chimera/issues/198.
+
+### SYSTEM
+- **Write rule.** SYSTEM is written exactly when RAM differs from what the
+  card in the slot is known to hold, keyed by volume. Untouched defaults
+  (nothing loaded at boot, nothing changed since) never go over a card's
+  SYSTEM: leaving System loads that card's file instead, and creates it only
+  when the card has none. A SYSTEM that needs newer firmware is never
+  written, whatever RAM holds.
+- **When.** Read at boot, behind a BUSY overlay (a cold acquire can take
+  about 3 s). Synced on each exit from the System chain, one mount per exit,
+  with no overlay first: a save is quicker than BUSY can be read. A toast in
+  the same box follows it: SAVED (about 600 ms) after a write, or the error's
+  message (about 1.2 s); none after a load, whose theme change is the
+  feedback, or when there was nothing to do. The toast blocks nothing and
+  new input takes it down.
 
 ### Measured (plan 1 Task 2 probe, 2026-09-29, rev V)
 - **CS is PE12**: the card answered on it.
@@ -174,15 +197,16 @@ did, and no tear ever loaded wrong data.
 - **Fast clock 25 MHz**: write 363 KB/s, read 1 333 KB/s, worst gap
   2 336 µs, well inside `SD_IDLE_MS`.
 
-### Pending
-- **Card-detect: unknown.** The plan builds on "no card-detect line": `Absent`
-  is inferred from a failed acquire. The only source is a transcription of
-  the stock firmware (Ixox/preenfm3), which lists no card-detect pin; the
-  probe couldn't test it. The owner confirms it against the schematic or the
-  CubeMX `main.c` at plan 1's Task 13 STOP. A line, if found, is a follow-up
-  issue.
-
-This ADR stays Proposed until it holds no pending item.
+### Task 13 STOP (2026-09-29, FAT32 SDHC 15 GB)
+- The theme persists across power cycles. Leaving System with a note held
+  causes no audio glitch, and the saves are fast (BUSY only flickered, so
+  the exit shows a SAVED toast after instead; that build, a634e30, was
+  flashed the same day).
+- The card is internal (the case must be opened), so hot-swap, no-card,
+  exFAT and the on-card fsck weren't run; host tests cover them, and the
+  on-card fsck is https://github.com/joegiralt/chimera/issues/199.
+- Firmware `.text` 311 784 → 353 712 B (+41 928) with the storage stack;
+  `SdStore` is 1 368 B of its 2 KB AXI reserve, leaving 88 892 B of AXI.
 
 ## Alternatives considered
 - **One file with rename-over.** Our FAT layer has no rename, and a FAT

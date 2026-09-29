@@ -42,7 +42,7 @@ Copied from the spec. Every task's requirements include this section.
 - SD runs in SPI mode on SPI2: SCK PA9, MISO PB14 (pulled up), MOSI PB15. CS is PE12 and there is no card-detect line, **both unconfirmed until the Task 2 STOP**.
 - Wake the card with ≥ 74 clocks, CS high, before CMD0. Init at ≤ 400 kHz, then switch to the fast clock.
 - Transfers are **polled**, with no DMA. The stack is in DTCM, which DMA1 and DMA2 can't reach, and D2 is full. This supersedes the design doc's DMA2 note.
-- Card I/O runs in the UI loop, never on the audio path. A BUSY/SAVING overlay is drawn before any card operation, at boot too. Every operation has a timeout.
+- Card I/O runs in the UI loop, never on the audio path. BUSY is drawn before the boot read of SYSTEM only. Leaving System draws nothing first, then shows a toast in the same box: SAVED after a write, or the error's message (Task 13 follow-up, owner's ruling). Every operation has a timeout.
 - States are `Absent`, `Ready(VolumeId)` and `Failed { err: CardError, last: Option<VolumeId> }`.
   - The card is mounted per operation. Every handle is closed on success and on error. Any card error sets `Failed`; NO CARD sets `Absent`; a file error leaves the state alone.
   - `Failed` or `Absent` becomes `Ready` only after a fresh init and mount.
@@ -282,7 +282,7 @@ What changes versus 099f251, and nothing else:
 - **(b) An exFAT superfloppy reports `Exfat`.** `first_partition` checks the OEM name of block 0 first. Test `exfat_superfloppy_is_exfat` on a new `exfat_superfloppy()` image.
 - **(c) `PartitionType` replaces the raw `u8`** in `Partition::kind` and `boot_sector`'s parameter; `Other` holds a `NonZeroU8`. Tests that compared `p.kind` to bytes compare variants.
 - **(d) Named constants** for every BPB and MBR offset and the two cluster thresholds; no bare offset literals remain in `volume.rs`.
-- **(e) `#![allow(dead_code)]` in `tests/common/image.rs` narrows** to `#[allow(dead_code)]` on `CutDisk` and its impl.
+- **(e) `tests/common/image.rs` keeps its module-level `#![allow(dead_code)]`**, with a comment: each test binary compiles `common` separately and uses its own part of it (`ab.rs` and `probe.rs` do the same).
 - **`Unsupported::BadBootSector`** is added to `chimera-hal/src/store.rs` (a damaged FAT volume isn't "not FAT"). Task 3 gives it a message.
 - **`embedded-hal` stays** in `chimera-fat/Cargo.toml`: Task 4 uses it.
 
@@ -1042,7 +1042,7 @@ Sound decoding rules:
 
 ```rust
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum CardError { Unsupported(Unsupported), Full, Timeout, VolumeChanged(VolumeId), Io }   // no NoCard: Failed(NoCard) can't exist
+pub enum CardError { Unsupported(Unsupported), Timeout, VolumeChanged(VolumeId), Io }   // no NoCard: Failed(NoCard) can't exist; no Full: a full card is file-level (Task 11 ruling)
 impl CardError { pub fn from_store(e: StoreError) -> Option<CardError>; }  // None for NoCard, NotFound, Corrupt
 impl From<CardError> for StoreError { .. }                                 // message() reuse
 #[derive(Debug)] pub struct Ready { vol: VolumeId }                          // private field; not Copy, not Clone
@@ -1073,7 +1073,8 @@ impl Card {
   - `file_errors_leave_the_card`: `after_error(Ready(v), NotFound)` and `after_error(Ready(v), Corrupt)` → `Ready(v)`.
   - `from_store_table`: every `StoreError` variant, checked against the Task 4b mapping table:
     - `NoCard`, `NotFound` and `Corrupt` → `None`;
-    - `Full`, `Timeout`, `Io`, `VolumeChanged(_)` and every `Unsupported(_)` → `Some`.
+    - `Timeout`, `Io`, `VolumeChanged(_)` and every `Unsupported(_)` → `Some`;
+    - `Full` → `None` as well: a full card is healthy and a delete makes room, so it is a file-level condition that leaves the card alone, with no re-init (Task 11 ruling).
 
     `Corrupt` is a file error from our FAT layer: a broken chain, or a name taken by the wrong kind. It never fails the card.
   - `op_error_fails_card`: an `op` returning `Err(Io)` leaves `Card::Failed { err: Io, last: Some(v) }`.
@@ -1096,7 +1097,7 @@ impl Card {
 - Modify: `chimera-fat/tests/common/image.rs`:
   - `CutDisk` counts and cuts **per block**, not per call: `writes: Cell<u32>` (blocks written) and `cut: Cell<Cut>` with `pub enum Cut { Never, After(u32), TornAfter(u32, Tear) }`, `pub enum Tear { HalfOld, Garbage }`. `TornAfter(k, t)` writes block `k` torn (first 256 B new and the rest old, or xorshift garbage) and fails it;
   - `pub fn fat_check(disk: &RamDisk) -> FatReport`: walks both FATs and the `/CHIMERA` entries. It reports cross-linked chains, chains shorter than their entry's length, FAT copies that differ, and each entry's raw 32 B and chain. It is written independently of `chimera_fat::fat`: test code doesn't check the code under test with itself;
-  - the builders `power_cut_test` doesn't use (`fat32`, `exfat`, `exfat_superfloppy`, `superfloppy`) get item-level `#[allow(dead_code)]`, as `CutDisk` has, because each test binary compiles `common` separately.
+  - the builders `power_cut_test` doesn't use (`fat32`, `exfat`, `exfat_superfloppy`, `superfloppy`) are covered by `image.rs`'s module-level `#![allow(dead_code)]`, because each test binary compiles `common` separately.
 - Modify: `chimera-core/src/storage/sound.rs` (`impl Decode for SoundDecoder`)
 
 **Interfaces:**
@@ -1135,7 +1136,7 @@ The rules:
   - `Present { gen, err: None }` when the pass passes.
 
   Other store errors propagate (they are card faults).
-- `check_frame` has no decoder: it checks `KIND`, the header, the CRC and the must-understand bit (an unknown critical record → `NeedsNewerFirmware`). `save_ab` uses it on both sides, then `write_target`. (Plan 2 note: that reads both sides in full before every save; a header-only pass is the cheap form if 60 KB projects make it slow.)
+- `check_frame` has no decoder: it checks `KIND`, the header, the CRC and the must-understand bit (an unknown critical record → `NeedsNewerFirmware`). It is `#[doc(hidden)]` and not how a save judges a side: `save_ab` and `delete_ab` take the kind's `Check` (the load's own pass 1, `check_file`) on both sides, then `write_target`, so a side a load rejects is never kept over the one it loads (Task 11 ruling). (Plan 2 note: that reads both sides in full before every save; a header-only pass is the cheap form if 60 KB projects make it slow.)
 - `pick`, over the `Present` sides newest first (tie → A):
   - the first with `err: None` → `Load(side)`;
   - one with `NeedsNewerFirmware` reached first → `Refuse(side, NeedsNewerFirmware)` (an older file never shadows it);
@@ -1192,15 +1193,18 @@ pub fn encode_system(s: &SystemSettings, w: &mut RecordWriter<'_>) -> Result<(),
 pub struct SystemDecoder<'a> { target: &'a mut SystemSettings }   // impl Decode, KIND = System; unknown records per the rules
 pub fn body_crc(s: &SystemSettings) -> u32;                       // CRC of encode_system's bytes, generation-independent
 pub enum BootNote { NoCard, NoFile, Error(LoadError) }
-pub struct SystemSync { /* saved: Option<u32>, was_in: bool */ }
+pub struct SystemSync { /* known: Option<(VolumeId, u32)>, untouched: bool, was_in: bool */ }
+pub fn exit_plan(known: Option<(VolumeId, u32)>, untouched: bool, vol: VolumeId, crc: u32) -> ExitPlan; // pure: Nothing, Write, Load
 impl SystemSync {
     pub fn boot<S: Store>(card: &mut Card, store: &mut S) -> (SystemSync, SystemSettings, Option<BootNote>);
-    pub fn wants_write(&mut self, in_system: bool, s: &SystemSettings) -> bool;  // true only on the in→out edge and body_crc ≠ saved
-    pub fn write<S: Store>(&mut self, card: &mut Card, store: &mut S, s: &SystemSettings) -> Result<(), SaveError>; // make_dir(Chimera), save_ab; saved = crc only on Ok
+    pub fn left_system(&mut self, in_system: bool, s: &SystemSettings) -> bool;  // once a frame: true on the in→out edge
+    pub fn on_exit<S: Store>(&mut self, card: &mut Card, store: &mut S, s: &mut SystemSettings) -> Result<Exit, SyncError>; // one mount; exit_plan for that volume; Exit::{Unchanged, Wrote, Loaded}
+    pub fn write<S: Store>(&mut self, card: &mut Card, store: &mut S, s: &SystemSettings) -> Result<(), SaveError>; // make_dir(Chimera), save_ab; keyed to the volume written
 }
-// ui/busy.rs
-pub enum BusyLabel { Busy, Saving }
-pub fn draw_busy<D: DrawTarget<Color = Rgb565>>(d: &mut D, label: BusyLabel) -> (u16, u16); // the band to flush
+// ui/busy.rs (as built after Task 13's follow-up; Task 12 first had BusyLabel { Busy, Saving })
+pub fn draw_busy<D: DrawTarget<Color = Rgb565>>(d: &mut D) -> (u16, u16); // BUSY, the band to flush
+pub fn draw_toast<D: DrawTarget<Color = Rgb565>>(d: &mut D, text: &str) -> (u16, u16);
+pub fn toast_for(r: &Result<Exit, SyncError>) -> Option<Toast>;            // SAVED, the error's message, or none
 ```
 
 `boot` decodes into a local `SystemSettings` (20 B) and returns it only on `Ok`; a pass 2 that fails half-way (card pulled after pass 1) leaves `DEFAULT`. `Err(Missing)` → `BootNote::NoFile`; `Err(Store(NoCard))` → `NoCard`; any other error → `Error(e)`. `SystemSync` takes no project state; its signatures are the guarantee, so no test pretends to check it.
@@ -1217,9 +1221,9 @@ pub fn draw_busy<D: DrawTarget<Color = Rgb565>>(d: &mut D, label: BusyLabel) -> 
     - exit with no change → `false`;
     - enter, change BRIGHT, exit → `true` once;
     - the next frame → `false`.
-  - `no_card_exit_tries_once` (Review Focus 3): with the store ejected, the exit edge gives `wants_write` `true` and `write` `Err(NoCard)`; 10 more frames out of System → `false`; re-enter and exit → `true` again.
+  - `no_card_exit_tries_once` (Review Focus 3): with the store ejected, the exit edge gives `left_system` `true` and `on_exit` `Err(NoCard)`; 10 more frames out of System → `false`; re-enter and exit → `true` again.
   - `system_fixture_loads`: `fixtures/v1/system.sys` decodes to its recorded values.
-- [ ] **Step 2: Write the screen golden** `busy_saving`: a centred box with `SAVING`, on the default theme; record it once.
+- [ ] **Step 2: Write the screen golden** `busy_saving`: a centred box with `SAVING`, on the default theme; record it once. (Task 13's follow-up replaced it with `busy`, `toast_saved` and `toast_exfat`.)
 - [ ] **Step 3: Run** `cargo test -p chimera-core --test system_file_test --test screen_golden_test` → FAIL.
 - [ ] **Step 4: Implement.** Extend `write_v1_fixtures` to write `system.sys`, run it once with `FIXTURE_WRITE=1`, and commit the file.
 - [ ] **Step 5: Run** the tests → PASS. Then `just check` → PASS.
@@ -1244,8 +1248,7 @@ pub fn draw_busy<D: DrawTarget<Color = Rgb565>>(d: &mut D, label: BusyLabel) -> 
   - `mod sd;` loses its `cfg(feature = "sd-probe")`;
   - `clocks::enable_cycle_counter` and `counting` lose their `cfg(any(feature = "perf-probe", feature = "sd-probe"))` gate (`sd::init` now calls them in every build);
   - after `display.init` with the default theme: `draw_busy(Busy)` and flush, then `sd::take_store`, then `SystemSync::boot(&mut card, store)`, then apply `settings.theme` through the same path the loop uses (backlight duty, gamma, palette) and `ui.set_theme`. The boot read is thus behind a visible overlay and inside the timeouts; it still runs before `watchdog::start`, which is safe because every card path is bounded (`SD_OP_CAP_MS`) and panic-free (Task 1's gate);
-  - in the loop after `handle_input`: `if sync.wants_write(ui.in_system(), &settings) { draw_busy(Saving) → flush_region → sync.write }`;
-  - `settings.theme = ui.theme()` each frame.
+  - in the loop after `handle_input`: `ui.sync_system(&mut sync, &mut card, store, &mut settings)`: `left_system`, then `on_exit` with no overlay first; `Exit::Loaded` applies the theme; `toast_for` puts up SAVED or the error, counted down by `step_toast` from the SysTick clock and drawn over the frame (Task 13 follow-up).
 - Modify: `chimera-desktop/src/main.rs`: `mod store;` loses its `cfg_attr`; the same wiring, with `DirStore::new(env CHIMERA_CARD or "chimera-card")`. The default dir is created if missing; a `CHIMERA_CARD` that doesn't exist stays "no card".
 
 **Interfaces:**
@@ -1262,11 +1265,11 @@ pub fn draw_busy<D: DrawTarget<Color = Rgb565>>(d: &mut D, label: BusyLabel) -> 
   - `CHIMERA_CARD=/nonexistent just desktop`: the defaults apply and leaving System doesn't hang.
 - [ ] **Step 5: Commit** `git commit -m "Boot reads SYSTEM; leaving System saves it"`
 - [ ] **Step 6: STOP. Ask the owner to run these checks on the unit with `just flash`, and wait.**
-  1. Boot with the Task 2 card: BUSY shows, then the default theme. Change BRIGHT and ACCENT, and leave System: SAVING flashes. Power off and on: the theme comes back.
+  1. Boot with the Task 2 card: BUSY shows, then the default theme. Change BRIGHT and ACCENT, and leave System: SAVED shows for about 0.6 s. Power off and on: the theme comes back.
   2. Boot with no card: BUSY shows for no longer than `SD_ACQUIRE_MS` plus the wake, then the defaults apply. Leave System: one quick failure, and audio is unaffected.
   3. Insert the card while running, then change the theme and leave System: it saves (`Absent → Ready`).
   4. Swap to a different FAT32 card while running, then leave System: it saves to the new card on the first try. The next boot with the first card shows its own theme.
-  5. Pull the card during SAVING (repeat until it lands mid-save): the next boot loads the earlier theme or the new one, never the defaults, unless the card has no SYSTEM file.
+  5. Pull the card as you leave System (repeat until it lands mid-save): the next boot loads the earlier theme or the new one, never the defaults, unless the card has no SYSTEM file.
   6. An exFAT card: the defaults apply at boot, with no hang.
   7. Put the card from checks 1–5 in a computer and run `fsck.fat -n` on its partition (or Windows' disk check). The only findings allowed are lost clusters from check 5's cuts. The computer lists `/CHIMERA/SYSTEM.A` and `.B`, and copies them off intact.
 
@@ -1292,7 +1295,16 @@ pub fn draw_busy<D: DrawTarget<Color = Rgb565>>(d: &mut D, label: BusyLabel) -> 
 
 Set: `SD_MODE = MODE_3` (SD-legal, measured), `SD_FAST_HZ = 25 MHz`, `SD_IDLE_MS` stays 600, `SD_ACQUIRE_MS = 1500` per attempt with one fresh retry. Whether the first cold acquire always fails, or MODE_0 is at fault, is unsettled; MODE_3 plus the retry holds in both cases.
 
-*(Task 13's STOP adds the on-unit checks.)*
+### Task 13 (2026-09-29)
+
+| Reading | Value |
+|---|---|
+| Firmware `.text` | 311 784 → 353 712 B (+41 928): the storage stack linked for the first time |
+| sd-probe `.text` | 74 824 B (`VolumeManager`) → 65 368 B (`SdStore`, our layer) |
+| `size_of::<SdStore>()` | 1 368 B, of the 2 048 B `STORE_RESERVE` |
+| AXI headroom | 88 892 B after `STORE_RESERVE` |
+
+Owner STOP (FAT32 SDHC 15 GB): the theme persists across power cycles; leaving System with a note held gives no audio glitch; saves are fast, so BUSY only flickered and the exit now shows a SAVED toast after instead (build a634e30, flashed 2026-09-29). The card is internal (the case must be opened), so hot-swap, no-card, exFAT and the on-card fsck (checks 2–7) were not run; host tests cover them, and the on-card fsck is https://github.com/joegiralt/chimera/issues/199. Card-detect is unconfirmed: https://github.com/joegiralt/chimera/issues/198. ADRs 0045 and 0048 are Accepted.
 
 ---
 
@@ -1314,7 +1326,7 @@ Answers the adversarial review of this plan at 98ef236.
 | M4 | 11, 12 | `pick` falls back on every error except `NeedsNewerFirmware`; both broken gives the error, `Missing` only for no files; spec § A/B items 2 and 4 amended. |
 | M5 | 10, 11, 12 | `Ready` not Copy/Clone, lent as `&Ready` inside `run`; `Card::ready()` gone; `CardError` has no `NoCard`; three compile-fail doc tests. The optional `Busy` token is not taken (Decisions). |
 | M6 | 6, 11, spec | Atomic-512 B assumption stated in the spec and ADR 0045; per-block `CutDisk` with torn writes; repeated-cut property; FAT check after every cut. |
-| M7 | 11 | `save_ab` classifies sides with `check_frame` (KIND, header, CRC, must-understand); plan 2 note on the cost. |
+| M7 | 11 | `save_ab` and `delete_ab` classify sides with the kind's `Check`, the load's own pass 1 (KIND, header, CRC, must-understand, then the decoder's verdict), superseding `check_frame` for saves (Task 11 ruling); plan 2 note on the cost. |
 | M8 | 2, 6 | ADR 0045 records CS/card-detect/mode as Pending until the Task 2 STOP; MODE 0, then 3, then 1; the upstream `MX_SPI2_Init`/`MX_GPIO_Init` named. |
 | M9 | 2, 13 | Acquire deadline, per-block idle deadline and a 10 s cap replace the 2 s whole-op deadline; the probe measures the worst gap. |
 | L1 | 6, 11 | `Generation::new(u32)` is public; tests use it. |
