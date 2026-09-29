@@ -23,6 +23,7 @@ pub mod preset;
 pub mod reset;
 pub mod scope;
 pub mod storage;
+pub mod sym_alloc;
 pub mod triple;
 pub mod ui;
 pub mod voice_alloc;
