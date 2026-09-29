@@ -18,10 +18,10 @@ use stm32h7xx_hal::time::Hertz;
 use crate::clocks;
 
 pub const SD_INIT_HZ: u32 = 400_000;
-pub const SD_FAST_HZ: u32 = 12_500_000;
-pub const SD_MODE: spi::Mode = spi::MODE_0;
+pub const SD_FAST_HZ: u32 = 25_000_000;
+pub const SD_MODE: spi::Mode = spi::MODE_3;
 pub const SD_ACQUIRE_RETRIES: u32 = 3;
-pub const SD_ACQUIRE_MS: u32 = 1_000;
+pub const SD_ACQUIRE_MS: u32 = 1_500;
 pub const SD_IDLE_MS: u32 = 600;
 pub const SD_OP_CAP_MS: u32 = 10_000;
 
