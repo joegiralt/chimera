@@ -8,11 +8,10 @@ use common::{SR, peak};
 use chimera_core::dsp::Stereo;
 use chimera_core::dsp::chorus::ChorusParams;
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus};
+use chimera_core::dsp::limiter::OUTPUT_TRIM;
 use chimera_core::dsp::ring::{first_reflection, size_step};
 use chimera_core::hw::{DAC_PAIRS, MAX_PARTS, MAX_VOICES};
-use chimera_core::instrument::{
-    AudioShared, DacOut, Instrument, PanCache, VOICE_SUM_TRIM, mix_parts, pan_gains,
-};
+use chimera_core::instrument::{AudioShared, DacOut, Instrument, PanCache, mix_parts, pan_gains};
 use chimera_core::modulation::ModState;
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::{EngineType, ParamSnapshot};
@@ -126,8 +125,8 @@ fn pan_law_is_constant_power() {
     }
 }
 
-/// The DAC pair gets the part's mono bus × pan gain × level × the
-/// voice-sum trim, one limiter lookahead (a block) later.
+/// The DAC pair gets the part's mono bus × pan gain × level, then × the
+/// output trim, one limiter lookahead (a block) later.
 #[test]
 fn part_bus_is_panned_and_levelled_into_its_pair() {
     let mut rig = Rig::new();
@@ -143,7 +142,7 @@ fn part_bus_is_panned_and_levelled_into_its_pair() {
     let (l, r) = lr(&rig.out[0]);
     assert!(peak(&bus) > 0.01);
     for i in 0..BLOCK_SIZE {
-        assert_eq!(l[i], bus[i] * (0.5 * VOICE_SUM_TRIM), "sample {i}");
+        assert_eq!(l[i], bus[i] * 0.5 * OUTPUT_TRIM, "sample {i}");
         assert_eq!(r[i], 0.0);
     }
     assert_eq!(
@@ -205,8 +204,7 @@ fn mix_parts_reference(
         }
         let bus = &buses[p];
         let (gl, gr) = pan_gains(part.mix.pan);
-        let g = part.mix.level * VOICE_SUM_TRIM;
-        let (gl, gr) = (gl * g, gr * g);
+        let (gl, gr) = (gl * part.mix.level, gr * part.mix.level);
         let pair = &mut out[part.mix.output.index()];
         for i in 0..BLOCK_SIZE {
             pair[2 * i] += bus[i] * gl;
@@ -222,8 +220,8 @@ fn mix_parts_reference(
     let mut ret = Stereo::SILENT;
     fx.process(sends, &shared.fx, SR, &mut ret);
     for (i, (&l, &r)) in ret.l.iter().zip(&ret.r).enumerate() {
-        out[0][2 * i] += l * VOICE_SUM_TRIM;
-        out[0][2 * i + 1] += r * VOICE_SUM_TRIM;
+        out[0][2 * i] += l;
+        out[0][2 * i + 1] += r;
     }
     fx.master(out, &shared.fx, SR);
     fx.limit(out, SR);
@@ -304,9 +302,9 @@ fn mix_parts_is_bit_identical_to_the_reference() {
 }
 
 /// Send/return: a Part on pair 3, panned hard left, with a reverb send puts
-/// no dry signal on pair 1 — pair 1 carries exactly the FX return (fed the
-/// untrimmed send, trimmed after), a limiter lookahead late, which is
-/// silent until its first reflection.
+/// no dry signal on pair 1 — pair 1 carries exactly the FX return, × the
+/// output trim a limiter lookahead late, which is silent until its first
+/// reflection.
 #[test]
 fn fx_send_puts_no_dry_signal_on_pair_1() {
     let mut rig = Rig::new();
@@ -332,8 +330,8 @@ fn fx_send_puts_no_dry_signal_on_pair_1() {
             "block {b}: pair 1 is the return only"
         );
         last = Stereo {
-            l: ret.l.map(|x| x * VOICE_SUM_TRIM),
-            r: ret.r.map(|x| x * VOICE_SUM_TRIM),
+            l: ret.l.map(|x| x * OUTPUT_TRIM),
+            r: ret.r.map(|x| x * OUTPUT_TRIM),
         };
         let (l3, r3) = lr(&rig.out[2]);
         assert_eq!(peak(&r3), 0.0, "block {b}: hard left");
@@ -448,6 +446,16 @@ fn refused_notes_are_counted_and_silent() {
 /// A performance-level render for the new goldens: `blocks` blocks, notes
 /// on at block 0 and off at `blocks / 2`, every DAC sample hashed.
 fn render_perf(perf: &Performance, notes: &[(u8, u8)], blocks: usize) -> Vec<f32> {
+    render_tap(perf, notes, blocks, |rig| &rig.out)
+}
+
+/// `render_perf`, each block read from `tap` after `render`.
+fn render_tap(
+    perf: &Performance,
+    notes: &[(u8, u8)],
+    blocks: usize,
+    tap: fn(&Rig) -> &DacOut,
+) -> Vec<f32> {
     let shared = AudioShared::from_performance(perf);
     let mut rig = Rig::new();
     let mut all = Vec::new();
@@ -460,36 +468,43 @@ fn render_perf(perf: &Performance, notes: &[(u8, u8)], blocks: usize) -> Vec<f32
                 rig.inst.handle(off(ch, n), &shared);
             }
         }
-        for pair in rig.render(&shared) {
+        rig.render(&shared);
+        for pair in tap(&rig) {
             all.extend_from_slice(pair);
         }
     }
     all
 }
 
+const CHORD4: [(u8, u8); 4] = [(0, 60), (0, 64), (0, 67), (0, 71)];
+
 fn chord() -> Vec<f32> {
-    render_perf(
-        &Performance::new(),
-        &[(0, 60), (0, 64), (0, 67), (0, 71)],
-        200,
-    )
+    render_perf(&Performance::new(), &CHORD4, 200)
 }
 
 /// Part 2 plays Modal out of pair 2.
 fn two_parts() -> Vec<f32> {
+    render_perf(&two_parts_perf(), &[(0, 60), (1, 67)], 200)
+}
+
+fn two_parts_perf() -> Performance {
     let mut perf = Performance::new();
     perf.parts[1].load_init(EngineType::Modal);
     perf.parts[1].mix.output = DacPair::P2;
     perf.parts[1].mix.pan = 0.5;
-    render_perf(&perf, &[(0, 60), (1, 67)], 200)
+    perf
 }
 
 fn reverb_send(send: f32) -> Vec<f32> {
+    render_perf(&reverb_perf(send), &[(0, 60)], 300)
+}
+
+fn reverb_perf(send: f32) -> Performance {
     let mut perf = Performance::new();
     perf.fx.reverb.mix = 0.5;
     perf.fx.reverb.time = 0.7;
     perf.parts[0].mix.sends[2] = send;
-    render_perf(&perf, &[(0, 60)], 300)
+    perf
 }
 
 /// ADR 0011's gate for `reverb_send_on`: finite, within ±1.0, and the
@@ -605,16 +620,22 @@ fn the_costliest_patch_plays_six_voices_on_rev_v() {
 
 /// Recorded when the instrument path landed (plan Task 12). Re-record only
 /// for an intended sound change (`common::golden`).
-///
-/// Re-recorded for ADR 0050: each is the last recording × 1/√8, one block
-/// late, within 5e-8 of full scale (the FX bus hears untrimmed sends and
-/// only its return is trimmed, so the reverb's ring is unchanged).
 const GOLDENS: &[(&str, u64)] = &[
-    ("poly_chord", 0x4dd60530a4325afd),
-    ("two_parts_two_pairs", 0x26c7a28fdac635b4),
-    ("reverb_send_off", 0xab56791b4b86ba21),
-    ("reverb_send_on", 0xf60f894cd0edb43d),
-    ("six_voice_chord", 0x176c7c512cef19a5),
+    ("poly_chord", 0x0a13a4fc59de97e5), // re-recorded: old×1/√8, one block late (ADR 0050)
+    ("two_parts_two_pairs", 0xb865c6141ef783ca), // re-recorded: old×1/√8, one block late (ADR 0050)
+    ("reverb_send_off", 0x6b1c722b362c4ae5), // re-recorded: old×1/√8, one block late (ADR 0050)
+    ("reverb_send_on", 0x49c5b6ba083c87f7), // re-recorded: old×1/√8, one block late (ADR 0050)
+    ("six_voice_chord", 0x2b79abe5f6e9301d), // re-recorded: old×1/√8, one block late (ADR 0050)
+];
+
+/// ADR 0050: everything before the limiter is main's mix, bit for bit.
+/// These are `GOLDENS` as main recorded them, before the output trim.
+const PRE_LIMITER: &[(&str, u64)] = &[
+    ("poly_chord", 0x508049a56f63be65),
+    ("two_parts_two_pairs", 0x98262aa38f73b0af),
+    ("reverb_send_off", 0x74703404aa517989),
+    ("reverb_send_on", 0x051f724346259a5a),
+    ("six_voice_chord", 0xf6e19895e1a40915),
 ];
 
 /// A named golden case: a case name paired with its render function.
@@ -634,6 +655,38 @@ fn instrument_goldens_match() {
         .map(|(name, render)| (name, fnv1a(&render())))
         .collect();
     common::golden::check(GOLDENS, &got);
+}
+
+#[test]
+fn the_mix_before_the_limiter_is_mains() {
+    fn pre(rig: &Rig) -> &DacOut {
+        rig.fx.limiter().input()
+    }
+    let cases: [(&str, Vec<f32>); 5] = [
+        (
+            "poly_chord",
+            render_tap(&Performance::new(), &CHORD4, 200, pre),
+        ),
+        (
+            "two_parts_two_pairs",
+            render_tap(&two_parts_perf(), &[(0, 60), (1, 67)], 200, pre),
+        ),
+        (
+            "reverb_send_off",
+            render_tap(&reverb_perf(0.0), &[(0, 60)], 300, pre),
+        ),
+        (
+            "reverb_send_on",
+            render_tap(&reverb_perf(0.5), &[(0, 60)], 300, pre),
+        ),
+        (
+            "six_voice_chord",
+            render_tap(&factory(4), &CHORD6.map(|n| (0, n)), 200, pre),
+        ),
+    ];
+    let got: Vec<_> = cases.iter().map(|(name, v)| (*name, fnv1a(v))).collect();
+    let failures = common::golden::mismatches(PRE_LIMITER, &got);
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
 /// What the goldens lock is what the spec asks for.
@@ -1216,8 +1269,7 @@ fn the_master_comp_ducks_pair_2_with_pair_1() {
         shared.parts[1].mix.output = DacPair::P2;
         (shared.fx.comp.thresh, shared.fx.comp.ratio) = (0.25, ratio);
         let buses: [[f32; BLOCK_SIZE]; MAX_PARTS] = core::array::from_fn(|p| match p {
-            // 0.9 on pair 1 after the voice-sum trim.
-            0 => [0.9 / VOICE_SUM_TRIM; BLOCK_SIZE],
+            0 => [0.9; BLOCK_SIZE],
             1 => core::array::from_fn(|i| 0.01 * (i as f32 * 0.3).sin()),
             _ => [0.0; BLOCK_SIZE],
         });

@@ -118,13 +118,6 @@ pub type DacOut = [[f32; BLOCK_SIZE * 2]; DAC_PAIRS];
 // ADR 0013/0014: the voice pool (and its small bookkeeping) lives in D2.
 const _: () = assert!(size_of::<Instrument>() <= VOICE_RAM_BUDGET);
 
-/// The voice-sum trim (ADR 0050): 1/√8, −9.03 dB, so eight voices summed
-/// at random phase land where one voice did. It goes around the FX bus,
-/// not into it: the dry path takes it in each Part's hoisted gains, the
-/// sends stay untrimmed and the bus's return takes it instead, so the
-/// reverb's i16 ring and the delay's saturation hear what they always did.
-pub const VOICE_SUM_TRIM: f32 = 0.353_553_38;
-
 /// Constant-power pan: (left, right) gains for `pan` in -1..1. Centre is
 /// -3 dB per side; hard left/right is unity on one side, exactly 0 on the
 /// other. Out-of-range `pan` is clamped (NaN reads as centre).
@@ -164,11 +157,11 @@ const SEND_STEP: usize = 2;
 const PAIR_STEP: usize = 8;
 const _: () = assert!(BLOCK_SIZE.is_multiple_of(SEND_STEP) && BLOCK_SIZE.is_multiple_of(PAIR_STEP));
 
-/// Steps 2–4 of `render`: each written Part's bus, trimmed, panned and
-/// levelled, into its pair and, by its sends, into the FX sends; then the
-/// FX bus once, its return trimmed onto pair 1; then the master section
-/// (`FxBus::master`) and the output limiter (`FxBus::limit`), which puts
-/// out the block before this one.
+/// Steps 2–4 of `render`: each written Part's bus, panned and levelled,
+/// into its pair and, by its sends, into the FX sends; then the FX bus
+/// once, its return on pair 1; then the master section (`FxBus::master`);
+/// then the output stage (`FxBus::limit`, ADR 0050), which trims and
+/// limits the block before this one.
 /// Returns the scope block (the written buses summed). Separate so the
 /// bench can time it without voices.
 ///
@@ -199,8 +192,7 @@ pub fn mix_parts(
         }
         let bus = &buses[p];
         let (gl, gr) = pans.gains(p, part.mix.pan);
-        let g = part.mix.level * VOICE_SUM_TRIM;
-        let (gl, gr) = (gl * g, gr * g);
+        let (gl, gr) = (gl * part.mix.level, gr * part.mix.level);
         src[n] = (bus, part.mix.sends);
         n += 1;
         let k = part.mix.output.index();
@@ -245,14 +237,14 @@ pub fn mix_parts(
             }
             if k == 0 {
                 for j in 0..PAIR_STEP {
-                    a[2 * j] += ret.l[i + j] * VOICE_SUM_TRIM;
-                    a[2 * j + 1] += ret.r[i + j] * VOICE_SUM_TRIM;
+                    a[2 * j] += ret.l[i + j];
+                    a[2 * j + 1] += ret.r[i + j];
                 }
             }
             pair[2 * i..2 * (i + PAIR_STEP)].copy_from_slice(&a);
         }
     }
-    // The master section, after every pair is summed; then the limiter.
+    // The master section, after every pair is summed; then the output stage.
     fx.master(out, &shared.fx, sample_rate);
     fx.limit(out, sample_rate);
     scope

@@ -1,18 +1,22 @@
-//! The final peak limiter (ADR 0050): after the master section, the last
-//! stage before the DACs. One gain, linked across every pair and side,
-//! holds each sample at or under `CEILING`, so `to_dac`'s clamp is never
-//! reached. Below the ceiling it is exact: the output is the input one
-//! block late, bit for bit.
+//! The output stage (ADR 0050): after the master section, the last stage
+//! before the DACs. It trims the mix by `OUTPUT_TRIM` and holds each sample
+//! at or under `CEILING`, with one gain linked across every pair and side,
+//! so `to_dac`'s clamp is never reached. Everything before it is left at
+//! main's levels, so the level-dependent stages (the reverb's i16 ring,
+//! the delay's saturation, the tape, the compressor) keep their character.
+//! Below `THRESHOLD` it is exact: the output is the input × the trim, one
+//! block late.
 //!
 //! The gain moves once per `STEP`-sample chunk and is ramped between, as
-//! the compressor's is (`ramp_gains`). Each chunk in asks for `AIM / peak`
-//! (1 at or under the ceiling). The gain at a chunk end out is the least
-//! any of the next `CHUNKS` chunks asks for (a van Herk minimum over this
-//! block and the last), released at 50 ms, then averaged over the last
-//! `CHUNKS` chunk ends. Every term of that average covers the chunks the
-//! ramp crosses, so the attack is done within the lookahead and no sample
-//! passes the ceiling. The average is summed in fixed point: it never
-//! drifts, and at rest it is exactly unity.
+//! the compressor's is (`ramp_gains`). Each chunk in asks to keep a share
+//! of the trim, `AIM / (peak · trim)` (1 at or under the threshold). The
+//! share at a chunk end out is the least any of the next `CHUNKS` chunks
+//! asks for (a van Herk minimum over this block and the last), released at
+//! 50 ms, then averaged over the last `CHUNKS` chunk ends. Every term of
+//! that average covers the chunks the ramp crosses, so the attack is done
+//! within the lookahead and no sample passes the ceiling. The average is
+//! summed in fixed point: it never drifts, and at rest the gain is exactly
+//! the trim.
 
 use chimera_hal::BLOCK_SIZE;
 use core::f32::consts::LOG2_E;
@@ -24,6 +28,12 @@ use crate::hw::DAC_PAIRS;
 
 /// −1 dBFS.
 pub const CEILING: f32 = 0.891_250_9;
+/// The output trim (ADR 0050): 1/√8, −9.03 dB, so eight voices summed at
+/// random phase land where one voice did. The limiter's rest gain.
+pub const OUTPUT_TRIM: f32 = 0.353_553_38;
+/// The input level the trim brings to the ceiling: above it, the limiter
+/// takes more than the trim.
+pub const THRESHOLD: f32 = CEILING / OUTPUT_TRIM;
 /// What an over chunk is scaled to: 2^-20 under the ceiling, room for the
 /// few roundings between the detector and the output.
 const AIM: f32 = CEILING * (1.0 - 1.0 / (1 << 20) as f32);
@@ -84,7 +94,7 @@ impl Limiter {
             rel: 1.0,
             held: [ONE; CHUNKS],
             sum: FULL,
-            gain: 1.0,
+            gain: OUTPUT_TRIM,
             k: 0.0,
             rate: 0,
         }
@@ -111,7 +121,12 @@ impl Limiter {
         for (c, mc) in m.iter_mut().enumerate() {
             let i0 = c * STEP;
             let peak = chunk_peak(out, i0);
-            let r = if peak > CEILING { AIM / peak } else { 1.0 };
+            // The share of the trim this chunk keeps: `AIM / (peak · trim)`.
+            let r = if peak > THRESHOLD {
+                (AIM / OUTPUT_TRIM) / peak
+            } else {
+                1.0
+            };
             *mc = least(r, prev);
             prev = r;
             head = least(head, *mc);
@@ -129,7 +144,8 @@ impl Limiter {
             let q = (self.rel * ONE as f32) as u32; // floors: never above
             self.sum = self.sum - self.held[slot] + q;
             self.held[slot] = q;
-            let e1 = self.sum as f32 * (1.0 / FULL as f32);
+            // The trim times the average: exactly the trim at rest.
+            let e1 = self.sum as f32 * (OUTPUT_TRIM / FULL as f32);
             // The chunk in is kept; the one kept a block ago goes out.
             for (j, g) in ramp_gains(e0, e1).into_iter().enumerate() {
                 let k = 2 * (i0 + j);
@@ -163,7 +179,8 @@ fn least(a: f32, b: f32) -> f32 {
 /// the bits: a float's magnitude orders as its bits do, and integer
 /// compares skip the FPU's flag round trip.
 ///
-/// A non-finite sample reads as full scale. It has no level to measure,
+/// A non-finite sample reads as the level the trim brings to full scale.
+/// It has no level to measure,
 /// and the DAC plays it at full scale at most (`to_dac`: ±inf clamps, NaN
 /// is silence), so it asks for the ceiling's 1 dB and no more: a fault
 /// upstream never mutes the music around it, and a finite over beside it
@@ -178,8 +195,8 @@ fn chunk_peak(x: &Pairs, i0: usize) -> f32 {
 }
 
 const INF: u32 = 0x7f80_0000;
-/// 1.0's bits.
-const FULL_SCALE: u32 = 0x3f80_0000;
+/// The input the trim brings to the DAC's full scale.
+const FULL_SCALE: u32 = (1.0 / OUTPUT_TRIM).to_bits();
 
 /// The largest `read(|s| bits)` over the chunk.
 #[inline(always)]

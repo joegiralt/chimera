@@ -16,6 +16,7 @@ use cpal::Stream;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
+use std::time::{Duration, Instant};
 
 #[cfg(feature = "midi")]
 const N_SOURCES: usize = 2;
@@ -39,6 +40,7 @@ pub struct DesktopAudio {
     /// The computer keyboard's note source.
     keys: NoteProducer<'static>,
     shared_audio: Writer<AudioShared>,
+    clamp_log: ClampLog,
     #[cfg(feature = "midi")]
     _midi: Option<midir::MidiInputConnection<()>>,
 }
@@ -122,6 +124,7 @@ impl DesktopAudio {
             shared,
             keys,
             shared_audio,
+            clamp_log: ClampLog::default(),
         }
     }
 
@@ -130,8 +133,8 @@ impl DesktopAudio {
     pub fn update(&mut self, perf: &Performance) {
         self.shared_audio.publish(|b| b.update_from(perf));
         let clamped = self.shared.clamped.swap(0, Ordering::Relaxed);
-        if clamped > 0 {
-            eprintln!("speakers: {clamped} frames of the pairs' sum clamped at full scale");
+        if let Some(n) = self.clamp_log.note(clamped, Instant::now()) {
+            eprintln!("speakers: {n} frames of the pairs' sum clamped at full scale");
         }
     }
 
@@ -158,6 +161,31 @@ impl DesktopAudio {
         self.shared
             .solo
             .store(pair.min(DAC_PAIRS as u8), Ordering::Relaxed);
+    }
+}
+
+/// The mixdown's clamped frames, reported at most once per `EVERY`.
+#[derive(Default)]
+struct ClampLog {
+    pending: u32,
+    last: Option<Instant>,
+}
+
+impl ClampLog {
+    const EVERY: Duration = Duration::from_secs(1);
+
+    /// Add `n` clamped frames seen by `now`; the count to report, if one is
+    /// due.
+    fn note(&mut self, n: u32, now: Instant) -> Option<u32> {
+        self.pending = self.pending.saturating_add(n);
+        let due = self
+            .last
+            .is_none_or(|t| now.duration_since(t) >= Self::EVERY);
+        if self.pending == 0 || !due {
+            return None;
+        }
+        self.last = Some(now);
+        Some(core::mem::take(&mut self.pending))
     }
 }
 
@@ -273,6 +301,20 @@ mod tests {
         let mut d = dac();
         (d[1][0], d[1][1]) = (3.0, -0.5);
         assert_eq!(stereo_frame(&d, 2, 0), ((1.0, to_dac(-0.5).level()), false));
+    }
+
+    /// At most one report a second, carrying every frame since the last.
+    #[test]
+    fn the_clamp_log_reports_once_a_second_with_a_count() {
+        let t0 = Instant::now();
+        let at = |ms| t0 + Duration::from_millis(ms);
+        let mut log = ClampLog::default();
+        assert_eq!(log.note(0, at(0)), None, "nothing to report");
+        assert_eq!(log.note(3, at(10)), Some(3));
+        assert_eq!(log.note(5, at(500)), None, "too soon");
+        assert_eq!(log.note(2, at(900)), None);
+        assert_eq!(log.note(0, at(1010)), Some(7), "the held count, once due");
+        assert_eq!(log.note(0, at(3000)), None);
     }
 
     /// Three pairs near full scale sum past 1.0: the speakers still get

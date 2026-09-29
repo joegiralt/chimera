@@ -1,4 +1,4 @@
-# 0050. Gain staging: voice-sum trim and a final peak limiter
+# 0050. Gain staging: an output trim and a final peak limiter
 
 - **Status:** Proposed
 - **Deciders:** owner; firmware (#190)
@@ -22,26 +22,26 @@ types and the real `Instrument` (#190) measured:
   this.
 
 ## Decision
-- **A trim, around the FX bus.** `VOICE_SUM_TRIM` is 1/√8 (−9.03 dB), so
-  eight voices summed at random phase land where one voice did.
-  - The dry path takes it in `mix_parts`' hoisted gains (`level × trim ×
-    pan`): no work per sample.
-  - The sends stay untrimmed, and the FX bus's return is trimmed as it is
-    added to pair 1. That multiply fuses into the existing add (VMLA), so
-    it adds no instruction.
-  - Why around the bus and not into it: to keep the reverb's character.
-    The ring is fixed point, and GRIT's grid does not scale with its
-    input. A send 9 dB lower made its quantisation relatively 9 dB louder
-    (0.7 % of the return, −43 dB, in `reverb_send_on`). Now the ring hears
-    exactly what it heard before the trim, and its output is the old
-    output × 1/√8.
-  - The same rule covers the whole bus. The chorus is linear float (its
-    only integer is the LFO phase). The delay is float, but its SAT
-    `tanh` depends on level, and REV SEND feeds the delay's return into
-    the reverb. Keeping every send at its old level keeps both exact.
+- **An output trim, in the limiter.** `OUTPUT_TRIM` is 1/√8 (−9.03 dB),
+  so eight voices summed at random phase land where one voice did. It is
+  the limiter's rest gain, after the master section: below the limiter's
+  threshold the output is exactly the input × the trim, one block late.
+  - Everything before it is main's mix, bit for bit: `mix_parts`, the
+    chorus, delay, reverb, tape and compressor all run as on main.
+    `the_mix_before_the_limiter_is_mains` checks the limiter's input
+    against main's recorded goldens.
+  - Why there, and not on the voice sum: to keep the character of every
+    level-dependent stage. The reverb's ring is fixed point, and GRIT's
+    grid does not scale with its input. A send 9 dB lower made its
+    quantisation relatively 9 dB louder (0.7 % of the return, −43 dB).
+    The delay's SAT `tanh`, the tape's drive and the compressor's
+    threshold all act on level too. Trimmed ahead of them, the tape would
+    saturate less and the compressor would fire 9 dB later. After them,
+    each hears what it always did.
+  - It costs nothing per sample. The trim folds into constants the
+    limiter already uses: the rest gain is `sum · (trim / FULL)`, the
+    threshold is `CEILING / trim`, and the aim is `(AIM / trim) / peak`.
   - The dry/wet balance is unchanged.
-  - The tape and the compressor, in the master section, do see the
-    trimmed mix.
 - **One limiter, last.** `Limiter` (`dsp/limiter.rs`) runs after the
   master section (`FxBus::limit`, called by `mix_parts` after
   `FxBus::master`). It is a peak limiter linked across all three pairs,
@@ -60,11 +60,11 @@ types and the real `Instrument` (#190) measured:
     closer than that, an f32 one-pole's steps fall under half an ulp and
     it would stall short of unity;
   - the average is summed in 24-bit fixed point, so it cannot drift. At
-    rest it is exactly 1.0: below the ceiling the output is the input one
-    block late, bit for bit;
+    rest the gain is exactly the trim;
   - the detector compares magnitudes as integer bits, with no FPU flag
     round trip;
-  - a non-finite sample reads as full scale. It has no level to measure,
+  - a non-finite sample reads as the level the trim brings to full scale.
+    It has no level to measure,
     and the DAC plays it at full scale at most (±inf clamps, NaN plays
     silence), so it asks for the ceiling's 1 dB and no more. A fault
     upstream cannot mute the music around it, and a finite over in the
@@ -97,8 +97,12 @@ types and the real `Instrument` (#190) measured:
   part of the sound the owner likes. With the trim and the limiter in
   place it cannot clip the DACs. Whether it should be quieter is a
   question for the ear, kept for later (#190).
-- **Trimming the sends too (this ADR's first draft).** It changed the
-  reverb's character, as above.
+- **Trimming the voice sum, sends included (this ADR's first draft).**
+  It changed the reverb's character, as above.
+- **Trimming the voice sum around the FX bus (the second draft).** The
+  sends stayed untrimmed and the return took the trim, so the effects
+  were exact. But the tape and the compressor still saw a mix 9 dB
+  quieter, and the compressor's threshold fired 9 dB later.
 - **A trim of 1/8 (the worst coherent case).** That takes 18 dB from every
   note, when eight coherent peaks almost never line up. The limiter covers
   the rare case.
@@ -109,15 +113,16 @@ types and the real `Instrument` (#190) measured:
   silence up to 50 ms around it.
 
 ## Consequences
-- A single note is about 9 dB quieter than before, at every output. The
-  FX returns are too, by the same amount, so the balance holds.
+- A single note is about 9 dB quieter than before, at every output, and so
+  is everything else: the output is main's × 1/√8 until the limiter
+  engages.
 - Measured with the probe after the change:
   - the default Sound, eight voices: 0 % clamped (was 12 %);
   - the synthetic eight-saw chord with the FX off peaks at 0.99 before the
     limiter (was 2.79) and 0.89 after it;
   - at maximum settings, with +24 dB makeup: 6.0 before the limiter, 0.89
     after it, 0 % clamped (was 85 %).
-- The reverb's ring sees what it saw before this change.
+- Every stage before the limiter sees what it saw before this change.
   - With typical FX (sends 0.3) its peak is 17,700 of 32,767 in the probe,
     and 6,852 to 13,646 with real voices, with no word on the rail.
   - At send 1 with the default Sound, or at maximum settings, it reaches
@@ -138,15 +143,19 @@ types and the real `Instrument` (#190) measured:
     drops from five voices to four on rev Y. Rev V keeps six up to 306
     cycles.
   - The FX bus is already over its target (#141).
-  - The trim itself costs nothing: its multiplies fold into gains or fuse
-    into existing adds.
+  - The trim itself costs nothing: it folds into the limiter's constants.
 - Memory: `Limiter` is 1,688 bytes inside `FxBus`, in AXI SRAM: one block
   of all three pairs (1,536 B) and the gain state. No heap. Flash grows by
   about 2.7 KB.
-- The five instrument goldens were re-recorded. Each is its old render ×
-  1/√8, one block late, within 5e-8 of full scale; the reverb case
-  included. The per-voice and FX goldens are upstream of the mix and do
-  not change.
+- The five instrument goldens were re-recorded. Each is exactly its old
+  render × 1/√8 (one f32 multiply per sample), one block late. Main's
+  hashes are kept as the pre-limiter check. The per-voice and FX goldens
+  are upstream of the mix and do not change.
+- The tape's clip is the only curve before the limiter at typical levels,
+  and its knee is smooth. The quintic meets its ceiling with zero slope
+  and zero curvature, so the clamp there adds no corner
+  (`the_tapes_clip_has_no_hard_corner`). The ring's i16 rail is a hard
+  edge, but it is off at typical sends (#142).
 
 ## Sources
 Issue #190 and its probe (`gainprobe`); #141 (FX bus cost); #142 (ring
