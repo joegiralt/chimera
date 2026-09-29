@@ -20,7 +20,11 @@ pub enum Shape {
 
 #[derive(Clone, Copy)]
 pub struct Recipe {
+    /// The label the UI shows.
     pub name: &'static str,
+    /// The wave's frozen disk ident (ADR 0045): one token, a literal of its
+    /// own so a relabel can't move it. Append-only, like the entry.
+    pub ident: &'static str,
     pub shape: Shape,
     pub keeps_dc: bool,
 }
@@ -33,17 +37,19 @@ fn first_half(t: f64, f: fn(f64) -> f64) -> f64 {
     if t < 0.5 { f(2.0 * t) } else { 0.0 }
 }
 
-const fn tx(name: &'static str, f: fn(f64) -> f64) -> Recipe {
+const fn tx(name: &'static str, ident: &'static str, f: fn(f64) -> f64) -> Recipe {
     Recipe {
         name,
+        ident,
         shape: Shape::Time(f),
         keeps_dc: true,
     }
 }
 
-const fn classic(name: &'static str, shape: Shape) -> Recipe {
+const fn classic(name: &'static str, ident: &'static str, shape: Shape) -> Recipe {
     Recipe {
         name,
+        ident,
         shape,
         keeps_dc: false,
     }
@@ -53,15 +59,16 @@ const fn classic(name: &'static str, shape: Shape) -> Recipe {
 /// with its name in `chimera-core/tests/fixtures/disk_codes_v1.txt`. Never
 /// reorder or remove.
 pub const RECIPES: [Recipe; 16] = [
-    tx("W1", |t| (TAU * t).sin()),
-    tx("W2", w2),
-    tx("W3", |t| (TAU * t).sin().max(0.0)),
-    tx("W4", |t| w2(t).max(0.0)),
-    tx("W5", |t| first_half(t, |u| (TAU * u).sin())),
-    tx("W6", |t| first_half(t, w2)),
-    tx("W7", |t| first_half(t, |u| (TAU * u).sin().abs())),
-    tx("W8", |t| first_half(t, |u| w2(u).abs())),
+    tx("W1", "W1", |t| (TAU * t).sin()),
+    tx("W2", "W2", w2),
+    tx("W3", "W3", |t| (TAU * t).sin().max(0.0)),
+    tx("W4", "W4", |t| w2(t).max(0.0)),
+    tx("W5", "W5", |t| first_half(t, |u| (TAU * u).sin())),
+    tx("W6", "W6", |t| first_half(t, w2)),
+    tx("W7", "W7", |t| first_half(t, |u| (TAU * u).sin().abs())),
+    tx("W8", "W8", |t| first_half(t, |u| w2(u).abs())),
     classic(
+        "TRI",
         "TRI",
         Shape::Time(|t| {
             if t < 0.25 {
@@ -73,11 +80,24 @@ pub const RECIPES: [Recipe; 16] = [
             }
         }),
     ),
-    classic("SAW", Shape::Time(|t| 2.0 * ((t + 0.5) % 1.0) - 1.0)),
-    classic("SQR", Shape::Time(|t| if t < 0.5 { 1.0 } else { -1.0 })),
-    classic("P25", Shape::Time(|t| if t < 0.25 { 1.0 } else { -1.0 })),
-    classic("P12", Shape::Time(|t| if t < 0.125 { 1.0 } else { -1.0 })),
+    classic("SAW", "SAW", Shape::Time(|t| 2.0 * ((t + 0.5) % 1.0) - 1.0)),
     classic(
+        "SQR",
+        "SQR",
+        Shape::Time(|t| if t < 0.5 { 1.0 } else { -1.0 }),
+    ),
+    classic(
+        "P25",
+        "P25",
+        Shape::Time(|t| if t < 0.25 { 1.0 } else { -1.0 }),
+    ),
+    classic(
+        "P12",
+        "P12",
+        Shape::Time(|t| if t < 0.125 { 1.0 } else { -1.0 }),
+    ),
+    classic(
+        "TSAW",
         "TSAW",
         Shape::Time(|t| {
             if t < 0.75 {
@@ -89,9 +109,11 @@ pub const RECIPES: [Recipe; 16] = [
     ),
     classic(
         "RSQR",
+        "RSQR",
         Shape::Time(|t| (4.0 * (TAU * t).sin()).tanh() / 4.0f64.tanh()),
     ),
     classic(
+        "SSAW",
         "SSAW",
         Shape::Sines(|k| {
             let sign = if k % 2 == 1 { 1.0 } else { -1.0 };
@@ -163,7 +185,7 @@ pub fn render(r: &Recipe) -> [[i16; WAVE_LEN]; MIPS] {
     core::array::from_fn(|m| core::array::from_fn(|n| (mips[m][n] / peak * 32767.0).round() as i16))
 }
 
-/// The Rust source `chimera-core` includes: `WAVE_NAMES` and `WAVES`.
+/// The Rust source `chimera-core` includes: `WAVE_NAMES`, `WAVE_IDENTS` and `WAVES`.
 pub fn emit_rust() -> String {
     let mut out = String::new();
     let names: Vec<String> = RECIPES.iter().map(|r| format!("{:?}", r.name)).collect();
@@ -172,6 +194,13 @@ pub fn emit_rust() -> String {
         "pub static WAVE_NAMES: [&str; {}] = [{}];",
         RECIPES.len(),
         names.join(", ")
+    );
+    let idents: Vec<String> = RECIPES.iter().map(|r| format!("{:?}", r.ident)).collect();
+    let _ = writeln!(
+        out,
+        "pub static WAVE_IDENTS: [&str; {}] = [{}];",
+        RECIPES.len(),
+        idents.join(", ")
     );
     let _ = writeln!(
         out,

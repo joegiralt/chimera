@@ -1,11 +1,11 @@
 //! The Algo Sound's parameters, stored as bytes (spec § Voice model).
 
 use crate::block::{Block, ParamId, ParamSpec, ValFmt};
-use crate::dsp::algo::algorithms::{ALGO_COUNT, ALGO_NAMES, AlgoId};
+use crate::dsp::algo::algorithms::{ALGO_COUNT, ALGO_IDENTS, ALGO_NAMES, AlgoId};
 use crate::dsp::algo::env::EnvRates;
 use crate::dsp::algo::plan::OPS;
 use crate::dsp::algo::tx::COARSE_NAMES;
-use crate::dsp::algo::waves::{WAVE_COUNT, WAVE_NAMES, WaveId};
+use crate::dsp::algo::waves::{WAVE_COUNT, WAVE_IDENTS, WAVE_NAMES, WaveId};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AlgoOpParams {
@@ -101,6 +101,7 @@ pub static ALGO_OP_SPECS: [ParamSpec; 13] = [
 
 // An Enum's `max` is its last code: a longer table needs the spec to grow too.
 const _: () = assert!(ALGO_OP_SPECS[0].max as usize == WAVE_COUNT - 1);
+const _: () = assert!(WAVE_IDENTS.len() == WAVE_COUNT && WAVE_NAMES.len() == WAVE_COUNT);
 
 impl Block for AlgoOpParams {
     fn specs(&self) -> &'static [ParamSpec] {
@@ -150,10 +151,10 @@ impl Block for AlgoOpParams {
         (id == Self::WAVE).then_some(self.wave)
     }
 
-    /// A wave's ident is its name.
+    /// A wave's ident is its own literal (`Recipe::ident`), not its label.
     fn enum_ident(&self, id: ParamId) -> Option<&'static str> {
         (id == Self::WAVE)
-            .then(|| WAVE_NAMES.get(usize::from(self.wave)).copied())
+            .then(|| WAVE_IDENTS.get(usize::from(self.wave)).copied())
             .flatten()
     }
 
@@ -211,6 +212,7 @@ pub static ALGO_SPECS: [ParamSpec; 4] = [
 
 const _: () = assert!(ALGO_SPECS[0].max as usize == ALGO_COUNT - 1);
 const _: () = assert!(ALGO_SPECS[1].max as usize == ALGO_COUNT - 1);
+const _: () = assert!(ALGO_IDENTS.len() == ALGO_COUNT && ALGO_NAMES.len() == ALGO_COUNT);
 
 impl Block for AlgoParams {
     fn specs(&self) -> &'static [ParamSpec] {
@@ -246,14 +248,14 @@ impl Block for AlgoParams {
         }
     }
 
-    /// An algorithm's ident is its name.
+    /// An algorithm's ident is its own literal (`Algorithm::ident`), not its label.
     fn enum_ident(&self, id: ParamId) -> Option<&'static str> {
         let i = match id {
             Self::ALG_A => self.alg_a,
             Self::ALG_B => self.alg_b,
             _ => return None,
         };
-        ALGO_NAMES.get(usize::from(i)).copied()
+        ALGO_IDENTS.get(usize::from(i)).copied()
     }
 
     fn set_enum_code(&mut self, id: ParamId, code: u8) -> bool {

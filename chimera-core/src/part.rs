@@ -168,6 +168,12 @@ pub static CHANNEL_SPECS: [ParamSpec; MAX_PARTS] = [
     ParamSpec::choice(5, "P6 CH", ValFmt::OneBased(15), 15.0, 5.0).ident("P6_CH"),
 ];
 
+/// CH's values, by channel number (the byte is the meaning).
+const CHANNEL_IDENTS: [&str; 16] = [
+    "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15",
+];
+const _: () = assert!(CHANNEL_IDENTS.len() == PART_SPECS[0].max as usize + 1);
+
 impl Block for PartParams {
     fn specs(&self) -> &'static [ParamSpec] {
         &PART_SPECS
@@ -212,11 +218,8 @@ impl Block for PartParams {
     }
 
     fn enum_ident(&self, id: ParamId) -> Option<&'static str> {
-        const CHANNELS: [&str; 16] = [
-            "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15",
-        ];
         match id {
-            Self::CHANNEL => CHANNELS.get(usize::from(self.channel.get())).copied(),
+            Self::CHANNEL => CHANNEL_IDENTS.get(usize::from(self.channel.get())).copied(),
             Self::MODE => Some(self.mode.disk_ident()),
             Self::OUTPUT => Some(self.output.disk_ident()),
             _ => None,
