@@ -6,7 +6,9 @@ use chimera_core::block::ParamKind;
 use chimera_core::dsp::modal::{BankModes, MODAL_SPECS, ModalParams, ResonatorMode, reads};
 use chimera_core::dsp::note_to_freq;
 use chimera_hal::BLOCK_SIZE;
-use common::{SR, fundamental_hz, play_modal, play_modal_at, play_modal_bare, rms, rms_diff};
+use common::{
+    SR, assert_stable, fundamental_hz, play_modal, play_modal_at, play_modal_bare, rms_diff,
+};
 
 const MODES: [ResonatorMode; 4] = [
     ResonatorMode::String,
@@ -39,26 +41,8 @@ fn every_model_is_stable_at_every_extreme() {
                         };
                         p.set(s.id, v);
                         let out = play_modal(&p, note, 30 * sr / BLOCK_SIZE, 0);
-                        let last = &out[out.len() - sr..];
-                        let second = &out[sr..2 * sr];
-                        assert!(
-                            out.iter().all(|x| x.is_finite() && x.abs() <= 4.0),
-                            "{mode:?} {note} {} = {v}: bounded",
-                            s.label
-                        );
-                        assert!(
-                            rms(last) <= rms(second) * margin + 1e-6,
-                            "{mode:?} {note} {} = {v}: grows",
-                            s.label
-                        );
-                        // Over 10 s: a high-passed output's 1 s mean is
-                        // its edge samples', up to about 1e-2.
-                        let tail = &out[out.len() - 10 * sr..];
-                        assert!(
-                            (tail.iter().sum::<f32>() / tail.len() as f32).abs() < 1e-3,
-                            "{mode:?} {note} {} = {v}: DC",
-                            s.label
-                        );
+                        let label = format!("{mode:?} {note} {} = {v}", s.label);
+                        assert_stable(&out, 4.0, margin, &label);
                     }
                 }
             });

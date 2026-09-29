@@ -9,7 +9,7 @@ use crate::ui::theme_settings::ThemeSettings;
 
 use super::block_codec::{ByteSet, decode_block, encode_block};
 use super::card::{Card, CardFault, Ready};
-use super::codes::MIGRATIONS;
+use super::codes::{MIGRATIONS, TRANSLATIONS};
 use super::crc::Crc32;
 use super::file::{AbFile, Check, Decode, LoadError, SaveError, load_ab, save_ab};
 use super::frame::{Event, FileError, FileKind, ProjectId};
@@ -119,7 +119,12 @@ impl SystemCheck {
                     return Err(FileError::Corrupt);
                 }
                 let mut theme = staged.map(|s| ThemeBlocks(&mut s.theme));
-                decode_block(p, MIGRATIONS, theme.as_mut().map(|t| t as &mut dyn Blocks))
+                decode_block(
+                    p,
+                    MIGRATIONS,
+                    TRANSLATIONS,
+                    theme.as_mut().map(|t| t as &mut dyn Blocks),
+                )
             }
             ReadTag::Known(RecordTag::LastProject) => {
                 if core::mem::replace(&mut self.last_project, true) {

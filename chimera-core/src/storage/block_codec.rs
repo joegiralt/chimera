@@ -4,7 +4,7 @@
 use crate::addr::{BlockRef, Blocks};
 use crate::block::{Block, ParamId};
 
-use super::codes::{DiskValue, Migration, ValidAddr, read_value};
+use super::codes::{DiskValue, Migration, RETIRED, Retired, Translation, ValidAddr, read_value};
 use super::frame::FileError;
 use super::record::RecordBuf;
 
@@ -35,12 +35,14 @@ pub fn encode_block(b: BlockRef, blk: &dyn Block, out: &mut RecordBuf) {
 ///
 /// `Bounds`: not 1 + 5n bytes. `Corrupt`: an id twice. An unknown block
 /// code, or one `target` doesn't hold, is skipped; so is an unknown param id,
-/// unless a migration maps it and the file lacks the new id. A non-finite
-/// value or an unknown code keeps the target's value; a real is clamped and
-/// quantised by its spec.
+/// unless a migration maps it and the file lacks the new id. A finite
+/// retired value is kept for the block's translation, run after the writes.
+/// A non-finite value or an unknown code keeps the target's value; a real is
+/// clamped and quantised by its spec.
 pub fn decode_block(
     payload: &[u8],
     migrations: &[Migration],
+    translations: &[Translation],
     target: Option<&mut dyn Blocks>,
 ) -> Result<(), FileError> {
     let (&code, body) = payload.split_first().ok_or(FileError::Bounds)?;
@@ -69,10 +71,15 @@ pub fn decode_block(
     let slot = |id: ParamId| specs.iter().position(|s| s.id == id);
 
     let mut vals = [None; MAX_BLOCK_PARAMS];
+    let mut retired = Retired::new();
     for (id, raw) in entries {
         let (a, v) = match ValidAddr::find(b, id) {
             Some(a) => (a, value(a, raw)),
             None => {
+                let old = f32::from_le_bytes(raw);
+                if old.is_finite() && RETIRED.contains(&(code, id.0)) {
+                    retired.put(id, old);
+                }
                 let Some(m) = migrations
                     .iter()
                     .find(|m| m.block == code && m.old == id && !seen.contains(m.new.0))
@@ -82,7 +89,7 @@ pub fn decode_block(
                 let Some(a) = ValidAddr::find(b, m.new) else {
                     continue;
                 };
-                let v = (m.map)(f32::from_le_bytes(raw));
+                let v = (m.map)(old);
                 (a, v.is_finite().then_some(DiskValue::Real(v)))
             }
         };
@@ -100,6 +107,11 @@ pub fn decode_block(
             }
             None => {}
         }
+    }
+    if retired.any()
+        && let Some(t) = translations.iter().find(|t| t.block == code)
+    {
+        (t.apply)(&retired, blk);
     }
     Ok(())
 }
@@ -141,7 +153,7 @@ mod tests {
     use super::*;
     use crate::block::{ParamKind, ParamSpec};
     use crate::params::{FILTER_SPECS, FilterParams};
-    use crate::storage::MIGRATIONS;
+    use crate::storage::{MIGRATIONS, TRANSLATIONS};
 
     /// A Filter that logs the order of its enum writes.
     struct Order {
@@ -181,7 +193,7 @@ mod tests {
             log: [ParamId(0); 4],
             n: 0,
         };
-        decode_block(&payload, &[], Some(&mut o)).unwrap();
+        decode_block(&payload, &[], &[], Some(&mut o)).unwrap();
         assert_eq!(o.log[..o.n], [FilterParams::KIND, FilterParams::MODE]);
     }
 
@@ -200,6 +212,15 @@ mod tests {
             assert!(ValidAddr::find(b, m.old).is_none(), "old id still live");
             let a = ValidAddr::find(b, m.new).expect("a stored new id");
             assert_ne!(a.spec().kind, ParamKind::Enum);
+        }
+    }
+
+    /// A translation reads a live block, and a retired id of it.
+    #[test]
+    fn translations_target_live_blocks() {
+        for t in TRANSLATIONS {
+            assert!(BlockRef::from_disk_code(t.block).is_some(), "{}", t.block);
+            assert!(RETIRED.iter().any(|r| r.0 == t.block), "{}", t.block);
         }
     }
 }

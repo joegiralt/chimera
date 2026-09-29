@@ -434,6 +434,22 @@ pub fn rms_diff(a: &[f32], b: &[f32]) -> f32 {
     rms(&d)
 }
 
+/// A held note's render: finite and within `bound`, its last second no
+/// louder than its second × `margin`, and no DC. The DC mean is over 10 s:
+/// a high-passed output's 1 s mean is its edge samples', up to about 1e-2.
+pub fn assert_stable(out: &[f32], bound: f32, margin: f32, label: &str) {
+    let sr = SR as usize;
+    assert!(
+        out.iter().all(|x| x.is_finite() && x.abs() <= bound),
+        "{label}: bounded"
+    );
+    let (second, last) = (&out[sr..2 * sr], &out[out.len() - sr..]);
+    assert!(rms(last) <= rms(second) * margin + 1e-6, "{label}: grows");
+    let tail = &out[out.len() - 10 * sr..];
+    let mean = tail.iter().sum::<f32>() / tail.len() as f32;
+    assert!(mean.abs() < 1e-3, "{label}: DC {mean}");
+}
+
 /// Each `(i, jump)` where `tanh(0.4·x)` jumps more than 0.15 from the
 /// sample before: the desktop's output stage, clicking.
 pub fn clicks(out: &[f32]) -> Vec<(usize, f32)> {

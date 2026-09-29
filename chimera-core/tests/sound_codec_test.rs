@@ -264,17 +264,20 @@ fn unknown_engine_needs_newer() {
 #[test]
 fn block_payload_shape_is_checked() {
     let mut p = Sound::neutral(EngineType::Algo).params;
-    assert_eq!(decode_block(&[], &[], None), Err(FileError::Bounds));
-    assert_eq!(decode_block(&[10, 0, 0], &[], None), Err(FileError::Bounds));
+    assert_eq!(decode_block(&[], &[], &[], None), Err(FileError::Bounds));
+    assert_eq!(
+        decode_block(&[10, 0, 0], &[], &[], None),
+        Err(FileError::Bounds)
+    );
     let dup = [10, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0];
-    assert_eq!(decode_block(&dup, &[], None), Err(FileError::Corrupt));
+    assert_eq!(decode_block(&dup, &[], &[], None), Err(FileError::Corrupt));
     // Unknown block codes and param ids are skipped.
     assert_eq!(
-        decode_block(&[200, 1, 0, 0, 0, 0], &[], Some(&mut p)),
+        decode_block(&[200, 1, 0, 0, 0, 0], &[], &[], Some(&mut p)),
         Ok(())
     );
     assert_eq!(
-        decode_block(&[10, 99, 0, 0, 0, 0], &[], Some(&mut p)),
+        decode_block(&[10, 99, 0, 0, 0, 0], &[], &[], Some(&mut p)),
         Ok(())
     );
 }
@@ -290,7 +293,7 @@ fn migration_maps_old_id() {
     let mut p = vec![10, 5];
     p.extend_from_slice(&0.8f32.to_le_bytes());
     let mut snap = Sound::neutral(EngineType::Algo).params;
-    decode_block(&p, &[m], Some(&mut snap)).unwrap();
+    decode_block(&p, &[m], &[], Some(&mut snap)).unwrap();
     assert_eq!(snap.filter.resonance, 0.4);
 }
 
