@@ -760,7 +760,8 @@ fn a_pitch_route_on_modal_bills_the_retune() {
     );
 }
 
-/// Modal is billed per model (#49): String as benched, the others at or
+/// Modal is billed per model (#49): String and Sympathetic as benched
+/// (Sympathetic's pool still sounds at most four), the others at or
 /// above the emulator's estimate until the bench's MDL rows (ROUTING 3/3,
 /// `modal` in chimera-stm32/src/bench.rs) read them; then the readings
 /// replace the estimates here. Voices beside the whole FX bus at its worst,
@@ -776,7 +777,7 @@ fn modal_bills_each_model() {
     for (mode, billed, estimate, rev_v, rev_y) in [
         (ResonatorMode::String, 390, 390, 8, 8),
         (ResonatorMode::Bowed, 620, 565, 8, 6),
-        (ResonatorMode::Sympathetic, 1_400, 1_274, 3, 3),
+        (ResonatorMode::Sympathetic, 802, 802, 6, 5),
         (ResonatorMode::Modal, 1_900, 1_703, 2, 2),
     ] {
         let p = sound(mode);

@@ -33,6 +33,10 @@ pub struct KsRenderParams {
 
 /// A fresh line's loop, before its first `set_freq`.
 const INIT_LEN: usize = 100;
+/// What a fresh line's first `clear` writes.
+pub(super) const FRESH_CLEAR_BYTES: usize = INIT_LEN * size_of::<f32>();
+/// The most any line's `clear` writes: its whole ring.
+pub(super) const RING_BYTES: usize = MAX_STRING_DELAY * size_of::<f32>();
 
 /// The third ensemble head's fixed offset from the second.
 const ENS_SPREAD: f32 = 0.3;
@@ -82,12 +86,22 @@ impl KsString {
         self.write_pos
     }
 
-    /// Excite the string (Carcosa's Trigger).
+    /// Excite the string at `freq` (Carcosa's Trigger).
     /// excitation: 0=noise, 1=click, 2=bright, 3=dark
-    /// The line is cleared first: the old note's samples past the new loop
-    /// are never read back, even by a pitch drop that lengthens it.
-    pub(super) fn trigger(&mut self, amplitude: f32, excitation: u8, color: f32, position: f32) {
+    /// The line is cleared first, before the new loop's length widens its
+    /// extent: the clear writes `clear_bytes`, and the old note's samples
+    /// past the new loop are never read back, even by a pitch drop that
+    /// lengthens it.
+    pub(super) fn trigger(
+        &mut self,
+        (freq, sample_rate): (f32, u32),
+        amplitude: f32,
+        excitation: u8,
+        color: f32,
+        position: f32,
+    ) {
         self.clear();
+        self.set_freq(freq, sample_rate);
         // Fill delay line based on excitation type
         let mut prev = 0.0_f32;
         for i in 0..self.delay_len {
@@ -143,8 +157,15 @@ impl KsString {
     /// hold anything, so only it is written: a line last played high
     /// clears in a fraction of the ring.
     pub(super) fn clear(&mut self) {
+        #[cfg(any(test, feature = "test-support"))]
+        cleared::add(self.clear_bytes());
         self.buffer[..self.dirty].fill(0.0);
         self.dirty = self.delay_len.max(self.write_pos + 1);
+    }
+
+    /// What the next `clear` writes.
+    pub(super) fn clear_bytes(&self) -> usize {
+        self.dirty * size_of::<f32>()
     }
 
     /// Silent, writing from the start again.
@@ -313,4 +334,22 @@ pub(super) fn xorshift_noise(state: &mut u32) -> f32 {
     *state ^= *state >> 17;
     *state ^= *state << 5;
     (*state as i32) as f32 / i32::MAX as f32
+}
+
+/// Bytes `KsString::clear` has written on this thread: for the tests.
+#[cfg(any(test, feature = "test-support"))]
+pub(super) mod cleared {
+    extern crate std;
+    use core::cell::Cell;
+
+    std::thread_local!(static BYTES: Cell<usize> = const { Cell::new(0) });
+
+    pub(in super::super) fn add(n: usize) {
+        BYTES.with(|b| b.set(b.get() + n));
+    }
+
+    /// The bytes cleared since the last call.
+    pub fn take() -> usize {
+        BYTES.with(|b| b.replace(0))
+    }
 }

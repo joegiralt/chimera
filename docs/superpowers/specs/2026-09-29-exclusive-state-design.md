@@ -229,7 +229,7 @@ pub struct VoiceIdx(u8);                   // private field: always < MAX_VOICES
 ### 4.4 In place
 
 - **The sets are built once.** `SymPool::init_in_place` runs from `Instrument::init_in_place`. It builds each `SympatheticSet` through `uninit_at`, as the voices are built, and writes `SymAlloc::new()` by value (about 64 B). `field_list!` guards both.
-- **The sets are never rebuilt.** A note-on clears its lines, as today (§ 4.8): one memset per line, 27,552 B, through `&mut` in place. So `SympatheticSet` needs no `in_place_enum!`.
+- **The sets are never rebuilt.** A note-on clears its lines (§ 4.8), each only up to its dirty extent, through `&mut` in place. So `SympatheticSet` needs no `in_place_enum!`.
 - **The voice's side is the existing `ModelSlot`.** `SympatheticVoice::init_in_place(slot, lease)` builds the main string with `KsString::init_in_place`, then writes the lease by value (one byte).
 
 **Taking the lease out on a rebuild.** A rebuild overwrites the old payload in place. If that payload is a `SympatheticVoice`, its `Lease` has to come out first, and moving a non-`Copy` field out of `&mut` needs a read without a write-back. `in_place.rs` gains one helper, beside `by_value`:
@@ -287,7 +287,7 @@ These are pure `SymAlloc` methods, except the shells named at the end. Ages are 
 
 **Mono.** A Mono Part gets no protection from the pool (owner, 2026-09-29). A Mono Sympathetic Part retriggers its own voice and keeps its slot (`place` rule 1). When it holds the oldest slot, a newer note takes it (rule 3). The `Allocator`'s own rule 1, that a Mono voice is never stolen for budget, is unchanged. ADR 0054 records this exception.
 
-**Cost.** The pool does not change a voice's `Cost`. `ModalEngine::COST_SYMPATHETIC` stays 1,400, and it is billed only on the voices that play it, now at most four. Every `SymAlloc` method scans four slots, and `restart` runs at most `MAX_VOICES` times per switch. All of them run at note events, switches and voice ends, never per sample.
+**Cost.** The pool does not change a voice's `Cost`. `ModalEngine::COST_SYMPATHETIC` was 1,400, an estimate. The chip read it at 802 (bench f59bc92, 2026-09-29, rev V): MDL SYM's slope of 859 a voice over the first four notes, less the Modal Sound's chain of 57. It is billed only on the voices that play it, now at most four. Every `SymAlloc` method scans four slots, and `restart` runs at most `MAX_VOICES` times per switch. All of them run at note events, switches and voice ends, never per sample.
 
 ### 4.6 The fade and the rebuild bound
 
@@ -323,6 +323,11 @@ Task 5 made `KsString` and `ModalEngine` generic over a `Store` and set `Q16` as
 - **The fused injection.** Each sympathetic string keeps its last output in `pending` and stores it once, with the next sample's coupled input (`KsString::tick_coupled`). It is bit-identical to storing, then loading and storing again. It cut Sympathetic from about 593 to 411 hot-path instructions a sample (ADR 0052's table).
 - **One-pass `damp(passes)`.** It loads once, multiplies `passes` times and stores once. That is bit-identical to repeated passes.
 - **A note-on clears every line it starts, the whole ring.** It changes sound only where a PITCH route lengthens a loop after a retrigger: that loop now reads silence where it read the last note's tail, and no golden plays that. With a pool this matters more: a slot handed to a new voice carries nothing of its last holder's note, so a note on a reused slot sounds exactly as on a fresh pool (`a_handed_over_slot_carries_nothing`).
+
+**Revision (2026-09-29, after the chip's first bench).** A whole-ring clear of eight lines cost 40,906 cycles a Sympathetic note-on on the chip (f59bc92, rev V). Four in one block could overrun it. Two changes bound it. Both are bit-identical to the whole-ring clear.
+
+- **The dirty extent.** Each `KsString` keeps `dirty`: every sample at or past it reads 0.0, and it covers the loop and the write position. `set_freq` raises it to the new loop's length, `clear` zeros `[0, dirty)` only, and Bowed's whole-ring writes (`ring_push`) raise it as they go. A note-on clears each line before retuning it, so a line last played high clears a loop, not the ring. A line last played at or below G1 still clears its whole ring: the worst case is a slot's history, not the new note.
+- **One worst-case clear a block.** `SymPool::note_on_clear` is pure. It gives the bytes a Sympathetic note-on will clear, to the byte: the voice's main string (fresh if the note rebuilds the engine) and the set it keeps or would be lent. The `Instrument` spends a budget of `SYM_CLEAR_BUDGET` bytes a block, one worst-case note-on (`SYM_NOTE_ON_CLEAR_MAX`, eight rings, 31,488 B), so any one note-on fits a fresh block. A Sympathetic note-on whose clear doesn't fit what the block has left waits on the stolen note's path (`waiting`), and so does one that arrives while an earlier one waits on the budget. Such a note starts before its idle voice renders in a later block, so it sounds in the block that lets it in. A chord of four slots last played low starts a note a block, over four blocks (5.3 ms). A typical chord, four A4s after A4s, clears about 3 KB a note and starts at once. Nothing is refused, and a waiting note replaced before it sounds counts in `dropped_unheard`, as before. The rebuild bound is unchanged: a waiting note spends no rebuild.
 
 **Goldens (ADR 0011).** Measured on cf3a23f with both defaults switched to f32, every render Task 5 re-recorded matches its pre-Task-5 value exactly:
 
