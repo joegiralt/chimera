@@ -1,6 +1,6 @@
 # 0054. Sympathetic borrows its strings from a shared pool of four
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-09-29)
 - **Deciders:** project owner
 - Supersedes [0052](0052-strings-stored-as-16-bit-block-float.md) (16-bit
   block-float strings, never accepted).
@@ -135,22 +135,24 @@ otherwise it plays bare. Nothing is stolen for the pool (the owner's rule,
   less, so the bill is an upper bound.
 - One more rebuild per Sympathetic note: `rest`, at its natural end (a
   `KsString`'s worth of stores, once per note).
-- **Measured on the chip (bench f59bc92, rev V at 480 MHz, 2026-09-29).**
-  - SYM POOL 110,912 B.
-  - MDL STR /VOICE 424, within String's billed 447.
-  - MDL SYM: totals 1,120, 1,974, 2,830 and 3,698 at one to four notes,
-    flat past four, the pool's cap under the Rings rule. That is a slope of
-    859 a ringing voice, within the 1,457 billed. `COST_SYMPATHETIC` is now
-    802, the slope less the Modal Sound's chain of 57, as String's is.
-    Beside this branch's FX bus (1,360), it gives 6 voices on rev V and 5
-    on rev Y. Beside 1,160, the bus after PR #212, it gives the same 6 and
-    5. Four ring; the rest play bare.
-  - SYM NOTE-ON 40,906 cycles with the whole-ring clear. That reading led
-    to the dirty extent and the per-block budget above. With them, the
-    estimate is about 9–10k for A4 after A4. The worst case, a slot last
-    played at or below G1, stays about 41k, and the budget takes one a
-    block. The bench's `SYM NOTE-ON` and `SYM NOTE-ON LOW` rows read both
-    at the ship build.
+- **Measured on the chip (ship build 2df4100, rev V at 480 MHz, 2026-09-29).**
+  - SYM POOL 111,000 B.
+  - MDL STR /VOICE 422, within String's billed 447. MDL BOW 653 (7 V) and
+    MDL RES 1,865.
+  - MDL SYM /VOICE 866 (4 V): totals 1,122, 1,983, 2,844 and 3,721 at one
+    to four notes, flat past four, the pool's cap under the Rings rule.
+    That is within the 1,457 billed. `COST_SYMPATHETIC` is now 809, the
+    slope less the Modal Sound's chain of 57 (commit 25ad3dd), as String's
+    is. It still gives 6 voices on rev V and 5 on rev Y. Four ring; the
+    rest play bare.
+  - SYM NOTE-ON 20,131 cycles, typical. SYM NOTE-ON LOW 64,929 cycles, the
+    worst case, a slot last played low. That is above the ~41k estimate
+    (40,906 with the whole-ring clear, which led to the dirty extent and the
+    per-block budget above). It fits: the audio budget is 70 %
+    (`AUDIO_BUDGET_PERCENT`), so the other 30 %, about 192k cycles a block,
+    is headroom, and one worst clear a block uses about a third of it. The
+    budget takes one clear a block.
+  - The owner judged by ear that it plays fine.
 - **Host sizes with the dirty extent, the clear budget and the halo:**
   `Voice` 5,848 B, `SymPool` 111,336 B (`SymAlloc` 8 B), `Instrument`
   160,792 B, which leaves 125,928 B of D2.
