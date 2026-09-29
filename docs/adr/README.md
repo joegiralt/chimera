@@ -48,4 +48,4 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0040](0040-eight-voices-modal-strings-to-g1.md) | Eight voices in D2; Modal strings sized to G1 (supersedes in part 0014 and 0031) | Accepted |
 | [0041](0041-mod-matrix-amount-grid.md) | The mod matrix is an amount grid of outlined cells (supersedes in part 0016) | Accepted |
 | [0042](0042-voice-pitch-is-a-matrix-destination.md) | Voice pitch is a matrix destination on each engine's PITCH page | Accepted |
-| [0050](0050-gain-staging-trim-and-final-limiter.md) | Gain staging: a 1/√8 voice-sum trim around the FX bus and one peak limiter at −1 dBFS, last | Proposed |
+| [0050](0050-gain-staging-trim-and-final-limiter.md) | Gain staging: a 1/√8 output trim and one peak limiter at −1 dBFS, last | Proposed |

@@ -6,7 +6,8 @@
 //! DAC pair 1 at unity. The delay's return can feed the reverb's send (REV
 //! SEND), in the same block. After the pairs are summed, `master` runs the
 //! master section: the tape on DAC pair 1, then the compressor linked
-//! across all three pairs; `limit` then runs the output limiter (ADR 0050).
+//! across all three pairs; `limit` then runs the output stage, the trim
+//! and the peak limiter (ADR 0050).
 
 use chimera_hal::BLOCK_SIZE;
 use core::f32::consts::LOG2_E;
@@ -179,8 +180,8 @@ impl FxBus {
         self.comp.process(out, &params.comp, sample_rate);
     }
 
-    /// The output stage, after the master section: the peak limiter, one
-    /// block late (ADR 0050).
+    /// The output stage, after the master section: the output trim and the
+    /// peak limiter, one block late (ADR 0050).
     pub fn limit(&mut self, out: &mut [[f32; 2 * BLOCK_SIZE]; DAC_PAIRS], sample_rate: u32) {
         self.limiter.process(out, sample_rate);
     }
