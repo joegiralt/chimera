@@ -11,8 +11,8 @@ use chimera_core::name::Name;
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
 use chimera_core::storage::{
-    AbFile, Card, CardFault, FileKind, Generation, LoadError, Ready, RecordWriter, SaveError, Side,
-    SoundDecoder, check_frame, encode_sound, load_ab, save_ab, write_target,
+    AbFile, Card, CardFault, Generation, LoadError, Ready, RecordWriter, SaveError, Side,
+    SoundDecoder, check_file, encode_sound, load_ab, save_ab, write_target,
 };
 use chimera_hal::store::{Dir, Store, StoreError};
 use core::cell::RefCell;
@@ -67,8 +67,10 @@ pub fn save_on(
     extra: &dyn Fn(&mut RecordWriter<'_>) -> Result<(), StoreError>,
 ) -> Result<Generation, SaveError> {
     let snd = sound(n);
+    let mut scratch = Sound::neutral(EngineType::Algo);
+    let mut d = SoundDecoder::new(&mut scratch);
     op(s, |s, r| {
-        save_ab(s, r, file(), FileKind::Sound, Some(snd.name), &mut |w| {
+        save_ab(s, r, file(), &mut d, Some(snd.name), &mut |w| {
             encode_sound(&snd, w)?;
             extra(w)
         })
@@ -97,9 +99,11 @@ pub fn load(slot: &Slot) -> Result<Sound, LoadError> {
 /// The side the next save writes.
 pub fn target(slot: &Slot) -> Side {
     let f = file();
+    let mut scratch = Sound::neutral(EngineType::Algo);
+    let mut d = SoundDecoder::new(&mut scratch);
     op(&mut probed(slot), |s, r| {
-        let a = check_frame(s, r, f.side(Side::A), FileKind::Sound)?;
-        let b = check_frame(s, r, f.side(Side::B), FileKind::Sound)?;
+        let a = check_file(s, r, f.side(Side::A), &mut d)?;
+        let b = check_file(s, r, f.side(Side::B), &mut d)?;
         Ok::<_, StoreError>(write_target(a, b).0)
     })
     .unwrap()

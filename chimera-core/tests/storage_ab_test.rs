@@ -41,11 +41,21 @@ fn sound(i: usize) -> Sound {
     factory_sound(i).unwrap()
 }
 
+/// Only pass 1 runs on a save's decoder: its target is scratch.
 fn save<S: Store>(s: &mut S, snd: &Sound) -> Result<Generation, SaveError> {
+    let mut scratch = Sound::neutral(EngineType::Algo);
+    let mut d = SoundDecoder::new(&mut scratch);
     run(s, |s, r| {
-        save_ab(s, r, file(), FileKind::Sound, Some(snd.name), &mut |w| {
+        save_ab(s, r, file(), &mut d, Some(snd.name), &mut |w| {
             encode_sound(snd, w)
         })
+    })
+}
+
+fn delete<S: Store>(s: &mut S) -> Result<(), StoreError> {
+    let mut scratch = Sound::neutral(EngineType::Algo);
+    run(s, |s, r| {
+        delete_ab(s, r, file(), &mut SoundDecoder::new(&mut scratch))
     })
 }
 
@@ -231,6 +241,51 @@ fn pick_and_write_target_table() {
     }
 }
 
+/// Load and save agree on every pair of side states: the side a save
+/// writes is never the one a load returns, or refuses as needing newer
+/// firmware.
+#[test]
+fn save_never_writes_what_load_keeps() {
+    let errs = [
+        FileError::Truncated,
+        FileError::BadMagic,
+        FileError::BadCrc,
+        NNF,
+        FileError::WrongKind,
+        FileError::Bounds,
+        FileError::BadName,
+        FileError::Corrupt,
+    ];
+    let mut states = vec![SideState::Missing];
+    for e in errs {
+        states.push(if e.is_torn() {
+            SideState::Torn(e)
+        } else {
+            SideState::Headerless(e)
+        });
+    }
+    for g in [0, 1, 2, u32::MAX] {
+        states.push(present(g, None));
+        states.extend(errs.map(|e| present(g, Some(e))));
+    }
+    for &a in &states {
+        for &b in &states {
+            let (side, g) = write_target(a, b);
+            match pick(a, b) {
+                Pick::Load(k) | Pick::Refuse(k, NNF) => {
+                    assert_ne!(side, k, "{a:?}, {b:?}: wrote the kept side")
+                }
+                Pick::Refuse(..) | Pick::Missing => {}
+            }
+            for s in [a, b] {
+                if let SideState::Present { generation, .. } = s {
+                    assert!(g.is_newer_than(generation), "{a:?}, {b:?}: {g:?}");
+                }
+            }
+        }
+    }
+}
+
 // Saves and loads.
 
 #[test]
@@ -284,9 +339,8 @@ fn records(generation: u32, recs: &[(RecordTag, Vec<u8>)]) -> Vec<u8> {
     b.0
 }
 
-/// The decoder's `Bounds`, under a valid CRC: `load_ab` falls back. The
-/// framing `save_ab` checks can't see a decoder's verdict, so the save
-/// takes B for valid and writes A; pinned here, see the task report.
+/// The decoder's `Bounds`, under a valid CRC: `load_ab` falls back to A,
+/// and `save_ab`, judging by the same decode, writes over B, never A.
 #[test]
 fn invalid_newest_falls_back() {
     use chimera_core::block::DiskCode;
@@ -305,8 +359,10 @@ fn invalid_newest_falls_back() {
     });
     assert_eq!(state, Ok(present(2, None)), "framing alone passes it");
     assert_loads(&mut s, &sound(0));
+    let a = raw(&mut s, Side::A);
     assert_eq!(save(&mut s, &sound(2)), Ok(Generation::new(3)));
-    assert_eq!(generation_of(&raw(&mut s, Side::A)), 3);
+    assert_eq!(generation_of(&raw(&mut s, Side::B)), 3, "wrote over B");
+    assert_eq!(raw(&mut s, Side::A), a, "A untouched");
     assert_loads(&mut s, &sound(2));
 }
 
@@ -464,7 +520,7 @@ fn delete_older_first() {
             save(&mut s, &sound(i)).unwrap();
         }
         assert_eq!(
-            run(&mut s, |s, r| delete_ab(s, r, file())),
+            delete(&mut s),
             Err(StoreError::Io),
             "cut after the first delete"
         );
@@ -472,10 +528,10 @@ fn delete_older_first() {
         assert_loads(&mut s, &sound(saves - 1));
 
         s.allow = 2;
-        run(&mut s, |s, r| delete_ab(s, r, file())).unwrap();
+        delete(&mut s).unwrap();
         assert_eq!(s.deleted, [file().side(older), file().side(newer)]);
         assert_eq!(load(&mut s).err(), Some(LoadError::Missing));
-        assert_eq!(run(&mut s, |s, r| delete_ab(s, r, file())), Ok(()));
+        assert_eq!(delete(&mut s), Ok(()));
     }
 }
 

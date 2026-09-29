@@ -406,16 +406,7 @@ pub fn check_frame<S: Store>(
     f: FileName,
     kind: FileKind,
 ) -> Result<SideState, StoreError> {
-    frame_state(s, r, f, Some(kind))
-}
-
-fn frame_state<S: Store>(
-    s: &mut S,
-    r: &Ready,
-    f: FileName,
-    kind: Option<FileKind>,
-) -> Result<SideState, StoreError> {
-    let scan = scan(s, r, f, kind, &mut |_| Ok(()));
+    let scan = scan(s, r, f, Some(kind), &mut |_| Ok(()));
     Checked::of(scan, || Ok(())).map(|c| c.state())
 }
 
@@ -457,6 +448,20 @@ pub fn load_file<S: Store, D: Decode>(
     apply(s, r, f, d, checked)
 }
 
+/// Pass 1 on both sides: the one judgement `load_ab`, `save_ab` and
+/// `delete_ab` share.
+fn sides<S: Store, D: Decode>(
+    s: &mut S,
+    r: &Ready,
+    f: AbFile,
+    d: &mut D,
+) -> Result<[Checked; 2], StoreError> {
+    Ok([
+        check(s, r, f.side(Side::A), d)?,
+        check(s, r, f.side(Side::B), d)?,
+    ])
+}
+
 /// Checks both sides, `pick`s one and applies it.
 pub fn load_ab<S: Store, D: Decode>(
     s: &mut S,
@@ -464,8 +469,7 @@ pub fn load_ab<S: Store, D: Decode>(
     f: AbFile,
     d: &mut D,
 ) -> Result<Header, LoadError> {
-    let a = check(s, r, f.side(Side::A), d)?;
-    let b = check(s, r, f.side(Side::B), d)?;
+    let [a, b] = sides(s, r, f, d)?;
     match pick(a.state(), b.state()) {
         Pick::Load(Side::A) => apply(s, r, f.side(Side::A), d, a),
         Pick::Load(Side::B) => apply(s, r, f.side(Side::B), d, b),
@@ -474,22 +478,22 @@ pub fn load_ab<S: Store, D: Decode>(
     }
 }
 
-/// Streams `header → body → trailer` to the side `write_target` names,
-/// judged by framing (a decoder's own verdicts need a target to decode
-/// into). Returns the generation written.
-pub fn save_ab<S: Store>(
+/// Streams `header → body → trailer` to the side `write_target` names.
+/// The sides are judged by `d`'s pass 1, as `load_ab` judges them, so a
+/// save never writes the side a load would take; `d`'s target is never
+/// touched. Returns the generation written.
+pub fn save_ab<S: Store, D: Decode>(
     s: &mut S,
     r: &Ready,
     f: AbFile,
-    kind: FileKind,
+    d: &mut D,
     name: Option<Name<16>>,
     body: &mut dyn FnMut(&mut RecordWriter<'_>) -> Result<(), StoreError>,
 ) -> Result<Generation, SaveError> {
-    let a = check_frame(s, r, f.side(Side::A), kind)?;
-    let b = check_frame(s, r, f.side(Side::B), kind)?;
-    let (side, generation) = write_target(a, b);
+    let [a, b] = sides(s, r, f, d)?;
+    let (side, generation) = write_target(a.state(), b.state());
     let h = Header {
-        kind,
+        kind: D::KIND,
         generation,
         name,
     };
@@ -499,11 +503,15 @@ pub fn save_ab<S: Store>(
     Ok(generation)
 }
 
-/// Deletes the sides there are in `delete_order`, judged by framing of any
-/// kind.
-pub fn delete_ab<S: Store>(s: &mut S, r: &Ready, f: AbFile) -> Result<(), StoreError> {
-    let a = frame_state(s, r, f.side(Side::A), None)?;
-    let b = frame_state(s, r, f.side(Side::B), None)?;
+/// Deletes the sides there are in `delete_order`, judged by `d`'s pass 1
+/// as `load_ab` judges them.
+pub fn delete_ab<S: Store, D: Decode>(
+    s: &mut S,
+    r: &Ready,
+    f: AbFile,
+    d: &mut D,
+) -> Result<(), StoreError> {
+    let [a, b] = sides(s, r, f, d)?.map(|c| c.state());
     for side in delete_order(a, b) {
         let state = if side == Side::A { a } else { b };
         if state != SideState::Missing {

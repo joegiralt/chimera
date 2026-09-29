@@ -123,7 +123,9 @@ All integers are little-endian.
   as it was.
 - **`write_target`.** A save truncates and rewrites the side the reader
   doesn't keep (the older, missing or broken one) with the newest generation
-  + 1, then flushes.
+  + 1, then flushes. It judges both sides by the kind's own pass 1, the
+  check a load makes, so a side a load would reject is broken to the save
+  too, and the side a load would keep is never written.
 - **Delete.** The older side first, then the newer. A cut in between leaves
   one valid file, which reads as "not deleted".
 
@@ -132,8 +134,11 @@ A/B is safe only if a 512 B block write is all-or-nothing and disturbs no
 other block. SD cards don't promise this. `.A` and `.B` share a directory
 sector and, when small, FAT sectors, so a block torn there can lose both
 sides. We accept it: the data blocks, where nearly all writes land, each
-belong to one side. Plan 1 Task 11's torn-block test characterises which
-cuts can lose a pair.
+belong to one side. Plan 1 Task 11's torn-block test measured it on a
+FAT16 card with the pair in one directory block and FAT sector 0: a
+garbage tear of either shared block can lose the pair (4 of the 18 torn
+writes of one save); a tear that leaves the block's second half old never
+did, and no tear ever loaded wrong data.
 
 ### Card access
 - SD in SPI mode on SPI2 (SCK PA9, MISO PB14 pulled up, MOSI PB15), polled,
@@ -194,7 +199,9 @@ This ADR stays Proposed until it holds no pending item.
   migrations are pure functions tested against the fixture corpus.
 - A newer file on an older firmware is greyed, never half-loaded.
 - Loads take two passes (check, then apply), so a torn file never touches
-  live state. A save reads both sides' framing first to pick its target.
+  live state. A save and a delete run pass 1 on both sides first, the check
+  a load makes: a save never writes, and a delete never removes first, the
+  side a load would keep.
 - A torn directory or FAT sector can still lose a pair (the atomic-block
   assumption above).
 - Adding a record, a kind or a param is additive; changing one's meaning
