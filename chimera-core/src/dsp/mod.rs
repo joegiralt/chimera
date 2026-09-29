@@ -47,6 +47,15 @@ pub fn fast_sin(theta: f32) -> f32 {
     a + (b - a) * frac
 }
 
+/// Xorshift32 white noise in [−1, 1]; a zero state stays zero, so seed it.
+#[inline]
+pub(crate) fn xorshift_noise(state: &mut u32) -> f32 {
+    *state ^= *state << 13;
+    *state ^= *state >> 17;
+    *state ^= *state << 5;
+    (*state as i32) as f32 / i32::MAX as f32
+}
+
 /// sin(2π·phase) for phase in [0, 1): a parabola with one correction step
 /// on the folded phase; absolute error below 0.001. `f32` only.
 #[inline(always)]

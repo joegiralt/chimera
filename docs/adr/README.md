@@ -52,3 +52,4 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0048](0048-own-fat-layer.md) | Own the FAT layer; keep embedded-sdmmc only as the SD block driver | Accepted |
 | [0049](0049-algo-init-routed-morph-dims.md) | Algo INIT is audibly routed; MORPH dims when A = B (supersedes in part 0024) | Proposed |
 | [0050](0050-gain-staging-trim-and-final-limiter.md) | Gain staging: a 1/√8 output trim and one peak limiter at −1 dBFS, last | Proposed |
+| [0053](0053-delay-mechanics-wow-and-irregular-flutter.md) | The delay's WOW becomes MECHANICS: a slow wow and an irregular flutter | Proposed |
