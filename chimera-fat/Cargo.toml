@@ -7,3 +7,6 @@ edition.workspace = true
 chimera-hal = { path = "../chimera-hal" }
 embedded-sdmmc = { version = "0.10", default-features = false }
 embedded-hal = "1.0"
+
+[dev-dependencies]
+chimera-hal = { path = "../chimera-hal", features = ["testkit"] }

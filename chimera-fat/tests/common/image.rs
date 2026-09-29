@@ -1,7 +1,9 @@
 //! RAM-disk card images: FAT16, FAT32, exFAT and the superfloppies.
 
+use chimera_fat::Medium;
+use chimera_hal::store::StoreError;
 use core::cell::{Cell, RefCell};
-use embedded_sdmmc::{Block, BlockCount, BlockDevice, BlockIdx, TimeSource, Timestamp};
+use embedded_sdmmc::{Block, BlockCount, BlockDevice, BlockIdx};
 
 pub const PART_LBA: u32 = 2048;
 
@@ -52,6 +54,8 @@ impl BlockDevice for RamDisk {
     }
 }
 
+impl Medium for RamDisk {}
+
 /// A card pulled mid-write: every write fails once `writes_left` reaches 0.
 /// `None` never fails.
 #[allow(dead_code)]
@@ -82,18 +86,11 @@ impl BlockDevice for CutDisk {
     }
 }
 
-pub struct FixedTime;
-
-impl TimeSource for FixedTime {
-    fn get_timestamp(&self) -> Timestamp {
-        Timestamp {
-            year_since_1970: 56,
-            zero_indexed_month: 8,
-            zero_indexed_day: 27,
-            hours: 12,
-            minutes: 0,
-            seconds: 0,
-        }
+#[allow(dead_code)]
+impl Medium for CutDisk {
+    /// Once cut, a fault, even where the library reports `DiskFull`.
+    fn fault(&self) -> Option<StoreError> {
+        (self.writes_left.get() == Some(0)).then_some(StoreError::Io)
     }
 }
 
