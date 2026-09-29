@@ -53,14 +53,36 @@ pool of four slots, lent to the voices that play it (exclusive-state spec
   held steals the oldest. A steal plays the new note on the slot's own
   voice (`Instrument::handle` books it there, fades it and queues the note),
   so a slot never moves between voices. `lend` takes the voice's promise
-  first, `give_back` hands a stolen slot on to its waiting note, and
-  `forfeit` frees a promise its note no longer needs.
+  first, and `give_back` hands a stolen or evicted slot on to its waiting
+  note.
+- **`cancel(v)`**: `v` wants no slot any more. Its promise is freed, and a
+  slot lent to another voice but bound for `v` goes free when that lease
+  comes back. `v`'s own lease is never touched: only `give_back` ends it.
+  `v` cancels when it triggers another kind, when it rests, when the
+  `Instrument` books it for a note of another kind or sheds it for the
+  budget, and when its restart goes `Silent`. So no slot is ever promised
+  or bound to a voice the `Allocator` holds free.
+- **Waiting notes, and what drops them.** A note placed on a voice that
+  still `awaits` another's fade (a restart's claim) waits as a stolen note
+  does, and is tried after each block's render. A newer note can take the
+  slot a waiting note was bound for: `place` and `restart` report that
+  waiter in `drops`, and the `Instrument` clears its waiting note and
+  counts it in `Allocator::dropped_unheard`, as ADR 0027 counts a shed one.
+- **A note-on clears every line it starts** (spec § 4.8), so a set handed
+  to another voice carries nothing of its last note: a note on a reused
+  slot sounds exactly as on a fresh pool.
 - **`SlotKind::resting`** maps `Modal(Sympathetic)` to `Modal(String)`: an
   idle voice holds no lease. `Voice::reset` rebuilds into the Sound's kind
   when a note follows the fade and into `resting()` when none does, and
   `Voice::rest` rests a voice whose engine went quiet on its own.
-- **The Rings rule.** The oldest yields, Mono Parts included, and the pool
-  never refuses a note: only the CPU budget does (ADR 0026).
+- **The Rings rule.** The oldest yields, Mono Parts included. The pool
+  never refuses a note-on: `place` returns `Refused` only when the CPU
+  budget gave no voice and a slot is free (ADR 0026). Every note it places
+  sounds, at once or once the fade ahead of it ends, unless a newer note
+  takes its slot first (a drop, counted).
+- **A Mono Part keeps one voice.** When the pool steals onto another
+  voice for a Mono Part's note, `Allocator::book` sheds the Part's old Mono
+  voice, which fades out.
 - **A switch onto Sympathetic** restarts the last four held notes played:
   `Instrument::render` calls `SymAlloc::restart` for the Part's held,
   sounding notes, newest first. Each claimer fades and restarts through the
@@ -102,6 +124,16 @@ pool of four slots, lent to the voices that play it (exclusive-state spec
   (https://github.com/joegiralt/chimera/issues/207): `SYM_SLOTS = 4`.
 - A Mono voice can be stolen by the pool: an exception to the
   `Allocator`'s rule 1, which still never steals a Mono voice for budget.
+- Edge cases, each pinned by a test in `sym_pool_test.rs`:
+  - A note-on for a voice whose restart awaits an eviction waits for that
+    fade too, instead of starting without a slot.
+  - A claimer booked again for another kind, or shed, before its eviction's
+    fade ends leaves no promise behind.
+  - A Mono Part whose held note went `Silent` on a switch, then plays, sheds
+    that silent voice and sounds on the stolen one.
+- `Voice::trigger` can still meet `Rebuilt::NoSlot`, but only for a lone
+  `Voice` driven without the `Instrument`'s placement: the note does not
+  start.
 
 ## Sources
 - `docs/superpowers/specs/2026-09-29-exclusive-state-design.md` § 4 and

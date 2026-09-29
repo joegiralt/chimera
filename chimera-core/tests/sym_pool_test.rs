@@ -9,7 +9,7 @@ use chimera_core::dsp::engines::SlotKind;
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::dsp::voice::Voice;
-use chimera_core::hw::{MAX_VOICES, SampleBudget};
+use chimera_core::hw::{AUDIO_BUDGET_PERCENT, CPU_HZ_REV_V, MAX_VOICES, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacOut, Instrument};
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::{EngineType, ParamSnapshot};
@@ -58,13 +58,17 @@ struct Stage {
 
 impl Stage {
     fn new(parts: &[(ParamSnapshot, PartMode)]) -> Self {
+        Self::with_budget(parts, SampleBudget::for_cpu(u32::MAX))
+    }
+
+    fn with_budget(parts: &[(ParamSnapshot, PartMode)], budget: SampleBudget) -> Self {
         let mut shared = AudioShared::default();
         for (part, (p, mode)) in shared.parts.iter_mut().zip(parts) {
             part.params = p.clone();
             part.mix.mode = *mode;
         }
         Self {
-            inst: Box::new(Instrument::new(SR, SampleBudget::for_cpu(u32::MAX))),
+            inst: Box::new(Instrument::new(SR, budget)),
             fx: Box::new(FxBus::new()),
             dac: [[0.0; BLOCK_SIZE * 2]; _],
             scope: scope_writer(),
@@ -89,14 +93,32 @@ impl Stage {
         self.event(part, n, NoteKind::Off);
     }
 
-    /// One block; then the pool's invariant: the voices holding a
-    /// Sympathetic slot number exactly the leases out, at most four.
+    /// One block; then the pool's invariants: the voices holding a
+    /// Sympathetic slot number exactly the leases out, at most four, and
+    /// no slot is promised or bound to a voice the `Allocator` holds free.
     fn block(&mut self) {
         self.inst
             .render(&mut self.fx, &mut self.dac, &self.shared, &mut self.scope);
         let sym = self.sym_voices();
+        let pool = self.inst.sym();
         assert!(sym <= SYM_SLOTS, "{sym} Sympathetic voices");
-        assert_eq!(sym, self.inst.sym().lent(), "Sympathetic voices vs leases");
+        assert_eq!(sym, pool.lent(), "Sympathetic voices vs leases");
+        for (v, s) in self.inst.allocator().slots().iter().enumerate() {
+            let id = VoiceIdx::ALL[v];
+            if s.is_free() {
+                assert!(!pool.promised(id), "a slot promised to free voice {v}");
+                assert!(!pool.awaits(id), "a slot bound for free voice {v}");
+            }
+        }
+    }
+
+    /// The booked, non-dying voices of `part`.
+    fn voices_of(&self, part: usize) -> usize {
+        let slots = self.inst.allocator().slots();
+        slots
+            .iter()
+            .filter(|s| s.part() == Some(part as u8) && !s.dying())
+            .count()
     }
 
     fn sym_voices(&self) -> usize {
@@ -320,6 +342,14 @@ fn a_handed_over_slot_carries_nothing() {
 
 #[test]
 fn every_lease_comes_home() {
+    let most = storm(SampleBudget::for_cpu(u32::MAX));
+    assert_eq!(most, SYM_SLOTS, "the storm fills the pool");
+    // The chip's ceiling sheds and refuses too.
+    storm(SampleBudget::for_cpu(CPU_HZ_REV_V));
+}
+
+/// The storm; the most leases out at once.
+fn storm(budget: SampleBudget) -> usize {
     const MODES: [ResonatorMode; 4] = [
         ResonatorMode::Modal,
         ResonatorMode::String,
@@ -333,7 +363,7 @@ fn every_lease_comes_home() {
         rng ^= rng << 5;
         rng % n
     };
-    let mut s = Stage::new(&vec![(sym(), PartMode::Poly); 3]);
+    let mut s = Stage::with_budget(&vec![(sym(), PartMode::Poly); 3], budget);
     let mut held: Vec<(usize, u8)> = Vec::new();
     let mut most = 0;
     for _ in 0..2_000 {
@@ -363,12 +393,12 @@ fn every_lease_comes_home() {
         s.block();
         most = most.max(s.inst.sym().lent());
     }
-    assert_eq!(most, SYM_SLOTS, "the storm fills the pool");
     for (part, n) in held {
         s.off(part, n);
     }
     s.until_idle(5_000);
     assert_eq!(s.inst.sym().free(), SYM_SLOTS);
+    most
 }
 
 /// Part 1 holds String notes `notes`, one a block; each is booked on a
@@ -495,7 +525,9 @@ fn a_resting_voice_gives_its_slot_back() {
     let v = s.voice_of(0, 60);
     s.block();
     assert_eq!(s.inst.sym().lent(), 1);
-    // Released, it rings down on its own: no fade, no reset.
+    // Released, it rings down on its own: no fade, no reset. Held, the
+    // default KS feedback sustains it for good
+    // (https://github.com/joegiralt/chimera/issues/191).
     s.off(0, 60);
     for _ in 0..5_000 {
         let r = s.inst.rebuilds()[v];
@@ -576,4 +608,164 @@ fn pool_ages_are_the_allocators() {
     assert_eq!(oldest, s.voice_of(1, 55), "55 is now the oldest by age");
     s.on(2, 62);
     assert_eq!(s.voice_of(2, 62), oldest, "the steal follows the ages");
+}
+
+/// Part 1 (String, `mode`) holds 60; Part 2 (Sympathetic) holds four
+/// notes, 48 the oldest, played before 60. `fillers` first plays and ends
+/// four Algo notes on Part 3, so the pool's voices start at voice 4.
+fn full_pool(mode: PartMode, fillers: bool, budget: SampleBudget) -> Stage {
+    let parts = [
+        (modal(ResonatorMode::String), mode),
+        (sym(), PartMode::Poly),
+        (common::tri(), PartMode::Poly),
+    ];
+    let mut s = Stage::with_budget(&parts, budget);
+    if fillers {
+        for n in 0..4 {
+            s.on(2, 70 + n);
+            s.off(2, 70 + n);
+        }
+        s.until_idle(5_000);
+    }
+    for n in [48, 50, 52, 53] {
+        s.on(1, n);
+        s.block();
+    }
+    s.on(0, 60);
+    s.block();
+    s
+}
+
+/// A restart that waits on an eviction's fade, then a new note on that
+/// voice: it waits too, and sounds once the slot is back.
+#[test]
+fn a_note_on_an_awaiting_voice_waits_for_its_slot() {
+    let mut s = full_pool(PartMode::Mono, false, SampleBudget::for_cpu(u32::MAX));
+    let (p, u) = (s.voice_of(0, 60), s.voice_of(1, 48));
+    // Bowed a block before Sympathetic: 60's fade ends first.
+    s.shared.parts[0].params = modal(ResonatorMode::Bowed);
+    s.block();
+    s.shared.parts[0].params = sym();
+    s.block();
+    let id = VoiceIdx::ALL[p];
+    assert!(s.inst.sym().awaits(id), "60's restart waits on 48's slot");
+    assert!(!s.inst.active()[p]);
+
+    s.on(0, 62);
+    assert_eq!(s.voice_of(0, 62), p, "Mono: its own voice");
+    for _ in 0..FADE_BLOCKS + 1 {
+        s.block();
+        if s.inst.active()[p] {
+            break;
+        }
+    }
+    assert!(s.inst.active()[p], "62 sounds");
+    assert_eq!(s.inst.slot_kinds()[p], SYM);
+    assert_ne!(s.inst.slot_kinds()[u], SYM, "after 48's fade");
+}
+
+/// A restart claims 48's slot for 60, then 60's voice is booked again
+/// for a String note before 48's fade ends, and renders before 48's
+/// voice: the claim goes with it.
+#[test]
+fn a_rebooked_claimer_leaves_no_stale_claim() {
+    let mut s = full_pool(PartMode::Mono, true, SampleBudget::for_cpu(u32::MAX));
+    let (v, u) = (s.voice_of(0, 60), s.voice_of(1, 48));
+    assert!(v < u, "the claimer renders first");
+    s.shared.parts[0].params = sym();
+    s.block();
+    assert!(s.inst.sym().awaits(VoiceIdx::ALL[v]), "60 claims 48's slot");
+
+    s.shared.parts[0].params = modal(ResonatorMode::String);
+    s.on(0, 62);
+    assert_eq!(s.voice_of(0, 62), v);
+    for _ in 0..FADE_BLOCKS + 1 {
+        s.block();
+    }
+    let pool = s.inst.sym();
+    assert_eq!(pool.free() + pool.lent(), SYM_SLOTS, "nothing promised");
+    assert!(s.inst.active()[v], "62 sounds on String");
+
+    let r = s.inst.rebuilds()[v];
+    s.on(1, 67);
+    for _ in 0..FADE_BLOCKS + 1 {
+        s.block();
+    }
+    assert!(s.inst.slot_kinds().contains(&SYM));
+    assert_eq!(s.inst.rebuilds()[v], r, "the new note leaves 62 alone");
+    assert!(s.inst.active()[v]);
+}
+
+/// The same claim, but its voice is shed for the budget before 48's fade
+/// ends, and is freed below 48's voice: no promise outlives it.
+#[test]
+fn a_shed_claimer_leaves_no_stale_claim() {
+    // Room for exactly five Sympathetic notes and the FX.
+    let mods = AudioShared::default().parts[0].mod_state.clone();
+    let need = FxBus::COST.0 as u64 + 5 * Voice::cost(&sym(), &mods).0 as u64;
+    let hz = (need * 100 * SR as u64).div_ceil(AUDIO_BUDGET_PERCENT as u64);
+    let budget = SampleBudget::for_cpu(hz as u32);
+    assert_eq!(budget.as_cost().0 as u64, need);
+    let mut s = full_pool(PartMode::Poly, true, budget);
+    let (v, u) = (s.voice_of(0, 60), s.voice_of(1, 48));
+    assert!(v < u, "the claimer renders first");
+
+    s.shared.parts[0].params = sym();
+    s.block();
+    let pool = s.inst.sym();
+    assert!(pool.awaits(VoiceIdx::ALL[v]), "60 claims 48's slot");
+    // DRIVE on Part 1: over the budget, and 60 is the newest held note.
+    // Shed mid-fade, it ends and frees in this block, and its restart is
+    // dropped unheard.
+    let refused = s.inst.allocator().refused();
+    s.shared.parts[0].params.drive.drive = 0.5;
+    s.block();
+    assert!(s.inst.allocator().slots()[v].is_free(), "60 is shed");
+    assert_eq!(s.inst.allocator().refused(), refused + 1);
+    for _ in 0..FADE_BLOCKS + 1 {
+        s.block();
+    }
+    let pool = s.inst.sym();
+    assert_eq!(pool.free() + pool.lent(), SYM_SLOTS, "nothing promised");
+}
+
+/// A Mono Part's held note whose restart went silent, then two new notes:
+/// each steals onto a pool voice, and the Part keeps exactly one voice.
+#[test]
+fn a_mono_part_keeps_one_voice() {
+    let mut s = Stage::new(&[
+        (modal(ResonatorMode::String), PartMode::Mono),
+        (sym(), PartMode::Poly),
+    ]);
+    s.on(0, 60);
+    s.block();
+    for n in [48, 50, 52, 53] {
+        s.on(1, n);
+        s.block();
+    }
+    let m = s.voice_of(0, 60);
+    s.shared.parts[0].params = sym();
+    for _ in 0..FADE_BLOCKS + 1 {
+        s.block();
+    }
+    assert!(!s.inst.active()[m], "60 went silent: four newer notes");
+    let others = [50, 52, 53].map(|n| s.voice_of(1, n));
+
+    for n in [50, 52] {
+        s.on(0, n);
+        assert_eq!(s.voices_of(0), 1, "after {n}: one voice for Part 1");
+        for _ in 0..FADE_BLOCKS + 2 {
+            s.block();
+            assert_eq!(s.voices_of(0), 1, "after {n}: one voice for Part 1");
+        }
+        assert_eq!(s.inst.sym().lent(), SYM_SLOTS);
+        for &o in &others {
+            assert!(s.inst.active()[o] && s.inst.slot_kinds()[o] == SYM);
+        }
+    }
+    let v = s.voice_of(0, 52);
+    assert!(
+        s.inst.active()[v] && s.inst.slot_kinds()[v] == SYM,
+        "52 sounds"
+    );
 }
