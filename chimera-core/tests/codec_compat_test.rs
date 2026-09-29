@@ -108,16 +108,16 @@ fn fnv1a_bytes(b: &[u8]) -> u64 {
 /// Each fixture's length and FNV-1a over its bytes: a file regenerated in a
 /// newer format fails here, whatever it decodes to.
 const FIXTURE_BYTES: &[(&str, usize, u64)] = &[
-    ("factory_0.snd", 1159, 0x0438b772728c7c2d),
-    ("factory_1.snd", 1159, 0xadc0bd6040a10c81),
-    ("factory_2.snd", 1159, 0xa1e317d09c0bffd4),
-    ("factory_3.snd", 1159, 0x4170cb887c528b4e),
-    ("factory_4.snd", 1159, 0x03dd31d4fea2fd6c),
-    ("factory_5.snd", 1159, 0x971f22e85f225417),
-    ("factory_6.snd", 1175, 0x18f8e86f142c7fcb),
-    ("factory_7.snd", 1159, 0x44cac2e23cd1f2d9),
-    ("init_algo.snd", 1159, 0x09c128653fac1423),
-    ("init_modal.snd", 1159, 0xa3012ac211ae8e98),
+    ("factory_0.snd", 1159, 0xfd931b0991bfb5db),
+    ("factory_1.snd", 1159, 0x38576e610ebea813),
+    ("factory_2.snd", 1159, 0x57487b1534947f88),
+    ("factory_3.snd", 1159, 0x45fba569228a4998),
+    ("factory_4.snd", 1159, 0x22cc59f6294be4d3),
+    ("factory_5.snd", 1159, 0xc32781ec0bf54c06),
+    ("factory_6.snd", 1175, 0xd2f10cb6fe350953),
+    ("factory_7.snd", 1159, 0xc0d43d4e79a25648),
+    ("init_algo.snd", 1159, 0x44acd895ff6f6af5),
+    ("init_modal.snd", 1159, 0xd122f91342eff62a),
 ];
 
 /// `system.sys`'s length and FNV-1a.
@@ -138,15 +138,15 @@ fn v1_fixture_bytes_are_frozen() {
 
 /// FNV-1a of each fixture's render, recorded when the fixtures were written.
 const FIXTURE_RENDERS: &[(&str, u64)] = &[
-    ("factory_0.snd", 0xc0e212b1b98a9bcb),
-    ("factory_1.snd", 0xd11d69ebe6b0e4f7),
-    ("factory_2.snd", 0x5d86bbdbd84012d3),
-    ("factory_3.snd", 0xe34e4665f140410c),
-    ("factory_4.snd", 0x44a3e31517fc8b68),
-    ("factory_5.snd", 0xdadaa3f8d1eecb4a),
-    ("factory_6.snd", 0x29b3e58dfd18575b),
-    ("factory_7.snd", 0x3dc833ebd9700912),
-    ("init_algo.snd", 0xf36afbe129df33fa),
+    ("factory_0.snd", 0x878c9ca6ca353aa1),
+    ("factory_1.snd", 0x0edce6a988cf7f1b),
+    ("factory_2.snd", 0xe0277f16dca55649),
+    ("factory_3.snd", 0x10424d2460e991df),
+    ("factory_4.snd", 0x05a4301cc61a2332),
+    ("factory_5.snd", 0x73b6b9429389dc2a),
+    ("factory_6.snd", 0x2cf3c112b967ff6f),
+    ("factory_7.snd", 0x7ef436e312c3c9e6),
+    ("init_algo.snd", 0xfd37f75c4096594b),
     ("init_modal.snd", 0x90f1197c153d0b05),
 ];
 

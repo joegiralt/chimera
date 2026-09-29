@@ -366,17 +366,29 @@ impl MasterComp {
             } else {
                 1.0 + x * (g - 1.0)
             };
-            let step = (e1 - e0) * (1.0 / STEP as f32);
-            for j in 0..STEP {
-                let ej = e0 + step * (j + 1) as f32;
-                for pair in out.iter_mut() {
-                    pair[2 * (i0 + j)] *= ej;
-                    pair[2 * (i0 + j) + 1] *= ej;
-                }
-            }
+            ramp(out, i0, e0, e1);
             e0 = e1;
         }
         (self.gr, self.e, self.engage) = (gr, e0, engage);
+    }
+}
+
+/// A chunk's gains, ramped linearly from `e0` (the last chunk's end) to
+/// `e1`, reached on its last sample.
+#[inline(always)]
+pub(crate) fn ramp_gains(e0: f32, e1: f32) -> [f32; STEP] {
+    let step = (e1 - e0) * (1.0 / STEP as f32);
+    core::array::from_fn(|j| e0 + step * (j + 1) as f32)
+}
+
+/// Scale chunk `i0..i0 + STEP` of every pair by `ramp_gains(e0, e1)`.
+#[inline(always)]
+fn ramp<const PAIRS: usize>(out: &mut [[f32; 2 * BLOCK_SIZE]; PAIRS], i0: usize, e0: f32, e1: f32) {
+    for (j, ej) in ramp_gains(e0, e1).into_iter().enumerate() {
+        for pair in out.iter_mut() {
+            pair[2 * (i0 + j)] *= ej;
+            pair[2 * (i0 + j) + 1] *= ej;
+        }
     }
 }
 

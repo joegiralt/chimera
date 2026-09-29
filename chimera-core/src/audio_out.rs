@@ -20,8 +20,16 @@ impl DacSample {
     pub const fn get(self) -> i32 {
         self.0
     }
+
+    /// The level the DAC plays, −1..1. The desktop sends it to its speakers,
+    /// so it hears the same clamp and 24-bit steps as the hardware (ADR 0050).
+    pub fn level(self) -> f32 {
+        (self.0 >> 8) as f32 / DAC_FULL_SCALE
+    }
 }
 
+/// The final conversion: clamped to full scale, a safety the limiter
+/// before it keeps from ever engaging (ADR 0050).
 pub fn to_dac(x: f32) -> DacSample {
     let steps = libm::roundf(x.clamp(-1.0, 1.0) * DAC_FULL_SCALE) as i32;
     DacSample(steps << 8)
