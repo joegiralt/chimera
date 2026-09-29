@@ -489,6 +489,24 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::A, 3)); // LFO1 → VELO
         feed(ui, Input::turn(EncoderId::E, -127));
     }),
+    ("algo_alg_morph_dimmed", |ui| {
+        feed(ui, Input::turn(EncoderId::B, -8)); // ALG B = T1 = ALG A
+        feed(ui, Input::turn(EncoderId::C, 1)); // MORPH focused, dimmed
+    }),
+    // ENV1 → MORPH primed while it was live; then ALG B = ALG A (#188).
+    ("mod_matrix_morph_inert", |ui| {
+        feed(ui, Input::turn(EncoderId::C, 1));
+        prime(ui);
+        plus(ui, 5);
+        to_matrix(ui);
+        feed(ui, Input::turn(EncoderId::B, 1)); // past FLT CUTOFF to MORPH
+        feed(ui, Input::turn(EncoderId::E, 60));
+        for _ in 0..5 {
+            feed(ui, Input::press(ButtonId::Minus));
+        }
+        feed(ui, Input::turn(EncoderId::B, -8));
+        plus(ui, 5);
+    }),
     ("sound_browser", |ui| {
         let mut s = Sound::init(EngineType::Algo);
         s.name = [0; 16];

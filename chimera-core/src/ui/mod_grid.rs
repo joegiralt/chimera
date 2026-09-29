@@ -55,6 +55,7 @@ const VISIBLE_COLS: usize = 5;
 /// Max sources and destinations for the amounts grid (presence is a `u8`).
 pub const MAX_SOURCES: usize = crate::modulation::MAX_MOD_SOURCES;
 pub const MAX_DESTS: usize = crate::modulation::MAX_MOD_DESTS;
+const _: () = assert!(MAX_DESTS <= u16::BITS as usize, "inert_dests is a u16");
 
 /// A destination in the mod matrix — a primed param.
 #[derive(Clone, Copy, Debug)]
@@ -498,8 +499,10 @@ pub fn cell_center(ci: usize, vi: usize) -> (i32, i32) {
 /// The amount grid: sources down, primed destinations across. A route's
 /// cell is lit and prints its amount (`+60`, `-30`, `0` in the rest grey);
 /// an absent route is an empty outline. The cursor's cell is outlined in
-/// the accent and prints `sel_amount`, the lerped amount.
-pub fn draw_grid<D>(d: &mut D, state: &MatrixState, sel_amount: i8)
+/// the accent and prints `sel_amount`, the lerped amount. A column in
+/// `inert` (`inert_dests`) reads as a dimmed cell does: its name and
+/// amounts in MID, its routes unlit.
+pub fn draw_grid<D>(d: &mut D, state: &MatrixState, sel_amount: i8, inert: u16)
 where
     D: DrawTarget<Color = Rgb565>,
 {
@@ -510,7 +513,7 @@ where
         let Some(Some(dest)) = state.dests.get(di).filter(|_| di < state.num_dests) else {
             break;
         };
-        let name_color = if di == state.sel_col {
+        let name_color = if di == state.sel_col && inert & (1 << di) == 0 {
             theme::INK
         } else {
             theme::MID
@@ -592,14 +595,15 @@ where
                 row,
                 state.is_present(si, di).then_some(amount),
                 selected,
+                inert & (1 << di) != 0,
             );
         }
     }
 }
 
 /// One cell: an outline (the accent under the cursor); a route fills it
-/// and prints its amount.
-fn draw_cell<D>(d: &mut D, ci: usize, vi: usize, route: Option<i8>, selected: bool)
+/// and prints its amount, unlit in MID when `inert`.
+fn draw_cell<D>(d: &mut D, ci: usize, vi: usize, route: Option<i8>, selected: bool, inert: bool)
 where
     D: DrawTarget<Color = Rgb565>,
 {
@@ -611,7 +615,9 @@ where
     };
     draw::round_outline(d, x, y, CELL_W, CELL_H, 0, edge);
     let Some(amount) = route else { return };
-    let text = if amount == 0 {
+    let text = if inert {
+        theme::MID
+    } else if amount == 0 {
         theme::BAR_REST
     } else {
         draw::fill_rect(d, x + 1, y + 1, CELL_W - 2, CELL_H - 2, theme::ACCENT_SOFT);
@@ -632,9 +638,9 @@ where
 
 /// The band under the grid: the cursor's route by full names (`ENV 3 →
 /// FILTER CUTOFF`), then its lerped amount and effect (`+42 = +3.3 oct`,
-/// `--` with no route), the hint and the route count. `NO DESTINATIONS`
-/// without one.
-pub fn draw_readout<D>(d: &mut D, state: &MatrixState, sel_amount: i8)
+/// `--` with no route; in MID and tagged `INERT` on an `inert` column), the
+/// hint and the route count. `NO DESTINATIONS` without one.
+pub fn draw_readout<D>(d: &mut D, state: &MatrixState, sel_amount: i8, inert: u16)
 where
     D: DrawTarget<Color = Rgb565>,
 {
@@ -667,10 +673,11 @@ where
             fmt_readout_dest(&mut name, src.name(), &dest);
             label(d, name.as_str(), x, theme::ACCENT);
             let mut effect = FmtBuf::new();
+            let dead = inert & (1 << state.sel_col) != 0;
             let color = match dest.addr.spec() {
                 Some(spec) if state.is_present(si, state.sel_col) => {
                     fmt_route_effect(&mut effect, spec, sel_amount);
-                    theme::INK
+                    if dead { theme::MID } else { theme::INK }
                 }
                 _ => {
                     let _ = effect.write_str("--");
@@ -685,6 +692,18 @@ where
                 AMOUNT_Y,
                 color,
             );
+            if dead {
+                let w = draw::text_width(&theme::FONT_VALUE, effect.as_str(), 0);
+                draw::text_tracked(
+                    d,
+                    &theme::FONT_LABEL,
+                    "INERT",
+                    theme::MARGIN_X + w + 2 * ARROW_GAP,
+                    AMOUNT_Y,
+                    theme::MID,
+                    theme::LABEL_TRACKING,
+                );
+            }
         }
         _ => {
             label(d, "NO DESTINATIONS", theme::MARGIN_X, theme::MID);
@@ -712,4 +731,13 @@ where
         STATS_Y,
         theme::MID,
     );
+}
+
+/// Bit `di`: destination column `di` is a param `view::dimmed` rules
+/// inapplicable (MORPH while ALG A = ALG B), so its routes do nothing.
+pub fn inert_dests(state: &MatrixState, sound: &crate::preset::Sound) -> u16 {
+    (0..state.num_dests).fold(0, |m, di| match state.dests[di] {
+        Some(d) if crate::ui::view::dimmed(d.addr, sound) => m | 1 << di,
+        _ => m,
+    })
 }
