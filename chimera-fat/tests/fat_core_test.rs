@@ -235,15 +235,17 @@ fn broken_chains_are_bounded() {
             FsKind::Fat16 => (5_000, 0xFFF7),
             FsKind::Fat32 => (66_000, 0x0FFF_FFF7),
         };
-        // (what, 4's entry, clusters freed from 3)
+        // (what, 4's entry, clusters freed from 3, 4's entry after). A bad
+        // or reserved mark is the cluster's own state, not a link: it stays.
         let cases = [
-            ("links to a free cluster", 0, 1),
-            ("links to reserved cluster 1", 1, 2),
-            ("links past the volume", count + 2, 2),
-            ("links to the bad mark", bad, 2),
-            ("2-cycle", 3, 2),
+            ("links to a free cluster", 0, 1, 0),
+            ("links to reserved cluster 1", 1, 2, 0),
+            ("links past the volume", count + 2, 2, 0),
+            ("is the bad mark", bad, 1, bad),
+            ("is a reserved mark", bad - 7, 1, bad - 7),
+            ("2-cycle", 3, 2, 0),
         ];
-        for (what, to, freed) in cases {
+        for (what, to, freed, after) in cases {
             let disk = RamDisk(disk.0.clone());
             chain(&disk, &l, to);
             // A sentinel chain beside it stays.
@@ -254,9 +256,9 @@ fn broken_chains_are_bounded() {
             assert_eq!(t.chain_len(3), Err(FsError::Corrupt), "{what}");
             assert_eq!(t.free_chain(3), Ok(freed), "{what}");
             t.flush().unwrap();
-            assert!(rec.reads <= count, "{what}: {} FAT reads", rec.reads);
+            assert_eq!(rec.reads, 1, "{what}: one FAT sector, cached");
             assert_eq!(entries(&disk, &l, 3), [0, 0], "{what}");
-            assert_eq!(entries(&disk, &l, 4), [0, 0], "{what}");
+            assert_eq!(entries(&disk, &l, 4), [after; 2], "{what}");
             assert_eq!(entries(&disk, &l, 5), [l.end_mark(); 2], "{what}");
         }
 
@@ -272,13 +274,13 @@ fn broken_chains_are_bounded() {
             assert_eq!(t.free_chain(start), Ok(0), "start {start}");
         }
         t.flush().unwrap();
-        assert!(rec.reads <= count);
+        assert_eq!(rec.reads, 1, "unheld starts read nothing");
         assert_eq!(entries(&disk, &l, 3), [0, 0], "self-loop");
     }
 }
 
 /// A loop the length of the volume is still a loop: the walk stops at
-/// `count` steps, one FAT read per sector.
+/// `count` steps, one FAT read per sector per pass.
 #[test]
 fn a_loop_through_every_cluster_is_corrupt() {
     let disk = with_clusters(5_000, 1);
@@ -293,8 +295,9 @@ fn a_loop_through_every_cluster_is_corrupt() {
     assert_eq!(t.free_chain(2), Ok(5_000));
     assert_eq!(t.free_count(), Ok(5_000));
     t.flush().unwrap();
+    // chain_len, free_chain and free_count each pass over the 20 sectors.
     let sectors = 5_002u32.div_ceil(256);
-    assert!(rec.reads <= 4 * sectors, "{} FAT reads", rec.reads);
+    assert_eq!(rec.reads, 3 * sectors);
 }
 
 fn file(stem: &[u8], ext: &[u8]) -> FileName {
@@ -406,4 +409,39 @@ fn fsinfo_is_checked_before_its_hint() {
         assert!(!fsinfo::valid(&bad), "signature at {at}");
         assert_eq!(fsinfo::hint(&bad, &l), None, "signature at {at}");
     }
+}
+
+/// A failed FAT write leaves the cache empty, not dirty: the card's state
+/// is unknown, so the next access reads it again.
+#[test]
+fn failed_flush_empties_the_cache() {
+    let disk = fat16(16_384, 1);
+    let l = layout_of(&disk);
+    let mut rec = Rec::new(&disk);
+    let mut cache = FatCache::new();
+    let mut t = Table::new(&mut rec, &l, &mut cache);
+    t.set(300, 7).unwrap();
+    t.blocks().fail_writes = true;
+    assert!(matches!(t.flush(), Err(FsError::Dev(_))));
+    t.blocks().fail_writes = false;
+    assert_eq!(t.flush(), Ok(()), "nothing left to write");
+    let reads = t.blocks().reads;
+    assert_eq!(t.link(300).map(|_| ()), Ok(()));
+    assert_eq!(t.blocks().reads, reads + 1, "read again");
+    let _ = Table::new(&mut rec, &l, &mut cache);
+    assert_eq!(entries(&disk, &l, 300), [0, 0]);
+}
+
+/// A `Table` dropped with a change unflushed is a bug the next one reports.
+#[test]
+#[cfg(debug_assertions)]
+#[should_panic(expected = "unflushed FAT change")]
+fn a_dirty_cache_is_not_dropped() {
+    let disk = fat16(16_384, 1);
+    let l = layout_of(&disk);
+    let mut rec = Rec::new(&disk);
+    let mut cache = FatCache::new();
+    let mut t = Table::new(&mut rec, &l, &mut cache);
+    t.set(300, 7).unwrap();
+    let _ = Table::new(&mut rec, &l, &mut cache);
 }

@@ -252,7 +252,9 @@ fn chain_errors_read_as_corrupt_before_the_sink() {
             let (r, sink) = read(&mut fs, name(Dir::Projects, file, "CHP"));
             assert_eq!(r, Err(FsError::Corrupt), "{what}");
             assert_eq!(sink.began, None, "{what}: begin");
-            assert!(rec.reads <= count, "{what}");
+            // The root, `CHIMERA`, `PROJECTS` and the one FAT sector every
+            // chain here lies in: the walk stops without another read.
+            assert_eq!(rec.reads, 4, "{what}");
             assert_eq!(rec.writes, [], "{what}");
         }
     }
@@ -335,40 +337,41 @@ impl XorShift {
     }
 }
 
-/// Mutated boot sectors, FATs (the tail sector included) and directories:
-/// no panic, no write, and no block outside the partition (`Rec` panics on
-/// one).
-#[test]
-fn mutated_images_read_within_the_partition() {
-    let files = [
-        (Dir::Chimera, "TOP", "BIN", 700),
-        (Dir::Projects, "A", "CHP", 1_536),
-        (Dir::Sounds, "S", "SND", 3_000),
-    ];
-    let (disk, bodies) = written(with_clusters(4_100, 1), &files);
-    let l = layout_of(&disk);
-    let Root::Fixed { first: root, .. } = l.root() else {
-        unreachable!("FAT16")
-    };
-    let targets = [
-        PART_LBA,
-        PART_LBA + l.fat_block(0),
-        PART_LBA + l.fat_block(l.clusters() + 1),
-        PART_LBA + root,
-        entry(&disk, b"A       CHP").0 as u32,
-        entry(&disk, b"S       SND").0 as u32,
-        entry(&disk, b"TOP     BIN").0 as u32,
-    ];
+/// BPB fields: sectors per cluster, reserved, FATs, root entries, the
+/// totals, the FAT sizes and FAT32's root cluster.
+const BPB_FIELDS: &[usize] = &[
+    13, 14, 15, 16, 17, 18, 19, 20, 22, 23, 32, 33, 34, 35, 36, 37, 38, 39, 44, 45, 46, 47,
+];
+/// A directory entry's name, attribute, cluster halves and length.
+const ENTRY_FIELDS: &[usize] = &[0, 11, 20, 21, 26, 27, 28, 29, 30, 31];
+
+/// A block to mutate, and the offsets a focused mutation picks from (every
+/// directory entry's, for a directory block).
+struct Target {
+    block: u32,
+    fields: &'static [usize],
+    per_entry: bool,
+}
+
+/// Mutates 1–8 bytes of `targets` per seed, half of them in the fields that
+/// steer a walk, then lists and reads: no panic, no write, and no block
+/// outside the partition (`Rec` panics on one). Returns the seeds that
+/// still read a file. Each seed's bytes are put back after it.
+fn fuzz(disk: &RamDisk, files: &Files, targets: &[Target], seeds: u64) -> u64 {
     let part = first_partition(&disk.block(0)).unwrap();
-    // Seeds whose image still mounts and reads a file: the fuzz isn't vacuous.
     let mut read_ok = 0;
-    for seed in 1..=2_000u64 {
+    for seed in 1..=seeds {
         let mut rng = XorShift(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15));
         let mut undo = Vec::new();
         for _ in 0..1 + rng.below(8) {
-            let blk = targets[rng.below(targets.len())] as usize;
-            let at = rng.below(512);
-            let mut d = disk.0.borrow_mut();
+            let t = &targets[rng.below(targets.len())];
+            let at = if t.fields.is_empty() || rng.below(2) == 0 {
+                rng.below(512)
+            } else {
+                let base = if t.per_entry { 32 * rng.below(16) } else { 0 };
+                base + t.fields[rng.below(t.fields.len())]
+            };
+            let (blk, mut d) = (t.block as usize, disk.0.borrow_mut());
             undo.push((blk, at, d[blk][at]));
             d[blk][at] = rng.next() as u8;
         }
@@ -376,24 +379,74 @@ fn mutated_images_read_within_the_partition() {
             let Ok((l, _)) = layout(&disk.block(PART_LBA), part) else {
                 return false;
             };
-            let mut rec = Rec::new(&disk);
+            let mut rec = Rec::new(disk);
             let mut bufs = Bufs::new();
             let mut fs = bufs.fs(&mut rec, l);
             for dir in [Dir::Chimera, Dir::Projects, Dir::Sounds] {
                 let _ = fs.list(dir, &mut |_, _| {});
             }
             let mut any = false;
-            for (file, _) in &bodies {
+            for (file, _) in files {
                 any |= read(&mut fs, *file).0.is_ok();
             }
             assert_eq!(rec.writes, []);
             any
         }));
-        read_ok += usize::from(run.unwrap_or_else(|_| panic!("seed {seed}")));
+        read_ok += u64::from(run.unwrap_or_else(|_| panic!("seed {seed}")));
         let mut d = disk.0.borrow_mut();
         for (blk, at, v) in undo.into_iter().rev() {
             d[blk][at] = v;
         }
     }
-    assert!(read_ok > 1_000, "{read_ok} of 2 000 seeds read a file");
+    read_ok
+}
+
+/// The boot sector, FAT 1's first and last sectors, the root and each
+/// directory holding a file.
+fn targets(disk: &RamDisk) -> Vec<Target> {
+    let l = layout_of(disk);
+    let root = match l.root() {
+        Root::Fixed { first, .. } => first,
+        Root::Cluster(c) => l.cluster_block(c).unwrap(),
+    };
+    let block = |b: u32, fields, per_entry| Target {
+        block: PART_LBA + b,
+        fields,
+        per_entry,
+    };
+    let dir = |name: &[u8; 11]| Target {
+        block: entry(disk, name).0 as u32,
+        fields: ENTRY_FIELDS,
+        per_entry: true,
+    };
+    vec![
+        block(0, BPB_FIELDS, false),
+        block(l.fat_block(0), &[], false),
+        block(l.fat_block(l.clusters() + 1), &[], false),
+        block(root, ENTRY_FIELDS, true),
+        dir(b"TOP     BIN"),
+        dir(b"A       CHP"),
+        dir(b"S       SND"),
+    ]
+}
+
+const FUZZ_FILES: [(Dir, &str, &str, usize); 3] = [
+    (Dir::Chimera, "TOP", "BIN", 700),
+    (Dir::Projects, "A", "CHP", 1_536),
+    (Dir::Sounds, "S", "SND", 3_000),
+];
+
+#[test]
+fn mutated_fat16_images_read_within_the_partition() {
+    let (disk, files) = written(with_clusters(4_100, 1), &FUZZ_FILES);
+    let ok = fuzz(&disk, &files, &targets(&disk), 2_000);
+    assert!(ok > 1_000, "{ok} of 2 000 seeds read a file");
+}
+
+/// FAT32 adds the root cluster and each entry's high cluster half.
+#[test]
+fn mutated_fat32_images_read_within_the_partition() {
+    let (disk, files) = written(fat32(1), &FUZZ_FILES);
+    let ok = fuzz(&disk, &files, &targets(&disk), 1_000);
+    assert!(ok > 500, "{ok} of 1 000 seeds read a file");
 }

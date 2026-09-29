@@ -173,7 +173,9 @@ fn corrupt_boot_sector_is_rejected_not_panic() {
             b[42..44].copy_from_slice(&1u16.to_le_bytes())
         }),
         ("FAT32 root cluster 0", fat32(1), |b| b[44..48].fill(0)),
-        ("FAT32 FSInfo 0", fat32(1), |b| b[48..50].fill(0)),
+        ("FAT32 FSInfo in the data area", fat32(1), |b| {
+            b[48..50].copy_from_slice(&32u16.to_le_bytes())
+        }),
         ("FAT too small for the clusters", fat16(16_384, 1), |b| {
             b[22..24].copy_from_slice(&10u16.to_le_bytes())
         }),
@@ -402,7 +404,7 @@ fn entry_widths() {
     let l = layout_of(&fat32(1));
     let mut block = [0; 512];
     block[240..244].copy_from_slice(&0xF000_0000u32.to_le_bytes());
-    l.put_entry(&mut block, 700, 0xFABC_DEF0);
+    l.put_entry(&mut block, 700, 0x5ABC_DEF0);
     assert_eq!(
         u32::from_le_bytes(block[240..244].try_into().unwrap()),
         0xFABC_DEF0,
@@ -414,4 +416,25 @@ fn entry_widths() {
         0xF000_0005
     );
     assert_eq!(l.entry(&block, 700), 5, "masked to 28 bits");
+}
+
+/// BPB_FSInfo 0 or 0xFFFF: the volume has no FSInfo, and still mounts.
+#[test]
+fn no_fs_info_mounts_without_one() {
+    let disk = fat32(1);
+    let p = first_partition(&disk.block(0)).unwrap();
+    for v in [0u16, 0xFFFF] {
+        let mut bs = disk.block(PART_LBA);
+        bs[48..50].copy_from_slice(&v.to_le_bytes());
+        let (l, _) = layout(&bs, p).unwrap();
+        assert_eq!(l.fs_info(), None, "BPB_FSInfo {v:#x}");
+    }
+}
+
+#[test]
+#[cfg(debug_assertions)]
+#[should_panic(expected = "FAT16 entry")]
+fn fat16_entry_over_16_bits_is_a_bug() {
+    let l = layout_of(&fat16(16_384, 1));
+    l.put_entry(&mut [0; 512], 300, 0x1_0000);
 }

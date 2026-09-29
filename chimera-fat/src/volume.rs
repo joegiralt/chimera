@@ -91,6 +91,8 @@ const BPB_FAT_SIZE32: usize = 36;
 const BPB_FS_VER: usize = 42;
 const BPB_ROOT_CLUSTER: usize = 44;
 const BPB_FS_INFO: usize = 48;
+const NO_FS_INFO: u16 = 0;
+const NO_FS_INFO_ALT: u16 = 0xFFFF;
 const BS_VOL_ID16: usize = 0x27;
 const BS_VOL_ID32: usize = 0x43;
 const BS_LABEL16: usize = 0x2B;
@@ -286,12 +288,25 @@ impl Layout {
     pub fn put_entry(&self, block: &mut [u8; SECTOR], cluster: u32, v: u32) {
         let at = self.entry_at(cluster);
         match self.kind {
-            FsKind::Fat16 => block[at..at + 2].copy_from_slice(&(v as u16).to_le_bytes()),
+            FsKind::Fat16 => {
+                debug_assert!(v <= 0xFFFF, "FAT16 entry {v:#x}");
+                block[at..at + 2].copy_from_slice(&(v as u16).to_le_bytes());
+            }
             FsKind::Fat32 => {
                 let v = (u32_at(block, at) & !FAT32_MASK) | (v & FAT32_MASK);
                 block[at..at + 4].copy_from_slice(&v.to_le_bytes());
             }
         }
+    }
+
+    /// A reserved value or the bad mark (0xFFF0..=0xFFF7, or FAT32's
+    /// 0x0FFF_FFF0..=0x0FFF_FFF7): the cluster's own state, not a link.
+    pub const fn is_reserved(&self, v: u32) -> bool {
+        let eoc = match self.kind {
+            FsKind::Fat16 => FAT16_EOC,
+            FsKind::Fat32 => FAT32_EOC,
+        };
+        v >= eoc - 8 && v < eoc
     }
 
     /// The end-of-chain mark this FAT writes.
@@ -388,16 +403,20 @@ pub fn layout(bs: &[u8; SECTOR], part: Partition) -> Result<(Layout, VolumeId), 
         (FsKind::Fat16, BS_VOL_ID16, BS_LABEL16, root, None)
     } else {
         let root_cluster = u32_at(bs, BPB_ROOT_CLUSTER);
-        let fs_info = u32::from(u16_at(bs, BPB_FS_INFO));
+        // 0 and 0xFFFF: no FSInfo. It is advisory, so the card mounts.
+        let fs_info = match u16_at(bs, BPB_FS_INFO) {
+            NO_FS_INFO | NO_FS_INFO_ALT => None,
+            n => Some(u32::from(n)),
+        };
         if u16_at(bs, BPB_FS_VER) != 0
             || !(2..clusters.saturating_add(2)).contains(&root_cluster)
-            || !(1..reserved).contains(&fs_info)
+            || fs_info.is_some_and(|b| !(1..reserved).contains(&b))
             || clusters > FAT32_MAX_CLUSTERS
         {
             return bad;
         }
         let root = Root::Cluster(root_cluster);
-        (FsKind::Fat32, BS_VOL_ID32, BS_LABEL32, root, Some(fs_info))
+        (FsKind::Fat32, BS_VOL_ID32, BS_LABEL32, root, fs_info)
     };
     // Every cluster's entry, the two reserved ones included, is in each FAT.
     let entries = (u64::from(clusters) + 2) * u64::from(kind.entry_bytes());
