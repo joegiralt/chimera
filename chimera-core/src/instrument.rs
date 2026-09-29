@@ -395,11 +395,9 @@ impl Instrument {
                         let awaits = v.is_some_and(|v| self.sym.alloc().awaits(VoiceIdx::ALL[v]));
                         (v, steal || awaits)
                     } else {
-                        // Any promise or claim of the voice is for a note
-                        // this one replaces.
-                        if let Some(v) = pick {
-                            self.sym.alloc_mut().cancel(VoiceIdx::ALL[v]);
-                        }
+                        // A promise or claim of the voice's goes when it
+                        // triggers this note, or rests (`Voice::trigger`,
+                        // `Voice::rest`).
                         (pick, false)
                     };
                     let Some(v) = v else {
@@ -463,13 +461,13 @@ impl Instrument {
     }
 
     /// Voice `v`, marked dying, fades out: a note waiting for it is dropped
-    /// unheard, and so is any slot promised or bound to it.
+    /// unheard (ADR 0027). Any slot promised or bound to it goes when it
+    /// rests, freed.
     fn shed(&mut self, v: usize) {
         let queued = self.voices[v].kill();
         if self.waiting[v].take().is_some() || queued {
             self.alloc.dropped_unheard();
         }
-        self.sym.alloc_mut().cancel(VoiceIdx::ALL[v]);
     }
 
     /// A Part whose Sound has just become Sympathetic: its held, sounding
@@ -521,7 +519,9 @@ impl Instrument {
                         evicted || lost
                     }
                     Restart::Silent => {
-                        self.sym.alloc_mut().cancel(id);
+                        // `restart` is Silent only for a voice no slot names.
+                        let pool = self.sym.alloc();
+                        debug_assert!(!pool.awaits(id) && !pool.promised(id));
                         self.waiting[v].take().is_some() | self.voices[v].kill()
                     }
                 };
@@ -573,9 +573,10 @@ impl Instrument {
             if !self.voices[v].is_active() {
                 let s = self.alloc.slots()[v];
                 match (self.waiting[v].take(), s.part(), s.note()) {
-                    // A Sympathetic note whose slot's holder still fades: no
+                    // A note bound for a slot whose holder still fades: no
                     // rebuild spent waiting, it tries again after the next
-                    // block.
+                    // block. (A note of another kind waits at most until the
+                    // claim's fade ends; its `trigger` cancels the claim.)
                     (Some(vel), Some(_), Some(_)) if self.sym.alloc().awaits(VoiceIdx::ALL[v]) => {
                         self.waiting[v] = Some(vel);
                     }
