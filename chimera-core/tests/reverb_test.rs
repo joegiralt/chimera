@@ -8,6 +8,7 @@ use chimera_core::dsp::halfband::HALF;
 use chimera_core::dsp::reverb::{REVERB_SPECS, ReverbParams};
 use chimera_core::dsp::ring::*;
 use chimera_hal::BLOCK_SIZE;
+use common::Rig;
 use common::{SR, rms};
 
 const FS_RING: f32 = 24_000.0;
@@ -911,14 +912,13 @@ fn grit_is_param_5_and_reaches_the_ring() {
 fn a_voice_through_the_reverb_leaves_a_tail() {
     use chimera_core::dsp::algo::params::AlgoParams;
     use chimera_core::dsp::algo::waves::WaveId;
-    use chimera_core::dsp::voice::Voice;
     use chimera_core::modulation::ModState;
     use chimera_core::params::{EngineType, ParamSnapshot};
     use chimera_core::{MidiNote, Velocity};
     let mut p = ParamSnapshot::for_engine(EngineType::Algo);
     p.algo = AlgoParams::single(WaveId::TRI);
     let m = ModState::new();
-    let mut voice = Voice::new(SR);
+    let mut voice = Rig::new(SR);
     let mut rv = Box::new(RingReverb::new());
     let c = RingControls {
         time: 0.7,

@@ -11,11 +11,15 @@ use chimera_core::dsp::algo::params::AlgoParams;
 use chimera_core::dsp::algo::plan::{EvalPlan, OPS};
 use chimera_core::dsp::algo::tx::FEEDBACK_CYCLES;
 use chimera_core::dsp::algo::waves::WaveId;
+use chimera_core::dsp::engines::{EngineSlot, SlotKind};
 use chimera_core::dsp::filter::FilterMode;
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus};
-use chimera_core::dsp::modal::ResonatorMode;
+use chimera_core::dsp::modal::{ModalEngine, ResonatorMode, SymPool};
 use chimera_core::dsp::modulator::{EnvForm, EnvSlot, EnvType, Func, Glide, LfoForm, LfoType};
-use chimera_core::hw::{BLOCK_SIZE, MAX_PARTS, MAX_VOICES, SAMPLE_RATE, SampleBudget};
+use chimera_core::dsp::voice::Voice;
+use chimera_core::hw::{
+    BLOCK_SIZE, MAX_PARTS, MAX_VOICES, SAMPLE_RATE, SampleBudget, VOICE_RAM_BUDGET,
+};
 use chimera_core::instrument::{
     AudioShared, DacBlocks, Instrument, PanCache, PartAudio, mix_parts,
 };
@@ -27,9 +31,11 @@ use chimera_core::params::{
 };
 use chimera_core::preset::Performance;
 use chimera_core::scope::{ScopeFrame, ScopeWriter, scope_buffer};
+use chimera_core::sym_alloc::SymAlloc;
 use chimera_core::triple::TripleBuffer;
 use chimera_core::ui::fmt::FmtBuf;
 use chimera_core::ui::{draw, theme};
+use chimera_core::voice_alloc::VoiceIdx;
 use chimera_core::{MidiChannel, MidiNote, Velocity};
 use chimera_hal::ChimeraDisplay;
 use cortex_m::peripheral::DWT;
@@ -136,7 +142,7 @@ fn worst_comp(s: &mut AudioShared) {
     (c.thresh, c.ratio, c.attack, c.release, c.makeup, c.mix) = (0.0, 7, 0.0, 0.0, 0.5, 1.0);
 }
 
-const ROUTING_ROWS: usize = 28;
+const ROUTING_ROWS: usize = 29;
 /// Rows per ROUTING screen: ten from y 46 at `ROW_H` 25 end at 283.
 const ROUTING_PAGE: usize = 10;
 
@@ -227,7 +233,27 @@ const ROUTING: [RoutingRow; ROUTING_ROWS] = [
     ("MDL BOW", |p| modal(p, ResonatorMode::Bowed), STILL),
     ("MDL SYM", |p| modal(p, ResonatorMode::Sympathetic), STILL),
     ("MDL RES", |p| modal(p, ResonatorMode::Modal), STILL),
+    // MODE flipped every 4 blocks: restarts and rests every flip.
+    ("SWITCH", |p| modal(p, ResonatorMode::String), switch_storm),
 ];
+
+/// Sympathetic ended by ENV 1 on the VCA at RELEASE 0: a low note's loop
+/// filters too seldom to fall silent within `IDLE_BLOCKS`, and a clear's
+/// extent follows the loops' lengths, not how long they rang.
+fn short_sym(p: &mut PartAudio) {
+    modal(p, ResonatorMode::Sympathetic);
+    p.params.envelopes[0].release = 0.0;
+    p.mod_state = matrix(&[(ModSource::Env1, VCA, 127)]);
+}
+
+/// String and Sympathetic in turn, 4 blocks each.
+fn switch_storm(p: &mut PartAudio, block: u32) {
+    p.params.modal.mode = if (block / 4).is_multiple_of(2) {
+        ResonatorMode::String
+    } else {
+        ResonatorMode::Sympathetic
+    };
+}
 
 /// The Modal Sound with its model set to `mode`.
 fn modal(p: &mut PartAudio, mode: ResonatorMode) {
@@ -360,6 +386,17 @@ fn mods(p: &mut PartAudio) {
 static mut SCOPE: TripleBuffer<ScopeFrame> = scope_buffer();
 // A static, not a local: `AudioShared` is 3 KB (ADR 0020).
 static mut SHARED: MaybeUninit<AudioShared> = MaybeUninit::uninit();
+// SAFETY: ".ram_d2.voices" is NOLOAD, so this holds garbage at boot; sound
+// because it is `MaybeUninit` and `time_rebuild` builds it in place before
+// any read. In D2 with the `Instrument`, as a voice's slot is.
+#[unsafe(link_section = ".ram_d2.voices")]
+static mut SLOT: MaybeUninit<EngineSlot> = MaybeUninit::uninit();
+static mut SYM: SymAlloc = SymAlloc::new();
+
+/// Rebuilds and note-ons timed, each averaged.
+const ROUNDS: u32 = 16;
+/// Render-to-idle gives up after 10 s of blocks: a voice stuck on.
+const IDLE_BLOCKS: u32 = 10 * SAMPLE_RATE / BLOCK_SIZE as u32;
 
 struct Rig<'p> {
     inst_slot: &'static mut MaybeUninit<Instrument>,
@@ -390,21 +427,21 @@ pub fn run(display: &mut impl ChimeraDisplay, clocks: Clocks, perf: &Performance
         scope: ScopeWriter::new(scope_w),
         dac: DacBlocks::new(),
     };
-    let mut rows = [[0u32; MAX_VOICES]; ROWS];
+    let mut rows = [Counts::default(); ROWS];
     for (row, &(_, patch, low, step)) in rows.iter_mut().zip(&PATCHES) {
         for n in 1..=MAX_VOICES {
             let setup = |s: &mut AudioShared| s.parts[0].params = black_box(patch());
-            row[n - 1] = rig.time(setup, |_, _| {}, n, low, step);
+            row.add(n, rig.time(setup, |_, _| {}, n, low, step));
         }
     }
     let fx: [u32; FX_ROWS] = core::array::from_fn(|i| rig.time_bus(FX[i].1));
     let kernel = time_kernel();
     show(display, clocks, &rows, kernel, &fx);
     hold(clocks);
-    let mut routing = [[0u32; MAX_VOICES]; ROUTING_ROWS];
+    let mut routing = [Counts::default(); ROUTING_ROWS];
     for (row, &(_, part, each)) in routing.iter_mut().zip(&ROUTING) {
         for n in 1..=MAX_VOICES {
-            row[n - 1] = rig.time(
+            let timed = rig.time(
                 |s| {
                     part(&mut s.parts[0]);
                     black_box(&s.parts[0]);
@@ -414,14 +451,83 @@ pub fn run(display: &mut impl ChimeraDisplay, clocks: Clocks, perf: &Performance
                 36,
                 12,
             );
+            row.add(n, timed);
         }
     }
     let pages = ROUTING
         .chunks(ROUTING_PAGE)
         .zip(routing.chunks(ROUTING_PAGE));
-    for (page, (labels, cycles)) in pages.enumerate() {
-        show_routing(display, page, labels, cycles);
+    for (page, (labels, counts)) in pages.enumerate() {
+        show_routing(display, page, labels, counts);
         hold(clocks);
+    }
+    let rebuild = time_rebuild();
+    // A4 after A4, the default Sound: the lines clear a loop each.
+    let note_on = rig.time_sym_note_on(MidiNote::A4, |p| modal(p, ResonatorMode::Sympathetic));
+    // The lowest note after itself: every ring whole, the worst case.
+    let lowest = MidiNote::new(0).unwrap_or(MidiNote::A4);
+    let lowest = rig.time_sym_note_on(lowest, short_sym);
+    show_memory(display, rebuild, note_on, lowest);
+    hold(clocks);
+}
+
+/// Cycles per `rebuild` into Sympathetic from Algo: the lend and the main
+/// string, no set. Each is undone by an untimed rebuild into Algo, which
+/// gives the lease back.
+#[inline(never)]
+fn time_rebuild() -> u32 {
+    // SAFETY: as in `run`: the bench is the only user of its statics, and
+    // these references end when this returns.
+    let (slot, pool) = unsafe { (&mut *addr_of_mut!(SLOT), &mut *addr_of_mut!(SYM)) };
+    let slot = EngineSlot::init_in_place(slot, SlotKind::Algo);
+    let voice = VoiceIdx::ALL[0];
+    let sym = black_box(SlotKind::Modal(ResonatorMode::Sympathetic));
+    let mut cycles = 0u32;
+    for _ in 0..ROUNDS {
+        slot.rebuild(SlotKind::Algo, pool, voice);
+        // Promised, as the `Instrument` places a note: it lends that slot.
+        pool.place(voice);
+        let start = DWT::cycle_count();
+        slot.rebuild(sym, pool, voice);
+        cycles = cycles.wrapping_add(DWT::cycle_count().wrapping_sub(start));
+        black_box(&*slot);
+        // The pool is free each round: a bare build would time no lend.
+        assert!(slot.rings());
+    }
+    slot.rebuild(SlotKind::Algo, pool, voice);
+    cycles / ROUNDS
+}
+
+/// A row's cycles per sample at 1..=`MAX_VOICES` notes, and how many
+/// voices its per-voice figure spans: those that rang a Sympathetic set at
+/// the most notes, or with none ringing, those that sounded.
+#[derive(Clone, Copy)]
+struct Counts {
+    cycles: [u32; MAX_VOICES],
+    spans: usize,
+}
+
+impl Default for Counts {
+    fn default() -> Self {
+        Self {
+            cycles: [0; MAX_VOICES],
+            spans: MAX_VOICES,
+        }
+    }
+}
+
+impl Counts {
+    fn add(&mut self, notes: usize, (cycles, spans): (u32, usize)) {
+        self.cycles[notes - 1] = cycles;
+        self.spans = spans;
+    }
+
+    /// The cost of a voice that sounds, or for Sympathetic that rings:
+    /// from one note to as many as that (the pool rings at most 4; the
+    /// notes past play bare, cheaper, and would dilute the slope).
+    fn per_voice(&self) -> u32 {
+        let k = self.spans.clamp(2, MAX_VOICES);
+        self.cycles[k - 1].saturating_sub(self.cycles[0]) / (k as u32 - 1)
     }
 }
 
@@ -433,7 +539,8 @@ fn hold(clocks: Clocks) {
 
 impl Rig<'_> {
     /// Voice `v` plays note `low + step * v`; `each` runs before every
-    /// block, its time counted (a few cycles a block).
+    /// block, its time counted (a few cycles a block). Returns the cycles
+    /// per sample and the voices its per-voice figure spans (`Counts`).
     #[inline(never)]
     fn time(
         &mut self,
@@ -442,7 +549,7 @@ impl Rig<'_> {
         voices: usize,
         low: u8,
         step: u8,
-    ) -> u32 {
+    ) -> (u32, usize) {
         // The allocator must not refuse what the bench wants to measure.
         let budget = SampleBudget::for_cpu(u32::MAX);
         let inst = Instrument::init_in_place(self.inst_slot, SAMPLE_RATE, budget);
@@ -467,7 +574,47 @@ impl Rig<'_> {
             each(shared, WARM_BLOCKS + b);
             inst.render(fx, &mut self.dac, shared, &mut self.scope);
         }
-        DWT::cycle_count().wrapping_sub(start) / (TIMED_BLOCKS * BLOCK_SIZE as u32)
+        let cycles = DWT::cycle_count().wrapping_sub(start);
+        let spans = match inst.ringing() {
+            0 => inst.sounding(),
+            ringing => ringing,
+        };
+        (cycles / (TIMED_BLOCKS * BLOCK_SIZE as u32), spans)
+    }
+
+    /// Cycles of `Instrument::handle` for one Sympathetic note-on of
+    /// `note`, Part 0 set by `part`, on an idle voice: `place`, `lend`, the
+    /// rebuild, the clear and the excitation. Each round releases the note
+    /// and renders until every voice is idle again; one untimed round
+    /// warms first, so the slot's lines hold `note`'s last round.
+    #[inline(never)]
+    fn time_sym_note_on(&mut self, note: MidiNote, part: fn(&mut PartAudio)) -> u32 {
+        let budget = SampleBudget::for_cpu(u32::MAX);
+        let inst = Instrument::init_in_place(self.inst_slot, SAMPLE_RATE, budget);
+        let fx = FxBus::init_in_place(self.fx_slot);
+        let shared = AudioShared::init_in_place(self.shared_slot, self.perf);
+        part(&mut shared.parts[0]);
+        let ev = |kind| NoteEvent {
+            channel: MidiChannel::clamped(0),
+            note,
+            kind,
+        };
+        let mut cycles = 0u32;
+        for round in 0..=ROUNDS {
+            let start = DWT::cycle_count();
+            inst.handle(black_box(ev(NoteKind::On(Velocity::DEFAULT))), shared);
+            if round > 0 {
+                cycles = cycles.wrapping_add(DWT::cycle_count().wrapping_sub(start));
+            }
+            inst.handle(ev(NoteKind::Off), shared);
+            for _ in 0..IDLE_BLOCKS {
+                inst.render(fx, &mut self.dac, shared, &mut self.scope);
+                if inst.allocator().slots().iter().all(|s| s.is_free()) {
+                    break;
+                }
+            }
+        }
+        cycles / ROUNDS
     }
 
     /// Six Parts written with one noise block, sends 0.5, no voices:
@@ -615,7 +762,7 @@ const CELL_W: i32 = (theme::SCREEN_W - 8) / MAX_VOICES as i32;
 fn show(
     display: &mut impl ChimeraDisplay,
     clocks: Clocks,
-    rows: &[[u32; MAX_VOICES]; ROWS],
+    rows: &[Counts; ROWS],
     kernel: u32,
     fx: &[u32; FX_ROWS],
 ) {
@@ -646,8 +793,8 @@ fn show(
         theme::MID,
     );
     let mut y = 46;
-    for (&(label, ..), cycles) in PATCHES.iter().zip(rows) {
-        voice_row(display, &mut line, y, label, cycles);
+    for (&(label, ..), counts) in PATCHES.iter().zip(rows) {
+        voice_row(display, &mut line, y, label, counts);
         y += ROW_H;
     }
     line.clear();
@@ -683,7 +830,7 @@ fn show_routing(
     display: &mut impl ChimeraDisplay,
     page: usize,
     rows: &[RoutingRow],
-    cycles: &[[u32; MAX_VOICES]],
+    counts: &[Counts],
 ) {
     draw::fill_rect(display, 0, 0, theme::SCREEN_W, theme::SCREEN_H, theme::BG);
     let mut line = FmtBuf::new();
@@ -697,27 +844,54 @@ fn show_routing(
         16,
         theme::INK,
     );
-    for (i, (&(label, ..), c)) in rows.iter().zip(cycles).enumerate() {
+    for (i, (&(label, ..), c)) in rows.iter().zip(counts).enumerate() {
         voice_row(display, &mut line, 46 + i as i32 * ROW_H, label, c);
     }
     display.flush();
 }
 
-/// `label`'s per-voice cost (the full pool minus one voice, over one fewer
-/// than the pool) and its count at each voice count.
+/// The sizes behind the D2 budget and the exclusive state's two timings.
+fn show_memory(display: &mut impl ChimeraDisplay, rebuild: u32, note_on: u32, lowest: u32) {
+    use core::mem::size_of;
+    draw::fill_rect(display, 0, 0, theme::SCREEN_W, theme::SCREEN_H, theme::BG);
+    draw::text(display, &theme::FONT_VALUE, "MEMORY", 4, 16, theme::INK);
+    let lines = [
+        format_args!("VOICE {}", size_of::<Voice>()),
+        format_args!("SLOT {}", size_of::<EngineSlot>()),
+        format_args!("MODAL {}", size_of::<ModalEngine>()),
+        format_args!("SYM POOL {}", size_of::<SymPool>()),
+        format_args!("INSTR {}/{VOICE_RAM_BUDGET}", size_of::<Instrument>()),
+        format_args!("REBUILD {rebuild} CYC"),
+        format_args!("SYM NOTE-ON {note_on} CYC"),
+        format_args!("SYM NOTE-ON LOW {lowest} CYC"),
+    ];
+    let mut line = FmtBuf::new();
+    for (i, args) in lines.into_iter().enumerate() {
+        line.clear();
+        let _ = line.write_fmt(args);
+        let y = 46 + i as i32 * ROW_H;
+        draw::text(display, &theme::FONT_VALUE, line.as_str(), 4, y, theme::INK);
+    }
+    display.flush();
+}
+
+/// `label`'s per-voice cost (`Counts::per_voice`), with the voices that
+/// sounded when fewer than all, and its count at each voice count.
 fn voice_row(
     display: &mut impl ChimeraDisplay,
     line: &mut FmtBuf,
     y: i32,
     label: &str,
-    cycles: &[u32; MAX_VOICES],
+    counts: &Counts,
 ) {
-    let per_voice = cycles[MAX_VOICES - 1].saturating_sub(cycles[0]) / (MAX_VOICES as u32 - 1);
     line.clear();
-    let _ = write!(line, "{label} /VOICE {per_voice}");
+    let _ = write!(line, "{label} /VOICE {}", counts.per_voice());
+    if counts.spans < MAX_VOICES {
+        let _ = write!(line, " ({} V)", counts.spans);
+    }
     draw::text(display, &theme::FONT_VALUE, line.as_str(), 4, y, theme::INK);
     // One cell per count: the counts together overflow a `FmtBuf`.
-    for (i, c) in cycles.iter().enumerate() {
+    for (i, c) in counts.cycles.iter().enumerate() {
         line.clear();
         let _ = write!(line, "{c}");
         draw::text(

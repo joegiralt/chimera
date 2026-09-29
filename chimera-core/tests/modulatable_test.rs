@@ -1,13 +1,14 @@
 //! Spec § Testing "Modulatable is true": for every address whose spec says
 //! `modulatable: true`, an LFO route changes the rendered output. Keeps the
 //! flag from lying. An ENV slot is heard through its own route into CUTOFF.
+mod common;
+use common::Rig;
 
 use chimera_core::addr::{BlockRef, ParamAddr};
 use chimera_core::dsp::algo::algorithms::AlgoId;
 use chimera_core::dsp::algo::params::AlgoParams;
 use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::modulator::EnvType;
-use chimera_core::dsp::voice::Voice;
 use chimera_core::mod_path::ModDestRegistry;
 use chimera_core::modulation::{CUTOFF, MAX_MOD_SOURCES, ModSource, ModState};
 use chimera_core::params::{EngineType, EnvParams, ParamSnapshot};
@@ -68,7 +69,7 @@ fn routes(addr: ParamAddr, lfo: i8) -> ModState {
 }
 
 fn render(params: &ParamSnapshot, mod_state: &ModState) -> Vec<f32> {
-    let mut voice = Voice::new(chimera_hal::SAMPLE_RATE);
+    let mut voice = Rig::new(chimera_hal::SAMPLE_RATE);
     voice.note_on(MidiNote::new(60).unwrap(), Velocity::DEFAULT, params);
     let mut out = Vec::new();
     let mut block = [0.0f32; BLOCK_SIZE];

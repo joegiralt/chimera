@@ -24,6 +24,26 @@ use crate::MidiNote;
 use crate::hw::{Cost, MAX_VOICES, SampleBudget};
 use crate::part::PartMode;
 
+/// A voice's index in the pool: always `< MAX_VOICES`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VoiceIdx(u8);
+
+impl VoiceIdx {
+    pub const ALL: [VoiceIdx; MAX_VOICES] = {
+        let mut all = [VoiceIdx(0); MAX_VOICES];
+        let mut i = 0;
+        while i < MAX_VOICES {
+            all[i] = VoiceIdx(i as u8);
+            i += 1;
+        }
+        all
+    };
+
+    pub fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct VoiceSlot {
     part: Option<u8>,
@@ -44,6 +64,12 @@ impl VoiceSlot {
 
     pub fn note(&self) -> Option<MidiNote> {
         self.note
+    }
+
+    /// `Allocator`'s clock at the note-on: lower is older. The sympathetic
+    /// pool ranks its slots by the same ages.
+    pub fn age(&self) -> u32 {
+        self.age
     }
 
     /// Key still down (no note-off yet).
@@ -139,25 +165,40 @@ impl Allocator {
         cost: Cost,
         reserved: Cost,
     ) -> Alloc {
-        let v = match self.pick(part, mode, cost, reserved) {
-            Some(v) => v,
-            None => {
-                self.refused = self.refused.wrapping_add(1);
-                return Alloc::Refused;
+        match self.pick(part, mode, cost, reserved) {
+            Some(v) => {
+                self.book(v, part, mode, note, cost);
+                Alloc::Voice(v)
             }
-        };
-        self.clock = self.clock.wrapping_add(1);
+            None => self.refuse(),
+        }
+    }
+
+    /// A note the budget gave no voice: counted, `Refused`.
+    pub fn refuse(&mut self) -> Alloc {
+        self.refused = self.refused.wrapping_add(1);
+        Alloc::Refused
+    }
+
+    /// The age `book` gives the next note.
+    fn next_age(&self) -> u32 {
+        self.clock.wrapping_add(1)
+    }
+
+    /// Books `note` on `pick`'s voice `v`, whatever it held.
+    pub fn book(&mut self, v: usize, part: u8, mode: PartMode, note: MidiNote, cost: Cost) {
+        let mono = mode == PartMode::Mono;
+        self.clock = self.next_age();
         self.rr = (v + 1) % MAX_VOICES;
         self.slots[v] = VoiceSlot {
             part: Some(part),
             note: Some(note),
             age: self.clock,
             held: true,
-            mono: mode == PartMode::Mono,
+            mono,
             dying: None,
             cost,
         };
-        Alloc::Voice(v)
     }
 
     /// Key up on `voice`: it is no longer held (its tail keeps the slot
@@ -210,7 +251,8 @@ impl Allocator {
         }
     }
 
-    fn pick(&self, part: u8, mode: PartMode, cost: Cost, reserved: Cost) -> Option<usize> {
+    /// The voice `note_on` would book, without booking it: rules 1–4.
+    pub fn pick(&self, part: u8, mode: PartMode, cost: Cost, reserved: Cost) -> Option<usize> {
         let fits = |freed: Cost| {
             let total = reserved.0 + self.live_cost().0 + cost.0;
             total.saturating_sub(freed.0) <= self.budget.as_cost().0
@@ -246,5 +288,17 @@ impl Allocator {
             .filter(|&v| !self.slots[v].is_free() && !self.slots[v].mono && !self.slots[v].dying())
             .min_by_key(|&v| (self.slots[v].held, self.slots[v].age))?;
         fits(self.slots[oldest].cost).then_some(oldest)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn voice_idx_all_counts_up() {
+        for (i, v) in VoiceIdx::ALL.iter().enumerate() {
+            assert_eq!(v.index(), i);
+        }
     }
 }

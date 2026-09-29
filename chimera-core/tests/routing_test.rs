@@ -1,7 +1,8 @@
 //! The matrix's eight sources (filter-routing spec § 2).
+mod common;
+use common::Rig;
 
 use chimera_core::addr::{BlockRef, ParamAddr};
-use chimera_core::dsp::voice::Voice;
 use chimera_core::mod_path::ModDestRegistry;
 use chimera_core::modulation::{ModSource, ModState, note_source};
 use chimera_core::params::{EngineType, FilterParams, ParamSnapshot};
@@ -45,7 +46,7 @@ fn render(source: ModSource, amount: i8, note: u8, vel: u8) -> Vec<f32> {
     reg.add(CUTOFF, *b"FLTCUTOF").unwrap();
     let mut ms = ModState::from_registry(&reg, 8);
     ms.set_amount(source.index(), 0, amount);
-    let mut v = Voice::new(chimera_hal::SAMPLE_RATE);
+    let mut v = Rig::new(chimera_hal::SAMPLE_RATE);
     v.note_on(
         MidiNote::new(note).unwrap(),
         Velocity::new(vel).unwrap(),
@@ -194,7 +195,7 @@ fn routed(routes: &[(ModSource, ParamAddr, i8)]) -> ModState {
 }
 
 /// `blocks` blocks of `v` from now.
-fn run(v: &mut Voice, p: &ParamSnapshot, ms: &ModState, blocks: usize) -> Vec<f32> {
+fn run(v: &mut Rig, p: &ParamSnapshot, ms: &ModState, blocks: usize) -> Vec<f32> {
     let mut out = Vec::new();
     let mut b = [0.0f32; BLOCK_SIZE];
     for _ in 0..blocks {
@@ -206,7 +207,7 @@ fn run(v: &mut Voice, p: &ParamSnapshot, ms: &ModState, blocks: usize) -> Vec<f3
 
 /// 24 blocks at note 72 under `routes` (source, destination, amount).
 fn render_with(p: &ParamSnapshot, routes: &[(ModSource, ParamAddr, i8)], vel: u8) -> Vec<f32> {
-    let mut v = Voice::new(chimera_hal::SAMPLE_RATE);
+    let mut v = Rig::new(chimera_hal::SAMPLE_RATE);
     v.note_on(MidiNote::new(72).unwrap(), Velocity::new(vel).unwrap(), p);
     run(&mut v, p, &routed(routes), 24)
 }
@@ -320,7 +321,7 @@ fn reused_voice_starts_fresh(stale_vel: u8, vel: u8) {
         (ModSource::Env1, CUTOFF, 127),
     ]);
     let note = MidiNote::new(72).unwrap();
-    let mut v = Voice::new(chimera_hal::SAMPLE_RATE);
+    let mut v = Rig::new(chimera_hal::SAMPLE_RATE);
     v.note_on(note, Velocity::new(stale_vel).unwrap(), &p);
     run(&mut v, &p, &ms, 24);
     v.note_off();
@@ -332,7 +333,7 @@ fn reused_voice_starts_fresh(stale_vel: u8, vel: u8) {
     }
     assert!(!v.is_active(), "the stale note ends");
     v.note_on(note, Velocity::new(vel).unwrap(), &p);
-    let mut fresh = Voice::new(chimera_hal::SAMPLE_RATE);
+    let mut fresh = Rig::new(chimera_hal::SAMPLE_RATE);
     fresh.note_on(note, Velocity::new(vel).unwrap(), &p);
     let (got, want) = (run(&mut v, &p, &ms, 8), run(&mut fresh, &p, &ms, 8));
     // The stale note's drive, filter and folder tail, below the engine's

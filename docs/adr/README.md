@@ -13,7 +13,7 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0005](0005-engine-selection-is-patch-based.md) | Engine selection is patch-based | Accepted |
 | [0006](0006-sub-project-decomposition.md) | Decompose the pivot into five sub-projects | Accepted |
 | [0007](0007-per-block-param-specs.md) | Each block owns its values and a const description | Accepted |
-| [0008](0008-persistent-engine-instances.md) | Engines are persistent; never constructed in the audio interrupt | Accepted |
+| [0008](0008-persistent-engine-instances.md) | Engines are persistent; never constructed in the audio interrupt | Superseded by [0051](0051-a-voice-holds-one-engine-rebuilt-in-place.md) |
 | [0009](0009-semantic-parameter-addresses.md) | Address parameters by what they are, not where they sit | Accepted |
 | [0010](0010-modulation-targets-are-honest.md) | Only parameters the voice reads per block are modulatable | Accepted; linear law superseded for CUTOFF by [0035](0035-every-connection-is-a-matrix-route.md), and for PITCH and FINE by [0042](0042-voice-pitch-is-a-matrix-destination.md) |
 | [0011](0011-goldens-are-a-refactor-lock.md) | Golden recordings are a refactor lock, not a quality claim | Accepted |
@@ -52,5 +52,8 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0048](0048-own-fat-layer.md) | Own the FAT layer; keep embedded-sdmmc only as the SD block driver | Accepted |
 | [0049](0049-algo-init-routed-morph-dims.md) | Algo INIT is audibly routed; MORPH dims when A = B (supersedes in part 0024) | Proposed |
 | [0050](0050-gain-staging-trim-and-final-limiter.md) | Gain staging: a 1/√8 output trim and one peak limiter at −1 dBFS, last | Proposed |
+| [0051](0051-a-voice-holds-one-engine-rebuilt-in-place.md) | A voice holds one engine, rebuilt in place (supersedes 0008) | Accepted |
+| [0052](0052-strings-stored-as-16-bit-block-float.md) | Store Modal's string delay lines as 16-bit block float | Superseded by [0054](0054-sympathetic-strings-from-a-shared-pool.md) (sympathetic slot pool, never accepted) |
 | [0053](0053-delay-mechanics-wow-and-irregular-flutter.md) | The delay's WOW becomes MECHANICS: a slow wow and an irregular flutter | Proposed |
+| [0054](0054-sympathetic-strings-from-a-shared-pool.md) | Sympathetic borrows its strings from a shared pool of four (supersedes 0052) | Accepted |
 | [0055](0055-master-tape-off-the-chain.md) | The master tape stage is off the chain, kept behind `master-tape` (supersedes in part 0030) | Proposed |

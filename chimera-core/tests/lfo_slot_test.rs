@@ -1,10 +1,11 @@
 //! LFO slots (filter-routing spec § LFO slots).
+mod common;
+use common::Rig;
 
 use chimera_core::addr::{BlockRef, ParamAddr};
 use chimera_core::dsp::lfo::{Lfo, LfoParams};
 use chimera_core::dsp::modulator::func::{BCoefs, FuncGen, Slides};
 use chimera_core::dsp::modulator::{FuncParams, LfoForm, LfoType};
-use chimera_core::dsp::voice::Voice;
 use chimera_core::mod_path::ModDestRegistry;
 use chimera_core::modulation::{ModSource, ModState};
 use chimera_core::params::{EngineType, FilterParams, ParamSnapshot};
@@ -197,7 +198,7 @@ fn after_retrigger(sync: u8, phase: f32, pre_rate: f32) -> Vec<f32> {
     let mut reg = ModDestRegistry::new();
     reg.add(CUTOFF, *b"FLTCUTOF").unwrap();
     let mut ms = ModState::from_registry(&reg, 8);
-    let mut v = Voice::new(SR);
+    let mut v = Rig::new(SR);
     let (n, vel) = (MidiNote::new(60).unwrap(), Velocity::new(100).unwrap());
     let mut b = [0.0f32; BLOCK_SIZE];
     v.note_on(n, vel, &p);

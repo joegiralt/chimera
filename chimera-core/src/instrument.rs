@@ -2,13 +2,16 @@
 //! what the audio thread reads from the UI, and the voice pool that renders
 //! every Part into the three DAC pairs.
 
+use core::cmp::Reverse;
 use core::mem::{MaybeUninit, size_of};
 use core::ptr::addr_of_mut;
 
 use chimera_hal::BLOCK_SIZE;
 
 use crate::dsp::Stereo;
+use crate::dsp::engines::SlotKind;
 use crate::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
+use crate::dsp::modal::{ResonatorMode, SYM_NOTE_ON_CLEAR_MAX, SymPool};
 use crate::dsp::voice::Voice;
 use crate::hw::{
     AXI_SRAM, Cost, DAC_PAIRS, FB_BYTES, MAX_PARTS, MAX_VOICES, STORE_RESERVE, SampleBudget,
@@ -23,8 +26,8 @@ use crate::perf::load::AudioStats;
 use crate::preset::{Part, Performance, SoundPool};
 use crate::scope::{ScopeFrame, ScopeWriter};
 use crate::triple::TripleBuffer;
-use crate::voice_alloc::{Alloc, Allocator};
-use crate::{MidiChannel, Velocity};
+use crate::voice_alloc::{Allocator, VoiceIdx};
+use crate::{MidiChannel, MidiNote, Velocity};
 
 /// Everything the port places in AXI SRAM (ADR 0014): framebuffer, UI,
 /// Performance, SoundPool, the `AudioShared`, scope and `AudioStats` triple
@@ -265,6 +268,8 @@ pub fn mix_parts(
 ///   current buffer.
 pub struct Instrument {
     voices: [Voice; MAX_VOICES],
+    /// Sympathetic's sets, lent to the voices playing it (ADR 0054).
+    sym: SymPool,
     alloc: Allocator,
     /// The MIDI channel each voice's note-on arrived on, so its note-off
     /// releases it even if the Part's channel changed meanwhile.
@@ -279,9 +284,25 @@ pub struct Instrument {
     sends: [[f32; BLOCK_SIZE]; FX_SENDS],
     pans: PanCache,
     sample_rate: u32,
+    /// Each Part's kind at the last `render`: a Part that has just become
+    /// Sympathetic restarts its held notes through the pool.
+    last_kind: [SlotKind; MAX_PARTS],
+    /// This block's Sympathetic clear budget left, in bytes.
+    clear_left: usize,
+    /// A note waits on the clear budget: later Sympathetic notes queue
+    /// behind it, until render step 0 serves the queue oldest first.
+    clear_backlog: bool,
 }
 
-crate::in_place::field_list!(Instrument => Instrument { voices, alloc, note_channel, sounding, waiting, buses, sends, pans, sample_rate });
+/// The string-line bytes Sympathetic note-ons may clear in one block (spec
+/// § 4.8): one worst-case note-on, so any one fits a fresh block. A
+/// note-on past it waits a block, as a stolen note does: a chord of
+/// worst-case slots starts a note a block, a typical one all at once.
+pub const SYM_CLEAR_BUDGET: usize = SYM_NOTE_ON_CLEAR_MAX;
+
+crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, sounding, waiting, buses, sends, pans, sample_rate, last_kind, clear_left, clear_backlog });
+
+const SYMPATHETIC: SlotKind = SlotKind::Modal(ResonatorMode::Sympathetic);
 
 impl Instrument {
     pub fn new(sample_rate: u32, budget: SampleBudget) -> Self {
@@ -295,14 +316,15 @@ impl Instrument {
         budget: SampleBudget,
     ) -> &mut Self {
         let p = slot.as_mut_ptr();
-        // SAFETY: `p` is valid and unaliased; the voices are built in
-        // place and the rest (the largest, `buses`, is 1.5 KB) written once
-        // by value before `assume_init_mut`.
+        // SAFETY: `p` is valid and unaliased; the voices and the pool are
+        // built in place and the rest (the largest, `buses`, is 1.5 KB)
+        // written once by value before `assume_init_mut`.
         unsafe {
             let voices = addr_of_mut!((*p).voices).cast::<Voice>();
-            for v in 0..MAX_VOICES {
-                Voice::init_in_place(uninit_at(voices.add(v)), sample_rate);
+            for (v, id) in VoiceIdx::ALL.into_iter().enumerate() {
+                Voice::init_in_place(uninit_at(voices.add(v)), sample_rate, id);
             }
+            SymPool::init_in_place(uninit_at(addr_of_mut!((*p).sym)));
             addr_of_mut!((*p).alloc).write(Allocator::new(budget));
             addr_of_mut!((*p).note_channel).write([MidiChannel::clamped(0); MAX_VOICES]);
             addr_of_mut!((*p).sounding).write([0; MAX_VOICES]);
@@ -311,12 +333,57 @@ impl Instrument {
             addr_of_mut!((*p).sends).write([[0.0; BLOCK_SIZE]; FX_SENDS]);
             addr_of_mut!((*p).pans).write(PanCache::default());
             addr_of_mut!((*p).sample_rate).write(sample_rate);
+            // The default Sound's (`Performance::new`: Algo).
+            addr_of_mut!((*p).last_kind).write([SlotKind::Algo; MAX_PARTS]);
+            addr_of_mut!((*p).clear_left).write(SYM_CLEAR_BUDGET);
+            addr_of_mut!((*p).clear_backlog).write(false);
             slot.assume_init_mut()
         }
     }
 
     pub fn allocator(&self) -> &Allocator {
         &self.alloc
+    }
+
+    /// Each voice's slot rebuilds (`Voice::rebuilds`): for the tests and
+    /// the bench.
+    pub fn rebuilds(&self) -> [u16; MAX_VOICES] {
+        core::array::from_fn(|v| self.voices[v].rebuilds())
+    }
+
+    /// Voices whose engine sounds: for the bench's per-voice figures.
+    pub fn sounding(&self) -> usize {
+        self.voices.iter().filter(|v| v.is_active()).count()
+    }
+
+    /// Voices that ring a pool set, at most `SYM_SLOTS`: for the bench,
+    /// whose Sympathetic figures bill a ringing voice, not a bare one.
+    pub fn ringing(&self) -> usize {
+        self.voices.iter().filter(|v| v.rings()).count()
+    }
+
+    /// The sympathetic pool's allocator: for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn sym(&self) -> &crate::sym_alloc::SymAlloc {
+        self.sym.alloc()
+    }
+
+    /// The kind each voice's slot holds: for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn slot_kinds(&self) -> [SlotKind; MAX_VOICES] {
+        core::array::from_fn(|v| self.voices[v].kind())
+    }
+
+    /// Whether each voice rings a pool set: for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn rings(&self) -> [bool; MAX_VOICES] {
+        core::array::from_fn(|v| self.voices[v].rings())
+    }
+
+    /// Whether each voice sounds: for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn active(&self) -> [bool; MAX_VOICES] {
+        core::array::from_fn(|v| self.voices[v].is_active())
     }
 
     /// Part `part`'s mono bus from the last `render` (before pan and level).
@@ -335,28 +402,45 @@ impl Instrument {
                     if part.mix.channel != ev.channel {
                         continue;
                     }
+                    let (q, mode) = (p as u8, part.mix.mode);
                     let cost = Voice::cost(&part.params, &part.mod_state);
-                    if let Alloc::Voice(v) =
-                        self.alloc
-                            .note_on(p as u8, part.mix.mode, ev.note, cost, FxBus::COST)
-                    {
-                        let voice = &mut self.voices[v];
-                        let waited = self.waiting[v].take().is_some();
-                        let queued = if self.sounding[v] as usize != p && voice.is_active() {
-                            // Another Part's sound fades out on its own bus
-                            // and settings first.
-                            self.waiting[v] = Some(vel);
-                            voice.kill()
-                        } else {
-                            self.sounding[v] = p as u8;
-                            voice.note_on(ev.note, vel, &part.params)
-                        };
-                        // A note replaced before it sounded (ADR 0027).
-                        if waited || queued {
-                            self.alloc.dropped_unheard();
-                        }
-                        self.note_channel[v] = ev.channel;
+                    let Some(v) = self.alloc.pick(q, mode, cost, FxBus::COST) else {
+                        self.alloc.refuse();
+                        continue;
+                    };
+                    // Sympathetic: a free slot is promised to it, else it
+                    // plays bare (ADR 0054). Another kind's promise goes when
+                    // the voice triggers it, or rests (`Voice::trigger`,
+                    // `Voice::rest`).
+                    if SlotKind::of(&part.params) == SYMPATHETIC {
+                        self.sym.alloc_mut().place(VoiceIdx::ALL[v]);
                     }
+                    self.alloc.book(v, q, mode, ev.note, cost);
+                    let waits = self.sounding[v] as usize != p && self.voices[v].is_active();
+                    // Sympathetic starts now only if the block's clear
+                    // budget takes it and no note waits on it before; else
+                    // it waits, as a steal does (spec § 4.8).
+                    let deferred = !waits
+                        && SlotKind::of(&part.params) == SYMPATHETIC
+                        && !(self.voices[v].starts_now(&part.params, &self.sym)
+                            && self.admit(v, &part.params));
+                    let voice = &mut self.voices[v];
+                    let waited = self.waiting[v].take().is_some();
+                    let queued = if waits || deferred {
+                        // Another Part's sound fades out on its own bus and
+                        // settings first; a Sympathetic note past the clear
+                        // budget waits a block.
+                        self.waiting[v] = Some(vel);
+                        voice.kill()
+                    } else {
+                        self.sounding[v] = q;
+                        voice.note_on(ev.note, vel, &part.params, &mut self.sym)
+                    };
+                    // A note replaced before it sounded (ADR 0027).
+                    if waited || queued {
+                        self.alloc.dropped_unheard();
+                    }
+                    self.note_channel[v] = ev.channel;
                 }
             }
             NoteKind::Off => {
@@ -366,11 +450,82 @@ impl Instrument {
                     let s = self.alloc.slots()[v];
                     if s.held() && s.note() == Some(ev.note) && self.note_channel[v] == ev.channel {
                         self.alloc.release(v);
-                        self.voices[v].note_off();
+                        self.voices[v].note_off(&mut self.sym);
                     }
                 }
             }
         }
+    }
+
+    /// Starts the waiting notes on idle voices oldest first, by `Allocator`
+    /// age, while the clear budget takes them: the first that doesn't fit
+    /// queues the rest (`admit`).
+    fn start_waiting(&mut self, shared: &AudioShared) {
+        let mut queue = [(u32::MAX, 0usize); MAX_VOICES];
+        let mut n = 0;
+        for v in 0..MAX_VOICES {
+            if !self.voices[v].is_active() && self.waiting[v].is_some() {
+                queue[n] = (self.alloc.slots()[v].age(), v);
+                n += 1;
+            }
+        }
+        queue[..n].sort_unstable();
+        for &(_, v) in &queue[..n] {
+            let s = self.alloc.slots()[v];
+            if let (Some(vel), Some(q), Some(note)) = (self.waiting[v], s.part(), s.note())
+                && self.start(v, (vel, q, note, s.held()), shared)
+            {
+                self.waiting[v] = None;
+            }
+        }
+    }
+
+    /// Starts idle voice `v`'s waiting note, velocity `vel` on Part `q`,
+    /// released at once unless `held`, if the block's clear budget lets it:
+    /// false if it must wait on. A Sympathetic note is placed as it starts
+    /// (its Part may have become Sympathetic while it waited): it keeps its
+    /// promise, takes a free slot, or plays bare.
+    fn start(
+        &mut self,
+        v: usize,
+        (vel, q, note, held): (Velocity, u8, MidiNote, bool),
+        shared: &AudioShared,
+    ) -> bool {
+        let params = &shared.parts[q as usize % MAX_PARTS].params;
+        if SlotKind::of(params) == SYMPATHETIC {
+            self.sym.alloc_mut().place(VoiceIdx::ALL[v]);
+        }
+        if !self.admit(v, params) {
+            return false;
+        }
+        let voice = &mut self.voices[v];
+        let _ = voice.note_on(note, vel, params, &mut self.sym);
+        if !held {
+            voice.note_off(&mut self.sym);
+        }
+        self.sounding[v] = q;
+        true
+    }
+
+    /// Whether voice `v` may start a note on `params` this block: anything
+    /// but Sympathetic may; Sympathetic if no note waits on the clear
+    /// budget before it and its clear fits what the block has left, which
+    /// it then takes. One that doesn't fit starts the queue.
+    fn admit(&mut self, v: usize, params: &ParamSnapshot) -> bool {
+        if SlotKind::of(params) != SYMPATHETIC {
+            return true;
+        }
+        if self.clear_backlog {
+            return false;
+        }
+        let bytes = self.voices[v].sym_note_on_clear(&self.sym);
+        debug_assert!(bytes <= SYM_CLEAR_BUDGET);
+        if bytes > self.clear_left {
+            self.clear_backlog = true;
+            return false;
+        }
+        self.clear_left -= bytes;
+        true
     }
 
     /// A patch edit changes its voices' cost; fade voices out if that went
@@ -388,9 +543,63 @@ impl Instrument {
             }
         }
         while let Some(v) = self.alloc.shed(FxBus::COST) {
-            let queued = self.voices[v].kill();
-            if self.waiting[v].take().is_some() || queued {
-                self.alloc.dropped_unheard();
+            self.shed(v);
+        }
+    }
+
+    /// Voice `v`, marked dying, fades out: a note waiting for it is dropped
+    /// unheard (ADR 0027). Any slot promised or bound to it goes when it
+    /// rests, freed.
+    fn shed(&mut self, v: usize) {
+        let queued = self.voices[v].kill();
+        if self.waiting[v].take().is_some() || queued {
+            self.alloc.dropped_unheard();
+        }
+    }
+
+    /// A Part whose Sound has just become Sympathetic: its held, sounding
+    /// notes restart on it, each fading first and waiting as another
+    /// Part's steal does, so each restart's clear goes through the budget.
+    /// Newest first, they are promised the free slots, so the last four
+    /// played ring and the rest play bare (the owner's rule, 2026-09-29,
+    /// spec § 4.5). Nothing is evicted.
+    fn restart_switched(&mut self, shared: &AudioShared) {
+        for (p, part) in shared.parts.iter().enumerate() {
+            let kind = SlotKind::of(&part.params);
+            let became = kind == SYMPATHETIC && self.last_kind[p] != SYMPATHETIC;
+            self.last_kind[p] = kind;
+            if !became {
+                continue;
+            }
+            // A note already Sympathetic (a note-on since the switch) keeps
+            // what it has, unless it fades toward its own restart (MODE
+            // flipped away and back within the fade); a shed note stays
+            // shed.
+            let mut held = [(VoiceIdx::ALL[0], 0u32); MAX_VOICES];
+            let mut n = 0;
+            for (v, s) in self.alloc.slots().iter().enumerate() {
+                let voice = &self.voices[v];
+                if s.held()
+                    && !s.dying()
+                    && s.part() == Some(p as u8)
+                    && self.sounding[v] as usize == p
+                    && voice.is_active()
+                    && (voice.kind() != SYMPATHETIC || voice.restarts())
+                {
+                    held[n] = (VoiceIdx::ALL[v], s.age());
+                    n += 1;
+                }
+            }
+            let held = &mut held[..n];
+            held.sort_unstable_by_key(|&(_, age)| Reverse(age));
+            for &(id, _) in held.iter() {
+                let v = id.index();
+                self.sym.alloc_mut().place(id);
+                // Its note waits for the fade; a note that came mid-fade
+                // gives way to it.
+                let vel = self.voices[v].velocity();
+                self.waiting[v].get_or_insert(vel);
+                let _ = self.voices[v].kill();
             }
         }
     }
@@ -404,6 +613,7 @@ impl Instrument {
         scope: &mut ScopeWriter,
     ) {
         self.recost(shared);
+        self.restart_switched(shared);
 
         // 1. Voices into their part's mono bus. The first voice of a part is
         //    copied, not added, so a lone voice reaches the bus bit-for-bit.
@@ -412,13 +622,17 @@ impl Instrument {
             bus.fill(0.0);
         }
         let mut block = [0.0f32; BLOCK_SIZE];
+        // 0. Notes that waited on the clear budget, their voices idle, start
+        //    before the voices render: let in this block, one sounds in it.
+        self.clear_backlog = false;
+        self.start_waiting(shared);
         for v in 0..MAX_VOICES {
             if self.alloc.slots()[v].is_free() {
                 continue;
             }
             let p = self.sounding[v] as usize % MAX_PARTS;
             let part = &shared.parts[p];
-            self.voices[v].render(&mut block, &part.params, &part.mod_state);
+            self.voices[v].render(&mut block, &part.params, &part.mod_state, &mut self.sym);
             if written[p] {
                 for (b, &s) in self.buses[p].iter_mut().zip(&block) {
                     *b += s;
@@ -432,21 +646,20 @@ impl Instrument {
             //    Read right after rendering the note the voice plays *now*,
             //    so a steal or retrigger since the last block is never freed
             //    by a report about the note it replaced.
-            if !self.voices[v].is_active() {
-                let s = self.alloc.slots()[v];
-                match (self.waiting[v].take(), s.part(), s.note()) {
-                    (Some(vel), Some(q), Some(note)) => {
-                        let voice = &mut self.voices[v];
-                        voice.note_on(note, vel, &shared.parts[q as usize % MAX_PARTS].params);
-                        if !s.held() {
-                            voice.note_off();
-                        }
-                        self.sounding[v] = q;
-                    }
-                    _ => self.alloc.release_finished(v),
-                }
+            //    A voice with a note waiting keeps it for step 6.
+            if !self.voices[v].is_active()
+                && (self.waiting[v].is_none() || self.alloc.slots()[v].note().is_none())
+            {
+                self.waiting[v] = None;
+                self.alloc.release_finished(v);
+                self.voices[v].rest(&mut self.sym);
             }
         }
+        // 6. Waiting notes whose voices went idle this block start, oldest
+        //    first, behind any the budget still queues.
+        self.start_waiting(shared);
+
+        self.clear_left = SYM_CLEAR_BUDGET;
 
         // 2-4.
         let scope_block = mix_parts(

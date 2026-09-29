@@ -32,6 +32,17 @@ const GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
             ],
         ),
     ),
+    // Recorded: pins Sympathetic before its set moves to the pool (exclusive-state spec § 4.8).
+    (
+        "modal_sympathetic",
+        (
+            0x4bb5969650e6f28d,
+            [
+                3146803683, 3183282215, 3195097727, 1061213380, 3181792418, 1025081920, 1035423354,
+                1043506943,
+            ],
+        ),
+    ),
     // Re-recorded, every Algo case: the output scale is the carrier power
     // (ADR 0049); INIT routes four operators. Factory Sounds compensate in
     // their data and match 937b89f to about 1e-7, but MORPH PAD (#192).
@@ -250,8 +261,9 @@ const GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
 ];
 
 /// Goldens whose locked output no longer reflects intended behaviour, each
-/// tracked at an issue: Modal failed the sanity gate (#10), and the switch
-/// case's second half is Modal's.
+/// tracked at an issue: Modal failed the sanity gate (#10), the switch
+/// case's second half is Modal's, and Sympathetic rings on the same KS
+/// main string.
 const KNOWN_BROKEN: &[(&str, &str)] = &[
     (
         "modal_init",
@@ -263,6 +275,10 @@ const KNOWN_BROKEN: &[(&str, &str)] = &[
     ),
     (
         "algo_to_modal_switch",
+        "https://github.com/joegiralt/chimera/issues/10",
+    ),
+    (
+        "modal_sympathetic",
         "https://github.com/joegiralt/chimera/issues/10",
     ),
 ];

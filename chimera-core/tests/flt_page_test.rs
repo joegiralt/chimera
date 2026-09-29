@@ -1,11 +1,12 @@
 //! The FLT pages are honest (filter-routing spec § Tests "Knobs are
 //! honest", "Route knobs").
+mod common;
+use common::Rig;
 
 mod screen;
 
 use chimera_core::addr::{BlockRef, ParamAddr};
 use chimera_core::dsp::algo::waves::WaveId;
-use chimera_core::dsp::voice::Voice;
 use chimera_core::modulation::ModSource;
 use chimera_core::params::EngineType;
 use chimera_core::params::FilterParams;
@@ -50,7 +51,7 @@ fn on_flt(ct: EngineType) -> UiState {
 
 /// 32 blocks of note 72 (so KEY moves the cutoff) from the UI's Sound.
 fn render(ui: &UiState) -> Vec<f32> {
-    let mut v = Voice::new(chimera_hal::SAMPLE_RATE);
+    let mut v = Rig::new(chimera_hal::SAMPLE_RATE);
     v.note_on(MidiNote::new(72).unwrap(), Velocity::DEFAULT, ui.params());
     let mut out = Vec::new();
     let mut b = [0.0f32; BLOCK_SIZE];
