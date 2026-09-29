@@ -3,6 +3,7 @@
 //! and an `AudioShared` published through a `TripleBuffer`, summed from
 //! three DAC pairs to the speakers.
 
+use chimera_core::audio_out::to_dac;
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::hw::{BLOCK_SIZE, CPU_HZ_REV_V, DAC_PAIRS, SAMPLE_RATE, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacOut, Instrument};
@@ -14,7 +15,8 @@ use chimera_core::{MidiChannel, MidiNote, Velocity};
 use cpal::Stream;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
+use std::time::{Duration, Instant};
 
 #[cfg(feature = "midi")]
 const N_SOURCES: usize = 2;
@@ -25,9 +27,11 @@ const KEYS: SourceId<N_SOURCES> = SourceId::new(0);
 #[cfg(feature = "midi")]
 const MIDI: SourceId<N_SOURCES> = SourceId::new(1);
 
-/// 0 = all pairs, 1..=3 = only that DAC pair; shared with the audio callback.
+/// Shared with the audio callback: `solo` 0 = all pairs, 1..=3 = only that
+/// DAC pair; `clamped` counts mixdown frames the speakers' clamp held.
 struct SharedState {
     solo: AtomicU8,
+    clamped: AtomicU32,
 }
 
 pub struct DesktopAudio {
@@ -36,6 +40,7 @@ pub struct DesktopAudio {
     /// The computer keyboard's note source.
     keys: NoteProducer<'static>,
     shared_audio: Writer<AudioShared>,
+    clamp_log: ClampLog,
     #[cfg(feature = "midi")]
     _midi: Option<midir::MidiInputConnection<()>>,
 }
@@ -65,6 +70,7 @@ impl DesktopAudio {
         let keys = producers.take(KEYS).expect("keyboard producer taken once");
         let shared = Arc::new(SharedState {
             solo: AtomicU8::new(0),
+            clamped: AtomicU32::new(0),
         });
         let audio = Arc::clone(&shared);
 
@@ -89,8 +95,10 @@ impl DesktopAudio {
                             inst.render(&mut fx, &mut dac, shared, &mut scope);
                             block_pos = 0;
                         }
-                        let (l, r) = stereo_frame(&dac, solo, block_pos);
-                        let (l, r) = (libm::tanhf(l * 0.7), libm::tanhf(r * 0.7));
+                        let ((l, r), clamped) = stereo_frame(&dac, solo, block_pos);
+                        if clamped {
+                            audio.clamped.fetch_add(1, Ordering::Relaxed);
+                        }
                         match frame {
                             [mono] => *mono = 0.5 * (l + r),
                             [fl, fr, rest @ ..] => {
@@ -116,12 +124,18 @@ impl DesktopAudio {
             shared,
             keys,
             shared_audio,
+            clamp_log: ClampLog::default(),
         }
     }
 
-    /// Push the Performance to the audio thread through the triple buffer.
+    /// Push the Performance to the audio thread through the triple buffer,
+    /// and report any mixdown frames clamped since the last call.
     pub fn update(&mut self, perf: &Performance) {
         self.shared_audio.publish(|b| b.update_from(perf));
+        let clamped = self.shared.clamped.swap(0, Ordering::Relaxed);
+        if let Some(n) = self.clamp_log.note(clamped, Instant::now()) {
+            eprintln!("speakers: {n} frames of the pairs' sum clamped at full scale");
+        }
     }
 
     /// Push a note-on onto the keyboard's queue.
@@ -150,6 +164,31 @@ impl DesktopAudio {
     }
 }
 
+/// The mixdown's clamped frames, reported at most once per `EVERY`.
+#[derive(Default)]
+struct ClampLog {
+    pending: u32,
+    last: Option<Instant>,
+}
+
+impl ClampLog {
+    const EVERY: Duration = Duration::from_secs(1);
+
+    /// Add `n` clamped frames seen by `now`; the count to report, if one is
+    /// due.
+    fn note(&mut self, n: u32, now: Instant) -> Option<u32> {
+        self.pending = self.pending.saturating_add(n);
+        let due = self
+            .last
+            .is_none_or(|t| now.duration_since(t) >= Self::EVERY);
+        if self.pending == 0 || !due {
+            return None;
+        }
+        self.last = Some(now);
+        Some(core::mem::take(&mut self.pending))
+    }
+}
+
 /// A 48 kHz stereo f32 config if the device has one (hardware parity).
 fn stereo_48k(device: &cpal::Device) -> Option<cpal::SupportedStreamConfig> {
     device
@@ -163,18 +202,22 @@ fn stereo_48k(device: &cpal::Device) -> Option<cpal::SupportedStreamConfig> {
         .map(|c| c.with_sample_rate(cpal::SampleRate(SAMPLE_RATE)))
 }
 
-/// Frame `i` of the three pairs summed to one stereo pair, or only pair
-/// `solo` (1..=3) when `solo` is not 0.
-fn stereo_frame(dac: &DacOut, solo: u8, i: usize) -> (f32, f32) {
+/// Frame `i` of the three pairs as their DACs play them (`to_dac`, the
+/// firmware's final stage: ADR 0050), summed to one stereo pair, or only
+/// pair `solo` (1..=3) when `solo` is not 0. The sum goes through the same
+/// stage again, so the speakers never get more than full scale; the flag
+/// says it clamped, which only several busy pairs together can make it do.
+fn stereo_frame(dac: &DacOut, solo: u8, i: usize) -> ((f32, f32), bool) {
     let mut l = 0.0;
     let mut r = 0.0;
     for (p, pair) in dac.iter().enumerate() {
         if solo == 0 || solo as usize == p + 1 {
-            l += pair[2 * i];
-            r += pair[2 * i + 1];
+            l += to_dac(pair[2 * i]).level();
+            r += to_dac(pair[2 * i + 1]).level();
         }
     }
-    (l, r)
+    let clamped = l.abs() > 1.0 || r.abs() > 1.0;
+    ((to_dac(l).level(), to_dac(r).level()), clamped)
 }
 
 /// Opens a MIDI input port for the app's lifetime, keeping the returned
@@ -222,20 +265,64 @@ mod tests {
     fn dac() -> DacOut {
         let mut d = [[0.0; BLOCK_SIZE * 2]; DAC_PAIRS];
         for (p, pair) in d.iter_mut().enumerate() {
-            pair[0] = (p + 1) as f32; // L of frame 0
-            pair[1] = 10.0 * (p + 1) as f32; // R of frame 0
+            pair[0] = 0.1 * (p + 1) as f32; // L of frame 0
+            pair[1] = -0.15 * (p + 1) as f32; // R of frame 0
         }
         d
     }
 
+    /// What pair `p`'s DAC plays for frame 0.
+    fn played(p: usize) -> (f32, f32) {
+        let d = dac();
+        (to_dac(d[p][0]).level(), to_dac(d[p][1]).level())
+    }
+
+    /// The speakers get the pairs' sum through the same final stage.
+    fn heard(l: f32, r: f32) -> (f32, f32) {
+        (to_dac(l).level(), to_dac(r).level())
+    }
+
     #[test]
     fn pairs_sum_to_stereo() {
-        assert_eq!(stereo_frame(&dac(), 0, 0), (6.0, 60.0));
+        let (a, b, c) = (played(0), played(1), played(2));
+        let want = heard(a.0 + b.0 + c.0, a.1 + b.1 + c.1);
+        assert_eq!(stereo_frame(&dac(), 0, 0), (want, false));
     }
 
     #[test]
     fn solo_hears_one_pair() {
-        assert_eq!(stereo_frame(&dac(), 2, 0), (2.0, 20.0));
-        assert_eq!(stereo_frame(&dac(), 3, 0), (3.0, 30.0));
+        assert_eq!(stereo_frame(&dac(), 2, 0), (played(1), false));
+        assert_eq!(stereo_frame(&dac(), 3, 0), (played(2), false));
+    }
+
+    /// ADR 0050: the desktop clamps where the DACs do, no softer curve.
+    #[test]
+    fn each_pair_clamps_as_its_dac_does() {
+        let mut d = dac();
+        (d[1][0], d[1][1]) = (3.0, -0.5);
+        assert_eq!(stereo_frame(&d, 2, 0), ((1.0, to_dac(-0.5).level()), false));
+    }
+
+    /// At most one report a second, carrying every frame since the last.
+    #[test]
+    fn the_clamp_log_reports_once_a_second_with_a_count() {
+        let t0 = Instant::now();
+        let at = |ms| t0 + Duration::from_millis(ms);
+        let mut log = ClampLog::default();
+        assert_eq!(log.note(0, at(0)), None, "nothing to report");
+        assert_eq!(log.note(3, at(10)), Some(3));
+        assert_eq!(log.note(5, at(500)), None, "too soon");
+        assert_eq!(log.note(2, at(900)), None);
+        assert_eq!(log.note(0, at(1010)), Some(7), "the held count, once due");
+        assert_eq!(log.note(0, at(3000)), None);
+    }
+
+    /// Three pairs near full scale sum past 1.0: the speakers still get
+    /// at most full scale, and the frame says it was clamped.
+    #[test]
+    fn the_mixdown_never_passes_full_scale_unreported() {
+        let d = [[0.8; BLOCK_SIZE * 2]; DAC_PAIRS];
+        assert_eq!(stereo_frame(&d, 0, 0), ((1.0, 1.0), true));
+        assert!(!stereo_frame(&d, 1, 0).1, "one pair alone is in range");
     }
 }

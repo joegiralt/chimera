@@ -42,6 +42,24 @@ fn non_finite_input_is_silent_or_clamped() {
     assert_eq!(to_dac(f32::NEG_INFINITY), to_dac(-1.0));
 }
 
+/// ADR 0050: the desktop plays each word's level, so it hears the DAC's
+/// clamp and 24-bit steps, not a softer curve of its own.
+#[test]
+fn a_words_level_is_what_the_dac_plays() {
+    assert_eq!(to_dac(1.0).level(), 1.0);
+    assert_eq!(to_dac(-1.0).level(), -1.0);
+    assert_eq!(to_dac(3.0).level(), 1.0, "clamped");
+    assert_eq!(to_dac(f32::NAN).level(), 0.0);
+    for i in -1000..=1000 {
+        let x = i as f32 / 997.0;
+        let step = to_dac(x).level();
+        assert!(
+            (step - x.clamp(-1.0, 1.0)).abs() <= 0.5 / 8_388_607.0 + 1e-7,
+            "{x}"
+        );
+    }
+}
+
 #[test]
 fn interleave_converts_one_pair_in_slot_order() {
     let mut dac: DacOut = [[0.0; BLOCK_SIZE * 2]; DAC_PAIRS];

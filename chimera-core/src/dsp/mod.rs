@@ -113,6 +113,7 @@ pub mod filter;
 pub mod fx_bus;
 pub mod halfband;
 pub mod lfo;
+pub mod limiter;
 pub mod modal;
 pub mod modulator;
 pub mod reverb;
