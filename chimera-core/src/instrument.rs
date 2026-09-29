@@ -313,6 +313,12 @@ impl Instrument {
         &self.alloc
     }
 
+    /// Each voice's slot rebuilds (`Voice::rebuilds`): for the tests and
+    /// the bench.
+    pub fn rebuilds(&self) -> [u16; MAX_VOICES] {
+        core::array::from_fn(|v| self.voices[v].rebuilds())
+    }
+
     /// Part `part`'s mono bus from the last `render` (before pan and level).
     pub fn part_bus(&self, part: usize) -> &[f32; BLOCK_SIZE] {
         &self.buses[part]

@@ -48,15 +48,51 @@ plays. Other Parts and the FX bus are untouched. Knob moves never rebuild.
 ## Consequences
 Memory is the largest engine, not the sum: a `Voice` is 33,584 B on the
 host, and Modal holds only the model it plays (`ModelSlot`, the same
-in-place enum). A voice rebuilds at most twice per block: a fade end then
-the note that waited for it (a steal across kinds), or an idle trigger then
-a VCA-lifetime reset. A MODE edit now fades ringing notes, where it used to
-leave them on their old model, or, on a retrigger, rebuild the ringing
-model unfaded: a sounding voice of another kind makes `note_on` wait for
-the fade. `Voice::held_model_extra` (#183) bills the old model for the
-fade's ≤ 2 blocks. Until the 16-bit
-strings (spec § 4), a Sympathetic rebuild writes about 31.7 KB, ~2.6 % of
-a block. The rebuilds are not billed in `Cost`, as the resets they replace
+in-place enum).
+
+A voice rebuilds at most three times between two blocks: the note events
+drained before `Instrument::render`, plus that render. A rebuild happens in
+only two places, `trigger` (an idle voice, across kinds) and `reset` (a
+fade end, or a VCA-lifetime end). Each stage allows at most one:
+
+- **The drain: at most one.** `trigger` rebuilds only an idle voice, which
+  then sounds. Nothing in the drain makes it idle again: `kill` and
+  `note_off` only start a fade or a release. A later note-on either waits
+  (another kind, or another Part's steal) or matches the voice's kind.
+- **Its render: at most one.** This is a fade end or a VCA-lifetime reset,
+  never both, because the fade end's reset clears the VCA routes that the
+  lifetime check reads.
+- **After its render: at most one.** `Instrument::render` plays a waiting
+  note on the now idle voice.
+
+All three are reachable on one voice
+(`a_voice_rebuilds_at_most_three_times_a_block`):
+
+1. An idle String voice triggers for a Part on Algo with every LEVEL at 0
+   (rebuild 1).
+2. A key up.
+3. Another Part steals the voice as the oldest tail, with the pool full.
+4. The Algo engine is silent in its first block, so the fade ends at once
+   (rebuild 2).
+5. The waiting note is on Modal (rebuild 3).
+
+A switch storm pins the bound (`a_switch_storm_never_rebuilds_a_voice_more_than_three_times_a_block`).
+
+Rebuilds 1 and 2 are into the same kind. That kind's engine fell silent in
+its first block, and only Algo can do that: Modal waits 11 silent blocks.
+So at most two of a voice's rebuilds in one block write a Modal model. Until
+the 16-bit strings (spec § 4), a Sympathetic rebuild writes about 31.7 KB,
+~2.6 % of a block, so a voice's worst block is about 63.4 KB, ~5.2 %.
+
+A MODE edit now fades ringing notes. It used to leave them on their old
+model, or, on a retrigger, rebuild the ringing model unfaded: now a sounding
+voice of another kind makes `note_on` wait for the fade.
+`ModalEngine::note_on` no longer rebuilds its model; it asserts that the
+model it holds is the model it is asked to play. `Voice::held_model_extra`
+(#183) bills the old model for the fade's 2 blocks at most. A fade from
+Modal to Algo is not yet billed that way (#205).
+
+The rebuilds are not billed in `Cost`, as the resets they replace
 weren't. The new `unsafe` lives
 in `in_place.rs` only: callers pass an in-place constructor, one
 `// SAFETY:` line per arm. Each variant's payload is `Sealed`, which only

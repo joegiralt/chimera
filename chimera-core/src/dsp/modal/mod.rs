@@ -118,7 +118,9 @@ impl ModelSlot {
         }
     }
 
-    /// `mode`'s model, fresh, in place.
+    /// `mode`'s model, fresh, in place: the layout test's. A voice rebuilds
+    /// its whole slot instead (`Voice::rebuild`, the one counted path).
+    #[cfg(test)]
     fn rebuild(&mut self, mode: ResonatorMode) {
         match mode {
             // SAFETY: `ModalBank::init_in_place` writes every field.
@@ -274,11 +276,10 @@ impl ModalEngine {
         if self.pitch == 1.0 { f } else { f * self.pitch }
     }
 
-    /// Plays `params.mode`: another model is rebuilt fresh first.
+    /// `params.mode` must be the model this engine holds: a voice rebuilds
+    /// its slot into another (`Voice::rebuild`, ADR 0051).
     pub fn note_on(&mut self, note: u8, velocity: u8, params: &ModalParams, sample_rate: u32) {
-        if params.mode != self.mode() {
-            self.model.rebuild(params.mode);
-        }
+        debug_assert_eq!(params.mode, self.mode());
         let vel = velocity as f32 / 127.0;
         let freq = note_to_freq(note);
         self.frequency = freq / sample_rate as f32;
@@ -794,101 +795,5 @@ mod tests {
                 assert_eq!(payload_addr(&slot), payload, "{:?}", MODES[i]);
             }
         }
-    }
-
-    /// A MODE edit rebuilds the model at note-on: nothing of the String
-    /// note before it (its string, its noise) reaches the Sympathetic one.
-    #[test]
-    fn a_mode_change_at_note_on_plays_like_a_fresh_engine() {
-        const SR: u32 = 48_000;
-        let mut p = ModalParams {
-            mode: ResonatorMode::String,
-            ..ModalParams::default()
-        };
-        let mut a = ModalEngine::new(ResonatorMode::String);
-        let (mut out_a, mut out_b) = ([0.0; BLOCK_SIZE], [0.0; BLOCK_SIZE]);
-        a.note_on(57, 100, &p, SR);
-        for _ in 0..40 {
-            a.render(&mut out_a, &p, SR);
-        }
-
-        p.mode = ResonatorMode::Sympathetic;
-        let mut b = ModalEngine::new(ResonatorMode::Sympathetic);
-        a.note_on(62, 110, &p, SR);
-        b.note_on(62, 110, &p, SR);
-        assert_eq!(a.playing(), Some(ResonatorMode::Sympathetic));
-        for block in 0..20 {
-            a.render(&mut out_a, &p, SR);
-            b.render(&mut out_b, &p, SR);
-            assert_eq!(
-                out_a.map(f32::to_bits),
-                out_b.map(f32::to_bits),
-                "block {block}"
-            );
-        }
-        assert!(out_b.iter().any(|s| *s != 0.0));
-    }
-
-    const SR: u32 = 48_000;
-
-    fn bank() -> ModalParams {
-        ModalParams {
-            mode: ResonatorMode::Modal,
-            excite: 1.0,
-            ..ModalParams::default()
-        }
-    }
-
-    fn blocks(e: &mut ModalEngine, p: &ModalParams, n: usize) -> std::vec::Vec<u32> {
-        let mut out = [0.0; BLOCK_SIZE];
-        (0..n)
-            .flat_map(|_| {
-                e.render(&mut out, p, SR);
-                out.map(f32::to_bits)
-            })
-            .collect()
-    }
-
-    /// The bank's burst (its noise, its filter) is the bank's own: a Bank
-    /// note after another model plays like the first Bank note ever.
-    #[test]
-    fn a_bank_note_after_another_model_plays_like_the_first() {
-        let (bank, string) = (
-            bank(),
-            ModalParams {
-                mode: ResonatorMode::String,
-                ..ModalParams::default()
-            },
-        );
-        let mut a = ModalEngine::new(ResonatorMode::Modal);
-        a.note_on(57, 100, &bank, SR);
-        blocks(&mut a, &bank, 10);
-        a.note_on(57, 100, &string, SR);
-        blocks(&mut a, &string, 10);
-        a.note_on(60, 90, &bank, SR);
-
-        let mut b = ModalEngine::new(ResonatorMode::Modal);
-        b.note_on(60, 90, &bank, SR);
-        let (second, first) = (blocks(&mut a, &bank, 20), blocks(&mut b, &bank, 20));
-        assert!(second == first, "the second Bank note differs from a first");
-    }
-
-    /// A MODE edit inside the bank's burst ends the burst with the bank:
-    /// the silent note after it goes idle like any other.
-    #[test]
-    fn a_mode_change_mid_burst_still_goes_idle() {
-        let mut e = ModalEngine::new(ResonatorMode::Modal);
-        let bank = bank();
-        e.note_on(57, 100, &bank, SR);
-        blocks(&mut e, &bank, 1);
-        let silent = ModalParams {
-            mode: ResonatorMode::String,
-            excite: 0.0,
-            ..ModalParams::default()
-        };
-        e.note_on(57, 100, &silent, SR);
-        // Idle after 11 silent blocks (`render`'s silence counter).
-        blocks(&mut e, &silent, 12);
-        assert!(!e.is_active());
     }
 }
