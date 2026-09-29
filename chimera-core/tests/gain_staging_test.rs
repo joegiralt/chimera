@@ -11,7 +11,7 @@ use chimera_core::dsp::reverb::ReverbParams;
 use chimera_core::dsp::tape::TapeParams;
 use chimera_core::factory::factory_sound;
 use chimera_core::hw::{CPU_HZ_REV_V, DAC_PAIRS, SampleBudget};
-use chimera_core::instrument::{AudioShared, DacOut, Instrument, pan_gains};
+use chimera_core::instrument::{AudioShared, DacBlocks, DacOut, Instrument, pan_gains};
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::scope::{ScopeWriter, scope_buffer};
 use chimera_core::{MidiNote, Velocity};
@@ -97,7 +97,7 @@ fn chord(
     fx_params: FxParams,
     level: f32,
     send: f32,
-    mut each: impl FnMut(&Instrument, &FxBus, &DacOut),
+    mut each: impl FnMut(&Instrument, &FxBus, &DacBlocks),
 ) {
     let mut shared = Box::new(AudioShared::default());
     if let Voices::Saw = voices {
@@ -131,7 +131,7 @@ fn chord(
         inst.allocator().slots().iter().filter(|s| s.held()).count(),
         8
     );
-    let mut dac: DacOut = [[0.0; 2 * BLOCK_SIZE]; DAC_PAIRS];
+    let mut dac = Box::new(DacBlocks::new());
     for _ in 0..BLOCKS {
         inst.render(&mut fx, &mut dac, &shared, &mut scope);
         each(&inst, &fx, &dac);
@@ -144,8 +144,9 @@ fn clamped(dac: &DacOut) -> usize {
 
 /// #190, for typical chords only: eight saw-lead or init voices at
 /// velocity 127, LEVEL 1, typical FX. Nothing reaches the final clamp;
-/// saw-lead pairs also sum to at most full scale after the output trim,
-/// so the limiter does no more than the trim (INIT does more: #193). At the typical
+/// saw-lead pairs also sum to at most full scale after the output trim
+/// (at send 1 only with the master tape, ADR 0055), so the limiter does no
+/// more than the trim (INIT does more: #193). At the typical
 /// send (0.3) the reverb's ring stays off its i16 rail; at send 1 it may
 /// reach it, as on main (#142).
 #[test]
@@ -154,7 +155,7 @@ fn no_stage_exceeds_ceiling() {
         for send in [0.3, 1.0] {
             let (mut pre, mut ring, mut rails, mut over) = (0.0f32, 0i32, 0usize, 0usize);
             chord(voices, typical(), 1.0, send, |_, fx, dac| {
-                let input = fx.limiter().input();
+                let input = dac.input();
                 let trimmed = input.iter().flatten().map(|x| x.abs() * OUTPUT_TRIM);
                 pre = trimmed.fold(pre, f32::max);
                 let lines = fx.reverb().ring().lines();
@@ -163,15 +164,17 @@ fn no_stage_exceeds_ceiling() {
                     .iter()
                     .filter(|&&v| v == i16::MAX || v == i16::MIN)
                     .count();
-                over += clamped(dac);
+                over += clamped(dac.out());
             });
             eprintln!(
                 "{voices:?} send {send}: trimmed peak {pre}, ring peak {ring}, rail words {rails}"
             );
             // ADR 0049's routed INIT sums past full scale at eight voices
             // (#193), so only the limiter keeps it off the clamp; SAW LEAD
-            // still fits under the trim alone.
-            if matches!(voices, Voices::Saw) {
+            // still fits under the trim alone, at send 1 only through the
+            // master tape's clip: off the chain (ADR 0055) it reaches 1.50
+            // there and the limiter carries it too.
+            if matches!(voices, Voices::Saw) && (cfg!(feature = "master-tape") || send < 1.0) {
                 assert!(
                     pre <= 1.0,
                     "{voices:?} send {send}: pair peak after the trim {pre}"
@@ -206,7 +209,7 @@ fn only_final_limiter_is_nonlinear() {
             0.0,
             |inst, _, dac| {
                 bus.extend_from_slice(inst.part_bus(0));
-                out.extend_from_slice(&dac[0]);
+                out.extend_from_slice(&dac.out()[0]);
             },
         );
         let over = bus
@@ -235,8 +238,8 @@ fn max_settings_bounded() {
     for voices in [Voices::Saw, Voices::Init] {
         let (mut peak, mut over) = (0.0f32, 0usize);
         chord(voices, max(), 1.0, 1.0, |_, _, dac| {
-            peak = dac.iter().flatten().fold(peak, |m, x| m.max(x.abs()));
-            over += clamped(dac);
+            peak = dac.out().iter().flatten().fold(peak, |m, x| m.max(x.abs()));
+            over += clamped(dac.out());
         });
         assert!(peak <= CEILING, "{voices:?}: peak {peak}");
         assert!(
@@ -254,17 +257,17 @@ fn limiter_transparent_below_threshold() {
     let mut lim = Box::new(Limiter::new());
     let a = 0.501_187_2; // −6 dBFS
     let x = |n: usize| a * libm::sinf(n as f32 * 0.057_3);
-    let mut out = [[0.0f32; 2 * BLOCK_SIZE]; DAC_PAIRS];
+    let mut dac = Box::new(DacBlocks::new());
     for b in 0..200 {
-        for (p, pair) in out.iter_mut().enumerate() {
+        for (p, pair) in dac.mix().iter_mut().enumerate() {
             for i in 0..BLOCK_SIZE {
                 let n = b * BLOCK_SIZE + i;
                 pair[2 * i] = x(n) * (p + 1) as f32 / 3.0;
                 pair[2 * i + 1] = -x(n + 7);
             }
         }
-        lim.process(&mut out, SAMPLE_RATE);
-        for (p, pair) in out.iter().enumerate() {
+        lim.process(&mut dac, SAMPLE_RATE);
+        for (p, pair) in dac.out().iter().enumerate() {
             for i in 0..BLOCK_SIZE {
                 let n = b * BLOCK_SIZE + i;
                 let (l, r) = match n.checked_sub(LOOKAHEAD) {
@@ -288,7 +291,7 @@ fn limiter_transparent_below_threshold() {
 #[test]
 fn limiter_catches_a_step_and_releases() {
     let mut lim = Box::new(Limiter::new());
-    let mut out = [[0.0f32; 2 * BLOCK_SIZE]; DAC_PAIRS];
+    let mut dac = Box::new(DacBlocks::new());
     let (mut peak, mut last) = (0.0f32, 0.0f32);
     for b in 0..1000 {
         let v = if (10..20).contains(&b) {
@@ -296,13 +299,15 @@ fn limiter_catches_a_step_and_releases() {
         } else {
             0.25
         };
+        let out = dac.mix();
         for pair in out.iter_mut() {
             pair.fill(v);
         }
         if b == 5 {
             out[1][37] = -4.0 / OUTPUT_TRIM;
         }
-        lim.process(&mut out, SAMPLE_RATE);
+        lim.process(&mut dac, SAMPLE_RATE);
+        let out = dac.out();
         peak = out.iter().flatten().fold(peak, |m, x| m.max(x.abs()));
         last = out[0][2 * BLOCK_SIZE - 1];
     }
@@ -333,11 +338,11 @@ fn everything_before_the_limiter_is_mains_mix() {
             fx.reverb().ring().lines(),
             reference.reverb().ring().lines()
         );
-        let input = fx.limiter().input().iter().flatten();
+        let input = dac.input().iter().flatten();
         peak = input.fold(peak, |m, x| m.max(x.abs()));
         // Under the threshold, so the limiter only trims it.
         assert_eq!(
-            dac[0].map(f32::to_bits),
+            dac.out()[0].map(f32::to_bits),
             want[blocks % 2].map(f32::to_bits),
             "block {blocks} peak {peak}"
         );
@@ -362,9 +367,10 @@ fn everything_before_the_limiter_is_mains_mix() {
 fn a_non_finite_sample_reads_as_full_scale() {
     for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
         let mut lim = Box::new(Limiter::new());
-        let mut out = [[0.0f32; 2 * BLOCK_SIZE]; DAC_PAIRS];
+        let mut dac = Box::new(DacBlocks::new());
         let (mut least, mut peak) = (f32::MAX, 0.0f32);
         for b in 0..20 {
+            let out = dac.mix();
             for pair in out.iter_mut() {
                 pair.fill(0.25);
             }
@@ -374,8 +380,8 @@ fn a_non_finite_sample_reads_as_full_scale() {
             if b == 9 {
                 (out[2][41], out[2][42]) = (bad, 3.0 / OUTPUT_TRIM);
             }
-            lim.process(&mut out, SAMPLE_RATE);
-            for &x in out.iter().flatten().filter(|x| x.is_finite()) {
+            lim.process(&mut dac, SAMPLE_RATE);
+            for &x in dac.out().iter().flatten().filter(|x| x.is_finite()) {
                 peak = peak.max(x.abs());
                 if b >= 1 {
                     least = least.min(x.abs());
@@ -385,12 +391,14 @@ fn a_non_finite_sample_reads_as_full_scale() {
         assert!(peak <= CEILING, "{bad}: {peak}");
         // Only the 3.0 asks for more than the ceiling's 1 dB.
         let mut calm = Box::new(Limiter::new());
-        let mut out = [[0.25f32; 2 * BLOCK_SIZE]; DAC_PAIRS];
-        out[1][9] = bad;
-        calm.process(&mut out, SAMPLE_RATE);
-        let mut out = [[0.25f32; 2 * BLOCK_SIZE]; DAC_PAIRS];
-        calm.process(&mut out, SAMPLE_RATE);
-        let quiet = out
+        let mut dac = Box::new(DacBlocks::new());
+        *dac.mix() = [[0.25f32; 2 * BLOCK_SIZE]; DAC_PAIRS];
+        dac.mix()[1][9] = bad;
+        calm.process(&mut dac, SAMPLE_RATE);
+        *dac.mix() = [[0.25f32; 2 * BLOCK_SIZE]; DAC_PAIRS];
+        calm.process(&mut dac, SAMPLE_RATE);
+        let quiet = dac
+            .out()
             .iter()
             .flatten()
             .filter(|x| x.is_finite())
@@ -414,9 +422,10 @@ fn random_spikes_never_pass_the_ceiling() {
         x
     };
     let mut lim = Box::new(Limiter::new());
+    let mut dac = Box::new(DacBlocks::new());
     let mut peak = 0.0f32;
     for _ in 0..4000 {
-        let mut out = [[0.0f32; 2 * BLOCK_SIZE]; DAC_PAIRS];
+        let out = dac.mix();
         for s in out.iter_mut().flatten() {
             *s = (rnd() as f32 / u32::MAX as f32 - 0.5) * 0.2;
         }
@@ -429,8 +438,8 @@ fn random_spikes_never_pass_the_ceiling() {
             let sign = if rnd() % 2 == 0 { 1.0 } else { -1.0 };
             out[p][k] = sign * THRESHOLD * libm::powf(10.0, db / 20.0);
         }
-        lim.process(&mut out, SAMPLE_RATE);
-        peak = out.iter().flatten().fold(peak, |m, x| m.max(x.abs()));
+        lim.process(&mut dac, SAMPLE_RATE);
+        peak = dac.out().iter().flatten().fold(peak, |m, x| m.max(x.abs()));
     }
     assert!(peak <= CEILING, "{peak}");
     assert!(
@@ -445,7 +454,8 @@ fn random_spikes_never_pass_the_ceiling() {
 /// knee, where slope and curvature are already zero: no hard corner. The
 /// second difference stays within the quintic's own curvature bound
 /// (|f''| ≤ 1.54) everywhere, the knee included; a corner would read
-/// about 1/h = 1000.
+/// about 1/h = 1000. Only with `master-tape` (ADR 0055).
+#[cfg(feature = "master-tape")]
 #[test]
 fn the_tapes_clip_has_no_hard_corner() {
     use chimera_core::dsp::tape::soft_clip;

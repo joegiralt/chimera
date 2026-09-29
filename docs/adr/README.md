@@ -35,7 +35,7 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0027](0027-shedding-fades-tails-first.md) | Shedding fades, and takes tails before held notes | Proposed; "rev Y gets two" superseded by [0031](0031-six-voices-on-rev-v.md) |
 | [0028](0028-one-alesis-style-reverb.md) | One Alesis-style ring is the reverb; Plate, FDN and MidiVerb retire | Accepted |
 | [0029](0029-stereo-fx-returns.md) | The reverb and chorus return stereo; the delay stays mono | Accepted |
-| [0030](0030-master-section.md) | REV SEND feeds the delay into the reverb; tape on pair 1; a compressor linked across the pairs, last | Accepted |
+| [0030](0030-master-section.md) | REV SEND feeds the delay into the reverb; tape on pair 1; a compressor linked across the pairs, last | Accepted; tape superseded in part by [0055](0055-master-tape-off-the-chain.md) |
 | [0031](0031-six-voices-on-rev-v.md) | Every patch gets six voices on rev V | Accepted; six as the pool superseded in part by [0040](0040-eight-voices-modal-strings-to-g1.md) |
 | [0032](0032-modal-code-provenance.md) | Modal's string is the owner's own code; Rings-derived parts keep Mutable's MIT notice | Accepted |
 | [0033](0033-theme-applied-in-the-display-shell.md) | The theme is applied in the display shell, not the renderer | Proposed |
@@ -54,4 +54,6 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0050](0050-gain-staging-trim-and-final-limiter.md) | Gain staging: a 1/√8 output trim and one peak limiter at −1 dBFS, last | Proposed |
 | [0051](0051-a-voice-holds-one-engine-rebuilt-in-place.md) | A voice holds one engine, rebuilt in place (supersedes 0008) | Proposed |
 | [0052](0052-strings-stored-as-16-bit-block-float.md) | Store Modal's string delay lines as 16-bit block float | Superseded by [0054](0054-sympathetic-strings-from-a-shared-pool.md) (sympathetic slot pool, never accepted) |
+| [0053](0053-delay-mechanics-wow-and-irregular-flutter.md) | The delay's WOW becomes MECHANICS: a slow wow and an irregular flutter | Proposed |
 | [0054](0054-sympathetic-strings-from-a-shared-pool.md) | Sympathetic borrows its strings from a shared pool of four (supersedes 0052) | Proposed |
+| [0055](0055-master-tape-off-the-chain.md) | The master tape stage is off the chain, kept behind `master-tape` (supersedes in part 0030) | Proposed |

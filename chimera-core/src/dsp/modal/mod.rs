@@ -41,12 +41,13 @@ use core::ptr::addr_of_mut;
 
 use chimera_hal::BLOCK_SIZE;
 
+use super::xorshift_noise;
 use crate::hw::Cost;
 use crate::in_place::{in_place_enum, uninit_at};
 use crate::sym_alloc::{Lease, SYM_SLOTS, SymAlloc, SymSlot};
 use crate::voice_alloc::VoiceIdx;
 use rings::{CosineOsc, Svf, stiffness_from_structure};
-use string::{FRESH_CLEAR_BYTES, KsString, RING_BYTES, xorshift_noise};
+use string::{FRESH_CLEAR_BYTES, KsString, RING_BYTES};
 
 /// Bytes the string lines' clears have written on this thread, since the
 /// last call: for the tests.

@@ -5,9 +5,10 @@
 //! chorus and reverb return stereo; the delay is mono, on both sides of
 //! DAC pair 1 at unity. The delay's return can feed the reverb's send (REV
 //! SEND), in the same block. After the pairs are summed, `master` runs the
-//! master section: the tape on DAC pair 1, then the compressor linked
-//! across all three pairs; `limit` then runs the output stage, the trim
-//! and the peak limiter (ADR 0050).
+//! master section: the compressor linked across all three pairs (the tape
+//! on DAC pair 1 before it only with the `master-tape` feature, ADR 0055);
+//! `limit` then runs the output stage, the trim and the peak limiter
+//! (ADR 0050).
 
 use chimera_hal::BLOCK_SIZE;
 use core::f32::consts::LOG2_E;
@@ -19,10 +20,12 @@ use crate::dsp::algo::math::exp2;
 use crate::dsp::chorus::{ChorusParams, JunoChorus};
 use crate::dsp::comp::{CompParams, MasterComp};
 use crate::dsp::delay::{DelayParams, TapeDelay};
-use crate::dsp::limiter::Limiter;
+use crate::dsp::limiter::{DacBlocks, Limiter};
 use crate::dsp::reverb::ReverbParams;
 use crate::dsp::ring::RingReverb;
-use crate::dsp::tape::{Tape, TapeParams};
+#[cfg(feature = "master-tape")]
+use crate::dsp::tape::Tape;
+use crate::dsp::tape::TapeParams;
 use crate::hw::{Cost, DAC_PAIRS, FX_BUS_BUDGET};
 use crate::in_place::uninit_at;
 
@@ -59,6 +62,7 @@ pub struct FxBus {
     chorus: JunoChorus,
     delay: TapeDelay,
     reverb: RingReverb,
+    #[cfg(feature = "master-tape")]
     tape: Tape,
     comp: MasterComp,
     limiter: Limiter,
@@ -66,7 +70,10 @@ pub struct FxBus {
     rev_send: f32,
 }
 
+#[cfg(feature = "master-tape")]
 crate::in_place::field_list!(FxBus => FxBus { chorus, delay, reverb, tape, comp, limiter, rev_send });
+#[cfg(not(feature = "master-tape"))]
+crate::in_place::field_list!(FxBus => FxBus { chorus, delay, reverb, comp, limiter, rev_send });
 
 impl Default for FxBus {
     fn default() -> Self {
@@ -78,14 +85,19 @@ impl FxBus {
     /// The whole bus at its worst settings, with the Instrument's mixing
     /// and the output limiter; reserved from the voice budget whether or
     /// not an effect is on. The bench's BUS row runs `mix_parts`, so it
-    /// times the limiter too; the reading below predates it (ADR 0050).
-    pub const COST: Cost = Cost(1360); // BUS 1356, measured 2026-09-27, bench, rev V at 480 MHz; rounded up
+    /// times the limiter too (ADR 0050); the master tape counts only in
+    /// the build that runs it (ADR 0055).
+    #[cfg(not(feature = "master-tape"))]
+    pub const COST: Cost = Cost(1160); // BUS 1155, measured 2026-09-29, bench, rev V at 480 MHz, b34a66a; rounded up
+    #[cfg(feature = "master-tape")]
+    pub const COST: Cost = Cost(1470); // BUS 1468, measured 2026-09-29, bench, rev V at 480 MHz, 87c2930 (tape in); rounded up
 
     pub fn new() -> Self {
         Self {
             chorus: JunoChorus::new(),
             delay: TapeDelay::new(),
             reverb: RingReverb::new(),
+            #[cfg(feature = "master-tape")]
             tape: Tape::new(),
             comp: MasterComp::new(),
             limiter: Limiter::new(),
@@ -102,6 +114,7 @@ impl FxBus {
             JunoChorus::init_in_place(uninit_at(addr_of_mut!((*p).chorus)));
             TapeDelay::init_in_place(uninit_at(addr_of_mut!((*p).delay)));
             RingReverb::init_in_place(uninit_at(addr_of_mut!((*p).reverb)));
+            #[cfg(feature = "master-tape")]
             Tape::init_in_place(uninit_at(addr_of_mut!((*p).tape)));
             MasterComp::init_in_place(uninit_at(addr_of_mut!((*p).comp)));
             Limiter::init_in_place(uninit_at(addr_of_mut!((*p).limiter)));
@@ -168,32 +181,29 @@ impl FxBus {
         }
     }
 
-    /// The master section, after every pair is summed: the tape on pair 1,
-    /// then the compressor, one gain on every pair.
+    /// The master section, after every pair is summed: the compressor, one
+    /// gain on every pair; with `master-tape`, the tape on pair 1 first.
     pub fn master(
         &mut self,
         out: &mut [[f32; 2 * BLOCK_SIZE]; DAC_PAIRS],
         params: &FxParams,
         sample_rate: u32,
     ) {
+        #[cfg(feature = "master-tape")]
         self.tape.process(&mut out[0], &params.tape, sample_rate);
         self.comp.process(out, &params.comp, sample_rate);
     }
 
     /// The output stage, after the master section: the output trim and the
-    /// peak limiter, one block late (ADR 0050).
-    pub fn limit(&mut self, out: &mut [[f32; 2 * BLOCK_SIZE]; DAC_PAIRS], sample_rate: u32) {
-        self.limiter.process(out, sample_rate);
+    /// peak limiter, one block late (ADR 0050). `dac.out()` is then the
+    /// block for the DACs.
+    pub fn limit(&mut self, dac: &mut DacBlocks, sample_rate: u32) {
+        self.limiter.process(dac, sample_rate);
     }
 
     /// The reverb, for reading its ring.
     pub fn reverb(&self) -> &RingReverb {
         &self.reverb
-    }
-
-    /// The final limiter, for reading what it was fed.
-    pub fn limiter(&self) -> &Limiter {
-        &self.limiter
     }
 
     /// The compressor's gain reduction, dB, for the GR meter.
