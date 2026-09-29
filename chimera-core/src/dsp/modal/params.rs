@@ -145,7 +145,7 @@ impl Default for ModalParams {
             structure: 0.0,
             // Today's INIT tone and ring, in the new direction.
             bright: 1.0 - 0.7,
-            damp: 1.0 - 0.3,
+            damp: damp_from_v1_decay(0.3),
             pos: 0.0,
             excite: 0.8,
             body: 0.3,
@@ -178,6 +178,19 @@ impl ModalParams {
 /// MODEL's names, by `ResonatorMode as u8`.
 pub const MODEL_NAMES: [&str; 4] = ["STRING", "BANK", "BOWED", "SYMP"];
 
+/// The old loop's gain per pass at `decay`, rung at C3, as DAMP: old
+/// string patches keep their ring time. The one v1 DECAY → DAMP map on
+/// STRING, SYMP and BOWED; BANK's DAMP is its DECAY.
+pub fn damp_from_v1_decay(decay: f32) -> f32 {
+    const C3_HZ: f32 = 130.81;
+    let g = 0.999 - 0.009 * decay;
+    let t60 = -3.0 / (C3_HZ * libm::log10f(g));
+    (libm::logf(t60 / 0.05) / libm::logf(400.0)).clamp(0.0, 1.0)
+}
+
+/// `damp_from_v1_decay(0.3)`, for the const spec table: a test pins it.
+const INIT_DAMP: f32 = 0.943_377_4;
+
 const fn unit(id: u8, label: &'static str, default: f32) -> ParamSpec {
     ParamSpec::continuous(
         id,
@@ -197,7 +210,7 @@ pub static MODAL_SPECS: [ParamSpec; 13] = [
     ParamSpec::choice(0, "MODEL", ValFmt::Names(&MODEL_NAMES), 3.0, 0.0).ident("MODE"),
     unit(13, "STRUCT", 0.0).short("STR").ident("STRUCTURE"),
     unit(3, "BRIGHT", 1.0 - 0.7).short("BRT").ident("BRIGHT"),
-    unit(12, "DAMP", 1.0 - 0.3).short("DMP").ident("DAMP"),
+    unit(12, "DAMP", INIT_DAMP).short("DMP").ident("DAMP"),
     unit(4, "POS", 0.0).short("POS").ident("POS"),
     unit(1, "EXCITE", 0.8).ident("EXCITE"),
     unit(6, "BODY", 0.3).ident("BODY"),
@@ -356,6 +369,36 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// DAMP's T60 on a string, as `super::super::t60`.
+    fn t60(damp: f32) -> f32 {
+        0.05 * libm::powf(400.0, damp)
+    }
+
+    #[test]
+    fn old_decay_keeps_its_ring_time_at_c3() {
+        for (decay, want) in [(0.3, 14.2), (0.6, 8.2)] {
+            let got = t60(damp_from_v1_decay(decay));
+            assert!((got / want - 1.0).abs() < 0.05, "DECAY {decay}: {got} s");
+        }
+        let mut last = f32::INFINITY;
+        for i in 0..=100 {
+            let d = damp_from_v1_decay(i as f32 / 100.0);
+            assert!((0.0..=1.0).contains(&d) && d <= last, "DECAY {i}%: {d}");
+            last = d;
+        }
+    }
+
+    #[test]
+    fn init_damp_is_old_decay_0_3() {
+        let init = damp_from_v1_decay(0.3);
+        assert_eq!(ModalParams::default().damp, init);
+        let spec = MODAL_SPECS
+            .iter()
+            .find(|s| s.id == ModalParams::DAMP)
+            .unwrap();
+        assert_eq!(spec.default, init);
     }
 
     #[test]
