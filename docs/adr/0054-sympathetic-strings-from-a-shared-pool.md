@@ -73,7 +73,19 @@ pool of four slots, lent to the voices that play it (exclusive-state spec
   0027).
 - **A note-on clears every line it starts** (spec § 4.8), so a set handed
   to another voice carries nothing of its last note: a note on a reused
-  slot sounds exactly as on a fresh pool.
+  slot sounds exactly as on a fresh pool. Each line clears only up to its
+  **dirty extent**: every sample at or past `KsString::dirty` is already
+  0.0, and `set_freq` raises it to each new loop length. A line last
+  played high clears a loop, not its ring, and the result is bit-identical
+  to clearing the whole ring.
+- **At most one worst-case clear a block.** `SymPool::note_on_clear`
+  gives, purely, the bytes a Sympathetic note-on will clear.
+  `Instrument` spends `SYM_CLEAR_BUDGET` a block: one worst-case note-on,
+  eight whole rings, 31,488 B. A note-on past what is left waits on the
+  stolen note's path, and so does one behind a note already waiting on the
+  budget. It starts before its voice renders in the block that lets it in.
+  A chord of four slots last played low starts over four blocks (5.3 ms),
+  and a typical one at once. Nothing is refused.
 - **`SlotKind::resting`** maps `Modal(Sympathetic)` to `Modal(String)`: an
   idle voice holds no lease. `Voice::reset` rebuilds into the Sound's kind
   when a note follows the fade and into `resting()` when none does, and
@@ -94,6 +106,9 @@ pool of four slots, lent to the voices that play it (exclusive-state spec
   holder still fades (`awaits`) waits another block without a rebuild.
 
 ## Alternatives considered
+- **Reserving note-on headroom in the cost model** — one worst note-on a
+  block is 41k cycles, 640 a sample: more than a whole Modal voice, billed
+  to every patch, all the time, for a transient.
 - **Q16 strings (ADR 0052)** — lost precision: −83.7 dBFS at C6 against the
   −90 dBFS gate, and extra work per sample.
 - **f32 in every voice** — an `Instrument` of 271,520 B, leaving 15,200 B of
@@ -119,6 +134,26 @@ pool of four slots, lent to the voices that play it (exclusive-state spec
   whose voice fades over `Voice::FADE` first. Other models keep 8 voices.
 - One more rebuild per Sympathetic note: `rest`, at its natural end (a
   `KsString`'s worth of stores, once per note).
+- **Measured on the chip (bench f59bc92, rev V at 480 MHz, 2026-09-29).**
+  - SYM POOL 110,912 B.
+  - MDL STR /VOICE 424, within String's billed 447.
+  - MDL SYM: totals 1,120, 1,974, 2,830 and 3,698 at one to four notes,
+    flat past four, the pool's cap. That is a slope of 859 a sounding
+    voice, within the 1,457 billed. `COST_SYMPATHETIC` is now 802, the
+    slope less the Modal Sound's chain of 57, as String's is. Beside this
+    branch's FX bus (1,360), it gives 6 voices on rev V and 5 on rev Y.
+    Beside 1,160, the bus after PR #212, it gives the same 6 and 5. The
+    pool sounds 4 of them.
+  - SYM NOTE-ON 40,906 cycles with the whole-ring clear. That reading led
+    to the dirty extent and the per-block budget above. With them, the
+    estimate is about 9–10k for A4 after A4. The worst case, a slot last
+    played at or below G1, stays about 41k, and the budget takes one a
+    block. The bench's `SYM NOTE-ON` and `SYM NOTE-ON LOW` rows read both
+    at the ship build.
+- **Host sizes since the dirty extent (4 B a line) and the clear budget:**
+  `Voice` 5,848 B, `SymPool` 111,360 B, `Instrument` 160,816 B, which
+  leaves 125,904 B of D2. On the chip, the firmware's `.ram_d2` is
+  160,244 B.
 - ADR 0051's bound, three rebuilds per voice per block, is unchanged: a
   steal or a restart is a fade end resting (one) and its waiting note (two),
   as a cross-Part steal was, and a note that `awaits` spends none.

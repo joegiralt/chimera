@@ -43,15 +43,27 @@ use chimera_hal::BLOCK_SIZE;
 
 use crate::hw::Cost;
 use crate::in_place::{in_place_enum, uninit_at};
-use crate::sym_alloc::{Lease, SYM_SLOTS, SymAlloc};
+use crate::sym_alloc::{Lease, SYM_SLOTS, SymAlloc, SymSlot};
+use crate::voice_alloc::VoiceIdx;
 use rings::{CosineOsc, Svf, stiffness_from_structure};
-use string::{KsString, xorshift_noise};
+use string::{FRESH_CLEAR_BYTES, KsString, RING_BYTES, xorshift_noise};
+
+/// Bytes the string lines' clears have written on this thread, since the
+/// last call: for the tests.
+#[cfg(any(test, feature = "test-support"))]
+pub fn take_cleared_bytes() -> usize {
+    string::cleared::take()
+}
 
 pub const MAX_MODES: usize = 48;
 
 // ── Modal Engine (with String and Bowed modes) ──────────────────────
 
 const NUM_SYMPATHETIC: usize = 7;
+
+/// The most a Sympathetic note-on clears: eight whole rings, a slot and a
+/// main string last played at or below G1 (`SymPool::note_on_clear`).
+pub const SYM_NOTE_ON_CLEAR_MAX: usize = (1 + NUM_SYMPATHETIC) * RING_BYTES;
 
 /// The resonator bank (`ResonatorMode::Modal`) and the noise burst that
 /// strikes it.
@@ -251,9 +263,10 @@ const fn models_are_exclusive() -> bool {
 const _: () = assert!(models_are_exclusive());
 
 impl ModalEngine {
-    /// Cycles/sample per model (ADR 0013), at the chain's LP24. String is
-    /// measured (bench `MODAL`, 2026-09-27, rev V at 480 MHz). The others
-    /// are provisional until the bench's MDL rows read them (#49): the
+    /// Cycles/sample per model (ADR 0013), at the chain's LP24. String and
+    /// Sympathetic are measured: a bench row's /VOICE less the chain the
+    /// Modal Sound's voice adds (57). The others are provisional until the
+    /// bench's MDL rows read them (#49): the
     /// emulator's count over String's (1.36 cycles an instruction, 38 an
     /// I- or D-cache miss), scaled by String's bench/emulator ratio (1.07)
     /// and rounded up about 10 %. Emulator, per voice: String 235
@@ -263,8 +276,12 @@ impl ModalEngine {
     pub const COST_STRING: Cost = Cost(390);
     /// Estimated 565.
     pub const COST_BOWED: Cost = Cost(620);
-    /// Estimated 1,274.
-    pub const COST_SYMPATHETIC: Cost = Cost(1_400);
+    /// Measured 2026-09-29, bench f59bc92, rev V at 480 MHz: MDL SYM's
+    /// totals 1120 1974 2830 3698 at one to four notes, a slope of 859 a
+    /// voice, taken over the first four because the pool sounds at most
+    /// four (the totals are flat past it); 859 − 57 = 802. (Estimated
+    /// 1,274 from the emulator.)
+    pub const COST_SYMPATHETIC: Cost = Cost(802);
     /// The resonator bank: this plus `COST_MODE` per mode. Estimated 1,703
     /// at 32 modes and 40 a mode; billed 1,900 at 32.
     pub const COST_BANK: Cost = Cost(460);
@@ -380,8 +397,8 @@ impl ModalEngine {
                 bank.burst_lp = 0.0;
             }
             ModelSlot::String(string) => {
-                string.set_freq(freq, sample_rate);
                 string.trigger(
+                    (freq, sample_rate),
                     vel * params.excite,
                     params.ks_excitation,
                     params.ks_color,
@@ -389,28 +406,29 @@ impl ModalEngine {
                 );
             }
             ModelSlot::Bowed(b) => {
-                b.string.set_freq(freq, sample_rate);
                 b.string.clear();
+                b.string.set_freq(freq, sample_rate);
                 b.force = vel * params.bow_force;
             }
             ModelSlot::Sympathetic(m) => {
                 let set = pool.set(&m.lease);
                 // Main string gets excitation
-                m.main.set_freq(freq, sample_rate);
                 m.main.trigger(
+                    (freq, sample_rate),
                     vel * params.excite,
                     params.ks_excitation,
                     params.ks_color,
                     params.position,
                 );
-                set.ratios = sympathetic_ratios(params.inharm);
-                set.tune(freq, sample_rate);
                 for sym in set.strings.iter_mut() {
                     // Sympathetic strings start silent — energy comes from
                     // main. A handed-over slot carries nothing of its last
-                    // note (spec § 4.8).
+                    // note (spec § 4.8). Cleared before the retune, so the
+                    // clear is `SymPool::note_on_clear`'s.
                     sym.restart();
                 }
+                set.ratios = sympathetic_ratios(params.inharm);
+                set.tune(freq, sample_rate);
                 set.pending = [0.0; NUM_SYMPATHETIC];
             }
         }
@@ -666,6 +684,25 @@ impl SymPool {
 
     pub(crate) fn alloc_mut(&mut self) -> &mut SymAlloc {
         &mut self.alloc
+    }
+
+    /// The bytes a Sympathetic note-on on `voice`, whose engine is
+    /// `engine`, clears (spec § 4.8): its main string and its set, each
+    /// line up to its dirty extent. An engine already Sympathetic keeps
+    /// both; any other is rebuilt, its main string fresh, and lent the
+    /// slot `voice` would be. At most `SYM_NOTE_ON_CLEAR_MAX`.
+    pub fn note_on_clear(&self, engine: Option<&ModalEngine>, voice: VoiceIdx) -> usize {
+        let set = |s: SymSlot| -> usize {
+            self.sets[s.index()]
+                .strings
+                .iter()
+                .map(KsString::clear_bytes)
+                .sum()
+        };
+        match engine.map(|e| &e.model) {
+            Some(ModelSlot::Sympathetic(m)) => m.main.clear_bytes() + set(m.lease.slot()),
+            _ => FRESH_CLEAR_BYTES + self.alloc.lend_slot(voice).map_or(0, set),
+        }
     }
 
     /// The set `lease` names. It borrows the pool and the lease, so no
@@ -1104,6 +1141,29 @@ mod tests {
             let (buf, dirty) = s.line();
             assert!(buf[dirty..].iter().all(|&x| x == 0.0), "line {i}");
         }
+    }
+
+    /// `SymPool::note_on_clear` is what the note-on then clears, to the
+    /// byte: a kept slot and main string after low and high notes and a
+    /// PITCH drop, and a fresh engine lent a slot last played low.
+    #[test]
+    fn note_on_clear_is_what_the_note_on_clears() {
+        let p = sym_params();
+        let v0 = VoiceIdx::ALL[0];
+        let mut pool = SymPool::boxed();
+        let mut e = engine(&mut pool, p.mode);
+        for (note, pitch) in [(0, 1.0), (96, 1.0), (60, 0.25), (31, 1.0), (84, 1.0)] {
+            e.set_pitch(1.0);
+            let want = pool.note_on_clear(Some(&e), v0);
+            let _ = take_cleared_bytes();
+            e.note_on(note, 100, &p, SR, &mut pool);
+            assert_eq!(take_cleared_bytes(), want, "note {note}");
+            assert!(want <= SYM_NOTE_ON_CLEAR_MAX);
+            play(&mut e, &mut pool, &p, SECOND / 8, (1, pitch));
+        }
+        // Voice 1 would be lent a slot never played: eight fresh lines.
+        let fresh = (1 + NUM_SYMPATHETIC) * FRESH_CLEAR_BYTES;
+        assert_eq!(pool.note_on_clear(None, VoiceIdx::ALL[1]), fresh);
     }
 
     /// Bowed writes round its whole ring; its extent follows the bow, so

@@ -176,6 +176,16 @@ impl EngineSlot {
         }
     }
 
+    /// The bytes a Sympathetic note-on on `voice` clears
+    /// (`SymPool::note_on_clear`).
+    pub fn sym_note_on_clear(&self, pool: &SymPool, voice: VoiceIdx) -> usize {
+        let modal = match self {
+            Self::Modal(m) => Some(&**m),
+            Self::Algo(_) => None,
+        };
+        pool.note_on_clear(modal, voice)
+    }
+
     /// `p` must play this slot's engine.
     pub fn note_on(
         &mut self,

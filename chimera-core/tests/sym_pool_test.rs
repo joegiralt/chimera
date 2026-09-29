@@ -7,10 +7,12 @@ use common::{SR, peak, scope_writer};
 
 use chimera_core::dsp::engines::SlotKind;
 use chimera_core::dsp::fx_bus::FxBus;
-use chimera_core::dsp::modal::ResonatorMode;
+use chimera_core::dsp::modal::{ResonatorMode, take_cleared_bytes};
 use chimera_core::dsp::voice::Voice;
 use chimera_core::hw::{AUDIO_BUDGET_PERCENT, CPU_HZ_REV_V, MAX_VOICES, SampleBudget};
-use chimera_core::instrument::{AudioShared, DacOut, Instrument};
+use chimera_core::instrument::{AudioShared, DacOut, Instrument, SYM_CLEAR_BUDGET};
+use chimera_core::mod_path::ModDestRegistry;
+use chimera_core::modulation::{MAX_MOD_SOURCES, ModSource, ModState, VCA};
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::part::PartMode;
@@ -768,4 +770,127 @@ fn a_mono_part_keeps_one_voice() {
         s.inst.active()[v] && s.inst.slot_kinds()[v] == SYM,
         "52 sounds"
     );
+}
+
+/// Sympathetic ended by ENV 1 on the VCA at RELEASE 0: a note released
+/// goes idle within a block, however low (a low loop filters too seldom
+/// to fall silent soon on its own).
+fn short_sym(s: &mut Stage, parts: usize) {
+    let mut reg = ModDestRegistry::new();
+    let _ = reg.add(VCA, *b"TEST\0\0\0\0");
+    let mut ms = ModState::from_registry(&reg, MAX_MOD_SOURCES);
+    let d = ms.find(VCA).unwrap();
+    ms.set_route(ModSource::Env1.index(), d, 127);
+    for part in &mut s.shared.parts[..parts] {
+        part.params.envelopes[0].release = 0.0;
+        part.mod_state = ms.clone();
+    }
+}
+
+/// Four Parts on the short Sympathetic Sound, each having played `last`
+/// once and gone idle, so each slot's lines are dirty to `last`'s loops.
+fn after(last: u8) -> Stage {
+    let mut s = Stage::new(&vec![(sym(), PartMode::Poly); 4]);
+    short_sym(&mut s, 4);
+    for part in 0..4 {
+        s.on(part, last);
+    }
+    s.block();
+    for part in 0..4 {
+        s.off(part, last);
+    }
+    s.until_idle(50);
+    let _ = take_cleared_bytes();
+    s
+}
+
+const CHORD: [u8; 4] = [40, 47, 52, 59];
+
+/// The chord played on Parts 1 to 4 at once, `blocks` blocks: each
+/// Part's bus, the bytes cleared each block and each voice's rebuilds.
+fn chord(mut s: Stage, blocks: usize) -> (Vec<Vec<Bits>>, Vec<usize>, Vec<[u16; MAX_VOICES]>) {
+    let (mut buses, mut cleared, mut rebuilds) = (vec![Vec::new(); 4], Vec::new(), Vec::new());
+    for (part, &n) in CHORD.iter().enumerate() {
+        s.on(part, n);
+    }
+    for _ in 0..blocks {
+        let before = s.inst.rebuilds();
+        s.block();
+        cleared.push(take_cleared_bytes());
+        let after = s.inst.rebuilds();
+        rebuilds.push(core::array::from_fn(|v| after[v].wrapping_sub(before[v])));
+        for (part, bus) in buses.iter_mut().enumerate() {
+            bus.push(s.bus(part));
+        }
+    }
+    assert_eq!(s.inst.allocator().refused(), 0, "nothing refused or lost");
+    (buses, cleared, rebuilds)
+}
+
+/// The block each Part first sounds in.
+fn starts(buses: &[Vec<Bits>]) -> Vec<usize> {
+    buses
+        .iter()
+        .map(|b| {
+            b.iter()
+                .position(|x| x.iter().any(|&s| s != 0))
+                .expect("sounds")
+        })
+        .collect()
+}
+
+/// Every slot last played at MIDI 0: each note-on clears eight whole
+/// rings, so the budget takes one a block and the chord starts a note a
+/// block, never clearing more than the budget in any block.
+#[test]
+fn a_worst_case_chord_starts_a_note_a_block() {
+    let (buses, cleared, rebuilds) = chord(after(0), 8);
+    let mut at = starts(&buses);
+    at.sort_unstable();
+    assert_eq!(at, [0, 1, 2, 3]);
+    for (b, &c) in cleared.iter().enumerate() {
+        assert!(c <= SYM_CLEAR_BUDGET, "block {b}: {c} > {SYM_CLEAR_BUDGET}");
+    }
+    assert!(
+        cleared[..4].iter().all(|&c| c > SYM_CLEAR_BUDGET * 3 / 4),
+        "{cleared:?}"
+    );
+    for r in &rebuilds {
+        assert!(r.iter().all(|&n| n <= 3), "{r:?}");
+    }
+}
+
+/// Every slot last played at A4: four small clears fit one block, so the
+/// chord starts at once.
+#[test]
+fn a_typical_chord_starts_at_once() {
+    let (buses, cleared, _) = chord(after(69), 4);
+    assert_eq!(starts(&buses), [0; 4]);
+    assert!(cleared[0] <= SYM_CLEAR_BUDGET / 2, "{cleared:?}");
+}
+
+/// A note that waited plays as it would alone, from its first sound, and
+/// starts from silence without a click: its step from the silence before
+/// it is its own first step, as on a fresh `Instrument`.
+#[test]
+fn a_spread_chord_plays_each_note_as_alone() {
+    let (buses, ..) = chord(after(0), 24);
+    for (part, bus) in buses.iter().enumerate() {
+        let from = starts(&buses)[part];
+        let mut a = Stage::new(&vec![(sym(), PartMode::Poly); 4]);
+        short_sym(&mut a, 4);
+        a.on(part, CHORD[part]);
+        a.block();
+        let want = from_first_sound(&mut a, part, bus.len() - from);
+        assert_eq!(bus[from..], want[..], "part {part}");
+
+        let samples =
+            |b: &[Bits]| -> Vec<f32> { b.iter().flatten().map(|&x| f32::from_bits(x)).collect() };
+        let mut alone = vec![0.0];
+        alone.extend(samples(&want));
+        assert!(
+            max_step(&samples(bus)) <= max_step(&alone),
+            "part {part}: a click at its delayed start"
+        );
+    }
 }

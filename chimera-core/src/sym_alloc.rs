@@ -222,11 +222,7 @@ impl SymAlloc {
     /// one, waits on another's fade, or the pool is full.
     #[must_use = "a dropped Lease leaks its slot; give it back"]
     pub fn lend(&mut self, voice: VoiceIdx) -> Option<Lease> {
-        let s = match self.slot_of(voice) {
-            Some(s) if matches!(self.slots[s], State::Promised { .. }) => s,
-            Some(_) => return None,
-            None => self.first_free()?,
-        };
+        let s = self.lend_slot(voice)?.index();
         // A free slot taken unpromised gets age 0 on purpose: it is the
         // first stolen, and it can never block a restart.
         self.slots[s] = State::Lent {
@@ -235,6 +231,16 @@ impl SymAlloc {
             then: Then::Free,
         };
         Some(Lease(SymSlot(s as u8)))
+    }
+
+    /// The slot `lend(voice)` would lend, lending nothing.
+    pub fn lend_slot(&self, voice: VoiceIdx) -> Option<SymSlot> {
+        let s = match self.slot_of(voice) {
+            Some(s) if matches!(self.slots[s], State::Promised { .. }) => s,
+            Some(_) => return None,
+            None => self.first_free()?,
+        };
+        Some(SymSlot(s as u8))
     }
 
     pub fn give_back(&mut self, lease: Lease) {

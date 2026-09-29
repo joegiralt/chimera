@@ -284,6 +284,18 @@ impl Voice {
         self.sample_rate
     }
 
+    /// A note-on on `params` starts now: the voice isn't fading, nor
+    /// sounding another engine or model (`note_on` then waits the fade).
+    pub fn starts_now(&self, params: &ParamSnapshot) -> bool {
+        self.fade == 0 && !(self.active && self.switched(params))
+    }
+
+    /// The bytes a Sympathetic note-on here clears: pure, for the
+    /// `Instrument`'s per-block clear budget (spec § 4.8).
+    pub fn sym_note_on_clear(&self, pool: &SymPool) -> usize {
+        self.slot.sym_note_on_clear(pool, self.id)
+    }
+
     /// On a fading voice, or one sounding another engine or model, the note
     /// waits for the fade-out and then starts clean. Returns whether it replaced
     /// a note still waiting, unheard.
