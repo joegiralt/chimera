@@ -33,6 +33,8 @@ const fn alg(name: &'static str, links: &[(u8, u8)], carriers: &[u8]) -> Algorit
 
 pub const ALGO_COUNT: usize = 32;
 
+/// Append-only: an algorithm's index is its disk code (ADR 0045), frozen with
+/// its name in `tests/fixtures/disk_codes_v1.txt`. Never reorder or remove.
 pub static ALGORITHMS: [Algorithm; ALGO_COUNT] = [
     alg("T1", &[(4, 3), (3, 2), (2, 1), (6, 5)], &[1, 5]),
     alg("T2", &[(4, 2), (3, 2), (2, 1), (6, 5)], &[1, 5]),
@@ -156,6 +158,15 @@ impl AlgoId {
     pub const A22: AlgoId = AlgoId(29);
     pub const A23: AlgoId = AlgoId(30);
     pub const A24: AlgoId = AlgoId(31);
+
+    /// `v` if it names an algorithm.
+    pub const fn from_index(v: u8) -> Option<Self> {
+        if (v as usize) < ALGO_COUNT {
+            Some(AlgoId(v))
+        } else {
+            None
+        }
+    }
 
     pub const fn clamped(v: u8) -> Self {
         if (v as usize) < ALGO_COUNT {

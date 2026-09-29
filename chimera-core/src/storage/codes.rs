@@ -70,7 +70,16 @@ impl ModSource {
 
 /// `(block code, param id)` pairs that once existed and never come back
 /// (ADR 0009: the filter's FM, ENV and KEY). A reader skips them silently.
+/// A retired code goes on one of these lists, and never gets another meaning:
+/// the fixture check fails a gone line that isn't listed, and a listed one
+/// that is produced again. A retired block lists each of its params.
 pub const RETIRED: &[(u8, u8)] = &[(10, 3), (10, 4), (10, 5)];
+
+/// `(block code, param id, value code)`: one enum value that is gone for good.
+pub const RETIRED_CODES: &[(u8, u8, u8)] = &[];
+
+/// `ModSource` codes that are gone for good.
+pub const RETIRED_SOURCES: &[u8] = &[];
 
 /// A param that moved or changed unit: a file's `old` value, run through
 /// `map`, is `new`'s. None yet.
@@ -97,10 +106,12 @@ pub struct ValidAddr {
 }
 
 impl ValidAddr {
-    /// `b`'s params in spec-table order: the canonical save order.
+    /// `b`'s stored params in spec-table order: the canonical save and load
+    /// order, so a param whose decoding needs another comes after it.
     pub fn of_block(b: BlockRef) -> impl Iterator<Item = ValidAddr> {
         b.specs()
             .iter()
+            .filter(|s| s.stored)
             .map(move |spec| ValidAddr { block: b, spec })
     }
 
@@ -129,9 +140,16 @@ pub enum DiskValue {
     Code(u8),
 }
 
+/// `a`'s value in `b`, which must be `a`'s block.
 pub fn read_value(b: &dyn Block, a: ValidAddr) -> DiskValue {
+    debug_assert!(
+        core::ptr::eq(b.specs(), a.block.specs()),
+        "block does not match the address"
+    );
     let id = a.spec.id;
-    match b.enum_code(id) {
+    let code = b.enum_code(id);
+    debug_assert!(!a.coded() || code.is_some(), "an Enum without a code");
+    match code {
         Some(c) if a.coded() => DiskValue::Code(c),
         _ => DiskValue::Real(b.get(id)),
     }

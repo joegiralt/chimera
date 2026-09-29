@@ -121,6 +121,9 @@ pub struct ParamSpec {
     pub modulatable: bool,
     /// How a matrix offset applies.
     pub law: OffsetLaw,
+    /// Written to the card. False for a live view of other stored params
+    /// (ENV's FORM reads the current MODE's slot), so nothing is stored twice.
+    pub stored: bool,
 }
 
 impl ParamSpec {
@@ -147,6 +150,7 @@ impl ParamSpec {
             kind: ParamKind::Continuous,
             modulatable,
             law: OffsetLaw::Linear,
+            stored: true,
         }
     }
 
@@ -172,6 +176,7 @@ impl ParamSpec {
             kind: ParamKind::Stepped,
             modulatable,
             law: OffsetLaw::Linear,
+            stored: true,
         }
     }
 
@@ -189,6 +194,7 @@ impl ParamSpec {
             kind: ParamKind::Enum,
             modulatable: false,
             law: OffsetLaw::Linear,
+            stored: true,
         }
     }
 
@@ -207,6 +213,14 @@ impl ParamSpec {
             return 0.0;
         }
         (v - self.min) / (self.max - self.min)
+    }
+
+    /// This spec as a live view of stored params: never written to the card.
+    pub const fn live(self) -> Self {
+        Self {
+            stored: false,
+            ..self
+        }
     }
 
     /// This spec with a short column header.

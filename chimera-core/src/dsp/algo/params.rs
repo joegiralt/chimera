@@ -1,11 +1,11 @@
 //! The Algo Sound's parameters, stored as bytes (spec § Voice model).
 
 use crate::block::{Block, ParamId, ParamSpec, ValFmt};
-use crate::dsp::algo::algorithms::{ALGO_COUNT, ALGO_NAMES};
+use crate::dsp::algo::algorithms::{ALGO_COUNT, ALGO_NAMES, AlgoId};
 use crate::dsp::algo::env::EnvRates;
 use crate::dsp::algo::plan::OPS;
 use crate::dsp::algo::tx::COARSE_NAMES;
-use crate::dsp::algo::waves::{WAVE_NAMES, WaveId};
+use crate::dsp::algo::waves::{WAVE_COUNT, WAVE_NAMES, WaveId};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AlgoOpParams {
@@ -97,6 +97,9 @@ pub static ALGO_OP_SPECS: [ParamSpec; 13] = [
     ParamSpec::stepped(11, "FDBK", ValFmt::Int(7), 0.0, 7.0, 0.0, false),
     ParamSpec::stepped(12, "VEL", ValFmt::Int(7), 0.0, 7.0, 0.0, false),
 ];
+
+// An Enum's `max` is its last code: a longer table needs the spec to grow too.
+const _: () = assert!(ALGO_OP_SPECS[0].max as usize == WAVE_COUNT - 1);
 
 impl Block for AlgoOpParams {
     fn specs(&self) -> &'static [ParamSpec] {
@@ -196,6 +199,9 @@ pub static ALGO_SPECS: [ParamSpec; 4] = [
     ParamSpec::stepped(3, "TRNSP", ValFmt::Signed(24), -24.0, 24.0, 0.0, false),
 ];
 
+const _: () = assert!(ALGO_SPECS[0].max as usize == ALGO_COUNT - 1);
+const _: () = assert!(ALGO_SPECS[1].max as usize == ALGO_COUNT - 1);
+
 impl Block for AlgoParams {
     fn specs(&self) -> &'static [ParamSpec] {
         &ALGO_SPECS
@@ -231,12 +237,12 @@ impl Block for AlgoParams {
     }
 
     fn set_enum_code(&mut self, id: ParamId, code: u8) -> bool {
-        if usize::from(code) >= ALGO_COUNT {
+        let Some(alg) = AlgoId::from_index(code) else {
             return false;
-        }
+        };
         match id {
-            Self::ALG_A => self.alg_a = code,
-            Self::ALG_B => self.alg_b = code,
+            Self::ALG_A => self.alg_a = alg.get(),
+            Self::ALG_B => self.alg_b = alg.get(),
             _ => return false,
         }
         true

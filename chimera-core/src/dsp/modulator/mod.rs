@@ -5,7 +5,7 @@ pub mod env_a;
 pub mod func;
 pub mod law;
 
-use crate::block::{DiskCode, apply_code};
+use crate::block::DiskCode;
 
 /// The choice at `v` among `all` (a `Block` write), clamped.
 pub fn pick<T: Copy>(all: &[T], v: f32) -> T {
@@ -292,24 +292,6 @@ impl FuncParams {
         match self.func() {
             Func::Env(x) | Func::Burst(x) => x as u8 as f32,
             Func::Lfo(x) => x as u8 as f32,
-        }
-    }
-
-    /// FORM's disk code: the current MODE's FORM.
-    pub fn form_code(&self) -> u8 {
-        match self.func() {
-            Func::Env(x) | Func::Burst(x) => x.disk_code(),
-            Func::Lfo(x) => x.disk_code(),
-        }
-    }
-
-    /// Set the current MODE's FORM from its code (so MODE goes first);
-    /// `false`, nothing written, if that MODE has no such FORM.
-    pub fn set_form_code(&mut self, c: u8) -> bool {
-        match self.mode {
-            FuncMode::Env => apply_code(EnvForm::from_disk_code(c), |x| self.env_form = x),
-            FuncMode::Lfo => apply_code(LfoForm::from_disk_code(c), |x| self.lfo_form = x),
-            FuncMode::Burst => apply_code(EnvForm::from_disk_code(c), |x| self.burst_form = x),
         }
     }
 
