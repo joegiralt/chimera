@@ -11,11 +11,15 @@ use chimera_core::dsp::algo::params::AlgoParams;
 use chimera_core::dsp::algo::plan::{EvalPlan, OPS};
 use chimera_core::dsp::algo::tx::FEEDBACK_CYCLES;
 use chimera_core::dsp::algo::waves::WaveId;
+use chimera_core::dsp::engines::{EngineSlot, Rebuilt, SlotKind};
 use chimera_core::dsp::filter::FilterMode;
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus};
-use chimera_core::dsp::modal::ResonatorMode;
+use chimera_core::dsp::modal::{ModalEngine, ResonatorMode, SymPool};
 use chimera_core::dsp::modulator::{EnvForm, EnvSlot, EnvType, Func, Glide, LfoForm, LfoType};
-use chimera_core::hw::{BLOCK_SIZE, DAC_PAIRS, MAX_PARTS, MAX_VOICES, SAMPLE_RATE, SampleBudget};
+use chimera_core::dsp::voice::Voice;
+use chimera_core::hw::{
+    BLOCK_SIZE, DAC_PAIRS, MAX_PARTS, MAX_VOICES, SAMPLE_RATE, SampleBudget, VOICE_RAM_BUDGET,
+};
 use chimera_core::instrument::{AudioShared, DacOut, Instrument, PanCache, PartAudio, mix_parts};
 use chimera_core::mod_path::ModDestRegistry;
 use chimera_core::modulation::{CUTOFF, MAX_MOD_SOURCES, ModSource, ModState, VCA};
@@ -25,9 +29,11 @@ use chimera_core::params::{
 };
 use chimera_core::preset::Performance;
 use chimera_core::scope::{ScopeFrame, ScopeWriter, scope_buffer};
+use chimera_core::sym_alloc::SymAlloc;
 use chimera_core::triple::TripleBuffer;
 use chimera_core::ui::fmt::FmtBuf;
 use chimera_core::ui::{draw, theme};
+use chimera_core::voice_alloc::VoiceIdx;
 use chimera_core::{MidiChannel, MidiNote, Velocity};
 use chimera_hal::ChimeraDisplay;
 use cortex_m::peripheral::DWT;
@@ -127,7 +133,7 @@ fn worst_comp(s: &mut AudioShared) {
     (c.thresh, c.ratio, c.attack, c.release, c.makeup, c.mix) = (0.0, 7, 0.0, 0.0, 0.5, 1.0);
 }
 
-const ROUTING_ROWS: usize = 28;
+const ROUTING_ROWS: usize = 29;
 /// Rows per ROUTING screen: ten from y 46 at `ROW_H` 25 end at 283.
 const ROUTING_PAGE: usize = 10;
 
@@ -218,7 +224,18 @@ const ROUTING: [RoutingRow; ROUTING_ROWS] = [
     ("MDL BOW", |p| modal(p, ResonatorMode::Bowed), STILL),
     ("MDL SYM", |p| modal(p, ResonatorMode::Sympathetic), STILL),
     ("MDL RES", |p| modal(p, ResonatorMode::Modal), STILL),
+    // MODE flipped every 4 blocks: restarts, steals and rests every flip.
+    ("SWITCH", |p| modal(p, ResonatorMode::String), switch_storm),
 ];
+
+/// String and Sympathetic in turn, 4 blocks each.
+fn switch_storm(p: &mut PartAudio, block: u32) {
+    p.params.modal.mode = if (block / 4).is_multiple_of(2) {
+        ResonatorMode::String
+    } else {
+        ResonatorMode::Sympathetic
+    };
+}
 
 /// The Modal Sound with its model set to `mode`.
 fn modal(p: &mut PartAudio, mode: ResonatorMode) {
@@ -351,6 +368,17 @@ fn mods(p: &mut PartAudio) {
 static mut SCOPE: TripleBuffer<ScopeFrame> = scope_buffer();
 // A static, not a local: `AudioShared` is 3 KB (ADR 0020).
 static mut SHARED: MaybeUninit<AudioShared> = MaybeUninit::uninit();
+// SAFETY: ".ram_d2.voices" is NOLOAD, so this holds garbage at boot; sound
+// because it is `MaybeUninit` and `time_rebuild` builds it in place before
+// any read. In D2 with the `Instrument`, as a voice's slot is.
+#[unsafe(link_section = ".ram_d2.voices")]
+static mut SLOT: MaybeUninit<EngineSlot> = MaybeUninit::uninit();
+static mut SYM: SymAlloc = SymAlloc::new();
+
+/// Rebuilds and note-ons timed, each averaged.
+const ROUNDS: u32 = 16;
+/// Render-to-idle gives up after 10 s of blocks: a voice stuck on.
+const IDLE_BLOCKS: u32 = 10 * SAMPLE_RATE / BLOCK_SIZE as u32;
 
 struct Rig<'p> {
     inst_slot: &'static mut MaybeUninit<Instrument>,
@@ -414,6 +442,34 @@ pub fn run(display: &mut impl ChimeraDisplay, clocks: Clocks, perf: &Performance
         show_routing(display, page, labels, cycles);
         hold(clocks);
     }
+    let rebuild = time_rebuild();
+    let note_on = rig.time_sym_note_on();
+    show_memory(display, rebuild, note_on);
+    hold(clocks);
+}
+
+/// Cycles per `rebuild` into Sympathetic from Algo: the lend and the main
+/// string, no set. Each is undone by an untimed rebuild into Algo, which
+/// gives the lease back.
+#[inline(never)]
+fn time_rebuild() -> u32 {
+    // SAFETY: as in `run`: the bench is the only user of its statics, and
+    // these references end when this returns.
+    let (slot, pool) = unsafe { (&mut *addr_of_mut!(SLOT), &mut *addr_of_mut!(SYM)) };
+    let slot = EngineSlot::init_in_place(slot, SlotKind::Algo);
+    let voice = VoiceIdx::ALL[0];
+    let sym = black_box(SlotKind::Modal(ResonatorMode::Sympathetic));
+    let mut cycles = 0u32;
+    for _ in 0..ROUNDS {
+        let _ = slot.rebuild(SlotKind::Algo, pool, voice);
+        let start = DWT::cycle_count();
+        let built = black_box(slot.rebuild(sym, pool, voice));
+        cycles = cycles.wrapping_add(DWT::cycle_count().wrapping_sub(start));
+        // The pool is free each round: a `NoSlot` would time String.
+        assert_eq!(built, Rebuilt::Built);
+    }
+    let _ = slot.rebuild(SlotKind::Algo, pool, voice);
+    cycles / ROUNDS
 }
 
 fn hold(clocks: Clocks) {
@@ -459,6 +515,40 @@ impl Rig<'_> {
             inst.render(fx, &mut self.dac, shared, &mut self.scope);
         }
         DWT::cycle_count().wrapping_sub(start) / (TIMED_BLOCKS * BLOCK_SIZE as u32)
+    }
+
+    /// Cycles of `Instrument::handle` for one Sympathetic note-on on an
+    /// idle voice: `place`, `lend`, the rebuild, the clear and the
+    /// excitation. Each round releases the note and renders until every
+    /// voice is idle again; one untimed round warms first.
+    #[inline(never)]
+    fn time_sym_note_on(&mut self) -> u32 {
+        let budget = SampleBudget::for_cpu(u32::MAX);
+        let inst = Instrument::init_in_place(self.inst_slot, SAMPLE_RATE, budget);
+        let fx = FxBus::init_in_place(self.fx_slot);
+        let shared = AudioShared::init_in_place(self.shared_slot, self.perf);
+        modal(&mut shared.parts[0], ResonatorMode::Sympathetic);
+        let ev = |kind| NoteEvent {
+            channel: MidiChannel::clamped(0),
+            note: MidiNote::A4,
+            kind,
+        };
+        let mut cycles = 0u32;
+        for round in 0..=ROUNDS {
+            let start = DWT::cycle_count();
+            inst.handle(black_box(ev(NoteKind::On(Velocity::DEFAULT))), shared);
+            if round > 0 {
+                cycles = cycles.wrapping_add(DWT::cycle_count().wrapping_sub(start));
+            }
+            inst.handle(ev(NoteKind::Off), shared);
+            for _ in 0..IDLE_BLOCKS {
+                inst.render(fx, &mut self.dac, shared, &mut self.scope);
+                if inst.allocator().slots().iter().all(|s| s.is_free()) {
+                    break;
+                }
+            }
+        }
+        cycles / ROUNDS
     }
 
     /// Six Parts written with one noise block, sends 0.5, no voices:
@@ -690,6 +780,30 @@ fn show_routing(
     );
     for (i, (&(label, ..), c)) in rows.iter().zip(cycles).enumerate() {
         voice_row(display, &mut line, 46 + i as i32 * ROW_H, label, c);
+    }
+    display.flush();
+}
+
+/// The sizes behind the D2 budget and the exclusive state's two timings.
+fn show_memory(display: &mut impl ChimeraDisplay, rebuild: u32, note_on: u32) {
+    use core::mem::size_of;
+    draw::fill_rect(display, 0, 0, theme::SCREEN_W, theme::SCREEN_H, theme::BG);
+    draw::text(display, &theme::FONT_VALUE, "MEMORY", 4, 16, theme::INK);
+    let lines = [
+        format_args!("VOICE {}", size_of::<Voice>()),
+        format_args!("SLOT {}", size_of::<EngineSlot>()),
+        format_args!("MODAL {}", size_of::<ModalEngine>()),
+        format_args!("SYM POOL {}", size_of::<SymPool>()),
+        format_args!("INSTR {}/{VOICE_RAM_BUDGET}", size_of::<Instrument>()),
+        format_args!("REBUILD {rebuild} CYC"),
+        format_args!("SYM NOTE-ON {note_on} CYC"),
+    ];
+    let mut line = FmtBuf::new();
+    for (i, args) in lines.into_iter().enumerate() {
+        line.clear();
+        let _ = line.write_fmt(args);
+        let y = 46 + i as i32 * ROW_H;
+        draw::text(display, &theme::FONT_VALUE, line.as_str(), 4, y, theme::INK);
     }
     display.flush();
 }
