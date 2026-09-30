@@ -499,6 +499,15 @@ impl ModalEngine {
         self.halo_in(pool).map(SympatheticSet::periods)
     }
 
+    /// STRING's chain STRUCTURE and line length: for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn string_line(&self) -> Option<(f32, usize)> {
+        match &self.model {
+            ModelSlot::String(v) => Some(v.line()),
+            _ => None,
+        }
+    }
+
     /// The halo strings' lines, `(delay, ring_len)`: for the tests.
     #[cfg(any(test, feature = "test-support"))]
     pub fn halo_lines(&self, pool: &SymPool) -> Option<[(usize, usize); NUM_SYMPATHETIC]> {
@@ -580,8 +589,8 @@ impl ModalEngine {
     /// The strings follow a changed pitch ratio (a divide per string,
     /// `ModalEngine::PITCH`), STRING's dispersion a moved STRUCTURE
     /// (gliding, `StringVoice::tune`), and SYMP's halo `chord`, the
-    /// un-eased STRUCTURE's (gliding, `SympatheticSet::retune`; a note's
-    /// first block snaps it).
+    /// un-eased STRUCTURE's (gliding, `SympatheticSet::retune`). A note's
+    /// first block (`snap`) snaps both.
     fn retune(
         &mut self,
         sample_rate: u32,
@@ -595,14 +604,14 @@ impl ModalEngine {
         match &mut self.model {
             ModelSlot::Bank(_) => {}
             ModelSlot::String(v) if pitched || moved || v.gliding(structure) => {
-                v.tune(freq, sample_rate, structure)
+                v.tune(freq, sample_rate, structure, snap)
             }
             ModelSlot::String(_) => {}
             ModelSlot::Bowed(b) if pitched => b.string.tune(freq, sample_rate),
             ModelSlot::Bowed(_) => {}
             ModelSlot::Sympathetic(m) => {
                 if pitched {
-                    m.main.tune(freq, sample_rate, 0.0);
+                    m.main.tune(freq, sample_rate, 0.0, false);
                 }
                 if let Some(set) = pool.halo(&m.halo) {
                     set.retune(sample_rate as f32 / freq, chord, (pitched, snap));

@@ -1006,6 +1006,34 @@ fn a_routed_chord_snaps_on_the_first_block() {
     }
 }
 
+/// A note's first block takes its routed STRUCTURE whole on STRING too:
+/// the chain and line are where a note-on at the routed value puts them,
+/// not 65 ms on. A VEL route arrives as the block's modulated params.
+#[test]
+fn a_routed_stiffness_snaps_on_the_first_block() {
+    use chimera_core::dsp::modal::SymPool;
+    let stored = ModalParams {
+        mode: ResonatorMode::String,
+        structure: 0.0,
+        ..Default::default()
+    };
+    let routed = ModalParams {
+        structure: 1.0,
+        ..stored
+    };
+    let line = |at_on: &ModalParams| {
+        let mut pool = SymPool::boxed();
+        let mut e = Box::new(ModalEngine::new_in(&mut pool, stored.mode));
+        e.note_on(31, 100, at_on, SR, &mut pool);
+        let mut block = [0.0; BLOCK_SIZE];
+        e.render(&mut block, &routed, SR, &mut pool);
+        e.string_line().expect("a string")
+    };
+    let (want, got) = (line(&routed), line(&stored));
+    assert_eq!(want.0, 1.0);
+    assert_eq!(got, want);
+}
+
 /// A pitch change mid-glide moves the glide's end, not where the strings
 /// are: the periods run on continuously from the step before.
 #[test]
