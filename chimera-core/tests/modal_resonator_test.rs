@@ -710,3 +710,62 @@ fn ensemble_at_full_depth_on_g1_stays_in_the_line() {
         }
     });
 }
+
+/// The fundamental at MIX 0.5 is the dry note's as DEPTH leaves 0, and
+/// stays near it at a moderate DEPTH: the heads read in phase with the
+/// dry, not half a period back (an octave-up comb).
+#[test]
+fn ensemble_keeps_the_fundamental() {
+    let blocks = 3 * SR as usize / BLOCK_SIZE;
+    for note in [48, 31] {
+        let h1 = |ens_depth: f32| {
+            let p = ModalParams {
+                mode: ResonatorMode::String,
+                damp: 1.0,
+                bright: 0.7,
+                ens_depth,
+                ens_rate: 0.5,
+                ens_mix: 0.5,
+                ..Default::default()
+            };
+            let out = play_modal(&p, note, blocks, 0);
+            let s = &out[SR as usize / 2..5 * SR as usize / 2];
+            20.0 * goertzel(s, note_to_freq(note), SR).log10()
+        };
+        let (zero, nudge, some) = (h1(0.0), h1(0.001), h1(0.35));
+        assert!(
+            (nudge - zero).abs() < 0.5,
+            "{note}: DEPTH 0.001 {nudge:.1} dB vs {zero:.1}"
+        );
+        assert!(
+            (some - zero).abs() < 3.0,
+            "{note}: DEPTH 0.35 {some:.1} dB vs {zero:.1}"
+        );
+    }
+}
+
+/// A PITCH route retunes the line under the heads each block: at DEPTH 1,
+/// either rate, no click past the attack.
+#[test]
+fn a_pitch_route_with_the_ensemble_on_does_not_click() {
+    let second = SR as usize / BLOCK_SIZE;
+    let pitch = ParamAddr::new(BlockRef::Pitch, chimera_core::params::PitchParams::PITCH);
+    for (ens_rate, ens_mix) in [(0.0, 0.5), (1.0, 0.5), (0.0, 1.0), (1.0, 1.0)] {
+        let mut p = ParamSnapshot::for_engine(EngineType::Modal);
+        p.modal.mode = ResonatorMode::String;
+        p.modal.damp = 1.0;
+        (p.modal.ens_depth, p.modal.ens_rate, p.modal.ens_mix) = (1.0, ens_rate, ens_mix);
+        p.lfos[0].rate = 5.0;
+        for note in [31, 48] {
+            let out = play_voice_at(note, &p, &routes(pitch, 32), 2 * second, &[]);
+            let n = clicks(&out)
+                .into_iter()
+                .filter(|&(i, _)| i / BLOCK_SIZE >= ATTACK_BLOCKS)
+                .count();
+            assert_eq!(
+                n, 0,
+                "note {note} RATE {ens_rate} MIX {ens_mix}: {n} clicks"
+            );
+        }
+    }
+}

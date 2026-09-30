@@ -1,13 +1,14 @@
-//! STRING's and SYMP's ensemble (ours, #50): three read heads on the
-//! string's own line, swung by one quadrature LFO at 0°, 90° and 180°,
-//! mixed on the output. The heads' Doppler is the detune. Not 120°: three
-//! even phases cancel each partial's first sidebands in the sum
-//! (Σ e^(i2πk/3) = 0), and the mix barely moves.
+//! STRING's and SYMP's ensemble (ours, #50): two read heads on the
+//! string's own line, near the write, swung by one quadrature LFO at 0°
+//! and 90°, mixed on the output. The heads' Doppler is the detune. Not
+//! three at 120°, nor any pair at 180°: evenly spread phases cancel each
+//! partial's first sidebands in the sum (Σ e^(i2πk/3) = 0), and the mix
+//! barely moves.
 
 use core::f32::consts::TAU;
 
 /// Read heads.
-pub const ENS_HEADS: usize = 3;
+pub const ENS_HEADS: usize = 2;
 /// A head's peak detune at DEPTH 1, cents, where the loop lets it swing.
 pub const ENS_MAX_CENTS: f32 = 15.0;
 
@@ -17,12 +18,14 @@ pub fn rate_hz(ens_rate: f32) -> f32 {
 }
 
 /// A quadrature LFO `(cos, sin)`, rotated a sample at a time, and the
-/// heads' swing, samples.
+/// heads' swing, samples: `swing` as the note set it, `amp` as the loop
+/// caps it.
 pub struct Ensemble {
     cos: f32,
     sin: f32,
     rot_c: f32,
     rot_s: f32,
+    swing: f32,
     amp: f32,
 }
 
@@ -33,35 +36,45 @@ impl Default for Ensemble {
             sin: 0.0,
             rot_c: 1.0,
             rot_s: 0.0,
+            swing: 0.0,
             amp: 0.0,
         }
     }
 }
 
-/// The most a head may swing about `delay / 2`: none under 4 samples (F7).
+/// The most a head may swing: `2 + 2·cap ≤ delay − 2`, none under 4
+/// samples (F7).
 fn cap(delay: usize) -> f32 {
-    (delay as f32 * 0.5 - 2.0).max(0.0)
+    ((delay as f32 - 4.0) * 0.5).max(0.0)
 }
 
 impl Ensemble {
-    /// Per block: the LFO at `rate` Hz, renormalised, and the swing that
-    /// peaks at `depth · ENS_MAX_CENTS`, capped to the loop.
-    pub fn set(&mut self, depth: f32, rate: f32, delay: usize, sample_rate: u32) {
-        let w = TAU * rate / sample_rate as f32;
-        (self.rot_c, self.rot_s) = (libm::cosf(w), libm::sinf(w));
-        let g = 1.0 / libm::sqrtf(self.cos * self.cos + self.sin * self.sin);
-        (self.cos, self.sin) = (self.cos * g, self.sin * g);
-        let detune = libm::exp2f(ENS_MAX_CENTS * depth / 1200.0) - 1.0;
-        self.amp = (detune / w).min(cap(delay));
+    /// At note-on: the LFO at `hz` (> 0) from phase 0, and the swing whose
+    /// Doppler peaks at `depth · ENS_MAX_CENTS`.
+    pub fn new(depth: f32, hz: f32, sample_rate: u32) -> Self {
+        let w = TAU * hz / sample_rate as f32;
+        Self {
+            rot_c: libm::cosf(w),
+            rot_s: libm::sinf(w),
+            swing: (libm::exp2f(ENS_MAX_CENTS * depth / 1200.0) - 1.0) / w,
+            ..Self::default()
+        }
     }
 
-    /// Head k's delay behind the write, this sample: within [2, delay − 2],
-    /// or `delay / 2` under 4 samples.
+    /// Per block: the LFO renormalised, the swing capped to the loop.
+    pub fn set(&mut self, delay: usize) {
+        let g = 1.0 / libm::sqrtf(self.cos * self.cos + self.sin * self.sin);
+        (self.cos, self.sin) = (self.cos * g, self.sin * g);
+        self.amp = self.swing.min(cap(delay));
+    }
+
+    /// Head k's delay behind the write, this sample: `2 + A + A·sₖ`, in
+    /// phase with the dry at DEPTH 0, within [2, delay − 2] (2 under 4).
     #[inline]
     pub fn head_delays(&self, delay: usize) -> [f32; ENS_HEADS] {
-        let (mid, cap) = (delay as f32 * 0.5, cap(delay));
+        let (mid, top) = (2.0 + self.amp, 2.0 + 2.0 * cap(delay));
         // Clamped: the LFO's radius drifts past 1 by rounding.
-        [self.sin, self.cos, -self.sin].map(|s| (mid + self.amp * s).clamp(mid - cap, mid + cap))
+        [self.sin, self.cos].map(|s| (mid + self.amp * s).clamp(2.0, top))
     }
 
     #[inline]
@@ -79,22 +92,21 @@ mod tests {
 
     const SR: u32 = 48_000;
 
-    /// Every head stays in `[2, delay − 2]`, or at `delay / 2` on a loop
-    /// too short to swing (F7).
+    /// Every head stays in `[2, delay − 2]`, or at 2 on a loop too short to
+    /// swing (F7).
     #[test]
     fn heads_stay_inside_the_loop() {
         for delay in [3, 23, 1010] {
             for depth in [0.0, 1.0] {
                 for rate in [0.0, 1.0] {
-                    let mut e = Ensemble::default();
-                    e.set(depth, rate_hz(rate), delay, SR);
+                    let mut e = Ensemble::new(depth, rate_hz(rate), SR);
                     for i in 0..100_000 {
                         if i % 32 == 0 {
-                            e.set(depth, rate_hz(rate), delay, SR);
+                            e.set(delay);
                         }
                         for o in e.head_delays(delay) {
                             if delay == 3 {
-                                assert_eq!(o, 1.5, "{depth} {rate}");
+                                assert_eq!(o, 2.0, "{depth} {rate}");
                             } else {
                                 assert!(
                                     (2.0..=delay as f32 - 2.0).contains(&o),
@@ -114,13 +126,13 @@ mod tests {
     #[test]
     fn the_doppler_is_the_detune() {
         for (depth, want) in [(1.0, ENS_MAX_CENTS), (0.5, ENS_MAX_CENTS * 0.5)] {
-            let mut e = Ensemble::default();
-            let hz = rate_hz(0.5);
+            let mut e = Ensemble::new(depth, rate_hz(0.5), SR);
+            e.set(900);
             let mut last = e.head_delays(900)[0];
             let mut most = 0.0_f32;
             for i in 0..SR as usize * 2 {
                 if i % 32 == 0 {
-                    e.set(depth, hz, 900, SR);
+                    e.set(900);
                 }
                 let o = e.head_delays(900)[0];
                 // A delay falling by `d` a sample reads `1 + d` fast.

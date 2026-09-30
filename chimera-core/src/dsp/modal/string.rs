@@ -306,30 +306,14 @@ pub(super) struct StringVoice {
     /// BODY, latched at note-on (spec § 1).
     body_mix: BodyMix,
     release: Release,
+    /// The ensemble and ENS MIX, latched at note-on (spec § 1); MIX 0 is off.
     ens: Ensemble,
-    /// ENS DEPTH, its rate in Hz and MIX, latched at note-on (spec § 1).
-    ens_at: EnsAt,
+    ens_mix: f32,
 }
 
 crate::in_place::field_list!(StringVoice => StringVoice {
-    string, disp, stiff, structure, period, body, body_mix, release, ens, ens_at,
+    string, disp, stiff, structure, period, body, body_mix, release, ens, ens_mix,
 });
-
-/// A note's ensemble: DEPTH, rate (Hz) and MIX; MIX 0 is off.
-#[derive(Clone, Copy)]
-pub(super) struct EnsAt {
-    pub depth: f32,
-    pub hz: f32,
-    pub mix: f32,
-}
-
-impl EnsAt {
-    pub(super) const OFF: Self = Self {
-        depth: 0.0,
-        hz: 1.0,
-        mix: 0.0,
-    };
-}
 
 /// The longest loop: the whole line, a one-sample fraction and the chain
 /// at STRUCTURE 0. A lower note plays this, at every STRUCTURE.
@@ -354,7 +338,7 @@ impl StringVoice {
             addr_of_mut!((*p).body_mix).write(Body::mix(0.0));
             addr_of_mut!((*p).release).write(Release::HELD);
             addr_of_mut!((*p).ens).write(Ensemble::default());
-            addr_of_mut!((*p).ens_at).write(EnsAt::OFF);
+            addr_of_mut!((*p).ens_mix).write(0.0);
             slot.assume_init_mut()
         }
     }
@@ -381,13 +365,14 @@ impl StringVoice {
     }
 
     /// A note-on: plucks `freq`, at `structure` if stiff (STRING) or with
-    /// no chain (`None`, SYMP's main string); BODY and `ens` latched.
+    /// no chain (`None`, SYMP's main string); BODY, and the ensemble at
+    /// its MIX, latched.
     pub(super) fn pluck(
         &mut self,
         (freq, sample_rate): (f32, u32),
         structure: Option<f32>,
         amplitude: f32,
-        (body, ens): (f32, EnsAt),
+        (body, (ens_mix, ens)): (f32, (f32, Ensemble)),
     ) {
         self.stiff = structure.is_some();
         self.structure = structure.unwrap_or(0.0);
@@ -397,14 +382,15 @@ impl StringVoice {
         self.body.reset();
         self.body_mix = Body::mix(body);
         self.release = Release::HELD;
-        self.ens = Ensemble::default();
-        self.ens_at = ens;
+        self.ens = ens;
+        self.ens_mix = ens_mix;
     }
 
     /// Per block, after any retune: the heads sized to the line in use.
-    pub(super) fn set_ensemble(&mut self, sample_rate: u32) {
-        let e = self.ens_at;
-        self.ens.set(e.depth, e.hz, self.string.delay, sample_rate);
+    pub(super) fn set_ensemble(&mut self) {
+        if self.ens_mix > 0.0 {
+            self.ens.set(self.string.delay);
+        }
     }
 
     /// Shapes the pluck at `position` of the loop's period (`KsString::shape`).
@@ -442,7 +428,7 @@ impl StringVoice {
             None
         };
         let dry = self.string.tick_full(p, gain, disp);
-        let mix = self.ens_at.mix;
+        let mix = self.ens_mix;
         if mix <= 0.0 {
             return dry;
         }
@@ -477,7 +463,12 @@ mod tests {
         for note in [31, 48, 84, 108] {
             let freq = note_to_freq(note);
             for s in [0.0, 0.5, 1.0] {
-                v.pluck((freq, 48_000), Some(s), 1.0, (0.0, EnsAt::OFF));
+                v.pluck(
+                    (freq, 48_000),
+                    Some(s),
+                    1.0,
+                    (0.0, (0.0, Ensemble::default())),
+                );
                 let (period, _, w) = loop_at(freq, 48_000);
                 let d = v.string.delay();
                 assert!((MIN_LINE..=MAX_LINE).contains(&d), "{note} {s}: {d}");
