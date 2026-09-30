@@ -46,6 +46,9 @@ This spec adds a voiced kind, FRMT, and an unvoiced kind, NOIS, to Algo's WAVE l
   - Two grain lanes overlap.
 - **Unvoiced (NOIS).** Noise runs through a resonant band shifted to CENTRE, with WIDTH and RES.
 - **Level is normalised.** BW, SKIRT and WIDTH change tone only, never level. This is our own take, not an FS1R clone.
+- **Clean peaks (owner, 2026-09-30).** A formant operator at full LEVEL sits about 12 dB under a sine's RMS and never exceeds full scale on its own. Patch loudness is set against ADR 0058's loudness reference, not by raising the operator.
+- **The four-voice floor holds (owner, 2026-09-30).** No formant patch may drop below ADR 0026's four voices on rev V, even with heavy routes and the master tape.
+  - A per-patch formant budget, derived from the cost terms, enforces this by construction (§ 1): it allows at most 3 FRMT operators, with NOIS counted by its own cost.
 - **VOWEL macro.** One control and one mod destination move every formant operator's frequency along **U→O→A→E→I**, the vowel triangle from dark to bright, by interpolating a small built-in vowel table. Each operator's FRMT offsets it from its vowel position.
 - **VOWEL SLOT (owner, 2026-09-30).** Each operator has a note-on cell on its operator page: AUTO (by order), F1, F2, F3 or OFF.
   - Two operators may share a slot, for a detuned choir.
@@ -103,6 +106,39 @@ This spec adds a voiced kind, FRMT, and an unvoiced kind, NOIS, to Algo's WAVE l
 - The const assert becomes `ALGO_OP_SPECS[0].max as usize == OP_KIND_COUNT - 1`.
 - `set_enum_code` accepts 0–17. Codes 16 and 17 are appended to `disk_codes_v1.txt` for each of the six operator blocks.
 - The OSC home page (WAVE) is unchanged: FRMT and NOIS are the last two entries of its list.
+
+### The formant budget
+
+**The floor's worst case.** This is ADR 0026's convention: LP24, no FOLD or DRIVE, and A16 ∪ A17's 12 links. On top of that, **heavy routes and the master tape**:
+
+- **Heavy routes:** ENV B in BURST mode on the VCA with its curve, a slide, all 16 destinations routed, and all three LFOs as FUNC.
+  - That is `ModRouting` 47 + 24 + 98 + 1 + 76 + 33 + 6 + 15 + 15 = **315**, so the voice's overhead is 315 + `CHAIN_COST` 10 = **325**.
+- **Four voices on rev V with the tape:** (7,000 − 1,470) / 4 = 1,382 cycles a voice. That leaves the engine **1,057**.
+- **The shape's fixed terms:** `COST_BASE` 370, 12 links × 8 = 96, and six operators at `COST_OP` + `COST_FEEDBACK` = 366. That leaves **225 cycles** for the formant operators' extra cost over a table operator.
+
+The budget:
+
+| Kind | Charge (its cost − `COST_OP`) |
+|---|---|
+| FRMT (billed at SKIRT 1–3's 130, so a SKIRT edit can never break the budget) | 70 |
+| NOIS | 10 |
+| Table | 0 |
+
+```
+FORMANT_BUDGET = 1,382 − 325 − 370 − 96 − 366 = 225
+Σ charges ≤ 225   ⇒   N = ⌊225 / 70⌋ = 3 FRMT operators
+```
+
+With 3 FRMT the 15 left admits 1 NOIS; with 2 FRMT or fewer, every other operator may be NOIS.
+
+- **Derived, not typed in.** `FORMANT_BUDGET` is a `const` computed from `COST_*`, `FxBus::COST` with the tape, the heavy-route overhead and the rev V budget. When the bench updates a term, N follows.
+- **Only a patch within budget can be built.** Kinds live in a newtype, `Kinds([OpKind; OPS])`, held by `AlgoParams`:
+  - Its only mutator, `AlgoParams::try_set_kind(op, kind) -> Result<(), OverBudget>`, refuses a kind that would overspend.
+  - `AlgoOpParams` no longer carries its own wave byte. The `(AlgoOp(n), WAVE)` address is served through `AlgoParams`, so every write path goes through the check: the UI, `set_enum_code`, the decoder, the param sweep and a future gang edit.
+  - `Kinds::new` is `const` and checks its argument, so INIT and the factory Sounds are checked at compile time.
+- **The WAVE cell.** Turning the encoder steps over a refused FRMT or NOIS, and a toast reads "FORMANT BUDGET FULL". The value never lands on a refused kind.
+- **Decoding.** A file that would overspend decodes its excess formant operators as W1, in operator order, and the load toast says so. No firmware writes such a file.
+- **Why a budget and not a cap on voices:** the allocator can't un-build a patch mid-song, and ADR 0026 promises the floor for every patch. Refusing the fourth FRMT at edit time is the smallest rule that holds by construction.
 
 ### Formant slots
 
@@ -298,6 +334,7 @@ The operator produces one raw grain signal, `y = Σ lanes W(x) · sin(c')`, time
   - `y · g_c`, with `g_c = min(R · g_rms, 1/p̂)`.
   - The exact RMS gain is `g_rms = 1 / sqrt(D · c_q · max(1 − ρ_q(2·FC·L), 0.05))`, where `ρ_q` is W²'s normalised transform. The bracket is the odd grain's exact energy: its negative-frequency image cancels part of it (review C1).
   - **The reference is `R = −12 dB`, relative to a full-scale sine's RMS.** A formant operator at LEVEL 99 has the RMS of a sine at LEVEL 83.
+  - **The owner accepted this (2026-09-30):** clean peaks, and loudness through ADR 0058's reference.
   - **Why −12 dB:** a grain train is peaky. Its crest runs 4–15 dB across the vowel range. At equal RMS to a sine it would peak up to +12 dB over a sine and break the factory and sanity tests' peak of 1.0. So the reference is set so the ceiling `1/p̂` binds only past a 15 dB crest.
   - **The peak is at most 1.0 by construction**, like a sine's.
 - **How the gains are applied.** `g_m` is folded into the operator's gain ramp, and `g_c / g_m` into its carrier-weight ramp. Both are computed per block and ramped, so they cost nothing per sample and never step.
@@ -520,15 +557,21 @@ Voices beside the whole FX bus, per ADR 0031's arithmetic, without mod routes: r
 | Any plain FM patch | unchanged | unchanged | unchanged |
 | Two NOIS, A1 (BREATH) | 510 | 8 | 8 |
 | One sine + three FRMT at SKIRT 1, A1 (TALK BASS) | 820 | 6 | 5 |
-| Five FRMT at SKIRT 1 + one NOIS, A1 (CHOIR) | 1,090 | 5 | 4 |
-| Six FRMT at SKIRT 0, A1 | 910 | 6 | 4 |
-| Six FRMT at SKIRT 1, A1 | 1,150 | 4 | 3 |
-| Six FRMT at SKIRT 1–3 with feedback, A16 ∪ A17 (the new costliest) | 1,252 | 4 | 3 |
+| Three FRMT + two NOIS, A1 (CHOIR) | 900 | 6 | 4 |
+| Two FRMT + four NOIS, A1 | 910 | 6 | 4 |
+| Three FRMT + one NOIS + two table, all with feedback where billed, A16 ∪ A17 (**the worst allowed**) | 1,051 | 5 | 4 |
 
-- ADR 0026's floor of four voices on rev V holds for every patch without mod routes, and with the master tape too: (7,000 − 1,470) / 1,309 = 4.2.
-- **With routes the floor breaks.** The costliest patch with heavy routes (ENV-B, BURST, CLAMP, SLIDE: about +230) and the tape gets 3 voices on rev V. The ADR records this as a consequence: formant patches can drop below four voices, and the allocator's floor test covers table patches only.
-- On rev Y the costliest patch falls from 5 voices to 3.
-- ADR 0031's "the costliest patch gets six voices on rev V" no longer holds for formant patches.
+**The worst allowed patch under the floor's worst case** (heavy routes, § 1): its voice bills 1,051 + 325 = 1,376.
+
+| | Rev V | Rev Y |
+|---|---|---|
+| With the tape | (7,000 − 1,470) / 1,376 = 4.02 → **4** | (5,833 − 1,470) / 1,376 = 3.2 → 3 |
+| Without the tape | (7,000 − 1,160) / 1,376 = 4.24 → **4** | 3 |
+
+- The other extreme allowed, two FRMT and four NOIS on A16 ∪ A17, bills 1,008 + 325 = 1,333: 4 voices on rev V, with and without the tape.
+- ADR 0026's floor holds for every patch that can be built. The owner's floor is rev V's; on rev Y, as for the costliest table patch under heavy routes, it is 3.
+- **The convention is ADR 0026's.** The floor was never promised under every route at once plus FOLD and DRIVE: `ModRouting`'s full-pool worst (633) takes even the costliest table patch to 3 voices with the tape. The heavy-route case above is the floor's defined worst.
+- ADR 0031's "the costliest patch gets six voices on rev V" still holds without routes: the worst allowed formant patch bills 1,051 + 57 = 1,108, which gives 5 voices, and the costliest table patch still gets its six.
 
 ### Memory
 
@@ -552,7 +595,7 @@ Voices beside the whole FX bus, per ADR 0031's arithmetic, without mod routes: r
 | FRMT3 | one FRMT operator, SKIRT 3, BW 20 Hz | both lanes overlapping |
 | FRMT PM | FRMT3 with a full-level ratio-1 modulator | the delay path |
 | NOIS | one NOIS operator | `COST_NOIS` |
-| FRMT6 | the costliest patch | the worst case |
+| FRMT MAX | the worst allowed patch (§ 9) | the budget's worst case |
 | CHOIR | the CHOIR factory Sound | a real patch |
 
 ## 10. Saving and compatibility
@@ -604,7 +647,9 @@ Each test fails on the first draft's design or on a plausible bug, or it pins a 
 | `old_patches_load_unchanged` | Every stored v1 fixture decodes to the same params, including INIT's new fields (§ 10), and the same render hash. |
 | `disk_codes_v1` | The appended codes and idents. |
 | `pages_adapt_to_formant_kinds` | The FRMT page is present exactly when a formant operator exists. The focus is kept by `BlockDef.id` through a list change (on DETUNE, a Sound load that adds FRMT stays on DETUNE). VOWEL and the table operators' FRMT cells are dimmed, as are NOIS's COARSE, FINE, DETUNE and FDBK. Operator pages show each kind's cells. |
-| `formant_costs_bill_by_kind` | Each term, the voice-count table above, and the floor-with-routes consequence, in `cost_test`. |
+| `formant_costs_bill_by_kind` | Each term and the voice-count table above, in `cost_test`. |
+| `formant_budget_keeps_four_voices` | `FORMANT_BUDGET` recomputes from the cost terms. Every allowed kind assignment (all 3⁶ over table/FRMT/NOIS, within budget), at every SKIRT, with feedback on every billed operator, on the costliest union (A16 ∪ A17) under the heavy routes, bills ≥ 4 voices on rev V, with and without the tape. The first refused assignment of each shape would bill 3. |
+| `over_budget_kinds_cannot_be_built` | `try_set_kind` refuses a fourth FRMT, and a second NOIS beside three FRMT. A property test drives random writes through every path (UI encoder, `set_enum_code`, the decoder, the sweep): no `AlgoParams` ever exceeds the budget. The WAVE encoder steps over refused kinds and toasts. An over-budget file decodes its excess as W1. `Kinds::new` rejects an over-budget const at compile time. |
 | memory | `voice_is_its_chain_plus_one_slot` still passes, and `Voice`'s size is unchanged. |
 
 - **ADR 0010's modulatable test.** `modulatable_test::recipe` makes the destination audible. For `AlgoOp(n)`'s FRMT or BW, operator n's WAVE is set to FRMT (NOIS for a second case). For `Algo`'s VOWEL, operators 1–3 are FRMT on A1.
@@ -617,11 +662,13 @@ Each test fails on the first draft's design or on a plausible bug, or it pins a 
 
 Three new factory Sounds. The clips render from them, so what the owner approves is what ships.
 
-- **CHOIR:** a pad on A1.
-  - Operators 1 and 2 are FRMT on slot F1, DETUNE −2 and +2. Operators 3 and 4 are FRMT on slot F2, DETUNE −2 and +2. Operator 5 is FRMT on slot F3, all at SKIRT 1.
-  - Operator 6 is NOIS on slot OFF: breath, CENTRE 1.5 kHz, WIDTH 3 kHz, low.
+- **CHOIR:** a pad on A1, within the budget (3 FRMT, 2 NOIS: 6 voices on rev V).
+  - Operator 1 is FRMT on slot F1.
+  - Operators 2 and 3 are FRMT on slot F2, DETUNE −2 and +2. F2 carries the vowel's identity, and its beating is the most audible, so doubling it gives the choir its width.
+  - Operator 4 is NOIS on slot F3: air on the third formant, which follows the vowel.
+  - Operator 5 is NOIS on slot OFF: breath, CENTRE 1.5 kHz, WIDTH 3 kHz, low.
+  - All the FRMT operators are at SKIRT 1.
   - Slow attack, VOWEL stored between O and A (37), and LFO 1 slowly across O–A.
-  - So each formant beats against its twin: real choir width.
 - **TALK BASS:** A1.
   - Operator 1 is W1 at 0.50, the body.
   - Operators 2–4 are FRMT on AUTO (F1–F3).
@@ -672,10 +719,11 @@ ADR 0060 (or the next free number when it is written): "Formant operators are Al
 - **Level:** the −12 dB reference, the peak ceiling and the peak-referenced modulator signal, and why they differ from a table operator's.
 - **Width:** the SKIRT-free floor.
 - **Cost terms:** `COST_FRMT_ONE`, `COST_FRMT` and `COST_NOIS`, as host estimates by ADR 0056's method until the bench, with the voice-count table and billing by SKIRT.
-- **Consequences:** formant patches with heavy routes can drop below ADR 0026's four-voice floor.
+- **The formant budget:** its derivation, N = 3, the `Kinds` newtype, and the floor's heavy-route worst case.
+- **The clean-peak decision (owner, 2026-09-30).**
 - **Partial supersessions:**
   - ADR 0022's destination list (§ 7);
-  - ADR 0026's cost terms (per-kind terms) and its floor (table patches only);
+  - ADR 0026's cost terms (per-kind terms), with its floor kept by the budget;
   - ADR 0031's statement that the costliest patch gets six voices.
 
 It is added to `docs/adr/README.md`.
@@ -703,7 +751,7 @@ Each task leaves the tree green. Phase 0 is its own branch.
 
 0. **Phase 0, #37's operator pages**, as `2026-09-27-algo-pages-design.md` § Operator pages specifies, with its owner UAT.
 1. The dynamic OSC sub-row: `algo_chain`, and focus by `BlockDef.id`. Every screen golden bit-identical.
-2. `OpKind`, the WAVE list, the new params and their disk codes, INIT's values, and the decode pin. The engine treats FRMT and NOIS as silent. Goldens bit-identical.
+2. `OpKind`, `Kinds` and the formant budget, the WAVE list and its encoder, the new params and their disk codes, INIT's values, and the decode pin. The engine treats FRMT and NOIS as silent. Goldens bit-identical.
 3. The pure laws: the window, the constants and curves, the width floor, the level and peak gains, `fc_hz`, the vowel table and Δ, slot resolution, the NOIS band and gains, and the edge laws. Each has its unit tests.
 4. The NOIS kernel path, with its tests.
 5. The FRMT kernel path (lanes, exact starts, the grain delay, the two signals, feedback), with its tests.
@@ -715,11 +763,12 @@ Each task leaves the tree green. Phase 0 is its own branch.
 
 ## For the owner
 
+Settled by the owner (2026-09-30): clean peaks at the −12 dB reference, and the four-voice floor through the formant budget (at most 3 FRMT operators).
+
 These change what the owner approved, and the owner should confirm them:
-- **The −12 dB reference:** a formant operator at LEVEL 99 matches a sine at LEVEL 83. This is the price of peaks within 1.0 at equal loudness across BW (§ 3).
-- **The cost terms rose:** 90 and 130 for FRMT and 70 for NOIS, against 75–110 and 55. A heavily routed formant patch can drop to 3 voices (§ 9).
+- **The cost terms rose:** 90 and 130 for FRMT and 70 for NOIS, against 75–110 and 55. They set N (§ 1): if the bench lowers COST_FRMT to 110 or less, N becomes 4.
 - **Per-voice memory is about 160 B,** against 100 B. No pool growth.
-- **The CHOIR demo uses five FRMT operators,** so it gets 5 voices on rev V.
+- **The floor's heavy-route case** (§ 1) follows ADR 0026's convention: the matrix's full-pool worst plus FOLD and DRIVE was never covered, even for table patches.
 
 Design choices the owner hasn't seen, each with its reason above:
 - the window law;
