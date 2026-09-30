@@ -359,23 +359,23 @@ The ring cells bind through a new `SlotBinding::SelectedRing(ParamId)`, as `Sele
 
 | Where | Input | Does |
 |---|---|---|
-| Anywhere but the browser | **hold SEQ** | Enter ORBIT. Inside ORBIT it goes to ORB, as a chain button pressed again goes home (design doc § Navigation Behavior). |
-| Anywhere | tap SEQ | As today: sub-page up; in the browser, save. |
-| ORBIT | B1–B5 | Pick ring 1–5 and open its RING page. |
+| Anywhere | **hold SEQ** | Enter ORBIT, back to the page you left; from the Part pages a hold B<n> opened too. Inside ORBIT it does nothing. (amended 2026-09-30, owner: ORBIT is a mode; ADR 0044) |
+| Anywhere | tap SEQ | Sub-page up on pages; on a ladder rung, save; in ORBIT, save the scene. (amended 2026-09-30, owner: ORBIT is a mode; ADR 0044) |
+| ORBIT | B1–B5 | Pick ring 1–5 and open its RING page. Never jumps to a Part. (amended 2026-09-30, owner: ORBIT is a mode; ADR 0044) |
 | ORBIT | MIX + B1–B5 | Mute or unmute that ring. |
-| ORBIT | B6 | PLAY / STOP (§ 6.3). |
-| ORB | EDIT | Jump to the pages of the Part the selected ring plays (`ChainId::Part`). |
+| ORBIT | B6 | PLAY / STOP (§ 6.3). (amended 2026-09-30, owner: ORBIT is a mode; ADR 0044) |
+| ORBIT | **hold B1–B5** | Jump out to the pages of the Part ring *n* plays (`Pages(p, recall.pages[p])`). Fires at `HOLD_MS`; the release does nothing. The only way out to sound design; hold SEQ returns. (amended 2026-09-30, owner: ORBIT is a mode; ADR 0044) The old EDIT-on-ORB jump is removed. |
 | RING | EDIT, tap SEQ | Down and up through RHYTHM, VOICE, NOTES, as elsewhere. |
 | CHRD | EDIT, tap SEQ | Down to CUSTOM and back, while SCALE is CUSTOM. On CUSTOM, EDIT toggles the note under the cursor. |
-| ORBIT | MENU | Leave, to System, as today. |
+| ORBIT | MENU | Tap: leave, back to where you were before; ORBIT keeps playing. Hold: System. (amended 2026-09-30, owner: ORBIT is a mode; ADR 0044) |
 | ORBIT | − / + | Move along ORB · RING · CHRD · SCN, as elsewhere. |
 
-- **Hold threshold: 500 ms.** A tap is a press released before 500 ms; a hold fires once when 500 ms is reached, before release. 500 ms is the usual long-press time and well above a deliberate tap (100–200 ms).
-- **A tap acts on release.** SEQ's sub-page-up and the browser's save move from `Pressed` to the release of a tap, so a hold never also moves a sub-page or saves a sound. The delay is the tap's own length.
-- A pure `ui::hold::HoldGate` takes each frame's `ButtonState` and elapsed milliseconds and returns `Tap`, `Hold` or nothing. `UiState::handle_input` gains the frame's milliseconds: the desktop already measures them (`main.rs:62`), and the firmware's UI loop does the same.
-- **EDIT: jump or sub-page.** EDIT jumps to the Part only from the ORB page. On RING pages, and on CHRD while SCALE is CUSTOM, it moves down the sub-pages; on CHRD › CUSTOM it toggles a note; on CHRD with a named scale it does nothing; on SCN it commits SAVE (§ Design choices). ORB has no sub-pages, so the two meanings never meet.
-- In ORBIT, EDIT acts on its press, so EDIT + B<n> (the browser) is not available there; the browser is reached from the Part pages as before. MIX + B6 keeps its job (Demo).
-- **Leaving.** ORBIT keeps playing when you leave. Holding SEQ returns to the ORBIT page you left.
+- **Hold threshold: 500 ms**, shared as `ui::hold::HOLD_MS` for MENU, SEQ and hold B<n> (ADR 0044). A tap is a press released before `HOLD_MS`; a hold fires once at `HOLD_MS`, before release. (amended 2026-09-30, owner: ORBIT is a mode; ADR 0044)
+- **A tap acts on release.** SEQ's sub-page-up and a rung's save, and MENU's tap, move from `Pressed` to the release of a tap, so a hold never also moves a sub-page or saves a sound. The delay is the tap's own length. (amended 2026-09-30, owner: ORBIT is a mode; ADR 0044)
+- A pure `ui::hold::HoldGate` takes each frame's `ButtonState` and elapsed milliseconds and returns `Tap`, `Hold` or nothing. `UiState::handle_input` gains the frame's milliseconds: the desktop already measures them (`main.rs:62`), and the firmware's UI loop does the same. One gate serves MENU, SEQ and B<n>, reading the storage spec's latched edges and timestamps. (amended 2026-09-30, owner: ORBIT is a mode; ADR 0044)
+- **EDIT: sub-page only.** EDIT never leaves ORBIT: on RING pages, and on CHRD while SCALE is CUSTOM, it moves down the sub-pages; on CHRD › CUSTOM it toggles a note; on CHRD with a named scale it does nothing; on SCN it commits SAVE (§ Design choices); on ORB it does nothing. (amended 2026-09-30, owner: ORBIT is a mode; ADR 0044)
+- In ORBIT, encoders, PLUS/MINUS and EDIT act only on ORBIT's pages, so EDIT + B<n> (the Sound rung) is not available there; hold B<n> is the crossing. MIX + B6 keeps its job (Demo) outside ORBIT; in ORBIT it is unassigned. (amended 2026-09-30, owner: ORBIT is a mode; ADR 0044)
+- **Leaving.** ORBIT keeps playing when you leave, by MENU tap (back to where you came from) or hold B<n> (to the ring's Part pages). Holding SEQ returns to the ORBIT page you left. (amended 2026-09-30, owner: ORBIT is a mode; ADR 0044)
 
 ### 7.3 The header dot
 
@@ -475,9 +475,9 @@ Per block: a clock step (a `u64` multiply and divide), five step lookups (a `u64
 | `play_starts_at_the_loop_start` | PLAY after a STOP mid-loop: the first events are the loop's step 0s, identical to the first PLAY. |
 | `scene_replays_identically` | The same scene from Start, twice (MUTATE 60%, CHANCE 70%, RANDOM walks): every event, block and velocity equal for 64 loops. |
 | `desktop_render_is_repeatable` | The desktop's `Instrument` + `OrbitRunner` rendered offline twice from one project: the DAC blocks are bit-identical. |
-| `hold_gate_*` (pure) | A 499 ms press is a Tap on release; 500 ms fires Hold once, and its release is nothing; bounces under a frame are one press. |
-| `seq_hold_enters_orbit` / `seq_tap_moves_up` | Hold SEQ from a Part page lands on ORB; a tap moves one sub-page up on release and never enters ORBIT; a tap in the browser saves once. |
-| `orbit_buttons` | In ORBIT: B3 opens RING 3; MIX + B4 toggles ring 4's mute; B6 toggles run; EDIT on ORB jumps to the target Part's chain; EDIT on RING moves down a sub-page; MENU opens System and ORBIT keeps running. |
+| `hold_gate_*` (pure) | A press of `HOLD_MS` − 1 ms is a Tap on release; `HOLD_MS` fires Hold once, and its release is nothing; bounces under a frame are one press; the same gate serves MENU, SEQ and B<n>. (amended 2026-09-30, owner: ORBIT is a mode; ADR 0044) |
+| `seq_hold_enters_orbit` / `seq_tap_moves_up` | Hold SEQ from a Part page lands on ORB; a tap moves one sub-page up on release and never enters ORBIT; a tap on a rung saves once; in ORBIT it saves the scene. (amended 2026-09-30, owner: ORBIT is a mode; ADR 0044) |
+| `orbit_buttons` | In ORBIT: B3 opens RING 3; MIX + B4 toggles ring 4's mute; B6 toggles run; a B3 tap never leaves ORBIT, and hold B3 jumps to ring 3's Part pages, from which hold SEQ returns; EDIT on ORB does nothing; EDIT on RING moves down a sub-page; SEQ tap saves the scene; tap MENU returns to where you came from, hold MENU opens System, and ORBIT keeps running. (amended 2026-09-30, owner: ORBIT is a mode; ADR 0044) |
 | `orb_page_golden` and `ring_rhythm_golden` | Screen goldens of ORB and RHYTHM at a fixed clock phase. |
 | `header_dot_pulses` | The dot is filled on a beat's first frame and back to outline by 150 ms, lerped; absent when stopped. |
 | `sounds_good_in_ten_seconds` (listening, not automatic) | The init scene, played on the desktop, with the owner. |
@@ -510,7 +510,7 @@ Each task leaves the tree green. ADRs are written where the decision lands, at t
 
 1. `chimera-theory` (on `orbit-core`): the crate, `Scale(u16)` with the named and custom scales, degrees and chords, `snap`, naming. ADR: theory is a shared crate.
 2. The pure `orbit` core (on `orbit-core`): settings types, `euclid`, `accents`, the walk, `mutate`, the clock's phase maths, `block`, and their tests.
-3. `ui::hold::HoldGate`; SEQ tap on release; SEQ hold enters ORBIT; `ChainId::Orbit` with ORB, RING · RHYTHM, and CHRD (KEY, SCALE with CUSTOM and its 12-dot circle, BARS, SEGS, DEGREE). ADR: SEQ hold enters ORBIT; the hold threshold.
+3. `ui::hold::HoldGate`; SEQ tap on release; SEQ hold enters ORBIT; `ChainId::Orbit` with ORB, RING · RHYTHM, and CHRD (KEY, SCALE with CUSTOM and its 12-dot circle, BARS, SEGS, DEGREE). ADR: SEQ hold enters ORBIT; the hold threshold, per ADR 0044 (ORBIT is a mode). (amended 2026-09-30, owner: ORBIT is a mode; ADR 0044)
    The custom set's `OrbitScale` record and SCALE's codes land here with their tests, so the codec for the rest follows in task 9.
 4. `OrbitRunner` on the desktop: the internal clock, B6 transport, `Origin` in `Instrument::handle`, the header dot. The init scene is tuned with the owner until it sounds good in 10 seconds, then pinned by an event golden. ADR: ORBIT runs on the audio thread, block-accurate, the engine owning the drift.
 
@@ -560,14 +560,14 @@ Each task leaves the tree green. ADRs are written where the decision lands, at t
 - **Clock:** internal BPM when nothing is connected; locks to incoming MIDI clock and start/stop when present. Chimera does not send clock.
 - **Scenes:** about eight per project, each the whole setup (chords, rings, notes, mutation state). SAVE captures the current drift. Switching lands on the next loop boundary. No morph.
 - **Pages:** ORB (home, the rings animated), RING (RHYTHM, VOICE, NOTES), CHRD, SCN, as mocked. The full per-ring pages stay the main view.
-- **Buttons in ORBIT** become transport (play/stop) and ring mutes; from a ring you can jump straight to its Part's pages.
+- **Buttons in ORBIT** become transport (play/stop) and ring mutes; from a ring you can jump straight to its Part's pages by holding its button. (amended 2026-09-30, owner: ORBIT is a mode; ADR 0044)
 - **Saved with the project.**
 - **Live input snapping:** while ORBIT runs, notes played on an attached keyboard go through the same snapper. A SNAP switch per Part says whether its live notes snap, and to the scale or the chord. KIT Parts stay unsnapped.
 - **Held notes on a chord change,** per Part: STAY (keep the pitch until released) or RE-SNAP (glide to the nearest tone of the new chord). Leads stay; pads follow the progression.
 - **The screen:** concentric rings turning, dots lighting as they fire.
 - **Order:** prototype ORBIT completely on the desktop simulator first, ahead of #214 and #215, as a sound-design tool; firmware wiring once it feels right. KIT targets wait for #215. It only emits notes into Parts and costs almost no CPU.
 - **Architecture (approved):** a pure `orbit` module; ordinary note events on the MIDI path, live notes through the per-Part snapper on it; a clock that follows MIDI clock and start/stop, with an internal BPM fallback; a seeded PRNG; the pages in the shared UI code; saved through the storage layer's frozen codes; desktop first, firmware behind a cargo feature; the three slices above.
-- **Navigation:** holding SEQ enters ORBIT, a new chain; a short SEQ press keeps its job (sub-page up; save in the browser). In ORBIT: B1–B5 pick a ring and open its RING page; MIX + B1–B5 mutes or unmutes it; B6 is PLAY/STOP; EDIT jumps to the selected ring's Part; a short SEQ, or EDIT on a page with sub-pages, moves through RHYTHM, VOICE and NOTES; MENU leaves as today. ORBIT keeps playing after you leave; a small ORBIT dot in every page's header shows it runs and pulses on the beat. Holding SEQ again returns to ORBIT.
+- **Navigation:** holding SEQ enters ORBIT, a new chain; a short SEQ press keeps its job (sub-page up; save in the browser). In ORBIT: B1–B5 pick a ring and open its RING page; MIX + B1–B5 mutes or unmutes it; B6 is PLAY/STOP; hold B<n> jumps to that ring's Part pages (there is no EDIT jump); a short SEQ, or EDIT on a page with sub-pages, moves through RHYTHM, VOICE and NOTES; a SEQ tap on SCN saves the scene; MENU tap leaves back to where you came from and MENU hold opens System. (amended 2026-09-30, owner: ORBIT is a mode; ADR 0044) ORBIT keeps playing after you leave; a small ORBIT dot in every page's header shows it runs and pulses on the beat. Holding SEQ again returns to ORBIT.
 - **Custom 12-note scales (slice 1):** a scale is a user-picked pitch-class set, a `chimera-theory` `Scale(u16)` that always contains the root. On CHRD, SCALE offers the named scales plus CUSTOM, which opens a 12-dot circle where each note is toggled with the encoder or buttons; the root stays locked on, enforced by the type. Saved with the project under a frozen code and ident. Snapping, degree-to-chord and naming work unchanged: degrees stack thirds within the set, and a set of fewer than 7 notes has its own notes as degrees, each chord stacking every other note. Microtuning is #217.
 - **Music theory** (pitch classes, keys, scales, chord qualities, degrees → chords, `Chord`, `snap`, naming) is its own crate, `chimera-theory`: no_std, zero dependencies, const tables, no heap, a few hundred bytes, beside `chimera-fat` and `chimera-waves`. `chimera-core` depends on it. ORBIT, live snapping, and later KIT and possibly Sympathetic's chords use it.
 
@@ -611,7 +611,7 @@ These fill gaps in the mockups and the owner's decisions. Each is the smallest c
 - **SCN:** turning SCENE queues that scene; SAVE's encoder picks the slot (`→ n`, default the playing one) and EDIT on SCN commits it; SWITCH shows LOOP, read-only, the owner's one switch point.
 - **ORB encoders:** A picks the selected ring; F sets the internal BPM (dimmed under an external clock).
 - **B1–B5** open RING on the sub-page last shown, so you can compare ring 2's VOICE with ring 3's.
-- **Holding SEQ back into ORBIT** returns to the page you left; inside ORBIT it goes to ORB.
+- **Holding SEQ back into ORBIT** returns to the page you left; inside ORBIT it does nothing. (amended 2026-09-30, owner: ORBIT is a mode; ADR 0044)
 - **PART SNAP and HELD** sit on the Part's mixer page with its other per-Part settings; HELD's values read STAY and RE-SNAP.
 - **The init scene** starts from the ORB mockup's rings (4/4, 3/3, 5 in 13 rotated 2, 3 in 8 muted, 9 in 16 rotated 1) in A minor, i–iv–v–i over one bar; ring n targets Part n; pools are the tonic triad in each ring's octave. It is tuned with the owner in slice 1, task 4.
 
