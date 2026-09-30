@@ -645,11 +645,10 @@ pub fn play(bench: &mut Bench, p: Option<&Param>, mv: Move, t: Timing) -> Run {
             .find(|&&x| x > e)
             .copied()
             .unwrap_or(usize::MAX);
-        // A voice freed within its fade of another event is that event's
-        // fade, judged there against the steady state either side; here
-        // it would have none before it. One freed as the next note starts
-        // would hear that note's onset as its transient.
-        if !after && (e < prev + 8 || next <= e + 4) {
+        // A voice freed within another event's transient window is that
+        // event's, judged there. One freed as the next note starts would
+        // hear that note's onset as its transient.
+        if !after && (e <= prev + 4 || next <= e + 4) {
             continue;
         }
         for k in 0..DAC_PAIRS {
