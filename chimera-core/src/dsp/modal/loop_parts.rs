@@ -112,41 +112,6 @@ impl Release {
 /// loop, where its phase would detune the upper partials (ADR 0056).
 pub const DC_HZ: f32 = 10.0;
 
-/// A one-pole high-pass at `DC_HZ`, normalized so its gain is at most 1
-/// at every frequency: `y = g·(x − x1) + r·y1`, `g = (1 + r) / 2`, so
-/// `|H| = 1` at Nyquist and below it elsewhere.
-pub struct DcBlocker {
-    r: f32,
-    g: f32,
-    x1: f32,
-    y1: f32,
-}
-
-impl DcBlocker {
-    pub fn new(sample_rate: u32) -> Self {
-        let r = libm::expf(-2.0 * core::f32::consts::PI * DC_HZ / sample_rate as f32);
-        Self {
-            r,
-            g: (1.0 + r) * 0.5,
-            x1: 0.0,
-            y1: 0.0,
-        }
-    }
-
-    #[inline]
-    pub fn process(&mut self, x: f32) -> f32 {
-        let y = self.g * (x - self.x1) + self.r * self.y1;
-        self.x1 = x;
-        self.y1 = y;
-        y
-    }
-
-    pub fn reset(&mut self) {
-        self.x1 = 0.0;
-        self.y1 = 0.0;
-    }
-}
-
 /// The shortest line the loop's three-tap low-pass reads.
 pub const MIN_LINE: usize = 2;
 
@@ -308,20 +273,6 @@ mod tests {
         r.start(LoopGain::new(0.9), LoopGain::new(0.99));
         for _ in 0..=RELEASE_SAMPLES {
             assert_eq!(r.gain(LoopGain::new(0.9)).get(), 0.9);
-        }
-    }
-
-    #[test]
-    fn dc_blocker_gain_is_at_most_one() {
-        let dc = DcBlocker::new(48_000);
-        let (r, g) = (dc.r as f64, dc.g as f64);
-        for k in 0..512 {
-            let w = core::f64::consts::PI * k as f64 / 511.0;
-            // H = g·(1 − e^{−jω}) / (1 − r·e^{−jω})
-            let (c, s) = (w.cos(), w.sin());
-            let num = g * ((1.0 - c).powi(2) + s * s).sqrt();
-            let den = ((1.0 - r * c).powi(2) + (r * s).powi(2)).sqrt();
-            assert!(num / den <= 1.0 + 1e-6, "ω = {w}: {}", num / den);
         }
     }
 }
