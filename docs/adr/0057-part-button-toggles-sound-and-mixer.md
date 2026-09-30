@@ -29,6 +29,11 @@ To reach a Part's mixer you had to hold MIX.
 - **The mixer opens on SENDS** (`block_registry::MIXER_HOME`), then on the
   mixer page last used this session. That page is remembered once, for
   every Part, because most mixer pages are the shared FX. It is not saved.
+  PART is remembered only from mixer to mixer (MIX+B<m> on a mixer), so
+  LEVEL and PAN can be balanced across Parts. Arriving from a sound page,
+  System or Demo, a remembered PART opens SENDS: the trap never returns.
+- **The sound page left is kept with its engine.** If the Part's engine
+  changed meanwhile, B<n> lands on its home instead.
 - **The header says SOUND or MIX:** `PART 2 · SOUND`, `PART 2 · MIX`. The
   map is the chain's own map. Mixer pages are no longer numbered (`SENDS`,
   not `SENDS 2`), because the context already names the Part.
@@ -46,9 +51,10 @@ To reach a Part's mixer you had to hold MIX.
 - **Move OUT off encoder C, or make it an EDIT+turn.** This fixes the trap
   only on PART. The same muscle memory still lands on PART from other
   pages, and it changes a page layout that is otherwise right.
-- **Only open on SENDS, with no toggle and no warning.** A remembered PART
-  page would bring the trap back, and a Part left on P2 would still be
-  silent without any sign.
+- **Only open on SENDS, with no toggle and no warning.** A Part left on
+  P2 would still be silent without any sign.
+- **Remember PART from anywhere.** It brings the trap back on the next
+  visit from a sound page.
 - **Remember the mixer page per Part.** Most of the chain is the shared
   FX, so a per-Part memory would open the same CHORUS page at different
   positions. One slot is simpler.

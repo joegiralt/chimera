@@ -56,7 +56,8 @@ enum Context {
 impl Context {
     /// Enter the chain at its first node, sub-page 0. A Part's pages are
     /// entered home from another Part's; the mixer reopens where it was left
-    /// (ADR 0057), so MINUS walks back to its first node.
+    /// (ADR 0057), so MINUS walks back to its first node (MINUS
+    /// resets the sub-page).
     fn home(self, ui: &mut UiState) {
         match self {
             Context::Part(_) => {
@@ -67,9 +68,6 @@ impl Context {
                 feed(ui, Input::chord(ButtonId::Mix, B[n]));
                 for _ in 0..ui.nav.active_chain().len() {
                     feed(ui, Input::press(ButtonId::Minus));
-                }
-                while ui.nav.sub_page > 0 {
-                    feed(ui, Input::press(ButtonId::Seq));
                 }
             }
             Context::Demo => feed(ui, Input::chord(ButtonId::Mix, ButtonId::B6)),

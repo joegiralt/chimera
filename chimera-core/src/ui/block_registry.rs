@@ -569,12 +569,16 @@ static MIXER_CHANNEL_BLOCKS: &[ChainBlock] = &[
 
 /// Where the mixer opens: SENDS, not PART, whose C is OUT (ADR 0057).
 pub const MIXER_HOME: usize = 1;
+/// PART's node: remembered only from mixer to mixer (ADR 0057).
+pub const MIXER_PART: usize = 0;
 
 pub static MIXER_CHANNEL_CHAIN: ChainDef2 = ChainDef2 {
     name: "Mixer",
     blocks: MIXER_CHANNEL_BLOCKS,
     mod_sources: &[],
 };
+const _: () = assert!(MIXER_CHANNEL_BLOCKS[MIXER_HOME].def.id == SENDS.id);
+const _: () = assert!(MIXER_CHANNEL_BLOCKS[MIXER_PART].def.id == PART.id);
 
 // ---------------------------------------------------------------------------
 // System chain

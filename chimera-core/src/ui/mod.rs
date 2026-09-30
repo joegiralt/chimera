@@ -555,8 +555,8 @@ impl UiState {
             // B<n> and MIX + B<n> both select Part n for editing.
             if let ChainId::Part(i) | ChainId::Mixer(i) = self.nav.chain_id {
                 self.active_part = i;
-                self.nav.engine = self.performance.parts[i].sound.engine();
-                self.nav.clamp();
+                self.nav
+                    .set_engine(self.performance.parts[i].sound.engine());
                 self.load_matrix(i);
             }
             self.enter_page();

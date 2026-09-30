@@ -106,12 +106,77 @@ fn the_mixer_reopens_on_the_page_last_used() {
     assert_eq!(at(&ui), (ChainId::Mixer(0), CHORUS.id));
     mix(&mut ui, ButtonId::B2);
     assert_eq!(at(&ui), (ChainId::Mixer(1), CHORUS.id), "global");
-    press(&mut ui, ButtonId::Minus);
-    press(&mut ui, ButtonId::Minus);
-    assert_eq!(at(&ui), (ChainId::Mixer(1), PART.id));
-    press(&mut ui, ButtonId::Menu);
+}
+
+/// PART is remembered only from mixer to mixer (balancing LEVEL and PAN);
+/// arriving from outside, a remembered PART opens SENDS, where C is REV.
+#[test]
+fn the_mixer_never_reopens_on_part_from_outside() {
+    let mut ui = UiState::new();
     mix(&mut ui, ButtonId::B1);
+    press(&mut ui, ButtonId::Minus);
     assert_eq!(at(&ui), (ChainId::Mixer(0), PART.id));
+    mix(&mut ui, ButtonId::B2);
+    assert_eq!(at(&ui), (ChainId::Mixer(1), PART.id), "mixer to mixer");
+    for (leave, back) in [
+        (ButtonId::Menu, Input::chord(ButtonId::Mix, ButtonId::B1)),
+        (ButtonId::B2, Input::press(ButtonId::B2)), // its sound pages, and back
+        (ButtonId::B1, Input::chord(ButtonId::Mix, ButtonId::B1)),
+    ] {
+        mix(&mut ui, ButtonId::B2);
+        press(&mut ui, ButtonId::Minus);
+        press(&mut ui, ButtonId::Minus);
+        assert_eq!(ui.nav.active_block_def().id, PART.id);
+        press(&mut ui, leave);
+        feed(&mut ui, back);
+        assert_eq!(ui.nav.active_block_def().id, SENDS.id, "{leave:?}");
+    }
+    mix(&mut ui, ButtonId::B6);
+    mix(&mut ui, ButtonId::B1);
+    assert_eq!(ui.nav.active_block_def().id, SENDS.id, "from Demo");
+}
+
+/// The page left is kept with its engine: a changed engine lands home.
+#[test]
+fn a_changed_engine_returns_home_not_to_the_page_left() {
+    use chimera_core::params::EngineType;
+    use chimera_core::ui::block_registry::MODAL_EXC;
+    let mut ui = UiState::new();
+    for _ in 0..3 {
+        press(&mut ui, ButtonId::Plus); // → FLT
+    }
+    press(&mut ui, ButtonId::B1); // mixer
+    ui.performance.parts[0].load_init(EngineType::Modal);
+    press(&mut ui, ButtonId::B1);
+    assert_eq!(ui.nav.engine, EngineType::Modal);
+    assert_eq!(at(&ui), (ChainId::Part(0), MODAL_EXC.id));
+    assert_eq!((ui.nav.node, ui.nav.sub_page), (0, 0));
+}
+
+/// Turning OUT redraws the header on the dirty-render path.
+#[test]
+fn the_out_warning_redraws_on_the_dirty_path() {
+    use chimera_core::ui::perf::PerfStats;
+    use chimera_core::ui::theme;
+    use screen::{Fb, scope_fixture};
+    let mut ui = UiState::new();
+    mix(&mut ui, ButtonId::B1);
+    press(&mut ui, ButtonId::Minus); // PART
+    settle(&mut ui);
+    let (mut fb, perf, scope) = (Fb::new(), PerfStats::zero(), scope_fixture());
+    ui.render_with_scope(&mut fb, &perf, &scope);
+    ui.prime_regions(&perf, None, &scope);
+    let band = ..theme::HEADER_BOTTOM as usize * 240;
+    let before = fb.px[band].to_vec();
+    for delta in [1, 1, -2] {
+        feed(&mut ui, Input::turn(EncoderId::C, delta));
+        settle(&mut ui);
+        ui.render_dirty_with_scope(&mut fb, &perf, &scope);
+        let mut full = Fb::new();
+        ui.render_with_scope(&mut full, &perf, &scope);
+        assert!(fb.px[band] == full.px[band], "stale header at {delta}");
+    }
+    assert!(fb.px[band] == before[..], "the warning is gone back on P1");
 }
 
 #[test]
@@ -172,7 +237,8 @@ fn the_header_says_sound_or_mix_and_warns_off_p1() {
     assert_eq!(header(&ui).2, None, "Part 1 is on P1");
     press(&mut ui, ButtonId::Menu);
     assert_eq!(header(&ui).2, None, "System has no OUT");
-    mix(&mut ui, ButtonId::B2);
+    mix(&mut ui, ButtonId::B2); // SENDS: PART isn't kept from outside
+    press(&mut ui, ButtonId::Minus);
     feed(&mut ui, Input::turn(EncoderId::C, 1)); // → P3
     settle(&mut ui);
     assert_eq!(header(&ui).2, Some("OUT P3"));
