@@ -1891,7 +1891,7 @@ fn period_mean(out: &[f32], hz: f32, t: f64) -> f64 {
 /// string's static deflection at the loop's rate (12 periods); once
 /// settled, from 1 s, every 0.1 s of the engine's output, over whole
 /// periods, holds a mean at least 45 dB under its RMS (the one-loop bow's
-/// worst, −49.9 dB at C6, ADR 0064), G1 to C7, at
+/// worst, −49.2 dB at C6, ADR 0064), G1 to C7, at
 /// SPEED and BRIGHT's corners. Measured over a window that cuts a
 /// period, a bow's pulse wave reads as a −30 dB drift that isn't there.
 #[test]

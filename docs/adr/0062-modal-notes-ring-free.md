@@ -1,7 +1,7 @@
 # 0062. A Modal note rings free, a re-struck key re-plucks its string, the halo glides
 
 - **Status:** Proposed
-- **Deciders:** project owner (UAT 2026-09-30); firmware (Modal 2, task 19)
+- **Deciders:** project owner (UAT 2026-09-30); firmware
 - **Supersedes in part:** [0056](0056-modal-resonators-share-four-macros.md)
   (a note-off releases a string, #51)
 
@@ -58,7 +58,11 @@ glide the long way round.
 - **By the table's interval, round the fold the short way:** a chord step
   glides each string by its interval where that fits the line, else to
   the octave above, the least move. A pitch change moves a gliding set's
-  targets and a resting set at once.
+  targets and a resting set at once: under an octave's move each string
+  follows from the octave it is in while its line fits, so a glide's
+  octave-above choice survives a small bend; a larger jump re-voices the
+  chord at the fold's octaves, which kept strings a unison apart from
+  summing coherently (4 dB up).
 
 ## Alternatives considered
 - **A release that follows DAMP** (the old ramp, to DAMP's T60): the
@@ -82,8 +86,9 @@ glide the long way round.
 - A repeated note costs one voice, not one a strike. A key re-struck from
   another channel re-strikes the same voice; that channel's note-off
   releases it.
-- A chord step's glide runs a second before it lands; its cost stays
-  billed as `CHORD`.
+- A chord step's glide runs a second before it lands; `CHORD` bills it,
+  80 (seven `exp2f`s and `set_period`s a gliding block, seven `log2f`s a
+  step).
 
 ## Sources
 - Owner UAT, 2026-09-30 (PR #252); `a_released_string_rings_on_damp`,
