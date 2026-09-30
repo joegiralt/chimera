@@ -323,7 +323,8 @@ fn modes_change_keeps_sounding_notes_and_their_bill() {
 }
 
 /// BODY and the ensemble latch at note-on, and so does their bill: an edit
-/// that turns them off under a sounding note bills them until it ends.
+/// that turns them off under a sounding note bills them until it ends, and
+/// one that turns them on bills them at once, from the params.
 #[test]
 fn body_and_ensemble_keep_their_bill() {
     let mods = ModState::new();
@@ -343,6 +344,17 @@ fn body_and_ensemble_keep_their_bill() {
             "{mode:?}"
         );
         assert_eq!(rig.held_model_extra(&on), Cost::ZERO, "{mode:?}");
+        // Turned on mid-note: the note plays without them, and is billed
+        // for them anyway.
+        let mut rig = Rig::new(SR);
+        rig.note_on(note, vel, &off);
+        rig.render(&mut block, &on, &mods);
+        assert_eq!(rig.held_model_extra(&on), Cost::ZERO, "{mode:?}");
+        assert_eq!(
+            ModalEngine::cost(&on.modal),
+            ModalEngine::cost(&off.modal) + ModalEngine::BODY + ModalEngine::ENSEMBLE,
+            "{mode:?}"
+        );
     }
 }
 

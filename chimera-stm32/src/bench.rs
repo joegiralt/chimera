@@ -144,7 +144,7 @@ fn worst_comp(s: &mut AudioShared) {
     (c.thresh, c.ratio, c.attack, c.release, c.makeup, c.mix) = (0.0, 7, 0.0, 0.0, 0.5, 1.0);
 }
 
-const ROUTING_ROWS: usize = 35;
+const ROUTING_ROWS: usize = 36;
 /// Rows per ROUTING screen: ten from y 46 at `ROW_H` 25 end at 283.
 const ROUTING_PAGE: usize = 10;
 
@@ -231,15 +231,20 @@ const ROUTING: [RoutingRow; ROUTING_ROWS] = [
     ("LP24 HOT", |p| hot(p, FilterMode::Lp24), STILL),
     ("SVF HOT", |p| hot(p, FilterMode::Phaser), STILL),
     // Each Modal model, the default Sound (BODY 0.3) otherwise:
-    // `ModalEngine::cost`. STR − STR0 and SYM − SYM0 are `BODY`.
+    // `ModalEngine::cost`. STR − STR0 and SYM − SYM0 are `BODY`; BODY
+    // costs the same at any amount above 0.
     ("MDL STR", |p| modal(p, ResonatorMode::String), STILL),
     ("MDL STR0", |p| bare(p, ResonatorMode::String), STILL),
-    // STR+ − STR is `ENSEMBLE`, with the macros moving under it.
+    // STR E − STR0 is `ENSEMBLE`.
+    ("MDL STR E", str_ens, STILL),
+    // STR+ − STR is `ENSEMBLE` plus four LFO routes' `ModRouting` terms
+    // (BODY 1 bills as 0.3); the re-split is in `COST_STRING`.
     ("MDL STR+", str_full, STILL),
     ("MDL BOW", |p| modal(p, ResonatorMode::Bowed), STILL),
     ("MDL SYM", |p| modal(p, ResonatorMode::Sympathetic), STILL),
     ("MDL SYM0", |p| bare(p, ResonatorMode::Sympathetic), STILL),
-    // SYM+ − SYM is `ENSEMBLE`, the halo always gliding, unrouted.
+    // SYM+ − SYM is `ENSEMBLE` plus a chord glide always running,
+    // unrouted: about `CHORD`'s work, which SYM LFO − SYM reads alone.
     (
         "MDL SYM+",
         |p| modal_full(p, ResonatorMode::Sympathetic),
@@ -291,6 +296,13 @@ fn modal_full(p: &mut PartAudio, mode: ResonatorMode) {
     modal(p, mode);
     let m = &mut p.params.modal;
     (m.structure, m.body, m.ens_depth, m.ens_mix) = (0.5, 1.0, 1.0, 0.5);
+}
+
+/// STRING at BODY 0 with the ensemble at full DEPTH and MIX 0.5, no
+/// routes.
+fn str_ens(p: &mut PartAudio) {
+    bare(p, ResonatorMode::String);
+    (p.params.modal.ens_depth, p.params.modal.ens_mix) = (1.0, 0.5);
 }
 
 /// STRING in full, LFO 1 (10 Hz sine) into each macro at 64: the

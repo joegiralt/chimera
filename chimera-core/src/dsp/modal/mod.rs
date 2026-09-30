@@ -341,14 +341,14 @@ impl ModalEngine {
     /// on the ring, the tap that follows the write (#206), the release, the
     /// bow's lift and the output blocker), 87 cycles.
     pub const COST_BOWED: Cost = Cost(720);
-    /// 809 (benched, ADR 0054) + 561: 323 instructions a sample (419 to
-    /// 742), 471 cycles, nearly all in the halo, each string's tick 42 to
-    /// 87 (the three-tap low-pass's three wrapped reads and the tuning
-    /// allpass); ten `powf`s a block for the loop gains, 32.
+    /// 809 (benched, ADR 0054) + 560, rounded to 1,370: 323 instructions a
+    /// sample (419 to 742), 471 cycles, nearly all in the halo, each
+    /// string's tick 42 to 87 (the three-tap low-pass's three wrapped reads
+    /// and the tuning allpass); ten `powf`s a block for the loop gains, 32.
     pub const COST_SYMPATHETIC: Cost = Cost(1_370);
     /// The resonator bank: this plus `COST_MODE` per mode. Unchanged: its
-    /// sample loop is as benched (MDL RES 1,865, 1,808 at 32 modes against
-    /// 1,900 billed), and the macros' easing is a few operations a block.
+    /// sample loop is as benched (MDL RES /VOICE 1,865; less the chain's 57,
+    /// 1,808 at 32 modes against 1,900 billed), and the macros' easing is a few operations a block.
     /// Dropping modes past Nyquist can only save.
     pub const COST_BANK: Cost = Cost(460);
     pub const COST_MODE: Cost = Cost(45);

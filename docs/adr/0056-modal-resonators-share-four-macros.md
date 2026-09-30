@@ -61,7 +61,8 @@ Task 2 adds fractional tuning (#163):
   0.05 cents from G1 to C7, and partials 2 to 4 are harmonic to it at G1
   and C3. Whole-sample tuning was up to 54 cents off at G1 and 84 cents at
   C7.
-- The line is 981 samples. That supersedes ADR 0040's 984 in part.
+- The ring is 981 samples: a line of at most 979, plus the low-pass's two
+  taps. That supersedes ADR 0040's 984-sample ring in part.
   - G1's 979.6-sample period takes a 979-sample line, 0.59 on the
     allpass, plus the low-pass's two taps.
   - F♯1 and lower clamp to the longest line.
@@ -128,6 +129,7 @@ Task 5 makes the four macros modulatable:
 Task 6 gives the pages the spec's layout: the home page is RES, the model
 page is named for the model (STRING, SYMP, BANK, BOWED) and shows its
 cells, and a control the model ignores is dimmed with its matrix column.
+The cell labels stay the spec's: STRUCT, ENS.D, ENS.R, ENS.M.
 BOWED dims all four macros.
 
 Task 7 releases the strings (#51): a note-off ramps the loop gain from the
@@ -154,9 +156,10 @@ loop (#10):
     keyboard, as on piano wire.
   - The chain's phase delay at f0 comes off the line (`split`'s `other`),
     so the fundamental holds within 0.05 cents from STRUCTURE 0 to 1. At G1
-    and STRUCTURE 1 the line is about 880 samples, within the 981.
-  - Below G1 the stiff loop clamps to its longest, 984 samples (the whole
-    line, one sample of fraction and the chain at 0), and the chain comes
+    and STRUCTURE 1 the line is about 880 samples, within the 979.
+  - Below G1 the stiff loop clamps to its longest period, 984 samples: the
+    979-sample line, one sample of fraction and the chain's four at
+    STRUCTURE 0 (the ring stays 981). The chain comes
     off the line there too. Notes below G1 all play about 8 cents under G1,
     at every STRUCTURE.
   - A moved STRUCTURE re-splits the loop once a block. The chain glides:
@@ -187,6 +190,11 @@ swung by a 0.1–6 Hz quadrature LFO to a peak Doppler of 15 cents · DEPTH.
 There are two heads, at 0° and 90°: evenly spread heads (three at 120°, or
 a pair at 180°) cancel each partial's first sidebands in the sum,
 Σ e^(i2πk/3) = 0, so the mix barely moves.
+- The swing is capped to the loop: `A ≤ (delay − 4)/2`, and 0 on a loop
+  under 4 samples, so every head stays within `[2, delay − 2]` (2 on the
+  shortest loops).
+- A note-off reaches the heads only through their source: they read the
+  line the released loop writes, and have no ramp of their own.
 
 Task 10 gives SYMP its chords, COUPLE and HALO:
 - STRUCTURE steps Rings' single-voice chord table (`part.cc`,
@@ -228,6 +236,34 @@ Task 11 bills the models and re-records the goldens:
   thumbv7em release build (before at 6f8fffc, after), at 1.46 cycles an
   instruction (ADR 0052's rate), plus 10 %, rounded up to 10; per-block work
   spread over 64 samples. The arithmetic is in each constant's doc comment.
+- The counts: `llvm-objdump -d --mcpu=cortex-m7` of
+  `target/thumbv7em-none-eabihf/release/chimera-stm32` (`just firmware`),
+  at 6f8fffc and at this task's commit, counting each path's instructions
+  from branch to branch as the bench's default Sound takes them (release
+  idle, no route). Instructions a sample:
+
+  | Path | Symbols | Before | After |
+  |---|---|---|---|
+  | STRING string | 6f8fffc `KsString::tick_full` (BODY comb and FDBK on, no stiffness, no ensemble); now `StringVoice::tick` (the chain, release idle, no ensemble) | 82 | 108 |
+  | STRING loop | `ModalEngine::render`'s STRING loop: call, store, level (before); call, store, BODY check (after) | 17 | 13 |
+  | Output blocker and level | `ModalEngine::render`'s blocker loop, 125 per 16 samples | — | 7.8 |
+  | STRING total, BODY 0 | | 99 | 128.8 |
+  | BODY | the three band-passes inline in the STRING loop (SYMP's mix) | — | 65 (80) |
+  | Ensemble | `StringVoice::tick`'s MIX > 0 branch | — | 94 |
+  | BOWED | `ModalEngine::render`'s bowed loop, both `tanhf` dispatches (before: with the level); after, plus the blocker | 143 | 195 + 7.8 |
+  | SYMP main string | `tick_full` as STRING's (before); `StringVoice::tick` without the chain (after) | 82 | 80 |
+  | SYMP halo string, each of 7 | the inlined `tick_coupled` loop: before a two-point average and a modulo wrap; after the three-tap low-pass's three wrapped reads and the tuning allpass | 42 | 87 |
+  | SYMP per sample, besides | the loop's head and tail, and the mix up to the `tanhf` dispatch | 31 + 12 | 26 + 19 |
+  | SYMP total, BODY 0 | main + 7 halo + the rest, after the blocker | 419 | 741.8 |
+
+  Per block, a `powf` or a `set_period` (with its two `sinf`s) is taken as
+  about 130 instructions: STRING's two `powf`s and its dispersion re-split
+  (`StringVoice::tune`), SYMP's ten `powf`s, and the retunes behind `PITCH`
+  and `CHORD` (`KsString::set_period`, `SympatheticSet::split`).
+- The marginal 1.46 cycles an instruction leaves out the larger code's
+  I-cache misses (`StringVoice::tick` is 900 B, `ModalEngine::render`
+  8 KB; the emulator figures billed a miss at 38 cycles). They are unbilled
+  until the bench reads them.
 
   | Term | Was | Now | From |
   |---|---|---|---|
@@ -255,13 +291,14 @@ Task 11 bills the models and re-records the goldens:
   `algo_to_modal_switch`), `init_modal.snd`'s render and instrument_test's
   `two_parts_two_pairs` are re-recorded once. #10's known-broken entries
   go.
-- Bench rows for the ship flash: MDL STR, STR0 (BODY 0), STR+ (BODY 1,
-  the ensemble, LFO 1 on each macro), BOW, SYM, SYM0, SYM+ (the ensemble,
+- Bench rows for the ship flash: MDL STR, STR0 (BODY 0), STR E (BODY 0,
+  the ensemble, no routes), STR+ (BODY 1, the ensemble, LFO 1 on each
+  macro), BOW, SYM, SYM0, SYM+ (the ensemble,
   STRUCTURE a chord on every 8 blocks), SYM LFO (a route into STRUCTURE),
   RES and RES48.
 
 Measured on the chip (the ship flash; to fill in, rev V at 480 MHz):
-- MDL STR /VOICE —, STR0 —, STR+ —; BOW —; SYM —, SYM0 —, SYM+ —, SYM
+- MDL STR /VOICE —, STR0 —, STR E —, STR+ —; BOW —; SYM —, SYM0 —, SYM+ —, SYM
   LFO —; RES —, RES48 —.
 - `COST_*`, `BODY`, `ENSEMBLE` and `CHORD` from them: —.
 
@@ -304,9 +341,12 @@ Open for the owner:
   the strings are still plucked at the unpitched length, as before this
   step (https://github.com/joegiralt/chimera/issues/233).
 - SYMP costs far more than it did, almost all in the halo's three-tap
-  low-pass and tuning allpass. On the estimate, it plays 3 voices on rev V
-  at the default BODY, so the pool of four never fills there. The bench
-  decides; if it agrees, the halo tick is where to save.
+  low-pass and tuning allpass. On this estimate it plays 3 voices on rev V
+  at the default BODY, so the pool of four never fills there. Ruled (task
+  11b, before the ship flash): SYMP is optimised to bill 916 or less with
+  BODY on (6 voices on rev V), and the default STRING Sound (BODY 0.3) keeps
+  8 voices on rev V and rev Y; BODY and `ENSEMBLE` come down where the code
+  allows.
 - Modal's goldens and the INIT Modal fixtures moved, and were re-recorded
   once, at the end of step A (task 11).
 
@@ -315,4 +355,4 @@ Open for the owner:
 - docs/superpowers/plans/2026-09-29-modal-2-resonators.md, Tasks 1 to 11
 - Mutable Instruments Rings, `dsp/string.cc` (`ap_gain`) and
   `dsp/part.cc` (the chord table)
-- ADR 0040 (the 984-sample line), ADR 0054 (the dirty extent)
+- ADR 0040 (the 984-sample ring), ADR 0054 (the dirty extent)
