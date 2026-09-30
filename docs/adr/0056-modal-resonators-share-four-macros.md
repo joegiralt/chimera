@@ -30,7 +30,9 @@ note-on, so nothing could modulate a string's character.
 
 ### Loops
 - `modal::loop_parts::LoopGain` is a string loop's gain per pass. Its
-  constructors clamp to `[0, 0.9995]` (`LoopGain::MAX`), and NaN gives 0.
+  constructors clamp to `[0, 0.99999]` (`LoopGain::MAX`, a T60 of
+  690,000 / f0 s: past DAMP's 20 s to 34 kHz), and NaN gives 0. It was
+  0.9995 (Task 18), which held C6 to 13 s and G6 to 9.
   It is the only gain any loop multiplies by: STRING, the SYMP main string,
   each halo string and BOWED. On STRING and the SYMP main string it
   multiplies the loop's sample after every in-loop stage, so none bypasses
@@ -102,10 +104,56 @@ note-on, so nothing could modulate a string's character.
   combs and smooths it before the first tick), so VEL and NOTE routes
   reach it; with no route this is bit-identical to shaping at note-on.
   BANK reads POS live.
+- POS is β, the pluck's or strike's place as a fraction of the string
+  from its end: `0.5·POS` (`params::beta` from `END`), the end at 0 and
+  the middle at 1. A pluck at β and at 1 − β is the same, so the knob
+  once went out and back: POS 0 and 1 rendered bit for bit alike on
+  STRING, SYMP and BANK (objective QA, Task 18). BOWED keeps its own
+  start, `BOW_END` 0.06 (below). On a pluck, `string::comb` runs round
+  the line once, in place (each cycle of `i → i + n` walked, its first
+  sample kept for its last), `(x[i] + x[i + n]) / 2` for
+  `n = round(β·len / 2)`: harmonic k is `|cos πkβ/2|` of the noise's, the
+  pluck's nulls at the odd multiples of 1/β. It passes the noise whole at
+  the end, as POS 0 always did, so INIT is unchanged; nulls the 2nd,
+  6th, 10th… at the middle; and never nulls the fundamental. The 2nd
+  over the 1st, `cos πβ / cos πβ/2`, falls at every step of POS. The old
+  comb, `period·POS` and one-sided, nulled the fundamental at POS 0.5
+  and stopped combing once its delay reached the line. A pluck's
+  partials still carry its noise's own spectrum, a dB or two each: the
+  loop's period is not the line's (the allpass fraction and the
+  dispersion's four samples). Two ends were tried and not taken: the
+  pluck comb `|sin πkβ|` from β 0.06, Bowed's start, is thin there, and
+  even with its energy kept INIT's C4 fell 3.1 dB on SYMP; Rings'
+  weights from β 0.06 took 2.3 dB off BANK's. ADR 0058 holds every INIT
+  within 1 dB of the reference, and its gains wait on the owner.
+- BANK's POS is Rings' cosine weights at β (`cos² πβ` the 2nd mode's,
+  the 1st's always 1). A moved POS glides the weights' coefficient over
+  the block, a step a sample (`CosineOsc::glide`), landing on it
+  exactly; a step once scaled every sounding mode at a block's edge (a
+  POS jump clicked 13× the steady state once POS 0 and 1 differed). A
+  note's first block takes it whole.
 - DAMP on a string is seconds, not a per-pass loss:
-  `T60 = 0.05·400^DAMP` (50 ms to 20 s), and `LoopGain::from_t60` turns it
-  into each loop's gain at its own f0. The bank's DAMP is its old DECAY,
-  law unchanged.
+  `T60 = 0.05·400^DAMP` (50 ms to 20 s), the fundamental's at every
+  pitch. `loop_parts::damped` turns it into each loop's gain at its own
+  f0, and makes up the loop low-pass's loss there, `lp·(1 − cos ω0)`, so
+  the fundamental's gain a pass is DAMP's. Before Task 18 that loss came
+  on top, growing as f0³: at DAMP 1 C5 rang 8.5 s, C6 2.5 and G6 0.8, and
+  INIT's G6 and C7 were silent within 0.5 s.
+- The low-pass takes at most `LP_SHARE` = 0.5 of DAMP's loss a pass at
+  f0; where BRIGHT's side taps would take more (a long ring on a high
+  note: above about B4 at INIT's DAMP, 440 Hz at DAMP 1, 1.2 kHz at DAMP
+  0.5), they are cut to that share, and the loop is brighter than BRIGHT
+  alone would make it. It is stable by construction: every other
+  frequency's gain is the loop's times `1 − lp·(1 − cos ω)`, highest at
+  0 Hz, and there under `g / (1 − LP_SHARE·(1 − g))` for DAMP's `g`, below
+  one; a 0 Hz ring lasts at most twice DAMP's, and a pluck carries none
+  (`shape` takes its mean out). The make-up is `1 / (1 − loss)`'s series
+  to `loss⁴`, a hair under it (`loss` is under 0.01 to C7), and the gain
+  an `expf`, not a `powf`: the block costs no more than before. SYMP's
+  halo strings run the same law at twice the T60. A released string's
+  ramp starts from the made-up gain. The bank's DAMP is its old DECAY,
+  law unchanged; a lifted bow's ends are plain delays, with nothing to
+  make up.
 - BRIGHT runs dark to bright on every model. On STRING, SYMP and BOWED
   that inverts the old field (brightness was damping): INIT's BRIGHT is
   `1 − 0.7`, and a v1 patch's BRIGHT flips on load. The low-pass's side
@@ -255,6 +303,26 @@ https://github.com/joegiralt/chimera/issues/240), in Chimera's own code (`modal:
   BRIGHT's low-pass, × `BOW_OUT` = 1.16: what the bridge hears, from the
   first sample (#206). 1.16 puts the v1 patch's held C3 within 0.04 dB of
   the one-loop bow's RMS (0.381).
+- **The attack's DC (#248).** The bow's pull has a mean, which holds the
+  string aside: a static deflection that the lossy ends carry into the
+  wave toward the bridge. It settles, and the Helmholtz motion grows, at
+  the loop's rate, `BOW_LOSS·NUT_LOSS` a period (12 periods: 92 ms at C3,
+  250 ms at G1), and the blockers take it. Once settled the bow does not
+  drift: from 1 s, every 0.1 s of its output, over whole periods, holds a
+  mean at least 69 dB under its RMS, G1 to C7, at SPEED's and BRIGHT's
+  corners (`a_settled_bow_does_not_drift`). The −30 dB drift #248
+  reported is a window that cuts a period of the bow's pulse wave. What
+  the sweep reads as DC with FOLD on a bowed chord (0.0065 on P1, 95 ms
+  in) is the fold rectifying the growing attack, gone 0.3 s in, and it is
+  allowed with that reason. Tried at the source and not taken: taking
+  the push's mean out (the Helmholtz motion needs it: INIT fell 31 dB), a body
+  high-pass at f0/16 to f0/2 on the output (the fold's DC moved either
+  way, to 0.017), a nut lossless at 0 Hz below f0/16 (no change), and an
+  ideal DC removal, the output less its mean over the last period (the
+  fold's DC 0.0070 → 0.0079). Only a nut lossless below f0 itself cleared
+  the gate (0.0024), by moving the nut's loss at f0 (0.95 → about 0.965)
+  and about 7 cents of phase there (estimated) that the lift would glide
+  off; it is a tone change for the owner.
 - **Stability by construction.** While bowed the loop's linear gain is
   at most `0.97·0.95·|H|⁴ < 1` a period (each end's filter at most 1);
   lifted, the bridge's `LoopGain` below 1. The junction adds at most
@@ -275,6 +343,13 @@ https://github.com/joegiralt/chimera/issues/240), in Chimera's own code (`modal:
 - The halo gets no release: a sitar's sympathetic strings ring until
   touched (the owner's rule), so a released halo rings on at its held T60
   until silent, keeping its lease.
+- A Modal note is silent, and frees its voice, once its output, after
+  the blocker, stays 60 dB under the note's own peak (`SILENT_REL`,
+  DAMP's T60) for 10 blocks, and never under −120 dBFS
+  (`SILENT_FLOOR`), unless the model still excites itself (a bow on the
+  string, a strike's burst). The peak is held from note-on. An absolute
+  0.001 once cut a quiet high note: DAMP 1 fell silent at 5.1 s on
+  STRING's C5 and 0.5 s on its G6.
 
 ### Ensemble
 - The ensemble (#50) is read heads on the string's own line, at
@@ -359,6 +434,10 @@ https://github.com/joegiralt/chimera/issues/240), in Chimera's own code (`modal:
 - Sympathetic is String's voice plus a lease, sized within one align of
   it. That supersedes in part ADR 0054's const assert that Bowed or String
   sizes the voice.
+- Task 18 added the note's peak to `ModalEngine` (4 B) and the POS
+  glide's end, step and count to `CosineOsc` (12 B), each within its
+  padding: no host size moved (`Voice` 6,208 B and `Instrument`
+  164,424 B, 122,296 B of D2 left, since ADR 0060's chain).
 - Host sizes: `Voice` 6,056 B, `ModelSlot` 4,160 B, `SymPool` 111,848 B,
   `Instrument` 162,968 B, which leaves 123,752 B of D2. Firmware
   `.ram_d2` is 162,108 B. `ModalParams` grew by EXC's four fields;
@@ -369,6 +448,12 @@ https://github.com/joegiralt/chimera/issues/240), in Chimera's own code (`modal:
   `StringVoice` by COLOR's passes, within its padding.
 
 ### Costs
+Task 18 moved no bill. `damped` swaps each loop gain's `powf` for an
+`expf` and adds a few multiplies and a compare a block, a divide only
+where `LP_SHARE` binds; the silence rule a compare a block; BANK's POS
+glide about 5 instructions a sample while POS moves, inside the bank's
+benched loop (1,808 of 1,900 billed at 32 modes).
+
 `COST_*` are host estimates by the method below, not yet measured on the
 chip (https://github.com/joegiralt/chimera/issues/242). Each is the
 model's last benched bill, plus the hot path's added instructions in the
@@ -453,8 +538,13 @@ NOTE-ON is, by `Rig::time_note_on`.
   DAMP and 40 s at DAMP 1, holding its pool slot that long, so a fifth
   SYMP note plays bare), the main string's, or DAMP-capped (about 8 s). It
   stays 2× until the owner rules.
-- DAMP is seconds at every pitch (spec § 1); the old per-pass law rang
-  high notes shorter. Partial key tracking is a candidate, by ear.
+- DAMP is seconds at every pitch (spec § 1), now the fundamental's
+  exactly (Task 18); the old per-pass law rang high notes shorter.
+  Partial key tracking is a candidate, by ear. A long ring on a high
+  note is brighter than BRIGHT asks (`LP_SHARE`): the price of ringing.
+- POS starts at the end on a pluck or strike (β 0) and at 0.06 on a bow
+  (Schelleng's floor); one start for all three would move INIT's level
+  (above).
 - The bank's gain staging (#231), and an ensemble of 2 heads or 3.
 
 ## Alternatives considered
@@ -530,7 +620,14 @@ NOTE-ON is, by `Rig::time_note_on`.
   (https://github.com/joegiralt/chimera/issues/233).
 - A string's state lives in its struct only between blocks: anything that
   reads a line mid-block (the ensemble's heads) reads it inside the span.
-- Modal's goldens and the INIT Modal fixtures moved once, with step A.
+- Modal's goldens and the INIT Modal fixtures moved with step A, and
+  again with Task 18's DAMP make-up and silence rule (`modal_init`,
+  `modal_lfo_cutoff`, `modal_sympathetic`, `algo_to_modal_switch`,
+  `two_parts_two_pairs` and its pre-limiter row, `init_modal.snd`, the v1
+  bow's release). POS 0 renders as before, so no golden moved for POS.
+- A Modal voice holds until its own ring is 60 dB down, so a quiet note
+  keeps its voice longer than under the old 0.001: DAMP 1 on STRING C5
+  rings past 9 s where it freed at 5.1 s.
 - Known gaps, tracked: the chord glide's test bound
   (https://github.com/joegiralt/chimera/issues/234), the long stability
   test at C2 only (https://github.com/joegiralt/chimera/issues/235),
