@@ -15,25 +15,35 @@ quality, so C E A became C6 (C E G A) and snapped to a G nobody played.
 - **Crate boundary.** `chimera-theory` is a `no_std` crate with no
   dependencies. It holds pitch classes, intervals, notes, scales, keys,
   degrees, chords, labels and `snap`, and nothing else. It is in the
-  workspace's default members and in `just check`, `just test` and
-  `just clippy`.
+  workspace's default members and in `just check` (which also builds it
+  for thumbv7em), `just test` and `just clippy`.
 - **Types first.** Invalid states are unrepresentable and functions are
   total. `PitchClass` is an enum, `Interval` is mod 12, `Note` is checked
-  (0..=127). `Scale` is a 12-bit set that always holds its root.
-  `Degree`, `Quality` and `SnapTo` are enums. Tables are `const`, with
-  `const` asserts on their shape and a 512 B size cap. The public API has
-  no bare `u8` for a musical quantity and no typenum-style generics.
+  (0..=127) and transposes to an `Option`. `Scale` is a 12-bit set that
+  always holds its root, built from `Interval`s. `Degree` runs I..=XII, so
+  a degree reaches every note of any set (`Scale::degree(n)` is None past
+  the set's size); I..=VII are named. `Quality` and `SnapTo` are enums.
+  Tables are `const`, with `const` asserts on their shape and a 512 B cap
+  on all of them together. The public API has no bare `u8` for a musical
+  quantity and no typenum-style generics.
 - **Snap ties go down.** A note halfway between two allowed pitches snaps
-  to the lower one, and never leaves 0..=127.
+  to the lower one, and never leaves 0..=127. A test checks every
+  non-empty set against brute force.
 - **Exact tones, smart labels.** A `Chord` stores exactly its tones
-  (`PcSet`) with the note it was built on and its bass, both among the
-  tones by construction. A played chord keeps its pitch classes on the
-  lowest note; a stacked degree keeps the stacked notes. Snapping uses
-  exactly those tones. The name is a `ChordLabel`: every tone is tried as
-  the root (the built-on note first, then the bass, then the rest rising)
-  for an exact `Quality`; a root that isn't the bass reads as a slash
-  chord, so C E A is Am/C. Only when nothing matches is the nearest
-  quality shown, marked approximate with a trailing `?`.
+  (`PcSet`) and its bass, among the tones by construction; two chords
+  are equal when both match. It also keeps the note it was built from (a
+  stacked degree, a quality's root, the played bass) as the label's first
+  guess at the root. Snapping uses exactly the tones. The name is a
+  `ChordLabel`, and `Chord::root` is the label's root: every tone is tried
+  as the root (the built-from note first, then the bass, then the rest
+  rising) for an exact `Quality`; a root that isn't the bass reads as a
+  slash chord, so C E A is Am/C. Only when nothing matches is the nearest
+  quality shown, marked approximate with a trailing `?`; on a tie aug and
+  dim7 lose, so E C over E reads C/E?.
+- **Degree numerals** come from the label: the degree of its root, the
+  quality and a figured-bass inversion (i6, I64, V65), or the stacked
+  degree and `?` when nothing matches. Added sixths read "add6", not "6",
+  and half-diminished reads "o/7", in ASCII.
 - **Custom scales.** `Scale::custom` takes any 12-bit set and forces the
   root on. Degrees stack every other note of the set and wrap on sets
   smaller than seven, so a pentatonic degree stacks three of its own
@@ -56,10 +66,13 @@ quality, so C E A became C6 (C E G A) and snapped to a G nobody played.
 - ORBIT and tuning build on one checked vocabulary; the firmware pays
   only for what it references (the tables are under 512 B).
 - Sets two qualities share (C6 and Am7, Csus2 and Gsus4, aug, dim7)
-  are named from the note the chord was built on; played, that is the
-  bass, so a played E G A C reads Am7/E.
+  are named from the note the chord was built from; played, that is the
+  bass, so a played E G A C reads Am7/E. Such chords can be equal and
+  still show different names, since equality ignores the built-from
+  note.
 - A stacked degree on a small or odd set may have no exact name; its
-  label is approximate and its roman numeral reads "I?".
+  label is approximate and its roman numeral reads "I?". Numerals past
+  VII (VIII..XII) only occur on sets of more than 7 notes.
 - Spelling is sharps-only ASCII ("C#", "m7b5", "dim"), C4 = 60.
 
 ## Sources
