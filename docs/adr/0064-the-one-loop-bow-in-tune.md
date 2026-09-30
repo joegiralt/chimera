@@ -57,11 +57,12 @@ partials of f0/2 (C3 at 65.4 Hz).
 - **Old Bowed patches** load the one-loop bow's own values: DAMP for v1's
   0.12 s release, BRIGHT 1, POS 0.
 - **`out_gain`** 0.93 puts BOWED INIT at the reference (ADR 0063).
-- **`COST_BOWED` 520:** counted in the thumbv7em release build, about
-  200 instructions a sample on the bowed path, 210 billed, against the
-  benched 620 of the one-loop bow at 143 and its two `tanhf` bodies:
-  620 + (210 − 143 − 135) × 1.46 × 1.1. Eight voices on rev V, seven on
-  rev Y.
+- **`COST_BOWED` 640:** counted in the thumbv7em release build, 256
+  instructions a sample on the bowed path and 14 more while POS moves,
+  against the benched 620 of the one-loop bow at 143 and its two `tanhf`
+  bodies, with `fast_tanh`'s two divides at 14 cycles: 620 + (270 − 143 −
+  135) × 1.46 × 1.1 + 2 × 12.54 × 1.1. Eight voices on rev V (seven with
+  the master tape), six on rev Y.
 
 **Scope of the tuning:** G1 to C7 within 5 cents at velocity 20 to 127
 for FORCE 0.1 at any SPEED and FORCE 0.5 at SPEED 0.5 and 1
@@ -81,7 +82,7 @@ lifted note keeps its pitch within 0.1 cent. BRIGHT 0 against 1 takes
   pitch up to 33 cents at C6.
 - **Dither in the bow's velocity, an eleven-tap stage, linear
   interpolation for the fraction:** none unlocked the top octave.
-- **`libm::tanhf`:** two bodies a sample cost three voices.
+- **`libm::tanhf`:** two bodies a sample cost two more voices.
 
 ## Consequences
 - A heavy or slow bow is out of tune (see the scope above): the grid of
