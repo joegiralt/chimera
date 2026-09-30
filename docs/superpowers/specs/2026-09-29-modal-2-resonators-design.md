@@ -4,6 +4,8 @@ Sub-project 2 of Modal 2 (#41). Builds on exclusive state (sub-project 1, PR #21
 
 (amended 2026-09-30, owner) Step A now also gives the exciters their own node, EXC, first in the chain. It shows the exciter each model already has; step B grows it into the blended mixer. See the amended § 1, § 2 BOWED and § 3.
 
+(amended 2026-09-30, owner: #240) Step A also rebuilds Bowed as a real bowed string: two delay lines meeting at the bow, after Smith's digital-waveguide model. It plays at its note, POS is the bow's position and BRIGHT is heard. See the amended § 1 Bowed row, § 2 BOWED, § 3 and the tests.
+
 ## Why
 
 The owner's bench report (#191): only the bank answers its knobs; String and Bowed sound alike and barely respond. The survey behind this spec found why:
@@ -59,7 +61,7 @@ EXC shows the exciter each model already has. Its header is named after the exci
 | BANK | Mode stretch, harmonic to bell (today's INHARM) | High-mode damping (today's BRIGHT) | Ring time, thud to about 20 s (today's DECAY) | Strike point; nulls the modes it lands on |
 | STRING | Stiffness: real dispersion, nylon to piano wire | Loop low-pass, gut to steel | Short pluck to near-endless sustain | Pluck point |
 | SYMP | Steps a chord table for the 7 halo strings | Main string and halo | Main string and halo | Main string's pluck point |
-| BOWED | dimmed | A gentle low-pass in the loop (amended 2026-09-30, owner) | The ring after the bow lifts (amended 2026-09-30, owner) | Bow position (amended 2026-09-30, owner) |
+| BOWED | dimmed | The bridge's reflection low-pass, clearly heard (amended 2026-09-30, owner: #240) | The ring after the bow lifts (amended 2026-09-30, owner) | Bow position: where the bow splits the string, bridge to middle; the pitch holds (amended 2026-09-30, owner: #240) |
 
 - **MODEL** is a named enum: BANK, STRING, SYMP, BOWED. A change is a switch (exclusive-state spec § 3): the Part's voices fade and rebuild, and the new model plays from the next note.
 - **STRUCTURE, BRIGHT, DAMP, POS** are modulatable. They are read every block from the modulated values and eased between blocks; none snaps. POS on STRING and SYMP takes effect at the next pluck, because the pluck comb shapes the excitation.
@@ -117,15 +119,17 @@ A control the current model ignores is dimmed through `view::dimmed` (`ui/view.r
 
 ### BOWED
 
-- It gets the DC blocker. The fix for #206 is that the read tap starts where the note has written, so a low note is not silent for its first period.
-- ~~Unchanged sound.~~ (amended 2026-09-30, owner) Bowed is playable in step A:
-  - **Velocity:** the bow's force is FORCE × (0.5 + 0.5 × velocity). At FORCE 0.5 and full velocity that is the old bow, so a soft key still bows.
-  - **SPEED** is the bow's velocity. At 0.5 it is the old one.
-  - (amended 2026-09-30, controller) FORCE and SPEED are read every block and eased while the bow is on; at note-off the bow lifts.
-  - **DAMP** is the ring after the bow lifts: at note-off the loop ramps from its bowed gain to DAMP's T60, and never gives the gain back. While the bow is on, the bow sustains the string, as before.
-  - **BRIGHT** is a gentle low-pass in the loop. It is linear-phase, centred on the tap, so it adds no delay and the pitch holds. At BRIGHT 1 the tap is read alone, as before.
-  - **POS** is where the bow meets the string, heard as the pluck's comb law on the output: `0.5·(x + tap)`, the tap `d − POS·d` behind the write, above POS 0.03. (amended 2026-09-30, controller ruling) The loop and the friction keep reading the one tap, so the pitch holds: a friction reading the comb bows a second loop through the second tap, which took the pitch to `1/(1 − POS)` times it. At POS 0 the output is the one tap, as before. A two-delay bow, where POS is the physical bow point, is open: https://github.com/joegiralt/chimera/issues/240.
-  - Stability by construction still holds: the loop's gain is a `LoopGain` below 1, the low-pass's gain is at most 1, the friction is bounded, and the output has its DC blocker.
+- It gets the DC blocker on its output, and a low note sounds from its first block and is not freed while bowed (#206).
+- ~~Unchanged sound.~~ ~~A one-loop stick-slip with POS as an output comb.~~ (amended 2026-09-30, owner: #240) The one-loop bow inverted its wave on every pass, so it played an octave low (C3 at 65 Hz), BRIGHT moved it under 0.5 dB, and reading a second tap moved its pitch. Bowed becomes a real bowed string:
+  - **The model.** The bow splits the string into two delay lines, bow to bridge and bow to nut, each a round trip. They meet at the bow junction, where a friction curve (the bow table) sets how much of the bow's velocity the string takes. Each end reflects inverted, so a wave comes back upright once a period. This is J. O. Smith's digital-waveguide bowed string (CCRMA, *Physical Audio Signal Processing*); the implementation is Chimera's own, and no STK code, constant or table is used.
+  - **Pitch.** The two lines, the bridge filter's one sample and the tuning allpass's fraction make one period, so C3 plays 130.8 Hz. The fraction goes through the existing allpass and `split`. G1 to C7 plays within ±2 cents.
+  - **Memory.** The two lines share the string's existing ring: one ring holds the bridge line's cells and then the nut line's, spliced at the bow. D2 does not grow.
+  - **POS** is the bow's position β, from near the bridge (0.06 of the string) to the middle (0.5). It splits the loop's length between the two lines; their sum is the period, so POS moves the tone, never the pitch. It is eased like the other macros, and the split glides a whole sample at most every 32 samples, as the STRUCTURE glide does, so a sweep does not click.
+  - **BRIGHT** is the bridge's reflection low-pass: the linear-phase three-tap `c/2·(x[n] + x[n−2]) + (1 − c)·x[n−1]` at `c = 0.5·(1 − BRIGHT)`. Its delay is one sample at every frequency, taken off the line, so the pitch holds. From BRIGHT 1 to 0 the upper harmonics fall by 3 dB or more.
+  - **DAMP** is the ring after the bow lifts, as before: at note-off the loop's gain (a `LoopGain`, at the bridge) ramps from its bowed gain to DAMP's T60 and never gives the gain back. While the bow is on, the bow sustains the string.
+  - **FORCE** is the bow's pressure: it sets the friction curve's width, so more force holds the string longer before it slips. **SPEED** is the bow's velocity. Both are read every block and eased while the bow is on (amended 2026-09-30, controller), and the force is still FORCE × (0.5 + 0.5 × velocity), so a soft key sounds. At note-off the bow lifts.
+  - **Stability by construction.** The loop's gain is a `LoopGain` below 1 at the bridge, the nut reflects at −1, the bridge filter's gain is at most 1, and the friction's push is bounded, so the string stays bounded. The output keeps its DC blocker.
+  - **Cost.** No more than the one-loop bow's bill (`COST_BOWED` 860), block at a time. The audio thread does not allocate, block or panic.
 - (amended 2026-09-30, owner) **STRING and SYMP's pluck:** COLOR sets the pluck noise's smoothing passes, `⌊(1 − COLOR) × 7⌋`. The old hidden 0.8 is one pass, as before. At COLOR 0 the first block of a low note does seven passes over the line, and the ship bench measures that.
 
 ### Cost and memory
@@ -151,7 +155,7 @@ A control the current model ignores is dimmed through `view::dimmed` (`ui/view.r
   - An old patch's EXCITE keeps its value; it now shows on EXC.
   - COLOR, FORCE and SPEED load at their defaults: 0.8, 0.5 and 0.5, the old hidden values. So an old Bowed patch bows as before.
   - On BANK, BURST is set to the patch's EXCITE, so an old strike keeps its length.
-  - Old Bowed patches stored BRIGHT, DAMP and POS but never read them. They load as the old sound: BRIGHT 1, POS 0, and DAMP at the old lifted-bow ring of 0.12 s.
+  - ~~Old Bowed patches stored BRIGHT, DAMP and POS but never read them. They load as the old sound: BRIGHT 1, POS 0, and DAMP at the old lifted-bow ring of 0.12 s.~~ (amended 2026-09-30, owner: #240) The old Bowed sound was the bug, so old Bowed patches load as an in-tune bowed string instead: POS 0.15 (the bow about an eighth of the string from the bridge), BRIGHT 0.5 (a moderately lossy bridge), DAMP at a 0.5 s ring after the lift, and FORCE and SPEED at their defaults of 0.5.
 - **Pages:**
   - (amended 2026-09-30, owner) The Modal chain is `EXC · RES · FLT · AMP · MOD`, and EXC's cells follow MODEL.
   - MODEL shows names.
@@ -176,25 +180,32 @@ Each is written to fail on today's code where today's code is wrong.
 | `bowed_low_notes_sound` | Bowed G1: audible within the first block and not freed (#206). |
 | `a_soft_bowed_note_sounds` (amended 2026-09-30, owner) | A velocity-20 Bowed note sounds. Today's bow fails it. |
 | `bowed_damp_is_the_ring_after_the_lift` (amended 2026-09-30, owner) | After note-off Bowed decays at DAMP's T60; while bowed, DAMP changes nothing. |
-| `bowed_pos_and_bright_keep_pitch` (amended 2026-09-30, owner) | POS and BRIGHT on Bowed move its fundamental by under 2 cents. |
-| `a_v1_bowed_patch_bows_as_before` (amended 2026-09-30, owner) | A v1 Bowed patch's held note renders bit for bit as before the EXC node. |
+| ~~`bowed_pos_and_bright_keep_pitch`~~ (amended 2026-09-30, owner: #240) | Replaced by `bowed_pos_moves_the_tone_not_the_pitch` and `bowed_bright_is_heard`. |
+| ~~`a_v1_bowed_patch_bows_as_before`~~ `a_v1_bowed_patch_bows_in_tune` (amended 2026-09-30, owner: #240) | A v1 Bowed patch plays at its note, at about its old level, and its held note and release are pinned bit for bit, re-recorded deliberately: the old sound was the bug. |
+| `bowed_is_in_tune` (amended 2026-09-30, owner: #240) | Bowed from G1 to C7, within ±2 cents, with the fundamental at the note and not an octave low. Today's bow fails it. |
+| `bowed_pos_moves_the_tone_not_the_pitch` (amended 2026-09-30, owner: #240) | POS from 0 to 1 keeps the fundamental within 2 cents of the note, and moves the harmonics the bow point nulls. |
+| `bowed_bright_is_heard` (amended 2026-09-30, owner: #240) | BRIGHT 0 against 1 moves the upper harmonics by 3 dB or more. Today's bow moves them under 0.5 dB. |
+| `a_bowed_pos_sweep_does_not_click` (amended 2026-09-30, owner: #240) | A square LFO sweeping POS end to end steps no further than the bow's own corner, and the pitch holds. |
+| `bowed_is_stable_and_in_tune_at_every_corner` (amended 2026-09-30, owner: #240) | FORCE, SPEED, BRIGHT and POS at their ends, G1 to the top note: bounded, no growth, no DC, and each sounding corner at its note. |
 | `old_modal_patches_translate` | `init_modal.snd` and a v1 patch per model decode to the mapped values. (amended 2026-09-30, owner) This includes EXC's defaults, BURST from EXCITE on BANK, and Bowed's neutral macros. |
 | cost and memory tests | New `COST_*` values; `Instrument` still fits D2. |
 
 - The Modal goldens (`modal_init`, `modal_lfo_cutoff`, `modal_sympathetic`, `algo_to_modal_switch`) and the `init_modal.snd` render hash are re-recorded once, deliberately. Their `KNOWN_BROKEN` #10 entries go.
 - **Listening:** the reel's Modal clips are re-rendered on the desktop as each model lands, so the owner hears each change without a flash.
 - (amended 2026-09-30, owner) The EXC node moves no audio golden: the defaults reproduce today's sound. Only the Modal screen goldens are re-recorded.
+- (amended 2026-09-30, owner: #240) The two-delay bow re-records the v1 Bowed pins and the Bowed demo clips, deliberately. No other audio golden moves.
 - **Ship:** one hardware flash with a bench row per model.
 
 ## Provenance
 
 - **From Rings, under the MIT notice (ADR 0032):** the SYMP chord table and the dispersion approach. The SVF bank's filter and mode-tuning math was already Rings-derived and stays so.
-- **Ours:** `LoopGain`, the DC blocker placement, the fractional tuning, the body filter, the ensemble, the release ramp and the macro mapping. (amended 2026-09-30, owner) Also ours: the bow's velocity scaling, its position comb and its loop low-pass.
+- **Ours:** `LoopGain`, the DC blocker placement, the fractional tuning, the body filter, the ensemble, the release ramp and the macro mapping. (amended 2026-09-30, owner) Also ours: the bow's velocity scaling. ~~Its position comb and its loop low-pass.~~ (amended 2026-09-30, owner: #240) Also ours: the bow table's curve, the one-ring splice that holds both lines, the split's glide and the bridge filter's mapping.
+- (amended 2026-09-30, owner: #240) **From the published literature:** the two-delay bowed string, after J. O. Smith, *Physical Audio Signal Processing* (CCRMA, Stanford), "Bowed Strings", and McIntyre, Schumacher and Woodhouse (JASA, 1983). No STK code, constant or table is used, so THIRD_PARTY.md does not change.
 - A new ADR records the macros, the FDBK removal, the provenance split and the Modal macros becoming modulatable (a partial supersession of ADR 0010's "Modal settings are read at note-on").
 
 ## Closes
 
-#191, #10, #50, #51, #163, #206.
+#191, #10, #50, #51, #163, #206, and #240 (amended 2026-09-30, owner).
 
 ## Out of scope
 
