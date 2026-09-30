@@ -700,7 +700,7 @@ impl ModalEngine {
                 // Recompute filters every block (Rings does this — allows live parameter changes)
                 bank.compute_filters(&m, bank_freq);
                 bank.cos_osc.init(m.pos);
-                render_modal(bank, output, &mut max_level);
+                render_modal(bank, output);
                 bank.burst_remaining > 0
             }
             ModelSlot::String(v) => {
@@ -729,12 +729,11 @@ impl ModalEngine {
                 false
             }
         };
-        // A string's silence is judged on what is heard: after the blocker.
-        if !matches!(self.model, ModelSlot::Bank(_)) {
-            for s in output.iter_mut() {
-                *s = self.dc.process(*s);
-                max_level = max_level.max(libm::fabsf(*s));
-            }
+        // Every model's DC stops here, BANK's tanh's too; silence is judged
+        // on what is heard, after the blocker.
+        for s in output.iter_mut() {
+            *s = self.dc.process(*s);
+            max_level = max_level.max(libm::fabsf(*s));
         }
 
         if max_level < 0.001 && !exciting {
@@ -1022,7 +1021,7 @@ impl SympatheticSet {
     }
 }
 
-fn render_modal(bank: &mut ModalBank, output: &mut [f32; BLOCK_SIZE], max_level: &mut f32) {
+fn render_modal(bank: &mut ModalBank, output: &mut [f32; BLOCK_SIZE]) {
     let num = bank.sounding;
     for s in output.iter_mut() {
         let excite = if bank.burst_remaining > 0 {
@@ -1055,7 +1054,6 @@ fn render_modal(bank: &mut ModalBank, output: &mut [f32; BLOCK_SIZE], max_level:
 
         // Sum to mono, scale up, soft-limit
         *s = libm::tanhf(odd + even) * 2.0;
-        *max_level = max_level.max(libm::fabsf(*s));
     }
 }
 

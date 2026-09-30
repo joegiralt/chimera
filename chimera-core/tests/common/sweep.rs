@@ -33,6 +33,9 @@ pub const SILENT_RMS: f32 = 1e-5;
 pub const LEAK_PEAK: f32 = 1e-7;
 /// DC over a whole case, per side, post limiter: −46 dBFS.
 pub const DC_MAX: f32 = 0.005;
+/// Blocks after a note-on before DC is judged: the voice's 5 Hz blocker
+/// settles its start-up transient in 3τ, 95 ms (ADR 0060).
+pub const DC_FROM: usize = 72;
 /// A click: a jump's second difference over `CLICK_RATIO` × the larger of
 /// the steady states either side of it, and over `CLICK_FLOOR`.
 pub const CLICK_RATIO: f32 = 4.0;
@@ -504,7 +507,7 @@ pub struct Timing {
 }
 
 pub const FAST: Timing = Timing {
-    hold: 150,
+    hold: 225,
     gap: 120,
     bound: 1500,
 };
@@ -659,8 +662,8 @@ pub fn play(bench: &mut Bench, p: Option<&Param>, mv: Move, t: Timing) -> Run {
             pairs(&|k| tape.rms(k, t.b_on() + 8, t.b_off())),
         ],
         dc: pairs(&|k| {
-            tape.dc(k, 8, t.a_off())
-                .max(tape.dc(k, t.b_on() + 8, t.b_off()))
+            tape.dc(k, DC_FROM, t.a_off())
+                .max(tape.dc(k, t.b_on() + DC_FROM, t.b_off()))
         }),
         clicks,
         freed: tape.freed(tail_at),

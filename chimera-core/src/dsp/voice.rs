@@ -7,6 +7,7 @@ use crate::addr::{BlockRef, Blocks, ParamAddr};
 use crate::block::apply_offset;
 use crate::dsp::algo::engine::AlgoLive;
 use crate::dsp::algo::params::AlgoParams;
+use crate::dsp::dc_blocker::DcBlocker;
 use crate::dsp::drive::Drive;
 use crate::dsp::ease::{Ease, Ramp, at, ease_coeff, step_of};
 use crate::dsp::engines::{EngineSlot, SlotKind};
@@ -33,8 +34,12 @@ const _: () = assert!(
     core::mem::size_of::<Voice>() <= VOICE_CHAIN_BYTES + core::mem::size_of::<EngineSlot>()
 );
 
+/// The voice's DC blocker corner (ADR 0060): after the last nonlinear
+/// stage, −0.26 dB at 20 Hz, settled in 0.1 s.
+pub const DC_HZ: f32 = 5.0;
+
 /// Complete voice signal chain:
-/// [Engine] → [Drive] → [Filter] → [Wavefolder] → [VCA]
+/// [Engine] → [Drive] → [Filter] → [Wavefolder] → [DC blocker] → [VCA]
 /// Modulators: three envelopes, three LFOs
 pub struct Voice {
     /// The engine it plays, and so the engine it last played.
@@ -47,6 +52,8 @@ pub struct Voice {
     drive: Drive,
     filter: SvfFilter,
     folder: Wavefolder,
+    /// DC from the stages before it (ADR 0060).
+    dc: DcBlocker,
     /// The stages' stored settings, eased as a bus setting is: a jump
     /// glides, and routes add to the glide.
     stages: StageEase,
@@ -241,16 +248,19 @@ impl Voice {
     /// it: the one list that `init_in_place` and `reset` share.
     ///
     /// # Safety
-    /// `p` must be valid for writes, aligned and unaliased.
+    /// `p` must be valid for writes, aligned and unaliased, with
+    /// `sample_rate` written.
     unsafe fn init_chain(p: *mut Self) {
-        // SAFETY: the caller's guarantee; every field is written by value,
-        // and none has drop glue (asserted above) to skip.
+        // SAFETY: the caller's guarantee; `sample_rate` is read, every
+        // field is written by value, and none has drop glue (asserted
+        // above) to skip.
         unsafe {
             let played = ParamSnapshot::default();
             write_chain!(p, {
                 drive: Drive::new(),
                 filter: SvfFilter::new(),
                 folder: Wavefolder::new(),
+                dc: DcBlocker::new(DC_HZ, (*p).sample_rate),
                 stages: StageEase::default(),
                 volume: Ramp::default(),
                 envs: [Envelope::new(); 3],
@@ -391,6 +401,7 @@ impl Voice {
             self.filter.hold();
             self.drive.hold();
             self.folder.hold();
+            self.dc.reset();
             self.volume.hold();
             self.stages = StageEase::default();
             // An idle voice's ENV slots and last source values start as a
@@ -618,7 +629,11 @@ impl Voice {
         // 4. Wavefolder
         self.folder.process(output, &m.folder);
 
-        // 5. The VCA, after the fold, with the engine's output gain,
+        // 5. DC from the engine, the drive, the filter and the fold: none
+        // reaches the VCA (ADR 0060).
+        self.dc.run(output);
+
+        // 6. The VCA, after the blocker, with the engine's output gain,
         // ramped (never snap).
         let v = self.volume.step(m.out.volume * self.slot.out_gain());
         let (volume, dv) = (v.1, step_of(v, BLOCK_SIZE));

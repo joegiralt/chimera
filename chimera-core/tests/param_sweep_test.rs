@@ -23,16 +23,13 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use chimera_core::addr::{BlockRef, Op};
 use chimera_core::block::ParamId;
 use chimera_core::dsp::algo::params::AlgoOpParams;
-use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::chorus::ChorusParams;
 use chimera_core::dsp::delay::DelayParams;
 use chimera_core::dsp::fx_bus::{FxBus, FxParams};
 use chimera_core::dsp::modal::{ModalParams, ResonatorMode};
 use chimera_core::dsp::reverb::ReverbParams;
 use chimera_core::hw::DAC_PAIRS;
-use chimera_core::params::{
-    DriveParams, EngineType, FilterParams, FolderParams, OutParams, PitchParams,
-};
+use chimera_core::params::{DriveParams, FilterParams, FolderParams, OutParams, PitchParams};
 use chimera_core::part::{DacPair, PartParams};
 use common::sweep::*;
 
@@ -242,8 +239,9 @@ fn silences(c: &Case) -> Option<&'static str> {
     }
     if c.is_op(AlgoOpParams::LEVEL) && c.any(|v| v == 0.0) {
         return Some(
-            "a carrier at LEVEL 0 is silent, and a voice whose carriers are all silent ends \
-             (engine.rs `active`): raising LEVEL later doesn't revive the held note",
+            "a carrier at LEVEL 0 is silent, and a voice whose carriers heard at its MORPH are \
+             all silent ends (engine.rs `active`): raising LEVEL later doesn't revive the held \
+             note",
         );
     }
     if c.is_op(AlgoOpParams::AR) && c.any(|v| v == 0.0) {
@@ -294,10 +292,6 @@ fn clicks_ok(c: &Case, label: &str) -> Option<&'static str> {
 
 /// Why `c` may carry DC to the DAC.
 fn dc_ok(c: &Case) -> Option<&'static str> {
-    let algo = matches!(c.param.block, BlockRef::AlgoOp(_) | BlockRef::Algo);
-    if algo && dc_waves(c) {
-        return Some("W3, W4, W7 and W8 keep the TX81Z's DC (ADR 0022, ADR 0023)");
-    }
     // What sets the spectrum: the algorithm, and each operator's wave,
     // ratio, detune and feedback.
     let spectral = [
@@ -309,28 +303,19 @@ fn dc_ok(c: &Case) -> Option<&'static str> {
     ];
     if c.param.block == BlockRef::Algo || spectral.iter().any(|&id| c.is_op(id)) {
         return Some(
-            "FM: a ratio, detune or feedback puts a sideband at or near 0 Hz (c − k·m = 0), \
-             which ADR 0022 leaves unblocked",
+            "FM: a ratio, detune or feedback puts a sideband near 0 Hz (c − k·m ≈ 0), below \
+             the voice's 5 Hz blocker (ADR 0060)",
         );
     }
-    if c.patch == Patch::ModalInit(ResonatorMode::Bowed) && c.modal(ModalParams::SPEED) {
+    if c.patch == Patch::ModalInit(ResonatorMode::Bowed)
+        && (c.modal(ModalParams::SPEED) || c.param.block == BlockRef::Folder)
+    {
         return Some(
-            "the bow's stick–slip drifts below 10 Hz, and the output's one-pole blocker passes \
-             part of it (about −30 dB re the note)",
+            "the bow's stick–slip drifts below 10 Hz, and the engine's and the voice's one-pole \
+             blockers pass part of it (about −30 dB re the note), more after FOLD's gain",
         );
     }
     None
-}
-
-/// The TX81Z's waves with DC (ADR 0022).
-const DC_WAVES: [WaveId; 4] = [WaveId::W3, WaveId::W4, WaveId::W7, WaveId::W8];
-
-/// Whether an Algo case plays a wave with DC: the patch's, or one it sets.
-fn dc_waves(c: &Case) -> bool {
-    let dc = |w: u8| DC_WAVES.contains(&WaveId::clamped(w));
-    let s = c.patch.sound();
-    let patch = s.engine() == EngineType::Algo && s.params.algo.ops.iter().any(|o| dc(o.wave));
-    patch || (c.is_op(AlgoOpParams::WAVE) && c.any(|v| dc(v as u8)))
 }
 
 /// Why a voice may stay busy on a silent bus past the bound.
@@ -340,6 +325,17 @@ fn zombie_ok(c: &Case) -> Option<&'static str> {
             "BANK, BOWED and SYMP ring on after note-off; the engine judges its own ring, before \
              the filter and the VCA, so a setting that silences it after the engine (OUT LEVEL \
              0, a filter MODE) leaves the voice busy until the ring decays",
+        );
+    }
+    None
+}
+
+/// Why the tail may hold its level to the bound, yet not be stuck.
+fn stuck_ok(c: &Case) -> Option<&'static str> {
+    if c.rings_on() && c.is(BlockRef::Folder, FolderParams::FOLD) && c.any(|v| v >= 0.75) {
+        return Some(
+            "FOLD's gain (×4.4 at 0.75, ×7 at 1) folds a ringing model's tail back up to full \
+             level: the ring decays at DAMP's T60 beneath it",
         );
     }
     None
@@ -365,65 +361,20 @@ fn long_tail(c: &Case) -> Option<&'static str> {
 // ── Known defects ──────────────────────────────────────────────────────
 
 /// A defect the sweep found, left for its fix: its ignored `defect_*`
-/// test fails until then.
+/// test fails until then. None open: Task 17 fixed the last (the voice's
+/// and the Modal engines' DC, snapped settings, a silent operator holding
+/// its voice).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum Defect {
-    VoiceDc,
-    ModalDc,
-}
+enum Defect {}
 
 impl Defect {
     fn what(self) -> &'static str {
-        match self {
-            Defect::VoiceDc => {
-                "no DC blocker after the voice's drive, filter drive and folder; the folder's SYM \
-                 bias is DC (wavefolder.rs:33, voice.rs:571-578)"
-            }
-            Defect::ModalDc => {
-                "the engine's own DC (Task 17): SYMP's halo drifts below the output blocker's \
-                 10 Hz, and BANK's output has no blocker"
-            }
-        }
+        match self {}
     }
 }
 
-fn known(c: &Case, kind: &Kind, label: &str) -> Option<Defect> {
-    let b = c.param.block;
-    match kind {
-        Kind::Dc if matches!(b, BlockRef::Folder | BlockRef::Drive | BlockRef::Filter) => {
-            Some(Defect::VoiceDc)
-        }
-        // BUSY MODAL drives its models through DRIVE 0.2.
-        Kind::Dc if c.patch == Patch::BusyModal && c.modal(ModalParams::MODE) => {
-            Some(Defect::VoiceDc)
-        }
-        // The filter saturates the bow's open sawtooth: DC the engine hasn't.
-        Kind::Dc
-            if c.patch == Patch::ModalInit(ResonatorMode::Bowed)
-                && c.modal(ModalParams::BRIGHT) =>
-        {
-            Some(Defect::VoiceDc)
-        }
-        Kind::Dc
-            if c.patch == Patch::ModalInit(ResonatorMode::Sympathetic)
-                && (c.modal(ModalParams::COUPLE)
-                    || c.modal(ModalParams::HALO)
-                    || c.is(BlockRef::Pitch, PitchParams::PITCH)) =>
-        {
-            Some(Defect::ModalDc)
-        }
-        Kind::Dc
-            if c.patch == Patch::ModalInit(ResonatorMode::Modal)
-                && c.modal(ModalParams::STRUCTURE) =>
-        {
-            Some(Defect::ModalDc)
-        }
-        // The SYM bias through the release steps the pair as the voice frees.
-        Kind::Click if label == "voice freed" && c.is(BlockRef::Folder, FolderParams::SYMMETRY) => {
-            Some(Defect::VoiceDc)
-        }
-        _ => None,
-    }
+fn known(_c: &Case, _kind: &Kind, _label: &str) -> Option<Defect> {
+    None
 }
 
 // ── Verdicts ───────────────────────────────────────────────────────────
@@ -539,14 +490,17 @@ fn judge(cases: &[Case], runs: &[Run], t: Timing) -> Verdict {
                     )),
                 }
             } else if last >= first * 0.89 {
-                out.push((
-                    Kind::Stuck,
-                    format!(
-                        "not freed {} blocks after release; tail {first:.2e} → {last:.2e}",
-                        t.bound
-                    ),
-                    "",
-                ));
+                match stuck_ok(c) {
+                    Some(why) => allowed.push((Kind::Stuck, why)),
+                    None => out.push((
+                        Kind::Stuck,
+                        format!(
+                            "not freed {} blocks after release; tail {first:.2e} → {last:.2e}",
+                            t.bound
+                        ),
+                        "",
+                    )),
+                }
             } else {
                 v.long_tails += 1;
                 match long_tail(c) {
@@ -823,7 +777,7 @@ const MODELS: [ResonatorMode; 4] = [
     ResonatorMode::Sympathetic,
 ];
 
-// ── The known defects, pinned: each fails until fixed ──────────────────
+// ── The defects Task 17 fixed, pinned ───────────────────────────────────
 
 fn find(block: BlockRef, id: ParamId) -> Param {
     registry(false)
@@ -832,12 +786,11 @@ fn find(block: BlockRef, id: ParamId) -> Param {
         .unwrap()
 }
 
-/// The folder's SYM adds `(sym − 0.5)·0.5` before its fold, so at SYM 0
-/// a note carries DC, through its silent release too: when the voice
-/// frees, pair 1 steps by it.
+/// The folder's SYM biases its fold, so at SYM 0 a note's fold is
+/// asymmetric: no DC reaches the DAC, held or through the silent release,
+/// so pair 1 doesn't step as the voice frees (ADR 0060).
 #[test]
-#[ignore = "defect: the voice chain carries DC after its nonlinear stages (wavefolder.rs:33, voice.rs:571-578)"]
-fn defect_folder_sym_puts_dc_on_the_dac() {
+fn the_folder_sym_puts_no_dc_on_the_dac() {
     let mut b = Bench::new(Patch::AlgoInit, PartParams::default(), FxParams::default());
     b.set(&find(BlockRef::Folder, FolderParams::FOLD), 0.5);
     b.set(&find(BlockRef::Folder, FolderParams::SYMMETRY), 0.0);
@@ -852,7 +805,7 @@ fn defect_folder_sym_puts_dc_on_the_dac() {
         b.render(&mut t);
     }
     let end = 150 + t.freed(150).expect("freed");
-    let held = t.dc(0, 8, 150);
+    let held = t.dc(0, DC_FROM, 150);
     let release = t.dc(0, end - 40, end - 1);
     assert!(
         held < DC_MAX && release < DC_MAX,
@@ -861,42 +814,67 @@ fn defect_folder_sym_puts_dc_on_the_dac() {
 }
 
 /// Each case's static DC on P1 over `DC_MAX`, as the sweep reads it.
-fn dc_over(cases: &[(Patch, Param, f32)]) -> Vec<String> {
+fn dc_over(cases: &[(Patch, Param, f32, Timing)]) -> Vec<String> {
     cases
         .iter()
-        .filter_map(|&(patch, p, v)| {
+        .filter_map(|&(patch, p, v, t)| {
             let c = Case {
                 param: p,
                 patch,
                 mv: Move::Static(v),
                 wet: false,
             };
-            let dc = play(&mut c.bench(), Some(&p), c.mv, FAST).dc[0];
+            let dc = play(&mut c.bench(), Some(&p), c.mv, t).dc[0];
             (dc > DC_MAX).then(|| format!("{}: DC {dc:.4}", c.label()))
         })
         .collect()
 }
 
-/// The voice's filter saturates the bow's open sawtooth into DC the
-/// engine hasn't (−64 dB re the note at the engine, −38 at the voice).
+/// A bright or fast bow drifts below the engine's 10 Hz blocker; the
+/// voice's blocker takes it (ADR 0060).
 #[test]
-#[ignore = "defect: the voice chain carries DC after its nonlinear stages (filter.rs saturate, voice.rs:571-578)"]
-fn defect_filter_puts_dc_on_a_bright_bow() {
+fn a_bright_bow_puts_no_dc_on_the_dac() {
     let bowed = Patch::ModalInit(ResonatorMode::Bowed);
-    let bad = dc_over(&[(bowed, find(BlockRef::Modal, ModalParams::BRIGHT), 1.0)]);
+    let bad = dc_over(&[
+        (bowed, find(BlockRef::Modal, ModalParams::BRIGHT), 1.0, FAST),
+        (
+            bowed,
+            find(BlockRef::Modal, ModalParams::BRIGHT),
+            0.75,
+            THOROUGH,
+        ),
+        (bowed, find(BlockRef::Modal, ModalParams::SPEED), 1.0, FAST),
+    ]);
     assert!(bad.is_empty(), "{}", bad.join("\n"));
 }
 
-/// Task 17: SYMP's halo drifts below the output blocker's 10 Hz, and
-/// BANK's output has no blocker.
+/// SYMP's pluck is zero-mean, so its halo gains no 0 Hz mode to drift
+/// under the output blocker; BANK's output has the blocker too.
 #[test]
-#[ignore = "defect: SYMP's halo drifts below the 10 Hz blocker and BANK's output has none (dsp/modal/mod.rs render); Task 17"]
-fn defect_modal_engines_put_dc_on_the_dac() {
+fn the_modal_engines_put_no_dc_on_the_dac() {
     let symp = Patch::ModalInit(ResonatorMode::Sympathetic);
     let bank = Patch::ModalInit(ResonatorMode::Modal);
     let bad = dc_over(&[
-        (symp, find(BlockRef::Pitch, PitchParams::PITCH), 12.0),
-        (bank, find(BlockRef::Modal, ModalParams::STRUCTURE), 1.0),
+        (symp, find(BlockRef::Pitch, PitchParams::PITCH), 12.0, FAST),
+        (symp, find(BlockRef::Pitch, PitchParams::PITCH), 24.0, FAST),
+        (
+            symp,
+            find(BlockRef::Modal, ModalParams::COUPLE),
+            1.0,
+            THOROUGH,
+        ),
+        (
+            symp,
+            find(BlockRef::Modal, ModalParams::HALO),
+            1.0,
+            THOROUGH,
+        ),
+        (
+            bank,
+            find(BlockRef::Modal, ModalParams::STRUCTURE),
+            1.0,
+            FAST,
+        ),
     ]);
     assert!(bad.is_empty(), "{}", bad.join("\n"));
 }

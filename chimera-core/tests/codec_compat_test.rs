@@ -144,17 +144,18 @@ fn v1_fixture_bytes_are_frozen() {
 
 /// FNV-1a of each fixture's render, recorded when the fixtures were written.
 const FIXTURE_RENDERS: &[(&str, u64)] = &[
-    ("factory_0.snd", 0x878c9ca6ca353aa1),
-    ("factory_1.snd", 0x0edce6a988cf7f1b),
-    ("factory_2.snd", 0xe0277f16dca55649),
-    ("factory_3.snd", 0x10424d2460e991df),
-    ("factory_4.snd", 0x05a4301cc61a2332),
-    ("factory_5.snd", 0x73b6b9429389dc2a),
-    ("factory_6.snd", 0x2cf3c112b967ff6f),
-    ("factory_7.snd", 0x7ef436e312c3c9e6),
-    ("init_algo.snd", 0xfd37f75c4096594b),
+    // Re-recorded, every row, as `golden_test`'s: ADR 0060's DC blocker.
+    ("factory_0.snd", 0x3bf08f68be7bc44f),
+    ("factory_1.snd", 0xc67ca8068a7877d9),
+    ("factory_2.snd", 0x3525cc1931c29ca2),
+    ("factory_3.snd", 0x14e064252e938abf),
+    ("factory_4.snd", 0x8e66d469654ec811),
+    ("factory_5.snd", 0xdf137d14d05668ec),
+    ("factory_6.snd", 0xfd388eee4c112513),
+    ("factory_7.snd", 0x81c2fbb41ba2c813),
+    ("init_algo.snd", 0x002d6721f776f6d6),
     // Re-recorded: Modal 2 step A's resonators (spec § Tests), then ADR 0058's gain.
-    ("init_modal.snd", 0xc3e2deb689eb82d6),
+    ("init_modal.snd", 0xbb3ef9463cbf89bc),
 ];
 
 #[test]
