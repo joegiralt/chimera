@@ -31,8 +31,8 @@ note-on, so nothing could modulate a string's character.
 ### Loops
 - `modal::loop_parts::LoopGain` is a string loop's gain per pass. Its
   constructors clamp to `[0, 0.99999]` (`LoopGain::MAX`, a T60 of
-  690,000 / f0 s: past DAMP's 20 s to 34 kHz), and NaN gives 0. It was
-  0.9995 (Task 18), which held C6 to 13 s and G6 to 9.
+  690,000 / f0 s: past DAMP's 20 s to 34 kHz), and NaN gives 0. At
+  0.9995 it held C6 to 13 s and G6 to 9.
   It is the only gain any loop multiplies by: STRING, the SYMP main string,
   each halo string and BOWED. On STRING and the SYMP main string it
   multiplies the loop's sample after every in-loop stage, so none bypasses
@@ -108,7 +108,7 @@ note-on, so nothing could modulate a string's character.
   from its end: `0.5·POS` (`params::beta` from `END`), the end at 0 and
   the middle at 1. A pluck at β and at 1 − β is the same, so the knob
   once went out and back: POS 0 and 1 rendered bit for bit alike on
-  STRING, SYMP and BANK (objective QA, Task 18). BOWED keeps its own
+  STRING, SYMP and BANK. BOWED keeps its own
   start, `BOW_END` 0.06 (below). On a pluck, `string::comb` runs round
   the line once, in place (each cycle of `i → i + n` walked, its first
   sample kept for its last), `(x[i] + x[i + n]) / 2` for
@@ -136,8 +136,8 @@ note-on, so nothing could modulate a string's character.
   `T60 = 0.05·400^DAMP` (50 ms to 20 s), the fundamental's at every
   pitch. `loop_parts::damped` turns it into each loop's gain at its own
   f0, and makes up the loop low-pass's loss there, `lp·(1 − cos ω0)`, so
-  the fundamental's gain a pass is DAMP's. Before Task 18 that loss came
-  on top, growing as f0³: at DAMP 1 C5 rang 8.5 s, C6 2.5 and G6 0.8, and
+  the fundamental's gain a pass is DAMP's. Without the make-up that loss
+  comes on top, growing as f0³: at DAMP 1 C5 rang 8.5 s, C6 2.5 and G6 0.8, and
   INIT's G6 and C7 were silent within 0.5 s.
 - The low-pass takes at most `LP_SHARE` = 0.5 of DAMP's loss a pass at
   f0; where BRIGHT's side taps would take more (a long ring on a high
@@ -434,21 +434,14 @@ https://github.com/joegiralt/chimera/issues/240), in Chimera's own code (`modal:
 - Sympathetic is String's voice plus a lease, sized within one align of
   it. That supersedes in part ADR 0054's const assert that Bowed or String
   sizes the voice.
-- Task 18 added the note's peak to `ModalEngine` (4 B) and the POS
-  glide's end, step and count to `CosineOsc` (12 B), each within its
-  padding: no host size moved (`Voice` 6,208 B and `Instrument`
-  164,424 B, 122,296 B of D2 left, since ADR 0060's chain).
-- Host sizes: `Voice` 6,056 B, `ModelSlot` 4,160 B, `SymPool` 111,848 B,
-  `Instrument` 162,968 B, which leaves 123,752 B of D2. Firmware
-  `.ram_d2` is 162,108 B. `ModalParams` grew by EXC's four fields;
-  `BowedString` by its lift, bow velocity, velocity scale and bowing
-  flag, the ends' filters, the split, BRIGHT's low-pass and the glide's
-  count, less the one-loop bow's `written` (4,056 B, inside `ModelSlot`)
-  and
-  `StringVoice` by COLOR's passes, within its padding.
+- Host sizes (`memory_budget_test`): `Voice` 6,200 B, `ModelSlot`
+  4,152 B, `StringVoice` 4,136 B, `BowedString` 4,048 B, `SymPool`
+  112,168 B, `Instrument` 164,680 B, which leaves 122,040 B of D2.
+  Firmware `.ram_d2` is 163,852 B. `ModelSlot` is the largest model,
+  `SympatheticVoice` (4,144 B), and the tag.
 
 ### Costs
-Task 18 moved no bill. `damped` swaps each loop gain's `powf` for an
+DAMP's make-up moved no bill. `damped` swaps each loop gain's `powf` for an
 `expf` and adds a few multiplies and a compare a block, a divide only
 where `LP_SHARE` binds; the silence rule a compare a block; BANK's POS
 glide about 5 instructions a sample while POS moves, inside the bank's
@@ -538,8 +531,8 @@ NOTE-ON is, by `Rig::time_note_on`.
   DAMP and 40 s at DAMP 1, holding its pool slot that long, so a fifth
   SYMP note plays bare), the main string's, or DAMP-capped (about 8 s). It
   stays 2× until the owner rules.
-- DAMP is seconds at every pitch (spec § 1), now the fundamental's
-  exactly (Task 18); the old per-pass law rang high notes shorter.
+- DAMP is seconds at every pitch (spec § 1), the fundamental's exactly;
+  the old per-pass law rang high notes shorter.
   Partial key tracking is a candidate, by ear. A long ring on a high
   note is brighter than BRIGHT asks (`LP_SHARE`): the price of ringing.
 - POS starts at the end on a pluck or strike (β 0) and at 0.06 on a bow
@@ -621,7 +614,7 @@ NOTE-ON is, by `Rig::time_note_on`.
 - A string's state lives in its struct only between blocks: anything that
   reads a line mid-block (the ensemble's heads) reads it inside the span.
 - Modal's goldens and the INIT Modal fixtures moved with step A, and
-  again with Task 18's DAMP make-up and silence rule (`modal_init`,
+  again with DAMP's make-up and the silence rule (`modal_init`,
   `modal_lfo_cutoff`, `modal_sympathetic`, `algo_to_modal_switch`,
   `two_parts_two_pairs` and its pre-limiter row, `init_modal.snd`, the v1
   bow's release). POS 0 renders as before, so no golden moved for POS.
