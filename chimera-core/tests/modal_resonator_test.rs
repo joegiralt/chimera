@@ -1793,3 +1793,60 @@ fn pos_runs_from_the_end_to_the_middle() {
         }
     }
 }
+
+/// `out`'s mean over the whole periods of `hz` in the 0.1 s from `t` s,
+/// the fractional ends weighted: a wave's own mean, no window edge's.
+fn period_mean(out: &[f32], hz: f32, t: f64) -> f64 {
+    let per = SR as f64 / hz as f64;
+    let len = (0.1 * SR as f64 / per).ceil() * per;
+    let a = t * SR as f64;
+    let b = a + len;
+    let (ia, ib) = (a as usize, b as usize);
+    let sum: f64 = (ia..=ib)
+        .map(|i| {
+            let w = if i == ia {
+                1.0 - (a - ia as f64)
+            } else if i == ib {
+                b - ib as f64
+            } else {
+                1.0
+            };
+            out[i] as f64 * w
+        })
+        .sum();
+    sum / len
+}
+
+/// #248: a held bow does not drift below 10 Hz. Its attack settles the
+/// string's static deflection at the loop's rate (12 periods); once
+/// settled, from 1 s, every 0.1 s of the engine's output, over whole
+/// periods, holds a mean at least 50 dB under its RMS, G1 to C7, at
+/// SPEED and BRIGHT's corners. Measured over a window that cuts a
+/// period, a bow's pulse wave reads as a −30 dB drift that isn't there.
+#[test]
+fn a_settled_bow_does_not_drift() {
+    let sr = SR as usize;
+    let mut worst = (f64::NEG_INFINITY, String::new());
+    for note in [31u8, 36, 48, 60, 72, 84, 96] {
+        for (speed, bright) in [(0.5, 0.3), (0.1, 0.0), (1.0, 0.0), (1.0, 1.0)] {
+            let p = ModalParams {
+                mode: ResonatorMode::Bowed,
+                speed,
+                bright,
+                ..Default::default()
+            };
+            let out = play_modal_at(&p, note, 100, 3 * sr / BLOCK_SIZE, 0);
+            let f0 = note_to_freq(note);
+            let rms = common::rms(&out[sr..2 * sr]) as f64;
+            for k in 0..15 {
+                let m = period_mean(&out, f0, 1.0 + 0.1 * k as f64).abs();
+                let db = 20.0 * (m / rms).log10();
+                if db > worst.0 {
+                    worst = (db, format!("{note} SPEED {speed} BRIGHT {bright}"));
+                }
+            }
+        }
+    }
+    println!("worst: {:.1} dB at {}", worst.0, worst.1);
+    assert!(worst.0 < -50.0, "{:.1} dB at {}", worst.0, worst.1);
+}
