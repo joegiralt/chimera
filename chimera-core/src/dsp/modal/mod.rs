@@ -131,10 +131,14 @@ struct BowedString {
     hair: BowHair,
     /// BRIGHT's one-pole on the output.
     tone: f32,
+    /// The last block's bow point, samples back (0 at a fresh note), and
+    /// its comb's weight.
+    back: f32,
+    comb: f32,
 }
 
 crate::in_place::field_list!(BowedString => BowedString {
-    string, force, force_to, lift, bow_vel, vel_scale, bowing, written, release, hair, tone,
+    string, force, force_to, lift, bow_vel, vel_scale, bowing, written, release, hair, tone, back, comb,
 });
 
 /// One pool slot (exclusive-state spec § 4.2): the seven strings a
@@ -368,7 +372,8 @@ impl ModalEngine {
     /// two `fast_tanh`s, the smoothing, BRIGHT's one-pole and the ring's
     /// push), 210 billed, against the one-loop bow's benched 620 at 143
     /// instructions and two `tanhf` bodies (135): 620 + (210 − 143 − 135) ×
-    /// 1.46 × 1.1 = 510.8, rounded up to 520.
+    /// 1.46 × 1.1 = 510.8, rounded up to 520. A block whose POS moved
+    /// splits the bow point each sample, a few more, inside the round-up.
     pub const COST_BOWED: Cost = Cost(520);
     /// 809 (benched, ADR 0054) − 271, rounded up to 540: 419 instructions a
     /// sample to 187, −306 cycles. Each halo string runs its block in
@@ -607,7 +612,7 @@ impl ModalEngine {
                 // A re-strike sets the bow back on the string as it rings.
                 if !restrike {
                     b.string.clear();
-                    (b.hair, b.tone) = (BowHair::REST, 0.0);
+                    (b.hair, b.tone, b.back) = (BowHair::REST, 0.0, 0.0);
                     b.tune(freq, sample_rate);
                     b.force = bow_force(params.force, vel);
                     (b.bow_vel, b.written) = (params.speed * BOW_SPEED, 0);
@@ -919,6 +924,8 @@ impl BowedString {
             addr_of_mut!((*p).release).write(Release::HELD);
             addr_of_mut!((*p).hair).write(BowHair::REST);
             addr_of_mut!((*p).tone).write(0.0);
+            addr_of_mut!((*p).back).write(0.0);
+            addr_of_mut!((*p).comb).write(0.0);
             slot.assume_init_mut()
         }
     }
@@ -928,7 +935,7 @@ impl BowedString {
     fn tune(&mut self, freq: f32, sample_rate: u32) {
         let (period, _, w) = string::loop_at(freq, sample_rate);
         self.hair = self.hair.tuned(freq, w);
-        self.string.set_period(0.5 * period, self.hair.delay(), w);
+        self.string.set_period(0.5 * period, BowHair::DELAY, w);
     }
 }
 
@@ -936,15 +943,16 @@ impl BowedString {
 /// phase, so every partial is delayed alike, and the stick-slip's corner,
 /// spread over a few samples, times the period between them. Without it
 /// the period locked to whole samples, 26 cents sharp at C7. `[1, 2, 1]/4`
-/// under C5, where it is enough, so low notes keep the one-loop bow's
-/// edge; `[1, 6, 15, 20, 15, 6, 1]/64` from C5. Its gain at f0 is made
-/// up, so DAMP sets the ring.
+/// under `NARROW_HZ`, where it is enough, so low notes keep the one-loop
+/// bow's edge; `[1, 6, 15, 20, 15, 6, 1]/64` from `WIDE_HZ`; between them
+/// a crossfade, both centred 3 samples back, so no neighbouring notes
+/// step. Its gain at f0 is made up, so DAMP sets the ring.
 #[derive(Clone, Copy)]
 struct BowHair {
     /// The last six samples pushed, newest first.
     past: [f32; 6],
-    /// Seven taps, not three.
-    wide: bool,
+    /// The seven taps' share.
+    wide: f32,
     /// Over its gain at f0.
     norm: f32,
 }
@@ -952,19 +960,25 @@ struct BowHair {
 impl BowHair {
     const REST: Self = Self {
         past: [0.0; 6],
-        wide: false,
+        wide: 0.0,
         norm: 1.0,
     };
-    /// From here up, seven taps.
-    const WIDE_HZ: f32 = 520.0;
+    /// Its delay, samples.
+    const DELAY: f32 = 3.0;
+    /// The crossfade's ends, Hz: A4 to D#5.
+    const NARROW_HZ: f32 = 440.0;
+    const WIDE_HZ: f32 = 622.0;
     /// The least gain at f0 made up: seven taps' at C7.
     const LEAST: f32 = 0.94;
 
     /// For `freq` Hz, `w` rad/sample, its history kept.
     fn tuned(self, freq: f32, w: f32) -> Self {
         let half = 0.5 * (1.0 + libm::cosf(w));
-        let wide = freq >= Self::WIDE_HZ;
-        let gain = if wide { half * half * half } else { half };
+        let t = (libm::log2f(freq / Self::NARROW_HZ)
+            / libm::log2f(Self::WIDE_HZ / Self::NARROW_HZ))
+        .clamp(0.0, 1.0);
+        let wide = t * t * (3.0 - 2.0 * t);
+        let gain = (1.0 - wide) * half + wide * half * half * half;
         Self {
             wide,
             // Past C7 the loop is too short to make up: it rings shorter.
@@ -973,20 +987,20 @@ impl BowHair {
         }
     }
 
-    /// Its delay, samples.
-    fn delay(&self) -> f32 {
-        if self.wide { 3.0 } else { 1.0 }
+    /// Its gain at `w` rad/sample, made up: for the tests.
+    #[cfg(test)]
+    fn response(&self, w: f32) -> f32 {
+        let half = 0.5 * (1.0 + libm::cosf(w));
+        ((1.0 - self.wide) * half + self.wide * half * half * half) * self.norm
     }
 
     #[inline]
     fn process(&mut self, x: f32) -> f32 {
         let [a, b, c, d, e, f] = self.past;
         self.past = [x, a, b, c, d, e];
-        if self.wide {
-            (x + f + 6.0 * (a + e) + 15.0 * (b + d) + 20.0 * c) * (self.norm / 64.0)
-        } else {
-            (x + 2.0 * a + b) * (self.norm * 0.25)
-        }
+        let narrow = (b + 2.0 * c + d) * 0.25;
+        let wide = (x + f + 6.0 * (a + e) + 15.0 * (b + d) + 20.0 * c) * (1.0 / 64.0);
+        (narrow + self.wide * (wide - narrow)) * self.norm
     }
 }
 
@@ -1332,9 +1346,26 @@ fn render_bowed(
     // of the way along (the loop sounds odd partials only).
     let d = b.string.delay() as f32;
     let back = (d - m.pos * d / 3.0).max(2.0);
-    let point = (back as usize, back - libm::floorf(back));
     let comb = 0.5 * (m.pos / BOW_POS_MIN).min(1.0);
-    for s in output.iter_mut() {
+    // A moved bow point glides across the block, a step a sample; a still
+    // one is set once. A note's first block takes it whole.
+    let (from, comb_from) = if b.back > 0.0 {
+        (b.back, b.comb)
+    } else {
+        (back, comb)
+    };
+    (b.back, b.comb) = (back, comb);
+    let moving = from != back || comb_from != comb;
+    let step = 1.0 / BLOCK_SIZE as f32;
+    let mut point = (back as usize, back - libm::floorf(back));
+    let mut comb = comb;
+    for (k, s) in output.iter_mut().enumerate() {
+        if moving {
+            let t = (k + 1) as f32 * step;
+            let at = from + t * (back - from);
+            point = (at as usize, at - libm::floorf(at));
+            comb = comb_from + t * (b.comb - comb_from);
+        }
         if b.bowing {
             // At its target, no bit moves.
             b.force += BOW_EASE * (b.force_to - b.force);
@@ -1364,6 +1395,11 @@ fn render_bowed(
         } else {
             feedback
         };
+        if b.written == 0 {
+            // A note's first push is its first pass's tap (#206): the
+            // smoothing starts as if held at it, not 3 samples of silence.
+            b.hair.past = [v; 6];
+        }
         let y = b.hair.process(v);
         b.string.ring_push(y);
         b.written = b.written.saturating_add(1);
@@ -1791,6 +1827,25 @@ mod tests {
                 };
                 assert_eq!(b.burst_remaining, want, "EXCITE {excite}, BURST {burst}");
             }
+        }
+    }
+
+    /// The bow's smoothing has no step in pitch: across any 2 % step from
+    /// 300 to 900 Hz its made-up response moves under 0.04 at every
+    /// frequency (0.033 at most; the hard switch at 520 Hz moved it 0.38 at
+    /// 10.8 kHz), so no timbre jumps between neighbouring notes.
+    #[test]
+    fn the_bows_smoothing_moves_smoothly_with_pitch() {
+        let hair = |f: f32| BowHair::REST.tuned(f, TAU * f / SR as f32);
+        let mut f = 300.0;
+        while f < 900.0 {
+            let (a, b) = (hair(f), hair(f * 1.02));
+            for k in 0..64 {
+                let w = core::f32::consts::PI * k as f32 / 64.0;
+                let d = (a.response(w) - b.response(w)).abs();
+                assert!(d < 0.04, "{f} Hz, ω {w}: {d}");
+            }
+            f *= 1.02;
         }
     }
 
