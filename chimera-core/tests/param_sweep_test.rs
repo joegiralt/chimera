@@ -307,13 +307,21 @@ fn dc_ok(c: &Case) -> Option<&'static str> {
              the voice's 5 Hz blocker (ADR 0060)",
         );
     }
-    if c.patch == Patch::ModalInit(ResonatorMode::Bowed)
-        && (c.modal(ModalParams::SPEED) || c.param.block == BlockRef::Folder)
-    {
+    if c.patch == Patch::ModalInit(ResonatorMode::Bowed) && c.param.block == BlockRef::Folder {
         return Some(
-            "the bow's stick–slip drifts below 10 Hz, and the engine's and the voice's one-pole \
-             blockers pass part of it (about −30 dB re the note), more after FOLD's gain \
-             (#248)",
+            "the bow's attack: the string's static deflection settles, and its Helmholtz motion \
+             grows, at the loop's rate, 12 periods (92 ms at C3); the fold rectifies the growing \
+             asymmetric wave, which the voice's 5 Hz blocker has not settled 95 ms in (a C3 \
+             note 0.003, the four-note chord 0.0065, gone 0.3 s in). Settled, the bow's output \
+             under 10 Hz is at least 69 dB under its RMS, G1 to C7 \
+             (`a_settled_bow_does_not_drift`, #248)",
+        );
+    }
+    if c.patch == Patch::ModalInit(ResonatorMode::Sympathetic) && c.param.block == BlockRef::Drive {
+        return Some(
+            "SYMP's halo is a chord (Rings' table, pairs a cent apart): the drive's difference \
+             tones between its strings fall below the voice's 5 Hz blocker (0.0048 on P1 before \
+             Task 18 made up the halo's low-pass loss, 0.0051 after; 0.0016 with HALO 0)",
         );
     }
     None
@@ -738,7 +746,8 @@ const REFERENCE_LUFS: f32 = -15.0;
 /// ADR 0058: ALGO INIT sits at the reference, ±0.1 dB, and each Modal
 /// model's INIT, one C4 at velocity 100, within ±1 dB of it. The limiter
 /// is a safety ceiling (ADR 0050): no INIT's chord at velocity 127, the
-/// hardest strike, loses more than `MAX_CHORD_LIMITED_DB` to it.
+/// hardest strike, loses more than `MAX_CHORD_LIMITED_DB` to it. The wider
+/// voicings (`WIDE_5`, `WIDE_8`) are printed, not gated (`--nocapture`).
 #[test]
 fn modal_models_match_the_loudness_reference() {
     let algo = level(Patch::AlgoInit, &[60], 100, BPS).lufs;
@@ -758,6 +767,17 @@ fn modal_models_match_the_loudness_reference() {
             chord.gr_db,
             chord.limited_db
         );
+        // Reported, not gated: the owner's loudness reference decides these.
+        for wide in [&WIDE_5[..], &WIDE_8[..]] {
+            let l = level(p, wide, 127, BPS);
+            println!(
+                "  {}-note chord at 127: gain reduction {:.1} dB at most, {:.2} dB of its \
+                 loudness",
+                wide.len(),
+                l.gr_db,
+                l.limited_db
+            );
+        }
         if d.abs() > 1.0 {
             bad.push(format!("{}: {d:+.2} dB off the reference", p.name()));
         }
@@ -771,6 +791,11 @@ fn modal_models_match_the_loudness_reference() {
     }
     assert!(bad.is_empty(), "{}", bad.join("\n"));
 }
+
+/// Wider v127 voicings, reported beside `CHORD` (objective QA, Task 18):
+/// a five-note open chord and eight notes over three octaves.
+const WIDE_5: [u8; 5] = [36, 48, 55, 60, 64];
+const WIDE_8: [u8; 8] = [36, 43, 48, 52, 55, 60, 64, 72];
 
 /// The loudness the limiter may take from an INIT's chord at velocity 127,
 /// dB: a safety ceiling may duck a strike, not hold the note down.
