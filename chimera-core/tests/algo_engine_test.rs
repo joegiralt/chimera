@@ -435,7 +435,9 @@ fn a_one_block_morph_away_from_the_only_sounding_carrier_does_not_end_the_note()
     let mut out = Vec::new();
     let mut blk = [0.0; BLOCK_SIZE];
     for b in 0..30 {
+        // A MORPH route's one-block swing.
         let mut live = AlgoLive::from_params(&p);
+        live.morph_routed = true;
         if b == 10 {
             live.morph = 127.0;
         }

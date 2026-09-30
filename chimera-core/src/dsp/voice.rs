@@ -6,6 +6,7 @@ use chimera_hal::BLOCK_SIZE;
 use crate::addr::{BlockRef, Blocks, ParamAddr};
 use crate::block::apply_offset;
 use crate::dsp::algo::engine::AlgoLive;
+use crate::dsp::algo::params::AlgoParams;
 use crate::dsp::drive::Drive;
 use crate::dsp::ease::{Ease, Ramp, at, ease_coeff, step_of};
 use crate::dsp::engines::{EngineSlot, SlotKind};
@@ -576,6 +577,8 @@ impl Voice {
             self.stages.ease(m, ease_coeff(sample_rate));
             *live = AlgoLive::from_params(&params.algo);
             live.routed = mod_state.algo_levels_routed();
+            live.morph_routed =
+                mod_state.moves_addr(ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH));
             let mut next = [EnvMods::NONE; 3];
             for d in 0..mod_state.num_dests() {
                 let a = mod_state.dest(d);
