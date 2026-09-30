@@ -180,6 +180,29 @@ fn test_string_body_latched_at_note_on() {
     );
 }
 
+/// ENS DEPTH, RATE and MIX are latched at note-on too (spec § 1).
+#[test]
+fn test_string_ens_latched_at_note_on() {
+    let setup = |p: &mut ParamSnapshot| {
+        *p = ParamSnapshot::for_engine(EngineType::Modal);
+        p.modal.mode = ResonatorMode::String;
+        (p.modal.ens_depth, p.modal.ens_rate, p.modal.ens_mix) = (0.5, 0.5, 0.5);
+    };
+    let (_, _, _, kept) = render_with_param_change(setup, |_| {}, 8, 8);
+    let (_, _, _, turned) = render_with_param_change(
+        setup,
+        |p| (p.modal.ens_depth, p.modal.ens_rate, p.modal.ens_mix) = (1.0, 1.0, 0.0),
+        8,
+        8,
+    );
+    assert!(
+        kept.iter()
+            .zip(&turned)
+            .all(|(a, b)| a.to_bits() == b.to_bits()),
+        "ENS moved a sounding note"
+    );
+}
+
 #[test]
 fn test_string_structure_mid_note() {
     let (_, _, before, after) = render_with_param_change(
