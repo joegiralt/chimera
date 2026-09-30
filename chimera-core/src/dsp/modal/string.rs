@@ -249,26 +249,31 @@ impl KsString {
         }
     }
 
-    /// Bowed's two taps, `(loop, bow point)`: the loop's `delay` back and
-    /// the bow point `i + f` back, `2 <= i + f <= delay`, each through the
-    /// linear-phase 3-tap low-pass `c/2·(x[k−1] + x[k+1]) + (1 − c)·x[k]`
-    /// centred on it, so BRIGHT darkens both. Until `written` passes
-    /// `delay + 1`, the note's first pass, they follow the write unfiltered
-    /// (`ring_tap`, `ring_tap_at`).
+    /// Bowed's taps, `(loop, output's loop, output's bow point)`: the
+    /// loop's `delay` back and the bow point `i + f` back, `2 <= i + f <=
+    /// delay`, through the linear-phase 3-tap low-pass `c/2·(x[k−1] +
+    /// x[k+1]) + (1 − c)·x[k]` centred on each, `cl` in the loop and `co`
+    /// out. Until `written` passes `delay + 1`, the note's first pass,
+    /// they follow the write unfiltered (`ring_tap`, `ring_tap_at`).
     #[inline]
-    pub(super) fn bow_taps(&self, written: u32, c: f32, (i, f): (usize, f32)) -> (f32, f32) {
+    pub(super) fn bow_taps(
+        &self,
+        written: u32,
+        (cl, co): (f32, f32),
+        (i, f): (usize, f32),
+    ) -> (f32, f32, f32) {
         let d = self.delay;
         if written as usize <= d + 1 {
-            return (
-                self.ring_tap(written),
-                self.ring_tap_at(written, i as f32 + f),
-            );
+            let x = self.ring_tap(written);
+            return (x, x, self.ring_tap_at(written, i as f32 + f));
         }
-        let lp = |k: usize| {
+        let lp = |c: f32, k: usize| {
             c * 0.5 * (self.behind(k - 1) + self.behind(k + 1)) + (1.0 - c) * self.behind(k)
         };
-        let a = lp(i - 1);
-        (lp(d - 1), a + f * (lp(i) - a))
+        let x = lp(cl, d - 1);
+        let xo = if co == cl { x } else { lp(co, d - 1) };
+        let a = lp(co, i - 1);
+        (x, xo, a + f * (lp(co, i) - a))
     }
 
     /// Bowed's ring: stores `x` through the allpass, stepping on round it.

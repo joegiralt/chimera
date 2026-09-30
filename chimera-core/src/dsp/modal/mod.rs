@@ -129,10 +129,12 @@ struct BowedString {
     release: Release,
     /// The loop's smoothing.
     hair: BowHair,
+    /// BRIGHT's one-pole on the output.
+    tone: f32,
 }
 
 crate::in_place::field_list!(BowedString => BowedString {
-    string, force, force_to, lift, bow_vel, vel_scale, bowing, written, release, hair,
+    string, force, force_to, lift, bow_vel, vel_scale, bowing, written, release, hair, tone,
 });
 
 /// One pool slot (exclusive-state spec § 4.2): the seven strings a
@@ -603,7 +605,7 @@ impl ModalEngine {
                 // A re-strike sets the bow back on the string as it rings.
                 if !restrike {
                     b.string.clear();
-                    b.hair = BowHair::REST;
+                    (b.hair, b.tone) = (BowHair::REST, 0.0);
                     b.tune(freq, sample_rate);
                     b.force = bow_force(params.force, vel);
                     (b.bow_vel, b.written) = (params.speed * BOW_SPEED, 0);
@@ -914,6 +916,7 @@ impl BowedString {
             addr_of_mut!((*p).written).write(0);
             addr_of_mut!((*p).release).write(Release::HELD);
             addr_of_mut!((*p).hair).write(BowHair::REST);
+            addr_of_mut!((*p).tone).write(0.0);
             slot.assume_init_mut()
         }
     }
@@ -1279,10 +1282,26 @@ const BOW_POS_MIN: f32 = 0.03;
 /// stick-slip ran a period of two passes, an octave down (UAT 2026-09-30).
 const BOW_LOOPS: f32 = 2.0;
 
-/// A lifted bow's loop at `f0` Hz, `w` rad/sample: BRIGHT's low-pass and
+/// The bowed loop's low-pass side taps: INIT's BRIGHT's, fixed. BRIGHT in
+/// the loop sharpened the stick-slip's corner, darker read brighter.
+const BOW_LOOP_LP: f32 = BOW_LP * (1.0 - 0.3);
+/// BRIGHT under INIT's 0.3 closes the output's one-pole to this corner
+/// at 0, Hz.
+const BOW_DARK_HZ: f32 = 1000.0;
+
+/// A lifted bow's loop at `f0` Hz, `w` rad/sample: its low-pass and
 /// DAMP's gain, the low-pass's loss at f0 made up (`damped`).
 fn lifted(m: &Macros, (f0, w): (f32, f32)) -> (f32, LoopGain) {
-    damped(t60(m.damp), (BOW_LOOPS * f0, w), BOW_LP * (1.0 - m.bright))
+    damped(t60(m.damp), (BOW_LOOPS * f0, w), BOW_LOOP_LP)
+}
+
+/// BRIGHT on the bow's output: the taps' 3-tap low-pass, `BOW_LP·(1 −
+/// BRIGHT)` as the loop's was, and under INIT's 0.3 a one-pole whose pole
+/// runs from 0 there to `BOW_DARK_HZ`'s at 0: `(taps' c, one-pole a)`.
+fn bow_tone(bright: f32) -> (f32, f32) {
+    let open = (bright / 0.3).min(1.0);
+    let pole = libm::expf(-TAU * BOW_DARK_HZ / SAMPLE_RATE as f32) * (1.0 - open);
+    (BOW_LP * (1.0 - bright), 1.0 - pole)
 }
 
 /// The bow on its string: a half-length loop that inverts each pass
@@ -1300,10 +1319,11 @@ fn render_bowed(
 ) {
     // Lifted, DAMP's ring, which `Release::gain` never lets rise; bowed, the top.
     let (c, held) = if b.bowing {
-        (BOW_LP * (1.0 - m.bright), BOW_GAIN)
+        (BOW_LOOP_LP, BOW_GAIN)
     } else {
         lifted(m, (f0, w0))
     };
+    let (co, a) = bow_tone(m.bright);
     // The bow point a third of the half-loop from the tap at POS 1: its
     // comb nulls the 3rd, 9th and 15th partials, the string bowed a third
     // of the way along (the loop sounds odd partials only).
@@ -1321,9 +1341,15 @@ fn render_bowed(
         }
         let bow_vel = if b.force > 0.001 { b.bow_vel } else { 0.0 };
         let gain = b.release.gain(held);
-        let (x, y) = b.string.bow_taps(b.written, c, point);
+        let (x, xo, y) = b.string.bow_taps(b.written, (c, co), point);
         // The bow point's nulls, heard: outside the loop, so the pitch holds.
-        *s = x + comb * (y - x);
+        let out = xo + comb * (y - xo);
+        b.tone = if a < 1.0 {
+            b.tone + a * (out - b.tone)
+        } else {
+            out
+        };
+        *s = b.tone;
         // Stick-slip: a small |Δv| sticks (energy in), a large one slips.
         let friction = b.force * 4.0 * libm::tanhf((bow_vel - x) * 8.0);
         // Inverted each pass: two passes a period. Bounded: `x` under a

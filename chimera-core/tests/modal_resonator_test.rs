@@ -1352,10 +1352,10 @@ fn bowed_pos_moves_the_tone_not_the_pitch() {
     }
 }
 
-/// BRIGHT low-passes the loop and both taps: 0 against 1 moves harmonics
-/// 8 to 24 by 3 dB or more, and the fundamental under 2 cents. The
-/// darker loop makes the stick-slip's corner sharper, so BRIGHT 0 reads
-/// 4.5 dB brighter there (ADR 0064).
+/// BRIGHT is the output's low-pass on both taps, the loop's fixed at
+/// INIT's: 0 against 1 takes 3 dB or more off harmonics 8 to 24, and
+/// moves the fundamental under 2 cents. In the loop it sharpened the
+/// stick-slip's corner, and BRIGHT 0 read 4.5 dB brighter.
 #[test]
 fn bowed_bright_is_heard() {
     let blocks = 3 * SR as usize / BLOCK_SIZE / 2;
@@ -1376,7 +1376,7 @@ fn bowed_bright_is_heard() {
     };
     let db = 10.0 * (upper(dark) / upper(bright)).log10();
     eprintln!("BRIGHT 0 against 1: harmonics 8–24 {db:+.2} dB");
-    assert!(db.abs() >= 3.0, "harmonics 8–24: {db:+.2} dB");
+    assert!(db <= -3.0, "harmonics 8–24: {db:+.2} dB");
     let (fd, fb) = (
         fundamental_hz(dark, f0 as f64),
         fundamental_hz(bright, f0 as f64),
@@ -1607,8 +1607,8 @@ fn force_and_speed_move_the_bows_tone() {
 }
 
 /// `force_and_speed_move_the_bows_tone`'s floor, under the one-loop bow's
-/// least, 0.020 (SPEED at G1, ADR 0064).
-const BOW_SHAPE: f32 = 0.015;
+/// least, 0.0087 (SPEED at C6, POS 0, ADR 0064).
+const BOW_SHAPE: f32 = 0.008;
 
 /// DAMP is the ring after the lift at every note: at C4 and C6 DAMP 1's
 /// tail, 0.3–0.6 s after note-off, is 10 dB or more above DAMP 0.5's. The
