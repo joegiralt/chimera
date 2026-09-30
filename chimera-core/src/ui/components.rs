@@ -7,10 +7,9 @@ use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::Rgb565;
 
 use crate::addr::BlockRef;
-use crate::dsp::modal::{EXCITER_NAMES, ResonatorMode};
+use crate::dsp::modal::{EXCITER_NAMES, ModalPage, ResonatorMode};
 use crate::ui::PrimeStatus;
 use crate::ui::block_def::{BlockDef, SlotBinding};
-use crate::ui::block_registry::MODAL_EXC;
 use crate::ui::chain::{ChainId, ChainNav};
 use crate::ui::draw;
 use crate::ui::fmt::FmtBuf;
@@ -32,13 +31,20 @@ fn edits_part(def: &BlockDef) -> bool {
         .any(|s| matches!(s.binding, SlotBinding::Param(a) if a.block == BlockRef::Part))
 }
 
+/// Whether `def`'s cells are the exciter's (EXC): its name is the exciter's.
+fn is_exciter(def: &BlockDef) -> bool {
+    def.params
+        .iter()
+        .any(|s| matches!(s.binding, SlotBinding::ModalPanel(ModalPage::Exciter, _)))
+}
+
 /// Header context label and page name: `PART 1` `FILTER`; on the Mixer
 /// chain `MIXER` and the page, numbered when it edits that Part (`PART 2`,
-/// `SENDS 2`; the FX are shared, so `CHORUS`). EXC is named after
-/// `model`'s exciter.
+/// `SENDS 2`; the FX are shared, so `CHORUS`). A page of the exciter's
+/// cells is named after `model`'s exciter (PLUCK, STRIKE, BOW).
 pub fn header_text(nav: &ChainNav, def: &BlockDef, model: ResonatorMode) -> (FmtBuf, FmtBuf) {
     let mut context = FmtBuf::new();
-    let mut name = if def.id == MODAL_EXC.id {
+    let mut name = if is_exciter(def) {
         upper(EXCITER_NAMES[model as usize])
     } else {
         upper(def.name)

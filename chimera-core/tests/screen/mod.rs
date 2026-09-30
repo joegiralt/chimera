@@ -223,11 +223,7 @@ pub fn to_pitch(ui: &mut UiState, engine: EngineType) {
         EngineType::Algo => &ALGO_CHAIN,
         EngineType::Modal => &MODAL_PLUCK_CHAIN,
     };
-    let node = chain
-        .blocks
-        .iter()
-        .position(|b| b.sub_pages.iter().any(|d| d.id == PITCH.id))
-        .expect("PIT is a sub-page of the engine's node");
+    let node = chain.engine_node();
     plus(ui, node);
     let n = chain.blocks[node]
         .sub_pages

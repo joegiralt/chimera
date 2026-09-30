@@ -1076,7 +1076,7 @@ This is the only task that touches hardware. Run it with the owner, on one combi
   - `MDL STR`, `MDL STR+`, `MDL BOW`, `MDL SYM` (1–4 notes and flat past 4), `MDL SYM+`, `MDL RES`, `MDL RES48`, `SWITCH`.
   - Task 13's rows: `MDL BOW` again, now with the velocity scaling, POS's tap and BRIGHT's low-pass, and `MDL BOW+` (FORCE 1, SPEED 1, LFO 1 on BRIGHT, DAMP and POS).
   - `SYM NOTE-ON` and `SYM NOTE-ON LOW`, which grew with the 1,016-sample line.
-  - `PLUCK DARK` (Task 13): a G1 STRING note-on at COLOR 0 and its first block. If it overruns a block beside eight voices, file an issue.
+  - `DARK NOTE+BLOCK` (Task 13, was `PLUCK DARK`): a G1 STRING note-on at COLOR 0 and its first block. If it overruns a block beside eight voices, file an issue. `DARK +6 PASSES` is the passes alone.
   - The MEMORY screen's `Voice`, `MODAL` and `SYM POOL`, and D2 left.
 - [ ] **Step 3: Listen, by ear, with the owner.** Check:
   - (a) Each model at G1, C4 and C6: in tune, and STRING distinct from Bowed.

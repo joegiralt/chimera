@@ -265,6 +265,16 @@ pub struct ChainDef2 {
 }
 
 impl ChainDef2 {
+    /// The engine's node: the one PIT hangs under (ADR 0042); the first
+    /// on a chain without it.
+    pub fn engine_node(&self) -> usize {
+        let pitch = crate::ui::block_registry::PITCH.id;
+        self.blocks
+            .iter()
+            .position(|b| b.sub_pages.iter().any(|d| d.id == pitch))
+            .unwrap_or(0)
+    }
+
     pub fn block_at(&self, node: usize) -> Option<&'static ChainBlock> {
         self.blocks.get(node)
     }
