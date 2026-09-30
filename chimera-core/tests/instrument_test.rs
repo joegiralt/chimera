@@ -694,8 +694,9 @@ fn the_costliest_patch_plays_six_voices_on_rev_v() {
 /// before.
 const GOLDENS: &[(&str, u64)] = &[
     ("poly_chord", 0xce89c7392b38b671), // ADR 0049 INIT, then the ADR 0050 output trim
-    // Re-recorded: Modal 2 step A, then ADR 0058's gain, then Task 18's DAMP make-up.
-    ("two_parts_two_pairs", 0x918bcbbfbfe68dba),
+    // Re-recorded: Modal 2 step A, then ADR 0058's gain, then Task 18's DAMP make-up,
+    // then the free ring on release (ADR 0062).
+    ("two_parts_two_pairs", 0x112b0da75fb8dded),
     ("reverb_send_off", 0x75803502320f25a9), // ADR 0049 INIT, then the ADR 0050 output trim
     ("reverb_send_on", 0x3c9c4253aa728bf6),  // ADR 0049 INIT, then the ADR 0050 output trim
     ("six_voice_chord", 0xb3bb31dbc471cf01), // ADR 0049 INIT, then the ADR 0050 output trim
@@ -708,8 +709,9 @@ const GOLDENS: &[(&str, u64)] = &[
 const PRE_LIMITER: &[(&str, u64)] = &[
     ("poly_chord", 0xcbcd9d3ad016a669),
     // Re-recorded: Modal 2 step A's resonators (spec § Tests), then ADR 0058's gain,
-    // then Task 18's DAMP make-up.
-    ("two_parts_two_pairs", 0xfbdd64262e05e9ef),
+    // then Task 18's DAMP make-up,
+    // then the free ring on release (ADR 0062).
+    ("two_parts_two_pairs", 0x68a55d50f75842bf),
     ("reverb_send_off", 0x5faf493c39dce385),
     ("reverb_send_on", 0xe12fdbbcf4c02124),
     ("six_voice_chord", 0x5efd58ea3b91d3bd),

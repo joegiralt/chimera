@@ -80,8 +80,6 @@ pub fn damped(t60_s: f32, (freq_hz, w): (f32, f32), lp: f32) -> (f32, LoopGain) 
 
 /// A note-off's ramp, in samples: 5 ms.
 pub const RELEASE_SAMPLES: u32 = 240;
-/// Seconds, a released string's ring.
-pub const RELEASE_T60: f32 = 0.12;
 
 /// A note-off's ramp from the held gain to the released one, a sample at a
 /// time. Unstarted, it passes the held gain.
@@ -99,17 +97,6 @@ impl Release {
         from: LoopGain::MAX,
         to: LoopGain::MAX,
     };
-
-    /// Ramps from `from` to `to`, never up: a second note-off ramps on
-    /// from where the first has got to.
-    pub fn start(&mut self, from: LoopGain, to: LoopGain) {
-        let from = from.min(LoopGain(self.now()));
-        *self = Self {
-            left: RELEASE_SAMPLES,
-            from: from.get(),
-            to: to.min(from).get(),
-        };
-    }
 
     /// Ramps from `from` to `to`, up or down: a lifted bow's loop, linear
     /// once the bow is off, rings on DAMP's gain whatever the bowed loss.
@@ -143,11 +130,6 @@ impl Release {
     /// Not ramping.
     pub fn idle(&self) -> bool {
         self.left == 0
-    }
-
-    /// Samples of ramp left.
-    pub fn left(&self) -> usize {
-        self.left as usize
     }
 }
 
@@ -295,51 +277,6 @@ mod tests {
                     assert!(at(0.0) < 1.0, "{hz} {t60} {lp}: {}", at(0.0));
                 }
             }
-        }
-    }
-
-    #[test]
-    fn release_ramps_then_never_gives_the_gain_back() {
-        let (held, to) = (LoopGain::new(0.999), LoopGain::new(0.9));
-        let mut r = Release::HELD;
-        assert!(r.idle());
-        assert_eq!(r.gain(held), held);
-        r.start(held, to);
-        let ramp: [f32; RELEASE_SAMPLES as usize] = core::array::from_fn(|_| r.gain(held).get());
-        assert_eq!(ramp[0], held.get());
-        assert!(ramp.windows(2).all(|w| w[1] < w[0]), "falls every sample");
-        let step = (held.get() - to.get()) / RELEASE_SAMPLES as f32;
-        assert!((ramp[RELEASE_SAMPLES as usize - 1] - (to.get() + step)).abs() < 1e-6);
-        assert!(r.idle());
-        // DAMP at its top: still `to`. Below it: the held gain.
-        assert_eq!(r.gain(LoopGain::new(1.0)), to);
-        assert_eq!(r.gain(LoopGain::new(0.5)).get(), 0.5);
-    }
-
-    #[test]
-    fn a_second_note_off_never_gives_the_gain_back() {
-        let (held, to) = (LoopGain::new(0.999), LoopGain::new(0.9));
-        let mut r = Release::HELD;
-        r.start(held, to);
-        for _ in 0..RELEASE_SAMPLES / 2 {
-            r.gain(held);
-        }
-        let mid = r.gain(held).get();
-        r.start(held, to);
-        assert!(r.gain(held).get() <= mid);
-        for _ in 0..RELEASE_SAMPLES {
-            r.gain(held);
-        }
-        r.start(held, to);
-        assert_eq!(r.gain(held), to);
-    }
-
-    #[test]
-    fn a_release_never_ramps_up() {
-        let mut r = Release::HELD;
-        r.start(LoopGain::new(0.9), LoopGain::new(0.99));
-        for _ in 0..=RELEASE_SAMPLES {
-            assert_eq!(r.gain(LoopGain::new(0.9)).get(), 0.9);
         }
     }
 }

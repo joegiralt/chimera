@@ -34,9 +34,10 @@ fn modal(mode: ResonatorMode) -> ParamSnapshot {
     p
 }
 
-/// Blocks a released Sympathetic note may ring: its halo gets no release
-/// (ADR 0054), about 30 s at the default DAMP.
-const HALO_RINGS: usize = 30 * chimera_hal::SAMPLE_RATE as usize / BLOCK_SIZE;
+/// Blocks a released Sympathetic note may ring: neither its main string
+/// nor its halo gets a release (ADR 0054, 0062), about 40 s at the default
+/// DAMP.
+const HALO_RINGS: usize = 60 * chimera_hal::SAMPLE_RATE as usize / BLOCK_SIZE;
 
 fn sym() -> ParamSnapshot {
     modal(ResonatorMode::Sympathetic)
