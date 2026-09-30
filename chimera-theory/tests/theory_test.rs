@@ -1,6 +1,6 @@
 use chimera_theory::{
-    Chord, Degree, Interval, Key, Note, PitchClass, Quality, Scale, SnapTo, Stack, TABLE_BYTES,
-    TIE, Tie, snap,
+    Chord, Degree, Interval, Key, Note, PcSet, PitchClass, Quality, Scale, SnapTo, Stack,
+    TABLE_BYTES, TIE, Tie, snap,
 };
 
 fn n(x: u8) -> Note {
@@ -96,20 +96,37 @@ fn heptatonic_degrees_name_exact_chords() {
             for st in [Stack::Triad, Stack::Seventh] {
                 let c = Key::new(PitchClass::D, s).chord(d, st);
                 let want = if st == Stack::Triad { 3 } else { 4 };
-                assert_eq!(c.quality().tones().len(), want, "{s:?} {d:?}");
+                assert_eq!(c.tones().len(), want, "{s:?} {d:?}");
+                let l = c.label();
+                assert!(l.is_exact(), "{s:?} {d:?}");
+                assert_eq!(l.root(), c.root(), "{s:?} {d:?}");
+                assert_eq!(l.bass(), c.root(), "{s:?} {d:?}");
             }
         }
     }
 }
 
 #[test]
-fn pentatonic_stacks_every_other_note() {
+fn pentatonic_stacks_keep_exact_tones() {
     // A C D E G, every other note: I = A D G, II = C E A, III = D G C.
-    // Quartal stacks take the nearest quality.
-    let a = Key::new(PitchClass::A, Scale::PENTATONIC_MINOR);
-    assert_eq!(name(a.chord(Degree::I, Stack::Triad)), "A7sus4");
-    assert_eq!(name(a.chord(Degree::II, Stack::Triad)), "C6");
-    assert_eq!(name(a.chord(Degree::III, Stack::Triad)), "D7sus4");
+    use PitchClass::*;
+    let a = Key::new(A, Scale::PENTATONIC_MINOR);
+    let i = a.chord(Degree::I, Stack::Triad);
+    assert_eq!(i.root(), A);
+    assert_eq!(i.tones(), PcSet::of(&[A, D, G]));
+    assert_eq!(i.tones().iter().collect::<Vec<_>>(), [D, G, A]);
+    for x in 0..=127 {
+        let pc = snap(n(x), SnapTo::Chord(i)).pc();
+        assert!([A, D, G].contains(&pc), "{x}: {pc}");
+    }
+    assert_eq!(name(i), "Dsus4/A");
+    assert_eq!(name(a.chord(Degree::II, Stack::Triad)), "Am/C");
+    assert_eq!(name(a.chord(Degree::III, Stack::Triad)), "Gsus4/D");
+    assert_eq!(
+        format!("{}", a.degree_label(Degree::I, Stack::Triad)),
+        "I?",
+        "no quality on the degree's own note"
+    );
     assert_eq!(
         a.chord(Degree::VI, Stack::Triad),
         a.chord(Degree::I, Stack::Triad),
@@ -144,16 +161,18 @@ fn custom_forces_the_root_and_drops_high_bits() {
 #[test]
 fn custom_two_note_set() {
     // Root and fifth on C: every degree lands on C or G.
+    // Every other note of two wraps onto itself: one-tone stacks.
     let c = Key::new(PitchClass::C, Scale::custom(1 << 7));
     assert_eq!(c.degree_count(), 2);
     assert_eq!(
-        c.chord(Degree::I, Stack::Triad),
-        Chord::new(PitchClass::C, Quality::Maj)
+        c.chord(Degree::I, Stack::Triad).tones(),
+        PcSet::of(&[PitchClass::C])
     );
     assert_eq!(
-        c.chord(Degree::II, Stack::Triad),
-        Chord::new(PitchClass::G, Quality::Maj)
+        c.chord(Degree::II, Stack::Triad).tones(),
+        PcSet::of(&[PitchClass::G])
     );
+    assert!(!c.chord(Degree::I, Stack::Triad).label().is_exact());
     assert_eq!(c.chord(Degree::III, Stack::Seventh).root(), PitchClass::C);
     assert_eq!(c.chord(Degree::IV, Stack::Seventh).root(), PitchClass::G);
 }
@@ -216,13 +235,13 @@ fn numerals_follow_quality() {
 }
 
 #[test]
-fn chord_tones_are_derived() {
+fn a_quality_chord_holds_its_tones() {
     let e7 = Chord::new(PitchClass::E, Quality::Dom7);
     assert_eq!(name(e7), "E7");
-    let tones: Vec<_> = e7.tones().collect();
+    let tones: Vec<_> = e7.tones().iter().collect();
     assert_eq!(
         tones,
-        [PitchClass::E, PitchClass::Gs, PitchClass::B, PitchClass::D]
+        [PitchClass::D, PitchClass::E, PitchClass::Gs, PitchClass::B]
     );
     for q in Quality::ALL {
         let t = q.tones().len();
@@ -231,36 +250,131 @@ fn chord_tones_are_derived() {
 }
 
 #[test]
-fn played_chords_map_to_the_nearest_quality() {
-    let e7 = Chord::new(PitchClass::E, Quality::Dom7);
+fn played_chords_keep_their_tones() {
+    use PitchClass::*;
+    let e7 = Chord::new(E, Quality::Dom7);
     // Any voicing over an E bass: E B D G#.
     assert_eq!(Chord::from_notes(&[n(52), n(59), n(62), n(68)]), Some(e7));
-    // The root is the lowest note, as played.
-    assert_eq!(
-        Chord::from_notes(&[n(56), n(59), n(62), n(64)]).map(|c| c.root()),
-        Some(PitchClass::Gs)
-    );
+    // The lowest note is the bass; the label finds the root.
+    let over_gs = Chord::from_notes(&[n(56), n(59), n(62), n(64)]).unwrap();
+    assert_eq!(over_gs.root(), Gs);
+    assert_eq!(over_gs.tones(), e7.tones());
+    assert_eq!(name(over_gs), "E7/G#");
     assert_eq!(
         Chord::from_notes(&[n(62), n(67), n(69)]),
-        Some(Chord::new(PitchClass::D, Quality::Sus4))
+        Some(Chord::new(D, Quality::Sus4))
     );
     // Octave doublings collapse.
     assert_eq!(
         Chord::from_notes(&[n(48), n(60), n(64), n(67), n(72)]),
-        Some(Chord::new(PitchClass::C, Quality::Maj))
+        Some(Chord::new(C, Quality::Maj))
     );
-    // Two classes: a fifth reads as a major triad on the bass.
-    assert_eq!(
-        Chord::from_notes(&[n(57), n(64)]),
-        Some(Chord::new(PitchClass::A, Quality::Maj))
-    );
+    // Two classes stay two: a bare fifth has no exact name.
+    let fifth = Chord::from_notes(&[n(57), n(64)]).unwrap();
+    assert_eq!(fifth.tones(), PcSet::of(&[A, E]));
+    assert!(!fifth.label().is_exact());
     // Under two classes: nothing.
     assert_eq!(Chord::from_notes(&[]), None);
     assert_eq!(Chord::from_notes(&[n(60)]), None);
     assert_eq!(Chord::from_notes(&[n(48), n(60), n(72)]), None);
-    // A cluster still gives a chord on its bass.
+}
+
+#[test]
+fn c_e_a_reads_a_minor_over_c_and_snaps_to_its_own_tones() {
+    use PitchClass::*;
+    let c = Chord::from_notes(&[n(60), n(64), n(69)]).unwrap();
+    assert_eq!(c.root(), C);
+    assert_eq!(c.tones(), PcSet::of(&[C, E, A]));
+    let l = c.label();
+    assert!(l.is_exact());
+    assert_eq!((l.root(), l.quality(), l.bass()), (A, Quality::Min, C));
+    assert_eq!(name(c), "Am/C");
+    for x in 0..=127 {
+        let pc = snap(n(x), SnapTo::Chord(c)).pc();
+        assert!([C, E, A].contains(&pc), "{x}: {pc}");
+    }
+    // G is 3 from E and 2 from A; a C6 would have kept it.
+    assert_eq!(snap(n(67), SnapTo::Chord(c)), n(69));
+}
+
+#[test]
+fn every_quality_names_itself_in_every_inversion() {
+    for q in Quality::ALL {
+        let bare = format!("{}", Chord::new(PitchClass::C, q));
+        let suffix = &bare[1..];
+        for r in PitchClass::ALL {
+            let chord = Chord::new(r, q);
+            for t in chord.tones().iter() {
+                let inv = chord.over(t).unwrap();
+                assert_eq!(inv.tones(), chord.tones());
+                let want = if t == r {
+                    format!("{r}{suffix}")
+                } else {
+                    format!("{r}{suffix}/{t}")
+                };
+                assert_eq!(name(inv), want, "{q:?} on {r} over {t}");
+                assert!(inv.label().is_exact());
+            }
+        }
+    }
+    let c = Chord::new(PitchClass::C, Quality::Maj);
+    assert_eq!(c.over(PitchClass::D), None, "the bass is a chord tone");
+}
+
+#[test]
+fn played_inversions_name_the_quality() {
+    // Played, only the notes are known: sets two qualities share (C6 and
+    // Am7, Csus2 and Gsus4, aug, dim7) read as the first match from the
+    // bass. Every other quality reads as itself over its bass.
+    let shared = |set: PcSet| {
+        Quality::ALL
+            .iter()
+            .flat_map(|&q| PitchClass::ALL.map(|r| Chord::new(r, q)))
+            .filter(|c| c.tones() == set)
+            .count()
+            > 1
+    };
+    for q in Quality::ALL {
+        let bare = format!("{}", Chord::new(PitchClass::C, q));
+        let suffix = &bare[1..];
+        for r in PitchClass::ALL {
+            let tones: Vec<_> = Chord::new(r, q).tones().iter().collect();
+            for &bass in &tones {
+                let notes: Vec<Note> = core::iter::once(n(36 + bass as u8))
+                    .chain(tones.iter().map(|&p| n(48 + p as u8)))
+                    .collect();
+                let c = Chord::from_notes(&notes).unwrap();
+                let l = c.label();
+                assert!(l.is_exact(), "{q:?} on {r} over {bass}");
+                assert_eq!(l.bass(), bass);
+                if !shared(c.tones()) {
+                    let want = if bass == r {
+                        format!("{r}{suffix}")
+                    } else {
+                        format!("{r}{suffix}/{bass}")
+                    };
+                    assert_eq!(name(c), want);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn a_cluster_gets_the_nearest_name_marked() {
     let c = Chord::from_notes(&[n(60), n(61), n(62)]).unwrap();
     assert_eq!(c.root(), PitchClass::C);
+    assert_eq!(
+        c.tones(),
+        PcSet::of(&[PitchClass::C, PitchClass::Cs, PitchClass::D])
+    );
+    let l = c.label();
+    assert!(!l.is_exact());
+    assert!(name(c).ends_with('?'), "{}", name(c));
+    // Snapping still uses the three played tones.
+    for x in 0..=127 {
+        assert!(c.contains(snap(n(x), SnapTo::Chord(c)).pc()));
+    }
 }
 
 #[test]
@@ -340,7 +454,9 @@ fn snap_is_pinned_to_brute_force() {
                     .map(|&q| SnapTo::Chord(Chord::new(p, q))),
             );
             for mask in [0, 1 << 7, 0b10_1001_0101, 0xFFF, 0b1111_0000_0000] {
-                sets.push(SnapTo::Scale(Key::new(p, Scale::custom(mask))));
+                let key = Key::new(p, Scale::custom(mask));
+                sets.push(SnapTo::Scale(key));
+                sets.push(SnapTo::Chord(key.chord(Degree::II, Stack::Seventh)));
             }
             for to in sets {
                 assert_eq!(snap(n(x), to).get(), brute(x, to), "{x} {to:?}");
