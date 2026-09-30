@@ -47,7 +47,7 @@ use crate::hw::{Cost, SAMPLE_RATE};
 use crate::in_place::{in_place_enum, uninit_at};
 use crate::sym_alloc::{Lease, SYM_SLOTS, SymAlloc, SymSlot};
 use crate::voice_alloc::VoiceIdx;
-use loop_parts::{DcBlocker, LoopGain};
+use loop_parts::{DcBlocker, LoopGain, RELEASE_SAMPLES, RELEASE_T60};
 use rings::{CosineOsc, Svf, stiffness_from_structure};
 use string::{FRESH_CLEAR_BYTES, KsRenderParams, KsString, RING_BYTES, loop_at, lp_coeff};
 
@@ -94,9 +94,13 @@ crate::in_place::field_list!(ModalBank => ModalBank {
 struct BowedString {
     string: KsString,
     force: f32,
+    /// The force `force` slews to: the note-on's, then 0 at note-off.
+    force_to: f32,
+    /// Samples pushed since note-on, for `KsString::ring_tap`.
+    written: u32,
 }
 
-crate::in_place::field_list!(BowedString => BowedString { string, force });
+crate::in_place::field_list!(BowedString => BowedString { string, force, force_to, written });
 
 /// One pool slot (exclusive-state spec § 4.2): the seven strings a
 /// Sympathetic note's main string sets ringing. The main string is the
@@ -248,7 +252,6 @@ pub struct ModalEngine {
     /// strings are tuned to.
     pitch: f32,
     tuned: f32,
-    released: bool, // true after note_off
     active: bool,
     silence_counter: u32,
     /// On a string model's output, not in its loop, where its phase would
@@ -261,11 +264,11 @@ pub struct ModalEngine {
 }
 
 crate::in_place::field_list!(ModalEngine => ModalEngine {
-    model, frequency, pitch, tuned, released, active, silence_counter, dc, macros, shape_pending,
+    model, frequency, pitch, tuned, active, silence_counter, dc, macros, shape_pending,
 });
 
 // A `ModalEngine` is its largest model plus the fields every model shares
-// (`frequency`, `pitch`, `tuned`, `released`, `active`, `silence_counter`,
+// (`frequency`, `pitch`, `tuned`, `active`, `silence_counter`,
 // `dc`, `macros`, `shape_pending`), never the sum of models. The slot's
 // tag takes one align (`in_place_enum!`).
 const fn models_are_exclusive() -> bool {
@@ -285,7 +288,7 @@ const fn models_are_exclusive() -> bool {
         i += 1;
     }
     let align = align_of::<ModalEngine>();
-    let shared = size_of::<(f32, f32, f32, bool, bool, u32, DcBlocker, Macros, bool)>();
+    let shared = size_of::<(f32, f32, f32, bool, u32, DcBlocker, Macros, bool)>();
     size_of::<ModalEngine>()
         <= (largest.next_multiple_of(align) + align + shared).next_multiple_of(align)
 }
@@ -372,7 +375,6 @@ impl ModalEngine {
             addr_of_mut!((*p).frequency).write(220.0 / 48000.0);
             addr_of_mut!((*p).pitch).write(1.0);
             addr_of_mut!((*p).tuned).write(1.0);
-            addr_of_mut!((*p).released).write(false);
             addr_of_mut!((*p).active).write(false);
             addr_of_mut!((*p).silence_counter).write(0);
             addr_of_mut!((*p).dc).write(DcBlocker::new(SAMPLE_RATE));
@@ -454,6 +456,8 @@ impl ModalEngine {
                 b.string.clear();
                 b.string.tune(freq, sample_rate);
                 b.force = vel * BOW_FORCE;
+                b.force_to = b.force;
+                b.written = 0;
             }
             ModelSlot::Sympathetic(v) => {
                 v.main
@@ -476,7 +480,6 @@ impl ModalEngine {
         self.shape_pending = true;
         self.dc.reset();
         self.active = true;
-        self.released = false;
         self.silence_counter = 0;
     }
 
@@ -501,26 +504,28 @@ impl ModalEngine {
         }
     }
 
+    /// The strings' loop gains ramp to a `RELEASE_T60` ring over
+    /// `RELEASE_SAMPLES`, the halo's to twice it; the bow lifts as fast.
+    /// Nothing scales a buffer (#51). The bank rings on.
     pub fn note_off(&mut self, pool: &mut SymPool) {
-        self.released = true;
+        // As `render` rings them: f0 in Hz, T60 from the eased DAMP.
+        let f0 = self.pitched(self.frequency) * SAMPLE_RATE as f32;
+        let held = t60(self.macros.damp);
+        let release = |s: &mut KsString, scale: f32, f: f32| {
+            s.release(
+                LoopGain::from_t60(scale * held, f),
+                LoopGain::from_t60(scale * RELEASE_T60, f),
+            );
+        };
         match &mut self.model {
-            ModelSlot::String(string) => {
-                // Dampen the buffer heavily
-                string.damp(3);
-            }
-            ModelSlot::Bowed(b) => {
-                // Stop the bow — zero exciter, heavily dampen string
-                b.force = 0.0;
-                b.string.damp(5);
-            }
+            ModelSlot::String(string) => release(string, 1.0, f0),
+            ModelSlot::Bowed(b) => b.force_to = 0.0,
             ModelSlot::Bank(_) => {}
             ModelSlot::Sympathetic(m) => {
-                m.main.damp(1);
+                release(&mut m.main, 1.0, f0);
                 if let Some(set) = pool.halo(&m.halo) {
-                    for (sym, pending) in set.strings.iter_mut().zip(&mut set.pending) {
-                        sym.damp(1);
-                        // Its write position's sample, were it stored.
-                        *pending *= 0.2;
+                    for (sym, r) in set.strings.iter_mut().zip(set.ratios) {
+                        release(sym, HALO_T60, f0 * r);
                     }
                 }
             }
@@ -587,23 +592,17 @@ impl ModalEngine {
                 bank.burst_remaining > 0
             }
             ModelSlot::String(string) => {
-                render_string(string, output, params, &m, f0, self.released);
+                render_string(string, output, params, &m, f0);
                 false
             }
             ModelSlot::Bowed(b) => {
                 render_bowed(b, output);
-                false
+                // Never freed while bowed, however low its note (#206).
+                b.force > 0.0
             }
             ModelSlot::Sympathetic(v) => {
                 let v = &mut **v;
-                render_sympathetic(
-                    &mut v.main,
-                    pool.halo(&v.halo),
-                    output,
-                    (params, &m),
-                    f0,
-                    self.released,
-                );
+                render_sympathetic(&mut v.main, pool.halo(&v.halo), output, (params, &m), f0);
                 false
             }
         };
@@ -712,10 +711,12 @@ impl BowedString {
     fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
         let p = slot.as_mut_ptr();
         // SAFETY: `p` is valid and unaliased; the string is built in place
-        // and `force` written by value, before `assume_init_mut`.
+        // and the rest written by value, before `assume_init_mut`.
         unsafe {
             KsString::init_in_place(uninit_at(addr_of_mut!((*p).string)));
             addr_of_mut!((*p).force).write(0.0);
+            addr_of_mut!((*p).force_to).write(0.0);
+            addr_of_mut!((*p).written).write(0);
             slot.assume_init_mut()
         }
     }
@@ -878,42 +879,24 @@ fn render_string(
     params: &ModalParams,
     m: &Macros,
     f0: f32,
-    released: bool,
 ) {
-    let p = main_string((params, m), (m.structure, params.ens_rate), f0, released);
+    let p = main_string((params, m), (m.structure, params.ens_rate), f0);
     for s in output.iter_mut() {
         *s = string.tick_full(&p);
     }
 }
 
-/// A released loop's gain, interim until Task 7's release: the old DECAY
-/// law at 0.8 or more (`scale` ½ on the halo), never above the held gain.
-/// `1 − damp` stands in for the old DECAY here only: since
-/// `damp_from_v1_decay` it no longer equals it.
-fn release_gain(held: LoopGain, damp: f32, scale: f32) -> LoopGain {
-    held.min(LoopGain::new(
-        0.999 - 0.009 * scale * 0.8_f32.max(1.0 - damp),
-    ))
-}
-
 /// The block's STRING or SYMP main string at `f0` Hz, with its own
-/// stiffness and ensemble rate.
+/// stiffness and ensemble rate: its held gain, which a release caps.
 fn main_string(
     (params, m): (&ModalParams, &Macros),
     (stiffness, ens_rate): (f32, f32),
     f0: f32,
-    released: bool,
 ) -> KsRenderParams {
-    let held = LoopGain::from_t60(t60(m.damp), f0);
-    let (body, stiffness, gain) = if released {
-        (0.0, 0.0, release_gain(held, m.damp, 1.0))
-    } else {
-        (params.body, stiffness, held)
-    };
     KsRenderParams {
         lp: lp_coeff(m.bright),
-        gain,
-        body,
+        gain: LoopGain::from_t60(t60(m.damp), f0),
+        body: params.body,
         stiffness,
         ens_rate,
         ens_depth: params.ens_depth,
@@ -924,25 +907,33 @@ fn main_string(
 /// Bowed's hidden bow, until step B's exciter.
 const BOW_VELOCITY: f32 = 0.5;
 const BOW_FORCE: f32 = 0.5;
+/// The bow lifts a full force in `RELEASE_SAMPLES`, a softer one sooner.
+const BOW_LIFT: f32 = BOW_FORCE / RELEASE_SAMPLES as f32;
+
+/// Each halo string's T60 over the main string's, held and released.
+const HALO_T60: f32 = 2.0;
 
 /// SYMP's main string's ensemble rate: ENS RATE is STRING's alone.
 const SYMP_ENS_RATE: f32 = 0.3;
 
 fn render_bowed(b: &mut BowedString, output: &mut [f32; BLOCK_SIZE]) {
-    let (string, exciter_amp) = (&mut b.string, b.force);
-    let bow_vel = if exciter_amp > 0.001 {
-        BOW_VELOCITY * 0.3
-    } else {
-        0.0
-    };
-    let bow_force = exciter_amp * 4.0;
-    // When bow is released, apply decay
-    let release_decay = if exciter_amp < 0.001 { 0.995 } else { 1.0 };
-    let gain = LoopGain::new(0.9995 * release_decay);
-
     for s in output.iter_mut() {
+        if b.force > b.force_to {
+            b.force = (b.force - BOW_LIFT).max(b.force_to);
+        }
+        let exciter_amp = b.force;
+        let bow_vel = if exciter_amp > 0.001 {
+            BOW_VELOCITY * 0.3
+        } else {
+            0.0
+        };
+        let bow_force = exciter_amp * 4.0;
+        // When bow is released, apply decay
+        let release_decay = if exciter_amp < 0.001 { 0.995 } else { 1.0 };
+        let gain = LoopGain::new(0.9995 * release_decay);
+
         // Read from delay line
-        let string_vel = string.ring_tap();
+        let string_vel = b.string.ring_tap(b.written);
 
         // Bow friction: stick-slip model.
         // When |delta_v| is small, bow sticks (high friction → energy in).
@@ -955,7 +946,8 @@ fn render_bowed(b: &mut BowedString, output: &mut [f32; BLOCK_SIZE]) {
         // Soft-limit to prevent blowup
         let clamped = libm::tanhf(feedback);
 
-        string.ring_push(clamped);
+        b.string.ring_push(clamped);
+        b.written = b.written.saturating_add(1);
 
         *s = string_vel;
     }
@@ -969,10 +961,9 @@ fn render_sympathetic(
     output: &mut [f32; BLOCK_SIZE],
     (params, m): (&ModalParams, &Macros),
     f0: f32,
-    released: bool,
 ) {
     // STRUCTURE tunes the halo only: the main string has no stiffness.
-    let main_params = main_string((params, m), (0.0, SYMP_ENS_RATE), f0, released);
+    let main_params = main_string((params, m), (0.0, SYMP_ENS_RATE), f0);
     let coupling = 0.1 * params.couple;
     let level = 0.6 * params.halo;
 
@@ -984,17 +975,10 @@ fn render_sympathetic(
     };
     // Each halo string rings twice the main one's T60, no darker.
     let lp = lp_coeff(halo_bright(m.bright));
-    let halo_t60 = 2.0 * t60(m.damp);
+    let halo_t60 = HALO_T60 * t60(m.damp);
     let halo = set.ratios.map(|r| KsRenderParams {
         lp,
-        gain: {
-            let held = LoopGain::from_t60(halo_t60, f0 * r);
-            if released {
-                release_gain(held, m.damp, 0.5)
-            } else {
-                held
-            }
-        },
+        gain: LoopGain::from_t60(halo_t60, f0 * r),
         body: 0.0,
         stiffness: 0.0,
         ens_rate: 0.0,
@@ -1083,7 +1067,7 @@ mod tests {
                 damp: damp_from_v1_decay(decay),
                 ..Default::default()
             };
-            let got = main_string((&p, &Macros::of(&p)), (0.0, 0.0), 130.81, false)
+            let got = main_string((&p, &Macros::of(&p)), (0.0, 0.0), 130.81)
                 .gain
                 .get();
             let want = 0.999 - 0.009 * decay;

@@ -4,7 +4,7 @@
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 
-use super::loop_parts::{Allpass1, LoopGain, MIN_LINE, split};
+use super::loop_parts::{Allpass1, LoopGain, MIN_LINE, Release, split};
 use crate::dsp::xorshift_noise;
 
 // ── Karplus-Strong delay line (from the owner's Carcosa firmware) ───
@@ -63,6 +63,8 @@ pub(super) struct KsString {
     ens_lfo_phase: u32,
     noise_state: u32,
     frac: Allpass1,
+    /// The loop gain's note-off ramp; a note-on's clear resets it.
+    release: Release,
 }
 
 impl KsString {
@@ -80,6 +82,7 @@ impl KsString {
             addr_of_mut!((*p).ens_lfo_phase).write(0);
             addr_of_mut!((*p).noise_state).write(NOISE_SEED);
             addr_of_mut!((*p).frac).write(Allpass1::default());
+            addr_of_mut!((*p).release).write(Release::HELD);
             slot.assume_init_mut()
         }
     }
@@ -197,6 +200,7 @@ impl KsString {
         self.ring_len = MIN_LINE + 2;
         self.dirty = self.ring_len;
         self.frac.reset();
+        self.release = Release::HELD;
     }
 
     /// What the next `clear` writes.
@@ -204,9 +208,11 @@ impl KsString {
         self.dirty * size_of::<f32>()
     }
 
-    /// Bowed's ring: the sample `delay` pushes back.
-    pub(super) fn ring_tap(&self) -> f32 {
-        self.behind(self.delay - 1)
+    /// Bowed's ring: the sample `delay` pushes back, or the note's first
+    /// until `written` reaches it, so a low note sounds from its first
+    /// samples (#206).
+    pub(super) fn ring_tap(&self, written: u32) -> f32 {
+        self.behind(self.delay.min(written.max(1) as usize) - 1)
     }
 
     /// Bowed's ring: stores `x` through the allpass, stepping on round it.
@@ -234,14 +240,9 @@ impl KsString {
         self.dirty = MAX_STRING_DELAY;
     }
 
-    /// Damps the ring, each sample by 0.2 `passes` times: read and written
-    /// once, the same f32 arithmetic as a pass at a time.
-    pub(super) fn damp(&mut self, passes: u32) {
-        for x in &mut self.buffer[..self.ring_len] {
-            for _ in 0..passes {
-                *x *= 0.2;
-            }
-        }
+    /// Note-off: the loop gain ramps from `held` to `to` (`Release`).
+    pub(super) fn release(&mut self, held: LoopGain, to: LoopGain) {
+        self.release.start(held, to);
     }
 
     /// Full render with all the KS+ features. See `KsRenderParams` for
@@ -264,7 +265,8 @@ impl KsString {
         }
 
         // The gain last, so no tap bypasses it.
-        let filtered = self.frac.process(filtered * p.gain.get());
+        let gain = self.release.gain(p.gain).get();
+        let filtered = self.frac.process(filtered * gain);
         self.advance();
         self.buffer[self.write_pos] = filtered;
 
@@ -308,7 +310,8 @@ impl KsString {
         debug_assert!(p.stiffness <= 0.01 && p.body <= 0.03);
         debug_assert!(p.ens_mix <= 0.01 || p.ens_depth <= 0.01);
         self.buffer[self.write_pos] = *pending + input;
-        let filtered = self.frac.process(self.lowpass(p) * p.gain.get());
+        let gain = self.release.gain(p.gain).get();
+        let filtered = self.frac.process(self.lowpass(p) * gain);
         self.advance();
         *pending = filtered;
         filtered
@@ -330,7 +333,7 @@ pub(super) fn lp_coeff(bright: f32) -> f32 {
     c * (1.0 - c)
 }
 
-crate::in_place::field_list!(KsString => KsString { buffer, write_pos, ring_len, delay, dirty, ens_lfo_phase, noise_state, frac });
+crate::in_place::field_list!(KsString => KsString { buffer, write_pos, ring_len, delay, dirty, ens_lfo_phase, noise_state, frac, release });
 
 /// Bytes `KsString::clear` has written on this thread: for the tests.
 #[cfg(any(test, feature = "test-support"))]

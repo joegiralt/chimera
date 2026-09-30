@@ -27,22 +27,22 @@ const MODES: [ResonatorMode; 4] = [
 
 /// A bow's steady limit cycle wobbles about 0.2 % between seconds; a
 /// runaway grows far past this. Its render is deterministic (no noise).
-const BOW_MARGIN: f32 = 1.02;
+const BOW_MARGIN: f32 = 1.005;
 
 /// Each model, each setting at its min and max, C2 held 30 s: bounded, no
-/// growth, no DC at the output. Bowed also at C3: its C2 is silent until #206's fix.
+/// growth, no DC at the output; Bowed still sounding.
 #[test]
 fn every_model_is_stable_at_every_extreme() {
     let sr = SR as usize;
     std::thread::scope(|scope| {
         for mode in MODES {
             scope.spawn(move || {
-                let (notes, margin): (&[u8], f32) = match mode {
-                    ResonatorMode::Bowed => (&[36, 48], BOW_MARGIN),
-                    _ => (&[36], 1.001),
+                let margin = match mode {
+                    ResonatorMode::Bowed => BOW_MARGIN,
+                    _ => 1.001,
                 };
                 for s in MODAL_SPECS.iter().filter(|s| s.id != ModalParams::MODE) {
-                    for (&note, v) in notes.iter().flat_map(|n| [(n, s.min), (n, s.max)]) {
+                    for (note, v) in [(36, s.min), (36, s.max)] {
                         let mut p = ModalParams {
                             mode,
                             ..Default::default()
@@ -51,6 +51,11 @@ fn every_model_is_stable_at_every_extreme() {
                         let out = play_modal(&p, note, 30 * sr / BLOCK_SIZE, 0);
                         let label = format!("{mode:?} {note} {} = {v}", s.label);
                         assert_stable(&out, 4.0, margin, &label);
+                        // Bowed's C2 sounds throughout (#206), not freed.
+                        if mode == ResonatorMode::Bowed {
+                            let last = &out[out.len() - sr..];
+                            assert!(common::rms(last) > 1e-3, "{label}: silent");
+                        }
                     }
                 }
             });
@@ -311,4 +316,119 @@ fn modes_change_keeps_sounding_notes_and_their_bill() {
     string.modal.mode = ResonatorMode::String;
     let over = ModalEngine::cost(&p16.modal).0 - ModalEngine::COST_STRING.0;
     assert_eq!(rig.held_model_extra(&string), Cost(over), "plays 16 modes");
+}
+
+/// `p` through a voice: `note` at `vel`, held `on` blocks, then released
+/// `off` blocks, `off_params` rendered from the note-off on.
+fn play_released(
+    p: &ParamSnapshot,
+    off_params: &ParamSnapshot,
+    (note, vel): (u8, u8),
+    on: usize,
+    off: usize,
+) -> (Vec<f32>, Rig) {
+    let mut rig = Rig::new(SR);
+    let mods = ModState::new();
+    rig.note_on(MidiNote::new(note).unwrap(), Velocity::new(vel).unwrap(), p);
+    let mut out = Vec::with_capacity((on + off) * BLOCK_SIZE);
+    let mut block = [0.0; BLOCK_SIZE];
+    for b in 0..on + off {
+        if b == on {
+            rig.note_off();
+        }
+        rig.render(&mut block, if b < on { p } else { off_params }, &mods);
+        out.extend_from_slice(&block);
+    }
+    (out, rig)
+}
+
+/// Samples each side of a note-off that `release_does_not_click` weighs.
+const CUT_W: usize = 128;
+
+/// #51: note-off on every model, the DC blocker in place, passes the click
+/// detector from a block before it on (F6: the bank's strike is not the
+/// subject), and does not cut: the level just after it keeps half the
+/// level just before, which the detector's absolute threshold misses at a
+/// voice's level. The instant buffer scaling this replaces kept 9 to 29 %
+/// and stepped the ring's DC (Task 2's carry); a 5 ms ramp barely starts.
+#[test]
+fn release_does_not_click() {
+    let half = SR as usize / BLOCK_SIZE / 2;
+    let off = half * BLOCK_SIZE;
+    for mode in MODES {
+        let mut p = ParamSnapshot::for_engine(EngineType::Modal);
+        p.modal.mode = mode;
+        let (out, _) = play_released(&p, &p, (60, 127), half, half);
+        let release = &out[off - BLOCK_SIZE..];
+        assert!(
+            clicks(release).is_empty(),
+            "{mode:?}: {:?}",
+            clicks(release)
+        );
+        let kept = common::rms(&out[off..off + CUT_W]) / common::rms(&out[off - CUT_W..off]);
+        assert!(kept > 0.5, "{mode:?}: note-off keeps {kept}");
+    }
+}
+
+/// #206: Bowed G1 sounds in its first block and is not freed while bowed.
+#[test]
+fn bowed_low_notes_sound() {
+    let mut p = ParamSnapshot::for_engine(EngineType::Modal);
+    p.modal.mode = ResonatorMode::Bowed;
+    let mut rig = Rig::new(SR);
+    let mods = ModState::new();
+    rig.note_on(MidiNote::new(31).unwrap(), Velocity::new(100).unwrap(), &p);
+    let mut block = [0.0; BLOCK_SIZE];
+    let blocks = 2 * SR as usize / BLOCK_SIZE;
+    for b in 0..blocks {
+        rig.render(&mut block, &p, &mods);
+        if b == 0 {
+            assert!(common::peak(&block) > 1e-3, "silent first block");
+        }
+        assert!(rig.is_active(), "freed at block {b}");
+    }
+    assert!(common::peak(&block) > 1e-3, "silent last block");
+}
+
+/// Review Focus 1: a route pushing DAMP to its top during a release does
+/// not hold the note: the release never gives the gain back, so the note
+/// ends within 2 s, as soon as with DAMP left alone.
+#[test]
+fn a_released_note_ends_with_damp_at_its_top() {
+    let blocks = SR as usize / BLOCK_SIZE;
+    let mut p = ParamSnapshot::for_engine(EngineType::Modal);
+    p.modal.mode = ResonatorMode::String;
+    let mut top = p.clone();
+    top.modal.damp = 1.0;
+    // Blocks from note-off until the voice ends.
+    let ends = |off: &ParamSnapshot| {
+        let (out, rig) = play_released(&p, off, (48, 100), blocks / 2, 2 * blocks);
+        assert!(!rig.is_active(), "still sounding 2 s after note-off");
+        out.chunks(BLOCK_SIZE)
+            .rposition(|b| b.iter().any(|&x| x != 0.0))
+            .unwrap()
+            - blocks / 2
+    };
+    let (alone, pushed) = (ends(&p), ends(&top));
+    assert!(
+        pushed <= alone + 2,
+        "DAMP at its top: {pushed} blocks, {alone} left alone"
+    );
+}
+
+/// The owner's sitar rule (ADR 0054): a released SYMP note's halo rings
+/// out on its own decay, after the main string has died, and the voice
+/// keeps it until then.
+#[test]
+fn a_released_halo_outlasts_its_main_string() {
+    let second = SR as usize / BLOCK_SIZE;
+    let p = ModalParams {
+        mode: ResonatorMode::Sympathetic,
+        ..Default::default()
+    };
+    let last_heard = |out: &[f32]| out.iter().rposition(|x| x.abs() > 1e-3).unwrap();
+    let full = play_modal(&p, 60, second / 2, 2 * second);
+    let bare = play_modal_bare(&p, 60, common::VEL, second / 2, 2 * second);
+    let (f, b) = (last_heard(&full), last_heard(&bare));
+    assert!(f > b + SR as usize / 20, "halo heard to {f}, main to {b}");
 }
