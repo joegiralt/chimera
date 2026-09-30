@@ -359,9 +359,10 @@ fn old_modal_patches_translate() {
 }
 
 /// A v1 Bowed patch on the one-loop bow restored in tune (ADR 0064):
-/// re-recorded deliberately; its level is `out_gain`'s now, at the VCA.
-const BOWED_V1_HELD: u64 = 0x25a7_3be0_4fa1_4e09;
-const BOWED_V1_RELEASED: u64 = 0x5d4f_d32c_33ea_18ff;
+/// re-recorded deliberately, then for BRIGHT on the output (its BRIGHT 1
+/// no longer opens the loop); its level is `out_gain`'s now, at the VCA.
+const BOWED_V1_HELD: u64 = 0x363f_2b2c_b000_aa99;
+const BOWED_V1_RELEASED: u64 = 0x23f0_8b50_15ca_8e99;
 
 /// A v1 Bowed patch plays at its note.
 #[test]
