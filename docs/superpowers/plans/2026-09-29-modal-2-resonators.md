@@ -17,8 +17,8 @@
 - **Stability (§ 2):** `LoopGain::MAX = 0.9995`; its only constructors clamp to `[0, MAX]` (NaN → 0). No string loop multiplies by anything but a `LoopGain` and filters whose gain is ≤ 1 at every frequency. The DC blocker's corner is `DC_HZ = 10.0`, in every string loop: STRING, the SYMP main string, each halo string and BOWED. FDBK and the `±1.5` clamp are deleted.
 - **Timing constants:** release ramp `RELEASE_SAMPLES = 240` (5 ms), chord glide `CHORD_GLIDE_SAMPLES = 960` (20 ms), macro easing `EASE = 0.3` per block, ensemble LFO 0.1–6 Hz, detune up to ±15 cents, `ENS_HEADS = 3`.
 - **Defaults carry today's sound:** COUPLE 0.25 maps to today's 0.025 (`coupling = 0.1 · couple`); HALO 0.25 maps to today's 0.15 (`level = 0.6 · halo`); MODES defaults to 32. `ModalParams::default()` is exactly what the v1 translation makes of today's default (Task 4 pins it bit for bit).
-- **Disk (ADR 0045):** kept ids and idents: MODE 0 `MODE`, EXCITE 1, BRIGHT 3, POS 4, BODY 6, E.DPT 9, E.RAT 10, E.MIX 11. Retired: `(1, 2)` DECAY, `(1, 5)` INHARM, `(1, 7)` STIFF, `(1, 8)` FDBK. New: DAMP 12 `DAMP`, STRUCTURE 13 `STRUCTURE`, COUPLE 14 `COUPLE`, HALO 15 `HALO`, MODES 16 `MODES` (Enum, codes 0–3, idents `M16 M24 M32 M48`). `ResonatorMode`'s codes and idents are untouched. The fixture is only appended to.
-- **Modulation (ADR 0010, superseded in part by ADR 0056):** exactly STRUCTURE, BRIGHT, DAMP and POS are `modulatable`. Model-page settings and MODEL are not.
+- **Disk (ADR 0045):** kept ids and idents: MODE 0 `MODE`, EXCITE 1, BRIGHT 3, POS 4, BODY 6, E.DPT 9, E.RAT 10, E.MIX 11. Retired: `(1, 2)` DECAY, `(1, 5)` INHARM, `(1, 7)` STIFF, `(1, 8)` FDBK. New: DAMP 12 `DAMP`, STRUCTURE 13 `STRUCTURE`, COUPLE 14 `COUPLE`, HALO 15 `HALO`, MODES 16 `MODES` (Enum, codes 0–3, idents `M16 M24 M32 M48`). Task 13 adds FORCE 17 `FORCE`, SPEED 18 `SPEED`, COLOR 19 `COLOR` and BURST 20 `BURST`. `ResonatorMode`'s codes and idents are untouched. The fixture is only appended to.
+- **Modulation (ADR 0010, superseded in part by ADR 0056):** exactly STRUCTURE, BRIGHT, DAMP and POS are `modulatable`. Model-page settings, EXC's settings (Task 13) and MODEL are not.
 - **Memory:** no new buffers. `MAX_STRING_DELAY` goes from 984 to 1016 (Task 2, the one growth, about 4.6 KB of D2, recorded in ADR 0056). `size_of::<Instrument>() <= VOICE_RAM_BUDGET` stays asserted.
 - **Audio thread:** no heap, no blocking. Transcendentals (`atan2f`, `sinf`, `expf`, `powf`) run per note-on or per block, never per sample. `just stack-check` stays green.
 - **Goldens (ADR 0011):** Task 1 moves the four Modal rows (`modal_init`, `modal_lfo_cutoff`, `modal_sympathetic`, `algo_to_modal_switch`) and the `init_modal.snd` render row into a `PENDING` list that the checks skip. Task 11 re-records them once and empties `PENDING` and `KNOWN_BROKEN`. Every other golden stays bit-identical in every task.
@@ -26,7 +26,8 @@
 - **Provenance (ADR 0032):** `chords.rs` and `dispersion.rs` carry Mutable Instruments' MIT notice (Copyright 2015 Emilie Gillet); `loop_parts.rs`, the body filter, the ensemble and the macro mapping are ours and say so.
 - **Green gate per task:** `just check` exits 0 (it runs the tests, the firmware builds, `just clippy`, `cargo fmt --check` and `just stack-check`). If ALSA's pkg-config is missing, set `PKG_CONFIG_PATH` as the Justfile says.
 - **Commits:** a terse plain sentence, no type prefix, never a Co-Authored-By or other attribution line. Stage named paths only. Never stage `docs/chimera-ui-ux-spec.md` or `chimera.bin`.
-- **Hardware:** no flash until Task 12. Between tasks, the owner listens on the desktop (the demo renderer steps below, or `just desktop`).
+- **Hardware:** no flash until Task 12, which runs last, after Task 13. Between tasks, the owner listens on the desktop (the demo renderer steps below, or `just desktop`).
+- **Task order (owner, 2026-09-30):** Tasks 1–11, then Task 13 (the EXC node), then Task 12 (the ship flash).
 
 ## Review Focus
 
@@ -35,6 +36,7 @@
 3. **MODES changed while bank notes sound.** A ringing 48-mode note should keep 48 modes (no click from stale filters) and be billed at 48 until it ends. Test: `modes_change_keeps_sounding_notes_and_their_bill` (Task 5).
 4. **An old patch with FDBK at 1.** A v1 STRING patch with FDBK 1 and DECAY 0 (today's runaway) should load and play bounded, with no DC. Test: `an_old_fdbk_1_patch_loads_stable` (Task 4).
 5. **The ensemble at full depth on G1.** DEPTH 1 at 0.1 Hz and at 6 Hz on the longest loop: the heads must stay inside the loop, with no clicks and a bounded output. Test: `ensemble_at_full_depth_on_g1_stays_in_the_line` (Task 9).
+6. **A soft key on Bowed (Task 13).** A velocity-20 note on the default Bowed should bow, and a routed DAMP pushed to its top after the lift should not hold the ring. Tests: `a_soft_bowed_note_sounds`, and `macros_are_routable` with BOWED's DAMP through a release (Task 13).
 
 ## Spec ambiguities ruled here
 
@@ -46,6 +48,17 @@
 - **BANK note-off.** § 2 keeps the bank unchanged, so it rings out on DAMP after note-off. The release ramp applies to string loops. BOWED's bow force ramps instead.
 - **SYMP chord reads un-eased STRUCTURE.** Chords are discrete, and the 20 ms glide is their easing. Easing the index too would miss the 25 ms bound.
 - **Sympathetic's size.** SYMP's main string is STRING's full string (body, ensemble, dispersion), so `SympatheticVoice` is at most `StringVoice` plus one align, not Bowed's size. That replaces ADR 0054's const assert, and ADR 0056 records the change.
+- **Task 13 (owner, 2026-09-30).** The amended spec leaves these open; they are ruled here:
+  - **BURST** is the strike's burst length, named and ranged as the old law: `2 + 4·BURST` ms. Its default is 0.8, EXCITE's. v1 BANK patches take BURST = EXCITE, so an old strike keeps its length.
+  - **COLOR** keeps the old `ks_color` law: `⌊(1 − COLOR)·7⌋` smoothing passes, 8 steps. The old hidden 0.8 is one pass, today's. A continuous one-pole would not keep INIT bit for bit.
+  - **STRUCTURE stays dimmed on BOWED.** The owner named DAMP, BRIGHT and POS.
+  - **DAMP on BOWED** sets the lifted bow's release target; the bowed loop keeps `BOW_GAIN` while the bow is on, as before.
+  - **POS on BOWED** is a second, interpolated tap feeding only the friction, so the loop's period, and the pitch, are untouched. It uses the pluck's comb law and 0.03 threshold.
+  - **BRIGHT on BOWED** is the strings' linear-phase 3-tap low-pass at `0.25·(1 − BRIGHT)`, so it adds no delay. At BRIGHT 1 the tap is read alone.
+  - **Old Bowed patches' macros:** v1 Bowed stored BRIGHT, DAMP and POS but never read them. They translate to the values that reproduce today's Bowed (BRIGHT 1, POS 0, DAMP = `damp_for(RELEASE_T60)`), extending "FORCE and SPEED reproduce today's sound" to the three newly live macros. The held note is pinned bit for bit. The release matches to within the `powf`/`logf` round trip.
+  - **The bow's lift** sheds the note's force over `RELEASE_SAMPLES` at any FORCE (`lift = force / RELEASE_SAMPLES`), which equals today's `BOW_LIFT` at full force.
+  - **EXC's settings** are note-on and unmodulatable, like the model page. Step B's mixer decides what becomes live.
+  - **EXC's header** reads the exciter's name (PLUCK, STRIKE, BOW), and the map node reads EXC. The Part opens on EXC, the chain's first node.
 - **Cost.** SYMP's host estimate (950) is above the +30–60 the spec expected: the halo's seven fractional allpasses and blockers add about 80. Unless the ship bench reads ≤ 883, SYMP gets 5 voices on rev V instead of 6. The bench decides (Task 12).
 
 ## Files
@@ -53,21 +66,23 @@
 | File | Responsibility | Tasks |
 |---|---|---|
 | `chimera-core/src/dsp/modal/loop_parts.rs` (new, ours) | `LoopGain`, `DcBlocker`, `Allpass1`, `dc_phase_delay`, `allpass_phase_delay`, `eta_for`, `split`, `Release` | 1, 2, 7 |
-| `chimera-core/src/dsp/modal/string.rs` | `KsString`: ring + fractional tap, 3-tap low-pass, DC blocker; `StringVoice` (body, ensemble, dispersion) | 1, 2, 8, 9 |
+| `chimera-core/src/dsp/modal/string.rs` | `KsString`: ring + fractional tap, 3-tap low-pass, DC blocker; `StringVoice` (body, ensemble, dispersion); COLOR's passes, Bowed's taps | 1, 2, 8, 9, 13 |
 | `chimera-core/src/dsp/modal/dispersion.rs` (new, MIT) | `Dispersion`: 4 first-order allpasses, Rings' `ap_gain` law | 8 |
 | `chimera-core/src/dsp/modal/body.rs` (new, ours) | `Body`: three fixed SVF resonances on the output | 8 |
 | `chimera-core/src/dsp/modal/ensemble.rs` (new, ours) | `Ensemble`: quadrature LFO, 3 interpolated heads | 9 |
 | `chimera-core/src/dsp/modal/chords.rs` (new, MIT) | `CHORDS: [[f32; 7]; 11]`, `chord_of`, `fold` | 10 |
-| `chimera-core/src/dsp/modal/params.rs` | the new `ModalParams`, `BankModes`, `MODAL_SPECS`, `reads`, `page_cells`, `translate_v1` | 3, 4, 5 |
-| `chimera-core/src/dsp/modal/mod.rs` | `ModalEngine` (eased macros, deferred pluck, release, playing cost), models' render | 1–10 |
+| `chimera-core/src/dsp/modal/params.rs` | the new `ModalParams`, `BankModes`, `MODAL_SPECS`, `reads`, `page_cells`, `translate_v1`; EXC's fields, `ModalPage`, `bow_force` | 3, 4, 5, 13 |
+| `chimera-core/src/dsp/modal/mod.rs` | `ModalEngine` (eased macros, deferred pluck, release, playing cost), models' render; the playable Bow and the strike's BURST | 1–10, 13 |
 | `chimera-core/src/storage/{codes,block_codec,sound,system}.rs` | `RETIRED`, `Translation`, `Retired`, `TRANSLATIONS` | 3, 4 |
 | `chimera-core/src/dsp/voice.rs:162-170` | `held_model_extra` through `playing_cost` | 5 |
-| `chimera-core/src/ui/{block_def,view,block_registry}.rs` | `SlotBinding::ModalPanel`, `SlotCtx::model`, MDL/MDL2 pages, SPACE, dimming | 6 |
-| `chimera-core/tests/modal_resonator_test.rs` (new) | the spec's audio tests, plus Review Focus 1, 2, 3, 5 | 1–10 |
+| `chimera-core/src/ui/{block_def,view,block_registry}.rs` | `SlotBinding::ModalPanel`, `SlotCtx::model`, MDL/MDL2 pages, SPACE, dimming; the EXC node | 6, 13 |
+| `chimera-core/tests/modal_resonator_test.rs` (new) | the spec's audio tests, plus Review Focus 1, 2, 3, 5 | 1–10, 13 |
 | `chimera-core/tests/common/mod.rs` | `clicks`, `modal_engine`, `play_modal` | 1 |
-| `chimera-core/tests/{golden,codec_compat,modulatable,click_free,sanity,memory_budget,cost,disk_codes,part_page,mod_registry,modal,modal_integration,exclusive_state,screen_golden}_test.rs`, `tests/screen/mod.rs`, `tests/fixtures/disk_codes_v1.txt` | pins moved, rows appended, goldens re-recorded | 1–11 |
-| `chimera-stm32/src/bench.rs:231-262` | new MDL rows | 11 |
-| `docs/adr/0056-modal-resonators-share-four-macros.md`, `docs/adr/README.md`, `THIRD_PARTY.md` | the ADR, provenance | 1, 2, 5, 8, 10, 11, 12 |
+| `chimera-core/tests/{golden,codec_compat,modulatable,click_free,sanity,memory_budget,cost,disk_codes,part_page,mod_registry,modal,modal_integration,exclusive_state,screen_golden}_test.rs`, `tests/screen/mod.rs`, `tests/fixtures/disk_codes_v1.txt` | pins moved, rows appended, goldens re-recorded | 1–11, 13 |
+| `chimera-stm32/src/bench.rs:231-262` | new MDL rows; MDL BOW+, PLUCK DARK | 11, 13 |
+| `chimera-core/src/ui/{components,renderer}.rs` | EXC's header named for the exciter | 13 |
+| `chimera-core/tests/{block_def_tests,header_map_test,binding_test}.rs` | the EXC node and its header | 13 |
+| `docs/adr/0056-modal-resonators-share-four-macros.md`, `docs/adr/README.md`, `THIRD_PARTY.md` | the ADR, provenance | 1, 2, 5, 8, 10, 11, 12, 13 |
 
 ---
 
@@ -795,7 +810,261 @@ git commit -m "Modal's costs re-estimated, bench rows added, goldens re-recorded
 
 ---
 
+### Task 13: The EXC node: each model's exciter and a playable Bow
+
+The owner's decision of 2026-09-30 (spec § 1, § 2 BOWED and § 3, each marked "amended 2026-09-30, owner"). On the bench, Bowed's values didn't move and soft keys made no sound on Bowed. So the exciters get their own node, first in the chain, and Bowed's macros go live. It runs after Task 11 and before Task 12. Task 12's ship flash covers it.
+
+**Files:**
+- Modify:
+  - `chimera-core/src/dsp/modal/params.rs`: the fields, specs, `reads`, `page_cells`, `ModalPage`, `EXCITER_NAMES`, `bow_force`, `damp_for` made public, and `translate_v1`.
+  - `chimera-core/src/dsp/modal/mod.rs`: `BowedString`, the bank's note-on, Bowed's note-on and note-off, `render_bowed`, `COST_BOWED`, `pub use loop_parts::RELEASE_T60`, and the unit tests.
+  - `chimera-core/src/dsp/modal/string.rs`: `color_passes`, `KsString::shape`, `StringVoice::pluck` and its `color`, `ring_tap_at`, `ring_tap_lp`.
+  - `chimera-core/src/ui/block_def.rs` (`SlotBinding::ModalPanel`, `ParamSlot::modal_panel`), `chimera-core/src/ui/view.rs` (`view`), `chimera-core/src/ui/block_registry.rs` (`MODAL_EXC`, `MODAL_2`, `MODAL_PLUCK_BLOCKS`), `chimera-core/src/ui/components.rs` (`header_text`), `chimera-core/src/ui/renderer.rs:421`, `chimera-core/src/ui/mod_grid.rs` (tests).
+  - `chimera-core/tests/fixtures/disk_codes_v1.txt` (append only).
+  - `chimera-stm32/src/bench.rs`: `MDL BOW+` and the MEMORY screen's `PLUCK DARK`.
+  - `docs/adr/0056-modal-resonators-share-four-macros.md`.
+- Test: `chimera-core/tests/{modal_resonator_test,codec_compat_test,part_page_test,block_def_tests,header_map_test,binding_test,cost_test,screen_golden_test}.rs`, `chimera-core/tests/screen/mod.rs`, and the unit tests in `params.rs`, `string.rs`, `mod.rs` and `mod_grid.rs`.
+
+**Interfaces:**
+- Consumes: `ModalParams`, `reads`, `translate_v1` (Tasks 3 and 4); `Macros` (Task 5); `SlotBinding::ModalPanel` (Task 6); `Release`, `RELEASE_SAMPLES`, `RELEASE_T60` and `KsString::ring_tap` (Task 7); the cost method in ADR 0056's Costs section (Task 11).
+- Produces, in `dsp::modal` (`params.rs`):
+
+```rust
+pub struct ModalParams {
+    // … Task 3's fields, then EXC's (note-on, not modulatable):
+    pub color: f32,   // PLUCK: the noise's smoothing, 1 brightest
+    pub burst: f32,   // STRIKE: the burst's length
+    pub force: f32,   // BOW: pressure
+    pub speed: f32,   // BOW: velocity
+}
+impl ModalParams {
+    pub const FORCE: ParamId = ParamId(17); pub const SPEED: ParamId = ParamId(18);
+    pub const COLOR: ParamId = ParamId(19); pub const BURST: ParamId = ParamId(20);
+}
+pub static MODAL_SPECS: [ParamSpec; 17];   // Task 3's 13, then COLOR, BURST, FORCE, SPEED, appended
+/// EXC's header by MODEL, by `ResonatorMode as u8`.
+pub const EXCITER_NAMES: [&str; 4] = ["PLUCK", "STRIKE", "BOW", "PLUCK"];
+/// Which of MODEL's two pages a cell list is for: EXC or the model page (MDL2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ModalPage { Exciter, Model }
+/// `page`'s six cells for `mode`. Replaces `page_cells(mode)`.
+pub fn page_cells(page: ModalPage, mode: ResonatorMode) -> [Option<ParamId>; 6];
+/// The bow's force at a note-on: FORCE × (0.5 + 0.5 × velocity), velocity in 0..=1.
+pub fn bow_force(force: f32, vel: f32) -> f32;
+pub fn damp_for(t60_s: f32) -> f32;        // Task 3's, now public: the tests name Bowed's v1 DAMP with it
+```
+
+- The specs, appended after MODES, so every earlier spec keeps its place:
+  - `unit(19, "COLOR", 0.8).ident("COLOR")`
+  - `unit(20, "BURST", 0.8).ident("BURST")`
+  - `unit(17, "FORCE", 0.5).ident("FORCE")`
+  - `unit(18, "SPEED", 0.5).ident("SPEED")`
+  - Defaults: COLOR 0.8 and BURST 0.8 (today's EXCITE default, so INIT's strike keeps its length); FORCE 0.5 and SPEED 0.5, the old hidden `BOW_FORCE` and `BOW_VELOCITY`. None is `modulatable`.
+- `reads` (MODE is read by every model):
+
+| id | BANK | STRING | SYMP | BOWED |
+|---|---|---|---|---|
+| STRUCTURE | ✓ | ✓ | ✓ | |
+| BRIGHT, DAMP, POS | ✓ | ✓ | ✓ | ✓ |
+| EXCITE | ✓ | ✓ | ✓ | |
+| COLOR | | ✓ | ✓ | |
+| BURST | ✓ | | | |
+| FORCE, SPEED | | | | ✓ |
+| BODY, ENS_DEPTH, ENS_MIX, ENS_RATE, COUPLE, HALO, MODES | as Task 3 | | | |
+
+- `page_cells`, in order, with the rest `None`:
+  - `Exciter`: STRING and SYMP `EXCITE COLOR`; BANK `EXCITE BURST`; BOWED `FORCE SPEED`.
+  - `Model`: STRING `BODY ENS_DEPTH ENS_RATE ENS_MIX`; SYMP `COUPLE HALO BODY ENS_DEPTH ENS_MIX`; BANK `MODES`; BOWED all `None`.
+- `translate_v1` gains two rules, each applied inside the translation only:
+  - BANK: `BURST = EXCITE`, the file's value, already written. The old burst was `2 + 4·EXCITE` ms.
+  - BOWED: `DAMP = damp_for(RELEASE_T60)`, `BRIGHT = 1.0` and `POS = 0.0`. These run after the DECAY and BRIGHT rules and override them, because v1 Bowed never read them.
+- In `string.rs`:
+
+```rust
+/// The pluck's smoothing passes at COLOR: the old `ks_color` law.
+pub(super) fn color_passes(color: f32) -> usize;       // ((1.0 - color) * 7.0) as usize, at most 7
+impl KsString {
+    pub(super) fn shape(&mut self, position: f32, period: f32, passes: usize); // was one pass, fixed
+    /// Bowed's bow point: `back` samples behind the write, in `ring_tap`'s
+    /// measure, linearly interpolated, clamped to `[1, delay]` and held
+    /// within what `written` has reached (#206's rule).
+    /// `ring_tap_at(w, delay as f32) == ring_tap(w)`, bit for bit.
+    pub(super) fn ring_tap_at(&self, written: u32, back: f32) -> f32;
+    /// Bowed's loop tap through the linear-phase 3-tap low-pass centred on it:
+    /// c/2·(x[d−1] + x[d+1]) + (1 − c)·x[d]. At c = 0, or before `written`
+    /// passes `delay + 1`, it is `ring_tap(written)` exactly.
+    pub(super) fn ring_tap_lp(&self, written: u32, c: f32) -> f32;
+}
+// StringVoice gains `passes: u8`, latched by `pluck` from `color_passes(params.color)`;
+// `StringVoice::shape(position)` passes it on. `pluck` takes it as a new last argument.
+```
+
+- In `mod.rs`:
+
+```rust
+struct BowedString {
+    string: KsString, force: f32, force_to: f32,
+    lift: f32,        // force shed a sample at note-off: force / RELEASE_SAMPLES
+    bow_vel: f32,     // SPEED × BOW_SPEED, latched at note-on
+    written: u32, release: Release,
+}
+/// SPEED 1's bow velocity; SPEED 0.5 is the old `BOW_VELOCITY · 0.3`.
+const BOW_SPEED: f32 = 0.3;
+/// BRIGHT 0's low-pass side taps on the bowed loop: gentle, |H| ≤ 1.
+const BOW_LP: f32 = 0.25;
+fn render_bowed(b: &mut BowedString, output: &mut [f32; BLOCK_SIZE], m: &Macros, f0: f32);
+```
+
+  - `BOW_VELOCITY`, `BOW_FORCE` and `BOW_LIFT` go. `field_list!` for `BowedString` and `StringVoice` gains the new fields.
+  - Note-on: `b.force = bow_force(params.force, vel)` and `b.bow_vel = params.speed * BOW_SPEED`. At FORCE 0.5, SPEED 0.5 and velocity 127 both equal the old values bit for bit: `0.5 * (0.5 + 0.5 * 1.0) == 1.0 * 0.5`, and `0.5 * 0.3` is the old product.
+  - Note-off: `b.lift = b.force / RELEASE_SAMPLES as f32`, `b.force_to = 0.0`, and `b.release.start(BOW_GAIN, LoopGain::from_t60(t60(self.macros.damp), f0))`.
+  - `render_bowed`, per sample:
+    - The bow lifts by `b.lift` toward `force_to`.
+    - The loop reads `x = b.string.ring_tap_lp(b.written, BOW_LP * (1.0 - m.bright))`.
+    - The bow reads `v = x` when `m.pos <= 0.03`. Otherwise it reads `v = 0.5 * (x + b.string.ring_tap_at(b.written, d - m.pos * d))`, with `d` the line delay: the pluck's comb law and threshold (`KsString::shape`).
+    - `friction = 4·force · tanh(8·(bow_vel − v))`.
+    - The loop's gain is `b.release.gain(LoopGain::from_t60(t60(m.damp), f0))` after note-off and `BOW_GAIN` before it. A DAMP routed upward never lengthens a lifted bow's ring (`Release::gain` takes the minimum).
+    - The output is `x`, as today. The `from_t60` runs once a block, not per sample.
+  - Stability holds by construction: the loop multiplies `x` by a `LoopGain` below 1; the low-pass's `|H| = (1 − c) + c·cos ω ≤ 1` for `c ≤ 0.5`; the friction is bounded; `tanh` bounds the push; the output blocker stays.
+  - BANK's note-on: `burst_ms = 2.0 + params.burst * 4.0`; `burst_amp = vel * params.excite` is unchanged.
+- In the UI:
+  - `SlotBinding::ModalPanel(ModalPage, u8)` and `ParamSlot::modal_panel(page: ModalPage, k: u8)`. `view` resolves it to `page_cells(page, ctx.model)[k]`.
+  - The page and the chain:
+
+```rust
+/// EXC: the model's exciter; its cells follow MODEL.
+pub static MODAL_EXC: BlockDef = BlockDef { id: 67, name: "Exciter", short: "EXC",
+    layout: PageLayout::CellGrid, viz: VizType::None,
+    params: [ParamSlot::modal_panel(ModalPage::Exciter, 0), /* … 1..=5 */] };
+static MODAL_PLUCK_BLOCKS: [ChainBlock; 5] = [
+    ChainBlock::page(&MODAL_EXC),
+    ChainBlock::with_subs(&MODAL_1, &MODAL_SUB_PAGES),
+    ChainBlock::with_subs(&FILTER, &FILTER_SUB_PAGES),
+    ChainBlock::page(&FOLDER),
+    ChainBlock { def: &MOD_MATRIX, sub_pages: &MOD_SUB_PAGES, map: Some("MOD") },
+];
+```
+
+  - `MODAL_2` is `modal_panel(ModalPage::Model, 0..=5)`. The map reads `EXC · RES · FLT · AMP · MOD`, and a Part's Modal chain opens on EXC.
+  - `components::header_text(nav, def, model: ResonatorMode)` names `MODAL_EXC` `EXCITER_NAMES[model as usize]` and every other page as before. `renderer.rs:421` passes `f.ctx.model`.
+
+- [ ] **Step 1: Pin today's Bowed.** Before any other change, add `a_v1_bowed_patch_bows_as_before` to `codec_compat_test.rs`:
+  - Decode `v1_modal(ResonatorMode::Bowed, 0.2)`, then `play_modal_at(&snap.modal, 48, 127, SR as usize / BLOCK_SIZE, 0)`: one second held, no release.
+  - Assert `fnv1a(&out) == BOWED_V1_HELD`, a `const` recorded on today's code.
+  - Run `cargo test -p chimera-core --test codec_compat_test -- a_v1_bowed_patch_bows_as_before --nocapture` with a placeholder and a temporary `eprintln!` of the hash. Paste the hash and remove the print.
+  - Expected: PASS on today's code. It must still pass after Step 4: it is the compatibility pin.
+- [ ] **Step 2: Write the failing tests.**
+  - `params.rs`:
+    - `page_cells_are_what_the_model_reads` (rewrite): for each mode and both pages, every `Some(id)` is read by the mode. Every non-home id the mode reads appears on exactly one of the two pages.
+    - `the_exciter_page_holds_each_models_exciter`: the `Exciter` cells are exactly the lists in Interfaces, and no `Model` cell is EXCITE, COLOR, BURST, FORCE or SPEED.
+    - `bowed_reads_three_macros` replaces `macros_are_dimmed_only_on_bowed`. BRIGHT, DAMP and POS are read by all four models; STRUCTURE by all but BOWED.
+    - `bow_force_scales_with_velocity`: `bow_force(0.5, 1.0).to_bits() == 0.5f32.to_bits()`, `bow_force(0.5, 0.0) == 0.25`, `bow_force(0.0, 1.0) == 0.0`, and `bow_force(1.0, 20.0 / 127.0) > 0.5`.
+  - `string.rs`:
+    - `color_passes_are_the_old_law`: `color_passes(0.8) == 1` (the old hidden value), `color_passes(0.0) == 7` and `color_passes(1.0) == 0`. It does not increase from 0 to 1 in steps of 1/128.
+    - `ring_tap_at_the_delay_is_ring_tap`: on a bowed ring after 2,000 pushes and after 3, `ring_tap_at(w, delay as f32)` and `ring_tap_lp(w, 0.0)` equal `ring_tap(w)` bit for bit, and `ring_tap_at(w, 0.0)` reads at 1.
+  - `mod.rs`: `bank_burst_is_2_to_6_ms`. A BANK note-on at BURST 0 leaves `burst_remaining == 96`, and at BURST 1 `288`, at EXCITE 0.2 and at 1.0 alike.
+  - `modal_resonator_test.rs`:
+    - `a_soft_bowed_note_sounds`: BOWED at the defaults, note 48 at velocity 20, `play_modal_at` for 2 s held. Seconds 1–2 have `rms > 1e-2`, and the last block has `peak > 1e-3`. If this passes on today's code, the test doesn't reproduce the bench: stop and report.
+    - `bowed_damp_is_the_ring_after_the_lift`: BOWED note 48, velocity 100, 1 s held and 2 s released, at DAMP 0.3 (T60 0.30 s) and 0.6 (1.82 s).
+      - The held second is bit-identical between the two.
+      - The fall from `db_at(out, 1.05)` to `db_at(out, 1.05 + t60(d) / 2)` is 30 ± 6 dB.
+    - `bowed_pos_and_bright_keep_pitch`: BOWED note 48 at POS {0, 0.3, 0.7} × BRIGHT {0, 1}. `fundamental_hz` over seconds 0.5–1.5 is within 2 cents of the POS 0, BRIGHT 1 render's. Each render differs from that one by `rms_diff > 1e-3`, except POS 0 at BRIGHT 1 itself.
+    - `live_knobs_move_dimmed_knobs_do_not`: play `play_modal(&p, 48, blocks, blocks / 2)`, 1 s held and 0.5 s released, so a lifted bow's DAMP is heard. It already iterates `MODAL_SPECS`, so the four new specs join without further edits.
+    - `macros_are_routable`: BOWED joins for BRIGHT and POS, as the others do. DAMP on BOWED is routed through a release: 1 s held, then 1 s after note-off. Assert `rms_diff > 1e-3` and `clicks(&wet).is_empty()`.
+    - `a_released_bowed_c2_is_silent_within_half_a_second`: set `damp: damp_for(RELEASE_T60)`, the v1 Bowed value. At INIT's DAMP a lifted bow now rings about 14 s.
+  - `codec_compat_test.rs`, `old_modal_patches_translate`:
+    - For every mode, `(m.color, m.force, m.speed) == (0.8, 0.5, 0.5)`.
+    - `m.burst` is 0.6 (the file's EXCITE) on BANK and 0.8 elsewhere.
+    - On BOWED, `(m.damp, m.bright, m.pos) == (damp_for(RELEASE_T60), 1.0, 0.0)`. The other modes keep Task 4's expectations.
+  - UI:
+    - `block_def_tests::modal_pluck_chain`: `blocks[0]` is `"Exciter"` with `sub_page_count() == 0`, and `blocks[1]` is `"Modal"` with 3. The map labels, `block.map.unwrap_or(block.def.short)`, are `["EXC", "RES", "FLT", "AMP", "MOD"]`.
+    - `part_page_test::modal_pages` (rewrite): on SYMP, `read(&reg::MODAL_2)` is `[couple, halo, body, ens_depth, ens_mix, 0.0]`, and turning slot 0 moves `couple` by 1/128. On BANK, slot 0 is MODES and slot 1 is `View::Empty`. The MODE assertions stay on `MODAL_1`.
+    - `part_page_test::exciter_page_follows_the_model`:
+      - STRING reads `[excite, color, 0.0, 0.0, 0.0, 0.0]` on `MODAL_EXC`.
+      - On BANK, slot 1 is BURST.
+      - On BOWED, slots 0 and 1 are FORCE and SPEED; turning slot 0 by +1 moves `force` by 1/128, and slot 2 is `View::Empty`.
+    - `part_page_test::space_is_the_parts_reverb_send`: after `load_init` the page is `MODAL_EXC`; press Plus once, assert `MODAL_1`, then turn F as before.
+    - `mod_grid::bowed_dims_structure_and_its_column` replaces `bowed_dims_the_macros_and_their_columns`:
+      - On BOWED, `dimmed` is true for STRUCTURE and false for BRIGHT, DAMP, POS, MODE and SPACE.
+      - With `(Modal, STRUCTURE)` and `(Modal, DAMP)` registered after CUTOFF, `inert_dests` is `0b10` on BOWED and 0 on STRING.
+    - `header_map_test::the_exciter_page_is_named_after_the_exciter`: for each mode, `header_text`'s name for `MODAL_EXC` is `EXCITER_NAMES[mode as usize]`, and the map node's label is `EXC`. `a_model_change_redraws_the_map` presses Plus to RES before turning MODEL.
+    - `binding_test`: `MODAL_EXC` joins the panel pages next to `MODAL_2`.
+    - `tests/screen/mod.rs`:
+      - Every Modal case reaches its page from EXC: `modal_home`, `modal_mdl2_symp` and `modal_home_bowed` call `plus(ui, 1)` first, and `modal_amp` is `plus(ui, 3)`.
+      - `to_pitch` finds the node whose `sub_pages` hold `PITCH`, not `blocks[0]`.
+      - New cases: `modal_exc` (init: PLUCK, EXCITE and COLOR), `modal_exc_bank` (RES, MODEL → BANK, Minus: STRIKE, EXCITE and BURST) and `modal_exc_bowed` (MODEL → BOWED: BOW, FORCE and SPEED).
+      - `modal_home_bowed` now shows only STRUCT dimmed.
+- [ ] **Step 3: Run them to verify they fail.**
+  - `cargo test -p chimera-core --lib -- modal::params modal::string modal::tests::bank_burst_is_2_to_6_ms ui::mod_grid`
+  - `cargo test -p chimera-core --test modal_resonator_test -- a_soft_bowed_note_sounds bowed_damp_is_the_ring_after_the_lift bowed_pos_and_bright_keep_pitch live_knobs_move_dimmed_knobs_do_not macros_are_routable`
+  - `cargo test -p chimera-core --test codec_compat_test --test part_page_test --test block_def_tests --test header_map_test --test screen_golden_test`
+  - Expected: compile errors first (`ModalPage`, `MODAL_EXC`, `ModalParams::FORCE`). With stubs:
+    - `a_soft_bowed_note_sounds` fails: today's velocity-20 bow is silent.
+    - Bowed's DAMP, BRIGHT and POS fail as "live but inaudible".
+    - The chain and page tests fail on the old layout.
+    - `a_v1_bowed_patch_bows_as_before` passes.
+- [ ] **Step 4: Implement** the Interfaces. Any `match` on `SlotBinding` gets the new arm shape; there is no wildcard. Exclusive state is untouched: Bowed's ring, its dirty extent and `bowed_clears_the_ring_it_wrote` stay as they are.
+- [ ] **Step 5: Append the fixture lines.** Run `cargo test -p chimera-core --test disk_codes_test`. It prints each missing line. Append exactly `B 1 17 FORCE`, `B 1 18 SPEED`, `B 1 19 COLOR` and `B 1 20 BURST` with their readable columns. No earlier line changes.
+- [ ] **Step 6: Run the tests to verify they pass.**
+  - `cargo test -p chimera-core --lib -- modal ui`
+  - `cargo test -p chimera-core --test modal_resonator_test --test codec_compat_test --test disk_codes_test --test golden_test --test modulatable_test --test mod_registry_test --test part_page_test --test block_def_tests --test header_map_test --test binding_test --test all_pages_walk_test --test exclusive_state_test --test sanity_test`
+  - Expected: PASS. No audio golden moves:
+    - STRING, SYMP and BANK at INIT pluck and strike as before (COLOR 0.8 is one pass; BURST 0.8 is EXCITE 0.8's length).
+    - `init_modal.snd` renders the same, and `a_v1_bowed_patch_bows_as_before` holds.
+    - If any `golden_test` or `FIXTURE_RENDERS` row fails, stop and investigate. Don't re-record it.
+- [ ] **Step 7: Re-record the screen goldens, deliberately.**
+  - Run `GOLDEN_RECORD=1 cargo test -p chimera-core --test screen_golden_test`. Paste the rows for the Modal cases only: every existing `modal_*` case (the map gains its EXC node) and the three new ones. Comment each "Re-recorded: the EXC node (plan Task 13)".
+  - No Algo, Mixer or System row may change.
+  - Open them with `SCREEN_DUMP=$SP/screens cargo test -p chimera-core --test screen_golden_test`, and check each by eye:
+    - The map reads EXC · RES · FLT · AMP · MOD.
+    - EXC's header reads PLUCK, STRIKE or BOW, with its two cells.
+    - MDL2 has no EXCITE.
+    - BOWED's RES dims STRUCT alone.
+  - Then run `cargo test -p chimera-core --test screen_golden_test`. Expected: PASS.
+- [ ] **Step 8: Re-bill Bowed and add the bench rows.**
+  - Re-count `ModalEngine::render`'s bowed loop by ADR 0056's method (`llvm-objdump -d --mcpu=cortex-m7` of the `just firmware` build, instructions a sample × 1.46 + 10 %, rounded up to 10). The expectation is about +25 cycles: the second tap and its lerp, the low-pass's two taps, and a `powf` a block.
+  - Set `COST_BOWED` with its arithmetic in the doc comment.
+  - Update `cost_test::modal_bills_each_model`'s BOWED row (its bill and its voice counts), deliberately. Then run `cargo test -p chimera-core --test cost_test`. Expected: PASS.
+  - In `bench.rs`:
+    - Add `("MDL BOW+", bow_full, STILL)`. `bow_full` is BOWED at FORCE 1, SPEED 1, POS 0.5 and BRIGHT 0, with LFO 1 (10 Hz) into BRIGHT, DAMP and POS at 64.
+    - Add a MEMORY-screen line `PLUCK DARK {n} CYC`, measured as `SYM NOTE-ON LOW` is: a STRING note-on at G1 and COLOR 0, and its first block's seven smoothing passes over the line.
+  - Run `just firmware`. Expected: exit 0.
+- [ ] **Step 9: Amend ADR 0056** (Proposed, so it may be edited):
+  - **Macros:**
+    - The Modal chain is EXC · RES · FLT · AMP · MOD, and a Part opens on EXC.
+    - EXC's cells follow MODEL through `page_cells(ModalPage::Exciter, _)`, and its header is named for the exciter (PLUCK, STRIKE, BOW).
+    - EXCITE leaves the model page.
+    - Replace "BOWED dims all four macros" with "BOWED dims STRUCTURE".
+    - COLOR, BURST, FORCE and SPEED are read at note-on and are not modulatable.
+  - **A new "Bowed" section:**
+    - The force is FORCE × (0.5 + 0.5 × velocity); SPEED × 0.3 is the bow's velocity.
+    - DAMP is the ring after the lift, which never gives the gain back.
+    - BRIGHT is the 3-tap loop low-pass at `0.25·(1 − BRIGHT)`, with no delay.
+    - POS is the bow's two-tap comb read, with the loop and output on the one tap.
+    - Stability holds by construction.
+  - **Release:** a lifted bow ramps to DAMP's T60, not `RELEASE_T60`.
+  - **Old patches:** BURST = EXCITE on BANK. On Bowed, DAMP = `damp_for(RELEASE_T60)`, BRIGHT 1 and POS 0. COLOR, FORCE and SPEED take their defaults, the old hidden values.
+  - **Costs:** the new `COST_BOWED` row and its count. **Memory:** the new host sizes, since `StringVoice` and `BowedString` grew.
+  - **Bench rows:** add MDL BOW+ and PLUCK DARK.
+  - **Sources:** add "Task 13" to the plan's range, and the owner's decision of 2026-09-30.
+- [ ] **Step 10: Listen on the desktop**, in `$SP/demo-m2` only. Leave `$SP/demo` alone.
+  - In `$SP/demo-m2/src/clips.rs`, add `modal_bowed_soft()` to the clip list: file `modal-bowed-soft`. It plays one D3 line at velocities 20, 40, 60, 90 and 127, then again at POS 0.3, BRIGHT 0.2 and DAMP 0.6, so the soft bow, the position, the tone and the ring after the lift are each heard.
+  - `modal_bowed()` keeps its settings. Its BRIGHT 0.4 is now heard, deliberately.
+  - Run `cd $SP/demo-m2 && cargo run -q --release --bin demo -- modal-bowed && cargo run -q --release --bin demo -- modal-string && cargo run -q --release --bin demo -- modal-bank`. Expected: WAVs in `$SP/demo-m2/out`. The string and bank clips sound as before, since their defaults are today's.
+  - Tell the owner which files changed, and that `just desktop` shows the EXC node.
+- [ ] **Step 11: Run the green gate.** Run `just test`, `just clippy` and `just check`. Expected: each exits 0.
+- [ ] **Step 12: Commit.**
+
+```bash
+git add chimera-core/src/dsp/modal/params.rs chimera-core/src/dsp/modal/mod.rs chimera-core/src/dsp/modal/string.rs chimera-core/src/ui/block_def.rs chimera-core/src/ui/view.rs chimera-core/src/ui/block_registry.rs chimera-core/src/ui/components.rs chimera-core/src/ui/renderer.rs chimera-core/src/ui/mod_grid.rs chimera-core/tests/fixtures/disk_codes_v1.txt chimera-core/tests/modal_resonator_test.rs chimera-core/tests/codec_compat_test.rs chimera-core/tests/part_page_test.rs chimera-core/tests/block_def_tests.rs chimera-core/tests/header_map_test.rs chimera-core/tests/binding_test.rs chimera-core/tests/cost_test.rs chimera-core/tests/screen_golden_test.rs chimera-core/tests/screen/mod.rs chimera-stm32/src/bench.rs docs/adr/0056-modal-resonators-share-four-macros.md
+git commit -m "Exciters get their own node, and soft keys bow"
+```
+
+---
+
 ### Task 12: Ship: one flash, the bench and the ears
+
+Task 12 runs after Task 13 (the owner's decision of 2026-09-30): the one flash ships the EXC node and the playable Bow with the resonators.
 
 **Files:**
 - Modify: `chimera-core/src/dsp/modal/mod.rs` (`COST_*` to the bench figures), `chimera-core/tests/cost_test.rs` (a measured row per MDL bench row), `docs/adr/0056-*.md` (Consequences: chip figures)
@@ -805,7 +1074,9 @@ This is the only task that touches hardware. Run it with the owner, on one combi
 - [ ] **Step 1: Build and flash.** Run `just flash-bench` for Steps 2 and 3, then `just flash` for the play test in Step 3 (l).
 - [ ] **Step 2: Read the bench rows.** Record each `/VOICE` and voice count on rev V at 480 MHz:
   - `MDL STR`, `MDL STR+`, `MDL BOW`, `MDL SYM` (1–4 notes and flat past 4), `MDL SYM+`, `MDL RES`, `MDL RES48`, `SWITCH`.
+  - Task 13's rows: `MDL BOW` again, now with the velocity scaling, POS's tap and BRIGHT's low-pass, and `MDL BOW+` (FORCE 1, SPEED 1, LFO 1 on BRIGHT, DAMP and POS).
   - `SYM NOTE-ON` and `SYM NOTE-ON LOW`, which grew with the 1,016-sample line.
+  - `PLUCK DARK` (Task 13): a G1 STRING note-on at COLOR 0 and its first block. If it overruns a block beside eight voices, file an issue.
   - The MEMORY screen's `Voice`, `MODAL` and `SYM POOL`, and D2 left.
 - [ ] **Step 3: Listen, by ear, with the owner.** Check:
   - (a) Each model at G1, C4 and C6: in tune, and STRING distinct from Bowed.
@@ -819,10 +1090,14 @@ This is the only task that touches hardware. Run it with the owner, on one combi
   - (i) An LFO on each macro.
   - (j) SPACE and the Part's REV send move together.
   - (k) An old v1 Modal patch with FDBK 1 loads and plays calmly.
+  - (k2) Task 13's EXC node: the map reads EXC · RES · FLT · AMP · MOD, and a Part opens on EXC. The header reads PLUCK, STRIKE or BOW as MODEL changes.
+  - (k3) PLUCK: EXCITE and COLOR on STRING and SYMP, dark to bright. STRIKE: EXCITE and BURST on BANK, a click to a thud.
+  - (k4) BOW: a velocity-20 key bows. FORCE and SPEED move the tone. DAMP is the ring after the bow lifts, BRIGHT darkens, and POS moves the bow, all with the pitch unmoved and no runaway at FORCE 1 and SPEED 1.
+  - (k5) An old v1 Bowed patch and an old v1 BANK patch sound as before.
   - (l) An eight-note chord on STRING and on SYMP, with reverb, delay and every page edited: record LOAD, OVER and DROPS.
 - [ ] **Step 4: Bill the measurements.**
-  - Set each `COST_*` to its bench slope less the Modal Sound's chain (57), as ADR 0054 did.
-  - In `cost_test.rs`, add `the_model_bills_every_modal_row_high` with the measured rows. If `MDL SYM` bills 883 or less, SYMP keeps 6 voices on rev V: note it.
+  - Set each `COST_*` to its bench slope less the Modal Sound's chain (57), as ADR 0054 did. `COST_BOWED` takes Task 13's `MDL BOW`.
+  - In `cost_test.rs`, add `the_model_bills_every_modal_row_high` with the measured rows, `MDL BOW+` among them. If `MDL SYM` bills 883 or less, SYMP keeps 6 voices on rev V: note it.
   - Run `just check`. Expected: exit 0.
 - [ ] **Step 5: Finish ADR 0056.** Add the chip figures and the owner's by-ear verdict to Consequences. It stays Proposed until the owner accepts it; only then does the status become `Accepted (date)`, in the file and the README.
 - [ ] **Step 6: Commit.**
