@@ -129,7 +129,14 @@ FORMANT_BUDGET = 1,382 − 325 − 370 − 96 − 366 = 225
 Σ charges ≤ 225   ⇒   N = ⌊225 / 70⌋ = 3 FRMT operators
 ```
 
-- **On Modal 2's terms (amended 2026-09-30, controller ruling).** Modal 2 raises `CHAIN_COST` to 30 and the bus with the tape to 1,490 (its ADRs 0060–0061). That gives ⌊(7,000 − 1,490)/4⌋ − 345 − 832 = **200**, so N = 2. The budget is derived at build time and never typed in. If the rebased build gives N < 3, the plan stops for the owner before CHOIR and TALK BASS are voiced.
+- **On Modal 2's terms (amended 2026-09-30, controller ruling).** Modal 2 raises `CHAIN_COST` to 30 and the bus with the tape to 1,490 (its ADRs 0060–0061). That gives ⌊(7,000 − 1,490)/4⌋ − 345 − 832 = **200**, so N = 2. The budget is derived at build time and never typed in.
+- **Optimise first, fall back to 2 (owner, 2026-09-30).** A performance pass makes FRMT cheap enough that 3 fit on these terms. It uses block-at-a-time spans between grain starts, hoisted per-block and per-grain work, and output bit-exact against the per-sample path. The target is `COST_FRMT` ≤ 120 by ADR 0056's method.
+  - If the target is met, N = 3, and CHOIR and TALK BASS keep three formants.
+  - If not, N = 2, and they take two-formant voicings. Nothing stops.
+  - The ADR records both the target and the outcome.
+- **Why three is enough (owner, 2026-09-30).**
+  - F1 and F2 carry a vowel's identity, and F3 adds speech clarity. More than three isn't worth the polyphony it costs.
+  - Formant operators are meant to be mixed with regular FM operators, not to fill all six.
 
 **The rule the type enforces is exactly `70·n_FRMT + 10·n_NOIS ≤ 225`**, checked on every assignment: 3 FRMT with at most 1 NOIS (220), 2 FRMT with up to 4 NOIS (180), and any number of NOIS with fewer FRMT. 3 FRMT with 2 NOIS (230) is refused.
 
@@ -456,7 +463,7 @@ The table is in path order, from dark to bright round the vowel triangle:
 
 ### Operator pages (prerequisite phase)
 
-- **Where they live (amended 2026-09-30, owner).** OP1 … OP6 are sub-pages of the OSC node, after its group pages. EDIT and SEQ step through them as on every page. There is no new gesture: B*n* keeps meaning Part *n*, and #37's hold-B1–B6 is dropped.
+- **Where they live (amended 2026-09-30, owner).** OP1 … OP6 are sub-pages of the OSC node, after its twelve group pages, which stay unchanged. There is no envelope-page merge: the controller's default, which the owner may revisit. EDIT and SEQ step through them as on every page. There is no new gesture: B*n* keeps meaning Part *n*, and #37's hold-B1–B6 is dropped.
 - **Dependency.** No operator page is built on main, and BW, SKIRT, KEY, RES and SLOT have no page without one. The OP sub-pages land first, as their own branch (Phase 0), with the dynamic sub-row and focus by identity. This spec builds on that branch.
   - Gang edit, LEVEL SCALE and the living diagram stay in #37.
 - **Cells by kind.** Cells come from a pure lookup keyed on the operator's kind:

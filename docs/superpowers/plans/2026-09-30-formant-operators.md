@@ -6,7 +6,7 @@
 - OP1–OP6 are OSC sub-pages. There is no hold gesture and no hold ADR.
 - The curves reach past 4: ρ is 0 and p̂ is 1 beyond the table.
 - Grains are clock-relative and latched per grain.
-- The budget is derived at build time, with a stop for the owner if N < 3.
+- The budget is derived at build time. Task 11b optimises FRMT so that 3 fit, and falls back to N = 2 without stopping (owner, 2026-09-30).
 - The first grain has no base delay.
 - Phase casts are wrapping fixed-point.
 - Latching moved to Task 9, and `modulatable` flips in Task 12.
@@ -59,7 +59,9 @@
 - **The budget.** The rule is `charge(FRMT)·n_FRMT + charge(NOIS)·n_NOIS ≤ FORMANT_BUDGET`, where each charge is its cost minus `COST_OP`.
   - `FORMANT_BUDGET` is derived at build time from the live cost constants, and never typed in; `FORMANT_N` = ⌊budget/charge(FRMT)⌋.
   - The cost estimates are `COST_FRMT_ONE` 90, `COST_FRMT` 130 and `COST_NOIS` 70.
-  - On Modal 2's terms the budget is 200 and N = 2 (spec § 1, amended). **Task 3 stops for the owner if N < 3.**
+  - On Modal 2's terms the budget is 200. The estimate `COST_FRMT` 130 gives N = 2 until Task 11b.
+  - **Task 11b's target** is a SKIRT 1–3 FRMT term ≤ 120 (charge ≤ 60, so 3·60 + 10 for CHOIR's NOIS = 190 ≤ 200), counted by ADR 0056's method.
+  - **Outcomes (owner, 2026-09-30):** if the target is met, N = 3; if not, N = 2 with the two-formant voicings. The plan continues either way, and ADR F records which.
 - **Audio thread:**
   - no heap, no blocking, no libc, and no per-sample table read beyond W1's;
   - no new `unsafe`;
@@ -90,8 +92,8 @@
 ## Rulings
 
 1. **Operator pages (owner, 2026-09-30).** OP1–OP6 are OSC sub-pages after the group pages, each bound to its operator. EDIT and SEQ step through them, and there is no new gesture: B*n* stays Part *n*. The spec's § 6 is amended to match.
-   - The owner's shorthand "WAVE, CRS, FINE, LVL, ENV, FB" is read as today's group pages, **unchanged**: CRS, FIN, DET, LVL, VEL, AR, D1R, D1L, D2R, RR, RS and FBK. OP1–OP6 follow them.
-   - Merging the ENV stages into one page is not done here (left open).
+   - Today's twelve group pages stay unchanged: CRS, FIN, DET, LVL, VEL, AR, D1R, D1L, D2R, RR, RS and FBK. OP1–OP6 follow them.
+   - There is no envelope-page merge. This is the controller's default, which the owner may revisit (2026-09-30).
 2. **Phase 0 owns the dynamic sub-row and focus by `BlockDef.id`**, plus OP1–OP6 and ADR P, which records operator pages as sub-pages and focus by identity.
    - #37's hold, envelope playhead dot, gang edit, LEVEL SCALE and living diagram stay in #37.
    - Phase 0's hardware UAT joins the single end list at the shared ship flash.
@@ -103,7 +105,7 @@
    - The reset grain's base delay is 0 (I2).
 6. **The budget** lives in `chimera-core/src/budget.rs`. It uses `Kinds::TABLE` for its costliest-table const, so there is no const cycle.
    - The demo recipes are chosen at compile time by `FORMANT_N`: the spec's voicings at N ≥ 3, and the two-FRMT voicings below at N = 2.
-   - Task 3 stops for the owner if N < 3.
+   - Nothing stops on N. Task 11b sets the terms, and N follows from them at build time: 3 if its target is met, else 2.
 7. **SKIRT latches when the operator is idle** at note-on, so a retrigger never changes an open grain's exponent.
    - Billing stays by the stored SKIRT. `AlgoEngine::held_skirt_extra(&self, p) -> Cost` bills `COST_FRMT − COST_FRMT_ONE` for each operator latched at SKIRT ≥ 1 whose stored SKIRT is 0. It is added where `Voice::held_model_extra` is, as #183 does for Modal.
 8. **The viz shows live values.** The OP page viz shows the live FC and BW_eff of the edited Part's most recently started voice, published once per block. With no voice sounding it shows the stored parameters at C4 (spec § 6).
@@ -380,14 +382,10 @@ git commit -m "OP1-OP6 are sub-pages of OSC: WAVE, COARSE, FINE, LEVEL, FB and V
   - `COST_FEEDBACK` is billed for Table and Formant only.
   - WAVE's spec keeps max 15 in this task.
 
-- [ ] **Step 0: Compute the budget on the rebased `main`, and stop if N < 3.** Add `budget.rs` and print `FORMANT_BUDGET` and `FORMANT_N` from a scratch test.
-  - On Modal 2's terms it reads 200 and N = 2.
-  - If N < 3, **stop and take it to the owner** with the three options from the plan review:
-    - accept N = 2, which the two-FRMT demo voicings (Task 5) cover;
-    - lower `COST_FRMT` from the bench;
-    - revisit the heavy-route convention.
-
-  Continue only on the owner's word, and record it in ADR F.
+- [ ] **Step 0: Compute the budget on the rebased `main`.** Add `budget.rs`, and print `FORMANT_BUDGET` and `FORMANT_N` from a scratch test.
+  - On Modal 2's terms it reads 200 and N = 2 at the estimate of 130.
+  - Don't stop. Every test and recipe is N-generic, and Task 11b settles N (owner, 2026-09-30).
+  - Put the printed values in the commit body.
 - [ ] **Step 1: Write the failing tests.**
 
 ```rust
@@ -1420,6 +1418,69 @@ git commit -m "PM delays FRMT grains within their slack; feedback drives the car
 
 - [ ] **Step 6: QA gate 4.** Run G1–G6, with G5 covering all three clips.
 
+### Task 11b: Make FRMT cheap: spans, hoisting, bit-exact against the per-sample path
+
+This follows Modal 2's Task 11b: block-at-a-time spans, per-block and per-grain work hoisted, and output bit-exact against a per-sample reference.
+
+**Target (owner, 2026-09-30):** `COST_FRMT` (SKIRT 1–3, both lanes live) ≤ 120 by ADR 0056's instruction-count method, so N = 3 on Modal 2's costs (CHAIN 30, bus 1,180/1,490). `COST_FRMT_ONE` and `COST_NOIS` are recounted in the same pass.
+
+**Files:**
+- Modify:
+  - `chimera-core/src/dsp/algo/{kernel.rs,engine.rs}`;
+  - `chimera-core/tests/algo_kernel_test.rs`.
+- Create: `chimera-core/tests/algo_formant_perf_test.rs`.
+
+**Interfaces:**
+- **The reference path.** Keep Tasks 10–11's per-sample loop as `fn formant_tick_ref`, under `#[cfg(any(test, feature = "test-support"))]`.
+- **`run_formant::<N, S>` renders in spans:**
+  - `m = min(samples left in the block, samples to the next clock wrap)`, where the samples to the wrap are `(u32::MAX − phase) / inc + 1`, integer. So the wrap test and the restart leave the inner loop.
+  - Per span, each live lane's latched `inv_d`, `slack`, `o_base` and `shift` sit in registers.
+  - With `N == 0` (no incoming links), `o` is constant per grain. So `cycles_to_phase(o·shift)` and `o·inv_d` are hoisted to the grain start, and each lane's open interval `[x > 0, x < 1)` is computed as sample indices. The inner loop then runs only the open samples, with no liveness test.
+  - With `N > 0`, only the delay and its phase stay per sample.
+- **Unchanged:** the sine read (W1 mip 0, one table, no crossfade) and the squaring chain, which is straight-line per `S`.
+- **`run_noise::<N>`** hoists its ramps' deltas, and its `rng` and poles stay in registers across the block.
+
+- [ ] **Step 1: Write the failing tests.**
+
+```rust
+#[test]
+fn spans_are_bit_exact_against_the_per_sample_path() {
+    for seed in 0..200u32 {
+        let (p, note, blocks, jumps) = random_formant_case(seed);   // kinds, SKIRT, BW, FRMT, PM links, BW and pitch jumps
+        let (fast, cuts_fast) = render_algo_with(&p, note, blocks, jumps.clone());
+        let (slow, cuts_slow) = render_algo_ref(&p, note, blocks, jumps);   // formant_tick_ref throughout
+        assert!(fast.iter().zip(&slow).all(|(a, b)| a.to_bits() == b.to_bits()), "seed {seed}");
+        assert_eq!(cuts_fast, cuts_slow);
+    }
+}
+#[test]
+fn frmt_meets_its_target_or_falls_back_to_two() {
+    assert!(AlgoEngine::COST_FRMT.0 <= 120 || FORMANT_N == 2);
+    assert_eq!(FORMANT_N >= 3, AlgoEngine::COST_FRMT.0 - AlgoEngine::COST_OP.0 <= FORMANT_BUDGET.0 / 3);
+}
+```
+
+- [ ] **Step 2: Run them to see them fail.** Run `cargo test -p chimera-core --test algo_formant_perf_test`. Expected: FAIL, because `render_algo_ref` isn't defined.
+- [ ] **Step 3: Implement the spans.** Every existing formant and kernel test stays green, and `the_kernel_matches_the_model_bit_for_bit` is unchanged.
+- [ ] **Step 4: Count.** Use Task 15's `llvm-objdump` procedure, with `#[cfg_attr(feature = "bench", inline(never))]` on `run_formant` and `run_noise` added here.
+  - Count the per-sample instructions of the inner span loops (`<0, S0>`, `<0, S3>`, `<1, S3>`, `run_noise<0>`) against `run_one<0>`.
+  - Each term is `COST_OP + Δ × 1.46 + per-block and per-grain work over 64`, plus 10 %, rounded up to 10.
+  - Bill `COST_FRMT` at the costlier of `<0, S3>` and `<1, S3>`.
+  - Set `COST_FRMT_ONE`, `COST_FRMT` and `COST_NOIS`, with "estimate, ADR 0056's method, <commit>" beside each.
+- [ ] **Step 5: The outcome.** `FORMANT_N` follows at build time.
+  - **N = 3:** CHOIR and TALK BASS take the spec's three-formant voicings.
+  - **N = 2:** they take the two-formant voicings (Task 5), and the plan continues (owner, 2026-09-30).
+  - Put the counts, the terms and N in the commit body. Task 15's ADR records both the target and the outcome.
+- [ ] **Step 6: Run the tests to verify they pass.** Run `just check`. `formant_budget_keeps_four_voices` must still hold at the new terms.
+- [ ] **Step 7: Commit.**
+
+```bash
+git add chimera-core/src/dsp/algo chimera-core/tests/algo_formant_perf_test.rs chimera-core/tests/algo_kernel_test.rs
+git commit -m "FRMT renders in spans between grain starts; terms recounted"
+```
+
+- [ ] **Step 8: QA gate 4b.** Run G1–G6. G4 checks the floor at the new terms, and G5 renders whichever voicings N chose.
+
 ---
 
 # Phase 5 — Modulation
@@ -1682,7 +1743,7 @@ git commit -m "OP pages swap in each kind's cells and draw the live grain or ban
   - `"NOIS"`: one NOIS;
   - `"FRMT MAX"`: A16/A17 with `FORMANT_N` FRMT, the NOIS the budget still allows, table operators in the rest, and feedback where billed;
   - `"CHOIR"`: `demo_sound(Demo::Choir)`.
-- `run_formant` and `run_noise` carry `#[cfg_attr(feature = "bench", inline(never))]`, so their symbols exist in the bench build.
+- `run_formant` and `run_noise` already carry `#[cfg_attr(feature = "bench", inline(never))]` (Task 11b).
 
 - [ ] **Step 1: Write the failing tests.**
 
@@ -1730,14 +1791,15 @@ grep -n "run_formant<\|run_noise<\|run_one<" target/formant.dis
 
   Count the per-sample loop body instructions of `run_formant<1, S0>`, `run_formant<1, S3>` (both lanes live) and `run_noise<1>`, against `run_one<1>`.
   - Each term is `COST_OP + Δ × 1.46 + per-block/64`, plus 10 %, rounded up to 10.
-  - Update any term that rises. `FORMANT_BUDGET` and N follow.
-  - If N falls, rerun Task 3's Step 0 rule: **stop** for the owner.
+  - This re-checks Task 11b's counts against the final code, with bench rows added.
+  - Update any term that moved. `FORMANT_BUDGET` and N follow.
+  - If N changes from Task 11b's outcome, the demo voicings switch at compile time. Rerun G5, and note it in the ADR.
 - [ ] **Step 4: Write ADR F**, following the spec's § ADR:
   - the provenance split, including FSVR's measured skirt law and its GPL status;
   - `OpKind`, codes and VOWEL SLOT;
   - the −12 dB reference, the ceiling and the peak-referenced modulator;
   - the SKIRT-free floor, per-grain BW and the extended curves;
-  - the terms, with the counts, the derived budget and N, the owner's ruling from Task 3 Step 0, and the voice table printed by `formant_costs_bill_by_kind`;
+  - the terms, with the counts, the derived budget and N, Task 11b's outcome (N = 3 with its target met, or the N = 2 fallback, with the counts and the two-formant voicings if it fell back), and the voice table printed by `formant_costs_bill_by_kind`;
   - `Kinds` and the heavy-route case;
   - the clean-peak decision;
   - the partial supersessions of ADRs 0022, 0026 and 0031.
@@ -1829,7 +1891,7 @@ This is one sitting at the chip, per the hardware-at-ship rule.
 - [ ] **Step 3: Update the terms.**
   - Solve `COST_FRMT_ONE` from FRMT0 − FLOOR, `COST_FRMT` from FRMT3 − FLOOR, and `COST_NOIS` from NOIS − FLOOR, each rounded up to 10. Write "measured <date>, bench, rev V at 480 MHz" beside each.
   - FRMT PM must be ≤ FRMT3 + 10, and FRMT MAX ≤ its model bill; otherwise file an issue and stop.
-  - If N changes, the Task 3 rule applies.
+  - If N changes, the voicings follow at compile time. Rerun G5 on the desktop, and file an issue if CHOIR or TALK BASS changes voicing after the owner's UAT.
   - Change ADR F's estimate lines, since it is still Proposed.
 - [ ] **Step 4: Commit.**
 
