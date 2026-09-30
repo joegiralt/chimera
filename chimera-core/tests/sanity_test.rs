@@ -53,12 +53,8 @@ fn fundamental_hz(s: &[f32]) -> f32 {
     SR as f32 / lag as f32
 }
 
-/// ±1, × the Modal model's output gain the case ends on (ADR 0058).
-fn bound(case: Case) -> f32 {
-    let p = match case {
-        Case::AlgoToModalSwitch => init_params(EngineType::Modal),
-        _ => setup(case).0,
-    };
+/// ±1, × a Modal model's output gain (ADR 0058).
+fn bound(p: &ParamSnapshot) -> f32 {
     match p.engine() {
         EngineType::Modal => out_gain(p.modal.mode),
         _ => 1.0,
@@ -72,9 +68,16 @@ fn assert_finite_bounded_audible(case: Case) {
         "{}: non-finite sample",
         case.name()
     );
-    let pk = peak(&out);
-    let bound = bound(case);
-    assert!(pk <= bound, "{}: peak {pk} exceeds ±{bound}", case.name());
+    // The switch's Algo half is Algo's, its Modal half Modal's.
+    let (algo, modal) = (setup(case).0, init_params(EngineType::Modal));
+    let split = match case {
+        Case::AlgoToModalSwitch => ON_BLOCKS / 2 * BLOCK_SIZE,
+        _ => out.len(),
+    };
+    for (part, p) in [(&out[..split], &algo), (&out[split..], &modal)] {
+        let (pk, bound) = (peak(part), bound(p));
+        assert!(pk <= bound, "{}: peak {pk} exceeds ±{bound}", case.name());
+    }
     let on = peak(&out[..ON_BLOCKS * BLOCK_SIZE]);
     assert!(
         on > AUDIBLE,

@@ -23,13 +23,16 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use chimera_core::addr::{BlockRef, Op};
 use chimera_core::block::ParamId;
 use chimera_core::dsp::algo::params::AlgoOpParams;
+use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::chorus::ChorusParams;
 use chimera_core::dsp::delay::DelayParams;
 use chimera_core::dsp::fx_bus::{FxBus, FxParams};
 use chimera_core::dsp::modal::{ModalParams, ResonatorMode};
 use chimera_core::dsp::reverb::ReverbParams;
 use chimera_core::hw::DAC_PAIRS;
-use chimera_core::params::{DriveParams, FilterParams, FolderParams, OutParams, PitchParams};
+use chimera_core::params::{
+    DriveParams, EngineType, FilterParams, FolderParams, OutParams, PitchParams,
+};
 use chimera_core::part::{DacPair, PartParams};
 use common::sweep::*;
 
@@ -291,10 +294,23 @@ fn clicks_ok(c: &Case, label: &str) -> Option<&'static str> {
 
 /// Why `c` may carry DC to the DAC.
 fn dc_ok(c: &Case) -> Option<&'static str> {
-    if matches!(c.param.block, BlockRef::AlgoOp(_) | BlockRef::Algo) {
+    let algo = matches!(c.param.block, BlockRef::AlgoOp(_) | BlockRef::Algo);
+    if algo && dc_waves(c) {
+        return Some("W3, W4, W7 and W8 keep the TX81Z's DC (ADR 0022, ADR 0023)");
+    }
+    // What sets the spectrum: the algorithm, and each operator's wave,
+    // ratio, detune and feedback.
+    let spectral = [
+        AlgoOpParams::WAVE,
+        AlgoOpParams::COARSE,
+        AlgoOpParams::FINE,
+        AlgoOpParams::DETUNE,
+        AlgoOpParams::FEEDBACK,
+    ];
+    if c.param.block == BlockRef::Algo || spectral.iter().any(|&id| c.is_op(id)) {
         return Some(
-            "FM: W3, W4, W7 and W8 keep the TX81Z's DC, and a ratio or feedback puts a sideband \
-             at or near 0 Hz (c − k·m = 0); ADR 0022 declined DC blocking on the Algo path",
+            "FM: a ratio, detune or feedback puts a sideband at or near 0 Hz (c − k·m = 0), \
+             which ADR 0022 leaves unblocked",
         );
     }
     if c.patch == Patch::ModalInit(ResonatorMode::Bowed) && c.modal(ModalParams::SPEED) {
@@ -303,19 +319,18 @@ fn dc_ok(c: &Case) -> Option<&'static str> {
              part of it (about −30 dB re the note)",
         );
     }
-    let symp = c.patch == Patch::ModalInit(ResonatorMode::Sympathetic)
-        && (c.modal(ModalParams::COUPLE)
-            || c.modal(ModalParams::HALO)
-            || c.is(BlockRef::Pitch, PitchParams::PITCH));
-    let bank = c.patch == Patch::ModalInit(ResonatorMode::Modal) && c.modal(ModalParams::STRUCTURE);
-    if symp || bank {
-        return Some(
-            "the engine's own: SYMP's halo drifts below the output blocker's 10 Hz, BANK's \
-             output has no blocker (−27 to −40 dB re the note); ADR 0058's gain lifts it past \
-             the threshold",
-        );
-    }
     None
+}
+
+/// The TX81Z's waves with DC (ADR 0022).
+const DC_WAVES: [WaveId; 4] = [WaveId::W3, WaveId::W4, WaveId::W7, WaveId::W8];
+
+/// Whether an Algo case plays a wave with DC: the patch's, or one it sets.
+fn dc_waves(c: &Case) -> bool {
+    let dc = |w: u8| DC_WAVES.contains(&WaveId::clamped(w));
+    let s = c.patch.sound();
+    let patch = s.engine() == EngineType::Algo && s.params.algo.ops.iter().any(|o| dc(o.wave));
+    patch || (c.is_op(AlgoOpParams::WAVE) && c.any(|v| dc(v as u8)))
 }
 
 /// Why a voice may stay busy on a silent bus past the bound.
@@ -354,6 +369,7 @@ fn long_tail(c: &Case) -> Option<&'static str> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Defect {
     VoiceDc,
+    ModalDc,
     Snaps,
     SilentOpHoldsVoice,
 }
@@ -364,6 +380,10 @@ impl Defect {
             Defect::VoiceDc => {
                 "no DC blocker after the voice's drive, filter drive and folder; the folder's SYM \
                  bias is DC (wavefolder.rs:33, voice.rs:571-578)"
+            }
+            Defect::ModalDc => {
+                "the engine's own DC (Task 17): SYMP's halo drifts below the output blocker's \
+                 10 Hz, and BANK's output has no blocker"
             }
             Defect::Snaps => {
                 "level, pan, send, FX mix, chorus depth, delay time, drive and its mix changes \
@@ -415,6 +435,20 @@ fn known(c: &Case, kind: &Kind, label: &str) -> Option<Defect> {
                 && c.modal(ModalParams::BRIGHT) =>
         {
             Some(Defect::VoiceDc)
+        }
+        Kind::Dc
+            if c.patch == Patch::ModalInit(ResonatorMode::Sympathetic)
+                && (c.modal(ModalParams::COUPLE)
+                    || c.modal(ModalParams::HALO)
+                    || c.is(BlockRef::Pitch, PitchParams::PITCH)) =>
+        {
+            Some(Defect::ModalDc)
+        }
+        Kind::Dc
+            if c.patch == Patch::ModalInit(ResonatorMode::Modal)
+                && c.modal(ModalParams::STRUCTURE) =>
+        {
+            Some(Defect::ModalDc)
         }
         Kind::Click if label.starts_with("jump") && snaps(c) => Some(Defect::Snaps),
         Kind::Zombie if c.is_op(AlgoOpParams::RR) => Some(Defect::SilentOpHoldsVoice),
@@ -768,45 +802,49 @@ fn levels_are_safe() {
     }
 }
 
-/// ADR 0058: each Modal model's INIT, one C4 at velocity 100, as loud on P1
-/// as ALGO INIT's, ±1 dB. Its chord stays under the ceiling, and the limiter
-/// takes little of its loudness.
+/// ADR 0058's reference: ALGO INIT's C4 at velocity 100 on P1, LUFS.
+const REFERENCE_LUFS: f32 = -15.0;
+
+/// ADR 0058: ALGO INIT sits at the reference, ±0.1 dB, and each Modal
+/// model's INIT, one C4 at velocity 100, within ±1 dB of it. The limiter
+/// is a safety ceiling (ADR 0050): no INIT's chord at velocity 127, the
+/// hardest strike, loses more than `MAX_CHORD_LIMITED_DB` to it.
 #[test]
 fn modal_models_match_the_loudness_reference() {
-    let reference = level(Patch::AlgoInit, &[60], 100, BPS).lufs;
-    let mut off = Vec::new();
+    let algo = level(Patch::AlgoInit, &[60], 100, BPS).lufs;
+    assert!(
+        (algo - REFERENCE_LUFS).abs() <= 0.1,
+        "ALGO INIT at {algo:.2} LUFS, not the reference's {REFERENCE_LUFS}"
+    );
+    let mut bad = Vec::new();
     for m in MODELS {
         let p = Patch::ModalInit(m);
-        let one = level(p, &[60], 100, BPS);
-        let chord = level(p, &CHORD, 100, BPS);
-        let d = one.lufs - reference;
+        let d = level(p, &[60], 100, BPS).lufs - REFERENCE_LUFS;
+        let chord = level(p, &CHORD, 127, BPS);
         println!(
-            "{}: {d:+.2} dB; chord peak {:.1} dBFS, gain reduction {:.1} dB at most, {:.2} dB \
-             of its loudness",
+            "{}: {d:+.2} dB; chord at 127: gain reduction {:.1} dB at most, {:.2} dB of its \
+             loudness",
             p.name(),
-            db(chord.peak[0]),
             chord.gr_db,
             chord.limited_db
         );
-        assert!(within_ceiling(chord.peak[0]), "{}: chord over", p.name());
-        assert!(
-            chord.limited_db < MAX_CHORD_LIMITED_DB,
-            "{}: the limiter took {:.2} dB of the chord",
-            p.name(),
-            chord.limited_db
-        );
-        off.push((p.name(), d));
+        if d.abs() > 1.0 {
+            bad.push(format!("{}: {d:+.2} dB off the reference", p.name()));
+        }
+        if chord.limited_db > MAX_CHORD_LIMITED_DB {
+            bad.push(format!(
+                "{}: the limiter took {:.2} dB of the chord at 127",
+                p.name(),
+                chord.limited_db
+            ));
+        }
     }
-    let off: Vec<_> = off.into_iter().filter(|o| o.1.abs() > 1.0).collect();
-    assert!(
-        off.is_empty(),
-        "off the reference ({reference:.1} LUFS): {off:?}"
-    );
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
 }
 
-/// The loudness the limiter may take from a Modal INIT's chord, dB. STRING's
-/// strike, 11 dB peakier than ALGO INIT for its loudness, loses 1.8.
-const MAX_CHORD_LIMITED_DB: f32 = 2.0;
+/// The loudness the limiter may take from an INIT's chord at velocity 127,
+/// dB: a safety ceiling may duck a strike, not hold the note down.
+const MAX_CHORD_LIMITED_DB: f32 = 3.0;
 
 const MODELS: [ResonatorMode; 4] = [
     ResonatorMode::String,
@@ -852,29 +890,133 @@ fn defect_folder_sym_puts_dc_on_the_dac() {
     );
 }
 
-/// A jump of these continuous parameters steps the triangle probe.
+/// Each case's static DC on P1 over `DC_MAX`, as the sweep reads it.
+fn dc_over(cases: &[(Patch, Param, f32)]) -> Vec<String> {
+    cases
+        .iter()
+        .filter_map(|&(patch, p, v)| {
+            let c = Case {
+                param: p,
+                patch,
+                mv: Move::Static(v),
+                wet: false,
+            };
+            let dc = play(&mut c.bench(), Some(&p), c.mv, FAST).dc[0];
+            (dc > DC_MAX).then(|| format!("{}: DC {dc:.4}", c.label()))
+        })
+        .collect()
+}
+
+/// The voice's filter saturates the bow's open sawtooth into DC the
+/// engine hasn't (−64 dB re the note at the engine, −38 at the voice).
 #[test]
-#[ignore = "defect: level, pan, send, FX mix and drive changes are unramped, FX bypass gates the return (instrument.rs:182-186, voice.rs:580-593, fx_bus.rs:124-165)"]
+#[ignore = "defect: the voice chain carries DC after its nonlinear stages (filter.rs saturate, voice.rs:571-578)"]
+fn defect_filter_puts_dc_on_a_bright_bow() {
+    let bowed = Patch::ModalInit(ResonatorMode::Bowed);
+    let bad = dc_over(&[(bowed, find(BlockRef::Modal, ModalParams::BRIGHT), 1.0)]);
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
+}
+
+/// Task 17: SYMP's halo drifts below the output blocker's 10 Hz, and
+/// BANK's output has no blocker.
+#[test]
+#[ignore = "defect: SYMP's halo drifts below the 10 Hz blocker and BANK's output has none (dsp/modal/mod.rs render); Task 17"]
+fn defect_modal_engines_put_dc_on_the_dac() {
+    let symp = Patch::ModalInit(ResonatorMode::Sympathetic);
+    let bank = Patch::ModalInit(ResonatorMode::Modal);
+    let bad = dc_over(&[
+        (symp, find(BlockRef::Pitch, PitchParams::PITCH), 12.0),
+        (bank, find(BlockRef::Modal, ModalParams::STRUCTURE), 1.0),
+    ]);
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
+}
+
+/// A jump of these continuous parameters steps the output: on the triangle
+/// probe, or on a Sound where the stage is in play.
+#[test]
+#[ignore = "defect: level, pan, send, FX mix, delay time, drive, filter drive and folder changes are unramped, FX bypass gates the return (instrument.rs:182-186, voice.rs:580-593, fx_bus.rs:124-165, drive.rs:30)"]
 fn defect_snaps_click() {
+    let symp = Patch::ModalInit(ResonatorMode::Sympathetic);
+    // Each (parameter, Sound, wet, timing) clicks today on its own.
     let params = [
-        (find(BlockRef::Out, OutParams::VOLUME), false),
-        (find(BlockRef::Part, PartParams::LEVEL), false),
-        (find(BlockRef::Part, PartParams::PAN), false),
-        (find(BlockRef::Reverb, ReverbParams::MIX), true),
-        (find(BlockRef::Chorus, ChorusParams::MIX), true),
-        (find(BlockRef::Delay, DelayParams::MIX), true),
-        (find(BlockRef::Folder, FolderParams::FOLD), false),
+        (
+            find(BlockRef::Out, OutParams::VOLUME),
+            Patch::Probe,
+            false,
+            FAST,
+        ),
+        (
+            find(BlockRef::Part, PartParams::LEVEL),
+            Patch::Probe,
+            false,
+            FAST,
+        ),
+        (
+            find(BlockRef::Part, PartParams::PAN),
+            Patch::Probe,
+            false,
+            FAST,
+        ),
+        (
+            find(BlockRef::Reverb, ReverbParams::MIX),
+            Patch::Probe,
+            true,
+            FAST,
+        ),
+        (
+            find(BlockRef::Chorus, ChorusParams::MIX),
+            Patch::Probe,
+            true,
+            FAST,
+        ),
+        (
+            find(BlockRef::Delay, DelayParams::MIX),
+            Patch::Probe,
+            true,
+            FAST,
+        ),
+        (
+            find(BlockRef::Delay, DelayParams::TIME_MS),
+            Patch::Probe,
+            true,
+            FAST,
+        ),
+        (
+            find(BlockRef::Folder, FolderParams::FOLD),
+            symp,
+            false,
+            FAST,
+        ),
+        (
+            find(BlockRef::Folder, FolderParams::SYMMETRY),
+            Patch::BusyModal,
+            false,
+            THOROUGH,
+        ),
+        (find(BlockRef::Drive, DriveParams::DRIVE), symp, false, FAST),
+        (
+            find(BlockRef::Drive, DriveParams::MIX),
+            Patch::BusyModal,
+            false,
+            THOROUGH,
+        ),
+        (
+            find(BlockRef::Filter, FilterParams::DRIVE),
+            symp,
+            false,
+            FAST,
+        ),
     ];
     let mut bad = Vec::new();
-    for (p, wet) in params {
+    for (p, patch, wet, t) in params {
         for (from, to) in [(p.spec.min, p.spec.max), (p.spec.max, p.spec.min)] {
             let c = Case {
                 param: p,
-                patch: Patch::Probe,
+                patch,
                 mv: Move::Jump { from, to },
                 wet,
             };
-            let r = play(&mut c.bench(), Some(&p), c.mv, FAST);
+            let r = play(&mut c.bench(), Some(&p), c.mv, t);
             let jumps: Vec<_> = r
                 .clicks
                 .iter()
