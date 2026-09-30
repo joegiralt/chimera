@@ -623,19 +623,77 @@ impl Block for OutParams {
     }
 }
 
-/// The voice's pitch offset (ADR 0042): one block for every engine, so a
-/// route to it survives an engine switch.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+/// What a note that steals a sounding voice of its own Part and model
+/// does to it (#254, ADR 0065).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Steal {
+    /// Cut: the note strikes at its own pitch, as a fresh note.
+    #[default]
+    Cut,
+    /// The ring glides to the new note's pitch over GLIDE TIME, struck anew
+    /// on the way, as a Prophet's glide.
+    Glide,
+}
+
+pub const STEAL_NAMES: [&str; 2] = ["CUT", "GLIDE"];
+
+impl DiskCode for Steal {
+    fn disk_code(self) -> u8 {
+        match self {
+            Steal::Cut => 0,
+            Steal::Glide => 1,
+        }
+    }
+
+    fn disk_ident(self) -> &'static str {
+        match self {
+            Steal::Cut => "CUT",
+            Steal::Glide => "GLIDE",
+        }
+    }
+
+    fn from_disk_code(c: u8) -> Option<Self> {
+        match c {
+            0 => Some(Steal::Cut),
+            1 => Some(Steal::Glide),
+            _ => None,
+        }
+    }
+}
+
+/// The voice's pitch (ADR 0042): its offset, one block for every engine,
+/// so a route to it survives an engine switch; and how a steal moves it
+/// (#254).
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PitchParams {
     /// Semitones, −24..=24; a modulated copy stays fractional.
     pub pitch: f32,
     /// Cents, −100..=100.
     pub fine: f32,
+    pub steal: Steal,
+    /// GLIDE TIME's slider position, 0..1 on `law::GLIDE_TIME`.
+    pub glide_time: f32,
+}
+
+/// GLIDE TIME's position at 150 ms.
+pub const INIT_GLIDE_TIME: f32 = 0.659_215_8;
+
+impl Default for PitchParams {
+    fn default() -> Self {
+        Self {
+            pitch: 0.0,
+            fine: 0.0,
+            steal: Steal::Cut,
+            glide_time: INIT_GLIDE_TIME,
+        }
+    }
 }
 
 impl PitchParams {
     pub const PITCH: ParamId = ParamId(0);
     pub const FINE: ParamId = ParamId(1);
+    pub const STEAL: ParamId = ParamId(2);
+    pub const GLIDE_TIME: ParamId = ParamId(3);
 
     /// The whole offset in semitones.
     pub fn semitones(&self) -> f32 {
@@ -652,16 +710,40 @@ impl PitchParams {
             crate::dsp::fast_exp2(st / 12.0)
         }
     }
+
+    /// GLIDE TIME, seconds.
+    pub fn glide_secs(&self) -> f32 {
+        crate::dsp::modulator::law::GLIDE_TIME.at(self.glide_time)
+    }
+
+    /// A steal's glide, as its one-pole's time constant, seconds: GLIDE
+    /// TIME is 95 % of the way, three of them. `None` at CUT.
+    pub fn steal_glide(&self) -> Option<f32> {
+        (self.steal == Steal::Glide).then(|| self.glide_secs() / 3.0)
+    }
 }
 
-/// Both read by the engine every block.
-pub static PITCH_SPECS: [ParamSpec; 2] = [
+/// PITCH and FINE read by the engine every block; STEAL and GLIDE TIME at
+/// a steal.
+pub static PITCH_SPECS: [ParamSpec; 4] = [
     ParamSpec::stepped(0, "PITCH", ValFmt::Signed(24), -24.0, 24.0, 0.0, true)
         .ident("PITCH")
         .semitones(24.0),
     ParamSpec::stepped(1, "FINE", ValFmt::Signed(100), -100.0, 100.0, 0.0, true)
         .ident("FINE")
         .cents(100.0),
+    ParamSpec::choice(2, "STEAL", ValFmt::Names(&STEAL_NAMES), 1.0, 0.0).ident("STEAL"),
+    ParamSpec::continuous(
+        3,
+        "TIME",
+        ValFmt::Law(crate::dsp::modulator::law::Law::GlideTime),
+        0.0,
+        1.0,
+        INIT_GLIDE_TIME,
+        1.0 / 128.0,
+        false,
+    )
+    .ident("GLIDE_TIME"),
 ];
 
 impl Block for PitchParams {
@@ -673,6 +755,8 @@ impl Block for PitchParams {
         match id {
             Self::PITCH => self.pitch,
             Self::FINE => self.fine,
+            Self::STEAL => self.steal as u8 as f32,
+            Self::GLIDE_TIME => self.glide_time,
             _ => 0.0,
         }
     }
@@ -681,8 +765,22 @@ impl Block for PitchParams {
         match id {
             Self::PITCH => self.pitch = v,
             Self::FINE => self.fine = v,
+            Self::STEAL => self.steal = if v >= 0.5 { Steal::Glide } else { Steal::Cut },
+            Self::GLIDE_TIME => self.glide_time = v,
             _ => {}
         }
+    }
+
+    fn enum_code(&self, id: ParamId) -> Option<u8> {
+        (id == Self::STEAL).then(|| self.steal.disk_code())
+    }
+
+    fn enum_ident(&self, id: ParamId) -> Option<&'static str> {
+        (id == Self::STEAL).then(|| self.steal.disk_ident())
+    }
+
+    fn set_enum_code(&mut self, id: ParamId, code: u8) -> bool {
+        id == Self::STEAL && apply_code(Steal::from_disk_code(code), |s| self.steal = s)
     }
 }
 

@@ -39,9 +39,11 @@ const GOLDENS: &[(&str, u64)] = &[
     ("lfo_func", 0x9fbaed70f0baac26),
     ("amp_vel_dimmed", 0x496ba84d34eb9c06),
     ("amp_vel_live", 0x07fe7ee2b28245d6),
-    ("algo_pitch", 0x5ab7af564cf9979b),
+    // Re-recorded: PIT shows STEAL and TIME (#254).
+    ("algo_pitch", 0x245c47fc88561cef),
     // Re-recorded: the EXC node (plan Task 13).
-    ("modal_pitch", 0xb64fd8506f6f6543),
+    // Re-recorded: PIT shows STEAL and TIME (#254).
+    ("modal_pitch", 0x68e6cf758f76373f),
     // Re-recorded: the EXC node (plan Task 13).
     ("modal_exc", 0xdf9684baab508f23),
     // Re-recorded: the EXC node (plan Task 13).

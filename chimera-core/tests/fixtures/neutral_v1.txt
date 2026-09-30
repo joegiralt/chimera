@@ -289,6 +289,8 @@ Sound {
         pitch: PitchParams {
             pitch: 0.0,
             fine: 0.0,
+            steal: Cut,
+            glide_time: 0.6592158,
         },
     },
     mod_state: ModState {
