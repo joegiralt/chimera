@@ -463,6 +463,23 @@ pub fn assert_stable(out: &[f32], bound: f32, margin: f32, label: &str) {
     assert!(mean.abs() < 1e-3, "{label}: DC {mean}");
 }
 
+/// `assert_stable` for a note of `f0` Hz: the growth check compares RMS
+/// over whole periods (the most that fit in a second), so a periodic
+/// waveform's window phase can't read as growth.
+pub fn assert_stable_at(out: &[f32], f0: f32, bound: f32, margin: f32, label: &str) {
+    let sr = SR as usize;
+    assert!(
+        out.iter().all(|x| x.is_finite() && x.abs() <= bound),
+        "{label}: bounded"
+    );
+    let n = ((f0 as f64).floor() * SR as f64 / f0 as f64).round() as usize;
+    let (second, last) = (&out[sr..sr + n], &out[out.len() - n..]);
+    assert!(rms(last) <= rms(second) * margin + 1e-6, "{label}: grows");
+    let tail = &out[out.len() - 10 * sr..];
+    let mean = tail.iter().sum::<f32>() / tail.len() as f32;
+    assert!(mean.abs() < 1e-3, "{label}: DC {mean}");
+}
+
 /// Each `(i, jump)` where `tanh(0.4·x)` jumps more than 0.15 from the
 /// sample before: the desktop's output stage, clicking.
 pub fn clicks(out: &[f32]) -> Vec<(usize, f32)> {
