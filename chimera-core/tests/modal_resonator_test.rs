@@ -5,7 +5,7 @@ use chimera_core::addr::{BlockRef, ParamAddr};
 use chimera_core::block::Block;
 use chimera_core::block::ParamKind;
 use chimera_core::dsp::modal::{
-    BankModes, MODAL_SPECS, ModalEngine, ModalParams, RELEASE_T60, ResonatorMode, damp_for, reads,
+    BankModes, MODAL_SPECS, ModalEngine, ModalParams, ResonatorMode, damp_for, reads,
 };
 use chimera_core::dsp::note_to_freq;
 use chimera_core::hw::Cost;
@@ -463,32 +463,6 @@ fn bowed_low_notes_sound() {
     assert!(common::peak(&block) > 1e-3, "silent last block");
 }
 
-/// Review Focus 1: a route pushing DAMP to its top during a release does
-/// not hold the note: the release never gives the gain back, so the note
-/// ends within 2 s, as soon as with DAMP left alone.
-#[test]
-fn a_released_note_ends_with_damp_at_its_top() {
-    let blocks = SR as usize / BLOCK_SIZE;
-    let mut p = ParamSnapshot::for_engine(EngineType::Modal);
-    p.modal.mode = ResonatorMode::String;
-    let mut top = p.clone();
-    top.modal.damp = 1.0;
-    // Blocks from note-off until the voice ends.
-    let ends = |off: &ParamSnapshot| {
-        let (out, rig) = play_released(&p, off, (48, 100), blocks / 2, 2 * blocks);
-        assert!(!rig.is_active(), "still sounding 2 s after note-off");
-        out.chunks(BLOCK_SIZE)
-            .rposition(|b| b.iter().any(|&x| x != 0.0))
-            .unwrap()
-            - blocks / 2
-    };
-    let (alone, pushed) = (ends(&p), ends(&top));
-    assert!(
-        pushed <= alone + 2,
-        "DAMP at its top: {pushed} blocks, {alone} left alone"
-    );
-}
-
 /// The owner's sitar rule (ADR 0054): a released SYMP note's halo rings
 /// out on its own decay, after the main string has died, and the voice
 /// keeps it until then.
@@ -497,11 +471,12 @@ fn a_released_halo_outlasts_its_main_string() {
     let second = SR as usize / BLOCK_SIZE;
     let p = ModalParams {
         mode: ResonatorMode::Sympathetic,
+        damp: 0.5,
         ..Default::default()
     };
     let last_heard = |out: &[f32]| out.iter().rposition(|x| x.abs() > 1e-3).unwrap();
-    let full = play_modal(&p, 60, second / 2, 2 * second);
-    let bare = play_modal_bare(&p, 60, common::VEL, second / 2, 2 * second);
+    let full = play_modal(&p, 60, second / 2, 4 * second);
+    let bare = play_modal_bare(&p, 60, common::VEL, second / 2, 4 * second);
     let (f, b) = (last_heard(&full), last_heard(&bare));
     assert!(f > b + SR as usize / 20, "halo heard to {f}, main to {b}");
 }
@@ -513,8 +488,8 @@ fn db_at(out: &[f32], at: f32) -> f32 {
 }
 
 /// The owner's ruling: the halo gets no release. After note-off it decays
-/// as it does held, within 10 %, over 0.5 to 1.5 s; the main string alone
-/// is silent by 0.5 s. The halo is the full note less the bare one: the
+/// as it does held, within 10 %, over 1 to 2 s. The halo is the full
+/// note less the bare one: the
 /// halo never drives the main string, and at these levels the tanh is
 /// linear.
 #[test]
@@ -529,31 +504,27 @@ fn a_released_halo_rings_on_its_held_decay() {
     let halo = |on: usize, off: usize| {
         let full = play_modal(&p, 60, on, off);
         let bare = play_modal_bare(&p, 60, common::VEL, on, off);
-        let d: Vec<f32> = full.iter().zip(&bare).map(|(f, b)| f - b).collect();
-        (d, bare)
+        full.iter()
+            .zip(&bare)
+            .map(|(f, b)| f - b)
+            .collect::<Vec<f32>>()
     };
-    let (held, _) = halo(3 * second, 0);
-    let (released, main) = halo(second / 2, 5 * second / 2);
+    let held = halo(3 * second, 0);
+    let released = halo(second / 2, 5 * second / 2);
     let slope = |x: &[f32]| db_at(x, 2.0) - db_at(x, 1.0);
     let (h, r) = (slope(&held), slope(&released));
     assert!(h < -5.0, "held halo falls {h} dB");
     assert!((r / h - 1.0).abs() < 0.1, "released {r} dB, held {h} dB");
-    let tail = &main[SR as usize..];
-    assert!(
-        common::peak(tail) < 1e-3,
-        "main string {}",
-        common::peak(tail)
-    );
 }
 
-/// Bowed's lifted bow at the v1 ring, `RELEASE_T60`: silent within 0.5 s
-/// of note-off at C2. At INIT's DAMP it rings about 14 s.
+/// Bowed's lifted bow at the v1 release's 0.12 s ring: silent within
+/// 0.5 s of note-off at C2. At INIT's DAMP it rings about 14 s.
 #[test]
 fn a_released_bowed_c2_is_silent_within_half_a_second() {
     let second = SR as usize / BLOCK_SIZE;
     let p = ModalParams {
         mode: ResonatorMode::Bowed,
-        damp: damp_for(RELEASE_T60),
+        damp: damp_for(0.12),
         ..Default::default()
     };
     let out = play_modal(&p, 36, second, second);
@@ -1849,4 +1820,71 @@ fn a_settled_bow_does_not_drift() {
     }
     println!("worst: {:.1} dB at {}", worst.0, worst.1);
     assert!(worst.0 < -50.0, "{:.1} dB at {}", worst.0, worst.1);
+}
+
+/// The owner's UAT (2026-09-30): a released string rings on, as Rings'
+/// does. STRING and SYMP at C3, released 0.3 s in: the fundamental's T60
+/// from 0.1 s after the note-off is the held note's over the same span
+/// within 10 %, and the 100 ms after the note-off are within 1 dB of the
+/// held note's.
+#[test]
+fn a_released_string_rings_on_damp() {
+    let sr = SR as usize;
+    let (on, off) = (sr * 3 / 10 / BLOCK_SIZE, 3 * sr / BLOCK_SIZE);
+    let cut = on * BLOCK_SIZE;
+    let f0 = note_to_freq(48);
+    for mode in [ResonatorMode::String, ResonatorMode::Sympathetic] {
+        for damp in [0.5, ModalParams::default().damp] {
+            let p = ModalParams {
+                mode,
+                damp,
+                ..Default::default()
+            };
+            let held = play_modal(&p, 48, on + off, 0);
+            let released = play_modal(&p, 48, on, off);
+            // A quarter of the ring, at most a second.
+            let span = (damp_t60(damp) / 4.0).min(1.0);
+            let t60 = |out: &[f32]| {
+                let at = |t: usize| partial(&out[t..t + sr / 10], f0);
+                let a = cut + sr / 10;
+                let b = a + (span * SR as f32) as usize;
+                60.0 * span as f64 / (20.0 * (at(a) / at(b)).log10())
+            };
+            let (h, r) = (t60(&held), t60(&released));
+            assert!(
+                (r / h - 1.0).abs() < 0.1,
+                "{mode:?} DAMP {damp}: released T60 {r:.2} s, held {h:.2} s"
+            );
+            let after = |out: &[f32]| common::rms(&out[cut..cut + sr / 10]);
+            let drop = 20.0 * (after(&held) / after(&released)).log10();
+            assert!(drop < 1.0, "{mode:?} DAMP {damp}: {drop:.2} dB down");
+        }
+    }
+}
+
+/// A note is freed only once it is 60 dB under its own peak: STRING C5 at
+/// DAMP 1, released at once, still sounds 5 s on, and when it frees its
+/// last blocks are under a thousandth of its peak.
+#[test]
+fn an_undamped_c5_frees_60_db_under_its_peak() {
+    let p = ModalParams {
+        mode: ResonatorMode::String,
+        damp: 1.0,
+        ..Default::default()
+    };
+    let mut pool = chimera_core::dsp::modal::SymPool::boxed();
+    let mut e = Box::new(ModalEngine::new_in(&mut pool, p.mode));
+    e.note_on(72, 100, &p, SR, &mut pool);
+    e.note_off(&mut pool);
+    let mut out = Vec::new();
+    let mut block = [0.0; BLOCK_SIZE];
+    while e.is_active() && out.len() < 120 * SR as usize {
+        e.render(&mut block, &p, SR, &mut pool);
+        out.extend_from_slice(&block);
+    }
+    let len = out.len() as f32 / SR as f32;
+    assert!(len > 5.0, "freed at {len:.2} s");
+    let peak = common::peak(&out);
+    let last = common::peak(&out[out.len() - 11 * BLOCK_SIZE..]);
+    assert!(last <= peak * 1e-3, "freed at {last} of a {peak} peak");
 }

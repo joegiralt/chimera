@@ -8,7 +8,7 @@ use core::ptr::addr_of_mut;
 use super::body::{Body, BodyMix};
 use super::dispersion::{DISPERSION_STAGES, Dispersion};
 use super::ensemble::{ENS_HEADS, Ensemble};
-use super::loop_parts::{Allpass1, LoopGain, MIN_LINE, Release, split};
+use super::loop_parts::{Allpass1, LoopGain, MIN_LINE, split};
 use crate::dsp::xorshift_noise;
 use crate::hw::SAMPLE_RATE;
 
@@ -253,7 +253,7 @@ impl KsString {
     }
 
     /// `tick_full` for a sympathetic string, which has no dispersion,
-    /// ensemble or release, and which `input` excites at its write
+    /// or ensemble, and which `input` excites at its write
     /// position. The last tick's output waits in `pending` and is stored
     /// with this tick's input. `run_coupled`'s reference.
     #[cfg(test)]
@@ -356,9 +356,7 @@ fn behind_at(ring: &[Cell<f32>], at: usize, k: usize) -> usize {
 struct Held {
     half: f32,
     mid: f32,
-    /// The loop's held gain, and the note-off's ramp from it.
-    held: LoopGain,
-    release: Release,
+    gain: f32,
     mix: f32,
     d: usize,
     /// The low-pass's two older taps, oldest first.
@@ -370,8 +368,7 @@ struct Held {
 
 impl Held {
     /// `out.len()` samples writing from `ws` and reading the newest tap
-    /// from `cp`, neither wrapping. `FAST`: the release idle, and the heads
-    /// not wrapping.
+    /// from `cp`, neither wrapping. `FAST`: the heads not wrapping.
     #[inline(always)]
     fn span<const STIFF: bool, const ENS: bool, const FAST: bool>(
         &mut self,
@@ -381,8 +378,6 @@ impl Held {
     ) {
         let m = out.len();
         let (mut a, mut b) = self.taps;
-        // Idle, the same gain every sample; else `gain` steps the ramp on.
-        let idle = (FAST || self.release.idle()).then(|| self.release.gain(self.held));
         let span = ring[ws..ws + m].iter().zip(&ring[cp..cp + m]);
         for (at, ((w, t), o)) in (ws..).zip(span.zip(out)) {
             let c = t.get();
@@ -390,8 +385,7 @@ impl Held {
             if STIFF {
                 x = self.disp.process(x);
             }
-            let gain = idle.unwrap_or_else(|| self.release.gain(self.held));
-            let dry = self.ap.process(x) * gain.get();
+            let dry = self.ap.process(x) * self.gain;
             w.set(dry);
             (a, b) = (b, c);
             *o = if ENS {
@@ -465,7 +459,7 @@ pub(super) fn lp_coeff(bright: f32) -> f32 {
 crate::in_place::field_list!(KsString => KsString { buffer, write_pos, ring_len, delay, dirty, noise_state, frac });
 
 /// STRING's string, and SYMP's main one: the loop, STRUCTURE's
-/// dispersion in it, BODY on its output and the note-off's ramp.
+/// dispersion in it, and BODY on its output.
 pub(super) struct StringVoice {
     pub(super) string: KsString,
     disp: Dispersion,
@@ -478,7 +472,6 @@ pub(super) struct StringVoice {
     body: Body,
     /// BODY, latched at note-on (spec § 1).
     body_mix: BodyMix,
-    release: Release,
     /// The ensemble and ENS MIX, latched at note-on (spec § 1); MIX 0 is off.
     ens: Ensemble,
     ens_mix: f32,
@@ -487,7 +480,7 @@ pub(super) struct StringVoice {
 }
 
 crate::in_place::field_list!(StringVoice => StringVoice {
-    string, disp, stiff, structure, period, body, body_mix, release, ens, ens_mix, passes,
+    string, disp, stiff, structure, period, body, body_mix, ens, ens_mix, passes,
 });
 
 /// The longest loop: the whole line, a one-sample fraction and the chain
@@ -511,7 +504,6 @@ impl StringVoice {
             addr_of_mut!((*p).period).write(INIT_LEN as f32);
             addr_of_mut!((*p).body).write(Body::new(SAMPLE_RATE));
             addr_of_mut!((*p).body_mix).write(Body::mix(0.0));
-            addr_of_mut!((*p).release).write(Release::HELD);
             addr_of_mut!((*p).ens).write(Ensemble::default());
             addr_of_mut!((*p).ens_mix).write(0.0);
             addr_of_mut!((*p).passes).write(1);
@@ -558,7 +550,6 @@ impl StringVoice {
         self.disp.reset();
         self.body.reset();
         self.body_mix = Body::mix(body);
-        self.release = Release::HELD;
         self.ens = ens;
         self.ens_mix = ens_mix;
         self.passes = color_passes(color) as u8;
@@ -610,16 +601,11 @@ impl StringVoice {
         (self.structure, self.string.delay)
     }
 
-    /// Note-off: the loop gain ramps from `held` to `to` (`Release`).
-    pub(super) fn release(&mut self, held: LoopGain, to: LoopGain) {
-        self.release.start(held, to);
-    }
-
     /// The string's next sample, and the ensemble's heads on its line,
     /// before BODY: `render`'s reference.
     #[cfg(test)]
     pub(super) fn tick(&mut self, p: &KsRenderParams) -> f32 {
-        let gain = self.release.gain(p.gain);
+        let gain = p.gain;
         let disp = if self.stiff {
             Some(&mut self.disp)
         } else {
@@ -656,8 +642,7 @@ impl StringVoice {
         let mut h = Held {
             half: p.lp * 0.5,
             mid: 1.0 - p.lp,
-            held: p.gain,
-            release: self.release,
+            gain: p.gain.get(),
             mix: self.ens_mix,
             d,
             taps: (behind_in(ring, last, d), behind_in(ring, last, d - 1)),
@@ -672,18 +657,14 @@ impl StringVoice {
         let mut k = 0;
         while k < out.len() {
             let mut m = (out.len() - k).min(len - ws).min(len - cp);
-            // The rare samples run apart, in `span`'s slow form: a release's
-            // ramp, and the heads' wrap while the write is within `reach`
-            // of the ring's start.
-            let (ramp, near) = (h.release.left(), ENS && ws < reach);
-            if ramp > 0 {
-                m = m.min(ramp);
-            }
+            // The heads' wrap, while the write is within `reach` of the
+            // ring's start, runs apart in `span`'s slow form.
+            let near = ENS && ws < reach;
             if near {
                 m = m.min(reach - ws);
             }
             let out = &mut out[k..k + m];
-            if ramp > 0 || near {
+            if near {
                 h.span::<STIFF, ENS, false>(ring, (ws, cp), out);
             } else {
                 h.span::<STIFF, ENS, true>(ring, (ws, cp), out);
@@ -692,7 +673,7 @@ impl StringVoice {
             k += m;
         }
         s.write_pos = if ws == 0 { len - 1 } else { ws - 1 };
-        (s.frac, self.disp, self.ens, self.release) = (h.ap, h.disp, h.ens, h.release);
+        (s.frac, self.disp, self.ens) = (h.ap, h.disp, h.ens);
     }
 
     /// `buf` through BODY, outside the loop, in place.
@@ -789,7 +770,7 @@ mod tests {
     }
 
     /// `render`'s spans are `tick` bit for bit: every chain and ensemble
-    /// case, from the shortest line to the longest, through a release.
+    /// case, from the shortest line to the longest.
     #[test]
     fn render_is_tick_bit_for_bit() {
         let p = KsRenderParams {
@@ -808,11 +789,6 @@ mod tests {
                     v.shape(0.2);
                 }
                 for block in 0..200 {
-                    if block == 150 {
-                        let to = LoopGain::new(0.9);
-                        fast.release(p.gain, to);
-                        slow.release(p.gain, to);
-                    }
                     fast.set_ensemble();
                     slow.set_ensemble();
                     let mut a = [0.0; 64];

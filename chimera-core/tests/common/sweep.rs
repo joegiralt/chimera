@@ -635,6 +635,12 @@ pub fn play(bench: &mut Bench, p: Option<&Param>, mv: Move, t: Timing) -> Run {
             continue;
         }
         let prev = edges.iter().rev().find(|&&x| x < e).copied().unwrap_or(0);
+        // A voice freed within its fade of another event is that event's
+        // fade, judged there against the steady state either side; here
+        // it would have none before it.
+        if !after && e < prev + 8 {
+            continue;
+        }
         let next = edges
             .iter()
             .find(|&&x| x > e)

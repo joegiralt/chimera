@@ -155,8 +155,9 @@ const FIXTURE_RENDERS: &[(&str, u64)] = &[
     ("factory_7.snd", 0x81c2fbb41ba2c813),
     ("init_algo.snd", 0x002d6721f776f6d6),
     // Re-recorded: Modal 2 step A's resonators (spec § Tests), then ADR 0058's gain,
-    // then Task 18's DAMP make-up and relative silence (ADR 0056).
-    ("init_modal.snd", 0x90ff44f19ca12238),
+    // then Task 18's DAMP make-up and relative silence (ADR 0056),
+    // then the free ring on release (ADR 0062).
+    ("init_modal.snd", 0xdbbb98e8b60c7fba),
 ];
 
 #[test]

@@ -88,12 +88,9 @@ impl Case {
         self.is(BlockRef::Modal, id)
     }
 
-    /// A Modal model that rings on after note-off (all but STRING), the
-    /// patch's own or one MODEL moves it to.
+    /// A Modal model: every one rings on after note-off.
     fn rings_on(&self) -> bool {
-        self.patch.mode().is_some_and(|m| {
-            m != ResonatorMode::String || (self.modal(ModalParams::MODE) && self.any(|v| v != 0.0))
-        })
+        self.patch.mode().is_some()
     }
 }
 
@@ -331,7 +328,7 @@ fn dc_ok(c: &Case) -> Option<&'static str> {
 fn zombie_ok(c: &Case) -> Option<&'static str> {
     if c.rings_on() {
         return Some(
-            "BANK, BOWED and SYMP ring on after note-off; the engine judges its own ring, before \
+            "every Modal model rings on after note-off; the engine judges its own ring, before \
              the filter and the VCA, so a setting that silences it after the engine (OUT LEVEL \
              0, a filter MODE) leaves the voice busy until the ring decays",
         );
@@ -352,13 +349,25 @@ fn stuck_ok(c: &Case, (first, last): (f32, f32)) -> Option<&'static str> {
              level: the ring decays at DAMP's T60 beneath it",
         );
     }
+    if last < first
+        && c.patch == Patch::ModalInit(ResonatorMode::Sympathetic)
+        && (c.modal(ModalParams::HALO) || c.modal(ModalParams::COUPLE))
+        && c.any(|v| v >= 0.75)
+    {
+        return Some(
+            "a released SYMP chord rings on (its halo at twice DAMP's T60, 28 s at INIT), and \
+             HALO or COUPLE near 1 drives SYMP's tanh: the chord's tail falls under a dB in 2 s",
+        );
+    }
     None
 }
 
 /// Why the tail may outlast the bound (it still decays).
 fn long_tail(c: &Case) -> Option<&'static str> {
     if c.rings_on() {
-        return Some("BANK, BOWED and SYMP ring on at DAMP's T60 after note-off (ADR 0054, 0056)");
+        return Some(
+            "every Modal model rings on at DAMP's T60 after note-off (ADR 0054, 0056, 0062)",
+        );
     }
     if c.modal(ModalParams::DAMP) {
         return Some("DAMP sets the ring's T60, up to 20 s");

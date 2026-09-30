@@ -16,36 +16,41 @@ const GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
     // those four off, every row matched its value before. Each row's comment
     // names what came before that.
     // Re-recorded: Modal 2 step A's resonators (spec § Tests), then ADR 0058's gain,
-    // then Task 18's DAMP make-up and relative silence (ADR 0056).
+    // then Task 18's DAMP make-up and relative silence (ADR 0056),
+    // then the free ring on release (ADR 0062).
     (
         "modal_init",
         (
-            0x90ff44f19ca12238,
+            0xdbbb98e8b60c7fba,
             [
-                0, 1065998110, 1070383691, 3193276627, 1065949295, 1066117027, 0, 0,
+                0, 1065998110, 1070383691, 3193276627, 1065949295, 1066117027, 1058078416,
+                3200321076,
             ],
         ),
     ),
     // Re-recorded: Modal 2 step A's resonators (spec § Tests), then ADR 0058's gain,
-    // then Task 18's DAMP make-up and relative silence (ADR 0056).
+    // then Task 18's DAMP make-up and relative silence (ADR 0056),
+    // then the free ring on release (ADR 0062).
     (
         "modal_lfo_cutoff",
         (
-            0x4278f609ab0c7f43,
+            0x4f273d07806c9c34,
             [
-                0, 1065998110, 1071124959, 3193277774, 1065949270, 1066117002, 0, 0,
+                0, 1065998110, 1071124959, 3193277774, 1065949270, 1066117002, 1058028533,
+                1014620204,
             ],
         ),
     ),
     // Re-recorded: Modal 2 step A's resonators (spec § Tests), then ADR 0058's gain,
-    // then Task 18's DAMP make-up and relative silence (ADR 0056).
+    // then Task 18's DAMP make-up and relative silence (ADR 0056),
+    // then the free ring on release (ADR 0062).
     (
         "modal_sympathetic",
         (
-            0xd944e0fb9be3e312,
+            0x821d0a45aaa916a3,
             [
-                1019770853, 1049714224, 1048805706, 3208819952, 1065636210, 1064583994, 1053584751,
-                3188431878,
+                1019770853, 1049714224, 1048805706, 3208819952, 1065636210, 1064583994, 1061427631,
+                3204548148,
             ],
         ),
     ),
@@ -175,13 +180,15 @@ const GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
         ),
     ),
     // Re-recorded: Modal 2 step A's resonators (spec § Tests), then ADR 0058's gain,
-    // then Task 18's DAMP make-up and relative silence (ADR 0056).
+    // then Task 18's DAMP make-up and relative silence (ADR 0056),
+    // then the free ring on release (ADR 0062).
     (
         "algo_to_modal_switch",
         (
-            0xa2ba6ed6e08cf3b4,
+            0xabac56023ea7eee9,
             [
-                979023578, 3208099471, 1058666167, 3219751083, 982097749, 1040690967, 0, 0,
+                979023578, 3208099471, 1058666167, 3219751083, 982097749, 1040690967, 3152069440,
+                3213492891,
             ],
         ),
     ),

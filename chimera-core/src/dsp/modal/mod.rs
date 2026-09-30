@@ -44,7 +44,6 @@ mod rings;
 mod string;
 
 pub use chords::{CHORD_COUNT, CHORD_GLIDE_SAMPLES, CHORDS, chord_of, fold};
-pub use loop_parts::RELEASE_T60;
 pub use params::*;
 pub use string::MAX_STRING_DELAY;
 
@@ -632,22 +631,15 @@ impl ModalEngine {
         }
     }
 
-    /// The string's loop gain ramps to a `RELEASE_T60` ring over
-    /// `RELEASE_SAMPLES`; Bowed's, as the bow lifts, to DAMP's ring. Nothing
-    /// scales a buffer (#51). The bank and SYMP's halo ring on: sympathetic
-    /// strings ring until touched (ADR 0054).
+    /// Note-off stops the exciter; the resonator rings on DAMP (the
+    /// owner's UAT, 2026-09-30): a string and SYMP's halo ring until their
+    /// T60 or a steal. Bowed's bow lifts, its loop ramping to DAMP's ring.
+    /// Nothing scales a buffer (#51).
     pub fn note_off(&mut self, _pool: &mut SymPool) {
-        // As `render` rings them: f0 in Hz, T60 from the eased DAMP.
-        let f = self.pitched(self.frequency);
-        let f0 = f * SAMPLE_RATE as f32;
-        let to = LoopGain::from_t60(RELEASE_T60, f0);
-        let string = main_string(&self.macros, (f0, core::f32::consts::TAU * f)).gain;
-        match &mut self.model {
-            ModelSlot::String(v) => v.release(string, to),
+        let f0 = self.pitched(self.frequency) * SAMPLE_RATE as f32;
+        if let ModelSlot::Bowed(b) = &mut self.model {
             // A lifted bow's ends are plain delays: no low-pass to make up.
-            ModelSlot::Bowed(b) => b.lift(LoopGain::from_t60(t60(self.macros.damp), f0)),
-            ModelSlot::Bank(_) => {}
-            ModelSlot::Sympathetic(m) => m.main.release(string, to),
+            b.lift(LoopGain::from_t60(t60(self.macros.damp), f0));
         }
     }
 
@@ -1085,7 +1077,7 @@ fn render_string(v: &mut StringVoice, output: &mut [f32; BLOCK_SIZE], m: &Macros
 }
 
 /// The block's STRING or SYMP main string at `f0` Hz, `w` rad/sample:
-/// its low-pass and held gain, which a release caps. The fundamental
+/// its low-pass and gain. The fundamental
 /// rings DAMP's T60 at every pitch (`damped`).
 fn main_string(m: &Macros, f0: (f32, f32)) -> KsRenderParams {
     let (lp, gain) = damped(t60(m.damp), f0, lp_coeff(m.bright));
