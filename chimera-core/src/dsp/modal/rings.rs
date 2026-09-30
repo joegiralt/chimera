@@ -28,7 +28,7 @@
 
 // ── SVF Bandpass (ZDF topology, matching Rings/stmlib) ──────────────
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub(super) struct Svf {
     state_1: f32,
     state_2: f32,

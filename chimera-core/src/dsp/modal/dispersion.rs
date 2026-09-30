@@ -46,7 +46,7 @@ fn uncurve(c: f32) -> f32 {
     0.15 * c / (1.15 - c)
 }
 
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 pub struct Dispersion {
     stages: [Allpass1; DISPERSION_STAGES],
 }

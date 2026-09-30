@@ -20,6 +20,7 @@ pub fn rate_hz(ens_rate: f32) -> f32 {
 /// A quadrature LFO `(cos, sin)`, rotated a sample at a time, and the
 /// heads' swing, samples: `swing` as the note set it, `amp` as the loop
 /// caps it.
+#[derive(Clone, Copy)]
 pub struct Ensemble {
     cos: f32,
     sin: f32,
@@ -48,6 +49,11 @@ fn cap(delay: usize) -> f32 {
     ((delay as f32 - 4.0) * 0.5).max(0.0)
 }
 
+/// The farthest a head sits behind the write.
+fn top(delay: usize) -> f32 {
+    2.0 + 2.0 * cap(delay)
+}
+
 impl Ensemble {
     /// At note-on: the LFO at `hz` (> 0) from phase 0, and the swing whose
     /// Doppler peaks at `depth · ENS_MAX_CENTS`.
@@ -72,9 +78,20 @@ impl Ensemble {
     /// phase with the dry at DEPTH 0, within [2, delay − 2] (2 under 4).
     #[inline]
     pub fn head_delays(&self, delay: usize) -> [f32; ENS_HEADS] {
-        let (mid, top) = (2.0 + self.amp, 2.0 + 2.0 * cap(delay));
-        // Clamped: the LFO's radius drifts past 1 by rounding.
-        [self.sin, self.cos].map(|s| (mid + self.amp * s).clamp(2.0, top))
+        let (mid, top) = (2.0 + self.amp, top(delay));
+        // Clamped: the LFO's radius drifts past 1 by rounding. Not `clamp`
+        // or `min`, whose checks run every sample; no head is NaN.
+        [self.sin, self.cos].map(|s| {
+            let o = (mid + self.amp * s).max(2.0);
+            if o > top { top } else { o }
+        })
+    }
+
+    /// Past the oldest sample a head reads behind the write this block, on
+    /// a line of `delay`: `set` holds the LFO's radius to 1 within 1e-5, so
+    /// no head passes `2 + 2.001·A`, and one more sample covers rounding.
+    pub fn reach(&self, delay: usize) -> usize {
+        (2.0 + 2.001 * self.amp).min(top(delay)) as usize + 2
     }
 
     #[inline]
@@ -93,7 +110,7 @@ mod tests {
     const SR: u32 = 48_000;
 
     /// Every head stays in `[2, delay − 2]`, or at 2 on a loop too short to
-    /// swing (F7).
+    /// swing (F7), and its older tap short of `reach`.
     #[test]
     fn heads_stay_inside_the_loop() {
         for delay in [3, 23, 1010] {
@@ -105,6 +122,7 @@ mod tests {
                             e.set(delay);
                         }
                         for o in e.head_delays(delay) {
+                            assert!(o as usize + 1 < e.reach(delay), "{delay}: {o}");
                             if delay == 3 {
                                 assert_eq!(o, 2.0, "{depth} {rate}");
                             } else {

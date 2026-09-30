@@ -1048,11 +1048,8 @@ fn render_modal(bank: &mut ModalBank, output: &mut [f32; BLOCK_SIZE], max_level:
 }
 
 fn render_string(v: &mut StringVoice, output: &mut [f32; BLOCK_SIZE], m: &Macros, f0: f32) {
-    let p = main_string(m, f0);
-    for s in output.iter_mut() {
-        let x = v.tick(&p);
-        *s = v.colour(x);
-    }
+    v.render(&main_string(m, f0), output);
+    v.colour(output);
 }
 
 /// The block's STRING or SYMP main string at `f0` Hz: its held gain,
@@ -1133,44 +1130,39 @@ fn render_sympathetic(
     m: &Macros,
     (f0, sample_rate): (f32, u32),
 ) {
-    let main_params = main_string(m, f0);
-
-    let Some(set) = set else {
-        for s in output.iter_mut() {
-            let x = main.tick(&main_params);
-            *s = libm::tanhf(main.colour(x));
-        }
-        return;
-    };
-    // Each halo string rings twice the main one's T60, no darker.
-    let lp = lp_coeff(halo_bright(m.bright));
-    let halo_t60 = HALO_T60 * t60(m.damp);
-    let halo = set.periods().map(|p| KsRenderParams {
-        lp,
-        gain: LoopGain::from_t60(halo_t60, sample_rate as f32 / p),
-    });
-    let (coupling, level) = (set.coupling, set.level);
-    for (i, s) in output.iter_mut().enumerate() {
-        if i % GLIDE_STEP == 0 {
+    main.render(&main_string(m, f0), output);
+    if let Some(set) = set {
+        // Each halo string rings twice the main one's T60, no darker.
+        let lp = lp_coeff(halo_bright(m.bright));
+        let halo_t60 = HALO_T60 * t60(m.damp);
+        let halo = set.periods().map(|p| KsRenderParams {
+            lp,
+            gain: LoopGain::from_t60(halo_t60, sample_rate as f32 / p),
+        });
+        let (coupling, level) = (set.coupling, set.level);
+        // The main string drives each halo string at its write position.
+        let input = output.map(|x| x * coupling);
+        let mut sum = [0.0_f32; BLOCK_SIZE];
+        // String by string, a glide step at a time; a whole block unless gliding.
+        let step = if set.glide > 0 {
+            GLIDE_STEP
+        } else {
+            BLOCK_SIZE
+        };
+        for (input, sum) in input.chunks(step).zip(sum.chunks_mut(step)) {
             set.glide_step();
+            let halo = set.strings.iter_mut().zip(&mut set.pending).zip(&halo);
+            for ((sym, pending), p) in halo {
+                sym.run_coupled(p, input, pending, sum);
+            }
         }
-        // 1. Main string tick
-        let main_out = main.tick(&main_params);
-
-        // 2. Couple main string output into sympathetic strings
-        let sym_input = main_out * coupling;
-
-        // 3. Tick all sympathetic strings, sum their output
-        let mut sym_sum = 0.0_f32;
-        for ((sym, pending), p) in set.strings.iter_mut().zip(&mut set.pending).zip(&halo) {
-            // Inject coupled energy from the main string at the write
-            // position.
-            sym_sum += sym.tick_coupled(p, sym_input, pending);
+        for (s, h) in output.iter_mut().zip(sum) {
+            *s += h * level;
         }
-
-        // 4. Mix: main + sympathetic, through BODY
-        let mixed = main_out + sym_sum * level;
-        *s = libm::tanhf(main.colour(mixed));
+    }
+    main.colour(output);
+    for s in output.iter_mut() {
+        *s = libm::tanhf(*s);
     }
 }
 
