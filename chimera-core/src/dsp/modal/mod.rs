@@ -53,7 +53,7 @@ use core::ptr::addr_of_mut;
 
 use chimera_hal::BLOCK_SIZE;
 
-use super::xorshift_noise;
+use super::{fast_tanh, xorshift_noise};
 use crate::dsp::dc_blocker::DcBlocker;
 use crate::hw::{Cost, SAMPLE_RATE};
 use crate::in_place::{in_place_enum, uninit_at};
@@ -361,13 +361,15 @@ impl ModalEngine {
     /// dispersion's re-split each block STRUCTURE glides, 8, billed always,
     /// +18. BODY and the ensemble bill apart.
     pub const COST_STRING: Cost = Cost(330);
-    /// The one-loop bow restored (ADR 0064): its 860 at 330298c (620
-    /// benched, then the step-A and playable-bow counts), × 1.13, its host
-    /// time now over then, each over STRING's on the same build (7.55
-    /// against 6.69): the smoothing, BRIGHT's taps at the bow point, less
-    /// the per-sample tap setup hoisted to the block. 972, rounded up to
-    /// 980; a host estimate until the chip bench.
-    pub const COST_BOWED: Cost = Cost(980);
+    /// The one-loop bow (ADR 0064), counted in the thumbv7em release build
+    /// (`render_bowed` kept out of line so it can be): about 200
+    /// instructions a sample on the bowed path (the easing, the release,
+    /// both taps' low-passes and the bow point's lerp, their bounds checks,
+    /// two `fast_tanh`s, the smoothing, BRIGHT's one-pole and the ring's
+    /// push), 210 billed, against the one-loop bow's benched 620 at 143
+    /// instructions and two `tanhf` bodies (135): 620 + (210 − 143 − 135) ×
+    /// 1.46 × 1.1 = 510.8, rounded up to 520.
+    pub const COST_BOWED: Cost = Cost(520);
     /// 809 (benched, ADR 0054) − 271, rounded up to 540: 419 instructions a
     /// sample to 187, −306 cycles. Each halo string runs its block in
     /// spans, 19 a sample (42 before, 87 at task 11); the main string 15;
@@ -1311,6 +1313,7 @@ fn bow_tone(bright: f32) -> (f32, f32) {
 /// the one tap, so the pitch holds: a friction reading POS's second tap
 /// bows a second loop, which takes the pitch. The tap's place is set once
 /// a block.
+#[inline(never)]
 fn render_bowed(
     b: &mut BowedString,
     output: &mut [f32; BLOCK_SIZE],
@@ -1351,13 +1354,13 @@ fn render_bowed(
         };
         *s = b.tone;
         // Stick-slip: a small |Δv| sticks (energy in), a large one slips.
-        let friction = b.force * 4.0 * libm::tanhf((bow_vel - x) * 8.0);
+        let friction = b.force * 4.0 * fast_tanh((bow_vel - x) * 8.0);
         // Inverted each pass: two passes a period. Bounded: `x` under a
         // gain below 1, a bounded push, then `tanh`; once the bow is off,
         // linear, so DAMP's ring is its T60 at any level.
         let feedback = -x * gain.get() + friction * 0.4;
         let v = if b.force > 0.0 {
-            libm::tanhf(feedback)
+            fast_tanh(feedback)
         } else {
             feedback
         };
