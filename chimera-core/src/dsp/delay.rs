@@ -67,8 +67,8 @@ impl Default for DelayParams {
 }
 
 impl DelayParams {
-    /// Off when the mix is below audibility; `process` passes the input
-    /// through unchanged then.
+    /// Off when the mix is below audibility: the return fades out, the line
+    /// runs on (ADR 0061).
     pub fn is_on(&self) -> bool {
         self.mix >= 0.001
     }

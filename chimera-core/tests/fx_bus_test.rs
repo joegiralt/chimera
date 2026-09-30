@@ -1,6 +1,6 @@
 //! The shared FX bus (instrument-core spec § Audio path, FX diet spec
 //! § Bus): each effect runs once on the sum of the parts' sends; the return
-//! is the sum of the wet outputs of the effects that are on.
+//! is the sum of the effects' wet outputs, each × its eased MIX.
 mod common;
 use common::SR;
 

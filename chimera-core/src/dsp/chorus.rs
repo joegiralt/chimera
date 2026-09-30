@@ -90,8 +90,8 @@ impl Default for ChorusParams {
 }
 
 impl ChorusParams {
-    /// Off when the mode is off or the mix is below audibility; `process`
-    /// passes the input through unchanged then.
+    /// Off when the mode is off or the mix is below audibility: the return
+    /// fades out, the lines run on (ADR 0061).
     pub fn is_on(&self) -> bool {
         ChorusMode::from_u8(self.mode) != ChorusMode::Off && self.mix >= 0.001
     }
