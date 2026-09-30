@@ -239,6 +239,9 @@ fn lfo(phase: &mut f32, rate: f32) -> f32 {
 /// A TIME change's crossfade from the old read head to the new, samples:
 /// 20 ms, so no pitch sweeps and no step (never snap).
 pub const TIME_FADE: u16 = 960;
+// A fade starts on a block and so ends on one: every sample of a fading
+// block fades.
+const _: () = assert!(TIME_FADE as usize % BLOCK_SIZE == 0);
 
 /// The line runs whatever MIX is, so a return brought back up plays what
 /// the send is doing now, never a frozen tail (#61). MIX eases; a TIME
@@ -358,21 +361,19 @@ impl TapeDelay {
         // make the compiler reload and store it every sample.
         let (mut transport, mut write_pos, mut lp_state) =
             (self.transport, self.write_pos, self.lp_state);
-        let (mut time, next, mut fade) = (self.time, self.next, self.fade);
+        let (time, next) = (self.time, self.next);
+        // From the old head to the new, linearly: the new head's weight.
+        let dt = 1.0 / f32::from(TIME_FADE);
+        let mut t = 1.0 - f32::from(self.fade) * dt;
         for (i, s) in buf.iter_mut().enumerate() {
             let dry = *s;
 
             let (wow, flutter) = transport.offsets(tap);
             let head = |base: f32| (base + wow + flutter).clamp(1.0, top);
             let mut delayed = read(&self.buffer, write_pos, head(time));
-            if FADE && fade > 0 {
-                // From the old head to the new, linearly.
-                let t = 1.0 - f32::from(fade) * (1.0 / f32::from(TIME_FADE));
+            if FADE {
                 delayed += (read(&self.buffer, write_pos, head(next)) - delayed) * t;
-                fade -= 1;
-                if fade == 0 {
-                    time = next;
-                }
+                t += dt;
             }
 
             // Tone: one-pole LP in feedback path (tape loses highs each pass)
@@ -398,7 +399,12 @@ impl TapeDelay {
             *s = dry * dry_gain + delayed * mix;
         }
         (self.transport, self.write_pos, self.lp_state) = (transport, write_pos, lp_state);
-        (self.time, self.fade) = (time, fade);
+        if FADE {
+            self.fade -= BLOCK_SIZE as u16;
+            if self.fade == 0 {
+                self.time = next;
+            }
+        }
     }
 }
 

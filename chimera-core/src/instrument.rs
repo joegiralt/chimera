@@ -9,7 +9,7 @@ use core::ptr::addr_of_mut;
 use chimera_hal::BLOCK_SIZE;
 
 use crate::dsp::Stereo;
-use crate::dsp::ease::{Ease, at, ease_coeff, step_of};
+use crate::dsp::ease::{Ease, ease_coeff, step_of};
 use crate::dsp::engines::SlotKind;
 use crate::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
 use crate::dsp::modal::{ResonatorMode, SYM_NOTE_ON_CLEAR_MAX, SymPool};
@@ -164,13 +164,17 @@ impl MixState {
     }
 }
 
-/// A gain's block: where it starts and its step a sample.
-type Glide = (f32, f32);
-
-/// Sample `i`'s gain of `g`: its start unless `RAMP`.
+/// Adds a moving gain's ramp past its start to side `SIDE` of `out`
+/// (`S` sides, interleaved): `bus · step·(i + 1)`. The mix passes play
+/// each gain at its block's start; only the gains that move pay for this.
 #[inline(always)]
-fn gain_at<const RAMP: bool>(g: Glide, i: usize) -> f32 {
-    if RAMP { at(g.0, g.1, i) } else { g.0 }
+fn glide<const S: usize, const SIDE: usize>(bus: &[f32; BLOCK_SIZE], step: f32, out: &mut [f32]) {
+    // `n` counts in whole floats, exactly `(i + 1) as f32`.
+    let mut n = 0.0f32;
+    for (o, &b) in out.as_chunks_mut::<S>().0.iter_mut().zip(bus) {
+        n += 1.0;
+        o[SIDE] += b * (step * n);
+    }
 }
 
 /// Samples per step of the send and the pair passes, sized so their
@@ -204,12 +208,15 @@ pub fn mix_parts(
     sample_rate: u32,
     dac: &mut DacBlocks,
 ) -> [f32; BLOCK_SIZE] {
-    // The written Parts in order, gains hoisted; by pair for the dry mix.
-    let mut src = [(&buses[0], [(0.0f32, 0.0f32); FX_SENDS]); MAX_PARTS];
+    // The written Parts in order, gains hoisted at their block's start; by
+    // pair for the dry mix. The Parts whose gains move, with their pair and
+    // steps.
+    let mut src = [(&buses[0], [0.0f32; FX_SENDS]); MAX_PARTS];
     let mut n = 0;
-    let mut dry = [[(&buses[0], (0.0f32, 0.0f32), (0.0f32, 0.0f32)); MAX_PARTS]; DAC_PAIRS];
+    let mut dry = [[(&buses[0], 0.0f32, 0.0f32); MAX_PARTS]; DAC_PAIRS];
     let mut dry_n = [0usize; DAC_PAIRS];
-    let mut ramp = false;
+    let mut moving = [(&buses[0], 0usize, [0.0f32; MIX_GAINS]); MAX_PARTS];
+    let mut moving_n = 0;
     let k = ease_coeff(sample_rate);
     for (p, part) in shared.parts.iter().enumerate() {
         let (gl, gr) = mix.pan_gains(p, part.mix.pan);
@@ -224,63 +231,31 @@ pub fn mix_parts(
             }
             continue;
         }
-        let g: [Glide; MIX_GAINS] = core::array::from_fn(|j| {
-            let ft = eases[j].step(to[j], k);
-            ramp |= ft.0 != ft.1;
-            (ft.0, step_of(ft, BLOCK_SIZE))
-        });
+        let g: [(f32, f32); MIX_GAINS] = core::array::from_fn(|j| eases[j].step(to[j], k));
         let bus = &buses[p];
-        src[n] = (bus, [g[2], g[3], g[4]]);
+        src[n] = (bus, [g[2].0, g[3].0, g[4].0]);
         n += 1;
         let k = part.mix.output.index();
-        dry[k][dry_n[k]] = (bus, g[0], g[1]);
+        dry[k][dry_n[k]] = (bus, g[0].0, g[1].0);
         dry_n[k] += 1;
-    }
-    let (src, dry) = (&src[..n], &dry);
-    let scope = if ramp {
-        mix_sends::<true>(src, sends)
-    } else {
-        mix_sends::<false>(src, sends)
-    };
-
-    // The FX bus once; its return lands on pair 1, L and R.
-    let mut ret = Stereo::SILENT;
-    fx.process(sends, &shared.fx, sample_rate, &mut ret);
-
-    let out = dac.mix();
-    for (k, pair) in out.iter_mut().enumerate() {
-        let parts = &dry[k][..dry_n[k]];
-        let ret = (k == 0).then_some(&ret);
-        if ramp {
-            mix_pair::<true>(parts, ret, pair);
-        } else {
-            mix_pair::<false>(parts, ret, pair);
+        if g.iter().any(|g| g.0 != g.1) {
+            moving[moving_n] = (bus, k, g.map(|g| step_of(g, BLOCK_SIZE)));
+            moving_n += 1;
         }
     }
-    // The master section, after every pair is summed; then the output stage.
-    fx.master(out, &shared.fx, sample_rate);
-    fx.limit(dac, sample_rate);
-    scope
-}
+    let moving = &moving[..moving_n];
 
-/// The send pass: each Part's bus by its sends into the FX sends, and the
-/// scope. `RAMP`: some gain moves this block.
-#[inline(always)]
-fn mix_sends<const RAMP: bool>(
-    src: &[(&[f32; BLOCK_SIZE], [Glide; FX_SENDS])],
-    sends: &mut [[f32; BLOCK_SIZE]; FX_SENDS],
-) -> [f32; BLOCK_SIZE] {
     let mut scope = [0.0f32; BLOCK_SIZE];
     let [s0, s1, s2] = sends;
     for c in 0..BLOCK_SIZE / SEND_STEP {
         let i = c * SEND_STEP;
         let mut a = [[0.0f32; SEND_STEP]; FX_SENDS + 1];
-        for &(bus, amt) in src {
+        for &(bus, amt) in &src[..n] {
             for k in 0..SEND_STEP {
                 let b = bus[i + k];
-                a[0][k] += b * gain_at::<RAMP>(amt[0], i + k);
-                a[1][k] += b * gain_at::<RAMP>(amt[1], i + k);
-                a[2][k] += b * gain_at::<RAMP>(amt[2], i + k);
+                a[0][k] += b * amt[0];
+                a[1][k] += b * amt[1];
+                a[2][k] += b * amt[2];
                 a[3][k] += b;
             }
         }
@@ -289,34 +264,51 @@ fn mix_sends<const RAMP: bool>(
         s2[i..i + SEND_STEP].copy_from_slice(&a[2]);
         scope[i..i + SEND_STEP].copy_from_slice(&a[3]);
     }
-    scope
-}
-
-/// One pair's pass: its Parts panned and levelled, and on pair 1 the FX
-/// return. `RAMP`: some gain moves this block.
-#[inline(always)]
-fn mix_pair<const RAMP: bool>(
-    parts: &[(&[f32; BLOCK_SIZE], Glide, Glide)],
-    ret: Option<&Stereo>,
-    pair: &mut [f32; 2 * BLOCK_SIZE],
-) {
-    for c in 0..BLOCK_SIZE / PAIR_STEP {
-        let i = c * PAIR_STEP;
-        let mut a = [0.0f32; 2 * PAIR_STEP];
-        for &(bus, gl, gr) in parts {
-            for j in 0..PAIR_STEP {
-                a[2 * j] += bus[i + j] * gain_at::<RAMP>(gl, i + j);
-                a[2 * j + 1] += bus[i + j] * gain_at::<RAMP>(gr, i + j);
+    for &(bus, _, steps) in moving {
+        for (send, &step) in sends.iter_mut().zip(&steps[2..]) {
+            if step != 0.0 {
+                glide::<1, 0>(bus, step, send);
             }
         }
-        if let Some(ret) = ret {
-            for j in 0..PAIR_STEP {
-                a[2 * j] += ret.l[i + j];
-                a[2 * j + 1] += ret.r[i + j];
-            }
-        }
-        pair[2 * i..2 * (i + PAIR_STEP)].copy_from_slice(&a);
     }
+
+    // The FX bus once; its return lands on pair 1, L and R.
+    let mut ret = Stereo::SILENT;
+    fx.process(sends, &shared.fx, sample_rate, &mut ret);
+
+    let out = dac.mix();
+    for (k, pair) in out.iter_mut().enumerate() {
+        let parts = &dry[k][..dry_n[k]];
+        for c in 0..BLOCK_SIZE / PAIR_STEP {
+            let i = c * PAIR_STEP;
+            let mut a = [0.0f32; 2 * PAIR_STEP];
+            for &(bus, gl, gr) in parts {
+                for j in 0..PAIR_STEP {
+                    a[2 * j] += bus[i + j] * gl;
+                    a[2 * j + 1] += bus[i + j] * gr;
+                }
+            }
+            if k == 0 {
+                for j in 0..PAIR_STEP {
+                    a[2 * j] += ret.l[i + j];
+                    a[2 * j + 1] += ret.r[i + j];
+                }
+            }
+            pair[2 * i..2 * (i + PAIR_STEP)].copy_from_slice(&a);
+        }
+    }
+    for &(bus, k, [l, r, ..]) in moving {
+        if l != 0.0 {
+            glide::<2, 0>(bus, l, &mut out[k]);
+        }
+        if r != 0.0 {
+            glide::<2, 1>(bus, r, &mut out[k]);
+        }
+    }
+    // The master section, after every pair is summed; then the output stage.
+    fx.master(out, &shared.fx, sample_rate);
+    fx.limit(dac, sample_rate);
+    scope
 }
 
 /// The shared voice pool and the per-block mix. The FX bus is passed to

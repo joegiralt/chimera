@@ -171,20 +171,28 @@ impl Default for Voice {
 impl Voice {
     /// The chain's floor: engine costs are bench per-voice minus this. The
     /// bench's `FLOOR` row (an Algo patch with every LEVEL at 0) measured 5 on
-    /// 2026-09-27; 10 is kept, erring high.
-    pub const CHAIN_COST: Cost = Cost(10); // measured 2026-09-26, bench, rev V at 480 MHz
+    /// 2026-09-27; 10 was kept, erring high. ADR 0060 adds the DC blocker
+    /// (6.5 instructions a sample), the stages' ease (1.3) and the ramps of
+    /// OUT LEVEL and filter DRIVE (about 2 each): 11.8 × 1.46 × 1.1 = 19,
+    /// by ADR 0056's host method; 29, rounded up.
+    pub const CHAIN_COST: Cost = Cost(30);
 
     /// A `kill` ramps to silence over this many samples (ADR 0027).
     pub const FADE: u16 = 2 * BLOCK_SIZE as u16;
 
     /// The wavefolder, which runs once FOLD is 0.001 or more: the bench's
-    /// FOLD row less 1 OP (measured 2026-09-28, rev V at 480 MHz).
-    pub const FOLD_COST: Cost = Cost(43);
+    /// FOLD row less 1 OP (measured 2026-09-28, rev V at 480 MHz), 43, plus
+    /// its ramp, which a route runs every block: 42 instructions a sample
+    /// against the steady 24, and the offset's 1 (ADR 0060); 19 × 1.46 ×
+    /// 1.1 = 30.5 by ADR 0056's host method; 73.5, rounded up.
+    pub const FOLD_COST: Cost = Cost(80);
     /// The drive stage, which runs once DRIVE is 0.001 or more. Measured:
     /// bench-t13d's DRIVE LO row (541) less that run's 1 OP (488) = 53;
-    /// bench-t13c's DRIVE row (540) less that run's 1 OP (483) = 57.
-    /// Billed as the larger: 57.
-    pub const DRIVE_COST: Cost = Cost(57);
+    /// bench-t13c's DRIVE row (540) less that run's 1 OP (483) = 57. Plus
+    /// its ramp, which a route runs every block: 36 instructions a sample
+    /// against the steady 22; 14 × 1.46 × 1.1 = 22.5 by ADR 0056's host
+    /// method; 79.5, rounded up.
+    pub const DRIVE_COST: Cost = Cost(80);
 
     /// Cycles/sample of a voice playing `p` under `mods`.
     pub fn cost(p: &ParamSnapshot, mods: &ModState) -> Cost {

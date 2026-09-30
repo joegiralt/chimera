@@ -9,6 +9,7 @@ use chimera_core::dsp::fx_bus::{FxBus, FxParams};
 use chimera_core::dsp::limiter::{CEILING, LOOKAHEAD, Limiter, OUTPUT_TRIM, THRESHOLD};
 use chimera_core::dsp::reverb::ReverbParams;
 use chimera_core::dsp::tape::TapeParams;
+use chimera_core::dsp::voice::Voice;
 use chimera_core::factory::factory_sound;
 use chimera_core::hw::{CPU_HZ_REV_V, DAC_PAIRS, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacBlocks, DacOut, Instrument, pan_gains};
@@ -110,9 +111,13 @@ fn chord(
     shared.parts[0].mix.level = level;
     shared.parts[0].mix.sends = [send; 3];
     shared.fx = fx_params;
+    // Rev V, or with the master tape (where ALGO INIT plays seven since
+    // ADR 0060) a budget for all eight.
+    let voice = Voice::cost(&shared.parts[0].params, &shared.parts[0].mod_state).0;
+    let eight = ((FxBus::COST.0 + 8 * voice) as u64 * 480_000).div_ceil(7) as u32;
     let mut inst = Box::new(Instrument::new(
         SAMPLE_RATE,
-        SampleBudget::for_cpu(CPU_HZ_REV_V),
+        SampleBudget::for_cpu(eight.max(CPU_HZ_REV_V)),
     ));
     let mut fx = Box::new(FxBus::new());
     let (w, _r) = Box::leak(Box::new(scope_buffer())).split();
