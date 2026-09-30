@@ -1227,15 +1227,24 @@ impl SympatheticSet {
             if snap {
                 g.toward(folded);
                 g.snap();
-            } else if !(stepped || gliding) {
-                // Moved with the pitch from where it rests: a glide may have
-                // left it an octave above the fold's.
-                g.toward(octave_near(folded, g.target() * moved));
-                g.snap();
             } else if stepped {
                 g.toward(octave_near(folded, g.period() * r / w));
             } else {
-                g.toward(octave_near(folded, g.target() * moved));
+                // Under an octave's move, with the pitch from where it is,
+                // in the octave it is in while its line fits (a glide or the
+                // fold may have left it over the fold's pick), at most one
+                // over it. A larger jump re-voices the chord at the fold's:
+                // kept where they were, strings a unison apart summed
+                // coherently, 4 dB up.
+                let near = moved > 0.5 && moved < 2.0;
+                g.toward(if near {
+                    octave_near(folded, fold(g.target() * moved))
+                } else {
+                    folded
+                });
+                if !gliding {
+                    g.snap();
+                }
             }
         }
         self.split();
