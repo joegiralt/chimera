@@ -1888,3 +1888,41 @@ fn an_undamped_c5_frees_60_db_under_its_peak() {
     let last = common::peak(&out[out.len() - 11 * BLOCK_SIZE..]);
     assert!(last <= peak * 1e-3, "freed at {last} of a {peak} peak");
 }
+
+/// The owner's UAT (2026-09-30): a re-strike adds to what rings, as a
+/// re-plucked string does, and clears nothing. C3 struck at v127, rung
+/// 0.3 s (released on the strings, held on the bow), then struck again:
+/// softly (v1) on the plucked and struck models, at v100 on a held bow.
+/// The 0.1 s after the re-strike are within 1 dB of the note left alone.
+#[test]
+fn a_restrike_adds_to_the_ring() {
+    let sr = SR as usize;
+    let at = sr * 3 / 10 / BLOCK_SIZE;
+    for mode in MODES {
+        let p = ModalParams {
+            mode,
+            ..Default::default()
+        };
+        let bowed = mode == ResonatorMode::Bowed;
+        let run = |restrike: bool| {
+            let mut pool = chimera_core::dsp::modal::SymPool::boxed();
+            let mut e = Box::new(ModalEngine::new_in(&mut pool, mode));
+            e.note_on(48, if bowed { 100 } else { 127 }, &p, SR, &mut pool);
+            if !bowed {
+                e.note_off(&mut pool);
+            }
+            let mut out = Vec::new();
+            let mut block = [0.0; BLOCK_SIZE];
+            for b in 0..at + sr / 10 / BLOCK_SIZE {
+                if b == at && restrike {
+                    e.note_on(48, if bowed { 100 } else { 1 }, &p, SR, &mut pool);
+                }
+                e.render(&mut block, &p, SR, &mut pool);
+                out.extend_from_slice(&block);
+            }
+            common::rms(&out[at * BLOCK_SIZE..])
+        };
+        let db = 20.0 * (run(true) / run(false)).log10();
+        assert!(db.abs() < 1.0, "{mode:?}: {db:.2} dB");
+    }
+}

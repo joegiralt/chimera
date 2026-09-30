@@ -63,4 +63,4 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0059](0059-music-theory-crate-built-from-types.md) | Music theory is its own crate, built from types | Proposed |
 | [0060](0060-one-dc-blocker-per-voice.md) | Block DC once per voice, after its last nonlinear stage (supersedes in part 0022, 0056) | Proposed |
 | [0061](0061-settings-ease-effects-run-at-mix-0.md) | Every continuous setting eases; an effect runs at MIX 0 | Proposed |
-| [0062](0062-modal-notes-ring-free.md) | A Modal note rings free after note-off (supersedes in part 0056) | Proposed |
+| [0062](0062-modal-notes-ring-free.md) | A Modal note rings free; a re-struck key re-plucks its own string (supersedes in part 0056) | Proposed |

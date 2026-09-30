@@ -279,15 +279,19 @@ pub struct ModalEngine {
     /// The note's first block is to come: it snaps `macros` to its
     /// modulated values and shapes the pluck at its POS.
     shape_pending: bool,
+    /// A re-strike's first block is to come: it adds the pluck at the
+    /// eased POS; nothing snaps.
+    restruck: bool,
 }
 
 crate::in_place::field_list!(ModalEngine => ModalEngine {
     model, frequency, pitch, tuned, active, silence_counter, peak, dc, macros, shape_pending,
+    restruck,
 });
 
 // A `ModalEngine` is its largest model plus the fields every model shares
 // (`frequency`, `pitch`, `tuned`, `active`, `silence_counter`, `peak`,
-// `dc`, `macros`, `shape_pending`), never the sum of models. The slot's
+// `dc`, `macros`, `shape_pending`, `restruck`), never the sum of models. The slot's
 // tag takes one align (`in_place_enum!`).
 const fn models_are_exclusive() -> bool {
     use core::mem::{align_of, size_of};
@@ -306,7 +310,7 @@ const fn models_are_exclusive() -> bool {
         i += 1;
     }
     let align = align_of::<ModalEngine>();
-    let shared = size_of::<(f32, f32, f32, bool, u32, f32, DcBlocker, Macros, bool)>();
+    let shared = size_of::<(f32, f32, f32, bool, u32, f32, DcBlocker, Macros, bool, bool)>();
     size_of::<ModalEngine>()
         <= (largest.next_multiple_of(align) + align + shared).next_multiple_of(align)
 }
@@ -446,6 +450,7 @@ impl ModalEngine {
             addr_of_mut!((*p).dc).write(DcBlocker::new(DC_HZ, SAMPLE_RATE));
             addr_of_mut!((*p).macros).write(Macros::of(&ModalParams::default()));
             addr_of_mut!((*p).shape_pending).write(false);
+            addr_of_mut!((*p).restruck).write(false);
             slot.assume_init_mut()
         }
     }
@@ -537,23 +542,32 @@ impl ModalEngine {
         debug_assert_eq!(params.mode, self.mode());
         let vel = velocity as f32 / 127.0;
         let freq = note_to_freq(note);
+        // The sounding note struck again: added to what rings, nothing
+        // cleared (the owner's UAT, 2026-09-30). BANK's strike always adds.
+        let restrike = self.active && freq / sample_rate as f32 == self.frequency;
         self.frequency = freq / sample_rate as f32;
         let freq = self.pitched(freq);
         self.tuned = self.pitch;
         let bank_freq = self.pitched(self.frequency);
-        self.macros = Macros::of(params);
+        // A re-strike's macros ease on.
+        if !restrike {
+            self.macros = Macros::of(params);
+        }
         let m = &self.macros;
 
         match &mut self.model {
             ModelSlot::Bank(bank) => {
                 bank.resolution = params.modes.count();
                 bank.compute_filters(m, bank_freq);
-                bank.cos_osc.init(params::beta(m.pos, params::END));
+                if !restrike {
+                    bank.cos_osc.init(params::beta(m.pos, params::END));
+                }
                 let burst_ms = 2.0 + params.burst * 4.0;
                 bank.burst_remaining = (burst_ms * sample_rate as f32 / 1000.0) as usize;
                 bank.burst_amp = vel * params.excite;
                 bank.burst_lp = 0.0;
             }
+            ModelSlot::String(v) if restrike => v.restrike(vel * params.excite, params.color),
             ModelSlot::String(v) => {
                 v.pluck(
                     (freq, sample_rate),
@@ -567,12 +581,16 @@ impl ModalEngine {
                 );
             }
             ModelSlot::Bowed(b) => {
-                b.start(freq, sample_rate, m.pos);
+                b.start(freq, sample_rate, m.pos, restrike);
                 b.force_to = bow_force(params.force, vel);
                 b.bow_vel = params.speed * BOW_SPEED;
                 b.vel_scale = 0.5 + 0.5 * vel;
                 b.bowing = true;
                 b.release = Release::HELD;
+            }
+            ModelSlot::Sympathetic(v) if restrike => {
+                // The halo rings on, on its chord.
+                v.main.restrike(vel * params.excite, params.color);
             }
             ModelSlot::Sympathetic(v) => {
                 // STRUCTURE tunes the halo only: the main string is not stiff.
@@ -590,11 +608,15 @@ impl ModalEngine {
             }
         }
 
-        self.shape_pending = true;
-        self.dc.reset();
+        if restrike {
+            self.restruck = true;
+        } else {
+            self.shape_pending = true;
+            self.dc.reset();
+            self.peak = 0.0;
+        }
         self.active = true;
         self.silence_counter = 0;
-        self.peak = 0.0;
     }
 
     /// The strings follow a changed pitch ratio (a divide per string,
@@ -677,6 +699,14 @@ impl ModalEngine {
             }
         } else {
             self.macros.ease(&to);
+            if core::mem::take(&mut self.restruck) {
+                let pos = self.macros.pos;
+                match &mut self.model {
+                    ModelSlot::String(s) => s.shape(pos),
+                    ModelSlot::Sympathetic(v) => v.main.shape(pos),
+                    ModelSlot::Bank(_) | ModelSlot::Bowed(_) => {}
+                }
+            }
         }
         let m = self.macros;
 
@@ -1533,8 +1563,8 @@ mod tests {
         }
     }
 
-    /// Bowed writes round its ring, the loop and two; its note-on still
-    /// starts silent.
+    /// Bowed writes round its ring, the loop and two; another note's
+    /// note-on still starts silent (the same note's re-strike adds).
     #[test]
     fn bowed_clears_the_ring_it_wrote() {
         let p = ModalParams {
@@ -1551,7 +1581,7 @@ mod tests {
         let (buf, dirty) = b.string.line();
         assert_eq!(dirty, b.string.delay() + 2);
         assert!(buf.iter().any(|&x| x != 0.0));
-        e.note_on(96, 100, &p, SR, &mut pool);
+        e.note_on(95, 100, &p, SR, &mut pool);
         let ModelSlot::Bowed(b) = &e.model else {
             unreachable!()
         };
