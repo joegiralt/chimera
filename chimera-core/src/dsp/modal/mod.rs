@@ -379,8 +379,8 @@ impl ModalEngine {
     /// More on SYMP with a route into STRUCTURE, which can keep the halo
     /// gliding: seven re-splits every `GLIDE_STEP` (28 a block), and seven
     /// `exp2f`s a chord step. Estimated from `PITCH`, 12 for eight splits
-    /// a block, pending the bench's SYM LFO row (task 11).
-    pub const CHORD: Cost = Cost(40);
+    /// a block, so 42, pending the bench's SYM LFO row (task 11).
+    pub const CHORD: Cost = Cost(42);
 
     /// An idle engine set to play `mode`, by value, through the stack:
     /// tests only. Sympathetic borrows a slot of `pool` for voice 0.
@@ -550,8 +550,14 @@ impl ModalEngine {
     /// The strings follow a changed pitch ratio (a divide per string,
     /// `ModalEngine::PITCH`), STRING's dispersion a moved STRUCTURE
     /// (gliding, `StringVoice::tune`), and SYMP's halo `chord`, the
-    /// un-eased STRUCTURE's (gliding, `SympatheticSet::retune`).
-    fn retune(&mut self, sample_rate: u32, pool: &mut SymPool, (moved, chord): (bool, usize)) {
+    /// un-eased STRUCTURE's (gliding, `SympatheticSet::retune`; a note's
+    /// first block snaps it).
+    fn retune(
+        &mut self,
+        sample_rate: u32,
+        pool: &mut SymPool,
+        (moved, chord, snap): (bool, usize, bool),
+    ) {
         let pitched = self.pitch != self.tuned;
         self.tuned = self.pitch;
         let freq = self.pitched(self.frequency * sample_rate as f32);
@@ -569,7 +575,7 @@ impl ModalEngine {
                     m.main.tune(freq, sample_rate, 0.0);
                 }
                 if let Some(set) = pool.halo(&m.halo) {
-                    set.retune(sample_rate as f32 / freq, chord, pitched);
+                    set.retune(sample_rate as f32 / freq, chord, (pitched, snap));
                 }
             }
         }
@@ -618,7 +624,8 @@ impl ModalEngine {
         // A note's first block takes its modulated macros whole: nothing
         // sounds yet. Then they ease.
         let (was, to) = (self.macros, Macros::of(params));
-        if core::mem::take(&mut self.shape_pending) {
+        let first = core::mem::take(&mut self.shape_pending);
+        if first {
             self.macros = to;
             // Before any retune: the pluck is the note-on's length.
             match &mut self.model {
@@ -636,7 +643,11 @@ impl ModalEngine {
         let f0 = bank_freq * sample_rate as f32;
         // The chord steps on the un-eased STRUCTURE: its glide is the easing.
         let chord = chord_of(to.structure);
-        self.retune(sample_rate, pool, (m.structure != was.structure, chord));
+        self.retune(
+            sample_rate,
+            pool,
+            (m.structure != was.structure, chord, first),
+        );
 
         // Whether the model is still exciting itself: silent or not, the
         // note sounds on.
@@ -925,21 +936,27 @@ impl SympatheticSet {
 
     /// Per block, on a main string of `period` samples: a new `chord`
     /// starts a glide from where the strings are, which `glide_step`
-    /// walks; a pitch change moves its target.
-    fn retune(&mut self, period: f32, chord: usize, pitched: bool) {
+    /// walks, or on a note's first block (`snap`) takes it whole; a pitch
+    /// change moves its target.
+    fn retune(&mut self, period: f32, chord: usize, (pitched, snap): (bool, bool)) {
         let stepped = chord != self.chord as usize;
+        if !stepped && !pitched {
+            return;
+        }
+        let now = self.periods();
         if stepped {
-            self.from = self.periods();
             self.chord = chord as u8;
             self.ratios = period_ratios(chord);
-            self.glide = CHORD_GLIDE_SAMPLES;
+            self.glide = if snap { 0 } else { CHORD_GLIDE_SAMPLES };
         }
-        if stepped || pitched {
-            self.to = self.ratios.map(|r| fold(period * r));
-        }
-        if pitched && self.glide == 0 {
+        self.to = self.ratios.map(|r| fold(period * r));
+        if self.glide == 0 {
             self.split();
+            return;
         }
+        // Rebased so `periods()` is still `now`: nothing jumps.
+        let g = self.glide as f32 / CHORD_GLIDE_SAMPLES as f32;
+        self.from = core::array::from_fn(|i| self.to[i] + (now[i] - self.to[i]) / g);
     }
 
     /// Every `GLIDE_STEP` samples: a gliding set's next step.

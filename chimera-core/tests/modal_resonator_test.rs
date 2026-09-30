@@ -817,7 +817,8 @@ fn chord_change_glides() {
 
 /// Review Focus 2: on G1 every chord's halo fits the line. Each string
 /// plays its interval folded up by the least octaves that fit (−12 is
-/// unison), and 2 s ring finite and bounded.
+/// unison), on a ring sized for its longest chord, and 2 s ring finite
+/// and bounded. A clamped line would miss its period.
 #[test]
 fn every_chord_fits_the_line_at_g1() {
     use chimera_core::dsp::modal::{CHORDS, MAX_STRING_DELAY, SymPool};
@@ -843,19 +844,23 @@ fn every_chord_fits_the_line_at_g1() {
             }
             let lines = e.halo_lines(&pool).expect("a halo");
             let periods = e.halo_periods(&pool).expect("a halo");
-            for (s, ((delay, ring), &st)) in lines.iter().zip(chord).enumerate() {
-                assert!(
-                    *ring <= MAX_STRING_DELAY,
-                    "chord {k} string {s}: ring {ring}"
-                );
-                assert!(
-                    delay + 2 <= *ring,
-                    "chord {k} string {s}: {delay} in {ring}"
-                );
-                let mut want = note_period * 2f64.powf(-st as f64 / 12.0);
-                while (want - 0.5).floor() > (MAX_STRING_DELAY - 2) as f64 {
-                    want /= 2.0;
+            let folded = |st: f32| {
+                let mut p = note_period * 2f64.powf(-st as f64 / 12.0);
+                while (p - 0.5).floor() > (MAX_STRING_DELAY - 2) as f64 {
+                    p /= 2.0;
                 }
+                p
+            };
+            for (s, (&(_, ring), &st)) in lines.iter().zip(chord).enumerate() {
+                // The ring is sized at note-on for the longest line any chord
+                // gives this string: no glide grows it.
+                let longest = CHORDS
+                    .iter()
+                    .map(|c| (folded(c[s]) - 0.5).floor() as usize + 2)
+                    .max()
+                    .unwrap();
+                assert_eq!(ring, longest, "chord {k} string {s}");
+                let want = folded(st);
                 let got = periods[s] as f64;
                 assert!(
                     (got - want).abs() < 1e-3,
@@ -936,4 +941,69 @@ fn a_pitch_change_retunes_the_halo() {
     for (a, b) in at_note_on.iter().zip(&moved) {
         assert!((a - b).abs() < 1e-3, "{at_note_on:?} vs {moved:?}");
     }
+}
+
+/// A note's first block takes its modulated STRUCTURE whole: a route
+/// (here the stored chord 0, rendered on chord 5) puts the halo on the
+/// routed chord at once, not 20 ms on.
+#[test]
+fn a_routed_chord_snaps_on_the_first_block() {
+    use chimera_core::dsp::modal::{CHORDS, SymPool, fold};
+    let stored = ModalParams {
+        mode: ResonatorMode::Sympathetic,
+        structure: 0.5 / 11.0,
+        ..Default::default()
+    };
+    let routed = ModalParams {
+        structure: 5.5 / 11.0,
+        ..stored
+    };
+    let mut pool = SymPool::boxed();
+    let mut e = Box::new(ModalEngine::new_in(&mut pool, stored.mode));
+    e.note_on(48, 100, &stored, SR, &mut pool);
+    let mut block = [0.0; BLOCK_SIZE];
+    e.render(&mut block, &routed, SR, &mut pool);
+    let want = CHORDS[5].map(|st| fold(period_of(48) * 2f32.powf(-st / 12.0)));
+    let got = e.halo_periods(&pool).expect("a halo");
+    for (g, w) in got.iter().zip(&want) {
+        assert!((g - w).abs() < 1e-3, "{got:?} vs {want:?}");
+    }
+}
+
+/// A pitch change mid-glide moves the glide's end, not where the strings
+/// are: the periods run on continuously from the step before.
+#[test]
+fn a_pitch_change_mid_glide_does_not_jump() {
+    use chimera_core::dsp::modal::SymPool;
+    let mut p = ModalParams {
+        mode: ResonatorMode::Sympathetic,
+        structure: 0.5 / 11.0,
+        ..Default::default()
+    };
+    let mut pool = SymPool::boxed();
+    let mut e = Box::new(ModalEngine::new_in(&mut pool, p.mode));
+    e.note_on(48, 100, &p, SR, &mut pool);
+    let mut block = [0.0; BLOCK_SIZE];
+    e.render(&mut block, &p, SR, &mut pool);
+    p.structure = 5.5 / 11.0;
+    for _ in 0..7 {
+        e.render(&mut block, &p, SR, &mut pool);
+    }
+    // Halfway through the glide: the step each block is about 1/15 of it.
+    let (a, b) = (e.halo_periods(&pool).unwrap(), {
+        e.render(&mut block, &p, SR, &mut pool);
+        e.halo_periods(&pool).unwrap()
+    });
+    let step = |x: &[f32; 7], y: &[f32; 7]| {
+        x.iter()
+            .zip(y)
+            .map(|(x, y)| (x - y).abs())
+            .fold(0.0, f32::max)
+    };
+    let held = step(&a, &b);
+    // A semitone up: the glide's end moves 6 %, the strings one step.
+    e.set_pitch(2f32.powf(1.0 / 12.0));
+    e.render(&mut block, &p, SR, &mut pool);
+    let c = e.halo_periods(&pool).unwrap();
+    assert!(step(&b, &c) <= 1.5 * held, "{} vs {held}", step(&b, &c));
 }

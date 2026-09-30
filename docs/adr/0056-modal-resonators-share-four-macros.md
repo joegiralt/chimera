@@ -142,7 +142,9 @@ Task 10 gives SYMP its chords, COUPLE and HALO:
   chord's over `CHORD_GLIDE_SAMPLES` = 960 (20 ms), re-split every
   `GLIDE_STEP` = 16 samples through the fractional tuning. The glide is
   the easing. A re-split each block stepped the line up to 22 samples at
-  G1 and ticked on low notes.
+  G1 and ticked on low notes. A note's first block takes its routed chord
+  whole, as it does the macros. A pitch change mid-glide moves the
+  glide's end, rebasing its start so the strings don't jump.
 - A halo string's period is `P·2^(−st/12)`, raised by octaves until its
   line fits (`fold`: `floor(period − 0.5) ≤ 979`). At G1 Rings' −12 plays
   unison. At note-on each halo ring is sized for the longest folded period
@@ -152,7 +154,7 @@ Task 10 gives SYMP its chords, COUPLE and HALO:
 - COUPLE and HALO replace the fixed 0.025 and 0.15: the coupling is
   `0.1·COUPLE` and the halo level `0.6·HALO`, latched at note-on. The
   defaults, 0.25, give today's values.
-- A route into STRUCTURE on SYMP is billed `ModalEngine::CHORD` = 40,
+- A route into STRUCTURE on SYMP is billed `ModalEngine::CHORD` = 42,
   estimated, until the bench's SYM LFO row measures it (task 11).
 - Provenance: from Rings (MIT) come the chord table and the dispersion's
   `ap_gain` law. Ours are `LoopGain`, the blocker's placement on the
