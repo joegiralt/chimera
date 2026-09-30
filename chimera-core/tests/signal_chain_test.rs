@@ -16,7 +16,7 @@ fn test_drive_passthrough_at_zero() {
     let params = DriveParams::default(); // drive=0
     let mut buf = [0.5, -0.5, 0.3, -0.3];
     let original = buf;
-    drive.process(&mut buf, &params);
+    drive.process(&mut buf, &params, params.drive >= 0.001);
     for (a, b) in buf.iter().zip(original.iter()) {
         assert!((a - b).abs() < 0.001, "drive=0 should passthrough");
     }
@@ -32,7 +32,7 @@ fn test_drive_clips_signal() {
     };
 
     let mut buf = [1.0; 4];
-    drive.process(&mut buf, &params);
+    drive.process(&mut buf, &params, params.drive >= 0.001);
     for &s in &buf {
         assert!(s.abs() <= 1.5, "drive should soft-clip, got {}", s);
     }
@@ -48,7 +48,7 @@ fn test_drive_output_bounded() {
     };
 
     let mut buf = [5.0, -5.0, 10.0, -10.0];
-    drive.process(&mut buf, &params);
+    drive.process(&mut buf, &params, params.drive >= 0.001);
     for &s in &buf {
         assert!(s.abs() < 3.0, "drive output should be bounded, got {}", s);
     }
@@ -145,7 +145,7 @@ fn test_folder_passthrough_at_zero() {
     let params = FolderParams::default(); // fold=0
     let mut buf = [0.5, -0.5, 0.8, -0.8];
     let original = buf;
-    folder.process(&mut buf, &params);
+    folder.process(&mut buf, &params, params.fold >= 0.001);
     for (a, b) in buf.iter().zip(original.iter()) {
         assert!((a - b).abs() < 0.001, "fold=0 should passthrough");
     }
@@ -161,7 +161,7 @@ fn test_folder_output_bounded() {
     };
 
     let mut buf = [5.0, -5.0, 10.0, -10.0];
-    folder.process(&mut buf, &params);
+    folder.process(&mut buf, &params, params.fold >= 0.001);
     for &s in &buf {
         assert!(
             s.abs() <= 1.01,
@@ -191,7 +191,7 @@ fn test_folder_adds_harmonics() {
         .filter(|w| (w[0] >= 0.0) != (w[1] >= 0.0))
         .count();
 
-    folder.process(&mut buf, &params);
+    folder.process(&mut buf, &params, params.fold >= 0.001);
 
     let zc_after: usize = buf
         .windows(2)

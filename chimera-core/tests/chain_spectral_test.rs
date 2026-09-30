@@ -36,7 +36,7 @@ fn test_drive_adds_harmonics() {
         mix: 1.0,
         ..Default::default()
     };
-    Drive::new().process(&mut clean, &params);
+    Drive::new().process(&mut clean, &params, params.drive >= 0.001);
     let driven_harmonics = harmonic_energy(&clean, freq);
 
     assert!(
@@ -54,7 +54,7 @@ fn test_drive_at_zero_preserves_spectrum() {
     let original = sine_buf(freq, 4096);
     let mut processed = original.clone();
     let params = DriveParams::default(); // drive=0
-    Drive::new().process(&mut processed, &params);
+    Drive::new().process(&mut processed, &params, params.drive >= 0.001);
 
     let orig_h = harmonic_energy(&original, freq);
     let proc_h = harmonic_energy(&processed, freq);
@@ -78,7 +78,7 @@ fn test_drive_more_drive_more_harmonics() {
             mix: 1.0,
             ..Default::default()
         };
-        Drive::new().process(&mut buf, &params);
+        Drive::new().process(&mut buf, &params, params.drive >= 0.001);
         harmonic_energy(&buf, freq)
     };
 
@@ -111,7 +111,7 @@ fn test_drive_tone_changes_spectrum() {
             tone,
             mix: 1.0,
         };
-        Drive::new().process(&mut buf, &params);
+        Drive::new().process(&mut buf, &params, params.drive >= 0.001);
         harmonic_energy(&buf, freq)
     };
 
@@ -330,7 +330,7 @@ fn test_folder_adds_harmonics() {
         mix: 1.0,
         ..Default::default()
     };
-    Wavefolder::new().process(&mut folded, &params);
+    Wavefolder::new().process(&mut folded, &params, params.fold >= 0.001);
     let folded_h = harmonic_energy(&folded, freq);
 
     assert!(
@@ -352,7 +352,7 @@ fn test_folder_more_fold_more_harmonics() {
             mix: 1.0,
             ..Default::default()
         };
-        Wavefolder::new().process(&mut buf, &params);
+        Wavefolder::new().process(&mut buf, &params, params.fold >= 0.001);
         harmonic_energy(&buf, freq)
     };
 

@@ -228,7 +228,8 @@ fn voice_bills_fold_and_drive_when_they_can_run() {
         Voice::cost(&p, &none),
         bare + Voice::FOLD_COST + Voice::DRIVE_COST
     );
-    // Stored at 0, a route: 0 bills nothing, anything else both terms.
+    // Stored at 0, a route: 0 bills nothing, anything else both stages
+    // and their ramps.
     let fold = ParamAddr::new(BlockRef::Folder, FolderParams::FOLD);
     let drive = ParamAddr::new(BlockRef::Drive, DriveParams::DRIVE);
     let empty = chimera_core::mod_path::ModDestRegistry::new();
@@ -240,10 +241,24 @@ fn voice_bills_fold_and_drive_when_they_can_run() {
     ms.set_route(ModSource::Vel.index(), f, -1);
     ms.set_route(ModSource::Vel.index(), d, 1);
     let routes = ModRouting::DEST_FIRST + ModRouting::DEST;
+    let ramps = Voice::FOLD_RAMP_COST + Voice::DRIVE_RAMP_COST;
     assert_eq!(
         Voice::cost(&base, &ms),
-        bare + Voice::FOLD_COST + Voice::DRIVE_COST + routes
+        bare + Voice::FOLD_COST + Voice::DRIVE_COST + ramps + routes
     );
+    // A route on TONE alone ramps a drive its stored DRIVE runs (I1).
+    let mut ms = ModState::from_registry(&empty, 8);
+    let t = ms
+        .push(ParamAddr::new(BlockRef::Drive, DriveParams::TONE))
+        .unwrap();
+    ms.set_route(ModSource::Vel.index(), t, 1);
+    let mut on = base.clone();
+    on.drive.drive = 0.3;
+    assert_eq!(
+        Voice::cost(&on, &ms),
+        bare + Voice::DRIVE_COST + Voice::DRIVE_RAMP_COST + ModRouting::DEST_FIRST
+    );
+    assert_eq!(Voice::cost(&base, &ms), bare + ModRouting::DEST_FIRST);
 }
 
 /// BURST mode adds `BURST` on top of `ENV_B`; B in ENV or LFO
@@ -556,6 +571,7 @@ fn the_model_bills_the_mods_row_high() {
             + Cost(5 * M::DEST.0)
             + func
             + Voice::FOLD_COST
+            + Voice::FOLD_RAMP_COST
             + LP24
     );
 }
@@ -628,12 +644,14 @@ fn the_costliest_patch_gets_six_voices_on_rev_v() {
     assert_eq!(voices_at(CPU_HZ_REV_V, &p), 6);
     assert_eq!(MAX_VOICES, 8, "the budget stops it short of the pool");
     assert_eq!(voices_at(CPU_HZ_REV_Y, &p), if TAPE { 4 } else { 5 });
-    // With the folder on (80, ADR 0060): 989, five on rev V and four on
-    // rev Y; the drive stage too (1,069): the same, with the tape too. No
-    // factory Sound does either with this shape.
+    // With the folder on, unrouted (45, ADR 0060): 954, six on rev V and
+    // four on rev Y (five and four with the tape); the drive stage too
+    // (1,011): five on rev V, four on rev Y, with the tape too. No factory
+    // Sound does either with this shape.
     let fits = |hz, voice: u32| (SampleBudget::for_cpu(hz).as_cost().0 - FxBus::COST.0) / voice;
     let fold = plain + Voice::FOLD_COST.0;
-    assert_eq!((fits(CPU_HZ_REV_V, fold), fits(CPU_HZ_REV_Y, fold)), (5, 4));
+    let want = if TAPE { (5, 4) } else { (6, 4) };
+    assert_eq!((fits(CPU_HZ_REV_V, fold), fits(CPU_HZ_REV_Y, fold)), want);
     let both = fold + Voice::DRIVE_COST.0;
     assert_eq!((fits(CPU_HZ_REV_V, both), fits(CPU_HZ_REV_Y, both)), (5, 4));
 }
