@@ -88,11 +88,13 @@ pub struct AlgoEngine {
     pitch: f32,
     velocity: f32,
     active: bool,
+    /// Key down since the last note-on: every carrier holds the voice.
+    held: bool,
 }
 
 crate::in_place::field_list!(AlgoEngine => AlgoEngine {
     kernel, env, plan, plan_key, waves, rates, gain, mip, morph, norm, swap, note, pitch, velocity,
-    active,
+    active, held,
 });
 
 #[cfg(any(test, feature = "test-support"))]
@@ -178,6 +180,7 @@ impl AlgoEngine {
             addr_of_mut!((*p).pitch).write(0.0);
             addr_of_mut!((*p).velocity).write(1.0);
             addr_of_mut!((*p).active).write(false);
+            addr_of_mut!((*p).held).write(false);
             slot.assume_init_mut()
         }
     }
@@ -217,6 +220,7 @@ impl AlgoEngine {
             self.env[i].note_on(EnvCoefs::new(self.rates[i], note, sr));
         }
         self.active = true;
+        self.held = true;
     }
 
     /// The voice's pitch offset in semitones, for the next `note_on` or
@@ -226,6 +230,7 @@ impl AlgoEngine {
     }
 
     pub fn note_off(&mut self) {
+        self.held = false;
         for e in &mut self.env {
             e.note_off();
         }
@@ -291,12 +296,13 @@ impl AlgoEngine {
         }
         (self.morph, self.norm) = (m.get(), norm);
         self.finish_swap(p);
-        // Held by a carrier heard at the MORPH: one only in ALG B is silent
-        // at MORPH 0 and holds nothing there. A routed MORPH may bring
-        // either algorithm's back, so modulation never ends a held note.
+        // A held key: a carrier of either algorithm holds the voice, so no
+        // MORPH, by hand or by route, ends a held note (58b35e9). Released:
+        // only a carrier heard at the MORPH does, unless a route may bring
+        // the other algorithm's back (ADR 0061).
         let (a, b) = (&self.plan.carrier_a, &self.plan.carrier_b);
         let heard = |i: usize| {
-            if live.morph_routed {
+            if self.held || live.morph_routed {
                 a[i] + b[i] > 0.0
             } else {
                 blend(a[i], b[i], m.get()) > 0.0
