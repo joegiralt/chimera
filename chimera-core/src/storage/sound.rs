@@ -24,12 +24,19 @@ const _: () = assert!(MAX_ROUTES * ROUTE_LEN <= MAX_RECORD_LEN);
 const _: () = assert!(MAX_REGISTRY_DESTS * REGISTRY_ENTRY_LEN <= MAX_RECORD_LEN);
 
 impl Sound {
-    /// The frozen base a file decodes onto: every param at its default, no
-    /// routes, an empty registry. Not `init`, whose routes may change.
+    /// The frozen base a file decodes onto: every param at its v1 default,
+    /// no routes, an empty registry. Not `init`, whose routes may change,
+    /// nor today's defaults: OUT LEVEL 0.8 and RR 8, as before ADR 0063
+    /// moved INIT's.
     pub fn neutral(engine: EngineType) -> Sound {
+        let mut params = ParamSnapshot::for_engine(engine);
+        params.out.volume = 0.8;
+        for o in &mut params.algo.ops {
+            o.rr = 8;
+        }
         Sound {
             name: Sound::init_name(),
-            params: ParamSnapshot::for_engine(engine),
+            params,
             mod_state: ModState::with_sources(MAX_MOD_SOURCES),
             dest_registry: ModDestRegistry::new(),
         }

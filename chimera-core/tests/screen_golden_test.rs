@@ -12,11 +12,12 @@ mod screen;
 use screen::*;
 
 // Re-recorded for ADR 0057: every Part and mixer header reads
-// `PART n · SOUND` or `· MIX`; the mixer recipes open on SENDS.
+// `PART n · SOUND` or `· MIX`; the mixer recipes open on SENDS. The Algo
+// screens again for ADR 0063: INIT's VOL 45 and RR 5.
 const GOLDENS: &[(&str, u64)] = &[
-    ("engine_algo", 0x58d330370dbb5ce0),
-    ("algo_alg", 0x617271e5b7fead7d),
-    ("algo_alg_morph_dimmed", 0xf809cde4c81d658f),
+    ("engine_algo", 0x3c1db80e3e80b53f),
+    ("algo_alg", 0xbffad8304f828aee),
+    ("algo_alg_morph_dimmed", 0xd8e8a78a528ad3b4),
     ("mod_matrix_morph_inert", 0xc0a153ae29f9167b),
     ("algo_wave", 0xdbd599e8964b6a89),
     ("algo_level", 0x7b3a4495d5c597e0),
@@ -91,7 +92,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("mixer_out_p2", 0x922c1706c7a6113f),
     #[cfg(feature = "master-tape")]
     ("mixer_out_p2", 0x72f5aa7f2c775a91),
-    ("algo_out_p3", 0x810cea9407ad73f5),
+    ("algo_out_p3", 0xe8b5d1afc600d5f6),
     ("mod_matrix", 0xa6cf67e584e06c56),
     ("mod_matrix_wide", 0xca78c74fca4ac959),
     ("sound_browser", 0xc1a53459edabbb6b),

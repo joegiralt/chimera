@@ -38,7 +38,8 @@ pub const SR: u32 = chimera_hal::SAMPLE_RATE;
 pub const NOTE: u8 = 60;
 pub const VEL: u8 = 100;
 pub const ON_BLOCKS: usize = 200;
-pub const OFF_BLOCKS: usize = 200;
+/// 1.6 s: ALGO INIT's RR 5 falls 60 dB in about 1.1 s (ADR 0063).
+pub const OFF_BLOCKS: usize = 1200;
 pub const TOTAL_SAMPLES: usize = (ON_BLOCKS + OFF_BLOCKS) * BLOCK_SIZE;
 /// LFO rate for every modulated case. At the 1 Hz default the LFO stays
 /// positive for the first 0.5 s, so a route to a param already at its max

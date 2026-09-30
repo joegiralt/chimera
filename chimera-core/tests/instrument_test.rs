@@ -692,29 +692,29 @@ fn the_costliest_patch_plays_six_voices_on_rev_v() {
 /// for an intended sound change (`common::golden`). Every row re-recorded
 /// at Task 17 for ADR 0060's voice DC blocker; each comment names what came
 /// before. The Algo rows re-recorded for the filter's C1 `saturate` (ADR
-/// 0063).
+/// 0063), then every row for its INIT (OUT LEVEL 45/128, RR 5).
 const GOLDENS: &[(&str, u64)] = &[
-    ("poly_chord", 0x069c649e84737fe5), // ADR 0049 INIT, then the ADR 0050 output trim
+    ("poly_chord", 0xba9fbebb12bbbc4d), // ADR 0049 INIT, then the ADR 0050 output trim
     // Re-recorded: Modal 2 step A, then ADR 0058's gain, then Task 18's DAMP make-up,
     // then the free ring on release (ADR 0062).
-    ("two_parts_two_pairs", 0xabdf2f84a26dc781),
-    ("reverb_send_off", 0xee412c6152260a99), // ADR 0049 INIT, then the ADR 0050 output trim
-    ("reverb_send_on", 0x385948e9b37036d9),  // ADR 0049 INIT, then the ADR 0050 output trim
+    ("two_parts_two_pairs", 0xd461a92a9542074a),
+    ("reverb_send_off", 0xb7ff733538f39db9), // ADR 0049 INIT, then the ADR 0050 output trim
+    ("reverb_send_on", 0xa7009ff4d6324987),  // ADR 0049 INIT, then the ADR 0050 output trim
     ("six_voice_chord", 0xb3bb31dbc471cf01), // ADR 0049 INIT, then the ADR 0050 output trim
 ];
 
 /// ADR 0050: everything before the limiter is the mix unchanged by it,
 /// bit for bit. These are the goldens as ADR 0049's INIT recorded them,
 /// before the output trim; every row re-recorded for ADR 0060's voice DC
-/// blocker, and for the filter's C1 `saturate` (ADR 0063).
+/// blocker, and for ADR 0063's C1 `saturate` and INIT.
 const PRE_LIMITER: &[(&str, u64)] = &[
-    ("poly_chord", 0x1564fc59331cc2a9),
+    ("poly_chord", 0x9a7e4fc66c45f339),
     // Re-recorded: Modal 2 step A's resonators (spec § Tests), then ADR 0058's gain,
     // then Task 18's DAMP make-up,
     // then the free ring on release (ADR 0062).
-    ("two_parts_two_pairs", 0x799002205ccd980b),
-    ("reverb_send_off", 0x96c17b6312814861),
-    ("reverb_send_on", 0xcf7b34e8473f63f8),
+    ("two_parts_two_pairs", 0x5505c654fb526b21),
+    ("reverb_send_off", 0x8180167de55cf955),
+    ("reverb_send_on", 0x746ea6b464bbdb38),
     ("six_voice_chord", 0x5efd58ea3b91d3bd),
 ];
 

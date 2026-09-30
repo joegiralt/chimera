@@ -1125,13 +1125,15 @@ fn ensemble(params: &ModalParams, hz: f32, sample_rate: u32) -> (f32, Ensemble) 
     )
 }
 
-/// Each model's output gain (ADR 0058), at the voice's VCA: its INIT's C4
-/// at velocity 100 as loud on P1 as ALGO INIT's, ±1 dB. After the bank's
-/// tanh, SYMP's and the voice's filter, so none of them saturates more.
-/// BOWED's is on top of `BOW_OUT`, the bow's level into that filter.
+/// Each model's output gain (ADR 0058, 0063), at the voice's VCA: its
+/// INIT's C4 at velocity 100 as loud on P1 as ALGO INIT's, the factory
+/// median, ±1 dB; STRING's by its peak, its eight-note chord at velocity
+/// 127 under 3 dB of the limiter's gain reduction. After the bank's tanh,
+/// SYMP's and the voice's filter, so none of them saturates more. BOWED's
+/// is on top of `BOW_OUT`, the bow's level into that filter.
 pub const fn out_gain(mode: ResonatorMode) -> f32 {
     match mode {
-        ResonatorMode::String => 10.96,
+        ResonatorMode::String => 5.95,
         ResonatorMode::Modal => 11.83,
         ResonatorMode::Bowed => 1.62,
         ResonatorMode::Sympathetic => 4.24,

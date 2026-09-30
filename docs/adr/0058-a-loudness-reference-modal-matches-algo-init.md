@@ -1,6 +1,6 @@
 # 0058. A loudness reference: every Modal model's INIT plays as loud as ALGO INIT
 
-- **Status:** Proposed
+- **Status:** Superseded by [0063](0063-levels-at-the-factory-median.md)
 - **Deciders:** owner; firmware (Modal 2, task 16)
 - **Relates to:** ADR 0050 (the output trim and the −1 dBFS limiter),
   ADR 0056 (Modal's four models, `BOW_OUT`, #231)

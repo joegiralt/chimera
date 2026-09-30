@@ -26,9 +26,20 @@ fn sources() -> Vec<(String, Sound)> {
     let mut v: Vec<_> = (0..FACTORY_LEN)
         .map(|i| (format!("factory_{i}.snd"), factory_sound(i).unwrap()))
         .collect();
-    v.push(("init_algo.snd".into(), Sound::init(EngineType::Algo)));
-    v.push(("init_modal.snd".into(), Sound::init(EngineType::Modal)));
+    v.push(("init_algo.snd".into(), v1_init(EngineType::Algo)));
+    v.push(("init_modal.snd".into(), v1_init(EngineType::Modal)));
     v
+}
+
+/// INIT as the v1 fixtures saved it: OUT LEVEL 0.8 and every operator's
+/// RR 8, before ADR 0063 moved them. An old INIT loads as it was saved.
+fn v1_init(engine: EngineType) -> Sound {
+    let mut s = Sound::init(engine);
+    s.params.out.volume = 0.8;
+    for o in &mut s.params.algo.ops {
+        o.rr = 8;
+    }
+    s
 }
 
 fn path(name: &str) -> PathBuf {
@@ -145,20 +156,21 @@ fn v1_fixture_bytes_are_frozen() {
 /// FNV-1a of each fixture's render, recorded when the fixtures were written.
 const FIXTURE_RENDERS: &[(&str, u64)] = &[
     // Re-recorded, every row, as `golden_test`'s: ADR 0060's DC blocker;
-    // SQR BASS and ALGO INIT for the filter's C1 `saturate` (ADR 0063).
-    ("factory_0.snd", 0x3bf08f68be7bc44f),
-    ("factory_1.snd", 0xc67ca8068a7877d9),
-    ("factory_2.snd", 0x3525cc1931c29ca2),
-    ("factory_3.snd", 0x14e064252e938abf),
-    ("factory_4.snd", 0x8e66d469654ec811),
-    ("factory_5.snd", 0x512974d405e39a60),
-    ("factory_6.snd", 0xfd388eee4c112513),
-    ("factory_7.snd", 0x81c2fbb41ba2c813),
-    ("init_algo.snd", 0x909c693e57a2c5bb),
+    // SQR BASS and ALGO INIT for the filter's C1 `saturate` (ADR 0063); every
+    // row for the harness's 1.6 s release (`OFF_BLOCKS`, ADR 0063).
+    ("factory_0.snd", 0xe98faae37ce6244f),
+    ("factory_1.snd", 0xab3ee51d703f17d9),
+    ("factory_2.snd", 0x07d23e6d0289e847),
+    ("factory_3.snd", 0x6136e6c43abf648a),
+    ("factory_4.snd", 0x9f9f17695f406811),
+    ("factory_5.snd", 0x1c921c39e8ff9a60),
+    ("factory_6.snd", 0xaa780f9a0cee1652),
+    ("factory_7.snd", 0x2f4ec4667083a813),
+    ("init_algo.snd", 0x68e843041c24a5bb),
     // Re-recorded: Modal 2 step A's resonators (spec § Tests), then ADR 0058's gain,
     // then Task 18's DAMP make-up and relative silence (ADR 0056),
     // then the free ring on release (ADR 0062).
-    ("init_modal.snd", 0xdbbb98e8b60c7fba),
+    ("init_modal.snd", 0xda59622102625d57),
 ];
 
 #[test]
@@ -316,7 +328,7 @@ fn decode_modal(payload: &[u8]) -> ParamSnapshot {
 fn old_modal_patches_translate() {
     use ResonatorMode::{Bowed, Modal, String, Sympathetic};
     let init = decode(&fixture("init_modal.snd")).unwrap();
-    assert!(init.bits_eq(&Sound::init(EngineType::Modal)));
+    assert!(init.bits_eq(&v1_init(EngineType::Modal)));
     for mode in [String, Modal, Bowed, Sympathetic] {
         let snap = decode_modal(&v1_modal(mode, 0.2));
         let m = &snap.modal;

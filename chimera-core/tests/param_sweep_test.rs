@@ -739,7 +739,7 @@ fn out_moves_the_part_to_its_pair() {
 #[test]
 fn levels_are_safe() {
     for p in level_patches() {
-        for notes in [&[60u8][..], &CHORD[..]] {
+        for notes in [&[60u8][..], &CHORD[..], &WIDE_8[..]] {
             let l = level(p, notes, 127, 300);
             for peak in l.peak {
                 assert!(peak.is_finite() && within_ceiling(peak), "{}", p.name());
@@ -749,15 +749,16 @@ fn levels_are_safe() {
     }
 }
 
-/// ADR 0058's reference: ALGO INIT's C4 at velocity 100 on P1, LUFS; 0.1
-/// dB up through the filter's C1 `saturate` (ADR 0063).
-const REFERENCE_LUFS: f32 = -14.9;
+/// ADR 0063's reference, the factory median: ALGO INIT's C4 at velocity
+/// 100 on P1, LUFS.
+const REFERENCE_LUFS: f32 = -22.0;
 
-/// ADR 0058: ALGO INIT sits at the reference, ±0.1 dB, and each Modal
-/// model's INIT, one C4 at velocity 100, within ±1 dB of it. The limiter
-/// is a safety ceiling (ADR 0050): no INIT's chord at velocity 127, the
-/// hardest strike, loses more than `MAX_CHORD_LIMITED_DB` to it. The wider
-/// voicings (`WIDE_5`, `WIDE_8`) are printed, not gated (`--nocapture`).
+/// ADR 0063: ALGO INIT sits at the reference, ±0.1 dB, and BANK, BOWED and
+/// SYMP INIT, one C4 at velocity 100, within ±1 dB of it. STRING is set by
+/// its peak: its eight-note chord at velocity 127 takes at most
+/// `MAX_STRING_GR_DB` of gain reduction. The limiter is a safety ceiling
+/// (ADR 0050): no INIT's chord at velocity 127, four notes or eight, loses
+/// more than `MAX_CHORD_LIMITED_DB` of its loudness to it.
 #[test]
 fn modal_models_match_the_loudness_reference() {
     let algo = level(Patch::AlgoInit, &[60], 100, BPS).lufs;
@@ -769,41 +770,66 @@ fn modal_models_match_the_loudness_reference() {
     for m in MODELS {
         let p = Patch::ModalInit(m);
         let d = level(p, &[60], 100, BPS).lufs - REFERENCE_LUFS;
-        let chord = level(p, &CHORD, 127, BPS);
-        println!(
-            "{}: {d:+.2} dB; chord at 127: gain reduction {:.1} dB at most, {:.2} dB of its \
-             loudness",
-            p.name(),
-            chord.gr_db,
-            chord.limited_db
-        );
-        // Reported, not gated: the owner's loudness reference decides these.
-        for wide in [&WIDE_5[..], &WIDE_8[..]] {
-            let l = level(p, wide, 127, BPS);
+        println!("{}: {d:+.2} dB", p.name());
+        for chord in [&CHORD[..], &WIDE_5[..], &WIDE_8[..]] {
+            let l = level(p, chord, 127, BPS);
             println!(
                 "  {}-note chord at 127: gain reduction {:.1} dB at most, {:.2} dB of its \
                  loudness",
-                wide.len(),
+                chord.len(),
                 l.gr_db,
                 l.limited_db
             );
+            if chord.len() != 5 && l.limited_db > MAX_CHORD_LIMITED_DB {
+                bad.push(format!(
+                    "{}: the limiter took {:.2} dB of the {}-note chord at 127",
+                    p.name(),
+                    l.limited_db,
+                    chord.len()
+                ));
+            }
+            if m == ResonatorMode::String && chord.len() == 8 && l.gr_db > MAX_STRING_GR_DB {
+                bad.push(format!(
+                    "{}: the 8-note chord at 127 takes {:.2} dB of gain reduction",
+                    p.name(),
+                    l.gr_db
+                ));
+            }
         }
-        if d.abs() > 1.0 {
+        if m != ResonatorMode::String && d.abs() > 1.0 {
             bad.push(format!("{}: {d:+.2} dB off the reference", p.name()));
-        }
-        if chord.limited_db > MAX_CHORD_LIMITED_DB {
-            bad.push(format!(
-                "{}: the limiter took {:.2} dB of the chord at 127",
-                p.name(),
-                chord.limited_db
-            ));
         }
     }
     assert!(bad.is_empty(), "{}", bad.join("\n"));
 }
 
-/// Wider v127 voicings, reported beside `CHORD` (objective QA, Task 18):
-/// a five-note open chord and eight notes over three octaves.
+/// STRING's peak rule: its eight-note chord at velocity 127 takes at most
+/// this much gain reduction, dB.
+const MAX_STRING_GR_DB: f32 = 3.0;
+
+/// ALGO INIT's operators release at RR 5 (ADR 0049's note): a C4 let go
+/// after 0.5 s falls 60 dB in about 1.1 s, 0.8 to 1.5 s.
+#[test]
+fn algo_init_releases_in_about_a_second() {
+    let mut b = Bench::new(Patch::AlgoInit, PartParams::default(), FxParams::default());
+    let mut t = Tape::default();
+    b.note(60, Some(100));
+    for blk in 0..2 * BPS {
+        if blk == BPS / 2 {
+            b.note(60, None);
+        }
+        b.render(&mut t);
+    }
+    let at = |s: f32| {
+        let blk = BPS / 2 + (s * BPS as f32) as usize;
+        db(t.rms(0, blk, blk + BPS / 20))
+    };
+    let t60 = 60.0 * 0.3 / (at(0.1) - at(0.4));
+    assert!((0.8..=1.5).contains(&t60), "release T60 {t60:.2} s");
+}
+
+/// Wider v127 voicings beside `CHORD`: a five-note open chord, reported,
+/// and eight notes over three octaves, gated.
 const WIDE_5: [u8; 5] = [36, 48, 55, 60, 64];
 const WIDE_8: [u8; 8] = [36, 43, 48, 52, 55, 60, 64, 72];
 
@@ -836,7 +862,7 @@ fn the_folder_sym_puts_no_dc_on_the_dac() {
     b.set(&find(BlockRef::Folder, FolderParams::FOLD), 0.5);
     b.set(&find(BlockRef::Folder, FolderParams::SYMMETRY), 0.0);
     let mut t = Tape::default();
-    for blk in 0..1000 {
+    for blk in 0..2500 {
         if blk == 0 {
             b.note(60, Some(100));
         }
