@@ -138,7 +138,7 @@ impl Note {
 
     /// `semitones` up (or down, if negative); None off either end.
     pub const fn transpose(self, semitones: i16) -> Option<Note> {
-        let n = self.0 as i16 + semitones;
+        let n = self.0 as i32 + semitones as i32;
         if n >= 0 && n <= 127 {
             Some(Note(n as u8))
         } else {
