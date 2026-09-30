@@ -7,6 +7,7 @@ use common::Rig;
 use chimera_core::addr::{BlockRef, ParamAddr};
 use chimera_core::dsp::algo::params::AlgoParams;
 use chimera_core::dsp::algo::waves::WaveId;
+use chimera_core::dsp::note_to_freq;
 use chimera_core::modulation::ModState;
 use chimera_core::params::{EngineType, ParamSnapshot, PitchParams};
 use chimera_core::{MidiNote, Velocity};
@@ -143,11 +144,17 @@ fn a_route_to_pitch_retunes_every_modal_model() {
     ] {
         let mut p = init_params(EngineType::Modal);
         p.modal.mode = mode;
+        // Near the stored f0: SYMP's chords put octaves beside it, and which
+        // peak is strongest turns on the pluck's length.
+        let f0 = |x: &[f32]| {
+            let near = note_to_freq(60) as f64 * 2f64.powf(st as f64 / 12.0);
+            common::fundamental_hz(&x[256..256 + 8192], near) as f32
+        };
         let flat = peak_hz(&render(&p, &ModState::new(), 200));
-        let routed = peak_hz(&render(&p, &up, 200));
+        let routed = f0(&render(&p, &up, 200));
         let mut stored = p.clone();
         stored.pitch.pitch = st;
-        let stored = peak_hz(&render(&stored, &ModState::new(), 200));
+        let stored = f0(&render(&stored, &ModState::new(), 200));
         assert!(
             (routed - stored).abs() <= bin,
             "{mode:?}: routed {routed} Hz, stored {stored} Hz"

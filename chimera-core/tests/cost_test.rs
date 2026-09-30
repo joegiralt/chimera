@@ -773,6 +773,45 @@ fn a_pitch_route_on_modal_bills_the_retune() {
     );
 }
 
+/// A route into STRUCTURE can keep SYMP's halo gliding between chords:
+/// billed `ModalEngine::CHORD` (estimated) on any route, at amount 0
+/// too; the other models' STRUCTURE is billed with them.
+#[test]
+fn a_structure_route_on_symp_bills_the_chord_glide() {
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::dsp::modal::{ModalEngine, ModalParams, ResonatorMode};
+    let routed = |amount| {
+        let mut ms = ModState::from_registry(&chimera_core::mod_path::ModDestRegistry::new(), 8);
+        let d = ms
+            .push(ParamAddr::new(BlockRef::Modal, ModalParams::STRUCTURE))
+            .unwrap();
+        ms.set_route(ModSource::Lfo1.index(), d, amount);
+        ms
+    };
+    for mode in [
+        ResonatorMode::String,
+        ResonatorMode::Modal,
+        ResonatorMode::Bowed,
+        ResonatorMode::Sympathetic,
+    ] {
+        let mut p = ParamSnapshot::for_engine(EngineType::Modal);
+        p.modal.mode = mode;
+        let bare = EngineSlot::cost(&p, &ModState::new());
+        let extra = if mode == ResonatorMode::Sympathetic {
+            ModalEngine::CHORD
+        } else {
+            Cost(0)
+        };
+        for amount in [127, 0] {
+            assert_eq!(
+                EngineSlot::cost(&p, &routed(amount)),
+                bare + extra,
+                "{mode:?}"
+            );
+        }
+    }
+}
+
 /// Modal is billed per model (#49): String and Sympathetic as benched
 /// (Sympathetic's pool still sounds at most four), the others at or
 /// above the emulator's estimate until the bench's MDL rows (ROUTING 3/3,

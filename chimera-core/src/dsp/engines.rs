@@ -9,7 +9,7 @@ use chimera_hal::BLOCK_SIZE;
 
 use crate::addr::{BlockRef, ParamAddr};
 use crate::dsp::algo::engine::{AlgoEngine, AlgoLive};
-use crate::dsp::modal::{Halo, ModalEngine, Model, ResonatorMode, SymPool};
+use crate::dsp::modal::{Halo, ModalEngine, ModalParams, Model, ResonatorMode, SymPool};
 use crate::hw::Cost;
 use crate::in_place::{in_place_enum, move_out};
 use crate::modulation::ModState;
@@ -251,12 +251,23 @@ impl EngineSlot {
     pub fn cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
         match p.engine() {
             EngineType::Algo => AlgoEngine::cost(&p.algo, &mods.algo_levels_routed()),
-            EngineType::Modal if pitch_routed(mods) => {
-                ModalEngine::cost(&p.modal) + ModalEngine::PITCH
+            EngineType::Modal => {
+                let mut c = ModalEngine::cost(&p.modal);
+                if pitch_routed(mods) {
+                    c = c + ModalEngine::PITCH;
+                }
+                if p.modal.mode == ResonatorMode::Sympathetic && chord_routed(mods) {
+                    c = c + ModalEngine::CHORD;
+                }
+                c
             }
-            EngineType::Modal => ModalEngine::cost(&p.modal),
         }
     }
+}
+
+/// A route, of any amount, into STRUCTURE: SYMP's chord.
+fn chord_routed(mods: &ModState) -> bool {
+    mods.routes_into(ParamAddr::new(BlockRef::Modal, ModalParams::STRUCTURE)) != 0
 }
 
 /// A route, of any amount, into the voice's PITCH or FINE.
