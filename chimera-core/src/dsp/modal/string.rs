@@ -187,6 +187,25 @@ impl KsString {
         }
     }
 
+    /// A re-strike: `shape`'s pluck, `amplitude` of fresh noise at `beta`
+    /// and `passes`, added to the period the loop reads next, over what
+    /// rings. Nothing is cleared. Streamed twice from the noise state, for
+    /// its mean then its samples: no scratch line.
+    pub(super) fn add_pluck(&mut self, beta: f32, passes: usize, amplitude: f32) {
+        let (len, ring) = (self.delay, self.ring_len);
+        let pluck = Pluck::new(self.noise_state, len, beta, passes);
+        let mean = pluck.clone().sum::<f32>() / len as f32;
+        // The next centre tap, `delay − 1` behind the write.
+        let mut at = (self.write_pos + ring - (len - 1)) % ring;
+        let mut p = pluck;
+        for _ in 0..len {
+            let x = p.next().unwrap_or(0.0);
+            self.buffer[at] += (x - mean) * amplitude;
+            at = wrap(at + 1, ring);
+        }
+        self.noise_state = p.noise_state();
+    }
+
     /// Zeros the whole line and starts the shortest ring from the start:
     /// a note starts on a silent line, even once a pitch drop lengthens
     /// it. Only `[0, dirty)` can hold anything, so only it is written: a
@@ -316,8 +335,8 @@ impl KsString {
 /// last.
 fn comb(line: &mut [f32], beta: f32) {
     let len = line.len();
-    let n = (beta * 0.5 * len as f32 + 0.5) as usize;
-    if n == 0 || n >= len {
+    let n = comb_offset(beta, len);
+    if n == 0 {
         return;
     }
     let (mut a, mut b) = (len, n);
@@ -337,6 +356,75 @@ fn comb(line: &mut [f32], beta: f32) {
             i = j;
         }
     }
+}
+
+/// `excite`'s noise, then `shape`'s comb and passes, as a stream: `(x[i]
+/// + x[(i + n) % len]) / 2` from two generators, the second restarted at
+/// the wrap, then each pass's one-pole `y[i] = (x[i] + y[i − 1]) / 2`.
+#[derive(Clone)]
+struct Pluck {
+    start: u32,
+    a: u32,
+    b: u32,
+    i: usize,
+    n: usize,
+    len: usize,
+    passes: usize,
+    y: [f32; 7],
+}
+
+impl Pluck {
+    fn new(state: u32, len: usize, beta: f32, passes: usize) -> Self {
+        let n = comb_offset(beta, len);
+        let mut b = state;
+        for _ in 0..n {
+            xorshift_noise(&mut b);
+        }
+        Self {
+            start: state,
+            a: state,
+            b,
+            i: 0,
+            n,
+            len,
+            passes: passes.min(7),
+            y: [0.0; 7],
+        }
+    }
+
+    /// The noise state after the pluck, as `excite` leaves it.
+    fn noise_state(&self) -> u32 {
+        self.a
+    }
+}
+
+impl Iterator for Pluck {
+    type Item = f32;
+
+    fn next(&mut self) -> Option<f32> {
+        if self.i == self.len {
+            return None;
+        }
+        let mut x = xorshift_noise(&mut self.a);
+        if self.n > 0 {
+            if self.i + self.n == self.len {
+                self.b = self.start;
+            }
+            x = (x + xorshift_noise(&mut self.b)) * 0.5;
+        }
+        for y in &mut self.y[..self.passes] {
+            x = if self.i == 0 { x } else { (x + *y) * 0.5 };
+            *y = x;
+        }
+        self.i += 1;
+        Some(x)
+    }
+}
+
+/// `comb`'s offset at `beta` on a line of `len`: 0 for none.
+fn comb_offset(beta: f32, len: usize) -> usize {
+    let n = (beta * 0.5 * len as f32 + 0.5) as usize;
+    if n >= len { 0 } else { n }
 }
 
 /// `i` round a ring of `len`, `i <= len`.
@@ -477,10 +565,12 @@ pub(super) struct StringVoice {
     ens_mix: f32,
     /// COLOR's smoothing passes, latched at note-on.
     passes: u8,
+    /// A re-strike's pluck level, for `shape` to add; 0 after a fresh pluck.
+    adding: f32,
 }
 
 crate::in_place::field_list!(StringVoice => StringVoice {
-    string, disp, stiff, structure, period, body, body_mix, ens, ens_mix, passes,
+    string, disp, stiff, structure, period, body, body_mix, ens, ens_mix, passes, adding,
 });
 
 /// The longest loop: the whole line, a one-sample fraction and the chain
@@ -507,6 +597,7 @@ impl StringVoice {
             addr_of_mut!((*p).ens).write(Ensemble::default());
             addr_of_mut!((*p).ens_mix).write(0.0);
             addr_of_mut!((*p).passes).write(1);
+            addr_of_mut!((*p).adding).write(0.0);
             slot.assume_init_mut()
         }
     }
@@ -553,6 +644,14 @@ impl StringVoice {
         self.ens = ens;
         self.ens_mix = ens_mix;
         self.passes = color_passes(color) as u8;
+        self.adding = 0.0;
+    }
+
+    /// A re-strike of the sounding note: a pluck of `amplitude` at COLOR,
+    /// added by `shape` to the ring. BODY, the chain and the ensemble run on.
+    pub(super) fn restrike(&mut self, amplitude: f32, color: f32) {
+        self.passes = color_passes(color) as u8;
+        self.adding = amplitude;
     }
 
     /// Whether BODY and the ensemble run, as latched: what the note bills.
@@ -568,12 +667,15 @@ impl StringVoice {
     }
 
     /// Shapes the pluck at POS's β (`params::beta`, from the end), at COLOR's passes
-    /// (`KsString::shape`).
+    /// (`KsString::shape`), or adds a re-strike's (`KsString::add_pluck`).
     pub(super) fn shape(&mut self, pos: f32) {
-        self.string.shape(
-            super::params::beta(pos, super::params::END),
-            self.passes.into(),
-        );
+        let beta = super::params::beta(pos, super::params::END);
+        let amplitude = core::mem::take(&mut self.adding);
+        if amplitude > 0.0 {
+            self.string.add_pluck(beta, self.passes.into(), amplitude);
+        } else {
+            self.string.shape(beta, self.passes.into());
+        }
     }
 
     /// Retunes to `freq`, the chain a step towards `structure`, mid-note;
@@ -766,6 +868,36 @@ mod tests {
             let (line, len) = (v.string.line().0, v.string.delay);
             let mean = line[..len].iter().sum::<f32>() / len as f32;
             assert!(mean.abs() < 1e-6, "note {note}: {mean}");
+        }
+    }
+
+    /// A re-strike's streamed pluck is `excite` and `shape`'s, on a silent
+    /// line, to float rounding, at every POS and COLOR; and it leaves the
+    /// noise where `excite` does.
+    #[test]
+    fn a_streamed_pluck_is_the_shaped_pluck() {
+        for note in [31, 48, 96] {
+            let l = loop_at(note_to_freq(note), 48_000);
+            for beta in [0.0, 0.13, 0.5] {
+                for passes in [0, 1, 7] {
+                    let (mut a, mut b) = (voice(), voice());
+                    a.string.excite(l, 0.7);
+                    a.string.shape(beta, passes);
+                    b.string.excite(l, 0.0);
+                    b.string.buffer.fill(0.0);
+                    b.string.noise_state = NOISE_SEED;
+                    b.string.add_pluck(beta, passes, 0.7);
+                    let len = a.string.delay;
+                    for i in 0..len {
+                        let (x, y) = (a.string.buffer[i], b.string.buffer[i]);
+                        assert!(
+                            (x - y).abs() < 1e-5,
+                            "{note} {beta} {passes} [{i}]: {x} {y}"
+                        );
+                    }
+                    assert_eq!(a.string.noise_state, b.string.noise_state);
+                }
+            }
         }
     }
 

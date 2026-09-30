@@ -473,3 +473,30 @@ fn a_note_on_takes_the_dying_voice_shed_first() {
     }
     assert_eq!(voice(on(&mut a, 1, Poly, 80)), first);
 }
+
+/// The owner's UAT (2026-09-30): a re-struck key re-plucks its own string,
+/// held or ringing, as a guitarist's does; another Part's same note takes
+/// a voice of its own.
+#[test]
+fn a_restruck_key_reuses_its_voice() {
+    let mut a = Allocator::new(BUDGET);
+    let first = voice(on(&mut a, 0, Poly, 48));
+    on(&mut a, 0, Poly, 52);
+    assert_eq!(voice(on(&mut a, 0, Poly, 48)), first, "held");
+    a.release(first);
+    assert_eq!(voice(on(&mut a, 0, Poly, 48)), first, "ringing");
+    assert_ne!(voice(on(&mut a, 1, Poly, 48)), first, "another Part");
+}
+
+/// Steals take the oldest ringing tail before any held note, whatever
+/// Part it is on.
+#[test]
+fn a_steal_takes_the_oldest_tail_first() {
+    let mut a = Allocator::new(BUDGET);
+    for i in 0..MAX_VOICES as u8 {
+        on(&mut a, 0, Poly, 40 + i);
+    }
+    a.release(5);
+    a.release(3);
+    assert_eq!(voice(on(&mut a, 1, Poly, 90)), 3, "the older of the tails");
+}

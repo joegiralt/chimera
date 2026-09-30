@@ -459,7 +459,7 @@ impl Instrument {
                     }
                     let (q, mode) = (p as u8, part.mix.mode);
                     let cost = Voice::cost(&part.params, &part.mod_state);
-                    let Some(v) = self.alloc.pick(q, mode, cost, FxBus::COST) else {
+                    let Some(v) = self.alloc.pick(q, mode, ev.note, cost, FxBus::COST) else {
                         self.alloc.refuse();
                         continue;
                     };

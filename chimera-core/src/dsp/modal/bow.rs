@@ -288,8 +288,13 @@ impl BowedString {
     }
 
     /// Note-on: the line cleared and tuned (`ENDS_DELAY` off the period),
-    /// the split snapped to POS, the bridge filter zeroed.
-    pub(super) fn start(&mut self, freq: f32, sample_rate: u32, pos: f32) {
+    /// the split snapped to POS, the bridge filter zeroed. A re-strike
+    /// sets the bow back on the string as it rings.
+    pub(super) fn start(&mut self, freq: f32, sample_rate: u32, pos: f32, restrike: bool) {
+        if restrike {
+            self.lift = 0.0;
+            return;
+        }
         self.string.clear();
         self.tune(freq, sample_rate);
         self.place(pos);
@@ -682,7 +687,7 @@ mod tests {
         const SPEED: f32 = 0.5 * super::super::BOW_SPEED;
         let freq = note_to_freq(48);
         let mut b = bowed();
-        b.start(freq, 48_000, 0.0);
+        b.start(freq, 48_000, 0.0, false);
         (b.force_to, b.bow_vel, b.vel_scale, b.bowing) = (0.5, SPEED, 1.0, true);
         let m = Macros::of(&ModalParams {
             pos: 1.0,
@@ -717,7 +722,7 @@ mod tests {
             let f0 = freq;
             let (mut fast, mut slow) = (bowed(), bowed());
             for b in [&mut fast, &mut slow] {
-                b.start(freq, 48_000, 0.2);
+                b.start(freq, 48_000, 0.2, false);
                 b.force_to = 0.4;
                 b.bow_vel = SPEED;
                 b.vel_scale = 1.0;

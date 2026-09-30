@@ -1012,8 +1012,9 @@ fn retriggering_a_releasing_mono_voice_does_not_free_the_new_note() {
 
 /// Review Focus (stuck notes): one Part holds the same key from two
 /// channels — C4 from channel 1, then the Part moves to channel 4 and C4
-/// comes again. Each note-off releases exactly the voice its channel
-/// started, in either order, and both voices ring out and are freed.
+/// comes again. The second re-strikes the key's voice (ADR 0062), which
+/// channel 4's note-off releases, in either order; channel 1's releases
+/// nothing, and the voice rings out and is freed.
 #[test]
 fn same_note_from_two_channels_releases_both_voices() {
     for ch4_first in [true, false] {
@@ -1022,26 +1023,21 @@ fn same_note_from_two_channels_releases_both_voices() {
         rig.inst.handle(on(0, 60), &shared); // voice 0
         rig.render(&shared);
         shared.parts[0].mix.channel = MidiChannel::new(3).unwrap();
-        rig.inst.handle(on(3, 60), &shared); // voice 1
+        rig.inst.handle(on(3, 60), &shared); // voice 0, re-struck
         rig.render(&shared);
-        let slots = rig.inst.allocator().slots();
-        assert_eq!([slots[0].part(), slots[1].part()], [Some(0), Some(0)]);
+        let part0 = rig
+            .inst
+            .allocator()
+            .slots()
+            .iter()
+            .filter(|s| s.part() == Some(0));
+        assert_eq!(part0.count(), 1, "one voice");
         let (first, second) = if ch4_first { (3, 0) } else { (0, 3) };
         rig.inst.handle(off(first, 60), &shared);
-        let held: Vec<bool> = rig.inst.allocator().slots()[..2]
-            .iter()
-            .map(|s| s.held())
-            .collect();
-        assert_eq!(
-            held,
-            if ch4_first {
-                [true, false]
-            } else {
-                [false, true]
-            },
-            "only {first}'s voice released"
-        );
+        let held = rig.inst.allocator().slots()[0].held();
+        assert_eq!(held, !ch4_first, "channel {first}'s note-off");
         rig.inst.handle(off(second, 60), &shared);
+        assert!(!rig.inst.allocator().slots()[0].held());
         let mut blocks = 0;
         while rig.inst.allocator().slots().iter().any(|s| !s.is_free()) {
             rig.render(&shared);
@@ -1468,4 +1464,78 @@ fn a_mode_switch_bills_sounding_tails_at_their_own_model() {
         real + FxBus::COST.0 <= budget,
         "{ringing} SYM tails and {strings} STR notes cost {real} + FX over {budget}"
     );
+}
+
+fn loud(note: u8) -> NoteEvent {
+    NoteEvent {
+        kind: NoteKind::On(Velocity::new(127).unwrap()),
+        ..on(0, note)
+    }
+}
+
+/// A STRING Part, rendered `blocks` blocks: Part 1's bus.
+fn string_blocks(rig: &mut Rig, shared: &AudioShared, blocks: usize, out: &mut Vec<f32>) {
+    for _ in 0..blocks {
+        rig.render(shared);
+        out.extend_from_slice(rig.inst.part_bus(0));
+    }
+}
+
+fn string_part() -> AudioShared {
+    let mut shared = AudioShared::default();
+    shared.parts[0].params = ParamSnapshot::for_engine(EngineType::Modal);
+    shared.parts[0].params.modal.mode = chimera_core::dsp::modal::ResonatorMode::String;
+    shared
+}
+
+/// The owner's UAT (2026-09-30): three strikes of C3 on a STRING Part,
+/// held or released between, ring one voice, as one guitar string
+/// re-plucked; and neither a re-strike nor a steal of a loud C2 tail (by
+/// a D2, as smooth a pluck) clicks.
+#[test]
+fn a_restrike_reuses_its_string_and_nothing_clicks() {
+    let shared = string_part();
+    let mut rig = Rig::full_pool();
+    for held in [true, false, true] {
+        rig.inst.handle(loud(48), &shared);
+        rig.render(&shared);
+        if !held {
+            rig.inst.handle(off(0, 48), &shared);
+        }
+        rig.render(&shared);
+    }
+    assert_eq!(slots_of(&rig, 48).len(), 1, "one voice");
+    assert_eq!(rig.inst.sounding(), 1);
+
+    // A loud C2, re-struck ringing; then the pool filled and the C2's
+    // tail, the oldest, stolen.
+    let mut rig = Rig::full_pool();
+    let mut out = Vec::new();
+    rig.inst.handle(loud(36), &shared);
+    string_blocks(&mut rig, &shared, 40, &mut out);
+    rig.inst.handle(off(0, 36), &shared);
+    string_blocks(&mut rig, &shared, 20, &mut out);
+    rig.inst.handle(loud(36), &shared);
+    string_blocks(&mut rig, &shared, 40, &mut out);
+    rig.inst.handle(off(0, 36), &shared);
+    // Part 2's ALGO INIT fills the rest, on its own bus.
+    for n in 0..MAX_VOICES as u8 - 1 {
+        rig.inst.handle(on(1, 60 + n), &shared);
+    }
+    string_blocks(&mut rig, &shared, 20, &mut out);
+    assert_eq!(slots_of(&rig, 36).len(), 1);
+    rig.inst.handle(loud(38), &shared);
+    string_blocks(&mut rig, &shared, 20, &mut out);
+    assert!(slots_of(&rig, 36).is_empty(), "the C2 stolen");
+    // At the model's level, as the models' click checks are set; a block
+    // before each event to 8 after.
+    let g = chimera_core::dsp::modal::out_gain(chimera_core::dsp::modal::ResonatorMode::String);
+    for (what, at) in [("re-strike", 60), ("steal", 120)] {
+        let w: Vec<f32> = out[(at - 1) * BLOCK_SIZE..(at + 8) * BLOCK_SIZE]
+            .iter()
+            .map(|x| x / g)
+            .collect();
+        let c = common::clicks(&w);
+        assert!(c.is_empty(), "{what}: {:?}", &c[..c.len().min(20)]);
+    }
 }
