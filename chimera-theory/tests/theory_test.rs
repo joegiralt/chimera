@@ -1,7 +1,17 @@
 use chimera_theory::{
     Chord, Degree, Interval, Key, Note, PcSet, PitchClass, Quality, Scale, SnapTo, Stack,
-    TABLE_BYTES, TIE, Tie, snap,
+    TABLE_BYTES, snap,
 };
+
+/// A scale from a mask, bit n = n semitones up, through the typed API.
+fn set(mask: u16) -> Scale {
+    Interval::ALL
+        .into_iter()
+        .filter(|i| mask & (1 << i.semitones()) != 0)
+        .fold(Scale::custom(&[]), |s, i| {
+            if s.contains(i) { s } else { s.toggle(i) }
+        })
+}
 
 fn n(x: u8) -> Note {
     Note::new(x).unwrap()
@@ -65,12 +75,12 @@ fn scales() {
 #[test]
 fn major_diatonic_triads_and_sevenths() {
     let c = Key::new(PitchClass::C, Scale::MAJOR);
-    let triads: Vec<_> = Degree::ALL
+    let triads: Vec<_> = Degree::ALL[..7]
         .iter()
         .map(|&d| name(c.chord(d, Stack::Triad)))
         .collect();
     assert_eq!(triads, ["C", "Dm", "Em", "F", "G", "Am", "Bdim"]);
-    let sevenths: Vec<_> = Degree::ALL
+    let sevenths: Vec<_> = Degree::ALL[..7]
         .iter()
         .map(|&d| name(c.chord(d, Stack::Seventh)))
         .collect();
@@ -92,15 +102,15 @@ fn harmonic_minor_degrees() {
 #[test]
 fn heptatonic_degrees_name_exact_chords() {
     for s in Scale::ALL.into_iter().filter(|s| s.degree_count() == 7) {
-        for d in Degree::ALL {
+        for d in Degree::ALL.into_iter().take(7) {
             for st in [Stack::Triad, Stack::Seventh] {
                 let c = Key::new(PitchClass::D, s).chord(d, st);
                 let want = if st == Stack::Triad { 3 } else { 4 };
                 assert_eq!(c.tones().len(), want, "{s:?} {d:?}");
                 let l = c.label();
                 assert!(l.is_exact(), "{s:?} {d:?}");
-                assert_eq!(l.root(), c.root(), "{s:?} {d:?}");
-                assert_eq!(l.bass(), c.root(), "{s:?} {d:?}");
+                assert_eq!(l.root(), c.bass(), "{s:?} {d:?}");
+                assert_eq!(c.root(), c.bass(), "{s:?} {d:?}");
             }
         }
     }
@@ -112,7 +122,8 @@ fn pentatonic_stacks_keep_exact_tones() {
     use PitchClass::*;
     let a = Key::new(A, Scale::PENTATONIC_MINOR);
     let i = a.chord(Degree::I, Stack::Triad);
-    assert_eq!(i.root(), A);
+    assert_eq!(i.bass(), A);
+    assert_eq!(i.root(), D, "the label's root");
     assert_eq!(i.tones(), PcSet::of(&[A, D, G]));
     assert_eq!(i.tones().iter().collect::<Vec<_>>(), [D, G, A]);
     for x in 0..=127 {
@@ -122,11 +133,18 @@ fn pentatonic_stacks_keep_exact_tones() {
     assert_eq!(name(i), "Dsus4/A");
     assert_eq!(name(a.chord(Degree::II, Stack::Triad)), "Am/C");
     assert_eq!(name(a.chord(Degree::III, Stack::Triad)), "Gsus4/D");
-    assert_eq!(
-        format!("{}", a.degree_label(Degree::I, Stack::Triad)),
-        "I?",
-        "no quality on the degree's own note"
-    );
+    // Exact stacks are labelled from their root's degree, with the
+    // figured-bass inversion: Am/C is i6, Dsus4/A is IIIsus4 in 6-4.
+    let label = |k: Key, d| format!("{}", k.degree_label(d, Stack::Triad));
+    assert_eq!(label(a, Degree::II), "i6");
+    assert_eq!(label(a, Degree::I), "III64sus4");
+    let c = Key::new(C, Scale::PENTATONIC_MAJOR);
+    // C D E G A: IV stacks G C E, C/G.
+    assert_eq!(name(c.chord(Degree::IV, Stack::Triad)), "C/G");
+    assert_eq!(label(c, Degree::IV), "I64");
+    // No exact name anywhere: the stacked degree, marked.
+    let chromatic = Key::new(C, set(0xFFF));
+    assert_eq!(label(chromatic, Degree::I), "I?");
     assert_eq!(
         a.chord(Degree::VI, Stack::Triad),
         a.chord(Degree::I, Stack::Triad),
@@ -136,7 +154,7 @@ fn pentatonic_stacks_keep_exact_tones() {
 
 #[test]
 fn custom_pentatonic_sized_set() {
-    let s = Scale::custom(0b10_1001_0101);
+    let s = set(0b10_1001_0101);
     assert_eq!(s, Scale::PENTATONIC_MAJOR);
     let c = Key::new(PitchClass::C, s);
     assert_eq!(c.degree_count(), 5);
@@ -151,18 +169,19 @@ fn custom_pentatonic_sized_set() {
 }
 
 #[test]
-fn custom_forces_the_root_and_drops_high_bits() {
-    let s = Scale::custom(0xF000 | (1 << 7));
+fn custom_forces_the_root() {
+    let s = Scale::custom(&[Interval::UNISON, Interval::FIFTH, Interval::FIFTH]);
     assert!(s.contains(Interval::UNISON));
     assert_eq!(s.degree_count(), 2);
-    assert_eq!(Scale::custom(0).degree_count(), 1);
+    assert_eq!(Scale::custom(&[]).degree_count(), 1);
+    assert_eq!(Scale::custom(&[Interval::FIFTH]), s);
 }
 
 #[test]
 fn custom_two_note_set() {
     // Root and fifth on C: every degree lands on C or G.
     // Every other note of two wraps onto itself: one-tone stacks.
-    let c = Key::new(PitchClass::C, Scale::custom(1 << 7));
+    let c = Key::new(PitchClass::C, set(1 << 7));
     assert_eq!(c.degree_count(), 2);
     assert_eq!(
         c.chord(Degree::I, Stack::Triad).tones(),
@@ -173,17 +192,29 @@ fn custom_two_note_set() {
         PcSet::of(&[PitchClass::G])
     );
     assert!(!c.chord(Degree::I, Stack::Triad).label().is_exact());
-    assert_eq!(c.chord(Degree::III, Stack::Seventh).root(), PitchClass::C);
-    assert_eq!(c.chord(Degree::IV, Stack::Seventh).root(), PitchClass::G);
+    assert_eq!(c.chord(Degree::III, Stack::Seventh).bass(), PitchClass::C);
+    assert_eq!(c.chord(Degree::IV, Stack::Seventh).bass(), PitchClass::G);
 }
 
 #[test]
 fn custom_chromatic_set() {
-    let c = Key::new(PitchClass::C, Scale::custom(0xFFF));
+    let c = Key::new(PitchClass::C, set(0xFFF));
     assert_eq!(c.degree_count(), 12);
-    for d in Degree::ALL {
-        assert_eq!(c.chord(d, Stack::Triad).root(), PitchClass::ALL[d as usize]);
+    let degrees: Vec<_> = c.scale.degrees().collect();
+    assert_eq!(degrees, Degree::ALL, "a 12-note set reaches all 12");
+    for (d, p) in degrees.into_iter().zip(PitchClass::ALL) {
+        assert_eq!(c.chord(d, Stack::Triad).bass(), p);
     }
+    assert_eq!(c.scale.degree(11), Some(Degree::ALL[11]));
+    assert_eq!(c.scale.degree(12), None);
+    assert_eq!(Scale::MAJOR.degree(6), Some(Degree::VII));
+    assert_eq!(Scale::MAJOR.degree(7), None);
+    assert_eq!(Scale::MAJOR.degrees().count(), 7);
+    assert_eq!(Scale::PENTATONIC_MINOR.degrees().count(), 5);
+    assert_eq!(
+        format!("{}", c.degree_label(Degree::ALL[11], Stack::Triad)),
+        "XII?"
+    );
     for x in 0..=127 {
         assert_eq!(snap(n(x), SnapTo::Scale(c)), n(x));
     }
@@ -192,13 +223,13 @@ fn custom_chromatic_set() {
 #[test]
 fn snap_to_a_custom_set() {
     // D and A only.
-    let da = SnapTo::Scale(Key::new(PitchClass::D, Scale::custom(1 << 7)));
+    let da = SnapTo::Scale(Key::new(PitchClass::D, set(1 << 7)));
     assert_eq!(snap(n(60), da), n(62), "C: D 2 up, A 3 down");
     assert_eq!(snap(n(64), da), n(62), "E: D 2 down, A 5 up");
     assert_eq!(snap(n(66), da), n(69), "F#: A 3 up, D 4 down");
     assert_eq!(snap(n(69), da), n(69));
-    // One-note set: always within a tritone, ties up.
-    let d = SnapTo::Scale(Key::new(PitchClass::D, Scale::custom(0)));
+    // One-note set: always within a tritone, ties down.
+    let d = SnapTo::Scale(Key::new(PitchClass::D, set(0)));
     assert_eq!(snap(n(68), d), n(62), "a tritone either way: down");
     assert_eq!(snap(n(69), d), n(74));
 }
@@ -225,7 +256,7 @@ fn numerals_follow_quality() {
     );
     assert_eq!(
         format!("{}", c.degree_label(Degree::VII, Stack::Seventh)),
-        "vii7b5"
+        "viio/7"
     );
     let h = Key::new(PitchClass::A, Scale::HARMONIC_MINOR);
     assert_eq!(
@@ -257,7 +288,9 @@ fn played_chords_keep_their_tones() {
     assert_eq!(Chord::from_notes(&[n(52), n(59), n(62), n(68)]), Some(e7));
     // The lowest note is the bass; the label finds the root.
     let over_gs = Chord::from_notes(&[n(56), n(59), n(62), n(64)]).unwrap();
-    assert_eq!(over_gs.root(), Gs);
+    assert_eq!(over_gs.bass(), Gs);
+    assert_eq!(over_gs.root(), E, "the root is the label's");
+    assert_eq!(over_gs, e7.over(Gs).unwrap(), "same tones, same bass");
     assert_eq!(over_gs.tones(), e7.tones());
     assert_eq!(name(over_gs), "E7/G#");
     assert_eq!(
@@ -283,7 +316,8 @@ fn played_chords_keep_their_tones() {
 fn c_e_a_reads_a_minor_over_c_and_snaps_to_its_own_tones() {
     use PitchClass::*;
     let c = Chord::from_notes(&[n(60), n(64), n(69)]).unwrap();
-    assert_eq!(c.root(), C);
+    assert_eq!(c.bass(), C);
+    assert_eq!(c.root(), A);
     assert_eq!(c.tones(), PcSet::of(&[C, E, A]));
     let l = c.label();
     assert!(l.is_exact());
@@ -363,7 +397,7 @@ fn played_inversions_name_the_quality() {
 #[test]
 fn a_cluster_gets_the_nearest_name_marked() {
     let c = Chord::from_notes(&[n(60), n(61), n(62)]).unwrap();
-    assert_eq!(c.root(), PitchClass::C);
+    assert_eq!(c.bass(), PitchClass::C);
     assert_eq!(
         c.tones(),
         PcSet::of(&[PitchClass::C, PitchClass::Cs, PitchClass::D])
@@ -379,7 +413,7 @@ fn a_cluster_gets_the_nearest_name_marked() {
 
 #[test]
 fn scale_always_holds_its_root() {
-    assert_eq!(Scale::custom(0).degree_count(), 1);
+    assert_eq!(set(0).degree_count(), 1);
     let m = Scale::MAJOR;
     assert_eq!(m.toggle(Interval::UNISON), m, "the root can't be cleared");
     for i in &Interval::ALL[1..] {
@@ -391,7 +425,6 @@ fn scale_always_holds_its_root() {
 
 #[test]
 fn snap_ties_go_down() {
-    assert_eq!(TIE, Tie::Down);
     // D against {C, E}: C.
     let c = SnapTo::Chord(Chord::new(PitchClass::C, Quality::Maj));
     assert_eq!(snap(n(62), c), n(60));
@@ -433,36 +466,87 @@ fn snap_stays_in_midi_range() {
 
 /// The rule written out plainly: nearest in-range note in the set, the
 /// lower on a tie.
-fn brute(x: u8, to: SnapTo) -> u8 {
-    (0..=127u8)
-        .filter(|&y| to.contains(n(y).pc()))
-        .min_by_key(|&y| ((y as i16 - x as i16).abs(), y))
+fn brute(x: u8, allowed: &[u8]) -> u8 {
+    *allowed
+        .iter()
+        .min_by_key(|&&y| ((y as i16 - x as i16).abs(), y))
         .unwrap()
 }
 
 #[test]
 fn snap_is_pinned_to_brute_force() {
-    for x in 0..=127 {
+    // Every root-holding mask on every tonic: all 4095 non-empty sets.
+    for mask in 0..2048u16 {
+        let scale = set(mask << 1 | 1);
         for p in PitchClass::ALL {
-            let mut sets: Vec<SnapTo> = Scale::ALL
-                .iter()
-                .map(|&s| SnapTo::Scale(Key::new(p, s)))
-                .collect();
-            sets.extend(
-                Quality::ALL
-                    .iter()
-                    .map(|&q| SnapTo::Chord(Chord::new(p, q))),
-            );
-            for mask in [0, 1 << 7, 0b10_1001_0101, 0xFFF, 0b1111_0000_0000] {
-                let key = Key::new(p, Scale::custom(mask));
-                sets.push(SnapTo::Scale(key));
-                sets.push(SnapTo::Chord(key.chord(Degree::II, Stack::Seventh)));
-            }
-            for to in sets {
-                assert_eq!(snap(n(x), to).get(), brute(x, to), "{x} {to:?}");
+            let to = SnapTo::Scale(Key::new(p, scale));
+            let allowed: Vec<u8> = (0..=127).filter(|&y| to.contains(n(y).pc())).collect();
+            for x in 0..=127 {
+                assert_eq!(snap(n(x), to).get(), brute(x, &allowed), "{x} {to:?}");
             }
         }
     }
+    // Chords snap through the same sets; a few, to pin the wiring.
+    for p in PitchClass::ALL {
+        for q in Quality::ALL {
+            let to = SnapTo::Chord(Chord::new(p, q));
+            let allowed: Vec<u8> = (0..=127).filter(|&y| to.contains(n(y).pc())).collect();
+            for x in 0..=127 {
+                assert_eq!(snap(n(x), to).get(), brute(x, &allowed), "{x} {to:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn chords_compare_by_tones_and_bass() {
+    use PitchClass::*;
+    let c_over_e = Chord::new(C, Quality::Maj).over(E).unwrap();
+    let played = Chord::from_notes(&[n(52), n(55), n(60)]).unwrap();
+    assert_eq!(c_over_e, played);
+    let hash = |c: Chord| {
+        use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
+        BuildHasherDefault::<DefaultHasher>::default().hash_one(c)
+    };
+    assert_eq!(hash(c_over_e), hash(played));
+    assert_eq!(played.root(), C);
+    assert_eq!(played.bass(), E);
+    assert_eq!(name(played), "C/E");
+    assert_ne!(Chord::new(C, Quality::Maj), c_over_e, "the bass counts");
+}
+
+#[test]
+fn approximate_ties_prefer_a_slash_over_a_symmetric_chord() {
+    // E and C over E: aug on E and major on C score the same.
+    let c = Chord::from_notes(&[n(52), n(60)]).unwrap();
+    assert_eq!(name(c), "C/E?");
+}
+
+#[test]
+fn intervals_and_transposes_are_total() {
+    assert_eq!(Interval::from_semitones(7), Interval::FIFTH);
+    assert_eq!(Interval::from_semitones(19), Interval::FIFTH);
+    assert_eq!(Interval::from_semitones(-5), Interval::FIFTH);
+    assert_eq!(Interval::from_semitones(-12), Interval::UNISON);
+    assert_eq!(n(60).transpose(7), Some(n(67)));
+    assert_eq!(n(60).transpose(-60), Some(n(0)));
+    assert_eq!(n(60).transpose(-61), None);
+    assert_eq!(n(120).transpose(7), Some(n(127)));
+    assert_eq!(n(120).transpose(8), None);
+}
+
+#[test]
+fn scales_have_names() {
+    let names: Vec<_> = Scale::ALL.iter().map(|s| format!("{s}")).collect();
+    assert_eq!(
+        names,
+        [
+            "MAJOR", "MINOR", "DORIAN", "PHRYGIAN", "LYDIAN", "MIXOLYD", "LOCRIAN", "HARM MIN",
+            "PENT MAJ", "PENT MIN"
+        ]
+    );
+    assert_eq!(format!("{}", set(0b1001_0001)), "CUSTOM");
+    assert_eq!(format!("{}", set(0b10_1001_0101)), "PENT MAJ");
 }
 
 #[test]

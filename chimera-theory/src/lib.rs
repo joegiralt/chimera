@@ -3,18 +3,9 @@
 #![no_std]
 
 use core::fmt::{self, Display, Formatter, Write};
+use core::hash::{Hash, Hasher};
 use core::mem::size_of;
 use core::ops::{Add, Sub};
-
-/// Which way a note halfway between two allowed pitches snaps.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Tie {
-    Up,
-    Down,
-}
-
-/// The ORBIT spec's rule (§ 5.1).
-pub const TIE: Tie = Tie::Down;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u8)]
@@ -115,6 +106,11 @@ impl Interval {
         a
     };
 
+    /// Any signed distance, folded into the octave.
+    pub const fn from_semitones(s: i32) -> Interval {
+        Interval(s.rem_euclid(12) as u8)
+    }
+
     pub const fn semitones(self) -> u8 {
         self.0
     }
@@ -139,6 +135,16 @@ impl Note {
     pub const fn pc(self) -> PitchClass {
         PitchClass::wrap(self.0)
     }
+
+    /// `semitones` up (or down, if negative); None off either end.
+    pub const fn transpose(self, semitones: i16) -> Option<Note> {
+        let n = self.0 as i16 + semitones;
+        if n >= 0 && n <= 127 {
+            Some(Note(n as u8))
+        } else {
+            None
+        }
+    }
 }
 
 impl Display for Note {
@@ -159,24 +165,19 @@ const fn relative(set: u16, root: PitchClass) -> u16 {
     ((set << r) | (set >> (12 - r))) & 0xFFF
 }
 
+/// Set bits of `set` below bit `below`.
+const fn rank(set: u16, below: u8) -> usize {
+    (set & ((1 << below) - 1)).count_ones() as usize
+}
+
 /// The pitch-class set of a scale relative to its root; bit 0, the root,
 /// is always set.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Scale(u16);
 
 impl Scale {
-    /// Any set of up to 12 notes; bit n is n semitones above the root.
-    /// The root is forced on, bits above 11 are dropped.
-    pub const fn custom(mask: u16) -> Scale {
-        Scale((mask & 0xFFF) | 1)
-    }
-
-    /// The set with `i` flipped; the root stays.
-    pub const fn toggle(self, i: Interval) -> Scale {
-        Scale::custom(self.0 ^ (1 << i.0) | 1)
-    }
-
-    pub const fn of(steps: &[Interval]) -> Scale {
+    /// Any set of notes above the root; the root is always in.
+    pub const fn custom(steps: &[Interval]) -> Scale {
         let mut m = 1;
         let mut i = 0;
         while i < steps.len() {
@@ -186,9 +187,14 @@ impl Scale {
         Scale(m)
     }
 
+    /// The set with `i` flipped; the root stays.
+    pub const fn toggle(self, i: Interval) -> Scale {
+        Scale((self.0 ^ (1 << i.0)) | 1)
+    }
+
     pub const MAJOR: Scale = {
         use Interval as I;
-        Scale::of(&[
+        Scale::custom(&[
             I::MAJOR_SECOND,
             I::MAJOR_THIRD,
             I::FOURTH,
@@ -199,7 +205,7 @@ impl Scale {
     };
     pub const MINOR: Scale = {
         use Interval as I;
-        Scale::of(&[
+        Scale::custom(&[
             I::MAJOR_SECOND,
             I::MINOR_THIRD,
             I::FOURTH,
@@ -210,7 +216,7 @@ impl Scale {
     };
     pub const DORIAN: Scale = {
         use Interval as I;
-        Scale::of(&[
+        Scale::custom(&[
             I::MAJOR_SECOND,
             I::MINOR_THIRD,
             I::FOURTH,
@@ -221,7 +227,7 @@ impl Scale {
     };
     pub const PHRYGIAN: Scale = {
         use Interval as I;
-        Scale::of(&[
+        Scale::custom(&[
             I::MINOR_SECOND,
             I::MINOR_THIRD,
             I::FOURTH,
@@ -232,7 +238,7 @@ impl Scale {
     };
     pub const LYDIAN: Scale = {
         use Interval as I;
-        Scale::of(&[
+        Scale::custom(&[
             I::MAJOR_SECOND,
             I::MAJOR_THIRD,
             I::TRITONE,
@@ -243,7 +249,7 @@ impl Scale {
     };
     pub const MIXOLYDIAN: Scale = {
         use Interval as I;
-        Scale::of(&[
+        Scale::custom(&[
             I::MAJOR_SECOND,
             I::MAJOR_THIRD,
             I::FOURTH,
@@ -254,7 +260,7 @@ impl Scale {
     };
     pub const LOCRIAN: Scale = {
         use Interval as I;
-        Scale::of(&[
+        Scale::custom(&[
             I::MINOR_SECOND,
             I::MINOR_THIRD,
             I::FOURTH,
@@ -265,7 +271,7 @@ impl Scale {
     };
     pub const HARMONIC_MINOR: Scale = {
         use Interval as I;
-        Scale::of(&[
+        Scale::custom(&[
             I::MAJOR_SECOND,
             I::MINOR_THIRD,
             I::FOURTH,
@@ -276,11 +282,11 @@ impl Scale {
     };
     pub const PENTATONIC_MAJOR: Scale = {
         use Interval as I;
-        Scale::of(&[I::MAJOR_SECOND, I::MAJOR_THIRD, I::FIFTH, I::MAJOR_SIXTH])
+        Scale::custom(&[I::MAJOR_SECOND, I::MAJOR_THIRD, I::FIFTH, I::MAJOR_SIXTH])
     };
     pub const PENTATONIC_MINOR: Scale = {
         use Interval as I;
-        Scale::of(&[I::MINOR_THIRD, I::FOURTH, I::FIFTH, I::MINOR_SEVENTH])
+        Scale::custom(&[I::MINOR_THIRD, I::FOURTH, I::FIFTH, I::MINOR_SEVENTH])
     };
 
     pub const ALL: [Scale; 10] = [
@@ -305,6 +311,29 @@ impl Scale {
         self.0.count_ones() as usize
     }
 
+    /// The `index`th note's degree, counting from 0; None past the set.
+    pub const fn degree(self, index: usize) -> Option<Degree> {
+        if index < self.degree_count() {
+            Some(Degree(index as u8))
+        } else {
+            None
+        }
+    }
+
+    /// Every degree of the set, from the root up.
+    pub fn degrees(self) -> impl ExactSizeIterator<Item = Degree> {
+        Degree::ALL.into_iter().take(self.degree_count())
+    }
+
+    /// The degree of the note `i` above the root, if it is in the set.
+    const fn degree_of(self, i: Interval) -> Option<Degree> {
+        if self.contains(i) {
+            Some(Degree(rank(self.0, i.0) as u8))
+        } else {
+            None
+        }
+    }
+
     /// Semitones of the `k`th note, `k` wrapping within the set.
     const fn nth(self, k: usize) -> u8 {
         let mut k = k % self.degree_count();
@@ -322,12 +351,12 @@ impl Scale {
 
     /// Every other note from `d`'s, as a mask relative to `d`'s note.
     const fn stack(self, d: Degree, st: Stack) -> (Interval, u16) {
-        let src = self;
-        let root = src.nth(d as usize);
+        let d = d.0 as usize;
+        let root = self.nth(d);
         let mut m = 0;
         let mut j = 0;
         while j < st.tones() {
-            let s = src.nth(d as usize + 2 * j);
+            let s = self.nth(d + 2 * j);
             m |= 1 << ((s + 12 - root) % 12);
             j += 1;
         }
@@ -335,27 +364,66 @@ impl Scale {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[repr(u8)]
-pub enum Degree {
-    I,
-    II,
-    III,
-    IV,
-    V,
-    VI,
-    VII,
+const SCALE_NAMES: [[u8; 8]; 10] = [
+    *b"MAJOR   ",
+    *b"MINOR   ",
+    *b"DORIAN  ",
+    *b"PHRYGIAN",
+    *b"LYDIAN  ",
+    *b"MIXOLYD ",
+    *b"LOCRIAN ",
+    *b"HARM MIN",
+    *b"PENT MAJ",
+    *b"PENT MIN",
+];
+
+impl Display for Scale {
+    /// A named scale's name, else "CUSTOM".
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match Scale::ALL.iter().position(|s| s == self) {
+            // Names hold one space at most, never at the start of a word.
+            Some(i) => f.write_str(
+                core::str::from_utf8(&SCALE_NAMES[i])
+                    .map_err(|_| fmt::Error)?
+                    .trim_end(),
+            ),
+            None => f.write_str("CUSTOM"),
+        }
+    }
 }
+
+/// A step of a scale, counting from its root: I..=XII, so a degree
+/// reaches every note of any set. Degrees past a smaller set's size wrap.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Degree(u8);
 
 impl Degree {
-    pub const ALL: [Degree; 7] = {
-        use Degree::*;
-        [I, II, III, IV, V, VI, VII]
+    pub const I: Degree = Degree(0);
+    pub const II: Degree = Degree(1);
+    pub const III: Degree = Degree(2);
+    pub const IV: Degree = Degree(3);
+    pub const V: Degree = Degree(4);
+    pub const VI: Degree = Degree(5);
+    pub const VII: Degree = Degree(6);
+    pub const ALL: [Degree; 12] = {
+        let mut a = [Degree(0); 12];
+        let mut i = 0;
+        while i < 12 {
+            a[i] = Degree(i as u8);
+            i += 1;
+        }
+        a
     };
+
+    /// Counting from 0.
+    pub const fn index(self) -> usize {
+        self.0 as usize
+    }
 }
 
-const NUMERALS: [[u8; 3]; 7] = [
-    *b"I  ", *b"II ", *b"III", *b"IV ", *b"V  ", *b"VI ", *b"VII",
+const NUMERALS: [[u8; 4]; 12] = [
+    *b"I   ", *b"II  ", *b"III ", *b"IV  ", *b"V   ", *b"VI  ", *b"VII ", *b"VIII", *b"IX  ",
+    *b"X   ", *b"XI  ", *b"XII ",
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -398,8 +466,8 @@ impl Key {
     }
 
     /// Stacks every other note of the set from the degree's note; degrees
-    /// wrap in sets under 7 notes. The chord keeps exactly the stacked
-    /// tones, whether or not they name a quality.
+    /// wrap in smaller sets. The chord keeps exactly the stacked tones,
+    /// whether or not they name a quality.
     pub const fn chord(self, d: Degree, st: Stack) -> Chord {
         let (root, m) = self.scale.stack(d, st);
         let root = self.tonic.up(root);
@@ -410,13 +478,26 @@ impl Key {
         self.chord(d, Stack::Triad)
     }
 
-    /// "iv", "V7", "iio": case from the quality; "I?" when the stack
-    /// names no quality on the degree's own note.
+    /// The stack as a roman numeral from its label: "iv", "V7", "viio/7";
+    /// inversions in figured bass, "i6", "I64"; "IV?" when no quality
+    /// matches exactly.
     pub const fn degree_label(self, d: Degree, st: Stack) -> DegreeLabel {
         let c = self.chord(d, st);
+        let l = c.label();
+        if !l.exact {
+            return DegreeLabel {
+                degree: d,
+                shape: None,
+            };
+        }
+        let degree = match self.scale.degree_of(l.root.above(self.tonic)) {
+            Some(r) => r,
+            None => d,
+        };
+        let inversion = rank(relative(c.tones.0, l.root), l.bass.above(l.root).0);
         DegreeLabel {
-            degree: d,
-            quality: Quality::exact(c.tones.0, c.root),
+            degree,
+            shape: Some((l.quality, inversion as u8)),
         }
     }
 }
@@ -424,26 +505,28 @@ impl Key {
 struct QualityDef {
     mask: u16,
     name: [u8; 6],
-    numeral: [u8; 5],
+    /// Numeral marks either side of the figure: "o" in "viio7", "sus4"
+    /// in "V7sus4".
+    pre: [u8; 4],
+    post: [u8; 4],
 }
 
-const fn q(steps: &[Interval], name: &[u8], numeral: &[u8]) -> QualityDef {
-    let mut n = [0; 6];
+const fn pad<const N: usize>(s: &[u8]) -> [u8; N] {
+    let mut a = [0; N];
     let mut i = 0;
-    while i < name.len() {
-        n[i] = name[i];
+    while i < s.len() {
+        a[i] = s[i];
         i += 1;
     }
-    let mut r = [0; 5];
-    let mut i = 0;
-    while i < numeral.len() {
-        r[i] = numeral[i];
-        i += 1;
-    }
+    a
+}
+
+const fn q(steps: &[Interval], name: &[u8], pre: &[u8], post: &[u8]) -> QualityDef {
     QualityDef {
-        mask: Scale::of(steps).0,
-        name: n,
-        numeral: r,
+        mask: Scale::custom(steps).0,
+        name: pad(name),
+        pre: pad(pre),
+        post: pad(post),
     }
 }
 
@@ -472,22 +555,27 @@ const QUALITIES: [QualityDef; 16] = {
     use Interval as I;
     let (m3, m3b, p5) = (I::MAJOR_THIRD, I::MINOR_THIRD, I::FIFTH);
     [
-        q(&[m3, p5], b"", b""),
-        q(&[m3b, p5], b"m", b""),
-        q(&[m3b, I::TRITONE], b"dim", b"o"),
-        q(&[m3, I::MINOR_SIXTH], b"aug", b"+"),
-        q(&[I::MAJOR_SECOND, p5], b"sus2", b"sus2"),
-        q(&[I::FOURTH, p5], b"sus4", b"sus4"),
-        q(&[m3, p5, I::MAJOR_SIXTH], b"6", b"6"),
-        q(&[m3b, p5, I::MAJOR_SIXTH], b"m6", b"6"),
-        q(&[m3, p5, I::MINOR_SEVENTH], b"7", b"7"),
-        q(&[m3, p5, I::MAJOR_SEVENTH], b"maj7", b"maj7"),
-        q(&[m3b, p5, I::MINOR_SEVENTH], b"m7", b"7"),
-        q(&[m3b, I::TRITONE, I::MINOR_SEVENTH], b"m7b5", b"7b5"),
-        q(&[m3b, I::TRITONE, I::MAJOR_SIXTH], b"dim7", b"o7"),
-        q(&[m3b, p5, I::MAJOR_SEVENTH], b"mMaj7", b"maj7"),
-        q(&[m3, I::MINOR_SIXTH, I::MAJOR_SEVENTH], b"maj7#5", b"+maj7"),
-        q(&[I::FOURTH, p5, I::MINOR_SEVENTH], b"7sus4", b"7sus4"),
+        q(&[m3, p5], b"", b"", b""),
+        q(&[m3b, p5], b"m", b"", b""),
+        q(&[m3b, I::TRITONE], b"dim", b"o", b""),
+        q(&[m3, I::MINOR_SIXTH], b"aug", b"+", b""),
+        q(&[I::MAJOR_SECOND, p5], b"sus2", b"", b"sus2"),
+        q(&[I::FOURTH, p5], b"sus4", b"", b"sus4"),
+        q(&[m3, p5, I::MAJOR_SIXTH], b"6", b"", b"add6"),
+        q(&[m3b, p5, I::MAJOR_SIXTH], b"m6", b"", b"add6"),
+        q(&[m3, p5, I::MINOR_SEVENTH], b"7", b"", b""),
+        q(&[m3, p5, I::MAJOR_SEVENTH], b"maj7", b"maj", b""),
+        q(&[m3b, p5, I::MINOR_SEVENTH], b"m7", b"", b""),
+        q(&[m3b, I::TRITONE, I::MINOR_SEVENTH], b"m7b5", b"o/", b""),
+        q(&[m3b, I::TRITONE, I::MAJOR_SIXTH], b"dim7", b"o", b""),
+        q(&[m3b, p5, I::MAJOR_SEVENTH], b"mMaj7", b"maj", b""),
+        q(
+            &[m3, I::MINOR_SIXTH, I::MAJOR_SEVENTH],
+            b"maj7#5",
+            b"+maj",
+            b"",
+        ),
+        q(&[I::FOURTH, p5, I::MINOR_SEVENTH], b"7sus4", b"", b"sus4"),
     ]
 };
 
@@ -521,8 +609,14 @@ impl Quality {
         None
     }
 
-    /// The best-scoring quality for a root-relative set: 2 per shared tone,
-    /// less 1 per missing or extra one; ties go to table order.
+    /// Aug and dim7 read the same from every tone.
+    const fn is_symmetric(self) -> bool {
+        matches!(self, Quality::Aug | Quality::Dim7)
+    }
+
+    /// The best quality for a root-relative set and its rank: 2 per shared
+    /// tone, less 1 per missing or extra one, doubled, plus 1 if it isn't
+    /// symmetric, so aug and dim7 lose ties. Equal ranks go to table order.
     const fn nearest(m: u16) -> (Quality, i8) {
         let mut best = (Quality::Maj, i8::MIN);
         let mut i = 0;
@@ -531,8 +625,9 @@ impl Quality {
             let score = 2 * (q & m).count_ones() as i8
                 - (q & !m).count_ones() as i8
                 - (m & !q & 0xFFF).count_ones() as i8;
-            if score > best.1 {
-                best = (Self::ALL[i], score);
+            let rank = 2 * score + !Self::ALL[i].is_symmetric() as i8;
+            if rank > best.1 {
+                best = (Self::ALL[i], rank);
             }
             i += 1;
         }
@@ -545,6 +640,12 @@ impl Quality {
         m & (1 << 3) != 0 && m & (1 << 4) == 0
     }
 
+    /// Four tones with a seventh, not an added sixth: figured 7, 65, 43, 42.
+    const fn is_seventh(self) -> bool {
+        let m = self.mask();
+        m.count_ones() == 4 && !(m & (1 << 7) != 0 && m & (1 << 9) != 0)
+    }
+
     /// Root-relative tones, ascending, root first.
     pub const fn tones(self) -> Tones {
         Tones {
@@ -554,7 +655,7 @@ impl Quality {
     }
 }
 
-/// Iterator over a quality's intervals.
+/// Iterator over a set's intervals, ascending.
 #[derive(Clone, Copy, Debug)]
 pub struct Tones {
     mask: u16,
@@ -582,7 +683,7 @@ impl Iterator for Tones {
 
 impl ExactSizeIterator for Tones {}
 
-/// A set of pitch classes; bit n is pitch class n.
+/// A set of pitch classes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct PcSet(u16);
 
@@ -619,23 +720,39 @@ impl PcSet {
     }
 }
 
-/// Exactly the tones played or stacked, with the note it was built on
-/// (`root`) and the lowest one (`bass`), both always among the tones.
+/// Exactly the tones played or stacked, and the lowest one (`bass`),
+/// always among them. Two chords are equal when their tones and bass are.
 /// The name is a label worked out from the tones: see [`ChordLabel`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug)]
 pub struct Chord {
-    root: PitchClass,
+    /// The note it was built from (a stacked degree, a quality's root, the
+    /// played bass): the label tries it first as the root.
+    built_on: PitchClass,
     bass: PitchClass,
     tones: PcSet,
 }
 
+impl PartialEq for Chord {
+    fn eq(&self, other: &Chord) -> bool {
+        (self.tones, self.bass) == (other.tones, other.bass)
+    }
+}
+
+impl Eq for Chord {}
+
+impl Hash for Chord {
+    fn hash<H: Hasher>(&self, h: &mut H) {
+        (self.tones, self.bass).hash(h)
+    }
+}
+
 impl Chord {
-    /// Callers pass `root` and `bass`; both are forced into the set.
-    const fn built(root: PitchClass, bass: PitchClass, tones: PcSet) -> Chord {
+    /// `built_on` and `bass` are forced into the set.
+    const fn built(built_on: PitchClass, bass: PitchClass, tones: PcSet) -> Chord {
         Chord {
-            root,
+            built_on,
             bass,
-            tones: PcSet(tones.0 | root.bit() | bass.bit()),
+            tones: PcSet(tones.0 | built_on.bit() | bass.bit()),
         }
     }
 
@@ -653,7 +770,7 @@ impl Chord {
         }
     }
 
-    /// A played chord: its pitch classes, built on the lowest note.
+    /// A played chord: its pitch classes over the lowest note.
     /// None under two classes.
     pub fn from_notes(notes: &[Note]) -> Option<Chord> {
         let bass = notes.iter().min()?.pc();
@@ -661,9 +778,9 @@ impl Chord {
         (played.count_ones() >= 2).then_some(Chord::built(bass, bass, PcSet(played)))
     }
 
-    /// The note it was built on: the stacked degree or the played bass.
+    /// The label's root.
     pub const fn root(self) -> PitchClass {
-        self.root
+        self.label().root
     }
 
     pub const fn bass(self) -> PitchClass {
@@ -678,13 +795,13 @@ impl Chord {
         self.tones.contains(pc)
     }
 
-    /// Candidate roots in naming order: the root, the bass, then the
-    /// other tones rising from the root.
+    /// Candidate roots in naming order: the note it was built on, the
+    /// bass, then the other tones rising from the first.
     const fn candidate(self, k: usize) -> PitchClass {
         match k {
-            0 => self.root,
+            0 => self.built_on,
             1 => self.bass,
-            _ => self.root.up(Interval::ALL[k - 1]),
+            _ => self.built_on.up(Interval::ALL[k - 1]),
         }
     }
 
@@ -702,14 +819,14 @@ impl Chord {
             }
             k += 1;
         }
-        let mut best = (self.root, Quality::Maj, i8::MIN);
+        let mut best = (self.built_on, Quality::Maj, i8::MIN);
         let mut k = 0;
         while k < 13 {
             let r = self.candidate(k);
             if self.tones.contains(r) {
-                let (q, score) = Quality::nearest(relative(self.tones.0, r));
-                if score > best.2 {
-                    best = (r, q, score);
+                let (q, rank) = Quality::nearest(relative(self.tones.0, r));
+                if rank > best.2 {
+                    best = (r, q, rank);
                 }
             }
             k += 1;
@@ -776,27 +893,40 @@ impl Display for ChordLabel {
     }
 }
 
-/// A degree with the quality its stack names on the degree's own note,
-/// if any, shown as a roman numeral.
+/// A stacked degree as a roman numeral: the degree of the label's root,
+/// its quality and a figured-bass inversion; or the stacked degree and
+/// "?" when no quality matches exactly.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct DegreeLabel {
-    pub degree: Degree,
-    pub quality: Option<Quality>,
+    degree: Degree,
+    /// The quality and the bass's place among its tones, 0..=3.
+    shape: Option<(Quality, u8)>,
 }
 
 impl Display for DegreeLabel {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let minor = matches!(self.quality, Some(q) if q.is_minor());
-        NUMERALS[self.degree as usize]
+        let minor = matches!(self.shape, Some((q, _)) if q.is_minor());
+        NUMERALS[self.degree.0 as usize]
             .iter()
             .take_while(|&&b| b != b' ')
             .try_for_each(|&b| {
                 f.write_char(if minor { b.to_ascii_lowercase() } else { b } as char)
             })?;
-        match self.quality {
-            Some(q) => write_ascii(f, &q.def().numeral),
-            None => f.write_char('?'),
-        }
+        let Some((q, inversion)) = self.shape else {
+            return f.write_char('?');
+        };
+        let figure = match (q.def().mask.count_ones(), inversion) {
+            (4, 0) if q.is_seventh() => "7",
+            (3, 1) => "6",
+            (3, 2) => "64",
+            (4, 1) => "65",
+            (4, 2) => "43",
+            (4, 3) => "42",
+            _ => "",
+        };
+        write_ascii(f, &q.def().pre)?;
+        f.write_str(figure)?;
+        write_ascii(f, &q.def().post)
     }
 }
 
@@ -819,7 +949,7 @@ impl SnapTo {
     }
 }
 
-/// The nearest note in `to`, ties by `TIE`, staying inside 0..=127.
+/// The nearest note in `to`, staying inside 0..=127; a tie goes down.
 /// A chord snaps to exactly its tones.
 pub const fn snap(note: Note, to: SnapTo) -> Note {
     let set = to.mask();
@@ -827,14 +957,11 @@ pub const fn snap(note: Note, to: SnapTo) -> Note {
     let mut d = 0;
     // Every set holds a pitch class, so one side hits within 11.
     while d < 12 {
-        let (a, b) = match TIE {
-            Tie::Up => (n + d, n - d),
-            Tie::Down => (n - d, n + d),
-        };
-        if a >= 0 && a <= 127 && set & (1 << (a % 12)) != 0 {
+        let (a, b) = (n - d, n + d);
+        if a >= 0 && set & (1 << (a % 12)) != 0 {
             return Note(a as u8);
         }
-        if b >= 0 && b <= 127 && set & (1 << (b % 12)) != 0 {
+        if b <= 127 && set & (1 << (b % 12)) != 0 {
             return Note(b as u8);
         }
         d += 1;
@@ -842,11 +969,16 @@ pub const fn snap(note: Note, to: SnapTo) -> Note {
     note
 }
 
-/// Flash held by the tables above.
-pub const TABLE_BYTES: usize = size_of::<[QualityDef; 16]>()
-    + size_of::<[Scale; 10]>()
+/// Flash held by every table above.
+pub const TABLE_BYTES: usize = size_of::<[PitchClass; 12]>()
     + size_of::<[[u8; 2]; 12]>()
-    + size_of::<[[u8; 3]; 7]>();
+    + size_of::<[Interval; 12]>()
+    + size_of::<[Scale; 10]>()
+    + size_of::<[[u8; 8]; 10]>()
+    + size_of::<[Degree; 12]>()
+    + size_of::<[[u8; 4]; 12]>()
+    + size_of::<[QualityDef; 16]>()
+    + size_of::<[Quality; 16]>();
 
 const _: () = {
     let mut i = 0;
