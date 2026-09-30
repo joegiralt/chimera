@@ -31,8 +31,9 @@ the DAC from three places:
   (`dsp::dc_blocker::DcBlocker`, gain ≤ 1 at every frequency) after the
   folder, before the VCA. Every stage that makes DC (the engine, the drive,
   the filter, the fold) is before it, so none reaches the VCA, the mix or
-  the DAC. The VCA scales a signal already free of DC, so its envelope
-  can't turn DC into thumps. A fresh note starts it at rest.
+  the DAC. The VCA scales a signal already free of DC, so the VCA's
+  envelope can't turn DC into thumps (the operators' own envelopes can:
+  below). A fresh note starts it at rest.
 - **Its corner is 5 Hz** (`voice::DC_HZ`), so it doesn't colour the
   bass: −0.26 dB and 14° at 20 Hz, −0.06 dB at E1 (41 Hz). It settles in
   3τ = 95 ms. A 10 Hz corner would take −0.97 dB at 20 Hz; a lower one
@@ -40,6 +41,11 @@ the DAC from three places:
 - **The drive, the filter and the folder see the engine's DC as before.**
   Their asymmetric character, and the TX81Z waves' DC inside the operators
   (ADR 0023), stay; only the output loses the DC.
+- **A Modal voice runs two blockers in series:** the engine's 10 Hz one and
+  the voice's 5 Hz one, −1.23 dB at 20 Hz (−0.97 − 0.26). The engine's
+  blocker stays because its output is what the silence detector judges,
+  and it keeps DC out of the voice's drive, filter and fold. Algo voices
+  have only the 5 Hz one.
 - **The folder's SYM shapes the fold, not the level:** it folds
   `(x + bias)·gain` less the fold of silence, `fold((bias)·gain)`. Silence
   folds to silence, so no offset steps in at a note-on or out as the
@@ -70,7 +76,7 @@ the DAC from three places:
   cycles by ADR 0056's host method. With ADR 0061's eases, `CHAIN_COST`
   goes from 10 to 30. The folder's offset adds 1 instruction a sample.
 - **Voices,** beside the FX bus at 1,180 (ADR 0061), rev V then rev Y:
-  - MORPH PAD 7 → 6 on rev V; SQR BASS 8 → 7 on rev Y.
+  - MORPH PAD 7 → 6 on rev V.
   - SYMP with BODY and the ensemble: 7 → 6 on rev V.
   - The costliest patch keeps 6 on rev V and 5 on rev Y.
   - With the master tape, ALGO INIT plays 7 on rev V, not 8. It had 2
@@ -83,6 +89,12 @@ the DAC from three places:
   `codec_compat_test`, `factory_level_test`).
 - **MORPH PAD** plays within +1.42 dB of 937b89f over its LFO sweep, up
   from +1.35 dB (#192).
+- **A note's onset still passes a DC step as a pulse.** A W3 carrier's
+  0.23 FS of DC is gated by its operator envelope before the blocker, so a
+  note-on, or a fast release, passes a step that decays with τ ≈ 32 ms,
+  as the TX81Z's AC-coupled output does. The VCA after the blocker adds
+  none. The sweep judges only settled DC and doesn't measure these
+  pulses.
 - **Sweep:** DC is judged 95 ms after a note-on, once the blocker has
   settled. `sweep_fast`'s hold is 225 blocks, so each half of the window
   is still 100 ms. FM sidebands and the bow's drift below 5 Hz still

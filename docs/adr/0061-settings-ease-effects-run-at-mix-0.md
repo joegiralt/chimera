@@ -37,8 +37,12 @@ The parameter sweep found 80 jumps that click:
   FOLD, SYM and fold MIX take `Ease`; routes add to the eased value, and
   each stage `Ramp`s what it plays across the block. A fresh note starts
   on its values, unramped.
-- **A stage switched off fades out.** Below DRIVE or FOLD 0.001 the stage
-  ramps its wet to 0 over a block, then rests; switched on, it ramps in.
+- **A stage switched off fades out.** Each stage has a gate (`ease::Gate`)
+  that fades its wet linearly over 20 ms (15 blocks), then rests; switched
+  on, it fades in. The gate is keyed on `Voice::stage_runs`, the same
+  answer the allocator bills: a stored DRIVE or FOLD of 0.001 or more, or
+  a route that may raise it. So a stage runs exactly 20 ms past the moment
+  it is billed off.
 - **Delay TIME crossfades two read heads over 20 ms** (`TIME_FADE`, 960
   samples, whole blocks). This is pitch-safe, where gliding the head would
   sweep the pitch. A TIME that keeps moving starts a new fade as each one
@@ -47,13 +51,31 @@ The parameter sweep found 80 jumps that click:
   MIX 0 the return fades out, but the lines and the ring keep taking the
   send. Brought back up, the effect plays what the send is doing now, as a
   send effect on a desk does. This closes #61 and #65.
+- **An Algo voice's lifetime (the sweep's D3):**
+  - While the key is held, every carrier holds the voice, whichever
+    algorithm it belongs to. A MORPH sweep, by hand or by route, never ends
+    a held note; this keeps 58b35e9's rule that modulation can't end a
+    held Algo note.
+  - Once the key is up, only a carrier heard at the MORPH holds it (its
+    blended weight above 0), unless MORPH has a route, which may bring the
+    other algorithm's carriers back.
+  - Before, a carrier only in ALG B kept a released INIT voice at MORPH 0,
+    and its bill, for 23 s of silence.
 - **Billing (ADR 0056's host method):**
   - The allocator bills what can be held: a route moves a voice's stages
-    every block, so `FOLD_COST` and `DRIVE_COST` bill their ramp paths.
+    every block. So `DRIVE_RAMP_COST` and `FOLD_RAMP_COST` are added only
+    while a route may move one of that stage's settings: DRIVE, TONE or
+    MIX for the drive; FOLD, SYM or MIX for the fold. Unrouted, only the UI
+    moves them, briefly, as it moves the bus.
   - A bus setting moves only when the UI moves it (there are no routes to
     it, and MIDI CC is dropped). So `FxBus::COST` bills only the ease work
     it does every block. What an ease costs while a setting moves is brief,
     and sits in the 30 % of headroom the 70 % budget leaves.
+  - The worst such case is a Performance load. It moves every Part's five
+    gains, a delay TIME, the chorus MODE and every MIX at once: about
+    35 × 6 + 50 + 21 ≈ 280 instructions a sample, ~450 cycles, for 20–100
+    ms. That is within the headroom (about 2,100 cycles a sample on rev
+    V).
 
 ## Alternatives considered
 - **A one-block ramp for everything:** a full-scale OUT LEVEL jump on
@@ -78,8 +100,10 @@ The parameter sweep found 80 jumps that click:
   | Term | Before | After | From |
   |---|---|---|---|
   | `CHAIN_COST` | 10 | 30 | ADR 0060's blocker 6.5; the stage eases 1.3; the OUT LEVEL and filter DRIVE ramps, about 2 each |
-  | `DRIVE_COST` | 57 | 80 | ramp path 36 instructions a sample, against the steady 22 |
-  | `FOLD_COST` | 43 | 80 | ramp path 42, against the steady 24; the fold's offset, 1 |
+  | `DRIVE_COST` | 57 | 57 | the steady stage |
+  | `DRIVE_RAMP_COST` | — | 23 | under a route: the ramp path's 36 instructions a sample, against the steady 22 |
+  | `FOLD_COST` | 43 | 45 | the steady stage and the fold's offset, 1 instruction |
+  | `FOLD_RAMP_COST` | — | 29 | under a route: the ramp path's 42, against the steady 24 |
   | `FxBus::COST` | 1,160 (1,470 with the tape) | 1,180 (1,490) | the eases' one-poles a block: 6.5 |
 
 - **Not billed (brief, UI-driven), per sample while it moves:**
@@ -91,8 +115,13 @@ The parameter sweep found 80 jumps that click:
 - **Always running** costs real CPU at MIX 0 that was idle before. The
   bill doesn't change: the bus was always reserved at its worst, every
   effect on.
-- **For about 0.2 s after DRIVE or FOLD goes to 0** the stage still runs
-  while it is billed as off (the allocator bills the stored value).
+- **For a fixed 20 ms after DRIVE or FOLD is billed off** (its gate's
+  fade) the stage still runs: at most 80 cycles a voice, within the
+  headroom.
+- **A hand MORPH sweep can no longer end a held note**, and a released
+  voice whose carriers are all unheard ends at once. Raising LEVEL or
+  moving MORPH after release doesn't revive it, just as a released
+  carrier at LEVEL 0 isn't revived.
 - **The first block after boot** lands every setting on its value.
 
 ## Sources
