@@ -12,7 +12,7 @@ use common::tri;
 
 #[test]
 fn test_drive_passthrough_at_zero() {
-    let drive = Drive::new();
+    let mut drive = Drive::new();
     let params = DriveParams::default(); // drive=0
     let mut buf = [0.5, -0.5, 0.3, -0.3];
     let original = buf;
@@ -24,7 +24,7 @@ fn test_drive_passthrough_at_zero() {
 
 #[test]
 fn test_drive_clips_signal() {
-    let drive = Drive::new();
+    let mut drive = Drive::new();
     let params = DriveParams {
         drive: 1.0, // full drive
         mix: 1.0,
@@ -40,7 +40,7 @@ fn test_drive_clips_signal() {
 
 #[test]
 fn test_drive_output_bounded() {
-    let drive = Drive::new();
+    let mut drive = Drive::new();
     let params = DriveParams {
         drive: 1.0,
         mix: 1.0,
@@ -141,7 +141,7 @@ fn fast_tanh_is_within_its_documented_error() {
 
 #[test]
 fn test_folder_passthrough_at_zero() {
-    let folder = Wavefolder::new();
+    let mut folder = Wavefolder::new();
     let params = FolderParams::default(); // fold=0
     let mut buf = [0.5, -0.5, 0.8, -0.8];
     let original = buf;
@@ -153,7 +153,7 @@ fn test_folder_passthrough_at_zero() {
 
 #[test]
 fn test_folder_output_bounded() {
-    let folder = Wavefolder::new();
+    let mut folder = Wavefolder::new();
     let params = FolderParams {
         fold: 1.0,
         mix: 1.0,
@@ -173,7 +173,7 @@ fn test_folder_output_bounded() {
 
 #[test]
 fn test_folder_adds_harmonics() {
-    let folder = Wavefolder::new();
+    let mut folder = Wavefolder::new();
     let params = FolderParams {
         fold: 1.0,
         mix: 1.0,

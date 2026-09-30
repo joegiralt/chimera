@@ -277,3 +277,61 @@ fn the_master_section_is_off_by_default() {
         assert_eq!(out, before, "block {b}");
     }
 }
+
+/// #61: an effect at MIX 0 keeps running on its send, so bringing MIX back
+/// up plays what the send is doing now. A burst into each effect, MIX 0
+/// through 2 s of silence, then MIX back to 0.5: the delay's line and the
+/// reverb's ring have long let the burst go, and the return stays silent.
+#[test]
+fn an_effect_at_mix_0_never_replays_a_stale_tail() {
+    let mut p = FxParams::default();
+    p.chorus.mode = 3;
+    (p.delay.time_ms, p.delay.feedback) = (400.0, 0.0);
+    (p.reverb.time, p.reverb.size) = (0.3, 0.5);
+    let on = |p: &mut FxParams, mix: f32| {
+        (p.chorus.mix, p.delay.mix, p.reverb.mix) = (mix, mix, mix);
+    };
+    let mut bus = Box::new(FxBus::new());
+    let mut peak_after = 0.0f32;
+    for b in 0..1600 {
+        on(&mut p, if (4..1500).contains(&b) { 0.0 } else { 0.5 });
+        let x = if b < 4 { burst() } else { [0.0; BLOCK_SIZE] };
+        let mut sends = [x, x, x];
+        let mut ret = Stereo::SILENT;
+        bus.process(&mut sends, &p, SR, &mut ret);
+        if b >= 1500 {
+            peak_after = ret
+                .l
+                .iter()
+                .chain(&ret.r)
+                .fold(peak_after, |m, s| m.max(s.abs()));
+        }
+    }
+    assert!(peak_after < 1e-4, "stale tail at {peak_after}");
+}
+
+/// Never snap: an effect's MIX 0.5 → 0 fades its return over the ease,
+/// no step at the switch.
+#[test]
+fn an_effect_switched_off_fades_its_return() {
+    let mut p = FxParams::default();
+    p.delay.mix = 0.5;
+    (p.delay.time_ms, p.delay.feedback) = (20.0, 0.0);
+    let mut bus = Box::new(FxBus::new());
+    let mut rets = Vec::new();
+    for b in 0..40 {
+        if b == 20 {
+            p.delay.mix = 0.0;
+        }
+        let mut sends = [[0.0; BLOCK_SIZE], [0.25; BLOCK_SIZE], [0.0; BLOCK_SIZE]];
+        let mut ret = Stereo::SILENT;
+        bus.process(&mut sends, &p, SR, &mut ret);
+        rets.extend(ret.l);
+    }
+    let at = 20 * BLOCK_SIZE;
+    // A DC send's echo: 0.125 held, then gliding down, never stepping.
+    assert!((rets[at - 1] - 0.125).abs() < 1e-3, "{}", rets[at - 1]);
+    let steps = rets[at - 1..].windows(2).map(|w| (w[1] - w[0]).abs());
+    assert!(steps.fold(0.0f32, f32::max) < 0.005);
+    assert!(rets[at + BLOCK_SIZE] > 0.05, "a fade, not a cut");
+}

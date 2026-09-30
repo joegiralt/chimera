@@ -9,6 +9,7 @@ use core::ptr::addr_of_mut;
 use chimera_hal::BLOCK_SIZE;
 
 use crate::dsp::Stereo;
+use crate::dsp::ease::{Ease, at, ease_coeff, step_of};
 use crate::dsp::engines::SlotKind;
 use crate::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
 use crate::dsp::modal::{ResonatorMode, SYM_NOTE_ON_CLEAR_MAX, SymPool};
@@ -136,23 +137,40 @@ pub fn pan_gains(pan: f32) -> (f32, f32) {
     (libm::sinf((1.0 - pan) * q), libm::sinf((1.0 + pan) * q))
 }
 
-/// Each Part's last pan and its `pan_gains`. `pan_gains` is two libm
-/// `sinf`, soft-float f64 on this FPU and most of what mixing cost, so the
-/// audio thread pays it only when a pan moves.
+/// Each Part's last pan and its `pan_gains`, and its mix gains eased
+/// (never snap). `pan_gains` is two libm `sinf`, soft-float f64 on this FPU
+/// and most of what mixing cost, so the audio thread pays it only when a
+/// pan moves.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct PanCache([Option<(u32, (f32, f32))>; MAX_PARTS]);
+pub struct MixState {
+    pans: [Option<(u32, (f32, f32))>; MAX_PARTS],
+    /// L and R (pan × LEVEL) and the three sends, per Part.
+    gains: [[Ease; MIX_GAINS]; MAX_PARTS],
+}
 
-impl PanCache {
-    fn gains(&mut self, p: usize, pan: f32) -> (f32, f32) {
-        match self.0[p] {
+/// A Part's eased gains: L, R and the three sends.
+const MIX_GAINS: usize = 2 + FX_SENDS;
+
+impl MixState {
+    fn pan_gains(&mut self, p: usize, pan: f32) -> (f32, f32) {
+        match self.pans[p] {
             Some((bits, g)) if bits == pan.to_bits() => g,
             _ => {
                 let g = pan_gains(pan);
-                self.0[p] = Some((pan.to_bits(), g));
+                self.pans[p] = Some((pan.to_bits(), g));
                 g
             }
         }
     }
+}
+
+/// A gain's block: where it starts and its step a sample.
+type Glide = (f32, f32);
+
+/// Sample `i`'s gain of `g`: its start unless `RAMP`.
+#[inline(always)]
+fn gain_at<const RAMP: bool>(g: Glide, i: usize) -> f32 {
+    if RAMP { at(g.0, g.1, i) } else { g.0 }
 }
 
 /// Samples per step of the send and the pair passes, sized so their
@@ -163,7 +181,8 @@ const PAIR_STEP: usize = 8;
 const _: () = assert!(BLOCK_SIZE.is_multiple_of(SEND_STEP) && BLOCK_SIZE.is_multiple_of(PAIR_STEP));
 
 /// Steps 2–4 of `render`: each written Part's bus, panned and levelled,
-/// into its pair and, by its sends, into the FX sends; then the FX bus
+/// into its pair and, by its sends, into the FX sends, each gain eased
+/// (`MixState`); then the FX bus
 /// once, its return on pair 1; then the master section (`FxBus::master`);
 /// then the output stage (`FxBus::limit`, ADR 0050), which trims and
 /// limits the block before this one.
@@ -179,51 +198,50 @@ pub fn mix_parts(
     buses: &[[f32; BLOCK_SIZE]; MAX_PARTS],
     written: &[bool; MAX_PARTS],
     sends: &mut [[f32; BLOCK_SIZE]; FX_SENDS],
-    pans: &mut PanCache,
+    mix: &mut MixState,
     fx: &mut FxBus,
     shared: &AudioShared,
     sample_rate: u32,
     dac: &mut DacBlocks,
 ) -> [f32; BLOCK_SIZE] {
     // The written Parts in order, gains hoisted; by pair for the dry mix.
-    let mut src = [(&buses[0], [0.0f32; FX_SENDS]); MAX_PARTS];
+    let mut src = [(&buses[0], [(0.0f32, 0.0f32); FX_SENDS]); MAX_PARTS];
     let mut n = 0;
-    let mut dry = [[(&buses[0], 0.0f32, 0.0f32); MAX_PARTS]; DAC_PAIRS];
+    let mut dry = [[(&buses[0], (0.0f32, 0.0f32), (0.0f32, 0.0f32)); MAX_PARTS]; DAC_PAIRS];
     let mut dry_n = [0usize; DAC_PAIRS];
+    let mut ramp = false;
+    let k = ease_coeff(sample_rate);
     for (p, part) in shared.parts.iter().enumerate() {
-        // A part with no voices this block has a silent bus: nothing to add.
+        let (gl, gr) = mix.pan_gains(p, part.mix.pan);
+        let [s0, s1, s2] = part.mix.sends;
+        let to = [gl * part.mix.level, gr * part.mix.level, s0, s1, s2];
+        let eases = &mut mix.gains[p];
+        // A part with no voices this block has a silent bus: nothing to
+        // add, and its gains land unheard.
         if !written[p] {
+            for (e, &t) in eases.iter_mut().zip(&to) {
+                e.land(t);
+            }
             continue;
         }
+        let g: [Glide; MIX_GAINS] = core::array::from_fn(|j| {
+            let ft = eases[j].step(to[j], k);
+            ramp |= ft.0 != ft.1;
+            (ft.0, step_of(ft, BLOCK_SIZE))
+        });
         let bus = &buses[p];
-        let (gl, gr) = pans.gains(p, part.mix.pan);
-        let (gl, gr) = (gl * part.mix.level, gr * part.mix.level);
-        src[n] = (bus, part.mix.sends);
+        src[n] = (bus, [g[2], g[3], g[4]]);
         n += 1;
         let k = part.mix.output.index();
-        dry[k][dry_n[k]] = (bus, gl, gr);
+        dry[k][dry_n[k]] = (bus, g[0], g[1]);
         dry_n[k] += 1;
     }
-
-    let mut scope = [0.0f32; BLOCK_SIZE];
-    let [s0, s1, s2] = sends;
-    for c in 0..BLOCK_SIZE / SEND_STEP {
-        let i = c * SEND_STEP;
-        let mut a = [[0.0f32; SEND_STEP]; FX_SENDS + 1];
-        for &(bus, amt) in &src[..n] {
-            for k in 0..SEND_STEP {
-                let b = bus[i + k];
-                a[0][k] += b * amt[0];
-                a[1][k] += b * amt[1];
-                a[2][k] += b * amt[2];
-                a[3][k] += b;
-            }
-        }
-        s0[i..i + SEND_STEP].copy_from_slice(&a[0]);
-        s1[i..i + SEND_STEP].copy_from_slice(&a[1]);
-        s2[i..i + SEND_STEP].copy_from_slice(&a[2]);
-        scope[i..i + SEND_STEP].copy_from_slice(&a[3]);
-    }
+    let (src, dry) = (&src[..n], &dry);
+    let scope = if ramp {
+        mix_sends::<true>(src, sends)
+    } else {
+        mix_sends::<false>(src, sends)
+    };
 
     // The FX bus once; its return lands on pair 1, L and R.
     let mut ret = Stereo::SILENT;
@@ -232,28 +250,73 @@ pub fn mix_parts(
     let out = dac.mix();
     for (k, pair) in out.iter_mut().enumerate() {
         let parts = &dry[k][..dry_n[k]];
-        for c in 0..BLOCK_SIZE / PAIR_STEP {
-            let i = c * PAIR_STEP;
-            let mut a = [0.0f32; 2 * PAIR_STEP];
-            for &(bus, gl, gr) in parts {
-                for j in 0..PAIR_STEP {
-                    a[2 * j] += bus[i + j] * gl;
-                    a[2 * j + 1] += bus[i + j] * gr;
-                }
-            }
-            if k == 0 {
-                for j in 0..PAIR_STEP {
-                    a[2 * j] += ret.l[i + j];
-                    a[2 * j + 1] += ret.r[i + j];
-                }
-            }
-            pair[2 * i..2 * (i + PAIR_STEP)].copy_from_slice(&a);
+        let ret = (k == 0).then_some(&ret);
+        if ramp {
+            mix_pair::<true>(parts, ret, pair);
+        } else {
+            mix_pair::<false>(parts, ret, pair);
         }
     }
     // The master section, after every pair is summed; then the output stage.
     fx.master(out, &shared.fx, sample_rate);
     fx.limit(dac, sample_rate);
     scope
+}
+
+/// The send pass: each Part's bus by its sends into the FX sends, and the
+/// scope. `RAMP`: some gain moves this block.
+#[inline(always)]
+fn mix_sends<const RAMP: bool>(
+    src: &[(&[f32; BLOCK_SIZE], [Glide; FX_SENDS])],
+    sends: &mut [[f32; BLOCK_SIZE]; FX_SENDS],
+) -> [f32; BLOCK_SIZE] {
+    let mut scope = [0.0f32; BLOCK_SIZE];
+    let [s0, s1, s2] = sends;
+    for c in 0..BLOCK_SIZE / SEND_STEP {
+        let i = c * SEND_STEP;
+        let mut a = [[0.0f32; SEND_STEP]; FX_SENDS + 1];
+        for &(bus, amt) in src {
+            for k in 0..SEND_STEP {
+                let b = bus[i + k];
+                a[0][k] += b * gain_at::<RAMP>(amt[0], i + k);
+                a[1][k] += b * gain_at::<RAMP>(amt[1], i + k);
+                a[2][k] += b * gain_at::<RAMP>(amt[2], i + k);
+                a[3][k] += b;
+            }
+        }
+        s0[i..i + SEND_STEP].copy_from_slice(&a[0]);
+        s1[i..i + SEND_STEP].copy_from_slice(&a[1]);
+        s2[i..i + SEND_STEP].copy_from_slice(&a[2]);
+        scope[i..i + SEND_STEP].copy_from_slice(&a[3]);
+    }
+    scope
+}
+
+/// One pair's pass: its Parts panned and levelled, and on pair 1 the FX
+/// return. `RAMP`: some gain moves this block.
+#[inline(always)]
+fn mix_pair<const RAMP: bool>(
+    parts: &[(&[f32; BLOCK_SIZE], Glide, Glide)],
+    ret: Option<&Stereo>,
+    pair: &mut [f32; 2 * BLOCK_SIZE],
+) {
+    for c in 0..BLOCK_SIZE / PAIR_STEP {
+        let i = c * PAIR_STEP;
+        let mut a = [0.0f32; 2 * PAIR_STEP];
+        for &(bus, gl, gr) in parts {
+            for j in 0..PAIR_STEP {
+                a[2 * j] += bus[i + j] * gain_at::<RAMP>(gl, i + j);
+                a[2 * j + 1] += bus[i + j] * gain_at::<RAMP>(gr, i + j);
+            }
+        }
+        if let Some(ret) = ret {
+            for j in 0..PAIR_STEP {
+                a[2 * j] += ret.l[i + j];
+                a[2 * j + 1] += ret.r[i + j];
+            }
+        }
+        pair[2 * i..2 * (i + PAIR_STEP)].copy_from_slice(&a);
+    }
 }
 
 /// The shared voice pool and the per-block mix. The FX bus is passed to
@@ -282,7 +345,7 @@ pub struct Instrument {
     /// Each Part's mono bus from the last `render`: the sum of its voices.
     buses: [[f32; BLOCK_SIZE]; MAX_PARTS],
     sends: [[f32; BLOCK_SIZE]; FX_SENDS],
-    pans: PanCache,
+    mix: MixState,
     sample_rate: u32,
     /// Each Part's kind at the last `render`: a Part that has just become
     /// Sympathetic restarts its held notes through the pool.
@@ -300,7 +363,7 @@ pub struct Instrument {
 /// worst-case slots starts a note a block, a typical one all at once.
 pub const SYM_CLEAR_BUDGET: usize = SYM_NOTE_ON_CLEAR_MAX;
 
-crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, sounding, waiting, buses, sends, pans, sample_rate, last_kind, clear_left, clear_backlog });
+crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, sounding, waiting, buses, sends, mix, sample_rate, last_kind, clear_left, clear_backlog });
 
 const SYMPATHETIC: SlotKind = SlotKind::Modal(ResonatorMode::Sympathetic);
 
@@ -331,7 +394,7 @@ impl Instrument {
             addr_of_mut!((*p).waiting).write([None; MAX_VOICES]);
             addr_of_mut!((*p).buses).write([[0.0; BLOCK_SIZE]; MAX_PARTS]);
             addr_of_mut!((*p).sends).write([[0.0; BLOCK_SIZE]; FX_SENDS]);
-            addr_of_mut!((*p).pans).write(PanCache::default());
+            addr_of_mut!((*p).mix).write(MixState::default());
             addr_of_mut!((*p).sample_rate).write(sample_rate);
             // The default Sound's (`Performance::new`: Algo).
             addr_of_mut!((*p).last_kind).write([SlotKind::Algo; MAX_PARTS]);
@@ -666,7 +729,7 @@ impl Instrument {
             &self.buses,
             &written,
             &mut self.sends,
-            &mut self.pans,
+            &mut self.mix,
             fx,
             shared,
             self.sample_rate,

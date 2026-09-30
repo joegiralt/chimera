@@ -8,6 +8,7 @@
 
 use crate::block::{Block, DiskCode, ParamId, ParamSpec, ValFmt, apply_code};
 use crate::dsp::Stereo;
+use crate::dsp::ease::{Ease, at, ease_coeff, step_of};
 use chimera_hal::BLOCK_SIZE;
 use core::mem::MaybeUninit;
 
@@ -174,9 +175,21 @@ impl BbdLine {
     /// 2^32.
     #[inline(always)]
     fn tick(&mut self, input: f32, base: f32, depth: f32, inc: u32) -> (f32, f32) {
+        self.write(input, inc);
+        self.taps(base, depth)
+    }
+
+    /// Writes `input` and moves the LFO on: a line unheard stays current.
+    #[inline(always)]
+    fn write(&mut self, input: f32, inc: u32) {
         self.buffer[self.write_pos & MASK] = input;
         self.write_pos = (self.write_pos + 1) & MASK;
         self.lfo_phase = self.lfo_phase.wrapping_add(inc);
+    }
+
+    /// The (normal, inverted) taps at the LFO's phase.
+    #[inline(always)]
+    fn taps(&self, base: f32, depth: f32) -> (f32, f32) {
         // Triangle, 0→1→0→-1→0: 1 − |4v − 2| a quarter turn on, v ∈ [0, 1),
         // from the phase's distance to the half turn.
         let x = (self.lfo_phase.wrapping_add(1 << 30) ^ (1 << 31)) as i32;
@@ -196,13 +209,17 @@ impl BbdLine {
     }
 }
 
-crate::in_place::field_list!(JunoChorus => JunoChorus { line_i, line_ii });
+crate::in_place::field_list!(JunoChorus => JunoChorus { line_i, line_ii, weight, depth });
 crate::in_place::field_list!(BbdLine => BbdLine { buffer, write_pos, lfo_phase });
 
-/// Juno-style chorus: mono send in, stereo wet out.
+/// Juno-style chorus: mono send in, stereo wet out. Both lines are
+/// written whatever the mode, so a line faded in is current; each line's
+/// weight (its share of the mode × MIX) and DEPTH ease (never snap).
 pub struct JunoChorus {
     line_i: BbdLine,
     line_ii: BbdLine,
+    weight: [Ease; 2],
+    depth: Ease,
 }
 
 impl Default for JunoChorus {
@@ -216,13 +233,16 @@ impl JunoChorus {
         Self {
             line_i: BbdLine::new(),
             line_ii: BbdLine::new(),
+            weight: [Ease::default(); 2],
+            depth: Ease::default(),
         }
     }
 
     pub fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
         // SAFETY: every field (two `BbdLine { buffer: [f32; N], write_pos:
-        // usize, lfo_phase: u32 }`) is valid as zero bytes, and zero is
-        // exactly `new()`'s state; `write_bytes` covers the whole slot.
+        // usize, lfo_phase: u32 }` and three `Ease { f32, bool }`) is valid
+        // as zero bytes, and zero is exactly `new()`'s state; `write_bytes`
+        // covers the whole slot.
         unsafe {
             slot.as_mut_ptr().write_bytes(0, 1);
             slot.assume_init_mut()
@@ -230,7 +250,8 @@ impl JunoChorus {
     }
 
     /// Send/return use (the FX bus): the wet signal × MIX, the return
-    /// level, per side.
+    /// level, per side. At MIX 0 or mode OFF the lines are still written
+    /// and the return fades out.
     pub fn process_wet(
         &mut self,
         send: &[f32; BLOCK_SIZE],
@@ -238,30 +259,70 @@ impl JunoChorus {
         sample_rate: u32,
         out: &mut Stereo,
     ) {
-        if !params.is_on() {
-            *out = Stereo::SILENT;
-            return;
-        }
         let mode = ChorusMode::from_u8(params.mode);
+        // Each line's share of the return: I+II averages the two.
+        let share = match mode {
+            ChorusMode::Off => (0.0, 0.0),
+            ChorusMode::JunoI => (1.0, 0.0),
+            ChorusMode::JunoII => (0.0, 1.0),
+            ChorusMode::JunoBoth => (0.5, 0.5),
+        };
+        let mix = if params.mix >= 0.001 { params.mix } else { 0.0 };
+        let k = ease_coeff(sample_rate);
+        let w = [
+            self.weight[0].step(share.0 * mix, k),
+            self.weight[1].step(share.1 * mix, k),
+        ];
+        let dp = self.depth.step(params.depth, k);
         // Juno I: 0.513 Hz, 1.7 ms; Juno II: 0.863 Hz, 2.3 ms; both 3.6 ms
         // from centre. RATE and DEPTH scale 0.5x to 2.0x.
         let rate = 0.5 + params.rate * 1.5;
-        let depth = 0.5 + params.depth * 1.5;
         let ms = sample_rate as f32 / 1000.0;
         let base = 3.6 * ms;
         let turns = |hz: f32| (hz / sample_rate as f32 * 4_294_967_296.0) as u32;
-        let (inc_i, depth_i) = (turns(0.513 * rate), 1.7 * depth * ms);
-        let (inc_ii, depth_ii) = (turns(0.863 * rate), 2.3 * depth * ms);
-        let (a, b, mix) = (&mut self.line_i, &mut self.line_ii, params.mix);
-        match mode {
-            ChorusMode::JunoI => each(send, mix, out, |x| a.tick(x, base, depth_i, inc_i)),
-            ChorusMode::JunoII => each(send, mix, out, |x| b.tick(x, base, depth_ii, inc_ii)),
-            ChorusMode::JunoBoth => each(send, mix, out, |x| {
-                let (l1, r1) = a.tick(x, base, depth_i, inc_i);
-                let (l2, r2) = b.tick(x, base, depth_ii, inc_ii);
-                ((l1 + l2) * 0.5, (r1 + r2) * 0.5)
-            }),
-            ChorusMode::Off => *out = Stereo::SILENT,
+        let (inc_i, inc_ii) = (turns(0.513 * rate), turns(0.863 * rate));
+        let (a, b) = (&mut self.line_i, &mut self.line_ii);
+        let steady = w[0].0 == w[0].1 && w[1].0 == w[1].1 && dp.0 == dp.1;
+        if steady {
+            let depth = 0.5 + dp.1 * 1.5;
+            let (depth_i, depth_ii) = (1.7 * depth * ms, 2.3 * depth * ms);
+            // Today's loops, bit for bit: × MIX, I+II's taps averaged first.
+            match (w[0].1 > 0.0, w[1].1 > 0.0) {
+                (false, false) => {
+                    for &x in send {
+                        a.write(x, inc_i);
+                        b.write(x, inc_ii);
+                    }
+                    *out = Stereo::SILENT;
+                }
+                (true, false) => each(send, mix, out, |x| {
+                    b.write(x, inc_ii);
+                    a.tick(x, base, depth_i, inc_i)
+                }),
+                (false, true) => each(send, mix, out, |x| {
+                    a.write(x, inc_i);
+                    b.tick(x, base, depth_ii, inc_ii)
+                }),
+                (true, true) => each(send, mix, out, |x| {
+                    let (l1, r1) = a.tick(x, base, depth_i, inc_i);
+                    let (l2, r2) = b.tick(x, base, depth_ii, inc_ii);
+                    ((l1 + l2) * 0.5, (r1 + r2) * 0.5)
+                }),
+            }
+            return;
+        }
+        // A mode, MIX or DEPTH move: both lines' taps, each by its weight.
+        let (sw, sd) = (
+            [step_of(w[0], BLOCK_SIZE), step_of(w[1], BLOCK_SIZE)],
+            step_of(dp, BLOCK_SIZE),
+        );
+        for (i, &x) in send.iter().enumerate() {
+            let depth = 0.5 + at(dp.0, sd, i) * 1.5;
+            let (l1, r1) = a.tick(x, base, 1.7 * depth * ms, inc_i);
+            let (l2, r2) = b.tick(x, base, 2.3 * depth * ms, inc_ii);
+            let (g1, g2) = (at(w[0].0, sw[0], i), at(w[1].0, sw[1], i));
+            out.l[i] = l1 * g1 + l2 * g2;
+            out.r[i] = r1 * g1 + r2 * g2;
         }
     }
 }

@@ -7,6 +7,7 @@ use crate::addr::{BlockRef, Blocks, ParamAddr};
 use crate::block::apply_offset;
 use crate::dsp::algo::engine::AlgoLive;
 use crate::dsp::drive::Drive;
+use crate::dsp::ease::{Ease, Ramp, at, ease_coeff, step_of};
 use crate::dsp::engines::{EngineSlot, SlotKind};
 use crate::dsp::envelope::{EnvMods, Envelope};
 use crate::dsp::filter::SvfFilter;
@@ -45,6 +46,11 @@ pub struct Voice {
     drive: Drive,
     filter: SvfFilter,
     folder: Wavefolder,
+    /// The stages' stored settings, eased as a bus setting is: a jump
+    /// glides, and routes add to the glide.
+    stages: StageEase,
+    /// OUT LEVEL × the engine's gain, ramped across each block.
+    volume: Ramp,
     envs: [Envelope; 3],
     lfos: [Lfo; 3],
     /// The ENV destinations' sums from the last block's matrix (spec § Signal flow 1).
@@ -71,6 +77,31 @@ pub struct Voice {
     /// them, so a new Sound never reaches the sound it fades out.
     played: ParamSnapshot,
     played_live: AlgoLive,
+}
+
+/// OUT LEVEL, DRIVE's three, filter DRIVE and FOLD's three, eased
+/// toward the stored values (never snap). Zero bytes land on the first
+/// block.
+#[derive(Clone, Copy, Debug, Default)]
+struct StageEase([Ease; 8]);
+
+impl StageEase {
+    /// `m`'s stored settings replaced by this block's eased ones.
+    fn ease(&mut self, m: &mut ParamSnapshot, k: f32) {
+        let [a, b, c, d, e, f, g, h] = &mut self.0;
+        for (ease, v) in [
+            (a, &mut m.out.volume),
+            (b, &mut m.drive.drive),
+            (c, &mut m.drive.tone),
+            (d, &mut m.drive.mix),
+            (e, &mut m.filter.drive),
+            (f, &mut m.folder.fold),
+            (g, &mut m.folder.symmetry),
+            (h, &mut m.folder.mix),
+        ] {
+            *v = ease.step(*v, k).1;
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -219,6 +250,8 @@ impl Voice {
                 drive: Drive::new(),
                 filter: SvfFilter::new(),
                 folder: Wavefolder::new(),
+                stages: StageEase::default(),
+                volume: Ramp::default(),
                 envs: [Envelope::new(); 3],
                 lfos: [Lfo::new(); 3],
                 env_mods: [EnvMods::NONE; 3],
@@ -353,7 +386,12 @@ impl Voice {
             pool.alloc_mut().cancel(self.id);
         }
         if !self.active {
-            self.filter.hold(); // a fresh note: no ramp from the last note's cutoff
+            // A fresh note: no ramp from the last note's settings.
+            self.filter.hold();
+            self.drive.hold();
+            self.folder.hold();
+            self.volume.hold();
+            self.stages = StageEase::default();
             // An idle voice's ENV slots and last source values start as a
             // fresh voice's. Idle is silent: a release its VCA routes still
             // hold keeps the voice active (`vca_holds`).
@@ -535,6 +573,7 @@ impl Voice {
             // spec (spec §4).
             let (m, live) = (&mut self.played, &mut self.played_live);
             m.clone_from(params);
+            self.stages.ease(m, ease_coeff(sample_rate));
             *live = AlgoLive::from_params(&params.algo);
             live.routed = mod_state.algo_levels_routed();
             let mut next = [EnvMods::NONE; 3];
@@ -576,8 +615,10 @@ impl Voice {
         // 4. Wavefolder
         self.folder.process(output, &m.folder);
 
-        // 5. The VCA, after the fold, with the engine's output gain.
-        let volume = m.out.volume * self.slot.out_gain();
+        // 5. The VCA, after the fold, with the engine's output gain,
+        // ramped (never snap).
+        let v = self.volume.step(m.out.volume * self.slot.out_gain());
+        let (volume, dv) = (v.1, step_of(v, BLOCK_SIZE));
         // The block's last routed gain, × AMP's VEL: whether the lifetime
         // check below ends the voice through a fade.
         let mut last_gain = 0.0;
@@ -588,8 +629,14 @@ impl Voice {
                 match &self.slot {
                     EngineSlot::Algo(_) | EngineSlot::Modal(_) => {
                         // Its own envelopes shape the sound: today's expression, bit for bit.
-                        for sample in output.iter_mut() {
-                            *sample *= volume;
+                        if dv == 0.0 {
+                            for sample in output.iter_mut() {
+                                *sample *= volume;
+                            }
+                        } else {
+                            for (i, sample) in output.iter_mut().enumerate() {
+                                *sample *= at(v.0, dv, i);
+                            }
                         }
                     }
                 }
@@ -598,8 +645,14 @@ impl Voice {
                 let vel = 1.0 - m.out.vca_vel + m.out.vca_vel * self.last_velocity.unit();
                 let k = volume * vel;
                 #[allow(clippy::manual_clamp)] // max/min, not clamp: NaN clamps too
-                for (sample, g) in output.iter_mut().zip(gain) {
-                    *sample *= k * g.max(0.0).min(1.0);
+                if dv == 0.0 {
+                    for (sample, g) in output.iter_mut().zip(gain) {
+                        *sample *= k * g.max(0.0).min(1.0);
+                    }
+                } else {
+                    for (i, (sample, g)) in output.iter_mut().zip(gain).enumerate() {
+                        *sample *= at(v.0, dv, i) * vel * g.max(0.0).min(1.0);
+                    }
                 }
                 #[allow(clippy::manual_clamp)]
                 let g = gain[BLOCK_SIZE - 1].max(0.0).min(1.0);

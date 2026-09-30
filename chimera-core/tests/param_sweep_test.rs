@@ -370,7 +370,6 @@ fn long_tail(c: &Case) -> Option<&'static str> {
 enum Defect {
     VoiceDc,
     ModalDc,
-    Snaps,
     SilentOpHoldsVoice,
 }
 
@@ -385,38 +384,12 @@ impl Defect {
                 "the engine's own DC (Task 17): SYMP's halo drifts below the output blocker's \
                  10 Hz, and BANK's output has no blocker"
             }
-            Defect::Snaps => {
-                "level, pan, send, FX mix, chorus depth, delay time, drive and its mix changes \
-                 are unramped, and FX bypass gates the return at MIX < 0.001: a snap clicks"
-            }
             Defect::SilentOpHoldsVoice => {
                 "an operator that is a carrier only in ALG B holds the voice at MORPH 0 \
                  (engine.rs:291-295)"
             }
         }
     }
-}
-
-fn snaps(c: &Case) -> bool {
-    let (b, id) = (c.param.block, c.param.spec.id);
-    let part = [
-        PartParams::LEVEL,
-        PartParams::PAN,
-        PartParams::SEND_CHORUS,
-        PartParams::SEND_DELAY,
-        PartParams::SEND_REVERB,
-    ];
-    let chorus = [ChorusParams::MIX, ChorusParams::DEPTH, ChorusParams::MODE];
-    c.is(BlockRef::Out, OutParams::VOLUME)
-        || (b == BlockRef::Part && part.contains(&id))
-        || (b == BlockRef::Chorus && chorus.contains(&id))
-        || (b == BlockRef::Delay && [DelayParams::MIX, DelayParams::TIME_MS].contains(&id))
-        || c.is(BlockRef::Reverb, ReverbParams::MIX)
-        || c.is(BlockRef::Drive, DriveParams::DRIVE)
-        || c.is(BlockRef::Drive, DriveParams::MIX)
-        || c.is(BlockRef::Filter, FilterParams::DRIVE)
-        || c.is(BlockRef::Folder, FolderParams::FOLD)
-        || c.is(BlockRef::Folder, FolderParams::SYMMETRY)
 }
 
 fn known(c: &Case, kind: &Kind, label: &str) -> Option<Defect> {
@@ -450,7 +423,10 @@ fn known(c: &Case, kind: &Kind, label: &str) -> Option<Defect> {
         {
             Some(Defect::ModalDc)
         }
-        Kind::Click if label.starts_with("jump") && snaps(c) => Some(Defect::Snaps),
+        // The SYM bias through the release steps the pair as the voice frees.
+        Kind::Click if label == "voice freed" && c.is(BlockRef::Folder, FolderParams::SYMMETRY) => {
+            Some(Defect::VoiceDc)
+        }
         Kind::Zombie if c.is_op(AlgoOpParams::RR) => Some(Defect::SilentOpHoldsVoice),
         _ => None,
     }
@@ -931,11 +907,11 @@ fn defect_modal_engines_put_dc_on_the_dac() {
     assert!(bad.is_empty(), "{}", bad.join("\n"));
 }
 
-/// A jump of these continuous parameters steps the output: on the triangle
-/// probe, or on a Sound where the stage is in play.
+/// Never snap: a jump of these continuous parameters eases, on the
+/// triangle probe or on a Sound where the stage is in play. Each clicked
+/// before Task 17.
 #[test]
-#[ignore = "defect: level, pan, send, FX mix, delay time, drive, filter drive and folder changes are unramped, FX bypass gates the return (instrument.rs:182-186, voice.rs:580-593, fx_bus.rs:124-165, drive.rs:30)"]
-fn defect_snaps_click() {
+fn jumps_never_click() {
     let symp = Patch::ModalInit(ResonatorMode::Sympathetic);
     // Each (parameter, Sound, wet, timing) clicks today on its own.
     let params = [
@@ -955,6 +931,36 @@ fn defect_snaps_click() {
             find(BlockRef::Part, PartParams::PAN),
             Patch::Probe,
             false,
+            FAST,
+        ),
+        (
+            find(BlockRef::Part, PartParams::SEND_CHORUS),
+            Patch::Probe,
+            true,
+            FAST,
+        ),
+        (
+            find(BlockRef::Part, PartParams::SEND_DELAY),
+            Patch::Probe,
+            true,
+            FAST,
+        ),
+        (
+            find(BlockRef::Part, PartParams::SEND_REVERB),
+            Patch::Probe,
+            true,
+            FAST,
+        ),
+        (
+            find(BlockRef::Chorus, ChorusParams::DEPTH),
+            Patch::Probe,
+            true,
+            FAST,
+        ),
+        (
+            find(BlockRef::Chorus, ChorusParams::MODE),
+            Patch::Probe,
+            true,
             FAST,
         ),
         (

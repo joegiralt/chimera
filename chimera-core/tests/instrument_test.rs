@@ -9,12 +9,13 @@ use chimera_core::dsp::Stereo;
 use chimera_core::dsp::algo::params::AlgoParams;
 use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::chorus::ChorusParams;
+use chimera_core::dsp::ease::{Ease, at, ease_coeff, step_of};
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus};
 use chimera_core::dsp::limiter::OUTPUT_TRIM;
 use chimera_core::dsp::ring::{first_reflection, size_step};
 use chimera_core::hw::{DAC_PAIRS, MAX_PARTS, MAX_VOICES};
 use chimera_core::instrument::{
-    AudioShared, DacBlocks, DacOut, Instrument, PanCache, mix_parts, pan_gains,
+    AudioShared, DacBlocks, DacOut, Instrument, MixState, mix_parts, pan_gains,
 };
 use chimera_core::modulation::ModState;
 use chimera_core::note_queue::{NoteEvent, NoteKind};
@@ -184,7 +185,7 @@ fn mix_parts_alone_is_renders_mix() {
         &buses,
         &written,
         &mut sends,
-        &mut PanCache::default(),
+        &mut MixState::default(),
         &mut fx,
         &shared,
         SR,
@@ -195,7 +196,8 @@ fn mix_parts_alone_is_renders_mix() {
 }
 
 /// `mix_parts` as first written: each Part added into zeroed buffers, then
-/// the master section and the limiter.
+/// the master section and the limiter; each gain eased as `MixState` eases
+/// it.
 fn mix_parts_reference(
     buses: &[[f32; BLOCK_SIZE]; MAX_PARTS],
     written: &[bool; MAX_PARTS],
@@ -203,27 +205,37 @@ fn mix_parts_reference(
     fx: &mut FxBus,
     shared: &AudioShared,
     dac: &mut DacBlocks,
+    eases: &mut [[Ease; 5]; MAX_PARTS],
 ) -> [f32; BLOCK_SIZE] {
     let out = dac.mix();
     *out = [[0.0; BLOCK_SIZE * 2]; DAC_PAIRS];
     *sends = [[0.0; BLOCK_SIZE]; FX_SENDS];
     let mut scope = [0.0f32; BLOCK_SIZE];
+    let k = ease_coeff(SR);
     for (p, part) in shared.parts.iter().enumerate() {
+        let (gl, gr) = pan_gains(part.mix.pan);
+        let [s0, s1, s2] = part.mix.sends;
+        let to = [gl * part.mix.level, gr * part.mix.level, s0, s1, s2];
         if !written[p] {
+            for (e, &t) in eases[p].iter_mut().zip(&to) {
+                e.land(t);
+            }
             continue;
         }
+        let g: [(f32, f32); 5] = core::array::from_fn(|j| {
+            let ft = eases[p][j].step(to[j], k);
+            (ft.0, step_of(ft, BLOCK_SIZE))
+        });
         let bus = &buses[p];
-        let (gl, gr) = pan_gains(part.mix.pan);
-        let (gl, gr) = (gl * part.mix.level, gr * part.mix.level);
         let pair = &mut out[part.mix.output.index()];
         for i in 0..BLOCK_SIZE {
-            pair[2 * i] += bus[i] * gl;
-            pair[2 * i + 1] += bus[i] * gr;
+            pair[2 * i] += bus[i] * at(g[0].0, g[0].1, i);
+            pair[2 * i + 1] += bus[i] * at(g[1].0, g[1].1, i);
             scope[i] += bus[i];
         }
-        for (send, &amount) in sends.iter_mut().zip(&part.mix.sends) {
-            for (s, &b) in send.iter_mut().zip(bus) {
-                *s += b * amount;
+        for (send, &(from, step)) in sends.iter_mut().zip(&g[2..]) {
+            for (i, (s, &b)) in send.iter_mut().zip(bus).enumerate() {
+                *s += b * at(from, step, i);
             }
         }
     }
@@ -243,7 +255,7 @@ fn bits<const N: usize>(x: &[f32; N]) -> [u32; N] {
 }
 
 /// The fused mix is bit-for-bit the reference, every Part written or some,
-/// every FX on, pans moving under one `PanCache`, signed zeros on the buses.
+/// every FX on, pans moving under one `MixState`, signed zeros on the buses.
 #[test]
 fn mix_parts_is_bit_identical_to_the_reference() {
     let mut x = 0x9e37_79b9u32;
@@ -259,7 +271,8 @@ fn mix_parts_is_bit_identical_to_the_reference() {
     shared.fx.delay.mix = 0.5;
     shared.fx.reverb.mix = 0.5;
     let (mut fx, mut fx_ref) = (Box::new(FxBus::new()), Box::new(FxBus::new()));
-    let mut pans = PanCache::default();
+    let mut pans = MixState::default();
+    let mut eases = [[Ease::default(); 5]; MAX_PARTS];
     let (mut sends, mut sends_ref) = ([[0.0; BLOCK_SIZE]; FX_SENDS], [[0.0; BLOCK_SIZE]; FX_SENDS]);
     let mut out = Box::new(DacBlocks::new());
     *out.mix() = [[1.0; BLOCK_SIZE * 2]; DAC_PAIRS];
@@ -297,6 +310,7 @@ fn mix_parts_is_bit_identical_to_the_reference() {
             &mut fx_ref,
             &shared,
             &mut out_ref,
+            &mut eases,
         );
         assert_eq!(bits(&scope), bits(&scope_ref), "block {block}: scope");
         for k in 0..DAC_PAIRS {
@@ -1287,7 +1301,7 @@ fn the_tape_is_on_pair_1_only() {
         });
         let written = [true, true, false, false, false, false];
         let mut sends = [[0.0; BLOCK_SIZE]; FX_SENDS];
-        let mut pans = PanCache::default();
+        let mut pans = MixState::default();
         let mut fx = Box::new(FxBus::new());
         let mut out = Box::new(DacBlocks::new());
         let mut blocks = Vec::new();
@@ -1327,7 +1341,7 @@ fn the_master_comp_ducks_pair_2_with_pair_1() {
         });
         let written = [true, true, false, false, false, false];
         let mut sends = [[0.0; BLOCK_SIZE]; FX_SENDS];
-        let mut pans = PanCache::default();
+        let mut pans = MixState::default();
         let mut fx = Box::new(FxBus::new());
         let mut out = Box::new(DacBlocks::new());
         let mut energy = 0.0f32;
