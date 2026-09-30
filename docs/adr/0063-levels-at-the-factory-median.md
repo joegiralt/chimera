@@ -1,7 +1,7 @@
 # 0063. INITs play at the factory median; BANK and the voice filter stop buzzing
 
 - **Status:** Proposed
-- **Deciders:** project owner (UAT 2026-09-30); firmware (Modal 2, task 19)
+- **Deciders:** project owner (UAT 2026-09-30); firmware
 - **Supersedes:** [0058](0058-a-loudness-reference-modal-matches-algo-init.md)
   (the reference at ALGO INIT's −15 LUFS)
 - **Relates to:** ADR 0049 (Algo INIT), ADR 0050 (the trim and the
