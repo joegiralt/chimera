@@ -69,7 +69,7 @@ the DAC from three places:
   the fold make DC from any asymmetric wave, by design. BOWED's
   sub-10 Hz drift, which BRIGHT and SPEED raise, is left to the voice's
   blocker. Its source is the bow's stick–slip, and changing it is the
-  bow's own work (#240).
+  bow's own work (#248, after #240).
 
 ## Consequences
 - **Cost:** 6.5 instructions a sample (24 per 4 samples, unrolled), 10
