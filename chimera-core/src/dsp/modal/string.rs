@@ -6,6 +6,7 @@ use core::ptr::addr_of_mut;
 
 use super::body::{Body, BodyMix};
 use super::dispersion::{DISPERSION_STAGES, Dispersion};
+use super::ensemble::{ENS_HEADS, Ensemble};
 use super::loop_parts::{Allpass1, LoopGain, MIN_LINE, Release, split};
 use crate::dsp::xorshift_noise;
 use crate::hw::SAMPLE_RATE;
@@ -28,9 +29,6 @@ pub(super) struct KsRenderParams {
     pub lp: f32,
     /// The loop's gain per pass.
     pub gain: LoopGain,
-    pub ens_rate: f32,
-    pub ens_depth: f32,
-    pub ens_mix: f32,
 }
 
 /// A fresh line's ring, before its first `set_period`.
@@ -42,9 +40,6 @@ pub(super) const RING_BYTES: usize = MAX_STRING_DELAY * size_of::<f32>();
 
 /// A fresh line's pluck noise.
 const NOISE_SEED: u32 = 0x8765_4321;
-
-/// The third ensemble head's fixed offset from the second.
-const ENS_SPREAD: f32 = 0.3;
 
 /// A delay line and its dirty extent: every sample at or past `dirty`
 /// reads 0.0, so a clear zeros `[0, dirty)` only. The loop reads `delay`
@@ -59,7 +54,6 @@ pub(super) struct KsString {
     ring_len: usize,
     delay: usize,
     dirty: usize,
-    ens_lfo_phase: u32,
     noise_state: u32,
     frac: Allpass1,
 }
@@ -76,7 +70,6 @@ impl KsString {
             addr_of_mut!((*p).ring_len).write(INIT_LEN);
             addr_of_mut!((*p).delay).write(INIT_LEN - 2);
             addr_of_mut!((*p).dirty).write(INIT_LEN);
-            addr_of_mut!((*p).ens_lfo_phase).write(0);
             addr_of_mut!((*p).noise_state).write(NOISE_SEED);
             addr_of_mut!((*p).frac).write(Allpass1::default());
             slot.assume_init_mut()
@@ -130,6 +123,15 @@ impl KsString {
         }]
     }
 
+    /// The line `delay` behind the last write, linearly interpolated:
+    /// `delay + 1 < ring_len`.
+    #[inline]
+    pub(super) fn read_frac(&self, delay: f32) -> f32 {
+        let i = delay as usize;
+        let f = delay - i as f32;
+        self.behind(i) + f * (self.behind(i + 1) - self.behind(i))
+    }
+
     /// Steps the write position on round the ring.
     #[inline]
     fn advance(&mut self) {
@@ -162,7 +164,6 @@ impl KsString {
         }
         // The oldest sample first.
         self.write_pos = len - 1;
-        self.ens_lfo_phase = 0;
     }
 
     /// Shapes the pluck `excite` wrote, in place, before the loop reads
@@ -236,7 +237,7 @@ impl KsString {
     }
 
     /// One pass of the loop, the low-pass, `disp` and the allpass, then
-    /// `gain` last, so nothing bypasses it; out through the ensemble.
+    /// `gain` last, so nothing bypasses it.
     #[inline]
     fn tick_full(
         &mut self,
@@ -244,7 +245,6 @@ impl KsString {
         gain: LoopGain,
         disp: Option<&mut Dispersion>,
     ) -> f32 {
-        let d = self.delay;
         let mut x = self.lowpass(p);
         if let Some(disp) = disp {
             x = disp.process(x);
@@ -252,31 +252,7 @@ impl KsString {
         let filtered = self.frac.process(x) * gain.get();
         self.advance();
         self.buffer[self.write_pos] = filtered;
-
-        // Ensemble: three read heads with LFO detuning
-        let mut output = filtered;
-        if p.ens_mix > 0.01 && p.ens_depth > 0.01 {
-            let lfo_inc = ((p.ens_rate + 0.01) * 1000.0) as u32;
-            self.ens_lfo_phase = self.ens_lfo_phase.wrapping_add(lfo_inc);
-
-            // Unipolar triangle: 0..1..0
-            let lfo_raw = (self.ens_lfo_phase >> 16) as i16;
-            let lfo_val = if self.ens_lfo_phase & 0x80000000 != 0 {
-                -(lfo_raw as f32 / 32768.0)
-            } else {
-                lfo_raw as f32 / 32768.0
-            };
-
-            let offset2 = (lfo_val * p.ens_depth * d as f32 * 0.05) as i32;
-            let offset3 = -offset2 + (ENS_SPREAD * d as f32 * 0.02) as i32;
-
-            // A head `offset` newer than the loop's read, round the loop.
-            let head = |offset: i32| self.behind((d as i32 - offset).rem_euclid(d as i32) as usize);
-            output =
-                filtered * (1.0 - p.ens_mix) + (head(offset2) + head(offset3)) * 0.5 * p.ens_mix;
-        }
-
-        output
+        filtered
     }
 
     /// `tick_full` for a sympathetic string, which has no dispersion,
@@ -290,7 +266,6 @@ impl KsString {
         input: f32,
         pending: &mut f32,
     ) -> f32 {
-        debug_assert!(p.ens_mix <= 0.01 || p.ens_depth <= 0.01);
         self.buffer[self.write_pos] = *pending + input;
         let filtered = self.frac.process(self.lowpass(p) * p.gain.get());
         self.advance();
@@ -314,7 +289,7 @@ pub(super) fn lp_coeff(bright: f32) -> f32 {
     c * (1.0 - c)
 }
 
-crate::in_place::field_list!(KsString => KsString { buffer, write_pos, ring_len, delay, dirty, ens_lfo_phase, noise_state, frac });
+crate::in_place::field_list!(KsString => KsString { buffer, write_pos, ring_len, delay, dirty, noise_state, frac });
 
 /// STRING's string, and SYMP's main one: the loop, STRUCTURE's
 /// dispersion in it, BODY on its output and the note-off's ramp.
@@ -331,11 +306,30 @@ pub(super) struct StringVoice {
     /// BODY, latched at note-on (spec § 1).
     body_mix: BodyMix,
     release: Release,
+    ens: Ensemble,
+    /// ENS DEPTH, its rate in Hz and MIX, latched at note-on (spec § 1).
+    ens_at: EnsAt,
 }
 
 crate::in_place::field_list!(StringVoice => StringVoice {
-    string, disp, stiff, structure, period, body, body_mix, release,
+    string, disp, stiff, structure, period, body, body_mix, release, ens, ens_at,
 });
+
+/// A note's ensemble: DEPTH, rate (Hz) and MIX; MIX 0 is off.
+#[derive(Clone, Copy)]
+pub(super) struct EnsAt {
+    pub depth: f32,
+    pub hz: f32,
+    pub mix: f32,
+}
+
+impl EnsAt {
+    pub(super) const OFF: Self = Self {
+        depth: 0.0,
+        hz: 1.0,
+        mix: 0.0,
+    };
+}
 
 /// The longest loop: the whole line, a one-sample fraction and the chain
 /// at STRUCTURE 0. A lower note plays this, at every STRUCTURE.
@@ -359,6 +353,8 @@ impl StringVoice {
             addr_of_mut!((*p).body).write(Body::new(SAMPLE_RATE));
             addr_of_mut!((*p).body_mix).write(Body::mix(0.0));
             addr_of_mut!((*p).release).write(Release::HELD);
+            addr_of_mut!((*p).ens).write(Ensemble::default());
+            addr_of_mut!((*p).ens_at).write(EnsAt::OFF);
             slot.assume_init_mut()
         }
     }
@@ -385,13 +381,13 @@ impl StringVoice {
     }
 
     /// A note-on: plucks `freq`, at `structure` if stiff (STRING) or with
-    /// no chain (`None`, SYMP's main string); BODY latched at `body`.
+    /// no chain (`None`, SYMP's main string); BODY and `ens` latched.
     pub(super) fn pluck(
         &mut self,
         (freq, sample_rate): (f32, u32),
         structure: Option<f32>,
         amplitude: f32,
-        body: f32,
+        (body, ens): (f32, EnsAt),
     ) {
         self.stiff = structure.is_some();
         self.structure = structure.unwrap_or(0.0);
@@ -401,6 +397,14 @@ impl StringVoice {
         self.body.reset();
         self.body_mix = Body::mix(body);
         self.release = Release::HELD;
+        self.ens = Ensemble::default();
+        self.ens_at = ens;
+    }
+
+    /// Per block, after any retune: the heads sized to the line in use.
+    pub(super) fn set_ensemble(&mut self, sample_rate: u32) {
+        let e = self.ens_at;
+        self.ens.set(e.depth, e.hz, self.string.delay, sample_rate);
     }
 
     /// Shapes the pluck at `position` of the loop's period (`KsString::shape`).
@@ -427,7 +431,8 @@ impl StringVoice {
         self.release.start(held, to);
     }
 
-    /// The string's next sample, before BODY.
+    /// The string's next sample, and the ensemble's heads on its line,
+    /// before BODY.
     #[inline]
     pub(super) fn tick(&mut self, p: &KsRenderParams) -> f32 {
         let gain = self.release.gain(p.gain);
@@ -436,7 +441,15 @@ impl StringVoice {
         } else {
             None
         };
-        self.string.tick_full(p, gain, disp)
+        let dry = self.string.tick_full(p, gain, disp);
+        let mix = self.ens_at.mix;
+        if mix <= 0.0 {
+            return dry;
+        }
+        let heads = self.ens.head_delays(self.string.delay);
+        self.ens.advance();
+        let wet = heads.iter().map(|&o| self.string.read_frac(o)).sum::<f32>();
+        dry + mix * (wet * (1.0 / ENS_HEADS as f32) - dry)
     }
 
     /// `x` through BODY, outside the loop.
@@ -464,7 +477,7 @@ mod tests {
         for note in [31, 48, 84, 108] {
             let freq = note_to_freq(note);
             for s in [0.0, 0.5, 1.0] {
-                v.pluck((freq, 48_000), Some(s), 1.0, 0.0);
+                v.pluck((freq, 48_000), Some(s), 1.0, (0.0, EnsAt::OFF));
                 let (period, _, w) = loop_at(freq, 48_000);
                 let d = v.string.delay();
                 assert!((MIN_LINE..=MAX_LINE).contains(&d), "{note} {s}: {d}");

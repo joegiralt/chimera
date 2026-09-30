@@ -33,6 +33,7 @@
 
 mod body;
 mod dispersion;
+mod ensemble;
 mod loop_parts;
 mod params;
 mod rings;
@@ -51,9 +52,12 @@ use crate::hw::{Cost, SAMPLE_RATE};
 use crate::in_place::{in_place_enum, uninit_at};
 use crate::sym_alloc::{Lease, SYM_SLOTS, SymAlloc, SymSlot};
 use crate::voice_alloc::VoiceIdx;
+use ensemble::rate_hz;
 use loop_parts::{DcBlocker, LoopGain, RELEASE_SAMPLES, RELEASE_T60, Release};
 use rings::{CosineOsc, Svf, stiffness_from_structure};
-use string::{FRESH_CLEAR_BYTES, KsRenderParams, KsString, RING_BYTES, StringVoice, lp_coeff};
+use string::{
+    EnsAt, FRESH_CLEAR_BYTES, KsRenderParams, KsString, RING_BYTES, StringVoice, lp_coeff,
+};
 
 /// Bytes the string lines' clears have written on this thread, since the
 /// last call: for the tests.
@@ -457,7 +461,7 @@ impl ModalEngine {
                     (freq, sample_rate),
                     Some(m.structure),
                     vel * params.excite,
-                    params.body,
+                    (params.body, ens_at(params, rate_hz(params.ens_rate))),
                 );
             }
             ModelSlot::Bowed(b) => {
@@ -470,8 +474,13 @@ impl ModalEngine {
             }
             ModelSlot::Sympathetic(v) => {
                 // STRUCTURE tunes the halo only: the main string is not stiff.
-                v.main
-                    .pluck((freq, sample_rate), None, vel * params.excite, params.body);
+                let ens = ens_at(params, rate_hz(SYMP_ENS_RATE));
+                v.main.pluck(
+                    (freq, sample_rate),
+                    None,
+                    vel * params.excite,
+                    (params.body, ens),
+                );
                 if let Some(set) = pool.halo(&v.halo) {
                     for sym in set.strings.iter_mut() {
                         // Sympathetic strings start silent — energy comes
@@ -599,7 +608,8 @@ impl ModalEngine {
                 bank.burst_remaining > 0
             }
             ModelSlot::String(v) => {
-                render_string(v, output, params, &m, f0);
+                v.set_ensemble(sample_rate);
+                render_string(v, output, &m, f0);
                 false
             }
             ModelSlot::Bowed(b) => {
@@ -609,6 +619,7 @@ impl ModalEngine {
             }
             ModelSlot::Sympathetic(v) => {
                 let v = &mut **v;
+                v.main.set_ensemble(sample_rate);
                 render_sympathetic(&mut v.main, pool.halo(&v.halo), output, (params, &m), f0);
                 false
             }
@@ -881,29 +892,32 @@ fn render_modal(bank: &mut ModalBank, output: &mut [f32; BLOCK_SIZE], max_level:
     }
 }
 
-fn render_string(
-    v: &mut StringVoice,
-    output: &mut [f32; BLOCK_SIZE],
-    params: &ModalParams,
-    m: &Macros,
-    f0: f32,
-) {
-    let p = main_string(params, m, params.ens_rate, f0);
+fn render_string(v: &mut StringVoice, output: &mut [f32; BLOCK_SIZE], m: &Macros, f0: f32) {
+    let p = main_string(m, f0);
     for s in output.iter_mut() {
         let x = v.tick(&p);
         *s = v.colour(x);
     }
 }
 
-/// The block's STRING or SYMP main string at `f0` Hz, with its own
-/// ensemble rate: its held gain, which a release caps.
-fn main_string(params: &ModalParams, m: &Macros, ens_rate: f32, f0: f32) -> KsRenderParams {
+/// The block's STRING or SYMP main string at `f0` Hz: its held gain,
+/// which a release caps.
+fn main_string(m: &Macros, f0: f32) -> KsRenderParams {
     KsRenderParams {
         lp: lp_coeff(m.bright),
         gain: LoopGain::from_t60(t60(m.damp), f0),
-        ens_rate,
-        ens_depth: params.ens_depth,
-        ens_mix: params.ens_mix,
+    }
+}
+
+/// A note's ensemble at `hz`: off at DEPTH or MIX 0.
+fn ens_at(params: &ModalParams, hz: f32) -> EnsAt {
+    if params.ens_depth <= 0.0 || params.ens_mix <= 0.0 {
+        return EnsAt::OFF;
+    }
+    EnsAt {
+        depth: params.ens_depth,
+        hz,
+        mix: params.ens_mix,
     }
 }
 
@@ -965,7 +979,7 @@ fn render_sympathetic(
     (params, m): (&ModalParams, &Macros),
     f0: f32,
 ) {
-    let main_params = main_string(params, m, SYMP_ENS_RATE, f0);
+    let main_params = main_string(m, f0);
     let coupling = 0.1 * params.couple;
     let level = 0.6 * params.halo;
 
@@ -982,9 +996,6 @@ fn render_sympathetic(
     let halo = set.ratios.map(|r| KsRenderParams {
         lp,
         gain: LoopGain::from_t60(halo_t60, f0 * r),
-        ens_rate: 0.0,
-        ens_depth: 0.0,
-        ens_mix: 0.0,
     });
     for s in output.iter_mut() {
         // 1. Main string tick
@@ -1068,7 +1079,7 @@ mod tests {
                 damp: damp_from_v1_decay(decay),
                 ..Default::default()
             };
-            let got = main_string(&p, &Macros::of(&p), 0.0, 130.81).gain.get();
+            let got = main_string(&Macros::of(&p), 130.81).gain.get();
             let want = 0.999 - 0.009 * decay;
             assert!((got - want).abs() < 1e-5, "DECAY {decay}: {got} vs {want}");
         }

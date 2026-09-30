@@ -14,8 +14,8 @@ use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::{MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
 use common::{
-    Rig, SR, assert_stable, clicks, fundamental_hz, play_modal, play_modal_at, play_modal_bare,
-    rms_diff, routes,
+    Rig, SR, assert_stable, clicks, fundamental_hz, goertzel, play_modal, play_modal_at,
+    play_modal_bare, rms_diff, routes,
 };
 
 const MODES: [ResonatorMode; 4] = [
@@ -105,10 +105,6 @@ fn strings_are_in_tune() {
     });
 }
 
-/// Held until Task 9: today's LFO moves the heads under a sample a second.
-const INAUDIBLE_UNTIL_T9: &[(ResonatorMode, chimera_core::block::ParamId)] =
-    &[(ResonatorMode::String, ModalParams::ENS_RATE)];
-
 /// Per model, from every continuous setting at 0.5 and MODES at 32, note
 /// 48 held 1 s: each setting at its min, middle and max. A setting the
 /// model reads changes the sound; one it ignores changes no bit. The
@@ -129,9 +125,6 @@ fn live_knobs_move_dimmed_knobs_do_not() {
             base.set(s.id, 0.5);
         }
         for s in MODAL_SPECS.iter().filter(|s| s.id != ModalParams::MODE) {
-            if INAUDIBLE_UNTIL_T9.contains(&(mode, s.id)) {
-                continue;
-            }
             let [lo, mid, hi] = [s.min, s.quantize((s.min + s.max) * 0.5), s.max].map(|v| {
                 let mut p = base;
                 p.set(s.id, v);
@@ -626,4 +619,94 @@ fn a_structure_step_at_g1_does_not_click() {
         let (k, base) = (kink(&routed), kink(&held[0]).max(kink(&held[1])));
         assert!(k <= 3.0 * base, "BRIGHT {bright}: kink {k}, held {base}");
     }
+}
+
+/// ENS on (DEPTH 1, MIX 0.5) against off (MIX 0), STRING note 48 at ENS
+/// RATE 0.5 (≈ 0.77 Hz), 4 s: energy spreads to ±10 cents of f0, and the
+/// level moves at the LFO's rate.
+#[test]
+fn ensemble_is_audible() {
+    let blocks = 4 * SR as usize / BLOCK_SIZE;
+    let [on, off] = [0.5, 0.0].map(|ens_mix| {
+        let p = ModalParams {
+            mode: ResonatorMode::String,
+            damp: 1.0,
+            bright: 0.7,
+            ens_depth: 1.0,
+            ens_rate: 0.5,
+            ens_mix,
+            ..Default::default()
+        };
+        play_modal(&p, 48, blocks, 0)
+    });
+    let f0 = note_to_freq(48);
+    let sideband = |x: &[f32]| {
+        let g = |cents: f32| goertzel(x, f0 * 2f32.powf(cents / 1200.0), SR);
+        20.0 * (0.5 * (g(10.0) + g(-10.0)) / g(0.0)).log10()
+    };
+    let spread = sideband(&on) - sideband(&off);
+    assert!(spread > 6.0, "sidebands up {spread:.1} dB");
+
+    // The 10 ms RMS envelope over seconds 1..4, in dB, less its line.
+    let wobble = |x: &[f32]| {
+        let w = SR as usize / 100;
+        let db: Vec<f64> = x[SR as usize..4 * SR as usize]
+            .chunks(w)
+            .map(|c| 20.0 * (common::rms(c) as f64).max(1e-9).log10())
+            .collect();
+        let n = db.len() as f64;
+        let mx = (n - 1.0) / 2.0;
+        let my = db.iter().sum::<f64>() / n;
+        let sxy: f64 = db
+            .iter()
+            .enumerate()
+            .map(|(i, y)| (i as f64 - mx) * (y - my))
+            .sum();
+        let sxx: f64 = (0..db.len()).map(|i| (i as f64 - mx).powi(2)).sum();
+        let slope = sxy / sxx;
+        let var = db
+            .iter()
+            .enumerate()
+            .map(|(i, y)| (y - my - slope * (i as f64 - mx)).powi(2))
+            .sum::<f64>()
+            / n;
+        var.sqrt()
+    };
+    let (w_on, w_off) = (wobble(&on), wobble(&off));
+    assert!(
+        w_on > 3.0 * w_off,
+        "level moves {w_on:.3} dB vs {w_off:.3} dB"
+    );
+}
+
+/// Review Focus 5: DEPTH 1, MIX 1 on G1's longest loop, at STRUCTURE 0 and
+/// 1 (the chain takes some of the line), at 0.1 Hz and 6 Hz, 30 s: the
+/// heads stay in the line, no clicks, bounded.
+#[test]
+fn ensemble_at_full_depth_on_g1_stays_in_the_line() {
+    let blocks = 30 * SR as usize / BLOCK_SIZE;
+    std::thread::scope(|scope| {
+        for structure in [0.0, 1.0] {
+            for ens_rate in [0.0, 1.0] {
+                scope.spawn(move || {
+                    let p = ModalParams {
+                        mode: ResonatorMode::String,
+                        damp: 1.0,
+                        structure,
+                        ens_depth: 1.0,
+                        ens_rate,
+                        ens_mix: 1.0,
+                        ..Default::default()
+                    };
+                    let out = play_modal(&p, 31, blocks, 0);
+                    let label = format!("STRUCTURE {structure} ENS RATE {ens_rate}");
+                    assert!(out.iter().all(|x| x.is_finite()), "{label}: finite");
+                    let peak = out.iter().fold(0.0_f32, |m, x| m.max(x.abs()));
+                    assert!(peak <= 1.5, "{label}: peak {peak}");
+                    let c = clicks(&out);
+                    assert!(c.is_empty(), "{label}: clicks {:?}", &c[..c.len().min(5)]);
+                });
+            }
+        }
+    });
 }
