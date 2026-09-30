@@ -117,6 +117,7 @@ pub mod comp;
 pub mod dc_blocker;
 pub mod delay;
 pub mod drive;
+pub mod ease;
 pub mod engines;
 pub mod envelope;
 pub mod filter;

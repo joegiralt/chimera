@@ -26,7 +26,6 @@ fn harmonic_energy(buf: &[f32], fundamental: f32) -> f32 {
 
 #[test]
 fn test_drive_adds_harmonics() {
-    let drive = Drive::new();
     let freq = 440.0;
 
     let mut clean = sine_buf(freq, 4096);
@@ -37,7 +36,7 @@ fn test_drive_adds_harmonics() {
         mix: 1.0,
         ..Default::default()
     };
-    drive.process(&mut clean, &params);
+    Drive::new().process(&mut clean, &params);
     let driven_harmonics = harmonic_energy(&clean, freq);
 
     assert!(
@@ -50,13 +49,12 @@ fn test_drive_adds_harmonics() {
 
 #[test]
 fn test_drive_at_zero_preserves_spectrum() {
-    let drive = Drive::new();
     let freq = 440.0;
 
     let original = sine_buf(freq, 4096);
     let mut processed = original.clone();
     let params = DriveParams::default(); // drive=0
-    drive.process(&mut processed, &params);
+    Drive::new().process(&mut processed, &params);
 
     let orig_h = harmonic_energy(&original, freq);
     let proc_h = harmonic_energy(&processed, freq);
@@ -71,7 +69,6 @@ fn test_drive_at_zero_preserves_spectrum() {
 
 #[test]
 fn test_drive_more_drive_more_harmonics() {
-    let drive = Drive::new();
     let freq = 440.0;
 
     let measure = |amount: f32| -> f32 {
@@ -81,7 +78,7 @@ fn test_drive_more_drive_more_harmonics() {
             mix: 1.0,
             ..Default::default()
         };
-        drive.process(&mut buf, &params);
+        Drive::new().process(&mut buf, &params);
         harmonic_energy(&buf, freq)
     };
 
@@ -105,7 +102,6 @@ fn test_drive_more_drive_more_harmonics() {
 
 #[test]
 fn test_drive_tone_changes_spectrum() {
-    let drive = Drive::new();
     let freq = 440.0;
 
     let measure = |tone: f32| -> f32 {
@@ -115,7 +111,7 @@ fn test_drive_tone_changes_spectrum() {
             tone,
             mix: 1.0,
         };
-        drive.process(&mut buf, &params);
+        Drive::new().process(&mut buf, &params);
         harmonic_energy(&buf, freq)
     };
 
@@ -323,7 +319,6 @@ fn test_filter_cutoff_sweep_changes_brightness() {
 
 #[test]
 fn test_folder_adds_harmonics() {
-    let folder = Wavefolder::new();
     let freq = 440.0;
 
     let clean = sine_buf(freq, 4096);
@@ -335,7 +330,7 @@ fn test_folder_adds_harmonics() {
         mix: 1.0,
         ..Default::default()
     };
-    folder.process(&mut folded, &params);
+    Wavefolder::new().process(&mut folded, &params);
     let folded_h = harmonic_energy(&folded, freq);
 
     assert!(
@@ -348,7 +343,6 @@ fn test_folder_adds_harmonics() {
 
 #[test]
 fn test_folder_more_fold_more_harmonics() {
-    let folder = Wavefolder::new();
     let freq = 440.0;
 
     let measure = |amount: f32| -> f32 {
@@ -358,7 +352,7 @@ fn test_folder_more_fold_more_harmonics() {
             mix: 1.0,
             ..Default::default()
         };
-        folder.process(&mut buf, &params);
+        Wavefolder::new().process(&mut buf, &params);
         harmonic_energy(&buf, freq)
     };
 

@@ -23,7 +23,7 @@ use chimera_core::hw::{
     BLOCK_SIZE, MAX_PARTS, MAX_VOICES, SAMPLE_RATE, SampleBudget, VOICE_RAM_BUDGET,
 };
 use chimera_core::instrument::{
-    AudioShared, DacBlocks, Instrument, PanCache, PartAudio, mix_parts,
+    AudioShared, DacBlocks, Instrument, MixState, PartAudio, mix_parts,
 };
 use chimera_core::mod_path::ModDestRegistry;
 use chimera_core::modulation::{CUTOFF, MAX_MOD_SOURCES, ModSource, ModState, VCA};
@@ -778,7 +778,7 @@ impl Rig<'_> {
         let buses = [noise; MAX_PARTS];
         let written = [true; MAX_PARTS];
         let mut sends = [[0.0; BLOCK_SIZE]; FX_SENDS];
-        let mut pans = PanCache::default();
+        let mut pans = MixState::default();
         let mut block = |shared: &mut AudioShared, fx: &mut FxBus, dac: &mut DacBlocks, b: u32| {
             each(shared, b);
             black_box(mix_parts(

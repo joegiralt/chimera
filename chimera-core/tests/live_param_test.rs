@@ -52,6 +52,14 @@ fn render_with_param_change(
     (rms(&before_buf), rms(&after_buf), before_buf, after_buf)
 }
 
+/// Blocks after a stage setting's change: its 20 ms ease settles in 15.
+const EASED: usize = 48;
+
+/// The last 8 blocks, after the ease.
+fn settled(after: &[f32]) -> &[f32] {
+    &after[after.len() - 8 * 64..]
+}
+
 fn harmonic_energy(buf: &[f32], f0: f32) -> f32 {
     (2..=8).map(|h| goertzel(buf, f0 * h as f32, SR)).sum()
 }
@@ -119,11 +127,11 @@ fn test_drive_amount_mid_note() {
             p.drive.drive = 0.9;
         },
         8,
-        8,
+        EASED,
     );
     let f0 = 261.6;
     let h_before = harmonic_energy(&before, f0);
-    let h_after = harmonic_energy(&after, f0);
+    let h_after = harmonic_energy(settled(&after), f0);
     assert!(
         h_after > h_before,
         "drive should add harmonics: before={} after={}",
@@ -146,11 +154,11 @@ fn test_folder_mid_note() {
             p.folder.mix = 1.0;
         },
         8,
-        8,
+        EASED,
     );
     let f0 = 261.6;
     let h_before = harmonic_energy(&before, f0);
-    let h_after = harmonic_energy(&after, f0);
+    let h_after = harmonic_energy(settled(&after), f0);
     assert!(
         h_after > h_before,
         "folder should add harmonics: before={} after={}",
@@ -305,7 +313,7 @@ fn test_bank_bright_mid_note() {
 
 #[test]
 fn test_volume_mid_note() {
-    let (before_rms, after_rms, _, _) = render_with_param_change(
+    let (before_rms, _, _, after) = render_with_param_change(
         |p| {
             *p = tri();
             p.out.volume = 0.8;
@@ -314,8 +322,10 @@ fn test_volume_mid_note() {
             p.out.volume = 0.1;
         },
         8,
-        8,
+        EASED,
     );
+    let tail = settled(&after);
+    let after_rms = libm::sqrtf(tail.iter().map(|s| s * s).sum::<f32>() / tail.len() as f32);
     assert!(
         after_rms < before_rms * 0.3,
         "reducing volume should reduce level: before={} after={}",
