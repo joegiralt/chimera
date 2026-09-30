@@ -18,8 +18,8 @@ pub struct ChainNav {
     pub sub_page: usize,
     /// The active Part's engine (resolves ChainId::Part to its chain def).
     pub engine: EngineType,
-    /// The last Part sound page left: (part, node, sub_page).
-    sound_left: (usize, usize, usize),
+    /// The last Part sound page left, with the engine it was on.
+    sound_left: SoundPage,
     /// The mixer page last used, for every Part (ADR 0057).
     mix_page: (usize, usize),
 }
@@ -37,32 +37,56 @@ impl ChainNav {
             node: 0,
             sub_page: 0,
             engine: EngineType::Algo,
-            sound_left: (0, 0, 0),
+            sound_left: SoundPage {
+                part: 0,
+                engine: EngineType::Algo,
+                node: 0,
+                sub_page: 0,
+            },
             mix_page: (block_registry::MIXER_HOME, 0),
         }
     }
 
-    /// Move to `to`: the mixer on its last page, Part n's sound pages on
-    /// the page left when coming from its mixer, anything else home.
+    /// Move to `to`: the mixer on its last page (PART only from another
+    /// mixer: from outside it opens SENDS), Part n's sound pages on the
+    /// page left when coming from its mixer, anything else home (ADR 0057).
     pub fn go(&mut self, to: ChainId) {
         let from = self.chain_id;
         match from {
-            ChainId::Part(p) => self.sound_left = (p, self.node, self.sub_page),
+            ChainId::Part(part) => {
+                self.sound_left = SoundPage {
+                    part,
+                    engine: self.engine,
+                    node: self.node,
+                    sub_page: self.sub_page,
+                }
+            }
             ChainId::Mixer(_) => self.mix_page = (self.node, self.sub_page),
             ChainId::System | ChainId::Demo => {}
         }
-        (self.node, self.sub_page) = match to {
-            ChainId::Mixer(_) => self.mix_page,
-            ChainId::Part(n) if from == ChainId::Mixer(n) && self.sound_left.0 == n => {
-                (self.sound_left.1, self.sound_left.2)
+        let left = self.sound_left;
+        (self.node, self.sub_page) = match (from, to) {
+            (ChainId::Mixer(_), ChainId::Mixer(_)) => self.mix_page,
+            (_, ChainId::Mixer(_)) if self.mix_page.0 == block_registry::MIXER_PART => {
+                (block_registry::MIXER_HOME, 0)
+            }
+            (_, ChainId::Mixer(_)) => self.mix_page,
+            (ChainId::Mixer(m), ChainId::Part(n)) if m == n && left.part == n => {
+                self.engine = left.engine;
+                (left.node, left.sub_page)
             }
             _ => (0, 0),
         };
         self.chain_id = to;
     }
 
-    /// Home, if the position is off the chain (the engine changed).
-    pub fn clamp(&mut self) {
+    /// The active Part's engine: a Part page kept for another engine, or
+    /// a position off the chain, goes home.
+    pub fn set_engine(&mut self, engine: EngineType) {
+        if matches!(self.chain_id, ChainId::Part(_)) && engine != self.engine {
+            (self.node, self.sub_page) = (0, 0);
+        }
+        self.engine = engine;
         let subs = self.active_chain_block().map(|b| b.sub_page_count().max(1));
         if subs.is_none_or(|n| self.sub_page >= n) {
             (self.node, self.sub_page) = (0, 0);
@@ -153,6 +177,15 @@ impl ChainNav {
         // Return whether position changed
         self.chain_id != prev_chain_id || self.node != prev_node || self.sub_page != prev_sub
     }
+}
+
+/// A Part sound page, and the engine whose chain it is on.
+#[derive(Clone, Copy, Debug)]
+struct SoundPage {
+    part: usize,
+    engine: EngineType,
+    node: usize,
+    sub_page: usize,
 }
 
 /// Where B<n> goes from `from`: Part n's sound pages and its mixer swap;
