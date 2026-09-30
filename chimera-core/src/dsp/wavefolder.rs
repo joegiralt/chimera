@@ -4,8 +4,8 @@ use crate::params::FolderParams;
 /// Post-filter wavefolder.
 /// Folds the signal by reflecting it at ±1 boundaries. SYM's bias shapes
 /// the fold, not the level: silence folds to silence. FOLD, SYM and MIX
-/// ramp across each block; below FOLD 0.001 the fold fades out over a
-/// block, then rests.
+/// ramp across each block; below FOLD 0.001 the gate fades the fold
+/// out over 20 ms, then rests.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Wavefolder {
     fold: Ramp,

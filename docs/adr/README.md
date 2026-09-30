@@ -27,7 +27,7 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0019](0019-note-input-per-source-queues.md) | One parser and one single-producer queue per note source | Accepted |
 | [0020](0020-audio-clocking-and-output.md) | Clock the chip by silicon revision; derive the cycle budget from it | Accepted; DTCM stack clause superseded in part by 0025 |
 | [0021](0021-take-once-triple-buffer.md) | Audio↔UI shared state uses a take-once triple buffer | Accepted |
-| [0022](0022-one-algorithmic-engine.md) | One algorithmic six-operator engine replaces Pizza, FM and VA | Accepted; VCA note superseded in part by [0035](0035-every-connection-is-a-matrix-route.md) |
+| [0022](0022-one-algorithmic-engine.md) | One algorithmic six-operator engine replaces Pizza, FM and VA | Accepted; VCA note superseded in part by [0035](0035-every-connection-is-a-matrix-route.md); superseded in part by [0060](0060-one-dc-blocker-per-voice.md) |
 | [0023](0023-waves-from-our-own-recipes.md) | The waves come from our own recipes | Accepted |
 | [0024](0024-morph-blends-link-weights.md) | MORPH blends link weights; one plan orders both algorithms | Accepted; output scale superseded in part by [0049](0049-algo-init-routed-morph-dims.md) |
 | [0025](0025-dtcm-holds-wave-tables-and-stack.md) | DTCM holds the wave tables and the stack | Accepted |
@@ -57,7 +57,7 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0053](0053-delay-mechanics-wow-and-irregular-flutter.md) | The delay's WOW becomes MECHANICS: a slow wow and an irregular flutter | Proposed |
 | [0054](0054-sympathetic-strings-from-a-shared-pool.md) | Sympathetic borrows its strings from a shared pool of four (supersedes 0052) | Accepted; voice size assert and `COST_SYMPATHETIC` superseded in part by [0056](0056-modal-resonators-share-four-macros.md) |
 | [0055](0055-master-tape-off-the-chain.md) | The master tape stage is off the chain, kept behind `master-tape` (supersedes in part 0030) | Proposed |
-| [0056](0056-modal-resonators-share-four-macros.md) | Modal's resonators share four modulatable macros; loops are stable by construction (supersedes in part 0010, 0040, 0042, 0054) | Proposed |
+| [0056](0056-modal-resonators-share-four-macros.md) | Modal's resonators share four modulatable macros; loops are stable by construction (supersedes in part 0010, 0040, 0042, 0054) | Proposed; superseded in part by [0060](0060-one-dc-blocker-per-voice.md) |
 | [0057](0057-part-button-toggles-sound-and-mixer.md) | The Part button toggles sound and mixer; the mixer opens on SENDS | Proposed |
 | [0058](0058-a-loudness-reference-modal-matches-algo-init.md) | A loudness reference: every Modal model's INIT plays as loud as ALGO INIT | Proposed |
 | [0059](0059-music-theory-crate-built-from-types.md) | Music theory is its own crate, built from types | Proposed |

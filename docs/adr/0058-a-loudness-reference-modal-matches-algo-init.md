@@ -83,7 +83,7 @@ Nothing tied one engine's level to another's:
     also judged its silence after the gain, 10 to 23 dB further down the
     ring, so voices lived longer.
   - At the VCA the gain is exact, linear and bit-for-bit elsewhere.
-- **The factory median (about −25 LUFS) as the reference, with ALGO INIT
+- **The factory median (about −22 LUFS) as the reference, with ALGO INIT
   brought down to it.** The sweep recommended this. It was rejected
   because the complaint is that Modal is quiet, and existing FM patches
   must not change.
@@ -102,7 +102,7 @@ Nothing tied one engine's level to another's:
 
   | Model | Velocity 100 | Velocity 127 |
   |---|---|---|
-  | STRING | 8.4 dB peak, 1.78 dB loudness | 10.5 dB peak, 2.81 dB loudness |
+  | STRING | 8.4 dB peak, 1.78 dB loudness | 10.2 dB peak, 2.79 dB loudness |
   | SYMP | 0 | 1.7 dB peak, 0.17 dB loudness |
   | BOWED | 0.3 dB peak, 0.02 dB loudness | 0.4 dB peak, 0.03 dB loudness |
   | BANK | 0 | 0 |
@@ -118,17 +118,14 @@ Nothing tied one engine's level to another's:
 - **Some DC now shows.** Each model's DC keeps its ratio to the note, but
   its absolute level rises with the gain. At the DAC it now crosses the
   sweep's −46 dBFS in a few cases:
-  - BOWED BRIGHT high: the filter saturates the bow's sawtooth, which is
-    the known voice-DC defect;
+  - BOWED BRIGHT high: the bow's own drift below 10 Hz (#248);
   - SYMP at COUPLE or HALO 1, or PITCH +12: the halo drifts below the
     blocker's 10 Hz;
   - BANK at STRUCTURE 1: the bank's output has no blocker.
 
-  The sweep counts each as a known defect, pinned by an ignored test that
-  fails until it is fixed:
-  - BOWED's DC is `defect_filter_puts_dc_on_a_bright_bow`;
-  - SYMP's and BANK's DC is `defect_modal_engines_put_dc_on_the_dac`,
-    for Task 17 to fix.
+  ADR 0060's per-voice blocker removes all three. Live tests pin it:
+  `a_bright_bow_puts_no_dc_on_the_dac` for BOWED and
+  `the_modal_engines_put_no_dc_on_the_dac` for SYMP and BANK.
 - **Velocity response is still per path:**
   - ALGO INIT and BOWED: 0 dB;
   - STRING and SYMP: +6 dB from velocity 64 to 127;
