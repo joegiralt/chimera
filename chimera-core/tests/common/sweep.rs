@@ -780,3 +780,66 @@ pub fn level(patch: Patch, notes: &[u8], vel: u8, blocks: usize) -> Level {
             - lufs(tape.pair(0, 1, blocks + 1)),
     }
 }
+
+/// `x`'s Welch power spectrum: `n`-point Hann frames (`n` a power of two)
+/// at 50 % overlap, averaged; bin `k` is `k · SR / n` Hz.
+pub fn power(x: &[f32], n: usize) -> Vec<f64> {
+    use std::f64::consts::TAU;
+    let mut acc = vec![0.0; n / 2];
+    let mut frames = 0;
+    let mut i = 0;
+    while i + n <= x.len() {
+        let mut re: Vec<f64> = (0..n)
+            .map(|k| x[i + k] as f64 * (0.5 - 0.5 * (TAU * k as f64 / n as f64).cos()))
+            .collect();
+        let mut im = vec![0.0; n];
+        // Radix-2, in place.
+        let mut j = 0;
+        for a in 1..n {
+            let mut bit = n >> 1;
+            while j & bit != 0 {
+                j ^= bit;
+                bit >>= 1;
+            }
+            j |= bit;
+            if a < j {
+                re.swap(a, j);
+                im.swap(a, j);
+            }
+        }
+        let mut len = 2;
+        while len <= n {
+            let (wr, wi) = ((-TAU / len as f64).cos(), (-TAU / len as f64).sin());
+            for s in (0..n).step_by(len) {
+                let (mut cr, mut ci) = (1.0, 0.0);
+                for k in 0..len / 2 {
+                    let (a, b) = (s + k, s + k + len / 2);
+                    let (tr, ti) = (re[b] * cr - im[b] * ci, re[b] * ci + im[b] * cr);
+                    (re[b], im[b]) = (re[a] - tr, im[a] - ti);
+                    (re[a], im[a]) = (re[a] + tr, im[a] + ti);
+                    (cr, ci) = (cr * wr - ci * wi, cr * wi + ci * wr);
+                }
+            }
+            len <<= 1;
+        }
+        for (k, a) in acc.iter_mut().enumerate() {
+            *a += re[k] * re[k] + im[k] * im[k];
+        }
+        frames += 1;
+        i += n / 2;
+    }
+    acc.iter().map(|a| a / frames.max(1) as f64).collect()
+}
+
+/// `notes` at `vel` on `patch`, held `blocks`: P1's left side, limited.
+pub fn p1_left(patch: Patch, notes: &[u8], vel: u8, blocks: usize) -> Vec<f32> {
+    let mut b = Bench::new(patch, PartParams::default(), FxParams::default());
+    let mut tape = Tape::default();
+    for &n in notes {
+        b.note(n, Some(vel));
+    }
+    for _ in 0..blocks {
+        b.render(&mut tape);
+    }
+    tape.out[0].iter().step_by(2).copied().collect()
+}

@@ -64,3 +64,4 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0060](0060-one-dc-blocker-per-voice.md) | Block DC once per voice, after its last nonlinear stage (supersedes in part 0022, 0056) | Proposed |
 | [0061](0061-settings-ease-effects-run-at-mix-0.md) | Every continuous setting eases; an effect runs at MIX 0 | Proposed |
 | [0062](0062-modal-notes-ring-free.md) | A Modal note rings free, a re-struck key re-plucks its string, the halo glides (supersedes in part 0056) | Proposed |
+| [0063](0063-levels-at-the-factory-median.md) | BANK and the voice filter stop buzzing | Proposed |

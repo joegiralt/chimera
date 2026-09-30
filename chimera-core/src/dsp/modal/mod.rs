@@ -561,7 +561,10 @@ impl ModalEngine {
                 }
                 let burst_ms = 2.0 + params.burst * 4.0;
                 bank.burst_remaining = (burst_ms * sample_rate as f32 / 1000.0) as usize;
-                bank.burst_amp = vel * params.excite;
+                // As loud a strike at every pitch: the modes' gain rises
+                // with f0, so the burst falls with it, C3 as it was.
+                bank.burst_amp =
+                    vel * params.excite * BURST_AT_C3 / (bank_freq * sample_rate as f32);
                 bank.burst_lp = 0.0;
             }
             ModelSlot::String(v) if restrike => v.restrike(vel * params.excite, params.color),
@@ -1092,8 +1095,9 @@ fn render_modal(bank: &mut ModalBank, output: &mut [f32; BLOCK_SIZE]) {
             odd += bank.cos_osc.next() * bank.filters[i].process_bp(input);
         }
 
-        // Sum to mono, scale up, soft-limit
-        *s = libm::tanhf(odd + even) * 2.0;
+        // Sum to mono and soft-limit, a quarter of Rings' 2× out: the
+        // voice's filter after it stays under its knee (`out_gain` makes up).
+        *s = libm::tanhf(odd + even) * 0.5;
     }
 }
 
@@ -1128,11 +1132,14 @@ fn ensemble(params: &ModalParams, hz: f32, sample_rate: u32) -> (f32, Ensemble) 
 pub const fn out_gain(mode: ResonatorMode) -> f32 {
     match mode {
         ResonatorMode::String => 10.96,
-        ResonatorMode::Modal => 2.10,
+        ResonatorMode::Modal => 11.83,
         ResonatorMode::Bowed => 1.62,
         ResonatorMode::Sympathetic => 4.24,
     }
 }
+
+/// C3, Hz: the bank's burst level there is EXCITE's, and falls as 1/f0.
+const BURST_AT_C3: f32 = 130.81;
 
 /// SPEED 1's bow velocity; SPEED 0.5 is the old `BOW_VELOCITY · 0.3`.
 const BOW_SPEED: f32 = 0.3;

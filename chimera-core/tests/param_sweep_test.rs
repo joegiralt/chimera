@@ -749,8 +749,9 @@ fn levels_are_safe() {
     }
 }
 
-/// ADR 0058's reference: ALGO INIT's C4 at velocity 100 on P1, LUFS.
-const REFERENCE_LUFS: f32 = -15.0;
+/// ADR 0058's reference: ALGO INIT's C4 at velocity 100 on P1, LUFS; 0.1
+/// dB up through the filter's C1 `saturate` (ADR 0063).
+const REFERENCE_LUFS: f32 = -14.9;
 
 /// ADR 0058: ALGO INIT sits at the reference, ±0.1 dB, and each Modal
 /// model's INIT, one C4 at velocity 100, within ±1 dB of it. The limiter
@@ -1370,4 +1371,43 @@ fn report(sw: &Sweep) -> String {
         }
     }
     s
+}
+
+/// The owner's UAT (2026-09-30): BANK was harsh high up. BANK INIT's C5 at
+/// v100 on P1, 50 ms to 1 s: the energy over 8 kHz at least 50 dB under
+/// its fundamental's band (a half-octave round f0).
+#[test]
+fn a_high_bank_note_is_not_harsh() {
+    let bank = Patch::ModalInit(ResonatorMode::Modal);
+    let x = p1_left(bank, &[72], 100, BPS);
+    let p = power(&x[2400..48_000], 8192);
+    let hz = |k: usize| k as f64 * 48_000.0 / 8192.0;
+    let f0 = 523.25;
+    let band = |lo: f64, hi: f64| -> f64 {
+        p.iter()
+            .enumerate()
+            .filter(|&(k, _)| hz(k) >= lo && hz(k) < hi)
+            .map(|(_, v)| v)
+            .sum()
+    };
+    let (hf, fund) = (
+        band(8000.0, 24_000.0),
+        band(f0 / 2f64.sqrt(), f0 * 2f64.sqrt()),
+    );
+    let db = 10.0 * (hf / fund).log10();
+    assert!(db <= -50.0, "over 8 kHz: {db:.1} dB re the fundamental");
+}
+
+/// BANK INIT's loudness from C2 to C6 at v100 spans at most 6 dB: the
+/// strike's level follows the pitch, as the modes' gain rises with it.
+#[test]
+fn bank_loudness_is_even_across_the_keyboard() {
+    let bank = Patch::ModalInit(ResonatorMode::Modal);
+    let l: Vec<f32> = [36u8, 48, 60, 72, 84]
+        .iter()
+        .map(|&n| level(bank, &[n], 100, BPS).lufs)
+        .collect();
+    let spread =
+        l.iter().fold(f32::MIN, |m, &x| m.max(x)) - l.iter().fold(f32::MAX, |m, &x| m.min(x));
+    assert!(spread <= 6.0, "C2 to C6: {l:?} LUFS, {spread:.1} dB apart");
 }
