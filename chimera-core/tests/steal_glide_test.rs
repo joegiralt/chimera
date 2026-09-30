@@ -47,10 +47,15 @@ struct Rig {
 impl Rig {
     /// Room for one voice of Part 1's Sound: every other note steals.
     fn one_voice(shared: &AudioShared) -> Self {
+        Self::voices(shared, 1)
+    }
+
+    /// Room for `n` voices of Part 1's Sound.
+    fn voices(shared: &AudioShared, n: u32) -> Self {
         let p = &shared.parts[0];
         let cost = Voice::cost(&p.params, &p.mod_state).0;
         Self {
-            inst: Box::new(Instrument::new(SR, budget(cost))),
+            inst: Box::new(Instrument::new(SR, budget(n * cost))),
             fx: Box::new(FxBus::new()),
             dac: Box::new(DacBlocks::new()),
             scope: common::scope_writer(),
@@ -262,4 +267,34 @@ fn another_parts_steal_cuts() {
         s.iter().any(|s| s.part() == Some(1)),
         "Part 2 took the voice"
     );
+}
+
+/// A fast glide down, at TIME's slider 0 (1 ms) and 0.3 (10 ms), shortens
+/// nothing it plays: the loop lengthened faster than it is written reads
+/// the ring's continuation, the old cycle, not silence. No block of the
+/// first 40 is more than 10 dB under the block before the steal: a C2
+/// cycle spans 11 blocks, and a CUT steal's own blocks dip to −7 dB on
+/// its quiet parts; reading the gap dipped 30 to 43.
+#[test]
+fn a_fast_glide_down_never_drops_out() {
+    let cases = [
+        ("STRING", ResonatorMode::String, (72, 36)),
+        ("SYMP", ResonatorMode::Sympathetic, (72, 36)),
+        ("STRING", ResonatorMode::String, (G3, C3)),
+    ];
+    for (name, mode, (from, to)) in cases {
+        for time in [0.0, 0.3] {
+            let mut shared = part(EngineType::Modal, Some(mode), Steal::Glide);
+            shared.parts[0].params.pitch.glide_time = time;
+            let (out, _) = steal(&shared, (from, to), 40);
+            let before = common::rms(&out[..BLOCK_SIZE]);
+            for (k, b) in out[BLOCK_SIZE..].chunks(BLOCK_SIZE).enumerate() {
+                let db = 20.0 * (common::rms(b) / before).log10();
+                assert!(
+                    db > -10.0,
+                    "{name} {from}→{to} TIME {time}: block {k} {db:.1} dB"
+                );
+            }
+        }
+    }
 }

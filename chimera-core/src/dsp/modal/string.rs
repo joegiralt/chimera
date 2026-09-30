@@ -93,22 +93,34 @@ impl KsString {
         self.grow(delay + 2);
     }
 
-    /// Room for a loop of up to `period` samples, the line where it is: a
-    /// glide that lengthens it then reads only what it has written. Grown a
-    /// step at a time, a gap of two or more is read before it is written.
+    /// Room for a loop of up to `period` samples, the line where it is:
+    /// grown once, as a glide starts, not a step each block.
     pub(super) fn fit(&mut self, period: f32) {
-        self.grow((period.min(MAX_STRING_DELAY as f32) as usize + 3).min(MAX_STRING_DELAY));
+        self.grow(Self::fit_len(period));
     }
 
-    /// The ring at least `need` long; never shorter mid-note.
+    fn fit_len(period: f32) -> usize {
+        (period.min(MAX_STRING_DELAY as f32) as usize + 3).min(MAX_STRING_DELAY)
+    }
+
+    /// The ring at least `need` long; never shorter mid-note. The oldest
+    /// samples move up past a new gap, which holds the loop's periodic
+    /// continuation, each sample the one a period younger: a loop that
+    /// lengthens faster than it writes (a fast glide down) reads the old
+    /// cycle again, not silence. On a cleared line it is silence.
     fn grow(&mut self, need: usize) {
         if need > self.ring_len {
-            // The oldest samples move up past the new gap, which reads silent.
             let (w, grow) = (self.write_pos + 1, need - self.ring_len);
             self.buffer.copy_within(w..self.ring_len, w + grow);
-            self.buffer[w..w + grow].fill(0.0);
             self.ring_len = need;
             self.dirty = self.dirty.max(need);
+            // The gap's ages, youngest first: `need − grow` to `need − 1`.
+            let period = self.delay + 1;
+            for j in (0..grow).rev() {
+                let age = need - 1 - j;
+                let src = (self.write_pos + need - (age - period.min(age))) % need;
+                self.buffer[w + j] = self.buffer[src];
+            }
         }
     }
 
