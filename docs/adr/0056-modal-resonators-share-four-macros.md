@@ -230,7 +230,8 @@ Task 10 gives SYMP its chords, COUPLE and HALO:
   output, the fractional tuning, BODY, the ensemble, the release, the
   octave fold, the chord glide and the macro mapping.
 
-Task 11 bills the models and re-records the goldens:
+Task 11 bills the models and re-records the goldens (its figures are
+superseded by task 11b's, below):
 - `COST_*` are host estimates until the ship flash's bench rows: the
   model's last benched bill, plus the hot path's added instructions in the
   thumbv7em release build (before at 6f8fffc, after), at 1.46 cycles an
@@ -297,6 +298,70 @@ Task 11 bills the models and re-records the goldens:
   STRUCTURE a chord on every 8 blocks), SYM LFO (a route into STRUCTURE),
   RES and RES48.
 
+Task 11b brings the hot paths back within budget, bit for bit (no golden
+moves):
+- Each string runs its block, not a sample at a time
+  (`StringVoice::render`, `KsString::run_coupled`). A ring is walked in
+  spans where neither the write nor the low-pass's newest tap wraps, so no
+  read is wrapped or bounds-checked per sample, and the loop's state (the
+  allpasses, the dispersion, the ensemble's LFO) stays in registers. The
+  low-pass's two older taps are carried from the sample before: no write
+  lands on them in between, as the write runs `d + 1 ≥ 3` samples ahead of
+  the oldest.
+- The halo runs string by string over the block, each summed into a
+  block buffer in string order, as the per-sample sum was. A gliding set
+  runs in `GLIDE_STEP` runs, each re-split between them as before.
+- The ensemble's heads wrap only while the write is within
+  `Ensemble::reach` of the ring's start (`set` holds the LFO's radius to 1
+  within 1e-5, so no head passes `2 + 2.001·A`); those samples, and a
+  release's ramp, run in the spans' slow form.
+- BODY runs over the block (`Body::process_block`), its three band-passes'
+  state in registers.
+- The per-sample paths (`StringVoice::tick`, `KsString::tick_coupled`)
+  remain as the tests' reference: `render_is_tick_bit_for_bit` and
+  `run_coupled_is_tick_coupled_bit_for_bit` pin every chain, ensemble,
+  line length and release case.
+- Counted as task 11's were, with two rules added: a span's per-block work
+  is taken at the bench's notes (C3 up in fifths: 2.2 spans a block), and a
+  saving is taken at 90 %. Instructions a sample:
+
+  | Path | Symbols | Task 11 | Task 11b |
+  |---|---|---|---|
+  | STRING string | `StringVoice::render`, `run::<true, false>`: a fast span 85 per 4 samples; entry, prologue and exit 127 a block; a span's head and remainder 63 | 108 | 25.4 |
+  | STRING loop | `ModalEngine::render`'s STRING arm and BODY's early return | 13 | 0.3 |
+  | Output blocker and level | as task 11 | 7.8 | 7.8 |
+  | STRING total, BODY 0 | | 128.8 | 33.5 |
+  | BODY | `Body::process_block`: 90 per 2 samples, 94 a block | 65 (80) | 46.5 |
+  | Ensemble | `run::<true, true>`'s fast span 101 less 21.25; its slow spans, the extra span a ring and `Ensemble::set` 1.8 | 94 | 82 |
+  | SYMP main string | `run::<false, false>`: 44 per 4 samples; 127 a block; a span 57 | 80 | 14.9 |
+  | SYMP halo string, each of 7 | `KsString::run_coupled`: 62 per 4 samples; a call 71; a span 65 | 87 | 18.8 |
+  | SYMP per sample, besides | the coupled input (55 per 16) and the two buffers' clears (116 each), the runs' setup 150, the mix (71 per 16), BODY's call, the `tanhf` dispatch 17 | 26 + 19 | 31.7 |
+  | SYMP total, BODY 0 | main + 7 halo + the rest, after the blocker | 741.8 | 186.2 |
+  | CHORD's cut block | a gliding halo in four runs: 3 × (87 + 7 × (71 + 65)) a block | — | 46 |
+
+  | Term | Task 11 | Task 11b | From (vs 6f8fffc) |
+  |---|---|---|---|
+  | `COST_STRING` | 460 | 330 | 99 → 33.5 instructions, −86 cycles; DAMP's `powf`s and the re-split, +18 |
+  | `COST_SYMPATHETIC` | 1,370 | 540 | 419 → 186.2 instructions, −306 cycles; ten `powf`s a block, +35 |
+  | `BODY` | 130 | 80 | 46.5 instructions |
+  | `ENSEMBLE` | 160 | 140 | 82 instructions |
+  | `CHORD` | 100 | 180 | the re-splits and lerp, 60, and the cut block, 46 |
+  | `COST_BOWED`, `COST_BANK`, `PITCH` | 720, 460, 30 | unchanged | |
+
+- Voices beside the whole FX bus at its worst (rev V, rev Y; with the
+  master tape the same unless noted): STRING bare 8, 8; at the default
+  BODY 8, 8; with the ensemble 8, 7. BOWED 7, 6 (tape 7, 5). SYMP bare 8,
+  7; at the default BODY 8, 6; with the ensemble 7, 5 (tape 6, 5); with a
+  STRUCTURE route at the default BODY 6, 5. BANK as task 11. SYMP at the
+  default BODY bills 620 against the 916 that keeps 6 on rev V.
+- The shortest rings wrap most: at a 23-sample ring a block takes 6.6
+  spans, STRING about 30 instructions a sample and a halo string about 23,
+  still under task 11's per-sample paths.
+- I-cache: `StringVoice::render` is 8 KB (four variants, each a fast and a
+  slow span), `KsString::run_coupled` 1 KB, `Body::process_block` 0.7 KB;
+  a voice's block touches one variant's fast span. Misses stay unbilled
+  until the bench.
+
 Measured on the chip (the ship flash; to fill in, rev V at 480 MHz):
 - MDL STR /VOICE —, STR0 —, STR E —, STR+ —; BOW —; SYM —, SYM0 —, SYM+ —, SYM
   LFO —; RES —, RES48 —.
@@ -340,13 +405,16 @@ Open for the owner:
   (https://github.com/joegiralt/chimera/issues/232). Under a PITCH route
   the strings are still plucked at the unpitched length, as before this
   step (https://github.com/joegiralt/chimera/issues/233).
-- SYMP costs far more than it did, almost all in the halo's three-tap
-  low-pass and tuning allpass. On this estimate it plays 3 voices on rev V
-  at the default BODY, so the pool of four never fills there. Ruled (task
-  11b, before the ship flash): SYMP is optimised to bill 916 or less with
-  BODY on (6 voices on rev V), and the default STRING Sound (BODY 0.3) keeps
-  8 voices on rev V and rev Y; BODY and `ENSEMBLE` come down where the code
-  allows.
+- Task 11's estimate put SYMP at 3 voices on rev V at the default BODY, so
+  the pool of four never filled there. Ruled (task 11b, before the ship
+  flash): SYMP bills 916 or less with BODY on (6 voices on rev V), the
+  default STRING Sound (BODY 0.3) keeps 8 voices on rev V and rev Y, and
+  BODY and `ENSEMBLE` come down where the code allows. Task 11b's
+  block-at-a-time strings bill SYMP 620 and the default STRING 410 at the
+  default BODY, both below their pre-step-A bills, bit for bit.
+- A voice's strings now run in spans, so a string's state lives in its
+  struct only between blocks: anything that reads a line mid-block (the
+  ensemble's heads) reads it inside the span.
 - Modal's goldens and the INIT Modal fixtures moved, and were re-recorded
   once, at the end of step A (task 11).
 

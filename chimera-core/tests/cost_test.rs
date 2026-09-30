@@ -34,7 +34,7 @@ fn worst() -> AlgoParams {
     p
 }
 
-/// The Modal Sound, STRING at BODY 0.3: `COST_STRING` 460 and `BODY` 130,
+/// The Modal Sound, STRING at BODY 0.3: `COST_STRING` 330 and `BODY` 80,
 /// host estimates until the bench (Modal 2 step A, task 12), plus
 /// `CHAIN_COST`. Algo is priced from its patch.
 #[test]
@@ -42,7 +42,7 @@ fn voice_costs_are_the_billed_literals() {
     assert_eq!(Voice::CHAIN_COST, Cost(10));
     assert_eq!(
         voice_cost(EngineType::Modal),
-        Cost(600) + ModRouting::BASE + LP24
+        Cost(420) + ModRouting::BASE + LP24
     );
     let mods = ModState::new();
     for e in EngineType::ALL {
@@ -781,7 +781,7 @@ fn a_pitch_route_on_modal_bills_the_retune() {
 fn a_structure_route_on_symp_bills_the_chord_glide() {
     use chimera_core::addr::{BlockRef, ParamAddr};
     use chimera_core::dsp::modal::{ModalEngine, ModalParams, ResonatorMode};
-    assert_eq!(ModalEngine::CHORD, Cost(100));
+    assert_eq!(ModalEngine::CHORD, Cost(180));
     let routed = |amount| {
         let mut ms = ModState::from_registry(&chimera_core::mod_path::ModDestRegistry::new(), 8);
         let d = ms
@@ -830,13 +830,13 @@ fn modal_bills_each_model() {
     use ResonatorMode::{Bowed, Modal, String, Sympathetic};
     // Voices on rev V and rev Y, then with the master tape (ADR 0055).
     for (p, billed, voices, taped) in [
-        (sound(String, 0.0, 0.0), 460, (8, 8), (8, 8)),
-        (sound(String, 0.3, 0.0), 590, (8, 7), (8, 6)),
-        (sound(String, 0.3, 0.5), 750, (7, 5), (6, 5)),
+        (sound(String, 0.0, 0.0), 330, (8, 8), (8, 8)),
+        (sound(String, 0.3, 0.0), 410, (8, 8), (8, 8)),
+        (sound(String, 0.3, 0.5), 550, (8, 7), (8, 7)),
         (sound(Bowed, 0.3, 0.5), 720, (7, 6), (7, 5)),
-        (sound(Sympathetic, 0.0, 0.0), 1_370, (4, 3), (3, 3)),
-        (sound(Sympathetic, 0.3, 0.0), 1_500, (3, 3), (3, 2)),
-        (sound(Sympathetic, 0.3, 0.5), 1_660, (3, 2), (3, 2)),
+        (sound(Sympathetic, 0.0, 0.0), 540, (8, 7), (8, 7)),
+        (sound(Sympathetic, 0.3, 0.0), 620, (8, 6), (8, 6)),
+        (sound(Sympathetic, 0.3, 0.5), 760, (7, 5), (6, 5)),
         (sound(Modal, 0.3, 0.5), 1_900, (2, 2), (2, 2)),
     ] {
         let (rev_v, rev_y) = if cfg!(feature = "master-tape") {
