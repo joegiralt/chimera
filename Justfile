@@ -21,7 +21,7 @@ build:
 # pkg-config file; point PKG_CONFIG_PATH at it if it is not installed
 # system-wide.
 check:
-    cargo test -p chimera-core -p chimera-hal -p chimera-waves -p chimera-fat --features chimera-hal/testkit
+    cargo test -p chimera-core -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory --features chimera-hal/testkit
     cargo test -p chimera-core --features master-tape
     just test-fat-tools
     cargo test -p chimera-desktop
@@ -32,6 +32,7 @@ check:
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --features bench,master-tape
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --features sd-probe
     cargo build -p chimera-bootloader --target thumbv7em-none-eabihf
+    cargo build -p chimera-theory --target thumbv7em-none-eabihf
     just clippy
     cargo fmt --all -- --check
     just stack-check
@@ -62,7 +63,7 @@ stack-check:
 
 # Run tests
 test:
-    cargo test -p chimera-core -p chimera-hal -p chimera-waves -p chimera-fat --features chimera-hal/testkit
+    cargo test -p chimera-core -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory --features chimera-hal/testkit
     just test-fat-tools
 
 # The FAT layer checked by dosfstools (ADR 0048): mkfs.fat images must read
@@ -74,7 +75,7 @@ test-fat-tools:
 
 # Clippy on every target and feature set `check` builds, test targets included
 clippy:
-    cargo clippy -p chimera-core -p chimera-hal -p chimera-desktop -p chimera-waves -p chimera-fat --features chimera-hal/testkit --all-targets -- -D warnings
+    cargo clippy -p chimera-core -p chimera-hal -p chimera-desktop -p chimera-waves -p chimera-fat -p chimera-theory --features chimera-hal/testkit --all-targets -- -D warnings
     cargo clippy -p chimera-core --features master-tape --all-targets -- -D warnings
     cargo clippy -p chimera-desktop --no-default-features --all-targets -- -D warnings
     cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf -- -D warnings
