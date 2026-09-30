@@ -330,7 +330,7 @@ impl ModalEngine {
     /// (ADR 0052), plus 10 % (a saving taken at 90 %), rounded up to 10.
     /// Per-block work is spread over the block's 64 samples, a ring's
     /// wrap-free spans at the bench's notes (2.2 a block); a `powf` or a
-    /// `set_period` is taken as about 130 instructions (ADR 0056, task 11b).
+    /// `set_period` is taken as about 130 instructions (ADR 0056, Costs).
     ///
     /// STRING, 390 − 69, rounded up to 330: 99 instructions a sample to
     /// 34 (the string's spans, 21 a sample, the three-tap low-pass, four
