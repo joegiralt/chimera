@@ -43,6 +43,8 @@ pub enum RegionData {
         sounding: bool,
         /// The ENV title's TYPE suffix (`renderer::title_type`).
         title_type: u8,
+        /// The Part's OUT, for its warning (`renderer::header_out`).
+        out: u8,
     },
     /// The focus band: which slot, its animated value, and any pending
     /// prime-status message (issue #21) shown in the value's place.
@@ -115,6 +117,7 @@ impl RegionData {
         load_pct: u8,
         sounding: bool,
         title_type: u8,
+        out: u8,
     ) -> Self {
         Self::Header {
             chain_idx,
@@ -123,6 +126,7 @@ impl RegionData {
             load_pct,
             sounding,
             title_type,
+            out,
         }
     }
 
@@ -197,6 +201,7 @@ impl RegionData {
             load_pct: u8::MAX,
             sounding: false,
             title_type: u8::MAX,
+            out: u8::MAX,
         }
     }
 

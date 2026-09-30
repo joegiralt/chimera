@@ -30,7 +30,6 @@ fn both_engines_reach_the_pitch_page_and_turn_it() {
     for engine in EngineType::ALL {
         let mut ui = chimera_core::ui::UiState::new();
         load_init(&mut ui, engine);
-        feed(&mut ui, Input::press(ButtonId::B1));
         to_pitch(&mut ui, engine);
         feed(&mut ui, Input::turn(EncoderId::A, 12));
         feed(&mut ui, Input::turn(EncoderId::B, -30));
@@ -43,7 +42,6 @@ fn both_engines_reach_the_pitch_page_and_turn_it() {
 fn mix_plus_primes_pitch_for_the_matrix() {
     let mut ui = chimera_core::ui::UiState::new();
     load_init(&mut ui, EngineType::Modal);
-    feed(&mut ui, Input::press(ButtonId::B1));
     to_pitch(&mut ui, EngineType::Modal);
     feed(&mut ui, Input::turn(EncoderId::A, 1));
     feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Plus));

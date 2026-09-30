@@ -18,6 +18,10 @@ pub struct ChainNav {
     pub sub_page: usize,
     /// The active Part's engine (resolves ChainId::Part to its chain def).
     pub engine: EngineType,
+    /// The last Part sound page left: (part, node, sub_page).
+    sound_left: (usize, usize, usize),
+    /// The mixer page last used, for every Part (ADR 0057).
+    mix_page: (usize, usize),
 }
 
 impl Default for ChainNav {
@@ -33,6 +37,35 @@ impl ChainNav {
             node: 0,
             sub_page: 0,
             engine: EngineType::Algo,
+            sound_left: (0, 0, 0),
+            mix_page: (block_registry::MIXER_HOME, 0),
+        }
+    }
+
+    /// Move to `to`: the mixer on its last page, Part n's sound pages on
+    /// the page left when coming from its mixer, anything else home.
+    pub fn go(&mut self, to: ChainId) {
+        let from = self.chain_id;
+        match from {
+            ChainId::Part(p) => self.sound_left = (p, self.node, self.sub_page),
+            ChainId::Mixer(_) => self.mix_page = (self.node, self.sub_page),
+            ChainId::System | ChainId::Demo => {}
+        }
+        (self.node, self.sub_page) = match to {
+            ChainId::Mixer(_) => self.mix_page,
+            ChainId::Part(n) if from == ChainId::Mixer(n) && self.sound_left.0 == n => {
+                (self.sound_left.1, self.sound_left.2)
+            }
+            _ => (0, 0),
+        };
+        self.chain_id = to;
+    }
+
+    /// Home, if the position is off the chain (the engine changed).
+    pub fn clamp(&mut self) {
+        let subs = self.active_chain_block().map(|b| b.sub_page_count().max(1));
+        if subs.is_none_or(|n| self.sub_page >= n) {
+            (self.node, self.sub_page) = (0, 0);
         }
     }
 
@@ -74,27 +107,18 @@ impl ChainNav {
 
         // MENU = System (again: home)
         if controls.button_state(ButtonId::Menu) == ButtonState::Pressed {
-            self.chain_id = ChainId::System;
-            self.node = 0;
-            self.sub_page = 0;
+            self.go(ChainId::System);
         }
 
-        // B1-B6: Part or Mixer depending on MIX modifier (again: home)
+        // B<n>: toggles Part n's sound and mixer; MIX + B<n>: its mixer,
+        // MIX + B6 the demo.
         for (i, &btn) in PART_BUTTONS.iter().enumerate() {
             if controls.button_state(btn) == ButtonState::Pressed {
-                let target = if mix_held {
-                    if i == 5 {
-                        ChainId::Demo
-                    } else {
-                        ChainId::Mixer(i)
-                    }
-                } else {
-                    ChainId::Part(i)
-                };
-
-                self.chain_id = target;
-                self.node = 0;
-                self.sub_page = 0;
+                self.go(match (mix_held, i) {
+                    (true, 5) => ChainId::Demo,
+                    (true, _) => ChainId::Mixer(i),
+                    (false, _) => next_on_part_button(self.chain_id, i),
+                });
             }
         }
 
@@ -128,6 +152,15 @@ impl ChainNav {
 
         // Return whether position changed
         self.chain_id != prev_chain_id || self.node != prev_node || self.sub_page != prev_sub
+    }
+}
+
+/// Where B<n> goes from `from`: Part n's sound pages and its mixer swap;
+/// from anywhere else, its sound pages (ADR 0057).
+pub const fn next_on_part_button(from: ChainId, n: usize) -> ChainId {
+    match from {
+        ChainId::Part(p) if p == n => ChainId::Mixer(n),
+        _ => ChainId::Part(n),
     }
 }
 

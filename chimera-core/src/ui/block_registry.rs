@@ -567,6 +567,9 @@ static MIXER_CHANNEL_BLOCKS: &[ChainBlock] = &[
     ChainBlock::with_subs(&MASTER, &MASTER_SUB_PAGES),
 ];
 
+/// Where the mixer opens: SENDS, not PART, whose C is OUT (ADR 0057).
+pub const MIXER_HOME: usize = 1;
+
 pub static MIXER_CHANNEL_CHAIN: ChainDef2 = ChainDef2 {
     name: "Mixer",
     blocks: MIXER_CHANNEL_BLOCKS,
