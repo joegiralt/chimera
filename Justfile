@@ -32,6 +32,7 @@ check:
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --features bench,master-tape
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --features sd-probe
     cargo build -p chimera-bootloader --target thumbv7em-none-eabihf
+    cargo build -p chimera-theory --target thumbv7em-none-eabihf
     just clippy
     cargo fmt --all -- --check
     just stack-check
