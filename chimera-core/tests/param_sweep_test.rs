@@ -312,7 +312,8 @@ fn dc_ok(c: &Case) -> Option<&'static str> {
     {
         return Some(
             "the bow's stick–slip drifts below 10 Hz, and the engine's and the voice's one-pole \
-             blockers pass part of it (about −30 dB re the note), more after FOLD's gain",
+             blockers pass part of it (about −30 dB re the note), more after FOLD's gain \
+             (#248)",
         );
     }
     None
