@@ -343,7 +343,14 @@ impl BowedString {
     /// Note-off: the bow lifts, shedding its width over `RELEASE_SAMPLES`,
     /// and the gain ramps from the bowed loss to `held`, DAMP's, up or
     /// down: lifted, the loop is linear and `LoopGain` keeps it stable.
+    /// A lift wins over a pending first block, which would otherwise set
+    /// the width to its target and bow on; a lifted bow stays lifted until
+    /// the next note-on (`start`).
     pub(super) fn lift(&mut self, held: LoopGain) {
+        if !self.bowing {
+            return;
+        }
+        self.fresh = false;
         self.lift = self.w4 / RELEASE_SAMPLES as f32;
         self.bowing = false;
         self.release.lift(bow_gain(), held);

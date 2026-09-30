@@ -14,7 +14,7 @@ use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::{MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
 use common::{
-    Rig, SR, assert_stable, clicks, fundamental_hz, goertzel, octave_clear, play_modal,
+    Rig, SR, assert_stable_at, clicks, fundamental_hz, goertzel, octave_clear, play_modal,
     play_modal_at, play_modal_bare, rms_diff, routes,
 };
 
@@ -25,11 +25,10 @@ const MODES: [ResonatorMode; 4] = [
     ResonatorMode::Sympathetic,
 ];
 
-/// A bow's steady limit cycle is periodic (its sidebands under −96 dB),
-/// but a 1 s window holds a fractional number of periods: slid over INIT's
-/// C2, near the bridge's spiky sawtooth, its RMS reads ±0.3 %. A runaway
-/// grows far past 1 %. Its render is deterministic (no noise).
-const BOW_MARGIN: f32 = 1.01;
+/// A bow's steady limit cycle wobbles a little between seconds; a
+/// runaway grows far past this. Measured over whole periods
+/// (`assert_stable_at`). Its render is deterministic (no noise).
+const BOW_MARGIN: f32 = 1.005;
 
 /// Each model, each setting at its min and max, C2 held 30 s: bounded, no
 /// growth, no DC at the output; Bowed still sounding while it bows.
@@ -52,7 +51,7 @@ fn every_model_is_stable_at_every_extreme() {
                         p.set(s.id, v);
                         let out = play_modal(&p, note, 30 * sr / BLOCK_SIZE, 0);
                         let label = format!("{mode:?} {note} {} = {v}", s.label);
-                        assert_stable(&out, 4.0, margin, &label);
+                        assert_stable_at(&out, note_to_freq(note), 4.0, margin, &label);
                         // Bowed's C2 sounds throughout (#206), not freed,
                         // unless the bow has no pressure or no motion.
                         let still =
@@ -1417,7 +1416,7 @@ fn bowed_is_stable_and_in_tune_at_every_corner() {
                     let label =
                         format!("{note} F{} S{} B{} P{}", p.force, p.speed, p.bright, p.pos);
                     let out = play_modal(&p, note, blocks, 0);
-                    assert_stable(&out, 4.0, BOW_MARGIN, &label);
+                    assert_stable_at(&out, note_to_freq(note), 4.0, BOW_MARGIN, &label);
                     if p.force > 0.0 && p.speed > 0.0 && note != 127 {
                         let last = &out[out.len() - sr..];
                         assert!(common::rms(last) > 1e-3, "{label}: silent");
@@ -1576,5 +1575,69 @@ fn bowed_damp_rings_at_every_note() {
         };
         let db = 20.0 * (tail(1.0) / tail(0.5)).log10();
         assert!(db >= 10.0, "{note}: DAMP 1 over 0.5, {db:+.1} dB");
+    }
+}
+
+/// A note-off before the first block, or after exactly one, lifts the bow
+/// for good: the note goes silent and frees its voice within the ring
+/// (DAMP 0.5 s). A second note-off, at once or mid-ring, changes nothing,
+/// and a retrigger, freed or mid-ring, bows again. A pending first-block
+/// settle once re-armed a lifted bow, which played on forever.
+#[test]
+fn a_bow_lifted_before_it_plays_stays_lifted() {
+    use chimera_core::dsp::modal::SymPool;
+    let second = SR as usize / BLOCK_SIZE;
+    let p = v1_bowed();
+    let mut block = [0.0; BLOCK_SIZE];
+    // `held` blocks, note-off, then 3 s, a second note-off at `again`.
+    let lifted = |note: u8, held: usize, again: Option<usize>| {
+        let mut pool = SymPool::boxed();
+        let mut e = Box::new(ModalEngine::new_in(&mut pool, p.mode));
+        let mut block = [0.0; BLOCK_SIZE];
+        e.note_on(note, 100, &p, SR, &mut pool);
+        for _ in 0..held {
+            e.render(&mut block, &p, SR, &mut pool);
+        }
+        e.note_off(&mut pool);
+        let mut out = Vec::new();
+        for b in 0..3 * second {
+            if again == Some(b) {
+                e.note_off(&mut pool);
+            }
+            e.render(&mut block, &p, SR, &mut pool);
+            out.extend_from_slice(&block);
+        }
+        let last = common::rms(&out[out.len() - SR as usize..]);
+        assert!(
+            last < 1e-4,
+            "{note} held {held}, again {again:?}: rms {last} at 2–3 s"
+        );
+        assert!(
+            !e.is_active(),
+            "{note} held {held}, again {again:?}: never freed"
+        );
+        (e, pool)
+    };
+    for held in [0, 1] {
+        for note in [48, 84] {
+            lifted(note, held, None);
+            lifted(note, held, Some(0));
+            let (mut e, mut pool) = lifted(note, held, Some(second / 5));
+            // A retrigger bows again: after the voice is freed, and mid-ring.
+            e.note_on(note, 100, &p, SR, &mut pool);
+            e.render(&mut block, &p, SR, &mut pool);
+            e.note_off(&mut pool);
+            for _ in 0..second / 5 {
+                e.render(&mut block, &p, SR, &mut pool);
+            }
+            e.note_on(note, 100, &p, SR, &mut pool);
+            let mut ring = Vec::new();
+            for _ in 0..second {
+                e.render(&mut block, &p, SR, &mut pool);
+                ring.extend_from_slice(&block);
+            }
+            let r = common::rms(&ring[SR as usize / 2..]);
+            assert!(r > 1e-2, "{note} held {held}: a retrigger is silent ({r})");
+        }
     }
 }
