@@ -289,8 +289,8 @@ impl TapeDelay {
         let p = slot.as_mut_ptr();
         // SAFETY: `p` is valid for writes of one `Self`. Every field is
         // valid as zero bytes (floats, integers, `false`, `Ease`) and all
-        // but the transport's seed are zero in `new()`; the transport is written whole before the slot is
-        // assumed initialised.
+        // but the transport's seed are zero in `new()`; the transport is
+        // written whole before the slot is assumed initialised.
         unsafe {
             p.write_bytes(0, 1);
             addr_of_mut!((*p).transport).write(Transport::new());
