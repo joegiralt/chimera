@@ -80,6 +80,15 @@ mod tests {
         }
     }
 
+    /// The voice's corner keeps the bass: within 0.3 dB at 20 Hz, 0.07 dB
+    /// at E1 (41 Hz).
+    #[test]
+    fn five_hz_keeps_the_bass() {
+        let db = |hz: f64| 20.0 * gain(5.0, core::f64::consts::TAU * hz / 48_000.0).log10();
+        assert!(db(20.0) > -0.3, "{}", db(20.0));
+        assert!(db(41.2) > -0.07, "{}", db(41.2));
+    }
+
     #[test]
     fn run_is_process_bit_for_bit() {
         let (mut a, mut b) = (DcBlocker::new(5.0, 48_000), DcBlocker::new(5.0, 48_000));

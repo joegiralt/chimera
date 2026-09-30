@@ -348,7 +348,9 @@ fn sympathetic_mode_is_bounded_and_falls_silent() {
 }
 
 /// The modal bank at its full size, 48 modes (the deleted stress test's
-/// case): every sample finite and within `render_modal`'s 2·tanh bound.
+/// case): every sample finite and within `render_modal`'s 2·tanh bound
+/// through the output blocker, whose impulse response sums to 2g < 2 in
+/// magnitude: under 4.
 #[test]
 fn modal_bank_at_full_size_is_finite_and_bounded() {
     let p = ModalParams {
@@ -357,6 +359,6 @@ fn modal_bank_at_full_size_is_finite_and_bounded() {
         ..modal_params()
     };
     let buf = render_modal(&p, 36, 400);
-    assert!(buf.iter().all(|s| s.is_finite() && s.abs() <= 2.0));
+    assert!(buf.iter().all(|s| s.is_finite() && s.abs() < 4.0));
     assert!(buf.iter().any(|&s| s != 0.0), "it rings");
 }

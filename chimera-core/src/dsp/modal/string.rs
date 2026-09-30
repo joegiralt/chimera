@@ -168,7 +168,8 @@ impl KsString {
 
     /// Shapes the pluck `excite` wrote, in place, before the loop reads
     /// it: a comb notched at `position`'s harmonics of a loop of `period`
-    /// samples, then `passes` smoothing passes (`color_passes`).
+    /// samples, then `passes` smoothing passes (`color_passes`), then its
+    /// mean taken out.
     pub(super) fn shape(&mut self, position: f32, period: f32, passes: usize) {
         let len = self.delay;
         if position > 0.03 {
@@ -183,6 +184,14 @@ impl KsString {
             for i in 1..len {
                 self.buffer[i] = (self.buffer[i] + self.buffer[i - 1]) * 0.5;
             }
+        }
+        // A pluck's mean rings as the loop's 0 Hz mode for the whole T60,
+        // and a halo string's comb gains it by 1 / (1 − g): the drift SYMP
+        // put under the output blocker. None.
+        let line = &mut self.buffer[..len];
+        let mean = line.iter().sum::<f32>() / len as f32;
+        for x in line {
+            *x -= mean;
         }
     }
 
@@ -677,6 +686,27 @@ mod tests {
     fn voice() -> Box<StringVoice> {
         // SAFETY: `init_in_place` writes every field.
         Box::new(unsafe { by_value(StringVoice::init_in_place) })
+    }
+
+    /// A pluck leaves no mean on the line: nothing for the loop's 0 Hz mode
+    /// to ring, nor a halo's comb to gain.
+    #[test]
+    fn a_pluck_is_zero_mean() {
+        for (note, color) in [(24, 0.0), (60, 0.8), (108, 1.0)] {
+            let mut v = voice();
+            let ens = Ensemble::new(0.0, 3.0, 48_000);
+            v.pluck(
+                (note_to_freq(note), 48_000),
+                None,
+                1.0,
+                (0.0, (0.0, ens)),
+                color,
+            );
+            v.shape(0.2);
+            let (line, len) = (v.string.line().0, v.string.delay);
+            let mean = line[..len].iter().sum::<f32>() / len as f32;
+            assert!(mean.abs() < 1e-6, "note {note}: {mean}");
+        }
     }
 
     /// `render`'s spans are `tick` bit for bit: every chain and ensemble
