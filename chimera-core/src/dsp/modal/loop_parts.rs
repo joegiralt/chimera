@@ -90,6 +90,11 @@ impl Release {
     pub fn idle(&self) -> bool {
         self.left == 0
     }
+
+    /// Samples of ramp left.
+    pub fn left(&self) -> usize {
+        self.left as usize
+    }
 }
 
 /// The DC blocker's corner. It sits on a string model's output, not in the

@@ -1141,7 +1141,10 @@ fn render_sympathetic(
         });
         let (coupling, level) = (set.coupling, set.level);
         // The main string drives each halo string at its write position.
-        let input = output.map(|x| x * coupling);
+        let mut input = [0.0_f32; BLOCK_SIZE];
+        for (i, x) in input.iter_mut().zip(output.iter()) {
+            *i = x * coupling;
+        }
         let mut sum = [0.0_f32; BLOCK_SIZE];
         // String by string, a glide step at a time; a whole block unless gliding.
         let step = if set.glide > 0 {
@@ -1156,7 +1159,7 @@ fn render_sympathetic(
                 sym.run_coupled(p, input, pending, sum);
             }
         }
-        for (s, h) in output.iter_mut().zip(sum) {
+        for (s, h) in output.iter_mut().zip(&sum) {
             *s += h * level;
         }
     }

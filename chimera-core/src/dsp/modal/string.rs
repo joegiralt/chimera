@@ -131,7 +131,7 @@ impl KsString {
 
     /// The line `delay` behind the last write, linearly interpolated:
     /// `delay + 1 < ring_len`.
-    #[inline]
+    #[cfg(test)]
     pub(super) fn read_frac(&self, delay: f32) -> f32 {
         let i = delay as usize;
         let f = delay - i as f32;
@@ -148,8 +148,8 @@ impl KsString {
     }
 
     /// The loop's next sample, before the gain: the low-pass centred
-    /// `delay` back, so it adds no delay.
-    #[inline]
+    /// `delay` back, so it adds no delay. The spans' reference.
+    #[cfg(test)]
     fn lowpass(&self, p: &KsRenderParams) -> f32 {
         let d = self.delay;
         let c = p.lp;
@@ -243,8 +243,8 @@ impl KsString {
     }
 
     /// One pass of the loop, the low-pass, `disp` and the allpass, then
-    /// `gain` last, so nothing bypasses it.
-    #[inline]
+    /// `gain` last, so nothing bypasses it. The spans' reference.
+    #[cfg(test)]
     fn tick_full(
         &mut self,
         p: &KsRenderParams,
@@ -333,7 +333,9 @@ fn behind_at(ring: &[Cell<f32>], at: usize, k: usize) -> usize {
 struct Held {
     half: f32,
     mid: f32,
-    gain: f32,
+    /// The loop's held gain, and the note-off's ramp from it.
+    held: LoopGain,
+    release: Release,
     mix: f32,
     d: usize,
     /// The low-pass's two older taps, oldest first.
@@ -345,9 +347,10 @@ struct Held {
 
 impl Held {
     /// `out.len()` samples writing from `ws` and reading the newest tap
-    /// from `cp`, neither wrapping; the heads wrap only if `NEAR`.
+    /// from `cp`, neither wrapping. `FAST`: the release idle, and the heads
+    /// not wrapping.
     #[inline(always)]
-    fn span<const STIFF: bool, const ENS: bool, const NEAR: bool>(
+    fn span<const STIFF: bool, const ENS: bool, const FAST: bool>(
         &mut self,
         ring: &[Cell<f32>],
         (ws, cp): (usize, usize),
@@ -355,6 +358,13 @@ impl Held {
     ) {
         let m = out.len();
         let (mut a, mut b) = self.taps;
+        // Idle, the same gain every sample; `gain` steps a ramp on.
+        let ramp = !FAST && !self.release.idle();
+        let gain = if ramp {
+            self.held
+        } else {
+            self.release.gain(self.held)
+        };
         let span = ring[ws..ws + m].iter().zip(&ring[cp..cp + m]);
         for (at, ((w, t), o)) in (ws..).zip(span.zip(out)) {
             let c = t.get();
@@ -362,17 +372,22 @@ impl Held {
             if STIFF {
                 x = self.disp.process(x);
             }
-            let dry = self.ap.process(x) * self.gain;
+            let gain = if ramp {
+                self.release.gain(self.held)
+            } else {
+                gain
+            };
+            let dry = self.ap.process(x) * gain.get();
             w.set(dry);
             (a, b) = (b, c);
             *o = if ENS {
                 let heads = self.ens.head_delays(self.d);
                 self.ens.advance();
                 let read = |&h| {
-                    if NEAR {
-                        read_frac_in(ring, at, h)
-                    } else {
+                    if FAST {
                         read_frac_up(ring, at, h)
+                    } else {
+                        read_frac_in(ring, at, h)
                     }
                 };
                 let wet = heads.iter().map(read).sum::<f32>();
@@ -561,8 +576,8 @@ impl StringVoice {
     }
 
     /// The string's next sample, and the ensemble's heads on its line,
-    /// before BODY.
-    #[inline]
+    /// before BODY: `render`'s reference.
+    #[cfg(test)]
     pub(super) fn tick(&mut self, p: &KsRenderParams) -> f32 {
         let gain = self.release.gain(p.gain);
         let disp = if self.stiff {
@@ -581,15 +596,8 @@ impl StringVoice {
         dry + mix * (wet * (1.0 / ENS_HEADS as f32) - dry)
     }
 
-    /// `tick` over `out`. Held, in spans (`run`); while a release ramps,
-    /// a sample at a time.
+    /// `tick` over `out`, in spans (`run`).
     pub(super) fn render(&mut self, p: &KsRenderParams, out: &mut [f32]) {
-        if !self.release.idle() {
-            for s in out {
-                *s = self.tick(p);
-            }
-            return;
-        }
         match (self.stiff, self.ens_mix > 0.0) {
             (false, false) => self.run::<false, false>(p, out),
             (true, false) => self.run::<true, false>(p, out),
@@ -598,9 +606,9 @@ impl StringVoice {
         }
     }
 
-    /// `tick` with the release idle, the chain if `STIFF` and the heads if
-    /// `ENS`: the same arithmetic, in spans where neither the write nor the
-    /// newest tap wraps, the two older taps carried from the sample before.
+    /// `tick`, with the chain if `STIFF` and the heads if `ENS`: the same
+    /// arithmetic, in spans where neither the write nor the newest tap
+    /// wraps, the two older taps carried from the sample before.
     fn run<const STIFF: bool, const ENS: bool>(&mut self, p: &KsRenderParams, out: &mut [f32]) {
         let s = &mut self.string;
         let (d, len, last) = (s.delay, s.ring_len, s.write_pos);
@@ -608,8 +616,8 @@ impl StringVoice {
         let mut h = Held {
             half: p.lp * 0.5,
             mid: 1.0 - p.lp,
-            // Idle: the same gain every sample.
-            gain: self.release.gain(p.gain).get(),
+            held: p.gain,
+            release: self.release,
             mix: self.ens_mix,
             d,
             taps: (behind_in(ring, last, d), behind_in(ring, last, d - 1)),
@@ -623,23 +631,28 @@ impl StringVoice {
         let reach = h.ens.reach(d);
         let mut k = 0;
         while k < out.len() {
-            let m = (out.len() - k).min(len - ws).min(len - cp);
+            let mut m = (out.len() - k).min(len - ws).min(len - cp);
+            // The rare samples run apart, in `span`'s slow form: a release's
+            // ramp, and the heads' wrap while the write is within `reach`
+            // of the ring's start.
+            let (ramp, near) = (h.release.left(), ENS && ws < reach);
+            if ramp > 0 {
+                m = m.min(ramp);
+            }
+            if near {
+                m = m.min(reach - ws);
+            }
             let out = &mut out[k..k + m];
-            // The heads wrap only while the write is within `reach` of the
-            // ring's start: those samples run apart.
-            let m = if ENS && ws < reach {
-                let m = m.min(reach - ws);
-                h.span::<STIFF, ENS, true>(ring, (ws, cp), &mut out[..m]);
-                m
-            } else {
+            if ramp > 0 || near {
                 h.span::<STIFF, ENS, false>(ring, (ws, cp), out);
-                m
-            };
+            } else {
+                h.span::<STIFF, ENS, true>(ring, (ws, cp), out);
+            }
             (ws, cp) = (wrap(ws + m, len), wrap(cp + m, len));
             k += m;
         }
         s.write_pos = if ws == 0 { len - 1 } else { ws - 1 };
-        (s.frac, self.disp, self.ens) = (h.ap, h.disp, h.ens);
+        (s.frac, self.disp, self.ens, self.release) = (h.ap, h.disp, h.ens, h.release);
     }
 
     /// `buf` through BODY, outside the loop, in place.
