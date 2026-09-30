@@ -45,9 +45,9 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0037](0037-kind-lays-out-the-filter-panel.md) | KIND lays out the filter panel; MODE follows KIND | Accepted |
 | [0038](0038-delay-sat-zero-still-saturates.md) | The delay's feedback loop saturates at every SAT, SAT 0 included | Proposed |
 | [0039](0039-six-encoders-no-main-encoder.md) | Six encoders; no main encoder | Proposed |
-| [0040](0040-eight-voices-modal-strings-to-g1.md) | Eight voices in D2; Modal strings sized to G1 (supersedes in part 0014 and 0031) | Accepted |
+| [0040](0040-eight-voices-modal-strings-to-g1.md) | Eight voices in D2; Modal strings sized to G1 (supersedes in part 0014 and 0031) | Accepted; line length superseded in part by [0056](0056-modal-resonators-share-four-macros.md) |
 | [0041](0041-mod-matrix-amount-grid.md) | The mod matrix is an amount grid of outlined cells (supersedes in part 0016) | Accepted |
-| [0042](0042-voice-pitch-is-a-matrix-destination.md) | Voice pitch is a matrix destination on each engine's PITCH page | Accepted |
+| [0042](0042-voice-pitch-is-a-matrix-destination.md) | Voice pitch is a matrix destination on each engine's PITCH page | Accepted; `ModalEngine::PITCH` superseded in part by [0056](0056-modal-resonators-share-four-macros.md) |
 | [0045](0045-card-format.md) | Store cards in 8.3 A/B files of versioned TLV records | Accepted |
 | [0048](0048-own-fat-layer.md) | Own the FAT layer; keep embedded-sdmmc only as the SD block driver | Accepted |
 | [0049](0049-algo-init-routed-morph-dims.md) | Algo INIT is audibly routed; MORPH dims when A = B (supersedes in part 0024) | Proposed |
@@ -55,6 +55,6 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0051](0051-a-voice-holds-one-engine-rebuilt-in-place.md) | A voice holds one engine, rebuilt in place (supersedes 0008) | Accepted |
 | [0052](0052-strings-stored-as-16-bit-block-float.md) | Store Modal's string delay lines as 16-bit block float | Superseded by [0054](0054-sympathetic-strings-from-a-shared-pool.md) (sympathetic slot pool, never accepted) |
 | [0053](0053-delay-mechanics-wow-and-irregular-flutter.md) | The delay's WOW becomes MECHANICS: a slow wow and an irregular flutter | Proposed |
-| [0054](0054-sympathetic-strings-from-a-shared-pool.md) | Sympathetic borrows its strings from a shared pool of four (supersedes 0052) | Accepted |
+| [0054](0054-sympathetic-strings-from-a-shared-pool.md) | Sympathetic borrows its strings from a shared pool of four (supersedes 0052) | Accepted; voice size assert and `COST_SYMPATHETIC` superseded in part by [0056](0056-modal-resonators-share-four-macros.md) |
 | [0055](0055-master-tape-off-the-chain.md) | The master tape stage is off the chain, kept behind `master-tape` (supersedes in part 0030) | Proposed |
-| [0056](0056-modal-resonators-share-four-macros.md) | Modal's resonators share four modulatable macros; loops are stable by construction (supersedes in part 0010, 0040, 0054) | Proposed |
+| [0056](0056-modal-resonators-share-four-macros.md) | Modal's resonators share four modulatable macros; loops are stable by construction (supersedes in part 0010, 0040, 0042, 0054) | Proposed |

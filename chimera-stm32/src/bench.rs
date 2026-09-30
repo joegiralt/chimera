@@ -14,7 +14,9 @@ use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::engines::{EngineSlot, SlotKind};
 use chimera_core::dsp::filter::FilterMode;
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus};
-use chimera_core::dsp::modal::{ModalEngine, ModalParams, ResonatorMode, SymPool};
+use chimera_core::dsp::modal::{
+    BankModes, CHORD_COUNT, ModalEngine, ModalParams, ResonatorMode, SymPool,
+};
 use chimera_core::dsp::modulator::{EnvForm, EnvSlot, EnvType, Func, Glide, LfoForm, LfoType};
 use chimera_core::dsp::voice::Voice;
 use chimera_core::hw::{
@@ -142,7 +144,7 @@ fn worst_comp(s: &mut AudioShared) {
     (c.thresh, c.ratio, c.attack, c.release, c.makeup, c.mix) = (0.0, 7, 0.0, 0.0, 0.5, 1.0);
 }
 
-const ROUTING_ROWS: usize = 30;
+const ROUTING_ROWS: usize = 35;
 /// Rows per ROUTING screen: ten from y 46 at `ROW_H` 25 end at 283.
 const ROUTING_PAGE: usize = 10;
 
@@ -228,13 +230,33 @@ const ROUTING: [RoutingRow; ROUTING_ROWS] = [
     // the SVF row's level never reaches. HOT − 1 OP is the hot LP24 term.
     ("LP24 HOT", |p| hot(p, FilterMode::Lp24), STILL),
     ("SVF HOT", |p| hot(p, FilterMode::Phaser), STILL),
-    // Each Modal model, the default Sound otherwise: `ModalEngine::cost`.
+    // Each Modal model, the default Sound (BODY 0.3) otherwise:
+    // `ModalEngine::cost`. STR − STR0 and SYM − SYM0 are `BODY`.
     ("MDL STR", |p| modal(p, ResonatorMode::String), STILL),
+    ("MDL STR0", |p| bare(p, ResonatorMode::String), STILL),
+    // STR+ − STR is `ENSEMBLE`, with the macros moving under it.
+    ("MDL STR+", str_full, STILL),
     ("MDL BOW", |p| modal(p, ResonatorMode::Bowed), STILL),
     ("MDL SYM", |p| modal(p, ResonatorMode::Sympathetic), STILL),
+    ("MDL SYM0", |p| bare(p, ResonatorMode::Sympathetic), STILL),
+    // SYM+ − SYM is `ENSEMBLE`, the halo always gliding, unrouted.
+    (
+        "MDL SYM+",
+        |p| modal_full(p, ResonatorMode::Sympathetic),
+        chord_storm,
+    ),
     // SYM LFO − MDL SYM is `ModalEngine::CHORD`.
     ("SYM LFO", sym_lfo, STILL),
     ("MDL RES", |p| modal(p, ResonatorMode::Modal), STILL),
+    // RES48 − RES is 16 × `COST_MODE`.
+    (
+        "MDL RES48",
+        |p| {
+            modal(p, ResonatorMode::Modal);
+            p.params.modal.modes = BankModes::M48;
+        },
+        STILL,
+    ),
     // MODE flipped every 4 blocks: restarts and rests every flip.
     ("SWITCH", |p| modal(p, ResonatorMode::String), switch_storm),
 ];
@@ -255,6 +277,40 @@ fn sym_lfo(p: &mut PartAudio) {
     p.params.lfos[0].rate = 10.0;
     let structure = ParamAddr::new(BlockRef::Modal, ModalParams::STRUCTURE);
     p.mod_state = matrix(&[(ModSource::Lfo1, structure, 127)]);
+}
+
+/// `mode` at BODY 0: the model alone.
+fn bare(p: &mut PartAudio, mode: ResonatorMode) {
+    modal(p, mode);
+    p.params.modal.body = 0.0;
+}
+
+/// `mode` with every extra on: BODY 1, the ensemble at full DEPTH and MIX
+/// 0.5, STRUCTURE mid-range.
+fn modal_full(p: &mut PartAudio, mode: ResonatorMode) {
+    modal(p, mode);
+    let m = &mut p.params.modal;
+    (m.structure, m.body, m.ens_depth, m.ens_mix) = (0.5, 1.0, 1.0, 0.5);
+}
+
+/// STRING in full, LFO 1 (10 Hz sine) into each macro at 64: the
+/// dispersion re-splits every block.
+fn str_full(p: &mut PartAudio) {
+    modal_full(p, ResonatorMode::String);
+    p.params.lfos[0].rate = 10.0;
+    let at = |q| (ModSource::Lfo1, ParamAddr::new(BlockRef::Modal, q), 64);
+    p.mod_state = matrix(&[
+        at(ModalParams::STRUCTURE),
+        at(ModalParams::BRIGHT),
+        at(ModalParams::DAMP),
+        at(ModalParams::POS),
+    ]);
+}
+
+/// STRUCTURE one chord on every 8 blocks, faster than a glide ends.
+fn chord_storm(p: &mut PartAudio, block: u32) {
+    let chord = (block / 8) % CHORD_COUNT as u32;
+    p.params.modal.structure = (chord as f32 + 0.5) / CHORD_COUNT as f32;
 }
 
 /// String and Sympathetic in turn, 4 blocks each.

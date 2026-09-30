@@ -34,14 +34,15 @@ fn worst() -> AlgoParams {
     p
 }
 
-/// Bench `MODAL /VOICE` 391: minus the chain's floor (5), rounded up to the
-/// next 10, plus `CHAIN_COST`. Algo is priced from its patch.
+/// The Modal Sound, STRING at BODY 0.3: `COST_STRING` 460 and `BODY` 130,
+/// host estimates until the bench (Modal 2 step A, task 12), plus
+/// `CHAIN_COST`. Algo is priced from its patch.
 #[test]
-fn voice_costs_are_the_bench_measurements() {
+fn voice_costs_are_the_billed_literals() {
     assert_eq!(Voice::CHAIN_COST, Cost(10));
     assert_eq!(
         voice_cost(EngineType::Modal),
-        Cost(400) + ModRouting::BASE + LP24
+        Cost(600) + ModRouting::BASE + LP24
     );
     let mods = ModState::new();
     for e in EngineType::ALL {
@@ -741,14 +742,14 @@ fn a_routed_silent_operator_is_priced() {
 }
 
 /// A route into PITCH or FINE retunes Modal's strings every block: billed
-/// `ModalEngine::PITCH` (provisional, emulator-derived) on any route, at
-/// amount 0 too; Algo's pitch rides its per-block operator update.
+/// `ModalEngine::PITCH` (a host estimate) on any route, at amount 0 too;
+/// Algo's pitch rides its per-block operator update.
 #[test]
 fn a_pitch_route_on_modal_bills_the_retune() {
     use chimera_core::addr::{BlockRef, ParamAddr};
     use chimera_core::dsp::modal::ModalEngine;
     use chimera_core::params::PitchParams;
-    assert_eq!(ModalEngine::PITCH, Cost(12));
+    assert_eq!(ModalEngine::PITCH, Cost(30));
     let routed = |q, amount| {
         let mut ms = ModState::from_registry(&chimera_core::mod_path::ModDestRegistry::new(), 8);
         let d = ms.push(ParamAddr::new(BlockRef::Pitch, q)).unwrap();
@@ -757,7 +758,7 @@ fn a_pitch_route_on_modal_bills_the_retune() {
     };
     let modal = ParamSnapshot::for_engine(EngineType::Modal);
     let bare = EngineSlot::cost(&modal, &ModState::new());
-    assert_eq!(bare, ModalEngine::COST_STRING);
+    assert_eq!(bare, ModalEngine::cost(&modal.modal));
     for q in [PitchParams::PITCH, PitchParams::FINE] {
         for amount in [127, 0] {
             assert_eq!(
@@ -780,6 +781,7 @@ fn a_pitch_route_on_modal_bills_the_retune() {
 fn a_structure_route_on_symp_bills_the_chord_glide() {
     use chimera_core::addr::{BlockRef, ParamAddr};
     use chimera_core::dsp::modal::{ModalEngine, ModalParams, ResonatorMode};
+    assert_eq!(ModalEngine::CHORD, Cost(100));
     let routed = |amount| {
         let mut ms = ModState::from_registry(&chimera_core::mod_path::ModDestRegistry::new(), 8);
         let d = ms
@@ -812,33 +814,40 @@ fn a_structure_route_on_symp_bills_the_chord_glide() {
     }
 }
 
-/// Modal is billed per model (#49): String and Sympathetic as benched
-/// (Sympathetic's pool still sounds at most four), the others at or
-/// above the emulator's estimate until the bench's MDL rows (ROUTING 3/3,
-/// `modal` in chimera-stm32/src/bench.rs) read them; then the readings
-/// replace the estimates here. Voices beside the whole FX bus at its worst,
-/// on rev V and rev Y: the costlier models get fewer, as they must.
+/// Modal is billed per model (#49), and STRING and SYMP for BODY and the
+/// ensemble when on: host estimates until the bench's MDL rows (Modal 2
+/// step A, task 12; `modal` in chimera-stm32/src/bench.rs) read them.
+/// Voices beside the whole FX bus at its worst, on rev V and rev Y: the
+/// costlier models get fewer, as they must.
 #[test]
 fn modal_bills_each_model() {
-    use chimera_core::dsp::modal::{ModalEngine, ResonatorMode};
-    let sound = |mode| {
+    use chimera_core::dsp::modal::{BankModes, ModalEngine, ResonatorMode};
+    let sound = |mode, body, ens_mix| {
         let mut p = ParamSnapshot::for_engine(EngineType::Modal);
-        p.modal.mode = mode;
+        (p.modal.mode, p.modal.body, p.modal.ens_mix) = (mode, body, ens_mix);
         p
     };
-    // Sympathetic, billed as benched, gets 6 and 5 with or without the
-    // master tape (ADR 0055); four of them ring a set.
-    for (mode, billed, estimate, rev_v, rev_y) in [
-        (ResonatorMode::String, 390, 390, 8, 8),
-        (ResonatorMode::Bowed, 620, 565, 8, 6),
-        (ResonatorMode::Sympathetic, 809, 809, 6, 5),
-        (ResonatorMode::Modal, 1_900, 1_703, 2, 2),
+    use ResonatorMode::{Bowed, Modal, String, Sympathetic};
+    // Voices on rev V and rev Y, then with the master tape (ADR 0055).
+    for (p, billed, voices, taped) in [
+        (sound(String, 0.0, 0.0), 460, (8, 8), (8, 8)),
+        (sound(String, 0.3, 0.0), 590, (8, 7), (8, 6)),
+        (sound(String, 0.3, 0.5), 750, (7, 5), (6, 5)),
+        (sound(Bowed, 0.3, 0.5), 720, (7, 6), (7, 5)),
+        (sound(Sympathetic, 0.0, 0.0), 1_370, (4, 3), (3, 3)),
+        (sound(Sympathetic, 0.3, 0.0), 1_500, (3, 3), (3, 2)),
+        (sound(Sympathetic, 0.3, 0.5), 1_660, (3, 2), (3, 2)),
+        (sound(Modal, 0.3, 0.5), 1_900, (2, 2), (2, 2)),
     ] {
-        let p = sound(mode);
+        let (rev_v, rev_y) = if cfg!(feature = "master-tape") {
+            taped
+        } else {
+            voices
+        };
+        let m = (p.modal.mode, p.modal.body, p.modal.ens_mix);
         let engine = EngineSlot::cost(&p, &ModState::new());
-        assert_eq!(engine, ModalEngine::cost(&p.modal), "{mode:?}");
-        assert_eq!(engine, Cost(billed), "{mode:?}");
-        assert!(billed >= estimate, "{mode:?}: {billed} < {estimate}");
+        assert_eq!(engine, ModalEngine::cost(&p.modal), "{m:?}");
+        assert_eq!(engine, Cost(billed), "{m:?}");
         let voice = Voice::cost(&p, &ModState::new()).0;
         let at = |hz| {
             let budget = SampleBudget::for_cpu(hz).as_cost().0;
@@ -847,11 +856,11 @@ fn modal_bills_each_model() {
         assert_eq!(
             (at(CPU_HZ_REV_V), at(CPU_HZ_REV_Y)),
             (rev_v, rev_y),
-            "{mode:?}"
+            "{m:?}"
         );
     }
     // The bank scales with its modes: 48, the most, is 16 more than 32.
-    let mut bank = sound(ResonatorMode::Modal);
-    bank.modal.modes = chimera_core::dsp::modal::BankModes::M48;
+    let mut bank = sound(Modal, 0.0, 0.0);
+    bank.modal.modes = BankModes::M48;
     assert_eq!(ModalEngine::cost(&bank.modal), Cost(1_900 + 16 * 45));
 }
