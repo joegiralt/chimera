@@ -500,3 +500,20 @@ fn a_steal_takes_the_oldest_tail_first() {
     a.release(3);
     assert_eq!(voice(on(&mut a, 1, Poly, 90)), 3, "the older of the tails");
 }
+
+/// A re-strike the budget won't take on its own voice falls through to
+/// the usual rules: here the older, dearer tail is stolen for it.
+#[test]
+fn a_restrike_over_budget_steals_as_any_note_does() {
+    let mut a = Allocator::new(BUDGET);
+    let total = BUDGET.as_cost().0;
+    // Everything but 1,000 cycles reserved: a dear tail, then the key.
+    let reserved = Cost(total - 1_000);
+    let tail = voice(a.note_on(0, Poly, n(40), Cost(700), reserved));
+    a.release(tail);
+    let key = voice(a.note_on(0, Poly, n(48), Cost(300), reserved));
+    // Re-struck at 650: its own voice frees 300 (700 + 650 > 1,000); the
+    // tail frees 700 (300 + 650 fits).
+    let got = voice(a.note_on(0, Poly, n(48), Cost(650), reserved));
+    assert_eq!(got, tail, "the tail stolen, key {key}");
+}
