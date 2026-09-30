@@ -2069,3 +2069,56 @@ fn a_resting_halo_keeps_its_octave_under_a_pitch_move() {
         }
     }
 }
+
+/// The lock correction follows a live FORCE or SPEED: at INIT, v100, a
+/// knob moved half a second in plays, a second later, within 1 cent of
+/// the same note started at the new value.
+#[test]
+fn a_live_force_or_speed_keeps_the_bow_in_tune() {
+    use chimera_core::dsp::modal::SymPool;
+    let base = ModalParams {
+        mode: ResonatorMode::Bowed,
+        ..Default::default()
+    };
+    let sr = SR as usize;
+    let cases = [
+        (96u8, "SPEED", 0.5, 0.1),
+        (96, "FORCE", 0.5, 0.25),
+        (92, "SPEED", 0.5, 0.1),
+        (84, "FORCE", 1.0, 0.5),
+    ];
+    let with = |knob: &str, v: f32| {
+        let mut p = base;
+        match knob {
+            "FORCE" => p.force = v,
+            _ => p.speed = v,
+        }
+        p
+    };
+    let pitch = |note: u8, first: ModalParams, then: ModalParams| {
+        let mut pool = SymPool::boxed();
+        let mut e = Box::new(ModalEngine::new_in(&mut pool, base.mode));
+        e.note_on(note, 100, &first, SR, &mut pool);
+        let mut out = Vec::new();
+        let mut block = [0.0; BLOCK_SIZE];
+        for b in 0..5 * sr / 2 / BLOCK_SIZE {
+            let p = if b < sr / 2 / BLOCK_SIZE {
+                &first
+            } else {
+                &then
+            };
+            e.render(&mut block, p, SR, &mut pool);
+            out.extend_from_slice(&block);
+        }
+        let f0 = note_to_freq(note);
+        cents(fundamental_hz(&out[3 * sr / 2..5 * sr / 2], f0 as f64), f0)
+    };
+    for (note, knob, from, to) in cases {
+        let (a, b) = (with(knob, from), with(knob, to));
+        let (live, fresh) = (pitch(note, a, b), pitch(note, b, b));
+        assert!(
+            (live - fresh).abs() < 1.0,
+            "{note} {knob} {from} to {to}: live {live:+.1} c, from note-on {fresh:+.1} c"
+        );
+    }
+}

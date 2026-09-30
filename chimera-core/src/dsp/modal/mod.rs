@@ -1414,6 +1414,16 @@ fn render_bowed(
     m: &Macros,
     (f0, w0, vel_to): (f32, f32, f32),
 ) {
+    // The lock correction follows the bow as it is now, FORCE and SPEED
+    // eased: re-taken each block, the loop re-split when it moves (only
+    // where it locks, `LOCKS_UNDER`).
+    if b.bowing && f0 * LOCKS_UNDER > SAMPLE_RATE as f32 {
+        let g = grip(b.force, b.bow_vel / BOW_SPEED);
+        if g != b.grip {
+            b.grip = g;
+            b.tune(f0, SAMPLE_RATE);
+        }
+    }
     // Lifted, DAMP's ring, which `Release::gain` never lets rise; bowed, the top.
     let (c, held) = if b.bowing {
         (BOW_LOOP_LP, BOW_GAIN)
