@@ -4,7 +4,7 @@ use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::chorus::ChorusParams;
 use crate::dsp::comp::CompParams;
 use crate::dsp::delay::DelayParams;
-use crate::dsp::modal::ModalParams;
+use crate::dsp::modal::{ModalPage, ModalParams};
 use crate::dsp::modulator::{EnvSlot, LfoSlot};
 use crate::dsp::reverb::ReverbParams;
 #[cfg(feature = "master-tape")]
@@ -21,6 +21,23 @@ const EMPTY: ParamSlot = ParamSlot::EMPTY;
 // ---------------------------------------------------------------------------
 // Modal engine pages
 // ---------------------------------------------------------------------------
+
+/// EXC: the model's exciter; its cells follow MODEL.
+pub static MODAL_EXC: BlockDef = BlockDef {
+    id: 67,
+    name: "Exciter",
+    short: "EXC",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::modal_panel(ModalPage::Exciter, 0),
+        ParamSlot::modal_panel(ModalPage::Exciter, 1),
+        ParamSlot::modal_panel(ModalPage::Exciter, 2),
+        ParamSlot::modal_panel(ModalPage::Exciter, 3),
+        ParamSlot::modal_panel(ModalPage::Exciter, 4),
+        ParamSlot::modal_panel(ModalPage::Exciter, 5),
+    ],
+};
 
 /// Home: MODEL, the four macros, and SPACE, the Part's REV send.
 pub static MODAL_1: BlockDef = BlockDef {
@@ -47,12 +64,12 @@ pub static MODAL_2: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
-        ParamSlot::modal_panel(0),
-        ParamSlot::modal_panel(1),
-        ParamSlot::modal_panel(2),
-        ParamSlot::modal_panel(3),
-        ParamSlot::modal_panel(4),
-        ParamSlot::modal_panel(5),
+        ParamSlot::modal_panel(ModalPage::Model, 0),
+        ParamSlot::modal_panel(ModalPage::Model, 1),
+        ParamSlot::modal_panel(ModalPage::Model, 2),
+        ParamSlot::modal_panel(ModalPage::Model, 3),
+        ParamSlot::modal_panel(ModalPage::Model, 4),
+        ParamSlot::modal_panel(ModalPage::Model, 5),
     ],
 };
 
@@ -445,7 +462,8 @@ static MOD_SUB_PAGES: [&BlockDef; 7] =
 
 static MODAL_SUB_PAGES: [&BlockDef; 2] = [&MODAL_2, &PITCH];
 
-static MODAL_PLUCK_BLOCKS: [ChainBlock; 4] = [
+static MODAL_PLUCK_BLOCKS: [ChainBlock; 5] = [
+    ChainBlock::page(&MODAL_EXC),
     ChainBlock::with_subs(&MODAL_1, &MODAL_SUB_PAGES),
     ChainBlock::with_subs(&FILTER, &FILTER_SUB_PAGES),
     ChainBlock::page(&FOLDER),

@@ -115,8 +115,8 @@ impl DiskCode for BankModes {
     }
 }
 
-/// Home: MODEL and the four macros every model but BOWED reads its own
-/// way. The rest is the model page (MDL2).
+/// Home: MODEL and the four macros each model reads its own way (BOWED
+/// all but STRUCTURE). Then the model page (MDL2), and the exciter's (EXC).
 #[derive(Clone, Copy, Debug)]
 pub struct ModalParams {
     pub mode: ResonatorMode,
@@ -136,6 +136,14 @@ pub struct ModalParams {
     /// SYMP's halo level.
     pub halo: f32,
     pub modes: BankModes,
+    /// PLUCK: the noise's smoothing, 1 brightest.
+    pub color: f32,
+    /// STRIKE: the burst's length.
+    pub burst: f32,
+    /// BOW: pressure.
+    pub force: f32,
+    /// BOW: velocity.
+    pub speed: f32,
 }
 
 impl Default for ModalParams {
@@ -155,6 +163,10 @@ impl Default for ModalParams {
             couple: 0.25,
             halo: 0.25,
             modes: BankModes::M32,
+            color: 0.8,
+            burst: 0.8,
+            force: 0.5,
+            speed: 0.5,
         }
     }
 }
@@ -173,6 +185,10 @@ impl ModalParams {
     pub const COUPLE: ParamId = ParamId(14);
     pub const HALO: ParamId = ParamId(15);
     pub const MODES: ParamId = ParamId(16);
+    pub const FORCE: ParamId = ParamId(17);
+    pub const SPEED: ParamId = ParamId(18);
+    pub const COLOR: ParamId = ParamId(19);
+    pub const BURST: ParamId = ParamId(20);
 }
 
 /// The four macros as the loops play them: eased toward the block's
@@ -213,6 +229,22 @@ impl Macros {
 /// MODEL's names, by `ResonatorMode as u8`.
 pub const MODEL_NAMES: [&str; 4] = ["STRING", "BANK", "BOWED", "SYMP"];
 
+/// EXC's header by MODEL, by `ResonatorMode as u8`.
+pub const EXCITER_NAMES: [&str; 4] = ["PLUCK", "STRIKE", "BOW", "PLUCK"];
+
+/// Which of MODEL's two pages a cell list is for: EXC or the model page (MDL2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ModalPage {
+    Exciter,
+    Model,
+}
+
+/// The bow's force at a note-on: FORCE × (0.5 + 0.5 × velocity), velocity
+/// in 0..=1. A soft key still bows.
+pub fn bow_force(force: f32, vel: f32) -> f32 {
+    force * (0.5 + 0.5 * vel)
+}
+
 /// DAMP's law on a string: T60 from `T60_MIN` at 0, ×`T60_SPAN` at 1.
 const T60_MIN: f32 = 0.05;
 const T60_SPAN: f32 = 400.0;
@@ -223,7 +255,7 @@ pub(super) fn t60(damp: f32) -> f32 {
 }
 
 /// `t60`'s inverse, held to DAMP's range.
-fn damp_for(t60_s: f32) -> f32 {
+pub fn damp_for(t60_s: f32) -> f32 {
     (libm::logf(t60_s / T60_MIN) / libm::logf(T60_SPAN)).clamp(0.0, 1.0)
 }
 
@@ -238,7 +270,9 @@ pub fn damp_from_v1_decay(decay: f32) -> f32 {
 
 /// A v1 Modal block into today's params (spec § 3), after its live values
 /// are written: DECAY → DAMP, STIFF or INHARM → STRUCTURE, FDBK dropped.
-/// The string models' BRIGHT flips to the new direction.
+/// The string models' BRIGHT flips to the new direction. BANK's BURST is
+/// its EXCITE, the old strike's length. Bowed never read BRIGHT, DAMP or
+/// POS: it loads its old sound, whatever the file held.
 pub fn translate_v1(old: &crate::storage::Retired, blk: &mut dyn Block) {
     const DECAY: ParamId = ParamId(2);
     const INHARM: ParamId = ParamId(5);
@@ -260,6 +294,14 @@ pub fn translate_v1(old: &crate::storage::Retired, blk: &mut dyn Block) {
     }
     if !bank {
         blk.set(P::BRIGHT, 1.0 - blk.get(P::BRIGHT));
+    }
+    if bank {
+        blk.set(P::BURST, blk.get(P::EXCITE));
+    }
+    if mode == Some(ResonatorMode::Bowed) {
+        blk.set(P::DAMP, damp_for(super::loop_parts::RELEASE_T60));
+        blk.set(P::BRIGHT, 1.0);
+        blk.set(P::POS, 0.0);
     }
 }
 
@@ -286,9 +328,9 @@ const fn macro_(id: u8, label: &'static str, default: f32) -> ParamSpec {
     s
 }
 
-/// The four macros are modulatable (`Macros`); the model page is read at
-/// note-on. Retired ids 2, 5, 7 and 8 are never reused.
-pub static MODAL_SPECS: [ParamSpec; 13] = [
+/// The four macros are modulatable (`Macros`); the model and exciter pages
+/// are read at note-on. Retired ids 2, 5, 7 and 8 are never reused.
+pub static MODAL_SPECS: [ParamSpec; 17] = [
     ParamSpec::choice(0, "MODEL", ValFmt::Names(&MODEL_NAMES), 3.0, 0.0).ident("MODE"),
     macro_(13, "STRUCT", 0.0).short("STR").ident("STRUCTURE"),
     macro_(3, "BRIGHT", 1.0 - 0.7).short("BRT").ident("BRIGHT"),
@@ -309,6 +351,10 @@ pub static MODAL_SPECS: [ParamSpec; 13] = [
         2.0,
     )
     .ident("MODES"),
+    unit(19, "COLOR", 0.8).ident("COLOR"),
+    unit(20, "BURST", 0.8).ident("BURST"),
+    unit(17, "FORCE", 0.5).ident("FORCE"),
+    unit(18, "SPEED", 0.5).ident("SPEED"),
 ];
 
 /// Whether `mode` reads `id`: the one table for page cells, dimming and
@@ -318,7 +364,11 @@ pub fn reads(mode: ResonatorMode, id: ParamId) -> bool {
     type P = ModalParams;
     match id {
         P::MODE => true,
-        P::STRUCTURE | P::BRIGHT | P::DAMP | P::POS | P::EXCITE => mode != Bowed,
+        P::BRIGHT | P::DAMP | P::POS => true,
+        P::STRUCTURE | P::EXCITE => mode != Bowed,
+        P::COLOR => matches!(mode, String | Symp),
+        P::BURST => mode == Bank,
+        P::FORCE | P::SPEED => mode == Bowed,
         P::BODY | P::ENS_DEPTH | P::ENS_MIX => matches!(mode, String | Symp),
         P::ENS_RATE => mode == String,
         P::COUPLE | P::HALO => mode == Symp,
@@ -327,29 +377,20 @@ pub fn reads(mode: ResonatorMode, id: ParamId) -> bool {
     }
 }
 
-/// MDL2's six cells for `mode`.
-pub fn page_cells(mode: ResonatorMode) -> [Option<ParamId>; 6] {
+/// `page`'s six cells for `mode`, in order.
+pub fn page_cells(page: ModalPage, mode: ResonatorMode) -> [Option<ParamId>; 6] {
+    use ResonatorMode::{Bowed, Modal as Bank, String, Sympathetic as Symp};
     type P = ModalParams;
-    match mode {
-        ResonatorMode::String => [
-            Some(P::EXCITE),
-            Some(P::BODY),
-            Some(P::ENS_DEPTH),
-            Some(P::ENS_RATE),
-            Some(P::ENS_MIX),
-            None,
-        ],
-        ResonatorMode::Sympathetic => [
-            Some(P::EXCITE),
-            Some(P::COUPLE),
-            Some(P::HALO),
-            Some(P::BODY),
-            Some(P::ENS_DEPTH),
-            Some(P::ENS_MIX),
-        ],
-        ResonatorMode::Modal => [Some(P::EXCITE), Some(P::MODES), None, None, None, None],
-        ResonatorMode::Bowed => [None; 6],
-    }
+    let ids: &[ParamId] = match (page, mode) {
+        (ModalPage::Exciter, String | Symp) => &[P::EXCITE, P::COLOR],
+        (ModalPage::Exciter, Bank) => &[P::EXCITE, P::BURST],
+        (ModalPage::Exciter, Bowed) => &[P::FORCE, P::SPEED],
+        (ModalPage::Model, String) => &[P::BODY, P::ENS_DEPTH, P::ENS_RATE, P::ENS_MIX],
+        (ModalPage::Model, Symp) => &[P::COUPLE, P::HALO, P::BODY, P::ENS_DEPTH, P::ENS_MIX],
+        (ModalPage::Model, Bank) => &[P::MODES],
+        (ModalPage::Model, Bowed) => &[],
+    };
+    core::array::from_fn(|k| ids.get(k).copied())
 }
 
 impl Block for ModalParams {
@@ -372,6 +413,10 @@ impl Block for ModalParams {
             Self::COUPLE => self.couple,
             Self::HALO => self.halo,
             Self::MODES => self.modes as u8 as f32,
+            Self::COLOR => self.color,
+            Self::BURST => self.burst,
+            Self::FORCE => self.force,
+            Self::SPEED => self.speed,
             _ => 0.0,
         }
     }
@@ -391,6 +436,10 @@ impl Block for ModalParams {
             Self::COUPLE => self.couple = v,
             Self::HALO => self.halo = v,
             Self::MODES => self.modes = BankModes::from_index(v as u8),
+            Self::COLOR => self.color = v,
+            Self::BURST => self.burst = v,
+            Self::FORCE => self.force = v,
+            Self::SPEED => self.speed = v,
             _ => {}
         }
     }
@@ -422,6 +471,7 @@ impl Block for ModalParams {
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
     use super::*;
 
     const MODES: [ResonatorMode; 4] = [
@@ -437,18 +487,47 @@ mod tests {
         ModalParams::POS,
     ];
 
+    const PAGES: [ModalPage; 2] = [ModalPage::Exciter, ModalPage::Model];
+
     #[test]
     fn page_cells_are_what_the_model_reads() {
         for mode in MODES {
-            let cells = page_cells(mode);
-            for id in cells.iter().flatten() {
-                assert!(reads(mode, *id), "{mode:?} shows {id:?}, unread");
+            for page in PAGES {
+                for id in page_cells(page, mode).iter().flatten() {
+                    assert!(reads(mode, *id), "{mode:?} {page:?} shows {id:?}, unread");
+                }
             }
             for s in &MODAL_SPECS {
                 let home = s.id == ModalParams::MODE || MACROS.contains(&s.id);
                 if !home && reads(mode, s.id) {
-                    assert!(cells.contains(&Some(s.id)), "{mode:?} hides {}", s.label);
+                    let on = PAGES
+                        .iter()
+                        .filter(|&&pg| page_cells(pg, mode).contains(&Some(s.id)))
+                        .count();
+                    assert_eq!(on, 1, "{mode:?} {}: on {on} pages", s.label);
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn the_exciter_page_holds_each_models_exciter() {
+        type P = ModalParams;
+        let want = |mode| match mode {
+            ResonatorMode::String | ResonatorMode::Sympathetic => &[P::EXCITE, P::COLOR][..],
+            ResonatorMode::Modal => &[P::EXCITE, P::BURST],
+            ResonatorMode::Bowed => &[P::FORCE, P::SPEED],
+        };
+        for mode in MODES {
+            let cells = page_cells(ModalPage::Exciter, mode);
+            let got: std::vec::Vec<_> = cells.iter().flatten().copied().collect();
+            assert_eq!(got.as_slice(), want(mode), "{mode:?}");
+            assert!(cells[got.len()..].iter().all(Option::is_none), "{mode:?}");
+            for id in page_cells(ModalPage::Model, mode).iter().flatten() {
+                assert!(
+                    ![P::EXCITE, P::COLOR, P::BURST, P::FORCE, P::SPEED].contains(id),
+                    "{mode:?}: MDL2 shows {id:?}"
+                );
             }
         }
     }
@@ -499,15 +578,24 @@ mod tests {
     }
 
     #[test]
-    fn macros_are_dimmed_only_on_bowed() {
-        for id in MACROS {
-            for mode in MODES {
-                assert_eq!(
-                    reads(mode, id),
-                    mode != ResonatorMode::Bowed,
-                    "{mode:?} {id:?}"
-                );
+    fn bowed_reads_three_macros() {
+        for mode in MODES {
+            for id in [ModalParams::BRIGHT, ModalParams::DAMP, ModalParams::POS] {
+                assert!(reads(mode, id), "{mode:?} {id:?}");
             }
+            assert_eq!(
+                reads(mode, ModalParams::STRUCTURE),
+                mode != ResonatorMode::Bowed,
+                "{mode:?}"
+            );
         }
+    }
+
+    #[test]
+    fn bow_force_scales_with_velocity() {
+        assert_eq!(bow_force(0.5, 1.0).to_bits(), 0.5f32.to_bits());
+        assert_eq!(bow_force(0.5, 0.0), 0.25);
+        assert_eq!(bow_force(0.0, 1.0), 0.0);
+        assert!(bow_force(1.0, 20.0 / 127.0) > 0.5);
     }
 }

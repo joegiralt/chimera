@@ -198,14 +198,16 @@ pub fn view(def: &BlockDef, i: usize, ctx: &SlotCtx) -> View {
             k,
             BlockRef::Lfo(s),
         ),
-        SlotBinding::ModalPanel(k) => match modal::page_cells(ctx.model).get(k as usize) {
-            Some(&Some(id)) => {
-                let addr = ParamAddr::new(BlockRef::Modal, id);
-                addr.spec()
-                    .map_or(View::Empty, |s| param(addr, s.label, s.fmt))
+        SlotBinding::ModalPanel(page, k) => {
+            match modal::page_cells(page, ctx.model).get(k as usize) {
+                Some(&Some(id)) => {
+                    let addr = ParamAddr::new(BlockRef::Modal, id);
+                    addr.spec()
+                        .map_or(View::Empty, |s| param(addr, s.label, s.fmt))
+                }
+                _ => View::Empty,
             }
-            _ => View::Empty,
-        },
+        }
     }
 }
 

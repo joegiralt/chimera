@@ -57,8 +57,8 @@ pub enum SlotBinding {
     EnvPanel(crate::dsp::modulator::EnvSlot, u8),
     /// Cell k of LFO slot s's page, per its TYPE and FORM.
     LfoPanel(crate::dsp::modulator::LfoSlot, u8),
-    /// Cell k of MDL2, per MODEL (`modal::page_cells`).
-    ModalPanel(u8),
+    /// Cell k of EXC or MDL2, per MODEL (`modal::page_cells`).
+    ModalPanel(crate::dsp::modal::ModalPage, u8),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -124,9 +124,9 @@ impl ParamSlot {
         }
     }
 
-    pub const fn modal_panel(k: u8) -> Self {
+    pub const fn modal_panel(page: crate::dsp::modal::ModalPage, k: u8) -> Self {
         Self {
-            binding: SlotBinding::ModalPanel(k),
+            binding: SlotBinding::ModalPanel(page, k),
             label_override: None,
         }
     }
@@ -150,7 +150,7 @@ impl ParamSlot {
             | SlotBinding::FilterPanel(_)
             | SlotBinding::EnvPanel(..)
             | SlotBinding::LfoPanel(..)
-            | SlotBinding::ModalPanel(_) => None,
+            | SlotBinding::ModalPanel(..) => None,
         }
     }
 
@@ -164,7 +164,7 @@ impl ParamSlot {
             | SlotBinding::FilterPanel(_)
             | SlotBinding::EnvPanel(..)
             | SlotBinding::LfoPanel(..)
-            | SlotBinding::ModalPanel(_) => "--",
+            | SlotBinding::ModalPanel(..) => "--",
             SlotBinding::SelectOp => "OP",
             SlotBinding::Legacy { label, .. } => label,
             SlotBinding::Param(_) | SlotBinding::SelectedOp(_) => {
@@ -179,7 +179,7 @@ impl ParamSlot {
             | SlotBinding::FilterPanel(_)
             | SlotBinding::EnvPanel(..)
             | SlotBinding::LfoPanel(..)
-            | SlotBinding::ModalPanel(_) => ValFmt::Uni,
+            | SlotBinding::ModalPanel(..) => ValFmt::Uni,
             SlotBinding::SelectOp => ValFmt::OneBased(Op::ALL.len() as u8 - 1),
             SlotBinding::Legacy { fmt, .. } => fmt,
             SlotBinding::Param(_) | SlotBinding::SelectedOp(_) => {

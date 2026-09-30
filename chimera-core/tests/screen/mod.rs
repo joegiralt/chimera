@@ -215,18 +215,25 @@ pub fn to_level_page(ui: &mut UiState) {
     }
 }
 
-/// From Part 1's home (the engine's node), EDIT down its sub-list to PIT.
+/// From Part 1's first node, on to the engine's node and EDIT down its
+/// sub-list to PIT.
 pub fn to_pitch(ui: &mut UiState, engine: EngineType) {
     use chimera_core::ui::block_registry::{ALGO_CHAIN, MODAL_PLUCK_CHAIN, PITCH};
     let chain = match engine {
         EngineType::Algo => &ALGO_CHAIN,
         EngineType::Modal => &MODAL_PLUCK_CHAIN,
     };
-    let n = chain.blocks[0]
+    let node = chain
+        .blocks
+        .iter()
+        .position(|b| b.sub_pages.iter().any(|d| d.id == PITCH.id))
+        .expect("PIT is a sub-page of the engine's node");
+    plus(ui, node);
+    let n = chain.blocks[node]
         .sub_pages
         .iter()
         .position(|d| d.id == PITCH.id)
-        .expect("PIT is a sub-page of the engine's node")
+        .unwrap()
         + 1;
     for _ in 0..n {
         feed(ui, Input::press(ButtonId::Edit));
@@ -426,19 +433,37 @@ pub const CASES: &[ScreenCase] = &[
         to_pitch(ui, EngineType::Modal);
         feed(ui, Input::turn(EncoderId::A, -12)); // PITCH -12, focused
     }),
-    ("modal_home", |ui| load_init(ui, EngineType::Modal)),
+    ("modal_exc", |ui| load_init(ui, EngineType::Modal)), // PLUCK: EXCITE, COLOR
+    ("modal_exc_bank", |ui| {
+        load_init(ui, EngineType::Modal);
+        plus(ui, 1); // RES
+        feed(ui, Input::turn(EncoderId::A, 1)); // MODEL → BANK
+        feed(ui, Input::press(ButtonId::Minus)); // STRIKE: EXCITE, BURST
+    }),
+    ("modal_exc_bowed", |ui| {
+        load_init(ui, EngineType::Modal);
+        plus(ui, 1); // RES
+        feed(ui, Input::turn(EncoderId::A, 2)); // MODEL → BOWED
+        feed(ui, Input::press(ButtonId::Minus)); // BOW: FORCE, SPEED
+    }),
+    ("modal_home", |ui| {
+        load_init(ui, EngineType::Modal);
+        plus(ui, 1); // EXC · RES
+    }),
     ("modal_mdl2_symp", |ui| {
         load_init(ui, EngineType::Modal);
+        plus(ui, 1); // RES
         feed(ui, Input::turn(EncoderId::A, 3)); // MODEL → SYMP
         feed(ui, Input::press(ButtonId::Edit)); // MDL2
     }),
     ("modal_home_bowed", |ui| {
         load_init(ui, EngineType::Modal);
-        feed(ui, Input::turn(EncoderId::A, 2)); // MODEL → BOWED: the macros dim
+        plus(ui, 1); // RES
+        feed(ui, Input::turn(EncoderId::A, 2)); // MODEL → BOWED: STRUCT dims
     }),
     ("modal_amp", |ui| {
         load_init(ui, EngineType::Modal);
-        plus(ui, 2); // MDL · FLT · AMP
+        plus(ui, 3); // EXC · RES · FLT · AMP
     }),
     ("mixer_part", |ui| {
         feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));

@@ -219,6 +219,10 @@ Sound {
             couple: 0.25,
             halo: 0.25,
             modes: M32,
+            color: 0.8,
+            burst: 0.8,
+            force: 0.5,
+            speed: 0.5,
         },
         lfos: [
             LfoParams {

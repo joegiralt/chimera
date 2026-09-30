@@ -63,13 +63,26 @@ note-on, so nothing could modulate a string's character.
   part.
 
 ### Macros
+- The Modal chain is EXC · RES · FLT · AMP · MOD, and a Part's Modal
+  chain opens on EXC (the owner's decision, 2026-09-30).
+- EXC holds the model's exciter. Its cells follow MODEL through
+  `page_cells(ModalPage::Exciter, _)`, and its header is named for the
+  exciter (`EXCITER_NAMES`): PLUCK (STRING, SYMP) EXCITE and COLOR; STRIKE
+  (BANK) EXCITE and BURST; BOW (BOWED) FORCE and SPEED. Its map node reads
+  EXC.
 - The home page (RES) is MODEL, STRUCTURE, BRIGHT, DAMP, POS and SPACE
   (the Part's reverb send). The model page, named for the model (STRING,
-  SYMP, BANK, BOWED), holds EXCITE, BODY, ENS DEPTH, ENS RATE, ENS MIX,
-  COUPLE, HALO and MODES; its cell labels are STRUCT, ENS.D, ENS.R and
-  ENS.M. FDBK, STIFF, INHARM, DECAY, the E.* fields, `ks_excitation`,
-  `ks_color`, `bow_velocity`, `bow_force` and `note` leave `ModalParams`,
-  and their disk codes are retired.
+  SYMP, BANK, BOWED), holds BODY, ENS DEPTH, ENS RATE, ENS MIX, COUPLE,
+  HALO and MODES (`page_cells(ModalPage::Model, _)`); EXCITE left it for
+  EXC. Its cell labels are STRUCT, ENS.D, ENS.R and ENS.M. FDBK, STIFF,
+  INHARM, DECAY, the E.* fields, `ks_excitation`, `ks_color`,
+  `bow_velocity`, `bow_force` and `note` leave `ModalParams`, and their
+  disk codes are retired.
+- COLOR (id 19), BURST (20), FORCE (17) and SPEED (18) are read at
+  note-on and are not modulatable, like the model page. COLOR is the
+  pluck's smoothing passes, `⌊(1 − COLOR)·7⌋`, the old `ks_color` law
+  (the old hidden 0.8 is one pass). BURST is the strike's noise burst,
+  `2 + 4·BURST` ms; EXCITE is the strike's level alone.
 - STRUCTURE, BRIGHT, DAMP and POS are read every block from the voice's
   modulated params, into `modal::Macros`; the loops read `Macros`, never
   the params. Each block eases them `EASE` = 0.3 of the way to the block's
@@ -95,7 +108,7 @@ note-on, so nothing could modulate a string's character.
   tone. SYMP's halo low-pass reads `1 − 0.7·(1 − BRIGHT)`, as the old halo
   damping was 0.7× the main string's.
 - A control the model ignores is dimmed, with its matrix column, from one
-  table (`modal::reads`). BOWED dims all four macros.
+  table (`modal::reads`). BOWED dims STRUCTURE.
 - MODES latches at note-on; a sounding bank note keeps its modes and is
   billed for them (`ModalEngine::playing_cost`) until it ends.
 - The bank drops the modes past Nyquist, as Rings does: the count stops at
@@ -135,13 +148,48 @@ note-on, so nothing could modulate a string's character.
   without transposing. On SYMP it colours the main-and-halo mix. BODY
   latches at note-on.
 
+### Bowed
+- The bow's force is `FORCE·(0.5 + 0.5·velocity)`, so a soft key still
+  bows; at FORCE 0.5 and full velocity it is the old bow, bit for bit.
+  `SPEED·0.3` is the bow's velocity (`BOW_SPEED`); SPEED 0.5 is the old
+  one. FORCE 0 or SPEED 0 is a bow at rest, and silent.
+- DAMP is the ring after the lift: while bowed the loop's gain is
+  `LoopGain::TOP` and the bow sustains the string, as before; at note-off
+  it ramps to DAMP's T60 and never gives the gain back.
+- BRIGHT is the linear-phase three-tap low-pass on the loop's tap,
+  `c/2·(x[d−1] + x[d+1]) + (1 − c)·x[d]` at `c = 0.5·(1 − BRIGHT)`
+  (`BOW_LP`), centred, so it adds no delay; at BRIGHT 1 the tap is read
+  alone, as before. `|H| = (1 − c) + c·cos ω` is at most 1 for
+  `c ≤ 0.5`. The plan's 0.25 moved a routed BRIGHT's sound 7.4e-4 RMS,
+  under the test's 1e-3; 0.5 is the most the bound allows. Even there the
+  harmonics move under 0.5 dB: the bow's stick-slip re-sharpens the wave
+  every pass, so BRIGHT is gentle on this bow.
+- POS is the bow point's comb on the output, the pluck's law:
+  `0.5·(x + tap)`, the tap `d − POS·d` behind the write
+  (`KsString::ring_tap_at`, interpolated, clamped to what the note has
+  written, #206), above POS 0.03; at or below it the one tap, as before.
+  A bowed string lacks the harmonics its bow point nulls, and the comb
+  puts the nulls there. The spec had the friction read the comb: that
+  bows a second loop, `(1 − POS)·d` long, which takes the pitch to
+  `1/(1 − POS)` times it (C3's bow, 65 Hz, played 93 Hz at POS 0.3 and
+  218 Hz at 0.7). On the output the pitch holds within 0.3 cents at every
+  POS and BRIGHT.
+- The loop and the friction read the one tap. The bow sounds an octave
+  below its note, as it always has: its stick-slip inverts the loop each
+  pass, so the ring holds half a period. The v1 pin keeps that sound.
+- Stability holds by construction: the loop multiplies `x` by a
+  `LoopGain` below 1, the low-pass's gain is at most 1, the friction
+  (`4·force·tanh(8·(bow_vel − x))`) is bounded, `tanh` bounds the push,
+  and the output has its blocker.
+
 ### Release
 - A note-off (#51) ramps the loop gain from the held one to
   `RELEASE_T60` = 0.12 s over `RELEASE_SAMPLES` = 240 (5 ms), and never
   gives the gain back, whatever DAMP does. Nothing scales a buffer. The
   `Release` is the voice's: STRING and SYMP's main string
-  (`string::StringVoice`) and BOWED, whose bow lifts over the same 240
-  samples while its ring falls to 0.12 s.
+  (`string::StringVoice`) and BOWED. A lifted bow sheds its force over the
+  same 240 samples while its ring ramps to DAMP's T60, not
+  `RELEASE_T60`.
 - The halo gets no release: a sitar's sympathetic strings ring until
   touched (the owner's rule), so a released halo rings on at its held T60
   until silent, keeping its lease.
@@ -195,6 +243,14 @@ note-on, so nothing could modulate a string's character.
   E.DPT, E.RAT and E.MIX become the ENS controls; FDBK and the hidden
   fields are dropped. The v1 fixture `init_modal.snd` renders bit for bit
   as INIT does.
+- An old patch's EXCITE keeps its value and shows on EXC. COLOR, FORCE
+  and SPEED load at their defaults, 0.8, 0.5 and 0.5, the old hidden
+  values. On BANK, BURST is the file's EXCITE, so an old strike keeps its
+  length.
+- Old Bowed patches stored BRIGHT, DAMP and POS but never read them. They
+  load as the old sound: DAMP `damp_for(RELEASE_T60)` (the old lifted
+  bow's 0.12 s), BRIGHT 1 and POS 0, after the DECAY and BRIGHT rules.
+  `a_v1_bowed_patch_bows_as_before` pins a held second bit for bit.
 
 ### Rendering
 - Each string runs its block, not a sample at a time
@@ -216,9 +272,11 @@ note-on, so nothing could modulate a string's character.
 - Sympathetic is String's voice plus a lease, sized within one align of
   it. That supersedes in part ADR 0054's const assert that Bowed or String
   sizes the voice.
-- Host sizes: `Voice` 6,040 B, `ModelSlot` 4,160 B, `SymPool` 111,848 B,
-  `Instrument` 162,840 B, which leaves 123,880 B of D2. Firmware
-  `.ram_d2` is 161,980 B.
+- Host sizes: `Voice` 6,056 B, `ModelSlot` 4,160 B, `SymPool` 111,848 B,
+  `Instrument` 162,968 B, which leaves 123,752 B of D2. Firmware
+  `.ram_d2` is 162,108 B. `ModalParams` grew by EXC's four fields;
+  `BowedString` by its latched lift and bow velocity (4,008 B) and
+  `StringVoice` by COLOR's passes, within its padding.
 
 ### Costs
 `COST_*` are host estimates until the ship flash's bench rows. Each is the
@@ -245,6 +303,7 @@ Instructions a sample:
 | BODY | `Body::process_block`: 90 per 2 samples, 94 a block | — | 46.5 |
 | Ensemble | `run::<true, true>`'s fast span 101 less 21.25; its slow spans, the extra span a ring and `Ensemble::set` 1.8 | — | 82 |
 | BOWED | `ModalEngine::render`'s bowed loop, both `tanhf` dispatches, plus the blocker | 143 | 195 + 7.8 |
+| BOWED, playable (Task 13) | the same loop: BRIGHT's two side taps and their wraps 23, POS's check 4, its clamped, lerped second tap 44; DAMP's `powf` once lifted, 2 | 203 | 276 |
 | SYMP main string | `run::<false, false>`: 44 per 4 samples; 127 a block; a span 57 | 82 | 14.9 |
 | SYMP halo string, each of 7 | `KsString::run_coupled`: 62 per 4 samples; a call 71; a span 65 | 42 | 18.8 |
 | SYMP per sample, besides | the coupled input (55 per 16), the two buffers' clears (116 each), the runs' setup 150, the mix (71 per 16), BODY's call, the `tanhf` dispatch 17 | 31 + 12 | 31.7 |
@@ -254,7 +313,7 @@ Instructions a sample:
 | Term | Before step A | Now | From |
 |---|---|---|---|
 | `COST_STRING` | 390 | 330 | 99 → 33.5 instructions, −86 cycles; DAMP's two `powf`s and the dispersion's re-split, billed always, +18 |
-| `COST_BOWED` | 620 | 720 | +60 instructions a sample |
+| `COST_BOWED` | 620 | 840 | +60 instructions a sample at step A, 87; +73 for the playable bow, 117.2, POS billed always |
 | `COST_SYMPATHETIC` | 809 | 540 | 419 → 186.2 instructions, −306 cycles; ten `powf`s a block, +35 |
 | `COST_BANK`, `COST_MODE` | 460, 45 | 460, 45 | sample loop unchanged |
 | `BODY` (STRING, SYMP, BODY > 0) | — | 80 | 46.5 instructions |
@@ -272,7 +331,7 @@ the bench.
 
 Voices beside the whole FX bus at its worst (rev V, rev Y; with the
 master tape the same unless noted): STRING bare 8, 8; at the default BODY
-8, 8; with the ensemble 8, 7. BOWED 7, 6 (tape 7, 5). SYMP bare 8, 7; at
+8, 8; with the ensemble 8, 7. BOWED 6, 5 (tape 6, 4). SYMP bare 8, 7; at
 the default BODY 8, 6; with the ensemble 7, 5 (tape 6, 5); with a
 STRUCTURE route at the default BODY 6, 5. BANK at 32 modes 2, 2; at 48, 2,
 1. `modal_bills_each_model` pins every count.
@@ -284,14 +343,18 @@ cycles an instruction STRING and BODY spend those 78 and it plays 7. The
 bench's MDL STR row, on rev Y with the tape, is the case to check.
 
 Measured on the chip (the ship flash; to fill in, rev V at 480 MHz):
-- MDL STR /VOICE —, STR0 —, STR E —, STR+ —; BOW —; SYM —, SYM0 —,
-  SYM+ —, SYM LFO —; RES —, RES48 —.
+- MDL STR /VOICE —, STR0 —, STR E —, STR+ —; BOW —, BOW+ —; SYM —,
+  SYM0 —, SYM+ —, SYM LFO —; RES —, RES48 —. PLUCK DARK — cycles.
 - `COST_*`, `BODY`, `ENSEMBLE` and `CHORD` from them: —.
 
 The bench rows: MDL STR, STR0 (BODY 0), STR E (BODY 0, the ensemble, no
-routes), STR+ (BODY 1, the ensemble, LFO 1 on each macro), BOW, SYM, SYM0,
-SYM+ (the ensemble, STRUCTURE a chord on every 8 blocks), SYM LFO (a route
-into STRUCTURE), RES and RES48.
+routes), STR+ (BODY 1, the ensemble, LFO 1 on each macro), BOW, BOW+
+(FORCE 1, SPEED 1, POS 0.5, BRIGHT 0, LFO 1 at 10 Hz into BRIGHT, DAMP and
+POS at 64), SYM, SYM0, SYM+ (the ensemble, STRUCTURE a chord on every 8
+blocks), SYM LFO (a route into STRUCTURE), RES and RES48. The MEMORY
+screen's PLUCK DARK is a STRING note-on at G1 and COLOR 0 and its first
+block, the pluck's seven smoothing passes over the line, timed as SYM
+NOTE-ON LOW is.
 
 ### Open for the owner
 - The halo's ring time: 2× the main string's T60 (about 30 s at INIT
@@ -301,6 +364,11 @@ into STRUCTURE), RES and RES48.
 - DAMP is seconds at every pitch (spec § 1); the old per-pass law rang
   high notes shorter. Partial key tracking is a candidate, by ear.
 - The bank's gain staging (#231), and an ensemble of 2 heads or 3.
+- Bowed sounds an octave below its note and BRIGHT barely moves it; both
+  come from the one-loop bow, which the v1 pin keeps. A bow junction on
+  two delays, nut and bridge side, each reflection inverting (Smith; STK's
+  `Bowed`), plays at pitch and lets POS and BRIGHT act as on a string. It
+  would move the old Bowed sound: step B's, or the owner's call.
 
 ## Alternatives considered
 - Keep FDBK and clamp its range below the unity point: its useful range
@@ -317,6 +385,9 @@ into STRUCTURE), RES and RES48.
   cancel in the sum.
 - Re-splitting the halo to a new chord each block: it stepped the line up
   to 22 samples at G1 and ticked on low notes. The 20 ms glide replaces it.
+- Bowed's friction reading POS's two-tap comb (the spec's first law): it
+  bows a second, shorter loop through the second tap, which takes the
+  pitch (`1/(1 − POS)` times it). The comb is on the output instead.
 - Per-sample string loops: at the first estimate they billed SYMP 1,370
   (3 voices on rev V, so the pool of four never filled) and STRING 460.
   The block-at-a-time spans bill 540 and 330, bit for bit.
@@ -358,6 +429,10 @@ into STRUCTURE), RES and RES48.
 ## Sources
 - docs/superpowers/specs/2026-09-29-modal-2-resonators-design.md § 2
 - docs/superpowers/plans/2026-09-29-modal-2-resonators.md, Tasks 1 to 11b
+  and 13
+- The owner's decision of 2026-09-30, after the bench: the exciters get
+  their own node, first in the chain, and Bowed becomes playable (spec
+  § 1, § 2 BOWED and § 3, amended)
 - Mutable Instruments Rings (MIT, ADR 0032): `dsp/string.cc` (`ap_gain`,
   the dispersion law) and `dsp/part.cc` (the chord table). Ours are
   `LoopGain`, the blocker's placement on the output, the fractional tuning,
