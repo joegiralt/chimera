@@ -473,6 +473,19 @@ pub fn clicks(out: &[f32]) -> Vec<(usize, f32)> {
         .collect()
 }
 
+/// The largest step the desktop's output stage hears (`clicks`).
+pub fn step(x: &[f32]) -> f32 {
+    let soft = |x: f32| libm::tanhf(x * 0.4);
+    x.windows(2)
+        .map(|w| (soft(w[1]) - soft(w[0])).abs())
+        .fold(0.0, f32::max)
+}
+
+/// `s` sounds `f0`, not an octave below it.
+pub fn octave_clear(s: &[f32], f0: f32) -> bool {
+    goertzel(s, f0, SR) > 10.0 * goertzel(s, f0 / 2.0, SR)
+}
+
 /// One Modal note at `VEL`: `on_blocks` held, then `off_blocks` released.
 /// Sympathetic rings a full halo.
 pub fn play_modal(p: &ModalParams, note: u8, on_blocks: usize, off_blocks: usize) -> Vec<f32> {

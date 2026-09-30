@@ -5,9 +5,8 @@ mod common;
 
 use std::path::PathBuf;
 
-use chimera_core::dsp::modal::{
-    BankModes, RELEASE_T60, ResonatorMode, damp_for, damp_from_v1_decay,
-};
+use chimera_core::dsp::modal::{BankModes, ResonatorMode, damp_for, damp_from_v1_decay};
+use chimera_core::dsp::note_to_freq;
 use chimera_core::factory::{FACTORY_LEN, factory_sound};
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::preset::Sound;
@@ -17,7 +16,10 @@ use common::codec_util::{
     SYSTEM_FIXTURE, decode, decode_into, encode, fix_crc, record_offsets, system_file,
     system_fixture_settings,
 };
-use common::{SR, assert_stable, fnv1a, play_modal, play_modal_at, render_sound};
+use common::{
+    SR, assert_stable, fnv1a, fundamental_hz, octave_clear, play_modal, play_modal_at,
+    render_sound, rms,
+};
 
 /// The v1 corpus: name, and the Sound it was written from.
 fn sources() -> Vec<(String, Sound)> {
@@ -305,7 +307,7 @@ fn decode_modal(payload: &[u8]) -> ParamSnapshot {
 
 /// Spec § 3: DECAY → DAMP, STIFF or INHARM → STRUCTURE, FDBK dropped; the
 /// string models' BRIGHT flips to the new direction. BANK's BURST is its
-/// EXCITE; Bowed loads its old sound.
+/// EXCITE; Bowed loads an in-tune bow (#240).
 #[test]
 fn old_modal_patches_translate() {
     use ResonatorMode::{Bowed, Modal, String, Sympathetic};
@@ -320,9 +322,9 @@ fn old_modal_patches_translate() {
             Sympathetic => (damp_from_v1_decay(0.2), 0.7),
         };
         let bright = if mode == Modal { 0.9 } else { 1.0 - 0.9 };
-        // v1 Bowed never read them: the old sound's values.
+        // v1 Bowed never read them: an in-tune bow's (#240).
         let (damp, bright, pos) = if mode == Bowed {
-            (damp_for(RELEASE_T60), 1.0, 0.0)
+            (damp_for(0.5), 0.5, 0.15)
         } else {
             (damp, bright, 0.4)
         };
@@ -341,19 +343,29 @@ fn old_modal_patches_translate() {
     }
 }
 
-/// A v1 Bowed patch, one second held at full velocity, then half a
-/// second released: recorded on 777518a, before the bow went live (Task
-/// 13), so the old bow is the default bow, lift and ring included.
-const BOWED_V1_HELD: u64 = 0x6bb1_88f9_e05e_9f67;
-const BOWED_V1_RELEASED: u64 = 0xc342_5873_9886_cf65;
+/// A v1 Bowed patch on the two-delay bow (plan Task 14): re-recorded
+/// deliberately, since the one-loop bow played an octave low (#240).
+const BOWED_V1_HELD: u64 = 0x0a5b_5fd8_dd2a_79ee;
+const BOWED_V1_RELEASED: u64 = 0x2a97_6168_8e68_ae5f;
+/// The one-loop bow's held C3, second half of its first second, recorded at 330298c.
+const BOWED_V1_RMS: f32 = 0.380_809_55;
 
+/// A v1 Bowed patch plays at its note, at about the old bow's level.
 #[test]
-fn a_v1_bowed_patch_bows_as_before() {
+fn a_v1_bowed_patch_bows_in_tune() {
     let snap = decode_modal(&v1_modal(ResonatorMode::Bowed, 0.2));
     let second = SR as usize / BLOCK_SIZE;
     let held = play_modal_at(&snap.modal, 48, 127, second, 0);
-    assert_eq!(fnv1a(&held), BOWED_V1_HELD);
+    let f0 = note_to_freq(48);
+    let s = &held[SR as usize / 2..];
+    let cents = 1200.0 * (fundamental_hz(s, f0 as f64) / f0 as f64).log2();
+    // Bowed's gate (spec § 2 BOWED): a bow moves its pitch a few cents.
+    assert!(cents.abs() < 5.0, "{cents:+.2} cents");
+    assert!(octave_clear(s, f0), "an octave low");
+    let db = 20.0 * (rms(s) / BOWED_V1_RMS).log10();
+    assert!(db.abs() < 1.0, "{db:+.2} dB from the old bow");
     let released = play_modal_at(&snap.modal, 48, 127, second, second / 2);
+    assert_eq!(fnv1a(&held), BOWED_V1_HELD);
     assert_eq!(fnv1a(&released), BOWED_V1_RELEASED);
 }
 

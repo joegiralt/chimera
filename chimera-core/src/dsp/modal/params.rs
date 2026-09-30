@@ -272,7 +272,8 @@ pub fn damp_from_v1_decay(decay: f32) -> f32 {
 /// are written: DECAY → DAMP, STIFF or INHARM → STRUCTURE, FDBK dropped.
 /// The string models' BRIGHT flips to the new direction. BANK's BURST is
 /// its EXCITE, the old strike's length. Bowed never read BRIGHT, DAMP or
-/// POS: it loads its old sound, whatever the file held.
+/// POS, and its old sound was the bug (#240): it loads an in-tune bow, an
+/// eighth of the string from the bridge, whatever the file held.
 pub fn translate_v1(old: &crate::storage::Retired, blk: &mut dyn Block) {
     const DECAY: ParamId = ParamId(2);
     const INHARM: ParamId = ParamId(5);
@@ -299,9 +300,9 @@ pub fn translate_v1(old: &crate::storage::Retired, blk: &mut dyn Block) {
         blk.set(P::BURST, blk.get(P::EXCITE));
     }
     if mode == Some(ResonatorMode::Bowed) {
-        blk.set(P::DAMP, damp_for(super::loop_parts::RELEASE_T60));
-        blk.set(P::BRIGHT, 1.0);
-        blk.set(P::POS, 0.0);
+        blk.set(P::DAMP, damp_for(0.5));
+        blk.set(P::BRIGHT, 0.5);
+        blk.set(P::POS, 0.15);
     }
 }
 

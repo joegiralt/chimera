@@ -34,6 +34,7 @@
 //! (`rings`) and Karplus-Strong strings (`string`) in four models.
 
 mod body;
+mod bow;
 mod chords;
 mod dispersion;
 mod ensemble;
@@ -57,10 +58,11 @@ use crate::hw::{Cost, SAMPLE_RATE};
 use crate::in_place::{in_place_enum, uninit_at};
 use crate::sym_alloc::{Lease, SYM_SLOTS, SymAlloc, SymSlot};
 use crate::voice_alloc::VoiceIdx;
+use bow::BowedString;
 use chords::{GLIDE_STEP, period_ratios};
 use core::f32::consts::TAU;
 use ensemble::{Ensemble, rate_hz};
-use loop_parts::{DcBlocker, LoopGain, RELEASE_SAMPLES, Release};
+use loop_parts::{DcBlocker, LoopGain, Release};
 use rings::{CosineOsc, Svf, stiffness_from_structure};
 use string::{FRESH_CLEAR_BYTES, KsRenderParams, KsString, RING_BYTES, StringVoice, lp_coeff};
 
@@ -104,31 +106,6 @@ struct ModalBank {
 
 crate::in_place::field_list!(ModalBank => ModalBank {
     filters, cos_osc, resolution, sounding, burst_remaining, burst_amp, noise_state, burst_lp,
-});
-
-/// The bowed string and the bow's force on it, 0 once the bow lifts.
-struct BowedString {
-    string: KsString,
-    force: f32,
-    /// The force `force` eases to: FORCE's at the note's velocity, read
-    /// every block, then 0 at note-off.
-    force_to: f32,
-    /// Force shed a sample at note-off: the note's force over `RELEASE_SAMPLES`.
-    lift: f32,
-    /// The bow's velocity, easing to SPEED × `BOW_SPEED`.
-    bow_vel: f32,
-    /// `0.5 + 0.5·velocity`, latched at note-on (`bow_force`).
-    vel_scale: f32,
-    /// On the string: note-on to note-off.
-    bowing: bool,
-    /// Samples pushed since note-on, for `KsString::ring_tap`.
-    written: u32,
-    /// The lifted bow's ramp.
-    release: Release,
-}
-
-crate::in_place::field_list!(BowedString => BowedString {
-    string, force, force_to, lift, bow_vel, vel_scale, bowing, written, release,
 });
 
 /// One pool slot (exclusive-state spec § 4.2): the seven strings a
@@ -351,14 +328,17 @@ impl ModalEngine {
     /// dispersion's re-split each block STRUCTURE glides, 8, billed always,
     /// +18. BODY and the ensemble bill apart.
     pub const COST_STRING: Cost = Cost(330);
-    /// 620 + 100 + 140: 60 instructions a sample at step A (143 to 203:
-    /// the tuning allpass on the ring, the tap that follows the write
-    /// (#206), the release, the bow's lift and the output blocker), 87
-    /// cycles; then the playable bow, 83 more (203 to 286: BRIGHT's
-    /// low-pass taps 23, POS's check 4 and its lerped second tap 44, FORCE
-    /// and SPEED eased each sample 10, DAMP's `powf` a block once lifted
-    /// 2), 83 × 1.46 × 1.1 = 133.3. POS is billed always.
-    pub const COST_BOWED: Cost = Cost(860);
+    /// The two-delay bow (Task 14), from the one-loop bow's benched 620:
+    /// `BowedString::render`'s fast span 68 instructions a sample (the
+    /// junction, both ends' filters, the tuning allpass, the bow table's
+    /// one `vdiv.f32`, BRIGHT's low-pass, FORCE and SPEED eased), its
+    /// per-block work 7.2 (two `expf`s for BRIGHT, the spans' heads at
+    /// the bench's notes, the split's step one block in 8), the output
+    /// blocker 7.8: N = 83 against the one-loop bow's 143. The two `tanhf`
+    /// bodies it drops, T = 120 (their `expm1f` taken paths, about 60
+    /// each), were in the 620. 620 + (83 − 143 − 120) × 1.46 × 0.9 +
+    /// (14 − 1.46) × 1.1 for the `vdiv` = 397.3, rounded up to 400.
+    pub const COST_BOWED: Cost = Cost(400);
     /// 809 (benched, ADR 0054) − 271, rounded up to 540: 419 instructions a
     /// sample to 187, −306 cycles. Each halo string runs its block in
     /// spans, 19 a sample (42 before, 87 at task 11); the main string 15;
@@ -575,15 +555,13 @@ impl ModalEngine {
                 );
             }
             ModelSlot::Bowed(b) => {
-                b.string.clear();
-                b.string.tune(freq, sample_rate);
+                b.start(freq, sample_rate, m.pos);
                 b.force = bow_force(params.force, vel);
                 b.force_to = b.force;
                 b.lift = 0.0;
                 b.bow_vel = params.speed * BOW_SPEED;
                 b.vel_scale = 0.5 + 0.5 * vel;
                 b.bowing = true;
-                b.written = 0;
                 b.release = Release::HELD;
             }
             ModelSlot::Sympathetic(v) => {
@@ -629,7 +607,7 @@ impl ModalEngine {
                 v.tune(freq, sample_rate, structure, snap)
             }
             ModelSlot::String(_) => {}
-            ModelSlot::Bowed(b) if pitched => b.string.tune(freq, sample_rate),
+            ModelSlot::Bowed(b) if pitched => b.tune(freq, sample_rate),
             ModelSlot::Bowed(_) => {}
             ModelSlot::Sympathetic(m) => {
                 if pitched {
@@ -653,12 +631,7 @@ impl ModalEngine {
         let held = LoopGain::from_t60(t60(self.macros.damp), f0);
         match &mut self.model {
             ModelSlot::String(v) => v.release(held, to),
-            ModelSlot::Bowed(b) => {
-                b.lift = b.force / RELEASE_SAMPLES as f32;
-                b.force_to = 0.0;
-                b.bowing = false;
-                b.release.start(BOW_GAIN, held);
-            }
+            ModelSlot::Bowed(b) => b.lift(held),
             ModelSlot::Bank(_) => {}
             ModelSlot::Sympathetic(m) => m.main.release(held, to),
         }
@@ -732,7 +705,11 @@ impl ModalEngine {
                 if b.bowing {
                     b.force_to = params.force * b.vel_scale;
                 }
-                render_bowed(b, output, &m, (f0, params.speed * BOW_SPEED));
+                // The first block's split is its modulated POS's, before a sample.
+                if first {
+                    b.place(m.pos);
+                }
+                b.render(output, &m, (f0, params.speed * BOW_SPEED));
                 // Never freed while bowed, however low its note (#206).
                 b.force > 0.0
             }
@@ -842,26 +819,6 @@ impl ModalBank {
             f.reset();
         }
         self.sounding = sounding;
-    }
-}
-
-impl BowedString {
-    fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
-        let p = slot.as_mut_ptr();
-        // SAFETY: `p` is valid and unaliased; the string is built in place
-        // and the rest written by value, before `assume_init_mut`.
-        unsafe {
-            KsString::init_in_place(uninit_at(addr_of_mut!((*p).string)));
-            addr_of_mut!((*p).force).write(0.0);
-            addr_of_mut!((*p).force_to).write(0.0);
-            addr_of_mut!((*p).lift).write(0.0);
-            addr_of_mut!((*p).bow_vel).write(0.0);
-            addr_of_mut!((*p).vel_scale).write(0.0);
-            addr_of_mut!((*p).bowing).write(false);
-            addr_of_mut!((*p).written).write(0);
-            addr_of_mut!((*p).release).write(Release::HELD);
-            slot.assume_init_mut()
-        }
     }
 }
 
@@ -1121,67 +1078,12 @@ fn ensemble(params: &ModalParams, hz: f32, sample_rate: u32) -> (f32, Ensemble) 
 
 /// SPEED 1's bow velocity; SPEED 0.5 is the old `BOW_VELOCITY · 0.3`.
 const BOW_SPEED: f32 = 0.3;
-/// FORCE's and SPEED's easing a sample: about the macros' `EASE` a block.
-const BOW_EASE: f32 = EASE / BLOCK_SIZE as f32;
-/// The bowed loop's gain per pass, until note-off ramps it down.
-const BOW_GAIN: LoopGain = LoopGain::TOP;
-/// BRIGHT 0's low-pass side taps on the bowed loop: the most |H| ≤ 1
-/// allows. The bow's stick-slip keeps it gentle.
-const BOW_LP: f32 = 0.5;
-/// POS at or below this plays the one tap, as the pluck's comb (`KsString::shape`).
-const BOW_POS_MIN: f32 = 0.03;
 
 /// Each halo string's T60 over the main string's.
 const HALO_T60: f32 = 2.0;
 
 /// SYMP's main string's ensemble rate: ENS RATE is STRING's alone.
 const SYMP_ENS_RATE: f32 = 0.3;
-
-/// The bow on its string: DAMP rings the lifted bow, BRIGHT low-passes
-/// the loop on its tap, POS combs the output at the bow point. The loop
-/// and the friction read the one tap, so the pitch holds: a friction
-/// reading POS's second tap bows a second loop, which takes the pitch.
-fn render_bowed(
-    b: &mut BowedString,
-    output: &mut [f32; BLOCK_SIZE],
-    m: &Macros,
-    (f0, vel_to): (f32, f32),
-) {
-    // Lifted, DAMP's ring, which `Release::gain` never lets rise; bowed, the top.
-    let held = if b.bowing {
-        BOW_GAIN
-    } else {
-        LoopGain::from_t60(t60(m.damp), f0)
-    };
-    let c = BOW_LP * (1.0 - m.bright);
-    let d = b.string.delay() as f32;
-    let back = (m.pos > BOW_POS_MIN).then_some(d - m.pos * d);
-    for s in output.iter_mut() {
-        if b.bowing {
-            // At its target, no bit moves.
-            b.force += BOW_EASE * (b.force_to - b.force);
-            b.bow_vel += BOW_EASE * (vel_to - b.bow_vel);
-        } else if b.force > b.force_to {
-            b.force = (b.force - b.lift).max(b.force_to);
-        }
-        let bow_vel = if b.force > 0.001 { b.bow_vel } else { 0.0 };
-        let gain = b.release.gain(held);
-
-        let x = b.string.ring_tap_lp(b.written, c);
-        // The bow point's nulls, heard: outside the loop, so the pitch holds.
-        *s = match back {
-            Some(back) => 0.5 * (x + b.string.ring_tap_at(b.written, back)),
-            None => x,
-        };
-
-        // Stick-slip: a small |Δv| sticks (energy in), a large one slips.
-        let friction = b.force * 4.0 * libm::tanhf((bow_vel - x) * 8.0);
-        // Bounded: `x` under a gain below 1, a bounded push, then `tanh`.
-        let feedback = x * gain.get() + friction * 0.4;
-        b.string.ring_push(libm::tanhf(feedback));
-        b.written = b.written.saturating_add(1);
-    }
-}
 
 /// The main string and, with a halo, the seven it sets ringing; bare, the
 /// main string alone.

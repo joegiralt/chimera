@@ -7,6 +7,7 @@ pub struct LoopGain(f32);
 impl LoopGain {
     pub const MAX: f32 = 0.9995;
     /// The highest gain.
+    #[cfg(test)]
     pub const TOP: Self = Self(Self::MAX);
 
     /// `g` clamped to `[0, MAX]`; NaN is 0.

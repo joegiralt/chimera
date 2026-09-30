@@ -241,7 +241,7 @@ const ROUTING: [RoutingRow; ROUTING_ROWS] = [
     // (BODY 1 bills as 0.3); the re-split is in `COST_STRING`.
     ("MDL STR+", str_full, STILL),
     ("MDL BOW", |p| modal(p, ResonatorMode::Bowed), STILL),
-    // BOW+ − BOW is BRIGHT's taps, POS's second tap and three routes.
+    // BOW+ − BOW is the split's steps, BRIGHT's low-pass and three routes.
     ("MDL BOW+", bow_full, STILL),
     ("MDL SYM", |p| modal(p, ResonatorMode::Sympathetic), STILL),
     ("MDL SYM0", |p| bare(p, ResonatorMode::Sympathetic), STILL),
@@ -352,8 +352,8 @@ fn str_full(p: &mut PartAudio) {
 }
 
 /// BOWED at FORCE 1, SPEED 1, POS 0.5 and BRIGHT 0, LFO 1 (10 Hz sine)
-/// into BRIGHT, DAMP and POS at 64: the low-pass's taps and POS's second
-/// tap every sample.
+/// into BRIGHT, DAMP and POS at 64: the 10 Hz POS route keeps the split
+/// stepping, a step one block in 8 (`BOW_SLEW`), the bow's worst case.
 fn bow_full(p: &mut PartAudio) {
     modal(p, ResonatorMode::Bowed);
     let m = &mut p.params.modal;

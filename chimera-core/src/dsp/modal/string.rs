@@ -101,13 +101,6 @@ impl KsString {
         }
     }
 
-    /// Tunes the loop to `freq`: the line and the allpass, nothing else
-    /// in the loop delaying.
-    pub(super) fn tune(&mut self, freq: f32, sample_rate: u32) {
-        let (period, other, w) = loop_at(freq, sample_rate);
-        self.set_period(period, other, w);
-    }
-
     pub(super) fn delay(&self) -> usize {
         self.delay
     }
@@ -118,6 +111,7 @@ impl KsString {
     }
 
     /// The sample `k` behind the last write, `k < ring_len`.
+    #[cfg(test)]
     #[inline]
     fn behind(&self, k: usize) -> f32 {
         let i = self.write_pos + self.ring_len - k;
@@ -138,6 +132,7 @@ impl KsString {
     }
 
     /// Steps the write position on round the ring.
+    #[cfg(test)]
     #[inline]
     fn advance(&mut self) {
         self.write_pos += 1;
@@ -211,46 +206,11 @@ impl KsString {
         self.dirty * size_of::<f32>()
     }
 
-    /// Bowed's ring: the sample `delay` pushes back, or the note's first
-    /// until `written` reaches it, so a low note sounds from its first
-    /// samples (#206).
-    pub(super) fn ring_tap(&self, written: u32) -> f32 {
-        self.behind(self.delay.min(written.max(1) as usize) - 1)
-    }
-
-    /// Bowed's bow point: `back` samples behind the write, in `ring_tap`'s
-    /// measure, linearly interpolated, clamped to `[1, delay]` and held
-    /// within what `written` has reached (#206). At `delay`, `ring_tap`
-    /// bit for bit.
-    pub(super) fn ring_tap_at(&self, written: u32, back: f32) -> f32 {
-        let reach = self.delay.min(written.max(1) as usize) as f32;
-        // `max` first: NaN reads at 1.
-        let back = back.max(1.0).min(reach);
-        let i = back as usize;
-        let f = back - i as f32;
-        let x = self.behind(i - 1);
-        if f > 0.0 {
-            x + f * (self.behind(i) - x)
-        } else {
-            x
-        }
-    }
-
-    /// Bowed's loop tap through the linear-phase 3-tap low-pass centred on
-    /// it: `c/2·(x[d−1] + x[d+1]) + (1 − c)·x[d]`, no delay. At `c` 0, or
-    /// before `written` passes `delay + 1`, `ring_tap` exactly.
-    pub(super) fn ring_tap_lp(&self, written: u32, c: f32) -> f32 {
-        let d = self.delay;
-        if c == 0.0 || written as usize <= d + 1 {
-            return self.ring_tap(written);
-        }
-        c * 0.5 * (self.behind(d - 2) + self.behind(d)) + (1.0 - c) * self.behind(d - 1)
-    }
-
-    /// Bowed's ring: stores `x` through the allpass, stepping on round it.
-    pub(super) fn ring_push(&mut self, x: f32) {
-        self.advance();
-        self.buffer[self.write_pos] = self.frac.process(x);
+    /// Bowed's waveguide on the ring (`bow.rs`): the ring in use
+    /// (`ring_len` cells), the last write, the loop's line and its tuning allpass.
+    pub(super) fn guide(&mut self) -> (&mut [f32], &mut usize, usize, &mut Allpass1) {
+        let ring = &mut self.buffer[..self.ring_len];
+        (ring, &mut self.write_pos, self.delay, &mut self.frac)
     }
 
     /// The line and its dirty extent: for the tests.
@@ -854,32 +814,6 @@ mod tests {
             let n = color_passes(i as f32 / 128.0);
             assert!(n <= last && n <= 7, "{i}/128: {n}");
             last = n;
-        }
-    }
-
-    /// Bowed's taps at the loop's own point are `ring_tap`, bit for bit,
-    /// once the ring is full and in its first samples.
-    #[test]
-    fn ring_tap_at_the_delay_is_ring_tap() {
-        // SAFETY: `init_in_place` writes every field.
-        let mut s = Box::new(unsafe { by_value(KsString::init_in_place) });
-        s.clear();
-        s.tune(note_to_freq(48), 48_000);
-        let d = s.delay();
-        let mut w = 0u32;
-        for n in [3, 2_000 - 3] {
-            for _ in 0..n {
-                s.ring_push(libm::sinf(w as f32 * 0.37) * 0.8 - 0.1);
-                w += 1;
-            }
-            let tap = s.ring_tap(w).to_bits();
-            assert_eq!(s.ring_tap_at(w, d as f32).to_bits(), tap, "after {w}");
-            assert_eq!(s.ring_tap_lp(w, 0.0).to_bits(), tap, "after {w}");
-            assert_eq!(
-                s.ring_tap_at(w, 0.0).to_bits(),
-                s.behind(0).to_bits(),
-                "after {w}"
-            );
         }
     }
 
