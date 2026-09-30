@@ -14,7 +14,7 @@ use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::engines::{EngineSlot, SlotKind};
 use chimera_core::dsp::filter::FilterMode;
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus};
-use chimera_core::dsp::modal::{ModalEngine, ResonatorMode, SymPool};
+use chimera_core::dsp::modal::{ModalEngine, ModalParams, ResonatorMode, SymPool};
 use chimera_core::dsp::modulator::{EnvForm, EnvSlot, EnvType, Func, Glide, LfoForm, LfoType};
 use chimera_core::dsp::voice::Voice;
 use chimera_core::hw::{
@@ -142,7 +142,7 @@ fn worst_comp(s: &mut AudioShared) {
     (c.thresh, c.ratio, c.attack, c.release, c.makeup, c.mix) = (0.0, 7, 0.0, 0.0, 0.5, 1.0);
 }
 
-const ROUTING_ROWS: usize = 29;
+const ROUTING_ROWS: usize = 30;
 /// Rows per ROUTING screen: ten from y 46 at `ROW_H` 25 end at 283.
 const ROUTING_PAGE: usize = 10;
 
@@ -232,6 +232,8 @@ const ROUTING: [RoutingRow; ROUTING_ROWS] = [
     ("MDL STR", |p| modal(p, ResonatorMode::String), STILL),
     ("MDL BOW", |p| modal(p, ResonatorMode::Bowed), STILL),
     ("MDL SYM", |p| modal(p, ResonatorMode::Sympathetic), STILL),
+    // SYM LFO − MDL SYM is `ModalEngine::CHORD`.
+    ("SYM LFO", sym_lfo, STILL),
     ("MDL RES", |p| modal(p, ResonatorMode::Modal), STILL),
     // MODE flipped every 4 blocks: restarts and rests every flip.
     ("SWITCH", |p| modal(p, ResonatorMode::String), switch_storm),
@@ -244,6 +246,15 @@ fn short_sym(p: &mut PartAudio) {
     modal(p, ResonatorMode::Sympathetic);
     p.params.envelopes[0].release = 0.0;
     p.mod_state = matrix(&[(ModSource::Env1, VCA, 127)]);
+}
+
+/// Sympathetic with LFO 1 (10 Hz sine) on STRUCTURE at 127: it crosses
+/// chords faster than they glide, so the halo is always gliding.
+fn sym_lfo(p: &mut PartAudio) {
+    modal(p, ResonatorMode::Sympathetic);
+    p.params.lfos[0].rate = 10.0;
+    let structure = ParamAddr::new(BlockRef::Modal, ModalParams::STRUCTURE);
+    p.mod_state = matrix(&[(ModSource::Lfo1, structure, 127)]);
 }
 
 /// String and Sympathetic in turn, 4 blocks each.

@@ -76,8 +76,8 @@ Task 5 makes the four macros modulatable:
   `shape` combs and smooths it before the first tick. So VEL and NOTE
   routes reach it. With no route, this is bit-identical to shaping at
   note-on. BANK reads POS live.
-- Until the chord table (task 10), SYMP's halo retunes to the eased
-  STRUCTURE whenever it moves.
+- Until the chord table (task 10), SYMP's halo retuned to the eased
+  STRUCTURE whenever it moved.
 - MODES latches at note-on. A sounding bank note keeps its modes, and the
   voice is billed for them (`ModalEngine::playing_cost`) until it ends.
 
@@ -131,6 +131,34 @@ There are two heads, at 0° and 90°: evenly spread heads (three at 120°, or
 a pair at 180°) cancel each partial's first sidebands in the sum,
 Σ e^(i2πk/3) = 0, so the mix barely moves.
 
+Task 10 gives SYMP its chords, COUPLE and HALO:
+- STRUCTURE steps Rings' single-voice chord table (`part.cc`,
+  `chords[0]`, MIT, ADR 0032), adapted to the 7 halo strings: each chord
+  less the 0.0 the main string plays, 11 chords of 7 distinct intervals
+  (`modal::chords`). The pairs 0.01 apart stay: they are Rings' detuned
+  chorus. `chord_of(s) = min(⌊11·s⌋, 10)`.
+- The chord reads the block's modulated STRUCTURE un-eased. A change
+  glides each halo string's period linearly from where it is to the new
+  chord's over `CHORD_GLIDE_SAMPLES` = 960 (20 ms), re-split every
+  `GLIDE_STEP` = 16 samples through the fractional tuning. The glide is
+  the easing. A re-split each block stepped the line up to 22 samples at
+  G1 and ticked on low notes.
+- A halo string's period is `P·2^(−st/12)`, raised by octaves until its
+  line fits (`fold`: `floor(period − 0.5) ≤ 979`). At G1 Rings' −12 plays
+  unison. At note-on each halo ring is sized for the longest folded period
+  any chord gives it at that note, so no glide grows a ring mid-note.
+- Each halo string's loop gain is from its own period, at 2× the main
+  string's T60, with no release (unchanged).
+- COUPLE and HALO replace the fixed 0.025 and 0.15: the coupling is
+  `0.1·COUPLE` and the halo level `0.6·HALO`, latched at note-on. The
+  defaults, 0.25, give today's values.
+- A route into STRUCTURE on SYMP is billed `ModalEngine::CHORD` = 40,
+  estimated, until the bench's SYM LFO row measures it (task 11).
+- Provenance: from Rings (MIT) come the chord table and the dispersion's
+  `ap_gain` law. Ours are `LoopGain`, the blocker's placement on the
+  output, the fractional tuning, BODY, the ensemble, the release, the
+  octave fold, the chord glide and the macro mapping.
+
 ## Alternatives considered
 - Keep FDBK and clamp its range below the unity point: its useful range
   would be 0–0.012, and the knob would still be one bad mapping from a
@@ -149,13 +177,16 @@ a pair at 180°) cancel each partial's first sidebands in the sum,
   window's edge samples, up to about 1e-2. The stability test measures DC
   over 10 s.
 - A macro route costs nothing extra on BANK, which already recomputes its
-  filters every block. On SYMP, a moving STRUCTURE retunes the seven halo
-  strings each block until task 10.
+  filters every block. On SYMP, a moving STRUCTURE re-splits the seven
+  halo strings each block while a chord change glides
+  (`ModalEngine::CHORD`).
 - Modal's goldens and the INIT Modal fixtures move, and are re-recorded
   once, at the end of step A.
 
 ## Sources
 - docs/superpowers/specs/2026-09-29-modal-2-resonators-design.md § 2
-- docs/superpowers/plans/2026-09-29-modal-2-resonators.md, Tasks 1, 2 and 8
-- Mutable Instruments Rings, `dsp/string.cc` (`ap_gain`)
+- docs/superpowers/plans/2026-09-29-modal-2-resonators.md, Tasks 1, 2, 8,
+  9 and 10
+- Mutable Instruments Rings, `dsp/string.cc` (`ap_gain`) and
+  `dsp/part.cc` (the chord table)
 - ADR 0040 (the 984-sample line), ADR 0054 (the dirty extent)

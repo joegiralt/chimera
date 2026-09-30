@@ -22,7 +22,9 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
-// `dispersion.rs` follows Rings' `ap_gain` curve, under the same notice.
+// `dispersion.rs` follows Rings' `ap_gain` curve, and `chords.rs` holds its
+// chord table (`dsp/part.cc`, Copyright 2015 Emilie Gillet), under the
+// same notice.
 //
 // The Karplus-Strong string (`string.rs`) is the project owner's own code,
 // from their Carcosa firmware for the Ambika, relicensed here under MIT
@@ -32,6 +34,7 @@
 //! (`rings`) and Karplus-Strong strings (`string`) in four models.
 
 mod body;
+mod chords;
 mod dispersion;
 mod ensemble;
 mod loop_parts;
@@ -39,6 +42,7 @@ mod params;
 mod rings;
 mod string;
 
+pub use chords::{CHORD_COUNT, CHORD_GLIDE_SAMPLES, CHORDS, chord_of, fold};
 pub use params::*;
 pub use string::MAX_STRING_DELAY;
 
@@ -52,6 +56,8 @@ use crate::hw::{Cost, SAMPLE_RATE};
 use crate::in_place::{in_place_enum, uninit_at};
 use crate::sym_alloc::{Lease, SYM_SLOTS, SymAlloc, SymSlot};
 use crate::voice_alloc::VoiceIdx;
+use chords::{GLIDE_STEP, period_ratios};
+use core::f32::consts::TAU;
 use ensemble::{Ensemble, rate_hz};
 use loop_parts::{DcBlocker, LoopGain, RELEASE_SAMPLES, RELEASE_T60, Release};
 use rings::{CosineOsc, Svf, stiffness_from_structure};
@@ -69,6 +75,9 @@ pub const MAX_MODES: usize = 48;
 // ── Modal Engine (with String and Bowed modes) ──────────────────────
 
 const NUM_SYMPATHETIC: usize = 7;
+
+/// A fresh set's periods, before its first note-on.
+const INIT_PERIOD: f32 = 100.0;
 
 /// The most a Sympathetic note-on clears: eight whole rings, a slot and a
 /// main string last played at or below G1 (`SymPool::note_on_clear`).
@@ -115,14 +124,27 @@ crate::in_place::field_list!(BowedString => BowedString { string, force, force_t
 /// voice's (`SympatheticVoice`).
 pub struct SympatheticSet {
     strings: [KsString; NUM_SYMPATHETIC],
-    /// Each sympathetic string's ratio to the main one, set at note-on.
+    /// The chord STRUCTURE last stepped to (`chord_of`).
+    chord: u8,
+    /// Its periods over the main string's, unfolded.
     ratios: [f32; NUM_SYMPATHETIC],
+    /// The glide's periods, samples: from the last chord's, to this one's
+    /// folded.
+    from: [f32; NUM_SYMPATHETIC],
+    to: [f32; NUM_SYMPATHETIC],
+    /// Samples of glide left.
+    glide: u32,
+    /// COUPLE's and HALO's gains, latched at note-on.
+    coupling: f32,
+    level: f32,
     /// Each sympathetic string's last output, not yet stored: it is stored
     /// with the next sample's coupled input (`KsString::tick_coupled`).
     pending: [f32; NUM_SYMPATHETIC],
 }
 
-crate::in_place::field_list!(SympatheticSet => SympatheticSet { strings, ratios, pending });
+crate::in_place::field_list!(SympatheticSet => SympatheticSet {
+    strings, chord, ratios, from, to, glide, coupling, level, pending,
+});
 
 /// Sympathetic's sets, one per slot of `SymAlloc`, which lends them to
 /// voices (ADR 0054). One per `Instrument`, in D2 beside the voices.
@@ -354,6 +376,12 @@ impl ModalEngine {
     /// and 9 I-cache misses a block, per voice (2026-09-28). Billed at 12.
     pub const PITCH: Cost = Cost(12);
 
+    /// More on SYMP with a route into STRUCTURE, which can keep the halo
+    /// gliding: seven re-splits every `GLIDE_STEP` (28 a block), and seven
+    /// `exp2f`s a chord step. Estimated from `PITCH`, 12 for eight splits
+    /// a block, pending the bench's SYM LFO row (task 11).
+    pub const CHORD: Cost = Cost(40);
+
     /// An idle engine set to play `mode`, by value, through the stack:
     /// tests only. Sympathetic borrows a slot of `pool` for voice 0.
     #[cfg(any(test, feature = "test-support"))]
@@ -423,6 +451,31 @@ impl ModalEngine {
         matches!(&self.model, ModelSlot::Sympathetic(m) if matches!(m.halo, Halo::Bare))
     }
 
+    /// The halo's set in `pool`, if any: for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    fn halo_in<'a>(&self, pool: &'a SymPool) -> Option<&'a SympatheticSet> {
+        match &self.model {
+            ModelSlot::Sympathetic(m) => match &m.halo {
+                Halo::Full(l) => Some(&pool.sets[l.slot().index()]),
+                Halo::Bare => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// The halo strings' periods, samples, as last split: for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn halo_periods(&self, pool: &SymPool) -> Option<[f32; NUM_SYMPATHETIC]> {
+        self.halo_in(pool).map(SympatheticSet::periods)
+    }
+
+    /// The halo strings' lines, `(delay, ring_len)`: for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn halo_lines(&self, pool: &SymPool) -> Option<[(usize, usize); NUM_SYMPATHETIC]> {
+        self.halo_in(pool)
+            .map(|s| s.strings.each_ref().map(|k| (k.delay(), k.ring_len())))
+    }
+
     /// `params.mode` must be the model this engine holds: a voice rebuilds
     /// its slot into another (`Voice::rebuild`, ADR 0051). Sympathetic
     /// reads its set from `pool`.
@@ -483,16 +536,7 @@ impl ModalEngine {
                     (params.body, ens),
                 );
                 if let Some(set) = pool.halo(&v.halo) {
-                    for sym in set.strings.iter_mut() {
-                        // Sympathetic strings start silent — energy comes
-                        // from main. A handed-over slot carries nothing of
-                        // its last note (spec § 4.8). Cleared before the
-                        // retune, so the clear is `SymPool::note_on_clear`'s.
-                        sym.clear();
-                    }
-                    set.ratios = sympathetic_ratios(m.structure);
-                    set.tune(freq, sample_rate);
-                    set.pending = [0.0; NUM_SYMPATHETIC];
+                    set.note_on(sample_rate as f32 / freq, chord_of(m.structure), params);
                 }
             }
         }
@@ -503,23 +547,21 @@ impl ModalEngine {
         self.silence_counter = 0;
     }
 
-    /// The strings follow a changed pitch ratio, and STRING's dispersion
-    /// (gliding, `StringVoice::tune`) and SYMP's halo a moved STRUCTURE
-    /// (per block, at a change only): a divide per string
-    /// (`ModalEngine::PITCH`).
-    fn retune(&mut self, sample_rate: u32, pool: &mut SymPool, moved: bool) {
+    /// The strings follow a changed pitch ratio (a divide per string,
+    /// `ModalEngine::PITCH`), STRING's dispersion a moved STRUCTURE
+    /// (gliding, `StringVoice::tune`), and SYMP's halo `chord`, the
+    /// un-eased STRUCTURE's (gliding, `SympatheticSet::retune`).
+    fn retune(&mut self, sample_rate: u32, pool: &mut SymPool, (moved, chord): (bool, usize)) {
         let pitched = self.pitch != self.tuned;
-        let gliding =
-            matches!(&self.model, ModelSlot::String(v) if v.gliding(self.macros.structure));
-        if !pitched && !moved && !gliding {
-            return;
-        }
         self.tuned = self.pitch;
         let freq = self.pitched(self.frequency * sample_rate as f32);
         let structure = self.macros.structure;
         match &mut self.model {
             ModelSlot::Bank(_) => {}
-            ModelSlot::String(v) => v.tune(freq, sample_rate, structure),
+            ModelSlot::String(v) if pitched || moved || v.gliding(structure) => {
+                v.tune(freq, sample_rate, structure)
+            }
+            ModelSlot::String(_) => {}
             ModelSlot::Bowed(b) if pitched => b.string.tune(freq, sample_rate),
             ModelSlot::Bowed(_) => {}
             ModelSlot::Sympathetic(m) => {
@@ -527,11 +569,7 @@ impl ModalEngine {
                     m.main.tune(freq, sample_rate, 0.0);
                 }
                 if let Some(set) = pool.halo(&m.halo) {
-                    if moved {
-                        // Interim until the chord table (Task 10).
-                        set.ratios = sympathetic_ratios(structure);
-                    }
-                    set.tune(freq, sample_rate);
+                    set.retune(sample_rate as f32 / freq, chord, pitched);
                 }
             }
         }
@@ -596,7 +634,9 @@ impl ModalEngine {
         let bank_freq = self.pitched(self.frequency);
         // The strings' f0 in Hz, for their loop gains.
         let f0 = bank_freq * sample_rate as f32;
-        self.retune(sample_rate, pool, m.structure != was.structure);
+        // The chord steps on the un-eased STRUCTURE: its glide is the easing.
+        let chord = chord_of(to.structure);
+        self.retune(sample_rate, pool, (m.structure != was.structure, chord));
 
         // Whether the model is still exciting itself: silent or not, the
         // note sounds on.
@@ -621,7 +661,8 @@ impl ModalEngine {
             ModelSlot::Sympathetic(v) => {
                 let v = &mut **v;
                 v.main.set_ensemble();
-                render_sympathetic(&mut v.main, pool.halo(&v.halo), output, (params, &m), f0);
+                let set = pool.halo(&v.halo);
+                render_sympathetic(&mut v.main, set, output, &m, (f0, sample_rate));
                 false
             }
         };
@@ -835,23 +876,95 @@ impl SympatheticSet {
     fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
         let p = slot.as_mut_ptr();
         // SAFETY: `p` is valid and unaliased; the seven strings are built
-        // in place and `ratios` and `pending` are written by value, before
+        // in place and every other field is written by value, before
         // `assume_init_mut`.
         unsafe {
             let sym = addr_of_mut!((*p).strings).cast::<KsString>();
             for i in 0..NUM_SYMPATHETIC {
                 KsString::init_in_place(uninit_at(sym.add(i)));
             }
+            addr_of_mut!((*p).chord).write(0);
             addr_of_mut!((*p).ratios).write([1.0; NUM_SYMPATHETIC]);
+            addr_of_mut!((*p).from).write([INIT_PERIOD; NUM_SYMPATHETIC]);
+            addr_of_mut!((*p).to).write([INIT_PERIOD; NUM_SYMPATHETIC]);
+            addr_of_mut!((*p).glide).write(0);
+            addr_of_mut!((*p).coupling).write(0.0);
+            addr_of_mut!((*p).level).write(0.0);
             addr_of_mut!((*p).pending).write([0.0; NUM_SYMPATHETIC]);
             slot.assume_init_mut()
         }
     }
 
-    /// The sympathetic strings at their note-on ratios to `freq`.
-    fn tune(&mut self, freq: f32, sample_rate: u32) {
-        for (sym, r) in self.strings.iter_mut().zip(self.ratios) {
-            sym.tune(freq * r, sample_rate);
+    /// A note-on on a main string of `period` samples: the strings
+    /// cleared, each ring sized for the longest folded period any chord
+    /// gives it, so no glide grows one mid-note, then tuned to `chord`.
+    fn note_on(&mut self, period: f32, chord: usize, params: &ModalParams) {
+        let ratios: [[f32; NUM_SYMPATHETIC]; CHORD_COUNT] = core::array::from_fn(period_ratios);
+        for (i, sym) in self.strings.iter_mut().enumerate() {
+            // Sympathetic strings start silent — energy comes from main. A
+            // handed-over slot carries nothing of its last note (spec
+            // § 4.8). Cleared before the retune, so the clear is
+            // `SymPool::note_on_clear`'s.
+            sym.clear();
+            let longest = ratios
+                .iter()
+                .map(|r| fold(period * r[i]))
+                .fold(0.0, f32::max);
+            sym.set_period(longest, 0.0, TAU / longest);
+        }
+        self.chord = chord as u8;
+        self.ratios = ratios[chord];
+        self.to = self.ratios.map(|r| fold(period * r));
+        self.from = self.to;
+        self.glide = 0;
+        self.split();
+        self.coupling = 0.1 * params.couple;
+        self.level = 0.6 * params.halo;
+        self.pending = [0.0; NUM_SYMPATHETIC];
+    }
+
+    /// Per block, on a main string of `period` samples: a new `chord`
+    /// starts a glide from where the strings are, which `glide_step`
+    /// walks; a pitch change moves its target.
+    fn retune(&mut self, period: f32, chord: usize, pitched: bool) {
+        let stepped = chord != self.chord as usize;
+        if stepped {
+            self.from = self.periods();
+            self.chord = chord as u8;
+            self.ratios = period_ratios(chord);
+            self.glide = CHORD_GLIDE_SAMPLES;
+        }
+        if stepped || pitched {
+            self.to = self.ratios.map(|r| fold(period * r));
+        }
+        if pitched && self.glide == 0 {
+            self.split();
+        }
+    }
+
+    /// Every `GLIDE_STEP` samples: a gliding set's next step.
+    #[inline]
+    fn glide_step(&mut self) {
+        if self.glide > 0 {
+            self.glide = self.glide.saturating_sub(GLIDE_STEP as u32);
+            self.split();
+        }
+    }
+
+    /// The strings' periods now, samples: `to` past the glide.
+    fn periods(&self) -> [f32; NUM_SYMPATHETIC] {
+        if self.glide == 0 {
+            return self.to;
+        }
+        let t = 1.0 - self.glide as f32 / CHORD_GLIDE_SAMPLES as f32;
+        core::array::from_fn(|i| self.from[i] + (self.to[i] - self.from[i]) * t)
+    }
+
+    /// Each string's line and allpass at `periods`: no dispersion.
+    fn split(&mut self) {
+        let periods = self.periods();
+        for (sym, p) in self.strings.iter_mut().zip(periods) {
+            sym.set_period(p, 0.0, TAU / p);
         }
     }
 }
@@ -976,12 +1089,10 @@ fn render_sympathetic(
     main: &mut StringVoice,
     set: Option<&mut SympatheticSet>,
     output: &mut [f32; BLOCK_SIZE],
-    (params, m): (&ModalParams, &Macros),
-    f0: f32,
+    m: &Macros,
+    (f0, sample_rate): (f32, u32),
 ) {
     let main_params = main_string(m, f0);
-    let coupling = 0.1 * params.couple;
-    let level = 0.6 * params.halo;
 
     let Some(set) = set else {
         for s in output.iter_mut() {
@@ -993,11 +1104,15 @@ fn render_sympathetic(
     // Each halo string rings twice the main one's T60, no darker.
     let lp = lp_coeff(halo_bright(m.bright));
     let halo_t60 = HALO_T60 * t60(m.damp);
-    let halo = set.ratios.map(|r| KsRenderParams {
+    let halo = set.periods().map(|p| KsRenderParams {
         lp,
-        gain: LoopGain::from_t60(halo_t60, f0 * r),
+        gain: LoopGain::from_t60(halo_t60, sample_rate as f32 / p),
     });
-    for s in output.iter_mut() {
+    let (coupling, level) = (set.coupling, set.level);
+    for (i, s) in output.iter_mut().enumerate() {
+        if i % GLIDE_STEP == 0 {
+            set.glide_step();
+        }
         // 1. Main string tick
         let main_out = main.tick(&main_params);
 
@@ -1023,13 +1138,6 @@ use super::note_to_freq;
 /// The halo's BRIGHT: its damping 0.7× the main string's, as today.
 fn halo_bright(bright: f32) -> f32 {
     1.0 - 0.7 * (1.0 - bright)
-}
-
-/// The sympathetic strings' ratios to the main one: harmonics/intervals
-/// spread by `structure`, 0 unison, 1 a wide harmonic series.
-fn sympathetic_ratios(structure: f32) -> [f32; NUM_SYMPATHETIC] {
-    let intervals = [0.0, 12.0, 7.02, 12.0, 19.02, 24.0, 7.02];
-    intervals.map(|st| libm::powf(2.0, st * structure / 12.0))
 }
 
 #[cfg(test)]
@@ -1091,6 +1199,22 @@ mod tests {
     fn the_halo_is_no_darker_than_the_main_string() {
         let bright = ModalParams::default().bright;
         assert!(lp_coeff(halo_bright(bright)) <= lp_coeff(bright));
+    }
+
+    /// COUPLE and HALO at their defaults give today's fixed 0.025 and 0.15,
+    /// latched at note-on.
+    #[test]
+    fn couple_and_halo_default_to_todays_mix() {
+        let mut pool = SymPool::boxed();
+        let mut e = engine(&mut pool, ResonatorMode::Sympathetic);
+        let mut p = sym_params();
+        (p.couple, p.halo) = (0.25, 0.25);
+        e.note_on(48, 100, &p, SR, &mut pool);
+        let ModelSlot::Sympathetic(m) = &e.model else {
+            unreachable!()
+        };
+        let set = &pool.sets[set_of(m).index()];
+        assert_eq!((set.coupling, set.level), (0.025, 0.15));
     }
 
     #[test]
@@ -1262,7 +1386,7 @@ mod tests {
 
     /// A note-on clears what the lines' last notes wrote, not the ring: a
     /// slot last played high clears a fraction of one last played at the
-    /// lowest pitch, which clears all eight rings (the worst case).
+    /// lowest pitch, which clears at most all eight rings.
     #[test]
     fn the_clear_scales_with_the_dirty_extent() {
         let p = sym_params();
@@ -1277,9 +1401,10 @@ mod tests {
         // A4: every loop at most 110 samples.
         let high = cleared_after(69);
         assert!(high <= (1 + NUM_SYMPATHETIC) * 110, "{high}");
-        // MIDI 0: every loop clamps to the whole ring.
+        // MIDI 0: the main string clamps to the whole ring; the halo's
+        // fold into it, each over half of it.
         let low = cleared_after(0);
-        assert_eq!(low, ring);
+        assert!(low <= ring && 2 * low > ring, "{low}");
         assert!(high * 8 < low);
         // The dirty extent is only ever the clear's upper bound: past it
         // every sample is silent.

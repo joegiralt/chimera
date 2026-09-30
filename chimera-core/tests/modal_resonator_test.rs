@@ -769,3 +769,171 @@ fn a_pitch_route_with_the_ensemble_on_does_not_click() {
         }
     }
 }
+
+/// Note 48's period, samples.
+fn period_of(note: u8) -> f32 {
+    SR as f32 / note_to_freq(note)
+}
+
+/// SYMP note 48 held on chord 1; at block 100 STRUCTURE crosses to chord
+/// 3. The halo glides, doesn't click, and 25 ms on sits on chord 3.
+#[test]
+fn chord_change_glides() {
+    use chimera_core::dsp::modal::{CHORDS, SymPool, fold};
+    let mut p = ModalParams {
+        mode: ResonatorMode::Sympathetic,
+        structure: 0.1,
+        damp: 1.0,
+        ..Default::default()
+    };
+    let mut pool = SymPool::boxed();
+    let mut e = Box::new(ModalEngine::new_in(&mut pool, p.mode));
+    e.note_on(48, 100, &p, SR, &mut pool);
+    let to = CHORDS[3].map(|st| fold(period_of(48) * 2f32.powf(-st / 12.0)));
+    let mut out = Vec::new();
+    let mut block = [0.0; BLOCK_SIZE];
+    for i in 0..200 {
+        if i == 100 {
+            p.structure = 0.3;
+        }
+        e.render(&mut block, &p, SR, &mut pool);
+        out.extend_from_slice(&block);
+        if i == 100 {
+            // Gliding, not stepped: string 4 goes 9.99 to 13.99.
+            let (a, b) = (fold(period_of(48) * 2f32.powf(-9.99 / 12.0)), to[4]);
+            let got = e.halo_periods(&pool).expect("a halo")[4];
+            assert!(got < a - 1e-3 && got > b + 1e-3, "{got}: {a} to {b}");
+        }
+        if i >= 100 + 19 {
+            let got = e.halo_periods(&pool).expect("a halo");
+            for (g, t) in got.iter().zip(&to) {
+                assert!((g - t).abs() < 1e-3, "block {i}: {got:?} vs {to:?}");
+            }
+        }
+    }
+    let c = clicks(&out);
+    assert!(c.is_empty(), "clicks {:?}", &c[..c.len().min(5)]);
+}
+
+/// Review Focus 2: on G1 every chord's halo fits the line. Each string
+/// plays its interval folded up by the least octaves that fit (−12 is
+/// unison), and 2 s ring finite and bounded.
+#[test]
+fn every_chord_fits_the_line_at_g1() {
+    use chimera_core::dsp::modal::{CHORDS, MAX_STRING_DELAY, SymPool};
+    let note_period = period_of(31) as f64;
+    for (k, chord) in CHORDS.iter().enumerate() {
+        let p = ModalParams {
+            mode: ResonatorMode::Sympathetic,
+            structure: (k as f32 + 0.5) / 11.0,
+            damp: 1.0,
+            ..Default::default()
+        };
+        let mut pool = SymPool::boxed();
+        let mut e = Box::new(ModalEngine::new_in(&mut pool, p.mode));
+        e.note_on(31, 127, &p, SR, &mut pool);
+        let mut block = [0.0; BLOCK_SIZE];
+        let mut peak = 0.0_f32;
+        for i in 0..2 * SR as usize / BLOCK_SIZE {
+            e.render(&mut block, &p, SR, &mut pool);
+            assert!(block.iter().all(|x| x.is_finite()), "chord {k}: finite");
+            peak = block.iter().fold(peak, |m, x| m.max(x.abs()));
+            if i > 0 {
+                continue;
+            }
+            let lines = e.halo_lines(&pool).expect("a halo");
+            let periods = e.halo_periods(&pool).expect("a halo");
+            for (s, ((delay, ring), &st)) in lines.iter().zip(chord).enumerate() {
+                assert!(
+                    *ring <= MAX_STRING_DELAY,
+                    "chord {k} string {s}: ring {ring}"
+                );
+                assert!(
+                    delay + 2 <= *ring,
+                    "chord {k} string {s}: {delay} in {ring}"
+                );
+                let mut want = note_period * 2f64.powf(-st as f64 / 12.0);
+                while (want - 0.5).floor() > (MAX_STRING_DELAY - 2) as f64 {
+                    want /= 2.0;
+                }
+                let got = periods[s] as f64;
+                assert!(
+                    (got - want).abs() < 1e-3,
+                    "chord {k} string {s}: {got} vs {want}"
+                );
+            }
+            assert!(
+                (periods[0] as f64 - note_period).abs() < 1e-3,
+                "−12 is unison"
+            );
+        }
+        assert!(peak <= 2.0, "chord {k}: peak {peak}");
+    }
+}
+
+/// A chord step on a low note, halo loud: the glide's sharpest kink stays
+/// within 2× the held chords' either side. A re-split each block (64
+/// samples) gave 2.9× here, and ticked in the demo's click check.
+#[test]
+fn a_chord_glide_on_a_low_note_does_not_tick() {
+    use chimera_core::dsp::modal::SymPool;
+    let at = |k: usize| (k as f32 + 0.5) / 11.0;
+    let mut p = ModalParams {
+        mode: ResonatorMode::Sympathetic,
+        structure: at(0),
+        damp: 0.97,
+        bright: 0.5,
+        couple: 0.5,
+        halo: 0.5,
+        ..Default::default()
+    };
+    let mut pool = SymPool::boxed();
+    let mut e = Box::new(ModalEngine::new_in(&mut pool, p.mode));
+    e.note_on(38, 100, &p, SR, &mut pool);
+    let mut out = Vec::new();
+    let mut block = [0.0; BLOCK_SIZE];
+    for i in 0..210 {
+        if i == 150 {
+            p.structure = at(5);
+        }
+        e.render(&mut block, &p, SR, &mut pool);
+        out.extend_from_slice(&block);
+    }
+    let kink = |b: std::ops::Range<usize>| {
+        out[b.start * BLOCK_SIZE..b.end * BLOCK_SIZE]
+            .windows(3)
+            .map(|w| (w[2] - 2.0 * w[1] + w[0]).abs())
+            .fold(0.0, f32::max)
+    };
+    let (glide, held) = (kink(150..166), kink(110..150).max(kink(166..206)));
+    assert!(glide <= 2.0 * held, "glide kink {glide}, held {held}");
+    assert!(clicks(&out[8 * BLOCK_SIZE..]).is_empty());
+}
+
+/// A pitch change mid-note retunes the halo to where a note-on at that
+/// pitch puts it.
+#[test]
+fn a_pitch_change_retunes_the_halo() {
+    use chimera_core::dsp::modal::SymPool;
+    let p = ModalParams {
+        mode: ResonatorMode::Sympathetic,
+        ..Default::default()
+    };
+    let r = 2f32.powf(7.0 / 12.0);
+    let halo = |before: bool| {
+        let mut pool = SymPool::boxed();
+        let mut e = Box::new(ModalEngine::new_in(&mut pool, p.mode));
+        if before {
+            e.set_pitch(r);
+        }
+        e.note_on(36, 100, &p, SR, &mut pool);
+        e.set_pitch(r);
+        let mut block = [0.0; BLOCK_SIZE];
+        e.render(&mut block, &p, SR, &mut pool);
+        e.halo_periods(&pool).expect("a halo")
+    };
+    let (at_note_on, moved) = (halo(true), halo(false));
+    for (a, b) in at_note_on.iter().zip(&moved) {
+        assert!((a - b).abs() < 1e-3, "{at_note_on:?} vs {moved:?}");
+    }
+}

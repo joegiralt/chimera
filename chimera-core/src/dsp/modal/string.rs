@@ -107,9 +107,14 @@ impl KsString {
         self.set_period(period, other, w);
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(super) fn delay(&self) -> usize {
         self.delay
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(super) fn ring_len(&self) -> usize {
+        self.ring_len
     }
 
     /// The sample `k` behind the last write, `k < ring_len`.
