@@ -5,9 +5,10 @@ use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 
 use super::body::{Body, BodyMix};
-use super::dispersion::Dispersion;
+use super::dispersion::{DISPERSION_STAGES, Dispersion};
 use super::loop_parts::{Allpass1, LoopGain, MIN_LINE, Release, split};
 use crate::dsp::xorshift_noise;
+use crate::hw::SAMPLE_RATE;
 
 // ── Karplus-Strong delay line (from the owner's Carcosa firmware) ───
 
@@ -165,12 +166,12 @@ impl KsString {
     }
 
     /// Shapes the pluck `excite` wrote, in place, before the loop reads
-    /// it: a comb notched at `position`'s harmonics, then one smoothing
-    /// pass (the old colour 0.8).
-    pub(super) fn shape(&mut self, position: f32) {
+    /// it: a comb notched at `position`'s harmonics of a loop of `period`
+    /// samples, then one smoothing pass (the old colour 0.8).
+    pub(super) fn shape(&mut self, position: f32, period: f32) {
         let len = self.delay;
         if position > 0.03 {
-            let notch_period = ((len as f32 * position) as usize).max(2);
+            let notch_period = ((period * position) as usize).max(2);
             if notch_period < len {
                 for i in 0..len - notch_period {
                     self.buffer[i] = (self.buffer[i] + self.buffer[i + notch_period]) * 0.5;
@@ -237,9 +238,18 @@ impl KsString {
     /// One pass of the loop, the low-pass, `disp` and the allpass, then
     /// `gain` last, so nothing bypasses it; out through the ensemble.
     #[inline]
-    fn tick_full(&mut self, p: &KsRenderParams, gain: LoopGain, disp: &mut Dispersion) -> f32 {
+    fn tick_full(
+        &mut self,
+        p: &KsRenderParams,
+        gain: LoopGain,
+        disp: Option<&mut Dispersion>,
+    ) -> f32 {
         let d = self.delay;
-        let filtered = self.frac.process(disp.process(self.lowpass(p))) * gain.get();
+        let mut x = self.lowpass(p);
+        if let Some(disp) = disp {
+            x = disp.process(x);
+        }
+        let filtered = self.frac.process(x) * gain.get();
         self.advance();
         self.buffer[self.write_pos] = filtered;
 
@@ -311,13 +321,29 @@ crate::in_place::field_list!(KsString => KsString { buffer, write_pos, ring_len,
 pub(super) struct StringVoice {
     pub(super) string: KsString,
     disp: Dispersion,
+    /// STRING's: the chain runs. SYMP's main string has none, and skips it.
+    stiff: bool,
+    /// The STRUCTURE the chain is at, slewing to the eased one.
+    structure: f32,
+    /// The loop's period, samples, as last tuned.
+    period: f32,
     body: Body,
     /// BODY, latched at note-on (spec § 1).
     body_mix: BodyMix,
     release: Release,
 }
 
-crate::in_place::field_list!(StringVoice => StringVoice { string, disp, body, body_mix, release });
+crate::in_place::field_list!(StringVoice => StringVoice {
+    string, disp, stiff, structure, period, body, body_mix, release,
+});
+
+/// The longest loop: the whole line, a one-sample fraction and the chain
+/// at STRUCTURE 0. A lower note plays this, at every STRUCTURE.
+const LONGEST: f32 = (MAX_LINE + 1 + DISPERSION_STAGES) as f32;
+
+/// Samples a block the chain's DC delay, and so the line, may move: a
+/// STRUCTURE step glides, not jumps.
+const DISP_SLEW: f32 = 2.0;
 
 impl StringVoice {
     pub(super) fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
@@ -327,42 +353,73 @@ impl StringVoice {
         unsafe {
             KsString::init_in_place(crate::in_place::uninit_at(addr_of_mut!((*p).string)));
             addr_of_mut!((*p).disp).write(Dispersion::default());
-            addr_of_mut!((*p).body).write(Body::new());
+            addr_of_mut!((*p).stiff).write(false);
+            addr_of_mut!((*p).structure).write(0.0);
+            addr_of_mut!((*p).period).write(INIT_LEN as f32);
+            addr_of_mut!((*p).body).write(Body::new(SAMPLE_RATE));
             addr_of_mut!((*p).body_mix).write(Body::mix(0.0));
             addr_of_mut!((*p).release).write(Release::HELD);
             slot.assume_init_mut()
         }
     }
 
-    /// `freq`'s loop at `structure`: the dispersion set, and its phase
-    /// delay at f0 the line's to give back, so the pitch holds.
-    fn dispersed(&mut self, freq: f32, sample_rate: u32, structure: f32) -> (f32, f32, f32) {
+    /// `freq`'s loop, stiff no longer than `LONGEST`, at `self.structure`: the
+    /// dispersion set, and its phase delay at f0 the line's to give back,
+    /// so the pitch holds.
+    fn dispersed(&mut self, freq: f32, sample_rate: u32) -> (f32, f32, f32) {
         let (period, _, w) = loop_at(freq, sample_rate);
-        let a = Dispersion::coeff(structure, period);
+        if !self.stiff {
+            self.period = period;
+            return (period, 0.0, w);
+        }
+        // Clamped, the chain's delay comes off the whole line, not on top.
+        let (period, w) = if period > LONGEST {
+            (LONGEST, core::f32::consts::TAU / LONGEST)
+        } else {
+            (period, w)
+        };
+        self.period = period;
+        let a = Dispersion::coeff(self.structure, period);
         self.disp.set(a);
         (period, Dispersion::phase_delay(a, w), w)
     }
 
-    /// A note-on: plucks `freq` at `structure`, BODY latched at `body`.
+    /// A note-on: plucks `freq`, at `structure` if stiff (STRING) or with
+    /// no chain (`None`, SYMP's main string); BODY latched at `body`.
     pub(super) fn pluck(
         &mut self,
         (freq, sample_rate): (f32, u32),
-        structure: f32,
+        structure: Option<f32>,
         amplitude: f32,
         body: f32,
     ) {
-        let l = self.dispersed(freq, sample_rate, structure);
+        self.stiff = structure.is_some();
+        self.structure = structure.unwrap_or(0.0);
+        let l = self.dispersed(freq, sample_rate);
         self.string.excite(l, amplitude);
         self.disp.reset();
-        self.body.tune(sample_rate);
+        self.body.reset();
         self.body_mix = Body::mix(body);
         self.release = Release::HELD;
     }
 
-    /// Retunes to `freq` at `structure`, mid-note.
+    /// Shapes the pluck at `position` of the loop's period (`KsString::shape`).
+    pub(super) fn shape(&mut self, position: f32) {
+        self.string.shape(position, self.period);
+    }
+
+    /// Retunes to `freq`, the chain a step towards `structure`, mid-note.
     pub(super) fn tune(&mut self, freq: f32, sample_rate: u32, structure: f32) {
-        let (period, other, w) = self.dispersed(freq, sample_rate, structure);
+        if self.stiff {
+            self.structure = Dispersion::slew(self.structure, structure, self.period, DISP_SLEW);
+        }
+        let (period, other, w) = self.dispersed(freq, sample_rate);
         self.string.set_period(period, other, w);
+    }
+
+    /// The chain has not reached `structure`: `tune` again next block.
+    pub(super) fn gliding(&self, structure: f32) -> bool {
+        self.stiff && self.structure != structure
     }
 
     /// Note-off: the loop gain ramps from `held` to `to` (`Release`).
@@ -374,7 +431,12 @@ impl StringVoice {
     #[inline]
     pub(super) fn tick(&mut self, p: &KsRenderParams) -> f32 {
         let gain = self.release.gain(p.gain);
-        self.string.tick_full(p, gain, &mut self.disp)
+        let disp = if self.stiff {
+            Some(&mut self.disp)
+        } else {
+            None
+        };
+        self.string.tick_full(p, gain, disp)
     }
 
     /// `x` through BODY, outside the loop.
@@ -402,7 +464,7 @@ mod tests {
         for note in [31, 48, 84, 108] {
             let freq = note_to_freq(note);
             for s in [0.0, 0.5, 1.0] {
-                v.pluck((freq, 48_000), s, 1.0, 0.0);
+                v.pluck((freq, 48_000), Some(s), 1.0, 0.0);
                 let (period, _, w) = loop_at(freq, 48_000);
                 let d = v.string.delay();
                 assert!((MIN_LINE..=MAX_LINE).contains(&d), "{note} {s}: {d}");

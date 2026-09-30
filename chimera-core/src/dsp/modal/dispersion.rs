@@ -30,9 +30,21 @@ use super::loop_parts::{Allpass1, allpass_phase_delay};
 pub const DISPERSION_STAGES: usize = 4;
 
 /// The chain's DC delay at STRUCTURE 1, over its flat `STAGES`: this
-/// share of the period. The 8th partial of C3 then sits about 24 cents
-/// sharp, rising with pitch, as on piano wire.
+/// share of the period. Tuned to clear `dispersion_stretches_the_partials`
+/// (> 5 cents) with margin, not derived: free to retune by ear. The 8th
+/// partial of C3 then sits about 24 cents sharp, rising with pitch.
 const SPAN: f32 = 0.1;
+
+/// Rings' `ap_gain` curve, `s / (0.15 + s)`, normalized to 1 at 1.
+fn curve(structure: f32) -> f32 {
+    let s = structure.clamp(0.0, 1.0);
+    s / (0.15 + s) * 1.15
+}
+
+/// `curve`'s inverse.
+fn uncurve(c: f32) -> f32 {
+    0.15 * c / (1.15 - c)
+}
 
 #[derive(Default)]
 pub struct Dispersion {
@@ -47,12 +59,23 @@ impl Dispersion {
     /// with the period; one first-order stage per quarter scales its
     /// corner instead. The chain's DC delay is at most half the period.
     pub fn coeff(structure: f32, period: f32) -> f32 {
-        let s = structure.clamp(0.0, 1.0);
-        let curve = s / (0.15 + s) * 1.15;
         let stages = DISPERSION_STAGES as f32;
-        let dc = 1.0 + curve * SPAN * period / stages;
+        let dc = 1.0 + curve(structure) * SPAN * period / stages;
         let limit = period / (2.0 * stages);
         ((1.0 - dc) / (1.0 + dc)).max((1.0 - limit) / (1.0 + limit))
+    }
+
+    /// A step from `from` towards `to` that moves the chain's DC delay on
+    /// a loop of `period` samples by at most `step` samples; `to` once
+    /// within reach.
+    pub fn slew(from: f32, to: f32, period: f32, step: f32) -> f32 {
+        let (c0, c1) = (curve(from), curve(to));
+        let max = step / (SPAN * period);
+        if (c1 - c0).abs() <= max {
+            to
+        } else {
+            uncurve(c0 + max.copysign(c1 - c0))
+        }
     }
 
     pub fn set(&mut self, a: f32) {
@@ -111,6 +134,24 @@ mod tests {
                 last = a;
             }
         }
+    }
+
+    /// A glide from 0 to 1 moves the DC delay `step` a block, then lands.
+    #[test]
+    fn slew_moves_the_delay_a_step_at_a_time() {
+        let p = 979.0;
+        let dc = |s| {
+            let a = Dispersion::coeff(s, p);
+            4.0 * (1.0 - a) / (1.0 + a)
+        };
+        let (mut s, mut steps) = (0.0, 0);
+        while s != 1.0 {
+            let next = Dispersion::slew(s, 1.0, p, 2.0);
+            assert!((dc(next) - dc(s)).abs() <= 2.0 + 1e-2, "{s} → {next}");
+            (s, steps) = (next, steps + 1);
+        }
+        assert_eq!(steps, 49);
+        assert_eq!(Dispersion::slew(0.7, 0.2, 22.9, 2.0), 0.2);
     }
 
     /// The chain's measured phase delay at `w` is `phase_delay`'s.

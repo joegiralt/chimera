@@ -455,7 +455,7 @@ impl ModalEngine {
             ModelSlot::String(v) => {
                 v.pluck(
                     (freq, sample_rate),
-                    m.structure,
+                    Some(m.structure),
                     vel * params.excite,
                     params.body,
                 );
@@ -471,7 +471,7 @@ impl ModalEngine {
             ModelSlot::Sympathetic(v) => {
                 // STRUCTURE tunes the halo only: the main string is not stiff.
                 v.main
-                    .pluck((freq, sample_rate), 0.0, vel * params.excite, params.body);
+                    .pluck((freq, sample_rate), None, vel * params.excite, params.body);
                 if let Some(set) = pool.halo(&v.halo) {
                     for sym in set.strings.iter_mut() {
                         // Sympathetic strings start silent — energy comes
@@ -494,11 +494,14 @@ impl ModalEngine {
     }
 
     /// The strings follow a changed pitch ratio, and STRING's dispersion
-    /// and SYMP's halo a moved STRUCTURE (per block, at a change only): a
-    /// divide per string (`ModalEngine::PITCH`).
+    /// (gliding, `StringVoice::tune`) and SYMP's halo a moved STRUCTURE
+    /// (per block, at a change only): a divide per string
+    /// (`ModalEngine::PITCH`).
     fn retune(&mut self, sample_rate: u32, pool: &mut SymPool, moved: bool) {
         let pitched = self.pitch != self.tuned;
-        if !pitched && !moved {
+        let gliding =
+            matches!(&self.model, ModelSlot::String(v) if v.gliding(self.macros.structure));
+        if !pitched && !moved && !gliding {
             return;
         }
         self.tuned = self.pitch;
@@ -571,8 +574,8 @@ impl ModalEngine {
             self.macros = to;
             // Before any retune: the pluck is the note-on's length.
             match &mut self.model {
-                ModelSlot::String(s) => s.string.shape(to.pos),
-                ModelSlot::Sympathetic(v) => v.main.string.shape(to.pos),
+                ModelSlot::String(s) => s.shape(to.pos),
+                ModelSlot::Sympathetic(v) => v.main.shape(to.pos),
                 ModelSlot::Bank(_) | ModelSlot::Bowed(_) => {}
             }
         } else {

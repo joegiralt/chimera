@@ -98,8 +98,16 @@ loop (#10):
   - The chain's phase delay at f0 comes off the line (`split`'s `other`),
     so the fundamental holds within 0.05 cents from STRUCTURE 0 to 1. At G1
     and STRUCTURE 1 the line is about 880 samples, within the 981.
-  - A moved STRUCTURE re-splits the loop once a block. SYMP's main string
-    has none: its STRUCTURE tunes the halo.
+  - Below G1 the stiff loop clamps to its longest, 984 samples (the whole
+    line, one sample of fraction and the chain at 0), and the chain comes
+    off the line there too. Notes below G1 all play about 8 cents under G1,
+    at every STRUCTURE.
+  - A moved STRUCTURE re-splits the loop once a block. The chain glides:
+    its DC delay, and so the line, moves at most 2 samples a block, about
+    65 ms end to end at G1. Each whole-sample move of the line still
+    leaves a small allpass transient, as a PITCH route's retune does.
+  - SYMP's main string has no chain, and skips it: its STRUCTURE tunes the
+    halo.
   - STIFF's two-sample mix is gone.
 - `modal::body::Body` is BODY: three fixed resonances on the output,
   outside the loop, (102 Hz, Q 3, 1), (236 Hz, Q 4, 0.7) and (517 Hz, Q 3,
