@@ -47,11 +47,16 @@ impl Wavefolder {
         }
         let n = buf.len();
         let (sf, sy, sm) = (step_of(f, n), step_of(y, n), step_of(m, n));
+        // Silence's fold at the block's ends, lerped between: one fold a
+        // sample, not two.
+        let rest = |fold: f32, sym: f32| fold_wave((sym - 0.5) * 0.5 * (1.0 + fold * fold * 6.0));
+        let r = (rest(f.0, y.0), rest(f.1, y.1));
+        let sr = step_of(r, n);
         for (i, sample) in buf.iter_mut().enumerate() {
             let (fold, sym, mix) = (at(f.0, sf, i), at(y.0, sy, i), at(m.0, sm, i));
             let dry = *sample;
             let (bias, gain) = ((sym - 0.5) * 0.5, 1.0 + fold * fold * 6.0);
-            let folded = fold_wave((dry + bias) * gain) - fold_wave(bias * gain);
+            let folded = fold_wave((dry + bias) * gain) - at(r.0, sr, i);
             *sample = dry * (1.0 - mix) + folded * mix;
         }
     }

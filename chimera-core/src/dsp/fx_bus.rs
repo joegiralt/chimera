@@ -85,11 +85,16 @@ impl FxBus {
     /// and the output limiter; reserved from the voice budget whether or
     /// not an effect is on. The bench's BUS row runs `mix_parts`, so it
     /// times the limiter too (ADR 0050); the master tape counts only in
-    /// the build that runs it (ADR 0055).
+    /// the build that runs it (ADR 0055). Each benched BUS row plus the
+    /// settings' eases, run every block (ADR 0061): 6.5 instructions a
+    /// sample, × 1.46 × 1.1 = 10.4 by ADR 0056's host method. A setting
+    /// moving is the UI's doing, never a route's, so what its ease costs
+    /// while it moves (up to 50 instructions a sample, a delay TIME
+    /// crossfade under a MIX ramp) is brief and sits in the headroom.
     #[cfg(not(feature = "master-tape"))]
-    pub const COST: Cost = Cost(1160); // BUS 1155, measured 2026-09-29, bench, rev V at 480 MHz, b34a66a; rounded up
+    pub const COST: Cost = Cost(1180); // BUS 1155, measured 2026-09-29, bench, rev V at 480 MHz, b34a66a; + 10.4 (ADR 0061); rounded up
     #[cfg(feature = "master-tape")]
-    pub const COST: Cost = Cost(1470); // BUS 1468, measured 2026-09-29, bench, rev V at 480 MHz, 87c2930 (tape in); rounded up
+    pub const COST: Cost = Cost(1490); // BUS 1468, measured 2026-09-29, bench, rev V at 480 MHz, 87c2930 (tape in); + 10.4 (ADR 0061); rounded up
 
     pub fn new() -> Self {
         Self {

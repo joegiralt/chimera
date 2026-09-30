@@ -9,7 +9,7 @@ use chimera_core::dsp::Stereo;
 use chimera_core::dsp::algo::params::AlgoParams;
 use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::chorus::ChorusParams;
-use chimera_core::dsp::ease::{Ease, at, ease_coeff, step_of};
+use chimera_core::dsp::ease::{Ease, ease_coeff, step_of};
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus};
 use chimera_core::dsp::limiter::OUTPUT_TRIM;
 use chimera_core::dsp::ring::{first_reflection, size_step};
@@ -95,6 +95,18 @@ impl Rig {
     fn rev_v() -> Self {
         let mut rig = Self::new();
         *rig.inst = Instrument::new(SR, SampleBudget::for_cpu(CPU_HZ_REV_V));
+        rig
+    }
+    /// Rev V, or with the master tape (where ALGO INIT plays seven since
+    /// ADR 0060) a budget for eight: the pool full of INIT.
+    fn full_pool() -> Self {
+        let mut rig = Self::rev_v();
+        if cfg!(feature = "master-tape") {
+            let init = AudioShared::default();
+            let p = &init.parts[0];
+            let voice = chimera_core::dsp::voice::Voice::cost(&p.params, &p.mod_state).0;
+            *rig.inst = Instrument::new(SR, budget_for(8 * voice));
+        }
         rig
     }
     fn render(&mut self, shared: &AudioShared) -> &DacOut {
@@ -212,6 +224,7 @@ fn mix_parts_reference(
     *sends = [[0.0; BLOCK_SIZE]; FX_SENDS];
     let mut scope = [0.0f32; BLOCK_SIZE];
     let k = ease_coeff(SR);
+    let mut moving = Vec::new();
     for (p, part) in shared.parts.iter().enumerate() {
         let (gl, gr) = pan_gains(part.mix.pan);
         let [s0, s1, s2] = part.mix.sends;
@@ -222,20 +235,31 @@ fn mix_parts_reference(
             }
             continue;
         }
-        let g: [(f32, f32); 5] = core::array::from_fn(|j| {
-            let ft = eases[p][j].step(to[j], k);
-            (ft.0, step_of(ft, BLOCK_SIZE))
-        });
+        let g: [(f32, f32); 5] = core::array::from_fn(|j| eases[p][j].step(to[j], k));
         let bus = &buses[p];
-        let pair = &mut out[part.mix.output.index()];
+        let k = part.mix.output.index();
         for i in 0..BLOCK_SIZE {
-            pair[2 * i] += bus[i] * at(g[0].0, g[0].1, i);
-            pair[2 * i + 1] += bus[i] * at(g[1].0, g[1].1, i);
+            out[k][2 * i] += bus[i] * g[0].0;
+            out[k][2 * i + 1] += bus[i] * g[1].0;
             scope[i] += bus[i];
         }
-        for (send, &(from, step)) in sends.iter_mut().zip(&g[2..]) {
-            for (i, (s, &b)) in send.iter_mut().zip(bus).enumerate() {
-                *s += b * at(from, step, i);
+        for (send, &(from, _)) in sends.iter_mut().zip(&g[2..]) {
+            for (s, &b) in send.iter_mut().zip(bus) {
+                *s += b * from;
+            }
+        }
+        if g.iter().any(|g| g.0 != g.1) {
+            moving.push((p, k, g.map(|g| step_of(g, BLOCK_SIZE))));
+        }
+    }
+    // Each moving gain's ramp past its start, after every Part's start.
+    let n = |i: usize| (i + 1) as f32;
+    for &(p, _, steps) in &moving {
+        for (send, &step) in sends.iter_mut().zip(&steps[2..]) {
+            if step != 0.0 {
+                for (i, (s, &b)) in send.iter_mut().zip(&buses[p]).enumerate() {
+                    *s += b * (step * n(i));
+                }
             }
         }
     }
@@ -244,6 +268,15 @@ fn mix_parts_reference(
     for (i, (&l, &r)) in ret.l.iter().zip(&ret.r).enumerate() {
         out[0][2 * i] += l;
         out[0][2 * i + 1] += r;
+    }
+    for &(p, k, steps) in &moving {
+        for (side, &step) in steps[..2].iter().enumerate() {
+            if step != 0.0 {
+                for (i, &b) in buses[p].iter().enumerate() {
+                    out[k][2 * i + side] += b * (step * n(i));
+                }
+            }
+        }
     }
     fx.master(out, &shared.fx, SR);
     fx.limit(dac, SR);
@@ -784,6 +817,11 @@ fn sound_change_mid_chord_stays_in_budget() {
         rig.inst.handle(on(0, 60 + n), &shared);
     }
     rig.render(&shared);
+    let fits = |p: &ParamSnapshot| {
+        ((budget.as_cost().0 - FxBus::COST.0) / Voice::cost(p, &ModState::new()).0)
+            .min(MAX_VOICES as u32) as usize
+    };
+    let held = fits(&shared.parts[0].params);
     assert_eq!(
         rig.inst
             .allocator()
@@ -791,7 +829,7 @@ fn sound_change_mid_chord_stays_in_budget() {
             .iter()
             .filter(|s| !s.is_free())
             .count(),
-        MAX_VOICES
+        held
     );
     shared.parts[0].params = ParamSnapshot::for_engine(EngineType::Modal);
     rig.render(&shared);
@@ -803,7 +841,7 @@ fn sound_change_mid_chord_stays_in_budget() {
             &ModState::new(),
         )
         .0)
-        .min(MAX_VOICES as u32);
+        .min(held as u32);
     assert_eq!(
         a.slots().iter().filter(|s| !s.is_free()).count(),
         expected as usize
@@ -816,7 +854,9 @@ fn sound_change_mid_chord_stays_in_budget() {
             )));
 }
 
-/// ADR 0040, 0049: eight held INIT notes all sound at rev V's budget.
+/// ADR 0040, 0049: eight held INIT notes all sound at rev V's budget;
+/// seven with the master tape (ADR 0055), whose two cycles to spare ADR
+/// 0060's DC blocker took.
 #[test]
 fn eight_init_voices_fit_rev_v() {
     let mut rig = Rig::rev_v();
@@ -829,7 +869,8 @@ fn eight_init_voices_fit_rev_v() {
     }
     let a = rig.inst.allocator();
     assert_eq!(MAX_VOICES, 8);
-    assert_eq!(a.slots().iter().filter(|s| !s.is_free()).count(), 8);
+    let want = if cfg!(feature = "master-tape") { 7 } else { 8 };
+    assert_eq!(a.slots().iter().filter(|s| !s.is_free()).count(), want);
     let budget = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost();
     assert!(
         a.sounding_cost() + FxBus::COST <= budget,
@@ -875,7 +916,7 @@ fn stealing_a_releasing_voice_does_not_free_the_new_note() {
         .into_iter()
         .flat_map(|a| [(a, 0), (a, 20)])
     {
-        let mut rig = Rig::rev_v();
+        let mut rig = Rig::full_pool();
         for k in 0..MAX_VOICES as u8 {
             rig.inst.handle(on(0, 60 + k), &shared); // the pool full, voice 0 oldest
         }
