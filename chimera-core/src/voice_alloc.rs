@@ -4,7 +4,8 @@
 //! 1. A Mono part owns one voice while it sounds; a new note retriggers it.
 //!    Mono voices are never stolen.
 //! 2. A Poly part re-striking a key it sounds, held or ringing, takes that
-//!    voice back: a re-plucked string (the owner's UAT, 2026-09-30).
+//!    voice back if the budget allows: a re-plucked string (the owner's
+//!    UAT, 2026-09-30); if not, the rules below.
 //!    Else a free voice, round-robin; with none free, a dying
 //!    one, nearest the end of its fade (its note starts when the fade ends).
 //! 3. Pool full: steal from any part the oldest released (note-off'd, tail
@@ -275,16 +276,17 @@ impl Allocator {
         {
             return fits(self.slots[v].cost).then_some(v);
         }
-        // Rule 2: the key's own voice, re-struck; else a free voice,
-        // round-robin, else the dying one nearest the end of its fade — if
-        // it fits.
+        // Rule 2: the key's own voice, re-struck, if it fits (else on to
+        // the rest); else a free voice, round-robin, else the dying one
+        // nearest the end of its fade — if it fits.
         if mode != PartMode::Mono
             && let Some(v) = self
                 .slots
                 .iter()
                 .position(|s| !s.mono && !s.dying() && s.part == Some(part) && s.note == Some(note))
+            && fits(self.slots[v].cost)
         {
-            return fits(self.slots[v].cost).then_some(v);
+            return Some(v);
         }
         let free = (0..MAX_VOICES)
             .map(|i| (self.rr + i) % MAX_VOICES)

@@ -31,8 +31,15 @@ glide the long way round.
   blocks, never over −120 dBFS (ADR 0056): a quiet high note rings as
   long as a loud low one.
 - **A re-struck key takes its own voice back** (`Allocator::pick`, rule
-  2): same Part, same note, not Mono, not dying, held or ringing. Steals
-  still take the oldest released tail first, then the oldest held note.
+  2): same Part, same note, not Mono, not dying, held or ringing, if the
+  budget takes it there; if not, the note goes on to the usual rules (a
+  free voice, then a steal). Steals still take the oldest released tail
+  first, then the oldest held note.
+  - The rule is the allocator's, so it holds on every engine: an ALGO
+    key re-struck retriggers its voice, its envelopes restarting from
+    their current level.
+  - A note-on doubled on one channel shares the voice: the first
+    note-off releases it.
 - **A re-strike adds to the ring and clears nothing.** STRING and SYMP's
   main string add a new pluck, shaped as a fresh one is, over the period
   the loop reads next (`KsString::add_pluck`, streamed from the noise
