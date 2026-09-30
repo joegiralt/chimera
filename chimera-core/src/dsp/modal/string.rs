@@ -108,7 +108,6 @@ impl KsString {
         self.set_period(period, other, w);
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub(super) fn delay(&self) -> usize {
         self.delay
     }
@@ -174,8 +173,8 @@ impl KsString {
 
     /// Shapes the pluck `excite` wrote, in place, before the loop reads
     /// it: a comb notched at `position`'s harmonics of a loop of `period`
-    /// samples, then one smoothing pass (the old colour 0.8).
-    pub(super) fn shape(&mut self, position: f32, period: f32) {
+    /// samples, then `passes` smoothing passes (`color_passes`).
+    pub(super) fn shape(&mut self, position: f32, period: f32, passes: usize) {
         let len = self.delay;
         if position > 0.03 {
             let notch_period = ((period * position) as usize).max(2);
@@ -185,8 +184,10 @@ impl KsString {
                 }
             }
         }
-        for i in 1..len {
-            self.buffer[i] = (self.buffer[i] + self.buffer[i - 1]) * 0.5;
+        for _ in 0..passes {
+            for i in 1..len {
+                self.buffer[i] = (self.buffer[i] + self.buffer[i - 1]) * 0.5;
+            }
         }
     }
 
@@ -215,6 +216,35 @@ impl KsString {
     /// samples (#206).
     pub(super) fn ring_tap(&self, written: u32) -> f32 {
         self.behind(self.delay.min(written.max(1) as usize) - 1)
+    }
+
+    /// Bowed's bow point: `back` samples behind the write, in `ring_tap`'s
+    /// measure, linearly interpolated, clamped to `[1, delay]` and held
+    /// within what `written` has reached (#206). At `delay`, `ring_tap`
+    /// bit for bit.
+    pub(super) fn ring_tap_at(&self, written: u32, back: f32) -> f32 {
+        let reach = self.delay.min(written.max(1) as usize) as f32;
+        // `max` first: NaN reads at 1.
+        let back = back.max(1.0).min(reach);
+        let i = back as usize;
+        let f = back - i as f32;
+        let x = self.behind(i - 1);
+        if f > 0.0 {
+            x + f * (self.behind(i) - x)
+        } else {
+            x
+        }
+    }
+
+    /// Bowed's loop tap through the linear-phase 3-tap low-pass centred on
+    /// it: `c/2·(x[d−1] + x[d+1]) + (1 − c)·x[d]`, no delay. At `c` 0, or
+    /// before `written` passes `delay + 1`, `ring_tap` exactly.
+    pub(super) fn ring_tap_lp(&self, written: u32, c: f32) -> f32 {
+        let d = self.delay;
+        if c == 0.0 || written as usize <= d + 1 {
+            return self.ring_tap(written);
+        }
+        c * 0.5 * (self.behind(d - 2) + self.behind(d)) + (1.0 - c) * self.behind(d - 1)
     }
 
     /// Bowed's ring: stores `x` through the allpass, stepping on round it.
@@ -425,6 +455,12 @@ pub(super) fn loop_at(freq: f32, sample_rate: u32) -> (f32, f32, f32) {
     (sample_rate as f32 / freq, 0.0, w)
 }
 
+/// The pluck's smoothing passes at COLOR, 1 brightest: the old `ks_color`
+/// law. The old hidden 0.8 is one pass.
+pub(super) fn color_passes(color: f32) -> usize {
+    (((1.0 - color) * 7.0) as usize).min(7)
+}
+
 /// The loop low-pass's side taps at `bright`, 1 brightest: the old
 /// two-point average's loss at low frequencies, `c·(1 − c)` for its `c`,
 /// so old patches keep their tone (0.0475 to 0.25).
@@ -453,10 +489,12 @@ pub(super) struct StringVoice {
     /// The ensemble and ENS MIX, latched at note-on (spec § 1); MIX 0 is off.
     ens: Ensemble,
     ens_mix: f32,
+    /// COLOR's smoothing passes, latched at note-on.
+    passes: u8,
 }
 
 crate::in_place::field_list!(StringVoice => StringVoice {
-    string, disp, stiff, structure, period, body, body_mix, release, ens, ens_mix,
+    string, disp, stiff, structure, period, body, body_mix, release, ens, ens_mix, passes,
 });
 
 /// The longest loop: the whole line, a one-sample fraction and the chain
@@ -483,6 +521,7 @@ impl StringVoice {
             addr_of_mut!((*p).release).write(Release::HELD);
             addr_of_mut!((*p).ens).write(Ensemble::default());
             addr_of_mut!((*p).ens_mix).write(0.0);
+            addr_of_mut!((*p).passes).write(1);
             slot.assume_init_mut()
         }
     }
@@ -509,14 +548,15 @@ impl StringVoice {
     }
 
     /// A note-on: plucks `freq`, at `structure` if stiff (STRING) or with
-    /// no chain (`None`, SYMP's main string); BODY, and the ensemble at
-    /// its MIX, latched.
+    /// no chain (`None`, SYMP's main string); BODY, the ensemble at its
+    /// MIX, and COLOR's passes, latched.
     pub(super) fn pluck(
         &mut self,
         (freq, sample_rate): (f32, u32),
         structure: Option<f32>,
         amplitude: f32,
         (body, (ens_mix, ens)): (f32, (f32, Ensemble)),
+        color: f32,
     ) {
         self.stiff = structure.is_some();
         self.structure = structure.unwrap_or(0.0);
@@ -528,6 +568,7 @@ impl StringVoice {
         self.release = Release::HELD;
         self.ens = ens;
         self.ens_mix = ens_mix;
+        self.passes = color_passes(color) as u8;
     }
 
     /// Whether BODY and the ensemble run, as latched: what the note bills.
@@ -542,9 +583,10 @@ impl StringVoice {
         }
     }
 
-    /// Shapes the pluck at `position` of the loop's period (`KsString::shape`).
+    /// Shapes the pluck at `position` of the loop's period, at COLOR's
+    /// passes (`KsString::shape`).
     pub(super) fn shape(&mut self, position: f32) {
-        self.string.shape(position, self.period);
+        self.string.shape(position, self.period, self.passes.into());
     }
 
     /// Retunes to `freq`, the chain a step towards `structure`, mid-note;
@@ -693,7 +735,7 @@ mod tests {
                 let (mut fast, mut slow) = (voice(), voice());
                 for v in [&mut fast, &mut slow] {
                     let ens = Ensemble::new(1.0, 3.0, 48_000);
-                    v.pluck((freq, 48_000), structure, 1.0, (0.3, (ens_mix, ens)));
+                    v.pluck((freq, 48_000), structure, 1.0, (0.3, (ens_mix, ens)), 0.8);
                     v.shape(0.2);
                 }
                 for block in 0..200 {
@@ -735,6 +777,7 @@ mod tests {
                     Some(0.5),
                     1.0,
                     (0.0, (1.0, ens)),
+                    0.8,
                 );
                 v.set_ensemble();
                 v.ens.drift(1e6);
@@ -799,6 +842,47 @@ mod tests {
         }
     }
 
+    /// COLOR's passes are the old `ks_color` law: 0.8 the old one pass,
+    /// 0 seven, 1 none, never more as COLOR rises.
+    #[test]
+    fn color_passes_are_the_old_law() {
+        assert_eq!(color_passes(0.8), 1);
+        assert_eq!(color_passes(0.0), 7);
+        assert_eq!(color_passes(1.0), 0);
+        let mut last = usize::MAX;
+        for i in 0..=128 {
+            let n = color_passes(i as f32 / 128.0);
+            assert!(n <= last && n <= 7, "{i}/128: {n}");
+            last = n;
+        }
+    }
+
+    /// Bowed's taps at the loop's own point are `ring_tap`, bit for bit,
+    /// once the ring is full and in its first samples.
+    #[test]
+    fn ring_tap_at_the_delay_is_ring_tap() {
+        // SAFETY: `init_in_place` writes every field.
+        let mut s = Box::new(unsafe { by_value(KsString::init_in_place) });
+        s.clear();
+        s.tune(note_to_freq(48), 48_000);
+        let d = s.delay();
+        let mut w = 0u32;
+        for n in [3, 2_000 - 3] {
+            for _ in 0..n {
+                s.ring_push(libm::sinf(w as f32 * 0.37) * 0.8 - 0.1);
+                w += 1;
+            }
+            let tap = s.ring_tap(w).to_bits();
+            assert_eq!(s.ring_tap_at(w, d as f32).to_bits(), tap, "after {w}");
+            assert_eq!(s.ring_tap_lp(w, 0.0).to_bits(), tap, "after {w}");
+            assert_eq!(
+                s.ring_tap_at(w, 0.0).to_bits(),
+                s.behind(0).to_bits(),
+                "after {w}"
+            );
+        }
+    }
+
     /// G1 to C8, STRUCTURE 0 to 1: the line stays in `[MIN_LINE, MAX_LINE]`,
     /// and the line, the allpass and the dispersion add to the period at
     /// f0. G1 at 1 gives the chain its most.
@@ -814,6 +898,7 @@ mod tests {
                     Some(s),
                     1.0,
                     (0.0, (0.0, Ensemble::default())),
+                    0.8,
                 );
                 let (period, _, w) = loop_at(freq, 48_000);
                 let d = v.string.delay();

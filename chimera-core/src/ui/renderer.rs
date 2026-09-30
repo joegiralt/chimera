@@ -418,7 +418,7 @@ impl Renderer {
     where
         D: DrawTarget<Color = Rgb565>,
     {
-        let (context, mut name) = components::header_text(f.nav, f.def);
+        let (context, mut name) = components::header_text(f.nav, f.def, f.ctx.model);
         if let Some(ty) = ["", " / A", " / B"].get(title_type(f) as usize) {
             let _ = core::fmt::Write::write_str(&mut name, ty);
         }

@@ -14,7 +14,7 @@ use chimera_hal::ButtonId;
 use screen::{Fb, Input, feed, osc_node, scope_fixture, settle, to_osc};
 
 fn texts(nav: &ChainNav) -> (String, String) {
-    let (c, n) = header_text(nav, nav.active_block_def());
+    let (c, n) = header_text(nav, nav.active_block_def(), ResonatorMode::String);
     (c.as_str().to_string(), n.as_str().to_string())
 }
 
@@ -91,7 +91,7 @@ fn every_header_fits() {
             for sub in 0..subs {
                 nav.sub_page = sub;
                 let def = nav.active_block_def();
-                let (c, n) = header_text(&nav, def);
+                let (c, n) = header_text(&nav, def, ResonatorMode::String);
                 assert_eq!(
                     n.as_str().len(),
                     def.name.len() + if n.as_str().ends_with(" 6") { 2 } else { 0 },
@@ -308,6 +308,7 @@ fn a_model_change_redraws_the_map() {
     use chimera_hal::EncoderId;
     let mut ui = UiState::new();
     screen::load_init(&mut ui, EngineType::Modal);
+    feed(&mut ui, Input::press(ButtonId::Plus)); // EXC → RES
     settle(&mut ui);
     let (mut fb, perf, scope) = (Fb::new(), PerfStats::zero(), scope_fixture());
     ui.render_dirty_with_audio(&mut fb, &perf, None, &scope);
@@ -318,4 +319,21 @@ fn a_model_change_redraws_the_map() {
     ui.render_with_audio(&mut full, &perf, None, &scope);
     let band = theme::MAP_TOP as usize * 240..;
     assert!(fb.px[band.clone()] == full.px[band], "stale map");
+}
+
+/// EXC's header is named after the model's exciter; its map node reads EXC.
+#[test]
+fn the_exciter_page_is_named_after_the_exciter() {
+    use chimera_core::dsp::modal::{EXCITER_NAMES, ResonatorMode as M};
+    use chimera_core::ui::block_registry::{MODAL_EXC, MODAL_PLUCK_CHAIN};
+    let mut nav = ChainNav::new();
+    nav.chain_id = ChainId::Part(0);
+    for m in [M::String, M::Modal, M::Bowed, M::Sympathetic] {
+        let (_, name) = header_text(&nav, &MODAL_EXC, m);
+        assert_eq!(name.as_str(), EXCITER_NAMES[m as usize], "{m:?}");
+        assert_eq!(dungeon_map::page_label(&MODAL_EXC, m), "EXC");
+    }
+    let node = &MODAL_PLUCK_CHAIN.blocks[0];
+    assert_eq!(node.def.id, MODAL_EXC.id);
+    assert_eq!(node.map.unwrap_or(node.def.short), "EXC");
 }

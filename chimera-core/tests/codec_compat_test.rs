@@ -5,7 +5,9 @@ mod common;
 
 use std::path::PathBuf;
 
-use chimera_core::dsp::modal::{BankModes, ResonatorMode, damp_from_v1_decay};
+use chimera_core::dsp::modal::{
+    BankModes, RELEASE_T60, ResonatorMode, damp_for, damp_from_v1_decay,
+};
 use chimera_core::factory::{FACTORY_LEN, factory_sound};
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::preset::Sound;
@@ -15,7 +17,7 @@ use common::codec_util::{
     SYSTEM_FIXTURE, decode, decode_into, encode, fix_crc, record_offsets, system_file,
     system_fixture_settings,
 };
-use common::{SR, assert_stable, fnv1a, play_modal, render_sound};
+use common::{SR, assert_stable, fnv1a, play_modal, play_modal_at, render_sound};
 
 /// The v1 corpus: name, and the Sound it was written from.
 fn sources() -> Vec<(String, Sound)> {
@@ -302,7 +304,8 @@ fn decode_modal(payload: &[u8]) -> ParamSnapshot {
 }
 
 /// Spec § 3: DECAY → DAMP, STIFF or INHARM → STRUCTURE, FDBK dropped; the
-/// string models' BRIGHT flips to the new direction.
+/// string models' BRIGHT flips to the new direction. BANK's BURST is its
+/// EXCITE; Bowed loads its old sound.
 #[test]
 fn old_modal_patches_translate() {
     use ResonatorMode::{Bowed, Modal, String, Sympathetic};
@@ -316,16 +319,37 @@ fn old_modal_patches_translate() {
             String | Bowed => (damp_from_v1_decay(0.2), 0.35),
             Sympathetic => (damp_from_v1_decay(0.2), 0.7),
         };
-        assert_eq!((m.damp, m.structure), (damp, structure), "{mode:?}");
         let bright = if mode == Modal { 0.9 } else { 1.0 - 0.9 };
+        // v1 Bowed never read them: the old sound's values.
+        let (damp, bright, pos) = if mode == Bowed {
+            (damp_for(RELEASE_T60), 1.0, 0.0)
+        } else {
+            (damp, bright, 0.4)
+        };
+        assert_eq!((m.damp, m.structure), (damp, structure), "{mode:?}");
         assert_eq!(
             (m.excite, m.bright, m.pos, m.body),
-            (0.6, bright, 0.4, 0.5),
+            (0.6, bright, pos, 0.5),
             "{mode:?}"
         );
+        // The exciters' hidden values; an old strike keeps its length.
+        assert_eq!((m.color, m.force, m.speed), (0.8, 0.5, 0.5), "{mode:?}");
+        let burst = if mode == Modal { 0.6 } else { 0.8 };
+        assert_eq!(m.burst, burst, "{mode:?}");
         assert_eq!((m.ens_depth, m.ens_rate, m.ens_mix), (0.1, 0.2, 0.3));
         assert_eq!((m.couple, m.halo, m.modes), (0.25, 0.25, BankModes::M32));
     }
+}
+
+/// A v1 Bowed patch, one second held at full velocity: recorded before
+/// the bow went live (Task 13), so the old bow is the default bow.
+const BOWED_V1_HELD: u64 = 0x6bb1_88f9_e05e_9f67;
+
+#[test]
+fn a_v1_bowed_patch_bows_as_before() {
+    let snap = decode_modal(&v1_modal(ResonatorMode::Bowed, 0.2));
+    let out = play_modal_at(&snap.modal, 48, 127, SR as usize / BLOCK_SIZE, 0);
+    assert_eq!(fnv1a(&out), BOWED_V1_HELD);
 }
 
 /// Review focus 4: FDBK 1 at DECAY 0, today's longest, once ran away. It

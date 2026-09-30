@@ -37,11 +37,22 @@ const GOLDENS: &[(&str, u64)] = &[
     ("amp_vel_dimmed", 0x906c5da68f92294b),
     ("amp_vel_live", 0xe969b1ab3a3e37fb),
     ("algo_pitch", 0x90d2841bef4b43a6),
-    ("modal_pitch", 0x5328efddda86574b),
-    ("modal_home", 0x0fbdc9c730c39a81),
-    ("modal_mdl2_symp", 0x6b93570620208bbf),
-    ("modal_home_bowed", 0x5d03666d65823f51),
-    ("modal_amp", 0x75fb1c0ad4baef3c),
+    // Re-recorded: the EXC node (plan Task 13).
+    ("modal_pitch", 0xbe92449965553076),
+    // Re-recorded: the EXC node (plan Task 13).
+    ("modal_exc", 0x47053a05f23e1e06),
+    // Re-recorded: the EXC node (plan Task 13).
+    ("modal_exc_bank", 0x2f083bc42b322c96),
+    // Re-recorded: the EXC node (plan Task 13).
+    ("modal_exc_bowed", 0x8e16cfc2ddb8d9b9),
+    // Re-recorded: the EXC node (plan Task 13).
+    ("modal_home", 0xe6e628b3942392a4),
+    // Re-recorded: the EXC node (plan Task 13).
+    ("modal_mdl2_symp", 0x5eacc49865c8e5f9),
+    // Re-recorded: the EXC node (plan Task 13).
+    ("modal_home_bowed", 0xa2ee9e5eb291c4c8),
+    // Re-recorded: the EXC node (plan Task 13).
+    ("modal_amp", 0x2a8bc7962c75c522),
     // The Mix chain's map loses its TAPE node without `master-tape`
     // (ADR 0055); with it, the screens are as before.
     #[cfg(not(feature = "master-tape"))]

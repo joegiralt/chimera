@@ -144,7 +144,7 @@ fn worst_comp(s: &mut AudioShared) {
     (c.thresh, c.ratio, c.attack, c.release, c.makeup, c.mix) = (0.0, 7, 0.0, 0.0, 0.5, 1.0);
 }
 
-const ROUTING_ROWS: usize = 36;
+const ROUTING_ROWS: usize = 37;
 /// Rows per ROUTING screen: ten from y 46 at `ROW_H` 25 end at 283.
 const ROUTING_PAGE: usize = 10;
 
@@ -241,6 +241,8 @@ const ROUTING: [RoutingRow; ROUTING_ROWS] = [
     // (BODY 1 bills as 0.3); the re-split is in `COST_STRING`.
     ("MDL STR+", str_full, STILL),
     ("MDL BOW", |p| modal(p, ResonatorMode::Bowed), STILL),
+    // BOW+ − BOW is BRIGHT's taps, POS's second tap and three routes.
+    ("MDL BOW+", bow_full, STILL),
     ("MDL SYM", |p| modal(p, ResonatorMode::Sympathetic), STILL),
     ("MDL SYM0", |p| bare(p, ResonatorMode::Sympathetic), STILL),
     // SYM+ − SYM is `ENSEMBLE` plus a chord glide always running,
@@ -284,6 +286,15 @@ fn sym_lfo(p: &mut PartAudio) {
     p.mod_state = matrix(&[(ModSource::Lfo1, structure, 127)]);
 }
 
+/// STRING at COLOR 0, ended as `short_sym` is: the pluck's seven
+/// smoothing passes.
+fn dark_pluck(p: &mut PartAudio) {
+    modal(p, ResonatorMode::String);
+    p.params.modal.color = 0.0;
+    p.params.envelopes[0].release = 0.0;
+    p.mod_state = matrix(&[(ModSource::Env1, VCA, 127)]);
+}
+
 /// `mode` at BODY 0: the model alone.
 fn bare(p: &mut PartAudio, mode: ResonatorMode) {
     modal(p, mode);
@@ -313,6 +324,22 @@ fn str_full(p: &mut PartAudio) {
     let at = |q| (ModSource::Lfo1, ParamAddr::new(BlockRef::Modal, q), 64);
     p.mod_state = matrix(&[
         at(ModalParams::STRUCTURE),
+        at(ModalParams::BRIGHT),
+        at(ModalParams::DAMP),
+        at(ModalParams::POS),
+    ]);
+}
+
+/// BOWED at FORCE 1, SPEED 1, POS 0.5 and BRIGHT 0, LFO 1 (10 Hz sine)
+/// into BRIGHT, DAMP and POS at 64: the low-pass's taps and POS's second
+/// tap every sample.
+fn bow_full(p: &mut PartAudio) {
+    modal(p, ResonatorMode::Bowed);
+    let m = &mut p.params.modal;
+    (m.force, m.speed, m.pos, m.bright) = (1.0, 1.0, 0.5, 0.0);
+    p.params.lfos[0].rate = 10.0;
+    let at = |q| (ModSource::Lfo1, ParamAddr::new(BlockRef::Modal, q), 64);
+    p.mod_state = matrix(&[
         at(ModalParams::BRIGHT),
         at(ModalParams::DAMP),
         at(ModalParams::POS),
@@ -546,7 +573,10 @@ pub fn run(display: &mut impl ChimeraDisplay, clocks: Clocks, perf: &Performance
     // The lowest note after itself: every ring whole, the worst case.
     let lowest = MidiNote::new(0).unwrap_or(MidiNote::A4);
     let lowest = rig.time_sym_note_on(lowest, short_sym);
-    show_memory(display, rebuild, note_on, lowest);
+    // G1 at COLOR 0: the longest line the passes walk, seven times.
+    let g1 = MidiNote::new(31).unwrap_or(MidiNote::A4);
+    let dark = rig.time_first_block(g1, dark_pluck);
+    show_memory(display, rebuild, note_on, (lowest, dark));
     hold(clocks);
 }
 
@@ -689,6 +719,40 @@ impl Rig<'_> {
             for _ in 0..IDLE_BLOCKS {
                 inst.render(fx, &mut self.dac, shared, &mut self.scope);
                 if inst.allocator().slots().iter().all(|s| s.is_free()) {
+                    break;
+                }
+            }
+        }
+        cycles / ROUNDS
+    }
+
+    /// Cycles of `Instrument::handle` for one note-on of `note`, Part 0 set
+    /// by `part`, and its first block, where a pluck is shaped: rounds as
+    /// `time_sym_note_on`'s, idle once no voice sounds.
+    #[inline(never)]
+    fn time_first_block(&mut self, note: MidiNote, part: fn(&mut PartAudio)) -> u32 {
+        let budget = SampleBudget::for_cpu(u32::MAX);
+        let inst = Instrument::init_in_place(self.inst_slot, SAMPLE_RATE, budget);
+        let fx = FxBus::init_in_place(self.fx_slot);
+        let shared = AudioShared::init_in_place(self.shared_slot, self.perf);
+        part(&mut shared.parts[0]);
+        let ev = |kind| NoteEvent {
+            channel: MidiChannel::clamped(0),
+            note,
+            kind,
+        };
+        let mut cycles = 0u32;
+        for round in 0..=ROUNDS {
+            let start = DWT::cycle_count();
+            inst.handle(black_box(ev(NoteKind::On(Velocity::DEFAULT))), shared);
+            inst.render(fx, &mut self.dac, shared, &mut self.scope);
+            if round > 0 {
+                cycles = cycles.wrapping_add(DWT::cycle_count().wrapping_sub(start));
+            }
+            inst.handle(ev(NoteKind::Off), shared);
+            for _ in 0..IDLE_BLOCKS {
+                inst.render(fx, &mut self.dac, shared, &mut self.scope);
+                if inst.sounding() == 0 {
                     break;
                 }
             }
@@ -930,7 +994,12 @@ fn show_routing(
 }
 
 /// The sizes behind the D2 budget and the exclusive state's two timings.
-fn show_memory(display: &mut impl ChimeraDisplay, rebuild: u32, note_on: u32, lowest: u32) {
+fn show_memory(
+    display: &mut impl ChimeraDisplay,
+    rebuild: u32,
+    note_on: u32,
+    (lowest, dark): (u32, u32),
+) {
     use core::mem::size_of;
     draw::fill_rect(display, 0, 0, theme::SCREEN_W, theme::SCREEN_H, theme::BG);
     draw::text(display, &theme::FONT_VALUE, "MEMORY", 4, 16, theme::INK);
@@ -943,6 +1012,7 @@ fn show_memory(display: &mut impl ChimeraDisplay, rebuild: u32, note_on: u32, lo
         format_args!("REBUILD {rebuild} CYC"),
         format_args!("SYM NOTE-ON {note_on} CYC"),
         format_args!("SYM NOTE-ON LOW {lowest} CYC"),
+        format_args!("PLUCK DARK {dark} CYC"),
     ];
     let mut line = FmtBuf::new();
     for (i, args) in lines.into_iter().enumerate() {

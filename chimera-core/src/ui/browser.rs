@@ -11,6 +11,7 @@ use chimera_hal::{ButtonId, ButtonState, Controls, EncoderId, PART_BUTTONS};
 
 use crate::params::EngineType;
 use crate::preset::{POOL_SIZE, SoundPool};
+use crate::ui::block_registry::PITCH;
 use crate::ui::chain::chain_def_for;
 use crate::ui::components;
 use crate::ui::draw;
@@ -149,6 +150,19 @@ where
     );
 }
 
+/// A Sound's engine as its chain names the engine's node: the one PIT
+/// hangs under (ADR 0042), not the chain's first.
+fn engine_label(engine: EngineType) -> &'static str {
+    let chain = chain_def_for(engine);
+    chain
+        .blocks
+        .iter()
+        .find(|b| b.sub_pages.iter().any(|d| d.id == PITCH.id))
+        .unwrap_or(&chain.blocks[0])
+        .def
+        .short
+}
+
 fn row<D>(d: &mut D, pool: &SoundPool, entry: usize, y: i32, selected: bool)
 where
     D: DrawTarget<Color = Rgb565>,
@@ -199,14 +213,6 @@ where
         draw::text(d, &theme::FONT_VALUE, name.as_str(), 52, y, color);
     }
     if let Some(engine) = chain {
-        draw::text_right(
-            d,
-            &theme::FONT_LABEL,
-            chain_def_for(engine).blocks[0].def.short,
-            223,
-            y,
-            dim,
-            0,
-        );
+        draw::text_right(d, &theme::FONT_LABEL, engine_label(engine), 223, y, dim, 0);
     }
 }

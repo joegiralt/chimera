@@ -7,8 +7,10 @@ use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::Rgb565;
 
 use crate::addr::BlockRef;
+use crate::dsp::modal::{EXCITER_NAMES, ResonatorMode};
 use crate::ui::PrimeStatus;
 use crate::ui::block_def::{BlockDef, SlotBinding};
+use crate::ui::block_registry::MODAL_EXC;
 use crate::ui::chain::{ChainId, ChainNav};
 use crate::ui::draw;
 use crate::ui::fmt::FmtBuf;
@@ -32,10 +34,15 @@ fn edits_part(def: &BlockDef) -> bool {
 
 /// Header context label and page name: `PART 1` `FILTER`; on the Mixer
 /// chain `MIXER` and the page, numbered when it edits that Part (`PART 2`,
-/// `SENDS 2`; the FX are shared, so `CHORUS`).
-pub fn header_text(nav: &ChainNav, def: &BlockDef) -> (FmtBuf, FmtBuf) {
+/// `SENDS 2`; the FX are shared, so `CHORUS`). EXC is named after
+/// `model`'s exciter.
+pub fn header_text(nav: &ChainNav, def: &BlockDef, model: ResonatorMode) -> (FmtBuf, FmtBuf) {
     let mut context = FmtBuf::new();
-    let mut name = upper(def.name);
+    let mut name = if def.id == MODAL_EXC.id {
+        upper(EXCITER_NAMES[model as usize])
+    } else {
+        upper(def.name)
+    };
     let _ = match nav.chain_id {
         ChainId::Part(n) => write!(context, "PART {}", n + 1),
         ChainId::Mixer(n) => {

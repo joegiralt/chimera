@@ -5,7 +5,7 @@ use chimera_core::addr::{BlockRef, ParamAddr};
 use chimera_core::block::Block;
 use chimera_core::block::ParamKind;
 use chimera_core::dsp::modal::{
-    BankModes, MODAL_SPECS, ModalEngine, ModalParams, ResonatorMode, reads,
+    BankModes, MODAL_SPECS, ModalEngine, ModalParams, RELEASE_T60, ResonatorMode, damp_for, reads,
 };
 use chimera_core::dsp::note_to_freq;
 use chimera_core::hw::Cost;
@@ -30,7 +30,7 @@ const MODES: [ResonatorMode; 4] = [
 const BOW_MARGIN: f32 = 1.005;
 
 /// Each model, each setting at its min and max, C2 held 30 s: bounded, no
-/// growth, no DC at the output; Bowed still sounding.
+/// growth, no DC at the output; Bowed still sounding while it bows.
 #[test]
 fn every_model_is_stable_at_every_extreme() {
     let sr = SR as usize;
@@ -51,8 +51,11 @@ fn every_model_is_stable_at_every_extreme() {
                         let out = play_modal(&p, note, 30 * sr / BLOCK_SIZE, 0);
                         let label = format!("{mode:?} {note} {} = {v}", s.label);
                         assert_stable(&out, 4.0, margin, &label);
-                        // Bowed's C2 sounds throughout (#206), not freed.
-                        if mode == ResonatorMode::Bowed {
+                        // Bowed's C2 sounds throughout (#206), not freed,
+                        // unless the bow has no pressure or no motion.
+                        let still =
+                            v == 0.0 && (s.id == ModalParams::FORCE || s.id == ModalParams::SPEED);
+                        if mode == ResonatorMode::Bowed && !still {
                             let last = &out[out.len() - sr..];
                             assert!(common::rms(last) > 1e-3, "{label}: silent");
                         }
@@ -106,7 +109,8 @@ fn strings_are_in_tune() {
 }
 
 /// Per model, from every continuous setting at 0.5 and MODES at 32, note
-/// 48 held 1 s: each setting at its min, middle and max. A setting the
+/// 48 held 1 s and released 0.5 s, so a lifted bow's DAMP is heard: each
+/// setting at its min, middle and max. A setting the
 /// model reads changes the sound; one it ignores changes no bit. The
 /// middle, as POS's ends can null alike.
 #[test]
@@ -128,7 +132,7 @@ fn live_knobs_move_dimmed_knobs_do_not() {
             let [lo, mid, hi] = [s.min, s.quantize((s.min + s.max) * 0.5), s.max].map(|v| {
                 let mut p = base;
                 p.set(s.id, v);
-                play_modal(&p, 48, blocks, 0)
+                play_modal(&p, 48, blocks, blocks / 2)
             });
             let same =
                 |a: &[f32], b: &[f32]| a.iter().zip(b).all(|(x, y)| x.to_bits() == y.to_bits());
@@ -212,8 +216,8 @@ fn play_voice_at(
     out
 }
 
-/// LFO 1 on each macro, at full depth, moves every live model's sound
-/// and adds no click past a strike. Plucked again just after 1 s, where
+/// LFO 1 on each macro a model reads, at full depth, moves its sound and
+/// adds no click past a strike; Bowed's DAMP is routed through a release. Plucked again just after 1 s, where
 /// the LFO is near +0.5: POS is heard at a pluck, and its ends null alike.
 /// The bank, at 48 modes, flags nothing on DAMP or POS, held at either end
 /// or routed. Its high STRUCTURE and BRIGHT drive the output tanh and flag
@@ -233,16 +237,36 @@ fn macros_are_routable() {
             })
             .collect()
     };
-    for mode in [
-        ResonatorMode::Modal,
-        ResonatorMode::String,
-        ResonatorMode::Sympathetic,
-    ] {
+    for mode in MODES {
         let mut p = ParamSnapshot::for_engine(EngineType::Modal);
         p.modal.mode = mode;
         p.modal.modes = BankModes::M48;
         p.lfos[0].rate = 5.0;
-        for id in MACROS {
+        for id in MACROS.into_iter().filter(|&id| reads(mode, id)) {
+            // Bowed's DAMP is its ring after the lift: heard through a release.
+            if mode == ResonatorMode::Bowed && id == ModalParams::DAMP {
+                let addr = ParamAddr::new(BlockRef::Modal, id);
+                let [dry, wet] = [0, 127].map(|a| {
+                    let mut rig = Rig::new(SR);
+                    let mods = routes(addr, a);
+                    let v = Velocity::new(100).unwrap();
+                    rig.note_on(MidiNote::new(48).unwrap(), v, &p);
+                    let mut out = Vec::new();
+                    let mut block = [0.0; BLOCK_SIZE];
+                    for b in 0..2 * second {
+                        if b == second {
+                            rig.note_off();
+                        }
+                        rig.render(&mut block, &p, &mods);
+                        out.extend_from_slice(&block);
+                    }
+                    out
+                });
+                let d = rms_diff(&dry, &wet);
+                assert!(d > 1e-3, "Bowed DAMP: the route changes nothing ({d})");
+                assert!(clicks(&wet).is_empty(), "Bowed DAMP: {:?}", clicks(&wet));
+                continue;
+            }
             let addr = ParamAddr::new(BlockRef::Modal, id);
             let [dry, wet] =
                 [0, 127].map(|a| play_voice(&p, &routes(addr, a), 2 * second, &[pluck]));
@@ -513,13 +537,14 @@ fn a_released_halo_rings_on_its_held_decay() {
     );
 }
 
-/// Bowed's lifted bow: the ring decays at the strings' release, silent
-/// within 0.5 s of note-off at C2.
+/// Bowed's lifted bow at the v1 ring, `RELEASE_T60`: silent within 0.5 s
+/// of note-off at C2. At INIT's DAMP it rings about 14 s.
 #[test]
 fn a_released_bowed_c2_is_silent_within_half_a_second() {
     let second = SR as usize / BLOCK_SIZE;
     let p = ModalParams {
         mode: ResonatorMode::Bowed,
+        damp: damp_for(RELEASE_T60),
         ..Default::default()
     };
     let out = play_modal(&p, 36, second, second);
@@ -1070,4 +1095,90 @@ fn a_pitch_change_mid_glide_does_not_jump() {
     e.render(&mut block, &p, SR, &mut pool);
     let c = e.halo_periods(&pool).unwrap();
     assert!(step(&b, &c) <= 1.5 * held, "{} vs {held}", step(&b, &c));
+}
+
+/// The bench: a soft key on Bowed at the defaults bowed nothing. The
+/// force follows velocity from half FORCE, so velocity 20 sounds and
+/// holds for 2 s.
+#[test]
+fn a_soft_bowed_note_sounds() {
+    let p = ModalParams {
+        mode: ResonatorMode::Bowed,
+        ..Default::default()
+    };
+    let out = play_modal_at(&p, 48, 20, 2 * SR as usize / BLOCK_SIZE, 0);
+    let sr = SR as usize;
+    let held = common::rms(&out[sr..2 * sr]);
+    assert!(held > 1e-2, "seconds 1–2: rms {held}");
+    let last = common::peak(&out[out.len() - BLOCK_SIZE..]);
+    assert!(last > 1e-3, "last block: peak {last}");
+}
+
+/// Bowed's DAMP is the ring after the lift: the held bow is the same bit
+/// for bit; released, it falls about 30 dB in half DAMP's T60.
+#[test]
+fn bowed_damp_is_the_ring_after_the_lift() {
+    let second = SR as usize / BLOCK_SIZE;
+    let at = |damp: f32| {
+        let p = ModalParams {
+            mode: ResonatorMode::Bowed,
+            damp,
+            ..Default::default()
+        };
+        play_modal_at(&p, 48, 100, second, 2 * second)
+    };
+    let (a, b) = (at(0.3), at(0.6));
+    let held = SR as usize;
+    assert!(
+        a[..held]
+            .iter()
+            .zip(&b[..held])
+            .all(|(x, y)| x.to_bits() == y.to_bits()),
+        "DAMP moved the held bow"
+    );
+    // DAMP's law (`params::t60`): 0.30 s and 1.82 s.
+    let t60 = |damp: f32| 0.05 * 400f32.powf(damp);
+    for (damp, out) in [(0.3, &a), (0.6, &b)] {
+        let fall = db_at(out, 1.05) - db_at(out, 1.05 + t60(damp) / 2.0);
+        assert!((fall - 30.0).abs() < 6.0, "DAMP {damp}: {fall} dB");
+    }
+}
+
+/// Bowed's POS and BRIGHT change the sound, not the pitch: within 2 cents
+/// of POS 0 at BRIGHT 1, the old bow. A friction reading a second tap
+/// bowed a second, shorter loop: 93 Hz for 65 at POS 0.3.
+#[test]
+fn bowed_pos_and_bright_keep_pitch() {
+    let blocks = 3 * SR as usize / BLOCK_SIZE / 2;
+    let render = |pos: f32, bright: f32| {
+        let p = ModalParams {
+            mode: ResonatorMode::Bowed,
+            pos,
+            bright,
+            ..Default::default()
+        };
+        play_modal_at(&p, 48, 100, blocks, 0)
+    };
+    // Today's bow sounds an octave below its note (pinned by
+    // `a_v1_bowed_patch_bows_as_before`): measured there.
+    let f0 = note_to_freq(48) as f64 / 2.0;
+    let span = |o: &[f32]| o[SR as usize / 2..SR as usize * 3 / 2].to_vec();
+    let base = render(0.0, 1.0);
+    let f_base = fundamental_hz(&span(&base), f0);
+    for pos in [0.0, 0.3, 0.7] {
+        for bright in [0.0, 1.0] {
+            if pos == 0.0 && bright == 1.0 {
+                continue;
+            }
+            let out = render(pos, bright);
+            let f = fundamental_hz(&span(&out), f0);
+            let cents = 1200.0 * (f / f_base).log2();
+            assert!(
+                cents.abs() < 2.0,
+                "POS {pos} BRIGHT {bright}: {cents:+.2} cents"
+            );
+            let d = rms_diff(&out, &base);
+            assert!(d > 1e-3, "POS {pos} BRIGHT {bright}: unchanged ({d})");
+        }
+    }
 }

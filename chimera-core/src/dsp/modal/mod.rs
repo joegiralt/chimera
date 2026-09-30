@@ -43,6 +43,7 @@ mod rings;
 mod string;
 
 pub use chords::{CHORD_COUNT, CHORD_GLIDE_SAMPLES, CHORDS, chord_of, fold};
+pub use loop_parts::RELEASE_T60;
 pub use params::*;
 pub use string::MAX_STRING_DELAY;
 
@@ -59,7 +60,7 @@ use crate::voice_alloc::VoiceIdx;
 use chords::{GLIDE_STEP, period_ratios};
 use core::f32::consts::TAU;
 use ensemble::{Ensemble, rate_hz};
-use loop_parts::{DcBlocker, LoopGain, RELEASE_SAMPLES, RELEASE_T60, Release};
+use loop_parts::{DcBlocker, LoopGain, RELEASE_SAMPLES, Release};
 use rings::{CosineOsc, Svf, stiffness_from_structure};
 use string::{FRESH_CLEAR_BYTES, KsRenderParams, KsString, RING_BYTES, StringVoice, lp_coeff};
 
@@ -111,13 +112,19 @@ struct BowedString {
     force: f32,
     /// The force `force` slews to: the note-on's, then 0 at note-off.
     force_to: f32,
+    /// Force shed a sample at note-off: the note's force over `RELEASE_SAMPLES`.
+    lift: f32,
+    /// SPEED × `BOW_SPEED`, latched at note-on.
+    bow_vel: f32,
     /// Samples pushed since note-on, for `KsString::ring_tap`.
     written: u32,
     /// The lifted bow's ramp.
     release: Release,
 }
 
-crate::in_place::field_list!(BowedString => BowedString { string, force, force_to, written, release });
+crate::in_place::field_list!(BowedString => BowedString {
+    string, force, force_to, lift, bow_vel, written, release,
+});
 
 /// One pool slot (exclusive-state spec § 4.2): the seven strings a
 /// Sympathetic note's main string sets ringing. The main string is the
@@ -339,10 +346,14 @@ impl ModalEngine {
     /// dispersion's re-split each block STRUCTURE glides, 8, billed always,
     /// +18. BODY and the ensemble bill apart.
     pub const COST_STRING: Cost = Cost(330);
-    /// 620 + 100: 60 instructions a sample (143 to 203: the tuning allpass
-    /// on the ring, the tap that follows the write (#206), the release, the
-    /// bow's lift and the output blocker), 87 cycles.
-    pub const COST_BOWED: Cost = Cost(720);
+    /// 620 + 100 + 120: 60 instructions a sample at step A (143 to 203:
+    /// the tuning allpass on the ring, the tap that follows the write
+    /// (#206), the release, the bow's lift and the output blocker), 87
+    /// cycles; then the playable bow, 73 more (203 to 276: BRIGHT's
+    /// low-pass taps 23, POS's check 4 and its lerped second tap 44, DAMP's
+    /// `powf` a block once lifted 2), 73 × 1.46 × 1.1 = 117.2. POS is
+    /// billed always.
+    pub const COST_BOWED: Cost = Cost(840);
     /// 809 (benched, ADR 0054) − 271, rounded up to 540: 419 instructions a
     /// sample to 187, −306 cycles. Each halo string runs its block in
     /// spans, 19 a sample (42 before, 87 at task 11); the main string 15;
@@ -541,7 +552,7 @@ impl ModalEngine {
                 bank.resolution = params.modes.count();
                 bank.compute_filters(m, bank_freq);
                 bank.cos_osc.init(m.pos);
-                let burst_ms = 2.0 + params.excite * 4.0;
+                let burst_ms = 2.0 + params.burst * 4.0;
                 bank.burst_remaining = (burst_ms * sample_rate as f32 / 1000.0) as usize;
                 bank.burst_amp = vel * params.excite;
                 bank.burst_lp = 0.0;
@@ -555,13 +566,16 @@ impl ModalEngine {
                         params.body,
                         ensemble(params, rate_hz(params.ens_rate), sample_rate),
                     ),
+                    params.color,
                 );
             }
             ModelSlot::Bowed(b) => {
                 b.string.clear();
                 b.string.tune(freq, sample_rate);
-                b.force = vel * BOW_FORCE;
+                b.force = bow_force(params.force, vel);
                 b.force_to = b.force;
+                b.lift = 0.0;
+                b.bow_vel = params.speed * BOW_SPEED;
                 b.written = 0;
                 b.release = Release::HELD;
             }
@@ -573,6 +587,7 @@ impl ModalEngine {
                     None,
                     vel * params.excite,
                     (params.body, ens),
+                    params.color,
                 );
                 if let Some(set) = pool.halo(&v.halo) {
                     set.note_on(sample_rate as f32 / freq, chord_of(m.structure), params);
@@ -621,9 +636,9 @@ impl ModalEngine {
     }
 
     /// The string's loop gain ramps to a `RELEASE_T60` ring over
-    /// `RELEASE_SAMPLES`, and Bowed's as the bow lifts. Nothing scales a
-    /// buffer (#51). The bank and SYMP's halo ring on: sympathetic strings
-    /// ring until touched (ADR 0054).
+    /// `RELEASE_SAMPLES`; Bowed's, as the bow lifts, to DAMP's ring. Nothing
+    /// scales a buffer (#51). The bank and SYMP's halo ring on: sympathetic
+    /// strings ring until touched (ADR 0054).
     pub fn note_off(&mut self, _pool: &mut SymPool) {
         // As `render` rings them: f0 in Hz, T60 from the eased DAMP.
         let f0 = self.pitched(self.frequency) * SAMPLE_RATE as f32;
@@ -632,8 +647,9 @@ impl ModalEngine {
         match &mut self.model {
             ModelSlot::String(v) => v.release(held, to),
             ModelSlot::Bowed(b) => {
+                b.lift = b.force / RELEASE_SAMPLES as f32;
                 b.force_to = 0.0;
-                b.release.start(BOW_GAIN, to);
+                b.release.start(BOW_GAIN, held);
             }
             ModelSlot::Bank(_) => {}
             ModelSlot::Sympathetic(m) => m.main.release(held, to),
@@ -704,7 +720,7 @@ impl ModalEngine {
                 false
             }
             ModelSlot::Bowed(b) => {
-                render_bowed(b, output);
+                render_bowed(b, output, &m, f0);
                 // Never freed while bowed, however low its note (#206).
                 b.force > 0.0
             }
@@ -1087,13 +1103,15 @@ fn ensemble(params: &ModalParams, hz: f32, sample_rate: u32) -> (f32, Ensemble) 
     )
 }
 
-/// Bowed's hidden bow, until step B's exciter.
-const BOW_VELOCITY: f32 = 0.5;
-const BOW_FORCE: f32 = 0.5;
+/// SPEED 1's bow velocity; SPEED 0.5 is the old `BOW_VELOCITY · 0.3`.
+const BOW_SPEED: f32 = 0.3;
 /// The bowed loop's gain per pass, until note-off ramps it down.
 const BOW_GAIN: LoopGain = LoopGain::TOP;
-/// The bow lifts a full force in `RELEASE_SAMPLES`, a softer one sooner.
-const BOW_LIFT: f32 = BOW_FORCE / RELEASE_SAMPLES as f32;
+/// BRIGHT 0's low-pass side taps on the bowed loop: the most |H| ≤ 1
+/// allows. The bow's stick-slip keeps it gentle.
+const BOW_LP: f32 = 0.5;
+/// POS at or below this plays the one tap, as the pluck's comb (`KsString::shape`).
+const BOW_POS_MIN: f32 = 0.03;
 
 /// Each halo string's T60 over the main string's.
 const HALO_T60: f32 = 2.0;
@@ -1101,38 +1119,40 @@ const HALO_T60: f32 = 2.0;
 /// SYMP's main string's ensemble rate: ENS RATE is STRING's alone.
 const SYMP_ENS_RATE: f32 = 0.3;
 
-fn render_bowed(b: &mut BowedString, output: &mut [f32; BLOCK_SIZE]) {
+/// The bow on its string: DAMP rings the lifted bow, BRIGHT low-passes
+/// the loop on its tap, POS combs the output at the bow point. The loop
+/// and the friction read the one tap, so the pitch holds: a friction
+/// reading POS's second tap bows a second loop, which takes the pitch.
+fn render_bowed(b: &mut BowedString, output: &mut [f32; BLOCK_SIZE], m: &Macros, f0: f32) {
+    // Lifted, DAMP's ring, which `Release::gain` never lets rise; bowed, the top.
+    let held = if b.force_to > 0.0 {
+        BOW_GAIN
+    } else {
+        LoopGain::from_t60(t60(m.damp), f0)
+    };
+    let c = BOW_LP * (1.0 - m.bright);
+    let d = b.string.delay() as f32;
+    let back = (m.pos > BOW_POS_MIN).then_some(d - m.pos * d);
     for s in output.iter_mut() {
         if b.force > b.force_to {
-            b.force = (b.force - BOW_LIFT).max(b.force_to);
+            b.force = (b.force - b.lift).max(b.force_to);
         }
-        let exciter_amp = b.force;
-        let bow_vel = if exciter_amp > 0.001 {
-            BOW_VELOCITY * 0.3
-        } else {
-            0.0
+        let bow_vel = if b.force > 0.001 { b.bow_vel } else { 0.0 };
+        let gain = b.release.gain(held);
+
+        let x = b.string.ring_tap_lp(b.written, c);
+        // The bow point's nulls, heard: outside the loop, so the pitch holds.
+        *s = match back {
+            Some(back) => 0.5 * (x + b.string.ring_tap_at(b.written, back)),
+            None => x,
         };
-        let bow_force = exciter_amp * 4.0;
-        let gain = b.release.gain(BOW_GAIN);
 
-        // Read from delay line
-        let string_vel = b.string.ring_tap(b.written);
-
-        // Bow friction: stick-slip model.
-        // When |delta_v| is small, bow sticks (high friction → energy in).
-        // When |delta_v| is large, bow slips (low friction → string rings free).
-        let delta_v = bow_vel - string_vel;
-        let friction = bow_force * libm::tanhf(delta_v * 8.0);
-
-        let feedback = string_vel * gain.get() + friction * 0.4;
-
-        // Soft-limit to prevent blowup
-        let clamped = libm::tanhf(feedback);
-
-        b.string.ring_push(clamped);
+        // Stick-slip: a small |Δv| sticks (energy in), a large one slips.
+        let friction = b.force * 4.0 * libm::tanhf((bow_vel - x) * 8.0);
+        // Bounded: `x` under a gain below 1, a bounded push, then `tanh`.
+        let feedback = x * gain.get() + friction * 0.4;
+        b.string.ring_push(libm::tanhf(feedback));
         b.written = b.written.saturating_add(1);
-
-        *s = string_vel;
     }
 }
 
@@ -1523,6 +1543,28 @@ mod tests {
         assert!(!rendered(b).is_empty());
         for (i, f) in rendered(b).iter().enumerate() {
             assert!(f.g() < ceiling, "mode {i}: g {}", f.g());
+        }
+    }
+
+    /// BURST alone sets the strike's length, 2 to 6 ms; EXCITE its level.
+    #[test]
+    fn bank_burst_is_2_to_6_ms() {
+        for excite in [0.2, 1.0] {
+            for (burst, want) in [(0.0, 96), (1.0, 288)] {
+                let p = ModalParams {
+                    mode: ResonatorMode::Modal,
+                    excite,
+                    burst,
+                    ..Default::default()
+                };
+                let mut pool = SymPool::boxed();
+                let mut e = engine(&mut pool, p.mode);
+                e.note_on(48, 100, &p, SR, &mut pool);
+                let ModelSlot::Bank(b) = &e.model else {
+                    unreachable!()
+                };
+                assert_eq!(b.burst_remaining, want, "EXCITE {excite}, BURST {burst}");
+            }
         }
     }
 
