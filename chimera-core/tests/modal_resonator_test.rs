@@ -318,8 +318,32 @@ fn modes_change_keeps_sounding_notes_and_their_bill() {
     // Billed over a STRING edit: exactly the 16-mode bank's cost.
     let mut string = p16.clone();
     string.modal.mode = ResonatorMode::String;
-    let over = ModalEngine::cost(&p16.modal).0 - ModalEngine::COST_STRING.0;
+    let over = ModalEngine::cost(&p16.modal).0 - ModalEngine::cost(&string.modal).0;
     assert_eq!(rig.held_model_extra(&string), Cost(over), "plays 16 modes");
+}
+
+/// BODY and the ensemble latch at note-on, and so does their bill: an edit
+/// that turns them off under a sounding note bills them until it ends.
+#[test]
+fn body_and_ensemble_keep_their_bill() {
+    let mods = ModState::new();
+    let (note, vel) = (MidiNote::new(60).unwrap(), Velocity::new(100).unwrap());
+    for mode in [ResonatorMode::String, ResonatorMode::Sympathetic] {
+        let mut on = ParamSnapshot::for_engine(EngineType::Modal);
+        (on.modal.mode, on.modal.body, on.modal.ens_mix) = (mode, 0.3, 0.5);
+        let mut off = on.clone();
+        (off.modal.body, off.modal.ens_mix) = (0.0, 0.0);
+        let mut rig = Rig::new(SR);
+        rig.note_on(note, vel, &on);
+        let mut block = [0.0; BLOCK_SIZE];
+        rig.render(&mut block, &off, &mods);
+        assert_eq!(
+            rig.held_model_extra(&off),
+            ModalEngine::BODY + ModalEngine::ENSEMBLE,
+            "{mode:?}"
+        );
+        assert_eq!(rig.held_model_extra(&on), Cost::ZERO, "{mode:?}");
+    }
 }
 
 /// `p` through a voice: `note` at `vel`, held `on` blocks, then released

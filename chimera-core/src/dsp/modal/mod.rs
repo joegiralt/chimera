@@ -322,35 +322,51 @@ const fn models_are_exclusive() -> bool {
 const _: () = assert!(models_are_exclusive());
 
 impl ModalEngine {
-    /// Cycles/sample per model (ADR 0013), at the chain's LP24. String and
-    /// Sympathetic are measured: a bench row's /VOICE less the chain the
-    /// Modal Sound's voice adds (57). The others are provisional until the
-    /// bench's MDL rows read them (#49): the
-    /// emulator's count over String's (1.36 cycles an instruction, 38 an
-    /// I- or D-cache miss), scaled by String's bench/emulator ratio (1.07)
-    /// and rounded up about 10 %. Emulator, per voice: String 235
-    /// instructions a sample, 78 misses a block; Bowed 340, 115;
-    /// Sympathetic 801, 174; the resonator bank 1,106, 148 at 32 modes and
-    /// 1,539, 169 at 48.
-    pub const COST_STRING: Cost = Cost(390);
-    /// Estimated 565.
-    pub const COST_BOWED: Cost = Cost(620);
-    /// Measured 2026-09-29, bench 2df4100 (the ship build), rev V at 480
-    /// MHz: MDL SYM's totals 1122 1983 2844 3721 at one to four ringing
-    /// notes, a slope of 866 a voice; 866 − 57 = 809. (859 at f59bc92;
-    /// estimated 1,274 from the emulator.)
-    pub const COST_SYMPATHETIC: Cost = Cost(809);
-    /// The resonator bank: this plus `COST_MODE` per mode. Estimated 1,703
-    /// at 32 modes and 40 a mode; billed 1,900 at 32.
+    /// Cycles/sample per model (ADR 0013), at the chain's LP24. Host
+    /// estimates, provisional until the bench's MDL rows (Modal 2 step A,
+    /// task 12): the model's last benched bill plus what step A added,
+    /// counted as the hot path's instructions in the thumbv7em release
+    /// build before (6f8fffc) and after, at 1.46 cycles an instruction
+    /// (ADR 0052), plus 10 %, rounded up to 10. Per-block work is spread
+    /// over the block's 64 samples; a `powf` or a `set_period` is taken as
+    /// about 130 instructions.
+    ///
+    /// STRING, 390 + 70: 30 instructions a sample (99 to 129: the
+    /// three-tap low-pass, four dispersion allpasses, the tuning allpass,
+    /// the release and the output blocker), 44 cycles; DAMP's two `powf`s
+    /// a block, 8; the dispersion's re-split each block STRUCTURE glides,
+    /// 8, billed always. BODY and the ensemble bill apart.
+    pub const COST_STRING: Cost = Cost(460);
+    /// 620 + 100: 60 instructions a sample (143 to 203: the tuning allpass
+    /// on the ring, the tap that follows the write (#206), the release, the
+    /// bow's lift and the output blocker), 87 cycles.
+    pub const COST_BOWED: Cost = Cost(720);
+    /// 809 (benched, ADR 0054) + 561: 323 instructions a sample (419 to
+    /// 742), 471 cycles, nearly all in the halo, each string's tick 42 to
+    /// 87 (the three-tap low-pass's three wrapped reads and the tuning
+    /// allpass); ten `powf`s a block for the loop gains, 32.
+    pub const COST_SYMPATHETIC: Cost = Cost(1_370);
+    /// The resonator bank: this plus `COST_MODE` per mode. Unchanged: its
+    /// sample loop is as benched (MDL RES 1,865, 1,808 at 32 modes against
+    /// 1,900 billed), and the macros' easing is a few operations a block.
+    /// Dropping modes past Nyquist can only save.
     pub const COST_BANK: Cost = Cost(460);
     pub const COST_MODE: Cost = Cost(45);
 
+    /// More on STRING and SYMP with BODY above 0: three band-passes, 80
+    /// instructions a sample on SYMP's mix (65 on STRING's).
+    pub const BODY: Cost = Cost(130);
+    /// More on STRING and SYMP with ENS MIX above 0: two interpolated heads
+    /// and the LFO's rotation, 94 instructions a sample.
+    pub const ENSEMBLE: Cost = Cost(160);
+
     /// `p`'s model, as the voice plays it from its next note-on.
     pub fn cost(p: &ModalParams) -> Cost {
+        let extras = || Self::extras((p.body > 0.0, p.ens_mix > 0.0));
         match p.mode {
-            ResonatorMode::String => Self::COST_STRING,
+            ResonatorMode::String => Self::COST_STRING + extras(),
             ResonatorMode::Bowed => Self::COST_BOWED,
-            ResonatorMode::Sympathetic => Self::COST_SYMPATHETIC,
+            ResonatorMode::Sympathetic => Self::COST_SYMPATHETIC + extras(),
             ResonatorMode::Modal => Self::bank_cost(p.modes.count()),
         }
     }
@@ -359,28 +375,36 @@ impl ModalEngine {
         Cost(Self::COST_BANK.0 + Self::COST_MODE.0 * modes as u32)
     }
 
-    /// What the sounding note costs: its note-on's model and MODES.
+    /// BODY's and the ensemble's bill, each if it runs.
+    fn extras((body, ens): (bool, bool)) -> Cost {
+        let on = |runs, c: Cost| if runs { c } else { Cost::ZERO };
+        on(body, Self::BODY) + on(ens, Self::ENSEMBLE)
+    }
+
+    /// What the sounding note costs: its note-on's model, MODES, BODY and
+    /// ensemble.
     pub fn playing_cost(&self) -> Option<Cost> {
         self.active.then(|| match &self.model {
             ModelSlot::Bank(b) => Self::bank_cost(b.resolution),
-            ModelSlot::String(_) => Self::COST_STRING,
+            ModelSlot::String(v) => Self::COST_STRING + Self::extras(v.runs()),
             ModelSlot::Bowed(_) => Self::COST_BOWED,
-            ModelSlot::Sympathetic(_) => Self::COST_SYMPATHETIC,
+            ModelSlot::Sympathetic(v) => Self::COST_SYMPATHETIC + Self::extras(v.main.runs()),
         })
     }
 
-    /// More with a route into PITCH or FINE: `retune`'s eight divides a
-    /// block, the per-block `fast_exp2` and the retune's I-cache lines.
-    /// Provisional, pending a bench row (#182): the emulator's Sympathetic row
-    /// with an LFO on PITCH less the unrouted one: 3 instructions a sample
-    /// and 9 I-cache misses a block, per voice (2026-09-28). Billed at 12.
-    pub const PITCH: Cost = Cost(12);
+    /// More with a route into PITCH or FINE: the strings re-split every
+    /// block. A host estimate, as the `COST_*`: SYMP's eight `set_period`s
+    /// a block and the halo's octave fold, 18 instructions a sample (STRING's
+    /// re-split with its dispersion, about 6). It was 12 before fractional
+    /// tuning (ADR 0042).
+    pub const PITCH: Cost = Cost(30);
 
     /// More on SYMP with a route into STRUCTURE, which can keep the halo
-    /// gliding: seven re-splits every `GLIDE_STEP` (28 a block), and seven
-    /// `exp2f`s a chord step. Estimated from `PITCH`, 12 for eight splits
-    /// a block, so 42, pending the bench's SYM LFO row (task 11).
-    pub const CHORD: Cost = Cost(42);
+    /// gliding: seven `set_period`s every `GLIDE_STEP` (28 a block) and
+    /// the glide's lerp, about 60 instructions a sample, and seven
+    /// `exp2f`s a chord step. A host estimate, as `PITCH`, until the
+    /// bench's SYM LFO row reads it (task 12).
+    pub const CHORD: Cost = Cost(100);
 
     /// An idle engine set to play `mode`, by value, through the stack:
     /// tests only. Sympathetic borrows a slot of `pool` for voice 0.

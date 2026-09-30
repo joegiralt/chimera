@@ -391,6 +391,11 @@ impl StringVoice {
         self.ens_mix = ens_mix;
     }
 
+    /// Whether BODY and the ensemble run, as latched: what the note bills.
+    pub(super) fn runs(&self) -> (bool, bool) {
+        (self.body_mix.runs(), self.ens_mix > 0.0)
+    }
+
     /// Per block, after any retune: the heads sized to the line in use.
     pub(super) fn set_ensemble(&mut self) {
         if self.ens_mix > 0.0 {

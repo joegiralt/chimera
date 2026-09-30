@@ -10,6 +10,13 @@ pub struct BodyMix {
     wet: f32,
 }
 
+impl BodyMix {
+    /// BODY above 0: the band-passes run.
+    pub fn runs(&self) -> bool {
+        self.wet != 0.0
+    }
+}
+
 /// Each resonance: Hz, Q, gain.
 pub const BODY_MODES: [(f32, f32, f32); 3] =
     [(102.0, 3.0, 1.0), (236.0, 4.0, 0.7), (517.0, 3.0, 0.5)];
@@ -49,7 +56,7 @@ impl Body {
     /// and the sum is scaled back so the loudest peak stays under 2.
     #[inline]
     pub fn process(&mut self, x: f32, mix: BodyMix) -> f32 {
-        if mix.wet == 0.0 {
+        if !mix.runs() {
             return x;
         }
         let mut wet = 0.0;
