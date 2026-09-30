@@ -78,8 +78,11 @@ note-on, so nothing could modulate a string's character.
   INHARM, DECAY, the E.* fields, `ks_excitation`, `ks_color`,
   `bow_velocity`, `bow_force` and `note` leave `ModalParams`, and their
   disk codes are retired.
-- COLOR (id 19), BURST (20), FORCE (17) and SPEED (18) are read at
-  note-on and are not modulatable, like the model page. COLOR is the
+- COLOR (id 19), BURST (20), FORCE (17) and SPEED (18) are not
+  modulatable, like the model page. COLOR and BURST are read at note-on;
+  FORCE and SPEED every block, eased, so turning them moves a held bow
+  (the controller's ruling: the owner's complaint was values that didn't
+  move). COLOR is the
   pluck's smoothing passes, `⌊(1 − COLOR)·7⌋`, the old `ks_color` law
   (the old hidden 0.8 is one pass). BURST is the strike's noise burst,
   `2 + 4·BURST` ms; EXCITE is the strike's level alone.
@@ -152,7 +155,10 @@ note-on, so nothing could modulate a string's character.
 - The bow's force is `FORCE·(0.5 + 0.5·velocity)`, so a soft key still
   bows; at FORCE 0.5 and full velocity it is the old bow, bit for bit.
   `SPEED·0.3` is the bow's velocity (`BOW_SPEED`); SPEED 0.5 is the old
-  one. FORCE 0 or SPEED 0 is a bow at rest, and silent.
+  one. FORCE 0 or SPEED 0 is a bow at rest, and silent. While the bow is
+  on, the force and velocity ease each sample `EASE / 64` of the way to
+  the block's FORCE and SPEED (`BOW_EASE`, about the macros' easing a
+  block); at their targets no bit moves, so the v1 pin holds.
 - DAMP is the ring after the lift: while bowed the loop's gain is
   `LoopGain::TOP` and the bow sustains the string, as before; at note-off
   it ramps to DAMP's T60 and never gives the gain back.
@@ -275,7 +281,8 @@ note-on, so nothing could modulate a string's character.
 - Host sizes: `Voice` 6,056 B, `ModelSlot` 4,160 B, `SymPool` 111,848 B,
   `Instrument` 162,968 B, which leaves 123,752 B of D2. Firmware
   `.ram_d2` is 162,108 B. `ModalParams` grew by EXC's four fields;
-  `BowedString` by its latched lift and bow velocity (4,008 B) and
+  `BowedString` by its lift, bow velocity, velocity scale and bowing
+  flag (4,016 B) and
   `StringVoice` by COLOR's passes, within its padding.
 
 ### Costs
@@ -303,7 +310,7 @@ Instructions a sample:
 | BODY | `Body::process_block`: 90 per 2 samples, 94 a block | — | 46.5 |
 | Ensemble | `run::<true, true>`'s fast span 101 less 21.25; its slow spans, the extra span a ring and `Ensemble::set` 1.8 | — | 82 |
 | BOWED | `ModalEngine::render`'s bowed loop, both `tanhf` dispatches, plus the blocker | 143 | 195 + 7.8 |
-| BOWED, playable (Task 13) | the same loop: BRIGHT's two side taps and their wraps 23, POS's check 4, its clamped, lerped second tap 44; DAMP's `powf` once lifted, 2 | 203 | 276 |
+| BOWED, playable (Task 13) | the same loop: BRIGHT's two side taps and their wraps 23, POS's check 4, its clamped, lerped second tap 44, FORCE and SPEED eased 10; DAMP's `powf` once lifted, 2 | 203 | 286 |
 | SYMP main string | `run::<false, false>`: 44 per 4 samples; 127 a block; a span 57 | 82 | 14.9 |
 | SYMP halo string, each of 7 | `KsString::run_coupled`: 62 per 4 samples; a call 71; a span 65 | 42 | 18.8 |
 | SYMP per sample, besides | the coupled input (55 per 16), the two buffers' clears (116 each), the runs' setup 150, the mix (71 per 16), BODY's call, the `tanhf` dispatch 17 | 31 + 12 | 31.7 |
@@ -313,7 +320,7 @@ Instructions a sample:
 | Term | Before step A | Now | From |
 |---|---|---|---|
 | `COST_STRING` | 390 | 330 | 99 → 33.5 instructions, −86 cycles; DAMP's two `powf`s and the dispersion's re-split, billed always, +18 |
-| `COST_BOWED` | 620 | 840 | +60 instructions a sample at step A, 87; +73 for the playable bow, 117.2, POS billed always |
+| `COST_BOWED` | 620 | 860 | +60 instructions a sample at step A, 87; +83 for the playable bow, 133.3, POS billed always |
 | `COST_SYMPATHETIC` | 809 | 540 | 419 → 186.2 instructions, −306 cycles; ten `powf`s a block, +35 |
 | `COST_BANK`, `COST_MODE` | 460, 45 | 460, 45 | sample loop unchanged |
 | `BODY` (STRING, SYMP, BODY > 0) | — | 80 | 46.5 instructions |
@@ -344,7 +351,7 @@ bench's MDL STR row, on rev Y with the tape, is the case to check.
 
 Measured on the chip (the ship flash; to fill in, rev V at 480 MHz):
 - MDL STR /VOICE —, STR0 —, STR E —, STR+ —; BOW —, BOW+ —; SYM —,
-  SYM0 —, SYM+ —, SYM LFO —; RES —, RES48 —. PLUCK DARK — cycles.
+  SYM0 —, SYM+ —, SYM LFO —; RES —, RES48 —. DARK NOTE+BLOCK —, DARK +6 PASSES — cycles.
 - `COST_*`, `BODY`, `ENSEMBLE` and `CHORD` from them: —.
 
 The bench rows: MDL STR, STR0 (BODY 0), STR E (BODY 0, the ensemble, no
@@ -352,9 +359,11 @@ routes), STR+ (BODY 1, the ensemble, LFO 1 on each macro), BOW, BOW+
 (FORCE 1, SPEED 1, POS 0.5, BRIGHT 0, LFO 1 at 10 Hz into BRIGHT, DAMP and
 POS at 64), SYM, SYM0, SYM+ (the ensemble, STRUCTURE a chord on every 8
 blocks), SYM LFO (a route into STRUCTURE), RES and RES48. The MEMORY
-screen's PLUCK DARK is a STRING note-on at G1 and COLOR 0 and its first
-block, the pluck's seven smoothing passes over the line, timed as SYM
-NOTE-ON LOW is.
+screen's DARK NOTE+BLOCK is a STRING note-on at G1 and COLOR 0 and its
+first block, the whole render included, against the block's budget;
+DARK +6 PASSES is that less the same at the default COLOR, the six
+smoothing passes over the line COLOR 0 adds. Both are timed as SYM
+NOTE-ON is, by `Rig::time_note_on`.
 
 ### Open for the owner
 - The halo's ring time: 2× the main string's T60 (about 30 s at INIT

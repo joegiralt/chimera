@@ -341,15 +341,20 @@ fn old_modal_patches_translate() {
     }
 }
 
-/// A v1 Bowed patch, one second held at full velocity: recorded before
-/// the bow went live (Task 13), so the old bow is the default bow.
+/// A v1 Bowed patch, one second held at full velocity, then half a
+/// second released: recorded on 777518a, before the bow went live (Task
+/// 13), so the old bow is the default bow, lift and ring included.
 const BOWED_V1_HELD: u64 = 0x6bb1_88f9_e05e_9f67;
+const BOWED_V1_RELEASED: u64 = 0xc342_5873_9886_cf65;
 
 #[test]
 fn a_v1_bowed_patch_bows_as_before() {
     let snap = decode_modal(&v1_modal(ResonatorMode::Bowed, 0.2));
-    let out = play_modal_at(&snap.modal, 48, 127, SR as usize / BLOCK_SIZE, 0);
-    assert_eq!(fnv1a(&out), BOWED_V1_HELD);
+    let second = SR as usize / BLOCK_SIZE;
+    let held = play_modal_at(&snap.modal, 48, 127, second, 0);
+    assert_eq!(fnv1a(&held), BOWED_V1_HELD);
+    let released = play_modal_at(&snap.modal, 48, 127, second, second / 2);
+    assert_eq!(fnv1a(&released), BOWED_V1_RELEASED);
 }
 
 /// Review focus 4: FDBK 1 at DECAY 0, today's longest, once ran away. It
