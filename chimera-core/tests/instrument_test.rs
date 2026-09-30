@@ -645,10 +645,10 @@ fn the_costliest_patch_plays_six_voices_on_rev_v() {
 /// for an intended sound change (`common::golden`).
 const GOLDENS: &[(&str, u64)] = &[
     ("poly_chord", 0x6876d7661e044851), // ADR 0049 INIT, then the ADR 0050 output trim
-    ("two_parts_two_pairs", 0x851eab45ed8a2f86), // ADR 0049 INIT, then the ADR 0050 output trim
-    ("reverb_send_off", 0x0e7a98bc151a775d), // ADR 0049 INIT, then the ADR 0050 output trim
-    ("reverb_send_on", 0xa0e1bc2dec7668d9), // ADR 0049 INIT, then the ADR 0050 output trim
-    ("six_voice_chord", 0xc2673515ab48c0c9), // ADR 0049 INIT, then the ADR 0050 output trim
+    ("two_parts_two_pairs", 0x937e9837218ce101), // Re-recorded: Modal 2 step A's resonators (spec § Tests)
+    ("reverb_send_off", 0x0e7a98bc151a775d),     // ADR 0049 INIT, then the ADR 0050 output trim
+    ("reverb_send_on", 0xa0e1bc2dec7668d9),      // ADR 0049 INIT, then the ADR 0050 output trim
+    ("six_voice_chord", 0xc2673515ab48c0c9),     // ADR 0049 INIT, then the ADR 0050 output trim
 ];
 
 /// ADR 0050: everything before the limiter is the mix unchanged by it,
@@ -656,24 +656,12 @@ const GOLDENS: &[(&str, u64)] = &[
 /// before the output trim.
 const PRE_LIMITER: &[(&str, u64)] = &[
     ("poly_chord", 0x2c57afe8baf00119),
-    ("two_parts_two_pairs", 0x016712a2b7e18d83),
+    // Re-recorded: Modal 2 step A's resonators (spec § Tests).
+    ("two_parts_two_pairs", 0xc1b5cdbe6cafa1c8),
     ("reverb_send_off", 0xf40c677a4633ad69),
     ("reverb_send_on", 0x5e7b5f6ed1eedd52),
     ("six_voice_chord", 0x241436b65cc7a435),
 ];
-
-/// Goldens that render INIT Modal, moved by Modal 2 step A: re-recorded
-/// once, in its Task 11.
-const PENDING: &[&str] = &["two_parts_two_pairs"];
-
-/// `table` less the pending rows.
-fn settled(table: &[(&'static str, u64)]) -> Vec<(&'static str, u64)> {
-    table
-        .iter()
-        .filter(|r| !PENDING.contains(&r.0))
-        .copied()
-        .collect()
-}
 
 /// A named golden case: a case name paired with its render function.
 type GoldenCase = (&'static str, fn() -> Vec<f32>);
@@ -689,10 +677,9 @@ fn instrument_goldens_match() {
     ];
     let got: Vec<_> = cases
         .into_iter()
-        .filter(|(name, _)| !PENDING.contains(name))
         .map(|(name, render)| (name, fnv1a(&render())))
         .collect();
-    common::golden::check(&settled(GOLDENS), &got);
+    common::golden::check(GOLDENS, &got);
 }
 
 #[test]
@@ -722,12 +709,8 @@ fn the_mix_before_the_limiter_is_mains() {
             render_tap(&factory(4), &CHORD6.map(|n| (0, n)), 200, pre),
         ),
     ];
-    let got: Vec<_> = cases
-        .iter()
-        .filter(|(name, _)| !PENDING.contains(name))
-        .map(|(name, v)| (*name, fnv1a(v)))
-        .collect();
-    let failures = common::golden::mismatches(&settled(PRE_LIMITER), &got);
+    let got: Vec<_> = cases.iter().map(|(name, v)| (*name, fnv1a(v))).collect();
+    let failures = common::golden::mismatches(PRE_LIMITER, &got);
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 

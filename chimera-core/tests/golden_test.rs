@@ -11,35 +11,34 @@ use common::*;
 
 /// (case name, FNV-1a 64 over every sample's bits, sample bits at SPOT_IDX).
 const GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
+    // Re-recorded: Modal 2 step A's resonators (spec § Tests).
     (
         "modal_init",
         (
-            0x90f1197c153d0b05,
+            0xb9a4be01cac830ff,
             [
-                3146805428, 3183273506, 3195882399, 1063217482, 3191764060, 3172592491, 993906163,
-                1000698095,
+                0, 1037113109, 1041593008, 3164086703, 1036527766, 1036778579, 0, 0,
             ],
         ),
     ),
-    // Re-recorded: CUTOFF routes in octaves, g ramped per block (filter-routing spec § 3).
+    // Re-recorded: Modal 2 step A's resonators (spec § Tests).
     (
         "modal_lfo_cutoff",
         (
-            0xe9e4fe3dda9b0262,
+            0x8da866721e0cb635,
             [
-                3146805428, 3183273506, 3198007719, 1063217482, 3191764060, 3172592491, 992207671,
-                3142402426,
+                0, 1037113109, 1042126441, 3164086703, 1036527766, 1036778579, 0, 0,
             ],
         ),
     ),
-    // Recorded: pins Sympathetic before its set moves to the pool (exclusive-state spec § 4.8).
+    // Re-recorded: Modal 2 step A's resonators (spec § Tests).
     (
         "modal_sympathetic",
         (
-            0x4bb5969650e6f28d,
+            0x2fd458807ead9041,
             [
-                3146803683, 3183282215, 3195097727, 1061213380, 3181792418, 1025081920, 1035423354,
-                1043506943,
+                1001436966, 1032798864, 1031034586, 3190798251, 1047862603, 1046731887, 1035741707,
+                3169759479,
             ],
         ),
     ),
@@ -168,14 +167,13 @@ const GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
             ],
         ),
     ),
-    // Re-recorded: the switch fades Algo out, then Modal starts (#33 M6).
+    // Re-recorded: Modal 2 step A's resonators (spec § Tests).
     (
         "algo_to_modal_switch",
         (
-            0x501ad70c947a9c4d,
+            0xed8d6af2fd0e68a7,
             [
-                979028267, 3207916546, 1058702061, 3198051069, 3178790723, 3188171051, 3137935627,
-                3125743219,
+                979028267, 3207916546, 1058702061, 3190348774, 3115775757, 1010705731, 0, 0,
             ],
         ),
     ),
@@ -261,57 +259,20 @@ const GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
 ];
 
 /// Goldens whose locked output no longer reflects intended behaviour, each
-/// tracked at an issue: Modal failed the sanity gate (#10), the switch
-/// case's second half is Modal's, and Sympathetic rings on the same KS
-/// main string.
-const KNOWN_BROKEN: &[(&str, &str)] = &[
-    (
-        "modal_init",
-        "https://github.com/joegiralt/chimera/issues/10",
-    ),
-    (
-        "modal_lfo_cutoff",
-        "https://github.com/joegiralt/chimera/issues/10",
-    ),
-    (
-        "algo_to_modal_switch",
-        "https://github.com/joegiralt/chimera/issues/10",
-    ),
-    (
-        "modal_sympathetic",
-        "https://github.com/joegiralt/chimera/issues/10",
-    ),
-];
-
-/// Modal's goldens, moved by Modal 2 step A (spec 2026-09-29): re-recorded
-/// once, in Modal 2 step A's last task.
-const PENDING: &[&str] = &[
-    "modal_init",
-    "modal_lfo_cutoff",
-    "modal_sympathetic",
-    "algo_to_modal_switch",
-];
-
-/// `GOLDENS` less the pending rows.
-fn settled() -> Vec<(&'static str, (u64, [u32; 8]))> {
-    GOLDENS
-        .iter()
-        .filter(|r| !PENDING.contains(&r.0))
-        .copied()
-        .collect()
-}
+/// with its issue. Empty: Modal 2 step A closed #10, and Modal's four
+/// goldens were re-recorded then; `known_broken` guards whatever comes next.
+const KNOWN_BROKEN: &[(&str, &str)] = &[];
 
 #[test]
 fn goldens_match() {
     let got: Vec<_> = Case::ALL
         .iter()
-        .filter(|c| !PENDING.contains(&c.name()))
         .map(|&case| {
             let out = render_case(case);
             (case.name(), (fnv1a(&out), spots(&out)))
         })
         .collect();
-    golden::check(&settled(), &got);
+    golden::check(GOLDENS, &got);
 }
 
 /// Spec § Testing: part 1's mono bus through the voice pool matches every
@@ -320,14 +281,13 @@ fn goldens_match() {
 fn goldens_match_through_the_instrument() {
     let got: Vec<_> = Case::ALL
         .iter()
-        .filter(|c| !PENDING.contains(&c.name()))
         .map(|&case| {
             let out = render_case_through_instrument(case);
             (case.name(), (fnv1a(&out), spots(&out)))
         })
         .collect();
     // Compares even under GOLDEN_RECORD; `goldens_match` alone records.
-    let failures = golden::mismatches(&settled(), &got);
+    let failures = golden::mismatches(GOLDENS, &got);
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
