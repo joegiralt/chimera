@@ -533,6 +533,15 @@ fn intervals_and_transposes_are_total() {
     assert_eq!(n(60).transpose(-61), None);
     assert_eq!(n(120).transpose(7), Some(n(127)));
     assert_eq!(n(120).transpose(8), None);
+    assert_eq!(n(0).transpose(0), Some(n(0)));
+    assert_eq!(n(0).transpose(-1), None);
+    assert_eq!(n(0).transpose(127), Some(n(127)));
+    assert_eq!(n(127).transpose(-127), Some(n(0)));
+    assert_eq!(n(127).transpose(1), None);
+    for x in [0, 64, 100, 127] {
+        assert_eq!(n(x).transpose(i16::MAX), None);
+        assert_eq!(n(x).transpose(i16::MIN), None);
+    }
 }
 
 #[test]
