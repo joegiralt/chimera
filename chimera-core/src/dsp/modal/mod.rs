@@ -146,6 +146,8 @@ pub struct SympatheticSet {
     ratios: [f32; NUM_SYMPATHETIC],
     /// Each string's period, gliding to the chord's.
     glides: [Glide; NUM_SYMPATHETIC],
+    /// The main string's period at the last retune, samples.
+    main: f32,
     /// COUPLE's and HALO's gains, latched at note-on.
     coupling: f32,
     level: f32,
@@ -155,7 +157,7 @@ pub struct SympatheticSet {
 }
 
 crate::in_place::field_list!(SympatheticSet => SympatheticSet {
-    strings, chord, ratios, glides, coupling, level, pending,
+    strings, chord, ratios, glides, main, coupling, level, pending,
 });
 
 /// Sympathetic's sets, one per slot of `SymAlloc`, which lends them to
@@ -1087,6 +1089,7 @@ impl SympatheticSet {
             addr_of_mut!((*p).ratios).write([1.0; NUM_SYMPATHETIC]);
             addr_of_mut!((*p).glides)
                 .write([Glide::new(INIT_PERIOD, CHORD_GLIDE_TAU); NUM_SYMPATHETIC]);
+            addr_of_mut!((*p).main).write(INIT_PERIOD);
             addr_of_mut!((*p).coupling).write(0.0);
             addr_of_mut!((*p).level).write(0.0);
             addr_of_mut!((*p).pending).write([0.0; NUM_SYMPATHETIC]);
@@ -1116,6 +1119,7 @@ impl SympatheticSet {
         self.glides = self
             .ratios
             .map(|r| Glide::new(fold(period * r), CHORD_GLIDE_TAU));
+        self.main = period;
         self.split();
         self.coupling = 0.1 * params.couple;
         self.level = 0.6 * params.halo;
@@ -1134,19 +1138,26 @@ impl SympatheticSet {
             return;
         }
         let (was, gliding) = (self.ratios, self.glides.iter().any(Glide::gliding));
+        let moved = period / self.main;
+        self.main = period;
         if stepped {
             self.chord = chord as u8;
             self.ratios = period_ratios(chord);
         }
         for ((g, r), w) in self.glides.iter_mut().zip(self.ratios).zip(was) {
             let folded = fold(period * r);
-            if snap || !(stepped || gliding) {
+            if snap {
                 g.toward(folded);
+                g.snap();
+            } else if !(stepped || gliding) {
+                // Moved with the pitch from where it rests: a glide may have
+                // left it an octave above the fold's.
+                g.toward(octave_near(folded, g.target() * moved));
                 g.snap();
             } else if stepped {
                 g.toward(octave_near(folded, g.period() * r / w));
             } else {
-                g.toward(octave_near(folded, g.target()));
+                g.toward(octave_near(folded, g.target() * moved));
             }
         }
         self.split();
