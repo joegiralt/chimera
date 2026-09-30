@@ -31,7 +31,7 @@ This spec adds a voiced kind, FRMT, and an unvoiced kind, NOIS, to Algo's WAVE l
 - VOWEL, FRMT and BW are mod destinations;
 - the pages adapt: a patch with no formant operator shows the same pages and cells as today, apart from one dimmed cell (§ 6);
 - every test in § Tests passes, and old patches load and sound bit for bit as before;
-- ADR 0060 is written;
+- its ADR is written (the next free number; 0060 and 0061 went to Modal 2);
 - the three demo clips have passed the owner's UAT;
 - the chip bench's formant rows are measured at the ship flash.
 
@@ -128,6 +128,8 @@ The budget:
 FORMANT_BUDGET = 1,382 − 325 − 370 − 96 − 366 = 225
 Σ charges ≤ 225   ⇒   N = ⌊225 / 70⌋ = 3 FRMT operators
 ```
+
+- **On Modal 2's terms (amended 2026-09-30, controller ruling).** Modal 2 raises `CHAIN_COST` to 30 and the bus with the tape to 1,490 (its ADRs 0060–0061). That gives ⌊(7,000 − 1,490)/4⌋ − 345 − 832 = **200**, so N = 2. The budget is derived at build time and never typed in. If the rebased build gives N < 3, the plan stops for the owner before CHOIR and TALK BASS are voiced.
 
 **The rule the type enforces is exactly `70·n_FRMT + 10·n_NOIS ≤ 225`**, checked on every assignment: 3 FRMT with at most 1 NOIS (220), 2 FRMT with up to 4 NOIS (180), and any number of NOIS with fewer FRMT. 3 FRMT with 2 NOIS (230) is refused.
 
@@ -243,6 +245,7 @@ Algo block (`AlgoParams`):
   - `c = c0 + elapsed · inc_c`.
   - This is exact, because the clock is unmodulated, so the harmonics are exact multiples of f0.
 - **First grain at note-on.** `Kernel::reset` fires a grain at once, so a note doesn't wait a period (31 ms at C1) for its first grain.
+  - The reset grain takes no base delay: its delay is `clamp(pm, 0, s)`, not `s/2 + pm`. So it opens at once at every pitch, C1 included (amended 2026-09-30, controller ruling).
 
 ### Window law
 
@@ -282,7 +285,10 @@ SKIRT's constants, measured on the host and pinned by tests:
 - **Why the floor costs no musical range:** a formant narrower than about 1.5 harmonic spacings can't be heard as narrower. It just selects the nearest harmonic.
   - At G2 the floor is 153 Hz, and at A3 343 Hz.
   - Below about A2, BW sets the width. Above it, the floor does.
-- BW is read every block, and `r_w`, `1/D` and the slack (below) ramp across the block. A lane's window phase stays continuous, so a BW change never clicks.
+- BW is read every block, but it takes effect **grain by grain** (amended 2026-09-30, controller ruling, after the plan review's simulations).
+  - Each lane latches `1/D`, the slack and the carrier's start at its restart.
+  - Its window is read from the clock: `x = (t − o)/D`, where `t` is the periods since the lane's start (the clock's fraction, plus 1 for the older lane).
+  - A restart comes exactly two clock periods later, so the old grain has closed by construction under any BW, pitch or PM change. Each grain is whole, so a BW change never clicks.
 
 ### Carrier
 
@@ -338,7 +344,9 @@ The operator produces one raw grain signal, `y = Σ lanes W(x) · sin(c')`, time
   - **Why −12 dB:** a grain train is peaky. Its crest runs 4–15 dB across the vowel range. At equal RMS to a sine it would peak up to +12 dB over a sine and break the factory and sanity tests' peak of 1.0. So the reference is set so the ceiling `1/p̂` binds only past a 15 dB crest.
   - **The peak is at most 1.0 by construction**, like a sine's.
 - **How the gains are applied.** `g_m` is folded into the operator's gain ramp, and `g_c / g_m` into its carrier-weight ramp. Both are computed per block and ramped, so they cost nothing per sample and never step.
-- **The curves.** `ρ_q` and `p_q` are two 33-point curves per SKIRT over `FC·L` in [0, 4], each flat beyond 4, in flash. That is about 1 KB, read per block, never per sample.
+- **The curves (amended 2026-09-30, controller ruling).** Both are flash tables per SKIRT, about 1.5 KB, read per block, never per sample.
+  - `ρ_q` runs over ν = 2·FC·L in [0, 12] and is 0 past it; ρ₁₆(12) is under 1e-4.
+  - `p_q` runs over FC·L in [0, 16] and is **1.0** past it, not flat. `p` tends to 1, so p̂ never underestimates the peak.
 
 **Level held, measured by a host probe of the exact one-period synthesis:**
 - Across the level-held domain the level matches R within 0.01 dB at every SKIRT:
@@ -448,8 +456,8 @@ The table is in path order, from dark to bright round the vowel triangle:
 
 ### Operator pages (prerequisite phase)
 
-- **Dependency.** The operator pages of `2026-09-27-algo-pages-design.md` § Operator pages (#37: hold B1–B6, PLUS/MINUS, EXIT, WAVE/COARSE/FINE/LEVEL/FB/VEL cells, the viz band) aren't built on main. BW, SKIRT, KEY, RES and SLOT have no page without them.
-  - They land first, as their own branch, with their own owner UAT. This spec builds on that branch.
+- **Where they live (amended 2026-09-30, owner).** OP1 … OP6 are sub-pages of the OSC node, after its group pages. EDIT and SEQ step through them as on every page. There is no new gesture: B*n* keeps meaning Part *n*, and #37's hold-B1–B6 is dropped.
+- **Dependency.** No operator page is built on main, and BW, SKIRT, KEY, RES and SLOT have no page without one. The OP sub-pages land first, as their own branch (Phase 0), with the dynamic sub-row and focus by identity. This spec builds on that branch.
   - Gang edit, LEVEL SCALE and the living diagram stay in #37.
 - **Cells by kind.** Cells come from a pure lookup keyed on the operator's kind:
 
@@ -460,6 +468,7 @@ The table is in path order, from dark to bright round the vowel triangle:
   | NOIS | WAVE, CNTR, WIDTH, RES, SLOT, LEVEL |
 
   - FRMT's COARSE, FINE, LEVEL, FB and VEL stay on their group pages.
+  - Only the OP pages of formant operators swap in formant cells (amended 2026-09-30, owner). A table operator's OP page is always the Table row.
 - **Viz band.**
   - A FRMT page draws one grain (window times carrier) at the live FC and BW_eff, and prints both. So the page shows what VOWEL, KEY and the width floor are doing, even when the cell's stored Hz differs.
   - A NOIS page draws its band as a bell over a log-frequency axis at the live centre.
@@ -584,7 +593,7 @@ Voices beside the whole FX bus, per ADR 0031's arithmetic, without mod routes: r
 - `AlgoEngine` grows from 676 B to about 836 B (host, main at 4374cff). The owner's estimate was about 100 B.
 - The `EngineSlot` is sized by `ModalEngine` (4,008 B), so `Voice` and the pool don't grow. `voice_is_its_chain_plus_one_slot` pins that.
 - No new wave table, and DTCM is untouched: both kinds read W1's mip 0, which is already there.
-- The new constants are all in flash and read per block: the SKIRT arrays (80 B), the `ρ_q` and `p_q` curves (about 1 KB), and the vowel table (60 B).
+- The new constants are all in flash and read per block: the SKIRT arrays (80 B), the `ρ_q` and `p_q` curves (about 1.5 KB), and the vowel table (60 B).
 - Flash grows by 30 kernel variants (`run_formant` 6 × 4, `run_noise` 6), well inside the 896 KB region. The bench checks the I-cache: a formant operator's block touches one variant.
 
 ### Bench rows (ship flash)
@@ -711,7 +720,7 @@ Three new factory Sounds. The clips render from them, so what the owner approves
 
 ## ADR
 
-ADR 0060 (or the next free number when it is written): "Formant operators are Algo operator kinds, after the FS1R patent". It records:
+The next free ADR number when it is written (0060 and 0061 went to Modal 2, and ORBIT's two follow): "Formant operators are Algo operator kinds, after the FS1R patent". It records:
 
 - **Provenance:** the split above, including FSVR's measured skirt law, and FSVR's GPL status.
 - **Kinds:** `OpKind`, the WAVE codes, and VOWEL SLOT.
@@ -756,7 +765,7 @@ Each task leaves the tree green. Phase 0 is its own branch.
 5. The FRMT kernel path (lanes, exact starts, the grain delay, the two signals, feedback), with its tests.
 6. VOWEL, VSLOT, and the modulation destinations, with the modulatable recipe.
 7. Pages: the ALGO cell, the FRMT group page, the operator-page cells and viz, dimming, and the screen goldens.
-8. Costs: the objdump recount, the terms, `cost_test`, and ADR 0060.
+8. Costs: the objdump recount, the terms, `cost_test`, and the ADR.
 9. The factory Sounds, the loudness check, the demo clips, and the owner's UAT.
 10. At ship: the flash, the bench rows, and the terms updated from the bench.
 
