@@ -74,63 +74,73 @@ desktop keys ────────────────┤ NoteSources    
 
 ## 2. `chimera-theory`
 
-A workspace crate beside `chimera-fat` and `chimera-waves`: `#![no_std]`, zero dependencies, const tables in flash (289 B, const-asserted ≤ 512 B), no heap. `chimera-core` depends on it. ORBIT, per-Part live snapping, KIT (#215) and possibly Modal's Sympathetic chords use it. It owns no disk codes; `chimera-core` implements `DiskCode` for its types. Built on `orbit-core` (c25126d, f107ff7, e725387).
+A workspace crate beside `chimera-fat` and `chimera-waves`: `#![no_std]`, zero dependencies, const tables in flash (289 B, const-asserted ≤ 512 B), no heap. `chimera-core` depends on it. ORBIT, per-Part live snapping, KIT (#215) and possibly Modal's Sympathetic chords use it. It owns no disk codes; `chimera-core` implements `DiskCode` for its types. Merged in PR #246 (main 4374cff). (amended 2026-09-30: chimera-theory as merged)
 
-Every value it hands out is valid by construction: a pitch class, a degree, a quality and a snap target are enums, and a scale always holds its root.
+Every value it hands out is valid by construction: a pitch class, a quality and a snap target are enums, a degree is a checked newtype, and a scale always holds its root. (amended 2026-09-30: chimera-theory as merged)
 
 ```rust
 #[repr(u8)] pub enum PitchClass { C, Cs, D, Ds, E, F, Fs, G, Gs, A, As, B }  // + Interval wraps; − gives the upward Interval
-pub struct Interval(u8);                  // mod 12; UNISON … MAJOR_SEVENTH
-pub struct Note(u8);                      // 0..=127, C4 = 60; new -> Option, pc()
+pub struct Interval(u8);                  // mod 12; UNISON … MAJOR_SEVENTH; from_semitones(i32) folds any distance
+pub struct Note(u8);                      // 0..=127, C4 = 60; new -> Option, pc(), transpose(i16) -> Option
 
 pub struct Scale(u16);                    // tonic-relative set; the root bit is always set
 impl Scale {
     pub const MAJOR, MINOR /* natural */, DORIAN, PHRYGIAN, LYDIAN, MIXOLYDIAN, LOCRIAN,
               HARMONIC_MINOR, PENTATONIC_MAJOR, PENTATONIC_MINOR: Scale;   // ALL: [Scale; 10]
-    pub const fn custom(mask: u16) -> Scale;       // forces the root on, drops bits above 11: total
+    pub const fn custom(steps: &[Interval]) -> Scale;  // the root is always in: total
     pub const fn toggle(self, i: Interval) -> Scale;   // the root is a no-op
     pub const fn contains(self, i: Interval) -> bool;
     pub const fn degree_count(self) -> usize;      // 1..=12
+    pub const fn degree(self, n: usize) -> Option<Degree>;   // None past the set
+    pub fn degrees(self) -> impl ExactSizeIterator<Item = Degree>;
 }
-pub enum Degree { I, II, III, IV, V, VI, VII }
+impl Display for Scale                    // "MAJOR", "HARM MIN", "PENT MIN", else "CUSTOM"
+pub struct Degree(u8);                    // 0..=11: I..=XII (consts I..VII, ALL: 12); index()
 pub enum Stack { Triad, Seventh }
 pub struct Key { pub tonic: PitchClass, pub scale: Scale }
 impl Key {
-    pub const fn chord(self, d: Degree, st: Stack) -> Chord;           // total
+    pub const fn chord(self, d: Degree, st: Stack) -> Chord;           // total; exactly the stacked tones
     pub const fn triad(self, d: Degree) -> Chord;
     pub const fn degree_label(self, d: Degree, st: Stack) -> DegreeLabel;
 }
 pub enum Quality { Maj, Min, Dim, Aug, Sus2, Sus4, Maj6, Min6, Dom7, Maj7, Min7,
-                   HalfDim7, Dim7, MinMaj7, AugMaj7, Dom7Sus4 }          // ALL: 16; tones() derived
-pub struct Chord { root: PitchClass, quality: Quality }                 // tones derived, never stored
+                   HalfDim7, Dim7, MinMaj7, AugMaj7, Dom7Sus4 }          // ALL: 16; tones()
+pub struct PcSet(u16);                    // of(&[PitchClass]), contains, len, iter
+pub struct Chord { built_on: PitchClass, bass: PitchClass, tones: PcSet }   // exact tones, stored
+// Eq and Hash on (tones, bass) only; built_on just steers the label.
 impl Chord {
-    pub const fn new(root: PitchClass, quality: Quality) -> Chord;
-    pub fn tones(self) -> impl ExactSizeIterator<Item = PitchClass>;
+    pub const fn new(root: PitchClass, quality: Quality) -> Chord;     // the quality's tones, root position
+    pub const fn over(self, bass: PitchClass) -> Option<Chord>;        // None unless bass is a tone
+    pub fn from_notes(notes: &[Note]) -> Option<Chord>;  // the played classes over the lowest; None under 2
+    pub const fn root(self) -> PitchClass;               // the label's root
+    pub const fn bass(self) -> PitchClass;
+    pub const fn tones(self) -> PcSet;
     pub const fn contains(self, pc: PitchClass) -> bool;
-    pub fn from_notes(notes: &[Note]) -> Option<Chord>;  // root = lowest note; None under 2 classes
+    pub const fn label(self) -> ChordLabel;
 }
+pub struct ChordLabel { .. }              // root(), quality(), bass(), is_exact()
 pub enum SnapTo { Scale(Key), Chord(Chord) }
-pub const fn snap(note: Note, to: SnapTo) -> Note;       // total; ties go down (§ 5.1)
+pub const fn snap(note: Note, to: SnapTo) -> Note;       // total; ties go down (§ 5.1); a chord snaps to its exact tones
 ```
 
-Names come through `Display`, with no heap: `Note` ("A3", "C#4"), `PitchClass`, `Chord` ("Am", "E7", "Bm7b5") and `DegreeLabel` ("iv", "V7", "iio", "III+"). There is no unnamed chord, so no "?".
+Names come through `Display`, with no heap: `Note` ("A3", "C#4"), `PitchClass`, `Scale`, `Chord` (through its `ChordLabel`: "Am", "E7", "Bm7b5", "Am/C") and `DegreeLabel` ("iv", "V7", "viio/7", "i6", "I64"). A chord is named by trying its tones as the root, the one it was built on first, then the bass, for an exact quality; with none it takes the nearest quality over its tones, marked "?" ("Csus2?", "IV?"). The name never changes the tones. (amended 2026-09-30: chimera-theory as merged)
 
 Compile-time checks: every named scale holds its root and has 5 or 7 notes; every named 7-note scale's degrees stack to an exact quality, triads and sevenths; every quality has its root and 3 or 4 tones, and no two share a set.
 
 ### 2.1 Custom scales (owner, 2026-09-30)
 
-A scale is a `Scale(u16)`: a set of pitch classes counted from the tonic that always holds the root (`Scale::custom` sets bit 0 and `toggle` never clears it). The ten named scales are values of it; CUSTOM is any other set the user picks. Snapping, degree-to-chord and naming don't know the difference.
+A scale is a `Scale(u16)`: a set of pitch classes counted from the tonic that always holds the root (`Scale::custom` always sets the root and `toggle` never clears it). The ten named scales are values of it; CUSTOM is any other set the user picks. Snapping, degree-to-chord and naming don't know the difference.
 
-- **Degrees** are the scale's own notes, ascending from the root: degree n is the set's n-th note. `Degree` stops at VII; on a set of fewer notes a degree wraps round the set (degree VI of a 5-note set is its I).
+- **Degrees** are the scale's own notes, ascending from the root: degree n is the set's n-th note. `Degree` runs I..=XII so it reaches every note of any set; `Scale::degree(n)` is None past the set, and `Key::chord` wraps a degree past a smaller set round it (degree VI of a 5-note set is its I). (amended 2026-09-30: chimera-theory as merged)
 - **A degree's chord** stacks every other note of the set: the degree's note and the notes two and four places up (and six for a seventh), wrapping an octave. For a 7-note set this is stacking thirds within the set; for fewer notes it is the owner's every-other-note rule; a set of more than 7 uses the same rule.
-- The stack is then named as the nearest `Quality` (§ 2.2, choice 1).
+- The chord keeps exactly the stacked tones; only its label is worked out from them, exact or marked "?" (§ 2.2, choice 1). (amended 2026-09-30: chimera-theory as merged)
 - Microtuning (Scala `.scl`/`.kbm`, the MIDI Tuning Standard) is not this: it is private issue #217.
 
 ### 2.2 Choices made on `orbit-core`, adopted here
 
-1. **Nearest quality.** `Chord::from_notes` and `Key::chord` name a set as the nearest `Quality`: 2 points per shared tone, −1 per missing or extra tone, ties to table order. **For the owner:** see § Conflicts.
-2. Custom and pentatonic sets stack every other note, as the owner ruled: A minor pentatonic gives A7sus4, C6 and D7sus4 on I–III.
-3. Names are ASCII, sharps only: "dim"/"o" for diminished, "m7b5"/"7b5" for half-diminished.
+1. **Exact tones** (owner). `Chord::from_notes` and `Key::chord` keep exactly the played or stacked tones over their bass; snapping uses those tones. The label tries each tone as the root for an exact quality and otherwise names the nearest, marked "?". C D E G A's stack C E A stays C E A, labelled "Am/C". (amended 2026-09-30: chimera-theory as merged)
+2. Custom and pentatonic sets stack every other note, as the owner ruled: A minor pentatonic's triads on I–III are A D G, C E A and D G C, named "Dsus4/A", "Am/C" and "Gsus4/D". (amended 2026-09-30: chimera-theory as merged)
+3. Names are ASCII, sharps only: "dim"/"o" for diminished, "m7b5"/"7b5" for half-diminished; a slash for a bass that isn't the root, "?" for an approximate name. (amended 2026-09-30: chimera-theory as merged)
 4. Octaves are named with C4 = 60.
 5. RANDOM draws uniformly over the whole walk (pool × (RANGE + 1)); a note RANGE pushes past 127 folds down an octave at a time.
 6. PING-PONG over a walk of one note stays put.
@@ -216,7 +226,7 @@ Editing STEPS, HITS or ROTATE builds a new `Fill`, `Ring::with_fill` re-lays the
 | `mutate(ring, &Harmony, &mut Rng) -> Option<Mutation>`, `Ring::apply` | At a loop boundary: § 3.5. | yes |
 | `ChordRing::key() -> Key` | The tonic with the named scale or `custom`, by SCALE. | no |
 | `segment_at(phase, segs) -> usize` | The chord segment at a loop phase. | no |
-| `harmony(chords, seg) -> Harmony` | `{ key, chord: played[seg].unwrap_or(key.triad(degrees[seg])) }`; a degree past a small set wraps (§ 2.1). | no |
+| `harmony(chords, seg) -> Harmony` | `{ key, chord: played[seg].unwrap_or(key.triad(degrees[seg])) }`; a degree past a small set wraps (§ 2.1). (amended 2026-09-30: chimera-theory as merged) | no |
 | `block(&mut OrbitState, &Scene, Span, &ClockOut) -> Events` | One block's events: § 3.6. | no |
 
 One `Rng` per ring (§ 2.2, choice 10), reseeded from `(scene.seed, ring)` at Start and at a scene switch. A separate stream per ring means editing or muting ring 2 never changes ring 4's dice.
@@ -283,7 +293,7 @@ Capture results come back here too: a counter and the captured notes (§ 5.3).
 
 ### 5.1 The rule
 
-`snap(note, to: SnapTo)`: a note whose pitch class `to` contains is unchanged. Otherwise it moves to the nearest note whose class it contains; **a tie goes down** (`chimera_theory::TIE`). A result outside 0..=127 takes the nearest member on the other side. `to` is `SnapTo::Scale(harmony.key)` for SNAP SCALE and `SnapTo::Chord(harmony.chord)` for SNAP CHORD; a chord's tones are derived from its root and quality.
+`snap(note, to: SnapTo)`: a note whose pitch class `to` contains is unchanged. Otherwise it moves to the nearest note whose class it contains; **a tie goes down**. A result outside 0..=127 takes the nearest member on the other side. `to` is `SnapTo::Scale(harmony.key)` for SNAP SCALE and `SnapTo::Chord(harmony.chord)` for SNAP CHORD; a chord snaps to exactly its tones. (amended 2026-09-30: chimera-theory as merged)
 
 ORBIT notes snap once, in the ring, to the ring's SNAP. A note already sounding keeps its pitch until its gate ends.
 
@@ -617,7 +627,7 @@ These fill gaps in the mockups and the owner's decisions. Each is the smallest c
 
 ## Conflicts for the owner
 
-- **Nearest-quality naming changes a chord's tones** (§ 2.2, choice 1). The owner ruled that a custom set's chord stacks every other note, and that a played chord's tones are what snapping uses. `orbit-core` stores a chord as a root and a `Quality`, so a stack or a played chord that names no quality becomes the nearest named one, with different tones: C D E G A's stack C E A becomes C6 (C E G A), adding G; a played C E A snaps to C E G A too. The alternatives: keep it (names always exist, one more tone), or give `Chord` a third form holding the exact set, unnamed. The spec keeps the built behaviour until the owner rules.
+- **Resolved (owner, PR #246): chords keep their exact tones** (§ 2.2, choice 1); the text below is the question as it stood. **Nearest-quality naming changed a chord's tones.** The owner ruled that a custom set's chord stacks every other note, and that a played chord's tones are what snapping uses. `orbit-core` stores a chord as a root and a `Quality`, so a stack or a played chord that names no quality becomes the nearest named one, with different tones: C D E G A's stack C E A becomes C6 (C E G A), adding G; a played C E A snaps to C E G A too. The alternatives: keep it (names always exist, one more tone), or give `Chord` a third form holding the exact set, unnamed. The spec keeps the built behaviour until the owner rules.
 
 ## Open questions
 
