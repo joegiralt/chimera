@@ -31,14 +31,14 @@ on 2026-09-30.
 |---|---|
 | **B*n*** | From anywhere on the ladder, ORBIT excepted (below): Part *n*'s sound pages (`Pages(n, 0,0)`, as today). From Part *n*'s sound pages: Part *n*'s rung, the mixer (PART and SENDS), opening on the last-used mixer page, SENDS until one is used. From Part *n*'s rung: back to the sound page it left. |
 | **MIX + B*n*** | Straight to Part *n*'s rung. MIX+B6 stays Demo until Demo moves to a debug-only System row. |
-| **EDIT** | Down or open (`down`). On pages, sub-page down, as today. In ORBIT, only ORBIT's own pages (sub-page down; SCN's commit): it never leaves ORBIT. |
+| **EDIT** | Down or open (`down`). On pages, sub-page down, as today. In ORBIT, only ORBIT's own pages: on RING it cycles the sub-pages, RHYTHM → VOICE → NOTES → back to RHYTHM (amended 2026-09-30, owner); SCN's commit; it never leaves ORBIT. |
 | **Hold B*n* in ORBIT** | Out to the pages of the Part ring *n* plays: `Pages(p, recall.pages[p])`. Fires at `HOLD_MS`; the release does nothing. The only way from ORBIT to sound design. |
 | **MENU tap** | Up one rung (`up`): pages → Part → Project → Projects. Acts on release, before `HOLD_MS`. |
 | **MENU hold** | System, from anywhere, ORBIT included. |
-| **SEQ tap** | Save what this rung is about: the Sound, the Part or the Project. On pages and in System it keeps today's sub-page up. In ORBIT it saves the scene. Acts on release, before `HOLD_MS`. |
+| **SEQ tap** | Save what this rung is about: the Sound, the Part or the Project. On pages and in System it keeps today's sub-page up. In ORBIT it always saves the scene, on every ORBIT page, since EDIT cycles the RING sub-pages and no sub-page-up is needed there (amended 2026-09-30, owner). Acts on release, before `HOLD_MS`. |
 | **SEQ hold** | ORBIT, from anywhere, including from the pages a hold B*n* opened. |
 | **MENU tap in ORBIT** | Leave ORBIT, back to where you were before; ORBIT keeps playing. |
-| **PLUS / MINUS** | Sideways: the next or previous page or node. On the Part rung, PART then SENDS, then on to the next Part's PART, and back the same way, so one key walks every Part's mixer. On the Sound rung, the next or previous Part. |
+| **PLUS / MINUS** | Sideways: the next or previous page or node. On a Part's rung (the mixer), PLUS steps PART → SENDS → the next Part's mixer, and MINUS goes the other way, so one key walks every Part's mixer (amended 2026-09-30, owner). On the Sound rung, the next or previous Part. |
 | **MIX+MINUS** | Remove, behind a confirm (storage spec § The keys). |
 | **MIX+PLUS** | Prime a route on pages (ADR 0017); rename and retag on a library entry. |
 | **MIX+MENU** | Reserved for the chain editor. |
@@ -49,8 +49,8 @@ sequencer:
 - **B1–B5** are rings (sequences) 1–5, and never jump to a Part.
 - **MIX + B1–B5** mutes or unmutes a ring.
 - **B6** is PLAY/STOP.
-- **SEQ tap** saves the scene.
-- **Encoders, PLUS/MINUS and EDIT** act only on ORBIT's pages.
+- **SEQ tap** saves the scene, on every ORBIT page (amended 2026-09-30, owner).
+- **Encoders, PLUS/MINUS and EDIT** act only on ORBIT's pages. EDIT cycles the RING sub-pages, RHYTHM → VOICE → NOTES → RHYTHM (amended 2026-09-30, owner).
 
 Crossing to sound design is deliberately expensive: hold B*n* (the shared
 `HOLD_MS`) jumps out to the pages of the Part ring *n* plays. The old "EDIT on
@@ -89,7 +89,7 @@ in the variant, so no box and no heap.
   - `Part(p, _)`: → `Sound(p)`. The mixer pages have no sub-pages, so EDIT
     is free there. Part *n*'s sound is one EDIT down, then EDIT on its
     current slot for its pages, or B*n* straight to them.
-  - `Orbit(_)`: sub-page down, as the ORBIT spec says; never leaves ORBIT.
+  - `Orbit(_)`: cycles the sub-pages (RING: RHYTHM → VOICE → NOTES → RHYTHM; amended 2026-09-30, owner); never leaves ORBIT.
     There is no jump from ORB (removed 2026-09-30, owner).
 - **`up(self, &Recall) -> Location`** is a MENU tap:
 
@@ -174,7 +174,7 @@ in the variant, so no box and no heap.
   mixer opens on SENDS, then on the last-used page; `up` from `Orbit`
   returns to `from`; SEQ hold from `Orbit` does nothing; hold B*n* in ORBIT
   lands on the ring's Part pages and B*n* taps never leave ORBIT; `from` is
-  never `Orbit`; a
+  never `Orbit`; in ORBIT a SEQ tap saves the scene on every page, and three EDITs on RING return to RHYTHM; PLUS on a Part's mixer walks PART → SENDS → the next Part's mixer, MINUS the reverse (amended 2026-09-30, owner); a
   499 ms press is a tap on release, 500 ms a hold, never both; the
   `down`-path property test covers `part_key`, `orbit_key` and `orbit_out`.
 - **The ORBIT spec** (branch `orbit`, `docs/superpowers/specs/2026-09-30-orbit-design.md`)
