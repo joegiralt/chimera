@@ -312,9 +312,12 @@ moves):
   block buffer in string order, as the per-sample sum was. A gliding set
   runs in `GLIDE_STEP` runs, each re-split between them as before.
 - The ensemble's heads wrap only while the write is within
-  `Ensemble::reach` of the ring's start (`set` holds the LFO's radius to 1
-  within 1e-5, so no head passes `2 + 2.001·A`); those samples, and a
-  release's ramp, run in the spans' slow form.
+  `Ensemble::reach` of the ring's start; those samples, and a release's
+  ramp, run in the spans' slow form. Each head is clamped to
+  `min(top, 2 + 2.001·A)` and `reach` is that limit's older tap plus one,
+  so no fast read can leave the ring, however the LFO drifts or however
+  often `set` runs. `set`, every block, holds the radius to 1 within 1e-5,
+  so the new limit never binds and the output is unchanged.
 - BODY runs over the block (`Body::process_block`), its three band-passes'
   state in registers.
 - The per-sample paths (`StringVoice::tick`, `KsString::tick_coupled`)
@@ -337,7 +340,7 @@ moves):
   | SYMP halo string, each of 7 | `KsString::run_coupled`: 62 per 4 samples; a call 71; a span 65 | 87 | 18.8 |
   | SYMP per sample, besides | the coupled input (55 per 16) and the two buffers' clears (116 each), the runs' setup 150, the mix (71 per 16), BODY's call, the `tanhf` dispatch 17 | 26 + 19 | 31.7 |
   | SYMP total, BODY 0 | main + 7 halo + the rest, after the blocker | 741.8 | 186.2 |
-  | CHORD's cut block | a gliding halo in four runs: 3 × (87 + 7 × (71 + 65)) a block | — | 46 |
+  | CHORD's cut block | a gliding halo in four runs: 3 × (87 + 7 × (71 + 65)) a block, over 64 | — | 48.7 |
 
   | Term | Task 11 | Task 11b | From (vs 6f8fffc) |
   |---|---|---|---|
@@ -345,7 +348,7 @@ moves):
   | `COST_SYMPATHETIC` | 1,370 | 540 | 419 → 186.2 instructions, −306 cycles; ten `powf`s a block, +35 |
   | `BODY` | 130 | 80 | 46.5 instructions |
   | `ENSEMBLE` | 160 | 140 | 82 instructions |
-  | `CHORD` | 100 | 180 | the re-splits and lerp, 60, and the cut block, 46 |
+  | `CHORD` | 100 | 180 | the re-splits and lerp, 60, and the cut block, 48.7: 174.6 |
   | `COST_BOWED`, `COST_BANK`, `PITCH` | 720, 460, 30 | unchanged | |
 
 - Voices beside the whole FX bus at its worst (rev V, rev Y; with the
@@ -361,6 +364,11 @@ moves):
   slow span), `KsString::run_coupled` 1 KB, `Body::process_block` 0.7 KB;
   a voice's block touches one variant's fast span. Misses stay unbilled
   until the bench.
+- The tightest margin is the default STRING Sound on rev Y with the master
+  tape: a voice bills 467 against the 545 that keeps 8 (4,363 / 8), 78
+  cycles. The new loops are chains of dependent float operations; at about
+  2.4 cycles an instruction STRING and BODY spend those 78 and it plays 7.
+  The bench's MDL STR row, on rev Y with the tape, is the case to check.
 
 Measured on the chip (the ship flash; to fill in, rev V at 480 MHz):
 - MDL STR /VOICE —, STR0 —, STR E —, STR+ —; BOW —; SYM —, SYM0 —, SYM+ —, SYM

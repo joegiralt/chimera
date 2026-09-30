@@ -358,13 +358,8 @@ impl Held {
     ) {
         let m = out.len();
         let (mut a, mut b) = self.taps;
-        // Idle, the same gain every sample; `gain` steps a ramp on.
-        let ramp = !FAST && !self.release.idle();
-        let gain = if ramp {
-            self.held
-        } else {
-            self.release.gain(self.held)
-        };
+        // Idle, the same gain every sample; else `gain` steps the ramp on.
+        let idle = (FAST || self.release.idle()).then(|| self.release.gain(self.held));
         let span = ring[ws..ws + m].iter().zip(&ring[cp..cp + m]);
         for (at, ((w, t), o)) in (ws..).zip(span.zip(out)) {
             let c = t.get();
@@ -372,11 +367,7 @@ impl Held {
             if STIFF {
                 x = self.disp.process(x);
             }
-            let gain = if ramp {
-                self.release.gain(self.held)
-            } else {
-                gain
-            };
+            let gain = idle.unwrap_or_else(|| self.release.gain(self.held));
             let dry = self.ap.process(x) * gain.get();
             w.set(dry);
             (a, b) = (b, c);
@@ -716,7 +707,42 @@ mod tests {
         }
     }
 
-    /// `run_coupled` is `tick_coupled` bit for bit, in runs of any length.
+    /// A drifted LFO, never renormalised, clamps its heads: the spans read
+    /// in range and match `tick` bit for bit.
+    #[test]
+    fn a_drifted_ensemble_never_reads_past_its_reach() {
+        let p = KsRenderParams {
+            lp: lp_coeff(0.4),
+            gain: LoopGain::new(0.998),
+        };
+        for note in [31, 60, 96] {
+            let (mut fast, mut slow) = (voice(), voice());
+            for v in [&mut fast, &mut slow] {
+                let ens = Ensemble::new(1.0, 6.0, 48_000);
+                v.pluck(
+                    (note_to_freq(note), 48_000),
+                    Some(0.5),
+                    1.0,
+                    (0.0, (1.0, ens)),
+                );
+                v.set_ensemble();
+                v.ens.drift(1e6);
+            }
+            for block in 0..100 {
+                let mut a = [0.0; 64];
+                fast.render(&p, &mut a);
+                let b: [f32; 64] = core::array::from_fn(|_| slow.tick(&p));
+                assert_eq!(
+                    a.map(f32::to_bits),
+                    b.map(f32::to_bits),
+                    "{note}: block {block}"
+                );
+            }
+        }
+    }
+
+    /// `run_coupled` is `tick_coupled` bit for bit, in runs of any length,
+    /// the period gliding between runs as a chord change does.
     #[test]
     fn run_coupled_is_tick_coupled_bit_for_bit() {
         let p = KsRenderParams {
@@ -726,9 +752,11 @@ mod tests {
         let input: [f32; 64] = core::array::from_fn(|i| libm::sinf(i as f32 * 0.37));
         for period in [3.2, 4.5, 23.7, 979.6] {
             let (mut fast, mut slow) = (voice(), voice());
+            // The ring sized for the longest, as a halo note-on does.
+            let tune = |s: &mut KsString, p: f32| s.set_period(p, 0.0, core::f32::consts::TAU / p);
             for s in [&mut fast.string, &mut slow.string] {
                 s.clear();
-                s.set_period(period, 0.0, core::f32::consts::TAU / period);
+                tune(s, period);
             }
             let (mut pf, mut ps) = (0.0, 0.0);
             for (block, len) in [64, 16, 1, 7, 64, 3]
@@ -737,6 +765,10 @@ mod tests {
                 .take(300)
                 .enumerate()
             {
+                // Down a fifth and back, a step a run.
+                let glide = period * (1.0 - 0.33 * (block % 20) as f32 / 20.0);
+                tune(&mut fast.string, glide);
+                tune(&mut slow.string, glide);
                 let mut a = [0.0; 64];
                 fast.string
                     .run_coupled(&p, &input[..len], &mut pf, &mut a[..len]);
