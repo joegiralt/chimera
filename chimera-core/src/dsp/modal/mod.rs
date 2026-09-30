@@ -110,12 +110,17 @@ crate::in_place::field_list!(ModalBank => ModalBank {
 struct BowedString {
     string: KsString,
     force: f32,
-    /// The force `force` slews to: the note-on's, then 0 at note-off.
+    /// The force `force` eases to: FORCE's at the note's velocity, read
+    /// every block, then 0 at note-off.
     force_to: f32,
     /// Force shed a sample at note-off: the note's force over `RELEASE_SAMPLES`.
     lift: f32,
-    /// SPEED × `BOW_SPEED`, latched at note-on.
+    /// The bow's velocity, easing to SPEED × `BOW_SPEED`.
     bow_vel: f32,
+    /// `0.5 + 0.5·velocity`, latched at note-on (`bow_force`).
+    vel_scale: f32,
+    /// On the string: note-on to note-off.
+    bowing: bool,
     /// Samples pushed since note-on, for `KsString::ring_tap`.
     written: u32,
     /// The lifted bow's ramp.
@@ -123,7 +128,7 @@ struct BowedString {
 }
 
 crate::in_place::field_list!(BowedString => BowedString {
-    string, force, force_to, lift, bow_vel, written, release,
+    string, force, force_to, lift, bow_vel, vel_scale, bowing, written, release,
 });
 
 /// One pool slot (exclusive-state spec § 4.2): the seven strings a
@@ -346,14 +351,14 @@ impl ModalEngine {
     /// dispersion's re-split each block STRUCTURE glides, 8, billed always,
     /// +18. BODY and the ensemble bill apart.
     pub const COST_STRING: Cost = Cost(330);
-    /// 620 + 100 + 120: 60 instructions a sample at step A (143 to 203:
+    /// 620 + 100 + 140: 60 instructions a sample at step A (143 to 203:
     /// the tuning allpass on the ring, the tap that follows the write
     /// (#206), the release, the bow's lift and the output blocker), 87
-    /// cycles; then the playable bow, 73 more (203 to 276: BRIGHT's
-    /// low-pass taps 23, POS's check 4 and its lerped second tap 44, DAMP's
-    /// `powf` a block once lifted 2), 73 × 1.46 × 1.1 = 117.2. POS is
-    /// billed always.
-    pub const COST_BOWED: Cost = Cost(840);
+    /// cycles; then the playable bow, 83 more (203 to 286: BRIGHT's
+    /// low-pass taps 23, POS's check 4 and its lerped second tap 44, FORCE
+    /// and SPEED eased each sample 10, DAMP's `powf` a block once lifted
+    /// 2), 83 × 1.46 × 1.1 = 133.3. POS is billed always.
+    pub const COST_BOWED: Cost = Cost(860);
     /// 809 (benched, ADR 0054) − 271, rounded up to 540: 419 instructions a
     /// sample to 187, −306 cycles. Each halo string runs its block in
     /// spans, 19 a sample (42 before, 87 at task 11); the main string 15;
@@ -576,6 +581,8 @@ impl ModalEngine {
                 b.force_to = b.force;
                 b.lift = 0.0;
                 b.bow_vel = params.speed * BOW_SPEED;
+                b.vel_scale = 0.5 + 0.5 * vel;
+                b.bowing = true;
                 b.written = 0;
                 b.release = Release::HELD;
             }
@@ -649,6 +656,7 @@ impl ModalEngine {
             ModelSlot::Bowed(b) => {
                 b.lift = b.force / RELEASE_SAMPLES as f32;
                 b.force_to = 0.0;
+                b.bowing = false;
                 b.release.start(BOW_GAIN, held);
             }
             ModelSlot::Bank(_) => {}
@@ -720,7 +728,11 @@ impl ModalEngine {
                 false
             }
             ModelSlot::Bowed(b) => {
-                render_bowed(b, output, &m, f0);
+                // FORCE and SPEED are live while bowed, as the macros are.
+                if b.bowing {
+                    b.force_to = params.force * b.vel_scale;
+                }
+                render_bowed(b, output, &m, (f0, params.speed * BOW_SPEED));
                 // Never freed while bowed, however low its note (#206).
                 b.force > 0.0
             }
@@ -842,6 +854,10 @@ impl BowedString {
             KsString::init_in_place(uninit_at(addr_of_mut!((*p).string)));
             addr_of_mut!((*p).force).write(0.0);
             addr_of_mut!((*p).force_to).write(0.0);
+            addr_of_mut!((*p).lift).write(0.0);
+            addr_of_mut!((*p).bow_vel).write(0.0);
+            addr_of_mut!((*p).vel_scale).write(0.0);
+            addr_of_mut!((*p).bowing).write(false);
             addr_of_mut!((*p).written).write(0);
             addr_of_mut!((*p).release).write(Release::HELD);
             slot.assume_init_mut()
@@ -1105,6 +1121,8 @@ fn ensemble(params: &ModalParams, hz: f32, sample_rate: u32) -> (f32, Ensemble) 
 
 /// SPEED 1's bow velocity; SPEED 0.5 is the old `BOW_VELOCITY · 0.3`.
 const BOW_SPEED: f32 = 0.3;
+/// FORCE's and SPEED's easing a sample: about the macros' `EASE` a block.
+const BOW_EASE: f32 = EASE / BLOCK_SIZE as f32;
 /// The bowed loop's gain per pass, until note-off ramps it down.
 const BOW_GAIN: LoopGain = LoopGain::TOP;
 /// BRIGHT 0's low-pass side taps on the bowed loop: the most |H| ≤ 1
@@ -1123,9 +1141,14 @@ const SYMP_ENS_RATE: f32 = 0.3;
 /// the loop on its tap, POS combs the output at the bow point. The loop
 /// and the friction read the one tap, so the pitch holds: a friction
 /// reading POS's second tap bows a second loop, which takes the pitch.
-fn render_bowed(b: &mut BowedString, output: &mut [f32; BLOCK_SIZE], m: &Macros, f0: f32) {
+fn render_bowed(
+    b: &mut BowedString,
+    output: &mut [f32; BLOCK_SIZE],
+    m: &Macros,
+    (f0, vel_to): (f32, f32),
+) {
     // Lifted, DAMP's ring, which `Release::gain` never lets rise; bowed, the top.
-    let held = if b.force_to > 0.0 {
+    let held = if b.bowing {
         BOW_GAIN
     } else {
         LoopGain::from_t60(t60(m.damp), f0)
@@ -1134,7 +1157,11 @@ fn render_bowed(b: &mut BowedString, output: &mut [f32; BLOCK_SIZE], m: &Macros,
     let d = b.string.delay() as f32;
     let back = (m.pos > BOW_POS_MIN).then_some(d - m.pos * d);
     for s in output.iter_mut() {
-        if b.force > b.force_to {
+        if b.bowing {
+            // At its target, no bit moves.
+            b.force += BOW_EASE * (b.force_to - b.force);
+            b.bow_vel += BOW_EASE * (vel_to - b.bow_vel);
+        } else if b.force > b.force_to {
             b.force = (b.force - b.lift).max(b.force_to);
         }
         let bow_vel = if b.force > 0.001 { b.bow_vel } else { 0.0 };

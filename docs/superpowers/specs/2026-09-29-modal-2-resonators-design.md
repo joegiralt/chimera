@@ -48,7 +48,7 @@ EXC shows the exciter each model already has. Its header is named after the exci
 - **BURST:** the strike's noise burst, 2 to 6 ms. Until now EXCITE set it too.
 - **FORCE:** the bow's pressure. A note bows at FORCE × (0.5 + 0.5 × velocity), so a soft key still bows.
 - **SPEED:** the bow's velocity.
-- EXC's controls are read at note-on and are not modulatable, like the model page. Step B's mixer decides what becomes live.
+- EXC's controls are not modulatable, like the model page. EXCITE, COLOR and BURST are read at note-on. (amended 2026-09-30, controller) FORCE and SPEED are read every block and eased, so turning them moves a held bow. Step B's mixer decides what becomes modulatable.
 
 ### Home page (RES)
 
@@ -121,9 +121,10 @@ A control the current model ignores is dimmed through `view::dimmed` (`ui/view.r
 - ~~Unchanged sound.~~ (amended 2026-09-30, owner) Bowed is playable in step A:
   - **Velocity:** the bow's force is FORCE × (0.5 + 0.5 × velocity). At FORCE 0.5 and full velocity that is the old bow, so a soft key still bows.
   - **SPEED** is the bow's velocity. At 0.5 it is the old one.
+  - (amended 2026-09-30, controller) FORCE and SPEED are read every block and eased while the bow is on; at note-off the bow lifts.
   - **DAMP** is the ring after the bow lifts: at note-off the loop ramps from its bowed gain to DAMP's T60, and never gives the gain back. While the bow is on, the bow sustains the string, as before.
   - **BRIGHT** is a gentle low-pass in the loop. It is linear-phase, centred on the tap, so it adds no delay and the pitch holds. At BRIGHT 1 the tap is read alone, as before.
-  - **POS** is where the bow meets the string. The friction reads the string through a two-tap comb on the ring, the pluck's comb law. The loop and the output keep reading the one tap, so the pitch holds. At POS 0 the bow reads the one tap, as before.
+  - **POS** is where the bow meets the string, heard as the pluck's comb law on the output: `0.5·(x + tap)`, the tap `d − POS·d` behind the write, above POS 0.03. (amended 2026-09-30, controller ruling) The loop and the friction keep reading the one tap, so the pitch holds: a friction reading the comb bows a second loop through the second tap, which took the pitch to `1/(1 − POS)` times it. At POS 0 the output is the one tap, as before. A two-delay bow, where POS is the physical bow point, is open: https://github.com/joegiralt/chimera/issues/240.
   - Stability by construction still holds: the loop's gain is a `LoopGain` below 1, the low-pass's gain is at most 1, the friction is bounded, and the output has its DC blocker.
 - (amended 2026-09-30, owner) **STRING and SYMP's pluck:** COLOR sets the pluck noise's smoothing passes, `⌊(1 − COLOR) × 7⌋`. The old hidden 0.8 is one pass, as before. At COLOR 0 the first block of a low note does seven passes over the line, and the ship bench measures that.
 

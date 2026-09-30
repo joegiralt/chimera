@@ -1182,3 +1182,67 @@ fn bowed_pos_and_bright_keep_pitch() {
         }
     }
 }
+
+/// FORCE and SPEED are read every block and eased: turned on a held bow,
+/// the sound moves within 8 blocks (the loop's delay is about 6 at C3),
+/// and without a click: no sample steps further than the bow's own corner
+/// does, held from note-on at either setting.
+#[test]
+fn force_and_speed_move_a_held_bow() {
+    use chimera_core::dsp::modal::SymPool;
+    let second = SR as usize / BLOCK_SIZE;
+    let turn = second / 2;
+    let base = ModalParams {
+        mode: ResonatorMode::Bowed,
+        ..Default::default()
+    };
+    let play_from = |first: &ModalParams, late: &ModalParams| {
+        let mut pool = SymPool::boxed();
+        let mut e = Box::new(ModalEngine::new_in(&mut pool, base.mode));
+        e.note_on(48, 100, first, SR, &mut pool);
+        let mut out = Vec::new();
+        let mut block = [0.0; BLOCK_SIZE];
+        for b in 0..second {
+            e.render(
+                &mut block,
+                if b < turn { first } else { late },
+                SR,
+                &mut pool,
+            );
+            out.extend_from_slice(&block);
+        }
+        out
+    };
+    let play = |late: &ModalParams| play_from(&base, late);
+    // The largest step the desktop's output stage hears (`common::clicks`).
+    let step = |x: &[f32]| {
+        let soft = |x: f32| libm::tanhf(x * 0.4);
+        x.windows(2)
+            .map(|w| (soft(w[1]) - soft(w[0])).abs())
+            .fold(0.0, f32::max)
+    };
+    let still = play(&base);
+    let (at, few) = (turn * BLOCK_SIZE, (turn + 8) * BLOCK_SIZE);
+    for (label, late) in [
+        ("FORCE", ModalParams { force: 1.0, ..base }),
+        ("SPEED", ModalParams { speed: 1.0, ..base }),
+    ] {
+        let moved = play(&late);
+        assert!(
+            still[..at]
+                .iter()
+                .zip(&moved[..at])
+                .all(|(a, b)| a.to_bits() == b.to_bits()),
+            "{label}: moved before the turn"
+        );
+        let d = rms_diff(&still[at..few], &moved[at..few]);
+        assert!(d > 1e-3, "{label}: unheard within 8 blocks ({d})");
+        let steady = play_from(&late, &late);
+        let corner = step(&still[at..]).max(step(&steady[at..]));
+        let turned = step(&moved[at - BLOCK_SIZE..]);
+        assert!(
+            turned <= corner * 1.05,
+            "{label}: steps {turned}, the bow's corner {corner}"
+        );
+    }
+}

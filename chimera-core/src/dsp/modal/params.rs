@@ -140,9 +140,9 @@ pub struct ModalParams {
     pub color: f32,
     /// STRIKE: the burst's length.
     pub burst: f32,
-    /// BOW: pressure.
+    /// BOW: pressure, read every block.
     pub force: f32,
-    /// BOW: velocity.
+    /// BOW: velocity, read every block.
     pub speed: f32,
 }
 
@@ -328,8 +328,10 @@ const fn macro_(id: u8, label: &'static str, default: f32) -> ParamSpec {
     s
 }
 
-/// The four macros are modulatable (`Macros`); the model and exciter pages
-/// are read at note-on. Retired ids 2, 5, 7 and 8 are never reused.
+/// The four macros are modulatable (`Macros`). FORCE and SPEED are read
+/// every block and eased, not modulatable; the rest of the model and
+/// exciter pages is read at note-on. Retired ids 2, 5, 7 and 8 are never
+/// reused.
 pub static MODAL_SPECS: [ParamSpec; 17] = [
     ParamSpec::choice(0, "MODEL", ValFmt::Names(&MODEL_NAMES), 3.0, 0.0).ident("MODE"),
     macro_(13, "STRUCT", 0.0).short("STR").ident("STRUCTURE"),
@@ -357,8 +359,8 @@ pub static MODAL_SPECS: [ParamSpec; 17] = [
     unit(18, "SPEED", 0.5).ident("SPEED"),
 ];
 
-/// Whether `mode` reads `id`: the one table for page cells, dimming and
-/// the audio test.
+/// Whether `mode` reads `id`, at note-on or every block: the one table
+/// for page cells, dimming and the audio test.
 pub fn reads(mode: ResonatorMode, id: ParamId) -> bool {
     use ResonatorMode::{Bowed, Modal as Bank, String, Sympathetic as Symp};
     type P = ModalParams;
@@ -377,7 +379,8 @@ pub fn reads(mode: ResonatorMode, id: ParamId) -> bool {
     }
 }
 
-/// `page`'s six cells for `mode`, in order.
+/// `page`'s six cells for `mode`, in order. BOW's FORCE and SPEED move a
+/// held note; the other EXC and MDL2 cells, the next.
 pub fn page_cells(page: ModalPage, mode: ResonatorMode) -> [Option<ParamId>; 6] {
     use ResonatorMode::{Bowed, Modal as Bank, String, Sympathetic as Symp};
     type P = ModalParams;
