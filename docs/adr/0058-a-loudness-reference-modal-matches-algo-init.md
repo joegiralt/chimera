@@ -34,8 +34,9 @@ Nothing tied one engine's level to another's:
   - ungated BS.1770 (K-weighted) loudness over the hold, after the
     output stage (`common::sweep::level`).
 
-  Today that reads −15.0 LUFS. ALGO INIT stays where it is, and so does
-  every Algo patch.
+  It reads −15.0 LUFS, pinned as `REFERENCE_LUFS` (ALGO INIT within
+  ±0.1 dB of it). ALGO INIT stays where it is, and so does every Algo
+  patch.
 - **Every engine's and Modal model's INIT lands within ±1 dB of it.**
   Algo is the reference. Each Modal model gets one named output gain,
   `modal::out_gain`:
@@ -64,9 +65,11 @@ Nothing tied one engine's level to another's:
   point by 1.3 dB. BOWED's 1.62 is on top of it: 1.88 from the bow's line
   to the VCA.
 - **Pinned by `modal_models_match_the_loudness_reference`.** It checks
-  each model's INIT against ALGO INIT within ±1 dB. It also plays each
-  INIT's chord (C3 E3 G3 C4 at velocity 100): the chord must stay under
-  the ceiling, and the limiter may take less than 2 dB of its loudness.
+  each model's INIT against the reference within ±1 dB.
+- **The limiter stays a safety ceiling (ADR 0050).** No INIT's chord
+  (C3 E3 G3 C4) at velocity 127, the hardest strike, may lose more than
+  3 dB of its loudness to it: the limiter may duck a strike, not hold the
+  note down. The same test checks this.
 
 ## Alternatives considered
 - **The gain at the end of `ModalEngine::render`.** This was tried
@@ -94,12 +97,20 @@ Nothing tied one engine's level to another's:
   `two_parts_two_pairs`, `codec_compat_test` `init_modal.snd`). The
   v1 Bowed pins are engine-level and unchanged.
 - **STRING's chord is limited.** A pluck's peak sits about 11 dB higher
-  for its loudness than ALGO INIT's sustained tone. At the reference, a
-  4-note STRING chord at velocity 100 reaches 8.4 dB of gain reduction on
-  the strike, and the limiter takes 1.8 dB of its loudness. BANK, BOWED
-  and SYMP take under 0.1 dB. At velocity 127 STRING is 2 dB hotter
-  still. ADR 0050's limiter holds the ceiling, but this is the first INIT
-  it works on.
+  for its loudness than ALGO INIT's sustained tone. At the reference, the
+  limiter takes this much from each INIT's chord:
+
+  | Model | Velocity 100 | Velocity 127 |
+  |---|---|---|
+  | STRING | 8.4 dB peak, 1.78 dB loudness | 10.5 dB peak, 2.81 dB loudness |
+  | SYMP | 0 | 1.7 dB peak, 0.17 dB loudness |
+  | BOWED | 0.3 dB peak, 0.02 dB loudness | 0.4 dB peak, 0.03 dB loudness |
+  | BANK | 0 | 0 |
+
+  STRING holds the 3 dB rule by 0.19 dB. ADR 0050's limiter holds the
+  ceiling, but this is the first INIT it works on. A lower reference, such
+  as the factory median (about −22 LUFS), would give it back its
+  headroom. That is the owner's call, and would be a superseding ADR.
 - **A Modal voice now peaks over 1.** STRING INIT peaks at about 3.0 at
   the VCA. The sanity gate's ±1 bound is scaled by the model's gain for a
   Modal case. The Modal tests' absolute click and bound checks read a
@@ -113,7 +124,11 @@ Nothing tied one engine's level to another's:
     blocker's 10 Hz;
   - BANK at STRUCTURE 1: the bank's output has no blocker.
 
-  The sweep classifies these with reasons.
+  The sweep counts each as a known defect, pinned by an ignored test that
+  fails until it is fixed:
+  - BOWED's DC is `defect_filter_puts_dc_on_a_bright_bow`;
+  - SYMP's and BANK's DC is `defect_modal_engines_put_dc_on_the_dac`,
+    for Task 17 to fix.
 - **Velocity response is still per path:**
   - ALGO INIT and BOWED: 0 dB;
   - STRING and SYMP: +6 dB from velocity 64 to 127;
