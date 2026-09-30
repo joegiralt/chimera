@@ -131,6 +131,8 @@ struct BowedString {
     hair: BowHair,
     /// BRIGHT's one-pole on the output.
     tone: f32,
+    /// How much of `unlocked`'s move the loop takes (`grip`).
+    grip: f32,
     /// The friction curve's slope, easing to FORCE's (`friction_slope`).
     slope: f32,
     slope_to: f32,
@@ -141,7 +143,7 @@ struct BowedString {
 }
 
 crate::in_place::field_list!(BowedString => BowedString {
-    string, force, force_to, lift, bow_vel, vel_scale, bowing, written, release, hair, tone, slope, slope_to, back, comb,
+    string, force, force_to, lift, bow_vel, vel_scale, bowing, written, release, hair, tone, grip, slope, slope_to, back, comb,
 });
 
 /// One pool slot (exclusive-state spec § 4.2): the seven strings a
@@ -612,14 +614,15 @@ impl ModalEngine {
                 );
             }
             ModelSlot::Bowed(b) => {
+                b.grip = grip(bow_force(params.force, vel), params.speed);
                 // A re-strike sets the bow back on the string as it rings.
                 if !restrike {
                     b.string.clear();
                     (b.hair, b.tone, b.back) = (BowHair::REST, 0.0, 0.0);
-                    b.tune(freq, sample_rate);
                     b.force = bow_force(params.force, vel);
                     (b.bow_vel, b.written) = (params.speed * BOW_SPEED, 0);
                 }
+                b.tune(freq, sample_rate);
                 b.force_to = bow_force(params.force, vel);
                 b.slope_to = friction_slope(params.force);
                 if !restrike {
@@ -705,6 +708,9 @@ impl ModalEngine {
             b.lift = b.force / RELEASE_SAMPLES as f32;
             b.force_to = 0.0;
             b.bowing = false;
+            // The free ring has no lock to lean against: its own period.
+            b.grip = 0.0;
+            b.tune(f * SAMPLE_RATE as f32, SAMPLE_RATE);
             let (_, ring) = lifted(&self.macros, (f * SAMPLE_RATE as f32, TAU * f));
             b.release.lift(BOW_GAIN, ring);
         }
@@ -932,6 +938,7 @@ impl BowedString {
             addr_of_mut!((*p).release).write(Release::HELD);
             addr_of_mut!((*p).hair).write(BowHair::REST);
             addr_of_mut!((*p).tone).write(0.0);
+            addr_of_mut!((*p).grip).write(0.0);
             addr_of_mut!((*p).slope).write(BOW_SLOPE);
             addr_of_mut!((*p).slope_to).write(BOW_SLOPE);
             addr_of_mut!((*p).back).write(0.0);
@@ -945,7 +952,49 @@ impl BowedString {
     fn tune(&mut self, freq: f32, sample_rate: u32) {
         let (period, _, w) = string::loop_at(freq, sample_rate);
         self.hair = self.hair.tuned(freq, w);
+        let period = period + self.grip * (unlocked(period) - period);
         self.string.set_period(0.5 * period, BowHair::DELAY, w);
+    }
+}
+
+/// The share of `unlocked`'s move a bow of this effective force (FORCE
+/// at the note's velocity, `bow_force`) and SPEED takes, as measured:
+/// all at INIT's v100, 0.447, none at 0.3 and under, where the stick-slip
+/// is too soft to lock, nor at 0.8 and over, whose windows are others;
+/// none at SPEED 0.1, where a slow bow already runs sharp, all from
+/// INIT's 0.5.
+fn grip(force: f32, speed: f32) -> f32 {
+    let f = ((force - 0.3) / (0.447 - 0.3)).min((0.8 - force) / (0.8 - 0.447));
+    f.clamp(0.0, 1.0) * ((speed - 0.1) / 0.4).clamp(0.0, 1.0)
+}
+
+/// Periods under this, samples (C6 up), lean toward a whole number: the
+/// stick-slip locks a period within `UNDER` below or `OVER` above one to
+/// it, up to 6.3 cents off.
+const LOCKS_UNDER: f32 = 48.0;
+/// The lock's reach either side of a whole period, samples, measured at
+/// C6 to C7 (a request swept in cents against the pitch heard).
+const UNDER: f32 = 0.18;
+const OVER: f32 = 0.33;
+/// Nearer a whole period than this the lock is heard under 4 cents: left.
+const NEAR: f32 = 0.05;
+
+/// `period` moved to the edge of a whole period's lock when inside it:
+/// there the stick-slip is pulled back toward `period`, which it then
+/// plays within 1 cent (measured: C6 +2 cents asked, D6 +2, G#6 +4, A6
+/// −3, C7 +8). Longer periods, and those nearly whole, as they are.
+fn unlocked(period: f32) -> f32 {
+    if period >= LOCKS_UNDER {
+        return period;
+    }
+    let n = libm::roundf(period);
+    let d = period - n;
+    if d > NEAR && d < OVER {
+        n + OVER
+    } else if d < -NEAR && d > -UNDER {
+        n - UNDER
+    } else {
+        period
     }
 }
 
