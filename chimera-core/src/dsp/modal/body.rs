@@ -19,16 +19,18 @@ pub struct Body {
 }
 
 impl Body {
-    pub fn new() -> Self {
-        Self {
-            modes: core::array::from_fn(|_| Svf::new()),
+    /// Tuned at `sample_rate`, once: the resonances are fixed.
+    pub fn new(sample_rate: u32) -> Self {
+        let mut modes: [Svf; 3] = core::array::from_fn(|_| Svf::new());
+        for (m, (hz, q, _)) in modes.iter_mut().zip(BODY_MODES) {
+            m.set(hz / sample_rate as f32, q);
         }
+        Self { modes }
     }
 
-    /// At `sample_rate`, silent.
-    pub fn tune(&mut self, sample_rate: u32) {
-        for (m, (hz, q, _)) in self.modes.iter_mut().zip(BODY_MODES) {
-            m.set(hz / sample_rate as f32, q);
+    /// Silent, as at a note-on.
+    pub fn reset(&mut self) {
+        for m in &mut self.modes {
             m.reset();
         }
     }
@@ -67,8 +69,7 @@ mod tests {
     const SR: u32 = 48_000;
 
     fn impulse_response(amount: f32) -> Vec<f32> {
-        let mut b = Body::new();
-        b.tune(SR);
+        let mut b = Body::new(SR);
         (0..16_384)
             .map(|n| b.process(if n == 0 { 1.0 } else { 0.0 }, Body::mix(amount)))
             .collect()

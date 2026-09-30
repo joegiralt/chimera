@@ -155,8 +155,9 @@ fn ui_state_fits_the_ui_reserve() {
 }
 
 /// Exclusive-state spec § Memory: Sympathetic's seven lines live in a pool
-/// of four slots inside the `Instrument`, in D2; the voice is sized for
-/// Bowed, never for Sympathetic.
+/// of four slots inside the `Instrument`, in D2. The voice holds only
+/// SYMP's main string and lease: the largest model, within an align of
+/// STRING's voice (ADR 0056).
 #[test]
 fn sympathetic_pool_fits_d2() {
     use chimera_core::dsp::modal::{SymPool, SympatheticSet, layout};

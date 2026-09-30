@@ -194,8 +194,19 @@ const ATTACK_BLOCKS: usize = 8;
 /// `p` through a voice: note 48 held `blocks`, plucked again at each of
 /// `plucks`.
 fn play_voice(p: &ParamSnapshot, mods: &ModState, blocks: usize, plucks: &[usize]) -> Vec<f32> {
+    play_voice_at(48, p, mods, blocks, plucks)
+}
+
+/// `play_voice` at `note`.
+fn play_voice_at(
+    note: u8,
+    p: &ParamSnapshot,
+    mods: &ModState,
+    blocks: usize,
+    plucks: &[usize],
+) -> Vec<f32> {
     let mut rig = Rig::new(SR);
-    let (note, vel) = (MidiNote::new(48).unwrap(), Velocity::new(100).unwrap());
+    let (note, vel) = (MidiNote::new(note).unwrap(), Velocity::new(100).unwrap());
     let mut out = Vec::with_capacity(blocks * BLOCK_SIZE);
     let mut block = [0.0; BLOCK_SIZE];
     for b in 0..blocks {
@@ -492,20 +503,21 @@ fn a_released_bowed_c2_is_silent_within_half_a_second() {
 }
 
 /// A second of `p` at `note`, 0.25 s in: the fundamental's cents from
-/// the note, and the measured f0.
+/// the note, and the measured f0. Below G1 the loop clamps near G1's
+/// length, so it is measured, and in cents, from G1.
 fn f0_cents(p: &ModalParams, note: u8) -> (f64, f64) {
     let out = play_modal(p, note, 3 * SR as usize / BLOCK_SIZE / 2, 0);
-    let f0 = note_to_freq(note) as f64;
+    let f0 = note_to_freq(note.max(31)) as f64;
     let f1 = fundamental_hz(&out[SR as usize / 4..SR as usize * 5 / 4], f0);
     (1200.0 * (f1 / f0).log2(), f1)
 }
 
-/// STRUCTURE 0 to 1 on STRING, G1 to C6: the fundamental holds within
+/// STRUCTURE 0 to 1 on STRING, A0 to C6: the fundamental holds within
 /// 2 cents, the dispersion's delay at f0 taken off the line. G1 at 1 is
-/// the line's longest chain.
+/// the line's longest chain; below it, the clamped loop holds too.
 #[test]
 fn dispersion_keeps_pitch() {
-    for note in [31, 36, 60, 84] {
+    for note in [21, 24, 30, 31, 36, 60, 84] {
         let at = |structure: f32| ModalParams {
             structure,
             bright: 0.0,
@@ -518,7 +530,9 @@ fn dispersion_keeps_pitch() {
             (c1 - c0).abs() < 2.0,
             "note {note}: {c0:+.2} → {c1:+.2} cents"
         );
-        assert!(c1.abs() < 2.0, "note {note}: {c1:+.2} cents at STRUCTURE 1");
+        if note >= 31 {
+            assert!(c1.abs() < 2.0, "note {note}: {c1:+.2} cents at STRUCTURE 1");
+        }
     }
 }
 
@@ -567,4 +581,49 @@ fn dispersion_stretches_the_partials() {
     let (off, on) = (cents(0.0), cents(1.0));
     assert!(off.abs() < 1.0, "STRUCTURE 0: 8th partial {off:+.2} cents");
     assert!(on > 5.0, "STRUCTURE 1: 8th partial {on:+.2} cents");
+}
+
+/// The largest second difference past the first second: a step's size.
+fn kink(out: &[f32]) -> f32 {
+    out[SR as usize..]
+        .windows(3)
+        .map(|w| (w[2] - 2.0 * w[1] + w[0]).abs())
+        .fold(0.0, f32::max)
+}
+
+/// A square LFO swings STRUCTURE end to end on G1, the longest chain.
+/// Each step glides the chain's delay 2 samples a block (`DISP_SLEW`), so
+/// at BRIGHT 1 nothing clicks past the strike; at BRIGHT 0, where a step
+/// would show, the kinks stay within 3× a held STRUCTURE's (unglided,
+/// 4.2×).
+#[test]
+fn a_structure_step_at_g1_does_not_click() {
+    let second = SR as usize / BLOCK_SIZE;
+    let addr = ParamAddr::new(BlockRef::Modal, ModalParams::STRUCTURE);
+    for bright in [1.0, 0.0] {
+        let mut p = ParamSnapshot::for_engine(EngineType::Modal);
+        p.modal.mode = ResonatorMode::String;
+        p.modal.structure = 0.5;
+        p.modal.bright = bright;
+        p.modal.damp = 1.0;
+        p.lfos[0].rate = 2.0;
+        p.lfos[0].shape = chimera_core::dsp::lfo::LfoShape::Square as u8;
+        let routed = play_voice_at(31, &p, &routes(addr, 127), 2 * second, &[]);
+        let held = [0.0, 1.0].map(|s| {
+            let mut h = p.clone();
+            h.modal.structure = s;
+            play_voice_at(31, &h, &ModState::new(), 2 * second, &[])
+        });
+        assert!(
+            rms_diff(&routed, &held[0]) > 1e-3,
+            "the route changes nothing"
+        );
+        let n = clicks(&routed)
+            .into_iter()
+            .filter(|&(i, _)| i / BLOCK_SIZE >= ATTACK_BLOCKS)
+            .count();
+        assert_eq!(n, 0, "BRIGHT {bright}: {n} clicks");
+        let (k, base) = (kink(&routed), kink(&held[0]).max(kink(&held[1])));
+        assert!(k <= 3.0 * base, "BRIGHT {bright}: kink {k}, held {base}");
+    }
 }
