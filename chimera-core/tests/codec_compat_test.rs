@@ -149,7 +149,8 @@ const FIXTURE_RENDERS: &[(&str, u64)] = &[
     ("factory_6.snd", 0x2cf3c112b967ff6f),
     ("factory_7.snd", 0x7ef436e312c3c9e6),
     ("init_algo.snd", 0xfd37f75c4096594b),
-    ("init_modal.snd", 0x90f1197c153d0b05),
+    // Re-recorded: Modal 2 step A's resonators (spec § Tests).
+    ("init_modal.snd", 0xb9a4be01cac830ff),
 ];
 
 #[test]
@@ -160,10 +161,6 @@ fn v1_fixtures_render_identically() {
         FIXTURE_RENDERS.iter().map(|r| r.0).collect::<Vec<_>>()
     );
     for &(name, want) in FIXTURE_RENDERS {
-        // Moved by Modal 2 step A: re-recorded once, in its Task 11.
-        if name == "init_modal.snd" {
-            continue;
-        }
         let s = decode(&fixture(name)).unwrap();
         assert_eq!(
             fnv1a(&render_sound(&s.params, &s.mod_state)),
