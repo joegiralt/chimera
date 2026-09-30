@@ -6,12 +6,13 @@ use embedded_graphics::primitives::{PrimitiveStyle, Rectangle, StyledDrawable};
 use crate::addr::Op;
 use crate::dsp::algo::algorithms::AlgoId;
 use crate::dsp::modulator::{EnvType, HoldPos};
+use crate::part::DacPair;
 use crate::perf::load::AudioStats;
 use crate::ui::PrimeStatus;
 use crate::ui::animation::AnimatedValue;
 use crate::ui::audio_page;
 use crate::ui::block_def::{BlockDef, FxFlow, SlotBinding, VizType, slot_addr};
-use crate::ui::chain::ChainNav;
+use crate::ui::chain::{ChainId, ChainNav};
 use crate::ui::components;
 use crate::ui::dungeon_map;
 use crate::ui::fmt::{self, FmtBuf};
@@ -418,14 +419,13 @@ impl Renderer {
     where
         D: DrawTarget<Color = Rgb565>,
     {
-        let (context, mut name) = components::header_text(f.nav, f.def, f.ctx.model);
-        if let Some(ty) = ["", " / A", " / B"].get(title_type(f) as usize) {
-            let _ = core::fmt::Write::write_str(&mut name, ty);
-        }
+        let suffix = ["", " / A", " / B"][title_type(f) as usize % 3];
+        let h = components::header_text(f.nav, f.def, f.ctx.model, suffix, header_out(f));
         components::header(
             display,
-            context.as_str(),
-            name.as_str(),
+            h.context.as_str(),
+            h.name.as_str(),
+            h.warn,
             f.sounding,
             f.perf.audio_load_pct,
         );
@@ -440,6 +440,14 @@ impl Renderer {
         let start = y_start as usize * theme::SCREEN_W as usize;
         let end = y_end as usize * theme::SCREEN_W as usize;
         fb[start..end].fill(bg);
+    }
+}
+
+/// The OUT of the Part whose pages these are; P1 off the Part chains.
+pub fn header_out(f: &Frame) -> DacPair {
+    match f.nav.chain_id {
+        ChainId::Part(n) | ChainId::Mixer(n) => f.parts[n].mix.output,
+        ChainId::System | ChainId::Demo => DacPair::P1,
     }
 }
 

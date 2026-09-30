@@ -44,12 +44,19 @@ impl Controls for MockControls {
     }
 }
 
+/// MIX + `b`: the mixer opens on SENDS (ADR 0057).
 fn open_mixer(ui: &mut UiState, b: ButtonId) {
     ui.handle_input(
         &MockControls::new()
             .button(ButtonId::Mix, ButtonState::Held)
             .button(b, ButtonState::Pressed),
     );
+}
+
+/// MIX + `b`, then MINUS back to PART.
+fn open_mixer_part(ui: &mut UiState, b: ButtonId) {
+    open_mixer(ui, b);
+    ui.handle_input(&MockControls::new().button(ButtonId::Minus, ButtonState::Pressed));
 }
 
 fn turn(ui: &mut UiState, enc: EncoderId, delta: i8) {
@@ -111,7 +118,7 @@ fn part_page_binds_channel_mode_output_level_pan() {
 #[test]
 fn mix_b2_edits_part_2() {
     let mut ui = UiState::new();
-    open_mixer(&mut ui, ButtonId::B2);
+    open_mixer_part(&mut ui, ButtonId::B2);
     assert_eq!(ui.active_part, 1);
     assert!(matches!(ui.page(), PageKey::Part { def: 27, .. }));
     turn(&mut ui, EncoderId::A, 3); // CH 1 → 4
@@ -134,8 +141,7 @@ fn mix_b2_edits_part_2() {
 #[test]
 fn sends_page_edits_the_part_sends() {
     let mut ui = UiState::new();
-    open_mixer(&mut ui, ButtonId::B3);
-    ui.handle_input(&MockControls::new().button(ButtonId::Plus, ButtonState::Pressed)); // → SENDS
+    open_mixer(&mut ui, ButtonId::B3); // SENDS
     turn(&mut ui, EncoderId::C, 64); // reverb send
     assert_eq!(ui.performance.parts[2].mix.sends, [0.0, 0.0, 0.5]);
 }
@@ -192,7 +198,7 @@ fn fx_are_shared_across_parts() {
 #[test]
 fn priming_a_part_param_is_refused() {
     let mut ui = UiState::new();
-    open_mixer(&mut ui, ButtonId::B1);
+    open_mixer_part(&mut ui, ButtonId::B1);
     turn(&mut ui, EncoderId::D, 1); // focus LEVEL
     ui.handle_input(
         &MockControls::new()
@@ -211,7 +217,7 @@ mod screen;
 fn overview(setup: impl FnOnce(&mut UiState), part_button: ButtonId) -> screen::Fb {
     let mut ui = UiState::new();
     setup(&mut ui);
-    open_mixer(&mut ui, part_button);
+    open_mixer_part(&mut ui, part_button);
     screen::settle(&mut ui);
     let mut fb = screen::Fb::new();
     ui.render_with_scope(
@@ -282,7 +288,7 @@ fn part_overview_shows_every_part_with_the_edited_one_lit() {
 #[test]
 fn part_overview_redraws_as_the_level_lerps() {
     let mut ui = UiState::new();
-    open_mixer(&mut ui, ButtonId::B1);
+    open_mixer_part(&mut ui, ButtonId::B1);
     screen::settle(&mut ui);
     let mut fb = screen::Fb::new();
     let (perf, scope) = (
