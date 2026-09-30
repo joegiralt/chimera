@@ -129,7 +129,7 @@ FORMANT_BUDGET = 1,382 − 325 − 370 − 96 − 366 = 225
 Σ charges ≤ 225   ⇒   N = ⌊225 / 70⌋ = 3 FRMT operators
 ```
 
-With 3 FRMT the 15 left admits 1 NOIS; with 2 FRMT or fewer, every other operator may be NOIS.
+**The rule the type enforces is exactly `70·n_FRMT + 10·n_NOIS ≤ 225`**, checked on every assignment: 3 FRMT with at most 1 NOIS (220), 2 FRMT with up to 4 NOIS (180), and any number of NOIS with fewer FRMT. 3 FRMT with 2 NOIS (230) is refused.
 
 - **Derived, not typed in.** `FORMANT_BUDGET` is a `const` computed from `COST_*`, `FxBus::COST` with the tape, the heavy-route overhead and the rev V budget. When the bench updates a term, N follows.
 - **Only a patch within budget can be built.** Kinds live in a newtype, `Kinds([OpKind; OPS])`, held by `AlgoParams`:
@@ -557,7 +557,7 @@ Voices beside the whole FX bus, per ADR 0031's arithmetic, without mod routes: r
 | Any plain FM patch | unchanged | unchanged | unchanged |
 | Two NOIS, A1 (BREATH) | 510 | 8 | 8 |
 | One sine + three FRMT at SKIRT 1, A1 (TALK BASS) | 820 | 6 | 5 |
-| Three FRMT + two NOIS, A1 (CHOIR) | 900 | 6 | 4 |
+| Three FRMT + one NOIS, A1 (CHOIR) | 830 | 6 | 5 |
 | Two FRMT + four NOIS, A1 | 910 | 6 | 4 |
 | Three FRMT + one NOIS + two table, all with feedback where billed, A16 ∪ A17 (**the worst allowed**) | 1,051 | 5 | 4 |
 
@@ -662,11 +662,10 @@ Each test fails on the first draft's design or on a plausible bug, or it pins a 
 
 Three new factory Sounds. The clips render from them, so what the owner approves is what ships.
 
-- **CHOIR:** a pad on A1, within the budget (3 FRMT, 2 NOIS: 6 voices on rev V).
+- **CHOIR:** a pad on A1, within the budget (3 FRMT, 1 NOIS: 3·70 + 10 = 220 ≤ 225; 6 voices on rev V).
   - Operator 1 is FRMT on slot F1.
   - Operators 2 and 3 are FRMT on slot F2, DETUNE −2 and +2. F2 carries the vowel's identity, and its beating is the most audible, so doubling it gives the choir its width.
-  - Operator 4 is NOIS on slot F3: air on the third formant, which follows the vowel.
-  - Operator 5 is NOIS on slot OFF: breath, CENTRE 1.5 kHz, WIDTH 3 kHz, low.
+  - Operator 4 is NOIS on slot F3: breath and air on the third formant, which follows the vowel (WIDTH 3 kHz, low).
   - All the FRMT operators are at SKIRT 1.
   - Slow attack, VOWEL stored between O and A (37), and LFO 1 slowly across O–A.
 - **TALK BASS:** A1.
