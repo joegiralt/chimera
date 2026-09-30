@@ -37,14 +37,12 @@ mod body;
 mod chords;
 mod dispersion;
 mod ensemble;
-mod glide;
 mod loop_parts;
 mod params;
 mod rings;
 mod string;
 
 pub use chords::{CHORD_COUNT, CHORD_GLIDE_TAU, CHORDS, chord_of, fold};
-pub use glide::Glide;
 pub use params::*;
 pub use string::MAX_STRING_DELAY;
 
@@ -55,6 +53,7 @@ use chimera_hal::BLOCK_SIZE;
 
 use super::{fast_tanh, xorshift_noise};
 use crate::dsp::dc_blocker::DcBlocker;
+use crate::dsp::glide::Glide;
 use crate::hw::{Cost, SAMPLE_RATE};
 use crate::in_place::{in_place_enum, uninit_at};
 use crate::sym_alloc::{Lease, SYM_SLOTS, SymAlloc, SymSlot};
@@ -1231,7 +1230,7 @@ impl SympatheticSet {
                 g.toward(folded);
                 g.snap();
             } else if stepped {
-                g.toward(octave_near(folded, g.period() * r / w));
+                g.toward(octave_near(folded, g.value() * r / w));
             } else {
                 // Under an octave's move, with the pitch from where it is,
                 // in the octave it is in while its line fits (a glide or the
@@ -1263,7 +1262,7 @@ impl SympatheticSet {
 
     /// The strings' periods now, samples.
     fn periods(&self) -> [f32; NUM_SYMPATHETIC] {
-        self.glides.map(|g| g.period())
+        self.glides.map(|g| g.value())
     }
 
     /// Each string's line and allpass at `periods`: no dispersion.

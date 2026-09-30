@@ -122,6 +122,7 @@ pub mod engines;
 pub mod envelope;
 pub mod filter;
 pub mod fx_bus;
+pub mod glide;
 pub mod halfband;
 pub mod lfo;
 pub mod limiter;
