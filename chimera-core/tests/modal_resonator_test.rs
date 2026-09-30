@@ -490,3 +490,81 @@ fn a_released_bowed_c2_is_silent_within_half_a_second() {
     let tail = &out[SR as usize * 3 / 2..];
     assert!(common::peak(tail) < 1e-3, "{}", common::peak(tail));
 }
+
+/// A second of `p` at `note`, 0.25 s in: the fundamental's cents from
+/// the note, and the measured f0.
+fn f0_cents(p: &ModalParams, note: u8) -> (f64, f64) {
+    let out = play_modal(p, note, 3 * SR as usize / BLOCK_SIZE / 2, 0);
+    let f0 = note_to_freq(note) as f64;
+    let f1 = fundamental_hz(&out[SR as usize / 4..SR as usize * 5 / 4], f0);
+    (1200.0 * (f1 / f0).log2(), f1)
+}
+
+/// STRUCTURE 0 to 1 on STRING, G1 to C6: the fundamental holds within
+/// 2 cents, the dispersion's delay at f0 taken off the line. G1 at 1 is
+/// the line's longest chain.
+#[test]
+fn dispersion_keeps_pitch() {
+    for note in [31, 36, 60, 84] {
+        let at = |structure: f32| ModalParams {
+            structure,
+            bright: 0.0,
+            damp: 1.0,
+            ..Default::default()
+        };
+        let (c0, _) = f0_cents(&at(0.0), note);
+        let (c1, _) = f0_cents(&at(1.0), note);
+        assert!(
+            (c1 - c0).abs() < 2.0,
+            "note {note}: {c0:+.2} → {c1:+.2} cents"
+        );
+        assert!(c1.abs() < 2.0, "note {note}: {c1:+.2} cents at STRUCTURE 1");
+    }
+}
+
+/// BODY colours on the output: C2 and C3, at the INIT's 0.3 and at 1,
+/// sound the note, not its octave (#10).
+#[test]
+fn body_does_not_transpose() {
+    for note in [36, 48] {
+        for body in [0.0, 0.3, 1.0] {
+            let p = ModalParams {
+                body,
+                ..Default::default()
+            };
+            let (c, _) = f0_cents(&p, note);
+            assert!(c.abs() < 2.0, "note {note} BODY {body}: {c:+.2} cents");
+            // What repeats, not only the strongest line near the note.
+            let out = play_modal(&p, note, 3 * SR as usize / BLOCK_SIZE, 0);
+            let f = common::period_hz(&out[SR as usize / 4..]);
+            let off = 1200.0 * (f / note_to_freq(note) as f64).log2();
+            assert!(
+                off.abs() < 2.0,
+                "note {note} BODY {body}: repeats at {f} Hz"
+            );
+        }
+    }
+}
+
+/// STRUCTURE stiffens STRING: at 1 its 8th partial sits more than 5
+/// cents sharp of 8·f0, at 0 within 1 cent of it.
+#[test]
+fn dispersion_stretches_the_partials() {
+    let cents = |structure: f32| {
+        let p = ModalParams {
+            structure,
+            bright: 1.0,
+            damp: 1.0,
+            body: 0.0,
+            ..Default::default()
+        };
+        let (_, f1) = f0_cents(&p, 48);
+        let out = play_modal(&p, 48, 3 * SR as usize / BLOCK_SIZE / 2, 0);
+        let s = &out[SR as usize / 4..SR as usize * 5 / 4];
+        let h = 8.0 * f1;
+        1200.0 * (fundamental_hz(s, h) / h).log2()
+    };
+    let (off, on) = (cents(0.0), cents(1.0));
+    assert!(off.abs() < 1.0, "STRUCTURE 0: 8th partial {off:+.2} cents");
+    assert!(on > 5.0, "STRUCTURE 1: 8th partial {on:+.2} cents");
+}

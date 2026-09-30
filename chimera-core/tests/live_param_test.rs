@@ -161,30 +161,22 @@ fn test_folder_mid_note() {
 
 // ── KS+ String: live parameter tests ────────────────────────────────
 
+/// BODY is a model-page setting, latched at note-on (spec § 1): a
+/// mid-note change leaves the sounding note alone.
 #[test]
-fn test_string_body_mid_note() {
-    let (_, _, before, after) = render_with_param_change(
-        |p| {
-            *p = ParamSnapshot::for_engine(EngineType::Modal);
-            p.modal.mode = ResonatorMode::String;
-            p.modal.body = 0.0;
-        },
-        |p| {
-            p.modal.body = 0.8;
-        },
-        8,
-        8,
-    );
-    let diff: f32 = before
-        .iter()
-        .zip(after.iter())
-        .map(|(a, b)| (a - b).abs())
-        .sum::<f32>()
-        / before.len() as f32;
+fn test_string_body_latched_at_note_on() {
+    let setup = |p: &mut ParamSnapshot| {
+        *p = ParamSnapshot::for_engine(EngineType::Modal);
+        p.modal.mode = ResonatorMode::String;
+        p.modal.body = 0.0;
+    };
+    let (_, _, _, kept) = render_with_param_change(setup, |_| {}, 8, 8);
+    let (_, _, _, turned) = render_with_param_change(setup, |p| p.modal.body = 0.8, 8, 8);
     assert!(
-        diff > 0.001,
-        "body resonance should change sound: diff={}",
-        diff
+        kept.iter()
+            .zip(&turned)
+            .all(|(a, b)| a.to_bits() == b.to_bits()),
+        "BODY moved a sounding note"
     );
 }
 

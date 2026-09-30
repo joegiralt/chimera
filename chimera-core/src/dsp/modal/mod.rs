@@ -22,6 +22,8 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
+// `dispersion.rs` follows Rings' `ap_gain` curve, under the same notice.
+//
 // The Karplus-Strong string (`string.rs`) is the project owner's own code,
 // from their Carcosa firmware for the Ambika, relicensed here under MIT
 // (ADR 0032).
@@ -29,6 +31,8 @@
 //! Modal, the physical-modelling engine (ADR 0004): a modal resonator bank
 //! (`rings`) and Karplus-Strong strings (`string`) in four models.
 
+mod body;
+mod dispersion;
 mod loop_parts;
 mod params;
 mod rings;
@@ -47,9 +51,9 @@ use crate::hw::{Cost, SAMPLE_RATE};
 use crate::in_place::{in_place_enum, uninit_at};
 use crate::sym_alloc::{Lease, SYM_SLOTS, SymAlloc, SymSlot};
 use crate::voice_alloc::VoiceIdx;
-use loop_parts::{DcBlocker, LoopGain, RELEASE_SAMPLES, RELEASE_T60};
+use loop_parts::{DcBlocker, LoopGain, RELEASE_SAMPLES, RELEASE_T60, Release};
 use rings::{CosineOsc, Svf, stiffness_from_structure};
-use string::{FRESH_CLEAR_BYTES, KsRenderParams, KsString, RING_BYTES, loop_at, lp_coeff};
+use string::{FRESH_CLEAR_BYTES, KsRenderParams, KsString, RING_BYTES, StringVoice, lp_coeff};
 
 /// Bytes the string lines' clears have written on this thread, since the
 /// last call: for the tests.
@@ -98,9 +102,11 @@ struct BowedString {
     force_to: f32,
     /// Samples pushed since note-on, for `KsString::ring_tap`.
     written: u32,
+    /// The lifted bow's ramp.
+    release: Release,
 }
 
-crate::in_place::field_list!(BowedString => BowedString { string, force, force_to, written });
+crate::in_place::field_list!(BowedString => BowedString { string, force, force_to, written, release });
 
 /// One pool slot (exclusive-state spec § 4.2): the seven strings a
 /// Sympathetic note's main string sets ringing. The main string is the
@@ -127,7 +133,7 @@ crate::in_place::field_list!(SymPool => SymPool { alloc, sets });
 
 /// Sympathetic's voice side: the main string, and its halo.
 struct SympatheticVoice {
-    main: KsString,
+    main: StringVoice,
     halo: Halo,
 }
 
@@ -148,13 +154,9 @@ pub enum Halo {
     Bare,
 }
 
-// Sympathetic never sizes the voice (spec § 4.2): Bowed or String does.
+// Sympathetic is String's voice and a lease (spec § 4.2): within an align.
 const _: () =
-    assert!(size_of::<SympatheticVoice>() <= max(size_of::<BowedString>(), size_of::<KsString>()));
-
-const fn max(a: usize, b: usize) -> usize {
-    if a > b { a } else { b }
-}
+    assert!(size_of::<SympatheticVoice>() <= size_of::<StringVoice>() + align_of::<StringVoice>());
 
 /// Host sizes of the private model types, for `memory_budget_test`.
 #[cfg(any(test, feature = "test-support"))]
@@ -164,6 +166,7 @@ pub mod layout {
     pub const MODEL_SLOT: usize = size_of::<super::ModelSlot>();
     pub const MODEL_SLOT_ALIGN: usize = align_of::<super::ModelSlot>();
     pub const BOWED: usize = size_of::<super::BowedString>();
+    pub const STRING: usize = size_of::<super::StringVoice>();
     pub const SYMPATHETIC_VOICE: usize = size_of::<super::SympatheticVoice>();
 }
 
@@ -192,7 +195,7 @@ in_place_enum! {
     /// The one model an engine holds: the variant is the mode.
     enum ModelSlot {
         Bank(ModalBank) => rebuild_bank, init_bank;
-        String(KsString) => rebuild_string, init_string;
+        String(StringVoice) => rebuild_string, init_string;
         Bowed(BowedString) => rebuild_bowed, init_bowed;
         Sympathetic(SympatheticVoice) => rebuild_sympathetic, init_sympathetic;
     }
@@ -203,8 +206,8 @@ impl ModelSlot {
         match model {
             // SAFETY: `ModalBank::init_in_place` writes every field.
             Model::Bank => unsafe { Self::init_bank(slot, ModalBank::init_in_place) },
-            // SAFETY: `KsString::init_in_place` writes every field.
-            Model::String => unsafe { Self::init_string(slot, KsString::init_in_place) },
+            // SAFETY: `StringVoice::init_in_place` writes every field.
+            Model::String => unsafe { Self::init_string(slot, StringVoice::init_in_place) },
             // SAFETY: `BowedString::init_in_place` writes every field.
             Model::Bowed => unsafe { Self::init_bowed(slot, BowedString::init_in_place) },
             // SAFETY: `SympatheticVoice::init_in_place` writes every field.
@@ -222,8 +225,8 @@ impl ModelSlot {
         match model {
             // SAFETY: `ModalBank::init_in_place` writes every field.
             Model::Bank => unsafe { self.rebuild_bank(ModalBank::init_in_place) },
-            // SAFETY: `KsString::init_in_place` writes every field.
-            Model::String => unsafe { self.rebuild_string(KsString::init_in_place) },
+            // SAFETY: `StringVoice::init_in_place` writes every field.
+            Model::String => unsafe { self.rebuild_string(StringVoice::init_in_place) },
             // SAFETY: `BowedString::init_in_place` writes every field.
             Model::Bowed => unsafe { self.rebuild_bowed(BowedString::init_in_place) },
             // SAFETY: `SympatheticVoice::init_in_place` writes every field.
@@ -275,7 +278,7 @@ const fn models_are_exclusive() -> bool {
     use core::mem::{align_of, size_of};
     let models = [
         size_of::<ModalBank>(),
-        size_of::<KsString>(),
+        size_of::<StringVoice>(),
         size_of::<BowedString>(),
         size_of::<SympatheticVoice>(),
     ];
@@ -449,8 +452,13 @@ impl ModalEngine {
                 bank.burst_amp = vel * params.excite;
                 bank.burst_lp = 0.0;
             }
-            ModelSlot::String(string) => {
-                string.excite(loop_at(freq, sample_rate), vel * params.excite);
+            ModelSlot::String(v) => {
+                v.pluck(
+                    (freq, sample_rate),
+                    m.structure,
+                    vel * params.excite,
+                    params.body,
+                );
             }
             ModelSlot::Bowed(b) => {
                 b.string.clear();
@@ -458,10 +466,12 @@ impl ModalEngine {
                 b.force = vel * BOW_FORCE;
                 b.force_to = b.force;
                 b.written = 0;
+                b.release = Release::HELD;
             }
             ModelSlot::Sympathetic(v) => {
+                // STRUCTURE tunes the halo only: the main string is not stiff.
                 v.main
-                    .excite(loop_at(freq, sample_rate), vel * params.excite);
+                    .pluck((freq, sample_rate), 0.0, vel * params.excite, params.body);
                 if let Some(set) = pool.halo(&v.halo) {
                     for sym in set.strings.iter_mut() {
                         // Sympathetic strings start silent — energy comes
@@ -483,21 +493,31 @@ impl ModalEngine {
         self.silence_counter = 0;
     }
 
-    /// The strings follow a changed pitch ratio (per block, at a change
-    /// only): a divide per string (`ModalEngine::PITCH`).
-    fn retune(&mut self, sample_rate: u32, pool: &mut SymPool) {
-        if self.pitch == self.tuned {
+    /// The strings follow a changed pitch ratio, and STRING's dispersion
+    /// and SYMP's halo a moved STRUCTURE (per block, at a change only): a
+    /// divide per string (`ModalEngine::PITCH`).
+    fn retune(&mut self, sample_rate: u32, pool: &mut SymPool, moved: bool) {
+        let pitched = self.pitch != self.tuned;
+        if !pitched && !moved {
             return;
         }
         self.tuned = self.pitch;
         let freq = self.pitched(self.frequency * sample_rate as f32);
+        let structure = self.macros.structure;
         match &mut self.model {
             ModelSlot::Bank(_) => {}
-            ModelSlot::String(string) => string.tune(freq, sample_rate),
-            ModelSlot::Bowed(b) => b.string.tune(freq, sample_rate),
+            ModelSlot::String(v) => v.tune(freq, sample_rate, structure),
+            ModelSlot::Bowed(b) if pitched => b.string.tune(freq, sample_rate),
+            ModelSlot::Bowed(_) => {}
             ModelSlot::Sympathetic(m) => {
-                m.main.tune(freq, sample_rate);
+                if pitched {
+                    m.main.tune(freq, sample_rate, 0.0);
+                }
                 if let Some(set) = pool.halo(&m.halo) {
+                    if moved {
+                        // Interim until the chord table (Task 10).
+                        set.ratios = sympathetic_ratios(structure);
+                    }
                     set.tune(freq, sample_rate);
                 }
             }
@@ -514,10 +534,10 @@ impl ModalEngine {
         let to = LoopGain::from_t60(RELEASE_T60, f0);
         let held = LoopGain::from_t60(t60(self.macros.damp), f0);
         match &mut self.model {
-            ModelSlot::String(string) => string.release(held, to),
+            ModelSlot::String(v) => v.release(held, to),
             ModelSlot::Bowed(b) => {
                 b.force_to = 0.0;
-                b.string.release(BOW_GAIN, to);
+                b.release.start(BOW_GAIN, to);
             }
             ModelSlot::Bank(_) => {}
             ModelSlot::Sympathetic(m) => m.main.release(held, to),
@@ -551,8 +571,8 @@ impl ModalEngine {
             self.macros = to;
             // Before any retune: the pluck is the note-on's length.
             match &mut self.model {
-                ModelSlot::String(s) => s.shape(to.pos),
-                ModelSlot::Sympathetic(v) => v.main.shape(to.pos),
+                ModelSlot::String(s) => s.string.shape(to.pos),
+                ModelSlot::Sympathetic(v) => v.main.string.shape(to.pos),
                 ModelSlot::Bank(_) | ModelSlot::Bowed(_) => {}
             }
         } else {
@@ -563,15 +583,7 @@ impl ModalEngine {
         let bank_freq = self.pitched(self.frequency);
         // The strings' f0 in Hz, for their loop gains.
         let f0 = bank_freq * sample_rate as f32;
-        self.retune(sample_rate, pool);
-        if m.structure != was.structure
-            && let ModelSlot::Sympathetic(v) = &self.model
-            && let Some(set) = pool.halo(&v.halo)
-        {
-            // Interim until the chord table (Task 10): the halo follows.
-            set.ratios = sympathetic_ratios(m.structure);
-            set.tune(f0, sample_rate);
-        }
+        self.retune(sample_rate, pool, m.structure != was.structure);
 
         // Whether the model is still exciting itself: silent or not, the
         // note sounds on.
@@ -583,8 +595,8 @@ impl ModalEngine {
                 render_modal(bank, output, &mut max_level);
                 bank.burst_remaining > 0
             }
-            ModelSlot::String(string) => {
-                render_string(string, output, params, &m, f0);
+            ModelSlot::String(v) => {
+                render_string(v, output, params, &m, f0);
                 false
             }
             ModelSlot::Bowed(b) => {
@@ -709,6 +721,7 @@ impl BowedString {
             addr_of_mut!((*p).force).write(0.0);
             addr_of_mut!((*p).force_to).write(0.0);
             addr_of_mut!((*p).written).write(0);
+            addr_of_mut!((*p).release).write(Release::HELD);
             slot.assume_init_mut()
         }
     }
@@ -721,7 +734,7 @@ impl SympatheticVoice {
         // place and the halo (two bytes) written by value, before
         // `assume_init_mut`.
         unsafe {
-            KsString::init_in_place(uninit_at(addr_of_mut!((*p).main)));
+            StringVoice::init_in_place(uninit_at(addr_of_mut!((*p).main)));
             addr_of_mut!((*p).halo).write(halo);
             slot.assume_init_mut()
         }
@@ -785,8 +798,8 @@ impl SymPool {
         let promise = self.alloc.promise_of(voice);
         match engine.map(|e| &e.model) {
             Some(ModelSlot::Sympathetic(m)) => match &m.halo {
-                Halo::Full(l) => m.main.clear_bytes() + set(l.slot()),
-                Halo::Bare if promise.is_none() => m.main.clear_bytes(),
+                Halo::Full(l) => m.main.string.clear_bytes() + set(l.slot()),
+                Halo::Bare if promise.is_none() => m.main.string.clear_bytes(),
                 Halo::Bare => FRESH_CLEAR_BYTES + promise.map_or(0, set),
             },
             _ => FRESH_CLEAR_BYTES + promise.map_or(0, set),
@@ -866,30 +879,25 @@ fn render_modal(bank: &mut ModalBank, output: &mut [f32; BLOCK_SIZE], max_level:
 }
 
 fn render_string(
-    string: &mut KsString,
+    v: &mut StringVoice,
     output: &mut [f32; BLOCK_SIZE],
     params: &ModalParams,
     m: &Macros,
     f0: f32,
 ) {
-    let p = main_string((params, m), (m.structure, params.ens_rate), f0);
+    let p = main_string(params, m, params.ens_rate, f0);
     for s in output.iter_mut() {
-        *s = string.tick_full(&p);
+        let x = v.tick(&p);
+        *s = v.colour(x);
     }
 }
 
 /// The block's STRING or SYMP main string at `f0` Hz, with its own
-/// stiffness and ensemble rate: its held gain, which a release caps.
-fn main_string(
-    (params, m): (&ModalParams, &Macros),
-    (stiffness, ens_rate): (f32, f32),
-    f0: f32,
-) -> KsRenderParams {
+/// ensemble rate: its held gain, which a release caps.
+fn main_string(params: &ModalParams, m: &Macros, ens_rate: f32, f0: f32) -> KsRenderParams {
     KsRenderParams {
         lp: lp_coeff(m.bright),
         gain: LoopGain::from_t60(t60(m.damp), f0),
-        body: params.body,
-        stiffness,
         ens_rate,
         ens_depth: params.ens_depth,
         ens_mix: params.ens_mix,
@@ -922,7 +930,7 @@ fn render_bowed(b: &mut BowedString, output: &mut [f32; BLOCK_SIZE]) {
             0.0
         };
         let bow_force = exciter_amp * 4.0;
-        let gain = b.string.ring_gain(BOW_GAIN);
+        let gain = b.release.gain(BOW_GAIN);
 
         // Read from delay line
         let string_vel = b.string.ring_tap(b.written);
@@ -948,20 +956,20 @@ fn render_bowed(b: &mut BowedString, output: &mut [f32; BLOCK_SIZE]) {
 /// The main string and, with a halo, the seven it sets ringing; bare, the
 /// main string alone.
 fn render_sympathetic(
-    main: &mut KsString,
+    main: &mut StringVoice,
     set: Option<&mut SympatheticSet>,
     output: &mut [f32; BLOCK_SIZE],
     (params, m): (&ModalParams, &Macros),
     f0: f32,
 ) {
-    // STRUCTURE tunes the halo only: the main string has no stiffness.
-    let main_params = main_string((params, m), (0.0, SYMP_ENS_RATE), f0);
+    let main_params = main_string(params, m, SYMP_ENS_RATE, f0);
     let coupling = 0.1 * params.couple;
     let level = 0.6 * params.halo;
 
     let Some(set) = set else {
         for s in output.iter_mut() {
-            *s = libm::tanhf(main.tick_full(&main_params));
+            let x = main.tick(&main_params);
+            *s = libm::tanhf(main.colour(x));
         }
         return;
     };
@@ -971,15 +979,13 @@ fn render_sympathetic(
     let halo = set.ratios.map(|r| KsRenderParams {
         lp,
         gain: LoopGain::from_t60(halo_t60, f0 * r),
-        body: 0.0,
-        stiffness: 0.0,
         ens_rate: 0.0,
         ens_depth: 0.0,
         ens_mix: 0.0,
     });
     for s in output.iter_mut() {
         // 1. Main string tick
-        let main_out = main.tick_full(&main_params);
+        let main_out = main.tick(&main_params);
 
         // 2. Couple main string output into sympathetic strings
         let sym_input = main_out * coupling;
@@ -992,9 +998,9 @@ fn render_sympathetic(
             sym_sum += sym.tick_coupled(p, sym_input, pending);
         }
 
-        // 4. Mix: main + sympathetic
+        // 4. Mix: main + sympathetic, through BODY
         let mixed = main_out + sym_sum * level;
-        *s = libm::tanhf(mixed);
+        *s = libm::tanhf(main.colour(mixed));
     }
 }
 
@@ -1059,9 +1065,7 @@ mod tests {
                 damp: damp_from_v1_decay(decay),
                 ..Default::default()
             };
-            let got = main_string((&p, &Macros::of(&p)), (0.0, 0.0), 130.81)
-                .gain
-                .get();
+            let got = main_string(&p, &Macros::of(&p), 0.0, 130.81).gain.get();
             let want = 0.999 - 0.009 * decay;
             assert!((got - want).abs() < 1e-5, "DECAY {decay}: {got} vs {want}");
         }
@@ -1125,7 +1129,7 @@ mod tests {
     /// Sympathetic's eight lines: the main string, then its set's seven.
     fn lines<'a>(e: &'a ModalEngine, pool: &'a SymPool) -> Vec<&'a KsString> {
         match &e.model {
-            ModelSlot::Sympathetic(m) => core::iter::once(&m.main)
+            ModelSlot::Sympathetic(m) => core::iter::once(&m.main.string)
                 .chain(&pool.sets[set_of(m).index()].strings)
                 .collect(),
             _ => unreachable!(),
@@ -1145,7 +1149,7 @@ mod tests {
         let ModelSlot::Sympathetic(m) = &mut e.model else {
             unreachable!()
         };
-        m.main.soil();
+        m.main.string.soil();
         for s in pool.sets[set_of(m).index()].strings.iter_mut() {
             s.soil();
         }
@@ -1229,7 +1233,7 @@ mod tests {
         let ModelSlot::Sympathetic(m) = &mut e.model else {
             unreachable!()
         };
-        m.main.reseed();
+        m.main.string.reseed();
         e.note_on(84, 100, &p, SR, &mut pool);
         for (i, s) in lines(&e, &pool).into_iter().enumerate() {
             let (buf, _) = s.line();

@@ -164,6 +164,7 @@ fn sympathetic_pool_fits_d2() {
     let inst = size_of::<Instrument>();
     for (name, size) in [
         ("SympatheticVoice", layout::SYMPATHETIC_VOICE),
+        ("StringVoice", layout::STRING),
         ("BowedString", layout::BOWED),
         ("ModelSlot", layout::MODEL_SLOT),
         ("SympatheticSet", size_of::<SympatheticSet>()),
@@ -176,9 +177,10 @@ fn sympathetic_pool_fits_d2() {
         eprintln!("{name:>16} {size:>7} B");
     }
     let align = layout::MODEL_SLOT_ALIGN;
+    let largest = layout::SYMPATHETIC_VOICE.max(layout::BOWED);
     assert!(
-        layout::MODEL_SLOT <= layout::BOWED.next_multiple_of(align) + align,
-        "ModelSlot = {} B: Sympathetic sizes the voice",
+        layout::MODEL_SLOT <= largest.next_multiple_of(align) + align,
+        "ModelSlot = {} B: a model and the tag, not more",
         layout::MODEL_SLOT
     );
     assert!(
