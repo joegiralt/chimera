@@ -1,0 +1,4 @@
+[package]
+name = "chimera-theory"
+version.workspace = true
+edition.workspace = true

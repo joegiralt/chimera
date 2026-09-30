@@ -252,6 +252,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "chimera-theory"
+version = "0.1.0"
+
+[[package]]
 name = "chimera-waves"
 version = "0.1.0"
 
