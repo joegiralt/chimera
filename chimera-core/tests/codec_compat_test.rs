@@ -345,8 +345,8 @@ fn old_modal_patches_translate() {
 
 /// A v1 Bowed patch on the two-delay bow (plan Task 14): re-recorded
 /// deliberately, since the one-loop bow played an octave low (#240).
-const BOWED_V1_HELD: u64 = 0x0a5b_5fd8_dd2a_79ee;
-const BOWED_V1_RELEASED: u64 = 0x2a97_6168_8e68_ae5f;
+const BOWED_V1_HELD: u64 = 0x4ff7_4f3d_d407_e80c;
+const BOWED_V1_RELEASED: u64 = 0x22d5_d84b_a143_3970;
 /// The one-loop bow's held C3, second half of its first second, recorded at 330298c.
 const BOWED_V1_RMS: f32 = 0.380_809_55;
 
