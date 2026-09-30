@@ -398,22 +398,25 @@ impl Key {
     }
 
     /// Stacks every other note of the set from the degree's note; degrees
-    /// wrap in sets under 7 notes. Stacks that name no quality take the
-    /// nearest one.
+    /// wrap in sets under 7 notes. The chord keeps exactly the stacked
+    /// tones, whether or not they name a quality.
     pub const fn chord(self, d: Degree, st: Stack) -> Chord {
         let (root, m) = self.scale.stack(d, st);
-        Chord::new(self.tonic.up(root), Quality::nearest(m).0)
+        let root = self.tonic.up(root);
+        Chord::built(root, root, PcSet(rotate(m, root)))
     }
 
     pub const fn triad(self, d: Degree) -> Chord {
         self.chord(d, Stack::Triad)
     }
 
-    /// "iv", "V7", "iio": case from the quality.
+    /// "iv", "V7", "iio": case from the quality; "I?" when the stack
+    /// names no quality on the degree's own note.
     pub const fn degree_label(self, d: Degree, st: Stack) -> DegreeLabel {
+        let c = self.chord(d, st);
         DegreeLabel {
             degree: d,
-            quality: self.chord(d, st).quality,
+            quality: Quality::exact(c.tones.0, c.root),
         }
     }
 }
@@ -505,9 +508,21 @@ impl Quality {
         self.def().mask
     }
 
+    /// The quality whose tones are exactly `set` (absolute) read from `root`.
+    const fn exact(set: u16, root: PitchClass) -> Option<Quality> {
+        let m = relative(set, root);
+        let mut i = 0;
+        while i < Self::ALL.len() {
+            if Self::ALL[i].mask() == m {
+                return Some(Self::ALL[i]);
+            }
+            i += 1;
+        }
+        None
+    }
+
     /// The best-scoring quality for a root-relative set: 2 per shared tone,
     /// less 1 per missing or extra one; ties go to table order.
-    /// Provisional.
     const fn nearest(m: u16) -> (Quality, i8) {
         let mut best = (Quality::Maj, i8::MIN);
         let mut i = 0;
@@ -567,16 +582,166 @@ impl Iterator for Tones {
 
 impl ExactSizeIterator for Tones {}
 
-/// A root and a quality; the tones are derived.
+/// A set of pitch classes; bit n is pitch class n.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct PcSet(u16);
+
+impl PcSet {
+    pub const fn of(pcs: &[PitchClass]) -> PcSet {
+        let mut m = 0;
+        let mut i = 0;
+        while i < pcs.len() {
+            m |= pcs[i].bit();
+            i += 1;
+        }
+        PcSet(m)
+    }
+
+    pub const fn contains(self, pc: PitchClass) -> bool {
+        self.0 & pc.bit() != 0
+    }
+
+    pub const fn len(self) -> usize {
+        self.0.count_ones() as usize
+    }
+
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    /// Ascending from C.
+    pub fn iter(self) -> impl ExactSizeIterator<Item = PitchClass> {
+        Tones {
+            mask: self.0,
+            next: 0,
+        }
+        .map(|i| PitchClass::C + i)
+    }
+}
+
+/// Exactly the tones played or stacked, with the note it was built on
+/// (`root`) and the lowest one (`bass`), both always among the tones.
+/// The name is a label worked out from the tones: see [`ChordLabel`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Chord {
     root: PitchClass,
-    quality: Quality,
+    bass: PitchClass,
+    tones: PcSet,
 }
 
 impl Chord {
+    /// Callers pass `root` and `bass`; both are forced into the set.
+    const fn built(root: PitchClass, bass: PitchClass, tones: PcSet) -> Chord {
+        Chord {
+            root,
+            bass,
+            tones: PcSet(tones.0 | root.bit() | bass.bit()),
+        }
+    }
+
+    /// The quality's tones on `root`, in root position.
     pub const fn new(root: PitchClass, quality: Quality) -> Chord {
-        Chord { root, quality }
+        Chord::built(root, root, PcSet(rotate(quality.mask(), root)))
+    }
+
+    /// The same tones over another of them; None if `bass` isn't one.
+    pub const fn over(self, bass: PitchClass) -> Option<Chord> {
+        if self.tones.contains(bass) {
+            Some(Chord { bass, ..self })
+        } else {
+            None
+        }
+    }
+
+    /// A played chord: its pitch classes, built on the lowest note.
+    /// None under two classes.
+    pub fn from_notes(notes: &[Note]) -> Option<Chord> {
+        let bass = notes.iter().min()?.pc();
+        let played = notes.iter().fold(0u16, |m, n| m | n.pc().bit());
+        (played.count_ones() >= 2).then_some(Chord::built(bass, bass, PcSet(played)))
+    }
+
+    /// The note it was built on: the stacked degree or the played bass.
+    pub const fn root(self) -> PitchClass {
+        self.root
+    }
+
+    pub const fn bass(self) -> PitchClass {
+        self.bass
+    }
+
+    pub const fn tones(self) -> PcSet {
+        self.tones
+    }
+
+    pub const fn contains(self, pc: PitchClass) -> bool {
+        self.tones.contains(pc)
+    }
+
+    /// Candidate roots in naming order: the root, the bass, then the
+    /// other tones rising from the root.
+    const fn candidate(self, k: usize) -> PitchClass {
+        match k {
+            0 => self.root,
+            1 => self.bass,
+            _ => self.root.up(Interval::ALL[k - 1]),
+        }
+    }
+
+    /// Tries every tone as the root for an exact quality, in
+    /// [`candidate`](Self::candidate) order. With none, the nearest quality
+    /// over every tone, marked approximate.
+    pub const fn label(self) -> ChordLabel {
+        let mut k = 0;
+        while k < 13 {
+            let r = self.candidate(k);
+            if self.tones.contains(r)
+                && let Some(q) = Quality::exact(self.tones.0, r)
+            {
+                return ChordLabel::new(r, q, self.bass, true);
+            }
+            k += 1;
+        }
+        let mut best = (self.root, Quality::Maj, i8::MIN);
+        let mut k = 0;
+        while k < 13 {
+            let r = self.candidate(k);
+            if self.tones.contains(r) {
+                let (q, score) = Quality::nearest(relative(self.tones.0, r));
+                if score > best.2 {
+                    best = (r, q, score);
+                }
+            }
+            k += 1;
+        }
+        ChordLabel::new(best.0, best.1, self.bass, false)
+    }
+}
+
+impl Display for Chord {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        self.label().fmt(f)
+    }
+}
+
+/// A chord's name: "Am", "Am/C", or "Csus2?" when no quality matches the
+/// tones exactly and this is the nearest.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ChordLabel {
+    root: PitchClass,
+    quality: Quality,
+    bass: PitchClass,
+    exact: bool,
+}
+
+impl ChordLabel {
+    const fn new(root: PitchClass, quality: Quality, bass: PitchClass, exact: bool) -> Self {
+        ChordLabel {
+            root,
+            quality,
+            bass,
+            exact,
+        }
     }
 
     pub const fn root(self) -> PitchClass {
@@ -587,54 +752,51 @@ impl Chord {
         self.quality
     }
 
-    const fn mask(self) -> u16 {
-        rotate(self.quality.mask(), self.root)
+    /// Shown after a slash when it isn't the root.
+    pub const fn bass(self) -> PitchClass {
+        self.bass
     }
 
-    pub fn tones(self) -> impl ExactSizeIterator<Item = PitchClass> {
-        self.quality.tones().map(move |i| self.root + i)
-    }
-
-    pub const fn contains(self, pc: PitchClass) -> bool {
-        self.mask() & pc.bit() != 0
-    }
-
-    /// A played chord: rooted on the lowest note, with the nearest
-    /// quality to its pitch classes. None under two classes.
-    pub fn from_notes(notes: &[Note]) -> Option<Chord> {
-        let root = notes.iter().min()?.pc();
-        let played = notes.iter().fold(0u16, |m, n| m | n.pc().bit());
-        if played.count_ones() < 2 {
-            return None;
-        }
-        Some(Chord::new(root, Quality::nearest(relative(played, root)).0))
+    pub const fn is_exact(self) -> bool {
+        self.exact
     }
 }
 
-impl Display for Chord {
+impl Display for ChordLabel {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.root)?;
-        write_ascii(f, &self.quality.def().name)
+        write_ascii(f, &self.quality.def().name)?;
+        if self.bass != self.root {
+            write!(f, "/{}", self.bass)?;
+        }
+        if !self.exact {
+            f.write_char('?')?;
+        }
+        Ok(())
     }
 }
 
-/// A degree with its quality, shown as a roman numeral.
+/// A degree with the quality its stack names on the degree's own note,
+/// if any, shown as a roman numeral.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct DegreeLabel {
     pub degree: Degree,
-    pub quality: Quality,
+    pub quality: Option<Quality>,
 }
 
 impl Display for DegreeLabel {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let minor = self.quality.is_minor();
+        let minor = matches!(self.quality, Some(q) if q.is_minor());
         NUMERALS[self.degree as usize]
             .iter()
             .take_while(|&&b| b != b' ')
             .try_for_each(|&b| {
                 f.write_char(if minor { b.to_ascii_lowercase() } else { b } as char)
             })?;
-        write_ascii(f, &self.quality.def().numeral)
+        match self.quality {
+            Some(q) => write_ascii(f, &q.def().numeral),
+            None => f.write_char('?'),
+        }
     }
 }
 
@@ -648,7 +810,7 @@ impl SnapTo {
     const fn mask(self) -> u16 {
         match self {
             SnapTo::Scale(s) => s.mask(),
-            SnapTo::Chord(c) => c.mask(),
+            SnapTo::Chord(c) => c.tones.0,
         }
     }
 
@@ -658,6 +820,7 @@ impl SnapTo {
 }
 
 /// The nearest note in `to`, ties by `TIE`, staying inside 0..=127.
+/// A chord snaps to exactly its tones.
 pub const fn snap(note: Note, to: SnapTo) -> Note {
     let set = to.mask();
     let n = note.0 as i16;
@@ -696,8 +859,8 @@ const _: () = {
         let mut d = 0;
         while n == 7 && d < 7 {
             let deg = Degree::ALL[d];
-            assert!(Quality::nearest(s.stack(deg, Stack::Triad).1).1 == 6);
-            assert!(Quality::nearest(s.stack(deg, Stack::Seventh).1).1 == 8);
+            assert!(Quality::exact(s.stack(deg, Stack::Triad).1, PitchClass::C).is_some());
+            assert!(Quality::exact(s.stack(deg, Stack::Seventh).1, PitchClass::C).is_some());
             d += 1;
         }
         i += 1;
