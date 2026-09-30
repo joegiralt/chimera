@@ -83,6 +83,11 @@ pub const BURST_LEN: Range = Range {
     min: 0.01,
     oct: 10.965_784,
 };
+/// GLIDE TIME (#254), 1 ms – 2 s: a steal's glide, about there (95 %).
+pub const GLIDE_TIME: Range = Range {
+    min: 1e-3,
+    oct: 10.965_784,
+};
 /// A B slot evaluated per block stops its rates here: the block rate ÷ 8
 /// (spec § Rates), 93.75 Hz at 48 kHz and 86.1 Hz at 44.1 kHz.
 pub fn block_rate_max(sample_rate: u32) -> f32 {
@@ -132,6 +137,7 @@ pub enum Law {
     BRate,
     BurstRate,
     BurstLen,
+    GlideTime,
     Phase,
     Pct,
     Curve,
@@ -148,6 +154,7 @@ impl Law {
             Law::BRate => B_RATE,
             Law::BurstRate => BURST_RATE,
             Law::BurstLen => BURST_LEN,
+            Law::GlideTime => GLIDE_TIME,
             Law::Phase | Law::Pct | Law::Curve | Law::Tilt => return None,
         })
     }

@@ -191,6 +191,19 @@ fn v1_fixtures_render_identically() {
 
 /// Holds only while the factory Sounds are unchanged; the render test is the
 /// lasting one.
+/// Every v1 file, saved before STEAL (#254), steals CUT.
+#[test]
+fn v1_fixtures_steal_cut() {
+    for (name, _) in sources() {
+        let s = decode(&fixture(&name)).unwrap();
+        assert_eq!(
+            s.params.pitch.steal,
+            chimera_core::params::Steal::Cut,
+            "{name}"
+        );
+    }
+}
+
 #[test]
 fn v1_fixtures_equal_factory() {
     for i in 0..FACTORY_LEN {

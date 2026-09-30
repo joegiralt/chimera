@@ -394,3 +394,39 @@ fn neutral_is_pinned() {
         assert!(got == want, "neutral {e:?} moved; now:\n{got}");
     }
 }
+
+/// STEAL and GLIDE TIME (#254) round-trip.
+#[test]
+fn steal_and_glide_time_round_trip() {
+    use chimera_core::params::Steal;
+    for e in EngineType::ALL {
+        let mut s = Sound::init(e);
+        s.params.pitch.steal = Steal::Glide;
+        s.params.pitch.set(PitchParams::GLIDE_TIME, 0.25);
+        assert_round_trip(&s);
+        let d = decode(&encode(&s)).unwrap();
+        assert_eq!(d.params.pitch.steal, Steal::Glide);
+        assert_eq!(d.params.pitch.glide_time, 0.25);
+    }
+}
+
+/// A Pitch record from before STEAL (PITCH and FINE only) decodes to CUT,
+/// GLIDE TIME at its 150 ms.
+#[test]
+fn a_pitch_record_before_steal_decodes_to_cut() {
+    use chimera_core::params::Steal;
+    let mut p = vec![19];
+    for (id, v) in [(PitchParams::PITCH, 3.0_f32), (PitchParams::FINE, 0.0)] {
+        p.push(id.0);
+        p.extend_from_slice(&v.to_le_bytes());
+    }
+    for e in EngineType::ALL {
+        let got = decode(&file(&[engine(e), (RecordTag::Block, p.clone())])).unwrap();
+        assert_eq!(got.params.pitch.pitch, 3.0);
+        assert_eq!(got.params.pitch.steal, Steal::Cut, "{e:?}");
+        assert!(
+            (got.params.pitch.glide_secs() - 0.150).abs() < 1e-4,
+            "{e:?}"
+        );
+    }
+}
