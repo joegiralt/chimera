@@ -327,25 +327,28 @@ impl ModalEngine {
     /// task 12): the model's last benched bill plus what step A added,
     /// counted as the hot path's instructions in the thumbv7em release
     /// build before (6f8fffc) and after, at 1.46 cycles an instruction
-    /// (ADR 0052), plus 10 %, rounded up to 10. Per-block work is spread
-    /// over the block's 64 samples; a `powf` or a `set_period` is taken as
-    /// about 130 instructions.
+    /// (ADR 0052), plus 10 % (a saving taken at 90 %), rounded up to 10.
+    /// Per-block work is spread over the block's 64 samples, a ring's
+    /// wrap-free spans at the bench's notes (2.2 a block); a `powf` or a
+    /// `set_period` is taken as about 130 instructions (ADR 0056, task 11b).
     ///
-    /// STRING, 390 + 70: 30 instructions a sample (99 to 129: the
-    /// three-tap low-pass, four dispersion allpasses, the tuning allpass,
-    /// the release and the output blocker), 44 cycles; DAMP's two `powf`s
-    /// a block, 8; the dispersion's re-split each block STRUCTURE glides,
-    /// 8, billed always. BODY and the ensemble bill apart.
-    pub const COST_STRING: Cost = Cost(460);
+    /// STRING, 390 − 69, rounded up to 330: 99 instructions a sample to
+    /// 34 (the string's spans, 21 a sample, the three-tap low-pass, four
+    /// dispersion allpasses and the tuning allpass in registers; the output
+    /// blocker), −86 cycles; DAMP's two `powf`s a block, 8, and the
+    /// dispersion's re-split each block STRUCTURE glides, 8, billed always,
+    /// +18. BODY and the ensemble bill apart.
+    pub const COST_STRING: Cost = Cost(330);
     /// 620 + 100: 60 instructions a sample (143 to 203: the tuning allpass
     /// on the ring, the tap that follows the write (#206), the release, the
     /// bow's lift and the output blocker), 87 cycles.
     pub const COST_BOWED: Cost = Cost(720);
-    /// 809 (benched, ADR 0054) + 560, rounded to 1,370: 323 instructions a
-    /// sample (419 to 742), 471 cycles, nearly all in the halo, each
-    /// string's tick 42 to 87 (the three-tap low-pass's three wrapped reads
-    /// and the tuning allpass); ten `powf`s a block for the loop gains, 32.
-    pub const COST_SYMPATHETIC: Cost = Cost(1_370);
+    /// 809 (benched, ADR 0054) − 271, rounded up to 540: 419 instructions a
+    /// sample to 187, −306 cycles. Each halo string runs its block in
+    /// spans, 19 a sample (42 before, 87 at task 11); the main string 15;
+    /// the coupling, the mix and the `tanhf` dispatch 32. Ten `powf`s a
+    /// block for the loop gains, +35.
+    pub const COST_SYMPATHETIC: Cost = Cost(540);
     /// The resonator bank: this plus `COST_MODE` per mode. Unchanged: its
     /// sample loop is as benched (MDL RES /VOICE 1,865; less the chain's 57,
     /// 1,808 at 32 modes against 1,900 billed), and the macros' easing is a few operations a block.
@@ -353,12 +356,13 @@ impl ModalEngine {
     pub const COST_BANK: Cost = Cost(460);
     pub const COST_MODE: Cost = Cost(45);
 
-    /// More on STRING and SYMP with BODY above 0: three band-passes, 80
-    /// instructions a sample on SYMP's mix (65 on STRING's).
-    pub const BODY: Cost = Cost(130);
+    /// More on STRING and SYMP with BODY above 0: three band-passes over
+    /// the block, their state in registers, 47 instructions a sample.
+    pub const BODY: Cost = Cost(80);
     /// More on STRING and SYMP with ENS MIX above 0: two interpolated heads
-    /// and the LFO's rotation, 94 instructions a sample.
-    pub const ENSEMBLE: Cost = Cost(160);
+    /// and the LFO's rotation, 82 instructions a sample on STRING (65 on
+    /// SYMP's main string).
+    pub const ENSEMBLE: Cost = Cost(140);
 
     /// `p`'s model, as the voice plays it from its next note-on.
     pub fn cost(p: &ModalParams) -> Cost {
@@ -401,10 +405,11 @@ impl ModalEngine {
 
     /// More on SYMP with a route into STRUCTURE, which can keep the halo
     /// gliding: seven `set_period`s every `GLIDE_STEP` (28 a block) and
-    /// the glide's lerp, about 60 instructions a sample, and seven
-    /// `exp2f`s a chord step. A host estimate, as `PITCH`, until the
-    /// bench's SYM LFO row reads it (task 12).
-    pub const CHORD: Cost = Cost(100);
+    /// the glide's lerp, about 60 instructions a sample; the halo's block
+    /// cut in four, three more runs of each string, 46; and seven `exp2f`s
+    /// a chord step. A host estimate, as `PITCH`, until the bench's SYM LFO
+    /// row reads it (task 12).
+    pub const CHORD: Cost = Cost(180);
 
     /// An idle engine set to play `mode`, by value, through the stack:
     /// tests only. Sympathetic borrows a slot of `pool` for voice 0.
