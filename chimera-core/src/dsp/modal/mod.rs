@@ -406,9 +406,10 @@ impl ModalEngine {
     /// More on SYMP with a route into STRUCTURE, which can keep the halo
     /// gliding: seven `set_period`s every `GLIDE_STEP` (28 a block) and
     /// the glide's lerp, about 60 instructions a sample; the halo's block
-    /// cut in four, three more runs of each string, 46; and seven `exp2f`s
-    /// a chord step. A host estimate, as `PITCH`, until the bench's SYM LFO
-    /// row reads it (task 12).
+    /// cut in four, three more runs of each string, 3 × (87 + 7 × (71 +
+    /// 65)) a block, 48.7; (60 + 48.7) × 1.46 × 1.1 = 174.6; and seven
+    /// `exp2f`s a chord step. A host estimate, as `PITCH`, until the
+    /// bench's SYM LFO row reads it (task 12).
     pub const CHORD: Cost = Cost(180);
 
     /// An idle engine set to play `mode`, by value, through the stack:

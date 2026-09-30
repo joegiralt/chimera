@@ -78,20 +78,33 @@ impl Ensemble {
     /// phase with the dry at DEPTH 0, within [2, delay − 2] (2 under 4).
     #[inline]
     pub fn head_delays(&self, delay: usize) -> [f32; ENS_HEADS] {
-        let (mid, top) = (2.0 + self.amp, top(delay));
+        let (mid, lim) = (2.0 + self.amp, self.limit(delay));
         // Clamped: the LFO's radius drifts past 1 by rounding. Not `clamp`
         // or `min`, whose checks run every sample; no head is NaN.
         [self.sin, self.cos].map(|s| {
             let o = (mid + self.amp * s).max(2.0);
-            if o > top { top } else { o }
+            if o > lim { lim } else { o }
         })
     }
 
-    /// Past the oldest sample a head reads behind the write this block, on
-    /// a line of `delay`: `set` holds the LFO's radius to 1 within 1e-5, so
-    /// no head passes `2 + 2.001·A`, and one more sample covers rounding.
+    /// The farthest a head may sit: the loop's `top`, and `2 + 2.001·A`,
+    /// which `set`'s radius (1 within 1e-5) never reaches, so it binds only
+    /// if the LFO drifts, and `reach` holds by construction.
+    fn limit(&self, delay: usize) -> f32 {
+        let (swing, top) = (2.0 + 2.001 * self.amp, top(delay));
+        if swing < top { swing } else { top }
+    }
+
+    /// Past the oldest sample a head reads behind the write, on a line of
+    /// `delay`: the older tap of a head at `limit`, and one more.
     pub fn reach(&self, delay: usize) -> usize {
-        (2.0 + 2.001 * self.amp).min(top(delay)) as usize + 2
+        self.limit(delay) as usize + 2
+    }
+
+    /// The LFO's radius scaled by `k`: drift, for the tests.
+    #[cfg(test)]
+    pub(super) fn drift(&mut self, k: f32) {
+        (self.cos, self.sin) = (self.cos * k, self.sin * k);
     }
 
     #[inline]
@@ -110,17 +123,20 @@ mod tests {
     const SR: u32 = 48_000;
 
     /// Every head stays in `[2, delay − 2]`, or at 2 on a loop too short to
-    /// swing (F7), and its older tap short of `reach`.
+    /// swing (F7), and its older tap short of `reach`; `set` a block apart,
+    /// as the engine calls it, and the LFO's limit never binding.
     #[test]
     fn heads_stay_inside_the_loop() {
         for delay in [3, 23, 1010] {
             for depth in [0.0, 1.0] {
-                for rate in [0.0, 1.0] {
+                for rate in [0.0, 0.5, 1.0] {
                     let mut e = Ensemble::new(depth, rate_hz(rate), SR);
                     for i in 0..100_000 {
-                        if i % 32 == 0 {
+                        if i % 64 == 0 {
                             e.set(delay);
                         }
+                        let free = 2.0 + e.amp + e.amp * e.sin.abs().max(e.cos.abs());
+                        assert!(free.max(2.0) <= e.limit(delay) || e.limit(delay) == top(delay));
                         for o in e.head_delays(delay) {
                             assert!(o as usize + 1 < e.reach(delay), "{delay}: {o}");
                             if delay == 3 {
@@ -134,6 +150,28 @@ mod tests {
                         }
                         e.advance();
                     }
+                }
+            }
+        }
+    }
+
+    /// However far the LFO drifts, or however deep, no head passes `reach`.
+    #[test]
+    fn a_drifted_lfo_is_clamped_short_of_reach() {
+        for delay in [4, 23, 979] {
+            for (depth, k) in [(1.0, 1.5), (1.0, 1e6), (1e3, 1.0), (0.0, 1e9)] {
+                let mut e = Ensemble::new(depth, rate_hz(1.0), SR);
+                e.set(delay);
+                e.drift(k);
+                for _ in 0..10_000 {
+                    for o in e.head_delays(delay) {
+                        assert!(
+                            (2.0..=e.limit(delay)).contains(&o),
+                            "{delay} {depth} {k}: {o}"
+                        );
+                        assert!(o as usize + 1 < e.reach(delay), "{delay} {depth} {k}: {o}");
+                    }
+                    e.advance();
                 }
             }
         }
