@@ -215,6 +215,11 @@ impl KsString {
         self.behind(self.delay.min(written.max(1) as usize) - 1)
     }
 
+    /// Bowed's ring: this sample's gain, `held` until a release.
+    pub(super) fn ring_gain(&mut self, held: LoopGain) -> LoopGain {
+        self.release.gain(held)
+    }
+
     /// Bowed's ring: stores `x` through the allpass, stepping on round it.
     pub(super) fn ring_push(&mut self, x: f32) {
         self.advance();

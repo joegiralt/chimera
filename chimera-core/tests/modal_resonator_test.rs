@@ -432,3 +432,61 @@ fn a_released_halo_outlasts_its_main_string() {
     let (f, b) = (last_heard(&full), last_heard(&bare));
     assert!(f > b + SR as usize / 20, "halo heard to {f}, main to {b}");
 }
+
+/// RMS in dB of `out`'s 0.1 s from `at` s.
+fn db_at(out: &[f32], at: f32) -> f32 {
+    let i = (at * SR as f32) as usize;
+    20.0 * common::rms(&out[i..i + SR as usize / 10]).log10()
+}
+
+/// The owner's ruling: the halo gets no release. After note-off it decays
+/// as it does held, within 10 %, over 0.5 to 1.5 s; the main string alone
+/// is silent by 0.5 s. The halo is the full note less the bare one: the
+/// halo never drives the main string, and at these levels the tanh is
+/// linear.
+#[test]
+fn a_released_halo_rings_on_its_held_decay() {
+    let second = SR as usize / BLOCK_SIZE;
+    // DAMP for a 2 s main string, so the halo falls about 15 dB a second.
+    let p = ModalParams {
+        mode: ResonatorMode::Sympathetic,
+        damp: 0.62,
+        ..Default::default()
+    };
+    let halo = |on: usize, off: usize| {
+        let full = play_modal(&p, 60, on, off);
+        let bare = play_modal_bare(&p, 60, common::VEL, on, off);
+        let d: Vec<f32> = full.iter().zip(&bare).map(|(f, b)| f - b).collect();
+        (d, bare)
+    };
+    let (held, _) = halo(3 * second, 0);
+    let (released, main) = halo(second / 2, 5 * second / 2);
+    let slope = |x: &[f32]| db_at(x, 2.0) - db_at(x, 1.0);
+    let (h, r) = (slope(&held), slope(&released));
+    assert!(h < -5.0, "held halo falls {h} dB");
+    assert!((r / h - 1.0).abs() < 0.1, "released {r} dB, held {h} dB");
+    let tail = &main[SR as usize..];
+    assert!(
+        common::peak(tail) < 1e-3,
+        "main string {}",
+        common::peak(tail)
+    );
+}
+
+/// Bowed's lifted bow: the ring decays at the strings' release, silent
+/// within 0.5 s of note-off at C2.
+#[test]
+fn a_released_bowed_c2_is_silent_within_half_a_second() {
+    let second = SR as usize / BLOCK_SIZE;
+    let p = ModalParams {
+        mode: ResonatorMode::Bowed,
+        ..Default::default()
+    };
+    let out = play_modal(&p, 36, second, second);
+    assert!(
+        common::peak(&out[SR as usize - BLOCK_SIZE..SR as usize]) > 1e-2,
+        "bowed"
+    );
+    let tail = &out[SR as usize * 3 / 2..];
+    assert!(common::peak(tail) < 1e-3, "{}", common::peak(tail));
+}

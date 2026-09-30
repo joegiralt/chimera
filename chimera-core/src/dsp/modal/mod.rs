@@ -504,31 +504,23 @@ impl ModalEngine {
         }
     }
 
-    /// The strings' loop gains ramp to a `RELEASE_T60` ring over
-    /// `RELEASE_SAMPLES`, the halo's to twice it; the bow lifts as fast.
-    /// Nothing scales a buffer (#51). The bank rings on.
-    pub fn note_off(&mut self, pool: &mut SymPool) {
+    /// The string's loop gain ramps to a `RELEASE_T60` ring over
+    /// `RELEASE_SAMPLES`, and Bowed's as the bow lifts. Nothing scales a
+    /// buffer (#51). The bank and SYMP's halo ring on: sympathetic strings
+    /// ring until touched (ADR 0054).
+    pub fn note_off(&mut self, _pool: &mut SymPool) {
         // As `render` rings them: f0 in Hz, T60 from the eased DAMP.
         let f0 = self.pitched(self.frequency) * SAMPLE_RATE as f32;
-        let held = t60(self.macros.damp);
-        let release = |s: &mut KsString, scale: f32, f: f32| {
-            s.release(
-                LoopGain::from_t60(scale * held, f),
-                LoopGain::from_t60(scale * RELEASE_T60, f),
-            );
-        };
+        let to = LoopGain::from_t60(RELEASE_T60, f0);
+        let held = LoopGain::from_t60(t60(self.macros.damp), f0);
         match &mut self.model {
-            ModelSlot::String(string) => release(string, 1.0, f0),
-            ModelSlot::Bowed(b) => b.force_to = 0.0,
-            ModelSlot::Bank(_) => {}
-            ModelSlot::Sympathetic(m) => {
-                release(&mut m.main, 1.0, f0);
-                if let Some(set) = pool.halo(&m.halo) {
-                    for (sym, r) in set.strings.iter_mut().zip(set.ratios) {
-                        release(sym, HALO_T60, f0 * r);
-                    }
-                }
+            ModelSlot::String(string) => string.release(held, to),
+            ModelSlot::Bowed(b) => {
+                b.force_to = 0.0;
+                b.string.release(BOW_GAIN, to);
             }
+            ModelSlot::Bank(_) => {}
+            ModelSlot::Sympathetic(m) => m.main.release(held, to),
         }
     }
 
@@ -907,10 +899,12 @@ fn main_string(
 /// Bowed's hidden bow, until step B's exciter.
 const BOW_VELOCITY: f32 = 0.5;
 const BOW_FORCE: f32 = 0.5;
+/// The bowed loop's gain per pass, until note-off ramps it down.
+const BOW_GAIN: LoopGain = LoopGain::TOP;
 /// The bow lifts a full force in `RELEASE_SAMPLES`, a softer one sooner.
 const BOW_LIFT: f32 = BOW_FORCE / RELEASE_SAMPLES as f32;
 
-/// Each halo string's T60 over the main string's, held and released.
+/// Each halo string's T60 over the main string's.
 const HALO_T60: f32 = 2.0;
 
 /// SYMP's main string's ensemble rate: ENS RATE is STRING's alone.
@@ -928,9 +922,7 @@ fn render_bowed(b: &mut BowedString, output: &mut [f32; BLOCK_SIZE]) {
             0.0
         };
         let bow_force = exciter_amp * 4.0;
-        // When bow is released, apply decay
-        let release_decay = if exciter_amp < 0.001 { 0.995 } else { 1.0 };
-        let gain = LoopGain::new(0.9995 * release_decay);
+        let gain = b.string.ring_gain(BOW_GAIN);
 
         // Read from delay line
         let string_vel = b.string.ring_tap(b.written);

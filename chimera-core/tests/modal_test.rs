@@ -313,11 +313,9 @@ fn test_structure_spreads_spectrum() {
 
 /// Sympathetic mode (#68): at DAMP and STRUCTURE's top the output stays
 /// finite and inside its tanh's ±1, held and released, and after note-off
-/// the engine falls silent. The slowest released loop is the unison halo
-/// string: until Task 7's release, its gain is at most the old DECAY law's
-/// 0.999 − 0.009 · 0.8 · ½, applied once per trip round the f0-period
-/// line, so −60 dB takes at most ln 1000 / −ln of it trips; the loop
-/// low-pass only shortens that.
+/// the engine falls silent. The halo gets no release (ADR 0054), so the
+/// slowest loop is a halo string on its held T60: twice the main string's
+/// 20 s at DAMP 1. The loop low-pass only shortens that.
 #[test]
 fn sympathetic_mode_is_bounded_and_falls_silent() {
     let p = ModalParams {
@@ -337,9 +335,7 @@ fn sympathetic_mode_is_bounded_and_falls_silent() {
     }
     assert!(engine.is_active(), "held note rings");
     engine.note_off(&mut pool);
-    let gain: f32 = 0.999 - 0.009 * (0.8 * 0.5);
-    let trips = libm::logf(1000.0) / -libm::logf(gain);
-    let limit = (trips / note_freq(48) * SR as f32) as usize / 64 + 11; // + the silence count
+    let limit = 40 * SR as usize / 64 + 11; // + the silence count
     let mut blocks = 0;
     while engine.is_active() {
         engine.render(&mut block, &p, SR, &mut pool);
