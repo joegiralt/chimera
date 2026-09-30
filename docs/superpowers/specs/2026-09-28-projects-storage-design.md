@@ -175,47 +175,64 @@ The CRC is recomputed on every UI frame that had input, because only input chang
 
 ## Navigation: one `Location`
 
+(amended 2026-09-30, owner: ADR 0044) The owner's button map of 2026-09-30 reconciles this ladder with ORBIT and the Part-button toggle. The Mixer chain's PART and SENDS pages are rung 2; the `Location` gains ORBIT and the B*n* toggle; SEQ gets a tap and a hold. Where § ADRs and § Decisions awaiting owner review below differ, ADR 0044 rules.
+
 ```rust
 pub struct Location(Loc);              // opaque; `Loc` is private to ui::nav
 enum Loc {
     Projects,                           // rung 0
     Project,                            // rung 1
-    Part(PartId),                       // rung 2
+    Part(PartId, MixPage),              // rung 2: the mixer's PART and SENDS pages (amended 2026-09-30, owner: ADR 0044)
     Sound(PartId),                      // rung 3
     Pages(PartId, PageAt),              // a sound's pages (today's Part chain)
     Fx(PageAt),                         // CHORUS, DELAY, EFX, TAPE, MASTER
     System(PageAt),                     // THEME, UPDATES, ABOUT (+ AUDIO)
+    Orbit(OrbitAt),                     // ORB, RING, CHRD, SCN (amended 2026-09-30, owner: ADR 0044)
 }
 pub struct PageAt { node: u8, sub: u8 }
+pub enum MixPage { Part, Sends }
+pub struct Recall {                    // (amended 2026-09-30, owner: ADR 0044)
+    pages: [PageAt; 6],                 // where each Part's sound pages were left
+    mix: MixPage,                       // the last-used mixer page, all Parts
+    orbit: OrbitAt,                     // the ORBIT page last left
+    from: Location,                     // where SEQ hold came from; never Orbit
+}
 ```
+
+`Recall` sits in `UiState` beside the `Location`, so `Loc` stays `Copy` and non-recursive. Leaving a place writes it. (amended 2026-09-30, owner: ADR 0044)
 
 - **`down(self, row: Row) -> Option<Location>`** is EDIT on the focused row.
   - Projects: the loaded project → `Project`. Another project or `+ NEW` → the guarded replace, then `Project`. `SYSTEM ›` → `System(0,0)`.
-  - Project: Part n → `Part(n)`. `FX ›` → `Fx(0,0)`.
-  - Part: `SOUND ›` → `Sound(p)`.
+  - Project: Part n → `Part(n, recall.mix)` (amended 2026-09-30, owner: ADR 0044). `FX ›` → `Fx(0,0)`.
+  - Part: → `Sound(p)`. The mixer pages have no sub-pages, so EDIT is free there. (amended 2026-09-30, owner: ADR 0044)
   - Sound: the Part's current sound → `Pages(p, 0,0)`. Another slot → a guarded replace; you stay on the rung. An empty slot → LIBRARY aimed at that slot.
   - Pages, Fx, System: sub-page down, as EDIT does today.
-- **`up(self) -> Location`** is a tap on MENU. It goes up one rung from anywhere:
+  - Orbit: on ORB, → `Pages(p, recall.pages[p])`, `p` being the Part the selected ring plays; on ORBIT's other pages, sub-page down, as the ORBIT spec says. (amended 2026-09-30, owner: ADR 0044)
+- **`up(self, &Recall) -> Location`** is a tap on MENU. It goes up one rung from anywhere: pages → Part → Project → Projects. (amended 2026-09-30, owner: ADR 0044)
 
   | From | To |
   |---|---|
   | `Projects` | `Projects` (no-op) |
   | `Project` | `Projects` |
-  | `Part(p)` | `Project` |
-  | `Sound(p)` | `Part(p)` |
-  | `Pages(p, _)` | `Part(p)`, the owner's rule |
+  | `Part(p, _)` | `Project` |
+  | `Sound(p)` | `Part(p, recall.mix)` |
+  | `Pages(p, _)` | `Part(p, recall.mix)`, the owner's rule |
   | `Fx(_)` | `Project` |
   | `System(_)` | `Projects` |
+  | `Orbit(_)` | `recall.from`, where you came from (amended 2026-09-30, owner: ADR 0044) |
 
 - **Sugar**, each defined in code *as* a composition of `down` calls:
   - hold MENU = `Projects.down(SYSTEM)`;
-  - plain B1–B6 = `…down(Part n).down(SOUND).down(current)` = `Pages(n, 0,0)`, exactly as today;
+  - plain B*n* = `…down(Part n).down(SOUND).down(current)` = `Pages(n, 0,0)`, exactly as today, except on Part *n*'s own pages and rung, where it toggles: `Pages(n, _)` → `Part(n, recall.mix)`, and `Part(n, _)` → `Pages(n, recall.pages[n])`. The mixer opens on SENDS until another mixer page is used. (amended 2026-09-30, owner: ADR 0044)
+  - MIX+B*n* = `…down(Part n)` = `Part(n, recall.mix)`, straight to the mixer. MIX+B6 stays Demo until Demo moves to System. (amended 2026-09-30, owner: ADR 0044)
   - EDIT+B1–B6 = `…down(Part n).down(SOUND)` = `Sound(n)`.
-- **Property test (M7).** Every `Location` has a `down` path from `Projects`, and every jump lands where its path ends.
+  - hold SEQ = `Orbit(recall.orbit)`, and `from` = where you were; inside ORBIT, hold SEQ = `recall.from`. (amended 2026-09-30, owner: ADR 0044)
+- **Property test (M7).** Every `Location` has a `down` path from `Projects`, and every jump lands where its path ends. The B*n* toggle and the ORBIT round trip are covered too: `from` is never `Orbit`, and `up` and hold SEQ from ORBIT both land on `from`. (amended 2026-09-30, owner: ADR 0044)
+- **Inside ORBIT** B1–B5 pick a ring, MIX+B1–B5 mute one and B6 is PLAY/STOP, as the ORBIT spec § 7 says. ORBIT keeps its own B layer. (amended 2026-09-30, owner: ADR 0044)
 - **What goes away:**
   - `ChainNav`'s own `ChainId` and `UiMode::SoundBrowser` are folded into `Location`. The chain defs stay as the page source for `Pages`, `Fx` and `System`.
-  - `ChainId::Mixer` and MIX+B1–B5 go: the PART and SENDS pages become rung 2, and the FX nodes become `Fx`.
-  - MIX+B6 (Demo) becomes a `DEMO ›` row in System, in debug builds only.
+  - `ChainId::Mixer` goes, but the Mixer chain is not retired: its PART and SENDS pages become rung 2, reached by MIX+B*n* or by B*n* from the Part's pages, and its FX nodes become `Fx`. (amended 2026-09-30, owner: ADR 0044)
+  - MIX+B6 (Demo) becomes a `DEMO ›` row in System, in debug builds only; until then it stays Demo. (amended 2026-09-30, owner: ADR 0044)
 
 ### The keys (H3)
 
@@ -224,10 +241,13 @@ Each key has one meaning, and every rung shows it in its legend.
 | Key | Meaning |
 |---|---|
 | **EDIT** | Down or open (on pages, sub-page down). |
-| **MENU tap** | Up one rung (the `up` table). Acts **on release**, and only if released before `MENU_HOLD_MS`. |
-| **MENU hold** | System, from anywhere. Fires when MENU has been down for `MENU_HOLD_MS` = **600 ms**, a tunable constant. The release after a hold does nothing. |
-| **SEQ** | Save the thing this rung is about. On pages and in System, it keeps today's sub-page up; the legend says so. |
-| **PLUS / MINUS** | Sideways: the next or previous node on pages, and the next or previous Part on rungs 2 and 3. Inert elsewhere, except the chip toggle on the modal tag screen. |
+| **B*n*** | From anywhere: Part *n*'s sound pages. From Part *n*'s sound pages: Part *n*'s rung, the mixer, on SENDS or the last-used mixer page. From Part *n*'s rung: back to the sound page it left. (amended 2026-09-30, owner: ADR 0044) |
+| **MIX+B*n*** | Straight to Part *n*'s rung. MIX+B6 stays Demo until Demo moves to a debug-only System row. (amended 2026-09-30, owner: ADR 0044) |
+| **MENU tap** | Up one rung (the `up` table): pages → Part → Project → Projects; from ORBIT, back to where you came from. Acts **on release**, and only if released before `HOLD_MS`. (amended 2026-09-30, owner: ADR 0044) |
+| **MENU hold** | System, from anywhere, ORBIT included. Fires when MENU has been down for `HOLD_MS`. The release after a hold does nothing. (amended 2026-09-30, owner: ADR 0044) |
+| **SEQ tap** | Save the thing this rung is about (Sound, Part or Project). On pages, in System and in ORBIT, it keeps today's sub-page up; the legend says so. Acts **on release**, and only if released before `HOLD_MS`. (amended 2026-09-30, owner: ADR 0044) |
+| **SEQ hold** | ORBIT, from anywhere. Inside ORBIT, back to where you came from. Fires at `HOLD_MS`; the release after it does nothing. (amended 2026-09-30, owner: ADR 0044) |
+| **PLUS / MINUS** | Sideways: the next or previous node on pages; on rung 2, PART then SENDS, then on to the next Part's PART (and back the same way); on rung 3, the next or previous Part. Inert elsewhere, except the chip toggle on the modal tag screen. (amended 2026-09-30, owner: ADR 0044) |
 | **MIX+MINUS** | Remove: a pool slot, a project on rung 0, or a library sound. Always behind a confirm. |
 | **MIX+PLUS** | Prime a route on pages (ADR 0017). On a library entry, it opens rename and retag. |
 | **MIX+MENU** | Stays reserved for the chain editor (UX spec § Chain Editor). |
@@ -236,14 +256,15 @@ Timing:
 
 - `ButtonState::Held` means "down for two frames" today and carries no duration.
 - Plan 2 adds press timestamps and **edge latching** in the controls tick. That gives a tap on release, a hold at the threshold, and no press lost during a blocking card operation (H6).
+- One constant, **`ui::hold::HOLD_MS` = 500 ms**, serves MENU and SEQ. It replaces `MENU_HOLD_MS` = 600 ms. ORBIT's pure `HoldGate` reads the latched edges, so there is one mechanism. A tap acts on release and a hold at the threshold, so they never both fire on one key. 500 ms is well above a deliberate tap (100–200 ms), and a tap's latency is its own length, not the threshold. (amended 2026-09-30, owner: ADR 0044)
 - The stock bootloader's hold-MENU-at-power-on happens before the firmware runs, so the two don't collide.
 
 Plan 2 amends `docs/chimera-ui-ux-spec.md`:
 
 - "MENU always enters the system chain" (§ line 602) becomes "hold MENU".
-- The MIX+Bn Mixer chain is removed.
+- The MIX+Bn Mixer chain becomes the Part rung: MIX+B*n* reaches it, and B*n* on a Part's pages toggles to it and back. "Same button = snap home" (invariant 7) goes. (amended 2026-09-30, owner: ADR 0044)
 
-**Owner review (interpretation).** The owner said "tap/release → project, tap/hold → system menu". This spec reads it as follows. A tap goes up one rung, and from a sound's pages it lands on the Part rung. So a tap reaches the project in one to three presses. A literal reading, "a tap always jumps to the Project rung", is a one-line change to `up`. The owner should confirm which one is meant.
+**Owner review (interpretation).** Settled 2026-09-30: a tap goes up one rung, pages → Part → Project → Projects. (amended 2026-09-30, owner: ADR 0044) The owner said "tap/release → project, tap/hold → system menu". This spec reads it as follows. A tap goes up one rung, and from a sound's pages it lands on the Part rung. So a tap reaches the project in one to three presses. A literal reading, "a tap always jumps to the Project rung", is a one-line change to `up`. The owner should confirm which one is meant.
 
 ### Legend (M10)
 
@@ -251,7 +272,7 @@ Every rung has a one-line footer, and the screen goldens include it:
 
 - Rung 0: `EDIT open · SEQ save as · MIX- delete · hold MENU system`
 - Rung 1: `EDIT open · SEQ save · MENU up · hold MENU system`
-- Rung 2: `B edit · EDIT sound · SEQ save part · MENU up`
+- Rung 2: `A–F edit · Bn sound pages · EDIT sound · SEQ save part · MENU up` (amended 2026-09-30, owner: ADR 0044)
 - Rung 3: `B source · C engine · EDIT load · SEQ save part · MENU up`
 
 ### Rung 0: PROJECTS
@@ -279,18 +300,10 @@ Every rung has a one-line footer, and the screen goldens include it:
 
 ### Rung 2: PART (breadcrumb `ACID PARTY › P4`)
 
-- This rung replaces the Mixer chain's PART and SENDS pages and System › MIDI Setup.
-- **The rows:**
-  - `SOUND ›`, showing the slot and name;
-  - CHANNEL;
-  - MODE (MONO/POLY);
-  - OUT;
-  - PART LVL;
-  - PAN;
-  - CHR SEND, DLY SEND, REV SEND;
-  - LAYER, read-only: the other Parts on this channel;
-  - VOICES, read-only: this sound's voices under the cost model.
-- **A** picks a row and **B** changes its value, lerped like any param. **EDIT** on `SOUND ›` goes down. **SEQ** opens the Part menu, built from `part_actions`.
+- (amended 2026-09-30, owner: ADR 0044) This rung **is** the Mixer chain's PART and SENDS pages, drawn by the page renderer like any other page. It also replaces System › MIDI Setup. MIX+B*n* opens it; B*n* on Part *n*'s pages toggles to it and back. It opens on SENDS, or on the mixer page last used.
+- **PART:** CHANNEL, MODE (MONO/POLY), OUT, PART LVL, PAN. The header or viz band shows the slot and sound name, LAYER (read-only: the other Parts on this channel) and VOICES (read-only: this sound's voices under the cost model).
+- **SENDS:** CHR SEND, DLY SEND, REV SEND.
+- The encoders change values, lerped like any param. **PLUS / MINUS** step between PART and SENDS, and past them to the next or previous Part. **EDIT** goes down to the Sound rung. **SEQ** opens the Part menu, built from `part_actions`.
 - PART LVL is named so it can't be confused with the Sound's OUT page volume (L5).
 
 ### Rung 3: SOUND (breadcrumb `ACID PARTY › P4 › SOUND`)
