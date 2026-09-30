@@ -632,8 +632,7 @@ impl RingReverb {
     pub fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
         // SAFETY: every field is an integer or float array, a float, an
         // integer, a `bool` (`false`) or an `Ease` of the two, all valid as
-        // zero bytes; zero is
-        // exactly `new()`'s state.
+        // zero bytes; zero is exactly `new()`'s state.
         unsafe {
             slot.as_mut_ptr().write_bytes(0, 1);
             slot.assume_init_mut()
