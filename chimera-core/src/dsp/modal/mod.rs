@@ -131,6 +131,9 @@ struct BowedString {
     hair: BowHair,
     /// BRIGHT's one-pole on the output.
     tone: f32,
+    /// The friction curve's slope, easing to FORCE's (`friction_slope`).
+    slope: f32,
+    slope_to: f32,
     /// The last block's bow point, samples back (0 at a fresh note), and
     /// its comb's weight.
     back: f32,
@@ -138,7 +141,7 @@ struct BowedString {
 }
 
 crate::in_place::field_list!(BowedString => BowedString {
-    string, force, force_to, lift, bow_vel, vel_scale, bowing, written, release, hair, tone, back, comb,
+    string, force, force_to, lift, bow_vel, vel_scale, bowing, written, release, hair, tone, slope, slope_to, back, comb,
 });
 
 /// One pool slot (exclusive-state spec § 4.2): the seven strings a
@@ -618,6 +621,10 @@ impl ModalEngine {
                     (b.bow_vel, b.written) = (params.speed * BOW_SPEED, 0);
                 }
                 b.force_to = bow_force(params.force, vel);
+                b.slope_to = friction_slope(params.force);
+                if !restrike {
+                    b.slope = b.slope_to;
+                }
                 b.lift = 0.0;
                 b.vel_scale = 0.5 + 0.5 * vel;
                 b.bowing = true;
@@ -785,6 +792,7 @@ impl ModalEngine {
                 // FORCE and SPEED are live while bowed, as the macros are.
                 if b.bowing {
                     b.force_to = params.force * b.vel_scale;
+                    b.slope_to = friction_slope(params.force);
                 }
                 render_bowed(b, output, &m, (f0, w0, params.speed * BOW_SPEED));
                 // Never freed while bowed, however low its note (#206).
@@ -924,6 +932,8 @@ impl BowedString {
             addr_of_mut!((*p).release).write(Release::HELD);
             addr_of_mut!((*p).hair).write(BowHair::REST);
             addr_of_mut!((*p).tone).write(0.0);
+            addr_of_mut!((*p).slope).write(BOW_SLOPE);
+            addr_of_mut!((*p).slope_to).write(BOW_SLOPE);
             addr_of_mut!((*p).back).write(0.0);
             addr_of_mut!((*p).comb).write(0.0);
             slot.assume_init_mut()
@@ -1298,6 +1308,15 @@ const BOW_POS_MIN: f32 = 0.03;
 /// stick-slip ran a period of two passes, an octave down (UAT 2026-09-30).
 const BOW_LOOPS: f32 = 2.0;
 
+/// The friction curve's slope at FORCE 0.5, INIT's: the one-loop bow's.
+const BOW_SLOPE: f32 = 8.0;
+
+/// FORCE's friction slope: `BOW_SLOPE` at 0.5, halved at 0 and doubled at
+/// 1, so a harder bow grips sharper and its corner, and tone, brighten.
+fn friction_slope(force: f32) -> f32 {
+    BOW_SLOPE * libm::expf(core::f32::consts::LN_2 * 2.0 * (force - 0.5))
+}
+
 /// The bowed loop's low-pass side taps: INIT's BRIGHT's, fixed. BRIGHT in
 /// the loop sharpened the stick-slip's corner, darker read brighter.
 const BOW_LOOP_LP: f32 = BOW_LP * (1.0 - 0.3);
@@ -1369,6 +1388,7 @@ fn render_bowed(
         if b.bowing {
             // At its target, no bit moves.
             b.force += BOW_EASE * (b.force_to - b.force);
+            b.slope += BOW_EASE * (b.slope_to - b.slope);
             b.bow_vel += BOW_EASE * (vel_to - b.bow_vel);
         } else if b.force > b.force_to {
             b.force = (b.force - b.lift).max(b.force_to);
@@ -1385,7 +1405,7 @@ fn render_bowed(
         };
         *s = b.tone;
         // Stick-slip: a small |Δv| sticks (energy in), a large one slips.
-        let friction = b.force * 4.0 * fast_tanh((bow_vel - x) * 8.0);
+        let friction = b.force * 4.0 * fast_tanh((bow_vel - x) * b.slope);
         // Inverted each pass: two passes a period. Bounded: `x` under a
         // gain below 1, a bounded push, then `tanh`; once the bow is off,
         // linear, so DAMP's ring is its T60 at any level.

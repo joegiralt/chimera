@@ -1565,51 +1565,78 @@ fn bowed_plays_clean_across_the_instrument() {
     assert!(defaults.is_empty(), "the defaults: {defaults:?}");
 }
 
-/// FORCE and SPEED move the bow's tone, not only its level: each at 0.25
-/// against 1 changes the harmonics' shares of the spectrum (summed |Δ|
-/// over 1 to 24) by `BOW_SHAPE` or more, at the v1 bow and INIT's POS,
-/// G1, C3 and C6.
+/// FORCE and SPEED move the bow's tone, not only its level, at the v1
+/// bow and INIT's POS, G1, C3 and C6, each at 0.25 against 1: the
+/// harmonics' shares of the spectrum (summed |Δ| over 1 to 24) move
+/// `FORCE_SHAPE` and `SPEED_SHAPE` or more, and FORCE, which sets the
+/// friction's slope, moves harmonics 8 to 24 against the fundamental
+/// `FORCE_DB` or more. Measured: FORCE's shares 0.030 at G1 to 0.25 at C3,
+/// its harmonics 0.8 dB at G1, 2.3 at C3, 4.4 at C6; SPEED's shares 0.014
+/// at G1 to 0.36 at C3.
 #[test]
 fn force_and_speed_move_the_bows_tone() {
     let sr = SR as usize;
-    let mut worst = (f32::MAX, String::new());
+    let mut worst = [(f32::MAX, String::new()), (f32::MAX, String::new())];
+    let mut brighter = (f32::MAX, String::new());
     for note in [31, 48, 84] {
         let f0 = note_to_freq(note);
         for pos in [0.15, 0.0] {
-            for knob in ["FORCE", "SPEED"] {
-                let shares = |v: f32| {
+            for (i, knob) in ["FORCE", "SPEED"].into_iter().enumerate() {
+                let h = |v: f32| {
                     let mut p = ModalParams { pos, ..v1_bowed() };
                     match knob {
                         "FORCE" => p.force = v,
                         _ => p.speed = v,
                     }
                     let out = play_modal_at(&p, note, 100, 2 * sr / BLOCK_SIZE, 0);
-                    let h: Vec<f32> = (1..=24)
+                    (1..=24)
                         .map(|k| goertzel(&out[sr..2 * sr], k as f32 * f0, SR))
-                        .collect();
-                    let sum: f32 = h.iter().sum();
-                    h.into_iter().map(|x| x / sum).collect::<Vec<_>>()
+                        .collect::<Vec<_>>()
                 };
-                let (a, b) = (shares(0.25), shares(1.0));
-                let d: f32 = a.iter().zip(&b).map(|(x, y)| (x - y).abs()).sum();
-                if d < worst.0 {
-                    worst = (d, format!("{knob} at {note} POS {pos}"));
+                let (a, b) = (h(0.25), h(1.0));
+                let share = |h: &[f32]| {
+                    let sum: f32 = h.iter().sum();
+                    h.iter().map(|x| x / sum).collect::<Vec<_>>()
+                };
+                let d: f32 = share(&a)
+                    .iter()
+                    .zip(share(&b))
+                    .map(|(x, y)| (x - y).abs())
+                    .sum();
+                let label = format!("{knob} at {note} POS {pos}");
+                if d < worst[i].0 {
+                    worst[i] = (d, label.clone());
+                }
+                if knob == "FORCE" {
+                    let upper =
+                        |h: &[f32]| h[7..].iter().map(|x| x * x).sum::<f32>() / (h[0] * h[0]);
+                    let db = (10.0 * (upper(&b) / upper(&a)).log10()).abs();
+                    if db < brighter.0 {
+                        brighter = (db, label);
+                    }
                 }
             }
         }
     }
-    println!("least: {:.4} ({})", worst.0, worst.1);
+    println!(
+        "least: FORCE {:.4} ({}), SPEED {:.4} ({}); FORCE's harmonics {:.1} dB ({})",
+        worst[0].0, worst[0].1, worst[1].0, worst[1].1, brighter.0, brighter.1
+    );
+    for ((d, label), floor) in worst.iter().zip([FORCE_SHAPE, SPEED_SHAPE]) {
+        assert!(*d >= floor, "{label}: the shape moves {d:.4}");
+    }
     assert!(
-        worst.0 >= BOW_SHAPE,
-        "{}: the shape moves {:.4}",
-        worst.1,
-        worst.0
+        brighter.0 >= FORCE_DB,
+        "{}: FORCE moves harmonics 8–24 {:.1} dB",
+        brighter.1,
+        brighter.0
     );
 }
 
-/// `force_and_speed_move_the_bows_tone`'s floor, under the one-loop bow's
-/// least, 0.0087 (SPEED at C6, POS 0, ADR 0064).
-const BOW_SHAPE: f32 = 0.008;
+/// `force_and_speed_move_the_bows_tone`'s floors, under its least.
+const FORCE_SHAPE: f32 = 0.025;
+const SPEED_SHAPE: f32 = 0.012;
+const FORCE_DB: f32 = 0.6;
 
 /// DAMP is the ring after the lift at every note: at C4 and C6 DAMP 1's
 /// tail, 0.3–0.6 s after note-off, is 10 dB or more above DAMP 0.5's. The
