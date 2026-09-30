@@ -14,8 +14,8 @@ use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::{MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
 use common::{
-    Rig, SR, assert_stable, clicks, fundamental_hz, goertzel, play_modal, play_modal_at,
-    play_modal_bare, rms_diff, routes,
+    Rig, SR, assert_stable, clicks, fundamental_hz, goertzel, octave_clear, play_modal,
+    play_modal_at, play_modal_bare, rms_diff, routes,
 };
 
 const MODES: [ResonatorMode; 4] = [
@@ -222,7 +222,8 @@ fn play_voice_at(
 /// The bank, at 48 modes, flags nothing on DAMP or POS, held at either end
 /// or routed. Its high STRUCTURE and BRIGHT drive the output tanh and flag
 /// by themselves (https://github.com/joegiralt/chimera/issues/231), so there
-/// it may flag no more than the macro held at either end.
+/// it may flag no more than the macro held at either end. So may Bowed's
+/// BRIGHT: open, its output is the bow's sawtooth, a step each period.
 #[test]
 fn macros_are_routable() {
     let second = SR as usize / BLOCK_SIZE;
@@ -272,7 +273,10 @@ fn macros_are_routable() {
                 [0, 127].map(|a| play_voice(&p, &routes(addr, a), 2 * second, &[pluck]));
             let d = rms_diff(&dry, &wet);
             assert!(d > 1e-3, "{mode:?} {id:?}: the route changes nothing ({d})");
-            let held = if mode == ResonatorMode::Modal {
+            // The bow's open output is its Helmholtz sawtooth, a step a
+            // period: at BRIGHT 1 it flags held, as the bank's tanh does.
+            let bow_bright = mode == ResonatorMode::Bowed && id == ModalParams::BRIGHT;
+            let held = if mode == ResonatorMode::Modal || bow_bright {
                 [0.0, 1.0]
                     .map(|v| {
                         let mut held = p.clone();
@@ -285,8 +289,9 @@ fn macros_are_routable() {
             } else {
                 0
             };
-            let hot = mode == ResonatorMode::Modal
-                && (id == ModalParams::STRUCTURE || id == ModalParams::BRIGHT);
+            let hot = bow_bright
+                || mode == ResonatorMode::Modal
+                    && (id == ModalParams::STRUCTURE || id == ModalParams::BRIGHT);
             assert!(hot || held == 0, "{mode:?} {id:?}: held, {held} clicks");
             let n = flags(&wet).len();
             assert!(
@@ -1099,7 +1104,9 @@ fn a_pitch_change_mid_glide_does_not_jump() {
 
 /// The bench: a soft key on Bowed at the defaults bowed nothing. The
 /// force follows velocity from half FORCE, so velocity 20 sounds and
-/// holds for 2 s.
+/// holds for 2 s. At INIT's POS 0, the bow at the bridge, a light bow may
+/// play a surface sound, as a real one does: only its level is held. On a
+/// v1 patch's bow it plays its note.
 #[test]
 fn a_soft_bowed_note_sounds() {
     let p = ModalParams {
@@ -1112,6 +1119,15 @@ fn a_soft_bowed_note_sounds() {
     assert!(held > 1e-2, "seconds 1–2: rms {held}");
     let last = common::peak(&out[out.len() - BLOCK_SIZE..]);
     assert!(last > 1e-3, "last block: peak {last}");
+    // A v1 patch's bow, soft: as loud, and at its note.
+    let out = play_modal_at(&v1_bowed(), 48, 20, 2 * SR as usize / BLOCK_SIZE, 0);
+    let s = &out[sr..2 * sr];
+    let v1 = common::rms(s);
+    assert!(v1 > 1e-2, "v1, seconds 1–2: rms {v1}");
+    let f0 = note_to_freq(48);
+    let c = cents(fundamental_hz(s, f0 as f64), f0);
+    assert!(c.abs() < BOW_CENTS, "v1: {c:+.2} cents");
+    assert!(octave_clear(s, f0), "v1: an octave low");
 }
 
 /// Bowed's DAMP is the ring after the lift: the held bow is the same bit
@@ -1141,45 +1157,6 @@ fn bowed_damp_is_the_ring_after_the_lift() {
     for (damp, out) in [(0.3, &a), (0.6, &b)] {
         let fall = db_at(out, 1.05) - db_at(out, 1.05 + t60(damp) / 2.0);
         assert!((fall - 30.0).abs() < 6.0, "DAMP {damp}: {fall} dB");
-    }
-}
-
-/// Bowed's POS and BRIGHT change the sound, not the pitch: within 2 cents
-/// of POS 0 at BRIGHT 1, the old bow. A friction reading a second tap
-/// bowed a second, shorter loop: 93 Hz for 65 at POS 0.3.
-#[test]
-fn bowed_pos_and_bright_keep_pitch() {
-    let blocks = 3 * SR as usize / BLOCK_SIZE / 2;
-    let render = |pos: f32, bright: f32| {
-        let p = ModalParams {
-            mode: ResonatorMode::Bowed,
-            pos,
-            bright,
-            ..Default::default()
-        };
-        play_modal_at(&p, 48, 100, blocks, 0)
-    };
-    // Today's bow sounds an octave below its note (pinned by
-    // `a_v1_bowed_patch_bows_as_before`): measured there.
-    let f0 = note_to_freq(48) as f64 / 2.0;
-    let span = |o: &[f32]| o[SR as usize / 2..SR as usize * 3 / 2].to_vec();
-    let base = render(0.0, 1.0);
-    let f_base = fundamental_hz(&span(&base), f0);
-    for pos in [0.0, 0.3, 0.7] {
-        for bright in [0.0, 1.0] {
-            if pos == 0.0 && bright == 1.0 {
-                continue;
-            }
-            let out = render(pos, bright);
-            let f = fundamental_hz(&span(&out), f0);
-            let cents = 1200.0 * (f / f_base).log2();
-            assert!(
-                cents.abs() < 2.0,
-                "POS {pos} BRIGHT {bright}: {cents:+.2} cents"
-            );
-            let d = rms_diff(&out, &base);
-            assert!(d > 1e-3, "POS {pos} BRIGHT {bright}: unchanged ({d})");
-        }
     }
 }
 
@@ -1214,13 +1191,7 @@ fn force_and_speed_move_a_held_bow() {
         out
     };
     let play = |late: &ModalParams| play_from(&base, late);
-    // The largest step the desktop's output stage hears (`common::clicks`).
-    let step = |x: &[f32]| {
-        let soft = |x: f32| libm::tanhf(x * 0.4);
-        x.windows(2)
-            .map(|w| (soft(w[1]) - soft(w[0])).abs())
-            .fold(0.0, f32::max)
-    };
+    let step = common::step;
     let still = play(&base);
     let (at, few) = (turn * BLOCK_SIZE, (turn + 8) * BLOCK_SIZE);
     for (label, late) in [
@@ -1245,4 +1216,224 @@ fn force_and_speed_move_a_held_bow() {
             "{label}: steps {turned}, the bow's corner {corner}"
         );
     }
+}
+
+/// The v1 Bowed patch's macros (`translate_v1`): the bow an eighth of the
+/// string from the bridge, a moderately lossy bridge.
+fn v1_bowed() -> ModalParams {
+    ModalParams {
+        mode: ResonatorMode::Bowed,
+        force: 0.5,
+        speed: 0.5,
+        pos: 0.15,
+        bright: 0.5,
+        damp: damp_for(0.5),
+        ..Default::default()
+    }
+}
+
+/// Bowed's tuning gate, cents: a bow's stick-slip moves its pitch a few
+/// cents, as a real one's does (controller ruling, spec § 2 BOWED).
+const BOW_CENTS: f64 = 5.0;
+
+/// `f` in cents from `f0`.
+fn cents(f: f64, f0: f32) -> f64 {
+    1200.0 * (f / f0 as f64).log2()
+}
+
+/// Seconds 0.5 to 1.5.
+fn steady(out: &[f32]) -> &[f32] {
+    &out[SR as usize / 2..SR as usize * 3 / 2]
+}
+
+/// #240: G1 to C7 within `BOW_CENTS` of its note, not an octave low; at
+/// G1 and C3 partials 2 to 4 on multiples of it.
+#[test]
+fn bowed_is_in_tune() {
+    let blocks = 2 * SR as usize / BLOCK_SIZE;
+    std::thread::scope(|scope| {
+        for notes in [31..=52, 53..=74, 75..=96] {
+            scope.spawn(move || {
+                for n in notes {
+                    let out = play_modal_at(&v1_bowed(), n, 100, blocks, 0);
+                    let s = steady(&out);
+                    let f0 = note_to_freq(n);
+                    let f1 = fundamental_hz(s, f0 as f64);
+                    let c = cents(f1, f0);
+                    assert!(c.abs() < BOW_CENTS, "note {n}: {c:+.2} cents");
+                    assert!(octave_clear(s, f0), "note {n}: an octave low");
+                    if matches!(n, 31 | 48) {
+                        for k in 2..=4 {
+                            let h = k as f64 * f1;
+                            let off = 1200.0 * (fundamental_hz(s, h) / h).log2();
+                            assert!(off.abs() < 5.0, "note {n} h{k}: {off:+.2} cents");
+                        }
+                    }
+                }
+            });
+        }
+    });
+}
+
+/// POS moves the bow, and the tone, not the pitch. At the middle (POS 1)
+/// the bow nulls the even harmonics: the 2nd 10 dB under POS 0.15's.
+#[test]
+fn bowed_pos_moves_the_tone_not_the_pitch() {
+    let blocks = 3 * SR as usize / BLOCK_SIZE / 2;
+    for note in [31, 48, 84] {
+        let f0 = note_to_freq(note);
+        for bright in [0.0, 1.0] {
+            let at = |pos: f32| {
+                let p = ModalParams {
+                    pos,
+                    bright,
+                    ..v1_bowed()
+                };
+                play_modal_at(&p, note, 100, blocks, 0)
+            };
+            for pos in [0.0, 0.15, 0.5, 1.0] {
+                let out = at(pos);
+                let s = steady(&out);
+                let c = cents(fundamental_hz(s, f0 as f64), f0);
+                assert!(
+                    c.abs() < BOW_CENTS,
+                    "{note} POS {pos} BRIGHT {bright}: {c:+.2} cents"
+                );
+                assert!(
+                    octave_clear(s, f0),
+                    "{note} POS {pos} BRIGHT {bright}: an octave low"
+                );
+            }
+            if note == 48 {
+                let h2 = |pos| {
+                    let out = at(pos);
+                    let s = steady(&out);
+                    goertzel(s, 2.0 * f0, SR) / goertzel(s, f0, SR)
+                };
+                let db = 20.0 * (h2(1.0) / h2(0.15)).log10();
+                assert!(
+                    db <= -10.0,
+                    "BRIGHT {bright}: 2nd harmonic {db:+.1} dB at POS 1"
+                );
+            }
+        }
+    }
+}
+
+/// BRIGHT is the bridge's loss: 0 against 1 takes 3 dB or more off
+/// harmonics 8 to 24, and moves the fundamental under 2 cents.
+#[test]
+fn bowed_bright_is_heard() {
+    let blocks = 3 * SR as usize / BLOCK_SIZE / 2;
+    let f0 = note_to_freq(48);
+    let at = |bright: f32| {
+        let p = ModalParams {
+            bright,
+            ..v1_bowed()
+        };
+        play_modal_at(&p, 48, 100, blocks, 0)
+    };
+    let (dark, bright) = (at(0.0), at(1.0));
+    let (dark, bright) = (steady(&dark), steady(&bright));
+    let upper = |s: &[f32]| {
+        (8..=24)
+            .map(|k| goertzel(s, k as f32 * f0, SR).powi(2))
+            .sum::<f32>()
+    };
+    let db = 10.0 * (upper(dark) / upper(bright)).log10();
+    eprintln!("BRIGHT 0 against 1: harmonics 8–24 {db:+.2} dB");
+    assert!(db <= -3.0, "harmonics 8–24: {db:+.2} dB");
+    let (fd, fb) = (
+        fundamental_hz(dark, f0 as f64),
+        fundamental_hz(bright, f0 as f64),
+    );
+    let moved = 1200.0 * (fd / fb).log2();
+    assert!(moved.abs() < 2.0, "the fundamental moves {moved:+.2} cents");
+}
+
+/// A square LFO swings POS end to end: the split glides a whole sample
+/// twice a block, so no sample steps further than the bow's own corner
+/// does held at either end, and the pitch holds.
+#[test]
+fn a_bowed_pos_sweep_does_not_click() {
+    let second = SR as usize / BLOCK_SIZE;
+    let addr = ParamAddr::new(BlockRef::Modal, ModalParams::POS);
+    for note in [31, 96] {
+        for force in [0.5, 1.0] {
+            let mut p = ParamSnapshot::for_engine(EngineType::Modal);
+            p.modal = ModalParams {
+                force,
+                ..v1_bowed()
+            };
+            p.lfos[0].rate = 2.0;
+            p.lfos[0].shape = chimera_core::dsp::lfo::LfoShape::Square as u8;
+            let routed = play_voice_at(note, &p, &routes(addr, 127), 2 * second, &[]);
+            let held = [0.0, 1.0].map(|pos| {
+                let mut h = p.clone();
+                h.modal.pos = pos;
+                play_voice_at(note, &h, &ModState::new(), 2 * second, &[])
+            });
+            let label = format!("{note} FORCE {force}");
+            let d = rms_diff(&routed, &held[0]);
+            assert!(d > 1e-3, "{label}: the route changes nothing ({d})");
+            let (k, corner) = (
+                common::step(&routed),
+                common::step(&held[0]).max(common::step(&held[1])),
+            );
+            assert!(
+                k <= 1.05 * corner,
+                "{label}: steps {k}, the bow's corner {corner}"
+            );
+            let f0 = note_to_freq(note);
+            let c = cents(fundamental_hz(steady(&routed), f0 as f64), f0);
+            assert!(c.abs() < BOW_CENTS, "{label}: {c:+.2} cents");
+        }
+    }
+}
+
+/// FORCE, SPEED, BRIGHT and POS at their ends, G1 to the top note, 12 s:
+/// bounded, no growth, no DC; with FORCE and SPEED at 1, released at
+/// DAMP's ends, bounded; each sounding corner at G1 and C7 at its note.
+#[test]
+fn bowed_is_stable_and_in_tune_at_every_corner() {
+    let sr = SR as usize;
+    let blocks = 12 * sr / BLOCK_SIZE;
+    std::thread::scope(|scope| {
+        for note in [31, 96, 127] {
+            scope.spawn(move || {
+                for corner in 0..16 {
+                    let end = |bit: usize| ((corner >> bit) & 1) as f32;
+                    let p = ModalParams {
+                        force: end(0),
+                        speed: end(1),
+                        bright: end(2),
+                        pos: end(3),
+                        ..v1_bowed()
+                    };
+                    let label =
+                        format!("{note} F{} S{} B{} P{}", p.force, p.speed, p.bright, p.pos);
+                    let out = play_modal(&p, note, blocks, 0);
+                    assert_stable(&out, 4.0, BOW_MARGIN, &label);
+                    if p.force > 0.0 && p.speed > 0.0 && note != 127 {
+                        let last = &out[out.len() - sr..];
+                        assert!(common::rms(last) > 1e-3, "{label}: silent");
+                        assert!(
+                            octave_clear(last, note_to_freq(note)),
+                            "{label}: an octave low"
+                        );
+                    }
+                    if p.force == 1.0 && p.speed == 1.0 {
+                        for damp in [0.0, 1.0] {
+                            let q = ModalParams { damp, ..p };
+                            let out = play_modal(&q, note, sr / BLOCK_SIZE, sr / BLOCK_SIZE);
+                            assert!(
+                                out.iter().all(|x| x.is_finite() && x.abs() <= 4.0),
+                                "{label} DAMP {damp}: released, bounded"
+                            );
+                        }
+                    }
+                }
+            });
+        }
+    });
 }

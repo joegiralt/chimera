@@ -39,7 +39,7 @@ note-on, so nothing could modulate a string's character.
   `y = g·(x − x1) + r·y1`, `r = e^(−2π·10/fs)`, `g = (1 + r)/2`, gain 1 at
   Nyquist and below 1 elsewhere. There is one per voice, on the model's
   output, outside the loop: STRING's string, SYMP's main-and-halo mix and
-  BOWED's ring. It is reset at note-on. The loop needs none: with
+  BOWED's bow. It is reset at note-on. The loop needs none: with
   `LoopGain` below 1, DC can't grow or latch, and decays with the ring.
 
 ### Tuning
@@ -53,7 +53,9 @@ note-on, so nothing could modulate a string's character.
   clamps the fraction to `[0.5, 1.5]` when the line clamps.
 - The loop low-pass is the linear-phase three-tap
   `c/2·(x[d−1] + x[d+1]) + (1 − c)·x[d]`, centred on the line, so it adds
-  no delay. BOWED's ring runs through the same allpass.
+  no delay. BOWED's bridge line's input runs through the same allpass,
+  and its two ends' filters' four samples come off the period
+  (`ENDS_DELAY`).
 - The fundamental of STRING and the SYMP main string lands within
   0.05 cents from G1 to C7, and partials 2 to 4 are harmonic to it at G1
   and C3.
@@ -152,41 +154,87 @@ note-on, so nothing could modulate a string's character.
   latches at note-on.
 
 ### Bowed
-- The bow's force is `FORCE·(0.5 + 0.5·velocity)`, so a soft key still
-  bows; at FORCE 0.5 and full velocity it is the old bow, bit for bit.
-  `SPEED·0.3` is the bow's velocity (`BOW_SPEED`); SPEED 0.5 is the old
-  one. FORCE 0 or SPEED 0 is a bow at rest, and silent. While the bow is
-  on, the force and velocity ease each sample `EASE / 64` of the way to
-  the block's FORCE and SPEED (`BOW_EASE`, about the macros' easing a
-  block); at their targets no bit moves, so the v1 pin holds.
-- DAMP is the ring after the lift: while bowed the loop's gain is
-  `LoopGain::TOP` and the bow sustains the string, as before; at note-off
-  it ramps to DAMP's T60 and never gives the gain back.
-- BRIGHT is the linear-phase three-tap low-pass on the loop's tap,
-  `c/2·(x[d−1] + x[d+1]) + (1 − c)·x[d]` at `c = 0.5·(1 − BRIGHT)`
-  (`BOW_LP`), centred, so it adds no delay; at BRIGHT 1 the tap is read
-  alone, as before. `|H| = (1 − c) + c·cos ω` is at most 1 for
-  `c ≤ 0.5`. The plan's 0.25 moved a routed BRIGHT's sound 7.4e-4 RMS,
-  under the test's 1e-3; 0.5 is the most the bound allows. Even there the
-  harmonics move under 0.5 dB: the bow's stick-slip re-sharpens the wave
-  every pass, so BRIGHT is gentle on this bow.
-- POS is the bow point's comb on the output, the pluck's law:
-  `0.5·(x + tap)`, the tap `d − POS·d` behind the write
-  (`KsString::ring_tap_at`, interpolated, clamped to what the note has
-  written, #206), above POS 0.03; at or below it the one tap, as before.
-  A bowed string lacks the harmonics its bow point nulls, and the comb
-  puts the nulls there. The spec had the friction read the comb: that
-  bows a second loop, `(1 − POS)·d` long, which takes the pitch to
-  `1/(1 − POS)` times it (C3's bow, 65 Hz, played 93 Hz at POS 0.3 and
-  218 Hz at 0.7). On the output the pitch holds within 0.3 cents at every
-  POS and BRIGHT.
-- The loop and the friction read the one tap. The bow sounds an octave
-  below its note, as it always has: its stick-slip inverts the loop each
-  pass, so the ring holds half a period. The v1 pin keeps that sound.
-- Stability holds by construction: the loop multiplies `x` by a
-  `LoopGain` below 1, the low-pass's gain is at most 1, the friction
-  (`4·force·tanh(8·(bow_vel − x))`) is bounded, `tanh` bounds the push,
-  and the output has its blocker.
+Bowed is J. O. Smith's digital-waveguide bowed string (plan Task 14, the
+owner's decision on #240), in Chimera's own code (`modal::bow`).
+- **Two lines on one ring.** The bow splits the loop into the bridge line
+  (bow to bridge and back) and the nut line (bow to nut and back). The
+  string's existing ring holds both: at the write the nut line's oldest
+  cell is read (the nut's return) and the bridge line's input written;
+  `split` cells behind it the bridge's return is read and the nut line's
+  input written in its place. The two lines' sum is the ring's line `d`,
+  so D2 does not grow.
+- **The pitch law.** Each end reflects inverted, the nut through `−H`,
+  the bridge through `−g·H`, so a wave comes back upright once a period:
+  C3 plays 130.8 Hz, where the one-loop bow played 65. The loop is the
+  line, the ends' filters' four samples (`ENDS_DELAY`) and the tuning
+  allpass's fraction on the bridge line's input, `set_period(period,
+  ENDS_DELAY, w)`. G1 to C7 plays within ±5 cents (the v1 patch: G1
+  49.000 Hz, C3 130.813, C6 1046.35, −0.25 cents); a bow's stick-slip moves its
+  pitch a few cents, as a real one's does, so Bowed's gate is ±5 where
+  STRING and SYMP keep ±2 (controller ruling).
+- **POS** is the bow position β, `0.06 + 0.44·POS` of the string from the
+  bridge. The split is whole samples, β of the whole loop less the bridge
+  side's filter and allpass (`bridge_len`), so POS is the same position at
+  every note and the pitch is exact at every split. It glides one whole
+  sample at most, one block in 8 (`BOW_SLEW`), at a block's first sample:
+  `+1` re-reads the last bridge return and drops the newest nut-line
+  sample, `−1` writes the nut line's input into both cells. Neither line
+  reads the other's, and the sum holds. A faster glide moves the bow fast
+  enough to Doppler-shift the waves it reflects: at two steps a block, a
+  square LFO on POS took G1 21 cents flat. At POS 1 the bow is at the
+  middle and the even harmonics fall away (the 2nd over 10 dB under POS
+  0.15's at C3).
+- **BRIGHT** is the bridge-to-body path, a one-pole low-pass on the
+  output, outside the loop, its corner from 2·f0 at 0 to 64·f0 at 1
+  (`tone`, two `expf`s a block). From BRIGHT 1 to 0 the v1 patch's
+  harmonics 8 to 24 fall 15.4 dB, and it cannot move the pitch. The spec's
+  first law, the bridge's reflection low-pass, is not heard: the bow
+  re-sharpens the Helmholtz corner every period, and eight cascaded
+  three-taps in the reflection moved harmonics 8 to 24 by under 3 dB
+  (controller ruling).
+- **The ends' loss.** While bowed the bridge reflects at 0.97 a pass
+  (`BOW_LOSS`; a T60 of 1.7 s at C3, 4.6 s at G1), and both ends through
+  the three-tap squared at c 0.5 (`END_C`: linear phase, two samples, `|H|
+  ≤ 1`). Without it the ripples between the bow and either end never
+  decayed: the harmonics were irregular, notes wandered 3 cents and INIT's
+  C2 swelled 9 dB over 23 s. The nut's filter is the half the one-loop bow
+  had not needed: with a lossless nut, energy between the bow and the nut
+  built up at POS 1. The two values are measured, the middle of the range
+  in which every Bowed test passes (0.97 to 0.975).
+- **The bow table** is ours: `ρ = w⁴/(w⁴ + Δv⁴ + 1e-20)`, the push
+  `Δv·ρ`, at most `0.57·w`: 1 at rest (the string sticks), ½ at `|Δv| =
+  w`, falling as `Δv⁻⁴` (it slips); no offset, which would put DC into the
+  string, and 0 at force 0, so a lifted bow lets the string ring free.
+  One `vdiv.f32` a sample, no `tanhf` or `powf`.
+- **FORCE and SPEED.** The curve's width is set against the bow's
+  velocity: `w⁴ = (BOW_WIDTH·v_b)⁴ · 2·force · reach⁴`, `BOW_WIDTH` 2.7, so
+  the width is 2.7·v_b at force 0.5 and goes as force^¼ around it. That
+  keeps every FORCE in the Helmholtz regime: at `w ≈ 2·v_b` the motion is
+  Helmholtz's, below it the string slips twice a period, well above it
+  high notes stick. The width widens towards either end of POS
+  (`reach4`): by 0.5 at the bridge, where Helmholtz motion needs more
+  force, and by 0.25 at the middle, where a narrow curve drags the slow
+  slip and the string period-doubles. `BOW_WIDTH` is measured in the
+  window every test passes in, 2.6 to 2.75; the window at the
+  middle is narrow, so the ship flash listens there. The force is
+  `FORCE·(0.5 + 0.5·velocity)` and `SPEED·0.3` the bow's velocity
+  (`BOW_SPEED`), both read every block and eased `EASE / 64` a sample
+  while bowed (Task 13).
+- **DAMP** is the ring after the lift: at note-off the bridge's gain
+  ramps from `BOW_LOSS` to DAMP's T60 and never gives the gain back, so a
+  DAMP longer than the bowed loss rings at the bowed loss.
+- **The output** is the wave the bow sends toward the bridge, through
+  BRIGHT's low-pass, × `BOW_OUT` = 1.14: what the bridge hears, from the
+  first sample (#206). 1.14 puts the v1 patch's held C3 within 0.01 dB of
+  the one-loop bow's RMS (0.381).
+- **Stability by construction.** The loop's linear gain is at most
+  `0.97·|H|² < 1` a period (the ends' filters at most 1 each), and the
+  junction adds at most `0.57·w` to each line a sample, so every wave is
+  bounded. The tests hold the output under 4.0 at every corner. The
+  output keeps its blocker.
+- The block runs in spans where no index (the write, the splice, the nut's
+  read) wraps; the split's step is a sample of its own. `tick` stays the
+  tests' reference, bit for bit.
 
 ### Release
 - A note-off (#51) ramps the loop gain from the held one to
@@ -195,7 +243,7 @@ note-on, so nothing could modulate a string's character.
   `Release` is the voice's: STRING and SYMP's main string
   (`string::StringVoice`) and BOWED. A lifted bow sheds its force over the
   same 240 samples while its ring ramps to DAMP's T60, not
-  `RELEASE_T60`.
+  `RELEASE_T60`, capped at the bowed loss.
 - The halo gets no release: a sitar's sympathetic strings ring until
   touched (the owner's rule), so a released halo rings on at its held T60
   until silent, keeping its lease.
@@ -253,10 +301,15 @@ note-on, so nothing could modulate a string's character.
   and SPEED load at their defaults, 0.8, 0.5 and 0.5, the old hidden
   values. On BANK, BURST is the file's EXCITE, so an old strike keeps its
   length.
-- Old Bowed patches stored BRIGHT, DAMP and POS but never read them. They
-  load as the old sound: DAMP `damp_for(RELEASE_T60)` (the old lifted
-  bow's 0.12 s), BRIGHT 1 and POS 0, after the DECAY and BRIGHT rules.
-  `a_v1_bowed_patch_bows_as_before` pins a held second bit for bit.
+- Old Bowed patches stored BRIGHT, DAMP and POS but never read them, and
+  their old sound was the bug (#240): an octave low. They load as an
+  in-tune bow, after the DECAY and BRIGHT rules: POS 0.15 (β ≈ 0.126,
+  about an eighth of the string from the bridge), BRIGHT 0.5, DAMP
+  `damp_for(0.5)` (a 0.5 s ring after the lift), FORCE and SPEED 0.5.
+  `a_v1_bowed_patch_bows_in_tune` checks its pitch and level and pins a
+  held second and its release bit for bit, re-recorded deliberately.
+  INIT is untouched: MODEL → BOWED bows at POS 0 (near the bridge), BRIGHT
+  0.3 and INIT's ring.
 
 ### Rendering
 - Each string runs its block, not a sample at a time
@@ -282,7 +335,9 @@ note-on, so nothing could modulate a string's character.
   `Instrument` 162,968 B, which leaves 123,752 B of D2. Firmware
   `.ram_d2` is 162,108 B. `ModalParams` grew by EXC's four fields;
   `BowedString` by its lift, bow velocity, velocity scale and bowing
-  flag (4,016 B) and
+  flag, then (Task 14) by the ends' filters, the split, BRIGHT's low-pass
+  and the glide's count, less the one-loop bow's `written` (4,056 B,
+  inside `ModelSlot`) and
   `StringVoice` by COLOR's passes, within its padding.
 
 ### Costs
@@ -311,6 +366,7 @@ Instructions a sample:
 | Ensemble | `run::<true, true>`'s fast span 101 less 21.25; its slow spans, the extra span a ring and `Ensemble::set` 1.8 | — | 82 |
 | BOWED | `ModalEngine::render`'s bowed loop, both `tanhf` dispatches, plus the blocker | 143 | 195 + 7.8 |
 | BOWED, playable (Task 13) | the same loop: BRIGHT's two side taps and their wraps 23, POS's check 4, its clamped, lerped second tap 44, FORCE and SPEED eased 10; DAMP's `powf` once lifted, 2 | 203 | 286 |
+| BOWED, two-delay (Task 14) | `BowedString::render`: the fast span 68 (the junction, both ends' filters, the allpass, the bow table's `vdiv`, BRIGHT's low-pass, the easing); per block 7.2 (two `expf`s, the spans' heads, the step one block in 8); the blocker 7.8. Dropped: the two `tanhf` bodies, T = 120 (their `expm1f` paths) | 143 | 83 |
 | SYMP main string | `run::<false, false>`: 44 per 4 samples; 127 a block; a span 57 | 82 | 14.9 |
 | SYMP halo string, each of 7 | `KsString::run_coupled`: 62 per 4 samples; a call 71; a span 65 | 42 | 18.8 |
 | SYMP per sample, besides | the coupled input (55 per 16), the two buffers' clears (116 each), the runs' setup 150, the mix (71 per 16), BODY's call, the `tanhf` dispatch 17 | 31 + 12 | 31.7 |
@@ -320,7 +376,7 @@ Instructions a sample:
 | Term | Before step A | Now | From |
 |---|---|---|---|
 | `COST_STRING` | 390 | 330 | 99 → 33.5 instructions, −86 cycles; DAMP's two `powf`s and the dispersion's re-split, billed always, +18 |
-| `COST_BOWED` | 620 | 860 | +60 instructions a sample at step A, 87; +83 for the playable bow, 133.3, POS billed always |
+| `COST_BOWED` | 620 | 400 | Task 14: 620 + (83 − 143 − 120) × 1.46 × 0.9 + (14 − 1.46) × 1.1 for the `vdiv` = 397.3 (Task 13's 860 superseded) |
 | `COST_SYMPATHETIC` | 809 | 540 | 419 → 186.2 instructions, −306 cycles; ten `powf`s a block, +35 |
 | `COST_BANK`, `COST_MODE` | 460, 45 | 460, 45 | sample loop unchanged |
 | `BODY` (STRING, SYMP, BODY > 0) | — | 80 | 46.5 instructions |
@@ -338,7 +394,7 @@ the bench.
 
 Voices beside the whole FX bus at its worst (rev V, rev Y; with the
 master tape the same unless noted): STRING bare 8, 8; at the default BODY
-8, 8; with the ensemble 8, 7. BOWED 6, 5 (tape 6, 4). SYMP bare 8, 7; at
+8, 8; with the ensemble 8, 7. BOWED 8, 8 (tape 8, 8). SYMP bare 8, 7; at
 the default BODY 8, 6; with the ensemble 7, 5 (tape 6, 5); with a
 STRUCTURE route at the default BODY 6, 5. BANK at 32 modes 2, 2; at 48, 2,
 1. `modal_bills_each_model` pins every count.
@@ -357,7 +413,7 @@ Measured on the chip (the ship flash; to fill in, rev V at 480 MHz):
 The bench rows: MDL STR, STR0 (BODY 0), STR E (BODY 0, the ensemble, no
 routes), STR+ (BODY 1, the ensemble, LFO 1 on each macro), BOW, BOW+
 (FORCE 1, SPEED 1, POS 0.5, BRIGHT 0, LFO 1 at 10 Hz into BRIGHT, DAMP and
-POS at 64), SYM, SYM0, SYM+ (the ensemble, STRUCTURE a chord on every 8
+POS at 64: the split stepping one block in 8, the bow's worst case), SYM, SYM0, SYM+ (the ensemble, STRUCTURE a chord on every 8
 blocks), SYM LFO (a route into STRUCTURE), RES and RES48. The MEMORY
 screen's DARK NOTE+BLOCK is a STRING note-on at G1 and COLOR 0 and its
 first block, the whole render included, against the block's budget;
@@ -373,11 +429,6 @@ NOTE-ON is, by `Rig::time_note_on`.
 - DAMP is seconds at every pitch (spec § 1); the old per-pass law rang
   high notes shorter. Partial key tracking is a candidate, by ear.
 - The bank's gain staging (#231), and an ensemble of 2 heads or 3.
-- Bowed sounds an octave below its note and BRIGHT barely moves it; both
-  come from the one-loop bow, which the v1 pin keeps. A bow junction on
-  two delays, nut and bridge side, each reflection inverting (Smith; STK's
-  `Bowed`), plays at pitch and lets POS and BRIGHT act as on a string. It
-  would move the old Bowed sound: step B's, or the owner's call.
 
 ## Alternatives considered
 - Keep FDBK and clamp its range below the unity point: its useful range
@@ -396,7 +447,23 @@ NOTE-ON is, by `Rig::time_note_on`.
   to 22 samples at G1 and ticked on low notes. The 20 ms glide replaces it.
 - Bowed's friction reading POS's two-tap comb (the spec's first law): it
   bows a second, shorter loop through the second tap, which takes the
-  pitch (`1/(1 − POS)` times it). The comb is on the output instead.
+  pitch (`1/(1 − POS)` times it).
+- Task 13's one-loop bow with POS as an output comb: the pitch held, but
+  an octave low, POS was not a bow position and BRIGHT was not heard
+  (#240). Replaced by the two-delay bow.
+- Two separate rings for the two lines: about 1.5× the line, +1.8 KB a
+  voice, past `ModelSlot`. One ring spliced at the bow costs none.
+- A fractional split by interpolation (its loss moves the tone with the
+  fraction) or by two allpasses (more cost, and the same whole-sample
+  crossing).
+- BRIGHT as the bridge's reflection low-pass (the amended spec's law):
+  under 3 dB even at eight cascaded three-taps, since the bow re-sharpens
+  the corner every period. On the output instead.
+- A lossless bowed loop (`LoopGain::TOP`, the nut at −1): its ripples
+  never decayed. A fixed loss at both ends instead.
+- STK's bow table (`|x·slope + offset| + 0.75` to the −4th, slope
+  `5 − 4·pressure`): a licensed constant set; ours is a rational curve with
+  no `powf`, scaled to the bow's velocity.
 - Per-sample string loops: at the first estimate they billed SYMP 1,370
   (3 voices on rev V, so the pool of four never filled) and STRING 460.
   The block-at-a-time spans bill 540 and 330, bit for bit.
@@ -437,11 +504,20 @@ NOTE-ON is, by `Rig::time_note_on`.
 
 ## Sources
 - docs/superpowers/specs/2026-09-29-modal-2-resonators-design.md § 2
-- docs/superpowers/plans/2026-09-29-modal-2-resonators.md, Tasks 1 to 11b
-  and 13
+- docs/superpowers/plans/2026-09-29-modal-2-resonators.md, Tasks 1 to 11b,
+  13 and 14
 - The owner's decision of 2026-09-30, after the bench: the exciters get
   their own node, first in the chain, and Bowed becomes playable (spec
-  § 1, § 2 BOWED and § 3, amended)
+  § 1, § 2 BOWED and § 3, amended); and on #240, Bowed rebuilt as a
+  two-delay bowed string before the ship flash, with the controller's
+  rulings of the same day (BRIGHT on the output, the ends' loss, the bow
+  table against the bow's velocity, Bowed's ±5 cents)
+- J. O. Smith, *Physical Audio Signal Processing*, CCRMA, "Bowed Strings"
+  and "Digital Waveguide Bowed-String"; M. E. McIntyre, R. T. Schumacher
+  and J. Woodhouse, "On the oscillations of musical instruments", JASA
+  74(5), 1983; J. C. Schelleng's bow-force limits, as those sources give
+  them. STK's `Bowed` is a known implementation, not a source: no STK
+  code, constant or table is used, so THIRD_PARTY.md does not change.
 - Mutable Instruments Rings (MIT, ADR 0032): `dsp/string.cc` (`ap_gain`,
   the dispersion law) and `dsp/part.cc` (the chord table). Ours are
   `LoopGain`, the blocker's placement on the output, the fractional tuning,
