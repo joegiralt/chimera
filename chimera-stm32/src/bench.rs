@@ -268,6 +268,22 @@ const ROUTING: [RoutingRow; ROUTING_ROWS] = [
     ("SWITCH", |p| modal(p, ResonatorMode::String), switch_storm),
 ];
 
+/// When `Rig::time_note_on`'s round may end.
+type Idle = fn(&Instrument) -> bool;
+
+/// Every pool slot free: a Sympathetic note-on's timed `place` and `lend`
+/// start from a free slot, and a released halo keeps its lease until
+/// silent (ADR 0054).
+fn slots_free(inst: &Instrument) -> bool {
+    inst.allocator().slots().iter().all(|s| s.is_free())
+}
+
+/// No voice sounding: a STRING note-on lands on an idle voice, not a
+/// steal. STRING holds no slot, so `slots_free` is true at once.
+fn silent(inst: &Instrument) -> bool {
+    inst.sounding() == 0
+}
+
 /// Sympathetic ended by ENV 1 on the VCA at RELEASE 0: a low note's loop
 /// filters too seldom to fall silent within `IDLE_BLOCKS`, and a clear's
 /// extent follows the loops' lengths, not how long they rang.
@@ -286,11 +302,16 @@ fn sym_lfo(p: &mut PartAudio) {
     p.mod_state = matrix(&[(ModSource::Lfo1, structure, 127)]);
 }
 
-/// STRING at COLOR 0, ended as `short_sym` is: the pluck's seven
+/// STRING ended as `short_sym` is, at COLOR 0: the pluck's seven
 /// smoothing passes.
 fn dark_pluck(p: &mut PartAudio) {
-    modal(p, ResonatorMode::String);
+    short_string(p);
     p.params.modal.color = 0.0;
+}
+
+/// STRING ended as `short_sym` is, at the default COLOR: one pass.
+fn short_string(p: &mut PartAudio) {
+    modal(p, ResonatorMode::String);
     p.params.envelopes[0].release = 0.0;
     p.mod_state = matrix(&[(ModSource::Env1, VCA, 127)]);
 }
@@ -569,14 +590,17 @@ pub fn run(display: &mut impl ChimeraDisplay, clocks: Clocks, perf: &Performance
     }
     let rebuild = time_rebuild();
     // A4 after A4, the default Sound: the lines clear a loop each.
-    let note_on = rig.time_sym_note_on(MidiNote::A4, |p| modal(p, ResonatorMode::Sympathetic));
+    let sym = |p: &mut PartAudio| modal(p, ResonatorMode::Sympathetic);
+    let note_on = rig.time_note_on(MidiNote::A4, sym, (false, slots_free));
     // The lowest note after itself: every ring whole, the worst case.
     let lowest = MidiNote::new(0).unwrap_or(MidiNote::A4);
-    let lowest = rig.time_sym_note_on(lowest, short_sym);
-    // G1 at COLOR 0: the longest line the passes walk, seven times.
+    let lowest = rig.time_note_on(lowest, short_sym, (false, slots_free));
+    // G1, the longest line the passes walk: its first block at COLOR 0
+    // less at the default's one pass, the six more COLOR 0 takes.
     let g1 = MidiNote::new(31).unwrap_or(MidiNote::A4);
-    let dark = rig.time_first_block(g1, dark_pluck);
-    show_memory(display, rebuild, note_on, (lowest, dark));
+    let dark = rig.time_note_on(g1, dark_pluck, (true, silent));
+    let light = rig.time_note_on(g1, short_string, (true, silent));
+    show_memory(display, rebuild, note_on, (lowest, dark, light));
     hold(clocks);
 }
 
@@ -691,13 +715,18 @@ impl Rig<'_> {
         (cycles / (TIMED_BLOCKS * BLOCK_SIZE as u32), spans)
     }
 
-    /// Cycles of `Instrument::handle` for one Sympathetic note-on of
-    /// `note`, Part 0 set by `part`, on an idle voice: `place`, `lend`, the
-    /// rebuild, the clear and the excitation. Each round releases the note
-    /// and renders until every voice is idle again; one untimed round
-    /// warms first, so the slot's lines hold `note`'s last round.
+    /// Cycles of `Instrument::handle` for one note-on of `note`, Part 0
+    /// set by `part`, on an idle voice, and with `first_block` its first
+    /// render, where a pluck is shaped. Each round releases the note and
+    /// renders until `idle`; one untimed round warms first, so the lines
+    /// hold `note`'s last round.
     #[inline(never)]
-    fn time_sym_note_on(&mut self, note: MidiNote, part: fn(&mut PartAudio)) -> u32 {
+    fn time_note_on(
+        &mut self,
+        note: MidiNote,
+        part: fn(&mut PartAudio),
+        (first_block, idle): (bool, Idle),
+    ) -> u32 {
         let budget = SampleBudget::for_cpu(u32::MAX);
         let inst = Instrument::init_in_place(self.inst_slot, SAMPLE_RATE, budget);
         let fx = FxBus::init_in_place(self.fx_slot);
@@ -712,47 +741,16 @@ impl Rig<'_> {
         for round in 0..=ROUNDS {
             let start = DWT::cycle_count();
             inst.handle(black_box(ev(NoteKind::On(Velocity::DEFAULT))), shared);
+            if first_block {
+                inst.render(fx, &mut self.dac, shared, &mut self.scope);
+            }
             if round > 0 {
                 cycles = cycles.wrapping_add(DWT::cycle_count().wrapping_sub(start));
             }
             inst.handle(ev(NoteKind::Off), shared);
             for _ in 0..IDLE_BLOCKS {
                 inst.render(fx, &mut self.dac, shared, &mut self.scope);
-                if inst.allocator().slots().iter().all(|s| s.is_free()) {
-                    break;
-                }
-            }
-        }
-        cycles / ROUNDS
-    }
-
-    /// Cycles of `Instrument::handle` for one note-on of `note`, Part 0 set
-    /// by `part`, and its first block, where a pluck is shaped: rounds as
-    /// `time_sym_note_on`'s, idle once no voice sounds.
-    #[inline(never)]
-    fn time_first_block(&mut self, note: MidiNote, part: fn(&mut PartAudio)) -> u32 {
-        let budget = SampleBudget::for_cpu(u32::MAX);
-        let inst = Instrument::init_in_place(self.inst_slot, SAMPLE_RATE, budget);
-        let fx = FxBus::init_in_place(self.fx_slot);
-        let shared = AudioShared::init_in_place(self.shared_slot, self.perf);
-        part(&mut shared.parts[0]);
-        let ev = |kind| NoteEvent {
-            channel: MidiChannel::clamped(0),
-            note,
-            kind,
-        };
-        let mut cycles = 0u32;
-        for round in 0..=ROUNDS {
-            let start = DWT::cycle_count();
-            inst.handle(black_box(ev(NoteKind::On(Velocity::DEFAULT))), shared);
-            inst.render(fx, &mut self.dac, shared, &mut self.scope);
-            if round > 0 {
-                cycles = cycles.wrapping_add(DWT::cycle_count().wrapping_sub(start));
-            }
-            inst.handle(ev(NoteKind::Off), shared);
-            for _ in 0..IDLE_BLOCKS {
-                inst.render(fx, &mut self.dac, shared, &mut self.scope);
-                if inst.sounding() == 0 {
+                if idle(inst) {
                     break;
                 }
             }
@@ -998,7 +996,7 @@ fn show_memory(
     display: &mut impl ChimeraDisplay,
     rebuild: u32,
     note_on: u32,
-    (lowest, dark): (u32, u32),
+    (lowest, dark, light): (u32, u32, u32),
 ) {
     use core::mem::size_of;
     draw::fill_rect(display, 0, 0, theme::SCREEN_W, theme::SCREEN_H, theme::BG);
@@ -1012,7 +1010,10 @@ fn show_memory(
         format_args!("REBUILD {rebuild} CYC"),
         format_args!("SYM NOTE-ON {note_on} CYC"),
         format_args!("SYM NOTE-ON LOW {lowest} CYC"),
-        format_args!("PLUCK DARK {dark} CYC"),
+        // The whole note-on and block, against the audio budget; then
+        // what COLOR 0 adds, its six passes over the line.
+        format_args!("DARK NOTE+BLOCK {dark} CYC"),
+        format_args!("DARK +6 PASSES {} CYC", dark.saturating_sub(light)),
     ];
     let mut line = FmtBuf::new();
     for (i, args) in lines.into_iter().enumerate() {

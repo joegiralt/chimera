@@ -73,15 +73,20 @@ fn header_shows_audio_load_in_warning_colours() {
 /// inside FmtBuf's 32 bytes).
 #[test]
 fn every_header_fits() {
+    use chimera_core::dsp::modal::{EXCITER_NAMES, ResonatorMode as M};
+    use chimera_core::params::EngineType;
+    use chimera_core::ui::block_registry::MODAL_EXC;
     use chimera_core::ui::draw::text_width;
-    for chain_id in [
-        ChainId::Part(5),
-        ChainId::Mixer(5),
-        ChainId::System,
-        ChainId::Demo,
+    let models = [M::String, M::Modal, M::Bowed, M::Sympathetic];
+    for (chain_id, engine) in [
+        (ChainId::Part(5), EngineType::Algo),
+        (ChainId::Part(5), EngineType::Modal),
+        (ChainId::Mixer(5), EngineType::Algo),
+        (ChainId::System, EngineType::Algo),
+        (ChainId::Demo, EngineType::Algo),
     ] {
         let mut nav = ChainNav::new();
-        nav.chain_id = chain_id;
+        (nav.chain_id, nav.engine) = (chain_id, engine);
         for node in 0..nav.active_chain().len() {
             nav.node = node;
             let subs = nav
@@ -91,23 +96,25 @@ fn every_header_fits() {
             for sub in 0..subs {
                 nav.sub_page = sub;
                 let def = nav.active_block_def();
-                let (c, n) = header_text(&nav, def, ResonatorMode::String);
-                assert_eq!(
-                    n.as_str().len(),
-                    def.name.len() + if n.as_str().ends_with(" 6") { 2 } else { 0 },
-                    "{}",
-                    def.name
-                );
-                let w = theme::MARGIN_X
-                    + text_width(&theme::FONT_LABEL, c.as_str(), 1)
-                    + 7
-                    + text_width(&theme::FONT_LABEL_BOLD, n.as_str(), 1);
-                assert!(
-                    w < theme::HEADER_DOT_X - 40,
-                    "{} / {}: {w}",
-                    c.as_str(),
-                    n.as_str()
-                );
+                for model in models {
+                    let (c, n) = header_text(&nav, def, model);
+                    let want = if def.id == MODAL_EXC.id {
+                        EXCITER_NAMES[model as usize].len()
+                    } else {
+                        def.name.len() + if n.as_str().ends_with(" 6") { 2 } else { 0 }
+                    };
+                    assert_eq!(n.as_str().len(), want, "{} {model:?}", def.name);
+                    let w = theme::MARGIN_X
+                        + text_width(&theme::FONT_LABEL, c.as_str(), 1)
+                        + 7
+                        + text_width(&theme::FONT_LABEL_BOLD, n.as_str(), 1);
+                    assert!(
+                        w < theme::HEADER_DOT_X - 40,
+                        "{} / {}: {w}",
+                        c.as_str(),
+                        n.as_str()
+                    );
+                }
             }
         }
     }
