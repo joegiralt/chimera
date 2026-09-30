@@ -962,12 +962,12 @@ impl BowedString {
 
 /// The share of `unlocked`'s move a bow of this effective force (FORCE
 /// at the note's velocity, `bow_force`) and SPEED takes, as measured:
-/// all at INIT's v100, 0.447, none at 0.3 and under, where the stick-slip
-/// is too soft to lock, nor at 0.8 and over, whose windows are others;
-/// none at SPEED 0.1, where a slow bow already runs sharp, all from
-/// INIT's 0.5.
+/// all from INIT's v100, 0.447, to FORCE 0.5 at v127, 0.55; none at 0.3
+/// and under, where the stick-slip is too soft to lock, nor at 0.8 and
+/// over, whose windows are others; none at SPEED 0.1, where a slow bow
+/// already runs sharp, all from INIT's 0.5.
 fn grip(force: f32, speed: f32) -> f32 {
-    let f = ((force - 0.3) / (0.447 - 0.3)).min((0.8 - force) / (0.8 - 0.447));
+    let f = ((force - 0.3) / (0.447 - 0.3)).min((0.8 - force) / (0.8 - 0.55));
     f.clamp(0.0, 1.0) * ((speed - 0.1) / 0.4).clamp(0.0, 1.0)
 }
 

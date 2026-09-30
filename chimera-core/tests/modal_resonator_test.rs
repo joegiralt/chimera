@@ -1477,13 +1477,18 @@ fn bows_clean(s: &[f32], note: u8) -> bool {
     octave_clear(s, f0) && thirds < 0.1 * g && c.abs() < BOW_CENTS && common::rms(s) > 1e-3
 }
 
+/// C7's slow, heavy bow, SPEED 0.1 at FORCE 1 or velocity 127: it runs 6
+/// to 37 cents sharp, the stick-slip's own, beyond `unlocked`'s reach
+/// (ADR 0064).
+fn slow_heavy_top(note: u8, vel: u8, force: f32, speed: f32) -> bool {
+    note == 96 && speed == 0.1 && (force >= 1.0 || vel == 127)
+}
+
 /// The bow is robust across the instrument, not only at the tested
 /// points. Seven notes, G1 to C7 × velocity 20 and 127 × FORCE 0.1, 0.5,
-/// 1 × SPEED 0.1, 1 × POS 0 to 1 by quarters, 3 s held, clean over
-/// 0.5–1.5 s and 2–3 s in 96 % of cases or more; and at INIT's POS,
-/// FORCE and SPEED, velocity 20, 64 and 127, in every case. What fails is
-/// C7's slow, heavy bow (SPEED 0.1, FORCE 0.5 at v127 or FORCE 1): it runs
-/// 6 to 37 cents sharp, measured, beyond `unlocked`'s reach.
+/// 1 × SPEED 0.1, 0.5, 1 × POS 0 to 1 by quarters, 3 s held, clean over
+/// 0.5–1.5 s and 2–3 s in every case but `slow_heavy_top`; and at INIT's
+/// POS, FORCE and SPEED, velocity 20, 64 and 127, in every case.
 #[test]
 fn bowed_plays_clean_across_the_instrument() {
     let sr = SR as usize;
@@ -1502,7 +1507,10 @@ fn bowed_plays_clean_across_the_instrument() {
                     let mut n = 0;
                     for vel in [20, 127] {
                         for force in [0.1, 0.5, 1.0] {
-                            for speed in [0.1, 1.0] {
+                            for speed in [0.1, 0.5, 1.0] {
+                                if slow_heavy_top(note, vel, force, speed) {
+                                    continue;
+                                }
                                 for pos in [0.0, 0.25, 0.5, 0.75, 1.0] {
                                     let p = ModalParams {
                                         force,
@@ -1552,11 +1560,7 @@ fn bowed_plays_clean_across_the_instrument() {
     });
     let n: usize = grid.iter().map(|g| g.0).sum();
     let fails: Vec<_> = grid.into_iter().flat_map(|g| g.1).collect();
-    let clean_pct = 100.0 * (n - fails.len()) as f64 / n as f64;
-    assert!(
-        clean_pct >= 96.0,
-        "{clean_pct:.1} % clean of {n}: {fails:?}"
-    );
+    assert!(fails.is_empty(), "{} of {n}: {fails:?}", fails.len());
     assert!(defaults.is_empty(), "the defaults: {defaults:?}");
 }
 
@@ -2121,4 +2125,47 @@ fn a_live_force_or_speed_keeps_the_bow_in_tune() {
             "{note} {knob} {from} to {to}: live {live:+.1} c, from note-on {fresh:+.1} c"
         );
     }
+}
+
+/// ADR 0064's tuning scope: G1 to C7 (every third note, every note from
+/// C6) within `BOW_CENTS` at velocity 20, 100 and 127 for FORCE 0.1 at
+/// SPEED 0.1, 0.5 and 1, and FORCE 0.5 at SPEED 0.5 and 1. Outside it a
+/// heavy or slow bow runs off: FORCE 1 up to 35 cents from F3 up, SPEED
+/// 0.1 at FORCE 0.5 up to 21 cents from G4 up.
+#[test]
+fn the_bow_is_in_tune_within_its_scope() {
+    let sr = SR as usize;
+    let notes: Vec<u8> = (31..84).step_by(3).chain(84..=96).collect();
+    std::thread::scope(|scope| {
+        let runs: Vec<_> = [20u8, 100, 127]
+            .into_iter()
+            .map(|vel| {
+                let notes = &notes;
+                scope.spawn(move || {
+                    let mut bad = Vec::new();
+                    for (force, speed) in
+                        [(0.1, 0.1), (0.1, 0.5), (0.1, 1.0), (0.5, 0.5), (0.5, 1.0)]
+                    {
+                        let p = ModalParams {
+                            mode: ResonatorMode::Bowed,
+                            force,
+                            speed,
+                            ..Default::default()
+                        };
+                        for &n in notes {
+                            let out = play_modal_at(&p, n, vel, 3 * sr / 2 / BLOCK_SIZE, 0);
+                            let f0 = note_to_freq(n);
+                            let c = cents(fundamental_hz(&out[sr / 2..3 * sr / 2], f0 as f64), f0);
+                            if c.abs() >= BOW_CENTS {
+                                bad.push(format!("{n} v{vel} F{force} S{speed}: {c:+.1}"));
+                            }
+                        }
+                    }
+                    bad
+                })
+            })
+            .collect();
+        let bad: Vec<_> = runs.into_iter().flat_map(|h| h.join().unwrap()).collect();
+        assert!(bad.is_empty(), "{bad:?}");
+    });
 }
