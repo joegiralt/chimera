@@ -136,7 +136,7 @@ pub const MIN_LINE: usize = 2;
 
 /// A first-order allpass, `(η + z⁻¹)/(1 + η z⁻¹)`: the loop's fraction of
 /// a sample. Stable for `|η| < 1`.
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 pub struct Allpass1 {
     eta: f32,
     x1: f32,

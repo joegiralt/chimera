@@ -1,6 +1,7 @@
 //! The Karplus-Strong string, the project owner's own code from their
 //! Carcosa firmware for the Ambika, relicensed here under MIT (ADR 0032).
 
+use core::cell::Cell;
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 
@@ -263,8 +264,8 @@ impl KsString {
     /// `tick_full` for a sympathetic string, which has no dispersion,
     /// ensemble or release, and which `input` excites at its write
     /// position. The last tick's output waits in `pending` and is stored
-    /// with this tick's input.
-    #[inline]
+    /// with this tick's input. `run_coupled`'s reference.
+    #[cfg(test)]
     pub(super) fn tick_coupled(
         &mut self,
         p: &KsRenderParams,
@@ -277,6 +278,138 @@ impl KsString {
         *pending = filtered;
         filtered
     }
+
+    /// `tick_coupled` over `input`, each output added to `out`'s sample:
+    /// the same arithmetic, in spans where neither the write nor the
+    /// newest tap wraps, the two older taps carried from the sample before.
+    pub(super) fn run_coupled(
+        &mut self,
+        p: &KsRenderParams,
+        input: &[f32],
+        pending: &mut f32,
+        out: &mut [f32],
+    ) {
+        let (half, mid, gain) = (p.lp * 0.5, 1.0 - p.lp, p.gain.get());
+        let (d, len) = (self.delay, self.ring_len);
+        let ring = Cell::from_mut(&mut self.buffer[..len]).as_slice_of_cells();
+        let mut wp = self.write_pos;
+        // The newest tap, `d − 2` behind the write: at `d` 2, the sample
+        // just written.
+        let mut cp = (wp + len + 2 - d) % len;
+        let (mut a, mut b) = (behind_in(ring, wp, d), behind_in(ring, wp, d - 1));
+        let (mut ap, mut pend) = (self.frac, *pending);
+        let mut k = 0;
+        while k < input.len() {
+            let m = (input.len() - k).min(len - wp).min(len - cp);
+            let io = input[k..k + m].iter().zip(&mut out[k..k + m]);
+            for ((w, t), (x, o)) in ring[wp..wp + m].iter().zip(&ring[cp..cp + m]).zip(io) {
+                w.set(pend + x);
+                let c = t.get();
+                pend = ap.process((half * (c + a) + mid * b) * gain);
+                *o += pend;
+                (a, b) = (b, c);
+            }
+            (wp, cp) = (wrap(wp + m, len), wrap(cp + m, len));
+            k += m;
+        }
+        (self.write_pos, self.frac, *pending) = (wp, ap, pend);
+    }
+}
+
+/// `i` round a ring of `len`, `i <= len`.
+#[inline]
+fn wrap(i: usize, len: usize) -> usize {
+    if i == len { 0 } else { i }
+}
+
+/// Where `ring`'s sample `k` behind `at` is, `k < ring.len()`.
+#[inline]
+fn behind_at(ring: &[Cell<f32>], at: usize, k: usize) -> usize {
+    let i = at + ring.len() - k;
+    if i >= ring.len() { i - ring.len() } else { i }
+}
+
+/// `StringVoice::run`'s state, held in registers across a block.
+struct Held {
+    half: f32,
+    mid: f32,
+    gain: f32,
+    mix: f32,
+    d: usize,
+    /// The low-pass's two older taps, oldest first.
+    taps: (f32, f32),
+    ap: Allpass1,
+    disp: Dispersion,
+    ens: Ensemble,
+}
+
+impl Held {
+    /// `out.len()` samples writing from `ws` and reading the newest tap
+    /// from `cp`, neither wrapping; the heads wrap only if `NEAR`.
+    #[inline(always)]
+    fn span<const STIFF: bool, const ENS: bool, const NEAR: bool>(
+        &mut self,
+        ring: &[Cell<f32>],
+        (ws, cp): (usize, usize),
+        out: &mut [f32],
+    ) {
+        let m = out.len();
+        let (mut a, mut b) = self.taps;
+        let span = ring[ws..ws + m].iter().zip(&ring[cp..cp + m]);
+        for (at, ((w, t), o)) in (ws..).zip(span.zip(out)) {
+            let c = t.get();
+            let mut x = self.half * (c + a) + self.mid * b;
+            if STIFF {
+                x = self.disp.process(x);
+            }
+            let dry = self.ap.process(x) * self.gain;
+            w.set(dry);
+            (a, b) = (b, c);
+            *o = if ENS {
+                let heads = self.ens.head_delays(self.d);
+                self.ens.advance();
+                let read = |&h| {
+                    if NEAR {
+                        read_frac_in(ring, at, h)
+                    } else {
+                        read_frac_up(ring, at, h)
+                    }
+                };
+                let wet = heads.iter().map(read).sum::<f32>();
+                dry + self.mix * (wet * (1.0 / ENS_HEADS as f32) - dry)
+            } else {
+                dry
+            };
+        }
+        self.taps = (a, b);
+    }
+}
+
+/// `ring`'s sample `k` behind `at`.
+#[inline]
+fn behind_in(ring: &[Cell<f32>], at: usize, k: usize) -> f32 {
+    ring[behind_at(ring, at, k)].get()
+}
+
+/// `read_frac_in` where the taps don't wrap: `delay + 2 <= at`.
+#[inline]
+fn read_frac_up(ring: &[Cell<f32>], at: usize, delay: f32) -> f32 {
+    let i = delay as usize;
+    let f = delay - i as f32;
+    let x = ring[at - i].get();
+    x + f * (ring[at - i - 1].get() - x)
+}
+
+/// `KsString::read_frac` on `ring` behind `at`: the older tap is the
+/// newer's neighbour, so one wrap serves both.
+#[inline]
+fn read_frac_in(ring: &[Cell<f32>], at: usize, delay: f32) -> f32 {
+    let i = delay as usize;
+    let f = delay - i as f32;
+    let j = behind_at(ring, at, i);
+    let x = ring[j].get();
+    let older = ring[if j == 0 { ring.len() - 1 } else { j - 1 }].get();
+    x + f * (older - x)
 }
 
 /// `freq`'s loop for `set_period`: its period, nothing else delaying,
@@ -448,10 +581,70 @@ impl StringVoice {
         dry + mix * (wet * (1.0 / ENS_HEADS as f32) - dry)
     }
 
-    /// `x` through BODY, outside the loop.
-    #[inline]
-    pub(super) fn colour(&mut self, x: f32) -> f32 {
-        self.body.process(x, self.body_mix)
+    /// `tick` over `out`. Held, in spans (`run`); while a release ramps,
+    /// a sample at a time.
+    pub(super) fn render(&mut self, p: &KsRenderParams, out: &mut [f32]) {
+        if !self.release.idle() {
+            for s in out {
+                *s = self.tick(p);
+            }
+            return;
+        }
+        match (self.stiff, self.ens_mix > 0.0) {
+            (false, false) => self.run::<false, false>(p, out),
+            (true, false) => self.run::<true, false>(p, out),
+            (false, true) => self.run::<false, true>(p, out),
+            (true, true) => self.run::<true, true>(p, out),
+        }
+    }
+
+    /// `tick` with the release idle, the chain if `STIFF` and the heads if
+    /// `ENS`: the same arithmetic, in spans where neither the write nor the
+    /// newest tap wraps, the two older taps carried from the sample before.
+    fn run<const STIFF: bool, const ENS: bool>(&mut self, p: &KsRenderParams, out: &mut [f32]) {
+        let s = &mut self.string;
+        let (d, len, last) = (s.delay, s.ring_len, s.write_pos);
+        let ring = Cell::from_mut(&mut s.buffer[..len]).as_slice_of_cells();
+        let mut h = Held {
+            half: p.lp * 0.5,
+            mid: 1.0 - p.lp,
+            // Idle: the same gain every sample.
+            gain: self.release.gain(p.gain).get(),
+            mix: self.ens_mix,
+            d,
+            taps: (behind_in(ring, last, d), behind_in(ring, last, d - 1)),
+            ap: s.frac,
+            disp: self.disp,
+            ens: self.ens,
+        };
+        let mut ws = wrap(last + 1, len);
+        // The newest tap, `d − 2` behind the last write: at `d` 2, that write.
+        let mut cp = (last + len + 2 - d) % len;
+        let reach = h.ens.reach(d);
+        let mut k = 0;
+        while k < out.len() {
+            let m = (out.len() - k).min(len - ws).min(len - cp);
+            let out = &mut out[k..k + m];
+            // The heads wrap only while the write is within `reach` of the
+            // ring's start: those samples run apart.
+            let m = if ENS && ws < reach {
+                let m = m.min(reach - ws);
+                h.span::<STIFF, ENS, true>(ring, (ws, cp), &mut out[..m]);
+                m
+            } else {
+                h.span::<STIFF, ENS, false>(ring, (ws, cp), out);
+                m
+            };
+            (ws, cp) = (wrap(ws + m, len), wrap(cp + m, len));
+            k += m;
+        }
+        s.write_pos = if ws == 0 { len - 1 } else { ws - 1 };
+        (s.frac, self.disp, self.ens) = (h.ap, h.disp, h.ens);
+    }
+
+    /// `buf` through BODY, outside the loop, in place.
+    pub(super) fn colour(&mut self, buf: &mut [f32]) {
+        self.body.process_block(buf, self.body_mix);
     }
 }
 
@@ -462,6 +655,93 @@ mod tests {
     use crate::dsp::modal::loop_parts::allpass_phase_delay;
     use crate::dsp::note_to_freq;
     use crate::in_place::by_value;
+    use std::boxed::Box;
+
+    fn voice() -> Box<StringVoice> {
+        // SAFETY: `init_in_place` writes every field.
+        Box::new(unsafe { by_value(StringVoice::init_in_place) })
+    }
+
+    /// `render`'s spans are `tick` bit for bit: every chain and ensemble
+    /// case, from the shortest line to the longest, through a release.
+    #[test]
+    fn render_is_tick_bit_for_bit() {
+        let p = KsRenderParams {
+            lp: lp_coeff(0.4),
+            gain: LoopGain::new(0.998),
+        };
+        for note in [20, 31, 60, 96, 127] {
+            let freq = note_to_freq(note);
+            for (structure, ens_mix) in
+                [(None, 0.0), (Some(0.7), 0.0), (None, 0.5), (Some(1.0), 1.0)]
+            {
+                let (mut fast, mut slow) = (voice(), voice());
+                for v in [&mut fast, &mut slow] {
+                    let ens = Ensemble::new(1.0, 3.0, 48_000);
+                    v.pluck((freq, 48_000), structure, 1.0, (0.3, (ens_mix, ens)));
+                    v.shape(0.2);
+                }
+                for block in 0..200 {
+                    if block == 150 {
+                        let to = LoopGain::new(0.9);
+                        fast.release(p.gain, to);
+                        slow.release(p.gain, to);
+                    }
+                    fast.set_ensemble();
+                    slow.set_ensemble();
+                    let mut a = [0.0; 64];
+                    fast.render(&p, &mut a);
+                    let b: [f32; 64] = core::array::from_fn(|_| slow.tick(&p));
+                    let bits = |x: [f32; 64]| x.map(f32::to_bits);
+                    assert_eq!(
+                        bits(a),
+                        bits(b),
+                        "{note} {structure:?} {ens_mix}: block {block}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// `run_coupled` is `tick_coupled` bit for bit, in runs of any length.
+    #[test]
+    fn run_coupled_is_tick_coupled_bit_for_bit() {
+        let p = KsRenderParams {
+            lp: lp_coeff(0.8),
+            gain: LoopGain::new(0.999),
+        };
+        let input: [f32; 64] = core::array::from_fn(|i| libm::sinf(i as f32 * 0.37));
+        for period in [3.2, 4.5, 23.7, 979.6] {
+            let (mut fast, mut slow) = (voice(), voice());
+            for s in [&mut fast.string, &mut slow.string] {
+                s.clear();
+                s.set_period(period, 0.0, core::f32::consts::TAU / period);
+            }
+            let (mut pf, mut ps) = (0.0, 0.0);
+            for (block, len) in [64, 16, 1, 7, 64, 3]
+                .into_iter()
+                .cycle()
+                .take(300)
+                .enumerate()
+            {
+                let mut a = [0.0; 64];
+                fast.string
+                    .run_coupled(&p, &input[..len], &mut pf, &mut a[..len]);
+                let b: [f32; 64] = core::array::from_fn(|i| {
+                    if i < len {
+                        slow.string.tick_coupled(&p, input[i], &mut ps)
+                    } else {
+                        0.0
+                    }
+                });
+                assert_eq!(
+                    a.map(f32::to_bits),
+                    b.map(f32::to_bits),
+                    "{period}: block {block}"
+                );
+            }
+        }
+    }
 
     /// G1 to C8, STRUCTURE 0 to 1: the line stays in `[MIN_LINE, MAX_LINE]`,
     /// and the line, the allpass and the dispersion add to the period at

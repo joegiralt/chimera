@@ -21,6 +21,7 @@ impl BodyMix {
 pub const BODY_MODES: [(f32, f32, f32); 3] =
     [(102.0, 3.0, 1.0), (236.0, 4.0, 0.7), (517.0, 3.0, 0.5)];
 
+#[derive(Clone, Copy)]
 pub struct Body {
     modes: [Svf; 3],
 }
@@ -64,6 +65,18 @@ impl Body {
             wet += g * m.process_bp_normalized(x);
         }
         mix.dry * x + mix.wet * wet
+    }
+
+    /// `process` over `buf`, in place, its state held in registers.
+    pub fn process_block(&mut self, buf: &mut [f32], mix: BodyMix) {
+        if !mix.runs() {
+            return;
+        }
+        let mut b = *self;
+        for x in buf {
+            *x = b.process(*x, mix);
+        }
+        *self = b;
     }
 }
 
