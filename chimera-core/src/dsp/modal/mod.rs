@@ -63,7 +63,7 @@ use bow::BowedString;
 use chords::{GLIDE_STEP, period_ratios};
 use core::f32::consts::TAU;
 use ensemble::{Ensemble, rate_hz};
-use loop_parts::{DC_HZ, LoopGain, Release};
+use loop_parts::{DC_HZ, LoopGain, Release, damped};
 use rings::{CosineOsc, Svf, stiffness_from_structure};
 use string::{FRESH_CLEAR_BYTES, KsRenderParams, KsString, RING_BYTES, StringVoice, lp_coeff};
 
@@ -271,6 +271,8 @@ pub struct ModalEngine {
     tuned: f32,
     active: bool,
     silence_counter: u32,
+    /// The note's loudest output sample: silence is judged against it.
+    peak: f32,
     /// On a string model's output, not in its loop, where its phase would
     /// detune the upper partials.
     dc: DcBlocker,
@@ -281,11 +283,11 @@ pub struct ModalEngine {
 }
 
 crate::in_place::field_list!(ModalEngine => ModalEngine {
-    model, frequency, pitch, tuned, active, silence_counter, dc, macros, shape_pending,
+    model, frequency, pitch, tuned, active, silence_counter, peak, dc, macros, shape_pending,
 });
 
 // A `ModalEngine` is its largest model plus the fields every model shares
-// (`frequency`, `pitch`, `tuned`, `active`, `silence_counter`,
+// (`frequency`, `pitch`, `tuned`, `active`, `silence_counter`, `peak`,
 // `dc`, `macros`, `shape_pending`), never the sum of models. The slot's
 // tag takes one align (`in_place_enum!`).
 const fn models_are_exclusive() -> bool {
@@ -305,7 +307,7 @@ const fn models_are_exclusive() -> bool {
         i += 1;
     }
     let align = align_of::<ModalEngine>();
-    let shared = size_of::<(f32, f32, f32, bool, u32, DcBlocker, Macros, bool)>();
+    let shared = size_of::<(f32, f32, f32, bool, u32, f32, DcBlocker, Macros, bool)>();
     size_of::<ModalEngine>()
         <= (largest.next_multiple_of(align) + align + shared).next_multiple_of(align)
 }
@@ -441,6 +443,7 @@ impl ModalEngine {
             addr_of_mut!((*p).tuned).write(1.0);
             addr_of_mut!((*p).active).write(false);
             addr_of_mut!((*p).silence_counter).write(0);
+            addr_of_mut!((*p).peak).write(0.0);
             addr_of_mut!((*p).dc).write(DcBlocker::new(DC_HZ, SAMPLE_RATE));
             addr_of_mut!((*p).macros).write(Macros::of(&ModalParams::default()));
             addr_of_mut!((*p).shape_pending).write(false);
@@ -546,7 +549,7 @@ impl ModalEngine {
             ModelSlot::Bank(bank) => {
                 bank.resolution = params.modes.count();
                 bank.compute_filters(m, bank_freq);
-                bank.cos_osc.init(m.pos);
+                bank.cos_osc.init(params::beta(m.pos, params::END));
                 let burst_ms = 2.0 + params.burst * 4.0;
                 bank.burst_remaining = (burst_ms * sample_rate as f32 / 1000.0) as usize;
                 bank.burst_amp = vel * params.excite;
@@ -592,6 +595,7 @@ impl ModalEngine {
         self.dc.reset();
         self.active = true;
         self.silence_counter = 0;
+        self.peak = 0.0;
     }
 
     /// The strings follow a changed pitch ratio (a divide per string,
@@ -634,14 +638,16 @@ impl ModalEngine {
     /// strings ring until touched (ADR 0054).
     pub fn note_off(&mut self, _pool: &mut SymPool) {
         // As `render` rings them: f0 in Hz, T60 from the eased DAMP.
-        let f0 = self.pitched(self.frequency) * SAMPLE_RATE as f32;
+        let f = self.pitched(self.frequency);
+        let f0 = f * SAMPLE_RATE as f32;
         let to = LoopGain::from_t60(RELEASE_T60, f0);
-        let held = LoopGain::from_t60(t60(self.macros.damp), f0);
+        let string = main_string(&self.macros, (f0, core::f32::consts::TAU * f)).gain;
         match &mut self.model {
-            ModelSlot::String(v) => v.release(held, to),
-            ModelSlot::Bowed(b) => b.lift(held),
+            ModelSlot::String(v) => v.release(string, to),
+            // A lifted bow's ends are plain delays: no low-pass to make up.
+            ModelSlot::Bowed(b) => b.lift(LoopGain::from_t60(t60(self.macros.damp), f0)),
             ModelSlot::Bank(_) => {}
-            ModelSlot::Sympathetic(m) => m.main.release(held, to),
+            ModelSlot::Sympathetic(m) => m.main.release(string, to),
         }
     }
 
@@ -685,6 +691,7 @@ impl ModalEngine {
         let bank_freq = self.pitched(self.frequency);
         // The strings' f0 in Hz, for their loop gains.
         let f0 = bank_freq * sample_rate as f32;
+        let w0 = core::f32::consts::TAU * bank_freq;
         // The chord steps on the un-eased STRUCTURE: its glide is the easing.
         let chord = chord_of(to.structure);
         self.retune(
@@ -699,13 +706,19 @@ impl ModalEngine {
             ModelSlot::Bank(bank) => {
                 // Recompute filters every block (Rings does this — allows live parameter changes)
                 bank.compute_filters(&m, bank_freq);
-                bank.cos_osc.init(m.pos);
+                // POS glides its weights over the block; a note's first takes it whole.
+                let place = params::beta(m.pos, params::END);
+                if first {
+                    bank.cos_osc.init(place);
+                } else {
+                    bank.cos_osc.glide(place, BLOCK_SIZE as u32);
+                }
                 render_modal(bank, output);
                 bank.burst_remaining > 0
             }
             ModelSlot::String(v) => {
                 v.set_ensemble();
-                render_string(v, output, &m, f0);
+                render_string(v, output, &m, (f0, w0));
                 false
             }
             ModelSlot::Bowed(b) => {
@@ -725,7 +738,7 @@ impl ModalEngine {
                 let v = &mut **v;
                 v.main.set_ensemble();
                 let set = pool.halo(&v.halo);
-                render_sympathetic(&mut v.main, set, output, &m, (f0, sample_rate));
+                render_sympathetic(&mut v.main, set, output, &m, (f0, w0));
                 false
             }
         };
@@ -736,7 +749,11 @@ impl ModalEngine {
             max_level = max_level.max(libm::fabsf(*s));
         }
 
-        if max_level < 0.001 && !exciting {
+        self.peak = self.peak.max(max_level);
+        // Silent 60 dB under the note's peak, as DAMP's T60 counts: a quiet
+        // high note rings as long as a loud low one. Never under
+        // `SILENT_FLOOR`.
+        if max_level <= (self.peak * SILENT_REL).max(SILENT_FLOOR) && !exciting {
             self.silence_counter += 1;
             if self.silence_counter > 10 {
                 self.active = false;
@@ -746,6 +763,11 @@ impl ModalEngine {
         }
     }
 }
+
+/// A note is silent this far under its peak: −60 dB, DAMP's T60.
+const SILENT_REL: f32 = 0.001;
+/// And under this whatever its peak: −120 dB.
+const SILENT_FLOOR: f32 = 1e-6;
 
 impl ModalBank {
     fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
@@ -1057,18 +1079,17 @@ fn render_modal(bank: &mut ModalBank, output: &mut [f32; BLOCK_SIZE]) {
     }
 }
 
-fn render_string(v: &mut StringVoice, output: &mut [f32; BLOCK_SIZE], m: &Macros, f0: f32) {
+fn render_string(v: &mut StringVoice, output: &mut [f32; BLOCK_SIZE], m: &Macros, f0: (f32, f32)) {
     v.render(&main_string(m, f0), output);
     v.colour(output);
 }
 
-/// The block's STRING or SYMP main string at `f0` Hz: its held gain,
-/// which a release caps.
-fn main_string(m: &Macros, f0: f32) -> KsRenderParams {
-    KsRenderParams {
-        lp: lp_coeff(m.bright),
-        gain: LoopGain::from_t60(t60(m.damp), f0),
-    }
+/// The block's STRING or SYMP main string at `f0` Hz, `w` rad/sample:
+/// its low-pass and held gain, which a release caps. The fundamental
+/// rings DAMP's T60 at every pitch (`damped`).
+fn main_string(m: &Macros, f0: (f32, f32)) -> KsRenderParams {
+    let (lp, gain) = damped(t60(m.damp), f0, lp_coeff(m.bright));
+    KsRenderParams { lp, gain }
 }
 
 /// A note's ENS MIX and ensemble at `hz`: off at MIX 0.
@@ -1111,16 +1132,17 @@ fn render_sympathetic(
     set: Option<&mut SympatheticSet>,
     output: &mut [f32; BLOCK_SIZE],
     m: &Macros,
-    (f0, sample_rate): (f32, u32),
+    f0: (f32, f32),
 ) {
     main.render(&main_string(m, f0), output);
     if let Some(set) = set {
         // Each halo string rings twice the main one's T60, no darker.
         let lp = lp_coeff(halo_bright(m.bright));
         let halo_t60 = HALO_T60 * t60(m.damp);
-        let halo = set.periods().map(|p| KsRenderParams {
-            lp,
-            gain: LoopGain::from_t60(halo_t60, sample_rate as f32 / p),
+        let halo = set.periods().map(|p| {
+            let hz = (SAMPLE_RATE as f32 / p, core::f32::consts::TAU / p);
+            let (lp, gain) = damped(halo_t60, hz, lp);
+            KsRenderParams { lp, gain }
         });
         let (coupling, level) = (set.coupling, set.level);
         // The main string drives each halo string at its write position.
@@ -1197,16 +1219,19 @@ mod tests {
         }
     }
 
-    /// The loop gain the DSP runs at C3 is the old DECAY's gain per pass:
-    /// the DAMP law and its v1 inverse agree.
+    /// The fundamental's gain the DSP runs at C3, the loop's and its
+    /// low-pass's, is the old DECAY's gain per pass: the DAMP law and its
+    /// v1 inverse agree.
     #[test]
     fn old_decay_gain_survives_at_c3() {
+        let w = TAU * 130.81 / 48_000.0;
         for decay in [0.2, 0.3, 0.6, 1.0] {
             let p = ModalParams {
                 damp: damp_from_v1_decay(decay),
                 ..Default::default()
             };
-            let got = main_string(&Macros::of(&p), 130.81).gain.get();
+            let k = main_string(&Macros::of(&p), (130.81, w));
+            let got = k.gain.get() * (1.0 - k.lp * (1.0 - libm::cosf(w)));
             let want = 0.999 - 0.009 * decay;
             assert!((got - want).abs() < 1e-5, "DECAY {decay}: {got} vs {want}");
         }

@@ -154,8 +154,9 @@ const FIXTURE_RENDERS: &[(&str, u64)] = &[
     ("factory_6.snd", 0xfd388eee4c112513),
     ("factory_7.snd", 0x81c2fbb41ba2c813),
     ("init_algo.snd", 0x002d6721f776f6d6),
-    // Re-recorded: Modal 2 step A's resonators (spec § Tests), then ADR 0058's gain.
-    ("init_modal.snd", 0xbb3ef9463cbf89bc),
+    // Re-recorded: Modal 2 step A's resonators (spec § Tests), then ADR 0058's gain,
+    // then Task 18's DAMP make-up and relative silence (ADR 0056).
+    ("init_modal.snd", 0x90ff44f19ca12238),
 ];
 
 #[test]
@@ -345,9 +346,10 @@ fn old_modal_patches_translate() {
 }
 
 /// A v1 Bowed patch on the two-delay bow (plan Task 14): re-recorded
-/// deliberately, since the one-loop bow played an octave low (#240).
+/// deliberately, since the one-loop bow played an octave low (#240). The
+/// release again at Task 18: silence is judged 60 dB under the note's peak.
 const BOWED_V1_HELD: u64 = 0x4ff7_4f3d_d407_e80c;
-const BOWED_V1_RELEASED: u64 = 0x22d5_d84b_a143_3970;
+const BOWED_V1_RELEASED: u64 = 0x3202_a692_2ae7_f619;
 /// The one-loop bow's held C3, second half of its first second, recorded at 330298c.
 const BOWED_V1_RMS: f32 = 0.380_809_55;
 
