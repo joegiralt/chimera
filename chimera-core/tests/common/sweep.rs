@@ -10,7 +10,7 @@ use chimera_core::dsp::chorus::ChorusParams;
 use chimera_core::dsp::comp::CompParams;
 use chimera_core::dsp::delay::DelayParams;
 use chimera_core::dsp::fx_bus::{FxBus, FxParams};
-use chimera_core::dsp::limiter::CEILING;
+use chimera_core::dsp::limiter::{CEILING, OUTPUT_TRIM};
 use chimera_core::dsp::modal::{ModalParams, ResonatorMode, reads};
 use chimera_core::dsp::reverb::ReverbParams;
 use chimera_core::dsp::voice::Voice;
@@ -363,6 +363,7 @@ impl Bench {
             tape.out[k].extend_from_slice(&out[k]);
             tape.pre_peak[k] = pre[k].iter().fold(tape.pre_peak[k], |m, x| m.max(x.abs()));
         }
+        tape.pre.extend_from_slice(&pre[0]);
         tape.bus.extend_from_slice(self.inst.part_bus(0));
         let a = self.inst.allocator();
         let live: u32 = a
@@ -391,6 +392,8 @@ impl Bench {
 pub struct Tape {
     pub out: [Vec<f32>; DAC_PAIRS],
     pub pre_peak: [f32; DAC_PAIRS],
+    /// P1 before the limiter, a block ahead of `out`.
+    pub pre: Vec<f32>,
     pub bus: Vec<f32>,
     pub bill: Vec<u32>,
     pub busy: Vec<u8>,
@@ -732,6 +735,10 @@ pub struct Level {
     /// Part 1's bus (its voices summed, before pan, level and the trim).
     pub bus_rms: f32,
     pub bus_peak: f32,
+    /// The limiter's deepest gain reduction, dB, over the trim (0 unlimited).
+    pub gr_db: f32,
+    /// The loudness it took from P1 over the hold, dB.
+    pub limited_db: f32,
 }
 
 /// `notes` at `vel` on `patch`, held `blocks`, measured over the hold
@@ -758,5 +765,9 @@ pub fn level(patch: Patch, notes: &[u8], vel: u8, blocks: usize) -> Level {
         lufs: lufs(tape.pair(0, 1, blocks + 1)),
         bus_rms: super::rms(bus),
         bus_peak: bus.iter().fold(0.0f32, |m, x| m.max(x.abs())),
+        gr_db: db(tape.pre_peak.iter().fold(0.0f32, |m, &x| m.max(x)) * OUTPUT_TRIM / CEILING)
+            .max(0.0),
+        limited_db: lufs(&tape.pre[..2 * BLOCK_SIZE * blocks]) + db(OUTPUT_TRIM)
+            - lufs(tape.pair(0, 1, blocks + 1)),
     }
 }

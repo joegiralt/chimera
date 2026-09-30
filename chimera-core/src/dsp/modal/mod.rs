@@ -453,6 +453,11 @@ impl ModalEngine {
         self.model.mode()
     }
 
+    /// Its model's `out_gain`, for the voice's VCA.
+    pub fn out_gain(&self) -> f32 {
+        out_gain(self.mode())
+    }
+
     /// The voice's pitch ratio, for the next `note_on` or `render`: the
     /// resonators' and strings' frequency, per block.
     pub fn set_pitch(&mut self, ratio: f32) {
@@ -1076,6 +1081,19 @@ fn ensemble(params: &ModalParams, hz: f32, sample_rate: u32) -> (f32, Ensemble) 
         params.ens_mix,
         Ensemble::new(params.ens_depth, hz, sample_rate),
     )
+}
+
+/// Each model's output gain (ADR 0058), at the voice's VCA: its INIT's C4
+/// at velocity 100 as loud on P1 as ALGO INIT's, ±1 dB. After the bank's
+/// tanh, SYMP's and the voice's filter, so none of them saturates more.
+/// BOWED's is on top of `BOW_OUT`, the bow's level into that filter.
+pub const fn out_gain(mode: ResonatorMode) -> f32 {
+    match mode {
+        ResonatorMode::String => 10.96,
+        ResonatorMode::Modal => 2.10,
+        ResonatorMode::Bowed => 1.62,
+        ResonatorMode::Sympathetic => 4.24,
+    }
 }
 
 /// SPEED 1's bow velocity; SPEED 0.5 is the old `BOW_VELOCITY · 0.3`.

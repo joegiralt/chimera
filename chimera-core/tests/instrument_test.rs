@@ -645,7 +645,7 @@ fn the_costliest_patch_plays_six_voices_on_rev_v() {
 /// for an intended sound change (`common::golden`).
 const GOLDENS: &[(&str, u64)] = &[
     ("poly_chord", 0x6876d7661e044851), // ADR 0049 INIT, then the ADR 0050 output trim
-    ("two_parts_two_pairs", 0x937e9837218ce101), // Re-recorded: Modal 2 step A's resonators (spec § Tests)
+    ("two_parts_two_pairs", 0x7a3db9bce7910dfe), // Re-recorded: Modal 2 step A, then ADR 0058's gain
     ("reverb_send_off", 0x0e7a98bc151a775d),     // ADR 0049 INIT, then the ADR 0050 output trim
     ("reverb_send_on", 0xa0e1bc2dec7668d9),      // ADR 0049 INIT, then the ADR 0050 output trim
     ("six_voice_chord", 0xc2673515ab48c0c9),     // ADR 0049 INIT, then the ADR 0050 output trim
@@ -656,8 +656,8 @@ const GOLDENS: &[(&str, u64)] = &[
 /// before the output trim.
 const PRE_LIMITER: &[(&str, u64)] = &[
     ("poly_chord", 0x2c57afe8baf00119),
-    // Re-recorded: Modal 2 step A's resonators (spec § Tests).
-    ("two_parts_two_pairs", 0xc1b5cdbe6cafa1c8),
+    // Re-recorded: Modal 2 step A's resonators (spec § Tests), then ADR 0058's gain.
+    ("two_parts_two_pairs", 0x3313cbb5922ce47a),
     ("reverb_send_off", 0xf40c677a4633ad69),
     ("reverb_send_on", 0x5e7b5f6ed1eedd52),
     ("six_voice_chord", 0x241436b65cc7a435),

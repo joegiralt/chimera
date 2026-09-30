@@ -112,6 +112,14 @@ impl EngineSlot {
         }
     }
 
+    /// The engine's output gain at the VCA (ADR 0058): Algo is the reference.
+    pub fn out_gain(&self) -> f32 {
+        match self {
+            Self::Algo(_) => 1.0,
+            Self::Modal(m) => m.out_gain(),
+        }
+    }
+
     /// An idle `kind`, fresh, in place: no stack copy of an engine. The
     /// one place a lease moves (exclusive-state spec § 4.4):
     ///
