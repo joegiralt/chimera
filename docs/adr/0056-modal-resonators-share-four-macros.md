@@ -124,6 +124,13 @@ loop (#10):
   or String sizes the voice. `Instrument` is 162,232 B, which leaves
   124,488 B of D2.
 
+Task 9 rebuilds the ensemble (#50, ours): read heads on the string's own
+line at `2 + A + A·sₖ` behind the write, in phase with the dry at DEPTH 0,
+swung by a 0.1–6 Hz quadrature LFO to a peak Doppler of 15 cents · DEPTH.
+There are two heads, at 0° and 90°: evenly spread heads (three at 120°, or
+a pair at 180°) cancel each partial's first sidebands in the sum,
+Σ e^(i2πk/3) = 0, so the mix barely moves.
+
 ## Alternatives considered
 - Keep FDBK and clamp its range below the unity point: its useful range
   would be 0–0.012, and the knob would still be one bad mapping from a

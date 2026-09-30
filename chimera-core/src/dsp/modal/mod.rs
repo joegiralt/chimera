@@ -52,12 +52,10 @@ use crate::hw::{Cost, SAMPLE_RATE};
 use crate::in_place::{in_place_enum, uninit_at};
 use crate::sym_alloc::{Lease, SYM_SLOTS, SymAlloc, SymSlot};
 use crate::voice_alloc::VoiceIdx;
-use ensemble::rate_hz;
+use ensemble::{Ensemble, rate_hz};
 use loop_parts::{DcBlocker, LoopGain, RELEASE_SAMPLES, RELEASE_T60, Release};
 use rings::{CosineOsc, Svf, stiffness_from_structure};
-use string::{
-    EnsAt, FRESH_CLEAR_BYTES, KsRenderParams, KsString, RING_BYTES, StringVoice, lp_coeff,
-};
+use string::{FRESH_CLEAR_BYTES, KsRenderParams, KsString, RING_BYTES, StringVoice, lp_coeff};
 
 /// Bytes the string lines' clears have written on this thread, since the
 /// last call: for the tests.
@@ -461,7 +459,10 @@ impl ModalEngine {
                     (freq, sample_rate),
                     Some(m.structure),
                     vel * params.excite,
-                    (params.body, ens_at(params, rate_hz(params.ens_rate))),
+                    (
+                        params.body,
+                        ensemble(params, rate_hz(params.ens_rate), sample_rate),
+                    ),
                 );
             }
             ModelSlot::Bowed(b) => {
@@ -474,7 +475,7 @@ impl ModalEngine {
             }
             ModelSlot::Sympathetic(v) => {
                 // STRUCTURE tunes the halo only: the main string is not stiff.
-                let ens = ens_at(params, rate_hz(SYMP_ENS_RATE));
+                let ens = ensemble(params, rate_hz(SYMP_ENS_RATE), sample_rate);
                 v.main.pluck(
                     (freq, sample_rate),
                     None,
@@ -608,7 +609,7 @@ impl ModalEngine {
                 bank.burst_remaining > 0
             }
             ModelSlot::String(v) => {
-                v.set_ensemble(sample_rate);
+                v.set_ensemble();
                 render_string(v, output, &m, f0);
                 false
             }
@@ -619,7 +620,7 @@ impl ModalEngine {
             }
             ModelSlot::Sympathetic(v) => {
                 let v = &mut **v;
-                v.main.set_ensemble(sample_rate);
+                v.main.set_ensemble();
                 render_sympathetic(&mut v.main, pool.halo(&v.halo), output, (params, &m), f0);
                 false
             }
@@ -909,16 +910,15 @@ fn main_string(m: &Macros, f0: f32) -> KsRenderParams {
     }
 }
 
-/// A note's ensemble at `hz`: off at DEPTH or MIX 0.
-fn ens_at(params: &ModalParams, hz: f32) -> EnsAt {
-    if params.ens_depth <= 0.0 || params.ens_mix <= 0.0 {
-        return EnsAt::OFF;
+/// A note's ENS MIX and ensemble at `hz`: off at MIX 0.
+fn ensemble(params: &ModalParams, hz: f32, sample_rate: u32) -> (f32, Ensemble) {
+    if params.ens_mix <= 0.0 {
+        return (0.0, Ensemble::default());
     }
-    EnsAt {
-        depth: params.ens_depth,
-        hz,
-        mix: params.ens_mix,
-    }
+    (
+        params.ens_mix,
+        Ensemble::new(params.ens_depth, hz, sample_rate),
+    )
 }
 
 /// Bowed's hidden bow, until step B's exciter.
