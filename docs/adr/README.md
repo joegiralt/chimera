@@ -57,3 +57,4 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0053](0053-delay-mechanics-wow-and-irregular-flutter.md) | The delay's WOW becomes MECHANICS: a slow wow and an irregular flutter | Proposed |
 | [0054](0054-sympathetic-strings-from-a-shared-pool.md) | Sympathetic borrows its strings from a shared pool of four (supersedes 0052) | Accepted |
 | [0055](0055-master-tape-off-the-chain.md) | The master tape stage is off the chain, kept behind `master-tape` (supersedes in part 0030) | Proposed |
+| [0059](0059-music-theory-crate-built-from-types.md) | Music theory is its own crate, built from types | Proposed |
