@@ -10,7 +10,7 @@ use crate::dsp::algo::kernel::{Kernel, KernelBlock, OpBlock, SAMPLE_SCALE};
 use crate::dsp::algo::math::exp2;
 use crate::dsp::algo::morph::{Morph, carrier_norm, incoming};
 use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
-use crate::dsp::algo::plan::{EvalPlan, MAX_EDGES, OPS};
+use crate::dsp::algo::plan::{EvalPlan, MAX_EDGES, OPS, blend};
 use crate::dsp::algo::tx::{FEEDBACK_CYCLES, LEVEL_GAIN, detune_factor, level_gain, ratio};
 use crate::dsp::algo::waves::{WaveId, mip_position, mip_step};
 use crate::hw::{BLOCK_SIZE, Cost};
@@ -28,6 +28,8 @@ pub struct AlgoLive {
     /// LEVELs with a mod route (`ModState::algo_levels_routed`): live even
     /// at a stored 0, as `cost` bills them.
     pub routed: [bool; OPS],
+    /// MORPH has a mod route: a carrier of either algorithm may be heard.
+    pub morph_routed: bool,
 }
 
 impl AlgoLive {
@@ -36,6 +38,7 @@ impl AlgoLive {
             morph: p.morph as f32,
             level: core::array::from_fn(|i| p.ops[i].level as f32),
             routed: [false; OPS],
+            morph_routed: false,
         }
     }
 
@@ -288,11 +291,19 @@ impl AlgoEngine {
         }
         (self.morph, self.norm) = (m.get(), norm);
         self.finish_swap(p);
-        self.active = (0..OPS).any(|i| {
-            self.plan.carrier_a[i] + self.plan.carrier_b[i] > 0.0
-                && (p.ops[i].level > 0 || live.routed[i])
-                && !self.env[i].is_idle()
-        });
+        // Held by a carrier heard at the MORPH: one only in ALG B is silent
+        // at MORPH 0 and holds nothing there. A routed MORPH may bring
+        // either algorithm's back, so modulation never ends a held note.
+        let (a, b) = (&self.plan.carrier_a, &self.plan.carrier_b);
+        let heard = |i: usize| {
+            if live.morph_routed {
+                a[i] + b[i] > 0.0
+            } else {
+                blend(a[i], b[i], m.get()) > 0.0
+            }
+        };
+        self.active = (0..OPS)
+            .any(|i| heard(i) && (p.ops[i].level > 0 || live.routed[i]) && !self.env[i].is_idle());
     }
 
     /// Cycles per sample of a ratio-1 operator.

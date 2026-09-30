@@ -370,7 +370,6 @@ fn long_tail(c: &Case) -> Option<&'static str> {
 enum Defect {
     VoiceDc,
     ModalDc,
-    SilentOpHoldsVoice,
 }
 
 impl Defect {
@@ -383,10 +382,6 @@ impl Defect {
             Defect::ModalDc => {
                 "the engine's own DC (Task 17): SYMP's halo drifts below the output blocker's \
                  10 Hz, and BANK's output has no blocker"
-            }
-            Defect::SilentOpHoldsVoice => {
-                "an operator that is a carrier only in ALG B holds the voice at MORPH 0 \
-                 (engine.rs:291-295)"
             }
         }
     }
@@ -427,7 +422,6 @@ fn known(c: &Case, kind: &Kind, label: &str) -> Option<Defect> {
         Kind::Click if label == "voice freed" && c.is(BlockRef::Folder, FolderParams::SYMMETRY) => {
             Some(Defect::VoiceDc)
         }
-        Kind::Zombie if c.is_op(AlgoOpParams::RR) => Some(Defect::SilentOpHoldsVoice),
         _ => None,
     }
 }
@@ -1037,11 +1031,10 @@ fn jumps_never_click() {
 }
 
 /// ALGO INIT's operators 2–4 are carriers only in ALG B (A1): at MORPH 0
-/// they're unheard once operator 1 has released, yet a slow release on
-/// one keeps the voice, and its bill, for 23 s.
+/// they're unheard once operator 1 has released, so a slow release on one
+/// holds neither the voice nor its bill (23 s before Task 17).
 #[test]
-#[ignore = "defect: engine.rs:291-295 counts ALG B's carriers at MORPH 0; a silent operator holds the voice"]
-fn defect_silent_operator_holds_the_voice() {
+fn a_silent_operator_frees_the_voice() {
     let mut b = Bench::new(Patch::AlgoInit, PartParams::default(), FxParams::default());
     b.set(&find(BlockRef::AlgoOp(Op::B), AlgoOpParams::RR), 1.0);
     let mut t = Tape::default();
