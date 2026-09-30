@@ -10,16 +10,13 @@ use core::ptr::addr_of_mut;
 use chimera_hal::BLOCK_SIZE;
 
 use super::loop_parts::{Allpass1, LoopGain, RELEASE_SAMPLES, Release};
-use super::params::{EASE, Macros, t60};
+use super::params::{BOW_END, EASE, Macros, beta, t60};
 use super::string::{KsString, loop_at};
 use crate::hw::SAMPLE_RATE;
 use crate::in_place::uninit_at;
 
 /// The two ends' filters' delay, samples: two centre taps each. Off the line.
 pub(super) const ENDS_DELAY: f32 = 4.0;
-/// POS 0's and POS 1's bow position, as a fraction of the string from the bridge.
-pub(super) const BETA_MIN: f32 = 0.06;
-pub(super) const BETA_MAX: f32 = 0.5;
 /// The bow's playable window: R, the friction curve's width over the bow's
 /// velocity, where the string keeps Helmholtz motion (one slip a period,
 /// no sub-harmonic), measured over β (POS by 1/32), R (10 % steps) and G1
@@ -60,20 +57,13 @@ pub(super) const BOW_OUT: f32 = 1.16;
 /// FORCE's and SPEED's easing a sample: about the macros' `EASE` a block.
 const BOW_EASE: f32 = EASE / BLOCK_SIZE as f32;
 
-/// POS's bow position β.
-pub(super) fn beta(pos: f32) -> f32 {
-    // Not `clamp`, which passes NaN.
-    let pos = if pos >= 0.0 { pos.min(1.0) } else { 0.0 };
-    BETA_MIN + (BETA_MAX - BETA_MIN) * pos
-}
-
 /// The bridge line's whole samples for a loop line of `d`, in [1, d − 1]:
 /// β of the whole loop (the line, both ends' filters and about a sample of
 /// allpass), less the bridge side's filter and allpass, so POS is the same
 /// bow position at every note.
 pub(super) fn bridge_len(pos: f32, d: usize) -> usize {
     let side = 0.5 * ENDS_DELAY + 1.0;
-    let s = beta(pos) * (d as f32 + ENDS_DELAY + 1.0) - side;
+    let s = beta(pos, BOW_END) * (d as f32 + ENDS_DELAY + 1.0) - side;
     // `max` first: `as` saturates, and a short loop's side can be past it.
     ((s + 0.5).max(1.0) as usize)
         .min(d.saturating_sub(1))

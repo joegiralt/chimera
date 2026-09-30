@@ -167,19 +167,11 @@ impl KsString {
     }
 
     /// Shapes the pluck `excite` wrote, in place, before the loop reads
-    /// it: a comb notched at `position`'s harmonics of a loop of `period`
-    /// samples, then `passes` smoothing passes (`color_passes`), then its
-    /// mean taken out.
-    pub(super) fn shape(&mut self, position: f32, period: f32, passes: usize) {
+    /// it: plucked at `beta` of the string (`comb`), then `passes`
+    /// smoothing passes (`color_passes`), then its mean taken out.
+    pub(super) fn shape(&mut self, beta: f32, passes: usize) {
         let len = self.delay;
-        if position > 0.03 {
-            let notch_period = ((period * position) as usize).max(2);
-            if notch_period < len {
-                for i in 0..len - notch_period {
-                    self.buffer[i] = (self.buffer[i] + self.buffer[i + notch_period]) * 0.5;
-                }
-            }
-        }
+        comb(&mut self.buffer[..len], beta);
         for _ in 0..passes {
             for i in 1..len {
                 self.buffer[i] = (self.buffer[i] + self.buffer[i - 1]) * 0.5;
@@ -312,6 +304,38 @@ impl KsString {
             k += m;
         }
         (self.write_pos, self.frac, *pending) = (wp, ap, pend);
+    }
+}
+
+/// A pluck at `beta` of the string, on one period of the line: `(x[i] +
+/// x[i + n]) / 2` round it for `n = β·len / 2`, so harmonic k is
+/// `|cos πkβ/2|` of the noise's. Its nulls are a pluck's at the odd
+/// multiples of 1/β: none at the end (β 0 passes the noise whole), and at
+/// the middle the 2nd, 6th, 10th…; the fundamental never. In place: each
+/// cycle of `i → i + n` walked in order, its first sample kept for its
+/// last.
+fn comb(line: &mut [f32], beta: f32) {
+    let len = line.len();
+    let n = (beta * 0.5 * len as f32 + 0.5) as usize;
+    if n == 0 || n >= len {
+        return;
+    }
+    let (mut a, mut b) = (len, n);
+    while b != 0 {
+        (a, b) = (b, a % b);
+    }
+    for start in 0..a {
+        let first = line[start];
+        let mut i = start;
+        loop {
+            let j = if i + n >= len { i + n - len } else { i + n };
+            let next = if j == start { first } else { line[j] };
+            line[i] = (line[i] + next) * 0.5;
+            if j == start {
+                break;
+            }
+            i = j;
+        }
     }
 }
 
@@ -552,10 +576,13 @@ impl StringVoice {
         }
     }
 
-    /// Shapes the pluck at `position` of the loop's period, at COLOR's
-    /// passes (`KsString::shape`).
-    pub(super) fn shape(&mut self, position: f32) {
-        self.string.shape(position, self.period, self.passes.into());
+    /// Shapes the pluck at POS's β (`params::beta`, from the end), at COLOR's passes
+    /// (`KsString::shape`).
+    pub(super) fn shape(&mut self, pos: f32) {
+        self.string.shape(
+            super::params::beta(pos, super::params::END),
+            self.passes.into(),
+        );
     }
 
     /// Retunes to `freq`, the chain a step towards `structure`, mid-note;
@@ -686,6 +713,58 @@ mod tests {
     fn voice() -> Box<StringVoice> {
         // SAFETY: `init_in_place` writes every field.
         Box::new(unsafe { by_value(StringVoice::init_in_place) })
+    }
+
+    /// `line`'s harmonic `k` of its length, magnitude.
+    fn bin(line: &[f32], k: usize) -> f64 {
+        let n = line.len() as f64;
+        let (mut re, mut im) = (0.0, 0.0);
+        for (i, &x) in line.iter().enumerate() {
+            let ph = std::f64::consts::TAU * (k * i) as f64 / n;
+            re += x as f64 * libm::cos(ph);
+            im += x as f64 * libm::sin(ph);
+        }
+        libm::sqrt(re * re + im * im)
+    }
+
+    /// The pluck's comb is `|cos πkβ/2|` on harmonic k of the line,
+    /// exactly, from G1's line to C7's. Stepped by POS 1/8, the 2nd
+    /// harmonic over the 1st, `cos πβ / cos πβ/2`, falls at every step
+    /// from 1 at the end to nothing at the middle; C7's 18 samples
+    /// resolve quarters.
+    #[test]
+    fn the_pluck_comb_runs_from_the_end_to_the_middle() {
+        let mut state = NOISE_SEED;
+        for len in [979, 362, 18] {
+            let noise: std::vec::Vec<f32> = (0..len).map(|_| xorshift_noise(&mut state)).collect();
+            let mut last = f64::INFINITY;
+            let by = if len > 18 { 1 } else { 2 };
+            for step in (0..=8).step_by(by) {
+                let beta = super::super::params::beta(step as f32 / 8.0, 0.0);
+                let mut line = noise.clone();
+                comb(&mut line, beta);
+                let n = libm::floor(beta as f64 * 0.5 * len as f64 + 0.5);
+                let at = |k: usize| {
+                    libm::fabs(libm::cos(
+                        core::f64::consts::PI * (k as f64) * n / len as f64,
+                    ))
+                };
+                for k in [1, 2, 3] {
+                    let got = bin(&line, k) / bin(&noise, k);
+                    assert!(
+                        (got - at(k)).abs() < 1e-4,
+                        "{len} POS {step}/8 h{k}: {got} {}",
+                        at(k)
+                    );
+                }
+                let ratio = at(2) / at(1);
+                assert!(ratio < last, "{len} POS {step}/8: {ratio} after {last}");
+                last = ratio;
+            }
+            // A whole-sample comb: C7's middle is 5/18, not 1/4.
+            let null = if len > 18 { 0.02 } else { 0.3 };
+            assert!(last < null, "{len}: the middle's 2nd over 1st {last}");
+        }
     }
 
     /// A pluck leaves no mean on the line: nothing for the loop's 0 Hz mode

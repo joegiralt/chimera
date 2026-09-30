@@ -5,7 +5,9 @@
 pub struct LoopGain(f32);
 
 impl LoopGain {
-    pub const MAX: f32 = 0.9995;
+    /// A T60 of 690,000 / f0 s: past DAMP's 20 s to 34 kHz. Once 0.9995,
+    /// which held C6 to 13 s and G6 to 9.
+    pub const MAX: f32 = 0.99999;
     /// The highest gain.
     #[cfg(test)]
     pub const TOP: Self = Self(Self::MAX);
@@ -18,12 +20,7 @@ impl LoopGain {
 
     /// The gain that falls 60 dB in `t60_s` at `freq_hz` passes a second.
     pub fn from_t60(t60_s: f32, freq_hz: f32) -> Self {
-        // Not above 0: a negative T60 would ring longest.
-        if t60_s > 0.0 {
-            Self::new(libm::powf(0.001, 1.0 / (t60_s * freq_hz)))
-        } else {
-            Self(0.0)
-        }
+        Self::new(fall(t60_s, freq_hz))
     }
 
     pub fn get(self) -> f32 {
@@ -33,6 +30,52 @@ impl LoopGain {
     pub fn min(self, o: Self) -> Self {
         Self(self.0.min(o.0))
     }
+}
+
+/// The share of DAMP's loss a pass the loop low-pass may take at f0.
+/// Below 1, so the loop's gain at 0 Hz, its highest, stays below 1.
+pub const LP_SHARE: f32 = 0.5;
+
+/// `0.001^(1 / (t60_s·freq_hz))`, as `expf`, cheaper than `powf`: the
+/// gain a pass that falls 60 dB in `t60_s`. Not above 0 is 0: a negative
+/// T60 would ring longest.
+#[inline]
+fn fall(t60_s: f32, freq_hz: f32) -> f32 {
+    const LN_1000: f32 = 6.907_755;
+    if t60_s > 0.0 {
+        libm::expf(-LN_1000 / (t60_s * freq_hz))
+    } else {
+        0.0
+    }
+}
+
+/// `1 − cos w`, its series to `w⁶`: within 0.3 % to `w` = 1.8, a loop of
+/// 3.5 samples.
+#[inline]
+fn one_less_cos(w: f32) -> f32 {
+    let x = w * w;
+    0.5 * x * (1.0 - x / 12.0 * (1.0 - x / 30.0))
+}
+
+/// A string loop's low-pass side taps and gain at `freq_hz` (`w`
+/// rad/sample) for a `t60_s` ring: the low-pass's loss at f0,
+/// `lp·(1 − cos w)`, is made up in the gain, so the fundamental rings
+/// `t60_s` at every pitch. The low-pass takes at most `LP_SHARE` of the
+/// ring's loss a pass: a long ring on a high note needs a brighter loop.
+/// Every other frequency's gain is `gain·(1 − lp·(1 − cos ω))`, highest
+/// at 0 Hz, under `g / (1 − LP_SHARE·(1 − g))` for the ring's `g`, so
+/// below one. The make-up, `1 / (1 − loss)`, is its series to `loss⁴`, a
+/// hair under it (`loss` is under 0.01 to C7): no divide, and one `expf`
+/// for `powf`, so the block costs no more than before.
+pub fn damped(t60_s: f32, (freq_hz, w): (f32, f32), lp: f32) -> (f32, LoopGain) {
+    let g = fall(t60_s, freq_hz);
+    let unit = one_less_cos(w);
+    let room = LP_SHARE * (1.0 - g);
+    // A divide only where the share binds.
+    let lp = if lp * unit > room { room / unit } else { lp };
+    let l = lp * unit;
+    let make_up = 1.0 + l * (1.0 + l * (1.0 + l * (1.0 + l)));
+    (lp, LoopGain::new(g * make_up))
 }
 
 /// A note-off's ramp, in samples: 5 ms.
@@ -229,6 +272,30 @@ mod tests {
             assert!(g.get() <= LoopGain::MAX, "{g:?}");
         }
         assert_eq!(LoopGain::new(f32::NAN).get(), 0.0);
+    }
+
+    /// The fundamental's gain is the ring's; no frequency's passes 1.
+    #[test]
+    fn damped_rings_the_fundamental_and_stays_below_one() {
+        for hz in [49.0, 261.6, 1046.5, 2093.0, 8000.0] {
+            let w = w_of(hz);
+            for t60 in [0.05, 1.0, 20.0] {
+                for lp in [0.0475, 0.25] {
+                    let (c, g) = damped(t60, (hz, w), lp);
+                    assert!(c <= lp && c >= 0.0, "{hz} {t60} {lp}: {c}");
+                    let at = |w: f32| g.get() * (1.0 - c * (1.0 - libm::cosf(w)));
+                    let want = LoopGain::from_t60(t60, hz).get();
+                    // The make-up's series: a hair under, never over.
+                    let tol = 2e-6 + want * libm::powf(0.5 * (1.0 - want), 5.0);
+                    assert!(
+                        (at(w) - want).abs() < tol,
+                        "{hz} {t60} {lp}: {} {want}",
+                        at(w)
+                    );
+                    assert!(at(0.0) < 1.0, "{hz} {t60} {lp}: {}", at(0.0));
+                }
+            }
+        }
     }
 
     #[test]

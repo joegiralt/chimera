@@ -112,7 +112,7 @@ fn strings_are_in_tune() {
 /// Per model, from every continuous setting at 0.5 and MODES at 32, note
 /// 48 held 1 s and released 0.5 s, so a lifted bow's DAMP is heard: each
 /// setting at its min, middle and max. A setting the
-/// model reads changes the sound; one it ignores changes no bit. The
+/// model reads changes the sound, over the note or its first 0.25 s; one it ignores changes no bit. The
 /// middle, as POS's ends can null alike.
 #[test]
 fn live_knobs_move_dimmed_knobs_do_not() {
@@ -138,9 +138,12 @@ fn live_knobs_move_dimmed_knobs_do_not() {
             let same =
                 |a: &[f32], b: &[f32]| a.iter().zip(b).all(|(x, y)| x.to_bits() == y.to_bits());
             if reads(mode, s.id) {
+                // Over the note, or its first quarter second: BRIGHT on a
+                // string moves the tone, not the fundamental's ring.
+                let q = SR as usize / 4;
                 let moved = [(&lo, &mid), (&mid, &hi), (&lo, &hi)]
                     .iter()
-                    .map(|(a, b)| rms_diff(a, b))
+                    .map(|(a, b)| rms_diff(a, b).max(rms_diff(&a[..q], &b[..q])))
                     .fold(0.0, f32::max);
                 assert!(moved > 1e-3, "{mode:?} {}: live but inaudible", s.label);
             } else {
@@ -1638,6 +1641,155 @@ fn a_bow_lifted_before_it_plays_stays_lifted() {
             }
             let r = common::rms(&ring[SR as usize / 2..]);
             assert!(r > 1e-2, "{note} held {held}: a retrigger is silent ({r})");
+        }
+    }
+}
+
+/// `x`'s amplitude at `hz`, Hann-windowed: one partial's level, its
+/// neighbours a harmonic away leaking under −80 dB.
+fn partial(x: &[f32], hz: f32) -> f64 {
+    let (n, w) = (
+        x.len() as f64,
+        std::f64::consts::TAU * hz as f64 / SR as f64,
+    );
+    let (mut re, mut im) = (0.0, 0.0);
+    for (i, &s) in x.iter().enumerate() {
+        let h = 0.5 - 0.5 * (std::f64::consts::TAU * i as f64 / n).cos();
+        re += s as f64 * h * (w * i as f64).cos();
+        im += s as f64 * h * (w * i as f64).sin();
+    }
+    (re * re + im * im).sqrt() * 4.0 / n
+}
+
+/// DAMP's law (`params::t60`), seconds.
+fn damp_t60(damp: f32) -> f32 {
+    0.05 * 400f32.powf(damp)
+}
+
+/// ADR 0056: DAMP sets the fundamental's ring the same way at every
+/// pitch. STRING, SYMP's main string and a lifted bow, G1 to C7, at
+/// BRIGHT 0 and INIT's: the fundamental's T60 within 10 % of DAMP's law,
+/// so DAMP 1 rings 20 s at C6; and nothing grows. The loop's low-pass
+/// once took its loss at f0 on top of DAMP's, as f0³: C6 at DAMP 1 rang
+/// 2.5 s, G6 0.8.
+#[test]
+fn damp_sets_the_ring_at_every_pitch() {
+    let sr = SR as usize;
+    std::thread::scope(|scope| {
+        for mode in [
+            ResonatorMode::String,
+            ResonatorMode::Sympathetic,
+            ResonatorMode::Bowed,
+        ] {
+            scope.spawn(move || {
+                let mut bad = Vec::new();
+                for note in [31u8, 48, 60, 72, 84, 91, 96] {
+                    for bright in [0.0, 0.3] {
+                        for damp in [0.5, 0.8, 1.0] {
+                            let p = ModalParams {
+                                mode,
+                                damp,
+                                bright,
+                                ..Default::default()
+                            };
+                            let law = damp_t60(damp);
+                            // A quarter of the ring: past it a high note, its peak
+                            // the pluck's whole band, nears the silence rule.
+                            let span = (law / 4.0).min(2.0);
+                            // From the lift on a bow; else 0.2 s in.
+                            let (on, from) = match mode {
+                                ResonatorMode::Bowed => (sr / BLOCK_SIZE, 1.1),
+                                _ => (0, 0.2),
+                            };
+                            let len = ((from + span + 0.2) * SR as f32) as usize;
+                            let out = match mode {
+                                ResonatorMode::Sympathetic => {
+                                    play_modal_bare(&p, note, 100, len / BLOCK_SIZE, 0)
+                                }
+                                _ if on > 0 => {
+                                    play_modal_at(&p, note, 100, on, len / BLOCK_SIZE - on)
+                                }
+                                _ => play_modal_at(&p, note, 100, len / BLOCK_SIZE, 0),
+                            };
+                            let f0 = note_to_freq(note);
+                            let win = |t: f32| {
+                                let i = (t * SR as f32) as usize;
+                                &out[i..i + sr / 10]
+                            };
+                            let (a, b) = (partial(win(from), f0), partial(win(from + span), f0));
+                            let fall = 20.0 * (a / b).log10();
+                            let t60 = 60.0 * span / fall as f32;
+                            let label = format!("{mode:?} {note} BRIGHT {bright} DAMP {damp}");
+                            if !(fall > 0.0 && (t60 / law - 1.0).abs() < 0.1) {
+                                let heard = out.iter().rposition(|&x| x != 0.0).unwrap_or(0);
+                                bad.push(format!(
+                                    "{label}: T60 {t60:.2} s, law {law:.2}; heard to {:.2} s",
+                                    heard as f32 / SR as f32
+                                ));
+                            }
+                            let (ra, rb) = (common::rms(win(from)), common::rms(win(from + span)));
+                            if rb > ra {
+                                bad.push(format!("{label}: grew {ra} → {rb}"));
+                            }
+                        }
+                    }
+                }
+                assert!(bad.is_empty(), "{}", bad.join("\n"));
+            });
+        }
+    });
+}
+
+/// ADR 0056: POS runs the pluck or strike from the end (β 0, where POS
+/// 0 always was) to the middle (0.5). A pluck at β and at 1 − β is the
+/// same, so POS 0 and 1 once rendered bit for bit alike. The 2nd partial
+/// over the 1st falls from POS 0 to 0.5 to 1, to a null at the middle:
+/// `cos πβ / cos πβ/2` on a pluck (`string::comb`), `cos² πβ` on a
+/// strike (Rings' weights). A strike's weights are exact, so it falls at
+/// every 1/8; a pluck's partials carry its noise's, a dB or two each
+/// (the loop's period is not the line's), so its every step is
+/// `string::comb`'s test.
+#[test]
+fn pos_runs_from_the_end_to_the_middle() {
+    let sr = SR as usize;
+    for mode in [
+        ResonatorMode::String,
+        ResonatorMode::Sympathetic,
+        ResonatorMode::Modal,
+    ] {
+        let bank = mode == ResonatorMode::Modal;
+        for note in [48u8, 60] {
+            let f0 = note_to_freq(note);
+            // The 2nd partial over the 1st, dB.
+            let at = |pos: f32| {
+                let p = ModalParams {
+                    mode,
+                    pos,
+                    damp: 0.8,
+                    // The bank's tanh linear; its modes harmonic, STRUCTURE's plateau.
+                    bright: if bank { 0.3 } else { 1.0 },
+                    structure: if bank { 0.27 } else { 0.0 },
+                    body: 0.0,
+                    ..Default::default()
+                };
+                let (vel, blocks) = (if bank { 30 } else { 100 }, sr / 2 / BLOCK_SIZE);
+                let out = match mode {
+                    ResonatorMode::Sympathetic => play_modal_bare(&p, note, vel, blocks, 0),
+                    _ => play_modal_at(&p, note, vel, blocks, 0),
+                };
+                let s = &out[sr / 20..sr / 20 + sr / 5];
+                20.0 * (partial(s, 2.0 * f0) / partial(s, f0)).log10()
+            };
+            let steps: Vec<f64> = (0..=8).map(|k| at(k as f32 / 8.0)).collect();
+            let label = format!("{mode:?} {note}: {steps:.1?}");
+            let (lo, mid, hi) = (steps[0], steps[4], steps[8]);
+            assert!(lo > mid && mid > hi, "end, quarter, middle: {label}");
+            assert!(hi < lo - 6.0, "the middle nulls the 2nd: {label}");
+            if bank {
+                for w in steps.windows(2) {
+                    assert!(w[1] < w[0], "every step: {label}");
+                }
+            }
         }
     }
 }

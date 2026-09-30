@@ -245,6 +245,23 @@ pub fn bow_force(force: f32, vel: f32) -> f32 {
     force * (0.5 + 0.5 * vel)
 }
 
+/// POS 1's β, the pluck's, strike's or bow's place as a fraction of the
+/// string from its end: the middle. A pluck at β and at 1 − β is the
+/// same, so the travel stops here.
+pub(super) const BETA_MAX: f32 = 0.5;
+/// POS 0's β on a pluck or strike: the end, where the place shapes
+/// nothing, as POS 0 always has.
+pub(super) const END: f32 = 0.0;
+/// POS 0's β on a bow: near the bridge, above Schelleng's floor.
+pub(super) const BOW_END: f32 = 0.06;
+
+/// POS's β, from `end` at 0 to the middle at 1.
+pub(super) fn beta(pos: f32, end: f32) -> f32 {
+    // Not `clamp`, which passes NaN.
+    let pos = if pos >= 0.0 { pos.min(1.0) } else { 0.0 };
+    end + (BETA_MAX - end) * pos
+}
+
 /// DAMP's law on a string: T60 from `T60_MIN` at 0, ×`T60_SPAN` at 1.
 const T60_MIN: f32 = 0.05;
 const T60_SPAN: f32 = 400.0;
