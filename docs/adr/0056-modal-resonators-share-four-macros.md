@@ -8,8 +8,9 @@
   [0042](0042-voice-pitch-is-a-matrix-destination.md) (`ModalEngine::PITCH`),
   [0054](0054-sympathetic-strings-from-a-shared-pool.md) (the voice's
   size assert, `COST_SYMPATHETIC`)
-- **Accepted by:** the Modal 2 step A ship flash (plan task 12), once its
-  bench rows fill in the chip figures below
+- **Accepted by:** the owner, after the Modal 2 step A ship flash (plan
+  task 12); the costs below are host estimates until the chip bench
+  (https://github.com/joegiralt/chimera/issues/242)
 
 ## Context
 The owner's bench report (#191) and the survey behind the Modal 2 step A
@@ -29,7 +30,7 @@ note-on, so nothing could modulate a string's character.
 
 ### Loops
 - `modal::loop_parts::LoopGain` is a string loop's gain per pass. Its
-  constructors clamp to `[0, 0.9995]` (`LoopGain::TOP`), and NaN gives 0.
+  constructors clamp to `[0, 0.9995]` (`LoopGain::MAX`), and NaN gives 0.
   It is the only gain any loop multiplies by: STRING, the SYMP main string,
   each halo string and BOWED. On STRING and the SYMP main string it
   multiplies the loop's sample after every in-loop stage, so none bypasses
@@ -155,7 +156,8 @@ note-on, so nothing could modulate a string's character.
 
 ### Bowed
 Bowed is J. O. Smith's digital-waveguide bowed string (plan Task 14, the
-owner's decision on #240), in Chimera's own code (`modal::bow`).
+owner's decision on
+https://github.com/joegiralt/chimera/issues/240), in Chimera's own code (`modal::bow`).
 - **Two lines on one ring.** The bow splits the loop into the bridge line
   (bow to bridge and back) and the nut line (bow to nut and back). The
   string's existing ring holds both: at the write the nut line's oldest
@@ -206,7 +208,7 @@ owner's decision on #240), in Chimera's own code (`modal::bow`).
   w`, falling as `Δv⁻⁴` (it slips); no offset, which would put DC into the
   string, and 0 at force 0, so a lifted bow lets the string ring free.
   One `vdiv.f32` a sample, no `tanhf` or `powf`.
-- **The playable window (fix round 1).** Whatever FORCE and SPEED do,
+- **The playable window.** Whatever FORCE and SPEED do,
   the bow's width stays where the string keeps Helmholtz motion: one slip
   a period, no sub-harmonic at −20 dB. The motion depends only on R, the
   curve's width over the bow's velocity (the junction is homogeneous in
@@ -218,7 +220,9 @@ owner's decision on #240), in Chimera's own code (`modal::bow`).
   - Schelleng's floor near the bridge, falling as β rises: `0.29 / β`
     clears every measured floor from β 0.06 to 0.14;
   - bands where the string locks, at β ≈ 1/6, 1/4, 1/3 and near 1/2, all
-    below R ≈ 3.5.
+    below R ≈ 3.5. The window keeps R above them, but β ≈ 1/4 still locks
+    under light force or high SPEED
+    (https://github.com/joegiralt/chimera/issues/241).
   So R's window is `[max(0.29 / β, 3.5), 4.2]` (`R_BRIDGE`, `R_FLOOR`,
   `R_CEIL`), held under the ceiling; at β 0.06 it closes to 4.2. FORCE ×
   velocity (`FORCE·(0.5 + 0.5·velocity)`) places R in it geometrically,
@@ -229,14 +233,13 @@ owner's decision on #240), in Chimera's own code (`modal::bow`).
   The width⁴ eases to its target at `EASE / 64` a sample while bowed, as
   the bow's velocity does, and starts there on a note's first block.
 - **FORCE and SPEED are heard in the tone.** Inside the window the loop's
-  corner barely moves, so FORCE and SPEED alone were a level control
-  (SPEED 0.25 against 1 scaled the output ×4.0000, its shape unchanged).
-  Cremer's corner rounding is heard instead: the corner sharpens as the
+  corner barely moves, so Cremer's corner rounding carries them: the
+  corner sharpens as the
   bow presses harder or moves slower, as `√(f / v_b)`, 1 at FORCE and
   SPEED 0.5, and it scales BRIGHT's corner (`sharpness`). SPEED 0.25
-  against 1 now moves the harmonics' shares by 0.08 to 0.30 (summed |Δ|,
+  against 1 moves the harmonics' shares by 0.08 to 0.30 (summed |Δ|,
   harmonics 1 to 24).
-- **Robustness (fix round 1).** Over the reviewer's sweep (7 notes ×
+- **Robustness.** Over the reviewer's sweep (7 notes ×
   velocity 20, 64, 127 × FORCE and SPEED 0.1, 0.5, 1 × POS by quarters,
   945 cases) every case is clean, against 88.7 % before; over POS by 1/32
   × FORCE × SPEED at velocity 100 (2,079 cases) 98.2 %, the rest at β ≈
@@ -247,9 +250,7 @@ owner's decision on #240), in Chimera's own code (`modal::bow`).
   bow's width sheds over 240 samples, the ends' filters fade to pure
   delays and the nut's gain to 1 over the same samples, and the bridge's
   gain ramps from `BOW_LOSS` to DAMP's, up or down (`Release::lift`):
-  lifted, the loop is linear and `LoopGain` keeps it stable. Before, the
-  release never rose past the bowed loss, and 87 % of DAMP's travel was
-  dead at C7.
+  lifted, the loop is linear and `LoopGain` keeps it stable.
 - **The output** is the wave the bow sends toward the bridge, through
   BRIGHT's low-pass, × `BOW_OUT` = 1.16: what the bridge hears, from the
   first sample (#206). 1.16 puts the v1 patch's held C3 within 0.04 dB of
@@ -329,7 +330,7 @@ owner's decision on #240), in Chimera's own code (`modal::bow`).
   values. On BANK, BURST is the file's EXCITE, so an old strike keeps its
   length.
 - Old Bowed patches stored BRIGHT, DAMP and POS but never read them, and
-  their old sound was the bug (#240): an octave low. They load as an
+  their old sound was the bug (https://github.com/joegiralt/chimera/issues/240): an octave low. They load as an
   in-tune bow, after the DECAY and BRIGHT rules: POS 0.15 (β ≈ 0.126,
   about an eighth of the string from the bridge), BRIGHT 0.5, DAMP
   `damp_for(0.5)` (a 0.5 s ring after the lift), FORCE and SPEED 0.5.
@@ -362,13 +363,14 @@ owner's decision on #240), in Chimera's own code (`modal::bow`).
   `Instrument` 162,968 B, which leaves 123,752 B of D2. Firmware
   `.ram_d2` is 162,108 B. `ModalParams` grew by EXC's four fields;
   `BowedString` by its lift, bow velocity, velocity scale and bowing
-  flag, then (Task 14) by the ends' filters, the split, BRIGHT's low-pass
-  and the glide's count, less the one-loop bow's `written` (4,056 B,
-  inside `ModelSlot`) and
+  flag, the ends' filters, the split, BRIGHT's low-pass and the glide's
+  count, less the one-loop bow's `written` (4,056 B, inside `ModelSlot`)
+  and
   `StringVoice` by COLOR's passes, within its padding.
 
 ### Costs
-`COST_*` are host estimates until the ship flash's bench rows. Each is the
+`COST_*` are host estimates by the method below, not yet measured on the
+chip (https://github.com/joegiralt/chimera/issues/242). Each is the
 model's last benched bill, plus the hot path's added instructions in the
 thumbv7em release build at 1.46 cycles an instruction (ADR 0052's rate),
 plus 10 % (a saving taken at 90 %), rounded up to 10. Per-block work is
@@ -391,9 +393,7 @@ Instructions a sample:
 | STRING total, BODY 0 | | 99 | 33.5 |
 | BODY | `Body::process_block`: 90 per 2 samples, 94 a block | — | 46.5 |
 | Ensemble | `run::<true, true>`'s fast span 101 less 21.25; its slow spans, the extra span a ring and `Ensemble::set` 1.8 | — | 82 |
-| BOWED | `ModalEngine::render`'s bowed loop, both `tanhf` dispatches, plus the blocker | 143 | 195 + 7.8 |
-| BOWED, playable (Task 13) | the same loop: BRIGHT's two side taps and their wraps 23, POS's check 4, its clamped, lerped second tap 44, FORCE and SPEED eased 10; DAMP's `powf` once lifted, 2 | 203 | 286 |
-| BOWED, two-delay (Task 14, fix round 1) | `BowedString::render`: the fast span 64 (the junction, both ends' filters and their fade, the allpass, the bow table's `vdiv`, BRIGHT's low-pass, the easing); per block at most 14 (the setup's 327, three `expf`s and two `sqrtf`s, the spans' heads, the step one block in 8); the blocker 7.8. Dropped: the two `tanhf` bodies, T = 135 (the friction's `expm1f` path for k ≥ 2, 73; the push's for k = 1, 54; each one's inlined tail, 4) | 143 | 85.8 |
+| BOWED | `BowedString::render`: the fast span 64 (the junction, both ends' filters and their fade, the allpass, the bow table's `vdiv`, BRIGHT's low-pass, the easing); per block at most 14 (the setup's 327, three `expf`s and two `sqrtf`s, the spans' heads, the step one block in 8); the blocker 7.8. Dropped: the two `tanhf` bodies, T = 135 (the friction's `expm1f` path for k ≥ 2, 73; the push's for k = 1, 54; each one's inlined tail, 4) | 143 | 85.8 |
 | SYMP main string | `run::<false, false>`: 44 per 4 samples; 127 a block; a span 57 | 82 | 14.9 |
 | SYMP halo string, each of 7 | `KsString::run_coupled`: 62 per 4 samples; a call 71; a span 65 | 42 | 18.8 |
 | SYMP per sample, besides | the coupled input (55 per 16), the two buffers' clears (116 each), the runs' setup 150, the mix (71 per 16), BODY's call, the `tanhf` dispatch 17 | 31 + 12 | 31.7 |
@@ -403,7 +403,7 @@ Instructions a sample:
 | Term | Before step A | Now | From |
 |---|---|---|---|
 | `COST_STRING` | 390 | 330 | 99 → 33.5 instructions, −86 cycles; DAMP's two `powf`s and the dispersion's re-split, billed always, +18 |
-| `COST_BOWED` | 620 | 390 | Task 14: 620 + (85.8 − 143 − 135) × 1.46 × 0.9 + (14 − 1.46) × 1.1 for the `vdiv` = 381.3 (Task 13's 860 superseded) |
+| `COST_BOWED` | 620 | 390 | 620 + (85.8 − 143 − 135) × 1.46 × 0.9 + (14 − 1.46) × 1.1 for the `vdiv` = 381.3 |
 | `COST_SYMPATHETIC` | 809 | 540 | 419 → 186.2 instructions, −306 cycles; ten `powf`s a block, +35 |
 | `COST_BANK`, `COST_MODE` | 460, 45 | 460, 45 | sample loop unchanged |
 | `BODY` (STRING, SYMP, BODY > 0) | — | 80 | 46.5 instructions |
@@ -432,12 +432,12 @@ cycles. The loops are chains of dependent float operations; at about 2.4
 cycles an instruction STRING and BODY spend those 78 and it plays 7. The
 bench's MDL STR row, on rev Y with the tape, is the case to check.
 
-Measured on the chip (the ship flash; to fill in, rev V at 480 MHz):
-- MDL STR /VOICE —, STR0 —, STR E —, STR+ —; BOW —, BOW+ —; SYM —,
-  SYM0 —, SYM+ —, SYM LFO —; RES —, RES48 —. DARK NOTE+BLOCK —, DARK +6 PASSES — cycles.
-- `COST_*`, `BODY`, `ENSEMBLE` and `CHORD` from them: —.
+Not yet measured on the chip: every `COST_*`, `BODY`, `ENSEMBLE` and
+`CHORD` above is a host estimate by the instruction-count method in Costs,
+and the voice counts here follow from them. The bench is filed as
+https://github.com/joegiralt/chimera/issues/242.
 
-The bench rows: MDL STR, STR0 (BODY 0), STR E (BODY 0, the ensemble, no
+The rows that bench will run: MDL STR, STR0 (BODY 0), STR E (BODY 0, the ensemble, no
 routes), STR+ (BODY 1, the ensemble, LFO 1 on each macro), BOW, BOW+
 (FORCE 1, SPEED 1, POS 0.5, BRIGHT 0, LFO 1 at 10 Hz into BRIGHT, DAMP and
 POS at 64: the split stepping one block in 8, the bow's worst case), SYM, SYM0, SYM+ (the ensemble, STRUCTURE a chord on every 8
@@ -477,7 +477,8 @@ NOTE-ON is, by `Rig::time_note_on`.
   pitch (`1/(1 − POS)` times it).
 - Task 13's one-loop bow with POS as an output comb: the pitch held, but
   an octave low, POS was not a bow position and BRIGHT was not heard
-  (#240). Replaced by the two-delay bow.
+  (https://github.com/joegiralt/chimera/issues/240). Replaced by the
+  two-delay bow.
 - Two separate rings for the two lines: about 1.5× the line, +1.8 KB a
   voice, past `ModelSlot`. One ring spliced at the bow costs none.
 - A fractional split by interpolation (its loss moves the tone with the
@@ -486,7 +487,7 @@ NOTE-ON is, by `Rig::time_note_on`.
 - BRIGHT as the bridge's reflection low-pass (the amended spec's law):
   under 3 dB even at eight cascaded three-taps, since the bow re-sharpens
   the corner every period. On the output instead.
-- A lossless bowed loop (`LoopGain::TOP`, the nut at −1): its ripples
+- A lossless bowed loop (the gain at `LoopGain::MAX`, the nut at −1): its ripples
   never decayed. A fixed loss at both ends instead.
 - Other cures for the β ≈ 1/n locks, measured on the window map and
   dropped: a two-point bow one cell wide (Pitteroff–Woodhouse's finite
