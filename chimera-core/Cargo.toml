@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 chimera-hal = { path = "../chimera-hal" }
+chimera-theory = { path = "../chimera-theory" }
 libm = "0.2"
 embedded-graphics = "0.8"
 embedded-graphics-core = "0.4"
