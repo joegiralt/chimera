@@ -799,7 +799,7 @@ fn a_pitch_route_on_modal_bills_the_retune() {
 fn a_structure_route_on_symp_bills_the_chord_glide() {
     use chimera_core::addr::{BlockRef, ParamAddr};
     use chimera_core::dsp::modal::{ModalEngine, ModalParams, ResonatorMode};
-    assert_eq!(ModalEngine::CHORD, Cost(180));
+    assert_eq!(ModalEngine::CHORD, Cost(80));
     let routed = |amount| {
         let mut ms = ModState::from_registry(&chimera_core::mod_path::ModDestRegistry::new(), 8);
         let d = ms
