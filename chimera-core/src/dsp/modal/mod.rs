@@ -34,7 +34,6 @@
 //! (`rings`) and Karplus-Strong strings (`string`) in four models.
 
 mod body;
-mod bow;
 mod chords;
 mod dispersion;
 mod ensemble;
@@ -60,11 +59,10 @@ use crate::hw::{Cost, SAMPLE_RATE};
 use crate::in_place::{in_place_enum, uninit_at};
 use crate::sym_alloc::{Lease, SYM_SLOTS, SymAlloc, SymSlot};
 use crate::voice_alloc::VoiceIdx;
-use bow::BowedString;
 use chords::period_ratios;
 use core::f32::consts::TAU;
 use ensemble::{Ensemble, rate_hz};
-use loop_parts::{DC_HZ, LoopGain, Release, damped};
+use loop_parts::{DC_HZ, LoopGain, RELEASE_SAMPLES, Release, damped};
 use rings::{CosineOsc, Svf, stiffness_from_structure};
 use string::{FRESH_CLEAR_BYTES, KsRenderParams, KsString, RING_BYTES, StringVoice, lp_coeff};
 
@@ -108,6 +106,33 @@ struct ModalBank {
 
 crate::in_place::field_list!(ModalBank => ModalBank {
     filters, cos_osc, resolution, sounding, burst_remaining, burst_amp, noise_state, burst_lp,
+});
+
+/// The bowed string and the bow's force on it, 0 once the bow lifts.
+struct BowedString {
+    string: KsString,
+    force: f32,
+    /// The force `force` eases to: FORCE's at the note's velocity, read
+    /// every block, then 0 at note-off.
+    force_to: f32,
+    /// Force shed a sample at note-off: the note's force over `RELEASE_SAMPLES`.
+    lift: f32,
+    /// The bow's velocity, easing to SPEED × `BOW_SPEED`.
+    bow_vel: f32,
+    /// `0.5 + 0.5·velocity`, latched at note-on (`bow_force`).
+    vel_scale: f32,
+    /// On the string: note-on to note-off.
+    bowing: bool,
+    /// Samples pushed since note-on, for `KsString::ring_tap`.
+    written: u32,
+    /// The lifted bow's ramp.
+    release: Release,
+    /// The loop's smoothing.
+    hair: BowHair,
+}
+
+crate::in_place::field_list!(BowedString => BowedString {
+    string, force, force_to, lift, bow_vel, vel_scale, bowing, written, release, hair,
 });
 
 /// One pool slot (exclusive-state spec § 4.2): the seven strings a
@@ -332,21 +357,13 @@ impl ModalEngine {
     /// dispersion's re-split each block STRUCTURE glides, 8, billed always,
     /// +18. BODY and the ensemble bill apart.
     pub const COST_STRING: Cost = Cost(330);
-    /// The two-delay bow (Task 14), from the one-loop bow's benched 620,
-    /// counted in the thumbv7em release build: `BowedString::render`'s
-    /// fast span 64 instructions a sample (the junction, both ends'
-    /// filters and their fade, the tuning allpass, the bow table's one
-    /// `vdiv.f32`, BRIGHT's low-pass, the width's and bow velocity's
-    /// easing); its per-block work at most 14 a sample (the setup's 327
-    /// instructions, three `expf`s and two `sqrtf`s for the window and
-    /// BRIGHT, the spans' heads at the bench's notes, the split's step one
-    /// block in 8, over 64); the output blocker 7.8: N = 85.8 against the
-    /// one-loop bow's 143. The two `tanhf` bodies it drops, T = 135, were
-    /// in the 620: the friction's `expm1f` path for k ≥ 2, 73, the push's
-    /// for k = 1, 54, and each one's inlined `1 − 2/(t + 2)`, 4.
-    /// 620 + (85.8 − 143 − 135) × 1.46 × 0.9 + (14 − 1.46) × 1.1 for the
-    /// `vdiv` = 381.3, rounded up to 390.
-    pub const COST_BOWED: Cost = Cost(390);
+    /// The one-loop bow restored (ADR 0064): its 860 at 330298c (620
+    /// benched, then the step-A and playable-bow counts), × 1.13, its host
+    /// time now over then, each over STRING's on the same build (7.55
+    /// against 6.69): the smoothing, BRIGHT's taps at the bow point, less
+    /// the per-sample tap setup hoisted to the block. 972, rounded up to
+    /// 980; a host estimate until the chip bench.
+    pub const COST_BOWED: Cost = Cost(980);
     /// 809 (benched, ADR 0054) − 271, rounded up to 540: 419 instructions a
     /// sample to 187, −306 cycles. Each halo string runs its block in
     /// spans, 19 a sample (42 before, 87 at task 11); the main string 15;
@@ -581,9 +598,16 @@ impl ModalEngine {
                 );
             }
             ModelSlot::Bowed(b) => {
-                b.start(freq, sample_rate, m.pos, restrike);
+                // A re-strike sets the bow back on the string as it rings.
+                if !restrike {
+                    b.string.clear();
+                    b.hair = BowHair::REST;
+                    b.tune(freq, sample_rate);
+                    b.force = bow_force(params.force, vel);
+                    (b.bow_vel, b.written) = (params.speed * BOW_SPEED, 0);
+                }
                 b.force_to = bow_force(params.force, vel);
-                b.bow_vel = params.speed * BOW_SPEED;
+                b.lift = 0.0;
                 b.vel_scale = 0.5 + 0.5 * vel;
                 b.bowing = true;
                 b.release = Release::HELD;
@@ -658,10 +682,13 @@ impl ModalEngine {
     /// T60 or a steal. Bowed's bow lifts, its loop ramping to DAMP's ring.
     /// Nothing scales a buffer (#51).
     pub fn note_off(&mut self, _pool: &mut SymPool) {
-        let f0 = self.pitched(self.frequency) * SAMPLE_RATE as f32;
+        let f = self.pitched(self.frequency);
         if let ModelSlot::Bowed(b) = &mut self.model {
-            // A lifted bow's ends are plain delays: no low-pass to make up.
-            b.lift(LoopGain::from_t60(t60(self.macros.damp), f0));
+            b.lift = b.force / RELEASE_SAMPLES as f32;
+            b.force_to = 0.0;
+            b.bowing = false;
+            let (_, ring) = lifted(&self.macros, (f * SAMPLE_RATE as f32, TAU * f));
+            b.release.lift(BOW_GAIN, ring);
         }
     }
 
@@ -748,13 +775,9 @@ impl ModalEngine {
                 if b.bowing {
                     b.force_to = params.force * b.vel_scale;
                 }
-                // The first block's split is its modulated POS's, before a sample.
-                if first {
-                    b.place(m.pos);
-                }
-                b.render(output, &m, (f0, params.speed * BOW_SPEED));
+                render_bowed(b, output, &m, (f0, w0, params.speed * BOW_SPEED));
                 // Never freed while bowed, however low its note (#206).
-                b.on()
+                b.force > 0.0
             }
             ModelSlot::Sympathetic(v) => {
                 let v = &mut **v;
@@ -870,6 +893,93 @@ impl ModalBank {
             f.reset();
         }
         self.sounding = sounding;
+    }
+}
+
+impl BowedString {
+    fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
+        let p = slot.as_mut_ptr();
+        // SAFETY: `p` is valid and unaliased; the string is built in place
+        // and the rest written by value, before `assume_init_mut`.
+        unsafe {
+            KsString::init_in_place(uninit_at(addr_of_mut!((*p).string)));
+            addr_of_mut!((*p).force).write(0.0);
+            addr_of_mut!((*p).force_to).write(0.0);
+            addr_of_mut!((*p).lift).write(0.0);
+            addr_of_mut!((*p).bow_vel).write(0.0);
+            addr_of_mut!((*p).vel_scale).write(0.0);
+            addr_of_mut!((*p).bowing).write(false);
+            addr_of_mut!((*p).written).write(0);
+            addr_of_mut!((*p).release).write(Release::HELD);
+            addr_of_mut!((*p).hair).write(BowHair::REST);
+            slot.assume_init_mut()
+        }
+    }
+
+    /// The loop for `freq`: half its period, less the smoothing's delay,
+    /// the allpass exact at `freq`; the smoothing's make-up at `freq`.
+    fn tune(&mut self, freq: f32, sample_rate: u32) {
+        let (period, _, w) = string::loop_at(freq, sample_rate);
+        self.hair = self.hair.tuned(freq, w);
+        self.string.set_period(0.5 * period, self.hair.delay(), w);
+    }
+}
+
+/// The bowed loop's smoothing, a binomial on what the bow pushes: linear
+/// phase, so every partial is delayed alike, and the stick-slip's corner,
+/// spread over a few samples, times the period between them. Without it
+/// the period locked to whole samples, 26 cents sharp at C7. `[1, 2, 1]/4`
+/// under C5, where it is enough, so low notes keep the one-loop bow's
+/// edge; `[1, 6, 15, 20, 15, 6, 1]/64` from C5. Its gain at f0 is made
+/// up, so DAMP sets the ring.
+#[derive(Clone, Copy)]
+struct BowHair {
+    /// The last six samples pushed, newest first.
+    past: [f32; 6],
+    /// Seven taps, not three.
+    wide: bool,
+    /// Over its gain at f0.
+    norm: f32,
+}
+
+impl BowHair {
+    const REST: Self = Self {
+        past: [0.0; 6],
+        wide: false,
+        norm: 1.0,
+    };
+    /// From here up, seven taps.
+    const WIDE_HZ: f32 = 520.0;
+    /// The least gain at f0 made up: seven taps' at C7.
+    const LEAST: f32 = 0.94;
+
+    /// For `freq` Hz, `w` rad/sample, its history kept.
+    fn tuned(self, freq: f32, w: f32) -> Self {
+        let half = 0.5 * (1.0 + libm::cosf(w));
+        let wide = freq >= Self::WIDE_HZ;
+        let gain = if wide { half * half * half } else { half };
+        Self {
+            wide,
+            // Past C7 the loop is too short to make up: it rings shorter.
+            norm: 1.0 / gain.max(Self::LEAST),
+            ..self
+        }
+    }
+
+    /// Its delay, samples.
+    fn delay(&self) -> f32 {
+        if self.wide { 3.0 } else { 1.0 }
+    }
+
+    #[inline]
+    fn process(&mut self, x: f32) -> f32 {
+        let [a, b, c, d, e, f] = self.past;
+        self.past = [x, a, b, c, d, e];
+        if self.wide {
+            (x + f + 6.0 * (a + e) + 15.0 * (b + d) + 20.0 * c) * (self.norm / 64.0)
+        } else {
+            (x + 2.0 * a + b) * (self.norm * 0.25)
+        }
     }
 }
 
@@ -1129,13 +1239,12 @@ fn ensemble(params: &ModalParams, hz: f32, sample_rate: u32) -> (f32, Ensemble) 
 /// INIT's C4 at velocity 100 as loud on P1 as ALGO INIT's, the factory
 /// median, ±1 dB; STRING's by its peak, its eight-note chord at velocity
 /// 127 under 3 dB of the limiter's gain reduction. After the bank's tanh,
-/// SYMP's and the voice's filter, so none of them saturates more. BOWED's
-/// is on top of `BOW_OUT`, the bow's level into that filter.
+/// SYMP's and the voice's filter, so none of them saturates more.
 pub const fn out_gain(mode: ResonatorMode) -> f32 {
     match mode {
         ResonatorMode::String => 5.95,
         ResonatorMode::Modal => 11.83,
-        ResonatorMode::Bowed => 1.62,
+        ResonatorMode::Bowed => 0.93,
         ResonatorMode::Sympathetic => 4.24,
     }
 }
@@ -1145,6 +1254,81 @@ const BURST_AT_C3: f32 = 130.81;
 
 /// SPEED 1's bow velocity; SPEED 0.5 is the old `BOW_VELOCITY · 0.3`.
 const BOW_SPEED: f32 = 0.3;
+/// FORCE's and SPEED's easing a sample: about the macros' `EASE` a block.
+const BOW_EASE: f32 = EASE / BLOCK_SIZE as f32;
+/// The bowed loop's gain per pass, until the lift ramps it to DAMP's.
+const BOW_GAIN: LoopGain = LoopGain::TOP;
+/// BRIGHT 0's low-pass side taps on the bowed loop: the most |H| ≤ 1
+/// allows. The bow's stick-slip keeps it gentle.
+const BOW_LP: f32 = 0.5;
+/// POS over which the bow point's comb fades in from the loop's tap alone.
+const BOW_POS_MIN: f32 = 0.03;
+/// Loop passes a period: the loop is half the string and inverts each
+/// pass, as a string's reflections do, so it sounds f0. The one-loop bow's
+/// stick-slip ran a period of two passes, an octave down (UAT 2026-09-30).
+const BOW_LOOPS: f32 = 2.0;
+
+/// A lifted bow's loop at `f0` Hz, `w` rad/sample: BRIGHT's low-pass and
+/// DAMP's gain, the low-pass's loss at f0 made up (`damped`).
+fn lifted(m: &Macros, (f0, w): (f32, f32)) -> (f32, LoopGain) {
+    damped(t60(m.damp), (BOW_LOOPS * f0, w), BOW_LP * (1.0 - m.bright))
+}
+
+/// The bow on its string: a half-length loop that inverts each pass
+/// (`BOW_LOOPS`) through `BowHair`. DAMP rings the lifted bow, BRIGHT
+/// low-passes the loop and the bow point alike, POS combs the output at the bow
+/// point, fading in over `BOW_POS_MIN`. The loop and the friction read
+/// the one tap, so the pitch holds: a friction reading POS's second tap
+/// bows a second loop, which takes the pitch. The tap's place is set once
+/// a block.
+fn render_bowed(
+    b: &mut BowedString,
+    output: &mut [f32; BLOCK_SIZE],
+    m: &Macros,
+    (f0, w0, vel_to): (f32, f32, f32),
+) {
+    // Lifted, DAMP's ring, which `Release::gain` never lets rise; bowed, the top.
+    let (c, held) = if b.bowing {
+        (BOW_LP * (1.0 - m.bright), BOW_GAIN)
+    } else {
+        lifted(m, (f0, w0))
+    };
+    // The bow point a third of the half-loop from the tap at POS 1: its
+    // comb nulls the 3rd, 9th and 15th partials, the string bowed a third
+    // of the way along (the loop sounds odd partials only).
+    let d = b.string.delay() as f32;
+    let back = (d - m.pos * d / 3.0).max(2.0);
+    let point = (back as usize, back - libm::floorf(back));
+    let comb = 0.5 * (m.pos / BOW_POS_MIN).min(1.0);
+    for s in output.iter_mut() {
+        if b.bowing {
+            // At its target, no bit moves.
+            b.force += BOW_EASE * (b.force_to - b.force);
+            b.bow_vel += BOW_EASE * (vel_to - b.bow_vel);
+        } else if b.force > b.force_to {
+            b.force = (b.force - b.lift).max(b.force_to);
+        }
+        let bow_vel = if b.force > 0.001 { b.bow_vel } else { 0.0 };
+        let gain = b.release.gain(held);
+        let (x, y) = b.string.bow_taps(b.written, c, point);
+        // The bow point's nulls, heard: outside the loop, so the pitch holds.
+        *s = x + comb * (y - x);
+        // Stick-slip: a small |Δv| sticks (energy in), a large one slips.
+        let friction = b.force * 4.0 * libm::tanhf((bow_vel - x) * 8.0);
+        // Inverted each pass: two passes a period. Bounded: `x` under a
+        // gain below 1, a bounded push, then `tanh`; once the bow is off,
+        // linear, so DAMP's ring is its T60 at any level.
+        let feedback = -x * gain.get() + friction * 0.4;
+        let v = if b.force > 0.0 {
+            libm::tanhf(feedback)
+        } else {
+            feedback
+        };
+        let y = b.hair.process(v);
+        b.string.ring_push(y);
+        b.written = b.written.saturating_add(1);
+    }
+}
 
 /// Each halo string's T60 over the main string's.
 const HALO_T60: f32 = 2.0;

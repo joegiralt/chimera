@@ -111,7 +111,6 @@ impl KsString {
     }
 
     /// The sample `k` behind the last write, `k < ring_len`.
-    #[cfg(test)]
     #[inline]
     fn behind(&self, k: usize) -> f32 {
         let i = self.write_pos + self.ring_len - k;
@@ -132,7 +131,6 @@ impl KsString {
     }
 
     /// Steps the write position on round the ring.
-    #[cfg(test)]
     #[inline]
     fn advance(&mut self) {
         self.write_pos += 1;
@@ -226,11 +224,57 @@ impl KsString {
         self.dirty * size_of::<f32>()
     }
 
-    /// Bowed's waveguide on the ring (`bow.rs`): the ring in use
-    /// (`ring_len` cells), the last write, the loop's line and its tuning allpass.
-    pub(super) fn guide(&mut self) -> (&mut [f32], &mut usize, usize, &mut Allpass1) {
-        let ring = &mut self.buffer[..self.ring_len];
-        (ring, &mut self.write_pos, self.delay, &mut self.frac)
+    /// Bowed's ring: the sample `delay` pushes back, or the note's first
+    /// until `written` reaches it, so a low note sounds from its first
+    /// samples (#206).
+    fn ring_tap(&self, written: u32) -> f32 {
+        self.behind(self.delay.min(written.max(1) as usize) - 1)
+    }
+
+    /// Bowed's bow point: `back` samples behind the write, in `ring_tap`'s
+    /// measure, linearly interpolated, clamped to `[1, delay]` and held
+    /// within what `written` has reached (#206). At `delay`, `ring_tap`
+    /// bit for bit.
+    fn ring_tap_at(&self, written: u32, back: f32) -> f32 {
+        let reach = self.delay.min(written.max(1) as usize) as f32;
+        // `max` first: NaN reads at 1.
+        let back = back.max(1.0).min(reach);
+        let i = back as usize;
+        let f = back - i as f32;
+        let x = self.behind(i - 1);
+        if f > 0.0 {
+            x + f * (self.behind(i) - x)
+        } else {
+            x
+        }
+    }
+
+    /// Bowed's two taps, `(loop, bow point)`: the loop's `delay` back and
+    /// the bow point `i + f` back, `2 <= i + f <= delay`, each through the
+    /// linear-phase 3-tap low-pass `c/2·(x[k−1] + x[k+1]) + (1 − c)·x[k]`
+    /// centred on it, so BRIGHT darkens both. Until `written` passes
+    /// `delay + 1`, the note's first pass, they follow the write unfiltered
+    /// (`ring_tap`, `ring_tap_at`).
+    #[inline]
+    pub(super) fn bow_taps(&self, written: u32, c: f32, (i, f): (usize, f32)) -> (f32, f32) {
+        let d = self.delay;
+        if written as usize <= d + 1 {
+            return (
+                self.ring_tap(written),
+                self.ring_tap_at(written, i as f32 + f),
+            );
+        }
+        let lp = |k: usize| {
+            c * 0.5 * (self.behind(k - 1) + self.behind(k + 1)) + (1.0 - c) * self.behind(k)
+        };
+        let a = lp(i - 1);
+        (lp(d - 1), a + f * (lp(i) - a))
+    }
+
+    /// Bowed's ring: stores `x` through the allpass, stepping on round it.
+    pub(super) fn ring_push(&mut self, x: f32) {
+        self.advance();
+        self.buffer[self.write_pos] = self.frac.process(x);
     }
 
     /// The line and its dirty extent: for the tests.

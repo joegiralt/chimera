@@ -252,8 +252,6 @@ pub(super) const BETA_MAX: f32 = 0.5;
 /// POS 0's β on a pluck or strike: the end, where the place shapes
 /// nothing, as POS 0 always has.
 pub(super) const END: f32 = 0.0;
-/// POS 0's β on a bow: near the bridge, above Schelleng's floor.
-pub(super) const BOW_END: f32 = 0.06;
 
 /// POS's β, from `end` at 0 to the middle at 1.
 pub(super) fn beta(pos: f32, end: f32) -> f32 {
@@ -289,8 +287,8 @@ pub fn damp_from_v1_decay(decay: f32) -> f32 {
 /// are written: DECAY → DAMP, STIFF or INHARM → STRUCTURE, FDBK dropped.
 /// The string models' BRIGHT flips to the new direction. BANK's BURST is
 /// its EXCITE, the old strike's length. Bowed never read BRIGHT, DAMP or
-/// POS, and its old sound was the bug (#240): it loads an in-tune bow, an
-/// eighth of the string from the bridge, whatever the file held.
+/// POS: it loads its old bow, now in tune (#240, ADR 0064), whatever the
+/// file held.
 pub fn translate_v1(old: &crate::storage::Retired, blk: &mut dyn Block) {
     const DECAY: ParamId = ParamId(2);
     const INHARM: ParamId = ParamId(5);
@@ -317,9 +315,10 @@ pub fn translate_v1(old: &crate::storage::Retired, blk: &mut dyn Block) {
         blk.set(P::BURST, blk.get(P::EXCITE));
     }
     if mode == Some(ResonatorMode::Bowed) {
-        blk.set(P::DAMP, damp_for(0.5));
-        blk.set(P::BRIGHT, 0.5);
-        blk.set(P::POS, 0.15);
+        // v1's release, 0.12 s.
+        blk.set(P::DAMP, damp_for(0.12));
+        blk.set(P::BRIGHT, 1.0);
+        blk.set(P::POS, 0.0);
     }
 }
 

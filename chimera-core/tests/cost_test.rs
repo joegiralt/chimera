@@ -851,7 +851,7 @@ fn modal_bills_each_model() {
         (sound(String, 0.0, 0.0), 330, (8, 8), (8, 8)),
         (sound(String, 0.3, 0.0), 410, (8, 8), (8, 8)),
         (sound(String, 0.3, 0.5), 550, (8, 7), (8, 6)),
-        (sound(Bowed, 0.3, 0.5), 390, (8, 8), (8, 8)),
+        (sound(Bowed, 0.3, 0.5), 980, (5, 4), (5, 4)),
         (sound(Sympathetic, 0.0, 0.0), 540, (8, 7), (8, 7)),
         (sound(Sympathetic, 0.3, 0.0), 620, (8, 6), (7, 6)),
         (sound(Sympathetic, 0.3, 0.5), 760, (6, 5), (6, 5)),
