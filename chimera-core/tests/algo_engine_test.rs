@@ -269,7 +269,8 @@ fn a_release_ends_the_voice_and_a_silent_carrier_does_not_hold_it() {
     while e.is_active() {
         e.render(&mut blk, &p, &AlgoLive::from_params(&p), SR);
         n += 1;
-        assert!(n < 400, "never ends");
+        // RR 5: T60 about 1.1 s, 825 blocks.
+        assert!(n < 1500, "never ends");
     }
     assert!(peak(&blk) < 1e-3);
 }

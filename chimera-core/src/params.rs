@@ -556,10 +556,14 @@ pub struct OutParams {
     pub vca_vel: f32,
 }
 
+/// INIT's OUT LEVEL: ALGO INIT's C4 at velocity 100 at the factory median,
+/// −22 LUFS on P1 (ADR 0063); 45/128, on the knob's grid.
+pub const INIT_VOLUME: f32 = 45.0 / 128.0;
+
 impl Default for OutParams {
     fn default() -> Self {
         Self {
-            volume: 0.8,
+            volume: INIT_VOLUME,
             pan: 0.0,
             vca: 0.0,
             vca_vel: 1.0,
@@ -577,7 +581,17 @@ impl OutParams {
 /// Volume and VEL are read by `Voice`'s VCA every block, VCA is a hidden
 /// destination; pan is not used by `Voice`.
 pub static OUT_SPECS: [ParamSpec; 4] = [
-    ParamSpec::continuous(0, "LEVEL", ValFmt::Uni, 0.0, 1.0, 0.8, 1.0 / 128.0, true).ident("LEVEL"),
+    ParamSpec::continuous(
+        0,
+        "LEVEL",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        INIT_VOLUME,
+        1.0 / 128.0,
+        true,
+    )
+    .ident("LEVEL"),
     ParamSpec::continuous(1, "PAN", ValFmt::Pan, -1.0, 1.0, 0.0, 2.0 / 128.0, false).ident("PAN"),
     ParamSpec::continuous(2, "VCA", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, true).ident("VCA"),
     ParamSpec::continuous(3, "VEL", ValFmt::Uni, 0.0, 1.0, 1.0, 1.0 / 128.0, false).ident("VEL"),

@@ -87,7 +87,8 @@ fn max() -> FxParams {
 enum Voices {
     /// SAW LEAD, its filter wide open: two saw operators a voice.
     Saw,
-    /// The default Sound, the hottest single voice.
+    /// The default Sound at OUT LEVEL 0.8, its level before ADR 0063: the
+    /// hottest single voice.
     Init,
 }
 
@@ -107,6 +108,8 @@ fn chord(
         shared.parts[0].params.filter.cutoff = 20_000.0;
         shared.parts[0].params.filter.resonance = 0.0;
         shared.parts[0].mod_state = saw.mod_state;
+    } else {
+        shared.parts[0].params.out.volume = 0.8;
     }
     shared.parts[0].mix.level = level;
     shared.parts[0].mix.sends = [send; 3];
