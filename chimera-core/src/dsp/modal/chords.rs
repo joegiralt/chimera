@@ -28,11 +28,9 @@
 use super::string::MAX_STRING_DELAY;
 
 pub const CHORD_COUNT: usize = 11;
-/// A chord change's glide: 20 ms.
-pub const CHORD_GLIDE_SAMPLES: u32 = 960;
-/// Samples between the glide's re-splits: a whole block's step ticks on
-/// low notes.
-pub(super) const GLIDE_STEP: usize = 16;
+/// A chord change's glide (`Glide`), seconds to 63 %: 90 % in 184 ms,
+/// as a Prophet's glide (the owner's UAT, 2026-09-30).
+pub const CHORD_GLIDE_TAU: f32 = 0.08;
 
 /// Rings' single-voice chords (part.cc, `chords[0]`), the 0.0 the main
 /// string plays dropped. Pairs 0.01 apart are Rings' detuned chorus.

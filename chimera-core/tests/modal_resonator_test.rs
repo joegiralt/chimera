@@ -816,8 +816,11 @@ fn period_of(note: u8) -> f32 {
     SR as f32 / note_to_freq(note)
 }
 
-/// SYMP note 48 held on chord 1; at block 100 STRUCTURE crosses to chord
-/// 3. The halo glides, doesn't click, and 25 ms on sits on chord 3.
+/// The owner's UAT (2026-09-30): the halo glides as a Prophet's glide
+/// does. SYMP note 48 held on chord 1; at block 100 STRUCTURE crosses to
+/// chord 3, string 4 from 9.99 to 13.99 semitones. Its pitch moves one
+/// way only, reaches 90 % of the interval 150 to 250 ms on, lands, and
+/// nothing clicks.
 #[test]
 fn chord_change_glides() {
     use chimera_core::dsp::modal::{CHORDS, SymPool, fold};
@@ -831,29 +834,76 @@ fn chord_change_glides() {
     let mut e = Box::new(ModalEngine::new_in(&mut pool, p.mode));
     e.note_on(48, 100, &p, SR, &mut pool);
     let to = CHORDS[3].map(|st| fold(period_of(48) * 2f32.powf(-st / 12.0)));
+    let from = fold(period_of(48) * 2f32.powf(-9.99 / 12.0));
     let mut out = Vec::new();
     let mut block = [0.0; BLOCK_SIZE];
-    for i in 0..200 {
+    let mut path = Vec::new();
+    for i in 0..900 {
         if i == 100 {
             p.structure = 0.3;
         }
         e.render(&mut block, &p, SR, &mut pool);
         out.extend_from_slice(&block);
-        if i == 100 {
-            // Gliding, not stepped: string 4 goes 9.99 to 13.99.
-            let (a, b) = (fold(period_of(48) * 2f32.powf(-9.99 / 12.0)), to[4]);
-            let got = e.halo_periods(&pool).expect("a halo")[4];
-            assert!(got < a - 1e-3 && got > b + 1e-3, "{got}: {a} to {b}");
+        if i >= 100 {
+            path.push(e.halo_periods(&pool).expect("a halo")[4]);
         }
-        if i >= 100 + 19 {
-            let got = e.halo_periods(&pool).expect("a halo");
-            for (g, t) in got.iter().zip(&to) {
-                assert!((g - t).abs() < 1e-3, "block {i}: {got:?} vs {to:?}");
-            }
-        }
+    }
+    assert!(path.windows(2).all(|w| w[1] <= w[0]), "one way");
+    let share = |x: f32| (x / from).log2() / (to[4] / from).log2();
+    let at90 = path.iter().position(|&x| share(x) >= 0.9).expect("90 %");
+    let ms = (at90 * BLOCK_SIZE) as f32 * 1000.0 / SR as f32;
+    assert!((150.0..=250.0).contains(&ms), "90 % at {ms} ms");
+    let got = e.halo_periods(&pool).expect("a halo");
+    for (g, t) in got.iter().zip(&to) {
+        assert!((g - t).abs() < 1e-3, "{got:?} vs {to:?}");
     }
     let c = clicks(&out);
     assert!(c.is_empty(), "clicks {:?}", &c[..c.len().min(5)]);
+}
+
+/// Low, a halo string's interval folds up an octave in one chord and not
+/// the next. Every step from chord to chord, on C1 and G1, moves each
+/// string by the table's interval where that fits the line, else the other
+/// way round the octave: never the long way round the fold.
+#[test]
+fn a_chord_glide_never_crosses_an_octave() {
+    use chimera_core::dsp::modal::{CHORD_COUNT, CHORDS, SymPool, fold};
+    for note in [24u8, 31] {
+        for k in 0..CHORD_COUNT - 1 {
+            let at = |k: usize| (k as f32 + 0.5) / CHORD_COUNT as f32;
+            let mut p = ModalParams {
+                mode: ResonatorMode::Sympathetic,
+                structure: at(k),
+                ..Default::default()
+            };
+            let mut pool = SymPool::boxed();
+            let mut e = Box::new(ModalEngine::new_in(&mut pool, p.mode));
+            e.note_on(note, 100, &p, SR, &mut pool);
+            let mut block = [0.0; BLOCK_SIZE];
+            e.render(&mut block, &p, SR, &mut pool);
+            let before = e.halo_periods(&pool).unwrap();
+            p.structure = at(k + 1);
+            for _ in 0..2 * SR as usize / BLOCK_SIZE {
+                e.render(&mut block, &p, SR, &mut pool);
+            }
+            let after = e.halo_periods(&pool).unwrap();
+            for s in 0..7 {
+                let moved = 12.0 * (before[s] / after[s]).log2();
+                let want = CHORDS[k + 1][s] - CHORDS[k][s];
+                let direct = before[s] * 2f32.powf(-want / 12.0);
+                let want = if fold(direct) == direct {
+                    want
+                } else {
+                    want - 12.0 * want.signum()
+                };
+                assert!(
+                    (moved - want).abs() < 0.01,
+                    "note {note}, chord {k} to {}, string {s}: moved {moved}, table {want}",
+                    k + 1
+                );
+            }
+        }
+    }
 }
 
 /// Review Focus 2: on G1 every chord's halo fits the line. Each string
@@ -918,8 +968,9 @@ fn every_chord_fits_the_line_at_g1() {
 }
 
 /// A chord step on a low note, halo loud: the glide's sharpest kink stays
-/// within 2× the held chords' either side. A re-split each block (64
-/// samples) gave 2.9× here, and ticked in the demo's click check.
+/// within 2× the held chords' either side. The 20 ms linear glide's
+/// re-split each block gave 2.9× here, and ticked in the demo's click
+/// check; the 80 ms one-pole's steps, a quarter of its largest, do not.
 #[test]
 fn a_chord_glide_on_a_low_note_does_not_tick() {
     use chimera_core::dsp::modal::SymPool;
@@ -986,7 +1037,7 @@ fn a_pitch_change_retunes_the_halo() {
 
 /// A note's first block takes its modulated STRUCTURE whole: a route
 /// (here the stored chord 0, rendered on chord 5) puts the halo on the
-/// routed chord at once, not 20 ms on.
+/// routed chord at once, not glided.
 #[test]
 fn a_routed_chord_snaps_on_the_first_block() {
     use chimera_core::dsp::modal::{CHORDS, SymPool, fold};

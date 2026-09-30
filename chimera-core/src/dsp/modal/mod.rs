@@ -38,12 +38,14 @@ mod bow;
 mod chords;
 mod dispersion;
 mod ensemble;
+mod glide;
 mod loop_parts;
 mod params;
 mod rings;
 mod string;
 
-pub use chords::{CHORD_COUNT, CHORD_GLIDE_SAMPLES, CHORDS, chord_of, fold};
+pub use chords::{CHORD_COUNT, CHORD_GLIDE_TAU, CHORDS, chord_of, fold};
+pub use glide::Glide;
 pub use params::*;
 pub use string::MAX_STRING_DELAY;
 
@@ -59,7 +61,7 @@ use crate::in_place::{in_place_enum, uninit_at};
 use crate::sym_alloc::{Lease, SYM_SLOTS, SymAlloc, SymSlot};
 use crate::voice_alloc::VoiceIdx;
 use bow::BowedString;
-use chords::{GLIDE_STEP, period_ratios};
+use chords::period_ratios;
 use core::f32::consts::TAU;
 use ensemble::{Ensemble, rate_hz};
 use loop_parts::{DC_HZ, LoopGain, Release, damped};
@@ -117,12 +119,8 @@ pub struct SympatheticSet {
     chord: u8,
     /// Its periods over the main string's, unfolded.
     ratios: [f32; NUM_SYMPATHETIC],
-    /// The glide's periods, samples: from the last chord's, to this one's
-    /// folded.
-    from: [f32; NUM_SYMPATHETIC],
-    to: [f32; NUM_SYMPATHETIC],
-    /// Samples of glide left.
-    glide: u32,
+    /// Each string's period, gliding to the chord's.
+    glides: [Glide; NUM_SYMPATHETIC],
     /// COUPLE's and HALO's gains, latched at note-on.
     coupling: f32,
     level: f32,
@@ -132,7 +130,7 @@ pub struct SympatheticSet {
 }
 
 crate::in_place::field_list!(SympatheticSet => SympatheticSet {
-    strings, chord, ratios, from, to, glide, coupling, level, pending,
+    strings, chord, ratios, glides, coupling, level, pending,
 });
 
 /// Sympathetic's sets, one per slot of `SymAlloc`, which lends them to
@@ -410,12 +408,11 @@ impl ModalEngine {
     pub const PITCH: Cost = Cost(30);
 
     /// More on SYMP with a route into STRUCTURE, which can keep the halo
-    /// gliding: seven `set_period`s every `GLIDE_STEP` (28 a block) and
-    /// the glide's lerp, about 60 instructions a sample; the halo's block
-    /// cut in four, three more runs of each string, 3 × (87 + 7 × (71 +
-    /// 65)) a block, 48.7; (60 + 48.7) × 1.46 × 1.1 = 174.6; and seven
-    /// `exp2f`s a chord step. A host estimate, as `PITCH`, until the
-    /// bench's SYM LFO row reads it (task 12).
+    /// gliding: seven `exp2f`s and `set_period`s a block (`Glide`), about
+    /// 7 × 260 / 64 = 28 instructions a sample, and seven `exp2f`s and
+    /// `log2f`s a chord step. Billed at the 16-sample re-split's 180 it
+    /// replaced (ADR 0062), a host estimate as `PITCH`, until the bench's
+    /// SYM LFO row reads it (task 12).
     pub const CHORD: Cost = Cost(180);
 
     /// An idle engine set to play `mode`, by value, through the stack:
@@ -975,9 +972,8 @@ impl SympatheticSet {
             }
             addr_of_mut!((*p).chord).write(0);
             addr_of_mut!((*p).ratios).write([1.0; NUM_SYMPATHETIC]);
-            addr_of_mut!((*p).from).write([INIT_PERIOD; NUM_SYMPATHETIC]);
-            addr_of_mut!((*p).to).write([INIT_PERIOD; NUM_SYMPATHETIC]);
-            addr_of_mut!((*p).glide).write(0);
+            addr_of_mut!((*p).glides)
+                .write([Glide::new(INIT_PERIOD, CHORD_GLIDE_TAU); NUM_SYMPATHETIC]);
             addr_of_mut!((*p).coupling).write(0.0);
             addr_of_mut!((*p).level).write(0.0);
             addr_of_mut!((*p).pending).write([0.0; NUM_SYMPATHETIC]);
@@ -1004,9 +1000,9 @@ impl SympatheticSet {
         }
         self.chord = chord as u8;
         self.ratios = ratios[chord];
-        self.to = self.ratios.map(|r| fold(period * r));
-        self.from = self.to;
-        self.glide = 0;
+        self.glides = self
+            .ratios
+            .map(|r| Glide::new(fold(period * r), CHORD_GLIDE_TAU));
         self.split();
         self.coupling = 0.1 * params.couple;
         self.level = 0.6 * params.halo;
@@ -1014,46 +1010,46 @@ impl SympatheticSet {
     }
 
     /// Per block, on a main string of `period` samples: a new `chord`
-    /// starts a glide from where the strings are, which `glide_step`
-    /// walks, or on a note's first block (`snap`) takes it whole; a pitch
-    /// change moves its target.
+    /// glides each string from where it is (`CHORD_GLIDE_TAU`), by the
+    /// table's interval, or round the fold by the least move where that
+    /// does not fit the line; a note's first block (`snap`) takes it whole.
+    /// A pitch change moves a gliding set's targets, and a resting set at
+    /// once.
     fn retune(&mut self, period: f32, chord: usize, (pitched, snap): (bool, bool)) {
         let stepped = chord != self.chord as usize;
         if !stepped && !pitched {
             return;
         }
-        let now = self.periods();
+        let (was, gliding) = (self.ratios, self.glides.iter().any(Glide::gliding));
         if stepped {
             self.chord = chord as u8;
             self.ratios = period_ratios(chord);
-            self.glide = if snap { 0 } else { CHORD_GLIDE_SAMPLES };
         }
-        self.to = self.ratios.map(|r| fold(period * r));
-        if self.glide == 0 {
-            self.split();
-            return;
+        for ((g, r), w) in self.glides.iter_mut().zip(self.ratios).zip(was) {
+            let folded = fold(period * r);
+            if snap || !(stepped || gliding) {
+                g.toward(folded);
+                g.snap();
+            } else if stepped {
+                g.toward(octave_near(folded, g.period() * r / w));
+            } else {
+                g.toward(octave_near(folded, g.target()));
+            }
         }
-        // Rebased so `periods()` is still `now`: nothing jumps.
-        let g = self.glide as f32 / CHORD_GLIDE_SAMPLES as f32;
-        self.from = core::array::from_fn(|i| self.to[i] + (now[i] - self.to[i]) / g);
+        self.split();
     }
 
-    /// Every `GLIDE_STEP` samples: a gliding set's next step.
-    #[inline]
+    /// A block of glide: the gliding strings a step on, re-split.
     fn glide_step(&mut self) {
-        if self.glide > 0 {
-            self.glide = self.glide.saturating_sub(GLIDE_STEP as u32);
+        if self.glides.iter().any(Glide::gliding) {
+            self.glides.iter_mut().for_each(Glide::tick);
             self.split();
         }
     }
 
-    /// The strings' periods now, samples: `to` past the glide.
+    /// The strings' periods now, samples.
     fn periods(&self) -> [f32; NUM_SYMPATHETIC] {
-        if self.glide == 0 {
-            return self.to;
-        }
-        let t = 1.0 - self.glide as f32 / CHORD_GLIDE_SAMPLES as f32;
-        core::array::from_fn(|i| self.from[i] + (self.to[i] - self.from[i]) * t)
+        self.glides.map(|g| g.period())
     }
 
     /// Each string's line and allpass at `periods`: no dispersion.
@@ -1158,6 +1154,7 @@ fn render_sympathetic(
 ) {
     main.render(&main_string(m, f0), output);
     if let Some(set) = set {
+        set.glide_step();
         // Each halo string rings twice the main one's T60, no darker.
         let lp = lp_coeff(halo_bright(m.bright));
         let halo_t60 = HALO_T60 * t60(m.damp);
@@ -1173,18 +1170,9 @@ fn render_sympathetic(
             *i = x * coupling;
         }
         let mut sum = [0.0_f32; BLOCK_SIZE];
-        // String by string, a glide step at a time; a whole block unless gliding.
-        let step = if set.glide > 0 {
-            GLIDE_STEP
-        } else {
-            BLOCK_SIZE
-        };
-        for (input, sum) in input.chunks(step).zip(sum.chunks_mut(step)) {
-            set.glide_step();
-            let halo = set.strings.iter_mut().zip(&mut set.pending).zip(&halo);
-            for ((sym, pending), p) in halo {
-                sym.run_coupled(p, input, pending, sum);
-            }
+        let halo = set.strings.iter_mut().zip(&mut set.pending).zip(&halo);
+        for ((sym, pending), p) in halo {
+            sym.run_coupled(p, &input, pending, &mut sum);
         }
         for (s, h) in output.iter_mut().zip(&sum) {
             *s += h * level;
@@ -1197,6 +1185,16 @@ fn render_sympathetic(
 }
 
 use super::note_to_freq;
+
+/// `folded` or the octave above, whichever is nearer `near`: a glide by
+/// the chord's interval, not round the fold.
+fn octave_near(folded: f32, near: f32) -> f32 {
+    if folded > near * core::f32::consts::SQRT_2 {
+        folded * 0.5
+    } else {
+        folded
+    }
+}
 
 /// The halo's BRIGHT: its damping 0.7× the main string's, as today.
 fn halo_bright(bright: f32) -> f32 {
