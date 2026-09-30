@@ -33,10 +33,12 @@ partials of f0/2 (C3 at 65.4 Hz).
 - **A whole period's lock, stepped out of** (`unlocked`, `grip`): from
   C6 up a period within 0.18 samples under or 0.33 over a whole one is
   set at that edge, where the stick-slip plays the asked pitch within a
-  cent. The share taken follows the bow: all at INIT's force and SPEED,
-  none for a soft (effective force 0.3 or less), very hard (0.8 or more)
-  or slow (SPEED 0.1) bow, whose windows differ. A lifted ring takes
-  none: it plays its own period.
+  cent. The share taken follows the bow as it is, re-taken each block
+  from the eased force and bow velocity: all from INIT's effective force
+  (0.447) to FORCE 0.5 at v127 (0.55) at SPEED 0.5 and up, none for a
+  soft (0.3 or less), very hard (0.8 or more) or slow (SPEED 0.1) bow,
+  whose windows differ. A lifted ring takes none: it plays its own
+  period.
 - **Once lifted the loop is linear** (no `tanh`): DAMP's T60 at any
   level, G1 to C7 within 10 % (`damp_sets_the_ring_at_every_pitch`).
 - **BRIGHT is the output's:** the loop's three-tap low-pass stays at
@@ -61,7 +63,13 @@ partials of f0/2 (C3 at 65.4 Hz).
   620 + (210 − 143 − 135) × 1.46 × 1.1. Eight voices on rev V, seven on
   rev Y.
 
-Measured, INIT and v1's bow at velocity 100: G1 to C7 within 3.1 cents; a
+**Scope of the tuning:** G1 to C7 within 5 cents at velocity 20 to 127
+for FORCE 0.1 at any SPEED and FORCE 0.5 at SPEED 0.5 and 1
+(`the_bow_is_in_tune_within_its_scope`). Outside it the stick-slip itself
+runs off: FORCE 1 up to 35 cents from F3 up (A6 at SPEED 0.5 +17.4), and
+SPEED 0.1 at FORCE 0.5 up to 21 cents from G4 up.
+
+Measured, INIT and v1's bow at velocity 100: G1 to C7 within 3.7 cents; a
 lifted note keeps its pitch within 0.1 cent. BRIGHT 0 against 1 takes
 4.3 dB off harmonics 8–24. FORCE 0.25 against 1 moves harmonics 8–24 by
 0.8 dB at G1, 2.3 at C3, 4.4 at C6.
@@ -76,9 +84,9 @@ lifted note keeps its pitch within 0.1 cent. BRIGHT 0 against 1 takes
 - **`libm::tanhf`:** two bodies a sample cost three voices.
 
 ## Consequences
-- The top octave's slow, heavy bow (SPEED 0.1 at FORCE 0.5 and v127, or
-  FORCE 1) runs 6 to 37 cents sharp, beyond `unlocked`'s reach: the grid
-  of `bowed_plays_clean_across_the_instrument` holds 96 %, not 97.
+- A heavy or slow bow is out of tune (see the scope above): the grid of
+  `bowed_plays_clean_across_the_instrument` (its C notes) is clean in
+  every case but C7's SPEED 0.1 at FORCE 1 or v127, 6 to 37 cents sharp.
 - A settled bow's drift is 49.2 dB under its RMS at worst (C6, SPEED
   0.1), where the two-delay bow's was 69.
 - SPEED moves the tone little at G1 (the partials' shares by 0.014).
