@@ -33,9 +33,11 @@ pub const SILENT_RMS: f32 = 1e-5;
 pub const LEAK_PEAK: f32 = 1e-7;
 /// DC over a whole case, per side, post limiter: −46 dBFS.
 pub const DC_MAX: f32 = 0.005;
-/// Blocks after a note-on before DC is judged: the voice's 5 Hz blocker
-/// settles its start-up transient in 3τ, 95 ms (ADR 0060).
-pub const DC_FROM: usize = 72;
+/// Blocks after a note-on before DC is judged, 0.3 s: past the attack. A
+/// note's start-up transient, the voice's 5 Hz blocker settling (3τ, 95 ms)
+/// and a bowed string's static deflection settling (a C3 bow's 12 periods),
+/// is not a held note's DC.
+pub const DC_FROM: usize = 225;
 /// A click: a jump's second difference over `CLICK_RATIO` × the larger of
 /// the steady states either side of it, and over `CLICK_FLOOR`.
 pub const CLICK_RATIO: f32 = 4.0;
@@ -498,7 +500,9 @@ impl Tape {
 /// One case's timeline, in blocks. A single note (C4) is held and
 /// released, then a chord (C3 E3 G3 C4) is held and released and its tail
 /// rendered until every voice is free or `bound` passes. A jump case moves
-/// the parameter to `to` and back mid-note, mid-chord and in the tail.
+/// the parameter to `to` and back mid-attack, mid-chord and in the tail;
+/// a static case's DC is judged from 0.3 s after each note-on, over the
+/// held rest (`DC_FROM`).
 #[derive(Clone, Copy, Debug)]
 pub struct Timing {
     pub hold: usize,
@@ -507,12 +511,12 @@ pub struct Timing {
 }
 
 pub const FAST: Timing = Timing {
-    hold: 225,
+    hold: 450,
     gap: 120,
     bound: 1500,
 };
 pub const THOROUGH: Timing = Timing {
-    hold: 225,
+    hold: 450,
     gap: 150,
     bound: 3000,
 };
@@ -535,12 +539,13 @@ impl Timing {
     pub fn b_off(&self) -> usize {
         self.b_on() + self.hold
     }
-    /// The jumps' blocks and values, `(block, to_max)`.
+    /// The jumps' blocks and values, `(block, to_max)`: within each note's
+    /// first 0.3 s (`DC_FROM`), so the held rest is static.
     pub fn jumps(&self) -> [(usize, bool); 4] {
         [
-            (self.hold / 3, true),
-            (2 * self.hold / 3, false),
-            (self.b_on() + self.hold / 2, true),
+            (DC_FROM / 3, true),
+            (2 * DC_FROM / 3, false),
+            (self.b_on() + DC_FROM / 2, true),
             (self.b_off() + 60, false),
         ]
     }
@@ -635,17 +640,18 @@ pub fn play(bench: &mut Bench, p: Option<&Param>, mv: Move, t: Timing) -> Run {
             continue;
         }
         let prev = edges.iter().rev().find(|&&x| x < e).copied().unwrap_or(0);
-        // A voice freed within its fade of another event is that event's
-        // fade, judged there against the steady state either side; here
-        // it would have none before it.
-        if !after && e < prev + 8 {
-            continue;
-        }
         let next = edges
             .iter()
             .find(|&&x| x > e)
             .copied()
             .unwrap_or(usize::MAX);
+        // A voice freed within its fade of another event is that event's
+        // fade, judged there against the steady state either side; here
+        // it would have none before it. One freed as the next note starts
+        // would hear that note's onset as its transient.
+        if !after && (e < prev + 8 || next <= e + 4) {
+            continue;
+        }
         for k in 0..DAC_PAIRS {
             if let Some(r) = tape.click(k, e, (prev, next), after) {
                 clicks.push((label, k, r));

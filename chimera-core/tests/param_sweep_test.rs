@@ -247,6 +247,15 @@ fn silences(c: &Case) -> Option<&'static str> {
     if c.is_op(AlgoOpParams::D2R) && c.any(|v| v == 31.0) {
         return Some("D2R 31 decays the held note to silence within its first 10 ms");
     }
+    if c.patch == Patch::ModalInit(ResonatorMode::Modal)
+        && c.is(BlockRef::Filter, FilterParams::MODE)
+        && c.any(|v| v == 5.0)
+    {
+        return Some(
+            "HP24 at INIT's 1 kHz cutoff: BANK INIT's C4 rings its modes under it, and since \
+             the filter's C1 saturate (ADR 0063) no buzz over it",
+        );
+    }
     None
 }
 
@@ -304,23 +313,6 @@ fn dc_ok(c: &Case) -> Option<&'static str> {
              the voice's 5 Hz blocker (ADR 0060)",
         );
     }
-    if c.patch == Patch::ModalInit(ResonatorMode::Bowed) && c.param.block == BlockRef::Folder {
-        return Some(
-            "the bow's attack: the string's static deflection settles, and its Helmholtz motion \
-             grows, at the loop's rate, 12 periods (92 ms at C3); the fold rectifies the growing \
-             asymmetric wave, which the voice's 5 Hz blocker has not settled 95 ms in (a C3 \
-             note 0.003, the four-note chord 0.0065, gone 0.3 s in). Settled, the bow's output \
-             under 10 Hz is at least 69 dB under its RMS, G1 to C7 \
-             (`a_settled_bow_does_not_drift`, #248)",
-        );
-    }
-    if c.patch == Patch::ModalInit(ResonatorMode::Sympathetic) && c.param.block == BlockRef::Drive {
-        return Some(
-            "SYMP's halo is a chord (Rings' table, pairs a cent apart): the drive's difference \
-             tones between its strings fall below the voice's 5 Hz blocker (0.0048 on P1 before \
-             Task 18 made up the halo's low-pass loss, 0.0051 after; 0.0016 with HALO 0)",
-        );
-    }
     None
 }
 
@@ -336,17 +328,24 @@ fn zombie_ok(c: &Case) -> Option<&'static str> {
     None
 }
 
-/// Why the tail may hold its level to the bound, yet not be stuck: it
-/// still falls (`last < first`), however slowly.
+/// Why the tail may hold its level to the bound, yet not be stuck: the
+/// ring beneath it still decays.
 fn stuck_ok(c: &Case, (first, last): (f32, f32)) -> Option<&'static str> {
-    if last < first
-        && c.rings_on()
-        && c.is(BlockRef::Folder, FolderParams::FOLD)
-        && c.any(|v| v >= 0.75)
-    {
+    if c.rings_on() && c.is(BlockRef::Folder, FolderParams::FOLD) && c.any(|v| v >= 0.75) {
         return Some(
             "FOLD's gain (×4.4 at 0.75, ×7 at 1) folds a ringing model's tail back up to full \
-             level: the ring decays at DAMP's T60 beneath it",
+             level, and as it falls through a fold it can rise: the ring decays at DAMP's T60 \
+             beneath it",
+        );
+    }
+    if c.patch == Patch::ModalInit(ResonatorMode::Sympathetic)
+        && c.param.block == BlockRef::Pitch
+        && matches!(c.mv, Move::Jump { .. })
+    {
+        return Some(
+            "PITCH jumped four octaves in a ringing SYMP chord's tail re-tunes its halo, which \
+             swells as its strings re-split and then decays at twice DAMP's T60 (26 s measured \
+             on the engine after the jump), past the 4 s bound",
         );
     }
     if last < first
@@ -862,17 +861,18 @@ fn the_folder_sym_puts_no_dc_on_the_dac() {
     b.set(&find(BlockRef::Folder, FolderParams::FOLD), 0.5);
     b.set(&find(BlockRef::Folder, FolderParams::SYMMETRY), 0.0);
     let mut t = Tape::default();
-    for blk in 0..2500 {
+    let off = 2 * DC_FROM;
+    for blk in 0..off + 2500 {
         if blk == 0 {
             b.note(60, Some(100));
         }
-        if blk == 150 {
+        if blk == off {
             b.note(60, None);
         }
         b.render(&mut t);
     }
-    let end = 150 + t.freed(150).expect("freed");
-    let held = t.dc(0, DC_FROM, 150);
+    let end = off + t.freed(off).expect("freed");
+    let held = t.dc(0, DC_FROM, off);
     let release = t.dc(0, end - 40, end - 1);
     assert!(
         held < DC_MAX && release < DC_MAX,
