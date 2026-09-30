@@ -441,12 +441,15 @@ impl ModalEngine {
     pub const PITCH: Cost = Cost(30);
 
     /// More on SYMP with a route into STRUCTURE, which can keep the halo
-    /// gliding: seven `exp2f`s and `set_period`s a block (`Glide`), about
-    /// 7 × 260 / 64 = 28 instructions a sample, and seven `exp2f`s and
-    /// `log2f`s a chord step. Billed at the 16-sample re-split's 180 it
-    /// replaced (ADR 0062), a host estimate as `PITCH`, until the bench's
-    /// SYM LFO row reads it (task 12).
-    pub const CHORD: Cost = Cost(180);
+    /// gliding (`Glide`, ADR 0062). A host estimate as `PITCH`, until the
+    /// bench's SYM LFO row reads it, taking a `exp2f`, `log2f` or
+    /// `set_period` as 130 instructions: a gliding block's seven ticks
+    /// (an `exp2f` and a few operations each) and seven `set_period`s,
+    /// 7 × 265 / 64 = 29 a sample; a chord step, which a routed STRUCTURE
+    /// may take any block, seven `log2f`s and folds, 7 × 140 / 64 = 15.3;
+    /// the halo's render unchanged. (29 + 15.3) × 1.46 × 1.1 = 71.1,
+    /// rounded up to 80.
+    pub const CHORD: Cost = Cost(80);
 
     /// An idle engine set to play `mode`, by value, through the stack:
     /// tests only. Sympathetic borrows a slot of `pool` for voice 0.
