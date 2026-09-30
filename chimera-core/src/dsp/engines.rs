@@ -13,7 +13,7 @@ use crate::dsp::modal::{Halo, ModalEngine, ModalParams, Model, ResonatorMode, Sy
 use crate::hw::Cost;
 use crate::in_place::{in_place_enum, move_out};
 use crate::modulation::ModState;
-use crate::params::{EngineType, ParamSnapshot, PitchParams};
+use crate::params::{EngineType, ParamSnapshot, PitchParams, Steal};
 use crate::sym_alloc::{Lease, SymAlloc};
 use crate::voice_alloc::VoiceIdx;
 use crate::{MidiNote, Velocity};
@@ -189,7 +189,9 @@ impl EngineSlot {
         pool.note_on_clear(modal, voice)
     }
 
-    /// `p` must play this slot's engine.
+    /// `p` must play this slot's engine. At STEAL GLIDE a note on a
+    /// sounding engine, another note of its Part stealing it, glides it
+    /// there (#254, ADR 0065).
     pub fn note_on(
         &mut self,
         note: MidiNote,
@@ -200,9 +202,22 @@ impl EngineSlot {
     ) {
         debug_assert_eq!(p.engine(), self.kind().engine());
         self.set_pitch(p);
+        match (self, p.pitch.steal_glide()) {
+            (Self::Algo(a), None) => a.note_on(note, vel, &p.algo, sample_rate),
+            (Self::Algo(a), Some(tau)) => a.glide_on(note, vel, &p.algo, sample_rate, tau),
+            (Self::Modal(m), None) => m.note_on(note.get(), vel.get(), &p.modal, sample_rate, pool),
+            (Self::Modal(m), Some(tau)) => {
+                m.glide_on(note.get(), vel.get(), &p.modal, (sample_rate, tau), pool)
+            }
+        }
+    }
+
+    /// A glide steal's ratio now, 1 at rest: for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn slide(&self) -> f32 {
         match self {
-            Self::Algo(a) => a.note_on(note, vel, &p.algo, sample_rate),
-            Self::Modal(m) => m.note_on(note.get(), vel.get(), &p.modal, sample_rate, pool),
+            Self::Algo(a) => a.slide(),
+            Self::Modal(m) => m.slide(),
         }
     }
 
@@ -261,7 +276,8 @@ impl EngineSlot {
             EngineType::Algo => AlgoEngine::cost(&p.algo, &mods.algo_levels_routed()),
             EngineType::Modal => {
                 let mut c = ModalEngine::cost(&p.modal);
-                if pitch_routed(mods) {
+                // A steal's glide retunes each block, as a route does.
+                if pitch_routed(mods) || p.pitch.steal == Steal::Glide {
                     c = c + ModalEngine::PITCH;
                 }
                 if p.modal.mode == ResonatorMode::Sympathetic && chord_routed(mods) {

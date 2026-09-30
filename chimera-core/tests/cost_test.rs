@@ -899,3 +899,39 @@ fn force_and_speed_take_no_route_so_the_bows_retune_bills_none() {
         assert_eq!(ms.push(addr), None, "{q:?}");
     }
 }
+
+/// STEAL GLIDE retunes a gliding Modal voice every block, as a PITCH
+/// route does: billed `ModalEngine::PITCH`, once beside a route; ALGO's
+/// glide rides its per-block operator update (#254).
+#[test]
+fn a_glide_steal_bills_the_retune() {
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::dsp::modal::{ModalEngine, ResonatorMode};
+    use chimera_core::params::{PitchParams, Steal};
+    let pitch_route = || {
+        let mut ms = ModState::from_registry(&chimera_core::mod_path::ModDestRegistry::new(), 8);
+        let d = ms
+            .push(ParamAddr::new(BlockRef::Pitch, PitchParams::PITCH))
+            .unwrap();
+        ms.set_route(ModSource::Lfo1.index(), d, 127);
+        ms
+    };
+    for mode in [
+        ResonatorMode::String,
+        ResonatorMode::Modal,
+        ResonatorMode::Bowed,
+        ResonatorMode::Sympathetic,
+    ] {
+        let mut p = ParamSnapshot::for_engine(EngineType::Modal);
+        p.modal.mode = mode;
+        let cut = EngineSlot::cost(&p, &ModState::new());
+        p.pitch.steal = Steal::Glide;
+        let glide = EngineSlot::cost(&p, &ModState::new());
+        assert_eq!(glide, cut + ModalEngine::PITCH, "{mode:?}");
+        assert_eq!(EngineSlot::cost(&p, &pitch_route()), glide, "{mode:?}");
+    }
+    let mut algo = ParamSnapshot::for_engine(EngineType::Algo);
+    let cut = EngineSlot::cost(&algo, &ModState::new());
+    algo.pitch.steal = Steal::Glide;
+    assert_eq!(EngineSlot::cost(&algo, &ModState::new()), cut);
+}

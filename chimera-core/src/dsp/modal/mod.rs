@@ -299,9 +299,11 @@ pub struct ModalEngine {
     model: ModelSlot,
     /// The note's frequency per sample, before the pitch offset.
     frequency: f32,
-    /// The voice's pitch ratio (`set_pitch`, ADR 0042), and the one the
-    /// strings are tuned to.
+    /// The voice's pitch ratio (`set_pitch`, ADR 0042); a glide steal's
+    /// ratio of the pitch it sounds over the note's, gliding to 1 (#254);
+    /// and the ratio of both the strings are tuned to.
     pitch: f32,
+    slide: Glide,
     tuned: f32,
     active: bool,
     silence_counter: u32,
@@ -320,12 +322,12 @@ pub struct ModalEngine {
 }
 
 crate::in_place::field_list!(ModalEngine => ModalEngine {
-    model, frequency, pitch, tuned, active, silence_counter, peak, dc, macros, shape_pending,
-    restruck,
+    model, frequency, pitch, slide, tuned, active, silence_counter, peak, dc, macros,
+    shape_pending, restruck,
 });
 
 // A `ModalEngine` is its largest model plus the fields every model shares
-// (`frequency`, `pitch`, `tuned`, `active`, `silence_counter`, `peak`,
+// (`frequency`, `pitch`, `slide`, `tuned`, `active`, `silence_counter`, `peak`,
 // `dc`, `macros`, `shape_pending`, `restruck`), never the sum of models. The slot's
 // tag takes one align (`in_place_enum!`).
 const fn models_are_exclusive() -> bool {
@@ -345,7 +347,19 @@ const fn models_are_exclusive() -> bool {
         i += 1;
     }
     let align = align_of::<ModalEngine>();
-    let shared = size_of::<(f32, f32, f32, bool, u32, f32, DcBlocker, Macros, bool, bool)>();
+    let shared = size_of::<(
+        f32,
+        f32,
+        Glide,
+        f32,
+        bool,
+        u32,
+        f32,
+        DcBlocker,
+        Macros,
+        bool,
+        bool,
+    )>();
     size_of::<ModalEngine>()
         <= (largest.next_multiple_of(align) + align + shared).next_multiple_of(align)
 }
@@ -432,8 +446,8 @@ impl ModalEngine {
         })
     }
 
-    /// More with a route into PITCH or FINE: the strings re-split every
-    /// block. A host estimate, as the `COST_*`: SYMP's eight `set_period`s
+    /// More with a route into PITCH or FINE, or at STEAL GLIDE (#254):
+    /// the strings re-split every block. A host estimate, as the `COST_*`: SYMP's eight `set_period`s
     /// a block and the halo's octave fold, 18 instructions a sample (STRING's
     /// re-split with its dispersion, about 6). It was 12 before fractional
     /// tuning (ADR 0042).
@@ -475,6 +489,7 @@ impl ModalEngine {
             ModelSlot::init_in_place(uninit_at(addr_of_mut!((*p).model)), model);
             addr_of_mut!((*p).frequency).write(220.0 / 48000.0);
             addr_of_mut!((*p).pitch).write(1.0);
+            addr_of_mut!((*p).slide).write(Glide::new(1.0, 1.0));
             addr_of_mut!((*p).tuned).write(1.0);
             addr_of_mut!((*p).active).write(false);
             addr_of_mut!((*p).silence_counter).write(0);
@@ -504,9 +519,21 @@ impl ModalEngine {
         self.pitch = ratio;
     }
 
-    /// `f` under the pitch ratio; untouched at 1 (the goldens).
+    /// The pitch ratio and a steal's glide.
+    fn ratio(&self) -> f32 {
+        self.pitch * self.slide.value()
+    }
+
+    /// `f` under `ratio`; untouched at 1 (the goldens).
     fn pitched(&self, f: f32) -> f32 {
-        if self.pitch == 1.0 { f } else { f * self.pitch }
+        let r = self.ratio();
+        if r == 1.0 { f } else { f * r }
+    }
+
+    /// The glide steal's ratio now, 1 at rest: for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn slide(&self) -> f32 {
+        self.slide.value()
     }
 
     /// The lease a Sympathetic engine holds: for `EngineSlot::rebuild`,
@@ -571,15 +598,59 @@ impl ModalEngine {
         sample_rate: u32,
         pool: &mut SymPool,
     ) {
+        self.strike(note, velocity, params, (sample_rate, None), pool);
+    }
+
+    /// `note_on` on a sounding engine (#254): what rings glides from the
+    /// pitch it sounds to `note`'s, a one-pole of `tau` seconds in log
+    /// pitch, and the strike adds to it, as a re-strike does, nothing
+    /// cleared. The strings and SYMP's halo retune each block, BANK's modes
+    /// move, and a bow keeps its lock correction. On an idle engine, or the
+    /// note it sounds, a plain `note_on`.
+    pub fn glide_on(
+        &mut self,
+        note: u8,
+        velocity: u8,
+        params: &ModalParams,
+        (sample_rate, tau): (u32, f32),
+        pool: &mut SymPool,
+    ) {
+        self.strike(note, velocity, params, (sample_rate, Some(tau)), pool);
+    }
+
+    fn strike(
+        &mut self,
+        note: u8,
+        velocity: u8,
+        params: &ModalParams,
+        (sample_rate, glide): (u32, Option<f32>),
+        pool: &mut SymPool,
+    ) {
         debug_assert_eq!(params.mode, self.mode());
         let vel = velocity as f32 / 127.0;
         let freq = note_to_freq(note);
+        let f = freq / sample_rate as f32;
         // The sounding note struck again: added to what rings, nothing
-        // cleared (the owner's UAT, 2026-09-30). BANK's strike always adds.
-        let restrike = self.active && freq / sample_rate as f32 == self.frequency;
-        self.frequency = freq / sample_rate as f32;
+        // cleared (the owner's UAT, 2026-09-30); it glides on. BANK's
+        // strike always adds.
+        let restrike = self.active && f == self.frequency;
+        let glides = self.active && !restrike && glide.is_some();
+        if let (true, Some(tau)) = (glides, glide) {
+            self.slide = Glide::new(self.frequency * self.slide.value() / f, tau);
+            self.slide.toward(1.0);
+        } else if !restrike {
+            self.slide.toward(1.0);
+            self.slide.snap();
+        }
+        let restrike = restrike || glides;
+        self.frequency = f;
+        if glides {
+            // Its lowest pitch on the way: the start or the target.
+            let lowest = freq * self.pitch * self.slide.value().min(1.0);
+            self.fit(sample_rate as f32 / lowest, pool);
+        }
         let freq = self.pitched(freq);
-        self.tuned = self.pitch;
+        self.tuned = self.ratio();
         let bank_freq = self.pitched(self.frequency);
         // A re-strike's macros ease on.
         if !restrike {
@@ -666,7 +737,25 @@ impl ModalEngine {
         self.silence_counter = 0;
     }
 
-    /// The strings follow a changed pitch ratio (a divide per string,
+    /// Every ring sized for a glide whose longest period is `period`
+    /// samples (`KsString::fit`): a string's, a bow's half loop, and SYMP's
+    /// main string and its halo, whose folded periods may take any length
+    /// on the way, whole.
+    fn fit(&mut self, period: f32, pool: &mut SymPool) {
+        match &mut self.model {
+            ModelSlot::Bank(_) => {}
+            ModelSlot::String(v) => v.string.fit(period),
+            ModelSlot::Bowed(b) => b.string.fit(period / BOW_LOOPS),
+            ModelSlot::Sympathetic(m) => {
+                m.main.string.fit(period);
+                if let Some(set) = pool.halo(&m.halo) {
+                    set.strings.iter_mut().for_each(|k| k.fit(f32::MAX));
+                }
+            }
+        }
+    }
+
+    /// The strings follow a changed pitch ratio or a steal's glide (a divide per string,
     /// `ModalEngine::PITCH`), STRING's dispersion a moved STRUCTURE
     /// (gliding, `StringVoice::tune`), and SYMP's halo `chord`, the
     /// un-eased STRUCTURE's (gliding, `SympatheticSet::retune`). A note's
@@ -677,8 +766,9 @@ impl ModalEngine {
         pool: &mut SymPool,
         (moved, chord, snap): (bool, usize, bool),
     ) {
-        let pitched = self.pitch != self.tuned;
-        self.tuned = self.pitch;
+        let ratio = self.ratio();
+        let pitched = ratio != self.tuned;
+        self.tuned = ratio;
         let freq = self.pitched(self.frequency * sample_rate as f32);
         let structure = self.macros.structure;
         match &mut self.model {
@@ -737,6 +827,7 @@ impl ModalEngine {
         }
 
         let mut max_level = 0.0_f32;
+        self.slide.tick();
 
         // A note's first block takes its modulated macros whole: nothing
         // sounds yet. Then they ease.
@@ -1710,6 +1801,50 @@ mod tests {
         match &m.halo {
             Halo::Full(l) => l.slot(),
             Halo::Bare => panic!("bare"),
+        }
+    }
+
+    /// Every line of the model: a string's, a bow's, or SYMP's eight.
+    fn all_lines<'a>(e: &'a ModalEngine, pool: &'a SymPool) -> Vec<&'a KsString> {
+        match &e.model {
+            ModelSlot::String(v) => std::vec![&v.string],
+            ModelSlot::Bowed(b) => std::vec![&b.string],
+            ModelSlot::Sympathetic(_) => lines(e, pool),
+            ModelSlot::Bank(_) => Vec::new(),
+        }
+    }
+
+    /// A glide steal down, C5 to C2 in 50 ms, sizes every ring at its start:
+    /// grown mid-glide, a ring's new gap is read before it is written, and
+    /// the loop takes in silence.
+    #[test]
+    fn a_glide_grows_no_ring_on_its_way() {
+        for mode in [
+            ResonatorMode::String,
+            ResonatorMode::Bowed,
+            ResonatorMode::Sympathetic,
+        ] {
+            let mut pool = SymPool::boxed();
+            let mut e = engine(&mut pool, mode);
+            let p = ModalParams {
+                mode,
+                ..ModalParams::default()
+            };
+            e.note_on(72, 100, &p, SR, &mut pool);
+            let mut out = [0.0; BLOCK_SIZE];
+            for _ in 0..40 {
+                e.render(&mut out, &p, SR, &mut pool);
+            }
+            e.glide_on(36, 100, &p, (SR, 0.05), &mut pool);
+            let rings = |e: &ModalEngine, pool: &SymPool| -> Vec<usize> {
+                all_lines(e, pool).iter().map(|k| k.ring_len()).collect()
+            };
+            let at_start = rings(&e, &pool);
+            for _ in 0..400 {
+                e.render(&mut out, &p, SR, &mut pool);
+                assert_eq!(rings(&e, &pool), at_start, "{mode:?}");
+            }
+            assert_eq!(e.slide(), 1.0, "{mode:?}: landed");
         }
     }
 
