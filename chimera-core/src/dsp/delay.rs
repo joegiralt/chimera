@@ -241,7 +241,7 @@ fn lfo(phase: &mut f32, rate: f32) -> f32 {
 pub const TIME_FADE: u16 = 960;
 // A fade starts on a block and so ends on one: every sample of a fading
 // block fades.
-const _: () = assert!(TIME_FADE as usize % BLOCK_SIZE == 0);
+const _: () = assert!((TIME_FADE as usize).is_multiple_of(BLOCK_SIZE));
 
 /// The line runs whatever MIX is, so a return brought back up plays what
 /// the send is doing now, never a frozen tail (#61). MIX eases; a TIME
