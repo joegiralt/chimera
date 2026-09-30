@@ -13,6 +13,7 @@ use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::algo::plan::{EvalPlan, MAX_EDGES, OPS, blend};
 use crate::dsp::algo::tx::{FEEDBACK_CYCLES, LEVEL_GAIN, detune_factor, level_gain, ratio};
 use crate::dsp::algo::waves::{WaveId, mip_position, mip_step};
+use crate::dsp::glide::Glide;
 use crate::hw::{BLOCK_SIZE, Cost};
 use crate::{MidiNote, Velocity};
 
@@ -86,6 +87,9 @@ pub struct AlgoEngine {
     note: MidiNote,
     /// The voice's pitch offset in semitones (`set_pitch`, ADR 0042).
     pitch: f32,
+    /// A glide steal's portamento: the sounding pitch over the note's,
+    /// gliding to 1 (#254).
+    slide: Glide,
     velocity: f32,
     active: bool,
     /// Key down since the last note-on: every carrier holds the voice.
@@ -93,8 +97,8 @@ pub struct AlgoEngine {
 }
 
 crate::in_place::field_list!(AlgoEngine => AlgoEngine {
-    kernel, env, plan, plan_key, waves, rates, gain, mip, morph, norm, swap, note, pitch, velocity,
-    active, held,
+    kernel, env, plan, plan_key, waves, rates, gain, mip, morph, norm, swap, note, pitch, slide,
+    velocity, active, held,
 });
 
 #[cfg(any(test, feature = "test-support"))]
@@ -178,6 +182,7 @@ impl AlgoEngine {
             addr_of_mut!((*p).swap).write(Swap::Idle);
             addr_of_mut!((*p).note).write(MidiNote::A4);
             addr_of_mut!((*p).pitch).write(0.0);
+            addr_of_mut!((*p).slide).write(Glide::new(1.0, 1.0));
             addr_of_mut!((*p).velocity).write(1.0);
             addr_of_mut!((*p).active).write(false);
             addr_of_mut!((*p).held).write(false);
@@ -197,6 +202,11 @@ impl AlgoEngine {
     ) {
         let live = AlgoLive::from_params(p);
         let sr = sample_rate as f32;
+        // A new note is at its pitch; the one sounding, struck again, glides on.
+        if !(self.active && note == self.note) {
+            self.slide.toward(1.0);
+            self.slide.snap();
+        }
         self.note = note;
         self.velocity = velocity.unit();
         let m = Morph::from_param(live.morph);
@@ -221,6 +231,33 @@ impl AlgoEngine {
         }
         self.active = true;
         self.held = true;
+    }
+
+    /// `note_on` on a sounding voice (#254): its operators glide from the
+    /// pitch they sound to the new note's, a one-pole of `tau` seconds in
+    /// log pitch, the classic portamento; the envelopes strike as a CUT.
+    /// On an idle voice, or the note it sounds, a plain `note_on`.
+    pub fn glide_on(
+        &mut self,
+        note: MidiNote,
+        velocity: Velocity,
+        p: &AlgoParams,
+        sample_rate: u32,
+        tau: f32,
+    ) {
+        let sr = sample_rate as f32;
+        let from = (self.active && note != self.note).then(|| self.cycles(p, sr));
+        self.note_on(note, velocity, p, sample_rate);
+        if let Some(from) = from {
+            self.slide = Glide::new(from / self.cycles(p, sr), tau);
+            self.slide.toward(1.0);
+        }
+    }
+
+    /// The glide steal's ratio now, 1 at rest: for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn slide(&self) -> f32 {
+        self.slide.value()
     }
 
     /// The voice's pitch offset in semitones, for the next `note_on` or
@@ -252,6 +289,7 @@ impl AlgoEngine {
             return;
         }
         let sr = sample_rate as f32;
+        self.slide.tick();
         self.begin_swap(p);
         for i in 0..OPS {
             let r = p.ops[i].rates();
@@ -318,7 +356,7 @@ impl AlgoEngine {
         if self.pitch != 0.0 {
             st += self.pitch;
         }
-        440.0 * exp2(st / 12.0) / sr
+        440.0 * exp2(st / 12.0) / sr * self.slide.value()
     }
 
     fn mip_target(

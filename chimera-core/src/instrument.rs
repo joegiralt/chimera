@@ -435,6 +435,12 @@ impl Instrument {
         core::array::from_fn(|v| self.voices[v].rings())
     }
 
+    /// Each voice's glide steal ratio, 1 at rest: for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn slides(&self) -> [f32; MAX_VOICES] {
+        core::array::from_fn(|v| self.voices[v].slide())
+    }
+
     /// Whether each voice sounds: for the tests.
     #[cfg(any(test, feature = "test-support"))]
     pub fn active(&self) -> [bool; MAX_VOICES] {

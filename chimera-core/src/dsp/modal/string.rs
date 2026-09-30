@@ -90,7 +90,18 @@ impl KsString {
         }
         self.delay = delay;
         self.frac.set(eta);
-        let need = delay + 2;
+        self.grow(delay + 2);
+    }
+
+    /// Room for a loop of up to `period` samples, the line where it is: a
+    /// glide that lengthens it then reads only what it has written. Grown a
+    /// step at a time, a gap of two or more is read before it is written.
+    pub(super) fn fit(&mut self, period: f32) {
+        self.grow((period.min(MAX_STRING_DELAY as f32) as usize + 3).min(MAX_STRING_DELAY));
+    }
+
+    /// The ring at least `need` long; never shorter mid-note.
+    fn grow(&mut self, need: usize) {
         if need > self.ring_len {
             // The oldest samples move up past the new gap, which reads silent.
             let (w, grow) = (self.write_pos + 1, need - self.ring_len);

@@ -346,6 +346,12 @@ impl Voice {
         self.slot.rings()
     }
 
+    /// A glide steal's ratio now, 1 at rest: for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn slide(&self) -> f32 {
+        self.slot.slide()
+    }
+
     /// The kind its slot holds.
     pub fn kind(&self) -> SlotKind {
         self.slot.kind()
