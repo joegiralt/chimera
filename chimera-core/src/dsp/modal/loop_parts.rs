@@ -68,6 +68,16 @@ impl Release {
         };
     }
 
+    /// Ramps from `from` to `to`, up or down: a lifted bow's loop, linear
+    /// once the bow is off, rings on DAMP's gain whatever the bowed loss.
+    pub fn lift(&mut self, from: LoopGain, to: LoopGain) {
+        *self = Self {
+            left: RELEASE_SAMPLES,
+            from: from.get(),
+            to: to.get(),
+        };
+    }
+
     /// The ramp's gain now: `to` past it.
     #[inline]
     fn now(&self) -> f32 {

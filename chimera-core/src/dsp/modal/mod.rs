@@ -328,17 +328,21 @@ impl ModalEngine {
     /// dispersion's re-split each block STRUCTURE glides, 8, billed always,
     /// +18. BODY and the ensemble bill apart.
     pub const COST_STRING: Cost = Cost(330);
-    /// The two-delay bow (Task 14), from the one-loop bow's benched 620:
-    /// `BowedString::render`'s fast span 68 instructions a sample (the
-    /// junction, both ends' filters, the tuning allpass, the bow table's
-    /// one `vdiv.f32`, BRIGHT's low-pass, FORCE and SPEED eased), its
-    /// per-block work 7.2 (two `expf`s for BRIGHT, the spans' heads at
-    /// the bench's notes, the split's step one block in 8), the output
-    /// blocker 7.8: N = 83 against the one-loop bow's 143. The two `tanhf`
-    /// bodies it drops, T = 120 (their `expm1f` taken paths, about 60
-    /// each), were in the 620. 620 + (83 − 143 − 120) × 1.46 × 0.9 +
-    /// (14 − 1.46) × 1.1 for the `vdiv` = 397.3, rounded up to 400.
-    pub const COST_BOWED: Cost = Cost(400);
+    /// The two-delay bow (Task 14), from the one-loop bow's benched 620,
+    /// counted in the thumbv7em release build: `BowedString::render`'s
+    /// fast span 64 instructions a sample (the junction, both ends'
+    /// filters and their fade, the tuning allpass, the bow table's one
+    /// `vdiv.f32`, BRIGHT's low-pass, the width's and bow velocity's
+    /// easing); its per-block work at most 14 a sample (the setup's 327
+    /// instructions, three `expf`s and two `sqrtf`s for the window and
+    /// BRIGHT, the spans' heads at the bench's notes, the split's step one
+    /// block in 8, over 64); the output blocker 7.8: N = 85.8 against the
+    /// one-loop bow's 143. The two `tanhf` bodies it drops, T = 135, were
+    /// in the 620: the friction's `expm1f` path for k ≥ 2, 73, the push's
+    /// for k = 1, 54, and each one's inlined `1 − 2/(t + 2)`, 4.
+    /// 620 + (85.8 − 143 − 135) × 1.46 × 0.9 + (14 − 1.46) × 1.1 for the
+    /// `vdiv` = 381.3, rounded up to 390.
+    pub const COST_BOWED: Cost = Cost(390);
     /// 809 (benched, ADR 0054) − 271, rounded up to 540: 419 instructions a
     /// sample to 187, −306 cycles. Each halo string runs its block in
     /// spans, 19 a sample (42 before, 87 at task 11); the main string 15;
@@ -556,9 +560,7 @@ impl ModalEngine {
             }
             ModelSlot::Bowed(b) => {
                 b.start(freq, sample_rate, m.pos);
-                b.force = bow_force(params.force, vel);
-                b.force_to = b.force;
-                b.lift = 0.0;
+                b.force_to = bow_force(params.force, vel);
                 b.bow_vel = params.speed * BOW_SPEED;
                 b.vel_scale = 0.5 + 0.5 * vel;
                 b.bowing = true;
@@ -711,7 +713,7 @@ impl ModalEngine {
                 }
                 b.render(output, &m, (f0, params.speed * BOW_SPEED));
                 // Never freed while bowed, however low its note (#206).
-                b.force > 0.0
+                b.on()
             }
             ModelSlot::Sympathetic(v) => {
                 let v = &mut **v;

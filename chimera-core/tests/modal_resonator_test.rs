@@ -25,9 +25,11 @@ const MODES: [ResonatorMode; 4] = [
     ResonatorMode::Sympathetic,
 ];
 
-/// A bow's steady limit cycle wobbles about 0.2 % between seconds; a
-/// runaway grows far past this. Its render is deterministic (no noise).
-const BOW_MARGIN: f32 = 1.005;
+/// A bow's steady limit cycle is periodic (its sidebands under −96 dB),
+/// but a 1 s window holds a fractional number of periods: slid over INIT's
+/// C2, near the bridge's spiky sawtooth, its RMS reads ±0.3 %. A runaway
+/// grows far past 1 %. Its render is deterministic (no noise).
+const BOW_MARGIN: f32 = 1.01;
 
 /// Each model, each setting at its min and max, C2 held 30 s: bounded, no
 /// growth, no DC at the output; Bowed still sounding while it bows.
@@ -1320,8 +1322,9 @@ fn bowed_pos_moves_the_tone_not_the_pitch() {
     }
 }
 
-/// BRIGHT is the bridge's loss: 0 against 1 takes 3 dB or more off
-/// harmonics 8 to 24, and moves the fundamental under 2 cents.
+/// BRIGHT is the bridge-to-body low-pass, on the output: 0 against 1
+/// takes 3 dB or more off harmonics 8 to 24, and moves the fundamental
+/// under 2 cents.
 #[test]
 fn bowed_bright_is_heard() {
     let blocks = 3 * SR as usize / BLOCK_SIZE / 2;
@@ -1352,8 +1355,9 @@ fn bowed_bright_is_heard() {
 }
 
 /// A square LFO swings POS end to end: the split glides a whole sample
-/// twice a block, so no sample steps further than the bow's own corner
-/// does held at either end, and the pitch holds.
+/// one block in `BOW_SLEW` (8), so no sample steps further than the bow's
+/// own corner does held at either end, and the pitch holds (a split that
+/// jumps is caught there, +25 cents at G1).
 #[test]
 fn a_bowed_pos_sweep_does_not_click() {
     let second = SR as usize / BLOCK_SIZE;
@@ -1436,4 +1440,141 @@ fn bowed_is_stable_and_in_tune_at_every_corner() {
             });
         }
     });
+}
+
+/// No sub-harmonic at −20 dB: not f0/2 (`octave_clear`), nor f0/3 or 2f0/3
+/// (period-tripling); in tune within `BOW_CENTS`, and sounding.
+fn bows_clean(s: &[f32], f0: f32) -> bool {
+    let g = goertzel(s, f0, SR);
+    let thirds = goertzel(s, f0 / 3.0, SR).max(goertzel(s, 2.0 * f0 / 3.0, SR));
+    let c = cents(fundamental_hz(s, f0 as f64), f0);
+    octave_clear(s, f0) && thirds < 0.1 * g && c.abs() < BOW_CENTS && common::rms(s) > 1e-3
+}
+
+/// Review of Task 14: the bow is robust across the instrument, not only at
+/// the tested points. Seven notes, G1 to C7 × velocity 20 and 127 × FORCE
+/// 0.1, 0.5, 1 × SPEED 0.1, 1 × POS 0 to 1 by quarters, 3 s held, clean
+/// over 0.5–1.5 s and 2–3 s in 97 % of cases or more; and at INIT's POS,
+/// FORCE and SPEED, velocity 20, 64 and 127, in every case.
+#[test]
+fn bowed_plays_clean_across_the_instrument() {
+    let sr = SR as usize;
+    let blocks = 3 * sr / BLOCK_SIZE;
+    let notes = [31, 36, 48, 60, 72, 84, 96];
+    let clean = |p: &ModalParams, note: u8, vel: u8| {
+        let out = play_modal_at(p, note, vel, blocks, 0);
+        let f0 = note_to_freq(note);
+        bows_clean(&out[sr / 2..sr * 3 / 2], f0) && bows_clean(&out[2 * sr..3 * sr], f0)
+    };
+    let (grid, defaults) = std::thread::scope(|scope| {
+        let grid: Vec<_> = notes
+            .iter()
+            .map(|&note| {
+                scope.spawn(move || {
+                    let mut fails = Vec::new();
+                    let mut n = 0;
+                    for vel in [20, 127] {
+                        for force in [0.1, 0.5, 1.0] {
+                            for speed in [0.1, 1.0] {
+                                for pos in [0.0, 0.25, 0.5, 0.75, 1.0] {
+                                    let p = ModalParams {
+                                        force,
+                                        speed,
+                                        pos,
+                                        ..v1_bowed()
+                                    };
+                                    n += 1;
+                                    if !clean(&p, note, vel) {
+                                        fails.push(format!(
+                                            "{note} v{vel} F{force} S{speed} P{pos}"
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    (n, fails)
+                })
+            })
+            .collect();
+        let defaults: Vec<_> = notes
+            .iter()
+            .map(|&note| {
+                scope.spawn(move || {
+                    let p = ModalParams {
+                        mode: ResonatorMode::Bowed,
+                        ..Default::default()
+                    };
+                    [20, 64, 127]
+                        .into_iter()
+                        .filter(|&vel| !clean(&p, note, vel))
+                        .map(|vel| format!("INIT {note} v{vel}"))
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        (
+            grid.into_iter()
+                .map(|h| h.join().unwrap())
+                .collect::<Vec<_>>(),
+            defaults
+                .into_iter()
+                .flat_map(|h| h.join().unwrap())
+                .collect::<Vec<_>>(),
+        )
+    });
+    let n: usize = grid.iter().map(|g| g.0).sum();
+    let fails: Vec<_> = grid.into_iter().flat_map(|g| g.1).collect();
+    let clean_pct = 100.0 * (n - fails.len()) as f64 / n as f64;
+    assert!(
+        clean_pct >= 97.0,
+        "{clean_pct:.1} % clean of {n}: {fails:?}"
+    );
+    assert!(defaults.is_empty(), "the defaults: {defaults:?}");
+}
+
+/// SPEED moves the bow's tone, not only its level: SPEED 0.25 against 1
+/// changes the harmonics' shares of the spectrum (summed |Δ| over 1 to 24)
+/// by 0.05 or more, at the v1 bow and INIT's POS, G1, C3 and C6.
+#[test]
+fn speed_moves_the_bows_tone_not_only_its_level() {
+    let sr = SR as usize;
+    for note in [31, 48, 84] {
+        let f0 = note_to_freq(note);
+        for pos in [0.15, 0.0] {
+            let shares = |speed: f32| {
+                let p = ModalParams {
+                    speed,
+                    pos,
+                    ..v1_bowed()
+                };
+                let out = play_modal_at(&p, note, 100, 2 * sr / BLOCK_SIZE, 0);
+                let h: Vec<f32> = (1..=24)
+                    .map(|k| goertzel(&out[sr..2 * sr], k as f32 * f0, SR))
+                    .collect();
+                let sum: f32 = h.iter().sum();
+                h.into_iter().map(|x| x / sum).collect::<Vec<_>>()
+            };
+            let (a, b) = (shares(0.25), shares(1.0));
+            let d: f32 = a.iter().zip(&b).map(|(x, y)| (x - y).abs()).sum();
+            assert!(d >= 0.05, "{note} POS {pos}: the shape moves {d:.4}");
+        }
+    }
+}
+
+/// DAMP is the ring after the lift at every note: at C4 and C6 DAMP 1's
+/// tail, 0.3–0.6 s after note-off, is 10 dB or more above DAMP 0.5's. The
+/// lifted bow's gain rises to DAMP's past the bowed loss.
+#[test]
+fn bowed_damp_rings_at_every_note() {
+    let (sr, second) = (SR as usize, SR as usize / BLOCK_SIZE);
+    for note in [60, 84] {
+        let tail = |damp: f32| {
+            let p = ModalParams { damp, ..v1_bowed() };
+            let out = play_modal_at(&p, note, 100, second, second);
+            common::rms(&out[sr + sr * 3 / 10..sr + sr * 6 / 10])
+        };
+        let db = 20.0 * (tail(1.0) / tail(0.5)).log10();
+        assert!(db >= 10.0, "{note}: DAMP 1 over 0.5, {db:+.1} dB");
+    }
 }
