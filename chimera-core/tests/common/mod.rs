@@ -576,5 +576,15 @@ fn play(
     out
 }
 
+/// A Modal voice's `out` with its model's output gain divided out (ADR
+/// 0058): the level the models' click and bound checks were set at.
+pub fn at_model_level(mut out: Vec<f32>, mode: ResonatorMode) -> Vec<f32> {
+    let g = chimera_core::dsp::modal::out_gain(mode);
+    for s in &mut out {
+        *s /= g;
+    }
+    out
+}
+
 #[allow(unused_imports)] // each test binary uses some of these
 pub use chimera_core::scope::peak;

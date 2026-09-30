@@ -3,7 +3,7 @@
 //! and scattering to variable-size output buffers.
 mod common;
 use common::Rig;
-use common::{SR, clicks, tri};
+use common::{SR, at_model_level, clicks, tri};
 
 use chimera_core::dsp::Stereo;
 use chimera_core::dsp::fx_bus::FxParams;
@@ -60,6 +60,10 @@ fn check_no_clicks(
         }
     }
 
+    // A Modal voice at its model's level (ADR 0058): the detector's step is absolute.
+    if params.engine() == EngineType::Modal {
+        all_samples = at_model_level(all_samples, params.modal.mode);
+    }
     let clicks = clicks(&all_samples);
     assert!(
         clicks.is_empty(),

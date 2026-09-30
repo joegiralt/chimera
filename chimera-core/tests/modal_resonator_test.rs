@@ -14,8 +14,8 @@ use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::{MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
 use common::{
-    Rig, SR, assert_stable_at, clicks, fundamental_hz, goertzel, octave_clear, play_modal,
-    play_modal_at, play_modal_bare, rms_diff, routes,
+    Rig, SR, assert_stable_at, at_model_level, clicks, fundamental_hz, goertzel, octave_clear,
+    play_modal, play_modal_at, play_modal_bare, rms_diff, routes,
 };
 
 const MODES: [ResonatorMode; 4] = [
@@ -214,7 +214,7 @@ fn play_voice_at(
         rig.render(&mut block, p, mods);
         out.extend_from_slice(&block);
     }
-    out
+    at_model_level(out, p.modal.mode)
 }
 
 /// LFO 1 on each macro a model reads, at full depth, moves its sound and
@@ -262,7 +262,7 @@ fn macros_are_routable() {
                         rig.render(&mut block, &p, &mods);
                         out.extend_from_slice(&block);
                     }
-                    out
+                    at_model_level(out, mode)
                 });
                 let d = rms_diff(&dry, &wet);
                 assert!(d > 1e-3, "Bowed DAMP: the route changes nothing ({d})");
@@ -409,7 +409,7 @@ fn play_released(
         rig.render(&mut block, if b < on { p } else { off_params }, &mods);
         out.extend_from_slice(&block);
     }
-    (out, rig)
+    (at_model_level(out, p.modal.mode), rig)
 }
 
 /// Samples each side of a note-off that `release_does_not_click` weighs.

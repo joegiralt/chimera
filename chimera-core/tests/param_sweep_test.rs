@@ -29,7 +29,7 @@ use chimera_core::dsp::fx_bus::{FxBus, FxParams};
 use chimera_core::dsp::modal::{ModalParams, ResonatorMode};
 use chimera_core::dsp::reverb::ReverbParams;
 use chimera_core::hw::DAC_PAIRS;
-use chimera_core::params::{DriveParams, FilterParams, FolderParams, OutParams};
+use chimera_core::params::{DriveParams, FilterParams, FolderParams, OutParams, PitchParams};
 use chimera_core::part::{DacPair, PartParams};
 use common::sweep::*;
 
@@ -303,6 +303,18 @@ fn dc_ok(c: &Case) -> Option<&'static str> {
              part of it (about −30 dB re the note)",
         );
     }
+    let symp = c.patch == Patch::ModalInit(ResonatorMode::Sympathetic)
+        && (c.modal(ModalParams::COUPLE)
+            || c.modal(ModalParams::HALO)
+            || c.is(BlockRef::Pitch, PitchParams::PITCH));
+    let bank = c.patch == Patch::ModalInit(ResonatorMode::Modal) && c.modal(ModalParams::STRUCTURE);
+    if symp || bank {
+        return Some(
+            "the engine's own: SYMP's halo drifts below the output blocker's 10 Hz, BANK's \
+             output has no blocker (−27 to −40 dB re the note); ADR 0058's gain lifts it past \
+             the threshold",
+        );
+    }
     None
 }
 
@@ -354,8 +366,8 @@ impl Defect {
                  bias is DC (wavefolder.rs:33, voice.rs:571-578)"
             }
             Defect::Snaps => {
-                "level, pan, send, FX mix, chorus depth, delay time and drive changes are \
-                 unramped, and FX bypass gates the return at MIX < 0.001: a snap clicks"
+                "level, pan, send, FX mix, chorus depth, delay time, drive and its mix changes \
+                 are unramped, and FX bypass gates the return at MIX < 0.001: a snap clicks"
             }
             Defect::SilentOpHoldsVoice => {
                 "an operator that is a carrier only in ALG B holds the voice at MORPH 0 \
@@ -381,6 +393,7 @@ fn snaps(c: &Case) -> bool {
         || (b == BlockRef::Delay && [DelayParams::MIX, DelayParams::TIME_MS].contains(&id))
         || c.is(BlockRef::Reverb, ReverbParams::MIX)
         || c.is(BlockRef::Drive, DriveParams::DRIVE)
+        || c.is(BlockRef::Drive, DriveParams::MIX)
         || c.is(BlockRef::Filter, FilterParams::DRIVE)
         || c.is(BlockRef::Folder, FolderParams::FOLD)
         || c.is(BlockRef::Folder, FolderParams::SYMMETRY)
@@ -394,6 +407,13 @@ fn known(c: &Case, kind: &Kind, label: &str) -> Option<Defect> {
         }
         // BUSY MODAL drives its models through DRIVE 0.2.
         Kind::Dc if c.patch == Patch::BusyModal && c.modal(ModalParams::MODE) => {
+            Some(Defect::VoiceDc)
+        }
+        // The filter saturates the bow's open sawtooth: DC the engine hasn't.
+        Kind::Dc
+            if c.patch == Patch::ModalInit(ResonatorMode::Bowed)
+                && c.modal(ModalParams::BRIGHT) =>
+        {
             Some(Defect::VoiceDc)
         }
         Kind::Click if label.starts_with("jump") && snaps(c) => Some(Defect::Snaps),
@@ -747,6 +767,53 @@ fn levels_are_safe() {
         }
     }
 }
+
+/// ADR 0058: each Modal model's INIT, one C4 at velocity 100, as loud on P1
+/// as ALGO INIT's, ±1 dB. Its chord stays under the ceiling, and the limiter
+/// takes little of its loudness.
+#[test]
+fn modal_models_match_the_loudness_reference() {
+    let reference = level(Patch::AlgoInit, &[60], 100, BPS).lufs;
+    let mut off = Vec::new();
+    for m in MODELS {
+        let p = Patch::ModalInit(m);
+        let one = level(p, &[60], 100, BPS);
+        let chord = level(p, &CHORD, 100, BPS);
+        let d = one.lufs - reference;
+        println!(
+            "{}: {d:+.2} dB; chord peak {:.1} dBFS, gain reduction {:.1} dB at most, {:.2} dB \
+             of its loudness",
+            p.name(),
+            db(chord.peak[0]),
+            chord.gr_db,
+            chord.limited_db
+        );
+        assert!(within_ceiling(chord.peak[0]), "{}: chord over", p.name());
+        assert!(
+            chord.limited_db < MAX_CHORD_LIMITED_DB,
+            "{}: the limiter took {:.2} dB of the chord",
+            p.name(),
+            chord.limited_db
+        );
+        off.push((p.name(), d));
+    }
+    let off: Vec<_> = off.into_iter().filter(|o| o.1.abs() > 1.0).collect();
+    assert!(
+        off.is_empty(),
+        "off the reference ({reference:.1} LUFS): {off:?}"
+    );
+}
+
+/// The loudness the limiter may take from a Modal INIT's chord, dB. STRING's
+/// strike, 11 dB peakier than ALGO INIT for its loudness, loses 1.8.
+const MAX_CHORD_LIMITED_DB: f32 = 2.0;
+
+const MODELS: [ResonatorMode; 4] = [
+    ResonatorMode::String,
+    ResonatorMode::Modal,
+    ResonatorMode::Bowed,
+    ResonatorMode::Sympathetic,
+];
 
 // ── The known defects, pinned: each fails until fixed ──────────────────
 

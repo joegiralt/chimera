@@ -1,5 +1,6 @@
 //! Sanity gate (spec § Testing), run before goldens are recorded.
-//! Per engine init sound: finite, within ±1.0, not silent, silent after
+//! Per engine init sound: finite, within ±1.0 (× a Modal model's output
+//! gain, ADR 0058), not silent, silent after
 //! note-off; pitched engines' fundamental within one semitone of the note.
 //! A failing engine gets a GitHub issue and its failing test is
 //! marked `#[ignore = "known broken: …"]`. It is not fixed in this refactor.
@@ -8,6 +9,7 @@ mod common;
 use common::Rig;
 use common::peak;
 
+use chimera_core::dsp::modal::out_gain;
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_hal::BLOCK_SIZE;
 use common::*;
@@ -51,6 +53,18 @@ fn fundamental_hz(s: &[f32]) -> f32 {
     SR as f32 / lag as f32
 }
 
+/// ±1, × the Modal model's output gain the case ends on (ADR 0058).
+fn bound(case: Case) -> f32 {
+    let p = match case {
+        Case::AlgoToModalSwitch => init_params(EngineType::Modal),
+        _ => setup(case).0,
+    };
+    match p.engine() {
+        EngineType::Modal => out_gain(p.modal.mode),
+        _ => 1.0,
+    }
+}
+
 fn assert_finite_bounded_audible(case: Case) {
     let out = render_case(case);
     assert!(
@@ -59,7 +73,8 @@ fn assert_finite_bounded_audible(case: Case) {
         case.name()
     );
     let pk = peak(&out);
-    assert!(pk <= 1.0, "{}: peak {pk} exceeds ±1.0", case.name());
+    let bound = bound(case);
+    assert!(pk <= bound, "{}: peak {pk} exceeds ±{bound}", case.name());
     let on = peak(&out[..ON_BLOCKS * BLOCK_SIZE]);
     assert!(
         on > AUDIBLE,

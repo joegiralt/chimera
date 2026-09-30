@@ -576,8 +576,8 @@ impl Voice {
         // 4. Wavefolder
         self.folder.process(output, &m.folder);
 
-        // 5. The VCA, after the fold.
-        let volume = m.out.volume;
+        // 5. The VCA, after the fold, with the engine's output gain.
+        let volume = m.out.volume * self.slot.out_gain();
         // The block's last routed gain, × AMP's VEL: whether the lifetime
         // check below ends the voice through a fade.
         let mut last_gain = 0.0;

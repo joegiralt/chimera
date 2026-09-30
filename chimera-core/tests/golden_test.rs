@@ -11,34 +11,34 @@ use common::*;
 
 /// (case name, FNV-1a 64 over every sample's bits, sample bits at SPOT_IDX).
 const GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
-    // Re-recorded: Modal 2 step A's resonators (spec § Tests).
+    // Re-recorded: Modal 2 step A's resonators (spec § Tests), then ADR 0058's gain.
     (
         "modal_init",
         (
-            0xb9a4be01cac830ff,
+            0xc3e2deb689eb82d6,
             [
-                0, 1037113109, 1041593008, 3164086703, 1036527766, 1036778579, 0, 0,
+                0, 1066351118, 1070382696, 3192941462, 1065950157, 1066121965, 0, 0,
             ],
         ),
     ),
-    // Re-recorded: Modal 2 step A's resonators (spec § Tests).
+    // Re-recorded: Modal 2 step A's resonators (spec § Tests), then ADR 0058's gain.
     (
         "modal_lfo_cutoff",
         (
-            0x8da866721e0cb635,
+            0xde2fb9f348d94666,
             [
-                0, 1037113109, 1042126441, 3164086703, 1036527766, 1036778579, 0, 0,
+                0, 1066351118, 1071113499, 3192941462, 1065950157, 1066121965, 0, 0,
             ],
         ),
     ),
-    // Re-recorded: Modal 2 step A's resonators (spec § Tests).
+    // Re-recorded: Modal 2 step A's resonators (spec § Tests), then ADR 0058's gain.
     (
         "modal_sympathetic",
         (
-            0x2fd458807ead9041,
+            0x143bb03f74b36a28,
             [
-                1001436966, 1032798864, 1031034586, 3190798251, 1047862603, 1046731887, 1035741707,
-                3169759479,
+                1018909055, 1050139401, 1048674291, 3208266416, 1065478432, 1064405088, 1053258815,
+                3187475266,
             ],
         ),
     ),
@@ -167,13 +167,13 @@ const GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
             ],
         ),
     ),
-    // Re-recorded: Modal 2 step A's resonators (spec § Tests).
+    // Re-recorded: Modal 2 step A's resonators (spec § Tests), then ADR 0058's gain.
     (
         "algo_to_modal_switch",
         (
-            0xed8d6af2fd0e68a7,
+            0x2fed644faee08086,
             [
-                979028267, 3207916546, 1058702061, 3190348774, 3115775757, 1010705731, 0, 0,
+                979028267, 3207916546, 1058702061, 3219609145, 3145378177, 1040334829, 0, 0,
             ],
         ),
     ),
