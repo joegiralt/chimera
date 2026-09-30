@@ -144,16 +144,17 @@ fn v1_fixture_bytes_are_frozen() {
 
 /// FNV-1a of each fixture's render, recorded when the fixtures were written.
 const FIXTURE_RENDERS: &[(&str, u64)] = &[
-    // Re-recorded, every row, as `golden_test`'s: ADR 0060's DC blocker.
+    // Re-recorded, every row, as `golden_test`'s: ADR 0060's DC blocker;
+    // SQR BASS and ALGO INIT for the filter's C1 `saturate` (ADR 0063).
     ("factory_0.snd", 0x3bf08f68be7bc44f),
     ("factory_1.snd", 0xc67ca8068a7877d9),
     ("factory_2.snd", 0x3525cc1931c29ca2),
     ("factory_3.snd", 0x14e064252e938abf),
     ("factory_4.snd", 0x8e66d469654ec811),
-    ("factory_5.snd", 0xdf137d14d05668ec),
+    ("factory_5.snd", 0x512974d405e39a60),
     ("factory_6.snd", 0xfd388eee4c112513),
     ("factory_7.snd", 0x81c2fbb41ba2c813),
-    ("init_algo.snd", 0x002d6721f776f6d6),
+    ("init_algo.snd", 0x909c693e57a2c5bb),
     // Re-recorded: Modal 2 step A's resonators (spec § Tests), then ADR 0058's gain,
     // then Task 18's DAMP make-up and relative silence (ADR 0056),
     // then the free ring on release (ADR 0062).

@@ -385,21 +385,39 @@ impl SvfFilter {
     }
 }
 
-/// Soft saturation — gentle curve that limits amplitude while preserving
-/// small signals. This is milder than tanh, letting the resonance peak
-/// ring out before clamping. Sounds more like analog capacitor saturation.
+/// Soft saturation of the integrators' state: linear to ±1, as it always
+/// was, then `1 + u − u²/2` for `u = |x| − 1`, flat at ±1.5 from ±2. Its
+/// value and slope are continuous (C1), so a loud signal bends, not steps:
+/// the old curve jumped from 1 to 0.83 at ±1, and from 0.96 to 1 at ±1.5,
+/// a buzz on anything that reached it (the owner's UAT, 2026-09-30).
 #[inline(always)]
 fn saturate(x: f32) -> f32 {
-    // Cubic soft clip: linear for |x| < 1, soft limit beyond
-    if x > 1.5 {
-        1.0
-    } else if x < -1.5 {
-        -1.0
-    } else if x > 1.0 {
-        1.0 - (2.0 - x) * (2.0 - x) / 6.0
-    } else if x < -1.0 {
-        -1.0 + (2.0 + x) * (2.0 + x) / 6.0
-    } else {
-        x
+    let a = x.abs();
+    if a <= 1.0 {
+        return x;
+    }
+    let u = (a - 1.0).min(1.0);
+    (1.0 + u - 0.5 * u * u).copysign(x)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::saturate;
+
+    /// C1: no step and no kink anywhere, odd, bounded by 1.5, linear to 1.
+    #[test]
+    fn saturate_is_smooth_and_bounded() {
+        let h = 1e-3;
+        let mut x = -3.0f32;
+        while x < 3.0 {
+            let (y0, y1, y2) = (saturate(x - h), saturate(x), saturate(x + h));
+            assert!((y2 - y0).abs() <= 2.0 * h * 1.001, "step at {x}");
+            let kink = ((y2 - y1) - (y1 - y0)).abs() / h;
+            assert!(kink <= 2.0 * h + 1e-4, "kink at {x}: {kink}");
+            assert!(y1.abs() <= 1.5 && saturate(-x) == -y1);
+            x += 0.0137;
+        }
+        assert_eq!(saturate(0.9), 0.9);
+        assert_eq!(saturate(2.5), 1.5);
     }
 }

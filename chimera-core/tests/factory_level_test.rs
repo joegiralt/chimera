@@ -445,7 +445,9 @@ fn block_rms(out: &[f32]) -> Vec<f32> {
 /// MORPH PAD only, over this harness's first 0.53 s of its sweep (1.06 dB,
 /// 1.12 through ADR 0060's blocker); `morph_pad_over_its_whole_lfo_sweep`
 /// bounds the whole of it.
-const KNOWN: [(usize, f32); 1] = [(6, 1.15)];
+/// SQR BASS: the filter's C1 `saturate` (ADR 0063) no longer clips its
+/// resonant state at 1, 0.55 dB at most.
+const KNOWN: [(usize, f32); 2] = [(5, 0.56), (6, 1.15)];
 
 #[test]
 fn factory_sounds_render_as_before_the_new_norm() {

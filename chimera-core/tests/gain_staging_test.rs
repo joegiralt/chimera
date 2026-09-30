@@ -330,11 +330,11 @@ fn everything_before_the_limiter_is_mains_mix() {
     fxp.delay.rev_send = 0.5;
     fxp.reverb.time = 0.7;
     let (gl, gr) = pan_gains(0.0);
-    let (gl, gr) = (gl * 0.35, gr * 0.35);
+    let (gl, gr) = (gl * 0.3, gr * 0.3);
     let mut reference = Box::new(FxBus::new());
     let mut want = [[0.0f32; 2 * BLOCK_SIZE]; 2];
     let (mut blocks, mut peak) = (0, 0.0f32);
-    chord(Voices::Init, fxp, 0.35, 0.1, |inst, fx, dac| {
+    chord(Voices::Init, fxp, 0.3, 0.1, |inst, fx, dac| {
         let bus = inst.part_bus(0);
         let mut sends = [bus.map(|b| b * 0.1); 3];
         let mut ret = chimera_core::dsp::Stereo::SILENT;
