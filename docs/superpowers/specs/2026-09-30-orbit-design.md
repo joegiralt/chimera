@@ -359,8 +359,8 @@ ORB ── RING ── CHRD ── SCN
 - **RING · RHYTHM:** STEPS, HITS, ROTATE, CHANCE, MUTATE, MUTE; the pattern unrolled; the focus band shows `HITS/STEPS`.
 - **RING · VOICE:** GATE, VEL, ACCENT, OCTAVE, RANGE, SNAP; gates drawn as bars, accents taller.
 - **RING · NOTES:** MODE, WALK, TARGET, LEARN, CLEAR; the pool as chips (or one note per step), and `POOL p · HITS h · COMES ROUND IN n`.
-- **CHRD:** KEY, SCALE, BARS, SEGS, DEGREE, PLAY; the segments as chips, a played chord shown by name with a dot. SCALE offers MAJOR, MINOR and CUSTOM.
-- **CHRD › CUSTOM** (a sub-page, shown while SCALE is CUSTOM): a 12-dot circle, one dot per pitch class from the tonic, lit when in the scale; the root's dot is locked on. Turning SCALE to CUSTOM opens it. Encoder A moves the cursor round the circle; a turn of encoder B, or EDIT, toggles the note under it.
+- **CHRD:** KEY, SCALE, BARS, SEGS, DEGREE, PLAY; the segments as chips, a played chord shown by name with a dot. SCALE offers the ten named scales and CUSTOM. (amended 2026-09-30: plan)
+- **CHRD › CUSTOM** (a sub-page, shown while SCALE is CUSTOM): a 12-dot circle, one dot per pitch class from the tonic, lit when in the scale; the root's dot is locked on. Turning SCALE to CUSTOM opens it. Encoder A moves the cursor round the 12 notes; encoder B turned right sets the note under it on, turned left sets it off; the root stays on. EDIT cycles CHRD ↔ CUSTOM. (amended 2026-09-30, controller ruling)
 - **SCN:** SCENE, SAVE, SWITCH; eight slots, the playing one outlined, a queued one filling as the loop runs out.
 
 The ring cells bind through a new `SlotBinding::SelectedRing(ParamId)`, as `SelectedOp` binds an operator's (`block_def.rs:37-59`). The chord ring and the rings are UI-held blocks resolved in `UiBlocks`, as THEME is (`ui/mod.rs:1036-1058`). The per-ring pages edit the *live* scene; the drift they draw comes from `OrbitView`.
@@ -376,14 +376,14 @@ The ring cells bind through a new `SlotBinding::SelectedRing(ParamId)`, as `Sele
 | ORBIT | B6 | PLAY / STOP (§ 6.3). (amended 2026-09-30, owner: ORBIT is a mode; ADR 0044) |
 | ORBIT | **hold B1–B5** | Jump out to the pages of the Part ring *n* plays (`Pages(p, recall.pages[p])`). Fires at `HOLD_MS`; the release does nothing. The only way out to sound design; hold SEQ returns. (amended 2026-09-30, owner: ORBIT is a mode; ADR 0044) The old EDIT-on-ORB jump is removed. |
 | RING | EDIT | Cycles the sub-pages: RHYTHM → VOICE → NOTES → back to RHYTHM. No sub-page-up key is needed. (amended 2026-09-30, owner) |
-| CHRD | EDIT | While SCALE is CUSTOM, cycles SCALE ↔ CUSTOM; on CUSTOM it toggles the note under the cursor. Tap SEQ saves the scene, as on every ORBIT page. (amended 2026-09-30, owner) |
+| CHRD | EDIT | While SCALE is CUSTOM, cycles CHRD ↔ CUSTOM, on either page; on CUSTOM, encoder B sets notes (right on, left off). (amended 2026-09-30, controller ruling) Tap SEQ saves the scene, as on every ORBIT page. (amended 2026-09-30, owner) |
 | ORBIT | MENU | Tap: leave, back to where you were before; ORBIT keeps playing. Hold: System. (amended 2026-09-30, owner: ORBIT is a mode; ADR 0044) |
 | ORBIT | − / + | Move along ORB · RING · CHRD · SCN, as elsewhere. |
 
 - **Hold threshold: 500 ms**, shared as `ui::hold::HOLD_MS` for MENU, SEQ and hold B<n> (ADR 0044). A tap is a press released before `HOLD_MS`; a hold fires once at `HOLD_MS`, before release. (amended 2026-09-30, owner: ORBIT is a mode; ADR 0044)
 - **A tap acts on release.** SEQ's sub-page-up and a rung's save, and MENU's tap, move from `Pressed` to the release of a tap, so a hold never also moves a sub-page or saves a sound. The delay is the tap's own length. (amended 2026-09-30, owner: ORBIT is a mode; ADR 0044)
 - A pure `ui::hold::HoldGate` takes each frame's `ButtonState` and elapsed milliseconds and returns `Tap`, `Hold` or nothing. `UiState::handle_input` gains the frame's milliseconds: the desktop already measures them (`main.rs:62`), and the firmware's UI loop does the same. One gate serves MENU, SEQ and B<n>, reading the storage spec's latched edges and timestamps. (amended 2026-09-30, owner: ORBIT is a mode; ADR 0044)
-- **EDIT: sub-page only.** EDIT never leaves ORBIT: on RING pages, and on CHRD while SCALE is CUSTOM, it cycles the sub-pages (RING: RHYTHM → VOICE → NOTES → RHYTHM); on CHRD › CUSTOM it toggles a note; on CHRD with a named scale it does nothing; on SCN it commits SAVE (§ Design choices); on ORB it does nothing. (amended 2026-09-30, owner: ORBIT is a mode; ADR 0044; amended 2026-09-30, owner: EDIT cycles)
+- **EDIT: sub-page only.** EDIT never leaves ORBIT: on RING pages, and on CHRD while SCALE is CUSTOM, it cycles the sub-pages (RING: RHYTHM → VOICE → NOTES → RHYTHM); on CHRD › CUSTOM it returns to CHRD (amended 2026-09-30, controller ruling); on CHRD with a named scale it does nothing; on SCN it commits SAVE (§ Design choices); on ORB it does nothing. (amended 2026-09-30, owner: ORBIT is a mode; ADR 0044; amended 2026-09-30, owner: EDIT cycles)
 - In ORBIT, encoders, PLUS/MINUS and EDIT act only on ORBIT's pages, so EDIT + B<n> (the Sound rung) is not available there; hold B<n> is the crossing. MIX + B6 keeps its job (Demo) outside ORBIT; in ORBIT it is unassigned. (amended 2026-09-30, owner: ORBIT is a mode; ADR 0044)
 - **Leaving.** ORBIT keeps playing when you leave, by MENU tap (back to where you came from) or hold B<n> (to the ring's Part pages). Holding SEQ returns to the ORBIT page you left. (amended 2026-09-30, owner: ORBIT is a mode; ADR 0044)
 
@@ -399,21 +399,23 @@ Settings save with the project through the existing storage layer (ADR 0045). Th
 
 | Code | Ident | Block |
 |---|---|---|
-| 27 | `ORBIT` | `BlockRef::OrbitChords`: KEY, SCALE (MAJOR, MINOR, CUSTOM), BARS, SEGS |
+| 27 | `ORBIT` | `BlockRef::OrbitChords`: KEY, SCALE (the ten named scales, CUSTOM) (amended 2026-09-30: plan), BARS, SEGS |
 | 28–32 | `RING1`–`RING5` | `BlockRef::OrbitRing(RingIdx)`: every scalar and enum field of `Ring` |
 
-The PART block (25) gains **SNAP** (ParamId 8) and **HELD** (ParamId 9). `ScaleKind` (codes 0–10 in the enum's order, idents `MAJOR` … `PENT_MINOR`, `CUSTOM`), `PitchClass`, `Degree`, `Quality` (16), `Range`, `SnapTo`, `NoteMode`, `Walk`, `Target`'s kind and the PART block's SNAP and HELD get exhaustive `DiskCode` tables, pinned in `tests/fixtures/disk_codes_v1.txt`.
+The PART block (25) gains **SNAP** (ParamId 8) and **HELD** (ParamId 9). `ScaleKind` (codes 0–10 in the enum's order, idents `MAJOR` … `PENT_MINOR`, `CUSTOM`), `PitchClass`, `Degree`, `Range`, `SnapTo`, `NoteMode`, `Walk`, `Target`'s kind and the PART block's SNAP and HELD get exhaustive `DiskCode` tables, pinned in `tests/fixtures/disk_codes_v1.txt`. (amended 2026-09-30: plan: no `Quality` table, since `OrbitChord` stores exact tones)
 
 **Records** (all non-critical, so a reader without them still loads the Sounds; each well under `MAX_RECORD_LEN` = 512 B):
 
 | Tag | Name | Payload |
 |---|---|---|
-| 0x0007 | `Tempo` | BPM as `f32` LE: the tempo record the projects spec reserves |
-| 0x0008 | `OrbitBlock` | scene `u8`, then a `Block` payload (block code, (ParamId, value)*) |
-| 0x0009 | `OrbitNotes` | scene `u8`, ring `u8`, `hits_mask` `u32` LE, pool length `u8` (1–8), the pool's notes, then 32 step notes; a reader rebuilds `Pool` and `HitMask` through their checked constructors and takes the default on a bad one |
-| 0x000A | `OrbitChord` | scene `u8`, segment `u8`, degree code `u8`, played root code `u8` (0xFF: none), played `Quality` code `u8` |
-| 0x000B | `Orbit` | current scene `u8`, then each scene's seed as `u32` LE (9 of them) |
-| 0x000C | `OrbitScale` | scene `u8`, the CUSTOM set as `u16` LE (bit 0 the root; a reader sets it whatever the file says) |
+| 0x000B | `Tempo` | BPM as `f32` LE: the tempo record the projects spec reserves |
+| 0x0010 | `OrbitBlock` | scene `u8`, then a `Block` payload (block code, (ParamId, value)*) |
+| 0x0011 | `OrbitNotes` | scene `u8`, ring `u8`, `hits_mask` `u32` LE, pool length `u8` (1–8), the pool's notes, then 32 step notes; a reader rebuilds `Pool` and `HitMask` through their checked constructors and takes the default on a bad one |
+| 0x0012 | `OrbitChord` | scene `u8`, segment `u8`, degree code `u8`, played `u8` (0 none, 1 played), bass pitch class `u8`, tones `u16` LE (bit n = pitch class n): the exact tones; a set without its bass or under two tones reads as none (amended 2026-09-30, controller ruling) |
+| 0x0013 | `Orbit` | current scene `u8`, then each scene's seed as `u32` LE (9 of them) |
+| 0x0014 | `OrbitScale` | scene `u8`, the CUSTOM set as `u16` LE (bit 0 the root; a reader sets it whatever the file says) |
+
+The tags follow projects-core's 0x8007–0x000A; 0x000B is the tempo slot its spec reserves. The ORBIT records sit at the top level after the six Parts; each closes the open Part context. (amended 2026-09-30: plan)
 
 - Scene 0–7 are the saved slots; **scene 8 is the live scene**, drift included, so a project reloads exactly where it was saved (projects spec, "comes back bit-identical").
 - The transport is never saved: a loaded project is stopped.
@@ -461,7 +463,7 @@ Per block: a clock step (a `u64` multiply and divide), five step lookups (a `u64
 | `scales_have_names` (built; replaces `named_scales_are_scale_values`) | The ten named scales' names in order, "CUSTOM" for any other set. A `Scale` is its set, so a CUSTOM set equal to a named one *is* that scale (`custom_pentatonic_sized_set`), with its degrees, chords, names and snaps. (amended 2026-09-30: as merged) |
 | `pentatonic_stacks_keep_exact_tones`, `custom_pentatonic_sized_set`, `custom_two_note_set`, `custom_chromatic_set` (built) | A 5-note set's degrees are its notes and wrap past V; its chords stack every other note and keep exactly those tones, labelled from them (A minor pentatonic's I–III: "Dsus4/A", "Am/C", "Gsus4/D"; numerals "III64sus4", "i6"); 2- and 12-note sets stay total ("I?", "XII?"). (amended 2026-09-30: as merged) |
 | `snap_to_a_custom_set` (built) | Snapping to a D–A set and a one-note set, by hand; `snap_is_pinned_to_brute_force` covers every set, and the 12-note set never moves a note (`custom_chromatic_set`). (amended 2026-09-30: as merged) |
-| `chrd_custom_circle` | Turning SCALE to CUSTOM opens the circle; encoder A moves the cursor, encoder B and EDIT toggle, the root can't be cleared; screen golden. |
+| `chrd_custom_circle` | Turning SCALE to CUSTOM opens the circle; encoder A moves the cursor, encoder B right sets and left clears, the root can't be cleared; EDIT cycles CHRD ↔ CUSTOM; screen golden. (amended 2026-09-30, controller ruling) |
 | `custom_scale_round_trips` | `OrbitScale` encodes and decodes every set; a file with bit 0 clear loads with the root set; SCALE's codes are pinned. |
 | `snap_ties_go_down` (built) | D against C and E snaps to C. |
 | `snap_stays_in_midi_range` (built) | A note whose nearest member is past 127 (or below 0) takes the one on the other side. |
@@ -543,7 +545,7 @@ Each task leaves the tree green. ADRs are written where the decision lands, at t
 - **Projects plan 2** (project files) writes and reads § 8's records. It takes the tempo record defined here.
 - **#214 / #215** (DRUM and KIT). ORBIT comes first (owner, 2026-09-30); slice 3 waits on #215.
 - **#207** (per-Part VOICES) would cap a Part's share of the pool; ORBIT uses whatever cap exists and adds none.
-- **`Instrument::handle`** gains an `Origin` argument. The bench (`chimera-stm32/src/bench.rs:566`, `:605-609`) and the test rigs pass `Origin::Live`.
+- **`Instrument::handle`** gains a `NoteOrigin` argument (`Live`, `Orbit(RingIdx)`; named apart from projects-core's `project::Origin`, and carrying the ring so rings never release each other). (amended 2026-09-30: plan) The bench (`chimera-stm32/src/bench.rs:566`, `:605-609`) and the test rigs pass `NoteOrigin::Live`.
 
 ## Out of scope
 
@@ -611,7 +613,7 @@ These fill gaps in the mockups and the owner's decisions. Each is the smallest c
 
 - **Named scales:** the ten built on `orbit-core` (MAJOR, MINOR, the five other modes, HARMONIC MINOR, the two pentatonics), beside CUSTOM; progression chords are triads, as the CHORDS mockup shows (Am, Dm).
 - **Custom sets of more than 7 notes** use the every-other-note rule too, so an 8-note diminished set gives diminished triads and a 12-note set gives clusters.
-- **The CUSTOM circle:** turning SCALE to CUSTOM opens it as a CHRD sub-page; encoder A moves the cursor and encoder B or EDIT toggles. A fresh CUSTOM set starts as the named scale picked before it.
+- **The CUSTOM circle:** turning SCALE to CUSTOM opens it as a CHRD sub-page; encoder A moves the cursor, encoder B right sets and left clears; EDIT cycles CHRD ↔ CUSTOM. A fresh CUSTOM set starts as the named scale picked before it. (amended 2026-09-30, controller ruling)
 - **Ranges:** STEPS 1–32 (the mockup's bar is drawn over 32); SEGS 1–8 (drawn over 8); OCTAVE 0–8 (drawn over 8, with C4 = 60); internal BPM 30–300 in steps of 1, default 120.
 - **Accent:** +30 velocity, capped at 127, from the VOICE mockup's "+30 VEL"; the accent fill has no rotation.
 - **MUTATE:** one change per ring per loop at most, with probability MUTATE; half swaps a note, half nudges a hit by one step.
