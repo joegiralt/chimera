@@ -1,0 +1,1111 @@
+//! Every user-facing parameter, from the registry, swept on the desktop's
+//! real mix path (`Instrument`, `FxBus`, `DacBlocks`) and measured on each
+//! DAC pair apart: finite, under the ceiling, no DC, no clicks the
+//! parameter doesn't cause, every voice freed, not silent unless the
+//! parameter silences it, and never billed over the CPU budget unshed.
+//!
+//! `sweep_fast` runs on every `cargo test`: each parameter once (the first
+//! operator, ENV and LFO), at its ends and one jump each way. `sweep_thorough`
+//! (`cargo test -- --ignored`) sweeps every instance at five points and every
+//! choice, on every Sound it applies to, and writes the report to
+//! `$PARAM_SWEEP_REPORT` when it is set. What a parameter may legitimately
+//! do (fall silent, click, ring on, carry DC) is listed below with the
+//! reason; a known defect is named, kept out of the sweeps' verdict, and
+//! pinned by an ignored test of its own.
+
+mod common;
+
+use std::collections::BTreeMap;
+use std::fmt::Write as _;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use chimera_core::addr::{BlockRef, Op};
+use chimera_core::block::ParamId;
+use chimera_core::dsp::algo::params::AlgoOpParams;
+use chimera_core::dsp::chorus::ChorusParams;
+use chimera_core::dsp::delay::DelayParams;
+use chimera_core::dsp::fx_bus::{FxBus, FxParams};
+use chimera_core::dsp::modal::{ModalParams, ResonatorMode};
+use chimera_core::dsp::reverb::ReverbParams;
+use chimera_core::hw::DAC_PAIRS;
+use chimera_core::params::{DriveParams, FilterParams, FolderParams, OutParams};
+use chimera_core::part::{DacPair, PartParams};
+use common::sweep::*;
+
+// ── Cases ──────────────────────────────────────────────────────────────
+
+#[derive(Clone, Copy, Debug)]
+struct Case {
+    param: Param,
+    patch: Patch,
+    mv: Move,
+    /// FX on and every send at 0.5 (the FX and mix parameters' baseline).
+    wet: bool,
+}
+
+impl Case {
+    fn label(&self) -> String {
+        let v = match self.mv {
+            Move::Static(v) => format!("{v}"),
+            Move::Jump { from, to } => format!("{from}→{to}"),
+        };
+        let wet = if self.wet { " (wet)" } else { "" };
+        format!("{} = {v} on {}{wet}", self.param.name(), self.patch.name())
+    }
+
+    fn bench(&self) -> Bench {
+        let mut mix = PartParams::default();
+        let fx = if self.wet {
+            mix.sends = [0.5; 3];
+            fx_on()
+        } else {
+            FxParams::default()
+        };
+        Bench::new(self.patch, mix, fx)
+    }
+
+    fn values(&self) -> Vec<f32> {
+        match self.mv {
+            Move::Static(v) => vec![v],
+            Move::Jump { from, to } => vec![from, to],
+        }
+    }
+
+    fn any(&self, f: impl Fn(f32) -> bool) -> bool {
+        self.values().into_iter().any(f)
+    }
+
+    fn is(&self, block: BlockRef, id: ParamId) -> bool {
+        self.param.is(block, id)
+    }
+
+    fn is_op(&self, id: ParamId) -> bool {
+        matches!(self.param.block, BlockRef::AlgoOp(_)) && self.param.spec.id == id
+    }
+
+    fn modal(&self, id: ParamId) -> bool {
+        self.is(BlockRef::Modal, id)
+    }
+
+    /// A Modal model that rings on after note-off (all but STRING), the
+    /// patch's own or one MODEL moves it to.
+    fn rings_on(&self) -> bool {
+        self.patch.mode().is_some_and(|m| {
+            m != ResonatorMode::String || (self.modal(ModalParams::MODE) && self.any(|v| v != 0.0))
+        })
+    }
+}
+
+const SOUNDS: [Patch; 7] = [
+    Patch::AlgoInit,
+    Patch::ModalInit(ResonatorMode::String),
+    Patch::ModalInit(ResonatorMode::Modal),
+    Patch::ModalInit(ResonatorMode::Bowed),
+    Patch::ModalInit(ResonatorMode::Sympathetic),
+    Patch::BusyAlgo,
+    Patch::BusyModal,
+];
+
+/// The Sounds `p` is swept on. Quick: the busy patches (every modulator
+/// routed, so ENV and LFO are heard), each Modal model its parameter
+/// belongs to, and ALGO INIT for the FX and mix, wet.
+fn patches(p: &Param, quick: bool) -> Vec<(Patch, bool)> {
+    if p.performance() {
+        let v = if quick {
+            vec![Patch::AlgoInit]
+        } else {
+            vec![
+                Patch::AlgoInit,
+                Patch::ModalInit(ResonatorMode::String),
+                Patch::BusyAlgo,
+            ]
+        };
+        return v.into_iter().map(|s| (s, true)).collect();
+    }
+    let v: Vec<Patch> = match (p.block, quick) {
+        (BlockRef::Modal, true) => SOUNDS
+            .into_iter()
+            .filter(|s| matches!(s, Patch::ModalInit(_)) || *s == Patch::BusyModal)
+            .collect(),
+        (BlockRef::Algo | BlockRef::AlgoOp(_), true) => vec![Patch::BusyAlgo],
+        (_, true) => vec![Patch::BusyAlgo, Patch::BusyModal],
+        (_, false) => SOUNDS.to_vec(),
+    };
+    v.into_iter()
+        .filter(|s| p.applies(*s))
+        .map(|s| (s, false))
+        .collect()
+}
+
+fn cases(quick: bool) -> Vec<Case> {
+    let mut out = Vec::new();
+    for param in registry(quick) {
+        for (patch, wet) in patches(&param, quick) {
+            let pts = param.points(quick);
+            let (lo, hi) = (pts[0], *pts.last().unwrap());
+            for &v in &pts {
+                out.push(Case {
+                    param,
+                    patch,
+                    mv: Move::Static(v),
+                    wet,
+                });
+            }
+            if lo != hi {
+                out.push(Case {
+                    param,
+                    patch,
+                    mv: Move::Jump { from: lo, to: hi },
+                    wet,
+                });
+                if !quick {
+                    out.push(Case {
+                        param,
+                        patch,
+                        mv: Move::Jump { from: hi, to: lo },
+                        wet,
+                    });
+                }
+            }
+        }
+        // Clicks stand out on the triangle: every jump again on it.
+        let pts = param.points(true);
+        let (lo, hi) = (pts[0], *pts.last().unwrap());
+        if lo != hi && param.applies(Patch::Probe) {
+            let wet = param.performance();
+            for (from, to) in [(lo, hi), (hi, lo)] {
+                out.push(Case {
+                    param,
+                    patch: Patch::Probe,
+                    mv: Move::Jump { from, to },
+                    wet,
+                });
+            }
+        }
+    }
+    out
+}
+
+/// Runs every case on every core; results in case order.
+fn run_all(cases: &[Case], t: Timing) -> Vec<Run> {
+    let next = AtomicUsize::new(0);
+    let results = Mutex::new(vec![None; cases.len()]);
+    let workers = std::thread::available_parallelism().map_or(4, |n| n.get());
+    std::thread::scope(|s| {
+        for _ in 0..workers {
+            std::thread::Builder::new()
+                .stack_size(64 << 20)
+                .spawn_scoped(s, || {
+                    loop {
+                        let i = next.fetch_add(1, Ordering::Relaxed);
+                        let Some(c) = cases.get(i) else { break };
+                        let r = play(&mut c.bench(), Some(&c.param), c.mv, t);
+                        results.lock().unwrap()[i] = Some(r);
+                    }
+                })
+                .unwrap();
+        }
+    });
+    results
+        .into_inner()
+        .unwrap()
+        .into_iter()
+        .map(Option::unwrap)
+        .collect()
+}
+
+// ── What a parameter may legitimately do ───────────────────────────────
+
+/// Why `c` may leave Part 1 silent. Each is the parameter doing its job.
+fn silences(c: &Case) -> Option<&'static str> {
+    if c.is(BlockRef::Part, PartParams::LEVEL) && c.any(|v| v == 0.0) {
+        return Some("Part LEVEL 0 mutes the Part");
+    }
+    if c.is(BlockRef::Out, OutParams::VOLUME) && c.any(|v| v == 0.0) {
+        return Some("OUT LEVEL 0 is the voice at volume 0");
+    }
+    if (c.is(BlockRef::Part, PartParams::CHANNEL)
+        || (c.param.block == BlockRef::Channels && c.param.spec.id.0 == 0))
+        && c.any(|v| v != 0.0)
+    {
+        return Some("Part 1 listens on another MIDI channel than the notes'");
+    }
+    if c.modal(ModalParams::EXCITE) && c.any(|v| v == 0.0) {
+        return Some("EXCITE 0: nothing strikes the resonator");
+    }
+    if (c.modal(ModalParams::FORCE) || c.modal(ModalParams::SPEED)) && c.any(|v| v == 0.0) {
+        return Some("FORCE or SPEED 0: the bow doesn't press, or doesn't move");
+    }
+    if c.is_op(AlgoOpParams::LEVEL) && c.any(|v| v == 0.0) {
+        return Some(
+            "a carrier at LEVEL 0 is silent, and a voice whose carriers are all silent ends \
+             (engine.rs `active`): raising LEVEL later doesn't revive the held note",
+        );
+    }
+    if c.is_op(AlgoOpParams::AR) && c.any(|v| v == 0.0) {
+        return Some("AR 0 never attacks (the TX81Z's rate 0)");
+    }
+    if c.is_op(AlgoOpParams::D2R) && c.any(|v| v == 31.0) {
+        return Some("D2R 31 decays the held note to silence within its first 10 ms");
+    }
+    None
+}
+
+/// The pairs `c` may put sound on: its OUT values' pairs, and pair 1 for
+/// the FX return when it's wet.
+fn expected_pairs(c: &Case) -> [bool; DAC_PAIRS] {
+    let mut e = [false; DAC_PAIRS];
+    if c.is(BlockRef::Part, PartParams::OUTPUT) {
+        for v in c.values() {
+            e[v as usize] = true;
+        }
+    } else {
+        e[DacPair::P1.index()] = true;
+    }
+    if c.wet {
+        e[0] = true;
+    }
+    e
+}
+
+/// Why a transient at a jump or a release is the parameter's own sound.
+fn clicks_ok(c: &Case, label: &str) -> Option<&'static str> {
+    if c.is(BlockRef::Part, PartParams::OUTPUT) {
+        return Some("OUT is a discrete choice: the Part leaves one pair for another at once");
+    }
+    if c.param.block == BlockRef::Pitch {
+        return Some("a pitch jump retunes a string's loop at once");
+    }
+    if c.is(BlockRef::Filter, FilterParams::CUTOFF) && c.any(|v| v == 20.0) {
+        return Some(
+            "CUTOFF moves ten octaves within one block's ramp (#53): at 20 Hz the SVF holds its \
+             state and lets it go, the filter's own thump",
+        );
+    }
+    if c.is_op(AlgoOpParams::RR) && label == "chord-off" && c.any(|v| v == 15.0) {
+        return Some("RR 15 is the fastest release: a note-off at full level ends within a few ms");
+    }
+    None
+}
+
+/// Why `c` may carry DC to the DAC.
+fn dc_ok(c: &Case) -> Option<&'static str> {
+    if matches!(c.param.block, BlockRef::AlgoOp(_) | BlockRef::Algo) {
+        return Some(
+            "FM: W3, W4, W7 and W8 keep the TX81Z's DC, and a ratio or feedback puts a sideband \
+             at or near 0 Hz (c − k·m = 0); ADR 0022 declined DC blocking on the Algo path",
+        );
+    }
+    if c.patch == Patch::ModalInit(ResonatorMode::Bowed) && c.modal(ModalParams::SPEED) {
+        return Some(
+            "the bow's stick–slip drifts below 10 Hz, and the output's one-pole blocker passes \
+             part of it (about −30 dB re the note)",
+        );
+    }
+    None
+}
+
+/// Why a voice may stay busy on a silent bus past the bound.
+fn zombie_ok(c: &Case) -> Option<&'static str> {
+    if c.rings_on() {
+        return Some(
+            "BANK, BOWED and SYMP ring on after note-off; the engine judges its own ring, before \
+             the filter and the VCA, so a setting that silences it after the engine (OUT LEVEL \
+             0, a filter MODE) leaves the voice busy until the ring decays",
+        );
+    }
+    None
+}
+
+/// Why the tail may outlast the bound (it still decays).
+fn long_tail(c: &Case) -> Option<&'static str> {
+    if c.rings_on() {
+        return Some("BANK, BOWED and SYMP ring on at DAMP's T60 after note-off (ADR 0054, 0056)");
+    }
+    if c.modal(ModalParams::DAMP) {
+        return Some("DAMP sets the ring's T60, up to 20 s");
+    }
+    if c.is_op(AlgoOpParams::RR) || c.is_op(AlgoOpParams::D2R) || c.is_op(AlgoOpParams::D1R) {
+        return Some("a slow operator release rings on");
+    }
+    if matches!(c.param.block, BlockRef::Env(_) | BlockRef::Lfo(_)) {
+        return Some("ENV 2 drives the busy patches' VCA: its release and times hold the note");
+    }
+    None
+}
+
+// ── Known defects ──────────────────────────────────────────────────────
+
+/// A defect the sweep found, left for its fix: its ignored `defect_*`
+/// test fails until then.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Defect {
+    VoiceDc,
+    Snaps,
+    SilentOpHoldsVoice,
+}
+
+impl Defect {
+    fn what(self) -> &'static str {
+        match self {
+            Defect::VoiceDc => {
+                "no DC blocker after the voice's drive, filter drive and folder; the folder's SYM \
+                 bias is DC (wavefolder.rs:33, voice.rs:571-578)"
+            }
+            Defect::Snaps => {
+                "level, pan, send, FX mix, chorus depth, delay time and drive changes are \
+                 unramped, and FX bypass gates the return at MIX < 0.001: a snap clicks"
+            }
+            Defect::SilentOpHoldsVoice => {
+                "an operator that is a carrier only in ALG B holds the voice at MORPH 0 \
+                 (engine.rs:291-295)"
+            }
+        }
+    }
+}
+
+fn snaps(c: &Case) -> bool {
+    let (b, id) = (c.param.block, c.param.spec.id);
+    let part = [
+        PartParams::LEVEL,
+        PartParams::PAN,
+        PartParams::SEND_CHORUS,
+        PartParams::SEND_DELAY,
+        PartParams::SEND_REVERB,
+    ];
+    let chorus = [ChorusParams::MIX, ChorusParams::DEPTH, ChorusParams::MODE];
+    c.is(BlockRef::Out, OutParams::VOLUME)
+        || (b == BlockRef::Part && part.contains(&id))
+        || (b == BlockRef::Chorus && chorus.contains(&id))
+        || (b == BlockRef::Delay && [DelayParams::MIX, DelayParams::TIME_MS].contains(&id))
+        || c.is(BlockRef::Reverb, ReverbParams::MIX)
+        || c.is(BlockRef::Drive, DriveParams::DRIVE)
+        || c.is(BlockRef::Filter, FilterParams::DRIVE)
+        || c.is(BlockRef::Folder, FolderParams::FOLD)
+        || c.is(BlockRef::Folder, FolderParams::SYMMETRY)
+}
+
+fn known(c: &Case, kind: &Kind, label: &str) -> Option<Defect> {
+    let b = c.param.block;
+    match kind {
+        Kind::Dc if matches!(b, BlockRef::Folder | BlockRef::Drive | BlockRef::Filter) => {
+            Some(Defect::VoiceDc)
+        }
+        // BUSY MODAL drives its models through DRIVE 0.2.
+        Kind::Dc if c.patch == Patch::BusyModal && c.modal(ModalParams::MODE) => {
+            Some(Defect::VoiceDc)
+        }
+        Kind::Click if label.starts_with("jump") && snaps(c) => Some(Defect::Snaps),
+        Kind::Zombie if c.is_op(AlgoOpParams::RR) => Some(Defect::SilentOpHoldsVoice),
+        _ => None,
+    }
+}
+
+// ── Verdicts ───────────────────────────────────────────────────────────
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Kind {
+    NotFinite,
+    OverCeiling,
+    Dc,
+    Click,
+    Stuck,
+    Zombie,
+    LongTail,
+    Silent,
+    Leak,
+    OverBudget,
+}
+
+#[derive(Clone, Debug)]
+struct Finding {
+    kind: Kind,
+    case: usize,
+    what: String,
+}
+
+#[derive(Default)]
+struct Verdict {
+    /// Unexpected: each fails the sweep.
+    findings: Vec<Finding>,
+    known: BTreeMap<Defect, Vec<Finding>>,
+    /// Each allowance used, and on how many cases.
+    allowed: BTreeMap<(Kind, &'static str), usize>,
+    long_tails: usize,
+}
+
+fn judge(cases: &[Case], runs: &[Run], t: Timing) -> Verdict {
+    let mut v = Verdict::default();
+    for (i, (c, r)) in cases.iter().zip(runs).enumerate() {
+        let mut out: Vec<(Kind, String, &str)> = Vec::new();
+        let mut allowed: Vec<(Kind, &'static str)> = Vec::new();
+        if !r.finite {
+            out.push((Kind::NotFinite, "NaN or inf on a pair".into(), ""));
+        }
+        for k in 0..DAC_PAIRS {
+            if !within_ceiling(r.peak[k]) {
+                out.push((
+                    Kind::OverCeiling,
+                    format!("P{} peak {:.4}", k + 1, r.peak[k]),
+                    "",
+                ));
+            }
+            if matches!(c.mv, Move::Static(_)) && r.dc[k] > DC_MAX {
+                match dc_ok(c) {
+                    Some(why) => allowed.push((Kind::Dc, why)),
+                    None => out.push((Kind::Dc, format!("P{} DC {:.4}", k + 1, r.dc[k]), "")),
+                }
+            }
+        }
+        for &(label, k, ratio) in &r.clicks {
+            // Wet, an echo of an onset lands anywhere: the voice's own
+            // events are judged dry.
+            if c.wet && !label.starts_with("jump") {
+                continue;
+            }
+            match clicks_ok(c, label) {
+                Some(why) => allowed.push((Kind::Click, why)),
+                None => out.push((
+                    Kind::Click,
+                    format!("{label} on P{}: {ratio:.1}× the steady state", k + 1),
+                    label,
+                )),
+            }
+        }
+        let expected = expected_pairs(c);
+        for k in 0..DAC_PAIRS {
+            if !expected[k] && r.peak[k] > LEAK_PEAK {
+                let what = format!(
+                    "P{} carries {:.2e} with no Part routed there",
+                    k + 1,
+                    r.peak[k]
+                );
+                out.push((Kind::Leak, what, ""));
+            }
+        }
+        let heard = |w: usize| {
+            (0..DAC_PAIRS)
+                .filter(|&k| expected[k])
+                .map(|k| r.held[w][k] * r.held[w][k])
+                .sum::<f32>()
+                .sqrt()
+        };
+        if let Some(w) = (0..2).find(|&w| heard(w) < SILENT_RMS) {
+            match silences(c) {
+                Some(why) => allowed.push((Kind::Silent, why)),
+                None => {
+                    let what = format!("{} held RMS {:.2e}", ["single note", "chord"][w], heard(w));
+                    out.push((Kind::Silent, what, ""));
+                }
+            }
+        }
+        if r.freed.is_none() {
+            let (first, last) = r.tail;
+            if last <= 1e-6 {
+                match zombie_ok(c) {
+                    Some(why) => allowed.push((Kind::Zombie, why)),
+                    None => out.push((
+                        Kind::Zombie,
+                        format!(
+                            "busy {} blocks after release on a silent bus ({last:.1e})",
+                            t.bound
+                        ),
+                        "",
+                    )),
+                }
+            } else if last >= first * 0.89 {
+                out.push((
+                    Kind::Stuck,
+                    format!(
+                        "not freed {} blocks after release; tail {first:.2e} → {last:.2e}",
+                        t.bound
+                    ),
+                    "",
+                ));
+            } else {
+                v.long_tails += 1;
+                match long_tail(c) {
+                    Some(why) => allowed.push((Kind::LongTail, why)),
+                    None => out.push((
+                        Kind::LongTail,
+                        format!(
+                            "ringing {} blocks after release: {first:.2e} → {last:.2e}",
+                            t.bound
+                        ),
+                        "",
+                    )),
+                }
+            }
+        }
+        if r.over_blocks > 0 {
+            let what = format!(
+                "billed {} over the budget {} for {} blocks, unshed",
+                r.bill_max, r.budget, r.over_blocks
+            );
+            out.push((Kind::OverBudget, what, ""));
+        }
+        for a in allowed {
+            *v.allowed.entry(a).or_default() += 1;
+        }
+        for (kind, what, label) in out {
+            let known = known(c, &kind, label);
+            let f = Finding {
+                kind,
+                case: i,
+                what,
+            };
+            match known {
+                Some(d) => v.known.entry(d).or_default().push(f),
+                None => v.findings.push(f),
+            }
+        }
+    }
+    v
+}
+
+fn summary(cases: &[Case], f: &[Finding]) -> String {
+    let mut s = String::new();
+    let mut by: BTreeMap<(Kind, String), Vec<String>> = BTreeMap::new();
+    for x in f {
+        let c = &cases[x.case];
+        by.entry((
+            x.kind.clone(),
+            format!("{} on {}", c.param.name(), c.patch.name()),
+        ))
+        .or_default()
+        .push(format!("{:?}: {}", c.mv, x.what));
+    }
+    for ((k, who), v) in &by {
+        let _ = writeln!(s, "{k:?} {who}: {} ({} cases)", v[0], v.len());
+    }
+    s
+}
+
+struct Sweep {
+    cases: Vec<Case>,
+    runs: Vec<Run>,
+    verdict: Verdict,
+    took: std::time::Duration,
+}
+
+fn sweep(quick: bool, t: Timing) -> Sweep {
+    let cases = cases(quick);
+    let t0 = std::time::Instant::now();
+    let runs = run_all(&cases, t);
+    let verdict = judge(&cases, &runs, t);
+    Sweep {
+        cases,
+        runs,
+        verdict,
+        took: t0.elapsed(),
+    }
+}
+
+// ── Tests ──────────────────────────────────────────────────────────────
+
+/// The sweep reads the registry: every block with audio, and every one of
+/// its parameters, is in it; Theme alone is left out.
+#[test]
+fn the_sweep_covers_the_registry() {
+    let all = registry(false);
+    for b in BlockRef::ALL {
+        let n = all.iter().filter(|p| p.block == b).count();
+        if NOT_AUDIO.contains(&b) {
+            assert_eq!(n, 0, "{b:?}");
+        } else {
+            assert_eq!(n, b.specs().len(), "{b:?}");
+        }
+    }
+    let quick: Vec<_> = cases(true).iter().map(|c| c.param.name()).collect();
+    for p in registry(true) {
+        assert!(quick.contains(&p.name()), "{} unswept", p.name());
+    }
+    // `Bench::set` reaches the value the Sound or Performance holds.
+    for p in registry(false) {
+        let (patch, wet) = patches(&p, false)[0];
+        let c = Case {
+            param: p,
+            patch,
+            mv: Move::Static(p.spec.max),
+            wet,
+        };
+        let mut b = c.bench();
+        b.set(&p, p.spec.max);
+        assert_eq!(b.get(&p), p.spec.quantize(p.spec.max), "{}", p.name());
+    }
+}
+
+#[test]
+fn sweep_fast() {
+    let s = sweep(true, FAST);
+    let v = &s.verdict;
+    println!(
+        "{} parameters, {} cases in {:.1?}; {} known-defect findings",
+        registry(true).len(),
+        s.cases.len(),
+        s.took,
+        v.known.values().map(Vec::len).sum::<usize>()
+    );
+    let msg = summary(&s.cases, &v.findings);
+    assert!(
+        v.findings.is_empty(),
+        "{} findings:\n{msg}",
+        v.findings.len()
+    );
+}
+
+#[test]
+#[ignore = "thorough: every instance at five points on every Sound (~2 min debug); cargo test -- --ignored"]
+fn sweep_thorough() {
+    let s = sweep(false, THOROUGH);
+    let v = &s.verdict;
+    println!(
+        "{} parameters, {} cases in {:.1?}; {} known-defect findings",
+        registry(false).len(),
+        s.cases.len(),
+        s.took,
+        v.known.values().map(Vec::len).sum::<usize>()
+    );
+    if let Ok(path) = std::env::var("PARAM_SWEEP_REPORT") {
+        std::fs::write(&path, report(&s)).expect("the report");
+        println!("report: {path}");
+    }
+    let msg = summary(&s.cases, &v.findings);
+    assert!(
+        v.findings.is_empty(),
+        "{} findings:\n{msg}",
+        v.findings.len()
+    );
+}
+
+/// OUT moves Part 1's dry signal to its pair whole, and only there; the
+/// FX return stays on pair 1. Summed, the pairs are what OUT = P1 plays.
+#[test]
+fn out_moves_the_part_to_its_pair() {
+    let out = find(BlockRef::Part, PartParams::OUTPUT);
+    for wet in [false, true] {
+        let tape = |pair: f32| {
+            let c = Case {
+                param: out,
+                patch: Patch::AlgoInit,
+                mv: Move::Static(pair),
+                wet,
+            };
+            let mut b = c.bench();
+            b.set(&out, pair);
+            let mut t = Tape::default();
+            for blk in 0..400 {
+                if blk == 0 {
+                    b.note(60, Some(100));
+                }
+                if blk == 200 {
+                    b.note(60, None);
+                }
+                b.render(&mut t);
+            }
+            t
+        };
+        let home = tape(0.0);
+        for k in 1..DAC_PAIRS {
+            let moved = tape(k as f32);
+            let silent = |p: usize| moved.out[p].iter().all(|&x| x == 0.0);
+            assert!(silent(3 - k), "wet {wet}: P{} silent", 4 - k);
+            assert!(!silent(k), "wet {wet}: the Part on P{}", k + 1);
+            if wet {
+                for (i, &x) in home.out[0].iter().enumerate() {
+                    let sum = moved.out[0][i] + moved.out[k][i];
+                    assert!(
+                        (sum - x).abs() < 1e-6,
+                        "wet: P1 + P{} is OUT P1's, at {i}",
+                        k + 1
+                    );
+                }
+            } else {
+                assert!(silent(0), "dry: P1 empty once OUT moves");
+                assert_eq!(
+                    moved.out[k],
+                    home.out[0],
+                    "dry: P{} plays what P1 did",
+                    k + 1
+                );
+            }
+        }
+    }
+}
+
+/// Every INIT and patch: finite and under the ceiling on every pair.
+#[test]
+fn levels_are_safe() {
+    for p in level_patches() {
+        for notes in [&[60u8][..], &CHORD[..]] {
+            let l = level(p, notes, 127, 300);
+            for peak in l.peak {
+                assert!(peak.is_finite() && within_ceiling(peak), "{}", p.name());
+            }
+            assert!(l.rms[0] > SILENT_RMS, "{} sounds", p.name());
+        }
+    }
+}
+
+// ── The known defects, pinned: each fails until fixed ──────────────────
+
+fn find(block: BlockRef, id: ParamId) -> Param {
+    registry(false)
+        .into_iter()
+        .find(|p| p.is(block, id))
+        .unwrap()
+}
+
+/// The folder's SYM adds `(sym − 0.5)·0.5` before its fold, so at SYM 0
+/// a note carries DC, through its silent release too: when the voice
+/// frees, pair 1 steps by it.
+#[test]
+#[ignore = "defect: the voice chain carries DC after its nonlinear stages (wavefolder.rs:33, voice.rs:571-578)"]
+fn defect_folder_sym_puts_dc_on_the_dac() {
+    let mut b = Bench::new(Patch::AlgoInit, PartParams::default(), FxParams::default());
+    b.set(&find(BlockRef::Folder, FolderParams::FOLD), 0.5);
+    b.set(&find(BlockRef::Folder, FolderParams::SYMMETRY), 0.0);
+    let mut t = Tape::default();
+    for blk in 0..1000 {
+        if blk == 0 {
+            b.note(60, Some(100));
+        }
+        if blk == 150 {
+            b.note(60, None);
+        }
+        b.render(&mut t);
+    }
+    let end = 150 + t.freed(150).expect("freed");
+    let held = t.dc(0, 8, 150);
+    let release = t.dc(0, end - 40, end - 1);
+    assert!(
+        held < DC_MAX && release < DC_MAX,
+        "held DC {held:.4}, silent release DC {release:.4}"
+    );
+}
+
+/// A jump of these continuous parameters steps the triangle probe.
+#[test]
+#[ignore = "defect: level, pan, send, FX mix and drive changes are unramped, FX bypass gates the return (instrument.rs:182-186, voice.rs:580-593, fx_bus.rs:124-165)"]
+fn defect_snaps_click() {
+    let params = [
+        (find(BlockRef::Out, OutParams::VOLUME), false),
+        (find(BlockRef::Part, PartParams::LEVEL), false),
+        (find(BlockRef::Part, PartParams::PAN), false),
+        (find(BlockRef::Reverb, ReverbParams::MIX), true),
+        (find(BlockRef::Chorus, ChorusParams::MIX), true),
+        (find(BlockRef::Delay, DelayParams::MIX), true),
+        (find(BlockRef::Folder, FolderParams::FOLD), false),
+    ];
+    let mut bad = Vec::new();
+    for (p, wet) in params {
+        for (from, to) in [(p.spec.min, p.spec.max), (p.spec.max, p.spec.min)] {
+            let c = Case {
+                param: p,
+                patch: Patch::Probe,
+                mv: Move::Jump { from, to },
+                wet,
+            };
+            let r = play(&mut c.bench(), Some(&p), c.mv, FAST);
+            let jumps: Vec<_> = r
+                .clicks
+                .iter()
+                .filter(|x| x.0.starts_with("jump"))
+                .collect();
+            if !jumps.is_empty() {
+                bad.push(format!("{}: {jumps:?}", c.label()));
+            }
+        }
+    }
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
+}
+
+/// ALGO INIT's operators 2–4 are carriers only in ALG B (A1): at MORPH 0
+/// they're unheard once operator 1 has released, yet a slow release on
+/// one keeps the voice, and its bill, for 23 s.
+#[test]
+#[ignore = "defect: engine.rs:291-295 counts ALG B's carriers at MORPH 0; a silent operator holds the voice"]
+fn defect_silent_operator_holds_the_voice() {
+    let mut b = Bench::new(Patch::AlgoInit, PartParams::default(), FxParams::default());
+    b.set(&find(BlockRef::AlgoOp(Op::B), AlgoOpParams::RR), 1.0);
+    let mut t = Tape::default();
+    for blk in 0..1500 {
+        if blk == 0 {
+            b.note(60, Some(100));
+        }
+        if blk == 150 {
+            b.note(60, None);
+        }
+        b.render(&mut t);
+    }
+    let quiet = (150..t.blocks())
+        .find(|&k| t.bus[k * 64..(k + 1) * 64].iter().all(|x| x.abs() < 1e-5))
+        .expect("quiet");
+    let freed = t.freed(150).map(|f| f + 150);
+    assert!(
+        freed.is_some_and(|f| f < quiet + BPS),
+        "quiet at block {quiet}, freed {freed:?}"
+    );
+}
+
+// ── The report ─────────────────────────────────────────────────────────
+
+fn level_patches() -> Vec<Patch> {
+    let mut v = SOUNDS.to_vec();
+    v.extend((0..8).map(Patch::Factory));
+    v
+}
+
+fn dbs(x: f32) -> String {
+    if x <= 0.0 {
+        "−∞".into()
+    } else {
+        format!("{:.1}", db(x))
+    }
+}
+
+fn median(mut v: Vec<f32>) -> f32 {
+    v.sort_by(f32::total_cmp);
+    let n = v.len();
+    if n % 2 == 1 {
+        v[n / 2]
+    } else {
+        0.5 * (v[n / 2 - 1] + v[n / 2])
+    }
+}
+
+/// The owner's question: Modal against Algo at INIT.
+fn modal_loudness(s: &mut String) {
+    let pats = [
+        Patch::AlgoInit,
+        Patch::ModalInit(ResonatorMode::String),
+        Patch::ModalInit(ResonatorMode::Modal),
+        Patch::ModalInit(ResonatorMode::Sympathetic),
+        Patch::ModalInit(ResonatorMode::Bowed),
+    ];
+    let conds: [(&str, &[u8]); 3] = [("C3", &[48]), ("C4", &[60]), ("chord", &CHORD)];
+    let _ = writeln!(
+        s,
+        "Held 1 s, measured on P1 after the output stage (trim 1/√8, ceiling −1 dBFS); LUFS is \
+         ungated BS.1770 (K-weighted) over the hold. Δ is LUFS against ALGO INIT at the same \
+         notes and velocity. Bus RMS is Part 1's voices summed, before pan, Part LEVEL and the \
+         trim.\n"
+    );
+    let _ = writeln!(
+        s,
+        "| Sound | vel | notes | peak dBFS | RMS dBFS | LUFS | Δ vs ALGO dB | bus RMS dBFS |"
+    );
+    let _ = writeln!(s, "|---|---|---|---|---|---|---|---|");
+    let mut algo = BTreeMap::new();
+    let mut offs: BTreeMap<String, Vec<f32>> = BTreeMap::new();
+    for p in pats {
+        for vel in [64u8, 127] {
+            for (name, notes) in conds {
+                let l = level(p, notes, vel, BPS);
+                if p == Patch::AlgoInit {
+                    algo.insert((vel, name), l.lufs);
+                }
+                let d = l.lufs - algo[&(vel, name)];
+                if p != Patch::AlgoInit {
+                    offs.entry(p.name()).or_default().push(d);
+                }
+                let _ = writeln!(
+                    s,
+                    "| {} | {vel} | {name} | {} | {} | {:.1} | {d:+.1} | {} |",
+                    p.name(),
+                    dbs(l.peak[0]),
+                    dbs(l.rms[0]),
+                    l.lufs,
+                    dbs(l.bus_rms)
+                );
+            }
+        }
+    }
+    let _ = writeln!(
+        s,
+        "\n| Model | mean Δ vs ALGO INIT dB | range dB |\n|---|---|---|"
+    );
+    for (m, v) in offs {
+        let mean = v.iter().sum::<f32>() / v.len() as f32;
+        let (lo, hi) = v
+            .iter()
+            .fold((f32::MAX, f32::MIN), |(a, b), &x| (a.min(x), b.max(x)));
+        let _ = writeln!(s, "| {m} | {mean:+.1} | {lo:+.1} … {hi:+.1} |");
+    }
+}
+
+/// Every INIT and patch: RMS and peak per pair, LUFS on P1, flagged
+/// ±6 dB from the median.
+fn levels(s: &mut String) {
+    let rows: Vec<(Patch, Level, Level)> = level_patches()
+        .into_iter()
+        .map(|p| (p, level(p, &[60], 100, BPS), level(p, &CHORD, 100, BPS)))
+        .collect();
+    let med = median(rows.iter().map(|r| r.1.lufs).collect());
+    let _ = writeln!(
+        s,
+        "C4 and the chord (C3 E3 G3 C4) at velocity 100, held 1 s, OUT P1, FX off. Median \
+         single-note loudness {med:.1} LUFS; a flag marks ±6 dB from it. P2 and P3 carry \
+         nothing with OUT on P1 (−∞ is exact silence).\n"
+    );
+    let _ = writeln!(
+        s,
+        "| Sound | P1 RMS | P1 peak | P2 RMS | P3 RMS | LUFS | vs median | chord P1 RMS | chord peak | chord LUFS | flag |"
+    );
+    let _ = writeln!(s, "|---|---|---|---|---|---|---|---|---|---|---|");
+    for (p, one, ch) in rows {
+        let d = one.lufs - med;
+        let flag = match d {
+            d if d > 6.0 => "HOT",
+            d if d < -6.0 => "QUIET",
+            _ => "",
+        };
+        let _ = writeln!(
+            s,
+            "| {} | {} | {} | {} | {} | {:.1} | {d:+.1} | {} | {} | {:.1} | {flag} |",
+            p.name(),
+            dbs(one.rms[0]),
+            dbs(one.peak[0]),
+            dbs(one.rms[1]),
+            dbs(one.rms[2]),
+            one.lufs,
+            dbs(ch.rms[0]),
+            dbs(ch.peak[0]),
+            ch.lufs,
+        );
+    }
+}
+
+fn report(sw: &Sweep) -> String {
+    let (cases, runs, v) = (&sw.cases, &sw.runs, &sw.verdict);
+    let mut s = String::new();
+    let _ = writeln!(s, "## Modal against Algo at INIT\n");
+    modal_loudness(&mut s);
+    let _ = writeln!(s, "\n## Levels\n");
+    levels(&mut s);
+
+    let _ = writeln!(s, "\n## Sweep\n");
+    let statics = cases
+        .iter()
+        .filter(|c| matches!(c.mv, Move::Static(_)))
+        .count();
+    let _ = writeln!(
+        s,
+        "{} parameters (every block instance in `BlockRef::ALL` but Theme), {} cases ({statics} \
+         static, {} jumps) in {:.1?}, timing {:?}. Unexpected findings: {}. Known-defect \
+         findings: {}. Long tails (still decaying at the bound): {}.\n",
+        registry(false).len(),
+        cases.len(),
+        cases.len() - statics,
+        sw.took,
+        THOROUGH,
+        v.findings.len(),
+        v.known.values().map(Vec::len).sum::<usize>(),
+        v.long_tails,
+    );
+    let _ = writeln!(
+        s,
+        "### Known defects\n\n| Defect | cases | example |\n|---|---|---|"
+    );
+    for (d, f) in &v.known {
+        let c = &cases[f[0].case];
+        let _ = writeln!(
+            s,
+            "| {} | {} | {}: {} |",
+            d.what(),
+            f.len(),
+            c.label(),
+            f[0].what
+        );
+    }
+    if !v.findings.is_empty() {
+        let _ = writeln!(
+            s,
+            "\n### Unexpected\n\n```\n{}```",
+            summary(cases, &v.findings)
+        );
+    }
+    let _ = writeln!(
+        s,
+        "\n### Allowed, and why\n\n| check | reason | cases |\n|---|---|---|"
+    );
+    for ((k, why), n) in &v.allowed {
+        let _ = writeln!(s, "| {k:?} | {why} | {n} |");
+    }
+
+    let _ = writeln!(s, "\n### Routing moves (Part 1 off P1)\n");
+    let _ = writeln!(s, "Chord held RMS per pair, dBFS.\n");
+    let _ = writeln!(s, "| case | P1 | P2 | P3 |\n|---|---|---|---|");
+    for (c, r) in cases.iter().zip(runs) {
+        if c.is(BlockRef::Part, PartParams::OUTPUT) && c.any(|v| v != 0.0) {
+            let [a, b, d] = r.held[1];
+            let _ = writeln!(
+                s,
+                "| {} | {} | {} | {} |",
+                c.label(),
+                dbs(a),
+                dbs(b),
+                dbs(d)
+            );
+        }
+    }
+
+    let _ = writeln!(s, "\n### CPU\n");
+    let budget = runs.iter().map(|r| r.budget).max().unwrap_or(0);
+    let over = runs.iter().filter(|r| r.over_blocks > 0).count();
+    let short = runs
+        .iter()
+        .filter(|r| (r.most_busy as usize) < CHORD.len())
+        .count();
+    let _ = writeln!(
+        s,
+        "Budget {budget} cycles/sample (rev V, 70 %), {} of it reserved for the FX bus. Cases \
+         billed over the budget without shedding: {over}. Cases whose chord got fewer than {} \
+         voices: {short}.\n",
+        FxBus::COST.0,
+        CHORD.len()
+    );
+    let mut by: BTreeMap<String, (usize, usize)> = BTreeMap::new();
+    for (c, r) in cases.iter().zip(runs) {
+        let e = by.entry(c.patch.name()).or_default();
+        e.1 += 1;
+        if (r.most_busy as usize) < CHORD.len() {
+            e.0 += 1;
+        }
+    }
+    let _ = writeln!(
+        s,
+        "| Sound | cases with a short chord | cases |\n|---|---|---|"
+    );
+    for (p, (n, of)) in by {
+        let _ = writeln!(s, "| {p} | {n} | {of} |");
+    }
+    let _ = writeln!(s);
+    let mut top: Vec<(&Case, &Run)> = cases.iter().zip(runs).collect();
+    top.sort_by_key(|(_, r)| std::cmp::Reverse(r.voice_cost));
+    let _ = writeln!(
+        s,
+        "| costliest settings | voice cost | max bill | most voices |\n|---|---|---|---|"
+    );
+    let mut seen = Vec::new();
+    for (c, r) in top {
+        let key = (c.param.name(), c.patch.name());
+        if seen.contains(&key) {
+            continue;
+        }
+        seen.push(key);
+        let _ = writeln!(
+            s,
+            "| {} | {} | {} | {} |",
+            c.label(),
+            r.voice_cost,
+            r.bill_max,
+            r.most_busy
+        );
+        if seen.len() == 12 {
+            break;
+        }
+    }
+    s
+}

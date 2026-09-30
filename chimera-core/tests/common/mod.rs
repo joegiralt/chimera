@@ -9,6 +9,7 @@
 pub mod codec_util;
 pub mod golden;
 pub mod rig;
+pub mod sweep;
 
 pub use rig::Rig;
 
