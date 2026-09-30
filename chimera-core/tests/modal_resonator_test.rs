@@ -456,6 +456,7 @@ fn bowed_low_notes_sound() {
     for b in 0..blocks {
         rig.render(&mut block, &p, &mods);
         if b == 0 {
+            eprintln!("PEAK0 {}", common::peak(&block));
             assert!(common::peak(&block) > 1e-3, "silent first block");
         }
         assert!(rig.is_active(), "freed at block {b}");
