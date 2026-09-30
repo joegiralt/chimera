@@ -1,4 +1,4 @@
-use crate::dsp::ease::{Ramp, at, step_of};
+use crate::dsp::ease::{Gate, Ramp, at, step_of};
 use crate::params::FolderParams;
 
 /// Post-filter wavefolder.
@@ -10,8 +10,8 @@ use crate::params::FolderParams;
 pub struct Wavefolder {
     fold: Ramp,
     sym: Ramp,
-    /// MIX × on.
     mix: Ramp,
+    gate: Gate,
 }
 
 impl Wavefolder {
@@ -24,16 +24,17 @@ impl Wavefolder {
         *self = Self::new();
     }
 
-    /// Process a block of samples in-place.
-    pub fn process(&mut self, buf: &mut [f32], params: &FolderParams) {
-        let on = if params.fold < 0.001 { 0.0 } else { 1.0 };
+    /// Process a block of samples in-place; `on` is whether the stage runs
+    /// (`Voice::stage_runs`), which its gate fades.
+    pub fn process(&mut self, buf: &mut [f32], params: &FolderParams, on: bool) {
         let f = self.fold.step(params.fold);
         let y = self.sym.step(params.symmetry);
-        let m = self.mix.step(params.mix * on);
-        if m == (0.0, 0.0) {
+        let m = self.mix.step(params.mix);
+        let g = self.gate.step(on);
+        if g == (0.0, 0.0) {
             return;
         }
-        if f.0 == f.1 && y.0 == y.1 && m.0 == m.1 {
+        if f.0 == f.1 && y.0 == y.1 && m.0 == m.1 && g == (1.0, 1.0) {
             let (fold, sym, mix) = (f.1, y.1, m.1); // SYM 0.5: no bias
             let gain = 1.0 + fold * fold * 6.0; // quadratic gain ramp
             let bias = (sym - 0.5) * 0.5;
@@ -46,14 +47,15 @@ impl Wavefolder {
             return;
         }
         let n = buf.len();
-        let (sf, sy, sm) = (step_of(f, n), step_of(y, n), step_of(m, n));
+        let (sf, sy, sm, sg) = (step_of(f, n), step_of(y, n), step_of(m, n), step_of(g, n));
         // Silence's fold at the block's ends, lerped between: one fold a
         // sample, not two.
         let rest = |fold: f32, sym: f32| fold_wave((sym - 0.5) * 0.5 * (1.0 + fold * fold * 6.0));
         let r = (rest(f.0, y.0), rest(f.1, y.1));
         let sr = step_of(r, n);
         for (i, sample) in buf.iter_mut().enumerate() {
-            let (fold, sym, mix) = (at(f.0, sf, i), at(y.0, sy, i), at(m.0, sm, i));
+            let (fold, sym) = (at(f.0, sf, i), at(y.0, sy, i));
+            let mix = at(m.0, sm, i) * at(g.0, sg, i);
             let dry = *sample;
             let (bias, gain) = ((sym - 0.5) * 0.5, 1.0 + fold * fold * 6.0);
             let folded = fold_wave((dry + bias) * gain) - at(r.0, sr, i);
@@ -92,7 +94,7 @@ mod tests {
             };
             let mut f = Wavefolder::new();
             let mut buf = [0.0f32; 64];
-            f.process(&mut buf, &p);
+            f.process(&mut buf, &p, true);
             assert!(buf.iter().all(|&x| x.abs() < 1e-6), "SYM {symmetry}");
         }
     }

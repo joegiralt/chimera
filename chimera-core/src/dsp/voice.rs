@@ -4,7 +4,7 @@ use core::ptr::addr_of_mut;
 use chimera_hal::BLOCK_SIZE;
 
 use crate::addr::{BlockRef, Blocks, ParamAddr};
-use crate::block::apply_offset;
+use crate::block::{ParamId, apply_offset};
 use crate::dsp::algo::engine::AlgoLive;
 use crate::dsp::algo::params::AlgoParams;
 use crate::dsp::dc_blocker::DcBlocker;
@@ -181,18 +181,22 @@ impl Voice {
     pub const FADE: u16 = 2 * BLOCK_SIZE as u16;
 
     /// The wavefolder, which runs once FOLD is 0.001 or more: the bench's
-    /// FOLD row less 1 OP (measured 2026-09-28, rev V at 480 MHz), 43, plus
-    /// its ramp, which a route runs every block: 42 instructions a sample
-    /// against the steady 24, and the offset's 1 (ADR 0060); 19 × 1.46 ×
-    /// 1.1 = 30.5 by ADR 0056's host method; 73.5, rounded up.
-    pub const FOLD_COST: Cost = Cost(80);
+    /// FOLD row less 1 OP (measured 2026-09-28, rev V at 480 MHz), 43, and
+    /// the offset of silence's fold (ADR 0060), 1 instruction a sample, 1.6
+    /// by ADR 0056's host method.
+    pub const FOLD_COST: Cost = Cost(45);
+    /// FOLD, SYM or MIX routed: the fold ramps every block, 42 instructions
+    /// a sample against the steady 24; 18 × 1.46 × 1.1 = 28.9.
+    pub const FOLD_RAMP_COST: Cost = Cost(29);
     /// The drive stage, which runs once DRIVE is 0.001 or more. Measured:
     /// bench-t13d's DRIVE LO row (541) less that run's 1 OP (488) = 53;
-    /// bench-t13c's DRIVE row (540) less that run's 1 OP (483) = 57. Plus
-    /// its ramp, which a route runs every block: 36 instructions a sample
-    /// against the steady 22; 14 × 1.46 × 1.1 = 22.5 by ADR 0056's host
-    /// method; 79.5, rounded up.
-    pub const DRIVE_COST: Cost = Cost(80);
+    /// bench-t13c's DRIVE row (540) less that run's 1 OP (483) = 57.
+    /// Billed as the larger: 57.
+    pub const DRIVE_COST: Cost = Cost(57);
+    /// DRIVE, TONE or MIX routed: the drive ramps every block, 36
+    /// instructions a sample against the steady 22; 14 × 1.46 × 1.1 = 22.5.
+    /// Unrouted, only the UI moves them: brief, in the headroom (ADR 0061).
+    pub const DRIVE_RAMP_COST: Cost = Cost(23);
 
     /// Cycles/sample of a voice playing `p` under `mods`.
     pub fn cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
@@ -212,18 +216,48 @@ impl Voice {
         })
     }
 
-    /// The folder and the drive stage, each once its stored amount runs it
-    /// or a route of nonzero amount may.
+    /// Whether the folder and the drive stage run: once the stored amount
+    /// is 0.001 or more, or a route of nonzero amount may raise it. The bill
+    /// and each stage's gate read the same answer.
+    pub fn stage_runs(p: &ParamSnapshot, mods: &ModState) -> (bool, bool) {
+        let routed = |block, param| mods.moves_addr(ParamAddr::new(block, param));
+        (
+            p.folder.fold >= 0.001 || routed(BlockRef::Folder, FolderParams::FOLD),
+            p.drive.drive >= 0.001 || routed(BlockRef::Drive, DriveParams::DRIVE),
+        )
+    }
+
+    /// The folder and the drive stage as they run, each with its ramp while
+    /// a route moves one of its settings.
     fn stage_cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
-        let runs = |stored: f32, block, param| {
-            stored >= 0.001 || mods.moves_addr(ParamAddr::new(block, param))
+        let (fold, drive) = Self::stage_runs(p, mods);
+        let routed = |block, params: [ParamId; 3]| {
+            params
+                .iter()
+                .any(|&param| mods.moves_addr(ParamAddr::new(block, param)))
         };
-        let fold = runs(p.folder.fold, BlockRef::Folder, FolderParams::FOLD);
-        let drive = runs(p.drive.drive, BlockRef::Drive, DriveParams::DRIVE);
-        [(fold, Self::FOLD_COST), (drive, Self::DRIVE_COST)]
-            .into_iter()
-            .filter(|&(on, _)| on)
-            .fold(Cost::ZERO, |a, (_, c)| a + c)
+        let mut c = Cost::ZERO;
+        if fold {
+            c = c + Self::FOLD_COST;
+            let fp = [
+                FolderParams::FOLD,
+                FolderParams::SYMMETRY,
+                FolderParams::MIX,
+            ];
+            if routed(BlockRef::Folder, fp) {
+                c = c + Self::FOLD_RAMP_COST;
+            }
+        }
+        if drive {
+            c = c + Self::DRIVE_COST;
+            if routed(
+                BlockRef::Drive,
+                [DriveParams::DRIVE, DriveParams::TONE, DriveParams::MIX],
+            ) {
+                c = c + Self::DRIVE_RAMP_COST;
+            }
+        }
+        c
     }
 
     /// The sample rate is stored once (spec §3), not passed per call. A
@@ -529,6 +563,8 @@ impl Voice {
         // The modulators run every block, fading or not, from the settings
         // the voice plays (spec § Signal flow 1).
         let src = if self.fade == 0 { params } else { &self.played };
+        // The stages run, and fade their gates, as the allocator bills them.
+        let (fold_on, drive_on) = Self::stage_runs(src, mod_state);
         let key = self.held;
         if self.fade == 0 {
             self.vca = VcaRoutes::of(mod_state);
@@ -628,14 +664,14 @@ impl Voice {
         // 1. Engine → raw oscillator output
         self.slot.render(output, m, live, sample_rate, pool);
 
-        // 2. Drive
-        self.drive.process(output, &m.drive);
+        // 2. Drive, gated as it's billed.
+        self.drive.process(output, &m.drive, drive_on);
 
         // 3. Filter
         self.filter.process(output, &m.filter, sample_rate);
 
         // 4. Wavefolder
-        self.folder.process(output, &m.folder);
+        self.folder.process(output, &m.folder, fold_on);
 
         // 5. DC from the engine, the drive, the filter and the fold: none
         // reaches the VCA (ADR 0060).

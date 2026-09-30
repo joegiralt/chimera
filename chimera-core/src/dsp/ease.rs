@@ -65,6 +65,41 @@ impl Ramp {
     }
 }
 
+/// Blocks a stage's on/off gate takes: 20 ms at 48 kHz, as `EASE_S`.
+pub const GATE_BLOCKS: u8 = 15;
+
+/// A stage's on/off, faded linearly over `GATE_BLOCKS` blocks so a fixed
+/// 20 ms is all it runs past its off (and is billed off). Zero bytes are
+/// unprimed: the first block lands.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Gate {
+    /// Blocks of the fade open, `0..=GATE_BLOCKS`.
+    open: u8,
+    primed: bool,
+}
+
+impl Gate {
+    /// This block's `(from, to)` of the wet's share.
+    #[inline]
+    pub fn step(&mut self, on: bool) -> (f32, f32) {
+        let from = if self.primed {
+            self.open
+        } else if on {
+            GATE_BLOCKS
+        } else {
+            0
+        };
+        self.open = if on {
+            (from + 1).min(GATE_BLOCKS)
+        } else {
+            from.saturating_sub(1)
+        };
+        self.primed = true;
+        let share = |n: u8| f32::from(n) / f32::from(GATE_BLOCKS);
+        (share(from), share(self.open))
+    }
+}
+
 /// Sample `i` of a block's ramp from `from` by `step` a sample: the last
 /// lands on `to`.
 #[inline(always)]
@@ -100,6 +135,19 @@ mod tests {
             last = e.step(1.0, k).1;
         }
         assert_eq!(last, 1.0);
+    }
+
+    #[test]
+    fn a_gate_lands_first_then_fades_in_15_blocks() {
+        let mut g = Gate::default();
+        assert_eq!(g.step(true), (1.0, 1.0));
+        let mut last = 1.0;
+        for _ in 0..GATE_BLOCKS {
+            last = g.step(false).1;
+        }
+        assert_eq!(last, 0.0);
+        assert_eq!(g.step(false), (0.0, 0.0));
+        assert_eq!(g.step(true).1, 1.0 / f32::from(GATE_BLOCKS));
     }
 
     #[test]

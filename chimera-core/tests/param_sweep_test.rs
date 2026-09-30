@@ -330,9 +330,14 @@ fn zombie_ok(c: &Case) -> Option<&'static str> {
     None
 }
 
-/// Why the tail may hold its level to the bound, yet not be stuck.
-fn stuck_ok(c: &Case) -> Option<&'static str> {
-    if c.rings_on() && c.is(BlockRef::Folder, FolderParams::FOLD) && c.any(|v| v >= 0.75) {
+/// Why the tail may hold its level to the bound, yet not be stuck: it
+/// still falls (`last < first`), however slowly.
+fn stuck_ok(c: &Case, (first, last): (f32, f32)) -> Option<&'static str> {
+    if last < first
+        && c.rings_on()
+        && c.is(BlockRef::Folder, FolderParams::FOLD)
+        && c.any(|v| v >= 0.75)
+    {
         return Some(
             "FOLD's gain (×4.4 at 0.75, ×7 at 1) folds a ringing model's tail back up to full \
              level: the ring decays at DAMP's T60 beneath it",
@@ -490,7 +495,7 @@ fn judge(cases: &[Case], runs: &[Run], t: Timing) -> Verdict {
                     )),
                 }
             } else if last >= first * 0.89 {
-                match stuck_ok(c) {
+                match stuck_ok(c, (first, last)) {
                     Some(why) => allowed.push((Kind::Stuck, why)),
                     None => out.push((
                         Kind::Stuck,
@@ -1002,6 +1007,42 @@ fn jumps_never_click() {
                 .collect();
             if !jumps.is_empty() {
                 bad.push(format!("{}: {jumps:?}", c.label()));
+            }
+        }
+    }
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
+}
+
+/// DRIVE's on/off at TONE's ends, where its wet at 0.001 is 2.5 dB under
+/// the dry: the gate's 20 ms fade (ADR 0061) never clicks.
+#[test]
+fn drive_jumps_never_click_at_any_tone() {
+    let symp = Patch::ModalInit(ResonatorMode::Sympathetic);
+    let (drive, tone) = (
+        find(BlockRef::Drive, DriveParams::DRIVE),
+        find(BlockRef::Drive, DriveParams::TONE),
+    );
+    let mut bad = Vec::new();
+    for patch in [symp, Patch::Probe] {
+        for t in [0.0, 1.0] {
+            for (from, to) in [(0.0, 1.0), (1.0, 0.0)] {
+                let c = Case {
+                    param: drive,
+                    patch,
+                    mv: Move::Jump { from, to },
+                    wet: false,
+                };
+                let mut b = c.bench();
+                b.set(&tone, t);
+                let r = play(&mut b, Some(&drive), c.mv, FAST);
+                let jumps: Vec<_> = r
+                    .clicks
+                    .iter()
+                    .filter(|x| x.0.starts_with("jump"))
+                    .collect();
+                if !jumps.is_empty() {
+                    bad.push(format!("TONE {t}, {}: {jumps:?}", c.label()));
+                }
             }
         }
     }
