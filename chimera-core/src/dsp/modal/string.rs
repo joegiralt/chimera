@@ -547,10 +547,15 @@ impl StringVoice {
         self.string.shape(position, self.period);
     }
 
-    /// Retunes to `freq`, the chain a step towards `structure`, mid-note.
-    pub(super) fn tune(&mut self, freq: f32, sample_rate: u32, structure: f32) {
+    /// Retunes to `freq`, the chain a step towards `structure`, mid-note;
+    /// on a note's first block (`snap`) all the way.
+    pub(super) fn tune(&mut self, freq: f32, sample_rate: u32, structure: f32, snap: bool) {
         if self.stiff {
-            self.structure = Dispersion::slew(self.structure, structure, self.period, DISP_SLEW);
+            self.structure = if snap {
+                structure
+            } else {
+                Dispersion::slew(self.structure, structure, self.period, DISP_SLEW)
+            };
         }
         let (period, other, w) = self.dispersed(freq, sample_rate);
         self.string.set_period(period, other, w);
@@ -559,6 +564,12 @@ impl StringVoice {
     /// The chain has not reached `structure`: `tune` again next block.
     pub(super) fn gliding(&self, structure: f32) -> bool {
         self.stiff && self.structure != structure
+    }
+
+    /// The chain's STRUCTURE and the line's length: for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub(super) fn line(&self) -> (f32, usize) {
+        (self.structure, self.string.delay)
     }
 
     /// Note-off: the loop gain ramps from `held` to `to` (`Release`).
