@@ -247,13 +247,13 @@ fn silences(c: &Case) -> Option<&'static str> {
     if c.is_op(AlgoOpParams::D2R) && c.any(|v| v == 31.0) {
         return Some("D2R 31 decays the held note to silence within its first 10 ms");
     }
-    if c.patch == Patch::ModalInit(ResonatorMode::Modal)
-        && c.is(BlockRef::Filter, FilterParams::MODE)
+    if c.is(BlockRef::Filter, FilterParams::MODE)
         && c.any(|v| v == 5.0)
+        && c.patch.sound().params.filter.cutoff >= 18_000.0
     {
         return Some(
-            "HP24 at INIT's 1 kHz cutoff: BANK INIT's C4 rings its modes under it, and since \
-             the filter's C1 saturate (ADR 0063) no buzz over it",
+            "HP24 at an open cutoff (INIT's 20 kHz) passes only what lies above it: a clean \
+             tone, BANK's since the filter's C1 saturate (ADR 0063), is silent there",
         );
     }
     None
@@ -328,24 +328,38 @@ fn zombie_ok(c: &Case) -> Option<&'static str> {
     None
 }
 
+/// A retuned SYMP tail may swell this much over the bound, as a level: 1 dB.
+const SWELL: f32 = 1.122;
+
 /// Why the tail may hold its level to the bound, yet not be stuck: the
 /// ring beneath it still decays.
-fn stuck_ok(c: &Case, (first, last): (f32, f32)) -> Option<&'static str> {
+fn stuck_ok(c: &Case, (first, last): (f32, f32), t: Timing) -> Option<&'static str> {
     if c.rings_on() && c.is(BlockRef::Folder, FolderParams::FOLD) && c.any(|v| v >= 0.75) {
-        return Some(
-            "FOLD's gain (×4.4 at 0.75, ×7 at 1) folds a ringing model's tail back up to full \
-             level, and as it falls through a fold it can rise: the ring decays at DAMP's T60 \
-             beneath it",
-        );
+        // The ring before the folder: the same case at FOLD 0 must decay.
+        let flat = Case {
+            mv: Move::Static(0.0),
+            ..*c
+        };
+        let (a, b) = play(&mut flat.bench(), Some(&c.param), flat.mv, t).tail;
+        if b < 0.89 * a {
+            return Some(
+                "FOLD's gain (×4.4 at 0.75, ×7 at 1) folds a ringing model's tail back up to \
+                 full level, and as it falls through a fold it can rise: the same case at FOLD \
+                 0, the ring before the folder, decays over the bound",
+            );
+        }
     }
     if c.patch == Patch::ModalInit(ResonatorMode::Sympathetic)
         && c.param.block == BlockRef::Pitch
         && matches!(c.mv, Move::Jump { .. })
+        && last <= first * SWELL
     {
         return Some(
-            "PITCH jumped four octaves in a ringing SYMP chord's tail re-tunes its halo, which \
-             swells as its strings re-split and then decays at twice DAMP's T60 (26 s measured \
-             on the engine after the jump), past the 4 s bound",
+            "PITCH jumped four octaves in a ringing SYMP chord's tail re-reads every halo \
+             line at a 16× shorter loop: the halo rings on at twice DAMP's T60 (28 s), and its \
+             unison pairs beat ±3 dB about once in 2 s, so two 0.2 s windows 4 s apart can read \
+             level (+0.2 dB measured, bounded by `SWELL`) while the ring beneath falls 3.4 dB \
+             (measured on the engine)",
         );
     }
     if last < first
@@ -512,7 +526,7 @@ fn judge(cases: &[Case], runs: &[Run], t: Timing) -> Verdict {
                     )),
                 }
             } else if last >= first * 0.89 {
-                match stuck_ok(c, (first, last)) {
+                match stuck_ok(c, (first, last), t) {
                     Some(why) => allowed.push((Kind::Stuck, why)),
                     None => out.push((
                         Kind::Stuck,
