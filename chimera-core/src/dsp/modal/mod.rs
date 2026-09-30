@@ -1400,13 +1400,6 @@ fn bow_tone(bright: f32) -> (f32, f32) {
     (BOW_LP * (1.0 - bright), 1.0 - pole)
 }
 
-/// The bow on its string: a half-length loop that inverts each pass
-/// (`BOW_LOOPS`) through `BowHair`. DAMP rings the lifted bow, BRIGHT
-/// low-passes the loop and the bow point alike, POS combs the output at the bow
-/// point, fading in over `BOW_POS_MIN`. The loop and the friction read
-/// the one tap, so the pitch holds: a friction reading POS's second tap
-/// bows a second loop, which takes the pitch. The tap's place is set once
-/// a block.
 /// A bow point `at` samples back, `at >= 2`: its whole samples and
 /// fraction, without a `floorf` (positive, so the cast truncates as floor).
 #[inline(always)]
@@ -1415,6 +1408,13 @@ fn split_back(at: f32) -> (usize, f32) {
     (i, at - i as f32)
 }
 
+/// The bow on its string: a half-length loop that inverts each pass
+/// (`BOW_LOOPS`) through `BowHair`. DAMP rings the lifted bow, BRIGHT
+/// low-passes the output (`bow_tone`), POS combs the output at the bow
+/// point, fading in over `BOW_POS_MIN`. The loop and the friction read
+/// the one tap, so the pitch holds: a friction reading POS's second tap
+/// bows a second loop, which takes the pitch. The tap's place is set once
+/// a block.
 #[inline(never)]
 fn render_bowed(
     b: &mut BowedString,
