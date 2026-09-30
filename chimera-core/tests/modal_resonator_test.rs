@@ -2002,3 +2002,47 @@ fn a_restrike_adds_to_the_ring() {
         assert!(db.abs() < 1.0, "{mode:?}: {db:.2} dB");
     }
 }
+
+/// A resting halo follows a small pitch change where it is: after a chord
+/// glide took a string round the fold to the octave above, a 0.1 %
+/// PITCH move moves every string 0.1 %, not an octave down; a fifth down
+/// takes every string whose line fits down a fifth.
+#[test]
+fn a_resting_halo_keeps_its_octave_under_a_pitch_move() {
+    use chimera_core::dsp::modal::{CHORD_COUNT, SymPool};
+    let at = |k: usize| (k as f32 + 0.5) / CHORD_COUNT as f32;
+    for note in [24u8, 31] {
+        for (from, to) in [(0, 1), (4, 5), (5, 6)] {
+            let mut p = ModalParams {
+                mode: ResonatorMode::Sympathetic,
+                structure: at(from),
+                ..Default::default()
+            };
+            let mut pool = SymPool::boxed();
+            let mut e = Box::new(ModalEngine::new_in(&mut pool, p.mode));
+            e.note_on(note, 100, &p, SR, &mut pool);
+            let mut block = [0.0; BLOCK_SIZE];
+            e.render(&mut block, &p, SR, &mut pool);
+            p.structure = at(to);
+            for _ in 0..2 * SR as usize / BLOCK_SIZE {
+                e.render(&mut block, &p, SR, &mut pool);
+            }
+            // Then a fifth down, where every line still fits: it follows.
+            for pitch in [1.001, 1.001 / 1.5] {
+                let before = e.halo_periods(&pool).unwrap();
+                let was = if pitch > 1.0 { 1.0 } else { 1.001 };
+                e.set_pitch(pitch);
+                e.render(&mut block, &p, SR, &mut pool);
+                let after = e.halo_periods(&pool).unwrap();
+                for s in 0..7 {
+                    let r = after[s] / before[s] * pitch / was;
+                    let fits = before[s] * was / pitch < 980.0;
+                    assert!(
+                        !fits || (r - 1.0).abs() < 1e-3,
+                        "note {note}, chord {from} to {to}, string {s}, pitch {pitch}: × {r}"
+                    );
+                }
+            }
+        }
+    }
+}
