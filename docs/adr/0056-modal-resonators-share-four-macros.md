@@ -21,7 +21,7 @@ So far (step A, task 1):
   constructors clamp to `[0, 0.9995]`, and NaN gives 0. Every string loop
   multiplies by one: STRING, the SYMP main string, each halo string and
   BOWED. On STRING and the SYMP main string it multiplies the loop's
-  sample after the BODY and STIFF taps, so no tap bypasses it.
+  sample after every in-loop stage, so none bypasses it.
 - `modal::loop_parts::DcBlocker` is a one-pole high-pass at `DC_HZ = 10`,
   `y = g·(x − x1) + r·y1`, `r = e^(−2π·10/fs)`, `g = (1 + r)/2`. Its gain
   is 1 at Nyquist and below 1 elsewhere.
@@ -81,6 +81,41 @@ Task 5 makes the four macros modulatable:
 - MODES latches at note-on. A sounding bank note keeps its modes, and the
   voice is billed for them (`ModalEngine::playing_cost`) until it ends.
 
+Task 8 adds STRUCTURE's dispersion on STRING and moves BODY out of the
+loop (#10):
+- `modal::dispersion::Dispersion` is a chain of four first-order allpasses
+  in the loop, after the low-pass and before the tuning allpass; the gain
+  follows them all. There is no new buffer.
+  - Its law follows Rings' `ap_gain` curve, `s/(0.15 + s)` (MIT, ADR 0032),
+    scaled by the period, as Rings scales its allpass line: each stage's
+    DC delay is `1 + 1.15·s/(0.15 + s)·0.1·period/4` samples. It is 1 at
+    STRUCTURE 0, a plain delay, and the chain's DC delay is capped at half
+    the period.
+  - Rings' fixed coefficient, −0.618·s/(0.15 + s), moved the 8th partial
+    of C3 by 0.95 cents. The scaled law moves it 24 cents at STRUCTURE 1,
+    and by the model about 21 at G1, 30 at C4 and 75 at C6: sharper up the
+    keyboard, as on piano wire.
+  - The chain's phase delay at f0 comes off the line (`split`'s `other`),
+    so the fundamental holds within 0.05 cents from STRUCTURE 0 to 1. At G1
+    and STRUCTURE 1 the line is about 880 samples, within the 981.
+  - A moved STRUCTURE re-splits the loop once a block. SYMP's main string
+    has none: its STRUCTURE tunes the halo.
+  - STIFF's two-sample mix is gone.
+- `modal::body::Body` is BODY: three fixed resonances on the output,
+  outside the loop, (102 Hz, Q 3, 1), (236 Hz, Q 4, 0.7) and (517 Hz, Q 3,
+  0.5). Each is a peak-normalized band-pass, and the output is
+  `(x + b·Σ gᵢ·bpᵢ(x)) / (1 + b/2)`, which peaks at about 1.4. It colours
+  without transposing: the old half-delay comb in the loop sounded low
+  notes an octave up. On SYMP it colours the main-and-halo mix. BODY is
+  latched at note-on, as a model-page setting.
+- A note-off's `Release` moves from each line to the voice: STRING and
+  SYMP's main string (`string::StringVoice`) and BOWED. Halo lines never
+  release.
+- Sympathetic is String's voice plus a lease, and is sized within one
+  align of it. That supersedes in part ADR 0054's const assert that Bowed
+  or String sizes the voice. `Instrument` is 162,232 B, which leaves
+  124,488 B of D2.
+
 ## Alternatives considered
 - Keep FDBK and clamp its range below the unity point: its useful range
   would be 0–0.012, and the knob would still be one bad mapping from a
@@ -106,5 +141,6 @@ Task 5 makes the four macros modulatable:
 
 ## Sources
 - docs/superpowers/specs/2026-09-29-modal-2-resonators-design.md § 2
-- docs/superpowers/plans/2026-09-29-modal-2-resonators.md, Tasks 1 and 2
+- docs/superpowers/plans/2026-09-29-modal-2-resonators.md, Tasks 1, 2 and 8
+- Mutable Instruments Rings, `dsp/string.cc` (`ap_gain`)
 - ADR 0040 (the 984-sample line), ADR 0054 (the dirty extent)

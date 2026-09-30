@@ -95,7 +95,6 @@ fn modal_is_finite_bounded_audible() {
     assert_finite_bounded_audible(Case::ModalInit);
 }
 #[test]
-#[ignore = "known broken: https://github.com/joegiralt/chimera/issues/10"]
 fn modal_is_pitched() {
     assert_pitched(Case::ModalInit);
 }

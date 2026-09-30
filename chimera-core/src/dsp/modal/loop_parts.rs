@@ -148,6 +148,11 @@ impl Allpass1 {
         self.eta = eta;
     }
 
+    #[cfg(test)]
+    pub fn eta(&self) -> f32 {
+        self.eta
+    }
+
     #[inline]
     pub fn process(&mut self, x: f32) -> f32 {
         let y = self.eta * (x - self.y1) + self.x1;
@@ -163,7 +168,6 @@ impl Allpass1 {
 }
 
 /// `Allpass1`'s phase delay at `w` rad/sample, in samples.
-#[cfg_attr(not(test), allow(dead_code))] // the dispersion's, next
 pub fn allpass_phase_delay(eta: f32, w: f32) -> f32 {
     1.0 - 2.0 * libm::atan2f(eta * libm::sinf(w), 1.0 + eta * libm::cosf(w)) / w
 }

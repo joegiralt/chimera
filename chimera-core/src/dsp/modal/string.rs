@@ -4,6 +4,8 @@
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 
+use super::body::{Body, BodyMix};
+use super::dispersion::Dispersion;
 use super::loop_parts::{Allpass1, LoopGain, MIN_LINE, Release, split};
 use crate::dsp::xorshift_noise;
 
@@ -25,10 +27,6 @@ pub(super) struct KsRenderParams {
     pub lp: f32,
     /// The loop's gain per pass.
     pub gain: LoopGain,
-    /// Half-delay comb, 0..1.
-    pub body: f32,
-    /// The two-sample stiffness mix, 0..1.
-    pub stiffness: f32,
     pub ens_rate: f32,
     pub ens_depth: f32,
     pub ens_mix: f32,
@@ -63,8 +61,6 @@ pub(super) struct KsString {
     ens_lfo_phase: u32,
     noise_state: u32,
     frac: Allpass1,
-    /// The loop gain's note-off ramp; a note-on's clear resets it.
-    release: Release,
 }
 
 impl KsString {
@@ -82,7 +78,6 @@ impl KsString {
             addr_of_mut!((*p).ens_lfo_phase).write(0);
             addr_of_mut!((*p).noise_state).write(NOISE_SEED);
             addr_of_mut!((*p).frac).write(Allpass1::default());
-            addr_of_mut!((*p).release).write(Release::HELD);
             slot.assume_init_mut()
         }
     }
@@ -200,7 +195,6 @@ impl KsString {
         self.ring_len = MIN_LINE + 2;
         self.dirty = self.ring_len;
         self.frac.reset();
-        self.release = Release::HELD;
     }
 
     /// What the next `clear` writes.
@@ -213,11 +207,6 @@ impl KsString {
     /// samples (#206).
     pub(super) fn ring_tap(&self, written: u32) -> f32 {
         self.behind(self.delay.min(written.max(1) as usize) - 1)
-    }
-
-    /// Bowed's ring: this sample's gain, `held` until a release.
-    pub(super) fn ring_gain(&mut self, held: LoopGain) -> LoopGain {
-        self.release.gain(held)
     }
 
     /// Bowed's ring: stores `x` through the allpass, stepping on round it.
@@ -245,33 +234,12 @@ impl KsString {
         self.dirty = MAX_STRING_DELAY;
     }
 
-    /// Note-off: the loop gain ramps from `held` to `to` (`Release`).
-    pub(super) fn release(&mut self, held: LoopGain, to: LoopGain) {
-        self.release.start(held, to);
-    }
-
-    /// Full render with all the KS+ features. See `KsRenderParams` for
-    /// the field meanings.
+    /// One pass of the loop, the low-pass, `disp` and the allpass, then
+    /// `gain` last, so nothing bypasses it; out through the ensemble.
     #[inline]
-    pub(super) fn tick_full(&mut self, p: &KsRenderParams) -> f32 {
+    fn tick_full(&mut self, p: &KsRenderParams, gain: LoopGain, disp: &mut Dispersion) -> f32 {
         let d = self.delay;
-        let mut filtered = self.lowpass(p);
-
-        // Stiffness: mix with a sample 7 newer (allpass-like dispersion)
-        if p.stiffness > 0.01 {
-            let stiff_sample = self.behind(d - 1 - 7 % d);
-            filtered = filtered * (1.0 - p.stiffness) + stiff_sample * p.stiffness;
-        }
-
-        // Body resonance: comb filter at half-delay
-        if p.body > 0.03 {
-            let body_sample = self.behind(d - 1 - d / 2);
-            filtered = filtered * (1.0 - p.body * 0.5) + body_sample * p.body * 0.5;
-        }
-
-        // The gain last, so no tap bypasses it.
-        let gain = self.release.gain(p.gain).get();
-        let filtered = self.frac.process(filtered * gain);
+        let filtered = self.frac.process(disp.process(self.lowpass(p))) * gain.get();
         self.advance();
         self.buffer[self.write_pos] = filtered;
 
@@ -301,10 +269,10 @@ impl KsString {
         output
     }
 
-    /// `tick_full` for a sympathetic string, which has no body, stiffness
-    /// or ensemble, and which `input` excites at its write position. The
-    /// last tick's output waits in `pending` and is stored with this
-    /// tick's input.
+    /// `tick_full` for a sympathetic string, which has no dispersion,
+    /// ensemble or release, and which `input` excites at its write
+    /// position. The last tick's output waits in `pending` and is stored
+    /// with this tick's input.
     #[inline]
     pub(super) fn tick_coupled(
         &mut self,
@@ -312,11 +280,9 @@ impl KsString {
         input: f32,
         pending: &mut f32,
     ) -> f32 {
-        debug_assert!(p.stiffness <= 0.01 && p.body <= 0.03);
         debug_assert!(p.ens_mix <= 0.01 || p.ens_depth <= 0.01);
         self.buffer[self.write_pos] = *pending + input;
-        let gain = self.release.gain(p.gain).get();
-        let filtered = self.frac.process(self.lowpass(p) * gain);
+        let filtered = self.frac.process(self.lowpass(p) * p.gain.get());
         self.advance();
         *pending = filtered;
         filtered
@@ -338,7 +304,120 @@ pub(super) fn lp_coeff(bright: f32) -> f32 {
     c * (1.0 - c)
 }
 
-crate::in_place::field_list!(KsString => KsString { buffer, write_pos, ring_len, delay, dirty, ens_lfo_phase, noise_state, frac, release });
+crate::in_place::field_list!(KsString => KsString { buffer, write_pos, ring_len, delay, dirty, ens_lfo_phase, noise_state, frac });
+
+/// STRING's string, and SYMP's main one: the loop, STRUCTURE's
+/// dispersion in it, BODY on its output and the note-off's ramp.
+pub(super) struct StringVoice {
+    pub(super) string: KsString,
+    disp: Dispersion,
+    body: Body,
+    /// BODY, latched at note-on (spec § 1).
+    body_mix: BodyMix,
+    release: Release,
+}
+
+crate::in_place::field_list!(StringVoice => StringVoice { string, disp, body, body_mix, release });
+
+impl StringVoice {
+    pub(super) fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
+        let p = slot.as_mut_ptr();
+        // SAFETY: `p` is valid and unaliased; the string is built in place
+        // and the rest written by value, before `assume_init_mut`.
+        unsafe {
+            KsString::init_in_place(crate::in_place::uninit_at(addr_of_mut!((*p).string)));
+            addr_of_mut!((*p).disp).write(Dispersion::default());
+            addr_of_mut!((*p).body).write(Body::new());
+            addr_of_mut!((*p).body_mix).write(Body::mix(0.0));
+            addr_of_mut!((*p).release).write(Release::HELD);
+            slot.assume_init_mut()
+        }
+    }
+
+    /// `freq`'s loop at `structure`: the dispersion set, and its phase
+    /// delay at f0 the line's to give back, so the pitch holds.
+    fn dispersed(&mut self, freq: f32, sample_rate: u32, structure: f32) -> (f32, f32, f32) {
+        let (period, _, w) = loop_at(freq, sample_rate);
+        let a = Dispersion::coeff(structure, period);
+        self.disp.set(a);
+        (period, Dispersion::phase_delay(a, w), w)
+    }
+
+    /// A note-on: plucks `freq` at `structure`, BODY latched at `body`.
+    pub(super) fn pluck(
+        &mut self,
+        (freq, sample_rate): (f32, u32),
+        structure: f32,
+        amplitude: f32,
+        body: f32,
+    ) {
+        let l = self.dispersed(freq, sample_rate, structure);
+        self.string.excite(l, amplitude);
+        self.disp.reset();
+        self.body.tune(sample_rate);
+        self.body_mix = Body::mix(body);
+        self.release = Release::HELD;
+    }
+
+    /// Retunes to `freq` at `structure`, mid-note.
+    pub(super) fn tune(&mut self, freq: f32, sample_rate: u32, structure: f32) {
+        let (period, other, w) = self.dispersed(freq, sample_rate, structure);
+        self.string.set_period(period, other, w);
+    }
+
+    /// Note-off: the loop gain ramps from `held` to `to` (`Release`).
+    pub(super) fn release(&mut self, held: LoopGain, to: LoopGain) {
+        self.release.start(held, to);
+    }
+
+    /// The string's next sample, before BODY.
+    #[inline]
+    pub(super) fn tick(&mut self, p: &KsRenderParams) -> f32 {
+        let gain = self.release.gain(p.gain);
+        self.string.tick_full(p, gain, &mut self.disp)
+    }
+
+    /// `x` through BODY, outside the loop.
+    #[inline]
+    pub(super) fn colour(&mut self, x: f32) -> f32 {
+        self.body.process(x, self.body_mix)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    extern crate std;
+    use super::*;
+    use crate::dsp::modal::loop_parts::allpass_phase_delay;
+    use crate::dsp::note_to_freq;
+    use crate::in_place::by_value;
+
+    /// G1 to C8, STRUCTURE 0 to 1: the line stays in `[MIN_LINE, MAX_LINE]`,
+    /// and the line, the allpass and the dispersion add to the period at
+    /// f0. G1 at 1 gives the chain its most.
+    #[test]
+    fn dispersion_stays_in_tune_and_in_bounds() {
+        // SAFETY: `init_in_place` writes every field.
+        let mut v = unsafe { by_value(StringVoice::init_in_place) };
+        for note in [31, 48, 84, 108] {
+            let freq = note_to_freq(note);
+            for s in [0.0, 0.5, 1.0] {
+                v.pluck((freq, 48_000), s, 1.0, 0.0);
+                let (period, _, w) = loop_at(freq, 48_000);
+                let d = v.string.delay();
+                assert!((MIN_LINE..=MAX_LINE).contains(&d), "{note} {s}: {d}");
+                let a = Dispersion::coeff(s, period);
+                let total = d as f32
+                    + allpass_phase_delay(v.string.frac.eta(), w)
+                    + Dispersion::phase_delay(a, w);
+                assert!(
+                    (total - period).abs() < 1e-2,
+                    "{note} {s}: {total} vs {period}"
+                );
+            }
+        }
+    }
+}
 
 /// Bytes `KsString::clear` has written on this thread: for the tests.
 #[cfg(any(test, feature = "test-support"))]

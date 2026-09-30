@@ -1,4 +1,4 @@
-// The SVF bandpass, fast tangent, cosine oscillator and stiffness table follow
+// The SVF bandpasses, fast tangent, cosine oscillator and stiffness table follow
 // Mutable Instruments Rings and stmlib (ADR 0032):
 //
 // Copyright 2014-2015 Emilie Gillet.
@@ -76,6 +76,13 @@ impl Svf {
         let lp = self.g * bp + self.state_2;
         self.state_2 = self.g * bp + lp;
         bp
+    }
+
+    /// `process_bp` at unity gain at its peak (Rings'
+    /// `FILTER_MODE_BAND_PASS_NORMALIZED`).
+    #[inline]
+    pub(super) fn process_bp_normalized(&mut self, input: f32) -> f32 {
+        self.r * self.process_bp(input)
     }
 }
 
