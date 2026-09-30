@@ -26,8 +26,8 @@
 - **Provenance (ADR 0032):** `chords.rs` and `dispersion.rs` carry Mutable Instruments' MIT notice (Copyright 2015 Emilie Gillet); `loop_parts.rs`, the body filter, the ensemble and the macro mapping are ours and say so.
 - **Green gate per task:** `just check` exits 0 (it runs the tests, the firmware builds, `just clippy`, `cargo fmt --check` and `just stack-check`). If ALSA's pkg-config is missing, set `PKG_CONFIG_PATH` as the Justfile says.
 - **Commits:** a terse plain sentence, no type prefix, never a Co-Authored-By or other attribution line. Stage named paths only. Never stage `docs/chimera-ui-ux-spec.md` or `chimera.bin`.
-- **Hardware:** no flash until Task 12, which runs last, after Task 13. Between tasks, the owner listens on the desktop (the demo renderer steps below, or `just desktop`).
-- **Task order (owner, 2026-09-30):** Tasks 1–11, then Task 13 (the EXC node), then Task 12 (the ship flash).
+- **Hardware:** no flash until Task 12, which runs last, after Tasks 13 and 14. Between tasks, the owner listens on the desktop (the demo renderer steps below, or `just desktop`).
+- **Task order (owner, 2026-09-30):** Tasks 1–11, then Task 13 (the EXC node), then Task 14 (the two-delay bow, #240), then Task 12 (the ship flash).
 
 ## Review Focus
 
@@ -37,6 +37,7 @@
 4. **An old patch with FDBK at 1.** A v1 STRING patch with FDBK 1 and DECAY 0 (today's runaway) should load and play bounded, with no DC. Test: `an_old_fdbk_1_patch_loads_stable` (Task 4).
 5. **The ensemble at full depth on G1.** DEPTH 1 at 0.1 Hz and at 6 Hz on the longest loop: the heads must stay inside the loop, with no clicks and a bounded output. Test: `ensemble_at_full_depth_on_g1_stays_in_the_line` (Task 9).
 6. **A soft key on Bowed (Task 13).** A velocity-20 note on the default Bowed should bow, and a routed DAMP pushed to its top after the lift should not hold the ring. Tests: `a_soft_bowed_note_sounds`, and `macros_are_routable` with BOWED's DAMP through a release (Task 13).
+7. **The bow's splice under a sweep at the extremes (Task 14).** POS swept end to end by a square LFO at G1 (the longest line) and at C7 (a bridge line of a few samples), at FORCE 1 and SPEED 1: the split must stay within `[1, d − 1]`, the sum must stay the line, and nothing may click or run away. Tests: `a_bowed_pos_sweep_does_not_click`, `bowed_is_stable_and_in_tune_at_every_corner` and the unit test `a_splice_step_keeps_the_loop_length` (Task 14).
 
 ## Spec ambiguities ruled here
 
@@ -53,12 +54,25 @@
   - **COLOR** keeps the old `ks_color` law: `⌊(1 − COLOR)·7⌋` smoothing passes, 8 steps. The old hidden 0.8 is one pass, today's. A continuous one-pole would not keep INIT bit for bit.
   - **STRUCTURE stays dimmed on BOWED.** The owner named DAMP, BRIGHT and POS.
   - **DAMP on BOWED** sets the lifted bow's release target; the bowed loop keeps `BOW_GAIN` while the bow is on, as before.
-  - **POS on BOWED** is a second, interpolated tap feeding only the friction, so the loop's period, and the pitch, are untouched. It uses the pluck's comb law and 0.03 threshold.
-  - **BRIGHT on BOWED** is the strings' linear-phase 3-tap low-pass at `0.25·(1 − BRIGHT)`, so it adds no delay. At BRIGHT 1 the tap is read alone.
-  - **Old Bowed patches' macros:** v1 Bowed stored BRIGHT, DAMP and POS but never read them. They translate to the values that reproduce today's Bowed (BRIGHT 1, POS 0, DAMP = `damp_for(RELEASE_T60)`), extending "FORCE and SPEED reproduce today's sound" to the three newly live macros. The held note is pinned bit for bit. The release matches to within the `powf`/`logf` round trip.
+  - ~~**POS on BOWED** is a second, interpolated tap feeding only the friction, so the loop's period, and the pitch, are untouched. It uses the pluck's comb law and 0.03 threshold.~~ Superseded by Task 14 (POS became an output comb in Task 13, then the bow position in Task 14).
+  - ~~**BRIGHT on BOWED** is the strings' linear-phase 3-tap low-pass at `0.25·(1 − BRIGHT)`, so it adds no delay. At BRIGHT 1 the tap is read alone.~~ Superseded by Task 14.
+  - ~~**Old Bowed patches' macros:** v1 Bowed stored BRIGHT, DAMP and POS but never read them. They translate to the values that reproduce today's Bowed (BRIGHT 1, POS 0, DAMP = `damp_for(RELEASE_T60)`), extending "FORCE and SPEED reproduce today's sound" to the three newly live macros. The held note is pinned bit for bit. The release matches to within the `powf`/`logf` round trip.~~ Superseded by Task 14: the old sound was the bug (#240).
   - **The bow's lift** sheds the note's force over `RELEASE_SAMPLES` at any FORCE (`lift = force / RELEASE_SAMPLES`), which equals today's `BOW_LIFT` at full force.
   - **EXC's settings** are note-on and unmodulatable, like the model page. Step B's mixer decides what becomes live.
   - **EXC's header** reads the exciter's name (PLUCK, STRIKE, BOW), and the map node reads EXC. The Part opens on EXC, the chain's first node.
+- **Task 14 (owner, 2026-09-30, #240).** The amended spec's § 2 BOWED leaves these open; they are ruled here:
+  - **One ring, two lines, spliced at the bow.** The ring holds the bridge line's cells and then the nut line's. Each sample, at the write the nut line's oldest cell is read (the nut's return) and the bridge line's input is written; `Lb` cells behind it the bridge line's cell is read (the bridge's return) and the nut line's input is written in its place. The ring's loop length `d` is `Lb + Ln`, so the two lines cost no new memory (D2 +0 B; `BowedString` grows by a few registers, inside `ModelSlot`'s 4,160 B). Two separate rings would need about 1.5× the line (+1.8 KB a voice, past `ModelSlot`).
+  - **Pitch.** The loop is `Lb + Ln` whole samples, the bridge filter's one sample (`BRIDGE_DELAY`) and the tuning allpass's fraction on the bridge line's input: `KsString::set_period(period, BRIDGE_DELAY, w)`, the existing `split` and `eta_for`. Each end reflects inverted (nut −1, bridge −g·H), so the wave comes back upright once a period: C3 is 130.8 Hz.
+  - **The split is whole samples.** `Lb = round(β·d)`, clamped to `[1, d − 1]`, with β = `BETA_MIN + (BETA_MAX − BETA_MIN)·POS`, `BETA_MIN = 0.06` and `BETA_MAX = 0.5` (near the bridge to the middle). The sum stays `d`, so the pitch is exact at every split. A fractional split needs two interpolated reads, whose loss varies with the fraction and would move the tone as much as BRIGHT does; two allpasses cost more and keep the whole-sample crossing. A whole sample of bow position is 1/d of the string: 0.3 % at C3, 4 % at C7, where few harmonics sound.
+  - **The split glides.** One whole-sample step at most every `BOW_SLEW = 32` samples, at the block's samples 0 and 32: two a block, `DISP_SLEW`'s rate. A step of +1 re-reads the last bridge return (held in the bridge filter's register) and drops one nut-line sample; a step of −1 writes the nut line's input into both cells, repeating one. Either way the sum is unchanged and nothing is read from the wrong line.
+  - **The bow table (ours).** `ρ(Δv) = w⁴ / (w⁴ + Δv⁴ + 1e-20)` with `w = BOW_WIDTH·force`, `BOW_WIDTH = 0.3`: 1 at rest (the string sticks), ½ at `|Δv| = w`, falling as `Δv⁻⁴` (it slips). The push `Δv·ρ` is at most `0.57·w`. FORCE widens the stick region, which is its pressure; the curve has no offset, since an offset puts DC into the string. Force 0 gives `ρ = 0`, exactly, so a lifted bow lets the string ring free. One `vdiv.f32` a sample, no `tanhf`, no `powf`. STK's table (`|x·slope + offset| + 0.75` to the −4th, slope `5 − 4·pressure`) is not used.
+  - **The output** is the wave the bow sends toward the bridge, × `BOW_OUT`: what the bridge hears `Lb` samples later, with the same spectrum, and non-zero from the first sample, so a low note sounds in its first block (#206). `BOW_OUT` is set so the v1 Bowed patch's held C3 is within ±1 dB of the old bow's RMS (Step 1 records it).
+  - **BRIGHT** is the bridge filter, `c/2·(a[n] + a[n−2]) + (1 − c)·a[n−1]` on the bridge's returns, `c = BOW_BRIGHT·(1 − BRIGHT)`, `BOW_BRIGHT = 0.5`: linear phase, one sample's delay at every frequency, `|H| ≤ 1`. It is in the loop once a period, so it sets how fast the upper harmonics lose energy, and the bow no longer re-saturates them. If `bowed_bright_is_heard` reads under 3 dB at `BOW_BRIGHT = 0.5`, square the filter (five taps, two samples' delay, `BRIDGE_DELAY = 2.0`), still linear phase; don't raise `c` past 0.5, which would break `|H| ≤ 1`.
+  - **DAMP** keeps Task 13's law: the bridge's `LoopGain` is `BOW_GAIN` while bowed, and ramps at note-off to `LoopGain::from_t60(t60(damp), f0)` through `Release`. That is exact per period, since the gain is met once a period.
+  - **FORCE and SPEED** keep Task 13's easing (`BOW_EASE` a sample, from the block's values while bowing), the lift, `bow_force`, `BOW_SPEED = 0.3` and `vel_scale`. The force now sets `w`; `w⁴` is two multiplies a sample from the eased force.
+  - **v1 Bowed patches** translate to FORCE 0.5, SPEED 0.5 (the defaults), POS 0.15 (β ≈ 0.126, about an eighth of the string from the bridge, a normal contact point), BRIGHT 0.5 (`c = 0.25`, a moderately lossy bridge) and DAMP `damp_for(0.5)` (a 0.5 s ring after the lift, where the old bow choked in 0.12 s). INIT is untouched: it is STRING's, and at MODEL → BOWED it bows at POS 0 (β 0.06, near the bridge), BRIGHT 0.3 and INIT's long ring.
+  - **Stability.** The loop's linear gain is `g·|H| < 1` per period (nut −1, bridge `−g·H`, `g` a `LoopGain`), and the junction adds at most `0.57·w` to each line a sample, so every wave is bounded by `2·0.57·BOW_WIDTH / (1 − LoopGain::MAX)`. In practice the string moves at about the bow's speed; the tests hold the output to 4.0. The output keeps its blocker.
+  - **Supersedes** Task 13's three parked Bowed DSP findings (the POS crossfade at 0.03, BRIGHT through both taps, hoisting the per-sample work): the code they were about is deleted.
 - **Cost.** SYMP's host estimate (950) is above the +30–60 the spec expected: the halo's seven fractional allpasses and blockers add about 80. Unless the ship bench reads ≤ 883, SYMP gets 5 voices on rev V instead of 6. The bench decides (Task 12).
 
 ## Files
@@ -66,23 +80,24 @@
 | File | Responsibility | Tasks |
 |---|---|---|
 | `chimera-core/src/dsp/modal/loop_parts.rs` (new, ours) | `LoopGain`, `DcBlocker`, `Allpass1`, `dc_phase_delay`, `allpass_phase_delay`, `eta_for`, `split`, `Release` | 1, 2, 7 |
-| `chimera-core/src/dsp/modal/string.rs` | `KsString`: ring + fractional tap, 3-tap low-pass, DC blocker; `StringVoice` (body, ensemble, dispersion); COLOR's passes, Bowed's taps | 1, 2, 8, 9, 13 |
+| `chimera-core/src/dsp/modal/string.rs` | `KsString`: ring + fractional tap, 3-tap low-pass, DC blocker; `StringVoice` (body, ensemble, dispersion); COLOR's passes, Bowed's taps (Task 13, deleted by 14), `KsString::guide` (14) | 1, 2, 8, 9, 13, 14 |
+| `chimera-core/src/dsp/modal/bow.rs` (new, ours, after Smith) | `BowedString`, the bow table, the split and its glide, the bridge filter, `render` in spans and its `tick` reference | 14 |
 | `chimera-core/src/dsp/modal/dispersion.rs` (new, MIT) | `Dispersion`: 4 first-order allpasses, Rings' `ap_gain` law | 8 |
 | `chimera-core/src/dsp/modal/body.rs` (new, ours) | `Body`: three fixed SVF resonances on the output | 8 |
 | `chimera-core/src/dsp/modal/ensemble.rs` (new, ours) | `Ensemble`: quadrature LFO, 3 interpolated heads | 9 |
 | `chimera-core/src/dsp/modal/chords.rs` (new, MIT) | `CHORDS: [[f32; 7]; 11]`, `chord_of`, `fold` | 10 |
-| `chimera-core/src/dsp/modal/params.rs` | the new `ModalParams`, `BankModes`, `MODAL_SPECS`, `reads`, `page_cells`, `translate_v1`; EXC's fields, `ModalPage`, `bow_force` | 3, 4, 5, 13 |
-| `chimera-core/src/dsp/modal/mod.rs` | `ModalEngine` (eased macros, deferred pluck, release, playing cost), models' render; the playable Bow and the strike's BURST | 1–10, 13 |
+| `chimera-core/src/dsp/modal/params.rs` | the new `ModalParams`, `BankModes`, `MODAL_SPECS`, `reads`, `page_cells`, `translate_v1`; EXC's fields, `ModalPage`, `bow_force`; v1 Bowed's new defaults | 3, 4, 5, 13, 14 |
+| `chimera-core/src/dsp/modal/mod.rs` | `ModalEngine` (eased macros, deferred pluck, release, playing cost), models' render; the playable Bow and the strike's BURST; Bowed wired to `bow.rs`, `COST_BOWED` | 1–10, 13, 14 |
 | `chimera-core/src/storage/{codes,block_codec,sound,system}.rs` | `RETIRED`, `Translation`, `Retired`, `TRANSLATIONS` | 3, 4 |
 | `chimera-core/src/dsp/voice.rs:162-170` | `held_model_extra` through `playing_cost` | 5 |
 | `chimera-core/src/ui/{block_def,view,block_registry}.rs` | `SlotBinding::ModalPanel`, `SlotCtx::model`, MDL/MDL2 pages, SPACE, dimming; the EXC node | 6, 13 |
-| `chimera-core/tests/modal_resonator_test.rs` (new) | the spec's audio tests, plus Review Focus 1, 2, 3, 5 | 1–10, 13 |
+| `chimera-core/tests/modal_resonator_test.rs` (new) | the spec's audio tests, plus Review Focus 1, 2, 3, 5, 7 | 1–10, 13, 14 |
 | `chimera-core/tests/common/mod.rs` | `clicks`, `modal_engine`, `play_modal` | 1 |
 | `chimera-core/tests/{golden,codec_compat,modulatable,click_free,sanity,memory_budget,cost,disk_codes,part_page,mod_registry,modal,modal_integration,exclusive_state,screen_golden}_test.rs`, `tests/screen/mod.rs`, `tests/fixtures/disk_codes_v1.txt` | pins moved, rows appended, goldens re-recorded | 1–11, 13 |
-| `chimera-stm32/src/bench.rs:231-262` | new MDL rows; MDL BOW+, PLUCK DARK | 11, 13 |
+| `chimera-stm32/src/bench.rs:231-262` | new MDL rows; MDL BOW+, PLUCK DARK; BOW+'s doc (14) | 11, 13, 14 |
 | `chimera-core/src/ui/{components,renderer}.rs` | EXC's header named for the exciter | 13 |
 | `chimera-core/tests/{block_def_tests,header_map_test,binding_test}.rs` | the EXC node and its header | 13 |
-| `docs/adr/0056-modal-resonators-share-four-macros.md`, `docs/adr/README.md`, `THIRD_PARTY.md` | the ADR, provenance | 1, 2, 5, 8, 10, 11, 12, 13 |
+| `docs/adr/0056-modal-resonators-share-four-macros.md`, `docs/adr/README.md`, `THIRD_PARTY.md` | the ADR, provenance | 1, 2, 5, 8, 10, 11, 12, 13, 14 |
 
 ---
 
@@ -1062,9 +1077,195 @@ git commit -m "Exciters get their own node, and soft keys bow"
 
 ---
 
+### Task 14: Bowed as a two-delay bowed string (#240)
+
+The owner's decision of 2026-09-30 (spec § 1 Bowed row, § 2 BOWED, § 3 and the tests, each marked "amended 2026-09-30, owner: #240"). The one-loop bow inverts its wave every pass, so it plays an octave low (C3 at 65 Hz); BRIGHT moves it under 0.5 dB; and POS became an output comb because a second tap moved the pitch. Bowed becomes Smith's two-delay bowed string. It runs after Task 13 and before Task 12, whose ship flash covers it. The rulings are under "Spec ambiguities ruled here", Task 14. It supersedes Task 13's three parked Bowed DSP findings (`.superpowers/sdd/2026-09-29-modal-2-resonators/task-13-review.md`, Important 1–3).
+
+**Files:**
+- Create: `chimera-core/src/dsp/modal/bow.rs` (ours, citing Smith).
+- Modify:
+  - `chimera-core/src/dsp/modal/mod.rs`: `mod bow`, `BowedString` and its `init_in_place` and `field_list!` moved to `bow.rs`, Bowed's note-on, note-off, the render arm and `tune` arm, `COST_BOWED` and its doc comment; `render_bowed`, `BOW_LP`, `BOW_POS_MIN` deleted.
+  - `chimera-core/src/dsp/modal/string.rs`: `KsString::guide` added; `ring_tap`, `ring_tap_at`, `ring_tap_lp`, `ring_push` and the unit test `ring_tap_at_the_delay_is_ring_tap` deleted.
+  - `chimera-core/src/dsp/modal/params.rs`: `translate_v1`'s BOWED rule, the `reads`/`MODAL_SPECS` doc comments that describe Bowed's POS and BRIGHT.
+  - `chimera-stm32/src/bench.rs`: `bow_full`'s doc comment.
+  - `docs/adr/0056-modal-resonators-share-four-macros.md`.
+- Test: `chimera-core/tests/{modal_resonator_test,codec_compat_test,cost_test}.rs`, `chimera-core/tests/common/mod.rs` (`step`, moved from `force_and_speed_move_a_held_bow`), and the unit tests in `bow.rs`.
+- Unchanged, and run: `pitch_test`, `exclusive_state_test`, `sym_pool_test`, `in_place_test`, `memory_budget_test`, `modal_integration_test`, `golden_test`.
+
+**What Task 13's output-comb POS leaves behind, deleted:**
+- Code: `render_bowed`'s comb (`0.5·(x + ring_tap_at(…))`), `BOW_POS_MIN`, `BOW_LP` and its "tuned to a test floor" doc, `KsString::ring_tap_at`, `ring_tap_lp`, `ring_tap` and `ring_push` (Bowed's only callers), `BowedString::written` (the ring-tap reach rule; the new output sounds from the first sample), and both `tanhf`s (the friction's and the push's).
+- Tests: `string::tests::ring_tap_at_the_delay_is_ring_tap`; `bowed_pos_and_bright_keep_pitch` (its octave-low search centre, `note_to_freq(48) / 2`, goes with it), replaced by `bowed_pos_moves_the_tone_not_the_pitch` and `bowed_bright_is_heard`; `a_v1_bowed_patch_bows_as_before`, renamed and re-recorded as `a_v1_bowed_patch_bows_in_tune`.
+- Docs: ADR 0056's Bowed bullets on the comb and the three-tap loop low-pass, and its "Open for the owner" bullet on the octave (both rewritten in Step 10).
+
+**Interfaces:**
+- Consumes: `KsString`, `set_period`, `split`, `eta_for`, `Allpass1`, `MIN_LINE` (Tasks 1–2); `LoopGain`, `Release`, `RELEASE_SAMPLES` (Tasks 1, 7); `Macros`, `EASE` (Task 5); `bow_force`, `BOW_SPEED`, `BOW_EASE`, `BOW_GAIN`, `damp_for`, `t60` (Task 13); the spans pattern of `StringVoice::run` (Task 11b); ADR 0056's cost method.
+- Produces, in `dsp::modal::bow` (all `pub(super)`):
+
+```rust
+//! Bowed: two delay lines, bow to bridge and bow to nut, meeting at the
+//! bow. After J. O. Smith's digital-waveguide bowed string (Physical Audio
+//! Signal Processing, CCRMA, "Bowed Strings"). Chimera's own code: no STK
+//! code, constant or table.
+
+/// The bridge filter's delay, samples: its centre tap. Off the line.
+pub const BRIDGE_DELAY: f32 = 1.0;
+/// POS 0's and POS 1's bow position, as a fraction of the string from the bridge.
+pub const BETA_MIN: f32 = 0.06;
+pub const BETA_MAX: f32 = 0.5;
+/// The friction curve's half-width at force 1 (`width4`).
+pub const BOW_WIDTH: f32 = 0.3;
+/// BRIGHT 0's bridge-filter side taps: the most `|H| ≤ 1` allows.
+pub const BOW_BRIGHT: f32 = 0.5;
+/// Samples between whole-sample steps of the split: 2 a block, as `DISP_SLEW`.
+pub const BOW_SLEW: usize = 32;
+/// The output's level: the v1 Bowed patch's C3 within ±1 dB of the old bow's.
+pub const BOW_OUT: f32 = /* Step 6 */;
+
+/// POS's bow position β.
+pub fn beta(pos: f32) -> f32;                 // BETA_MIN + (BETA_MAX − BETA_MIN)·pos, pos clamped to [0, 1], NaN → 0
+/// The bridge line's whole samples for a loop line of `d`: round(β·d), in [1, d − 1].
+pub fn bridge_len(pos: f32, d: usize) -> usize;
+/// `split` one whole sample towards `to`: the glide's step.
+pub fn glide(split: usize, to: usize) -> usize;
+/// (BOW_WIDTH·force)⁴: the friction curve's width, to the fourth.
+pub fn width4(force: f32) -> f32;
+/// The bow's push on the string at a velocity difference `dv`:
+/// dv·ρ(dv), ρ = w4 / (w4 + dv⁴ + 1e-20). At most 0.57·w; 0 at w4 = 0.
+pub fn push(dv: f32, w4: f32) -> f32;
+
+/// The bridge filter's state: the bridge's last two returns.
+#[derive(Clone, Copy, Default)]
+pub struct Bridge { a1: f32, a2: f32 }
+impl Bridge {
+    /// c/2·(a + a2) + (1 − c)·a1, then shifts: linear phase, one sample, |H| ≤ 1 for c ≤ 0.5.
+    pub fn reflect(&mut self, a: f32, c: f32) -> f32;
+}
+
+pub struct BowedString {
+    pub string: KsString,
+    pub force: f32, pub force_to: f32, pub lift: f32,
+    pub bow_vel: f32, pub vel_scale: f32, pub bowing: bool,
+    pub release: Release,
+    bridge: Bridge,
+    /// The bridge line's whole samples now; the nut line is `delay − split`.
+    split: usize,
+}
+impl BowedString {
+    pub fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self;
+    /// Note-on: the line cleared and tuned (`BRIDGE_DELAY` off the period),
+    /// the split snapped to POS, the bridge filter zeroed.
+    pub fn start(&mut self, freq: f32, sample_rate: u32, pos: f32);
+    /// A pitch move: `set_period(period, BRIDGE_DELAY, w)`, the split clamped to the new line.
+    pub fn tune(&mut self, freq: f32, sample_rate: u32);
+    /// A block: in spans where neither the write nor the splice wraps; the
+    /// split steps at samples 0 and `BOW_SLEW`; the block's gain, `c`, and
+    /// FORCE's and SPEED's targets computed once.
+    pub fn render(&mut self, out: &mut [f32; BLOCK_SIZE], m: &Macros, (f0, vel_to): (f32, f32));
+    /// One sample of `render`, for the tests: bit for bit the same, at
+    /// the block's held gain, bridge filter `c` and bow velocity target.
+    #[cfg(test)]
+    pub fn tick(&mut self, held: LoopGain, c: f32, vel_to: f32) -> f32;
+}
+```
+
+- In `string.rs`:
+
+```rust
+impl KsString {
+    /// Bowed's waveguide on the ring (`bow.rs`): the ring in use
+    /// (`ring_len` cells), the last write, the loop's line and its tuning allpass.
+    pub(super) fn guide(&mut self) -> (&mut [f32], &mut usize, usize, &mut Allpass1);
+}
+```
+
+- A sample, in `tick`'s order (the spans do the same arithmetic):
+  - The bow eases or lifts as in Task 13; `w4 = width4(force)`; `bow_vel` is 0 once `force <= 0.001`.
+  - `n = ` the nut line's return: the cell `delay` pushes back, the oldest in the loop. `a = ` the bridge's return: the cell `split` pushes back.
+  - `bridge = −gain·bridge_filter.reflect(a, c)`, `nut = −n`. `gain` is `release.gain(held)`, `held` as Task 13.
+  - `dv = bow_vel − (bridge + nut)`, `v = push(dv, w4)`.
+  - The nut line's input `bridge + v` goes into the cell `a` came from; the bridge line's input `nut + v` is pushed through the tuning allpass at the next write.
+  - The output is `BOW_OUT·(nut + v)`, the wave toward the bridge, before the allpass.
+- A split step (`glide`), between spans only:
+  - `+1`: the next sample's `a` is the filter's `a1` (the last return re-read), and the nut line's input overwrites the cell one further back.
+  - `−1`: the nut line's input is written into both the cell `a` came from (the new split) and the cell one further back (the old split's), so no bridge-line sample is read as the nut's.
+- Note-on: `force`, `force_to`, `lift`, `bow_vel`, `vel_scale`, `bowing` and `release` as Task 13; `start(freq, sr, m.pos)`. Note-off as Task 13.
+- `render`'s return is unchanged: the voice is held while `force > 0` (#206).
+- `translate_v1`, BOWED: `DAMP = damp_for(0.5)`, `BRIGHT = 0.5`, `POS = 0.15`, after the DECAY and BRIGHT rules as before. FORCE and SPEED stay at their defaults, 0.5.
+- `BowedString` grows by the filter's two floats and the split, less `written`: it stays under `ModelSlot`'s 4,160 B, so `Voice` and `Instrument` do not grow. D2 +0 B.
+
+- [ ] **Step 1: Record the old bow's level, then keep today's tests green.** On HEAD, before any other change:
+  - Add to `codec_compat_test.rs` a temporary `eprintln!` of `rms(&held[SR/2..SR])` in `a_v1_bowed_patch_bows_as_before`, and run `cargo test -p chimera-core --test codec_compat_test -- a_v1_bowed_patch_bows_as_before --nocapture`. Paste the value as `const BOWED_V1_RMS: f32` with the comment "the one-loop bow's held C3, second half of its first second, recorded at 330298c". Remove the print.
+  - Run `cargo test -p chimera-core --test modal_resonator_test -- bowed a_soft a_released_bowed force_and_speed`. Expected: PASS.
+- [ ] **Step 2: Write the failing unit tests** in `bow.rs` (the module compiles with `todo!()` bodies and `BOW_OUT = 1.0` until Step 5):
+  - `the_bow_table_sticks_at_rest_and_slips_away`: at `w4 = width4(0.5)`, `push(dv, w4) / dv` is within 1e-6 of 1 at `dv = 1e-4`, 0.5 at `dv = ±0.15` (`w`), and below 0.01 at `dv = ±0.6`.
+  - `the_push_is_bounded_and_finite`: over `dv` in ±10 in 1e-3 steps and force in {0, 0.001, 0.5, 1}, `|push| <= 0.5700·BOW_WIDTH·force` and it is finite; `push(0.0, 0.0) == 0.0` and `push(x, 0.0) == 0.0`.
+  - `the_bridge_filter_is_linear_phase_and_lossless_at_dc`: an impulse through `reflect` at `c` 0.5 gives `[0.25, 0.5, 0.25]`; at `c` 0, `[0, 1, 0]`; a constant input settles to itself.
+  - `the_split_fits_the_line`: for `d` in `MIN_LINE..=979` and POS in 0..=1 by 1/64 (and NaN), `1 <= bridge_len(pos, d) <= d − 1`, and it rises with POS.
+  - `glide_steps_one_sample`: `glide(10, 14) == 11`, `glide(10, 7) == 9`, `glide(10, 10) == 10`.
+  - `an_impulse_comes_back_upright_once_a_period`: force 0 (the string free), BRIGHT 1, the held gain `LoopGain::TOP`, a period of `d + 2` whole samples (`frac` 1, so the allpass is a pure unit delay): one impulse on the bridge line returns to the output exactly `d + 2` samples later, positive, `0.9995` of it to 1e-6, and nothing between, at every POS in {0, 0.15, 0.5, 1}. This is the pitch law: two inversions a period, so one period, not two.
+  - `a_splice_step_keeps_the_loop_length`: as above, with the split stepped +1 and then −1 mid-period: the impulse still returns once a period, positive, and no second impulse appears.
+  - `render_is_tick_bit_for_bit`: 40 blocks at C3 and G1, POS gliding (0.2 → 0.9 at block 10), BRIGHT 0.3, FORCE easing, note-off at block 30: `render` and 64 × `tick` agree bit for bit.
+- [ ] **Step 3: Write the failing integration tests.**
+  - `modal_resonator_test.rs` (helpers: `v1_bowed()` = `ModalParams { mode: Bowed, force: 0.5, speed: 0.5, pos: 0.15, bright: 0.5, damp: damp_for(0.5), ..Default::default() }`; `octave_clear(s, f0)` = `goertzel(s, f0) > 10·goertzel(s, f0/2)`):
+    - `bowed_is_in_tune`: `v1_bowed()`, notes 31 to 96, velocity 100, 2 s held; over seconds 0.5–1.5, `fundamental_hz(s, f0)` within ±2 cents and `octave_clear(s, f0)`. At 31 and 48, partials 2–4 within ±5 cents of multiples of it. Fails today: C3 is 65 Hz.
+    - `bowed_pos_moves_the_tone_not_the_pitch`: notes 31, 48 and 84; POS {0, 0.15, 0.5, 1} × BRIGHT {0, 1}: each within 2 cents of the note and `octave_clear`. At note 48, POS 1 (β 0.5) puts the 2nd harmonic at least 10 dB below POS 0.15's (`goertzel` at 2·f0): the bow at the middle nulls the even harmonics. Fails today on the pitch.
+    - `bowed_bright_is_heard`: `v1_bowed()` at note 48, BRIGHT 0 against 1: the summed `goertzel` power of harmonics 8 to 24 falls by at least 3 dB, and the fundamental moves under 2 cents. Fails today (under 0.5 dB).
+    - `a_soft_bowed_note_sounds` gains a second case: velocity 20 on `v1_bowed()` sounds as the defaults' does, and over seconds 1–2 its `fundamental_hz` is within ±2 cents of note 48 and `octave_clear`. Fails today on the pitch. The defaults' case (INIT's POS 0, the bow at the bridge) keeps only its level clause: a light bow that near the bridge may play a surface sound, as a real one does.
+    - `a_bowed_pos_sweep_does_not_click`: `ParamSnapshot` Bowed at `v1_bowed()`'s values, LFO 1 square at 2 Hz into POS at 127 (as `a_structure_step_at_g1_does_not_click`), notes 31 and 96, 2 s, at FORCE {0.5, 1}. The route changes the sound (`rms_diff > 1e-3`); `step` (Task 13's `tanh(0.4x)` measure, moved to `common`) over the routed render is at most 1.05 × the larger of the held renders' at POS 0 and 1; and `fundamental_hz` over seconds 0.5–1.5 is within ±2 cents of the note. Fails today on the pitch; the click clause is proved in Step 5.
+    - `bowed_is_stable_and_in_tune_at_every_corner`: notes 31, 96 and 127, a thread each; FORCE, SPEED, BRIGHT and POS each at 0 and 1 (16 corners), 12 s held: `assert_stable(&out, 4.0, BOW_MARGIN, …)` (bounded, no growth, DC over 10 s). Each corner with FORCE and SPEED at 1, then released 1 s at DAMP 0 and 1: finite and within 4.0. Every corner with FORCE > 0 and SPEED > 0 at notes 31 and 96 sounds (`rms > 1e-3` over the last second) and is `octave_clear`. Fails today on the octave.
+    - `every_model_is_stable_at_every_extreme` is unchanged; it must still pass.
+    - `bowed_low_notes_sound`, `bowed_damp_is_the_ring_after_the_lift`, `a_released_bowed_c2_is_silent_within_half_a_second`, `force_and_speed_move_a_held_bow`, `macros_are_routable`, `live_knobs_move_dimmed_knobs_do_not` and `release_does_not_click` are unchanged; they must still pass.
+    - Delete `bowed_pos_and_bright_keep_pitch`.
+  - `codec_compat_test.rs`:
+    - `old_modal_patches_translate`: on BOWED, `(m.damp, m.bright, m.pos) == (damp_for(0.5), 0.5, 0.15)`, and `(m.force, m.speed) == (0.5, 0.5)`. Fails today.
+    - Rename `a_v1_bowed_patch_bows_as_before` to `a_v1_bowed_patch_bows_in_tune`: the held second is within ±2 cents of note 48 and `octave_clear`; its RMS over the second half is within ±1 dB of `BOWED_V1_RMS`; and the held and released renders' `fnv1a` equal `BOWED_V1_HELD` and `BOWED_V1_RELEASED`. Leave the two hashes as they are until Step 7. Fails today on the pitch.
+  - `cost_test.rs`: `modal_bills_each_model`'s BOWED row is written in Step 9, with the counted bill and voice counts, before `COST_BOWED` changes, so it fails first.
+- [ ] **Step 4: Run them to verify they fail.**
+  - `cargo test -p chimera-core --lib -- modal::bow modal::string`
+  - `cargo test -p chimera-core --test modal_resonator_test -- bowed_is_in_tune bowed_pos_moves_the_tone_not_the_pitch bowed_bright_is_heard a_soft_bowed_note_sounds a_bowed_pos_sweep_does_not_click bowed_is_stable_and_in_tune_at_every_corner`
+  - `cargo test -p chimera-core --test codec_compat_test -- old_modal_patches_translate a_v1_bowed_patch_bows_in_tune`
+  - Expected: the unit tests panic on `todo!()`. The integration tests fail on the pitch (C3 near 65 Hz, `octave_clear` false), BRIGHT under 3 dB, and the v1 defaults. If `bowed_is_in_tune` passes on today's code, it does not measure the octave: stop and report.
+- [ ] **Step 5: Implement** the Interfaces, `tick` first, then `render` in spans (Task 11b's pattern: `m = min(left, ring_len − write, ring_len − splice, next step)`; the filter's taps, the allpass, the force and the bow's velocity in registers; one `vdiv.f32` a sample, no transcendental). Delete what "What Task 13's output-comb POS leaves behind" lists. Any `match` on `ModelSlot` keeps its arms; exclusive state is untouched (`bowed_clears_the_ring_it_wrote` stays).
+  - Prove the click clause discriminates: temporarily make `glide` jump straight to its target, run `cargo test -p chimera-core --test modal_resonator_test -- a_bowed_pos_sweep_does_not_click`, and see it fail on the step measure. Restore `glide`. If it passes with the jump, the measure is blind to the splice: tighten it to 1.0 × the corner, or measure the second difference as `kink` does, and say which in the report.
+  - If `bowed_bright_is_heard` reads under 3 dB, apply the ruled fallback (the squared five-tap filter, `BRIDGE_DELAY = 2.0`) and record the measured dB either way.
+- [ ] **Step 6: Set `BOW_OUT`.** Run `cargo test -p chimera-core --test codec_compat_test -- a_v1_bowed_patch_bows_in_tune --nocapture` with a temporary `eprintln!` of the held RMS at `BOW_OUT = 1.0`. Set `BOW_OUT = BOWED_V1_RMS / that`, rounded to 3 significant figures, with its measurement in the doc comment. Remove the print.
+- [ ] **Step 7: Re-record the v1 pins, deliberately.** With a temporary `eprintln!` of both hashes, run `cargo test -p chimera-core --test codec_compat_test -- a_v1_bowed_patch_bows_in_tune --nocapture`. Paste them into `BOWED_V1_HELD` and `BOWED_V1_RELEASED`, and replace their doc comment with "A v1 Bowed patch on the two-delay bow (plan Task 14): re-recorded deliberately, since the one-loop bow played an octave low (#240)". Remove the print. Only after the pitch, level and translation clauses pass.
+- [ ] **Step 8: Run the tests to verify they pass.**
+  - `cargo test -p chimera-core --lib -- modal`
+  - `cargo test -p chimera-core --test modal_resonator_test --test codec_compat_test --test golden_test --test pitch_test --test exclusive_state_test --test sym_pool_test --test in_place_test --test memory_budget_test --test modal_integration_test --test modulatable_test --test sanity_test -- --nocapture`
+  - Expected: PASS. No `golden_test` row or `FIXTURE_RENDERS` hash moves (no golden plays Bowed); if one does, stop and investigate. `instrument_fits_d2` prints the same `Instrument` size as Task 13's, and `BowedString` stays under `ModelSlot`.
+- [ ] **Step 9: Re-bill Bowed and the bench rows.**
+  - Build with `just firmware` and count `BowedString::render`'s fast span by ADR 0056's method: `llvm-objdump -d --mcpu=cortex-m7 target/thumbv7em-none-eabihf/release/chimera-stm32`, instructions a sample, spans at the bench's notes (2.2 a block, plus the split's two step points), the per-block setup spread over 64, the output blocker's 7.8.
+  - The bill: `620 (benched) + (N − 143) × 1.46 × 0.9 − T × 1.46 × 0.9 + (14 − 1.46) × 1.1`, rounded up to 10, where `N` is the new count, 143 the one-loop bow's count at the bench, `T` the two `tanhf` bodies' instructions on their taken path (counted from `libm::tanhf`'s disassembly; they were in the bench's 620), and the last term the `vdiv.f32`'s 14 cycles against its 1.46. Expected: `N` about 50, a bill about 450–550. The gate is 860 (today's `COST_BOWED`); over it, stop and report.
+  - Set `COST_BOWED` with this arithmetic in its doc comment, replacing Task 13's. Update `modal_bills_each_model`'s BOWED row (its bill and its voice counts, with and without the tape), deliberately; run `cargo test -p chimera-core --test cost_test` and `cargo test -p chimera-core --test cost_test --features master-tape`. Expected: PASS.
+  - `bench.rs`: no new row. `MDL BOW` (the default Bowed Sound) and `MDL BOW+` keep their builders; `bow_full`'s doc comment says that its 10 Hz POS route steps the split twice a block, the bow's worst case. Run `just firmware`. Expected: exit 0.
+- [ ] **Step 10: Amend ADR 0056** (Proposed, so it may be edited):
+  - **Bowed**, rewritten: the two lines on one ring and the splice; the pitch law (`BRIDGE_DELAY` off the period, upright once a period); POS as β from 0.06 to 0.5 and the split's whole-sample glide (`BOW_SLEW`); BRIGHT as the bridge filter at `0.5·(1 − BRIGHT)`, with the measured harmonic change; DAMP, FORCE, SPEED and the velocity scaling as before; the bow table `w⁴/(w⁴ + Δv⁴)` and its bound; the output toward the bridge and `BOW_OUT`; stability by construction.
+  - **Tuning:** "BOWED's ring runs through the same allpass" becomes the bridge line's input.
+  - **Old patches:** v1 Bowed loads POS 0.15, BRIGHT 0.5, DAMP `damp_for(0.5)`, FORCE and SPEED 0.5, and why (the old sound was the bug).
+  - **Memory:** `BowedString`'s new size; D2 unchanged.
+  - **Costs:** the BOWED rows of both tables (the count, `T`, the `vdiv`), the voice counts, and the bench rows' note on BOW+.
+  - **Open for the owner:** drop the octave bullet.
+  - **Alternatives considered:** Task 13's output comb (pitch held, but not a bow position, and BRIGHT inaudible); two separate rings (+1.8 KB a voice); a fractional split by interpolation (its loss moves the tone with the fraction) or by two allpasses (more cost, the same whole-sample crossing); STK's bow table (a licensed constant set; ours is a rational curve with no `powf`).
+  - **Sources:** J. O. Smith, *Physical Audio Signal Processing*, CCRMA, "Bowed Strings" and "Digital Waveguide Bowed-String"; M. E. McIntyre, R. T. Schumacher and J. Woodhouse, "On the oscillations of musical instruments", JASA 74(5), 1983; STK's `Bowed` named as a known implementation, not a source: no STK code, constant or table is used, so THIRD_PARTY.md does not change. Add "Task 14" to the plan's range, and the owner's decision of 2026-09-30 on #240.
+  - Check provenance: `git diff 330298c -- chimera-core | grep -n -i -E "stk|0\.75|5\.0 - 4\.0|bowTable"` prints nothing.
+- [ ] **Step 11: Listen on the desktop**, in `$SP/demo-m2` only. Leave `$SP/demo` alone.
+  - `modal_bowed()` and `modal_bowed_soft()` keep their settings; their descriptions in `src/clips.rs` say the bow now plays at its note, POS moves the bow and BRIGHT darkens it.
+  - Run `cd $SP/demo-m2 && cargo run -q --release --bin demo -- modal-bowed-drone && cargo run -q --release --bin demo -- modal-bowed-soft`. Expected: `out/modal-bowed-drone.wav` and `out/modal-bowed-soft.wav` re-rendered, the drone's D an octave above the old clip's.
+  - Tell the owner which files changed, the v1 defaults, and that INIT → MODEL BOWED now bows at POS 0 (near the bridge), BRIGHT 0.3 and INIT's long ring.
+- [ ] **Step 12: Run the green gate.** Run `just test`, `just clippy`, `just firmware` and `just check`. Expected: each exits 0.
+- [ ] **Step 13: Commit.**
+
+```bash
+git add chimera-core/src/dsp/modal/bow.rs chimera-core/src/dsp/modal/mod.rs chimera-core/src/dsp/modal/string.rs chimera-core/src/dsp/modal/params.rs chimera-core/tests/modal_resonator_test.rs chimera-core/tests/codec_compat_test.rs chimera-core/tests/cost_test.rs chimera-core/tests/common/mod.rs chimera-stm32/src/bench.rs docs/adr/0056-modal-resonators-share-four-macros.md
+git commit -m "Bowed is a two-delay bowed string: in tune, POS is the bow, BRIGHT is heard"
+```
+
+---
+
 ### Task 12: Ship: one flash, the bench and the ears
 
-Task 12 runs after Task 13 (the owner's decision of 2026-09-30): the one flash ships the EXC node and the playable Bow with the resonators.
+Task 12 runs after Task 14, which follows Task 13 (the owner's decisions of 2026-09-30): the one flash ships the EXC node and the two-delay bow (#240) with the resonators.
 
 **Files:**
 - Modify: `chimera-core/src/dsp/modal/mod.rs` (`COST_*` to the bench figures), `chimera-core/tests/cost_test.rs` (a measured row per MDL bench row), `docs/adr/0056-*.md` (Consequences: chip figures)
@@ -1074,12 +1275,12 @@ This is the only task that touches hardware. Run it with the owner, on one combi
 - [ ] **Step 1: Build and flash.** Run `just flash-bench` for Steps 2 and 3, then `just flash` for the play test in Step 3 (l).
 - [ ] **Step 2: Read the bench rows.** Record each `/VOICE` and voice count on rev V at 480 MHz:
   - `MDL STR`, `MDL STR+`, `MDL BOW`, `MDL SYM` (1–4 notes and flat past 4), `MDL SYM+`, `MDL RES`, `MDL RES48`, `SWITCH`.
-  - Task 13's rows: `MDL BOW` again, now with the velocity scaling, POS's tap and BRIGHT's low-pass, and `MDL BOW+` (FORCE 1, SPEED 1, LFO 1 on BRIGHT, DAMP and POS).
+  - Task 14's bow: `MDL BOW` (the two-delay bow at the default Bowed Sound) and `MDL BOW+` (FORCE 1, SPEED 1, LFO 1 on BRIGHT, DAMP and POS, so the split steps twice a block). Compare each with Task 14's host bill; if `MDL BOW` bills above 860, file an issue.
   - `SYM NOTE-ON` and `SYM NOTE-ON LOW`, which grew with the 1,016-sample line.
   - `DARK NOTE+BLOCK` (Task 13, was `PLUCK DARK`): a G1 STRING note-on at COLOR 0 and its first block. If it overruns a block beside eight voices, file an issue. `DARK +6 PASSES` is the passes alone.
   - The MEMORY screen's `Voice`, `MODAL` and `SYM POOL`, and D2 left.
 - [ ] **Step 3: Listen, by ear, with the owner.** Check:
-  - (a) Each model at G1, C4 and C6: in tune, and STRING distinct from Bowed.
+  - (a) Each model at G1, C4 and C6: in tune, and STRING distinct from Bowed. Bowed plays at its note, not an octave below (C3 at 130.8 Hz on a tuner).
   - (b) DAMP swept 0 → 1 on STRING: a short pluck to near-endless, never a runaway or a DC thump.
   - (c) STRUCTURE on STRING: nylon to wire, the pitch unmoved. On BANK: harmonic to bell. On SYMP: the chords step and glide.
   - (d) BRIGHT and POS on each model.
@@ -1092,11 +1293,11 @@ This is the only task that touches hardware. Run it with the owner, on one combi
   - (k) An old v1 Modal patch with FDBK 1 loads and plays calmly.
   - (k2) Task 13's EXC node: the map reads EXC · RES · FLT · AMP · MOD, and a Part opens on EXC. The header reads PLUCK, STRIKE or BOW as MODEL changes.
   - (k3) PLUCK: EXCITE and COLOR on STRING and SYMP, dark to bright. STRIKE: EXCITE and BURST on BANK, a click to a thud.
-  - (k4) BOW: a velocity-20 key bows. FORCE and SPEED move the tone. DAMP is the ring after the bow lifts, BRIGHT darkens, and POS moves the bow, all with the pitch unmoved and no runaway at FORCE 1 and SPEED 1.
-  - (k5) An old v1 Bowed patch and an old v1 BANK patch sound as before.
+  - (k4) BOW (Task 14): a velocity-20 key bows, in tune. FORCE and SPEED move the tone. DAMP is the ring after the bow lifts. BRIGHT clearly darkens. POS moves the bow from near the bridge (glassy) to the middle (hollow, the even harmonics gone), swept by hand and by an LFO without a click, the pitch unmoved. No runaway at FORCE 1 and SPEED 1, at G1 or C7.
+  - (k5) An old v1 BANK patch sounds as before. An old v1 Bowed patch plays in tune, at about its old level, at the Task 14 defaults (POS 0.15, BRIGHT 0.5, a 0.5 s ring after the lift): the owner confirms by ear that they sound like a reasonable bowed string, or names new ones.
   - (l) An eight-note chord on STRING and on SYMP, with reverb, delay and every page edited: record LOAD, OVER and DROPS.
 - [ ] **Step 4: Bill the measurements.**
-  - Set each `COST_*` to its bench slope less the Modal Sound's chain (57), as ADR 0054 did. `COST_BOWED` takes Task 13's `MDL BOW`.
+  - Set each `COST_*` to its bench slope less the Modal Sound's chain (57), as ADR 0054 did. `COST_BOWED` takes Task 14's `MDL BOW`.
   - In `cost_test.rs`, add `the_model_bills_every_modal_row_high` with the measured rows, `MDL BOW+` among them. If `MDL SYM` bills 883 or less, SYMP keeps 6 voices on rev V: note it.
   - Run `just check`. Expected: exit 0.
 - [ ] **Step 5: Finish ADR 0056.** Add the chip figures and the owner's by-ear verdict to Consequences. It stays Proposed until the owner accepts it; only then does the status become `Accepted (date)`, in the file and the README.
@@ -1107,4 +1308,4 @@ git add chimera-core/src/dsp/modal/mod.rs chimera-core/tests/cost_test.rs docs/a
 git commit -m "Modal 2 resonators billed at the ship bench's figures"
 ```
 
-- [ ] **Step 7: Close the issues.** In the PR description, reference #191, #10, #50, #51, #163 and #206 as closed. File any by-ear finding as a new GitHub issue; don't write it into the repo.
+- [ ] **Step 7: Close the issues.** In the PR description, reference #191, #10, #50, #51, #163, #206 and #240 as closed. File any by-ear finding as a new GitHub issue; don't write it into the repo.
