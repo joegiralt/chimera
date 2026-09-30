@@ -114,6 +114,7 @@ pub use self::algo::math::log2 as fast_log2;
 pub mod algo;
 pub mod chorus;
 pub mod comp;
+pub mod dc_blocker;
 pub mod delay;
 pub mod drive;
 pub mod engines;

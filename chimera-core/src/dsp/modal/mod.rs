@@ -54,6 +54,7 @@ use core::ptr::addr_of_mut;
 use chimera_hal::BLOCK_SIZE;
 
 use super::xorshift_noise;
+use crate::dsp::dc_blocker::DcBlocker;
 use crate::hw::{Cost, SAMPLE_RATE};
 use crate::in_place::{in_place_enum, uninit_at};
 use crate::sym_alloc::{Lease, SYM_SLOTS, SymAlloc, SymSlot};
@@ -62,7 +63,7 @@ use bow::BowedString;
 use chords::{GLIDE_STEP, period_ratios};
 use core::f32::consts::TAU;
 use ensemble::{Ensemble, rate_hz};
-use loop_parts::{DcBlocker, LoopGain, Release};
+use loop_parts::{DC_HZ, LoopGain, Release};
 use rings::{CosineOsc, Svf, stiffness_from_structure};
 use string::{FRESH_CLEAR_BYTES, KsRenderParams, KsString, RING_BYTES, StringVoice, lp_coeff};
 
@@ -440,7 +441,7 @@ impl ModalEngine {
             addr_of_mut!((*p).tuned).write(1.0);
             addr_of_mut!((*p).active).write(false);
             addr_of_mut!((*p).silence_counter).write(0);
-            addr_of_mut!((*p).dc).write(DcBlocker::new(SAMPLE_RATE));
+            addr_of_mut!((*p).dc).write(DcBlocker::new(DC_HZ, SAMPLE_RATE));
             addr_of_mut!((*p).macros).write(Macros::of(&ModalParams::default()));
             addr_of_mut!((*p).shape_pending).write(false);
             slot.assume_init_mut()
