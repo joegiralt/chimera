@@ -371,15 +371,15 @@ impl ModalEngine {
     /// +18. BODY and the ensemble bill apart.
     pub const COST_STRING: Cost = Cost(330);
     /// The one-loop bow (ADR 0064), counted in the thumbv7em release build
-    /// (`render_bowed` kept out of line so it can be): about 200
-    /// instructions a sample on the bowed path (the easing, the release,
-    /// both taps' low-passes and the bow point's lerp, their bounds checks,
-    /// two `fast_tanh`s, the smoothing, BRIGHT's one-pole and the ring's
-    /// push), 210 billed, against the one-loop bow's benched 620 at 143
-    /// instructions and two `tanhf` bodies (135): 620 + (210 − 143 − 135) ×
-    /// 1.46 × 1.1 = 510.8, rounded up to 520. A block whose POS moved
-    /// splits the bow point each sample, a few more, inside the round-up.
-    pub const COST_BOWED: Cost = Cost(520);
+    /// (`render_bowed` kept out of line so it can be): its per-sample loop,
+    /// traced on the bowed path with both `fast_tanh`s off their clamps,
+    /// 256 instructions (the easing, the release, both taps' low-passes and
+    /// the bow point's lerp, their bounds checks, the smoothing and the
+    /// push); a moved POS's per-sample split, 14 more: 270. Against the
+    /// one-loop bow's benched 620 at 143 instructions and two `tanhf` bodies
+    /// (135), with the two `vdiv.f32`s at 14 cycles: 620 + (270 − 143 −
+    /// 135) × 1.46 × 1.1 + 2 × (14 − 1.46) × 1.1 = 634.8, rounded up to 640.
+    pub const COST_BOWED: Cost = Cost(640);
     /// 809 (benched, ADR 0054) − 271, rounded up to 540: 419 instructions a
     /// sample to 187, −306 cycles. Each halo string runs its block in
     /// spans, 19 a sample (42 before, 87 at task 11); the main string 15;
@@ -1407,6 +1407,14 @@ fn bow_tone(bright: f32) -> (f32, f32) {
 /// the one tap, so the pitch holds: a friction reading POS's second tap
 /// bows a second loop, which takes the pitch. The tap's place is set once
 /// a block.
+/// A bow point `at` samples back, `at >= 2`: its whole samples and
+/// fraction, without a `floorf` (positive, so the cast truncates as floor).
+#[inline(always)]
+fn split_back(at: f32) -> (usize, f32) {
+    let i = at as usize;
+    (i, at - i as f32)
+}
+
 #[inline(never)]
 fn render_bowed(
     b: &mut BowedString,
@@ -1447,13 +1455,13 @@ fn render_bowed(
     (b.back, b.comb) = (back, comb);
     let moving = from != back || comb_from != comb;
     let step = 1.0 / BLOCK_SIZE as f32;
-    let mut point = (back as usize, back - libm::floorf(back));
+    let mut point = split_back(back);
     let mut comb = comb;
     for (k, s) in output.iter_mut().enumerate() {
         if moving {
             let t = (k + 1) as f32 * step;
             let at = from + t * (back - from);
-            point = (at as usize, at - libm::floorf(at));
+            point = split_back(at);
             comb = comb_from + t * (b.comb - comb_from);
         }
         if b.bowing {
