@@ -17,8 +17,7 @@ use common::codec_util::{
     system_fixture_settings,
 };
 use common::{
-    SR, assert_stable, fnv1a, fundamental_hz, octave_clear, play_modal, play_modal_at,
-    render_sound, rms,
+    SR, assert_stable, fnv1a, fundamental_hz, octave_clear, play_modal, play_modal_at, render_sound,
 };
 
 /// The v1 corpus: name, and the Sound it was written from.
@@ -323,7 +322,7 @@ fn decode_modal(payload: &[u8]) -> ParamSnapshot {
 
 /// Spec § 3: DECAY → DAMP, STIFF or INHARM → STRUCTURE, FDBK dropped; the
 /// string models' BRIGHT flips to the new direction. BANK's BURST is its
-/// EXCITE; Bowed loads an in-tune bow (#240).
+/// EXCITE; Bowed loads its old sound, now in tune (#240, ADR 0064).
 #[test]
 fn old_modal_patches_translate() {
     use ResonatorMode::{Bowed, Modal, String, Sympathetic};
@@ -338,9 +337,9 @@ fn old_modal_patches_translate() {
             Sympathetic => (damp_from_v1_decay(0.2), 0.7),
         };
         let bright = if mode == Modal { 0.9 } else { 1.0 - 0.9 };
-        // v1 Bowed never read them: an in-tune bow's (#240).
+        // v1 Bowed never read them: the old sound's values.
         let (damp, bright, pos) = if mode == Bowed {
-            (damp_for(0.5), 0.5, 0.15)
+            (damp_for(0.12), 1.0, 0.0)
         } else {
             (damp, bright, 0.4)
         };
@@ -359,15 +358,12 @@ fn old_modal_patches_translate() {
     }
 }
 
-/// A v1 Bowed patch on the two-delay bow (plan Task 14): re-recorded
-/// deliberately, since the one-loop bow played an octave low (#240). The
-/// release again at Task 18: silence is judged 60 dB under the note's peak.
-const BOWED_V1_HELD: u64 = 0x4ff7_4f3d_d407_e80c;
-const BOWED_V1_RELEASED: u64 = 0x3202_a692_2ae7_f619;
-/// The one-loop bow's held C3, second half of its first second, recorded at 330298c.
-const BOWED_V1_RMS: f32 = 0.380_809_55;
+/// A v1 Bowed patch on the one-loop bow restored in tune (ADR 0064):
+/// re-recorded deliberately; its level is `out_gain`'s now, at the VCA.
+const BOWED_V1_HELD: u64 = 0x25a7_3be0_4fa1_4e09;
+const BOWED_V1_RELEASED: u64 = 0x5d4f_d32c_33ea_18ff;
 
-/// A v1 Bowed patch plays at its note, at about the old bow's level.
+/// A v1 Bowed patch plays at its note.
 #[test]
 fn a_v1_bowed_patch_bows_in_tune() {
     let snap = decode_modal(&v1_modal(ResonatorMode::Bowed, 0.2));
@@ -379,8 +375,6 @@ fn a_v1_bowed_patch_bows_in_tune() {
     // Bowed's gate (spec § 2 BOWED): a bow moves its pitch a few cents.
     assert!(cents.abs() < 5.0, "{cents:+.2} cents");
     assert!(octave_clear(s, f0), "an octave low");
-    let db = 20.0 * (rms(s) / BOWED_V1_RMS).log10();
-    assert!(db.abs() < 1.0, "{db:+.2} dB from the old bow");
     let released = play_modal_at(&snap.modal, 48, 127, second, second / 2);
     assert_eq!(fnv1a(&held), BOWED_V1_HELD);
     assert_eq!(fnv1a(&released), BOWED_V1_RELEASED);

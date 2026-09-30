@@ -57,7 +57,7 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0053](0053-delay-mechanics-wow-and-irregular-flutter.md) | The delay's WOW becomes MECHANICS: a slow wow and an irregular flutter | Proposed |
 | [0054](0054-sympathetic-strings-from-a-shared-pool.md) | Sympathetic borrows its strings from a shared pool of four (supersedes 0052) | Accepted; voice size assert and `COST_SYMPATHETIC` superseded in part by [0056](0056-modal-resonators-share-four-macros.md) |
 | [0055](0055-master-tape-off-the-chain.md) | The master tape stage is off the chain, kept behind `master-tape` (supersedes in part 0030) | Proposed |
-| [0056](0056-modal-resonators-share-four-macros.md) | Modal's resonators share four modulatable macros; loops are stable by construction (supersedes in part 0010, 0040, 0042, 0054) | Proposed; superseded in part by [0060](0060-one-dc-blocker-per-voice.md), [0062](0062-modal-notes-ring-free.md) |
+| [0056](0056-modal-resonators-share-four-macros.md) | Modal's resonators share four modulatable macros; loops are stable by construction (supersedes in part 0010, 0040, 0042, 0054) | Proposed; superseded in part by [0060](0060-one-dc-blocker-per-voice.md), [0062](0062-modal-notes-ring-free.md), [0064](0064-the-one-loop-bow-in-tune.md) |
 | [0057](0057-part-button-toggles-sound-and-mixer.md) | The Part button toggles sound and mixer; the mixer opens on SENDS | Proposed |
 | [0058](0058-a-loudness-reference-modal-matches-algo-init.md) | A loudness reference: every Modal model's INIT plays as loud as ALGO INIT | Superseded by [0063](0063-levels-at-the-factory-median.md) |
 | [0059](0059-music-theory-crate-built-from-types.md) | Music theory is its own crate, built from types | Proposed |
@@ -65,3 +65,4 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0061](0061-settings-ease-effects-run-at-mix-0.md) | Every continuous setting eases; an effect runs at MIX 0 | Proposed |
 | [0062](0062-modal-notes-ring-free.md) | A Modal note rings free, a re-struck key re-plucks its string, the halo glides (supersedes in part 0056) | Proposed |
 | [0063](0063-levels-at-the-factory-median.md) | INITs play at the factory median; BANK and the voice filter stop buzzing (supersedes 0058) | Proposed |
+| [0064](0064-the-one-loop-bow-in-tune.md) | Bowed is the one-loop bow again, half-length and inverting, in tune (supersedes in part 0056) | Proposed |

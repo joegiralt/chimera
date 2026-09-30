@@ -9,7 +9,6 @@ impl LoopGain {
     /// which held C6 to 13 s and G6 to 9.
     pub const MAX: f32 = 0.99999;
     /// The highest gain.
-    #[cfg(test)]
     pub const TOP: Self = Self(Self::MAX);
 
     /// `g` clamped to `[0, MAX]`; NaN is 0.
@@ -19,6 +18,7 @@ impl LoopGain {
     }
 
     /// The gain that falls 60 dB in `t60_s` at `freq_hz` passes a second.
+    #[cfg(test)]
     pub fn from_t60(t60_s: f32, freq_hz: f32) -> Self {
         Self::new(fall(t60_s, freq_hz))
     }
