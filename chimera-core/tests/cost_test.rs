@@ -882,3 +882,20 @@ fn modal_bills_each_model() {
     bank.modal.modes = BankModes::M48;
     assert_eq!(ModalEngine::cost(&bank.modal), Cost(1_900 + 16 * 45));
 }
+
+/// A bow from C6 up re-takes its lock correction each block while FORCE
+/// or SPEED eases (`grip`, a loop re-split). No route can move them: they
+/// are no modulation destination, so only a knob moves them, briefly, in
+/// the headroom (ADR 0061), and nothing is billed. Made modulatable, they
+/// need a bill as PITCH's.
+#[test]
+fn force_and_speed_take_no_route_so_the_bows_retune_bills_none() {
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::dsp::modal::ModalParams;
+    for q in [ModalParams::FORCE, ModalParams::SPEED] {
+        let addr = ParamAddr::new(BlockRef::Modal, q);
+        assert!(!addr.modulatable(), "{q:?}");
+        let mut ms = ModState::from_registry(&chimera_core::mod_path::ModDestRegistry::new(), 8);
+        assert_eq!(ms.push(addr), None, "{q:?}");
+    }
+}
