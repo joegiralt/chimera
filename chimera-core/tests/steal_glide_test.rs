@@ -317,8 +317,10 @@ fn a_glide_steal_never_drops_out() {
             }
             if time == 0.0 {
                 let blocks = out[BLOCK_SIZE..]
-                    .chunks_exact(BLOCK_SIZE)
-                    .zip(cut[BLOCK_SIZE..].chunks_exact(BLOCK_SIZE));
+                    .as_chunks::<BLOCK_SIZE>()
+                    .0
+                    .iter()
+                    .zip(cut[BLOCK_SIZE..].as_chunks::<BLOCK_SIZE>().0.iter());
                 for (k, (g, c)) in blocks.enumerate() {
                     let db = 20.0 * (common::rms(g) / common::rms(c)).log10();
                     assert!(
@@ -355,7 +357,7 @@ fn a_fast_glide_down_carries_the_old_ring() {
             let before = common::rms(&out[out.len() - BLOCK_SIZE..]);
             out.clear();
             rig.run(&shared, 40, &mut out, &mut ratios);
-            for (k, b) in out.chunks_exact(BLOCK_SIZE).enumerate() {
+            for (k, b) in out.as_chunks::<BLOCK_SIZE>().0.iter().enumerate() {
                 let db = 20.0 * (common::rms(b) / before).log10();
                 assert!(db > -10.0, "{name} TIME {time}: block {k} {db:+.1} dB");
             }
