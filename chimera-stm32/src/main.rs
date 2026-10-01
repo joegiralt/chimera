@@ -30,6 +30,8 @@ mod shared;
 mod watchdog;
 
 #[cfg(not(feature = "sd-probe"))]
+use chimera_core::project::LOAD_LINK;
+#[cfg(not(feature = "sd-probe"))]
 use chimera_core::reset::ResetCause;
 use chimera_core::ui::theme_settings::ThemeSettings;
 use cortex_m_rt::entry;
@@ -316,7 +318,7 @@ fn synth(board: Board) -> ! {
         // System › Theme: the UI loop owns the display and the backlight.
         let recolour = apply_theme(ui.theme(), &mut theme, &mut backlight, &mut display);
         ui.update();
-        shared_w.publish(|b| b.update_from(ui.project().perf()));
+        shared_w.publish(|b| b.update_from(ui.project().perf(), LOAD_LINK.epoch()));
         let stats = stats_r.as_mut().map(|r| {
             let mut s = *r.read();
             s.stack_used = probe::stack_used();

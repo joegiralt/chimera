@@ -60,6 +60,8 @@ pub struct PartAudio {
 pub struct AudioShared {
     pub parts: [PartAudio; MAX_PARTS],
     pub fx: FxParams,
+    /// The load epoch this snapshot was published under (ADR 0046).
+    pub epoch: u32,
 }
 
 impl Default for AudioShared {
@@ -78,7 +80,7 @@ impl PartAudio {
     }
 }
 
-crate::in_place::field_list!(AudioShared => AudioShared { parts, fx });
+crate::in_place::field_list!(AudioShared => AudioShared { parts, fx, epoch });
 
 impl AudioShared {
     pub fn from_performance(perf: &Performance) -> Self {
@@ -102,20 +104,26 @@ impl AudioShared {
                 parts.add(i).write(PartAudio::of(&perf.parts()[i]));
             }
             addr_of_mut!((*p).fx).write(perf.fx);
+            addr_of_mut!((*p).epoch).write(0);
             slot.assume_init_mut()
         }
     }
 
-    /// Overwrite with `perf` (the UI's per-frame publish), one Part at a
-    /// time in place: the stack holds one `PartAudio`, not the whole
-    /// struct. The destructuring lists every field, so a new one fails to
-    /// compile here.
-    pub fn update_from(&mut self, perf: &Performance) {
-        let Self { parts, fx } = self;
+    /// Overwrite with `perf` (the UI's per-frame publish), tagged with
+    /// the load `epoch`, one Part at a time in place: the stack holds one
+    /// `PartAudio`, not the whole struct. The destructuring lists every
+    /// field, so a new one fails to compile here.
+    pub fn update_from(&mut self, perf: &Performance, epoch: u32) {
+        let Self {
+            parts,
+            fx,
+            epoch: e,
+        } = self;
         for (d, p) in parts.iter_mut().zip(perf.parts()) {
             *d = PartAudio::of(p);
         }
         *fx = perf.fx;
+        *e = epoch;
     }
 }
 
@@ -447,6 +455,24 @@ impl Instrument {
     #[cfg(any(test, feature = "test-support"))]
     pub fn active(&self) -> [bool; MAX_VOICES] {
         core::array::from_fn(|v| self.voices[v].is_active())
+    }
+
+    /// No voice sounds.
+    pub fn quiet(&self) -> bool {
+        !self.voices.iter().any(Voice::is_active)
+    }
+
+    /// A project load (ADR 0046): every voice fades over `Voice::FADE` on
+    /// the snapshot it plays, and every waiting note goes. Each slot is
+    /// marked dying, so `render` step 5 frees it as it does a shed one: a
+    /// later note-off finds nothing and a held key isn't retriggered.
+    /// Nothing is counted unheard.
+    pub fn kill_all(&mut self) {
+        self.alloc.kill_all();
+        for v in &mut self.voices {
+            let _ = v.kill();
+        }
+        self.waiting = [None; MAX_VOICES];
     }
 
     /// Part `part`'s mono bus from the last `render` (before pan and level).

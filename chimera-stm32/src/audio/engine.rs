@@ -10,6 +10,7 @@ use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
 use chimera_core::note_queue::SourceId;
 use chimera_core::note_queue::{NoteDrain, NoteSources};
 use chimera_core::part::DacPair;
+use chimera_core::project::{LOAD_LINK, LoadGate};
 use chimera_core::scope::{ScopeFrame, ScopeWriter};
 use chimera_core::triple::{Reader, Writer};
 
@@ -35,6 +36,8 @@ struct Engine {
     notes: NoteDrain<'static, NOTE_SOURCES>,
     scope: ScopeWriter,
     dac: DacBlocks,
+    /// Holds the note queues through a project load (ADR 0046).
+    gate: LoadGate,
 }
 
 static mut ENGINE: MaybeUninit<Engine> = MaybeUninit::uninit();
@@ -75,6 +78,7 @@ pub fn init(
             notes,
             scope: ScopeWriter::new(scope),
             dac: DacBlocks::new(),
+            gate: LoadGate::new(),
         });
     }
     ENGINE_READY.store(true, Ordering::Release);
@@ -90,7 +94,9 @@ pub fn render_half(half: Half) {
     // this is the only live reference to `ENGINE`.
     let e = unsafe { (*addr_of_mut!(ENGINE)).assume_init_mut() };
     let shared = e.shared.read();
-    e.notes.drain(|ev| e.inst.handle(ev, shared));
+    if e.gate.before_block(&LOAD_LINK, e.inst, shared) {
+        e.notes.drain(|ev| e.inst.handle(ev, shared));
+    }
     e.inst.render(e.fx, &mut e.dac, shared, &mut e.scope);
     for pair in DacPair::ALL {
         // SAFETY: `main` runs `dma::clear` before `prefill`; the caller is

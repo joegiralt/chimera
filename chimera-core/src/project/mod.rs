@@ -8,6 +8,7 @@ mod ids;
 mod marks;
 mod parts;
 mod pool;
+mod swap;
 mod template;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
@@ -21,6 +22,7 @@ pub use marks::{
 };
 pub use parts::{Origin, Part, PartEdit, Performance, part_block, part_block_mut};
 pub use pool::Pool;
+pub use swap::{GateStep, LOAD_ACK_TIMEOUT_MS, LOAD_LINK, LoadGate, LoadLink, Settled, Swap};
 pub use template::TemplateCrc;
 
 use crate::dsp::fx_bus::FxParams;
