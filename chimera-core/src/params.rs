@@ -604,7 +604,8 @@ pub static OUT_SPECS: [ParamSpec; 4] = [
         1.0 / 128.0,
         true,
     )
-    .ident("LEVEL"),
+    .ident("LEVEL")
+    .glyph(crate::ui::glyph::FocusGlyph::LevelBar),
     ParamSpec::continuous(1, "PAN", ValFmt::Pan, -1.0, 1.0, 0.0, 2.0 / 128.0, false).ident("PAN"),
     ParamSpec::continuous(2, "VCA", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, true).ident("VCA"),
     ParamSpec::continuous(3, "VEL", ValFmt::Uni, 0.0, 1.0, 1.0, 1.0 / 128.0, false).ident("VEL"),

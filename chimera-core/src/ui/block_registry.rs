@@ -754,7 +754,10 @@ pub static DEMO_GLYPH_ARC: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
-        ParamSlot::param(BlockRef::Out, OutParams::VOLUME).with_label("UNI"),
+        // VOLUME is a LEVEL BAR on its own pages; here it shows the arc.
+        ParamSlot::param(BlockRef::Out, OutParams::VOLUME)
+            .with_label("UNI")
+            .with_glyph(FocusGlyph::Arc),
         ParamSlot::param(BlockRef::Out, OutParams::PAN).with_label("BI"),
         EMPTY,
         EMPTY,
@@ -808,9 +811,8 @@ pub static DEMO_GLYPH_LEVEL: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
-        ParamSlot::param(BlockRef::Out, OutParams::VOLUME).with_glyph(FocusGlyph::LevelBar),
-        ParamSlot::param(BlockRef::AlgoOp(Op::A), AlgoOpParams::FEEDBACK)
-            .with_glyph(FocusGlyph::LevelBar),
+        ParamSlot::param(BlockRef::Out, OutParams::VOLUME),
+        ParamSlot::param(BlockRef::AlgoOp(Op::A), AlgoOpParams::FEEDBACK),
         EMPTY,
         EMPTY,
         EMPTY,

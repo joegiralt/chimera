@@ -47,6 +47,12 @@ chorus braid (RATE, DEPTH, MIX; MODE is the strand count).
   SWITCH word fits before the pill. Chorus MODE (OFF, I, II, I+II), LFO
   SHAPE and SYNC are named on their specs, so they read as words
   everywhere; names are display only, disk codes are unchanged.
+- **Set-and-leave levels take LEVEL BAR** (owner-approved
+  2026-10-01): unipolar, 0 to max: OUT LEVEL, each operator's LEVEL
+  and FDBK, Part LEVEL and its CHR/DLY/REV sends, chorus, delay,
+  reverb, tape and comp MIX, delay REV, comp MAKEUP. Bipolar and
+  centred params keep ARC; a test checks every LEVEL BAR is unipolar
+  from 0.
 - **A composite draws from its params' set (stored) values only**, never
   the modulated ones: when it moves, that is always its own animation,
   never automation. The params stay modulatable; their cells and mod

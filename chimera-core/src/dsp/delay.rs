@@ -100,8 +100,12 @@ pub static DELAY_SPECS: [ParamSpec; 7] = [
     .short("MECH"),
     ParamSpec::continuous(3, "SAT", ValFmt::Uni, 0.0, 1.0, 0.2, 1.0 / 128.0, false).ident("SAT"),
     ParamSpec::continuous(4, "TONE", ValFmt::Uni, 0.0, 1.0, 0.6, 1.0 / 128.0, false).ident("TONE"),
-    ParamSpec::continuous(5, "MIX", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false).ident("MIX"),
-    ParamSpec::continuous(6, "REV", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false).ident("REV"),
+    ParamSpec::continuous(5, "MIX", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false)
+        .ident("MIX")
+        .glyph(crate::ui::glyph::FocusGlyph::LevelBar),
+    ParamSpec::continuous(6, "REV", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false)
+        .ident("REV")
+        .glyph(crate::ui::glyph::FocusGlyph::LevelBar),
 ];
 
 impl Block for DelayParams {

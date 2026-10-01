@@ -26,6 +26,7 @@ use screen::*;
 
 const NONE: FocusGlyph = FocusGlyph::None;
 const SWITCH: FocusGlyph = FocusGlyph::Switch;
+const LEVEL: FocusGlyph = FocusGlyph::LevelBar;
 
 /// Params assigned a glyph other than ARC, by `(block kind, ident)`: every
 /// instance of the block (`AlgoOp`, `Env`, `Lfo`) alike. Each glyph story
@@ -52,6 +53,21 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Chorus", "MODE", NONE),
     // Two states, one of them off: a toggle.
     ("Lfo", "SYNC", SWITCH),
+    // Set-and-leave levels, 0 to max: a fader.
+    ("Out", "LEVEL", LEVEL),
+    ("AlgoOp", "LEVEL", LEVEL),
+    ("AlgoOp", "FDBK", LEVEL),
+    ("Part", "LEVEL", LEVEL),
+    ("Part", "CHR", LEVEL),
+    ("Part", "DLY", LEVEL),
+    ("Part", "REV", LEVEL),
+    ("Chorus", "MIX", LEVEL),
+    ("Delay", "MIX", LEVEL),
+    ("Delay", "REV", LEVEL),
+    ("Reverb", "MIX", LEVEL),
+    ("Tape", "MIX", LEVEL),
+    ("Comp", "MAKEUP", LEVEL),
+    ("Comp", "MIX", LEVEL),
     ("Pitch", "STEAL", NONE),
     ("Part", "MODE", NONE),
     ("Part", "OUT", NONE),
@@ -81,6 +97,17 @@ const TWO_PEERS: &[(&str, &str)] = &[
     // CUT and GLIDE: two ways to steal; GLIDE could read as "glide on".
     ("Pitch", "STEAL"),
 ];
+
+/// Every LEVEL BAR param is a unipolar level, 0 to max.
+#[test]
+fn level_bars_are_unipolar() {
+    for b in BlockRef::ALL {
+        for s in b.specs().iter().filter(|s| s.glyph == FocusGlyph::LevelBar) {
+            assert!(!s.fmt.is_bipolar(), "{b:?}.{}: bipolar keeps ARC", s.ident);
+            assert!(s.min == 0.0 && s.max > 0.0, "{b:?}.{}: 0 to max", s.ident);
+        }
+    }
+}
 
 /// Least gap between a SWITCH word and the pill.
 const SWITCH_GAP: i32 = 6;
@@ -530,11 +557,11 @@ fn tick_y(i: i32, n: i32) -> i32 {
 fn glyph_level_page_drives_a_level_and_a_stepped_value() {
     let mut ui = UiState::new();
     to_demo(&mut ui, &reg::DEMO_GLYPH_LEVEL);
-    // LEVEL BAR is the page's: the specs stay ARC until approved.
+    // Both specs carry LEVEL BAR.
     let vol = ParamAddr::new(BlockRef::Out, OutParams::VOLUME);
     let fdbk = ParamAddr::new(BlockRef::AlgoOp(Op::A), AlgoOpParams::FEEDBACK);
-    assert_eq!(vol.spec().unwrap().glyph, FocusGlyph::Arc);
-    assert_eq!(fdbk.spec().unwrap().glyph, FocusGlyph::Arc);
+    assert_eq!(vol.spec().unwrap().glyph, FocusGlyph::LevelBar);
+    assert_eq!(fdbk.spec().unwrap().glyph, FocusGlyph::LevelBar);
     let ctx = SlotCtx::read(ui.params(), ui.selected_op());
     assert_eq!(view(ui.nav.active_block_def(), 0, &ctx).addr(), Some(vol));
     assert_eq!(view(ui.nav.active_block_def(), 1, &ctx).addr(), Some(fdbk));

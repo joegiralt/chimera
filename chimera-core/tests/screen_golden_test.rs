@@ -20,8 +20,8 @@ const GOLDENS: &[(&str, u64)] = &[
     ("algo_alg_morph_dimmed", 0xd8e8a78a528ad3b4),
     ("mod_matrix_morph_inert", 0xc0a153ae29f9167b),
     ("algo_wave", 0xa04fd344f3387270),
-    ("algo_level", 0x7b3a4495d5c597e0),
-    ("algo_osc_last", 0x6112961e4f96c7ab),
+    ("algo_level", 0x408f6bef763157fe),
+    ("algo_osc_last", 0x7ac731494a9568e2),
     ("bigviz_filter", 0x64de3de945e82cf3),
     ("flt_mode", 0x9dd12a044e75cc68),
     ("env_a", 0x6f15c442d71edf83),
@@ -61,9 +61,9 @@ const GOLDENS: &[(&str, u64)] = &[
     // The Mix chain's map loses its TAPE node without `master-tape`
     // (ADR 0055); with it, the screens are as before.
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_part", 0xa692924186da849a),
+    ("mixer_part", 0x24ee8f61ddea9047),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_sends", 0x26c03d61d4dffe1b),
+    ("mixer_sends", 0xdf3aab7c23ee0c31),
     #[cfg(not(feature = "master-tape"))]
     ("mixer_fx_delay", 0x7cad11c8821d60af),
     #[cfg(not(feature = "master-tape"))]
@@ -75,9 +75,9 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(not(feature = "master-tape"))]
     ("mixer_master_level", 0xb898d28bbb71bce6),
     #[cfg(feature = "master-tape")]
-    ("mixer_part", 0xc25c1c60d1ccf57c),
+    ("mixer_part", 0xd362801facb9dc65),
     #[cfg(feature = "master-tape")]
-    ("mixer_sends", 0xd9c254b0347d110d),
+    ("mixer_sends", 0x27bc9363dd407e2b),
     #[cfg(feature = "master-tape")]
     ("mixer_fx_delay", 0x40a01377e2ee0701),
     #[cfg(feature = "master-tape")]
@@ -91,9 +91,9 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(feature = "master-tape")]
     ("mixer_master_level", 0x1fea2dbc893512ec),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_out_p2", 0x922c1706c7a6113f),
+    ("mixer_out_p2", 0xc657c44494c829ac),
     #[cfg(feature = "master-tape")]
-    ("mixer_out_p2", 0x72f5aa7f2c775a91),
+    ("mixer_out_p2", 0xc7a057082a7a6932),
     ("algo_out_p3", 0x3e91d6b588f4ebfa),
     ("mod_matrix", 0xa6cf67e584e06c56),
     ("mod_matrix_wide", 0xca78c74fca4ac959),
