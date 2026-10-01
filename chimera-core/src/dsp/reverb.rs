@@ -52,12 +52,26 @@ impl ReverbParams {
 }
 
 /// The reverb runs outside `Voice`: nothing is modulatable.
+/// Every reverb param shows the cube (ADR 0067).
+const CUBE: crate::ui::glyph::FocusGlyph =
+    crate::ui::glyph::FocusGlyph::Composite(crate::ui::glyph::CompositeId::ReverbCube);
+
 pub static REVERB_SPECS: [ParamSpec; 5] = [
-    ParamSpec::continuous(5, "GRIT", ValFmt::Uni, 0.0, 1.0, 0.3, 1.0 / 128.0, false).ident("GRIT"),
-    ParamSpec::continuous(1, "TIME", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false).ident("TIME"),
-    ParamSpec::continuous(2, "DAMP", ValFmt::Uni, 0.0, 1.0, 0.3, 1.0 / 128.0, false).ident("DAMP"),
-    ParamSpec::continuous(3, "SIZE", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 31.0, false).ident("SIZE"),
-    ParamSpec::continuous(4, "MIX", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false).ident("MIX"),
+    ParamSpec::continuous(5, "GRIT", ValFmt::Uni, 0.0, 1.0, 0.3, 1.0 / 128.0, false)
+        .ident("GRIT")
+        .glyph(CUBE),
+    ParamSpec::continuous(1, "TIME", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false)
+        .ident("TIME")
+        .glyph(CUBE),
+    ParamSpec::continuous(2, "DAMP", ValFmt::Uni, 0.0, 1.0, 0.3, 1.0 / 128.0, false)
+        .ident("DAMP")
+        .glyph(CUBE),
+    ParamSpec::continuous(3, "SIZE", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 31.0, false)
+        .ident("SIZE")
+        .glyph(CUBE),
+    ParamSpec::continuous(4, "MIX", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false)
+        .ident("MIX")
+        .glyph(CUBE),
 ];
 
 impl Block for ReverbParams {

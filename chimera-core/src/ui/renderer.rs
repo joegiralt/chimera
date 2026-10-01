@@ -3,7 +3,7 @@ use embedded_graphics::geometry::{Point, Size};
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::primitives::{PrimitiveStyle, Rectangle, StyledDrawable};
 
-use crate::addr::Op;
+use crate::addr::{BlockRead, Op, ParamAddr};
 use crate::dsp::algo::algorithms::AlgoId;
 use crate::dsp::modulator::{EnvType, HoldPos};
 use crate::part::DacPair;
@@ -17,6 +17,10 @@ use crate::ui::chain::{ChainId, ChainNav};
 use crate::ui::components;
 use crate::ui::dungeon_map;
 use crate::ui::fmt::{self, FmtBuf};
+use crate::ui::glyph::{
+    BRAID_PARAMS, Braid, BraidPart, CUBE_PARAMS, CompositeId, Cube, CubePart, FocusGlyph, Gauge,
+    RINGS_PARAMS, Rings, RingsPart,
+};
 use crate::ui::mod_grid::MatrixState;
 use crate::ui::page::PageLayout;
 use crate::ui::perf::PerfStats;
@@ -50,12 +54,20 @@ pub struct Frame<'a> {
     pub audio: Option<&'a AudioStats>,
     /// The master compressor's gain reduction, dB (MST's GR meter).
     pub master_gr_db: f32,
+    /// Animation phase: what an animated glyph draws from.
+    pub clock: crate::ui::animation::UiClock,
+    /// The FX's stored params (a composite reads the chorus's).
+    pub fx: &'a crate::dsp::fx_bus::FxParams,
 }
 
 /// Full-screen renderer. Composites header, visualization, parameters, and dungeon map.
 pub struct Renderer {
     /// Animated display values for the 6 encoders (normalized 0..1).
     pub anim: [AnimatedValue; 6],
+    /// The same slots' set values, eased, with no modulation: what the
+    /// glyphs that ignore modulation draw (CROSSFADER, and the composites
+    /// through `eased_set`).
+    pub set: [AnimatedValue; 6],
     /// Animated scroll offset for dungeon map sub-page branches (in pixels).
     pub branch_scroll: AnimatedValue,
 }
@@ -70,6 +82,7 @@ impl Renderer {
     pub fn new() -> Self {
         Self {
             anim: [AnimatedValue::new(0.5); 6],
+            set: [AnimatedValue::new(0.5); 6],
             branch_scroll: AnimatedValue::new(0.0).with_speed(0.25),
         }
     }
@@ -77,6 +90,9 @@ impl Renderer {
     /// Jump the animated values (page change: nothing to lerp from).
     pub fn snap_to_current(&mut self, values: [f32; 6]) {
         for (a, &v) in self.anim.iter_mut().zip(values.iter()) {
+            a.snap(v);
+        }
+        for (a, &v) in self.set.iter_mut().zip(values.iter()) {
             a.snap(v);
         }
     }
@@ -377,11 +393,82 @@ impl Renderer {
             display,
             view.label(),
             buf.as_str(),
-            v,
-            view.fmt().is_bipolar(),
+            self.gauge(f),
             look(f, f.focus),
             f.prime_status,
         );
+    }
+
+    /// The focused slot's gauge, by its glyph.
+    pub fn gauge(&self, f: &Frame) -> Gauge {
+        let view = view::view(f.def, f.focus, &f.ctx);
+        let (fmt, glyph, focused) = (view.fmt(), view.glyph(), view.addr());
+        let value = match glyph {
+            FocusGlyph::Crossfader => self.set[f.focus].current(),
+            _ => self.anim[f.focus].current(),
+        };
+        let frame = f.clock.frame();
+        glyph.gauge(value, fmt, |id| {
+            // Which of the composite's params has focus.
+            let focus = id.params().iter().position(|&a| Some(a) == focused);
+            match id {
+                CompositeId::ChorusBraid => Gauge::Braid(Braid::from_set(
+                    self.eased_set(f, BRAID_PARAMS),
+                    focus.map(|i| BraidPart::ALL[i]),
+                    frame,
+                )),
+                CompositeId::DelayRings => Gauge::Rings(Rings::from_set(
+                    self.eased_set(f, RINGS_PARAMS),
+                    focus.map(|i| RingsPart::ALL[i]),
+                    frame,
+                )),
+                CompositeId::ReverbCube => Gauge::Cube(Cube::from_set(
+                    self.eased_set(f, CUBE_PARAMS),
+                    focus.map(|i| CubePart::ALL[i]),
+                    frame,
+                )),
+            }
+        })
+    }
+
+    /// A composite's inputs, `addrs`' set values normalized: eased (`set`)
+    /// where the page has a slot for one, else stored; never `anim` or
+    /// anything modulated, so the glyph only ever moves by its own
+    /// animation.
+    fn eased_set<const N: usize>(&self, f: &Frame, addrs: [ParamAddr; N]) -> [f32; N] {
+        let stored = stored_set(&Stored(f), addrs);
+        core::array::from_fn(|i| {
+            (0..f.def.params.len())
+                .find(|&s| slot_addr(f.def, s, &f.ctx) == Some(addrs[i]))
+                .map_or(stored[i], |s| self.set[s].current())
+        })
+    }
+
+    /// The gauge the focus band shows now: none while a prime status holds
+    /// the band, or for a dimmed, absent or empty slot.
+    pub fn shown_gauge(&self, f: &Frame) -> Option<Gauge> {
+        let plain = f.def.layout != PageLayout::Matrix && f.def.viz != VizType::AudioStats;
+        (plain
+            && f.prime_status.is_none()
+            && view::view(f.def, f.focus, &f.ctx) != View::Empty
+            && look(f, f.focus) == components::Look::Live)
+            .then(|| self.gauge(f))
+    }
+
+    /// Redraw only `gauge` (the shown one) in its box, if it has one; the
+    /// rows to flush.
+    pub fn redraw_gauge<D>(
+        display: &mut D,
+        fb: impl FnOnce(&mut D) -> &mut [u16],
+        gauge: Gauge,
+    ) -> Option<(u16, u16)>
+    where
+        D: DrawTarget<Color = Rgb565>,
+    {
+        let (x, y, w, h) = components::gauge_rect(&gauge)?;
+        Self::clear_rect_fb(fb(display), x, y, w, h);
+        components::draw_gauge(display, gauge);
+        Some((y as u16, (y + h) as u16))
     }
 
     /// The six cells, first row's labels at `top`.
@@ -438,6 +525,17 @@ impl Renderer {
 
     // ── Dirty region helpers ─────────────────────────────────────────
 
+    /// Clear a box by direct framebuffer fill.
+    pub fn clear_rect_fb(fb: &mut [u16], x: i32, y: i32, w: i32, h: i32) {
+        use embedded_graphics::pixelcolor::raw::{RawData, RawU16};
+        let bg = RawU16::from(theme::BG).into_inner();
+        let sw = theme::SCREEN_W as usize;
+        for row in y.max(0) as usize..(y + h).min(theme::SCREEN_H) as usize {
+            fb[row * sw + x.max(0) as usize..row * sw + (x + w).min(theme::SCREEN_W) as usize]
+                .fill(bg);
+        }
+    }
+
     /// Clear a screen region by direct framebuffer fill. Much faster than draw_iter.
     pub fn clear_region_fb(fb: &mut [u16], y_start: u16, y_end: u16) {
         use embedded_graphics::pixelcolor::raw::{RawData, RawU16};
@@ -445,6 +543,22 @@ impl Renderer {
         let start = y_start as usize * theme::SCREEN_W as usize;
         let end = y_end as usize * theme::SCREEN_W as usize;
         fb[start..end].fill(bg);
+    }
+}
+
+/// `addrs`' stored values, normalized: `eased_set`'s fallback for a param
+/// the page has no slot for.
+fn stored_set<const N: usize>(stored: &impl BlockRead, addrs: [ParamAddr; N]) -> [f32; N] {
+    addrs.map(|a| stored.block(a.block).map_or(0.0, |b| b.normalized(a.param)))
+}
+
+/// The edited Part's stored blocks and the FX's, read-only.
+struct Stored<'f, 'a>(&'f Frame<'a>);
+
+impl BlockRead for Stored<'_, '_> {
+    fn block(&self, b: crate::addr::BlockRef) -> Option<&dyn crate::block::Block> {
+        let p = &self.0.parts[self.0.active_part.index()];
+        crate::project::part_block(&p.sound, &p.mix, self.0.fx, b)
     }
 }
 

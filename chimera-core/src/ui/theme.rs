@@ -70,6 +70,43 @@ pub const ARC_CX: i32 = 188;
 pub const ARC_CY: i32 = 80;
 pub const ARC_R: i32 = 28;
 pub const ARC_WIDTH: u32 = 5;
+/// The SWITCH glyph's pill, on the arc's centre line, flush with the
+/// right margin so a word has room before it.
+pub const SWITCH_W: i32 = 56;
+pub const SWITCH_H: i32 = 28;
+pub const SWITCH_CX: i32 = SCREEN_W - MARGIN_X - SWITCH_W / 2;
+/// The LEVEL BAR glyph: a slim vertical track as tall as the arc, near
+/// the right margin, its tick dots to the left.
+pub const LEVEL_X: i32 = SCREEN_W - MARGIN_X - 8;
+pub const LEVEL_W: i32 = 6;
+pub const LEVEL_TOP: i32 = ARC_CY - ARC_R;
+pub const LEVEL_BOTTOM: i32 = ARC_CY + ARC_R;
+pub const LEVEL_TICK_X: i32 = LEVEL_X - 14;
+/// The CROSSFADER glyph: a horizontal track flush with the right margin,
+/// a centre detent, and a cap taller than the track.
+pub const XF_W: i32 = 64;
+pub const XF_CX: i32 = SCREEN_W - MARGIN_X - XF_W / 2;
+pub const XF_TRACK_H: i32 = 6;
+pub const XF_CAP_W: i32 = 10;
+pub const XF_CAP_H: i32 = 26;
+/// The chorus braid's box, flush with the right margin, as tall as the
+/// arc: the only pixels it redraws each frame.
+pub const BRAID_W: i32 = 80;
+pub const BRAID_H: i32 = 56;
+pub const BRAID_X: i32 = SCREEN_W - MARGIN_X - BRAID_W;
+pub const BRAID_Y: i32 = ARC_CY - BRAID_H / 2;
+/// The delay rings' box, flush with the right margin, round about its
+/// centre: the only pixels it redraws each frame.
+pub const RINGS_W: i32 = 60;
+pub const RINGS_H: i32 = 56;
+pub const RINGS_X: i32 = SCREEN_W - MARGIN_X - RINGS_W;
+pub const RINGS_Y: i32 = ARC_CY - RINGS_H / 2;
+/// The reverb cube's box, flush with the right margin: the only pixels it
+/// redraws each frame.
+pub const CUBE_W: i32 = 64;
+pub const CUBE_H: i32 = 56;
+pub const CUBE_X: i32 = SCREEN_W - MARGIN_X - CUBE_W;
+pub const CUBE_Y: i32 = ARC_CY - CUBE_H / 2;
 
 /// Viz band on CellGrid / Mixer pages: 118..186, centre line 152.
 pub const VIZ_BAND_TOP: i32 = 118;

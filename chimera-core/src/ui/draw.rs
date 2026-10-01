@@ -210,8 +210,9 @@ where
     .draw_styled(&PrimitiveStyle::with_fill(color), d);
 }
 
-/// Filled rounded rectangle (SETTINGS' bar).
-pub fn round_fill<D>(d: &mut D, x: i32, y: i32, w: i32, h: i32, radius: u32, color: Rgb565)
+/// Filled rounded rectangle with corner `radius`; nothing for a
+/// non-positive `w` or `h`.
+pub fn round_rect<D>(d: &mut D, x: i32, y: i32, w: i32, h: i32, radius: u32, color: Rgb565)
 where
     D: DrawTarget<Color = Rgb565>,
 {

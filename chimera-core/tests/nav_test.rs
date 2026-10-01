@@ -284,13 +284,14 @@ fn leaf_keys() {
     #[cfg(debug_assertions)]
     {
         let mut l = Location::settings_at(&path_of(&["SYSTEM", "DEMO"]), 0);
-        for n in 1..=4 {
+        let last = chimera_core::ui::block_registry::DEMO_CHAIN.len() as u8 - 1;
+        for n in 1..=last {
             key(&mut l, NavKey::Plus, &cx, &mut r);
             assert_eq!(l.settings().unwrap().page(), at(n, 0));
         }
         assert_eq!(l.step(NavKey::Plus, &cx, &mut r), Step::Stay);
         key(&mut l, NavKey::Minus, &cx, &mut r);
-        assert_eq!(l.settings().unwrap().page(), at(3, 0));
+        assert_eq!(l.settings().unwrap().page(), at(last - 1, 0));
     }
 
     let mut l = Location::settings_at(&path_of(&["SYSTEM", "ABOUT"]), 0);

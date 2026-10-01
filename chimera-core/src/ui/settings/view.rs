@@ -233,7 +233,7 @@ pub fn draw_list<D: DrawTarget<Color = Rgb565>>(
         let y = LIST_TOP + (i - first) as i32 * ROW_H;
         let on = i == bar;
         if on {
-            draw::round_fill(
+            draw::round_rect(
                 d,
                 BAR_X,
                 y,
