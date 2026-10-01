@@ -1572,20 +1572,20 @@ disassembly and the encoded sizes:
    - **The relaunch root** (`full()` saved, so SYSTEM names it): no toast.
      `same()` matches the saved project, the status is `Saved`, and the
      note sounds (peak 0.089).
-   - **No card** (a root that doesn't exist): the toast is `NEW PROJECT`,
-     **not `NO CARD`** as Step 4.3 expects. With no card, SYSTEM's defaults
-     have no last project, so `boot_project` reports NEW's note, and boot
-     drops SYSTEM's `BootNote::NoCard`. That is
-     https://github.com/joegiralt/chimera/issues/197 (commented). The note
-     sounds (peak 0.072), sample for sample as `Performance::new`, which is
-     what main played.
+   - **No card** (a root that doesn't exist): the toast is `NO CARD`. At
+     first it was `NEW PROJECT`: SYSTEM's defaults name no project, so
+     `boot_project` reported NEW's note. Now, with no last project, it
+     mounts the card to say why, so a card that won't mount shows its
+     fault as well (`project_boot_test`'s
+     `boot_without_a_card_says_no_card`). The note sounds (peak 0.072),
+     sample for sample as `Performance::new`, which is what main played.
    - **A fresh empty directory:** the toast is `NEW PROJECT`. The note
      sounds sample for sample as `Performance::new`.
 4. **Not run:** the window itself. Item 3 automates the toast text and the
    audio path, not what the screen draws or what the speakers play.
    - UAT (owner): `just desktop` against each of the three roots. Check
      the toast as drawn, and that a held key sounds as on main by ear.
-     For no card, expect `NEW PROJECT` until #197 is fixed.
+     For no card, expect `NO CARD`.
 
 `just stack-check` passes, which covers `encode_project`, `ProjectDecoder`
 and `load_ab_in_place` on every feature set. `just firmware` builds.

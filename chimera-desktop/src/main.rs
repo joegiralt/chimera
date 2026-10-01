@@ -39,7 +39,8 @@ fn boot<S: Store>(
     card: &mut Card,
     store: &mut S,
 ) -> (SystemSync, SystemSettings) {
-    // Why the defaults applied is not shown yet:
+    // No card or a card fault shows at the project's boot; a SYSTEM
+    // file that can't be read still applies the defaults silently:
     // https://github.com/joegiralt/chimera/issues/197
     let (sync, settings, _) = SystemSync::boot(card, store);
     ui.set_theme(settings.theme);

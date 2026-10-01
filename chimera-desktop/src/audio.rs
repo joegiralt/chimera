@@ -428,9 +428,7 @@ mod tests {
         }
         let cases = [
             (saved.clone(), None),
-            // Not NO CARD: boot drops SYSTEM's BootNote, and with no last
-            // project the note is NEW's (#197).
-            (base.join("absent"), Some("NEW PROJECT")),
+            (base.join("absent"), Some("NO CARD")),
             (fresh.clone(), Some("NEW PROJECT")),
         ];
         for (root, toast) in cases {

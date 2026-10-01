@@ -259,7 +259,8 @@ fn synth(board: Board) -> ! {
     let sd = sd::init(sd, &mut cp.DCB, &mut cp.DWT, &clocks, clk.cpu_hz);
     let store = sd::take_store(sd).expect("store taken once");
     let mut card = Card::new();
-    // Why the defaults applied is not shown yet:
+    // No card or a card fault shows at the project's boot; a SYSTEM
+    // file that can't be read still applies the defaults silently:
     // https://github.com/joegiralt/chimera/issues/197
     let (mut sync, mut settings, _) = SystemSync::boot(&mut card, store);
     ui.set_theme(settings.theme);
