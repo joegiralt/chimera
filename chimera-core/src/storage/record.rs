@@ -140,7 +140,7 @@ pub struct RecordWriter<'s> {
 
 impl<'s> RecordWriter<'s> {
     /// A writer with a fresh CRC: the file's, or a body's alone.
-    pub(crate) fn new(sink: &'s mut dyn ByteSink) -> Self {
+    fn new(sink: &'s mut dyn ByteSink) -> Self {
         RecordWriter {
             sink,
             crc: Crc32::new(),
@@ -172,6 +172,29 @@ impl<'s> RecordWriter<'s> {
         self.raw(&head)?;
         self.raw(payload)
     }
+}
+
+/// Takes bytes and keeps none.
+struct Discard;
+
+impl ByteSink for Discard {
+    fn put(&mut self, _: &[u8]) -> Result<(), StoreError> {
+        Ok(())
+    }
+}
+
+/// The CRC of `prefix`, then of the records `body` puts: one pass, the
+/// writer's own CRC, nothing kept.
+pub(crate) fn records_crc(
+    prefix: &[u8],
+    body: impl FnOnce(&mut RecordWriter<'_>) -> Result<(), StoreError>,
+) -> u32 {
+    let mut sink = Discard;
+    let mut w = RecordWriter::new(&mut sink);
+    w.crc.update(prefix);
+    // `Discard::put` is never Err, so neither is `body`.
+    let _ = body(&mut w);
+    w.crc.finish()
 }
 
 /// Header, then whatever `body` puts, then the CRC trailer.
