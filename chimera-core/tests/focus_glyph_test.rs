@@ -30,6 +30,7 @@ const LEVEL: FocusGlyph = FocusGlyph::LevelBar;
 const XF: FocusGlyph = FocusGlyph::Crossfader;
 const BRAID: FocusGlyph = FocusGlyph::Composite(CompositeId::ChorusBraid);
 const RINGS: FocusGlyph = FocusGlyph::Composite(CompositeId::DelayRings);
+const CUBE: FocusGlyph = FocusGlyph::Composite(CompositeId::ReverbCube);
 
 /// Params assigned a glyph other than ARC, by `(block kind, ident)`: every
 /// instance of the block (`AlgoOp`, `Env`, `Lfo`) alike. Each glyph story
@@ -63,7 +64,6 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Part", "CHR", LEVEL),
     ("Part", "DLY", LEVEL),
     ("Part", "REV", LEVEL),
-    ("Reverb", "MIX", LEVEL),
     ("Tape", "MIX", LEVEL),
     ("Comp", "MAKEUP", LEVEL),
     ("Comp", "MIX", LEVEL),
@@ -80,6 +80,12 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Delay", "TONE", RINGS),
     ("Delay", "MIX", RINGS),
     ("Delay", "REV", RINGS),
+    // The reverb, all five params: the cube.
+    ("Reverb", "GRIT", CUBE),
+    ("Reverb", "TIME", CUBE),
+    ("Reverb", "DAMP", CUBE),
+    ("Reverb", "SIZE", CUBE),
+    ("Reverb", "MIX", CUBE),
     // Blends between two ends: a crossfader.
     ("Algo", "MORPH", XF),
     ("Drive", "MIX", XF),
@@ -1116,9 +1122,9 @@ fn cube_ui(slot: EncoderId) -> UiState {
 
 #[test]
 fn glyph_cube_page_moves_only_inside_its_box() {
-    // Not on the reverb pages yet.
+    // Every reverb param carries the cube.
     for s in BlockRef::Reverb.specs() {
-        assert!(!matches!(s.glyph, FocusGlyph::Composite(_)), "{}", s.ident);
+        assert_eq!(s.glyph, CUBE, "{}", s.ident);
         for w in value_texts(s) {
             let right = theme::FOCUS_VALUE_X + draw::text_width(&theme::FONT_FOCUS, &w, 0);
             assert!(right + 4 <= theme::CUBE_X, "{} {w}", s.ident);
