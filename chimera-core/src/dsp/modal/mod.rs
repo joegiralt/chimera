@@ -58,7 +58,7 @@ use crate::hw::{Cost, SAMPLE_RATE};
 use crate::in_place::{in_place_enum, uninit_at};
 use crate::sym_alloc::{Lease, SYM_SLOTS, SymAlloc, SymSlot};
 use crate::voice_alloc::VoiceIdx;
-use chords::period_ratios;
+use chords::{FITS, period_ratios};
 use core::f32::consts::TAU;
 use ensemble::{Ensemble, rate_hz};
 use loop_parts::{DC_HZ, LoopGain, RELEASE_SAMPLES, Release, damped};
@@ -635,6 +635,7 @@ impl ModalEngine {
         // strike always adds.
         let restrike = self.active && f == self.frequency;
         let glides = self.active && !restrike && glide.is_some();
+        let span = glides.then(|| self.span(freq, sample_rate));
         if let (true, Some(tau)) = (glides, glide) {
             self.slide = Glide::new(self.frequency * self.slide.value() / f, tau);
             self.slide.toward(1.0);
@@ -644,10 +645,8 @@ impl ModalEngine {
         }
         let restrike = restrike || glides;
         self.frequency = f;
-        if glides {
-            // Its lowest pitch on the way: the start or the target.
-            let lowest = freq * self.pitch * self.slide.value().min(1.0);
-            self.fit(sample_rate as f32 / lowest, pool);
+        if let Some(span) = span {
+            self.fit(span, pool);
         }
         let freq = self.pitched(freq);
         self.tuned = self.ratio();
@@ -737,22 +736,72 @@ impl ModalEngine {
         self.silence_counter = 0;
     }
 
-    /// Every ring sized for a glide whose longest period is `period`
-    /// samples (`KsString::fit`): a string's, a bow's half loop, and SYMP's
-    /// main string and its halo, whose folded periods may take any length
-    /// on the way, whole.
-    fn fit(&mut self, period: f32, pool: &mut SymPool) {
+    /// A glide from the pitch it sounds to `freq` Hz: its shortest and
+    /// longest periods, samples, the start's and the target's.
+    fn span(&self, freq: f32, sample_rate: u32) -> (f32, f32) {
+        let now = self.frequency * sample_rate as f32 * self.slide.value();
+        let period = |f: f32| sample_rate as f32 / (self.pitch * f);
+        (period(now.max(freq)), period(now.min(freq)))
+    }
+
+    /// Every ring sized for a glide over main periods `(lo, hi)` samples
+    /// (`KsString::fit`): a string's, a bow's half loop, and SYMP's main
+    /// string and its halo (`halo_reach`).
+    fn fit(&mut self, (lo, hi): (f32, f32), pool: &mut SymPool) {
         match &mut self.model {
             ModelSlot::Bank(_) => {}
-            ModelSlot::String(v) => v.string.fit(period),
-            ModelSlot::Bowed(b) => b.string.fit(period / BOW_LOOPS),
+            ModelSlot::String(v) => v.string.fit(hi),
+            ModelSlot::Bowed(b) => b.string.fit(hi / BOW_LOOPS),
             ModelSlot::Sympathetic(m) => {
-                m.main.string.fit(period);
+                m.main.string.fit(hi);
                 if let Some(set) = pool.halo(&m.halo) {
-                    set.strings.iter_mut().for_each(|k| k.fit(f32::MAX));
+                    for (k, p) in set.strings.iter_mut().zip(halo_reach(lo, hi)) {
+                        k.fit(p);
+                    }
                 }
             }
         }
+    }
+
+    /// The bytes a strike of `note` writes to the lines when it adds to
+    /// what rings, for the clear budget (spec § 4.8): none for a re-strike,
+    /// `fit`'s growth for a glide (`glide`, STEAL GLIDE). `None`: the note
+    /// starts fresh, `SymPool::note_on_clear`'s.
+    pub fn strike_clear(
+        &self,
+        note: u8,
+        glide: bool,
+        sample_rate: u32,
+        pool: &SymPool,
+    ) -> Option<usize> {
+        let freq = note_to_freq(note);
+        if !self.active {
+            return None;
+        }
+        if freq / sample_rate as f32 == self.frequency {
+            return Some(0);
+        }
+        if !glide {
+            return None;
+        }
+        let (lo, hi) = self.span(freq, sample_rate);
+        Some(match &self.model {
+            ModelSlot::Bank(_) => 0,
+            ModelSlot::String(v) => v.string.fit_bytes(hi),
+            ModelSlot::Bowed(b) => b.string.fit_bytes(hi / BOW_LOOPS),
+            ModelSlot::Sympathetic(m) => {
+                let halo = match &m.halo {
+                    Halo::Full(l) => pool.sets[l.slot().index()]
+                        .strings
+                        .iter()
+                        .zip(halo_reach(lo, hi))
+                        .map(|(k, p)| k.fit_bytes(p))
+                        .sum(),
+                    Halo::Bare => 0,
+                };
+                m.main.string.fit_bytes(hi) + halo
+            }
+        })
     }
 
     /// The strings follow a changed pitch ratio or a steal's glide (a divide per string,
@@ -1644,6 +1693,26 @@ fn render_sympathetic(
 
 use super::note_to_freq;
 
+/// The longest period each halo string may take while its main string
+/// glides over `(lo, hi)` samples, under any chord: its folded period at
+/// `hi`, or `FITS` where the glide crosses a fold, where its period jumps
+/// an octave and may take any length up to the line.
+fn halo_reach(lo: f32, hi: f32) -> [f32; NUM_SYMPATHETIC] {
+    let span = |r: f32| {
+        let (a, b) = (lo * r, hi * r);
+        if fold(a) / a == fold(b) / b {
+            fold(b)
+        } else {
+            FITS
+        }
+    };
+    core::array::from_fn(|i| {
+        (0..CHORD_COUNT)
+            .map(|c| span(period_ratios(c)[i]))
+            .fold(0.0, f32::max)
+    })
+}
+
 /// `folded` or the octave above, whichever is nearer `near`: a glide by
 /// the chord's interval, not round the fold.
 fn octave_near(folded: f32, near: f32) -> f32 {
@@ -1814,7 +1883,8 @@ mod tests {
         }
     }
 
-    /// A glide steal down, C5 to C2 in 50 ms, sizes every ring at its start:
+    /// A glide steal down, C5 to C2 in 50 ms, sizes every ring at its start,
+    /// billed within one note-on's clear, a re-strike nothing:
     /// grown mid-glide, a ring's new gap is read before it is written, and
     /// the loop takes in silence.
     #[test]
@@ -1835,6 +1905,9 @@ mod tests {
             for _ in 0..40 {
                 e.render(&mut out, &p, SR, &mut pool);
             }
+            assert_eq!(e.strike_clear(72, true, SR, &pool), Some(0), "{mode:?}");
+            let bill = e.strike_clear(36, true, SR, &pool).unwrap();
+            assert!(bill <= SYM_NOTE_ON_CLEAR_MAX, "{mode:?}: {bill}");
             e.glide_on(36, 100, &p, (SR, 0.05), &mut pool);
             let rings = |e: &ModalEngine, pool: &SymPool| -> Vec<usize> {
                 all_lines(e, pool).iter().map(|k| k.ring_len()).collect()
