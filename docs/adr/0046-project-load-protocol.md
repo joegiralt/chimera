@@ -28,10 +28,10 @@ commits it at its end.
   the other way, so neither can ride the snapshot. Writes are Release and
   reads Acquire; only the counters ride them, and the snapshot keeps the
   triple buffer's own ordering.
-- **Only the project load functions bump the epoch**
-  (`LoadLink::bump` is `pub(in crate::project)`, and it returns a
-  `#[must_use] Swap`). No `Project` method writes it, so `Project` holds
-  no statics.
+- **Only `load_project` bumps the epoch** (`project/store.rs`;
+  `LoadLink::bump` is `pub(in crate::project)`, and it returns a
+  `#[must_use] Swap`), for a file loaded, a fallback to NEW, and `+ NEW`.
+  No `Project` method writes it, so `Project` holds no statics.
 - **Every snapshot carries the epoch it was published under**
   (`AudioShared.epoch`; `update_from(perf, LOAD_LINK.epoch())` in both
   shells). The gate reopens on the snapshot that carries the epoch it
@@ -96,9 +96,13 @@ commits it at its end.
   A queue that fills while the gate is shut drops and counts each event
   past it, as it always does: 64 events per source, in a gap of at most
   the fade plus the 10 ms timeout.
-- **Boot publishes with no fade.** Nothing sounds yet, so the boot load
-  bumps the epoch, publishes, and doesn't settle. The gate's first step
-  sees the epoch already in the snapshot: kill (of nothing) and drain.
+- **Boot doesn't bump.** Nothing sounds yet, so there is nothing to
+  fade. `boot_project` loads with `load_ab_in_place` (falling back to NEW
+  as `load_project` does) but never bumps: the epoch stays 0, the first
+  snapshot (`AudioShared::init_in_place`) carries 0, and the gate starts
+  at 0, so its first step drains. A boot that bumped would need its first
+  snapshot tagged with the new epoch, or the gate would hold every note
+  until the UI's first publish.
 - **A project load applies in place.** This supersedes in part ADR 0045's
   "Two passes, staged", **for projects only**. Pass 1 checks the CRC as
   before; pass 2 writes straight into the UI's project, because a 34 KB
@@ -144,6 +148,10 @@ commits it at its end.
   once per callback, so a publish reopens the gate at the next one.
 - The in-place load makes a failed pass 2 cost the project (it becomes
   NEW); ADR 0045's staged loader stays for Sounds and SYSTEM.
+- A project file is about 44 KB. A load reads about 130 KB (pass 1 on
+  both sides, then pass 2 on one); a save reads about 88 KB (pass 1 on
+  both sides, so it never writes the side a load would take) and writes
+  about 44 KB.
 
 ## Sources
 - Spec: `docs/superpowers/specs/2026-09-28-projects-storage-design.md`
@@ -153,11 +161,15 @@ commits it at its end.
   in place, the epoch is written by the project load functions only;
   Review Focus 1 and 5).
 - Code: `chimera-core/src/project/swap.rs` (`LoadLink`, `Swap`,
-  `LoadGate`), `chimera-core/src/instrument.rs` (`AudioShared.epoch`,
+  `LoadGate`), `chimera-core/src/project/store.rs` (`load_project`),
+  `chimera-core/src/storage/file.rs` (`load_ab_in_place`),
+  `chimera-core/src/instrument.rs` (`AudioShared.epoch`,
   `Instrument::kill_all`, `quiet`), `chimera-core/src/voice_alloc.rs`
   (`Allocator::kill_all`), `chimera-stm32/src/audio/engine.rs`,
   `chimera-desktop/src/audio.rs`.
-- Tests: `chimera-core/tests/load_protocol_test.rs`.
+- Tests: `chimera-core/tests/load_protocol_test.rs`,
+  `chimera-core/tests/project_store_test.rs`,
+  `chimera-fat/tests/power_cut_test.rs` (`project_cut_keeps_a_generation`).
 - ADRs 0021 (triple buffer), 0027 (shedding), 0043 (projects, record
   table), 0045 (card format, superseded in part), 0062 (Modal rings
   free), 0065 (steal cut or glide).

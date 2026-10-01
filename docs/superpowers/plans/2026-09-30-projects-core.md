@@ -1452,7 +1452,7 @@ impl UiState {
     - its project equals the first (`test_support::same`) and is `Saved`.
 - [ ] **Step 2: Run** `cargo test -p chimera-core --test project_boot_test && cargo test -p chimera-desktop` → FAIL.
 - [ ] **Step 3: Implement.** Then wire the shells:
-  - **stm32 `synth`:** after the SYSTEM boot and theme, and before `shared::take_audio`, call `ui.boot_project(&mut card, store, settings.last_project)`. BUSY is still up, the audio hasn't started, and the watchdog isn't running, so the ~60 KB read is covered.
+  - **stm32 `synth`:** after the SYSTEM boot and theme, and before `shared::take_audio`, call `ui.boot_project(&mut card, store, settings.last_project)`. BUSY is still up, the audio hasn't started, and the watchdog isn't running, so the ≈130 KB read (pass 1 on both sides, then pass 2) is covered.
   - **Desktop `main`:** the same, after `SystemSync::boot`.
   - Neither shell calls save or load: the navigation plan does, and settles each `Swap` with a 10 ms deadline, on `controls::ticks()` (stm32) or `Instant` (desktop).
 - [ ] **Step 4: Run** → PASS; `just check` → PASS.
