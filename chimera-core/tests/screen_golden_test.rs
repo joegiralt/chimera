@@ -16,7 +16,7 @@ use screen::*;
 // screens again for ADR 0063: INIT's VOL 45 and RR 5.
 const GOLDENS: &[(&str, u64)] = &[
     ("engine_algo", 0x29fa1ef579c4a0e7),
-    ("algo_alg", 0xbffad8304f828aee),
+    ("algo_alg", 0xb73321ba103c1886),
     ("algo_alg_morph_dimmed", 0xd8e8a78a528ad3b4),
     ("mod_matrix_morph_inert", 0xc0a153ae29f9167b),
     ("algo_wave", 0xa04fd344f3387270),

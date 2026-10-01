@@ -246,6 +246,7 @@ pub static ALGO_SPECS: [ParamSpec; 4] = [
     .glyph(crate::ui::glyph::FocusGlyph::None),
     ParamSpec::stepped(2, "MORPH", ValFmt::Uni, 0.0, 127.0, 0.0, true)
         .ident("MORPH")
+        .glyph(crate::ui::glyph::FocusGlyph::Crossfader)
         .short("MRPH"),
     ParamSpec::stepped(3, "TRNSP", ValFmt::Signed(24), -24.0, 24.0, 0.0, false).ident("TRNSP"),
 ];

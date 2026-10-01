@@ -430,7 +430,9 @@ impl DriveParams {
 pub static DRIVE_SPECS: [ParamSpec; 3] = [
     ParamSpec::continuous(0, "DRIVE", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, true).ident("DRIVE"),
     ParamSpec::continuous(1, "TONE", ValFmt::Bi, 0.0, 1.0, 0.5, 1.0 / 128.0, true).ident("TONE"),
-    ParamSpec::continuous(2, "MIX", ValFmt::Bi, 0.0, 1.0, 1.0, 1.0 / 128.0, true).ident("MIX"),
+    ParamSpec::continuous(2, "MIX", ValFmt::Bi, 0.0, 1.0, 1.0, 1.0 / 128.0, true)
+        .ident("MIX")
+        .glyph(crate::ui::glyph::FocusGlyph::Crossfader),
 ];
 
 impl Block for DriveParams {
