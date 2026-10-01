@@ -7,6 +7,7 @@ mod common;
 use chimera_core::name::ProjectName;
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
+use chimera_core::project::test_support::save_part_to;
 use chimera_core::project::{
     PartActionKind, PartFrom, PartId, PartSource, PartStatus, Project, ProjectSource, Prompt,
     ReplaceError, ReplaceGuard, SlotId, part_actions, part_status,
@@ -49,7 +50,7 @@ fn part_replace_prompts_only_when_edited() {
         p.replace_part(c).unwrap();
     }
     edit(&mut p, b);
-    p.save_part_to(b, s);
+    save_part_to(&mut p, b, s);
     assert_eq!(part_status(p.part(a), p.pool()), PartStatus::Stale(s));
     let c = ReplaceGuard::check(&p, t, slot(a, SlotId::ALL[5])).unwrap();
     assert_eq!(c.target(), slot(a, SlotId::ALL[5]));
@@ -230,11 +231,11 @@ fn a_confirmation_is_refused_once_its_slot_moves() {
     }
     edit(&mut p, a);
     edit(&mut p, b);
-    p.save_part_to(b, s);
+    save_part_to(&mut p, b, s);
     assert_eq!(part_status(p.part(a), p.pool()), PartStatus::Clean);
     let c = ReplaceGuard::check(&p, t, slot(a, SlotId::ALL[0])).unwrap();
     edit(&mut p, b);
-    p.save_part_to(b, s);
+    save_part_to(&mut p, b, s);
     assert_eq!(part_status(p.part(a), p.pool()), PartStatus::Edited);
     assert!(ReplaceGuard::check(&p, t, slot(a, SlotId::ALL[0])).is_err());
     let bits = p.part(a).sound.clone();

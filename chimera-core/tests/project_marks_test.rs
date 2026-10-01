@@ -8,6 +8,7 @@ use chimera_core::factory::factory_sound;
 use chimera_core::name::ProjectName;
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
+use chimera_core::project::test_support::save_part_to;
 use chimera_core::project::{
     ActionGone, Origin, PartActionKind, PartActions, PartFrom, PartId, PartSet, PartSource,
     PartStatus, Project, ProjectStatus, SlotId, part_actions, part_status, project_crc,
@@ -92,9 +93,9 @@ fn save_part_to_names_only_the_stale_users() {
     }
     edit(&mut p, b, 0.5);
     edit(&mut p, a, 0.25);
-    assert_eq!(p.save_part_to(a, s), PartSet::EMPTY.with(c));
+    assert_eq!(save_part_to(&mut p, a, s), PartSet::EMPTY.with(c));
     // Saving again moves the slot; c is still as loaded, so still named.
-    assert_eq!(p.save_part_to(a, s), PartSet::EMPTY.with(c));
+    assert_eq!(save_part_to(&mut p, a, s), PartSet::EMPTY.with(c));
 }
 
 #[test]
@@ -148,7 +149,7 @@ fn update_brings_a_stale_part_to_its_slot() {
     load(&mut p, t, src(a, s)).unwrap();
     load(&mut p, t, src(b, s)).unwrap();
     edit(&mut p, a, 0.5);
-    p.save_part_to(a, s);
+    save_part_to(&mut p, a, s);
     assert_eq!(status(&p, b), PartStatus::Stale(s));
     let update = part_actions(&p, b).iter().next().unwrap();
     assert_eq!(update.kind(), PartActionKind::Revert(s));
@@ -194,7 +195,7 @@ fn edited_part_never_stale_after_reload() {
     }
     load(&mut q, tq, src(b, s)).unwrap();
     edit(&mut q, b, 0.25);
-    assert_eq!(q.save_part_to(b, s), PartSet::EMPTY);
+    assert_eq!(save_part_to(&mut q, b, s), PartSet::EMPTY);
     assert_eq!(status(&q, a), PartStatus::Edited);
     assert_eq!(
         kinds(part_actions(&q, a)),
@@ -214,7 +215,7 @@ fn stale_reloads_as_edited() {
     load(&mut p, t, src(a, s)).unwrap();
     load(&mut p, t, src(b, s)).unwrap();
     edit(&mut p, b, 0.5);
-    assert_eq!(p.save_part_to(b, s), PartSet::EMPTY.with(a));
+    assert_eq!(save_part_to(&mut p, b, s), PartSet::EMPTY.with(a));
     assert_eq!(status(&p, a), PartStatus::Stale(s));
     let (mut q, _) = Project::boxed();
     decode(&encode(&p), &mut q).unwrap();
@@ -273,7 +274,7 @@ fn actions_offer_only_what_applies() {
     load(&mut p, t, src(stale, s)).unwrap();
     load(&mut p, t, src(saver, s)).unwrap();
     edit(&mut p, saver, 0.5);
-    p.save_part_to(saver, s);
+    save_part_to(&mut p, saver, s);
     load(&mut p, t, src(clean_slot, s)).unwrap();
     load(&mut p, t, src(edited_slot, s)).unwrap();
     edit(&mut p, edited_slot, 0.25);

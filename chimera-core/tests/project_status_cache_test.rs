@@ -7,8 +7,9 @@ mod screen;
 use chimera_core::name::ProjectName;
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
+use chimera_core::project::test_support::save_part_to;
 use chimera_core::project::{
-    LoadLink, PartFrom, PartId, PartSource, Project, ProjectStatus, SlotId, StatusCache,
+    LoadLink, PartFrom, PartId, PartSource, Project, ProjectStatus, SaveTo, SlotId, StatusCache,
     boot_project, load_project, new_project_id, part_actions, project_crc, save_project,
 };
 use chimera_core::storage::Card;
@@ -69,13 +70,14 @@ fn every_mutation_bumps_the_revision() {
         p.apply_part_action(a).unwrap();
     });
     bumps!(p, "save_part_to", {
-        p.save_part_to(P1, free);
+        save_part_to(&mut p, P1, free);
     });
 
     let (mut card, mut store) = (Card::new(), MemStore::new(1));
-    let f = new_project_id(&mut card, &mut store).unwrap();
+    let fresh = new_project_id(&mut card, &mut store).unwrap();
+    let f = fresh.file();
     bumps!(p, "save_project", {
-        let _ = save_project(&mut card, &mut store, &mut p, f);
+        let _ = save_project(&mut card, &mut store, &mut p, SaveTo::Fresh(fresh));
     });
     bumps!(p, "boot_project", {
         let _ = boot_project(&mut card, &mut store, Some(f.id()), &mut p);
@@ -137,7 +139,7 @@ fn ui_status_follows_edits_and_saves() {
     let (mut card, mut store) = (Card::new(), MemStore::new(1));
     let (mut sync, mut set, _) = chimera_core::storage::SystemSync::boot(&mut card, &mut store);
     let f = new_project_id(&mut card, &mut store).unwrap();
-    ui.save_project(&mut card, &mut store, &mut sync, &mut set, f);
+    ui.save_project(&mut card, &mut store, &mut sync, &mut set, SaveTo::Fresh(f));
     ui.update();
     assert_eq!(ui.project_status(), ProjectStatus::Saved);
 }

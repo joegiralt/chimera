@@ -19,10 +19,9 @@ use chimera_core::mod_path::MAX_REGISTRY_DESTS;
 use chimera_core::params::EngineType;
 use chimera_core::part::PartParams;
 use chimera_core::preset::Sound;
-use chimera_core::project::test_support::{full, same};
+use chimera_core::project::test_support::{full, same, save_at};
 use chimera_core::project::{
-    PartId, Project, ProjectDecoder, ProjectFile, ProjectNote, project_crc, project_file,
-    save_project,
+    PartId, Project, ProjectDecoder, ProjectNote, project_crc, project_file,
 };
 use chimera_core::storage::{
     Card, CardError, CardEvent, FileKind, Generation, Header, InPlaceError, ProjectId, RecordTag,
@@ -443,9 +442,9 @@ fn project_id() -> ProjectId {
     ProjectId::new(1).unwrap()
 }
 
+/// Save `n` over the pair, as listed (a SAVE OVER), or to it fresh.
 fn save_project_on(s: &mut Probed<CutDisk>, n: u32) -> ProjectNote {
-    let to = ProjectFile::for_test(project_id(), s.mount().unwrap());
-    save_project(&mut Card::new(), s, &mut project_gen(n), to)
+    save_at(&mut Card::new(), s, &mut project_gen(n), project_id().get())
 }
 
 fn load_project_in_place(slot: &Slot) -> Result<Box<Project>, InPlaceError> {

@@ -48,9 +48,9 @@ use crate::params::{EngineType, ParamSnapshot};
 use crate::perf::load::AudioStats;
 use crate::preset::POOL_SIZE;
 use crate::project::{
-    self, Confirmed, Line, LoadLink, PartEdit, PartFrom, PartId, PartSource, Project, ProjectFile,
-    ProjectNote, ProjectSource, ProjectStatus, ReplaceGuard, StatusCache, Swap, TemplateCrc,
-    part_block_mut,
+    self, Confirmed, DeleteTarget, Line, LoadLink, PartEdit, PartFrom, PartId, PartSource, Project,
+    ProjectFile, ProjectNote, ProjectSource, ProjectStatus, ReplaceGuard, SaveTo, StatusCache,
+    Swap, TemplateCrc, part_block_mut,
 };
 use crate::scope::SCOPE_LEN;
 use crate::storage::ProjectId;
@@ -377,8 +377,9 @@ impl UiState {
         self.project_replaced(was);
     }
 
-    /// SAVE (`meta().file()`) or a first save / SAVE AS (`new_project_id`).
-    /// A save that lands becomes SYSTEM's last project.
+    /// SAVE, a first save / SAVE AS or SAVE OVER (`SaveTo`). A save that
+    /// lands becomes SYSTEM's last project. A bare file isn't a place to
+    /// save:
     ///
     /// ```compile_fail,E0308
     /// # use chimera_core::storage::{Card, SystemSync};
@@ -386,7 +387,7 @@ impl UiState {
     /// # let mut card = Card::new();
     /// # let (mut sync, mut set, _) = SystemSync::boot(&mut card, &mut s);
     /// let mut ui = chimera_core::ui::UiState::new();
-    /// let to = ui.project().meta().file(); // NEW has none
+    /// let to = chimera_core::project::new_project_id(&mut card, &mut s).unwrap().file();
     /// ui.save_project(&mut card, &mut s, &mut sync, &mut set, to);
     /// ```
     pub fn save_project<S: Store>(
@@ -395,11 +396,11 @@ impl UiState {
         store: &mut S,
         sync: &mut SystemSync,
         settings: &mut SystemSettings,
-        to: ProjectFile,
+        to: SaveTo,
     ) {
         let n = project::save_project(card, store, &mut self.project, to);
-        if let ProjectNote::Saved(_) = n {
-            self.remember(card, store, sync, settings, to);
+        if let (ProjectNote::Saved(_), Some(f)) = (n, self.project.meta().file()) {
+            self.remember(card, store, sync, settings, f);
         }
         self.show_note(n);
     }
@@ -439,7 +440,7 @@ impl UiState {
         Some(published)
     }
 
-    /// Deletes `file` (`project::delete_project`); a refusal or a card
+    /// Deletes the confirmed file (`project::delete_project`); a refusal or a card
     /// error shows its note. If SYSTEM names it as its card's last project
     /// (possible after `+ NEW`), it names none, so the next boot is NEW,
     /// not PROJECT NOT FOUND.
@@ -449,9 +450,10 @@ impl UiState {
         store: &mut S,
         sync: &mut SystemSync,
         settings: &mut SystemSettings,
-        file: ProjectFile,
+        c: Confirmed<DeleteTarget>,
     ) {
-        match project::delete_project(card, store, &self.project, file) {
+        let file = c.target().file();
+        match project::delete_project(card, store, &self.project, c) {
             // A failed write: the next save, load or SETTINGS exit retries
             // SYSTEM; until then a boot falls back to NEW and says why.
             Ok(()) => {

@@ -68,16 +68,20 @@ impl Project {
     /// a slot at a time, and every generation moves.
     fn fill_new_pool(&mut self) {
         for s in SlotId::ALL {
-            let i = s.index();
-            let sound = match i.checked_sub(FACTORY_LEN) {
-                None => factory_sound(i),
-                Some(j) => EngineType::ALL.get(j).map(|&e| Sound::init(e)),
-            };
-            match sound {
+            match new_slot(s) {
                 Some(sound) => self.pool.store(s, sound),
                 None => self.pool.clear(s),
             }
         }
+    }
+}
+
+/// NEW's Sound in slot `s`.
+pub(super) fn new_slot(s: SlotId) -> Option<Sound> {
+    let i = s.index();
+    match i.checked_sub(FACTORY_LEN) {
+        None => factory_sound(i),
+        Some(j) => EngineType::ALL.get(j).map(|&e| Sound::init(e)),
     }
 }
 

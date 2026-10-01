@@ -6,7 +6,9 @@ mod screen;
 
 use chimera_core::block::Block;
 use chimera_core::params::{EngineType, FilterParams};
-use chimera_core::project::test_support::{FlipOnSecondRead, full, same};
+use chimera_core::project::test_support::{
+    FlipOnSecondRead, confirm_delete_of, full, same, save_to,
+};
 use chimera_core::project::{
     LOAD_LINK, Line, LoadLink, PartFrom, PartId, PartSource, Project, ProjectFile, ProjectNote,
     ProjectSource, ProjectStatus, ReplaceGuard, Subject, TemplateCrc, project_crc, project_file,
@@ -41,7 +43,7 @@ fn last_on_card(s: &mut impl Store) -> Option<ProjectId> {
 /// `p` saved as `P000000n`, outside any UI.
 fn put_project(s: &mut impl Store, p: &mut Project, n: u32) {
     let f = at(s, n);
-    let note = save_project(&mut Card::new(), s, p, f);
+    let note = save_project(&mut Card::new(), s, p, save_to(p, f));
     assert!(matches!(note, ProjectNote::Saved(_)), "{note:?}");
 }
 
@@ -101,7 +103,13 @@ fn boot_loads_the_last_project() {
     // Bound to this card: SAVE lands here, and a swapped card refuses it.
     b.ui.project_mut().edit_fx().reverb.mix = 0.2;
     let f = b.ui.project().meta().file().unwrap();
-    b.ui.save_project(&mut b.card, &mut s, &mut b.sync, &mut b.settings, f);
+    b.ui.save_project(
+        &mut b.card,
+        &mut s,
+        &mut b.sync,
+        &mut b.settings,
+        save_to(b.ui.project(), f),
+    );
     assert_eq!(
         b.ui.step_toast(0),
         show("SAVED: P2 DIFFERS FROM SLOT 04"),
@@ -109,7 +117,13 @@ fn boot_loads_the_last_project() {
     );
     s.swap(9);
     b.ui.project_mut().edit_fx().reverb.mix = 0.3;
-    b.ui.save_project(&mut b.card, &mut s, &mut b.sync, &mut b.settings, f);
+    b.ui.save_project(
+        &mut b.card,
+        &mut s,
+        &mut b.sync,
+        &mut b.settings,
+        save_to(b.ui.project(), f),
+    );
     assert_eq!(b.ui.step_toast(0), show("CARD CHANGED: FULL"));
     assert_eq!(
         project_status(b.ui.project(), b.ui.template()),
@@ -284,7 +298,13 @@ fn save_writes_the_last_project() {
     let mut b = boot_system(&mut s);
     b.ui.project_mut().edit_fx().delay.mix = 0.8;
     let f = at(&mut s, 3);
-    b.ui.save_project(&mut b.card, &mut s, &mut b.sync, &mut b.settings, f);
+    b.ui.save_project(
+        &mut b.card,
+        &mut s,
+        &mut b.sync,
+        &mut b.settings,
+        save_to(b.ui.project(), f),
+    );
     assert_eq!(b.settings.last_project, Some(id(3)));
     assert_eq!(last_on_card(&mut s), Some(id(3)));
     assert_eq!(b.ui.step_toast(0), show("SAVED"));
@@ -298,7 +318,13 @@ fn save_writes_the_last_project() {
     // A failed save leaves SYSTEM.
     let f4 = at(&mut s, 4);
     s.eject();
-    b.ui.save_project(&mut b.card, &mut s, &mut b.sync, &mut b.settings, f4);
+    b.ui.save_project(
+        &mut b.card,
+        &mut s,
+        &mut b.sync,
+        &mut b.settings,
+        save_to(b.ui.project(), f4),
+    );
     assert_eq!(b.ui.step_toast(0), show("NO CARD: NEW PROJECT"));
     s.insert();
     assert_eq!(
@@ -314,8 +340,20 @@ fn delete_forgets_the_last_project() {
     let mut s = MemStore::new(1);
     let mut b = boot_system(&mut s);
     let (f3, f4) = (at(&mut s, 3), at(&mut s, 4));
-    b.ui.save_project(&mut b.card, &mut s, &mut b.sync, &mut b.settings, f3);
-    b.ui.save_project(&mut b.card, &mut s, &mut b.sync, &mut b.settings, f4);
+    b.ui.save_project(
+        &mut b.card,
+        &mut s,
+        &mut b.sync,
+        &mut b.settings,
+        save_to(b.ui.project(), f3),
+    );
+    b.ui.save_project(
+        &mut b.card,
+        &mut s,
+        &mut b.sync,
+        &mut b.settings,
+        save_to(b.ui.project(), f4),
+    );
     assert_eq!(last_on_card(&mut s), Some(id(4)));
     let go = ReplaceGuard::check(b.ui.project(), b.ui.template(), ProjectSource::New)
         .expect("Saved never asks");
@@ -330,13 +368,15 @@ fn delete_forgets_the_last_project() {
         settle,
     );
 
-    b.ui.delete_project(&mut b.card, &mut s, &mut b.sync, &mut b.settings, f3);
+    let c = confirm_delete_of(&mut s, f3);
+    b.ui.delete_project(&mut b.card, &mut s, &mut b.sync, &mut b.settings, c);
     assert_eq!(
         (b.settings.last_project, last_on_card(&mut s)),
         (Some(id(4)), Some(id(4))),
         "another project: kept"
     );
-    b.ui.delete_project(&mut b.card, &mut s, &mut b.sync, &mut b.settings, f4);
+    let c = confirm_delete_of(&mut s, f4);
+    b.ui.delete_project(&mut b.card, &mut s, &mut b.sync, &mut b.settings, c);
     assert_eq!(
         (b.settings.last_project, last_on_card(&mut s)),
         (None, None),
@@ -375,14 +415,21 @@ fn delete_forgets_on_the_card_it_deletes_from() {
     let mut s = MemStore::new(1);
     let mut b = boot_system(&mut s);
     let f3 = at(&mut s, 3);
-    b.ui.save_project(&mut b.card, &mut s, &mut b.sync, &mut b.settings, f3);
+    b.ui.save_project(
+        &mut b.card,
+        &mut s,
+        &mut b.sync,
+        &mut b.settings,
+        save_to(b.ui.project(), f3),
+    );
     // Its theme, changed outside this UI.
     let mut card_side = SystemSync::boot(&mut Card::new(), &mut s).1;
     card_side.theme.bright = Bright::new(40);
     save_system(&mut s, &card_side);
 
     let mut b = boot_system(&mut MemStore::new(9));
-    b.ui.delete_project(&mut b.card, &mut s, &mut b.sync, &mut b.settings, f3);
+    let c = confirm_delete_of(&mut s, f3);
+    b.ui.delete_project(&mut b.card, &mut s, &mut b.sync, &mut b.settings, c);
     assert_eq!(last_on_card(&mut s), None);
     assert_eq!(
         SystemSync::boot(&mut Card::new(), &mut s).1.theme,
@@ -398,7 +445,13 @@ fn a_failed_system_write_keeps_the_saved_toast() {
     let mut b = boot_system(&mut s);
     b.ui.project_mut().edit_fx().delay.mix = 0.8;
     let f = at(&mut s, 3);
-    b.ui.save_project(&mut b.card, &mut s, &mut b.sync, &mut b.settings, f);
+    b.ui.save_project(
+        &mut b.card,
+        &mut s,
+        &mut b.sync,
+        &mut b.settings,
+        save_to(b.ui.project(), f),
+    );
     assert_eq!(b.ui.step_toast(0), show("SAVED"));
     assert_eq!(
         project_status(b.ui.project(), b.ui.template()),
@@ -762,7 +815,13 @@ fn a_save_after_a_late_card_keeps_its_theme() {
     let mut ui = Box::new(UiState::new());
     ui.project_mut().edit_fx().delay.mix = 0.8;
     let f = at(&mut s, 3);
-    ui.save_project(&mut card, &mut s, &mut sync, &mut set, f);
+    ui.save_project(
+        &mut card,
+        &mut s,
+        &mut sync,
+        &mut set,
+        save_to(ui.project(), f),
+    );
     let now = system_on(&mut s);
     assert_eq!((now.theme, now.last_project), (owner.theme, Some(id(3))));
     assert_eq!(ui.theme(), owner.theme, "the card's theme applies");
@@ -833,7 +892,13 @@ fn a_save_after_an_unread_system_keeps_its_theme() {
         let mut ui = Box::new(UiState::new());
         ui.project_mut().edit_fx().delay.mix = 0.8;
         let f = at(&mut s, 3);
-        ui.save_project(&mut card, &mut s, &mut sync, &mut set, f);
+        ui.save_project(
+            &mut card,
+            &mut s,
+            &mut sync,
+            &mut set,
+            save_to(ui.project(), f),
+        );
         assert_eq!(ui.step_toast(0), show("SAVED"), "the project landed");
         let now = system_on(&mut s.0);
         assert_eq!(now.theme, owner.theme, "reads: {reads_by_then}");
@@ -854,7 +919,13 @@ fn a_failed_write_then_an_idle_system_exit_keeps_the_theme() {
     let mut ui = Box::new(UiState::new());
     ui.project_mut().edit_fx().delay.mix = 0.8;
     let f = at(&mut s, 3);
-    ui.save_project(&mut card, &mut s, &mut sync, &mut set, f);
+    ui.save_project(
+        &mut card,
+        &mut s,
+        &mut sync,
+        &mut set,
+        save_to(ui.project(), f),
+    );
     s.1 = true;
     screen::tap(&mut ui, chimera_hal::ButtonId::Menu);
     ui.sync_system(&mut sync, &mut card, &mut s, &mut set);
@@ -874,7 +945,13 @@ fn the_last_project_stays_on_its_card() {
     let mut b = boot_system(&mut s);
     b.ui.project_mut().edit_fx().delay.mix = 0.8;
     let fa = at(&mut s, 3);
-    b.ui.save_project(&mut b.card, &mut s, &mut b.sync, &mut b.settings, fa);
+    b.ui.save_project(
+        &mut b.card,
+        &mut s,
+        &mut b.sync,
+        &mut b.settings,
+        save_to(b.ui.project(), fa),
+    );
     assert_eq!(system_on(&mut s).last_project, Some(id(3)));
 
     // Card B: its own P0000003 and a SYSTEM naming P0000007.
@@ -907,7 +984,13 @@ fn the_last_project_stays_on_its_card() {
 
     // A save of A's project while B is in is refused, and SYSTEM's write
     // with it: B's last project is still its own.
-    b.ui.save_project(&mut b.card, &mut s, &mut b.sync, &mut b.settings, fa);
+    b.ui.save_project(
+        &mut b.card,
+        &mut s,
+        &mut b.sync,
+        &mut b.settings,
+        save_to(b.ui.project(), fa),
+    );
     assert_eq!(system_on(&mut s).last_project, Some(id(7)));
     // Bound by hand to A's card, a write on B does nothing, not even
     // RAM's theme.
@@ -932,7 +1015,13 @@ fn the_last_project_is_no_theme_change() {
     let mut b = boot_system(&mut s);
     b.ui.project_mut().edit_fx().delay.mix = 0.8;
     let f = at(&mut s, 3);
-    b.ui.save_project(&mut b.card, &mut s, &mut b.sync, &mut b.settings, f);
+    b.ui.save_project(
+        &mut b.card,
+        &mut s,
+        &mut b.sync,
+        &mut b.settings,
+        save_to(b.ui.project(), f),
+    );
     assert_eq!(b.settings.last_project, Some(id(3)));
 
     let (mut s, owner) = owner_card();

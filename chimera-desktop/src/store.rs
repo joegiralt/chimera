@@ -275,7 +275,7 @@ mod tests {
         use chimera_core::preset::Sound;
         use chimera_core::project::test_support::same;
         use chimera_core::project::{
-            PartId, ProjectStatus, SlotId, new_project_id, project_status,
+            PartId, ProjectStatus, SaveTo, SlotId, new_project_id, project_status,
         };
         use chimera_core::storage::{Card, SystemSync};
         use chimera_core::ui::UiState;
@@ -294,7 +294,13 @@ mod tests {
         p.edit_fx().reverb.mix = 0.6;
         p.set_name(ProjectName::new("RELAUNCH").unwrap());
         let file = new_project_id(&mut card, &mut store).unwrap();
-        ui.save_project(&mut card, &mut store, &mut sync, &mut s, file);
+        ui.save_project(
+            &mut card,
+            &mut store,
+            &mut sync,
+            &mut s,
+            SaveTo::Fresh(file),
+        );
 
         let mut store = DirStore::new(root.clone());
         let mut card = Card::new();

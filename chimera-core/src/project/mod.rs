@@ -15,8 +15,11 @@ mod template;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
 
-pub use codec::{ProjectCheck, ProjectDecoder, encode_project, project_crc};
-pub use guard::{Confirmed, NeedsConfirm, Pending, ProjectSource, Prompt, ReplaceGuard, Target};
+pub use codec::{ProjectCheck, ProjectDecoder, encode_new_project, encode_project, project_crc};
+pub use guard::{
+    Confirmed, DeleteTarget, NeedsConfirm, OverwriteTarget, Pending, ProjectSource, Prompt,
+    ReplaceGuard, Target, Witnessed,
+};
 pub use ids::{PartId, PartSet, SlotId};
 pub use marks::{
     ActionGone, PartAction, PartActionKind, PartActions, PartStatus, ProjectStatus, StatusCache,
@@ -26,8 +29,8 @@ pub use note::{Differ, LINE_LEN, Line, ProjectNote, Subject};
 pub use parts::{Origin, Part, PartEdit, PartRead, Performance, part_block, part_block_mut};
 pub use pool::Pool;
 pub use store::{
-    ListOutcome, LoadOutcome, ProjectEntry, boot_project, delete_project, list_projects,
-    load_project, new_project_id, project_file, save_project,
+    FreshFile, ListOutcome, LoadOutcome, ProjectEntry, SaveTo, boot_project, clear_project,
+    delete_project, list_projects, load_project, new_project_id, project_file, save_project,
 };
 pub use swap::{GateStep, LOAD_ACK_TIMEOUT_MS, LOAD_LINK, LoadGate, LoadLink, Settled, Swap};
 pub use template::TemplateCrc;
@@ -191,8 +194,16 @@ impl Project {
     }
 
     /// Stores a copy of p's sound in s and sets p's Origin fresh. Returns the
-    /// other users of s that now derive Stale(s).
-    pub fn save_part_to(&mut self, p: PartId, s: SlotId) -> PartSet {
+    /// other users of s that now derive Stale(s). Only a Part action
+    /// (`apply_part_action`) saves a Part (#257):
+    ///
+    /// ```compile_fail,E0624
+    /// use chimera_core::project::{PartId, Project, SlotId};
+    /// fn f(p: &mut Project) {
+    ///     let _ = p.save_part_to(PartId::ALL[0], SlotId::ALL[0]);
+    /// }
+    /// ```
+    pub(crate) fn save_part_to(&mut self, p: PartId, s: SlotId) -> PartSet {
         self.bump();
         let others = self.users(s);
         let sound = self.part(p).sound.clone();

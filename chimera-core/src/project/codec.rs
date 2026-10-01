@@ -19,7 +19,9 @@ use crate::storage::{
     sound_crc,
 };
 
-use super::{Origin, PartId, PartSet, Project, SlotId};
+use super::parts::new_part;
+use super::template::new_slot;
+use super::{Origin, Part, PartId, PartSet, Project, SlotId};
 
 const FX_BLOCKS: [BlockRef; 5] = [
     BlockRef::Chorus,
@@ -107,29 +109,57 @@ fn put_context(
     w.put(tag, &p)
 }
 
-/// Streams `p` from live state: no copy, no buffer past one record.
-pub fn encode_project(p: &Project, w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
+fn put_fx(w: &mut RecordWriter<'_>, fx: &FxParams) -> Result<(), StoreError> {
     w.put(RecordTag::Fx, &[])?;
     for b in FX_BLOCKS {
-        if let Some(blk) = fx_block(&p.perf.fx, b) {
+        if let Some(blk) = fx_block(fx, b) {
             put_block(w, b, blk)?;
         }
     }
+    Ok(())
+}
+
+fn put_slot(w: &mut RecordWriter<'_>, s: SlotId, sound: &Sound) -> Result<(), StoreError> {
+    put_context(w, RecordTag::Slot, s.index(), sound.name)?;
+    encode_sound(sound, w)
+}
+
+fn put_part(w: &mut RecordWriter<'_>, i: usize, part: &Part) -> Result<(), StoreError> {
+    put_context(w, RecordTag::Part, i, part.sound.name)?;
+    encode_sound(&part.sound, w)?;
+    put_block(w, BlockRef::Part, &part.mix)?;
+    let origin = match part.origin {
+        Origin::Slot { slot, .. } => [ORIGIN_SLOT, slot.index() as u8],
+        Origin::Init(e) => [ORIGIN_INIT, e.disk_code()],
+    };
+    w.put(RecordTag::Origin, &origin)
+}
+
+/// Streams `p` from live state: no copy, no buffer past one record.
+pub fn encode_project(p: &Project, w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
+    put_fx(w, &p.perf.fx)?;
     for s in SlotId::ALL {
         if let Some(sound) = p.pool.get(s) {
-            put_context(w, RecordTag::Slot, s.index(), sound.name)?;
-            encode_sound(sound, w)?;
+            put_slot(w, s, sound)?;
         }
     }
     for (i, part) in p.perf.parts.iter().enumerate() {
-        put_context(w, RecordTag::Part, i, part.sound.name)?;
-        encode_sound(&part.sound, w)?;
-        put_block(w, BlockRef::Part, &part.mix)?;
-        let origin = match part.origin {
-            Origin::Slot { slot, .. } => [ORIGIN_SLOT, slot.index() as u8],
-            Origin::Init(e) => [ORIGIN_INIT, e.disk_code()],
-        };
-        w.put(RecordTag::Origin, &origin)?;
+        put_part(w, i, part)?;
+    }
+    Ok(())
+}
+
+/// NEW's records, as `encode_project` of NEW puts them, built a Sound at a
+/// time: no second project in RAM (CLEAR of a file not loaded).
+pub fn encode_new_project(w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
+    put_fx(w, &FxParams::default())?;
+    for s in SlotId::ALL {
+        if let Some(sound) = new_slot(s) {
+            put_slot(w, s, &sound)?;
+        }
+    }
+    for i in 0..MAX_PARTS {
+        put_part(w, i, &new_part(i))?;
     }
     Ok(())
 }

@@ -93,6 +93,10 @@ pub enum ProjectNote {
     LoadFailed(Subject),
     /// The confirmed target moved: nothing ran.
     Changed,
+    /// A confirmed overwrite or delete whose file moved: nothing written.
+    FileChanged(Subject),
+    /// SAVE of a project with no file.
+    NoFile,
     IsLoaded,
     NoIds,
     NewProject,
@@ -147,6 +151,8 @@ impl ProjectNote {
             ProjectNote::Missing(s) => return naming("PROJECT NOT FOUND", s),
             ProjectNote::LoadFailed(s) => return naming("LOAD FAILED", s),
             ProjectNote::Changed => l.write_str("CHANGED SINCE ASKED: TRY AGAIN"),
+            ProjectNote::FileChanged(s) => return naming("CHANGED SINCE ASKED", s),
+            ProjectNote::NoFile => l.write_str("NOT SAVED YET"),
             ProjectNote::IsLoaded => l.write_str("CAN NOT DELETE THE LOADED PROJECT"),
             ProjectNote::NoIds => l.write_str("NO PROJECT IDS LEFT"),
             ProjectNote::NewProject => l.write_str("NEW PROJECT"),

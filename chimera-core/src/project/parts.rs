@@ -49,7 +49,7 @@ impl Part {
     }
 }
 
-fn new_part(i: usize) -> Part {
+pub(super) fn new_part(i: usize) -> Part {
     Part {
         sound: Sound::init(EngineType::Algo),
         origin: Origin::Init(EngineType::Algo),

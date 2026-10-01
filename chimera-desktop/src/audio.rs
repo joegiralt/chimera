@@ -400,7 +400,7 @@ mod tests {
     fn each_card_boots_a_project_that_plays() {
         use crate::store::DirStore;
         use chimera_core::project::test_support::{full, same};
-        use chimera_core::project::{ProjectStatus, new_project_id, project_status};
+        use chimera_core::project::{ProjectStatus, SaveTo, new_project_id, project_status};
         use chimera_core::storage::{Card, SystemSync};
         use chimera_core::ui::UiState;
         use chimera_core::ui::busy::ToastStep;
@@ -420,7 +420,13 @@ mod tests {
             let mut ui = Box::new(UiState::new());
             *ui.project_mut() = *full().0;
             let file = new_project_id(&mut card, &mut store).unwrap();
-            ui.save_project(&mut card, &mut store, &mut sync, &mut set, file);
+            ui.save_project(
+                &mut card,
+                &mut store,
+                &mut sync,
+                &mut set,
+                SaveTo::Fresh(file),
+            );
             assert_eq!(
                 project_status(ui.project(), ui.template()),
                 ProjectStatus::Saved

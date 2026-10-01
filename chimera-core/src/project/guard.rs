@@ -43,15 +43,17 @@
 //! }
 //! ```
 
+use core::fmt::Debug;
+
 use chimera_hal::store::VolumeId;
 
 use crate::block::DiskCode;
-use crate::storage::{Crc32, ProjectId, sound_crc};
+use crate::storage::{Crc32, Generation, ProjectId, sound_crc};
 
 use super::marks::status_at;
 use super::{
-    Origin, PartSource, PartStatus, Project, ProjectStatus, TemplateCrc, part_status, project_crc,
-    project_status,
+    Origin, PartSource, PartStatus, Project, ProjectEntry, ProjectFile, ProjectStatus, TemplateCrc,
+    part_status, project_crc, project_status,
 };
 
 /// The question asked before a replace that would lose work.
@@ -67,10 +69,17 @@ mod sealed {
     pub trait Sealed {}
     impl Sealed for super::PartSource {}
     impl Sealed for super::ProjectSource {}
+    impl Sealed for super::OverwriteTarget {}
+    impl Sealed for super::DeleteTarget {}
+}
+
+/// What a `Confirmed` can confirm, and what it keeps of the target then.
+pub trait Witnessed: Copy + sealed::Sealed {
+    type Witness: Copy + PartialEq + Debug;
 }
 
 /// What a replace overwrites. Implemented for the two targets only.
-pub trait Target: Copy + sealed::Sealed {
+pub trait Target: Witnessed<Witness = u32> {
     /// The prompt the replace needs now, if any.
     fn at_risk(&self, p: &Project, t: TemplateCrc) -> Option<Prompt>;
     /// The target's state, as a confirmation saw it: every input to
@@ -83,6 +92,10 @@ pub trait Target: Copy + sealed::Sealed {
             None => Ok(self.witness(p)),
         }
     }
+}
+
+impl Witnessed for PartSource {
+    type Witness = u32;
 }
 
 /// An `Edited` Part asks; a `Clean` or `Stale` one doesn't.
@@ -127,6 +140,10 @@ pub enum ProjectSource {
     New,
 }
 
+impl Witnessed for ProjectSource {
+    type Witness = u32;
+}
+
 /// A `Modified` project asks; a `Pristine` or `Saved` one doesn't.
 impl Target for ProjectSource {
     fn at_risk(&self, p: &Project, t: TemplateCrc) -> Option<Prompt> {
@@ -151,9 +168,19 @@ impl Target for ProjectSource {
 /// A replace the guard let through, and the state of its target then.
 #[must_use]
 #[derive(Debug)]
-pub struct Confirmed<R> {
+pub struct Confirmed<R: Witnessed> {
     target: R,
-    witness: u32,
+    witness: R::Witness,
+}
+
+impl<R: Witnessed> Confirmed<R> {
+    pub fn target(&self) -> R {
+        self.target
+    }
+
+    pub(crate) fn witness(&self) -> R::Witness {
+        self.witness
+    }
 }
 
 impl<R: Target> Confirmed<R> {
@@ -162,10 +189,6 @@ impl<R: Target> Confirmed<R> {
             target,
             witness: target.witness(p),
         }
-    }
-
-    pub fn target(&self) -> R {
-        self.target
     }
 
     /// The target's state still what was confirmed.
@@ -227,6 +250,68 @@ impl ReplaceGuard {
                 pending: Pending(r),
                 prompt,
             }),
+        }
+    }
+}
+
+/// A file a save writes over: SAVE OVER, or CLEAR.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OverwriteTarget {
+    file: ProjectFile,
+}
+
+/// A file DELETE removes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DeleteTarget {
+    file: ProjectFile,
+}
+
+impl OverwriteTarget {
+    pub fn file(self) -> ProjectFile {
+        self.file
+    }
+}
+
+impl DeleteTarget {
+    pub fn file(self) -> ProjectFile {
+        self.file
+    }
+}
+
+/// The newest readable side's generation as listed (`None`: none
+/// readable). A file saved, cleared or deleted since refuses it.
+impl Witnessed for OverwriteTarget {
+    type Witness = Option<Generation>;
+}
+
+impl Witnessed for DeleteTarget {
+    type Witness = Option<Generation>;
+}
+
+impl Confirmed<OverwriteTarget> {
+    /// SAVE OVER or CLEAR answered on the listed `e`.
+    #[cfg_attr(
+        not(any(test, feature = "test-support")),
+        expect(dead_code, reason = "the SETTINGS prompts answer with it next")
+    )]
+    pub(crate) fn answered(e: &ProjectEntry) -> Self {
+        Confirmed {
+            target: OverwriteTarget { file: e.file() },
+            witness: e.generation,
+        }
+    }
+}
+
+impl Confirmed<DeleteTarget> {
+    /// DELETE answered on the listed `e`.
+    #[cfg_attr(
+        not(any(test, feature = "test-support")),
+        expect(dead_code, reason = "the SETTINGS prompts answer with it next")
+    )]
+    pub(crate) fn answered(e: &ProjectEntry) -> Self {
+        Confirmed {
+            target: DeleteTarget { file: e.file() },
+            witness: e.generation,
         }
     }
 }
