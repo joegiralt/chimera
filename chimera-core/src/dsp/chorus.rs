@@ -14,6 +14,9 @@ use core::mem::MaybeUninit;
 
 const MAX_CHORUS_DELAY: usize = 2048; // ~42ms at 48kHz, plenty for chorus
 
+/// MODE's names, in `ChorusMode`'s order (display only).
+pub const MODE_NAMES: [&str; 4] = ["OFF", "I", "II", "I+II"];
+
 /// Chorus mode selection.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -104,7 +107,9 @@ impl ChorusParams {
 
 /// Chorus runs outside `Voice`, on the FX bus: nothing is modulatable.
 pub static CHORUS_SPECS: [ParamSpec; 4] = [
-    ParamSpec::choice(0, "MODE", ValFmt::Int(3), 3.0, 0.0).ident("MODE"),
+    ParamSpec::choice(0, "MODE", ValFmt::Names(&MODE_NAMES), 3.0, 0.0)
+        .ident("MODE")
+        .glyph(crate::ui::glyph::FocusGlyph::None),
     ParamSpec::continuous(1, "RATE", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false).ident("RATE"),
     ParamSpec::continuous(2, "DEPTH", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false)
         .ident("DEPTH"),

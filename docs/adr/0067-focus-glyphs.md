@@ -39,6 +39,13 @@ chorus braid (RATE, DEPTH, MIX; MODE is the strand count).
   scale (CRSE, MODES, RATIO, BRIGHT, BLACK) keep ARC. A test makes every
   named choice one or the other, and checks every word of a NONE param
   fits the band at the focus size.
+- **Toggles take SWITCH** (owner-approved 2026-10-01): a two-value
+  choice where one value is "off" (LFO SYNC, FREE / RETRIG). Two-value
+  choices of two peers (ENV and LFO TYPE, Part MODE, STEAL) keep NONE.
+  A test makes every two-value choice one or the other, and checks each
+  SWITCH word fits before the pill. Chorus MODE (OFF, I, II, I+II), LFO
+  SHAPE and SYNC are named on their specs, so they read as words
+  everywhere; names are display only, disk codes are unchanged.
 - **A composite draws from its params' set (stored) values only**, never
   the modulated ones: when it moves, that is always its own animation,
   never automation. The params stay modulatable; their cells and mod
