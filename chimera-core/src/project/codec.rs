@@ -400,17 +400,32 @@ impl Check for ProjectCheck {
 /// Decodes a project file into `target` in place: pass 1 checks, pass 2
 /// writes as it reads. There is no staging copy, so a pass 2 that fails
 /// leaves `target` part written (the loader falls back to NEW).
+///
+/// It replaces the whole project, so only the guarded load makes one:
+///
+/// ```compile_fail,E0624
+/// use chimera_core::project::{Project, ProjectDecoder};
+/// fn f(p: &mut Project) {
+///     let _ = ProjectDecoder::new(p);
+/// }
+/// ```
 pub struct ProjectDecoder<'a> {
     check: ProjectCheck,
     target: &'a mut Project,
 }
 
 impl<'a> ProjectDecoder<'a> {
-    pub fn new(target: &'a mut Project) -> Self {
+    pub(crate) fn new(target: &'a mut Project) -> Self {
         ProjectDecoder {
             check: ProjectCheck::new(),
             target,
         }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn new_for_test(target: &'a mut Project) -> Self {
+        Self::new(target)
     }
 }
 

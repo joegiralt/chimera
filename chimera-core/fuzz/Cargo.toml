@@ -9,7 +9,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-chimera-core = { path = ".." }
+chimera-core = { path = "..", features = ["test-support"] }
 chimera-hal = { path = "../../chimera-hal" }
 
 [[bin]]
