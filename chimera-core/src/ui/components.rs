@@ -13,7 +13,7 @@ use crate::ui::block_def::{BlockDef, SlotBinding};
 use crate::ui::chain::{ChainId, ChainNav};
 use crate::ui::draw;
 use crate::ui::fmt::FmtBuf;
-use crate::ui::glyph::{Braid, BraidPart, Gauge, Rings, RingsPart};
+use crate::ui::glyph::{Braid, BraidPart, Cube, CubePart, Gauge, Rings, RingsPart};
 use crate::ui::theme;
 
 /// `s` in upper case (names are stored mixed case: "Filter", "4opFM").
@@ -345,6 +345,7 @@ pub fn gauge_rect(gauge: &Gauge) -> Option<(i32, i32, i32, i32)> {
             theme::RINGS_W,
             theme::RINGS_H,
         )),
+        Gauge::Cube(_) => Some((theme::CUBE_X, theme::CUBE_Y, theme::CUBE_W, theme::CUBE_H)),
         Gauge::Arc { .. }
         | Gauge::None
         | Gauge::Switch { .. }
@@ -362,6 +363,7 @@ where
         Gauge::None => {}
         Gauge::Braid(b) => braid(d, &b),
         Gauge::Rings(r) => rings(d, &r),
+        Gauge::Cube(c) => cube(d, &c),
         Gauge::Switch { on } => switch(d, on),
         Gauge::LevelBar { value, ticks } => level_bar(d, value, ticks),
         Gauge::Crossfader { value } => crossfader(d, value),
@@ -671,6 +673,142 @@ where
     draw::dot(d, cx, cy, src, theme::INK);
     if r.focus == Some(RingsPart::Mix) {
         draw::ring(d, cx, cy, src + 3, theme::INK, 1);
+    }
+}
+
+/// The cube's twelve edges, by corner (bit 0 x, bit 1 y, bit 2 z).
+const CUBE_EDGES: [(usize, usize); 12] = [
+    (0, 1),
+    (2, 3),
+    (4, 5),
+    (6, 7),
+    (0, 2),
+    (1, 3),
+    (4, 6),
+    (5, 7),
+    (0, 4),
+    (1, 5),
+    (2, 6),
+    (3, 7),
+];
+
+/// A 0..255 grain, the same for the same frame, edge and piece.
+fn grain(frame: u32, edge: usize, piece: i32) -> u32 {
+    let mut h = frame
+        .wrapping_mul(0x9E37_79B9)
+        .wrapping_add((edge as u32) << 16)
+        .wrapping_add(piece as u32);
+    h ^= h << 13;
+    h ^= h >> 17;
+    h ^= h << 5;
+    h & 255
+}
+
+/// The reverb cube in its box: a wireframe room in perspective, tilted to
+/// show its top, turning once in 16 s. Near edges (towards the viewer) in
+/// ACCENT, 1 to 3 px by MIX; far edges 1 px, by DAMP ACCENT, MID, then
+/// dotted MID, so the highs die in the back of the room. TIME trails up
+/// to three afterimages behind the turn in FAINT; GRIT drops grains from
+/// every edge, new each frame. The focused param is marked: SIZE dots the
+/// corners, TIME draws the afterimages in MID, DAMP the far edges in INK,
+/// MIX the near edges in INK, GRIT specks the room. Palette colours only,
+/// so the theme's ACCENT swap applies.
+fn cube<D>(d: &mut D, c: &Cube)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    use crate::dsp::fast_sin;
+    use core::f32::consts::FRAC_PI_2;
+    /// Viewer distance, px: the perspective.
+    const VIEW: f32 = 100.0;
+    const TILT: f32 = 0.45;
+    let (cx, cy) = (
+        theme::CUBE_X + theme::CUBE_W / 2,
+        theme::CUBE_Y + theme::CUBE_H / 2,
+    );
+    let s = c.half();
+    let (tc, ts) = (fast_sin(TILT + FRAC_PI_2), fast_sin(TILT));
+    let project = |turn: f32| -> [(i32, i32, f32); 8] {
+        let (rc, rs) = (fast_sin(turn + FRAC_PI_2), fast_sin(turn));
+        core::array::from_fn(|i| {
+            let sign = |bit: usize| if i >> bit & 1 == 1 { s } else { -s };
+            let (x, y, z) = (sign(0), sign(1), sign(2));
+            let (x1, z1) = (x * rc + z * rs, -x * rs + z * rc);
+            let (y2, z2) = (y * tc - z1 * ts, y * ts + z1 * tc);
+            let k = VIEW / (VIEW - z2);
+            (
+                cx + libm::roundf(x1 * k) as i32,
+                cy + libm::roundf(y2 * k) as i32,
+                z2,
+            )
+        })
+    };
+    // An edge in pieces of about 3 px: GRIT drops some, `dotted` every other.
+    let edge =
+        |d: &mut D, p: &[(i32, i32, f32); 8], e: usize, color: Rgb565, width: u32, dotted: bool| {
+            let ((ax, ay, _), (bx, by, _)) = (p[CUBE_EDGES[e].0], p[CUBE_EDGES[e].1]);
+            let drop = (c.grit * 128.0) as u32;
+            if drop == 0 && !dotted {
+                draw::line(d, ax, ay, bx, by, color, width);
+                return;
+            }
+            let n = ((ax - bx).abs().max((ay - by).abs()) / 3).max(1);
+            for i in 0..n {
+                if (dotted && i % 2 == 1) || grain(c.frame, e, i) < drop {
+                    continue;
+                }
+                let at = |t: i32| (ax + (bx - ax) * t / n, ay + (by - ay) * t / n);
+                let ((x0, y0), (x1, y1)) = (at(i), at(i + 1));
+                draw::line(d, x0, y0, x1, y1, color, width);
+            }
+        };
+    let ghost = if c.focus == Some(CubePart::Time) {
+        theme::MID
+    } else {
+        theme::FAINT
+    };
+    for k in (1..=c.trails()).rev() {
+        let p = project(c.turn() - k as f32 * c.lag());
+        for e in 0..CUBE_EDGES.len() {
+            edge(d, &p, e, ghost, 1, false);
+        }
+    }
+    let p = project(c.turn());
+    let near = |e: usize| p[CUBE_EDGES[e].0].2 + p[CUBE_EDGES[e].1].2 >= 0.0;
+    let damp = ((c.damp * 3.0) as usize).min(2);
+    let far = match (c.focus, damp) {
+        (Some(CubePart::Damp), _) => theme::INK,
+        (_, 0) => theme::ACCENT,
+        _ => theme::MID,
+    };
+    for e in (0..CUBE_EDGES.len()).filter(|&e| !near(e)) {
+        edge(d, &p, e, far, 1, damp == 2);
+    }
+    let weight = ((c.mix * 3.0) as u32).min(2) + 1;
+    let front = if c.focus == Some(CubePart::Mix) {
+        theme::INK
+    } else {
+        theme::ACCENT
+    };
+    for e in (0..CUBE_EDGES.len()).filter(|&e| near(e)) {
+        edge(d, &p, e, front, weight, false);
+    }
+    match c.focus {
+        Some(CubePart::Size) => {
+            for &(x, y, _) in &p {
+                draw::fill_rect(d, x - 1, y - 1, 2, 2, theme::INK);
+            }
+        }
+        Some(CubePart::Grit) => {
+            let n = 3 + (c.grit * 10.0) as i32;
+            for i in 0..n {
+                let g = grain(c.frame, 12, i) as i32 | (grain(c.frame, 13, i) as i32) << 8;
+                let x = theme::CUBE_X + 2 + (g & 0xff) % (theme::CUBE_W - 4);
+                let y = theme::CUBE_Y + 2 + (g >> 8) % (theme::CUBE_H - 4);
+                draw::fill_rect(d, x, y, 1, 1, theme::INK);
+            }
+        }
+        _ => {}
     }
 }
 

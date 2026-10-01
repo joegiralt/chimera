@@ -269,6 +269,7 @@ fn unbuilt_glyphs_draw_as_arc() {
             // A built composite: whatever its inputs make of it.
             FocusGlyph::Composite(CompositeId::ChorusBraid) => Gauge::Switch { on: 9.0 },
             FocusGlyph::Composite(CompositeId::DelayRings) => Gauge::Switch { on: 8.0 },
+            FocusGlyph::Composite(CompositeId::ReverbCube) => Gauge::Switch { on: 7.0 },
             _ => Gauge::Arc {
                 value: 0.25,
                 bipolar: true,
@@ -277,7 +278,7 @@ fn unbuilt_glyphs_draw_as_arc() {
         let composite = |id| match id {
             CompositeId::ChorusBraid => Gauge::Switch { on: 9.0 },
             CompositeId::DelayRings => Gauge::Switch { on: 8.0 },
-            CompositeId::ReverbCube => panic!("the cube isn't built"),
+            CompositeId::ReverbCube => Gauge::Switch { on: 7.0 },
         };
         assert_eq!(g.gauge(0.25, ValFmt::Bi, composite), want, "{g:?}");
     }
@@ -856,7 +857,7 @@ fn composite_values_stay_clear_of_the_box() {
             let box_x = match id {
                 CompositeId::ChorusBraid => theme::BRAID_X,
                 CompositeId::DelayRings => theme::RINGS_X,
-                CompositeId::ReverbCube => continue,
+                CompositeId::ReverbCube => theme::CUBE_X,
             };
             for w in value_texts(s) {
                 let right = theme::FOCUS_VALUE_X + draw::text_width(&theme::FONT_FOCUS, &w, 0);
@@ -876,6 +877,7 @@ fn composite_values_stay_clear_of_the_box() {
 fn a_status_stops_the_glyph_redrawing() {
     status_stops_redrawing(braid_ui(EncoderId::B));
     status_stops_redrawing(rings_ui(EncoderId::A));
+    status_stops_redrawing(cube_ui(EncoderId::A));
 }
 
 fn status_stops_redrawing(mut ui: UiState) {
@@ -1037,7 +1039,7 @@ fn rings_emphasise_the_focused_param() {
 #[test]
 fn composites_draw_inside_their_boxes() {
     use chimera_core::ui::components::{draw_gauge, gauge_rect};
-    use chimera_core::ui::glyph::{BraidPart, RingsPart};
+    use chimera_core::ui::glyph::{BraidPart, Cube, CubePart, RingsPart};
     let check = |g: Gauge| {
         let (x, y, w, h) = gauge_rect(&g).unwrap();
         let mut fb = Fb::new();
@@ -1063,9 +1065,127 @@ fn composites_draw_inside_their_boxes() {
                     frame,
                 )));
             }
+            for focus in CubePart::ALL.map(Some).into_iter().chain([None]) {
+                check(Gauge::Cube(Cube::from_set([v, v, v, 1.0, v], focus, frame)));
+                check(Gauge::Cube(Cube::from_set(
+                    [1.0, 1.0 - v, 1.0, 1.0, 1.0],
+                    focus,
+                    frame,
+                )));
+            }
             for focus in BraidPart::ALL.map(Some).into_iter().chain([None]) {
                 check(Gauge::Braid(Braid::from_set([v, v, 1.0, v], focus, frame)));
             }
+        }
+    }
+}
+
+#[test]
+fn cube_reads_its_set_values() {
+    use chimera_core::ui::glyph::Cube;
+    // SIZE, TIME, DAMP, MIX, GRIT.
+    let c = |size: f32, time: f32| Cube::from_set([size, time, 0.5, 0.5, 0.0], None, 0);
+    // SIZE grows the room.
+    assert!(c(1.0, 0.5).half() > c(0.0, 0.5).half());
+    // TIME: how long the afterimage trails; none at 0.
+    assert_eq!(c(0.5, 0.0).trails(), 0);
+    assert!(c(0.5, 1.0).trails() > c(0.5, 0.4).trails());
+    // It turns on the clock.
+    let at = |frame| Cube::from_set([0.5; 5], None, frame).turn();
+    assert_ne!(at(0), at(20));
+    assert!(Gauge::Cube(c(0.5, 0.5)).animates());
+}
+
+fn cube_box(x: i32, y: i32) -> bool {
+    (theme::CUBE_X..theme::CUBE_X + theme::CUBE_W).contains(&x)
+        && (theme::CUBE_Y..theme::CUBE_Y + theme::CUBE_H).contains(&y)
+}
+
+/// MIX and GRIT up a little, DAMP up, `slot` focused.
+fn cube_ui(slot: EncoderId) -> UiState {
+    let mut ui = UiState::new();
+    to_demo(&mut ui, &reg::DEMO_GLYPH_CUBE);
+    feed(&mut ui, Input::turn(EncoderId::C, 30));
+    feed(&mut ui, Input::turn(EncoderId::D, 64));
+    feed(&mut ui, Input::turn(EncoderId::E, 20));
+    feed(&mut ui, Input::turn(slot, -1));
+    feed(&mut ui, Input::turn(slot, 1));
+    settle(&mut ui);
+    ui
+}
+
+#[test]
+fn glyph_cube_page_moves_only_inside_its_box() {
+    // Not on the reverb pages yet.
+    for s in BlockRef::Reverb.specs() {
+        assert!(!matches!(s.glyph, FocusGlyph::Composite(_)), "{}", s.ident);
+        for w in value_texts(s) {
+            let right = theme::FOCUS_VALUE_X + draw::text_width(&theme::FONT_FOCUS, &w, 0);
+            assert!(right + 4 <= theme::CUBE_X, "{} {w}", s.ident);
+        }
+    }
+    let mut ui = cube_ui(EncoderId::A);
+    let a = render_ui(&ui);
+    assert_eq!(a.oob, 0);
+    assert_eq!(arc_top(&a), theme::BG, "no arc");
+    for _ in 0..3 {
+        ui.update();
+    }
+    let b = render_ui(&ui);
+    let mut inside = 0;
+    for y in 0..H as i32 {
+        for x in 0..W as i32 {
+            if a.at(x, y) != b.at(x, y) {
+                assert!(cube_box(x, y), "({x}, {y}) moved outside the box");
+                inside += 1;
+            }
+        }
+    }
+    assert!(inside > 0, "the cube turns on the clock");
+}
+
+#[test]
+fn cube_redraws_only_its_box_each_frame() {
+    let mut ui = cube_ui(EncoderId::B);
+    let mut fb = Fb::new();
+    let perf = chimera_core::ui::perf::PerfStats::zero();
+    ui.render_dirty_with_scope(&mut fb, &perf, &scope_fixture());
+    for _ in 0..3 {
+        ui.update();
+        let flushed: Vec<_> = ui
+            .render_dirty_with_scope(&mut fb, &perf, &scope_fixture())
+            .into_iter()
+            .filter(|&(a, b)| a != b)
+            .collect();
+        let rows = (theme::CUBE_Y as u16, (theme::CUBE_Y + theme::CUBE_H) as u16);
+        assert_eq!(flushed, [rows]);
+        let mut full = Fb::new();
+        ui.render_with_scope(&mut full, &perf, &scope_fixture());
+        assert!(fb.px == full.px, "dirty frame matches a full render");
+    }
+}
+
+#[test]
+fn cube_emphasises_the_focused_param() {
+    let shots: Vec<_> = SIX[..5]
+        .iter()
+        .map(|&e| {
+            let mut ui = cube_ui(e);
+            while ui.clock().frame() < 200 {
+                ui.update();
+            }
+            render_ui(&ui)
+        })
+        .collect();
+    let boxed = |fb: &Fb| -> Vec<_> {
+        (theme::CUBE_Y..theme::CUBE_Y + theme::CUBE_H)
+            .flat_map(|y| (theme::CUBE_X..theme::CUBE_X + theme::CUBE_W).map(move |x| (x, y)))
+            .map(|(x, y)| fb.at(x, y))
+            .collect()
+    };
+    for i in 0..5 {
+        for j in i + 1..5 {
+            assert_ne!(boxed(&shots[i]), boxed(&shots[j]), "focus {i} vs {j}");
         }
     }
 }

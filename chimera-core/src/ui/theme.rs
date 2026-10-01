@@ -101,6 +101,12 @@ pub const RINGS_W: i32 = 60;
 pub const RINGS_H: i32 = 56;
 pub const RINGS_X: i32 = SCREEN_W - MARGIN_X - RINGS_W;
 pub const RINGS_Y: i32 = ARC_CY - RINGS_H / 2;
+/// The reverb cube's box, flush with the right margin: the only pixels it
+/// redraws each frame.
+pub const CUBE_W: i32 = 64;
+pub const CUBE_H: i32 = 56;
+pub const CUBE_X: i32 = SCREEN_W - MARGIN_X - CUBE_W;
+pub const CUBE_Y: i32 = ARC_CY - CUBE_H / 2;
 
 /// Viz band on CellGrid / Mixer pages: 118..186, centre line 152.
 pub const VIZ_BAND_TOP: i32 = 118;

@@ -5,6 +5,7 @@ use crate::addr::{BlockRef, ParamAddr};
 use crate::block::ValFmt;
 use crate::dsp::chorus::ChorusParams;
 use crate::dsp::delay::DelayParams;
+use crate::dsp::reverb::ReverbParams;
 
 /// The gauge a parameter's focus band shows.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -55,6 +56,94 @@ pub enum Gauge {
     Braid(Braid),
     /// The delay's rings (`CompositeId::DelayRings`).
     Rings(Rings),
+    /// The reverb's cube (`CompositeId::ReverbCube`).
+    Cube(Cube),
+}
+
+/// The reverb params the cube reads, in `Cube::from_set`'s order.
+pub const CUBE_PARAMS: [ParamAddr; 5] = [
+    ParamAddr::new(BlockRef::Reverb, ReverbParams::SIZE),
+    ParamAddr::new(BlockRef::Reverb, ReverbParams::TIME),
+    ParamAddr::new(BlockRef::Reverb, ReverbParams::DAMPING),
+    ParamAddr::new(BlockRef::Reverb, ReverbParams::MIX),
+    ParamAddr::new(BlockRef::Reverb, ReverbParams::GRIT),
+];
+
+/// The cube's param in focus, emphasised.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CubePart {
+    Size,
+    Time,
+    Damp,
+    Mix,
+    Grit,
+}
+
+impl CubePart {
+    /// In `CUBE_PARAMS`' order.
+    pub const ALL: [CubePart; 5] = [
+        CubePart::Size,
+        CubePart::Time,
+        CubePart::Damp,
+        CubePart::Mix,
+        CubePart::Grit,
+    ];
+}
+
+/// The reverb as a room: a wireframe cube in perspective, slowly turning,
+/// from the reverb's set values (normalized) and the UI clock's `frame`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Cube {
+    /// How big the room is.
+    pub size: f32,
+    /// How long it rings: afterimages trailing the turn.
+    pub time: f32,
+    /// How fast the highs die: the far edges dim, then dot.
+    pub damp: f32,
+    /// Edge weight.
+    pub mix: f32,
+    /// The lo-fi dirt: edges crackle.
+    pub grit: f32,
+    pub focus: Option<CubePart>,
+    pub frame: u32,
+}
+
+impl Cube {
+    /// From `CUBE_PARAMS`' set values, normalized.
+    pub fn from_set(set: [f32; 5], focus: Option<CubePart>, frame: u32) -> Self {
+        let n = |i: usize| set[i].clamp(0.0, 1.0);
+        Self {
+            size: n(0),
+            time: n(1),
+            damp: n(2),
+            mix: n(3),
+            grit: n(4),
+            focus,
+            frame,
+        }
+    }
+
+    /// Half the cube's side, px: 5 (SIZE 0) to 11.
+    pub fn half(&self) -> f32 {
+        5.0 + 6.0 * self.size
+    }
+
+    /// Afterimages trailing the turn: none (TIME 0) to 3.
+    pub fn trails(&self) -> usize {
+        libm::roundf(self.time * 3.0) as usize
+    }
+
+    /// How far behind each afterimage lags, radians.
+    pub fn lag(&self) -> f32 {
+        0.12 + 0.18 * self.time
+    }
+
+    /// The turn at `frame`, radians in 0..τ: one slow constant spin, 16 s a
+    /// turn at 20 fps. In f64, so it stays smooth however long it runs.
+    pub fn turn(&self) -> f32 {
+        use core::f64::consts::TAU;
+        libm::fmod(self.frame as f64 * TAU / 320.0, TAU) as f32
+    }
 }
 
 /// The delay params the rings read, in `Rings::from_set`'s order.
@@ -298,9 +387,8 @@ impl FocusGlyph {
             FocusGlyph::Crossfader => Gauge::Crossfader { value },
             FocusGlyph::Composite(CompositeId::ChorusBraid) => composite(CompositeId::ChorusBraid),
             FocusGlyph::Composite(CompositeId::DelayRings) => composite(CompositeId::DelayRings),
-            FocusGlyph::Arc | FocusGlyph::Composite(CompositeId::ReverbCube) => {
-                Gauge::Arc { value, bipolar }
-            }
+            FocusGlyph::Composite(CompositeId::ReverbCube) => composite(CompositeId::ReverbCube),
+            FocusGlyph::Arc => Gauge::Arc { value, bipolar },
         }
     }
 }
@@ -322,7 +410,7 @@ impl Gauge {
             | Gauge::Switch { .. }
             | Gauge::LevelBar { .. }
             | Gauge::Crossfader { .. } => false,
-            Gauge::Braid(_) | Gauge::Rings(_) => true,
+            Gauge::Braid(_) | Gauge::Rings(_) | Gauge::Cube(_) => true,
         }
     }
 }

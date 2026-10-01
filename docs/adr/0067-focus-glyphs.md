@@ -92,6 +92,15 @@ chorus braid (RATE, DEPTH, MIX; MODE is the strand count).
 - **The delay shows the rings** (owner-approved 2026-10-01) on all
   seven params, DELAY and CHAR alike: TIME, FDBK, TONE, MIX, REV,
   MECHANICS, SAT. The box-clear and status tests cover them.
+- **The reverb cube is the third composite**: the room as a wireframe
+  cube in perspective, tilted to show its top, turning once in 16 s.
+  SIZE grows it (half-side 5 to 11 px); TIME trails up to three
+  afterimages behind the turn, further back as it rises (trails, not spin
+  speed: persistence reads as decay, a faster spin would read as a rate);
+  DAMP dims the far edges, then dots them, so the highs die in the back
+  of the room; MIX is edge weight; GRIT, the lo-fi dirt, drops grains
+  from the edges, new each frame. Near edges heavier than far ones for
+  depth. The reverb has no pre-delay. Same rules as the braid and rings.
 - **Each glyph gets one Demo page** ("Glyph: X", MIX + B6), one glyph per
   page, its slots bound to the params that drive it: several animated
   panels at once can't be judged.
