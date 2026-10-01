@@ -89,7 +89,7 @@ impl SystemCheck {
     /// One event, applied to `staged` if there is one.
     ///
     /// `WrongKind`: not a SYSTEM file. `Corrupt`: a block or last project
-    /// read twice, or a critical record SYSTEM doesn't read. `Bounds`: a
+    /// read twice, a critical record SYSTEM doesn't read, or a project's. `Bounds`: a
     /// payload of the wrong shape. A block other than THEME, and any other
     /// record, is skipped; a last project out of range is none.
     fn step(&mut self, e: Event<'_>, staged: Option<&mut SystemSettings>) -> Result<(), FileError> {
@@ -128,6 +128,10 @@ impl SystemCheck {
                 }
                 Ok(())
             }
+            // A project's records are no SYSTEM we wrote, critical or not.
+            ReadTag::Known(
+                RecordTag::Slot | RecordTag::Part | RecordTag::Fx | RecordTag::Origin,
+            ) => Err(FileError::Corrupt),
             // The framer refuses an unknown critical record before it gets
             // here; a known one that isn't SYSTEM's is no SYSTEM we wrote.
             t if t.critical() => Err(FileError::Corrupt),

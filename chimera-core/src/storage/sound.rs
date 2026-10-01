@@ -113,6 +113,8 @@ const fn once_bit(tag: RecordTag) -> u8 {
         RecordTag::ModDests => 1 << 2,
         RecordTag::Routes => 1 << 3,
         RecordTag::LastProject => 1 << 4,
+        // A project's own records: refused before `once` is asked.
+        RecordTag::Slot | RecordTag::Part | RecordTag::Fx | RecordTag::Origin => 0,
     }
 }
 
@@ -134,8 +136,13 @@ pub struct SoundCheck {
 
 impl SoundCheck {
     pub fn new() -> Self {
+        Self::begin(None)
+    }
+
+    /// A Sound past its header: a project's context, whose record names it.
+    pub(crate) fn begin(name: Option<SoundName>) -> Self {
         SoundCheck {
-            name: None,
+            name,
             engine: false,
             seen: 0,
             blocks: ByteSet::new(),
@@ -209,10 +216,14 @@ impl SoundCheck {
     /// One event, applied to `staged` if there is one.
     ///
     /// `NeedsNewerFirmware`: an unknown engine. `Corrupt`: a record before
-    /// `Engine`, or one we write once read twice. `Bounds`: a payload of the
-    /// wrong shape, or more entries than the Sound holds. `WrongKind`: not a
-    /// Sound file.
-    fn step(&mut self, e: Event<'_>, staged: Option<&mut Sound>) -> Result<(), FileError> {
+    /// `Engine`, one we write once read twice, or a project's record.
+    /// `Bounds`: a payload of the wrong shape, or more entries than the
+    /// Sound holds. `WrongKind`: not a Sound file.
+    pub(crate) fn step(
+        &mut self,
+        e: Event<'_>,
+        staged: Option<&mut Sound>,
+    ) -> Result<(), FileError> {
         let (tag, p) = match e {
             Event::Header(h) => {
                 if h.kind != FileKind::Sound {
@@ -229,6 +240,12 @@ impl SoundCheck {
             Event::Record(ReadTag::Unknown(_), _) if self.engine => return Ok(()),
             Event::Record(ReadTag::Unknown(_), _) => return Err(FileError::Corrupt),
         };
+        if matches!(
+            tag,
+            RecordTag::Slot | RecordTag::Part | RecordTag::Fx | RecordTag::Origin
+        ) {
+            return Err(FileError::Corrupt);
+        }
         // Engine first, and once.
         if (tag == RecordTag::Engine) == self.engine {
             return Err(FileError::Corrupt);
@@ -264,11 +281,14 @@ impl SoundCheck {
                 Ok(())
             }
             RecordTag::LastProject => Ok(()),
+            RecordTag::Slot | RecordTag::Part | RecordTag::Fx | RecordTag::Origin => {
+                Err(FileError::Corrupt)
+            }
         }
     }
 
     /// `Corrupt` without an Engine record. Adds the routes to `staged`.
-    fn finish(&mut self, staged: Option<&mut Sound>) -> Result<(), FileError> {
+    pub(crate) fn finish(&mut self, staged: Option<&mut Sound>) -> Result<(), FileError> {
         if !self.engine {
             return Err(FileError::Corrupt);
         }

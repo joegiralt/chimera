@@ -13,11 +13,12 @@ pub const HEADER_LEN: usize = 28;
 pub const TRAILER_LEN: usize = 4;
 const RECORD_HEAD_LEN: usize = 4;
 
-/// What a file holds. 2 Project, 4 Tags and 5 Index are reserved (ADR 0045).
+/// What a file holds. 4 Tags and 5 Index are reserved (ADR 0045).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum FileKind {
     Sound = 1,
+    Project = 2,
     System = 3,
 }
 
@@ -25,6 +26,7 @@ impl FileKind {
     fn from_code(c: u8) -> Option<Self> {
         match c {
             1 => Some(FileKind::Sound),
+            2 => Some(FileKind::Project),
             3 => Some(FileKind::System),
             _ => None,
         }

@@ -41,7 +41,7 @@ use crate::modulation::{CUTOFF, CUTOFF_LABEL, MAX_MOD_SOURCES, ModSource, ModSta
 use crate::params::ParamSnapshot;
 use crate::perf::load::AudioStats;
 use crate::preset::{POOL_SIZE, PartEdit};
-use crate::project::{PartFrom, PartId, PartSource, Project};
+use crate::project::{PartFrom, PartId, PartSource, Project, TemplateCrc};
 use crate::scope::SCOPE_LEN;
 use block_def::BlockDef;
 use block_def::VizType;
@@ -133,6 +133,8 @@ pub struct UiState {
     pub nav: ChainNav,
     /// The pool, the Parts and the FX: what a project file holds.
     project: Project,
+    /// NEW's CRC, computed when the project was built.
+    template: TemplateCrc,
     pub active_part: PartId,
     pub renderer: Renderer,
     pub matrix_state: MatrixState,
@@ -160,6 +162,7 @@ pub struct UiState {
 crate::in_place::field_list!(UiState => UiState {
     nav,
     project,
+    template,
     active_part,
     renderer,
     matrix_state,
@@ -197,7 +200,8 @@ impl UiState {
         unsafe {
             let nav = ChainNav::new();
             let page = PageKey::from_nav(&nav, Op::A);
-            let project = Project::init_in_place(uninit_at(addr_of_mut!((*p).project)));
+            let template = Project::init_in_place(uninit_at(addr_of_mut!((*p).project)));
+            let project = &mut *addr_of_mut!((*p).project);
             let mut renderer = Renderer::new();
             renderer.snap_to_current(page_values(
                 page,
@@ -206,6 +210,7 @@ impl UiState {
                 Op::A,
             ));
             addr_of_mut!((*p).nav).write(nav);
+            addr_of_mut!((*p).template).write(template);
             addr_of_mut!((*p).active_part).write(PartId::ALL[0]);
             addr_of_mut!((*p).renderer).write(renderer);
             addr_of_mut!((*p).matrix_state).write(MatrixState::new());
@@ -282,6 +287,11 @@ impl UiState {
 
     pub fn project_mut(&mut self) -> &mut Project {
         &mut self.project
+    }
+
+    /// NEW's CRC: a project whose `project_crc` equals it is `Pristine`.
+    pub fn template(&self) -> TemplateCrc {
+        self.template
     }
 
     /// The edited Part's blocks and System › Theme, as one `Blocks`.

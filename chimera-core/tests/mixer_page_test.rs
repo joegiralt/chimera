@@ -452,7 +452,7 @@ fn sound_browser_title_names_the_part() {
     // `draw` expects a screen cleared to the ground.
     let mut got = screen::Fb::new();
     let _ = got.clear(theme::BG);
-    browser::draw(&mut got, Project::boxed().pool(), PartId::ALL[1], 0, 0);
+    browser::draw(&mut got, Project::boxed().0.pool(), PartId::ALL[1], 0, 0);
     let mut want = screen::Fb::new();
     let _ = want.clear(theme::BG);
     components::title_to(&mut want, "LOAD SOUND", "PART 2");

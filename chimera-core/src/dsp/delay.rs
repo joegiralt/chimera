@@ -31,7 +31,7 @@ pub const JITTER_RMS: f32 = 0.4;
 const _: () = assert!(24_000 + (WOW_SAMPLES + FLUTTER_SAMPLES) as usize + 2 <= MAX_DELAY_SAMPLES);
 
 /// Tape delay parameters.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DelayParams {
     /// Delay time in ms (10..500)
     pub time_ms: f32,

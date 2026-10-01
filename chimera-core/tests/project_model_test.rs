@@ -32,7 +32,7 @@ fn part_set_holds_what_it_was_given() {
 
 #[test]
 fn new_project_contents() {
-    let p = Project::boxed();
+    let p = Project::boxed().0;
     assert_eq!(p.meta().name().as_str(), "NEW PROJECT");
     assert_eq!((p.meta().id(), p.meta().saved_crc()), (None, None));
     for i in 0..FACTORY_LEN {
@@ -65,7 +65,7 @@ fn new_project_contents() {
 
 #[test]
 fn store_and_clear_bump_the_generation() {
-    let mut p = Project::boxed();
+    let mut p = Project::boxed().0;
     let s = SlotId::ALL[20];
     let g = p.pool().generation(s);
     p.pool_store(s, Sound::init(EngineType::Modal));
@@ -80,7 +80,7 @@ fn store_and_clear_bump_the_generation() {
 
 #[test]
 fn clear_refuses_a_used_slot() {
-    let mut p = Project::boxed();
+    let mut p = Project::boxed().0;
     let (a, b, s) = (PartId::ALL[1], PartId::ALL[3], SlotId::ALL[0]);
     for part in [a, b] {
         p.load_part(PartSource {
@@ -98,7 +98,7 @@ fn clear_refuses_a_used_slot() {
 
 #[test]
 fn load_sets_origin_from_the_slot() {
-    let mut p = Project::boxed();
+    let mut p = Project::boxed().0;
     let (part, s) = (PartId::ALL[0], SlotId::ALL[2]);
     p.load_part(PartSource {
         part,
@@ -132,7 +132,7 @@ fn load_sets_origin_from_the_slot() {
 
 #[test]
 fn load_init_keeps_the_mix() {
-    let mut p = Project::boxed();
+    let mut p = Project::boxed().0;
     let part = PartId::ALL[3];
     p.edit_part(part).mix.level = 0.25;
     p.edit_part(part).mix.channel = MidiChannel::new(9).unwrap();
@@ -149,7 +149,7 @@ fn load_init_keeps_the_mix() {
 
 #[test]
 fn save_part_to_returns_only_the_parts_now_stale() {
-    let mut p = Project::boxed();
+    let mut p = Project::boxed().0;
     let s = SlotId::ALL[0];
     let [a, b, c] = [PartId::ALL[0], PartId::ALL[2], PartId::ALL[4]];
     for part in [a, b, c] {
@@ -176,7 +176,7 @@ fn save_part_to_returns_only_the_parts_now_stale() {
 
 #[test]
 fn save_part_to_an_empty_slot_has_no_other_users() {
-    let mut p = Project::boxed();
+    let mut p = Project::boxed().0;
     let (a, s) = (PartId::ALL[5], SlotId::ALL[17]);
     assert_eq!(p.save_part_to(a, s), PartSet::EMPTY);
     assert_eq!(p.users(s), PartSet::EMPTY.with(a));
@@ -185,7 +185,7 @@ fn save_part_to_an_empty_slot_has_no_other_users() {
 
 #[test]
 fn edit_fx_and_set_name_reach_the_project() {
-    let mut p = Project::boxed();
+    let mut p = Project::boxed().0;
     p.edit_fx().reverb.mix = 0.5;
     assert_eq!(p.perf().fx.reverb.mix, 0.5);
     let n = chimera_core::name::ProjectName::new("SET ONE").unwrap();
