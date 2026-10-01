@@ -585,22 +585,6 @@ const _: () = assert!(MIXER_CHANNEL_BLOCKS[MIXER_PART].def.id == PART.id);
 // System chain
 // ---------------------------------------------------------------------------
 
-pub static SYS_MIDI: BlockDef = BlockDef {
-    id: 31,
-    name: "MIDI Setup",
-    short: "MID",
-    layout: PageLayout::CellGrid,
-    viz: VizType::None,
-    params: [
-        ParamSlot::param(BlockRef::Channels, ParamId(0)),
-        ParamSlot::param(BlockRef::Channels, ParamId(1)),
-        ParamSlot::param(BlockRef::Channels, ParamId(2)),
-        ParamSlot::param(BlockRef::Channels, ParamId(3)),
-        ParamSlot::param(BlockRef::Channels, ParamId(4)),
-        ParamSlot::param(BlockRef::Channels, ParamId(5)),
-    ],
-};
-
 pub static SYS_TUNING: BlockDef = BlockDef {
     id: 32,
     name: "Tuning",
@@ -668,8 +652,7 @@ pub static SYS_AUDIO: BlockDef = BlockDef {
     ],
 };
 
-static SYSTEM_BLOCKS: [ChainBlock; 5] = [
-    ChainBlock::page(&SYS_MIDI),
+static SYSTEM_BLOCKS: [ChainBlock; 4] = [
     ChainBlock::page(&SYS_TUNING),
     ChainBlock::page(&SYS_THEME),
     ChainBlock::page(&SYS_UPDATES),

@@ -9,12 +9,19 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-chimera-core = { path = ".." }
+chimera-core = { path = "..", features = ["test-support"] }
 chimera-hal = { path = "../../chimera-hal" }
 
 [[bin]]
 name = "decode_sound"
 path = "fuzz_targets/decode_sound.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decode_project"
+path = "fuzz_targets/decode_project.rs"
 test = false
 doc = false
 bench = false

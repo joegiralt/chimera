@@ -10,4 +10,4 @@ embedded-hal = "1.0"
 
 [dev-dependencies]
 chimera-hal = { path = "../chimera-hal", features = ["testkit"] }
-chimera-core = { path = "../chimera-core" }
+chimera-core = { path = "../chimera-core", features = ["test-support"] }

@@ -1,7 +1,7 @@
 //! SYSTEM: the theme and the last project, read at boot and written on
 //! leaving System when RAM differs from what the card is known to hold (ADR 0045).
 
-use chimera_hal::store::{ByteSink, Dir, Store, StoreError, VolumeId};
+use chimera_hal::store::{Dir, Store, StoreError, VolumeId};
 
 use crate::addr::{BlockRef, Blocks};
 use crate::block::Block;
@@ -10,9 +10,9 @@ use crate::ui::theme_settings::ThemeSettings;
 use super::block_codec::{ByteSet, decode_block, encode_block};
 use super::card::{Card, CardFault, Ready};
 use super::codes::{MIGRATIONS, TRANSLATIONS};
-use super::crc::Crc32;
 use super::file::{AbFile, Check, Decode, LoadError, SaveError, load_ab, save_ab};
-use super::frame::{Event, FileError, FileKind, ProjectId};
+use super::frame::{Event, FileError, FileKind, ProjectFile, ProjectId};
+use super::record::records_crc;
 use super::record::{ReadTag, RecordBuf, RecordTag, RecordWriter};
 
 /// Everything SYSTEM holds.
@@ -47,23 +47,10 @@ pub fn encode_system(s: &SystemSettings, w: &mut RecordWriter<'_>) -> Result<(),
     }
 }
 
-/// Hashes what it's given.
-struct CrcSink(Crc32);
-
-impl ByteSink for CrcSink {
-    fn put(&mut self, bytes: &[u8]) -> Result<(), StoreError> {
-        self.0.update(bytes);
-        Ok(())
-    }
-}
-
 /// The CRC of `encode_system`'s bytes: the body alone, so a new generation
 /// or header never reads as a change.
 pub fn body_crc(s: &SystemSettings) -> u32 {
-    let mut sink = CrcSink(Crc32::new());
-    // `CrcSink::put` is never Err, so neither is this.
-    let _ = encode_system(s, &mut RecordWriter::new(&mut sink));
-    sink.0.finish()
+    records_crc(&[], |w| encode_system(s, w))
 }
 
 /// The theme as the one block a `Block` record can reach.
@@ -99,7 +86,7 @@ impl SystemCheck {
     /// One event, applied to `staged` if there is one.
     ///
     /// `WrongKind`: not a SYSTEM file. `Corrupt`: a block or last project
-    /// read twice, or a critical record SYSTEM doesn't read. `Bounds`: a
+    /// read twice, a critical record SYSTEM doesn't read, or a project's. `Bounds`: a
     /// payload of the wrong shape. A block other than THEME, and any other
     /// record, is skipped; a last project out of range is none.
     fn step(&mut self, e: Event<'_>, staged: Option<&mut SystemSettings>) -> Result<(), FileError> {
@@ -138,6 +125,10 @@ impl SystemCheck {
                 }
                 Ok(())
             }
+            // A project's records are no SYSTEM we wrote, critical or not.
+            ReadTag::Known(
+                RecordTag::Slot | RecordTag::Part | RecordTag::Fx | RecordTag::Origin,
+            ) => Err(FileError::Corrupt),
             // The framer refuses an unknown critical record before it gets
             // here; a known one that isn't SYSTEM's is no SYSTEM we wrote.
             t if t.critical() => Err(FileError::Corrupt),
@@ -305,15 +296,26 @@ fn save<S: Store>(s: &mut S, r: &Ready, v: &SystemSettings) -> Result<(), SaveEr
     Ok(())
 }
 
+/// Why SYSTEM syncs, and so what its last project becomes.
+#[derive(Clone, Copy)]
+enum Last {
+    /// Leaving System: the loaded project's file, on its own card.
+    Exit(Option<ProjectFile>),
+    /// A save or load: this file, on its card only.
+    Saved(ProjectFile),
+    /// A delete: none, if the card named this file; on its card only.
+    Deleted(ProjectFile),
+}
+
 /// When SYSTEM is read and written. A thin shell over `exit_plan`: it
 /// mounts once per exit, so the plan always sees the card in the slot.
 #[derive(Debug)]
 pub struct SystemSync {
     /// The volume and `body_crc` last loaded from or saved to it.
     known: Option<(VolumeId, u32)>,
-    /// RAM holds defaults that no card gave and the user hasn't changed.
-    /// `write` leaves it: the next `left_system` frame clears it, as what was
-    /// written then differs from DEFAULT.
+    /// RAM's theme is the default no card gave and the user hasn't changed.
+    /// The last project doesn't count: writing it to a card with no SYSTEM
+    /// leaves the theme untouched for the next card.
     untouched: bool,
     was_in: bool,
 }
@@ -344,59 +346,120 @@ impl SystemSync {
         (sync, settings, note)
     }
 
-    /// Once a frame: true on the frame System is left. Any change from the
-    /// defaults, even one undone, marks them touched.
+    /// Once a frame: true on the frame System is left. Any theme change
+    /// from the defaults, even one undone, marks them touched; the last
+    /// project is no user setting.
     pub fn left_system(&mut self, in_system: bool, s: &SystemSettings) -> bool {
-        self.untouched &= *s == SystemSettings::DEFAULT;
+        self.untouched &= s.theme == SystemSettings::DEFAULT.theme;
         let left = self.was_in && !in_system;
         self.was_in = in_system;
         left
     }
 
     /// On leaving System: mounts, then does what `exit_plan` says for that
-    /// volume. `Loaded` replaced `s` with the card's, to apply.
+    /// volume. `Loaded` replaced `s` with the card's, to apply. `current`
+    /// is the loaded project's file: SYSTEM names it only on its own card.
     pub fn on_exit<S: Store>(
         &mut self,
         card: &mut Card,
         store: &mut S,
         s: &mut SystemSettings,
+        current: Option<ProjectFile>,
     ) -> Result<Exit, SyncError> {
-        let (known, untouched, crc) = (self.known, self.untouched, body_crc(s));
-        let (vol, exit) = card
-            .run(store, |st, r| {
-                let vol = r.volume();
-                let exit = match exit_plan(known, untouched, vol, crc) {
-                    ExitPlan::Nothing => Exit::Unchanged,
-                    ExitPlan::Write => save(st, r, s).map(|()| Exit::Wrote)?,
-                    ExitPlan::Load => match load(st, r) {
-                        Ok(v) => {
-                            *s = v;
-                            Exit::Loaded
-                        }
-                        Err(LoadError::Missing) => save(st, r, s).map(|()| Exit::Wrote)?,
-                        Err(LoadError::Store(e)) => return Err(SyncError::Store(e)),
-                        Err(LoadError::File(e)) => return Err(SyncError::File(e)),
-                    },
-                };
-                Ok((vol, exit))
-            })
-            .and_then(|o| o.result)?;
-        self.known = Some((vol, body_crc(s)));
-        self.untouched &= exit != Exit::Loaded;
-        Ok(exit)
+        self.sync(card, store, s, Last::Exit(current))
     }
 
-    /// Saves `s` now (a project save or load, for the last project).
+    /// A project save or load: `saved` becomes the last project of its own
+    /// card, by the same plan as `on_exit`, so untouched defaults still
+    /// never go over that card's theme. Another card in the slot is left
+    /// alone (`Unchanged`).
     pub fn write<S: Store>(
         &mut self,
         card: &mut Card,
         store: &mut S,
-        s: &SystemSettings,
-    ) -> Result<(), SaveError> {
-        let vol = card
-            .run(store, |st, r| save(st, r, s).map(|()| r.volume()))
+        s: &mut SystemSettings,
+        saved: ProjectFile,
+    ) -> Result<Exit, SyncError> {
+        self.sync(card, store, s, Last::Saved(saved))
+    }
+
+    /// A project deleted: if it is its card's last project, SYSTEM there
+    /// names none, by the same plan as `write`; otherwise nothing is
+    /// written (`Unchanged`). Another card in the slot is left alone.
+    pub fn forget<S: Store>(
+        &mut self,
+        card: &mut Card,
+        store: &mut S,
+        s: &mut SystemSettings,
+        deleted: ProjectFile,
+    ) -> Result<Exit, SyncError> {
+        self.sync(card, store, s, Last::Deleted(deleted))
+    }
+
+    fn sync<S: Store>(
+        &mut self,
+        card: &mut Card,
+        store: &mut S,
+        s: &mut SystemSettings,
+        why: Last,
+    ) -> Result<Exit, SyncError> {
+        let (known, untouched, ram) = (self.known, self.untouched, *s);
+        let done = card
+            .run(store, |st, r| {
+                let vol = r.volume();
+                let on_card = |f: ProjectFile| (f.vol() == vol).then(|| f.id());
+                let file = match why {
+                    Last::Exit(f) => f,
+                    Last::Saved(f) | Last::Deleted(f) => Some(f),
+                };
+                let mine = file.and_then(on_card);
+                if !matches!(why, Last::Exit(_)) && mine.is_none() {
+                    return Ok(None);
+                }
+                // The card's own SYSTEM, unless RAM already mirrors it.
+                let theirs = (known.map(|(v, _)| v) != Some(vol)).then(|| load(st, r));
+                let own = match theirs {
+                    None => ram.last_project,
+                    Some(Ok(v)) => v.last_project,
+                    Some(Err(_)) => None,
+                };
+                let last = match why {
+                    Last::Deleted(_) if own != mine => return Ok(None),
+                    Last::Deleted(_) => None,
+                    _ => mine.or(own),
+                };
+                let want = SystemSettings {
+                    last_project: last,
+                    ..ram
+                };
+                let done = match (exit_plan(known, untouched, vol, body_crc(&want)), theirs) {
+                    (ExitPlan::Nothing, _) => (Exit::Unchanged, want),
+                    (_, Some(Err(LoadError::Store(e)))) => return Err(SyncError::Store(e)),
+                    (ExitPlan::Load, Some(Ok(mut v))) => {
+                        if v.last_project != last {
+                            v.last_project = last;
+                            save(st, r, &v)?;
+                        }
+                        (Exit::Loaded, v)
+                    }
+                    (ExitPlan::Load, Some(Err(LoadError::File(e)))) => {
+                        return Err(SyncError::File(e));
+                    }
+                    // A card with no SYSTEM, or one RAM is written over.
+                    _ => {
+                        save(st, r, &want)?;
+                        (Exit::Wrote, want)
+                    }
+                };
+                Ok(Some((vol, done)))
+            })
             .and_then(|o| o.result)?;
+        let Some((vol, (exit, now))) = done else {
+            return Ok(Exit::Unchanged);
+        };
+        *s = now;
         self.known = Some((vol, body_crc(s)));
-        Ok(())
+        self.untouched &= exit != Exit::Loaded;
+        Ok(exit)
     }
 }

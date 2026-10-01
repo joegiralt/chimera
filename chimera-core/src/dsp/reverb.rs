@@ -4,7 +4,7 @@
 use crate::block::{Block, ParamId, ParamSpec, ValFmt};
 use crate::dsp::ring::RingControls;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ReverbParams {
     pub grit: f32,
     pub time: f32,

@@ -1,6 +1,7 @@
 //! The FLT pages are honest (filter-routing spec § Tests "Knobs are
 //! honest", "Route knobs").
 mod common;
+use chimera_core::project::PartId;
 use common::Rig;
 
 mod screen;
@@ -83,7 +84,7 @@ fn every_flt_knob_changes_a_held_note() {
 
 /// Removes CUTOFF from Part 1's matrix and reloads it (re-entering Part 1).
 fn without_cutoff(ui: &mut UiState, fill: bool) {
-    let sound = &mut ui.performance.parts[0].sound;
+    let sound = ui.project_mut().edit_part(PartId::ALL[0]).sound;
     sound.dest_registry.remove(CUTOFF);
     if fill {
         for b in BlockRef::ALL {

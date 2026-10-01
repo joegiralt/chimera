@@ -89,24 +89,22 @@ fn fx_bus_fits_its_axi_share() {
     assert!(size <= hw::FX_BUS_BUDGET, "FxBus = {size} B");
 }
 
-/// Spec § Hardware parity: Performance + SoundPool + framebuffer + UI
-/// reserve (+ the AudioShared, scope and AudioStats triple buffers, the
-/// scope's writer, the FX bus and the card's store, ADR 0014 / ADR 0021)
-/// fit AXI, with 64 KB to spare (~91 KB before storage; SYSTEM adds no
-/// other static).
+/// Spec § Hardware parity: the Project (Performance and pool), the
+/// framebuffer, the UI reserve, the AudioShared, scope and AudioStats triple
+/// buffers, the scope's writer, the FX bus and the card's store (ADR 0014,
+/// ADR 0021) fit AXI, with 64 KB to spare.
 #[test]
 fn axi_residents_fit() {
     use chimera_core::dsp::fx_bus::FxBus;
     use chimera_core::instrument::{AXI_RESIDENT, AudioShared};
     use chimera_core::perf::load::AudioStats;
-    use chimera_core::preset::{Performance, SoundPool};
+    use chimera_core::project::Project;
     use chimera_core::scope::{ScopeFrame, ScopeWriter};
     use chimera_core::triple::TripleBuffer;
     let parts = [
         ("framebuffer", hw::FB_BYTES),
         ("UI reserve", hw::UI_RESERVE),
-        ("Performance", size_of::<Performance>()),
-        ("SoundPool", size_of::<SoundPool>()),
+        ("Project", size_of::<Project>()),
         ("AudioShared x3", size_of::<TripleBuffer<AudioShared>>()),
         ("scope x3", size_of::<TripleBuffer<ScopeFrame>>()),
         ("scope writer", size_of::<ScopeWriter>()),
@@ -135,22 +133,39 @@ fn instrument_fits_d2() {
     assert!(size <= hw::VOICE_RAM_BUDGET, "Instrument = {size} B");
 }
 
-/// UiState is one AXI static (`chimera-stm32/src/shared.rs`). Its Performance and SoundPool
-/// are counted on their own in `axi_residents_fit`; the rest (navigation,
-/// renderer, regions, focus: 1 120 B after the UI refresh, +48 B for the
-/// per-page focus) comes out of the UI reserve.
+/// The Project is the Performance and the pool's slots, plus no more than
+/// its meta and the slots' generations.
+#[test]
+fn axi_counts_the_project() {
+    use chimera_core::preset::{POOL_SIZE, Performance, Sound};
+    use chimera_core::project::Project;
+    let (project, perf, slots) = (
+        size_of::<Project>(),
+        size_of::<Performance>(),
+        POOL_SIZE * size_of::<Option<Sound>>(),
+    );
+    eprintln!("Project = {project} B: Performance {perf} B, slots {slots} B");
+    assert!(
+        project - (perf + slots) <= 128,
+        "Project = {project} B, {} B over its parts",
+        project - (perf + slots)
+    );
+}
+
+/// UiState is one AXI static (`chimera-stm32/src/shared.rs`). Its Project
+/// is counted on its own in `axi_residents_fit`; the rest (navigation,
+/// renderer, regions, focus) comes out of the UI reserve.
 #[test]
 fn ui_state_fits_the_ui_reserve() {
-    use chimera_core::preset::{Performance, SoundPool};
-    let rest =
-        size_of::<chimera_core::ui::UiState>() - size_of::<Performance>() - size_of::<SoundPool>();
+    use chimera_core::project::Project;
+    let rest = size_of::<chimera_core::ui::UiState>() - size_of::<Project>();
     eprintln!(
-        "UiState without Performance and SoundPool = {rest} B, reserve {} B",
+        "UiState without its Project = {rest} B, reserve {} B",
         hw::UI_RESERVE
     );
     assert!(
         rest <= 2 * 1024,
-        "UiState grew to {rest} B besides its Performance and SoundPool"
+        "UiState grew to {rest} B besides its Project"
     );
 }
 

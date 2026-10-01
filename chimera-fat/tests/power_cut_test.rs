@@ -14,17 +14,24 @@ use ab::{
     Slot, assert_kept, copy, file, load, load_side, name83, save, save_on, slot, sound, target,
 };
 use chimera_core::addr::BlockRef;
-use chimera_core::block::DiskCode;
+use chimera_core::block::{Block, DiskCode};
 use chimera_core::mod_path::MAX_REGISTRY_DESTS;
 use chimera_core::params::EngineType;
+use chimera_core::part::PartParams;
 use chimera_core::preset::Sound;
+use chimera_core::project::test_support::{full, same};
+use chimera_core::project::{
+    PartId, Project, ProjectDecoder, ProjectFile, ProjectNote, project_crc, project_file,
+    save_project,
+};
 use chimera_core::storage::{
-    Card, CardError, CardEvent, FileKind, Generation, Header, RecordTag, RecordWriter, SaveError,
-    Side, SoundCheck, SoundDecoder, encode_sound, load_ab, save_ab, write_file,
+    Card, CardError, CardEvent, FileKind, Generation, Header, InPlaceError, ProjectId, RecordTag,
+    RecordWriter, SaveError, Side, SoundCheck, SoundDecoder, encode_sound, load_ab,
+    load_ab_in_place, save_ab, write_file,
 };
 use chimera_hal::store::{ByteSink, Dir, FileName, Store, StoreError};
-use image::{Cut, FatEntry, RamDisk, Tear, fat_check, with_clusters};
-use probe::{XorShift, free, log, probed};
+use image::{Cut, CutDisk, FatEntry, RamDisk, Tear, fat_check, with_clusters};
+use probe::{Probed, XorShift, free, log, probed};
 use std::collections::HashSet;
 
 /// A FAT16 card of 512 B clusters: every file of the pair and `/CHIMERA`
@@ -421,4 +428,93 @@ fn full_card_keeps_previous_generation() {
     s.delete(v, file().side(side)).unwrap();
     assert_eq!(free(&disk.inner), (1 + old, 1 + old), "Full leaked nothing");
     assert!(load(&disk).unwrap().bits_eq(&sound(2)));
+}
+
+/// `full()` with Part 1's LEVEL at save `n`'s value: each save differs.
+fn project_gen(n: u32) -> Box<Project> {
+    let (mut p, _) = full();
+    p.edit_part(PartId::ALL[0])
+        .mix
+        .set(PartParams::LEVEL, 0.1 * n as f32);
+    p
+}
+
+fn project_id() -> ProjectId {
+    ProjectId::new(1).unwrap()
+}
+
+fn save_project_on(s: &mut Probed<CutDisk>, n: u32) -> ProjectNote {
+    let to = ProjectFile::for_test(project_id(), s.mount().unwrap());
+    save_project(&mut Card::new(), s, &mut project_gen(n), to)
+}
+
+fn load_project_in_place(slot: &Slot) -> Result<Box<Project>, InPlaceError> {
+    let (mut q, _) = Project::boxed();
+    ab::op(&mut probed(slot), |s, r| {
+        load_ab_in_place(
+            s,
+            r,
+            project_file(project_id()),
+            &mut ProjectDecoder::new_for_test(&mut q),
+        )
+    })?;
+    Ok(q)
+}
+
+/// A project (about 44 KB, 90-odd blocks a side) cut at every block
+/// write of its third save: the in-place load always gets save 2 or 3
+/// whole, never an error, and the next save lands.
+#[test]
+fn project_cut_keeps_a_generation() {
+    let base = slot(with_clusters(CLUSTERS, 0xC0DE));
+    for n in 1..=2 {
+        let note = save_project_on(&mut probed(&base), n);
+        assert!(matches!(note, ProjectNote::Saved(_)), "save {n}: {note:?}");
+    }
+    let before = copy(&base.inner);
+    let blocks = {
+        let dry = slot(copy(&before));
+        let mut s = probed(&dry);
+        assert!(matches!(save_project_on(&mut s, 3), ProjectNote::Saved(_)));
+        let blocks: Vec<u32> = log(&s).writes.borrow().iter().map(|&(b, _)| b).collect();
+        blocks
+    };
+    assert!(blocks.len() > 80, "{} writes", blocks.len());
+    let (two, three) = (project_gen(2), project_gen(3));
+    let (crc2, crc3) = (project_crc(&two), project_crc(&three));
+    assert_ne!(crc2, crc3);
+    let mut loaded = [0; 2];
+    for k in 0..blocks.len() {
+        let what = format!("project save 3 cut at write {k} of {}", blocks.len());
+        let cut = slot(copy(&before));
+        cut.cut.set(Cut::After(k as u32));
+        let note = save_project_on(&mut probed(&cut), 3);
+        assert!(!matches!(note, ProjectNote::Saved(_)), "{what}: {note:?}");
+        cut.cut.set(Cut::Never);
+        let r = fat_check(&cut.inner);
+        assert!(
+            r.cross_linked.is_empty() && r.short.is_empty(),
+            "{what}: {r:?}"
+        );
+        let got = load_project_in_place(&cut).unwrap_or_else(|e| panic!("{what}: {e:?}"));
+        if project_crc(&got) == crc3 {
+            same(&three, &got);
+            loaded[1] += 1;
+        } else {
+            same(&two, &got);
+            loaded[0] += 1;
+        }
+        let note = save_project_on(&mut probed(&cut), 4);
+        assert!(
+            matches!(note, ProjectNote::Saved(_)),
+            "{what}: next save {note:?}"
+        );
+        same(&project_gen(4), &load_project_in_place(&cut).unwrap());
+    }
+    println!(
+        "project cuts: {} writes; save 2 loads at {}, save 3 at {}",
+        blocks.len(),
+        loaded[0],
+        loaded[1]
+    );
 }

@@ -8,9 +8,13 @@
 
 pub mod codec_util;
 pub mod golden;
+pub mod inst_rig;
+pub mod project;
 pub mod rig;
 pub mod sweep;
 
+#[allow(unused_imports)] // each test binary uses some of these
+pub use inst_rig::InstRig;
 pub use rig::Rig;
 
 use chimera_core::addr::{BlockRef, ParamAddr};

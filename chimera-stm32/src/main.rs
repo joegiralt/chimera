@@ -30,6 +30,8 @@ mod shared;
 mod watchdog;
 
 #[cfg(not(feature = "sd-probe"))]
+use chimera_core::project::LOAD_LINK;
+#[cfg(not(feature = "sd-probe"))]
 use chimera_core::reset::ResetCause;
 use chimera_core::ui::theme_settings::ThemeSettings;
 use cortex_m_rt::entry;
@@ -257,21 +259,25 @@ fn synth(board: Board) -> ! {
     let sd = sd::init(sd, &mut cp.DCB, &mut cp.DWT, &clocks, clk.cpu_hz);
     let store = sd::take_store(sd).expect("store taken once");
     let mut card = Card::new();
-    // Why the defaults applied is not shown yet:
+    // No card or a card fault shows at the project's boot; a SYSTEM
+    // file that can't be read still applies the defaults silently:
     // https://github.com/joegiralt/chimera/issues/197
     let (mut sync, mut settings, _) = SystemSync::boot(&mut card, store);
     ui.set_theme(settings.theme);
     apply_theme(settings.theme, &mut theme, &mut backlight, &mut display);
+    // Boot step 2, still behind BUSY, before the audio and the watchdog
+    // start: the last project (about 130 KB read), or NEW and why.
+    ui.boot_project(&mut card, store, settings.last_project);
     let perf = PerfTracker::new();
     #[cfg(feature = "bench")]
-    bench::run(&mut display, clk, &ui.performance);
+    bench::run(&mut display, clk, ui.project_mut());
 
     controls::start_systick(cp.SYST, &mut cp.SCB, clk.cpu_hz);
     controls::enable();
 
     let (scope_w, mut scope_r) = shared::take_scope().expect("scope buffer taken once");
     let (mut shared_w, shared_r) =
-        shared::take_audio(&ui.performance).expect("audio buffer taken once");
+        shared::take_audio(ui.project().perf()).expect("audio buffer taken once");
     // Without MIDI DIN nothing takes a producer.
     #[cfg_attr(not(feature = "midi-din"), allow(unused_mut, unused_variables))]
     let (mut producers, notes) = audio::engine::NOTES
@@ -316,7 +322,7 @@ fn synth(board: Board) -> ! {
         // System › Theme: the UI loop owns the display and the backlight.
         let recolour = apply_theme(ui.theme(), &mut theme, &mut backlight, &mut display);
         ui.update();
-        shared_w.publish(|b| b.update_from(&ui.performance));
+        shared_w.publish(|b| b.update_from(ui.project().perf(), LOAD_LINK.epoch()));
         let stats = stats_r.as_mut().map(|r| {
             let mut s = *r.read();
             s.stack_used = probe::stack_used();
@@ -338,7 +344,7 @@ fn synth(board: Board) -> ! {
             ui.render_dirty_with_audio(&mut display, &perf.stats, stats.as_ref(), scope_r.read());
         // Over whatever redrew beneath it, before anything is flushed.
         let band = match toast {
-            ToastStep::Show(text) => Some(draw_toast(&mut display, text)),
+            ToastStep::Show(text) => Some(draw_toast(&mut display, text.as_str())),
             _ => None,
         };
         if recolour {

@@ -11,8 +11,8 @@ use crate::modulation::ModSource;
 use super::block_codec::MAX_BLOCK_PARAMS;
 
 impl BlockRef {
-    /// The block's code; `None` for `Channels`, which is a view of the Parts'
-    /// own `CH` params and is never stored.
+    /// The block's code. `Option`, so a block that is never stored can be
+    /// added without a code.
     pub const fn disk_code(self) -> Option<u8> {
         Some(match self {
             BlockRef::Modal => 1,
@@ -41,7 +41,6 @@ impl BlockRef {
             BlockRef::Comp => 24,
             BlockRef::Part => 25,
             BlockRef::Theme => 26,
-            BlockRef::Channels => return None,
         })
     }
 
@@ -75,7 +74,6 @@ impl BlockRef {
             BlockRef::Comp => "COMP",
             BlockRef::Part => "PART",
             BlockRef::Theme => "THEME",
-            BlockRef::Channels => return None,
         })
     }
 

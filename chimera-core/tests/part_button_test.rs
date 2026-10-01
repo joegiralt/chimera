@@ -4,6 +4,7 @@ mod screen;
 
 use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::part::DacPair;
+use chimera_core::project::{PartFrom, PartId, PartSource, ReplaceGuard};
 use chimera_core::ui::UiState;
 use chimera_core::ui::block_registry::{ALGO_ALG, ALGO_WAVE, CHORUS, FILTER, PART, SENDS};
 use chimera_core::ui::chain::{ChainId, next_on_part_button};
@@ -30,7 +31,7 @@ fn mix_b1_then_c_turns_the_reverb_send_not_out() {
     mix(&mut ui, ButtonId::B1);
     feed(&mut ui, Input::turn(EncoderId::C, 1));
     settle(&mut ui);
-    let p = &ui.performance.parts[0].mix;
+    let p = &ui.project().part(PartId::ALL[0]).mix;
     assert!(p.sends[2] > 0.0, "REV moved");
     assert_eq!(p.output, DacPair::P1, "OUT stays P1");
 }
@@ -58,7 +59,7 @@ fn b_n_toggles_sound_and_mixer_and_returns_to_the_page_left() {
     assert_eq!(at(&ui), (ChainId::Part(0), FILTER.id));
     press(&mut ui, ButtonId::B1);
     assert_eq!(at(&ui), (ChainId::Mixer(0), SENDS.id));
-    assert_eq!(ui.active_part, 0);
+    assert_eq!(ui.active_part, PartId::ALL[0]);
     press(&mut ui, ButtonId::B1);
     assert_eq!(at(&ui), (ChainId::Part(0), FILTER.id), "the page left");
     press(&mut ui, ButtonId::B1);
@@ -77,7 +78,7 @@ fn another_parts_button_lands_on_its_home() {
         (ChainId::Part(0), ALGO_ALG.id),
         "Part 2's pages → Part 1's"
     );
-    assert_eq!(ui.active_part, 0);
+    assert_eq!(ui.active_part, PartId::ALL[0]);
     mix(&mut ui, ButtonId::B2);
     press(&mut ui, ButtonId::B1);
     assert_eq!(
@@ -146,7 +147,12 @@ fn a_changed_engine_returns_home_not_to_the_page_left() {
         press(&mut ui, ButtonId::Plus); // → FLT
     }
     press(&mut ui, ButtonId::B1); // mixer
-    ui.performance.parts[0].load_init(EngineType::Modal);
+    let src = PartSource {
+        part: PartId::ALL[0],
+        from: PartFrom::Init(EngineType::Modal),
+    };
+    let c = ReplaceGuard::check(ui.project(), ui.template(), src).unwrap();
+    ui.project_mut().replace_part(c).unwrap();
     press(&mut ui, ButtonId::B1);
     assert_eq!(ui.nav.engine, EngineType::Modal);
     assert_eq!(at(&ui), (ChainId::Part(0), MODAL_EXC.id));
@@ -185,7 +191,7 @@ fn mix_b_is_still_a_shortcut_to_the_mixer() {
     press(&mut ui, ButtonId::Plus);
     mix(&mut ui, ButtonId::B3);
     assert_eq!(at(&ui), (ChainId::Mixer(2), SENDS.id));
-    assert_eq!(ui.active_part, 2);
+    assert_eq!(ui.active_part, PartId::ALL[2]);
     mix(&mut ui, ButtonId::B3);
     assert_eq!(at(&ui), (ChainId::Mixer(2), SENDS.id), "again: stays");
     mix(&mut ui, ButtonId::B6);
@@ -201,7 +207,7 @@ fn mix_b_is_still_a_shortcut_to_the_mixer() {
 }
 
 fn header(ui: &UiState) -> (String, String, Option<&'static str>) {
-    let out = ui.performance.parts[ui.active_part].mix.output;
+    let out = ui.project().part(ui.active_part).mix.output;
     let h = header_text(
         &ui.nav,
         ui.nav.active_block_def(),
@@ -225,7 +231,7 @@ fn the_header_says_sound_or_mix_and_warns_off_p1() {
     press(&mut ui, ButtonId::Minus); // PART
     feed(&mut ui, Input::turn(EncoderId::C, 1)); // OUT → P2
     settle(&mut ui);
-    assert_eq!(ui.performance.parts[1].mix.output, DacPair::P2);
+    assert_eq!(ui.project().part(PartId::ALL[1]).mix.output, DacPair::P2);
     assert_eq!(
         header(&ui),
         ("PART 2 · MIX".into(), "PART".into(), Some("OUT P2"))
@@ -245,4 +251,18 @@ fn the_header_says_sound_or_mix_and_warns_off_p1() {
     feed(&mut ui, Input::turn(EncoderId::C, -2)); // → P1
     settle(&mut ui);
     assert_eq!(header(&ui).2, None, "gone back on P1");
+}
+
+/// A chain index past the Parts draws its header with OUT P1, not a panic.
+#[test]
+fn a_chain_past_the_parts_reads_as_p1() {
+    use chimera_core::ui::perf::PerfStats;
+    use screen::{Fb, scope_fixture};
+    for chain in [ChainId::Part(9), ChainId::Mixer(300)] {
+        let mut ui = UiState::new();
+        ui.nav.chain_id = chain;
+        let mut fb = Fb::new();
+        ui.render_with_scope(&mut fb, &PerfStats::zero(), &scope_fixture());
+        assert_eq!(header(&ui).2, None, "{chain:?}: no OUT warning");
+    }
 }

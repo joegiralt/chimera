@@ -8,6 +8,7 @@ use embedded_graphics::geometry::Point;
 use embedded_graphics::pixelcolor::Rgb565;
 use u8g2_fonts::types::VerticalPosition;
 
+use crate::project::Line;
 use crate::storage::{Exit, SyncError};
 use crate::ui::{draw, theme};
 
@@ -97,7 +98,7 @@ fn draw_band<D: DrawTarget<Color = Rgb565>>(d: &mut D, text: &str) -> (u16, u16)
 /// A line shown for a while after a card operation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Toast {
-    pub text: &'static str,
+    pub text: Line,
     pub ms: u32,
 }
 
@@ -116,7 +117,10 @@ pub fn toast_for(r: &Result<Exit, SyncError>) -> Option<Toast> {
         Err(SyncError::Store(e)) => (e.message(), Toast::ERROR_MS),
         Err(SyncError::File(e)) => (e.message(), Toast::ERROR_MS),
     };
-    Some(Toast { text, ms })
+    Some(Toast {
+        text: Line::new(text),
+        ms,
+    })
 }
 
 /// What the shell does with the toast this frame.
@@ -124,7 +128,7 @@ pub fn toast_for(r: &Result<Exit, SyncError>) -> Option<Toast> {
 pub enum ToastStep {
     Idle,
     /// Draw it over the rendered frame and flush its band.
-    Show(&'static str),
+    Show(Line),
     /// It went this frame: repaint what it covered.
     Ended,
 }

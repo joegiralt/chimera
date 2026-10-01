@@ -5,11 +5,13 @@ mod display;
 mod midi;
 mod store;
 
+use chimera_core::project::LOAD_LINK;
 use chimera_core::scope::scope_buffer;
-use chimera_core::storage::{Card, SystemSync};
+use chimera_core::storage::{Card, SystemSettings, SystemSync};
 use chimera_core::ui::UiState;
 use chimera_core::ui::busy::{ToastStep, draw_busy, draw_toast};
 use chimera_core::ui::perf::PerfTracker;
+use chimera_hal::store::Store;
 use chimera_hal::{ChimeraDisplay, MidiChannel, MidiNote, Velocity};
 use controls::DesktopControls;
 use display::DesktopDisplay;
@@ -31,6 +33,21 @@ fn card_dir() -> PathBuf {
     )
 }
 
+/// SYSTEM and its theme, then step 2: the last project, or NEW and why.
+fn boot<S: Store>(
+    ui: &mut UiState,
+    card: &mut Card,
+    store: &mut S,
+) -> (SystemSync, SystemSettings) {
+    // No card or a card fault shows at the project's boot; a SYSTEM
+    // file that can't be read still applies the defaults silently:
+    // https://github.com/joegiralt/chimera/issues/197
+    let (sync, settings, _) = SystemSync::boot(card, store);
+    ui.set_theme(settings.theme);
+    ui.boot_project(card, store, settings.last_project);
+    (sync, settings)
+}
+
 fn main() {
     let mut display = DesktopDisplay::new();
     let mut controls = DesktopControls::new();
@@ -44,10 +61,7 @@ fn main() {
     display.flush();
     let mut store = DirStore::new(card_dir());
     let mut card = Card::new();
-    // Why the defaults applied is not shown yet:
-    // https://github.com/joegiralt/chimera/issues/197
-    let (mut sync, mut settings, _) = SystemSync::boot(&mut card, &mut store);
-    ui.set_theme(settings.theme);
+    let (mut sync, mut settings) = boot(&mut ui, &mut card, &mut store);
     let mut perf = PerfTracker::new();
     // The held key and the channel it was sent on, so its note-off follows
     // it even if the selected Part changes while it is held.
@@ -92,7 +106,7 @@ fn main() {
             if let Some((ch, n)) = current_note {
                 audio.note_off(ch, n);
             }
-            current_note = note.map(|n| (ui.performance.parts[ui.active_part].mix.channel, n));
+            current_note = note.map(|n| (ui.project().part(ui.active_part).mix.channel, n));
             if let Some((ch, n)) = current_note {
                 audio.note_on(ch, n, Velocity::DEFAULT);
             }
@@ -106,14 +120,14 @@ fn main() {
         ui.update();
 
         // Push every Part and the FX to the audio thread.
-        audio.update(&ui.performance);
+        audio.update(ui.project().perf(), LOAD_LINK.epoch());
 
         ui.render_with_scope(&mut display, &perf.stats, scope_r.read());
         let now = Instant::now();
         let toast_ms = now.duration_since(toast_at).as_millis() as u32;
         toast_at = now;
         if let ToastStep::Show(text) = ui.step_toast(toast_ms) {
-            draw_toast(&mut display, text);
+            draw_toast(&mut display, text.as_str());
         }
 
         perf.record(frame_us, 0);

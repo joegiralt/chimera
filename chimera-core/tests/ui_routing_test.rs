@@ -3,6 +3,7 @@
 use chimera_core::addr::{BlockRef, ParamAddr};
 use chimera_core::modulation::CUTOFF;
 use chimera_core::params::{DriveParams, FilterParams};
+use chimera_core::project::PartId;
 use chimera_core::ui::UiState;
 use chimera_hal::{ButtonId, ButtonState, Controls, EncoderId};
 
@@ -112,7 +113,7 @@ fn leave_matrix(ui: &mut UiState) {
 }
 
 fn primed(ui: &UiState) -> Vec<ParamAddr> {
-    let reg = &ui.performance.parts[0].sound.dest_registry;
+    let reg = &ui.project().part(PartId::ALL[0]).sound.dest_registry;
     (0..reg.len())
         .filter_map(|i| reg.get(i))
         .map(|e| e.addr)
@@ -128,7 +129,7 @@ fn priming_on_a_part_page_registers_its_address() {
         primed(&ui),
         [CUTOFF, ParamAddr::new(BlockRef::Drive, DriveParams::DRIVE)]
     );
-    let reg = &ui.performance.parts[0].sound.dest_registry;
+    let reg = &ui.project().part(PartId::ALL[0]).sound.dest_registry;
     assert_eq!(reg.get(1).unwrap().label_str(), "DRVDRIVE");
     assert_eq!(ui.mod_state().num_dests(), 2);
 }
@@ -149,7 +150,7 @@ fn priming_the_filter_drive_from_flt_mode_tags_it_flt() {
             ParamAddr::new(BlockRef::Filter, FilterParams::DRIVE)
         ]
     );
-    let reg = &ui.performance.parts[0].sound.dest_registry;
+    let reg = &ui.project().part(PartId::ALL[0]).sound.dest_registry;
     assert_eq!(reg.get(1).unwrap().label_str(), "FLTDRIVE");
 }
 
@@ -231,7 +232,7 @@ fn set_first_amount(ui: &mut UiState, delta: i8) {
 }
 
 fn routes(ui: &UiState, part: usize) -> Vec<(ParamAddr, i8)> {
-    let ms = &ui.performance.parts[part].sound.mod_state;
+    let ms = &ui.project().part(PartId::ALL[part]).sound.mod_state;
     (0..ms.num_dests())
         .map(|d| (ms.dest(d), ms.amount(0, d)))
         .collect()
@@ -252,7 +253,7 @@ fn switching_part_rebuilds_the_matrix_for_that_part() {
     assert_eq!(routes(&ui, 0), [(CUTOFF, 10), (drive, 0)]);
 
     press(&mut ui, ButtonId::B2); // Part 2: nothing primed
-    assert_eq!(ui.active_part, 1);
+    assert_eq!(ui.active_part, PartId::ALL[1]);
     assert_eq!(
         ui.matrix_state.num_dests, 1,
         "only its default CUTOFF column"
@@ -264,7 +265,9 @@ fn switching_part_rebuilds_the_matrix_for_that_part() {
             .button(ButtonId::Mix, ButtonState::Held)
             .button(ButtonId::Plus, ButtonState::Pressed),
     );
-    let p2 = ui.performance.parts[1]
+    let p2 = ui
+        .project()
+        .part(PartId::ALL[1])
         .sound
         .dest_registry
         .get(1)
@@ -291,7 +294,7 @@ fn switching_part_rebuilds_the_matrix_for_that_part() {
             .button(ButtonId::Mix, ButtonState::Held)
             .button(ButtonId::B1, ButtonState::Pressed),
     );
-    assert_eq!(ui.active_part, 0);
+    assert_eq!(ui.active_part, PartId::ALL[0]);
     assert_eq!(
         (ui.matrix_state.num_dests, ui.matrix_state.amounts[0][0]),
         (2, 10)
@@ -364,7 +367,7 @@ fn priming_after_a_stale_cursor_does_not_inherit_a_phantom_amount() {
     let tone = ParamAddr::new(BlockRef::Drive, DriveParams::TONE);
     prime_slot(&mut ui, EncoderId::B);
     assert_eq!(ui.matrix_state.num_dests, 4);
-    let ms = &ui.performance.parts[1].sound.mod_state;
+    let ms = &ui.project().part(PartId::ALL[1]).sound.mod_state;
     assert_eq!(ms.dest(3), tone);
     assert!((0..ms.num_sources()).all(|s| ms.amount(s, 3) == 0));
     assert_eq!(ms.present(3), 0);
