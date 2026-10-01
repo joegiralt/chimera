@@ -94,9 +94,9 @@ fn focus_band_shows_the_last_touched_slot() {
         &mut want,
         slot.label(),
         text.as_str(),
-        chimera_core::ui::glyph::Gauge::Arc {
-            value: v,
-            bipolar: slot.format().is_bipolar(),
+        // MORPH's glyph: a crossfader on its set value.
+        chimera_core::ui::glyph::Gauge::Crossfader {
+            value: ui.renderer.set[2].current(),
         },
         components::Look::Live,
         None,

@@ -27,6 +27,7 @@ use screen::*;
 const NONE: FocusGlyph = FocusGlyph::None;
 const SWITCH: FocusGlyph = FocusGlyph::Switch;
 const LEVEL: FocusGlyph = FocusGlyph::LevelBar;
+const XF: FocusGlyph = FocusGlyph::Crossfader;
 
 /// Params assigned a glyph other than ARC, by `(block kind, ident)`: every
 /// instance of the block (`AlgoOp`, `Env`, `Lfo`) alike. Each glyph story
@@ -68,6 +69,9 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Tape", "MIX", LEVEL),
     ("Comp", "MAKEUP", LEVEL),
     ("Comp", "MIX", LEVEL),
+    // Blends between two ends: a crossfader.
+    ("Algo", "MORPH", XF),
+    ("Drive", "MIX", XF),
     ("Pitch", "STEAL", NONE),
     ("Part", "MODE", NONE),
     ("Part", "OUT", NONE),
@@ -624,11 +628,11 @@ fn glyph_crossfader_page_slides_left_centre_right() {
     use chimera_core::params::DriveParams;
     let mut ui = UiState::new();
     to_xf(&mut ui);
-    // CROSSFADER is the page's: the specs keep their own glyphs.
+    // Both specs carry CROSSFADER.
     let morph = ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH);
     let mix = ParamAddr::new(BlockRef::Drive, DriveParams::MIX);
-    assert_eq!(morph.spec().unwrap().glyph, FocusGlyph::Arc);
-    assert_eq!(mix.spec().unwrap().glyph, FocusGlyph::Arc);
+    assert_eq!(morph.spec().unwrap().glyph, FocusGlyph::Crossfader);
+    assert_eq!(mix.spec().unwrap().glyph, FocusGlyph::Crossfader);
     let ctx = SlotCtx::read(ui.params(), ui.selected_op());
     assert_eq!(view(ui.nav.active_block_def(), 0, &ctx).addr(), Some(morph));
     assert_eq!(view(ui.nav.active_block_def(), 1, &ctx).addr(), Some(mix));

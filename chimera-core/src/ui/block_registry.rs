@@ -829,8 +829,8 @@ pub static DEMO_GLYPH_XF: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
-        ParamSlot::param(BlockRef::Algo, AlgoParams::MORPH).with_glyph(FocusGlyph::Crossfader),
-        ParamSlot::param(BlockRef::Drive, DriveParams::MIX).with_glyph(FocusGlyph::Crossfader),
+        ParamSlot::param(BlockRef::Algo, AlgoParams::MORPH),
+        ParamSlot::param(BlockRef::Drive, DriveParams::MIX),
         EMPTY,
         EMPTY,
         EMPTY,

@@ -57,6 +57,8 @@ chorus braid (RATE, DEPTH, MIX; MODE is the strand count).
   the modulated ones: when it moves, that is always its own animation,
   never automation. The params stay modulatable; their cells and mod
   bars still show modulation.
+- **Blends take CROSSFADER** (owner-approved 2026-10-01): ALGO
+  MORPH (ALG A to B) and DRV MIX (dry to wet).
 - **CROSSFADER draws the set value too**, eased in its own lane
   (`Renderer::set`, fed before modulation offsets; the focus band's key
   carries it), so its cap never moves with modulation.
