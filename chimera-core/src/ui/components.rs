@@ -13,6 +13,7 @@ use crate::ui::block_def::{BlockDef, SlotBinding};
 use crate::ui::chain::{ChainId, ChainNav};
 use crate::ui::draw;
 use crate::ui::fmt::FmtBuf;
+use crate::ui::glyph::Drawn;
 use crate::ui::theme;
 
 /// `s` in upper case (names are stored mixed case: "Filter", "4opFM").
@@ -226,12 +227,14 @@ where
 /// the mid-size value font, so the longest message (`NOT MODULATABLE`)
 /// still fits the full row width; the label above is unchanged, so the
 /// message still reads against the parameter it was tried on.
+#[allow(clippy::too_many_arguments)]
 pub fn focus_band<D>(
     d: &mut D,
     label: &str,
     value_text: &str,
     value: f32,
     bipolar: bool,
+    glyph: Drawn,
     look: Look,
     status: Option<PrimeStatus>,
 ) where
@@ -264,7 +267,7 @@ pub fn focus_band<D>(
                 color,
             );
         }
-        None => focus_value(d, value_text, value, bipolar),
+        None => focus_value(d, value_text, value, bipolar, glyph),
     }
 }
 
@@ -314,7 +317,8 @@ where
     )
 }
 
-fn focus_value<D>(d: &mut D, value_text: &str, value: f32, bipolar: bool)
+/// The value large and the glyph's gauge.
+fn focus_value<D>(d: &mut D, value_text: &str, value: f32, bipolar: bool, glyph: Drawn)
 where
     D: DrawTarget<Color = Rgb565>,
 {
@@ -326,17 +330,19 @@ where
         theme::FOCUS_VALUE_Y,
         theme::INK,
     );
-    draw::arc_gauge(
-        d,
-        theme::ARC_CX,
-        theme::ARC_CY,
-        theme::ARC_R,
-        theme::ARC_WIDTH,
-        value,
-        bipolar,
-        theme::FAINT,
-        theme::ACCENT,
-    );
+    match glyph {
+        Drawn::Arc => draw::arc_gauge(
+            d,
+            theme::ARC_CX,
+            theme::ARC_CY,
+            theme::ARC_R,
+            theme::ARC_WIDTH,
+            value,
+            bipolar,
+            theme::FAINT,
+            theme::ACCENT,
+        ),
+    }
 }
 
 /// How a cell reads (spec § UI). The discriminants pack into the Cells

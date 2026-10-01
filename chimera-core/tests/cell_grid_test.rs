@@ -96,6 +96,7 @@ fn focus_band_shows_the_last_touched_slot() {
         text.as_str(),
         v,
         slot.format().is_bipolar(),
+        chimera_core::ui::glyph::Drawn::Arc,
         components::Look::Live,
         None,
     );

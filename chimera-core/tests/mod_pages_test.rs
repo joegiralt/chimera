@@ -274,7 +274,16 @@ fn a_fixed_slot_is_dimmed_in_the_focus_band() {
     let mut want = Fb::new();
     want.px.fill(fb.px[0]);
     let v = ui.renderer.anim[0].current();
-    components::focus_band(&mut want, "MODE", "LFO", v, false, Look::Dimmed, None);
+    components::focus_band(
+        &mut want,
+        "MODE",
+        "LFO",
+        v,
+        false,
+        chimera_core::ui::glyph::Drawn::Arc,
+        Look::Dimmed,
+        None,
+    );
     assert!(band(&fb) == band(&want), "the band is MODE LFO, dimmed");
     let inks = [theme::INK, theme::ACCENT];
     assert!(

@@ -50,6 +50,8 @@ pub struct Frame<'a> {
     pub audio: Option<&'a AudioStats>,
     /// The master compressor's gain reduction, dB (MST's GR meter).
     pub master_gr_db: f32,
+    /// Animation phase: what an animated glyph draws from.
+    pub clock: crate::ui::animation::UiClock,
 }
 
 /// Full-screen renderer. Composites header, visualization, parameters, and dungeon map.
@@ -377,6 +379,7 @@ impl Renderer {
             buf.as_str(),
             v,
             view.fmt().is_bipolar(),
+            view.glyph().drawn(),
             look(f, f.focus),
             f.prime_status,
         );
@@ -444,6 +447,11 @@ impl Renderer {
         let end = y_end as usize * theme::SCREEN_W as usize;
         fb[start..end].fill(bg);
     }
+}
+
+/// What the focus band draws for the focused slot.
+pub fn focus_glyph(f: &Frame) -> crate::ui::glyph::Drawn {
+    view::view(f.def, f.focus, &f.ctx).glyph().drawn()
 }
 
 /// The OUT of the Part whose pages these are; P1 off the Part chains.
