@@ -633,10 +633,7 @@ mod e2e {
         let mut s = MemStore::new(1);
         let mut card = Card::new();
         for (p, n) in [(new, 2), (old, 1)] {
-            let to = ProjectFile {
-                id: ProjectId::new(n).unwrap(),
-                vol: s.mount().unwrap(),
-            };
+            let to = ProjectFile::for_test(ProjectId::new(n).unwrap(), s.mount().unwrap());
             let note = save_project(&mut card, &mut s, p, to);
             assert!(matches!(note, ProjectNote::Saved(_)), "{note:?}");
         }

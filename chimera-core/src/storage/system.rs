@@ -384,7 +384,7 @@ impl SystemSync {
         let done = card
             .run(store, |st, r| {
                 let vol = r.volume();
-                let mine = current.filter(|f| f.vol == vol).map(|f| f.id);
+                let mine = current.filter(|f| f.vol() == vol).map(ProjectFile::id);
                 if bound && mine.is_none() {
                     return Ok(None);
                 }

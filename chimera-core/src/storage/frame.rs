@@ -84,11 +84,41 @@ impl Side {
 
 /// A project's file: its id on the card `vol`. A save or a delete runs
 /// only on that card, so a swapped card's `P000000n` is never written;
-/// SYSTEM names it as the last project only on that card.
+/// SYSTEM names it as the last project only on that card. Only a save, a
+/// load, a listing or `new_project_id` makes one, from the card it read:
+///
+/// ```compile_fail,E0451
+/// # use chimera_core::storage::{ProjectFile, ProjectId};
+/// # use chimera_hal::store::Store;
+/// let vol = chimera_hal::testkit::MemStore::new(1).mount().unwrap();
+/// let _ = ProjectFile { id: ProjectId::new(1).unwrap(), vol };
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ProjectFile {
-    pub id: ProjectId,
-    pub vol: chimera_hal::store::VolumeId,
+    id: ProjectId,
+    vol: chimera_hal::store::VolumeId,
+}
+
+impl ProjectFile {
+    pub(crate) fn new(id: ProjectId, vol: chimera_hal::store::VolumeId) -> Self {
+        ProjectFile { id, vol }
+    }
+
+    /// For tests that write a project's files by hand.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn for_test(id: ProjectId, vol: chimera_hal::store::VolumeId) -> Self {
+        Self::new(id, vol)
+    }
+
+    pub fn id(self) -> ProjectId {
+        self.id
+    }
+
+    /// The card it is on.
+    pub fn vol(self) -> chimera_hal::store::VolumeId {
+        self.vol
+    }
 }
 
 /// A project's id, 1..=9 999 999, so its stem `P` + 7 digits is 8.3.

@@ -65,7 +65,7 @@ impl ProjectMeta {
     }
 
     pub fn id(&self) -> Option<ProjectId> {
-        self.file.map(|f| f.id)
+        self.file.map(ProjectFile::id)
     }
 
     pub fn file(&self) -> Option<ProjectFile> {

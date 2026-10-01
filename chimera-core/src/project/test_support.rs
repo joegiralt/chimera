@@ -396,10 +396,7 @@ fn pid(n: u32) -> ProjectId {
 
 /// `P000000n` on the card in the slot.
 fn at<S: Store>(s: &mut S, n: u32) -> ProjectFile {
-    ProjectFile {
-        id: pid(n),
-        vol: s.mount().expect("a card"),
-    }
+    ProjectFile::new(pid(n), s.mount().expect("a card"))
 }
 
 fn save_at<S: Store>(card: &mut Card, s: &mut S, p: &mut Project, n: u32) -> ProjectNote {
@@ -482,7 +479,7 @@ fn save_then_load_is_bit_identical<S: Store>(store: &mut S) {
     let mut card = Card::new();
     let (mut p, _) = full();
     let file = new_project_id(&mut card, store).expect("an id");
-    let id = file.id;
+    let id = file.id();
     assert_eq!(file, at(store, 1));
     saved(save_project(&mut card, store, &mut p, file));
     assert_eq!(p.meta().file(), Some(file));
@@ -530,7 +527,7 @@ fn list_and_next_id<S: Store>(s: &mut S) {
         p
     };
     for (n, name) in [(1, "ONE"), (2, "TWO"), (5, "FIVE")] {
-        assert!(new_project_id(&mut card, s).expect("an id").id.get() <= n);
+        assert!(new_project_id(&mut card, s).expect("an id").id().get() <= n);
         saved(save_at(&mut card, s, &mut named(name), n));
     }
     let six = at(s, 6);

@@ -444,10 +444,7 @@ fn project_id() -> ProjectId {
 }
 
 fn save_project_on(s: &mut Probed<CutDisk>, n: u32) -> ProjectNote {
-    let to = ProjectFile {
-        id: project_id(),
-        vol: s.mount().unwrap(),
-    };
+    let to = ProjectFile::for_test(project_id(), s.mount().unwrap());
     save_project(&mut Card::new(), s, &mut project_gen(n), to)
 }
 

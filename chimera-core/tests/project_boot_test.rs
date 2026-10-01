@@ -25,10 +25,7 @@ fn id(n: u32) -> ProjectId {
 }
 
 fn at(s: &mut impl Store, n: u32) -> ProjectFile {
-    ProjectFile {
-        id: id(n),
-        vol: s.mount().unwrap(),
-    }
+    ProjectFile::for_test(id(n), s.mount().unwrap())
 }
 
 fn show(s: &str) -> ToastStep {
@@ -70,8 +67,8 @@ fn boot_system(s: &mut impl Store) -> Booted {
 
 fn file_go(ui: &UiState, f: ProjectFile) -> chimera_core::project::Confirmed<ProjectSource> {
     let src = ProjectSource::File {
-        id: f.id,
-        vol: f.vol,
+        id: f.id(),
+        vol: f.vol(),
     };
     ReplaceGuard::check(ui.project(), ui.template(), src)
         .unwrap_or_else(|n| n.into_pending().anyway(ui.project()))
