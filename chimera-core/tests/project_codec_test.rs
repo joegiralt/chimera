@@ -516,12 +516,11 @@ fn crc_sees_name_pool_fx_and_mix() {
 }
 
 #[test]
-fn the_template_is_new_whatever_came_before() {
-    let (mut p, t) = Project::boxed();
-    let (q, _) = full();
-    assert_ne!(project_crc(&q), t.get());
-    decode(&encode(&q), &mut p).unwrap();
-    let (fresh, again) = Project::boxed();
-    assert_eq!(t, again);
-    assert_eq!(project_crc(&fresh), t.get());
+fn new_loaded_over_anything_is_the_template() {
+    let (new, t) = Project::boxed();
+    let (mut p, _) = full();
+    assert_ne!(project_crc(&p), t.get());
+    decode(&encode(&new), &mut p).unwrap();
+    assert_eq!(project_crc(&p), t.get());
+    same(&p, &new);
 }
