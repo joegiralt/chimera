@@ -129,6 +129,53 @@ commits it at its end.
   rules). A new Origin shape takes a new tag; `0x000A` stays 2 bytes.
 
 ## FX at the swap
+At the publish every voice has faded, so what sounds is the FX tails. The
+FX settings switch with the snapshot, and nothing clears the delay line,
+the chorus lines or the reverb ring: each effect runs whatever its MIX
+(ADR 0061), so a tail rings on into the new project's settings, and an
+effect the new project turns on plays what its send does from then on.
+A setting steps a tail if it moves the tail's sample value at once (a
+gain, a read position, what a loop writes); a coefficient or an LFO's rate
+changes only the slope.
+
+| Block | Setting | At the swap |
+|---|---|---|
+| CHORUS | MODE | Crossfades: each line's share eases (ADR 0061). |
+| CHORUS | RATE | Steps, accepted: the LFOs' increments only; their phases run on. The lines are at most 7 ms, fed by voices faded before the ack. |
+| CHORUS | DEPTH, MIX | Ease (ADR 0061). |
+| DELAY | TIME | Crossfades two read heads over `TIME_FADE` (960 samples). Never a gliding head (ADR 0061). |
+| DELAY | FDBK | Eases, as MIX (this ADR, below). |
+| DELAY | MECHANICS | Steps, accepted: the transport's depth moves the read head by up to ±22 samples at once, on a tail TONE has low-passed; measured at most 1.04× the tail's own steps. The phases run on. |
+| DELAY | SAT | Steps, accepted: the loop's curve changes what is written by the curves' difference only; measured 1.03×. |
+| DELAY | TONE | Steps, accepted: a coefficient; the filter's state runs on. |
+| DELAY | MIX, REV | Ease (ADR 0061). |
+| REVERB | GRIT, TIME, DAMP | Smoothed once a block (20, 50 and 20 ms) and the gains and the damping coefficient ramped across it. |
+| REVERB | SIZE | Crossfades between size steps. |
+| REVERB | MIX | Eases (ADR 0061). |
+| COMP | THRESH, MAKEUP, MIX | Smoothed once a block, ramped across it. |
+| COMP | RATIO | Steps, accepted: the gain reduction's target changes, and the reduction follows it at ATK or REL. |
+| COMP | ATK, REL | Step, accepted: coefficients of the follower. |
+| COMP | on and off | Engages and bypasses over a fade. |
+| TAPE | DRIVE, TONE, WOW, MIX | Smoothed once a block, ramped across it; only in `master-tape` builds (ADR 0055). |
+
+- **FDBK eases** (`TapeDelay`, an `Ease` as MIX's, ramped in the same
+  path): FDBK scales what the loop writes, so a step cuts or starts the
+  recirculating tail at once, heard a TIME later. Stepped 0↔1 at the swap
+  it measured 2.1× the tail's own largest step. ADR 0061 eases every
+  continuous setting; FDBK was missed because its step lands a TIME after
+  the move. A still FDBK plays the same samples as before. The ease's
+  one-pole adds about 0.1 instruction a sample, inside `FxBus::COST`'s
+  rounding; while FDBK moves, its ramp takes the MIX ramp's path, a
+  multiply-add a sample, brief and UI-driven as ADR 0061's other eases.
+- **The measure** (`fx_swap_test`): every send plays two partials, the
+  kill fades them over `Voice::FADE`, and the next block publishes the new
+  settings. Each setting stepped min → max and max → min, A → B between
+  two projects with every effect on, and A to and from NEW. Each passes
+  if `common::clicks` hears nothing and the largest sample step over the
+  600 ms after the swap is at most 2× the larger of the largest step in
+  the 20 ms before it and the new settings' own tail over the same span.
+  That second term is what lets a level rise (a MIX or MAKEUP brought up)
+  pass without letting a step through.
 
 ## Alternatives considered
 - **The epoch inside `AudioShared`.** The audio would learn of the load
@@ -176,11 +223,14 @@ commits it at its end.
   `chimera-core/src/storage/file.rs` (`load_ab_in_place`),
   `chimera-core/src/instrument.rs` (`AudioShared.epoch`,
   `Instrument::kill_all`, `quiet`), `chimera-core/src/voice_alloc.rs`
-  (`Allocator::kill_all`), `chimera-stm32/src/audio/engine.rs`,
+  (`Allocator::kill_all`), `chimera-core/src/dsp/delay.rs` (FDBK's
+  ease), `chimera-stm32/src/audio/engine.rs`,
   `chimera-desktop/src/audio.rs`.
 - Tests: `chimera-core/tests/load_protocol_test.rs`,
+  `chimera-core/tests/fx_swap_test.rs`,
   `chimera-core/tests/project_store_test.rs`,
   `chimera-fat/tests/power_cut_test.rs` (`project_cut_keeps_a_generation`).
 - ADRs 0021 (triple buffer), 0027 (shedding), 0043 (projects, record
   table), 0045 (card format, superseded in part), 0062 (Modal rings
-  free), 0065 (steal cut or glide).
+  free), 0061 (settings ease, effects run at MIX 0), 0065 (steal cut or
+  glide).

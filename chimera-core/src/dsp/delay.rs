@@ -244,8 +244,9 @@ pub const TIME_FADE: u16 = 960;
 const _: () = assert!((TIME_FADE as usize).is_multiple_of(BLOCK_SIZE));
 
 /// The line runs whatever MIX is, so a return brought back up plays what
-/// the send is doing now, never a frozen tail (#61). MIX eases; a TIME
-/// change crossfades two read heads.
+/// the send is doing now, never a frozen tail (#61). MIX and FDBK ease
+/// (FDBK steps what is written, heard a TIME later); a TIME change
+/// crossfades two read heads.
 pub struct TapeDelay {
     buffer: [f32; MAX_DELAY_SAMPLES],
     write_pos: usize,
@@ -260,9 +261,10 @@ pub struct TapeDelay {
     /// A block has set `time`.
     primed: bool,
     mix: Ease,
+    feedback: Ease,
 }
 
-crate::in_place::field_list!(TapeDelay => TapeDelay { buffer, write_pos, lp_state, transport, time, next, fade, primed, mix });
+crate::in_place::field_list!(TapeDelay => TapeDelay { buffer, write_pos, lp_state, transport, time, next, fade, primed, mix, feedback });
 
 impl Default for TapeDelay {
     fn default() -> Self {
@@ -282,6 +284,7 @@ impl TapeDelay {
             fade: 0,
             primed: false,
             mix: Ease::default(),
+            feedback: Ease::default(),
         }
     }
 
@@ -329,17 +332,19 @@ impl TapeDelay {
             (self.next, self.fade) = (tap.base(), TIME_FADE);
         }
         let mix = if params.is_on() { params.mix } else { 0.0 };
-        let m = self.mix.step(mix, ease_coeff(sample_rate));
-        match (self.fade > 0, m.0 != m.1) {
-            (false, false) => self.span::<false, false>(buf, params, &tap, m, insert),
-            (false, true) => self.span::<false, true>(buf, params, &tap, m, insert),
-            (true, false) => self.span::<true, false>(buf, params, &tap, m, insert),
-            (true, true) => self.span::<true, true>(buf, params, &tap, m, insert),
+        let k = ease_coeff(sample_rate);
+        let m = self.mix.step(mix, k);
+        let f = self.feedback.step(params.feedback, k);
+        match (self.fade > 0, m.0 != m.1 || f.0 != f.1) {
+            (false, false) => self.span::<false, false>(buf, params, &tap, m, f, insert),
+            (false, true) => self.span::<false, true>(buf, params, &tap, m, f, insert),
+            (true, false) => self.span::<true, false>(buf, params, &tap, m, f, insert),
+            (true, true) => self.span::<true, true>(buf, params, &tap, m, f, insert),
         }
     }
 
     /// The block: `FADE` while a TIME crossfade runs, `RAMP` while MIX
-    /// moves from `m.0` to `m.1`.
+    /// moves from `m.0` to `m.1` or FDBK from `f.0` to `f.1`.
     #[inline(always)]
     fn span<const FADE: bool, const RAMP: bool>(
         &mut self,
@@ -347,6 +352,7 @@ impl TapeDelay {
         params: &DelayParams,
         tap: &Tap,
         m: (f32, f32),
+        f: (f32, f32),
         insert: bool,
     ) {
         // Tone: LP coefficient (higher = brighter)
@@ -354,7 +360,7 @@ impl TapeDelay {
         let sat_gain = 1.0 + params.saturation * 3.0;
         // Once a block: the loop multiplies, never divides (within 1 ulp).
         let sat_inv = 1.0 / sat_gain;
-        let sm = step_of(m, BLOCK_SIZE);
+        let (sm, sf) = (step_of(m, BLOCK_SIZE), step_of(f, BLOCK_SIZE));
         let top = (MAX_DELAY_SAMPLES - 2) as f32;
 
         // The loop's state in locals: the stores into the line cannot then
@@ -387,7 +393,8 @@ impl TapeDelay {
             let saturated = libm::tanhf(filtered * sat_gain) * sat_inv;
 
             // Write: input + feedback
-            self.buffer[write_pos] = dry + saturated * params.feedback;
+            let feedback = if RAMP { at(f.0, sf, i) } else { f.1 };
+            self.buffer[write_pos] = dry + saturated * feedback;
             write_pos += 1;
             if write_pos == MAX_DELAY_SAMPLES {
                 write_pos = 0;
