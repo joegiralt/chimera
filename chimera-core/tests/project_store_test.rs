@@ -34,10 +34,7 @@ fn vol(s: &mut impl Store) -> VolumeId {
 
 /// `P000000n` on the card in the slot now.
 fn at(s: &mut impl Store, n: u32) -> ProjectFile {
-    ProjectFile {
-        id: id(n),
-        vol: vol(s),
-    }
+    ProjectFile::for_test(id(n), vol(s))
 }
 
 /// Saves `p` as `P000000n` on the card in the slot.
@@ -85,7 +82,7 @@ fn full_card_save_stays_modified() {
     let mut card = Card::new();
     let (mut p, t) = full();
     let file = new_project_id(&mut card, &mut s).unwrap();
-    let id = file.id;
+    let id = file.id();
     let _ = save_project(&mut card, &mut s, &mut p, file);
     let saved = p.meta().saved_crc();
     assert!(saved.is_some());
@@ -120,7 +117,7 @@ fn swapped_card_refuses_a_pending_load() {
     let link = LoadLink::new();
     let (mut a, _) = full();
     let first = new_project_id(&mut card, &mut s).unwrap();
-    let one = first.id;
+    let one = first.id();
     assert!(matches!(
         save_project(&mut card, &mut s, &mut a, first),
         ProjectNote::Saved(_)
@@ -145,7 +142,7 @@ fn swapped_card_refuses_a_pending_load() {
     let (mut other, _) = Project::boxed();
     other.set_name(name("OTHER CARD"));
     let on_b = new_project_id(&mut card, &mut s).unwrap();
-    assert_eq!(on_b.id, one, "the new card has its own P0000001");
+    assert_eq!(on_b.id(), one, "the new card has its own P0000001");
     assert!(matches!(
         save_project(&mut card, &mut s, &mut other, on_b),
         ProjectNote::Saved(_)
@@ -342,7 +339,7 @@ fn no_card_note() {
     ));
     let v = vol(&mut s);
     let home = p.meta().file().unwrap();
-    assert_eq!(home, ProjectFile { id: id(1), vol: v });
+    assert_eq!(home, ProjectFile::for_test(id(1), v));
     s.eject();
     let no_card = |subject| ProjectNote::Card {
         err: StoreError::NoCard,
@@ -536,7 +533,7 @@ fn delete_after_a_swap_is_refused() {
         matches!(got, Err(ProjectNote::Card {
             err: StoreError::VolumeChanged(v),
             subject: Some(Subject::File(f)),
-        }) if v == on_b.vol && f == id(1)),
+        }) if v == on_b.vol() && f == id(1)),
         "{got:?}"
     );
     assert!(matches!(card, Card::Ready(_)));
@@ -550,7 +547,7 @@ fn delete_after_a_swap_is_refused() {
         Err(ProjectNote::IsLoaded)
     );
     // A's P0000001 loaded doesn't guard B's: same id, other card.
-    assert_eq!(on_a.id, on_b.id);
+    assert_eq!(on_a.id(), on_b.id());
     assert_eq!(delete_project(&mut card, &mut s, &a, on_b), Ok(()));
 }
 

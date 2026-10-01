@@ -88,7 +88,7 @@ pub fn new_project_id<S: Store>(
     });
     match out.and_then(|o| o.result) {
         Ok((top, vol)) => ProjectId::new(top + 1)
-            .map(|id| ProjectFile { id, vol })
+            .map(|id| ProjectFile::new(id, vol))
             .ok_or(ProjectNote::NoIds),
         Err(e) => Err(card_note(e, None)),
     }
@@ -126,8 +126,8 @@ pub fn save_project<S: Store>(
     let name = p.meta.name;
     let subject = Subject::Name(name);
     let live = &*p;
-    let id = to.id;
-    let out = run_on(card, store, to.vol, |s, r| {
+    let id = to.id();
+    let out = run_on(card, store, to.vol(), |s, r| {
         s.make_dir(r.volume(), Dir::Chimera)?;
         s.make_dir(r.volume(), Dir::Projects)?;
         save_ab(
@@ -208,7 +208,7 @@ pub fn load_project<S: Store>(
     };
     match result {
         Ok(Ok(_)) => {
-            p.meta.file = Some(ProjectFile { id, vol });
+            p.meta.file = Some(ProjectFile::new(id, vol));
             p.meta.saved_crc = Some(project_crc(p));
             out.swap = Some(link.bump());
         }
@@ -254,7 +254,7 @@ pub fn boot_project<S: Store>(
             match run {
                 Ok(o) => match o.result {
                     Ok(vol) => {
-                        p.meta.file = Some(ProjectFile { id, vol });
+                        p.meta.file = Some(ProjectFile::new(id, vol));
                         p.meta.saved_crc = Some(project_crc(p));
                         return None;
                     }
@@ -287,10 +287,7 @@ pub struct ProjectEntry {
 impl ProjectEntry {
     /// The file to load or delete: on the card it was listed on.
     pub fn file(&self) -> ProjectFile {
-        ProjectFile {
-            id: self.id,
-            vol: self.vol,
-        }
+        ProjectFile::new(self.id, self.vol)
     }
 }
 
@@ -448,9 +445,9 @@ pub fn delete_project<S: Store>(
     if loaded.meta().file() == Some(file) {
         return Err(ProjectNote::IsLoaded);
     }
-    let subject = Subject::File(file.id);
-    let out = run_on(card, store, file.vol, |s, r| {
-        delete_ab(s, r, project_file(file.id), &mut ProjectCheck::new())
+    let subject = Subject::File(file.id());
+    let out = run_on(card, store, file.vol(), |s, r| {
+        delete_ab(s, r, project_file(file.id()), &mut ProjectCheck::new())
     });
     match out.and_then(|o| o.result) {
         Ok(Ok(())) => Ok(()),
