@@ -124,6 +124,17 @@ commits it at its end.
   A first save (or SAVE AS) takes `new_project_id`'s file: the next id on
   the card in the slot. Deleting a pair already gone is Ok, as the
   volume was checked first.
+- **SYSTEM's last project names a project on that card only.** A save or
+  a file load writes its id to SYSTEM through `SystemSync::write`, bound
+  to the project's volume: another card in the slot gets nothing. Any
+  SYSTEM write (a project's, or leaving System) sets the last project to
+  the loaded project's id when its file is on that card, and otherwise
+  keeps the card's own (none if it has none). So a card never boots
+  another card's `P000000n`. The write follows ADR 0045's plan: on a card
+  RAM doesn't mirror, untouched defaults take the card's SYSTEM (its
+  theme applies) and only the last project is merged in; a card whose
+  SYSTEM can't be read gets nothing. The last project is no theme
+  change: writing it leaves the defaults untouched.
 - **The project file's records** are ADR 0043's table (`0x8007` Slot,
   `0x8008` Part, `0x8009` Fx, `0x000A` Origin, their payloads and context
   rules). A new Origin shape takes a new tag; `0x000A` stays 2 bytes.
