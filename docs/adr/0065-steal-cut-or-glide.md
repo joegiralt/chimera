@@ -42,8 +42,8 @@ new note's.
   BANK's modes, recomputed each block anyway, and the bow's loop, whose
   lock correction (`grip`, ADR 0064) is re-taken as it moves. The new
   strike adds to what rings, as a re-strike does: STRING and SYMP add a
-  pluck to the line, the bow is set back on its string, BANK adds a
-  burst; nothing is cleared, the macros ease on.
+  pluck to the line, the target's length, the bow is set back on its
+  string, BANK adds a burst; nothing is cleared, the macros ease on.
 - **At the glide's start every ring is sized for the glide's longest
   period** (`KsString::fit`): a string's and SYMP's main string for the
   longer of the two, a bow's half loop for half of it, and each halo
@@ -57,14 +57,23 @@ new note's.
   (spec § 4.8) for what it writes**: a re-strike nothing, a glide its
   rings' growth (`ModalEngine::strike_clear`), not a fresh note-on's
   clear. Two SYMP glide steals of low notes fit one block.
-- **A grown ring's gap holds the loop's periodic continuation**, each
-  sample the one a period younger (`KsString::grow`). A loop that
-  lengthens faster than it writes, a fast glide down, reads the old cycle
-  again rather than silence: short GLIDE TIMEs stay snappy, with no slew
-  limit. Zero-filled, a C5 to C2 glide at 1 or 10 ms carried one burst and
-  some 640 samples of silence round the loop, a C2 pulse train dipping
-  30 to 43 dB; filled, no block dips more than a CUT's own do. On a
-  cleared line the continuation is silence, so a note-on is unchanged.
+- **A grown ring's gap holds the loop's continuation**, each sample the
+  one a pass younger (`KsString::grow`, the pass as last set, `cycle`),
+  negated on the bow's half loop, which inverts each pass
+  (`set_period_inverting`): unnegated, every Bowed glide steal's output
+  moved, a C5 to C2 at 1 ms dipping 2.2 dB a block against 1.2. A loop
+  that lengthens faster than it writes, a fast glide down, reads the old
+  cycle again rather than silence: short GLIDE TIMEs stay snappy, with no
+  slew limit. Zero-filled, a C5 to C2 glide at 1 or 10 ms carried one
+  burst and some 640 samples of silence round the loop, a C2 pulse train
+  dipping 30 to 43 dB. On a cleared line the continuation is silence, so
+  a note-on is unchanged.
+- **A glide's pluck spans the target's line**: the strike is the new
+  note's. The old line's length, a C5's on a C2 glide, plucked a quarter
+  of the line, 8 dB under a CUT's strike over the first C2 period. Over
+  each C2 period's window of the first 40 blocks, a fast glide down is now
+  no more than 3 dB under the same steal at CUT, and louder only by what
+  still rings (SYMP's halo, a bow's ringing loop).
 - **ALGO:** the ratio multiplies every operator's frequency, the classic
   portamento; the envelopes strike as at CUT.
 - **Bill:** at STEAL GLIDE a Modal voice may retune every block, as with a
