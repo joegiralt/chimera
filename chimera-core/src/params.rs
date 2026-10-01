@@ -83,8 +83,12 @@ pub static FILTER_SPECS: [ParamSpec; 5] = [
     ParamSpec::continuous(1, "RESO", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, true).ident("RESO"),
     ParamSpec::continuous(2, "DRIVE", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, true).ident("DRIVE"),
     // A choice among the one built kind.
-    ParamSpec::choice(6, "KIND", ValFmt::Names(&KIND_NAMES), 0.0, 0.0).ident("KIND"),
-    ParamSpec::choice(7, "MODE", ValFmt::Names(&SVF_MODE_NAMES), 7.0, 0.0).ident("MODE"),
+    ParamSpec::choice(6, "KIND", ValFmt::Names(&KIND_NAMES), 0.0, 0.0)
+        .ident("KIND")
+        .glyph(crate::ui::glyph::FocusGlyph::None),
+    ParamSpec::choice(7, "MODE", ValFmt::Names(&SVF_MODE_NAMES), 7.0, 0.0)
+        .ident("MODE")
+        .glyph(crate::ui::glyph::FocusGlyph::None),
 ];
 
 impl Block for FilterParams {
@@ -229,7 +233,9 @@ pub static ENV_SPECS: [ParamSpec; 19] = [
     ParamSpec::continuous(4, "LEVEL", ValFmt::Uni, 0.0, 1.0, 1.0, 1.0 / 128.0, true).ident("LEVEL"),
     ParamSpec::continuous(5, "VEL", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false).ident("VEL"),
     ParamSpec::continuous(6, "H", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false).ident("H"),
-    ParamSpec::choice(7, "TYPE", ValFmt::Names(&["A", "B"]), 1.0, 0.0).ident("TYPE"),
+    ParamSpec::choice(7, "TYPE", ValFmt::Names(&["A", "B"]), 1.0, 0.0)
+        .ident("TYPE")
+        .glyph(crate::ui::glyph::FocusGlyph::None),
     ParamSpec::choice(
         8,
         "SPEED",
@@ -237,7 +243,8 @@ pub static ENV_SPECS: [ParamSpec; 19] = [
         2.0,
         1.0,
     )
-    .ident("SPEED"),
+    .ident("SPEED")
+    .glyph(crate::ui::glyph::FocusGlyph::None),
     ParamSpec::choice(
         9,
         "HOLD",
@@ -245,7 +252,8 @@ pub static ENV_SPECS: [ParamSpec; 19] = [
         2.0,
         1.0,
     )
-    .ident("HOLD"),
+    .ident("HOLD")
+    .glyph(crate::ui::glyph::FocusGlyph::None),
     ParamSpec::continuous(10, "TIME", ValFmt::Bi, -1.0, 1.0, 0.0, 2.0 / 128.0, true).ident("TIME"),
     ParamSpec::choice(
         11,
@@ -254,10 +262,12 @@ pub static ENV_SPECS: [ParamSpec; 19] = [
         2.0,
         0.0,
     )
-    .ident("MODE"),
+    .ident("MODE")
+    .glyph(crate::ui::glyph::FocusGlyph::None),
     // Live: the current MODE's FORM slot (16..=18), which is what is stored.
     ParamSpec::choice(12, "FORM", ValFmt::Names(&["AD", "AHR", "CYCLE"]), 2.0, 0.0)
         .ident("FORM")
+        .glyph(crate::ui::glyph::FocusGlyph::None)
         .live(),
     ParamSpec::continuous(13, "RISE", ValFmt::Uni, 0.0, 1.0, 0.206, 1.0 / 128.0, true)
         .ident("RISE"),
@@ -273,7 +283,8 @@ pub static ENV_SPECS: [ParamSpec; 19] = [
         2.0,
         0.0,
     )
-    .ident("ENV_FORM"),
+    .ident("ENV_FORM")
+    .glyph(crate::ui::glyph::FocusGlyph::None),
     ParamSpec::choice(
         17,
         "LFO FORM",
@@ -281,7 +292,8 @@ pub static ENV_SPECS: [ParamSpec; 19] = [
         2.0,
         0.0,
     )
-    .ident("LFO_FORM"),
+    .ident("LFO_FORM")
+    .glyph(crate::ui::glyph::FocusGlyph::None),
     ParamSpec::choice(
         18,
         "BRST FORM",
@@ -289,7 +301,8 @@ pub static ENV_SPECS: [ParamSpec; 19] = [
         2.0,
         0.0,
     )
-    .ident("BRST_FORM"),
+    .ident("BRST_FORM")
+    .glyph(crate::ui::glyph::FocusGlyph::None),
 ];
 
 impl Block for EnvParams {
@@ -732,7 +745,9 @@ pub static PITCH_SPECS: [ParamSpec; 4] = [
     ParamSpec::stepped(1, "FINE", ValFmt::Signed(100), -100.0, 100.0, 0.0, true)
         .ident("FINE")
         .cents(100.0),
-    ParamSpec::choice(2, "STEAL", ValFmt::Names(&STEAL_NAMES), 1.0, 0.0).ident("STEAL"),
+    ParamSpec::choice(2, "STEAL", ValFmt::Names(&STEAL_NAMES), 1.0, 0.0)
+        .ident("STEAL")
+        .glyph(crate::ui::glyph::FocusGlyph::None),
     ParamSpec::continuous(
         3,
         "TIME",

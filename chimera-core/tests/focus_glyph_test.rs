@@ -21,9 +21,50 @@ use chimera_core::ui::{draw, theme};
 use chimera_hal::{ButtonId, EncoderId};
 use screen::*;
 
-/// Params assigned a glyph other than ARC, by `(block, ident)`. Each glyph
-/// story adds its rows here.
-const ASSIGNED: &[(BlockRef, &str, FocusGlyph)] = &[];
+const NONE: FocusGlyph = FocusGlyph::None;
+
+/// Params assigned a glyph other than ARC, by `(block kind, ident)`: every
+/// instance of the block (`AlgoOp`, `Env`, `Lfo`) alike. Each glyph story
+/// adds its rows here.
+const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
+    // Word choices: the word is the value, there is no amount to gauge.
+    ("Modal", "MODE", NONE),
+    ("Algo", "ALG_A", NONE),
+    ("Algo", "ALG_B", NONE),
+    ("AlgoOp", "WAVE", NONE),
+    ("Filter", "KIND", NONE),
+    ("Filter", "MODE", NONE),
+    ("Env", "TYPE", NONE),
+    ("Env", "SPEED", NONE),
+    ("Env", "HOLD", NONE),
+    ("Env", "MODE", NONE),
+    ("Env", "FORM", NONE),
+    ("Env", "ENV_FORM", NONE),
+    ("Env", "LFO_FORM", NONE),
+    ("Env", "BRST_FORM", NONE),
+    ("Lfo", "TYPE", NONE),
+    ("Lfo", "FORM", NONE),
+    ("Pitch", "STEAL", NONE),
+    ("Part", "MODE", NONE),
+    ("Part", "OUT", NONE),
+    ("Theme", "GAMMA", NONE),
+    ("Theme", "ACCENT", NONE),
+];
+
+/// Named choices that keep the ARC: their names are numbers on a scale,
+/// so the arc still says where in the range the value sits.
+const NAMED_ARC: &[(&str, &str)] = &[
+    ("AlgoOp", "CRSE"),
+    ("Modal", "MODES"),
+    ("Comp", "RATIO"),
+    ("Theme", "BRIGHT"),
+    ("Theme", "BLACK"),
+];
+
+/// `Env` for `Env(Env1)`: the block's kind, every instance alike.
+fn kind(b: BlockRef) -> String {
+    format!("{b:?}").split('(').next().unwrap().to_string()
+}
 
 #[test]
 fn every_param_is_arc_unless_assigned() {
@@ -31,9 +72,44 @@ fn every_param_is_arc_unless_assigned() {
         for s in b.specs() {
             let want = ASSIGNED
                 .iter()
-                .find(|(ab, id, _)| *ab == b && *id == s.ident)
+                .find(|(k, id, _)| *k == kind(b) && *id == s.ident)
                 .map_or(FocusGlyph::Arc, |a| a.2);
             assert_eq!(s.glyph, want, "{b:?}.{}", s.ident);
+        }
+    }
+}
+
+/// Every named choice is decided: NONE, or listed as keeping the arc.
+#[test]
+fn every_named_choice_is_decided() {
+    for b in BlockRef::ALL {
+        for s in b.specs() {
+            if !matches!(s.fmt, ValFmt::Names(_)) {
+                continue;
+            }
+            let id = (kind(b), s.ident);
+            let none = ASSIGNED.iter().any(|a| (a.0, a.1) == (id.0.as_str(), id.1));
+            let arc = NAMED_ARC
+                .iter()
+                .any(|a| (a.0, a.1) == (id.0.as_str(), id.1));
+            assert!(none ^ arc, "{b:?}.{}: NONE or NAMED_ARC, once", s.ident);
+        }
+    }
+}
+
+/// Every word of a NONE param fits the whole band at the focus size.
+#[test]
+fn every_none_word_fits_the_band() {
+    let room = theme::SCREEN_W - theme::MARGIN_X - theme::FOCUS_VALUE_X;
+    for b in BlockRef::ALL {
+        for s in b.specs().iter().filter(|s| s.glyph == FocusGlyph::None) {
+            let ValFmt::Names(names) = s.fmt else {
+                panic!("{b:?}.{}: NONE on a value that isn't a word", s.ident);
+            };
+            for w in names {
+                let width = draw::text_width(&theme::FONT_FOCUS, w, 0);
+                assert!(width <= room, "{b:?}.{} {w}: {width} > {room}", s.ident);
+            }
         }
     }
 }
@@ -248,9 +324,9 @@ fn arc_top(fb: &Fb) -> embedded_graphics::pixelcolor::Rgb565 {
 fn glyph_none_page_steps_words_across_the_whole_band() {
     let mut ui = UiState::new();
     to_demo(&mut ui, &reg::DEMO_GLYPH_NONE);
-    // NONE is the page's, not MODEL's: MODEL's spec stays ARC.
+    // MODEL's own spec carries NONE.
     let model = ParamAddr::new(BlockRef::Modal, ModalParams::MODE);
-    assert_eq!(model.spec().unwrap().glyph, FocusGlyph::Arc);
+    assert_eq!(model.spec().unwrap().glyph, FocusGlyph::None);
     feed(&mut ui, Input::turn(EncoderId::A, -127));
     for (i, word) in MODEL_NAMES.iter().enumerate() {
         if i > 0 {

@@ -13,7 +13,6 @@ use crate::modulation::{MAX_MOD_SOURCES, ModSource};
 use crate::params::{DriveParams, EnvParams, FilterParams, FolderParams, OutParams, PitchParams};
 use crate::part::PartParams;
 use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2, FxFlow, FxNode, ParamSlot, VizType};
-use crate::ui::glyph::FocusGlyph;
 use crate::ui::page::{PageLayout, ValFmt};
 use crate::ui::theme_settings::ThemeSettings;
 
@@ -772,7 +771,7 @@ pub static DEMO_GLYPH_NONE: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
-        ParamSlot::param(BlockRef::Modal, ModalParams::MODE).with_glyph(FocusGlyph::None),
+        ParamSlot::param(BlockRef::Modal, ModalParams::MODE),
         EMPTY,
         EMPTY,
         EMPTY,

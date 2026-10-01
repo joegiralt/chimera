@@ -32,6 +32,13 @@ chorus braid (RATE, DEPTH, MIX; MODE is the strand count).
   with its inputs (`Arc { value, bipolar }`, `None`); the focus band
   matches on it exhaustively, so nothing unbuilt can be drawn
   or panic.
+- **Word choices take NONE** (owner-approved 2026-10-01): a named
+  choice whose value is a word (MODEL, KIND, filter MODE, ALG A/B,
+  WAVE, the ENV and LFO TYPE/MODE/FORM/SPEED/HOLD, STEAL, Part MODE and
+  OUT, THEME GAMMA and ACCENT). Named choices that are numbers on a
+  scale (CRSE, MODES, RATIO, BRIGHT, BLACK) keep ARC. A test makes every
+  named choice one or the other, and checks every word of a NONE param
+  fits the band at the focus size.
 - **A composite draws from its params' set (stored) values only**, never
   the modulated ones: when it moves, that is always its own animation,
   never automation. The params stay modulatable; their cells and mod

@@ -125,8 +125,12 @@ pub static LFO_SPECS: [ParamSpec; 11] = [
     ParamSpec::continuous(4, "DEPTH", ValFmt::Uni, 0.0, 1.0, 1.0, 1.0 / 128.0, false)
         .ident("DEPTH"),
     ParamSpec::continuous(5, "OFST", ValFmt::Bi, -1.0, 1.0, 0.0, 2.0 / 128.0, false).ident("OFST"),
-    ParamSpec::choice(6, "TYPE", ValFmt::Names(&["CLASSIC", "FUNC"]), 1.0, 0.0).ident("TYPE"),
-    ParamSpec::choice(7, "FORM", ValFmt::Names(&["FREE", "SYNC", "LFV"]), 2.0, 0.0).ident("FORM"),
+    ParamSpec::choice(6, "TYPE", ValFmt::Names(&["CLASSIC", "FUNC"]), 1.0, 0.0)
+        .ident("TYPE")
+        .glyph(crate::ui::glyph::FocusGlyph::None),
+    ParamSpec::choice(7, "FORM", ValFmt::Names(&["FREE", "SYNC", "LFV"]), 2.0, 0.0)
+        .ident("FORM")
+        .glyph(crate::ui::glyph::FocusGlyph::None),
     ParamSpec::continuous(8, "RISE", ValFmt::Uni, 0.0, 1.0, 0.309, 1.0 / 128.0, false)
         .ident("RISE"),
     ParamSpec::continuous(9, "FALL", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false).ident("FALL"),
