@@ -644,6 +644,8 @@ impl ModalEngine {
             self.slide.snap();
         }
         let restrike = restrike || glides;
+        // A glide's pluck spans the target's line: it strikes the new note.
+        let line = span.map(|_| (sample_rate as f32 / (freq * self.pitch)) as usize);
         self.frequency = f;
         if let Some(span) = span {
             self.fit(span, pool);
@@ -672,7 +674,7 @@ impl ModalEngine {
                     vel * params.excite * BURST_AT_C3 / (bank_freq * sample_rate as f32);
                 bank.burst_lp = 0.0;
             }
-            ModelSlot::String(v) if restrike => v.restrike(vel * params.excite, params.color),
+            ModelSlot::String(v) if restrike => v.restrike(vel * params.excite, params.color, line),
             ModelSlot::String(v) => {
                 v.pluck(
                     (freq, sample_rate),
@@ -707,7 +709,7 @@ impl ModalEngine {
             }
             ModelSlot::Sympathetic(v) if restrike => {
                 // The halo rings on, on its chord.
-                v.main.restrike(vel * params.excite, params.color);
+                v.main.restrike(vel * params.excite, params.color, line);
             }
             ModelSlot::Sympathetic(v) => {
                 // STRUCTURE tunes the halo only: the main string is not stiff.

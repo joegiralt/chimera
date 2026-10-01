@@ -269,30 +269,43 @@ fn another_parts_steal_cuts() {
     );
 }
 
-/// A fast glide down, at TIME's slider 0 (1 ms) and 0.3 (10 ms), shortens
+/// A fast glide down, at TIME's slider 0 (1 ms) and 0.3 (10 ms), loses
 /// nothing it plays: the loop lengthened faster than it is written reads
-/// the ring's continuation, the old cycle, not silence. No block of the
-/// first 40 is more than 10 dB under the block before the steal: a C2
-/// cycle spans 11 blocks, and a CUT steal's own blocks dip to −7 dB on
-/// its quiet parts; reading the gap dipped 30 to 43.
+/// the ring's continuation, the old cycle, not silence, and its pluck
+/// spans the target's line. Over each window of the target's period (12
+/// blocks at C2) of the first 40, it is no more than 3 dB under the same
+/// steal at CUT; it may be louder, as it adds to what rings (SYMP's halo
+/// +3 dB, a bow on a ringing loop +6.5 dB in its first window), but not by
+/// a burst's 9 dB. Reading a silent gap dipped 30 to 43 dB a block, with
+/// +13 dB bursts; a pluck the old line's length, 8 dB under.
 #[test]
 fn a_fast_glide_down_never_drops_out() {
     let cases = [
         ("STRING", ResonatorMode::String, (72, 36)),
         ("SYMP", ResonatorMode::Sympathetic, (72, 36)),
+        ("BOWED", ResonatorMode::Bowed, (72, 36)),
         ("STRING", ResonatorMode::String, (G3, C3)),
     ];
     for (name, mode, (from, to)) in cases {
+        let period = SR as f32 / note_to_freq(to);
+        let n = (period / BLOCK_SIZE as f32).ceil() as usize * BLOCK_SIZE;
+        let (cut, _) = steal(
+            &part(EngineType::Modal, Some(mode), Steal::Cut),
+            (from, to),
+            40,
+        );
         for time in [0.0, 0.3] {
             let mut shared = part(EngineType::Modal, Some(mode), Steal::Glide);
             shared.parts[0].params.pitch.glide_time = time;
             let (out, _) = steal(&shared, (from, to), 40);
-            let before = common::rms(&out[..BLOCK_SIZE]);
-            for (k, b) in out[BLOCK_SIZE..].chunks(BLOCK_SIZE).enumerate() {
-                let db = 20.0 * (common::rms(b) / before).log10();
+            let windows = out[BLOCK_SIZE..]
+                .chunks_exact(n)
+                .zip(cut[BLOCK_SIZE..].chunks_exact(n));
+            for (k, (g, c)) in windows.enumerate() {
+                let db = 20.0 * (common::rms(g) / common::rms(c)).log10();
                 assert!(
-                    db > -10.0,
-                    "{name} {from}→{to} TIME {time}: block {k} {db:.1} dB"
+                    (-3.0..=9.0).contains(&db),
+                    "{name} {from}→{to} TIME {time}: window {k} {db:+.1} dB against CUT"
                 );
             }
         }
