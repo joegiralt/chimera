@@ -3,8 +3,9 @@
 
 mod screen;
 
-use chimera_core::addr::{BlockRef, Blocks, ParamAddr};
+use chimera_core::addr::{BlockRef, Blocks, Op, ParamAddr};
 use chimera_core::block::{ParamSpec, ValFmt};
+use chimera_core::dsp::algo::params::AlgoOpParams;
 use chimera_core::dsp::lfo::LfoParams;
 use chimera_core::dsp::modal::{MODEL_NAMES, ModalParams};
 use chimera_core::dsp::modulator::LfoSlot;
@@ -218,13 +219,38 @@ fn unbuilt_glyphs_draw_as_arc() {
         let want = match g {
             FocusGlyph::None => Gauge::None,
             FocusGlyph::Switch => Gauge::Switch { on: 0.25 },
+            FocusGlyph::LevelBar => Gauge::LevelBar {
+                value: 0.25,
+                ticks: 8,
+            },
             _ => Gauge::Arc {
                 value: 0.25,
                 bipolar: true,
             },
         };
-        assert_eq!(g.gauge(0.25, true), want, "{g:?}");
+        assert_eq!(g.gauge(0.25, ValFmt::Bi), want, "{g:?}");
     }
+}
+
+/// A level bar's ticks: one per step for a few steps, else 8.
+#[test]
+fn level_bar_ticks_follow_the_steps() {
+    let ticks = |fmt| match FocusGlyph::LevelBar.gauge(0.5, fmt) {
+        Gauge::LevelBar { ticks, .. } => ticks,
+        g => panic!("{g:?}"),
+    };
+    assert_eq!(ticks(ValFmt::Uni), 8);
+    assert_eq!(ticks(ValFmt::Names(&["16", "24", "32", "48"])), 4);
+    assert_eq!(ticks(ValFmt::Int(4)), 5);
+    assert_eq!(ticks(ValFmt::Int(8)), 9);
+    assert_eq!(ticks(ValFmt::Int(15)), 8);
+    assert!(
+        !Gauge::LevelBar {
+            value: 1.0,
+            ticks: 8
+        }
+        .animates()
+    );
 }
 
 #[test]
@@ -491,4 +517,65 @@ fn glyph_switch_page_flips_a_real_two_state_param() {
         "knob right, on"
     );
     assert_eq!(on.at(knob_x(0), theme::ARC_CY), theme::ACCENT, "lit track");
+}
+
+/// Tick `i` of `n` on the level bar, bottom (0) to top: where the
+/// handle's centre sits at that step.
+fn tick_y(i: i32, n: i32) -> i32 {
+    let travel = theme::LEVEL_BOTTOM - theme::LEVEL_TOP - theme::LEVEL_W;
+    theme::LEVEL_BOTTOM - theme::LEVEL_W / 2 - i * travel / (n - 1)
+}
+
+#[test]
+fn glyph_level_page_drives_a_level_and_a_stepped_value() {
+    let mut ui = UiState::new();
+    to_demo(&mut ui, &reg::DEMO_GLYPH_LEVEL);
+    // LEVEL BAR is the page's: the specs stay ARC until approved.
+    let vol = ParamAddr::new(BlockRef::Out, OutParams::VOLUME);
+    let fdbk = ParamAddr::new(BlockRef::AlgoOp(Op::A), AlgoOpParams::FEEDBACK);
+    assert_eq!(vol.spec().unwrap().glyph, FocusGlyph::Arc);
+    assert_eq!(fdbk.spec().unwrap().glyph, FocusGlyph::Arc);
+    let ctx = SlotCtx::read(ui.params(), ui.selected_op());
+    assert_eq!(view(ui.nav.active_block_def(), 0, &ctx).addr(), Some(vol));
+    assert_eq!(view(ui.nav.active_block_def(), 1, &ctx).addr(), Some(fdbk));
+    let (x, tick_x) = (theme::LEVEL_X, theme::LEVEL_TICK_X);
+
+    // a, low: lit at the bottom only.
+    feed(&mut ui, Input::turn(EncoderId::A, -127));
+    settle(&mut ui);
+    let low = render_ui(&ui);
+    assert_eq!(low.oob, 0);
+    assert_eq!(arc_top(&low), theme::BG, "no arc");
+    assert_eq!(low.at(x, theme::LEVEL_BOTTOM - 2), theme::ACCENT);
+    assert_eq!(low.at(x, theme::LEVEL_TOP + 2), theme::FAINT);
+
+    // a, high: lit to the top; eased on the way.
+    feed(&mut ui, Input::turn(EncoderId::A, 127));
+    ui.update();
+    let t = ui.renderer.anim[0].current();
+    assert!(t > 0.0 && t < 1.0, "eased: {t}");
+    settle(&mut ui);
+    let high = render_ui(&ui);
+    assert_eq!(high.at(x, theme::LEVEL_TOP + 2), theme::ACCENT);
+    // A continuous level: eight ticks.
+    for i in 0..8 {
+        assert_ne!(high.at(tick_x, tick_y(i, 8)), theme::BG, "tick {i}");
+    }
+
+    // b: FDBK, 0..7, a tick per step; at 3 the handle sits on tick 3.
+    feed(&mut ui, Input::turn(EncoderId::B, -127));
+    feed(&mut ui, Input::turn(EncoderId::B, 3));
+    settle(&mut ui);
+    assert_eq!(ui.focused_slot(), 1);
+    let b = render_ui(&ui);
+    for i in 0..8 {
+        assert_ne!(b.at(tick_x, tick_y(i, 8)), theme::BG, "tick {i}");
+    }
+    assert_eq!(b.at(tick_x, (tick_y(0, 8) + tick_y(1, 8)) / 2), theme::BG);
+    assert_eq!(
+        b.at(x + theme::LEVEL_W - 1, tick_y(3, 8)),
+        theme::ACCENT,
+        "handle"
+    );
+    assert_eq!(b.at(x, tick_y(5, 8)), theme::FAINT, "track above");
 }

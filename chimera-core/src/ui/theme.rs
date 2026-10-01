@@ -75,6 +75,13 @@ pub const ARC_WIDTH: u32 = 5;
 pub const SWITCH_W: i32 = 56;
 pub const SWITCH_H: i32 = 28;
 pub const SWITCH_CX: i32 = SCREEN_W - MARGIN_X - SWITCH_W / 2;
+/// The LEVEL BAR glyph: a slim vertical track as tall as the arc, near
+/// the right margin, its tick dots to the left.
+pub const LEVEL_X: i32 = SCREEN_W - MARGIN_X - 8;
+pub const LEVEL_W: i32 = 6;
+pub const LEVEL_TOP: i32 = ARC_CY - ARC_R;
+pub const LEVEL_BOTTOM: i32 = ARC_CY + ARC_R;
+pub const LEVEL_TICK_X: i32 = LEVEL_X - 14;
 
 /// Viz band on CellGrid / Mixer pages: 118..186, centre line 152.
 pub const VIZ_BAND_TOP: i32 = 118;

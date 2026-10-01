@@ -14,6 +14,7 @@ use crate::modulation::{MAX_MOD_SOURCES, ModSource};
 use crate::params::{DriveParams, EnvParams, FilterParams, FolderParams, OutParams, PitchParams};
 use crate::part::PartParams;
 use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2, FxFlow, FxNode, ParamSlot, VizType};
+use crate::ui::glyph::FocusGlyph;
 use crate::ui::page::{PageLayout, ValFmt};
 use crate::ui::theme_settings::ThemeSettings;
 
@@ -798,7 +799,26 @@ pub static DEMO_GLYPH_SWITCH: BlockDef = BlockDef {
     ],
 };
 
-static DEMO_BLOCKS: [ChainBlock; 8] = [
+/// GLYPH: LEVEL. a: a continuous level (VOLUME, 8 ticks); b: a stepped
+/// one (operator A's FDBK, 0..7, a tick per step).
+pub static DEMO_GLYPH_LEVEL: BlockDef = BlockDef {
+    id: 73,
+    name: "Glyph: Level",
+    short: "LVL",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::param(BlockRef::Out, OutParams::VOLUME).with_glyph(FocusGlyph::LevelBar),
+        ParamSlot::param(BlockRef::AlgoOp(Op::A), AlgoOpParams::FEEDBACK)
+            .with_glyph(FocusGlyph::LevelBar),
+        EMPTY,
+        EMPTY,
+        EMPTY,
+        EMPTY,
+    ],
+};
+
+static DEMO_BLOCKS: [ChainBlock; 9] = [
     ChainBlock::page(&DEMO_WAVES),
     ChainBlock::page(&DEMO_SHAPES),
     ChainBlock::page(&DEMO_MOTION),
@@ -807,6 +827,7 @@ static DEMO_BLOCKS: [ChainBlock; 8] = [
     ChainBlock::page(&DEMO_GLYPH_ARC),
     ChainBlock::page(&DEMO_GLYPH_NONE),
     ChainBlock::page(&DEMO_GLYPH_SWITCH),
+    ChainBlock::page(&DEMO_GLYPH_LEVEL),
 ];
 
 pub static DEMO_CHAIN: ChainDef2 = ChainDef2 {

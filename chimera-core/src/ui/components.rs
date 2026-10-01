@@ -329,6 +329,7 @@ where
     match gauge {
         Gauge::None => {}
         Gauge::Switch { on } => switch(d, on),
+        Gauge::LevelBar { value, ticks } => level_bar(d, value, ticks),
         Gauge::Arc { value, bipolar } => draw::arc_gauge(
             d,
             theme::ARC_CX,
@@ -360,6 +361,31 @@ where
     }
     let color = if on >= 0.5 { theme::INK } else { theme::MID };
     draw::dot(d, knob, theme::ARC_CY, h / 2 - 4, color);
+}
+
+/// The LEVEL BAR glyph near the band's right: a faint track filled in the
+/// accent from the bottom to an accent handle at `value` (0..1), and
+/// `ticks` dots beside it, MID up to the level, FAINT above, each where
+/// the handle's centre sits at that step.
+fn level_bar<D>(d: &mut D, value: f32, ticks: u8)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let (x, w) = (theme::LEVEL_X, theme::LEVEL_W);
+    let (top, bottom) = (theme::LEVEL_TOP, theme::LEVEL_BOTTOM);
+    let travel = bottom - top - w;
+    let v = value.clamp(0.0, 1.0);
+    let rise = libm::roundf(v * travel as f32) as i32;
+    draw::pill(d, x - w / 2, top, w, bottom - top, theme::FAINT);
+    draw::pill(d, x - w / 2, bottom - w - rise, w, w + rise, theme::ACCENT);
+    draw::dot(d, x, bottom - w / 2 - rise, w, theme::ACCENT);
+    let n = ticks.max(2) as i32;
+    for i in 0..n {
+        let y = bottom - w / 2 - i * travel / (n - 1);
+        let lit = i as f32 / (n - 1) as f32 <= v + 0.001;
+        let color = if lit { theme::MID } else { theme::FAINT };
+        draw::dot(d, theme::LEVEL_TICK_X, y, 1, color);
+    }
 }
 
 /// How a cell reads (spec § UI). The discriminants pack into the Cells

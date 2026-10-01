@@ -1,6 +1,8 @@
 //! Focus glyphs: the gauge at the right of the focus band, hand-assigned
 //! per parameter on its spec (`ParamSpec::glyph`), ARC by default.
 
+use crate::block::ValFmt;
+
 /// The gauge a parameter's focus band shows.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum FocusGlyph {
@@ -40,6 +42,9 @@ pub enum Gauge {
     None,
     /// A two-state toggle: `on` 0 off, 1 on, eased between.
     Switch { on: f32 },
+    /// A vertical slider, `value` 0..1 rising from the bottom, beside
+    /// `ticks` dots: one per step for a few steps, else 8.
+    LevelBar { value: f32, ticks: u8 },
 }
 
 impl FocusGlyph {
@@ -70,14 +75,18 @@ impl FocusGlyph {
     }
 
     /// The gauge the focus band draws for this glyph at the focused slot's
-    /// `value`. The one place a glyph not built yet stands in as ARC; each
-    /// glyph's story gives it its own `Gauge`.
-    pub const fn gauge(self, value: f32, bipolar: bool) -> Gauge {
+    /// `value` in format `fmt`. The one place a glyph not built yet stands
+    /// in as ARC; each glyph's story gives it its own `Gauge`.
+    pub fn gauge(self, value: f32, fmt: ValFmt) -> Gauge {
+        let bipolar = fmt.is_bipolar();
         match self {
             FocusGlyph::None => Gauge::None,
             FocusGlyph::Switch => Gauge::Switch { on: value },
+            FocusGlyph::LevelBar => Gauge::LevelBar {
+                value,
+                ticks: level_ticks(fmt),
+            },
             FocusGlyph::Arc
-            | FocusGlyph::LevelBar
             | FocusGlyph::Crossfader
             | FocusGlyph::Composite(CompositeId::ReverbCube)
             | FocusGlyph::Composite(CompositeId::DelayRings)
@@ -98,8 +107,20 @@ impl Gauge {
     /// Moves on its own: its band redraws every frame while shown.
     pub const fn animates(&self) -> bool {
         match self {
-            Gauge::Arc { .. } | Gauge::None | Gauge::Switch { .. } => false,
+            Gauge::Arc { .. } | Gauge::None | Gauge::Switch { .. } | Gauge::LevelBar { .. } => {
+                false
+            }
         }
+    }
+}
+
+/// A level bar's ticks for `fmt`: one per step when it has 2 to 9, else 8.
+fn level_ticks(fmt: ValFmt) -> u8 {
+    let steps = fmt.max_int().saturating_add(1);
+    if fmt.is_discrete() && (2..=9).contains(&steps) {
+        steps
+    } else {
+        8
     }
 }
 
