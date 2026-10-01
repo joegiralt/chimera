@@ -7,9 +7,11 @@ use chimera_core::audio_out::to_dac;
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::hw::{BLOCK_SIZE, CPU_HZ_REV_V, DAC_PAIRS, SAMPLE_RATE, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacBlocks, DacOut, Instrument};
-use chimera_core::note_queue::{NoteEvent, NoteKind, NoteProducer, NoteSources, SourceId};
+use chimera_core::note_queue::{
+    NoteDrain, NoteEvent, NoteKind, NoteProducer, NoteSources, SourceId,
+};
 use chimera_core::preset::Performance;
-use chimera_core::project::{LOAD_LINK, LoadGate};
+use chimera_core::project::{LOAD_LINK, LoadGate, LoadLink};
 use chimera_core::scope::{ScopeFrame, ScopeWriter};
 use chimera_core::triple::{TripleBuffer, Writer};
 use chimera_core::{MidiChannel, MidiNote, Velocity};
@@ -75,31 +77,22 @@ impl DesktopAudio {
         });
         let audio = Arc::clone(&shared);
 
-        let mut inst = Box::new(Instrument::new(
-            sample_rate,
-            SampleBudget::for_cpu(CPU_HZ_REV_V),
-        ));
-        let mut fx = Box::new(FxBus::new());
-        let mut dac = DacBlocks::new();
+        let mut engine = Engine::new(sample_rate);
         let mut block_pos = BLOCK_SIZE;
         let mut scope = ScopeWriter::new(scope);
-        let mut gate = LoadGate::new();
 
         let stream = device
             .build_output_stream(
                 &config.into(),
                 move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                     let shared = shared_reader.read();
-                    if gate.before_block(&LOAD_LINK, &mut inst, shared) {
-                        drain.drain(|ev| inst.handle(ev, shared));
-                    }
                     let solo = audio.solo.load(Ordering::Relaxed);
                     for frame in data.chunks_mut(channels) {
                         if block_pos >= BLOCK_SIZE {
-                            inst.render(&mut fx, &mut dac, shared, &mut scope);
+                            engine.block(&LOAD_LINK, &mut drain, shared, &mut scope);
                             block_pos = 0;
                         }
-                        let ((l, r), clamped) = stereo_frame(dac.out(), solo, block_pos);
+                        let ((l, r), clamped) = stereo_frame(engine.dac.out(), solo, block_pos);
                         if clamped {
                             audio.clamped.fetch_add(1, Ordering::Relaxed);
                         }
@@ -166,6 +159,51 @@ impl DesktopAudio {
         self.shared
             .solo
             .store(pair.min(DAC_PAIRS as u8), Ordering::Relaxed);
+    }
+}
+
+/// What the callback renders with: the firmware's `Engine`, less the queue
+/// and the snapshot it is handed.
+struct Engine {
+    inst: Box<Instrument>,
+    fx: Box<FxBus>,
+    dac: DacBlocks,
+    /// Holds the note queues through a project load (ADR 0046).
+    gate: LoadGate,
+}
+
+impl Engine {
+    fn new(sample_rate: u32) -> Self {
+        Self {
+            inst: Box::new(Instrument::new(
+                sample_rate,
+                SampleBudget::for_cpu(CPU_HZ_REV_V),
+            )),
+            fx: Box::new(FxBus::new()),
+            dac: DacBlocks::new(),
+            gate: LoadGate::new(),
+        }
+    }
+
+    /// One block, as the firmware renders each half: the gate, the drain
+    /// only when it opens, then the render.
+    fn block<const N: usize>(
+        &mut self,
+        link: &LoadLink,
+        drain: &mut NoteDrain<'_, N>,
+        shared: &AudioShared,
+        scope: &mut ScopeWriter,
+    ) {
+        let Self {
+            inst,
+            fx,
+            dac,
+            gate,
+        } = self;
+        if gate.before_block(link, inst, shared) {
+            drain.drain(|ev| inst.handle(ev, shared));
+        }
+        inst.render(fx, dac, shared, scope);
     }
 }
 
@@ -320,6 +358,37 @@ mod tests {
         assert_eq!(log.note(2, at(900)), None);
         assert_eq!(log.note(0, at(1010)), Some(7), "the held count, once due");
         assert_eq!(log.note(0, at(3000)), None);
+    }
+
+    /// ADR 0046: the gate steps once per block, not per callback, so one
+    /// callback's blocks kill, fade and ack a load, and a note queued
+    /// meanwhile waits for the publish.
+    #[test]
+    fn the_gate_steps_every_block() {
+        let sources: &'static NoteSources<1> = Box::leak(Box::new(NoteSources::new()));
+        let (mut producers, mut drain) = sources.split().unwrap();
+        let mut keys = producers.take(SourceId::new(0)).unwrap();
+        let mut e = Engine::new(SAMPLE_RATE);
+        let (w, _unread) = Box::leak(Box::new(chimera_core::scope::scope_buffer())).split();
+        let mut scope = ScopeWriter::new(w);
+        let mut shared = AudioShared::default();
+        let link = LoadLink::new();
+        let _swap = link.bump_for_test();
+        let ch = MidiChannel::new(0).unwrap();
+        let note = MidiNote::new(60).unwrap();
+        keys.push(NoteEvent {
+            channel: ch,
+            note,
+            kind: NoteKind::On(Velocity::DEFAULT),
+        });
+        for _ in 0..3 {
+            e.block(&link, &mut drain, &shared, &mut scope);
+        }
+        assert!(link.acked(link.epoch()), "kill, fade, ack: three blocks");
+        assert!(e.inst.quiet(), "the note waits in the queue");
+        shared.epoch = link.epoch();
+        e.block(&link, &mut drain, &shared, &mut scope);
+        assert!(!e.inst.quiet(), "it plays once published");
     }
 
     /// Three pairs near full scale sum past 1.0: the speakers still get
