@@ -647,7 +647,13 @@ pub fn render(name: &str) -> Fb {
         fb.dump(name);
         return fb;
     }
-    let ui = ui_for(name);
+    let fb = render_ui(&ui_for(name));
+    fb.dump(name);
+    fb
+}
+
+/// Full render of `ui` with the goldens' audio and scope fixtures.
+pub fn render_ui(ui: &UiState) -> Fb {
     let mut fb = Fb::new();
     ui.render_with_audio(
         &mut fb,
@@ -655,7 +661,6 @@ pub fn render(name: &str) -> Fb {
         Some(&audio_fixture()),
         &scope_fixture(),
     );
-    fb.dump(name);
     fb
 }
 
