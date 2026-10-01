@@ -60,11 +60,16 @@ pub(super) fn status_at(p: &Project, t: TemplateCrc, crc: u32) -> ProjectStatus 
 }
 
 /// `project_status`, hashed once per `Project::rev`: the CRC costs about
-/// 1.7 ms on the chip, so no frame may run it.
+/// 1.7 ms on the chip, so no frame may run it. It serves one `Project`
+/// instance: a whole project assigned over it brings its own `rev`, so
+/// whoever hands out that `&mut Project` calls `invalidate` first.
 #[derive(Clone, Copy, Debug)]
 pub struct StatusCache {
     rev: Option<u32>,
     status: ProjectStatus,
+    /// Hashes run, for tests that pin "once per revision".
+    #[cfg(any(test, feature = "test-support"))]
+    hashes: u32,
 }
 
 impl Default for StatusCache {
@@ -78,7 +83,20 @@ impl StatusCache {
         StatusCache {
             rev: None,
             status: ProjectStatus::Pristine,
+            #[cfg(any(test, feature = "test-support"))]
+            hashes: 0,
         }
+    }
+
+    /// The next `get` hashes, whatever the revision.
+    pub fn invalidate(&mut self) {
+        self.rev = None;
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn hashes_for_test(&self) -> u32 {
+        self.hashes
     }
 
     /// Hashes with `crc` only when `p.rev()` moved since the last call.
@@ -91,6 +109,17 @@ impl StatusCache {
         if self.rev != Some(p.rev()) {
             self.status = status_at(p, t, crc(p));
             self.rev = Some(p.rev());
+            #[cfg(any(test, feature = "test-support"))]
+            {
+                self.hashes += 1;
+            }
+        } else {
+            // A `&mut` path that skipped `bump` shows up here.
+            debug_assert_eq!(
+                status_at(p, t, project_crc(p)),
+                self.status,
+                "the project changed without its revision moving"
+            );
         }
         self.status
     }

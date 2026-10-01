@@ -163,7 +163,8 @@ pub struct UiState {
     theme: ThemeSettings,
     /// What the last card operation said, for a moment.
     toast: busy::ToastTimer,
-    /// `project_status`, refreshed by `update` and `handle_input` only.
+    /// `project_status`, refreshed by `update` only: both shells run it
+    /// after `handle_input`, before the frame's render.
     status: StatusCache,
 }
 
@@ -430,7 +431,10 @@ impl UiState {
         &self.project
     }
 
+    /// The cache is dropped first: a whole project assigned through this
+    /// brings its own revision, which may be the one last hashed.
     pub fn project_mut(&mut self) -> &mut Project {
+        self.status.invalidate();
         &mut self.project
     }
 
@@ -439,10 +443,16 @@ impl UiState {
         self.template
     }
 
-    /// The project's status as `update` or `handle_input` last found it:
+    /// The project's status as `update` last found it:
     /// render reads this, and never hashes.
     pub fn project_status(&self) -> ProjectStatus {
         self.status.cached()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn status_hashes_for_test(&self) -> u32 {
+        self.status.hashes_for_test()
     }
 
     /// Hashes only when the project's revision moved.
@@ -684,11 +694,6 @@ impl UiState {
 
     /// Process one frame of input: navigation + encoder deltas.
     pub fn handle_input(&mut self, controls: &impl Controls) {
-        self.input(controls);
-        self.refresh_status();
-    }
-
-    fn input(&mut self, controls: &impl Controls) {
         // Any encoder turn or button press retires the last prime-status
         // message (issue #21; no timer). The MIX+Plus branch below re-sets
         // it when this same frame is itself a prime attempt.

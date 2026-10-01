@@ -141,3 +141,50 @@ fn ui_status_follows_edits_and_saves() {
     ui.update();
     assert_eq!(ui.project_status(), ProjectStatus::Saved);
 }
+
+#[test]
+fn a_whole_project_assigned_is_hashed_afresh() {
+    let mut ui = Box::new(chimera_core::ui::UiState::new());
+    for _ in 0..5 {
+        ui.project_mut()
+            .set_name(ProjectName::new("EDITED").unwrap());
+    }
+    ui.update();
+    assert_eq!(ui.project_status(), ProjectStatus::Modified);
+    // A saved project at the revision the cache last saw.
+    let (mut q, _) = Project::boxed();
+    q.set_name(ProjectName::new("OTHER").unwrap());
+    while q.rev().wrapping_add(1) != ui.project().rev() {
+        q.set_name(ProjectName::new("OTHER").unwrap());
+    }
+    q.mark_saved_for_test();
+    assert_eq!(q.rev(), ui.project().rev());
+    *ui.project_mut() = *q;
+    ui.update();
+    assert_eq!(ui.project_status(), ProjectStatus::Saved);
+}
+
+#[test]
+fn the_ui_hashes_once_per_revision() {
+    let mut ui = Box::new(chimera_core::ui::UiState::new());
+    let mut fb = Fb::new();
+    let frame = |ui: &mut chimera_core::ui::UiState, fb: &mut Fb, input: Input| {
+        feed(ui, input);
+        ui.update();
+        let _ = ui.render_dirty_with_scope(fb, &PerfStats::zero(), &screen::scope_fixture());
+    };
+    for _ in 0..50 {
+        frame(&mut ui, &mut fb, Input::default());
+    }
+    assert_eq!(
+        ui.status_hashes_for_test(),
+        1,
+        "one hash for 50 idle frames"
+    );
+    frame(&mut ui, &mut fb, Input::press(ButtonId::Plus));
+    frame(&mut ui, &mut fb, Input::turn(EncoderId::A, 1));
+    for _ in 0..50 {
+        frame(&mut ui, &mut fb, Input::default());
+    }
+    assert_eq!(ui.status_hashes_for_test(), 2, "one more for the edit");
+}
