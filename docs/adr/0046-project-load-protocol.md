@@ -113,6 +113,17 @@ commits it at its end.
   "LOAD FAILED: <file>", and still bumps, settles and publishes. The
   replace guard (ADR 0043) has already accepted losing the old state.
   Sounds and SYSTEM stay staged.
+- **A project's file is bound to its card.** `ProjectMeta` holds a
+  `ProjectFile { id, vol }`, set by a file load (the `vol` it was listed
+  on) and by a save. `save_project` and `delete_project` take a
+  `ProjectFile` and check the mounted volume inside `Card::run` before
+  any read or write. Another card in the slot gets `CARD CHANGED` with
+  nothing touched and the card left `Ready`, as a load listed on another
+  card does. So SAVE after a swap never writes the new card's
+  `P000000n`, and a delete confirmed on one card never runs on another.
+  A first save (or SAVE AS) takes `new_project_id`'s file: the next id on
+  the card in the slot. Deleting a pair already gone is Ok, as the
+  volume was checked first.
 - **The project file's records** are ADR 0043's table (`0x8007` Slot,
   `0x8008` Part, `0x8009` Fx, `0x000A` Origin, their payloads and context
   rules). A new Origin shape takes a new tag; `0x000A` stays 2 bytes.
