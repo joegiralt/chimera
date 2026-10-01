@@ -66,13 +66,14 @@ pub enum PartActionKind {
 }
 
 /// An action `part_actions` offered, with what it was offered against: the
-/// Part's Origin and status. Only `part_actions` makes one.
+/// Part's Origin, status and `sound_crc`. Only `part_actions` makes one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PartAction {
     part: PartId,
     kind: PartActionKind,
     origin: Origin,
     status: PartStatus,
+    crc: u32,
 }
 
 impl PartAction {
@@ -97,6 +98,7 @@ impl PartActions {
 pub fn part_actions(p: &Project, part: PartId) -> PartActions {
     let x = p.part(part);
     let status = part_status(x, &p.pool);
+    let crc = sound_crc(&x.sound);
     let free = p.pool.first_free().map(PartActionKind::NewSlot);
     let filled = |s: SlotId| p.pool.get(s).is_some().then_some(PartActionKind::Revert(s));
     let kinds = match (status, x.origin) {
@@ -113,13 +115,14 @@ pub fn part_actions(p: &Project, part: PartId) -> PartActions {
                 kind,
                 origin: x.origin,
                 status,
+                crc,
             })
         }),
     }
 }
 
-/// The action no longer applies: its Part's status or Origin changed, its
-/// new slot filled, or its revert slot emptied.
+/// The action no longer applies: its Part's status, Origin or Sound changed,
+/// its new slot filled, or its revert slot emptied.
 #[derive(Debug, PartialEq)]
 pub struct ActionGone;
 
@@ -127,7 +130,10 @@ impl Project {
     /// Ok: the other users of the slot that now derive Stale (as `save_part_to`).
     pub fn apply_part_action(&mut self, a: PartAction) -> Result<PartSet, ActionGone> {
         let x = self.part(a.part);
-        if x.origin != a.origin || part_status(x, &self.pool) != a.status {
+        if x.origin != a.origin
+            || part_status(x, &self.pool) != a.status
+            || sound_crc(&x.sound) != a.crc
+        {
             return Err(ActionGone);
         }
         match a.kind {

@@ -70,7 +70,7 @@ ADR 0046 (Task 5) decides the load protocol.
 ### Part actions
 `part_actions(&Project, PartId)` offers only what applies, in menu order;
 `PartAction` is opaque, and `apply_part_action` refuses one (`ActionGone`)
-whose Part's Origin or status moved since it was offered.
+whose Part's Origin, status or `sound_crc` moved since it was offered.
 
 | Part | Offers |
 |---|---|
