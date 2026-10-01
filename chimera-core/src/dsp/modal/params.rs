@@ -350,7 +350,9 @@ const fn macro_(id: u8, label: &'static str, default: f32) -> ParamSpec {
 /// exciter pages is read at note-on. Retired ids 2, 5, 7 and 8 are never
 /// reused.
 pub static MODAL_SPECS: [ParamSpec; 17] = [
-    ParamSpec::choice(0, "MODEL", ValFmt::Names(&MODEL_NAMES), 3.0, 0.0).ident("MODE"),
+    ParamSpec::choice(0, "MODEL", ValFmt::Names(&MODEL_NAMES), 3.0, 0.0)
+        .ident("MODE")
+        .glyph(crate::ui::glyph::FocusGlyph::None),
     macro_(13, "STRUCT", 0.0).short("STR").ident("STRUCTURE"),
     macro_(3, "BRIGHT", 1.0 - 0.7).short("BRT").ident("BRIGHT"),
     macro_(12, "DAMP", INIT_DAMP).short("DMP").ident("DAMP"),

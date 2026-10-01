@@ -437,8 +437,12 @@ const _: () = assert!(BLACK_IDENTS.len() == THEME_SPECS[3].max as usize + 1);
 /// defaults are the owner's pick: 70, PUNCH, TEAL, −2.
 pub static THEME_SPECS: [ParamSpec; 4] = [
     ParamSpec::choice(0, "BRIGHT", ValFmt::Names(&BRIGHT_NAMES), 18.0, 12.0).ident("BRIGHT"),
-    ParamSpec::choice(1, "GAMMA", ValFmt::Names(&GAMMA_NAMES), 2.0, 2.0).ident("GAMMA"),
-    ParamSpec::choice(2, "ACCENT", ValFmt::Names(&ACCENT_NAMES), 4.0, 0.0).ident("ACCENT"),
+    ParamSpec::choice(1, "GAMMA", ValFmt::Names(&GAMMA_NAMES), 2.0, 2.0)
+        .ident("GAMMA")
+        .glyph(crate::ui::glyph::FocusGlyph::None),
+    ParamSpec::choice(2, "ACCENT", ValFmt::Names(&ACCENT_NAMES), 4.0, 0.0)
+        .ident("ACCENT")
+        .glyph(crate::ui::glyph::FocusGlyph::None),
     ParamSpec::choice(3, "BLACK", ValFmt::Names(&BLACK_NAMES), 6.0, 0.0).ident("BLACK"),
 ];
 

@@ -76,7 +76,9 @@ impl AlgoOpParams {
 /// it is the one operator destination (ADR 0010). FINE and FEEDBACK are
 /// not: FINE's 104-cent steps would zipper.
 pub static ALGO_OP_SPECS: [ParamSpec; 13] = [
-    ParamSpec::choice(0, "WAVE", ValFmt::Names(&WAVE_NAMES), 15.0, 0.0).ident("WAVE"),
+    ParamSpec::choice(0, "WAVE", ValFmt::Names(&WAVE_NAMES), 15.0, 0.0)
+        .ident("WAVE")
+        .glyph(crate::ui::glyph::FocusGlyph::None),
     ParamSpec::stepped(
         1,
         "CRSE",
@@ -227,7 +229,8 @@ pub static ALGO_SPECS: [ParamSpec; 4] = [
         31.0,
         INIT_A.get() as f32,
     )
-    .ident("ALG_A"),
+    .ident("ALG_A")
+    .glyph(crate::ui::glyph::FocusGlyph::None),
     ParamSpec::choice(
         1,
         "ALG B",
@@ -235,7 +238,8 @@ pub static ALGO_SPECS: [ParamSpec; 4] = [
         31.0,
         INIT_B.get() as f32,
     )
-    .ident("ALG_B"),
+    .ident("ALG_B")
+    .glyph(crate::ui::glyph::FocusGlyph::None),
     ParamSpec::stepped(2, "MORPH", ValFmt::Uni, 0.0, 127.0, 0.0, true)
         .ident("MORPH")
         .short("MRPH"),

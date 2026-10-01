@@ -146,8 +146,12 @@ impl Default for PartParams {
 /// Nothing here is modulatable: the mixer applies these, not the voice (ADR 0010).
 pub static PART_SPECS: [ParamSpec; 8] = [
     ParamSpec::choice(0, "CH", ValFmt::OneBased(15), 15.0, 0.0).ident("CH"),
-    ParamSpec::choice(1, "MODE", ValFmt::Names(&["MONO", "POLY"]), 1.0, 1.0).ident("MODE"),
-    ParamSpec::choice(2, "OUT", ValFmt::Names(&["P1", "P2", "P3"]), 2.0, 0.0).ident("OUT"),
+    ParamSpec::choice(1, "MODE", ValFmt::Names(&["MONO", "POLY"]), 1.0, 1.0)
+        .ident("MODE")
+        .glyph(crate::ui::glyph::FocusGlyph::None),
+    ParamSpec::choice(2, "OUT", ValFmt::Names(&["P1", "P2", "P3"]), 2.0, 0.0)
+        .ident("OUT")
+        .glyph(crate::ui::glyph::FocusGlyph::None),
     ParamSpec::continuous(3, "LEVEL", ValFmt::Uni, 0.0, 1.0, 0.8, 1.0 / 128.0, false)
         .ident("LEVEL"),
     ParamSpec::continuous(4, "PAN", ValFmt::Pan, -1.0, 1.0, 0.0, 2.0 / 128.0, false).ident("PAN"),
