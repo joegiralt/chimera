@@ -98,6 +98,21 @@ pub enum ProjectNote {
     NewProject,
 }
 
+/// `msg: subject`. Past `LINE_LEN` the message gives way, so the name or
+/// file always shows whole.
+fn naming(msg: &str, subject: Subject) -> Line {
+    let mut sub = Line::new("");
+    let _ = write!(sub, "{subject}");
+    let room = LINE_LEN.saturating_sub(sub.len as usize + 2);
+    let mut cut = msg.len().min(room);
+    while !msg.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    let mut l = Line::new(msg[..cut].trim_end());
+    let _ = write!(l, ": {}", sub.as_str());
+    l
+}
+
 impl ProjectNote {
     /// Parts and slots are 1-based, slots in two digits.
     pub fn line(&self) -> Line {
@@ -115,10 +130,10 @@ impl ProjectNote {
             ProjectNote::Card {
                 err,
                 subject: Some(s),
-            } => write!(l, "{}: {s}", err.message()),
-            ProjectNote::File { err, subject } => write!(l, "{}: {subject}", err.message()),
-            ProjectNote::Missing(s) => write!(l, "PROJECT NOT FOUND: {s}"),
-            ProjectNote::LoadFailed(s) => write!(l, "LOAD FAILED: {s}"),
+            } => return naming(err.message(), s),
+            ProjectNote::File { err, subject } => return naming(err.message(), subject),
+            ProjectNote::Missing(s) => return naming("PROJECT NOT FOUND", s),
+            ProjectNote::LoadFailed(s) => return naming("LOAD FAILED", s),
             ProjectNote::Changed => l.write_str("CHANGED SINCE ASKED: TRY AGAIN"),
             ProjectNote::IsLoaded => l.write_str("CAN NOT DELETE THE LOADED PROJECT"),
             ProjectNote::NoIds => l.write_str("NO PROJECT IDS LEFT"),

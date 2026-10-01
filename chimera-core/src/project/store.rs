@@ -9,14 +9,15 @@ use chimera_hal::store::{Dir, FileName, ReadSink, Store, StoreError, VolumeId};
 
 use crate::name::ProjectName;
 use crate::storage::{
-    AbFile, Card, CardEvent, FileError, FileKind, HEADER_LEN, Header, InPlaceError, LoadError,
-    ProjectId, SaveError, Side, delete_ab, load_ab_in_place, peek_header, save_ab,
+    AbFile, Card, CardEvent, CardFault, FileError, FileKind, HEADER_LEN, Header, InPlaceError,
+    LoadError, Outcome, ProjectId, Ready, SaveError, Side, delete_ab, load_ab_in_place,
+    peek_header, save_ab,
 };
 
 use super::note::{Differ, ProjectNote, Subject};
 use super::{
     Confirmed, LoadLink, Origin, PartId, PartStatus, Project, ProjectCheck, ProjectDecoder,
-    ProjectSource, Swap, encode_project, part_status, project_crc,
+    ProjectFile, ProjectSource, Swap, encode_project, part_status, project_crc,
 };
 
 pub fn project_file(id: ProjectId) -> AbFile {
@@ -35,6 +36,26 @@ fn file_id(f: FileName) -> Option<ProjectId> {
     ProjectId::new(n)
 }
 
+/// `op` on the card `vol` only. Another card in the slot is `Ok(Err(now))`:
+/// nothing is read or written, and the healthy card isn't marked failed.
+fn run_on<S: Store, R, E: CardFault + From<StoreError>>(
+    card: &mut Card,
+    store: &mut S,
+    vol: VolumeId,
+    op: impl FnOnce(&mut S, &Ready) -> Result<R, E>,
+) -> Result<Outcome<Result<R, VolumeId>, E>, E> {
+    card.run(store, |s, r| {
+        if r.volume() != vol {
+            return Ok(Err(r.volume()));
+        }
+        op(s, r).map(Ok)
+    })
+}
+
+fn changed(now: VolumeId, subject: Subject) -> ProjectNote {
+    card_note(StoreError::VolumeChanged(now), Some(subject))
+}
+
 fn card_note(err: StoreError, subject: Option<Subject>) -> ProjectNote {
     ProjectNote::Card { err, subject }
 }
@@ -47,21 +68,28 @@ fn load_note(e: LoadError, subject: Subject) -> ProjectNote {
     }
 }
 
-/// The highest id on the card + 1; 1 with no `PROJECTS` directory.
-pub fn new_project_id<S: Store>(card: &mut Card, store: &mut S) -> Result<ProjectId, ProjectNote> {
+/// A new file on the card in the slot: the highest id there + 1; 1 with
+/// no `PROJECTS` directory.
+pub fn new_project_id<S: Store>(
+    card: &mut Card,
+    store: &mut S,
+) -> Result<ProjectFile, ProjectNote> {
     let out = card.run(store, |s, r| {
+        let vol = r.volume();
         let mut top = 0;
         match s.list(r.volume(), Dir::Projects, &mut |f, _| {
             if let Some(id) = file_id(f) {
                 top = top.max(id.get());
             }
         }) {
-            Ok(()) | Err(StoreError::NotFound) => Ok(top),
+            Ok(()) | Err(StoreError::NotFound) => Ok((top, vol)),
             Err(e) => Err(e),
         }
     });
     match out.and_then(|o| o.result) {
-        Ok(top) => ProjectId::new(top + 1).ok_or(ProjectNote::NoIds),
+        Ok((top, vol)) => ProjectId::new(top + 1)
+            .map(|id| ProjectFile { id, vol })
+            .ok_or(ProjectNote::NoIds),
         Err(e) => Err(card_note(e, None)),
     }
 }
@@ -84,18 +112,22 @@ fn differ(p: &Project) -> Differ {
     }
 }
 
-/// Streams `p` to its pair, making the directories first. On success the
-/// project is `Saved` under `id`; on any error its meta is untouched.
+/// Streams `p` to `to`'s pair, making the directories first: SAVE passes
+/// `meta().file()`, a first save or SAVE AS `new_project_id`'s. Only on
+/// `to.vol`: another card is `CARD CHANGED` with nothing written. On
+/// success the project is `Saved` as `to`; on any error its meta is
+/// untouched.
 pub fn save_project<S: Store>(
     card: &mut Card,
     store: &mut S,
     p: &mut Project,
-    id: ProjectId,
+    to: ProjectFile,
 ) -> ProjectNote {
     let name = p.meta.name;
     let subject = Subject::Name(name);
     let live = &*p;
-    let out = card.run(store, |s, r| {
+    let id = to.id;
+    let out = run_on(card, store, to.vol, |s, r| {
         s.make_dir(r.volume(), Dir::Chimera)?;
         s.make_dir(r.volume(), Dir::Projects)?;
         save_ab(
@@ -108,11 +140,12 @@ pub fn save_project<S: Store>(
         )
     });
     match out.and_then(|o| o.result) {
-        Ok(_) => {
-            p.meta.id = Some(id);
+        Ok(Ok(_)) => {
+            p.meta.file = Some(to);
             p.meta.saved_crc = Some(project_crc(p));
             ProjectNote::Saved(differ(p))
         }
+        Ok(Err(now)) => changed(now, subject),
         Err(SaveError::Store(err)) => card_note(err, Some(subject)),
         Err(SaveError::File(err)) => ProjectNote::File { err, subject },
     }
@@ -121,19 +154,16 @@ pub fn save_project<S: Store>(
 /// A load's result: `swap` when the project was replaced (loaded, or
 /// reset to NEW), which the caller settles and publishes; `note` for the
 /// screen; `event` when the card mounted.
+///
+/// A file loaded and `+ NEW` look alike here (a swap, no note). What the
+/// caller does only for a file (SYSTEM's last project) keys on the
+/// confirmed source, or on `meta().file()` being set.
 #[must_use]
 #[derive(Debug)]
 pub struct LoadOutcome {
     pub swap: Option<Swap>,
     pub note: Option<ProjectNote>,
     pub event: Option<CardEvent>,
-}
-
-/// What the mounted op found.
-enum Loaded {
-    Header,
-    /// Not the card the file was listed on: nothing read.
-    OtherCard(VolumeId),
 }
 
 /// Replaces `p` as `go` confirmed: NEW, or a file in place (ADR 0046).
@@ -166,12 +196,8 @@ pub fn load_project<S: Store>(
         ProjectSource::File { id, vol } => (id, vol),
     };
     let subject = Subject::File(id);
-    let run = card.run(store, |s, r| {
-        if r.volume() != vol {
-            return Ok(Loaded::OtherCard(r.volume()));
-        }
+    let run = run_on(card, store, vol, |s, r| {
         load_ab_in_place(s, r, project_file(id), &mut ProjectDecoder::new(p))
-            .map(|_| Loaded::Header)
     });
     let result = match run {
         Ok(o) => {
@@ -181,14 +207,13 @@ pub fn load_project<S: Store>(
         Err(e) => Err(e),
     };
     match result {
-        Ok(Loaded::Header) => {
-            p.meta.id = Some(id);
+        Ok(Ok(_)) => {
+            p.meta.file = Some(ProjectFile { id, vol });
             p.meta.saved_crc = Some(project_crc(p));
             out.swap = Some(link.bump());
         }
-        Ok(Loaded::OtherCard(now)) => {
-            out.note = Some(card_note(StoreError::VolumeChanged(now), Some(subject)));
-        }
+        // Not the card the file was listed on: nothing read.
+        Ok(Err(now)) => out.note = Some(changed(now, subject)),
         Err(InPlaceError {
             clobbered: false,
             err,
@@ -213,6 +238,16 @@ pub struct ProjectEntry {
     pub name: Option<ProjectName>,
     /// What a load would refuse it for, when the headers already say.
     pub err: Option<FileError>,
+}
+
+impl ProjectEntry {
+    /// The file to load or delete: on the card it was listed on.
+    pub fn file(&self) -> ProjectFile {
+        ProjectFile {
+            id: self.id,
+            vol: self.vol,
+        }
+    }
 }
 
 /// `list_projects`' result: `event` when the card mounted.
@@ -357,20 +392,25 @@ pub fn list_projects<S: Store>(
     }
 }
 
-/// Deletes `id`'s pair, the side a load wouldn't keep first. The loaded
-/// project's own file is refused. A pair already gone is Ok.
+/// Deletes `file`'s pair, the side a load wouldn't keep first, on
+/// `file.vol` only (another card is `CARD CHANGED`). The loaded project's
+/// own file is refused. A pair already gone is Ok.
 pub fn delete_project<S: Store>(
     card: &mut Card,
     store: &mut S,
     loaded: &Project,
-    id: ProjectId,
+    file: ProjectFile,
 ) -> Result<(), ProjectNote> {
-    if loaded.meta().id() == Some(id) {
+    if loaded.meta().file() == Some(file) {
         return Err(ProjectNote::IsLoaded);
     }
-    let out = card.run(store, |s, r| {
-        delete_ab(s, r, project_file(id), &mut ProjectCheck::new())
+    let subject = Subject::File(file.id);
+    let out = run_on(card, store, file.vol, |s, r| {
+        delete_ab(s, r, project_file(file.id), &mut ProjectCheck::new())
     });
-    out.and_then(|o| o.result)
-        .map_err(|e| card_note(e, Some(Subject::File(id))))
+    match out.and_then(|o| o.result) {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(now)) => Err(changed(now, subject)),
+        Err(e) => Err(card_note(e, Some(subject))),
+    }
 }
