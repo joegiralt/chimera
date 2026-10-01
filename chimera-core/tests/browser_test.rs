@@ -10,6 +10,7 @@ use chimera_core::ui::browser::{
 };
 use chimera_core::ui::nav::{Browse, Location};
 use chimera_core::ui::perf::PerfStats;
+use chimera_core::ui::settings::PART_ROW;
 use chimera_core::ui::theme;
 use chimera_hal::{ButtonId, EncoderId};
 use screen::*;
@@ -99,10 +100,10 @@ fn init_rows_end_the_list_and_load() {
         ui.location(),
         Location::sound_at(
             PartId::ALL[1],
-            Browse {
-                cursor: (TOTAL_ENTRIES - 1) as u8,
-                scroll: (TOTAL_ENTRIES - VISIBLE_ROWS) as u8
-            }
+            Browse::of(
+                (TOTAL_ENTRIES - 1) as u8,
+                (TOTAL_ENTRIES - VISIBLE_ROWS) as u8
+            )
         )
     );
     let fb = render_ui(&ui);
@@ -208,10 +209,7 @@ fn browser_redraw_does_not_fill_the_screen_again() {
 #[test]
 fn browser_input_moves_the_cursor() {
     use browser::input;
-    let at = |cursor: usize, scroll: usize| Browse {
-        cursor: cursor as u8,
-        scroll: scroll as u8,
-    };
+    let at = |cursor: usize, scroll: usize| Browse::of(cursor as u8, scroll as u8);
     let last = TOTAL_ENTRIES - 1;
     assert_eq!(input(&Input::turn(EncoderId::A, 3), at(0, 0)), at(3, 0));
     // The list clamps, and scrolling keeps the cursor on screen.
@@ -234,5 +232,5 @@ fn the_sound_rung_leaves_by_the_location_keys() {
     assert!(ui.location().browse().is_none());
     feed(&mut ui, Input::chord(ButtonId::Edit, ButtonId::B2));
     tap(&mut ui, ButtonId::Seq);
-    assert_eq!(ui.location(), Location::settings_at(&[1], 0));
+    assert_eq!(ui.location(), Location::settings_at(&[PART_ROW], 0));
 }

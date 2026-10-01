@@ -4,11 +4,14 @@
 use crate::hw::MAX_PARTS;
 use crate::params::EngineType;
 use crate::project::PartId;
-use crate::ui::block_def::{ChainBlock, ChainDef2};
+use crate::ui::block_def::{ChainDef2, Move};
 use crate::ui::block_registry::{
     self, ALGO_CHAIN, CHORUS, MIXER_CHANNEL_CHAIN, MIXER_HOME, MIXER_PART, MODAL_PLUCK_CHAIN,
 };
-use crate::ui::settings::{Act, Kind, MANAGE_COMMANDS, Row, Screen, row_at};
+use crate::ui::settings::{Act, Kind, MANAGE_COMMANDS, PART_ROW, Row, Screen, row_at};
+
+pub use crate::ui::block_def::PageAt;
+pub use crate::ui::browser::Browse;
 
 /// Path depth limit of the SETTINGS tree.
 const MAX_DEPTH: usize = 4;
@@ -20,96 +23,21 @@ const FX_FIRST: u8 = if MIXER_HOME > MIXER_PART {
 };
 const _: () = assert!(MIXER_CHANNEL_CHAIN.blocks[FX_FIRST as usize].def.id == CHORUS.id);
 /// SETTINGS › PART, where SEQ on the mixer and the Sound rung goes.
-const PART_SETTINGS: [u8; 1] = [1];
+const PART_SETTINGS: [u8; 1] = [PART_ROW];
 
 // The mixer's home is SENDS: from outside it, B*n* and MIX+B*n* open there.
-const _: () = assert!(MIXER_CHANNEL_CHAIN.home().node as usize == MIXER_HOME);
+const _: () = assert!(MIXER_CHANNEL_CHAIN.home().node() as usize == MIXER_HOME);
 
-/// The Sound rung's browser: its cursor and the first row shown.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub struct Browse {
-    pub cursor: u8,
-    pub scroll: u8,
-}
-
-const _: () = assert!(crate::ui::browser::TOTAL_ENTRIES <= 256);
-
-/// A page on a chain. Only a chain makes one (`ChainDef2::home`,
-/// `ChainDef2::page`), and this module's steps from one, so no code can
-/// land on a node it assumed.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct PageAt {
-    node: u8,
-    sub: u8,
-}
-
-impl PageAt {
-    /// A list's: it shows no page.
-    const NONE: PageAt = PageAt { node: 0, sub: 0 };
-
-    pub const fn node(self) -> u8 {
-        self.node
-    }
-
-    pub const fn sub(self) -> u8 {
-        self.sub
-    }
-
-    /// Any page, unchecked: tests only.
-    #[cfg(any(test, feature = "test-support"))]
-    pub const fn of(node: u8, sub: u8) -> Self {
-        PageAt { node, sub }
+/// A mixer chain page, checked at compile time.
+const fn mixer_page(node: usize) -> PageAt {
+    match MIXER_CHANNEL_CHAIN.page(node, 0) {
+        Some(p) => p,
+        None => panic!("not a mixer node"),
     }
 }
-
-impl ChainDef2 {
-    /// A chain whose home is its first node. An empty chain fails the
-    /// build: every chain is a static.
-    pub const fn new(
-        name: &'static str,
-        blocks: &'static [ChainBlock],
-        mod_sources: &'static [&'static str],
-    ) -> Self {
-        assert!(!blocks.is_empty(), "a chain has a page");
-        ChainDef2 {
-            name,
-            blocks,
-            mod_sources,
-            home: PageAt::NONE,
-        }
-    }
-
-    /// Home on `node` instead; past the chain fails the build.
-    pub const fn with_home(self, node: usize) -> Self {
-        assert!(node < self.blocks.len(), "home past the chain");
-        ChainDef2 {
-            home: PageAt {
-                node: node as u8,
-                sub: 0,
-            },
-            ..self
-        }
-    }
-
-    /// Where a first visit lands (ADR 0066).
-    pub const fn home(&self) -> PageAt {
-        self.home
-    }
-
-    /// The def at `at`, if `at` is on this chain.
-    pub fn def_at(&self, at: PageAt) -> Option<&'static crate::ui::block_def::BlockDef> {
-        self.active_def(at.node as usize, at.sub as usize)
-    }
-
-    /// `node`'s sub-page `sub`, if the chain has it.
-    pub fn page(&self, node: usize, sub: usize) -> Option<PageAt> {
-        let b = self.block_at(node)?;
-        (sub < b.sub_page_count().max(1)).then_some(PageAt {
-            node: node as u8,
-            sub: sub as u8,
-        })
-    }
-}
+const PART_PAGE: PageAt = mixer_page(MIXER_PART);
+const SENDS_PAGE: PageAt = mixer_page(MIXER_HOME);
+const FX_FIRST_PAGE: PageAt = mixer_page(FX_FIRST as usize);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MixPage {
@@ -127,24 +55,38 @@ enum MixAt {
 }
 
 impl MixPage {
-    fn node(self) -> u8 {
+    fn page(self) -> PageAt {
         match self {
-            MixPage::Part => MIXER_PART as u8,
-            MixPage::Sends => MIXER_HOME as u8,
+            MixPage::Part => PART_PAGE,
+            MixPage::Sends => SENDS_PAGE,
         }
     }
 }
 
-/// A place in SETTINGS: a list with its bar on `row`, a Screen, or a leaf
-/// on `page`. On MANAGE PROJECTS, `page.sub` is the column (1: the
-/// commands) and `page.node` the command.
+/// What a SETTINGS place shows besides its bar.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum At {
+    /// A list, or a Screen's rows.
+    List,
+    Leaf(PageAt),
+    /// MANAGE PROJECTS: which column has the bar.
+    Manage(Column),
+}
+
+/// MANAGE PROJECTS' columns (ADR 0066).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Column {
+    Projects,
+    Command(u8),
+}
+
+/// A place in SETTINGS: a path, the bar on `row`, and what it shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SettingsAt {
     path: [u8; MAX_DEPTH],
     depth: u8,
     row: u8,
-    /// (0,0) on lists.
-    page: PageAt,
+    at: At,
 }
 
 impl SettingsAt {
@@ -156,8 +98,20 @@ impl SettingsAt {
         self.row
     }
 
-    pub fn page(&self) -> PageAt {
-        self.page
+    /// A leaf's page.
+    pub fn page(&self) -> Option<PageAt> {
+        match self.at {
+            At::Leaf(p) => Some(p),
+            _ => None,
+        }
+    }
+
+    /// On MANAGE PROJECTS, the column with the bar.
+    pub fn column(&self) -> Option<Column> {
+        match self.at {
+            At::Manage(c) => Some(c),
+            _ => None,
+        }
     }
 
     pub fn at_leaf(&self) -> Option<&'static ChainDef2> {
@@ -167,15 +121,14 @@ impl SettingsAt {
         }
     }
 
-    /// On a leaf, its chain's home.
+    /// Arrived: a leaf on its chain's home, MANAGE on its projects.
     fn landed(self) -> SettingsAt {
-        match self.at_leaf() {
-            Some(c) => SettingsAt {
-                page: c.home(),
-                ..self
-            },
-            None => self,
-        }
+        let at = match self.kind() {
+            Some(Kind::Leaf(c)) => At::Leaf(c.home()),
+            Some(Kind::Screen(Screen::ManageProjects)) => At::Manage(Column::Projects),
+            _ => At::List,
+        };
+        SettingsAt { at, ..self }
     }
 
     fn kind(&self) -> Option<Kind> {
@@ -194,7 +147,7 @@ impl SettingsAt {
                 path,
                 depth: self.depth + 1,
                 row: 0,
-                page: PageAt::NONE,
+                at: At::List,
             }
             .landed(),
         )
@@ -203,9 +156,9 @@ impl SettingsAt {
     /// MENU: MANAGE's commands back to its list, else one level up with the
     /// bar on the row just left.
     fn back(self) -> Option<SettingsAt> {
-        if matches!(self.kind(), Some(Kind::Screen(Screen::ManageProjects))) && self.page.sub == 1 {
+        if let At::Manage(Column::Command(_)) = self.at {
             return Some(SettingsAt {
-                page: PageAt::NONE,
+                at: At::Manage(Column::Projects),
                 ..self
             });
         }
@@ -213,12 +166,15 @@ impl SettingsAt {
         let mut path = self.path;
         // Zero past `depth`, so equal places compare equal.
         path[d as usize] = 0;
-        Some(SettingsAt {
-            path,
-            depth: d,
-            row: self.path[d as usize],
-            page: PageAt::NONE,
-        })
+        Some(
+            SettingsAt {
+                path,
+                depth: d,
+                row: self.path[d as usize],
+                at: At::List,
+            }
+            .landed(),
+        )
     }
 
     fn step(self, k: NavKey, cx: &NavCtx) -> Step {
@@ -244,21 +200,28 @@ impl SettingsAt {
         };
         let under_bar = |rs: &'static [Row]| rs.get(self.row as usize).map(|r| r.kind);
         match (self.kind(), k, delta) {
-            (Some(Kind::Leaf(c)), k, _) => page_step(c, self.page, k)
-                .map_or(Step::Stay, |page| go(SettingsAt { page, ..self })),
+            (Some(Kind::Leaf(c)), k, _) => match self.at {
+                At::Leaf(p) => page_step(c, p, k).map_or(Step::Stay, |p| {
+                    go(SettingsAt {
+                        at: At::Leaf(p),
+                        ..self
+                    })
+                }),
+                _ => Step::Stay,
+            },
             (Some(Kind::List(rs)), _, Some(d)) => row(rs.len(), d),
-            (Some(Kind::Screen(Screen::ManageProjects)), _, Some(d)) if self.page.sub == 1 => {
-                let node = wrap(self.page.node, MANAGE_COMMANDS.len(), d);
+            (_, _, Some(d)) if matches!(self.at, At::Manage(Column::Command(_))) => {
+                let At::Manage(Column::Command(n)) = self.at else {
+                    return Step::Stay;
+                };
                 go(SettingsAt {
-                    page: PageAt { node, sub: 1 },
+                    at: At::Manage(Column::Command(wrap(n, MANAGE_COMMANDS.len(), d))),
                     ..self
                 })
             }
-            (Some(Kind::Screen(Screen::ManageProjects)), NavKey::Edit, _)
-                if self.page.sub == 0 && cx.dyn_rows > 0 =>
-            {
+            (_, NavKey::Edit, _) if self.at == At::Manage(Column::Projects) && cx.dyn_rows > 0 => {
                 go(SettingsAt {
-                    page: PageAt { node: 0, sub: 1 },
+                    at: At::Manage(Column::Command(0)),
                     ..self
                 })
             }
@@ -425,7 +388,7 @@ pub enum Step {
     Act(Act),
     /// EDIT or SEQ on a Screen row: `UiState` lists it, then goes in.
     Screen(Screen),
-    /// SEQ inside a Screen: `UiState` decides; on MANAGE, `page().sub` says which column.
+    /// SEQ inside a Screen: `UiState` decides; on MANAGE, `column()` says which.
     Run,
     Stay,
 }
@@ -434,9 +397,16 @@ impl Location {
     /// Part 1's pages on its engine's home.
     pub fn home(cx: &NavCtx) -> Location {
         let p = PartId::ALL[0];
-        Location(Loc::Pages(p, chain_def_for(cx.engine(p)).home()))
+        Self::part_home(p, cx.engine(p))
     }
 
+    /// Part `p`'s pages on `engine`'s home.
+    pub fn part_home(p: PartId, engine: EngineType) -> Location {
+        Location(Loc::Pages(p, chain_def_for(engine).home()))
+    }
+
+    /// Any page of Part `p`: tests only.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn pages(p: PartId, at: PageAt) -> Location {
         Location(Loc::Pages(p, at))
     }
@@ -469,7 +439,7 @@ impl Location {
                 path: p,
                 depth: path.len() as u8,
                 row,
-                page: PageAt::NONE,
+                at: At::List,
             }
             .landed(),
         ))
@@ -511,7 +481,7 @@ impl Location {
             (Part(..) | Fx(..) | Sound(..), NavKey::SeqTap) => {
                 Step::Go(Location::settings_at(&PART_SETTINGS, 0))
             }
-            (Fx(_, at), NavKey::Minus) if at.node == FX_FIRST => {
+            (Fx(_, at), NavKey::Minus) if at.node() == FX_FIRST => {
                 go(Part(PartId::ALL[MAX_PARTS - 1], MixPage::Sends))
             }
             (Fx(p, at), k) => {
@@ -527,15 +497,9 @@ impl Location {
     pub fn page(self, cx: &NavCtx) -> Option<(&'static ChainDef2, PageAt)> {
         match self.0 {
             Loc::Pages(p, at) => Some((chain_def_for(cx.engine(p)), at)),
-            Loc::Part(_, m) => Some((
-                &MIXER_CHANNEL_CHAIN,
-                PageAt {
-                    node: m.node(),
-                    sub: 0,
-                },
-            )),
+            Loc::Part(_, m) => Some((&MIXER_CHANNEL_CHAIN, m.page())),
             Loc::Fx(_, at) => Some((&MIXER_CHANNEL_CHAIN, at)),
-            Loc::Settings(s) => s.at_leaf().map(|c| (c, s.page)),
+            Loc::Settings(s) => s.at_leaf().zip(s.page()),
             Loc::Sound(..) => None,
         }
     }
@@ -577,13 +541,7 @@ fn mix_walk(p: PartId, m: MixPage, d: i8) -> Loc {
                 MixPage::Sends
             },
         ),
-        None => Loc::Fx(
-            p,
-            PageAt {
-                node: FX_FIRST,
-                sub: 0,
-            },
-        ),
+        None => Loc::Fx(p, FX_FIRST_PAGE),
     }
 }
 
@@ -594,33 +552,19 @@ fn wrap(p: PartId, d: i8) -> PartId {
 
 /// PLUS and MINUS step the node, clamped; EDIT is sub-page down, SEQ up.
 fn page_step(c: &ChainDef2, at: PageAt, k: NavKey) -> Option<PageAt> {
-    let subs = c
-        .block_at(at.node as usize)
-        .map_or(0, |b| b.sub_page_count());
-    match k {
-        NavKey::Plus if (at.node as usize) + 1 < c.len() => Some(PageAt {
-            node: at.node + 1,
-            sub: 0,
-        }),
-        NavKey::Minus if at.node > 0 => Some(PageAt {
-            node: at.node - 1,
-            sub: 0,
-        }),
-        NavKey::Edit if (at.sub as usize) + 1 < subs => Some(PageAt {
-            sub: at.sub + 1,
-            ..at
-        }),
-        NavKey::SeqTap if at.sub > 0 => Some(PageAt {
-            sub: at.sub - 1,
-            ..at
-        }),
-        _ => None,
-    }
+    let m = match k {
+        NavKey::Plus => Move::Next,
+        NavKey::Minus => Move::Prev,
+        NavKey::Edit => Move::Down,
+        NavKey::SeqTap => Move::Up,
+        _ => return None,
+    };
+    c.step(at, m)
 }
 
 /// Part `n`'s mixer place showing `at`: PART, SENDS or an FX page.
 fn mix_loc(n: PartId, at: PageAt) -> Loc {
-    match at.node as usize {
+    match at.node() as usize {
         MIXER_PART => Loc::Part(n, MixPage::Part),
         MIXER_HOME => Loc::Part(n, MixPage::Sends),
         _ => Loc::Fx(n, at),

@@ -4,6 +4,7 @@
 use chimera_core::project::PartId;
 use chimera_core::ui::page::PageLayout;
 use chimera_core::ui::region::{RegionKind, settings_regions};
+use chimera_core::ui::settings::PART_ROW;
 use chimera_core::ui::settings::view::{Crumbs, LegendFor, VISIBLE_ROWS, first_visible, legend};
 use chimera_core::ui::{draw, theme};
 
@@ -51,9 +52,12 @@ fn legends_read_as_the_spec_says() {
 
 #[test]
 fn part_crumb_names_the_active_part() {
-    assert_eq!(format!("{}", Crumbs::of(&[1], P2)), "SETTINGS › PART 2");
     assert_eq!(
-        format!("{}", Crumbs::of(&[1, 2], P2)),
+        format!("{}", Crumbs::of(&[PART_ROW], P2)),
+        "SETTINGS › PART 2"
+    );
+    assert_eq!(
+        format!("{}", Crumbs::of(&[PART_ROW, 2], P2)),
         "SETTINGS › PART 2 › SAVE TO"
     );
 }

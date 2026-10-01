@@ -139,6 +139,34 @@ static TOP: [Row; 8] = [
 
 pub static ROOT: Row = row("SETTINGS", List(&TOP));
 
+/// The top list's PART row, found by its crumb at compile time: a tree
+/// without one fails the build.
+pub const PART_ROW: u8 = {
+    let mut i = 0;
+    loop {
+        assert!(i < TOP.len(), "no PART row at the top");
+        if str_eq(TOP[i].crumb, "PART") && matches!(TOP[i].kind, List(_)) {
+            break i as u8;
+        }
+        i += 1;
+    }
+};
+
+const fn str_eq(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i < a.len() {
+        if a[i] != b[i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
 /// The row a path of row indices names; the empty path is `ROOT`.
 pub fn row_at(path: &[u8]) -> Option<&'static Row> {
     let mut cur = &ROOT;

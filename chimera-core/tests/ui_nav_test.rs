@@ -13,6 +13,7 @@ use chimera_core::ui::busy::ToastStep;
 use chimera_core::ui::nav::{Location, MixPage, PageAt, chain_def_for};
 use chimera_core::ui::perf::PerfStats;
 use chimera_core::ui::region::RegionKind;
+use chimera_core::ui::settings::PART_ROW;
 use chimera_core::ui::theme_settings::ThemeSettings;
 use chimera_core::ui::{UiState, block_def::SlotBinding, page::PageKey};
 use chimera_hal::{ButtonId, EncoderId};
@@ -151,7 +152,7 @@ fn edit_on_mixer_opens_sound_and_seq_opens_part_settings() {
     assert_eq!(ui.location(), Location::sound(P[1]));
     feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::B2));
     tap(&mut ui, ButtonId::Seq);
-    assert_eq!(ui.location(), Location::settings_at(&[1], 0));
+    assert_eq!(ui.location(), Location::settings_at(&[PART_ROW], 0));
     assert_eq!(ui.active_part, P[1]);
 }
 
@@ -233,7 +234,7 @@ fn seq_on_a_part_action_says_not_yet() {
     to_leaf(&mut ui, &["PART"]); // the bar on RENAME, an action
     tap(&mut ui, ButtonId::Seq);
     assert_eq!(ui.step_toast(0), not_yet());
-    assert_eq!(ui.location(), Location::settings_at(&[1], 0));
+    assert_eq!(ui.location(), Location::settings_at(&[PART_ROW], 0));
 }
 
 #[test]
@@ -320,7 +321,7 @@ fn every_first_landing_is_the_chains_home() {
         to_leaf(&mut ui, &leaf.labels);
         assert_eq!(
             ui.location().settings().unwrap().page(),
-            leaf.chain.home(),
+            Some(leaf.chain.home()),
             "{}",
             leaf.name()
         );

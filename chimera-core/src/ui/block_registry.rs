@@ -481,9 +481,7 @@ static MODAL_PLUCK_BLOCKS: [ChainBlock; 5] = [
 
 /// Modal's home is RES (owner, 2026-10-01: ADR 0066).
 pub static MODAL_PLUCK_CHAIN: ChainDef2 =
-    ChainDef2::new("Modal Pluck", &MODAL_PLUCK_BLOCKS, &PART_MOD_SOURCES).with_home(MODAL_RES);
-const MODAL_RES: usize = 1;
-const _: () = assert!(MODAL_PLUCK_BLOCKS[MODAL_RES].def.id == MODAL_1.id);
+    ChainDef2::new("Modal Pluck", &MODAL_PLUCK_BLOCKS, &PART_MOD_SOURCES).with_home_def(&MODAL_1);
 
 /// WAVE is the OSC node's home; FINE's DETUNE and the five ENV stages sit
 /// right after their group (sub-pages are one level deep).
@@ -575,7 +573,7 @@ pub const MIXER_PART: usize = 0;
 
 /// The mixer's home is SENDS (ADR 0057).
 pub static MIXER_CHANNEL_CHAIN: ChainDef2 =
-    ChainDef2::new("Mixer", MIXER_CHANNEL_BLOCKS, &[]).with_home(MIXER_HOME);
+    ChainDef2::new("Mixer", MIXER_CHANNEL_BLOCKS, &[]).with_home_def(&SENDS);
 const _: () = assert!(MIXER_CHANNEL_BLOCKS[MIXER_HOME].def.id == SENDS.id);
 const _: () = assert!(MIXER_CHANNEL_BLOCKS[MIXER_PART].def.id == PART.id);
 

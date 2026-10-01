@@ -15,7 +15,7 @@ use crate::project::{PartId, Pool, SlotId};
 use crate::ui::components;
 use crate::ui::draw;
 use crate::ui::fmt::FmtBuf;
-use crate::ui::nav::{Browse, chain_def_for};
+use crate::ui::nav::chain_def_for;
 use crate::ui::theme;
 
 /// Rows on screen.
@@ -24,6 +24,32 @@ pub const VISIBLE_ROWS: usize = 8;
 /// order.
 pub const INIT_TYPES: [EngineType; EngineType::ALL.len()] = EngineType::ALL;
 pub const TOTAL_ENTRIES: usize = POOL_SIZE + INIT_TYPES.len();
+
+/// The Sound rung's browser: its cursor and the first row shown. Only
+/// `input` moves it; it opens at the top.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct Browse {
+    cursor: u8,
+    scroll: u8,
+}
+
+const _: () = assert!(TOTAL_ENTRIES <= 256);
+
+impl Browse {
+    pub const fn cursor(self) -> usize {
+        self.cursor as usize
+    }
+
+    pub const fn scroll(self) -> usize {
+        self.scroll as usize
+    }
+
+    /// Any cursor and scroll, unchecked: tests only.
+    #[cfg(any(test, feature = "test-support"))]
+    pub const fn of(cursor: u8, scroll: u8) -> Self {
+        Browse { cursor, scroll }
+    }
+}
 
 /// The pool slot at list entry `entry`; `None` for the INIT rows.
 pub fn slot_at(entry: usize) -> Option<SlotId> {
@@ -47,7 +73,7 @@ pub fn input(controls: &impl Controls, b: Browse) -> Browse {
     let scroll = (b.scroll as usize)
         .min(cursor)
         .max((cursor + 1).saturating_sub(visible));
-    // TOTAL_ENTRIES <= 256 (`nav`).
+    // TOTAL_ENTRIES <= 256.
     Browse {
         cursor: cursor as u8,
         scroll: scroll as u8,

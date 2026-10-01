@@ -348,7 +348,7 @@ impl UiState {
         {
             let engine = cx.engines[p.index()];
             if engine != was || c.def_at(at).is_none() {
-                self.loc = Location::pages(p, chain_def_for(engine).home());
+                self.loc = Location::part_home(p, engine);
             }
         }
         self.load_matrix(part);
@@ -716,7 +716,7 @@ impl UiState {
     /// EDIT on the Sound rung: the entry under the cursor into `part`, then
     /// its pages.
     fn load_sound(&mut self, part: PartId, b: Browse) {
-        let cursor = b.cursor as usize;
+        let cursor = b.cursor();
         // Init entries follow the pool slots.
         let from = browser::slot_at(cursor).map(PartFrom::Slot).or_else(|| {
             cursor
@@ -732,10 +732,7 @@ impl UiState {
             // An empty slot loads nothing.
             let _ = self.project.replace_part(c);
         }
-        let to = Location::pages(
-            part,
-            chain_def_for(self.project.part(part).sound.engine()).home(),
-        );
+        let to = Location::part_home(part, self.project.part(part).sound.engine());
         self.go(to);
     }
 
@@ -1071,7 +1068,7 @@ impl UiState {
     {
         if let Some((part, b)) = self.loc.browse() {
             let _ = display.clear(theme::BG);
-            let (cursor, scroll) = (b.cursor as usize, b.scroll as usize);
+            let (cursor, scroll) = (b.cursor(), b.scroll());
             browser::draw(display, self.project.pool(), part, cursor, scroll);
             return;
         }
@@ -1295,7 +1292,7 @@ impl UiState {
             if self.browser_dirty {
                 let fb = display.pixel_buffer();
                 Renderer::clear_region_fb(fb, 0, chimera_hal::SCREEN_HEIGHT);
-                let (cursor, scroll) = (b.cursor as usize, b.scroll as usize);
+                let (cursor, scroll) = (b.cursor(), b.scroll());
                 browser::draw(display, self.project.pool(), part, cursor, scroll);
                 // Invalidate region set so normal layout forces full rebuild on exit
                 self.region_set.prev_layout = None;

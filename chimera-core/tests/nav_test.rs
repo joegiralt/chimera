@@ -4,9 +4,9 @@ use chimera_core::params::EngineType;
 use chimera_core::project::PartId;
 use chimera_core::ui::block_registry::{MIXER_CHANNEL_CHAIN, MIXER_HOME, MIXER_PART, MODAL_1};
 use chimera_core::ui::nav::{
-    Location, MixPage, NavCtx, NavKey, PageAt, Recall, Step, chain_def_for,
+    Column, Location, MixPage, NavCtx, NavKey, PageAt, Recall, Step, chain_def_for,
 };
-use chimera_core::ui::settings::{Act, Kind, MANAGE_COMMANDS, Screen, row_at, rows};
+use chimera_core::ui::settings::{Act, Kind, MANAGE_COMMANDS, PART_ROW, Screen, row_at, rows};
 
 const P: [PartId; 6] = PartId::ALL;
 
@@ -225,7 +225,7 @@ fn bn_lands_on(e: EngineType) -> PageAt {
         Location::home(&cx),
         Location::mixer(P[0], MixPage::Part),
         Location::sound(P[2]),
-        Location::settings_at(&[1], 0),
+        Location::settings_at(&[PART_ROW], 0),
     ];
     for from in froms {
         assert_eq!(
@@ -290,19 +290,19 @@ fn leaf_keys() {
         let last = chimera_core::ui::block_registry::DEMO_CHAIN.len() as u8 - 1;
         for n in 1..=last {
             key(&mut l, NavKey::Plus, &cx, &mut r);
-            assert_eq!(l.settings().unwrap().page(), at(n, 0));
+            assert_eq!(l.settings().unwrap().page(), Some(at(n, 0)));
         }
         assert_eq!(l.step(NavKey::Plus, &cx, &mut r), Step::Stay);
         key(&mut l, NavKey::Minus, &cx, &mut r);
-        assert_eq!(l.settings().unwrap().page(), at(last - 1, 0));
+        assert_eq!(l.settings().unwrap().page(), Some(at(last - 1, 0)));
     }
 
     let mut l = Location::settings_at(&path_of(&["SYSTEM", "ABOUT"]), 0);
     key(&mut l, NavKey::Edit, &cx, &mut r);
-    assert_eq!(l.settings().unwrap().page(), at(0, 1), "AUDIO");
+    assert_eq!(l.settings().unwrap().page(), Some(at(0, 1)), "AUDIO");
     assert_eq!(l.step(NavKey::Edit, &cx, &mut r), Step::Stay);
     key(&mut l, NavKey::SeqTap, &cx, &mut r);
-    assert_eq!(l.settings().unwrap().page(), at(0, 0), "ABOUT");
+    assert_eq!(l.settings().unwrap().page(), Some(at(0, 0)), "ABOUT");
     assert!(l.page(&cx).is_some());
 
     let l = Location::settings_at(&path_of(&["PERSONALIZE", "THEME"]), 0);
@@ -366,7 +366,7 @@ fn seq_on_mixer_and_sound_opens_part_settings() {
         let mut r = Recall::new();
         let mut l = from;
         key(&mut l, NavKey::SeqTap, &cx, &mut r);
-        assert_eq!(l, Location::settings_at(&[1], 0), "{from:?}");
+        assert_eq!(l, Location::settings_at(&[PART_ROW], 0), "{from:?}");
         assert_eq!(r.settings_from(), from);
         key(&mut l, NavKey::MenuTap, &cx, &mut r);
         assert_eq!(l, Location::settings_at(&[], 1));
@@ -488,7 +488,7 @@ fn mix_bn_from_the_fx_keeps_the_page() {
     assert_eq!(fx_node(l, &cx), Some((P[2], fx)), "from SETTINGS");
     assert_eq!(
         l.step(NavKey::SeqTap, &cx, &mut r),
-        Step::Go(Location::settings_at(&[1], 0)),
+        Step::Go(Location::settings_at(&[PART_ROW], 0)),
         "SEQ on the FX: SETTINGS › PART"
     );
 }
@@ -553,13 +553,17 @@ fn manage_has_a_command_column() {
     key(&mut l, NavKey::Plus, &cx, &mut r);
     key(&mut l, NavKey::Edit, &cx, &mut r);
     let s = l.settings().unwrap();
-    assert_eq!((s.row(), s.page()), (1, at(0, 1)), "into the commands");
+    assert_eq!(
+        (s.row(), s.column()),
+        (1, Some(Column::Command(0))),
+        "into the commands"
+    );
     key(&mut l, NavKey::Minus, &cx, &mut r);
     let s = l.settings().unwrap();
     let last = MANAGE_COMMANDS.len() as u8 - 1;
     assert_eq!(
-        (s.row(), s.page()),
-        (1, at(last, 1)),
+        (s.row(), s.column()),
+        (1, Some(Column::Command(last))),
         "the bar is the command"
     );
     assert_eq!(l.step(NavKey::Edit, &cx, &mut r), Step::Stay);
