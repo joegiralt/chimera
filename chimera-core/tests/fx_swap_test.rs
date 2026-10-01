@@ -114,10 +114,11 @@ const FLOOR: f32 = 1e-4;
 ///   largest second difference past 4× (the sweep's `CLICK_RATIO`), the
 ///   larger either tail takes within `NEAR` of it, or a `common::clicks`
 ///   neither tail has there;
-/// - from the swapped tail around it (`NEAR` either side) by the same
-///   ratios: a click is local, where a level the swap legitimately
-///   changes (a MIX brought up, a loop that no longer cancels itself) is
-///   as large in the windows beside it.
+/// - from the swapped tail's own `NEAR` before it, by the same ratios: a
+///   click is new, where a level the swap legitimately changes (a MIX
+///   brought up, a loop that no longer cancels itself) builds up through
+///   the windows before it. Only before: after it, a short delay TIME
+///   echoes the click itself.
 fn verdict(swapped: &Sides, a_only: &Sides, b_only: &Sides) -> Result<(), String> {
     for side in 0..2 {
         let s = &swapped[side];
@@ -129,15 +130,7 @@ fn verdict(swapped: &Sides, a_only: &Sides, b_only: &Sides) -> Result<(), String
             let own = |f: fn(&[f32]) -> f32| {
                 f(&a_only[side][near.clone()]).max(f(&b_only[side][near.clone()]))
             };
-            let around = |f: fn(&[f32]) -> f32| {
-                let after = (end + NEAR).min(s.len());
-                let right = if after > end + 2 {
-                    f(&s[end..after])
-                } else {
-                    0.0
-                };
-                f(&s[near.start..w0]).max(right)
-            };
+            let around = |f: fn(&[f32]) -> f32| f(&s[near.start..w0]);
             let (step, d2) = (max_step(&s[w.clone()]), max_d2(&s[w.clone()]));
             let at = (w0 as f32 - SWAP as f32) / MS as f32;
             let out = |v: f32, r: f32, k: f32| v > k * r + FLOOR;
@@ -293,6 +286,13 @@ fn bright() -> FxParams {
     p
 }
 
+/// The delay at its shortest TIME, 10 ms: a click echoes within `NEAR`.
+fn short() -> FxParams {
+    let mut p = solo(Fx::Delay);
+    p.delay.time_ms = 10.0;
+    p
+}
+
 fn specs(fx: Fx) -> &'static [ParamSpec] {
     match fx {
         Fx::Chorus => &CHORUS_SPECS,
@@ -349,6 +349,11 @@ fn delay_settings_never_step_the_tail() {
 #[test]
 fn bright_delay_settings_never_step_the_tail() {
     each_setting(Fx::Delay, bright());
+}
+
+#[test]
+fn short_delay_settings_never_step_the_tail() {
+    each_setting(Fx::Delay, short());
 }
 
 #[test]

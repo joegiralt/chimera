@@ -135,8 +135,10 @@ the chorus lines or the reverb ring: each effect runs whatever its MIX
 (ADR 0061), so a tail rings on into the new project's settings, and an
 effect the new project turns on plays what its send does from then on.
 A setting steps a tail if it moves the tail's sample value at once (a
-gain, a read position, what a loop writes); a coefficient or an LFO's rate
-changes only the slope.
+gain, a read position, what a loop writes). One that changes only the
+tail's slope kinks it: harmless on an output (an LFO's rate), but inside
+the delay's loop (TONE) the kink is written and heard a TIME later, so it
+eases too.
 
 | Block | Setting | At the swap |
 |---|---|---|
@@ -167,16 +169,20 @@ MAKEUP 1 → 0), and a project change at most 1.11×.
   settings. Each setting is stepped min → max and max → min with its
   effect alone (the comp and the tape on the delay's tail; REV SEND with
   the reverb on), the delay's again at its brightest (TONE 1, FDBK 0.9,
-  MIX 1); then A → B between two projects with every effect on, and A to
-  and from NEW. In each 5 ms window from 20 ms before the swap to 600 ms
-  after it (past the longest TIME), a click stands out both from the
-  projects' own tails (the same render on A throughout, and on B,
-  within 20 ms of the window) and from the swapped tail's own 20 ms
-  either side: its largest step by 2×, its largest second difference by
-  4× (the sweep's `CLICK_RATIO`), or a `common::clicks` neither project's
-  tail has there. The first lets a level the swap legitimately changes
-  pass (a MIX brought up, a loop that no longer cancels itself); the
-  second keeps a bright tail's own steps from passing as clicks.
+  MIX 1) and at its shortest TIME (10 ms); then A → B between two
+  projects with every effect on, and A to and from NEW. In each 5 ms
+  window from 20 ms before the swap to 600 ms after it (past the longest
+  TIME), a click stands out both from the projects' own tails (the same
+  render on A throughout, and on B, within 20 ms of the window) and from
+  the swapped tail's own 20 ms before the window: its largest step by
+  2×, its largest second difference by 4× (the sweep's `CLICK_RATIO`), or
+  a `common::clicks` neither project's tail has there. The projects'
+  tails keep a bright tail's own steps from passing as clicks; the
+  swapped tail's past lets a level the swap legitimately changes pass (a
+  MIX brought up, a loop that no longer cancels itself), as it builds
+  up through the windows before. Only the past: a short TIME echoes a
+  click within 20 ms, which would hide it. With the FDBK ease taken out,
+  the 10 ms delay fails at +5 ms (step 8×).
 - `load_protocol_test::a_delay_tail_rings_through_the_swap` plays a delay
   tail through the real gate, kill, ack and publish.
 
