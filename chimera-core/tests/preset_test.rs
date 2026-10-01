@@ -1,11 +1,19 @@
 use chimera_core::addr::Op;
 use chimera_core::params::EngineType;
 use chimera_core::preset::{POOL_SIZE, Performance, Sound};
-use chimera_core::project::{Origin, PartFrom, PartId, PartSource, Project, SlotId};
+use chimera_core::project::{
+    Origin, PartFrom, PartId, PartSource, Project, ReplaceError, ReplaceGuard, SlotId, TemplateCrc,
+};
 use chimera_core::ui::block_registry as reg;
 use chimera_core::ui::page::PageKey;
 use chimera_core::ui::{UiMode, UiState};
 use chimera_hal::{ButtonId, ButtonState, Controls, EncoderId};
+
+/// A load into a Clean or Stale Part: the guard lets it through.
+fn load(p: &mut Project, t: TemplateCrc, src: PartSource) -> Result<(), ReplaceError> {
+    let c = ReplaceGuard::check(p, t, src).expect("a Clean or Stale Part");
+    p.replace_part(c)
+}
 
 /// Mock controls for testing UI input handling.
 struct MockControls {
@@ -70,13 +78,17 @@ fn patch_init_has_musically_useful_defaults() {
 /// Editing a loaded Part edits its copy: the slot keeps its Sound.
 #[test]
 fn part_edit_does_not_modify_pool() {
-    let mut p = Project::boxed().0;
+    let (mut p, t) = Project::boxed();
     let (part, slot) = (PartId::ALL[0], SlotId::ALL[0]);
     p.pool_store(slot, Sound::init(EngineType::Algo));
-    p.load_part(PartSource {
-        part,
-        from: PartFrom::Slot(slot),
-    })
+    load(
+        &mut p,
+        t,
+        PartSource {
+            part,
+            from: PartFrom::Slot(slot),
+        },
+    )
     .unwrap();
     p.edit_part(part).sound.params.out.volume = 0.0; // mute
     assert_eq!(p.part(part).sound.params.out.volume, 0.0);

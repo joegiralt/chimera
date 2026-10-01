@@ -22,7 +22,7 @@ use common::codec_util::{
     SYSTEM_FIXTURE, decode, decode_into, encode, fix_crc, record_offsets, system_file,
     system_fixture_settings,
 };
-use common::project::{decode as decode_project, encode as encode_project};
+use common::project::{decode as decode_project, encode as encode_project, load};
 use common::{
     SR, assert_stable, fnv1a, fundamental_hz, octave_clear, play_modal, play_modal_at, render_sound,
 };
@@ -203,15 +203,19 @@ fn fixture_part_edits(s: &mut Sound) {
 /// NEW, slot 11 an edited copy of slot 0; Part 1 (0-based) from slot 11,
 /// then edited; Part 2 from slot 9; delay MIX 0.3; `FIXTURE`.
 fn fixture_project() -> Box<Project> {
-    let (mut p, _) = Project::boxed();
+    let (mut p, t) = Project::boxed();
     let mut s = p.pool().get(SlotId::ALL[0]).unwrap().clone();
     fixture_edits(&mut s);
     p.pool_store(SlotId::ALL[11], s);
     for (part, slot) in [(1, 11), (2, 9)] {
-        p.load_part(PartSource {
-            part: PartId::ALL[part],
-            from: PartFrom::Slot(SlotId::ALL[slot]),
-        })
+        load(
+            &mut p,
+            t,
+            PartSource {
+                part: PartId::ALL[part],
+                from: PartFrom::Slot(SlotId::ALL[slot]),
+            },
+        )
         .unwrap();
     }
     fixture_part_edits(p.edit_part(PartId::ALL[1]).sound);

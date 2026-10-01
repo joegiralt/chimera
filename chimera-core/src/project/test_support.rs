@@ -12,7 +12,8 @@ use crate::part::PartParams;
 use crate::preset::Sound;
 
 use super::{
-    Origin, PartFrom, PartId, PartSource, Project, SlotId, TemplateCrc, part_status, project_crc,
+    Origin, PartFrom, PartId, PartSource, Project, ReplaceGuard, SlotId, TemplateCrc, part_status,
+    project_crc,
 };
 
 /// NEW with every slot filled: the factory Sounds and INIT, then edited
@@ -46,11 +47,12 @@ pub fn full() -> (Box<Project>, TemplateCrc) {
         (5, PartFrom::Slot(SlotId::ALL[3])),
     ];
     for (part, from) in loads {
-        p.load_part(PartSource {
+        let src = PartSource {
             part: PartId::ALL[part],
             from,
-        })
-        .expect("a filled slot");
+        };
+        let c = ReplaceGuard::check(&p, t, src).expect("a Clean Part");
+        p.replace_part(c).expect("a filled slot");
     }
     let e = p.edit_part(PartId::ALL[1]);
     e.sound.params.filter.set(FilterParams::RESONANCE, 0.6);

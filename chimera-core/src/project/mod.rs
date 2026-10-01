@@ -3,6 +3,7 @@
 //! sets an `Origin` or moves a slot's generation.
 
 mod codec;
+mod guard;
 mod ids;
 mod marks;
 mod parts;
@@ -12,6 +13,7 @@ mod template;
 pub mod test_support;
 
 pub use codec::{ProjectCheck, ProjectDecoder, encode_project, project_crc};
+pub use guard::{Confirmed, NeedsConfirm, Pending, ProjectSource, Prompt, ReplaceGuard, Target};
 pub use ids::{PartId, PartSet, SlotId};
 pub use marks::{
     ActionGone, PartAction, PartActionKind, PartActions, PartStatus, ProjectStatus, part_actions,
@@ -84,7 +86,7 @@ pub struct InUse(pub PartSet);
 #[derive(Debug, PartialEq)]
 pub enum ReplaceError {
     SlotEmpty,
-    /// The slot moved since the replace was asked for.
+    /// The target moved since the replace was confirmed.
     Changed,
 }
 
@@ -164,8 +166,17 @@ impl Project {
             .fold(PartSet::EMPTY, PartSet::with)
     }
 
-    /// Replaces the Part's Sound; its mix stays.
-    pub fn load_part(&mut self, src: PartSource) -> Result<(), ReplaceError> {
+    /// Replaces the Part's Sound; its mix stays. Refused if the Part moved
+    /// since it was confirmed, or the slot emptied.
+    pub fn replace_part(&mut self, c: Confirmed<PartSource>) -> Result<(), ReplaceError> {
+        if !c.holds(self) {
+            return Err(ReplaceError::Changed);
+        }
+        self.load_part(c.target())
+    }
+
+    /// Only through `replace_part` or a Part action.
+    fn load_part(&mut self, src: PartSource) -> Result<(), ReplaceError> {
         let part = &mut self.perf.parts[src.part.index()];
         match src.from {
             PartFrom::Slot(s) => {

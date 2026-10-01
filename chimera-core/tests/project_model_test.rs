@@ -7,9 +7,16 @@ use chimera_core::name::SoundName;
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
 use chimera_core::project::{
-    InUse, Origin, PartFrom, PartId, PartSet, PartSource, Project, ReplaceError, SlotId,
+    InUse, Origin, PartFrom, PartId, PartSet, PartSource, Project, ReplaceError, ReplaceGuard,
+    SlotId, TemplateCrc,
 };
 use chimera_core::storage::sound_crc;
+
+/// A load into a Clean or Stale Part: the guard lets it through.
+fn load(p: &mut Project, t: TemplateCrc, src: PartSource) -> Result<(), ReplaceError> {
+    let c = ReplaceGuard::check(p, t, src).expect("a Clean or Stale Part");
+    p.replace_part(c)
+}
 
 #[test]
 fn ids_are_bounded() {
@@ -80,13 +87,17 @@ fn store_and_clear_bump_the_generation() {
 
 #[test]
 fn clear_refuses_a_used_slot() {
-    let mut p = Project::boxed().0;
+    let (mut p, t) = Project::boxed();
     let (a, b, s) = (PartId::ALL[1], PartId::ALL[3], SlotId::ALL[0]);
     for part in [a, b] {
-        p.load_part(PartSource {
-            part,
-            from: PartFrom::Slot(s),
-        })
+        load(
+            &mut p,
+            t,
+            PartSource {
+                part,
+                from: PartFrom::Slot(s),
+            },
+        )
         .unwrap();
     }
     assert_eq!(p.users(s), PartSet::EMPTY.with(a).with(b));
@@ -98,12 +109,16 @@ fn clear_refuses_a_used_slot() {
 
 #[test]
 fn load_sets_origin_from_the_slot() {
-    let mut p = Project::boxed().0;
+    let (mut p, t) = Project::boxed();
     let (part, s) = (PartId::ALL[0], SlotId::ALL[2]);
-    p.load_part(PartSource {
-        part,
-        from: PartFrom::Slot(s),
-    })
+    load(
+        &mut p,
+        t,
+        PartSource {
+            part,
+            from: PartFrom::Slot(s),
+        },
+    )
     .unwrap();
     let crc = sound_crc(p.pool().get(s).unwrap());
     assert_eq!(
@@ -119,7 +134,7 @@ fn load_sets_origin_from_the_slot() {
         part,
         from: PartFrom::Slot(SlotId::ALL[30]),
     };
-    assert_eq!(p.load_part(empty), Err(ReplaceError::SlotEmpty));
+    assert_eq!(load(&mut p, t, empty), Err(ReplaceError::SlotEmpty));
     assert_eq!(
         p.part(part).origin(),
         Origin::Slot {
@@ -132,14 +147,18 @@ fn load_sets_origin_from_the_slot() {
 
 #[test]
 fn load_init_keeps_the_mix() {
-    let mut p = Project::boxed().0;
+    let (mut p, t) = Project::boxed();
     let part = PartId::ALL[3];
     p.edit_part(part).mix.level = 0.25;
     p.edit_part(part).mix.channel = MidiChannel::new(9).unwrap();
-    p.load_part(PartSource {
-        part,
-        from: PartFrom::Init(EngineType::Modal),
-    })
+    load(
+        &mut p,
+        t,
+        PartSource {
+            part,
+            from: PartFrom::Init(EngineType::Modal),
+        },
+    )
     .unwrap();
     assert_eq!(p.part(part).origin(), Origin::Init(EngineType::Modal));
     assert!(p.part(part).sound.bits_eq(&Sound::init(EngineType::Modal)));
@@ -149,14 +168,18 @@ fn load_init_keeps_the_mix() {
 
 #[test]
 fn save_part_to_returns_only_the_parts_now_stale() {
-    let mut p = Project::boxed().0;
+    let (mut p, t) = Project::boxed();
     let s = SlotId::ALL[0];
     let [a, b, c] = [PartId::ALL[0], PartId::ALL[2], PartId::ALL[4]];
     for part in [a, b, c] {
-        p.load_part(PartSource {
-            part,
-            from: PartFrom::Slot(s),
-        })
+        load(
+            &mut p,
+            t,
+            PartSource {
+                part,
+                from: PartFrom::Slot(s),
+            },
+        )
         .unwrap();
     }
     p.edit_part(c).sound.params.filter.cutoff *= 0.5; // c is Edited
