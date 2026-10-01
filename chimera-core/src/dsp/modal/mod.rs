@@ -738,8 +738,11 @@ impl ModalEngine {
         } else {
             self.shape_pending = true;
             self.dc.reset();
-            self.peak = 0.0;
         }
+        // Silence is judged against this strike's peak, and what still rings
+        // under it: a soft re-strike or glide on a loud ring rings its own
+        // T60.
+        self.peak = 0.0;
         self.active = true;
         self.silence_counter = 0;
     }
@@ -1879,6 +1882,49 @@ mod tests {
         match &m.halo {
             Halo::Full(l) => l.slot(),
             Halo::Bare => panic!("bare"),
+        }
+    }
+
+    /// Blocks until `e` frees, at most `max`.
+    fn lifetime(e: &mut ModalEngine, pool: &mut SymPool, p: &ModalParams, max: usize) -> usize {
+        let mut out = [0.0; BLOCK_SIZE];
+        (0..max)
+            .find(|_| {
+                e.render(&mut out, p, SR, pool);
+                !e.is_active()
+            })
+            .unwrap_or(max)
+    }
+
+    /// A soft strike after a loud one, its ring 40 dB down, rings its own
+    /// T60: silence is judged against its own peak, not the loud note's.
+    /// A re-strike and a glide (to a semitone up) alike.
+    #[test]
+    fn a_soft_strike_on_a_loud_ring_rings_its_own_t60() {
+        let p = ModalParams {
+            mode: ResonatorMode::String,
+            damp: damp_for(1.0),
+            ..ModalParams::default()
+        };
+        let mut pool = SymPool::boxed();
+        let mut fresh = engine(&mut pool, ResonatorMode::String);
+        fresh.note_on(49, 10, &p, SR, &mut pool);
+        let alone = lifetime(&mut fresh, &mut pool, &p, 4000);
+        for to in [48, 49] {
+            let mut e = engine(&mut pool, ResonatorMode::String);
+            e.note_on(48, 127, &p, SR, &mut pool);
+            // 40 dB down at a 1 s T60: 0.67 s.
+            let mut out = [0.0; BLOCK_SIZE];
+            for _ in 0..500 {
+                e.render(&mut out, &p, SR, &mut pool);
+            }
+            assert!(e.is_active());
+            e.glide_on(to, 10, &p, (SR, 0.01), &mut pool);
+            let after = lifetime(&mut e, &mut pool, &p, 4000);
+            assert!(
+                after as f32 >= 0.8 * alone as f32,
+                "to {to}: {after} blocks, a fresh soft note {alone}"
+            );
         }
     }
 
