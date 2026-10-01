@@ -92,7 +92,6 @@ fn round_trip() {
         last_project: None,
         ..settings()
     };
-    let mut s = MemStore::new(2);
     save(&mut s, &none);
     assert_eq!(boot(&mut s).0, none);
 }
