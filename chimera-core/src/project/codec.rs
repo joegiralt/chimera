@@ -14,9 +14,9 @@ use crate::params::EngineType;
 use crate::part::PartParams;
 use crate::preset::Sound;
 use crate::storage::{
-    Check, Crc32, CrcSink, DecodeInPlace, Event, FileError, FileKind, MIGRATIONS, ReadTag,
-    RecordBuf, RecordTag, RecordWriter, SoundCheck, TRANSLATIONS, decode_block, encode_block,
-    encode_sound, sound_crc,
+    Check, DecodeInPlace, Event, FileError, FileKind, MIGRATIONS, ReadTag, RecordBuf, RecordTag,
+    RecordWriter, SoundCheck, TRANSLATIONS, decode_block, encode_block, encode_sound, records_crc,
+    sound_crc,
 };
 
 use super::{Origin, PartId, PartSet, Project, SlotId};
@@ -145,11 +145,7 @@ pub fn encode_project(p: &Project, w: &mut RecordWriter<'_>) -> Result<(), Store
 /// The project's canonical CRC: its padded name, then `encode_project`'s
 /// bytes. Content only: generations and the header don't count.
 pub fn project_crc(p: &Project) -> u32 {
-    let mut sink = CrcSink(Crc32::new());
-    sink.0.update(&p.meta.name.padded());
-    // `CrcSink::put` is never Err, so neither is this.
-    let _ = encode_project(p, &mut RecordWriter::new(&mut sink));
-    sink.0.finish()
+    records_crc(&p.meta.name.padded(), |w| encode_project(p, w))
 }
 
 /// The context the records belong to: the last `Fx`, `Slot` or `Part`.

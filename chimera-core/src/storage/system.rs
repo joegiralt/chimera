@@ -10,9 +10,9 @@ use crate::ui::theme_settings::ThemeSettings;
 use super::block_codec::{ByteSet, decode_block, encode_block};
 use super::card::{Card, CardFault, Ready};
 use super::codes::{MIGRATIONS, TRANSLATIONS};
-use super::crc::{Crc32, CrcSink};
 use super::file::{AbFile, Check, Decode, LoadError, SaveError, load_ab, save_ab};
 use super::frame::{Event, FileError, FileKind, ProjectId};
+use super::record::records_crc;
 use super::record::{ReadTag, RecordBuf, RecordTag, RecordWriter};
 
 /// Everything SYSTEM holds.
@@ -50,10 +50,7 @@ pub fn encode_system(s: &SystemSettings, w: &mut RecordWriter<'_>) -> Result<(),
 /// The CRC of `encode_system`'s bytes: the body alone, so a new generation
 /// or header never reads as a change.
 pub fn body_crc(s: &SystemSettings) -> u32 {
-    let mut sink = CrcSink(Crc32::new());
-    // `CrcSink::put` is never Err, so neither is this.
-    let _ = encode_system(s, &mut RecordWriter::new(&mut sink));
-    sink.0.finish()
+    records_crc(&[], |w| encode_system(s, w))
 }
 
 /// The theme as the one block a `Block` record can reach.

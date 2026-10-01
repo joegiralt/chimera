@@ -13,9 +13,9 @@ use crate::preset::Sound;
 
 use super::block_codec::{ByteSet, decode_block, encode_block};
 use super::codes::{MIGRATIONS, TRANSLATIONS, ValidAddr};
-use super::crc::{Crc32, CrcSink};
 use super::file::{Check, Decode};
 use super::frame::{Event, FileError, FileKind};
+use super::record::records_crc;
 use super::record::{MAX_RECORD_LEN, ReadTag, RecordBuf, RecordTag, RecordWriter};
 
 const REGISTRY_ENTRY_LEN: usize = 2 + LABEL_LEN;
@@ -97,11 +97,7 @@ pub fn encode_sound(s: &Sound, w: &mut RecordWriter<'_>) -> Result<(), StoreErro
 /// The CRC of the Sound's padded name, then `encode_sound`'s bytes: equal
 /// for Sounds a card round trip can't tell apart.
 pub fn sound_crc(s: &Sound) -> u32 {
-    let mut sink = CrcSink(Crc32::new());
-    sink.0.update(&s.name.padded());
-    // `CrcSink::put` is never Err, so neither is this.
-    let _ = encode_sound(s, &mut RecordWriter::new(&mut sink));
-    sink.0.finish()
+    records_crc(&s.name.padded(), |w| encode_sound(s, w))
 }
 
 /// A record's bit in `SoundCheck::seen`; `Block` repeats per block code.
