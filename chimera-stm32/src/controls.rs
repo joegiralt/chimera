@@ -5,7 +5,10 @@
 //! Quadrature decoding matches PreenFM3 Encoders.cpp exactly.
 
 use chimera_core::clock_plan::{cycles_for_ns, systick_reload};
-use chimera_hal::{ButtonId, ButtonState, Controls, EncoderId, NUM_BUTTONS, NUM_ENCODERS};
+use chimera_hal::{
+    ButtonId, ButtonState, Controls, Edges, EncoderId, Latch, NUM_BUTTONS, NUM_ENCODERS,
+};
+use core::ptr::addr_of_mut;
 use core::sync::atomic::{AtomicBool, AtomicI8, AtomicU32, Ordering};
 use cortex_m::peripheral::syst::SystClkSource;
 use cortex_m::peripheral::{SCB, SYST};
@@ -53,7 +56,9 @@ const QUAD: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 0];
 // Shared ISR ↔ main state
 static READY: AtomicBool = AtomicBool::new(false);
 static ENC_DELTA: [AtomicI8; NUM_ENCODERS] = [const { AtomicI8::new(0) }; NUM_ENCODERS];
-static BTN_LATCH: AtomicU32 = AtomicU32::new(0);
+/// Each button's edges since the last `snapshot`. The ISR feeds them; the
+/// main loop takes them inside `interrupt::free`, so the two never overlap.
+static mut LATCHES: [Latch; NUM_BUTTONS] = [Latch::new(); NUM_BUTTONS];
 static mut ENC_STATE: [u8; NUM_ENCODERS] = [0; NUM_ENCODERS];
 static mut ENC_DEBOUNCE: [u8; NUM_ENCODERS] = [0; NUM_ENCODERS];
 /// Button debounce: tracks how many consecutive ISR ticks a button has been stable.
@@ -91,12 +96,18 @@ pub fn ticks() -> u32 {
     ISR_TICK.load(Ordering::Relaxed)
 }
 
+/// `tick` in ms. Wrapping, never `tick * 1000 / CONTROLS_HZ`: that
+/// overflows `u32` after about 2.4 h.
+fn tick_ms(tick: u32) -> u32 {
+    tick.wrapping_mul(1000 / CONTROLS_HZ)
+}
+
 /// SysTick ISR handler. Reads HC165 and decodes inputs.
 pub fn isr_tick() {
     if !READY.load(Ordering::Acquire) {
         return;
     }
-    ISR_TICK.fetch_add(1, Ordering::Relaxed);
+    let now_ms = tick_ms(ISR_TICK.fetch_add(1, Ordering::Relaxed).wrapping_add(1));
 
     let d = HC165_DELAY.load(Ordering::Relaxed);
     // Shift the HC165 chain in: LOAD on PF1, CLK on PF0, DATA on PF2.
@@ -123,10 +134,14 @@ pub fn isr_tick() {
         b
     };
 
-    // Buttons: active low, debounced to stable level
-    // SAFETY: only accessed from this ISR
+    // Buttons: active low, debounced to stable level, edges latched.
+    // SAFETY: BTN_DEBOUNCE/BTN_STATE are only touched by this ISR, which is
+    // not reentrant. LATCHES is shared with `snapshot`, which only touches it
+    // inside `interrupt::free`: on this single core that masks SysTick, so the
+    // ISR never runs during it, and the main loop cannot run during the ISR.
+    // Access is exclusive either way; no ordering beyond that is needed.
     unsafe {
-        let mut debounced: u32 = 0;
+        let latches = &mut *addr_of_mut!(LATCHES);
         for (i, &mask) in BTN_BITS.iter().enumerate() {
             let raw_pressed = bits & mask == 0;
             if raw_pressed == BTN_STATE[i] {
@@ -140,12 +155,8 @@ pub fn isr_tick() {
                     BTN_DEBOUNCE[i] = 0;
                 }
             }
-            if BTN_STATE[i] {
-                debounced |= 1 << i;
-            }
+            latches[i].level(BTN_STATE[i], now_ms);
         }
-        // Store debounced level (not edge-latched)
-        BTN_LATCH.store(debounced, Ordering::Relaxed);
     }
 
     // Encoders: quadrature decode with debounce
@@ -190,8 +201,8 @@ fn accel_for(burst_pos: u8) -> i8 {
 }
 
 pub struct Stm32Controls {
-    btn_prev: [bool; NUM_BUTTONS],
-    btn_cur: [bool; NUM_BUTTONS],
+    edges: [Edges; NUM_BUTTONS],
+    now_ms: u32,
     enc: [i8; NUM_ENCODERS],
     burst: [u8; NUM_ENCODERS],
 }
@@ -199,8 +210,8 @@ pub struct Stm32Controls {
 impl Stm32Controls {
     pub fn new() -> Self {
         Self {
-            btn_prev: [false; NUM_BUTTONS],
-            btn_cur: [false; NUM_BUTTONS],
+            edges: [Edges::default(); NUM_BUTTONS],
+            now_ms: 0,
             enc: [0; NUM_ENCODERS],
             burst: [0; NUM_ENCODERS],
         }
@@ -208,12 +219,16 @@ impl Stm32Controls {
 
     /// Read and clear accumulated ISR state. Call once per frame.
     pub fn snapshot(&mut self) {
-        self.btn_prev = self.btn_cur;
-        let debounced = BTN_LATCH.load(Ordering::Relaxed);
-        for (i, cur) in self.btn_cur.iter_mut().enumerate() {
-            *cur = debounced & (1 << i) != 0;
-        }
+        cortex_m::interrupt::free(|_| {
+            // SAFETY: SysTick is masked here, so the ISR (LATCHES' only
+            // other user) cannot run; see `isr_tick`.
+            let latches = unsafe { &mut *addr_of_mut!(LATCHES) };
+            for (e, latch) in self.edges.iter_mut().zip(latches.iter_mut()) {
+                *e = latch.take();
+            }
+        });
         let now = ISR_TICK.load(Ordering::Relaxed);
+        self.now_ms = tick_ms(now);
         for i in 0..NUM_ENCODERS {
             let raw = ENC_DELTA[i].swap(0, Ordering::Relaxed);
             // Reset burst if >150ms (75 ticks at 500Hz) since last edge
@@ -235,15 +250,6 @@ impl Stm32Controls {
             }
         }
     }
-
-    /// Returns true if any button changed state or any encoder moved this frame.
-    pub fn has_activity(&self) -> bool {
-        // Any button pressed or just released (need Released event for UI)
-        if self.btn_cur.iter().any(|&b| b) || self.btn_prev.iter().any(|&b| b) {
-            return true;
-        }
-        self.enc.iter().any(|&e| e != 0)
-    }
 }
 
 impl Controls for Stm32Controls {
@@ -252,7 +258,14 @@ impl Controls for Stm32Controls {
     }
 
     fn button_state(&self, id: ButtonId) -> ButtonState {
-        let i = id as usize;
-        ButtonState::from_levels(self.btn_prev[i], self.btn_cur[i])
+        ButtonState::from_edges(self.edges[id as usize])
+    }
+
+    fn edges(&self, id: ButtonId) -> Edges {
+        self.edges[id as usize]
+    }
+
+    fn now_ms(&self) -> u32 {
+        self.now_ms
     }
 }

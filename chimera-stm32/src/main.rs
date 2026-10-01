@@ -326,9 +326,8 @@ fn synth(board: Board) -> ! {
     let mut last_tick = controls::ticks();
     loop {
         controls.snapshot();
-        if controls.has_activity() {
-            ui.handle_input(&controls);
-        }
+        // Every frame, even idle: a held key must age.
+        ui.handle_input(&controls);
         // Leaving System syncs SYSTEM, with no overlay first: a save is
         // quicker than BUSY can be read. A toast says how it went.
         ui.sync_system(&mut sync, &mut card, store, &mut settings);

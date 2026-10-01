@@ -84,7 +84,12 @@ fn main() {
         frame_start = now;
 
         let keys = display.get_keys();
-        controls.update(&keys);
+        controls.update_events(
+            &keys,
+            &display.get_keys_pressed(),
+            &display.get_keys_released(),
+            first_light.elapsed().as_millis() as u32,
+        );
 
         // Octave shift: [ and ]
         if keys.contains(&minifb::Key::LeftBracket) {
