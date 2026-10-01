@@ -1,29 +1,43 @@
 //! One chain per SETTINGS leaf page, from the existing System defs.
 
+use crate::addr::BlockRef;
+use crate::part::PartParams;
+use crate::project::PartId;
 use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2, ParamSlot, VizType};
 use crate::ui::block_registry::{SYS_ABOUT, SYS_AUDIO, SYS_THEME, SYS_TUNING, SYS_UPDATES};
 use crate::ui::page::PageLayout;
 
-const EMPTY: ParamSlot = ParamSlot::EMPTY;
+/// One cell per Part, `P1`–`P6`, each Part's `param`: the mixer's own
+/// value, so editing either edits both.
+const fn per_part(param: crate::block::ParamId) -> [ParamSlot; 6] {
+    const LABELS: [&str; 6] = ["P1", "P2", "P3", "P4", "P5", "P6"];
+    let mut slots = [ParamSlot::EMPTY; 6];
+    let mut i = 0;
+    while i < 6 {
+        slots[i] = ParamSlot::param(BlockRef::PartMix(PartId::ALL[i]), param).with_label(LABELS[i]);
+        i += 1;
+    }
+    slots
+}
 
-/// MIDI CONFIG > CHANNELS; Task 7 binds the slots.
+/// MIDI CONFIG > CHANNELS.
 pub static CHANNELS: BlockDef = BlockDef {
     id: 68,
     name: "Channels",
     short: "CHN",
     layout: PageLayout::CellGrid,
     viz: VizType::None,
-    params: [EMPTY; 6],
+    params: per_part(PartParams::CHANNEL),
 };
 
-/// AUDIO ROUTING > OUTPUTS; Task 7 binds the slots.
+/// AUDIO ROUTING > OUTPUTS.
 pub static OUTPUTS: BlockDef = BlockDef {
     id: 69,
     name: "Outputs",
     short: "OUT",
     layout: PageLayout::CellGrid,
     viz: VizType::None,
-    params: [EMPTY; 6],
+    params: per_part(PartParams::OUTPUT),
 };
 
 static CHANNELS_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&CHANNELS)];

@@ -74,6 +74,9 @@ pub enum BlockRef {
     Part,
     /// System › Theme (`ThemeSettings`): held by the UI, not a Sound.
     Theme,
+    /// Part n's `PartParams` from any page: the SETTINGS mirrors. UI-only,
+    /// so not in `ALL` and never stored.
+    PartMix(crate::project::PartId),
 }
 
 impl BlockRef {
@@ -124,7 +127,7 @@ impl BlockRef {
             BlockRef::Reverb => &crate::dsp::reverb::REVERB_SPECS,
             BlockRef::Tape => &crate::dsp::tape::TAPE_SPECS,
             BlockRef::Comp => &crate::dsp::comp::COMP_SPECS,
-            BlockRef::Part => &crate::part::PART_SPECS,
+            BlockRef::Part | BlockRef::PartMix(_) => &crate::part::PART_SPECS,
             BlockRef::Theme => &crate::ui::theme_settings::THEME_SPECS,
         }
     }
@@ -151,6 +154,7 @@ impl BlockRef {
             | BlockRef::Tape
             | BlockRef::Comp
             | BlockRef::Part
+            | BlockRef::PartMix(_)
             | BlockRef::Theme => false,
         }
     }

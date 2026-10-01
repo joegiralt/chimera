@@ -836,6 +836,7 @@ impl BlockRead for ParamSnapshot {
             | BlockRef::Tape
             | BlockRef::Comp
             | BlockRef::Part
+            | BlockRef::PartMix(_)
             | BlockRef::Theme => return None,
         })
     }
@@ -860,6 +861,7 @@ impl Blocks for ParamSnapshot {
             | BlockRef::Tape
             | BlockRef::Comp
             | BlockRef::Part
+            | BlockRef::PartMix(_)
             | BlockRef::Theme => return None,
         })
     }

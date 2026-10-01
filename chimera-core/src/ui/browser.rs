@@ -32,7 +32,7 @@ pub fn slot_at(entry: usize) -> Option<SlotId> {
 
 pub const LIST_TOP: i32 = 44;
 pub const ROW_H: i32 = 26;
-pub const SCROLL_X: i32 = 236;
+pub const SCROLL_X: i32 = theme::SCROLL_X;
 pub const SCROLL_TOP: i32 = 40;
 pub const SCROLL_H: i32 = 208;
 const HINT_Y: i32 = 284;

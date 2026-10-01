@@ -1097,6 +1097,9 @@ impl UiState {
                 qvalues[renderer::MATRIX_AMOUNT_SLOT],
             )
             .keyed(self.matrix_state.rev, renderer::inert(f)),
+            RegionKind::Crumbs | RegionKind::List | RegionKind::Footer => {
+                RegionData::Settings { key: 0 }
+            }
         }
     }
 
@@ -1249,6 +1252,7 @@ fn read_block<'a>(
 ) -> Option<&'a dyn Block> {
     match b {
         BlockRef::Theme => Some(theme),
+        BlockRef::PartMix(p) => Some(project.read_part(p).mix),
         _ => project.read_part(part).block(b),
     }
 }
@@ -1263,6 +1267,7 @@ impl Blocks for UiBlocks<'_> {
     fn block_mut(&mut self, b: BlockRef) -> Option<&mut dyn Block> {
         match b {
             BlockRef::Theme => Some(self.theme),
+            BlockRef::PartMix(p) => Some(self.project.edit_part(p).mix),
             _ => {
                 let PartEdit { sound, mix, fx } = self.project.edit_part(self.part);
                 part_block_mut(sound, mix, fx, b)
@@ -1297,4 +1302,34 @@ fn nav_tag(nav: &ChainNav) -> (u8, u8, u8) {
         ChainId::Demo => 21,
     };
     (chain_byte, nav.node as u8, nav.sub_page as u8)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::part::PartParams;
+
+    #[test]
+    fn part_mix_edits_the_named_part() {
+        let (mut project, _) = Project::boxed();
+        let mut theme = ThemeSettings::default();
+        let [p1, _, p3, ..] = PartId::ALL;
+        let a = ParamAddr::new(BlockRef::PartMix(p3), PartParams::CHANNEL);
+        let ch = |p: &Project, id| p.part(id).mix.get(PartParams::CHANNEL);
+        let before = ch(&project, p1);
+        let mut ui = UiBlocks {
+            project: &mut project,
+            part: p1,
+            theme: &mut theme,
+        };
+        ui.block_mut(a.block).unwrap().set(a.param, 9.0);
+        assert_eq!(ch(&project, p3), 9.0);
+        assert_eq!(ch(&project, p1), before);
+        let read = UiRead {
+            project: &project,
+            part: p1,
+            theme: &theme,
+        };
+        assert_eq!(read.block(a.block).unwrap().get(a.param), 9.0);
+    }
 }

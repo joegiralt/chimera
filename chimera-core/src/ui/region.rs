@@ -107,6 +107,9 @@ pub enum RegionData {
         /// `mod_grid::inert_dests`.
         inert: u16,
     },
+    /// A SETTINGS band (breadcrumb, list or footer): a fingerprint of what
+    /// it shows.
+    Settings { key: u32 },
 }
 
 impl RegionData {
@@ -347,6 +350,11 @@ pub enum RegionKind {
     Cells,
     Nav,
     Grid,
+    /// SETTINGS' header: the breadcrumb.
+    Crumbs,
+    List,
+    /// SETTINGS' project line and key legend, in the map's band.
+    Footer,
 }
 
 /// A screen region with Y bounds and cached data.
@@ -454,6 +462,46 @@ pub fn layout_regions(layout: PageLayout) -> &'static [(RegionKind, u16, u16)] {
     }
 }
 
+const FOOTER: u16 = theme::MAP_TOP as u16;
+
+/// A SETTINGS list: breadcrumb, rows, footer.
+const SETTINGS_LIST: [(RegionKind, u16, u16); 3] = [
+    (K::Crumbs, 0, HEADER),
+    (K::List, HEADER, FOOTER),
+    (K::Footer, FOOTER, SCREEN),
+];
+const SETTINGS_CELL_GRID: [(RegionKind, u16, u16); 5] = [
+    (K::Crumbs, 0, HEADER),
+    (K::Focus, HEADER, FOCUS),
+    (K::Viz, FOCUS, BAND),
+    (K::Cells, BAND, CELLS),
+    (K::Footer, CELLS, SCREEN),
+];
+const SETTINGS_BIG_VIZ: [(RegionKind, u16, u16); 4] = [
+    (K::Crumbs, 0, HEADER),
+    (K::Viz, HEADER, BIG_VIZ_END),
+    (K::Cells, BIG_VIZ_END, CELLS),
+    (K::Footer, CELLS, SCREEN),
+];
+const SETTINGS_MATRIX: [(RegionKind, u16, u16); 4] = [
+    (K::Crumbs, 0, HEADER),
+    (K::Grid, HEADER, MATRIX_GRID),
+    (K::Focus, MATRIX_GRID, CELLS),
+    (K::Footer, CELLS, SCREEN),
+];
+
+/// SETTINGS' bands: a list (`None`) or a leaf page of `layout`. The
+/// breadcrumb takes the header's place and the footer the map's, so a leaf
+/// never shows the map.
+pub fn settings_regions(leaf: Option<PageLayout>) -> &'static [(RegionKind, u16, u16)] {
+    match leaf {
+        None => &SETTINGS_LIST,
+        Some(PageLayout::CellGrid) => &SETTINGS_CELL_GRID,
+        Some(PageLayout::BigViz) => &SETTINGS_BIG_VIZ,
+        Some(PageLayout::Matrix) => &SETTINGS_MATRIX,
+    }
+}
+
 fn sentinel(kind: RegionKind) -> RegionData {
     match kind {
         K::Header => RegionData::sentinel_header(),
@@ -462,5 +510,6 @@ fn sentinel(kind: RegionKind) -> RegionData {
         K::Cells => RegionData::sentinel_cells(),
         K::Nav => RegionData::sentinel_nav(),
         K::Grid => RegionData::sentinel_grid(),
+        K::Crumbs | K::List | K::Footer => RegionData::Settings { key: u32::MAX },
     }
 }

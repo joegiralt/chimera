@@ -346,6 +346,8 @@ impl Renderer {
                     (self.branch_scroll.current() * theme::BRANCH_LINE_HEIGHT as f32) as i32,
                 );
             }
+            // SETTINGS' bands: `settings::view` draws them.
+            RegionKind::Crumbs | RegionKind::List | RegionKind::Footer => {}
         }
     }
 

@@ -110,3 +110,16 @@ pub const NODE_LABEL_Y: i32 = 306;
 /// Sub-page branch rows under the pill.
 pub const BRANCH_START_Y: i32 = 300;
 pub const BRANCH_LINE_HEIGHT: i32 = 10;
+
+/// SETTINGS (spec § Screens): breadcrumb, list and footer, in its own look.
+/// The breadcrumb's width before it drops leading parts.
+pub const CRUMBS_W: i32 = VIZ_RIGHT - MARGIN_X;
+/// A list row's label, and the right edge of its note or `›`.
+pub const LIST_TEXT_X: i32 = 18;
+pub const LIST_RIGHT: i32 = 222;
+/// The list's scrollbar.
+pub const SCROLL_X: i32 = 236;
+/// Footer, in the map's band: a rule, the project line, the key legend.
+pub const FOOTER_RULE_Y: i32 = 280;
+pub const FOOTER_NAME_Y: i32 = 296;
+pub const FOOTER_LEGEND_Y: i32 = 312;
