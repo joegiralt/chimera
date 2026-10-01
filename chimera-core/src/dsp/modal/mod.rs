@@ -1095,7 +1095,8 @@ impl BowedString {
         let (period, _, w) = string::loop_at(freq, sample_rate);
         self.hair = self.hair.tuned(freq, w);
         let period = period + self.grip * (unlocked(period) - period);
-        self.string.set_period(0.5 * period, BowHair::DELAY, w);
+        self.string
+            .set_period_inverting(0.5 * period, BowHair::DELAY, w);
     }
 }
 
