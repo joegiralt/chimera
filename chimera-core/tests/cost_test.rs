@@ -34,14 +34,15 @@ fn worst() -> AlgoParams {
     p
 }
 
-/// Bench `MODAL /VOICE` 391: minus the chain's floor (5), rounded up to the
-/// next 10, plus `CHAIN_COST`. Algo is priced from its patch.
+/// The Modal Sound, STRING at BODY 0.3: `COST_STRING` 330 and `BODY` 80,
+/// host estimates until the bench (Modal 2 step A, task 12), plus
+/// `CHAIN_COST` (30 since ADR 0060). Algo is priced from its patch.
 #[test]
-fn voice_costs_are_the_bench_measurements() {
-    assert_eq!(Voice::CHAIN_COST, Cost(10));
+fn voice_costs_are_the_billed_literals() {
+    assert_eq!(Voice::CHAIN_COST, Cost(30));
     assert_eq!(
         voice_cost(EngineType::Modal),
-        Cost(400) + ModRouting::BASE + LP24
+        Cost(440) + ModRouting::BASE + LP24
     );
     let mods = ModState::new();
     for e in EngineType::ALL {
@@ -227,7 +228,8 @@ fn voice_bills_fold_and_drive_when_they_can_run() {
         Voice::cost(&p, &none),
         bare + Voice::FOLD_COST + Voice::DRIVE_COST
     );
-    // Stored at 0, a route: 0 bills nothing, anything else both terms.
+    // Stored at 0, a route: 0 bills nothing, anything else both stages
+    // and their ramps.
     let fold = ParamAddr::new(BlockRef::Folder, FolderParams::FOLD);
     let drive = ParamAddr::new(BlockRef::Drive, DriveParams::DRIVE);
     let empty = chimera_core::mod_path::ModDestRegistry::new();
@@ -239,10 +241,24 @@ fn voice_bills_fold_and_drive_when_they_can_run() {
     ms.set_route(ModSource::Vel.index(), f, -1);
     ms.set_route(ModSource::Vel.index(), d, 1);
     let routes = ModRouting::DEST_FIRST + ModRouting::DEST;
+    let ramps = Voice::FOLD_RAMP_COST + Voice::DRIVE_RAMP_COST;
     assert_eq!(
         Voice::cost(&base, &ms),
-        bare + Voice::FOLD_COST + Voice::DRIVE_COST + routes
+        bare + Voice::FOLD_COST + Voice::DRIVE_COST + ramps + routes
     );
+    // A route on TONE alone ramps a drive its stored DRIVE runs (I1).
+    let mut ms = ModState::from_registry(&empty, 8);
+    let t = ms
+        .push(ParamAddr::new(BlockRef::Drive, DriveParams::TONE))
+        .unwrap();
+    ms.set_route(ModSource::Vel.index(), t, 1);
+    let mut on = base.clone();
+    on.drive.drive = 0.3;
+    assert_eq!(
+        Voice::cost(&on, &ms),
+        bare + Voice::DRIVE_COST + Voice::DRIVE_RAMP_COST + ModRouting::DEST_FIRST
+    );
+    assert_eq!(Voice::cost(&base, &ms), bare + ModRouting::DEST_FIRST);
 }
 
 /// BURST mode adds `BURST` on top of `ENV_B`; B in ENV or LFO
@@ -347,7 +363,8 @@ fn budget_capacity_per_engine() {
     }
 }
 
-/// A14 ∪ A22 is eight links. The bench's `WC /VOICE` read 790.
+/// A14 ∪ A22 is eight links. The bench's `WC /VOICE` read 790, before ADR
+/// 0060's DC blocker and eases added 20 to the chain.
 #[test]
 fn the_worst_case_is_the_sum_of_its_terms() {
     let sum = AlgoEngine::COST_BASE.0
@@ -355,7 +372,7 @@ fn the_worst_case_is_the_sum_of_its_terms() {
         + 8 * AlgoEngine::COST_LINK.0
         + 6 * AlgoEngine::COST_FEEDBACK.0;
     assert_eq!(cost(&worst()), sum);
-    assert_eq!(Voice::CHAIN_COST.0 + sum, 810, "measured 790");
+    assert_eq!(Voice::CHAIN_COST.0 + sum, 830, "measured 790, + 20");
 }
 
 /// Each bench row's `/VOICE` reading, 2026-09-27, is billed at or above.
@@ -554,6 +571,7 @@ fn the_model_bills_the_mods_row_high() {
             + Cost(5 * M::DEST.0)
             + func
             + Voice::FOLD_COST
+            + Voice::FOLD_RAMP_COST
             + LP24
     );
 }
@@ -607,31 +625,32 @@ fn a16_a17() -> AlgoParams {
 /// some counts below are one fewer.
 const TAPE: bool = cfg!(feature = "master-tape");
 
-/// FX diet spec § Intent and ADR 0031: with the bus measured at 1,160
-/// (ADR 0055; 1,470 with the master tape) and the modulator pool's floor
+/// FX diet spec § Intent and ADR 0031: with the bus at 1,180 (ADR 0055,
+/// ADR 0061; 1,490 with the master tape) and the modulator pool's floor
 /// (`ModRouting::BASE`, 47) added, the costliest patch gets six voices on
-/// rev V (6 × 889 + 1,160 = 6,494 ≤ 7,000; a seventh would be 7,383), and
-/// five on rev Y ((5,833 − 1,160) / 889 = 5.26; four with the tape),
+/// rev V (6 × 909 + 1,180 = 6,634 ≤ 7,000; a seventh would be 7,543), and
+/// five on rev Y ((5,833 − 1,180) / 909 = 5.12; four with the tape),
 /// without FOLD or DRIVE, at LP24 (its SVF term 0). ADR 0040: the budget,
 /// not the eight-voice pool, is what stops it.
 #[test]
 fn the_costliest_patch_gets_six_voices_on_rev_v() {
     let p = a16_a17();
-    assert_eq!(Voice::CHAIN_COST.0 + cost(&p), 842);
-    assert_eq!(Voice::CHAIN_COST.0 + ModRouting::BASE.0 + cost(&p), 889);
-    let plain = 889 + LP24.0;
+    assert_eq!(Voice::CHAIN_COST.0 + cost(&p), 862);
+    assert_eq!(Voice::CHAIN_COST.0 + ModRouting::BASE.0 + cost(&p), 909);
+    let plain = 909 + LP24.0;
     assert_eq!(cost(&costliest()), cost(&p), "no pair has more links");
-    let bus = if TAPE { 1_470 } else { 1_160 };
+    let bus = if TAPE { 1_490 } else { 1_180 };
     assert_eq!(FxBus::COST.0, bus, "{:?}", FxBus::COST);
     assert_eq!(voices_at(CPU_HZ_REV_V, &p), 6);
     assert_eq!(MAX_VOICES, 8, "the budget stops it short of the pool");
     assert_eq!(voices_at(CPU_HZ_REV_Y, &p), if TAPE { 4 } else { 5 });
-    // With the folder on (43): 932, six on rev V and five on rev Y (five
-    // and four with the tape); the drive stage too (989): five on rev V,
-    // four on rev Y. No factory Sound does either with this shape.
+    // With the folder on, unrouted (45, ADR 0060): 954, six on rev V and
+    // four on rev Y (five and four with the tape); the drive stage too
+    // (1,011): five on rev V, four on rev Y, with the tape too. No factory
+    // Sound does either with this shape.
     let fits = |hz, voice: u32| (SampleBudget::for_cpu(hz).as_cost().0 - FxBus::COST.0) / voice;
     let fold = plain + Voice::FOLD_COST.0;
-    let want = if TAPE { (5, 4) } else { (6, 5) };
+    let want = if TAPE { (5, 4) } else { (6, 4) };
     assert_eq!((fits(CPU_HZ_REV_V, fold), fits(CPU_HZ_REV_Y, fold)), want);
     let both = fold + Voice::DRIVE_COST.0;
     assert_eq!((fits(CPU_HZ_REV_V, both), fits(CPU_HZ_REV_Y, both)), (5, 4));
@@ -639,17 +658,17 @@ fn the_costliest_patch_gets_six_voices_on_rev_v() {
 
 /// Spec § Intent and ADR 0031, 0040: every factory Sound gets at least six
 /// voices on rev V and at least five on rev Y, billed as it plays (its
-/// routes, FOLD and DRIVE in; all at LP24). With the bus at 1,160 (ADR
-/// 0055) the TX and single-oscillator Sounds (552–692) get all eight on
-/// rev V, MORPH PAD (833) seven and MORPH KEYS (844) six, both five on
-/// rev Y. With the master tape (1,470) the 692 gets seven and MORPH PAD
-/// six.
+/// routes, FOLD and DRIVE in; all at LP24). With the bus at 1,180 (ADR
+/// 0055, 0061) and ADR 0060's chain, the TX and single-oscillator Sounds
+/// (575–712) get all eight on rev V, MORPH PAD (853) and MORPH KEYS (864)
+/// six, both five on rev Y. With the master tape (1,490) the TX Sounds
+/// (703–712) get seven.
 #[test]
 fn every_factory_sound_gets_at_least_six_voices_on_rev_v() {
     const REV_V: [u32; 8] = if TAPE {
-        [8, 8, 7, 8, 8, 8, 6, 6]
+        [7, 7, 7, 7, 8, 8, 6, 6]
     } else {
-        [8, 8, 8, 8, 8, 8, 7, 6]
+        [8, 8, 8, 8, 8, 8, 6, 6]
     };
     for (i, want) in REV_V.into_iter().enumerate() {
         let s = chimera_core::factory::factory_sound(i).unwrap();
@@ -741,14 +760,16 @@ fn a_routed_silent_operator_is_priced() {
 }
 
 /// A route into PITCH or FINE retunes Modal's strings every block: billed
-/// `ModalEngine::PITCH` (provisional, emulator-derived) on any route, at
-/// amount 0 too; Algo's pitch rides its per-block operator update.
+/// `ModalEngine::PITCH` (a host estimate) on any route, at amount 0 too,
+/// SYMP `HALO_PITCH` more for its halo's seven targets;
+/// Algo's pitch rides its per-block operator update.
 #[test]
 fn a_pitch_route_on_modal_bills_the_retune() {
     use chimera_core::addr::{BlockRef, ParamAddr};
     use chimera_core::dsp::modal::ModalEngine;
     use chimera_core::params::PitchParams;
-    assert_eq!(ModalEngine::PITCH, Cost(12));
+    assert_eq!(ModalEngine::PITCH, Cost(30));
+    assert_eq!(ModalEngine::HALO_PITCH, Cost(23));
     let routed = |q, amount| {
         let mut ms = ModState::from_registry(&chimera_core::mod_path::ModDestRegistry::new(), 8);
         let d = ms.push(ParamAddr::new(BlockRef::Pitch, q)).unwrap();
@@ -757,7 +778,7 @@ fn a_pitch_route_on_modal_bills_the_retune() {
     };
     let modal = ParamSnapshot::for_engine(EngineType::Modal);
     let bare = EngineSlot::cost(&modal, &ModState::new());
-    assert_eq!(bare, ModalEngine::COST_STRING);
+    assert_eq!(bare, ModalEngine::cost(&modal.modal));
     for q in [PitchParams::PITCH, PitchParams::FINE] {
         for amount in [127, 0] {
             assert_eq!(
@@ -766,6 +787,12 @@ fn a_pitch_route_on_modal_bills_the_retune() {
             );
         }
     }
+    let mut symp = modal.clone();
+    symp.modal.mode = chimera_core::dsp::modal::ResonatorMode::Sympathetic;
+    assert_eq!(
+        EngineSlot::cost(&symp, &routed(PitchParams::PITCH, 127)),
+        EngineSlot::cost(&symp, &ModState::new()) + ModalEngine::PITCH + ModalEngine::HALO_PITCH
+    );
     let algo = ParamSnapshot::for_engine(EngineType::Algo);
     assert_eq!(
         EngineSlot::cost(&algo, &routed(PitchParams::PITCH, 127)),
@@ -773,33 +800,80 @@ fn a_pitch_route_on_modal_bills_the_retune() {
     );
 }
 
-/// Modal is billed per model (#49): String and Sympathetic as benched
-/// (Sympathetic's pool still sounds at most four), the others at or
-/// above the emulator's estimate until the bench's MDL rows (ROUTING 3/3,
-/// `modal` in chimera-stm32/src/bench.rs) read them; then the readings
-/// replace the estimates here. Voices beside the whole FX bus at its worst,
-/// on rev V and rev Y: the costlier models get fewer, as they must.
+/// A route into STRUCTURE can keep SYMP's halo gliding between chords:
+/// billed `ModalEngine::CHORD` (estimated) on any route, at amount 0
+/// too; the other models' STRUCTURE is billed with them.
 #[test]
-fn modal_bills_each_model() {
-    use chimera_core::dsp::modal::{ModalEngine, ResonatorMode};
-    let sound = |mode| {
+fn a_structure_route_on_symp_bills_the_chord_glide() {
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::dsp::modal::{ModalEngine, ModalParams, ResonatorMode};
+    assert_eq!(ModalEngine::CHORD, Cost(80));
+    let routed = |amount| {
+        let mut ms = ModState::from_registry(&chimera_core::mod_path::ModDestRegistry::new(), 8);
+        let d = ms
+            .push(ParamAddr::new(BlockRef::Modal, ModalParams::STRUCTURE))
+            .unwrap();
+        ms.set_route(ModSource::Lfo1.index(), d, amount);
+        ms
+    };
+    for mode in [
+        ResonatorMode::String,
+        ResonatorMode::Modal,
+        ResonatorMode::Bowed,
+        ResonatorMode::Sympathetic,
+    ] {
         let mut p = ParamSnapshot::for_engine(EngineType::Modal);
         p.modal.mode = mode;
+        let bare = EngineSlot::cost(&p, &ModState::new());
+        let extra = if mode == ResonatorMode::Sympathetic {
+            ModalEngine::CHORD
+        } else {
+            Cost(0)
+        };
+        for amount in [127, 0] {
+            assert_eq!(
+                EngineSlot::cost(&p, &routed(amount)),
+                bare + extra,
+                "{mode:?}"
+            );
+        }
+    }
+}
+
+/// Modal is billed per model (#49), and STRING and SYMP for BODY and the
+/// ensemble when on: host estimates until the bench's MDL rows (Modal 2
+/// step A, task 12; `modal` in chimera-stm32/src/bench.rs) read them.
+/// Voices beside the whole FX bus at its worst, on rev V and rev Y: the
+/// costlier models get fewer, as they must.
+#[test]
+fn modal_bills_each_model() {
+    use chimera_core::dsp::modal::{BankModes, ModalEngine, ResonatorMode};
+    let sound = |mode, body, ens_mix| {
+        let mut p = ParamSnapshot::for_engine(EngineType::Modal);
+        (p.modal.mode, p.modal.body, p.modal.ens_mix) = (mode, body, ens_mix);
         p
     };
-    // Sympathetic, billed as benched, gets 6 and 5 with or without the
-    // master tape (ADR 0055); four of them ring a set.
-    for (mode, billed, estimate, rev_v, rev_y) in [
-        (ResonatorMode::String, 390, 390, 8, 8),
-        (ResonatorMode::Bowed, 620, 565, 8, 6),
-        (ResonatorMode::Sympathetic, 809, 809, 6, 5),
-        (ResonatorMode::Modal, 1_900, 1_703, 2, 2),
+    use ResonatorMode::{Bowed, Modal, String, Sympathetic};
+    // Voices on rev V and rev Y, then with the master tape (ADR 0055).
+    for (p, billed, voices, taped) in [
+        (sound(String, 0.0, 0.0), 330, (8, 8), (8, 8)),
+        (sound(String, 0.3, 0.0), 410, (8, 8), (8, 8)),
+        (sound(String, 0.3, 0.5), 550, (8, 7), (8, 6)),
+        (sound(Bowed, 0.3, 0.5), 640, (8, 6), (7, 6)),
+        (sound(Sympathetic, 0.0, 0.0), 540, (8, 7), (8, 7)),
+        (sound(Sympathetic, 0.3, 0.0), 620, (8, 6), (7, 6)),
+        (sound(Sympathetic, 0.3, 0.5), 760, (6, 5), (6, 5)),
+        (sound(Modal, 0.3, 0.5), 1_900, (2, 2), (2, 2)),
     ] {
-        let p = sound(mode);
+        let (rev_v, rev_y) = if cfg!(feature = "master-tape") {
+            taped
+        } else {
+            voices
+        };
+        let m = (p.modal.mode, p.modal.body, p.modal.ens_mix);
         let engine = EngineSlot::cost(&p, &ModState::new());
-        assert_eq!(engine, ModalEngine::cost(&p.modal), "{mode:?}");
-        assert_eq!(engine, Cost(billed), "{mode:?}");
-        assert!(billed >= estimate, "{mode:?}: {billed} < {estimate}");
+        assert_eq!(engine, ModalEngine::cost(&p.modal), "{m:?}");
+        assert_eq!(engine, Cost(billed), "{m:?}");
         let voice = Voice::cost(&p, &ModState::new()).0;
         let at = |hz| {
             let budget = SampleBudget::for_cpu(hz).as_cost().0;
@@ -808,11 +882,69 @@ fn modal_bills_each_model() {
         assert_eq!(
             (at(CPU_HZ_REV_V), at(CPU_HZ_REV_Y)),
             (rev_v, rev_y),
-            "{mode:?}"
+            "{m:?}"
         );
     }
     // The bank scales with its modes: 48, the most, is 16 more than 32.
-    let mut bank = sound(ResonatorMode::Modal);
-    bank.modal.num_modes = 48;
+    let mut bank = sound(Modal, 0.0, 0.0);
+    bank.modal.modes = BankModes::M48;
     assert_eq!(ModalEngine::cost(&bank.modal), Cost(1_900 + 16 * 45));
+}
+
+/// A bow from C6 up re-takes its lock correction each block while FORCE
+/// or SPEED eases (`grip`, a loop re-split). No route can move them: they
+/// are no modulation destination, so only a knob moves them, briefly, in
+/// the headroom (ADR 0061), and nothing is billed. Made modulatable, they
+/// need a bill as PITCH's.
+#[test]
+fn force_and_speed_take_no_route_so_the_bows_retune_bills_none() {
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::dsp::modal::ModalParams;
+    for q in [ModalParams::FORCE, ModalParams::SPEED] {
+        let addr = ParamAddr::new(BlockRef::Modal, q);
+        assert!(!addr.modulatable(), "{q:?}");
+        let mut ms = ModState::from_registry(&chimera_core::mod_path::ModDestRegistry::new(), 8);
+        assert_eq!(ms.push(addr), None, "{q:?}");
+    }
+}
+
+/// STEAL GLIDE retunes a gliding Modal voice every block, as a PITCH
+/// route does: billed `ModalEngine::PITCH`, once beside a route; ALGO's
+/// glide rides its per-block operator update (#254).
+#[test]
+fn a_glide_steal_bills_the_retune() {
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::dsp::modal::{ModalEngine, ResonatorMode};
+    use chimera_core::params::{PitchParams, Steal};
+    let pitch_route = || {
+        let mut ms = ModState::from_registry(&chimera_core::mod_path::ModDestRegistry::new(), 8);
+        let d = ms
+            .push(ParamAddr::new(BlockRef::Pitch, PitchParams::PITCH))
+            .unwrap();
+        ms.set_route(ModSource::Lfo1.index(), d, 127);
+        ms
+    };
+    for mode in [
+        ResonatorMode::String,
+        ResonatorMode::Modal,
+        ResonatorMode::Bowed,
+        ResonatorMode::Sympathetic,
+    ] {
+        let mut p = ParamSnapshot::for_engine(EngineType::Modal);
+        p.modal.mode = mode;
+        let cut = EngineSlot::cost(&p, &ModState::new());
+        p.pitch.steal = Steal::Glide;
+        let glide = EngineSlot::cost(&p, &ModState::new());
+        let halo = if mode == ResonatorMode::Sympathetic {
+            ModalEngine::HALO_PITCH
+        } else {
+            Cost(0)
+        };
+        assert_eq!(glide, cut + ModalEngine::PITCH + halo, "{mode:?}");
+        assert_eq!(EngineSlot::cost(&p, &pitch_route()), glide, "{mode:?}");
+    }
+    let mut algo = ParamSnapshot::for_engine(EngineType::Algo);
+    let cut = EngineSlot::cost(&algo, &ModState::new());
+    algo.pitch.steal = Steal::Glide;
+    assert_eq!(EngineSlot::cost(&algo, &ModState::new()), cut);
 }

@@ -25,8 +25,16 @@ fn chain_active_def_resolves() {
 #[test]
 fn modal_pluck_chain() {
     let chain = &block_registry::MODAL_PLUCK_CHAIN;
-    assert_eq!(chain.blocks[0].def.name, "Modal");
-    assert_eq!(chain.blocks[0].sub_page_count(), 3); // primary + Modal-2 + Pitch
+    assert_eq!(chain.blocks[0].def.name, "Exciter");
+    assert_eq!(chain.blocks[0].sub_page_count(), 0);
+    assert_eq!(chain.blocks[1].def.name, "Modal");
+    assert_eq!(chain.blocks[1].sub_page_count(), 3); // primary + Modal-2 + Pitch
+    let map: Vec<_> = chain
+        .blocks
+        .iter()
+        .map(|b| b.map.unwrap_or(b.def.short))
+        .collect();
+    assert_eq!(map, ["EXC", "RES", "FLT", "AMP", "MOD"]);
 }
 
 #[test]

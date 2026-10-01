@@ -54,11 +54,22 @@ enum Context {
 }
 
 impl Context {
-    /// Press the chain's own button: enters it, or snaps home when already there.
+    /// Enter the chain at its first node, sub-page 0. A Part's pages are
+    /// entered home from another Part's; the mixer reopens where it was left
+    /// (ADR 0057), so MINUS walks back to its first node (MINUS
+    /// resets the sub-page).
     fn home(self, ui: &mut UiState) {
         match self {
-            Context::Part(_) => feed(ui, Input::press(ButtonId::B1)),
-            Context::Mixer(n) => feed(ui, Input::chord(ButtonId::Mix, B[n])),
+            Context::Part(_) => {
+                feed(ui, Input::press(ButtonId::B2));
+                feed(ui, Input::press(ButtonId::B1));
+            }
+            Context::Mixer(n) => {
+                feed(ui, Input::chord(ButtonId::Mix, B[n]));
+                for _ in 0..ui.nav.active_chain().len() {
+                    feed(ui, Input::press(ButtonId::Minus));
+                }
+            }
             Context::Demo => feed(ui, Input::chord(ButtonId::Mix, ButtonId::B6)),
             Context::System => feed(ui, Input::press(ButtonId::Menu)),
         }

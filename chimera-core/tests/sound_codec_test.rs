@@ -264,17 +264,20 @@ fn unknown_engine_needs_newer() {
 #[test]
 fn block_payload_shape_is_checked() {
     let mut p = Sound::neutral(EngineType::Algo).params;
-    assert_eq!(decode_block(&[], &[], None), Err(FileError::Bounds));
-    assert_eq!(decode_block(&[10, 0, 0], &[], None), Err(FileError::Bounds));
+    assert_eq!(decode_block(&[], &[], &[], None), Err(FileError::Bounds));
+    assert_eq!(
+        decode_block(&[10, 0, 0], &[], &[], None),
+        Err(FileError::Bounds)
+    );
     let dup = [10, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0];
-    assert_eq!(decode_block(&dup, &[], None), Err(FileError::Corrupt));
+    assert_eq!(decode_block(&dup, &[], &[], None), Err(FileError::Corrupt));
     // Unknown block codes and param ids are skipped.
     assert_eq!(
-        decode_block(&[200, 1, 0, 0, 0, 0], &[], Some(&mut p)),
+        decode_block(&[200, 1, 0, 0, 0, 0], &[], &[], Some(&mut p)),
         Ok(())
     );
     assert_eq!(
-        decode_block(&[10, 99, 0, 0, 0, 0], &[], Some(&mut p)),
+        decode_block(&[10, 99, 0, 0, 0, 0], &[], &[], Some(&mut p)),
         Ok(())
     );
 }
@@ -290,7 +293,7 @@ fn migration_maps_old_id() {
     let mut p = vec![10, 5];
     p.extend_from_slice(&0.8f32.to_le_bytes());
     let mut snap = Sound::neutral(EngineType::Algo).params;
-    decode_block(&p, &[m], Some(&mut snap)).unwrap();
+    decode_block(&p, &[m], &[], Some(&mut snap)).unwrap();
     assert_eq!(snap.filter.resonance, 0.4);
 }
 
@@ -389,5 +392,41 @@ fn neutral_is_pinned() {
         let want = golden.replace("engine: ENGINE,", &format!("engine: {e:?},"));
         let got = format!("{:#?}\n", Sound::neutral(e));
         assert!(got == want, "neutral {e:?} moved; now:\n{got}");
+    }
+}
+
+/// STEAL and GLIDE TIME (#254) round-trip.
+#[test]
+fn steal_and_glide_time_round_trip() {
+    use chimera_core::params::Steal;
+    for e in EngineType::ALL {
+        let mut s = Sound::init(e);
+        s.params.pitch.steal = Steal::Glide;
+        s.params.pitch.set(PitchParams::GLIDE_TIME, 0.25);
+        assert_round_trip(&s);
+        let d = decode(&encode(&s)).unwrap();
+        assert_eq!(d.params.pitch.steal, Steal::Glide);
+        assert_eq!(d.params.pitch.glide_time, 0.25);
+    }
+}
+
+/// A Pitch record from before STEAL (PITCH and FINE only) decodes to CUT,
+/// GLIDE TIME at its 150 ms.
+#[test]
+fn a_pitch_record_before_steal_decodes_to_cut() {
+    use chimera_core::params::Steal;
+    let mut p = vec![19];
+    for (id, v) in [(PitchParams::PITCH, 3.0_f32), (PitchParams::FINE, 0.0)] {
+        p.push(id.0);
+        p.extend_from_slice(&v.to_le_bytes());
+    }
+    for e in EngineType::ALL {
+        let got = decode(&file(&[engine(e), (RecordTag::Block, p.clone())])).unwrap();
+        assert_eq!(got.params.pitch.pitch, 3.0);
+        assert_eq!(got.params.pitch.steal, Steal::Cut, "{e:?}");
+        assert!(
+            (got.params.pitch.glide_secs() - 0.150).abs() < 1e-4,
+            "{e:?}"
+        );
     }
 }

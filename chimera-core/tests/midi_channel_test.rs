@@ -68,11 +68,12 @@ fn part_n_listens_on_channel_n_by_default() {
     }
 }
 
-/// MIX + B1, CH +2: Part 1 shows 3 and plays from status nibble 2.
+/// MIX + B1, MINUS to PART, CH +2: Part 1 shows 3 and plays from status nibble 2.
 #[test]
 fn mixer_part_page_moves_part_1_to_channel_3() {
     let mut ui = UiState::new();
     feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::B1));
+    feed(&mut ui, Input::press(ButtonId::Minus)); // SENDS → PART
     feed(&mut ui, Input::turn(EncoderId::A, 2));
     assert_eq!(shown(&mut ui, 0), "3");
     assert_eq!(parts_hearing(&ui, 2), [0, 2], "Part 1 layered on Part 3");

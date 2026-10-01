@@ -56,14 +56,14 @@ fn modal_row_no_amp_env_and_lives_until_modes_decay() {
     let kind = EngineType::Modal;
     let mut p = params(kind);
     p.modal.mode = ResonatorMode::Modal;
-    p.modal.decay = 0.0;
+    p.modal.damp = 0.0;
     let mut pool = SymPool::boxed();
     let mut e = EngineSlot::new(SlotKind::of(&p));
     assert!(!e.is_active());
     e.note_on(MidiNote::A4, Velocity::DEFAULT, &p, SR, &mut pool);
     assert!(e.is_active());
     e.note_off(&mut pool);
-    render(&mut e, &p, &mut pool, 400);
+    render(&mut e, &p, &mut pool, 1500);
     assert!(!e.is_active());
 }
 
@@ -77,6 +77,7 @@ fn algo_row_no_amp_env_and_lives_until_its_carriers_release() {
     render(&mut e, &p, &mut pool, 1);
     assert!(e.is_active());
     e.note_off(&mut pool);
-    render(&mut e, &p, &mut pool, 400);
+    // RR 5: T60 about 1.1 s.
+    render(&mut e, &p, &mut pool, 1500);
     assert!(!e.is_active());
 }

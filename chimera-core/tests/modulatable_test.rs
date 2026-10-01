@@ -2,7 +2,7 @@
 //! `modulatable: true`, an LFO route changes the rendered output. Keeps the
 //! flag from lying. An ENV slot is heard through its own route into CUTOFF.
 mod common;
-use common::Rig;
+use common::{Rig, routes};
 
 use chimera_core::addr::{BlockRef, ParamAddr};
 use chimera_core::dsp::algo::algorithms::AlgoId;
@@ -10,7 +10,7 @@ use chimera_core::dsp::algo::params::AlgoParams;
 use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::modulator::EnvType;
 use chimera_core::mod_path::ModDestRegistry;
-use chimera_core::modulation::{CUTOFF, MAX_MOD_SOURCES, ModSource, ModState};
+use chimera_core::modulation::{MAX_MOD_SOURCES, ModSource, ModState};
 use chimera_core::params::{EngineType, EnvParams, ParamSnapshot};
 use chimera_core::{MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
@@ -55,25 +55,18 @@ fn recipe(addr: ParamAddr) -> ParamSnapshot {
     p
 }
 
-/// LFO 1 → `addr` at `lfo`; an ENV slot also routes itself into CUTOFF.
-fn routes(addr: ParamAddr, lfo: i8) -> ModState {
-    let mut reg = ModDestRegistry::new();
-    reg.add(addr, *b"TEST\0\0\0\0").expect("modulatable");
-    let mut ms = ModState::from_registry(&reg, MAX_MOD_SOURCES);
-    ms.set_amount(ModSource::Lfo1.index(), 0, lfo);
-    if let BlockRef::Env(s) = addr.block {
-        let d = ms.push(CUTOFF).unwrap();
-        ms.set_amount(ModSource::of_env(s).index(), d, 127);
-    }
-    ms
-}
-
-fn render(params: &ParamSnapshot, mod_state: &ModState) -> Vec<f32> {
+/// Note 60 held 100 blocks, then released. `repluck`: again at block 50,
+/// so Modal's POS is heard at its next pluck.
+fn render(params: &ParamSnapshot, mod_state: &ModState, repluck: bool) -> Vec<f32> {
     let mut voice = Rig::new(chimera_hal::SAMPLE_RATE);
-    voice.note_on(MidiNote::new(60).unwrap(), Velocity::DEFAULT, params);
+    let note = MidiNote::new(60).unwrap();
+    voice.note_on(note, Velocity::DEFAULT, params);
     let mut out = Vec::new();
     let mut block = [0.0f32; BLOCK_SIZE];
     for b in 0..200 {
+        if b == 50 && repluck {
+            voice.note_on(note, Velocity::DEFAULT, params);
+        }
         if b == 100 {
             voice.note_off();
         }
@@ -93,8 +86,9 @@ fn every_modulatable_param_audibly_changes_output() {
                 continue;
             }
             let base = recipe(addr);
-            let dry = render(&base, &routes(addr, 0));
-            let wet = render(&base, &routes(addr, 127));
+            let repluck = block == BlockRef::Modal;
+            let dry = render(&base, &routes(addr, 0), repluck);
+            let wet = render(&base, &routes(addr, 127), repluck);
             let diff = dry
                 .iter()
                 .zip(&wet)
@@ -107,7 +101,7 @@ fn every_modulatable_param_audibly_changes_output() {
             checked += 1;
         }
     }
-    assert_eq!(checked, 17 + 3 * 5 + 1 + 2); // + VCA; PITCH, FINE
+    assert_eq!(checked, 17 + 3 * 5 + 1 + 2 + 4); // + VCA; PITCH, FINE; Modal's macros
 }
 
 /// #188: ENV 2 → MORPH is heard on the INIT Sound, whose ALG B differs
@@ -119,9 +113,9 @@ fn env2_into_morph_is_heard_on_init() {
     let mut reg = ModDestRegistry::new();
     reg.add(morph, *b"ALGMORPH").unwrap();
     let mut ms = ModState::from_registry(&reg, MAX_MOD_SOURCES);
-    let dry = render(&p, &ms);
+    let dry = render(&p, &ms, false);
     ms.set_amount(ModSource::Env2.index(), 0, 127);
-    let wet = render(&p, &ms);
+    let wet = render(&p, &ms, false);
     let sq = |s: &mut dyn Iterator<Item = f32>| s.map(|x| x * x).sum::<f32>();
     let rel =
         (sq(&mut dry.iter().zip(&wet).map(|(a, b)| a - b)) / sq(&mut dry.iter().copied())).sqrt();

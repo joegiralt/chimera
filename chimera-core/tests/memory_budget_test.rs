@@ -65,16 +65,19 @@ fn voice_is_its_chain_plus_one_slot() {
     );
 }
 
-/// ADR 0040: Modal's string buffers hold the period of G1 (MIDI 31, 49.0 Hz)
-/// at 48 kHz exactly; lower notes clamp to the buffer.
+/// ADR 0040, 0056: Modal's string lines hold G1 (MIDI 31, 49.0 Hz) at
+/// 48 kHz, its period's whole samples and the low-pass's two taps, and no
+/// more: F♯1 and lower clamp.
 #[test]
 fn modal_strings_cover_g1_and_no_lower() {
-    let period = |n: u8| (hw::SAMPLE_RATE as f32 / note_to_freq(n)) as usize;
-    assert_eq!(period(31), 979);
-    assert!(period(31) < MAX_STRING_DELAY, "G1 must not clamp");
-    assert!(
-        period(30) > MAX_STRING_DELAY - 1,
-        "buffer is larger than G1 needs"
+    let ring = |n: u8| (hw::SAMPLE_RATE as f32 / note_to_freq(n) - 0.5) as usize + 2;
+    assert_eq!(ring(31), 981);
+    assert_eq!(ring(31), MAX_STRING_DELAY, "G1 fits, exactly");
+    assert!(ring(30) > MAX_STRING_DELAY, "the line fits F♯1");
+    let inst = size_of::<chimera_core::instrument::Instrument>();
+    eprintln!(
+        "Instrument = {inst} B, {} B left in D2",
+        hw::VOICE_RAM_BUDGET - inst
     );
 }
 
@@ -152,8 +155,9 @@ fn ui_state_fits_the_ui_reserve() {
 }
 
 /// Exclusive-state spec § Memory: Sympathetic's seven lines live in a pool
-/// of four slots inside the `Instrument`, in D2; the voice is sized for
-/// Bowed, never for Sympathetic.
+/// of four slots inside the `Instrument`, in D2. The voice holds only
+/// SYMP's main string and lease: the largest model, within an align of
+/// STRING's voice (ADR 0056).
 #[test]
 fn sympathetic_pool_fits_d2() {
     use chimera_core::dsp::modal::{SymPool, SympatheticSet, layout};
@@ -161,6 +165,7 @@ fn sympathetic_pool_fits_d2() {
     let inst = size_of::<Instrument>();
     for (name, size) in [
         ("SympatheticVoice", layout::SYMPATHETIC_VOICE),
+        ("StringVoice", layout::STRING),
         ("BowedString", layout::BOWED),
         ("ModelSlot", layout::MODEL_SLOT),
         ("SympatheticSet", size_of::<SympatheticSet>()),
@@ -173,9 +178,10 @@ fn sympathetic_pool_fits_d2() {
         eprintln!("{name:>16} {size:>7} B");
     }
     let align = layout::MODEL_SLOT_ALIGN;
+    let largest = layout::SYMPATHETIC_VOICE.max(layout::BOWED);
     assert!(
-        layout::MODEL_SLOT <= layout::BOWED.next_multiple_of(align) + align,
-        "ModelSlot = {} B: Sympathetic sizes the voice",
+        layout::MODEL_SLOT <= largest.next_multiple_of(align) + align,
+        "ModelSlot = {} B: a model and the tag, not more",
         layout::MODEL_SLOT
     );
     assert!(

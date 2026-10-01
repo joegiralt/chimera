@@ -199,14 +199,8 @@ where
         draw::text(d, &theme::FONT_VALUE, name.as_str(), 52, y, color);
     }
     if let Some(engine) = chain {
-        draw::text_right(
-            d,
-            &theme::FONT_LABEL,
-            chain_def_for(engine).blocks[0].def.short,
-            223,
-            y,
-            dim,
-            0,
-        );
+        let chain = chain_def_for(engine);
+        let label = chain.blocks[chain.engine_node()].def.short;
+        draw::text_right(d, &theme::FONT_LABEL, label, 223, y, dim, 0);
     }
 }

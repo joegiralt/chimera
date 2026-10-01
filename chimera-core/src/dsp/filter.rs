@@ -221,6 +221,8 @@ pub struct SvfFilter {
     ic2eq: [f32; 2],
     /// The last block's `g`; `None` on a fresh voice, which starts unramped.
     g: Option<f32>,
+    /// The last block's DRIVE gain, ramped as `g` is.
+    pre: Option<f32>,
 }
 
 impl Default for SvfFilter {
@@ -235,6 +237,7 @@ impl SvfFilter {
             ic1eq: [0.0; 2],
             ic2eq: [0.0; 2],
             g: None,
+            pre: None,
         }
     }
 
@@ -250,41 +253,54 @@ impl SvfFilter {
         let k = 2.0 * (1.0 - params.resonance) + 0.01;
 
         let pre = 1.0 + drive * 4.0;
+        let pre = (self.pre.replace(pre).unwrap_or(pre), pre);
+        let g = (from, g);
         // The mode matched once a block: each mode's loop is its own, `tick`
         // inlined into it.
         match mode {
-            FilterMode::Lp6 => self.run::<0>(buf, pre, from, g, k),
-            FilterMode::Lp12 => self.run::<1>(buf, pre, from, g, k),
-            FilterMode::Lp24 => self.run::<2>(buf, pre, from, g, k),
-            FilterMode::Bp12 => self.run::<3>(buf, pre, from, g, k),
-            FilterMode::Bp24 => self.run::<4>(buf, pre, from, g, k),
-            FilterMode::Hp24 => self.run::<5>(buf, pre, from, g, k),
-            FilterMode::Notch => self.run::<6>(buf, pre, from, g, k),
-            FilterMode::Phaser => self.run::<7>(buf, pre, from, g, k),
+            FilterMode::Lp6 => self.run::<0>(buf, pre, g, k),
+            FilterMode::Lp12 => self.run::<1>(buf, pre, g, k),
+            FilterMode::Lp24 => self.run::<2>(buf, pre, g, k),
+            FilterMode::Bp12 => self.run::<3>(buf, pre, g, k),
+            FilterMode::Bp24 => self.run::<4>(buf, pre, g, k),
+            FilterMode::Hp24 => self.run::<5>(buf, pre, g, k),
+            FilterMode::Notch => self.run::<6>(buf, pre, g, k),
+            FilterMode::Phaser => self.run::<7>(buf, pre, g, k),
         }
     }
 
-    /// One block in mode `M` (a `FilterMode` discriminant).
+    /// One block in mode `M` (a `FilterMode` discriminant), `pre` and `g`
+    /// each `(from, to)`.
     #[inline(always)]
-    fn run<const M: u8>(&mut self, buf: &mut [f32], pre: f32, from: f32, g: f32, k: f32) {
+    fn run<const M: u8>(
+        &mut self,
+        buf: &mut [f32],
+        (pre_from, pre): (f32, f32),
+        (from, g): (f32, f32),
+        k: f32,
+    ) {
         let mode = FilterMode::ALL[M as usize];
-        if from == g {
+        if from == g && pre_from == pre {
             for sample in buf.iter_mut() {
                 *sample = self.tick(mode, *sample * pre, g, k);
             }
         } else {
-            // #53: `g` ramps to this block's value, reached on the last sample.
+            // #53: `g` and DRIVE ramp to this block's values, reached on the
+            // last sample.
             let step = (g - from) / buf.len() as f32;
+            let pre_step = (pre - pre_from) / buf.len() as f32;
             for (i, sample) in buf.iter_mut().enumerate() {
                 let gi = g_at(from, step, i);
-                *sample = self.tick(mode, *sample * pre, gi, k);
+                let input = *sample * g_at(pre_from, pre_step, i);
+                *sample = self.tick(mode, input, gi, k);
             }
         }
     }
 
-    /// Forget the last `g`: the next block starts without a ramp.
+    /// Forget the last `g` and DRIVE: the next block starts without a ramp.
     pub fn hold(&mut self) {
         self.g = None;
+        self.pre = None;
     }
 
     /// The last block's `g` (`None`: no ramp next block). Test-only: nothing
@@ -369,21 +385,39 @@ impl SvfFilter {
     }
 }
 
-/// Soft saturation — gentle curve that limits amplitude while preserving
-/// small signals. This is milder than tanh, letting the resonance peak
-/// ring out before clamping. Sounds more like analog capacitor saturation.
+/// Soft saturation of the integrators' state: linear to ±1, as it always
+/// was, then `1 + u − u²/2` for `u = |x| − 1`, flat at ±1.5 from ±2. Its
+/// value and slope are continuous (C1), so a loud signal bends, not steps:
+/// the old curve jumped from 1 to 0.83 at ±1, and from 0.96 to 1 at ±1.5,
+/// a buzz on anything that reached it (the owner's UAT, 2026-09-30).
 #[inline(always)]
 fn saturate(x: f32) -> f32 {
-    // Cubic soft clip: linear for |x| < 1, soft limit beyond
-    if x > 1.5 {
-        1.0
-    } else if x < -1.5 {
-        -1.0
-    } else if x > 1.0 {
-        1.0 - (2.0 - x) * (2.0 - x) / 6.0
-    } else if x < -1.0 {
-        -1.0 + (2.0 + x) * (2.0 + x) / 6.0
-    } else {
-        x
+    let a = x.abs();
+    if a <= 1.0 {
+        return x;
+    }
+    let u = (a - 1.0).min(1.0);
+    (1.0 + u - 0.5 * u * u).copysign(x)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::saturate;
+
+    /// C1: no step and no kink anywhere, odd, bounded by 1.5, linear to 1.
+    #[test]
+    fn saturate_is_smooth_and_bounded() {
+        let h = 1e-3;
+        let mut x = -3.0f32;
+        while x < 3.0 {
+            let (y0, y1, y2) = (saturate(x - h), saturate(x), saturate(x + h));
+            assert!((y2 - y0).abs() <= 2.0 * h * 1.001, "step at {x}");
+            let kink = ((y2 - y1) - (y1 - y0)).abs() / h;
+            assert!(kink <= 2.0 * h + 1e-4, "kink at {x}: {kink}");
+            assert!(y1.abs() <= 1.5 && saturate(-x) == -y1);
+            x += 0.0137;
+        }
+        assert_eq!(saturate(0.9), 0.9);
+        assert_eq!(saturate(2.5), 1.5);
     }
 }

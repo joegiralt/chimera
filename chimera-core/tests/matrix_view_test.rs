@@ -255,7 +255,8 @@ fn an_empty_matrix_says_so() {
         .sound
         .dest_registry
         .remove(chimera_core::modulation::CUTOFF);
-    feed(&mut ui, Input::press(ButtonId::B1));
+    feed(&mut ui, Input::press(ButtonId::B2));
+    feed(&mut ui, Input::press(ButtonId::B1)); // via Part 2: Part 1's home
     for _ in 0..5 {
         feed(&mut ui, Input::press(ButtonId::Plus)); // → MOD: MTX
     }

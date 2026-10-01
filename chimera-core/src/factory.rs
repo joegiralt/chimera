@@ -49,7 +49,12 @@ fn named(name: &str, algo: AlgoParams) -> Sound {
 }
 
 pub fn factory_sound(i: usize) -> Option<Sound> {
-    let off = AlgoOpParams::default();
+    // A silent operator, as the factory Sounds were written: RR 8, before
+    // INIT's moved to 5 (ADR 0063).
+    let off = AlgoOpParams {
+        rr: 8,
+        ..AlgoOpParams::default()
+    };
     let w1 = WaveId::W1;
     let sound = match i {
         0 => {
@@ -197,6 +202,8 @@ pub fn factory_sound(i: usize) -> Option<Sound> {
             (s.params.filter.cutoff, s.params.filter.resonance) = (900.0, 0.4);
             // DRIVE 0.3 trimmed for LEVEL 95's +0.01 dB: the clipper's input is unchanged.
             s.params.drive.drive = 0.299_496_26;
+            // Its level from before INIT's moved to the median (ADR 0063).
+            s.params.out.volume = 0.8;
             s
         }
         6 => {

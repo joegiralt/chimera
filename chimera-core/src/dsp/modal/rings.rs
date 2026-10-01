@@ -1,4 +1,4 @@
-// The SVF bandpass, fast tangent, cosine oscillator and stiffness table follow
+// The SVF bandpasses, fast tangent, cosine oscillator and stiffness table follow
 // Mutable Instruments Rings and stmlib (ADR 0032):
 //
 // Copyright 2014-2015 Emilie Gillet.
@@ -28,7 +28,7 @@
 
 // ── SVF Bandpass (ZDF topology, matching Rings/stmlib) ──────────────
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub(super) struct Svf {
     state_1: f32,
     state_2: f32,
@@ -55,6 +55,18 @@ impl Svf {
         self.h = 1.0 / (1.0 + self.r * self.g + self.g * self.g);
     }
 
+    /// Silent, its tuning kept.
+    pub(super) fn reset(&mut self) {
+        self.state_1 = 0.0;
+        self.state_2 = 0.0;
+    }
+
+    /// `tan(π·f)` as set: for the tests.
+    #[cfg(test)]
+    pub(super) fn g(&self) -> f32 {
+        self.g
+    }
+
     /// Process one sample, return bandpass output.
     #[inline]
     pub(super) fn process_bp(&mut self, input: f32) -> f32 {
@@ -65,10 +77,17 @@ impl Svf {
         self.state_2 = self.g * bp + lp;
         bp
     }
+
+    /// `process_bp` at unity gain at its peak (Rings'
+    /// `FILTER_MODE_BAND_PASS_NORMALIZED`).
+    #[inline]
+    pub(super) fn process_bp_normalized(&mut self, input: f32) -> f32 {
+        self.r * self.process_bp(input)
+    }
 }
 
 /// Fast tangent approximation (matches Rings' FREQUENCY_FAST).
-fn tan_approx(f: f32) -> f32 {
+pub(super) fn tan_approx(f: f32) -> f32 {
     let pi = core::f32::consts::PI;
     let f2 = f * f;
     f * (pi + f2 * (0.326 * pi * pi * pi + 0.1823 * pi * pi * pi * pi * pi * f2))
@@ -81,6 +100,11 @@ pub(super) struct CosineOsc {
     y1: f32,
     iir_coefficient: f32,
     initial_amplitude: f32,
+    /// A moved position's glide: its end, the coefficient's step a
+    /// sample, and the samples left.
+    to: f32,
+    step: f32,
+    left: u32,
 }
 
 impl CosineOsc {
@@ -90,11 +114,14 @@ impl CosineOsc {
             y1: 0.0,
             iir_coefficient: 0.0,
             initial_amplitude: 0.0,
+            to: 0.0,
+            step: 0.0,
+            left: 0,
         }
     }
 
-    /// Initialize with position (0..1).
-    pub(super) fn init(&mut self, position: f32) {
+    /// The coefficient at position (0..1).
+    fn coefficient(position: f32) -> f32 {
         let mut sign = 16.0_f32;
         let mut freq = position - 0.25;
         if freq < 0.0 {
@@ -104,12 +131,41 @@ impl CosineOsc {
         } else {
             sign = -16.0;
         }
-        self.iir_coefficient = sign * freq * (1.0 - 2.0 * freq);
-        self.initial_amplitude = self.iir_coefficient * 0.25;
+        sign * freq * (1.0 - 2.0 * freq)
     }
 
-    /// Reset to start of sequence.
+    /// Initialize with position (0..1), at once: a note-on.
+    pub(super) fn init(&mut self, position: f32) {
+        self.iir_coefficient = Self::coefficient(position);
+        self.initial_amplitude = self.iir_coefficient * 0.25;
+        self.left = 0;
+    }
+
+    /// Moves to position (0..1) over `samples` `start`s, the weights
+    /// gliding: a step would click every sounding mode.
+    pub(super) fn glide(&mut self, position: f32, samples: u32) {
+        self.to = Self::coefficient(position);
+        self.step = (self.to - self.iir_coefficient) / samples as f32;
+        // Where it is: nothing to step.
+        self.left = if self.to == self.iir_coefficient {
+            0
+        } else {
+            samples
+        };
+    }
+
+    /// Reset to start of sequence, a gliding position a sample on.
     pub(super) fn start(&mut self) {
+        if self.left > 0 {
+            self.left -= 1;
+            // The last step lands on the end exactly.
+            self.iir_coefficient = if self.left == 0 {
+                self.to
+            } else {
+                self.iir_coefficient + self.step
+            };
+            self.initial_amplitude = self.iir_coefficient * 0.25;
+        }
         self.y1 = self.initial_amplitude;
         self.y0 = 0.5;
     }

@@ -1,5 +1,6 @@
 //! Sanity gate (spec § Testing), run before goldens are recorded.
-//! Per engine init sound: finite, within ±1.0, not silent, silent after
+//! Per engine init sound: finite, within ±1.0 (× a Modal model's output
+//! gain, ADR 0058), not silent, silent after
 //! note-off; pitched engines' fundamental within one semitone of the note.
 //! A failing engine gets a GitHub issue and its failing test is
 //! marked `#[ignore = "known broken: …"]`. It is not fixed in this refactor.
@@ -8,6 +9,7 @@ mod common;
 use common::Rig;
 use common::peak;
 
+use chimera_core::dsp::modal::out_gain;
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_hal::BLOCK_SIZE;
 use common::*;
@@ -51,6 +53,14 @@ fn fundamental_hz(s: &[f32]) -> f32 {
     SR as f32 / lag as f32
 }
 
+/// ±1, × a Modal model's output gain (ADR 0058).
+fn bound(p: &ParamSnapshot) -> f32 {
+    match p.engine() {
+        EngineType::Modal => out_gain(p.modal.mode),
+        _ => 1.0,
+    }
+}
+
 fn assert_finite_bounded_audible(case: Case) {
     let out = render_case(case);
     assert!(
@@ -58,8 +68,16 @@ fn assert_finite_bounded_audible(case: Case) {
         "{}: non-finite sample",
         case.name()
     );
-    let pk = peak(&out);
-    assert!(pk <= 1.0, "{}: peak {pk} exceeds ±1.0", case.name());
+    // The switch's Algo half is Algo's, its Modal half Modal's.
+    let (algo, modal) = (setup(case).0, init_params(EngineType::Modal));
+    let split = match case {
+        Case::AlgoToModalSwitch => ON_BLOCKS / 2 * BLOCK_SIZE,
+        _ => out.len(),
+    };
+    for (part, p) in [(&out[..split], &algo), (&out[split..], &modal)] {
+        let (pk, bound) = (peak(part), bound(p));
+        assert!(pk <= bound, "{}: peak {pk} exceeds ±{bound}", case.name());
+    }
     let on = peak(&out[..ON_BLOCKS * BLOCK_SIZE]);
     assert!(
         on > AUDIBLE,
@@ -95,7 +113,6 @@ fn modal_is_finite_bounded_audible() {
     assert_finite_bounded_audible(Case::ModalInit);
 }
 #[test]
-#[ignore = "known broken: https://github.com/joegiralt/chimera/issues/10"]
 fn modal_is_pitched() {
     assert_pitched(Case::ModalInit);
 }
@@ -138,7 +155,7 @@ fn modal_tail_windows(params: &ParamSnapshot, off_blocks: usize, window_blocks: 
 /// Physics-correct replacement for the old "silent within TAIL_BLOCKS" check:
 /// the tail's windowed RMS trends down over the release (several-window
 /// averages, not a strict per-block decrease), and a patch with a faster
-/// DECAY setting reaches silence sooner than the default.
+/// DAMP reaches silence sooner than the default.
 #[test]
 fn modal_tail_decays_after_note_off() {
     // ~1.6 s of release — long enough for both patches below to cross SILENT.
@@ -165,10 +182,10 @@ fn modal_tail_decays_after_note_off() {
         "modal_init: tail did not decay (early avg {early:.6}, late avg {late:.6})"
     );
 
-    // A patch with a faster decay setting must reach silence sooner than the
-    // default (DECAY spec default 0.3; 1.0 is its max — still a valid patch).
+    // A patch with a shorter DAMP must reach silence sooner than the
+    // default (INIT's, the old DECAY 0.3; 0.0, its min, is the shortest).
     let mut faster_decay = default_params.clone();
-    faster_decay.modal.decay = 1.0;
+    faster_decay.modal.damp = 0.0;
     let faster_windows = modal_tail_windows(&faster_decay, OFF_BLOCKS_LONG, WINDOW_BLOCKS);
 
     let silent_at = |windows: &[f32]| {
@@ -181,7 +198,7 @@ fn modal_tail_decays_after_note_off() {
     let faster_at = silent_at(&faster_windows);
     assert!(
         faster_at < default_at,
-        "higher decay should reach silence sooner: default window {default_at}, decay=1.0 window {faster_at}"
+        "shorter DAMP should reach silence sooner: default window {default_at}, DAMP 0 window {faster_at}"
     );
 }
 

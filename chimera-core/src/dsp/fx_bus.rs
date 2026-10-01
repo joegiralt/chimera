@@ -11,15 +11,14 @@
 //! (ADR 0050).
 
 use chimera_hal::BLOCK_SIZE;
-use core::f32::consts::LOG2_E;
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 
 use crate::dsp::Stereo;
-use crate::dsp::algo::math::exp2;
 use crate::dsp::chorus::{ChorusParams, JunoChorus};
 use crate::dsp::comp::{CompParams, MasterComp};
 use crate::dsp::delay::{DelayParams, TapeDelay};
+use crate::dsp::ease::{Ease, ease_coeff};
 use crate::dsp::limiter::{DacBlocks, Limiter};
 use crate::dsp::reverb::ReverbParams;
 use crate::dsp::ring::RingReverb;
@@ -66,8 +65,8 @@ pub struct FxBus {
     tape: Tape,
     comp: MasterComp,
     limiter: Limiter,
-    /// REV SEND, smoothed: where this block's ramp starts.
-    rev_send: f32,
+    /// REV SEND, eased.
+    rev_send: Ease,
 }
 
 #[cfg(feature = "master-tape")]
@@ -86,11 +85,16 @@ impl FxBus {
     /// and the output limiter; reserved from the voice budget whether or
     /// not an effect is on. The bench's BUS row runs `mix_parts`, so it
     /// times the limiter too (ADR 0050); the master tape counts only in
-    /// the build that runs it (ADR 0055).
+    /// the build that runs it (ADR 0055). Each benched BUS row plus the
+    /// settings' eases, run every block (ADR 0061): 6.5 instructions a
+    /// sample, × 1.46 × 1.1 = 10.4 by ADR 0056's host method. A setting
+    /// moving is the UI's doing, never a route's, so what its ease costs
+    /// while it moves (up to 50 instructions a sample, a delay TIME
+    /// crossfade under a MIX ramp) is brief and sits in the headroom.
     #[cfg(not(feature = "master-tape"))]
-    pub const COST: Cost = Cost(1160); // BUS 1155, measured 2026-09-29, bench, rev V at 480 MHz, b34a66a; rounded up
+    pub const COST: Cost = Cost(1180); // BUS 1155, measured 2026-09-29, bench, rev V at 480 MHz, b34a66a; + 10.4 (ADR 0061); rounded up
     #[cfg(feature = "master-tape")]
-    pub const COST: Cost = Cost(1470); // BUS 1468, measured 2026-09-29, bench, rev V at 480 MHz, 87c2930 (tape in); rounded up
+    pub const COST: Cost = Cost(1490); // BUS 1468, measured 2026-09-29, bench, rev V at 480 MHz, 87c2930 (tape in); + 10.4 (ADR 0061); rounded up
 
     pub fn new() -> Self {
         Self {
@@ -101,7 +105,7 @@ impl FxBus {
             tape: Tape::new(),
             comp: MasterComp::new(),
             limiter: Limiter::new(),
-            rev_send: 0.0,
+            rev_send: Ease::default(),
         }
     }
 
@@ -118,14 +122,15 @@ impl FxBus {
             Tape::init_in_place(uninit_at(addr_of_mut!((*p).tape)));
             MasterComp::init_in_place(uninit_at(addr_of_mut!((*p).comp)));
             Limiter::init_in_place(uninit_at(addr_of_mut!((*p).limiter)));
-            addr_of_mut!((*p).rev_send).write(0.0);
+            addr_of_mut!((*p).rev_send).write(Ease::default());
             slot.assume_init_mut()
         }
     }
 
-    /// Run each effect that is on over its send and sum the wet returns
-    /// into `ret`. An effect that is off returns nothing, so a send into
-    /// it is silent.
+    /// Run every effect over its send and sum the wet returns into `ret`.
+    /// Each runs whatever its MIX, which eases its return: an effect at
+    /// MIX 0 returns nothing, and one brought back up plays what its send
+    /// is doing now, never a frozen tail (#61).
     pub fn process(
         &mut self,
         sends: &mut [[f32; BLOCK_SIZE]; FX_SENDS],
@@ -133,52 +138,37 @@ impl FxBus {
         sample_rate: u32,
         ret: &mut Stereo,
     ) {
-        *ret = Stereo::SILENT;
         let [chorus, delay, reverb] = sends;
-        if params.chorus.is_on() {
-            let mut wet = Stereo::SILENT;
-            self.chorus
-                .process_wet(chorus, &params.chorus, sample_rate, &mut wet);
-            add(&mut ret.l, &wet.l);
-            add(&mut ret.r, &wet.r);
-        }
-        let delay_on = params.delay.is_on();
-        if delay_on {
-            self.delay.process_wet(delay, &params.delay, sample_rate);
-            add(&mut ret.l, delay);
-            add(&mut ret.r, delay);
-        }
+        self.chorus
+            .process_wet(chorus, &params.chorus, sample_rate, ret);
+        self.delay.process_wet(delay, &params.delay, sample_rate);
+        add(&mut ret.l, delay);
+        add(&mut ret.r, delay);
         // REV SEND: the delay's return into the reverb's send, this block.
-        // With the delay off its buffer is the raw send: nothing passes.
-        let target = if delay_on && params.reverb.is_on() {
-            unit(params.delay.rev_send)
-        } else {
-            0.0
-        };
-        let from = if delay_on { self.rev_send } else { 0.0 };
-        let mut to = target + smoothing(sample_rate) * (from - target);
-        if target == 0.0 && to < 1e-4 {
-            to = 0.0;
-        }
+        let (from, to) = self
+            .rev_send
+            .step(unit(params.delay.rev_send), ease_coeff(sample_rate));
         if from != 0.0 || to != 0.0 {
             let n = BLOCK_SIZE as f32;
             for (i, (r, &d)) in reverb.iter_mut().zip(delay.iter()).enumerate() {
                 *r += (from + (to - from) * (i + 1) as f32 / n) * d;
             }
         }
-        self.rev_send = to;
-        if params.reverb.is_on() {
-            let mut wet = Stereo::SILENT;
-            self.reverb.process(
-                reverb,
-                &params.reverb.controls(),
-                params.reverb.mix,
-                sample_rate,
-                &mut wet,
-            );
-            add(&mut ret.l, &wet.l);
-            add(&mut ret.r, &wet.r);
-        }
+        let mut wet = Stereo::SILENT;
+        let mix = if params.reverb.is_on() {
+            params.reverb.mix
+        } else {
+            0.0
+        };
+        self.reverb.process(
+            reverb,
+            &params.reverb.controls(),
+            mix,
+            sample_rate,
+            &mut wet,
+        );
+        add(&mut ret.l, &wet.l);
+        add(&mut ret.r, &wet.r);
     }
 
     /// The master section, after every pair is summed: the compressor, one
@@ -216,11 +206,6 @@ fn add(acc: &mut [f32; BLOCK_SIZE], x: &[f32; BLOCK_SIZE]) {
     for (a, &v) in acc.iter_mut().zip(x) {
         *a += v;
     }
-}
-
-/// REV SEND's one-pole, once per block: 20 ms.
-fn smoothing(sample_rate: u32) -> f32 {
-    exp2(-LOG2_E * BLOCK_SIZE as f32 / (0.02 * sample_rate as f32))
 }
 
 /// Clamped to 0..1; NaN reads as 0.

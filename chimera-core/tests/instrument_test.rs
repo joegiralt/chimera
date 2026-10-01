@@ -9,12 +9,13 @@ use chimera_core::dsp::Stereo;
 use chimera_core::dsp::algo::params::AlgoParams;
 use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::chorus::ChorusParams;
+use chimera_core::dsp::ease::{Ease, ease_coeff, step_of};
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus};
 use chimera_core::dsp::limiter::OUTPUT_TRIM;
 use chimera_core::dsp::ring::{first_reflection, size_step};
 use chimera_core::hw::{DAC_PAIRS, MAX_PARTS, MAX_VOICES};
 use chimera_core::instrument::{
-    AudioShared, DacBlocks, DacOut, Instrument, PanCache, mix_parts, pan_gains,
+    AudioShared, DacBlocks, DacOut, Instrument, MixState, mix_parts, pan_gains,
 };
 use chimera_core::modulation::ModState;
 use chimera_core::note_queue::{NoteEvent, NoteKind};
@@ -94,6 +95,18 @@ impl Rig {
     fn rev_v() -> Self {
         let mut rig = Self::new();
         *rig.inst = Instrument::new(SR, SampleBudget::for_cpu(CPU_HZ_REV_V));
+        rig
+    }
+    /// Rev V, or with the master tape (where ALGO INIT plays seven since
+    /// ADR 0060) a budget for eight: the pool full of INIT.
+    fn full_pool() -> Self {
+        let mut rig = Self::rev_v();
+        if cfg!(feature = "master-tape") {
+            let init = AudioShared::default();
+            let p = &init.parts[0];
+            let voice = chimera_core::dsp::voice::Voice::cost(&p.params, &p.mod_state).0;
+            *rig.inst = Instrument::new(SR, budget_for(8 * voice));
+        }
         rig
     }
     fn render(&mut self, shared: &AudioShared) -> &DacOut {
@@ -184,7 +197,7 @@ fn mix_parts_alone_is_renders_mix() {
         &buses,
         &written,
         &mut sends,
-        &mut PanCache::default(),
+        &mut MixState::default(),
         &mut fx,
         &shared,
         SR,
@@ -195,7 +208,8 @@ fn mix_parts_alone_is_renders_mix() {
 }
 
 /// `mix_parts` as first written: each Part added into zeroed buffers, then
-/// the master section and the limiter.
+/// the master section and the limiter; each gain eased as `MixState` eases
+/// it.
 fn mix_parts_reference(
     buses: &[[f32; BLOCK_SIZE]; MAX_PARTS],
     written: &[bool; MAX_PARTS],
@@ -203,27 +217,49 @@ fn mix_parts_reference(
     fx: &mut FxBus,
     shared: &AudioShared,
     dac: &mut DacBlocks,
+    eases: &mut [[Ease; 5]; MAX_PARTS],
 ) -> [f32; BLOCK_SIZE] {
     let out = dac.mix();
     *out = [[0.0; BLOCK_SIZE * 2]; DAC_PAIRS];
     *sends = [[0.0; BLOCK_SIZE]; FX_SENDS];
     let mut scope = [0.0f32; BLOCK_SIZE];
+    let k = ease_coeff(SR);
+    let mut moving = Vec::new();
     for (p, part) in shared.parts.iter().enumerate() {
+        let (gl, gr) = pan_gains(part.mix.pan);
+        let [s0, s1, s2] = part.mix.sends;
+        let to = [gl * part.mix.level, gr * part.mix.level, s0, s1, s2];
         if !written[p] {
+            for (e, &t) in eases[p].iter_mut().zip(&to) {
+                e.land(t);
+            }
             continue;
         }
+        let g: [(f32, f32); 5] = core::array::from_fn(|j| eases[p][j].step(to[j], k));
         let bus = &buses[p];
-        let (gl, gr) = pan_gains(part.mix.pan);
-        let (gl, gr) = (gl * part.mix.level, gr * part.mix.level);
-        let pair = &mut out[part.mix.output.index()];
+        let k = part.mix.output.index();
         for i in 0..BLOCK_SIZE {
-            pair[2 * i] += bus[i] * gl;
-            pair[2 * i + 1] += bus[i] * gr;
+            out[k][2 * i] += bus[i] * g[0].0;
+            out[k][2 * i + 1] += bus[i] * g[1].0;
             scope[i] += bus[i];
         }
-        for (send, &amount) in sends.iter_mut().zip(&part.mix.sends) {
+        for (send, &(from, _)) in sends.iter_mut().zip(&g[2..]) {
             for (s, &b) in send.iter_mut().zip(bus) {
-                *s += b * amount;
+                *s += b * from;
+            }
+        }
+        if g.iter().any(|g| g.0 != g.1) {
+            moving.push((p, k, g.map(|g| step_of(g, BLOCK_SIZE))));
+        }
+    }
+    // Each moving gain's ramp past its start, after every Part's start.
+    let n = |i: usize| (i + 1) as f32;
+    for &(p, _, steps) in &moving {
+        for (send, &step) in sends.iter_mut().zip(&steps[2..]) {
+            if step != 0.0 {
+                for (i, (s, &b)) in send.iter_mut().zip(&buses[p]).enumerate() {
+                    *s += b * (step * n(i));
+                }
             }
         }
     }
@@ -232,6 +268,15 @@ fn mix_parts_reference(
     for (i, (&l, &r)) in ret.l.iter().zip(&ret.r).enumerate() {
         out[0][2 * i] += l;
         out[0][2 * i + 1] += r;
+    }
+    for &(p, k, steps) in &moving {
+        for (side, &step) in steps[..2].iter().enumerate() {
+            if step != 0.0 {
+                for (i, &b) in buses[p].iter().enumerate() {
+                    out[k][2 * i + side] += b * (step * n(i));
+                }
+            }
+        }
     }
     fx.master(out, &shared.fx, SR);
     fx.limit(dac, SR);
@@ -243,7 +288,7 @@ fn bits<const N: usize>(x: &[f32; N]) -> [u32; N] {
 }
 
 /// The fused mix is bit-for-bit the reference, every Part written or some,
-/// every FX on, pans moving under one `PanCache`, signed zeros on the buses.
+/// every FX on, pans moving under one `MixState`, signed zeros on the buses.
 #[test]
 fn mix_parts_is_bit_identical_to_the_reference() {
     let mut x = 0x9e37_79b9u32;
@@ -259,7 +304,8 @@ fn mix_parts_is_bit_identical_to_the_reference() {
     shared.fx.delay.mix = 0.5;
     shared.fx.reverb.mix = 0.5;
     let (mut fx, mut fx_ref) = (Box::new(FxBus::new()), Box::new(FxBus::new()));
-    let mut pans = PanCache::default();
+    let mut pans = MixState::default();
+    let mut eases = [[Ease::default(); 5]; MAX_PARTS];
     let (mut sends, mut sends_ref) = ([[0.0; BLOCK_SIZE]; FX_SENDS], [[0.0; BLOCK_SIZE]; FX_SENDS]);
     let mut out = Box::new(DacBlocks::new());
     *out.mix() = [[1.0; BLOCK_SIZE * 2]; DAC_PAIRS];
@@ -297,6 +343,7 @@ fn mix_parts_is_bit_identical_to_the_reference() {
             &mut fx_ref,
             &shared,
             &mut out_ref,
+            &mut eases,
         );
         assert_eq!(bits(&scope), bits(&scope_ref), "block {block}: scope");
         for k in 0..DAC_PAIRS {
@@ -642,24 +689,33 @@ fn the_costliest_patch_plays_six_voices_on_rev_v() {
 }
 
 /// Recorded when the instrument path landed (plan Task 12). Re-record only
-/// for an intended sound change (`common::golden`).
+/// for an intended sound change (`common::golden`). Every row re-recorded
+/// at Task 17 for ADR 0060's voice DC blocker; each comment names what came
+/// before. The Algo rows re-recorded for the filter's C1 `saturate` (ADR
+/// 0063), then every row for its INIT (OUT LEVEL 45/128, RR 5).
 const GOLDENS: &[(&str, u64)] = &[
-    ("poly_chord", 0x6876d7661e044851), // ADR 0049 INIT, then the ADR 0050 output trim
-    ("two_parts_two_pairs", 0x851eab45ed8a2f86), // ADR 0049 INIT, then the ADR 0050 output trim
-    ("reverb_send_off", 0x0e7a98bc151a775d), // ADR 0049 INIT, then the ADR 0050 output trim
-    ("reverb_send_on", 0xa0e1bc2dec7668d9), // ADR 0049 INIT, then the ADR 0050 output trim
-    ("six_voice_chord", 0xc2673515ab48c0c9), // ADR 0049 INIT, then the ADR 0050 output trim
+    ("poly_chord", 0xba9fbebb12bbbc4d), // ADR 0049 INIT, then the ADR 0050 output trim
+    // Re-recorded: Modal 2 step A, then ADR 0058's gain, then Task 18's DAMP make-up,
+    // then the free ring on release (ADR 0062).
+    ("two_parts_two_pairs", 0xd461a92a9542074a),
+    ("reverb_send_off", 0xb7ff733538f39db9), // ADR 0049 INIT, then the ADR 0050 output trim
+    ("reverb_send_on", 0xa7009ff4d6324987),  // ADR 0049 INIT, then the ADR 0050 output trim
+    ("six_voice_chord", 0xb3bb31dbc471cf01), // ADR 0049 INIT, then the ADR 0050 output trim
 ];
 
 /// ADR 0050: everything before the limiter is the mix unchanged by it,
 /// bit for bit. These are the goldens as ADR 0049's INIT recorded them,
-/// before the output trim.
+/// before the output trim; every row re-recorded for ADR 0060's voice DC
+/// blocker, and for ADR 0063's C1 `saturate` and INIT.
 const PRE_LIMITER: &[(&str, u64)] = &[
-    ("poly_chord", 0x2c57afe8baf00119),
-    ("two_parts_two_pairs", 0x016712a2b7e18d83),
-    ("reverb_send_off", 0xf40c677a4633ad69),
-    ("reverb_send_on", 0x5e7b5f6ed1eedd52),
-    ("six_voice_chord", 0x241436b65cc7a435),
+    ("poly_chord", 0x9a7e4fc66c45f339),
+    // Re-recorded: Modal 2 step A's resonators (spec § Tests), then ADR 0058's gain,
+    // then Task 18's DAMP make-up,
+    // then the free ring on release (ADR 0062).
+    ("two_parts_two_pairs", 0x5505c654fb526b21),
+    ("reverb_send_off", 0x8180167de55cf955),
+    ("reverb_send_on", 0x746ea6b464bbdb38),
+    ("six_voice_chord", 0x5efd58ea3b91d3bd),
 ];
 
 /// A named golden case: a case name paired with its render function.
@@ -766,6 +822,11 @@ fn sound_change_mid_chord_stays_in_budget() {
         rig.inst.handle(on(0, 60 + n), &shared);
     }
     rig.render(&shared);
+    let fits = |p: &ParamSnapshot| {
+        ((budget.as_cost().0 - FxBus::COST.0) / Voice::cost(p, &ModState::new()).0)
+            .min(MAX_VOICES as u32) as usize
+    };
+    let held = fits(&shared.parts[0].params);
     assert_eq!(
         rig.inst
             .allocator()
@@ -773,7 +834,7 @@ fn sound_change_mid_chord_stays_in_budget() {
             .iter()
             .filter(|s| !s.is_free())
             .count(),
-        MAX_VOICES
+        held
     );
     shared.parts[0].params = ParamSnapshot::for_engine(EngineType::Modal);
     rig.render(&shared);
@@ -785,7 +846,7 @@ fn sound_change_mid_chord_stays_in_budget() {
             &ModState::new(),
         )
         .0)
-        .min(MAX_VOICES as u32);
+        .min(held as u32);
     assert_eq!(
         a.slots().iter().filter(|s| !s.is_free()).count(),
         expected as usize
@@ -798,7 +859,9 @@ fn sound_change_mid_chord_stays_in_budget() {
             )));
 }
 
-/// ADR 0040, 0049: eight held INIT notes all sound at rev V's budget.
+/// ADR 0040, 0049: eight held INIT notes all sound at rev V's budget;
+/// seven with the master tape (ADR 0055), whose two cycles to spare ADR
+/// 0060's DC blocker took.
 #[test]
 fn eight_init_voices_fit_rev_v() {
     let mut rig = Rig::rev_v();
@@ -811,7 +874,8 @@ fn eight_init_voices_fit_rev_v() {
     }
     let a = rig.inst.allocator();
     assert_eq!(MAX_VOICES, 8);
-    assert_eq!(a.slots().iter().filter(|s| !s.is_free()).count(), 8);
+    let want = if cfg!(feature = "master-tape") { 7 } else { 8 };
+    assert_eq!(a.slots().iter().filter(|s| !s.is_free()).count(), want);
     let budget = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost();
     assert!(
         a.sounding_cost() + FxBus::COST <= budget,
@@ -857,7 +921,7 @@ fn stealing_a_releasing_voice_does_not_free_the_new_note() {
         .into_iter()
         .flat_map(|a| [(a, 0), (a, 20)])
     {
-        let mut rig = Rig::rev_v();
+        let mut rig = Rig::full_pool();
         for k in 0..MAX_VOICES as u8 {
             rig.inst.handle(on(0, 60 + k), &shared); // the pool full, voice 0 oldest
         }
@@ -949,8 +1013,9 @@ fn retriggering_a_releasing_mono_voice_does_not_free_the_new_note() {
 
 /// Review Focus (stuck notes): one Part holds the same key from two
 /// channels — C4 from channel 1, then the Part moves to channel 4 and C4
-/// comes again. Each note-off releases exactly the voice its channel
-/// started, in either order, and both voices ring out and are freed.
+/// comes again. The second re-strikes the key's voice (ADR 0062), which
+/// channel 4's note-off releases, in either order; channel 1's releases
+/// nothing, and the voice rings out and is freed.
 #[test]
 fn same_note_from_two_channels_releases_both_voices() {
     for ch4_first in [true, false] {
@@ -959,26 +1024,21 @@ fn same_note_from_two_channels_releases_both_voices() {
         rig.inst.handle(on(0, 60), &shared); // voice 0
         rig.render(&shared);
         shared.parts[0].mix.channel = MidiChannel::new(3).unwrap();
-        rig.inst.handle(on(3, 60), &shared); // voice 1
+        rig.inst.handle(on(3, 60), &shared); // voice 0, re-struck
         rig.render(&shared);
-        let slots = rig.inst.allocator().slots();
-        assert_eq!([slots[0].part(), slots[1].part()], [Some(0), Some(0)]);
+        let part0 = rig
+            .inst
+            .allocator()
+            .slots()
+            .iter()
+            .filter(|s| s.part() == Some(0));
+        assert_eq!(part0.count(), 1, "one voice");
         let (first, second) = if ch4_first { (3, 0) } else { (0, 3) };
         rig.inst.handle(off(first, 60), &shared);
-        let held: Vec<bool> = rig.inst.allocator().slots()[..2]
-            .iter()
-            .map(|s| s.held())
-            .collect();
-        assert_eq!(
-            held,
-            if ch4_first {
-                [true, false]
-            } else {
-                [false, true]
-            },
-            "only {first}'s voice released"
-        );
+        let held = rig.inst.allocator().slots()[0].held();
+        assert_eq!(held, !ch4_first, "channel {first}'s note-off");
         rig.inst.handle(off(second, 60), &shared);
+        assert!(!rig.inst.allocator().slots()[0].held());
         let mut blocks = 0;
         while rig.inst.allocator().slots().iter().any(|s| !s.is_free()) {
             rig.render(&shared);
@@ -1286,7 +1346,7 @@ fn the_tape_is_on_pair_1_only() {
         });
         let written = [true, true, false, false, false, false];
         let mut sends = [[0.0; BLOCK_SIZE]; FX_SENDS];
-        let mut pans = PanCache::default();
+        let mut pans = MixState::default();
         let mut fx = Box::new(FxBus::new());
         let mut out = Box::new(DacBlocks::new());
         let mut blocks = Vec::new();
@@ -1326,7 +1386,7 @@ fn the_master_comp_ducks_pair_2_with_pair_1() {
         });
         let written = [true, true, false, false, false, false];
         let mut sends = [[0.0; BLOCK_SIZE]; FX_SENDS];
-        let mut pans = PanCache::default();
+        let mut pans = MixState::default();
         let mut fx = Box::new(FxBus::new());
         let mut out = Box::new(DacBlocks::new());
         let mut energy = 0.0f32;
@@ -1405,4 +1465,78 @@ fn a_mode_switch_bills_sounding_tails_at_their_own_model() {
         real + FxBus::COST.0 <= budget,
         "{ringing} SYM tails and {strings} STR notes cost {real} + FX over {budget}"
     );
+}
+
+fn loud(note: u8) -> NoteEvent {
+    NoteEvent {
+        kind: NoteKind::On(Velocity::new(127).unwrap()),
+        ..on(0, note)
+    }
+}
+
+/// A STRING Part, rendered `blocks` blocks: Part 1's bus.
+fn string_blocks(rig: &mut Rig, shared: &AudioShared, blocks: usize, out: &mut Vec<f32>) {
+    for _ in 0..blocks {
+        rig.render(shared);
+        out.extend_from_slice(rig.inst.part_bus(0));
+    }
+}
+
+fn string_part() -> AudioShared {
+    let mut shared = AudioShared::default();
+    shared.parts[0].params = ParamSnapshot::for_engine(EngineType::Modal);
+    shared.parts[0].params.modal.mode = chimera_core::dsp::modal::ResonatorMode::String;
+    shared
+}
+
+/// The owner's UAT (2026-09-30): three strikes of C3 on a STRING Part,
+/// held or released between, ring one voice, as one guitar string
+/// re-plucked; and neither a re-strike nor a steal of a loud C2 tail (by
+/// a D2, as smooth a pluck) clicks.
+#[test]
+fn a_restrike_reuses_its_string_and_nothing_clicks() {
+    let shared = string_part();
+    let mut rig = Rig::full_pool();
+    for held in [true, false, true] {
+        rig.inst.handle(loud(48), &shared);
+        rig.render(&shared);
+        if !held {
+            rig.inst.handle(off(0, 48), &shared);
+        }
+        rig.render(&shared);
+    }
+    assert_eq!(slots_of(&rig, 48).len(), 1, "one voice");
+    assert_eq!(rig.inst.sounding(), 1);
+
+    // A loud C2, re-struck ringing; then the pool filled and the C2's
+    // tail, the oldest, stolen.
+    let mut rig = Rig::full_pool();
+    let mut out = Vec::new();
+    rig.inst.handle(loud(36), &shared);
+    string_blocks(&mut rig, &shared, 40, &mut out);
+    rig.inst.handle(off(0, 36), &shared);
+    string_blocks(&mut rig, &shared, 20, &mut out);
+    rig.inst.handle(loud(36), &shared);
+    string_blocks(&mut rig, &shared, 40, &mut out);
+    rig.inst.handle(off(0, 36), &shared);
+    // Part 2's ALGO INIT fills the rest, on its own bus.
+    for n in 0..MAX_VOICES as u8 - 1 {
+        rig.inst.handle(on(1, 60 + n), &shared);
+    }
+    string_blocks(&mut rig, &shared, 20, &mut out);
+    assert_eq!(slots_of(&rig, 36).len(), 1);
+    rig.inst.handle(loud(38), &shared);
+    string_blocks(&mut rig, &shared, 20, &mut out);
+    assert!(slots_of(&rig, 36).is_empty(), "the C2 stolen");
+    // At the model's level, as the models' click checks are set; a block
+    // before each event to 8 after.
+    let g = chimera_core::dsp::modal::out_gain(chimera_core::dsp::modal::ResonatorMode::String);
+    for (what, at) in [("re-strike", 60), ("steal", 120)] {
+        let w: Vec<f32> = out[(at - 1) * BLOCK_SIZE..(at + 8) * BLOCK_SIZE]
+            .iter()
+            .map(|x| x / g)
+            .collect();
+        let c = common::clicks(&w);
+        assert!(c.is_empty(), "{what}: {:?}", &c[..c.len().min(20)]);
+    }
 }

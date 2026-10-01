@@ -1,60 +1,65 @@
 //! The Karplus-Strong string, the project owner's own code from their
 //! Carcosa firmware for the Ambika, relicensed here under MIT (ADR 0032).
 
+use core::cell::Cell;
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 
+use super::body::{Body, BodyMix};
+use super::dispersion::{DISPERSION_STAGES, Dispersion};
+use super::ensemble::{ENS_HEADS, Ensemble};
+use super::loop_parts::{Allpass1, LoopGain, MIN_LINE, split};
 use crate::dsp::xorshift_noise;
+use crate::hw::SAMPLE_RATE;
 
 // ── Karplus-Strong delay line (from the owner's Carcosa firmware) ───
 
-/// String delay-line length (ADR 0040): the period of G1 (MIDI 31, 49.0 Hz)
-/// at 48 kHz is 979 samples, so G1 and above play at their exact period;
-/// lower notes clamp to 983 samples (~48.8 Hz). Sized so eight voices fit D2.
-pub const MAX_STRING_DELAY: usize = 984;
+/// String ring length (ADR 0040, 0056): G1 (MIDI 31, 979.6 samples at
+/// 48 kHz) needs a 979-sample line and two more for the low-pass, so G1
+/// and above play in tune; lower notes clamp.
+pub const MAX_STRING_DELAY: usize = 981;
+
+/// The longest line: the ring less the low-pass's two taps.
+const MAX_LINE: usize = MAX_STRING_DELAY - 2;
 
 /// Parameters for `KsString::tick_full`, built once per render block (not
 /// per sample) at each call site.
-/// damping: 0..1 (lowpass coefficient)
-/// decay: 0..1 (AC attenuation rate)
-/// body: 0..1 (half-delay comb resonance)
-/// stiffness: 0..1 (allpass dispersion for bell character)
-/// feedback: 0..1 (sustain boost)
-/// ens_rate/ens_depth/ens_mix: ensemble chorus parameters
 #[derive(Clone, Copy)]
-pub struct KsRenderParams {
-    pub damping: f32,
-    pub decay: f32,
-    pub body: f32,
-    pub stiffness: f32,
-    pub feedback: f32,
-    pub ens_rate: f32,
-    pub ens_depth: f32,
-    pub ens_mix: f32,
+pub(super) struct KsRenderParams {
+    /// The loop low-pass's side taps (`lp_coeff`).
+    pub lp: f32,
+    /// The loop's gain per pass.
+    pub gain: LoopGain,
 }
 
-/// A fresh line's loop, before its first `set_freq`.
+/// A fresh line's ring, before its first `set_period`.
 const INIT_LEN: usize = 100;
 /// What a fresh line's first `clear` writes.
 pub(super) const FRESH_CLEAR_BYTES: usize = INIT_LEN * size_of::<f32>();
 /// The most any line's `clear` writes: its whole ring.
 pub(super) const RING_BYTES: usize = MAX_STRING_DELAY * size_of::<f32>();
 
-/// The third ensemble head's fixed offset from the second.
-const ENS_SPREAD: f32 = 0.3;
+/// A fresh line's pluck noise.
+const NOISE_SEED: u32 = 0x8765_4321;
 
 /// A delay line and its dirty extent: every sample at or past `dirty`
-/// reads 0.0, so a clear zeros `[0, dirty)` only. `dirty` covers the
-/// loop and the write position (`dirty ≥ delay_len`, `dirty > write_pos`):
-/// every store lands below it, and only `set_freq`, `clear` and
-/// `ring_push` move it.
+/// reads 0.0, so a clear zeros `[0, dirty)` only. The loop reads `delay`
+/// behind the last write, round a ring of `ring_len`; the allpass `frac`
+/// carries the rest of the period. `MIN_LINE <= delay`,
+/// `delay + 2 <= ring_len <= dirty` and `write_pos < ring_len`: every
+/// store lands below `dirty`, and only `set_period` and `clear` move it.
 pub(super) struct KsString {
     buffer: [f32; MAX_STRING_DELAY],
+    /// The last write.
     write_pos: usize,
-    delay_len: usize,
+    ring_len: usize,
+    delay: usize,
     dirty: usize,
-    ens_lfo_phase: u32,
     noise_state: u32,
+    frac: Allpass1,
+    /// A pass of the loop, samples, as last set: negative when the loop
+    /// inverts each pass (the bow's half loop). A grown gap continues it.
+    cycle: f32,
 }
 
 impl KsString {
@@ -66,103 +71,207 @@ impl KsString {
         unsafe {
             addr_of_mut!((*p).buffer).write_bytes(0, 1);
             addr_of_mut!((*p).write_pos).write(0);
-            addr_of_mut!((*p).delay_len).write(INIT_LEN);
+            addr_of_mut!((*p).ring_len).write(INIT_LEN);
+            addr_of_mut!((*p).delay).write(INIT_LEN - 2);
             addr_of_mut!((*p).dirty).write(INIT_LEN);
-            addr_of_mut!((*p).ens_lfo_phase).write(0);
-            addr_of_mut!((*p).noise_state).write(0x8765_4321);
+            addr_of_mut!((*p).noise_state).write(NOISE_SEED);
+            addr_of_mut!((*p).frac).write(Allpass1::default());
+            addr_of_mut!((*p).cycle).write(INIT_LEN as f32);
             slot.assume_init_mut()
         }
     }
 
-    pub(super) fn set_freq(&mut self, freq: f32, sample_rate: u32) {
-        let period = sample_rate as f32 / freq;
-        self.delay_len = (period as usize).clamp(2, MAX_STRING_DELAY - 1);
-        self.dirty = self.dirty.max(self.delay_len);
+    /// A loop of `period` samples, `other` of them in its other parts at
+    /// `w`: the line and the allpass (`split`). The ring grows to fit,
+    /// its samples kept in order, and never shrinks mid-note.
+    pub(super) fn set_period(&mut self, period: f32, other: f32, w: f32) {
+        self.split_period(period, other, w);
+        self.cycle = period;
     }
 
-    pub(super) fn delay_len(&self) -> usize {
-        self.delay_len
+    /// `set_period` for a loop that inverts each pass, as the bow's half
+    /// loop does.
+    pub(super) fn set_period_inverting(&mut self, period: f32, other: f32, w: f32) {
+        self.split_period(period, other, w);
+        self.cycle = -period;
     }
 
-    pub(super) fn write_pos(&self) -> usize {
-        self.write_pos
-    }
-
-    /// Excite the string at `freq` (Carcosa's Trigger).
-    /// excitation: 0=noise, 1=click, 2=bright, 3=dark
-    /// The line is cleared first, before the new loop's length widens its
-    /// extent: the clear writes `clear_bytes`, and the old note's samples
-    /// past the new loop are never read back, even by a pitch drop that
-    /// lengthens it.
-    pub(super) fn trigger(
-        &mut self,
-        (freq, sample_rate): (f32, u32),
-        amplitude: f32,
-        excitation: u8,
-        color: f32,
-        position: f32,
-    ) {
-        self.clear();
-        self.set_freq(freq, sample_rate);
-        // Fill delay line based on excitation type
-        let mut prev = 0.0_f32;
-        for i in 0..self.delay_len {
-            let sample = match excitation % 4 {
-                1 => {
-                    // Click: short impulse
-                    if i < 4 { amplitude } else { 0.0 }
-                }
-                2 => {
-                    // Bright noise
-                    let n1 = xorshift_noise(&mut self.noise_state);
-                    let n2 = xorshift_noise(&mut self.noise_state);
-                    (n1 * 0.5 + n2 * 0.25) * amplitude
-                }
-                3 => {
-                    // Dark noise: average with previous
-                    let n = xorshift_noise(&mut self.noise_state) * amplitude;
-                    prev = (n + prev) * 0.5;
-                    prev
-                }
-                _ => {
-                    // White noise
-                    xorshift_noise(&mut self.noise_state) * amplitude
-                }
-            };
-            self.buffer[i] = sample;
+    /// The line and allpass for `period`; a ring grown to fit continues
+    /// the loop as it was (`cycle`, stored after).
+    fn split_period(&mut self, period: f32, other: f32, w: f32) {
+        let (mut delay, mut eta) = split(period, other, w);
+        if delay > MAX_LINE || period - other < MIN_LINE as f32 + 0.5 {
+            // Clamped, the fraction leaves [0.5, 1.5]: held at its edge.
+            delay = delay.min(MAX_LINE);
+            let frac = (period - other - delay as f32).clamp(0.5, 1.5);
+            eta = super::loop_parts::eta_for(frac, w);
         }
+        self.delay = delay;
+        self.frac.set(eta);
+        self.grow(delay + 2);
+    }
 
-        // Pluck position: comb notch at position harmonics
-        if position > 0.03 {
-            let notch_period = ((self.delay_len as f32 * position) as usize).max(2);
-            if notch_period < self.delay_len {
-                for i in 0..self.delay_len - notch_period {
-                    self.buffer[i] = (self.buffer[i] + self.buffer[i + notch_period]) * 0.5;
-                }
+    /// Room for a loop of up to `period` samples, the line where it is:
+    /// grown once, as a glide starts, not a step each block.
+    pub(super) fn fit(&mut self, period: f32) {
+        self.grow(Self::fit_len(period));
+    }
+
+    fn fit_len(period: f32) -> usize {
+        (period.min(MAX_STRING_DELAY as f32) as usize + 3).min(MAX_STRING_DELAY)
+    }
+
+    /// What `fit(period)` writes, bytes: the samples it moves and the gap.
+    pub(super) fn fit_bytes(&self, period: f32) -> usize {
+        let need = Self::fit_len(period);
+        if need > self.ring_len {
+            (self.ring_len - self.write_pos - 1 + need - self.ring_len) * size_of::<f32>()
+        } else {
+            0
+        }
+    }
+
+    /// The ring at least `need` long; never shorter mid-note. The oldest
+    /// samples move up past a new gap, which holds the loop's continuation,
+    /// each sample the one a pass younger, negated if the loop inverts
+    /// (`cycle`): a loop that lengthens faster than it writes (a fast glide
+    /// down) reads the old cycle again, not silence. On a cleared line it
+    /// is silence.
+    fn grow(&mut self, need: usize) {
+        if need > self.ring_len {
+            let (w, grow) = (self.write_pos + 1, need - self.ring_len);
+            self.buffer.copy_within(w..self.ring_len, w + grow);
+            self.ring_len = need;
+            self.dirty = self.dirty.max(need);
+            // The gap's ages, youngest first: `need − grow` to `need − 1`.
+            let pass = (libm::roundf(self.cycle.abs()) as usize).max(1);
+            let sign = self.cycle.signum();
+            for j in (0..grow).rev() {
+                let age = need - 1 - j;
+                let src = (self.write_pos + need - (age - pass.min(age))) % need;
+                self.buffer[w + j] = sign * self.buffer[src];
             }
         }
+    }
 
-        // Excitation color: low-pass filter passes (lower color = darker)
-        let filter_passes = ((1.0 - color) * 7.0) as usize;
-        for _ in 0..filter_passes {
-            for i in 1..self.delay_len {
+    pub(super) fn delay(&self) -> usize {
+        self.delay
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(super) fn ring_len(&self) -> usize {
+        self.ring_len
+    }
+
+    /// The sample `k` behind the last write, `k < ring_len`.
+    #[inline]
+    fn behind(&self, k: usize) -> f32 {
+        let i = self.write_pos + self.ring_len - k;
+        self.buffer[if i >= self.ring_len {
+            i - self.ring_len
+        } else {
+            i
+        }]
+    }
+
+    /// The line `delay` behind the last write, linearly interpolated:
+    /// `delay + 1 < ring_len`.
+    #[cfg(test)]
+    pub(super) fn read_frac(&self, delay: f32) -> f32 {
+        let i = delay as usize;
+        let f = delay - i as f32;
+        self.behind(i) + f * (self.behind(i + 1) - self.behind(i))
+    }
+
+    /// Steps the write position on round the ring.
+    #[inline]
+    fn advance(&mut self) {
+        self.write_pos += 1;
+        if self.write_pos == self.ring_len {
+            self.write_pos = 0;
+        }
+    }
+
+    /// The loop's next sample, before the gain: the low-pass centred
+    /// `delay` back, so it adds no delay. The spans' reference.
+    #[cfg(test)]
+    fn lowpass(&self, p: &KsRenderParams) -> f32 {
+        let d = self.delay;
+        let c = p.lp;
+        c * 0.5 * (self.behind(d - 2) + self.behind(d)) + (1.0 - c) * self.behind(d - 1)
+    }
+
+    /// Plucks the string with white noise on a loop of `period` samples
+    /// (`set_period`), unshaped until `shape`. The line is cleared first,
+    /// before the new loop's length widens its extent: the clear writes
+    /// `clear_bytes`, and the old note's samples past the new loop are
+    /// never read back, even by a pitch drop that lengthens it.
+    pub(super) fn excite(&mut self, (period, other, w): (f32, f32, f32), amplitude: f32) {
+        self.clear();
+        self.set_period(period, other, w);
+        let len = self.delay;
+        for i in 0..len {
+            self.buffer[i] = xorshift_noise(&mut self.noise_state) * amplitude;
+        }
+        // The oldest sample first.
+        self.write_pos = len - 1;
+    }
+
+    /// Shapes the pluck `excite` wrote, in place, before the loop reads
+    /// it: plucked at `beta` of the string (`comb`), then `passes`
+    /// smoothing passes (`color_passes`), then its mean taken out.
+    pub(super) fn shape(&mut self, beta: f32, passes: usize) {
+        let len = self.delay;
+        comb(&mut self.buffer[..len], beta);
+        for _ in 0..passes {
+            for i in 1..len {
                 self.buffer[i] = (self.buffer[i] + self.buffer[i - 1]) * 0.5;
             }
         }
-
-        self.write_pos = 0;
-        self.ens_lfo_phase = 0;
+        // A pluck's mean rings as the loop's 0 Hz mode for the whole T60,
+        // and a halo string's comb gains it by 1 / (1 − g): the drift SYMP
+        // put under the output blocker. None.
+        let line = &mut self.buffer[..len];
+        let mean = line.iter().sum::<f32>() / len as f32;
+        for x in line {
+            *x -= mean;
+        }
     }
 
-    /// Zeros the whole ring, not just the loop: a note starts on a silent
-    /// line, even once a pitch drop lengthens it. Only `[0, dirty)` can
-    /// hold anything, so only it is written: a line last played high
-    /// clears in a fraction of the ring.
+    /// A re-strike: `shape`'s pluck, `amplitude` of fresh noise at `beta`
+    /// and `passes`, over `len` samples (at most the ring less one), added
+    /// to what the loop reads next, over what rings. Nothing is cleared.
+    /// Streamed twice from the noise state, for its mean then its samples:
+    /// no scratch line.
+    pub(super) fn add_pluck(&mut self, beta: f32, passes: usize, amplitude: f32, len: usize) {
+        let ring = self.ring_len;
+        let len = len.clamp(1, ring - 1);
+        let pluck = Pluck::new(self.noise_state, len, beta, passes);
+        let mean = pluck.clone().sum::<f32>() / len as f32;
+        // The next centre tap, `delay − 1` behind the write.
+        let mut at = (self.write_pos + ring - (len - 1)) % ring;
+        let mut p = pluck;
+        for _ in 0..len {
+            let x = p.next().unwrap_or(0.0);
+            self.buffer[at] += (x - mean) * amplitude;
+            at = wrap(at + 1, ring);
+        }
+        self.noise_state = p.noise_state();
+    }
+
+    /// Zeros the whole line and starts the shortest ring from the start:
+    /// a note starts on a silent line, even once a pitch drop lengthens
+    /// it. Only `[0, dirty)` can hold anything, so only it is written: a
+    /// line last played high clears in a fraction of the buffer.
     pub(super) fn clear(&mut self) {
         #[cfg(any(test, feature = "test-support"))]
         cleared::add(self.clear_bytes());
         self.buffer[..self.dirty].fill(0.0);
-        self.dirty = self.delay_len.max(self.write_pos + 1);
+        self.write_pos = 0;
+        self.delay = MIN_LINE;
+        self.ring_len = MIN_LINE + 2;
+        self.dirty = self.ring_len;
+        self.frac.reset();
     }
 
     /// What the next `clear` writes.
@@ -170,29 +279,74 @@ impl KsString {
         self.dirty * size_of::<f32>()
     }
 
-    /// Silent, writing from the start again.
-    pub(super) fn restart(&mut self) {
-        self.clear();
-        self.write_pos = 0;
+    /// Bowed's ring: the sample `delay` pushes back, or the note's first
+    /// until `written` reaches it, so a low note sounds from its first
+    /// samples (#206).
+    fn ring_tap(&self, written: u32) -> f32 {
+        self.behind(self.delay.min(written.max(1) as usize) - 1)
     }
 
-    /// Bowed's ring, the whole buffer: the sample `delay_len` behind the
-    /// write position.
-    pub(super) fn ring_tap(&self) -> f32 {
-        self.buffer[(self.write_pos + MAX_STRING_DELAY - self.delay_len) % MAX_STRING_DELAY]
+    /// Bowed's bow point: `back` samples behind the write, in `ring_tap`'s
+    /// measure, linearly interpolated, clamped to `[1, delay]` and held
+    /// within what `written` has reached (#206). At `delay`, `ring_tap`
+    /// bit for bit.
+    fn ring_tap_at(&self, written: u32, back: f32) -> f32 {
+        let reach = self.delay.min(written.max(1) as usize) as f32;
+        // `max` first: NaN reads at 1.
+        let back = back.max(1.0).min(reach);
+        let i = back as usize;
+        let f = back - i as f32;
+        let x = self.behind(i - 1);
+        if f > 0.0 {
+            x + f * (self.behind(i) - x)
+        } else {
+            x
+        }
     }
 
-    /// Bowed's ring: stores `x` and steps on round the whole buffer.
+    /// Bowed's taps, `(loop, output's loop, output's bow point)`: the
+    /// loop's `delay` back and the bow point `i + f` back, `2 <= i + f <=
+    /// delay`, through the linear-phase 3-tap low-pass `c/2·(x[k−1] +
+    /// x[k+1]) + (1 − c)·x[k]` centred on each, `cl` in the loop and `co`
+    /// out. Until `written` passes `delay + 1`, the note's first pass,
+    /// they follow the write unfiltered (`ring_tap`, `ring_tap_at`).
+    #[inline]
+    pub(super) fn bow_taps(
+        &self,
+        written: u32,
+        (cl, co): (f32, f32),
+        (i, f): (usize, f32),
+    ) -> (f32, f32, f32) {
+        let d = self.delay;
+        if written as usize <= d + 1 {
+            let x = self.ring_tap(written);
+            return (x, x, self.ring_tap_at(written, i as f32 + f));
+        }
+        let lp = |c: f32, k: usize| {
+            c * 0.5 * (self.behind(k - 1) + self.behind(k + 1)) + (1.0 - c) * self.behind(k)
+        };
+        let x = lp(cl, d - 1);
+        let xo = if co == cl { x } else { lp(co, d - 1) };
+        let a = lp(co, i - 1);
+        (x, xo, a + f * (lp(co, i) - a))
+    }
+
+    /// Bowed's ring: stores `x` through the allpass, stepping on round it.
     pub(super) fn ring_push(&mut self, x: f32) {
-        self.buffer[self.write_pos] = x;
-        self.write_pos = (self.write_pos + 1) % MAX_STRING_DELAY;
-        self.dirty = self.dirty.max(self.write_pos + 1);
+        self.advance();
+        self.buffer[self.write_pos] = self.frac.process(x);
     }
 
     /// The line and its dirty extent: for the tests.
     #[cfg(test)]
     pub(super) fn line(&self) -> (&[f32; MAX_STRING_DELAY], usize) {
         (&self.buffer, self.dirty)
+    }
+
+    /// The pluck's noise from its first note's: for the tests.
+    #[cfg(test)]
+    pub(super) fn reseed(&mut self) {
+        self.noise_state = NOISE_SEED;
     }
 
     /// The next clear zeros the whole ring, as before the dirty extent:
@@ -202,133 +356,901 @@ impl KsString {
         self.dirty = MAX_STRING_DELAY;
     }
 
-    /// Damps the loop, each sample by 0.2 `passes` times: read and written
-    /// once, the same f32 arithmetic as a pass at a time.
-    pub(super) fn damp(&mut self, passes: u32) {
-        for x in &mut self.buffer[..self.delay_len] {
-            for _ in 0..passes {
-                *x *= 0.2;
-            }
+    /// One pass of the loop, the low-pass, `disp` and the allpass, then
+    /// `gain` last, so nothing bypasses it. The spans' reference.
+    #[cfg(test)]
+    fn tick_full(
+        &mut self,
+        p: &KsRenderParams,
+        gain: LoopGain,
+        disp: Option<&mut Dispersion>,
+    ) -> f32 {
+        let mut x = self.lowpass(p);
+        if let Some(disp) = disp {
+            x = disp.process(x);
         }
+        let filtered = self.frac.process(x) * gain.get();
+        self.advance();
+        self.buffer[self.write_pos] = filtered;
+        filtered
     }
 
-    /// Full render with all the KS+ features. See `KsRenderParams` for
-    /// the field meanings.
-    #[inline]
-    pub(super) fn tick_full(&mut self, p: &KsRenderParams) -> f32 {
-        // Read position: one ahead of write
-        let read_pos = (self.write_pos + 1) % self.delay_len;
-        let current = self.buffer[read_pos];
-        let next = self.buffer[(read_pos + 1) % self.delay_len];
-        let mut filtered = lowpass(p, current, next);
-
-        // Stiffness: mix with a sample from +7 offset (allpass-like dispersion)
-        if p.stiffness > 0.01 {
-            let stiff_pos = (read_pos + 7) % self.delay_len;
-            let stiff_sample = self.buffer[stiff_pos];
-            filtered = filtered * (1.0 - p.stiffness) + stiff_sample * p.stiffness;
-        }
-
-        // Body resonance: comb filter at half-delay
-        if p.body > 0.03 {
-            let body_pos = (read_pos + self.delay_len / 2) % self.delay_len;
-            let body_sample = self.buffer[body_pos];
-            filtered = filtered * (1.0 - p.body * 0.5) + body_sample * p.body * 0.5;
-        }
-
-        // Feedback boost for sustain (adds energy back, fights decay)
-        // Only at high values does it approach infinite sustain.
-        if p.feedback > 0.01 {
-            filtered += filtered * p.feedback * 0.3;
-            filtered = filtered.clamp(-1.5, 1.5);
-        }
-
-        // Write back
-        self.buffer[read_pos] = filtered;
-        self.write_pos = read_pos;
-
-        // Ensemble: three read heads with LFO detuning
-        let mut output = filtered;
-        if p.ens_mix > 0.01 && p.ens_depth > 0.01 {
-            let lfo_inc = ((p.ens_rate + 0.01) * 1000.0) as u32;
-            self.ens_lfo_phase = self.ens_lfo_phase.wrapping_add(lfo_inc);
-
-            // Unipolar triangle: 0..1..0
-            let lfo_raw = (self.ens_lfo_phase >> 16) as i16;
-            let lfo_val = if self.ens_lfo_phase & 0x80000000 != 0 {
-                -(lfo_raw as f32 / 32768.0)
-            } else {
-                lfo_raw as f32 / 32768.0
-            };
-
-            let offset2 = (lfo_val * p.ens_depth * self.delay_len as f32 * 0.05) as i32;
-            let offset3 = -offset2 + (ENS_SPREAD * self.delay_len as f32 * 0.02) as i32;
-
-            let p2 = ((read_pos as i32 + offset2).rem_euclid(self.delay_len as i32)) as usize;
-            let p3 = ((read_pos as i32 + offset3).rem_euclid(self.delay_len as i32)) as usize;
-
-            let head2 = self.buffer[p2];
-            let head3 = self.buffer[p3];
-
-            output = filtered * (1.0 - p.ens_mix) + (head2 + head3) * 0.5 * p.ens_mix;
-        }
-
-        output
-    }
-
-    /// `tick_full` for a sympathetic string, which has no body, stiffness,
-    /// feedback or ensemble, and which `input` excites at its write
+    /// `tick_full` for a sympathetic string, which has no dispersion,
+    /// or ensemble, and which `input` excites at its write
     /// position. The last tick's output waits in `pending` and is stored
-    /// with this tick's input: one store a sample instead of a store, a
-    /// load and a store again, bit-identical to storing it, then adding the
-    /// input in place.
-    #[inline]
+    /// with this tick's input. `run_coupled`'s reference.
+    #[cfg(test)]
     pub(super) fn tick_coupled(
         &mut self,
         p: &KsRenderParams,
         input: f32,
         pending: &mut f32,
     ) -> f32 {
-        debug_assert!(p.stiffness <= 0.01 && p.body <= 0.03 && p.feedback <= 0.01);
-        debug_assert!(p.ens_mix <= 0.01 || p.ens_depth <= 0.01);
-        let wp = self.write_pos;
-        let injected = *pending + input;
-        let read_pos = (wp + 1) % self.delay_len;
-        let next_pos = (read_pos + 1) % self.delay_len;
-        let current = self.buffer[read_pos];
-        // A two-sample loop reads its write position back.
-        let next = if next_pos == wp {
-            injected
-        } else {
-            self.buffer[next_pos]
-        };
-        let filtered = lowpass(p, current, next);
-        self.buffer[wp] = injected;
+        self.buffer[self.write_pos] = *pending + input;
+        let filtered = self.frac.process(self.lowpass(p) * p.gain.get());
+        self.advance();
         *pending = filtered;
-        self.write_pos = read_pos;
         filtered
+    }
+
+    /// `tick_coupled` over `input`, each output added to `out`'s sample:
+    /// the same arithmetic, in spans where neither the write nor the
+    /// newest tap wraps, the two older taps carried from the sample before.
+    pub(super) fn run_coupled(
+        &mut self,
+        p: &KsRenderParams,
+        input: &[f32],
+        pending: &mut f32,
+        out: &mut [f32],
+    ) {
+        let (half, mid, gain) = (p.lp * 0.5, 1.0 - p.lp, p.gain.get());
+        let (d, len) = (self.delay, self.ring_len);
+        let ring = Cell::from_mut(&mut self.buffer[..len]).as_slice_of_cells();
+        let mut wp = self.write_pos;
+        // The newest tap, `d − 2` behind the write: at `d` 2, the sample
+        // just written.
+        let mut cp = (wp + len + 2 - d) % len;
+        let (mut a, mut b) = (behind_in(ring, wp, d), behind_in(ring, wp, d - 1));
+        let (mut ap, mut pend) = (self.frac, *pending);
+        let mut k = 0;
+        while k < input.len() {
+            let m = (input.len() - k).min(len - wp).min(len - cp);
+            let io = input[k..k + m].iter().zip(&mut out[k..k + m]);
+            for ((w, t), (x, o)) in ring[wp..wp + m].iter().zip(&ring[cp..cp + m]).zip(io) {
+                w.set(pend + x);
+                let c = t.get();
+                pend = ap.process((half * (c + a) + mid * b) * gain);
+                *o += pend;
+                (a, b) = (b, c);
+            }
+            (wp, cp) = (wrap(wp + m, len), wrap(cp + m, len));
+            k += m;
+        }
+        (self.write_pos, self.frac, *pending) = (wp, ap, pend);
     }
 }
 
-/// The loop's filter: a two-point average and a gain below 1.
-#[inline]
-fn lowpass(p: &KsRenderParams, current: f32, next: f32) -> f32 {
-    // KS low-pass averaging: blend between current and next sample.
-    // Higher coeff = more averaging = darker sound.
-    // damping=0 (bright): coeff=0.05 (barely any filtering)
-    // damping=1 (dark): coeff=0.5 (heavy filtering, fast decay)
-    let coeff = 0.05 + p.damping * 0.45;
-    let filtered = current * (1.0 - coeff) + next * coeff;
-
-    // The 2-point average inherently decays the signal.
-    // Apply a per-sample gain < 1.0 to control decay time.
-    // decay=0 → gain=0.9990 (very long ring, ~7 seconds)
-    // decay=1 → gain=0.9900 (short pluck, ~100ms)
-    let gain = 0.999 - p.decay * 0.009;
-    filtered * gain
+/// A pluck at `beta` of the string, on one period of the line: `(x[i] +
+/// x[i + n]) / 2` round it for `n = β·len / 2`, so harmonic k is
+/// `|cos πkβ/2|` of the noise's. Its nulls are a pluck's at the odd
+/// multiples of 1/β: none at the end (β 0 passes the noise whole), and at
+/// the middle the 2nd, 6th, 10th…; the fundamental never. In place: each
+/// cycle of `i → i + n` walked in order, its first sample kept for its
+/// last.
+fn comb(line: &mut [f32], beta: f32) {
+    let len = line.len();
+    let n = comb_offset(beta, len);
+    if n == 0 {
+        return;
+    }
+    let (mut a, mut b) = (len, n);
+    while b != 0 {
+        (a, b) = (b, a % b);
+    }
+    for start in 0..a {
+        let first = line[start];
+        let mut i = start;
+        loop {
+            let j = if i + n >= len { i + n - len } else { i + n };
+            let next = if j == start { first } else { line[j] };
+            line[i] = (line[i] + next) * 0.5;
+            if j == start {
+                break;
+            }
+            i = j;
+        }
+    }
 }
 
-crate::in_place::field_list!(KsString => KsString { buffer, write_pos, delay_len, dirty, ens_lfo_phase, noise_state });
+/// `excite`'s noise, then `shape`'s comb and passes, as a stream: `(x[i]
+/// + x[(i + n) % len]) / 2` from two generators, the second restarted at
+/// the wrap, then each pass's one-pole `y[i] = (x[i] + y[i − 1]) / 2`.
+#[derive(Clone)]
+struct Pluck {
+    start: u32,
+    a: u32,
+    b: u32,
+    i: usize,
+    n: usize,
+    len: usize,
+    passes: usize,
+    y: [f32; 7],
+}
+
+impl Pluck {
+    fn new(state: u32, len: usize, beta: f32, passes: usize) -> Self {
+        let n = comb_offset(beta, len);
+        let mut b = state;
+        for _ in 0..n {
+            xorshift_noise(&mut b);
+        }
+        Self {
+            start: state,
+            a: state,
+            b,
+            i: 0,
+            n,
+            len,
+            passes: passes.min(7),
+            y: [0.0; 7],
+        }
+    }
+
+    /// The noise state after the pluck, as `excite` leaves it.
+    fn noise_state(&self) -> u32 {
+        self.a
+    }
+}
+
+impl Iterator for Pluck {
+    type Item = f32;
+
+    fn next(&mut self) -> Option<f32> {
+        if self.i == self.len {
+            return None;
+        }
+        let mut x = xorshift_noise(&mut self.a);
+        if self.n > 0 {
+            if self.i + self.n == self.len {
+                self.b = self.start;
+            }
+            x = (x + xorshift_noise(&mut self.b)) * 0.5;
+        }
+        for y in &mut self.y[..self.passes] {
+            x = if self.i == 0 { x } else { (x + *y) * 0.5 };
+            *y = x;
+        }
+        self.i += 1;
+        Some(x)
+    }
+}
+
+/// `comb`'s offset at `beta` on a line of `len`: 0 for none.
+fn comb_offset(beta: f32, len: usize) -> usize {
+    let n = (beta * 0.5 * len as f32 + 0.5) as usize;
+    if n >= len { 0 } else { n }
+}
+
+/// `i` round a ring of `len`, `i <= len`.
+#[inline]
+fn wrap(i: usize, len: usize) -> usize {
+    if i == len { 0 } else { i }
+}
+
+/// Where `ring`'s sample `k` behind `at` is, `k < ring.len()`.
+#[inline]
+fn behind_at(ring: &[Cell<f32>], at: usize, k: usize) -> usize {
+    let i = at + ring.len() - k;
+    if i >= ring.len() { i - ring.len() } else { i }
+}
+
+/// `StringVoice::run`'s state, held in registers across a block.
+struct Held {
+    half: f32,
+    mid: f32,
+    gain: f32,
+    mix: f32,
+    d: usize,
+    /// The low-pass's two older taps, oldest first.
+    taps: (f32, f32),
+    ap: Allpass1,
+    disp: Dispersion,
+    ens: Ensemble,
+}
+
+impl Held {
+    /// `out.len()` samples writing from `ws` and reading the newest tap
+    /// from `cp`, neither wrapping. `FAST`: the heads not wrapping.
+    #[inline(always)]
+    fn span<const STIFF: bool, const ENS: bool, const FAST: bool>(
+        &mut self,
+        ring: &[Cell<f32>],
+        (ws, cp): (usize, usize),
+        out: &mut [f32],
+    ) {
+        let m = out.len();
+        let (mut a, mut b) = self.taps;
+        let span = ring[ws..ws + m].iter().zip(&ring[cp..cp + m]);
+        for (at, ((w, t), o)) in (ws..).zip(span.zip(out)) {
+            let c = t.get();
+            let mut x = self.half * (c + a) + self.mid * b;
+            if STIFF {
+                x = self.disp.process(x);
+            }
+            let dry = self.ap.process(x) * self.gain;
+            w.set(dry);
+            (a, b) = (b, c);
+            *o = if ENS {
+                let heads = self.ens.head_delays(self.d);
+                self.ens.advance();
+                let read = |&h| {
+                    if FAST {
+                        read_frac_up(ring, at, h)
+                    } else {
+                        read_frac_in(ring, at, h)
+                    }
+                };
+                let wet = heads.iter().map(read).sum::<f32>();
+                dry + self.mix * (wet * (1.0 / ENS_HEADS as f32) - dry)
+            } else {
+                dry
+            };
+        }
+        self.taps = (a, b);
+    }
+}
+
+/// `ring`'s sample `k` behind `at`.
+#[inline]
+fn behind_in(ring: &[Cell<f32>], at: usize, k: usize) -> f32 {
+    ring[behind_at(ring, at, k)].get()
+}
+
+/// `read_frac_in` where the taps don't wrap: `delay + 2 <= at`.
+#[inline]
+fn read_frac_up(ring: &[Cell<f32>], at: usize, delay: f32) -> f32 {
+    let i = delay as usize;
+    let f = delay - i as f32;
+    let x = ring[at - i].get();
+    x + f * (ring[at - i - 1].get() - x)
+}
+
+/// `KsString::read_frac` on `ring` behind `at`: the older tap is the
+/// newer's neighbour, so one wrap serves both.
+#[inline]
+fn read_frac_in(ring: &[Cell<f32>], at: usize, delay: f32) -> f32 {
+    let i = delay as usize;
+    let f = delay - i as f32;
+    let j = behind_at(ring, at, i);
+    let x = ring[j].get();
+    let older = ring[if j == 0 { ring.len() - 1 } else { j - 1 }].get();
+    x + f * (older - x)
+}
+
+/// `freq`'s loop for `set_period`: its period, nothing else delaying,
+/// and its angular frequency.
+pub(super) fn loop_at(freq: f32, sample_rate: u32) -> (f32, f32, f32) {
+    let w = core::f32::consts::TAU * freq / sample_rate as f32;
+    (sample_rate as f32 / freq, 0.0, w)
+}
+
+/// The pluck's smoothing passes at COLOR, 1 brightest: the old `ks_color`
+/// law. The old hidden 0.8 is one pass.
+pub(super) fn color_passes(color: f32) -> usize {
+    (((1.0 - color) * 7.0) as usize).min(7)
+}
+
+/// The loop low-pass's side taps at `bright`, 1 brightest: the old
+/// two-point average's loss at low frequencies, `c·(1 − c)` for its `c`,
+/// so old patches keep their tone (0.0475 to 0.25).
+pub(super) fn lp_coeff(bright: f32) -> f32 {
+    let c = 0.05 + 0.45 * (1.0 - bright);
+    c * (1.0 - c)
+}
+
+crate::in_place::field_list!(KsString => KsString {
+    buffer, write_pos, ring_len, delay, dirty, noise_state, frac, cycle,
+});
+
+/// STRING's string, and SYMP's main one: the loop, STRUCTURE's
+/// dispersion in it, and BODY on its output.
+pub(super) struct StringVoice {
+    pub(super) string: KsString,
+    disp: Dispersion,
+    /// STRING's: the chain runs. SYMP's main string has none, and skips it.
+    stiff: bool,
+    /// The STRUCTURE the chain is at, slewing to the eased one.
+    structure: f32,
+    /// The loop's period, samples, as last tuned.
+    period: f32,
+    body: Body,
+    /// BODY, latched at note-on (spec § 1).
+    body_mix: BodyMix,
+    /// The ensemble and ENS MIX, latched at note-on (spec § 1); MIX 0 is off.
+    ens: Ensemble,
+    ens_mix: f32,
+    /// COLOR's smoothing passes, latched at note-on.
+    passes: u8,
+    /// A re-strike's pluck level, for `shape` to add; 0 after a fresh pluck.
+    adding: f32,
+    /// Its length, samples: a glide's target line; 0, the line in use.
+    adding_len: usize,
+}
+
+crate::in_place::field_list!(StringVoice => StringVoice {
+    string, disp, stiff, structure, period, body, body_mix, ens, ens_mix, passes, adding,
+    adding_len,
+});
+
+/// The longest loop: the whole line, a one-sample fraction and the chain
+/// at STRUCTURE 0. A lower note plays this, at every STRUCTURE.
+const LONGEST: f32 = (MAX_LINE + 1 + DISPERSION_STAGES) as f32;
+
+/// Samples a block the chain's DC delay, and so the line, may move: a
+/// STRUCTURE step glides, not jumps.
+const DISP_SLEW: f32 = 2.0;
+
+impl StringVoice {
+    pub(super) fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
+        let p = slot.as_mut_ptr();
+        // SAFETY: `p` is valid and unaliased; the string is built in place
+        // and the rest written by value, before `assume_init_mut`.
+        unsafe {
+            KsString::init_in_place(crate::in_place::uninit_at(addr_of_mut!((*p).string)));
+            addr_of_mut!((*p).disp).write(Dispersion::default());
+            addr_of_mut!((*p).stiff).write(false);
+            addr_of_mut!((*p).structure).write(0.0);
+            addr_of_mut!((*p).period).write(INIT_LEN as f32);
+            addr_of_mut!((*p).body).write(Body::new(SAMPLE_RATE));
+            addr_of_mut!((*p).body_mix).write(Body::mix(0.0));
+            addr_of_mut!((*p).ens).write(Ensemble::default());
+            addr_of_mut!((*p).ens_mix).write(0.0);
+            addr_of_mut!((*p).passes).write(1);
+            addr_of_mut!((*p).adding).write(0.0);
+            addr_of_mut!((*p).adding_len).write(0);
+            slot.assume_init_mut()
+        }
+    }
+
+    /// `freq`'s loop, stiff no longer than `LONGEST`, at `self.structure`: the
+    /// dispersion set, and its phase delay at f0 the line's to give back,
+    /// so the pitch holds.
+    fn dispersed(&mut self, freq: f32, sample_rate: u32) -> (f32, f32, f32) {
+        let (period, _, w) = loop_at(freq, sample_rate);
+        if !self.stiff {
+            self.period = period;
+            return (period, 0.0, w);
+        }
+        // Clamped, the chain's delay comes off the whole line, not on top.
+        let (period, w) = if period > LONGEST {
+            (LONGEST, core::f32::consts::TAU / LONGEST)
+        } else {
+            (period, w)
+        };
+        self.period = period;
+        let a = Dispersion::coeff(self.structure, period);
+        self.disp.set(a);
+        (period, Dispersion::phase_delay(a, w), w)
+    }
+
+    /// A note-on: plucks `freq`, at `structure` if stiff (STRING) or with
+    /// no chain (`None`, SYMP's main string); BODY, the ensemble at its
+    /// MIX, and COLOR's passes, latched.
+    pub(super) fn pluck(
+        &mut self,
+        (freq, sample_rate): (f32, u32),
+        structure: Option<f32>,
+        amplitude: f32,
+        (body, (ens_mix, ens)): (f32, (f32, Ensemble)),
+        color: f32,
+    ) {
+        self.stiff = structure.is_some();
+        self.structure = structure.unwrap_or(0.0);
+        let l = self.dispersed(freq, sample_rate);
+        self.string.excite(l, amplitude);
+        self.disp.reset();
+        self.body.reset();
+        self.body_mix = Body::mix(body);
+        self.ens = ens;
+        self.ens_mix = ens_mix;
+        self.passes = color_passes(color) as u8;
+        (self.adding, self.adding_len) = (0.0, 0);
+    }
+
+    /// A re-strike of the sounding note, or a glide's strike of a new one
+    /// whose line is `line` samples: a pluck of `amplitude` at COLOR, over
+    /// the line in use or `line`, added by `shape` to the ring. BODY, the
+    /// chain and the ensemble run on.
+    pub(super) fn restrike(&mut self, amplitude: f32, color: f32, line: Option<usize>) {
+        self.passes = color_passes(color) as u8;
+        self.adding = amplitude;
+        self.adding_len = line.unwrap_or(0);
+    }
+
+    /// Whether BODY and the ensemble run, as latched: what the note bills.
+    pub(super) fn runs(&self) -> (bool, bool) {
+        (self.body_mix.runs(), self.ens_mix > 0.0)
+    }
+
+    /// Per block, after any retune: the heads sized to the line in use.
+    pub(super) fn set_ensemble(&mut self) {
+        if self.ens_mix > 0.0 {
+            self.ens.set(self.string.delay);
+        }
+    }
+
+    /// Shapes the pluck at POS's β (`params::beta`, from the end), at COLOR's passes
+    /// (`KsString::shape`), or adds a re-strike's (`KsString::add_pluck`).
+    pub(super) fn shape(&mut self, pos: f32) {
+        let beta = super::params::beta(pos, super::params::END);
+        let amplitude = core::mem::take(&mut self.adding);
+        let len = match core::mem::take(&mut self.adding_len) {
+            0 => self.string.delay,
+            n => n,
+        };
+        if amplitude > 0.0 {
+            self.string
+                .add_pluck(beta, self.passes.into(), amplitude, len);
+        } else {
+            self.string.shape(beta, self.passes.into());
+        }
+    }
+
+    /// Retunes to `freq`, the chain a step towards `structure`, mid-note;
+    /// on a note's first block (`snap`) all the way.
+    pub(super) fn tune(&mut self, freq: f32, sample_rate: u32, structure: f32, snap: bool) {
+        if self.stiff {
+            self.structure = if snap {
+                structure
+            } else {
+                Dispersion::slew(self.structure, structure, self.period, DISP_SLEW)
+            };
+        }
+        let (period, other, w) = self.dispersed(freq, sample_rate);
+        self.string.set_period(period, other, w);
+    }
+
+    /// The chain has not reached `structure`: `tune` again next block.
+    pub(super) fn gliding(&self, structure: f32) -> bool {
+        self.stiff && self.structure != structure
+    }
+
+    /// The chain's STRUCTURE and the line's length: for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub(super) fn line(&self) -> (f32, usize) {
+        (self.structure, self.string.delay)
+    }
+
+    /// The string's next sample, and the ensemble's heads on its line,
+    /// before BODY: `render`'s reference.
+    #[cfg(test)]
+    pub(super) fn tick(&mut self, p: &KsRenderParams) -> f32 {
+        let gain = p.gain;
+        let disp = if self.stiff {
+            Some(&mut self.disp)
+        } else {
+            None
+        };
+        let dry = self.string.tick_full(p, gain, disp);
+        let mix = self.ens_mix;
+        if mix <= 0.0 {
+            return dry;
+        }
+        let heads = self.ens.head_delays(self.string.delay);
+        self.ens.advance();
+        let wet = heads.iter().map(|&o| self.string.read_frac(o)).sum::<f32>();
+        dry + mix * (wet * (1.0 / ENS_HEADS as f32) - dry)
+    }
+
+    /// `tick` over `out`, in spans (`run`).
+    pub(super) fn render(&mut self, p: &KsRenderParams, out: &mut [f32]) {
+        match (self.stiff, self.ens_mix > 0.0) {
+            (false, false) => self.run::<false, false>(p, out),
+            (true, false) => self.run::<true, false>(p, out),
+            (false, true) => self.run::<false, true>(p, out),
+            (true, true) => self.run::<true, true>(p, out),
+        }
+    }
+
+    /// `tick`, with the chain if `STIFF` and the heads if `ENS`: the same
+    /// arithmetic, in spans where neither the write nor the newest tap
+    /// wraps, the two older taps carried from the sample before.
+    fn run<const STIFF: bool, const ENS: bool>(&mut self, p: &KsRenderParams, out: &mut [f32]) {
+        let s = &mut self.string;
+        let (d, len, last) = (s.delay, s.ring_len, s.write_pos);
+        let ring = Cell::from_mut(&mut s.buffer[..len]).as_slice_of_cells();
+        let mut h = Held {
+            half: p.lp * 0.5,
+            mid: 1.0 - p.lp,
+            gain: p.gain.get(),
+            mix: self.ens_mix,
+            d,
+            taps: (behind_in(ring, last, d), behind_in(ring, last, d - 1)),
+            ap: s.frac,
+            disp: self.disp,
+            ens: self.ens,
+        };
+        let mut ws = wrap(last + 1, len);
+        // The newest tap, `d − 2` behind the last write: at `d` 2, that write.
+        let mut cp = (last + len + 2 - d) % len;
+        let reach = h.ens.reach(d);
+        let mut k = 0;
+        while k < out.len() {
+            let mut m = (out.len() - k).min(len - ws).min(len - cp);
+            // The heads' wrap, while the write is within `reach` of the
+            // ring's start, runs apart in `span`'s slow form.
+            let near = ENS && ws < reach;
+            if near {
+                m = m.min(reach - ws);
+            }
+            let out = &mut out[k..k + m];
+            if near {
+                h.span::<STIFF, ENS, false>(ring, (ws, cp), out);
+            } else {
+                h.span::<STIFF, ENS, true>(ring, (ws, cp), out);
+            }
+            (ws, cp) = (wrap(ws + m, len), wrap(cp + m, len));
+            k += m;
+        }
+        s.write_pos = if ws == 0 { len - 1 } else { ws - 1 };
+        (s.frac, self.disp, self.ens) = (h.ap, h.disp, h.ens);
+    }
+
+    /// `buf` through BODY, outside the loop, in place.
+    pub(super) fn colour(&mut self, buf: &mut [f32]) {
+        self.body.process_block(buf, self.body_mix);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    extern crate std;
+    use super::*;
+    use crate::dsp::modal::loop_parts::allpass_phase_delay;
+    use crate::dsp::note_to_freq;
+    use crate::in_place::by_value;
+    use std::boxed::Box;
+
+    fn voice() -> Box<StringVoice> {
+        // SAFETY: `init_in_place` writes every field.
+        Box::new(unsafe { by_value(StringVoice::init_in_place) })
+    }
+
+    /// A pitch step down, `set_period` from 50.5 to 120.5 samples, grows the
+    /// ring under the loop as it was: its gap continues the old pass of 51,
+    /// not the new one, which repeats what lies 121 back, a plateau.
+    #[test]
+    fn a_step_down_grows_under_the_old_pass() {
+        let mut v = voice();
+        let k = &mut v.string;
+        let tau = core::f32::consts::TAU;
+        k.set_period(50.5, 0.0, tau / 50.5);
+        let f = |age: usize| libm::sinf(tau * age as f32 / 51.0);
+        let ring = k.ring_len;
+        for age in 0..ring {
+            let i = (k.write_pos + ring - age) % ring;
+            k.buffer[i] = f(age);
+        }
+        k.set_period(120.5, 0.0, tau / 120.5);
+        assert!(k.ring_len > ring);
+        for age in ring..k.ring_len {
+            let got = k.behind(age);
+            assert!(
+                (got - f(age)).abs() < 1e-4,
+                "age {age}: {got} vs {}",
+                f(age)
+            );
+        }
+    }
+
+    /// A line holding `f(age)` at each age, on a loop of 50.5 samples a
+    /// pass, inverting each pass or not; then grown by `fit(200)`: the gap
+    /// holds `f`'s continuation, a pass behind and the loop's sign.
+    #[test]
+    fn a_grown_gap_continues_the_loop_with_its_sign() {
+        for inverts in [false, true] {
+            let mut v = voice();
+            let k = &mut v.string;
+            let (p, w) = (50.5, core::f32::consts::TAU / 50.5);
+            if inverts {
+                k.set_period_inverting(p, 0.0, w);
+            } else {
+                k.set_period(p, 0.0, w);
+            }
+            // Anti-periodic over a pass of 51 inverting, periodic over 51 not.
+            let f = |age: usize| {
+                let x = core::f32::consts::PI * age as f32 / 51.0;
+                if inverts {
+                    libm::sinf(x)
+                } else {
+                    libm::sinf(2.0 * x)
+                }
+            };
+            let ring = k.ring_len;
+            for age in 0..ring {
+                let i = (k.write_pos + ring - age) % ring;
+                k.buffer[i] = f(age);
+            }
+            k.fit(200.0);
+            for age in ring..k.ring_len {
+                let got = k.behind(age);
+                assert!(
+                    (got - f(age)).abs() < 1e-5,
+                    "inverts {inverts}, age {age}: {got} vs {}",
+                    f(age)
+                );
+            }
+        }
+    }
+
+    /// `line`'s harmonic `k` of its length, magnitude.
+    fn bin(line: &[f32], k: usize) -> f64 {
+        let n = line.len() as f64;
+        let (mut re, mut im) = (0.0, 0.0);
+        for (i, &x) in line.iter().enumerate() {
+            let ph = std::f64::consts::TAU * (k * i) as f64 / n;
+            re += x as f64 * libm::cos(ph);
+            im += x as f64 * libm::sin(ph);
+        }
+        libm::sqrt(re * re + im * im)
+    }
+
+    /// The pluck's comb is `|cos πkβ/2|` on harmonic k of the line,
+    /// exactly, from G1's line to C7's. Stepped by POS 1/8, the 2nd
+    /// harmonic over the 1st, `cos πβ / cos πβ/2`, falls at every step
+    /// from 1 at the end to nothing at the middle; C7's 18 samples
+    /// resolve quarters.
+    #[test]
+    fn the_pluck_comb_runs_from_the_end_to_the_middle() {
+        let mut state = NOISE_SEED;
+        for len in [979, 362, 18] {
+            let noise: std::vec::Vec<f32> = (0..len).map(|_| xorshift_noise(&mut state)).collect();
+            let mut last = f64::INFINITY;
+            let by = if len > 18 { 1 } else { 2 };
+            for step in (0..=8).step_by(by) {
+                let beta = super::super::params::beta(step as f32 / 8.0, 0.0);
+                let mut line = noise.clone();
+                comb(&mut line, beta);
+                let n = libm::floor(beta as f64 * 0.5 * len as f64 + 0.5);
+                let at = |k: usize| {
+                    libm::fabs(libm::cos(
+                        core::f64::consts::PI * (k as f64) * n / len as f64,
+                    ))
+                };
+                for k in [1, 2, 3] {
+                    let got = bin(&line, k) / bin(&noise, k);
+                    assert!(
+                        (got - at(k)).abs() < 1e-4,
+                        "{len} POS {step}/8 h{k}: {got} {}",
+                        at(k)
+                    );
+                }
+                let ratio = at(2) / at(1);
+                assert!(ratio < last, "{len} POS {step}/8: {ratio} after {last}");
+                last = ratio;
+            }
+            // A whole-sample comb: C7's middle is 5/18, not 1/4.
+            let null = if len > 18 { 0.02 } else { 0.3 };
+            assert!(last < null, "{len}: the middle's 2nd over 1st {last}");
+        }
+    }
+
+    /// A pluck leaves no mean on the line: nothing for the loop's 0 Hz mode
+    /// to ring, nor a halo's comb to gain.
+    #[test]
+    fn a_pluck_is_zero_mean() {
+        for (note, color) in [(24, 0.0), (60, 0.8), (108, 1.0)] {
+            let mut v = voice();
+            let ens = Ensemble::new(0.0, 3.0, 48_000);
+            v.pluck(
+                (note_to_freq(note), 48_000),
+                None,
+                1.0,
+                (0.0, (0.0, ens)),
+                color,
+            );
+            v.shape(0.2);
+            let (line, len) = (v.string.line().0, v.string.delay);
+            let mean = line[..len].iter().sum::<f32>() / len as f32;
+            assert!(mean.abs() < 1e-6, "note {note}: {mean}");
+        }
+    }
+
+    /// A re-strike's streamed pluck is `excite` and `shape`'s, on a silent
+    /// line, to float rounding, at every POS and COLOR; and it leaves the
+    /// noise where `excite` does.
+    #[test]
+    fn a_streamed_pluck_is_the_shaped_pluck() {
+        for note in [31, 48, 96] {
+            let l = loop_at(note_to_freq(note), 48_000);
+            for beta in [0.0, 0.13, 0.5] {
+                for passes in [0, 1, 7] {
+                    let (mut a, mut b) = (voice(), voice());
+                    a.string.excite(l, 0.7);
+                    a.string.shape(beta, passes);
+                    b.string.excite(l, 0.0);
+                    b.string.buffer.fill(0.0);
+                    b.string.noise_state = NOISE_SEED;
+                    b.string.add_pluck(beta, passes, 0.7, b.string.delay);
+                    let len = a.string.delay;
+                    for i in 0..len {
+                        let (x, y) = (a.string.buffer[i], b.string.buffer[i]);
+                        assert!(
+                            (x - y).abs() < 1e-5,
+                            "{note} {beta} {passes} [{i}]: {x} {y}"
+                        );
+                    }
+                    assert_eq!(a.string.noise_state, b.string.noise_state);
+                }
+            }
+        }
+    }
+
+    /// `render`'s spans are `tick` bit for bit: every chain and ensemble
+    /// case, from the shortest line to the longest.
+    #[test]
+    fn render_is_tick_bit_for_bit() {
+        let p = KsRenderParams {
+            lp: lp_coeff(0.4),
+            gain: LoopGain::new(0.998),
+        };
+        for note in [20, 31, 60, 96, 127] {
+            let freq = note_to_freq(note);
+            for (structure, ens_mix) in
+                [(None, 0.0), (Some(0.7), 0.0), (None, 0.5), (Some(1.0), 1.0)]
+            {
+                let (mut fast, mut slow) = (voice(), voice());
+                for v in [&mut fast, &mut slow] {
+                    let ens = Ensemble::new(1.0, 3.0, 48_000);
+                    v.pluck((freq, 48_000), structure, 1.0, (0.3, (ens_mix, ens)), 0.8);
+                    v.shape(0.2);
+                }
+                for block in 0..200 {
+                    fast.set_ensemble();
+                    slow.set_ensemble();
+                    let mut a = [0.0; 64];
+                    fast.render(&p, &mut a);
+                    let b: [f32; 64] = core::array::from_fn(|_| slow.tick(&p));
+                    let bits = |x: [f32; 64]| x.map(f32::to_bits);
+                    assert_eq!(
+                        bits(a),
+                        bits(b),
+                        "{note} {structure:?} {ens_mix}: block {block}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// A drifted LFO, never renormalised, clamps its heads: the spans read
+    /// in range and match `tick` bit for bit.
+    #[test]
+    fn a_drifted_ensemble_never_reads_past_its_reach() {
+        let p = KsRenderParams {
+            lp: lp_coeff(0.4),
+            gain: LoopGain::new(0.998),
+        };
+        for note in [31, 60, 96] {
+            let (mut fast, mut slow) = (voice(), voice());
+            for v in [&mut fast, &mut slow] {
+                let ens = Ensemble::new(1.0, 6.0, 48_000);
+                v.pluck(
+                    (note_to_freq(note), 48_000),
+                    Some(0.5),
+                    1.0,
+                    (0.0, (1.0, ens)),
+                    0.8,
+                );
+                v.set_ensemble();
+                v.ens.drift(1e6);
+            }
+            for block in 0..100 {
+                let mut a = [0.0; 64];
+                fast.render(&p, &mut a);
+                let b: [f32; 64] = core::array::from_fn(|_| slow.tick(&p));
+                assert_eq!(
+                    a.map(f32::to_bits),
+                    b.map(f32::to_bits),
+                    "{note}: block {block}"
+                );
+            }
+        }
+    }
+
+    /// `run_coupled` is `tick_coupled` bit for bit, in runs of any length,
+    /// the period gliding between runs as a chord change does.
+    #[test]
+    fn run_coupled_is_tick_coupled_bit_for_bit() {
+        let p = KsRenderParams {
+            lp: lp_coeff(0.8),
+            gain: LoopGain::new(0.999),
+        };
+        let input: [f32; 64] = core::array::from_fn(|i| libm::sinf(i as f32 * 0.37));
+        for period in [3.2, 4.5, 23.7, 979.6] {
+            let (mut fast, mut slow) = (voice(), voice());
+            // The ring sized for the longest, as a halo note-on does.
+            let tune = |s: &mut KsString, p: f32| s.set_period(p, 0.0, core::f32::consts::TAU / p);
+            for s in [&mut fast.string, &mut slow.string] {
+                s.clear();
+                tune(s, period);
+            }
+            let (mut pf, mut ps) = (0.0, 0.0);
+            for (block, len) in [64, 16, 1, 7, 64, 3]
+                .into_iter()
+                .cycle()
+                .take(300)
+                .enumerate()
+            {
+                // Down a fifth and back, a step a run.
+                let glide = period * (1.0 - 0.33 * (block % 20) as f32 / 20.0);
+                tune(&mut fast.string, glide);
+                tune(&mut slow.string, glide);
+                let mut a = [0.0; 64];
+                fast.string
+                    .run_coupled(&p, &input[..len], &mut pf, &mut a[..len]);
+                let b: [f32; 64] = core::array::from_fn(|i| {
+                    if i < len {
+                        slow.string.tick_coupled(&p, input[i], &mut ps)
+                    } else {
+                        0.0
+                    }
+                });
+                assert_eq!(
+                    a.map(f32::to_bits),
+                    b.map(f32::to_bits),
+                    "{period}: block {block}"
+                );
+            }
+        }
+    }
+
+    /// COLOR's passes are the old `ks_color` law: 0.8 the old one pass,
+    /// 0 seven, 1 none, never more as COLOR rises.
+    #[test]
+    fn color_passes_are_the_old_law() {
+        assert_eq!(color_passes(0.8), 1);
+        assert_eq!(color_passes(0.0), 7);
+        assert_eq!(color_passes(1.0), 0);
+        let mut last = usize::MAX;
+        for i in 0..=128 {
+            let n = color_passes(i as f32 / 128.0);
+            assert!(n <= last && n <= 7, "{i}/128: {n}");
+            last = n;
+        }
+    }
+
+    /// G1 to C8, STRUCTURE 0 to 1: the line stays in `[MIN_LINE, MAX_LINE]`,
+    /// and the line, the allpass and the dispersion add to the period at
+    /// f0. G1 at 1 gives the chain its most.
+    #[test]
+    fn dispersion_stays_in_tune_and_in_bounds() {
+        // SAFETY: `init_in_place` writes every field.
+        let mut v = unsafe { by_value(StringVoice::init_in_place) };
+        for note in [31, 48, 84, 108] {
+            let freq = note_to_freq(note);
+            for s in [0.0, 0.5, 1.0] {
+                v.pluck(
+                    (freq, 48_000),
+                    Some(s),
+                    1.0,
+                    (0.0, (0.0, Ensemble::default())),
+                    0.8,
+                );
+                let (period, _, w) = loop_at(freq, 48_000);
+                let d = v.string.delay();
+                assert!((MIN_LINE..=MAX_LINE).contains(&d), "{note} {s}: {d}");
+                let a = Dispersion::coeff(s, period);
+                let total = d as f32
+                    + allpass_phase_delay(v.string.frac.eta(), w)
+                    + Dispersion::phase_delay(a, w);
+                assert!(
+                    (total - period).abs() < 1e-2,
+                    "{note} {s}: {total} vs {period}"
+                );
+            }
+        }
+    }
+}
 
 /// Bytes `KsString::clear` has written on this thread: for the tests.
 #[cfg(any(test, feature = "test-support"))]

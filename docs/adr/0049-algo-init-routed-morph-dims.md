@@ -4,6 +4,8 @@
 - **Deciders:** owner (#188, #189, 2026-09-29), firmware
 - Supersedes part of 0024: the output scale is the carrier power, not the
   carrier count.
+- **Note (ADR 0063):** INIT's operators release at RR 5, a T60 of about
+  1.1 s (the owner's UAT, 2026-09-30), and INIT's OUT LEVEL is 45/128.
 
 ## Context
 INIT was `AlgoParams::single(W1)`: operator 1 alone at LEVEL 99. Operator 1

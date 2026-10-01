@@ -14,14 +14,16 @@ use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::engines::{EngineSlot, SlotKind};
 use chimera_core::dsp::filter::FilterMode;
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus};
-use chimera_core::dsp::modal::{ModalEngine, ResonatorMode, SymPool};
+use chimera_core::dsp::modal::{
+    BankModes, CHORD_COUNT, ModalEngine, ModalParams, ResonatorMode, SymPool,
+};
 use chimera_core::dsp::modulator::{EnvForm, EnvSlot, EnvType, Func, Glide, LfoForm, LfoType};
 use chimera_core::dsp::voice::Voice;
 use chimera_core::hw::{
     BLOCK_SIZE, MAX_PARTS, MAX_VOICES, SAMPLE_RATE, SampleBudget, VOICE_RAM_BUDGET,
 };
 use chimera_core::instrument::{
-    AudioShared, DacBlocks, Instrument, PanCache, PartAudio, mix_parts,
+    AudioShared, DacBlocks, Instrument, MixState, PartAudio, mix_parts,
 };
 use chimera_core::mod_path::ModDestRegistry;
 use chimera_core::modulation::{CUTOFF, MAX_MOD_SOURCES, ModSource, ModState, VCA};
@@ -142,7 +144,7 @@ fn worst_comp(s: &mut AudioShared) {
     (c.thresh, c.ratio, c.attack, c.release, c.makeup, c.mix) = (0.0, 7, 0.0, 0.0, 0.5, 1.0);
 }
 
-const ROUTING_ROWS: usize = 29;
+const ROUTING_ROWS: usize = 37;
 /// Rows per ROUTING screen: ten from y 46 at `ROW_H` 25 end at 283.
 const ROUTING_PAGE: usize = 10;
 
@@ -228,14 +230,60 @@ const ROUTING: [RoutingRow; ROUTING_ROWS] = [
     // the SVF row's level never reaches. HOT − 1 OP is the hot LP24 term.
     ("LP24 HOT", |p| hot(p, FilterMode::Lp24), STILL),
     ("SVF HOT", |p| hot(p, FilterMode::Phaser), STILL),
-    // Each Modal model, the default Sound otherwise: `ModalEngine::cost`.
+    // Each Modal model, the default Sound (BODY 0.3) otherwise:
+    // `ModalEngine::cost`. STR − STR0 and SYM − SYM0 are `BODY`; BODY
+    // costs the same at any amount above 0.
     ("MDL STR", |p| modal(p, ResonatorMode::String), STILL),
+    ("MDL STR0", |p| bare(p, ResonatorMode::String), STILL),
+    // STR E − STR0 is `ENSEMBLE`.
+    ("MDL STR E", str_ens, STILL),
+    // STR+ − STR is `ENSEMBLE` plus four LFO routes' `ModRouting` terms
+    // (BODY 1 bills as 0.3); the re-split is in `COST_STRING`.
+    ("MDL STR+", str_full, STILL),
     ("MDL BOW", |p| modal(p, ResonatorMode::Bowed), STILL),
+    // BOW+ − BOW is a moving bow point's per-sample split, BRIGHT's output
+    // low-pass and three routes.
+    ("MDL BOW+", bow_full, STILL),
     ("MDL SYM", |p| modal(p, ResonatorMode::Sympathetic), STILL),
+    ("MDL SYM0", |p| bare(p, ResonatorMode::Sympathetic), STILL),
+    // SYM+ − SYM is `ENSEMBLE` plus a chord glide always running,
+    // unrouted: about `CHORD`'s work, which SYM LFO − SYM reads alone.
+    (
+        "MDL SYM+",
+        |p| modal_full(p, ResonatorMode::Sympathetic),
+        chord_storm,
+    ),
+    // SYM LFO − MDL SYM is `ModalEngine::CHORD`.
+    ("SYM LFO", sym_lfo, STILL),
     ("MDL RES", |p| modal(p, ResonatorMode::Modal), STILL),
+    // RES48 − RES is 16 × `COST_MODE`.
+    (
+        "MDL RES48",
+        |p| {
+            modal(p, ResonatorMode::Modal);
+            p.params.modal.modes = BankModes::M48;
+        },
+        STILL,
+    ),
     // MODE flipped every 4 blocks: restarts and rests every flip.
     ("SWITCH", |p| modal(p, ResonatorMode::String), switch_storm),
 ];
+
+/// When `Rig::time_note_on`'s round may end.
+type Idle = fn(&Instrument) -> bool;
+
+/// Every pool slot free: a Sympathetic note-on's timed `place` and `lend`
+/// start from a free slot, and a released halo keeps its lease until
+/// silent (ADR 0054).
+fn slots_free(inst: &Instrument) -> bool {
+    inst.allocator().slots().iter().all(|s| s.is_free())
+}
+
+/// No voice sounding: a STRING note-on lands on an idle voice, not a
+/// steal. STRING holds no slot, so `slots_free` is true at once.
+fn silent(inst: &Instrument) -> bool {
+    inst.sounding() == 0
+}
 
 /// Sympathetic ended by ENV 1 on the VCA at RELEASE 0: a low note's loop
 /// filters too seldom to fall silent within `IDLE_BLOCKS`, and a clear's
@@ -244,6 +292,87 @@ fn short_sym(p: &mut PartAudio) {
     modal(p, ResonatorMode::Sympathetic);
     p.params.envelopes[0].release = 0.0;
     p.mod_state = matrix(&[(ModSource::Env1, VCA, 127)]);
+}
+
+/// Sympathetic with LFO 1 (10 Hz sine) on STRUCTURE at 127: it crosses
+/// chords faster than they glide, so the halo is always gliding.
+fn sym_lfo(p: &mut PartAudio) {
+    modal(p, ResonatorMode::Sympathetic);
+    p.params.lfos[0].rate = 10.0;
+    let structure = ParamAddr::new(BlockRef::Modal, ModalParams::STRUCTURE);
+    p.mod_state = matrix(&[(ModSource::Lfo1, structure, 127)]);
+}
+
+/// STRING ended as `short_sym` is, at COLOR 0: the pluck's seven
+/// smoothing passes.
+fn dark_pluck(p: &mut PartAudio) {
+    short_string(p);
+    p.params.modal.color = 0.0;
+}
+
+/// STRING ended as `short_sym` is, at the default COLOR: one pass.
+fn short_string(p: &mut PartAudio) {
+    modal(p, ResonatorMode::String);
+    p.params.envelopes[0].release = 0.0;
+    p.mod_state = matrix(&[(ModSource::Env1, VCA, 127)]);
+}
+
+/// `mode` at BODY 0: the model alone.
+fn bare(p: &mut PartAudio, mode: ResonatorMode) {
+    modal(p, mode);
+    p.params.modal.body = 0.0;
+}
+
+/// `mode` with every extra on: BODY 1, the ensemble at full DEPTH and MIX
+/// 0.5, STRUCTURE mid-range.
+fn modal_full(p: &mut PartAudio, mode: ResonatorMode) {
+    modal(p, mode);
+    let m = &mut p.params.modal;
+    (m.structure, m.body, m.ens_depth, m.ens_mix) = (0.5, 1.0, 1.0, 0.5);
+}
+
+/// STRING at BODY 0 with the ensemble at full DEPTH and MIX 0.5, no
+/// routes.
+fn str_ens(p: &mut PartAudio) {
+    bare(p, ResonatorMode::String);
+    (p.params.modal.ens_depth, p.params.modal.ens_mix) = (1.0, 0.5);
+}
+
+/// STRING in full, LFO 1 (10 Hz sine) into each macro at 64: the
+/// dispersion re-splits every block.
+fn str_full(p: &mut PartAudio) {
+    modal_full(p, ResonatorMode::String);
+    p.params.lfos[0].rate = 10.0;
+    let at = |q| (ModSource::Lfo1, ParamAddr::new(BlockRef::Modal, q), 64);
+    p.mod_state = matrix(&[
+        at(ModalParams::STRUCTURE),
+        at(ModalParams::BRIGHT),
+        at(ModalParams::DAMP),
+        at(ModalParams::POS),
+    ]);
+}
+
+/// BOWED at FORCE 1, SPEED 1, POS 0.5 and BRIGHT 0, LFO 1 (10 Hz sine)
+/// into BRIGHT, DAMP and POS at 64: the 10 Hz POS route moves the bow
+/// point every block, so it glides across each block, split per sample
+/// (`render_bowed`), the bow's worst case.
+fn bow_full(p: &mut PartAudio) {
+    modal(p, ResonatorMode::Bowed);
+    let m = &mut p.params.modal;
+    (m.force, m.speed, m.pos, m.bright) = (1.0, 1.0, 0.5, 0.0);
+    p.params.lfos[0].rate = 10.0;
+    let at = |q| (ModSource::Lfo1, ParamAddr::new(BlockRef::Modal, q), 64);
+    p.mod_state = matrix(&[
+        at(ModalParams::BRIGHT),
+        at(ModalParams::DAMP),
+        at(ModalParams::POS),
+    ]);
+}
+
+/// STRUCTURE one chord on every 8 blocks, faster than a glide ends.
+fn chord_storm(p: &mut PartAudio, block: u32) {
+    let chord = (block / 8) % CHORD_COUNT as u32;
+    p.params.modal.structure = (chord as f32 + 0.5) / CHORD_COUNT as f32;
 }
 
 /// String and Sympathetic in turn, 4 blocks each.
@@ -463,11 +592,17 @@ pub fn run(display: &mut impl ChimeraDisplay, clocks: Clocks, perf: &Performance
     }
     let rebuild = time_rebuild();
     // A4 after A4, the default Sound: the lines clear a loop each.
-    let note_on = rig.time_sym_note_on(MidiNote::A4, |p| modal(p, ResonatorMode::Sympathetic));
+    let sym = |p: &mut PartAudio| modal(p, ResonatorMode::Sympathetic);
+    let note_on = rig.time_note_on(MidiNote::A4, sym, (false, slots_free));
     // The lowest note after itself: every ring whole, the worst case.
     let lowest = MidiNote::new(0).unwrap_or(MidiNote::A4);
-    let lowest = rig.time_sym_note_on(lowest, short_sym);
-    show_memory(display, rebuild, note_on, lowest);
+    let lowest = rig.time_note_on(lowest, short_sym, (false, slots_free));
+    // G1, the longest line the passes walk: its first block at COLOR 0
+    // less at the default's one pass, the six more COLOR 0 takes.
+    let g1 = MidiNote::new(31).unwrap_or(MidiNote::A4);
+    let dark = rig.time_note_on(g1, dark_pluck, (true, silent));
+    let light = rig.time_note_on(g1, short_string, (true, silent));
+    show_memory(display, rebuild, note_on, (lowest, dark, light));
     hold(clocks);
 }
 
@@ -582,13 +717,18 @@ impl Rig<'_> {
         (cycles / (TIMED_BLOCKS * BLOCK_SIZE as u32), spans)
     }
 
-    /// Cycles of `Instrument::handle` for one Sympathetic note-on of
-    /// `note`, Part 0 set by `part`, on an idle voice: `place`, `lend`, the
-    /// rebuild, the clear and the excitation. Each round releases the note
-    /// and renders until every voice is idle again; one untimed round
-    /// warms first, so the slot's lines hold `note`'s last round.
+    /// Cycles of `Instrument::handle` for one note-on of `note`, Part 0
+    /// set by `part`, on an idle voice, and with `first_block` its first
+    /// render, where a pluck is shaped. Each round releases the note and
+    /// renders until `idle`; one untimed round warms first, so the lines
+    /// hold `note`'s last round.
     #[inline(never)]
-    fn time_sym_note_on(&mut self, note: MidiNote, part: fn(&mut PartAudio)) -> u32 {
+    fn time_note_on(
+        &mut self,
+        note: MidiNote,
+        part: fn(&mut PartAudio),
+        (first_block, idle): (bool, Idle),
+    ) -> u32 {
         let budget = SampleBudget::for_cpu(u32::MAX);
         let inst = Instrument::init_in_place(self.inst_slot, SAMPLE_RATE, budget);
         let fx = FxBus::init_in_place(self.fx_slot);
@@ -603,13 +743,16 @@ impl Rig<'_> {
         for round in 0..=ROUNDS {
             let start = DWT::cycle_count();
             inst.handle(black_box(ev(NoteKind::On(Velocity::DEFAULT))), shared);
+            if first_block {
+                inst.render(fx, &mut self.dac, shared, &mut self.scope);
+            }
             if round > 0 {
                 cycles = cycles.wrapping_add(DWT::cycle_count().wrapping_sub(start));
             }
             inst.handle(ev(NoteKind::Off), shared);
             for _ in 0..IDLE_BLOCKS {
                 inst.render(fx, &mut self.dac, shared, &mut self.scope);
-                if inst.allocator().slots().iter().all(|s| s.is_free()) {
+                if idle(inst) {
                     break;
                 }
             }
@@ -637,7 +780,7 @@ impl Rig<'_> {
         let buses = [noise; MAX_PARTS];
         let written = [true; MAX_PARTS];
         let mut sends = [[0.0; BLOCK_SIZE]; FX_SENDS];
-        let mut pans = PanCache::default();
+        let mut pans = MixState::default();
         let mut block = |shared: &mut AudioShared, fx: &mut FxBus, dac: &mut DacBlocks, b: u32| {
             each(shared, b);
             black_box(mix_parts(
@@ -851,7 +994,12 @@ fn show_routing(
 }
 
 /// The sizes behind the D2 budget and the exclusive state's two timings.
-fn show_memory(display: &mut impl ChimeraDisplay, rebuild: u32, note_on: u32, lowest: u32) {
+fn show_memory(
+    display: &mut impl ChimeraDisplay,
+    rebuild: u32,
+    note_on: u32,
+    (lowest, dark, light): (u32, u32, u32),
+) {
     use core::mem::size_of;
     draw::fill_rect(display, 0, 0, theme::SCREEN_W, theme::SCREEN_H, theme::BG);
     draw::text(display, &theme::FONT_VALUE, "MEMORY", 4, 16, theme::INK);
@@ -864,6 +1012,10 @@ fn show_memory(display: &mut impl ChimeraDisplay, rebuild: u32, note_on: u32, lo
         format_args!("REBUILD {rebuild} CYC"),
         format_args!("SYM NOTE-ON {note_on} CYC"),
         format_args!("SYM NOTE-ON LOW {lowest} CYC"),
+        // The whole note-on and block, against the audio budget; then
+        // what COLOR 0 adds, its six passes over the line.
+        format_args!("DARK NOTE+BLOCK {dark} CYC"),
+        format_args!("DARK +6 PASSES {} CYC", dark.saturating_sub(light)),
     ];
     let mut line = FmtBuf::new();
     for (i, args) in lines.into_iter().enumerate() {

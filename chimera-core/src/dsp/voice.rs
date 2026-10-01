@@ -4,14 +4,17 @@ use core::ptr::addr_of_mut;
 use chimera_hal::BLOCK_SIZE;
 
 use crate::addr::{BlockRef, Blocks, ParamAddr};
-use crate::block::apply_offset;
+use crate::block::{ParamId, apply_offset};
 use crate::dsp::algo::engine::AlgoLive;
+use crate::dsp::algo::params::AlgoParams;
+use crate::dsp::dc_blocker::DcBlocker;
 use crate::dsp::drive::Drive;
+use crate::dsp::ease::{Ease, Ramp, at, ease_coeff, step_of};
 use crate::dsp::engines::{EngineSlot, SlotKind};
 use crate::dsp::envelope::{EnvMods, Envelope};
 use crate::dsp::filter::SvfFilter;
 use crate::dsp::lfo::Lfo;
-use crate::dsp::modal::{ModalEngine, ModalParams, ResonatorMode, SymPool};
+use crate::dsp::modal::{ModalEngine, ResonatorMode, SymPool};
 use crate::dsp::modulator::{EnvSlot, LfoSlot};
 use crate::dsp::wavefolder::Wavefolder;
 use crate::hw::{Cost, MAX_VOICES, VOICE_CHAIN_BYTES, VOICE_RAM_BUDGET};
@@ -19,7 +22,7 @@ use crate::in_place::{by_value, uninit_at};
 use crate::modulation::{
     MAX_MOD_SOURCES, ModRouting, ModSource, ModState, VCA, amount_scale, note_source,
 };
-use crate::params::{DriveParams, EnvParams, FolderParams, ParamSnapshot};
+use crate::params::{DriveParams, EnvParams, FolderParams, ParamSnapshot, Steal};
 use crate::voice_alloc::VoiceIdx;
 use crate::{MidiNote, Velocity};
 
@@ -31,8 +34,12 @@ const _: () = assert!(
     core::mem::size_of::<Voice>() <= VOICE_CHAIN_BYTES + core::mem::size_of::<EngineSlot>()
 );
 
+/// The voice's DC blocker corner (ADR 0060): after the last nonlinear
+/// stage, −0.26 dB at 20 Hz, settled in 0.1 s.
+pub const DC_HZ: f32 = 5.0;
+
 /// Complete voice signal chain:
-/// [Engine] → [Drive] → [Filter] → [Wavefolder] → [VCA]
+/// [Engine] → [Drive] → [Filter] → [Wavefolder] → [DC blocker] → [VCA]
 /// Modulators: three envelopes, three LFOs
 pub struct Voice {
     /// The engine it plays, and so the engine it last played.
@@ -45,6 +52,13 @@ pub struct Voice {
     drive: Drive,
     filter: SvfFilter,
     folder: Wavefolder,
+    /// DC from the stages before it (ADR 0060).
+    dc: DcBlocker,
+    /// The stages' stored settings, eased as a bus setting is: a jump
+    /// glides, and routes add to the glide.
+    stages: StageEase,
+    /// OUT LEVEL × the engine's gain, ramped across each block.
+    volume: Ramp,
     envs: [Envelope; 3],
     lfos: [Lfo; 3],
     /// The ENV destinations' sums from the last block's matrix (spec § Signal flow 1).
@@ -71,6 +85,31 @@ pub struct Voice {
     /// them, so a new Sound never reaches the sound it fades out.
     played: ParamSnapshot,
     played_live: AlgoLive,
+}
+
+/// OUT LEVEL, DRIVE's three, filter DRIVE and FOLD's three, eased
+/// toward the stored values (never snap). Zero bytes land on the first
+/// block.
+#[derive(Clone, Copy, Debug, Default)]
+struct StageEase([Ease; 8]);
+
+impl StageEase {
+    /// `m`'s stored settings replaced by this block's eased ones.
+    fn ease(&mut self, m: &mut ParamSnapshot, k: f32) {
+        let [a, b, c, d, e, f, g, h] = &mut self.0;
+        for (ease, v) in [
+            (a, &mut m.out.volume),
+            (b, &mut m.drive.drive),
+            (c, &mut m.drive.tone),
+            (d, &mut m.drive.mix),
+            (e, &mut m.filter.drive),
+            (f, &mut m.folder.fold),
+            (g, &mut m.folder.symmetry),
+            (h, &mut m.folder.mix),
+        ] {
+            *v = ease.step(*v, k).1;
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -132,20 +171,32 @@ impl Default for Voice {
 impl Voice {
     /// The chain's floor: engine costs are bench per-voice minus this. The
     /// bench's `FLOOR` row (an Algo patch with every LEVEL at 0) measured 5 on
-    /// 2026-09-27; 10 is kept, erring high.
-    pub const CHAIN_COST: Cost = Cost(10); // measured 2026-09-26, bench, rev V at 480 MHz
+    /// 2026-09-27; 10 was kept, erring high. ADR 0060 adds the DC blocker
+    /// (6.5 instructions a sample), the stages' ease (1.3) and the ramps of
+    /// OUT LEVEL and filter DRIVE (about 2 each): 11.8 × 1.46 × 1.1 = 19,
+    /// by ADR 0056's host method; 29, rounded up.
+    pub const CHAIN_COST: Cost = Cost(30);
 
     /// A `kill` ramps to silence over this many samples (ADR 0027).
     pub const FADE: u16 = 2 * BLOCK_SIZE as u16;
 
     /// The wavefolder, which runs once FOLD is 0.001 or more: the bench's
-    /// FOLD row less 1 OP (measured 2026-09-28, rev V at 480 MHz).
-    pub const FOLD_COST: Cost = Cost(43);
+    /// FOLD row less 1 OP (measured 2026-09-28, rev V at 480 MHz), 43, and
+    /// the offset of silence's fold (ADR 0060), 1 instruction a sample, 1.6
+    /// by ADR 0056's host method.
+    pub const FOLD_COST: Cost = Cost(45);
+    /// FOLD, SYM or MIX routed: the fold ramps every block, 42 instructions
+    /// a sample against the steady 24; 18 × 1.46 × 1.1 = 28.9.
+    pub const FOLD_RAMP_COST: Cost = Cost(29);
     /// The drive stage, which runs once DRIVE is 0.001 or more. Measured:
     /// bench-t13d's DRIVE LO row (541) less that run's 1 OP (488) = 53;
     /// bench-t13c's DRIVE row (540) less that run's 1 OP (483) = 57.
     /// Billed as the larger: 57.
     pub const DRIVE_COST: Cost = Cost(57);
+    /// DRIVE, TONE or MIX routed: the drive ramps every block, 36
+    /// instructions a sample against the steady 22; 14 × 1.46 × 1.1 = 22.5.
+    /// Unrouted, only the UI moves them: brief, in the headroom (ADR 0061).
+    pub const DRIVE_RAMP_COST: Cost = Cost(23);
 
     /// Cycles/sample of a voice playing `p` under `mods`.
     pub fn cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
@@ -156,31 +207,57 @@ impl Voice {
             + Self::stage_cost(p, mods)
     }
 
-    /// What this voice's note-on Modal model costs over `p`'s stored one
-    /// while it still plays it (#183): the model is fixed per note, so a
-    /// MODE edit under a sounding voice is billed at the costlier of the two.
+    /// What this voice's sounding Modal note costs over `p`'s stored
+    /// model (#183): MODE and MODES are fixed per note, so an edit under a
+    /// sounding voice is billed at the costlier of the two.
     pub fn held_model_extra(&self, p: &ParamSnapshot) -> Cost {
-        match self.slot.modal_playing() {
-            Some(mode) if mode != p.modal.mode => {
-                let held = ModalEngine::cost(&ModalParams { mode, ..p.modal });
-                Cost(held.0.saturating_sub(ModalEngine::cost(&p.modal).0))
-            }
-            _ => Cost::ZERO,
-        }
+        self.slot.modal_playing_cost().map_or(Cost::ZERO, |held| {
+            Cost(held.0.saturating_sub(ModalEngine::cost(&p.modal).0))
+        })
     }
 
-    /// The folder and the drive stage, each once its stored amount runs it
-    /// or a route of nonzero amount may.
+    /// Whether the folder and the drive stage run: once the stored amount
+    /// is 0.001 or more, or a route of nonzero amount may raise it. The bill
+    /// and each stage's gate read the same answer.
+    pub fn stage_runs(p: &ParamSnapshot, mods: &ModState) -> (bool, bool) {
+        let routed = |block, param| mods.moves_addr(ParamAddr::new(block, param));
+        (
+            p.folder.fold >= 0.001 || routed(BlockRef::Folder, FolderParams::FOLD),
+            p.drive.drive >= 0.001 || routed(BlockRef::Drive, DriveParams::DRIVE),
+        )
+    }
+
+    /// The folder and the drive stage as they run, each with its ramp while
+    /// a route moves one of its settings.
     fn stage_cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
-        let runs = |stored: f32, block, param| {
-            stored >= 0.001 || mods.moves_addr(ParamAddr::new(block, param))
+        let (fold, drive) = Self::stage_runs(p, mods);
+        let routed = |block, params: [ParamId; 3]| {
+            params
+                .iter()
+                .any(|&param| mods.moves_addr(ParamAddr::new(block, param)))
         };
-        let fold = runs(p.folder.fold, BlockRef::Folder, FolderParams::FOLD);
-        let drive = runs(p.drive.drive, BlockRef::Drive, DriveParams::DRIVE);
-        [(fold, Self::FOLD_COST), (drive, Self::DRIVE_COST)]
-            .into_iter()
-            .filter(|&(on, _)| on)
-            .fold(Cost::ZERO, |a, (_, c)| a + c)
+        let mut c = Cost::ZERO;
+        if fold {
+            c = c + Self::FOLD_COST;
+            let fp = [
+                FolderParams::FOLD,
+                FolderParams::SYMMETRY,
+                FolderParams::MIX,
+            ];
+            if routed(BlockRef::Folder, fp) {
+                c = c + Self::FOLD_RAMP_COST;
+            }
+        }
+        if drive {
+            c = c + Self::DRIVE_COST;
+            if routed(
+                BlockRef::Drive,
+                [DriveParams::DRIVE, DriveParams::TONE, DriveParams::MIX],
+            ) {
+                c = c + Self::DRIVE_RAMP_COST;
+            }
+        }
+        c
     }
 
     /// The sample rate is stored once (spec §3), not passed per call. A
@@ -213,16 +290,21 @@ impl Voice {
     /// it: the one list that `init_in_place` and `reset` share.
     ///
     /// # Safety
-    /// `p` must be valid for writes, aligned and unaliased.
+    /// `p` must be valid for writes, aligned and unaliased, with
+    /// `sample_rate` written.
     unsafe fn init_chain(p: *mut Self) {
-        // SAFETY: the caller's guarantee; every field is written by value,
-        // and none has drop glue (asserted above) to skip.
+        // SAFETY: the caller's guarantee; `sample_rate` is read, every
+        // field is written by value, and none has drop glue (asserted
+        // above) to skip.
         unsafe {
             let played = ParamSnapshot::default();
             write_chain!(p, {
                 drive: Drive::new(),
                 filter: SvfFilter::new(),
                 folder: Wavefolder::new(),
+                dc: DcBlocker::new(DC_HZ, (*p).sample_rate),
+                stages: StageEase::default(),
+                volume: Ramp::default(),
                 envs: [Envelope::new(); 3],
                 lfos: [Lfo::new(); 3],
                 env_mods: [EnvMods::NONE; 3],
@@ -262,6 +344,12 @@ impl Voice {
     /// Its slot rings a pool set (Sympathetic with a halo).
     pub fn rings(&self) -> bool {
         self.slot.rings()
+    }
+
+    /// A glide steal's ratio now, 1 at rest: for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn slide(&self) -> f32 {
+        self.slot.slide()
     }
 
     /// The kind its slot holds.
@@ -308,10 +396,20 @@ impl Voice {
         self.fade == 0 && !(self.active && self.stale(params, pool))
     }
 
-    /// The bytes a Sympathetic note-on here clears: pure, for the
-    /// `Instrument`'s per-block clear budget (spec § 4.8).
-    pub fn sym_note_on_clear(&self, pool: &SymPool) -> usize {
-        self.slot.sym_note_on_clear(pool, self.id)
+    /// The bytes a Sympathetic note-on of `note` on `params` here clears:
+    /// pure, for the `Instrument`'s per-block clear budget (spec § 4.8).
+    /// One that starts now on its sounding engine clears nothing: a
+    /// re-strike adds to it, and a glide steal writes only its rings'
+    /// growth.
+    pub fn sym_note_on_clear(
+        &self,
+        pool: &SymPool,
+        note: MidiNote,
+        params: &ParamSnapshot,
+    ) -> usize {
+        let adds = self.starts_now(params, pool) && params.pitch.steal == Steal::Glide;
+        self.slot
+            .sym_note_on_clear(pool, self.id, (note, adds, self.sample_rate))
     }
 
     /// On a fading voice, or one sounding another engine or model, the note
@@ -357,7 +455,13 @@ impl Voice {
             pool.alloc_mut().cancel(self.id);
         }
         if !self.active {
-            self.filter.hold(); // a fresh note: no ramp from the last note's cutoff
+            // A fresh note: no ramp from the last note's settings.
+            self.filter.hold();
+            self.drive.hold();
+            self.folder.hold();
+            self.dc.reset();
+            self.volume.hold();
+            self.stages = StageEase::default();
             // An idle voice's ENV slots and last source values start as a
             // fresh voice's. Idle is silent: a release its VCA routes still
             // hold keeps the voice active (`vca_holds`).
@@ -475,6 +579,8 @@ impl Voice {
         // The modulators run every block, fading or not, from the settings
         // the voice plays (spec § Signal flow 1).
         let src = if self.fade == 0 { params } else { &self.played };
+        // The stages run, and fade their gates, as the allocator bills them.
+        let (fold_on, drive_on) = Self::stage_runs(src, mod_state);
         let key = self.held;
         if self.fade == 0 {
             self.vca = VcaRoutes::of(mod_state);
@@ -539,8 +645,11 @@ impl Voice {
             // spec (spec §4).
             let (m, live) = (&mut self.played, &mut self.played_live);
             m.clone_from(params);
+            self.stages.ease(m, ease_coeff(sample_rate));
             *live = AlgoLive::from_params(&params.algo);
             live.routed = mod_state.algo_levels_routed();
+            live.morph_routed =
+                mod_state.moves_addr(ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH));
             let mut next = [EnvMods::NONE; 3];
             for d in 0..mod_state.num_dests() {
                 let a = mod_state.dest(d);
@@ -571,17 +680,23 @@ impl Voice {
         // 1. Engine → raw oscillator output
         self.slot.render(output, m, live, sample_rate, pool);
 
-        // 2. Drive
-        self.drive.process(output, &m.drive);
+        // 2. Drive, gated as it's billed.
+        self.drive.process(output, &m.drive, drive_on);
 
         // 3. Filter
         self.filter.process(output, &m.filter, sample_rate);
 
         // 4. Wavefolder
-        self.folder.process(output, &m.folder);
+        self.folder.process(output, &m.folder, fold_on);
 
-        // 5. The VCA, after the fold.
-        let volume = m.out.volume;
+        // 5. DC from the engine, the drive, the filter and the fold: none
+        // reaches the VCA (ADR 0060).
+        self.dc.run(output);
+
+        // 6. The VCA, after the blocker, with the engine's output gain,
+        // ramped (never snap).
+        let v = self.volume.step(m.out.volume * self.slot.out_gain());
+        let (volume, dv) = (v.1, step_of(v, BLOCK_SIZE));
         // The block's last routed gain, × AMP's VEL: whether the lifetime
         // check below ends the voice through a fade.
         let mut last_gain = 0.0;
@@ -592,8 +707,14 @@ impl Voice {
                 match &self.slot {
                     EngineSlot::Algo(_) | EngineSlot::Modal(_) => {
                         // Its own envelopes shape the sound: today's expression, bit for bit.
-                        for sample in output.iter_mut() {
-                            *sample *= volume;
+                        if dv == 0.0 {
+                            for sample in output.iter_mut() {
+                                *sample *= volume;
+                            }
+                        } else {
+                            for (i, sample) in output.iter_mut().enumerate() {
+                                *sample *= at(v.0, dv, i);
+                            }
                         }
                     }
                 }
@@ -602,8 +723,14 @@ impl Voice {
                 let vel = 1.0 - m.out.vca_vel + m.out.vca_vel * self.last_velocity.unit();
                 let k = volume * vel;
                 #[allow(clippy::manual_clamp)] // max/min, not clamp: NaN clamps too
-                for (sample, g) in output.iter_mut().zip(gain) {
-                    *sample *= k * g.max(0.0).min(1.0);
+                if dv == 0.0 {
+                    for (sample, g) in output.iter_mut().zip(gain) {
+                        *sample *= k * g.max(0.0).min(1.0);
+                    }
+                } else {
+                    for (i, (sample, g)) in output.iter_mut().zip(gain).enumerate() {
+                        *sample *= at(v.0, dv, i) * vel * g.max(0.0).min(1.0);
+                    }
                 }
                 #[allow(clippy::manual_clamp)]
                 let g = gain[BLOCK_SIZE - 1].max(0.0).min(1.0);

@@ -234,18 +234,19 @@ fn a_steady_cutoff_does_not_ramp() {
 }
 
 /// Every mode's output, steady and ramped, hot enough to saturate, bit for
-/// bit as recorded before `tick` was inlined into per-mode loops.
+/// bit as recorded before `tick` was inlined into per-mode loops;
+/// re-recorded for the C1 `saturate` (ADR 0063), the first mode unmoved.
 #[test]
 fn every_mode_renders_as_recorded() {
     const WANT: [u64; 8] = [
         0x31ba_0de6_59aa_bd16,
-        0x8881_22f4_1133_37c5,
-        0xefd7_edba_5eab_f5ec,
-        0x0ebe_833a_a4b4_21d0,
-        0x9531_72d7_34b8_27cc,
-        0xe9e1_2b33_8060_4879,
-        0xeaac_ffc4_00fb_ef23,
-        0x2a19_e4cc_f46f_f16a,
+        0xff48_85db_b8fb_a588,
+        0x8de8_dcb7_bcad_af5c,
+        0x4137_d7eb_af1e_4c5b,
+        0x3760_1f4e_5339_ba69,
+        0x5c6d_d584_642b_f8ce,
+        0xfbac_439c_098e_01c8,
+        0xad2c_fb78_5be4_b719,
     ];
     let got = FilterMode::ALL.map(|m| {
         let mut p = FilterParams::default();

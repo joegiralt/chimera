@@ -3,7 +3,10 @@
 //!
 //! 1. A Mono part owns one voice while it sounds; a new note retriggers it.
 //!    Mono voices are never stolen.
-//! 2. A Poly part takes a free voice, round-robin; with none free, a dying
+//! 2. A Poly part re-striking a key it sounds, held or ringing, takes that
+//!    voice back if the budget allows: a re-plucked string (the owner's
+//!    UAT, 2026-09-30); if not, the rules below.
+//!    Else a free voice, round-robin; with none free, a dying
 //!    one, nearest the end of its fade (its note starts when the fade ends).
 //! 3. Pool full: steal from any part the oldest released (note-off'd, tail
 //!    ringing) non-mono voice; if none, the oldest held non-mono voice;
@@ -165,7 +168,7 @@ impl Allocator {
         cost: Cost,
         reserved: Cost,
     ) -> Alloc {
-        match self.pick(part, mode, cost, reserved) {
+        match self.pick(part, mode, note, cost, reserved) {
             Some(v) => {
                 self.book(v, part, mode, note, cost);
                 Alloc::Voice(v)
@@ -252,7 +255,14 @@ impl Allocator {
     }
 
     /// The voice `note_on` would book, without booking it: rules 1–4.
-    pub fn pick(&self, part: u8, mode: PartMode, cost: Cost, reserved: Cost) -> Option<usize> {
+    pub fn pick(
+        &self,
+        part: u8,
+        mode: PartMode,
+        note: MidiNote,
+        cost: Cost,
+        reserved: Cost,
+    ) -> Option<usize> {
         let fits = |freed: Cost| {
             let total = reserved.0 + self.live_cost().0 + cost.0;
             total.saturating_sub(freed.0) <= self.budget.as_cost().0
@@ -266,8 +276,18 @@ impl Allocator {
         {
             return fits(self.slots[v].cost).then_some(v);
         }
-        // Rule 2: a free voice, round-robin, else the dying one nearest the
-        // end of its fade — if it fits.
+        // Rule 2: the key's own voice, re-struck, if it fits (else on to
+        // the rest); else a free voice, round-robin, else the dying one
+        // nearest the end of its fade — if it fits.
+        if mode != PartMode::Mono
+            && let Some(v) = self
+                .slots
+                .iter()
+                .position(|s| !s.mono && !s.dying() && s.part == Some(part) && s.note == Some(note))
+            && fits(self.slots[v].cost)
+        {
+            return Some(v);
+        }
         let free = (0..MAX_VOICES)
             .map(|i| (self.rr + i) % MAX_VOICES)
             .find(|&v| self.slots[v].is_free())

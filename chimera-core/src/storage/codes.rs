@@ -8,6 +8,8 @@ use crate::block::{Block, ParamId, ParamKind, ParamSpec};
 use crate::dsp::modulator::{EnvSlot, LfoSlot};
 use crate::modulation::ModSource;
 
+use super::block_codec::MAX_BLOCK_PARAMS;
+
 impl BlockRef {
     /// The block's code; `None` for `Channels`, which is a view of the Parts'
     /// own `CH` params and is never stored.
@@ -118,11 +120,12 @@ impl ModSource {
 }
 
 /// `(block code, param id)` pairs that once existed and never come back
-/// (ADR 0009: the filter's FM, ENV and KEY). A reader skips them silently.
+/// (ADR 0009: the filter's FM, ENV and KEY). A reader skips them, unless a
+/// `Translation` of the block reads them.
 /// A retired code goes on one of these lists, and never gets another meaning:
 /// the fixture check fails a gone line that isn't listed, and a listed one
 /// that is produced again. A retired block lists each of its params.
-pub const RETIRED: &[(u8, u8)] = &[(10, 3), (10, 4), (10, 5)];
+pub const RETIRED: &[(u8, u8)] = &[(10, 3), (10, 4), (10, 5), (1, 2), (1, 5), (1, 7), (1, 8)];
 
 /// Block codes that are gone for good (each of its params is in `RETIRED`).
 pub const RETIRED_BLOCKS: &[u8] = &[];
@@ -143,6 +146,48 @@ pub struct Migration {
 }
 
 pub const MIGRATIONS: &[Migration] = &[];
+
+/// A block's retired values from one file, by old `ParamId`.
+pub struct Retired([Option<f32>; MAX_BLOCK_PARAMS]);
+
+impl Retired {
+    pub(super) const fn new() -> Self {
+        Retired([None; MAX_BLOCK_PARAMS])
+    }
+
+    pub(super) fn put(&mut self, id: ParamId, v: f32) {
+        self.0[usize::from(id.0)] = Some(v);
+    }
+
+    pub fn get(&self, id: ParamId) -> Option<f32> {
+        self.0.get(usize::from(id.0)).copied().flatten()
+    }
+
+    pub fn any(&self) -> bool {
+        self.0.iter().any(Option::is_some)
+    }
+}
+
+// Every retired id has a slot in `Retired`.
+const _: () = {
+    let mut i = 0;
+    while i < RETIRED.len() {
+        assert!((RETIRED[i].1 as usize) < MAX_BLOCK_PARAMS);
+        i += 1;
+    }
+};
+
+/// Live params several retired ones derive from together (spec § 3): run once
+/// the file's live values are written, only when the file held a retired id of `block`.
+pub struct Translation {
+    pub block: u8,
+    pub apply: fn(&Retired, &mut dyn Block),
+}
+
+pub const TRANSLATIONS: &[Translation] = &[Translation {
+    block: 1,
+    apply: crate::dsp::modal::translate_v1,
+}];
 
 /// A param that exists in a live spec table. Only built from one, so a saver
 /// can't write, and a loader can't apply, an address the firmware lacks.

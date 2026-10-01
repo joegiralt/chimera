@@ -6,6 +6,9 @@
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::Rgb565;
 
+use crate::dsp::modal::{MODEL_NAMES, ResonatorMode};
+use crate::ui::block_def::BlockDef;
+use crate::ui::block_registry::MODAL_2;
 use crate::ui::chain::ChainNav;
 use crate::ui::draw;
 use crate::ui::theme;
@@ -19,8 +22,17 @@ pub fn node_x(i: usize, n: usize) -> i32 {
     }
 }
 
+/// A page's name on the map: MDL2 is named after `model`.
+pub fn page_label(def: &BlockDef, model: ResonatorMode) -> &'static str {
+    if def.id == MODAL_2.id {
+        MODEL_NAMES[model as usize]
+    } else {
+        def.short
+    }
+}
+
 /// Draw the map. `branch_scroll_px` scrolls the sub-page list (animated).
-pub fn draw<D>(d: &mut D, nav: &ChainNav, branch_scroll_px: i32)
+pub fn draw<D>(d: &mut D, nav: &ChainNav, model: ResonatorMode, branch_scroll_px: i32)
 where
     D: DrawTarget<Color = Rgb565>,
 {
@@ -45,7 +57,7 @@ where
             ring_node(d, x, theme::MAP_LINE_Y, label, theme::NODE_LABEL_Y);
         }
     }
-    draw_branches(d, nav, node_x(nav.node, n), branch_scroll_px);
+    draw_branches(d, nav, model, node_x(nav.node, n), branch_scroll_px);
 }
 
 /// A current node: a `fill` pill centred on (x, cy) with a dark bold label.
@@ -83,8 +95,13 @@ where
 }
 
 /// Sub-pages of the current block, under its pill.
-fn draw_branches<D>(d: &mut D, nav: &ChainNav, pill_x: i32, branch_scroll_px: i32)
-where
+fn draw_branches<D>(
+    d: &mut D,
+    nav: &ChainNav,
+    model: ResonatorMode,
+    pill_x: i32,
+    branch_scroll_px: i32,
+) where
     D: DrawTarget<Color = Rgb565>,
 {
     let Some(block) = nav.active_chain_block() else {
@@ -109,11 +126,12 @@ where
     }
     for i in 0..count as i32 {
         let Some(y) = visible(i) else { continue };
-        let label = if i == 0 {
-            block.def.short
+        let def = if i == 0 {
+            block.def
         } else {
-            block.sub_pages[i as usize - 1].short
+            block.sub_pages[i as usize - 1]
         };
+        let label = page_label(def, model);
         let cy = y + theme::BRANCH_LINE_HEIGHT / 2;
         if i as usize == nav.sub_page {
             draw::dot(d, x, cy, 2, theme::ACCENT);

@@ -5,6 +5,7 @@
 
 use crate::dsp::Stereo;
 use crate::dsp::algo::math::exp2;
+use crate::dsp::ease::{Ease, at, ease_coeff, step_of};
 use crate::dsp::halfband::{Decimator, HALF, Interpolator};
 use chimera_hal::BLOCK_SIZE;
 use core::f32::consts::{LOG2_10, LOG2_E, PI};
@@ -605,9 +606,11 @@ pub struct RingReverb {
     gains: [f32; STAGES],
     damp_coef: f32,
     primed: bool,
+    /// MIX, eased (never snap).
+    mix: Ease,
 }
 
-crate::in_place::field_list!(RingReverb => RingReverb { ring, dec, up_l, up_r, time, damp, grit, gains, damp_coef, primed });
+crate::in_place::field_list!(RingReverb => RingReverb { ring, dec, up_l, up_r, time, damp, grit, gains, damp_coef, primed, mix });
 
 impl RingReverb {
     pub fn new() -> Self {
@@ -622,13 +625,14 @@ impl RingReverb {
             gains: [0.0; STAGES],
             damp_coef: 0.0,
             primed: false,
+            mix: Ease::default(),
         }
     }
 
     pub fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
         // SAFETY: every field is an integer or float array, a float, an
-        // integer or a `bool` (`false`), all valid as zero bytes; zero is
-        // exactly `new()`'s state.
+        // integer, a `bool` (`false`) or an `Ease` of the two, all valid as
+        // zero bytes; zero is exactly `new()`'s state.
         unsafe {
             slot.as_mut_ptr().write_bytes(0, 1);
             slot.assume_init_mut()
@@ -681,9 +685,22 @@ impl RingReverb {
         self.ring.process(&u, &blk, &mut l, &mut r);
         self.up_l.process(&l, &mut out.l);
         self.up_r.process(&r, &mut out.r);
-        let gain = WET_GAIN * mix / FULL_SCALE;
-        for s in out.l.iter_mut().chain(out.r.iter_mut()) {
-            *s *= gain;
+        let (from, to) = self.mix.step(mix, ease_coeff(sample_rate));
+        let gain = WET_GAIN * to / FULL_SCALE;
+        if from == to {
+            for s in out.l.iter_mut().chain(out.r.iter_mut()) {
+                *s *= gain;
+            }
+        } else {
+            let (g0, step) = (
+                WET_GAIN * from / FULL_SCALE,
+                step_of((from, to), BLOCK_SIZE) * WET_GAIN / FULL_SCALE,
+            );
+            for side in [&mut out.l, &mut out.r] {
+                for (i, s) in side.iter_mut().enumerate() {
+                    *s *= at(g0, step, i);
+                }
+            }
         }
     }
 }

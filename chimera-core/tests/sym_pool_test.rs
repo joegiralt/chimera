@@ -34,6 +34,11 @@ fn modal(mode: ResonatorMode) -> ParamSnapshot {
     p
 }
 
+/// Blocks a released Sympathetic note may ring: neither its main string
+/// nor its halo gets a release (ADR 0054, 0062), about 40 s at the default
+/// DAMP.
+const HALO_RINGS: usize = 60 * chimera_hal::SAMPLE_RATE as usize / BLOCK_SIZE;
+
 fn sym() -> ParamSnapshot {
     modal(ResonatorMode::Sympathetic)
 }
@@ -368,7 +373,7 @@ fn a_handed_over_slot_carries_nothing() {
     }
     assert_eq!(s.inst.sym().holder(SymSlot::ALL[0]), Some(VoiceIdx::ALL[a]));
     s.off(0, 60);
-    s.until_idle(5_000);
+    s.until_idle(HALO_RINGS);
     assert_eq!(s.inst.sym().free(), SYM_SLOTS);
 
     s.off(0, 60);
@@ -454,7 +459,7 @@ fn storm(budget: SampleBudget) -> usize {
     for (part, n) in held {
         s.off(part, n);
     }
-    s.until_idle(5_000);
+    s.until_idle(HALO_RINGS);
     assert_eq!(s.inst.sym().free(), SYM_SLOTS);
     most
 }
@@ -516,7 +521,7 @@ fn switch_gives_the_last_four_played_a_halo() {
         for &n in older {
             s.off(1, n);
         }
-        s.until_idle(5_000);
+        s.until_idle(HALO_RINGS);
         assert_eq!(s.inst.sym().free(), SYM_SLOTS);
     }
 }
@@ -524,17 +529,15 @@ fn switch_gives_the_last_four_played_a_halo() {
 #[test]
 fn a_resting_voice_gives_its_slot_back() {
     let mut p = sym();
-    p.modal.decay = 0.3;
+    p.modal.damp = chimera_core::dsp::modal::damp_from_v1_decay(0.3);
     let mut s = Stage::new(&[(p, PartMode::Poly)]);
     s.on(0, 60);
     let v = s.voice_of(0, 60);
     s.block();
     assert_eq!(s.inst.sym().lent(), 1);
-    // Released, it rings down on its own: no fade, no reset. Held, the
-    // default KS feedback sustains it for good
-    // (https://github.com/joegiralt/chimera/issues/191).
+    // Released, it rings down on its own: no fade, no reset.
     s.off(0, 60);
-    for _ in 0..5_000 {
+    for _ in 0..HALO_RINGS {
         let r = s.inst.rebuilds()[v];
         s.block();
         if !s.inst.active()[v] {
