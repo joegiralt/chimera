@@ -470,7 +470,7 @@ where
     let cy = theme::BRAID_Y + h / 2;
     let amp = 3.0 + b.depth * (h / 2 - 6) as f32;
     let k = TAU * b.turns() / w as f32;
-    let twist = b.twist(b.frame);
+    let twist = b.twist();
     let level = ((b.mix * 3.0) as usize).min(2);
     let dry = match b.focus {
         Some(BraidPart::Mix) => theme::INK,
@@ -558,7 +558,7 @@ where
     });
     let level = ((r.mix * 3.0) as usize).min(2);
     let wobble = r.mech * 3.0;
-    let wob_phase = r.frame as f32 * 0.37;
+    let wob_phase = r.wobble_phase();
     let ring = |d: &mut D, rad: f32, wob: f32, color: Rgb565, width: u32, dotted: bool| {
         let pt = |i: usize| {
             let (c, s) = unit[i % N];

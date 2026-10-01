@@ -3,7 +3,7 @@
 
 use crate::addr::{BlockRef, ParamAddr};
 use crate::block::ValFmt;
-use crate::dsp::chorus::ChorusParams;
+use crate::dsp::chorus::{ChorusMode, ChorusParams};
 use crate::dsp::delay::DelayParams;
 use crate::dsp::reverb::ReverbParams;
 
@@ -21,7 +21,8 @@ pub enum FocusGlyph {
     LevelBar,
     /// Horizontal crossfader.
     Crossfader,
-    /// One animated glyph for up to three params of an effect, drawn from
+    /// One animated glyph for all of an effect's params (`CompositeId::
+    /// params`: the braid's 4, the rings' 7, the cube's 5), drawn from
     /// their set values, never the modulated ones.
     Composite(CompositeId),
 }
@@ -37,7 +38,19 @@ pub enum CompositeId {
     ChorusBraid,
 }
 
-/// What the focus band draws, with its inputs: built glyphs only.
+impl CompositeId {
+    /// The params a composite reads, in its inputs' order: every spec that
+    /// carries it, and only those (`tests/focus_glyph_test.rs` pins both).
+    pub const fn params(self) -> &'static [ParamAddr] {
+        match self {
+            CompositeId::ChorusBraid => &BRAID_PARAMS,
+            CompositeId::DelayRings => &RINGS_PARAMS,
+            CompositeId::ReverbCube => &CUBE_PARAMS,
+        }
+    }
+}
+
+/// What the focus band draws, with its inputs.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Gauge {
     /// `value` 0..1, from 12:00 when `bipolar`.
@@ -251,6 +264,12 @@ impl Rings {
         1 + libm::roundf(self.tone * 4.0) as usize
     }
 
+    /// The wobble's phase at `frame`, radians in 0..τ, 0.37 a frame. In
+    /// f64, so it stays smooth however long the clock has run.
+    pub fn wobble_phase(&self) -> f32 {
+        libm::fmod(self.frame as f64 * 0.37, core::f64::consts::TAU) as f32
+    }
+
     /// How long the newest ring has been out, UI frames (0..period). In
     /// f64, so it stays smooth however long the clock has run.
     pub fn age(&self) -> f32 {
@@ -289,8 +308,8 @@ impl BraidPart {
 /// the chorus's set values (normalized) and the UI clock's `frame`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Braid {
-    /// MODE: 0 OFF, 1 I, 2 II, 3 I+II.
-    pub mode: u8,
+    /// MODE: OFF, I, II or I+II.
+    pub mode: ChorusMode,
     /// How fast the twist travels.
     pub rate: f32,
     /// How far the strands swing apart.
@@ -305,7 +324,7 @@ impl Braid {
     /// From `BRAID_PARAMS`' set values, normalized.
     pub fn from_set(set: [f32; 4], focus: Option<BraidPart>, frame: u32) -> Self {
         Self {
-            mode: libm::roundf(set[0].clamp(0.0, 1.0) * 3.0) as u8,
+            mode: ChorusMode::from_u8(libm::roundf(set[0].clamp(0.0, 1.0) * 3.0) as u8),
             rate: set[1].clamp(0.0, 1.0),
             depth: set[2].clamp(0.0, 1.0),
             mix: set[3].clamp(0.0, 1.0),
@@ -317,24 +336,36 @@ impl Braid {
     /// OFF none (the dry line alone), I and II two, I+II three.
     pub const fn strands(&self) -> usize {
         match self.mode {
-            0 => 0,
-            1 | 2 => 2,
-            _ => 3,
+            ChorusMode::Off => 0,
+            ChorusMode::JunoI | ChorusMode::JunoII => 2,
+            ChorusMode::JunoBoth => 3,
         }
     }
 
-    /// Twists along the box: II's are tighter.
+    /// Twists along the box, and how fast the twist travels: II's are
+    /// tighter and faster.
+    const fn turns_and_speed(&self) -> (f32, f64) {
+        match self.mode {
+            ChorusMode::JunoII => (2.5, 1.6),
+            ChorusMode::Off | ChorusMode::JunoI | ChorusMode::JunoBoth => (1.5, 1.0),
+        }
+    }
+
+    /// Twists along the box.
     pub const fn turns(&self) -> f32 {
-        if self.mode == 2 { 2.5 } else { 1.5 }
+        self.turns_and_speed().0
     }
 
     /// The twist's phase at `frame`, radians in 0..τ: RATE sets how fast
     /// it travels (0.16 to 1.6 Hz at 20 fps); II travels faster. In f64,
     /// so it stays smooth however long the clock has run.
-    pub fn twist(&self, frame: u32) -> f32 {
+    pub fn twist(&self) -> f32 {
         let per_frame = 0.05 + 0.45 * self.rate as f64;
-        let speed = if self.mode == 2 { 1.6 } else { 1.0 };
-        libm::fmod(frame as f64 * per_frame * speed, core::f64::consts::TAU) as f32
+        let speed = self.turns_and_speed().1;
+        libm::fmod(
+            self.frame as f64 * per_frame * speed,
+            core::f64::consts::TAU,
+        ) as f32
     }
 }
 
@@ -366,10 +397,8 @@ impl FocusGlyph {
     }
 
     /// The gauge the focus band draws for this glyph at the focused slot's
-    /// `value` in format `fmt`. The one place a glyph not built yet stands
-    /// in as ARC; each glyph's story gives it its own `Gauge`.
-    /// A built composite's gauge comes from `composite`, which reads its
-    /// params' set values.
+    /// `value` in format `fmt`. A composite's comes from `composite`,
+    /// which reads its params' set values (`Renderer::eased_set`).
     pub fn gauge(
         self,
         value: f32,

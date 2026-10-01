@@ -11,9 +11,11 @@ better as a switch, a level as a slider. The owner chose a set of glyph
 kinds, each built as its own story: NONE (word choices: no gauge, the
 value text gets the band), SWITCH (two-state), LEVEL BAR (vertical
 slider with tick dots), CROSSFADER (horizontal, Octatrack-style), and
-animated COMPOSITES, one glyph for up to three params of an effect:
-reverb cube (SIZE, TIME, AMOUNT), delay rings (TIME, FEEDBACK, TONE),
-chorus braid (RATE, DEPTH, MIX; MODE is the strand count).
+animated COMPOSITES, one glyph for all of an effect's params: as built,
+the chorus braid's 4 (MODE, RATE, DEPTH, MIX), the delay rings' 7 and the
+reverb cube's 5. They were first sketched as three each: cube SIZE, TIME,
+AMOUNT; rings TIME, FEEDBACK, TONE; braid RATE, DEPTH, MIX, MODE the
+strand count.
 
 ## Decision
 - **A glyph is hand-assigned on the parameter's spec**, never derived
@@ -24,15 +26,15 @@ chorus braid (RATE, DEPTH, MIX; MODE is the strand count).
 - **`FocusGlyph`** names every planned kind: `Arc`, `None`, `Switch`,
   `LevelBar`, `Crossfader`, `Composite(CompositeId)` with `ReverbCube`,
   `DelayRings`, `ChorusBraid`. Slots with no spec (legacy, fixed text)
-  show ARC. A page slot may override its param's glyph
-  (`ParamSlot::with_glyph`): the glyph demo pages show a glyph on a
-  real param before the owner assigns it to any spec.
-- **What is drawn is `FocusGlyph::gauge(..) -> Gauge`**, the one place an
-  unbuilt glyph falls back to ARC. `Gauge` holds only built glyphs, each
-  with its inputs (`Arc { value, bipolar }`, `None`, `Switch { on }`,
-  `LevelBar { value, ticks }`, ticks from the format); the focus band
-  matches on it exhaustively, so nothing unbuilt can be drawn
-  or panic.
+  show ARC. A slot shows its spec's glyph; there is no per-slot
+  override.
+- **What is drawn is `FocusGlyph::gauge(..) -> Gauge`**, which maps
+  each glyph to its `Gauge`, with its inputs (`Arc { value, bipolar }`,
+  `None`, `Switch { on }`, `LevelBar { value, ticks }`, ticks from the
+  format, `Crossfader { value }`, `Braid`, `Rings`, `Cube`); a
+  composite's comes from the renderer's `composite` callback. The focus
+  band matches on `Gauge` exhaustively, so a new kind can't be drawn
+  half-built or panic.
 - **Word choices take NONE** (owner-approved 2026-10-01): a named
   choice whose value is a word (MODEL, KIND, filter MODE, ALG A/B,
   WAVE, the ENV and LFO TYPE/MODE/FORM/SPEED/HOLD, STEAL, Part MODE and
@@ -49,14 +51,18 @@ chorus braid (RATE, DEPTH, MIX; MODE is the strand count).
   everywhere; names are display only, disk codes are unchanged.
 - **Set-and-leave levels take LEVEL BAR** (owner-approved
   2026-10-01): unipolar, 0 to max: OUT LEVEL, each operator's LEVEL
-  and FDBK, Part LEVEL and its CHR/DLY/REV sends, chorus, delay,
-  reverb, tape and comp MIX, delay REV, comp MAKEUP. Bipolar and
-  centred params keep ARC; a test checks every LEVEL BAR is unipolar
-  from 0.
+  and FDBK, Part LEVEL and its CHR/DLY/REV sends, tape and comp MIX,
+  comp MAKEUP. The chorus, delay and reverb MIX and the delay's REV were
+  LEVEL BAR until their composites took them. Bipolar and centred
+  params keep ARC; a test checks every LEVEL BAR is unipolar from 0.
 - **A composite draws from its params' set (stored) values only**, never
   the modulated ones: when it moves, that is always its own animation,
   never automation. The params stay modulatable; their cells and mod
-  bars still show modulation.
+  bars still show modulation. The inputs come from one function,
+  `Renderer::eased_set`: the eased set value (`Renderer::set`, fed
+  before modulation offsets) where the page has the param's slot, else
+  the stored value. `CompositeId::params()` names each composite's
+  params, and a test pins both ways that exactly those specs carry it.
 - **Blends take CROSSFADER** (owner-approved 2026-10-01): ALGO
   MORPH (ALG A to B) and DRV MIX (dry to wet).
 - **CROSSFADER draws the set value too**, eased in its own lane
@@ -65,7 +71,9 @@ chorus braid (RATE, DEPTH, MIX; MODE is the strand count).
 - **Animation runs on a UI clock** (`animation::UiClock`, frames, ticked
   by `UiState::update`), never the audio thread. While the focused
   glyph animates (`Gauge::animates`), the focus band's dirty key carries
-  the frame (`glyph::anim_key`), so the band redraws every frame.
+  the frame (`glyph::anim_key`): when only the frame moved, the glyph's
+  box alone is cleared, redrawn and its rows flushed; the rest of the
+  band redraws only when its key changes.
 - **The chorus braid is the first composite**: MODE, RATE, DEPTH and
   MIX as strands twisting round a dry line (OFF the line alone, I two
   strands, II two tighter and faster, I+II three); RATE the twist's
@@ -118,16 +126,16 @@ chorus braid (RATE, DEPTH, MIX; MODE is the strand count).
   do UI work, and the UI frame rate is what the motion is seen at.
 
 ## Consequences
-- Until a glyph's story lands, assigning it changes nothing on screen;
-  each story adds its `Gauge` variant and match arms, and moves its kind
-  in `gauge()`. A composite's `set` comes from one function,
-  `renderer::composite_set`, which reads the stored params only.
-- An animated glyph costs one focus-band redraw per frame while shown;
-  only that band, only while focused.
-- Demo glyph pages edit the active Part's real sound (GLYPH: ARC turns
-  Part 1's VOLUME and PAN), as the older demo pages do.
+- Every planned kind is built. A new one adds a `FocusGlyph` variant
+  (the exhaustive `position` and `gauge` matches won't compile until it
+  is placed) and its `Gauge` variant and drawing.
+- An animated glyph costs its box per frame while shown and focused
+  (braid 80 by 56, rings 60 by 56, cube 64 by 56), flushed as whole
+  rows: 56 rows of 240 px.
+- Demo glyph pages edit the real sound (GLYPH: ARC turns Part 1's RESO
+  and PAN; the composites' pages the FX), as the older demo pages do.
 - Demo glyph pages take `BlockDef` ids 70 and up (68–69 are reserved
-  for the nav branch's CHANNELS and OUTPUTS); `focus::MAX_PAGES` (72) is
+  for the nav branch's CHANNELS and OUTPUTS); `focus::MAX_PAGES` (80) is
   raised when a later page needs it.
 - A Demo page with bound slots is slot-driven (`PageId::from_nav`), as
   System › THEME is, so each glyph page is data only.

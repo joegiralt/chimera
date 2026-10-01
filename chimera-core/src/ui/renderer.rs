@@ -64,8 +64,9 @@ pub struct Frame<'a> {
 pub struct Renderer {
     /// Animated display values for the 6 encoders (normalized 0..1).
     pub anim: [AnimatedValue; 6],
-    /// The same slots' set values, eased, with no modulation: what a glyph
-    /// that ignores modulation (CROSSFADER) draws.
+    /// The same slots' set values, eased, with no modulation: what the
+    /// glyphs that ignore modulation draw (CROSSFADER, and the composites
+    /// through `eased_set`).
     pub set: [AnimatedValue; 6],
     /// Animated scroll offset for dungeon map sub-page branches (in pixels).
     pub branch_scroll: AnimatedValue,
@@ -398,45 +399,42 @@ impl Renderer {
 
     /// The focused slot's gauge, by its glyph.
     pub fn gauge(&self, f: &Frame) -> Gauge {
-        let fmt = view::view(f.def, f.focus, &f.ctx).fmt();
-        let glyph = view::glyph(f.def, f.focus, &f.ctx);
+        let view = view::view(f.def, f.focus, &f.ctx);
+        let (fmt, glyph, focused) = (view.fmt(), view.glyph(), view.addr());
         let value = match glyph {
             FocusGlyph::Crossfader => self.set[f.focus].current(),
             _ => self.anim[f.focus].current(),
         };
-        let focused = view::view(f.def, f.focus, &f.ctx).addr();
-        glyph.gauge(value, fmt, |id| match id {
-            CompositeId::ChorusBraid => {
-                let focus = BRAID_PARAMS
-                    .iter()
-                    .position(|&a| Some(a) == focused)
-                    .map(|i| BraidPart::ALL[i]);
-                let set = self.eased_set(f, BRAID_PARAMS);
-                Gauge::Braid(Braid::from_set(set, focus, f.clock.frame()))
-            }
-            CompositeId::DelayRings => {
-                let focus = RINGS_PARAMS
-                    .iter()
-                    .position(|&a| Some(a) == focused)
-                    .map(|i| RingsPart::ALL[i]);
-                let set = self.eased_set(f, RINGS_PARAMS);
-                Gauge::Rings(Rings::from_set(set, focus, f.clock.frame()))
-            }
-            CompositeId::ReverbCube => {
-                let focus = CUBE_PARAMS
-                    .iter()
-                    .position(|&a| Some(a) == focused)
-                    .map(|i| CubePart::ALL[i]);
-                let set = self.eased_set(f, CUBE_PARAMS);
-                Gauge::Cube(Cube::from_set(set, focus, f.clock.frame()))
+        let frame = f.clock.frame();
+        glyph.gauge(value, fmt, |id| {
+            // Which of the composite's params has focus.
+            let focus = id.params().iter().position(|&a| Some(a) == focused);
+            match id {
+                CompositeId::ChorusBraid => Gauge::Braid(Braid::from_set(
+                    self.eased_set(f, BRAID_PARAMS),
+                    focus.map(|i| BraidPart::ALL[i]),
+                    frame,
+                )),
+                CompositeId::DelayRings => Gauge::Rings(Rings::from_set(
+                    self.eased_set(f, RINGS_PARAMS),
+                    focus.map(|i| RingsPart::ALL[i]),
+                    frame,
+                )),
+                CompositeId::ReverbCube => Gauge::Cube(Cube::from_set(
+                    self.eased_set(f, CUBE_PARAMS),
+                    focus.map(|i| CubePart::ALL[i]),
+                    frame,
+                )),
             }
         })
     }
 
-    /// `addrs`' set values: eased (`set`) where the page has a slot for one,
-    /// else stored; never modulated.
+    /// A composite's inputs, `addrs`' set values normalized: eased (`set`)
+    /// where the page has a slot for one, else stored; never `anim` or
+    /// anything modulated, so the glyph only ever moves by its own
+    /// animation.
     fn eased_set<const N: usize>(&self, f: &Frame, addrs: [ParamAddr; N]) -> [f32; N] {
-        let stored = composite_set(&Stored(f), addrs);
+        let stored = stored_set(&Stored(f), addrs);
         core::array::from_fn(|i| {
             (0..f.def.params.len())
                 .find(|&s| slot_addr(f.def, s, &f.ctx) == Some(addrs[i]))
@@ -455,18 +453,16 @@ impl Renderer {
             .then(|| self.gauge(f))
     }
 
-    /// Redraw only the focused slot's gauge in its box, if it has one; the
+    /// Redraw only `gauge` (the shown one) in its box, if it has one; the
     /// rows to flush.
     pub fn redraw_gauge<D>(
-        &self,
         display: &mut D,
         fb: impl FnOnce(&mut D) -> &mut [u16],
-        f: &Frame,
+        gauge: Gauge,
     ) -> Option<(u16, u16)>
     where
         D: DrawTarget<Color = Rgb565>,
     {
-        let gauge = self.shown_gauge(f)?;
         let (x, y, w, h) = components::gauge_rect(&gauge)?;
         Self::clear_rect_fb(fb(display), x, y, w, h);
         components::draw_gauge(display, gauge);
@@ -548,10 +544,9 @@ impl Renderer {
     }
 }
 
-/// A composite's inputs: its params' set values, normalized, read from
-/// the stored params (`stored`), never `Renderer::anim` or anything
-/// modulated, so the glyph only ever moves by its own animation.
-pub fn composite_set<const N: usize>(stored: &impl Blocks, addrs: [ParamAddr; N]) -> [f32; N] {
+/// `addrs`' stored values, normalized: `eased_set`'s fallback for a param
+/// the page has no slot for.
+fn stored_set<const N: usize>(stored: &impl Blocks, addrs: [ParamAddr; N]) -> [f32; N] {
     addrs.map(|a| stored.block(a.block).map_or(0.0, |b| b.normalized(a.param)))
 }
 
