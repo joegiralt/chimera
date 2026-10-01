@@ -852,3 +852,32 @@ mod e2e {
         assert!(ui.pool().get(SlotId::ALL[0]).is_some());
     }
 }
+
+/// FX at the swap: the kill fades the voices, never the FX. A delay tail
+/// rings through the gate, the ack and the publish into the new project's
+/// delay settings.
+#[test]
+fn a_delay_tail_rings_through_the_swap() {
+    let mut r = rev_v();
+    r.shared.parts[0].mix.sends = [0.0, 0.8, 0.0];
+    r.shared.fx.delay.mix = 0.7;
+    r.note_on(0, 60);
+    r.render(400); // past the first echo
+    let link = LoadLink::new();
+    let mut g = LoadGate::new();
+    let _swap = link.bump_for_test();
+    for _ in 0..4 {
+        g.before_block(&link, &mut r.inst, &r.shared);
+        r.render(1);
+    }
+    assert!(link.acked(link.epoch()) && r.inst.quiet());
+    let before = common::rms(&r.out()[0]);
+    let mut next = (*r.shared).clone();
+    (next.fx.delay.time_ms, next.fx.delay.mix) = (250.0, 0.5);
+    next.epoch = link.epoch();
+    *r.shared = next;
+    assert!(g.before_block(&link, &mut r.inst, &r.shared), "published");
+    r.render(1);
+    let after = common::rms(&r.out()[0]);
+    assert!(before > 0.01 && after > 0.25 * before, "{before} → {after}");
+}
