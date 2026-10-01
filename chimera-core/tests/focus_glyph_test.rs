@@ -5,7 +5,9 @@ mod screen;
 
 use chimera_core::addr::{BlockRef, Blocks, ParamAddr};
 use chimera_core::block::{ParamSpec, ValFmt};
+use chimera_core::dsp::lfo::LfoParams;
 use chimera_core::dsp::modal::{MODEL_NAMES, ModalParams};
+use chimera_core::dsp::modulator::LfoSlot;
 use chimera_core::modulation::{CUTOFF, ModSource};
 use chimera_core::params::OutParams;
 use chimera_core::project::PartId;
@@ -128,6 +130,7 @@ fn unbuilt_glyphs_draw_as_arc() {
     for g in FocusGlyph::ALL {
         let want = match g {
             FocusGlyph::None => Gauge::None,
+            FocusGlyph::Switch => Gauge::Switch { on: 0.25 },
             _ => Gauge::Arc {
                 value: 0.25,
                 bipolar: true,
@@ -164,6 +167,7 @@ fn anim_key_follows_the_clock_only_while_animating() {
     };
     assert!(!arc.animates());
     assert!(!Gauge::None.animates());
+    assert!(!Gauge::Switch { on: 1.0 }.animates());
 }
 
 #[test]
@@ -345,4 +349,59 @@ fn glyph_none_page_steps_words_across_the_whole_band() {
     to_demo(&mut arc, &reg::DEMO_GLYPH_ARC);
     settle(&mut arc);
     assert_ne!(arc_top(&render_ui(&arc)), theme::BG);
+}
+
+/// The switch's knob centre at `on` (0 off, 1 on).
+fn knob_x(on: i32) -> i32 {
+    let x0 = theme::SWITCH_CX - theme::SWITCH_W / 2 + theme::SWITCH_H / 2;
+    x0 + on * (theme::SWITCH_W - theme::SWITCH_H)
+}
+
+#[test]
+fn glyph_switch_page_flips_a_real_two_state_param() {
+    let mut ui = UiState::new();
+    to_demo(&mut ui, &reg::DEMO_GLYPH_SWITCH);
+    // SWITCH is the page's: LFO1 SYNC's spec stays ARC until approved.
+    let sync = ParamAddr::new(BlockRef::Lfo(LfoSlot::Lfo1), LfoParams::SYNC);
+    assert_eq!(sync.spec().unwrap().glyph, FocusGlyph::Arc);
+    let lfo_sync = |ui: &UiState| {
+        ui.params()
+            .block(BlockRef::Lfo(LfoSlot::Lfo1))
+            .unwrap()
+            .get(LfoParams::SYNC)
+    };
+
+    // It reads as the LFO page shows it: FREE / RETRIG.
+    let ctx = SlotCtx::read(ui.params(), ui.selected_op());
+    let v = view(ui.nav.active_block_def(), 0, &ctx);
+    assert_eq!(v.addr(), Some(sync));
+    assert_eq!(v.fmt(), ValFmt::Names(&["FREE", "RETRIG"]));
+
+    feed(&mut ui, Input::turn(EncoderId::A, -1));
+    settle(&mut ui);
+    assert_eq!(lfo_sync(&ui), 0.0);
+    let off = render_ui(&ui);
+    assert_eq!(off.oob, 0);
+    assert_eq!(arc_top(&off), theme::BG, "no arc");
+    assert_eq!(
+        off.at(knob_x(0), theme::ARC_CY),
+        theme::MID,
+        "knob left, off"
+    );
+    assert_eq!(off.at(knob_x(1), theme::ARC_CY), theme::FAINT, "track");
+
+    feed(&mut ui, Input::turn(EncoderId::A, 1));
+    assert_eq!(lfo_sync(&ui), 1.0);
+    // Eased: one frame in, the knob is on its way.
+    ui.update();
+    let t = ui.renderer.anim[0].current();
+    assert!(t > 0.0 && t < 1.0, "eased: {t}");
+    settle(&mut ui);
+    let on = render_ui(&ui);
+    assert_eq!(
+        on.at(knob_x(1), theme::ARC_CY),
+        theme::INK,
+        "knob right, on"
+    );
+    assert_eq!(on.at(knob_x(0), theme::ARC_CY), theme::ACCENT, "lit track");
 }

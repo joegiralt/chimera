@@ -328,6 +328,7 @@ where
     );
     match gauge {
         Gauge::None => {}
+        Gauge::Switch { on } => switch(d, on),
         Gauge::Arc { value, bipolar } => draw::arc_gauge(
             d,
             theme::ARC_CX,
@@ -340,6 +341,25 @@ where
             theme::ACCENT,
         ),
     }
+}
+
+/// The SWITCH glyph at the band's right: a faint pill track, lit in the
+/// accent up to the knob, which slides with `on` (0..1) and reads INK on,
+/// MID off.
+fn switch<D>(d: &mut D, on: f32)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let (w, h) = (theme::SWITCH_W, theme::SWITCH_H);
+    let (x, y) = (theme::SWITCH_CX - w / 2, theme::ARC_CY - h / 2);
+    let on = on.clamp(0.0, 1.0);
+    let knob = x + h / 2 + libm::roundf(on * (w - h) as f32) as i32;
+    draw::pill(d, x, y, w, h, theme::FAINT);
+    if on > 0.0 {
+        draw::pill(d, x, y, knob + h / 2 - x, h, theme::ACCENT);
+    }
+    let color = if on >= 0.5 { theme::INK } else { theme::MID };
+    draw::dot(d, knob, theme::ARC_CY, h / 2 - 4, color);
 }
 
 /// How a cell reads (spec § UI). The discriminants pack into the Cells

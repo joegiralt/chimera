@@ -38,6 +38,8 @@ pub enum Gauge {
     Arc { value: f32, bipolar: bool },
     /// No gauge: the value text has the whole band.
     None,
+    /// A two-state toggle: `on` 0 off, 1 on, eased between.
+    Switch { on: f32 },
 }
 
 impl FocusGlyph {
@@ -73,8 +75,8 @@ impl FocusGlyph {
     pub const fn gauge(self, value: f32, bipolar: bool) -> Gauge {
         match self {
             FocusGlyph::None => Gauge::None,
+            FocusGlyph::Switch => Gauge::Switch { on: value },
             FocusGlyph::Arc
-            | FocusGlyph::Switch
             | FocusGlyph::LevelBar
             | FocusGlyph::Crossfader
             | FocusGlyph::Composite(CompositeId::ReverbCube)
@@ -96,7 +98,7 @@ impl Gauge {
     /// Moves on its own: its band redraws every frame while shown.
     pub const fn animates(&self) -> bool {
         match self {
-            Gauge::Arc { .. } | Gauge::None => false,
+            Gauge::Arc { .. } | Gauge::None | Gauge::Switch { .. } => false,
         }
     }
 }

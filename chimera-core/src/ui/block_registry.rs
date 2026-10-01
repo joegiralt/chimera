@@ -13,6 +13,7 @@ use crate::modulation::{MAX_MOD_SOURCES, ModSource};
 use crate::params::{DriveParams, EnvParams, FilterParams, FolderParams, OutParams, PitchParams};
 use crate::part::PartParams;
 use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2, FxFlow, FxNode, ParamSlot, VizType};
+use crate::ui::glyph::FocusGlyph;
 use crate::ui::page::{PageLayout, ValFmt};
 use crate::ui::theme_settings::ThemeSettings;
 
@@ -762,7 +763,7 @@ pub static DEMO_GLYPH_ARC: BlockDef = BlockDef {
 };
 
 /// Glyph pages take ids 70 and up (68–69 are nav-core's CHANNELS and
-/// OUTPUTS); raise `focus::MAX_PAGES` past 72 when one needs it.
+/// OUTPUTS); raise `focus::MAX_PAGES` when one needs it.
 /// GLYPH: NONE. a steps MODEL's words, which get the whole band.
 pub static DEMO_GLYPH_NONE: BlockDef = BlockDef {
     id: 71,
@@ -780,7 +781,25 @@ pub static DEMO_GLYPH_NONE: BlockDef = BlockDef {
     ],
 };
 
-static DEMO_BLOCKS: [ChainBlock; 7] = [
+/// GLYPH: SWITCH. a flips LFO1's SYNC, FREE / RETRIG: CLASSIC's panel
+/// cell, which names it (the spec shows 0 / 1).
+pub static DEMO_GLYPH_SWITCH: BlockDef = BlockDef {
+    id: 72,
+    name: "Glyph: Switch",
+    short: "SW",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::lfo_panel(LfoSlot::Lfo1, 2).with_glyph(FocusGlyph::Switch),
+        EMPTY,
+        EMPTY,
+        EMPTY,
+        EMPTY,
+        EMPTY,
+    ],
+};
+
+static DEMO_BLOCKS: [ChainBlock; 8] = [
     ChainBlock::page(&DEMO_WAVES),
     ChainBlock::page(&DEMO_SHAPES),
     ChainBlock::page(&DEMO_MOTION),
@@ -788,6 +807,7 @@ static DEMO_BLOCKS: [ChainBlock; 7] = [
     ChainBlock::page(&DEMO_MATRIX),
     ChainBlock::page(&DEMO_GLYPH_ARC),
     ChainBlock::page(&DEMO_GLYPH_NONE),
+    ChainBlock::page(&DEMO_GLYPH_SWITCH),
 ];
 
 pub static DEMO_CHAIN: ChainDef2 = ChainDef2 {
