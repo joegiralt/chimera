@@ -41,7 +41,7 @@ use crate::modulation::{CUTOFF, CUTOFF_LABEL, MAX_MOD_SOURCES, ModSource, ModSta
 use crate::params::ParamSnapshot;
 use crate::perf::load::AudioStats;
 use crate::preset::{POOL_SIZE, PartEdit};
-use crate::project::{PartFrom, PartId, PartSource, Project, TemplateCrc};
+use crate::project::{PartFrom, PartId, PartSource, Project, ReplaceGuard, TemplateCrc};
 use crate::scope::SCOPE_LEN;
 use block_def::BlockDef;
 use block_def::VizType;
@@ -496,8 +496,12 @@ impl UiState {
                         .map(|&e| PartFrom::Init(e))
                 });
                 if let Some(from) = from {
+                    // No prompt screen yet: https://github.com/joegiralt/chimera/issues/258.
+                    let src = PartSource { part, from };
+                    let c = ReplaceGuard::check(&self.project, self.template, src)
+                        .unwrap_or_else(|n| n.into_pending().anyway(&self.project));
                     // An empty slot loads nothing.
-                    let _ = self.project.load_part(PartSource { part, from });
+                    let _ = self.project.replace_part(c);
                 }
                 self.active_part = part;
                 self.nav.chain_id = ChainId::Part(part.index());

@@ -13,7 +13,7 @@ use chimera_core::preset::Sound;
 use chimera_core::project::{Origin, PartFrom, PartId, PartSource, Project, SlotId, project_crc};
 use chimera_core::storage::{FileError, RecordTag};
 use common::codec_util::{decode as decode_sound, fix_crc};
-use common::project::{decode, encode, full, same};
+use common::project::{decode, encode, full, load, same};
 
 const SLOT: u16 = 0x8007;
 const PART: u16 = 0x8008;
@@ -232,14 +232,18 @@ fn record_order_is_fx_then_slots_then_parts() {
 
 #[test]
 fn slot_and_part_names_round_trip() {
-    let (mut p, _) = Project::boxed();
+    let (mut p, t) = Project::boxed();
     let mut s = factory_sound(0).unwrap();
     s.name = SoundName::new("DUB-042").unwrap();
     p.pool_store(SlotId::ALL[12], s);
-    p.load_part(PartSource {
-        part: PartId::ALL[1],
-        from: PartFrom::Slot(SlotId::ALL[12]),
-    })
+    load(
+        &mut p,
+        t,
+        PartSource {
+            part: PartId::ALL[1],
+            from: PartFrom::Slot(SlotId::ALL[12]),
+        },
+    )
     .unwrap();
     p.edit_part(PartId::ALL[1]).sound.name = SoundName::new("DUB-043").unwrap();
     let (mut q, _) = Project::boxed();
@@ -305,11 +309,15 @@ fn origin_to_empty_slot_reads_as_init() {
 
 #[test]
 fn unknown_or_missing_origins_read_as_init() {
-    let (mut p, _) = Project::boxed();
-    p.load_part(PartSource {
-        part: PartId::ALL[0],
-        from: PartFrom::Slot(SlotId::ALL[9]),
-    })
+    let (mut p, t) = Project::boxed();
+    load(
+        &mut p,
+        t,
+        PartSource {
+            part: PartId::ALL[0],
+            from: PartFrom::Slot(SlotId::ALL[9]),
+        },
+    )
     .unwrap();
     let modal = Origin::Init(EngineType::Modal);
     let (mut q, _) = Project::boxed();

@@ -14,7 +14,7 @@ use chimera_core::project::{
     project_status,
 };
 use chimera_core::storage::sound_crc;
-use common::project::{decode, encode};
+use common::project::{decode, encode, load, load_anyway};
 
 fn src(part: PartId, slot: SlotId) -> PartSource {
     PartSource {
@@ -50,9 +50,9 @@ fn new_is_pristine() {
 
 #[test]
 fn edit_back_to_the_slot_is_clean() {
-    let (mut p, _) = Project::boxed();
+    let (mut p, t) = Project::boxed();
     let a = PartId::ALL[0];
-    p.load_part(src(a, SlotId::ALL[0])).unwrap();
+    load(&mut p, t, src(a, SlotId::ALL[0])).unwrap();
     assert_eq!(status(&p, a), PartStatus::Clean);
     let was = p.part(a).sound.params.filter.cutoff;
     p.edit_part(a).sound.params.filter.cutoff = was * 0.5;
@@ -63,11 +63,11 @@ fn edit_back_to_the_slot_is_clean() {
 
 #[test]
 fn save_over_a_slot_stales_the_other_unedited_users() {
-    let (mut p, _) = Project::boxed();
+    let (mut p, t) = Project::boxed();
     let s = SlotId::ALL[0];
     let [a, b, c] = [PartId::ALL[0], PartId::ALL[3], PartId::ALL[5]];
     for part in [a, b, c] {
-        p.load_part(src(part, s)).unwrap();
+        load(&mut p, t, src(part, s)).unwrap();
     }
     edit(&mut p, c, 0.5);
     edit(&mut p, a, 0.25);
@@ -84,11 +84,11 @@ fn save_over_a_slot_stales_the_other_unedited_users() {
 
 #[test]
 fn save_part_to_names_only_the_stale_users() {
-    let (mut p, _) = Project::boxed();
+    let (mut p, t) = Project::boxed();
     let s = SlotId::ALL[1];
     let [a, b, c] = [PartId::ALL[1], PartId::ALL[2], PartId::ALL[4]];
     for part in [a, b, c] {
-        p.load_part(src(part, s)).unwrap();
+        load(&mut p, t, src(part, s)).unwrap();
     }
     edit(&mut p, b, 0.5);
     edit(&mut p, a, 0.25);
@@ -99,9 +99,9 @@ fn save_part_to_names_only_the_stale_users() {
 
 #[test]
 fn new_slot_saves_to_the_free_slot_and_cleans_the_part() {
-    let (mut p, _) = Project::boxed();
+    let (mut p, t) = Project::boxed();
     let a = PartId::ALL[0];
-    p.load_part(src(a, SlotId::ALL[4])).unwrap();
+    load(&mut p, t, src(a, SlotId::ALL[4])).unwrap();
     edit(&mut p, a, 0.5);
     let free = p.pool().first_free().unwrap();
     let new = part_actions(&p, a)
@@ -122,9 +122,9 @@ fn new_slot_saves_to_the_free_slot_and_cleans_the_part() {
 
 #[test]
 fn revert_is_bit_exact() {
-    let (mut p, _) = Project::boxed();
+    let (mut p, t) = Project::boxed();
     let (a, s) = (PartId::ALL[0], SlotId::ALL[2]);
-    p.load_part(src(a, s)).unwrap();
+    load(&mut p, t, src(a, s)).unwrap();
     let mix = p.part(a).mix;
     edit(&mut p, a, 0.5);
     p.edit_part(a).mix.pan = 0.25;
@@ -142,11 +142,11 @@ fn revert_is_bit_exact() {
 
 #[test]
 fn update_brings_a_stale_part_to_its_slot() {
-    let (mut p, _) = Project::boxed();
+    let (mut p, t) = Project::boxed();
     let s = SlotId::ALL[6];
     let [a, b] = [PartId::ALL[0], PartId::ALL[1]];
-    p.load_part(src(a, s)).unwrap();
-    p.load_part(src(b, s)).unwrap();
+    load(&mut p, t, src(a, s)).unwrap();
+    load(&mut p, t, src(b, s)).unwrap();
     edit(&mut p, a, 0.5);
     p.save_part_to(a, s);
     assert_eq!(status(&p, b), PartStatus::Stale(s));
@@ -159,7 +159,7 @@ fn update_brings_a_stale_part_to_its_slot() {
 
 #[test]
 fn init_origin_never_stale() {
-    let (mut p, _) = Project::boxed();
+    let (mut p, t) = Project::boxed();
     let a = PartId::ALL[1];
     assert_eq!(status(&p, a), PartStatus::Clean);
     // The INIT slot changes under it.
@@ -167,7 +167,7 @@ fn init_origin_never_stale() {
     assert_eq!(status(&p, a), PartStatus::Clean);
     edit(&mut p, a, 0.5);
     assert_eq!(status(&p, a), PartStatus::Edited);
-    p.load_part(init(a, EngineType::Modal)).unwrap();
+    load_anyway(&mut p, t, init(a, EngineType::Modal)).unwrap();
     assert_eq!(status(&p, a), PartStatus::Clean);
 }
 
@@ -176,12 +176,12 @@ fn init_origin_never_stale() {
 /// UPDATE can't drop its edits without a prompt.
 #[test]
 fn edited_part_never_stale_after_reload() {
-    let (mut p, _) = Project::boxed();
+    let (mut p, t) = Project::boxed();
     let s = SlotId::ALL[5];
     let [a, b] = [PartId::ALL[0], PartId::ALL[2]];
-    p.load_part(src(a, s)).unwrap();
+    load(&mut p, t, src(a, s)).unwrap();
     edit(&mut p, a, 0.5);
-    let (mut q, _) = Project::boxed();
+    let (mut q, tq) = Project::boxed();
     decode(&encode(&p), &mut q).unwrap();
     assert_eq!(status(&q, a), PartStatus::Edited);
     match q.part(a).origin() {
@@ -192,7 +192,7 @@ fn edited_part_never_stale_after_reload() {
         }
         o => panic!("origin {o:?}"),
     }
-    q.load_part(src(b, s)).unwrap();
+    load(&mut q, tq, src(b, s)).unwrap();
     edit(&mut q, b, 0.25);
     assert_eq!(q.save_part_to(b, s), PartSet::EMPTY);
     assert_eq!(status(&q, a), PartStatus::Edited);
@@ -208,11 +208,11 @@ fn edited_part_never_stale_after_reload() {
 
 #[test]
 fn stale_reloads_as_edited() {
-    let (mut p, _) = Project::boxed();
+    let (mut p, t) = Project::boxed();
     let s = SlotId::ALL[0];
     let [a, b] = [PartId::ALL[3], PartId::ALL[4]];
-    p.load_part(src(a, s)).unwrap();
-    p.load_part(src(b, s)).unwrap();
+    load(&mut p, t, src(a, s)).unwrap();
+    load(&mut p, t, src(b, s)).unwrap();
     edit(&mut p, b, 0.5);
     assert_eq!(p.save_part_to(b, s), PartSet::EMPTY.with(a));
     assert_eq!(status(&p, a), PartStatus::Stale(s));
@@ -258,7 +258,7 @@ fn project_marks() {
 #[test]
 fn actions_offer_only_what_applies() {
     use PartActionKind::{NewSlot, OverSlot, Revert};
-    let (mut p, _) = Project::boxed();
+    let (mut p, t) = Project::boxed();
     let s = SlotId::ALL[0];
     let free = SlotId::ALL[10];
     let [
@@ -269,13 +269,13 @@ fn actions_offer_only_what_applies() {
         stale,
         saver,
     ] = PartId::ALL;
-    p.load_part(src(clean_slot, s)).unwrap();
-    p.load_part(src(stale, s)).unwrap();
-    p.load_part(src(saver, s)).unwrap();
+    load(&mut p, t, src(clean_slot, s)).unwrap();
+    load(&mut p, t, src(stale, s)).unwrap();
+    load(&mut p, t, src(saver, s)).unwrap();
     edit(&mut p, saver, 0.5);
     p.save_part_to(saver, s);
-    p.load_part(src(clean_slot, s)).unwrap();
-    p.load_part(src(edited_slot, s)).unwrap();
+    load(&mut p, t, src(clean_slot, s)).unwrap();
+    load(&mut p, t, src(edited_slot, s)).unwrap();
     edit(&mut p, edited_slot, 0.25);
     edit(&mut p, edited_init, 0.5);
 
@@ -323,9 +323,10 @@ fn actions_offer_only_what_applies() {
         .iter()
         .find(|x| x.kind() == Revert(s))
         .unwrap();
-    for part in [clean_slot, stale, saver, edited_slot] {
-        p.load_part(init(part, EngineType::Algo)).unwrap();
+    for part in [clean_slot, stale, saver] {
+        load(&mut p, t, init(part, EngineType::Algo)).unwrap();
     }
+    load_anyway(&mut p, t, init(edited_slot, EngineType::Algo)).unwrap();
     p.pool_clear(s).unwrap();
     let crc = project_crc(&p);
     assert_eq!(p.apply_part_action(rev), Err(ActionGone));
@@ -334,10 +335,10 @@ fn actions_offer_only_what_applies() {
 
 #[test]
 fn an_action_is_gone_once_its_part_or_slot_moves() {
-    let (mut p, _) = Project::boxed();
+    let (mut p, t) = Project::boxed();
     let s = SlotId::ALL[3];
     let a = PartId::ALL[0];
-    p.load_part(src(a, s)).unwrap();
+    load(&mut p, t, src(a, s)).unwrap();
     let was = p.part(a).sound.params.filter.cutoff;
     edit(&mut p, a, 0.5);
     let pick =
@@ -356,7 +357,7 @@ fn an_action_is_gone_once_its_part_or_slot_moves() {
     assert_eq!(project_crc(&p), crc);
 
     // Origin: the Part reloaded from another slot and edited.
-    p.load_part(src(a, SlotId::ALL[4])).unwrap();
+    load(&mut p, t, src(a, SlotId::ALL[4])).unwrap();
     edit(&mut p, a, 0.5);
     assert_eq!(p.apply_part_action(over), Err(ActionGone));
     assert_eq!(p.apply_part_action(rev), Err(ActionGone));

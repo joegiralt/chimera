@@ -4,7 +4,7 @@ mod screen;
 
 use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::part::DacPair;
-use chimera_core::project::{PartFrom, PartId, PartSource};
+use chimera_core::project::{PartFrom, PartId, PartSource, ReplaceGuard};
 use chimera_core::ui::UiState;
 use chimera_core::ui::block_registry::{ALGO_ALG, ALGO_WAVE, CHORUS, FILTER, PART, SENDS};
 use chimera_core::ui::chain::{ChainId, next_on_part_button};
@@ -147,12 +147,12 @@ fn a_changed_engine_returns_home_not_to_the_page_left() {
         press(&mut ui, ButtonId::Plus); // → FLT
     }
     press(&mut ui, ButtonId::B1); // mixer
-    ui.project_mut()
-        .load_part(PartSource {
-            part: PartId::ALL[0],
-            from: PartFrom::Init(EngineType::Modal),
-        })
-        .unwrap();
+    let src = PartSource {
+        part: PartId::ALL[0],
+        from: PartFrom::Init(EngineType::Modal),
+    };
+    let c = ReplaceGuard::check(ui.project(), ui.template(), src).unwrap();
+    ui.project_mut().replace_part(c).unwrap();
     press(&mut ui, ButtonId::B1);
     assert_eq!(ui.nav.engine, EngineType::Modal);
     assert_eq!(at(&ui), (ChainId::Part(0), MODAL_EXC.id));
