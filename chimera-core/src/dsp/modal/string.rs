@@ -57,6 +57,9 @@ pub(super) struct KsString {
     dirty: usize,
     noise_state: u32,
     frac: Allpass1,
+    /// A pass of the loop, samples, as last set: negative when the loop
+    /// inverts each pass (the bow's half loop). A grown gap continues it.
+    cycle: f32,
 }
 
 impl KsString {
@@ -73,6 +76,7 @@ impl KsString {
             addr_of_mut!((*p).dirty).write(INIT_LEN);
             addr_of_mut!((*p).noise_state).write(NOISE_SEED);
             addr_of_mut!((*p).frac).write(Allpass1::default());
+            addr_of_mut!((*p).cycle).write(INIT_LEN as f32);
             slot.assume_init_mut()
         }
     }
@@ -81,6 +85,18 @@ impl KsString {
     /// `w`: the line and the allpass (`split`). The ring grows to fit,
     /// its samples kept in order, and never shrinks mid-note.
     pub(super) fn set_period(&mut self, period: f32, other: f32, w: f32) {
+        self.cycle = period;
+        self.split_period(period, other, w);
+    }
+
+    /// `set_period` for a loop that inverts each pass, as the bow's half
+    /// loop does.
+    pub(super) fn set_period_inverting(&mut self, period: f32, other: f32, w: f32) {
+        self.cycle = -period;
+        self.split_period(period, other, w);
+    }
+
+    fn split_period(&mut self, period: f32, other: f32, w: f32) {
         let (mut delay, mut eta) = split(period, other, w);
         if delay > MAX_LINE || period - other < MIN_LINE as f32 + 0.5 {
             // Clamped, the fraction leaves [0.5, 1.5]: held at its edge.
@@ -114,10 +130,11 @@ impl KsString {
     }
 
     /// The ring at least `need` long; never shorter mid-note. The oldest
-    /// samples move up past a new gap, which holds the loop's periodic
-    /// continuation, each sample the one a period younger: a loop that
-    /// lengthens faster than it writes (a fast glide down) reads the old
-    /// cycle again, not silence. On a cleared line it is silence.
+    /// samples move up past a new gap, which holds the loop's continuation,
+    /// each sample the one a pass younger, negated if the loop inverts
+    /// (`cycle`): a loop that lengthens faster than it writes (a fast glide
+    /// down) reads the old cycle again, not silence. On a cleared line it
+    /// is silence.
     fn grow(&mut self, need: usize) {
         if need > self.ring_len {
             let (w, grow) = (self.write_pos + 1, need - self.ring_len);
@@ -125,11 +142,12 @@ impl KsString {
             self.ring_len = need;
             self.dirty = self.dirty.max(need);
             // The gap's ages, youngest first: `need − grow` to `need − 1`.
-            let period = self.delay + 1;
+            let pass = (libm::roundf(self.cycle.abs()) as usize).max(1);
+            let sign = self.cycle.signum();
             for j in (0..grow).rev() {
                 let age = need - 1 - j;
-                let src = (self.write_pos + need - (age - period.min(age))) % need;
-                self.buffer[w + j] = self.buffer[src];
+                let src = (self.write_pos + need - (age - pass.min(age))) % need;
+                self.buffer[w + j] = sign * self.buffer[src];
             }
         }
     }
@@ -626,7 +644,9 @@ pub(super) fn lp_coeff(bright: f32) -> f32 {
     c * (1.0 - c)
 }
 
-crate::in_place::field_list!(KsString => KsString { buffer, write_pos, ring_len, delay, dirty, noise_state, frac });
+crate::in_place::field_list!(KsString => KsString {
+    buffer, write_pos, ring_len, delay, dirty, noise_state, frac, cycle,
+});
 
 /// STRING's string, and SYMP's main one: the loop, STRUCTURE's
 /// dispersion in it, and BODY on its output.
@@ -878,6 +898,46 @@ mod tests {
     fn voice() -> Box<StringVoice> {
         // SAFETY: `init_in_place` writes every field.
         Box::new(unsafe { by_value(StringVoice::init_in_place) })
+    }
+
+    /// A line holding `f(age)` at each age, on a loop of 50.5 samples a
+    /// pass, inverting each pass or not; then grown by `fit(200)`: the gap
+    /// holds `f`'s continuation, a pass behind and the loop's sign.
+    #[test]
+    fn a_grown_gap_continues_the_loop_with_its_sign() {
+        for inverts in [false, true] {
+            let mut v = voice();
+            let k = &mut v.string;
+            let (p, w) = (50.5, core::f32::consts::TAU / 50.5);
+            if inverts {
+                k.set_period_inverting(p, 0.0, w);
+            } else {
+                k.set_period(p, 0.0, w);
+            }
+            // Anti-periodic over a pass of 51 inverting, periodic over 51 not.
+            let f = |age: usize| {
+                let x = core::f32::consts::PI * age as f32 / 51.0;
+                if inverts {
+                    libm::sinf(x)
+                } else {
+                    libm::sinf(2.0 * x)
+                }
+            };
+            let ring = k.ring_len;
+            for age in 0..ring {
+                let i = (k.write_pos + ring - age) % ring;
+                k.buffer[i] = f(age);
+            }
+            k.fit(200.0);
+            for age in ring..k.ring_len {
+                let got = k.behind(age);
+                assert!(
+                    (got - f(age)).abs() < 1e-5,
+                    "inverts {inverts}, age {age}: {got} vs {}",
+                    f(age)
+                );
+            }
+        }
     }
 
     /// `line`'s harmonic `k` of its length, magnitude.
