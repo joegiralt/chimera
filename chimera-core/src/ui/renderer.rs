@@ -17,7 +17,7 @@ use crate::ui::chain::{ChainId, ChainNav};
 use crate::ui::components;
 use crate::ui::dungeon_map;
 use crate::ui::fmt::{self, FmtBuf};
-use crate::ui::glyph::{FocusGlyph, Gauge};
+use crate::ui::glyph::{BRAID_PARAMS, Braid, BraidPart, CompositeId, FocusGlyph, Gauge};
 use crate::ui::mod_grid::MatrixState;
 use crate::ui::page::PageLayout;
 use crate::ui::perf::PerfStats;
@@ -53,6 +53,8 @@ pub struct Frame<'a> {
     pub master_gr_db: f32,
     /// Animation phase: what an animated glyph draws from.
     pub clock: crate::ui::animation::UiClock,
+    /// The FX's stored params (a composite reads the chorus's).
+    pub fx: &'a crate::dsp::fx_bus::FxParams,
 }
 
 /// Full-screen renderer. Composites header, visualization, parameters, and dungeon map.
@@ -399,7 +401,51 @@ impl Renderer {
             FocusGlyph::Crossfader => self.set[f.focus].current(),
             _ => self.anim[f.focus].current(),
         };
-        glyph.gauge(value, fmt)
+        let focused = view::view(f.def, f.focus, &f.ctx).addr();
+        glyph.gauge(value, fmt, |id| match id {
+            CompositeId::ChorusBraid => {
+                let focus = BRAID_PARAMS
+                    .iter()
+                    .position(|&a| Some(a) == focused)
+                    .map(|i| BraidPart::ALL[i]);
+                let set = self.eased_set(f, BRAID_PARAMS);
+                Gauge::Braid(Braid::from_set(set, focus, f.clock.frame()))
+            }
+            // `gauge` calls this for built composites only.
+            CompositeId::ReverbCube | CompositeId::DelayRings => Gauge::Arc {
+                value,
+                bipolar: fmt.is_bipolar(),
+            },
+        })
+    }
+
+    /// `addrs`' set values: eased (`set`) where the page has a slot for one,
+    /// else stored; never modulated.
+    fn eased_set<const N: usize>(&self, f: &Frame, addrs: [ParamAddr; N]) -> [f32; N] {
+        let stored = composite_set(&Stored(f), addrs);
+        core::array::from_fn(|i| {
+            (0..f.def.params.len())
+                .find(|&s| slot_addr(f.def, s, &f.ctx) == Some(addrs[i]))
+                .map_or(stored[i], |s| self.set[s].current())
+        })
+    }
+
+    /// Redraw only the focused slot's gauge in its box, if it has one; the
+    /// rows to flush.
+    pub fn redraw_gauge<D>(
+        &self,
+        display: &mut D,
+        fb: impl FnOnce(&mut D) -> &mut [u16],
+        f: &Frame,
+    ) -> Option<(u16, u16)>
+    where
+        D: DrawTarget<Color = Rgb565>,
+    {
+        let gauge = self.gauge(f);
+        let (x, y, w, h) = components::gauge_rect(&gauge)?;
+        Self::clear_rect_fb(fb(display), x, y, w, h);
+        components::draw_gauge(display, gauge);
+        Some((y as u16, (y + h) as u16))
     }
 
     /// The six cells, first row's labels at `top`.
@@ -456,6 +502,17 @@ impl Renderer {
 
     // ── Dirty region helpers ─────────────────────────────────────────
 
+    /// Clear a box by direct framebuffer fill.
+    pub fn clear_rect_fb(fb: &mut [u16], x: i32, y: i32, w: i32, h: i32) {
+        use embedded_graphics::pixelcolor::raw::{RawData, RawU16};
+        let bg = RawU16::from(theme::BG).into_inner();
+        let sw = theme::SCREEN_W as usize;
+        for row in y.max(0) as usize..(y + h).min(theme::SCREEN_H) as usize {
+            fb[row * sw + x.max(0) as usize..row * sw + (x + w).min(theme::SCREEN_W) as usize]
+                .fill(bg);
+        }
+    }
+
     /// Clear a screen region by direct framebuffer fill. Much faster than draw_iter.
     pub fn clear_region_fb(fb: &mut [u16], y_start: u16, y_end: u16) {
         use embedded_graphics::pixelcolor::raw::{RawData, RawU16};
@@ -469,8 +526,22 @@ impl Renderer {
 /// A composite's inputs: its params' set values, normalized, read from
 /// the stored params (`stored`), never `Renderer::anim` or anything
 /// modulated, so the glyph only ever moves by its own animation.
-pub fn composite_set(stored: &impl Blocks, addrs: [ParamAddr; 3]) -> [f32; 3] {
+pub fn composite_set<const N: usize>(stored: &impl Blocks, addrs: [ParamAddr; N]) -> [f32; N] {
     addrs.map(|a| stored.block(a.block).map_or(0.0, |b| b.normalized(a.param)))
+}
+
+/// The edited Part's stored blocks and the FX's, read-only.
+struct Stored<'f, 'a>(&'f Frame<'a>);
+
+impl Blocks for Stored<'_, '_> {
+    fn block(&self, b: crate::addr::BlockRef) -> Option<&dyn crate::block::Block> {
+        let p = &self.0.parts[self.0.active_part.index()];
+        crate::project::part_block(&p.sound, &p.mix, self.0.fx, b)
+    }
+
+    fn block_mut(&mut self, _: crate::addr::BlockRef) -> Option<&mut dyn crate::block::Block> {
+        None
+    }
 }
 
 /// The OUT of the Part whose pages these are; P1 off the Part chains.

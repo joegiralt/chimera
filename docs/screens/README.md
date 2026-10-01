@@ -178,3 +178,4 @@ The UI component storyboard.
 | ![](demo_sw.png) | SW | Glyph: SWITCH; a flips LFO 1's SYNC, FREE / RETRIG |
 | ![](demo_lvl.png) | LVL | Glyph: LEVEL BAR; a drives VOLUME (8 ticks), b operator A's FDBK (a tick per step) |
 | ![](demo_xf.png) | XF | Glyph: CROSSFADER; a slides ALG A to B (MORPH), b dry to wet (DRV MIX); set values only |
+| ![](demo_brd.png) | BRD | Glyph: chorus BRAID; a MODE (strands), b RATE (twist speed), c DEPTH (swing), d MIX (strand weight); animated on the UI clock |

@@ -1005,6 +1005,7 @@ impl UiState {
             audio,
             master_gr_db: crate::meter::MASTER_GR.read(),
             clock: self.clock,
+            fx: &self.project.perf().fx,
         }
     }
 
@@ -1171,7 +1172,16 @@ impl UiState {
             for i in 0..count {
                 let r = self.region_set.regions[i];
                 data[i] = self.region_data(r.kind, &f);
-                if data[i] != r.prev_data {
+                // Only an animated glyph moved: redraw its box alone.
+                if data[i] != r.prev_data
+                    && data[i].without_anim() == r.prev_data.without_anim()
+                    && let Some(rows) =
+                        self.renderer
+                            .redraw_gauge(display, |d| d.pixel_buffer(), &f)
+                {
+                    flush_list[flush_count] = rows;
+                    flush_count += 1;
+                } else if data[i] != r.prev_data {
                     renderer::Renderer::clear_region_fb(display.pixel_buffer(), r.y_start, r.y_end);
                     self.renderer.draw_region_with_def(display, r.kind, &f);
                     flush_list[flush_count] = (r.y_start, r.y_end);

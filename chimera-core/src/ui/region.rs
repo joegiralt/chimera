@@ -152,6 +152,12 @@ impl RegionData {
         }
     }
 
+    /// This key with no animation share: equal when only an animated
+    /// glyph's frame moved.
+    pub fn without_anim(self) -> Self {
+        self.animated(0)
+    }
+
     /// A focus band keyed on its slot's set value too.
     pub fn with_set(mut self, set: u16) -> Self {
         if let Self::Focus { set: s, .. } = &mut self {

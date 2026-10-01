@@ -14,7 +14,7 @@ use crate::modulation::{MAX_MOD_SOURCES, ModSource};
 use crate::params::{DriveParams, EnvParams, FilterParams, FolderParams, OutParams, PitchParams};
 use crate::part::PartParams;
 use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2, FxFlow, FxNode, ParamSlot, VizType};
-use crate::ui::glyph::FocusGlyph;
+use crate::ui::glyph::{CompositeId, FocusGlyph};
 use crate::ui::page::{PageLayout, ValFmt};
 use crate::ui::theme_settings::ThemeSettings;
 
@@ -838,7 +838,26 @@ pub static DEMO_GLYPH_XF: BlockDef = BlockDef {
     ],
 };
 
-static DEMO_BLOCKS: [ChainBlock; 10] = [
+/// GLYPH: BRAID, the chorus braid: a MODE, b RATE, c DEPTH, d MIX, each
+/// emphasised when focused. It moves on the UI clock alone.
+pub static DEMO_GLYPH_BRAID: BlockDef = BlockDef {
+    id: 75,
+    name: "Glyph: Braid",
+    short: "BRD",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::param(BlockRef::Chorus, ChorusParams::MODE).with_glyph(BRAID),
+        ParamSlot::param(BlockRef::Chorus, ChorusParams::RATE).with_glyph(BRAID),
+        ParamSlot::param(BlockRef::Chorus, ChorusParams::DEPTH).with_glyph(BRAID),
+        ParamSlot::param(BlockRef::Chorus, ChorusParams::MIX).with_glyph(BRAID),
+        EMPTY,
+        EMPTY,
+    ],
+};
+const BRAID: FocusGlyph = FocusGlyph::Composite(CompositeId::ChorusBraid);
+
+static DEMO_BLOCKS: [ChainBlock; 11] = [
     ChainBlock::page(&DEMO_WAVES),
     ChainBlock::page(&DEMO_SHAPES),
     ChainBlock::page(&DEMO_MOTION),
@@ -849,6 +868,7 @@ static DEMO_BLOCKS: [ChainBlock; 10] = [
     ChainBlock::page(&DEMO_GLYPH_SWITCH),
     ChainBlock::page(&DEMO_GLYPH_LEVEL),
     ChainBlock::page(&DEMO_GLYPH_XF),
+    ChainBlock::page(&DEMO_GLYPH_BRAID),
 ];
 
 pub static DEMO_CHAIN: ChainDef2 = ChainDef2 {
