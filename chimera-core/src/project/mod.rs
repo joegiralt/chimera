@@ -22,6 +22,10 @@ use crate::preset::Sound;
 use crate::storage::{ProjectId, sound_crc};
 
 pub const NEW_NAME: &str = "NEW PROJECT";
+const NEW_PROJECT_NAME: ProjectName = match ProjectName::new(NEW_NAME) {
+    Ok(n) => n,
+    Err(_) => panic!("NEW_NAME is a valid name"),
+};
 
 /// What a project is besides its Sounds and Parts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -36,7 +40,7 @@ impl ProjectMeta {
     fn new_project() -> Self {
         ProjectMeta {
             id: None,
-            name: ProjectName::new(NEW_NAME).expect("a valid name"),
+            name: NEW_PROJECT_NAME,
             saved_crc: None,
         }
     }
