@@ -179,22 +179,15 @@ impl ParamAddr {
     }
 }
 
-/// Resolves block addresses to values (spec § Data model). A Sound's
-/// `ParamSnapshot` holds the voice blocks; a Part view (`PartEdit`) adds the
-/// shared FX. `None`: the address is not held here.
-pub trait Blocks {
-    fn block(&self, b: BlockRef) -> Option<&dyn Block>;
-    fn block_mut(&mut self, b: BlockRef) -> Option<&mut dyn Block>;
-}
-
 /// The read half of `Blocks`, for code that only reads: a page's values, a
 /// frame. A `BlockRead` alone can't be written through.
 pub trait BlockRead {
     fn block(&self, b: BlockRef) -> Option<&dyn Block>;
 }
 
-impl<T: Blocks + ?Sized> BlockRead for T {
-    fn block(&self, b: BlockRef) -> Option<&dyn Block> {
-        Blocks::block(self, b)
-    }
+/// Resolves block addresses to values (spec § Data model). A Sound's
+/// `ParamSnapshot` holds the voice blocks; a Part view (`PartEdit`) adds the
+/// shared FX. `None`: the address is not held here.
+pub trait Blocks: BlockRead {
+    fn block_mut(&mut self, b: BlockRef) -> Option<&mut dyn Block>;
 }

@@ -1,6 +1,6 @@
 //! The Parts and the shared FX: what the audio plays.
 
-use crate::addr::{BlockRef, Blocks};
+use crate::addr::{BlockRead, BlockRef, Blocks};
 use crate::block::Block;
 use crate::dsp::fx_bus::FxParams;
 use crate::hw::MAX_PARTS;
@@ -134,11 +134,13 @@ pub struct PartEdit<'a> {
     pub fx: &'a mut FxParams,
 }
 
-impl Blocks for PartEdit<'_> {
+impl BlockRead for PartEdit<'_> {
     fn block(&self, b: BlockRef) -> Option<&dyn Block> {
         part_block(self.sound, self.mix, self.fx, b)
     }
+}
 
+impl Blocks for PartEdit<'_> {
     fn block_mut(&mut self, b: BlockRef) -> Option<&mut dyn Block> {
         part_block_mut(self.sound, self.mix, self.fx, b)
     }
@@ -152,10 +154,16 @@ pub struct PartRead<'a> {
     pub fx: &'a FxParams,
 }
 
-// By path: `BlockRead` in scope makes `Blocks::block` calls ambiguous.
-impl crate::addr::BlockRead for PartRead<'_> {
-    fn block(&self, b: BlockRef) -> Option<&dyn Block> {
+impl<'a> PartRead<'a> {
+    /// `BlockRead::block`, for as long as the Part is borrowed, not the view.
+    pub fn block(&self, b: BlockRef) -> Option<&'a dyn Block> {
         part_block(self.sound, self.mix, self.fx, b)
+    }
+}
+
+impl BlockRead for PartRead<'_> {
+    fn block(&self, b: BlockRef) -> Option<&dyn Block> {
+        PartRead::block(self, b)
     }
 }
 

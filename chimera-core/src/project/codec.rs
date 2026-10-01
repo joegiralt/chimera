@@ -5,7 +5,7 @@
 
 use chimera_hal::store::StoreError;
 
-use crate::addr::{BlockRef, Blocks};
+use crate::addr::{BlockRead, BlockRef, Blocks};
 use crate::block::{Block, DiskCode};
 use crate::dsp::fx_bus::FxParams;
 use crate::hw::MAX_PARTS;
@@ -54,11 +54,13 @@ fn fx_block(fx: &FxParams, b: BlockRef) -> Option<&dyn Block> {
 /// The FX as the blocks a `Block` record can reach in the `Fx` context.
 struct FxBlocks<'a>(&'a mut FxParams);
 
-impl Blocks for FxBlocks<'_> {
+impl BlockRead for FxBlocks<'_> {
     fn block(&self, b: BlockRef) -> Option<&dyn Block> {
         fx_block(self.0, b)
     }
+}
 
+impl Blocks for FxBlocks<'_> {
     fn block_mut(&mut self, b: BlockRef) -> Option<&mut dyn Block> {
         let fx = &mut *self.0;
         Some(match b {
@@ -75,11 +77,13 @@ impl Blocks for FxBlocks<'_> {
 /// A Part's mix as the one block `Block(Part)` reaches.
 struct MixBlocks<'a>(&'a mut PartParams);
 
-impl Blocks for MixBlocks<'_> {
+impl BlockRead for MixBlocks<'_> {
     fn block(&self, b: BlockRef) -> Option<&dyn Block> {
         (b == BlockRef::Part).then_some(&*self.0 as &dyn Block)
     }
+}
 
+impl Blocks for MixBlocks<'_> {
     fn block_mut(&mut self, b: BlockRef) -> Option<&mut dyn Block> {
         (b == BlockRef::Part).then_some(&mut *self.0 as &mut dyn Block)
     }

@@ -2,7 +2,7 @@
 
 mod screen;
 
-use chimera_core::addr::{BlockRef, Blocks};
+use chimera_core::addr::{BlockRead, BlockRef};
 use chimera_core::block::Block;
 use chimera_core::project::PartId;
 use chimera_core::ui::block_registry::SYS_THEME;

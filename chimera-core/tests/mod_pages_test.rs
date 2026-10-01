@@ -220,7 +220,7 @@ fn spd_dims_a_type_b_slot() {
 /// slot's read its values.
 #[test]
 fn spd_reads_type_b_on_a_type_b_slot() {
-    use chimera_core::addr::Blocks;
+    use chimera_core::addr::BlockRead;
     let s = Sound::init(EngineType::Algo);
     let ctx = SlotCtx::read(&s.params, Op::A);
     for (i, label) in [(2, "E3 SPEED"), (5, "E3 HOLD")] {

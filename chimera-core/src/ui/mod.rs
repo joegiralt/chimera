@@ -45,7 +45,7 @@ use crate::preset::POOL_SIZE;
 use crate::project::{
     self, Confirmed, LoadLink, PartEdit, PartFrom, PartId, PartSource, Project, ProjectFile,
     ProjectNote, ProjectSource, ProjectStatus, ReplaceGuard, StatusCache, Swap, TemplateCrc,
-    part_block, part_block_mut,
+    part_block_mut,
 };
 use crate::scope::SCOPE_LEN;
 use crate::storage::ProjectId;
@@ -1246,18 +1246,17 @@ fn read_block<'a>(
 ) -> Option<&'a dyn Block> {
     match b {
         BlockRef::Theme => Some(theme),
-        _ => {
-            let x = project.part(part);
-            part_block(&x.sound, &x.mix, &project.perf().fx, b)
-        }
+        _ => project.read_part(part).block(b),
+    }
+}
+
+impl BlockRead for UiBlocks<'_> {
+    fn block(&self, b: BlockRef) -> Option<&dyn Block> {
+        read_block(self.project, self.part, self.theme, b)
     }
 }
 
 impl Blocks for UiBlocks<'_> {
-    fn block(&self, b: BlockRef) -> Option<&dyn Block> {
-        read_block(self.project, self.part, self.theme, b)
-    }
-
     fn block_mut(&mut self, b: BlockRef) -> Option<&mut dyn Block> {
         match b {
             BlockRef::Theme => Some(self.theme),

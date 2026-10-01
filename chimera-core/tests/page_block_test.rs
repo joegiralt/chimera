@@ -1,7 +1,7 @@
 //! Legacy (`PageId`) pages — System, Demo — after moving onto
 //! `Block` specs and `ParamAddr` bindings. Parity tests pin today's steps.
 
-use chimera_core::addr::{BlockRef, Blocks, Op, ParamAddr};
+use chimera_core::addr::{BlockRead, BlockRef, Op, ParamAddr};
 use chimera_core::dsp::algo::params::AlgoOpParams;
 use chimera_core::dsp::modulator::EnvSlot;
 use chimera_core::params::{EnvParams, FilterParams, ParamSnapshot};
