@@ -113,7 +113,9 @@ pub static CHORUS_SPECS: [ParamSpec; 4] = [
     ParamSpec::continuous(1, "RATE", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false).ident("RATE"),
     ParamSpec::continuous(2, "DEPTH", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false)
         .ident("DEPTH"),
-    ParamSpec::continuous(3, "MIX", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false).ident("MIX"),
+    ParamSpec::continuous(3, "MIX", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false)
+        .ident("MIX")
+        .glyph(crate::ui::glyph::FocusGlyph::LevelBar),
 ];
 
 impl Block for ChorusParams {

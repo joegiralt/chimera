@@ -153,11 +153,18 @@ pub static PART_SPECS: [ParamSpec; 8] = [
         .ident("OUT")
         .glyph(crate::ui::glyph::FocusGlyph::None),
     ParamSpec::continuous(3, "LEVEL", ValFmt::Uni, 0.0, 1.0, 0.8, 1.0 / 128.0, false)
-        .ident("LEVEL"),
+        .ident("LEVEL")
+        .glyph(crate::ui::glyph::FocusGlyph::LevelBar),
     ParamSpec::continuous(4, "PAN", ValFmt::Pan, -1.0, 1.0, 0.0, 2.0 / 128.0, false).ident("PAN"),
-    ParamSpec::continuous(5, "CHR", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false).ident("CHR"),
-    ParamSpec::continuous(6, "DLY", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false).ident("DLY"),
-    ParamSpec::continuous(7, "REV", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false).ident("REV"),
+    ParamSpec::continuous(5, "CHR", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false)
+        .ident("CHR")
+        .glyph(crate::ui::glyph::FocusGlyph::LevelBar),
+    ParamSpec::continuous(6, "DLY", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false)
+        .ident("DLY")
+        .glyph(crate::ui::glyph::FocusGlyph::LevelBar),
+    ParamSpec::continuous(7, "REV", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false)
+        .ident("REV")
+        .glyph(crate::ui::glyph::FocusGlyph::LevelBar),
 ];
 
 /// CH's values, by channel number (the byte is the meaning).
