@@ -24,6 +24,7 @@ use chimera_hal::{ButtonId, EncoderId};
 use screen::*;
 
 const NONE: FocusGlyph = FocusGlyph::None;
+const SWITCH: FocusGlyph = FocusGlyph::Switch;
 
 /// Params assigned a glyph other than ARC, by `(block kind, ident)`: every
 /// instance of the block (`AlgoOp`, `Env`, `Lfo`) alike. Each glyph story
@@ -46,6 +47,10 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Env", "BRST_FORM", NONE),
     ("Lfo", "TYPE", NONE),
     ("Lfo", "FORM", NONE),
+    ("Lfo", "SHAPE", NONE),
+    ("Chorus", "MODE", NONE),
+    // Two states, one of them off: a toggle.
+    ("Lfo", "SYNC", SWITCH),
     ("Pitch", "STEAL", NONE),
     ("Part", "MODE", NONE),
     ("Part", "OUT", NONE),
@@ -62,6 +67,22 @@ const NAMED_ARC: &[(&str, &str)] = &[
     ("Theme", "BRIGHT"),
     ("Theme", "BLACK"),
 ];
+
+/// Two-value choices that are two peers, not on and off: a toggle would
+/// read one of them as "off". They show the word (NONE).
+const TWO_PEERS: &[(&str, &str)] = &[
+    // A and B are two envelope designs.
+    ("Env", "TYPE"),
+    // CLASSIC and FUNC are two LFO designs.
+    ("Lfo", "TYPE"),
+    // MONO and POLY: neither is off.
+    ("Part", "MODE"),
+    // CUT and GLIDE: two ways to steal; GLIDE could read as "glide on".
+    ("Pitch", "STEAL"),
+];
+
+/// Least gap between a SWITCH word and the pill.
+const SWITCH_GAP: i32 = 6;
 
 /// `Env` for `Env(Env1)`: the block's kind, every instance alike.
 fn kind(b: BlockRef) -> String {
@@ -97,6 +118,72 @@ fn every_named_choice_is_decided() {
             assert!(none ^ arc, "{b:?}.{}: NONE or NAMED_ARC, once", s.ident);
         }
     }
+}
+
+/// Every two-value named choice is a toggle (SWITCH) or two peers (NONE).
+#[test]
+fn every_two_state_choice_is_decided() {
+    for b in BlockRef::ALL {
+        for s in b.specs() {
+            let ValFmt::Names(names) = s.fmt else {
+                continue;
+            };
+            if names.len() != 2 {
+                continue;
+            }
+            let k = kind(b);
+            let peers = TWO_PEERS
+                .iter()
+                .any(|p| (p.0, p.1) == (k.as_str(), s.ident));
+            assert!(
+                (s.glyph == FocusGlyph::Switch) ^ peers,
+                "{b:?}.{}: SWITCH or TWO_PEERS, once",
+                s.ident
+            );
+            if peers {
+                assert_eq!(s.glyph, FocusGlyph::None, "{b:?}.{}", s.ident);
+            }
+        }
+    }
+}
+
+/// Every word of a SWITCH param fits before the pill at the focus size.
+#[test]
+fn every_switch_word_fits_beside_the_pill() {
+    let room = theme::SWITCH_CX - theme::SWITCH_W / 2 - SWITCH_GAP - theme::FOCUS_VALUE_X;
+    for b in BlockRef::ALL {
+        for s in b.specs().iter().filter(|s| s.glyph == FocusGlyph::Switch) {
+            let ValFmt::Names(names) = s.fmt else {
+                panic!("{b:?}.{}: SWITCH on a value that isn't named", s.ident);
+            };
+            assert_eq!(names.len(), 2, "{b:?}.{}: two states", s.ident);
+            for w in names {
+                let width = draw::text_width(&theme::FONT_FOCUS, w, 0);
+                assert!(width <= room, "{b:?}.{} {w}: {width} > {room}", s.ident);
+            }
+        }
+    }
+}
+
+/// Values the spec names read as words everywhere, as their panels show
+/// them; names are display only (disk codes are pinned elsewhere).
+#[test]
+fn chorus_mode_and_lfo_shape_and_sync_are_named() {
+    use chimera_core::dsp::chorus::ChorusParams;
+    let names = |b: BlockRef, id| match ParamAddr::new(b, id).spec().unwrap().fmt {
+        ValFmt::Names(n) => n.to_vec(),
+        f => panic!("{b:?}: {f:?}"),
+    };
+    assert_eq!(
+        names(BlockRef::Chorus, ChorusParams::MODE),
+        ["OFF", "I", "II", "I+II"]
+    );
+    let lfo = BlockRef::Lfo(LfoSlot::Lfo1);
+    assert_eq!(
+        names(lfo, LfoParams::SHAPE),
+        ["SINE", "TRI", "SAW", "SQR", "S&H"]
+    );
+    assert_eq!(names(lfo, LfoParams::SYNC), ["FREE", "RETRIG"]);
 }
 
 /// Every word of a NONE param fits the whole band at the focus size.
@@ -361,9 +448,9 @@ fn knob_x(on: i32) -> i32 {
 fn glyph_switch_page_flips_a_real_two_state_param() {
     let mut ui = UiState::new();
     to_demo(&mut ui, &reg::DEMO_GLYPH_SWITCH);
-    // SWITCH is the page's: LFO1 SYNC's spec stays ARC until approved.
+    // LFO1 SYNC's own spec carries SWITCH.
     let sync = ParamAddr::new(BlockRef::Lfo(LfoSlot::Lfo1), LfoParams::SYNC);
-    assert_eq!(sync.spec().unwrap().glyph, FocusGlyph::Arc);
+    assert_eq!(sync.spec().unwrap().glyph, FocusGlyph::Switch);
     let lfo_sync = |ui: &UiState| {
         ui.params()
             .block(BlockRef::Lfo(LfoSlot::Lfo1))

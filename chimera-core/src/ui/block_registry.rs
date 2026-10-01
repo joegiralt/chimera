@@ -4,6 +4,7 @@ use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::chorus::ChorusParams;
 use crate::dsp::comp::CompParams;
 use crate::dsp::delay::DelayParams;
+use crate::dsp::lfo::LfoParams;
 use crate::dsp::modal::{ModalPage, ModalParams};
 use crate::dsp::modulator::{EnvSlot, LfoSlot};
 use crate::dsp::reverb::ReverbParams;
@@ -13,7 +14,6 @@ use crate::modulation::{MAX_MOD_SOURCES, ModSource};
 use crate::params::{DriveParams, EnvParams, FilterParams, FolderParams, OutParams, PitchParams};
 use crate::part::PartParams;
 use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2, FxFlow, FxNode, ParamSlot, VizType};
-use crate::ui::glyph::FocusGlyph;
 use crate::ui::page::{PageLayout, ValFmt};
 use crate::ui::theme_settings::ThemeSettings;
 
@@ -781,8 +781,7 @@ pub static DEMO_GLYPH_NONE: BlockDef = BlockDef {
     ],
 };
 
-/// GLYPH: SWITCH. a flips LFO1's SYNC, FREE / RETRIG: CLASSIC's panel
-/// cell, which names it (the spec shows 0 / 1).
+/// GLYPH: SWITCH. a flips LFO1's SYNC, FREE / RETRIG.
 pub static DEMO_GLYPH_SWITCH: BlockDef = BlockDef {
     id: 72,
     name: "Glyph: Switch",
@@ -790,7 +789,7 @@ pub static DEMO_GLYPH_SWITCH: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
-        ParamSlot::lfo_panel(LfoSlot::Lfo1, 2).with_glyph(FocusGlyph::Switch),
+        ParamSlot::param(BlockRef::Lfo(LfoSlot::Lfo1), LfoParams::SYNC),
         EMPTY,
         EMPTY,
         EMPTY,
