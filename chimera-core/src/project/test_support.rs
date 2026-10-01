@@ -11,7 +11,9 @@ use crate::params::{EngineType, FilterParams, OutParams};
 use crate::part::PartParams;
 use crate::preset::Sound;
 
-use super::{Origin, PartFrom, PartId, PartSource, Project, SlotId, TemplateCrc, project_crc};
+use super::{
+    Origin, PartFrom, PartId, PartSource, Project, SlotId, TemplateCrc, part_status, project_crc,
+};
 
 /// NEW with every slot filled: the factory Sounds and INIT, then edited
 /// and renamed copies of them. Parts from slots 0, 3 and 9 and from INIT;
@@ -71,8 +73,8 @@ pub fn full() -> (Box<Project>, TemplateCrc) {
 }
 
 /// Panics with the first difference: the names, each slot (`bits_eq`),
-/// each Part's Sound (`bits_eq`), mix and Origin (slot and CRC, or engine;
-/// never the generation), the FX, then `project_crc`.
+/// each Part's Sound (`bits_eq`), mix, Origin (slot and CRC, or engine;
+/// never the generation) and `part_status`, the FX, then `project_crc`.
 pub fn same(a: &Project, b: &Project) {
     assert_eq!(a.meta().name(), b.meta().name(), "project name");
     for s in SlotId::ALL {
@@ -109,6 +111,11 @@ pub fn same(a: &Project, b: &Project) {
             ) => assert_eq!((s1, c1), (s2, c2), "Part {n} origin"),
             (o1, o2) => assert_eq!(o1, o2, "Part {n} origin"),
         }
+        assert_eq!(
+            part_status(x, a.pool()),
+            part_status(y, b.pool()),
+            "Part {n} status"
+        );
     }
     assert_eq!(a.perf().fx, b.perf().fx, "FX");
     assert_eq!(project_crc(a), project_crc(b), "project_crc");
