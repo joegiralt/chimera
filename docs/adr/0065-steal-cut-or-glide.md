@@ -44,12 +44,27 @@ new note's.
   strike adds to what rings, as a re-strike does: STRING and SYMP add a
   pluck to the line, the bow is set back on its string, BANK adds a
   burst; nothing is cleared, the macros ease on.
-- **At the glide's start every ring is sized for the longer of the two
-  periods** (`KsString::fit`; SYMP's halo strings for the whole line, as
-  their folded periods may take any length on the way). A ring grown a
-  block at a time by two or more samples reads its new gap before it has
-  written it, and the loop takes in silence (measured: a C5 to C2 STRING
-  glide dipped 6.8 dB; sized first, 2.0 dB, the fresh pluck's own decay).
+- **At the glide's start every ring is sized for the glide's longest
+  period** (`KsString::fit`): a string's and SYMP's main string for the
+  longer of the two, a bow's half loop for half of it, and each halo
+  string for the longest its fold may give it under any chord on the way
+  (`halo_reach`: its folded period at the longer main period, or `FITS`,
+  the longest line, where the glide crosses a fold). A ring grown a block
+  at a time by two or more samples reads its new gap before it has
+  written it (measured: a C5 to C2 STRING glide dipped 6.8 dB; sized
+  first, 2.0 dB, the fresh pluck's own decay).
+- **A glide or a re-strike is billed against the block's clear budget
+  (spec § 4.8) for what it writes**: a re-strike nothing, a glide its
+  rings' growth (`ModalEngine::strike_clear`), not a fresh note-on's
+  clear. Two SYMP glide steals of low notes fit one block.
+- **A grown ring's gap holds the loop's periodic continuation**, each
+  sample the one a period younger (`KsString::grow`). A loop that
+  lengthens faster than it writes, a fast glide down, reads the old cycle
+  again rather than silence: short GLIDE TIMEs stay snappy, with no slew
+  limit. Zero-filled, a C5 to C2 glide at 1 or 10 ms carried one burst and
+  some 640 samples of silence round the loop, a C2 pulse train dipping
+  30 to 43 dB; filled, no block dips more than a CUT's own do. On a
+  cleared line the continuation is silence, so a note-on is unchanged.
 - **ALGO:** the ratio multiplies every operator's frequency, the classic
   portamento; the envelopes strike as at CUT.
 - **Bill:** at STEAL GLIDE a Modal voice may retune every block, as with a
@@ -72,12 +87,10 @@ new note's.
 ## Consequences
 - A fast line on few voices plays as a guitarist's slides; at CUT nothing
   changes.
-- GLIDE TIME's floor is 1 ms, not 0: a glide there lands in three blocks.
-  At that speed a downward glide lengthens the loop faster than it writes,
-  and reads some of the gap it grew: near a CUT, which clears nothing.
-- SYMP's halo rings are grown to the whole line at a glide's start: up to
-  seven rings' copy and fill, within the note-on clear the Part's
-  admission (spec § 4.8) already bills.
+- GLIDE TIME's floor is 1 ms, not 0: a glide there lands in three blocks,
+  and a fast glide down replays the old cycle while its loop lengthens.
+- A SYMP glide that crosses a fold grows that halo string's ring to the
+  whole line; its next fresh note-on clears it whole.
 - A SYMP steal past the block's clear budget still waits, as any SYMP
   note does (spec § 4.8): the voice fades and its note starts clean, a
   CUT.
