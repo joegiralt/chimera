@@ -317,8 +317,9 @@ fn actions_offer_only_what_applies() {
         ]
     );
 
-    // A Revert whose Part went to INIT and whose slot emptied is gone, and
-    // it changes nothing.
+    // A Revert whose Part has since gone to INIT is refused by its Origin,
+    // and changes nothing. The slot can be emptied only once its Part left
+    // it, so this never reaches the empty-slot refusal.
     let rev = part_actions(&p, edited_slot)
         .iter()
         .find(|x| x.kind() == Revert(s))
