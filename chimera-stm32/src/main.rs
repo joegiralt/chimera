@@ -264,6 +264,9 @@ fn synth(board: Board) -> ! {
     let (mut sync, mut settings, _) = SystemSync::boot(&mut card, store);
     ui.set_theme(settings.theme);
     apply_theme(settings.theme, &mut theme, &mut backlight, &mut display);
+    // Boot step 2, still behind BUSY, before the audio and the watchdog
+    // start: the last project (about 130 KB read), or NEW and why.
+    ui.boot_project(&mut card, store, settings.last_project);
     let perf = PerfTracker::new();
     #[cfg(feature = "bench")]
     bench::run(&mut display, clk, ui.project().perf());
@@ -340,7 +343,7 @@ fn synth(board: Board) -> ! {
             ui.render_dirty_with_audio(&mut display, &perf.stats, stats.as_ref(), scope_r.read());
         // Over whatever redrew beneath it, before anything is flushed.
         let band = match toast {
-            ToastStep::Show(text) => Some(draw_toast(&mut display, text)),
+            ToastStep::Show(text) => Some(draw_toast(&mut display, text.as_str())),
             _ => None,
         };
         if recolour {
