@@ -106,9 +106,10 @@ where
         d,
         def.params[0].label(),
         texts[0].as_str(),
-        value,
-        false,
-        crate::ui::glyph::Drawn::Arc,
+        crate::ui::glyph::Gauge::Arc {
+            value,
+            bipolar: false,
+        },
         components::Look::Live,
         None,
     );

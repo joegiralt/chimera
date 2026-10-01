@@ -1038,7 +1038,7 @@ impl UiState {
                 self.prime_status,
             )
             .animated(glyph::anim_key(
-                renderer::focus_glyph(f).animates(),
+                self.renderer.gauge(f).animates(),
                 f.clock.frame(),
             )),
             RegionKind::Viz => {

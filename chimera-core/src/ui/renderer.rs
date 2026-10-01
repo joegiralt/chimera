@@ -3,7 +3,7 @@ use embedded_graphics::geometry::{Point, Size};
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::primitives::{PrimitiveStyle, Rectangle, StyledDrawable};
 
-use crate::addr::Op;
+use crate::addr::{Blocks, Op, ParamAddr};
 use crate::dsp::algo::algorithms::AlgoId;
 use crate::dsp::modulator::{EnvType, HoldPos};
 use crate::part::DacPair;
@@ -17,6 +17,7 @@ use crate::ui::chain::{ChainId, ChainNav};
 use crate::ui::components;
 use crate::ui::dungeon_map;
 use crate::ui::fmt::{self, FmtBuf};
+use crate::ui::glyph::Gauge;
 use crate::ui::mod_grid::MatrixState;
 use crate::ui::page::PageLayout;
 use crate::ui::perf::PerfStats;
@@ -377,12 +378,17 @@ impl Renderer {
             display,
             view.label(),
             buf.as_str(),
-            v,
-            view.fmt().is_bipolar(),
-            view.glyph().drawn(),
+            self.gauge(f),
             look(f, f.focus),
             f.prime_status,
         );
+    }
+
+    /// The focused slot's gauge, by its glyph.
+    pub fn gauge(&self, f: &Frame) -> Gauge {
+        let view = view::view(f.def, f.focus, &f.ctx);
+        view.glyph()
+            .gauge(self.anim[f.focus].current(), view.fmt().is_bipolar())
     }
 
     /// The six cells, first row's labels at `top`.
@@ -449,9 +455,11 @@ impl Renderer {
     }
 }
 
-/// What the focus band draws for the focused slot.
-pub fn focus_glyph(f: &Frame) -> crate::ui::glyph::Drawn {
-    view::view(f.def, f.focus, &f.ctx).glyph().drawn()
+/// A composite's inputs: its params' set values, normalized, read from
+/// the stored params (`stored`), never `Renderer::anim` or anything
+/// modulated, so the glyph only ever moves by its own animation.
+pub fn composite_set(stored: &impl Blocks, addrs: [ParamAddr; 3]) -> [f32; 3] {
+    addrs.map(|a| stored.block(a.block).map_or(0.0, |b| b.normalized(a.param)))
 }
 
 /// The OUT of the Part whose pages these are; P1 off the Part chains.

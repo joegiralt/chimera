@@ -310,9 +310,10 @@ fn an_absent_route_knob_reads_dashes_in_the_focus_band() {
         &mut want,
         "LFO",
         "--",
-        ui.renderer.anim[2].current(),
-        chimera_core::ui::page::ValFmt::Route.is_bipolar(),
-        chimera_core::ui::glyph::Drawn::Arc,
+        chimera_core::ui::glyph::Gauge::Arc {
+            value: ui.renderer.anim[2].current(),
+            bipolar: chimera_core::ui::page::ValFmt::Route.is_bipolar(),
+        },
         components::Look::Absent,
         None,
     );

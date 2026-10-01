@@ -13,7 +13,7 @@ use crate::ui::block_def::{BlockDef, SlotBinding};
 use crate::ui::chain::{ChainId, ChainNav};
 use crate::ui::draw;
 use crate::ui::fmt::FmtBuf;
-use crate::ui::glyph::Drawn;
+use crate::ui::glyph::Gauge;
 use crate::ui::theme;
 
 /// `s` in upper case (names are stored mixed case: "Filter", "4opFM").
@@ -217,24 +217,20 @@ where
     );
 }
 
-/// Focus band (y 28..118): the focused slot's label, its value large, and an
-/// arc gauge (from 12:00 for bipolar params). `value` is the animated 0..1.
-/// A dimmed or absent slot reads as its cell does, with no arc: a dimmed
-/// value in MID, an absent route's dash in INK2.
+/// Focus band (y 28..118): the focused slot's label, its value large, and
+/// its `gauge`. A dimmed or absent slot reads as its cell does, with no
+/// gauge: a dimmed value in MID, an absent route's dash in INK2.
 ///
 /// While a MIX+PLUS `status` is pending (issue #21) the value readout — the
 /// large numerals and the arc gauge — is replaced by the status word(s) at
 /// the mid-size value font, so the longest message (`NOT MODULATABLE`)
 /// still fits the full row width; the label above is unchanged, so the
 /// message still reads against the parameter it was tried on.
-#[allow(clippy::too_many_arguments)]
 pub fn focus_band<D>(
     d: &mut D,
     label: &str,
     value_text: &str,
-    value: f32,
-    bipolar: bool,
-    glyph: Drawn,
+    gauge: Gauge,
     look: Look,
     status: Option<PrimeStatus>,
 ) where
@@ -267,7 +263,7 @@ pub fn focus_band<D>(
                 color,
             );
         }
-        None => focus_value(d, value_text, value, bipolar, glyph),
+        None => focus_value(d, value_text, gauge),
     }
 }
 
@@ -317,8 +313,8 @@ where
     )
 }
 
-/// The value large and the glyph's gauge.
-fn focus_value<D>(d: &mut D, value_text: &str, value: f32, bipolar: bool, glyph: Drawn)
+/// The value large and its gauge; with none, the text has the band.
+fn focus_value<D>(d: &mut D, value_text: &str, gauge: Gauge)
 where
     D: DrawTarget<Color = Rgb565>,
 {
@@ -330,8 +326,9 @@ where
         theme::FOCUS_VALUE_Y,
         theme::INK,
     );
-    match glyph {
-        Drawn::Arc => draw::arc_gauge(
+    match gauge {
+        Gauge::None => {}
+        Gauge::Arc { value, bipolar } => draw::arc_gauge(
             d,
             theme::ARC_CX,
             theme::ARC_CY,
