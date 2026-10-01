@@ -229,6 +229,49 @@ pub fn load_project<S: Store>(
     out
 }
 
+/// Boot's load of SYSTEM's last project (spec § Boot). Nothing sounds
+/// yet, so there is no epoch to bump (ADR 0046). A load binds the project
+/// to the card it came from; anything else leaves `p` NEW, whatever it
+/// held, and says why.
+pub fn boot_project<S: Store>(
+    card: &mut Card,
+    store: &mut S,
+    last: Option<ProjectId>,
+    p: &mut Project,
+) -> Option<ProjectNote> {
+    let note = match last {
+        None => ProjectNote::NewProject,
+        Some(id) => {
+            let subject = Subject::File(id);
+            let run = card.run(store, |s, r| {
+                load_ab_in_place(s, r, project_file(id), &mut ProjectDecoder::new(p))
+                    .map(|_| r.volume())
+            });
+            match run {
+                Ok(o) => match o.result {
+                    Ok(vol) => {
+                        p.meta.file = Some(ProjectFile { id, vol });
+                        p.meta.saved_crc = Some(project_crc(p));
+                        return None;
+                    }
+                    Err(InPlaceError {
+                        clobbered: true, ..
+                    }) => ProjectNote::LoadFailed(subject),
+                    Err(InPlaceError { err, .. }) => load_note(err, subject),
+                },
+                // The mount: no file was reached.
+                Err(InPlaceError {
+                    err: LoadError::Store(e),
+                    ..
+                }) => card_note(e, None),
+                Err(InPlaceError { err, .. }) => load_note(err, subject),
+            }
+        }
+    };
+    p.reset_new();
+    Some(note)
+}
+
 /// A project as its headers list it, on the card `vol`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ProjectEntry {

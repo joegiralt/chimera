@@ -49,6 +49,8 @@ fn main() {
     // https://github.com/joegiralt/chimera/issues/197
     let (mut sync, mut settings, _) = SystemSync::boot(&mut card, &mut store);
     ui.set_theme(settings.theme);
+    // Boot step 2: the last project, or NEW and why.
+    ui.boot_project(&mut card, &mut store, settings.last_project);
     let mut perf = PerfTracker::new();
     // The held key and the channel it was sent on, so its note-off follows
     // it even if the selected Part changes while it is held.
@@ -114,7 +116,7 @@ fn main() {
         let toast_ms = now.duration_since(toast_at).as_millis() as u32;
         toast_at = now;
         if let ToastStep::Show(text) = ui.step_toast(toast_ms) {
-            draw_toast(&mut display, text);
+            draw_toast(&mut display, text.as_str());
         }
 
         perf.record(frame_us, 0);

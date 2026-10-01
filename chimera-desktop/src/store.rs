@@ -249,6 +249,63 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    #[test]
+    fn project_store_suite_on_dir_store() {
+        let mut roots = Vec::new();
+        chimera_core::project::test_support::project_store_suite(&mut || {
+            let root = unique_root();
+            roots.push(root.clone());
+            DirStore::new(root)
+        });
+        for r in roots {
+            let _ = fs::remove_dir_all(r);
+        }
+    }
+
+    /// The sim's boot: a project saved, then the next launch loads it from
+    /// the files alone.
+    #[test]
+    fn project_survives_a_relaunch() {
+        use chimera_core::block::Block;
+        use chimera_core::name::ProjectName;
+        use chimera_core::params::{EngineType, FilterParams};
+        use chimera_core::preset::Sound;
+        use chimera_core::project::test_support::same;
+        use chimera_core::project::{
+            PartId, ProjectStatus, SlotId, new_project_id, project_status,
+        };
+        use chimera_core::storage::{Card, SystemSync};
+        use chimera_core::ui::UiState;
+        let root = unique_root();
+        let mut store = DirStore::new(root.clone());
+        let mut card = Card::new();
+        let (mut sync, mut s, _) = SystemSync::boot(&mut card, &mut store);
+        let mut ui = Box::new(UiState::new());
+        let p = ui.project_mut();
+        p.edit_part(PartId::ALL[2])
+            .sound
+            .params
+            .filter
+            .set(FilterParams::RESONANCE, 0.7);
+        p.pool_store(SlotId::ALL[20], Sound::init(EngineType::Modal));
+        p.edit_fx().reverb.mix = 0.6;
+        p.set_name(ProjectName::new("RELAUNCH").unwrap());
+        let file = new_project_id(&mut card, &mut store).unwrap();
+        ui.save_project(&mut card, &mut store, &mut sync, &mut s, file);
+
+        let mut store = DirStore::new(root.clone());
+        let mut card = Card::new();
+        let (_, s, _) = SystemSync::boot(&mut card, &mut store);
+        let mut again = Box::new(UiState::new());
+        again.boot_project(&mut card, &mut store, s.last_project);
+        same(ui.project(), again.project());
+        assert_eq!(
+            project_status(again.project(), again.template()),
+            ProjectStatus::Saved
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
     /// `CHIMERA_CARD` naming no directory: boot and every exit are NoCard.
     #[test]
     fn missing_card_dir_keeps_defaults() {

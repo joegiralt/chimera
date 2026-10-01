@@ -41,8 +41,12 @@ use crate::modulation::{CUTOFF, CUTOFF_LABEL, MAX_MOD_SOURCES, ModSource, ModSta
 use crate::params::ParamSnapshot;
 use crate::perf::load::AudioStats;
 use crate::preset::{POOL_SIZE, PartEdit};
-use crate::project::{PartFrom, PartId, PartSource, Project, ReplaceGuard, TemplateCrc};
+use crate::project::{
+    self, Confirmed, LoadLink, PartFrom, PartId, PartSource, Project, ProjectFile, ProjectNote,
+    ProjectSource, ReplaceGuard, Swap, TemplateCrc,
+};
 use crate::scope::SCOPE_LEN;
+use crate::storage::ProjectId;
 use block_def::BlockDef;
 use block_def::VizType;
 use block_def::slot_addr;
@@ -53,6 +57,19 @@ use perf::PerfStats;
 use renderer::Renderer;
 use theme_settings::ThemeSettings;
 use view::{SlotCtx, View};
+
+/// SYSTEM's last project is now `id`. A failed write leaves the toast to
+/// the project's note; the next save or load retries it.
+fn remember<S: Store>(
+    card: &mut Card,
+    store: &mut S,
+    sync: &mut SystemSync,
+    settings: &mut SystemSettings,
+    id: ProjectId,
+) {
+    settings.last_project = Some(id);
+    let _ = sync.write(card, store, settings);
+}
 
 /// MIX + turn on a route knob: the next of −127, 0, +127 that way.
 fn snap_amount(a: i8, delta: i8) -> i8 {
@@ -268,6 +285,93 @@ impl UiState {
         if let Some(t) = busy::toast_for(&r) {
             self.toast.show(t);
         }
+    }
+
+    /// A project note as a toast: a save's time for SAVED, else an error's.
+    pub fn show_note(&mut self, n: ProjectNote) {
+        let ms = match n {
+            ProjectNote::Saved(_) => busy::Toast::SAVED_MS,
+            _ => busy::Toast::ERROR_MS,
+        };
+        self.toast.show(busy::Toast { text: n.line(), ms });
+    }
+
+    /// After a load or a boot replaced the project: the active Part's
+    /// engine and matrix, the page, and its values snapped, not lerped
+    /// (projects spec § Loading while playing: the voice fade covers it).
+    pub fn project_replaced(&mut self) {
+        let part = self.active_part;
+        self.nav.set_engine(self.project.part(part).sound.engine());
+        self.load_matrix(part);
+        self.enter_page();
+        self.browser_dirty = true;
+    }
+
+    /// Boot step 2, after SYSTEM: SYSTEM's last project, or NEW and why.
+    pub fn boot_project<S: Store>(
+        &mut self,
+        card: &mut Card,
+        store: &mut S,
+        last: Option<ProjectId>,
+    ) {
+        if let Some(n) = project::boot_project(card, store, last, &mut self.project) {
+            self.show_note(n);
+        }
+        self.project_replaced();
+    }
+
+    /// SAVE (`meta().file()`) or a first save / SAVE AS (`new_project_id`).
+    /// A save that lands becomes SYSTEM's last project.
+    ///
+    /// ```compile_fail,E0308
+    /// # use chimera_core::storage::{Card, SystemSync};
+    /// # let mut s = chimera_hal::testkit::MemStore::new(1);
+    /// # let mut card = Card::new();
+    /// # let (mut sync, mut set, _) = SystemSync::boot(&mut card, &mut s);
+    /// let mut ui = chimera_core::ui::UiState::new();
+    /// let to = ui.project().meta().file(); // NEW has none
+    /// ui.save_project(&mut card, &mut s, &mut sync, &mut set, to);
+    /// ```
+    pub fn save_project<S: Store>(
+        &mut self,
+        card: &mut Card,
+        store: &mut S,
+        sync: &mut SystemSync,
+        settings: &mut SystemSettings,
+        to: ProjectFile,
+    ) {
+        let n = project::save_project(card, store, &mut self.project, to);
+        if let ProjectNote::Saved(_) = n {
+            remember(card, store, sync, settings, to.id);
+        }
+        self.show_note(n);
+    }
+
+    /// Replaces the project as `go` confirmed. A file that loads becomes
+    /// SYSTEM's last project; `+ NEW` and a fallback to NEW leave it. The
+    /// shell settles the `Swap` (`LOAD_ACK_TIMEOUT_MS`), then publishes.
+    #[must_use]
+    pub fn load_project<S: Store>(
+        &mut self,
+        card: &mut Card,
+        store: &mut S,
+        sync: &mut SystemSync,
+        settings: &mut SystemSettings,
+        go: Confirmed<ProjectSource>,
+        link: &LoadLink,
+    ) -> Option<Swap> {
+        let out = project::load_project(card, store, &mut self.project, go, link);
+        if let Some(n) = out.note {
+            self.show_note(n);
+        }
+        if out.swap.is_some() {
+            self.project_replaced();
+            // Only a file load sets it: NEW, loaded or fallen back to, has none.
+            if let Some(f) = self.project.meta().file() {
+                remember(card, store, sync, settings, f.id);
+            }
+        }
+        out.swap
     }
 
     /// Once a frame: the toast, `elapsed_ms` after the last frame.

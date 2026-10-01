@@ -26,8 +26,8 @@ pub use note::{Differ, LINE_LEN, Line, ProjectNote, Subject};
 pub use parts::{Origin, Part, PartEdit, Performance, part_block, part_block_mut};
 pub use pool::Pool;
 pub use store::{
-    ListOutcome, LoadOutcome, ProjectEntry, delete_project, list_projects, load_project,
-    new_project_id, project_file, save_project,
+    ListOutcome, LoadOutcome, ProjectEntry, boot_project, delete_project, list_projects,
+    load_project, new_project_id, project_file, save_project,
 };
 pub use swap::{GateStep, LOAD_ACK_TIMEOUT_MS, LOAD_LINK, LoadGate, LoadLink, Settled, Swap};
 pub use template::TemplateCrc;
