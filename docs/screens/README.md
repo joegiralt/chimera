@@ -174,3 +174,4 @@ The UI component storyboard.
 | ![](demo_fm.png) | FM | FM icons |
 | ![](demo_mtx.png) | MTX | A matrix |
 | ![](demo_arc.png) | ARC | Glyph: ARC; a drives it unipolar, b bipolar |
+| ![](demo_none.png) | NONE | Glyph: NONE; a steps MODEL, its word has the whole band |

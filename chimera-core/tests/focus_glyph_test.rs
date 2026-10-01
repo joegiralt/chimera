@@ -5,6 +5,7 @@ mod screen;
 
 use chimera_core::addr::{BlockRef, Blocks, ParamAddr};
 use chimera_core::block::{ParamSpec, ValFmt};
+use chimera_core::dsp::modal::{MODEL_NAMES, ModalParams};
 use chimera_core::modulation::{CUTOFF, ModSource};
 use chimera_core::params::OutParams;
 use chimera_core::project::PartId;
@@ -16,6 +17,7 @@ use chimera_core::ui::page::{PageId, PageKey, PageLayout};
 use chimera_core::ui::region::{RegionData, RegionKind};
 use chimera_core::ui::renderer::composite_set;
 use chimera_core::ui::view::{SlotCtx, View, view};
+use chimera_core::ui::{draw, theme};
 use chimera_hal::{ButtonId, EncoderId};
 use screen::*;
 
@@ -236,4 +238,35 @@ fn glyph_arc_page_drives_the_arc() {
     let bi = render_ui(&ui);
     assert_eq!(bi.oob, 0);
     assert_ne!(bi.hash(), uni.hash());
+}
+/// The arc's track at 12:00: lit on an ARC band, ground on a NONE band.
+fn arc_top(fb: &Fb) -> embedded_graphics::pixelcolor::Rgb565 {
+    fb.at(theme::ARC_CX, theme::ARC_CY - theme::ARC_R)
+}
+
+#[test]
+fn glyph_none_page_steps_words_across_the_whole_band() {
+    let mut ui = UiState::new();
+    to_demo(&mut ui, &reg::DEMO_GLYPH_NONE);
+    // NONE is the page's, not MODEL's: MODEL's spec stays ARC.
+    let model = ParamAddr::new(BlockRef::Modal, ModalParams::MODE);
+    assert_eq!(model.spec().unwrap().glyph, FocusGlyph::Arc);
+    feed(&mut ui, Input::turn(EncoderId::A, -127));
+    for (i, word) in MODEL_NAMES.iter().enumerate() {
+        if i > 0 {
+            feed(&mut ui, Input::turn(EncoderId::A, 1));
+        }
+        settle(&mut ui);
+        assert_eq!(ui.params().modal.mode as usize, i, "{word}");
+        let fb = render_ui(&ui);
+        assert_eq!(fb.oob, 0, "{word}");
+        assert_eq!(arc_top(&fb), theme::BG, "{word}: no gauge");
+        let right = theme::FOCUS_VALUE_X + draw::text_width(&theme::FONT_FOCUS, word, 0);
+        assert!(right <= theme::SCREEN_W - theme::MARGIN_X, "{word} fits");
+    }
+    // For contrast, an ARC page draws its track there.
+    let mut arc = UiState::new();
+    to_demo(&mut arc, &reg::DEMO_GLYPH_ARC);
+    settle(&mut arc);
+    assert_ne!(arc_top(&render_ui(&arc)), theme::BG);
 }

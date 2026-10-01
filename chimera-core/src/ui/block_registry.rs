@@ -13,6 +13,7 @@ use crate::modulation::{MAX_MOD_SOURCES, ModSource};
 use crate::params::{DriveParams, EnvParams, FilterParams, FolderParams, OutParams, PitchParams};
 use crate::part::PartParams;
 use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2, FxFlow, FxNode, ParamSlot, VizType};
+use crate::ui::glyph::FocusGlyph;
 use crate::ui::page::{PageLayout, ValFmt};
 use crate::ui::theme_settings::ThemeSettings;
 
@@ -763,13 +764,31 @@ pub static DEMO_GLYPH_ARC: BlockDef = BlockDef {
 
 /// Glyph pages take ids 70 and up (68–69 are nav-core's CHANNELS and
 /// OUTPUTS); raise `focus::MAX_PAGES` past 72 when one needs it.
-static DEMO_BLOCKS: [ChainBlock; 6] = [
+/// GLYPH: NONE. a steps MODEL's words, which get the whole band.
+pub static DEMO_GLYPH_NONE: BlockDef = BlockDef {
+    id: 71,
+    name: "Glyph: None",
+    short: "NONE",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::param(BlockRef::Modal, ModalParams::MODE).with_glyph(FocusGlyph::None),
+        EMPTY,
+        EMPTY,
+        EMPTY,
+        EMPTY,
+        EMPTY,
+    ],
+};
+
+static DEMO_BLOCKS: [ChainBlock; 7] = [
     ChainBlock::page(&DEMO_WAVES),
     ChainBlock::page(&DEMO_SHAPES),
     ChainBlock::page(&DEMO_MOTION),
     ChainBlock::page(&DEMO_FM),
     ChainBlock::page(&DEMO_MATRIX),
     ChainBlock::page(&DEMO_GLYPH_ARC),
+    ChainBlock::page(&DEMO_GLYPH_NONE),
 ];
 
 pub static DEMO_CHAIN: ChainDef2 = ChainDef2 {
