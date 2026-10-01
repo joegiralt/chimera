@@ -6,7 +6,7 @@
 
 use chimera_core::clock_plan::{cycles_for_ns, systick_reload};
 use chimera_hal::{
-    ButtonId, ButtonState, Controls, Edges, EncoderId, Latch, NUM_BUTTONS, NUM_ENCODERS,
+    ButtonId, ButtonState, Controls, Edges, EncoderId, Latch, Ms, NUM_BUTTONS, NUM_ENCODERS,
 };
 use core::ptr::addr_of_mut;
 use core::sync::atomic::{AtomicBool, AtomicI8, AtomicU32, Ordering};
@@ -107,7 +107,9 @@ pub fn isr_tick() {
     if !READY.load(Ordering::Acquire) {
         return;
     }
-    let now_ms = tick_ms(ISR_TICK.fetch_add(1, Ordering::Relaxed).wrapping_add(1));
+    let now_ms = Ms(tick_ms(
+        ISR_TICK.fetch_add(1, Ordering::Relaxed).wrapping_add(1),
+    ));
 
     let d = HC165_DELAY.load(Ordering::Relaxed);
     // Shift the HC165 chain in: LOAD on PF1, CLK on PF0, DATA on PF2.
@@ -202,7 +204,7 @@ fn accel_for(burst_pos: u8) -> i8 {
 
 pub struct Stm32Controls {
     edges: [Edges; NUM_BUTTONS],
-    now_ms: u32,
+    now_ms: Ms,
     enc: [i8; NUM_ENCODERS],
     burst: [u8; NUM_ENCODERS],
 }
@@ -211,7 +213,7 @@ impl Stm32Controls {
     pub fn new() -> Self {
         Self {
             edges: [Edges::default(); NUM_BUTTONS],
-            now_ms: 0,
+            now_ms: Ms(0),
             enc: [0; NUM_ENCODERS],
             burst: [0; NUM_ENCODERS],
         }
@@ -228,7 +230,7 @@ impl Stm32Controls {
             }
         });
         let now = ISR_TICK.load(Ordering::Relaxed);
-        self.now_ms = tick_ms(now);
+        self.now_ms = Ms(tick_ms(now));
         for i in 0..NUM_ENCODERS {
             let raw = ENC_DELTA[i].swap(0, Ordering::Relaxed);
             // Reset burst if >150ms (75 ticks at 500Hz) since last edge
@@ -265,7 +267,7 @@ impl Controls for Stm32Controls {
         self.edges[id as usize]
     }
 
-    fn now_ms(&self) -> u32 {
+    fn now_ms(&self) -> Ms {
         self.now_ms
     }
 }

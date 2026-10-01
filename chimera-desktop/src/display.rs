@@ -5,7 +5,7 @@ use embedded_graphics_core::draw_target::DrawTarget;
 use embedded_graphics_core::geometry::{OriginDimensions, Size};
 use embedded_graphics_core::pixelcolor::Rgb565;
 use embedded_graphics_core::pixelcolor::raw::{RawData, RawU16};
-use minifb::{Key, KeyRepeat, Window, WindowOptions};
+use minifb::{Key, Window, WindowOptions};
 
 const SCALE: usize = 2;
 
@@ -76,16 +76,6 @@ impl DesktopDisplay {
 
     pub fn get_keys(&self) -> Vec<Key> {
         self.window.get_keys()
-    }
-
-    /// Keys pressed since the last window update, without repeats.
-    pub fn get_keys_pressed(&self) -> Vec<Key> {
-        self.window.get_keys_pressed(KeyRepeat::No)
-    }
-
-    /// Keys released since the last window update.
-    pub fn get_keys_released(&self) -> Vec<Key> {
-        self.window.get_keys_released()
     }
 }
 

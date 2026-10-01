@@ -1,5 +1,5 @@
 use chimera_hal::{
-    ButtonId, ButtonState, Controls, Edges, EncoderId, Latch, NUM_BUTTONS, NUM_ENCODERS,
+    ButtonId, ButtonState, Controls, Edges, EncoderId, Latch, Ms, NUM_BUTTONS, NUM_ENCODERS,
 };
 use minifb::Key;
 
@@ -23,7 +23,7 @@ pub struct DesktopControls {
     encoder_deltas: [i8; NUM_ENCODERS],
     latches: [Latch; NUM_BUTTONS],
     edges: [Edges; NUM_BUTTONS],
-    now_ms: u32,
+    now_ms: Ms,
 }
 
 /// The button a key stands for.
@@ -51,13 +51,13 @@ impl DesktopControls {
             encoder_deltas: [0; NUM_ENCODERS],
             latches: [Latch::new(); NUM_BUTTONS],
             edges: [Edges::default(); NUM_BUTTONS],
-            now_ms: 0,
+            now_ms: Ms(0),
         }
     }
 
-    /// Call once per frame with the keys down now and those pressed and
-    /// released since the last frame, so a tap between frames is kept.
-    pub fn update_events(&mut self, down: &[Key], pressed: &[Key], released: &[Key], now_ms: u32) {
+    /// Call once per frame with the keys down now. A tap that starts and
+    /// ends between two frames is not seen.
+    pub fn update_events(&mut self, down: &[Key], now_ms: Ms) {
         self.now_ms = now_ms;
         self.encoder_deltas = [0; NUM_ENCODERS];
         let step = if down
@@ -74,13 +74,6 @@ impl DesktopControls {
             }
         }
 
-        // Presses, then releases, then the level: a tap inside the frame
-        // latches both edges and ends up.
-        for (keys, level) in [(pressed, true), (released, false)] {
-            for b in keys.iter().copied().filter_map(button_for) {
-                self.latches[b as usize].level(level, now_ms);
-            }
-        }
         let mut level = [false; NUM_BUTTONS];
         for b in down.iter().copied().filter_map(button_for) {
             level[b as usize] = true;
@@ -105,7 +98,7 @@ impl Controls for DesktopControls {
         self.edges[id as usize]
     }
 
-    fn now_ms(&self) -> u32 {
+    fn now_ms(&self) -> Ms {
         self.now_ms
     }
 }
@@ -116,7 +109,7 @@ mod tests {
 
     fn deltas(keys: &[Key]) -> [i8; NUM_ENCODERS] {
         let mut c = DesktopControls::new();
-        c.update_events(keys, &[], &[], 0);
+        c.update_events(keys, Ms(0));
         chimera_hal::ALL_ENCODERS.map(|e| c.encoder_delta(e))
     }
 
@@ -128,25 +121,14 @@ mod tests {
         assert_eq!(deltas(&[Key::LeftShift, Key::Y]), [0, 0, 0, 0, 0, -1]);
     }
 
-    /// A key down and up between two frames still reads as a press.
-    #[test]
-    fn a_tap_inside_one_frame_is_a_press() {
-        let mut c = DesktopControls::new();
-        c.update_events(&[], &[Key::Key3], &[Key::Key3], 100);
-        assert_eq!(c.button_state(ButtonId::B3), ButtonState::Pressed);
-        assert_eq!(c.edges(ButtonId::B3).released_at, Some(100));
-        c.update_events(&[], &[], &[], 120);
-        assert_eq!(c.button_state(ButtonId::B3), ButtonState::Up);
-    }
-
     /// A held key ages: pressed once, then held with no new edge.
     #[test]
     fn a_held_key_is_pressed_then_held() {
         let mut c = DesktopControls::new();
-        c.update_events(&[Key::M], &[Key::M], &[], 10);
-        assert_eq!(c.edges(ButtonId::Menu).pressed_at, Some(10));
-        c.update_events(&[Key::M], &[], &[], 30);
+        c.update_events(&[Key::M], Ms(10));
+        assert_eq!(c.edges(ButtonId::Menu).pressed_at, Some(Ms(10)));
+        c.update_events(&[Key::M], Ms(30));
         assert_eq!(c.button_state(ButtonId::Menu), ButtonState::Held);
-        assert_eq!(c.now_ms(), 30);
+        assert_eq!(c.now_ms(), Ms(30));
     }
 }

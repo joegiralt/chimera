@@ -115,12 +115,23 @@ impl ButtonState {
     }
 }
 
+/// A millisecond timestamp. It wraps, so compare with `since`, never `<`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Ms(pub u32);
+
+impl Ms {
+    /// Ms elapsed since `earlier`, across a wrap.
+    pub fn since(self, earlier: Ms) -> u32 {
+        self.0.wrapping_sub(earlier.0)
+    }
+}
+
 /// A button's level now and the edges since the last frame, in ms.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct Edges {
     pub down: bool,
-    pub pressed_at: Option<u32>,
-    pub released_at: Option<u32>,
+    pub pressed_at: Option<Ms>,
+    pub released_at: Option<Ms>,
 }
 
 /// Latches a button's edges between frames: the control tick feeds it
@@ -139,7 +150,7 @@ impl Latch {
     }
 
     /// Records a press or release when `down` differs from the last level.
-    pub fn level(&mut self, down: bool, now_ms: u32) {
+    pub fn level(&mut self, down: bool, now_ms: Ms) {
         if down == self.0.down {
             return;
         }
@@ -189,8 +200,8 @@ pub trait Controls {
     }
 
     /// The controls' clock, in ms.
-    fn now_ms(&self) -> u32 {
-        0
+    fn now_ms(&self) -> Ms {
+        Ms(0)
     }
 }
 
@@ -323,15 +334,15 @@ mod latch_tests {
     #[test]
     fn latch_keeps_a_tap_between_takes() {
         let mut l = Latch::new();
-        l.level(true, 10);
-        l.level(false, 40);
+        l.level(true, Ms(10));
+        l.level(false, Ms(40));
         let e = l.take();
         assert_eq!(
             e,
             Edges {
                 down: false,
-                pressed_at: Some(10),
-                released_at: Some(40)
+                pressed_at: Some(Ms(10)),
+                released_at: Some(Ms(40))
             }
         );
         assert_eq!(ButtonState::from_edges(e), ButtonState::Pressed);
@@ -343,9 +354,9 @@ mod latch_tests {
     #[test]
     fn latch_held_across_takes() {
         let mut l = Latch::new();
-        l.level(true, 3);
+        l.level(true, Ms(3));
         assert_eq!(ButtonState::from_edges(l.take()), ButtonState::Pressed);
-        l.level(true, 5); // no change: no edge
+        l.level(true, Ms(5)); // no change: no edge
         let e = l.take();
         assert_eq!(
             e,
@@ -361,17 +372,17 @@ mod latch_tests {
     #[test]
     fn latch_release_then_press() {
         let mut l = Latch::new();
-        l.level(true, 0);
+        l.level(true, Ms(0));
         l.take();
-        l.level(false, 5);
-        l.level(true, 9);
+        l.level(false, Ms(5));
+        l.level(true, Ms(9));
         let e = l.take();
         assert_eq!(
             e,
             Edges {
                 down: true,
-                pressed_at: Some(9),
-                released_at: Some(5)
+                pressed_at: Some(Ms(9)),
+                released_at: Some(Ms(5))
             }
         );
         assert_eq!(ButtonState::from_edges(e), ButtonState::Pressed);
@@ -380,9 +391,9 @@ mod latch_tests {
     #[test]
     fn a_lone_release_is_released() {
         let mut l = Latch::new();
-        l.level(true, 0);
+        l.level(true, Ms(0));
         l.take();
-        l.level(false, 7);
+        l.level(false, Ms(7));
         assert_eq!(ButtonState::from_edges(l.take()), ButtonState::Released);
     }
 
@@ -395,8 +406,8 @@ mod latch_tests {
         fn button_state(&self, _: ButtonId) -> ButtonState {
             self.0
         }
-        fn now_ms(&self) -> u32 {
-            77
+        fn now_ms(&self) -> Ms {
+            Ms(77)
         }
     }
 
@@ -413,17 +424,22 @@ mod latch_tests {
         }
         assert_eq!(
             Fixed(ButtonState::Pressed).edges(ButtonId::Menu).pressed_at,
-            Some(77)
+            Some(Ms(77))
         );
         assert_eq!(
             Fixed(ButtonState::Released)
                 .edges(ButtonId::Menu)
                 .released_at,
-            Some(77)
+            Some(Ms(77))
         );
         assert_eq!(
             Fixed(ButtonState::Held).edges(ButtonId::Menu).pressed_at,
             None
         );
+    }
+
+    #[test]
+    fn ms_since_wraps() {
+        assert_eq!(Ms(5).since(Ms(u32::MAX - 4)), 10);
     }
 }

@@ -12,7 +12,7 @@ use chimera_core::ui::UiState;
 use chimera_core::ui::busy::{ToastStep, draw_toast};
 use chimera_core::ui::perf::PerfTracker;
 use chimera_hal::store::Store;
-use chimera_hal::{ChimeraDisplay, MidiChannel, MidiNote, Velocity};
+use chimera_hal::{ChimeraDisplay, MidiChannel, MidiNote, Ms, Velocity};
 use controls::DesktopControls;
 use display::DesktopDisplay;
 use std::path::PathBuf;
@@ -84,12 +84,7 @@ fn main() {
         frame_start = now;
 
         let keys = display.get_keys();
-        controls.update_events(
-            &keys,
-            &display.get_keys_pressed(),
-            &display.get_keys_released(),
-            first_light.elapsed().as_millis() as u32,
-        );
+        controls.update_events(&keys, Ms(first_light.elapsed().as_millis() as u32));
 
         // Octave shift: [ and ]
         if keys.contains(&minifb::Key::LeftBracket) {
