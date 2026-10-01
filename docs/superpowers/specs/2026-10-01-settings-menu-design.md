@@ -105,7 +105,7 @@ SETTINGS has its own visual language, on purpose (owner, 2026-10-01: "it's obvio
 - **List:** the breadcrumb in the header, e.g. `SETTINGS › PROJECT › LOAD`, with the last part bold. Rows are 26–30 px. The bar is teal on a soft fill with a left tick. A `›` marks a row that opens more. A right-hand note shows a value or status (`● LOADED`, `FILE DAMAGED`, `SLOT 03`). A scrollbar appears when the list overflows.
 - **Footer**, on every SETTINGS screen:
   - the project's name;
-  - its status: `* MODIFIED` in the route colour, `SAVED`, or `NEW`;
+  - its status: `* MODIFIED` in `theme::WARN`, `SAVED`, or `NEW`;
   - a one-line legend for that screen's keys.
 
   The status comes from a cached `project_status` (below).

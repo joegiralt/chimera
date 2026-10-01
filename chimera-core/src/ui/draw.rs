@@ -91,7 +91,8 @@ where
             line(d, x + 2, y - 4, x, y - 2, color, 1);
         }
         BULLET => dot(d, x + 2, y - 4, 2, color),
-        _ => ring(d, x + 2, y - 4, 2, color, 1),
+        RING => ring(d, x + 2, y - 4, 2, color, 1),
+        _ => debug_assert!(false, "{ch:?} is not a mark"),
     }
 }
 

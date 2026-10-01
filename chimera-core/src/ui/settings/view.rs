@@ -8,7 +8,7 @@ use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::Rgb565;
 use u8g2_fonts::FontRenderer;
 
-use super::tree::{Kind, ROOT, Row, row_at};
+use super::tree::{Kind, PART, ROOT, Row, row_at};
 use crate::project::{PartId, ProjectStatus};
 use crate::ui::draw;
 use crate::ui::fmt::FmtBuf;
@@ -26,6 +26,7 @@ const DOTS: &str = "..";
 /// Space either side of a breadcrumb's `›`.
 const SEP_GAP: i32 = 4;
 const BAR_X: i32 = 8;
+const BAR_RIGHT: i32 = theme::SCROLL_X - 4;
 const BAR_H: i32 = ROW_H - 4;
 const BAR_R: u32 = 6;
 const TICK_X: i32 = 4;
@@ -57,16 +58,21 @@ pub struct Crumbs {
 }
 
 impl Crumbs {
-    /// The crumbs of the rows on `path`, from SETTINGS down.
-    pub fn of(path: &[u8]) -> Self {
+    /// The crumbs of the rows on `path`, from SETTINGS down; the PART list
+    /// is `PART n` for the `active` Part.
+    pub fn of(path: &[u8], active: PartId) -> Self {
         let mut c = Crumbs {
             parts: [Crumb::Name(ROOT.crumb); MAX_CRUMBS],
             len: 1,
             width: theme::CRUMBS_W,
         };
         for d in 1..=path.len() {
-            if let Some(r) = row_at(&path[..d]) {
-                c.push(Crumb::Name(r.crumb));
+            match row_at(&path[..d]) {
+                Some(r) if matches!(r.kind, Kind::List(rs) if core::ptr::eq(rs, &PART[..])) => {
+                    c.push(Crumb::Part(active))
+                }
+                Some(r) => c.push(Crumb::Name(r.crumb)),
+                None => {}
             }
         }
         c
@@ -189,7 +195,7 @@ impl RowLook {
     pub fn of(kind: Kind) -> Self {
         match kind {
             Kind::Later(_) => RowLook::Later,
-            _ => RowLook::Normal,
+            Kind::List(_) | Kind::Leaf(_) | Kind::Screen(_) | Kind::Act(_) => RowLook::Normal,
         }
     }
 }
@@ -231,7 +237,7 @@ pub fn draw_list<D: DrawTarget<Color = Rgb565>>(
                 d,
                 BAR_X,
                 y,
-                theme::LIST_RIGHT + 10 - BAR_X,
+                BAR_RIGHT - BAR_X,
                 BAR_H,
                 BAR_R,
                 theme::ACCENT_SOFT,
@@ -322,7 +328,7 @@ pub fn draw_footer<D: DrawTarget<Color = Rgb565>>(d: &mut D, f: &Footer<'_>) {
         d,
         theme::MARGIN_X,
         theme::FOOTER_RULE_Y,
-        theme::CRUMBS_W,
+        theme::FOOTER_RULE_W,
         1,
         theme::FAINT,
     );

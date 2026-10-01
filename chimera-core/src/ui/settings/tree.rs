@@ -94,7 +94,8 @@ static PROJECT: [Row; 3] = [
     ),
 ];
 
-static PART: [Row; 4] = [
+/// The active Part's list: its crumb is `PART n`.
+pub static PART: [Row; 4] = [
     row("RENAME", Kind::Act(Act::PartRename)),
     row("CLEAR", Kind::Act(Act::PartClear)),
     crumb("SAVE TO PROJ", "SAVE TO", Kind::Screen(Screen::SaveToProj)),

@@ -463,6 +463,8 @@ pub fn layout_regions(layout: PageLayout) -> &'static [(RegionKind, u16, u16)] {
 }
 
 const FOOTER: u16 = theme::MAP_TOP as u16;
+// A leaf's footer starts where its cells end.
+const _: () = assert!(CELLS == FOOTER);
 
 /// A SETTINGS list: breadcrumb, rows, footer.
 const SETTINGS_LIST: [(RegionKind, u16, u16); 3] = [
@@ -475,19 +477,19 @@ const SETTINGS_CELL_GRID: [(RegionKind, u16, u16); 5] = [
     (K::Focus, HEADER, FOCUS),
     (K::Viz, FOCUS, BAND),
     (K::Cells, BAND, CELLS),
-    (K::Footer, CELLS, SCREEN),
+    (K::Footer, FOOTER, SCREEN),
 ];
 const SETTINGS_BIG_VIZ: [(RegionKind, u16, u16); 4] = [
     (K::Crumbs, 0, HEADER),
     (K::Viz, HEADER, BIG_VIZ_END),
     (K::Cells, BIG_VIZ_END, CELLS),
-    (K::Footer, CELLS, SCREEN),
+    (K::Footer, FOOTER, SCREEN),
 ];
 const SETTINGS_MATRIX: [(RegionKind, u16, u16); 4] = [
     (K::Crumbs, 0, HEADER),
     (K::Grid, HEADER, MATRIX_GRID),
     (K::Focus, MATRIX_GRID, CELLS),
-    (K::Footer, CELLS, SCREEN),
+    (K::Footer, FOOTER, SCREEN),
 ];
 
 /// SETTINGS' bands: a list (`None`) or a leaf page of `layout`. The

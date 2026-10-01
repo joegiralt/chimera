@@ -58,7 +58,7 @@ Also binding:
   - `›` on a row that opens more;
   - a right-hand note (`● LOADED`, `FILE DAMAGED`, `SLOT 03`);
   - a scrollbar when the list overflows.
-- **The footer is on every SETTINGS screen:** the project's name, its status (`* MODIFIED` in the route colour, `SAVED` or `NEW`), and a one-line legend.
+- **The footer is on every SETTINGS screen:** the project's name, its status (`* MODIFIED` in `theme::WARN`, `SAVED` or `NEW`), and a one-line legend.
 - **A leaf page** uses the cell grid, with up to six cells eased like every value. It keeps the breadcrumb and the footer, and never shows the chain map.
 - **Prompt:** a teal-outlined panel with the question, the reason in the route colour, and two or three pill options. Encoder A picks, SEQ confirms, and MENU is always CANCEL.
 - **NAMING:**

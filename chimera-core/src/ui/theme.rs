@@ -121,5 +121,6 @@ pub const LIST_RIGHT: i32 = 222;
 pub const SCROLL_X: i32 = 236;
 /// Footer, in the map's band: a rule, the project line, the key legend.
 pub const FOOTER_RULE_Y: i32 = 280;
+pub const FOOTER_RULE_W: i32 = VIZ_RIGHT - MARGIN_X;
 pub const FOOTER_NAME_Y: i32 = 296;
 pub const FOOTER_LEGEND_Y: i32 = 312;
