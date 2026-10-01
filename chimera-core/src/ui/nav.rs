@@ -8,7 +8,7 @@ use crate::ui::block_def::ChainDef2;
 use crate::ui::block_registry::{
     self, CHORUS, MIXER_CHANNEL_CHAIN, MIXER_HOME, MIXER_PART, MODAL_1, MODAL_PLUCK_CHAIN,
 };
-use crate::ui::settings::{Act, Kind, MANAGE_COMMANDS, Screen, row_at};
+use crate::ui::settings::{Act, Kind, MANAGE_COMMANDS, Row, Screen, row_at};
 
 /// Path depth limit of the SETTINGS tree.
 const MAX_DEPTH: usize = 4;
@@ -158,8 +158,7 @@ impl SettingsAt {
                 ..self
             })
         };
-        let under_bar =
-            |rs: &'static [crate::ui::settings::Row]| rs.get(self.row as usize).map(|r| r.kind);
+        let under_bar = |rs: &'static [Row]| rs.get(self.row as usize).map(|r| r.kind);
         match (self.kind(), k, delta) {
             (Some(Kind::Leaf(c)), k, _) => page_step(c, self.page, k)
                 .map_or(Step::Stay, |page| go(SettingsAt { page, ..self })),
@@ -342,7 +341,7 @@ pub enum Step {
     Act(Act),
     /// EDIT or SEQ on a Screen row: `UiState` lists it, then goes in.
     Screen(Screen),
-    /// SEQ inside a Screen: `UiState` decides.
+    /// SEQ inside a Screen: `UiState` decides; on MANAGE, `page().sub` says which column.
     Run,
     Stay,
 }

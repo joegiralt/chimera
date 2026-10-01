@@ -458,13 +458,14 @@ fn the_fx_page_is_remembered() {
         Location::pages(P[0], at(0, 0)),
         "Part 6's FX: not B1's mixer"
     );
+    l = Location::pages(P[0], at(3, 0));
     key(&mut l, NavKey::Part(P[0]), &cx, &mut r);
     assert_eq!(fx_node(l, &cx), Some((P[0], fx)), "B1, B1 reopens the FX");
     key(&mut l, NavKey::Part(P[0]), &cx, &mut r);
     assert_eq!(
         l,
-        Location::pages(P[0], at(0, 0)),
-        "Fx(P1) is P1's own mixer"
+        Location::pages(P[0], at(3, 0)),
+        "Fx(P1) is P1's own mixer: the page left comes back"
     );
 }
 
