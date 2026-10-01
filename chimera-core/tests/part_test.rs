@@ -19,13 +19,13 @@ fn midi_channel_accepts_0_to_15_only() {
 #[test]
 fn performance_defaults_per_part() {
     let perf = Performance::new();
-    for (n, part) in perf.parts.iter().enumerate() {
+    for (n, part) in perf.parts().iter().enumerate() {
         let m = &part.mix;
         assert_eq!(m.channel.get() as usize, n);
         assert_eq!((m.mode, m.output), (PartMode::Poly, DacPair::P1));
         assert_eq!((m.level, m.pan, m.sends), (0.8, 0.0, [0.0; 3]));
     }
-    assert_eq!(perf.parts.len(), MAX_PARTS);
+    assert_eq!(perf.parts().len(), MAX_PARTS);
 }
 
 #[test]

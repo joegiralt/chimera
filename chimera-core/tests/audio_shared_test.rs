@@ -8,12 +8,13 @@ use chimera_core::params::EngineType;
 use chimera_core::params::FilterParams;
 use chimera_core::part::PartMode;
 use chimera_core::preset::{Performance, Sound};
+use chimera_core::project::PartId;
 
 fn non_default_performance() -> Performance {
     let mut perf = Performance::new();
-    perf.parts[4].sound = Sound::init(EngineType::Algo);
-    perf.parts[4].mix.mode = PartMode::Mono;
-    perf.parts[4].mix.pan = -0.5;
+    *perf.edit(PartId::ALL[4]).sound = Sound::init(EngineType::Algo);
+    perf.edit(PartId::ALL[4]).mix.mode = PartMode::Mono;
+    perf.edit(PartId::ALL[4]).mix.pan = -0.5;
     perf.fx.reverb.mix = 0.4;
 
     // A non-default ModState: one modulatable destination with a non-zero amount.
@@ -22,7 +23,7 @@ fn non_default_performance() -> Performance {
     registry.add(cutoff, *b"CUTOFF\0\0").unwrap();
     let mut mod_state = ModState::from_registry(&registry, 1);
     mod_state.set_amount(0, 0, 42);
-    perf.parts[4].sound.mod_state = mod_state;
+    perf.edit(PartId::ALL[4]).sound.mod_state = mod_state;
     perf
 }
 
@@ -33,9 +34,9 @@ fn snapshot_copies_every_part_and_the_fx() {
     let shared = AudioShared::from_performance(&perf);
     assert_eq!(
         shared.parts[4].params.engine(),
-        perf.parts[4].sound.params.engine()
+        perf.parts()[4].sound.params.engine()
     );
-    assert_eq!(shared.parts[4].mix, perf.parts[4].mix);
+    assert_eq!(shared.parts[4].mix, perf.parts()[4].mix);
     assert_eq!(shared.fx.reverb.mix, 0.4);
     assert_eq!(shared.parts[4].mod_state.num_dests(), 1);
     assert_eq!(shared.parts[4].mod_state.dest(0), cutoff);
@@ -63,15 +64,15 @@ fn update_from_overwrites_in_place() {
     shared.parts[0].mod_state = stale_mod_state;
 
     let mut perf = Performance::new();
-    perf.parts[0].sound.params.filter.cutoff = 440.0;
-    perf.parts[0].mix.level = 0.1;
+    perf.edit(PartId::ALL[0]).sound.params.filter.cutoff = 440.0;
+    perf.edit(PartId::ALL[0]).mix.level = 0.1;
 
     // The Performance's actual routing: one destination, a different amount.
     let mut fresh_registry = ModDestRegistry::new();
     fresh_registry.add(cutoff, *b"CUTOFF\0\0").unwrap();
     let mut fresh_mod_state = ModState::from_registry(&fresh_registry, 1);
     fresh_mod_state.set_amount(0, 0, 17);
-    perf.parts[0].sound.mod_state = fresh_mod_state;
+    perf.edit(PartId::ALL[0]).sound.mod_state = fresh_mod_state;
 
     shared.update_from(&perf);
 
@@ -94,7 +95,7 @@ fn init_in_place_matches_from_performance() {
 
     let expected = AudioShared {
         parts: core::array::from_fn(|i| {
-            let p = &perf.parts[i];
+            let p = &perf.parts()[i];
             PartAudio {
                 params: p.sound.params.clone(),
                 mod_state: p.sound.mod_state.clone(),

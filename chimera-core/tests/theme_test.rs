@@ -266,7 +266,6 @@ fn theme_page_is_reachable_and_edits_the_settings() {
     assert!(
         ui.project_mut()
             .edit_part(PartId::ALL[0])
-            .part
             .sound
             .params
             .block(BlockRef::Theme)

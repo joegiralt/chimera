@@ -134,8 +134,8 @@ fn load_sets_origin_from_the_slot() {
 fn load_init_keeps_the_mix() {
     let mut p = Project::boxed();
     let part = PartId::ALL[3];
-    p.edit_part(part).part.mix.level = 0.25;
-    p.edit_part(part).part.mix.channel = MidiChannel::new(9).unwrap();
+    p.edit_part(part).mix.level = 0.25;
+    p.edit_part(part).mix.channel = MidiChannel::new(9).unwrap();
     p.load_part(PartSource {
         part,
         from: PartFrom::Init(EngineType::Modal),
@@ -159,8 +159,8 @@ fn save_part_to_returns_only_the_parts_now_stale() {
         })
         .unwrap();
     }
-    p.edit_part(c).part.sound.params.filter.cutoff *= 0.5; // c is Edited
-    p.edit_part(a).part.sound.params.filter.cutoff *= 0.25;
+    p.edit_part(c).sound.params.filter.cutoff *= 0.5; // c is Edited
+    p.edit_part(a).sound.params.filter.cutoff *= 0.25;
     assert_eq!(p.save_part_to(a, s), PartSet::EMPTY.with(b)); // c, edited, isn't Stale
     let crc = sound_crc(p.pool().get(s).unwrap());
     assert_eq!(

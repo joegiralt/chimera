@@ -3,6 +3,7 @@
 //! sends into the FX bus, FX return into DAC pair 1.
 
 mod common;
+use chimera_core::project::PartId;
 use common::{SR, peak};
 
 use chimera_core::dsp::Stereo;
@@ -489,8 +490,8 @@ fn tails_ring_out_then_free_the_voice() {
 fn refused_notes_are_counted_and_silent() {
     let mut rig = Rig::rev_v();
     let mut perf = Performance::new();
-    for part in perf.parts.iter_mut() {
-        part.sound = chimera_core::factory::factory_sound(7).unwrap();
+    for p in PartId::ALL {
+        *perf.edit(p).sound = chimera_core::factory::factory_sound(7).unwrap();
     }
     let mut shared = AudioShared::from_performance(&perf);
     for p in 0..MAX_PARTS {
@@ -551,9 +552,9 @@ fn two_parts() -> Vec<f32> {
 
 fn two_parts_perf() -> Performance {
     let mut perf = Performance::new();
-    perf.parts[1].sound = Sound::init(EngineType::Modal);
-    perf.parts[1].mix.output = DacPair::P2;
-    perf.parts[1].mix.pan = 0.5;
+    *perf.edit(PartId::ALL[1]).sound = Sound::init(EngineType::Modal);
+    perf.edit(PartId::ALL[1]).mix.output = DacPair::P2;
+    perf.edit(PartId::ALL[1]).mix.pan = 0.5;
     perf
 }
 
@@ -561,7 +562,7 @@ fn two_parts_perf() -> Performance {
 /// voicing (INIT through this reverb peaks at 1.55: #193).
 fn sine_perf() -> Performance {
     let mut perf = Performance::new();
-    perf.parts[0].sound.params.algo = AlgoParams::single(WaveId::W1);
+    perf.edit(PartId::ALL[0]).sound.params.algo = AlgoParams::single(WaveId::W1);
     perf
 }
 
@@ -573,7 +574,7 @@ fn reverb_perf(send: f32) -> Performance {
     let mut perf = sine_perf();
     perf.fx.reverb.mix = 0.5;
     perf.fx.reverb.time = 0.7;
-    perf.parts[0].mix.sends[2] = send;
+    perf.edit(PartId::ALL[0]).mix.sends[2] = send;
     perf
 }
 
@@ -594,7 +595,8 @@ const CHORD_FULL: [u8; MAX_VOICES] = [48, 52, 55, 60, 64, 67, 72, 76];
 
 fn factory(i: usize) -> Performance {
     let mut perf = Performance::new();
-    perf.parts[0].sound = chimera_core::factory::factory_sound(i).expect("factory Sound");
+    *perf.edit(PartId::ALL[0]).sound =
+        chimera_core::factory::factory_sound(i).expect("factory Sound");
     perf
 }
 
@@ -1181,7 +1183,7 @@ fn a_note_on_with_a_patch_edit_is_judged_at_the_new_cost() {
 fn a_note_on_waits_out_a_fade_before_stealing_a_held_note() {
     let perf = |lead: usize| {
         let mut p = factory(lead);
-        p.parts[1].sound = chimera_core::factory::factory_sound(5).unwrap(); // SQR BASS
+        *p.edit(PartId::ALL[1]).sound = chimera_core::factory::factory_sound(5).unwrap(); // SQR BASS
         AudioShared::from_performance(&p)
     };
     let (light, heavy) = (perf(4), perf(6)); // SAW LEAD fills the pool, MORPH PAD two short
@@ -1225,7 +1227,7 @@ fn a_note_on_waits_out_a_fade_before_stealing_a_held_note() {
 fn a_shed_waiting_note_counts_as_refused() {
     let perf = |lead: usize, other: usize| {
         let mut p = factory(lead);
-        p.parts[1].sound = chimera_core::factory::factory_sound(other).unwrap();
+        *p.edit(PartId::ALL[1]).sound = chimera_core::factory::factory_sound(other).unwrap();
         AudioShared::from_performance(&p)
     };
     let mut rig = Rig::new();
@@ -1255,7 +1257,7 @@ fn a_shed_waiting_note_counts_as_refused() {
 #[test]
 fn a_steal_from_another_part_fades_on_the_old_bus() {
     let mut p = factory(4); // SAW LEAD on both Parts
-    p.parts[1].sound = chimera_core::factory::factory_sound(4).unwrap();
+    *p.edit(PartId::ALL[1]).sound = chimera_core::factory::factory_sound(4).unwrap();
     let shared = AudioShared::from_performance(&p);
     let mut rig = Rig::new();
     for n in CHORD6 {
@@ -1282,9 +1284,9 @@ fn a_steal_from_another_part_fades_on_the_old_bus() {
 fn full_pool(mode: PartMode) -> (Rig, AudioShared) {
     let mut p = factory(4);
     for q in [1, 2] {
-        p.parts[q].sound = chimera_core::factory::factory_sound(4).unwrap();
+        *p.edit(PartId::ALL[q]).sound = chimera_core::factory::factory_sound(4).unwrap();
     }
-    p.parts[1].mix.mode = mode;
+    p.edit(PartId::ALL[1]).mix.mode = mode;
     let shared = AudioShared::from_performance(&p);
     let mut rig = Rig::new();
     for n in CHORD6 {

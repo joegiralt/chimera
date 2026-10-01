@@ -237,11 +237,11 @@ fn part_overview_shows_every_part_with_the_edited_one_lit() {
     use chimera_core::ui::viz::{STRIP_H, STRIP_PAN_Y, STRIP_TOP, strip_x};
     let fb = overview(
         |ui| {
-            ui.project_mut().edit_part(PartId::ALL[0]).part.mix.pan = -1.0;
-            ui.project_mut().edit_part(PartId::ALL[1]).part.mix.level = 1.0;
-            ui.project_mut().edit_part(PartId::ALL[1]).part.mix.pan = 1.0;
-            ui.project_mut().edit_part(PartId::ALL[2]).part.mix.pan = 0.0;
-            ui.project_mut().edit_part(PartId::ALL[3]).part.mix.level = 0.0;
+            ui.project_mut().edit_part(PartId::ALL[0]).mix.pan = -1.0;
+            ui.project_mut().edit_part(PartId::ALL[1]).mix.level = 1.0;
+            ui.project_mut().edit_part(PartId::ALL[1]).mix.pan = 1.0;
+            ui.project_mut().edit_part(PartId::ALL[2]).mix.pan = 0.0;
+            ui.project_mut().edit_part(PartId::ALL[3]).mix.level = 0.0;
         },
         ButtonId::B2,
     );

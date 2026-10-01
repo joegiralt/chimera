@@ -211,9 +211,9 @@ fn part_switch_redraws_mod_bars_that_differ() {
     let addr = ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH);
     let mut ui = chimera_core::ui::UiState::new();
     let s = ui.project().part(PartId::ALL[0]).sound.clone();
-    ui.project_mut().edit_part(PartId::ALL[1]).part.sound = s;
+    *ui.project_mut().edit_part(PartId::ALL[1]).sound = s;
     for (part, amount) in [(0, -64), (1, -40)] {
-        let s = &mut ui.project_mut().edit_part(PartId::ALL[part]).part.sound;
+        let s = ui.project_mut().edit_part(PartId::ALL[part]).sound;
         s.dest_registry.add(addr, *b"MORPH\0\0\0").unwrap();
         s.mod_state = ModState::from_registry(&s.dest_registry, 2);
         s.mod_state.set_amount(0, 0, amount);

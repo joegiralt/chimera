@@ -254,7 +254,6 @@ fn an_empty_matrix_says_so() {
     let mut ui = chimera_core::ui::UiState::new();
     ui.project_mut()
         .edit_part(PartId::ALL[0])
-        .part
         .sound
         .dest_registry
         .remove(chimera_core::modulation::CUTOFF);

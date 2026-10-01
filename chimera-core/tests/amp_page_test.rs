@@ -82,12 +82,7 @@ fn the_cells_key_carries_vels_dimming() {
         looks >> 6 & 3
     };
     assert_eq!(vel_look(&mut ui), Look::Dimmed as u16);
-    let m = &mut ui
-        .project_mut()
-        .edit_part(PartId::ALL[0])
-        .part
-        .sound
-        .mod_state;
+    let m = &mut ui.project_mut().edit_part(PartId::ALL[0]).sound.mod_state;
     let d = m.push(VCA).unwrap();
     m.set_route(ModSource::Env2.index(), d, 127);
     assert_eq!(vel_look(&mut ui), Look::Live as u16);
