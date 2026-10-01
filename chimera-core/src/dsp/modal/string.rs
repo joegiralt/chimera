@@ -237,11 +237,13 @@ impl KsString {
     }
 
     /// A re-strike: `shape`'s pluck, `amplitude` of fresh noise at `beta`
-    /// and `passes`, added to the period the loop reads next, over what
-    /// rings. Nothing is cleared. Streamed twice from the noise state, for
-    /// its mean then its samples: no scratch line.
-    pub(super) fn add_pluck(&mut self, beta: f32, passes: usize, amplitude: f32) {
-        let (len, ring) = (self.delay, self.ring_len);
+    /// and `passes`, over `len` samples (at most the ring less one), added
+    /// to what the loop reads next, over what rings. Nothing is cleared.
+    /// Streamed twice from the noise state, for its mean then its samples:
+    /// no scratch line.
+    pub(super) fn add_pluck(&mut self, beta: f32, passes: usize, amplitude: f32, len: usize) {
+        let ring = self.ring_len;
+        let len = len.clamp(1, ring - 1);
         let pluck = Pluck::new(self.noise_state, len, beta, passes);
         let mean = pluck.clone().sum::<f32>() / len as f32;
         // The next centre tap, `delay − 1` behind the write.
@@ -669,10 +671,13 @@ pub(super) struct StringVoice {
     passes: u8,
     /// A re-strike's pluck level, for `shape` to add; 0 after a fresh pluck.
     adding: f32,
+    /// Its length, samples: a glide's target line; 0, the line in use.
+    adding_len: usize,
 }
 
 crate::in_place::field_list!(StringVoice => StringVoice {
     string, disp, stiff, structure, period, body, body_mix, ens, ens_mix, passes, adding,
+    adding_len,
 });
 
 /// The longest loop: the whole line, a one-sample fraction and the chain
@@ -700,6 +705,7 @@ impl StringVoice {
             addr_of_mut!((*p).ens_mix).write(0.0);
             addr_of_mut!((*p).passes).write(1);
             addr_of_mut!((*p).adding).write(0.0);
+            addr_of_mut!((*p).adding_len).write(0);
             slot.assume_init_mut()
         }
     }
@@ -746,14 +752,17 @@ impl StringVoice {
         self.ens = ens;
         self.ens_mix = ens_mix;
         self.passes = color_passes(color) as u8;
-        self.adding = 0.0;
+        (self.adding, self.adding_len) = (0.0, 0);
     }
 
-    /// A re-strike of the sounding note: a pluck of `amplitude` at COLOR,
-    /// added by `shape` to the ring. BODY, the chain and the ensemble run on.
-    pub(super) fn restrike(&mut self, amplitude: f32, color: f32) {
+    /// A re-strike of the sounding note, or a glide's strike of a new one
+    /// whose line is `line` samples: a pluck of `amplitude` at COLOR, over
+    /// the line in use or `line`, added by `shape` to the ring. BODY, the
+    /// chain and the ensemble run on.
+    pub(super) fn restrike(&mut self, amplitude: f32, color: f32, line: Option<usize>) {
         self.passes = color_passes(color) as u8;
         self.adding = amplitude;
+        self.adding_len = line.unwrap_or(0);
     }
 
     /// Whether BODY and the ensemble run, as latched: what the note bills.
@@ -773,8 +782,13 @@ impl StringVoice {
     pub(super) fn shape(&mut self, pos: f32) {
         let beta = super::params::beta(pos, super::params::END);
         let amplitude = core::mem::take(&mut self.adding);
+        let len = match core::mem::take(&mut self.adding_len) {
+            0 => self.string.delay,
+            n => n,
+        };
         if amplitude > 0.0 {
-            self.string.add_pluck(beta, self.passes.into(), amplitude);
+            self.string
+                .add_pluck(beta, self.passes.into(), amplitude, len);
         } else {
             self.string.shape(beta, self.passes.into());
         }
@@ -1028,7 +1042,7 @@ mod tests {
                     b.string.excite(l, 0.0);
                     b.string.buffer.fill(0.0);
                     b.string.noise_state = NOISE_SEED;
-                    b.string.add_pluck(beta, passes, 0.7);
+                    b.string.add_pluck(beta, passes, 0.7, b.string.delay);
                     let len = a.string.delay;
                     for i in 0..len {
                         let (x, y) = (a.string.buffer[i], b.string.buffer[i]);
