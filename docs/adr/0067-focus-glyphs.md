@@ -24,7 +24,9 @@ chorus braid (RATE, DEPTH, MIX; MODE is the strand count).
 - **`FocusGlyph`** names every planned kind: `Arc`, `None`, `Switch`,
   `LevelBar`, `Crossfader`, `Composite(CompositeId)` with `ReverbCube`,
   `DelayRings`, `ChorusBraid`. Slots with no spec (legacy, fixed text)
-  show ARC.
+  show ARC. A page slot may override its param's glyph
+  (`ParamSlot::with_glyph`): the glyph demo pages show a glyph on a
+  real param before the owner assigns it to any spec.
 - **What is drawn is `FocusGlyph::gauge(..) -> Gauge`**, the one place an
   unbuilt glyph falls back to ARC. `Gauge` holds only built glyphs, each
   with its inputs (`Arc { value, bipolar }`, `None`); the focus band

@@ -228,6 +228,14 @@ fn panel_view(panel: &mod_panel::ModPanel, k: u8, block: BlockRef) -> View {
     }
 }
 
+/// Slot `i`'s focus glyph: the slot's override, else its view's.
+pub fn glyph(def: &BlockDef, i: usize, ctx: &SlotCtx) -> FocusGlyph {
+    def.params
+        .get(i)
+        .and_then(|s| s.glyph)
+        .unwrap_or_else(|| view(def, i, ctx).glyph())
+}
+
 /// A fixed or inapplicable slot draws dimmed, and its encoder is ignored
 /// (spec § UI "Dimmed").
 pub fn dimmed(addr: ParamAddr, sound: &Sound) -> bool {

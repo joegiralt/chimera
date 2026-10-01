@@ -67,18 +67,23 @@ pub struct ParamSlot {
     /// Display label override; `None` shows the spec's label (plan D6).
     /// Format and step always come from the spec.
     pub label_override: Option<&'static str>,
+    /// Focus glyph override: a glyph page shows its glyph on a param whose
+    /// spec doesn't carry it yet. `None` shows the spec's.
+    pub glyph: Option<crate::ui::glyph::FocusGlyph>,
 }
 
 impl ParamSlot {
     pub const EMPTY: ParamSlot = ParamSlot {
         binding: SlotBinding::Empty,
         label_override: None,
+        glyph: None,
     };
 
     pub const fn param(block: BlockRef, param: ParamId) -> Self {
         Self {
             binding: SlotBinding::Param(ParamAddr::new(block, param)),
             label_override: None,
+            glyph: None,
         }
     }
 
@@ -86,6 +91,7 @@ impl ParamSlot {
         Self {
             binding: SlotBinding::SelectedOp(param),
             label_override: None,
+            glyph: None,
         }
     }
 
@@ -93,6 +99,7 @@ impl ParamSlot {
         Self {
             binding: SlotBinding::SelectOp,
             label_override: None,
+            glyph: None,
         }
     }
 
@@ -100,6 +107,7 @@ impl ParamSlot {
         Self {
             binding: SlotBinding::Legacy { label, fmt },
             label_override: None,
+            glyph: None,
         }
     }
 
@@ -107,6 +115,7 @@ impl ParamSlot {
         Self {
             binding: SlotBinding::FilterPanel(k),
             label_override: None,
+            glyph: None,
         }
     }
 
@@ -114,6 +123,7 @@ impl ParamSlot {
         Self {
             binding: SlotBinding::EnvPanel(s, k),
             label_override: None,
+            glyph: None,
         }
     }
 
@@ -121,6 +131,7 @@ impl ParamSlot {
         Self {
             binding: SlotBinding::LfoPanel(s, k),
             label_override: None,
+            glyph: None,
         }
     }
 
@@ -128,12 +139,20 @@ impl ParamSlot {
         Self {
             binding: SlotBinding::ModalPanel(page, k),
             label_override: None,
+            glyph: None,
         }
     }
 
     pub const fn with_label(self, label: &'static str) -> Self {
         Self {
             label_override: Some(label),
+            ..self
+        }
+    }
+
+    pub const fn with_glyph(self, glyph: crate::ui::glyph::FocusGlyph) -> Self {
+        Self {
+            glyph: Some(glyph),
             ..self
         }
     }
