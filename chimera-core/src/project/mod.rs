@@ -6,8 +6,10 @@ mod codec;
 mod guard;
 mod ids;
 mod marks;
+mod note;
 mod parts;
 mod pool;
+mod store;
 mod swap;
 mod template;
 #[cfg(any(test, feature = "test-support"))]
@@ -20,8 +22,13 @@ pub use marks::{
     ActionGone, PartAction, PartActionKind, PartActions, PartStatus, ProjectStatus, part_actions,
     part_status, project_status,
 };
+pub use note::{Differ, LINE_LEN, Line, ProjectNote, Subject};
 pub use parts::{Origin, Part, PartEdit, Performance, part_block, part_block_mut};
 pub use pool::Pool;
+pub use store::{
+    ListOutcome, LoadOutcome, ProjectEntry, delete_project, list_projects, load_project,
+    new_project_id, project_file, save_project,
+};
 pub use swap::{GateStep, LOAD_ACK_TIMEOUT_MS, LOAD_LINK, LoadGate, LoadLink, Settled, Swap};
 pub use template::TemplateCrc;
 

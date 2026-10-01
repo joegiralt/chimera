@@ -52,9 +52,7 @@ impl Project {
         (unsafe { raw.assume_init() }, t)
     }
 
-    /// Back to NEW, in place.
-    // A failed load's fallback, which the load protocol calls.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// Back to NEW, in place: `+ NEW`, and a failed load's fallback.
     pub(crate) fn reset_new(&mut self) -> TemplateCrc {
         self.meta = ProjectMeta::new_project();
         self.perf.reset();

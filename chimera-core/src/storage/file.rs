@@ -33,8 +33,8 @@ pub trait Decode: Check {
 }
 
 /// Pass 2 in place: writes the target as it hears events. Used only where
-/// staging can't fit (a project); `load_ab_in_place` (Task 6) says whether
-/// the target was touched.
+/// staging can't fit (a project); `load_ab_in_place` says whether the
+/// target was touched.
 pub trait DecodeInPlace: Check {
     fn apply(&mut self, e: Event<'_>) -> Result<(), FileError>;
     fn finish(&mut self) -> Result<(), FileError>;
@@ -66,6 +66,30 @@ impl From<StoreError> for LoadError {
 impl From<StoreError> for SaveError {
     fn from(e: StoreError) -> Self {
         SaveError::Store(e)
+    }
+}
+
+/// A failed `load_ab_in_place`: `clobbered` once pass 2 had started, so
+/// the target is part written.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct InPlaceError {
+    pub err: LoadError,
+    pub clobbered: bool,
+}
+
+/// Before pass 2: the target is untouched.
+impl From<StoreError> for InPlaceError {
+    fn from(e: StoreError) -> Self {
+        InPlaceError {
+            err: LoadError::Store(e),
+            clobbered: false,
+        }
+    }
+}
+
+impl CardFault for InPlaceError {
+    fn store_error(&self) -> Option<StoreError> {
+        self.err.store_error()
     }
 }
 
@@ -514,6 +538,48 @@ pub fn load_ab<S: Store, D: Decode>(
         Pick::Load(Side::B) => apply(s, r, f.side(Side::B), d, b),
         Pick::Refuse(_, e) => Err(LoadError::File(e)),
         Pick::Missing => Err(LoadError::Missing),
+    }
+}
+
+/// `load_ab` with pass 2 in place (ADR 0046): pass 1 and the pick as
+/// `load_ab`, so a failure there leaves the target untouched. Pass 2 then
+/// writes the target as it reads; any failure from there, or a CRC other
+/// than pass 1's, is `clobbered`.
+pub fn load_ab_in_place<S: Store, D: DecodeInPlace>(
+    s: &mut S,
+    r: &Ready,
+    f: AbFile,
+    d: &mut D,
+) -> Result<Header, InPlaceError> {
+    let untouched = |err| InPlaceError {
+        err,
+        clobbered: false,
+    };
+    let clobbered = |err| InPlaceError {
+        err,
+        clobbered: true,
+    };
+    let [a, b] = sides(s, r, f, d)?;
+    let (side, checked) = match pick(a.state(), b.state()) {
+        Pick::Load(Side::A) => (Side::A, a),
+        Pick::Load(Side::B) => (Side::B, b),
+        Pick::Refuse(_, e) => return Err(untouched(LoadError::File(e))),
+        Pick::Missing => return Err(untouched(LoadError::Missing)),
+    };
+    let crc = match checked {
+        Checked::Passed { crc, .. } => crc,
+        Checked::Missing => return Err(untouched(LoadError::Missing)),
+        Checked::Failed { err, .. } => return Err(untouched(LoadError::File(err))),
+    };
+    match scan(s, r, f.side(side), Some(D::KIND), &mut |e| d.apply(e)) {
+        Ok(Scan::Passed { header, crc: again }) if again == crc => {
+            d.finish().map_err(|e| clobbered(LoadError::File(e)))?;
+            Ok(header)
+        }
+        Ok(_) | Err(StoreError::NotFound | StoreError::Corrupt) => {
+            Err(clobbered(LoadError::File(FileError::BadCrc)))
+        }
+        Err(e) => Err(clobbered(LoadError::Store(e))),
     }
 }
 

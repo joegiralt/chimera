@@ -45,7 +45,6 @@ impl LoadLink {
     }
 
     /// A new epoch. Only the project load functions call it.
-    #[allow(dead_code)] // the load functions arrive with the card loader
     pub(in crate::project) fn bump(&self) -> Swap {
         Swap {
             epoch: self.epoch.fetch_add(1, Ordering::Release).wrapping_add(1),
@@ -71,6 +70,7 @@ impl LoadLink {
 
 /// An epoch bumped and not yet settled: the UI publishes after `settle`.
 #[must_use]
+#[derive(Debug)]
 pub struct Swap {
     epoch: u32,
 }
