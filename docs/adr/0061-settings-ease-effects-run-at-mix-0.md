@@ -28,8 +28,14 @@ The parameter sweep found 80 jumps that click:
   - `Ramp`, for a value a route may move every block: from the last
     block's value to this one's across the block.
 - **The bus:** each Part's two pan×LEVEL gains and three sends, each
-  effect's MIX, chorus DEPTH, and each line's share of chorus MODE (so a
-  MODE change crossfades the lines) take `Ease`. The mix plays each gain
+  effect's MIX, chorus DEPTH, each line's share of chorus MODE (so a
+  MODE change crossfades the lines), and the delay's FDBK, SAT and
+  MECHANICS take `Ease`. FDBK and SAT change what the delay's loop
+  writes, so a step is heard a TIME later; MECHANICS scales the read
+  head's wow and flutter, never its base. The compressor's ATTACK and
+  RELEASE ease by its own per-block one-pole, as THRESH (a step to a fast
+  attack makes a lagging reduction catch up at once). Found by
+  `fx_swap_test` at a project swap (ADR 0046). The mix plays each gain
   at its block's start. A pass then adds `bus · step·(i + 1)` for each
   moving gain only (`instrument::glide`), so a still mix costs nothing
   extra.
@@ -104,10 +110,16 @@ The parameter sweep found 80 jumps that click:
   | `DRIVE_RAMP_COST` | — | 23 | under a route: the ramp path's 36 instructions a sample, against the steady 22 |
   | `FOLD_COST` | 43 | 45 | the steady stage and the fold's offset, 1 instruction |
   | `FOLD_RAMP_COST` | — | 29 | under a route: the ramp path's 42, against the steady 24 |
-  | `FxBus::COST` | 1,160 (1,470 with the tape) | 1,180 (1,490) | the eases' one-poles a block: 6.5 |
+  | `FxBus::COST` | 1,160 (1,470 with the tape) | 1,180 (1,490) | the eases' one-poles a block: 6.5; the delay's FDBK, SAT and MECHANICS and the compressor's ATTACK and RELEASE one-poles add about 0.4, inside the rounding |
 
 - **Not billed (brief, UI-driven), per sample while it moves:**
   - A delay TIME crossfade: 43 instructions, 50 with a MIX ramp.
+  - The delay's ramp path, taken while MIX, FDBK, SAT or MECHANICS
+    moves: each ramps by a multiply-add a sample (SAT's gain and its
+    inverse two), and MECHANICS scales the transport's offsets, two
+    multiplies: about 8 instructions over the MIX ramp alone.
+  - The compressor's ATTACK or RELEASE: its two coefficients' `exp2`s
+    again each block, about 1 instruction a sample.
   - A chorus ease: 21.
   - Each moving Part gain: 7, so all five of one Part's gains 35.
   - The reverb's MIX ramp: none.
@@ -125,8 +137,9 @@ The parameter sweep found 80 jumps that click:
 - **The first block after boot** lands every setting on its value.
 
 ## Sources
-`chimera-core/src/dsp/{ease,drive,wavefolder,filter,voice,chorus,delay,ring,fx_bus}.rs`;
+`chimera-core/src/dsp/{ease,drive,wavefolder,filter,voice,chorus,delay,ring,comp,fx_bus}.rs`;
 `chimera-core/src/instrument.rs` (`MixState`, `glide`);
 `param_sweep_test::jumps_never_click`;
-`fx_bus_test::an_effect_at_mix_0_never_replays_a_stale_tail`; #53, #61,
+`fx_bus_test::an_effect_at_mix_0_never_replays_a_stale_tail`;
+`fx_swap_test`; #53, #61,
 #65.

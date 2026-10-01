@@ -141,41 +141,45 @@ changes only the slope.
 | Block | Setting | At the swap |
 |---|---|---|
 | CHORUS | MODE | Crossfades: each line's share eases (ADR 0061). |
-| CHORUS | RATE | Steps, accepted: the LFOs' increments only; their phases run on. The lines are at most 7 ms, fed by voices faded before the ack. |
+| CHORUS | RATE | Steps, accepted: the LFOs' increments only; their phases run on, and the lines are at most 7 ms. Worst 1.01×. |
 | CHORUS | DEPTH, MIX | Ease (ADR 0061). |
-| DELAY | TIME | Crossfades two read heads over `TIME_FADE` (960 samples). Never a gliding head (ADR 0061). |
-| DELAY | FDBK | Eases, as MIX (this ADR, below). |
-| DELAY | MECHANICS | Steps, accepted: the transport's depth moves the read head by up to ±22 samples at once, on a tail TONE has low-passed; measured at most 1.04× the tail's own steps. The phases run on. |
-| DELAY | SAT | Steps, accepted: the loop's curve changes what is written by the curves' difference only; measured 1.03×. |
-| DELAY | TONE | Steps, accepted: a coefficient; the filter's state runs on. |
+| DELAY | TIME | Crossfades two read heads over `TIME_FADE` (960 samples); never a gliding head (ADR 0061). |
+| DELAY | FDBK, SAT | Ease (ADR 0061): each changes what the loop writes, heard a TIME later. |
+| DELAY | MECHANICS | Eases (ADR 0061): the wow and flutter depths ramp; the base read head doesn't move. |
+| DELAY | TONE | Steps, accepted: a coefficient, so the loop's filter keeps its value and only its slope turns, heard a TIME later. Worst 3.91× in second difference (TONE 0 → 1, two partials), against the 4× bound. |
 | DELAY | MIX, REV | Ease (ADR 0061). |
-| REVERB | GRIT, TIME, DAMP | Smoothed once a block (20, 50 and 20 ms) and the gains and the damping coefficient ramped across it. |
+| REVERB | GRIT, TIME, DAMP | Smoothed once a block (20, 50 and 20 ms), the gains and the damping coefficient ramped across it. |
 | REVERB | SIZE | Crossfades between size steps. |
 | REVERB | MIX | Eases (ADR 0061). |
 | COMP | THRESH, MAKEUP, MIX | Smoothed once a block, ramped across it. |
-| COMP | RATIO | Steps, accepted: the gain reduction's target changes, and the reduction follows it at ATK or REL. |
-| COMP | ATK, REL | Step, accepted: coefficients of the follower. |
+| COMP | ATK, REL | Ease (ADR 0061), as THRESH. |
+| COMP | RATIO | Steps, accepted: the reduction's target changes, and the reduction follows it at ATK or REL. Worst 1.70× in second difference. |
 | COMP | on and off | Engages and bypasses over a fade. |
 | TAPE | DRIVE, TONE, WOW, MIX | Smoothed once a block, ramped across it; only in `master-tape` builds (ADR 0055). |
 
-- **FDBK eases** (`TapeDelay`, an `Ease` as MIX's, ramped in the same
-  path): FDBK scales what the loop writes, so a step cuts or starts the
-  recirculating tail at once, heard a TIME later. Stepped 0↔1 at the swap
-  it measured 2.1× the tail's own largest step. ADR 0061 eases every
-  continuous setting; FDBK was missed because its step lands a TIME after
-  the move. A still FDBK plays the same samples as before. The ease's
-  one-pole adds about 0.1 instruction a sample, inside `FxBus::COST`'s
-  rounding; while FDBK moves, its ramp takes the MIX ramp's path, a
-  multiply-add a sample, brief and UI-driven as ADR 0061's other eases.
-- **The measure** (`fx_swap_test`): every send plays two partials, the
-  kill fades them over `Voice::FADE`, and the next block publishes the new
-  settings. Each setting stepped min → max and max → min, A → B between
-  two projects with every effect on, and A to and from NEW. Each passes
-  if `common::clicks` hears nothing and the largest sample step over the
-  600 ms after the swap is at most 2× the larger of the largest step in
-  the 20 ms before it and the new settings' own tail over the same span.
-  That second term is what lets a level rise (a MIX or MAKEUP brought up)
-  pass without letting a step through.
+Worst is the largest ratio over every case, signal and 5 ms window by
+which the swapped tail stands out from both references below (1.00×:
+not at all). Every eased or crossfaded setting measures at most 1.39× (comp
+MAKEUP 1 → 0), and a project change at most 1.11×.
+
+- **The measure** (`fx_swap_test`): every send plays a signal (two
+  partials, a 1 kHz sine, or a 220 Hz saw's first eight partials), the
+  kill fades it over `Voice::FADE`, and the next block publishes the new
+  settings. Each setting is stepped min → max and max → min with its
+  effect alone (the comp and the tape on the delay's tail; REV SEND with
+  the reverb on), the delay's again at its brightest (TONE 1, FDBK 0.9,
+  MIX 1); then A → B between two projects with every effect on, and A to
+  and from NEW. In each 5 ms window from 20 ms before the swap to 600 ms
+  after it (past the longest TIME), a click stands out both from the
+  projects' own tails (the same render on A throughout, and on B,
+  within 20 ms of the window) and from the swapped tail's own 20 ms
+  either side: its largest step by 2×, its largest second difference by
+  4× (the sweep's `CLICK_RATIO`), or a `common::clicks` neither project's
+  tail has there. The first lets a level the swap legitimately changes
+  pass (a MIX brought up, a loop that no longer cancels itself); the
+  second keeps a bright tail's own steps from passing as clicks.
+- `load_protocol_test::a_delay_tail_rings_through_the_swap` plays a delay
+  tail through the real gate, kill, ack and publish.
 
 ## Alternatives considered
 - **The epoch inside `AudioShared`.** The audio would learn of the load
@@ -223,8 +227,7 @@ changes only the slope.
   `chimera-core/src/storage/file.rs` (`load_ab_in_place`),
   `chimera-core/src/instrument.rs` (`AudioShared.epoch`,
   `Instrument::kill_all`, `quiet`), `chimera-core/src/voice_alloc.rs`
-  (`Allocator::kill_all`), `chimera-core/src/dsp/delay.rs` (FDBK's
-  ease), `chimera-stm32/src/audio/engine.rs`,
+  (`Allocator::kill_all`), `chimera-stm32/src/audio/engine.rs`,
   `chimera-desktop/src/audio.rs`.
 - Tests: `chimera-core/tests/load_protocol_test.rs`,
   `chimera-core/tests/fx_swap_test.rs`,
