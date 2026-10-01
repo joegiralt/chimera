@@ -55,6 +55,10 @@ pub enum RegionData {
         /// The slot's look: it can change without a `matrix_rev` bump.
         look: Look,
         status: Option<PrimeStatus>,
+        /// `glyph::anim_key`: the clock while the glyph animates.
+        anim: u32,
+        /// The slot's set value (quantized): a glyph may draw it, not `value`.
+        set: u16,
     },
     /// The mod matrix readout: the selected route, its animated amount and
     /// the route count.
@@ -143,7 +147,31 @@ impl RegionData {
             value,
             look,
             status,
+            anim: 0,
+            set: 0,
         }
+    }
+
+    /// This key with no animation share: equal when only an animated
+    /// glyph's frame moved.
+    pub fn without_anim(self) -> Self {
+        self.animated(0)
+    }
+
+    /// A focus band keyed on its slot's set value too.
+    pub fn with_set(mut self, set: u16) -> Self {
+        if let Self::Focus { set: s, .. } = &mut self {
+            *s = set;
+        }
+        self
+    }
+
+    /// A focus band keyed on its glyph's `anim` too.
+    pub fn animated(mut self, anim: u32) -> Self {
+        if let Self::Focus { anim: a, .. } = &mut self {
+            *a = anim;
+        }
+        self
     }
 
     pub fn viz(page: PageKey, values: [u16; 6], live: u32) -> Self {
@@ -212,6 +240,8 @@ impl RegionData {
             value: SENTINEL,
             look: Look::Live,
             status: None,
+            anim: u32::MAX,
+            set: SENTINEL,
         }
     }
 

@@ -16,6 +16,7 @@ use crate::params::{EnvParams, FilterParams, OutParams};
 use crate::preset::Sound;
 use crate::ui::block_def::{BlockDef, SlotBinding};
 use crate::ui::filter_panel::{self, PanelKnob, PanelTarget};
+use crate::ui::glyph::FocusGlyph;
 use crate::ui::mod_panel::{self, PanelSlot};
 
 /// What an ENV slot's page resolves against: type A's panel follows its
@@ -137,6 +138,13 @@ impl View {
             View::Legacy { fmt, .. } | View::Param { fmt, .. } => fmt,
             View::Route { .. } => ValFmt::Route,
         }
+    }
+
+    /// The focus glyph: the param's spec's, else ARC.
+    pub fn glyph(&self) -> FocusGlyph {
+        self.addr()
+            .and_then(|a| a.spec())
+            .map_or(FocusGlyph::Arc, |s| s.glyph)
     }
 
     pub fn addr(&self) -> Option<ParamAddr> {

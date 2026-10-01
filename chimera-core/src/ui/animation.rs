@@ -76,3 +76,22 @@ impl AnimatedValue {
         abs(self.target - self.current) < SNAP_THRESHOLD
     }
 }
+
+/// UI frames since boot, ticked once per `UiState::update`: the phase an
+/// animated glyph reads. UI side only; wraps.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct UiClock(u32);
+
+impl UiClock {
+    pub const fn new() -> Self {
+        Self(0)
+    }
+
+    pub fn tick(&mut self) {
+        self.0 = self.0.wrapping_add(1);
+    }
+
+    pub const fn frame(self) -> u32 {
+        self.0
+    }
+}

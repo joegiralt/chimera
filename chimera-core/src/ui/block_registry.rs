@@ -4,6 +4,7 @@ use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::chorus::ChorusParams;
 use crate::dsp::comp::CompParams;
 use crate::dsp::delay::DelayParams;
+use crate::dsp::lfo::LfoParams;
 use crate::dsp::modal::{ModalPage, ModalParams};
 use crate::dsp::modulator::{EnvSlot, LfoSlot};
 use crate::dsp::reverb::ReverbParams;
@@ -742,12 +743,167 @@ pub static DEMO_FM: BlockDef = BlockDef {
     ],
 };
 
-static DEMO_BLOCKS: [ChainBlock; 5] = [
+// One page per focus glyph: its slots bind the params that drive it.
+
+/// GLYPH: ARC, on two real ARC params. a: unipolar (RESO), b: bipolar
+/// from 12:00 (PAN).
+pub static DEMO_GLYPH_ARC: BlockDef = BlockDef {
+    id: 70,
+    name: "Glyph: Arc",
+    short: "ARC",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::param(BlockRef::Filter, FilterParams::RESONANCE).with_label("UNI"),
+        ParamSlot::param(BlockRef::Out, OutParams::PAN).with_label("BI"),
+        EMPTY,
+        EMPTY,
+        EMPTY,
+        EMPTY,
+    ],
+};
+
+/// Glyph pages take ids 70 and up (68–69 are nav-core's CHANNELS and
+/// OUTPUTS); raise `focus::MAX_PAGES` when one needs it.
+/// GLYPH: NONE. a steps MODEL's words, which get the whole band.
+pub static DEMO_GLYPH_NONE: BlockDef = BlockDef {
+    id: 71,
+    name: "Glyph: None",
+    short: "NONE",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::param(BlockRef::Modal, ModalParams::MODE),
+        EMPTY,
+        EMPTY,
+        EMPTY,
+        EMPTY,
+        EMPTY,
+    ],
+};
+
+/// GLYPH: SWITCH. a flips LFO1's SYNC, FREE / RETRIG.
+pub static DEMO_GLYPH_SWITCH: BlockDef = BlockDef {
+    id: 72,
+    name: "Glyph: Switch",
+    short: "SW",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::param(BlockRef::Lfo(LfoSlot::Lfo1), LfoParams::SYNC),
+        EMPTY,
+        EMPTY,
+        EMPTY,
+        EMPTY,
+        EMPTY,
+    ],
+};
+
+/// GLYPH: LEVEL. a: a continuous level (VOLUME, 8 ticks); b: a stepped
+/// one (operator A's FDBK, 0..7, a tick per step).
+pub static DEMO_GLYPH_LEVEL: BlockDef = BlockDef {
+    id: 73,
+    name: "Glyph: Level",
+    short: "LVL",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::param(BlockRef::Out, OutParams::VOLUME),
+        ParamSlot::param(BlockRef::AlgoOp(Op::A), AlgoOpParams::FEEDBACK),
+        EMPTY,
+        EMPTY,
+        EMPTY,
+        EMPTY,
+    ],
+};
+
+/// GLYPH: CROSSFADER. a: ALG A to ALG B (MORPH); b: dry to wet (DRV's
+/// MIX). The cap follows the set value, never modulation.
+pub static DEMO_GLYPH_XF: BlockDef = BlockDef {
+    id: 74,
+    name: "Glyph: Crossfader",
+    short: "XF",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::param(BlockRef::Algo, AlgoParams::MORPH),
+        ParamSlot::param(BlockRef::Drive, DriveParams::MIX),
+        EMPTY,
+        EMPTY,
+        EMPTY,
+        EMPTY,
+    ],
+};
+
+/// GLYPH: BRAID, the chorus braid (the chorus specs carry it): a MODE,
+/// b RATE, c DEPTH, d MIX, each emphasised when focused.
+pub static DEMO_GLYPH_BRAID: BlockDef = BlockDef {
+    id: 75,
+    name: "Glyph: Braid",
+    short: "BRD",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::param(BlockRef::Chorus, ChorusParams::MODE),
+        ParamSlot::param(BlockRef::Chorus, ChorusParams::RATE),
+        ParamSlot::param(BlockRef::Chorus, ChorusParams::DEPTH),
+        ParamSlot::param(BlockRef::Chorus, ChorusParams::MIX),
+        EMPTY,
+        EMPTY,
+    ],
+};
+
+/// GLYPH: RINGS, the delay rings (the delay specs carry them): a TIME,
+/// b FDBK, c TONE, d MIX, e MECHANICS, f SAT (REV, read too, has no slot
+/// here).
+pub static DEMO_GLYPH_RINGS: BlockDef = BlockDef {
+    id: 76,
+    name: "Glyph: Rings",
+    short: "RNG",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::param(BlockRef::Delay, DelayParams::TIME_MS),
+        ParamSlot::param(BlockRef::Delay, DelayParams::FEEDBACK),
+        ParamSlot::param(BlockRef::Delay, DelayParams::TONE),
+        ParamSlot::param(BlockRef::Delay, DelayParams::MIX),
+        ParamSlot::param(BlockRef::Delay, DelayParams::WOW_FLUTTER),
+        ParamSlot::param(BlockRef::Delay, DelayParams::SATURATION),
+    ],
+};
+
+/// GLYPH: CUBE, the reverb cube (the reverb specs carry it): a SIZE,
+/// b TIME, c DAMP, d MIX, e GRIT, each emphasised when focused.
+pub static DEMO_GLYPH_CUBE: BlockDef = BlockDef {
+    id: 77,
+    name: "Glyph: Cube",
+    short: "CUB",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::param(BlockRef::Reverb, ReverbParams::SIZE),
+        ParamSlot::param(BlockRef::Reverb, ReverbParams::TIME),
+        ParamSlot::param(BlockRef::Reverb, ReverbParams::DAMPING),
+        ParamSlot::param(BlockRef::Reverb, ReverbParams::MIX),
+        ParamSlot::param(BlockRef::Reverb, ReverbParams::GRIT),
+        EMPTY,
+    ],
+};
+
+static DEMO_BLOCKS: [ChainBlock; 13] = [
     ChainBlock::page(&DEMO_WAVES),
     ChainBlock::page(&DEMO_SHAPES),
     ChainBlock::page(&DEMO_MOTION),
     ChainBlock::page(&DEMO_FM),
     ChainBlock::page(&DEMO_MATRIX),
+    ChainBlock::page(&DEMO_GLYPH_ARC),
+    ChainBlock::page(&DEMO_GLYPH_NONE),
+    ChainBlock::page(&DEMO_GLYPH_SWITCH),
+    ChainBlock::page(&DEMO_GLYPH_LEVEL),
+    ChainBlock::page(&DEMO_GLYPH_XF),
+    ChainBlock::page(&DEMO_GLYPH_BRAID),
+    ChainBlock::page(&DEMO_GLYPH_RINGS),
+    ChainBlock::page(&DEMO_GLYPH_CUBE),
 ];
 
 pub static DEMO_CHAIN: ChainDef2 = ChainDef2 {

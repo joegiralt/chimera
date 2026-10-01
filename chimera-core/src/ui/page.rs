@@ -58,18 +58,17 @@ impl PageKey {
 
 impl PageId {
     /// The legacy page at the current navigation position; `None` on a
-    /// slot-bound page: the Part and Mixer chains, and a System page whose
-    /// slots are bound (THEME) (see `PageKey::from_nav`).
+    /// slot-bound page: the Part and Mixer chains, and a System or Demo
+    /// page whose slots are bound (THEME, the glyph pages) (see
+    /// `PageKey::from_nav`).
     pub fn from_nav(nav: &ChainNav) -> Option<Self> {
         use crate::ui::chain::ChainId;
         Some(match nav.chain_id {
             ChainId::Part(_) | ChainId::Mixer(_) => return None,
-            ChainId::System
-                if nav
-                    .active_block_def()
-                    .params
-                    .iter()
-                    .any(|s| matches!(s.binding, SlotBinding::Param(_))) =>
+            ChainId::System | ChainId::Demo
+                if nav.active_block_def().params.iter().any(|s| {
+                    !matches!(s.binding, SlotBinding::Legacy { .. } | SlotBinding::Empty)
+                }) =>
             {
                 return None;
             }
@@ -79,7 +78,12 @@ impl PageId {
                 1 => PageId::DemoShapes,
                 2 => PageId::DemoMotion,
                 3 => PageId::DemoFm,
-                _ => PageId::DemoMatrix,
+                4 => PageId::DemoMatrix,
+                // Pages past MTX bind their slots (the glyph pages).
+                n => {
+                    debug_assert!(false, "Demo node {n} has no bound slots");
+                    PageId::System(nav.active_block_def().id)
+                }
             },
         })
     }

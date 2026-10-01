@@ -3,6 +3,7 @@
 
 use crate::block::{ParamId, ValFmt};
 use crate::dsp::lfo::LfoParams as L;
+use crate::dsp::lfo::{SHAPE_NAMES, SYNC_NAMES};
 use crate::dsp::modulator::law::Law;
 use crate::dsp::modulator::{EnvSpeed, Func, LfoForm};
 use crate::params::EnvParams as E;
@@ -116,12 +117,8 @@ pub fn env_panel(k: EnvKind) -> &'static ModPanel {
 static CLASSIC: ModPanel = ModPanel {
     slots: [
         p(L::RATE, "RATE", ValFmt::Uni),
-        p(
-            L::SHAPE,
-            "SHAPE",
-            ValFmt::Names(&["SINE", "TRI", "SAW", "SQR", "S&H"]),
-        ),
-        p(L::SYNC, "SYNC", ValFmt::Names(&["FREE", "RETRIG"])),
+        p(L::SHAPE, "SHAPE", ValFmt::Names(&SHAPE_NAMES)),
+        p(L::SYNC, "SYNC", ValFmt::Names(&SYNC_NAMES)),
         p(L::PHASE, "PHASE", ValFmt::Uni),
         p(L::DEPTH, "DEPTH", ValFmt::Uni),
         LFO_TYPE,
