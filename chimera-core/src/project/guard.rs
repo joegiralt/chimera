@@ -74,7 +74,7 @@ pub trait Target: Copy + sealed::Sealed {
     /// The prompt the replace needs now, if any.
     fn at_risk(&self, p: &Project, t: TemplateCrc) -> Option<Prompt>;
     /// The target's state, as a confirmation saw it: every input to
-    /// `at_risk` but the template.
+    /// `at_risk` but the template (a wrapped generation may alias).
     fn witness(&self, p: &Project) -> u32;
     /// The witness when nothing is at risk, else the prompt.
     fn assess(&self, p: &Project, t: TemplateCrc) -> Result<u32, Prompt> {
@@ -92,8 +92,9 @@ impl Target for PartSource {
             .then_some(Prompt::SavePartFirst)
     }
 
-    /// The Part's `sound_crc` and Origin: its status follows from them and
-    /// the pool, and a slot's generation moves with its contents.
+    /// The Part's `sound_crc`, its Origin and, for a slot, the slot's
+    /// generation now: `part_status` reads only these and the slot's
+    /// contents, which move its generation.
     fn witness(&self, p: &Project) -> u32 {
         let part = p.part(self.part);
         let mut c = Crc32::new();
@@ -107,6 +108,7 @@ impl Target for PartSource {
                 c.update(&[0, slot.index() as u8]);
                 c.update(&generation.to_le_bytes());
                 c.update(&crc.to_le_bytes());
+                c.update(&p.pool().generation(slot).to_le_bytes());
             }
             Origin::Init(e) => c.update(&[1, e.disk_code()]),
         }
