@@ -29,6 +29,7 @@ const SWITCH: FocusGlyph = FocusGlyph::Switch;
 const LEVEL: FocusGlyph = FocusGlyph::LevelBar;
 const XF: FocusGlyph = FocusGlyph::Crossfader;
 const BRAID: FocusGlyph = FocusGlyph::Composite(CompositeId::ChorusBraid);
+const RINGS: FocusGlyph = FocusGlyph::Composite(CompositeId::DelayRings);
 
 /// Params assigned a glyph other than ARC, by `(block kind, ident)`: every
 /// instance of the block (`AlgoOp`, `Env`, `Lfo`) alike. Each glyph story
@@ -62,8 +63,6 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Part", "CHR", LEVEL),
     ("Part", "DLY", LEVEL),
     ("Part", "REV", LEVEL),
-    ("Delay", "MIX", LEVEL),
-    ("Delay", "REV", LEVEL),
     ("Reverb", "MIX", LEVEL),
     ("Tape", "MIX", LEVEL),
     ("Comp", "MAKEUP", LEVEL),
@@ -73,6 +72,14 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Chorus", "RATE", BRAID),
     ("Chorus", "DEPTH", BRAID),
     ("Chorus", "MIX", BRAID),
+    // The delay, all seven params, CHAR's included: the rings.
+    ("Delay", "TIME", RINGS),
+    ("Delay", "FDBK", RINGS),
+    ("Delay", "WOW", RINGS),
+    ("Delay", "SAT", RINGS),
+    ("Delay", "TONE", RINGS),
+    ("Delay", "MIX", RINGS),
+    ("Delay", "REV", RINGS),
     // Blends between two ends: a crossfader.
     ("Algo", "MORPH", XF),
     ("Drive", "MIX", XF),
@@ -867,9 +874,13 @@ fn composite_values_stay_clear_of_the_box() {
 /// must not paint the braid over the message.
 #[test]
 fn a_status_stops_the_glyph_redrawing() {
-    let mut ui = braid_ui(EncoderId::B);
+    status_stops_redrawing(braid_ui(EncoderId::B));
+    status_stops_redrawing(rings_ui(EncoderId::A));
+}
+
+fn status_stops_redrawing(mut ui: UiState) {
     feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Plus));
-    assert!(ui.prime_status().is_some(), "chorus RATE isn't modulatable");
+    assert!(ui.prime_status().is_some(), "FX params aren't modulatable");
     let mut fb = Fb::new();
     let perf = chimera_core::ui::perf::PerfStats::zero();
     ui.render_dirty_with_scope(&mut fb, &perf, &scope_fixture());
@@ -933,9 +944,9 @@ fn rings_ui(slot: EncoderId) -> UiState {
 #[test]
 fn glyph_rings_page_moves_only_inside_its_box() {
     use chimera_core::dsp::delay::DelayParams;
-    // Not on the delay pages yet.
+    // Every delay param carries the rings.
     for s in BlockRef::Delay.specs() {
-        assert!(!matches!(s.glyph, FocusGlyph::Composite(_)), "{}", s.ident);
+        assert_eq!(s.glyph, RINGS, "{}", s.ident);
     }
     // Every value the page's params show stays clear of the box.
     for id in [

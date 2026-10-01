@@ -65,11 +65,11 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(not(feature = "master-tape"))]
     ("mixer_sends", 0xdf3aab7c23ee0c31),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_delay", 0x7cad11c8821d60af),
+    ("mixer_fx_delay", 0xc034be24011848b2),
     #[cfg(not(feature = "master-tape"))]
     ("mixer_fx_reverb", 0x114c421e48eb2959),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_delay_char", 0xee4a9257032bb195),
+    ("mixer_fx_delay_char", 0x3310e7e57f36fb88),
     #[cfg(not(feature = "master-tape"))]
     ("mixer_master", 0xeb7a9f3352f2416f),
     #[cfg(not(feature = "master-tape"))]
@@ -79,11 +79,11 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(feature = "master-tape")]
     ("mixer_sends", 0x27bc9363dd407e2b),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_delay", 0x40a01377e2ee0701),
+    ("mixer_fx_delay", 0xe3e12c53b10a44f0),
     #[cfg(feature = "master-tape")]
     ("mixer_fx_reverb", 0xb6abe4aa3463b5ab),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_delay_char", 0x2acb22b0d9a133df),
+    ("mixer_fx_delay_char", 0x746fa7fa4cfc948e),
     #[cfg(feature = "master-tape")]
     ("mixer_tape", 0x2548917571779052),
     #[cfg(feature = "master-tape")]
