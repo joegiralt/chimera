@@ -183,7 +183,7 @@ These five failure modes are the ones the spec implies but no spec test exercise
 
 ## Issue map
 
-Task 1 fills this table. Task 5 writes the numbers from it into the tree's `Status::Later(n)`; the tree is then the one copy the code and tests read.
+Task 1 fills this table. Task 5 writes the numbers from it into the tree's `Kind::Later(issue(n))`; the tree is then the one copy the code and tests read.
 
 | Row or item | Issue |
 |---|---|
@@ -608,10 +608,11 @@ git commit -m "A tap acts on release and a hold at 500 ms, from latched edges"
 
 ```rust
 pub struct Row { pub label: &'static str, pub crumb: &'static str, pub kind: Kind, pub status: Status }
-pub enum Kind { List(&'static [Row]), Leaf(&'static ChainDef2), Screen(Screen), Act(Act) }
+pub enum Kind { List(&'static [Row]), Leaf(&'static ChainDef2), Screen(Screen), Act(Act), Later(Issue) }
 pub enum Screen { LoadProject, ManageProjects, SaveToProj }  // rows built at run time
 pub enum Act { SaveProjectAs, PartRename, PartClear, PartReload }
-pub enum Status { Built, Mirror, Later(u16) }                // the GitHub issue number
+pub enum Status { Built, Mirror }
+pub struct Issue(NonZeroU16); pub const fn issue(n: u16) -> Issue; impl Issue { pub fn get(self) -> u16 }  // a GitHub issue, never 0
 pub static ROOT: Row;                                        // "SETTINGS", List(&TOP)
 pub fn row_at(path: &[u8]) -> Option<&'static Row>;          // the row a path names
 pub fn rows(path: &[u8]) -> &'static [Row];                  // a List's rows; empty otherwise
@@ -638,7 +639,7 @@ SYSTEM › OS UPGRADE [OS] Leaf(UPDATES) Mirror · STORAGE Later · FORMAT CARD 
 ```
 
 - [ ] **Step 1: Write the failing tests** in `settings_tree_test.rs`:
-  - `every_later_row_names_its_issue`: walk the tree; the tree is the one copy of the numbers, so the test keeps no list of its own. Every `Later(n)` has `n > 0`. The labels of the `Later` rows are exactly the spec's later rows: `ORBIT`, `SYNC`, `PORT CONFIG`, `SYSEX DUMP`, `SENDS`, `STORAGE`, `FORMAT CARD`, `USB CONFIG`. SENDS is `Later(259)`.
+  - `every_later_row_names_its_issue`: walk the tree; the tree is the one copy of the numbers, so the test keeps no list of its own. (`Issue` is nonzero by type.) The labels of the `Later` rows are exactly the spec's later rows: `ORBIT`, `SYNC`, `PORT CONFIG`, `SYSEX DUMP`, `SENDS`, `STORAGE`, `FORMAT CARD`, `USB CONFIG`. SENDS is `Later(259)`.
   - `leaf_chains_are_in_all_chains`: every `Leaf` row's chain is in `block_registry::ALL_CHAINS` (by `core::ptr::eq`), and `CHANNELS.id == 68`, `OUTPUTS.id == 69`.
   - `top_list_is_the_spec_order`: the labels are `PROJECT, PART, ORBIT, MIDI CONFIG, SYSEX DUMP, AUDIO ROUTING, PERSONALIZE, SYSTEM`.
   - `paths_resolve`: `row_at(&[0, 0])` is LOAD PROJECT; `row_at(&[6, 0])` is THEME; `row_at(&[9])` is `None`.

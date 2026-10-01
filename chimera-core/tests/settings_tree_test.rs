@@ -1,6 +1,6 @@
 use chimera_core::ui::block_registry::ALL_CHAINS;
 use chimera_core::ui::settings::leaves::{CHANNELS, OUTPUTS};
-use chimera_core::ui::settings::{Kind, ROOT, Row, Status, row_at, rows};
+use chimera_core::ui::settings::{Kind, ROOT, Row, row_at, rows};
 
 fn walk(row: &'static Row, path: &mut Vec<u8>, f: &mut dyn FnMut(&'static Row, &[u8])) {
     f(row, path);
@@ -23,9 +23,8 @@ fn all() -> Vec<(&'static Row, Vec<u8>)> {
 fn every_later_row_names_its_issue() {
     let mut labels = Vec::new();
     for (r, _) in all() {
-        if let Status::Later(n) = r.status {
-            assert!(n > 0, "{}", r.label);
-            labels.push((r.label, n));
+        if let Kind::Later(n) = r.kind {
+            labels.push((r.label, n.get()));
         }
     }
     let names: Vec<_> = labels.iter().map(|l| l.0).collect();
@@ -43,6 +42,21 @@ fn every_later_row_names_its_issue() {
         ]
     );
     assert!(labels.contains(&("SENDS", 259)));
+}
+
+#[test]
+fn later_issues_are_distinct() {
+    let mut n: Vec<u16> = all()
+        .iter()
+        .filter_map(|(r, _)| match r.kind {
+            Kind::Later(i) => Some(i.get()),
+            _ => None,
+        })
+        .collect();
+    n.sort();
+    let len = n.len();
+    n.dedup();
+    assert_eq!(n.len(), len);
 }
 
 #[test]
@@ -93,10 +107,10 @@ fn depth_fits_settings_at() {
     }
 }
 
-#[cfg(debug_assertions)]
 #[test]
 fn demo_only_in_debug() {
-    assert_eq!(rows(&[7]).last().unwrap().label, "DEMO");
+    let has = rows(&[7]).iter().any(|r| r.label == "DEMO");
+    assert_eq!(has, cfg!(debug_assertions));
 }
 
 #[test]

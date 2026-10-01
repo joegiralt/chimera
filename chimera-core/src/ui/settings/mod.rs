@@ -3,4 +3,4 @@
 pub mod leaves;
 pub mod tree;
 
-pub use tree::{Act, Kind, ROOT, Row, Screen, Status, row_at, rows};
+pub use tree::{Act, Issue, Kind, ROOT, Row, Screen, Status, issue, row_at, rows};

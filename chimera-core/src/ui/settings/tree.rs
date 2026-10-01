@@ -2,8 +2,11 @@
 //! A `Later` row is in the table, so a feature flips its status and
 //! navigation stays as it is.
 
-use super::leaves::*;
+use super::leaves::{
+    ABOUT_LEAF, CHANNELS_LEAF, OUTPUTS_LEAF, THEME_LEAF, TUNING_LEAF, UPDATES_LEAF,
+};
 use crate::ui::block_def::ChainDef2;
+use core::num::NonZeroU16;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Row {
@@ -21,6 +24,25 @@ pub enum Kind {
     /// A screen whose rows are built at run time.
     Screen(Screen),
     Act(Act),
+    /// Not built: dimmed, and EDIT and SEQ ignore it.
+    Later(Issue),
+}
+
+/// A GitHub issue number: never 0.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Issue(NonZeroU16);
+
+impl Issue {
+    pub fn get(self) -> u16 {
+        self.0.get()
+    }
+}
+
+pub const fn issue(n: u16) -> Issue {
+    match NonZeroU16::new(n) {
+        Some(n) => Issue(n),
+        None => panic!("issue number 0"),
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -44,8 +66,6 @@ pub enum Status {
     Built,
     /// An existing page moved here.
     Mirror,
-    /// Not built: the GitHub issue number.
-    Later(u16),
 }
 
 const fn row(label: &'static str, kind: Kind, status: Status) -> Row {
@@ -66,36 +86,56 @@ const fn crumb(label: &'static str, crumb: &'static str, kind: Kind, status: Sta
     }
 }
 
-use Kind::{Act as A, Leaf, List, Screen as S};
-use Status::{Built, Later, Mirror};
+use Kind::{Later, Leaf, List};
+use Status::{Built, Mirror};
 
 static PROJECT: [Row; 3] = [
-    crumb("LOAD PROJECT", "LOAD", S(Screen::LoadProject), Built),
-    crumb("SAVE PROJECT AS", "SAVE AS", A(Act::SaveProjectAs), Built),
+    crumb(
+        "LOAD PROJECT",
+        "LOAD",
+        Kind::Screen(Screen::LoadProject),
+        Built,
+    ),
+    crumb(
+        "SAVE PROJECT AS",
+        "SAVE AS",
+        Kind::Act(Act::SaveProjectAs),
+        Built,
+    ),
     crumb(
         "MANAGE PROJECTS",
         "MANAGE",
-        S(Screen::ManageProjects),
+        Kind::Screen(Screen::ManageProjects),
         Built,
     ),
 ];
 
 static PART: [Row; 4] = [
-    row("RENAME", A(Act::PartRename), Built),
-    row("CLEAR", A(Act::PartClear), Built),
-    crumb("SAVE TO PROJ", "SAVE TO", S(Screen::SaveToProj), Built),
-    crumb("RELOAD FROM PROJ", "RELOAD", A(Act::PartReload), Built),
+    row("RENAME", Kind::Act(Act::PartRename), Built),
+    row("CLEAR", Kind::Act(Act::PartClear), Built),
+    crumb(
+        "SAVE TO PROJ",
+        "SAVE TO",
+        Kind::Screen(Screen::SaveToProj),
+        Built,
+    ),
+    crumb(
+        "RELOAD FROM PROJ",
+        "RELOAD",
+        Kind::Act(Act::PartReload),
+        Built,
+    ),
 ];
 
 static MIDI: [Row; 3] = [
-    row("SYNC", List(&[]), Later(264)),
-    crumb("PORT CONFIG", "PORT", List(&[]), Later(265)),
+    row("SYNC", Later(issue(264)), Built),
+    crumb("PORT CONFIG", "PORT", Later(issue(265)), Built),
     row("CHANNELS", Leaf(&CHANNELS_LEAF), Mirror),
 ];
 
 static AUDIO: [Row; 3] = [
     row("OUTPUTS", Leaf(&OUTPUTS_LEAF), Mirror),
-    row("SENDS", List(&[]), Later(259)),
+    row("SENDS", Later(issue(259)), Built),
     row("TUNING", Leaf(&TUNING_LEAF), Mirror),
 ];
 
@@ -103,9 +143,9 @@ static PERSONALIZE: [Row; 1] = [row("THEME", Leaf(&THEME_LEAF), Mirror)];
 
 static SYSTEM: &[Row] = &[
     crumb("OS UPGRADE", "OS", Leaf(&UPDATES_LEAF), Mirror),
-    row("STORAGE", List(&[]), Later(267)),
-    crumb("FORMAT CARD", "FORMAT", List(&[]), Later(268)),
-    crumb("USB CONFIG", "USB", List(&[]), Later(269)),
+    row("STORAGE", Later(issue(267)), Built),
+    crumb("FORMAT CARD", "FORMAT", Later(issue(268)), Built),
+    crumb("USB CONFIG", "USB", Later(issue(269)), Built),
     row("ABOUT", Leaf(&ABOUT_LEAF), Mirror),
     #[cfg(debug_assertions)]
     row("DEMO", Leaf(&crate::ui::block_registry::DEMO_CHAIN), Built),
@@ -114,9 +154,9 @@ static SYSTEM: &[Row] = &[
 static TOP: [Row; 8] = [
     row("PROJECT", List(&PROJECT), Built),
     row("PART", List(&PART), Built),
-    row("ORBIT", List(&[]), Later(262)),
+    row("ORBIT", Later(issue(262)), Built),
     crumb("MIDI CONFIG", "MIDI", List(&MIDI), Built),
-    crumb("SYSEX DUMP", "SYSEX", List(&[]), Later(263)),
+    crumb("SYSEX DUMP", "SYSEX", Later(issue(263)), Built),
     crumb("AUDIO ROUTING", "AUDIO", List(&AUDIO), Built),
     crumb("PERSONALIZE", "PERSONAL", List(&PERSONALIZE), Built),
     row("SYSTEM", List(SYSTEM), Built),

@@ -15,9 +15,9 @@ settings world of the synth. The spec is
 ## Decision
 - **The tree is one static table** (`ui::settings::tree`): a `Row` has a
   label, a crumb of at most 8 characters, a `Kind` (List, Leaf chain,
-  Screen, Act) and a `Status` (Built, Mirror, or `Later(n)` with its
-  GitHub issue). A later row is in the table, so shipping it flips its
-  status and leaves navigation alone. Paths are row indices, at most 4
+  Screen, Act, or Later with its nonzero GitHub issue) and a `Status`
+  (Built or Mirror). A later row is in the table, so shipping it replaces
+  its kind and leaves navigation alone. Paths are row indices, at most 4
   deep. SYSTEM's DEMO row exists in debug builds only; MIX+B6 becomes
   Part 6's mixer.
 - **Keys inside SETTINGS:** MENU tap backs one level, and at the top
@@ -43,7 +43,7 @@ settings world of the synth. The spec is
   AUDIO ROUTING > OUTPUTS edit the same fields as each mixer PART page.
   Their defs take ids 68 and 69.
 - **The Projects and Project rungs leave the ladder; the System chain
-  goes** (its pages become leaves, Task 8). The Part rung and the Sound
+  goes** (its pages become leaves, in the navigation rewrite). The Part rung and the Sound
   rung stay.
 
 ## Alternatives considered
@@ -67,7 +67,7 @@ settings world of the synth. The spec is
     superseding the relevant part of ADR 0045, which is Accepted and
     never amended.
   - **Each engine has a home node.** A new or INIT Modal Part lands on
-    RES, not EXC (Tasks 6 and 8).
+    RES, not EXC (the navigation rewrite).
 - `ChainId::System` and `UiMode::SoundBrowser` go; the browser becomes
   the Sound rung, and saving is SETTINGS > PART.
 - The UX spec is the owner's file and is amended by hand.
