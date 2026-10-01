@@ -296,6 +296,17 @@ fn save<S: Store>(s: &mut S, r: &Ready, v: &SystemSettings) -> Result<(), SaveEr
     Ok(())
 }
 
+/// Why SYSTEM syncs, and so what its last project becomes.
+#[derive(Clone, Copy)]
+enum Last {
+    /// Leaving System: the loaded project's file, on its own card.
+    Exit(Option<ProjectFile>),
+    /// A save or load: this file, on its card only.
+    Saved(ProjectFile),
+    /// A delete: none, if the card named this file; on its card only.
+    Deleted(ProjectFile),
+}
+
 /// When SYSTEM is read and written. A thin shell over `exit_plan`: it
 /// mounts once per exit, so the plan always sees the card in the slot.
 #[derive(Debug)]
@@ -355,7 +366,7 @@ impl SystemSync {
         s: &mut SystemSettings,
         current: Option<ProjectFile>,
     ) -> Result<Exit, SyncError> {
-        self.sync(card, store, s, current, false)
+        self.sync(card, store, s, Last::Exit(current))
     }
 
     /// A project save or load: `saved` becomes the last project of its own
@@ -369,7 +380,20 @@ impl SystemSync {
         s: &mut SystemSettings,
         saved: ProjectFile,
     ) -> Result<Exit, SyncError> {
-        self.sync(card, store, s, Some(saved), true)
+        self.sync(card, store, s, Last::Saved(saved))
+    }
+
+    /// A project deleted: if it is its card's last project, SYSTEM there
+    /// names none, by the same plan as `write`; otherwise nothing is
+    /// written (`Unchanged`). Another card in the slot is left alone.
+    pub fn forget<S: Store>(
+        &mut self,
+        card: &mut Card,
+        store: &mut S,
+        s: &mut SystemSettings,
+        deleted: ProjectFile,
+    ) -> Result<Exit, SyncError> {
+        self.sync(card, store, s, Last::Deleted(deleted))
     }
 
     fn sync<S: Store>(
@@ -377,15 +401,19 @@ impl SystemSync {
         card: &mut Card,
         store: &mut S,
         s: &mut SystemSettings,
-        current: Option<ProjectFile>,
-        bound: bool,
+        why: Last,
     ) -> Result<Exit, SyncError> {
         let (known, untouched, ram) = (self.known, self.untouched, *s);
         let done = card
             .run(store, |st, r| {
                 let vol = r.volume();
-                let mine = current.filter(|f| f.vol() == vol).map(ProjectFile::id);
-                if bound && mine.is_none() {
+                let on_card = |f: ProjectFile| (f.vol() == vol).then(|| f.id());
+                let file = match why {
+                    Last::Exit(f) => f,
+                    Last::Saved(f) | Last::Deleted(f) => Some(f),
+                };
+                let mine = file.and_then(on_card);
+                if !matches!(why, Last::Exit(_)) && mine.is_none() {
                     return Ok(None);
                 }
                 // The card's own SYSTEM, unless RAM already mirrors it.
@@ -395,16 +423,21 @@ impl SystemSync {
                     Some(Ok(v)) => v.last_project,
                     Some(Err(_)) => None,
                 };
+                let last = match why {
+                    Last::Deleted(_) if own != mine => return Ok(None),
+                    Last::Deleted(_) => None,
+                    _ => mine.or(own),
+                };
                 let want = SystemSettings {
-                    last_project: mine.or(own),
+                    last_project: last,
                     ..ram
                 };
                 let done = match (exit_plan(known, untouched, vol, body_crc(&want)), theirs) {
                     (ExitPlan::Nothing, _) => (Exit::Unchanged, want),
                     (_, Some(Err(LoadError::Store(e)))) => return Err(SyncError::Store(e)),
                     (ExitPlan::Load, Some(Ok(mut v))) => {
-                        if mine.is_some_and(|m| v.last_project != Some(m)) {
-                            v.last_project = mine;
+                        if v.last_project != last {
+                            v.last_project = last;
                             save(st, r, &v)?;
                         }
                         (Exit::Loaded, v)
