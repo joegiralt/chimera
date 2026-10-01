@@ -11,6 +11,7 @@ pub enum Press {
     Hold,
 }
 
+#[derive(Clone, Copy, Debug)]
 pub struct HoldGate {
     down_at: Option<Ms>,
     fired: bool,
@@ -32,6 +33,7 @@ impl HoldGate {
         }
     }
 
+    /// One result per frame; in a stalled frame a hold of the new press wins over the old release.
     /// `muted`: the press under way yields nothing (MIX + MENU). Applied after
     /// a press in `e` resets the gate, before its release or hold is decided.
     pub fn step(&mut self, e: Edges, now: Ms, muted: bool) -> Option<Press> {
@@ -74,11 +76,13 @@ impl HoldGate {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Presses {
     pub menu: Option<Press>,
     pub seq: Option<Press>,
 }
 
+#[derive(Clone, Copy, Debug)]
 pub struct HoldGates {
     menu: HoldGate,
     seq: HoldGate,
@@ -98,7 +102,7 @@ impl HoldGates {
         }
     }
 
-    /// MENU is muted while MIX is down.
+    /// MENU is muted while MIX is down; MIX is read as a level at frame end, so a chord inside one frame is not muted.
     pub fn step(&mut self, c: &impl Controls) -> Presses {
         let now = c.now_ms();
         let mix = c.edges(ButtonId::Mix).down;
