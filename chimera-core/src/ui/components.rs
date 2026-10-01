@@ -13,7 +13,7 @@ use crate::ui::block_def::{BlockDef, SlotBinding};
 use crate::ui::chain::{ChainId, ChainNav};
 use crate::ui::draw;
 use crate::ui::fmt::FmtBuf;
-use crate::ui::glyph::{Braid, BraidPart, Gauge};
+use crate::ui::glyph::{Braid, BraidPart, Gauge, Rings, RingsPart};
 use crate::ui::theme;
 
 /// `s` in upper case (names are stored mixed case: "Filter", "4opFM").
@@ -339,6 +339,12 @@ pub fn gauge_rect(gauge: &Gauge) -> Option<(i32, i32, i32, i32)> {
             theme::BRAID_W,
             theme::BRAID_H,
         )),
+        Gauge::Rings(_) => Some((
+            theme::RINGS_X,
+            theme::RINGS_Y,
+            theme::RINGS_W,
+            theme::RINGS_H,
+        )),
         Gauge::Arc { .. }
         | Gauge::None
         | Gauge::Switch { .. }
@@ -355,6 +361,7 @@ where
     match gauge {
         Gauge::None => {}
         Gauge::Braid(b) => braid(d, &b),
+        Gauge::Rings(r) => rings(d, &r),
         Gauge::Switch { on } => switch(d, on),
         Gauge::LevelBar { value, ticks } => level_bar(d, value, ticks),
         Gauge::Crossfader { value } => crossfader(d, value),
@@ -518,6 +525,152 @@ where
             draw::dot(d, x0 + x.clamp(2, w - 3), at(0, x).0, 2, theme::INK);
         }
         _ => {}
+    }
+}
+
+/// The delay rings in their box: a source dot at the centre and a ring
+/// per surviving repeat spreading from it, `spacing` apart. A repeat's
+/// ring is ACCENT while it is at least 0.35 of the first, then MID; the
+/// first `crisp` are solid, older ones dotted (dark TONE blurs sooner).
+/// MIX weighs rings (1 to 3 px) against the source dot (3 to 1 px);
+/// MECHANICS wobbles each ring, more as it grows; SAT thickens the newest;
+/// REV dots the edge where the rings leave. The focused param is marked:
+/// TIME ticks at each ring's radius, FDBK a dot per survivor along the
+/// top, TONE the crisp rings in INK, MIX a ring round the source,
+/// MECHANICS dots at the newest ring's wobble peaks, SAT the newest in INK
+/// with a ring inside it, REV its dots in INK. Palette colours only, so the theme's ACCENT swap applies.
+fn rings<D>(d: &mut D, r: &Rings)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    use crate::dsp::fast_sin;
+    use core::f32::consts::{FRAC_PI_2, TAU};
+    const N: usize = 24;
+    let (w, h) = (theme::RINGS_W, theme::RINGS_H);
+    let (cx, cy) = (theme::RINGS_X + w / 2, theme::RINGS_Y + h / 2);
+    // Room for the wobble (3) and the thickest ring inside the box.
+    let r_max = (h / 2 - 7) as f32;
+    let unit: [(f32, f32); N] = core::array::from_fn(|i| {
+        let a = i as f32 * TAU / N as f32;
+        (fast_sin(a + FRAC_PI_2), fast_sin(a))
+    });
+    let level = ((r.mix * 3.0) as usize).min(2);
+    let wobble = r.mech * 3.0;
+    let wob_phase = r.frame as f32 * 0.37;
+    let ring = |d: &mut D, rad: f32, wob: f32, color: Rgb565, width: u32, dotted: bool| {
+        let pt = |i: usize| {
+            let (c, s) = unit[i % N];
+            let a = i as f32 * TAU / N as f32;
+            let rr = rad + wob * fast_sin(3.0 * a + wob_phase) * (rad / r_max);
+            (
+                cx + libm::roundf(rr * c) as i32,
+                cy + libm::roundf(rr * s) as i32,
+            )
+        };
+        for i in (0..N).filter(|i| !dotted || i % 2 == 0) {
+            let (a, b) = (pt(i), pt(i + 1));
+            draw::line(d, a.0, a.1, b.0, b.1, color, width);
+        }
+    };
+    // The radii of the rings in the box, newest first.
+    let mut radii = [0.0f32; 12];
+    let mut alive = 0;
+    for k in 0..r.survivors() {
+        let rad = (r.age() + k as f32 * r.period()) * Rings::SPEED;
+        if rad > r_max {
+            break;
+        }
+        radii[alive] = rad;
+        alive += 1;
+    }
+    for (k, &rad) in radii[..alive].iter().enumerate().rev() {
+        if rad < 1.0 {
+            continue;
+        }
+        let amp = libm::powf(r.fdbk, k as f32);
+        let crisp = k < r.crisp();
+        let ink = match r.focus {
+            Some(RingsPart::Tone) => crisp,
+            Some(RingsPart::Sat) => k == 0,
+            _ => false,
+        };
+        let color = if ink {
+            theme::INK
+        } else if amp >= 0.35 {
+            theme::ACCENT
+        } else {
+            theme::MID
+        };
+        let sat = if k == 0 {
+            libm::roundf(r.sat * 2.0) as u32
+        } else {
+            0
+        };
+        ring(d, rad, wobble, color, level as u32 + 1 + sat, !crisp);
+        if k == 0 && r.focus == Some(RingsPart::Sat) && rad > 4.0 {
+            ring(d, rad - 3.0, wobble, theme::ACCENT, 1, true);
+        }
+    }
+    match r.focus {
+        // How many repeats survive: a dot each along the top.
+        Some(RingsPart::Fdbk) => {
+            for i in 0..r.survivors() as i32 {
+                draw::fill_rect(
+                    d,
+                    theme::RINGS_X + 2 + 4 * i,
+                    theme::RINGS_Y + 1,
+                    2,
+                    2,
+                    theme::INK,
+                );
+            }
+        }
+        // Where the wobble peaks on the newest ring.
+        Some(RingsPart::Mech) if alive > 0 => {
+            for p in 0..3 {
+                let a = (FRAC_PI_2 - wob_phase) / 3.0 + p as f32 * TAU / 3.0;
+                // Kept inside the box: at most r_max + 3, a 2 px dot.
+                let rr = (radii[0] + wobble * (radii[0] / r_max) + 3.0).min(r_max + 3.0);
+                let (c, s) = (fast_sin(a + FRAC_PI_2), fast_sin(a));
+                draw::fill_rect(
+                    d,
+                    cx + libm::roundf(rr * c) as i32,
+                    cy + libm::roundf(rr * s) as i32,
+                    2,
+                    2,
+                    theme::INK,
+                );
+            }
+        }
+        _ => {}
+    }
+    if r.focus == Some(RingsPart::Time) {
+        for &rad in &radii[..alive] {
+            draw::fill_rect(d, cx + rad as i32, theme::RINGS_Y + h - 4, 1, 3, theme::INK);
+        }
+    }
+    let dots = libm::roundf(r.rev * 16.0) as usize;
+    let rev = if r.focus == Some(RingsPart::Rev) {
+        theme::INK
+    } else {
+        theme::MID
+    };
+    for i in 0..dots {
+        let (c, s) = unit[i * N / 16];
+        let edge = r_max + 4.0;
+        draw::fill_rect(
+            d,
+            cx + libm::roundf(edge * c) as i32,
+            cy + libm::roundf(edge * s) as i32,
+            1,
+            1,
+            rev,
+        );
+    }
+    let src = 3 - level as i32;
+    draw::dot(d, cx, cy, src, theme::INK);
+    if r.focus == Some(RingsPart::Mix) {
+        draw::ring(d, cx, cy, src + 3, theme::INK, 1);
     }
 }
 
