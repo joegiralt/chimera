@@ -9,7 +9,7 @@ use chimera_core::dsp::modal::{ResonatorMode, out_gain};
 use chimera_core::dsp::note_to_freq;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::hw::{MAX_VOICES, SampleBudget};
-use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
+use chimera_core::instrument::AudioShared;
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::{EngineType, ParamSnapshot, Steal};
 use chimera_core::{MidiChannel, MidiNote, Velocity};
@@ -37,12 +37,7 @@ fn budget(cost: u32) -> SampleBudget {
     SampleBudget::for_cpu(((FxBus::COST.0 + cost) as u64 * 480_000).div_ceil(7) as u32)
 }
 
-struct Rig {
-    inst: Box<Instrument>,
-    fx: Box<FxBus>,
-    dac: Box<DacBlocks>,
-    scope: chimera_core::scope::ScopeWriter,
-}
+use common::InstRig as Rig;
 
 impl Rig {
     /// Room for one voice of Part 1's Sound: every other note steals.
@@ -54,12 +49,7 @@ impl Rig {
     fn voices(shared: &AudioShared, n: u32) -> Self {
         let p = &shared.parts[0];
         let cost = Voice::cost(&p.params, &p.mod_state).0;
-        Self {
-            inst: Box::new(Instrument::new(SR, budget(n * cost))),
-            fx: Box::new(FxBus::new()),
-            dac: Box::new(DacBlocks::new()),
-            scope: common::scope_writer(),
-        }
+        Self::with_budget(budget(n * cost))
     }
 
     /// `blocks` blocks of Part `part`'s bus, and each block's glide ratio of
@@ -72,8 +62,7 @@ impl Rig {
         ratios: &mut Vec<f32>,
     ) {
         for _ in 0..blocks {
-            self.inst
-                .render(&mut self.fx, &mut self.dac, shared, &mut self.scope);
+            self.block(shared);
             out.extend_from_slice(self.inst.part_bus(0));
             let active = self.inst.active();
             let v = (0..MAX_VOICES).find(|&v| active[v]).unwrap_or(0);

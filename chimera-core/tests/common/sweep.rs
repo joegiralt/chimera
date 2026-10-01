@@ -327,7 +327,7 @@ impl Bench {
             .block_mut(p.block)
             .expect("an audio block")
             .set(p.spec.id, v);
-        self.shared.update_from(&self.perf);
+        self.shared.update_from(&self.perf, 0);
     }
 
     pub fn get(&mut self, p: &Param) -> f32 {

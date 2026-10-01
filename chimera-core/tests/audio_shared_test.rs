@@ -74,7 +74,7 @@ fn update_from_overwrites_in_place() {
     fresh_mod_state.set_amount(0, 0, 17);
     perf.edit(PartId::ALL[0]).sound.mod_state = fresh_mod_state;
 
-    shared.update_from(&perf);
+    shared.update_from(&perf, 0);
 
     assert_eq!(shared.parts[0].params.filter.cutoff, 440.0);
     assert_eq!(shared.parts[0].mix.level, 0.1);
@@ -103,6 +103,7 @@ fn init_in_place_matches_from_performance() {
             }
         }),
         fx: perf.fx,
+        epoch: 0,
     };
     let placed = format!("{placed:?}");
     assert_eq!(placed, format!("{expected:?}"));

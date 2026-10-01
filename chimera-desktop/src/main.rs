@@ -5,6 +5,7 @@ mod display;
 mod midi;
 mod store;
 
+use chimera_core::project::LOAD_LINK;
 use chimera_core::scope::scope_buffer;
 use chimera_core::storage::{Card, SystemSync};
 use chimera_core::ui::UiState;
@@ -106,7 +107,7 @@ fn main() {
         ui.update();
 
         // Push every Part and the FX to the audio thread.
-        audio.update(ui.project().perf());
+        audio.update(ui.project().perf(), LOAD_LINK.epoch());
 
         ui.render_with_scope(&mut display, &perf.stats, scope_r.read());
         let now = Instant::now();

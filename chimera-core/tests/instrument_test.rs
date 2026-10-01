@@ -75,28 +75,16 @@ fn off(ch: u8, note: u8) -> NoteEvent {
     }
 }
 
-struct Rig {
-    inst: Box<Instrument>,
-    fx: Box<FxBus>,
-    dac: Box<DacBlocks>,
-    scope: chimera_core::scope::ScopeWriter,
-}
+use common::InstRig as Rig;
 
 impl Rig {
     fn new() -> Self {
-        Self {
-            inst: Box::new(Instrument::new(SR, BUDGET)),
-            fx: Box::new(FxBus::new()),
-            dac: Box::new(DacBlocks::new()),
-            scope: common::scope_writer(),
-        }
+        Self::with_budget(BUDGET)
     }
     /// The chip's own budget, for tests that fill the pool rather than the
     /// pre-diet voice share.
     fn rev_v() -> Self {
-        let mut rig = Self::new();
-        *rig.inst = Instrument::new(SR, SampleBudget::for_cpu(CPU_HZ_REV_V));
-        rig
+        Self::with_budget(SampleBudget::for_cpu(CPU_HZ_REV_V))
     }
     /// Rev V, or with the master tape (where ALGO INIT plays seven since
     /// ADR 0060) a budget for eight: the pool full of INIT.
@@ -109,15 +97,6 @@ impl Rig {
             *rig.inst = Instrument::new(SR, budget_for(8 * voice));
         }
         rig
-    }
-    fn render(&mut self, shared: &AudioShared) -> &DacOut {
-        self.inst
-            .render(&mut self.fx, &mut self.dac, shared, &mut self.scope);
-        self.dac.out()
-    }
-    /// The last block out, limited.
-    fn out(&self) -> &DacOut {
-        self.dac.out()
     }
 }
 
@@ -157,10 +136,10 @@ fn part_bus_is_panned_and_levelled_into_its_pair() {
     shared.parts[0].mix.pan = -1.0;
     rig.inst.handle(on(0, 60), &shared);
     for _ in 0..4 {
-        rig.render(&shared);
+        rig.block(&shared);
     }
     let bus = *rig.inst.part_bus(0);
-    rig.render(&shared);
+    rig.block(&shared);
     let (l, r) = lr(&rig.out()[0]);
     assert!(peak(&bus) > 0.01);
     for i in 0..BLOCK_SIZE {
@@ -183,7 +162,7 @@ fn mix_parts_alone_is_renders_mix() {
     shared.parts[0].mix.sends = [0.2, 0.3, 0.4];
     shared.fx.delay.mix = 0.5;
     rig.inst.handle(on(0, 60), &shared);
-    rig.render(&shared);
+    rig.block(&shared);
     let bus = *rig.inst.part_bus(0);
     assert!(peak(&bus) > 0.01);
     let mut buses = [[0.0; BLOCK_SIZE]; MAX_PARTS];
@@ -381,7 +360,7 @@ fn fx_send_puts_no_dry_signal_on_pair_1() {
     rig.inst.handle(on(0, 60), &shared);
     let mut last = Stereo::SILENT;
     for b in 0..120 {
-        rig.render(&shared);
+        rig.block(&shared);
         let bus = *rig.inst.part_bus(0);
         let mut sends = [[0.0; BLOCK_SIZE], [0.0; BLOCK_SIZE], bus.map(|s| s * 0.5)];
         let mut ret = Stereo::SILENT;
@@ -426,7 +405,7 @@ fn the_chorus_returns_stereo_on_pair_1() {
     rig.inst.handle(on(0, 60), &shared);
     let (mut l, mut r) = (Vec::new(), Vec::new());
     for _ in 0..100 {
-        rig.render(&shared);
+        rig.block(&shared);
         let (a, b) = lr(&rig.out()[0]);
         l.extend(a);
         r.extend(b);
@@ -444,13 +423,13 @@ fn notes_route_by_channel() {
     let mut rig = Rig::new();
     let mut shared = AudioShared::default();
     rig.inst.handle(on(2, 60), &shared);
-    rig.render(&shared);
+    rig.block(&shared);
     for p in 0..6 {
         assert_eq!(peak(rig.inst.part_bus(p)) > 0.0, p == 2, "part {p}");
     }
     shared.parts[4].mix.channel = MidiChannel::new(2).unwrap();
     rig.inst.handle(on(2, 64), &shared);
-    rig.render(&shared);
+    rig.block(&shared);
     assert!(
         peak(rig.inst.part_bus(4)) > 0.0,
         "part 5 layered on channel 3"
@@ -465,15 +444,15 @@ fn tails_ring_out_then_free_the_voice() {
     let shared = AudioShared::default(); // Algo init, RR 8
     rig.inst.handle(on(0, 60), &shared);
     for _ in 0..20 {
-        rig.render(&shared);
+        rig.block(&shared);
     }
     rig.inst.handle(off(0, 60), &shared);
-    rig.render(&shared);
+    rig.block(&shared);
     assert!(peak(rig.inst.part_bus(0)) > 0.0, "tail");
     assert_eq!(rig.inst.allocator().slots()[0].part(), Some(0));
     let mut blocks = 0;
     while !rig.inst.allocator().slots()[0].is_free() {
-        rig.render(&shared);
+        rig.block(&shared);
         blocks += 1;
         assert!(blocks < 2_000, "voice never freed");
     }
@@ -531,7 +510,7 @@ fn render_tap(
                 rig.inst.handle(off(ch, n), &shared);
             }
         }
-        rig.render(&shared);
+        rig.block(&shared);
         for pair in tap(&rig) {
             all.extend_from_slice(pair);
         }
@@ -612,7 +591,7 @@ fn a_six_voice_saw_lead_chord_is_not_refused() {
     for n in CHORD6 {
         rig.inst.handle(on(0, n), &shared);
     }
-    rig.render(&shared);
+    rig.block(&shared);
     let a = rig.inst.allocator();
     assert_eq!(a.refused(), 0);
     assert_eq!(a.slots().iter().filter(|s| !s.is_free()).count(), 6);
@@ -629,7 +608,7 @@ fn a_six_note_tx_epiano_chord_stays_in_budget() {
         assert!(rig.inst.allocator().sounding_cost() + FxBus::COST <= BUDGET.as_cost());
     }
     for _ in 0..4 {
-        rig.render(&shared);
+        rig.block(&shared);
     }
     let a = rig.inst.allocator();
     assert!(a.sounding_cost() + FxBus::COST <= BUDGET.as_cost());
@@ -657,7 +636,7 @@ fn a_light_patch_plays_every_voice_on_rev_v() {
     for n in CHORD_FULL {
         rig.inst.handle(on(0, n), &shared);
     }
-    rig.render(&shared);
+    rig.block(&shared);
     let a = rig.inst.allocator();
     assert_eq!(a.refused(), 0);
     assert_eq!(
@@ -683,7 +662,7 @@ fn the_costliest_patch_plays_six_voices_on_rev_v() {
     for n in CHORD_FULL {
         rig.inst.handle(on(0, n), &shared);
     }
-    rig.render(&shared);
+    rig.block(&shared);
     let a = rig.inst.allocator();
     assert_eq!(a.refused(), 0);
     assert_eq!(a.slots().iter().filter(|s| !s.is_free()).count(), 6);
@@ -804,7 +783,7 @@ fn note_off_follows_the_note_on_channel() {
     let mut rig = Rig::new();
     let mut shared = AudioShared::default();
     rig.inst.handle(on(0, 60), &shared);
-    rig.render(&shared);
+    rig.block(&shared);
     shared.parts[0].mix.channel = MidiChannel::new(3).unwrap();
     rig.inst.handle(off(0, 60), &shared);
     assert!(!rig.inst.allocator().slots()[0].held());
@@ -823,7 +802,7 @@ fn sound_change_mid_chord_stays_in_budget() {
     for n in 0..MAX_VOICES as u8 {
         rig.inst.handle(on(0, 60 + n), &shared);
     }
-    rig.render(&shared);
+    rig.block(&shared);
     let fits = |p: &ParamSnapshot| {
         ((budget.as_cost().0 - FxBus::COST.0) / Voice::cost(p, &ModState::new()).0)
             .min(MAX_VOICES as u32) as usize
@@ -839,7 +818,7 @@ fn sound_change_mid_chord_stays_in_budget() {
         held
     );
     shared.parts[0].params = ParamSnapshot::for_engine(EngineType::Modal);
-    rig.render(&shared);
+    rig.block(&shared);
     let a = rig.inst.allocator();
     assert!(a.sounding_cost() + FxBus::COST <= budget.as_cost());
     let expected = ((budget.as_cost().0 - FxBus::COST.0)
@@ -872,7 +851,7 @@ fn eight_init_voices_fit_rev_v() {
         rig.inst.handle(on(0, 60 + n), &shared);
     }
     for _ in 0..4 {
-        rig.render(&shared);
+        rig.block(&shared);
     }
     let a = rig.inst.allocator();
     assert_eq!(MAX_VOICES, 8);
@@ -893,12 +872,12 @@ fn blocks_until_free() -> usize {
     let shared = AudioShared::default();
     rig.inst.handle(on(0, 60), &shared);
     for _ in 0..20 {
-        rig.render(&shared);
+        rig.block(&shared);
     }
     rig.inst.handle(off(0, 60), &shared);
     let mut blocks = 0;
     while !rig.inst.allocator().slots()[0].is_free() {
-        rig.render(&shared);
+        rig.block(&shared);
         blocks += 1;
         assert!(blocks < 2_000, "voice never freed");
     }
@@ -928,11 +907,11 @@ fn stealing_a_releasing_voice_does_not_free_the_new_note() {
             rig.inst.handle(on(0, 60 + k), &shared); // the pool full, voice 0 oldest
         }
         for _ in 0..20 {
-            rig.render(&shared);
+            rig.block(&shared);
         }
         rig.inst.handle(off(0, 60), &shared);
         for _ in 0..after_off {
-            rig.render(&shared);
+            rig.block(&shared);
         }
         rig.inst.handle(on(1, 72), &shared); // voice 0: stolen, or free again
         let s = rig.inst.allocator().slots()[0];
@@ -942,7 +921,7 @@ fn stealing_a_releasing_voice_does_not_free_the_new_note() {
             "{after_off}: voice 0 took it"
         );
         for b in 0..held {
-            rig.render(&shared);
+            rig.block(&shared);
             assert!(
                 rig.inst.allocator().slots()[0].held(),
                 "{after_off}: new note freed at block {b}"
@@ -951,7 +930,7 @@ fn stealing_a_releasing_voice_does_not_free_the_new_note() {
         rig.inst.handle(off(1, 72), &shared);
         let mut blocks = 0;
         while !rig.inst.allocator().slots()[0].is_free() {
-            rig.render(&shared);
+            rig.block(&shared);
             blocks += 1;
             assert!(blocks < 20_000, "voice never freed");
         }
@@ -980,15 +959,15 @@ fn retriggering_a_releasing_mono_voice_does_not_free_the_new_note() {
         let mut rig = Rig::new();
         rig.inst.handle(on(0, 60), &init);
         for _ in 0..20 {
-            rig.render(&init);
+            rig.block(&init);
         }
         rig.inst.handle(off(0, 60), &init);
         for _ in 0..after_off {
-            rig.render(&init);
+            rig.block(&init);
         }
         rig.inst.handle(on(0, 62), &modal);
         for b in 0..held {
-            rig.render(&modal);
+            rig.block(&modal);
             let s = rig
                 .inst
                 .allocator()
@@ -1002,7 +981,7 @@ fn retriggering_a_releasing_mono_voice_does_not_free_the_new_note() {
         rig.inst.handle(off(0, 62), &modal);
         let mut blocks = 0;
         while rig.inst.allocator().slots().iter().any(|s| !s.is_free()) {
-            rig.render(&modal);
+            rig.block(&modal);
             blocks += 1;
             assert!(blocks < 20_000, "voice never freed");
         }
@@ -1024,10 +1003,10 @@ fn same_note_from_two_channels_releases_both_voices() {
         let mut rig = Rig::new();
         let mut shared = AudioShared::default();
         rig.inst.handle(on(0, 60), &shared); // voice 0
-        rig.render(&shared);
+        rig.block(&shared);
         shared.parts[0].mix.channel = MidiChannel::new(3).unwrap();
         rig.inst.handle(on(3, 60), &shared); // voice 0, re-struck
-        rig.render(&shared);
+        rig.block(&shared);
         let part0 = rig
             .inst
             .allocator()
@@ -1043,7 +1022,7 @@ fn same_note_from_two_channels_releases_both_voices() {
         assert!(!rig.inst.allocator().slots()[0].held());
         let mut blocks = 0;
         while rig.inst.allocator().slots().iter().any(|s| !s.is_free()) {
-            rig.render(&shared);
+            rig.block(&shared);
             blocks += 1;
             assert!(
                 blocks < 3_000,
@@ -1064,12 +1043,12 @@ fn shed_one(release: &[u8]) -> (Rig, AudioShared) {
         rig.inst.handle(on(0, n), &light);
     }
     for _ in 0..20 {
-        rig.render(&light);
+        rig.block(&light);
     }
     for &n in release {
         rig.inst.handle(off(0, n), &light);
     }
-    rig.render(&light);
+    rig.block(&light);
     assert_eq!(
         rig.inst
             .allocator()
@@ -1079,7 +1058,7 @@ fn shed_one(release: &[u8]) -> (Rig, AudioShared) {
             .count(),
         6
     );
-    rig.render(&heavy);
+    rig.block(&heavy);
     (rig, heavy)
 }
 
@@ -1110,7 +1089,7 @@ fn a_patch_edit_over_budget_fades_a_tail_first() {
         s.dying() && s.note() == MidiNote::new(55),
         "reallocated mid-fade"
     );
-    rig.render(&heavy); // the fade's second block
+    rig.block(&heavy); // the fade's second block
     let a = rig.inst.allocator();
     assert!(a.slots()[v].is_free());
     assert!(a.sounding_cost() + FxBus::COST <= BUDGET.as_cost());
@@ -1127,7 +1106,7 @@ fn a_patch_edit_over_budget_fades_the_newest_held_note() {
     rig.inst.handle(off(0, 48), &heavy); // a tail to steal
     rig.inst.handle(on(0, 90), &heavy);
     assert_eq!(dying(&rig), d, "reallocated mid-fade");
-    rig.render(&heavy);
+    rig.block(&heavy);
     assert!(dying(&rig).is_empty());
     let a = rig.inst.allocator();
     assert_eq!(a.slots().iter().filter(|s| !s.is_free()).count(), 5);
@@ -1157,11 +1136,11 @@ fn a_note_on_with_a_patch_edit_is_judged_at_the_new_cost() {
         rig.inst.handle(on(0, *n), &light);
     }
     for _ in 0..4 {
-        rig.render(&light);
+        rig.block(&light);
     }
     rig.inst.handle(on(0, 90), &heavy);
     for _ in 0..4 {
-        rig.render(&heavy);
+        rig.block(&heavy);
     }
     let a = rig.inst.allocator();
     assert!(a.sounding_cost() + FxBus::COST <= BUDGET.as_cost());
@@ -1193,9 +1172,9 @@ fn a_note_on_waits_out_a_fade_before_stealing_a_held_note() {
         rig.inst.handle(on(0, n), &light);
     }
     for _ in 0..4 {
-        rig.render(&light);
+        rig.block(&light);
     }
-    rig.render(&heavy); // two are shed
+    rig.block(&heavy); // two are shed
     let dying: Vec<usize> = (0..MAX_VOICES)
         .filter(|&v| rig.inst.allocator().slots()[v].dying())
         .collect();
@@ -1211,9 +1190,9 @@ fn a_note_on_waits_out_a_fade_before_stealing_a_held_note() {
     assert_eq!(held.len(), MAX_VOICES - 2, "no held note stolen");
     let (v, d) = slots_of(&rig, 40)[0];
     assert!(dying.contains(&v) && !d);
-    rig.render(&heavy); // the fade's second block: bass still silent
+    rig.block(&heavy); // the fade's second block: bass still silent
     assert_eq!(peak(rig.inst.part_bus(1)), 0.0);
-    rig.render(&heavy);
+    rig.block(&heavy);
     assert!(
         peak(rig.inst.part_bus(1)) > 0.0,
         "the bass plays after the fade"
@@ -1237,16 +1216,16 @@ fn a_shed_waiting_note_counts_as_refused() {
         rig.inst.handle(on(0, n), &light);
     }
     for _ in 0..4 {
-        rig.render(&light);
+        rig.block(&light);
     }
     let heavy = perf(6, 5);
-    rig.render(&heavy); // two shed
+    rig.block(&heavy); // two shed
     rig.inst.handle(on(1, 40), &heavy); // waits on a dying slot
     assert_eq!(slots_of(&rig, 40).len(), 1);
-    rig.render(&perf(6, 7)); // part 2 now MORPH KEYS: the waiting note goes
+    rig.block(&perf(6, 7)); // part 2 now MORPH KEYS: the waiting note goes
     assert_eq!(rig.inst.allocator().refused(), 1);
     for _ in 0..4 {
-        rig.render(&perf(6, 7));
+        rig.block(&perf(6, 7));
     }
     assert!(slots_of(&rig, 40).is_empty());
     assert_eq!(peak(rig.inst.part_bus(1)), 0.0);
@@ -1264,17 +1243,17 @@ fn a_steal_from_another_part_fades_on_the_old_bus() {
         rig.inst.handle(on(0, n), &shared);
     }
     for _ in 0..4 {
-        rig.render(&shared);
+        rig.block(&shared);
     }
     rig.inst.handle(off(0, 48), &shared);
-    rig.render(&shared);
+    rig.block(&shared);
     rig.inst.handle(on(1, 40), &shared); // steals the tail of 48
     let (v, _) = slots_of(&rig, 40)[0];
     for _ in 0..2 {
-        rig.render(&shared);
+        rig.block(&shared);
         assert_eq!(peak(rig.inst.part_bus(1)), 0.0, "fading on part 1's bus");
     }
-    rig.render(&shared);
+    rig.block(&shared);
     assert!(peak(rig.inst.part_bus(1)) > 0.0, "then the new note plays");
     assert!(rig.inst.allocator().slots()[v].held());
 }
@@ -1293,7 +1272,7 @@ fn full_pool(mode: PartMode) -> (Rig, AudioShared) {
         rig.inst.handle(on(0, n), &shared);
     }
     for _ in 0..4 {
-        rig.render(&shared);
+        rig.block(&shared);
     }
     (rig, shared)
 }
@@ -1309,7 +1288,7 @@ fn a_mono_retrigger_of_a_waiting_note_counts_it_as_refused() {
     assert_eq!(slots_of(&rig, 41), [(v, false)]);
     assert_eq!(rig.inst.allocator().refused(), 1);
     for _ in 0..3 {
-        rig.render(&shared);
+        rig.block(&shared);
     }
     assert!(peak(rig.inst.part_bus(1)) > 0.0, "41 plays");
 }
@@ -1326,7 +1305,7 @@ fn a_steal_of_a_waiting_note_counts_it_as_refused() {
     assert_eq!(slots_of(&rig, 70), [(v, false)]);
     assert_eq!(rig.inst.allocator().refused(), 1);
     for _ in 0..3 {
-        rig.render(&shared);
+        rig.block(&shared);
     }
     assert_eq!(peak(rig.inst.part_bus(1)), 0.0, "90 never sounds");
     assert!(peak(rig.inst.part_bus(2)) > 0.0, "70 plays");
@@ -1432,11 +1411,11 @@ fn a_mode_switch_bills_sounding_tails_at_their_own_model() {
     for n in tails {
         rig.inst.handle(on(0, n), &shared);
     }
-    rig.render(&shared);
+    rig.block(&shared);
     for n in tails {
         rig.inst.handle(off(0, n), &shared);
     }
-    rig.render(&shared);
+    rig.block(&shared);
     let tail_voices: Vec<usize> = (0..MAX_VOICES)
         .filter(|&v| {
             rig.inst.allocator().slots()[v]
@@ -1447,7 +1426,7 @@ fn a_mode_switch_bills_sounding_tails_at_their_own_model() {
     assert_eq!(tail_voices.len(), tails.len());
     shared.parts[0].params.modal.mode = ResonatorMode::String;
     // The switch's first block: the tails are one block into their fade.
-    rig.render(&shared);
+    rig.block(&shared);
     // Five fill the pool beside the tails: the budget alone decides.
     for n in 60..65 {
         rig.inst.handle(on(0, n), &shared);
@@ -1479,7 +1458,7 @@ fn loud(note: u8) -> NoteEvent {
 /// A STRING Part, rendered `blocks` blocks: Part 1's bus.
 fn string_blocks(rig: &mut Rig, shared: &AudioShared, blocks: usize, out: &mut Vec<f32>) {
     for _ in 0..blocks {
-        rig.render(shared);
+        rig.block(shared);
         out.extend_from_slice(rig.inst.part_bus(0));
     }
 }
@@ -1501,11 +1480,11 @@ fn a_restrike_reuses_its_string_and_nothing_clicks() {
     let mut rig = Rig::full_pool();
     for held in [true, false, true] {
         rig.inst.handle(loud(48), &shared);
-        rig.render(&shared);
+        rig.block(&shared);
         if !held {
             rig.inst.handle(off(0, 48), &shared);
         }
-        rig.render(&shared);
+        rig.block(&shared);
     }
     assert_eq!(slots_of(&rig, 48).len(), 1, "one voice");
     assert_eq!(rig.inst.sounding(), 1);
