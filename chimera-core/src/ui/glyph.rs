@@ -4,6 +4,7 @@
 use crate::addr::{BlockRef, ParamAddr};
 use crate::block::ValFmt;
 use crate::dsp::chorus::ChorusParams;
+use crate::dsp::delay::DelayParams;
 
 /// The gauge a parameter's focus band shows.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -52,6 +53,120 @@ pub enum Gauge {
     Crossfader { value: f32 },
     /// The chorus braid (`CompositeId::ChorusBraid`).
     Braid(Braid),
+    /// The delay's rings (`CompositeId::DelayRings`).
+    Rings(Rings),
+}
+
+/// The delay params the rings read, in `Rings::from_set`'s order.
+pub const RINGS_PARAMS: [ParamAddr; 7] = [
+    ParamAddr::new(BlockRef::Delay, DelayParams::TIME_MS),
+    ParamAddr::new(BlockRef::Delay, DelayParams::FEEDBACK),
+    ParamAddr::new(BlockRef::Delay, DelayParams::TONE),
+    ParamAddr::new(BlockRef::Delay, DelayParams::MIX),
+    ParamAddr::new(BlockRef::Delay, DelayParams::WOW_FLUTTER),
+    ParamAddr::new(BlockRef::Delay, DelayParams::SATURATION),
+    ParamAddr::new(BlockRef::Delay, DelayParams::REV_SEND),
+];
+
+/// The rings' param in focus, emphasised.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RingsPart {
+    Time,
+    Fdbk,
+    Tone,
+    Mix,
+    Mech,
+    Sat,
+    Rev,
+}
+
+impl RingsPart {
+    /// In `RINGS_PARAMS`' order.
+    pub const ALL: [RingsPart; 7] = [
+        RingsPart::Time,
+        RingsPart::Fdbk,
+        RingsPart::Tone,
+        RingsPart::Mix,
+        RingsPart::Mech,
+        RingsPart::Sat,
+        RingsPart::Rev,
+    ];
+}
+
+/// The delay's echoes as rings spreading from a source dot, one per
+/// repeat, from the delay's set values (normalized) and the UI clock's
+/// `frame`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Rings {
+    /// How often a ring leaves the source, so how far apart they travel.
+    pub time: f32,
+    /// How many repeats survive.
+    pub fdbk: f32,
+    /// How many stay crisp before they blur.
+    pub tone: f32,
+    /// Ring weight against the source dot.
+    pub mix: f32,
+    /// MECHANICS: how much the rings wobble.
+    pub mech: f32,
+    /// How thick the newest ring is.
+    pub sat: f32,
+    /// The send on to the reverb: dots where the rings leave.
+    pub rev: f32,
+    pub focus: Option<RingsPart>,
+    pub frame: u32,
+}
+
+impl Rings {
+    /// How far a ring spreads each UI frame, px.
+    pub const SPEED: f32 = 0.8;
+
+    /// From `RINGS_PARAMS`' set values, normalized.
+    pub fn from_set(set: [f32; 7], focus: Option<RingsPart>, frame: u32) -> Self {
+        let n = |i: usize| set[i].clamp(0.0, 1.0);
+        Self {
+            time: n(0),
+            fdbk: n(1),
+            tone: n(2),
+            mix: n(3),
+            mech: n(4),
+            sat: n(5),
+            rev: n(6),
+            focus,
+            frame,
+        }
+    }
+
+    /// UI frames between rings: 4 (TIME 0) to 16 (TIME 1), so 3 to 13 px
+    /// apart: seven rings in the field to two.
+    pub fn period(&self) -> f32 {
+        4.0 + 12.0 * self.time
+    }
+
+    /// The distance between neighbouring rings, px.
+    pub fn spacing(&self) -> f32 {
+        self.period() * Self::SPEED
+    }
+
+    /// Repeats louder than an eighth of the first (FDBK^k ≥ 1/8), at most
+    /// 12; with no feedback, the first alone.
+    pub fn survivors(&self) -> usize {
+        if self.fdbk < 0.01 {
+            return 1;
+        }
+        let k = libm::logf(0.125) / libm::logf(self.fdbk.min(0.999));
+        (1 + k as usize).min(12)
+    }
+
+    /// Rings drawn solid before they blur (dotted): 1 (TONE 0) to 5.
+    pub fn crisp(&self) -> usize {
+        1 + libm::roundf(self.tone * 4.0) as usize
+    }
+
+    /// How long the newest ring has been out, UI frames (0..period). In
+    /// f64, so it stays smooth however long the clock has run.
+    pub fn age(&self) -> f32 {
+        libm::fmod(self.frame as f64, self.period() as f64) as f32
+    }
 }
 
 /// The chorus params the braid reads, in `Braid::from_set`'s order.
@@ -182,9 +297,10 @@ impl FocusGlyph {
             },
             FocusGlyph::Crossfader => Gauge::Crossfader { value },
             FocusGlyph::Composite(CompositeId::ChorusBraid) => composite(CompositeId::ChorusBraid),
-            FocusGlyph::Arc
-            | FocusGlyph::Composite(CompositeId::ReverbCube)
-            | FocusGlyph::Composite(CompositeId::DelayRings) => Gauge::Arc { value, bipolar },
+            FocusGlyph::Composite(CompositeId::DelayRings) => composite(CompositeId::DelayRings),
+            FocusGlyph::Arc | FocusGlyph::Composite(CompositeId::ReverbCube) => {
+                Gauge::Arc { value, bipolar }
+            }
         }
     }
 }
@@ -206,7 +322,7 @@ impl Gauge {
             | Gauge::Switch { .. }
             | Gauge::LevelBar { .. }
             | Gauge::Crossfader { .. } => false,
-            Gauge::Braid(_) => true,
+            Gauge::Braid(_) | Gauge::Rings(_) => true,
         }
     }
 }

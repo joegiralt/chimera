@@ -80,6 +80,15 @@ chorus braid (RATE, DEPTH, MIX; MODE is the strand count).
   composite's params can show reaches into its box. An animated glyph
   only redraws while the band actually shows it: not under a MIX+PLUS
   status, nor for a dimmed or absent slot.
+- **The delay rings are the second composite**: echoes as rings
+  spreading from a source dot, one per repeat (ADR 0053's MECHANICS for
+  the wobble). TIME is how often a ring leaves, so their spacing (3 to
+  13 px); FDBK how many repeats survive (FDBK^k ≥ 1/8, at most 12);
+  TONE how many stay solid before they blur dotted; MIX ring weight
+  against the source dot; MECHANICS wobbles each ring, more as it grows;
+  SAT thickens the newest; REV, the send on to the reverb, dots the edge
+  where rings leave. Same rules as the braid: stored values, the UI
+  clock, only its box (60 by 56) redrawn each frame.
 - **Each glyph gets one Demo page** ("Glyph: X", MIX + B6), one glyph per
   page, its slots bound to the params that drive it: several animated
   panels at once can't be judged.

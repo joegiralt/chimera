@@ -95,6 +95,12 @@ pub const BRAID_W: i32 = 80;
 pub const BRAID_H: i32 = 56;
 pub const BRAID_X: i32 = SCREEN_W - MARGIN_X - BRAID_W;
 pub const BRAID_Y: i32 = ARC_CY - BRAID_H / 2;
+/// The delay rings' box, flush with the right margin, round about its
+/// centre: the only pixels it redraws each frame.
+pub const RINGS_W: i32 = 60;
+pub const RINGS_H: i32 = 56;
+pub const RINGS_X: i32 = SCREEN_W - MARGIN_X - RINGS_W;
+pub const RINGS_Y: i32 = ARC_CY - RINGS_H / 2;
 
 /// Viz band on CellGrid / Mixer pages: 118..186, centre line 152.
 pub const VIZ_BAND_TOP: i32 = 118;

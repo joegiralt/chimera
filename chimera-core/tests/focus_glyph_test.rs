@@ -15,7 +15,7 @@ use chimera_core::project::PartId;
 use chimera_core::ui::UiState;
 use chimera_core::ui::block_def::{BlockDef, slot_addr};
 use chimera_core::ui::block_registry as reg;
-use chimera_core::ui::glyph::{Braid, CompositeId, FocusGlyph, Gauge, anim_key};
+use chimera_core::ui::glyph::{Braid, CompositeId, FocusGlyph, Gauge, Rings, anim_key};
 use chimera_core::ui::page::{PageId, PageKey, PageLayout};
 use chimera_core::ui::region::{RegionData, RegionKind};
 use chimera_core::ui::renderer::composite_set;
@@ -261,14 +261,16 @@ fn unbuilt_glyphs_draw_as_arc() {
             FocusGlyph::Crossfader => Gauge::Crossfader { value: 0.25 },
             // A built composite: whatever its inputs make of it.
             FocusGlyph::Composite(CompositeId::ChorusBraid) => Gauge::Switch { on: 9.0 },
+            FocusGlyph::Composite(CompositeId::DelayRings) => Gauge::Switch { on: 8.0 },
             _ => Gauge::Arc {
                 value: 0.25,
                 bipolar: true,
             },
         };
-        let composite = |id| {
-            assert_eq!(id, CompositeId::ChorusBraid);
-            Gauge::Switch { on: 9.0 }
+        let composite = |id| match id {
+            CompositeId::ChorusBraid => Gauge::Switch { on: 9.0 },
+            CompositeId::DelayRings => Gauge::Switch { on: 8.0 },
+            CompositeId::ReverbCube => panic!("the cube isn't built"),
         };
         assert_eq!(g.gauge(0.25, ValFmt::Bi, composite), want, "{g:?}");
     }
@@ -846,7 +848,8 @@ fn composite_values_stay_clear_of_the_box() {
             };
             let box_x = match id {
                 CompositeId::ChorusBraid => theme::BRAID_X,
-                CompositeId::DelayRings | CompositeId::ReverbCube => continue,
+                CompositeId::DelayRings => theme::RINGS_X,
+                CompositeId::ReverbCube => continue,
             };
             for w in value_texts(s) {
                 let right = theme::FOCUS_VALUE_X + draw::text_width(&theme::FONT_FOCUS, &w, 0);
@@ -880,4 +883,178 @@ fn a_status_stops_the_glyph_redrawing() {
     let mut full = Fb::new();
     ui.render_with_scope(&mut full, &perf, &scope_fixture());
     assert!(fb.px == full.px);
+}
+
+#[test]
+fn rings_read_their_set_values() {
+    // TIME, FDBK, TONE, MIX, MECH, SAT, REV.
+    let r = |time: f32, fdbk: f32, tone: f32| {
+        Rings::from_set([time, fdbk, tone, 0.5, 0.0, 0.0, 0.0], None, 0)
+    };
+    // TIME spaces the rings.
+    assert!(r(1.0, 0.5, 0.5).spacing() > r(0.0, 0.5, 0.5).spacing());
+    // FDBK: how many repeats survive; none feeding back, one ring.
+    assert_eq!(r(0.5, 0.0, 0.5).survivors(), 1);
+    assert!(r(0.5, 0.9, 0.5).survivors() > r(0.5, 0.4, 0.5).survivors());
+    // TONE: how many stay crisp before they blur.
+    assert!(r(0.5, 0.9, 1.0).crisp() > r(0.5, 0.9, 0.0).crisp());
+    assert!(r(0.5, 0.9, 0.0).crisp() >= 1);
+    assert!(Gauge::Rings(r(0.5, 0.5, 0.5)).animates());
+}
+
+fn rings_box(x: i32, y: i32) -> bool {
+    (theme::RINGS_X..theme::RINGS_X + theme::RINGS_W).contains(&x)
+        && (theme::RINGS_Y..theme::RINGS_Y + theme::RINGS_H).contains(&y)
+}
+
+const SIX: [EncoderId; 6] = [
+    EncoderId::A,
+    EncoderId::B,
+    EncoderId::C,
+    EncoderId::D,
+    EncoderId::E,
+    EncoderId::F,
+];
+
+/// FDBK and MIX up, MECH and SAT up a little, `slot` focused.
+fn rings_ui(slot: EncoderId) -> UiState {
+    let mut ui = UiState::new();
+    to_demo(&mut ui, &reg::DEMO_GLYPH_RINGS);
+    feed(&mut ui, Input::turn(EncoderId::B, 40));
+    feed(&mut ui, Input::turn(EncoderId::D, 64));
+    feed(&mut ui, Input::turn(EncoderId::E, 20));
+    feed(&mut ui, Input::turn(EncoderId::F, 30));
+    feed(&mut ui, Input::turn(slot, -1));
+    feed(&mut ui, Input::turn(slot, 1));
+    settle(&mut ui);
+    ui
+}
+
+#[test]
+fn glyph_rings_page_moves_only_inside_its_box() {
+    use chimera_core::dsp::delay::DelayParams;
+    // Not on the delay pages yet.
+    for s in BlockRef::Delay.specs() {
+        assert!(!matches!(s.glyph, FocusGlyph::Composite(_)), "{}", s.ident);
+    }
+    // Every value the page's params show stays clear of the box.
+    for id in [
+        DelayParams::TIME_MS,
+        DelayParams::FEEDBACK,
+        DelayParams::TONE,
+        DelayParams::MIX,
+        DelayParams::WOW_FLUTTER,
+        DelayParams::SATURATION,
+    ] {
+        let spec = ParamAddr::new(BlockRef::Delay, id).spec().unwrap();
+        for w in value_texts(spec) {
+            let right = theme::FOCUS_VALUE_X + draw::text_width(&theme::FONT_FOCUS, &w, 0);
+            assert!(right + 4 <= theme::RINGS_X, "{} {w}", spec.ident);
+        }
+    }
+    let mut ui = rings_ui(EncoderId::A);
+    let a = render_ui(&ui);
+    assert_eq!(a.oob, 0);
+    assert_eq!(arc_top(&a), theme::BG, "no arc");
+    let mut inside = 0;
+    for _ in 0..3 {
+        ui.update();
+    }
+    let b = render_ui(&ui);
+    for y in 0..H as i32 {
+        for x in 0..W as i32 {
+            if a.at(x, y) != b.at(x, y) {
+                assert!(rings_box(x, y), "({x}, {y}) moved outside the box");
+                inside += 1;
+            }
+        }
+    }
+    assert!(inside > 0, "the rings move on the clock");
+}
+
+#[test]
+fn rings_redraw_only_their_box_each_frame() {
+    let mut ui = rings_ui(EncoderId::C);
+    let mut fb = Fb::new();
+    let perf = chimera_core::ui::perf::PerfStats::zero();
+    ui.render_dirty_with_scope(&mut fb, &perf, &scope_fixture());
+    for _ in 0..3 {
+        ui.update();
+        let flushed: Vec<_> = ui
+            .render_dirty_with_scope(&mut fb, &perf, &scope_fixture())
+            .into_iter()
+            .filter(|&(a, b)| a != b)
+            .collect();
+        let rows = (
+            theme::RINGS_Y as u16,
+            (theme::RINGS_Y + theme::RINGS_H) as u16,
+        );
+        assert_eq!(flushed, [rows]);
+        let mut full = Fb::new();
+        ui.render_with_scope(&mut full, &perf, &scope_fixture());
+        assert!(fb.px == full.px, "dirty frame matches a full render");
+    }
+}
+
+#[test]
+fn rings_emphasise_the_focused_param() {
+    let shots: Vec<_> = SIX
+        .into_iter()
+        .map(|e| {
+            let mut ui = rings_ui(e);
+            while ui.clock().frame() < 200 {
+                ui.update();
+            }
+            render_ui(&ui)
+        })
+        .collect();
+    let boxed = |fb: &Fb| -> Vec<_> {
+        (theme::RINGS_Y..theme::RINGS_Y + theme::RINGS_H)
+            .flat_map(|y| (theme::RINGS_X..theme::RINGS_X + theme::RINGS_W).map(move |x| (x, y)))
+            .map(|(x, y)| fb.at(x, y))
+            .collect()
+    };
+    for i in 0..6 {
+        for j in i + 1..6 {
+            assert_ne!(boxed(&shots[i]), boxed(&shots[j]), "focus {i} vs {j}");
+        }
+    }
+}
+
+/// At any setting, focus and frame, a composite draws inside its box only:
+/// the box is all it clears each frame.
+#[test]
+fn composites_draw_inside_their_boxes() {
+    use chimera_core::ui::components::{draw_gauge, gauge_rect};
+    use chimera_core::ui::glyph::{BraidPart, RingsPart};
+    let check = |g: Gauge| {
+        let (x, y, w, h) = gauge_rect(&g).unwrap();
+        let mut fb = Fb::new();
+        draw_gauge(&mut fb, g);
+        assert_eq!(fb.oob, 0);
+        for py in 0..H as i32 {
+            for px in 0..W as i32 {
+                if fb.px[py as usize * W + px as usize] != 0 {
+                    assert!(
+                        (x..x + w).contains(&px) && (y..y + h).contains(&py),
+                        "{g:?} at ({px}, {py})"
+                    );
+                }
+            }
+        }
+    };
+    for v in [0.0, 0.5, 1.0] {
+        for frame in (0..200).step_by(7) {
+            for focus in RingsPart::ALL.map(Some).into_iter().chain([None]) {
+                check(Gauge::Rings(Rings::from_set(
+                    [v, 1.0 - v, v, v, 1.0, 1.0, 1.0],
+                    focus,
+                    frame,
+                )));
+            }
+            for focus in BraidPart::ALL.map(Some).into_iter().chain([None]) {
+                check(Gauge::Braid(Braid::from_set([v, v, 1.0, v], focus, frame)));
+            }
+        }
+    }
 }

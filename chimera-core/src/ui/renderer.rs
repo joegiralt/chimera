@@ -17,7 +17,9 @@ use crate::ui::chain::{ChainId, ChainNav};
 use crate::ui::components;
 use crate::ui::dungeon_map;
 use crate::ui::fmt::{self, FmtBuf};
-use crate::ui::glyph::{BRAID_PARAMS, Braid, BraidPart, CompositeId, FocusGlyph, Gauge};
+use crate::ui::glyph::{
+    BRAID_PARAMS, Braid, BraidPart, CompositeId, FocusGlyph, Gauge, RINGS_PARAMS, Rings, RingsPart,
+};
 use crate::ui::mod_grid::MatrixState;
 use crate::ui::page::PageLayout;
 use crate::ui::perf::PerfStats;
@@ -411,8 +413,16 @@ impl Renderer {
                 let set = self.eased_set(f, BRAID_PARAMS);
                 Gauge::Braid(Braid::from_set(set, focus, f.clock.frame()))
             }
+            CompositeId::DelayRings => {
+                let focus = RINGS_PARAMS
+                    .iter()
+                    .position(|&a| Some(a) == focused)
+                    .map(|i| RingsPart::ALL[i]);
+                let set = self.eased_set(f, RINGS_PARAMS);
+                Gauge::Rings(Rings::from_set(set, focus, f.clock.frame()))
+            }
             // `gauge` calls this for built composites only.
-            CompositeId::ReverbCube | CompositeId::DelayRings => Gauge::Arc {
+            CompositeId::ReverbCube => Gauge::Arc {
                 value,
                 bipolar: fmt.is_bipolar(),
             },
