@@ -244,10 +244,10 @@ pub const TIME_FADE: u16 = 960;
 const _: () = assert!((TIME_FADE as usize).is_multiple_of(BLOCK_SIZE));
 
 /// The line runs whatever MIX is, so a return brought back up plays what
-/// the send is doing now, never a frozen tail (#61). MIX, FDBK, SAT and
-/// MECHANICS ease (FDBK and SAT step what is written, heard a TIME later;
-/// MECHANICS moves the read head); a TIME change crossfades two read
-/// heads, never gliding one. TONE, a coefficient, steps.
+/// the send is doing now, never a frozen tail (#61). MIX, FDBK, SAT, TONE
+/// and MECHANICS ease (FDBK, SAT and TONE change what is written, heard a
+/// TIME later; MECHANICS moves the read head); a TIME change crossfades
+/// two read heads, never gliding one.
 pub struct TapeDelay {
     buffer: [f32; MAX_DELAY_SAMPLES],
     write_pos: usize,
@@ -264,10 +264,11 @@ pub struct TapeDelay {
     mix: Ease,
     feedback: Ease,
     saturation: Ease,
+    tone: Ease,
     mechanics: Ease,
 }
 
-crate::in_place::field_list!(TapeDelay => TapeDelay { buffer, write_pos, lp_state, transport, time, next, fade, primed, mix, feedback, saturation, mechanics });
+crate::in_place::field_list!(TapeDelay => TapeDelay { buffer, write_pos, lp_state, transport, time, next, fade, primed, mix, feedback, saturation, tone, mechanics });
 
 /// One block's eased settings, each `(from, to)`.
 #[derive(Clone, Copy)]
@@ -275,14 +276,21 @@ struct Eased {
     mix: (f32, f32),
     feedback: (f32, f32),
     saturation: (f32, f32),
+    tone: (f32, f32),
     mechanics: (f32, f32),
 }
 
 impl Eased {
     fn moving(&self) -> bool {
-        [self.mix, self.feedback, self.saturation, self.mechanics]
-            .iter()
-            .any(|e| e.0 != e.1)
+        [
+            self.mix,
+            self.feedback,
+            self.saturation,
+            self.tone,
+            self.mechanics,
+        ]
+        .iter()
+        .any(|e| e.0 != e.1)
     }
 }
 
@@ -306,6 +314,7 @@ impl TapeDelay {
             mix: Ease::default(),
             feedback: Ease::default(),
             saturation: Ease::default(),
+            tone: Ease::default(),
             mechanics: Ease::default(),
         }
     }
@@ -359,13 +368,14 @@ impl TapeDelay {
             mix: self.mix.step(mix, k),
             feedback: self.feedback.step(params.feedback, k),
             saturation: self.saturation.step(params.saturation, k),
+            tone: self.tone.step(params.tone, k),
             mechanics: self.mechanics.step(params.wow_flutter, k),
         };
         match (self.fade > 0, e.moving()) {
-            (false, false) => self.span::<false, false>(buf, params, &tap, e, insert),
-            (false, true) => self.span::<false, true>(buf, params, &tap, e, insert),
-            (true, false) => self.span::<true, false>(buf, params, &tap, e, insert),
-            (true, true) => self.span::<true, true>(buf, params, &tap, e, insert),
+            (false, false) => self.span::<false, false>(buf, &tap, e, insert),
+            (false, true) => self.span::<false, true>(buf, &tap, e, insert),
+            (true, false) => self.span::<true, false>(buf, &tap, e, insert),
+            (true, true) => self.span::<true, true>(buf, &tap, e, insert),
         }
     }
 
@@ -376,14 +386,14 @@ impl TapeDelay {
     fn span<const FADE: bool, const RAMP: bool>(
         &mut self,
         buf: &mut [f32; BLOCK_SIZE],
-        params: &DelayParams,
         tap: &Tap,
         e: Eased,
         insert: bool,
     ) {
         let ramp = |v: (f32, f32)| (v.0, step_of(v, BLOCK_SIZE));
         // Tone: LP coefficient (higher = brighter)
-        let lp_coeff = 0.2 + params.tone * 0.75;
+        let lp = |t: f32| 0.2 + t * 0.75;
+        let lp_coeff = ramp((lp(e.tone.0), lp(e.tone.1)));
         let gain = |s: f32| 1.0 + s * 3.0;
         let (g0, g1) = (gain(e.saturation.0), gain(e.saturation.1));
         let sat_gain = ramp((g0, g1));
@@ -425,7 +435,7 @@ impl TapeDelay {
             }
 
             // Tone: one-pole LP in feedback path (tape loses highs each pass)
-            lp_state += lp_coeff * (delayed - lp_state);
+            lp_state += now(lp_coeff, i) * (delayed - lp_state);
             let filtered = lp_state;
 
             // Tape saturation in the feedback path, always on (ADR 0038): at
