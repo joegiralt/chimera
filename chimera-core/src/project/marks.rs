@@ -45,7 +45,11 @@ pub enum ProjectStatus {
 }
 
 pub fn project_status(p: &Project, t: TemplateCrc) -> ProjectStatus {
-    let crc = project_crc(p);
+    status_at(p, t, project_crc(p))
+}
+
+/// `project_status` given the project's CRC, for a caller that needs both.
+pub(super) fn status_at(p: &Project, t: TemplateCrc, crc: u32) -> ProjectStatus {
     if crc == t.get() {
         ProjectStatus::Pristine
     } else if p.meta.saved_crc == Some(crc) {
