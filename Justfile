@@ -85,13 +85,14 @@ clippy:
     cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --features sd-probe -- -D warnings
     cargo clippy -p chimera-bootloader --target thumbv7em-none-eabihf -- -D warnings
 
-# Render every screen-golden case with the real renderer and write
-# docs/screens/<case>.png at 2x (nearest neighbour). Needs ImageMagick (`magick`).
+# Render every screen (the golden cases and the atlas) with the real renderer
+# and write docs/screens/<case>.png at 2x (nearest neighbour), replacing the
+# old set. Needs ImageMagick (`magick`).
 # SCREEN_DUMP must be absolute: cargo runs the test binary with its CWD set
 # to chimera-core/, not the workspace root, so a relative path lands there.
 screens:
-    rm -rf target/screens && mkdir -p target/screens docs/screens
-    SCREEN_DUMP="$(pwd)/target/screens" cargo test -p chimera-core --test screen_golden_test -q
+    rm -rf target/screens docs/screens/*.png && mkdir -p target/screens docs/screens
+    SCREEN_DUMP="$(pwd)/target/screens" cargo test -p chimera-core --test screen_golden_test --test screen_atlas_test -q
     for f in target/screens/*.ppm; do magick "$f" -filter point -resize 200% "docs/screens/$(basename "$f" .ppm).png"; done
 
 # Flash firmware to PreenFM3 via DFU

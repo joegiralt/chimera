@@ -40,6 +40,11 @@ use stm32h7xx_hal::gpio::{Output, PD8, PD9, PD10, PushPull, Speed};
 use stm32h7xx_hal::rcc::CoreClocks;
 use stm32h7xx_hal::{pac, prelude::*, spi};
 
+/// How long the boot splash stays up from first light; SYSTEM and the
+/// last project load behind it.
+#[cfg(not(feature = "sd-probe"))]
+const SPLASH_US: u32 = 1_000_000;
+
 /// Flush-to-zero and default NaN, in this context (FPSCR) and in every
 /// exception's (FPDSCR, which the audio ISR starts from; it resets to
 /// 0). Tails decaying toward silence then never go denormal, whose
@@ -225,7 +230,7 @@ fn synth(board: Board) -> ! {
     use chimera_core::clock_plan::pll3_for;
     use chimera_core::hw::SampleBudget;
     use chimera_core::storage::{Card, SystemSync};
-    use chimera_core::ui::busy::{ToastStep, draw_busy, draw_toast};
+    use chimera_core::ui::busy::{ToastStep, draw_toast};
     use chimera_core::ui::perf::PerfTracker;
     use chimera_hal::ChimeraDisplay;
     use controls::Stm32Controls;
@@ -251,10 +256,11 @@ fn synth(board: Board) -> ! {
     let mut controls = Stm32Controls::new();
     let ui = shared::take_ui().expect("UI state taken once");
 
-    // Boot step 1: SYSTEM behind BUSY, then its theme. Card work runs only
-    // here and in the UI loop, never on the audio path, and every card
+    // Boot step 1: SYSTEM behind the splash, then its theme. Card work runs
+    // only here and in the UI loop, never on the audio path, and every card
     // path is bounded, so it can run before the watchdog starts.
-    draw_busy(&mut display);
+    let first_light = cortex_m::peripheral::DWT::cycle_count();
+    let _ = chimera_core::ui::splash::draw(&mut display);
     display.flush();
     let sd = sd::init(sd, &mut cp.DCB, &mut cp.DWT, &clocks, clk.cpu_hz);
     let store = sd::take_store(sd).expect("store taken once");
@@ -268,6 +274,13 @@ fn synth(board: Board) -> ! {
     // Boot step 2, still behind BUSY, before the audio and the watchdog
     // start: the last project (about 130 KB read), or NEW and why.
     ui.boot_project(&mut card, store, settings.last_project);
+    // The splash again in the card's theme, held to SPLASH_US from first
+    // light: the boot's card work hides inside it rather than adding to it.
+    let _ = chimera_core::ui::splash::draw(&mut display);
+    display.flush();
+    let held_us = cortex_m::peripheral::DWT::cycle_count().wrapping_sub(first_light)
+        / (clk.cpu_hz / 1_000_000);
+    clocks::delay_us(clk.cpu_hz, SPLASH_US.saturating_sub(held_us));
     let perf = PerfTracker::new();
     #[cfg(feature = "bench")]
     bench::run(&mut display, clk, ui.project_mut());
