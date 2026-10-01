@@ -9,7 +9,7 @@ use chimera_core::dsp::algo::params::AlgoOpParams;
 use chimera_core::dsp::lfo::LfoParams;
 use chimera_core::dsp::modal::{MODEL_NAMES, ModalParams};
 use chimera_core::dsp::modulator::LfoSlot;
-use chimera_core::modulation::{CUTOFF, ModSource};
+use chimera_core::modulation::ModSource;
 use chimera_core::params::OutParams;
 use chimera_core::project::PartId;
 use chimera_core::ui::UiState;
@@ -18,7 +18,6 @@ use chimera_core::ui::block_registry as reg;
 use chimera_core::ui::glyph::{Braid, CompositeId, FocusGlyph, Gauge, Rings, anim_key};
 use chimera_core::ui::page::{PageId, PageKey, PageLayout};
 use chimera_core::ui::region::{RegionData, RegionKind};
-use chimera_core::ui::renderer::composite_set;
 use chimera_core::ui::view::{SlotCtx, View, view};
 use chimera_core::ui::{draw, theme};
 use chimera_hal::{ButtonId, EncoderId};
@@ -33,7 +32,7 @@ const RINGS: FocusGlyph = FocusGlyph::Composite(CompositeId::DelayRings);
 const CUBE: FocusGlyph = FocusGlyph::Composite(CompositeId::ReverbCube);
 
 /// Params assigned a glyph other than ARC, by `(block kind, ident)`: every
-/// instance of the block (`AlgoOp`, `Env`, `Lfo`) alike. Each glyph story
+/// instance of the block (`AlgoOp`, `Env`, `Lfo`) alike. Assigning a glyph
 /// adds its rows here.
 const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     // Word choices: the word is the value, there is no amount to gauge.
@@ -262,7 +261,7 @@ fn glyph_is_hand_assigned_on_the_spec() {
 }
 
 #[test]
-fn unbuilt_glyphs_draw_as_arc() {
+fn each_glyph_maps_to_its_gauge() {
     for g in FocusGlyph::ALL {
         let want = match g {
             FocusGlyph::None => Gauge::None,
@@ -372,54 +371,6 @@ fn an_arc_focus_band_does_not_redraw_on_the_clock() {
     assert_eq!(ui.drawn_key(RegionKind::Focus), before);
 }
 
-/// A composite's set values are the stored ones: an LFO on the param moves
-/// its cell, never what `composite_set` returns.
-#[test]
-fn composite_set_ignores_modulation() {
-    let mut ui = UiState::new();
-    feed(&mut ui, Input::press(ButtonId::B2));
-    feed(&mut ui, Input::press(ButtonId::B1));
-    let chain = ui.nav.active_chain();
-    let ctx = SlotCtx::read(ui.params(), ui.selected_op());
-    let (node, slot) = (0..chain.len())
-        .find_map(|n| {
-            let def = chain.active_def(n, 0)?;
-            (0..6)
-                .find(|&i| slot_addr(def, i, &ctx) == Some(CUTOFF))
-                .map(|i| (n, i))
-        })
-        .expect("a page with CUTOFF");
-    for _ in 0..node {
-        feed(&mut ui, Input::press(ButtonId::Plus));
-    }
-    // Off the top of its range, so the LFO swings both ways.
-    let enc = [
-        EncoderId::A,
-        EncoderId::B,
-        EncoderId::C,
-        EncoderId::D,
-        EncoderId::E,
-        EncoderId::F,
-    ];
-    feed(&mut ui, Input::turn(enc[slot], -40));
-    let m = &mut ui.project_mut().edit_part(PartId::ALL[0]).sound.mod_state;
-    let d = m.push(CUTOFF).unwrap();
-    m.set_route(ModSource::Lfo1.index(), d, 127);
-
-    let stored = ui
-        .params()
-        .block(BlockRef::Filter)
-        .unwrap()
-        .normalized(CUTOFF.param);
-    let mut moved = false;
-    for _ in 0..60 {
-        ui.update();
-        moved |= (ui.renderer.anim[slot].current() - stored).abs() > 0.01;
-        assert_eq!(composite_set(ui.params(), [CUTOFF; 3]), [stored; 3]);
-    }
-    assert!(moved, "the LFO moves the cell");
-}
-
 fn to_demo(ui: &mut UiState, def: &'static BlockDef) {
     feed(ui, Input::chord(ButtonId::Mix, ButtonId::B6));
     let node = ui
@@ -464,13 +415,27 @@ fn glyph_arc_page_drives_the_arc() {
     let before = render_ui(&ui);
     assert_eq!(before.oob, 0);
     let key = focus_key(&mut ui);
-    let (vol, pan) = (ui.params().out.volume, ui.params().out.pan);
+    // Real ARC params, no override.
+    let reso = ParamAddr::new(
+        BlockRef::Filter,
+        chimera_core::params::FilterParams::RESONANCE,
+    );
+    let pan_addr = ParamAddr::new(BlockRef::Out, OutParams::PAN);
+    let ctx = SlotCtx::read(ui.params(), ui.selected_op());
+    for (slot, addr) in [(0, reso), (1, pan_addr)] {
+        assert_eq!(
+            view(ui.nav.active_block_def(), slot, &ctx).addr(),
+            Some(addr)
+        );
+        assert_eq!(addr.spec().unwrap().glyph, FocusGlyph::Arc);
+    }
+    let (vol, pan) = (ui.params().filter.resonance, ui.params().out.pan);
 
     // Encoder a: the unipolar value.
     feed(&mut ui, Input::turn(EncoderId::A, 20));
     settle(&mut ui);
     assert_eq!(ui.focused_slot(), 0);
-    assert_ne!(ui.params().out.volume, vol);
+    assert_ne!(ui.params().filter.resonance, vol);
     let uni_key = focus_key(&mut ui);
     assert_ne!(uni_key, key);
     let uni = render_ui(&ui);
@@ -722,12 +687,14 @@ fn braid_reads_its_set_values() {
         .map(|&m| b(m).strands())
         .collect();
     assert_eq!(strands, [0, 2, 2, 3]);
+    let at = |mode: f32, frame| Braid::from_set([mode, 0.5, 0.5, 0.5], None, frame);
     assert!(
-        b(2.0 / 3.0).twist(100) != b(1.0 / 3.0).twist(100),
+        at(2.0 / 3.0, 100).twist() != at(1.0 / 3.0, 100).twist(),
         "II twists faster"
     );
+    assert_eq!(b(1.0).mode, chimera_core::dsp::chorus::ChorusMode::JunoBoth);
     // RATE is how fast the twist travels: frame 0 is still, rate 0 slowest.
-    let rate = |r: f32| Braid::from_set([1.0 / 3.0, r, 0.5, 0.5], None, 20).twist(20);
+    let rate = |r: f32| Braid::from_set([1.0 / 3.0, r, 0.5, 0.5], None, 20).twist();
     assert!(rate(1.0) > rate(0.0));
     assert!(Gauge::Braid(b(1.0)).animates());
 }
@@ -1192,6 +1159,146 @@ fn cube_emphasises_the_focused_param() {
     for i in 0..5 {
         for j in i + 1..5 {
             assert_ne!(boxed(&shots[i]), boxed(&shots[j]), "focus {i} vs {j}");
+        }
+    }
+}
+
+/// The box of `rect` in `fb`.
+fn boxed_rect(
+    fb: &Fb,
+    (x, y, w, h): (i32, i32, i32, i32),
+) -> Vec<embedded_graphics::pixelcolor::Rgb565> {
+    (y..y + h)
+        .flat_map(|py| (x..x + w).map(move |px| (px, py)))
+        .map(|(px, py)| fb.at(px, py))
+        .collect()
+}
+
+/// On the real path, a composite draws the set values: a different
+/// display (modulated) value in the focused slot leaves its box as it was.
+#[test]
+fn composites_draw_set_values_not_the_animated_ones() {
+    let shots = [
+        (
+            braid_ui(EncoderId::B),
+            1,
+            (
+                theme::BRAID_X,
+                theme::BRAID_Y,
+                theme::BRAID_W,
+                theme::BRAID_H,
+            ),
+        ),
+        (
+            rings_ui(EncoderId::A),
+            0,
+            (
+                theme::RINGS_X,
+                theme::RINGS_Y,
+                theme::RINGS_W,
+                theme::RINGS_H,
+            ),
+        ),
+        (
+            cube_ui(EncoderId::A),
+            0,
+            (theme::CUBE_X, theme::CUBE_Y, theme::CUBE_W, theme::CUBE_H),
+        ),
+    ];
+    for (mut ui, slot, rect) in shots {
+        assert_eq!(ui.focused_slot(), slot);
+        let before = boxed_rect(&render_ui(&ui), rect);
+        let v = ui.renderer.anim[slot].current();
+        ui.renderer.anim[slot].snap(if v > 0.5 { v - 0.4 } else { v + 0.4 });
+        assert_eq!(boxed_rect(&render_ui(&ui), rect), before, "slot {slot}");
+    }
+}
+
+/// The focus key carries the set value: under a modulation pinned at the
+/// top, a CROSSFADER's set value moving still redraws the cap.
+#[test]
+fn a_crossfader_redraws_when_only_its_set_value_moves() {
+    use chimera_core::dsp::algo::params::AlgoParams;
+    let morph = ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH);
+    let mut ui = UiState::new();
+    feed(&mut ui, Input::press(ButtonId::B2));
+    feed(&mut ui, Input::press(ButtonId::B1));
+    let ctx = SlotCtx::read(ui.params(), ui.selected_op());
+    let slot = (0..6)
+        .find(|&i| slot_addr(ui.nav.active_block_def(), i, &ctx) == Some(morph))
+        .expect("ALG holds MORPH");
+    feed(&mut ui, Input::turn(SIX[slot], -127));
+    feed(&mut ui, Input::turn(SIX[slot], 76));
+    // VEL stands in as 1 on the display: a full route pins MORPH at the top.
+    let m = &mut ui.project_mut().edit_part(PartId::ALL[0]).sound.mod_state;
+    let d = m.push(morph).unwrap();
+    m.set_route(ModSource::Vel.index(), d, 127);
+    let perf = chimera_core::ui::perf::PerfStats::zero();
+    let mut fb = Fb::new();
+    for _ in 0..120 {
+        ui.update();
+        ui.render_dirty_with_scope(&mut fb, &perf, &scope_fixture());
+    }
+    assert_eq!(ui.renderer.anim[slot].current(), 1.0, "modulated, pinned");
+    assert!((ui.renderer.set[slot].current() - 76.0 / 127.0).abs() < 0.01);
+    let xf = (
+        theme::XF_CX - theme::XF_W / 2,
+        theme::ARC_CY - theme::XF_CAP_H / 2,
+        theme::XF_W,
+        theme::XF_CAP_H,
+    );
+    let before = boxed_rect(&fb, xf);
+    feed(&mut ui, Input::turn(SIX[slot], 26));
+    for _ in 0..120 {
+        ui.update();
+        ui.render_dirty_with_scope(&mut fb, &perf, &scope_fixture());
+    }
+    assert_eq!(ui.renderer.anim[slot].current(), 1.0, "still pinned");
+    assert_ne!(boxed_rect(&fb, xf), before, "the cap moved");
+    let mut full = Fb::new();
+    ui.render_with_scope(&mut full, &perf, &scope_fixture());
+    assert!(fb.px == full.px, "dirty frame matches a full render");
+}
+
+/// The wobble's phase stays in 0..τ, smooth, however long the clock runs.
+#[test]
+fn rings_wobble_phase_wraps_in_f64() {
+    let tau = core::f64::consts::TAU;
+    for frame in [0, 1, 1000, u32::MAX - 1] {
+        let r = Rings::from_set([0.5; 7], None, frame);
+        let want = ((frame as f64 * 0.37) % tau) as f32;
+        assert_eq!(r.wobble_phase(), want, "{frame}");
+        assert!((0.0..core::f32::consts::TAU + 1e-3).contains(&r.wobble_phase()));
+    }
+}
+
+/// Each composite's params are the specs that carry it, both ways; a
+/// CROSSFADER blends a range, never a list of names.
+#[test]
+fn composite_params_match_their_specs() {
+    let ids = [
+        CompositeId::ChorusBraid,
+        CompositeId::DelayRings,
+        CompositeId::ReverbCube,
+    ];
+    for b in BlockRef::ALL {
+        for s in b.specs() {
+            let addr = ParamAddr::new(b, s.id);
+            if let FocusGlyph::Composite(id) = s.glyph {
+                assert!(
+                    id.params().contains(&addr),
+                    "{b:?}.{} not in {id:?}",
+                    s.ident
+                );
+            }
+            if s.glyph == FocusGlyph::Crossfader {
+                assert!(!matches!(s.fmt, ValFmt::Names(_)), "{b:?}.{}", s.ident);
+            }
+        }
+    }
+    for id in ids {
+        for a in id.params() {
+            assert_eq!(a.spec().unwrap().glyph, FocusGlyph::Composite(id), "{a:?}");
         }
     }
 }

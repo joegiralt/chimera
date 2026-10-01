@@ -14,7 +14,6 @@ use crate::modulation::{MAX_MOD_SOURCES, ModSource};
 use crate::params::{DriveParams, EnvParams, FilterParams, FolderParams, OutParams, PitchParams};
 use crate::part::PartParams;
 use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2, FxFlow, FxNode, ParamSlot, VizType};
-use crate::ui::glyph::FocusGlyph;
 use crate::ui::page::{PageLayout, ValFmt};
 use crate::ui::theme_settings::ThemeSettings;
 
@@ -746,7 +745,8 @@ pub static DEMO_FM: BlockDef = BlockDef {
 
 // One page per focus glyph: its slots bind the params that drive it.
 
-/// GLYPH: ARC. a: unipolar, b: bipolar (from 12:00).
+/// GLYPH: ARC, on two real ARC params. a: unipolar (RESO), b: bipolar
+/// from 12:00 (PAN).
 pub static DEMO_GLYPH_ARC: BlockDef = BlockDef {
     id: 70,
     name: "Glyph: Arc",
@@ -754,10 +754,7 @@ pub static DEMO_GLYPH_ARC: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
-        // VOLUME is a LEVEL BAR on its own pages; here it shows the arc.
-        ParamSlot::param(BlockRef::Out, OutParams::VOLUME)
-            .with_label("UNI")
-            .with_glyph(FocusGlyph::Arc),
+        ParamSlot::param(BlockRef::Filter, FilterParams::RESONANCE).with_label("UNI"),
         ParamSlot::param(BlockRef::Out, OutParams::PAN).with_label("BI"),
         EMPTY,
         EMPTY,

@@ -1010,7 +1010,13 @@ impl UiState {
     }
 
     /// Snapshot of what region `kind` shows; a region redraws when it changes.
-    fn region_data(&self, kind: region::RegionKind, f: &renderer::Frame) -> region::RegionData {
+    /// `shown` is the focus band's gauge this frame (`Renderer::shown_gauge`).
+    fn region_data(
+        &self,
+        kind: region::RegionKind,
+        f: &renderer::Frame,
+        shown: Option<glyph::Gauge>,
+    ) -> region::RegionData {
         use region::{RegionData, RegionKind};
         let qvalues = region::quantize_values(&self.renderer.anim);
         let audio_page = f.def.viz == VizType::AudioStats;
@@ -1045,7 +1051,7 @@ impl UiState {
             )
             .with_set(region::quantize(self.renderer.set[f.focus].current()))
             .animated(glyph::anim_key(
-                self.renderer.shown_gauge(f).is_some_and(|g| g.animates()),
+                shown.is_some_and(|g| g.animates()),
                 f.clock.frame(),
             )),
             RegionKind::Viz => {
@@ -1102,8 +1108,9 @@ impl UiState {
         let mut data = [region::RegionData::sentinel_header(); region::MAX_REGIONS];
         {
             let f = self.frame(perf, audio, scope);
+            let shown = self.renderer.shown_gauge(&f);
             for (d, r) in data.iter_mut().zip(self.region_set.active_regions()) {
-                *d = self.region_data(r.kind, &f);
+                *d = self.region_data(r.kind, &f, shown);
             }
         }
         for (r, d) in self.region_set.active_regions_mut().iter_mut().zip(data) {
@@ -1169,15 +1176,18 @@ impl UiState {
         let mut data = [region::RegionData::sentinel_header(); region::MAX_REGIONS];
         {
             let f = self.frame(perf, audio, scope);
+            // The focus band's gauge, resolved once for the frame.
+            let shown = self.renderer.shown_gauge(&f);
             for i in 0..count {
                 let r = self.region_set.regions[i];
-                data[i] = self.region_data(r.kind, &f);
+                data[i] = self.region_data(r.kind, &f, shown);
                 // Only an animated glyph moved: redraw its box alone.
-                if data[i] != r.prev_data
+                if r.kind == region::RegionKind::Focus
+                    && data[i] != r.prev_data
                     && data[i].without_anim() == r.prev_data.without_anim()
+                    && let Some(gauge) = shown
                     && let Some(rows) =
-                        self.renderer
-                            .redraw_gauge(display, |d| d.pixel_buffer(), &f)
+                        renderer::Renderer::redraw_gauge(display, |d| d.pixel_buffer(), gauge)
                 {
                     flush_list[flush_count] = rows;
                     flush_count += 1;
