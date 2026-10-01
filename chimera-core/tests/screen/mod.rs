@@ -16,8 +16,9 @@ use chimera_core::scope::SCOPE_LEN;
 use chimera_core::ui::UiState;
 use chimera_core::ui::block_registry as reg;
 use chimera_core::ui::busy::{draw_busy, draw_toast};
+use chimera_core::ui::hold::HOLD_MS;
 use chimera_core::ui::perf::PerfStats;
-use chimera_hal::{ButtonId, ButtonState, ChimeraDisplay, Controls, EncoderId};
+use chimera_hal::{ButtonId, ButtonState, ChimeraDisplay, Controls, EncoderId, Ms};
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::pixelcolor::raw::{RawData, RawU16};
 use embedded_graphics::prelude::*;
@@ -115,11 +116,30 @@ impl ChimeraDisplay for Fb {
 /// One frame of input.
 #[derive(Default)]
 pub struct Input {
+    at_ms: u32,
     buttons: Vec<(ButtonId, ButtonState)>,
     encoders: Vec<(EncoderId, i8)>,
 }
 
 impl Input {
+    /// The frame's clock; press and release edges are stamped with it.
+    pub fn at(mut self, ms: u32) -> Self {
+        self.at_ms = ms;
+        self
+    }
+    pub fn release(b: ButtonId) -> Self {
+        Self {
+            buttons: vec![(b, ButtonState::Released)],
+            ..Self::default()
+        }
+    }
+    /// A frame with `b` still down.
+    pub fn held(b: ButtonId) -> Self {
+        Self {
+            buttons: vec![(b, ButtonState::Held)],
+            ..Self::default()
+        }
+    }
     pub fn press(b: ButtonId) -> Self {
         Self {
             buttons: vec![(b, ButtonState::Pressed)],
@@ -142,6 +162,9 @@ impl Input {
 }
 
 impl Controls for Input {
+    fn now_ms(&self) -> Ms {
+        Ms(self.at_ms)
+    }
     fn encoder_delta(&self, id: EncoderId) -> i8 {
         self.encoders.iter().find(|e| e.0 == id).map_or(0, |e| e.1)
     }
@@ -155,6 +178,19 @@ impl Controls for Input {
 
 pub fn feed(ui: &mut UiState, input: Input) {
     ui.handle_input(&input);
+}
+
+/// Press, then release 100 ms later.
+pub fn tap(ui: &mut UiState, b: ButtonId) {
+    feed(ui, Input::press(b).at(0));
+    feed(ui, Input::release(b).at(100));
+}
+
+/// Press, a frame at `HOLD_MS`, then release.
+pub fn hold(ui: &mut UiState, b: ButtonId) {
+    feed(ui, Input::press(b).at(0));
+    feed(ui, Input::held(b).at(HOLD_MS));
+    feed(ui, Input::release(b).at(HOLD_MS + 33));
 }
 
 /// Let every lerp settle (the goldens lock the resting screen).

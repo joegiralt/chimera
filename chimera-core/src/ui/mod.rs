@@ -12,6 +12,7 @@ pub mod dungeon_map;
 pub mod filter_panel;
 pub mod fmt;
 pub mod focus;
+pub mod hold;
 pub mod mod_grid;
 pub mod mod_panel;
 pub mod page;
