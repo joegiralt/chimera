@@ -5,24 +5,40 @@ mod common;
 
 use std::path::PathBuf;
 
+use chimera_core::dsp::modal::{BankModes, ResonatorMode, damp_for, damp_from_v1_decay};
+use chimera_core::dsp::note_to_freq;
 use chimera_core::factory::{FACTORY_LEN, factory_sound};
-use chimera_core::params::EngineType;
+use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::preset::Sound;
-use chimera_core::storage::FileError;
+use chimera_core::storage::{FileError, MIGRATIONS, TRANSLATIONS, decode_block};
+use chimera_hal::BLOCK_SIZE;
 use common::codec_util::{
     SYSTEM_FIXTURE, decode, decode_into, encode, fix_crc, record_offsets, system_file,
     system_fixture_settings,
 };
-use common::{fnv1a, render_sound};
+use common::{
+    SR, assert_stable, fnv1a, fundamental_hz, octave_clear, play_modal, play_modal_at, render_sound,
+};
 
 /// The v1 corpus: name, and the Sound it was written from.
 fn sources() -> Vec<(String, Sound)> {
     let mut v: Vec<_> = (0..FACTORY_LEN)
         .map(|i| (format!("factory_{i}.snd"), factory_sound(i).unwrap()))
         .collect();
-    v.push(("init_algo.snd".into(), Sound::init(EngineType::Algo)));
-    v.push(("init_modal.snd".into(), Sound::init(EngineType::Modal)));
+    v.push(("init_algo.snd".into(), v1_init(EngineType::Algo)));
+    v.push(("init_modal.snd".into(), v1_init(EngineType::Modal)));
     v
+}
+
+/// INIT as the v1 fixtures saved it: OUT LEVEL 0.8 and every operator's
+/// RR 8, before ADR 0063 moved them. An old INIT loads as it was saved.
+fn v1_init(engine: EngineType) -> Sound {
+    let mut s = Sound::init(engine);
+    s.params.out.volume = 0.8;
+    for o in &mut s.params.algo.ops {
+        o.rr = 8;
+    }
+    s
 }
 
 fn path(name: &str) -> PathBuf {
@@ -138,16 +154,22 @@ fn v1_fixture_bytes_are_frozen() {
 
 /// FNV-1a of each fixture's render, recorded when the fixtures were written.
 const FIXTURE_RENDERS: &[(&str, u64)] = &[
-    ("factory_0.snd", 0x878c9ca6ca353aa1),
-    ("factory_1.snd", 0x0edce6a988cf7f1b),
-    ("factory_2.snd", 0xe0277f16dca55649),
-    ("factory_3.snd", 0x10424d2460e991df),
-    ("factory_4.snd", 0x05a4301cc61a2332),
-    ("factory_5.snd", 0x73b6b9429389dc2a),
-    ("factory_6.snd", 0x2cf3c112b967ff6f),
-    ("factory_7.snd", 0x7ef436e312c3c9e6),
-    ("init_algo.snd", 0xfd37f75c4096594b),
-    ("init_modal.snd", 0x90f1197c153d0b05),
+    // Re-recorded, every row, as `golden_test`'s: ADR 0060's DC blocker;
+    // SQR BASS and ALGO INIT for the filter's C1 `saturate` (ADR 0063); every
+    // row for the harness's 1.6 s release (`OFF_BLOCKS`, ADR 0063).
+    ("factory_0.snd", 0xe98faae37ce6244f),
+    ("factory_1.snd", 0xab3ee51d703f17d9),
+    ("factory_2.snd", 0x07d23e6d0289e847),
+    ("factory_3.snd", 0x6136e6c43abf648a),
+    ("factory_4.snd", 0x9f9f17695f406811),
+    ("factory_5.snd", 0x1c921c39e8ff9a60),
+    ("factory_6.snd", 0xaa780f9a0cee1652),
+    ("factory_7.snd", 0x2f4ec4667083a813),
+    ("init_algo.snd", 0x68e843041c24a5bb),
+    // Re-recorded: Modal 2 step A's resonators (spec § Tests), then ADR 0058's gain,
+    // then Task 18's DAMP make-up and relative silence (ADR 0056),
+    // then the free ring on release (ADR 0062).
+    ("init_modal.snd", 0xda59622102625d57),
 ];
 
 #[test]
@@ -162,6 +184,19 @@ fn v1_fixtures_render_identically() {
         assert_eq!(
             fnv1a(&render_sound(&s.params, &s.mod_state)),
             want,
+            "{name}"
+        );
+    }
+}
+
+/// Every v1 file, saved before STEAL (#254), steals CUT.
+#[test]
+fn v1_fixtures_steal_cut() {
+    for (name, _) in sources() {
+        let s = decode(&fixture(&name)).unwrap();
+        assert_eq!(
+            s.params.pitch.steal,
+            chimera_core::params::Steal::Cut,
             "{name}"
         );
     }
@@ -278,4 +313,92 @@ fn truncated_bad_crc_bad_magic_leave_target() {
         assert_eq!(decode_into(&mut t, &f), Err(FileError::BadMagic), "{name}");
         assert!(t.bits_eq(&factory_sound(3).unwrap()), "{name}");
     }
+}
+
+/// A v1 Modal block in `mode`: every old id, DECAY at `decay`.
+fn v1_modal(mode: ResonatorMode, decay: f32) -> Vec<u8> {
+    let mut p = vec![1, 0];
+    p.extend(u32::from(mode as u8).to_le_bytes());
+    let reals = [0.6, decay, 0.9, 0.4, 0.7, 0.5, 0.35, 1.0, 0.1, 0.2, 0.3];
+    for (id, v) in (1u8..).zip(reals) {
+        p.push(id);
+        p.extend(f32::to_le_bytes(v));
+    }
+    p
+}
+
+fn decode_modal(payload: &[u8]) -> ParamSnapshot {
+    let mut snap = ParamSnapshot::for_engine(EngineType::Modal);
+    decode_block(payload, MIGRATIONS, TRANSLATIONS, Some(&mut snap)).unwrap();
+    snap
+}
+
+/// Spec § 3: DECAY → DAMP, STIFF or INHARM → STRUCTURE, FDBK dropped; the
+/// string models' BRIGHT flips to the new direction. BANK's BURST is its
+/// EXCITE; Bowed loads its old sound, now in tune (#240, ADR 0064).
+#[test]
+fn old_modal_patches_translate() {
+    use ResonatorMode::{Bowed, Modal, String, Sympathetic};
+    let init = decode(&fixture("init_modal.snd")).unwrap();
+    assert!(init.bits_eq(&v1_init(EngineType::Modal)));
+    for mode in [String, Modal, Bowed, Sympathetic] {
+        let snap = decode_modal(&v1_modal(mode, 0.2));
+        let m = &snap.modal;
+        let (damp, structure) = match mode {
+            Modal => (0.2, 0.7),
+            String | Bowed => (damp_from_v1_decay(0.2), 0.35),
+            Sympathetic => (damp_from_v1_decay(0.2), 0.7),
+        };
+        let bright = if mode == Modal { 0.9 } else { 1.0 - 0.9 };
+        // v1 Bowed never read them: the old sound's values.
+        let (damp, bright, pos) = if mode == Bowed {
+            (damp_for(0.12), 1.0, 0.0)
+        } else {
+            (damp, bright, 0.4)
+        };
+        assert_eq!((m.damp, m.structure), (damp, structure), "{mode:?}");
+        assert_eq!(
+            (m.excite, m.bright, m.pos, m.body),
+            (0.6, bright, pos, 0.5),
+            "{mode:?}"
+        );
+        // The exciters' hidden values; an old strike keeps its length.
+        assert_eq!((m.color, m.force, m.speed), (0.8, 0.5, 0.5), "{mode:?}");
+        let burst = if mode == Modal { 0.6 } else { 0.8 };
+        assert_eq!(m.burst, burst, "{mode:?}");
+        assert_eq!((m.ens_depth, m.ens_rate, m.ens_mix), (0.1, 0.2, 0.3));
+        assert_eq!((m.couple, m.halo, m.modes), (0.25, 0.25, BankModes::M32));
+    }
+}
+
+/// A v1 Bowed patch on the one-loop bow restored in tune (ADR 0064):
+/// re-recorded deliberately, then for BRIGHT on the output (its BRIGHT 1
+/// no longer opens the loop); its level is `out_gain`'s now, at the VCA.
+const BOWED_V1_HELD: u64 = 0x9fb6_8f3a_568a_5b83;
+const BOWED_V1_RELEASED: u64 = 0xbe49_7c66_9987_19cf;
+
+/// A v1 Bowed patch plays at its note.
+#[test]
+fn a_v1_bowed_patch_bows_in_tune() {
+    let snap = decode_modal(&v1_modal(ResonatorMode::Bowed, 0.2));
+    let second = SR as usize / BLOCK_SIZE;
+    let held = play_modal_at(&snap.modal, 48, 127, second, 0);
+    let f0 = note_to_freq(48);
+    let s = &held[SR as usize / 2..];
+    let cents = 1200.0 * (fundamental_hz(s, f0 as f64) / f0 as f64).log2();
+    // Bowed's gate (spec § 2 BOWED): a bow moves its pitch a few cents.
+    assert!(cents.abs() < 5.0, "{cents:+.2} cents");
+    assert!(octave_clear(s, f0), "an octave low");
+    let released = play_modal_at(&snap.modal, 48, 127, second, second / 2);
+    assert_eq!(fnv1a(&held), BOWED_V1_HELD);
+    assert_eq!(fnv1a(&released), BOWED_V1_RELEASED);
+}
+
+/// Review focus 4: FDBK 1 at DECAY 0, today's longest, once ran away. It
+/// now loads as a plain long STRING.
+#[test]
+fn an_old_fdbk_1_patch_loads_stable() {
+    let snap = decode_modal(&v1_modal(ResonatorMode::String, 0.0));
+    let out = play_modal(&snap.modal, 36, 30 * SR as usize / BLOCK_SIZE, 0);
+    assert_stable(&out, 1.0, 1.0, "STRING, FDBK 1");
 }

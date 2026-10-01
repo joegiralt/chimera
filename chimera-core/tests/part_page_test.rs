@@ -6,13 +6,17 @@ use chimera_core::addr::{BlockRef, Op, ParamAddr};
 use chimera_core::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::filter::FilterMode;
-use chimera_core::dsp::modal::ResonatorMode;
+use chimera_core::dsp::modal::{ModalParams, ResonatorMode};
 use chimera_core::params::{EngineType, ParamSnapshot};
+use chimera_core::ui::UiState;
 use chimera_core::ui::block_def::{BlockDef, ParamSlot, VizType, slot_addr};
 use chimera_core::ui::block_registry as reg;
 use chimera_core::ui::page::PageLayout;
 use chimera_core::ui::part_page;
-use chimera_core::ui::view::SlotCtx;
+use chimera_core::ui::view::{SlotCtx, View, view};
+use chimera_hal::{ButtonId, EncoderId};
+
+mod screen;
 
 /// One encoder turn with operator A selected.
 fn turn(def: &BlockDef, slot: usize, delta: i8, p: &mut ParamSnapshot) {
@@ -31,13 +35,35 @@ fn read(def: &BlockDef, p: &ParamSnapshot) -> [f32; 6] {
 #[test]
 fn modal_pages() {
     let mut p = ParamSnapshot::default();
-    turn(&reg::MODAL_1, 1, 2, &mut p);
-    assert_eq!(p.modal.excite, 0.8 + 2.0 * (1.0 / 128.0));
-    turn(&reg::MODAL_2, 5, -1, &mut p);
-    assert_eq!(p.modal.ks_ens_mix, 0.0);
-    assert_eq!(read(&reg::MODAL_2, &p), [0.3, 0.0, 0.2, 0.0, 0.3, 0.0]);
-    // Plan D3: MODE reaches Sympathetic; Review Focus 3: snap lands on a choice.
+    p.modal.mode = ResonatorMode::Sympathetic;
+    let m = p.modal;
+    assert_eq!(
+        read(&reg::MODAL_2, &p),
+        [m.couple, m.halo, m.body, m.ens_depth, m.ens_mix, 0.0]
+    );
+    turn(&reg::MODAL_2, 0, 1, &mut p);
+    assert_eq!(p.modal.couple, m.couple + 1.0 / 128.0);
+
+    // BANK: MODES, then nothing.
+    p.modal.mode = ResonatorMode::Modal;
+    let ctx = SlotCtx::read(&p, Op::A);
+    assert_eq!(
+        slot_addr(&reg::MODAL_2, 0, &ctx),
+        Some(ParamAddr::new(BlockRef::Modal, ModalParams::MODES))
+    );
+    assert_eq!(view(&reg::MODAL_2, 1, &ctx), View::Empty);
+    let before = p.modal;
+    turn(&reg::MODAL_2, 1, 5, &mut p);
+    assert_eq!(format!("{:?}", p.modal), format!("{before:?}"));
+
+    // BOWED reads nothing on MDL2.
     p.modal.mode = ResonatorMode::Bowed;
+    let ctx = SlotCtx::read(&p, Op::A);
+    for k in 0..6 {
+        assert_eq!(view(&reg::MODAL_2, k, &ctx), View::Empty, "slot {k}");
+    }
+
+    // Plan D3: MODE reaches Sympathetic; Review Focus 3: snap lands on a choice.
     assert_eq!(read(&reg::MODAL_1, &p)[0], 2.0 / 3.0);
     turn(&reg::MODAL_1, 0, 1, &mut p);
     assert_eq!(p.modal.mode, ResonatorMode::Sympathetic);
@@ -49,6 +75,58 @@ fn modal_pages() {
     // Shift-snap on an Enum jumps straight to the far end.
     snap(&reg::MODAL_1, 0, 1, &mut p);
     assert_eq!(p.modal.mode, ResonatorMode::Sympathetic);
+}
+
+/// EXC's cells follow MODEL: the pluck's, the strike's and the bow's.
+#[test]
+fn exciter_page_follows_the_model() {
+    let mut p = ParamSnapshot::default();
+    p.modal.mode = ResonatorMode::String;
+    let m = p.modal;
+    assert_eq!(
+        read(&reg::MODAL_EXC, &p),
+        [m.excite, m.color, 0.0, 0.0, 0.0, 0.0]
+    );
+
+    p.modal.mode = ResonatorMode::Modal;
+    let ctx = SlotCtx::read(&p, Op::A);
+    assert_eq!(
+        slot_addr(&reg::MODAL_EXC, 1, &ctx),
+        Some(ParamAddr::new(BlockRef::Modal, ModalParams::BURST))
+    );
+
+    p.modal.mode = ResonatorMode::Bowed;
+    let ctx = SlotCtx::read(&p, Op::A);
+    let at = |k| slot_addr(&reg::MODAL_EXC, k, &ctx);
+    assert_eq!(
+        at(0),
+        Some(ParamAddr::new(BlockRef::Modal, ModalParams::FORCE))
+    );
+    assert_eq!(
+        at(1),
+        Some(ParamAddr::new(BlockRef::Modal, ModalParams::SPEED))
+    );
+    assert_eq!(view(&reg::MODAL_EXC, 2, &ctx), View::Empty);
+    let force = p.modal.force;
+    turn(&reg::MODAL_EXC, 0, 1, &mut p);
+    assert_eq!(p.modal.force, force + 1.0 / 128.0);
+}
+
+/// SPACE on MDL is the Part's REV send, the value SENDS edits.
+#[test]
+fn space_is_the_parts_reverb_send() {
+    let mut ui = UiState::new();
+    screen::load_init(&mut ui, EngineType::Modal);
+    assert_eq!(ui.nav.active_block_def().id, reg::MODAL_EXC.id);
+    screen::feed(&mut ui, screen::Input::press(ButtonId::Plus));
+    assert_eq!(ui.nav.active_block_def().id, reg::MODAL_1.id);
+    let was = ui.performance.parts[0].mix.sends[2];
+    screen::feed(&mut ui, screen::Input::turn(EncoderId::F, 10));
+    let now = ui.performance.parts[0].mix.sends[2];
+    assert!((now - was - 10.0 / 128.0).abs() < 1e-6, "{was} → {now}");
+    let edit = ui.performance.edit(0);
+    let space = part_page::read_values(&reg::MODAL_1, &edit, Op::A)[5];
+    assert_eq!(part_page::read_values(&reg::SENDS, &edit, Op::A)[2], space);
 }
 
 #[test]

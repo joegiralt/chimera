@@ -4,7 +4,7 @@ use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::chorus::ChorusParams;
 use crate::dsp::comp::CompParams;
 use crate::dsp::delay::DelayParams;
-use crate::dsp::modal::ModalParams;
+use crate::dsp::modal::{ModalPage, ModalParams};
 use crate::dsp::modulator::{EnvSlot, LfoSlot};
 use crate::dsp::reverb::ReverbParams;
 #[cfg(feature = "master-tape")]
@@ -22,22 +22,41 @@ const EMPTY: ParamSlot = ParamSlot::EMPTY;
 // Modal engine pages
 // ---------------------------------------------------------------------------
 
+/// EXC: the model's exciter; its cells follow MODEL.
+pub static MODAL_EXC: BlockDef = BlockDef {
+    id: 67,
+    name: "Exciter",
+    short: "EXC",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::modal_panel(ModalPage::Exciter, 0),
+        ParamSlot::modal_panel(ModalPage::Exciter, 1),
+        ParamSlot::modal_panel(ModalPage::Exciter, 2),
+        ParamSlot::modal_panel(ModalPage::Exciter, 3),
+        ParamSlot::modal_panel(ModalPage::Exciter, 4),
+        ParamSlot::modal_panel(ModalPage::Exciter, 5),
+    ],
+};
+
+/// Home: MODEL, the four macros, and SPACE, the Part's REV send.
 pub static MODAL_1: BlockDef = BlockDef {
     id: 2,
     name: "Modal",
-    short: "MDL",
+    short: "RES",
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
         ParamSlot::param(BlockRef::Modal, ModalParams::MODE),
-        ParamSlot::param(BlockRef::Modal, ModalParams::EXCITE),
-        ParamSlot::param(BlockRef::Modal, ModalParams::DECAY),
-        ParamSlot::param(BlockRef::Modal, ModalParams::BRIGHTNESS),
-        ParamSlot::param(BlockRef::Modal, ModalParams::POSITION),
-        ParamSlot::param(BlockRef::Modal, ModalParams::INHARM),
+        ParamSlot::param(BlockRef::Modal, ModalParams::STRUCTURE),
+        ParamSlot::param(BlockRef::Modal, ModalParams::BRIGHT),
+        ParamSlot::param(BlockRef::Modal, ModalParams::DAMP),
+        ParamSlot::param(BlockRef::Modal, ModalParams::POS),
+        ParamSlot::param(BlockRef::Part, PartParams::SEND_REVERB).with_label("SPACE"),
     ],
 };
 
+/// The model page: its cells follow MODEL.
 pub static MODAL_2: BlockDef = BlockDef {
     id: 3,
     name: "Modal-2",
@@ -45,12 +64,12 @@ pub static MODAL_2: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
-        ParamSlot::param(BlockRef::Modal, ModalParams::KS_BODY),
-        ParamSlot::param(BlockRef::Modal, ModalParams::KS_STIFFNESS),
-        ParamSlot::param(BlockRef::Modal, ModalParams::KS_FEEDBACK),
-        ParamSlot::param(BlockRef::Modal, ModalParams::KS_ENS_DEPTH),
-        ParamSlot::param(BlockRef::Modal, ModalParams::KS_ENS_RATE),
-        ParamSlot::param(BlockRef::Modal, ModalParams::KS_ENS_MIX),
+        ParamSlot::modal_panel(ModalPage::Model, 0),
+        ParamSlot::modal_panel(ModalPage::Model, 1),
+        ParamSlot::modal_panel(ModalPage::Model, 2),
+        ParamSlot::modal_panel(ModalPage::Model, 3),
+        ParamSlot::modal_panel(ModalPage::Model, 4),
+        ParamSlot::modal_panel(ModalPage::Model, 5),
     ],
 };
 
@@ -58,7 +77,8 @@ pub static MODAL_2: BlockDef = BlockDef {
 // Voice pitch (ADR 0042): a sub-page of every engine's node
 // ---------------------------------------------------------------------------
 
-/// PIT: the voice's PITCH and FINE; C–F are kept for GLIDE and SLEW.
+/// PIT: the voice's PITCH and FINE, and a steal's STEAL and GLIDE TIME
+/// (#254); E and F are free.
 pub static PITCH: BlockDef = BlockDef {
     id: 66,
     name: "Pitch",
@@ -68,8 +88,8 @@ pub static PITCH: BlockDef = BlockDef {
     params: [
         ParamSlot::param(BlockRef::Pitch, PitchParams::PITCH),
         ParamSlot::param(BlockRef::Pitch, PitchParams::FINE),
-        EMPTY,
-        EMPTY,
+        ParamSlot::param(BlockRef::Pitch, PitchParams::STEAL),
+        ParamSlot::param(BlockRef::Pitch, PitchParams::GLIDE_TIME),
         EMPTY,
         EMPTY,
     ],
@@ -443,7 +463,8 @@ static MOD_SUB_PAGES: [&BlockDef; 7] =
 
 static MODAL_SUB_PAGES: [&BlockDef; 2] = [&MODAL_2, &PITCH];
 
-static MODAL_PLUCK_BLOCKS: [ChainBlock; 4] = [
+static MODAL_PLUCK_BLOCKS: [ChainBlock; 5] = [
+    ChainBlock::page(&MODAL_EXC),
     ChainBlock::with_subs(&MODAL_1, &MODAL_SUB_PAGES),
     ChainBlock::with_subs(&FILTER, &FILTER_SUB_PAGES),
     ChainBlock::page(&FOLDER),
@@ -547,11 +568,18 @@ static MIXER_CHANNEL_BLOCKS: &[ChainBlock] = &[
     ChainBlock::with_subs(&MASTER, &MASTER_SUB_PAGES),
 ];
 
+/// Where the mixer opens: SENDS, not PART, whose C is OUT (ADR 0057).
+pub const MIXER_HOME: usize = 1;
+/// PART's node: remembered only from mixer to mixer (ADR 0057).
+pub const MIXER_PART: usize = 0;
+
 pub static MIXER_CHANNEL_CHAIN: ChainDef2 = ChainDef2 {
     name: "Mixer",
     blocks: MIXER_CHANNEL_BLOCKS,
     mod_sources: &[],
 };
+const _: () = assert!(MIXER_CHANNEL_BLOCKS[MIXER_HOME].def.id == SENDS.id);
+const _: () = assert!(MIXER_CHANNEL_BLOCKS[MIXER_PART].def.id == PART.id);
 
 // ---------------------------------------------------------------------------
 // System chain

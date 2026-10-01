@@ -27,7 +27,8 @@ impl Default for ReverbParams {
 }
 
 impl ReverbParams {
-    /// Off when the mix is below audibility; the bus skips it then.
+    /// Off when the mix is below audibility: the return fades out, the ring
+    /// runs on (ADR 0061).
     pub fn is_on(&self) -> bool {
         self.mix >= 0.001
     }

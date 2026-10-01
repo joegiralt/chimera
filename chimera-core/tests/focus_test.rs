@@ -47,6 +47,7 @@ fn focus_is_remembered_per_page() {
 fn mixer_part_and_matrix_pages_use_the_same_mechanism() {
     let mut ui = UiState::new();
     feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::B1));
+    feed(&mut ui, Input::press(ButtonId::Minus)); // SENDS → PART
     feed(&mut ui, Input::turn(EncoderId::D, -1)); // LEVEL
     assert_eq!(ui.focused_slot(), 3);
     feed(&mut ui, Input::press(ButtonId::B1)); // Part 1 chain, Algo

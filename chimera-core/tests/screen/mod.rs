@@ -215,18 +215,21 @@ pub fn to_level_page(ui: &mut UiState) {
     }
 }
 
-/// From Part 1's home (the engine's node), EDIT down its sub-list to PIT.
+/// From Part 1's first node, on to the engine's node and EDIT down its
+/// sub-list to PIT.
 pub fn to_pitch(ui: &mut UiState, engine: EngineType) {
     use chimera_core::ui::block_registry::{ALGO_CHAIN, MODAL_PLUCK_CHAIN, PITCH};
     let chain = match engine {
         EngineType::Algo => &ALGO_CHAIN,
         EngineType::Modal => &MODAL_PLUCK_CHAIN,
     };
-    let n = chain.blocks[0]
+    let node = chain.engine_node();
+    plus(ui, node);
+    let n = chain.blocks[node]
         .sub_pages
         .iter()
         .position(|d| d.id == PITCH.id)
-        .expect("PIT is a sub-page of the engine's node")
+        .unwrap()
         + 1;
     for _ in 0..n {
         feed(ui, Input::press(ButtonId::Edit));
@@ -310,7 +313,7 @@ pub type ScreenCase = (&'static str, fn(&mut UiState));
 
 /// Every screen the goldens lock, one or more per page type (spec § Testing).
 /// MST's place on the Mix chain: after TAPE only with `master-tape`
-/// (ADR 0055).
+/// (ADR 0055). The mixer opens on SENDS, node 1 (ADR 0057).
 const MST: usize = if cfg!(feature = "master-tape") { 6 } else { 5 };
 
 pub const CASES: &[ScreenCase] = &[
@@ -426,49 +429,91 @@ pub const CASES: &[ScreenCase] = &[
         to_pitch(ui, EngineType::Modal);
         feed(ui, Input::turn(EncoderId::A, -12)); // PITCH -12, focused
     }),
+    ("modal_exc", |ui| load_init(ui, EngineType::Modal)), // PLUCK: EXCITE, COLOR
+    ("modal_exc_bank", |ui| {
+        load_init(ui, EngineType::Modal);
+        plus(ui, 1); // RES
+        feed(ui, Input::turn(EncoderId::A, 1)); // MODEL → BANK
+        feed(ui, Input::press(ButtonId::Minus)); // STRIKE: EXCITE, BURST
+    }),
+    ("modal_exc_bowed", |ui| {
+        load_init(ui, EngineType::Modal);
+        plus(ui, 1); // RES
+        feed(ui, Input::turn(EncoderId::A, 2)); // MODEL → BOWED
+        feed(ui, Input::press(ButtonId::Minus)); // BOW: FORCE, SPEED
+    }),
+    ("modal_home", |ui| {
+        load_init(ui, EngineType::Modal);
+        plus(ui, 1); // EXC · RES
+    }),
+    ("modal_mdl2_symp", |ui| {
+        load_init(ui, EngineType::Modal);
+        plus(ui, 1); // RES
+        feed(ui, Input::turn(EncoderId::A, 3)); // MODEL → SYMP
+        feed(ui, Input::press(ButtonId::Edit)); // MDL2
+    }),
+    ("modal_home_bowed", |ui| {
+        load_init(ui, EngineType::Modal);
+        plus(ui, 1); // RES
+        feed(ui, Input::turn(EncoderId::A, 2)); // MODEL → BOWED: STRUCT dims
+    }),
     ("modal_amp", |ui| {
         load_init(ui, EngineType::Modal);
-        plus(ui, 2); // MDL · FLT · AMP
+        plus(ui, 3); // EXC · RES · FLT · AMP
     }),
     ("mixer_part", |ui| {
         feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
+        feed(ui, Input::press(ButtonId::Minus)); // SENDS → PART
         feed(ui, Input::turn(EncoderId::D, -8));
     }),
     ("mixer_sends", |ui| {
         feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
-        plus(ui, 1);
         feed(ui, Input::turn(EncoderId::C, 40));
     }),
     ("mixer_fx_delay", |ui| {
         feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
-        plus(ui, 3);
+        plus(ui, 2);
     }),
     ("mixer_fx_reverb", |ui| {
         feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
-        plus(ui, 4);
+        plus(ui, 3);
         feed(ui, Input::turn(EncoderId::A, 20)); // GRIT
     }),
     ("mixer_fx_delay_char", |ui| {
         feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
-        plus(ui, 3);
+        plus(ui, 2);
         feed(ui, Input::press(ButtonId::Edit)); // DLY › CHAR
         feed(ui, Input::turn(EncoderId::A, 20)); // WOW
     }),
     #[cfg(feature = "master-tape")]
     ("mixer_tape", |ui| {
         feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
-        plus(ui, 5);
+        plus(ui, 4);
         feed(ui, Input::turn(EncoderId::A, 40)); // DRIVE
     }),
     ("mixer_master", |ui| {
         feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
-        plus(ui, MST);
+        plus(ui, MST - 1);
         feed(ui, Input::turn(EncoderId::B, 4)); // RATIO 4:1: the curve bends
     }),
     ("mixer_master_level", |ui| {
         feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
-        plus(ui, MST);
+        plus(ui, MST - 1);
         feed(ui, Input::press(ButtonId::Edit)); // MST › LEVEL
+    }),
+    // Part 1 on P2: the OUT warning on its mixer (ADR 0057).
+    ("mixer_out_p2", |ui| {
+        feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
+        feed(ui, Input::press(ButtonId::Minus)); // → PART
+        feed(ui, Input::turn(EncoderId::C, 1)); // OUT P2
+        feed(ui, Input::press(ButtonId::Plus)); // → SENDS
+    }),
+    // Part 1 on P3: the warning on its sound pages; ALGORITHM falls back to ALG.
+    ("algo_out_p3", |ui| {
+        feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
+        feed(ui, Input::press(ButtonId::Minus));
+        feed(ui, Input::turn(EncoderId::C, 2)); // OUT P3
+        feed(ui, Input::press(ButtonId::B1)); // back to the sound pages
     }),
     ("mod_matrix", mod_matrix),
     ("mod_matrix_wide", |ui| {

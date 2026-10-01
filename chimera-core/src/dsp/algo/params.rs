@@ -36,7 +36,8 @@ impl Default for AlgoOpParams {
             d1r: 0,
             d1l: 15,
             d2r: 0,
-            rr: 8,
+            // RR 5: INIT's release, T60 about 1.1 s (ADR 0049's note).
+            rr: 5,
             rate_scale: 0,
             feedback: 0,
             velocity: 0,
@@ -93,7 +94,7 @@ pub static ALGO_OP_SPECS: [ParamSpec; 13] = [
     ParamSpec::stepped(6, "D1R", ValFmt::Int(31), 0.0, 31.0, 0.0, false).ident("D1R"),
     ParamSpec::stepped(7, "D1L", ValFmt::Int(15), 0.0, 15.0, 15.0, false).ident("D1L"),
     ParamSpec::stepped(8, "D2R", ValFmt::Int(31), 0.0, 31.0, 0.0, false).ident("D2R"),
-    ParamSpec::stepped(9, "RR", ValFmt::OneBased(14), 1.0, 15.0, 8.0, false).ident("RR"),
+    ParamSpec::stepped(9, "RR", ValFmt::OneBased(14), 1.0, 15.0, 5.0, false).ident("RR"),
     ParamSpec::stepped(10, "RS", ValFmt::Int(3), 0.0, 3.0, 0.0, false).ident("RS"),
     ParamSpec::stepped(11, "FDBK", ValFmt::Int(7), 0.0, 7.0, 0.0, false).ident("FDBK"),
     ParamSpec::stepped(12, "VEL", ValFmt::Int(7), 0.0, 7.0, 0.0, false).ident("VEL"),

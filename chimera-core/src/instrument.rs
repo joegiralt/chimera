@@ -9,6 +9,7 @@ use core::ptr::addr_of_mut;
 use chimera_hal::BLOCK_SIZE;
 
 use crate::dsp::Stereo;
+use crate::dsp::ease::{Ease, ease_coeff, step_of};
 use crate::dsp::engines::SlotKind;
 use crate::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
 use crate::dsp::modal::{ResonatorMode, SYM_NOTE_ON_CLEAR_MAX, SymPool};
@@ -136,22 +137,43 @@ pub fn pan_gains(pan: f32) -> (f32, f32) {
     (libm::sinf((1.0 - pan) * q), libm::sinf((1.0 + pan) * q))
 }
 
-/// Each Part's last pan and its `pan_gains`. `pan_gains` is two libm
-/// `sinf`, soft-float f64 on this FPU and most of what mixing cost, so the
-/// audio thread pays it only when a pan moves.
+/// Each Part's last pan and its `pan_gains`, and its mix gains eased
+/// (never snap). `pan_gains` is two libm `sinf`, soft-float f64 on this FPU
+/// and most of what mixing cost, so the audio thread pays it only when a
+/// pan moves.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct PanCache([Option<(u32, (f32, f32))>; MAX_PARTS]);
+pub struct MixState {
+    pans: [Option<(u32, (f32, f32))>; MAX_PARTS],
+    /// L and R (pan × LEVEL) and the three sends, per Part.
+    gains: [[Ease; MIX_GAINS]; MAX_PARTS],
+}
 
-impl PanCache {
-    fn gains(&mut self, p: usize, pan: f32) -> (f32, f32) {
-        match self.0[p] {
+/// A Part's eased gains: L, R and the three sends.
+const MIX_GAINS: usize = 2 + FX_SENDS;
+
+impl MixState {
+    fn pan_gains(&mut self, p: usize, pan: f32) -> (f32, f32) {
+        match self.pans[p] {
             Some((bits, g)) if bits == pan.to_bits() => g,
             _ => {
                 let g = pan_gains(pan);
-                self.0[p] = Some((pan.to_bits(), g));
+                self.pans[p] = Some((pan.to_bits(), g));
                 g
             }
         }
+    }
+}
+
+/// Adds a moving gain's ramp past its start to side `SIDE` of `out`
+/// (`S` sides, interleaved): `bus · step·(i + 1)`. The mix passes play
+/// each gain at its block's start; only the gains that move pay for this.
+#[inline(always)]
+fn glide<const S: usize, const SIDE: usize>(bus: &[f32; BLOCK_SIZE], step: f32, out: &mut [f32]) {
+    // `n` counts in whole floats, exactly `(i + 1) as f32`.
+    let mut n = 0.0f32;
+    for (o, &b) in out.as_chunks_mut::<S>().0.iter_mut().zip(bus) {
+        n += 1.0;
+        o[SIDE] += b * (step * n);
     }
 }
 
@@ -163,7 +185,8 @@ const PAIR_STEP: usize = 8;
 const _: () = assert!(BLOCK_SIZE.is_multiple_of(SEND_STEP) && BLOCK_SIZE.is_multiple_of(PAIR_STEP));
 
 /// Steps 2–4 of `render`: each written Part's bus, panned and levelled,
-/// into its pair and, by its sends, into the FX sends; then the FX bus
+/// into its pair and, by its sends, into the FX sends, each gain eased
+/// (`MixState`); then the FX bus
 /// once, its return on pair 1; then the master section (`FxBus::master`);
 /// then the output stage (`FxBus::limit`, ADR 0050), which trims and
 /// limits the block before this one.
@@ -179,31 +202,48 @@ pub fn mix_parts(
     buses: &[[f32; BLOCK_SIZE]; MAX_PARTS],
     written: &[bool; MAX_PARTS],
     sends: &mut [[f32; BLOCK_SIZE]; FX_SENDS],
-    pans: &mut PanCache,
+    mix: &mut MixState,
     fx: &mut FxBus,
     shared: &AudioShared,
     sample_rate: u32,
     dac: &mut DacBlocks,
 ) -> [f32; BLOCK_SIZE] {
-    // The written Parts in order, gains hoisted; by pair for the dry mix.
+    // The written Parts in order, gains hoisted at their block's start; by
+    // pair for the dry mix. The Parts whose gains move, with their pair and
+    // steps.
     let mut src = [(&buses[0], [0.0f32; FX_SENDS]); MAX_PARTS];
     let mut n = 0;
     let mut dry = [[(&buses[0], 0.0f32, 0.0f32); MAX_PARTS]; DAC_PAIRS];
     let mut dry_n = [0usize; DAC_PAIRS];
+    let mut moving = [(&buses[0], 0usize, [0.0f32; MIX_GAINS]); MAX_PARTS];
+    let mut moving_n = 0;
+    let k = ease_coeff(sample_rate);
     for (p, part) in shared.parts.iter().enumerate() {
-        // A part with no voices this block has a silent bus: nothing to add.
+        let (gl, gr) = mix.pan_gains(p, part.mix.pan);
+        let [s0, s1, s2] = part.mix.sends;
+        let to = [gl * part.mix.level, gr * part.mix.level, s0, s1, s2];
+        let eases = &mut mix.gains[p];
+        // A part with no voices this block has a silent bus: nothing to
+        // add, and its gains land unheard.
         if !written[p] {
+            for (e, &t) in eases.iter_mut().zip(&to) {
+                e.land(t);
+            }
             continue;
         }
+        let g: [(f32, f32); MIX_GAINS] = core::array::from_fn(|j| eases[j].step(to[j], k));
         let bus = &buses[p];
-        let (gl, gr) = pans.gains(p, part.mix.pan);
-        let (gl, gr) = (gl * part.mix.level, gr * part.mix.level);
-        src[n] = (bus, part.mix.sends);
+        src[n] = (bus, [g[2].0, g[3].0, g[4].0]);
         n += 1;
         let k = part.mix.output.index();
-        dry[k][dry_n[k]] = (bus, gl, gr);
+        dry[k][dry_n[k]] = (bus, g[0].0, g[1].0);
         dry_n[k] += 1;
+        if g.iter().any(|g| g.0 != g.1) {
+            moving[moving_n] = (bus, k, g.map(|g| step_of(g, BLOCK_SIZE)));
+            moving_n += 1;
+        }
     }
+    let moving = &moving[..moving_n];
 
     let mut scope = [0.0f32; BLOCK_SIZE];
     let [s0, s1, s2] = sends;
@@ -223,6 +263,13 @@ pub fn mix_parts(
         s1[i..i + SEND_STEP].copy_from_slice(&a[1]);
         s2[i..i + SEND_STEP].copy_from_slice(&a[2]);
         scope[i..i + SEND_STEP].copy_from_slice(&a[3]);
+    }
+    for &(bus, _, steps) in moving {
+        for (send, &step) in sends.iter_mut().zip(&steps[2..]) {
+            if step != 0.0 {
+                glide::<1, 0>(bus, step, send);
+            }
+        }
     }
 
     // The FX bus once; its return lands on pair 1, L and R.
@@ -248,6 +295,14 @@ pub fn mix_parts(
                 }
             }
             pair[2 * i..2 * (i + PAIR_STEP)].copy_from_slice(&a);
+        }
+    }
+    for &(bus, k, [l, r, ..]) in moving {
+        if l != 0.0 {
+            glide::<2, 0>(bus, l, &mut out[k]);
+        }
+        if r != 0.0 {
+            glide::<2, 1>(bus, r, &mut out[k]);
         }
     }
     // The master section, after every pair is summed; then the output stage.
@@ -282,7 +337,7 @@ pub struct Instrument {
     /// Each Part's mono bus from the last `render`: the sum of its voices.
     buses: [[f32; BLOCK_SIZE]; MAX_PARTS],
     sends: [[f32; BLOCK_SIZE]; FX_SENDS],
-    pans: PanCache,
+    mix: MixState,
     sample_rate: u32,
     /// Each Part's kind at the last `render`: a Part that has just become
     /// Sympathetic restarts its held notes through the pool.
@@ -300,7 +355,7 @@ pub struct Instrument {
 /// worst-case slots starts a note a block, a typical one all at once.
 pub const SYM_CLEAR_BUDGET: usize = SYM_NOTE_ON_CLEAR_MAX;
 
-crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, sounding, waiting, buses, sends, pans, sample_rate, last_kind, clear_left, clear_backlog });
+crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, sounding, waiting, buses, sends, mix, sample_rate, last_kind, clear_left, clear_backlog });
 
 const SYMPATHETIC: SlotKind = SlotKind::Modal(ResonatorMode::Sympathetic);
 
@@ -331,7 +386,7 @@ impl Instrument {
             addr_of_mut!((*p).waiting).write([None; MAX_VOICES]);
             addr_of_mut!((*p).buses).write([[0.0; BLOCK_SIZE]; MAX_PARTS]);
             addr_of_mut!((*p).sends).write([[0.0; BLOCK_SIZE]; FX_SENDS]);
-            addr_of_mut!((*p).pans).write(PanCache::default());
+            addr_of_mut!((*p).mix).write(MixState::default());
             addr_of_mut!((*p).sample_rate).write(sample_rate);
             // The default Sound's (`Performance::new`: Algo).
             addr_of_mut!((*p).last_kind).write([SlotKind::Algo; MAX_PARTS]);
@@ -380,6 +435,12 @@ impl Instrument {
         core::array::from_fn(|v| self.voices[v].rings())
     }
 
+    /// Each voice's glide steal ratio, 1 at rest: for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn slides(&self) -> [f32; MAX_VOICES] {
+        core::array::from_fn(|v| self.voices[v].slide())
+    }
+
     /// Whether each voice sounds: for the tests.
     #[cfg(any(test, feature = "test-support"))]
     pub fn active(&self) -> [bool; MAX_VOICES] {
@@ -404,7 +465,7 @@ impl Instrument {
                     }
                     let (q, mode) = (p as u8, part.mix.mode);
                     let cost = Voice::cost(&part.params, &part.mod_state);
-                    let Some(v) = self.alloc.pick(q, mode, cost, FxBus::COST) else {
+                    let Some(v) = self.alloc.pick(q, mode, ev.note, cost, FxBus::COST) else {
                         self.alloc.refuse();
                         continue;
                     };
@@ -423,7 +484,7 @@ impl Instrument {
                     let deferred = !waits
                         && SlotKind::of(&part.params) == SYMPATHETIC
                         && !(self.voices[v].starts_now(&part.params, &self.sym)
-                            && self.admit(v, &part.params));
+                            && self.admit(v, &part.params, ev.note));
                     let voice = &mut self.voices[v];
                     let waited = self.waiting[v].take().is_some();
                     let queued = if waits || deferred {
@@ -495,7 +556,7 @@ impl Instrument {
         if SlotKind::of(params) == SYMPATHETIC {
             self.sym.alloc_mut().place(VoiceIdx::ALL[v]);
         }
-        if !self.admit(v, params) {
+        if !self.admit(v, params, note) {
             return false;
         }
         let voice = &mut self.voices[v];
@@ -507,18 +568,18 @@ impl Instrument {
         true
     }
 
-    /// Whether voice `v` may start a note on `params` this block: anything
+    /// Whether voice `v` may start `note` on `params` this block: anything
     /// but Sympathetic may; Sympathetic if no note waits on the clear
     /// budget before it and its clear fits what the block has left, which
     /// it then takes. One that doesn't fit starts the queue.
-    fn admit(&mut self, v: usize, params: &ParamSnapshot) -> bool {
+    fn admit(&mut self, v: usize, params: &ParamSnapshot, note: MidiNote) -> bool {
         if SlotKind::of(params) != SYMPATHETIC {
             return true;
         }
         if self.clear_backlog {
             return false;
         }
-        let bytes = self.voices[v].sym_note_on_clear(&self.sym);
+        let bytes = self.voices[v].sym_note_on_clear(&self.sym, note, params);
         debug_assert!(bytes <= SYM_CLEAR_BUDGET);
         if bytes > self.clear_left {
             self.clear_backlog = true;
@@ -666,7 +727,7 @@ impl Instrument {
             &self.buses,
             &written,
             &mut self.sends,
-            &mut self.pans,
+            &mut self.mix,
             fx,
             shared,
             self.sample_rate,

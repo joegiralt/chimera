@@ -9,11 +9,11 @@ use chimera_hal::BLOCK_SIZE;
 
 use crate::addr::{BlockRef, ParamAddr};
 use crate::dsp::algo::engine::{AlgoEngine, AlgoLive};
-use crate::dsp::modal::{Halo, ModalEngine, Model, ResonatorMode, SymPool};
+use crate::dsp::modal::{Halo, ModalEngine, ModalParams, Model, ResonatorMode, SymPool};
 use crate::hw::Cost;
 use crate::in_place::{in_place_enum, move_out};
 use crate::modulation::ModState;
-use crate::params::{EngineType, ParamSnapshot, PitchParams};
+use crate::params::{EngineType, ParamSnapshot, PitchParams, Steal};
 use crate::sym_alloc::{Lease, SymAlloc};
 use crate::voice_alloc::VoiceIdx;
 use crate::{MidiNote, Velocity};
@@ -112,6 +112,14 @@ impl EngineSlot {
         }
     }
 
+    /// The engine's output gain at the VCA (ADR 0058): Algo is the reference.
+    pub fn out_gain(&self) -> f32 {
+        match self {
+            Self::Algo(_) => 1.0,
+            Self::Modal(m) => m.out_gain(),
+        }
+    }
+
     /// An idle `kind`, fresh, in place: no stack copy of an engine. The
     /// one place a lease moves (exclusive-state spec § 4.4):
     ///
@@ -171,17 +179,26 @@ impl EngineSlot {
         matches!(self, Self::Modal(m) if m.is_bare())
     }
 
-    /// The bytes a Sympathetic note-on on `voice` clears
-    /// (`SymPool::note_on_clear`).
-    pub fn sym_note_on_clear(&self, pool: &SymPool, voice: VoiceIdx) -> usize {
-        let modal = match self {
-            Self::Modal(m) => Some(&**m),
-            Self::Algo(_) => None,
-        };
-        pool.note_on_clear(modal, voice)
+    /// The bytes a Sympathetic note-on of `note` on `voice` clears
+    /// (`SymPool::note_on_clear`), or writes as it adds to what rings, a
+    /// re-strike or, at `glide`, a glide (`ModalEngine::strike_clear`).
+    pub fn sym_note_on_clear(
+        &self,
+        pool: &SymPool,
+        voice: VoiceIdx,
+        (note, glide, sample_rate): (MidiNote, bool, u32),
+    ) -> usize {
+        match self {
+            Self::Modal(m) => m
+                .strike_clear(note.get(), glide, sample_rate, pool)
+                .unwrap_or_else(|| pool.note_on_clear(Some(m), voice)),
+            Self::Algo(_) => pool.note_on_clear(None, voice),
+        }
     }
 
-    /// `p` must play this slot's engine.
+    /// `p` must play this slot's engine. At STEAL GLIDE a note on a
+    /// sounding engine, another note of its Part stealing it, glides it
+    /// there (#254, ADR 0065).
     pub fn note_on(
         &mut self,
         note: MidiNote,
@@ -192,9 +209,22 @@ impl EngineSlot {
     ) {
         debug_assert_eq!(p.engine(), self.kind().engine());
         self.set_pitch(p);
+        match (self, p.pitch.steal_glide()) {
+            (Self::Algo(a), None) => a.note_on(note, vel, &p.algo, sample_rate),
+            (Self::Algo(a), Some(tau)) => a.glide_on(note, vel, &p.algo, sample_rate, tau),
+            (Self::Modal(m), None) => m.note_on(note.get(), vel.get(), &p.modal, sample_rate, pool),
+            (Self::Modal(m), Some(tau)) => {
+                m.glide_on(note.get(), vel.get(), &p.modal, (sample_rate, tau), pool)
+            }
+        }
+    }
+
+    /// A glide steal's ratio now, 1 at rest: for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn slide(&self) -> f32 {
         match self {
-            Self::Algo(a) => a.note_on(note, vel, &p.algo, sample_rate),
-            Self::Modal(m) => m.note_on(note.get(), vel.get(), &p.modal, sample_rate, pool),
+            Self::Algo(a) => a.slide(),
+            Self::Modal(m) => m.slide(),
         }
     }
 
@@ -239,11 +269,11 @@ impl EngineSlot {
         }
     }
 
-    /// The Modal model the sounding note plays, if Modal is sounding.
-    pub fn modal_playing(&self) -> Option<ResonatorMode> {
+    /// What the sounding Modal note costs, if Modal is sounding.
+    pub fn modal_playing_cost(&self) -> Option<Cost> {
         match self {
             Self::Algo(_) => None,
-            Self::Modal(m) => m.playing(),
+            Self::Modal(m) => m.playing_cost(),
         }
     }
 
@@ -251,12 +281,27 @@ impl EngineSlot {
     pub fn cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
         match p.engine() {
             EngineType::Algo => AlgoEngine::cost(&p.algo, &mods.algo_levels_routed()),
-            EngineType::Modal if pitch_routed(mods) => {
-                ModalEngine::cost(&p.modal) + ModalEngine::PITCH
+            EngineType::Modal => {
+                let mut c = ModalEngine::cost(&p.modal);
+                // A steal's glide retunes each block, as a route does.
+                if pitch_routed(mods) || p.pitch.steal == Steal::Glide {
+                    c = c + ModalEngine::PITCH;
+                    if p.modal.mode == ResonatorMode::Sympathetic {
+                        c = c + ModalEngine::HALO_PITCH;
+                    }
+                }
+                if p.modal.mode == ResonatorMode::Sympathetic && chord_routed(mods) {
+                    c = c + ModalEngine::CHORD;
+                }
+                c
             }
-            EngineType::Modal => ModalEngine::cost(&p.modal),
         }
     }
+}
+
+/// A route, of any amount, into STRUCTURE: SYMP's chord.
+fn chord_routed(mods: &ModState) -> bool {
+    mods.routes_into(ParamAddr::new(BlockRef::Modal, ModalParams::STRUCTURE)) != 0
 }
 
 /// A route, of any amount, into the voice's PITCH or FINE.

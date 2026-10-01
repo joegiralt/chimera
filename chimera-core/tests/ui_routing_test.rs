@@ -246,7 +246,8 @@ fn switching_part_rebuilds_the_matrix_for_that_part() {
     let mut ui = UiState::new();
     to_drive(&mut ui);
     prime_slot_0(&mut ui); // Part 1: DRIVE
-    press(&mut ui, ButtonId::B1); // back home
+    press(&mut ui, ButtonId::B2);
+    press(&mut ui, ButtonId::B1); // via Part 2: Part 1's home
     set_first_amount(&mut ui, 10); // E1 → CUTOFF
     assert_eq!(routes(&ui, 0), [(CUTOFF, 10), (drive, 0)]);
 
@@ -270,7 +271,8 @@ fn switching_part_rebuilds_the_matrix_for_that_part() {
         .expect("Part 2 primed")
         .addr;
     assert_ne!(p2, drive);
-    press(&mut ui, ButtonId::B2); // home
+    press(&mut ui, ButtonId::B1);
+    press(&mut ui, ButtonId::B2); // via Part 1: Part 2's home
     set_first_amount(&mut ui, 20);
     assert_eq!(
         routes(&ui, 1),

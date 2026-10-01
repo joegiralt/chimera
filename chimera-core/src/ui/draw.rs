@@ -42,6 +42,11 @@ where
 {
     let mut cx = x;
     for ch in s.chars() {
+        if ch == MIDDOT {
+            fill_rect(d, cx, y - 4, 2, 2, color);
+            cx += MIDDOT_ADV + tracking;
+            continue;
+        }
         let adv = font
             .render(
                 ch,
@@ -56,12 +61,17 @@ where
     cx - x
 }
 
+/// `·`, which the u8g2 faces lack: `text_tracked` draws it as a 2×2 dot.
+pub const MIDDOT: char = '·';
+const MIDDOT_ADV: i32 = 3;
+
 /// Advance of `s` in `font` (with `tracking` after each glyph).
 pub fn text_width(font: &FontRenderer, s: &str, tracking: i32) -> i32 {
     let adv = font
         .get_rendered_dimensions(s, Point::zero(), VerticalPosition::Baseline)
         .map_or(0, |dims| dims.advance.x);
-    adv + tracking * s.chars().count() as i32
+    let dots = s.chars().filter(|&c| c == MIDDOT).count() as i32;
+    adv + dots * MIDDOT_ADV + tracking * s.chars().count() as i32
 }
 
 /// Draw `s` ending at `right` (exclusive).

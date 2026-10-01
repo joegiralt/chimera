@@ -31,7 +31,8 @@ fn every_part_slot_resolves_to_a_spec() {
                 | SlotBinding::SelectOp
                 | SlotBinding::FilterPanel(_)
                 | SlotBinding::EnvPanel(..)
-                | SlotBinding::LfoPanel(..) => {}
+                | SlotBinding::LfoPanel(..)
+                | SlotBinding::ModalPanel(..) => {}
                 SlotBinding::Param(_) | SlotBinding::SelectedOp(_) => {
                     assert!(slot.spec().is_some(), "{} slot {i}: no spec", def.name)
                 }
@@ -116,30 +117,41 @@ fn all_chains_holds_every_reachable_chain() {
 /// bindings (spec labels + the two plan-D6 overrides; plan D5 BODY fix).
 #[test]
 fn part_pages_display_like_before() {
-    use ValFmt::{Bi, Int, Law, Names, Uni};
+    use ValFmt::{Bi, Law, Names, Uni};
     use chimera_core::dsp::modulator::EnvSpeed::Med;
     use chimera_core::dsp::modulator::law::Law::{Attack, DecRel, Hold, Pct};
-    let want: [(&BlockDef, [(&str, ValFmt); 6]); 7] = [
+    let want: [(&BlockDef, [(&str, ValFmt); 6]); 8] = [
         (
             &reg::MODAL_1,
             [
-                ("MODE", Int(3)),
-                ("EXCITE", Uni),
-                ("DECAY", Uni),
+                ("MODEL", Names(&chimera_core::dsp::modal::MODEL_NAMES)),
+                ("STRUCT", Uni),
                 ("BRIGHT", Uni),
+                ("DAMP", Uni),
                 ("POS", Uni),
-                ("INHARM", Uni),
+                ("SPACE", Uni),
+            ],
+        ),
+        (
+            &reg::MODAL_EXC,
+            [
+                ("EXCITE", Uni),
+                ("COLOR", Uni),
+                ("--", Uni),
+                ("--", Uni),
+                ("--", Uni),
+                ("--", Uni),
             ],
         ),
         (
             &reg::MODAL_2,
             [
                 ("BODY", Uni),
-                ("STIFF", Uni),
-                ("FDBK", Uni),
-                ("E.DPT", Uni),
-                ("E.RAT", Uni),
-                ("E.MIX", Uni),
+                ("ENS.D", Uni),
+                ("ENS.R", Uni),
+                ("ENS.M", Uni),
+                ("--", Uni),
+                ("--", Uni),
             ],
         ),
         (
@@ -204,10 +216,16 @@ fn part_pages_display_like_before() {
             ],
         ),
     ];
-    // A panel slot's own label and format are empty: FLT, ENV and LFO read
-    // their views.
+    // A panel slot's own label and format are empty: FLT, ENV, LFO, EXC
+    // and MDL2 (here STRING's) read their views.
     let ctx = ctx();
-    let panels: [&BlockDef; 3] = [&reg::FILTER, &reg::ENVELOPE, &reg::LFO];
+    let panels: [&BlockDef; 5] = [
+        &reg::FILTER,
+        &reg::ENVELOPE,
+        &reg::LFO,
+        &reg::MODAL_EXC,
+        &reg::MODAL_2,
+    ];
     for (def, slots) in want {
         for (i, (label, fmt)) in slots.iter().enumerate() {
             let got = if panels.iter().any(|p| core::ptr::eq(*p, def)) {

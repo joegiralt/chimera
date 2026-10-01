@@ -57,6 +57,8 @@ pub enum SlotBinding {
     EnvPanel(crate::dsp::modulator::EnvSlot, u8),
     /// Cell k of LFO slot s's page, per its TYPE and FORM.
     LfoPanel(crate::dsp::modulator::LfoSlot, u8),
+    /// Cell k of EXC or MDL2, per MODEL (`modal::page_cells`).
+    ModalPanel(crate::dsp::modal::ModalPage, u8),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -122,6 +124,13 @@ impl ParamSlot {
         }
     }
 
+    pub const fn modal_panel(page: crate::dsp::modal::ModalPage, k: u8) -> Self {
+        Self {
+            binding: SlotBinding::ModalPanel(page, k),
+            label_override: None,
+        }
+    }
+
     pub const fn with_label(self, label: &'static str) -> Self {
         Self {
             label_override: Some(label),
@@ -140,7 +149,8 @@ impl ParamSlot {
             | SlotBinding::Legacy { .. }
             | SlotBinding::FilterPanel(_)
             | SlotBinding::EnvPanel(..)
-            | SlotBinding::LfoPanel(..) => None,
+            | SlotBinding::LfoPanel(..)
+            | SlotBinding::ModalPanel(..) => None,
         }
     }
 
@@ -153,7 +163,8 @@ impl ParamSlot {
             SlotBinding::Empty
             | SlotBinding::FilterPanel(_)
             | SlotBinding::EnvPanel(..)
-            | SlotBinding::LfoPanel(..) => "--",
+            | SlotBinding::LfoPanel(..)
+            | SlotBinding::ModalPanel(..) => "--",
             SlotBinding::SelectOp => "OP",
             SlotBinding::Legacy { label, .. } => label,
             SlotBinding::Param(_) | SlotBinding::SelectedOp(_) => {
@@ -167,7 +178,8 @@ impl ParamSlot {
             SlotBinding::Empty
             | SlotBinding::FilterPanel(_)
             | SlotBinding::EnvPanel(..)
-            | SlotBinding::LfoPanel(..) => ValFmt::Uni,
+            | SlotBinding::LfoPanel(..)
+            | SlotBinding::ModalPanel(..) => ValFmt::Uni,
             SlotBinding::SelectOp => ValFmt::OneBased(Op::ALL.len() as u8 - 1),
             SlotBinding::Legacy { fmt, .. } => fmt,
             SlotBinding::Param(_) | SlotBinding::SelectedOp(_) => {
@@ -253,6 +265,16 @@ pub struct ChainDef2 {
 }
 
 impl ChainDef2 {
+    /// The engine's node: the one PIT hangs under (ADR 0042); the first
+    /// on a chain without it.
+    pub fn engine_node(&self) -> usize {
+        let pitch = crate::ui::block_registry::PITCH.id;
+        self.blocks
+            .iter()
+            .position(|b| b.sub_pages.iter().any(|d| d.id == pitch))
+            .unwrap_or(0)
+    }
+
     pub fn block_at(&self, node: usize) -> Option<&'static ChainBlock> {
         self.blocks.get(node)
     }

@@ -555,7 +555,8 @@ impl UiState {
             // B<n> and MIX + B<n> both select Part n for editing.
             if let ChainId::Part(i) | ChainId::Mixer(i) = self.nav.chain_id {
                 self.active_part = i;
-                self.nav.engine = self.performance.parts[i].sound.engine();
+                self.nav
+                    .set_engine(self.performance.parts[i].sound.engine());
                 self.load_matrix(i);
             }
             self.enter_page();
@@ -848,6 +849,7 @@ impl UiState {
                 f.perf.audio_load_pct,
                 f.sounding,
                 renderer::title_type(f),
+                renderer::header_out(f) as u8,
             ),
             RegionKind::Focus if f.def.layout == PageLayout::Matrix => RegionData::route(
                 self.matrix_state.sel_row as u8,
@@ -896,6 +898,7 @@ impl UiState {
                 node,
                 sub,
                 region::quantize(self.renderer.branch_scroll.current()),
+                f.ctx.model as u8,
             ),
             RegionKind::Grid => RegionData::grid_with_value(
                 self.matrix_state.sel_row as u8,

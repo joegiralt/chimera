@@ -11,69 +11,93 @@ mod screen;
 
 use screen::*;
 
+// Re-recorded for ADR 0057: every Part and mixer header reads
+// `PART n · SOUND` or `· MIX`; the mixer recipes open on SENDS. The Algo
+// screens again for ADR 0063: INIT's VOL 45 and RR 5.
 const GOLDENS: &[(&str, u64)] = &[
-    ("engine_algo", 0x2fc2acd0ca736b91),
-    ("algo_alg", 0x7d93a049d17ce0d4),
-    ("algo_alg_morph_dimmed", 0x897c253790c1a56a),
-    ("mod_matrix_morph_inert", 0xcb22cbb86571bf4e),
-    ("algo_wave", 0x077421b3106b8510),
-    ("algo_level", 0xbf166056bf540001),
-    ("algo_osc_last", 0xe14e98097058782e),
-    ("bigviz_filter", 0xb50c845f7f09909e),
-    ("flt_mode", 0x7bb550d437421757),
-    ("env_a", 0x83a56036fe4bec0e),
-    ("env_b_env_ad", 0x8c13c7f2b2b13a2c),
-    ("env_b_env_ahr", 0x239b8de9de91ae55),
-    ("env_b_env_cycle", 0x8661f41e9aaba3bb),
-    ("env_b_lfo_free", 0xa44221f904c8a5a1),
-    ("env_b_lfo_sync", 0x2ae7574467c3e409),
-    ("env_b_lfo_lfv", 0x87f0d152f27af928),
-    ("env_b_burst_ad", 0x85aa6fdb690493dd),
-    ("env_b_burst_ahr", 0xf18a55e8ad5fed5a),
-    ("env_b_burst_cycle", 0x45af240dacae29a6),
-    ("spd", 0xc4f026243b3d0db5),
-    ("lfo_classic", 0x4e9744d2d0d414fd),
-    ("lfo_func", 0x125c4f66cf905b5b),
-    ("amp_vel_dimmed", 0x906c5da68f92294b),
-    ("amp_vel_live", 0xe969b1ab3a3e37fb),
-    ("algo_pitch", 0x90d2841bef4b43a6),
-    ("modal_pitch", 0xecd2cbfd3f40c2e6),
-    ("modal_amp", 0xad2feb025c2dfa59),
+    ("engine_algo", 0x3c1db80e3e80b53f),
+    ("algo_alg", 0xbffad8304f828aee),
+    ("algo_alg_morph_dimmed", 0xd8e8a78a528ad3b4),
+    ("mod_matrix_morph_inert", 0xc0a153ae29f9167b),
+    ("algo_wave", 0xdbd599e8964b6a89),
+    ("algo_level", 0x7b3a4495d5c597e0),
+    ("algo_osc_last", 0x6112961e4f96c7ab),
+    ("bigviz_filter", 0x64de3de945e82cf3),
+    ("flt_mode", 0xf5635604c002fec2),
+    ("env_a", 0x6f15c442d71edf83),
+    ("env_b_env_ad", 0x849b12e99ea94bfd),
+    ("env_b_env_ahr", 0x25bd96be29456024),
+    ("env_b_env_cycle", 0x731397722d8939e6),
+    ("env_b_lfo_free", 0x393aca1db211bd20),
+    ("env_b_lfo_sync", 0xe99f8846653ec2a8),
+    ("env_b_lfo_lfv", 0x0eae7ee6c8214c21),
+    ("env_b_burst_ad", 0x051b9e98ae0429b4),
+    ("env_b_burst_ahr", 0x8af61048dba1b1f7),
+    ("env_b_burst_cycle", 0x4506fd5dfe4a8d5b),
+    ("spd", 0x96c5fde07700d7dc),
+    ("lfo_classic", 0x3136c2e044ecb304),
+    ("lfo_func", 0x9fbaed70f0baac26),
+    ("amp_vel_dimmed", 0x496ba84d34eb9c06),
+    ("amp_vel_live", 0x07fe7ee2b28245d6),
+    // Re-recorded: PIT shows STEAL and TIME (#254).
+    ("algo_pitch", 0x245c47fc88561cef),
+    // Re-recorded: the EXC node (plan Task 13).
+    // Re-recorded: PIT shows STEAL and TIME (#254).
+    ("modal_pitch", 0x68e6cf758f76373f),
+    // Re-recorded: the EXC node (plan Task 13).
+    ("modal_exc", 0xdf9684baab508f23),
+    // Re-recorded: the EXC node (plan Task 13).
+    ("modal_exc_bank", 0x9afb273b79c982eb),
+    // Re-recorded: the EXC node (plan Task 13).
+    ("modal_exc_bowed", 0xb182a2665edcbaf0),
+    // Re-recorded: the EXC node (plan Task 13).
+    ("modal_home", 0x6f33887c0e8894d5),
+    // Re-recorded: the EXC node (plan Task 13).
+    ("modal_mdl2_symp", 0xa21e22e85bcd12b8),
+    // Re-recorded: the EXC node (plan Task 13).
+    ("modal_home_bowed", 0x1b4c79d6f245b6a9),
+    // Re-recorded: the EXC node (plan Task 13).
+    ("modal_amp", 0x126f578eb867adcf),
     // The Mix chain's map loses its TAPE node without `master-tape`
     // (ADR 0055); with it, the screens are as before.
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_part", 0xb892f61925a4b666),
+    ("mixer_part", 0xa692924186da849a),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_sends", 0xe0b902864ee92e77),
+    ("mixer_sends", 0x26c03d61d4dffe1b),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_delay", 0x9b978460a2ca3bfb),
+    ("mixer_fx_delay", 0x7cad11c8821d60af),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb", 0xd5ed45bab88ba5ed),
+    ("mixer_fx_reverb", 0x114c421e48eb2959),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_delay_char", 0x537c67b32d4e0db1),
+    ("mixer_fx_delay_char", 0xee4a9257032bb195),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_master", 0x2b29fc33adeaa2eb),
+    ("mixer_master", 0xeb7a9f3352f2416f),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_master_level", 0x144af1f49255dd52),
+    ("mixer_master_level", 0xb898d28bbb71bce6),
     #[cfg(feature = "master-tape")]
-    ("mixer_part", 0x87ab4a2a75c3d238),
+    ("mixer_part", 0xc25c1c60d1ccf57c),
     #[cfg(feature = "master-tape")]
-    ("mixer_sends", 0x650322c12ad0b389),
+    ("mixer_sends", 0xd9c254b0347d110d),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_delay", 0xd13240ab6a9b4ead),
+    ("mixer_fx_delay", 0x40a01377e2ee0701),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb", 0x9e3a0671fa320bdf),
+    ("mixer_fx_reverb", 0xb6abe4aa3463b5ab),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_delay_char", 0x836df9c070860c8b),
+    ("mixer_fx_delay_char", 0x2acb22b0d9a133df),
     #[cfg(feature = "master-tape")]
-    ("mixer_tape", 0x28a0e7569c2009be),
+    ("mixer_tape", 0x2548917571779052),
     #[cfg(feature = "master-tape")]
-    ("mixer_master", 0xc1981d439df14ddd),
+    ("mixer_master", 0x4e68a2befa356ab1),
     #[cfg(feature = "master-tape")]
-    ("mixer_master_level", 0x7554d112cc792b98),
-    ("mod_matrix", 0x1ac795629104192b),
-    ("mod_matrix_wide", 0x4605f59b8c26e5b8),
-    ("sound_browser", 0xaf0c38105a4aee59),
+    ("mixer_master_level", 0x1fea2dbc893512ec),
+    #[cfg(not(feature = "master-tape"))]
+    ("mixer_out_p2", 0x922c1706c7a6113f),
+    #[cfg(feature = "master-tape")]
+    ("mixer_out_p2", 0x72f5aa7f2c775a91),
+    ("algo_out_p3", 0xe8b5d1afc600d5f6),
+    ("mod_matrix", 0xa6cf67e584e06c56),
+    ("mod_matrix_wide", 0xca78c74fca4ac959),
+    ("sound_browser", 0xc1a53459edabbb6b),
     ("system", 0xbadd5e55da36c80d),
     ("system_theme", 0x6f46ed28ddb10559),
     ("system_audio", 0x281985b580ac2fb1),

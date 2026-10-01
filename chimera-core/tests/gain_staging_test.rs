@@ -9,6 +9,7 @@ use chimera_core::dsp::fx_bus::{FxBus, FxParams};
 use chimera_core::dsp::limiter::{CEILING, LOOKAHEAD, Limiter, OUTPUT_TRIM, THRESHOLD};
 use chimera_core::dsp::reverb::ReverbParams;
 use chimera_core::dsp::tape::TapeParams;
+use chimera_core::dsp::voice::Voice;
 use chimera_core::factory::factory_sound;
 use chimera_core::hw::{CPU_HZ_REV_V, DAC_PAIRS, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacBlocks, DacOut, Instrument, pan_gains};
@@ -86,7 +87,8 @@ fn max() -> FxParams {
 enum Voices {
     /// SAW LEAD, its filter wide open: two saw operators a voice.
     Saw,
-    /// The default Sound, the hottest single voice.
+    /// The default Sound at OUT LEVEL 0.8, its level before ADR 0063: the
+    /// hottest single voice.
     Init,
 }
 
@@ -106,13 +108,19 @@ fn chord(
         shared.parts[0].params.filter.cutoff = 20_000.0;
         shared.parts[0].params.filter.resonance = 0.0;
         shared.parts[0].mod_state = saw.mod_state;
+    } else {
+        shared.parts[0].params.out.volume = 0.8;
     }
     shared.parts[0].mix.level = level;
     shared.parts[0].mix.sends = [send; 3];
     shared.fx = fx_params;
+    // Rev V, or with the master tape (where ALGO INIT plays seven since
+    // ADR 0060) a budget for all eight.
+    let voice = Voice::cost(&shared.parts[0].params, &shared.parts[0].mod_state).0;
+    let eight = ((FxBus::COST.0 + 8 * voice) as u64 * 480_000).div_ceil(7) as u32;
     let mut inst = Box::new(Instrument::new(
         SAMPLE_RATE,
-        SampleBudget::for_cpu(CPU_HZ_REV_V),
+        SampleBudget::for_cpu(eight.max(CPU_HZ_REV_V)),
     ));
     let mut fx = Box::new(FxBus::new());
     let (w, _r) = Box::leak(Box::new(scope_buffer())).split();
@@ -325,11 +333,11 @@ fn everything_before_the_limiter_is_mains_mix() {
     fxp.delay.rev_send = 0.5;
     fxp.reverb.time = 0.7;
     let (gl, gr) = pan_gains(0.0);
-    let (gl, gr) = (gl * 0.35, gr * 0.35);
+    let (gl, gr) = (gl * 0.3, gr * 0.3);
     let mut reference = Box::new(FxBus::new());
     let mut want = [[0.0f32; 2 * BLOCK_SIZE]; 2];
     let (mut blocks, mut peak) = (0, 0.0f32);
-    chord(Voices::Init, fxp, 0.35, 0.1, |inst, fx, dac| {
+    chord(Voices::Init, fxp, 0.3, 0.1, |inst, fx, dac| {
         let bus = inst.part_bus(0);
         let mut sends = [bus.map(|b| b * 0.1); 3];
         let mut ret = chimera_core::dsp::Stereo::SILENT;

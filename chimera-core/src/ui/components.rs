@@ -6,7 +6,8 @@ use core::fmt::Write;
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::Rgb565;
 
-use crate::addr::BlockRef;
+use crate::dsp::modal::{EXCITER_NAMES, ModalPage, ResonatorMode};
+use crate::part::DacPair;
 use crate::ui::PrimeStatus;
 use crate::ui::block_def::{BlockDef, SlotBinding};
 use crate::ui::chain::{ChainId, ChainNav};
@@ -23,37 +24,103 @@ pub fn upper(s: &str) -> FmtBuf {
     buf
 }
 
-/// Whether any slot of `def` edits the Part's own mix settings (PART, SENDS).
-fn edits_part(def: &BlockDef) -> bool {
+/// Whether `def`'s cells are the exciter's (EXC): its name is the exciter's.
+fn is_exciter(def: &BlockDef) -> bool {
     def.params
         .iter()
-        .any(|s| matches!(s.binding, SlotBinding::Param(a) if a.block == BlockRef::Part))
+        .any(|s| matches!(s.binding, SlotBinding::ModalPanel(ModalPage::Exciter, _)))
 }
 
-/// Header context label and page name: `PART 1` `FILTER`; on the Mixer
-/// chain `MIXER` and the page, numbered when it edits that Part (`PART 2`,
-/// `SENDS 2`; the FX are shared, so `CHORUS`).
-pub fn header_text(nav: &ChainNav, def: &BlockDef) -> (FmtBuf, FmtBuf) {
+/// A header's text: context, page name, and the OUT warning.
+pub struct HeaderText {
+    pub context: FmtBuf,
+    pub name: FmtBuf,
+    pub warn: Option<&'static str>,
+}
+
+/// `PART 2 · SOUND` or `PART 2 · MIX` and the page (`FILTER`, `SENDS`),
+/// `SYSTEM`, `DEMO`; `suffix` follows the name (`/ B`). A page of the
+/// exciter's cells is named after `model`'s exciter (PLUCK, STRIKE, BOW).
+/// `OUT P2`/`OUT P3` warns on a Part's pages when `out` isn't P1 (ADR
+/// 0057). A name too long for the line falls back to the page's short one.
+pub fn header_text(
+    nav: &ChainNav,
+    def: &BlockDef,
+    model: ResonatorMode,
+    suffix: &str,
+    out: DacPair,
+) -> HeaderText {
     let mut context = FmtBuf::new();
-    let mut name = upper(def.name);
     let _ = match nav.chain_id {
-        ChainId::Part(n) => write!(context, "PART {}", n + 1),
-        ChainId::Mixer(n) => {
-            if edits_part(def) {
-                let _ = write!(name, " {}", n + 1);
-            }
-            context.write_str("MIXER")
-        }
+        ChainId::Part(n) => write!(context, "PART {} · SOUND", n + 1),
+        ChainId::Mixer(n) => write!(context, "PART {} · MIX", n + 1),
         ChainId::System => context.write_str("SYSTEM"),
         ChainId::Demo => context.write_str("DEMO"),
     };
-    (context, name)
+    let warn = match (nav.chain_id, out) {
+        (ChainId::System | ChainId::Demo, _) | (_, DacPair::P1) => None,
+        (_, DacPair::P2) => Some("OUT P2"),
+        (_, DacPair::P3) => Some("OUT P3"),
+    };
+    let named = |full: bool| {
+        let mut name = match (full, is_exciter(def)) {
+            (true, true) => upper(EXCITER_NAMES[model as usize]),
+            (true, false) => upper(def.name),
+            (false, _) => upper(def.short),
+        };
+        let _ = name.write_str(suffix);
+        name
+    };
+    let mut h = HeaderText {
+        context,
+        name: named(true),
+        warn,
+    };
+    if !header_fits(&h) {
+        h.name = named(false);
+    }
+    h
 }
 
-/// Header band (y 0..28): grey context label, bold name, the audio load
-/// when measured, and an accent dot while the instrument is sounding.
-pub fn header<D>(d: &mut D, context: &str, name: &str, sounding: bool, load_pct: u8)
-where
+/// Right edge of the CPU readout and of the OUT warning.
+const HEADER_RIGHT: i32 = theme::HEADER_DOT_X - 8;
+
+/// Gap between the context and the name.
+const HEADER_GAP: i32 = 7;
+/// Least gap before what the header draws on the right.
+const RIGHT_GAP: i32 = 6;
+
+/// Where the context and name end.
+fn header_end(context: &str, name: &str) -> i32 {
+    theme::MARGIN_X
+        + draw::text_width(&theme::FONT_LABEL, context, theme::LABEL_TRACKING)
+        + HEADER_GAP
+        + draw::text_width(&theme::FONT_LABEL_BOLD, name, theme::LABEL_TRACKING)
+}
+
+/// Whether the context and name end `RIGHT_GAP` short of the OUT warning,
+/// or of the sounding dot.
+pub fn header_fits(h: &HeaderText) -> bool {
+    let right = match h.warn {
+        Some(warn) => {
+            HEADER_RIGHT - draw::text_width(&theme::FONT_LABEL, warn, theme::LABEL_TRACKING)
+        }
+        None => theme::HEADER_DOT_X - theme::HEADER_DOT_R,
+    };
+    header_end(h.context.as_str(), h.name.as_str()) + RIGHT_GAP <= right
+}
+
+/// Header band (y 0..28): grey context label, bold name, the OUT warning
+/// or else the audio load when measured, and an accent dot while the
+/// instrument is sounding.
+pub fn header<D>(
+    d: &mut D,
+    context: &str,
+    name: &str,
+    warn: Option<&str>,
+    sounding: bool,
+    load_pct: u8,
+) where
     D: DrawTarget<Color = Rgb565>,
 {
     let y = theme::HEADER_BASELINE;
@@ -71,12 +138,22 @@ where
         d,
         &theme::FONT_LABEL_BOLD,
         name,
-        x + 7,
+        x + HEADER_GAP,
         y,
         theme::INK,
         theme::LABEL_TRACKING,
     );
-    if load_pct > 0 {
+    if let Some(warn) = warn {
+        draw::text_right(
+            d,
+            &theme::FONT_LABEL,
+            warn,
+            HEADER_RIGHT,
+            y,
+            theme::WARN,
+            theme::LABEL_TRACKING,
+        );
+    } else if load_pct > 0 {
         let mut buf = FmtBuf::new();
         let _ = write!(buf, "CPU {}%", load_pct);
         let color = match load_pct {
@@ -84,15 +161,19 @@ where
             61..=80 => theme::WARN,
             _ => theme::MID,
         };
-        draw::text_right(
-            d,
-            &theme::FONT_LABEL,
-            buf.as_str(),
-            theme::HEADER_DOT_X - 8,
-            y,
-            color,
-            0,
-        );
+        // The bench readout yields to a long page name.
+        let w = draw::text_width(&theme::FONT_LABEL, buf.as_str(), 0);
+        if header_end(context, name) + RIGHT_GAP <= HEADER_RIGHT - w {
+            draw::text_right(
+                d,
+                &theme::FONT_LABEL,
+                buf.as_str(),
+                HEADER_RIGHT,
+                y,
+                color,
+                0,
+            );
+        }
     }
     if sounding {
         draw::dot(
