@@ -66,11 +66,9 @@ impl PageId {
         Some(match nav.chain_id {
             ChainId::Part(_) | ChainId::Mixer(_) => return None,
             ChainId::System | ChainId::Demo
-                if nav
-                    .active_block_def()
-                    .params
-                    .iter()
-                    .any(|s| matches!(s.binding, SlotBinding::Param(_))) =>
+                if nav.active_block_def().params.iter().any(|s| {
+                    !matches!(s.binding, SlotBinding::Legacy { .. } | SlotBinding::Empty)
+                }) =>
             {
                 return None;
             }

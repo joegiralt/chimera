@@ -70,6 +70,11 @@ pub const ARC_CX: i32 = 188;
 pub const ARC_CY: i32 = 80;
 pub const ARC_R: i32 = 28;
 pub const ARC_WIDTH: u32 = 5;
+/// The SWITCH glyph's pill, on the arc's centre line, flush with the
+/// right margin so a word has room before it.
+pub const SWITCH_W: i32 = 56;
+pub const SWITCH_H: i32 = 28;
+pub const SWITCH_CX: i32 = SCREEN_W - MARGIN_X - SWITCH_W / 2;
 
 /// Viz band on CellGrid / Mixer pages: 118..186, centre line 152.
 pub const VIZ_BAND_TOP: i32 = 118;
