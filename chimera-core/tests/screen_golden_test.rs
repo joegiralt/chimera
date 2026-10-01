@@ -15,15 +15,15 @@ use screen::*;
 // `PART n · SOUND` or `· MIX`; the mixer recipes open on SENDS. The Algo
 // screens again for ADR 0063: INIT's VOL 45 and RR 5.
 const GOLDENS: &[(&str, u64)] = &[
-    ("engine_algo", 0x3c1db80e3e80b53f),
-    ("algo_alg", 0xbffad8304f828aee),
+    ("engine_algo", 0x29fa1ef579c4a0e7),
+    ("algo_alg", 0xb73321ba103c1886),
     ("algo_alg_morph_dimmed", 0xd8e8a78a528ad3b4),
     ("mod_matrix_morph_inert", 0xc0a153ae29f9167b),
-    ("algo_wave", 0xdbd599e8964b6a89),
-    ("algo_level", 0x7b3a4495d5c597e0),
-    ("algo_osc_last", 0x6112961e4f96c7ab),
+    ("algo_wave", 0xa04fd344f3387270),
+    ("algo_level", 0x408f6bef763157fe),
+    ("algo_osc_last", 0x7ac731494a9568e2),
     ("bigviz_filter", 0x64de3de945e82cf3),
-    ("flt_mode", 0xf5635604c002fec2),
+    ("flt_mode", 0x9dd12a044e75cc68),
     ("env_a", 0x6f15c442d71edf83),
     ("env_b_env_ad", 0x849b12e99ea94bfd),
     ("env_b_env_ahr", 0x25bd96be29456024),
@@ -36,7 +36,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("env_b_burst_cycle", 0x4506fd5dfe4a8d5b),
     ("spd", 0x96c5fde07700d7dc),
     ("lfo_classic", 0x3136c2e044ecb304),
-    ("lfo_func", 0x9fbaed70f0baac26),
+    ("lfo_func", 0x60ec706c0ecfc450),
     ("amp_vel_dimmed", 0x496ba84d34eb9c06),
     ("amp_vel_live", 0x07fe7ee2b28245d6),
     // Re-recorded: PIT shows STEAL and TIME (#254).
@@ -51,39 +51,39 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: the EXC node (plan Task 13).
     ("modal_exc_bowed", 0xb182a2665edcbaf0),
     // Re-recorded: the EXC node (plan Task 13).
-    ("modal_home", 0x6f33887c0e8894d5),
+    ("modal_home", 0x36bc37f1707051b1),
     // Re-recorded: the EXC node (plan Task 13).
     ("modal_mdl2_symp", 0xa21e22e85bcd12b8),
     // Re-recorded: the EXC node (plan Task 13).
-    ("modal_home_bowed", 0x1b4c79d6f245b6a9),
+    ("modal_home_bowed", 0xc8b8ec05462bb0a8),
     // Re-recorded: the EXC node (plan Task 13).
     ("modal_amp", 0x126f578eb867adcf),
     // The Mix chain's map loses its TAPE node without `master-tape`
     // (ADR 0055); with it, the screens are as before.
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_part", 0xa692924186da849a),
+    ("mixer_part", 0x24ee8f61ddea9047),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_sends", 0x26c03d61d4dffe1b),
+    ("mixer_sends", 0xdf3aab7c23ee0c31),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_delay", 0x7cad11c8821d60af),
+    ("mixer_fx_delay", 0xc034be24011848b2),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb", 0x114c421e48eb2959),
+    ("mixer_fx_reverb", 0x8f7e8e92e0ecf7f0),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_delay_char", 0xee4a9257032bb195),
+    ("mixer_fx_delay_char", 0x3310e7e57f36fb88),
     #[cfg(not(feature = "master-tape"))]
     ("mixer_master", 0xeb7a9f3352f2416f),
     #[cfg(not(feature = "master-tape"))]
     ("mixer_master_level", 0xb898d28bbb71bce6),
     #[cfg(feature = "master-tape")]
-    ("mixer_part", 0xc25c1c60d1ccf57c),
+    ("mixer_part", 0xd362801facb9dc65),
     #[cfg(feature = "master-tape")]
-    ("mixer_sends", 0xd9c254b0347d110d),
+    ("mixer_sends", 0x27bc9363dd407e2b),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_delay", 0x40a01377e2ee0701),
+    ("mixer_fx_delay", 0xe3e12c53b10a44f0),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb", 0xb6abe4aa3463b5ab),
+    ("mixer_fx_reverb", 0x1d59b8a7dbfe4c4e),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_delay_char", 0x2acb22b0d9a133df),
+    ("mixer_fx_delay_char", 0x746fa7fa4cfc948e),
     #[cfg(feature = "master-tape")]
     ("mixer_tape", 0x2548917571779052),
     #[cfg(feature = "master-tape")]
@@ -91,15 +91,15 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(feature = "master-tape")]
     ("mixer_master_level", 0x1fea2dbc893512ec),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_out_p2", 0x922c1706c7a6113f),
+    ("mixer_out_p2", 0xc657c44494c829ac),
     #[cfg(feature = "master-tape")]
-    ("mixer_out_p2", 0x72f5aa7f2c775a91),
-    ("algo_out_p3", 0xe8b5d1afc600d5f6),
+    ("mixer_out_p2", 0xc7a057082a7a6932),
+    ("algo_out_p3", 0x3e91d6b588f4ebfa),
     ("mod_matrix", 0xa6cf67e584e06c56),
     ("mod_matrix_wide", 0xca78c74fca4ac959),
     ("sound_browser", 0xc1a53459edabbb6b),
     ("system", 0x47472f01fe558b63),
-    ("system_theme", 0x1dd3aa5ad44901ff),
+    ("system_theme", 0xc6d20cd2d23cd756),
     ("system_audio", 0xa94279d71653b3b7),
     ("busy", 0x198544cd36863145),
     ("toast_saved", 0xe344dd99a47d0dad),

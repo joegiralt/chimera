@@ -83,9 +83,17 @@ impl DelayParams {
 }
 
 /// Delay runs outside `Voice`, on the FX bus: nothing is modulatable.
+/// Every delay param shows the rings (ADR 0067).
+const RINGS: crate::ui::glyph::FocusGlyph =
+    crate::ui::glyph::FocusGlyph::Composite(crate::ui::glyph::CompositeId::DelayRings);
+
 pub static DELAY_SPECS: [ParamSpec; 7] = [
-    ParamSpec::continuous(0, "TIME", ValFmt::Uni, 10.0, 500.0, 375.0, 8.0, false).ident("TIME"),
-    ParamSpec::continuous(1, "FDBK", ValFmt::Uni, 0.0, 1.0, 0.4, 1.0 / 128.0, false).ident("FDBK"),
+    ParamSpec::continuous(0, "TIME", ValFmt::Uni, 10.0, 500.0, 375.0, 8.0, false)
+        .ident("TIME")
+        .glyph(RINGS),
+    ParamSpec::continuous(1, "FDBK", ValFmt::Uni, 0.0, 1.0, 0.4, 1.0 / 128.0, false)
+        .ident("FDBK")
+        .glyph(RINGS),
     ParamSpec::continuous(
         2,
         "MECHANICS",
@@ -97,11 +105,20 @@ pub static DELAY_SPECS: [ParamSpec; 7] = [
         false,
     )
     .ident("WOW")
+    .glyph(RINGS)
     .short("MECH"),
-    ParamSpec::continuous(3, "SAT", ValFmt::Uni, 0.0, 1.0, 0.2, 1.0 / 128.0, false).ident("SAT"),
-    ParamSpec::continuous(4, "TONE", ValFmt::Uni, 0.0, 1.0, 0.6, 1.0 / 128.0, false).ident("TONE"),
-    ParamSpec::continuous(5, "MIX", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false).ident("MIX"),
-    ParamSpec::continuous(6, "REV", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false).ident("REV"),
+    ParamSpec::continuous(3, "SAT", ValFmt::Uni, 0.0, 1.0, 0.2, 1.0 / 128.0, false)
+        .ident("SAT")
+        .glyph(RINGS),
+    ParamSpec::continuous(4, "TONE", ValFmt::Uni, 0.0, 1.0, 0.6, 1.0 / 128.0, false)
+        .ident("TONE")
+        .glyph(RINGS),
+    ParamSpec::continuous(5, "MIX", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false)
+        .ident("MIX")
+        .glyph(RINGS),
+    ParamSpec::continuous(6, "REV", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false)
+        .ident("REV")
+        .glyph(RINGS),
 ];
 
 impl Block for DelayParams {

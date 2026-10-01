@@ -173,3 +173,11 @@ The UI component storyboard.
 | ![](demo_mot.png) | MOT | Motion icons |
 | ![](demo_fm.png) | FM | FM icons |
 | ![](demo_mtx.png) | MTX | A matrix |
+| ![](demo_arc.png) | ARC | Glyph: ARC; a drives it unipolar, b bipolar |
+| ![](demo_none.png) | NONE | Glyph: NONE; a steps MODEL, its word has the whole band |
+| ![](demo_sw.png) | SW | Glyph: SWITCH; a flips LFO 1's SYNC, FREE / RETRIG |
+| ![](demo_lvl.png) | LVL | Glyph: LEVEL BAR; a drives VOLUME (8 ticks), b operator A's FDBK (a tick per step) |
+| ![](demo_xf.png) | XF | Glyph: CROSSFADER; a slides ALG A to B (MORPH), b dry to wet (DRV MIX); set values only |
+| ![](demo_brd.png) | BRD | Glyph: chorus BRAID; a MODE (strands), b RATE (twist speed), c DEPTH (swing), d MIX (strand weight); animated on the UI clock |
+| ![](demo_rng.png) | RNG | Glyph: delay RINGS; a TIME (spacing), b FDBK (survivors), c TONE (crisp or blurred), d MIX (ring weight), e MECHANICS (wobble), f SAT (the newest ring's weight); REV dots the edge |
+| ![](demo_cub.png) | CUB | Glyph: reverb CUBE; a SIZE (the room), b TIME (afterimage trails), c DAMP (far edges dim, then dot), d MIX (edge weight), e GRIT (crackle) |

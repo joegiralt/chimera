@@ -138,8 +138,11 @@ pub static COMP_SPECS: [ParamSpec; 6] = [
     ParamSpec::continuous(2, "ATK", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false).ident("ATK"),
     ParamSpec::continuous(3, "REL", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false).ident("REL"),
     ParamSpec::continuous(4, "MAKEUP", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false)
-        .ident("MAKEUP"),
-    ParamSpec::continuous(5, "MIX", ValFmt::Uni, 0.0, 1.0, 1.0, 1.0 / 128.0, false).ident("MIX"),
+        .ident("MAKEUP")
+        .glyph(crate::ui::glyph::FocusGlyph::LevelBar),
+    ParamSpec::continuous(5, "MIX", ValFmt::Uni, 0.0, 1.0, 1.0, 1.0 / 128.0, false)
+        .ident("MIX")
+        .glyph(crate::ui::glyph::FocusGlyph::LevelBar),
 ];
 
 impl Block for CompParams {

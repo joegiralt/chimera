@@ -127,6 +127,8 @@ pub struct ParamSpec {
     /// Written to the card. False for a live view of other stored params
     /// (ENV's FORM reads the current MODE's slot), so nothing is stored twice.
     pub stored: bool,
+    /// The focus band's gauge, hand-assigned; ARC unless set.
+    pub glyph: crate::ui::glyph::FocusGlyph,
 }
 
 impl ParamSpec {
@@ -155,6 +157,7 @@ impl ParamSpec {
             law: OffsetLaw::Linear,
             stored: true,
             ident: "",
+            glyph: crate::ui::glyph::FocusGlyph::Arc,
         }
     }
 
@@ -182,6 +185,7 @@ impl ParamSpec {
             law: OffsetLaw::Linear,
             stored: true,
             ident: "",
+            glyph: crate::ui::glyph::FocusGlyph::Arc,
         }
     }
 
@@ -201,6 +205,7 @@ impl ParamSpec {
             law: OffsetLaw::Linear,
             stored: true,
             ident: "",
+            glyph: crate::ui::glyph::FocusGlyph::Arc,
         }
     }
 
@@ -232,6 +237,11 @@ impl ParamSpec {
             stored: false,
             ..self
         }
+    }
+
+    /// This spec with its focus glyph.
+    pub const fn glyph(self, glyph: crate::ui::glyph::FocusGlyph) -> Self {
+        Self { glyph, ..self }
     }
 
     /// This spec with a short column header.

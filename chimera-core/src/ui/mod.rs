@@ -12,6 +12,7 @@ pub mod dungeon_map;
 pub mod filter_panel;
 pub mod fmt;
 pub mod focus;
+pub mod glyph;
 pub mod mod_grid;
 pub mod mod_panel;
 pub mod page;
@@ -162,6 +163,8 @@ pub struct UiState {
     theme: ThemeSettings,
     /// What the last card operation said, for a moment.
     toast: busy::ToastTimer,
+    /// Animation phase for the renderer.
+    clock: animation::UiClock,
 }
 
 crate::in_place::field_list!(UiState => UiState {
@@ -181,6 +184,7 @@ crate::in_place::field_list!(UiState => UiState {
     prime_status,
     theme,
     toast,
+    clock,
 });
 
 impl Default for UiState {
@@ -229,6 +233,7 @@ impl UiState {
             addr_of_mut!((*p).prime_status).write(None);
             addr_of_mut!((*p).theme).write(ThemeSettings::DEFAULT);
             addr_of_mut!((*p).toast).write(busy::ToastTimer::new());
+            addr_of_mut!((*p).clock).write(animation::UiClock::new());
             let ui = slot.assume_init_mut();
             ui.load_matrix(PartId::ALL[0]);
             ui
@@ -239,6 +244,11 @@ impl UiState {
     /// encoder, button or page change (issue #21).
     pub fn prime_status(&self) -> Option<PrimeStatus> {
         self.prime_status
+    }
+
+    /// The UI's animation clock.
+    pub fn clock(&self) -> animation::UiClock {
+        self.clock
     }
 
     /// System › Theme as last edited; the display shell applies it.
@@ -856,11 +866,17 @@ impl UiState {
 
     /// Advance animations. Call at UI_FPS (~20fps).
     pub fn update(&mut self) {
+        self.clock.tick();
         let at = self.active_part;
 
         // Read base param values
         let def = self.nav.active_block_def();
         let mut values = self.display_values();
+        // Set values, before any modulation offset.
+        for (a, &v) in self.renderer.set.iter_mut().zip(values.iter()) {
+            a.set_target(v);
+            a.update();
+        }
         let ctx = self.ctx();
         let sound = &self.project.part(at).sound;
 
@@ -988,11 +1004,19 @@ impl UiState {
             prime_status: self.prime_status,
             audio,
             master_gr_db: crate::meter::MASTER_GR.read(),
+            clock: self.clock,
+            fx: &self.project.perf().fx,
         }
     }
 
     /// Snapshot of what region `kind` shows; a region redraws when it changes.
-    fn region_data(&self, kind: region::RegionKind, f: &renderer::Frame) -> region::RegionData {
+    /// `shown` is the focus band's gauge this frame (`Renderer::shown_gauge`).
+    fn region_data(
+        &self,
+        kind: region::RegionKind,
+        f: &renderer::Frame,
+        shown: Option<glyph::Gauge>,
+    ) -> region::RegionData {
         use region::{RegionData, RegionKind};
         let qvalues = region::quantize_values(&self.renderer.anim);
         let audio_page = f.def.viz == VizType::AudioStats;
@@ -1024,7 +1048,12 @@ impl UiState {
                 },
                 renderer::look(f, f.focus),
                 self.prime_status,
-            ),
+            )
+            .with_set(region::quantize(self.renderer.set[f.focus].current()))
+            .animated(glyph::anim_key(
+                shown.is_some_and(|g| g.animates()),
+                f.clock.frame(),
+            )),
             RegionKind::Viz => {
                 let (values, live) = self.renderer.viz_inputs(f);
                 // BigViz pages have no focus band: their viz carries the
@@ -1079,8 +1108,9 @@ impl UiState {
         let mut data = [region::RegionData::sentinel_header(); region::MAX_REGIONS];
         {
             let f = self.frame(perf, audio, scope);
+            let shown = self.renderer.shown_gauge(&f);
             for (d, r) in data.iter_mut().zip(self.region_set.active_regions()) {
-                *d = self.region_data(r.kind, &f);
+                *d = self.region_data(r.kind, &f, shown);
             }
         }
         for (r, d) in self.region_set.active_regions_mut().iter_mut().zip(data) {
@@ -1146,10 +1176,22 @@ impl UiState {
         let mut data = [region::RegionData::sentinel_header(); region::MAX_REGIONS];
         {
             let f = self.frame(perf, audio, scope);
+            // The focus band's gauge, resolved once for the frame.
+            let shown = self.renderer.shown_gauge(&f);
             for i in 0..count {
                 let r = self.region_set.regions[i];
-                data[i] = self.region_data(r.kind, &f);
-                if data[i] != r.prev_data {
+                data[i] = self.region_data(r.kind, &f, shown);
+                // Only an animated glyph moved: redraw its box alone.
+                if r.kind == region::RegionKind::Focus
+                    && data[i] != r.prev_data
+                    && data[i].without_anim() == r.prev_data.without_anim()
+                    && let Some(gauge) = shown
+                    && let Some(rows) =
+                        renderer::Renderer::redraw_gauge(display, |d| d.pixel_buffer(), gauge)
+                {
+                    flush_list[flush_count] = rows;
+                    flush_count += 1;
+                } else if data[i] != r.prev_data {
                     renderer::Renderer::clear_region_fb(display.pixel_buffer(), r.y_start, r.y_end);
                     self.renderer.draw_region_with_def(display, r.kind, &f);
                     flush_list[flush_count] = (r.y_start, r.y_end);

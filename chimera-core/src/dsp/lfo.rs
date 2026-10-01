@@ -8,6 +8,11 @@ use crate::dsp::fast_sin;
 use crate::dsp::modulator::func::{BCoefs, FuncGen, Slides};
 use crate::dsp::modulator::{Func, FuncParams, Glide, LfoForm, LfoType, pick};
 
+/// SHAPE's names, in `LfoShape`'s order (display only).
+pub const SHAPE_NAMES: [&str; 5] = ["SINE", "TRI", "SAW", "SQR", "S&H"];
+/// SYNC's names: 0 free-running, 1 retriggered by each note.
+pub const SYNC_NAMES: [&str; 2] = ["FREE", "RETRIG"];
+
 /// LFO waveform shapes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LfoShape {
@@ -118,15 +123,23 @@ impl LfoParams {
 /// modulating an LFO itself is out of scope, so nothing here is modulatable.
 pub static LFO_SPECS: [ParamSpec; 11] = [
     ParamSpec::continuous(0, "RATE", ValFmt::Uni, 0.01, 20.0, 1.0, 0.15, false).ident("RATE"),
-    ParamSpec::choice(1, "SHAPE", ValFmt::Int(4), 4.0, 0.0).ident("SHAPE"),
-    ParamSpec::choice(2, "SYNC", ValFmt::Int(1), 1.0, 0.0).ident("SYNC"),
+    ParamSpec::choice(1, "SHAPE", ValFmt::Names(&SHAPE_NAMES), 4.0, 0.0)
+        .ident("SHAPE")
+        .glyph(crate::ui::glyph::FocusGlyph::None),
+    ParamSpec::choice(2, "SYNC", ValFmt::Names(&SYNC_NAMES), 1.0, 0.0)
+        .ident("SYNC")
+        .glyph(crate::ui::glyph::FocusGlyph::Switch),
     ParamSpec::continuous(3, "PHASE", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false)
         .ident("PHASE"),
     ParamSpec::continuous(4, "DEPTH", ValFmt::Uni, 0.0, 1.0, 1.0, 1.0 / 128.0, false)
         .ident("DEPTH"),
     ParamSpec::continuous(5, "OFST", ValFmt::Bi, -1.0, 1.0, 0.0, 2.0 / 128.0, false).ident("OFST"),
-    ParamSpec::choice(6, "TYPE", ValFmt::Names(&["CLASSIC", "FUNC"]), 1.0, 0.0).ident("TYPE"),
-    ParamSpec::choice(7, "FORM", ValFmt::Names(&["FREE", "SYNC", "LFV"]), 2.0, 0.0).ident("FORM"),
+    ParamSpec::choice(6, "TYPE", ValFmt::Names(&["CLASSIC", "FUNC"]), 1.0, 0.0)
+        .ident("TYPE")
+        .glyph(crate::ui::glyph::FocusGlyph::None),
+    ParamSpec::choice(7, "FORM", ValFmt::Names(&["FREE", "SYNC", "LFV"]), 2.0, 0.0)
+        .ident("FORM")
+        .glyph(crate::ui::glyph::FocusGlyph::None),
     ParamSpec::continuous(8, "RISE", ValFmt::Uni, 0.0, 1.0, 0.309, 1.0 / 128.0, false)
         .ident("RISE"),
     ParamSpec::continuous(9, "FALL", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false).ident("FALL"),
