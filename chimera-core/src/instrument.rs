@@ -44,6 +44,8 @@ pub const AXI_RESIDENT: usize = FB_BYTES
     + size_of::<TripleBuffer<AudioStats>>()
     + size_of::<FxBus>();
 const _: () = assert!(AXI_RESIDENT <= AXI_SRAM);
+// Spec § Hardware parity: 64 KB of AXI to spare.
+const _: () = assert!(AXI_SRAM - AXI_RESIDENT >= 64 * 1024);
 
 /// One Part as the audio thread sees it.
 #[derive(Clone, Debug)]
