@@ -2,6 +2,8 @@
 //! § Unsaved-state edge cases): a replace that can lose work asks first,
 //! and a confirmation is refused once its target moved.
 
+mod common;
+
 use chimera_core::name::ProjectName;
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
@@ -12,6 +14,7 @@ use chimera_core::project::{
 use chimera_core::storage::ProjectId;
 use chimera_hal::store::{Store, VolumeId};
 use chimera_hal::testkit::MemStore;
+use common::project::{decode, encode};
 
 fn vol() -> VolumeId {
     MemStore::new(1).mount().unwrap()
@@ -183,4 +186,34 @@ fn a_project_confirmation_holds_until_the_project_moves() {
     p.mark_saved_for_test();
     let c = pending.save_then(&p, t).unwrap();
     assert!(c.holds(&p));
+}
+
+/// A Part confirmed Clean, then a project load that keeps its bits but
+/// points it at a slot that now differs: it derives Edited, so the old
+/// confirmation no longer holds.
+#[test]
+fn a_confirmation_from_before_a_load_is_refused() {
+    let (a, s) = (PartId::ALL[1], SlotId::ALL[2]);
+    let (mut q, tq) = Project::boxed();
+    let c = ReplaceGuard::check(&q, tq, slot(a, s)).unwrap();
+    q.replace_part(c).unwrap();
+    q.pool_store(s, Sound::init(EngineType::Modal));
+    let (mut p, t) = Project::boxed();
+    let c = ReplaceGuard::check(&p, t, slot(a, s)).unwrap();
+    p.replace_part(c).unwrap();
+    let c = ReplaceGuard::check(&p, t, slot(a, SlotId::ALL[5])).unwrap();
+    let bits = p.part(a).sound.clone();
+    decode(&encode(&q), &mut p).unwrap();
+    assert!(p.part(a).sound.bits_eq(&bits));
+    assert_eq!(part_status(p.part(a), p.pool()), PartStatus::Edited);
+    assert_eq!(
+        ReplaceGuard::check(&p, t, slot(a, SlotId::ALL[5]))
+            .unwrap_err()
+            .prompt(),
+        Prompt::SavePartFirst
+    );
+    assert!(!c.holds(&p));
+    let before = p.part(a).sound.clone();
+    assert_eq!(p.replace_part(c), Err(ReplaceError::Changed));
+    assert!(p.part(a).sound.bits_eq(&before));
 }

@@ -36,9 +36,10 @@ ADR 0046 (Task 5) decides the load protocol.
   crc } | Init(EngineType)` is set only by a load, a save over a slot and a
   revert.
 - **Generations are never lowered.** A project load clears and stores every
-  slot through `Pool::clear` and `Pool::store`, so every generation moves;
-  no `Origin`, `PartAction` or `Confirmed` from before a load can match
-  after it by accident. Tests compare an Origin by slot and CRC, never by
+  slot through `Pool::clear` and `Pool::store`, so every generation moves:
+  no `Origin::Slot` from before a load equals one after it, so no
+  `PartAction` or `Confirmed<PartSource>` taken on a slot-origin Part
+  applies after it. Tests compare an Origin by slot and CRC, never by
   generation. 65 536 stores to one slot between two looks may alias; that
   is accepted.
 
@@ -103,16 +104,25 @@ whose Part's Origin, status or `sound_crc` moved since it was offered.
   a cancelled or failed save leaves the target at risk and the caller
   aborts. A `Pending` holds the source's id, never parsed data.
 - **A confirmation carries a witness** of what it confirmed, taken when it
-  is made: the Part's `sound_crc`, or the project's `project_crc`. A file
-  load also carries the card's `VolumeId`. `Confirmed`'s fields are
+  is made, covering every input to the prompt it would need:
+  - a Part: a CRC of its `sound_crc` and its whole Origin (kind, then slot,
+    generation and CRC, or engine code). A slot's generation moves with
+    its contents, so the pool's part is covered through it;
+  - a project: its `project_crc`.
+
+  A file load also carries the card's `VolumeId`. `Confirmed`'s fields are
   private to `project/guard.rs` (compile-fail E0451).
 - **The replace refuses if the witness moved** (`ReplaceError::Changed`):
   a Part edited between `check` and `replace_part` would otherwise lose
   the edit without the prompt it now needs (Review Focus 4). `load_project`
   (Task 6) makes the same check, and refuses a swapped volume inside
   `Card::run`.
-- **An empty slot is a runtime refusal** (`ReplaceError::SlotEmpty`), not a
-  type: a `Pending` may be confirmed after its slot was cleared.
+- **The replace's source is not witnessed.** An empty slot is a runtime
+  refusal (`ReplaceError::SlotEmpty`), not a type: a `Pending` may be
+  confirmed after its slot was cleared. A slot overwritten between the
+  confirmation and the replace is not refused: the replace loads the new
+  contents, and no work is lost, since the Part's own state is what the
+  witness guards.
 - **`Project::replace_part(Confirmed<PartSource>)` is the only public Part
   load.** `load_part` is private to `project` (compile-fail E0624); a
   Part action's REVERT uses it after its own re-check.
@@ -187,8 +197,16 @@ whose Part's Origin, status or `sound_crc` moved since it was offered.
   https://github.com/joegiralt/chimera/issues/257.
 - `part_status` on an INIT origin builds `Sound::init(e)` on the stack per
   call (~900 B), within the 8 KB frame rule.
-- A `PartAction` or `Confirmed` from before a project load can't apply
-  after it: the generation, Origin or witness moved.
+- A `PartAction` or `Confirmed<PartSource>` from before a project load
+  applies after it only if the Part is from INIT with the same engine and
+  the same bits, and so the same status: then it does what a fresh one
+  would. On a slot origin, the generation moved. A `Confirmed<ProjectSource>`
+  holds after a load only if the loaded project is bit-equal by
+  `project_crc`, when no work can be lost.
+- The Part witness includes the generation, so a confirmation is also
+  refused (`Changed`) when another Part saves over its Part's slot in
+  between, though the Part only became `Stale`. That over-refusal is safe:
+  the caller asks again.
 
 ## Sources
 - Spec: `docs/superpowers/specs/2026-09-28-projects-storage-design.md`

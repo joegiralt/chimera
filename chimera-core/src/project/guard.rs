@@ -45,10 +45,11 @@
 
 use chimera_hal::store::VolumeId;
 
-use crate::storage::{ProjectId, sound_crc};
+use crate::block::DiskCode;
+use crate::storage::{Crc32, ProjectId, sound_crc};
 
 use super::{
-    PartSource, PartStatus, Project, ProjectStatus, TemplateCrc, part_status, project_crc,
+    Origin, PartSource, PartStatus, Project, ProjectStatus, TemplateCrc, part_status, project_crc,
     project_status,
 };
 
@@ -71,7 +72,8 @@ mod sealed {
 pub trait Target: Copy + sealed::Sealed {
     /// The prompt the replace needs now, if any.
     fn at_risk(&self, p: &Project, t: TemplateCrc) -> Option<Prompt>;
-    /// The target's state, as a confirmation saw it.
+    /// The target's state, as a confirmation saw it: every input to
+    /// `at_risk` but the template.
     fn witness(&self, p: &Project) -> u32;
 }
 
@@ -82,8 +84,25 @@ impl Target for PartSource {
             .then_some(Prompt::SavePartFirst)
     }
 
+    /// The Part's `sound_crc` and Origin: its status follows from them and
+    /// the pool, and a slot's generation moves with its contents.
     fn witness(&self, p: &Project) -> u32 {
-        sound_crc(&p.part(self.part).sound)
+        let part = p.part(self.part);
+        let mut c = Crc32::new();
+        c.update(&sound_crc(&part.sound).to_le_bytes());
+        match part.origin {
+            Origin::Slot {
+                slot,
+                generation,
+                crc,
+            } => {
+                c.update(&[0, slot.index() as u8]);
+                c.update(&generation.to_le_bytes());
+                c.update(&crc.to_le_bytes());
+            }
+            Origin::Init(e) => c.update(&[1, e.disk_code()]),
+        }
+        c.finish()
     }
 }
 
