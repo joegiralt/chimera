@@ -11,6 +11,9 @@
 - **Accepted by:** the owner, after the Modal 2 step A ship flash (plan
   task 12); the costs below are host estimates until the chip bench
   (https://github.com/joegiralt/chimera/issues/242)
+- **Superseded in part by:** [0062](0062-modal-notes-ring-free.md) (a
+  note-off's release: a note rings free), [0064](0064-the-one-loop-bow-in-tune.md)
+  (the Bowed section: the one-loop bow, and its old-patch translation)
 
 ## Context
 The owner's bench report (#191) and the survey behind the Modal 2 step A
