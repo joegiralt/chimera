@@ -303,8 +303,8 @@ impl Bench {
     /// on channels 2–6 and stay silent.
     pub fn new(patch: Patch, mix: PartParams, fx: FxParams) -> Self {
         let mut perf = Box::new(Performance::new());
-        perf.parts[0].sound = patch.sound();
-        perf.parts[0].mix = mix;
+        *perf.edit(PartId::ALL[0]).sound = patch.sound();
+        *perf.edit(PartId::ALL[0]).mix = mix;
         perf.fx = fx;
         let shared = Box::new(AudioShared::from_performance(&perf));
         Self {

@@ -58,9 +58,16 @@ fn new_part(i: usize) -> Part {
 }
 
 /// All Parts + FX: what the audio plays. The pool and the name are the
-/// `Project`'s.
+/// `Project`'s. A Part is never reached whole by `&mut`, so no Origin is
+/// swapped in from elsewhere:
+///
+/// ```compile_fail,E0616
+/// use chimera_core::preset::Performance;
+/// let (mut a, mut b) = (Performance::new(), Performance::new());
+/// core::mem::swap(&mut a.parts[0], &mut b.parts[0]);
+/// ```
 pub struct Performance {
-    pub parts: [Part; MAX_PARTS],
+    pub(in crate::project) parts: [Part; MAX_PARTS],
     /// Chorus, delay and reverb: shared by every Part, not per Sound.
     pub fx: FxParams,
 }
@@ -92,41 +99,66 @@ impl Performance {
         &self.parts[p.index()]
     }
 
-    /// Part `p` as the pages edit it: its Sound plus the shared FX.
+    pub fn parts(&self) -> &[Part; MAX_PARTS] {
+        &self.parts
+    }
+
+    /// Part `p` as the pages edit it: its Sound and mix plus the shared FX.
     pub fn edit(&mut self, p: PartId) -> PartEdit<'_> {
+        let Part { sound, mix, .. } = &mut self.parts[p.index()];
         PartEdit {
-            part: &mut self.parts[p.index()],
+            sound,
+            mix,
             fx: &mut self.fx,
         }
     }
 }
 
-/// One Part (Sound + mix settings) and the Performance's FX, borrowed
-/// together so a page can address any block by `BlockRef`.
+/// One Part's Sound and mix settings and the Performance's FX, borrowed
+/// together so a page can address any block by `BlockRef`. Never the Part
+/// itself, so its Origin can't be swapped:
+///
+/// ```compile_fail,E0609
+/// use chimera_core::preset::Performance;
+/// use chimera_core::project::{PartId, Project};
+/// let mut p = Project::boxed();
+/// let mut other = Performance::new();
+/// core::mem::swap(
+///     p.edit_part(PartId::ALL[0]).part,
+///     other.edit(PartId::ALL[0]).part,
+/// );
+/// ```
 pub struct PartEdit<'a> {
-    pub part: &'a mut Part,
+    pub sound: &'a mut Sound,
+    pub mix: &'a mut PartParams,
     pub fx: &'a mut FxParams,
 }
 
 impl Blocks for PartEdit<'_> {
     fn block(&self, b: BlockRef) -> Option<&dyn Block> {
-        part_block(self.part, self.fx, b)
+        part_block(self.sound, self.mix, self.fx, b)
     }
 
     fn block_mut(&mut self, b: BlockRef) -> Option<&mut dyn Block> {
-        part_block_mut(self.part, self.fx, b)
+        part_block_mut(self.sound, self.mix, self.fx, b)
     }
 }
 
-/// `part`'s block `b`, or the FX's; `None` for the blocks the UI holds.
-pub fn part_block<'a>(part: &'a Part, fx: &'a FxParams, b: BlockRef) -> Option<&'a dyn Block> {
+/// A Part's block `b` (its Sound's or its mix), or the FX's; `None` for the
+/// blocks the UI holds.
+pub fn part_block<'a>(
+    sound: &'a Sound,
+    mix: &'a PartParams,
+    fx: &'a FxParams,
+    b: BlockRef,
+) -> Option<&'a dyn Block> {
     match b {
         BlockRef::Chorus => Some(&fx.chorus),
         BlockRef::Delay => Some(&fx.delay),
         BlockRef::Reverb => Some(&fx.reverb),
         BlockRef::Tape => Some(&fx.tape),
         BlockRef::Comp => Some(&fx.comp),
-        BlockRef::Part => Some(&part.mix),
+        BlockRef::Part => Some(mix),
         BlockRef::Theme => None,
         BlockRef::Modal
         | BlockRef::Algo
@@ -137,13 +169,14 @@ pub fn part_block<'a>(part: &'a Part, fx: &'a FxParams, b: BlockRef) -> Option<&
         | BlockRef::Env(_)
         | BlockRef::Lfo(_)
         | BlockRef::Out
-        | BlockRef::Pitch => part.sound.params.block(b),
+        | BlockRef::Pitch => sound.params.block(b),
     }
 }
 
 /// `part_block`, mutable.
 pub fn part_block_mut<'a>(
-    part: &'a mut Part,
+    sound: &'a mut Sound,
+    mix: &'a mut PartParams,
     fx: &'a mut FxParams,
     b: BlockRef,
 ) -> Option<&'a mut dyn Block> {
@@ -153,7 +186,7 @@ pub fn part_block_mut<'a>(
         BlockRef::Reverb => Some(&mut fx.reverb),
         BlockRef::Tape => Some(&mut fx.tape),
         BlockRef::Comp => Some(&mut fx.comp),
-        BlockRef::Part => Some(&mut part.mix),
+        BlockRef::Part => Some(mix),
         BlockRef::Theme => None,
         BlockRef::Modal
         | BlockRef::Algo
@@ -164,6 +197,6 @@ pub fn part_block_mut<'a>(
         | BlockRef::Env(_)
         | BlockRef::Lfo(_)
         | BlockRef::Out
-        | BlockRef::Pitch => part.sound.params.block_mut(b),
+        | BlockRef::Pitch => sound.params.block_mut(b),
     }
 }

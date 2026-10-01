@@ -78,7 +78,7 @@ fn part_edit_does_not_modify_pool() {
         from: PartFrom::Slot(slot),
     })
     .unwrap();
-    p.edit_part(part).part.sound.params.out.volume = 0.0; // mute
+    p.edit_part(part).sound.params.out.volume = 0.0; // mute
     assert_eq!(p.part(part).sound.params.out.volume, 0.0);
     assert!(p.pool().get(slot).unwrap().params.out.volume > 0.0);
 }
@@ -87,8 +87,8 @@ fn part_edit_does_not_modify_pool() {
 #[test]
 fn performance_has_six_parts_playing_sounds() {
     let perf = Performance::new();
-    assert_eq!(perf.parts.len(), chimera_core::hw::MAX_PARTS);
-    let sound: &Sound = &perf.parts[0].sound;
+    assert_eq!(perf.parts().len(), chimera_core::hw::MAX_PARTS);
+    let sound: &Sound = &perf.parts()[0].sound;
     assert_eq!(sound.engine(), EngineType::Algo);
     assert_eq!(Project::boxed().meta().name().as_str(), "NEW PROJECT");
 }
@@ -249,7 +249,7 @@ fn browser_save_to_pool() {
     let mut ui = UiState::new();
 
     // Edit part 0's sound name
-    ui.project_mut().edit_part(PartId::ALL[0]).part.sound.name =
+    ui.project_mut().edit_part(PartId::ALL[0]).sound.name =
         chimera_core::name::Name::new("My Bass").unwrap();
 
     // Open browser for B1
@@ -306,9 +306,9 @@ fn browser_init_entries_set_the_engine() {
 #[test]
 fn browser_load_keeps_part_mix() {
     let mut ui = UiState::new();
-    ui.project_mut().edit_part(PartId::ALL[2]).part.mix.channel =
+    ui.project_mut().edit_part(PartId::ALL[2]).mix.channel =
         chimera_core::MidiChannel::new(9).unwrap();
-    ui.project_mut().edit_part(PartId::ALL[2]).part.mix.level = 0.3;
+    ui.project_mut().edit_part(PartId::ALL[2]).mix.level = 0.3;
     open_browser(&mut ui, ButtonId::B3);
     ui.handle_input(&MockControls::new().encoder(EncoderId::A, (POOL_SIZE + 1) as i8));
     ui.handle_input(&MockControls::new().button(ButtonId::Edit, ButtonState::Pressed));
@@ -403,7 +403,7 @@ fn priming_a_wave_registers_nothing() {
 fn performance_default_is_new() {
     use chimera_core::part::PartParams;
     let p = chimera_core::preset::Performance::default();
-    for (i, part) in p.parts.iter().enumerate() {
+    for (i, part) in p.parts().iter().enumerate() {
         assert_eq!(part.mix, PartParams::for_part(i));
     }
 }

@@ -299,7 +299,7 @@ impl UiState {
 
     /// Returns a mutable reference to the active part's params.
     pub fn params_mut(&mut self) -> &mut ParamSnapshot {
-        &mut self.project.edit_part(self.active_part).part.sound.params
+        &mut self.project.edit_part(self.active_part).sound.params
     }
 
     /// Returns a reference to the active part's mod state.
@@ -309,12 +309,7 @@ impl UiState {
 
     /// Returns a mutable reference to the active part's mod state.
     pub fn mod_state_mut(&mut self) -> &mut ModState {
-        &mut self
-            .project
-            .edit_part(self.active_part)
-            .part
-            .sound
-            .mod_state
+        &mut self.project.edit_part(self.active_part).sound.mod_state
     }
 
     /// Current page identity.
@@ -389,7 +384,7 @@ impl UiState {
     /// when there is no room), then set `source → CUTOFF` to `f(amount)`.
     fn edit_route(&mut self, source: crate::modulation::ModSource, f: impl FnOnce(i8) -> i8) {
         let at = self.active_part;
-        let sound = &mut self.project.edit_part(at).part.sound;
+        let sound = self.project.edit_part(at).sound;
         if !sound.dest_registry.is_primed(CUTOFF) {
             if let Err(e) = sound.dest_registry.add(CUTOFF, CUTOFF_LABEL) {
                 self.prime_status = Some(e.into());
@@ -409,7 +404,7 @@ impl UiState {
 
     /// Rebuild a part's audio-side `ModState` from the matrix.
     fn sync_mod_state(&mut self, part: PartId) {
-        let sound = &mut self.project.edit_part(part).part.sound;
+        let sound = self.project.edit_part(part).sound;
         sound.mod_state.sync_from_matrix(&self.matrix_state);
     }
 
@@ -668,7 +663,7 @@ impl UiState {
                         self.prime_status = Some(PrimeStatus::NotModulatable);
                     } else if let Some(addr) = self.current_param_addr() {
                         let label = self.mod_label(addr);
-                        let sound = &mut self.project.edit_part(at).part.sound;
+                        let sound = self.project.edit_part(at).sound;
                         self.prime_status = Some(if sound.dest_registry.is_primed(addr) {
                             PrimeStatus::AlreadyRouted
                         } else {
@@ -690,7 +685,7 @@ impl UiState {
                 if controls.button_state(ButtonId::Minus) == ButtonState::Pressed
                     && let Some(addr) = self.current_param_addr()
                 {
-                    let sound = &mut self.project.edit_part(at).part.sound;
+                    let sound = self.project.edit_part(at).sound;
                     sound.dest_registry.remove(addr);
                     self.matrix_state
                         .rebuild_dests_from_registry(&sound.dest_registry);
@@ -834,7 +829,7 @@ impl UiState {
             focus: self.focused_slot(),
             scope,
             sounding: crate::scope::peak(scope) > crate::scope::SOUNDING_PEAK,
-            parts: &self.project.perf().parts,
+            parts: self.project.perf().parts(),
             active_part: self.active_part,
             prime_status: self.prime_status,
             audio,
