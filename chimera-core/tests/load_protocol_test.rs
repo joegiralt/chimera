@@ -492,8 +492,8 @@ mod e2e {
     use chimera_core::params::FilterParams;
     use chimera_core::project::test_support::FlipOnSecondRead;
     use chimera_core::project::{
-        LoadOutcome, PartFrom, PartSource, Project, ProjectNote, ProjectSource, ReplaceGuard,
-        SlotId, Subject, Swap, TemplateCrc, load_project, project_file, save_project,
+        LoadOutcome, PartFrom, PartSource, Project, ProjectFile, ProjectNote, ProjectSource,
+        ReplaceGuard, SlotId, Subject, Swap, TemplateCrc, load_project, project_file, save_project,
     };
     use chimera_core::storage::{Card, ProjectId, Side};
     use chimera_core::triple::{Reader, TripleBuffer, Writer};
@@ -633,7 +633,11 @@ mod e2e {
         let mut s = MemStore::new(1);
         let mut card = Card::new();
         for (p, n) in [(new, 2), (old, 1)] {
-            let note = save_project(&mut card, &mut s, p, ProjectId::new(n).unwrap());
+            let to = ProjectFile {
+                id: ProjectId::new(n).unwrap(),
+                vol: s.mount().unwrap(),
+            };
+            let note = save_project(&mut card, &mut s, p, to);
             assert!(matches!(note, ProjectNote::Saved(_)), "{note:?}");
         }
         (s, card)

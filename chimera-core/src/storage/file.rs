@@ -488,11 +488,24 @@ fn apply<S: Store, D: Decode>(
         Checked::Missing => return Err(LoadError::Missing),
         Checked::Failed { err, .. } => return Err(LoadError::File(err)),
     };
-    match scan(s, r, f, Some(D::KIND), &mut |e| d.apply(e)) {
-        Ok(Scan::Passed { header, crc: again }) if again == crc => {
-            d.commit().map_err(LoadError::File)?;
-            Ok(header)
-        }
+    let header = pass_two(s, r, f, D::KIND, crc, &mut |e| d.apply(e))?;
+    d.commit().map_err(LoadError::File)?;
+    Ok(header)
+}
+
+/// Pass 2's read, for the staged and the in-place loader alike: Ok only
+/// if it reads the bytes pass 1 passed (`crc`). Other bytes, or a side
+/// gone or broken since, are `BadCrc`; any other store error is the card's.
+fn pass_two<S: Store>(
+    s: &mut S,
+    r: &Ready,
+    f: FileName,
+    kind: FileKind,
+    crc: u32,
+    on: &mut dyn FnMut(Event<'_>) -> Result<(), FileError>,
+) -> Result<Header, LoadError> {
+    match scan(s, r, f, Some(kind), on) {
+        Ok(Scan::Passed { header, crc: again }) if again == crc => Ok(header),
         Ok(_) | Err(StoreError::NotFound | StoreError::Corrupt) => {
             Err(LoadError::File(FileError::BadCrc))
         }
@@ -571,16 +584,10 @@ pub fn load_ab_in_place<S: Store, D: DecodeInPlace>(
         Checked::Missing => return Err(untouched(LoadError::Missing)),
         Checked::Failed { err, .. } => return Err(untouched(LoadError::File(err))),
     };
-    match scan(s, r, f.side(side), Some(D::KIND), &mut |e| d.apply(e)) {
-        Ok(Scan::Passed { header, crc: again }) if again == crc => {
-            d.finish().map_err(|e| clobbered(LoadError::File(e)))?;
-            Ok(header)
-        }
-        Ok(_) | Err(StoreError::NotFound | StoreError::Corrupt) => {
-            Err(clobbered(LoadError::File(FileError::BadCrc)))
-        }
-        Err(e) => Err(clobbered(LoadError::Store(e))),
-    }
+    let header =
+        pass_two(s, r, f.side(side), D::KIND, crc, &mut |e| d.apply(e)).map_err(clobbered)?;
+    d.finish().map_err(|e| clobbered(LoadError::File(e)))?;
+    Ok(header)
 }
 
 /// Streams `header → body → trailer` to the side `write_target` names.

@@ -21,7 +21,8 @@ use chimera_core::part::PartParams;
 use chimera_core::preset::Sound;
 use chimera_core::project::test_support::{full, same};
 use chimera_core::project::{
-    PartId, Project, ProjectDecoder, ProjectNote, project_crc, project_file, save_project,
+    PartId, Project, ProjectDecoder, ProjectFile, ProjectNote, project_crc, project_file,
+    save_project,
 };
 use chimera_core::storage::{
     Card, CardError, CardEvent, FileKind, Generation, Header, InPlaceError, ProjectId, RecordTag,
@@ -443,7 +444,11 @@ fn project_id() -> ProjectId {
 }
 
 fn save_project_on(s: &mut Probed<CutDisk>, n: u32) -> ProjectNote {
-    save_project(&mut Card::new(), s, &mut project_gen(n), project_id())
+    let to = ProjectFile {
+        id: project_id(),
+        vol: s.mount().unwrap(),
+    };
+    save_project(&mut Card::new(), s, &mut project_gen(n), to)
 }
 
 fn load_project_in_place(slot: &Slot) -> Result<Box<Project>, InPlaceError> {

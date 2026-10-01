@@ -22,9 +22,9 @@ use crate::preset::Sound;
 
 use super::{
     Line, LoadLink, LoadOutcome, Origin, PartFrom, PartId, PartSource, Project, ProjectEntry,
-    ProjectNote, ProjectSource, ProjectStatus, ReplaceGuard, SlotId, Subject, TemplateCrc,
-    delete_project, list_projects, load_project, new_project_id, part_status, project_crc,
-    project_file, project_status, save_project,
+    ProjectFile, ProjectNote, ProjectSource, ProjectStatus, ReplaceGuard, SlotId, Subject,
+    TemplateCrc, delete_project, list_projects, load_project, new_project_id, part_status,
+    project_crc, project_file, project_status, save_project,
 };
 
 /// NEW with every slot filled: the factory Sounds and INIT, then edited
@@ -317,8 +317,94 @@ impl<S: Store> Store for FlipOnSecondRead<S> {
     }
 }
 
+/// A store whose second read of `file` on fails with `err` before any
+/// byte: the card pulled (`NoCard`) or swapped (`VolumeChanged`) between
+/// a load's two passes.
+pub struct FailOnSecondRead<S> {
+    pub inner: S,
+    pub file: FileName,
+    pub err: StoreError,
+    reads: u8,
+}
+
+impl<S> FailOnSecondRead<S> {
+    pub fn new(inner: S, file: FileName, err: StoreError) -> Self {
+        FailOnSecondRead {
+            inner,
+            file,
+            err,
+            reads: 0,
+        }
+    }
+
+    /// Reads of `file` so far.
+    pub fn reads(&self) -> u8 {
+        self.reads
+    }
+}
+
+impl<S: Store> Store for FailOnSecondRead<S> {
+    fn mount(&mut self) -> Result<VolumeId, StoreError> {
+        self.inner.mount()
+    }
+
+    fn list(
+        &mut self,
+        vol: VolumeId,
+        dir: Dir,
+        f: &mut dyn FnMut(FileName, u32),
+    ) -> Result<(), StoreError> {
+        self.inner.list(vol, dir, f)
+    }
+
+    fn read(
+        &mut self,
+        vol: VolumeId,
+        file: FileName,
+        sink: &mut dyn ReadSink,
+    ) -> Result<(), StoreError> {
+        if file == self.file {
+            self.reads = self.reads.saturating_add(1);
+            if self.reads >= 2 {
+                return Err(self.err);
+            }
+        }
+        self.inner.read(vol, file, sink)
+    }
+
+    fn write(
+        &mut self,
+        vol: VolumeId,
+        file: FileName,
+        body: &mut dyn FnMut(&mut dyn ByteSink) -> Result<(), StoreError>,
+    ) -> Result<u32, StoreError> {
+        self.inner.write(vol, file, body)
+    }
+
+    fn delete(&mut self, vol: VolumeId, file: FileName) -> Result<(), StoreError> {
+        self.inner.delete(vol, file)
+    }
+
+    fn make_dir(&mut self, vol: VolumeId, dir: Dir) -> Result<(), StoreError> {
+        self.inner.make_dir(vol, dir)
+    }
+}
+
 fn pid(n: u32) -> ProjectId {
     ProjectId::new(n).expect("an id")
+}
+
+/// `P000000n` on the card in the slot.
+fn at<S: Store>(s: &mut S, n: u32) -> ProjectFile {
+    ProjectFile {
+        id: pid(n),
+        vol: s.mount().expect("a card"),
+    }
+}
+
+fn save_at<S: Store>(card: &mut Card, s: &mut S, p: &mut Project, n: u32) -> ProjectNote {
+    let f = at(s, n);
+    save_project(card, s, p, f)
 }
 
 /// Every entry `list_projects` gives, and its note.
@@ -395,9 +481,11 @@ pub fn project_store_suite<S: Store>(make: &mut dyn FnMut() -> S) {
 fn save_then_load_is_bit_identical<S: Store>(store: &mut S) {
     let mut card = Card::new();
     let (mut p, _) = full();
-    let id = new_project_id(&mut card, store).expect("an id");
-    assert_eq!(id, pid(1));
-    saved(save_project(&mut card, store, &mut p, id));
+    let file = new_project_id(&mut card, store).expect("an id");
+    let id = file.id;
+    assert_eq!(file, at(store, 1));
+    saved(save_project(&mut card, store, &mut p, file));
+    assert_eq!(p.meta().file(), Some(file));
     assert_eq!(p.meta().id(), Some(id));
     let (mut q, t) = Project::boxed();
     let link = LoadLink::new();
@@ -419,10 +507,14 @@ fn first_save_makes_the_dirs<S: Store>(make: &mut dyn FnMut() -> S) {
             let out = card.run(&mut s, |s, r| s.make_dir(r.volume(), Dir::Chimera));
             out.and_then(|o| o.result).expect("/CHIMERA");
         }
-        assert_eq!(new_project_id(&mut card, &mut s), Ok(pid(1)), "no PROJECTS");
+        assert_eq!(
+            new_project_id(&mut card, &mut s),
+            Ok(at(&mut s, 1)),
+            "no PROJECTS"
+        );
         assert!(listed(&mut card, &mut s).is_empty());
         let (mut p, _) = Project::boxed();
-        saved(save_project(&mut card, &mut s, &mut p, pid(1)));
+        saved(save_at(&mut card, &mut s, &mut p, 1));
         let got = listed(&mut card, &mut s);
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].name, Some(p.meta().name()));
@@ -438,12 +530,13 @@ fn list_and_next_id<S: Store>(s: &mut S) {
         p
     };
     for (n, name) in [(1, "ONE"), (2, "TWO"), (5, "FIVE")] {
-        assert!(new_project_id(&mut card, s).expect("an id").get() <= n);
-        saved(save_project(&mut card, s, &mut named(name), pid(n)));
+        assert!(new_project_id(&mut card, s).expect("an id").id.get() <= n);
+        saved(save_at(&mut card, s, &mut named(name), n));
     }
-    assert_eq!(new_project_id(&mut card, s), Ok(pid(6)));
+    let six = at(s, 6);
+    assert_eq!(new_project_id(&mut card, s), Ok(six));
     // A second save under a new name: the newer side's name lists.
-    saved(save_project(&mut card, s, &mut named("ONE AGAIN"), pid(1)));
+    saved(save_at(&mut card, s, &mut named("ONE AGAIN"), 1));
     // Headers this firmware refuses, alone or beside a readable side.
     let mut newer = header_bytes(FileKind::Project, 1, "NEWER");
     newer[4] = 2;
@@ -486,40 +579,38 @@ fn list_and_next_id<S: Store>(s: &mut S) {
             entry(9, None, Some(FileError::WrongKind)),
         ]
     );
-    assert_eq!(new_project_id(&mut card, s), Ok(pid(10)));
+    let ten = at(s, 10);
+    assert_eq!(new_project_id(&mut card, s), Ok(ten));
 
     // The last id: the next is refused.
-    saved(save_project(
-        &mut card,
-        s,
-        &mut named("LAST"),
-        pid(ProjectId::MAX),
-    ));
+    saved(save_at(&mut card, s, &mut named("LAST"), ProjectId::MAX));
     assert_eq!(new_project_id(&mut card, s), Err(ProjectNote::NoIds));
 }
 
 fn delete_rules<S: Store>(s: &mut S) {
     let mut card = Card::new();
+    let (at1, two) = (at(s, 1), at(s, 2));
     let (mut a, _) = Project::boxed();
     let (mut b, _) = Project::boxed();
-    saved(save_project(&mut card, s, &mut a, pid(1)));
-    saved(save_project(&mut card, s, &mut b, pid(2)));
-    saved(save_project(&mut card, s, &mut b, pid(2)));
+    saved(save_at(&mut card, s, &mut a, 1));
+    saved(save_at(&mut card, s, &mut b, 2));
+    saved(save_at(&mut card, s, &mut b, 2));
     assert_eq!(
-        delete_project(&mut card, s, &b, pid(2)),
+        delete_project(&mut card, s, &b, two),
         Err(ProjectNote::IsLoaded)
     );
     assert_eq!(listed(&mut card, s).len(), 2, "nothing deleted");
-    assert_eq!(delete_project(&mut card, s, &b, pid(1)), Ok(()));
+    assert_eq!(delete_project(&mut card, s, &b, at1), Ok(()));
     let left: Vec<_> = listed(&mut card, s).iter().map(|e| e.id).collect();
     assert_eq!(left, [pid(2)]);
     // A NEW project has no id: it guards nothing.
     let (fresh, _) = Project::boxed();
-    assert_eq!(delete_project(&mut card, s, &fresh, pid(2)), Ok(()));
+    assert_eq!(delete_project(&mut card, s, &fresh, two), Ok(()));
     assert!(listed(&mut card, s).is_empty());
-    assert_eq!(new_project_id(&mut card, s), Ok(pid(1)));
+    let one = at(s, 1);
+    assert_eq!(new_project_id(&mut card, s), Ok(one));
     assert_eq!(
-        delete_project(&mut card, s, &fresh, pid(2)),
+        delete_project(&mut card, s, &fresh, two),
         Ok(()),
         "already gone"
     );
@@ -528,7 +619,7 @@ fn delete_rules<S: Store>(s: &mut S) {
 fn missing_file<S: Store>(s: &mut S) {
     let mut card = Card::new();
     let (mut p, _) = Project::boxed();
-    saved(save_project(&mut card, s, &mut p, pid(1)));
+    saved(save_at(&mut card, s, &mut p, 1));
     let (mut q, t) = full();
     q.mark_saved_for_test();
     let before = project_crc(&q);

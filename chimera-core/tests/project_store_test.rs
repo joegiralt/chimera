@@ -5,14 +5,15 @@ mod common;
 
 use chimera_core::block::Block;
 use chimera_core::name::ProjectName;
-use chimera_core::params::{EngineType, FilterParams};
+use chimera_core::params::FilterParams;
 use chimera_core::project::test_support::{
-    FlipOnSecondRead, FullOnWrite, full, project_store_suite, same,
+    FailOnSecondRead, FlipOnSecondRead, FullOnWrite, full, project_store_suite, same,
 };
 use chimera_core::project::{
-    Differ, LoadLink, PartFrom, PartId, PartSource, Project, ProjectNote, ProjectSource,
-    ProjectStatus, ReplaceGuard, SlotId, Subject, TemplateCrc, delete_project, list_projects,
-    load_project, new_project_id, project_crc, project_file, project_status, save_project,
+    Differ, LoadLink, PartFrom, PartId, PartSource, PartStatus, Project, ProjectFile, ProjectNote,
+    ProjectSource, ProjectStatus, ReplaceGuard, SlotId, Subject, TemplateCrc, delete_project,
+    list_projects, load_project, new_project_id, part_status, project_crc, project_file,
+    project_status, save_project,
 };
 use chimera_core::storage::{Card, CardEvent, FileError, ProjectId, Side};
 use chimera_hal::store::{Store, StoreError, VolumeId};
@@ -29,6 +30,20 @@ fn name(s: &str) -> ProjectName {
 
 fn vol(s: &mut impl Store) -> VolumeId {
     s.mount().unwrap()
+}
+
+/// `P000000n` on the card in the slot now.
+fn at(s: &mut impl Store, n: u32) -> ProjectFile {
+    ProjectFile {
+        id: id(n),
+        vol: vol(s),
+    }
+}
+
+/// Saves `p` as `P000000n` on the card in the slot.
+fn save_at(card: &mut Card, s: &mut impl Store, p: &mut Project, n: u32) -> ProjectNote {
+    let f = at(s, n);
+    save_project(card, s, p, f)
 }
 
 /// A slot into a Clean Part, then an edit: an `Edited` Part from that slot.
@@ -69,14 +84,15 @@ fn full_card_save_stays_modified() {
     let mut s = FullOnWrite(MemStore::new(1), false);
     let mut card = Card::new();
     let (mut p, t) = full();
-    let id = new_project_id(&mut card, &mut s).unwrap();
-    let _ = save_project(&mut card, &mut s, &mut p, id);
+    let file = new_project_id(&mut card, &mut s).unwrap();
+    let id = file.id;
+    let _ = save_project(&mut card, &mut s, &mut p, file);
     let saved = p.meta().saved_crc();
     assert!(saved.is_some());
     p.edit_fx().delay.mix = 0.9;
     s.1 = true;
     assert_eq!(
-        save_project(&mut card, &mut s, &mut p, id),
+        save_project(&mut card, &mut s, &mut p, file),
         ProjectNote::Card {
             err: StoreError::Full,
             subject: Some(Subject::Name(p.meta().name())),
@@ -103,9 +119,10 @@ fn swapped_card_refuses_a_pending_load() {
     let mut card = Card::new();
     let link = LoadLink::new();
     let (mut a, _) = full();
-    let one = new_project_id(&mut card, &mut s).unwrap();
+    let first = new_project_id(&mut card, &mut s).unwrap();
+    let one = first.id;
     assert!(matches!(
-        save_project(&mut card, &mut s, &mut a, one),
+        save_project(&mut card, &mut s, &mut a, first),
         ProjectNote::Saved(_)
     ));
     let mut listed = None;
@@ -127,13 +144,10 @@ fn swapped_card_refuses_a_pending_load() {
     s.swap(2);
     let (mut other, _) = Project::boxed();
     other.set_name(name("OTHER CARD"));
-    assert_eq!(
-        new_project_id(&mut card, &mut s),
-        Ok(one),
-        "the new card has its own P0000001"
-    );
+    let on_b = new_project_id(&mut card, &mut s).unwrap();
+    assert_eq!(on_b.id, one, "the new card has its own P0000001");
     assert!(matches!(
-        save_project(&mut card, &mut s, &mut other, one),
+        save_project(&mut card, &mut s, &mut other, on_b),
         ProjectNote::Saved(_)
     ));
     let before = project_crc(&q);
@@ -164,7 +178,7 @@ fn saved_toast_names_differing_parts() {
     let mut s = MemStore::new(1);
     let mut card = Card::new();
     let (mut p, t) = Project::boxed();
-    let one = id(1);
+    let one = at(&mut s, 1);
     assert_eq!(
         save_project(&mut card, &mut s, &mut p, one),
         ProjectNote::Saved(Differ::None)
@@ -259,7 +273,7 @@ fn pass_two_failure_falls_back_to_new() {
     let mut card = Card::new();
     let (mut p, _) = full();
     assert!(matches!(
-        save_project(&mut card, &mut mem, &mut p, id(1)),
+        save_at(&mut card, &mut mem, &mut p, 1),
         ProjectNote::Saved(_)
     ));
     let mut s = FlipOnSecondRead::new(mem, project_file(id(1)).side(Side::A));
@@ -323,10 +337,12 @@ fn no_card_note() {
     let link = LoadLink::new();
     let (mut p, t) = full();
     assert!(matches!(
-        save_project(&mut card, &mut s, &mut p, id(1)),
+        save_at(&mut card, &mut s, &mut p, 1),
         ProjectNote::Saved(_)
     ));
     let v = vol(&mut s);
+    let home = p.meta().file().unwrap();
+    assert_eq!(home, ProjectFile { id: id(1), vol: v });
     s.eject();
     let no_card = |subject| ProjectNote::Card {
         err: StoreError::NoCard,
@@ -336,7 +352,7 @@ fn no_card_note() {
     p.edit_fx().delay.mix = 0.8;
     let saved = p.meta().saved_crc();
     assert_eq!(
-        save_project(&mut card, &mut s, &mut p, id(1)),
+        save_project(&mut card, &mut s, &mut p, home),
         no_card(Some(Subject::Name(name("FULL"))))
     );
     assert_eq!(p.meta().saved_crc(), saved);
@@ -354,7 +370,7 @@ fn no_card_note() {
     assert_eq!((out.event, out.note), (None, Some(no_card(None))));
     assert_eq!(new_project_id(&mut card, &mut s), Err(no_card(None)));
     assert_eq!(
-        delete_project(&mut card, &mut s, &q, id(1)),
+        delete_project(&mut card, &mut s, &q, home),
         Err(no_card(Some(Subject::File(id(1)))))
     );
     assert_eq!(card, Card::Absent);
@@ -435,8 +451,180 @@ fn a_long_line_is_cut() {
         subject: Some(Subject::Name(name("SIXTEEN CHARS 16"))),
     };
     let line = note.line();
-    assert_eq!(line.as_str().len(), LINE_LEN);
-    assert!("CARD FAT NOT MIRRORED: FORMAT IT: SIXTEEN CHARS 16".starts_with(line.as_str()));
+    assert!(line.as_str().len() <= LINE_LEN);
+    // The message gives way; the name survives.
+    assert_eq!(
+        line.as_str(),
+        "CARD FAT NOT MIRRORED: FORMAT: SIXTEEN CHARS 16"
+    );
     assert_eq!(Line::new(&"X".repeat(100)).as_str().len(), LINE_LEN);
-    let _ = EngineType::Algo;
+}
+
+/// I2: a project loaded from card A, card B (with its own `P0000001`) in
+/// the slot, then SAVE: refused, and nothing on B changes.
+#[test]
+fn save_after_a_swap_is_refused() {
+    let mut s = MemStore::new(1);
+    let mut card = Card::new();
+    let link = LoadLink::new();
+    let (mut a, _) = full();
+    assert!(matches!(
+        save_at(&mut card, &mut s, &mut a, 1),
+        ProjectNote::Saved(_)
+    ));
+    let (mut q, t) = Project::boxed();
+    let out = load_file(&mut card, &mut s, &mut q, t, id(1), &link);
+    assert!(out.note.is_none());
+    let home = q.meta().file().unwrap();
+    assert_eq!(home, at(&mut s, 1));
+    // On its own card, SAVE lands.
+    q.edit_fx().reverb.mix = 0.2;
+    assert!(matches!(
+        save_project(&mut card, &mut s, &mut q, home),
+        ProjectNote::Saved(_)
+    ));
+    assert_eq!(project_status(&q, t), ProjectStatus::Saved);
+
+    s.swap(2);
+    let (mut b, tb) = Project::boxed();
+    b.set_name(name("CARD B"));
+    assert!(matches!(
+        save_at(&mut card, &mut s, &mut b, 1),
+        ProjectNote::Saved(_)
+    ));
+
+    q.edit_fx().delay.mix = 0.9;
+    let before = *q.meta();
+    let note = save_project(&mut card, &mut s, &mut q, home);
+    assert!(
+        matches!(note, ProjectNote::Card {
+            err: StoreError::VolumeChanged(v),
+            subject: Some(Subject::Name(n)),
+        } if v == vol(&mut s) && n == name("FULL")),
+        "{note:?}"
+    );
+    assert_eq!(*q.meta(), before, "meta untouched");
+    assert_eq!(project_status(&q, t), ProjectStatus::Modified);
+    assert!(matches!(card, Card::Ready(_)), "card B is fine");
+
+    // B's P0000001 is still B's.
+    let (mut r, _) = Project::boxed();
+    let out = load_file(&mut card, &mut s, &mut r, tb, id(1), &link);
+    assert!(out.note.is_none());
+    same(&b, &r);
+}
+
+/// I3: a delete confirmed on card A, run after card B went in: refused.
+#[test]
+fn delete_after_a_swap_is_refused() {
+    let mut s = MemStore::new(1);
+    let mut card = Card::new();
+    let (mut a, _) = Project::boxed();
+    let on_a = at(&mut s, 1);
+    assert!(matches!(
+        save_project(&mut card, &mut s, &mut a, on_a),
+        ProjectNote::Saved(_)
+    ));
+    s.swap(2);
+    let (mut b, _) = Project::boxed();
+    let on_b = at(&mut s, 1);
+    assert!(matches!(
+        save_project(&mut card, &mut s, &mut b, on_b),
+        ProjectNote::Saved(_)
+    ));
+    let (loaded, _) = Project::boxed();
+    let got = delete_project(&mut card, &mut s, &loaded, on_a);
+    assert!(
+        matches!(got, Err(ProjectNote::Card {
+            err: StoreError::VolumeChanged(v),
+            subject: Some(Subject::File(f)),
+        }) if v == on_b.vol && f == id(1)),
+        "{got:?}"
+    );
+    assert!(matches!(card, Card::Ready(_)));
+    let mut ids = Vec::new();
+    let out = list_projects(&mut card, &mut s, &mut |e| ids.push(e.file()));
+    assert_eq!(out.note, None);
+    assert_eq!(ids, [on_b], "B's file stays");
+    // On its own card the delete runs; B's own project guards its file.
+    assert_eq!(
+        delete_project(&mut card, &mut s, &b, on_b),
+        Err(ProjectNote::IsLoaded)
+    );
+    assert_eq!(delete_project(&mut card, &mut s, &loaded, on_b), Ok(()));
+}
+
+/// I1: the card goes (or changes) during pass 2: a store error, not a
+/// CRC. The project is part written, so it falls back to NEW and swaps.
+#[test]
+fn pass_two_store_error_falls_back_to_new() {
+    let other = VolumeId {
+        serial: 9,
+        label: *b"OTHER      ",
+    };
+    for err in [StoreError::NoCard, StoreError::VolumeChanged(other)] {
+        let mut mem = MemStore::new(1);
+        let mut card = Card::new();
+        let (mut p, _) = full();
+        assert!(matches!(
+            save_at(&mut card, &mut mem, &mut p, 1),
+            ProjectNote::Saved(_)
+        ));
+        let mut s = FailOnSecondRead::new(mem, project_file(id(1)).side(Side::A), err);
+        let link = LoadLink::new();
+        let (mut q, t) = Project::boxed();
+        q.set_name(name("OLD"));
+        q.mark_saved_for_test();
+        let out = load_file(&mut card, &mut s, &mut q, t, id(1), &link);
+        assert_eq!(s.reads(), 2, "{err:?}: pass 2 ran");
+        assert_eq!(
+            out.note,
+            Some(ProjectNote::LoadFailed(Subject::File(id(1)))),
+            "{err:?}"
+        );
+        assert!(out.swap.is_some(), "{err:?}");
+        assert_eq!(link.epoch(), 1);
+        assert_eq!(project_crc(&q), t.get(), "{err:?}: NEW");
+        assert_eq!(q.meta().file(), None);
+        let failed = err == StoreError::NoCard;
+        assert_eq!(card == Card::Absent, failed, "{err:?}: {card:?}");
+    }
+}
+
+/// A Part left `Stale` by another Part's save over its slot isn't counted:
+/// only `Edited` ones are.
+#[test]
+fn saved_toast_skips_stale_parts() {
+    let mut s = MemStore::new(1);
+    let mut card = Card::new();
+    let (mut p, t) = Project::boxed();
+    let slot = SlotId::ALL[4];
+    for part in [0, 1] {
+        let src = PartSource {
+            part: PartId::ALL[part],
+            from: PartFrom::Slot(slot),
+        };
+        let c = ReplaceGuard::check(&p, t, src).unwrap();
+        p.replace_part(c).unwrap();
+    }
+    p.edit_part(PartId::ALL[0])
+        .sound
+        .params
+        .filter
+        .set(FilterParams::RESONANCE, 0.77);
+    let stale = p.save_part_to(PartId::ALL[0], slot);
+    assert!(stale.contains(PartId::ALL[1]));
+    assert_eq!(
+        part_status(p.part(PartId::ALL[1]), p.pool()),
+        PartStatus::Stale(slot)
+    );
+    assert_eq!(
+        save_at(&mut card, &mut s, &mut p, 1),
+        ProjectNote::Saved(Differ::None)
+    );
+    edited_from(&mut p, t, 2, 6);
+    assert_eq!(
+        save_at(&mut card, &mut s, &mut p, 1),
+        ProjectNote::Saved(Differ::One(PartId::ALL[2], SlotId::ALL[6]))
+    );
 }
