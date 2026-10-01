@@ -5,7 +5,6 @@ pub mod block_def;
 pub mod block_registry;
 pub mod browser;
 pub mod busy;
-pub mod chain;
 pub mod components;
 pub mod draw;
 pub mod dungeon_map;
@@ -34,7 +33,9 @@ use core::ptr::addr_of_mut;
 
 use crate::storage::{Card, Exit, SystemSettings, SystemSync};
 use chimera_hal::store::Store;
-use chimera_hal::{ALL_BUTTONS, ALL_ENCODERS, ButtonId, ButtonState, Controls, PART_BUTTONS};
+use chimera_hal::{
+    ALL_BUTTONS, ALL_ENCODERS, ButtonId, ButtonState, Controls, EncoderId, PART_BUTTONS,
+};
 
 use crate::addr::{BlockRead, BlockRef, Blocks, Op, ParamAddr};
 use crate::block::Block;
@@ -47,7 +48,7 @@ use crate::params::ParamSnapshot;
 use crate::perf::load::AudioStats;
 use crate::preset::POOL_SIZE;
 use crate::project::{
-    self, Confirmed, LoadLink, PartEdit, PartFrom, PartId, PartSource, Project, ProjectFile,
+    self, Confirmed, Line, LoadLink, PartEdit, PartFrom, PartId, PartSource, Project, ProjectFile,
     ProjectNote, ProjectSource, ProjectStatus, ReplaceGuard, StatusCache, Swap, TemplateCrc,
     part_block_mut,
 };
@@ -56,8 +57,10 @@ use crate::storage::ProjectId;
 use block_def::BlockDef;
 use block_def::VizType;
 use block_def::slot_addr;
-use chain::{ChainId, ChainNav};
+use components::Head;
+use hold::{HoldGates, Press};
 use mod_grid::MatrixState;
+use nav::{Browse, Location, NavCtx, NavKey, Recall, Step, home};
 use page::{PageKey, PageLayout};
 use perf::PerfStats;
 use renderer::Renderer;
@@ -88,16 +91,12 @@ fn prime_target(addr: ParamAddr) -> ParamAddr {
     }
 }
 
-/// UI mode — Normal chain navigation vs overlay screens.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum UiMode {
-    Normal,
-    SoundBrowser {
-        part: PartId,
-        cursor: usize,
-        scroll: usize,
-    },
-}
+/// What lists, Screens and the Sound rung show for a page: none of its
+/// six slots is bound.
+static NO_PAGE: &BlockDef = &block_registry::SYS_UPDATES;
+
+/// The SETTINGS rows and keys not wired yet (Tasks 11–13).
+const NOT_YET: &str = "NOT YET";
 
 /// The outcome of the last MIX+PLUS attempt on a parameter page, shown in
 /// the focus band in place of the value readout (on BigViz pages, which
@@ -140,7 +139,14 @@ impl From<RegistryError> for PrimeStatus {
 /// Top-level UI state. Owns navigation, parameters, and display animation.
 /// Portable across desktop and hardware — only depends on HAL traits.
 pub struct UiState {
-    pub nav: ChainNav,
+    /// Where the UI is (ADR 0066).
+    loc: Location,
+    /// What leaving a place remembers.
+    recall: Recall,
+    /// MENU and SEQ: tap on release, hold at `hold::HOLD_MS`.
+    gates: HoldGates,
+    /// A SETTINGS list's first row shown.
+    list_first: u8,
     /// The pool, the Parts and the FX: what a project file holds.
     project: Project,
     /// NEW's CRC, computed when the project was built.
@@ -148,10 +154,9 @@ pub struct UiState {
     pub active_part: PartId,
     pub renderer: Renderer,
     pub matrix_state: MatrixState,
-    pub ui_mode: UiMode,
-    /// Set when the sound browser opens, its cursor/scroll moves, or a save
-    /// changes the pool; `render_dirty_with_scope` redraws it only then, and
-    /// clears the flag once flushed (#7).
+    /// Set on every move, and when the project is replaced:
+    /// `render_dirty_with_scope` redraws the Sound rung's browser only
+    /// then, and clears the flag once flushed (#7).
     browser_dirty: bool,
     page: PageKey,
     /// Selected operator — one global selection, as before (spec §5).
@@ -163,7 +168,7 @@ pub struct UiState {
     display_lfos: [Lfo; 3],
     /// The last MIX+PLUS outcome; `None` once retired (issue #21).
     prime_status: Option<PrimeStatus>,
-    /// System › Theme; boot sets it from SYSTEM (`set_theme`).
+    /// SETTINGS › THEME; boot sets it from SYSTEM (`set_theme`).
     theme: ThemeSettings,
     /// What the last card operation said, for a moment.
     toast: busy::ToastTimer,
@@ -175,13 +180,15 @@ pub struct UiState {
 }
 
 crate::in_place::field_list!(UiState => UiState {
-    nav,
+    loc,
+    recall,
+    gates,
+    list_first,
     project,
     template,
     active_part,
     renderer,
     matrix_state,
-    ui_mode,
     browser_dirty,
     page,
     sel_op,
@@ -215,10 +222,12 @@ impl UiState {
         // place before it is borrowed, and every other field is written
         // once, all before `assume_init_mut`.
         unsafe {
-            let nav = ChainNav::new();
-            let page = PageKey::from_nav(&nav, Op::A);
             let template = Project::init_in_place(uninit_at(addr_of_mut!((*p).project)));
             let project = &mut *addr_of_mut!((*p).project);
+            let cx = nav_cx(project);
+            let loc = Location::home(&cx);
+            let def = page_def(loc, &cx);
+            let page = PageKey::from_location(loc, def, Op::A);
             let mut renderer = Renderer::new();
             let theme = ThemeSettings::DEFAULT;
             let read = UiRead {
@@ -226,13 +235,15 @@ impl UiState {
                 part: PartId::ALL[0],
                 theme: &theme,
             };
-            renderer.snap_to_current(page_values(page, nav.active_block_def(), &read, Op::A));
-            addr_of_mut!((*p).nav).write(nav);
+            renderer.snap_to_current(page_values(page, def, &read, Op::A));
+            addr_of_mut!((*p).loc).write(loc);
+            addr_of_mut!((*p).recall).write(Recall::new());
+            addr_of_mut!((*p).gates).write(HoldGates::new());
+            addr_of_mut!((*p).list_first).write(0);
             addr_of_mut!((*p).template).write(template);
             addr_of_mut!((*p).active_part).write(PartId::ALL[0]);
             addr_of_mut!((*p).renderer).write(renderer);
             addr_of_mut!((*p).matrix_state).write(MatrixState::new());
-            addr_of_mut!((*p).ui_mode).write(UiMode::Normal);
             addr_of_mut!((*p).browser_dirty).write(false);
             addr_of_mut!((*p).page).write(page);
             addr_of_mut!((*p).sel_op).write(Op::A);
@@ -256,12 +267,17 @@ impl UiState {
         self.prime_status
     }
 
+    /// Where the UI is.
+    pub fn location(&self) -> Location {
+        self.loc
+    }
+
     /// The UI's animation clock.
     pub fn clock(&self) -> animation::UiClock {
         self.clock
     }
 
-    /// System › Theme as last edited; the display shell applies it.
+    /// SETTINGS › THEME as last edited; the display shell applies it.
     pub fn theme(&self) -> ThemeSettings {
         self.theme
     }
@@ -271,7 +287,7 @@ impl UiState {
         self.theme = t;
     }
 
-    /// Once a frame, after input: on leaving System, syncs SYSTEM (one
+    /// Once a frame, after input: on leaving SETTINGS, syncs SYSTEM (one
     /// mount, which may load or save) and puts up what came of it. It draws
     /// nothing, so no BUSY covers a save too quick to read; a `Loaded`
     /// theme is applied here.
@@ -283,7 +299,7 @@ impl UiState {
         s: &mut SystemSettings,
     ) {
         s.theme = self.theme;
-        if !sync.left_system(self.in_system(), s) {
+        if !sync.left_system(self.in_settings(), s) {
             return;
         }
         let r = sync.on_exit(card, store, s, self.project.meta().file());
@@ -309,7 +325,14 @@ impl UiState {
     /// (projects spec § Loading while playing: the voice fade covers it).
     pub fn project_replaced(&mut self) {
         let part = self.active_part;
-        self.nav.set_engine(self.project.part(part).sound.engine());
+        // A page the new engine's chain has no page at goes home.
+        let cx = self.cx();
+        if let (Some((c, at)), Some(p)) = (self.loc.page(&cx), self.loc.part())
+            && self.loc.settings().is_none()
+            && c.active_def(at.node as usize, at.sub as usize).is_none()
+        {
+            self.loc = Location::pages(p, home(cx.engines[p.index()]));
+        }
         self.load_matrix(part);
         self.enter_page();
         self.browser_dirty = true;
@@ -402,7 +425,7 @@ impl UiState {
         file: ProjectFile,
     ) {
         match project::delete_project(card, store, &self.project, file) {
-            // A failed write: the next save, load or System exit retries
+            // A failed write: the next save, load or SETTINGS exit retries
             // SYSTEM; until then a boot falls back to NEW and says why.
             Ok(()) => {
                 if sync.forget(card, store, settings, file) == Ok(Exit::Loaded) {
@@ -415,7 +438,7 @@ impl UiState {
 
     /// `f` becomes its card's last project in SYSTEM; a card SYSTEM was
     /// taken from brings its theme. A failed write leaves the toast to the
-    /// project's note: the next save, load or System exit retries it.
+    /// project's note: the next save, load or SETTINGS exit retries it.
     fn remember<S: Store>(
         &mut self,
         card: &mut Card,
@@ -434,10 +457,45 @@ impl UiState {
         self.toast.step(elapsed_ms)
     }
 
-    /// On the System chain, any of its pages or sub-pages: moving between
-    /// them is no exit. Leaving the chain is when SYSTEM syncs.
-    pub fn in_system(&self) -> bool {
-        self.nav.chain_id == ChainId::System
+    /// Anywhere in SETTINGS: moving inside it is no exit. Leaving it is
+    /// when SYSTEM syncs.
+    pub fn in_settings(&self) -> bool {
+        self.loc.settings().is_some()
+    }
+
+    fn cx(&self) -> NavCtx {
+        nav_cx(&self.project)
+    }
+
+    /// The page shown; `NO_PAGE` where there is none.
+    fn def(&self) -> &'static BlockDef {
+        page_def(self.loc, &self.cx())
+    }
+
+    /// The page shown: its def, an empty one on lists and the Sound rung.
+    pub fn page_def(&self) -> &'static BlockDef {
+        self.def()
+    }
+
+    /// Move to `to`: a Part's place selects that Part for editing (its
+    /// matrix), and the page's values snap.
+    fn go(&mut self, to: Location) {
+        let from = self.loc;
+        self.loc = to;
+        if let Some(s) = to.settings() {
+            let prev = match from.settings() {
+                Some(f) if f.path() == s.path() => self.list_first as usize,
+                _ => 0,
+            };
+            let len = settings::rows(s.path()).len();
+            self.list_first = settings::view::first_visible(s.row() as usize, len, prev) as u8;
+        }
+        if let Some(p) = to.part() {
+            self.active_part = p;
+            self.load_matrix(p);
+        }
+        self.browser_dirty = true;
+        self.enter_page();
     }
 
     pub fn project(&self) -> &Project {
@@ -473,7 +531,7 @@ impl UiState {
         self.status.get(&self.project, self.template);
     }
 
-    /// Part `part`'s blocks and System › Theme, read only: reading leaves
+    /// Part `part`'s blocks and SETTINGS › THEME, read only: reading leaves
     /// the project's revision alone.
     fn read(&self, part: PartId) -> UiRead<'_> {
         UiRead {
@@ -511,7 +569,7 @@ impl UiState {
     /// The slot the focus band shows on the current page: the last one
     /// turned there, slot a until then.
     pub fn focused_slot(&self) -> usize {
-        self.focus.get(self.nav.active_block_def().id)
+        self.focus.get(self.def().id)
     }
 
     /// The selected operator.
@@ -529,7 +587,7 @@ impl UiState {
 
     /// Recompute the page identity and jump the display to its values.
     fn enter_page(&mut self) {
-        self.page = PageKey::from_nav(&self.nav, self.sel_op);
+        self.page = PageKey::from_location(self.loc, self.def(), self.sel_op);
         let values = self.display_values();
         self.renderer.snap_to_current(values);
     }
@@ -537,7 +595,7 @@ impl UiState {
     /// The six values the display animates toward: the page's slots, and on
     /// the mod matrix the selected route's amount in slot e.
     fn display_values(&self) -> [f32; 6] {
-        let def = self.nav.active_block_def();
+        let def = self.def();
         let (page, sel_op) = (self.page, self.sel_op);
         let mut values = page_values(page, def, &self.read(self.active_part), sel_op);
         let ctx = self.ctx();
@@ -562,7 +620,7 @@ impl UiState {
     fn load_matrix(&mut self, part: PartId) {
         let sound = &self.project.part(part).sound;
         self.matrix_state
-            .rebuild_sources(chain::chain_def_for(sound.engine()).mod_sources);
+            .rebuild_sources(nav::chain_def_for(sound.engine()).mod_sources);
         self.matrix_state
             .rebuild_dests_from_registry(&sound.dest_registry);
         self.matrix_state.load_amounts(&sound.mod_state);
@@ -599,16 +657,11 @@ impl UiState {
         sound.mod_state.sync_from_matrix(&self.matrix_state);
     }
 
-    /// The address the focused encoder edits, if its slot is bound. System
-    /// and Demo slots are `Legacy`, so priming there does nothing; Mixer
+    /// The address the focused encoder edits, if its slot is bound. Leaf
+    /// and DEMO slots are `Legacy`, so priming there does nothing; Mixer
     /// params are bound but not modulatable, so the registry refuses them.
     fn current_param_addr(&self) -> Option<ParamAddr> {
-        slot_addr(
-            self.nav.active_block_def(),
-            self.focused_slot(),
-            &self.ctx(),
-        )
-        .map(prime_target)
+        slot_addr(self.def(), self.focused_slot(), &self.ctx()).map(prime_target)
     }
 
     /// 8-byte matrix column label for a primed destination: `O<n> ` + spec
@@ -616,7 +669,7 @@ impl UiState {
     /// `mod_grid::block_tag` — the page can be a sub-page with a different
     /// short name, e.g. FLT › MODE for the filter's DRIVE) + the slot label.
     fn mod_label(&self, addr: ParamAddr) -> [u8; LABEL_LEN] {
-        let def = self.nav.active_block_def();
+        let def = self.def();
         let op_prefix;
         let (prefix, name): (&[u8], &str) = match addr.block {
             BlockRef::AlgoOp(op) => {
@@ -644,65 +697,76 @@ impl UiState {
         label
     }
 
-    /// One frame of input while the sound browser for `part` is open.
-    fn browser_input(
-        &mut self,
-        controls: &impl Controls,
-        part: PartId,
-        cursor: usize,
-        scroll: usize,
-    ) {
-        let (cursor, scroll, act) = browser::handle(controls, cursor, scroll);
-        if self.ui_mode
-            != (UiMode::SoundBrowser {
-                part,
-                cursor,
-                scroll,
-            })
-        {
-            self.ui_mode = UiMode::SoundBrowser {
-                part,
-                cursor,
-                scroll,
-            };
-            self.browser_dirty = true;
+    /// EDIT on the Sound rung: the entry under the cursor into `part`, then
+    /// its pages.
+    fn load_sound(&mut self, part: PartId, b: Browse) {
+        let cursor = b.cursor as usize;
+        // Init entries follow the pool slots.
+        let from = browser::slot_at(cursor).map(PartFrom::Slot).or_else(|| {
+            cursor
+                .checked_sub(POOL_SIZE)
+                .and_then(|j| browser::INIT_TYPES.get(j))
+                .map(|&e| PartFrom::Init(e))
+        });
+        if let Some(from) = from {
+            // No prompt screen yet: https://github.com/joegiralt/chimera/issues/258.
+            let src = PartSource { part, from };
+            let c = ReplaceGuard::check(&self.project, self.template, src)
+                .unwrap_or_else(|n| n.into_pending().anyway(&self.project));
+            // An empty slot loads nothing.
+            let _ = self.project.replace_part(c);
         }
-        match act {
-            Some(browser::BrowserAct::Load) => {
-                // Init entries follow the pool slots.
-                let from = browser::slot_at(cursor).map(PartFrom::Slot).or_else(|| {
-                    cursor
-                        .checked_sub(POOL_SIZE)
-                        .and_then(|j| browser::INIT_TYPES.get(j))
-                        .map(|&e| PartFrom::Init(e))
+        let to = Location::pages(part, home(self.project.part(part).sound.engine()));
+        self.go(to);
+    }
+
+    /// The keys this frame, in order: MENU, B*n*, PLUS and MINUS, SEQ, EDIT,
+    /// then encoder A on a list. With MIX down, PLUS and MINUS are MIX's
+    /// own (prime, delete), never a move.
+    fn nav_keys(&mut self, c: &impl Controls) -> [Option<NavKey>; 12] {
+        let presses = self.gates.step(c);
+        let pressed = |b| c.button_state(b) == ButtonState::Pressed;
+        let down = |b| matches!(c.button_state(b), ButtonState::Pressed | ButtonState::Held);
+        let mix = c.edges(ButtonId::Mix).down;
+        let edit = down(ButtonId::Edit);
+        let mut keys = [None; 12];
+        let mut n = 0;
+        let mut push = |k| {
+            keys[n] = Some(k);
+            n += 1;
+        };
+        if presses.menu == Some(Press::Tap) {
+            push(NavKey::MenuTap);
+        }
+        let mut edit_part = false;
+        for (p, &b) in PartId::ALL.into_iter().zip(PART_BUTTONS.iter()) {
+            if pressed(b) {
+                edit_part |= edit;
+                push(match (edit, mix) {
+                    (true, _) => NavKey::EditPart(p),
+                    (_, true) => NavKey::MixPart(p),
+                    _ => NavKey::Part(p),
                 });
-                if let Some(from) = from {
-                    // No prompt screen yet: https://github.com/joegiralt/chimera/issues/258.
-                    let src = PartSource { part, from };
-                    let c = ReplaceGuard::check(&self.project, self.template, src)
-                        .unwrap_or_else(|n| n.into_pending().anyway(&self.project));
-                    // An empty slot loads nothing.
-                    let _ = self.project.replace_part(c);
-                }
-                self.active_part = part;
-                self.nav.chain_id = ChainId::Part(part.index());
-                self.nav.node = 0;
-                self.nav.sub_page = 0;
-                self.nav.engine = self.project.part(part).sound.engine();
-                self.load_matrix(part);
-                self.enter_page();
-                self.ui_mode = UiMode::Normal;
-                self.browser_dirty = true;
             }
-            Some(browser::BrowserAct::Save) => {
-                if let Some(s) = browser::slot_at(cursor) {
-                    self.project.save_part_to(part, s);
-                }
-                self.browser_dirty = true;
-            }
-            Some(browser::BrowserAct::Cancel) => self.ui_mode = UiMode::Normal,
-            None => {}
         }
+        if !mix && pressed(ButtonId::Minus) {
+            push(NavKey::Minus);
+        }
+        if !mix && pressed(ButtonId::Plus) {
+            push(NavKey::Plus);
+        }
+        if presses.seq == Some(Press::Tap) {
+            push(NavKey::SeqTap);
+        }
+        if pressed(ButtonId::Edit) && !edit_part {
+            push(NavKey::Edit);
+        }
+        let a = c.encoder_delta(EncoderId::A);
+        let on_list = self.loc.settings().is_some_and(|s| s.at_leaf().is_none());
+        if on_list && a != 0 {
+            push(NavKey::Bar(a));
+        }
+        keys
     }
 
     /// Process one frame of input: navigation + encoder deltas.
@@ -714,51 +778,35 @@ impl UiState {
             self.prime_status = None;
             self.toast.dismiss();
         }
+        self.refresh_status();
 
-        if let UiMode::SoundBrowser {
-            part,
-            cursor,
-            scroll,
-        } = self.ui_mode
-        {
-            // The browser takes every input while it is open.
-            self.browser_input(controls, part, cursor, scroll);
+        let keys = self.nav_keys(controls);
+        for k in keys.into_iter().flatten() {
+            if let (Some((p, b)), NavKey::Edit) = (self.loc.browse(), k) {
+                self.load_sound(p, b);
+                continue;
+            }
+            let cx = self.cx();
+            match self.loc.step(k, &cx, &mut self.recall) {
+                Step::Go(to) => self.go(to),
+                Step::Act(_) | Step::Screen(_) | Step::Run => self.toast.show(busy::Toast {
+                    text: Line::new(NOT_YET),
+                    ms: busy::Toast::ERROR_MS,
+                }),
+                Step::Stay => {}
+            }
+        }
+
+        if let Some((p, b)) = self.loc.browse() {
+            let moved = browser::input(controls, b);
+            if moved != b {
+                self.loc = Location::sound_at(p, moved);
+                self.browser_dirty = true;
+            }
             return;
         }
-
-        // ── Normal mode ──────────────────────────────────────────────
-
-        // Edit + B1-B6: open sound browser for that part
-        let edit_held = matches!(
-            controls.button_state(ButtonId::Edit),
-            ButtonState::Pressed | ButtonState::Held
-        );
-        if edit_held {
-            for (part, &btn) in PartId::ALL.into_iter().zip(PART_BUTTONS.iter()) {
-                if controls.button_state(btn) == ButtonState::Pressed {
-                    self.ui_mode = UiMode::SoundBrowser {
-                        part,
-                        cursor: 0,
-                        scroll: 0,
-                    };
-                    self.browser_dirty = true;
-                    return; // consume — don't pass to navigation
-                }
-            }
-        }
-
-        // Navigation
-        let nav_changed = self.nav.handle_input(controls);
-        if nav_changed {
-            // B<n> and MIX + B<n> both select Part n for editing.
-            if let ChainId::Part(i) | ChainId::Mixer(i) = self.nav.chain_id
-                && let Some(part) = u8::try_from(i).ok().and_then(PartId::new)
-            {
-                self.active_part = part;
-                self.nav.set_engine(self.project.part(part).sound.engine());
-                self.load_matrix(part);
-            }
-            self.enter_page();
+        if self.loc.page(&self.cx()).is_none() {
+            return;
         }
 
         // Encoder deltas -> parameter changes
@@ -767,7 +815,7 @@ impl UiState {
             ButtonState::Pressed | ButtonState::Held
         );
 
-        let def = self.nav.active_block_def();
+        let def = self.def();
         if def.layout == PageLayout::Matrix {
             for (i, &enc) in ALL_ENCODERS.iter().enumerate() {
                 let delta = controls.encoder_delta(enc);
@@ -839,7 +887,7 @@ impl UiState {
                 self.renderer.snap_to_current(values);
             }
             // The operator selection is part of the page identity.
-            self.page = PageKey::from_nav(&self.nav, self.sel_op);
+            self.page = PageKey::from_location(self.loc, def, self.sel_op);
 
             // MIX + Plus/Minus: prime/un-prime parameter for modulation
             if shift {
@@ -904,7 +952,7 @@ impl UiState {
         let at = self.active_part;
 
         // Read base param values
-        let def = self.nav.active_block_def();
+        let def = self.def();
         let mut values = self.display_values();
         // Set values, before any modulation offset.
         for (a, &v) in self.renderer.set.iter_mut().zip(values.iter()) {
@@ -966,8 +1014,8 @@ impl UiState {
         // Animate branch scroll for dungeon map sub-pages.
         // Ensure the active row's bottom edge (y + LINE_HEIGHT) is on screen.
         // scroll_px = max(0, BRANCH_START_Y + (sub_page+1)*LINE_HEIGHT - SCREEN_HEIGHT)
-        let needed_bottom =
-            theme::BRANCH_START_Y + (self.nav.sub_page as i32 + 1) * theme::BRANCH_LINE_HEIGHT;
+        let sub = self.loc.page(&self.cx()).map_or(0, |(_, at)| at.sub);
+        let needed_bottom = theme::BRANCH_START_Y + (sub as i32 + 1) * theme::BRANCH_LINE_HEIGHT;
         let overflow = needed_bottom - chimera_hal::SCREEN_HEIGHT as i32;
         let target_scroll = if overflow > 0 {
             overflow as f32 / theme::BRANCH_LINE_HEIGHT as f32
@@ -990,7 +1038,7 @@ impl UiState {
     }
 
     /// Render full screen with `scope` as the live output and `audio` behind
-    /// the System ▸ About ▸ AUDIO sub-page.
+    /// SETTINGS › SYSTEM › ABOUT's AUDIO sub-page.
     pub fn render_with_audio<D>(
         &self,
         display: &mut D,
@@ -1002,13 +1050,9 @@ impl UiState {
                 Color = embedded_graphics::pixelcolor::Rgb565,
             >,
     {
-        if let UiMode::SoundBrowser {
-            part,
-            cursor,
-            scroll,
-        } = self.ui_mode
-        {
+        if let Some((part, b)) = self.loc.browse() {
             let _ = display.clear(theme::BG);
+            let (cursor, scroll) = (b.cursor as usize, b.scroll as usize);
             browser::draw(display, self.project.pool(), part, cursor, scroll);
             return;
         }
@@ -1023,9 +1067,26 @@ impl UiState {
         audio: Option<&'a AudioStats>,
         scope: &'a [f32; SCOPE_LEN],
     ) -> renderer::Frame<'a> {
+        let cx = self.cx();
+        let def = self.def();
+        let settings = self.loc.settings();
+        let head = match (settings, self.loc.part()) {
+            (None, Some(p)) if self.loc.on_mixer() => Head::Mix(p),
+            (None, Some(p)) => Head::Sound(p),
+            _ => Head::Settings,
+        };
         renderer::Frame {
-            nav: &self.nav,
-            def: self.nav.active_block_def(),
+            head,
+            map: self.loc.page(&cx).filter(|_| settings.is_none()),
+            layout: self.layout(),
+            settings: settings.map(|at| settings::view::Bands {
+                at,
+                active: self.active_part,
+                first: self.list_first as usize,
+                name: self.project.meta().name(),
+                status: self.project_status(),
+            }),
+            def,
             perf,
             matrix: &self.matrix_state,
             sel_op: self.sel_op,
@@ -1043,6 +1104,31 @@ impl UiState {
         }
     }
 
+    /// The bands on screen: a page's, or SETTINGS' list or leaf.
+    fn layout(&self) -> region::Layout {
+        let def = self.def();
+        match self.loc.settings() {
+            Some(s) => region::Layout::Settings(s.at_leaf().map(|_| def.layout)),
+            None => region::Layout::Page(def.layout),
+        }
+    }
+
+    /// Where the UI is as (place, node, sub) for the header and map keys:
+    /// Part n's pages n, its mixer 10 + n, its Sound rung 30 + n, SETTINGS 20.
+    fn loc_tag(&self) -> (u8, u8, u8) {
+        let place = match (self.loc.settings(), self.loc.part()) {
+            (Some(_), _) | (_, None) => 20,
+            (_, Some(p)) if self.loc.on_mixer() => 10 + p.index() as u8,
+            (_, Some(p)) if self.loc.browse().is_some() => 30 + p.index() as u8,
+            (_, Some(p)) => p.index() as u8,
+        };
+        let at = self
+            .loc
+            .page(&self.cx())
+            .map_or((0, 0), |(_, at)| (at.node, at.sub));
+        (place, at.0, at.1)
+    }
+
     /// Snapshot of what region `kind` shows; a region redraws when it changes.
     /// `shown` is the focus band's gauge this frame (`Renderer::shown_gauge`).
     fn region_data(
@@ -1054,7 +1140,7 @@ impl UiState {
         use region::{RegionData, RegionKind};
         let qvalues = region::quantize_values(&self.renderer.anim);
         let audio_page = f.def.viz == VizType::AudioStats;
-        let (chain, node, sub) = nav_tag(&self.nav);
+        let (chain, node, sub) = self.loc_tag();
         match kind {
             RegionKind::Header => RegionData::header(
                 chain,
@@ -1127,7 +1213,12 @@ impl UiState {
             )
             .keyed(self.matrix_state.rev, renderer::inert(f)),
             RegionKind::Crumbs | RegionKind::List | RegionKind::Footer => {
-                RegionData::Settings { key: 0 }
+                let key = f.settings.map_or(0, |b| match kind {
+                    RegionKind::Crumbs => b.crumbs_key(f.sounding),
+                    RegionKind::List => b.list_key(),
+                    _ => b.footer_key(),
+                });
+                RegionData::Settings { key }
             }
         }
     }
@@ -1140,8 +1231,7 @@ impl UiState {
         audio: Option<&AudioStats>,
         scope: &[f32; SCOPE_LEN],
     ) {
-        self.region_set
-            .set_layout(self.nav.active_block_def().layout);
+        self.region_set.set_layout(self.layout());
         let mut data = [region::RegionData::sentinel_header(); region::MAX_REGIONS];
         {
             let f = self.frame(perf, audio, scope);
@@ -1179,18 +1269,14 @@ impl UiState {
                 Color = embedded_graphics::pixelcolor::Rgb565,
             > + chimera_hal::ChimeraDisplay,
     {
-        // Sound browser overlay — one flush region, redrawn only while dirty
-        // (opened, cursor/scroll moved, or a save changed the pool; #7).
-        if let UiMode::SoundBrowser {
-            part,
-            cursor,
-            scroll,
-        } = self.ui_mode
-        {
+        // The Sound rung's browser: one flush region, redrawn only while
+        // dirty (opened, cursor/scroll moved; #7).
+        if let Some((part, b)) = self.loc.browse() {
             let mut flush_list = [(0u16, 0u16); region::MAX_REGIONS];
             if self.browser_dirty {
                 let fb = display.pixel_buffer();
                 Renderer::clear_region_fb(fb, 0, chimera_hal::SCREEN_HEIGHT);
+                let (cursor, scroll) = (b.cursor as usize, b.scroll as usize);
                 browser::draw(display, self.project.pool(), part, cursor, scroll);
                 // Invalidate region set so normal layout forces full rebuild on exit
                 self.region_set.prev_layout = None;
@@ -1200,7 +1286,7 @@ impl UiState {
             return flush_list;
         }
 
-        let layout = self.nav.active_block_def().layout;
+        let layout = self.layout();
         let mut flush_list = [(0u16, 0u16); region::MAX_REGIONS];
         let mut flush_count = 0;
 
@@ -1269,7 +1355,7 @@ fn any_input(controls: &impl Controls) -> bool {
             .any(|&b| controls.button_state(b) == ButtonState::Pressed)
 }
 
-/// A Part's blocks plus System › Theme, so the theme edits through the same
+/// A Part's blocks plus SETTINGS › THEME, so the theme edits through the same
 /// slot bindings as any other. Only a block written takes `edit_part`, so
 /// only a write moves the project's revision.
 struct UiBlocks<'a> {
@@ -1333,17 +1419,18 @@ fn page_values(page: PageKey, def: &BlockDef, params: &impl BlockRead, sel_op: O
     }
 }
 
-/// Encode ChainId + node + sub_page into (u8, u8, u8) for region snapshot.
-/// The chain_idx byte encodes ChainId discriminant + index.
-fn nav_tag(nav: &ChainNav) -> (u8, u8, u8) {
-    use chain::ChainId;
-    let chain_byte = match nav.chain_id {
-        ChainId::Part(i) => i as u8,       // 0-5
-        ChainId::Mixer(i) => 10 + i as u8, // 10-15
-        ChainId::System => 20,
-        ChainId::Demo => 21,
-    };
-    (chain_byte, nav.node as u8, nav.sub_page as u8)
+fn nav_cx(project: &Project) -> NavCtx {
+    NavCtx {
+        engines: PartId::ALL.map(|p| project.part(p).sound.engine()),
+        dyn_rows: 0,
+    }
+}
+
+/// The page `at` shows; lists, Screens and the Sound rung show `NO_PAGE`.
+fn page_def(at: Location, cx: &NavCtx) -> &'static BlockDef {
+    at.page(cx)
+        .and_then(|(c, p)| c.active_def(p.node as usize, p.sub as usize))
+        .unwrap_or(NO_PAGE)
 }
 
 #[cfg(test)]

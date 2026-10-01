@@ -149,8 +149,9 @@ pub const BRANCH_START_Y: i32 = 300;
 pub const BRANCH_LINE_HEIGHT: i32 = 10;
 
 /// SETTINGS (spec § Screens): breadcrumb, list and footer, in its own look.
-/// The breadcrumb's width before it drops leading parts.
-pub const CRUMBS_W: i32 = VIZ_RIGHT - MARGIN_X;
+/// The breadcrumb's width before it drops leading parts: it clears the
+/// sounding dot.
+pub const CRUMBS_W: i32 = HEADER_DOT_X - HEADER_DOT_R - 4 - MARGIN_X;
 /// A list row's label, and the right edge of its note or `›`.
 pub const LIST_TEXT_X: i32 = 18;
 pub const LIST_RIGHT: i32 = 222;

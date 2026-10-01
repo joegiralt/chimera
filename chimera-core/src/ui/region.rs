@@ -402,7 +402,40 @@ pub const MAX_REGIONS: usize = 5;
 pub struct RegionSet {
     pub regions: [Region; MAX_REGIONS],
     pub count: u8,
-    pub prev_layout: Option<PageLayout>,
+    pub prev_layout: Option<Layout>,
+}
+
+/// Which bands a screen has: a page's, or SETTINGS' (a list, or a leaf of
+/// a layout).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Layout {
+    Page(PageLayout),
+    Settings(Option<PageLayout>),
+}
+
+impl Layout {
+    pub fn regions(self) -> &'static [(RegionKind, u16, u16)] {
+        match self {
+            Layout::Page(l) => layout_regions(l),
+            Layout::Settings(leaf) => settings_regions(leaf),
+        }
+    }
+}
+
+impl From<PageLayout> for Layout {
+    fn from(l: PageLayout) -> Self {
+        Layout::Page(l)
+    }
+}
+
+/// FNV-1a over `parts`: a SETTINGS band's key.
+pub fn settings_key(parts: &[&[u8]]) -> u32 {
+    let mut h: u32 = 0x811c_9dc5;
+    for b in parts.iter().flat_map(|p| p.iter()) {
+        h ^= *b as u32;
+        h = h.wrapping_mul(0x0100_0193);
+    }
+    h
 }
 
 impl RegionSet {
@@ -420,8 +453,9 @@ impl RegionSet {
     }
 
     /// Rebuild the region list for a new layout. All regions start dirty (sentinel data).
-    pub fn set_layout(&mut self, layout: PageLayout) {
-        let bands = layout_regions(layout);
+    pub fn set_layout(&mut self, layout: impl Into<Layout>) {
+        let layout = layout.into();
+        let bands = layout.regions();
         for (r, &(kind, y_start, y_end)) in self.regions.iter_mut().zip(bands) {
             *r = Region {
                 kind,

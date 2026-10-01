@@ -118,9 +118,9 @@ fn exciter_page_follows_the_model() {
 fn space_is_the_parts_reverb_send() {
     let mut ui = UiState::new();
     screen::load_init(&mut ui, EngineType::Modal);
-    assert_eq!(ui.nav.active_block_def().id, reg::MODAL_EXC.id);
+    assert_eq!(ui.page_def().id, reg::MODAL_EXC.id);
     screen::feed(&mut ui, screen::Input::press(ButtonId::Plus));
-    assert_eq!(ui.nav.active_block_def().id, reg::MODAL_1.id);
+    assert_eq!(ui.page_def().id, reg::MODAL_1.id);
     let was = ui.project().part(PartId::ALL[0]).mix.sends[2];
     screen::feed(&mut ui, screen::Input::turn(EncoderId::F, 10));
     let now = ui.project().part(PartId::ALL[0]).mix.sends[2];

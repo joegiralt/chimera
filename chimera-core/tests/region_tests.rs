@@ -1,4 +1,5 @@
 use chimera_core::ui::animation::AnimatedValue;
+use chimera_core::ui::block_registry as reg;
 use chimera_core::ui::components::Look;
 use chimera_core::ui::page::{PageId, PageKey, PageLayout};
 use chimera_core::ui::region::{RegionData, RegionSet, quantize, quantize_values};
@@ -47,14 +48,14 @@ fn region_data_diff_is_not_equal() {
 #[test]
 fn region_data_cell_values_differ() {
     let a = RegionData::cells(
-        PageKey::Legacy(PageId::DemoWaves),
+        PageKey::Legacy(PageId::Demo(reg::DEMO_WAVES.id)),
         [500; 6],
         0,
         0,
         [None; 6],
     );
     let b = RegionData::cells(
-        PageKey::Legacy(PageId::DemoWaves),
+        PageKey::Legacy(PageId::Demo(reg::DEMO_WAVES.id)),
         [501, 500, 500, 500, 500, 500],
         0,
         0,
@@ -112,7 +113,7 @@ fn layout_change_resets_all_regions() {
     let mut rs = RegionSet::new();
     rs.set_layout(PageLayout::BigViz);
     rs.regions[2].prev_data = RegionData::cells(
-        PageKey::Legacy(PageId::DemoWaves),
+        PageKey::Legacy(PageId::Demo(reg::DEMO_WAVES.id)),
         [500; 6],
         0,
         0,
@@ -171,7 +172,7 @@ fn encoder_only_dirties_params_not_header() {
     let mut rs = RegionSet::new();
     rs.set_layout(PageLayout::BigViz);
 
-    let page = PageKey::Legacy(PageId::DemoWaves);
+    let page = PageKey::Legacy(PageId::Demo(reg::DEMO_WAVES.id));
     let values_a = [500u16; 6];
     let values_b = [501, 500, 500, 500, 500, 500];
 
@@ -202,7 +203,7 @@ fn nav_change_dirties_header_and_nav() {
     let mut rs = RegionSet::new();
     rs.set_layout(PageLayout::BigViz);
 
-    let page = PageKey::Legacy(PageId::DemoWaves);
+    let page = PageKey::Legacy(PageId::Demo(reg::DEMO_WAVES.id));
     let values = [500u16; 6];
 
     rs.regions[0].prev_data = RegionData::header(0, 0, 0, 0, false, 0, 0);
@@ -232,7 +233,7 @@ fn no_change_means_no_dirty() {
     let mut rs = RegionSet::new();
     rs.set_layout(PageLayout::BigViz);
 
-    let page = PageKey::Legacy(PageId::DemoWaves);
+    let page = PageKey::Legacy(PageId::Demo(reg::DEMO_WAVES.id));
     let values = [500u16; 6];
 
     rs.regions[0].prev_data = RegionData::header(0, 0, 0, 0, false, 0, 0);
@@ -288,7 +289,7 @@ fn animation_settling_produces_dirty_then_clean() {
 
 fn cells_keyed(matrix_rev: u16, looks: u16) -> RegionData {
     RegionData::cells(
-        PageKey::Legacy(PageId::DemoWaves),
+        PageKey::Legacy(PageId::Demo(reg::DEMO_WAVES.id)),
         [500; 6],
         0,
         0,
@@ -311,7 +312,13 @@ fn region_data_cell_matrix_rev_differs() {
 }
 
 fn focus_with(look: Look) -> RegionData {
-    RegionData::focus(PageKey::Legacy(PageId::DemoWaves), 0, 500, look, None)
+    RegionData::focus(
+        PageKey::Legacy(PageId::Demo(reg::DEMO_WAVES.id)),
+        0,
+        500,
+        look,
+        None,
+    )
 }
 
 /// The focused slot turning dimmed (or absent) alone redraws the focus

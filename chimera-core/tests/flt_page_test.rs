@@ -12,7 +12,7 @@ use chimera_core::modulation::ModSource;
 use chimera_core::params::EngineType;
 use chimera_core::params::FilterParams;
 use chimera_core::ui::block_registry::FILTER;
-use chimera_core::ui::chain::chain_def_for;
+use chimera_core::ui::nav::chain_def_for;
 use chimera_core::ui::renderer::amount_of;
 use chimera_core::ui::{PrimeStatus, UiState};
 use chimera_core::{MidiNote, Velocity};

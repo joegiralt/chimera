@@ -38,7 +38,7 @@ whatever the last frame left.
 | ![](toast_file_damaged.png) | Project › toast | A load error: the file's CRC fails |
 | ![](toast_load_failed.png) | Project › toast | Load failed partway: the project is NEW |
 | ![](toast_not_found.png) | Project › toast | The project's file is gone |
-| ![](toast_saved.png) | Project › toast | Leaving System after a write: SAVED |
+| ![](toast_saved.png) | Project › toast | Leaving SETTINGS after a write: SAVED |
 | ![](toast_saved_differs.png) | Project › toast | SAVED, with a Part differing from its slot |
 
 ## Sound browser
@@ -138,7 +138,9 @@ per model.
 
 ## Mixer (MIX + B1)
 
-Part 1's mixer; the other Parts' differ only in the header.
+Part 1's PART and SENDS; the other Parts' differ only in the header. The
+shared FX come after Part 6's SENDS (PLUS from there), so they read
+PART 6 · MIX.
 
 | Screen | Where | What it shows |
 |---|---|---|
@@ -152,32 +154,37 @@ Part 1's mixer; the other Parts' differ only in the header.
 | ![](mixer_master.png) | MST | Compressor curve, RATIO 4:1 |
 | ![](mixer_master_level.png) | MST › LVL | Master VOL and PAN |
 
-## System (MENU)
+## SETTINGS leaves (MENU)
+
+A leaf is the page it was on the old System chain, under a breadcrumb and
+above the project footer. The lists aren't in the atlas yet.
 
 | Screen | Where | What it shows |
 |---|---|---|
-| ![](system.png) | TUN | Home: TUNE and SCALE |
-| ![](system_theme.png) | THM | BRIGHT, GAMMA, ACCENT (AMBER, focused), BLACK |
-| ![](system_upd.png) | UPD | Updates: no controls yet |
-| ![](system_abt.png) | ABT | About: no content yet |
-| ![](system_audio.png) | ABT › AUD | Audio load, peak, overruns, drops, desyncs, stack |
+| ![](settings_midi_channels.png) | MIDI › CHANNELS | Each Part's MIDI channel: the mixer's own value |
+| ![](settings_audio_outputs.png) | AUDIO › OUTPUTS | Each Part's OUT: the mixer's own value |
+| ![](settings_audio_tuning.png) | AUDIO › TUNING | TUNE and SCALE |
+| ![](settings_personal_theme.png) | PERSONAL › THEME | BRIGHT, GAMMA, ACCENT (AMBER, focused), BLACK |
+| ![](settings_system_os.png) | SYSTEM › OS | Updates: no controls yet |
+| ![](settings_system_about.png) | SYSTEM › ABOUT | About: no content yet |
+| ![](settings_system_about_audio.png) | ABOUT › AUDIO | Audio load, peak, overruns, drops, desyncs, stack |
 
-## Demo (MIX + B6)
+## DEMO (SETTINGS › SYSTEM › DEMO, debug builds)
 
 The UI component storyboard.
 
 | Screen | Where | What it shows |
 |---|---|---|
-| ![](demo_wav.png) | WAV | Wave icons |
-| ![](demo_shp.png) | SHP | Shape icons |
-| ![](demo_mot.png) | MOT | Motion icons |
-| ![](demo_fm.png) | FM | FM icons |
-| ![](demo_mtx.png) | MTX | A matrix |
-| ![](demo_arc.png) | ARC | Glyph: ARC; a drives it unipolar, b bipolar |
-| ![](demo_none.png) | NONE | Glyph: NONE; a steps MODEL, its word has the whole band |
-| ![](demo_sw.png) | SW | Glyph: SWITCH; a flips LFO 1's SYNC, FREE / RETRIG |
-| ![](demo_lvl.png) | LVL | Glyph: LEVEL BAR; a drives VOLUME (8 ticks), b operator A's FDBK (a tick per step) |
-| ![](demo_xf.png) | XF | Glyph: CROSSFADER; a slides ALG A to B (MORPH), b dry to wet (DRV MIX); set values only |
-| ![](demo_brd.png) | BRD | Glyph: chorus BRAID; a MODE (strands), b RATE (twist speed), c DEPTH (swing), d MIX (strand weight); animated on the UI clock |
-| ![](demo_rng.png) | RNG | Glyph: delay RINGS; a TIME (spacing), b FDBK (survivors), c TONE (crisp or blurred), d MIX (ring weight), e MECHANICS (wobble), f SAT (the newest ring's weight); REV dots the edge |
-| ![](demo_cub.png) | CUB | Glyph: reverb CUBE; a SIZE (the room), b TIME (afterimage trails), c DAMP (far edges dim, then dot), d MIX (edge weight), e GRIT (crackle) |
+| ![](settings_system_demo_wav.png) | WAV | Wave icons |
+| ![](settings_system_demo_shp.png) | SHP | Shape icons |
+| ![](settings_system_demo_mot.png) | MOT | Motion icons |
+| ![](settings_system_demo_fm.png) | FM | FM icons |
+| ![](settings_system_demo_mtx.png) | MTX | A matrix |
+| ![](settings_system_demo_arc.png) | ARC | Glyph: ARC; a drives it unipolar, b bipolar |
+| ![](settings_system_demo_none.png) | NONE | Glyph: NONE; a steps MODEL, its word has the whole band |
+| ![](settings_system_demo_sw.png) | SW | Glyph: SWITCH; a flips LFO 1's SYNC, FREE / RETRIG |
+| ![](settings_system_demo_lvl.png) | LVL | Glyph: LEVEL BAR; a drives VOLUME (8 ticks), b operator A's FDBK (a tick per step) |
+| ![](settings_system_demo_xf.png) | XF | Glyph: CROSSFADER; a slides ALG A to B (MORPH), b dry to wet (DRV MIX); set values only |
+| ![](settings_system_demo_brd.png) | BRD | Glyph: chorus BRAID; a MODE (strands), b RATE (twist speed), c DEPTH (swing), d MIX (strand weight); animated on the UI clock |
+| ![](settings_system_demo_rng.png) | RNG | Glyph: delay RINGS; a TIME (spacing), b FDBK (survivors), c TONE (crisp or blurred), d MIX (ring weight), e MECHANICS (wobble), f SAT (the newest ring's weight); REV dots the edge |
+| ![](settings_system_demo_cub.png) | CUB | Glyph: reverb CUBE; a SIZE (the room), b TIME (afterimage trails), c DAMP (far edges dim, then dot), d MIX (edge weight), e GRIT (crackle) |

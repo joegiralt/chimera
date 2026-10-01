@@ -586,7 +586,7 @@ const _: () = assert!(MIXER_CHANNEL_BLOCKS[MIXER_HOME].def.id == SENDS.id);
 const _: () = assert!(MIXER_CHANNEL_BLOCKS[MIXER_PART].def.id == PART.id);
 
 // ---------------------------------------------------------------------------
-// System chain
+// SETTINGS leaf pages (`ui::settings::leaves` chains them)
 // ---------------------------------------------------------------------------
 
 pub static SYS_TUNING: BlockDef = BlockDef {
@@ -654,19 +654,6 @@ pub static SYS_AUDIO: BlockDef = BlockDef {
         ParamSlot::legacy("DESYNC", ValFmt::Int(0)),
         ParamSlot::legacy("STACK", ValFmt::Int(0)),
     ],
-};
-
-static SYSTEM_BLOCKS: [ChainBlock; 4] = [
-    ChainBlock::page(&SYS_TUNING),
-    ChainBlock::page(&SYS_THEME),
-    ChainBlock::page(&SYS_UPDATES),
-    ChainBlock::with_subs(&SYS_ABOUT, &[&SYS_AUDIO]),
-];
-
-pub static SYSTEM_CHAIN: ChainDef2 = ChainDef2 {
-    name: "System",
-    blocks: &SYSTEM_BLOCKS,
-    mod_sources: &[],
 };
 
 // ---------------------------------------------------------------------------
@@ -916,12 +903,10 @@ pub static DEMO_CHAIN: ChainDef2 = ChainDef2 {
 };
 
 /// Every chain, for whole-registry checks (unique ids, the focus table).
-/// `SYSTEM_CHAIN` stays until Task 8; it shares its defs with the leaves.
-pub static ALL_CHAINS: [&ChainDef2; 11] = [
+pub static ALL_CHAINS: [&ChainDef2; 10] = [
     &ALGO_CHAIN,
     &MODAL_PLUCK_CHAIN,
     &MIXER_CHANNEL_CHAIN,
-    &SYSTEM_CHAIN,
     &DEMO_CHAIN,
     &CHANNELS_LEAF,
     &OUTPUTS_LEAF,

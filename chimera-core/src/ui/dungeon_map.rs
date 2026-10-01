@@ -7,10 +7,10 @@ use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::Rgb565;
 
 use crate::dsp::modal::{MODEL_NAMES, ResonatorMode};
-use crate::ui::block_def::BlockDef;
+use crate::ui::block_def::{BlockDef, ChainDef2};
 use crate::ui::block_registry::MODAL_2;
-use crate::ui::chain::ChainNav;
 use crate::ui::draw;
+use crate::ui::nav::PageAt;
 use crate::ui::theme;
 
 /// Centre x of node `i` of `n`, spread evenly over the map line.
@@ -31,12 +31,18 @@ pub fn page_label(def: &BlockDef, model: ResonatorMode) -> &'static str {
     }
 }
 
-/// Draw the map. `branch_scroll_px` scrolls the sub-page list (animated).
-pub fn draw<D>(d: &mut D, nav: &ChainNav, model: ResonatorMode, branch_scroll_px: i32)
-where
+/// Draw `chain`'s map at `at`. `branch_scroll_px` scrolls the sub-page
+/// list (animated).
+pub fn draw<D>(
+    d: &mut D,
+    chain: &ChainDef2,
+    at: PageAt,
+    model: ResonatorMode,
+    branch_scroll_px: i32,
+) where
     D: DrawTarget<Color = Rgb565>,
 {
-    let chain = nav.active_chain();
+    let node = at.node as usize;
     let n = chain.blocks.len();
     if n > 1 {
         draw::fill_rect(
@@ -51,13 +57,13 @@ where
     for (i, block) in chain.blocks.iter().enumerate() {
         let x = node_x(i, n);
         let label = block.map.unwrap_or(block.def.short);
-        if i == nav.node {
+        if i == node {
             pill_node(d, x, theme::MAP_LINE_Y, label, theme::ACCENT);
         } else {
             ring_node(d, x, theme::MAP_LINE_Y, label, theme::NODE_LABEL_Y);
         }
     }
-    draw_branches(d, nav, model, node_x(nav.node, n), branch_scroll_px);
+    draw_branches(d, chain, at, model, node_x(node, n), branch_scroll_px);
 }
 
 /// A current node: a `fill` pill centred on (x, cy) with a dark bold label.
@@ -97,14 +103,15 @@ where
 /// Sub-pages of the current block, under its pill.
 fn draw_branches<D>(
     d: &mut D,
-    nav: &ChainNav,
+    chain: &ChainDef2,
+    at: PageAt,
     model: ResonatorMode,
     pill_x: i32,
     branch_scroll_px: i32,
 ) where
     D: DrawTarget<Color = Rgb565>,
 {
-    let Some(block) = nav.active_chain_block() else {
+    let Some(block) = chain.block_at(at.node as usize) else {
         return;
     };
     let count = block.sub_page_count();
@@ -133,7 +140,7 @@ fn draw_branches<D>(
         };
         let label = page_label(def, model);
         let cy = y + theme::BRANCH_LINE_HEIGHT / 2;
-        if i as usize == nav.sub_page {
+        if i == at.sub as i32 {
             draw::dot(d, x, cy, 2, theme::ACCENT);
             draw::text(d, &theme::FONT_LABEL, label, x + 6, y + 8, theme::ACCENT);
         } else {

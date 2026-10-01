@@ -148,7 +148,7 @@ fn boot() -> Board {
 
     let mut led = gpioe.pe1.into_push_pull_output();
     // TIM1 CH2 PWM, above hearing so the backlight driver cannot whine.
-    // Full brightness lifts a TN panel's blacks; System › Theme's BRIGHT
+    // Full brightness lifts a TN panel's blacks; SETTINGS › THEME's BRIGHT
     // sets the duty: the default until SYSTEM is read.
     let mut backlight = dp.TIM1.pwm(
         gpioe.pe11.into_alternate::<1>(),
@@ -328,10 +328,10 @@ fn synth(board: Board) -> ! {
         controls.snapshot();
         // Every frame, even idle: a held key must age.
         ui.handle_input(&controls);
-        // Leaving System syncs SYSTEM, with no overlay first: a save is
+        // Leaving SETTINGS syncs SYSTEM, with no overlay first: a save is
         // quicker than BUSY can be read. A toast says how it went.
         ui.sync_system(&mut sync, &mut card, store, &mut settings);
-        // System › Theme: the UI loop owns the display and the backlight.
+        // SETTINGS › THEME: the UI loop owns the display and the backlight.
         let recolour = apply_theme(ui.theme(), &mut theme, &mut backlight, &mut display);
         ui.update();
         shared_w.publish(|b| b.update_from(ui.project().perf(), LOAD_LINK.epoch()));

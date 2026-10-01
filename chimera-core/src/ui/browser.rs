@@ -7,15 +7,15 @@ use core::fmt::Write;
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::Rgb565;
 
-use chimera_hal::{ButtonId, ButtonState, Controls, EncoderId, PART_BUTTONS};
+use chimera_hal::{Controls, EncoderId};
 
 use crate::params::EngineType;
 use crate::preset::POOL_SIZE;
 use crate::project::{PartId, Pool, SlotId};
-use crate::ui::chain::chain_def_for;
 use crate::ui::components;
 use crate::ui::draw;
 use crate::ui::fmt::FmtBuf;
+use crate::ui::nav::{Browse, chain_def_for};
 use crate::ui::theme;
 
 /// Rows on screen.
@@ -38,44 +38,20 @@ pub const SCROLL_H: i32 = 208;
 const HINT_Y: i32 = 284;
 const INFO_Y: i32 = 304;
 
-/// What a frame of browser input asks for, besides moving the cursor.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BrowserAct {
-    /// EDIT: load the highlighted entry into the Part and close.
-    Load,
-    /// SEQ: save the Part's Sound into the highlighted slot; stay open.
-    Save,
-    /// Any B button, or MENU: close.
-    Cancel,
-}
-
-/// One frame of browser input: encoder A moves the cursor (clamped to the
-/// list, `scroll` following it on screen), then at most one button acts,
-/// EDIT first.
-pub fn handle(
-    controls: &impl Controls,
-    cursor: usize,
-    scroll: usize,
-) -> (usize, usize, Option<BrowserAct>) {
+/// Encoder A moves the cursor, clamped to the list; the scroll follows it
+/// on screen. EDIT's load and every key's way out are `UiState`'s.
+pub fn input(controls: &impl Controls, b: Browse) -> Browse {
     let visible = VISIBLE_ROWS.min(TOTAL_ENTRIES);
     let delta = i32::from(controls.encoder_delta(EncoderId::A));
-    let cursor = (cursor as i32 + delta).clamp(0, TOTAL_ENTRIES as i32 - 1) as usize;
-    let scroll = scroll.min(cursor).max((cursor + 1).saturating_sub(visible));
-    let pressed = |b| controls.button_state(b) == ButtonState::Pressed;
-    let act = if pressed(ButtonId::Edit) {
-        Some(BrowserAct::Load)
-    } else if pressed(ButtonId::Seq) {
-        Some(BrowserAct::Save)
-    } else if PART_BUTTONS
-        .iter()
-        .chain(&[ButtonId::Menu])
-        .any(|&b| pressed(b))
-    {
-        Some(BrowserAct::Cancel)
-    } else {
-        None
-    };
-    (cursor, scroll, act)
+    let cursor = (b.cursor as i32 + delta).clamp(0, TOTAL_ENTRIES as i32 - 1) as usize;
+    let scroll = (b.scroll as usize)
+        .min(cursor)
+        .max((cursor + 1).saturating_sub(visible));
+    // TOTAL_ENTRIES <= 256 (`nav`).
+    Browse {
+        cursor: cursor as u8,
+        scroll: scroll as u8,
+    }
 }
 
 /// Baseline of visible row `i`.

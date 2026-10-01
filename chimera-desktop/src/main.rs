@@ -121,7 +121,7 @@ fn main() {
 
         // UI framework handles navigation + encoder -> param binding
         ui.handle_input(&controls);
-        // Leaving System syncs SYSTEM; a toast says how it went.
+        // Leaving SETTINGS syncs SYSTEM; a toast says how it went.
         ui.sync_system(&mut sync, &mut card, &mut store, &mut settings);
         display.set_theme(&ui.theme());
         ui.update();

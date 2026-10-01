@@ -12,10 +12,7 @@ use screen::*;
 
 fn on_audio_page() -> UiState {
     let mut ui = UiState::new();
-    feed(&mut ui, Input::press(ButtonId::Menu));
-    for _ in 0..3 {
-        feed(&mut ui, Input::press(ButtonId::Plus));
-    }
+    to_leaf(&mut ui, &["SYSTEM", "ABOUT"]);
     feed(&mut ui, Input::press(ButtonId::Edit));
     settle(&mut ui);
     ui
@@ -30,7 +27,7 @@ fn texts(s: Option<&chimera_core::perf::load::AudioStats>) -> Vec<String> {
 
 #[test]
 fn the_page_is_system_about_audio() {
-    assert_eq!(on_audio_page().nav.active_block_def().id, SYS_AUDIO.id);
+    assert_eq!(on_audio_page().page_def().id, SYS_AUDIO.id);
 }
 
 #[test]

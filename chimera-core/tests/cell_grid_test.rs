@@ -20,7 +20,12 @@ fn band(fb: &Fb, y0: i32, y1: i32) -> Vec<u16> {
 
 #[test]
 fn dirty_render_from_scratch_equals_full_render() {
-    for name in ["engine_algo", "algo_alg", "algo_level", "system"] {
+    for name in [
+        "engine_algo",
+        "algo_alg",
+        "algo_level",
+        "settings_personal_theme",
+    ] {
         assert!(render(name).px == render_dirty(name).px, "{name}");
     }
 }
@@ -84,7 +89,7 @@ fn focus_band_shows_the_last_touched_slot() {
     settle(&mut ui);
     let mut fb = Fb::new();
     ui.render_with_scope(&mut fb, &PerfStats::zero(), &scope_fixture());
-    let slot = &ui.nav.active_block_def().params[2];
+    let slot = &ui.page_def().params[2];
     let v = ui.renderer.anim[2].current();
     let mut text = FmtBuf::new();
     fmt_val(&mut text, v, slot.format());
@@ -172,14 +177,11 @@ fn live_output_is_flat_when_silent_and_scaled_to_the_band() {
     }
 }
 
-/// A page whose slots are all empty (System UPDATES) shows no focus band.
+/// A page whose slots are all empty (SYSTEM › OS UPGRADE) shows no focus band.
 #[test]
 fn an_all_empty_page_has_an_empty_focus_band() {
     let mut ui = UiState::new();
-    feed(&mut ui, Input::press(chimera_hal::ButtonId::Menu));
-    for _ in 0..2 {
-        feed(&mut ui, Input::press(chimera_hal::ButtonId::Plus)); // → UPDATES
-    }
+    to_leaf(&mut ui, &["SYSTEM", "OS UPGRADE"]);
     settle(&mut ui);
     let mut fb = Fb::new();
     ui.render_with_scope(&mut fb, &PerfStats::zero(), &scope_fixture());

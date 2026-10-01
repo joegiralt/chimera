@@ -7,6 +7,9 @@
 //! picture; the atlas adds the rest, named `<chain>_<map label>`:
 //! `algo_crs`, `modal_bank_exc` (Modal pages that follow MODEL carry it),
 //! `algo_pit_cut` (a choice that changes the page, at its other values).
+//! A SETTINGS leaf is `settings_<crumbs joined by _>`, its later pages
+//! with their name: `settings_personal_theme`, `settings_system_about_audio`,
+//! `settings_system_demo_<map label>`.
 
 mod screen;
 
@@ -18,10 +21,11 @@ use chimera_core::dsp::modal::{MODEL_NAMES, ModalParams};
 use chimera_core::params::{EngineType, FilterParams, ParamSnapshot, PitchParams, STEAL_NAMES};
 use chimera_core::project::{Differ, PartId, ProjectNote, SlotId, Subject};
 use chimera_core::storage::{FileError, ProjectId};
-use chimera_core::ui::block_def::{BlockDef, SlotBinding};
+use chimera_core::ui::block_def::{BlockDef, ChainDef2, SlotBinding};
+use chimera_core::ui::block_registry::{DEMO_CHAIN, MIXER_CHANNEL_CHAIN, MIXER_HOME, MIXER_PART};
 use chimera_core::ui::busy::{ToastStep, draw_toast};
-use chimera_core::ui::chain::ChainId;
-use chimera_core::ui::{UiMode, UiState, splash};
+use chimera_core::ui::nav::{Location, chain_def_for};
+use chimera_core::ui::{UiState, splash};
 use chimera_hal::store::{StoreError, VolumeId};
 use chimera_hal::{ButtonId, EncoderId};
 use screen::*;
@@ -82,31 +86,64 @@ fn follows_model(def: &BlockDef) -> bool {
 enum Ctx {
     /// Part 1 on the engine's init Sound.
     Part(EngineType),
-    /// MIX + B1. The other Parts' mixers differ only in the header.
+    /// MIX + B1's PART and SENDS, then the FX past Part 6's SENDS. The
+    /// other Parts' mixers differ only in the header.
     Mixer,
-    /// MENU.
-    System,
-    /// MIX + B6.
+    /// A SETTINGS leaf, by its index in `leaves()`.
+    Settings(usize),
+    /// SETTINGS › SYSTEM › DEMO (debug builds).
     Demo,
 }
 
 impl Ctx {
-    const ALL: [Ctx; 5] = [
-        Ctx::Part(EngineType::Algo),
-        Ctx::Part(EngineType::Modal),
-        Ctx::Mixer,
-        Ctx::System,
-        Ctx::Demo,
-    ];
-
-    fn prefix(self) -> &'static str {
-        match self {
-            Ctx::Part(EngineType::Algo) => "algo",
-            Ctx::Part(EngineType::Modal) => "modal",
-            Ctx::Mixer => "mixer",
-            Ctx::System => "system",
-            Ctx::Demo => "demo",
+    fn all() -> Vec<Ctx> {
+        let mut all = vec![
+            Ctx::Part(EngineType::Algo),
+            Ctx::Part(EngineType::Modal),
+            Ctx::Mixer,
+        ];
+        let leaves = leaves();
+        all.extend(
+            (0..leaves.len())
+                .filter(|&i| !core::ptr::eq(leaves[i].chain, &DEMO_CHAIN))
+                .map(Ctx::Settings),
+        );
+        if cfg!(debug_assertions) {
+            all.push(Ctx::Demo);
         }
+        all
+    }
+
+    fn prefix(self) -> String {
+        match self {
+            Ctx::Part(EngineType::Algo) => "algo".into(),
+            Ctx::Part(EngineType::Modal) => "modal".into(),
+            Ctx::Mixer => "mixer".into(),
+            Ctx::Settings(i) => leaves()[i].name(),
+            Ctx::Demo => "settings_system_demo".into(),
+        }
+    }
+
+    fn chain(self) -> &'static ChainDef2 {
+        match self {
+            Ctx::Part(e) => chain_def_for(e),
+            Ctx::Mixer => &MIXER_CHANNEL_CHAIN,
+            Ctx::Settings(i) => leaves()[i].chain,
+            Ctx::Demo => &DEMO_CHAIN,
+        }
+    }
+
+    /// The name of `def` at `node`, `sub`: a leaf's first page is the leaf.
+    fn name(self, def: &BlockDef, node: usize, sub: usize) -> String {
+        let mut n = self.prefix();
+        let tail = match self {
+            Ctx::Settings(_) if (node, sub) == (0, 0) => return n,
+            Ctx::Settings(_) => def.name.to_lowercase().replace(' ', "_"),
+            _ => def.short.to_lowercase(),
+        };
+        n += "_";
+        n += &tail;
+        n
     }
 
     fn start(self) -> UiState {
@@ -114,44 +151,50 @@ impl Ctx {
         if let Ctx::Part(engine) = self {
             load_init(&mut ui, engine);
         }
-        self.home(&mut ui);
         ui
     }
 
-    /// The chain's first node, sub-page 0.
-    fn home(self, ui: &mut UiState) {
+    /// To `node` and EDIT down to `sub`, through the real controls.
+    fn go(self, ui: &mut UiState, node: usize, sub: usize) {
         match self {
             Ctx::Part(_) => {
                 feed(ui, Input::press(ButtonId::B2));
                 feed(ui, Input::press(ButtonId::B1));
+                for _ in 0..self.chain().len() {
+                    feed(ui, Input::press(ButtonId::Minus));
+                }
+                plus(ui, node);
             }
+            Ctx::Mixer if node > MIXER_HOME => to_fx(ui, node),
             Ctx::Mixer => {
                 feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
-                for _ in 0..ui.nav.active_chain().len() {
+                if node == MIXER_PART {
                     feed(ui, Input::press(ButtonId::Minus));
                 }
             }
-            Ctx::System => feed(ui, Input::press(ButtonId::Menu)),
-            Ctx::Demo => feed(ui, Input::chord(ButtonId::Mix, ButtonId::B6)),
-        }
-    }
-
-    /// Home, then PLUS to `node` and EDIT down to `sub`.
-    fn go(self, ui: &mut UiState, node: usize, sub: usize) {
-        self.home(ui);
-        for _ in 0..node {
-            feed(ui, Input::press(ButtonId::Plus));
+            Ctx::Settings(i) => {
+                to_leaf(ui, &leaves()[i].labels);
+                plus(ui, node);
+            }
+            Ctx::Demo => to_demo(ui, node),
         }
         for _ in 0..sub {
             feed(ui, Input::press(ButtonId::Edit));
         }
-        assert_eq!((ui.nav.node, ui.nav.sub_page), (node, sub), "{self:?}");
+        let def = self.chain().active_def(node, sub).unwrap();
+        assert_eq!(page_def_id(ui), def.id, "{self:?} {node} {sub}");
+    }
+}
+
+fn plus(ui: &mut UiState, n: usize) {
+    for _ in 0..n {
+        feed(ui, Input::press(ButtonId::Plus));
     }
 }
 
 /// Turn the focused page's slot for `c` to value `i`.
 fn set(ui: &mut UiState, c: &Choice, i: usize) {
-    let slot = slot_of(ui.nav.active_block_def(), c.addr).expect("on the choice's page");
+    let slot = slot_of(ui.page_def(), c.addr).expect("on the choice's page");
     feed(ui, Input::turn(ENCODERS[slot], -127));
     feed(ui, Input::turn(ENCODERS[slot], i as i8));
     assert_eq!((c.now)(ui.params()), i, "{}", c.names[i]);
@@ -159,7 +202,7 @@ fn set(ui: &mut UiState, c: &Choice, i: usize) {
 
 /// Go to the first page with `c`'s slot and turn it to `i`.
 fn set_anywhere(ui: &mut UiState, ctx: Ctx, c: &Choice, i: usize) {
-    let chain = ui.nav.active_chain();
+    let chain = ctx.chain();
     let (node, sub) = (0..chain.len())
         .flat_map(|n| (0..chain.blocks[n].sub_page_count().max(1)).map(move |s| (n, s)))
         .find(|&(n, s)| slot_of(chain.active_def(n, s).unwrap(), c.addr).is_some())
@@ -198,10 +241,10 @@ impl Shot {
 /// page with a `CHOICES` slot once more per other value.
 fn atlas() -> Vec<Shot> {
     let mut shots = Vec::new();
-    for ctx in Ctx::ALL {
+    for ctx in Ctx::all() {
         let ui = ctx.start();
         let init = ui.params();
-        let chain = ui.nav.active_chain();
+        let chain = ctx.chain();
         let models = matches!(ctx, Ctx::Part(EngineType::Modal));
         for (node, block) in chain.blocks.iter().enumerate() {
             for sub in 0..block.sub_page_count().max(1) {
@@ -213,13 +256,14 @@ fn atlas() -> Vec<Shot> {
                     vec![None]
                 };
                 for model in model_list {
-                    let mut base = String::from(ctx.prefix());
-                    if let Some(m) = model {
-                        base += "_";
-                        base += &MODEL.names[m].to_lowercase();
-                    }
-                    base += "_";
-                    base += &def.short.to_lowercase();
+                    let base = match model {
+                        Some(m) => {
+                            let named = ctx.name(def, node, sub);
+                            let tail = &named[ctx.prefix().len()..];
+                            format!("{}_{}{tail}", ctx.prefix(), MODEL.names[m].to_lowercase())
+                        }
+                        None => ctx.name(def, node, sub),
+                    };
                     let shot = |name: String, choice| Shot {
                         name,
                         ctx,
@@ -245,28 +289,21 @@ fn atlas() -> Vec<Shot> {
     shots
 }
 
-/// What tells two screens apart for the goldens' cover: the page, and on
-/// a Part its engine and model.
+/// What tells two screens apart for the goldens' cover: where the UI is,
+/// and the edited Part's engine and model.
 #[derive(PartialEq)]
 struct Key {
-    chain: ChainId,
-    engine: Option<EngineType>,
+    at: Location,
+    engine: EngineType,
     model: Option<usize>,
-    node: usize,
-    sub: usize,
-    browser: bool,
 }
 
 fn key(ui: &UiState) -> Key {
-    let part = matches!(ui.nav.chain_id, ChainId::Part(_));
-    let engine = part.then_some(ui.nav.engine);
+    let engine = ui.project().part(ui.active_part).sound.engine();
     Key {
-        chain: ui.nav.chain_id,
+        at: ui.location(),
         engine,
-        model: (engine == Some(EngineType::Modal)).then(|| (MODEL.now)(ui.params())),
-        node: ui.nav.node,
-        sub: ui.nav.sub_page,
-        browser: !matches!(ui.ui_mode, UiMode::Normal),
+        model: (engine == EngineType::Modal).then(|| (MODEL.now)(ui.params())),
     }
 }
 

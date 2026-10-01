@@ -5,10 +5,10 @@ mod screen;
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
 use chimera_core::project::{PartId, Pool, Project, SlotId};
-use chimera_core::ui::UiMode;
 use chimera_core::ui::browser::{
     self, INIT_TYPES, SCROLL_TOP, SCROLL_X, TOTAL_ENTRIES, VISIBLE_ROWS, row_y,
 };
+use chimera_core::ui::nav::{Browse, Location};
 use chimera_core::ui::perf::PerfStats;
 use chimera_core::ui::theme;
 use chimera_hal::{ButtonId, EncoderId};
@@ -96,12 +96,14 @@ fn init_rows_end_the_list_and_load() {
     feed(&mut ui, Input::chord(ButtonId::Edit, ButtonId::B2));
     feed(&mut ui, Input::turn(EncoderId::A, 100)); // clamps to the last row
     assert_eq!(
-        ui.ui_mode,
-        UiMode::SoundBrowser {
-            part: PartId::ALL[1],
-            cursor: TOTAL_ENTRIES - 1,
-            scroll: TOTAL_ENTRIES - VISIBLE_ROWS
-        }
+        ui.location(),
+        Location::sound_at(
+            PartId::ALL[1],
+            Browse {
+                cursor: (TOTAL_ENTRIES - 1) as u8,
+                scroll: (TOTAL_ENTRIES - VISIBLE_ROWS) as u8
+            }
+        )
     );
     let fb = render_ui(&ui);
     assert_eq!(
@@ -202,31 +204,35 @@ fn browser_redraw_does_not_fill_the_screen_again() {
     assert!(fb.px == full.px);
 }
 
-/// Browser input is a pure function of the controls and the cursor (#75).
+/// Browser input is a pure function of encoder A and the cursor (#75).
 #[test]
-fn browser_handle_moves_then_acts() {
-    use browser::{BrowserAct, handle};
+fn browser_input_moves_the_cursor() {
+    use browser::input;
+    let at = |cursor: usize, scroll: usize| Browse {
+        cursor: cursor as u8,
+        scroll: scroll as u8,
+    };
     let last = TOTAL_ENTRIES - 1;
-    assert_eq!(handle(&Input::turn(EncoderId::A, 3), 0, 0), (3, 0, None));
+    assert_eq!(input(&Input::turn(EncoderId::A, 3), at(0, 0)), at(3, 0));
     // The list clamps, and scrolling keeps the cursor on screen.
     assert_eq!(
-        handle(&Input::turn(EncoderId::A, 100), 0, 0),
-        (last, last + 1 - VISIBLE_ROWS, None)
+        input(&Input::turn(EncoderId::A, 100), at(0, 0)),
+        at(last, last + 1 - VISIBLE_ROWS)
     );
-    assert_eq!(handle(&Input::turn(EncoderId::A, -2), 5, 5), (3, 3, None));
-    assert_eq!(
-        handle(&Input::press(ButtonId::Edit), 4, 0),
-        (4, 0, Some(BrowserAct::Load))
-    );
-    assert_eq!(
-        handle(&Input::press(ButtonId::Seq), 4, 0),
-        (4, 0, Some(BrowserAct::Save))
-    );
-    for b in [ButtonId::B3, ButtonId::Menu] {
-        assert_eq!(
-            handle(&Input::press(b), 4, 0),
-            (4, 0, Some(BrowserAct::Cancel))
-        );
-    }
-    assert_eq!(handle(&Input::press(ButtonId::Plus), 4, 0), (4, 0, None));
+    assert_eq!(input(&Input::turn(EncoderId::A, -2), at(5, 5)), at(3, 3));
+    assert_eq!(input(&Input::press(ButtonId::Edit), at(4, 0)), at(4, 0));
+}
+
+/// On the Sound rung, B<n> leaves for Part n's pages, MENU opens SETTINGS
+/// and SEQ the Part's: the browser's own CANCEL and SAVE are gone.
+#[test]
+fn the_sound_rung_leaves_by_the_location_keys() {
+    let mut ui = chimera_core::ui::UiState::new();
+    feed(&mut ui, Input::chord(ButtonId::Edit, ButtonId::B2));
+    feed(&mut ui, Input::press(ButtonId::B3));
+    assert_eq!(ui.location().part(), Some(PartId::ALL[2]));
+    assert!(ui.location().browse().is_none());
+    feed(&mut ui, Input::chord(ButtonId::Edit, ButtonId::B2));
+    tap(&mut ui, ButtonId::Seq);
+    assert_eq!(ui.location(), Location::settings_at(&[1], 0));
 }

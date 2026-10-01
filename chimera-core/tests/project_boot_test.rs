@@ -2,6 +2,7 @@
 //! and load record it there (§ SYSTEM) and show their notes.
 
 mod common;
+mod screen;
 
 use chimera_core::block::Block;
 use chimera_core::params::{EngineType, FilterParams};
@@ -408,9 +409,9 @@ fn a_failed_system_write_keeps_the_saved_toast() {
 
     // Retried at the next System exit, with nothing else changed.
     let mut s = s.0;
-    b.ui.nav.chain_id = chimera_core::ui::chain::ChainId::System;
+    screen::tap(&mut b.ui, chimera_hal::ButtonId::Menu);
     b.ui.sync_system(&mut b.sync, &mut b.card, &mut s, &mut b.settings);
-    b.ui.nav.chain_id = chimera_core::ui::chain::ChainId::Part(0);
+    screen::tap(&mut b.ui, chimera_hal::ButtonId::Menu);
     b.ui.sync_system(&mut b.sync, &mut b.card, &mut s, &mut b.settings);
     assert_eq!(last_on_card(&mut s), Some(id(3)));
 }
@@ -616,7 +617,10 @@ fn replaced_ui_snaps() {
     let mut b = boot_system(&mut s);
     b.ui.update();
     let before = shown(&b.ui);
-    assert_ne!(b.ui.nav.engine, EngineType::Modal);
+    assert_ne!(
+        b.ui.project().part(b.ui.active_part).sound.engine(),
+        EngineType::Modal
+    );
 
     let go = file_go(&b.ui, at(&mut s, 5));
     let swap = b.ui.load_project(
@@ -630,7 +634,7 @@ fn replaced_ui_snaps() {
     );
     assert!(swap.is_some());
     assert_eq!(
-        b.ui.nav.engine,
+        b.ui.project().part(b.ui.active_part).sound.engine(),
         EngineType::Modal,
         "the active Part's engine"
     );
@@ -714,7 +718,10 @@ fn boot_shows_the_loaded_part() {
         .unwrap();
     let mut b = boot_system(&mut s);
     b.ui.boot_project(&mut b.card, &mut s, b.settings.last_project);
-    assert_eq!(b.ui.nav.engine, EngineType::Modal);
+    assert_eq!(
+        b.ui.project().part(b.ui.active_part).sound.engine(),
+        EngineType::Modal
+    );
     let now = shown(&b.ui);
     for _ in 0..500 {
         b.ui.update();
@@ -849,9 +856,9 @@ fn a_failed_write_then_an_idle_system_exit_keeps_the_theme() {
     let f = at(&mut s, 3);
     ui.save_project(&mut card, &mut s, &mut sync, &mut set, f);
     s.1 = true;
-    ui.nav.chain_id = chimera_core::ui::chain::ChainId::System;
+    screen::tap(&mut ui, chimera_hal::ButtonId::Menu);
     ui.sync_system(&mut sync, &mut card, &mut s, &mut set);
-    ui.nav.chain_id = chimera_core::ui::chain::ChainId::Part(0);
+    screen::tap(&mut ui, chimera_hal::ButtonId::Menu);
     ui.sync_system(&mut sync, &mut card, &mut s, &mut set);
     let now = system_on(&mut s.0);
     assert_eq!((now.theme, now.last_project), (owner.theme, Some(id(3))));
@@ -883,12 +890,12 @@ fn the_last_project_stays_on_its_card() {
     let mut a = std::mem::replace(&mut s, card_b);
 
     // A theme change on B, then leaving System, writes B's SYSTEM.
-    b.ui.nav.chain_id = chimera_core::ui::chain::ChainId::System;
+    screen::tap(&mut b.ui, chimera_hal::ButtonId::Menu);
     b.ui.sync_system(&mut b.sync, &mut b.card, &mut s, &mut b.settings);
     let mut t = b.ui.theme();
     t.bright = Bright::new(55);
     b.ui.set_theme(t);
-    b.ui.nav.chain_id = chimera_core::ui::chain::ChainId::Part(0);
+    screen::tap(&mut b.ui, chimera_hal::ButtonId::Menu);
     b.ui.sync_system(&mut b.sync, &mut b.card, &mut s, &mut b.settings);
     let on_b = system_on(&mut s);
     assert_eq!(on_b.theme, t, "B took the theme");
@@ -929,9 +936,9 @@ fn the_last_project_is_no_theme_change() {
     assert_eq!(b.settings.last_project, Some(id(3)));
 
     let (mut s, owner) = owner_card();
-    b.ui.nav.chain_id = chimera_core::ui::chain::ChainId::System;
+    screen::tap(&mut b.ui, chimera_hal::ButtonId::Menu);
     b.ui.sync_system(&mut b.sync, &mut b.card, &mut s, &mut b.settings);
-    b.ui.nav.chain_id = chimera_core::ui::chain::ChainId::Part(0);
+    screen::tap(&mut b.ui, chimera_hal::ButtonId::Menu);
     b.ui.sync_system(&mut b.sync, &mut b.card, &mut s, &mut b.settings);
     assert_eq!(system_on(&mut s), owner, "the owner's card is untouched");
     assert_eq!(b.ui.theme(), owner.theme, "and its theme applies");

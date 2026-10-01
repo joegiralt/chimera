@@ -8,10 +8,13 @@ use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::Rgb565;
 use u8g2_fonts::FontRenderer;
 
-use super::tree::{Kind, PART, ROOT, Row, row_at};
+use super::tree::{Kind, PART, ROOT, Row, row_at, rows};
+use crate::name::ProjectName;
 use crate::project::{PartId, ProjectStatus};
 use crate::ui::draw;
 use crate::ui::fmt::FmtBuf;
+use crate::ui::nav::SettingsAt;
+use crate::ui::region::settings_key;
 use crate::ui::theme;
 
 pub const LIST_TOP: i32 = 34;
@@ -401,5 +404,97 @@ pub fn legend(on: LegendFor, at_top: bool) -> &'static str {
         (L::Naming, _) => "SEQ SAVE · MENU CANCEL",
         (L::ManageList, _) => "EDIT COMMANDS · MENU BACK",
         (L::ManageCommands, _) => "SEQ RUN · MENU LIST",
+    }
+}
+
+/// The most rows a tree list holds.
+const MAX_ROWS: usize = 16;
+
+/// What SETTINGS' bands draw from in one frame.
+#[derive(Clone, Copy, Debug)]
+pub struct Bands {
+    pub at: SettingsAt,
+    /// The Part the PART crumb names.
+    pub active: PartId,
+    /// The list's first row shown (`first_visible`).
+    pub first: usize,
+    pub name: ProjectName,
+    pub status: ProjectStatus,
+}
+
+impl Bands {
+    /// The list's rows; none on a leaf.
+    fn rows(&self) -> &'static [Row] {
+        rows(self.at.path())
+    }
+
+    pub fn legend(&self) -> &'static str {
+        if self.at.at_leaf().is_some() {
+            return legend(LegendFor::Leaf, false);
+        }
+        let on = self
+            .rows()
+            .get(self.at.row() as usize)
+            .map_or(LegendFor::Opens, |r| LegendFor::of(r.kind));
+        legend(on, self.at.path().is_empty())
+    }
+
+    pub fn crumbs_key(&self, sounding: bool) -> u32 {
+        let head = [
+            self.at.path().len() as u8,
+            self.active.index() as u8,
+            sounding as u8,
+        ];
+        settings_key(&[self.at.path(), &head])
+    }
+
+    pub fn list_key(&self) -> u32 {
+        let list = [self.at.path().len() as u8, self.at.row(), self.first as u8];
+        settings_key(&[self.at.path(), &list])
+    }
+
+    pub fn footer_key(&self) -> u32 {
+        settings_key(&[
+            self.name.as_str().as_bytes(),
+            &[self.status as u8],
+            self.legend().as_bytes(),
+        ])
+    }
+
+    /// The breadcrumb, and the sounding dot where the header has it.
+    pub fn draw_crumbs<D: DrawTarget<Color = Rgb565>>(&self, d: &mut D, sounding: bool) {
+        draw_crumbs(d, &Crumbs::of(self.at.path(), self.active));
+        if sounding {
+            draw::dot(
+                d,
+                theme::HEADER_DOT_X,
+                theme::HEADER_DOT_Y,
+                theme::HEADER_DOT_R,
+                theme::ACCENT,
+            );
+        }
+    }
+
+    pub fn draw_list<D: DrawTarget<Color = Rgb565>>(&self, d: &mut D) {
+        let rows = self.rows();
+        debug_assert!(rows.len() <= MAX_ROWS);
+        let mut shown = [ListRow::of(&ROOT); MAX_ROWS];
+        let n = rows.len().min(MAX_ROWS);
+        for (s, r) in shown.iter_mut().zip(rows) {
+            *s = ListRow::of(r);
+        }
+        draw_list(d, &shown[..n], self.at.row() as usize, self.first);
+    }
+
+    pub fn draw_footer<D: DrawTarget<Color = Rgb565>>(&self, d: &mut D) {
+        let name = crate::ui::components::upper(self.name.as_str());
+        draw_footer(
+            d,
+            &Footer {
+                name: name.as_str(),
+                status: self.status,
+                legend: self.legend(),
+            },
+        );
     }
 }

@@ -19,6 +19,9 @@ mod screen;
 use chimera_core::params::EngineType;
 use chimera_core::scope::SCOPE_LEN;
 use chimera_core::ui::UiState;
+use chimera_core::ui::block_def::ChainDef2;
+use chimera_core::ui::block_registry::{DEMO_CHAIN, MIXER_CHANNEL_CHAIN, MIXER_HOME, MIXER_PART};
+use chimera_core::ui::nav::chain_def_for;
 use chimera_core::ui::perf::PerfStats;
 use chimera_hal::{ButtonId, EncoderId};
 use screen::*;
@@ -40,39 +43,71 @@ const B: [ButtonId; 6] = [
     ButtonId::B6,
 ];
 
-/// Which chain a walk starts from.
+/// Which pages a walk visits.
 #[derive(Clone, Copy, Debug)]
 enum Context {
     /// Part 1 with `EngineType`'s init Sound loaded.
     Part(EngineType),
-    /// MIX + B<n> (0-based).
+    /// MIX + B<n> (0-based): its PART and SENDS.
     Mixer(usize),
-    /// MIX + B6.
+    /// The shared FX, after Part 6's SENDS.
+    Fx,
+    /// SETTINGS › SYSTEM › DEMO (debug builds).
     Demo,
-    /// MENU.
-    System,
+    /// Every other SETTINGS leaf, by its index in `leaves()`.
+    Leaf(usize),
 }
 
 impl Context {
-    /// Enter the chain at its first node, sub-page 0. A Part's pages are
-    /// entered home from another Part's; the mixer reopens where it was left
-    /// (ADR 0057), so MINUS walks back to its first node (MINUS
-    /// resets the sub-page).
-    fn home(self, ui: &mut UiState) {
+    fn chain(self) -> &'static ChainDef2 {
+        match self {
+            Context::Part(e) => chain_def_for(e),
+            Context::Mixer(_) | Context::Fx => &MIXER_CHANNEL_CHAIN,
+            Context::Demo => &DEMO_CHAIN,
+            Context::Leaf(i) => leaves()[i].chain,
+        }
+    }
+
+    /// The nodes this context owns on its chain.
+    fn owns(self, node: usize) -> bool {
+        match self {
+            Context::Mixer(_) => node == MIXER_PART || node == MIXER_HOME,
+            Context::Fx => node > MIXER_HOME,
+            _ => true,
+        }
+    }
+
+    /// Drive the UI to `node`, `sub` through the real controls.
+    fn reach(self, ui: &mut UiState, node: usize, sub: usize) {
         match self {
             Context::Part(_) => {
                 feed(ui, Input::press(ButtonId::B2));
                 feed(ui, Input::press(ButtonId::B1));
+                for _ in 0..self.chain().len() {
+                    feed(ui, Input::press(ButtonId::Minus));
+                }
+                plus(ui, node);
             }
             Context::Mixer(n) => {
+                // From outside its last place, the mixer opens on SENDS.
+                tap(ui, ButtonId::Menu);
                 feed(ui, Input::chord(ButtonId::Mix, B[n]));
-                for _ in 0..ui.nav.active_chain().len() {
+                if node == MIXER_PART {
                     feed(ui, Input::press(ButtonId::Minus));
                 }
             }
-            Context::Demo => feed(ui, Input::chord(ButtonId::Mix, ButtonId::B6)),
-            Context::System => feed(ui, Input::press(ButtonId::Menu)),
+            Context::Fx => to_fx(ui, node),
+            Context::Demo => to_demo(ui, node),
+            Context::Leaf(i) => {
+                to_leaf(ui, &leaves()[i].labels);
+                plus(ui, node);
+            }
         }
+        for _ in 0..sub {
+            feed(ui, Input::press(ButtonId::Edit));
+        }
+        let def = self.chain().active_def(node, sub).unwrap();
+        assert_eq!(page_def_id(ui), def.id, "{self:?} reached {}", def.name);
     }
 
     fn start(self) -> UiState {
@@ -80,8 +115,13 @@ impl Context {
         if let Context::Part(engine) = self {
             load_init(&mut ui, engine);
         }
-        self.home(&mut ui);
         ui
+    }
+}
+
+fn plus(ui: &mut UiState, n: usize) {
+    for _ in 0..n {
+        feed(ui, Input::press(ButtonId::Plus));
     }
 }
 
@@ -127,7 +167,7 @@ impl Walk {
                 .render_dirty_with_scope(&mut self.dirty, &perf, &scope);
             let mut full = Fb::new();
             self.ui.render_with_scope(&mut full, &perf, &scope);
-            let page = self.ui.nav.active_block_def().name;
+            let page = format!("{:?}", self.ui.location());
             assert_eq!(full.oob, 0, "{what} on {page}: full render drew off screen");
             assert_eq!(
                 self.dirty.oob, 0,
@@ -170,7 +210,7 @@ impl Walk {
     }
 }
 
-/// Visit every node and sub-page of `ctx`'s chain (or only those `keep`
+/// Visit every node and sub-page `ctx` owns (or only those `keep`
 /// accepts), exercising each. Returns the frames rendered.
 fn walk(
     ctx: Context,
@@ -179,24 +219,12 @@ fn walk(
     keep: impl Fn(usize, usize) -> bool,
 ) -> usize {
     let mut w = Walk::new(ctx, frames_per_step);
-    let chain = w.ui.nav.active_chain();
-    for (node, block) in chain.blocks.iter().enumerate() {
+    for (node, block) in ctx.chain().blocks.iter().enumerate() {
         for sub in 0..block.sub_page_count().max(1) {
-            if !keep(node, sub) {
+            if !ctx.owns(node) || !keep(node, sub) {
                 continue;
             }
-            ctx.home(&mut w.ui);
-            for _ in 0..node {
-                feed(&mut w.ui, Input::press(ButtonId::Plus));
-            }
-            for _ in 0..sub {
-                feed(&mut w.ui, Input::press(ButtonId::Edit));
-            }
-            assert_eq!(
-                (w.ui.nav.node, w.ui.nav.sub_page),
-                (node, sub),
-                "{ctx:?} reached"
-            );
+            ctx.reach(&mut w.ui, node, sub);
             w.exercise(encoders);
         }
     }
@@ -208,13 +236,12 @@ fn walk(
 /// redraw. Returns the frames rendered.
 fn arrive_untouched(ctx: Context, frames_per_step: usize) -> usize {
     let mut w = Walk::new(ctx, frames_per_step);
-    let chain = w.ui.nav.active_chain();
-    for (node, block) in chain.blocks.iter().enumerate() {
-        ctx.home(&mut w.ui);
-        w.frames("home");
-        for _ in 0..node {
-            w.step(Input::press(ButtonId::Plus), "PLUS, untouched");
+    for (node, block) in ctx.chain().blocks.iter().enumerate() {
+        if !ctx.owns(node) {
+            continue;
         }
+        ctx.reach(&mut w.ui, node, 0);
+        w.frames("arrive, untouched");
         for _ in 1..block.sub_page_count().max(1) {
             w.step(Input::press(ButtonId::Edit), "EDIT, untouched");
         }
@@ -227,8 +254,17 @@ fn every_context() -> Vec<Context> {
         .iter()
         .map(|&engine| Context::Part(engine))
         .collect();
-    all.extend((0..5).map(Context::Mixer));
-    all.extend([Context::Demo, Context::System]);
+    all.extend((0..6).map(Context::Mixer));
+    all.push(Context::Fx);
+    if cfg!(debug_assertions) {
+        all.push(Context::Demo);
+    }
+    let leaves = leaves();
+    all.extend(
+        (0..leaves.len())
+            .filter(|&i| !core::ptr::eq(leaves[i].chain, &DEMO_CHAIN))
+            .map(Context::Leaf),
+    );
     all
 }
 
@@ -248,35 +284,39 @@ fn every_page_walk() {
 }
 
 /// A trimmed walk: the Algo chain (CellGrid, BigViz filter and envelope, the matrix),
-/// the Mixer on Part 1, and the first Demo and System pages; two encoders,
+/// the Mixer on Part 1, the FX, the first DEMO page and THEME; two encoders,
 /// two frames per step.
 #[test]
 fn representative_pages_walk() {
     let enc = [EncoderId::A, EncoderId::E];
     walk(Context::Part(EngineType::Algo), 2, &enc, |_, sub| sub <= 1);
     walk(Context::Mixer(0), 2, &enc, |_, _| true);
-    walk(Context::Demo, 2, &enc, |node, _| node == 0);
-    walk(Context::System, 2, &enc, |node, _| node == 0);
+    walk(Context::Fx, 2, &enc, |_, sub| sub == 0);
+    if cfg!(debug_assertions) {
+        walk(Context::Demo, 2, &enc, |node, _| node == 0);
+    }
+    let theme = leaves()
+        .iter()
+        .position(|l| l.labels == ["PERSONALIZE", "THEME"]);
+    walk(Context::Leaf(theme.unwrap()), 2, &enc, |_, _| true);
     for ctx in every_context() {
         arrive_untouched(ctx, 1);
     }
 }
 
-/// PLUS alone between System pages redraws each one (#69): they share a
-/// layout and read no values, so only their def tells them apart.
+/// Each SETTINGS leaf redraws on arrival from another (#69): they share a
+/// layout and some read no values, so only their def tells them apart.
 #[test]
-fn system_pages_redraw_on_plus_alone() {
-    use chimera_core::ui::block_registry::SYSTEM_CHAIN;
+fn settings_leaves_redraw_on_arrival() {
     let (perf, scope, audio) = (PerfStats::zero(), scope_fixture(), audio_fixture());
     let mut ui = UiState::new();
-    feed(&mut ui, Input::press(ButtonId::Menu));
     let mut fb = Fb::new();
-    for node in 0..SYSTEM_CHAIN.blocks.len() {
+    for leaf in leaves() {
+        to_leaf(&mut ui, &leaf.labels);
         settle(&mut ui);
         ui.render_dirty_with_audio(&mut fb, &perf, Some(&audio), &scope);
         let mut full = Fb::new();
         ui.render_with_audio(&mut full, &perf, Some(&audio), &scope);
-        assert!(fb.px == full.px, "System node {node}");
-        feed(&mut ui, Input::press(ButtonId::Plus));
+        assert!(fb.px == full.px, "{}", leaf.name());
     }
 }

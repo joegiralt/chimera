@@ -4,9 +4,10 @@ use chimera_core::preset::{POOL_SIZE, Performance, Sound};
 use chimera_core::project::{
     Origin, PartFrom, PartId, PartSource, Project, ReplaceError, ReplaceGuard, SlotId, TemplateCrc,
 };
+use chimera_core::ui::UiState;
 use chimera_core::ui::block_registry as reg;
+use chimera_core::ui::nav::{Browse, NavCtx};
 use chimera_core::ui::page::PageKey;
-use chimera_core::ui::{UiMode, UiState};
 use chimera_hal::{ButtonId, ButtonState, Controls, EncoderId};
 
 /// A load into a Clean or Stale Part: the guard lets it through.
@@ -107,26 +108,35 @@ fn performance_has_six_parts_playing_sounds() {
 
 // ── Navigation tests ─────────────────────────────────────────────
 
+/// The node of the page shown.
+fn node(ui: &UiState) -> usize {
+    let cx = NavCtx {
+        engines: [EngineType::Algo; 6],
+        dyn_rows: 0,
+    };
+    ui.location().page(&cx).unwrap().1.node as usize
+}
+
 #[test]
 fn plus_moves_one_block_per_press() {
     let mut ui = UiState::new();
-    let start_node = ui.nav.node;
+    let start_node = node(&ui);
 
     // Single Pressed event → one step
     ui.handle_input(&MockControls::new().button(ButtonId::Plus, ButtonState::Pressed));
-    assert_eq!(ui.nav.node, start_node + 1);
+    assert_eq!(node(&ui), start_node + 1);
 
     // Held does NOT advance further
     ui.handle_input(&MockControls::new().button(ButtonId::Plus, ButtonState::Held));
-    assert_eq!(ui.nav.node, start_node + 1);
+    assert_eq!(node(&ui), start_node + 1);
 
     // Released does NOT advance
     ui.handle_input(&MockControls::new().button(ButtonId::Plus, ButtonState::Released));
-    assert_eq!(ui.nav.node, start_node + 1);
+    assert_eq!(node(&ui), start_node + 1);
 
     // Another Pressed → one more step
     ui.handle_input(&MockControls::new().button(ButtonId::Plus, ButtonState::Pressed));
-    assert_eq!(ui.nav.node, start_node + 2);
+    assert_eq!(node(&ui), start_node + 2);
 }
 
 #[test]
@@ -136,21 +146,21 @@ fn minus_moves_one_block_per_press() {
     // Move forward first so we have room to go back
     ui.handle_input(&MockControls::new().button(ButtonId::Plus, ButtonState::Pressed));
     ui.handle_input(&MockControls::new().button(ButtonId::Plus, ButtonState::Pressed));
-    assert_eq!(ui.nav.node, 2);
+    assert_eq!(node(&ui), 2);
 
     // Minus → one step back
     ui.handle_input(&MockControls::new().button(ButtonId::Minus, ButtonState::Pressed));
-    assert_eq!(ui.nav.node, 1);
+    assert_eq!(node(&ui), 1);
 
     // Held does NOT go further
     ui.handle_input(&MockControls::new().button(ButtonId::Minus, ButtonState::Held));
-    assert_eq!(ui.nav.node, 1);
+    assert_eq!(node(&ui), 1);
 }
 
 #[test]
 fn edit_held_with_b_press_does_not_navigate() {
     let mut ui = UiState::new();
-    let start_node = ui.nav.node;
+    let start_node = node(&ui);
 
     // Edit+B1 should open browser, NOT navigate
     ui.handle_input(
@@ -159,9 +169,10 @@ fn edit_held_with_b_press_does_not_navigate() {
             .button(ButtonId::B1, ButtonState::Pressed),
     );
 
-    // Should be in browser, not navigated
-    assert!(matches!(ui.ui_mode, UiMode::SoundBrowser { .. }));
-    assert_eq!(ui.nav.node, start_node);
+    // On the Sound rung, not a page step
+    assert!(ui.location().browse().is_some());
+    ui.handle_input(&MockControls::new().button(ButtonId::B1, ButtonState::Pressed));
+    assert_eq!(node(&ui), start_node);
 }
 
 // ── Sound browser integration tests ─────────────────────────────
@@ -178,10 +189,14 @@ fn open_browser(ui: &mut UiState, btn: ButtonId) {
 #[test]
 fn edit_b1_opens_patch_browser() {
     let mut ui = UiState::new();
-    assert!(matches!(ui.ui_mode, UiMode::Normal));
+    assert!(ui.location().browse().is_none());
 
     open_browser(&mut ui, ButtonId::B1);
-    assert!(matches!(ui.ui_mode, UiMode::SoundBrowser { part, .. } if part == PartId::ALL[0]));
+    assert!(
+        ui.location()
+            .browse()
+            .is_some_and(|(p, _)| p == PartId::ALL[0])
+    );
 }
 
 #[test]
@@ -189,7 +204,11 @@ fn edit_b3_opens_browser_for_track_2() {
     let mut ui = UiState::new();
 
     open_browser(&mut ui, ButtonId::B3);
-    assert!(matches!(ui.ui_mode, UiMode::SoundBrowser { part, .. } if part == PartId::ALL[2]));
+    assert!(
+        ui.location()
+            .browse()
+            .is_some_and(|(p, _)| p == PartId::ALL[2])
+    );
 }
 
 #[test]
@@ -197,7 +216,7 @@ fn b1_without_edit_does_not_open_browser() {
     let mut ui = UiState::new();
 
     ui.handle_input(&MockControls::new().button(ButtonId::B1, ButtonState::Pressed));
-    assert!(matches!(ui.ui_mode, UiMode::Normal));
+    assert!(ui.location().browse().is_none());
 }
 
 #[test]
@@ -211,14 +230,10 @@ fn browser_load_copies_patch_to_part() {
 
     // Open browser for B1 (part 0)
     open_browser(&mut ui, ButtonId::B1);
-    assert!(matches!(
-        ui.ui_mode,
-        UiMode::SoundBrowser {
-            part,
-            cursor: 0,
-            ..
-        } if part == PartId::ALL[0]
-    ));
+    assert_eq!(
+        ui.location().browse(),
+        Some((PartId::ALL[0], Browse::default()))
+    );
 
     // Scroll down to slot 2
     ui.handle_input(&MockControls::new().encoder(EncoderId::A, 2));
@@ -227,7 +242,7 @@ fn browser_load_copies_patch_to_part() {
     ui.handle_input(&MockControls::new().button(ButtonId::Edit, ButtonState::Pressed));
 
     // Should exit browser and load sound into part 0
-    assert!(matches!(ui.ui_mode, UiMode::Normal));
+    assert!(ui.location().browse().is_none());
     assert_eq!(
         ui.project().part(PartId::ALL[0]).sound.name.as_str(),
         "Test Sound"
@@ -247,42 +262,13 @@ fn browser_cancel_does_not_load() {
     ui.project_mut()
         .pool_store(SlotId::ALL[0], Sound::init(EngineType::Modal));
     open_browser(&mut ui, ButtonId::B1);
-    assert!(matches!(ui.ui_mode, UiMode::SoundBrowser { .. }));
+    assert!(ui.location().browse().is_some());
 
     // Cancel by pressing a B-button
     ui.handle_input(&MockControls::new().button(ButtonId::B2, ButtonState::Pressed));
 
-    assert!(matches!(ui.ui_mode, UiMode::Normal));
+    assert!(ui.location().browse().is_none());
     assert_eq!(ui.project().part(PartId::ALL[0]).sound.name, original_name);
-}
-
-#[test]
-fn browser_save_to_pool() {
-    let mut ui = UiState::new();
-
-    // Edit part 0's sound name
-    ui.project_mut().edit_part(PartId::ALL[0]).sound.name =
-        chimera_core::name::Name::new("My Bass").unwrap();
-
-    // Open browser for B1
-    open_browser(&mut ui, ButtonId::B1);
-    assert!(matches!(ui.ui_mode, UiMode::SoundBrowser { .. }));
-
-    // Scroll to slot 5 and save
-    ui.handle_input(&MockControls::new().encoder(EncoderId::A, 5));
-    ui.handle_input(&MockControls::new().button(ButtonId::Seq, ButtonState::Pressed));
-
-    // Should stay in browser, and pool slot 5 now has our sound
-    assert!(matches!(ui.ui_mode, UiMode::SoundBrowser { .. }));
-    let p = ui.project();
-    assert_eq!(
-        p.pool().get(SlotId::ALL[5]).unwrap().name.as_str(),
-        "My Bass"
-    );
-    assert!(matches!(
-        p.part(PartId::ALL[0]).origin(),
-        Origin::Slot { slot, .. } if slot == SlotId::ALL[5]
-    ));
 }
 
 #[test]
@@ -294,7 +280,7 @@ fn browser_init_entries_set_the_engine() {
     ui.handle_input(&MockControls::new().encoder(EncoderId::A, (POOL_SIZE + 1) as i8));
     ui.handle_input(&MockControls::new().button(ButtonId::Edit, ButtonState::Pressed));
 
-    assert!(matches!(ui.ui_mode, UiMode::Normal));
+    assert!(ui.location().browse().is_none());
     assert_eq!(
         ui.project().part(PartId::ALL[0]).sound.engine(),
         EngineType::Modal
@@ -306,7 +292,7 @@ fn browser_init_entries_set_the_engine() {
     ui.handle_input(&MockControls::new().encoder(EncoderId::A, POOL_SIZE as i8));
     ui.handle_input(&MockControls::new().button(ButtonId::Edit, ButtonState::Pressed));
 
-    assert!(matches!(ui.ui_mode, UiMode::Normal));
+    assert!(ui.location().browse().is_none());
     assert_eq!(
         ui.project().part(PartId::ALL[0]).sound.engine(),
         EngineType::Algo

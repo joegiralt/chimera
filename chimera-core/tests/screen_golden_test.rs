@@ -65,31 +65,31 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(not(feature = "master-tape"))]
     ("mixer_sends", 0xdf3aab7c23ee0c31),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_delay", 0xc034be24011848b2),
+    ("mixer_fx_delay", 0x57508228791992f2),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb", 0x8f7e8e92e0ecf7f0),
+    ("mixer_fx_reverb", 0xd831539df40c3730),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_delay_char", 0x3310e7e57f36fb88),
+    ("mixer_fx_delay_char", 0xc6fd6e6be7eb22e8),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_master", 0xeb7a9f3352f2416f),
+    ("mixer_master", 0x56a92de14c3c7d2f),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_master_level", 0xb898d28bbb71bce6),
+    ("mixer_master_level", 0x46ef06da0f464e86),
     #[cfg(feature = "master-tape")]
     ("mixer_part", 0xd362801facb9dc65),
     #[cfg(feature = "master-tape")]
     ("mixer_sends", 0x27bc9363dd407e2b),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_delay", 0xe3e12c53b10a44f0),
+    ("mixer_fx_delay", 0x03c136cb5bd76c30),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb", 0x1d59b8a7dbfe4c4e),
+    ("mixer_fx_reverb", 0xa0a7d29cf2586a8e),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_delay_char", 0x746fa7fa4cfc948e),
+    ("mixer_fx_delay_char", 0x53eccd58242c222e),
     #[cfg(feature = "master-tape")]
-    ("mixer_tape", 0x2548917571779052),
+    ("mixer_tape", 0x8a13a3bdedf41ea2),
     #[cfg(feature = "master-tape")]
-    ("mixer_master", 0x4e68a2befa356ab1),
+    ("mixer_master", 0xc30644c3d5d5ba71),
     #[cfg(feature = "master-tape")]
-    ("mixer_master_level", 0x1fea2dbc893512ec),
+    ("mixer_master_level", 0xe01aa2996887644c),
     #[cfg(not(feature = "master-tape"))]
     ("mixer_out_p2", 0xc657c44494c829ac),
     #[cfg(feature = "master-tape")]
@@ -98,9 +98,8 @@ const GOLDENS: &[(&str, u64)] = &[
     ("mod_matrix", 0xa6cf67e584e06c56),
     ("mod_matrix_wide", 0xca78c74fca4ac959),
     ("sound_browser", 0xc1a53459edabbb6b),
-    ("system", 0x47472f01fe558b63),
-    ("system_theme", 0xc6d20cd2d23cd756),
-    ("system_audio", 0xa94279d71653b3b7),
+    ("settings_personal_theme", 0xf0cebf950ac63708),
+    ("settings_system_about_audio", 0x72ca6e91ad964b83),
     ("busy", 0x198544cd36863145),
     ("toast_saved", 0xe344dd99a47d0dad),
     ("toast_exfat", 0xfc0cb3b4feb1a1b5),

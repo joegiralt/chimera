@@ -1,10 +1,13 @@
 use chimera_core::addr::Op;
+use chimera_core::params::EngineType;
+use chimera_core::project::PartId;
 use chimera_core::ui::animation::AnimatedValue;
 use chimera_core::ui::block_def::BlockDef;
 use chimera_core::ui::block_registry as reg;
-use chimera_core::ui::chain::{ChainId, ChainNav};
 use chimera_core::ui::fmt::{FmtBuf, fmt_val};
+use chimera_core::ui::nav::{Location, NavCtx, PageAt};
 use chimera_core::ui::page::{PageId, PageKey, ValFmt};
+use chimera_core::ui::settings::rows;
 
 // -- ValFmt --
 
@@ -153,18 +156,41 @@ fn part(def: &BlockDef) -> PageKey {
     }
 }
 
-#[test]
-fn test_chain_nav_starts_at_part0_engine() {
-    let nav = ChainNav::new();
-    assert_eq!(nav.chain_id, ChainId::Part(0));
-    assert_eq!(nav.node, 0);
-    assert_eq!(nav.sub_page, 0);
-    assert_eq!(PageKey::from_nav(&nav, Op::A), part(&reg::ALGO_ALG));
+fn cx() -> NavCtx {
+    NavCtx {
+        engines: [EngineType::Algo; 6],
+        dyn_rows: 0,
+    }
+}
+
+/// The page key at `l`.
+fn key(l: Location, op: Op) -> PageKey {
+    let (c, at) = l.page(&cx()).unwrap();
+    let def = c.active_def(at.node as usize, at.sub as usize).unwrap();
+    PageKey::from_location(l, def, op)
+}
+
+fn pages(node: u8, sub: u8) -> Location {
+    Location::pages(PartId::ALL[0], PageAt { node, sub })
+}
+
+fn leaf(labels: &[&str]) -> Location {
+    let mut path = Vec::new();
+    for l in labels {
+        path.push(rows(&path).iter().position(|r| r.label == *l).unwrap() as u8);
+    }
+    Location::settings_at(&path, 0)
 }
 
 #[test]
-fn test_page_from_nav_part_chain() {
-    let mut nav = ChainNav::new();
+fn test_ui_starts_at_part_1_home() {
+    let ui = chimera_core::ui::UiState::new();
+    assert_eq!(ui.location(), Location::home(&cx()));
+    assert_eq!(key(ui.location(), Op::A), part(&reg::ALGO_ALG));
+}
+
+#[test]
+fn test_page_from_location_part_chain() {
     for (node, def) in [
         (0, &reg::ALGO_ALG),
         (1, &reg::ALGO_WAVE),
@@ -173,8 +199,7 @@ fn test_page_from_nav_part_chain() {
         (4, &reg::FOLDER),
         (5, &reg::MOD_MATRIX),
     ] {
-        nav.node = node;
-        assert_eq!(PageKey::from_nav(&nav, Op::A), part(def), "node {node}");
+        assert_eq!(key(pages(node, 0), Op::A), part(def), "node {node}");
     }
     for (sub, def) in [
         (1, &reg::ENVELOPE),
@@ -185,50 +210,36 @@ fn test_page_from_nav_part_chain() {
         (6, &reg::LFO_2),
         (7, &reg::LFO_3),
     ] {
-        nav.sub_page = sub;
-        assert_eq!(PageKey::from_nav(&nav, Op::A), part(def), "sub-page {sub}");
+        assert_eq!(key(pages(5, sub), Op::A), part(def), "sub-page {sub}");
     }
     // The operator selection is part of a Part page's identity.
-    assert_ne!(
-        PageKey::from_nav(&nav, Op::B),
-        PageKey::from_nav(&nav, Op::A)
-    );
+    assert_ne!(key(pages(5, 7), Op::B), key(pages(5, 7), Op::A));
 }
 
 #[test]
-fn test_page_from_nav_demo_chain() {
-    let mut nav = ChainNav::new();
-    nav.chain_id = ChainId::Demo;
-    nav.node = 0;
+#[cfg(debug_assertions)]
+fn test_page_from_location_demo() {
+    let demo = leaf(&["SYSTEM", "DEMO"]);
     assert_eq!(
-        PageKey::from_nav(&nav, Op::A),
-        PageKey::Legacy(PageId::DemoWaves)
+        PageKey::from_location(demo, &reg::DEMO_SHAPES, Op::A),
+        PageKey::Legacy(PageId::Demo(reg::DEMO_SHAPES.id))
     );
-    nav.node = 1;
     assert_eq!(
-        PageKey::from_nav(&nav, Op::A),
-        PageKey::Legacy(PageId::DemoShapes)
-    );
-    nav.node = 2;
-    assert_eq!(
-        PageKey::from_nav(&nav, Op::A),
-        PageKey::Legacy(PageId::DemoMotion)
+        key(demo, Op::A),
+        PageKey::Legacy(PageId::Demo(reg::DEMO_WAVES.id))
     );
 }
 
-/// Spec §5: System gets its own page (it used to alias an engine page).
-/// TUNING (node 0) is not slot-bound yet; THEME (node 1) is.
+/// Spec §5: a SETTINGS leaf gets its own page (it used to alias an engine
+/// page). TUNING is not slot-bound yet; THEME is.
 #[test]
-fn test_system_chain_has_its_own_page() {
-    let mut nav = ChainNav::new();
-    nav.chain_id = ChainId::System;
+fn test_settings_leaves_have_their_own_page() {
     assert_eq!(
-        PageKey::from_nav(&nav, Op::A),
-        PageKey::Legacy(PageId::System(nav.active_block_def().id))
+        key(leaf(&["AUDIO ROUTING", "TUNING"]), Op::A),
+        PageKey::Legacy(PageId::System(reg::SYS_TUNING.id))
     );
-    nav.node = 1;
     assert!(matches!(
-        PageKey::from_nav(&nav, Op::A),
+        key(leaf(&["PERSONALIZE", "THEME"]), Op::A),
         PageKey::Part { .. }
     ));
 }

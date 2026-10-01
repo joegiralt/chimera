@@ -12,9 +12,8 @@ use crate::project::PartId;
 use crate::ui::PrimeStatus;
 use crate::ui::animation::AnimatedValue;
 use crate::ui::audio_page;
-use crate::ui::block_def::{BlockDef, FxFlow, SlotBinding, VizType, slot_addr};
-use crate::ui::chain::{ChainId, ChainNav};
-use crate::ui::components;
+use crate::ui::block_def::{BlockDef, ChainDef2, FxFlow, SlotBinding, VizType, slot_addr};
+use crate::ui::components::{self, Head};
 use crate::ui::dungeon_map;
 use crate::ui::fmt::{self, FmtBuf};
 use crate::ui::glyph::{
@@ -22,16 +21,24 @@ use crate::ui::glyph::{
     RINGS_PARAMS, Rings, RingsPart,
 };
 use crate::ui::mod_grid::MatrixState;
+use crate::ui::nav::PageAt;
 use crate::ui::page::PageLayout;
 use crate::ui::perf::PerfStats;
-use crate::ui::region::{self, RegionKind};
+use crate::ui::region::{self, Layout, RegionKind};
+use crate::ui::settings::view::Bands;
 use crate::ui::theme;
 use crate::ui::view::{self, EnvKind, SlotCtx, View};
 use crate::ui::viz;
 
 /// Everything one frame draws from, besides the renderer's own animation.
 pub struct Frame<'a> {
-    pub nav: &'a ChainNav,
+    /// Whose page this is, for the header and its OUT warning.
+    pub head: Head,
+    /// The chain the map shows, and where on it; `None` in SETTINGS.
+    pub map: Option<(&'static ChainDef2, PageAt)>,
+    pub layout: Layout,
+    /// SETTINGS' breadcrumb, list and footer.
+    pub settings: Option<Bands>,
     pub def: &'static BlockDef,
     pub perf: &'a PerfStats,
     pub matrix: &'a MatrixState,
@@ -290,7 +297,7 @@ impl Renderer {
             Size::new(theme::SCREEN_W as u32, theme::SCREEN_H as u32),
         )
         .draw_styled(&PrimitiveStyle::with_fill(theme::BG), display);
-        for &(kind, _, _) in region::layout_regions(f.def.layout) {
+        for &(kind, _, _) in f.layout.regions() {
             self.draw_region_with_def(display, kind, f);
         }
     }
@@ -338,7 +345,7 @@ impl Renderer {
     where
         D: DrawTarget<Color = Rgb565>,
     {
-        let (nav, def, matrix_state) = (f.nav, f.def, f.matrix);
+        let (def, matrix_state) = (f.def, f.matrix);
         match kind {
             RegionKind::Header => self.draw_header(display, f),
             RegionKind::Focus => self.draw_focus(display, f),
@@ -355,15 +362,31 @@ impl Renderer {
                 inert(f),
             ),
             RegionKind::Nav => {
-                dungeon_map::draw(
-                    display,
-                    nav,
-                    f.ctx.model,
-                    (self.branch_scroll.current() * theme::BRANCH_LINE_HEIGHT as f32) as i32,
-                );
+                if let Some((chain, at)) = f.map {
+                    dungeon_map::draw(
+                        display,
+                        chain,
+                        at,
+                        f.ctx.model,
+                        (self.branch_scroll.current() * theme::BRANCH_LINE_HEIGHT as f32) as i32,
+                    );
+                }
             }
-            // SETTINGS' bands: `settings::view` draws them.
-            RegionKind::Crumbs | RegionKind::List | RegionKind::Footer => {}
+            RegionKind::Crumbs => {
+                if let Some(b) = &f.settings {
+                    b.draw_crumbs(display, f.sounding)
+                }
+            }
+            RegionKind::List => {
+                if let Some(b) = &f.settings {
+                    b.draw_list(display)
+                }
+            }
+            RegionKind::Footer => {
+                if let Some(b) = &f.settings {
+                    b.draw_footer(display)
+                }
+            }
         }
     }
 
@@ -512,7 +535,7 @@ impl Renderer {
         D: DrawTarget<Color = Rgb565>,
     {
         let suffix = ["", " / A", " / B"][title_type(f) as usize % 3];
-        let h = components::header_text(f.nav, f.def, f.ctx.model, suffix, header_out(f));
+        let h = components::header_text(f.head, f.def, f.ctx.model, suffix, header_out(f));
         components::header(
             display,
             h.context.as_str(),
@@ -562,14 +585,11 @@ impl BlockRead for Stored<'_, '_> {
     }
 }
 
-/// The OUT of the Part whose pages these are; P1 off the Part chains.
+/// The OUT of the Part whose pages these are; P1 in SETTINGS.
 pub fn header_out(f: &Frame) -> DacPair {
-    match f.nav.chain_id {
-        ChainId::Part(n) | ChainId::Mixer(n) => u8::try_from(n)
-            .ok()
-            .and_then(PartId::new)
-            .map_or(DacPair::P1, |p| f.parts[p.index()].mix.output),
-        ChainId::System | ChainId::Demo => DacPair::P1,
+    match f.head {
+        Head::Sound(p) | Head::Mix(p) => f.parts[p.index()].mix.output,
+        Head::Settings => DacPair::P1,
     }
 }
 

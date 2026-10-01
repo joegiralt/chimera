@@ -372,29 +372,24 @@ fn an_arc_focus_band_does_not_redraw_on_the_clock() {
 }
 
 fn to_demo(ui: &mut UiState, def: &'static BlockDef) {
-    feed(ui, Input::chord(ButtonId::Mix, ButtonId::B6));
-    let node = ui
-        .nav
-        .active_chain()
+    let node = reg::DEMO_CHAIN
         .blocks
         .iter()
         .position(|b| core::ptr::eq(b.def, def))
         .expect("on the Demo chain");
-    for _ in 0..node {
-        feed(ui, Input::press(ButtonId::Plus));
-    }
-    assert!(core::ptr::eq(ui.nav.active_block_def(), def));
+    screen::to_demo(ui, node);
+    assert!(core::ptr::eq(ui.page_def(), def));
 }
 
 #[test]
 fn only_the_matrix_demo_node_is_the_matrix() {
     let mut ui = UiState::new();
-    feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::B6));
-    for n in 0..ui.nav.active_chain().len() {
-        assert_eq!(ui.nav.node, n);
-        let matrix = ui.nav.active_block_def().layout == PageLayout::Matrix;
+    screen::to_demo(&mut ui, 0);
+    for (n, b) in reg::DEMO_CHAIN.blocks.iter().enumerate() {
+        assert!(core::ptr::eq(ui.page_def(), b.def), "node {n}");
+        let matrix = ui.page_def().layout == PageLayout::Matrix;
         assert_eq!(
-            ui.page() == PageKey::Legacy(PageId::DemoMatrix),
+            ui.page() == PageKey::Legacy(PageId::Demo(reg::DEMO_MATRIX.id)),
             matrix,
             "node {n}"
         );
@@ -423,10 +418,7 @@ fn glyph_arc_page_drives_the_arc() {
     let pan_addr = ParamAddr::new(BlockRef::Out, OutParams::PAN);
     let ctx = SlotCtx::read(ui.params(), ui.selected_op());
     for (slot, addr) in [(0, reso), (1, pan_addr)] {
-        assert_eq!(
-            view(ui.nav.active_block_def(), slot, &ctx).addr(),
-            Some(addr)
-        );
+        assert_eq!(view(ui.page_def(), slot, &ctx).addr(), Some(addr));
         assert_eq!(addr.spec().unwrap().glyph, FocusGlyph::Arc);
     }
     let (vol, pan) = (ui.params().filter.resonance, ui.params().out.pan);
@@ -447,7 +439,7 @@ fn glyph_arc_page_drives_the_arc() {
     assert_eq!(ui.focused_slot(), 1);
     assert_ne!(ui.params().out.pan, pan);
     assert_ne!(focus_key(&mut ui), uni_key);
-    let def = ui.nav.active_block_def();
+    let def = ui.page_def();
     let ctx = SlotCtx::read(ui.params(), ui.selected_op());
     assert!(view(def, 1, &ctx).fmt().is_bipolar());
     assert!(!view(def, 0, &ctx).fmt().is_bipolar());
@@ -509,7 +501,7 @@ fn glyph_switch_page_flips_a_real_two_state_param() {
 
     // It reads as the LFO page shows it: FREE / RETRIG.
     let ctx = SlotCtx::read(ui.params(), ui.selected_op());
-    let v = view(ui.nav.active_block_def(), 0, &ctx);
+    let v = view(ui.page_def(), 0, &ctx);
     assert_eq!(v.addr(), Some(sync));
     assert_eq!(v.fmt(), ValFmt::Names(&["FREE", "RETRIG"]));
 
@@ -559,8 +551,8 @@ fn glyph_level_page_drives_a_level_and_a_stepped_value() {
     assert_eq!(vol.spec().unwrap().glyph, FocusGlyph::LevelBar);
     assert_eq!(fdbk.spec().unwrap().glyph, FocusGlyph::LevelBar);
     let ctx = SlotCtx::read(ui.params(), ui.selected_op());
-    assert_eq!(view(ui.nav.active_block_def(), 0, &ctx).addr(), Some(vol));
-    assert_eq!(view(ui.nav.active_block_def(), 1, &ctx).addr(), Some(fdbk));
+    assert_eq!(view(ui.page_def(), 0, &ctx).addr(), Some(vol));
+    assert_eq!(view(ui.page_def(), 1, &ctx).addr(), Some(fdbk));
     let (x, tick_x) = (theme::LEVEL_X, theme::LEVEL_TICK_X);
 
     // a, low: lit at the bottom only.
@@ -625,8 +617,8 @@ fn glyph_crossfader_page_slides_left_centre_right() {
     assert_eq!(morph.spec().unwrap().glyph, FocusGlyph::Crossfader);
     assert_eq!(mix.spec().unwrap().glyph, FocusGlyph::Crossfader);
     let ctx = SlotCtx::read(ui.params(), ui.selected_op());
-    assert_eq!(view(ui.nav.active_block_def(), 0, &ctx).addr(), Some(morph));
-    assert_eq!(view(ui.nav.active_block_def(), 1, &ctx).addr(), Some(mix));
+    assert_eq!(view(ui.page_def(), 0, &ctx).addr(), Some(morph));
+    assert_eq!(view(ui.page_def(), 1, &ctx).addr(), Some(mix));
     assert!(!Gauge::Crossfader { value: 0.5 }.animates());
 
     let y = theme::ARC_CY - theme::XF_CAP_H / 2 + 2;
@@ -1225,7 +1217,7 @@ fn a_crossfader_redraws_when_only_its_set_value_moves() {
     feed(&mut ui, Input::press(ButtonId::B1));
     let ctx = SlotCtx::read(ui.params(), ui.selected_op());
     let slot = (0..6)
-        .find(|&i| slot_addr(ui.nav.active_block_def(), i, &ctx) == Some(morph))
+        .find(|&i| slot_addr(ui.page_def(), i, &ctx) == Some(morph))
         .expect("ALG holds MORPH");
     feed(&mut ui, Input::turn(SIX[slot], -127));
     feed(&mut ui, Input::turn(SIX[slot], 76));

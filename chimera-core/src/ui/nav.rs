@@ -32,6 +32,15 @@ const MODAL_HOME: u8 = {
     i as u8
 };
 
+/// The Sound rung's browser: its cursor and the first row shown.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct Browse {
+    pub cursor: u8,
+    pub scroll: u8,
+}
+
+const _: () = assert!(crate::ui::browser::TOTAL_ENTRIES <= 256);
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PageAt {
     pub node: u8,
@@ -204,8 +213,8 @@ enum Loc {
     /// The shared FX, `node` from CHORUS on the mixer chain, reached from
     /// Part n's mixer: it counts as Part n's own mixer.
     Fx(PartId, PageAt),
-    /// The Sound rung; Task 8 adds the browser's cursor.
-    Sound(PartId),
+    /// The Sound rung, its browser where it was left.
+    Sound(PartId, Browse),
     Settings(SettingsAt),
 }
 
@@ -362,7 +371,16 @@ impl Location {
     }
 
     pub fn sound(p: PartId) -> Location {
-        Location(Loc::Sound(p))
+        Self::sound_at(p, Browse::default())
+    }
+
+    pub fn sound_at(p: PartId, b: Browse) -> Location {
+        Location(Loc::Sound(p, b))
+    }
+
+    /// On a Part's mixer or the FX it was entered from.
+    pub fn on_mixer(self) -> bool {
+        matches!(self.0, Loc::Part(..) | Loc::Fx(..))
     }
 
     /// A path deeper than the tree allows is cut to its first four rows.
@@ -400,7 +418,7 @@ impl Location {
             (Part(_, m), NavKey::MixPart(n)) => go(Part(n, m)),
             (Fx(_, at), NavKey::MixPart(n)) => go(Fx(n, at)),
             (_, NavKey::MixPart(n)) => go(r.mix_entry(n)),
-            (_, NavKey::EditPart(n)) => go(Sound(n)),
+            (_, NavKey::EditPart(n)) => go(Sound(n, Browse::default())),
             (Settings(s), NavKey::MenuTap) => match s.back() {
                 Some(up) => go(Settings(up)),
                 None => Step::Go(r.close_settings(cx)),
@@ -411,8 +429,8 @@ impl Location {
                 .map_or(Step::Stay, |at| go(Pages(p, at))),
             (Part(p, m), NavKey::Plus) => go(mix_walk(p, m, 1)),
             (Part(p, m), NavKey::Minus) => go(mix_walk(p, m, -1)),
-            (Part(p, _), NavKey::Edit) => go(Sound(p)),
-            (Part(..) | Fx(..) | Sound(_), NavKey::SeqTap) => {
+            (Part(p, _), NavKey::Edit) => go(Sound(p, Browse::default())),
+            (Part(..) | Fx(..) | Sound(..), NavKey::SeqTap) => {
                 Step::Go(Location::settings_at(&PART_SETTINGS, 0))
             }
             (Fx(_, at), NavKey::Minus) if at.node == FX_FIRST => {
@@ -421,8 +439,8 @@ impl Location {
             (Fx(p, at), k) => {
                 page_step(&MIXER_CHANNEL_CHAIN, at, k).map_or(Step::Stay, |at| go(Fx(p, at)))
             }
-            (Sound(p), NavKey::Plus) => go(Sound(wrap(p, 1))),
-            (Sound(p), NavKey::Minus) => go(Sound(wrap(p, -1))),
+            (Sound(p, b), NavKey::Plus) => go(Sound(wrap(p, 1), b)),
+            (Sound(p, b), NavKey::Minus) => go(Sound(wrap(p, -1), b)),
             _ => Step::Stay,
         }
     }
@@ -440,13 +458,21 @@ impl Location {
             )),
             Loc::Fx(_, at) => Some((&MIXER_CHANNEL_CHAIN, at)),
             Loc::Settings(s) => s.at_leaf().map(|c| (c, s.page)),
-            Loc::Sound(_) => None,
+            Loc::Sound(..) => None,
+        }
+    }
+
+    /// The Sound rung's Part and browser.
+    pub fn browse(self) -> Option<(PartId, Browse)> {
+        match self.0 {
+            Loc::Sound(p, b) => Some((p, b)),
+            _ => None,
         }
     }
 
     pub fn part(self) -> Option<PartId> {
         match self.0 {
-            Loc::Pages(p, _) | Loc::Part(p, _) | Loc::Fx(p, _) | Loc::Sound(p) => Some(p),
+            Loc::Pages(p, _) | Loc::Part(p, _) | Loc::Fx(p, _) | Loc::Sound(p, _) => Some(p),
             Loc::Settings(_) => None,
         }
     }
