@@ -1,9 +1,10 @@
 //! Spec § Replacing the old engines: a bank of eight Algo Sounds that plays.
 
 mod common;
-use chimera_core::factory::{FACTORY_LEN, factory_sound, load_factory};
+use chimera_core::factory::{FACTORY_LEN, factory_sound};
 use chimera_core::params::EngineType;
-use chimera_core::preset::SoundPool;
+use chimera_core::preset::Sound;
+use chimera_core::project::SlotId;
 use chimera_core::ui::UiState;
 use chimera_core::{MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
@@ -152,10 +153,12 @@ fn the_ui_starts_with_the_bank_in_the_pool() {
     let ui = UiState::new();
     for i in 0..FACTORY_LEN {
         let want = factory_sound(i).unwrap();
-        assert_eq!(ui.pool.get(i).unwrap().name.as_str(), want.name.as_str());
+        let got = ui.project().pool().get(SlotId::ALL[i]).unwrap();
+        assert!(got.bits_eq(&want), "slot {i}");
     }
-    assert!(ui.pool.get(FACTORY_LEN).is_none());
-    let mut pool = SoundPool::new();
-    load_factory(&mut pool);
-    assert!(pool.get(FACTORY_LEN - 1).is_some() && pool.get(FACTORY_LEN).is_none());
+    let after = ui.project().pool().get(SlotId::ALL[FACTORY_LEN]).unwrap();
+    assert!(
+        after.bits_eq(&Sound::init(EngineType::Algo)),
+        "INIT follows the bank"
+    );
 }

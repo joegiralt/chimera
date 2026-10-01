@@ -7,11 +7,11 @@ use chimera_core::modulation::ModState;
 use chimera_core::params::EngineType;
 use chimera_core::params::FilterParams;
 use chimera_core::part::PartMode;
-use chimera_core::preset::Performance;
+use chimera_core::preset::{Performance, Sound};
 
 fn non_default_performance() -> Performance {
     let mut perf = Performance::new();
-    perf.parts[4].load_init(EngineType::Algo);
+    perf.parts[4].sound = Sound::init(EngineType::Algo);
     perf.parts[4].mix.mode = PartMode::Mono;
     perf.parts[4].mix.pan = -0.5;
     perf.fx.reverb.mix = 0.4;

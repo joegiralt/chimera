@@ -3,7 +3,8 @@
 mod screen;
 
 use chimera_core::params::EngineType;
-use chimera_core::preset::{Sound, SoundPool};
+use chimera_core::preset::Sound;
+use chimera_core::project::{PartId, Pool, Project, SlotId};
 use chimera_core::ui::UiMode;
 use chimera_core::ui::browser::{
     self, INIT_TYPES, SCROLL_TOP, SCROLL_X, TOTAL_ENTRIES, VISIBLE_ROWS, row_y,
@@ -13,12 +14,21 @@ use chimera_core::ui::theme;
 use chimera_hal::{ButtonId, EncoderId};
 use screen::*;
 
+/// A project whose pool is empty.
+fn empty() -> Box<Project> {
+    let mut p = Project::boxed();
+    for s in SlotId::ALL {
+        p.pool_clear(s).unwrap();
+    }
+    p
+}
+
 /// `draw` on a screen cleared to the ground, as it expects.
-fn drawn(pool: &SoundPool, cursor: usize, scroll: usize) -> Fb {
+fn drawn(pool: &Pool, cursor: usize, scroll: usize) -> Fb {
     use embedded_graphics::draw_target::DrawTarget;
     let mut fb = Fb::new();
     let _ = fb.clear(theme::BG);
-    browser::draw(&mut fb, pool, 0, cursor, scroll);
+    browser::draw(&mut fb, pool, PartId::ALL[0], cursor, scroll);
     assert_eq!(fb.oob, 0);
     fb
 }
@@ -30,16 +40,16 @@ fn row_has(fb: &Fb, i: usize, c: embedded_graphics::pixelcolor::Rgb565) -> bool 
 
 #[test]
 fn the_selected_row_is_an_accent_pill() {
-    let fb = drawn(&SoundPool::new(), 2, 0);
+    let fb = drawn(empty().pool(), 2, 0);
     assert_eq!(fb.at(120, row_y(2) - 5), theme::ACCENT);
     assert_ne!(fb.at(120, row_y(1) - 5), theme::ACCENT);
 }
 
 #[test]
 fn empty_slots_are_dimmed_and_saved_ones_bright() {
-    let mut pool = SoundPool::new();
-    pool.store(0, Sound::init(EngineType::Algo));
-    let fb = drawn(&pool, 5, 0);
+    let mut p = empty();
+    p.pool_store(SlotId::ALL[0], Sound::init(EngineType::Algo));
+    let fb = drawn(p.pool(), 5, 0);
     assert!(row_has(&fb, 0, theme::INK), "saved slot name in ink");
     assert!(
         !row_has(&fb, 1, theme::INK) && row_has(&fb, 1, theme::FAINT),
@@ -55,7 +65,7 @@ fn empty_slots_are_dimmed_and_saved_ones_bright() {
 fn init_rows_name_their_chain_in_a_distinct_shade() {
     let scroll = TOTAL_ENTRIES - VISIBLE_ROWS; // the tail: the INIT rows follow the pool
     let init_row = VISIBLE_ROWS - INIT_TYPES.len(); // first INIT row's visible index
-    let fb = drawn(&SoundPool::new(), scroll, scroll); // cursor on the first visible row, not an INIT one
+    let fb = drawn(empty().pool(), scroll, scroll); // cursor on the first visible row, not an INIT one
     assert!(row_has(&fb, init_row, theme::INK2), "INIT row name in INK2");
     assert!(
         !row_has(&fb, init_row, theme::INK),
@@ -70,9 +80,9 @@ fn the_scroll_thumb_follows_the_list() {
             .find(|&y| fb.at(SCROLL_X, y) == theme::MID)
             .unwrap()
     };
-    let top = thumb_top(&drawn(&SoundPool::new(), 0, 0));
+    let top = thumb_top(&drawn(empty().pool(), 0, 0));
     let bottom = thumb_top(&drawn(
-        &SoundPool::new(),
+        empty().pool(),
         TOTAL_ENTRIES - 1,
         TOTAL_ENTRIES - VISIBLE_ROWS,
     ));
@@ -88,7 +98,7 @@ fn init_rows_end_the_list_and_load() {
     assert_eq!(
         ui.ui_mode,
         UiMode::SoundBrowser {
-            part: 1,
+            part: PartId::ALL[1],
             cursor: TOTAL_ENTRIES - 1,
             scroll: TOTAL_ENTRIES - VISIBLE_ROWS
         }
@@ -100,7 +110,10 @@ fn init_rows_end_the_list_and_load() {
         "last visible row selected"
     );
     feed(&mut ui, Input::press(ButtonId::Edit)); // the last of the two INIT rows
-    assert_eq!(ui.performance.parts[1].sound.engine(), EngineType::Modal);
+    assert_eq!(
+        ui.project().part(PartId::ALL[1]).sound.engine(),
+        EngineType::Modal
+    );
 }
 
 fn render_ui(ui: &chimera_core::ui::UiState) -> Fb {
@@ -162,12 +175,12 @@ fn cursor_move_redraws_and_matches_a_full_render() {
 /// render it in full, not truncated, and stay inside the screen.
 #[test]
 fn the_longest_sound_name_is_not_truncated() {
-    let mut pool = SoundPool::new();
+    let mut p = empty();
     let mut s = Sound::init(EngineType::Algo);
     s.name = chimera_core::name::SoundName::new("ABCDEFGHIJKLMNOP").unwrap();
     assert_eq!(s.name.as_str().len(), 16);
-    pool.store(0, s);
-    let fb = drawn(&pool, 5, 0); // drawn() asserts fb.oob == 0 (nothing clipped off-screen)
+    p.pool_store(SlotId::ALL[0], s);
+    let fb = drawn(p.pool(), 5, 0); // drawn() asserts fb.oob == 0 (nothing clipped off-screen)
     assert!(row_has(&fb, 0, theme::INK), "16-char name drawn in full");
 }
 

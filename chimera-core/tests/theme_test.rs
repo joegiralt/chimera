@@ -4,6 +4,7 @@ mod screen;
 
 use chimera_core::addr::{BlockRef, Blocks};
 use chimera_core::block::Block;
+use chimera_core::project::PartId;
 use chimera_core::ui::block_registry::SYS_THEME;
 use chimera_core::ui::theme;
 use chimera_core::ui::theme_settings::{
@@ -243,12 +244,11 @@ fn each_black_step_moves_only_the_ground() {
     }
 }
 
-/// MENU, PLUS ×2 reaches THEME; its four encoders edit the UI's settings.
+/// MENU, PLUS reaches THEME; its four encoders edit the UI's settings.
 #[test]
 fn theme_page_is_reachable_and_edits_the_settings() {
     let mut ui = chimera_core::ui::UiState::new();
     feed(&mut ui, Input::press(ButtonId::Menu));
-    feed(&mut ui, Input::press(ButtonId::Plus));
     feed(&mut ui, Input::press(ButtonId::Plus));
     assert_eq!(ui.nav.active_block_def().id, SYS_THEME.id);
     assert_eq!(ui.theme(), ThemeSettings::DEFAULT);
@@ -264,8 +264,8 @@ fn theme_page_is_reachable_and_edits_the_settings() {
     assert_eq!(t.black.get(), -2);
     // The Sound is untouched: THEME lives in the UI.
     assert!(
-        ui.performance
-            .edit(0)
+        ui.project_mut()
+            .edit_part(PartId::ALL[0])
             .part
             .sound
             .params

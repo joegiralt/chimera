@@ -4,7 +4,7 @@
 //! pair measured apart, not summed as the desktop's speakers hear them.
 
 use chimera_core::addr::{BlockRef, Blocks, ParamAddr};
-use chimera_core::block::{Block, ParamId, ParamKind, ParamSpec};
+use chimera_core::block::{ParamId, ParamKind, ParamSpec};
 use chimera_core::dsp::algo::params::AlgoParams;
 use chimera_core::dsp::chorus::ChorusParams;
 use chimera_core::dsp::comp::CompParams;
@@ -21,6 +21,7 @@ use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::{DriveParams, EngineType, FilterParams, FolderParams, OutParams};
 use chimera_core::part::PartParams;
 use chimera_core::preset::{Performance, Sound};
+use chimera_core::project::PartId;
 use chimera_core::scope::ScopeWriter;
 use chimera_core::{MidiChannel, MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
@@ -228,7 +229,6 @@ impl Param {
                 | BlockRef::Tape
                 | BlockRef::Comp
                 | BlockRef::Part
-                | BlockRef::Channels
         )
     }
 
@@ -282,7 +282,6 @@ pub fn registry(one_instance: bool) -> Vec<Param> {
                     && !matches!(b, BlockRef::Lfo(s) if s.index() > 0)
         })
         .flat_map(|block| block.specs().iter().map(move |spec| Param { block, spec }))
-        .filter(|p| !one_instance || p.block != BlockRef::Channels || p.spec.id.0 == 0)
         .collect()
 }
 
@@ -323,28 +322,20 @@ impl Bench {
 
     /// The UI's edit: `Block::set` (clamped, rounded), then the publish.
     pub fn set(&mut self, p: &Param, v: f32) {
-        match p.block {
-            BlockRef::Channels => self.perf.parts.set(p.spec.id, v),
-            b => self
-                .perf
-                .edit(0)
-                .block_mut(b)
-                .expect("an audio block")
-                .set(p.spec.id, v),
-        }
+        self.perf
+            .edit(PartId::ALL[0])
+            .block_mut(p.block)
+            .expect("an audio block")
+            .set(p.spec.id, v);
         self.shared.update_from(&self.perf);
     }
 
     pub fn get(&mut self, p: &Param) -> f32 {
-        match p.block {
-            BlockRef::Channels => self.perf.parts.get(p.spec.id),
-            b => self
-                .perf
-                .edit(0)
-                .block(b)
-                .expect("an audio block")
-                .get(p.spec.id),
-        }
+        self.perf
+            .edit(PartId::ALL[0])
+            .block(p.block)
+            .expect("an audio block")
+            .get(p.spec.id)
     }
 
     pub fn note(&mut self, note: u8, vel: Option<u8>) {

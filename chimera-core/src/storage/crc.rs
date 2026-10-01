@@ -1,5 +1,7 @@
 //! CRC-32/ISO-HDLC: reflected poly 0xEDB88320, init and xorout 0xFFFF_FFFF.
 
+use chimera_hal::store::{ByteSink, StoreError};
+
 const TABLE: [u32; 256] = {
     let mut t = [0u32; 256];
     let mut i = 0;
@@ -43,5 +45,15 @@ impl Crc32 {
 impl Default for Crc32 {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Hashes what it's given.
+pub(crate) struct CrcSink(pub(crate) Crc32);
+
+impl ByteSink for CrcSink {
+    fn put(&mut self, bytes: &[u8]) -> Result<(), StoreError> {
+        self.0.update(bytes);
+        Ok(())
     }
 }

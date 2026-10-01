@@ -5,7 +5,6 @@
 use crate::MidiChannel;
 use crate::block::{Block, DiskCode, ParamId, ParamSpec, ValFmt, apply_code};
 use crate::dsp::fx_bus::FX_SENDS;
-use crate::hw::MAX_PARTS;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -155,17 +154,6 @@ pub static PART_SPECS: [ParamSpec; 8] = [
     ParamSpec::continuous(5, "CHR", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false).ident("CHR"),
     ParamSpec::continuous(6, "DLY", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false).ident("DLY"),
     ParamSpec::continuous(7, "REV", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false).ident("REV"),
-];
-
-/// Every Part's `CHANNEL` side by side (System › MIDI Setup); param `n`
-/// is Part n + 1's.
-pub static CHANNEL_SPECS: [ParamSpec; MAX_PARTS] = [
-    ParamSpec::choice(0, "P1 CH", ValFmt::OneBased(15), 15.0, 0.0).ident("P1_CH"),
-    ParamSpec::choice(1, "P2 CH", ValFmt::OneBased(15), 15.0, 1.0).ident("P2_CH"),
-    ParamSpec::choice(2, "P3 CH", ValFmt::OneBased(15), 15.0, 2.0).ident("P3_CH"),
-    ParamSpec::choice(3, "P4 CH", ValFmt::OneBased(15), 15.0, 3.0).ident("P4_CH"),
-    ParamSpec::choice(4, "P5 CH", ValFmt::OneBased(15), 15.0, 4.0).ident("P5_CH"),
-    ParamSpec::choice(5, "P6 CH", ValFmt::OneBased(15), 15.0, 5.0).ident("P6_CH"),
 ];
 
 /// CH's values, by channel number (the byte is the meaning).

@@ -3,9 +3,8 @@
 use chimera_core::MidiChannel;
 use chimera_core::block::Block;
 use chimera_core::hw::MAX_PARTS;
-use chimera_core::params::EngineType;
 use chimera_core::part::{DacPair, PartMode, PartParams};
-use chimera_core::preset::{Part, Performance};
+use chimera_core::preset::Performance;
 
 #[test]
 fn midi_channel_accepts_0_to_15_only() {
@@ -48,16 +47,4 @@ fn enum_params_round_trip_through_the_block() {
 #[test]
 fn no_part_param_is_modulatable() {
     assert!(PartParams::default().specs().iter().all(|s| !s.modulatable));
-}
-
-/// Loading a Sound replaces only the Sound: channel, mode and mix stay.
-#[test]
-fn loading_a_sound_keeps_the_mix() {
-    let mut part = Part::new(EngineType::Modal);
-    part.mix.channel = MidiChannel::new(9).unwrap();
-    part.mix.level = 0.25;
-    part.load_init(EngineType::Algo);
-    assert_eq!(part.sound.engine(), EngineType::Algo);
-    assert_eq!((part.mix.channel.get(), part.mix.level), (9, 0.25));
-    assert_eq!(part.loaded_from, None);
 }

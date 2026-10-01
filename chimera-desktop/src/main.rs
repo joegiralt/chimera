@@ -92,7 +92,7 @@ fn main() {
             if let Some((ch, n)) = current_note {
                 audio.note_off(ch, n);
             }
-            current_note = note.map(|n| (ui.performance.parts[ui.active_part].mix.channel, n));
+            current_note = note.map(|n| (ui.project().part(ui.active_part).mix.channel, n));
             if let Some((ch, n)) = current_note {
                 audio.note_on(ch, n, Velocity::DEFAULT);
             }
@@ -106,7 +106,7 @@ fn main() {
         ui.update();
 
         // Push every Part and the FX to the audio thread.
-        audio.update(&ui.performance);
+        audio.update(ui.project().perf());
 
         ui.render_with_scope(&mut display, &perf.stats, scope_r.read());
         let now = Instant::now();

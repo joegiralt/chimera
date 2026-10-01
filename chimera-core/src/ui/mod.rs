@@ -40,7 +40,8 @@ use crate::mod_path::{LABEL_LEN, RegistryError};
 use crate::modulation::{CUTOFF, CUTOFF_LABEL, MAX_MOD_SOURCES, ModSource, ModState};
 use crate::params::ParamSnapshot;
 use crate::perf::load::AudioStats;
-use crate::preset::{POOL_SIZE, Performance, SoundPool, part_block, part_block_mut};
+use crate::preset::{POOL_SIZE, PartEdit};
+use crate::project::{PartFrom, PartId, PartSource, Project};
 use crate::scope::SCOPE_LEN;
 use block_def::BlockDef;
 use block_def::VizType;
@@ -82,7 +83,7 @@ fn prime_target(addr: ParamAddr) -> ParamAddr {
 pub enum UiMode {
     Normal,
     SoundBrowser {
-        part: usize,
+        part: PartId,
         cursor: usize,
         scroll: usize,
     },
@@ -130,10 +131,9 @@ impl From<RegistryError> for PrimeStatus {
 /// Portable across desktop and hardware — only depends on HAL traits.
 pub struct UiState {
     pub nav: ChainNav,
-    pub performance: Performance,
-    /// Saved Sounds that can be loaded into a Part (not part of the Performance).
-    pub pool: SoundPool,
-    pub active_part: usize,
+    /// The pool, the Parts and the FX: what a project file holds.
+    project: Project,
+    pub active_part: PartId,
     pub renderer: Renderer,
     pub matrix_state: MatrixState,
     pub ui_mode: UiMode,
@@ -159,8 +159,7 @@ pub struct UiState {
 
 crate::in_place::field_list!(UiState => UiState {
     nav,
-    performance,
-    pool,
+    project,
     active_part,
     renderer,
     matrix_state,
@@ -188,30 +187,26 @@ impl UiState {
         unsafe { by_value(Self::init_in_place) }
     }
 
-    // In place so the ~27 KB state (the 21 KB sound pool) never passes
-    // through the firmware's stack.
+    // In place so the ~34 KB state (the 28 KB pool) never passes through
+    // the firmware's stack.
     pub fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
         let p = slot.as_mut_ptr();
-        // SAFETY: `p` is valid and unaliased; the pool is built in place,
-        // then filled with the factory bank, every other field is written
-        // once, and `performance` is written before it is borrowed, all
-        // before `assume_init_mut`.
+        // SAFETY: `p` is valid and unaliased; the project is built in
+        // place before it is borrowed, and every other field is written
+        // once, all before `assume_init_mut`.
         unsafe {
             let nav = ChainNav::new();
             let page = PageKey::from_nav(&nav, Op::A);
-            addr_of_mut!((*p).performance).write(Performance::new());
-            let performance = &mut *addr_of_mut!((*p).performance);
+            let project = Project::init_in_place(uninit_at(addr_of_mut!((*p).project)));
             let mut renderer = Renderer::new();
             renderer.snap_to_current(page_values(
                 page,
                 nav.active_block_def(),
-                &performance.edit(0),
+                &project.edit_part(PartId::ALL[0]),
                 Op::A,
             ));
             addr_of_mut!((*p).nav).write(nav);
-            let pool = SoundPool::init_in_place(uninit_at(addr_of_mut!((*p).pool)));
-            crate::factory::load_factory(pool);
-            addr_of_mut!((*p).active_part).write(0);
+            addr_of_mut!((*p).active_part).write(PartId::ALL[0]);
             addr_of_mut!((*p).renderer).write(renderer);
             addr_of_mut!((*p).matrix_state).write(MatrixState::new());
             addr_of_mut!((*p).ui_mode).write(UiMode::Normal);
@@ -225,7 +220,7 @@ impl UiState {
             addr_of_mut!((*p).theme).write(ThemeSettings::DEFAULT);
             addr_of_mut!((*p).toast).write(busy::ToastTimer::new());
             let ui = slot.assume_init_mut();
-            ui.load_matrix(0);
+            ui.load_matrix(PartId::ALL[0]);
             ui
         }
     }
@@ -281,33 +276,45 @@ impl UiState {
         self.nav.chain_id == ChainId::System
     }
 
-    /// The edited Part's blocks and the System pages' (THEME, MIDI), as one `Blocks`.
-    fn blocks(&mut self, part: usize) -> UiBlocks<'_> {
+    pub fn project(&self) -> &Project {
+        &self.project
+    }
+
+    pub fn project_mut(&mut self) -> &mut Project {
+        &mut self.project
+    }
+
+    /// The edited Part's blocks and System › Theme, as one `Blocks`.
+    fn blocks(&mut self, part: PartId) -> UiBlocks<'_> {
         UiBlocks {
-            perf: &mut self.performance,
-            at: part,
+            edit: self.project.edit_part(part),
             theme: &mut self.theme,
         }
     }
 
     /// Returns a reference to the active part's params.
     pub fn params(&self) -> &ParamSnapshot {
-        &self.performance.parts[self.active_part].sound.params
+        &self.project.part(self.active_part).sound.params
     }
 
     /// Returns a mutable reference to the active part's params.
     pub fn params_mut(&mut self) -> &mut ParamSnapshot {
-        &mut self.performance.parts[self.active_part].sound.params
+        &mut self.project.edit_part(self.active_part).part.sound.params
     }
 
     /// Returns a reference to the active part's mod state.
     pub fn mod_state(&self) -> &ModState {
-        &self.performance.parts[self.active_part].sound.mod_state
+        &self.project.part(self.active_part).sound.mod_state
     }
 
     /// Returns a mutable reference to the active part's mod state.
     pub fn mod_state_mut(&mut self) -> &mut ModState {
-        &mut self.performance.parts[self.active_part].sound.mod_state
+        &mut self
+            .project
+            .edit_part(self.active_part)
+            .part
+            .sound
+            .mod_state
     }
 
     /// Current page identity.
@@ -329,7 +336,7 @@ impl UiState {
     /// What the edited Part's page slots resolve against.
     fn ctx(&self) -> SlotCtx {
         SlotCtx::read(
-            &self.performance.parts[self.active_part].sound.params,
+            &self.project.part(self.active_part).sound.params,
             self.sel_op,
         )
     }
@@ -366,8 +373,8 @@ impl UiState {
     /// Sound's chain (ENV, LFO — even while the Mixer chain is on screen),
     /// destinations from its registry, amounts from its `ModState`. Call
     /// whenever the edited Part or its Sound changes.
-    fn load_matrix(&mut self, part: usize) {
-        let sound = &self.performance.parts[part].sound;
+    fn load_matrix(&mut self, part: PartId) {
+        let sound = &self.project.part(part).sound;
         self.matrix_state
             .rebuild_sources(chain::chain_def_for(sound.engine()).mod_sources);
         self.matrix_state
@@ -382,7 +389,7 @@ impl UiState {
     /// when there is no room), then set `source → CUTOFF` to `f(amount)`.
     fn edit_route(&mut self, source: crate::modulation::ModSource, f: impl FnOnce(i8) -> i8) {
         let at = self.active_part;
-        let sound = &mut self.performance.parts[at].sound;
+        let sound = &mut self.project.edit_part(at).part.sound;
         if !sound.dest_registry.is_primed(CUTOFF) {
             if let Err(e) = sound.dest_registry.add(CUTOFF, CUTOFF_LABEL) {
                 self.prime_status = Some(e.into());
@@ -401,8 +408,8 @@ impl UiState {
     }
 
     /// Rebuild a part's audio-side `ModState` from the matrix.
-    fn sync_mod_state(&mut self, part: usize) {
-        let sound = &mut self.performance.parts[part].sound;
+    fn sync_mod_state(&mut self, part: PartId) {
+        let sound = &mut self.project.edit_part(part).part.sound;
         sound.mod_state.sync_from_matrix(&self.matrix_state);
     }
 
@@ -455,7 +462,7 @@ impl UiState {
     fn browser_input(
         &mut self,
         controls: &impl Controls,
-        part: usize,
+        part: PartId,
         cursor: usize,
         scroll: usize,
     ) {
@@ -476,29 +483,29 @@ impl UiState {
         }
         match act {
             Some(browser::BrowserAct::Load) => {
-                if cursor < POOL_SIZE {
-                    if let Some(sound) = self.pool.get(cursor) {
-                        self.performance.parts[part].sound = sound.clone();
-                        self.performance.parts[part].loaded_from = Some(cursor as u8);
-                    }
-                } else if let Some(&engine) = browser::INIT_TYPES.get(cursor - POOL_SIZE) {
-                    // Init entries follow the pool slots.
-                    self.performance.parts[part].load_init(engine);
+                // Init entries follow the pool slots.
+                let from = browser::slot_at(cursor).map(PartFrom::Slot).or_else(|| {
+                    browser::INIT_TYPES
+                        .get(cursor - POOL_SIZE)
+                        .map(|&e| PartFrom::Init(e))
+                });
+                if let Some(from) = from {
+                    // An empty slot loads nothing.
+                    let _ = self.project.load_part(PartSource { part, from });
                 }
                 self.active_part = part;
-                self.nav.chain_id = ChainId::Part(part);
+                self.nav.chain_id = ChainId::Part(part.index());
                 self.nav.node = 0;
                 self.nav.sub_page = 0;
-                self.nav.engine = self.performance.parts[part].sound.engine();
+                self.nav.engine = self.project.part(part).sound.engine();
                 self.load_matrix(part);
                 self.enter_page();
                 self.ui_mode = UiMode::Normal;
                 self.browser_dirty = true;
             }
             Some(browser::BrowserAct::Save) => {
-                if cursor < POOL_SIZE {
-                    let sound = self.performance.parts[part].sound.clone();
-                    self.pool.store(cursor, sound);
+                if let Some(s) = browser::slot_at(cursor) {
+                    self.project.save_part_to(part, s);
                 }
                 self.browser_dirty = true;
             }
@@ -536,10 +543,10 @@ impl UiState {
             ButtonState::Pressed | ButtonState::Held
         );
         if edit_held {
-            for (i, &btn) in PART_BUTTONS.iter().enumerate() {
+            for (part, &btn) in PartId::ALL.into_iter().zip(PART_BUTTONS.iter()) {
                 if controls.button_state(btn) == ButtonState::Pressed {
                     self.ui_mode = UiMode::SoundBrowser {
-                        part: i,
+                        part,
                         cursor: 0,
                         scroll: 0,
                     };
@@ -553,11 +560,12 @@ impl UiState {
         let nav_changed = self.nav.handle_input(controls);
         if nav_changed {
             // B<n> and MIX + B<n> both select Part n for editing.
-            if let ChainId::Part(i) | ChainId::Mixer(i) = self.nav.chain_id {
-                self.active_part = i;
-                self.nav
-                    .set_engine(self.performance.parts[i].sound.engine());
-                self.load_matrix(i);
+            if let ChainId::Part(i) | ChainId::Mixer(i) = self.nav.chain_id
+                && let Some(part) = PartId::new(i as u8)
+            {
+                self.active_part = part;
+                self.nav.set_engine(self.project.part(part).sound.engine());
+                self.load_matrix(part);
             }
             self.enter_page();
         }
@@ -614,12 +622,11 @@ impl UiState {
                     });
                     continue;
                 }
-                if view::is_dimmed(&v, &self.performance.parts[at].sound) {
+                if view::is_dimmed(&v, &self.project.part(at).sound) {
                     continue; // dimmed: the encoder is ignored
                 }
                 let params = &mut UiBlocks {
-                    perf: &mut self.performance,
-                    at,
+                    edit: self.project.edit_part(at),
                     theme: &mut self.theme,
                 };
                 match (self.page, shift) {
@@ -653,7 +660,7 @@ impl UiState {
                     // A dimmed slot that primes itself is refused; one that
                     // primes elsewhere (AMP's VEL: the VCA) still primes.
                     let v = view::view(def, self.focused_slot(), &self.ctx());
-                    let sound = &self.performance.parts[at].sound;
+                    let sound = &self.project.part(at).sound;
                     if let Some(a) = v.addr()
                         && prime_target(a) == a
                         && view::is_dimmed(&v, sound)
@@ -661,7 +668,7 @@ impl UiState {
                         self.prime_status = Some(PrimeStatus::NotModulatable);
                     } else if let Some(addr) = self.current_param_addr() {
                         let label = self.mod_label(addr);
-                        let sound = &mut self.performance.parts[at].sound;
+                        let sound = &mut self.project.edit_part(at).part.sound;
                         self.prime_status = Some(if sound.dest_registry.is_primed(addr) {
                             PrimeStatus::AlreadyRouted
                         } else {
@@ -683,7 +690,7 @@ impl UiState {
                 if controls.button_state(ButtonId::Minus) == ButtonState::Pressed
                     && let Some(addr) = self.current_param_addr()
                 {
-                    let sound = &mut self.performance.parts[at].sound;
+                    let sound = &mut self.project.edit_part(at).part.sound;
                     sound.dest_registry.remove(addr);
                     self.matrix_state
                         .rebuild_dests_from_registry(&sound.dest_registry);
@@ -706,7 +713,7 @@ impl UiState {
         let def = self.nav.active_block_def();
         let mut values = self.display_values();
         let ctx = self.ctx();
-        let sound = &self.performance.parts[at].sound;
+        let sound = &self.project.part(at).sound;
 
         // Apply mod offsets for display — makes bars and vizzes animate with modulation.
         // Skip the LFO tick entirely when no modulation is active.
@@ -803,7 +810,7 @@ impl UiState {
         } = self.ui_mode
         {
             let _ = display.clear(theme::BG);
-            browser::draw(display, &self.pool, part, cursor, scroll);
+            browser::draw(display, self.project.pool(), part, cursor, scroll);
             return;
         }
         self.renderer
@@ -827,7 +834,7 @@ impl UiState {
             focus: self.focused_slot(),
             scope,
             sounding: crate::scope::peak(scope) > crate::scope::SOUNDING_PEAK,
-            parts: &self.performance.parts,
+            parts: &self.project.perf().parts,
             active_part: self.active_part,
             prime_status: self.prime_status,
             audio,
@@ -968,7 +975,7 @@ impl UiState {
             if self.browser_dirty {
                 let fb = display.pixel_buffer();
                 Renderer::clear_region_fb(fb, 0, chimera_hal::SCREEN_HEIGHT);
-                browser::draw(display, &self.pool, part, cursor, scroll);
+                browser::draw(display, self.project.pool(), part, cursor, scroll);
                 // Invalidate region set so normal layout forces full rebuild on exit
                 self.region_set.prev_layout = None;
                 flush_list[0] = (0, chimera_hal::SCREEN_HEIGHT);
@@ -1034,11 +1041,10 @@ fn any_input(controls: &impl Controls) -> bool {
             .any(|&b| controls.button_state(b) == ButtonState::Pressed)
 }
 
-/// A Part's blocks plus the ones the System pages edit (Theme, every
-/// Part's channel), so they edit through the same slot bindings as any other.
+/// A Part's blocks plus System › Theme, so the theme edits through the same
+/// slot bindings as any other.
 struct UiBlocks<'a> {
-    perf: &'a mut Performance,
-    at: usize,
+    edit: PartEdit<'a>,
     theme: &'a mut ThemeSettings,
 }
 
@@ -1046,16 +1052,14 @@ impl Blocks for UiBlocks<'_> {
     fn block(&self, b: BlockRef) -> Option<&dyn Block> {
         match b {
             BlockRef::Theme => Some(&*self.theme),
-            BlockRef::Channels => Some(&self.perf.parts),
-            _ => part_block(&self.perf.parts[self.at], &self.perf.fx, b),
+            _ => self.edit.block(b),
         }
     }
 
     fn block_mut(&mut self, b: BlockRef) -> Option<&mut dyn Block> {
         match b {
             BlockRef::Theme => Some(self.theme),
-            BlockRef::Channels => Some(&mut self.perf.parts),
-            _ => part_block_mut(&mut self.perf.parts[self.at], &mut self.perf.fx, b),
+            _ => self.edit.block_mut(b),
         }
     }
 }

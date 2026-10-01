@@ -24,6 +24,7 @@ pub mod params;
 pub mod part;
 pub mod perf;
 pub mod preset;
+pub mod project;
 pub mod reset;
 pub mod scope;
 pub mod storage;

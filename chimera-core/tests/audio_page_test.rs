@@ -13,7 +13,7 @@ use screen::*;
 fn on_audio_page() -> UiState {
     let mut ui = UiState::new();
     feed(&mut ui, Input::press(ButtonId::Menu));
-    for _ in 0..4 {
+    for _ in 0..3 {
         feed(&mut ui, Input::press(ButtonId::Plus));
     }
     feed(&mut ui, Input::press(ButtonId::Edit));
