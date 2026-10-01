@@ -1,5 +1,6 @@
 use crate::addr::{BlockRef, Op, ParamAddr};
 use crate::block::{ParamId, ParamSpec, find_spec};
+use crate::ui::nav::PageAt;
 use crate::ui::page::{PageLayout, ValFmt};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -262,6 +263,9 @@ pub struct ChainDef2 {
     pub blocks: &'static [ChainBlock],
     /// Mod matrix source rows, in `Voice`'s source order (spec §4).
     pub mod_sources: &'static [&'static str],
+    /// Where a first visit lands (ADR 0066); `ui::nav` builds and reads
+    /// it (`ChainDef2::new`, `home`).
+    pub(crate) home: PageAt,
 }
 
 impl ChainDef2 {

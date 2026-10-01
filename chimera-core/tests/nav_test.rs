@@ -4,7 +4,7 @@ use chimera_core::params::EngineType;
 use chimera_core::project::PartId;
 use chimera_core::ui::block_registry::{MIXER_CHANNEL_CHAIN, MIXER_HOME, MIXER_PART, MODAL_1};
 use chimera_core::ui::nav::{
-    Location, MixPage, NavCtx, NavKey, PageAt, Recall, Step, chain_def_for, home,
+    Location, MixPage, NavCtx, NavKey, PageAt, Recall, Step, chain_def_for,
 };
 use chimera_core::ui::settings::{Act, Kind, MANAGE_COMMANDS, Screen, row_at, rows};
 
@@ -18,7 +18,7 @@ fn cx() -> NavCtx {
 }
 
 fn at(node: u8, sub: u8) -> PageAt {
-    PageAt { node, sub }
+    PageAt::of(node, sub)
 }
 
 /// Step and follow a `Go`; returns the step.
@@ -61,7 +61,7 @@ fn fx_node(l: Location, cx: &NavCtx) -> Option<(PartId, PageAt)> {
     match l.page(cx) {
         Some((c, at))
             if core::ptr::eq(c, &MIXER_CHANNEL_CHAIN)
-                && ![MIXER_HOME, MIXER_PART].contains(&(at.node as usize)) =>
+                && ![MIXER_HOME, MIXER_PART].contains(&(at.node() as usize)) =>
         {
             Some((l.part()?, at))
         }
@@ -108,7 +108,10 @@ fn bn_leaves_from_any_depth() {
             let mut r = Recall::new();
             assert_eq!(
                 l.step(NavKey::Part(P[2]), &cx, &mut r),
-                Step::Go(Location::pages(P[2], home(EngineType::Algo))),
+                Step::Go(Location::pages(
+                    P[2],
+                    chain_def_for(EngineType::Algo).home()
+                )),
                 "{path:?} row {row}"
             );
         }
@@ -191,7 +194,7 @@ fn part_key_toggles_and_restores() {
     key(&mut l, NavKey::Part(P[0]), &cx, &mut r);
     assert_eq!(
         l,
-        Location::pages(P[0], home(EngineType::Modal)),
+        Location::pages(P[0], chain_def_for(EngineType::Modal).home()),
         "another engine: home"
     );
 }
@@ -227,11 +230,11 @@ fn bn_lands_on(e: EngineType) -> PageAt {
     for from in froms {
         assert_eq!(
             from.step(NavKey::Part(P[2]), &cx, &mut r),
-            Step::Go(Location::pages(P[2], home(e))),
+            Step::Go(Location::pages(P[2], chain_def_for(e).home())),
             "{from:?}"
         );
     }
-    home(e)
+    chain_def_for(e).home()
 }
 
 #[test]
@@ -243,9 +246,9 @@ fn bn_lands_on_the_engine_home_algo() {
 fn bn_lands_on_the_engine_home_modal() {
     let h = bn_lands_on(EngineType::Modal);
     let c = chain_def_for(EngineType::Modal);
-    assert_eq!(c.active_def(h.node as usize, 0).unwrap().id, MODAL_1.id);
-    assert_eq!(c.blocks[h.node as usize].def.short, "RES");
-    assert_eq!(h.sub, 0);
+    assert_eq!(c.active_def(h.node() as usize, 0).unwrap().id, MODAL_1.id);
+    assert_eq!(c.blocks[h.node() as usize].def.short, "RES");
+    assert_eq!(h.sub(), 0);
 }
 
 #[test]
@@ -520,9 +523,12 @@ fn closing_settings_resolves_the_page_for_a_new_engine() {
     key(&mut l, NavKey::Edit, &cx, &mut r); // PROJECT
     key(&mut l, NavKey::MenuTap, &cx, &mut r);
     key(&mut l, NavKey::MenuTap, &cx, &mut r);
-    assert_eq!(l, Location::pages(P[0], home(EngineType::Modal)));
+    assert_eq!(
+        l,
+        Location::pages(P[0], chain_def_for(EngineType::Modal).home())
+    );
     let (c, at) = l.page(&cx).unwrap();
-    assert!((at.node as usize) < c.len());
+    assert!((at.node() as usize) < c.len());
 }
 
 #[test]

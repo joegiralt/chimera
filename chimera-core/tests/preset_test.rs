@@ -114,7 +114,7 @@ fn node(ui: &UiState) -> usize {
         engines: [EngineType::Algo; 6],
         dyn_rows: 0,
     };
-    ui.location().page(&cx).unwrap().1.node as usize
+    ui.location().page(&cx).unwrap().1.node() as usize
 }
 
 #[test]

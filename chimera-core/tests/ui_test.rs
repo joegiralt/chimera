@@ -166,12 +166,12 @@ fn cx() -> NavCtx {
 /// The page key at `l`.
 fn key(l: Location, op: Op) -> PageKey {
     let (c, at) = l.page(&cx()).unwrap();
-    let def = c.active_def(at.node as usize, at.sub as usize).unwrap();
+    let def = c.def_at(at).unwrap();
     PageKey::from_location(l, def, op)
 }
 
 fn pages(node: u8, sub: u8) -> Location {
-    Location::pages(PartId::ALL[0], PageAt { node, sub })
+    Location::pages(PartId::ALL[0], PageAt::of(node, sub))
 }
 
 fn leaf(labels: &[&str]) -> Location {

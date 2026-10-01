@@ -60,7 +60,7 @@ use block_def::slot_addr;
 use components::Head;
 use hold::{HoldGates, Press};
 use mod_grid::MatrixState;
-use nav::{Browse, Location, NavCtx, NavKey, Recall, Step, home};
+use nav::{Browse, Location, NavCtx, NavKey, Recall, Step, chain_def_for};
 use page::{PageKey, PageLayout};
 use perf::PerfStats;
 use renderer::Renderer;
@@ -101,8 +101,8 @@ pub static NO_PAGE: BlockDef = BlockDef {
     viz: VizType::None,
     params: [block_def::ParamSlot::EMPTY; 6],
 };
-pub const NO_PAGE_ID: u16 = 79;
-const _: () = assert!((NO_PAGE_ID as usize) < focus::MAX_PAGES);
+/// No page has it: `focus` keeps no slot for it.
+pub const NO_PAGE_ID: u16 = u16::MAX;
 
 /// The SETTINGS rows and keys not wired yet (Tasks 11–13).
 const NOT_YET: &str = "NOT YET";
@@ -347,8 +347,8 @@ impl UiState {
             && self.loc.browse().is_none()
         {
             let engine = cx.engines[p.index()];
-            if engine != was || c.active_def(at.node as usize, at.sub as usize).is_none() {
-                self.loc = Location::pages(p, home(engine));
+            if engine != was || c.def_at(at).is_none() {
+                self.loc = Location::pages(p, chain_def_for(engine).home());
             }
         }
         self.load_matrix(part);
@@ -636,7 +636,7 @@ impl UiState {
     fn load_matrix(&mut self, part: PartId) {
         let sound = &self.project.part(part).sound;
         self.matrix_state
-            .rebuild_sources(nav::chain_def_for(sound.engine()).mod_sources);
+            .rebuild_sources(chain_def_for(sound.engine()).mod_sources);
         self.matrix_state
             .rebuild_dests_from_registry(&sound.dest_registry);
         self.matrix_state.load_amounts(&sound.mod_state);
@@ -732,7 +732,10 @@ impl UiState {
             // An empty slot loads nothing.
             let _ = self.project.replace_part(c);
         }
-        let to = Location::pages(part, home(self.project.part(part).sound.engine()));
+        let to = Location::pages(
+            part,
+            chain_def_for(self.project.part(part).sound.engine()).home(),
+        );
         self.go(to);
     }
 
@@ -1030,7 +1033,7 @@ impl UiState {
         // Animate branch scroll for dungeon map sub-pages.
         // Ensure the active row's bottom edge (y + LINE_HEIGHT) is on screen.
         // scroll_px = max(0, BRANCH_START_Y + (sub_page+1)*LINE_HEIGHT - SCREEN_HEIGHT)
-        let sub = self.loc.page(&self.cx()).map_or(0, |(_, at)| at.sub);
+        let sub = self.loc.page(&self.cx()).map_or(0, |(_, at)| at.sub());
         let needed_bottom = theme::BRANCH_START_Y + (sub as i32 + 1) * theme::BRANCH_LINE_HEIGHT;
         let overflow = needed_bottom - chimera_hal::SCREEN_HEIGHT as i32;
         let target_scroll = if overflow > 0 {
@@ -1141,7 +1144,7 @@ impl UiState {
         let at = self
             .loc
             .page(&self.cx())
-            .map_or((0, 0), |(_, at)| (at.node, at.sub));
+            .map_or((0, 0), |(_, at)| (at.node(), at.sub()));
         (place, at.0, at.1)
     }
 
@@ -1445,7 +1448,7 @@ fn nav_cx(project: &Project) -> NavCtx {
 /// The page `at` shows; lists, Screens and the Sound rung show `NO_PAGE`.
 fn page_def(at: Location, cx: &NavCtx) -> &'static BlockDef {
     at.page(cx)
-        .and_then(|(c, p)| c.active_def(p.node as usize, p.sub as usize))
+        .and_then(|(c, p)| c.def_at(p))
         .unwrap_or(&NO_PAGE)
 }
 

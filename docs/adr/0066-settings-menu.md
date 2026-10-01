@@ -67,6 +67,9 @@ settings world of the synth. The spec is
     never amended.
   - **Each engine has a home node.** A new or INIT Modal Part lands on
     RES, not EXC (the navigation rewrite).
+  - **Each chain declares its home page** (node 0 unless it says
+    otherwise), and every never-visited landing goes there; no code
+    outside the chain assumes the first node (owner, 2026-10-02).
 - `ChainId::System` and `UiMode::SoundBrowser` go; the browser becomes
   the Sound rung, and saving is SETTINGS > PART.
 - The UX spec is the owner's file and is amended by hand.

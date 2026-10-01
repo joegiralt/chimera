@@ -59,10 +59,7 @@ impl At {
     }
 
     fn page(&self) -> PageAt {
-        PageAt {
-            node: self.node as u8,
-            sub: self.sub as u8,
-        }
+        self.chain.page(self.node, self.sub).unwrap()
     }
 }
 
@@ -305,7 +302,7 @@ fn a_fresh_algo_part_lands_on_the_algo_page() {
     assert_eq!(ui.page_def().id, ALGO_ALG.id);
     feed(&mut ui, Input::press(ButtonId::Plus));
     feed(&mut ui, Input::press(ButtonId::B2));
-    let home = |p: usize| Location::pages(PartId::ALL[p], PageAt { node: 0, sub: 0 });
+    let home = |p: usize| Location::pages(PartId::ALL[p], ALGO_CHAIN.home());
     assert_eq!(ui.location(), home(1));
     assert_eq!(ui.page_def().id, ALGO_ALG.id);
     feed(&mut ui, Input::press(ButtonId::Plus));

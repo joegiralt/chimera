@@ -42,7 +42,7 @@ pub fn draw<D>(
 ) where
     D: DrawTarget<Color = Rgb565>,
 {
-    let node = at.node as usize;
+    let node = at.node() as usize;
     let n = chain.blocks.len();
     if n > 1 {
         draw::fill_rect(
@@ -111,7 +111,7 @@ fn draw_branches<D>(
 ) where
     D: DrawTarget<Color = Rgb565>,
 {
-    let Some(block) = chain.block_at(at.node as usize) else {
+    let Some(block) = chain.block_at(at.node() as usize) else {
         return;
     };
     let count = block.sub_page_count();
@@ -140,7 +140,7 @@ fn draw_branches<D>(
         };
         let label = page_label(def, model);
         let cy = y + theme::BRANCH_LINE_HEIGHT / 2;
-        if i == at.sub as i32 {
+        if i == at.sub() as i32 {
             draw::dot(d, x, cy, 2, theme::ACCENT);
             draw::text(d, &theme::FONT_LABEL, label, x + 6, y + 8, theme::ACCENT);
         } else {

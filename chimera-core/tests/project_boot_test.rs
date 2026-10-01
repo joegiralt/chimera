@@ -945,7 +945,10 @@ fn the_last_project_is_no_theme_change() {
 }
 
 fn at_home(engine: EngineType) -> chimera_core::ui::nav::Location {
-    chimera_core::ui::nav::Location::pages(PartId::ALL[0], chimera_core::ui::nav::home(engine))
+    chimera_core::ui::nav::Location::pages(
+        PartId::ALL[0],
+        chimera_core::ui::nav::chain_def_for(engine).home(),
+    )
 }
 
 /// From Part 1's home, PLUS to FLT.

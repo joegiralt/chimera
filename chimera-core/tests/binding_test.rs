@@ -94,7 +94,7 @@ fn block_def_ids_are_unique() {
 #[test]
 fn all_chains_holds_every_reachable_chain() {
     use chimera_core::project::PartId;
-    use chimera_core::ui::nav::{Location, MixPage, NavCtx, home};
+    use chimera_core::ui::nav::{Location, MixPage, NavCtx, chain_def_for};
     use chimera_core::ui::settings::{Kind, rows};
     fn leaves(path: &mut Vec<u8>, out: &mut Vec<Location>) {
         for (i, r) in rows(path).iter().enumerate() {
@@ -109,7 +109,10 @@ fn all_chains_holds_every_reachable_chain() {
     }
     let mut at = Vec::new();
     for engine in EngineType::ALL {
-        at.push((engine, Location::pages(PartId::ALL[0], home(engine))));
+        at.push((
+            engine,
+            Location::pages(PartId::ALL[0], chain_def_for(engine).home()),
+        ));
     }
     at.push((
         EngineType::Algo,

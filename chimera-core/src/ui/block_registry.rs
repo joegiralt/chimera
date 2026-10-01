@@ -479,11 +479,11 @@ static MODAL_PLUCK_BLOCKS: [ChainBlock; 5] = [
     },
 ];
 
-pub static MODAL_PLUCK_CHAIN: ChainDef2 = ChainDef2 {
-    name: "Modal Pluck",
-    blocks: &MODAL_PLUCK_BLOCKS,
-    mod_sources: &PART_MOD_SOURCES,
-};
+/// Modal's home is RES (owner, 2026-10-01: ADR 0066).
+pub static MODAL_PLUCK_CHAIN: ChainDef2 =
+    ChainDef2::new("Modal Pluck", &MODAL_PLUCK_BLOCKS, &PART_MOD_SOURCES).with_home(MODAL_RES);
+const MODAL_RES: usize = 1;
+const _: () = assert!(MODAL_PLUCK_BLOCKS[MODAL_RES].def.id == MODAL_1.id);
 
 /// WAVE is the OSC node's home; FINE's DETUNE and the five ENV stages sit
 /// right after their group (sub-pages are one level deep).
@@ -516,11 +516,7 @@ static ALGO_BLOCKS: [ChainBlock; 6] = [
     },
 ];
 
-pub static ALGO_CHAIN: ChainDef2 = ChainDef2 {
-    name: "Algo",
-    blocks: &ALGO_BLOCKS,
-    mod_sources: &PART_MOD_SOURCES,
-};
+pub static ALGO_CHAIN: ChainDef2 = ChainDef2::new("Algo", &ALGO_BLOCKS, &PART_MOD_SOURCES);
 
 // ---------------------------------------------------------------------------
 // Mixer channel strip
@@ -577,11 +573,9 @@ pub const MIXER_HOME: usize = 1;
 /// PART's node: remembered only from mixer to mixer (ADR 0057).
 pub const MIXER_PART: usize = 0;
 
-pub static MIXER_CHANNEL_CHAIN: ChainDef2 = ChainDef2 {
-    name: "Mixer",
-    blocks: MIXER_CHANNEL_BLOCKS,
-    mod_sources: &[],
-};
+/// The mixer's home is SENDS (ADR 0057).
+pub static MIXER_CHANNEL_CHAIN: ChainDef2 =
+    ChainDef2::new("Mixer", MIXER_CHANNEL_BLOCKS, &[]).with_home(MIXER_HOME);
 const _: () = assert!(MIXER_CHANNEL_BLOCKS[MIXER_HOME].def.id == SENDS.id);
 const _: () = assert!(MIXER_CHANNEL_BLOCKS[MIXER_PART].def.id == PART.id);
 
@@ -896,11 +890,7 @@ static DEMO_BLOCKS: [ChainBlock; 13] = [
     ChainBlock::page(&DEMO_GLYPH_CUBE),
 ];
 
-pub static DEMO_CHAIN: ChainDef2 = ChainDef2 {
-    name: "Demo",
-    blocks: &DEMO_BLOCKS,
-    mod_sources: &[],
-};
+pub static DEMO_CHAIN: ChainDef2 = ChainDef2::new("Demo", &DEMO_BLOCKS, &[]);
 
 /// Every chain, for whole-registry checks (unique ids, the focus table).
 pub static ALL_CHAINS: [&ChainDef2; 10] = [

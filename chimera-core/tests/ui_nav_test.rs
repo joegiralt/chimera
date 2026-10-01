@@ -10,7 +10,7 @@ use chimera_core::project::{Line, PartId};
 use chimera_core::storage::{Card, SystemSync};
 use chimera_core::ui::block_registry::{FILTER, MIXER_CHANNEL_CHAIN, MIXER_PART};
 use chimera_core::ui::busy::ToastStep;
-use chimera_core::ui::nav::{Location, MixPage, PageAt, home};
+use chimera_core::ui::nav::{Location, MixPage, PageAt, chain_def_for};
 use chimera_core::ui::perf::PerfStats;
 use chimera_core::ui::region::RegionKind;
 use chimera_core::ui::theme_settings::ThemeSettings;
@@ -25,7 +25,7 @@ fn top() -> Location {
 }
 
 fn part_home(p: PartId) -> Location {
-    Location::pages(p, home(EngineType::Algo))
+    Location::pages(p, chain_def_for(EngineType::Algo).home())
 }
 
 /// From Part 2's home, PLUS to FILTER.
@@ -42,7 +42,7 @@ fn filter_on_part_2(ui: &mut UiState) -> Location {
 fn menu_tap_opens_settings_and_backs_out() {
     let mut ui = UiState::new();
     let filter = filter_on_part_2(&mut ui);
-    assert_eq!(filter, Location::pages(P[1], PageAt { node: 3, sub: 0 }));
+    assert_eq!(filter, Location::pages(P[1], PageAt::of(3, 0)));
     tap(&mut ui, ButtonId::Menu);
     assert_eq!(ui.location(), top());
     assert!(ui.in_settings());
@@ -66,15 +66,12 @@ fn seq_tap_is_sub_page_up_on_release() {
     let mut ui = UiState::new();
     filter_on_part_2(&mut ui);
     feed(&mut ui, Input::press(ButtonId::Edit));
-    let down = Location::pages(P[1], PageAt { node: 3, sub: 1 });
+    let down = Location::pages(P[1], PageAt::of(3, 1));
     assert_eq!(ui.location(), down);
     feed(&mut ui, Input::press(ButtonId::Seq));
     assert_eq!(ui.location(), down);
     feed(&mut ui, Input::release(ButtonId::Seq).at(100));
-    assert_eq!(
-        ui.location(),
-        Location::pages(P[1], PageAt { node: 3, sub: 0 })
-    );
+    assert_eq!(ui.location(), Location::pages(P[1], PageAt::of(3, 0)));
 }
 
 #[test]
@@ -246,4 +243,86 @@ fn edit_on_load_project_says_not_yet() {
     feed(&mut ui, Input::press(ButtonId::Edit));
     assert_eq!(ui.step_toast(0), not_yet());
     assert_eq!(ui.location(), Location::settings_at(&[0], 0));
+}
+
+/// Part `p` onto `e`'s INIT, behind the UI's back.
+fn set_engine(ui: &mut UiState, p: PartId, e: EngineType) {
+    use chimera_core::project::{PartFrom, PartSource, ReplaceGuard};
+    let src = PartSource {
+        part: p,
+        from: PartFrom::Init(e),
+    };
+    let c = ReplaceGuard::check(ui.project(), ui.template(), src).unwrap();
+    ui.project_mut().replace_part(c).unwrap();
+}
+
+/// Every first landing goes to the chain's home (ADR 0066); Modal's is
+/// RES, not its first node. Boot and loads: `project_boot_test`.
+#[test]
+fn every_first_landing_is_the_chains_home() {
+    let modal = chain_def_for(EngineType::Modal);
+    assert_ne!(modal.home().node(), 0, "the live case");
+    let res = |p| Location::pages(p, modal.home());
+
+    // A Part never visited.
+    let mut ui = UiState::new();
+    set_engine(&mut ui, P[1], EngineType::Modal);
+    feed(&mut ui, Input::press(ButtonId::B2));
+    assert_eq!(ui.location(), res(P[1]), "never visited");
+
+    // B<n> from elsewhere, though its page was left elsewhere.
+    feed(&mut ui, Input::press(ButtonId::Plus));
+    assert_ne!(ui.location(), res(P[1]));
+    feed(&mut ui, Input::press(ButtonId::B1));
+    feed(&mut ui, Input::press(ButtonId::B2));
+    assert_eq!(ui.location(), res(P[1]), "B2 from Part 1");
+
+    // An engine change behind the mixer.
+    let mut ui = UiState::new();
+    filter_on_part_2(&mut ui);
+    feed(&mut ui, Input::press(ButtonId::B2)); // its mixer
+    set_engine(&mut ui, P[1], EngineType::Modal);
+    feed(&mut ui, Input::press(ButtonId::B2));
+    assert_eq!(ui.location(), res(P[1]), "engine changed");
+
+    // An engine change behind SETTINGS.
+    let mut ui = UiState::new();
+    filter_on_part_2(&mut ui);
+    tap(&mut ui, ButtonId::Menu);
+    set_engine(&mut ui, P[1], EngineType::Modal);
+    tap(&mut ui, ButtonId::Menu);
+    assert_eq!(ui.location(), res(P[1]), "MENU back");
+
+    // INIT from the Sound rung.
+    let mut ui = UiState::new();
+    feed(&mut ui, Input::chord(ButtonId::Edit, ButtonId::B3));
+    let init = chimera_core::preset::POOL_SIZE
+        + EngineType::ALL
+            .iter()
+            .position(|&e| e == EngineType::Modal)
+            .unwrap();
+    feed(&mut ui, Input::turn(EncoderId::A, init as i8));
+    feed(&mut ui, Input::press(ButtonId::Edit));
+    assert_eq!(ui.location(), res(P[2]), "INIT");
+
+    // The mixer's first entry.
+    let mut ui = UiState::new();
+    feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::B1));
+    let home = MIXER_CHANNEL_CHAIN.home();
+    assert_eq!(
+        ui.page_def().id,
+        MIXER_CHANNEL_CHAIN.def_at(home).unwrap().id
+    );
+
+    // Every SETTINGS leaf, DEMO among them.
+    for leaf in leaves() {
+        let mut ui = UiState::new();
+        to_leaf(&mut ui, &leaf.labels);
+        assert_eq!(
+            ui.location().settings().unwrap().page(),
+            leaf.chain.home(),
+            "{}",
+            leaf.name()
+        );
+    }
 }

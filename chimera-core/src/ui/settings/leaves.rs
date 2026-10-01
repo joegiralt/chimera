@@ -48,11 +48,7 @@ static UPDATES_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&SYS_UPDATES)];
 static ABOUT_BLOCKS: [ChainBlock; 1] = [ChainBlock::with_subs(&SYS_ABOUT, &[&SYS_AUDIO])];
 
 const fn leaf(name: &'static str, blocks: &'static [ChainBlock]) -> ChainDef2 {
-    ChainDef2 {
-        name,
-        blocks,
-        mod_sources: &[],
-    }
+    ChainDef2::new(name, blocks, &[])
 }
 
 pub static CHANNELS_LEAF: ChainDef2 = leaf("Channels", &CHANNELS_BLOCKS);

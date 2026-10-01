@@ -8,7 +8,7 @@ use chimera_core::project::{PartFrom, PartId, PartSource, ReplaceGuard};
 use chimera_core::ui::UiState;
 use chimera_core::ui::block_registry::{ALGO_ALG, ALGO_WAVE, CHORUS, FILTER, PART, SENDS};
 use chimera_core::ui::components::{Head, header_text};
-use chimera_core::ui::nav::{Location, home};
+use chimera_core::ui::nav::{Location, chain_def_for};
 use chimera_hal::{ButtonId, EncoderId};
 use screen::{Input, feed, settle, tap};
 
@@ -176,7 +176,7 @@ fn a_changed_engine_returns_home_not_to_the_page_left() {
     press(&mut ui, ButtonId::B1);
     assert_eq!(
         ui.location(),
-        Location::pages(PartId::ALL[0], home(EngineType::Modal))
+        Location::pages(PartId::ALL[0], chain_def_for(EngineType::Modal).home())
     );
     assert_eq!(at(&ui), (On::Sound(0), MODAL_1.id), "Modal's home is RES");
 }

@@ -4,9 +4,9 @@
 use crate::hw::MAX_PARTS;
 use crate::params::EngineType;
 use crate::project::PartId;
-use crate::ui::block_def::ChainDef2;
+use crate::ui::block_def::{ChainBlock, ChainDef2};
 use crate::ui::block_registry::{
-    self, CHORUS, MIXER_CHANNEL_CHAIN, MIXER_HOME, MIXER_PART, MODAL_1, MODAL_PLUCK_CHAIN,
+    self, ALGO_CHAIN, CHORUS, MIXER_CHANNEL_CHAIN, MIXER_HOME, MIXER_PART, MODAL_PLUCK_CHAIN,
 };
 use crate::ui::settings::{Act, Kind, MANAGE_COMMANDS, Row, Screen, row_at};
 
@@ -22,15 +22,8 @@ const _: () = assert!(MIXER_CHANNEL_CHAIN.blocks[FX_FIRST as usize].def.id == CH
 /// SETTINGS › PART, where SEQ on the mixer and the Sound rung goes.
 const PART_SETTINGS: [u8; 1] = [1];
 
-/// RES, Modal's home (owner, 2026-10-01: ADR 0066).
-const MODAL_HOME: u8 = {
-    let b = MODAL_PLUCK_CHAIN.blocks;
-    let mut i = 0;
-    while b[i].def.id != MODAL_1.id {
-        i += 1;
-    }
-    i as u8
-};
+// The mixer's home is SENDS: from outside it, B*n* and MIX+B*n* open there.
+const _: () = assert!(MIXER_CHANNEL_CHAIN.home().node as usize == MIXER_HOME);
 
 /// The Sound rung's browser: its cursor and the first row shown.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -41,14 +34,81 @@ pub struct Browse {
 
 const _: () = assert!(crate::ui::browser::TOTAL_ENTRIES <= 256);
 
+/// A page on a chain. Only a chain makes one (`ChainDef2::home`,
+/// `ChainDef2::page`), and this module's steps from one, so no code can
+/// land on a node it assumed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PageAt {
-    pub node: u8,
-    pub sub: u8,
+    node: u8,
+    sub: u8,
 }
 
 impl PageAt {
-    const ZERO: PageAt = PageAt { node: 0, sub: 0 };
+    /// A list's: it shows no page.
+    const NONE: PageAt = PageAt { node: 0, sub: 0 };
+
+    pub const fn node(self) -> u8 {
+        self.node
+    }
+
+    pub const fn sub(self) -> u8 {
+        self.sub
+    }
+
+    /// Any page, unchecked: tests only.
+    #[cfg(any(test, feature = "test-support"))]
+    pub const fn of(node: u8, sub: u8) -> Self {
+        PageAt { node, sub }
+    }
+}
+
+impl ChainDef2 {
+    /// A chain whose home is its first node. An empty chain fails the
+    /// build: every chain is a static.
+    pub const fn new(
+        name: &'static str,
+        blocks: &'static [ChainBlock],
+        mod_sources: &'static [&'static str],
+    ) -> Self {
+        assert!(!blocks.is_empty(), "a chain has a page");
+        ChainDef2 {
+            name,
+            blocks,
+            mod_sources,
+            home: PageAt::NONE,
+        }
+    }
+
+    /// Home on `node` instead; past the chain fails the build.
+    pub const fn with_home(self, node: usize) -> Self {
+        assert!(node < self.blocks.len(), "home past the chain");
+        ChainDef2 {
+            home: PageAt {
+                node: node as u8,
+                sub: 0,
+            },
+            ..self
+        }
+    }
+
+    /// Where a first visit lands (ADR 0066).
+    pub const fn home(&self) -> PageAt {
+        self.home
+    }
+
+    /// The def at `at`, if `at` is on this chain.
+    pub fn def_at(&self, at: PageAt) -> Option<&'static crate::ui::block_def::BlockDef> {
+        self.active_def(at.node as usize, at.sub as usize)
+    }
+
+    /// `node`'s sub-page `sub`, if the chain has it.
+    pub fn page(&self, node: usize, sub: usize) -> Option<PageAt> {
+        let b = self.block_at(node)?;
+        (sub < b.sub_page_count().max(1)).then_some(PageAt {
+            node: node as u8,
+            sub: sub as u8,
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -57,11 +117,12 @@ pub enum MixPage {
     Sends,
 }
 
-/// The mixer page B*n* and MIX+B*n* reopen from outside the mixer: SENDS,
-/// or the FX page last left; never PART, whose C is OUT (ADR 0057).
+/// The mixer page B*n* and MIX+B*n* reopen from outside the mixer: its
+/// home (SENDS), or the FX page last left; never PART, whose C is OUT
+/// (ADR 0057).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum MixAt {
-    Sends,
+    Home,
     Fx(PageAt),
 }
 
@@ -106,6 +167,17 @@ impl SettingsAt {
         }
     }
 
+    /// On a leaf, its chain's home.
+    fn landed(self) -> SettingsAt {
+        match self.at_leaf() {
+            Some(c) => SettingsAt {
+                page: c.home(),
+                ..self
+            },
+            None => self,
+        }
+    }
+
     fn kind(&self) -> Option<Kind> {
         row_at(self.path()).map(|r| r.kind)
     }
@@ -117,12 +189,15 @@ impl SettingsAt {
         }
         let mut path = self.path;
         path[d] = self.row;
-        Some(SettingsAt {
-            path,
-            depth: self.depth + 1,
-            row: 0,
-            page: PageAt::ZERO,
-        })
+        Some(
+            SettingsAt {
+                path,
+                depth: self.depth + 1,
+                row: 0,
+                page: PageAt::NONE,
+            }
+            .landed(),
+        )
     }
 
     /// MENU: MANAGE's commands back to its list, else one level up with the
@@ -130,7 +205,7 @@ impl SettingsAt {
     fn back(self) -> Option<SettingsAt> {
         if matches!(self.kind(), Some(Kind::Screen(Screen::ManageProjects))) && self.page.sub == 1 {
             return Some(SettingsAt {
-                page: PageAt::ZERO,
+                page: PageAt::NONE,
                 ..self
             });
         }
@@ -142,7 +217,7 @@ impl SettingsAt {
             path,
             depth: d,
             row: self.path[d as usize],
-            page: PageAt::ZERO,
+            page: PageAt::NONE,
         })
     }
 
@@ -219,7 +294,7 @@ enum Loc {
 }
 
 /// Where `Recall` starts, before anything is left: re-resolved on use.
-const PLACEHOLDER: Loc = Loc::Pages(PartId::ALL[0], PageAt::ZERO);
+const PLACEHOLDER: Loc = Loc::Pages(PartId::ALL[0], ALGO_CHAIN.home());
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Location(Loc);
@@ -265,7 +340,7 @@ impl Recall {
     pub const fn new() -> Self {
         Self {
             pages: [None; MAX_PARTS],
-            mix: MixAt::Sends,
+            mix: MixAt::Home,
             settings_from: Outside(PLACEHOLDER),
         }
     }
@@ -282,7 +357,7 @@ impl Recall {
                     at,
                 })
             }
-            Loc::Part(..) => self.mix = MixAt::Sends,
+            Loc::Part(..) => self.mix = MixAt::Home,
             Loc::Fx(_, at) => self.mix = MixAt::Fx(at),
             _ => {}
         }
@@ -295,14 +370,14 @@ impl Recall {
     fn pages_of(&self, p: PartId, cx: &NavCtx) -> PageAt {
         match self.pages[p.index()] {
             Some(s) if s.engine == cx.engine(p) => s.at,
-            _ => home(cx.engine(p)),
+            _ => chain_def_for(cx.engine(p)).home(),
         }
     }
 
     /// Part n's mixer from outside it.
     fn mix_entry(&self, n: PartId) -> Loc {
         match self.mix {
-            MixAt::Sends => Loc::Part(n, MixPage::Sends),
+            MixAt::Home => mix_loc(n, MIXER_CHANNEL_CHAIN.home()),
             MixAt::Fx(at) => Loc::Fx(n, at),
         }
     }
@@ -359,7 +434,7 @@ impl Location {
     /// Part 1's pages on its engine's home.
     pub fn home(cx: &NavCtx) -> Location {
         let p = PartId::ALL[0];
-        Location(Loc::Pages(p, home(cx.engine(p))))
+        Location(Loc::Pages(p, chain_def_for(cx.engine(p)).home()))
     }
 
     pub fn pages(p: PartId, at: PageAt) -> Location {
@@ -389,12 +464,15 @@ impl Location {
         let path = &path[..path.len().min(MAX_DEPTH)];
         let mut p = [0; MAX_DEPTH];
         p[..path.len()].copy_from_slice(path);
-        Location(Loc::Settings(SettingsAt {
-            path: p,
-            depth: path.len() as u8,
-            row,
-            page: PageAt::ZERO,
-        }))
+        Location(Loc::Settings(
+            SettingsAt {
+                path: p,
+                depth: path.len() as u8,
+                row,
+                page: PageAt::NONE,
+            }
+            .landed(),
+        ))
     }
 
     pub fn step(self, k: NavKey, cx: &NavCtx, r: &mut Recall) -> Step {
@@ -414,7 +492,7 @@ impl Location {
         match (self.0, k) {
             (Pages(p, _), NavKey::Part(n)) if p == n => go(r.mix_entry(n)),
             (Part(p, _) | Fx(p, _), NavKey::Part(n)) if p == n => go(Pages(n, r.pages_of(n, cx))),
-            (_, NavKey::Part(n)) => go(Pages(n, home(cx.engine(n)))),
+            (_, NavKey::Part(n)) => go(Pages(n, chain_def_for(cx.engine(n)).home())),
             (Part(_, m), NavKey::MixPart(n)) => go(Part(n, m)),
             (Fx(_, at), NavKey::MixPart(n)) => go(Fx(n, at)),
             (_, NavKey::MixPart(n)) => go(r.mix_entry(n)),
@@ -540,13 +618,13 @@ fn page_step(c: &ChainDef2, at: PageAt, k: NavKey) -> Option<PageAt> {
     }
 }
 
-/// Where an engine's pages open (owner, 2026-10-01: ADR 0066).
-pub fn home(e: EngineType) -> PageAt {
-    let node = match e {
-        EngineType::Algo => 0,
-        EngineType::Modal => MODAL_HOME,
-    };
-    PageAt { node, sub: 0 }
+/// Part `n`'s mixer place showing `at`: PART, SENDS or an FX page.
+fn mix_loc(n: PartId, at: PageAt) -> Loc {
+    match at.node as usize {
+        MIXER_PART => Loc::Part(n, MixPage::Part),
+        MIXER_HOME => Loc::Part(n, MixPage::Sends),
+        _ => Loc::Fx(n, at),
+    }
 }
 
 /// The static chain definition for an engine.
