@@ -75,6 +75,11 @@ chorus braid (RATE, DEPTH, MIX; MODE is the strand count).
   box (80 by 56) is cleared and redrawn each frame, and only those rows
   flushed; the rest of the band redraws when its key changes as before.
   Palette colours only, so the theme's ACCENT swap applies.
+- **The chorus shows the braid** (owner-approved 2026-10-01) on all
+  four params, MODE, RATE, DEPTH and MIX. A test pins that no value a
+  composite's params can show reaches into its box. An animated glyph
+  only redraws while the band actually shows it: not under a MIX+PLUS
+  status, nor for a dimmed or absent slot.
 - **Each glyph gets one Demo page** ("Glyph: X", MIX + B6), one glyph per
   page, its slots bound to the params that drive it: several animated
   panels at once can't be judged.
