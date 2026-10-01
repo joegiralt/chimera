@@ -345,8 +345,15 @@ fn load_writes_the_last_project() {
     let mut b = boot_system(&mut s);
 
     let go = file_go(&b.ui, at(&mut s, 5));
-    let swap =
-        b.ui.load_project(&mut b.card, &mut s, &mut b.sync, &mut b.settings, go, &link);
+    let swap = b.ui.load_project(
+        &mut b.card,
+        &mut s,
+        &mut b.sync,
+        &mut b.settings,
+        go,
+        &link,
+        settle,
+    );
     assert!(swap.is_some());
     same(&p, b.ui.project());
     assert_eq!(b.ui.step_toast(0), ToastStep::Idle, "a load says nothing");
@@ -356,8 +363,15 @@ fn load_writes_the_last_project() {
     // + NEW leaves it.
     let go = ReplaceGuard::check(b.ui.project(), b.ui.template(), ProjectSource::New)
         .expect("Saved never asks");
-    let swap =
-        b.ui.load_project(&mut b.card, &mut s, &mut b.sync, &mut b.settings, go, &link);
+    let swap = b.ui.load_project(
+        &mut b.card,
+        &mut s,
+        &mut b.sync,
+        &mut b.settings,
+        go,
+        &link,
+        settle,
+    );
     assert!(swap.is_some());
     assert_eq!(
         project_status(b.ui.project(), b.ui.template()),
@@ -371,8 +385,15 @@ fn load_writes_the_last_project() {
     // So does a fallback to NEW.
     let go = file_go(&b.ui, at(&mut s, 6));
     let mut s = FlipOnSecondRead::new(s, project_file(id(6)).side(Side::A));
-    let swap =
-        b.ui.load_project(&mut b.card, &mut s, &mut b.sync, &mut b.settings, go, &link);
+    let swap = b.ui.load_project(
+        &mut b.card,
+        &mut s,
+        &mut b.sync,
+        &mut b.settings,
+        go,
+        &link,
+        settle,
+    );
     assert!(swap.is_some(), "a failed pass 2 still swaps");
     assert_eq!(b.ui.step_toast(0), show("LOAD FAILED: P0000006"));
     assert_eq!(b.ui.project().meta().file(), None);
@@ -384,10 +405,103 @@ fn load_writes_the_last_project() {
     // A pass 1 failure swaps nothing and leaves it.
     let mut s = s.inner;
     let go = file_go(&b.ui, at(&mut s, 7));
-    let swap =
-        b.ui.load_project(&mut b.card, &mut s, &mut b.sync, &mut b.settings, go, &link);
+    let swap = b.ui.load_project(
+        &mut b.card,
+        &mut s,
+        &mut b.sync,
+        &mut b.settings,
+        go,
+        &link,
+        settle,
+    );
     assert!(swap.is_none());
     assert_eq!(b.ui.step_toast(0), show("PROJECT NOT FOUND: P0000007"));
+    assert_eq!(last_on_card(&mut s), Some(id(5)));
+}
+
+/// A shell's publish: settle at once (no audio runs here).
+fn settle(swap: chimera_core::project::Swap, _: &Project) {
+    let _ = swap.settle(&LoadLink::new(), || false);
+}
+
+/// Counts the card writes it passes on.
+struct CountWrites<S> {
+    inner: S,
+    writes: std::rc::Rc<std::cell::Cell<u32>>,
+}
+
+impl<S: Store> Store for CountWrites<S> {
+    fn mount(&mut self) -> Result<VolumeId, StoreError> {
+        self.inner.mount()
+    }
+    fn list(
+        &mut self,
+        vol: VolumeId,
+        dir: Dir,
+        f: &mut dyn FnMut(FileName, u32),
+    ) -> Result<(), StoreError> {
+        self.inner.list(vol, dir, f)
+    }
+    fn read(
+        &mut self,
+        vol: VolumeId,
+        file: FileName,
+        sink: &mut dyn ReadSink,
+    ) -> Result<(), StoreError> {
+        self.inner.read(vol, file, sink)
+    }
+    fn write(
+        &mut self,
+        vol: VolumeId,
+        file: FileName,
+        body: &mut dyn FnMut(&mut dyn ByteSink) -> Result<(), StoreError>,
+    ) -> Result<u32, StoreError> {
+        self.writes.set(self.writes.get() + 1);
+        self.inner.write(vol, file, body)
+    }
+    fn delete(&mut self, vol: VolumeId, file: FileName) -> Result<(), StoreError> {
+        self.writes.set(self.writes.get() + 1);
+        self.inner.delete(vol, file)
+    }
+    fn make_dir(&mut self, vol: VolumeId, dir: Dir) -> Result<(), StoreError> {
+        self.writes.set(self.writes.get() + 1);
+        self.inner.make_dir(vol, dir)
+    }
+}
+
+/// ADR 0046: from the bump to the publish the audio holds the note
+/// queues, so a load's SYSTEM write waits until the shell has published.
+#[test]
+fn a_load_publishes_before_its_system_write() {
+    let mut mem = MemStore::new(1);
+    let (mut p, _) = full();
+    put_project(&mut mem, &mut p, 5);
+    let mut b = boot_system(&mut mem);
+    let writes = std::rc::Rc::new(std::cell::Cell::new(0));
+    let mut s = CountWrites {
+        inner: mem,
+        writes: writes.clone(),
+    };
+    let link = LoadLink::new();
+    let go = file_go(&b.ui, at(&mut s, 5));
+    let at_publish = b.ui.load_project(
+        &mut b.card,
+        &mut s,
+        &mut b.sync,
+        &mut b.settings,
+        go,
+        &link,
+        |swap, _| {
+            let _ = swap.settle(&link, || false);
+            writes.get()
+        },
+    );
+    assert_eq!(
+        at_publish,
+        Some(0),
+        "no card write between bump and publish"
+    );
+    assert!(writes.get() > 0, "SYSTEM written after the publish");
     assert_eq!(last_on_card(&mut s), Some(id(5)));
 }
 
@@ -431,6 +545,7 @@ fn replaced_ui_snaps() {
         &mut b.settings,
         go,
         &LoadLink::new(),
+        settle,
     );
     assert!(swap.is_some());
     assert_eq!(

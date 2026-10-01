@@ -335,10 +335,16 @@ impl UiState {
     }
 
     /// Replaces the project as `go` confirmed. A file that loads becomes
-    /// SYSTEM's last project; `+ NEW` and a fallback to NEW leave it. The
-    /// shell settles the `Swap` (`LOAD_ACK_TIMEOUT_MS`), then publishes.
-    #[must_use]
-    pub fn load_project<S: Store>(
+    /// SYSTEM's last project; `+ NEW` and a fallback to NEW leave it.
+    ///
+    /// On a swap, `publish` settles the `Swap` (`LOAD_ACK_TIMEOUT_MS`) and
+    /// publishes the project, and its result comes back. It runs before the
+    /// SYSTEM write: from the bump to the publish the audio holds the note
+    /// queues, so no card write may sit in that gap (ADR 0046).
+    // The card, SYSTEM and the audio each take their own: no struct
+    // groups them.
+    #[allow(clippy::too_many_arguments)]
+    pub fn load_project<S: Store, R>(
         &mut self,
         card: &mut Card,
         store: &mut S,
@@ -346,19 +352,20 @@ impl UiState {
         settings: &mut SystemSettings,
         go: Confirmed<ProjectSource>,
         link: &LoadLink,
-    ) -> Option<Swap> {
+        publish: impl FnOnce(Swap, &Project) -> R,
+    ) -> Option<R> {
         let out = project::load_project(card, store, &mut self.project, go, link);
         if let Some(n) = out.note {
             self.show_note(n);
         }
-        if out.swap.is_some() {
-            self.project_replaced();
-            // Only a file load sets it: NEW, loaded or fallen back to, has none.
-            if let Some(f) = self.project.meta().file() {
-                self.remember(card, store, sync, settings, f);
-            }
+        let swap = out.swap?;
+        let published = publish(swap, &self.project);
+        self.project_replaced();
+        // Only a file load sets it: NEW, loaded or fallen back to, has none.
+        if let Some(f) = self.project.meta().file() {
+            self.remember(card, store, sync, settings, f);
         }
-        out.swap
+        Some(published)
     }
 
     /// `f` becomes its card's last project in SYSTEM; a card SYSTEM was
