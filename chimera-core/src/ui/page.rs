@@ -80,7 +80,12 @@ impl PageId {
                 1 => PageId::DemoShapes,
                 2 => PageId::DemoMotion,
                 3 => PageId::DemoFm,
-                _ => PageId::DemoMatrix,
+                4 => PageId::DemoMatrix,
+                // Pages past MTX bind their slots (the glyph pages).
+                n => {
+                    debug_assert!(false, "Demo node {n} has no bound slots");
+                    PageId::System(nav.active_block_def().id)
+                }
             },
         })
     }

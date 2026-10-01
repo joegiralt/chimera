@@ -278,9 +278,10 @@ fn a_fixed_slot_is_dimmed_in_the_focus_band() {
         &mut want,
         "MODE",
         "LFO",
-        v,
-        false,
-        chimera_core::ui::glyph::Drawn::Arc,
+        chimera_core::ui::glyph::Gauge::Arc {
+            value: v,
+            bipolar: false,
+        },
         Look::Dimmed,
         None,
     );

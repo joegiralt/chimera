@@ -31,10 +31,13 @@ pub enum CompositeId {
     ChorusBraid,
 }
 
-/// A glyph the focus band can draw today.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Drawn {
-    Arc,
+/// What the focus band draws, with its inputs: built glyphs only.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Gauge {
+    /// `value` 0..1, from 12:00 when `bipolar`.
+    Arc { value: f32, bipolar: bool },
+    /// No gauge: the value text has the whole band.
+    None,
 }
 
 impl FocusGlyph {
@@ -49,25 +52,51 @@ impl FocusGlyph {
         FocusGlyph::Composite(CompositeId::ChorusBraid),
     ];
 
-    /// What the focus band draws for this glyph: one not built yet stands
-    /// in as ARC. Each glyph's story moves it to its own `Drawn`.
-    pub const fn drawn(self) -> Drawn {
+    /// Index in `ALL`. Exhaustive: a new variant fails to compile here
+    /// until it is listed.
+    const fn position(self) -> usize {
         match self {
+            FocusGlyph::Arc => 0,
+            FocusGlyph::None => 1,
+            FocusGlyph::Switch => 2,
+            FocusGlyph::LevelBar => 3,
+            FocusGlyph::Crossfader => 4,
+            FocusGlyph::Composite(CompositeId::ReverbCube) => 5,
+            FocusGlyph::Composite(CompositeId::DelayRings) => 6,
+            FocusGlyph::Composite(CompositeId::ChorusBraid) => 7,
+        }
+    }
+
+    /// The gauge the focus band draws for this glyph at the focused slot's
+    /// `value`. The one place a glyph not built yet stands in as ARC; each
+    /// glyph's story gives it its own `Gauge`.
+    pub const fn gauge(self, value: f32, bipolar: bool) -> Gauge {
+        match self {
+            FocusGlyph::None => Gauge::None,
             FocusGlyph::Arc
-            | FocusGlyph::None
             | FocusGlyph::Switch
             | FocusGlyph::LevelBar
             | FocusGlyph::Crossfader
-            | FocusGlyph::Composite(_) => Drawn::Arc,
+            | FocusGlyph::Composite(CompositeId::ReverbCube)
+            | FocusGlyph::Composite(CompositeId::DelayRings)
+            | FocusGlyph::Composite(CompositeId::ChorusBraid) => Gauge::Arc { value, bipolar },
         }
     }
 }
 
-impl Drawn {
+const _: () = {
+    let mut i = 0;
+    while i < FocusGlyph::ALL.len() {
+        assert!(FocusGlyph::ALL[i].position() == i);
+        i += 1;
+    }
+};
+
+impl Gauge {
     /// Moves on its own: its band redraws every frame while shown.
-    pub const fn animates(self) -> bool {
+    pub const fn animates(&self) -> bool {
         match self {
-            Drawn::Arc => false,
+            Gauge::Arc { .. } | Gauge::None => false,
         }
     }
 }

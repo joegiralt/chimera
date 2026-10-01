@@ -25,9 +25,10 @@ chorus braid (RATE, DEPTH, MIX; MODE is the strand count).
   `LevelBar`, `Crossfader`, `Composite(CompositeId)` with `ReverbCube`,
   `DelayRings`, `ChorusBraid`. Slots with no spec (legacy, fixed text)
   show ARC.
-- **What is drawn is `FocusGlyph::drawn() -> Drawn`**, the one place an
-  unbuilt glyph falls back to ARC. `Drawn` holds only built glyphs; the
-  focus band matches on it exhaustively, so nothing unbuilt can be drawn
+- **What is drawn is `FocusGlyph::gauge(..) -> Gauge`**, the one place an
+  unbuilt glyph falls back to ARC. `Gauge` holds only built glyphs, each
+  with its inputs (`Arc { value, bipolar }`, `None`); the focus band
+  matches on it exhaustively, so nothing unbuilt can be drawn
   or panic.
 - **A composite draws from its params' set (stored) values only**, never
   the modulated ones: when it moves, that is always its own animation,
@@ -35,7 +36,7 @@ chorus braid (RATE, DEPTH, MIX; MODE is the strand count).
   bars still show modulation.
 - **Animation runs on a UI clock** (`animation::UiClock`, frames, ticked
   by `UiState::update`), never the audio thread. While the focused
-  glyph animates (`Drawn::animates`), the focus band's dirty key carries
+  glyph animates (`Gauge::animates`), the focus band's dirty key carries
   the frame (`glyph::anim_key`), so the band redraws every frame.
 - **Each glyph gets one Demo page** ("Glyph: X", MIX + B6), one glyph per
   page, its slots bound to the params that drive it: several animated
@@ -52,8 +53,9 @@ chorus braid (RATE, DEPTH, MIX; MODE is the strand count).
 
 ## Consequences
 - Until a glyph's story lands, assigning it changes nothing on screen;
-  each story adds its `Drawn` variant and match arms, and moves its kind
-  in `drawn()`.
+  each story adds its `Gauge` variant and match arms, and moves its kind
+  in `gauge()`. A composite's `set` comes from one function,
+  `renderer::composite_set`, which reads the stored params only.
 - An animated glyph costs one focus-band redraw per frame while shown;
   only that band, only while focused.
 - Demo glyph pages edit the active Part's real sound (GLYPH: ARC turns
