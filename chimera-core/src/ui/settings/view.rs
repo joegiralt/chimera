@@ -24,8 +24,8 @@ pub const VISIBLE_ROWS: usize = 8;
 /// The footer takes the map's band.
 pub const FOOTER_TOP: i32 = theme::MAP_TOP;
 
-/// SETTINGS and one part per level of the tree.
-const MAX_CRUMBS: usize = 5;
+/// SETTINGS, one part per level of the tree, and NAMING's.
+const MAX_CRUMBS: usize = 6;
 const DOTS: &str = "..";
 /// Space either side of a breadcrumb's `›`.
 const SEP_GAP: i32 = 4;
@@ -421,10 +421,20 @@ pub struct Bands {
     pub first: usize,
     pub name: ProjectName,
     pub status: ProjectStatus,
-    /// A prompt is over the screen: the legend is its keys.
-    pub prompt: bool,
-    /// NAMING in the list's place, under its title.
-    pub naming: Option<(Naming, &'static str)>,
+    pub modal: Option<BandsModal>,
+}
+
+/// What is over SETTINGS' bands.
+#[derive(Clone, Copy, Debug)]
+pub enum BandsModal {
+    /// The list beneath is blank; the legend is the prompt's.
+    Prompt,
+    /// In the list's place, under `title`; `crumb` ends the breadcrumb.
+    Naming {
+        naming: Naming,
+        title: &'static str,
+        crumb: &'static str,
+    },
 }
 
 impl Bands {
@@ -434,11 +444,10 @@ impl Bands {
     }
 
     pub fn legend(&self) -> &'static str {
-        if self.prompt {
-            return legend(LegendFor::Prompt, false);
-        }
-        if self.naming.is_some() {
-            return legend(LegendFor::Naming, false);
+        match self.modal {
+            Some(BandsModal::Prompt) => return legend(LegendFor::Prompt, false),
+            Some(BandsModal::Naming { .. }) => return legend(LegendFor::Naming, false),
+            None => {}
         }
         if self.at.at_leaf().is_some() {
             return legend(LegendFor::Leaf, false);
@@ -456,21 +465,40 @@ impl Bands {
             self.active.index() as u8,
             sounding as u8,
         ];
-        settings_key(&[self.at.path(), &head])
+        settings_key(&[self.at.path(), &head, self.naming_crumb().as_bytes()])
+    }
+
+    fn naming_crumb(&self) -> &'static str {
+        match self.modal {
+            Some(BandsModal::Naming { crumb, .. }) => crumb,
+            _ => "",
+        }
+    }
+
+    /// As drawn: NAMING's crumb ends it.
+    pub fn crumbs(&self) -> Crumbs {
+        let mut c = Crumbs::of(self.at.path(), self.active);
+        if let Some(BandsModal::Naming { crumb, .. }) = self.modal {
+            c.push(Crumb::Name(crumb));
+        }
+        c
     }
 
     pub fn list_key(&self) -> u32 {
         let list = [self.at.path().len() as u8, self.at.row(), self.first as u8];
-        let (text, title, cursor) = self
-            .naming
-            .as_ref()
-            .map_or(("", "", u8::MAX), |(n, t)| (n.text(), *t, n.cursor()));
+        let (tag, text, title, cursor) = match &self.modal {
+            None => (0, "", "", 0),
+            Some(BandsModal::Prompt) => (1, "", "", 0),
+            Some(BandsModal::Naming { naming, title, .. }) => {
+                (2, naming.text(), *title, naming.cursor())
+            }
+        };
         settings_key(&[
             self.at.path(),
             &list,
             text.as_bytes(),
             title.as_bytes(),
-            &[cursor, text.len() as u8],
+            &[tag, cursor, text.len() as u8],
         ])
     }
 
@@ -484,7 +512,7 @@ impl Bands {
 
     /// The breadcrumb, and the sounding dot where the header has it.
     pub fn draw_crumbs<D: DrawTarget<Color = Rgb565>>(&self, d: &mut D, sounding: bool) {
-        draw_crumbs(d, &Crumbs::of(self.at.path(), self.active));
+        draw_crumbs(d, &self.crumbs());
         if sounding {
             draw::dot(
                 d,
@@ -497,8 +525,12 @@ impl Bands {
     }
 
     pub fn draw_list<D: DrawTarget<Color = Rgb565>>(&self, d: &mut D) {
-        if let Some((n, title)) = &self.naming {
-            return draw_naming(d, n, title);
+        match &self.modal {
+            Some(BandsModal::Prompt) => return,
+            Some(BandsModal::Naming { naming, title, .. }) => {
+                return draw_naming(d, naming, title);
+            }
+            None => {}
         }
         let rows = self.rows();
         debug_assert!(rows.len() <= MAX_ROWS);

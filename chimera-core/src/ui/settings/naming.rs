@@ -8,7 +8,7 @@ use chimera_hal::{Controls, EncoderId};
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::Rgb565;
 
-use crate::name::{Name, ProjectName};
+use crate::name::{Name, ProjectName, is_name_byte};
 use crate::storage::ProjectId;
 use crate::ui::draw;
 use crate::ui::fmt::FmtBuf;
@@ -38,10 +38,6 @@ pub enum NamingOut {
     Empty,
 }
 
-fn is_name_char(c: u8) -> bool {
-    c.is_ascii_alphanumeric() || c == b' ' || c == b'-'
-}
-
 impl Naming {
     /// `start`'s name characters, cut at `NAME_MAX`; the cursor at the end.
     pub fn new(start: &str) -> Self {
@@ -50,7 +46,7 @@ impl Naming {
             len: 0,
             cursor: 0,
         };
-        for &c in start.as_bytes().iter().filter(|&&c| is_name_char(c)) {
+        for &c in start.as_bytes().iter().filter(|&&c| is_name_byte(c)) {
             if n.len as usize == NAME_MAX {
                 break;
             }
@@ -218,10 +214,22 @@ pub fn draw_naming<D: DrawTarget<Color = Rgb565>>(d: &mut D, n: &Naming, title: 
         Some(c) if c.is_ascii_lowercase() => "abc",
         _ => "ABC",
     };
+    // What B and C turn: the character under the cursor, if it is theirs.
+    let mut ch = [0u8; 4];
+    let letter = match n.at() {
+        Some(c) if c.is_ascii_alphabetic() => &*(c as char).encode_utf8(&mut ch),
+        _ => "·",
+    };
+    let mut dg = [0u8; 4];
+    let digit = match n.at() {
+        Some(b' ') => "SPACE",
+        Some(c) if OTHERS.contains(&c) => &*(c as char).encode_utf8(&mut dg),
+        _ => "·",
+    };
     let cells: [(&str, &str, bool); 6] = [
         ("CURSOR", pos.as_str(), true),
-        ("LETTER", "A-Z", true),
-        ("DIGIT", "0-9 -", true),
+        ("LETTER", letter, true),
+        ("DIGIT", digit, true),
         ("CASE", case, true),
         ("DELETE", "< >", true),
         ("TAGS", "LATER", false),
@@ -243,13 +251,14 @@ pub fn draw_naming<D: DrawTarget<Color = Rgb565>>(d: &mut D, n: &Naming, title: 
             lc,
             theme::LABEL_TRACKING,
         );
-        draw::text(
+        draw::text_tracked(
             d,
             &theme::FONT_VALUE,
             value,
             x,
             y + theme::CELL_VALUE_DY,
             vc,
+            0,
         );
     }
 }

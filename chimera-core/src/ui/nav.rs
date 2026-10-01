@@ -80,6 +80,16 @@ pub enum Column {
     Command(u8),
 }
 
+/// A SETTINGS list: only `SettingsAt::list` makes one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ListAt(SettingsAt);
+
+impl ListAt {
+    pub fn location(self) -> Location {
+        Location(Loc::Settings(self.0))
+    }
+}
+
 /// A place in SETTINGS: a path, the bar on `row`, and what it shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SettingsAt {
@@ -112,6 +122,11 @@ impl SettingsAt {
             At::Manage(c) => Some(c),
             _ => None,
         }
+    }
+
+    /// This place as a list: NAMING opens only on one.
+    pub fn list(self) -> Option<ListAt> {
+        (self.at == At::List && !matches!(self.kind(), Some(Kind::Leaf(_)))).then_some(ListAt(self))
     }
 
     pub fn at_leaf(&self) -> Option<&'static ChainDef2> {

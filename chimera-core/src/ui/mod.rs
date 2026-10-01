@@ -60,13 +60,13 @@ use block_def::slot_addr;
 use components::Head;
 use hold::{HoldGates, Press};
 use mod_grid::MatrixState;
-use nav::{Browse, Location, NavCtx, NavKey, Recall, Step, chain_def_for};
+use nav::{Browse, ListAt, Location, NavCtx, NavKey, Recall, Step, chain_def_for};
 use page::{PageKey, PageLayout};
 use perf::PerfStats;
 use renderer::Renderer;
-use settings::naming::{Naming, NamingOut};
-use settings::prompt::{Answer, Choice, Pick};
-use settings::{Ask, NamingFor};
+use settings::naming::Naming;
+use settings::prompt::{self, Answer};
+use settings::{Answered, Ask, Done, Modal, ModalStep, NamingFor};
 use theme_settings::ThemeSettings;
 use view::{SlotCtx, View};
 
@@ -191,13 +191,6 @@ pub struct UiState {
     clock: animation::UiClock,
     /// A prompt or NAMING: while open it takes every key but B*n*.
     modal: Option<Modal>,
-}
-
-/// What takes the keys over the screen: one at a time.
-#[derive(Debug)]
-enum Modal {
-    Prompt(Ask, Choice),
-    Naming(NamingFor, Naming),
 }
 
 crate::in_place::field_list!(UiState => UiState {
@@ -800,7 +793,38 @@ impl UiState {
 
     /// Whether a prompt is open.
     pub fn prompt_open(&self) -> bool {
-        matches!(self.modal, Some(Modal::Prompt(..)))
+        self.prompt().is_some()
+    }
+
+    fn prompt(&self) -> Option<&Ask> {
+        match &self.modal {
+            Some(Modal::Prompt(a)) => Some(a),
+            _ => None,
+        }
+    }
+
+    /// SETTINGS' breadcrumb as drawn.
+    pub fn crumbs(&self) -> Option<settings::view::Crumbs> {
+        self.bands().map(|b| b.crumbs())
+    }
+
+    fn bands(&self) -> Option<settings::view::Bands> {
+        use settings::view::BandsModal;
+        self.loc.settings().map(|at| settings::view::Bands {
+            at,
+            active: self.active_part,
+            first: self.list_first as usize,
+            name: self.project.meta().name(),
+            status: self.project_status(),
+            modal: self.modal.as_ref().map(|m| match m {
+                Modal::Prompt(_) => BandsModal::Prompt,
+                Modal::Naming(f, n) => BandsModal::Naming {
+                    naming: *n,
+                    title: f.title(),
+                    crumb: f.crumb(),
+                },
+            }),
+        })
     }
 
     /// NAMING, if it is open.
@@ -816,31 +840,28 @@ impl UiState {
         expect(dead_code, reason = "Tasks 11–13 open prompts")
     )]
     fn ask(&mut self, a: Ask) {
-        let c = Choice::new(a.wording().count());
-        self.open(Modal::Prompt(a, c));
+        self.open(Modal::Prompt(a));
     }
 
-    /// NAMING opens on SETTINGS lists only: it takes the list's band.
+    /// NAMING takes a list's band, so it opens on one: `at`.
     #[cfg_attr(
         not(any(test, feature = "test-support")),
         expect(dead_code, reason = "Tasks 11–13 open NAMING")
     )]
-    fn name(&mut self, f: NamingFor, start: &str) {
-        debug_assert!(self.loc.settings().is_some_and(|s| s.at_leaf().is_none()));
+    fn name(&mut self, at: ListAt, f: NamingFor, start: &str) {
+        self.go(at.location());
         self.open(Modal::Naming(f, Naming::new(start)));
     }
 
     fn open(&mut self, m: Modal) {
         self.modal = Some(m);
-        self.browser_dirty = true;
+        self.browser_dirty |= self.loc.browse().is_some();
     }
 
-    /// Drops what's open, a pending replace with it: the screen beneath
-    /// redraws whole.
-    fn close_modal(&mut self) -> Option<Modal> {
+    /// The screen beneath redraws whole once a modal closes.
+    fn closed(&mut self) {
         self.region_set.prev_screen = None;
-        self.browser_dirty = true;
-        self.modal.take()
+        self.browser_dirty |= self.loc.browse().is_some();
     }
 
     /// A replace from `src` that asks opens its prompt; whether it did.
@@ -850,63 +871,68 @@ impl UiState {
         match ReplaceGuard::check(&self.project, self.template, src) {
             Ok(_) => false,
             Err(n) => {
-                self.ask(Ask::ReplacePart(n.into_pending()));
+                self.ask(Ask::replace_part(n.into_pending()));
                 true
             }
         }
     }
 
-    /// NAMING for the loaded project (`None`) or Part `part`'s Sound.
+    /// NAMING on `at` for the loaded project (`None`) or Part `part`'s Sound.
     #[cfg(any(test, feature = "test-support"))]
     #[doc(hidden)]
-    pub fn rename_for_test(&mut self, part: Option<PartId>, start: &str) {
+    pub fn rename_for_test(&mut self, at: ListAt, part: Option<PartId>, start: &str) {
         let f = part.map_or(NamingFor::RenameLoaded, NamingFor::RenamePart);
-        self.name(f, start);
+        self.name(at, f, start);
     }
 
     /// A frame for the prompt or NAMING.
-    fn modal_input(&mut self, c: &impl Controls, p: &hold::Presses) {
-        let out = match &mut self.modal {
-            Some(Modal::Prompt(_, choice)) => {
-                let was = choice.pick();
-                let a = choice.input(c, p);
-                self.browser_dirty |= choice.pick() != was;
-                a.map(Ok)
-            }
-            Some(Modal::Naming(_, n)) => n.input(c, p).map(Err),
-            None => None,
+    fn modal_input(&mut self, m: Modal, c: &impl Controls, p: &hold::Presses) {
+        let key = |m: &Modal| match m {
+            Modal::Prompt(a) => Some(a.key()),
+            Modal::Naming(..) => None,
         };
-        match out {
-            Some(Err(NamingOut::Empty)) => self.toast.show(busy::Toast {
-                text: Line::new("NAME IS EMPTY"),
-                ms: busy::Toast::ERROR_MS,
-            }),
-            Some(out) => match (self.close_modal(), out) {
-                (Some(Modal::Prompt(ask, _)), Ok(a)) => self.answer(ask, a),
-                (Some(Modal::Naming(f, _)), Err(NamingOut::Save(name))) => match f {
-                    NamingFor::RenameLoaded => self.project.set_name(name),
-                    NamingFor::RenamePart(part) => self.project.edit_part(part).sound.name = name,
-                },
-                _ => {}
-            },
-            None => {}
+        let was = key(&m);
+        match m.input(c, p) {
+            ModalStep::Open(m) => {
+                self.browser_dirty |= self.loc.browse().is_some() && key(&m) != was;
+                self.modal = Some(m);
+            }
+            ModalStep::Empty(m) => {
+                self.modal = Some(m);
+                self.toast.show(busy::Toast {
+                    text: Line::new("NAME IS EMPTY"),
+                    ms: busy::Toast::ERROR_MS,
+                });
+            }
+            ModalStep::Done(d) => {
+                self.closed();
+                self.done(d);
+            }
         }
     }
 
-    /// CANCEL, or a cancelling pick, drops the pending replace.
-    fn answer(&mut self, ask: Ask, a: Answer) {
-        match (ask, a) {
-            (Ask::ReplacePart(p), Answer::Pick(Pick::Second)) => {
+    /// A cancel drops what the prompt held.
+    fn done(&mut self, d: Done) {
+        use prompt::ReplaceAnswer as R;
+        match d {
+            Done::Answered(Answered::ReplacePart(p, Answer::Pick(R::Replace))) => {
                 let was = self.active_engine();
                 let _ = self.project.replace_part(p.anyway(&self.project));
                 self.project_replaced(was);
             }
-            // SAVE PART FIRST: Task 13 (Pre-flight 15).
-            (Ask::ReplacePart(_), Answer::Pick(Pick::First)) => self.toast.show(busy::Toast {
-                text: Line::new(NOT_YET),
-                ms: busy::Toast::ERROR_MS,
-            }),
-            _ => {}
+            // Task 13 (Pre-flight 15).
+            Done::Answered(Answered::ReplacePart(_, Answer::Pick(R::SavePartFirst))) => {
+                self.toast.show(busy::Toast {
+                    text: Line::new(NOT_YET),
+                    ms: busy::Toast::ERROR_MS,
+                })
+            }
+            Done::Answered(Answered::ReplacePart(_, Answer::Pick(R::Cancel) | Answer::Cancel)) => {}
+            Done::Named(NamingFor::RenameLoaded, name) => self.project.set_name(name),
+            Done::Named(NamingFor::RenamePart(part), name) => {
+                self.project.edit_part(part).sound.name = name
+            }
+            Done::Cancelled => {}
         }
     }
 
@@ -922,12 +948,13 @@ impl UiState {
         self.refresh_status();
 
         let presses = self.gates.step(controls);
-        if self.modal.is_some() {
+        if let Some(m) = self.modal.take() {
             if !part_key(controls) {
-                self.modal_input(controls, &presses);
+                self.modal_input(m, controls, &presses);
                 return;
             }
-            self.close_modal();
+            // Dropped: a pending replace with it.
+            self.closed();
         }
         let keys = self.nav_keys(controls, presses);
         for k in keys.into_iter().flatten() {
@@ -1217,9 +1244,8 @@ impl UiState {
                 Color = embedded_graphics::pixelcolor::Rgb565,
             >,
     {
-        if let Some(Modal::Prompt(a, c)) = &self.modal {
-            a.wording()
-                .with_view(|v| settings::prompt::draw_prompt(d, v, c.pick()));
+        if let Some(a) = self.prompt() {
+            a.with_view(|v| prompt::draw_prompt(d, v));
         }
     }
 
@@ -1242,22 +1268,8 @@ impl UiState {
             head,
             map: self.loc.page(&cx).filter(|_| settings.is_none()),
             layout: self.layout(),
-            settings: settings.map(|at| settings::view::Bands {
-                at,
-                active: self.active_part,
-                first: self.list_first as usize,
-                name: self.project.meta().name(),
-                status: self.project_status(),
-                prompt: self.prompt_open(),
-                naming: match &self.modal {
-                    Some(Modal::Naming(f, n)) => Some((*n, f.title())),
-                    _ => None,
-                },
-            }),
-            prompt: match &self.modal {
-                Some(Modal::Prompt(a, c)) => Some((a.wording(), c.pick())),
-                _ => None,
-            },
+            settings: self.bands(),
+            prompt: self.prompt(),
             def,
             perf,
             matrix: &self.matrix_state,
@@ -1280,11 +1292,7 @@ impl UiState {
     fn layout(&self) -> region::Layout {
         let def = self.page_def();
         match self.loc.settings() {
-            Some(s) => region::Layout::Settings(
-                s.at_leaf()
-                    .filter(|_| self.naming().is_none())
-                    .map(|_| def.layout),
-            ),
+            Some(s) => region::Layout::Settings(s.at_leaf().map(|_| def.layout)),
             None => region::Layout::Page(def.layout),
         }
     }
@@ -1397,28 +1405,7 @@ impl UiState {
                 RegionData::Settings { key }
             }
             RegionKind::Prompt => {
-                let key = f.prompt.map_or(0, |(w, pick)| {
-                    w.with_view(|v| {
-                        let o = |i| {
-                            v.options
-                                .as_slice()
-                                .get(i)
-                                .map_or(&b""[..], |s: &&str| s.as_bytes())
-                        };
-                        region::settings_key(&[
-                            v.question.as_bytes(),
-                            &[0],
-                            v.reason.as_bytes(),
-                            &[0],
-                            o(0),
-                            &[0],
-                            o(1),
-                            &[0],
-                            o(2),
-                            &[pick.index() as u8],
-                        ])
-                    })
-                });
+                let key = f.prompt.map_or(0, Ask::key);
                 RegionData::Overlay { key }
             }
         }
@@ -1495,9 +1482,13 @@ impl UiState {
 
         // Rebuild regions if layout changed
         let screen = (layout, self.prompt_open());
-        if self.region_set.prev_screen != Some(screen) {
+        let fresh = self.region_set.prev_screen != Some(screen);
+        if fresh {
             self.region_set.set_screen(layout, screen.1);
         }
+        // Beneath a prompt the screen is frozen: drawn once, then only the
+        // panel redraws, when its key moves.
+        let frozen = screen.1 && !fresh;
 
         let count = self.region_set.count as usize;
         let mut data = [region::RegionData::sentinel_header(); region::MAX_REGIONS];
@@ -1505,14 +1496,14 @@ impl UiState {
             let f = self.frame(perf, audio, scope);
             // The focus band's gauge, resolved once for the frame.
             let shown = self.renderer.shown_gauge(&f);
-            // A band beneath the prompt redrew over it: it redraws too.
-            let (top, bottom) = (region::PROMPT.1, region::PROMPT.2);
-            let under = |(a, b): (u16, u16)| a < bottom && b > top;
-            let mut beneath = false;
             for i in 0..count {
                 let r = self.region_set.regions[i];
-                data[i] = self.region_data(r.kind, &f, shown);
                 let prompt = r.kind == region::RegionKind::Prompt;
+                if frozen && !prompt {
+                    data[i] = r.prev_data;
+                    continue;
+                }
+                data[i] = self.region_data(r.kind, &f, shown);
                 // Only an animated glyph moved: redraw its box alone.
                 if r.kind == region::RegionKind::Focus
                     && data[i] != r.prev_data
@@ -1523,8 +1514,7 @@ impl UiState {
                 {
                     flush_list[flush_count] = rows;
                     flush_count += 1;
-                    beneath |= under(rows);
-                } else if data[i] != r.prev_data || (prompt && beneath) {
+                } else if data[i] != r.prev_data {
                     // The panel is opaque over its own last frame.
                     if !prompt {
                         renderer::Renderer::clear_region_fb(
@@ -1536,7 +1526,6 @@ impl UiState {
                     self.renderer.draw_region_with_def(display, r.kind, &f);
                     flush_list[flush_count] = (r.y_start, r.y_end);
                     flush_count += 1;
-                    beneath |= under((r.y_start, r.y_end));
                 }
             }
         }

@@ -25,7 +25,8 @@ use crate::ui::nav::PageAt;
 use crate::ui::page::PageLayout;
 use crate::ui::perf::PerfStats;
 use crate::ui::region::{self, Layout, RegionKind};
-use crate::ui::settings::prompt::{Pick, Wording, draw_prompt};
+use crate::ui::settings::Ask;
+use crate::ui::settings::prompt::draw_prompt;
 use crate::ui::settings::view::Bands;
 use crate::ui::theme;
 use crate::ui::view::{self, EnvKind, SlotCtx, View};
@@ -40,8 +41,8 @@ pub struct Frame<'a> {
     pub layout: Layout,
     /// SETTINGS' breadcrumb, list and footer.
     pub settings: Option<Bands>,
-    /// A prompt over the screen, and its pick.
-    pub prompt: Option<(Wording, Pick)>,
+    /// A prompt over the screen.
+    pub prompt: Option<&'a Ask>,
     pub def: &'static BlockDef,
     pub perf: &'a PerfStats,
     pub matrix: &'a MatrixState,
@@ -392,8 +393,8 @@ impl Renderer {
                 }
             }
             RegionKind::Prompt => {
-                if let Some((w, pick)) = f.prompt {
-                    w.with_view(|v| draw_prompt(display, v, pick))
+                if let Some(a) = f.prompt {
+                    a.with_view(|v| draw_prompt(display, v))
                 }
             }
         }

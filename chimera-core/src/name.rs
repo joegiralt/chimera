@@ -71,6 +71,11 @@ impl<const N: usize> Name<N> {
     }
 }
 
+/// A-Z a-z 0-9, space or '-'.
+pub const fn is_name_byte(c: u8) -> bool {
+    c.is_ascii_alphanumeric() || c == b' ' || c == b'-'
+}
+
 const fn check(b: &[u8], max: usize) -> Result<(), NameError> {
     if b.is_empty() {
         return Err(NameError::Empty);
@@ -81,7 +86,7 @@ const fn check(b: &[u8], max: usize) -> Result<(), NameError> {
     let mut i = 0;
     while i < b.len() {
         let c = b[i];
-        if !(c.is_ascii_alphanumeric() || c == b' ' || c == b'-') {
+        if !is_name_byte(c) {
             return Err(NameError::BadChar(c));
         }
         i += 1;
