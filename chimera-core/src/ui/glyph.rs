@@ -45,6 +45,9 @@ pub enum Gauge {
     /// A vertical slider, `value` 0..1 rising from the bottom, beside
     /// `ticks` dots: one per step for a few steps, else 8.
     LevelBar { value: f32, ticks: u8 },
+    /// A horizontal crossfader, `value` 0 left .. 1 right, from the set
+    /// value, never the modulated one.
+    Crossfader { value: f32 },
 }
 
 impl FocusGlyph {
@@ -86,8 +89,8 @@ impl FocusGlyph {
                 value,
                 ticks: level_ticks(fmt),
             },
+            FocusGlyph::Crossfader => Gauge::Crossfader { value },
             FocusGlyph::Arc
-            | FocusGlyph::Crossfader
             | FocusGlyph::Composite(CompositeId::ReverbCube)
             | FocusGlyph::Composite(CompositeId::DelayRings)
             | FocusGlyph::Composite(CompositeId::ChorusBraid) => Gauge::Arc { value, bipolar },
@@ -107,9 +110,11 @@ impl Gauge {
     /// Moves on its own: its band redraws every frame while shown.
     pub const fn animates(&self) -> bool {
         match self {
-            Gauge::Arc { .. } | Gauge::None | Gauge::Switch { .. } | Gauge::LevelBar { .. } => {
-                false
-            }
+            Gauge::Arc { .. }
+            | Gauge::None
+            | Gauge::Switch { .. }
+            | Gauge::LevelBar { .. }
+            | Gauge::Crossfader { .. } => false,
         }
     }
 }

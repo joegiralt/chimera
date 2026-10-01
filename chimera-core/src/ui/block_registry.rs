@@ -820,7 +820,25 @@ pub static DEMO_GLYPH_LEVEL: BlockDef = BlockDef {
     ],
 };
 
-static DEMO_BLOCKS: [ChainBlock; 9] = [
+/// GLYPH: CROSSFADER. a: ALG A to ALG B (MORPH); b: dry to wet (DRV's
+/// MIX). The cap follows the set value, never modulation.
+pub static DEMO_GLYPH_XF: BlockDef = BlockDef {
+    id: 74,
+    name: "Glyph: Crossfader",
+    short: "XF",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::param(BlockRef::Algo, AlgoParams::MORPH).with_glyph(FocusGlyph::Crossfader),
+        ParamSlot::param(BlockRef::Drive, DriveParams::MIX).with_glyph(FocusGlyph::Crossfader),
+        EMPTY,
+        EMPTY,
+        EMPTY,
+        EMPTY,
+    ],
+};
+
+static DEMO_BLOCKS: [ChainBlock; 10] = [
     ChainBlock::page(&DEMO_WAVES),
     ChainBlock::page(&DEMO_SHAPES),
     ChainBlock::page(&DEMO_MOTION),
@@ -830,6 +848,7 @@ static DEMO_BLOCKS: [ChainBlock; 9] = [
     ChainBlock::page(&DEMO_GLYPH_NONE),
     ChainBlock::page(&DEMO_GLYPH_SWITCH),
     ChainBlock::page(&DEMO_GLYPH_LEVEL),
+    ChainBlock::page(&DEMO_GLYPH_XF),
 ];
 
 pub static DEMO_CHAIN: ChainDef2 = ChainDef2 {
