@@ -60,7 +60,7 @@ pub fn encode_project(p: &Project) -> Vec<u8> {
 pub fn project_pass(target: &mut Project, bytes: &[u8], apply: bool) -> Result<(), FileError> {
     let mut f = Framer::new(bytes.len() as u32)?;
     if apply {
-        let mut d = ProjectDecoder::new(target);
+        let mut d = ProjectDecoder::new_for_test(target);
         f.push(bytes, &mut |e| d.apply(e))?;
         f.finish()?;
         DecodeInPlace::finish(&mut d)

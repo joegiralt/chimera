@@ -453,7 +453,7 @@ fn load_project_in_place(slot: &Slot) -> Result<Box<Project>, InPlaceError> {
             s,
             r,
             project_file(project_id()),
-            &mut ProjectDecoder::new(&mut q),
+            &mut ProjectDecoder::new_for_test(&mut q),
         )
     })?;
     Ok(q)
