@@ -14,7 +14,7 @@ use crate::modulation::{MAX_MOD_SOURCES, ModSource};
 use crate::params::{DriveParams, EnvParams, FilterParams, FolderParams, OutParams, PitchParams};
 use crate::part::PartParams;
 use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2, FxFlow, FxNode, ParamSlot, VizType};
-use crate::ui::glyph::{CompositeId, FocusGlyph};
+use crate::ui::glyph::FocusGlyph;
 use crate::ui::page::{PageLayout, ValFmt};
 use crate::ui::theme_settings::ThemeSettings;
 
@@ -856,9 +856,9 @@ pub static DEMO_GLYPH_BRAID: BlockDef = BlockDef {
     ],
 };
 
-/// GLYPH: RINGS, the delay rings: a TIME, b FDBK, c TONE, d MIX, e
-/// MECHANICS, f SAT, each emphasised when focused (REV, read too, has no
-/// slot here).
+/// GLYPH: RINGS, the delay rings (the delay specs carry them): a TIME,
+/// b FDBK, c TONE, d MIX, e MECHANICS, f SAT (REV, read too, has no slot
+/// here).
 pub static DEMO_GLYPH_RINGS: BlockDef = BlockDef {
     id: 76,
     name: "Glyph: Rings",
@@ -866,15 +866,14 @@ pub static DEMO_GLYPH_RINGS: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
-        ParamSlot::param(BlockRef::Delay, DelayParams::TIME_MS).with_glyph(RINGS),
-        ParamSlot::param(BlockRef::Delay, DelayParams::FEEDBACK).with_glyph(RINGS),
-        ParamSlot::param(BlockRef::Delay, DelayParams::TONE).with_glyph(RINGS),
-        ParamSlot::param(BlockRef::Delay, DelayParams::MIX).with_glyph(RINGS),
-        ParamSlot::param(BlockRef::Delay, DelayParams::WOW_FLUTTER).with_glyph(RINGS),
-        ParamSlot::param(BlockRef::Delay, DelayParams::SATURATION).with_glyph(RINGS),
+        ParamSlot::param(BlockRef::Delay, DelayParams::TIME_MS),
+        ParamSlot::param(BlockRef::Delay, DelayParams::FEEDBACK),
+        ParamSlot::param(BlockRef::Delay, DelayParams::TONE),
+        ParamSlot::param(BlockRef::Delay, DelayParams::MIX),
+        ParamSlot::param(BlockRef::Delay, DelayParams::WOW_FLUTTER),
+        ParamSlot::param(BlockRef::Delay, DelayParams::SATURATION),
     ],
 };
-const RINGS: FocusGlyph = FocusGlyph::Composite(CompositeId::DelayRings);
 
 static DEMO_BLOCKS: [ChainBlock; 12] = [
     ChainBlock::page(&DEMO_WAVES),

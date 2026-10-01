@@ -89,6 +89,9 @@ chorus braid (RATE, DEPTH, MIX; MODE is the strand count).
   SAT thickens the newest; REV, the send on to the reverb, dots the edge
   where rings leave. Same rules as the braid: stored values, the UI
   clock, only its box (60 by 56) redrawn each frame.
+- **The delay shows the rings** (owner-approved 2026-10-01) on all
+  seven params, DELAY and CHAR alike: TIME, FDBK, TONE, MIX, REV,
+  MECHANICS, SAT. The box-clear and status tests cover them.
 - **Each glyph gets one Demo page** ("Glyph: X", MIX + B6), one glyph per
   page, its slots bound to the params that drive it: several animated
   panels at once can't be judged.
