@@ -144,9 +144,8 @@ changes only the slope.
 | CHORUS | RATE | Steps, accepted: the LFOs' increments only; their phases run on, and the lines are at most 7 ms. Worst 1.01×. |
 | CHORUS | DEPTH, MIX | Ease (ADR 0061). |
 | DELAY | TIME | Crossfades two read heads over `TIME_FADE` (960 samples); never a gliding head (ADR 0061). |
-| DELAY | FDBK, SAT | Ease (ADR 0061): each changes what the loop writes, heard a TIME later. |
+| DELAY | FDBK, SAT, TONE | Ease (ADR 0061): each changes what the loop writes, heard a TIME later. TONE stepped measured 3.91× in second difference, against the 4× bound; eased, 1.07×. |
 | DELAY | MECHANICS | Eases (ADR 0061): the wow and flutter depths ramp; the base read head doesn't move. |
-| DELAY | TONE | Steps, accepted: a coefficient, so the loop's filter keeps its value and only its slope turns, heard a TIME later. Worst 3.91× in second difference (TONE 0 → 1, two partials), against the 4× bound. |
 | DELAY | MIX, REV | Ease (ADR 0061). |
 | REVERB | GRIT, TIME, DAMP | Smoothed once a block (20, 50 and 20 ms), the gains and the damping coefficient ramped across it. |
 | REVERB | SIZE | Crossfades between size steps. |

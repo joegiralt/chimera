@@ -29,8 +29,8 @@ The parameter sweep found 80 jumps that click:
     block's value to this one's across the block.
 - **The bus:** each Part's two pan×LEVEL gains and three sends, each
   effect's MIX, chorus DEPTH, each line's share of chorus MODE (so a
-  MODE change crossfades the lines), and the delay's FDBK, SAT and
-  MECHANICS take `Ease`. FDBK and SAT change what the delay's loop
+  MODE change crossfades the lines), and the delay's FDBK, SAT, TONE and
+  MECHANICS take `Ease`. FDBK, SAT and TONE change what the delay's loop
   writes, so a step is heard a TIME later; MECHANICS scales the read
   head's wow and flutter, never its base. The compressor's ATTACK and
   RELEASE ease by its own per-block one-pole, as THRESH (a step to a fast
@@ -110,14 +110,14 @@ The parameter sweep found 80 jumps that click:
   | `DRIVE_RAMP_COST` | — | 23 | under a route: the ramp path's 36 instructions a sample, against the steady 22 |
   | `FOLD_COST` | 43 | 45 | the steady stage and the fold's offset, 1 instruction |
   | `FOLD_RAMP_COST` | — | 29 | under a route: the ramp path's 42, against the steady 24 |
-  | `FxBus::COST` | 1,160 (1,470 with the tape) | 1,180 (1,490) | the eases' one-poles a block: 6.5; the delay's FDBK, SAT and MECHANICS and the compressor's ATTACK and RELEASE one-poles add about 0.4, inside the rounding |
+  | `FxBus::COST` | 1,160 (1,470 with the tape) | 1,180 (1,490) | the eases' one-poles a block: 6.5; the delay's FDBK, SAT, TONE and MECHANICS and the compressor's ATTACK and RELEASE one-poles add about 0.5, inside the rounding |
 
 - **Not billed (brief, UI-driven), per sample while it moves:**
   - A delay TIME crossfade: 43 instructions, 50 with a MIX ramp.
-  - The delay's ramp path, taken while MIX, FDBK, SAT or MECHANICS
-    moves: each ramps by a multiply-add a sample (SAT's gain and its
-    inverse two), and MECHANICS scales the transport's offsets, two
-    multiplies: about 8 instructions over the MIX ramp alone.
+  - The delay's ramp path, taken while MIX, FDBK, SAT, TONE or
+    MECHANICS moves: each ramps by a multiply-add a sample (SAT's gain and
+    its inverse two), and MECHANICS scales the transport's offsets, two
+    multiplies: about 9 instructions over the MIX ramp alone.
   - The compressor's ATTACK or RELEASE: its two coefficients' `exp2`s
     again each block, about 1 instruction a sample.
   - A chorus ease: 21.
