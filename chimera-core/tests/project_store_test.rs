@@ -452,11 +452,9 @@ fn a_long_line_is_cut() {
     };
     let line = note.line();
     assert!(line.as_str().len() <= LINE_LEN);
-    // The message gives way; the name survives.
-    assert_eq!(
-        line.as_str(),
-        "CARD FAT NOT MIRRORED: FORMAT: SIXTEEN CHARS 16"
-    );
+    // The message gives way at its last ": ", never mid-instruction; the
+    // name survives.
+    assert_eq!(line.as_str(), "CARD FAT NOT MIRRORED: SIXTEEN CHARS 16");
     assert_eq!(Line::new(&"X".repeat(100)).as_str().len(), LINE_LEN);
 }
 
@@ -551,7 +549,9 @@ fn delete_after_a_swap_is_refused() {
         delete_project(&mut card, &mut s, &b, on_b),
         Err(ProjectNote::IsLoaded)
     );
-    assert_eq!(delete_project(&mut card, &mut s, &loaded, on_b), Ok(()));
+    // A's P0000001 loaded doesn't guard B's: same id, other card.
+    assert_eq!(on_a.id, on_b.id);
+    assert_eq!(delete_project(&mut card, &mut s, &a, on_b), Ok(()));
 }
 
 /// I1: the card goes (or changes) during pass 2: a store error, not a
