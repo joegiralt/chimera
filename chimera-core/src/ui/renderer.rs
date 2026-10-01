@@ -17,7 +17,7 @@ use crate::ui::chain::{ChainId, ChainNav};
 use crate::ui::components;
 use crate::ui::dungeon_map;
 use crate::ui::fmt::{self, FmtBuf};
-use crate::ui::glyph::Gauge;
+use crate::ui::glyph::{FocusGlyph, Gauge};
 use crate::ui::mod_grid::MatrixState;
 use crate::ui::page::PageLayout;
 use crate::ui::perf::PerfStats;
@@ -59,6 +59,9 @@ pub struct Frame<'a> {
 pub struct Renderer {
     /// Animated display values for the 6 encoders (normalized 0..1).
     pub anim: [AnimatedValue; 6],
+    /// The same slots' set values, eased, with no modulation: what a glyph
+    /// that ignores modulation (CROSSFADER) draws.
+    pub set: [AnimatedValue; 6],
     /// Animated scroll offset for dungeon map sub-page branches (in pixels).
     pub branch_scroll: AnimatedValue,
 }
@@ -73,6 +76,7 @@ impl Renderer {
     pub fn new() -> Self {
         Self {
             anim: [AnimatedValue::new(0.5); 6],
+            set: [AnimatedValue::new(0.5); 6],
             branch_scroll: AnimatedValue::new(0.0).with_speed(0.25),
         }
     }
@@ -80,6 +84,9 @@ impl Renderer {
     /// Jump the animated values (page change: nothing to lerp from).
     pub fn snap_to_current(&mut self, values: [f32; 6]) {
         for (a, &v) in self.anim.iter_mut().zip(values.iter()) {
+            a.snap(v);
+        }
+        for (a, &v) in self.set.iter_mut().zip(values.iter()) {
             a.snap(v);
         }
     }
@@ -387,7 +394,12 @@ impl Renderer {
     /// The focused slot's gauge, by its glyph.
     pub fn gauge(&self, f: &Frame) -> Gauge {
         let fmt = view::view(f.def, f.focus, &f.ctx).fmt();
-        view::glyph(f.def, f.focus, &f.ctx).gauge(self.anim[f.focus].current(), fmt)
+        let glyph = view::glyph(f.def, f.focus, &f.ctx);
+        let value = match glyph {
+            FocusGlyph::Crossfader => self.set[f.focus].current(),
+            _ => self.anim[f.focus].current(),
+        };
+        glyph.gauge(value, fmt)
     }
 
     /// The six cells, first row's labels at `top`.

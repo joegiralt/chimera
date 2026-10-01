@@ -57,6 +57,8 @@ pub enum RegionData {
         status: Option<PrimeStatus>,
         /// `glyph::anim_key`: the clock while the glyph animates.
         anim: u32,
+        /// The slot's set value (quantized): a glyph may draw it, not `value`.
+        set: u16,
     },
     /// The mod matrix readout: the selected route, its animated amount and
     /// the route count.
@@ -146,7 +148,16 @@ impl RegionData {
             look,
             status,
             anim: 0,
+            set: 0,
         }
+    }
+
+    /// A focus band keyed on its slot's set value too.
+    pub fn with_set(mut self, set: u16) -> Self {
+        if let Self::Focus { set: s, .. } = &mut self {
+            *s = set;
+        }
+        self
     }
 
     /// A focus band keyed on its glyph's `anim` too.
@@ -224,6 +235,7 @@ impl RegionData {
             look: Look::Live,
             status: None,
             anim: u32::MAX,
+            set: SENTINEL,
         }
     }
 

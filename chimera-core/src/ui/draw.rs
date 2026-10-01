@@ -179,6 +179,22 @@ where
     .draw_styled(&PrimitiveStyle::with_fill(color), d);
 }
 
+/// Filled rounded rectangle with corner `radius`; nothing for a
+/// non-positive `w` or `h`.
+pub fn round_rect<D>(d: &mut D, x: i32, y: i32, w: i32, h: i32, radius: u32, color: Rgb565)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    if w <= 0 || h <= 0 {
+        return;
+    }
+    let _ = RoundedRectangle::new(
+        Rectangle::new(Point::new(x, y), Size::new(w as u32, h as u32)),
+        CornerRadii::new(Size::new(radius, radius)),
+    )
+    .draw_styled(&PrimitiveStyle::with_fill(color), d);
+}
+
 /// Rounded-rectangle outline (the matrix cursor).
 pub fn round_outline<D>(d: &mut D, x: i32, y: i32, w: i32, h: i32, radius: u32, color: Rgb565)
 where

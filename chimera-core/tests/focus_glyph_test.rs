@@ -250,6 +250,7 @@ fn unbuilt_glyphs_draw_as_arc() {
                 value: 0.25,
                 ticks: 8,
             },
+            FocusGlyph::Crossfader => Gauge::Crossfader { value: 0.25 },
             _ => Gauge::Arc {
                 value: 0.25,
                 bipolar: true,
@@ -605,4 +606,79 @@ fn glyph_level_page_drives_a_level_and_a_stepped_value() {
         "handle"
     );
     assert_eq!(b.at(x, tick_y(5, 8)), theme::FAINT, "track above");
+}
+
+/// The crossfader's cap centre at `v` (0 left, 1 right).
+fn cap_x(v: f32) -> i32 {
+    let x0 = theme::XF_CX - theme::XF_W / 2 + theme::XF_CAP_W / 2;
+    x0 + (v * (theme::XF_W - theme::XF_CAP_W) as f32).round() as i32
+}
+
+fn to_xf(ui: &mut UiState) {
+    to_demo(ui, &reg::DEMO_GLYPH_XF);
+}
+
+#[test]
+fn glyph_crossfader_page_slides_left_centre_right() {
+    use chimera_core::dsp::algo::params::AlgoParams;
+    use chimera_core::params::DriveParams;
+    let mut ui = UiState::new();
+    to_xf(&mut ui);
+    // CROSSFADER is the page's: the specs keep their own glyphs.
+    let morph = ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH);
+    let mix = ParamAddr::new(BlockRef::Drive, DriveParams::MIX);
+    assert_eq!(morph.spec().unwrap().glyph, FocusGlyph::Arc);
+    assert_eq!(mix.spec().unwrap().glyph, FocusGlyph::Arc);
+    let ctx = SlotCtx::read(ui.params(), ui.selected_op());
+    assert_eq!(view(ui.nav.active_block_def(), 0, &ctx).addr(), Some(morph));
+    assert_eq!(view(ui.nav.active_block_def(), 1, &ctx).addr(), Some(mix));
+    assert!(!Gauge::Crossfader { value: 0.5 }.animates());
+
+    let y = theme::ARC_CY - theme::XF_CAP_H / 2 + 2;
+    for (ticks, v) in [(0i8, 0.0f32), (64, 64.0 / 127.0), (127, 1.0)] {
+        feed(&mut ui, Input::turn(EncoderId::A, -127));
+        feed(&mut ui, Input::turn(EncoderId::A, ticks));
+        settle(&mut ui);
+        let fb = render_ui(&ui);
+        assert_eq!(fb.oob, 0);
+        assert_eq!(arc_top(&fb), theme::BG, "no arc");
+        assert_eq!(fb.at(cap_x(v), y), theme::ACCENT, "cap at {v}");
+        // Only the cap rises that high: nothing at the far end.
+        let other = if v < 0.5 { cap_x(1.0) } else { cap_x(0.0) };
+        assert_eq!(fb.at(other, y), theme::BG, "{v}");
+    }
+}
+
+/// The crossfader draws the set value: an LFO on MORPH moves its cell's
+/// value, never the cap.
+#[test]
+fn crossfader_ignores_modulation() {
+    let mut ui = UiState::new();
+    to_xf(&mut ui);
+    feed(&mut ui, Input::turn(EncoderId::A, -127));
+    feed(&mut ui, Input::turn(EncoderId::A, 64));
+    let morph = ParamAddr::new(
+        BlockRef::Algo,
+        chimera_core::dsp::algo::params::AlgoParams::MORPH,
+    );
+    let m = &mut ui.project_mut().edit_part(PartId::ALL[0]).sound.mod_state;
+    let d = m.push(morph).unwrap();
+    m.set_route(ModSource::Lfo1.index(), d, 127);
+    settle(&mut ui);
+    let cap = |fb: &Fb| -> Vec<_> {
+        let x0 = theme::XF_CX - theme::XF_W / 2;
+        let y0 = theme::ARC_CY - theme::XF_CAP_H / 2;
+        (x0..x0 + theme::XF_W)
+            .flat_map(|x| (y0..y0 + theme::XF_CAP_H).map(move |y| (x, y)))
+            .map(|(x, y)| fb.at(x, y))
+            .collect()
+    };
+    let first = cap(&render_ui(&ui));
+    let mut moved = false;
+    for _ in 0..40 {
+        ui.update();
+        moved |= (ui.renderer.anim[0].current() - ui.renderer.set[0].current()).abs() > 0.01;
+        assert_eq!(cap(&render_ui(&ui)), first);
+    }
+    assert!(moved, "the LFO moves the cell");
 }

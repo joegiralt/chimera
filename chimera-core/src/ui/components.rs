@@ -330,6 +330,7 @@ where
         Gauge::None => {}
         Gauge::Switch { on } => switch(d, on),
         Gauge::LevelBar { value, ticks } => level_bar(d, value, ticks),
+        Gauge::Crossfader { value } => crossfader(d, value),
         Gauge::Arc { value, bipolar } => draw::arc_gauge(
             d,
             theme::ARC_CX,
@@ -386,6 +387,32 @@ where
         let color = if lit { theme::MID } else { theme::FAINT };
         draw::dot(d, theme::LEVEL_TICK_X, y, 1, color);
     }
+}
+
+/// The CROSSFADER glyph at the band's right: a faint horizontal track, a
+/// MID centre detent, and an accent cap with a groove at `value` (0 left,
+/// 1 right).
+fn crossfader<D>(d: &mut D, value: f32)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let (w, cy) = (theme::XF_W, theme::ARC_CY);
+    let (cap_w, cap_h, track_h) = (theme::XF_CAP_W, theme::XF_CAP_H, theme::XF_TRACK_H);
+    let x0 = theme::XF_CX - w / 2;
+    draw::pill(d, x0, cy - track_h / 2, w, track_h, theme::FAINT);
+    draw::fill_rect(d, theme::XF_CX - 1, cy - 7, 2, 14, theme::MID);
+    let travel = (w - cap_w) as f32;
+    let cx = x0 + cap_w / 2 + libm::roundf(value.clamp(0.0, 1.0) * travel) as i32;
+    draw::round_rect(
+        d,
+        cx - cap_w / 2,
+        cy - cap_h / 2,
+        cap_w,
+        cap_h,
+        3,
+        theme::ACCENT,
+    );
+    draw::fill_rect(d, cx - cap_w / 2 + 2, cy - 1, cap_w - 4, 2, theme::BG);
 }
 
 /// How a cell reads (spec § UI). The discriminants pack into the Cells

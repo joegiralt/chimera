@@ -872,6 +872,11 @@ impl UiState {
         // Read base param values
         let def = self.nav.active_block_def();
         let mut values = self.display_values();
+        // Set values, before any modulation offset.
+        for (a, &v) in self.renderer.set.iter_mut().zip(values.iter()) {
+            a.set_target(v);
+            a.update();
+        }
         let ctx = self.ctx();
         let sound = &self.project.part(at).sound;
 
@@ -1037,6 +1042,7 @@ impl UiState {
                 renderer::look(f, f.focus),
                 self.prime_status,
             )
+            .with_set(region::quantize(self.renderer.set[f.focus].current()))
             .animated(glyph::anim_key(
                 self.renderer.gauge(f).animates(),
                 f.clock.frame(),
