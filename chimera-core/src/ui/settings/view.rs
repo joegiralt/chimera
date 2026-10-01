@@ -28,7 +28,7 @@ pub const FOOTER_TOP: i32 = theme::MAP_TOP;
 const MAX_CRUMBS: usize = 6;
 const DOTS: &str = "..";
 /// Space either side of a breadcrumb's `›`.
-const SEP_GAP: i32 = 4;
+const SEP_GAP: i32 = 3;
 const BAR_X: i32 = 8;
 const BAR_RIGHT: i32 = theme::SCROLL_X - 4;
 const BAR_H: i32 = ROW_H - 4;

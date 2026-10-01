@@ -18,6 +18,7 @@ use chimera_core::ui::settings::prompt::{
     AlsoUses, AlsoUsesAnswer, Answer, CardChanged, Choice, Clear, ClearSlot, Delete, Load,
     NameExists, Prompt, Replace, ReplaceAnswer as R, SaveOver, fits, with_view,
 };
+use chimera_core::ui::settings::view::{Crumb, Crumbs};
 use chimera_core::ui::{UiState, theme};
 use chimera_hal::{ButtonId, EncoderId};
 use screen::*;
@@ -438,12 +439,11 @@ fn naming_ends_the_breadcrumb_with_its_crumb() {
     let mut ui = UiState::new();
     ui.rename_for_test(project_list(), None, "DUB-042");
     let crumbs = ui.crumbs().unwrap();
-    assert_eq!(
-        crumbs.within(400).to_string(),
-        "SETTINGS › PROJECT › RENAME"
-    );
-    // 209 px in the header's 206: SETTINGS drops behind the dots.
-    assert_eq!(crumbs.to_string(), ".. › PROJECT › RENAME");
+    assert_eq!(crumbs.to_string(), "SETTINGS › PROJECT › RENAME");
+    // Task 11's SAVE AS, the widest third crumb, fits too.
+    let mut save_as = Crumbs::of(&[0], PartId::ALL[0]);
+    save_as.push(Crumb::Name("SAVE AS"));
+    assert_eq!(save_as.to_string(), "SETTINGS › PROJECT › SAVE AS");
     tap(&mut ui, ButtonId::Menu);
     let crumbs = ui.crumbs().map(|c| c.to_string());
     assert_eq!(crumbs.as_deref(), Some("SETTINGS › PROJECT"));
