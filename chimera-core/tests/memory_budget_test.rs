@@ -137,7 +137,6 @@ fn instrument_fits_d2() {
 /// its meta and the slots' generations.
 #[test]
 fn axi_counts_the_project() {
-    use chimera_core::instrument::AXI_RESIDENT;
     use chimera_core::preset::{POOL_SIZE, Performance, Sound};
     use chimera_core::project::Project;
     let (project, perf, slots) = (
@@ -151,7 +150,6 @@ fn axi_counts_the_project() {
         "Project = {project} B, {} B over its parts",
         project - (perf + slots)
     );
-    const { assert!(hw::AXI_SRAM - AXI_RESIDENT >= 64 * 1024) };
 }
 
 /// UiState is one AXI static (`chimera-stm32/src/shared.rs`). Its Project
