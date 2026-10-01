@@ -100,6 +100,8 @@ The tree is one static table: rows with a label, a kind (list, leaf page, action
 
 ## Screens
 
+SETTINGS has its own visual language, on purpose (owner, 2026-10-01: "it's obvious you are in the settings world of the synth"). It uses lists with a highlight bar, a growing breadcrumb and a project footer, where the Part and mixer flows use cell pages and the chain map. A SETTINGS leaf page uses the cell grid for its values but keeps the breadcrumb header and the footer, never the chain map, so you can always tell which world you're in.
+
 - **List:** the breadcrumb in the header, e.g. `SETTINGS › PROJECT › LOAD`, with the last part bold. Rows are 26–30 px. The bar is teal on a soft fill with a left tick. A `›` marks a row that opens more. A right-hand note shows a value or status (`● LOADED`, `FILE DAMAGED`, `SLOT 03`). A scrollbar appears when the list overflows.
 - **Footer**, on every SETTINGS screen:
   - the project's name;
