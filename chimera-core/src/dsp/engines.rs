@@ -179,14 +179,21 @@ impl EngineSlot {
         matches!(self, Self::Modal(m) if m.is_bare())
     }
 
-    /// The bytes a Sympathetic note-on on `voice` clears
-    /// (`SymPool::note_on_clear`).
-    pub fn sym_note_on_clear(&self, pool: &SymPool, voice: VoiceIdx) -> usize {
-        let modal = match self {
-            Self::Modal(m) => Some(&**m),
-            Self::Algo(_) => None,
-        };
-        pool.note_on_clear(modal, voice)
+    /// The bytes a Sympathetic note-on of `note` on `voice` clears
+    /// (`SymPool::note_on_clear`), or writes as it adds to what rings, a
+    /// re-strike or, at `glide`, a glide (`ModalEngine::strike_clear`).
+    pub fn sym_note_on_clear(
+        &self,
+        pool: &SymPool,
+        voice: VoiceIdx,
+        (note, glide, sample_rate): (MidiNote, bool, u32),
+    ) -> usize {
+        match self {
+            Self::Modal(m) => m
+                .strike_clear(note.get(), glide, sample_rate, pool)
+                .unwrap_or_else(|| pool.note_on_clear(Some(m), voice)),
+            Self::Algo(_) => pool.note_on_clear(None, voice),
+        }
     }
 
     /// `p` must play this slot's engine. At STEAL GLIDE a note on a

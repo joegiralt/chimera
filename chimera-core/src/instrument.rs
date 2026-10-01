@@ -484,7 +484,7 @@ impl Instrument {
                     let deferred = !waits
                         && SlotKind::of(&part.params) == SYMPATHETIC
                         && !(self.voices[v].starts_now(&part.params, &self.sym)
-                            && self.admit(v, &part.params));
+                            && self.admit(v, &part.params, ev.note));
                     let voice = &mut self.voices[v];
                     let waited = self.waiting[v].take().is_some();
                     let queued = if waits || deferred {
@@ -556,7 +556,7 @@ impl Instrument {
         if SlotKind::of(params) == SYMPATHETIC {
             self.sym.alloc_mut().place(VoiceIdx::ALL[v]);
         }
-        if !self.admit(v, params) {
+        if !self.admit(v, params, note) {
             return false;
         }
         let voice = &mut self.voices[v];
@@ -568,18 +568,18 @@ impl Instrument {
         true
     }
 
-    /// Whether voice `v` may start a note on `params` this block: anything
+    /// Whether voice `v` may start `note` on `params` this block: anything
     /// but Sympathetic may; Sympathetic if no note waits on the clear
     /// budget before it and its clear fits what the block has left, which
     /// it then takes. One that doesn't fit starts the queue.
-    fn admit(&mut self, v: usize, params: &ParamSnapshot) -> bool {
+    fn admit(&mut self, v: usize, params: &ParamSnapshot, note: MidiNote) -> bool {
         if SlotKind::of(params) != SYMPATHETIC {
             return true;
         }
         if self.clear_backlog {
             return false;
         }
-        let bytes = self.voices[v].sym_note_on_clear(&self.sym);
+        let bytes = self.voices[v].sym_note_on_clear(&self.sym, note, params);
         debug_assert!(bytes <= SYM_CLEAR_BUDGET);
         if bytes > self.clear_left {
             self.clear_backlog = true;

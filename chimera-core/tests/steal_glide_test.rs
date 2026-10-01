@@ -298,3 +298,33 @@ fn a_fast_glide_down_never_drops_out() {
         }
     }
 }
+
+/// Two SYMP glide steals of low notes, whose rings are whole, in one
+/// block both glide: a glide clears nothing, so the block's clear budget,
+/// one note-on's worst, takes both.
+#[test]
+fn two_symp_glide_steals_in_a_block_both_glide() {
+    let shared = part(
+        EngineType::Modal,
+        Some(ResonatorMode::Sympathetic),
+        Steal::Glide,
+    );
+    let mut rig = Rig::voices(&shared, 2);
+    let (mut out, mut ratios) = (Vec::new(), Vec::new());
+    for n in [24, 31] {
+        rig.inst.handle(on(0, n), &shared);
+        rig.run(&shared, 2, &mut out, &mut ratios);
+    }
+    rig.run(&shared, 40, &mut out, &mut ratios);
+    rig.inst.handle(off(0, 24), &shared);
+    rig.inst.handle(off(0, 31), &shared);
+    rig.run(&shared, 4, &mut out, &mut ratios);
+    rig.inst.handle(on(0, 26), &shared);
+    rig.inst.handle(on(0, 33), &shared);
+    rig.run(&shared, 1, &mut out, &mut ratios);
+    let (active, slides) = (rig.inst.active(), rig.inst.slides());
+    let gliding = (0..MAX_VOICES)
+        .filter(|&v| active[v] && slides[v] != 1.0)
+        .count();
+    assert_eq!(gliding, 2, "{slides:?}");
+}

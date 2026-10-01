@@ -22,7 +22,7 @@ use crate::in_place::{by_value, uninit_at};
 use crate::modulation::{
     MAX_MOD_SOURCES, ModRouting, ModSource, ModState, VCA, amount_scale, note_source,
 };
-use crate::params::{DriveParams, EnvParams, FolderParams, ParamSnapshot};
+use crate::params::{DriveParams, EnvParams, FolderParams, ParamSnapshot, Steal};
 use crate::voice_alloc::VoiceIdx;
 use crate::{MidiNote, Velocity};
 
@@ -396,10 +396,20 @@ impl Voice {
         self.fade == 0 && !(self.active && self.stale(params, pool))
     }
 
-    /// The bytes a Sympathetic note-on here clears: pure, for the
-    /// `Instrument`'s per-block clear budget (spec § 4.8).
-    pub fn sym_note_on_clear(&self, pool: &SymPool) -> usize {
-        self.slot.sym_note_on_clear(pool, self.id)
+    /// The bytes a Sympathetic note-on of `note` on `params` here clears:
+    /// pure, for the `Instrument`'s per-block clear budget (spec § 4.8).
+    /// One that starts now on its sounding engine clears nothing: a
+    /// re-strike adds to it, and a glide steal writes only its rings'
+    /// growth.
+    pub fn sym_note_on_clear(
+        &self,
+        pool: &SymPool,
+        note: MidiNote,
+        params: &ParamSnapshot,
+    ) -> usize {
+        let adds = self.starts_now(params, pool) && params.pitch.steal == Steal::Glide;
+        self.slot
+            .sym_note_on_clear(pool, self.id, (note, adds, self.sample_rate))
     }
 
     /// On a fading voice, or one sounding another engine or model, the note

@@ -60,7 +60,7 @@ pub fn period_ratios(c: usize) -> [f32; 7] {
 
 /// The longest period whose line fits: `split` gives
 /// `floor(period − 0.5) <= MAX_STRING_DELAY − 2`.
-const FITS: f32 = (MAX_STRING_DELAY - 2) as f32 + 1.5;
+pub(super) const FITS: f32 = (MAX_STRING_DELAY - 2) as f32 + 1.5;
 
 /// `period` raised by octaves (halved) until its line fits.
 pub fn fold(period: f32) -> f32 {

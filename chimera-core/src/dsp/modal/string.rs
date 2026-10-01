@@ -103,6 +103,16 @@ impl KsString {
         (period.min(MAX_STRING_DELAY as f32) as usize + 3).min(MAX_STRING_DELAY)
     }
 
+    /// What `fit(period)` writes, bytes: the samples it moves and the gap.
+    pub(super) fn fit_bytes(&self, period: f32) -> usize {
+        let need = Self::fit_len(period);
+        if need > self.ring_len {
+            (self.ring_len - self.write_pos - 1 + need - self.ring_len) * size_of::<f32>()
+        } else {
+            0
+        }
+    }
+
     /// The ring at least `need` long; never shorter mid-note. The oldest
     /// samples move up past a new gap, which holds the loop's periodic
     /// continuation, each sample the one a period younger: a loop that
