@@ -391,6 +391,98 @@ mod tests {
         assert!(!e.inst.quiet(), "it plays once published");
     }
 
+    /// Task 9's desktop QA without a window: `boot` over a card holding a
+    /// saved project, over no card and over a fresh card. Each gives the
+    /// toast the shell would draw, and a note held on the selected Part's
+    /// channel sounds; on NEW, sample for sample as `Performance::new`,
+    /// what main played.
+    #[test]
+    fn each_card_boots_a_project_that_plays() {
+        use crate::store::DirStore;
+        use chimera_core::project::test_support::{full, same};
+        use chimera_core::project::{ProjectStatus, new_project_id, project_status};
+        use chimera_core::storage::{Card, SystemSync};
+        use chimera_core::ui::UiState;
+        use chimera_core::ui::busy::ToastStep;
+
+        let base = std::env::temp_dir().join(format!("chimera-qa-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (saved, fresh) = (base.join("saved"), base.join("fresh"));
+        for d in [&saved, &fresh] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        // The relaunch root: `full()` saved, so SYSTEM names it.
+        let (want, _) = full();
+        {
+            let mut store = DirStore::new(saved.clone());
+            let mut card = Card::new();
+            let (mut sync, mut set, _) = SystemSync::boot(&mut card, &mut store);
+            let mut ui = Box::new(UiState::new());
+            *ui.project_mut() = *full().0;
+            let file = new_project_id(&mut card, &mut store).unwrap();
+            ui.save_project(&mut card, &mut store, &mut sync, &mut set, file);
+            assert_eq!(
+                project_status(ui.project(), ui.template()),
+                ProjectStatus::Saved
+            );
+        }
+        let cases = [
+            (saved.clone(), None),
+            // Not NO CARD: boot drops SYSTEM's BootNote, and with no last
+            // project the note is NEW's (#197).
+            (base.join("absent"), Some("NEW PROJECT")),
+            (fresh.clone(), Some("NEW PROJECT")),
+        ];
+        for (root, toast) in cases {
+            let mut ui = Box::new(UiState::new());
+            let mut card = Card::new();
+            crate::boot(&mut ui, &mut card, &mut DirStore::new(root.clone()));
+            let shown = match ui.step_toast(0) {
+                ToastStep::Show(t) => Some(t),
+                _ => None,
+            };
+            assert_eq!(shown.as_ref().map(|t| t.as_str()), toast, "{root:?}");
+            let ch = ui.project().part(ui.active_part).mix.channel;
+            let played = held_note(ui.project().perf(), ch);
+            assert!(played.iter().any(|s| s.abs() > 1e-3), "{root:?}: silent");
+            if toast.is_some() {
+                assert_eq!(played, held_note(&Performance::new(), ch), "{root:?}");
+            } else {
+                same(ui.project(), &want);
+                assert_eq!(
+                    project_status(ui.project(), ui.template()),
+                    ProjectStatus::Saved
+                );
+            }
+        }
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    /// 100 ms of the speakers' left channel with middle C held on `ch`
+    /// from the first block, `perf` published.
+    fn held_note(perf: &Performance, ch: MidiChannel) -> Vec<f32> {
+        let sources: &'static NoteSources<1> = Box::leak(Box::new(NoteSources::new()));
+        let (mut producers, mut drain) = sources.split().unwrap();
+        let mut keys = producers.take(SourceId::new(0)).unwrap();
+        let mut e = Engine::new(SAMPLE_RATE);
+        let (w, _unread) = Box::leak(Box::new(chimera_core::scope::scope_buffer())).split();
+        let mut scope = ScopeWriter::new(w);
+        let link = LoadLink::new();
+        let mut shared = Box::new(AudioShared::default());
+        shared.update_from(perf, link.epoch());
+        keys.push(NoteEvent {
+            channel: ch,
+            note: MidiNote::new(60).unwrap(),
+            kind: NoteKind::On(Velocity::DEFAULT),
+        });
+        let mut out = Vec::new();
+        for _ in 0..(SAMPLE_RATE as usize / 10).div_ceil(BLOCK_SIZE) {
+            e.block(&link, &mut drain, &shared, &mut scope);
+            out.extend((0..BLOCK_SIZE).map(|i| stereo_frame(e.dac.out(), 0, i).0.0));
+        }
+        out
+    }
+
     /// Three pairs near full scale sum past 1.0: the speakers still get
     /// at most full scale, and the frame says it was clamped.
     #[test]

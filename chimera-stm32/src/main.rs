@@ -269,7 +269,7 @@ fn synth(board: Board) -> ! {
     ui.boot_project(&mut card, store, settings.last_project);
     let perf = PerfTracker::new();
     #[cfg(feature = "bench")]
-    bench::run(&mut display, clk, ui.project().perf());
+    bench::run(&mut display, clk, ui.project_mut());
 
     controls::start_systick(cp.SYST, &mut cp.SCB, clk.cpu_hz);
     controls::enable();

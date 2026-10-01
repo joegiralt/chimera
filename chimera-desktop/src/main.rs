@@ -7,10 +7,11 @@ mod store;
 
 use chimera_core::project::LOAD_LINK;
 use chimera_core::scope::scope_buffer;
-use chimera_core::storage::{Card, SystemSync};
+use chimera_core::storage::{Card, SystemSettings, SystemSync};
 use chimera_core::ui::UiState;
 use chimera_core::ui::busy::{ToastStep, draw_busy, draw_toast};
 use chimera_core::ui::perf::PerfTracker;
+use chimera_hal::store::Store;
 use chimera_hal::{ChimeraDisplay, MidiChannel, MidiNote, Velocity};
 use controls::DesktopControls;
 use display::DesktopDisplay;
@@ -32,6 +33,20 @@ fn card_dir() -> PathBuf {
     )
 }
 
+/// SYSTEM and its theme, then step 2: the last project, or NEW and why.
+fn boot<S: Store>(
+    ui: &mut UiState,
+    card: &mut Card,
+    store: &mut S,
+) -> (SystemSync, SystemSettings) {
+    // Why the defaults applied is not shown yet:
+    // https://github.com/joegiralt/chimera/issues/197
+    let (sync, settings, _) = SystemSync::boot(card, store);
+    ui.set_theme(settings.theme);
+    ui.boot_project(card, store, settings.last_project);
+    (sync, settings)
+}
+
 fn main() {
     let mut display = DesktopDisplay::new();
     let mut controls = DesktopControls::new();
@@ -45,12 +60,7 @@ fn main() {
     display.flush();
     let mut store = DirStore::new(card_dir());
     let mut card = Card::new();
-    // Why the defaults applied is not shown yet:
-    // https://github.com/joegiralt/chimera/issues/197
-    let (mut sync, mut settings, _) = SystemSync::boot(&mut card, &mut store);
-    ui.set_theme(settings.theme);
-    // Boot step 2: the last project, or NEW and why.
-    ui.boot_project(&mut card, &mut store, settings.last_project);
+    let (mut sync, mut settings) = boot(&mut ui, &mut card, &mut store);
     let mut perf = PerfTracker::new();
     // The held key and the channel it was sent on, so its note-off follows
     // it even if the selected Part changes while it is held.

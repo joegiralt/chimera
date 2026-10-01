@@ -1505,4 +1505,87 @@ ADRs 0043 and 0046 move to Accepted in that plan's `## Measured` commit.
 
 ## Measured
 
-(Task 9 fills this in.)
+Task 9, 2026-10-01, on the host; nothing flashed.
+
+**`PROJ CRC` bench row** (MEMORY screen, last line). `bench::run` now takes
+the live project: before the audio rows it fills every free slot that no
+Part names (copies as `full()` makes them: INIT Modal at every third index,
+a factory Sound otherwise), times `project_crc` 16 times with the DWT and
+averages, then `pool_clear`s those slots, so the content and status are
+unchanged. It builds with `--features bench` and
+`--features bench,master-tape`. Its frame is 1 876 B (`sub sp, #0x754`),
+under the stack check's 8 KB.
+
+**`PROJ CRC` estimate** (rev V, 480 MHz), from the release bench ELF's
+disassembly and the encoded sizes:
+
+| | `full()` | NEW |
+|---|---|---|
+| file bytes | 45 499 | 19 441 |
+| records | 930 | 402 |
+| `Block` records | 733 | 315 |
+| param entries (5 B each) | 7 864 | 3 354 |
+
+- **The CRC.** `Crc32::update` is inlined into `RecordWriter::put`, and the
+  compiler unrolled its loop by four: 22 instructions per 4 bytes, so 5.5
+  per byte. One table load per byte, from a 1 KB table.
+- **The encode.** Each entry is about 30 instructions in `encode_block`
+  (the `ValidAddr` scan and the `RecordBuf` writes), plus two dynamic calls.
+  `enum_code` is about 7 instructions, and `get` (a `tbb` jump, a load and
+  a convert) about 10. With the CRC's 27.5, that is about 75 instructions
+  per entry.
+- **Each record** costs about 250 more. That is `put`'s setup, its 4-byte
+  header CRC and two `Discard` calls, `encode_block`'s dispatch, and
+  `RecordBuf::new`'s 512 B `memclr`.
+- **`full()`:** 7 864 × 75 + 930 × 250 ≈ 0.82 M instructions. At an IPC of
+  0.8 to 1.6 (dual issue, but a `blx`, a `tbb` and a table load every few
+  instructions), that is **≈ 1.1–2.1 ms, about 1.7 ms at IPC 1**.
+- **NEW:** 3 354 × 75 + 402 × 250 ≈ 0.35 M instructions, **≈ 0.5–0.9 ms**.
+- **Host check** (release, x86): `project_crc(full())` runs in 88–104 µs,
+  against a reviewer's 80 µs.
+- **Verdict.** The figure is ≥ 1 ms, so the navigation plan must not hash
+  the project per input frame. https://github.com/joegiralt/chimera/issues/257
+  already asks it to cache `project_status` on a revision counter; it has a
+  comment with these figures. The bench row gives the chip's number at the
+  ship flash.
+
+**Desktop QA gate**
+
+1. **The parameter sweep** passes on this branch, on a bare
+   `Performance`/`AudioShared` (ruling R20). `param_sweep_test` gives
+   14 passed with 1 ignored, and `sweep_thorough` with `--ignored` passes
+   in 135 s.
+2. **The project tests pass.** `load_protocol_test` 23,
+   `project_boot_test` 13, `project_codec_test` 14, `project_marks_test`
+   14, `project_model_test` 12, `project_store_test` 14, and
+   `system_file_test`. The desktop's `project_survives_a_relaunch`,
+   `project_store_suite_on_dir_store` and `theme_survives_a_relaunch` pass
+   too. `just check` is green, with 3 037 tests passed and 16 ignored over
+   every run.
+3. **Window checks, automated headless.** No one read the screen. The
+   desktop's boot moved into `main.rs`'s `boot()`, and the test
+   `audio::tests::each_card_boots_a_project_that_plays` runs it against a
+   `DirStore` and then renders 100 ms of a held middle C. The note goes on
+   the selected Part's channel, through the desktop `Engine` (gate, drain,
+   render, `stereo_frame`). `card_dir()` only maps `CHIMERA_CARD` to the
+   root, so the test passes the roots directly.
+   - **The relaunch root** (`full()` saved, so SYSTEM names it): no toast.
+     `same()` matches the saved project, the status is `Saved`, and the
+     note sounds (peak 0.089).
+   - **No card** (a root that doesn't exist): the toast is `NEW PROJECT`,
+     **not `NO CARD`** as Step 4.3 expects. With no card, SYSTEM's defaults
+     have no last project, so `boot_project` reports NEW's note, and boot
+     drops SYSTEM's `BootNote::NoCard`. That is
+     https://github.com/joegiralt/chimera/issues/197 (commented). The note
+     sounds (peak 0.072), sample for sample as `Performance::new`, which is
+     what main played.
+   - **A fresh empty directory:** the toast is `NEW PROJECT`. The note
+     sounds sample for sample as `Performance::new`.
+4. **Not run:** the window itself. Item 3 automates the toast text and the
+   audio path, not what the screen draws or what the speakers play.
+   - UAT (owner): `just desktop` against each of the three roots. Check
+     the toast as drawn, and that a held key sounds as on main by ear.
+     For no card, expect `NEW PROJECT` until #197 is fixed.
+
+`just stack-check` passes, which covers `encode_project`, `ProjectDecoder`
+and `load_ab_in_place` on every feature set. `just firmware` builds.
