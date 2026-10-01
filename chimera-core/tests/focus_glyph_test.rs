@@ -28,6 +28,7 @@ const NONE: FocusGlyph = FocusGlyph::None;
 const SWITCH: FocusGlyph = FocusGlyph::Switch;
 const LEVEL: FocusGlyph = FocusGlyph::LevelBar;
 const XF: FocusGlyph = FocusGlyph::Crossfader;
+const BRAID: FocusGlyph = FocusGlyph::Composite(CompositeId::ChorusBraid);
 
 /// Params assigned a glyph other than ARC, by `(block kind, ident)`: every
 /// instance of the block (`AlgoOp`, `Env`, `Lfo`) alike. Each glyph story
@@ -51,7 +52,6 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Lfo", "TYPE", NONE),
     ("Lfo", "FORM", NONE),
     ("Lfo", "SHAPE", NONE),
-    ("Chorus", "MODE", NONE),
     // Two states, one of them off: a toggle.
     ("Lfo", "SYNC", SWITCH),
     // Set-and-leave levels, 0 to max: a fader.
@@ -62,13 +62,17 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Part", "CHR", LEVEL),
     ("Part", "DLY", LEVEL),
     ("Part", "REV", LEVEL),
-    ("Chorus", "MIX", LEVEL),
     ("Delay", "MIX", LEVEL),
     ("Delay", "REV", LEVEL),
     ("Reverb", "MIX", LEVEL),
     ("Tape", "MIX", LEVEL),
     ("Comp", "MAKEUP", LEVEL),
     ("Comp", "MIX", LEVEL),
+    // The chorus, all four params: the braid.
+    ("Chorus", "MODE", BRAID),
+    ("Chorus", "RATE", BRAID),
+    ("Chorus", "DEPTH", BRAID),
+    ("Chorus", "MIX", BRAID),
     // Blends between two ends: a crossfader.
     ("Algo", "MORPH", XF),
     ("Drive", "MIX", XF),
@@ -734,7 +738,7 @@ fn braid_ui(slot: EncoderId) -> UiState {
 #[test]
 fn glyph_braid_page_moves_only_inside_its_box() {
     use chimera_core::dsp::chorus::ChorusParams;
-    // Not on the chorus pages yet: no chorus spec carries the braid.
+    // Every chorus param carries the braid.
     for id in [
         ChorusParams::MODE,
         ChorusParams::RATE,
@@ -742,7 +746,7 @@ fn glyph_braid_page_moves_only_inside_its_box() {
         ChorusParams::MIX,
     ] {
         let g = ParamAddr::new(BlockRef::Chorus, id).spec().unwrap().glyph;
-        assert!(!matches!(g, FocusGlyph::Composite(_)), "{g:?}");
+        assert_eq!(g, FocusGlyph::Composite(CompositeId::ChorusBraid));
     }
     let mut ui = braid_ui(EncoderId::B);
     assert_eq!(ui.focused_slot(), 1);
@@ -814,4 +818,66 @@ fn braid_emphasises_the_focused_param() {
             assert_ne!(boxed(&shots[i]), boxed(&shots[j]), "focus {i} vs {j}");
         }
     }
+}
+
+/// Every value a composite's param can show, as the focus band writes it.
+fn value_texts(spec: &ParamSpec) -> Vec<String> {
+    match spec.fmt {
+        ValFmt::Names(names) => names.iter().map(|n| n.to_string()).collect(),
+        fmt => (0..=128)
+            .map(|i| {
+                let mut buf = chimera_core::ui::fmt::FmtBuf::new();
+                chimera_core::ui::fmt::fmt_val(&mut buf, i as f32 / 128.0, fmt);
+                buf.as_str().to_string()
+            })
+            .collect(),
+    }
+}
+
+/// A composite clears its box each frame: no value its params can show
+/// may reach into it.
+#[test]
+fn composite_values_stay_clear_of_the_box() {
+    const GAP: i32 = 4;
+    for b in BlockRef::ALL {
+        for s in b.specs() {
+            let FocusGlyph::Composite(id) = s.glyph else {
+                continue;
+            };
+            let box_x = match id {
+                CompositeId::ChorusBraid => theme::BRAID_X,
+                CompositeId::DelayRings | CompositeId::ReverbCube => continue,
+            };
+            for w in value_texts(s) {
+                let right = theme::FOCUS_VALUE_X + draw::text_width(&theme::FONT_FOCUS, &w, 0);
+                assert!(
+                    right + GAP <= box_x,
+                    "{b:?}.{} {w}: ends at {right}",
+                    s.ident
+                );
+            }
+        }
+    }
+}
+
+/// While a MIX+PLUS status shows, the band carries no gauge: the clock
+/// must not paint the braid over the message.
+#[test]
+fn a_status_stops_the_glyph_redrawing() {
+    let mut ui = braid_ui(EncoderId::B);
+    feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Plus));
+    assert!(ui.prime_status().is_some(), "chorus RATE isn't modulatable");
+    let mut fb = Fb::new();
+    let perf = chimera_core::ui::perf::PerfStats::zero();
+    ui.render_dirty_with_scope(&mut fb, &perf, &scope_fixture());
+    ui.update();
+    let flushed: Vec<_> = ui
+        .render_dirty_with_scope(&mut fb, &perf, &scope_fixture())
+        .into_iter()
+        .filter(|&(a, b)| a != b)
+        .collect();
+    assert!(flushed.is_empty(), "{flushed:?}");
+    let mut full = Fb::new();
+    ui.render_with_scope(&mut full, &perf, &scope_fixture());
+    assert!(fb.px == full.px);
 }

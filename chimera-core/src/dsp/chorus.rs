@@ -106,16 +106,23 @@ impl ChorusParams {
 }
 
 /// Chorus runs outside `Voice`, on the FX bus: nothing is modulatable.
+/// Every chorus param shows the braid (ADR 0067).
+const BRAID: crate::ui::glyph::FocusGlyph =
+    crate::ui::glyph::FocusGlyph::Composite(crate::ui::glyph::CompositeId::ChorusBraid);
+
 pub static CHORUS_SPECS: [ParamSpec; 4] = [
     ParamSpec::choice(0, "MODE", ValFmt::Names(&MODE_NAMES), 3.0, 0.0)
         .ident("MODE")
-        .glyph(crate::ui::glyph::FocusGlyph::None),
-    ParamSpec::continuous(1, "RATE", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false).ident("RATE"),
+        .glyph(BRAID),
+    ParamSpec::continuous(1, "RATE", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false)
+        .ident("RATE")
+        .glyph(BRAID),
     ParamSpec::continuous(2, "DEPTH", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false)
-        .ident("DEPTH"),
+        .ident("DEPTH")
+        .glyph(BRAID),
     ParamSpec::continuous(3, "MIX", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false)
         .ident("MIX")
-        .glyph(crate::ui::glyph::FocusGlyph::LevelBar),
+        .glyph(BRAID),
 ];
 
 impl Block for ChorusParams {

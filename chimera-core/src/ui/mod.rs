@@ -1045,7 +1045,7 @@ impl UiState {
             )
             .with_set(region::quantize(self.renderer.set[f.focus].current()))
             .animated(glyph::anim_key(
-                self.renderer.gauge(f).animates(),
+                self.renderer.shown_gauge(f).is_some_and(|g| g.animates()),
                 f.clock.frame(),
             )),
             RegionKind::Viz => {

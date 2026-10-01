@@ -430,6 +430,17 @@ impl Renderer {
         })
     }
 
+    /// The gauge the focus band shows now: none while a prime status holds
+    /// the band, or for a dimmed, absent or empty slot.
+    pub fn shown_gauge(&self, f: &Frame) -> Option<Gauge> {
+        let plain = f.def.layout != PageLayout::Matrix && f.def.viz != VizType::AudioStats;
+        (plain
+            && f.prime_status.is_none()
+            && view::view(f.def, f.focus, &f.ctx) != View::Empty
+            && look(f, f.focus) == components::Look::Live)
+            .then(|| self.gauge(f))
+    }
+
     /// Redraw only the focused slot's gauge in its box, if it has one; the
     /// rows to flush.
     pub fn redraw_gauge<D>(
@@ -441,7 +452,7 @@ impl Renderer {
     where
         D: DrawTarget<Color = Rgb565>,
     {
-        let gauge = self.gauge(f);
+        let gauge = self.shown_gauge(f)?;
         let (x, y, w, h) = components::gauge_rect(&gauge)?;
         Self::clear_rect_fb(fb(display), x, y, w, h);
         components::draw_gauge(display, gauge);
