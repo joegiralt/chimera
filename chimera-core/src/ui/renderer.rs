@@ -8,6 +8,7 @@ use crate::dsp::algo::algorithms::AlgoId;
 use crate::dsp::modulator::{EnvType, HoldPos};
 use crate::part::DacPair;
 use crate::perf::load::AudioStats;
+use crate::project::PartId;
 use crate::ui::PrimeStatus;
 use crate::ui::animation::AnimatedValue;
 use crate::ui::audio_page;
@@ -41,7 +42,7 @@ pub struct Frame<'a> {
     pub sounding: bool,
     /// Every Part (Mixer overview) and the one being edited.
     pub parts: &'a [crate::preset::Part; crate::hw::MAX_PARTS],
-    pub active_part: crate::project::PartId,
+    pub active_part: PartId,
     /// The last MIX+PLUS outcome, shown in the focus band in place of the
     /// value readout (issue #21).
     pub prime_status: Option<PrimeStatus>,
@@ -448,7 +449,10 @@ impl Renderer {
 /// The OUT of the Part whose pages these are; P1 off the Part chains.
 pub fn header_out(f: &Frame) -> DacPair {
     match f.nav.chain_id {
-        ChainId::Part(n) | ChainId::Mixer(n) => f.parts[n].mix.output,
+        ChainId::Part(n) | ChainId::Mixer(n) => u8::try_from(n)
+            .ok()
+            .and_then(PartId::new)
+            .map_or(DacPair::P1, |p| f.parts[p.index()].mix.output),
         ChainId::System | ChainId::Demo => DacPair::P1,
     }
 }

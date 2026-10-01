@@ -252,3 +252,17 @@ fn the_header_says_sound_or_mix_and_warns_off_p1() {
     settle(&mut ui);
     assert_eq!(header(&ui).2, None, "gone back on P1");
 }
+
+/// A chain index past the Parts draws its header with OUT P1, not a panic.
+#[test]
+fn a_chain_past_the_parts_reads_as_p1() {
+    use chimera_core::ui::perf::PerfStats;
+    use screen::{Fb, scope_fixture};
+    for chain in [ChainId::Part(9), ChainId::Mixer(300)] {
+        let mut ui = UiState::new();
+        ui.nav.chain_id = chain;
+        let mut fb = Fb::new();
+        ui.render_with_scope(&mut fb, &PerfStats::zero(), &scope_fixture());
+        assert_eq!(header(&ui).2, None, "{chain:?}: no OUT warning");
+    }
+}

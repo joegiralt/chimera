@@ -480,8 +480,9 @@ impl UiState {
             Some(browser::BrowserAct::Load) => {
                 // Init entries follow the pool slots.
                 let from = browser::slot_at(cursor).map(PartFrom::Slot).or_else(|| {
-                    browser::INIT_TYPES
-                        .get(cursor - POOL_SIZE)
+                    cursor
+                        .checked_sub(POOL_SIZE)
+                        .and_then(|j| browser::INIT_TYPES.get(j))
                         .map(|&e| PartFrom::Init(e))
                 });
                 if let Some(from) = from {
@@ -556,7 +557,7 @@ impl UiState {
         if nav_changed {
             // B<n> and MIX + B<n> both select Part n for editing.
             if let ChainId::Part(i) | ChainId::Mixer(i) = self.nav.chain_id
-                && let Some(part) = PartId::new(i as u8)
+                && let Some(part) = u8::try_from(i).ok().and_then(PartId::new)
             {
                 self.active_part = part;
                 self.nav.set_engine(self.project.part(part).sound.engine());
