@@ -1,6 +1,6 @@
-//! The SETTINGS tree: rows with a kind and a status, one static table.
-//! A `Later` row is in the table, so a feature flips its status and
-//! navigation stays as it is.
+//! The SETTINGS tree: rows with a kind, one static table. A `Later` row is in the
+//! table, so a feature is built out by replacing its `Later(issue(n))`
+//! kind and navigation stays as it is.
 
 use super::leaves::{
     ABOUT_LEAF, CHANNELS_LEAF, OUTPUTS_LEAF, THEME_LEAF, TUNING_LEAF, UPDATES_LEAF,
@@ -14,7 +14,6 @@ pub struct Row {
     /// The breadcrumb's name for this row, at most 8 characters.
     pub crumb: &'static str,
     pub kind: Kind,
-    pub status: Status,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -61,108 +60,73 @@ pub enum Act {
     PartReload,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Status {
-    Built,
-    /// An existing page moved here.
-    Mirror,
-}
-
-const fn row(label: &'static str, kind: Kind, status: Status) -> Row {
+const fn row(label: &'static str, kind: Kind) -> Row {
     Row {
         label,
         crumb: label,
         kind,
-        status,
     }
 }
 
-const fn crumb(label: &'static str, crumb: &'static str, kind: Kind, status: Status) -> Row {
-    Row {
-        label,
-        crumb,
-        kind,
-        status,
-    }
+const fn crumb(label: &'static str, crumb: &'static str, kind: Kind) -> Row {
+    Row { label, crumb, kind }
 }
 
 use Kind::{Later, Leaf, List};
-use Status::{Built, Mirror};
 
 static PROJECT: [Row; 3] = [
-    crumb(
-        "LOAD PROJECT",
-        "LOAD",
-        Kind::Screen(Screen::LoadProject),
-        Built,
-    ),
-    crumb(
-        "SAVE PROJECT AS",
-        "SAVE AS",
-        Kind::Act(Act::SaveProjectAs),
-        Built,
-    ),
+    crumb("LOAD PROJECT", "LOAD", Kind::Screen(Screen::LoadProject)),
+    crumb("SAVE PROJECT AS", "SAVE AS", Kind::Act(Act::SaveProjectAs)),
     crumb(
         "MANAGE PROJECTS",
         "MANAGE",
         Kind::Screen(Screen::ManageProjects),
-        Built,
     ),
 ];
 
 static PART: [Row; 4] = [
-    row("RENAME", Kind::Act(Act::PartRename), Built),
-    row("CLEAR", Kind::Act(Act::PartClear), Built),
-    crumb(
-        "SAVE TO PROJ",
-        "SAVE TO",
-        Kind::Screen(Screen::SaveToProj),
-        Built,
-    ),
-    crumb(
-        "RELOAD FROM PROJ",
-        "RELOAD",
-        Kind::Act(Act::PartReload),
-        Built,
-    ),
+    row("RENAME", Kind::Act(Act::PartRename)),
+    row("CLEAR", Kind::Act(Act::PartClear)),
+    crumb("SAVE TO PROJ", "SAVE TO", Kind::Screen(Screen::SaveToProj)),
+    crumb("RELOAD FROM PROJ", "RELOAD", Kind::Act(Act::PartReload)),
 ];
 
 static MIDI: [Row; 3] = [
-    row("SYNC", Later(issue(264)), Built),
-    crumb("PORT CONFIG", "PORT", Later(issue(265)), Built),
-    row("CHANNELS", Leaf(&CHANNELS_LEAF), Mirror),
+    row("SYNC", Later(issue(264))),
+    crumb("PORT CONFIG", "PORT", Later(issue(265))),
+    row("CHANNELS", Leaf(&CHANNELS_LEAF)),
 ];
 
 static AUDIO: [Row; 3] = [
-    row("OUTPUTS", Leaf(&OUTPUTS_LEAF), Mirror),
-    row("SENDS", Later(issue(259)), Built),
-    row("TUNING", Leaf(&TUNING_LEAF), Mirror),
+    row("OUTPUTS", Leaf(&OUTPUTS_LEAF)),
+    row("SENDS", Later(issue(259))),
+    row("TUNING", Leaf(&TUNING_LEAF)),
 ];
 
-static PERSONALIZE: [Row; 1] = [row("THEME", Leaf(&THEME_LEAF), Mirror)];
+static PERSONALIZE: [Row; 1] = [row("THEME", Leaf(&THEME_LEAF))];
 
 static SYSTEM: &[Row] = &[
-    crumb("OS UPGRADE", "OS", Leaf(&UPDATES_LEAF), Mirror),
-    row("STORAGE", Later(issue(267)), Built),
-    crumb("FORMAT CARD", "FORMAT", Later(issue(268)), Built),
-    crumb("USB CONFIG", "USB", Later(issue(269)), Built),
-    row("ABOUT", Leaf(&ABOUT_LEAF), Mirror),
+    crumb("OS UPGRADE", "OS", Leaf(&UPDATES_LEAF)),
+    row("STORAGE", Later(issue(267))),
+    crumb("FORMAT CARD", "FORMAT", Later(issue(268))),
+    crumb("USB CONFIG", "USB", Later(issue(269))),
+    row("ABOUT", Leaf(&ABOUT_LEAF)),
     #[cfg(debug_assertions)]
-    row("DEMO", Leaf(&crate::ui::block_registry::DEMO_CHAIN), Built),
+    row("DEMO", Leaf(&crate::ui::block_registry::DEMO_CHAIN)),
 ];
 
 static TOP: [Row; 8] = [
-    row("PROJECT", List(&PROJECT), Built),
-    row("PART", List(&PART), Built),
-    row("ORBIT", Later(issue(262)), Built),
-    crumb("MIDI CONFIG", "MIDI", List(&MIDI), Built),
-    crumb("SYSEX DUMP", "SYSEX", Later(issue(263)), Built),
-    crumb("AUDIO ROUTING", "AUDIO", List(&AUDIO), Built),
-    crumb("PERSONALIZE", "PERSONAL", List(&PERSONALIZE), Built),
-    row("SYSTEM", List(SYSTEM), Built),
+    row("PROJECT", List(&PROJECT)),
+    row("PART", List(&PART)),
+    row("ORBIT", Later(issue(262))),
+    crumb("MIDI CONFIG", "MIDI", List(&MIDI)),
+    crumb("SYSEX DUMP", "SYSEX", Later(issue(263))),
+    crumb("AUDIO ROUTING", "AUDIO", List(&AUDIO)),
+    crumb("PERSONALIZE", "PERSONAL", List(&PERSONALIZE)),
+    row("SYSTEM", List(SYSTEM)),
 ];
 
-pub static ROOT: Row = row("SETTINGS", List(&TOP), Built);
+pub static ROOT: Row = row("SETTINGS", List(&TOP));
 
 /// The row a path of row indices names; the empty path is `ROOT`.
 pub fn row_at(path: &[u8]) -> Option<&'static Row> {

@@ -15,9 +15,8 @@ settings world of the synth. The spec is
 ## Decision
 - **The tree is one static table** (`ui::settings::tree`): a `Row` has a
   label, a crumb of at most 8 characters, a `Kind` (List, Leaf chain,
-  Screen, Act, or Later with its nonzero GitHub issue) and a `Status`
-  (Built or Mirror). A later row is in the table, so shipping it replaces
-  its kind and leaves navigation alone. Paths are row indices, at most 4
+  Screen, Act, or Later with its nonzero GitHub issue). A later row is in the table,
+  so shipping it replaces its kind and leaves navigation alone. Paths are row indices, at most 4
   deep. SYSTEM's DEMO row exists in debug builds only; MIX+B6 becomes
   Part 6's mixer.
 - **Keys inside SETTINGS:** MENU tap backs one level, and at the top

@@ -245,7 +245,7 @@ Never staged by this plan. Each block replaces the text named.
 | `chimera-desktop/src/controls.rs`, `main.rs` | The `Latch` fed from minifb's levels and its pressed and released keys; `card_work`. |
 | `chimera-core/src/ui/hold.rs` | `HOLD_MS`, `Press`, `HoldGate`, `Presses`, `HoldGates`. |
 | `chimera-core/src/ui/nav.rs` | `PageAt`, `MixPage`, `SettingsAt`, `Location`, `Outside`, `Recall`, `NavKey`, `NavCtx`, `Step`. Replaces `ui/chain.rs`'s `ChainId`, `ChainNav`, `next_on_part_button`; `chain_def_for` moves here. |
-| `chimera-core/src/ui/settings/tree.rs` | `Row`, `Kind`, `Screen`, `Act`, `Status`, `ROOT`, `row_at`, `rows`. |
+| `chimera-core/src/ui/settings/tree.rs` | `Row`, `Kind`, `Screen`, `Act`, `ROOT`, `row_at`, `rows`. |
 | `chimera-core/src/ui/settings/leaves.rs` | The leaf chains (`CHANNELS_LEAF`, `OUTPUTS_LEAF`, `TUNING_LEAF`, `THEME_LEAF`, `UPDATES_LEAF`, `ABOUT_LEAF`) and the CHANNELS and OUTPUTS defs (ids 68, 69). |
 | `chimera-core/src/ui/settings/view.rs` | Breadcrumb, list, PART strip and footer drawing; `legend`. |
 | `chimera-core/src/ui/settings/prompt.rs` | `PromptView`, `Choice`, `Answer`. |
@@ -607,11 +607,10 @@ git commit -m "A tap acts on release and a hold at 500 ms, from latched edges"
 - Produces:
 
 ```rust
-pub struct Row { pub label: &'static str, pub crumb: &'static str, pub kind: Kind, pub status: Status }
+pub struct Row { pub label: &'static str, pub crumb: &'static str, pub kind: Kind }
 pub enum Kind { List(&'static [Row]), Leaf(&'static ChainDef2), Screen(Screen), Act(Act), Later(Issue) }
 pub enum Screen { LoadProject, ManageProjects, SaveToProj }  // rows built at run time
 pub enum Act { SaveProjectAs, PartRename, PartClear, PartReload }
-pub enum Status { Built, Mirror }
 pub struct Issue(NonZeroU16); pub const fn issue(n: u16) -> Issue; impl Issue { pub fn get(self) -> u16 }  // a GitHub issue, never 0
 pub static ROOT: Row;                                        // "SETTINGS", List(&TOP)
 pub fn row_at(path: &[u8]) -> Option<&'static Row>;          // the row a path names
@@ -630,12 +629,12 @@ The table (labels exact; crumbs in brackets where they differ; Debug = `cfg(debu
 PROJECT › LOAD PROJECT [LOAD] Screen(LoadProject) · SAVE PROJECT AS [SAVE AS] Act · MANAGE PROJECTS [MANAGE] Screen(Manage)
 PART › RENAME Act · CLEAR Act · SAVE TO PROJ [SAVE TO] Screen(SaveToProj) · RELOAD FROM PROJ [RELOAD] Act
 ORBIT Later
-MIDI CONFIG [MIDI] › SYNC Later · PORT CONFIG [PORT] Later · CHANNELS Leaf Mirror
+MIDI CONFIG [MIDI] › SYNC Later · PORT CONFIG [PORT] Later · CHANNELS Leaf
 SYSEX DUMP [SYSEX] Later
-AUDIO ROUTING [AUDIO] › OUTPUTS Leaf Mirror · SENDS Later(259) · TUNING Leaf Mirror
-PERSONALIZE [PERSONAL] › THEME Leaf Mirror
-SYSTEM › OS UPGRADE [OS] Leaf(UPDATES) Mirror · STORAGE Later · FORMAT CARD [FORMAT] Later · USB CONFIG [USB] Later
-         · ABOUT Leaf(ABOUT + AUDIO sub) Mirror · DEMO Leaf(DEMO_CHAIN) Built, Debug only
+AUDIO ROUTING [AUDIO] › OUTPUTS Leaf · SENDS Later(259) · TUNING Leaf
+PERSONALIZE [PERSONAL] › THEME Leaf
+SYSTEM › OS UPGRADE [OS] Leaf(UPDATES) · STORAGE Later · FORMAT CARD [FORMAT] Later · USB CONFIG [USB] Later
+         · ABOUT Leaf(ABOUT + AUDIO sub) · DEMO Leaf(DEMO_CHAIN) Debug only
 ```
 
 - [ ] **Step 1: Write the failing tests** in `settings_tree_test.rs`:
@@ -687,7 +686,7 @@ git commit -m "The SETTINGS tree is one table of rows with a kind and a status; 
 - Modify: `chimera-core/src/ui/mod.rs` (`pub mod nav;`), `chimera-core/src/ui/chain.rs` (`chain_def_for` moves out; `pub use super::nav::chain_def_for;` stays here until Task 8, so `amp_page_test`, `flt_page_test` and `routing_test`'s `ui::chain::chain_def_for` imports keep compiling), `docs/adr/0044-one-ladder-one-button-map.md`, `docs/adr/0057-part-button-toggles-sound-and-mixer.md`, `docs/adr/README.md`
 
 **Interfaces:**
-- Consumes: `tree::{ROOT, row_at, rows, Kind, Status}` and `settings::leaves` (Task 5); `block_registry::{MIXER_CHANNEL_CHAIN, MIXER_HOME, MIXER_PART, DEMO_CHAIN}`.
+- Consumes: `tree::{ROOT, row_at, rows, Kind}` and `settings::leaves` (Task 5); `block_registry::{MIXER_CHANNEL_CHAIN, MIXER_HOME, MIXER_PART, DEMO_CHAIN}`.
 - Produces:
 
 ```rust
