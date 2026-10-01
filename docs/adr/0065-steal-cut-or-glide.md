@@ -42,8 +42,10 @@ new note's.
   BANK's modes, recomputed each block anyway, and the bow's loop, whose
   lock correction (`grip`, ADR 0064) is re-taken as it moves. The new
   strike adds to what rings, as a re-strike does: STRING and SYMP add a
-  pluck to the line, the target's length, the bow is set back on its
-  string, BANK adds a burst; nothing is cleared, the macros ease on.
+  pluck to the line, the glide's longer line's length, the bow is set
+  back on its string, BANK adds a burst; nothing is cleared, the macros
+  ease on. Silence is judged from the strike's own peak (ADR 0062), so a
+  soft strike on a loud ring rings its own T60.
 - **At the glide's start every ring is sized for the glide's longest
   period** (`KsString::fit`): a string's and SYMP's main string for the
   longer of the two, a bow's half loop for half of it, and each halo
@@ -68,16 +70,24 @@ new note's.
   burst and some 640 samples of silence round the loop, a C2 pulse train
   dipping 30 to 43 dB. On a cleared line the continuation is silence, so
   a note-on is unchanged.
-- **A glide's pluck spans the target's line**: the strike is the new
-  note's. The old line's length, a C5's on a C2 glide, plucked a quarter
-  of the line, 8 dB under a CUT's strike over the first C2 period. Over
-  each C2 period's window of the first 40 blocks, a fast glide down is now
-  no more than 3 dB under the same steal at CUT, and louder only by what
-  still rings (SYMP's halo, a bow's ringing loop).
+- **A glide's pluck spans its longer line**, the start's or the
+  target's: the line read on the way, whole. The old line's length, a
+  C5's on a C2 glide, plucked a quarter of the line, 8 dB under a CUT's
+  strike over the first C2 period; the target's length up, a C2 to C5,
+  plucked 92 samples into a 367-sample loop, a pulse train 6 to 11 dB
+  under. Over each target period's window of the first 40 blocks, a glide
+  either way at TIME 0, 10 ms or 150 ms is now no more than 3.5 dB under
+  the same steal at CUT (an instant glide up hears only the pluck's
+  youngest quarter, −3.1 dB), and louder only by what still rings (SYMP's
+  halo, a bow's ringing loop).
+- **A ring grows under the loop as it was**: `set_period` continues the
+  old pass into a grown gap, then takes the new one, so a PITCH route's
+  step down does not fill the gap with a plateau.
 - **ALGO:** the ratio multiplies every operator's frequency, the classic
   portamento; the envelopes strike as at CUT.
 - **Bill:** at STEAL GLIDE a Modal voice may retune every block, as with a
-  PITCH route: billed `ModalEngine::PITCH` (30), once beside such a route.
+  PITCH route: billed `ModalEngine::PITCH` (30), once beside such a route,
+  and on SYMP `HALO_PITCH` (23) more for its halo's seven targets a block.
   ALGO's frequency is set each block anyway: nothing more.
 
 ## Alternatives considered
