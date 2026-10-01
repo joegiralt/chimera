@@ -132,9 +132,12 @@ commits it at its end.
   keeps the card's own (none if it has none). So a card never boots
   another card's `P000000n`. The write follows ADR 0045's plan: on a card
   RAM doesn't mirror, untouched defaults take the card's SYSTEM (its
-  theme applies) and only the last project is merged in; a card whose
-  SYSTEM can't be read gets nothing. The last project is no theme
-  change: writing it leaves the defaults untouched.
+  theme applies) and only the last project is merged in; with untouched
+  defaults, a card whose SYSTEM can't be read gets nothing. Touched
+  settings are written whatever the card holds, as ADR 0045 allows, so
+  they replace an unreadable SYSTEM (never one that needs newer
+  firmware). The last project is no theme change: writing it leaves the
+  defaults untouched.
 - **The project file's records** are ADR 0043's table (`0x8007` Slot,
   `0x8008` Part, `0x8009` Fx, `0x000A` Origin, their payloads and context
   rules). A new Origin shape takes a new tag; `0x000A` stays 2 bytes.
