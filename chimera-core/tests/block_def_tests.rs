@@ -86,3 +86,26 @@ fn algo_chain_is_alg_osc_then_the_voice_chain() {
     assert!(chain.blocks[1].sub_pages.iter().any(|d| d.name == "Level"));
     assert_eq!(chain.blocks[5].sub_pages.len(), 7);
 }
+
+/// Lists and the Sound rung show `NO_PAGE`: no chain's page shares its id,
+/// and it binds nothing.
+#[test]
+fn no_page_id_is_reserved() {
+    use chimera_core::ui::block_def::SlotBinding;
+    use chimera_core::ui::{NO_PAGE, NO_PAGE_ID};
+    for chain in block_registry::ALL_CHAINS {
+        for (n, b) in chain.blocks.iter().enumerate() {
+            for s in 0..b.sub_page_count().max(1) {
+                let def = chain.active_def(n, s).unwrap();
+                assert_ne!(def.id, NO_PAGE_ID, "{}", def.name);
+            }
+        }
+    }
+    assert_eq!(NO_PAGE.id, NO_PAGE_ID);
+    assert!(
+        NO_PAGE
+            .params
+            .iter()
+            .all(|p| p.binding == SlotBinding::Empty)
+    );
+}

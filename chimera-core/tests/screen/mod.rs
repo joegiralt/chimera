@@ -390,7 +390,13 @@ pub fn load_init(ui: &mut UiState, engine: EngineType) {
     feed(ui, Input::chord(ButtonId::Edit, ButtonId::B1));
     feed(ui, Input::turn(EncoderId::A, row as i8));
     feed(ui, Input::press(ButtonId::Edit));
-    for _ in 0..chimera_core::ui::nav::home(engine).node {
+    let home = chimera_core::ui::nav::home(engine);
+    assert_eq!(
+        ui.location(),
+        chimera_core::ui::nav::Location::pages(chimera_core::project::PartId::ALL[0], home),
+        "a load lands on the engine's home"
+    );
+    for _ in 0..home.node {
         feed(ui, Input::press(ButtonId::Minus));
     }
 }

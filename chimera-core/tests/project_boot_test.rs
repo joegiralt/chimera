@@ -943,3 +943,81 @@ fn the_last_project_is_no_theme_change() {
     assert_eq!(system_on(&mut s), owner, "the owner's card is untouched");
     assert_eq!(b.ui.theme(), owner.theme, "and its theme applies");
 }
+
+fn at_home(engine: EngineType) -> chimera_core::ui::nav::Location {
+    chimera_core::ui::nav::Location::pages(PartId::ALL[0], chimera_core::ui::nav::home(engine))
+}
+
+/// From Part 1's home, PLUS to FLT.
+fn to_flt(ui: &mut UiState) {
+    for _ in 0..3 {
+        screen::feed(ui, screen::Input::press(chimera_hal::ButtonId::Plus));
+    }
+    assert_eq!(
+        ui.page_def().id,
+        chimera_core::ui::block_registry::FILTER.id
+    );
+}
+
+/// Load project `n` from the card into `b`'s UI.
+fn load_file(b: &mut Booted, s: &mut MemStore, n: u32) {
+    let go = file_go(&b.ui, at(s, n));
+    let swap = b.ui.load_project(
+        &mut b.card,
+        s,
+        &mut b.sync,
+        &mut b.settings,
+        go,
+        &LoadLink::new(),
+        settle,
+    );
+    assert!(swap.is_some());
+}
+
+/// A boot onto a Modal Part 1 lands on Modal's home, RES, not on the
+/// Algo page index it booted on (ADR 0066).
+#[test]
+fn boot_onto_a_modal_part_lands_on_res() {
+    let mut s = MemStore::new(1);
+    let (mut p, _) = modal_project();
+    put_project(&mut s, &mut p, 4);
+    let mut b = boot_system(&mut s);
+    let f = at(&mut s, 4);
+    b.sync
+        .write(&mut b.card, &mut s, &mut b.settings, f)
+        .unwrap();
+    let mut b = boot_system(&mut s);
+    b.ui.boot_project(&mut b.card, &mut s, b.settings.last_project);
+    assert_eq!(b.ui.location(), at_home(EngineType::Modal));
+    assert_eq!(
+        b.ui.page_def().id,
+        chimera_core::ui::block_registry::MODAL_1.id
+    );
+}
+
+#[test]
+fn a_load_that_changes_the_engine_lands_on_its_home() {
+    let mut s = MemStore::new(1);
+    let (mut p, _) = modal_project();
+    put_project(&mut s, &mut p, 4);
+    let mut b = boot_system(&mut s);
+    to_flt(&mut b.ui);
+    load_file(&mut b, &mut s, 4);
+    assert_eq!(b.ui.location(), at_home(EngineType::Modal));
+}
+
+#[test]
+fn a_same_engine_load_keeps_the_page() {
+    let mut s = MemStore::new(1);
+    let (mut p, _) = full();
+    put_project(&mut s, &mut p, 5);
+    let mut b = boot_system(&mut s);
+    assert_eq!(
+        p.part(PartId::ALL[0]).sound.engine(),
+        b.ui.project().part(PartId::ALL[0]).sound.engine()
+    );
+    to_flt(&mut b.ui);
+    let flt = b.ui.location();
+    load_file(&mut b, &mut s, 5);
+    assert_eq!(b.ui.location(), flt);
+}

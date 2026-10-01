@@ -44,7 +44,7 @@ use crate::dsp::modulator::{EnvSlot, EnvType, LfoSlot, LfoType};
 use crate::in_place::{by_value, uninit_at};
 use crate::mod_path::{LABEL_LEN, RegistryError};
 use crate::modulation::{CUTOFF, CUTOFF_LABEL, MAX_MOD_SOURCES, ModSource, ModState};
-use crate::params::ParamSnapshot;
+use crate::params::{EngineType, ParamSnapshot};
 use crate::perf::load::AudioStats;
 use crate::preset::POOL_SIZE;
 use crate::project::{
@@ -91,9 +91,18 @@ fn prime_target(addr: ParamAddr) -> ParamAddr {
     }
 }
 
-/// What lists, Screens and the Sound rung show for a page: none of its
-/// six slots is bound.
-static NO_PAGE: &BlockDef = &block_registry::SYS_UPDATES;
+/// What lists, Screens and the Sound rung show for a page: six empty
+/// slots, under an id no chain uses (`no_page_id_is_reserved`).
+pub static NO_PAGE: BlockDef = BlockDef {
+    id: NO_PAGE_ID,
+    name: "",
+    short: "",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [block_def::ParamSlot::EMPTY; 6],
+};
+pub const NO_PAGE_ID: u16 = 79;
+const _: () = assert!((NO_PAGE_ID as usize) < focus::MAX_PAGES);
 
 /// The SETTINGS rows and keys not wired yet (Tasks 11–13).
 const NOT_YET: &str = "NOT YET";
@@ -172,8 +181,8 @@ pub struct UiState {
     theme: ThemeSettings,
     /// What the last card operation said, for a moment.
     toast: busy::ToastTimer,
-    /// `project_status`, refreshed by `update` only: both shells run it
-    /// after `handle_input`, before the frame's render.
+    /// `project_status`, refreshed by `handle_input` and `update`; render
+    /// only reads it.
     status: StatusCache,
     /// Animation phase for the renderer.
     clock: animation::UiClock,
@@ -320,18 +329,27 @@ impl UiState {
         self.toast.show(busy::Toast { text: n.line(), ms });
     }
 
+    /// The active Part's engine, before a replace (`project_replaced`).
+    fn active_engine(&self) -> EngineType {
+        self.project.part(self.active_part).sound.engine()
+    }
+
     /// After a load or a boot replaced the project: the active Part's
     /// engine and matrix, the page, and its values snapped, not lerped
     /// (projects spec § Loading while playing: the voice fade covers it).
-    pub fn project_replaced(&mut self) {
+    /// Its pages go home when its engine is no longer `was` (ADR 0066).
+    fn project_replaced(&mut self, was: EngineType) {
         let part = self.active_part;
-        // A page the new engine's chain has no page at goes home.
         let cx = self.cx();
         if let (Some((c, at)), Some(p)) = (self.loc.page(&cx), self.loc.part())
             && self.loc.settings().is_none()
-            && c.active_def(at.node as usize, at.sub as usize).is_none()
+            && !self.loc.on_mixer()
+            && self.loc.browse().is_none()
         {
-            self.loc = Location::pages(p, home(cx.engines[p.index()]));
+            let engine = cx.engines[p.index()];
+            if engine != was || c.active_def(at.node as usize, at.sub as usize).is_none() {
+                self.loc = Location::pages(p, home(engine));
+            }
         }
         self.load_matrix(part);
         self.enter_page();
@@ -345,10 +363,11 @@ impl UiState {
         store: &mut S,
         last: Option<ProjectId>,
     ) {
+        let was = self.active_engine();
         if let Some(n) = project::boot_project(card, store, last, &mut self.project) {
             self.show_note(n);
         }
-        self.project_replaced();
+        self.project_replaced(was);
     }
 
     /// SAVE (`meta().file()`) or a first save / SAVE AS (`new_project_id`).
@@ -398,13 +417,14 @@ impl UiState {
         link: &LoadLink,
         publish: impl FnOnce(Swap, &Project) -> R,
     ) -> Option<R> {
+        let was = self.active_engine();
         let out = project::load_project(card, store, &mut self.project, go, link);
         if let Some(n) = out.note {
             self.show_note(n);
         }
         let swap = out.swap?;
         let published = publish(swap, &self.project);
-        self.project_replaced();
+        self.project_replaced(was);
         // Only a file load sets it: NEW, loaded or fallen back to, has none.
         if let Some(f) = self.project.meta().file() {
             self.remember(card, store, sync, settings, f);
@@ -467,14 +487,10 @@ impl UiState {
         nav_cx(&self.project)
     }
 
-    /// The page shown; `NO_PAGE` where there is none.
-    fn def(&self) -> &'static BlockDef {
-        page_def(self.loc, &self.cx())
-    }
-
-    /// The page shown: its def, an empty one on lists and the Sound rung.
+    /// The page shown: its def, `NO_PAGE` on lists, Screens and the Sound
+    /// rung.
     pub fn page_def(&self) -> &'static BlockDef {
-        self.def()
+        page_def(self.loc, &self.cx())
     }
 
     /// Move to `to`: a Part's place selects that Part for editing (its
@@ -569,7 +585,7 @@ impl UiState {
     /// The slot the focus band shows on the current page: the last one
     /// turned there, slot a until then.
     pub fn focused_slot(&self) -> usize {
-        self.focus.get(self.def().id)
+        self.focus.get(self.page_def().id)
     }
 
     /// The selected operator.
@@ -587,7 +603,7 @@ impl UiState {
 
     /// Recompute the page identity and jump the display to its values.
     fn enter_page(&mut self) {
-        self.page = PageKey::from_location(self.loc, self.def(), self.sel_op);
+        self.page = PageKey::from_location(self.loc, self.page_def(), self.sel_op);
         let values = self.display_values();
         self.renderer.snap_to_current(values);
     }
@@ -595,7 +611,7 @@ impl UiState {
     /// The six values the display animates toward: the page's slots, and on
     /// the mod matrix the selected route's amount in slot e.
     fn display_values(&self) -> [f32; 6] {
-        let def = self.def();
+        let def = self.page_def();
         let (page, sel_op) = (self.page, self.sel_op);
         let mut values = page_values(page, def, &self.read(self.active_part), sel_op);
         let ctx = self.ctx();
@@ -661,7 +677,7 @@ impl UiState {
     /// and DEMO slots are `Legacy`, so priming there does nothing; Mixer
     /// params are bound but not modulatable, so the registry refuses them.
     fn current_param_addr(&self) -> Option<ParamAddr> {
-        slot_addr(self.def(), self.focused_slot(), &self.ctx()).map(prime_target)
+        slot_addr(self.page_def(), self.focused_slot(), &self.ctx()).map(prime_target)
     }
 
     /// 8-byte matrix column label for a primed destination: `O<n> ` + spec
@@ -669,7 +685,7 @@ impl UiState {
     /// `mod_grid::block_tag` — the page can be a sub-page with a different
     /// short name, e.g. FLT › MODE for the filter's DRIVE) + the slot label.
     fn mod_label(&self, addr: ParamAddr) -> [u8; LABEL_LEN] {
-        let def = self.def();
+        let def = self.page_def();
         let op_prefix;
         let (prefix, name): (&[u8], &str) = match addr.block {
             BlockRef::AlgoOp(op) => {
@@ -815,7 +831,7 @@ impl UiState {
             ButtonState::Pressed | ButtonState::Held
         );
 
-        let def = self.def();
+        let def = self.page_def();
         if def.layout == PageLayout::Matrix {
             for (i, &enc) in ALL_ENCODERS.iter().enumerate() {
                 let delta = controls.encoder_delta(enc);
@@ -952,7 +968,7 @@ impl UiState {
         let at = self.active_part;
 
         // Read base param values
-        let def = self.def();
+        let def = self.page_def();
         let mut values = self.display_values();
         // Set values, before any modulation offset.
         for (a, &v) in self.renderer.set.iter_mut().zip(values.iter()) {
@@ -1068,7 +1084,7 @@ impl UiState {
         scope: &'a [f32; SCOPE_LEN],
     ) -> renderer::Frame<'a> {
         let cx = self.cx();
-        let def = self.def();
+        let def = self.page_def();
         let settings = self.loc.settings();
         let head = match (settings, self.loc.part()) {
             (None, Some(p)) if self.loc.on_mixer() => Head::Mix(p),
@@ -1106,7 +1122,7 @@ impl UiState {
 
     /// The bands on screen: a page's, or SETTINGS' list or leaf.
     fn layout(&self) -> region::Layout {
-        let def = self.def();
+        let def = self.page_def();
         match self.loc.settings() {
             Some(s) => region::Layout::Settings(s.at_leaf().map(|_| def.layout)),
             None => region::Layout::Page(def.layout),
@@ -1430,7 +1446,7 @@ fn nav_cx(project: &Project) -> NavCtx {
 fn page_def(at: Location, cx: &NavCtx) -> &'static BlockDef {
     at.page(cx)
         .and_then(|(c, p)| c.active_def(p.node as usize, p.sub as usize))
-        .unwrap_or(NO_PAGE)
+        .unwrap_or(&NO_PAGE)
 }
 
 #[cfg(test)]

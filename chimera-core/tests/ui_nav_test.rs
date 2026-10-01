@@ -6,9 +6,10 @@ mod screen;
 use chimera_core::block::Block;
 use chimera_core::params::EngineType;
 use chimera_core::part::PartParams;
-use chimera_core::project::PartId;
+use chimera_core::project::{Line, PartId};
 use chimera_core::storage::{Card, SystemSync};
 use chimera_core::ui::block_registry::{FILTER, MIXER_CHANNEL_CHAIN, MIXER_PART};
+use chimera_core::ui::busy::ToastStep;
 use chimera_core::ui::nav::{Location, MixPage, PageAt, home};
 use chimera_core::ui::perf::PerfStats;
 use chimera_core::ui::region::RegionKind;
@@ -193,7 +194,29 @@ fn settings_keys_follow_the_bar_and_the_status() {
     feed(&mut ui, Input::turn(EncoderId::A, 1));
     draw(&mut ui);
     assert_ne!(key(&ui, RegionKind::List), list, "bar");
-    assert_eq!(key(&ui, RegionKind::Footer), footer);
+    assert_eq!(
+        key(&ui, RegionKind::Footer),
+        footer,
+        "PART opens, as PROJECT"
+    );
+
+    // PART (a list) → ORBIT (later): the legend changes.
+    feed(&mut ui, Input::press(ButtonId::Plus));
+    draw(&mut ui);
+    assert_ne!(key(&ui, RegionKind::Footer), footer, "legend");
+    let footer = key(&ui, RegionKind::Footer);
+
+    // Into PART and MENU back out: the breadcrumb changes.
+    feed(&mut ui, Input::press(ButtonId::Minus));
+    feed(&mut ui, Input::press(ButtonId::Edit));
+    draw(&mut ui);
+    let crumbs = key(&ui, RegionKind::Crumbs);
+    tap(&mut ui, ButtonId::Menu);
+    draw(&mut ui);
+    assert_ne!(key(&ui, RegionKind::Crumbs), crumbs, "MENU back");
+    feed(&mut ui, Input::press(ButtonId::Plus));
+    draw(&mut ui);
+    assert_eq!(key(&ui, RegionKind::Footer), footer, "back on ORBIT");
 
     ui.project_mut()
         .edit_part(P[0])
@@ -201,4 +224,26 @@ fn settings_keys_follow_the_bar_and_the_status() {
         .set(PartParams::LEVEL, 0.25);
     draw(&mut ui);
     assert_ne!(key(&ui, RegionKind::Footer), footer, "status");
+}
+
+fn not_yet() -> ToastStep {
+    ToastStep::Show(Line::new("NOT YET"))
+}
+
+#[test]
+fn seq_on_a_part_action_says_not_yet() {
+    let mut ui = UiState::new();
+    to_leaf(&mut ui, &["PART"]); // the bar on RENAME, an action
+    tap(&mut ui, ButtonId::Seq);
+    assert_eq!(ui.step_toast(0), not_yet());
+    assert_eq!(ui.location(), Location::settings_at(&[1], 0));
+}
+
+#[test]
+fn edit_on_load_project_says_not_yet() {
+    let mut ui = UiState::new();
+    to_leaf(&mut ui, &["PROJECT"]); // the bar on LOAD PROJECT, a Screen
+    feed(&mut ui, Input::press(ButtonId::Edit));
+    assert_eq!(ui.step_toast(0), not_yet());
+    assert_eq!(ui.location(), Location::settings_at(&[0], 0));
 }
