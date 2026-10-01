@@ -25,6 +25,7 @@ use crate::ui::nav::PageAt;
 use crate::ui::page::PageLayout;
 use crate::ui::perf::PerfStats;
 use crate::ui::region::{self, Layout, RegionKind};
+use crate::ui::settings::prompt::{Pick, Wording, draw_prompt};
 use crate::ui::settings::view::Bands;
 use crate::ui::theme;
 use crate::ui::view::{self, EnvKind, SlotCtx, View};
@@ -39,6 +40,8 @@ pub struct Frame<'a> {
     pub layout: Layout,
     /// SETTINGS' breadcrumb, list and footer.
     pub settings: Option<Bands>,
+    /// A prompt over the screen, and its pick.
+    pub prompt: Option<(Wording, Pick)>,
     pub def: &'static BlockDef,
     pub perf: &'a PerfStats,
     pub matrix: &'a MatrixState,
@@ -300,6 +303,7 @@ impl Renderer {
         for &(kind, _, _) in f.layout.regions() {
             self.draw_region_with_def(display, kind, f);
         }
+        self.draw_region_with_def(display, RegionKind::Prompt, f);
     }
 
     /// What the page's viz is drawn from, for dirty tracking: the slot
@@ -385,6 +389,11 @@ impl Renderer {
             RegionKind::Footer => {
                 if let Some(b) = &f.settings {
                     b.draw_footer(display)
+                }
+            }
+            RegionKind::Prompt => {
+                if let Some((w, pick)) = f.prompt {
+                    w.with_view(|v| draw_prompt(display, v, pick))
                 }
             }
         }

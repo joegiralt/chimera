@@ -64,6 +64,9 @@ use nav::{Browse, Location, NavCtx, NavKey, Recall, Step, chain_def_for};
 use page::{PageKey, PageLayout};
 use perf::PerfStats;
 use renderer::Renderer;
+use settings::naming::{Naming, NamingOut};
+use settings::prompt::{Answer, Choice, Pick};
+use settings::{Ask, NamingFor};
 use theme_settings::ThemeSettings;
 use view::{SlotCtx, View};
 
@@ -186,6 +189,15 @@ pub struct UiState {
     status: StatusCache,
     /// Animation phase for the renderer.
     clock: animation::UiClock,
+    /// A prompt or NAMING: while open it takes every key but B*n*.
+    modal: Option<Modal>,
+}
+
+/// What takes the keys over the screen: one at a time.
+#[derive(Debug)]
+enum Modal {
+    Prompt(Ask, Choice),
+    Naming(NamingFor, Naming),
 }
 
 crate::in_place::field_list!(UiState => UiState {
@@ -209,6 +221,7 @@ crate::in_place::field_list!(UiState => UiState {
     toast,
     status,
     clock,
+    modal,
 });
 
 impl Default for UiState {
@@ -264,6 +277,7 @@ impl UiState {
             addr_of_mut!((*p).toast).write(busy::ToastTimer::new());
             addr_of_mut!((*p).status).write(StatusCache::new());
             addr_of_mut!((*p).clock).write(animation::UiClock::new());
+            addr_of_mut!((*p).modal).write(None);
             let ui = slot.assume_init_mut();
             ui.load_matrix(PartId::ALL[0]);
             ui
@@ -739,8 +753,7 @@ impl UiState {
     /// The keys this frame, in order: MENU, B*n*, PLUS and MINUS, SEQ, EDIT,
     /// then encoder A on a list. With MIX down, PLUS and MINUS are MIX's
     /// own (prime, delete), never a move.
-    fn nav_keys(&mut self, c: &impl Controls) -> [Option<NavKey>; 12] {
-        let presses = self.gates.step(c);
+    fn nav_keys(&self, c: &impl Controls, presses: hold::Presses) -> [Option<NavKey>; 12] {
         let pressed = |b| c.button_state(b) == ButtonState::Pressed;
         let down = |b| matches!(c.button_state(b), ButtonState::Pressed | ButtonState::Held);
         let mix = c.edges(ButtonId::Mix).down;
@@ -785,6 +798,118 @@ impl UiState {
         keys
     }
 
+    /// Whether a prompt is open.
+    pub fn prompt_open(&self) -> bool {
+        matches!(self.modal, Some(Modal::Prompt(..)))
+    }
+
+    /// NAMING, if it is open.
+    pub fn naming(&self) -> Option<&Naming> {
+        match &self.modal {
+            Some(Modal::Naming(_, n)) => Some(n),
+            _ => None,
+        }
+    }
+
+    #[cfg_attr(
+        not(any(test, feature = "test-support")),
+        expect(dead_code, reason = "Tasks 11–13 open prompts")
+    )]
+    fn ask(&mut self, a: Ask) {
+        let c = Choice::new(a.wording().count());
+        self.open(Modal::Prompt(a, c));
+    }
+
+    /// NAMING opens on SETTINGS lists only: it takes the list's band.
+    #[cfg_attr(
+        not(any(test, feature = "test-support")),
+        expect(dead_code, reason = "Tasks 11–13 open NAMING")
+    )]
+    fn name(&mut self, f: NamingFor, start: &str) {
+        debug_assert!(self.loc.settings().is_some_and(|s| s.at_leaf().is_none()));
+        self.open(Modal::Naming(f, Naming::new(start)));
+    }
+
+    fn open(&mut self, m: Modal) {
+        self.modal = Some(m);
+        self.browser_dirty = true;
+    }
+
+    /// Drops what's open, a pending replace with it: the screen beneath
+    /// redraws whole.
+    fn close_modal(&mut self) -> Option<Modal> {
+        self.region_set.prev_screen = None;
+        self.browser_dirty = true;
+        self.modal.take()
+    }
+
+    /// A replace from `src` that asks opens its prompt; whether it did.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn ask_replace_for_test(&mut self, src: PartSource) -> bool {
+        match ReplaceGuard::check(&self.project, self.template, src) {
+            Ok(_) => false,
+            Err(n) => {
+                self.ask(Ask::ReplacePart(n.into_pending()));
+                true
+            }
+        }
+    }
+
+    /// NAMING for the loaded project (`None`) or Part `part`'s Sound.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn rename_for_test(&mut self, part: Option<PartId>, start: &str) {
+        let f = part.map_or(NamingFor::RenameLoaded, NamingFor::RenamePart);
+        self.name(f, start);
+    }
+
+    /// A frame for the prompt or NAMING.
+    fn modal_input(&mut self, c: &impl Controls, p: &hold::Presses) {
+        let out = match &mut self.modal {
+            Some(Modal::Prompt(_, choice)) => {
+                let was = choice.pick();
+                let a = choice.input(c, p);
+                self.browser_dirty |= choice.pick() != was;
+                a.map(Ok)
+            }
+            Some(Modal::Naming(_, n)) => n.input(c, p).map(Err),
+            None => None,
+        };
+        match out {
+            Some(Err(NamingOut::Empty)) => self.toast.show(busy::Toast {
+                text: Line::new("NAME IS EMPTY"),
+                ms: busy::Toast::ERROR_MS,
+            }),
+            Some(out) => match (self.close_modal(), out) {
+                (Some(Modal::Prompt(ask, _)), Ok(a)) => self.answer(ask, a),
+                (Some(Modal::Naming(f, _)), Err(NamingOut::Save(name))) => match f {
+                    NamingFor::RenameLoaded => self.project.set_name(name),
+                    NamingFor::RenamePart(part) => self.project.edit_part(part).sound.name = name,
+                },
+                _ => {}
+            },
+            None => {}
+        }
+    }
+
+    /// CANCEL, or a cancelling pick, drops the pending replace.
+    fn answer(&mut self, ask: Ask, a: Answer) {
+        match (ask, a) {
+            (Ask::ReplacePart(p), Answer::Pick(Pick::Second)) => {
+                let was = self.active_engine();
+                let _ = self.project.replace_part(p.anyway(&self.project));
+                self.project_replaced(was);
+            }
+            // SAVE PART FIRST: Task 13 (Pre-flight 15).
+            (Ask::ReplacePart(_), Answer::Pick(Pick::First)) => self.toast.show(busy::Toast {
+                text: Line::new(NOT_YET),
+                ms: busy::Toast::ERROR_MS,
+            }),
+            _ => {}
+        }
+    }
+
     /// Process one frame of input: navigation + encoder deltas.
     pub fn handle_input(&mut self, controls: &impl Controls) {
         // Any encoder turn or button press retires the last prime-status
@@ -796,7 +921,15 @@ impl UiState {
         }
         self.refresh_status();
 
-        let keys = self.nav_keys(controls);
+        let presses = self.gates.step(controls);
+        if self.modal.is_some() {
+            if !part_key(controls) {
+                self.modal_input(controls, &presses);
+                return;
+            }
+            self.close_modal();
+        }
+        let keys = self.nav_keys(controls, presses);
         for k in keys.into_iter().flatten() {
             if let (Some((p, b)), NavKey::Edit) = (self.loc.browse(), k) {
                 self.load_sound(p, b);
@@ -1070,10 +1203,24 @@ impl UiState {
             let _ = display.clear(theme::BG);
             let (cursor, scroll) = (b.cursor(), b.scroll());
             browser::draw(display, self.project.pool(), part, cursor, scroll);
+            self.draw_prompt(display);
             return;
         }
         self.renderer
             .draw_with_def(display, &self.frame(perf, audio, scope));
+    }
+
+    /// The open prompt's panel, if any, over whatever is drawn.
+    fn draw_prompt<D>(&self, d: &mut D)
+    where
+        D: embedded_graphics::draw_target::DrawTarget<
+                Color = embedded_graphics::pixelcolor::Rgb565,
+            >,
+    {
+        if let Some(Modal::Prompt(a, c)) = &self.modal {
+            a.wording()
+                .with_view(|v| settings::prompt::draw_prompt(d, v, c.pick()));
+        }
     }
 
     /// What one frame draws from.
@@ -1101,7 +1248,16 @@ impl UiState {
                 first: self.list_first as usize,
                 name: self.project.meta().name(),
                 status: self.project_status(),
+                prompt: self.prompt_open(),
+                naming: match &self.modal {
+                    Some(Modal::Naming(f, n)) => Some((*n, f.title())),
+                    _ => None,
+                },
             }),
+            prompt: match &self.modal {
+                Some(Modal::Prompt(a, c)) => Some((a.wording(), c.pick())),
+                _ => None,
+            },
             def,
             perf,
             matrix: &self.matrix_state,
@@ -1124,7 +1280,11 @@ impl UiState {
     fn layout(&self) -> region::Layout {
         let def = self.page_def();
         match self.loc.settings() {
-            Some(s) => region::Layout::Settings(s.at_leaf().map(|_| def.layout)),
+            Some(s) => region::Layout::Settings(
+                s.at_leaf()
+                    .filter(|_| self.naming().is_none())
+                    .map(|_| def.layout),
+            ),
             None => region::Layout::Page(def.layout),
         }
     }
@@ -1236,6 +1396,31 @@ impl UiState {
                 });
                 RegionData::Settings { key }
             }
+            RegionKind::Prompt => {
+                let key = f.prompt.map_or(0, |(w, pick)| {
+                    w.with_view(|v| {
+                        let o = |i| {
+                            v.options
+                                .as_slice()
+                                .get(i)
+                                .map_or(&b""[..], |s: &&str| s.as_bytes())
+                        };
+                        region::settings_key(&[
+                            v.question.as_bytes(),
+                            &[0],
+                            v.reason.as_bytes(),
+                            &[0],
+                            o(0),
+                            &[0],
+                            o(1),
+                            &[0],
+                            o(2),
+                            &[pick.index() as u8],
+                        ])
+                    })
+                });
+                RegionData::Overlay { key }
+            }
         }
     }
 
@@ -1247,7 +1432,8 @@ impl UiState {
         audio: Option<&AudioStats>,
         scope: &[f32; SCOPE_LEN],
     ) {
-        self.region_set.set_layout(self.layout());
+        self.region_set
+            .set_screen(self.layout(), self.prompt_open());
         let mut data = [region::RegionData::sentinel_header(); region::MAX_REGIONS];
         {
             let f = self.frame(perf, audio, scope);
@@ -1294,8 +1480,9 @@ impl UiState {
                 Renderer::clear_region_fb(fb, 0, chimera_hal::SCREEN_HEIGHT);
                 let (cursor, scroll) = (b.cursor(), b.scroll());
                 browser::draw(display, self.project.pool(), part, cursor, scroll);
+                self.draw_prompt(display);
                 // Invalidate region set so normal layout forces full rebuild on exit
-                self.region_set.prev_layout = None;
+                self.region_set.prev_screen = None;
                 flush_list[0] = (0, chimera_hal::SCREEN_HEIGHT);
                 self.browser_dirty = false;
             }
@@ -1307,8 +1494,9 @@ impl UiState {
         let mut flush_count = 0;
 
         // Rebuild regions if layout changed
-        if self.region_set.prev_layout != Some(layout) {
-            self.region_set.set_layout(layout);
+        let screen = (layout, self.prompt_open());
+        if self.region_set.prev_screen != Some(screen) {
+            self.region_set.set_screen(layout, screen.1);
         }
 
         let count = self.region_set.count as usize;
@@ -1317,9 +1505,14 @@ impl UiState {
             let f = self.frame(perf, audio, scope);
             // The focus band's gauge, resolved once for the frame.
             let shown = self.renderer.shown_gauge(&f);
+            // A band beneath the prompt redrew over it: it redraws too.
+            let (top, bottom) = (region::PROMPT.1, region::PROMPT.2);
+            let under = |(a, b): (u16, u16)| a < bottom && b > top;
+            let mut beneath = false;
             for i in 0..count {
                 let r = self.region_set.regions[i];
                 data[i] = self.region_data(r.kind, &f, shown);
+                let prompt = r.kind == region::RegionKind::Prompt;
                 // Only an animated glyph moved: redraw its box alone.
                 if r.kind == region::RegionKind::Focus
                     && data[i] != r.prev_data
@@ -1330,11 +1523,20 @@ impl UiState {
                 {
                     flush_list[flush_count] = rows;
                     flush_count += 1;
-                } else if data[i] != r.prev_data {
-                    renderer::Renderer::clear_region_fb(display.pixel_buffer(), r.y_start, r.y_end);
+                    beneath |= under(rows);
+                } else if data[i] != r.prev_data || (prompt && beneath) {
+                    // The panel is opaque over its own last frame.
+                    if !prompt {
+                        renderer::Renderer::clear_region_fb(
+                            display.pixel_buffer(),
+                            r.y_start,
+                            r.y_end,
+                        );
+                    }
                     self.renderer.draw_region_with_def(display, r.kind, &f);
                     flush_list[flush_count] = (r.y_start, r.y_end);
                     flush_count += 1;
+                    beneath |= under((r.y_start, r.y_end));
                 }
             }
         }
@@ -1360,6 +1562,16 @@ impl UiState {
     {
         self.render_dirty_with_audio(display, perf, None, scope)
     }
+}
+
+/// B*n* or MIX+B*n*: the keys a prompt or NAMING lets through, after
+/// dropping itself. EDIT+B*n* is theirs.
+fn part_key(c: &impl Controls) -> bool {
+    let down = |b| matches!(c.button_state(b), ButtonState::Pressed | ButtonState::Held);
+    !down(ButtonId::Edit)
+        && PART_BUTTONS
+            .iter()
+            .any(|&b| c.button_state(b) == ButtonState::Pressed)
 }
 
 /// Whether `controls` reports an encoder turn or a button press this frame —

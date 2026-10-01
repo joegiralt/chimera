@@ -8,6 +8,7 @@ use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::Rgb565;
 use u8g2_fonts::FontRenderer;
 
+use super::naming::{Naming, draw_naming};
 use super::tree::{Kind, PART, ROOT, Row, row_at, rows};
 use crate::name::ProjectName;
 use crate::project::{PartId, ProjectStatus};
@@ -420,6 +421,10 @@ pub struct Bands {
     pub first: usize,
     pub name: ProjectName,
     pub status: ProjectStatus,
+    /// A prompt is over the screen: the legend is its keys.
+    pub prompt: bool,
+    /// NAMING in the list's place, under its title.
+    pub naming: Option<(Naming, &'static str)>,
 }
 
 impl Bands {
@@ -429,6 +434,12 @@ impl Bands {
     }
 
     pub fn legend(&self) -> &'static str {
+        if self.prompt {
+            return legend(LegendFor::Prompt, false);
+        }
+        if self.naming.is_some() {
+            return legend(LegendFor::Naming, false);
+        }
         if self.at.at_leaf().is_some() {
             return legend(LegendFor::Leaf, false);
         }
@@ -450,7 +461,17 @@ impl Bands {
 
     pub fn list_key(&self) -> u32 {
         let list = [self.at.path().len() as u8, self.at.row(), self.first as u8];
-        settings_key(&[self.at.path(), &list])
+        let (text, title, cursor) = self
+            .naming
+            .as_ref()
+            .map_or(("", "", u8::MAX), |(n, t)| (n.text(), *t, n.cursor()));
+        settings_key(&[
+            self.at.path(),
+            &list,
+            text.as_bytes(),
+            title.as_bytes(),
+            &[cursor, text.len() as u8],
+        ])
     }
 
     pub fn footer_key(&self) -> u32 {
@@ -476,6 +497,9 @@ impl Bands {
     }
 
     pub fn draw_list<D: DrawTarget<Color = Rgb565>>(&self, d: &mut D) {
+        if let Some((n, title)) = &self.naming {
+            return draw_naming(d, n, title);
+        }
         let rows = self.rows();
         debug_assert!(rows.len() <= MAX_ROWS);
         let mut shown = [ListRow::of(&ROOT); MAX_ROWS];

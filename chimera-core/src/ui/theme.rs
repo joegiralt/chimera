@@ -22,6 +22,10 @@ pub const FAINT: Rgb565 = Rgb565::new(5, 10, 5);
 pub const ACCENT: Rgb565 = Rgb565::new(15, 53, 25);
 /// Accent at 12 % over the ground: fill under a viz line.
 pub const ACCENT_SOFT: Rgb565 = Rgb565::new(3, 8, 4);
+/// A prompt's panel `#0d1514`.
+pub const PANEL: Rgb565 = Rgb565::new(1, 5, 2);
+/// An unpicked option's outline `#3a3937`.
+pub const PILL_EDGE: Rgb565 = Rgb565::new(7, 14, 6);
 /// Audio load above 60 % / 80 %.
 pub const WARN: Rgb565 = Rgb565::new(31, 32, 0);
 pub const ALERT: Rgb565 = Rgb565::new(31, 0, 0);
