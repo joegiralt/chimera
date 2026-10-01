@@ -11,8 +11,9 @@ use crate::preset::Sound;
 
 use super::{Performance, Pool, Project, ProjectMeta, SlotId, project_crc};
 
-/// The CRC of NEW, as `init_in_place` or `reset_new` built it: a project
-/// equal to it is `Pristine`. Nothing else makes one:
+/// The CRC of NEW, as `init_in_place` built it (`reset_new` builds the
+/// same project): a project equal to it is `Pristine`. Nothing else makes
+/// one:
 ///
 /// ```compile_fail,E0423
 /// let t = chimera_core::project::TemplateCrc(0);
@@ -52,12 +53,13 @@ impl Project {
         (unsafe { raw.assume_init() }, t)
     }
 
-    /// Back to NEW, in place: `+ NEW`, and a failed load's fallback.
-    pub(crate) fn reset_new(&mut self) -> TemplateCrc {
+    /// Back to NEW, in place: `+ NEW`, and a failed load's fallback. No
+    /// CRC: the template was taken once, at `init_in_place`, and a hash
+    /// here is a whole project's (about 0.5–0.9 ms on the chip).
+    pub(crate) fn reset_new(&mut self) {
         self.meta = ProjectMeta::new_project();
         self.perf.reset();
         self.fill_new_pool();
-        TemplateCrc(project_crc(self))
     }
 
     /// The factory Sounds, then an INIT Sound per engine, then empty slots;
@@ -97,7 +99,7 @@ mod tests {
         p.edit_fx().delay.mix = 0.5;
         p.pool_store(SlotId::ALL[25], Sound::init(EngineType::Modal));
         let before = SlotId::ALL.map(|s| p.pool().generation(s));
-        assert_eq!(p.reset_new(), t);
+        p.reset_new();
         assert_eq!(project_crc(&p), t.get());
         assert_eq!(p.meta(), fresh.meta());
         assert_eq!(p.pool().used(), fresh.pool().used());
