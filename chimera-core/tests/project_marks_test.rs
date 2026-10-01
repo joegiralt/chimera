@@ -377,3 +377,24 @@ fn an_action_is_gone_once_its_part_or_slot_moves() {
     assert_eq!(p.apply_part_action(new), Ok(PartSet::EMPTY));
     assert!(p.pool().get(later).unwrap().bits_eq(&p.part(a).sound));
 }
+
+/// An INIT Part's action from before a project load can't apply to the
+/// loaded project's Part, though its Origin and status read the same.
+#[test]
+fn an_action_from_before_a_load_is_gone() {
+    let a = PartId::ALL[2];
+    let (mut q, tq) = Project::boxed();
+    load(&mut q, tq, init(a, EngineType::Modal)).unwrap();
+    edit(&mut q, a, 0.25);
+    let (mut p, t) = Project::boxed();
+    load(&mut p, t, init(a, EngineType::Modal)).unwrap();
+    edit(&mut p, a, 0.5);
+    let new = part_actions(&p, a).iter().next().unwrap();
+    assert!(matches!(new.kind(), PartActionKind::NewSlot(_)));
+    decode(&encode(&q), &mut p).unwrap();
+    assert_eq!(p.part(a).origin(), Origin::Init(EngineType::Modal));
+    assert_eq!(status(&p, a), PartStatus::Edited);
+    let crc = project_crc(&p);
+    assert_eq!(p.apply_part_action(new), Err(ActionGone));
+    assert_eq!(project_crc(&p), crc);
+}
