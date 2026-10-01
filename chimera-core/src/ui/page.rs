@@ -1,4 +1,4 @@
-use crate::addr::{BlockRef, Blocks, Op, ParamAddr};
+use crate::addr::{BlockRead, BlockRef, Blocks, Op, ParamAddr};
 use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::modulator::EnvSlot;
 use crate::params::{DriveParams, EnvParams, FilterParams, FolderParams, OutParams};
@@ -96,7 +96,7 @@ impl PageId {
     }
 
     /// Read 6 normalized (0..1) encoder values from params for this page.
-    pub fn read_values(&self, params: &impl Blocks) -> [f32; 6] {
+    pub fn read_values(&self, params: &impl BlockRead) -> [f32; 6] {
         core::array::from_fn(|i| {
             self.binding(i)
                 .and_then(|a| Some(params.block(a.block)?.normalized(a.param)))

@@ -33,12 +33,13 @@ impl Project {
     /// template: a project equal to it is `Pristine`.
     pub fn init_in_place(slot: &mut MaybeUninit<Project>) -> TemplateCrc {
         let p = slot.as_mut_ptr();
-        // SAFETY: `p` is valid and unaliased; `meta`, `pool` (in place) and
-        // `perf` are each written once before `assume_init_mut`.
+        // SAFETY: `p` is valid and unaliased; `meta`, `pool` (in place),
+        // `perf` and `rev` are each written once before `assume_init_mut`.
         let project = unsafe {
             addr_of_mut!((*p).meta).write(ProjectMeta::new_project());
             Pool::init_in_place(uninit_at(addr_of_mut!((*p).pool)));
             addr_of_mut!((*p).perf).write(Performance::new());
+            addr_of_mut!((*p).rev).write(0);
             slot.assume_init_mut()
         };
         project.fill_new_pool();
@@ -57,6 +58,7 @@ impl Project {
     /// CRC: the template was taken once, at `init_in_place`, and a hash
     /// here is a whole project's (about 0.5–0.9 ms on the chip).
     pub(crate) fn reset_new(&mut self) {
+        self.bump();
         self.meta = ProjectMeta::new_project();
         self.perf.reset();
         self.fill_new_pool();

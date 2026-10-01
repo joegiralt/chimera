@@ -59,6 +59,52 @@ pub(super) fn status_at(p: &Project, t: TemplateCrc, crc: u32) -> ProjectStatus 
     }
 }
 
+/// `project_status`, hashed once per `Project::rev`: the CRC costs about
+/// 1.7 ms on the chip, so no frame may run it.
+#[derive(Clone, Copy, Debug)]
+pub struct StatusCache {
+    rev: Option<u32>,
+    status: ProjectStatus,
+}
+
+impl Default for StatusCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl StatusCache {
+    pub const fn new() -> Self {
+        StatusCache {
+            rev: None,
+            status: ProjectStatus::Pristine,
+        }
+    }
+
+    /// Hashes with `crc` only when `p.rev()` moved since the last call.
+    pub fn get_with(
+        &mut self,
+        p: &Project,
+        t: TemplateCrc,
+        crc: impl FnOnce(&Project) -> u32,
+    ) -> ProjectStatus {
+        if self.rev != Some(p.rev()) {
+            self.status = status_at(p, t, crc(p));
+            self.rev = Some(p.rev());
+        }
+        self.status
+    }
+
+    pub fn get(&mut self, p: &Project, t: TemplateCrc) -> ProjectStatus {
+        self.get_with(p, t, project_crc)
+    }
+
+    /// The last result; `Pristine` before any.
+    pub fn cached(&self) -> ProjectStatus {
+        self.status
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PartActionKind {
     /// Save the Part over its slot.
@@ -133,6 +179,7 @@ pub struct ActionGone;
 impl Project {
     /// Ok: the other users of the slot that now derive Stale (as `save_part_to`).
     pub fn apply_part_action(&mut self, a: PartAction) -> Result<PartSet, ActionGone> {
+        self.bump();
         let x = self.part(a.part);
         if x.origin != a.origin
             || part_status(x, &self.pool) != a.status
@@ -160,6 +207,7 @@ impl Project {
     #[cfg(any(test, feature = "test-support"))]
     #[doc(hidden)]
     pub fn mark_saved_for_test(&mut self) {
+        self.bump();
         self.meta.saved_crc = Some(project_crc(self));
     }
 }

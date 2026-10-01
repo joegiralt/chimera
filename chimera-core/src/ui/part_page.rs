@@ -2,13 +2,13 @@
 //! slot bindings (spec §5): label, format, step and range all come from the
 //! bound param's spec.
 
-use crate::addr::{Blocks, Op};
+use crate::addr::{BlockRead, Blocks, Op};
 use crate::ui::block_def::{BlockDef, SlotBinding, slot_addr};
 use crate::ui::view::{SlotCtx, View, view};
 
 /// Normalized (0..1) display values of the six slots (a route view reads 0:
 /// the UI overlays its amount).
-pub fn read_values(def: &BlockDef, params: &impl Blocks, sel_op: Op) -> [f32; 6] {
+pub fn read_values(def: &BlockDef, params: &impl BlockRead, sel_op: Op) -> [f32; 6] {
     let ctx = SlotCtx::read(params, sel_op);
     core::array::from_fn(|i| match view(def, i, &ctx) {
         View::SelectOp => sel_op.index() as f32 / (Op::ALL.len() - 1) as f32,

@@ -416,6 +416,7 @@ pub struct ProjectDecoder<'a> {
 
 impl<'a> ProjectDecoder<'a> {
     pub(crate) fn new(target: &'a mut Project) -> Self {
+        target.bump();
         ProjectDecoder {
             check: ProjectCheck::new(),
             target,

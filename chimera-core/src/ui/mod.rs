@@ -32,7 +32,7 @@ use crate::storage::{Card, Exit, SystemSettings, SystemSync};
 use chimera_hal::store::Store;
 use chimera_hal::{ALL_BUTTONS, ALL_ENCODERS, ButtonId, ButtonState, Controls, PART_BUTTONS};
 
-use crate::addr::{BlockRef, Blocks, Op, ParamAddr};
+use crate::addr::{BlockRead, BlockRef, Blocks, Op, ParamAddr};
 use crate::block::Block;
 use crate::dsp::lfo::Lfo;
 use crate::dsp::modulator::{EnvSlot, EnvType, LfoSlot, LfoType};
@@ -41,10 +41,11 @@ use crate::mod_path::{LABEL_LEN, RegistryError};
 use crate::modulation::{CUTOFF, CUTOFF_LABEL, MAX_MOD_SOURCES, ModSource, ModState};
 use crate::params::ParamSnapshot;
 use crate::perf::load::AudioStats;
-use crate::preset::{POOL_SIZE, PartEdit};
+use crate::preset::POOL_SIZE;
 use crate::project::{
-    self, Confirmed, LoadLink, PartFrom, PartId, PartSource, Project, ProjectFile, ProjectNote,
-    ProjectSource, ReplaceGuard, Swap, TemplateCrc,
+    self, Confirmed, LoadLink, PartEdit, PartFrom, PartId, PartSource, Project, ProjectFile,
+    ProjectNote, ProjectSource, ProjectStatus, ReplaceGuard, StatusCache, Swap, TemplateCrc,
+    part_block, part_block_mut,
 };
 use crate::scope::SCOPE_LEN;
 use crate::storage::ProjectId;
@@ -162,6 +163,8 @@ pub struct UiState {
     theme: ThemeSettings,
     /// What the last card operation said, for a moment.
     toast: busy::ToastTimer,
+    /// `project_status`, refreshed by `update` and `handle_input` only.
+    status: StatusCache,
 }
 
 crate::in_place::field_list!(UiState => UiState {
@@ -181,6 +184,7 @@ crate::in_place::field_list!(UiState => UiState {
     prime_status,
     theme,
     toast,
+    status,
 });
 
 impl Default for UiState {
@@ -208,12 +212,13 @@ impl UiState {
             let template = Project::init_in_place(uninit_at(addr_of_mut!((*p).project)));
             let project = &mut *addr_of_mut!((*p).project);
             let mut renderer = Renderer::new();
-            renderer.snap_to_current(page_values(
-                page,
-                nav.active_block_def(),
-                &project.edit_part(PartId::ALL[0]),
-                Op::A,
-            ));
+            let theme = ThemeSettings::DEFAULT;
+            let read = UiRead {
+                project,
+                part: PartId::ALL[0],
+                theme: &theme,
+            };
+            renderer.snap_to_current(page_values(page, nav.active_block_def(), &read, Op::A));
             addr_of_mut!((*p).nav).write(nav);
             addr_of_mut!((*p).template).write(template);
             addr_of_mut!((*p).active_part).write(PartId::ALL[0]);
@@ -227,8 +232,9 @@ impl UiState {
             addr_of_mut!((*p).focus).write(focus::FocusMemory::new());
             addr_of_mut!((*p).display_lfos).write([Lfo::new(); 3]);
             addr_of_mut!((*p).prime_status).write(None);
-            addr_of_mut!((*p).theme).write(ThemeSettings::DEFAULT);
+            addr_of_mut!((*p).theme).write(theme);
             addr_of_mut!((*p).toast).write(busy::ToastTimer::new());
+            addr_of_mut!((*p).status).write(StatusCache::new());
             let ui = slot.assume_init_mut();
             ui.load_matrix(PartId::ALL[0]);
             ui
@@ -433,11 +439,24 @@ impl UiState {
         self.template
     }
 
-    /// The edited Part's blocks and System › Theme, as one `Blocks`.
-    fn blocks(&mut self, part: PartId) -> UiBlocks<'_> {
-        UiBlocks {
-            edit: self.project.edit_part(part),
-            theme: &mut self.theme,
+    /// The project's status as `update` or `handle_input` last found it:
+    /// render reads this, and never hashes.
+    pub fn project_status(&self) -> ProjectStatus {
+        self.status.cached()
+    }
+
+    /// Hashes only when the project's revision moved.
+    fn refresh_status(&mut self) {
+        self.status.get(&self.project, self.template);
+    }
+
+    /// Part `part`'s blocks and System › Theme, read only: reading leaves
+    /// the project's revision alone.
+    fn read(&self, part: PartId) -> UiRead<'_> {
+        UiRead {
+            project: &self.project,
+            part,
+            theme: &self.theme,
         }
     }
 
@@ -494,10 +513,10 @@ impl UiState {
 
     /// The six values the display animates toward: the page's slots, and on
     /// the mod matrix the selected route's amount in slot e.
-    fn display_values(&mut self) -> [f32; 6] {
+    fn display_values(&self) -> [f32; 6] {
         let def = self.nav.active_block_def();
         let (page, sel_op) = (self.page, self.sel_op);
-        let mut values = page_values(page, def, &self.blocks(self.active_part), sel_op);
+        let mut values = page_values(page, def, &self.read(self.active_part), sel_op);
         let ctx = self.ctx();
         for (i, value) in values.iter_mut().enumerate() {
             if let View::Route { source, .. } = view::view(def, i, &ctx) {
@@ -665,6 +684,11 @@ impl UiState {
 
     /// Process one frame of input: navigation + encoder deltas.
     pub fn handle_input(&mut self, controls: &impl Controls) {
+        self.input(controls);
+        self.refresh_status();
+    }
+
+    fn input(&mut self, controls: &impl Controls) {
         // Any encoder turn or button press retires the last prime-status
         // message (issue #21; no timer). The MIX+Plus branch below re-sets
         // it when this same frame is itself a prime attempt.
@@ -775,7 +799,8 @@ impl UiState {
                     continue; // dimmed: the encoder is ignored
                 }
                 let params = &mut UiBlocks {
-                    edit: self.project.edit_part(at),
+                    project: &mut self.project,
+                    part: at,
                     theme: &mut self.theme,
                 };
                 match (self.page, shift) {
@@ -856,6 +881,7 @@ impl UiState {
 
     /// Advance animations. Call at UI_FPS (~20fps).
     pub fn update(&mut self) {
+        self.refresh_status();
         let at = self.active_part;
 
         // Read base param values
@@ -1191,31 +1217,62 @@ fn any_input(controls: &impl Controls) -> bool {
 }
 
 /// A Part's blocks plus System › Theme, so the theme edits through the same
-/// slot bindings as any other.
+/// slot bindings as any other. Only a block written takes `edit_part`, so
+/// only a write moves the project's revision.
 struct UiBlocks<'a> {
-    edit: PartEdit<'a>,
+    project: &'a mut Project,
+    part: PartId,
     theme: &'a mut ThemeSettings,
+}
+
+/// `UiBlocks`' shared twin: no `block_mut`, so a frame can't write.
+struct UiRead<'a> {
+    project: &'a Project,
+    part: PartId,
+    theme: &'a ThemeSettings,
+}
+
+/// Part `part`'s block `b`, or the theme: what both views read.
+fn read_block<'a>(
+    project: &'a Project,
+    part: PartId,
+    theme: &'a ThemeSettings,
+    b: BlockRef,
+) -> Option<&'a dyn Block> {
+    match b {
+        BlockRef::Theme => Some(theme),
+        _ => {
+            let x = project.part(part);
+            part_block(&x.sound, &x.mix, &project.perf().fx, b)
+        }
+    }
 }
 
 impl Blocks for UiBlocks<'_> {
     fn block(&self, b: BlockRef) -> Option<&dyn Block> {
-        match b {
-            BlockRef::Theme => Some(&*self.theme),
-            _ => self.edit.block(b),
-        }
+        read_block(self.project, self.part, self.theme, b)
     }
 
     fn block_mut(&mut self, b: BlockRef) -> Option<&mut dyn Block> {
         match b {
             BlockRef::Theme => Some(self.theme),
-            _ => self.edit.block_mut(b),
+            _ => {
+                let PartEdit { sound, mix, fx } = self.project.edit_part(self.part);
+                part_block_mut(sound, mix, fx, b)
+            }
         }
+    }
+}
+
+impl BlockRead for UiRead<'_> {
+    fn block(&self, b: BlockRef) -> Option<&dyn Block> {
+        read_block(self.project, self.part, self.theme, b)
     }
 }
 
 /// Display values for `page`: Part pages through slot bindings, legacy pages
 /// through `PageId`.
-fn page_values(page: PageKey, def: &BlockDef, params: &impl Blocks, sel_op: Op) -> [f32; 6] {
+fn page_values(page: PageKey, def: &BlockDef, params: &impl BlockRead, sel_op: Op) -> [f32; 6] {
     match page {
         PageKey::Part { .. } => part_page::read_values(def, params, sel_op),
         PageKey::Legacy(p) => p.read_values(params),

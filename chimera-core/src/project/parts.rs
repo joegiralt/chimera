@@ -144,6 +144,21 @@ impl Blocks for PartEdit<'_> {
     }
 }
 
+/// `PartEdit`'s shared twin: a Part as the pages read it, never written
+/// through, so reading it leaves `Project::rev` where it was.
+pub struct PartRead<'a> {
+    pub sound: &'a Sound,
+    pub mix: &'a PartParams,
+    pub fx: &'a FxParams,
+}
+
+// By path: `BlockRead` in scope makes `Blocks::block` calls ambiguous.
+impl crate::addr::BlockRead for PartRead<'_> {
+    fn block(&self, b: BlockRef) -> Option<&dyn Block> {
+        part_block(self.sound, self.mix, self.fx, b)
+    }
+}
+
 /// A Part's block `b` (its Sound's or its mix), or the FX's; `None` for the
 /// blocks the UI holds.
 pub fn part_block<'a>(

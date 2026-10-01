@@ -141,6 +141,7 @@ pub fn save_project<S: Store>(
     });
     match out.and_then(|o| o.result) {
         Ok(Ok(_)) => {
+            p.bump();
             p.meta.file = Some(to);
             p.meta.saved_crc = Some(project_crc(p));
             ProjectNote::Saved(differ(p))
@@ -208,6 +209,7 @@ pub fn load_project<S: Store>(
     };
     match result {
         Ok(Ok(_)) => {
+            p.bump();
             p.meta.file = Some(ProjectFile::new(id, vol));
             p.meta.saved_crc = Some(project_crc(p));
             out.swap = Some(link.bump());
@@ -254,6 +256,7 @@ pub fn boot_project<S: Store>(
             match run {
                 Ok(o) => match o.result {
                     Ok(vol) => {
+                        p.bump();
                         p.meta.file = Some(ProjectFile::new(id, vol));
                         p.meta.saved_crc = Some(project_crc(p));
                         return None;
