@@ -269,23 +269,30 @@ fn another_parts_steal_cuts() {
     );
 }
 
-/// A fast glide down, at TIME's slider 0 (1 ms) and 0.3 (10 ms), loses
-/// nothing it plays: the loop lengthened faster than it is written reads
-/// the ring's continuation, the old cycle, not silence, and its pluck
-/// spans the target's line. Over each window of the target's period (12
-/// blocks at C2) of the first 40, it is no more than 3 dB under the same
-/// steal at CUT; it may be louder, as it adds to what rings (SYMP's halo
-/// +3 dB, a bow on a ringing loop +6.5 dB in its first window), but not by
-/// a burst's 9 dB. Reading a silent gap dipped 30 to 43 dB a block, with
-/// +13 dB bursts; a pluck the old line's length, 8 dB under.
+/// A glide steal, down or up, at TIME's slider 0 (1 ms), 0.3 (10 ms) and
+/// INIT (150 ms), loses nothing it plays. Down, the loop lengthened faster
+/// than it is written reads the ring's continuation, the old cycle, not
+/// silence; either way the strike plucks the glide's longer line. Over each
+/// window of the target's period of the first 40 blocks, it is no more than
+/// 3.5 dB under the same steal at CUT (an instant glide up hears only the
+/// pluck's youngest quarter of its line, −3.1 dB); it may be louder, as it adds to what
+/// rings (SYMP's halo +3 dB, a bow on a ringing loop +6.5 dB in its first
+/// window), but not by a burst's 9 dB. At TIME 0 no block is 20 dB under
+/// CUT's. Reading a silent gap dipped 30 to 43 dB a block, with +13 dB
+/// bursts; a pluck the old line's length down, 8 dB under, and the
+/// target's length up, a pulse train 6 to 11 dB under.
 #[test]
-fn a_fast_glide_down_never_drops_out() {
+fn a_glide_steal_never_drops_out() {
     let cases = [
         ("STRING", ResonatorMode::String, (72, 36)),
         ("SYMP", ResonatorMode::Sympathetic, (72, 36)),
         ("BOWED", ResonatorMode::Bowed, (72, 36)),
         ("STRING", ResonatorMode::String, (G3, C3)),
+        ("STRING", ResonatorMode::String, (36, 72)),
+        ("SYMP", ResonatorMode::Sympathetic, (36, 72)),
+        ("BOWED", ResonatorMode::Bowed, (36, 72)),
     ];
+    let init = chimera_core::params::PitchParams::default().glide_time;
     for (name, mode, (from, to)) in cases {
         let period = SR as f32 / note_to_freq(to);
         let n = (period / BLOCK_SIZE as f32).ceil() as usize * BLOCK_SIZE;
@@ -294,7 +301,7 @@ fn a_fast_glide_down_never_drops_out() {
             (from, to),
             40,
         );
-        for time in [0.0, 0.3] {
+        for time in [0.0, 0.3, init] {
             let mut shared = part(EngineType::Modal, Some(mode), Steal::Glide);
             shared.parts[0].params.pitch.glide_time = time;
             let (out, _) = steal(&shared, (from, to), 40);
@@ -304,9 +311,53 @@ fn a_fast_glide_down_never_drops_out() {
             for (k, (g, c)) in windows.enumerate() {
                 let db = 20.0 * (common::rms(g) / common::rms(c)).log10();
                 assert!(
-                    (-3.0..=9.0).contains(&db),
+                    (-3.5..=9.0).contains(&db),
                     "{name} {from}→{to} TIME {time}: window {k} {db:+.1} dB against CUT"
                 );
+            }
+            if time == 0.0 {
+                let blocks = out[BLOCK_SIZE..]
+                    .chunks_exact(BLOCK_SIZE)
+                    .zip(cut[BLOCK_SIZE..].chunks_exact(BLOCK_SIZE));
+                for (k, (g, c)) in blocks.enumerate() {
+                    let db = 20.0 * (common::rms(g) / common::rms(c)).log10();
+                    assert!(
+                        db > -20.0,
+                        "{name} {from}→{to}: block {k} {db:+.1} dB against CUT"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// A fast glide down struck at EXCITE 0 adds no pluck: what sounds is the
+/// old ring alone, carried round the lengthened loop. It never drops more
+/// than 10 dB a block under the block before the steal; a zero-filled gap
+/// dropped it 30 dB and more.
+#[test]
+fn a_fast_glide_down_carries_the_old_ring() {
+    for (name, mode) in [
+        ("STRING", ResonatorMode::String),
+        ("SYMP", ResonatorMode::Sympathetic),
+    ] {
+        for time in [0.0, 0.3] {
+            let mut shared = part(EngineType::Modal, Some(mode), Steal::Glide);
+            shared.parts[0].params.pitch.glide_time = time;
+            let mut rig = Rig::one_voice(&shared);
+            let (mut out, mut ratios) = (Vec::new(), Vec::new());
+            rig.inst.handle(on(0, 72), &shared);
+            rig.run(&shared, 40, &mut out, &mut ratios);
+            rig.inst.handle(off(0, 72), &shared);
+            rig.run(&shared, 4, &mut out, &mut ratios);
+            shared.parts[0].params.modal.excite = 0.0;
+            rig.inst.handle(on(0, 36), &shared);
+            let before = common::rms(&out[out.len() - BLOCK_SIZE..]);
+            out.clear();
+            rig.run(&shared, 40, &mut out, &mut ratios);
+            for (k, b) in out.chunks_exact(BLOCK_SIZE).enumerate() {
+                let db = 20.0 * (common::rms(b) / before).log10();
+                assert!(db > -10.0, "{name} TIME {time}: block {k} {db:+.1} dB");
             }
         }
     }

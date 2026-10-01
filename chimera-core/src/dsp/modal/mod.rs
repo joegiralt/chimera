@@ -644,8 +644,9 @@ impl ModalEngine {
             self.slide.snap();
         }
         let restrike = restrike || glides;
-        // A glide's pluck spans the target's line: it strikes the new note.
-        let line = span.map(|_| (sample_rate as f32 / (freq * self.pitch)) as usize);
+        // A glide's pluck spans its longer line, the start's or the target's:
+        // the line read on the way, whole, not a pulse in part of it.
+        let line = span.map(|(_, hi)| hi as usize);
         self.frequency = f;
         if let Some(span) = span {
             self.fit(span, pool);
