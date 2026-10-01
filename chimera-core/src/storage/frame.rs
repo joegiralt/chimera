@@ -82,6 +82,15 @@ impl Side {
     }
 }
 
+/// A project's file: its id on the card `vol`. A save or a delete runs
+/// only on that card, so a swapped card's `P000000n` is never written;
+/// SYSTEM names it as the last project only on that card.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProjectFile {
+    pub id: ProjectId,
+    pub vol: chimera_hal::store::VolumeId,
+}
+
 /// A project's id, 1..=9 999 999, so its stem `P` + 7 digits is 8.3.
 ///
 /// ```compile_fail,E0423

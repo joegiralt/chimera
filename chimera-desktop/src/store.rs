@@ -242,7 +242,10 @@ mod tests {
         assert!(!sync.left_system(true, &s));
         s.theme.bright = Bright::new(40);
         assert!(sync.left_system(false, &s));
-        assert_eq!(sync.on_exit(&mut card, &mut store, &mut s), Ok(Exit::Wrote));
+        assert_eq!(
+            sync.on_exit(&mut card, &mut store, &mut s, None),
+            Ok(Exit::Wrote)
+        );
 
         let (_, again, note) = SystemSync::boot(&mut Card::new(), &mut DirStore::new(root.clone()));
         assert_eq!((again, note), (s, None));
@@ -317,7 +320,7 @@ mod tests {
         sync.left_system(true, &s);
         assert!(sync.left_system(false, &s));
         assert_eq!(
-            sync.on_exit(&mut card, &mut store, &mut s),
+            sync.on_exit(&mut card, &mut store, &mut s, None),
             Err(SyncError::Store(StoreError::NoCard))
         );
     }

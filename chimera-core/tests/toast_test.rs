@@ -167,8 +167,11 @@ fn a_loaded_theme_is_its_own_feedback() {
     want.theme.bright = Bright::new(40);
     {
         let mut card = Card::new();
-        let (mut sync, ..) = SystemSync::boot(&mut card, &mut s);
-        sync.write(&mut card, &mut s, &want).unwrap();
+        let (mut sync, mut cur, _) = SystemSync::boot(&mut card, &mut s);
+        cur.theme = want.theme;
+        sync.left_system(true, &cur);
+        sync.left_system(false, &cur);
+        sync.on_exit(&mut card, &mut s, &mut cur, None).unwrap();
     }
     // Booted with no card: untouched defaults, then the card goes in.
     s.eject();

@@ -32,12 +32,11 @@ pub use store::{
 pub use swap::{GateStep, LOAD_ACK_TIMEOUT_MS, LOAD_LINK, LoadGate, LoadLink, Settled, Swap};
 pub use template::TemplateCrc;
 
-use chimera_hal::store::VolumeId;
-
 use crate::dsp::fx_bus::FxParams;
 use crate::name::ProjectName;
 use crate::params::EngineType;
 use crate::preset::Sound;
+pub use crate::storage::ProjectFile;
 use crate::storage::{ProjectId, sound_crc};
 
 pub const NEW_NAME: &str = "NEW PROJECT";
@@ -45,14 +44,6 @@ const NEW_PROJECT_NAME: ProjectName = match ProjectName::new(NEW_NAME) {
     Ok(n) => n,
     Err(_) => panic!("NEW_NAME is a valid name"),
 };
-
-/// A project's file: its id on the card `vol`. A save or a delete runs
-/// only on that card, so a swapped card's `P000000n` is never written.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ProjectFile {
-    pub id: ProjectId,
-    pub vol: VolumeId,
-}
 
 /// What a project is besides its Sounds and Parts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

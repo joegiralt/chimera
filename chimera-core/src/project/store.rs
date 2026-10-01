@@ -259,12 +259,9 @@ pub fn boot_project<S: Store>(
                     }) => ProjectNote::LoadFailed(subject),
                     Err(InPlaceError { err, .. }) => load_note(err, subject),
                 },
-                // The mount: no file was reached.
-                Err(InPlaceError {
-                    err: LoadError::Store(e),
-                    ..
-                }) => card_note(e, None),
-                Err(InPlaceError { err, .. }) => load_note(err, subject),
+                // The mount failed, so no file was reached. `Card::run`
+                // builds that error from the mount's `StoreError`.
+                Err(e) => card_note(e.store_error().unwrap_or(StoreError::Io), None),
             }
         }
     };
