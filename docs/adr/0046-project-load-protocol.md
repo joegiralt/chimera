@@ -42,7 +42,10 @@ commits it at its end.
   3. bump the epoch;
   4. the audio kills every voice and acks once they are quiet;
   5. the UI waits for the ack (`Swap::settle`, at most
-     `LOAD_ACK_TIMEOUT_MS` = 10 ms), then publishes.
+     `LOAD_ACK_TIMEOUT_MS` = 10 ms), then publishes;
+  6. only then the card again: a file load's SYSTEM write
+     (`UiState::load_project` runs the shell's `publish` before it), so
+     no SD access sits between the bump and the publish.
 - **The gate** (`LoadGate`, pure `step(requested, snapshot, quiet)`; the
   shells call `before_block` once per 64-sample block, before that
   block's drain, and drain only when it says so):
