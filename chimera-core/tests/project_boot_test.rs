@@ -145,6 +145,67 @@ fn boot_without_a_last_id_is_new_and_says_so() {
     assert_eq!(b.ui.project().meta().file(), None);
 }
 
+/// No card: SYSTEM's defaults name no project, and the toast says why.
+#[test]
+fn boot_without_a_card_says_no_card() {
+    let mut s = MemStore::new(1);
+    s.eject();
+    let mut b = boot_system(&mut s);
+    assert_eq!(b.settings.last_project, None);
+    b.ui.project_mut().edit_fx().delay.mix = 0.8;
+    b.ui.boot_project(&mut b.card, &mut s, None);
+    assert_eq!(b.ui.step_toast(0), show("NO CARD"));
+    assert_eq!(
+        project_status(b.ui.project(), b.ui.template()),
+        ProjectStatus::Pristine
+    );
+    assert_eq!(b.card, Card::Absent);
+
+    // A card that won't mount: its fault, not NEW PROJECT.
+    let mut s = Timeout;
+    let mut b = boot_system(&mut s);
+    b.ui.boot_project(&mut b.card, &mut s, None);
+    let want = ProjectNote::Card {
+        err: StoreError::Timeout,
+        subject: None,
+    };
+    assert_eq!(b.ui.step_toast(0), ToastStep::Show(want.line()));
+}
+
+/// A card in the slot that times out on every call.
+struct Timeout;
+
+impl Store for Timeout {
+    fn mount(&mut self) -> Result<VolumeId, StoreError> {
+        Err(StoreError::Timeout)
+    }
+    fn list(
+        &mut self,
+        _: VolumeId,
+        _: Dir,
+        _: &mut dyn FnMut(FileName, u32),
+    ) -> Result<(), StoreError> {
+        Err(StoreError::Timeout)
+    }
+    fn read(&mut self, _: VolumeId, _: FileName, _: &mut dyn ReadSink) -> Result<(), StoreError> {
+        Err(StoreError::Timeout)
+    }
+    fn write(
+        &mut self,
+        _: VolumeId,
+        _: FileName,
+        _: &mut dyn FnMut(&mut dyn ByteSink) -> Result<(), StoreError>,
+    ) -> Result<u32, StoreError> {
+        Err(StoreError::Timeout)
+    }
+    fn delete(&mut self, _: VolumeId, _: FileName) -> Result<(), StoreError> {
+        Err(StoreError::Timeout)
+    }
+    fn make_dir(&mut self, _: VolumeId, _: Dir) -> Result<(), StoreError> {
+        Err(StoreError::Timeout)
+    }
+}
+
 /// Each reason boot falls back to NEW: the note, and NEW whatever the
 /// project held before.
 #[test]

@@ -240,7 +240,11 @@ pub fn boot_project<S: Store>(
     p: &mut Project,
 ) -> Option<ProjectNote> {
     let note = match last {
-        None => ProjectNote::NewProject,
+        // SYSTEM's defaults name no project with no card: mount to say why.
+        None => match card.run(store, |_, _| Ok::<_, StoreError>(())) {
+            Ok(_) => ProjectNote::NewProject,
+            Err(e) => card_note(e, None),
+        },
         Some(id) => {
             let subject = Subject::File(id);
             let run = card.run(store, |s, r| {
