@@ -21,18 +21,6 @@ use crate::storage::{
 
 use super::{Origin, PartId, PartSet, Project, SlotId};
 
-/// The CRC of NEW, as `init_in_place` or `reset_new` built it: a project
-/// equal to it is `Pristine`. Only they make one.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct TemplateCrc(pub(super) u32);
-
-impl TemplateCrc {
-    #[doc(hidden)]
-    pub fn get(self) -> u32 {
-        self.0
-    }
-}
-
 const FX_BLOCKS: [BlockRef; 5] = [
     BlockRef::Chorus,
     BlockRef::Delay,
