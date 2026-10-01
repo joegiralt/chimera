@@ -286,6 +286,9 @@ impl EngineSlot {
                 // A steal's glide retunes each block, as a route does.
                 if pitch_routed(mods) || p.pitch.steal == Steal::Glide {
                     c = c + ModalEngine::PITCH;
+                    if p.modal.mode == ResonatorMode::Sympathetic {
+                        c = c + ModalEngine::HALO_PITCH;
+                    }
                 }
                 if p.modal.mode == ResonatorMode::Sympathetic && chord_routed(mods) {
                     c = c + ModalEngine::CHORD;
