@@ -101,6 +101,9 @@ chorus braid (RATE, DEPTH, MIX; MODE is the strand count).
   of the room; MIX is edge weight; GRIT, the lo-fi dirt, drops grains
   from the edges, new each frame. Near edges heavier than far ones for
   depth. The reverb has no pre-delay. Same rules as the braid and rings.
+- **The reverb shows the cube** (owner-approved 2026-10-01, may be
+  replaced) on all five params: GRIT, TIME, DAMP, SIZE, MIX. The
+  box-clear and status tests cover it.
 - **Each glyph gets one Demo page** ("Glyph: X", MIX + B6), one glyph per
   page, its slots bound to the params that drive it: several animated
   panels at once can't be judged.
