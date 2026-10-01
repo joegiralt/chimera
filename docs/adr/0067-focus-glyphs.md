@@ -66,6 +66,15 @@ chorus braid (RATE, DEPTH, MIX; MODE is the strand count).
   by `UiState::update`), never the audio thread. While the focused
   glyph animates (`Gauge::animates`), the focus band's dirty key carries
   the frame (`glyph::anim_key`), so the band redraws every frame.
+- **The chorus braid is the first composite**: MODE, RATE, DEPTH and
+  MIX as strands twisting round a dry line (OFF the line alone, I two
+  strands, II two tighter and faster, I+II three); RATE the twist's
+  speed, DEPTH the swing, MIX the strands' weight against the line; the
+  focused param marked. It reads the stored values (eased where the
+  page has the param's slot), and the UI clock. While it shows, only its
+  box (80 by 56) is cleared and redrawn each frame, and only those rows
+  flushed; the rest of the band redraws when its key changes as before.
+  Palette colours only, so the theme's ACCENT swap applies.
 - **Each glyph gets one Demo page** ("Glyph: X", MIX + B6), one glyph per
   page, its slots bound to the params that drive it: several animated
   panels at once can't be judged.

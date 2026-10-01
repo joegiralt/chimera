@@ -1,7 +1,9 @@
 //! Focus glyphs: the gauge at the right of the focus band, hand-assigned
 //! per parameter on its spec (`ParamSpec::glyph`), ARC by default.
 
+use crate::addr::{BlockRef, ParamAddr};
 use crate::block::ValFmt;
+use crate::dsp::chorus::ChorusParams;
 
 /// The gauge a parameter's focus band shows.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -48,6 +50,88 @@ pub enum Gauge {
     /// A horizontal crossfader, `value` 0 left .. 1 right, from the set
     /// value, never the modulated one.
     Crossfader { value: f32 },
+    /// The chorus braid (`CompositeId::ChorusBraid`).
+    Braid(Braid),
+}
+
+/// The chorus params the braid reads, in `Braid::from_set`'s order.
+pub const BRAID_PARAMS: [ParamAddr; 4] = [
+    ParamAddr::new(BlockRef::Chorus, ChorusParams::MODE),
+    ParamAddr::new(BlockRef::Chorus, ChorusParams::RATE),
+    ParamAddr::new(BlockRef::Chorus, ChorusParams::DEPTH),
+    ParamAddr::new(BlockRef::Chorus, ChorusParams::MIX),
+];
+
+/// The braid's param in focus, emphasised.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BraidPart {
+    Mode,
+    Rate,
+    Depth,
+    Mix,
+}
+
+impl BraidPart {
+    /// In `BRAID_PARAMS`' order.
+    pub const ALL: [BraidPart; 4] = [
+        BraidPart::Mode,
+        BraidPart::Rate,
+        BraidPart::Depth,
+        BraidPart::Mix,
+    ];
+}
+
+/// The chorus's voices as strands twisting round a dry centre line, from
+/// the chorus's set values (normalized) and the UI clock's `frame`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Braid {
+    /// MODE: 0 OFF, 1 I, 2 II, 3 I+II.
+    pub mode: u8,
+    /// How fast the twist travels.
+    pub rate: f32,
+    /// How far the strands swing apart.
+    pub depth: f32,
+    /// How bright the strands are against the dry line.
+    pub mix: f32,
+    pub focus: Option<BraidPart>,
+    pub frame: u32,
+}
+
+impl Braid {
+    /// From `BRAID_PARAMS`' set values, normalized.
+    pub fn from_set(set: [f32; 4], focus: Option<BraidPart>, frame: u32) -> Self {
+        Self {
+            mode: libm::roundf(set[0].clamp(0.0, 1.0) * 3.0) as u8,
+            rate: set[1].clamp(0.0, 1.0),
+            depth: set[2].clamp(0.0, 1.0),
+            mix: set[3].clamp(0.0, 1.0),
+            focus,
+            frame,
+        }
+    }
+
+    /// OFF none (the dry line alone), I and II two, I+II three.
+    pub const fn strands(&self) -> usize {
+        match self.mode {
+            0 => 0,
+            1 | 2 => 2,
+            _ => 3,
+        }
+    }
+
+    /// Twists along the box: II's are tighter.
+    pub const fn turns(&self) -> f32 {
+        if self.mode == 2 { 2.5 } else { 1.5 }
+    }
+
+    /// The twist's phase at `frame`, radians in 0..τ: RATE sets how fast
+    /// it travels (0.16 to 1.6 Hz at 20 fps); II travels faster. In f64,
+    /// so it stays smooth however long the clock has run.
+    pub fn twist(&self, frame: u32) -> f32 {
+        let per_frame = 0.05 + 0.45 * self.rate as f64;
+        let speed = if self.mode == 2 { 1.6 } else { 1.0 };
+        libm::fmod(frame as f64 * per_frame * speed, core::f64::consts::TAU) as f32
+    }
 }
 
 impl FocusGlyph {
@@ -80,7 +164,14 @@ impl FocusGlyph {
     /// The gauge the focus band draws for this glyph at the focused slot's
     /// `value` in format `fmt`. The one place a glyph not built yet stands
     /// in as ARC; each glyph's story gives it its own `Gauge`.
-    pub fn gauge(self, value: f32, fmt: ValFmt) -> Gauge {
+    /// A built composite's gauge comes from `composite`, which reads its
+    /// params' set values.
+    pub fn gauge(
+        self,
+        value: f32,
+        fmt: ValFmt,
+        composite: impl FnOnce(CompositeId) -> Gauge,
+    ) -> Gauge {
         let bipolar = fmt.is_bipolar();
         match self {
             FocusGlyph::None => Gauge::None,
@@ -90,10 +181,10 @@ impl FocusGlyph {
                 ticks: level_ticks(fmt),
             },
             FocusGlyph::Crossfader => Gauge::Crossfader { value },
+            FocusGlyph::Composite(CompositeId::ChorusBraid) => composite(CompositeId::ChorusBraid),
             FocusGlyph::Arc
             | FocusGlyph::Composite(CompositeId::ReverbCube)
-            | FocusGlyph::Composite(CompositeId::DelayRings)
-            | FocusGlyph::Composite(CompositeId::ChorusBraid) => Gauge::Arc { value, bipolar },
+            | FocusGlyph::Composite(CompositeId::DelayRings) => Gauge::Arc { value, bipolar },
         }
     }
 }
@@ -115,6 +206,7 @@ impl Gauge {
             | Gauge::Switch { .. }
             | Gauge::LevelBar { .. }
             | Gauge::Crossfader { .. } => false,
+            Gauge::Braid(_) => true,
         }
     }
 }

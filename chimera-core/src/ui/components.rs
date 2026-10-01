@@ -13,7 +13,7 @@ use crate::ui::block_def::{BlockDef, SlotBinding};
 use crate::ui::chain::{ChainId, ChainNav};
 use crate::ui::draw;
 use crate::ui::fmt::FmtBuf;
-use crate::ui::glyph::Gauge;
+use crate::ui::glyph::{Braid, BraidPart, Gauge};
 use crate::ui::theme;
 
 /// `s` in upper case (names are stored mixed case: "Filter", "4opFM").
@@ -326,8 +326,35 @@ where
         theme::FOCUS_VALUE_Y,
         theme::INK,
     );
+    draw_gauge(d, gauge);
+}
+
+/// The box an animated gauge redraws alone each frame; `None` for the
+/// still ones.
+pub fn gauge_rect(gauge: &Gauge) -> Option<(i32, i32, i32, i32)> {
+    match gauge {
+        Gauge::Braid(_) => Some((
+            theme::BRAID_X,
+            theme::BRAID_Y,
+            theme::BRAID_W,
+            theme::BRAID_H,
+        )),
+        Gauge::Arc { .. }
+        | Gauge::None
+        | Gauge::Switch { .. }
+        | Gauge::LevelBar { .. }
+        | Gauge::Crossfader { .. } => None,
+    }
+}
+
+/// `gauge` alone, at the focus band's right.
+pub fn draw_gauge<D>(d: &mut D, gauge: Gauge)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
     match gauge {
         Gauge::None => {}
+        Gauge::Braid(b) => braid(d, &b),
         Gauge::Switch { on } => switch(d, on),
         Gauge::LevelBar { value, ticks } => level_bar(d, value, ticks),
         Gauge::Crossfader { value } => crossfader(d, value),
@@ -413,6 +440,85 @@ where
         theme::ACCENT,
     );
     draw::fill_rect(d, cx - cap_w / 2 + 2, cy - 1, cap_w - 4, 2, theme::BG);
+}
+
+/// The chorus braid in its box: a dry centre line, and `strands` strands
+/// twisting round it, each a sine `turns` times along the box shifted by
+/// `twist`; behind the line FAINT, in front ACCENT. MIX weighs the strands
+/// against the line (1 to 3 px; the line INK2, MID or FAINT); DEPTH is the
+/// swing. The focused param is marked: MODE a dot per strand at the left,
+/// RATE a bead riding the twist, DEPTH the swing's bounds, MIX the line
+/// in INK. Palette colours only, so the theme's ACCENT swap applies.
+fn braid<D>(d: &mut D, b: &Braid)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    use crate::dsp::fast_sin;
+    use core::f32::consts::{FRAC_PI_2, TAU};
+    const STEP: i32 = 4;
+    // Strands kept 2 px inside the box, so their thickness never leaves it.
+    let (x0, w, h) = (theme::BRAID_X + 2, theme::BRAID_W - 4, theme::BRAID_H);
+    let cy = theme::BRAID_Y + h / 2;
+    let amp = 3.0 + b.depth * (h / 2 - 6) as f32;
+    let k = TAU * b.turns() / w as f32;
+    let twist = b.twist(b.frame);
+    let level = ((b.mix * 3.0) as usize).min(2);
+    let dry = match b.focus {
+        Some(BraidPart::Mix) => theme::INK,
+        _ => [theme::INK2, theme::MID, theme::FAINT][level],
+    };
+    draw::fill_rect(d, x0, cy, w, 1, dry);
+    if b.focus == Some(BraidPart::Depth) {
+        for x in (x0..x0 + w).step_by(4) {
+            for y in [cy - amp as i32, cy + amp as i32] {
+                draw::fill_rect(d, x, y, 1, 1, theme::MID);
+            }
+        }
+    }
+    let n = b.strands();
+    let width = level as u32 + 1;
+    let at = |s: usize, x: i32| {
+        let a = k * x as f32 - twist + s as f32 * TAU / n.max(1) as f32;
+        let y = cy + libm::roundf(amp * fast_sin(a)) as i32;
+        (y, fast_sin(a + FRAC_PI_2) >= 0.0)
+    };
+    // Behind the line first, then in front.
+    for front in [false, true] {
+        let color = if front { theme::ACCENT } else { theme::FAINT };
+        for s in 0..n {
+            let mut prev = at(s, 0);
+            for x in (STEP..=w).step_by(STEP as usize) {
+                let next = at(s, x);
+                if prev.1 == front {
+                    let px = x0 + x - STEP;
+                    draw::line(
+                        d,
+                        px,
+                        prev.0,
+                        (x0 + x).min(x0 + w - 1),
+                        next.0,
+                        color,
+                        width,
+                    );
+                }
+                prev = next;
+            }
+        }
+    }
+    match b.focus {
+        Some(BraidPart::Mode) => {
+            for s in 0..n.max(1) {
+                let y = if n == 0 { cy } else { at(s, 0).0 };
+                draw::dot(d, x0 + 2, y, 2, theme::INK);
+            }
+        }
+        Some(BraidPart::Rate) if n > 0 => {
+            // Where strand 0 crests: it travels as the twist does.
+            let x = libm::fmodf((twist + FRAC_PI_2) / k, w as f32) as i32;
+            draw::dot(d, x0 + x.clamp(2, w - 3), at(0, x).0, 2, theme::INK);
+        }
+        _ => {}
+    }
 }
 
 /// How a cell reads (spec § UI). The discriminants pack into the Cells

@@ -89,6 +89,12 @@ pub const XF_CX: i32 = SCREEN_W - MARGIN_X - XF_W / 2;
 pub const XF_TRACK_H: i32 = 6;
 pub const XF_CAP_W: i32 = 10;
 pub const XF_CAP_H: i32 = 26;
+/// The chorus braid's box, flush with the right margin, as tall as the
+/// arc: the only pixels it redraws each frame.
+pub const BRAID_W: i32 = 80;
+pub const BRAID_H: i32 = 56;
+pub const BRAID_X: i32 = SCREEN_W - MARGIN_X - BRAID_W;
+pub const BRAID_Y: i32 = ARC_CY - BRAID_H / 2;
 
 /// Viz band on CellGrid / Mixer pages: 118..186, centre line 152.
 pub const VIZ_BAND_TOP: i32 = 118;

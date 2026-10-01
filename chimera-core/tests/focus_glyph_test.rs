@@ -15,7 +15,7 @@ use chimera_core::project::PartId;
 use chimera_core::ui::UiState;
 use chimera_core::ui::block_def::{BlockDef, slot_addr};
 use chimera_core::ui::block_registry as reg;
-use chimera_core::ui::glyph::{CompositeId, FocusGlyph, Gauge, anim_key};
+use chimera_core::ui::glyph::{Braid, CompositeId, FocusGlyph, Gauge, anim_key};
 use chimera_core::ui::page::{PageId, PageKey, PageLayout};
 use chimera_core::ui::region::{RegionData, RegionKind};
 use chimera_core::ui::renderer::composite_set;
@@ -255,19 +255,25 @@ fn unbuilt_glyphs_draw_as_arc() {
                 ticks: 8,
             },
             FocusGlyph::Crossfader => Gauge::Crossfader { value: 0.25 },
+            // A built composite: whatever its inputs make of it.
+            FocusGlyph::Composite(CompositeId::ChorusBraid) => Gauge::Switch { on: 9.0 },
             _ => Gauge::Arc {
                 value: 0.25,
                 bipolar: true,
             },
         };
-        assert_eq!(g.gauge(0.25, ValFmt::Bi), want, "{g:?}");
+        let composite = |id| {
+            assert_eq!(id, CompositeId::ChorusBraid);
+            Gauge::Switch { on: 9.0 }
+        };
+        assert_eq!(g.gauge(0.25, ValFmt::Bi, composite), want, "{g:?}");
     }
 }
 
 /// A level bar's ticks: one per step for a few steps, else 8.
 #[test]
 fn level_bar_ticks_follow_the_steps() {
-    let ticks = |fmt| match FocusGlyph::LevelBar.gauge(0.5, fmt) {
+    let ticks = |fmt| match FocusGlyph::LevelBar.gauge(0.5, fmt, |_| Gauge::None) {
         Gauge::LevelBar { ticks, .. } => ticks,
         g => panic!("{g:?}"),
     };
@@ -685,4 +691,127 @@ fn crossfader_ignores_modulation() {
         assert_eq!(cap(&render_ui(&ui)), first);
     }
     assert!(moved, "the LFO moves the cell");
+}
+
+#[test]
+fn braid_reads_its_set_values() {
+    let b = |mode: f32| Braid::from_set([mode, 0.5, 0.5, 0.5], None, 0);
+    // OFF a straight line; I two strands; II two, faster; I+II three.
+    let strands: Vec<_> = [0.0, 1.0 / 3.0, 2.0 / 3.0, 1.0]
+        .iter()
+        .map(|&m| b(m).strands())
+        .collect();
+    assert_eq!(strands, [0, 2, 2, 3]);
+    assert!(
+        b(2.0 / 3.0).twist(100) != b(1.0 / 3.0).twist(100),
+        "II twists faster"
+    );
+    // RATE is how fast the twist travels: frame 0 is still, rate 0 slowest.
+    let rate = |r: f32| Braid::from_set([1.0 / 3.0, r, 0.5, 0.5], None, 20).twist(20);
+    assert!(rate(1.0) > rate(0.0));
+    assert!(Gauge::Braid(b(1.0)).animates());
+}
+
+fn braid_box(x: i32, y: i32) -> bool {
+    (theme::BRAID_X..theme::BRAID_X + theme::BRAID_W).contains(&x)
+        && (theme::BRAID_Y..theme::BRAID_Y + theme::BRAID_H).contains(&y)
+}
+
+/// MODE I+II, DEPTH up, MIX up, `slot` focused.
+fn braid_ui(slot: EncoderId) -> UiState {
+    let mut ui = UiState::new();
+    to_demo(&mut ui, &reg::DEMO_GLYPH_BRAID);
+    feed(&mut ui, Input::turn(EncoderId::A, 3));
+    feed(&mut ui, Input::turn(EncoderId::C, 30));
+    feed(&mut ui, Input::turn(EncoderId::D, 60));
+    // Focus `slot` without moving it.
+    feed(&mut ui, Input::turn(slot, -1));
+    feed(&mut ui, Input::turn(slot, 1));
+    settle(&mut ui);
+    ui
+}
+
+#[test]
+fn glyph_braid_page_moves_only_inside_its_box() {
+    use chimera_core::dsp::chorus::ChorusParams;
+    // Not on the chorus pages yet: no chorus spec carries the braid.
+    for id in [
+        ChorusParams::MODE,
+        ChorusParams::RATE,
+        ChorusParams::DEPTH,
+        ChorusParams::MIX,
+    ] {
+        let g = ParamAddr::new(BlockRef::Chorus, id).spec().unwrap().glyph;
+        assert!(!matches!(g, FocusGlyph::Composite(_)), "{g:?}");
+    }
+    let mut ui = braid_ui(EncoderId::B);
+    assert_eq!(ui.focused_slot(), 1);
+    let a = render_ui(&ui);
+    assert_eq!(a.oob, 0);
+    assert_eq!(arc_top(&a), theme::BG, "no arc");
+    ui.update();
+    let b = render_ui(&ui);
+    let mut inside = 0;
+    for y in 0..H as i32 {
+        for x in 0..W as i32 {
+            if a.at(x, y) != b.at(x, y) {
+                assert!(braid_box(x, y), "({x}, {y}) moved outside the box");
+                inside += 1;
+            }
+        }
+    }
+    assert!(inside > 0, "the braid moves on the clock");
+}
+
+/// Each frame the braid redraws its box alone, and the screen stays what
+/// a full render draws.
+#[test]
+fn braid_redraws_only_its_box_each_frame() {
+    let mut ui = braid_ui(EncoderId::C);
+    let mut fb = Fb::new();
+    let perf = chimera_core::ui::perf::PerfStats::zero();
+    ui.render_dirty_with_scope(&mut fb, &perf, &scope_fixture());
+    for _ in 0..3 {
+        ui.update();
+        let flushed: Vec<_> = ui
+            .render_dirty_with_scope(&mut fb, &perf, &scope_fixture())
+            .into_iter()
+            .filter(|&(a, b)| a != b)
+            .collect();
+        let rows = (
+            theme::BRAID_Y as u16,
+            (theme::BRAID_Y + theme::BRAID_H) as u16,
+        );
+        assert_eq!(flushed, [rows]);
+        let mut full = Fb::new();
+        ui.render_with_scope(&mut full, &perf, &scope_fixture());
+        assert!(fb.px == full.px, "dirty frame matches a full render");
+    }
+}
+
+/// The focused param is emphasised: same frame, a different braid.
+#[test]
+fn braid_emphasises_the_focused_param() {
+    let shots: Vec<_> = [EncoderId::A, EncoderId::B, EncoderId::C, EncoderId::D]
+        .into_iter()
+        .map(|e| {
+            let mut ui = braid_ui(e);
+            // Same clock frame for every shot.
+            while ui.clock().frame() < 200 {
+                ui.update();
+            }
+            render_ui(&ui)
+        })
+        .collect();
+    let boxed = |fb: &Fb| -> Vec<_> {
+        (theme::BRAID_Y..theme::BRAID_Y + theme::BRAID_H)
+            .flat_map(|y| (theme::BRAID_X..theme::BRAID_X + theme::BRAID_W).map(move |x| (x, y)))
+            .map(|(x, y)| fb.at(x, y))
+            .collect()
+    };
+    for i in 0..4 {
+        for j in i + 1..4 {
+            assert_ne!(boxed(&shots[i]), boxed(&shots[j]), "focus {i} vs {j}");
+        }
+    }
 }
