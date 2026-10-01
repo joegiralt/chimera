@@ -4,6 +4,7 @@
 use chimera_core::addr::{BlockRef, Op, ParamAddr};
 use chimera_core::part::{DacPair, PartMode, PartParams};
 use chimera_core::preset::Performance;
+use chimera_core::project::PartId;
 use chimera_core::ui::block_def::{BlockDef, FxFlow, FxNode, SlotBinding, VizType};
 use chimera_core::ui::block_registry as reg;
 use chimera_core::ui::page::PageKey;
@@ -119,20 +120,20 @@ fn part_page_binds_channel_mode_output_level_pan() {
 fn mix_b2_edits_part_2() {
     let mut ui = UiState::new();
     open_mixer_part(&mut ui, ButtonId::B2);
-    assert_eq!(ui.active_part, 1);
+    assert_eq!(ui.active_part, PartId::ALL[1]);
     assert!(matches!(ui.page(), PageKey::Part { def: 27, .. }));
     turn(&mut ui, EncoderId::A, 3); // CH 1 → 4
     turn(&mut ui, EncoderId::B, -1); // Poly → Mono
     turn(&mut ui, EncoderId::C, 2); // P1 → P3
     turn(&mut ui, EncoderId::D, -8); // level
-    let m = &ui.performance.parts[1].mix;
+    let m = &ui.project().part(PartId::ALL[1]).mix;
     assert_eq!(
         (m.channel.get(), m.mode, m.output),
         (4, PartMode::Mono, DacPair::P3)
     );
     assert_eq!(m.level, 0.8 - 8.0 / 128.0);
     assert_eq!(
-        ui.performance.parts[0].mix,
+        ui.project().part(PartId::ALL[0]).mix,
         PartParams::for_part(0),
         "part 1 untouched"
     );
@@ -143,11 +144,11 @@ fn sends_page_edits_the_part_sends() {
     let mut ui = UiState::new();
     open_mixer(&mut ui, ButtonId::B3); // SENDS
     turn(&mut ui, EncoderId::C, 64); // reverb send
-    assert_eq!(ui.performance.parts[2].mix.sends, [0.0, 0.0, 0.5]);
+    assert_eq!(ui.project().part(PartId::ALL[2]).mix.sends, [0.0, 0.0, 0.5]);
 }
 
 fn turn_def(def: &BlockDef, slot: usize, delta: i8, perf: &mut Performance) {
-    part_page::apply_encoder(def, slot, delta, &mut perf.edit(0), &mut Op::A);
+    part_page::apply_encoder(def, slot, delta, &mut perf.edit(PartId::ALL[0]), &mut Op::A);
 }
 
 /// Each slot's parameter address, `None` where the slot is not bound.
@@ -181,7 +182,7 @@ fn fx_encoders_step_like_before() {
     assert_eq!(perf.fx.delay.rev_send, 0.5);
     turn_def(&reg::DELAY_CHAR, 0, 1, &mut perf);
     assert!((perf.fx.delay.wow_flutter - (0.15 + 1.0 / 128.0)).abs() < 1e-6);
-    part_page::snap_encoder(&reg::DELAY, 4, 1, &mut perf.edit(0), Op::A);
+    part_page::snap_encoder(&reg::DELAY, 4, 1, &mut perf.edit(PartId::ALL[0]), Op::A);
     assert_eq!(perf.fx.delay.mix, 100.0 / 127.0);
 }
 
@@ -190,7 +191,7 @@ fn fx_encoders_step_like_before() {
 fn fx_are_shared_across_parts() {
     let mut perf = Performance::new();
     turn_def(&reg::DELAY, 0, 2, &mut perf);
-    let shown = part_page::read_values(&reg::DELAY, &perf.edit(3), Op::A)[0];
+    let shown = part_page::read_values(&reg::DELAY, &perf.edit(PartId::ALL[3]), Op::A)[0];
     assert_eq!(shown, (391.0 - 10.0) / (500.0 - 10.0));
 }
 
@@ -206,7 +207,7 @@ fn priming_a_part_param_is_refused() {
             .button(ButtonId::Plus, ButtonState::Pressed),
     );
     assert_eq!(
-        ui.performance.parts[0].sound.dest_registry.len(),
+        ui.project().part(PartId::ALL[0]).sound.dest_registry.len(),
         1,
         "only the default CUTOFF"
     );
@@ -236,11 +237,11 @@ fn part_overview_shows_every_part_with_the_edited_one_lit() {
     use chimera_core::ui::viz::{STRIP_H, STRIP_PAN_Y, STRIP_TOP, strip_x};
     let fb = overview(
         |ui| {
-            ui.performance.parts[0].mix.pan = -1.0;
-            ui.performance.parts[1].mix.level = 1.0;
-            ui.performance.parts[1].mix.pan = 1.0;
-            ui.performance.parts[2].mix.pan = 0.0;
-            ui.performance.parts[3].mix.level = 0.0;
+            ui.project_mut().edit_part(PartId::ALL[0]).mix.pan = -1.0;
+            ui.project_mut().edit_part(PartId::ALL[1]).mix.level = 1.0;
+            ui.project_mut().edit_part(PartId::ALL[1]).mix.pan = 1.0;
+            ui.project_mut().edit_part(PartId::ALL[2]).mix.pan = 0.0;
+            ui.project_mut().edit_part(PartId::ALL[3]).mix.level = 0.0;
         },
         ButtonId::B2,
     );
@@ -444,14 +445,14 @@ fn mixer_part_dirty_render_equals_full_render() {
 /// into: "LOAD SOUND → PART 2" for Part 2.
 #[test]
 fn sound_browser_title_names_the_part() {
-    use chimera_core::preset::SoundPool;
+    use chimera_core::project::Project;
     use chimera_core::ui::{browser, components, theme};
     use embedded_graphics::draw_target::DrawTarget;
 
     // `draw` expects a screen cleared to the ground.
     let mut got = screen::Fb::new();
     let _ = got.clear(theme::BG);
-    browser::draw(&mut got, &SoundPool::new(), 1, 0, 0);
+    browser::draw(&mut got, Project::boxed().0.pool(), PartId::ALL[1], 0, 0);
     let mut want = screen::Fb::new();
     let _ = want.clear(theme::BG);
     components::title_to(&mut want, "LOAD SOUND", "PART 2");

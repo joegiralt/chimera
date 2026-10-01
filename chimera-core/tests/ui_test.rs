@@ -217,20 +217,20 @@ fn test_page_from_nav_demo_chain() {
 }
 
 /// Spec §5: System gets its own page (it used to alias an engine page).
-/// MIDI Setup (node 0) is slot-bound; TUNING (node 1) is not yet.
+/// TUNING (node 0) is not slot-bound yet; THEME (node 1) is.
 #[test]
 fn test_system_chain_has_its_own_page() {
     let mut nav = ChainNav::new();
     nav.chain_id = ChainId::System;
-    assert!(matches!(
-        PageKey::from_nav(&nav, Op::A),
-        PageKey::Part { .. }
-    ));
-    nav.node = 1;
     assert_eq!(
         PageKey::from_nav(&nav, Op::A),
         PageKey::Legacy(PageId::System(nav.active_block_def().id))
     );
+    nav.node = 1;
+    assert!(matches!(
+        PageKey::from_nav(&nav, Op::A),
+        PageKey::Part { .. }
+    ));
 }
 
 // -- BlockDef registry: format coverage --

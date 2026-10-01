@@ -8,7 +8,8 @@ use core::ops::ControlFlow;
 
 use chimera_core::hw::{AXI_SRAM, VOICE_RAM_BUDGET};
 use chimera_core::instrument::{AXI_RESIDENT, AudioShared, Instrument};
-use chimera_core::preset::{Performance, Sound, SoundPool};
+use chimera_core::preset::{Performance, Sound};
+use chimera_core::project::Pool;
 use chimera_core::triple::TripleBuffer;
 use chimera_core::ui::UiState;
 use chimera_core::ui::fmt::FmtBuf;
@@ -326,7 +327,7 @@ fn sizes<D: ChimeraDisplay>(c: &mut Console<D>) {
     c.line(format_args!(
         "SOUND {} POOL {}",
         size_of::<Sound>(),
-        size_of::<SoundPool>()
+        size_of::<Pool>()
     ));
     c.line(format_args!(
         "PERF {} UI {}",

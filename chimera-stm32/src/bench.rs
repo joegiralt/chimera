@@ -19,6 +19,7 @@ use chimera_core::dsp::modal::{
 };
 use chimera_core::dsp::modulator::{EnvForm, EnvSlot, EnvType, Func, Glide, LfoForm, LfoType};
 use chimera_core::dsp::voice::Voice;
+use chimera_core::factory::{FACTORY_LEN, factory_sound};
 use chimera_core::hw::{
     BLOCK_SIZE, MAX_PARTS, MAX_VOICES, SAMPLE_RATE, SampleBudget, VOICE_RAM_BUDGET,
 };
@@ -31,7 +32,8 @@ use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::{
     EngineType, EnvParams, FilterParams, FolderParams, OutParams, ParamSnapshot,
 };
-use chimera_core::preset::Performance;
+use chimera_core::preset::{Performance, Sound};
+use chimera_core::project::{Project, SlotId, project_crc};
 use chimera_core::scope::{ScopeFrame, ScopeWriter, scope_buffer};
 use chimera_core::sym_alloc::SymAlloc;
 use chimera_core::triple::TripleBuffer;
@@ -538,7 +540,8 @@ struct Rig<'p> {
 
 // Not inlined, so its frame never adds to `main`'s.
 #[inline(never)]
-pub fn run(display: &mut impl ChimeraDisplay, clocks: Clocks, perf: &Performance) {
+pub fn run(display: &mut impl ChimeraDisplay, clocks: Clocks, project: &mut Project) {
+    let proj_crc = time_project_crc(project);
     // SAFETY: the bench runs once from `main`, before `engine::init` and
     // before any interrupt is unmasked, so it is the only user of the
     // engine's slots and of its own statics; its references are gone when it
@@ -552,7 +555,7 @@ pub fn run(display: &mut impl ChimeraDisplay, clocks: Clocks, perf: &Performance
         inst_slot,
         fx_slot,
         shared_slot,
-        perf,
+        perf: project.perf(),
         scope: ScopeWriter::new(scope_w),
         dac: DacBlocks::new(),
     };
@@ -602,8 +605,44 @@ pub fn run(display: &mut impl ChimeraDisplay, clocks: Clocks, perf: &Performance
     let g1 = MidiNote::new(31).unwrap_or(MidiNote::A4);
     let dark = rig.time_note_on(g1, dark_pluck, (true, silent));
     let light = rig.time_note_on(g1, short_string, (true, silent));
-    show_memory(display, rebuild, note_on, (lowest, dark, light));
+    show_memory(display, (rebuild, proj_crc), note_on, (lowest, dark, light));
     hold(clocks);
+}
+
+/// Cycles per `project_crc` over `project` with every slot filled, the
+/// test fixture `full()`'s shape: its free slots take copies (as `full()`
+/// fills them) and are cleared after, so its content and status are as
+/// before. A slot a Part names is left as it is.
+#[inline(never)]
+fn time_project_crc(project: &mut Project) -> u32 {
+    let mut filled = 0u32;
+    for s in SlotId::ALL {
+        if project.pool().get(s).is_some() || !project.users(s).is_empty() {
+            continue;
+        }
+        let i = s.index();
+        let sound = match i % 3 {
+            0 => None,
+            _ => factory_sound(i % FACTORY_LEN),
+        };
+        let sound = sound.unwrap_or_else(|| Sound::init(EngineType::Modal));
+        project.pool_store(s, sound);
+        filled |= 1 << i;
+    }
+    let mut cycles = 0u32;
+    for _ in 0..ROUNDS {
+        let start = DWT::cycle_count();
+        black_box(project_crc(black_box(&*project)));
+        cycles = cycles.wrapping_add(DWT::cycle_count().wrapping_sub(start));
+    }
+    for s in SlotId::ALL {
+        if filled & 1 << s.index() != 0 {
+            project
+                .pool_clear(s)
+                .expect("no users: checked when filled");
+        }
+    }
+    cycles / ROUNDS
 }
 
 /// Cycles per `rebuild` into Sympathetic from Algo: the lend and the main
@@ -993,10 +1032,11 @@ fn show_routing(
     display.flush();
 }
 
-/// The sizes behind the D2 budget and the exclusive state's two timings.
+/// The sizes behind the D2 budget, the exclusive state's two timings and
+/// the project CRC's.
 fn show_memory(
     display: &mut impl ChimeraDisplay,
-    rebuild: u32,
+    (rebuild, proj_crc): (u32, u32),
     note_on: u32,
     (lowest, dark, light): (u32, u32, u32),
 ) {
@@ -1016,6 +1056,8 @@ fn show_memory(
         // what COLOR 0 adds, its six passes over the line.
         format_args!("DARK NOTE+BLOCK {dark} CYC"),
         format_args!("DARK +6 PASSES {} CYC", dark.saturating_sub(light)),
+        // One project's CRC, every slot filled: the project status's cost.
+        format_args!("PROJ CRC {proj_crc} CYC"),
     ];
     let mut line = FmtBuf::new();
     for (i, args) in lines.into_iter().enumerate() {

@@ -13,11 +13,12 @@ pub const HEADER_LEN: usize = 28;
 pub const TRAILER_LEN: usize = 4;
 const RECORD_HEAD_LEN: usize = 4;
 
-/// What a file holds. 2 Project, 4 Tags and 5 Index are reserved (ADR 0045).
+/// What a file holds. 4 Tags and 5 Index are reserved (ADR 0045).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum FileKind {
     Sound = 1,
+    Project = 2,
     System = 3,
 }
 
@@ -25,6 +26,7 @@ impl FileKind {
     fn from_code(c: u8) -> Option<Self> {
         match c {
             1 => Some(FileKind::Sound),
+            2 => Some(FileKind::Project),
             3 => Some(FileKind::System),
             _ => None,
         }
@@ -80,6 +82,45 @@ impl Side {
     }
 }
 
+/// A project's file: its id on the card `vol`. A save or a delete runs
+/// only on that card, so a swapped card's `P000000n` is never written;
+/// SYSTEM names it as the last project only on that card. Only a save, a
+/// load, a listing or `new_project_id` makes one, from the card it read:
+///
+/// ```compile_fail,E0451
+/// # use chimera_core::storage::{ProjectFile, ProjectId};
+/// # use chimera_hal::store::Store;
+/// let vol = chimera_hal::testkit::MemStore::new(1).mount().unwrap();
+/// let _ = ProjectFile { id: ProjectId::new(1).unwrap(), vol };
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProjectFile {
+    id: ProjectId,
+    vol: chimera_hal::store::VolumeId,
+}
+
+impl ProjectFile {
+    pub(crate) fn new(id: ProjectId, vol: chimera_hal::store::VolumeId) -> Self {
+        ProjectFile { id, vol }
+    }
+
+    /// For tests that write a project's files by hand.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn for_test(id: ProjectId, vol: chimera_hal::store::VolumeId) -> Self {
+        Self::new(id, vol)
+    }
+
+    pub fn id(self) -> ProjectId {
+        self.id
+    }
+
+    /// The card it is on.
+    pub fn vol(self) -> chimera_hal::store::VolumeId {
+        self.vol
+    }
+}
+
 /// A project's id, 1..=9 999 999, so its stem `P` + 7 digits is 8.3.
 ///
 /// ```compile_fail,E0423
@@ -131,34 +172,36 @@ impl Header {
         }
         b
     }
+}
 
-    fn decode(b: &[u8; HEADER_LEN]) -> Result<Header, FileError> {
-        if b[..4] != MAGIC {
-            return Err(FileError::BadMagic);
-        }
-        match u16::from_le_bytes([b[4], b[5]]) {
-            FORMAT_VERSION => {}
-            0 => return Err(FileError::Corrupt),
-            _ => return Err(FileError::NeedsNewerFirmware),
-        }
-        let kind = FileKind::from_code(b[6]).ok_or(FileError::WrongKind)?;
-        if b[7] != 0 {
-            return Err(FileError::Corrupt);
-        }
-        let generation = Generation(u32::from_le_bytes([b[8], b[9], b[10], b[11]]));
-        let mut raw = [0; 16];
-        raw.copy_from_slice(&b[12..]);
-        let name = if raw == [0; 16] {
-            None
-        } else {
-            Some(Name::from_padded(&raw).map_err(|_| FileError::BadName)?)
-        };
-        Ok(Header {
-            kind,
-            generation,
-            name,
-        })
+/// A header alone, as the framer decodes it: the project list reads one
+/// block a side, with no CRC to wait for.
+pub fn peek_header(b: &[u8; HEADER_LEN]) -> Result<Header, FileError> {
+    if b[..4] != MAGIC {
+        return Err(FileError::BadMagic);
     }
+    match u16::from_le_bytes([b[4], b[5]]) {
+        FORMAT_VERSION => {}
+        0 => return Err(FileError::Corrupt),
+        _ => return Err(FileError::NeedsNewerFirmware),
+    }
+    let kind = FileKind::from_code(b[6]).ok_or(FileError::WrongKind)?;
+    if b[7] != 0 {
+        return Err(FileError::Corrupt);
+    }
+    let generation = Generation(u32::from_le_bytes([b[8], b[9], b[10], b[11]]));
+    let mut raw = [0; 16];
+    raw.copy_from_slice(&b[12..]);
+    let name = if raw == [0; 16] {
+        None
+    } else {
+        Some(Name::from_padded(&raw).map_err(|_| FileError::BadName)?)
+    };
+    Ok(Header {
+        kind,
+        generation,
+        name,
+    })
 }
 
 /// Why a file can't be read. A file error, never a card fault.
@@ -364,7 +407,7 @@ impl Framer {
     ) -> Result<(), FileError> {
         match self.state {
             State::Header => {
-                on(Event::Header(Header::decode(&self.head)?))?;
+                on(Event::Header(peek_header(&self.head)?))?;
                 self.next_record()
             }
             State::RecordHead => {

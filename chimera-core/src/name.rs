@@ -28,12 +28,19 @@ pub type ProjectName = Name<16>;
 impl<const N: usize> Name<N> {
     const FITS_U8: () = assert!(N >= 1 && N <= u8::MAX as usize);
 
-    pub fn new(s: &str) -> Result<Self, NameError> {
+    /// `const`, so a literal name is checked at compile time.
+    pub const fn new(s: &str) -> Result<Self, NameError> {
         let () = Self::FITS_U8;
         let b = s.as_bytes();
-        check(b, N)?;
+        if let Err(e) = check(b, N) {
+            return Err(e);
+        }
         let mut bytes = [0; N];
-        bytes[..b.len()].copy_from_slice(b);
+        let mut i = 0;
+        while i < b.len() {
+            bytes[i] = b[i];
+            i += 1;
+        }
         Ok(Name {
             bytes,
             len: b.len() as u8,
@@ -64,18 +71,20 @@ impl<const N: usize> Name<N> {
     }
 }
 
-fn check(b: &[u8], max: usize) -> Result<(), NameError> {
+const fn check(b: &[u8], max: usize) -> Result<(), NameError> {
     if b.is_empty() {
         return Err(NameError::Empty);
     }
     if b.len() > max {
         return Err(NameError::TooLong);
     }
-    if let Some(&c) = b
-        .iter()
-        .find(|&&c| !(c.is_ascii_alphanumeric() || c == b' ' || c == b'-'))
-    {
-        return Err(NameError::BadChar(c));
+    let mut i = 0;
+    while i < b.len() {
+        let c = b[i];
+        if !(c.is_ascii_alphanumeric() || c == b' ' || c == b'-') {
+            return Err(NameError::BadChar(c));
+        }
+        i += 1;
     }
     if b[0] == b' ' || b[b.len() - 1] == b' ' {
         return Err(NameError::EdgeSpace);

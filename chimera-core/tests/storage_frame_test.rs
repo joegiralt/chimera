@@ -183,6 +183,10 @@ fn codes_are_frozen() {
         (RecordTag::ModDests, 0x0004),
         (RecordTag::Routes, 0x0005),
         (RecordTag::LastProject, 0x0006),
+        (RecordTag::Slot, 0x8007),
+        (RecordTag::Part, 0x8008),
+        (RecordTag::Fx, 0x8009),
+        (RecordTag::Origin, 0x000A),
     ];
     for (t, c) in table {
         assert_eq!(t.code(), c);
@@ -194,6 +198,7 @@ fn codes_are_frozen() {
     assert!(ReadTag::Unknown(0x8077).critical());
     assert!(!ReadTag::Unknown(0x0077).critical());
     assert_eq!(FileKind::Sound as u8, 1);
+    assert_eq!(FileKind::Project as u8, 2);
     assert_eq!(FileKind::System as u8, 3);
 }
 
@@ -332,8 +337,9 @@ fn flags_and_kind() {
         read(&refresh_crc(b[..28].to_vec()), 512),
         Err(FileError::Corrupt)
     );
+    // 4 Tags is reserved, not yet read.
     let mut b = file(&[]);
-    b[6] = 2;
+    b[6] = 4;
     assert_eq!(
         read(&refresh_crc(b[..28].to_vec()), 512),
         Err(FileError::WrongKind)

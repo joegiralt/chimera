@@ -19,4 +19,5 @@ midi = ["dep:midir"]
 master-tape = ["chimera-core/master-tape"]
 
 [dev-dependencies]
+chimera-core = { path = "../chimera-core", features = ["test-support"] }
 chimera-hal = { path = "../chimera-hal", features = ["testkit"] }

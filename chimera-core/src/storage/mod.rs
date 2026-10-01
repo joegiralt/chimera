@@ -18,17 +18,19 @@ pub use codes::{
 };
 pub use crc::Crc32;
 pub use file::{
-    AbFile, Check, Decode, LoadError, Pick, SaveError, SideState, check_file, check_frame,
-    delete_ab, delete_order, load_ab, load_file, pick, save_ab, write_target,
+    AbFile, Check, Decode, DecodeInPlace, InPlaceError, LoadError, Pick, SaveError, SideState,
+    check_file, check_frame, delete_ab, delete_order, load_ab, load_ab_in_place, load_file, pick,
+    save_ab, write_target,
 };
 pub use frame::{
     Event, FORMAT_VERSION, FileError, FileKind, Framer, Generation, HEADER_LEN, Header, MAGIC,
-    ProjectId, Side, TRAILER_LEN,
+    ProjectFile, ProjectId, Side, TRAILER_LEN, peek_header,
 };
+pub(crate) use record::records_crc;
 pub use record::{
     CRITICAL, MAX_RECORD_LEN, ReadTag, RecordBuf, RecordTag, RecordWriter, write_file,
 };
-pub use sound::{SoundCheck, SoundDecoder, encode_sound};
+pub use sound::{SoundCheck, SoundDecoder, encode_sound, sound_crc};
 pub use system::{
     BootNote, Exit, ExitPlan, SyncError, SystemCheck, SystemDecoder, SystemSettings, SystemSync,
     body_crc, encode_system, exit_plan,

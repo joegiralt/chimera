@@ -35,7 +35,7 @@ pub const FX_SENDS: usize = 3;
 const _: () = assert!(core::mem::size_of::<FxBus>() <= FX_BUS_BUDGET);
 
 /// Shared effect settings: one set per Performance, not per Sound.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FxParams {
     pub chorus: ChorusParams,
     pub delay: DelayParams,

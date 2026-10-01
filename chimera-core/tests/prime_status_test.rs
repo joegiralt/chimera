@@ -6,6 +6,7 @@
 mod screen;
 
 use chimera_core::mod_path::RegistryError;
+use chimera_core::project::PartId;
 use chimera_core::ui::draw;
 use chimera_core::ui::perf::PerfStats;
 use chimera_core::ui::theme;
@@ -358,7 +359,7 @@ fn priming_past_matrix_capacity_on_the_algo_chain_reports_full() {
     );
     assert_eq!(ui.matrix_state.num_dests, MAX_MOD_DESTS);
     assert_eq!(
-        ui.performance.parts[0].sound.dest_registry.len(),
+        ui.project().part(PartId::ALL[0]).sound.dest_registry.len(),
         MAX_MOD_DESTS
     );
 }
@@ -376,7 +377,7 @@ fn stage_cells_prime_time_and_sustain_primes_level() {
     assert_eq!(ui.prime_status(), Some(PrimeStatus::Added));
     prime(&mut ui, EncoderId::C); // SUSTAIN
     assert_eq!(ui.prime_status(), Some(PrimeStatus::Added));
-    let reg = &ui.performance.parts[0].sound.dest_registry;
+    let reg = &ui.project().part(PartId::ALL[0]).sound.dest_registry;
     let primed: Vec<ParamAddr> = (0..reg.len()).map(|i| reg.get(i).unwrap().addr).collect();
     let has = |id| {
         primed

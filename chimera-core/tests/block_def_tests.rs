@@ -49,11 +49,11 @@ fn mixer_channel_strip_chain() {
 }
 
 #[test]
-fn system_chain_has_5_blocks() {
+fn system_chain_has_4_blocks() {
     let chain = &block_registry::SYSTEM_CHAIN;
-    assert_eq!(chain.blocks[0].def.name, "MIDI Setup");
-    assert_eq!(chain.blocks[4].def.name, "About");
-    assert_eq!(chain.len(), 5);
+    assert_eq!(chain.blocks[0].def.name, "Tuning");
+    assert_eq!(chain.blocks[3].def.name, "About");
+    assert_eq!(chain.len(), 4);
 }
 
 #[test]
@@ -70,7 +70,7 @@ fn demo_chain_has_5_blocks() {
 
 #[test]
 fn about_has_the_audio_sub_page() {
-    let about = &block_registry::SYSTEM_CHAIN.blocks[4];
+    let about = &block_registry::SYSTEM_CHAIN.blocks[3];
     assert_eq!(about.def.name, "About");
     assert_eq!(about.sub_pages.len(), 1);
     assert_eq!(about.sub_pages[0].name, "Audio");

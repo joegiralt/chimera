@@ -48,7 +48,9 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0040](0040-eight-voices-modal-strings-to-g1.md) | Eight voices in D2; Modal strings sized to G1 (supersedes in part 0014 and 0031) | Accepted; line length superseded in part by [0056](0056-modal-resonators-share-four-macros.md) |
 | [0041](0041-mod-matrix-amount-grid.md) | The mod matrix is an amount grid of outlined cells (supersedes in part 0016) | Accepted |
 | [0042](0042-voice-pitch-is-a-matrix-destination.md) | Voice pitch is a matrix destination on each engine's PITCH page | Accepted; `ModalEngine::PITCH` superseded in part by [0056](0056-modal-resonators-share-four-macros.md) |
-| [0045](0045-card-format.md) | Store cards in 8.3 A/B files of versioned TLV records | Accepted |
+| [0043](0043-projects-own-their-sounds.md) | Projects own their sounds; marks are derived; one typed replace guard | Proposed |
+| [0045](0045-card-format.md) | Store cards in 8.3 A/B files of versioned TLV records | Accepted; load staging superseded in part by [0046](0046-project-load-protocol.md) |
+| [0046](0046-project-load-protocol.md) | Swap projects by epoch: fade the voices, then publish (supersedes in part [0045](0045-card-format.md)) | Proposed |
 | [0048](0048-own-fat-layer.md) | Own the FAT layer; keep embedded-sdmmc only as the SD block driver | Accepted |
 | [0049](0049-algo-init-routed-morph-dims.md) | Algo INIT is audibly routed; MORPH dims when A = B (supersedes in part 0024) | Proposed; INIT's RR and OUT LEVEL noted by [0063](0063-levels-at-the-factory-median.md) |
 | [0050](0050-gain-staging-trim-and-final-limiter.md) | Gain staging: a 1/√8 output trim and one peak limiter at −1 dBFS, last | Proposed |

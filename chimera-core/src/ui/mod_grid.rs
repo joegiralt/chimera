@@ -344,7 +344,6 @@ pub fn block_tag(b: BlockRef) -> &'static str {
         BlockRef::Comp => "CMP",
         BlockRef::Part => "PRT",
         BlockRef::Theme => "THM",
-        BlockRef::Channels => "MID",
     }
 }
 
@@ -404,7 +403,6 @@ pub fn block_name(b: BlockRef) -> &'static str {
         BlockRef::Comp => "COMP",
         BlockRef::Part => "PART",
         BlockRef::Theme => "THEME",
-        BlockRef::Channels => "MIDI",
     }
 }
 

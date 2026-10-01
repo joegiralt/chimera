@@ -66,7 +66,7 @@ impl DiskCode for ChorusMode {
 }
 
 /// Chorus parameters.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ChorusParams {
     /// Mode: 0=off, 1=Juno I, 2=Juno II, 3=Both
     pub mode: u8,

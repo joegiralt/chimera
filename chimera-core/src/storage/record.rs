@@ -11,7 +11,9 @@ pub const MAX_RECORD_LEN: usize = 512;
 /// Tag bit 15, must-understand: a reader that doesn't know the tag refuses the file.
 pub const CRITICAL: u16 = 0x8000;
 
-/// The records this firmware writes. Codes are frozen (ADR 0045).
+/// The records this firmware writes. Codes are frozen (ADR 0045). Low 15
+/// bits 0x0B–0x0F stay free for the reserved project records (tempo, AFX
+/// map, CC map, set list, tag names), in either criticality.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RecordTag {
     Block,
@@ -20,6 +22,16 @@ pub enum RecordTag {
     ModDests,
     Routes,
     LastProject,
+    /// A project's pool slot: slot `u8` (0..32), then the Sound's name, 16 B
+    /// padded; its Sound's records follow.
+    Slot,
+    /// A project's Part: part `u8` (0..6), then the Sound's name, 16 B; its
+    /// Sound's records, `Block(Part)` (the mix) and `Origin` follow.
+    Part,
+    /// A project's FX: empty; the FX `Block`s follow.
+    Fx,
+    /// A Part's source: `[0, slot]` or `[1, engine code]`.
+    Origin,
 }
 
 impl RecordTag {
@@ -31,6 +43,10 @@ impl RecordTag {
             RecordTag::ModDests => 0x0004,
             RecordTag::Routes => 0x0005,
             RecordTag::LastProject => 0x0006,
+            RecordTag::Slot => 0x8007,
+            RecordTag::Part => 0x8008,
+            RecordTag::Fx => 0x8009,
+            RecordTag::Origin => 0x000A,
         }
     }
 
@@ -42,6 +58,10 @@ impl RecordTag {
             0x0004 => RecordTag::ModDests,
             0x0005 => RecordTag::Routes,
             0x0006 => RecordTag::LastProject,
+            0x8007 => RecordTag::Slot,
+            0x8008 => RecordTag::Part,
+            0x8009 => RecordTag::Fx,
+            0x000A => RecordTag::Origin,
             _ => return None,
         })
     }
@@ -120,7 +140,7 @@ pub struct RecordWriter<'s> {
 
 impl<'s> RecordWriter<'s> {
     /// A writer with a fresh CRC: the file's, or a body's alone.
-    pub(super) fn new(sink: &'s mut dyn ByteSink) -> Self {
+    fn new(sink: &'s mut dyn ByteSink) -> Self {
         RecordWriter {
             sink,
             crc: Crc32::new(),
@@ -152,6 +172,29 @@ impl<'s> RecordWriter<'s> {
         self.raw(&head)?;
         self.raw(payload)
     }
+}
+
+/// Takes bytes and keeps none.
+struct Discard;
+
+impl ByteSink for Discard {
+    fn put(&mut self, _: &[u8]) -> Result<(), StoreError> {
+        Ok(())
+    }
+}
+
+/// The CRC of `prefix`, then of the records `body` puts: one pass, the
+/// writer's own CRC, nothing kept.
+pub(crate) fn records_crc(
+    prefix: &[u8],
+    body: impl FnOnce(&mut RecordWriter<'_>) -> Result<(), StoreError>,
+) -> u32 {
+    let mut sink = Discard;
+    let mut w = RecordWriter::new(&mut sink);
+    w.crc.update(prefix);
+    // `Discard::put` is never Err, so neither is `body`.
+    let _ = body(&mut w);
+    w.crc.finish()
 }
 
 /// Header, then whatever `body` puts, then the CRC trailer.

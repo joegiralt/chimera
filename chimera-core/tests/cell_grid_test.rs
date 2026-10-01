@@ -3,6 +3,7 @@
 
 mod screen;
 
+use chimera_core::project::PartId;
 use chimera_core::ui::UiState;
 use chimera_core::ui::components::{self, Cell};
 use chimera_core::ui::fmt::{FmtBuf, fmt_val};
@@ -174,7 +175,7 @@ fn live_output_is_flat_when_silent_and_scaled_to_the_band() {
 fn an_all_empty_page_has_an_empty_focus_band() {
     let mut ui = UiState::new();
     feed(&mut ui, Input::press(chimera_hal::ButtonId::Menu));
-    for _ in 0..3 {
+    for _ in 0..2 {
         feed(&mut ui, Input::press(chimera_hal::ButtonId::Plus)); // → UPDATES
     }
     settle(&mut ui);
@@ -209,9 +210,10 @@ fn part_switch_redraws_mod_bars_that_differ() {
     use chimera_core::modulation::ModState;
     let addr = ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH);
     let mut ui = chimera_core::ui::UiState::new();
-    ui.performance.parts[1].sound = ui.performance.parts[0].sound.clone();
+    let s = ui.project().part(PartId::ALL[0]).sound.clone();
+    *ui.project_mut().edit_part(PartId::ALL[1]).sound = s;
     for (part, amount) in [(0, -64), (1, -40)] {
-        let s = &mut ui.performance.parts[part].sound;
+        let s = ui.project_mut().edit_part(PartId::ALL[part]).sound;
         s.dest_registry.add(addr, *b"MORPH\0\0\0").unwrap();
         s.mod_state = ModState::from_registry(&s.dest_registry, 2);
         s.mod_state.set_amount(0, 0, amount);

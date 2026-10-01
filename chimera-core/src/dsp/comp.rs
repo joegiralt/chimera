@@ -208,8 +208,12 @@ pub struct MasterComp {
     mix: f32,
     /// 0 bypassed, 1 fully in; fades over `ENGAGE` samples.
     engage: f32,
-    /// The coefficients below were made for these ATTACK and RELEASE bits
-    /// at this rate (0: not yet).
+    /// ATTACK and RELEASE, eased as THRESH (a step makes a lagging
+    /// reduction catch up at once).
+    attack: f32,
+    release: f32,
+    /// The coefficients below were made for these eased ATTACK and RELEASE
+    /// bits at this rate (0: not yet).
     key: [u32; 3],
     att: f32,
     rel: f32,
@@ -217,7 +221,7 @@ pub struct MasterComp {
     k: f32,
 }
 
-crate::in_place::field_list!(MasterComp => MasterComp { gr, e, thresh, makeup, mix, engage, key, att, rel, k });
+crate::in_place::field_list!(MasterComp => MasterComp { gr, e, thresh, makeup, mix, engage, attack, release, key, att, rel, k });
 
 impl Default for MasterComp {
     fn default() -> Self {
@@ -234,6 +238,8 @@ impl MasterComp {
             makeup: 0.0,
             mix: 0.0,
             engage: 0.0,
+            attack: 0.0,
+            release: 0.0,
             key: [0; 3],
             att: 0.0,
             rel: 0.0,
@@ -284,22 +290,27 @@ impl MasterComp {
             (self.gr, self.e) = (0.0, 1.0);
             (self.thresh, self.makeup, self.mix) =
                 (p.thresh_db() * oct, p.makeup_db() * oct, p.mix);
+            (self.attack, self.release) = (p.attack, p.release);
         }
-        let key = [p.attack.to_bits(), p.release.to_bits(), sample_rate];
-        if key[0] != self.key[0] || key[1] != self.key[1] || key[2] != self.key[2] {
-            // Divide-free but for 1/fs: α = exp(−STEP/(τ·fs)), with 1/τ
-            // folded into the inner `exp2` (τ = 0.1 ms·1000^a, 10 ms·100^r).
-            let per_fs = 1.0 / sample_rate.max(1) as f32;
-            if sample_rate != self.key[2] {
-                self.k = exp2(-LOG2_E * BLOCK_SIZE as f32 / SMOOTH_S * per_fs);
-            }
-            let c = -LOG2_E * STEP as f32 * per_fs;
-            self.att = exp2(c * 1.0e4 * exp2(-9.965_784 * p.attack));
-            self.rel = exp2(c * 1.0e2 * exp2(-6.643_856 * p.release));
-            self.key = key;
+        let per_fs = 1.0 / sample_rate.max(1) as f32;
+        if sample_rate != self.key[2] {
+            self.k = exp2(-LOG2_E * BLOCK_SIZE as f32 / SMOOTH_S * per_fs);
         }
         let k = self.k;
         let smooth = |s: f32, t: f32| t + k * (s - t);
+        (self.attack, self.release) = (
+            smooth(self.attack, p.attack),
+            smooth(self.release, p.release),
+        );
+        let key = [self.attack.to_bits(), self.release.to_bits(), sample_rate];
+        if key[0] != self.key[0] || key[1] != self.key[1] || key[2] != self.key[2] {
+            // Divide-free but for 1/fs: α = exp(−STEP/(τ·fs)), with 1/τ
+            // folded into the inner `exp2` (τ = 0.1 ms·1000^a, 10 ms·100^r).
+            let c = -LOG2_E * STEP as f32 * per_fs;
+            self.att = exp2(c * 1.0e4 * exp2(-9.965_784 * self.attack));
+            self.rel = exp2(c * 1.0e2 * exp2(-6.643_856 * self.release));
+            self.key = key;
+        }
         let slope = 1.0 - 1.0 / p.ratio();
         let (t0, t1) = (self.thresh, smooth(self.thresh, p.thresh_db() * oct));
         let (m0, m1) = (self.makeup, smooth(self.makeup, p.makeup_db() * oct));

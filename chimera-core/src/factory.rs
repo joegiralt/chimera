@@ -7,7 +7,7 @@ use crate::dsp::algo::waves::WaveId;
 use crate::modulation::ModSource;
 use crate::name::SoundName;
 use crate::params::EngineType;
-use crate::preset::{Sound, SoundPool};
+use crate::preset::Sound;
 
 pub const FACTORY_LEN: usize = 8;
 
@@ -257,12 +257,4 @@ pub fn factory_sound(i: usize) -> Option<Sound> {
         _ => return None,
     };
     Some(sound)
-}
-
-pub fn load_factory(pool: &mut SoundPool) {
-    for i in 0..FACTORY_LEN {
-        if let Some(s) = factory_sound(i) {
-            pool.store(i, s);
-        }
-    }
 }

@@ -24,26 +24,28 @@ use crate::note_queue::{NoteEvent, NoteKind};
 use crate::params::ParamSnapshot;
 use crate::part::PartParams;
 use crate::perf::load::AudioStats;
-use crate::preset::{Part, Performance, SoundPool};
+use crate::preset::{Part, Performance};
+use crate::project::Project;
 use crate::scope::{ScopeFrame, ScopeWriter};
 use crate::triple::TripleBuffer;
 use crate::voice_alloc::{Allocator, VoiceIdx};
 use crate::{MidiChannel, MidiNote, Velocity};
 
 /// Everything the port places in AXI SRAM (ADR 0014): framebuffer, UI,
-/// Performance, SoundPool, the `AudioShared`, scope and `AudioStats` triple
+/// the Project, the `AudioShared`, scope and `AudioStats` triple
 /// buffers (the scope's writer besides), the FX bus, and the card's store.
 pub const AXI_RESIDENT: usize = FB_BYTES
     + UI_RESERVE
     + STORE_RESERVE
-    + size_of::<Performance>()
-    + size_of::<SoundPool>()
+    + size_of::<Project>()
     + size_of::<TripleBuffer<AudioShared>>()
     + size_of::<TripleBuffer<ScopeFrame>>()
     + size_of::<ScopeWriter>()
     + size_of::<TripleBuffer<AudioStats>>()
     + size_of::<FxBus>();
 const _: () = assert!(AXI_RESIDENT <= AXI_SRAM);
+// Spec § Hardware parity: 64 KB of AXI to spare.
+const _: () = assert!(AXI_SRAM - AXI_RESIDENT >= 64 * 1024);
 
 /// One Part as the audio thread sees it.
 #[derive(Clone, Debug)]
@@ -58,6 +60,8 @@ pub struct PartAudio {
 pub struct AudioShared {
     pub parts: [PartAudio; MAX_PARTS],
     pub fx: FxParams,
+    /// The load epoch this snapshot was published under (ADR 0046).
+    pub epoch: u32,
 }
 
 impl Default for AudioShared {
@@ -76,7 +80,7 @@ impl PartAudio {
     }
 }
 
-crate::in_place::field_list!(AudioShared => AudioShared { parts, fx });
+crate::in_place::field_list!(AudioShared => AudioShared { parts, fx, epoch });
 
 impl AudioShared {
     pub fn from_performance(perf: &Performance) -> Self {
@@ -97,23 +101,29 @@ impl AudioShared {
             // The destination's length bounds the writes, not the source's.
             #[allow(clippy::needless_range_loop)]
             for i in 0..MAX_PARTS {
-                parts.add(i).write(PartAudio::of(&perf.parts[i]));
+                parts.add(i).write(PartAudio::of(&perf.parts()[i]));
             }
             addr_of_mut!((*p).fx).write(perf.fx);
+            addr_of_mut!((*p).epoch).write(0);
             slot.assume_init_mut()
         }
     }
 
-    /// Overwrite with `perf` (the UI's per-frame publish), one Part at a
-    /// time in place: the stack holds one `PartAudio`, not the whole
-    /// struct. The destructuring lists every field, so a new one fails to
-    /// compile here.
-    pub fn update_from(&mut self, perf: &Performance) {
-        let Self { parts, fx } = self;
-        for (d, p) in parts.iter_mut().zip(&perf.parts) {
+    /// Overwrite with `perf` (the UI's per-frame publish), tagged with
+    /// the load `epoch`, one Part at a time in place: the stack holds one
+    /// `PartAudio`, not the whole struct. The destructuring lists every
+    /// field, so a new one fails to compile here.
+    pub fn update_from(&mut self, perf: &Performance, epoch: u32) {
+        let Self {
+            parts,
+            fx,
+            epoch: e,
+        } = self;
+        for (d, p) in parts.iter_mut().zip(perf.parts()) {
             *d = PartAudio::of(p);
         }
         *fx = perf.fx;
+        *e = epoch;
     }
 }
 
@@ -445,6 +455,24 @@ impl Instrument {
     #[cfg(any(test, feature = "test-support"))]
     pub fn active(&self) -> [bool; MAX_VOICES] {
         core::array::from_fn(|v| self.voices[v].is_active())
+    }
+
+    /// No voice sounds.
+    pub fn quiet(&self) -> bool {
+        !self.voices.iter().any(Voice::is_active)
+    }
+
+    /// A project load (ADR 0046): every voice fades over `Voice::FADE` on
+    /// the snapshot it plays, and every waiting note goes. Each slot is
+    /// marked dying, so `render` step 5 frees it as it does a shed one: a
+    /// later note-off finds nothing and a held key isn't retriggered.
+    /// Nothing is counted unheard.
+    pub fn kill_all(&mut self) {
+        self.alloc.kill_all();
+        for v in &mut self.voices {
+            let _ = v.kill();
+        }
+        self.waiting = [None; MAX_VOICES];
     }
 
     /// Part `part`'s mono bus from the last `render` (before pan and level).

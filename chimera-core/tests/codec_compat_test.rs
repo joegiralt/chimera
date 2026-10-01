@@ -5,17 +5,24 @@ mod common;
 
 use std::path::PathBuf;
 
+use chimera_core::addr::BlockRef;
+use chimera_core::block::{Block, ParamId};
 use chimera_core::dsp::modal::{BankModes, ResonatorMode, damp_for, damp_from_v1_decay};
 use chimera_core::dsp::note_to_freq;
 use chimera_core::factory::{FACTORY_LEN, factory_sound};
-use chimera_core::params::{EngineType, ParamSnapshot};
+use chimera_core::name::{ProjectName, SoundName};
+use chimera_core::params::{EngineType, FilterParams, OutParams, ParamSnapshot};
 use chimera_core::preset::Sound;
-use chimera_core::storage::{FileError, MIGRATIONS, TRANSLATIONS, decode_block};
+use chimera_core::project::{
+    Origin, PartFrom, PartId, PartSource, PartStatus, Project, SlotId, part_block, part_status,
+};
+use chimera_core::storage::{FileError, MIGRATIONS, TRANSLATIONS, decode_block, sound_crc};
 use chimera_hal::BLOCK_SIZE;
 use common::codec_util::{
     SYSTEM_FIXTURE, decode, decode_into, encode, fix_crc, record_offsets, system_file,
     system_fixture_settings,
 };
+use common::project::{decode as decode_project, encode as encode_project, load};
 use common::{
     SR, assert_stable, fnv1a, fundamental_hz, octave_clear, play_modal, play_modal_at, render_sound,
 };
@@ -89,6 +96,30 @@ fn write_v1_fixtures() {
     if write_fixture(SYSTEM_FIXTURE, &sys) {
         println!("system ({}, {:#018x}),", sys.len(), fnv1a_bytes(&sys));
     }
+    let prj = encode_project(&fixture_project());
+    if write_fixture(PROJECT_FIXTURE, &prj) {
+        println!("project ({}, {:#018x}),", prj.len(), fnv1a_bytes(&prj));
+        let (mut p, _) = Project::boxed();
+        decode_project(&prj, &mut p).unwrap();
+        println!("fx");
+        for b in FX_BLOCKS {
+            let blk = part_block(
+                &p.part(PartId::ALL[0]).sound,
+                &p.part(PartId::ALL[0]).mix,
+                &p.perf().fx,
+                b,
+            );
+            println!(
+                "    ({}, &{:?}),",
+                b.disk_code().unwrap(),
+                values(blk.unwrap())
+            );
+        }
+        println!("mix");
+        for id in PartId::ALL {
+            println!("    &{:?},", values(&p.part(id).mix));
+        }
+    }
     for (name, s) in sources() {
         let bytes = encode(&s);
         if !write_fixture(&name, &bytes) {
@@ -139,14 +170,242 @@ const FIXTURE_BYTES: &[(&str, usize, u64)] = &[
 /// `system.sys`'s length and FNV-1a.
 const SYSTEM_FIXTURE_BYTES: (usize, u64) = (65, 0xf544fe6fdcbdda8c);
 
+/// The v1 project fixture, written from `fixture_project`.
+const PROJECT_FIXTURE: &str = "project.prj";
+
+/// `project.prj`'s length and FNV-1a.
+const PROJECT_FIXTURE_BYTES: (usize, u64) = (20624, 0x12b9dada0b932378);
+
+/// INIT as NEW's pool held it when `project.prj` was written: OUT LEVEL
+/// 45/128 and every operator's RR 5 (ADR 0063).
+fn prj_init(engine: EngineType) -> Sound {
+    let mut s = Sound::init(engine);
+    s.params.out.volume = 45.0 / 128.0;
+    for o in &mut s.params.algo.ops {
+        o.rr = 5;
+    }
+    s
+}
+
+/// Slot 11's edit of `factory_0`.
+fn fixture_edits(s: &mut Sound) {
+    s.name = SoundName::new("EDITED").unwrap();
+    s.params.filter.set(FilterParams::CUTOFF, 2_500.0);
+    s.params.out.set(OutParams::VOLUME, 0.5);
+}
+
+/// Part 1's further edit, after loading slot 11.
+fn fixture_part_edits(s: &mut Sound) {
+    s.name = SoundName::new("EDITED AGAIN").unwrap();
+    s.params.filter.set(FilterParams::CUTOFF, 900.0);
+}
+
+/// NEW, slot 11 an edited copy of slot 0; Part 1 (0-based) from slot 11,
+/// then edited; Part 2 from slot 9; delay MIX 0.3; `FIXTURE`.
+fn fixture_project() -> Box<Project> {
+    let (mut p, t) = Project::boxed();
+    let mut s = p.pool().get(SlotId::ALL[0]).unwrap().clone();
+    fixture_edits(&mut s);
+    p.pool_store(SlotId::ALL[11], s);
+    for (part, slot) in [(1, 11), (2, 9)] {
+        load(
+            &mut p,
+            t,
+            PartSource {
+                part: PartId::ALL[part],
+                from: PartFrom::Slot(SlotId::ALL[slot]),
+            },
+        )
+        .unwrap();
+    }
+    fixture_part_edits(p.edit_part(PartId::ALL[1]).sound);
+    p.edit_fx().delay.mix = 0.3;
+    p.set_name(ProjectName::new("FIXTURE").unwrap());
+    p
+}
+
+const FX_BLOCKS: [BlockRef; 5] = [
+    BlockRef::Chorus,
+    BlockRef::Delay,
+    BlockRef::Reverb,
+    BlockRef::Tape,
+    BlockRef::Comp,
+];
+
+/// Every `(id, value)` of `blk`, in spec order.
+fn values(blk: &dyn Block) -> Vec<(u8, f32)> {
+    blk.specs()
+        .iter()
+        .map(|s| (s.id.0, blk.get(s.id)))
+        .collect()
+}
+
+/// The FX `project.prj` was written with: (block code, (id, value)*).
+const PROJECT_FIXTURE_FX: &[(u8, &[(u8, f32)])] = &[
+    (20, &[(0, 0.0), (1, 0.5), (2, 0.5), (3, 0.0)]),
+    (
+        21,
+        &[
+            (0, 375.0),
+            (1, 0.4),
+            (2, 0.15),
+            (3, 0.2),
+            (4, 0.6),
+            (5, 0.3),
+            (6, 0.0),
+        ],
+    ),
+    (22, &[(5, 0.3), (1, 0.5), (2, 0.3), (3, 0.5), (4, 0.0)]),
+    (23, &[(0, 0.0), (1, 0.5), (2, 0.0), (3, 0.0)]),
+    (
+        24,
+        &[(0, 0.7), (1, 0.0), (2, 0.5), (3, 0.5), (4, 0.0), (5, 1.0)],
+    ),
+];
+
+/// Each Part's mix in `project.prj`.
+const PROJECT_FIXTURE_MIX: [&[(u8, f32)]; 6] = [
+    &[
+        (0, 0.0),
+        (1, 1.0),
+        (2, 0.0),
+        (3, 0.8),
+        (4, 0.0),
+        (5, 0.0),
+        (6, 0.0),
+        (7, 0.0),
+    ],
+    &[
+        (0, 1.0),
+        (1, 1.0),
+        (2, 0.0),
+        (3, 0.8),
+        (4, 0.0),
+        (5, 0.0),
+        (6, 0.0),
+        (7, 0.0),
+    ],
+    &[
+        (0, 2.0),
+        (1, 1.0),
+        (2, 0.0),
+        (3, 0.8),
+        (4, 0.0),
+        (5, 0.0),
+        (6, 0.0),
+        (7, 0.0),
+    ],
+    &[
+        (0, 3.0),
+        (1, 1.0),
+        (2, 0.0),
+        (3, 0.8),
+        (4, 0.0),
+        (5, 0.0),
+        (6, 0.0),
+        (7, 0.0),
+    ],
+    &[
+        (0, 4.0),
+        (1, 1.0),
+        (2, 0.0),
+        (3, 0.8),
+        (4, 0.0),
+        (5, 0.0),
+        (6, 0.0),
+        (7, 0.0),
+    ],
+    &[
+        (0, 5.0),
+        (1, 1.0),
+        (2, 0.0),
+        (3, 0.8),
+        (4, 0.0),
+        (5, 0.0),
+        (6, 0.0),
+        (7, 0.0),
+    ],
+];
+
+/// `pinned`'s values in `blk`; a param added since is not pinned.
+fn assert_values(blk: &dyn Block, pinned: &[(u8, f32)], what: &str) {
+    assert!(!pinned.is_empty(), "{what}: pinned");
+    for &(id, v) in pinned {
+        assert_eq!(blk.get(ParamId(id)), v, "{what} id {id}");
+    }
+}
+
+#[test]
+fn project_fixture_loads() {
+    let f = fixture(PROJECT_FIXTURE);
+    assert_eq!((f.len(), fnv1a_bytes(&f)), PROJECT_FIXTURE_BYTES);
+    let (mut p, _) = Project::boxed();
+    decode_project(&f, &mut p).unwrap();
+    assert_eq!(p.meta().name().as_str(), "FIXTURE");
+
+    let slot = |i: usize| p.pool().get(SlotId::ALL[i]);
+    for i in 0..FACTORY_LEN {
+        let want = decode(&fixture(&format!("factory_{i}.snd"))).unwrap();
+        assert!(slot(i).unwrap().bits_eq(&want), "slot {i}");
+    }
+    assert!(slot(8).unwrap().bits_eq(&prj_init(EngineType::Algo)));
+    assert!(slot(9).unwrap().bits_eq(&prj_init(EngineType::Modal)));
+    let mut edited = decode(&fixture("factory_0.snd")).unwrap();
+    fixture_edits(&mut edited);
+    assert!(slot(11).unwrap().bits_eq(&edited));
+    assert_eq!(p.pool().used(), 11);
+    assert!(slot(10).is_none());
+
+    let mut part1 = edited.clone();
+    fixture_part_edits(&mut part1);
+    let origin = |i: usize| Origin::Slot {
+        slot: SlotId::ALL[i],
+        generation: p.pool().generation(SlotId::ALL[i]),
+        crc: sound_crc(slot(i).unwrap()),
+    };
+    for id in PartId::ALL {
+        let part = p.part(id);
+        let (sound, o) = match id.index() {
+            1 => (part1.clone(), origin(11)),
+            2 => (prj_init(EngineType::Modal), origin(9)),
+            _ => (prj_init(EngineType::Algo), Origin::Init(EngineType::Algo)),
+        };
+        assert!(part.sound.bits_eq(&sound), "Part {}", id.index());
+        assert_eq!(part.origin(), o, "Part {}", id.index());
+        assert_values(&part.mix, PROJECT_FIXTURE_MIX[id.index()], "mix");
+        let status = match id.index() {
+            1 => PartStatus::Edited,
+            _ => PartStatus::Clean,
+        };
+        assert_eq!(part_status(part, p.pool()), status, "Part {}", id.index());
+    }
+
+    let first = p.part(PartId::ALL[0]);
+    assert_eq!(PROJECT_FIXTURE_FX.len(), FX_BLOCKS.len());
+    for (b, &(code, pinned)) in FX_BLOCKS.into_iter().zip(PROJECT_FIXTURE_FX) {
+        assert_eq!(b.disk_code(), Some(code));
+        let blk = part_block(&first.sound, &first.mix, &p.perf().fx, b).unwrap();
+        assert_values(blk, pinned, b.disk_ident().unwrap());
+    }
+    assert_eq!(p.perf().fx.delay.mix, 0.3);
+}
+
 #[test]
 fn v1_fixture_bytes_are_frozen() {
     assert_eq!(FIXTURE_BYTES.len(), sources().len());
-    for &(name, len, h) in FIXTURE_BYTES.iter().chain([&(
-        SYSTEM_FIXTURE,
-        SYSTEM_FIXTURE_BYTES.0,
-        SYSTEM_FIXTURE_BYTES.1,
-    )]) {
+    let own = [
+        (
+            SYSTEM_FIXTURE,
+            SYSTEM_FIXTURE_BYTES.0,
+            SYSTEM_FIXTURE_BYTES.1,
+        ),
+        (
+            PROJECT_FIXTURE,
+            PROJECT_FIXTURE_BYTES.0,
+            PROJECT_FIXTURE_BYTES.1,
+        ),
+    ];
+    for &(name, len, h) in FIXTURE_BYTES.iter().chain(&own) {
         let f = fixture(name);
         assert_eq!((f.len(), fnv1a_bytes(&f)), (len, h), "{name}");
     }

@@ -34,7 +34,7 @@ fn header_names_context_and_page() {
     assert_eq!(texts(&nav), ("PART 2 · MIX".into(), "CHORUS".into()));
     nav.chain_id = ChainId::System;
     nav.node = 0;
-    assert_eq!(texts(&nav), ("SYSTEM".into(), "MIDI SETUP".into()));
+    assert_eq!(texts(&nav), ("SYSTEM".into(), "TUNING".into()));
 }
 
 #[test]

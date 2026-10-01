@@ -8,6 +8,7 @@ use chimera_core::params::{
     DriveParams, EnvParams, FilterParams, FolderParams, OutParams, ParamSnapshot, PitchParams,
 };
 use chimera_core::preset::Performance;
+use chimera_core::project::PartId;
 
 #[test]
 fn op_rejects_out_of_range() {
@@ -41,9 +42,9 @@ fn block_ref_all_has_no_duplicates() {
 #[test]
 fn block_and_specs_agree() {
     let mut perf = Performance::new();
-    let part = perf.edit(0);
+    let part = perf.edit(PartId::ALL[0]);
     for b in BlockRef::ALL {
-        if matches!(b, BlockRef::Theme | BlockRef::Channels) {
+        if b == BlockRef::Theme {
             assert!(part.block(b).is_none());
             assert!(ParamSnapshot::default().block(b).is_none());
             continue;
