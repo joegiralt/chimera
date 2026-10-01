@@ -48,6 +48,7 @@ use chimera_hal::store::VolumeId;
 use crate::block::DiskCode;
 use crate::storage::{Crc32, ProjectId, sound_crc};
 
+use super::marks::status_at;
 use super::{
     Origin, PartSource, PartStatus, Project, ProjectStatus, TemplateCrc, part_status, project_crc,
     project_status,
@@ -75,6 +76,13 @@ pub trait Target: Copy + sealed::Sealed {
     /// The target's state, as a confirmation saw it: every input to
     /// `at_risk` but the template.
     fn witness(&self, p: &Project) -> u32;
+    /// The witness when nothing is at risk, else the prompt.
+    fn assess(&self, p: &Project, t: TemplateCrc) -> Result<u32, Prompt> {
+        match self.at_risk(p, t) {
+            Some(prompt) => Err(prompt),
+            None => Ok(self.witness(p)),
+        }
+    }
 }
 
 /// An `Edited` Part asks; a `Clean` or `Stale` one doesn't.
@@ -126,6 +134,15 @@ impl Target for ProjectSource {
     /// The whole project is the target, whichever source replaces it.
     fn witness(&self, p: &Project) -> u32 {
         project_crc(p)
+    }
+
+    /// One hash for both.
+    fn assess(&self, p: &Project, t: TemplateCrc) -> Result<u32, Prompt> {
+        let crc = project_crc(p);
+        match status_at(p, t, crc) {
+            ProjectStatus::Modified => Err(Prompt::SaveProjectFirst),
+            ProjectStatus::Pristine | ProjectStatus::Saved => Ok(crc),
+        }
     }
 }
 
@@ -202,9 +219,9 @@ impl ReplaceGuard {
         t: TemplateCrc,
         r: R,
     ) -> Result<Confirmed<R>, NeedsConfirm<R>> {
-        match r.at_risk(p, t) {
-            None => Ok(Confirmed::now(r, p)),
-            Some(prompt) => Err(NeedsConfirm {
+        match r.assess(p, t) {
+            Ok(witness) => Ok(Confirmed { target: r, witness }),
+            Err(prompt) => Err(NeedsConfirm {
                 pending: Pending(r),
                 prompt,
             }),
