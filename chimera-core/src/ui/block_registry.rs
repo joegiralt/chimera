@@ -14,6 +14,9 @@ use crate::params::{DriveParams, EnvParams, FilterParams, FolderParams, OutParam
 use crate::part::PartParams;
 use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2, FxFlow, FxNode, ParamSlot, VizType};
 use crate::ui::page::{PageLayout, ValFmt};
+use crate::ui::settings::leaves::{
+    ABOUT_LEAF, CHANNELS_LEAF, OUTPUTS_LEAF, THEME_LEAF, TUNING_LEAF, UPDATES_LEAF,
+};
 use crate::ui::theme_settings::ThemeSettings;
 
 const EMPTY: ParamSlot = ParamSlot::EMPTY;
@@ -757,10 +760,17 @@ pub static DEMO_CHAIN: ChainDef2 = ChainDef2 {
 };
 
 /// Every chain, for whole-registry checks (unique ids, the focus table).
-pub static ALL_CHAINS: [&ChainDef2; 5] = [
+/// `SYSTEM_CHAIN` stays until Task 8; it shares its defs with the leaves.
+pub static ALL_CHAINS: [&ChainDef2; 11] = [
     &ALGO_CHAIN,
     &MODAL_PLUCK_CHAIN,
     &MIXER_CHANNEL_CHAIN,
     &SYSTEM_CHAIN,
     &DEMO_CHAIN,
+    &CHANNELS_LEAF,
+    &OUTPUTS_LEAF,
+    &TUNING_LEAF,
+    &THEME_LEAF,
+    &UPDATES_LEAF,
+    &ABOUT_LEAF,
 ];
