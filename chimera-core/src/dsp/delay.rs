@@ -244,9 +244,10 @@ pub const TIME_FADE: u16 = 960;
 const _: () = assert!((TIME_FADE as usize).is_multiple_of(BLOCK_SIZE));
 
 /// The line runs whatever MIX is, so a return brought back up plays what
-/// the send is doing now, never a frozen tail (#61). MIX and FDBK ease
-/// (FDBK steps what is written, heard a TIME later); a TIME change
-/// crossfades two read heads.
+/// the send is doing now, never a frozen tail (#61). MIX, FDBK, SAT and
+/// MECHANICS ease (FDBK and SAT step what is written, heard a TIME later;
+/// MECHANICS moves the read head); a TIME change crossfades two read
+/// heads, never gliding one. TONE, a coefficient, steps.
 pub struct TapeDelay {
     buffer: [f32; MAX_DELAY_SAMPLES],
     write_pos: usize,
@@ -262,9 +263,28 @@ pub struct TapeDelay {
     primed: bool,
     mix: Ease,
     feedback: Ease,
+    saturation: Ease,
+    mechanics: Ease,
 }
 
-crate::in_place::field_list!(TapeDelay => TapeDelay { buffer, write_pos, lp_state, transport, time, next, fade, primed, mix, feedback });
+crate::in_place::field_list!(TapeDelay => TapeDelay { buffer, write_pos, lp_state, transport, time, next, fade, primed, mix, feedback, saturation, mechanics });
+
+/// One block's eased settings, each `(from, to)`.
+#[derive(Clone, Copy)]
+struct Eased {
+    mix: (f32, f32),
+    feedback: (f32, f32),
+    saturation: (f32, f32),
+    mechanics: (f32, f32),
+}
+
+impl Eased {
+    fn moving(&self) -> bool {
+        [self.mix, self.feedback, self.saturation, self.mechanics]
+            .iter()
+            .any(|e| e.0 != e.1)
+    }
+}
 
 impl Default for TapeDelay {
     fn default() -> Self {
@@ -285,6 +305,8 @@ impl TapeDelay {
             primed: false,
             mix: Ease::default(),
             feedback: Ease::default(),
+            saturation: Ease::default(),
+            mechanics: Ease::default(),
         }
     }
 
@@ -333,34 +355,49 @@ impl TapeDelay {
         }
         let mix = if params.is_on() { params.mix } else { 0.0 };
         let k = ease_coeff(sample_rate);
-        let m = self.mix.step(mix, k);
-        let f = self.feedback.step(params.feedback, k);
-        match (self.fade > 0, m.0 != m.1 || f.0 != f.1) {
-            (false, false) => self.span::<false, false>(buf, params, &tap, m, f, insert),
-            (false, true) => self.span::<false, true>(buf, params, &tap, m, f, insert),
-            (true, false) => self.span::<true, false>(buf, params, &tap, m, f, insert),
-            (true, true) => self.span::<true, true>(buf, params, &tap, m, f, insert),
+        let e = Eased {
+            mix: self.mix.step(mix, k),
+            feedback: self.feedback.step(params.feedback, k),
+            saturation: self.saturation.step(params.saturation, k),
+            mechanics: self.mechanics.step(params.wow_flutter, k),
+        };
+        match (self.fade > 0, e.moving()) {
+            (false, false) => self.span::<false, false>(buf, params, &tap, e, insert),
+            (false, true) => self.span::<false, true>(buf, params, &tap, e, insert),
+            (true, false) => self.span::<true, false>(buf, params, &tap, e, insert),
+            (true, true) => self.span::<true, true>(buf, params, &tap, e, insert),
         }
     }
 
-    /// The block: `FADE` while a TIME crossfade runs, `RAMP` while MIX
-    /// moves from `m.0` to `m.1` or FDBK from `f.0` to `f.1`.
+    /// The block: `FADE` while a TIME crossfade runs, `RAMP` while any
+    /// eased setting moves (each ramps from its `.0` to its `.1`; one
+    /// that isn't moving ramps by 0, so plays its value).
     #[inline(always)]
     fn span<const FADE: bool, const RAMP: bool>(
         &mut self,
         buf: &mut [f32; BLOCK_SIZE],
         params: &DelayParams,
         tap: &Tap,
-        m: (f32, f32),
-        f: (f32, f32),
+        e: Eased,
         insert: bool,
     ) {
+        let ramp = |v: (f32, f32)| (v.0, step_of(v, BLOCK_SIZE));
         // Tone: LP coefficient (higher = brighter)
         let lp_coeff = 0.2 + params.tone * 0.75;
-        let sat_gain = 1.0 + params.saturation * 3.0;
+        let gain = |s: f32| 1.0 + s * 3.0;
+        let (g0, g1) = (gain(e.saturation.0), gain(e.saturation.1));
+        let sat_gain = ramp((g0, g1));
         // Once a block: the loop multiplies, never divides (within 1 ulp).
-        let sat_inv = 1.0 / sat_gain;
-        let (sm, sf) = (step_of(m, BLOCK_SIZE), step_of(f, BLOCK_SIZE));
+        // Ramped, the inverse is linear between the ends: still at most 1.
+        let sat_inv = ramp((1.0 / g0, 1.0 / g1));
+        let (m, f, d) = (ramp(e.mix), ramp(e.feedback), ramp(e.mechanics));
+        // MECHANICS at 1: ramped, the transport's offsets × its depth.
+        let unit = Tap {
+            wow: WOW_SAMPLES,
+            flutter: FLUTTER_SAMPLES,
+            ..*tap
+        };
+        let now = |(v, step): (f32, f32), i: usize| if RAMP { at(v, step, i) } else { v };
         let top = (MAX_DELAY_SAMPLES - 2) as f32;
 
         // The loop's state in locals: the stores into the line cannot then
@@ -374,7 +411,12 @@ impl TapeDelay {
         for (i, s) in buf.iter_mut().enumerate() {
             let dry = *s;
 
-            let (wow, flutter) = transport.offsets(tap);
+            let (wow, flutter) = if RAMP {
+                let ((w, f), depth) = (transport.offsets(&unit), now(d, i));
+                (w * depth, f * depth)
+            } else {
+                transport.offsets(tap)
+            };
             let head = |base: f32| (base + wow + flutter).clamp(1.0, top);
             let mut delayed = read(&self.buffer, write_pos, head(time));
             if FADE {
@@ -390,18 +432,17 @@ impl TapeDelay {
             // SAT 0 the loop is otherwise linear with unity DC gain, so FDBK
             // 1 grows without bound. Bounded by 1 / gain, the write stays
             // within |dry| + FDBK.
-            let saturated = libm::tanhf(filtered * sat_gain) * sat_inv;
+            let saturated = libm::tanhf(filtered * now(sat_gain, i)) * now(sat_inv, i);
 
             // Write: input + feedback
-            let feedback = if RAMP { at(f.0, sf, i) } else { f.1 };
-            self.buffer[write_pos] = dry + saturated * feedback;
+            self.buffer[write_pos] = dry + saturated * now(f, i);
             write_pos += 1;
             if write_pos == MAX_DELAY_SAMPLES {
                 write_pos = 0;
             }
 
             // Mix
-            let mix = if RAMP { at(m.0, sm, i) } else { m.1 };
+            let mix = now(m, i);
             let dry_gain = if insert { 1.0 - mix } else { 0.0 };
             *s = dry * dry_gain + delayed * mix;
         }
