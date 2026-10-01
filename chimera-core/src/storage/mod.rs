@@ -28,7 +28,7 @@ pub use frame::{
 pub use record::{
     CRITICAL, MAX_RECORD_LEN, ReadTag, RecordBuf, RecordTag, RecordWriter, write_file,
 };
-pub use sound::{SoundCheck, SoundDecoder, encode_sound};
+pub use sound::{SoundCheck, SoundDecoder, encode_sound, sound_crc};
 pub use system::{
     BootNote, Exit, ExitPlan, SyncError, SystemCheck, SystemDecoder, SystemSettings, SystemSync,
     body_crc, encode_system, exit_plan,

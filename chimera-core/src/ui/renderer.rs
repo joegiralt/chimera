@@ -41,7 +41,7 @@ pub struct Frame<'a> {
     pub sounding: bool,
     /// Every Part (Mixer overview) and the one being edited.
     pub parts: &'a [crate::preset::Part; crate::hw::MAX_PARTS],
-    pub active_part: usize,
+    pub active_part: crate::project::PartId,
     /// The last MIX+PLUS outcome, shown in the focus band in place of the
     /// value readout (issue #21).
     pub prime_status: Option<PrimeStatus>,
@@ -96,7 +96,7 @@ impl Renderer {
                         .map_or(0.0, a)
                 };
                 use crate::params::FilterParams;
-                let mode = f.parts[f.active_part].sound.params.filter.mode();
+                let mode = f.parts[f.active_part.index()].sound.params.filter.mode();
                 let v = view::view(f.def, f.focus, &f.ctx);
                 let buf = value_text(f, f.focus, a(f.focus));
                 let readout = (v != View::Empty).then(|| (v.label(), buf.as_str()));
@@ -120,7 +120,7 @@ impl Renderer {
                         .map(a)
                 };
                 use crate::params::EnvParams as E;
-                let p = &f.parts[f.active_part].sound.params.envelopes[s.index()];
+                let p = &f.parts[f.active_part.index()].sound.params.envelopes[s.index()];
                 match f.ctx.envs[s.index()] {
                     EnvKind::A(_) => {
                         let (atk, dec, sus, rel) = (
@@ -176,7 +176,7 @@ impl Renderer {
                 viz::compressor(display, -40.0 + 40.0 * a(0), ratio, f.master_gr_db);
             }
             VizType::EnvSpeed => {
-                let e = &f.parts[f.active_part].sound.params.envelopes;
+                let e = &f.parts[f.active_part.index()].sound.params.envelopes;
                 viz::env_speed(
                     display,
                     core::array::from_fn(|i| {
@@ -198,7 +198,9 @@ impl Renderer {
     {
         match f.def.viz {
             VizType::AudioStats => audio_page::draw_viz(display, f.audio),
-            VizType::MixerLevels => viz::parts_overview(display, &self.strips(f), f.active_part),
+            VizType::MixerLevels => {
+                viz::parts_overview(display, &self.strips(f), f.active_part.index())
+            }
             VizType::EffectsFlow(FxFlow::Sends) => {
                 let sends = [
                     self.anim[0].current(),
@@ -211,7 +213,7 @@ impl Renderer {
                 viz::effects_flow(display, Some(node as usize), None)
             }
             VizType::AlgoDiagram => {
-                let algo = &f.parts[f.active_part].sound.params.algo;
+                let algo = &f.parts[f.active_part.index()].sound.params.algo;
                 let morph = crate::addr::ParamAddr::new(
                     crate::addr::BlockRef::Algo,
                     crate::dsp::algo::params::AlgoParams::MORPH,
@@ -247,7 +249,7 @@ impl Renderer {
                 level: mix.level,
                 pan: mix.pan,
             };
-            if i == f.active_part {
+            if i == f.active_part.index() {
                 if let Some(l) = level {
                     s.level = self.anim[l].current();
                 }
@@ -284,11 +286,11 @@ impl Renderer {
                 VizType::AudioStats => ([0; 6], audio_page::viz_key(f.audio)),
                 VizType::MixerLevels => (
                     region::quantize_values(&self.anim),
-                    strips_key(&self.strips(f), f.active_part),
+                    strips_key(&self.strips(f), f.active_part.index()),
                 ),
                 VizType::EffectsFlow(_) => (region::quantize_values(&self.anim), f.focus as u32),
                 VizType::AlgoDiagram => {
-                    let algo = &f.parts[f.active_part].sound.params.algo;
+                    let algo = &f.parts[f.active_part.index()].sound.params.algo;
                     let q = region::quantize_values(&self.anim);
                     (
                         [0, 0, q[2], 0, 0, 0],
@@ -466,7 +468,7 @@ pub fn title_type(f: &Frame) -> u8 {
 /// decided, for drawing and for the dirty-region key. Both looks read the
 /// Sound's `mod_state`, which every matrix edit syncs, not the UI's mirror.
 pub fn look(f: &Frame, i: usize) -> components::Look {
-    let sound = &f.parts[f.active_part].sound;
+    let sound = &f.parts[f.active_part.index()].sound;
     match view::view(f.def, i, &f.ctx) {
         View::Route { source, .. }
             if sound.mod_state.routes_into(crate::modulation::CUTOFF) & (1 << source.index())
@@ -481,7 +483,7 @@ pub fn look(f: &Frame, i: usize) -> components::Look {
 
 /// The matrix's inert columns on the edited Part (`mod_grid::inert_dests`).
 pub fn inert(f: &Frame) -> u16 {
-    crate::ui::mod_grid::inert_dests(f.matrix, &f.parts[f.active_part].sound)
+    crate::ui::mod_grid::inert_dests(f.matrix, &f.parts[f.active_part.index()].sound)
 }
 
 /// Mod-bar amount for cell `i`, if its param is a destination.

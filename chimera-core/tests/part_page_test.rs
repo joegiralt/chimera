@@ -8,6 +8,7 @@ use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::filter::FilterMode;
 use chimera_core::dsp::modal::{ModalParams, ResonatorMode};
 use chimera_core::params::{EngineType, ParamSnapshot};
+use chimera_core::project::PartId;
 use chimera_core::ui::UiState;
 use chimera_core::ui::block_def::{BlockDef, ParamSlot, VizType, slot_addr};
 use chimera_core::ui::block_registry as reg;
@@ -120,11 +121,11 @@ fn space_is_the_parts_reverb_send() {
     assert_eq!(ui.nav.active_block_def().id, reg::MODAL_EXC.id);
     screen::feed(&mut ui, screen::Input::press(ButtonId::Plus));
     assert_eq!(ui.nav.active_block_def().id, reg::MODAL_1.id);
-    let was = ui.performance.parts[0].mix.sends[2];
+    let was = ui.project().part(PartId::ALL[0]).mix.sends[2];
     screen::feed(&mut ui, screen::Input::turn(EncoderId::F, 10));
-    let now = ui.performance.parts[0].mix.sends[2];
+    let now = ui.project().part(PartId::ALL[0]).mix.sends[2];
     assert!((now - was - 10.0 / 128.0).abs() < 1e-6, "{was} → {now}");
-    let edit = ui.performance.edit(0);
+    let edit = ui.project_mut().edit_part(PartId::ALL[0]);
     let space = part_page::read_values(&reg::MODAL_1, &edit, Op::A)[5];
     assert_eq!(part_page::read_values(&reg::SENDS, &edit, Op::A)[2], space);
 }

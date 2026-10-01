@@ -21,7 +21,7 @@ use chimera_core::modulation::ModState;
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::part::{DacPair, PartMode};
-use chimera_core::preset::Performance;
+use chimera_core::preset::{Performance, Sound};
 use chimera_core::{MidiChannel, MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
 use common::fnv1a;
@@ -551,7 +551,7 @@ fn two_parts() -> Vec<f32> {
 
 fn two_parts_perf() -> Performance {
     let mut perf = Performance::new();
-    perf.parts[1].load_init(EngineType::Modal);
+    perf.parts[1].sound = Sound::init(EngineType::Modal);
     perf.parts[1].mix.output = DacPair::P2;
     perf.parts[1].mix.pan = 0.5;
     perf

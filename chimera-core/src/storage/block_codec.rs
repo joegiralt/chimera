@@ -17,7 +17,7 @@ pub(crate) const MAX_BLOCK_PARAMS: usize = 32;
 /// empty `out`.
 ///
 /// # Panics
-/// For `Channels`, which is never stored: an encoder bug.
+/// For a block with no disk code: an encoder bug.
 pub fn encode_block(b: BlockRef, blk: &dyn Block, out: &mut RecordBuf) {
     out.u8(b.disk_code().expect("a stored block"));
     for a in ValidAddr::of_block(b) {

@@ -10,7 +10,8 @@ use embedded_graphics::pixelcolor::Rgb565;
 use chimera_hal::{ButtonId, ButtonState, Controls, EncoderId, PART_BUTTONS};
 
 use crate::params::EngineType;
-use crate::preset::{POOL_SIZE, SoundPool};
+use crate::preset::POOL_SIZE;
+use crate::project::{PartId, Pool, SlotId};
 use crate::ui::chain::chain_def_for;
 use crate::ui::components;
 use crate::ui::draw;
@@ -23,6 +24,11 @@ pub const VISIBLE_ROWS: usize = 8;
 /// order.
 pub const INIT_TYPES: [EngineType; EngineType::ALL.len()] = EngineType::ALL;
 pub const TOTAL_ENTRIES: usize = POOL_SIZE + INIT_TYPES.len();
+
+/// The pool slot at list entry `entry`; `None` for the INIT rows.
+pub fn slot_at(entry: usize) -> Option<SlotId> {
+    SlotId::new(u8::try_from(entry).ok()?)
+}
 
 pub const LIST_TOP: i32 = 44;
 pub const ROW_H: i32 = 26;
@@ -79,12 +85,12 @@ pub fn row_y(i: usize) -> i32 {
 
 /// The full-screen browser for Part `part` (0-based), on a screen the
 /// caller has cleared to `theme::BG`.
-pub fn draw<D>(d: &mut D, pool: &SoundPool, part: usize, cursor: usize, scroll: usize)
+pub fn draw<D>(d: &mut D, pool: &Pool, part: PartId, cursor: usize, scroll: usize)
 where
     D: DrawTarget<Color = Rgb565>,
 {
     let mut name = FmtBuf::new();
-    let _ = write!(name, "PART {}", part + 1);
+    let _ = write!(name, "PART {}", part.index() + 1);
     components::title_to(d, "LOAD SOUND", name.as_str());
 
     for i in 0..VISIBLE_ROWS {
@@ -149,14 +155,14 @@ where
     );
 }
 
-fn row<D>(d: &mut D, pool: &SoundPool, entry: usize, y: i32, selected: bool)
+fn row<D>(d: &mut D, pool: &Pool, entry: usize, y: i32, selected: bool)
 where
     D: DrawTarget<Color = Rgb565>,
 {
     let mut slot = FmtBuf::new();
-    let (name, chain, saved) = if entry < POOL_SIZE {
+    let (name, chain, saved) = if let Some(s) = slot_at(entry) {
         let _ = write!(slot, "{:02}", entry + 1);
-        match pool.get(entry) {
+        match pool.get(s) {
             Some(s) => (components::upper(s.name.as_str()), Some(s.engine()), true),
             None => (FmtBuf::new(), None, false),
         }

@@ -10,6 +10,7 @@ use chimera_core::clock_plan::SiliconRev;
 use chimera_core::params::EngineType;
 use chimera_core::perf::load::AudioStats;
 use chimera_core::preset::{POOL_SIZE, Sound};
+use chimera_core::project::SlotId;
 use chimera_core::reset::ResetCause;
 use chimera_core::scope::SCOPE_LEN;
 use chimera_core::ui::UiState;
@@ -561,22 +562,22 @@ pub const CASES: &[ScreenCase] = &[
     ("sound_browser", |ui| {
         let mut s = Sound::init(EngineType::Algo);
         s.name = chimera_core::name::Name::new("WARM BASS").unwrap();
-        ui.pool.store(0, s);
+        ui.project_mut().pool_store(SlotId::ALL[0], s);
         let mut s = Sound::init(EngineType::Modal);
         s.name = chimera_core::name::Name::new("GLASS PLUCK").unwrap();
-        ui.pool.store(1, s);
+        ui.project_mut().pool_store(SlotId::ALL[1], s);
         feed(ui, Input::chord(ButtonId::Edit, ButtonId::B1));
         feed(ui, Input::turn(EncoderId::A, 1));
     }),
     ("system", |ui| feed(ui, Input::press(ButtonId::Menu))),
     ("system_theme", |ui| {
         feed(ui, Input::press(ButtonId::Menu));
-        plus(ui, 2);
+        plus(ui, 1);
         feed(ui, Input::turn(EncoderId::C, 1)); // ACCENT AMBER, focused
     }),
     ("system_audio", |ui| {
         feed(ui, Input::press(ButtonId::Menu));
-        plus(ui, 4);
+        plus(ui, 3);
         feed(ui, Input::press(ButtonId::Edit));
     }),
 ];

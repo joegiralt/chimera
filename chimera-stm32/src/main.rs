@@ -264,14 +264,14 @@ fn synth(board: Board) -> ! {
     apply_theme(settings.theme, &mut theme, &mut backlight, &mut display);
     let perf = PerfTracker::new();
     #[cfg(feature = "bench")]
-    bench::run(&mut display, clk, &ui.performance);
+    bench::run(&mut display, clk, ui.project().perf());
 
     controls::start_systick(cp.SYST, &mut cp.SCB, clk.cpu_hz);
     controls::enable();
 
     let (scope_w, mut scope_r) = shared::take_scope().expect("scope buffer taken once");
     let (mut shared_w, shared_r) =
-        shared::take_audio(&ui.performance).expect("audio buffer taken once");
+        shared::take_audio(ui.project().perf()).expect("audio buffer taken once");
     // Without MIDI DIN nothing takes a producer.
     #[cfg_attr(not(feature = "midi-din"), allow(unused_mut, unused_variables))]
     let (mut producers, notes) = audio::engine::NOTES
@@ -316,7 +316,7 @@ fn synth(board: Board) -> ! {
         // System › Theme: the UI loop owns the display and the backlight.
         let recolour = apply_theme(ui.theme(), &mut theme, &mut backlight, &mut display);
         ui.update();
-        shared_w.publish(|b| b.update_from(&ui.performance));
+        shared_w.publish(|b| b.update_from(ui.project().perf()));
         let stats = stats_r.as_mut().map(|r| {
             let mut s = *r.read();
             s.stack_used = probe::stack_used();

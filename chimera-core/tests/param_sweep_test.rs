@@ -222,10 +222,7 @@ fn silences(c: &Case) -> Option<&'static str> {
     if c.is(BlockRef::Out, OutParams::VOLUME) && c.any(|v| v == 0.0) {
         return Some("OUT LEVEL 0 is the voice at volume 0");
     }
-    if (c.is(BlockRef::Part, PartParams::CHANNEL)
-        || (c.param.block == BlockRef::Channels && c.param.spec.id.0 == 0))
-        && c.any(|v| v != 0.0)
-    {
+    if c.is(BlockRef::Part, PartParams::CHANNEL) && c.any(|v| v != 0.0) {
         return Some("Part 1 listens on another MIDI channel than the notes'");
     }
     if c.modal(ModalParams::EXCITE) && c.any(|v| v == 0.0) {

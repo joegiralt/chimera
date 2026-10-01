@@ -3,6 +3,7 @@
 
 mod screen;
 
+use chimera_core::project::PartId;
 use chimera_core::ui::draw;
 use chimera_core::ui::mod_grid::{AMOUNT_Y, CELL_H, CELL_W, GRID_BOTTOM, READOUT_Y, cell_origin};
 use chimera_core::ui::perf::PerfStats;
@@ -251,7 +252,9 @@ fn the_amount_lerps() {
 #[test]
 fn an_empty_matrix_says_so() {
     let mut ui = chimera_core::ui::UiState::new();
-    ui.performance.parts[0]
+    ui.project_mut()
+        .edit_part(PartId::ALL[0])
+        .part
         .sound
         .dest_registry
         .remove(chimera_core::modulation::CUTOFF);
@@ -871,7 +874,7 @@ fn rows_read_envs_then_lfos_then_velo_and_note() {
     feed(&mut ui, Input::turn(EncoderId::A, 1));
     assert_eq!(ui.matrix_state.sel_source(), ModSource::Env2.index());
     feed(&mut ui, Input::turn(EncoderId::E, 10));
-    let sound = &ui.performance.parts[0].sound;
+    let sound = &ui.project().part(PartId::ALL[0]).sound;
     let d = sound
         .mod_state
         .find(chimera_core::modulation::CUTOFF)

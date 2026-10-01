@@ -24,20 +24,20 @@ use crate::note_queue::{NoteEvent, NoteKind};
 use crate::params::ParamSnapshot;
 use crate::part::PartParams;
 use crate::perf::load::AudioStats;
-use crate::preset::{Part, Performance, SoundPool};
+use crate::preset::{Part, Performance};
+use crate::project::Project;
 use crate::scope::{ScopeFrame, ScopeWriter};
 use crate::triple::TripleBuffer;
 use crate::voice_alloc::{Allocator, VoiceIdx};
 use crate::{MidiChannel, MidiNote, Velocity};
 
 /// Everything the port places in AXI SRAM (ADR 0014): framebuffer, UI,
-/// Performance, SoundPool, the `AudioShared`, scope and `AudioStats` triple
+/// the Project, the `AudioShared`, scope and `AudioStats` triple
 /// buffers (the scope's writer besides), the FX bus, and the card's store.
 pub const AXI_RESIDENT: usize = FB_BYTES
     + UI_RESERVE
     + STORE_RESERVE
-    + size_of::<Performance>()
-    + size_of::<SoundPool>()
+    + size_of::<Project>()
     + size_of::<TripleBuffer<AudioShared>>()
     + size_of::<TripleBuffer<ScopeFrame>>()
     + size_of::<ScopeWriter>()

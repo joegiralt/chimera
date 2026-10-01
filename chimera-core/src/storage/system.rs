@@ -1,7 +1,7 @@
 //! SYSTEM: the theme and the last project, read at boot and written on
 //! leaving System when RAM differs from what the card is known to hold (ADR 0045).
 
-use chimera_hal::store::{ByteSink, Dir, Store, StoreError, VolumeId};
+use chimera_hal::store::{Dir, Store, StoreError, VolumeId};
 
 use crate::addr::{BlockRef, Blocks};
 use crate::block::Block;
@@ -10,7 +10,7 @@ use crate::ui::theme_settings::ThemeSettings;
 use super::block_codec::{ByteSet, decode_block, encode_block};
 use super::card::{Card, CardFault, Ready};
 use super::codes::{MIGRATIONS, TRANSLATIONS};
-use super::crc::Crc32;
+use super::crc::{Crc32, CrcSink};
 use super::file::{AbFile, Check, Decode, LoadError, SaveError, load_ab, save_ab};
 use super::frame::{Event, FileError, FileKind, ProjectId};
 use super::record::{ReadTag, RecordBuf, RecordTag, RecordWriter};
@@ -44,16 +44,6 @@ pub fn encode_system(s: &SystemSettings, w: &mut RecordWriter<'_>) -> Result<(),
     match s.last_project {
         Some(p) => w.put(RecordTag::LastProject, &p.get().to_le_bytes()),
         None => Ok(()),
-    }
-}
-
-/// Hashes what it's given.
-struct CrcSink(Crc32);
-
-impl ByteSink for CrcSink {
-    fn put(&mut self, bytes: &[u8]) -> Result<(), StoreError> {
-        self.0.update(bytes);
-        Ok(())
     }
 }
 

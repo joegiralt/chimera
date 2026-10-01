@@ -397,8 +397,7 @@ fn block_codes_unique_and_round_trip() {
         assert!(!seen.contains(&c), "code {c} twice");
         seen.push(c);
     }
-    assert_eq!(seen.len(), BlockRef::ALL.len() - 1);
-    assert_eq!(BlockRef::Channels.disk_code(), None);
+    assert_eq!(seen.len(), BlockRef::ALL.len());
     assert_eq!(BlockRef::from_disk_code(0), None);
     assert_eq!(BlockRef::from_disk_code(27), None);
     assert_eq!(BlockRef::from_disk_code(255), None);
