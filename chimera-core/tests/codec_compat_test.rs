@@ -189,8 +189,6 @@ fn v1_fixtures_render_identically() {
     }
 }
 
-/// Holds only while the factory Sounds are unchanged; the render test is the
-/// lasting one.
 /// Every v1 file, saved before STEAL (#254), steals CUT.
 #[test]
 fn v1_fixtures_steal_cut() {
@@ -204,6 +202,8 @@ fn v1_fixtures_steal_cut() {
     }
 }
 
+/// Holds only while the factory Sounds are unchanged; the render test is the
+/// lasting one.
 #[test]
 fn v1_fixtures_equal_factory() {
     for i in 0..FACTORY_LEN {

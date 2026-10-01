@@ -447,10 +447,10 @@ impl ModalEngine {
     }
 
     /// More with a route into PITCH or FINE, or at STEAL GLIDE (#254):
-    /// the strings re-split every block. A host estimate, as the `COST_*`: SYMP's eight `set_period`s
-    /// a block and the halo's octave fold, 18 instructions a sample (STRING's
-    /// re-split with its dispersion, about 6). It was 12 before fractional
-    /// tuning (ADR 0042).
+    /// the strings re-split every block. A host estimate, as the `COST_*`:
+    /// SYMP's eight `set_period`s a block and the halo's octave fold, 18
+    /// instructions a sample (STRING's re-split with its dispersion, about
+    /// 6). It was 12 before fractional tuning (ADR 0042).
     pub const PITCH: Cost = Cost(30);
 
     /// More on SYMP with a route into STRUCTURE, which can keep the halo
