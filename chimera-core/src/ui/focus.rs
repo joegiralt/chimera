@@ -4,7 +4,8 @@
 //! chains (FILTER) keeps one focus, and the operator selection does not
 //! reset it.
 
-/// One entry per `BlockDef::id`; ids are 0..=66 today (test-checked).
+/// One entry per `BlockDef::id` (test-checked); glyph demo pages take
+/// 70 and up.
 pub const MAX_PAGES: usize = 72;
 
 #[derive(Clone, Copy, Debug)]

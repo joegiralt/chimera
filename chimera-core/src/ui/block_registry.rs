@@ -746,7 +746,7 @@ pub static DEMO_FM: BlockDef = BlockDef {
 
 /// GLYPH: ARC. a: unipolar, b: bipolar (from 12:00).
 pub static DEMO_GLYPH_ARC: BlockDef = BlockDef {
-    id: 68,
+    id: 70,
     name: "Glyph: Arc",
     short: "ARC",
     layout: PageLayout::CellGrid,
@@ -761,6 +761,8 @@ pub static DEMO_GLYPH_ARC: BlockDef = BlockDef {
     ],
 };
 
+/// Glyph pages take ids 70 and up (68–69 are nav-core's CHANNELS and
+/// OUTPUTS); raise `focus::MAX_PAGES` past 72 when one needs it.
 static DEMO_BLOCKS: [ChainBlock; 6] = [
     ChainBlock::page(&DEMO_WAVES),
     ChainBlock::page(&DEMO_SHAPES),
