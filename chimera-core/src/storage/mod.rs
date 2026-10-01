@@ -18,12 +18,13 @@ pub use codes::{
 };
 pub use crc::Crc32;
 pub use file::{
-    AbFile, Check, Decode, DecodeInPlace, LoadError, Pick, SaveError, SideState, check_file,
-    check_frame, delete_ab, delete_order, load_ab, load_file, pick, save_ab, write_target,
+    AbFile, Check, Decode, DecodeInPlace, InPlaceError, LoadError, Pick, SaveError, SideState,
+    check_file, check_frame, delete_ab, delete_order, load_ab, load_ab_in_place, load_file, pick,
+    save_ab, write_target,
 };
 pub use frame::{
     Event, FORMAT_VERSION, FileError, FileKind, Framer, Generation, HEADER_LEN, Header, MAGIC,
-    ProjectId, Side, TRAILER_LEN,
+    ProjectId, Side, TRAILER_LEN, peek_header,
 };
 pub(crate) use record::records_crc;
 pub use record::{

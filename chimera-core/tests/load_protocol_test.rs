@@ -52,6 +52,20 @@ fn an_epoch_already_published_kills_and_drains() {
     assert_eq!(g.step(1, 1, true), s(false, true, None));
 }
 
+/// Boot doesn't bump (ADR 0046): the first snapshot, the link and the
+/// gate all start at epoch 0, so the first block drains and kills nothing.
+#[test]
+fn boot_drains_from_the_first_block() {
+    let link = LoadLink::new();
+    let shared = AudioShared::from_performance(&Performance::new());
+    assert_eq!(shared.epoch, link.epoch());
+    let mut r = rev_v();
+    r.note_on(0, 60);
+    let mut g = LoadGate::new();
+    assert!(g.before_block(&link, &mut r.inst, &shared), "drains");
+    assert!(!r.inst.quiet(), "kills nothing");
+}
+
 #[test]
 fn second_epoch_restarts_the_fade() {
     // Review Focus 5
@@ -465,4 +479,372 @@ fn a_second_epoch_mid_fade_still_reopens_the_audio() {
     assert_eq!(second.settle(&l.link, || false), Settled::Acked);
     l.publish();
     assert!(l.plays_new(), "never left muted");
+}
+
+// End to end (spec § Tests › Load protocol): a project loaded off a card
+// by `load_project`, the audio stepped inside `settle`, then published
+// through a triple buffer, all in one thread.
+
+mod e2e {
+    use super::*;
+    use chimera_core::block::Block;
+    use chimera_core::modulation::ModSource;
+    use chimera_core::params::FilterParams;
+    use chimera_core::project::test_support::FlipOnSecondRead;
+    use chimera_core::project::{
+        LoadOutcome, PartFrom, PartSource, Project, ProjectNote, ProjectSource, ReplaceGuard,
+        SlotId, Subject, Swap, TemplateCrc, load_project, project_file, save_project,
+    };
+    use chimera_core::storage::{Card, ProjectId, Side};
+    use chimera_core::triple::{Reader, TripleBuffer, Writer};
+    use chimera_hal::BLOCK_SIZE;
+    use chimera_hal::store::Store;
+    use chimera_hal::testkit::MemStore;
+
+    /// Blocks `settle` may run before it gives up.
+    const CAP: usize = 16;
+
+    /// A shell in miniature: the audio reads its snapshot from a triple
+    /// buffer, steps the gate, drains, renders, and keeps pair 1.
+    struct Stage {
+        r: InstRig,
+        writer: Writer<AudioShared>,
+        reader: Reader<AudioShared>,
+        keys: NoteProducer<'static>,
+        drain: NoteDrain<'static, 1>,
+        gate: LoadGate,
+        pair1: Vec<f32>,
+    }
+
+    impl Stage {
+        fn new(p: &Project) -> Self {
+            let s = || AudioShared::from_performance(p.perf());
+            let (writer, reader) = Box::leak(Box::new(TripleBuffer::new(s(), s(), s()))).split();
+            let sources: &'static NoteSources<1> = Box::leak(Box::new(NoteSources::new()));
+            let (mut producers, drain) = sources.split().unwrap();
+            Self {
+                r: rev_v(),
+                writer,
+                reader,
+                keys: producers.take(SourceId::new(0)).unwrap(),
+                drain,
+                gate: LoadGate::new(),
+                pair1: Vec::new(),
+            }
+        }
+
+        fn push(&mut self, note: u8, kind: NoteKind) {
+            assert!(self.keys.push(NoteEvent {
+                channel: MidiChannel::new(0).unwrap(),
+                note: MidiNote::new(note).unwrap(),
+                kind,
+            }));
+        }
+
+        fn on(&mut self, note: u8) {
+            self.push(note, NoteKind::On(Velocity::MAX));
+        }
+
+        /// One block: the gate, the drain if it says so, the render.
+        fn audio_block(&mut self, link: &LoadLink) -> bool {
+            let Self {
+                r,
+                reader,
+                drain,
+                gate,
+                pair1,
+                ..
+            } = self;
+            let shared = reader.read();
+            let open = gate.before_block(link, &mut r.inst, shared);
+            if open {
+                drain.drain(|ev| r.inst.handle(ev, shared));
+            }
+            r.inst.render(&mut r.fx, &mut r.dac, shared, &mut r.scope);
+            pair1.extend_from_slice(&r.dac.out()[0]);
+            open
+        }
+
+        fn blocks(&mut self, link: &LoadLink, n: usize) {
+            for _ in 0..n {
+                self.audio_block(link);
+            }
+        }
+
+        /// `settle` with the audio run as its clock: blocks run, and how
+        /// it ended.
+        fn settle(&mut self, swap: Swap, link: &LoadLink) -> (usize, Settled) {
+            let mut n = 0;
+            let s = swap.settle(link, || {
+                if n == CAP {
+                    return false;
+                }
+                self.audio_block(link);
+                n += 1;
+                true
+            });
+            (n, s)
+        }
+
+        fn publish(&mut self, p: &Project, link: &LoadLink) {
+            let e = link.epoch();
+            self.writer.publish(|s| s.update_from(p.perf(), e));
+        }
+
+        fn active(&self) -> bool {
+            self.r.inst.active().iter().any(|&a| a)
+        }
+
+        fn kinds(&self) -> Vec<SlotKind> {
+            let k = self.r.inst.slot_kinds();
+            (0..MAX_VOICES)
+                .filter(|&v| self.r.inst.active()[v])
+                .map(|v| k[v])
+                .collect()
+        }
+    }
+
+    /// The largest step between successive samples of one channel.
+    fn max_step(pair: &[f32]) -> f32 {
+        pair.windows(3)
+            .map(|w| (w[2] - w[0]).abs())
+            .fold(0.0, f32::max)
+    }
+
+    fn peak(pair: &[f32]) -> f32 {
+        pair.iter().fold(0.0, |m, x| m.max(x.abs()))
+    }
+
+    /// Part 1 on `engine`'s INIT.
+    fn on_engine(e: EngineType) -> (Box<Project>, TemplateCrc) {
+        let (mut p, t) = Project::boxed();
+        let src = PartSource {
+            part: PartId::ALL[0],
+            from: PartFrom::Init(e),
+        };
+        let c = ReplaceGuard::check(&p, t, src).unwrap();
+        p.replace_part(c).unwrap();
+        (p, t)
+    }
+
+    /// A card with `new` as P0000002, then `old` as P0000001: `old` ends
+    /// `Saved`, so its load asks nothing.
+    fn card_with(old: &mut Project, new: &mut Project) -> (MemStore, Card) {
+        let mut s = MemStore::new(1);
+        let mut card = Card::new();
+        for (p, n) in [(new, 2), (old, 1)] {
+            let note = save_project(&mut card, &mut s, p, ProjectId::new(n).unwrap());
+            assert!(matches!(note, ProjectNote::Saved(_)), "{note:?}");
+        }
+        (s, card)
+    }
+
+    fn load_two(
+        card: &mut Card,
+        s: &mut impl Store,
+        ui: &mut Project,
+        t: TemplateCrc,
+        link: &LoadLink,
+    ) -> LoadOutcome {
+        let vol = s.mount().unwrap();
+        let src = ProjectSource::File {
+            id: ProjectId::new(2).unwrap(),
+            vol,
+        };
+        let go = ReplaceGuard::check(ui, t, src).expect("Saved never asks");
+        load_project(card, s, ui, go, link)
+    }
+
+    const CHORD: [u8; 3] = [60, 64, 67];
+    const HELD: usize = 40;
+    const BEFORE: usize = 16;
+
+    /// L7: across the swap no step is larger than the music's own before
+    /// it, plus a 128-sample linear fade of the loudest voice.
+    #[test]
+    fn swap_step_within_fade_bound() {
+        let (mut ui, t) = on_engine(EngineType::Algo);
+        let (mut new, _) = on_engine(EngineType::Modal);
+        let (mut s, mut card) = card_with(&mut ui, &mut new);
+        let link = LoadLink::new();
+
+        // Each voice alone: its peak over the same blocks.
+        let loudest = CHORD
+            .iter()
+            .map(|&n| {
+                let mut st = Stage::new(&ui);
+                st.on(n);
+                st.blocks(&link, HELD + BEFORE);
+                peak(&st.pair1[HELD * BLOCK_SIZE * 2..])
+            })
+            .fold(0.0, f32::max);
+        assert!(loudest > 0.05, "{loudest}");
+
+        let mut st = Stage::new(&ui);
+        for n in CHORD {
+            st.on(n);
+        }
+        st.blocks(&link, HELD + BEFORE);
+        let bump = st.pair1.len();
+        let out = load_two(&mut card, &mut s, &mut ui, t, &link);
+        assert_eq!(out.note, None);
+        let (_, settled) = st.settle(out.swap.unwrap(), &link);
+        assert_eq!(settled, Settled::Acked);
+        st.publish(&ui, &link);
+        st.blocks(&link, 2);
+
+        let before = &st.pair1[HELD * BLOCK_SIZE * 2..bump];
+        // From the last frame before the bump on.
+        let across = &st.pair1[bump - 2..];
+        let bound = max_step(before) + loudest / 128.0;
+        let got = max_step(across);
+        assert!(got <= bound, "step {got} over {bound}");
+        assert!(
+            peak(&st.pair1[bump..bump + BLOCK_SIZE * 2]) > 0.0,
+            "the fade sounds"
+        );
+        assert!(!st.active());
+    }
+
+    /// Up to the ack, a load sounds exactly as a bare `kill_all` on the old
+    /// project: the fading voice keeps the old Part's LFO 1 → CUTOFF.
+    #[test]
+    fn fading_voice_keeps_its_routes() {
+        let routed = |route: bool| {
+            let (mut p, t) = on_engine(EngineType::Algo);
+            let e = p.edit_part(PartId::ALL[0]);
+            e.sound.params.filter.set(FilterParams::CUTOFF, 600.0);
+            if route {
+                e.sound.params.lfos[0].rate = 8.0;
+                e.sound
+                    .mod_state
+                    .set_amount(ModSource::Lfo1.index(), 0, 127);
+            }
+            (p, t)
+        };
+        let (mut ui, t) = routed(true);
+        let (mut new, _) = routed(false);
+        let (mut s, mut card) = card_with(&mut ui, &mut new);
+
+        // The reference: no load, a bare kill at the same block.
+        let reference = |p: &Project, blocks: usize| {
+            let link = LoadLink::new();
+            let mut st = Stage::new(p);
+            st.on(60);
+            st.blocks(&link, HELD);
+            st.r.inst.kill_all();
+            st.blocks(&link, blocks);
+            st.pair1
+        };
+
+        let link = LoadLink::new();
+        let mut st = Stage::new(&ui);
+        st.on(60);
+        st.blocks(&link, HELD);
+        let out = load_two(&mut card, &mut s, &mut ui, t, &link);
+        let (n, settled) = st.settle(out.swap.unwrap(), &link);
+        assert_eq!(settled, Settled::Acked);
+        assert!(n >= 2, "the fade is two blocks");
+
+        let (old, _) = routed(true);
+        let want = reference(&old, n);
+        assert_eq!(st.pair1, want, "the old routes, bit for bit");
+        let unrouted = reference(&new, n);
+        assert_ne!(
+            unrouted[HELD * BLOCK_SIZE * 2..],
+            want[HELD * BLOCK_SIZE * 2..],
+            "the route is heard in the fade"
+        );
+    }
+
+    /// A note-on after the bump waits behind the gate and plays on the new
+    /// project's Part once its snapshot lands.
+    #[test]
+    fn note_on_between_epoch_and_publish_plays_new() {
+        let (mut ui, t) = on_engine(EngineType::Algo);
+        let (mut new, _) = on_engine(EngineType::Modal);
+        let (mut s, mut card) = card_with(&mut ui, &mut new);
+        let link = LoadLink::new();
+        let mut st = Stage::new(&ui);
+        st.blocks(&link, 4);
+        let out = load_two(&mut card, &mut s, &mut ui, t, &link);
+        st.on(60);
+        let (n, settled) = st.settle(out.swap.unwrap(), &link);
+        assert_eq!(settled, Settled::Acked);
+        assert!(!st.active(), "not before the publish");
+        assert!(!st.audio_block(&link), "still held");
+        assert!(!st.active());
+        st.publish(&ui, &link);
+        assert!(st.audio_block(&link));
+        assert_eq!(st.kinds(), [SlotKind::Modal(ResonatorMode::String)]);
+        assert!(n < CAP);
+    }
+
+    /// A key held through the swap stays silent, and its note-off finds
+    /// nothing.
+    #[test]
+    fn held_key_not_retriggered() {
+        let (mut ui, t) = on_engine(EngineType::Algo);
+        let (mut new, _) = on_engine(EngineType::Algo);
+        new.edit_part(PartId::ALL[0]).mix.level = 0.5;
+        let (mut s, mut card) = card_with(&mut ui, &mut new);
+        let link = LoadLink::new();
+        let mut st = Stage::new(&ui);
+        st.on(60);
+        st.blocks(&link, 8);
+        assert!(st.active());
+        let out = load_two(&mut card, &mut s, &mut ui, t, &link);
+        let _ = st.settle(out.swap.unwrap(), &link);
+        st.publish(&ui, &link);
+        for _ in 0..4 {
+            assert!(st.audio_block(&link));
+            assert!(!st.active(), "not retriggered");
+        }
+        st.push(60, NoteKind::Off);
+        for _ in 0..4 {
+            assert!(st.audio_block(&link));
+            assert!(!st.active());
+            assert!(st.r.inst.allocator().slots().iter().all(|s| s.is_free()));
+        }
+        assert_eq!(st.r.inst.allocator().refused(), 0);
+    }
+
+    /// Review Focus 1: pass 2 fails (the card changed under it). The
+    /// project falls back to NEW, and NEW reaches the audio through the
+    /// same epoch: the gate reopens and a note plays on NEW's Part 1.
+    #[test]
+    fn load_failure_still_publishes() {
+        let (mut ui, t) = on_engine(EngineType::Modal);
+        let (mut new, _) = on_engine(EngineType::Modal);
+        new.set_name(chimera_core::name::ProjectName::new("SECOND").unwrap());
+        let (mem, mut card) = card_with(&mut ui, &mut new);
+        let file = project_file(ProjectId::new(2).unwrap()).side(Side::A);
+        let mut s = FlipOnSecondRead::new(mem, file);
+        let link = LoadLink::new();
+        let mut st = Stage::new(&ui);
+        st.on(60);
+        st.blocks(&link, 8);
+        assert_eq!(st.kinds(), [SlotKind::Modal(ResonatorMode::String)]);
+
+        let out = load_two(&mut card, &mut s, &mut ui, t, &link);
+        assert_eq!(
+            out.note,
+            Some(ProjectNote::LoadFailed(Subject::File(
+                ProjectId::new(2).unwrap()
+            )))
+        );
+        assert_eq!(s.reads(), 2, "pass 2 ran");
+        assert_eq!(chimera_core::project::project_crc(&ui), t.get(), "NEW");
+        assert_eq!(link.epoch(), 1);
+        let (_, settled) = st.settle(out.swap.expect("a failed load still swaps"), &link);
+        assert_eq!(settled, Settled::Acked);
+        assert!(!st.active());
+        st.on(64);
+        assert!(!st.audio_block(&link), "held until the publish");
+        st.publish(&ui, &link);
+        assert_eq!(st.reader.read().epoch, 1);
+        assert!(st.audio_block(&link), "reopened");
+        assert_eq!(st.kinds(), [SlotKind::Algo], "NEW's Part 1");
+        assert!(ui.pool().get(SlotId::ALL[0]).is_some());
+    }
 }

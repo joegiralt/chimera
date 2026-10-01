@@ -133,34 +133,36 @@ impl Header {
         }
         b
     }
+}
 
-    fn decode(b: &[u8; HEADER_LEN]) -> Result<Header, FileError> {
-        if b[..4] != MAGIC {
-            return Err(FileError::BadMagic);
-        }
-        match u16::from_le_bytes([b[4], b[5]]) {
-            FORMAT_VERSION => {}
-            0 => return Err(FileError::Corrupt),
-            _ => return Err(FileError::NeedsNewerFirmware),
-        }
-        let kind = FileKind::from_code(b[6]).ok_or(FileError::WrongKind)?;
-        if b[7] != 0 {
-            return Err(FileError::Corrupt);
-        }
-        let generation = Generation(u32::from_le_bytes([b[8], b[9], b[10], b[11]]));
-        let mut raw = [0; 16];
-        raw.copy_from_slice(&b[12..]);
-        let name = if raw == [0; 16] {
-            None
-        } else {
-            Some(Name::from_padded(&raw).map_err(|_| FileError::BadName)?)
-        };
-        Ok(Header {
-            kind,
-            generation,
-            name,
-        })
+/// A header alone, as the framer decodes it: the project list reads one
+/// block a side, with no CRC to wait for.
+pub fn peek_header(b: &[u8; HEADER_LEN]) -> Result<Header, FileError> {
+    if b[..4] != MAGIC {
+        return Err(FileError::BadMagic);
     }
+    match u16::from_le_bytes([b[4], b[5]]) {
+        FORMAT_VERSION => {}
+        0 => return Err(FileError::Corrupt),
+        _ => return Err(FileError::NeedsNewerFirmware),
+    }
+    let kind = FileKind::from_code(b[6]).ok_or(FileError::WrongKind)?;
+    if b[7] != 0 {
+        return Err(FileError::Corrupt);
+    }
+    let generation = Generation(u32::from_le_bytes([b[8], b[9], b[10], b[11]]));
+    let mut raw = [0; 16];
+    raw.copy_from_slice(&b[12..]);
+    let name = if raw == [0; 16] {
+        None
+    } else {
+        Some(Name::from_padded(&raw).map_err(|_| FileError::BadName)?)
+    };
+    Ok(Header {
+        kind,
+        generation,
+        name,
+    })
 }
 
 /// Why a file can't be read. A file error, never a card fault.
@@ -366,7 +368,7 @@ impl Framer {
     ) -> Result<(), FileError> {
         match self.state {
             State::Header => {
-                on(Event::Header(Header::decode(&self.head)?))?;
+                on(Event::Header(peek_header(&self.head)?))?;
                 self.next_record()
             }
             State::RecordHead => {
