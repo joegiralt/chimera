@@ -176,3 +176,4 @@ The UI component storyboard.
 | ![](demo_arc.png) | ARC | Glyph: ARC; a drives it unipolar, b bipolar |
 | ![](demo_none.png) | NONE | Glyph: NONE; a steps MODEL, its word has the whole band |
 | ![](demo_sw.png) | SW | Glyph: SWITCH; a flips LFO 1's SYNC, FREE / RETRIG |
+| ![](demo_lvl.png) | LVL | Glyph: LEVEL BAR; a drives VOLUME (8 ticks), b operator A's FDBK (a tick per step) |

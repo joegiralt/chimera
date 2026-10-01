@@ -386,8 +386,8 @@ impl Renderer {
 
     /// The focused slot's gauge, by its glyph.
     pub fn gauge(&self, f: &Frame) -> Gauge {
-        let bipolar = view::view(f.def, f.focus, &f.ctx).fmt().is_bipolar();
-        view::glyph(f.def, f.focus, &f.ctx).gauge(self.anim[f.focus].current(), bipolar)
+        let fmt = view::view(f.def, f.focus, &f.ctx).fmt();
+        view::glyph(f.def, f.focus, &f.ctx).gauge(self.anim[f.focus].current(), fmt)
     }
 
     /// The six cells, first row's labels at `top`.

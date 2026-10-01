@@ -29,7 +29,8 @@ chorus braid (RATE, DEPTH, MIX; MODE is the strand count).
   real param before the owner assigns it to any spec.
 - **What is drawn is `FocusGlyph::gauge(..) -> Gauge`**, the one place an
   unbuilt glyph falls back to ARC. `Gauge` holds only built glyphs, each
-  with its inputs (`Arc { value, bipolar }`, `None`); the focus band
+  with its inputs (`Arc { value, bipolar }`, `None`, `Switch { on }`,
+  `LevelBar { value, ticks }`, ticks from the format); the focus band
   matches on it exhaustively, so nothing unbuilt can be drawn
   or panic.
 - **Word choices take NONE** (owner-approved 2026-10-01): a named
