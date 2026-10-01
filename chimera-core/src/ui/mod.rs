@@ -368,6 +368,30 @@ impl UiState {
         Some(published)
     }
 
+    /// Deletes `file` (`project::delete_project`); a refusal or a card
+    /// error shows its note. If SYSTEM names it as its card's last project
+    /// (possible after `+ NEW`), it names none, so the next boot is NEW,
+    /// not PROJECT NOT FOUND.
+    pub fn delete_project<S: Store>(
+        &mut self,
+        card: &mut Card,
+        store: &mut S,
+        sync: &mut SystemSync,
+        settings: &mut SystemSettings,
+        file: ProjectFile,
+    ) {
+        match project::delete_project(card, store, &self.project, file) {
+            // A failed write: the next save, load or System exit retries
+            // SYSTEM; until then a boot falls back to NEW and says why.
+            Ok(()) => {
+                if sync.forget(card, store, settings, file) == Ok(Exit::Loaded) {
+                    self.theme = settings.theme;
+                }
+            }
+            Err(n) => self.show_note(n),
+        }
+    }
+
     /// `f` becomes its card's last project in SYSTEM; a card SYSTEM was
     /// taken from brings its theme. A failed write leaves the toast to the
     /// project's note: the next save, load or System exit retries it.

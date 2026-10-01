@@ -306,6 +306,90 @@ fn save_writes_the_last_project() {
     );
 }
 
+/// Deleting the project SYSTEM names (possible after `+ NEW`) clears it,
+/// so the next boot isn't PROJECT NOT FOUND; deleting another leaves it.
+#[test]
+fn delete_forgets_the_last_project() {
+    let mut s = MemStore::new(1);
+    let mut b = boot_system(&mut s);
+    let (f3, f4) = (at(&mut s, 3), at(&mut s, 4));
+    b.ui.save_project(&mut b.card, &mut s, &mut b.sync, &mut b.settings, f3);
+    b.ui.save_project(&mut b.card, &mut s, &mut b.sync, &mut b.settings, f4);
+    assert_eq!(last_on_card(&mut s), Some(id(4)));
+    let go = ReplaceGuard::check(b.ui.project(), b.ui.template(), ProjectSource::New)
+        .expect("Saved never asks");
+    let link = LoadLink::new();
+    let _ = b.ui.load_project(
+        &mut b.card,
+        &mut s,
+        &mut b.sync,
+        &mut b.settings,
+        go,
+        &link,
+        settle,
+    );
+
+    b.ui.delete_project(&mut b.card, &mut s, &mut b.sync, &mut b.settings, f3);
+    assert_eq!(
+        (b.settings.last_project, last_on_card(&mut s)),
+        (Some(id(4)), Some(id(4))),
+        "another project: kept"
+    );
+    b.ui.delete_project(&mut b.card, &mut s, &mut b.sync, &mut b.settings, f4);
+    assert_eq!(
+        (b.settings.last_project, last_on_card(&mut s)),
+        (None, None),
+        "the last project: cleared"
+    );
+    let mut again = boot_system(&mut s);
+    let last = again.settings.last_project;
+    again.ui.boot_project(&mut again.card, &mut s, last);
+    assert_eq!(again.ui.step_toast(0), show("NEW PROJECT"));
+}
+
+/// `want` as SYSTEM's next generation on `s`, written as it stands.
+fn save_system(s: &mut MemStore, want: &SystemSettings) {
+    use chimera_core::storage::{SystemCheck, encode_system, save_ab};
+    Card::new()
+        .run(s, |st, r| {
+            st.make_dir(r.volume(), Dir::Chimera)?;
+            save_ab(
+                st,
+                r,
+                AbFile::SYSTEM,
+                &mut SystemCheck::new(),
+                None,
+                &mut |w| encode_system(want, w),
+            )
+        })
+        .and_then(|o| o.result)
+        .unwrap();
+}
+
+/// A card SYSTEM wasn't read from: a delete there clears its own last
+/// project, and its theme still applies (untouched defaults never go over
+/// it).
+#[test]
+fn delete_forgets_on_the_card_it_deletes_from() {
+    let mut s = MemStore::new(1);
+    let mut b = boot_system(&mut s);
+    let f3 = at(&mut s, 3);
+    b.ui.save_project(&mut b.card, &mut s, &mut b.sync, &mut b.settings, f3);
+    // Its theme, changed outside this UI.
+    let mut card_side = SystemSync::boot(&mut Card::new(), &mut s).1;
+    card_side.theme.bright = Bright::new(40);
+    save_system(&mut s, &card_side);
+
+    let mut b = boot_system(&mut MemStore::new(9));
+    b.ui.delete_project(&mut b.card, &mut s, &mut b.sync, &mut b.settings, f3);
+    assert_eq!(last_on_card(&mut s), None);
+    assert_eq!(
+        SystemSync::boot(&mut Card::new(), &mut s).1.theme,
+        card_side.theme,
+        "the card's theme kept"
+    );
+}
+
 /// The project lands, SYSTEM's write fails: the toast is the save's.
 #[test]
 fn a_failed_system_write_keeps_the_saved_toast() {

@@ -132,8 +132,10 @@ commits it at its end.
   to the project's volume: another card in the slot gets nothing. Any
   SYSTEM write (a project's, or leaving System) sets the last project to
   the loaded project's id when its file is on that card, and otherwise
-  keeps the card's own (none if it has none). So a card never boots
-  another card's `P000000n`. The write follows ADR 0045's plan: on a card
+  keeps the card's own (none if it has none). Deleting the file its
+  card's SYSTEM names (possible after `+ NEW`) clears it there
+  (`SystemSync::forget`, same plan), so the next boot is NEW, not
+  PROJECT NOT FOUND. So a card never boots another card's `P000000n`. The write follows ADR 0045's plan: on a card
   RAM doesn't mirror, untouched defaults take the card's SYSTEM (its
   theme applies) and only the last project is merged in; with untouched
   defaults, a card whose SYSTEM can't be read gets nothing. Touched
