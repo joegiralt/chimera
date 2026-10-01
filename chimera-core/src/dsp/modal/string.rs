@@ -85,17 +85,19 @@ impl KsString {
     /// `w`: the line and the allpass (`split`). The ring grows to fit,
     /// its samples kept in order, and never shrinks mid-note.
     pub(super) fn set_period(&mut self, period: f32, other: f32, w: f32) {
-        self.cycle = period;
         self.split_period(period, other, w);
+        self.cycle = period;
     }
 
     /// `set_period` for a loop that inverts each pass, as the bow's half
     /// loop does.
     pub(super) fn set_period_inverting(&mut self, period: f32, other: f32, w: f32) {
-        self.cycle = -period;
         self.split_period(period, other, w);
+        self.cycle = -period;
     }
 
+    /// The line and allpass for `period`; a ring grown to fit continues
+    /// the loop as it was (`cycle`, stored after).
     fn split_period(&mut self, period: f32, other: f32, w: f32) {
         let (mut delay, mut eta) = split(period, other, w);
         if delay > MAX_LINE || period - other < MIN_LINE as f32 + 0.5 {
@@ -912,6 +914,33 @@ mod tests {
     fn voice() -> Box<StringVoice> {
         // SAFETY: `init_in_place` writes every field.
         Box::new(unsafe { by_value(StringVoice::init_in_place) })
+    }
+
+    /// A pitch step down, `set_period` from 50.5 to 120.5 samples, grows the
+    /// ring under the loop as it was: its gap continues the old pass of 51,
+    /// not the new one, which repeats what lies 121 back, a plateau.
+    #[test]
+    fn a_step_down_grows_under_the_old_pass() {
+        let mut v = voice();
+        let k = &mut v.string;
+        let tau = core::f32::consts::TAU;
+        k.set_period(50.5, 0.0, tau / 50.5);
+        let f = |age: usize| libm::sinf(tau * age as f32 / 51.0);
+        let ring = k.ring_len;
+        for age in 0..ring {
+            let i = (k.write_pos + ring - age) % ring;
+            k.buffer[i] = f(age);
+        }
+        k.set_period(120.5, 0.0, tau / 120.5);
+        assert!(k.ring_len > ring);
+        for age in ring..k.ring_len {
+            let got = k.behind(age);
+            assert!(
+                (got - f(age)).abs() < 1e-4,
+                "age {age}: {got} vs {}",
+                f(age)
+            );
+        }
     }
 
     /// A line holding `f(age)` at each age, on a loop of 50.5 samples a
