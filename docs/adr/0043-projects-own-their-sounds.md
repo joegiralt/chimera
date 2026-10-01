@@ -105,9 +105,11 @@ whose Part's Origin, status or `sound_crc` moved since it was offered.
   aborts. A `Pending` holds the source's id, never parsed data.
 - **A confirmation carries a witness** of what it confirmed, taken when it
   is made, covering every input to the prompt it would need:
-  - a Part: a CRC of its `sound_crc` and its whole Origin (kind, then slot,
-    generation and CRC, or engine code). A slot's generation moves with
-    its contents, so the pool's part is covered through it;
+  - a Part: a CRC of its `sound_crc`, its whole Origin (kind, then slot,
+    generation and CRC, or engine code) and, for a slot origin, that
+    slot's generation in the pool now. `part_status` reads only these and
+    the slot's contents, and the contents never change without the
+    generation moving (short of a wrapped `u16` aliasing);
   - a project: its `project_crc`.
 
   A file load also carries the card's `VolumeId`. `Confirmed`'s fields are
@@ -119,10 +121,12 @@ whose Part's Origin, status or `sound_crc` moved since it was offered.
   `Card::run`.
 - **The replace's source is not witnessed.** An empty slot is a runtime
   refusal (`ReplaceError::SlotEmpty`), not a type: a `Pending` may be
-  confirmed after its slot was cleared. A slot overwritten between the
-  confirmation and the replace is not refused: the replace loads the new
-  contents, and no work is lost, since the Part's own state is what the
-  witness guards.
+  confirmed after its slot was cleared. A source slot overwritten between
+  the confirmation and the replace is not refused: the replace loads the
+  new contents, and no work is lost, since the Part's own state is what the
+  witness guards. The exception is a source slot that is also the Part's
+  Origin slot: its generation is in the witness, so that replace is
+  refused (`Changed`).
 - **`Project::replace_part(Confirmed<PartSource>)` is the only public Part
   load.** `load_part` is private to `project` (compile-fail E0624); a
   Part action's REVERT uses it after its own re-check.
@@ -203,10 +207,12 @@ whose Part's Origin, status or `sound_crc` moved since it was offered.
   would. On a slot origin, the generation moved. A `Confirmed<ProjectSource>`
   holds after a load only if the loaded project is bit-equal by
   `project_crc`, when no work can be lost.
-- The Part witness includes the generation, so a confirmation is also
-  refused (`Changed`) when another Part saves over its Part's slot in
-  between, though the Part only became `Stale`. That over-refusal is safe:
-  the caller asks again.
+- The Part witness includes its Origin slot's generation in the pool, so
+  a confirmation is refused (`Changed`) whenever that slot is stored or
+  cleared in between. That is required where the Part moves from `Clean`
+  to `Edited` (the slot came to hold its bits, then moved on), and an
+  over-refusal where it only becomes `Stale` (another Part saves over the
+  slot), which is safe: the caller asks again.
 
 ## Sources
 - Spec: `docs/superpowers/specs/2026-09-28-projects-storage-design.md`

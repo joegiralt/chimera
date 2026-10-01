@@ -217,3 +217,28 @@ fn a_confirmation_from_before_a_load_is_refused() {
     assert_eq!(p.replace_part(c), Err(ReplaceError::Changed));
     assert!(p.part(a).sound.bits_eq(&before));
 }
+
+/// A Part confirmed Clean because its slot came to hold its bits, then the
+/// slot moves on: the Part derives Edited, so the confirmation is refused.
+#[test]
+fn a_confirmation_is_refused_once_its_slot_moves() {
+    let (mut p, t) = Project::boxed();
+    let (a, b, s) = (PartId::ALL[0], PartId::ALL[3], SlotId::ALL[6]);
+    for part in [a, b] {
+        let c = ReplaceGuard::check(&p, t, slot(part, s)).unwrap();
+        p.replace_part(c).unwrap();
+    }
+    edit(&mut p, a);
+    edit(&mut p, b);
+    p.save_part_to(b, s);
+    assert_eq!(part_status(p.part(a), p.pool()), PartStatus::Clean);
+    let c = ReplaceGuard::check(&p, t, slot(a, SlotId::ALL[0])).unwrap();
+    edit(&mut p, b);
+    p.save_part_to(b, s);
+    assert_eq!(part_status(p.part(a), p.pool()), PartStatus::Edited);
+    assert!(ReplaceGuard::check(&p, t, slot(a, SlotId::ALL[0])).is_err());
+    let bits = p.part(a).sound.clone();
+    assert!(!c.holds(&p));
+    assert_eq!(p.replace_part(c), Err(ReplaceError::Changed));
+    assert!(p.part(a).sound.bits_eq(&bits));
+}
