@@ -187,21 +187,21 @@ Task 1 fills this table. Task 5 writes the numbers from it into the tree's `Stat
 
 | Row or item | Issue |
 |---|---|
-| SETTINGS › ORBIT (scenes: RENAME, CLEAR, SAVE TO PROJ, RELOAD FROM PROJ) and `Location::Orbit` | |
-| SYSEX DUMP | |
-| MIDI CONFIG › SYNC values (CLK IN/OUT, TRANS IN/OUT, PRG IN) | |
-| MIDI CONFIG › PORT CONFIG values (INPUT FROM, OUTPUT TO, RECEIVE NOTES, RECEIVE CC) | |
-| AUDIO ROUTING › OUTPUTS per pair: STEREO/MONO and LEVEL | |
+| SETTINGS › ORBIT (scenes: RENAME, CLEAR, SAVE TO PROJ, RELOAD FROM PROJ) and `Location::Orbit` | https://github.com/joegiralt/chimera/issues/262 |
+| SYSEX DUMP | https://github.com/joegiralt/chimera/issues/263 |
+| MIDI CONFIG › SYNC values (CLK IN/OUT, TRANS IN/OUT, PRG IN) | https://github.com/joegiralt/chimera/issues/264 |
+| MIDI CONFIG › PORT CONFIG values (INPUT FROM, OUTPUT TO, RECEIVE NOTES, RECEIVE CC) | https://github.com/joegiralt/chimera/issues/265 |
+| AUDIO ROUTING › OUTPUTS per pair: STEREO/MONO and LEVEL | https://github.com/joegiralt/chimera/issues/266 |
 | AUDIO ROUTING › SENDS PRE/POST FADER | https://github.com/joegiralt/chimera/issues/259 (comment) |
-| SYSTEM › STORAGE | |
-| SYSTEM › FORMAT CARD | |
-| SYSTEM › USB CONFIG | |
-| PROJECT › MANAGE › PROTECT (a write-protect bit in the project header) | |
-| Tags and the library (plan 3), and NAMING's F | |
-| PERSONALIZE options beyond THEME | |
-| RENAME of a project that isn't loaded (owner ruling: dimmed `LOAD TO RENAME` for now; needs a `Store` streaming copy and a new ADR superseding part of 0045) | |
-| Project lists past 48 entries | |
-| Kept from the storage spec, not built here: rung 2's PART LVL rename and its LAYER and VOICES read-outs; rung 3's "EDIT on the current sound opens its pages" | |
+| SYSTEM › STORAGE | https://github.com/joegiralt/chimera/issues/267 |
+| SYSTEM › FORMAT CARD | https://github.com/joegiralt/chimera/issues/268 |
+| SYSTEM › USB CONFIG | https://github.com/joegiralt/chimera/issues/269 |
+| PROJECT › MANAGE › PROTECT (a write-protect bit in the project header) | https://github.com/joegiralt/chimera/issues/270 |
+| Tags and the library (plan 3), and NAMING's F | https://github.com/joegiralt/chimera/issues/271 |
+| PERSONALIZE options beyond THEME | https://github.com/joegiralt/chimera/issues/272 |
+| RENAME of a project that isn't loaded (owner ruling: dimmed `LOAD TO RENAME` for now; needs a `Store` streaming copy and a new ADR superseding part of 0045) | https://github.com/joegiralt/chimera/issues/273 |
+| Project lists past 48 entries | https://github.com/joegiralt/chimera/issues/274 |
+| Kept from the storage spec, not built here: rung 2's PART LVL rename and its LAYER and VOICES read-outs; rung 3's "EDIT on the current sound opens its pages" | https://github.com/joegiralt/chimera/issues/275 |
 
 ## UX spec amendment (the owner applies it to `docs/chimera-ui-ux-spec.md`)
 
