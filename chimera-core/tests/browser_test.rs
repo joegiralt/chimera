@@ -16,7 +16,7 @@ use screen::*;
 
 /// A project whose pool is empty.
 fn empty() -> Box<Project> {
-    let mut p = Project::boxed();
+    let mut p = Project::boxed().0;
     for s in SlotId::ALL {
         p.pool_clear(s).unwrap();
     }

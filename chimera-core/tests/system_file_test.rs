@@ -267,6 +267,21 @@ fn record_rules() {
     let g = with_record(&f, end, 0x8002, &[0]);
     assert_eq!(boot_bytes(&g), (SystemSettings::DEFAULT, corrupt));
 
+    // A project's records, Origin (non-critical) too, are refused.
+    for (tag, payload) in [
+        (0x8007, vec![0; 17]),
+        (0x8008, vec![0; 17]),
+        (0x8009, vec![]),
+        (0x000A, vec![0, 0]),
+    ] {
+        let g = with_record(&f, end, tag, &payload);
+        assert_eq!(
+            boot_bytes(&g),
+            (SystemSettings::DEFAULT, corrupt),
+            "{tag:#x}"
+        );
+    }
+
     // A second THEME block or last project is refused.
     let first = record_offsets(&f)[0];
     let theme_len = 4 + u16::from_le_bytes([f[first + 2], f[first + 3]]) as usize;

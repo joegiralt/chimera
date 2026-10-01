@@ -2,13 +2,17 @@
 //! (projects spec § Model). The fields are private, so only this module
 //! sets an `Origin` or moves a slot's generation.
 
+mod codec;
 mod ids;
 mod parts;
 mod pool;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 
+pub use codec::{ProjectCheck, ProjectDecoder, TemplateCrc, encode_project, project_crc};
 pub use ids::{PartId, PartSet, SlotId};
 pub use parts::{Origin, Part, PartEdit, Performance, part_block, part_block_mut};
 pub use pool::Pool;
@@ -91,8 +95,9 @@ pub struct Project {
 crate::in_place::field_list!(Project => Project { meta, pool, perf });
 
 impl Project {
-    /// NEW, built in place.
-    pub fn init_in_place(slot: &mut MaybeUninit<Project>) -> &mut Project {
+    /// NEW, built in place; `slot` is initialised on return. Its CRC is the
+    /// template: a project equal to it is `Pristine`.
+    pub fn init_in_place(slot: &mut MaybeUninit<Project>) -> TemplateCrc {
         let p = slot.as_mut_ptr();
         // SAFETY: `p` is valid and unaliased; `meta`, `pool` (in place) and
         // `perf` are each written once before `assume_init_mut`.
@@ -103,15 +108,15 @@ impl Project {
             slot.assume_init_mut()
         };
         project.fill_new_pool();
-        project
+        TemplateCrc(project_crc(project))
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn boxed() -> alloc::boxed::Box<Project> {
+    pub fn boxed() -> (alloc::boxed::Box<Project>, TemplateCrc) {
         let mut raw = alloc::boxed::Box::<Project>::new_uninit();
-        Self::init_in_place(&mut raw);
+        let t = Self::init_in_place(&mut raw);
         // SAFETY: `init_in_place` built a valid project in the box.
-        unsafe { raw.assume_init() }
+        (unsafe { raw.assume_init() }, t)
     }
 
     pub fn meta(&self) -> &ProjectMeta {
@@ -222,10 +227,11 @@ impl Project {
     /// Back to NEW, in place.
     // A failed load's fallback, which the load protocol calls.
     #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn reset_new(&mut self) {
+    pub(crate) fn reset_new(&mut self) -> TemplateCrc {
         self.meta = ProjectMeta::new_project();
         self.perf.reset();
         self.fill_new_pool();
+        TemplateCrc(project_crc(self))
     }
 
     /// The factory Sounds, then an INIT Sound per engine, then empty slots;
@@ -251,8 +257,8 @@ mod tests {
 
     #[test]
     fn reset_new_is_new_and_moves_every_generation() {
-        let mut p = Project::boxed();
-        let fresh = Project::boxed();
+        let (mut p, _) = Project::boxed();
+        let (fresh, t) = Project::boxed();
         let s = SlotId::ALL[0];
         p.set_name(ProjectName::new("OLD").unwrap());
         p.load_part(PartSource {
@@ -263,7 +269,8 @@ mod tests {
         p.edit_fx().delay.mix = 0.5;
         p.pool_store(SlotId::ALL[25], Sound::init(EngineType::Modal));
         let before = SlotId::ALL.map(|s| p.pool().generation(s));
-        p.reset_new();
+        assert_eq!(p.reset_new(), t);
+        assert_eq!(project_crc(&p), t.get());
         assert_eq!(p.meta(), fresh.meta());
         assert_eq!(p.pool().used(), fresh.pool().used());
         for s in SlotId::ALL {

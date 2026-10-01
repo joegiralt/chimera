@@ -121,7 +121,7 @@ impl Performance {
 /// ```compile_fail,E0609
 /// use chimera_core::preset::Performance;
 /// use chimera_core::project::{PartId, Project};
-/// let mut p = Project::boxed();
+/// let (mut p, _) = Project::boxed();
 /// let mut other = Performance::new();
 /// core::mem::swap(
 ///     p.edit_part(PartId::ALL[0]).part,

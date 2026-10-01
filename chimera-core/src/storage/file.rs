@@ -32,6 +32,14 @@ pub trait Decode: Check {
     fn commit(&mut self) -> Result<(), FileError>;
 }
 
+/// Pass 2 in place: writes the target as it hears events. Used only where
+/// staging can't fit (a project); `load_ab_in_place` (Task 6) says whether
+/// the target was touched.
+pub trait DecodeInPlace: Check {
+    fn apply(&mut self, e: Event<'_>) -> Result<(), FileError>;
+    fn finish(&mut self) -> Result<(), FileError>;
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LoadError {
     Store(StoreError),

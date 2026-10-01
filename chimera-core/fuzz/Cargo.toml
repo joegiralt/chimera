@@ -19,4 +19,11 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "decode_project"
+path = "fuzz_targets/decode_project.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]

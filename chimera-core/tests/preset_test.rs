@@ -70,7 +70,7 @@ fn patch_init_has_musically_useful_defaults() {
 /// Editing a loaded Part edits its copy: the slot keeps its Sound.
 #[test]
 fn part_edit_does_not_modify_pool() {
-    let mut p = Project::boxed();
+    let mut p = Project::boxed().0;
     let (part, slot) = (PartId::ALL[0], SlotId::ALL[0]);
     p.pool_store(slot, Sound::init(EngineType::Algo));
     p.load_part(PartSource {
@@ -90,7 +90,7 @@ fn performance_has_six_parts_playing_sounds() {
     assert_eq!(perf.parts().len(), chimera_core::hw::MAX_PARTS);
     let sound: &Sound = &perf.parts()[0].sound;
     assert_eq!(sound.engine(), EngineType::Algo);
-    assert_eq!(Project::boxed().meta().name().as_str(), "NEW PROJECT");
+    assert_eq!(Project::boxed().0.meta().name().as_str(), "NEW PROJECT");
 }
 
 // ── Navigation tests ─────────────────────────────────────────────

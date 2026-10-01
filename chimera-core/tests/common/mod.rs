@@ -8,6 +8,7 @@
 
 pub mod codec_util;
 pub mod golden;
+pub mod project;
 pub mod rig;
 pub mod sweep;
 
