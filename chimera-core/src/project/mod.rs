@@ -4,6 +4,7 @@
 
 mod codec;
 mod ids;
+mod marks;
 mod parts;
 mod pool;
 mod template;
@@ -12,6 +13,10 @@ pub mod test_support;
 
 pub use codec::{ProjectCheck, ProjectDecoder, encode_project, project_crc};
 pub use ids::{PartId, PartSet, SlotId};
+pub use marks::{
+    ActionGone, PartAction, PartActionKind, PartActions, PartStatus, ProjectStatus, part_actions,
+    part_status, project_status,
+};
 pub use parts::{Origin, Part, PartEdit, Performance, part_block, part_block_mut};
 pub use pool::Pool;
 pub use template::TemplateCrc;
@@ -155,25 +160,8 @@ impl Project {
         };
         others
             .iter()
-            .filter(|&o| o != p && self.stale(o))
+            .filter(|&o| o != p && part_status(self.part(o), &self.pool) == PartStatus::Stale(s))
             .fold(PartSet::EMPTY, PartSet::with)
-    }
-
-    /// `part_status`'s Stale: the Part differs from its slot, the slot moved,
-    /// and the Part is as it was loaded.
-    fn stale(&self, p: PartId) -> bool {
-        let part = self.part(p);
-        let Origin::Slot {
-            slot,
-            generation,
-            crc,
-        } = part.origin
-        else {
-            return false;
-        };
-        !self.pool.get(slot).is_some_and(|s| part.sound.bits_eq(s))
-            && self.pool.generation(slot) != generation
-            && sound_crc(&part.sound) == crc
     }
 
     /// Replaces the Part's Sound; its mix stays.

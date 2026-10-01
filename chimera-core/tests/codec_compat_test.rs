@@ -13,7 +13,9 @@ use chimera_core::factory::{FACTORY_LEN, factory_sound};
 use chimera_core::name::{ProjectName, SoundName};
 use chimera_core::params::{EngineType, FilterParams, OutParams, ParamSnapshot};
 use chimera_core::preset::Sound;
-use chimera_core::project::{Origin, PartFrom, PartId, PartSource, Project, SlotId, part_block};
+use chimera_core::project::{
+    Origin, PartFrom, PartId, PartSource, PartStatus, Project, SlotId, part_block, part_status,
+};
 use chimera_core::storage::{FileError, MIGRATIONS, TRANSLATIONS, decode_block, sound_crc};
 use chimera_hal::BLOCK_SIZE;
 use common::codec_util::{
@@ -367,6 +369,11 @@ fn project_fixture_loads() {
         assert!(part.sound.bits_eq(&sound), "Part {}", id.index());
         assert_eq!(part.origin(), o, "Part {}", id.index());
         assert_values(&part.mix, PROJECT_FIXTURE_MIX[id.index()], "mix");
+        let status = match id.index() {
+            1 => PartStatus::Edited,
+            _ => PartStatus::Clean,
+        };
+        assert_eq!(part_status(part, p.pool()), status, "Part {}", id.index());
     }
 
     let first = p.part(PartId::ALL[0]);
