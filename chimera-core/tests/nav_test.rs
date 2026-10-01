@@ -2,11 +2,11 @@
 
 use chimera_core::params::EngineType;
 use chimera_core::project::PartId;
-use chimera_core::ui::block_registry::{MIXER_CHANNEL_CHAIN, MODAL_1};
+use chimera_core::ui::block_registry::{MIXER_CHANNEL_CHAIN, MIXER_HOME, MIXER_PART, MODAL_1};
 use chimera_core::ui::nav::{
     Location, MixPage, NavCtx, NavKey, PageAt, Recall, Step, chain_def_for, home,
 };
-use chimera_core::ui::settings::{Act, Kind, Screen, row_at, rows};
+use chimera_core::ui::settings::{Act, Kind, MANAGE_COMMANDS, Screen, row_at, rows};
 
 const P: [PartId; 6] = PartId::ALL;
 
@@ -56,9 +56,15 @@ fn path_of(labels: &[&str]) -> Vec<u8> {
     path
 }
 
-fn fx_node(l: Location, cx: &NavCtx) -> Option<PageAt> {
+/// The FX page shown and the Part it carries: past PART and SENDS.
+fn fx_node(l: Location, cx: &NavCtx) -> Option<(PartId, PageAt)> {
     match l.page(cx) {
-        Some((c, at)) if core::ptr::eq(c, &MIXER_CHANNEL_CHAIN) && l.part().is_none() => Some(at),
+        Some((c, at))
+            if core::ptr::eq(c, &MIXER_CHANNEL_CHAIN)
+                && ![MIXER_HOME, MIXER_PART].contains(&(at.node as usize)) =>
+        {
+            Some((l.part()?, at))
+        }
         _ => None,
     }
 }
@@ -68,22 +74,25 @@ fn every_settings_path_is_reached_by_edit_and_menu_backs_out() {
     let cx = cx();
     for path in paths() {
         let mut r = Recall::new();
-        let mut l = Location::HOME;
+        let mut l = Location::home(&cx);
         key(&mut l, NavKey::MenuTap, &cx, &mut r);
         assert_eq!(l, Location::settings_at(&[], 0));
-        for &i in &path {
+        for (j, &i) in path.iter().enumerate() {
             key(&mut l, NavKey::Bar(i as i8), &cx, &mut r);
+            let before = l;
+            let into = Location::settings_at(&path[..=j], 0);
             assert_eq!(
-                key(&mut l, NavKey::Edit, &cx, &mut r),
-                Step::Go(l),
+                before.step(NavKey::Edit, &cx, &mut r),
+                Step::Go(into),
                 "{path:?}"
             );
+            l = into;
         }
         assert_eq!(l, Location::settings_at(&path, 0), "{path:?}");
         for _ in 0..=path.len() {
             key(&mut l, NavKey::MenuTap, &cx, &mut r);
         }
-        assert_eq!(l, Location::HOME, "{path:?}");
+        assert_eq!(l, Location::home(&cx), "{path:?}");
     }
 }
 
@@ -120,7 +129,7 @@ fn settings_from_is_never_settings() {
         cx.engines[(rand() % 6) as usize] = EngineType::Modal;
         cx.dyn_rows = (rand() % 4) as u8;
         let mut r = Recall::new();
-        let mut l = Location::HOME;
+        let mut l = Location::home(&cx);
         for _ in 0..40 {
             let p = P[(rand() % 6) as usize];
             let k = match rand() % 10 {
@@ -149,7 +158,7 @@ fn settings_from_is_never_settings() {
 fn part_key_toggles_and_restores() {
     let mut cx = cx();
     let mut r = Recall::new();
-    let mut l = Location::HOME;
+    let mut l = Location::home(&cx);
     for _ in 0..3 {
         key(&mut l, NavKey::Plus, &cx, &mut r);
     }
@@ -210,7 +219,7 @@ fn bn_lands_on(e: EngineType) -> PageAt {
     cx.engines[2] = e;
     let mut r = Recall::new();
     let froms = [
-        Location::HOME,
+        Location::home(&cx),
         Location::mixer(P[0], MixPage::Part),
         Location::sound(P[2]),
         Location::settings_at(&[1], 0),
@@ -249,7 +258,7 @@ fn mixer_walk_reaches_the_fx() {
     }
     assert_eq!(l, Location::mixer(P[5], MixPage::Sends));
     key(&mut l, NavKey::Plus, &cx, &mut r);
-    assert_eq!(fx_node(l, &cx), Some(at(2, 0)), "CHORUS");
+    assert_eq!(fx_node(l, &cx), Some((P[5], at(2, 0))), "CHORUS");
     key(&mut l, NavKey::Minus, &cx, &mut r);
     assert_eq!(l, Location::mixer(P[5], MixPage::Sends));
     for _ in 0..11 {
@@ -263,7 +272,7 @@ fn mixer_walk_reaches_the_fx() {
     for _ in 0..last - 1 {
         key(&mut l, NavKey::Plus, &cx, &mut r);
     }
-    assert_eq!(fx_node(l, &cx), Some(at(last, 0)), "MASTER");
+    assert_eq!(fx_node(l, &cx), Some((P[5], at(last, 0))), "MASTER");
     assert_eq!(l.step(NavKey::Plus, &cx, &mut r), Step::Stay);
 }
 
@@ -315,6 +324,11 @@ fn edit_on_a_screen_row_does_not_move() {
         Step::Screen(Screen::LoadProject)
     );
     assert_eq!(l, Location::settings_at(&[0], 0));
+    assert_eq!(
+        l.step(NavKey::SeqTap, &cx, &mut r),
+        Step::Screen(Screen::LoadProject),
+        "SEQ on a Screen row is EDIT"
+    );
 
     // Inside a Screen, SEQ runs the row and EDIT stays.
     let s = Location::settings_at(&[0, 0], 0);
@@ -416,4 +430,150 @@ fn bar_wraps_any_delta_on_any_list() {
             }
         }
     }
+}
+
+/// Walks from Part 1's SENDS into the FX, to `fx_steps` past CHORUS.
+fn into_fx(l: &mut Location, fx_steps: u8, cx: &NavCtx, r: &mut Recall) {
+    *l = Location::mixer(P[0], MixPage::Sends);
+    for _ in 0..11 + fx_steps {
+        key(l, NavKey::Plus, cx, r);
+    }
+}
+
+#[test]
+fn the_fx_page_is_remembered() {
+    let cx = cx();
+    let mut r = Recall::new();
+    let mut l = Location::home(&cx);
+    key(&mut l, NavKey::Part(P[0]), &cx, &mut r);
+    for _ in 0..12 {
+        key(&mut l, NavKey::Plus, &cx, &mut r);
+    }
+    key(&mut l, NavKey::Edit, &cx, &mut r); // DELAY's sub-page
+    let fx = fx_node(l, &cx).unwrap().1;
+    assert_eq!(fx, at(3, 1));
+    key(&mut l, NavKey::Part(P[0]), &cx, &mut r);
+    assert_eq!(
+        l,
+        Location::pages(P[0], at(0, 0)),
+        "Part 6's FX: not B1's mixer"
+    );
+    key(&mut l, NavKey::Part(P[0]), &cx, &mut r);
+    assert_eq!(fx_node(l, &cx), Some((P[0], fx)), "B1, B1 reopens the FX");
+    key(&mut l, NavKey::Part(P[0]), &cx, &mut r);
+    assert_eq!(
+        l,
+        Location::pages(P[0], at(0, 0)),
+        "Fx(P1) is P1's own mixer"
+    );
+}
+
+#[test]
+fn mix_bn_from_the_fx_keeps_the_page() {
+    let cx = cx();
+    let mut r = Recall::new();
+    let mut l = Location::home(&cx);
+    into_fx(&mut l, 2, &cx, &mut r);
+    let fx = fx_node(l, &cx).unwrap().1;
+    key(&mut l, NavKey::MixPart(P[1]), &cx, &mut r);
+    assert_eq!(fx_node(l, &cx), Some((P[1], fx)));
+    assert_eq!(l.part(), Some(P[1]));
+    key(&mut l, NavKey::MenuTap, &cx, &mut r);
+    key(&mut l, NavKey::MixPart(P[2]), &cx, &mut r);
+    assert_eq!(fx_node(l, &cx), Some((P[2], fx)), "from SETTINGS");
+    assert_eq!(
+        l.step(NavKey::SeqTap, &cx, &mut r),
+        Step::Go(Location::settings_at(&[1], 0)),
+        "SEQ on the FX: SETTINGS › PART"
+    );
+}
+
+#[test]
+fn leaving_by_part_or_sends_resets_to_sends() {
+    let cx = cx();
+    for minus in [1, 2] {
+        let mut r = Recall::new();
+        let mut l = Location::home(&cx);
+        into_fx(&mut l, 0, &cx, &mut r);
+        for _ in 0..minus {
+            key(&mut l, NavKey::Minus, &cx, &mut r);
+        }
+        assert_eq!(
+            l,
+            Location::mixer(P[5], [MixPage::Sends, MixPage::Part][minus - 1])
+        );
+        key(&mut l, NavKey::Part(P[0]), &cx, &mut r);
+        key(&mut l, NavKey::Part(P[0]), &cx, &mut r);
+        assert_eq!(l, Location::mixer(P[0], MixPage::Sends));
+    }
+}
+
+#[test]
+fn closing_settings_resolves_the_page_for_a_new_engine() {
+    let mut cx = cx();
+    let mut r = Recall::new();
+    let mut l = Location::pages(P[0], at(5, 0));
+    key(&mut l, NavKey::MenuTap, &cx, &mut r);
+    cx.engines[0] = EngineType::Modal;
+    key(&mut l, NavKey::Edit, &cx, &mut r); // PROJECT
+    key(&mut l, NavKey::MenuTap, &cx, &mut r);
+    key(&mut l, NavKey::MenuTap, &cx, &mut r);
+    assert_eq!(l, Location::pages(P[0], home(EngineType::Modal)));
+    let (c, at) = l.page(&cx).unwrap();
+    assert!((at.node as usize) < c.len());
+}
+
+#[test]
+fn the_sound_rung_is_not_the_mixer() {
+    let cx = cx();
+    let mut r = Recall::new();
+    let mut l = Location::pages(P[2], at(3, 0));
+    key(&mut l, NavKey::EditPart(P[2]), &cx, &mut r);
+    key(&mut l, NavKey::Part(P[2]), &cx, &mut r);
+    assert_eq!(l, Location::pages(P[2], at(0, 0)));
+}
+
+#[test]
+fn manage_has_a_command_column() {
+    let cx = NavCtx {
+        dyn_rows: 3,
+        ..cx()
+    };
+    let mut r = Recall::new();
+    let path = path_of(&["PROJECT", "MANAGE PROJECTS"]);
+    let mut l = Location::settings_at(&path, 0);
+    key(&mut l, NavKey::Plus, &cx, &mut r);
+    key(&mut l, NavKey::Edit, &cx, &mut r);
+    let s = l.settings().unwrap();
+    assert_eq!((s.row(), s.page()), (1, at(0, 1)), "into the commands");
+    key(&mut l, NavKey::Minus, &cx, &mut r);
+    let s = l.settings().unwrap();
+    let last = MANAGE_COMMANDS.len() as u8 - 1;
+    assert_eq!(
+        (s.row(), s.page()),
+        (1, at(last, 1)),
+        "the bar is the command"
+    );
+    assert_eq!(l.step(NavKey::Edit, &cx, &mut r), Step::Stay);
+    assert_eq!(l.step(NavKey::SeqTap, &cx, &mut r), Step::Run);
+    key(&mut l, NavKey::MenuTap, &cx, &mut r);
+    assert_eq!(l, Location::settings_at(&path, 1), "back to the list");
+    key(&mut l, NavKey::MenuTap, &cx, &mut r);
+    assert_eq!(l, Location::settings_at(&path[..1], path[1]));
+
+    let empty = NavCtx { dyn_rows: 0, ..cx };
+    let l = Location::settings_at(&path, 0);
+    assert_eq!(
+        l.step(NavKey::Edit, &empty, &mut r),
+        Step::Stay,
+        "no projects"
+    );
+}
+
+/// Debug builds assert; release cuts the path to four rows.
+#[test]
+#[cfg_attr(debug_assertions, should_panic)]
+fn settings_at_cuts_a_deep_path() {
+    let l = Location::settings_at(&[0, 0, 0, 0, 0], 0);
+    assert_eq!(l.settings().unwrap().path().len(), 4);
 }

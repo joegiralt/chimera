@@ -60,7 +60,7 @@ returns to ORBIT. MENU hold is quick save, as everywhere (amended 2026-10-01, ow
 
 ### `Location`
 
-Amended amended 2026-10-01, owner: ADR 0066: `Loc` loses `Projects`, `Project`, `System` and
+Amended 2026-10-01 (owner: ADR 0066): `Loc` loses `Projects`, `Project`, `System` and
 `Orbit`, and gains `Settings(SettingsAt)`. `Orbit`, with `Recall`'s `orbit`
 and `from`, returns with the ORBIT plan. `Recall` gains `settings_from`,
 an `Outside` that by type can never hold SETTINGS. As built
@@ -71,17 +71,27 @@ pub struct Location(Loc);              // opaque; `Loc` is private to ui::nav
 enum Loc {
     Pages(PartId, PageAt),             // a sound's pages
     Part(PartId, MixPage),             // the Part rung: the mixer
-    Fx(PageAt),                        // CHORUS, DELAY, EFX, TAPE, MASTER
+    Fx(PartId, PageAt),                // CHORUS … MASTER, as Part n's own mixer
     Sound(PartId),                     // the Sound rung
     Settings(SettingsAt),              // a SETTINGS list, Screen or leaf page
 }
 pub struct Outside(Loc);               // never Settings
 pub struct Recall {
     pages: [Option<SoundPage>; 6],     // each Part's page left, with its engine
-    mix: MixPage,
+    mix: MixAt,                        // the mixer page from outside it
     settings_from: Outside,            // where MENU at the top returns
 }
+enum MixAt { Sends, Fx(PageAt) }       // never PART (ADR 0057)
 ```
+
+Leaving PART or SENDS sets `mix` to SENDS, and leaving an FX page sets it
+to that page. B*n* on Part *n*'s pages, and MIX+B*n* from outside the mixer,
+open `mix` for Part *n*. MIX+B*n* inside the mixer keeps the page, PART
+included. B*n* on `Part(n, _)` or `Fx(n, _)` restores the page left. The
+walk enters the FX as Part 6's, and MINUS from CHORUS returns to Part 6's
+SENDS. MENU at the top re-resolves a sound page left for the Part's current
+engine. MANAGE PROJECTS' two columns are `SettingsAt.page`: `sub` is the
+column and `node` the command (amended 2026-10-01, owner: ADR 0066).
 
 `step(self, NavKey, &NavCtx, &mut Recall) -> Step` is every key, pure; it
 writes `Recall` on leaving a place (amended 2026-10-01, owner: ADR 0066). As first written:

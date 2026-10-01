@@ -52,6 +52,16 @@ pub enum Screen {
     SaveToProj,
 }
 
+/// MANAGE PROJECTS' command column (spec § MANAGE PROJECTS); PROTECT is later.
+pub const MANAGE_COMMANDS: [&str; 6] = [
+    "LOAD FROM",
+    "SAVE TO",
+    "RENAME",
+    "CLEAR",
+    "DELETE",
+    "PROTECT",
+];
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Act {
     SaveProjectAs,

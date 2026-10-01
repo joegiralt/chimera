@@ -8,7 +8,7 @@ use crate::ui::block_def::ChainDef2;
 use crate::ui::block_registry::{
     self, CHORUS, MIXER_CHANNEL_CHAIN, MIXER_HOME, MIXER_PART, MODAL_1, MODAL_PLUCK_CHAIN,
 };
-use crate::ui::settings::{Act, Kind, Screen, row_at};
+use crate::ui::settings::{Act, Kind, MANAGE_COMMANDS, Screen, row_at};
 
 /// Path depth limit of the SETTINGS tree.
 const MAX_DEPTH: usize = 4;
@@ -48,6 +48,14 @@ pub enum MixPage {
     Sends,
 }
 
+/// The mixer page B*n* and MIX+B*n* reopen from outside the mixer: SENDS,
+/// or the FX page last left; never PART, whose C is OUT (ADR 0057).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MixAt {
+    Sends,
+    Fx(PageAt),
+}
+
 impl MixPage {
     fn node(self) -> u8 {
         match self {
@@ -58,7 +66,8 @@ impl MixPage {
 }
 
 /// A place in SETTINGS: a list with its bar on `row`, a Screen, or a leaf
-/// on `page`.
+/// on `page`. On MANAGE PROJECTS, `page.sub` is the column (1: the
+/// commands) and `page.node` the command.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SettingsAt {
     path: [u8; MAX_DEPTH],
@@ -107,8 +116,15 @@ impl SettingsAt {
         })
     }
 
-    /// One level up, the bar on the row just left.
-    fn parent(self) -> Option<SettingsAt> {
+    /// MENU: MANAGE's commands back to its list, else one level up with the
+    /// bar on the row just left.
+    fn back(self) -> Option<SettingsAt> {
+        if matches!(self.kind(), Some(Kind::Screen(Screen::ManageProjects))) && self.page.sub == 1 {
+            return Some(SettingsAt {
+                page: PageAt::ZERO,
+                ..self
+            });
+        }
         let d = self.depth.checked_sub(1)?;
         let mut path = self.path;
         // Zero past `depth`, so equal places compare equal.
@@ -122,15 +138,13 @@ impl SettingsAt {
     }
 
     fn step(self, k: NavKey, cx: &NavCtx) -> Step {
-        let go =
-            |s: Option<SettingsAt>| s.map_or(Step::Stay, |s| Step::Go(Location(Loc::Settings(s))));
-        let bar = |n: usize, d: i32| {
-            let row = if n == 0 {
+        let go = |s: SettingsAt| Step::Go(Location(Loc::Settings(s)));
+        let wrap = |i: u8, n: usize, d: i32| {
+            if n == 0 {
                 0
             } else {
-                (self.row as i32 + d).rem_euclid(n as i32) as u8
-            };
-            go(Some(SettingsAt { row, ..self }))
+                (i as i32 + d).rem_euclid(n as i32) as u8
+            }
         };
         let delta = match k {
             NavKey::Bar(d) => Some(d as i32),
@@ -138,26 +152,45 @@ impl SettingsAt {
             NavKey::Minus => Some(-1),
             _ => None,
         };
+        let row = |n: usize, d: i32| {
+            go(SettingsAt {
+                row: wrap(self.row, n, d),
+                ..self
+            })
+        };
+        let under_bar =
+            |rs: &'static [crate::ui::settings::Row]| rs.get(self.row as usize).map(|r| r.kind);
         match (self.kind(), k, delta) {
-            (Some(Kind::Leaf(c)), k, _) => {
-                go(page_step(c, self.page, k).map(|page| SettingsAt { page, ..self }))
+            (Some(Kind::Leaf(c)), k, _) => page_step(c, self.page, k)
+                .map_or(Step::Stay, |page| go(SettingsAt { page, ..self })),
+            (Some(Kind::List(rs)), _, Some(d)) => row(rs.len(), d),
+            (Some(Kind::Screen(Screen::ManageProjects)), _, Some(d)) if self.page.sub == 1 => {
+                let node = wrap(self.page.node, MANAGE_COMMANDS.len(), d);
+                go(SettingsAt {
+                    page: PageAt { node, sub: 1 },
+                    ..self
+                })
             }
-            (Some(Kind::List(rs)), _, Some(d)) => bar(rs.len(), d),
-            (Some(Kind::Screen(_)), _, Some(d)) => bar(cx.dyn_rows as usize, d),
+            (Some(Kind::Screen(Screen::ManageProjects)), NavKey::Edit, _)
+                if self.page.sub == 0 && cx.dyn_rows > 0 =>
+            {
+                go(SettingsAt {
+                    page: PageAt { node: 0, sub: 1 },
+                    ..self
+                })
+            }
+            (Some(Kind::Screen(_)), _, Some(d)) => row(cx.dyn_rows as usize, d),
             (Some(Kind::Screen(_)), NavKey::SeqTap, _) => Step::Run,
-            (Some(Kind::List(rs)), NavKey::Edit, _) => {
-                match rs.get(self.row as usize).map(|r| r.kind) {
-                    Some(Kind::List(_) | Kind::Leaf(_)) => go(self.child()),
-                    Some(Kind::Screen(s)) => Step::Screen(s),
-                    _ => Step::Stay,
-                }
-            }
-            (Some(Kind::List(rs)), NavKey::SeqTap, _) => {
-                match rs.get(self.row as usize).map(|r| r.kind) {
-                    Some(Kind::Act(a)) => Step::Act(a),
-                    _ => Step::Stay,
-                }
-            }
+            (Some(Kind::List(rs)), NavKey::Edit, _) => match under_bar(rs) {
+                Some(Kind::List(_) | Kind::Leaf(_)) => self.child().map_or(Step::Stay, go),
+                Some(Kind::Screen(s)) => Step::Screen(s),
+                _ => Step::Stay,
+            },
+            (Some(Kind::List(rs)), NavKey::SeqTap, _) => match under_bar(rs) {
+                Some(Kind::Act(a)) => Step::Act(a),
+                Some(Kind::Screen(s)) => Step::Screen(s),
+                _ => Step::Stay,
+            },
             _ => Step::Stay,
         }
     }
@@ -169,12 +202,16 @@ enum Loc {
     Pages(PartId, PageAt),
     /// A Part's rung: its mixer pages.
     Part(PartId, MixPage),
-    /// The shared FX, `node` from CHORUS on the mixer chain.
-    Fx(PageAt),
+    /// The shared FX, `node` from CHORUS on the mixer chain, reached from
+    /// Part n's mixer: it counts as Part n's own mixer.
+    Fx(PartId, PageAt),
     /// The Sound rung; Task 8 adds the browser's cursor.
     Sound(PartId),
     Settings(SettingsAt),
 }
+
+/// Where `Recall` starts, before anything is left: re-resolved on use.
+const PLACEHOLDER: Loc = Loc::Pages(PartId::ALL[0], PageAt::ZERO);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Location(Loc);
@@ -206,7 +243,7 @@ struct SoundPage {
 #[derive(Clone, Copy, Debug)]
 pub struct Recall {
     pages: [Option<SoundPage>; MAX_PARTS],
-    mix: MixPage,
+    mix: MixAt,
     settings_from: Outside,
 }
 
@@ -220,8 +257,8 @@ impl Recall {
     pub const fn new() -> Self {
         Self {
             pages: [None; MAX_PARTS],
-            mix: MixPage::Sends,
-            settings_from: Outside(Location::HOME.0),
+            mix: MixAt::Sends,
+            settings_from: Outside(PLACEHOLDER),
         }
     }
 
@@ -237,7 +274,8 @@ impl Recall {
                     at,
                 })
             }
-            Loc::Part(_, m) => self.mix = m,
+            Loc::Part(..) => self.mix = MixAt::Sends,
+            Loc::Fx(_, at) => self.mix = MixAt::Fx(at),
             _ => {}
         }
         if let (Some(o), Some(_)) = (Outside::new(from), to.settings()) {
@@ -245,11 +283,28 @@ impl Recall {
         }
     }
 
-    /// Part n's pages from its own mixer: the page left, on the same engine.
+    /// Part n's pages left, if on the same engine; else its home.
     fn pages_of(&self, p: PartId, cx: &NavCtx) -> PageAt {
         match self.pages[p.index()] {
             Some(s) if s.engine == cx.engine(p) => s.at,
             _ => home(cx.engine(p)),
+        }
+    }
+
+    /// Part n's mixer from outside it.
+    fn mix_entry(&self, n: PartId) -> Loc {
+        match self.mix {
+            MixAt::Sends => Loc::Part(n, MixPage::Sends),
+            MixAt::Fx(at) => Loc::Fx(n, at),
+        }
+    }
+
+    /// MENU at the top: where it was pressed, a page re-resolved in case
+    /// the engine changed meanwhile.
+    fn close_settings(&self, cx: &NavCtx) -> Location {
+        match self.settings_from.0 {
+            Loc::Pages(p, _) => Location(Loc::Pages(p, self.pages_of(p, cx))),
+            l => Location(l),
         }
     }
 }
@@ -285,16 +340,19 @@ pub enum NavKey {
 pub enum Step {
     Go(Location),
     Act(Act),
-    /// EDIT on a Screen row: `UiState` lists it, then goes in.
+    /// EDIT or SEQ on a Screen row: `UiState` lists it, then goes in.
     Screen(Screen),
-    /// SEQ on a Screen's row: `UiState` decides.
+    /// SEQ inside a Screen: `UiState` decides.
     Run,
     Stay,
 }
 
 impl Location {
-    /// Part 1's pages at (0,0): its engine's home at boot, when it is Algo.
-    pub const HOME: Location = Location(Loc::Pages(PartId::ALL[0], PageAt::ZERO));
+    /// Part 1's pages on its engine's home.
+    pub fn home(cx: &NavCtx) -> Location {
+        let p = PartId::ALL[0];
+        Location(Loc::Pages(p, home(cx.engine(p))))
+    }
 
     pub fn pages(p: PartId, at: PageAt) -> Location {
         Location(Loc::Pages(p, at))
@@ -308,8 +366,10 @@ impl Location {
         Location(Loc::Sound(p))
     }
 
-    /// Panics on a path deeper than the tree allows.
+    /// A path deeper than the tree allows is cut to its first four rows.
     pub fn settings_at(path: &[u8], row: u8) -> Location {
+        debug_assert!(path.len() <= MAX_DEPTH, "{path:?}");
+        let path = &path[..path.len().min(MAX_DEPTH)];
         let mut p = [0; MAX_DEPTH];
         p[..path.len()].copy_from_slice(path);
         Location(Loc::Settings(SettingsAt {
@@ -334,18 +394,17 @@ impl Location {
     fn next(self, k: NavKey, cx: &NavCtx, r: &Recall) -> Step {
         use Loc::*;
         let go = |l: Loc| Step::Go(Location(l));
-        let pages_home = |n: PartId| go(Pages(n, home(cx.engine(n))));
         match (self.0, k) {
-            (Pages(p, _), NavKey::Part(n)) if p == n => go(Part(n, outside_mix(r.mix))),
-            (Part(p, _), NavKey::Part(n)) if p == n => go(Pages(n, r.pages_of(n, cx))),
-            (_, NavKey::Part(n)) => pages_home(n),
+            (Pages(p, _), NavKey::Part(n)) if p == n => go(r.mix_entry(n)),
+            (Part(p, _) | Fx(p, _), NavKey::Part(n)) if p == n => go(Pages(n, r.pages_of(n, cx))),
+            (_, NavKey::Part(n)) => go(Pages(n, home(cx.engine(n)))),
             (Part(_, m), NavKey::MixPart(n)) => go(Part(n, m)),
-            (Fx(_), NavKey::MixPart(n)) => go(Part(n, r.mix)),
-            (_, NavKey::MixPart(n)) => go(Part(n, outside_mix(r.mix))),
+            (Fx(_, at), NavKey::MixPart(n)) => go(Fx(n, at)),
+            (_, NavKey::MixPart(n)) => go(r.mix_entry(n)),
             (_, NavKey::EditPart(n)) => go(Sound(n)),
-            (Settings(s), NavKey::MenuTap) => match s.parent() {
+            (Settings(s), NavKey::MenuTap) => match s.back() {
                 Some(up) => go(Settings(up)),
-                None => Step::Go(r.settings_from()),
+                None => Step::Go(r.close_settings(cx)),
             },
             (_, NavKey::MenuTap) => Step::Go(Location::settings_at(&[], 0)),
             (Settings(s), k) => s.step(k, cx),
@@ -354,14 +413,14 @@ impl Location {
             (Part(p, m), NavKey::Plus) => go(mix_walk(p, m, 1)),
             (Part(p, m), NavKey::Minus) => go(mix_walk(p, m, -1)),
             (Part(p, _), NavKey::Edit) => go(Sound(p)),
-            (Part(..) | Sound(_), NavKey::SeqTap) => {
+            (Part(..) | Fx(..) | Sound(_), NavKey::SeqTap) => {
                 Step::Go(Location::settings_at(&PART_SETTINGS, 0))
             }
-            (Fx(at), NavKey::Minus) if at.node == FX_FIRST => {
+            (Fx(_, at), NavKey::Minus) if at.node == FX_FIRST => {
                 go(Part(PartId::ALL[MAX_PARTS - 1], MixPage::Sends))
             }
-            (Fx(at), k) => {
-                page_step(&MIXER_CHANNEL_CHAIN, at, k).map_or(Step::Stay, |at| go(Fx(at)))
+            (Fx(p, at), k) => {
+                page_step(&MIXER_CHANNEL_CHAIN, at, k).map_or(Step::Stay, |at| go(Fx(p, at)))
             }
             (Sound(p), NavKey::Plus) => go(Sound(wrap(p, 1))),
             (Sound(p), NavKey::Minus) => go(Sound(wrap(p, -1))),
@@ -380,7 +439,7 @@ impl Location {
                     sub: 0,
                 },
             )),
-            Loc::Fx(at) => Some((&MIXER_CHANNEL_CHAIN, at)),
+            Loc::Fx(_, at) => Some((&MIXER_CHANNEL_CHAIN, at)),
             Loc::Settings(s) => s.at_leaf().map(|c| (c, s.page)),
             Loc::Sound(_) => None,
         }
@@ -388,8 +447,8 @@ impl Location {
 
     pub fn part(self) -> Option<PartId> {
         match self.0 {
-            Loc::Pages(p, _) | Loc::Part(p, _) | Loc::Sound(p) => Some(p),
-            Loc::Fx(_) | Loc::Settings(_) => None,
+            Loc::Pages(p, _) | Loc::Part(p, _) | Loc::Fx(p, _) | Loc::Sound(p) => Some(p),
+            Loc::Settings(_) => None,
         }
     }
 
@@ -398,14 +457,6 @@ impl Location {
             Loc::Settings(s) => Some(s),
             _ => None,
         }
-    }
-}
-
-/// Into the mixer from outside it: a remembered PART opens SENDS (ADR 0057).
-fn outside_mix(m: MixPage) -> MixPage {
-    match m {
-        MixPage::Part => MixPage::Sends,
-        m => m,
     }
 }
 
@@ -423,10 +474,13 @@ fn mix_walk(p: PartId, m: MixPage, d: i8) -> Loc {
                 MixPage::Sends
             },
         ),
-        None => Loc::Fx(PageAt {
-            node: FX_FIRST,
-            sub: 0,
-        }),
+        None => Loc::Fx(
+            p,
+            PageAt {
+                node: FX_FIRST,
+                sub: 0,
+            },
+        ),
     }
 }
 

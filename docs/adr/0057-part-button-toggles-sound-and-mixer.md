@@ -2,8 +2,8 @@
 
 - **Status:** Superseded by [0044](0044-one-ladder-one-button-map.md)
 - **Deciders:** owner; firmware
-- **To be absorbed by:** ADR 0044, the navigation ladder (pending). The
-  mixer chain becomes its Part rung.
+- **Absorbed by:** ADR 0044, the navigation ladder. The mixer chain
+  becomes its Part rung.
 
 ## Context
 MIX+B<n> opened the mixer chain on its first page, PART. There encoder C
