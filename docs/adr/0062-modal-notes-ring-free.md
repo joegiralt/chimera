@@ -44,8 +44,9 @@ glide the long way round.
   main string add a new pluck, shaped as a fresh one is, over the period
   the loop reads next (`KsString::add_pluck`, streamed from the noise
   state, no scratch line); SYMP's halo rings on; a bow is set back on its
-  ringing string; BANK's strike always added. The macros, the DC blocker
-  and the note's peak carry on: nothing snaps.
+  ringing string; BANK's strike always added. The macros and the DC
+  blocker carry on: nothing snaps. The silence peak restarts and is
+  rebuilt from what sounds next, the old ring included (ADR 0065).
 - **A steal of another note** still starts its string clean, after the
   voice's 2.7 ms fade where the engine or model changes; a same-model
   steal of a loud C2 tail passes the click check without one.
