@@ -4,13 +4,20 @@
 
 mod common;
 
+use chimera_core::dsp::engines::SlotKind;
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::dsp::voice::Voice;
-use chimera_core::hw::{CPU_HZ_REV_V, MAX_PARTS, SampleBudget};
+use chimera_core::hw::{CPU_HZ_REV_V, MAX_PARTS, MAX_VOICES, SampleBudget};
+use chimera_core::instrument::{AudioShared, DacOut};
+use chimera_core::note_queue::{
+    NoteDrain, NoteEvent, NoteKind, NoteProducer, NoteSources, SourceId,
+};
 use chimera_core::params::{EngineType, ParamSnapshot, Steal};
-use chimera_core::preset::Performance;
-use chimera_core::project::{GateStep, LoadGate, LoadLink, Settled};
+use chimera_core::part::DacPair;
+use chimera_core::preset::{Performance, Sound};
+use chimera_core::project::{GateStep, LoadGate, LoadLink, PartId, Settled};
+use chimera_core::{MidiChannel, MidiNote, Velocity};
 use common::{InstRig, peak};
 
 fn rev_v() -> InstRig {
@@ -142,7 +149,7 @@ fn kill_all_fades_and_frees() {
 /// The fade is the 128-sample one: the killed block falls, the next ends
 /// at silence, with no step.
 #[test]
-fn the_kill_fades_through_the_old_snapshot() {
+fn the_kill_fades_over_two_blocks() {
     let mut r = rev_v();
     r.note_on(0, 60);
     r.render(8);
@@ -248,62 +255,187 @@ fn kill_all_drops_a_waiting_note_uncounted() {
     assert_eq!(r.inst.allocator().refused(), 0);
 }
 
-/// One callback: the gate, then the drain only when it says so.
-fn callback(g: &mut LoadGate, link: &LoadLink, r: &mut InstRig) -> bool {
-    let drain = g.before_block(link, &mut r.inst, &r.shared);
-    r.render(1);
-    drain
+/// The project playing: Part 1 on ALGO INIT at LEVEL 0.8, out on pair 1.
+fn old_project() -> Performance {
+    let p = Performance::new();
+    let part = &p.parts()[0];
+    assert_eq!(part.sound.params.engine(), EngineType::Algo);
+    assert_eq!((part.mix.level, part.mix.output), (0.8, DacPair::P1));
+    p
 }
 
-/// The whole protocol, acked in time: the fade runs on the old snapshot,
-/// the audio acks once quiet, and drains from the tagged publish on.
-#[test]
-fn a_load_fades_acks_and_reopens() {
-    let (link, mut g, mut r) = (LoadLink::new(), LoadGate::new(), rev_v());
-    assert!(callback(&mut g, &link, &mut r));
+/// The project loaded: Part 1 on MODAL INIT at LEVEL 0.2, out on pair 2.
+/// The pair switches at once, so it tells which mix a block went through.
+fn new_project() -> Performance {
+    let mut p = Performance::new();
+    let e = p.edit(PartId::ALL[0]);
+    *e.sound = Sound::init(EngineType::Modal);
+    e.mix.level = 0.2;
+    e.mix.output = DacPair::P2;
+    p
+}
+
+/// Each pair's summed |sample| over a block out.
+fn energy(out: &DacOut) -> [f32; 3] {
+    out.map(|pair| pair.iter().map(|x| x.abs()).sum())
+}
+
+/// A rig on the old project, fed through a real note queue, with the link
+/// and the gate between them: a shell in miniature.
+struct Load {
+    link: LoadLink,
+    gate: LoadGate,
+    r: InstRig,
+    keys: NoteProducer<'static>,
+    drain: NoteDrain<'static, 1>,
+}
+
+impl Load {
+    fn new() -> Self {
+        let sources: &'static NoteSources<1> = Box::leak(Box::new(NoteSources::new()));
+        let (mut producers, drain) = sources.split().unwrap();
+        let mut r = rev_v();
+        *r.shared = AudioShared::from_performance(&old_project());
+        Self {
+            link: LoadLink::new(),
+            gate: LoadGate::new(),
+            r,
+            keys: producers.take(SourceId::new(0)).unwrap(),
+            drain,
+        }
+    }
+
+    fn key(&mut self, note: u8) {
+        assert!(self.keys.push(NoteEvent {
+            channel: MidiChannel::new(0).unwrap(),
+            note: MidiNote::new(note).unwrap(),
+            kind: NoteKind::On(Velocity::DEFAULT),
+        }));
+    }
+
+    /// One callback: the gate, the drain only when it says so, a block.
+    /// Returns whether it drained, and the block out.
+    fn callback(&mut self) -> (bool, DacOut) {
+        let Self { link, gate, r, .. } = self;
+        let drain = gate.before_block(link, &mut r.inst, &r.shared);
+        if drain {
+            let (inst, shared) = (&mut r.inst, &r.shared);
+            self.drain.drain(|ev| inst.handle(ev, shared));
+        }
+        r.render(1);
+        (drain, *r.out())
+    }
+
+    fn publish(&mut self) {
+        self.r.shared.update_from(&new_project(), self.link.epoch());
+    }
+
+    /// Part 1 sounds a note of the new project: a Modal voice, on pair 2.
+    fn plays_new(&mut self) -> bool {
+        let mut on_p2 = false;
+        for _ in 0..3 {
+            let (_, out) = self.callback();
+            on_p2 |= energy(&out)[1] > 0.0;
+        }
+        let kinds = self.r.inst.slot_kinds();
+        let modal = (0..MAX_VOICES).any(|v| {
+            !self.r.inst.allocator().slots()[v].is_free()
+                && kinds[v] == SlotKind::Modal(ResonatorMode::String)
+        });
+        modal && on_p2
+    }
+}
+
+/// The old project's note faded by a bare `kill_all` after `held` blocks:
+/// each block out, from the kill on.
+fn reference_fade(held: usize, blocks: usize) -> Vec<DacOut> {
+    let mut r = rev_v();
+    *r.shared = AudioShared::from_performance(&old_project());
     r.note_on(0, 60);
+    r.render(held);
+    r.inst.kill_all();
+    (0..blocks)
+        .map(|_| {
+            r.render(1);
+            *r.out()
+        })
+        .collect()
+}
+
+/// The whole protocol, acked in time: the fade runs through the old
+/// snapshot (its Sound, LEVEL and pair) bit for bit; a note played during
+/// the load waits in the queue and plays on the new project.
+#[test]
+fn a_load_fades_through_the_old_mix_acks_and_reopens() {
+    let mut l = Load::new();
+    l.key(60);
     for _ in 0..4 {
-        assert!(callback(&mut g, &link, &mut r));
+        assert!(l.callback().0);
     }
-    let swap = link.bump_for_test();
-    assert!(!callback(&mut g, &link, &mut r), "the kill");
-    assert!(!callback(&mut g, &link, &mut r), "fading");
-    assert!(r.inst.quiet());
-    assert!(!callback(&mut g, &link, &mut r), "the ack");
-    assert!(link.acked(link.epoch()));
-    assert_eq!(swap.settle(&link, || false), Settled::Acked);
+    let swap = l.link.bump_for_test();
+    let reference = reference_fade(4, 3);
+    let (drained, out) = l.callback();
+    assert!(!drained, "the kill");
+    l.key(64); // queued behind the gate
+    assert!(energy(&out)[0] > 0.0);
+    assert_eq!(out, reference[0], "the old mix");
+    let (drained, out) = l.callback();
+    assert!(!drained, "fading");
+    assert_eq!(out, reference[1], "the old mix");
+    assert_eq!(energy(&out)[1], 0.0, "nothing on the new pair");
+    assert!(l.r.inst.quiet());
+    let (drained, out) = l.callback();
+    assert!(!drained, "the ack");
+    assert_eq!(out, reference[2]);
+    assert!(l.link.acked(l.link.epoch()));
+    assert_eq!(swap.settle(&l.link, || false), Settled::Acked);
     for _ in 0..3 {
-        assert!(!callback(&mut g, &link, &mut r), "held until the publish");
+        assert!(!l.callback().0, "held until the publish");
+        assert!(l.r.inst.allocator().slots().iter().all(|s| s.is_free()));
     }
-    r.shared.update_from(&Performance::new(), link.epoch());
-    assert!(callback(&mut g, &link, &mut r));
-    r.note_on(0, 64);
-    r.render(2);
-    assert!(peak(r.inst.part_bus(0)) > 0.0, "it plays again");
+    l.publish();
+    assert!(l.plays_new(), "the queued note plays on the new project");
 }
 
 /// Review Focus 5: the callback stalls past the timeout; the UI publishes
-/// anyway. The gate reopens on that snapshot mid-fade and is never left
-/// shut.
+/// anyway. The gate reopens on that snapshot mid-fade, and the rest of the
+/// fade goes through the new mix (pair 2), never leaving the synth muted.
 #[test]
 fn a_timed_out_load_still_reopens_the_audio() {
-    let (link, mut g, mut r) = (LoadLink::new(), LoadGate::new(), rev_v());
-    r.note_on(0, 60);
-    r.render(4);
-    let swap = link.bump_for_test();
-    // The audio has not run since the bump: no ack.
-    assert_eq!(swap.settle(&link, || false), Settled::TimedOut);
-    r.shared.update_from(&Performance::new(), link.epoch());
-    assert!(callback(&mut g, &link, &mut r), "kill and drain in one");
-    assert!(!r.inst.quiet(), "the fade runs on the new snapshot");
+    let mut l = Load::new();
+    l.key(60);
     for _ in 0..4 {
-        assert!(callback(&mut g, &link, &mut r));
+        assert!(l.callback().0);
     }
-    assert!(r.inst.quiet());
-    assert!(!link.acked(link.epoch()), "no ack is owed once published");
-    r.note_on(0, 64);
-    r.render(2);
-    assert!(peak(r.inst.part_bus(0)) > 0.0, "never left muted");
+    let swap = l.link.bump_for_test();
+    // The audio has not run since the bump: no ack.
+    assert_eq!(swap.settle(&l.link, || false), Settled::TimedOut);
+    l.publish();
+    // The output stage runs a block behind: three blocks hold the fade.
+    let (mut got, mut old) = ([0.0f32; 3], [0.0f32; 3]);
+    for (i, reference) in reference_fade(4, 3).iter().enumerate() {
+        let (drained, out) = l.callback();
+        assert!(drained, "kill and drain in one, then open");
+        if i == 0 {
+            assert!(!l.r.inst.quiet(), "still fading");
+        }
+        for k in 0..3 {
+            got[k] += energy(&out)[k];
+            old[k] += energy(reference)[k];
+        }
+    }
+    assert!(got[1] > 0.0, "the fade through the new mix");
+    assert!(got[0] < old[0], "not wholly the old");
+    for _ in 0..2 {
+        assert!(l.callback().0);
+    }
+    assert!(l.r.inst.quiet());
+    assert!(
+        !l.link.acked(l.link.epoch()),
+        "no ack is owed once published"
+    );
+    l.key(64);
+    assert!(l.plays_new(), "never left muted");
 }
 
 /// Review Focus 5: a second epoch mid-fade, its predecessor never acked
@@ -311,24 +443,26 @@ fn a_timed_out_load_still_reopens_the_audio() {
 /// publish reopens the gate.
 #[test]
 fn a_second_epoch_mid_fade_still_reopens_the_audio() {
-    let (link, mut g, mut r) = (LoadLink::new(), LoadGate::new(), rev_v());
-    r.note_on(0, 60);
-    r.render(4);
-    let first = link.bump_for_test();
-    assert!(!callback(&mut g, &link, &mut r), "the first kill");
-    assert!(!r.inst.quiet(), "mid-fade");
-    let second = link.bump_for_test();
-    assert_eq!(first.settle(&link, || false), Settled::TimedOut);
+    let mut l = Load::new();
+    l.key(60);
+    for _ in 0..4 {
+        assert!(l.callback().0);
+    }
+    let first = l.link.bump_for_test();
+    assert!(!l.callback().0, "the first kill");
+    assert!(!l.r.inst.quiet(), "mid-fade");
+    let second = l.link.bump_for_test();
+    assert_eq!(first.settle(&l.link, || false), Settled::TimedOut);
+    l.key(64);
     let mut acked = false;
     for _ in 0..4 {
-        assert!(!callback(&mut g, &link, &mut r));
-        acked |= link.acked(link.epoch());
+        let (drained, out) = l.callback();
+        assert!(!drained);
+        assert_eq!(energy(&out)[1], 0.0, "the old mix to the end");
+        acked |= l.link.acked(l.link.epoch());
     }
-    assert!(acked && r.inst.quiet());
-    assert_eq!(second.settle(&link, || false), Settled::Acked);
-    r.shared.update_from(&Performance::new(), link.epoch());
-    assert!(callback(&mut g, &link, &mut r));
-    r.note_on(0, 64);
-    r.render(2);
-    assert!(peak(r.inst.part_bus(0)) > 0.0, "never left muted");
+    assert!(acked && l.r.inst.quiet());
+    assert_eq!(second.settle(&l.link, || false), Settled::Acked);
+    l.publish();
+    assert!(l.plays_new(), "never left muted");
 }
