@@ -29,16 +29,16 @@ on 2026-09-30.
 
 | Key | Meaning |
 |---|---|
-| **B*n*** | From anywhere on the ladder, ORBIT excepted (below): Part *n*'s sound pages (`Pages(n, 0,0)`, as today). From Part *n*'s sound pages: Part *n*'s rung, the mixer (PART and SENDS), opening on the last-used mixer page, SENDS until one is used. From Part *n*'s rung: back to the sound page it left. |
-| **MIX + B*n*** | Straight to Part *n*'s rung. MIX+B6 stays Demo until Demo moves to a debug-only System row. |
-| **EDIT** | Down or open (`down`). On pages, sub-page down, as today. In ORBIT, only ORBIT's own pages: on RING it cycles the sub-pages, RHYTHM → VOICE → NOTES → back to RHYTHM (amended 2026-09-30, owner); SCN's commit; it never leaves ORBIT. |
+| **B*n*** | From anywhere on the ladder, ORBIT excepted (below): Part *n*'s sound pages on its engine's home, `Pages(n, home(engine))`: node 0 for Algo, RES for Modal, never EXC (amended 2026-10-01, owner: ADR 0066). SETTINGS included, from any depth (amended 2026-10-01, owner: ADR 0066). From Part *n*'s sound pages: Part *n*'s rung, the mixer (PART and SENDS), opening on the last-used mixer page, SENDS until one is used. From Part *n*'s rung: back to the sound page it left, if its engine is unchanged; from anywhere else, the home (amended 2026-10-01, owner: ADR 0066). |
+| **MIX + B*n*** | Straight to Part *n*'s rung. MIX+B6 is Part 6's mixer, now that Demo is the debug-only row SYSTEM › DEMO (amended 2026-10-01, owner: ADR 0066). |
+| **EDIT** | Down or open (`down`). On pages, sub-page down, as today. In a SETTINGS list, open the row: a list or a leaf page; a Screen row is listed first, by `UiState`; a later row does nothing (amended 2026-10-01, owner: ADR 0066). In ORBIT, only ORBIT's own pages: on RING it cycles the sub-pages, RHYTHM → VOICE → NOTES → back to RHYTHM (amended 2026-09-30, owner); SCN's commit; it never leaves ORBIT. |
 | **Hold B*n* in ORBIT** | Out to the pages of the Part ring *n* plays: `Pages(p, recall.pages[p])`. Fires at `HOLD_MS`; the release does nothing. The only way from ORBIT to sound design. |
-| **MENU tap** | Up one rung (`up`): pages → Part → Project → Projects. Acts on release, before `HOLD_MS`. |
-| **MENU hold** | System, from anywhere, ORBIT included. |
-| **SEQ tap** | Save what this rung is about: the Sound, the Part or the Project. On pages and in System it keeps today's sub-page up. In ORBIT it always saves the scene, on every ORBIT page, since EDIT cycles the RING sub-pages and no sub-page-up is needed there (amended 2026-09-30, owner). Acts on release, before `HOLD_MS`. |
+| **MENU tap** | ~~Up one rung (`up`)~~. Outside SETTINGS: open SETTINGS at its top list, remembering where you were. In it: back one level, and at the top close, back to where MENU was pressed (amended 2026-10-01, owner: ADR 0066). Acts on release, before `HOLD_MS`. |
+| **MENU hold** | ~~System~~ Quick save, from anywhere, ORBIT included (orbit spec lines 370 and 570: "MENU hold: save the project") (amended 2026-10-01, owner: ADR 0066). |
+| **SEQ tap** | ~~Save what this rung is about.~~ On the mixer and the Sound rung, open SETTINGS › PART for that Part; in a SETTINGS list, run the highlighted action (amended 2026-10-01, owner: ADR 0066). On pages and leaf pages it keeps today's sub-page up. In ORBIT it always saves the scene, on every ORBIT page, since EDIT cycles the RING sub-pages and no sub-page-up is needed there (amended 2026-09-30, owner). Acts on release, before `HOLD_MS`. |
 | **SEQ hold** | ORBIT, from anywhere, including from the pages a hold B*n* opened. |
 | **MENU tap in ORBIT** | Leave ORBIT, back to where you were before; ORBIT keeps playing. |
-| **PLUS / MINUS** | Sideways: the next or previous page or node. On a Part's rung (the mixer), PLUS steps PART → SENDS → the next Part's mixer, and MINUS goes the other way, so one key walks every Part's mixer (amended 2026-09-30, owner). On the Sound rung, the next or previous Part. |
+| **PLUS / MINUS** | Sideways: the next or previous page or node. On a Part's rung (the mixer), PLUS steps PART → SENDS → the next Part's mixer, and MINUS goes the other way, so one key walks every Part's mixer (amended 2026-09-30, owner); after Part 6's SENDS it goes on into the shared FX, CHORUS to MASTER, and MINUS from CHORUS returns to Part 6's SENDS (owner ruling 2026-10-01) (amended 2026-10-01, owner: ADR 0066). On the Sound rung, the next or previous Part, wrapping. In a SETTINGS list, the bar; on a leaf page, the node (amended 2026-10-01, owner: ADR 0066). |
 | **MIX+MINUS** | Remove, behind a confirm (storage spec § The keys). |
 | **MIX+PLUS** | Prime a route on pages (ADR 0017); rename and retag on a library entry. |
 | **MIX+MENU** | Reserved for the chain editor. |
@@ -56,9 +56,35 @@ Crossing to sound design is deliberately expensive: hold B*n* (the shared
 `HOLD_MS`) jumps out to the pages of the Part ring *n* plays. The old "EDIT on
 ORB jumps to the ring's Part" shortcut is removed. MENU tap leaves ORBIT, back
 to where you were before, and ORBIT keeps playing; hold SEQ from anywhere
-returns to ORBIT. MENU hold is System, as everywhere.
+returns to ORBIT. MENU hold is quick save, as everywhere (amended 2026-10-01, owner: ADR 0066).
 
 ### `Location`
+
+Amended amended 2026-10-01, owner: ADR 0066: `Loc` loses `Projects`, `Project`, `System` and
+`Orbit`, and gains `Settings(SettingsAt)`. `Orbit`, with `Recall`'s `orbit`
+and `from`, returns with the ORBIT plan. `Recall` gains `settings_from`,
+an `Outside` that by type can never hold SETTINGS. As built
+(`ui::nav`):
+
+```rust
+pub struct Location(Loc);              // opaque; `Loc` is private to ui::nav
+enum Loc {
+    Pages(PartId, PageAt),             // a sound's pages
+    Part(PartId, MixPage),             // the Part rung: the mixer
+    Fx(PageAt),                        // CHORUS, DELAY, EFX, TAPE, MASTER
+    Sound(PartId),                     // the Sound rung
+    Settings(SettingsAt),              // a SETTINGS list, Screen or leaf page
+}
+pub struct Outside(Loc);               // never Settings
+pub struct Recall {
+    pages: [Option<SoundPage>; 6],     // each Part's page left, with its engine
+    mix: MixPage,
+    settings_from: Outside,            // where MENU at the top returns
+}
+```
+
+`step(self, NavKey, &NavCtx, &mut Recall) -> Step` is every key, pure; it
+writes `Recall` on leaving a place (amended 2026-10-01, owner: ADR 0066). As first written:
 
 ```rust
 pub struct Location(Loc);              // opaque; `Loc` is private to ui::nav
@@ -91,7 +117,7 @@ in the variant, so no box and no heap.
     current slot for its pages, or B*n* straight to them.
   - `Orbit(_)`: cycles the sub-pages (RING: RHYTHM → VOICE → NOTES → RHYTHM; amended 2026-09-30, owner); never leaves ORBIT.
     There is no jump from ORB (removed 2026-09-30, owner).
-- **`up(self, &Recall) -> Location`** is a MENU tap:
+- ~~**`up(self, &Recall) -> Location`** is a MENU tap:~~ The `up` table goes: MENU tap opens SETTINGS, backs out one level, or closes it (amended 2026-10-01, owner: ADR 0066).
 
   | From | To |
   |---|---|
@@ -106,7 +132,8 @@ in the variant, so no box and no heap.
 
 - **`part_key(self, n, &Recall) -> Location`** is B*n*, the toggle:
   `Pages(n, _)` → `Part(n, recall.mix)`; `Part(n, _)` →
-  `Pages(n, recall.pages[n])`; anything else → `Pages(n, 0,0)`. It is sugar,
+  `Pages(n, recall.pages[n])`; anything else → `Pages(n, 0,0)`
+  (now `Pages(n, home(engine))`, amended 2026-10-01, owner: ADR 0066). It is sugar,
   defined as a composition of `down` and `up`, so the storage spec's
   property test (every jump lands where its path ends) covers it.
 - **`orbit_key(self, &Recall) -> Location`** is SEQ hold: from outside ORBIT,
@@ -166,6 +193,18 @@ in the variant, so no box and no heap.
   retired: its PART and SENDS pages are rung 2, its FX nodes are `Fx`. MIDI
   Setup's channels still move to PART. Where its § ADRs and § Decisions
   awaiting owner review differ, this ADR rules.
+- **Owner rulings of 2026-10-01** (amended 2026-10-01, owner: ADR 0066):
+  - **Each engine has a home node**: `nav::home(engine)`, node 0 for Algo
+    and RES for Modal, looked up in the Modal chain. A new or INIT Modal
+    Part lands on RES, not EXC.
+  - **The mixer walk reaches the FX** after Part 6's SENDS; the FX have no
+    key or SETTINGS row of their own.
+  - **RENAME of a project that isn't loaded is dimmed `LOAD TO RENAME`**
+    until `Store` gains a streaming copy
+    ([#273](https://github.com/joegiralt/chimera/issues/273)). Lifting it
+    is a new ADR superseding the relevant part of ADR 0045, never an
+    amendment of 0045.
+  - **ADR 0057 is superseded** by this ADR, which absorbed it.
 - **"Same button = snap home"** (UX spec invariant 7) goes: B*n* on Part *n*'s
   pages now toggles to the mixer. MINUS back to node 0 replaces it. Plan 2
   amends `docs/chimera-ui-ux-spec.md`: invariants 1, 2, 3 and 7, and the

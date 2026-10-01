@@ -49,7 +49,7 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0041](0041-mod-matrix-amount-grid.md) | The mod matrix is an amount grid of outlined cells (supersedes in part 0016) | Accepted |
 | [0042](0042-voice-pitch-is-a-matrix-destination.md) | Voice pitch is a matrix destination on each engine's PITCH page | Accepted; `ModalEngine::PITCH` superseded in part by [0056](0056-modal-resonators-share-four-macros.md) |
 | [0043](0043-projects-own-their-sounds.md) | Projects own their sounds; marks are derived; one typed replace guard | Proposed |
-| [0044](0044-one-ladder-one-button-map.md) | One ladder and one button map for Parts, the mixer and ORBIT (absorbs 0057) | Proposed |
+| [0044](0044-one-ladder-one-button-map.md) | One ladder and one button map for Parts, the mixer and ORBIT (absorbs 0057; amended by 0066 for SETTINGS) | Proposed |
 | [0045](0045-card-format.md) | Store cards in 8.3 A/B files of versioned TLV records | Accepted; load staging superseded in part by [0046](0046-project-load-protocol.md) |
 | [0046](0046-project-load-protocol.md) | Swap projects by epoch: fade the voices, then publish (supersedes in part [0045](0045-card-format.md)) | Proposed |
 | [0048](0048-own-fat-layer.md) | Own the FAT layer; keep embedded-sdmmc only as the SD block driver | Accepted |
@@ -61,7 +61,7 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0054](0054-sympathetic-strings-from-a-shared-pool.md) | Sympathetic borrows its strings from a shared pool of four (supersedes 0052) | Accepted; voice size assert and `COST_SYMPATHETIC` superseded in part by [0056](0056-modal-resonators-share-four-macros.md) |
 | [0055](0055-master-tape-off-the-chain.md) | The master tape stage is off the chain, kept behind `master-tape` (supersedes in part 0030) | Proposed |
 | [0056](0056-modal-resonators-share-four-macros.md) | Modal's resonators share four modulatable macros; loops are stable by construction (supersedes in part 0010, 0040, 0042, 0054) | Proposed; superseded in part by [0060](0060-one-dc-blocker-per-voice.md), [0062](0062-modal-notes-ring-free.md), [0064](0064-the-one-loop-bow-in-tune.md) |
-| [0057](0057-part-button-toggles-sound-and-mixer.md) | The Part button toggles sound and mixer; the mixer opens on SENDS | Proposed |
+| [0057](0057-part-button-toggles-sound-and-mixer.md) | The Part button toggles sound and mixer; the mixer opens on SENDS | Superseded by 0044 |
 | [0058](0058-a-loudness-reference-modal-matches-algo-init.md) | A loudness reference: every Modal model's INIT plays as loud as ALGO INIT | Superseded by [0063](0063-levels-at-the-factory-median.md) |
 | [0059](0059-music-theory-crate-built-from-types.md) | Music theory is its own crate, built from types | Proposed |
 | [0060](0060-one-dc-blocker-per-voice.md) | Block DC once per voice, after its last nonlinear stage (supersedes in part 0022, 0056) | Proposed |

@@ -3,6 +3,9 @@ use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2};
 use crate::ui::block_registry;
 use chimera_hal::{ButtonId, ButtonState, Controls, PART_BUTTONS};
 
+/// Moved to `ui::nav`; re-exported until `UiState` runs it (Task 8).
+pub use super::nav::chain_def_for;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ChainId {
     Part(usize),  // 0-5 (B1-B6)
@@ -194,13 +197,5 @@ pub const fn next_on_part_button(from: ChainId, n: usize) -> ChainId {
     match from {
         ChainId::Part(p) if p == n => ChainId::Mixer(n),
         _ => ChainId::Part(n),
-    }
-}
-
-/// The static chain definition for an engine.
-pub fn chain_def_for(engine: EngineType) -> &'static ChainDef2 {
-    match engine {
-        EngineType::Algo => &block_registry::ALGO_CHAIN,
-        EngineType::Modal => &block_registry::MODAL_PLUCK_CHAIN,
     }
 }

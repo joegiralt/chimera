@@ -15,6 +15,7 @@ pub mod focus;
 pub mod hold;
 pub mod mod_grid;
 pub mod mod_panel;
+pub mod nav;
 pub mod page;
 pub mod part_page;
 pub mod perf;
