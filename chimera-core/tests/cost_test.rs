@@ -760,7 +760,8 @@ fn a_routed_silent_operator_is_priced() {
 }
 
 /// A route into PITCH or FINE retunes Modal's strings every block: billed
-/// `ModalEngine::PITCH` (a host estimate) on any route, at amount 0 too;
+/// `ModalEngine::PITCH` (a host estimate) on any route, at amount 0 too,
+/// SYMP `HALO_PITCH` more for its halo's seven targets;
 /// Algo's pitch rides its per-block operator update.
 #[test]
 fn a_pitch_route_on_modal_bills_the_retune() {
@@ -768,6 +769,7 @@ fn a_pitch_route_on_modal_bills_the_retune() {
     use chimera_core::dsp::modal::ModalEngine;
     use chimera_core::params::PitchParams;
     assert_eq!(ModalEngine::PITCH, Cost(30));
+    assert_eq!(ModalEngine::HALO_PITCH, Cost(23));
     let routed = |q, amount| {
         let mut ms = ModState::from_registry(&chimera_core::mod_path::ModDestRegistry::new(), 8);
         let d = ms.push(ParamAddr::new(BlockRef::Pitch, q)).unwrap();
@@ -785,6 +787,12 @@ fn a_pitch_route_on_modal_bills_the_retune() {
             );
         }
     }
+    let mut symp = modal.clone();
+    symp.modal.mode = chimera_core::dsp::modal::ResonatorMode::Sympathetic;
+    assert_eq!(
+        EngineSlot::cost(&symp, &routed(PitchParams::PITCH, 127)),
+        EngineSlot::cost(&symp, &ModState::new()) + ModalEngine::PITCH + ModalEngine::HALO_PITCH
+    );
     let algo = ParamSnapshot::for_engine(EngineType::Algo);
     assert_eq!(
         EngineSlot::cost(&algo, &routed(PitchParams::PITCH, 127)),
@@ -927,7 +935,12 @@ fn a_glide_steal_bills_the_retune() {
         let cut = EngineSlot::cost(&p, &ModState::new());
         p.pitch.steal = Steal::Glide;
         let glide = EngineSlot::cost(&p, &ModState::new());
-        assert_eq!(glide, cut + ModalEngine::PITCH, "{mode:?}");
+        let halo = if mode == ResonatorMode::Sympathetic {
+            ModalEngine::HALO_PITCH
+        } else {
+            Cost(0)
+        };
+        assert_eq!(glide, cut + ModalEngine::PITCH + halo, "{mode:?}");
         assert_eq!(EngineSlot::cost(&p, &pitch_route()), glide, "{mode:?}");
     }
     let mut algo = ParamSnapshot::for_engine(EngineType::Algo);

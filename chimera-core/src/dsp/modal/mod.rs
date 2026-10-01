@@ -452,6 +452,11 @@ impl ModalEngine {
     /// instructions a sample (STRING's re-split with its dispersion, about
     /// 6). It was 12 before fractional tuning (ADR 0042).
     pub const PITCH: Cost = Cost(30);
+    /// More on SYMP where `PITCH` is billed: each pitched block moves the
+    /// halo's seven targets (`Glide::toward`), a `log2f` each, taken as 130
+    /// instructions as `CHORD` does: 7 × 130 / 64 = 14.2 a sample; × 1.46
+    /// × 1.1 = 22.9, rounded up to 23.
+    pub const HALO_PITCH: Cost = Cost(23);
 
     /// More on SYMP with a route into STRUCTURE, which can keep the halo
     /// gliding (`Glide`, ADR 0062). A host estimate as `PITCH`, until the
