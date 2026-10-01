@@ -99,16 +99,28 @@ pub enum ProjectNote {
 }
 
 /// `msg: subject`. Past `LINE_LEN` the message gives way, so the name or
-/// file always shows whole.
+/// file always shows whole: it drops its last `: ` clause, else its last
+/// words, never half a word.
 fn naming(msg: &str, subject: Subject) -> Line {
     let mut sub = Line::new("");
     let _ = write!(sub, "{subject}");
     let room = LINE_LEN.saturating_sub(sub.len as usize + 2);
-    let mut cut = msg.len().min(room);
-    while !msg.is_char_boundary(cut) {
-        cut -= 1;
-    }
-    let mut l = Line::new(msg[..cut].trim_end());
+    let msg = if msg.len() <= room {
+        msg
+    } else {
+        let mut cut = room;
+        while !msg.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        let fits = &msg[..cut];
+        let word_end = msg[cut..].starts_with(' ');
+        let at = fits
+            .rfind(": ")
+            .or_else(|| if word_end { Some(cut) } else { fits.rfind(' ') })
+            .unwrap_or(cut);
+        &msg[..at]
+    };
+    let mut l = Line::new(msg.trim_end());
     let _ = write!(l, ": {}", sub.as_str());
     l
 }
@@ -140,5 +152,25 @@ impl ProjectNote {
             ProjectNote::NewProject => l.write_str("NEW PROJECT"),
         };
         l
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// With no `: ` clause to drop, the message gives way at a word.
+    #[test]
+    fn a_long_message_is_cut_at_a_word() {
+        let f = Subject::File(ProjectId::new(7).unwrap());
+        let msg = "THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG TWICE";
+        let l = naming(msg, f);
+        assert_eq!(l.as_str(), "THE QUICK BROWN FOX JUMPS OVER THE: P0000007");
+        assert_eq!(
+            naming("ABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZ", f)
+                .as_str()
+                .len(),
+            LINE_LEN
+        );
     }
 }
