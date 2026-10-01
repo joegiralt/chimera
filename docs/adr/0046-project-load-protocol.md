@@ -6,9 +6,10 @@
 
 ## Context
 A project load replaces every Part's Sound, every mix and the FX at once.
-The audio must not hear that as a step: a held chord snapping onto six new
-Sounds clicks, and a voice whose engine changes under it is rebuilt
-mid-note. The UI loop is blocked for the card read (tens of ms) while the
+The audio must not hear that as a step: a held note whose Sound keeps its
+engine snaps onto the new params mid-note, and a Part's mix and FX jump.
+Only a voice whose engine or model changes fades (`Voice::render`'s
+switch fade), and then restarts its held note on the new Sound. The UI loop is blocked for the card read (tens of ms) while the
 audio keeps playing its last `AudioShared` snapshot (ADR 0021).
 
 ADR 0021's triple buffer is latest-wins and one way (UI to audio). It
@@ -43,8 +44,8 @@ commits it at its end.
   5. the UI waits for the ack (`Swap::settle`, at most
      `LOAD_ACK_TIMEOUT_MS` = 10 ms), then publishes.
 - **The gate** (`LoadGate`, pure `step(requested, snapshot, quiet)`; the
-  shells call `before_block` once per callback, before the drain, and
-  drain only when it says so):
+  shells call `before_block` once per 64-sample block, before that
+  block's drain, and drain only when it says so):
 
   | Phase | Input | Output, next phase |
   |---|---|---|
@@ -66,22 +67,28 @@ commits it at its end.
   `Voice::FADE` (128 samples, two blocks) on the snapshot it plays, so
   through the old Sounds, mix and FX, and every waiting note goes. A
   dying slot is never re-struck, retriggered by a Mono Part, shed or
-  stolen, and `render` frees it when its fade ends, held or not.
+  stolen as a sounding voice, and `render` frees it when its fade ends,
+  held or not. A note-on that finds no free voice may still take the
+  dying slot nearest the end of its fade (`Allocator::pick`, ADR 0027):
+  the note waits for the fade and starts fresh.
   `Voice::kill` drops a queued note and doesn't restart a running fade.
   Nothing is counted as refused. A released Modal string that rings free
   (ADR 0062) fades with the rest, and a STEAL = GLIDE Part (ADR 0065)
   never glides from a killed note: its next note starts fresh.
 - **A late ack:** the UI publishes at the timeout. The gate sees the
   epoch in the snapshot and reopens at once, so the rest of the fade
-  runs on the **new** snapshot: up to two blocks of the old notes through
-  the new Sounds and mix. The fade still ends them; nothing is held.
+  goes through the **new** snapshot's mix and FX (LEVEL eased, PAN and
+  sends eased, OUT switched at once) and its mod routing. A fading voice
+  keeps the Sound it last played (`Voice::render` reads `played` while
+  it fades), so the old notes keep their own Sound for up to two
+  blocks. The fade still ends them; nothing is held.
 - **MIDI during a load:**
 
   | When | What happens |
   |---|---|
   | During the card read (steps 1–2) | Notes play on the old project, and are faded at step 4. |
   | Between the epoch and the publish | The audio doesn't drain the note queues: note-ons wait and play on the new project, in queue order, so a note-off still follows its note-on. |
-  | A note-off for a killed voice | Ignored: its slot is freed. |
+  | A note-off for a killed voice | Acked in time: ignored, its slot is already freed. After a timed-out publish, one drained mid-fade reaches the fading voice and changes nothing audible; the fade ends it. |
   | A key held through the swap | Not retriggered; silent until played again. |
   | Pitch bend, mod wheel and other controllers | Dropped at the note queue today (`note_queue.rs`), so there is nothing to keep. |
   | MIDI clock and thru | Not implemented. |
@@ -125,11 +132,16 @@ commits it at its end.
 - A load is silent for at most a block or two between the fade and the
   first note on the new project; FX tails ring through it.
 - The audio pays one atomic load, one compare and `Instrument::quiet`
-  (eight flags) per callback; nothing allocates or blocks.
+  (eight flags) per block; nothing allocates or blocks.
 - Every caller of `update_from` passes an epoch. A shell that forgot the
   gate would drain through a load and play notes on the old project.
-- On the desktop, one callback renders several blocks, so the gate steps
-  once per callback, not per block: a slower ack, the same protocol.
+- On the desktop, one cpal callback (often 10–20 ms) renders several
+  blocks; the gate and the drain step per block inside it, as on the
+  chip, so the first callback after a bump kills, fades and acks (its
+  third block). That callback can still start more than 10 ms after
+  the bump when the period is long: the UI then times out, and the
+  fade's tail goes through the new mix, as above. The snapshot is read
+  once per callback, so a publish reopens the gate at the next one.
 - The in-place load makes a failed pass 2 cost the project (it becomes
   NEW); ADR 0045's staged loader stays for Sounds and SYSTEM.
 
