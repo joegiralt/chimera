@@ -108,6 +108,7 @@ where
         texts[0].as_str(),
         value,
         false,
+        crate::ui::glyph::Drawn::Arc,
         components::Look::Live,
         None,
     );

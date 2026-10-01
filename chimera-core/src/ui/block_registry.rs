@@ -742,12 +742,32 @@ pub static DEMO_FM: BlockDef = BlockDef {
     ],
 };
 
-static DEMO_BLOCKS: [ChainBlock; 5] = [
+// One page per focus glyph: its slots bind the params that drive it.
+
+/// GLYPH: ARC. a: unipolar, b: bipolar (from 12:00).
+pub static DEMO_GLYPH_ARC: BlockDef = BlockDef {
+    id: 68,
+    name: "Glyph: Arc",
+    short: "ARC",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::param(BlockRef::Out, OutParams::VOLUME).with_label("UNI"),
+        ParamSlot::param(BlockRef::Out, OutParams::PAN).with_label("BI"),
+        EMPTY,
+        EMPTY,
+        EMPTY,
+        EMPTY,
+    ],
+};
+
+static DEMO_BLOCKS: [ChainBlock; 6] = [
     ChainBlock::page(&DEMO_WAVES),
     ChainBlock::page(&DEMO_SHAPES),
     ChainBlock::page(&DEMO_MOTION),
     ChainBlock::page(&DEMO_FM),
     ChainBlock::page(&DEMO_MATRIX),
+    ChainBlock::page(&DEMO_GLYPH_ARC),
 ];
 
 pub static DEMO_CHAIN: ChainDef2 = ChainDef2 {

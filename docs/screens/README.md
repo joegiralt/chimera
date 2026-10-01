@@ -173,3 +173,4 @@ The UI component storyboard.
 | ![](demo_mot.png) | MOT | Motion icons |
 | ![](demo_fm.png) | FM | FM icons |
 | ![](demo_mtx.png) | MTX | A matrix |
+| ![](demo_arc.png) | ARC | Glyph: ARC; a drives it unipolar, b bipolar |

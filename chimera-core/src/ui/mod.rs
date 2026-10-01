@@ -12,6 +12,7 @@ pub mod dungeon_map;
 pub mod filter_panel;
 pub mod fmt;
 pub mod focus;
+pub mod glyph;
 pub mod mod_grid;
 pub mod mod_panel;
 pub mod page;
@@ -162,6 +163,8 @@ pub struct UiState {
     theme: ThemeSettings,
     /// What the last card operation said, for a moment.
     toast: busy::ToastTimer,
+    /// Animation phase for the renderer.
+    clock: animation::UiClock,
 }
 
 crate::in_place::field_list!(UiState => UiState {
@@ -181,6 +184,7 @@ crate::in_place::field_list!(UiState => UiState {
     prime_status,
     theme,
     toast,
+    clock,
 });
 
 impl Default for UiState {
@@ -229,6 +233,7 @@ impl UiState {
             addr_of_mut!((*p).prime_status).write(None);
             addr_of_mut!((*p).theme).write(ThemeSettings::DEFAULT);
             addr_of_mut!((*p).toast).write(busy::ToastTimer::new());
+            addr_of_mut!((*p).clock).write(animation::UiClock::new());
             let ui = slot.assume_init_mut();
             ui.load_matrix(PartId::ALL[0]);
             ui
@@ -239,6 +244,11 @@ impl UiState {
     /// encoder, button or page change (issue #21).
     pub fn prime_status(&self) -> Option<PrimeStatus> {
         self.prime_status
+    }
+
+    /// The UI's animation clock.
+    pub fn clock(&self) -> animation::UiClock {
+        self.clock
     }
 
     /// System › Theme as last edited; the display shell applies it.
@@ -856,6 +866,7 @@ impl UiState {
 
     /// Advance animations. Call at UI_FPS (~20fps).
     pub fn update(&mut self) {
+        self.clock.tick();
         let at = self.active_part;
 
         // Read base param values
@@ -988,6 +999,7 @@ impl UiState {
             prime_status: self.prime_status,
             audio,
             master_gr_db: crate::meter::MASTER_GR.read(),
+            clock: self.clock,
         }
     }
 
@@ -1024,7 +1036,11 @@ impl UiState {
                 },
                 renderer::look(f, f.focus),
                 self.prime_status,
-            ),
+            )
+            .animated(glyph::anim_key(
+                renderer::focus_glyph(f).animates(),
+                f.clock.frame(),
+            )),
             RegionKind::Viz => {
                 let (values, live) = self.renderer.viz_inputs(f);
                 // BigViz pages have no focus band: their viz carries the
