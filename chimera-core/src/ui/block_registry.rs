@@ -14,7 +14,7 @@ use crate::modulation::{MAX_MOD_SOURCES, ModSource};
 use crate::params::{DriveParams, EnvParams, FilterParams, FolderParams, OutParams, PitchParams};
 use crate::part::PartParams;
 use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2, FxFlow, FxNode, ParamSlot, VizType};
-use crate::ui::glyph::FocusGlyph;
+use crate::ui::glyph::{CompositeId, FocusGlyph};
 use crate::ui::page::{PageLayout, ValFmt};
 use crate::ui::theme_settings::ThemeSettings;
 
@@ -875,7 +875,26 @@ pub static DEMO_GLYPH_RINGS: BlockDef = BlockDef {
     ],
 };
 
-static DEMO_BLOCKS: [ChainBlock; 12] = [
+/// GLYPH: CUBE, the reverb cube: a SIZE, b TIME, c DAMP, d MIX, e GRIT,
+/// each emphasised when focused.
+pub static DEMO_GLYPH_CUBE: BlockDef = BlockDef {
+    id: 77,
+    name: "Glyph: Cube",
+    short: "CUB",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::param(BlockRef::Reverb, ReverbParams::SIZE).with_glyph(CUBE),
+        ParamSlot::param(BlockRef::Reverb, ReverbParams::TIME).with_glyph(CUBE),
+        ParamSlot::param(BlockRef::Reverb, ReverbParams::DAMPING).with_glyph(CUBE),
+        ParamSlot::param(BlockRef::Reverb, ReverbParams::MIX).with_glyph(CUBE),
+        ParamSlot::param(BlockRef::Reverb, ReverbParams::GRIT).with_glyph(CUBE),
+        EMPTY,
+    ],
+};
+const CUBE: FocusGlyph = FocusGlyph::Composite(CompositeId::ReverbCube);
+
+static DEMO_BLOCKS: [ChainBlock; 13] = [
     ChainBlock::page(&DEMO_WAVES),
     ChainBlock::page(&DEMO_SHAPES),
     ChainBlock::page(&DEMO_MOTION),
@@ -888,6 +907,7 @@ static DEMO_BLOCKS: [ChainBlock; 12] = [
     ChainBlock::page(&DEMO_GLYPH_XF),
     ChainBlock::page(&DEMO_GLYPH_BRAID),
     ChainBlock::page(&DEMO_GLYPH_RINGS),
+    ChainBlock::page(&DEMO_GLYPH_CUBE),
 ];
 
 pub static DEMO_CHAIN: ChainDef2 = ChainDef2 {
