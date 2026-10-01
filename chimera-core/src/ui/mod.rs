@@ -58,19 +58,6 @@ use renderer::Renderer;
 use theme_settings::ThemeSettings;
 use view::{SlotCtx, View};
 
-/// SYSTEM's last project is now `id`. A failed write leaves the toast to
-/// the project's note; the next save or load retries it.
-fn remember<S: Store>(
-    card: &mut Card,
-    store: &mut S,
-    sync: &mut SystemSync,
-    settings: &mut SystemSettings,
-    id: ProjectId,
-) {
-    settings.last_project = Some(id);
-    let _ = sync.write(card, store, settings);
-}
-
 /// MIX + turn on a route knob: the next of −127, 0, +127 that way.
 fn snap_amount(a: i8, delta: i8) -> i8 {
     match (delta > 0, a) {
@@ -278,7 +265,7 @@ impl UiState {
         if !sync.left_system(self.in_system(), s) {
             return;
         }
-        let r = sync.on_exit(card, store, s);
+        let r = sync.on_exit(card, store, s, self.project.meta().file());
         if r == Ok(Exit::Loaded) {
             self.theme = s.theme;
         }
@@ -342,7 +329,7 @@ impl UiState {
     ) {
         let n = project::save_project(card, store, &mut self.project, to);
         if let ProjectNote::Saved(_) = n {
-            remember(card, store, sync, settings, to.id);
+            self.remember(card, store, sync, settings, to);
         }
         self.show_note(n);
     }
@@ -368,10 +355,26 @@ impl UiState {
             self.project_replaced();
             // Only a file load sets it: NEW, loaded or fallen back to, has none.
             if let Some(f) = self.project.meta().file() {
-                remember(card, store, sync, settings, f.id);
+                self.remember(card, store, sync, settings, f);
             }
         }
         out.swap
+    }
+
+    /// `f` becomes its card's last project in SYSTEM; a card SYSTEM was
+    /// taken from brings its theme. A failed write leaves the toast to the
+    /// project's note: the next save, load or System exit retries it.
+    fn remember<S: Store>(
+        &mut self,
+        card: &mut Card,
+        store: &mut S,
+        sync: &mut SystemSync,
+        settings: &mut SystemSettings,
+        f: ProjectFile,
+    ) {
+        if sync.write(card, store, settings, f) == Ok(Exit::Loaded) {
+            self.theme = settings.theme;
+        }
     }
 
     /// Once a frame: the toast, `elapsed_ms` after the last frame.

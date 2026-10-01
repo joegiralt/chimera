@@ -24,7 +24,7 @@ pub use file::{
 };
 pub use frame::{
     Event, FORMAT_VERSION, FileError, FileKind, Framer, Generation, HEADER_LEN, Header, MAGIC,
-    ProjectId, Side, TRAILER_LEN, peek_header,
+    ProjectFile, ProjectId, Side, TRAILER_LEN, peek_header,
 };
 pub(crate) use record::records_crc;
 pub use record::{

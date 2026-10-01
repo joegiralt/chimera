@@ -11,9 +11,11 @@ use chimera_core::project::{
     ProjectSource, ProjectStatus, ReplaceGuard, Subject, TemplateCrc, project_crc, project_file,
     project_status, save_project,
 };
+use chimera_core::storage::Exit;
 use chimera_core::storage::{AbFile, Card, FileError, ProjectId, Side, SystemSettings, SystemSync};
 use chimera_core::ui::UiState;
 use chimera_core::ui::busy::{Toast, ToastStep};
+use chimera_core::ui::theme_settings::Bright;
 use chimera_hal::store::{ByteSink, Dir, FileName, ReadSink, Store, StoreError, VolumeId};
 use chimera_hal::testkit::MemStore;
 use common::codec_util::encode_project;
@@ -81,8 +83,10 @@ fn boot_loads_the_last_project() {
     let (mut p, _) = full();
     put_project(&mut s, &mut p, 2);
     let mut b = boot_system(&mut s);
-    b.settings.last_project = Some(id(2));
-    b.sync.write(&mut b.card, &mut s, &b.settings).unwrap();
+    let f = at(&mut s, 2);
+    b.sync
+        .write(&mut b.card, &mut s, &mut b.settings, f)
+        .unwrap();
 
     let mut b = boot_system(&mut s);
     assert_eq!(b.settings.last_project, Some(id(2)));
@@ -258,7 +262,15 @@ fn a_failed_system_write_keeps_the_saved_toast() {
         ProjectStatus::Saved
     );
     assert_eq!(last_on_card(&mut s.0), None);
-    assert_eq!(b.settings.last_project, Some(id(3)), "retried next time");
+    assert_eq!(b.settings.last_project, None, "RAM mirrors the card");
+
+    // Retried at the next System exit, with nothing else changed.
+    let mut s = s.0;
+    b.ui.nav.chain_id = chimera_core::ui::chain::ChainId::System;
+    b.ui.sync_system(&mut b.sync, &mut b.card, &mut s, &mut b.settings);
+    b.ui.nav.chain_id = chimera_core::ui::chain::ChainId::Part(0);
+    b.ui.sync_system(&mut b.sync, &mut b.card, &mut s, &mut b.settings);
+    assert_eq!(last_on_card(&mut s), Some(id(3)));
 }
 
 #[test]
@@ -430,4 +442,240 @@ impl Store for NoSystemWrites {
     fn make_dir(&mut self, vol: VolumeId, dir: Dir) -> Result<(), StoreError> {
         self.0.make_dir(vol, dir)
     }
+}
+
+/// Boot on the loaded project's own Part: its engine, page and values.
+#[test]
+fn boot_shows_the_loaded_part() {
+    let mut s = MemStore::new(1);
+    let (mut p, _) = modal_project();
+    put_project(&mut s, &mut p, 4);
+    let mut b = boot_system(&mut s);
+    let f = at(&mut s, 4);
+    b.sync
+        .write(&mut b.card, &mut s, &mut b.settings, f)
+        .unwrap();
+    let mut b = boot_system(&mut s);
+    b.ui.boot_project(&mut b.card, &mut s, b.settings.last_project);
+    assert_eq!(b.ui.nav.engine, EngineType::Modal);
+    let now = shown(&b.ui);
+    for _ in 0..500 {
+        b.ui.update();
+    }
+    let settled = shown(&b.ui);
+    for i in 0..6 {
+        assert!((now[i] - settled[i]).abs() < 1e-4, "slot {i}");
+    }
+}
+
+/// A card whose SYSTEM holds the owner's theme (BRIGHT 40), and no last
+/// project.
+fn owner_card() -> (MemStore, SystemSettings) {
+    let mut s = MemStore::new(1);
+    let mut card = Card::new();
+    let (mut sync, mut set, _) = SystemSync::boot(&mut card, &mut s);
+    set.theme.bright = Bright::new(40);
+    assert_eq!(
+        sync.on_exit(&mut card, &mut s, &mut set, None),
+        Ok(Exit::Wrote)
+    );
+    (s, set)
+}
+
+fn system_on(s: &mut impl Store) -> SystemSettings {
+    SystemSync::boot(&mut Card::new(), s).1
+}
+
+/// Booted with no card, then the owner's card goes in: a save keeps its
+/// theme, adds the last project, and the UI takes the theme.
+#[test]
+fn a_save_after_a_late_card_keeps_its_theme() {
+    let (mut s, owner) = owner_card();
+    s.eject();
+    let mut card = Card::new();
+    let (mut sync, mut set, _) = SystemSync::boot(&mut card, &mut s);
+    s.insert();
+    let mut ui = Box::new(UiState::new());
+    ui.project_mut().edit_fx().delay.mix = 0.8;
+    let f = at(&mut s, 3);
+    ui.save_project(&mut card, &mut s, &mut sync, &mut set, f);
+    let now = system_on(&mut s);
+    assert_eq!((now.theme, now.last_project), (owner.theme, Some(id(3))));
+    assert_eq!(ui.theme(), owner.theme, "the card's theme applies");
+    assert_eq!(set, now);
+}
+
+/// SYSTEM reads time out until `.1` is set.
+struct Flaky(MemStore, bool);
+
+impl Store for Flaky {
+    fn mount(&mut self) -> Result<VolumeId, StoreError> {
+        self.0.mount()
+    }
+
+    fn list(
+        &mut self,
+        v: VolumeId,
+        d: Dir,
+        f: &mut dyn FnMut(FileName, u32),
+    ) -> Result<(), StoreError> {
+        self.0.list(v, d, f)
+    }
+
+    fn read(
+        &mut self,
+        v: VolumeId,
+        file: FileName,
+        sink: &mut dyn ReadSink,
+    ) -> Result<(), StoreError> {
+        if !self.1
+            && [Side::A, Side::B]
+                .map(|s| AbFile::SYSTEM.side(s))
+                .contains(&file)
+        {
+            return Err(StoreError::Timeout);
+        }
+        self.0.read(v, file, sink)
+    }
+
+    fn write(
+        &mut self,
+        v: VolumeId,
+        file: FileName,
+        body: &mut dyn FnMut(&mut dyn ByteSink) -> Result<(), StoreError>,
+    ) -> Result<u32, StoreError> {
+        self.0.write(v, file, body)
+    }
+
+    fn delete(&mut self, v: VolumeId, f: FileName) -> Result<(), StoreError> {
+        self.0.delete(v, f)
+    }
+
+    fn make_dir(&mut self, v: VolumeId, d: Dir) -> Result<(), StoreError> {
+        self.0.make_dir(v, d)
+    }
+}
+
+/// SYSTEM unread at boot (a timeout), then a save: the card's theme
+/// stays, whether the card reads by then or not.
+#[test]
+fn a_save_after_an_unread_system_keeps_its_theme() {
+    for reads_by_then in [true, false] {
+        let (mem, owner) = owner_card();
+        let mut s = Flaky(mem, false);
+        let mut card = Card::new();
+        let (mut sync, mut set, _) = SystemSync::boot(&mut card, &mut s);
+        s.1 = reads_by_then;
+        let mut ui = Box::new(UiState::new());
+        ui.project_mut().edit_fx().delay.mix = 0.8;
+        let f = at(&mut s, 3);
+        ui.save_project(&mut card, &mut s, &mut sync, &mut set, f);
+        assert_eq!(ui.step_toast(0), show("SAVED"), "the project landed");
+        let now = system_on(&mut s.0);
+        assert_eq!(now.theme, owner.theme, "reads: {reads_by_then}");
+        let last = reads_by_then.then_some(id(3));
+        assert_eq!(now.last_project, last, "reads: {reads_by_then}");
+    }
+}
+
+/// The write failed, then System is entered and left with nothing
+/// changed: the card's SYSTEM is taken, not overwritten with defaults,
+/// and the last project still lands.
+#[test]
+fn a_failed_write_then_an_idle_system_exit_keeps_the_theme() {
+    let (mem, owner) = owner_card();
+    let mut s = Flaky(mem, false);
+    let mut card = Card::new();
+    let (mut sync, mut set, _) = SystemSync::boot(&mut card, &mut s);
+    let mut ui = Box::new(UiState::new());
+    ui.project_mut().edit_fx().delay.mix = 0.8;
+    let f = at(&mut s, 3);
+    ui.save_project(&mut card, &mut s, &mut sync, &mut set, f);
+    s.1 = true;
+    ui.nav.chain_id = chimera_core::ui::chain::ChainId::System;
+    ui.sync_system(&mut sync, &mut card, &mut s, &mut set);
+    ui.nav.chain_id = chimera_core::ui::chain::ChainId::Part(0);
+    ui.sync_system(&mut sync, &mut card, &mut s, &mut set);
+    let now = system_on(&mut s.0);
+    assert_eq!((now.theme, now.last_project), (owner.theme, Some(id(3))));
+    assert_eq!(ui.theme(), owner.theme);
+}
+
+/// SYSTEM's last project names a project on that card only: P3 saved on
+/// card A never becomes card B's last project, so B doesn't boot its own,
+/// unrelated P0000003.
+#[test]
+fn the_last_project_stays_on_its_card() {
+    let mut s = MemStore::new(1);
+    let mut b = boot_system(&mut s);
+    b.ui.project_mut().edit_fx().delay.mix = 0.8;
+    let fa = at(&mut s, 3);
+    b.ui.save_project(&mut b.card, &mut s, &mut b.sync, &mut b.settings, fa);
+    assert_eq!(system_on(&mut s).last_project, Some(id(3)));
+
+    // Card B: its own P0000003 and a SYSTEM naming P0000007.
+    let mut card_b = MemStore::new(2);
+    let (mut other, _) = full();
+    put_project(&mut card_b, &mut other, 3);
+    {
+        let mut c = Card::new();
+        let (mut sync, mut set, _) = SystemSync::boot(&mut c, &mut card_b);
+        let f = at(&mut card_b, 7);
+        sync.write(&mut c, &mut card_b, &mut set, f).unwrap();
+    }
+    let mut a = std::mem::replace(&mut s, card_b);
+
+    // A theme change on B, then leaving System, writes B's SYSTEM.
+    b.ui.nav.chain_id = chimera_core::ui::chain::ChainId::System;
+    b.ui.sync_system(&mut b.sync, &mut b.card, &mut s, &mut b.settings);
+    let mut t = b.ui.theme();
+    t.bright = Bright::new(55);
+    b.ui.set_theme(t);
+    b.ui.nav.chain_id = chimera_core::ui::chain::ChainId::Part(0);
+    b.ui.sync_system(&mut b.sync, &mut b.card, &mut s, &mut b.settings);
+    let on_b = system_on(&mut s);
+    assert_eq!(on_b.theme, t, "B took the theme");
+    assert_eq!(
+        on_b.last_project,
+        Some(id(7)),
+        "B keeps its own last project"
+    );
+
+    // A save of A's project while B is in is refused, and SYSTEM's write
+    // with it: B's last project is still its own.
+    b.ui.save_project(&mut b.card, &mut s, &mut b.sync, &mut b.settings, fa);
+    assert_eq!(system_on(&mut s).last_project, Some(id(7)));
+    // Bound by hand to A's card, a write on B does nothing, not even
+    // RAM's theme.
+    b.settings.theme.bright = Bright::new(60);
+    assert_eq!(
+        b.sync.write(&mut b.card, &mut s, &mut b.settings, fa),
+        Ok(Exit::Unchanged)
+    );
+    assert_eq!(system_on(&mut s), on_b);
+
+    // Back on A, A's SYSTEM still names P3.
+    std::mem::swap(&mut s, &mut a);
+    assert_eq!(system_on(&mut s).last_project, Some(id(3)));
+}
+
+/// A save puts the last project on a card with no SYSTEM; the theme is
+/// still the untouched defaults, so a card swapped in after keeps its own
+/// theme when System is left.
+#[test]
+fn the_last_project_is_no_theme_change() {
+    let mut s = MemStore::new(5);
+    let mut b = boot_system(&mut s);
+    b.ui.project_mut().edit_fx().delay.mix = 0.8;
+    let f = at(&mut s, 3);
+    b.ui.save_project(&mut b.card, &mut s, &mut b.sync, &mut b.settings, f);
+    assert_eq!(b.settings.last_project, Some(id(3)));
+
+    let (mut s, owner) = owner_card();
+    b.ui.nav.chain_id = chimera_core::ui::chain::ChainId::System;
+    b.ui.sync_system(&mut b.sync, &mut b.card, &mut s, &mut b.settings);
+    b.ui.nav.chain_id = chimera_core::ui::chain::ChainId::Part(0);
+    b.ui.sync_system(&mut b.sync, &mut b.card, &mut s, &mut b.settings);
+    assert_eq!(system_on(&mut s), owner, "the owner's card is untouched");
+    assert_eq!(b.ui.theme(), owner.theme, "and its theme applies");
 }

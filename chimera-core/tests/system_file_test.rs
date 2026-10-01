@@ -5,7 +5,7 @@ mod common;
 
 use chimera_core::storage::{
     AbFile, BootNote, Card, Exit, ExitPlan, FileError, LoadError, ProjectId, Side, SyncError,
-    SystemSettings, SystemSync, exit_plan,
+    SystemCheck, SystemSettings, SystemSync, encode_system, exit_plan, save_ab,
 };
 use chimera_core::ui::theme_settings::{Accent, Black, Bright, Gamma, ThemeSettings};
 use chimera_hal::store::{ByteSink, Dir, FileName, ReadSink, Store, StoreError, VolumeId};
@@ -55,11 +55,22 @@ fn get<S: Store>(s: &mut S, side: Side) -> Vec<u8> {
     c.0
 }
 
-/// `write` from a fresh boot on `s`.
+/// `want` as SYSTEM's next generation on `s`, written as it stands.
 fn save(s: &mut MemStore, want: &SystemSettings) {
-    let mut card = Card::new();
-    let (mut sync, ..) = SystemSync::boot(&mut card, s);
-    sync.write(&mut card, s, want).unwrap();
+    Card::new()
+        .run(s, |st, r| {
+            st.make_dir(r.volume(), Dir::Chimera)?;
+            save_ab(
+                st,
+                r,
+                AbFile::SYSTEM,
+                &mut SystemCheck::new(),
+                None,
+                &mut |w| encode_system(want, w),
+            )
+        })
+        .and_then(|o| o.result)
+        .unwrap();
 }
 
 fn boot<S: Store>(s: &mut S) -> (SystemSettings, Option<BootNote>, Card) {
@@ -81,6 +92,7 @@ fn round_trip() {
         last_project: None,
         ..settings()
     };
+    let mut s = MemStore::new(2);
     save(&mut s, &none);
     assert_eq!(boot(&mut s).0, none);
 }
@@ -360,7 +372,7 @@ fn same_card_writes_only_a_change() {
     let before = sides(&mut s);
     assert!(visit(&mut sync, &cur));
     assert_eq!(
-        sync.on_exit(&mut card, &mut s, &mut cur),
+        sync.on_exit(&mut card, &mut s, &mut cur, None),
         Ok(Exit::Unchanged)
     );
     assert_eq!(sides(&mut s), before, "no change, no write");
@@ -368,13 +380,16 @@ fn same_card_writes_only_a_change() {
     assert!(!sync.left_system(true, &cur));
     cur.theme.bright = Bright::new(90);
     assert!(sync.left_system(false, &cur));
-    assert_eq!(sync.on_exit(&mut card, &mut s, &mut cur), Ok(Exit::Wrote));
+    assert_eq!(
+        sync.on_exit(&mut card, &mut s, &mut cur, None),
+        Ok(Exit::Wrote)
+    );
     assert_eq!(boot(&mut s).0, cur);
 
     let before = sides(&mut s);
     assert!(visit(&mut sync, &cur));
     assert_eq!(
-        sync.on_exit(&mut card, &mut s, &mut cur),
+        sync.on_exit(&mut card, &mut s, &mut cur, None),
         Ok(Exit::Unchanged)
     );
     assert_eq!(
@@ -401,19 +416,22 @@ fn late_card_loads_its_system() {
     s.insert();
     let before = sides(&mut s);
     assert!(visit(&mut sync, &cur));
-    assert_eq!(sync.on_exit(&mut card, &mut s, &mut cur), Ok(Exit::Loaded));
+    assert_eq!(
+        sync.on_exit(&mut card, &mut s, &mut cur, None),
+        Ok(Exit::Loaded)
+    );
     assert_eq!(sides(&mut s), before, "the card's SYSTEM is untouched");
     assert_eq!(cur, settings(), "RAM holds the card's");
 
     // Loaded from this card: no change is no write.
     assert!(visit(&mut sync, &cur));
     assert_eq!(
-        sync.on_exit(&mut card, &mut s, &mut cur),
+        sync.on_exit(&mut card, &mut s, &mut cur, None),
         Ok(Exit::Unchanged)
     );
 }
 
-/// Loaded from card A, then a fresh card B: A's settings go to B.
+/// Loaded from card A, then a fresh card B: A's theme goes to B.
 #[test]
 fn swap_writes_to_the_new_card() {
     let mut s = MemStore::new(1);
@@ -423,9 +441,17 @@ fn swap_writes_to_the_new_card() {
 
     s.swap(2);
     assert!(visit(&mut sync, &cur));
-    assert_eq!(sync.on_exit(&mut card, &mut s, &mut cur), Ok(Exit::Wrote));
-    assert_eq!(cur, settings());
-    assert_eq!(boot(&mut s), (settings(), None, card));
+    assert_eq!(
+        sync.on_exit(&mut card, &mut s, &mut cur, None),
+        Ok(Exit::Wrote)
+    );
+    // A's last project names a file on A: B keeps its own (none).
+    let on_b = SystemSettings {
+        last_project: None,
+        ..settings()
+    };
+    assert_eq!(cur, on_b);
+    assert_eq!(boot(&mut s), (on_b, None, card));
 }
 
 /// A read that fails at boot leaves the defaults untouched: leaving System
@@ -446,14 +472,20 @@ fn transient_boot_error_writes_nothing() {
     );
 
     assert!(visit(&mut sync, &cur));
-    assert_eq!(sync.on_exit(&mut card, &mut s, &mut cur), Ok(Exit::Loaded));
+    assert_eq!(
+        sync.on_exit(&mut card, &mut s, &mut cur, None),
+        Ok(Exit::Loaded)
+    );
     assert_eq!(sides(&mut s.inner), before, "nothing written");
     assert_eq!(cur, settings());
 
     assert!(!sync.left_system(true, &cur));
     cur.theme.black = Black::new(4);
     assert!(sync.left_system(false, &cur));
-    assert_eq!(sync.on_exit(&mut card, &mut s, &mut cur), Ok(Exit::Wrote));
+    assert_eq!(
+        sync.on_exit(&mut card, &mut s, &mut cur, None),
+        Ok(Exit::Wrote)
+    );
     assert_eq!(boot(&mut s.inner).0, cur);
 }
 
@@ -474,7 +506,7 @@ fn unreadable_card_with_untouched_defaults_writes_nothing() {
     let (mut sync, mut cur, _) = SystemSync::boot(&mut card, &mut s);
     assert!(visit(&mut sync, &cur));
     assert_eq!(
-        sync.on_exit(&mut card, &mut s, &mut cur),
+        sync.on_exit(&mut card, &mut s, &mut cur, None),
         Err(SyncError::File(FileError::BadCrc))
     );
     assert_eq!(sides(&mut s), before);
@@ -516,7 +548,7 @@ fn newer_firmware_system_is_never_written() {
             let want = cur;
             assert!(sync.left_system(false, &cur));
             assert_eq!(
-                sync.on_exit(&mut card, &mut s, &mut cur),
+                sync.on_exit(&mut card, &mut s, &mut cur, None),
                 nnf,
                 "{shape} {change}"
             );
@@ -534,11 +566,14 @@ fn no_file_boot_creates_on_first_exit() {
     let (mut sync, mut cur, note) = SystemSync::boot(&mut card, &mut s);
     assert_eq!(note, Some(BootNote::NoFile));
     assert!(visit(&mut sync, &cur));
-    assert_eq!(sync.on_exit(&mut card, &mut s, &mut cur), Ok(Exit::Wrote));
+    assert_eq!(
+        sync.on_exit(&mut card, &mut s, &mut cur, None),
+        Ok(Exit::Wrote)
+    );
     assert_eq!(boot(&mut s), (SystemSettings::DEFAULT, None, card));
     assert!(visit(&mut sync, &cur));
     assert_eq!(
-        sync.on_exit(&mut card, &mut s, &mut cur),
+        sync.on_exit(&mut card, &mut s, &mut cur, None),
         Ok(Exit::Unchanged)
     );
 }
@@ -558,8 +593,16 @@ fn a_reverted_change_is_still_a_change() {
     assert!(sync.left_system(false, &cur));
 
     s.insert();
-    assert_eq!(sync.on_exit(&mut card, &mut s, &mut cur), Ok(Exit::Wrote));
-    assert_eq!(boot(&mut s).0, SystemSettings::DEFAULT);
+    assert_eq!(
+        sync.on_exit(&mut card, &mut s, &mut cur, None),
+        Ok(Exit::Wrote)
+    );
+    // The card keeps its own last project.
+    let want = SystemSettings {
+        last_project: settings().last_project,
+        ..SystemSettings::DEFAULT
+    };
+    assert_eq!(boot(&mut s).0, want);
 }
 
 #[test]
@@ -604,7 +647,7 @@ fn no_card_exit_tries_once() {
 
     assert!(visit(&mut sync, &cur), "the exit edge");
     assert_eq!(
-        sync.on_exit(&mut card, &mut s, &mut cur),
+        sync.on_exit(&mut card, &mut s, &mut cur, None),
         Err(SyncError::Store(StoreError::NoCard))
     );
     assert_eq!(card, Card::Absent);
@@ -615,7 +658,10 @@ fn no_card_exit_tries_once() {
 
     // The card back: that exit creates the file.
     s.insert();
-    assert_eq!(sync.on_exit(&mut card, &mut s, &mut cur), Ok(Exit::Wrote));
+    assert_eq!(
+        sync.on_exit(&mut card, &mut s, &mut cur, None),
+        Ok(Exit::Wrote)
+    );
     assert!(matches!(card, Card::Ready(_)), "{card:?}");
     assert_eq!(boot(&mut s), (cur, None, card));
 }
