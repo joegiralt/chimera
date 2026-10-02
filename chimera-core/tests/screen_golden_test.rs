@@ -14,6 +14,8 @@ use screen::*;
 // Re-recorded for ADR 0057: every Part and mixer header reads
 // `PART n · SOUND` or `· MIX`; the mixer recipes open on SENDS. The Algo
 // screens again for ADR 0063: INIT's VOL 45 and RR 5.
+// SETTINGS crumbs again for ORBIT (plan Task 10): they always clear its
+// beat dot, so three paths drop their first part.
 const GOLDENS: &[(&str, u64)] = &[
     ("engine_algo", 0x29fa1ef579c4a0e7),
     ("algo_alg", 0xb73321ba103c1886),
@@ -99,12 +101,12 @@ const GOLDENS: &[(&str, u64)] = &[
     ("mod_matrix_wide", 0xca78c74fca4ac959),
     ("sound_browser", 0x1d1ac95bdfaca72b),
     // Re-recorded: a fresh project's footer drops NEW (#286).
-    ("settings_personal_theme", 0x2158e1935828c468),
-    ("settings_system_diag_aud_load", 0x72f498c93e0f22f6),
+    ("settings_personal_theme", 0x4ceb975ee846afcc),
+    ("settings_system_diag_aud_load", 0x0d5edcdc4826225e),
     ("settings_top", 0xb8200119c8d8b837),
     ("settings_load", 0xbee3b127e748ef17),
     ("settings_prompt_load", 0xc47d45b862dea1e3),
-    ("settings_naming", 0xe963e855baf239a6),
+    ("settings_naming", 0x3ad617885a99ddf2),
     // ORBIT's RHYTHM, CHRD and CUSTOM (plan Task 9); Task 10's header,
     // `SCENE n`, and the beat dot on the playing ones.
     ("orbit_rhythm", 0xd4f227344f76861c),

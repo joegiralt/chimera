@@ -78,6 +78,17 @@ pub struct Frame<'a> {
     pub orbit: OrbitFrame<'a>,
 }
 
+impl Frame<'_> {
+    /// What the header shows beside its words: the load and the dots.
+    pub fn header_status(&self) -> components::HeaderStatus {
+        components::HeaderStatus {
+            sounding: self.sounding,
+            load_pct: self.perf.audio_load_pct,
+            orbit_dot: self.orbit_dot,
+        }
+    }
+}
+
 /// Full-screen renderer. Composites header, visualization, parameters, and dungeon map.
 pub struct Renderer {
     /// Animated display values for the 6 encoders (normalized 0..1).
@@ -413,7 +424,7 @@ impl Renderer {
             }
             RegionKind::Crumbs => {
                 if let Some(b) = &f.settings {
-                    b.draw_crumbs(display, f.sounding, f.orbit_dot)
+                    b.draw_crumbs(display, f.header_status())
                 }
             }
             RegionKind::List => {
@@ -615,9 +626,7 @@ impl Renderer {
             h.context.as_str(),
             h.name.as_str(),
             h.warn,
-            f.sounding,
-            f.perf.audio_load_pct,
-            f.orbit_dot,
+            f.header_status(),
         );
     }
 

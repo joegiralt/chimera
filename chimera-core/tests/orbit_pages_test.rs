@@ -381,6 +381,7 @@ fn header_dot_pulses() {
     use chimera_core::orbit::runner::OrbitView;
     use chimera_core::ui::animation::UiTick;
     use chimera_core::ui::perf::PerfStats;
+    use chimera_core::ui::region::RegionKind;
     use screen::{Fb, audio_fixture, orbit_view, scope_fixture};
     const LOAD: PerfStats = PerfStats {
         frame_us: 0,
@@ -411,33 +412,42 @@ fn header_dot_pulses() {
         ui.set_orbit_view(&OrbitView::default());
         screen::settle(&mut ui);
         let mut dirty = Fb::new();
+        // The band the dots are in: a page's header, SETTINGS' crumbs.
+        let head = |ui: &UiState| {
+            ui.drawn_key(RegionKind::Header)
+                .or(ui.drawn_key(RegionKind::Crumbs))
+                .expect("a header band")
+        };
         let mut step = |ui: &mut UiState, what: &str| {
             ui.update(UiTick::for_test());
             ui.render_dirty_with_audio(&mut dirty, &LOAD, Some(&audio_fixture()), &scope_fixture());
             let fb = full(ui);
             assert!(dirty.px == fb.px, "{name}: {what}, dirty");
-            fb
+            (fb, head(ui))
         };
-        let stopped = step(&mut ui, "stopped");
+        let (stopped, _) = step(&mut ui, "stopped");
         for dx in -r..=r {
             assert_eq!(stopped.at(x + dx, y), theme::BG, "{name}: stopped, no dot");
         }
 
         ui.set_orbit_view(&orbit_view(0.0));
-        let first = step(&mut ui, "the beat");
+        let (first, k1) = step(&mut ui, "the beat");
         assert_eq!(first.at(x, y), theme::ACCENT, "{name}: filled");
         assert_eq!(first.at(x + 2, y), theme::ACCENT, "{name}: filled");
-        let second = step(&mut ui, "fading");
+        let (second, k2) = step(&mut ui, "fading");
         assert_eq!(second.at(x, y), theme::ACCENT, "{name}: part filled");
         assert_eq!(second.at(x + 2, y), theme::BG, "{name}: part filled");
-        let third = step(&mut ui, "faded");
+        let (third, k3) = step(&mut ui, "faded");
         assert_eq!(third.at(x, y), theme::BG, "{name}: an outline");
         assert_eq!(third.at(x + r, y), theme::ACCENT, "{name}: an outline");
-        let still = step(&mut ui, "between beats");
+        let (still, k4) = step(&mut ui, "between beats");
         assert!(still.px == third.px, "{name}: still between beats");
+        // The band redraws as the dot fades, and not between beats.
+        assert!(k1 != k2 && k2 != k3, "{name}: each fade step redraws");
+        assert_eq!(k3, k4, "{name}: the band rests between beats");
 
         ui.set_orbit_view(&orbit_view(0.25));
-        let next = step(&mut ui, "the next beat");
+        let (next, _) = step(&mut ui, "the next beat");
         assert_eq!(next.at(x + 2, y), theme::ACCENT, "{name}: the next beat");
 
         if cpu {

@@ -1983,11 +1983,9 @@ impl UiState {
                 chain,
                 node,
                 sub,
-                f.perf.audio_load_pct,
-                f.sounding,
                 renderer::title_type(f),
                 renderer::header_out(f) as u8,
-                f.orbit_dot,
+                f.header_status(),
             ),
             RegionKind::Focus if f.def.layout == PageLayout::Matrix => RegionData::route(
                 self.matrix_state.sel_row as u8,
@@ -2054,7 +2052,7 @@ impl UiState {
             .keyed(self.matrix_state.rev, renderer::inert(f)),
             RegionKind::Crumbs | RegionKind::List | RegionKind::Footer => {
                 let key = f.settings.map_or(0, |b| match kind {
-                    RegionKind::Crumbs => b.crumbs_key(f.sounding, f.orbit_dot),
+                    RegionKind::Crumbs => b.crumbs_key(f.header_status()),
                     RegionKind::List => b.list_key(),
                     _ => b.footer_key(),
                 });

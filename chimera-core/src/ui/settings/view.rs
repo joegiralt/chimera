@@ -19,6 +19,7 @@ use crate::name::{ProjectName, SoundName};
 use crate::project::{
     Line, Origin, PartId, PartStatus, Project, ProjectFile, ProjectStatus, SlotId, part_status,
 };
+use crate::ui::components::HeaderStatus;
 use crate::ui::draw;
 use crate::ui::fmt::FmtBuf;
 use crate::ui::nav::{Column, SettingsAt};
@@ -793,13 +794,14 @@ impl Bands<'_> {
         legend(on, self.at.path().is_empty())
     }
 
-    pub fn crumbs_key(&self, sounding: bool, orbit_dot: Option<u8>) -> u32 {
+    /// The breadcrumb and its dots; not the load, which it never shows.
+    pub fn crumbs_key(&self, s: HeaderStatus) -> u32 {
         let head = [
             self.at.path().len() as u8,
             self.active.index() as u8,
-            sounding as u8,
-            orbit_dot.is_some() as u8,
-            orbit_dot.unwrap_or(0),
+            s.sounding as u8,
+            s.orbit_dot.is_some() as u8,
+            s.orbit_dot.unwrap_or(0),
         ];
         settings_key(&[self.at.path(), &head, self.naming_crumb().as_bytes()])
     }
@@ -873,21 +875,10 @@ impl Bands<'_> {
         ])
     }
 
-    /// The breadcrumb, and the dots where the header has them: it makes
-    /// room for ORBIT's while it shows.
-    pub fn draw_crumbs<D: DrawTarget<Color = Rgb565>>(
-        &self,
-        d: &mut D,
-        sounding: bool,
-        orbit_dot: Option<u8>,
-    ) {
-        let c = self.crumbs();
-        let c = match orbit_dot {
-            Some(_) => c.within(theme::CRUMBS_ORBIT_W),
-            None => c,
-        };
-        draw_crumbs(d, &c);
-        crate::ui::components::header_dots(d, sounding, orbit_dot);
+    /// The breadcrumb, and the dots where the header has them.
+    pub fn draw_crumbs<D: DrawTarget<Color = Rgb565>>(&self, d: &mut D, s: HeaderStatus) {
+        draw_crumbs(d, &self.crumbs());
+        crate::ui::components::header_dots(d, s);
     }
 
     pub fn draw_list<D: DrawTarget<Color = Rgb565>>(&self, d: &mut D) {

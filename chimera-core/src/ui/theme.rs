@@ -156,9 +156,16 @@ pub const BRANCH_LINE_HEIGHT: i32 = 10;
 
 /// SETTINGS (spec § Screens): breadcrumb, list and footer, in its own look.
 /// The breadcrumb's width before it drops leading parts: it clears the
-/// sounding dot, and while ORBIT runs its beat dot too.
-pub const CRUMBS_W: i32 = HEADER_DOT_X - HEADER_DOT_R - 4 - MARGIN_X;
-pub const CRUMBS_ORBIT_W: i32 = ORBIT_DOT_X - HEADER_DOT_R - 4 - MARGIN_X;
+/// dots. With ORBIT built, always its beat dot too, so the crumbs never
+/// move when it starts or stops.
+pub const CRUMBS_W: i32 = CRUMBS_RIGHT - MARGIN_X;
+/// Where the breadcrumb must end.
+pub const CRUMBS_RIGHT: i32 = if cfg!(feature = "orbit") {
+    ORBIT_DOT_X
+} else {
+    HEADER_DOT_X
+} - HEADER_DOT_R
+    - 4;
 /// A list row's label, and the right edge of its note or `›`.
 pub const LIST_TEXT_X: i32 = 18;
 pub const LIST_RIGHT: i32 = 222;

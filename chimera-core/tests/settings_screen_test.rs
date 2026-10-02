@@ -154,14 +154,15 @@ fn a_leaf_ends_the_breadcrumb() {
     assert_eq!(about, "SETTINGS › SYSTEM › ABOUT");
     to_leaf(&mut ui, &["SYSTEM", "DIAGNOSTICS", "AUDIO LOAD"]);
     let (audio, k1) = crumbs(&mut ui);
-    assert_eq!(audio, ".. › SYSTEM › DIAG › AUD LOAD");
+    // The crumbs always clear ORBIT's beat dot.
+    assert_eq!(audio, ".. › DIAG › AUD LOAD");
     assert_ne!(k0, k1);
     // EDIT on a leaf steps nothing: the crumbs stay.
     feed(&mut ui, Input::press(ButtonId::Edit));
     assert_eq!(crumbs(&mut ui), (audio, k1));
 
     to_leaf(&mut ui, &["PERSONALIZE", "THEME"]);
-    assert_eq!(crumbs(&mut ui).0, "SETTINGS › PERSONAL › THEME");
+    assert_eq!(crumbs(&mut ui).0, ".. › PERSONAL › THEME");
 }
 
 #[test]
@@ -194,5 +195,55 @@ fn a_read_only_leaf_says_only_menu_back() {
         let mut ui = UiState::new();
         to_leaf(&mut ui, &["SYSTEM", "DIAGNOSTICS", "DEMO", "MTX"]);
         assert_eq!(ui.legend_for_test(), Some("A-F EDIT · MENU BACK"));
+    }
+}
+
+/// Every SETTINGS breadcrumb, NAMING's last part on it too, ends left of
+/// ORBIT's beat dot (`theme::CRUMBS_RIGHT`): `dropped` keeps it there
+/// however deep the path, so the crumbs never move with ORBIT's transport.
+#[test]
+fn every_breadcrumb_clears_the_dots() {
+    use chimera_core::ui::settings::tree::{Kind, rows};
+    use chimera_core::ui::settings::view::{Crumb, draw_crumbs};
+    use screen::W;
+    fn walk(path: &mut Vec<u8>, out: &mut Vec<Vec<u8>>) {
+        out.push(path.clone());
+        for (i, r) in rows(path).iter().enumerate() {
+            path.push(i as u8);
+            match r.kind {
+                Kind::List(_) => walk(path, out),
+                _ => out.push(path.clone()),
+            }
+            path.pop();
+        }
+    }
+    let mut paths = Vec::new();
+    walk(&mut Vec::new(), &mut paths);
+    assert!(paths.len() > 20, "{} paths", paths.len());
+    for path in &paths {
+        let base = Crumbs::of(path, PartId::ALL[5]);
+        // A crumb for each row from the top, and one for NAMING's.
+        let naming: &[&str] = if path.len() + 2 <= 6 {
+            &["RENAME", "SAVE AS"]
+        } else {
+            &[]
+        };
+        let ends = core::iter::once(None).chain(naming.iter().copied().map(Some));
+        for last in ends {
+            let mut c = base;
+            if let Some(n) = last {
+                c.push(Crumb::Name(n));
+            }
+            let mut fb = Fb::new();
+            draw_crumbs(&mut fb, &c);
+            let right = (0..W)
+                .rev()
+                .find(|&x| (0..theme::HEADER_BOTTOM as usize).any(|y| fb.px[y * W + x] != 0));
+            assert!(
+                right.is_some_and(|r| r as i32 <= theme::CRUMBS_RIGHT),
+                "{c}: ends at {right:?}, past {}",
+                theme::CRUMBS_RIGHT
+            );
+        }
     }
 }

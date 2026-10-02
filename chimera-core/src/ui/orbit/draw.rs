@@ -167,6 +167,7 @@ where
     let bars = c.bars.get();
     let mut line = FmtBuf::new();
     let plural = if bars == 1 { "" } else { "S" };
+    // Task 12: the clock's source, INT or MIDI, from the view.
     let _ = write!(
         line,
         "{} {} · {bars} BAR{plural} · {} INT",

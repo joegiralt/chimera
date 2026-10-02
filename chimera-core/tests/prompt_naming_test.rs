@@ -482,11 +482,12 @@ fn naming_ends_the_breadcrumb_with_its_crumb() {
     let mut ui = UiState::new();
     ui.rename_for_test(project_list(), None, "DUB-042");
     let crumbs = ui.crumbs().unwrap();
-    assert_eq!(crumbs.to_string(), "SETTINGS › PROJECT › RENAME");
-    // Task 11's SAVE AS, the widest third crumb, fits too.
+    // The crumbs clear ORBIT's beat dot, so SETTINGS drops behind `..`.
+    assert_eq!(crumbs.to_string(), ".. › PROJECT › RENAME");
+    // Task 11's SAVE AS, the widest third crumb, ends it the same way.
     let mut save_as = Crumbs::of(&[0], PartId::ALL[0]);
     save_as.push(Crumb::Name("SAVE AS"));
-    assert_eq!(save_as.to_string(), "SETTINGS › PROJECT › SAVE AS");
+    assert_eq!(save_as.to_string(), ".. › PROJECT › SAVE AS");
     tap(&mut ui, ButtonId::Menu);
     let crumbs = ui.crumbs().map(|c| c.to_string());
     assert_eq!(crumbs.as_deref(), Some("SETTINGS › PROJECT"));

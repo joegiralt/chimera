@@ -9,7 +9,7 @@ use chimera_core::ui::UiState;
 use chimera_core::ui::block_def::{BlockDef, ChainDef2};
 use chimera_core::ui::block_registry::ALGO_CHAIN;
 use chimera_core::ui::block_registry::MIXER_CHANNEL_CHAIN;
-use chimera_core::ui::components::{Head, header, header_fits, header_text};
+use chimera_core::ui::components::{Head, HeaderStatus, header, header_fits, header_text};
 use chimera_core::ui::dungeon_map::{self, node_x};
 use chimera_core::ui::nav::{Location, PageAt};
 use chimera_core::ui::perf::PerfStats;
@@ -91,7 +91,16 @@ fn header_names_context_and_page() {
 fn header_dot_shows_only_while_sounding_and_stays_in_the_band() {
     for sounding in [false, true] {
         let mut fb = Fb::new();
-        header(&mut fb, "PART 1", "WAVE", None, sounding, 0, None);
+        header(
+            &mut fb,
+            "PART 1",
+            "WAVE",
+            None,
+            HeaderStatus {
+                sounding,
+                ..HeaderStatus::default()
+            },
+        );
         assert_eq!(
             fb.at(theme::HEADER_DOT_X, theme::HEADER_DOT_Y) == theme::ACCENT,
             sounding
@@ -109,7 +118,16 @@ fn header_dot_shows_only_while_sounding_and_stays_in_the_band() {
 #[test]
 fn header_shows_audio_load_in_warning_colours() {
     let mut fb = Fb::new();
-    header(&mut fb, "PART 1", "WAVE", None, false, 85, None);
+    header(
+        &mut fb,
+        "PART 1",
+        "WAVE",
+        None,
+        HeaderStatus {
+            load_pct: 85,
+            ..HeaderStatus::default()
+        },
+    );
     let alert = (0..28)
         .flat_map(|y| (120..225).map(move |x| (x, y)))
         .any(|(x, y)| fb.at(x, y) == theme::ALERT);
@@ -196,9 +214,10 @@ fn the_out_warning_draws_in_warn_and_hides_the_load() {
         "PART 2 · MIX",
         "SENDS",
         Some("OUT P2"),
-        false,
-        50,
-        None,
+        HeaderStatus {
+            load_pct: 50,
+            ..HeaderStatus::default()
+        },
     );
     let warn = |fb: &Fb| {
         (0..28)

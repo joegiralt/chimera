@@ -5,7 +5,7 @@
 
 use crate::ui::PrimeStatus;
 use crate::ui::animation::AnimatedValue;
-use crate::ui::components::Look;
+use crate::ui::components::{HeaderStatus, Look};
 use crate::ui::page::{PageId, PageKey, PageLayout};
 use crate::ui::theme;
 
@@ -38,15 +38,12 @@ pub enum RegionData {
         chain_idx: u8,
         node_idx: u8,
         sub_page: u8,
-        /// Audio load shown in the header (0 = not measured).
-        load_pct: u8,
-        sounding: bool,
         /// The ENV title's TYPE suffix (`renderer::title_type`).
         title_type: u8,
         /// The Part's OUT, for its warning (`renderer::header_out`).
         out: u8,
-        /// ORBIT's beat dot: its fill while it runs.
-        orbit_dot: Option<u8>,
+        /// The load and the dots.
+        status: HeaderStatus,
     },
     /// The focus band: which slot, its animated value, and any pending
     /// prime-status message (issue #21) shown in the value's place.
@@ -126,26 +123,21 @@ pub enum RegionData {
 }
 
 impl RegionData {
-    #[allow(clippy::too_many_arguments)]
     pub fn header(
         chain_idx: u8,
         node_idx: u8,
         sub_page: u8,
-        load_pct: u8,
-        sounding: bool,
         title_type: u8,
         out: u8,
-        orbit_dot: Option<u8>,
+        status: HeaderStatus,
     ) -> Self {
         Self::Header {
             chain_idx,
             node_idx,
             sub_page,
-            load_pct,
-            sounding,
             title_type,
             out,
-            orbit_dot,
+            status,
         }
     }
 
@@ -259,11 +251,13 @@ impl RegionData {
             chain_idx: 255,
             node_idx: 255,
             sub_page: 255,
-            load_pct: u8::MAX,
-            sounding: false,
             title_type: u8::MAX,
             out: u8::MAX,
-            orbit_dot: None,
+            status: HeaderStatus {
+                sounding: false,
+                load_pct: u8::MAX,
+                orbit_dot: None,
+            },
         }
     }
 

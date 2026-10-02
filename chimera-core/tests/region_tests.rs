@@ -1,5 +1,6 @@
 use chimera_core::ui::animation::AnimatedValue;
 use chimera_core::ui::block_registry as reg;
+use chimera_core::ui::components::HeaderStatus;
 use chimera_core::ui::components::Look;
 use chimera_core::ui::page::{PageId, PageKey, PageLayout};
 use chimera_core::ui::region::{RegionData, RegionSet, quantize, quantize_values};
@@ -33,15 +34,15 @@ fn quantize_stability_tiny_jitter() {
 
 #[test]
 fn region_data_same_is_equal() {
-    let a = RegionData::header(0, 1, 2, 0, false, 0, 0, None);
-    let b = RegionData::header(0, 1, 2, 0, false, 0, 0, None);
+    let a = RegionData::header(0, 1, 2, 0, 0, HeaderStatus::default());
+    let b = RegionData::header(0, 1, 2, 0, 0, HeaderStatus::default());
     assert_eq!(a, b);
 }
 
 #[test]
 fn region_data_diff_is_not_equal() {
-    let a = RegionData::header(0, 1, 2, 0, false, 0, 0, None);
-    let b = RegionData::header(0, 1, 3, 0, false, 0, 0, None);
+    let a = RegionData::header(0, 1, 2, 0, 0, HeaderStatus::default());
+    let b = RegionData::header(0, 1, 3, 0, 0, HeaderStatus::default());
     assert_ne!(a, b);
 }
 
@@ -176,13 +177,13 @@ fn encoder_only_dirties_params_not_header() {
     let values_a = [500u16; 6];
     let values_b = [501, 500, 500, 500, 500, 500];
 
-    rs.regions[0].prev_data = RegionData::header(0, 0, 0, 0, false, 0, 0, None);
+    rs.regions[0].prev_data = RegionData::header(0, 0, 0, 0, 0, HeaderStatus::default());
     rs.regions[1].prev_data = RegionData::viz(page, values_a, 0);
     rs.regions[2].prev_data = RegionData::cells(page, values_a, 0, 0, [None; 6]);
     rs.regions[3].prev_data = RegionData::nav(0, 0, 0, 0, 0);
 
     let current = [
-        RegionData::header(0, 0, 0, 0, false, 0, 0, None),
+        RegionData::header(0, 0, 0, 0, 0, HeaderStatus::default()),
         RegionData::viz(page, values_b, 0),
         RegionData::cells(page, values_b, 0, 0, [None; 6]),
         RegionData::nav(0, 0, 0, 0, 0),
@@ -206,13 +207,13 @@ fn nav_change_dirties_header_and_nav() {
     let page = PageKey::Legacy(PageId::Demo(reg::DEMO_WAVES.id));
     let values = [500u16; 6];
 
-    rs.regions[0].prev_data = RegionData::header(0, 0, 0, 0, false, 0, 0, None);
+    rs.regions[0].prev_data = RegionData::header(0, 0, 0, 0, 0, HeaderStatus::default());
     rs.regions[1].prev_data = RegionData::viz(page, values, 0);
     rs.regions[2].prev_data = RegionData::cells(page, values, 0, 0, [None; 6]);
     rs.regions[3].prev_data = RegionData::nav(0, 0, 0, 0, 0);
 
     let current = [
-        RegionData::header(0, 1, 0, 0, false, 0, 0, None),
+        RegionData::header(0, 1, 0, 0, 0, HeaderStatus::default()),
         RegionData::viz(page, values, 0),
         RegionData::cells(page, values, 0, 0, [None; 6]),
         RegionData::nav(0, 1, 0, 0, 0),
@@ -236,13 +237,13 @@ fn no_change_means_no_dirty() {
     let page = PageKey::Legacy(PageId::Demo(reg::DEMO_WAVES.id));
     let values = [500u16; 6];
 
-    rs.regions[0].prev_data = RegionData::header(0, 0, 0, 0, false, 0, 0, None);
+    rs.regions[0].prev_data = RegionData::header(0, 0, 0, 0, 0, HeaderStatus::default());
     rs.regions[1].prev_data = RegionData::viz(page, values, 0);
     rs.regions[2].prev_data = RegionData::cells(page, values, 0, 0, [None; 6]);
     rs.regions[3].prev_data = RegionData::nav(0, 0, 0, 0, 0);
 
     let current = [
-        RegionData::header(0, 0, 0, 0, false, 0, 0, None),
+        RegionData::header(0, 0, 0, 0, 0, HeaderStatus::default()),
         RegionData::viz(page, values, 0),
         RegionData::cells(page, values, 0, 0, [None; 6]),
         RegionData::nav(0, 0, 0, 0, 0),

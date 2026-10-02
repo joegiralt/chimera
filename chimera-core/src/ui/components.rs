@@ -128,19 +128,22 @@ pub fn header_fits(h: &HeaderText) -> bool {
     header_end(h.context.as_str(), h.name.as_str()) + RIGHT_GAP <= right
 }
 
+/// What a header shows of the instrument beside its words.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct HeaderStatus {
+    /// The live output is above silence: the sounding dot.
+    pub sounding: bool,
+    /// Audio load (0 = not measured).
+    pub load_pct: u8,
+    /// ORBIT's beat dot: its fill while ORBIT runs.
+    pub orbit_dot: Option<u8>,
+}
+
 /// Header band (y 0..28): grey context label, bold name, the OUT warning
 /// or else the audio load when measured, and the dots (`header_dots`).
 /// The load moves left by one dot while ORBIT's shows.
-#[allow(clippy::too_many_arguments)]
-pub fn header<D>(
-    d: &mut D,
-    context: &str,
-    name: &str,
-    warn: Option<&str>,
-    sounding: bool,
-    load_pct: u8,
-    orbit_dot: Option<u8>,
-) where
+pub fn header<D>(d: &mut D, context: &str, name: &str, warn: Option<&str>, s: HeaderStatus)
+where
     D: DrawTarget<Color = Rgb565>,
 {
     let y = theme::HEADER_BASELINE;
@@ -173,17 +176,17 @@ pub fn header<D>(
             theme::WARN,
             theme::LABEL_TRACKING,
         );
-    } else if load_pct > 0 {
+    } else if s.load_pct > 0 {
         let mut buf = FmtBuf::new();
-        let _ = write!(buf, "CPU {}%", load_pct);
-        let color = match load_pct {
+        let _ = write!(buf, "CPU {}%", s.load_pct);
+        let color = match s.load_pct {
             81.. => theme::ALERT,
             61..=80 => theme::WARN,
             _ => theme::MID,
         };
         // The bench readout yields to a long page name.
         let right = HEADER_RIGHT
-            - if orbit_dot.is_some() {
+            - if s.orbit_dot.is_some() {
                 ORBIT_DOT_SHIFT
             } else {
                 0
@@ -193,22 +196,22 @@ pub fn header<D>(
             draw::text_right(d, &theme::FONT_LABEL, buf.as_str(), right, y, color, 0);
         }
     }
-    header_dots(d, sounding, orbit_dot);
+    header_dots(d, s);
 }
 
 /// The header's dots: the sounding dot, accent while the instrument
 /// sounds; left of it while ORBIT runs, its beat dot, an outline filled
-/// as far as `orbit_dot` (255 full, 0 an outline). Palette colours only,
+/// as far as `s.orbit_dot` (255 full, 0 an outline). Palette colours only,
 /// so the fill is a radius, not a shade.
-pub fn header_dots<D>(d: &mut D, sounding: bool, orbit_dot: Option<u8>)
+pub fn header_dots<D>(d: &mut D, s: HeaderStatus)
 where
     D: DrawTarget<Color = Rgb565>,
 {
     let (y, r) = (theme::HEADER_DOT_Y, theme::HEADER_DOT_R);
-    if sounding {
+    if s.sounding {
         draw::dot(d, theme::HEADER_DOT_X, y, r, theme::ACCENT);
     }
-    if let Some(fill) = orbit_dot {
+    if let Some(fill) = s.orbit_dot {
         let x = theme::ORBIT_DOT_X;
         draw::ring(d, x, y, r, theme::ACCENT, 1);
         let filled = (r * fill as i32 + 127) / 255;

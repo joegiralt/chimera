@@ -627,7 +627,6 @@ fn every_screen_renders() {
     }
 }
 
-/// Every SETTINGS frame's map band is its footer, drawn alone.
 /// The atlas writes ORB as its golden, `orbit_orb`: the ring 3 the atlas
 /// stands on, so the golden covers it and nothing is written twice.
 #[test]
@@ -647,6 +646,7 @@ fn orb_page_in_the_atlas() {
     assert_eq!(shot.ui().page_def().layout, PageLayout::BigViz);
 }
 
+/// Every SETTINGS frame's map band is its footer, drawn alone.
 #[test]
 fn atlas_settings_never_shows_the_map() {
     let leaves = atlas()
