@@ -21,6 +21,7 @@ use crate::hw::{
 use crate::in_place::{by_value, uninit_at};
 use crate::modulation::ModState;
 use crate::note_queue::{NoteEvent, NoteKind};
+use crate::orbit::RingIdx;
 use crate::params::ParamSnapshot;
 use crate::part::PartParams;
 use crate::perf::load::AudioStats;
@@ -339,6 +340,10 @@ pub struct Instrument {
     /// The MIDI channel each voice's note-on arrived on, so its note-off
     /// releases it even if the Part's channel changed meanwhile.
     note_channel: [MidiChannel; MAX_VOICES],
+    /// Who started each voice's note: a note-off releases only its own
+    /// origin's voices, so ORBIT's rings and a played key never release
+    /// one another.
+    note_origin: [NoteOrigin; MAX_VOICES],
     /// The Part whose Sound each voice renders: its slot's Part, except
     /// while another Part's sound fades out ahead of a waiting note.
     sounding: [u8; MAX_VOICES],
@@ -359,13 +364,20 @@ pub struct Instrument {
     clear_backlog: bool,
 }
 
+/// Who plays a note: the keys and MIDI, or one of ORBIT's rings.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NoteOrigin {
+    Live,
+    Orbit(RingIdx),
+}
+
 /// The string-line bytes Sympathetic note-ons may clear in one block (spec
 /// § 4.8): one worst-case note-on, so any one fits a fresh block. A
 /// note-on past it waits a block, as a stolen note does: a chord of
 /// worst-case slots starts a note a block, a typical one all at once.
 pub const SYM_CLEAR_BUDGET: usize = SYM_NOTE_ON_CLEAR_MAX;
 
-crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, sounding, waiting, buses, sends, mix, sample_rate, last_kind, clear_left, clear_backlog });
+crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, note_origin, sounding, waiting, buses, sends, mix, sample_rate, last_kind, clear_left, clear_backlog });
 
 const SYMPATHETIC: SlotKind = SlotKind::Modal(ResonatorMode::Sympathetic);
 
@@ -392,6 +404,7 @@ impl Instrument {
             SymPool::init_in_place(uninit_at(addr_of_mut!((*p).sym)));
             addr_of_mut!((*p).alloc).write(Allocator::new(budget));
             addr_of_mut!((*p).note_channel).write([MidiChannel::clamped(0); MAX_VOICES]);
+            addr_of_mut!((*p).note_origin).write([NoteOrigin::Live; MAX_VOICES]);
             addr_of_mut!((*p).sounding).write([0; MAX_VOICES]);
             addr_of_mut!((*p).waiting).write([None; MAX_VOICES]);
             addr_of_mut!((*p).buses).write([[0.0; BLOCK_SIZE]; MAX_PARTS]);
@@ -480,9 +493,15 @@ impl Instrument {
         &self.buses[part]
     }
 
-    /// Note-on: play on every Part listening on the channel. Note-off:
-    /// release the voices this channel started.
+    /// A played key or MIDI note: `handle_from` `NoteOrigin::Live`.
     pub fn handle(&mut self, ev: NoteEvent, shared: &AudioShared) {
+        self.handle_from(ev, shared, NoteOrigin::Live);
+    }
+
+    /// Note-on: play on every Part listening on the channel. Note-off:
+    /// release the voices this channel and `from` started. A Poly re-strike
+    /// takes back only `from`'s own voice of the key.
+    pub fn handle_from(&mut self, ev: NoteEvent, shared: &AudioShared, from: NoteOrigin) {
         match ev.kind {
             NoteKind::On(vel) => {
                 // Judge the note against this block's patches, not the last.
@@ -493,7 +512,11 @@ impl Instrument {
                     }
                     let (q, mode) = (p as u8, part.mix.mode);
                     let cost = Voice::cost(&part.params, &part.mod_state);
-                    let Some(v) = self.alloc.pick(q, mode, ev.note, cost, FxBus::COST) else {
+                    let origins = &self.note_origin;
+                    let Some(v) = self
+                        .alloc
+                        .pick_where(q, mode, ev.note, cost, FxBus::COST, |v| origins[v] == from)
+                    else {
                         self.alloc.refuse();
                         continue;
                     };
@@ -530,6 +553,7 @@ impl Instrument {
                         self.alloc.dropped_unheard();
                     }
                     self.note_channel[v] = ev.channel;
+                    self.note_origin[v] = from;
                 }
             }
             NoteKind::Off => {
@@ -537,7 +561,11 @@ impl Instrument {
                 // this note (one per layered Part), and no other.
                 for v in 0..MAX_VOICES {
                     let s = self.alloc.slots()[v];
-                    if s.held() && s.note() == Some(ev.note) && self.note_channel[v] == ev.channel {
+                    if s.held()
+                        && s.note() == Some(ev.note)
+                        && self.note_channel[v] == ev.channel
+                        && self.note_origin[v] == from
+                    {
                         self.alloc.release(v);
                         self.voices[v].note_off(&mut self.sym);
                     }
