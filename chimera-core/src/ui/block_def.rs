@@ -7,7 +7,8 @@ pub enum VizType {
     None,
     FilterResponse,
     Adsr,
-    Logo,
+    /// SYSTEM › ABOUT: the name and firmware; its cells are `about_page`'s.
+    About,
     /// IN → CHR → DLY → REV → OUT, lighting this page's part of it.
     EffectsFlow(FxFlow),
     MixerLevels,
@@ -247,7 +248,7 @@ impl ChainBlock {
         }
     }
 
-    pub fn sub_page_count(&self) -> usize {
+    pub const fn sub_page_count(&self) -> usize {
         if self.sub_pages.is_empty() {
             0
         } else {
@@ -262,9 +263,132 @@ pub struct ChainDef2 {
     pub blocks: &'static [ChainBlock],
     /// Mod matrix source rows, in `Voice`'s source order (spec §4).
     pub mod_sources: &'static [&'static str],
+    /// Where a first visit lands (ADR 0066): only `new` and
+    /// `with_home_def` set it, so the build checks it.
+    home: PageAt,
+}
+
+/// A page on a chain. Only a chain makes one (`ChainDef2::home`, `page`,
+/// `step`), so no code can land on a node it assumed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PageAt {
+    node: u8,
+    sub: u8,
+}
+
+impl PageAt {
+    pub const fn node(self) -> u8 {
+        self.node
+    }
+
+    pub const fn sub(self) -> u8 {
+        self.sub
+    }
+
+    /// Any page, unchecked: tests only.
+    #[cfg(any(test, feature = "test-support"))]
+    pub const fn of(node: u8, sub: u8) -> Self {
+        PageAt { node, sub }
+    }
+}
+
+/// A key on a chain's pages: PLUS, MINUS, EDIT (sub-page down), SEQ (up).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Move {
+    Next,
+    Prev,
+    Down,
+    Up,
 }
 
 impl ChainDef2 {
+    /// A new chain's home: its first node.
+    const FIRST: PageAt = PageAt { node: 0, sub: 0 };
+
+    /// A chain whose home is its first node. An empty chain fails the
+    /// build: every chain is a static. Nothing else makes one, so the home
+    /// can't skip the checks:
+    ///
+    /// ```compile_fail,E0451
+    /// use chimera_core::ui::block_def::ChainDef2;
+    /// use chimera_core::ui::block_registry::ALGO_CHAIN;
+    /// static BAD: ChainDef2 = ChainDef2 { blocks: &[], ..ALGO_CHAIN };
+    /// ```
+    ///
+    /// ```compile_fail,E0451
+    /// use chimera_core::ui::block_def::PageAt;
+    /// let home = PageAt { node: 1, sub: 0 };
+    /// ```
+    pub const fn new(
+        name: &'static str,
+        blocks: &'static [ChainBlock],
+        mod_sources: &'static [&'static str],
+    ) -> Self {
+        assert!(!blocks.is_empty(), "a chain has a page");
+        assert!(blocks.len() <= u8::MAX as usize);
+        ChainDef2 {
+            name,
+            blocks,
+            mod_sources,
+            home: Self::FIRST,
+        }
+    }
+
+    /// Home on `def`'s node instead; a def not on the chain fails the build.
+    pub const fn with_home_def(self, def: &BlockDef) -> Self {
+        let mut i = 0;
+        while i < self.blocks.len() {
+            if self.blocks[i].def.id == def.id {
+                return ChainDef2 {
+                    home: PageAt {
+                        node: i as u8,
+                        sub: 0,
+                    },
+                    ..self
+                };
+            }
+            i += 1;
+        }
+        panic!("home def not on the chain")
+    }
+
+    /// Where a first visit lands (ADR 0066).
+    pub const fn home(&self) -> PageAt {
+        self.home
+    }
+
+    /// `node`'s sub-page `sub`, if the chain has it.
+    pub const fn page(&self, node: usize, sub: usize) -> Option<PageAt> {
+        if node >= self.blocks.len() {
+            return None;
+        }
+        let subs = self.blocks[node].sub_page_count();
+        if sub >= if subs == 0 { 1 } else { subs } {
+            return None;
+        }
+        Some(PageAt {
+            node: node as u8,
+            sub: sub as u8,
+        })
+    }
+
+    /// The def at `at`, if `at` is on this chain.
+    pub fn def_at(&self, at: PageAt) -> Option<&'static BlockDef> {
+        self.active_def(at.node as usize, at.sub as usize)
+    }
+
+    /// The page `m` moves to from `at`: the next or previous node,
+    /// clamped, on its own page; a sub-page down or up.
+    pub fn step(&self, at: PageAt, m: Move) -> Option<PageAt> {
+        let (node, sub) = (at.node as usize, at.sub as usize);
+        match m {
+            Move::Next => self.page(node + 1, 0),
+            Move::Prev => self.page(node.checked_sub(1)?, 0),
+            Move::Down => self.page(node, sub + 1),
+            Move::Up => self.page(node, sub.checked_sub(1)?),
+        }
+    }
+
     /// The engine's node: the one PIT hangs under (ADR 0042); the first
     /// on a chain without it.
     pub fn engine_node(&self) -> usize {

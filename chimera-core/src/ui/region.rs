@@ -111,6 +111,11 @@ pub enum RegionData {
         /// `mod_grid::inert_dests`.
         inert: u16,
     },
+    /// A SETTINGS band (breadcrumb, list or footer): a fingerprint of what
+    /// it shows.
+    Settings { key: u32 },
+    /// The prompt's panel: a fingerprint of its words and pick.
+    Overlay { key: u32 },
 }
 
 impl RegionData {
@@ -377,6 +382,13 @@ pub enum RegionKind {
     Cells,
     Nav,
     Grid,
+    /// SETTINGS' header: the breadcrumb.
+    Crumbs,
+    List,
+    /// SETTINGS' project line and key legend, in the map's band.
+    Footer,
+    /// A prompt's panel, over the bands beneath.
+    Prompt,
 }
 
 /// A screen region with Y bounds and cached data.
@@ -388,13 +400,48 @@ pub struct Region {
     pub prev_data: RegionData,
 }
 
-pub const MAX_REGIONS: usize = 5;
+/// A Part page's five bands and a prompt over them.
+pub const MAX_REGIONS: usize = 6;
 
 /// Tracks the region list for the current page layout.
 pub struct RegionSet {
     pub regions: [Region; MAX_REGIONS],
     pub count: u8,
-    pub prev_layout: Option<PageLayout>,
+    /// The layout built, and whether a prompt is over it; `None` rebuilds.
+    pub prev_screen: Option<(Layout, bool)>,
+}
+
+/// Which bands a screen has: a page's, or SETTINGS' (a list, or a leaf of
+/// a layout).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Layout {
+    Page(PageLayout),
+    Settings(Option<PageLayout>),
+}
+
+impl Layout {
+    pub fn regions(self) -> &'static [(RegionKind, u16, u16)] {
+        match self {
+            Layout::Page(l) => layout_regions(l),
+            Layout::Settings(leaf) => settings_regions(leaf),
+        }
+    }
+}
+
+impl From<PageLayout> for Layout {
+    fn from(l: PageLayout) -> Self {
+        Layout::Page(l)
+    }
+}
+
+/// FNV-1a over `parts`: a SETTINGS band's key.
+pub fn settings_key(parts: &[&[u8]]) -> u32 {
+    let mut h: u32 = 0x811c_9dc5;
+    for b in parts.iter().flat_map(|p| p.iter()) {
+        h ^= *b as u32;
+        h = h.wrapping_mul(0x0100_0193);
+    }
+    h
 }
 
 impl RegionSet {
@@ -407,14 +454,21 @@ impl RegionSet {
                 prev_data: RegionData::sentinel_header(),
             }; MAX_REGIONS],
             count: 0,
-            prev_layout: None,
+            prev_screen: None,
         }
     }
 
     /// Rebuild the region list for a new layout. All regions start dirty (sentinel data).
-    pub fn set_layout(&mut self, layout: PageLayout) {
-        let bands = layout_regions(layout);
-        for (r, &(kind, y_start, y_end)) in self.regions.iter_mut().zip(bands) {
+    pub fn set_layout(&mut self, layout: impl Into<Layout>) {
+        self.set_screen(layout.into(), false);
+    }
+
+    /// `layout`'s bands, then the prompt's panel over them when `prompt`.
+    /// All start dirty.
+    pub fn set_screen(&mut self, layout: Layout, prompt: bool) {
+        let bands = layout.regions();
+        let over = prompt.then_some(&PROMPT);
+        for (r, &(kind, y_start, y_end)) in self.regions.iter_mut().zip(bands.iter().chain(over)) {
             *r = Region {
                 kind,
                 y_start,
@@ -422,8 +476,8 @@ impl RegionSet {
                 prev_data: sentinel(kind),
             };
         }
-        self.count = bands.len() as u8;
-        self.prev_layout = Some(layout);
+        self.count = (bands.len() + prompt as usize) as u8;
+        self.prev_screen = Some((layout, prompt));
     }
 
     pub fn active_regions(&self) -> &[Region] {
@@ -484,6 +538,69 @@ pub fn layout_regions(layout: PageLayout) -> &'static [(RegionKind, u16, u16)] {
     }
 }
 
+const FOOTER: u16 = theme::MAP_TOP as u16;
+// A leaf's footer starts where its cells end.
+const _: () = assert!(CELLS == FOOTER);
+
+/// A SETTINGS list: breadcrumb, rows, footer.
+const SETTINGS_LIST: [(RegionKind, u16, u16); 3] = [
+    (K::Crumbs, 0, HEADER),
+    (K::List, HEADER, FOOTER),
+    (K::Footer, FOOTER, SCREEN),
+];
+const SETTINGS_CELL_GRID: [(RegionKind, u16, u16); 5] = [
+    (K::Crumbs, 0, HEADER),
+    (K::Focus, HEADER, FOCUS),
+    (K::Viz, FOCUS, BAND),
+    (K::Cells, BAND, CELLS),
+    (K::Footer, FOOTER, SCREEN),
+];
+const SETTINGS_BIG_VIZ: [(RegionKind, u16, u16); 4] = [
+    (K::Crumbs, 0, HEADER),
+    (K::Viz, HEADER, BIG_VIZ_END),
+    (K::Cells, BIG_VIZ_END, CELLS),
+    (K::Footer, FOOTER, SCREEN),
+];
+const SETTINGS_MATRIX: [(RegionKind, u16, u16); 4] = [
+    (K::Crumbs, 0, HEADER),
+    (K::Grid, HEADER, MATRIX_GRID),
+    (K::Focus, MATRIX_GRID, CELLS),
+    (K::Footer, FOOTER, SCREEN),
+];
+
+/// A prompt's panel: over the List band, and whatever lies there.
+pub const PROMPT: (RegionKind, u16, u16) = (K::Prompt, 60, 240);
+
+// Every region set has room for a prompt over it.
+const _: () = {
+    let sets: [&[(RegionKind, u16, u16)]; 7] = [
+        &CELL_GRID,
+        &BIG_VIZ,
+        &MATRIX,
+        &SETTINGS_LIST,
+        &SETTINGS_CELL_GRID,
+        &SETTINGS_BIG_VIZ,
+        &SETTINGS_MATRIX,
+    ];
+    let mut i = 0;
+    while i < sets.len() {
+        assert!(sets[i].len() < MAX_REGIONS);
+        i += 1;
+    }
+};
+
+/// SETTINGS' bands: a list (`None`) or a leaf page of `layout`. The
+/// breadcrumb takes the header's place and the footer the map's, so a leaf
+/// never shows the map.
+pub fn settings_regions(leaf: Option<PageLayout>) -> &'static [(RegionKind, u16, u16)] {
+    match leaf {
+        None => &SETTINGS_LIST,
+        Some(PageLayout::CellGrid) => &SETTINGS_CELL_GRID,
+        Some(PageLayout::BigViz) => &SETTINGS_BIG_VIZ,
+        Some(PageLayout::Matrix) => &SETTINGS_MATRIX,
+    }
+}
+
 fn sentinel(kind: RegionKind) -> RegionData {
     match kind {
         K::Header => RegionData::sentinel_header(),
@@ -492,5 +609,7 @@ fn sentinel(kind: RegionKind) -> RegionData {
         K::Cells => RegionData::sentinel_cells(),
         K::Nav => RegionData::sentinel_nav(),
         K::Grid => RegionData::sentinel_grid(),
+        K::Crumbs | K::List | K::Footer => RegionData::Settings { key: u32::MAX },
+        K::Prompt => RegionData::Overlay { key: u32::MAX },
     }
 }

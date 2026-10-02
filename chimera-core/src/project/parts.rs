@@ -1,6 +1,6 @@
 //! The Parts and the shared FX: what the audio plays.
 
-use crate::addr::{BlockRef, Blocks};
+use crate::addr::{BlockRead, BlockRef, Blocks};
 use crate::block::Block;
 use crate::dsp::fx_bus::FxParams;
 use crate::hw::MAX_PARTS;
@@ -49,7 +49,7 @@ impl Part {
     }
 }
 
-fn new_part(i: usize) -> Part {
+pub(super) fn new_part(i: usize) -> Part {
     Part {
         sound: Sound::init(EngineType::Algo),
         origin: Origin::Init(EngineType::Algo),
@@ -134,13 +134,36 @@ pub struct PartEdit<'a> {
     pub fx: &'a mut FxParams,
 }
 
-impl Blocks for PartEdit<'_> {
+impl BlockRead for PartEdit<'_> {
     fn block(&self, b: BlockRef) -> Option<&dyn Block> {
         part_block(self.sound, self.mix, self.fx, b)
     }
+}
 
+impl Blocks for PartEdit<'_> {
     fn block_mut(&mut self, b: BlockRef) -> Option<&mut dyn Block> {
         part_block_mut(self.sound, self.mix, self.fx, b)
+    }
+}
+
+/// `PartEdit`'s shared twin: a Part as the pages read it, never written
+/// through, so reading it leaves `Project::rev` where it was.
+pub struct PartRead<'a> {
+    pub sound: &'a Sound,
+    pub mix: &'a PartParams,
+    pub fx: &'a FxParams,
+}
+
+impl<'a> PartRead<'a> {
+    /// `BlockRead::block`, for as long as the Part is borrowed, not the view.
+    pub fn block(&self, b: BlockRef) -> Option<&'a dyn Block> {
+        part_block(self.sound, self.mix, self.fx, b)
+    }
+}
+
+impl BlockRead for PartRead<'_> {
+    fn block(&self, b: BlockRef) -> Option<&dyn Block> {
+        PartRead::block(self, b)
     }
 }
 
@@ -159,7 +182,7 @@ pub fn part_block<'a>(
         BlockRef::Tape => Some(&fx.tape),
         BlockRef::Comp => Some(&fx.comp),
         BlockRef::Part => Some(mix),
-        BlockRef::Theme => None,
+        BlockRef::Theme | BlockRef::PartMix(_) => None,
         BlockRef::Modal
         | BlockRef::Algo
         | BlockRef::AlgoOp(_)
@@ -187,7 +210,7 @@ pub fn part_block_mut<'a>(
         BlockRef::Tape => Some(&mut fx.tape),
         BlockRef::Comp => Some(&mut fx.comp),
         BlockRef::Part => Some(mix),
-        BlockRef::Theme => None,
+        BlockRef::Theme | BlockRef::PartMix(_) => None,
         BlockRef::Modal
         | BlockRef::Algo
         | BlockRef::AlgoOp(_)

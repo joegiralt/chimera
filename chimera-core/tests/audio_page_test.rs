@@ -7,16 +7,11 @@ use chimera_core::ui::block_registry::SYS_AUDIO;
 use chimera_core::ui::draw::text_width;
 use chimera_core::ui::perf::PerfStats;
 use chimera_core::ui::theme::{CELL_COL_W, FONT_VALUE};
-use chimera_hal::ButtonId;
 use screen::*;
 
 fn on_audio_page() -> UiState {
     let mut ui = UiState::new();
-    feed(&mut ui, Input::press(ButtonId::Menu));
-    for _ in 0..3 {
-        feed(&mut ui, Input::press(ButtonId::Plus));
-    }
-    feed(&mut ui, Input::press(ButtonId::Edit));
+    to_leaf(&mut ui, &["SYSTEM", "DIAGNOSTICS", "AUDIO LOAD"]);
     settle(&mut ui);
     ui
 }
@@ -29,8 +24,8 @@ fn texts(s: Option<&chimera_core::perf::load::AudioStats>) -> Vec<String> {
 }
 
 #[test]
-fn the_page_is_system_about_audio() {
-    assert_eq!(on_audio_page().nav.active_block_def().id, SYS_AUDIO.id);
+fn the_page_is_system_diagnostics_audio_load() {
+    assert_eq!(on_audio_page().page_def().id, SYS_AUDIO.id);
 }
 
 #[test]
@@ -119,4 +114,44 @@ fn other_pages_ignore_the_stats() {
     );
     ui.render_with_audio(&mut b, &PerfStats::zero(), None, &scope_fixture());
     assert_eq!(a.hash(), b.hash());
+}
+
+/// ABOUT: the firmware, the chip from the stats, and the card as last seen.
+#[test]
+fn about_shows_the_firmware_chip_and_card() {
+    use chimera_core::storage::Card;
+    use chimera_core::ui::about_page::{BUILD, VERSION, cell_texts};
+    use chimera_hal::store::VolumeId;
+    let texts = |s, c| -> Vec<String> {
+        cell_texts(s, c)
+            .iter()
+            .map(|b| b.as_str().to_string())
+            .collect()
+    };
+    let s = audio_fixture();
+    assert_eq!(
+        texts(Some(&s), Card::Absent),
+        [VERSION, BUILD, "V", "480 MHZ", "WDOG", "NO CARD"]
+    );
+    assert_eq!(texts(None, Card::Absent)[2..5], ["--", "--", "--"]);
+    let vol = |label: &[u8; 11]| {
+        Card::Ready(VolumeId {
+            serial: 0x1234_abcd,
+            label: *label,
+        })
+    };
+    assert_eq!(texts(None, vol(b"CHIMERA    "))[5], "CHIMERA");
+    assert_eq!(texts(None, vol(b"NO NAME    "))[5], "1234ABCD");
+    let long = &texts(None, vol(b"WWWWWWWWWWW"))[5];
+    assert!(long.len() < 11 && text_width(&FONT_VALUE, long, 0) <= CELL_COL_W - 4);
+}
+
+#[test]
+fn about_is_system_about() {
+    let mut ui = UiState::new();
+    to_leaf(&mut ui, &["SYSTEM", "ABOUT"]);
+    assert_eq!(
+        ui.page_def().id,
+        chimera_core::ui::block_registry::SYS_ABOUT.id
+    );
 }

@@ -7,7 +7,7 @@ use chimera_core::mod_path::ModDestRegistry;
 use chimera_core::modulation::{ModSource, ModState, note_source};
 use chimera_core::params::{EngineType, FilterParams, ParamSnapshot};
 use chimera_core::ui::block_registry::PART_MOD_SOURCES;
-use chimera_core::ui::chain::chain_def_for;
+use chimera_core::ui::nav::chain_def_for;
 use chimera_core::{MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
 

@@ -20,7 +20,7 @@ use screen::*;
 fn shown(ui: &mut UiState, i: usize) -> String {
     settle(ui);
     let mut buf = FmtBuf::new();
-    let fmt = ui.nav.active_block_def().params[i].format();
+    let fmt = ui.page_def().params[i].format();
     fmt_val(&mut buf, ui.renderer.anim[i].current(), fmt);
     buf.as_str().to_owned()
 }

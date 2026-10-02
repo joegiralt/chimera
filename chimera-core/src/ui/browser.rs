@@ -7,15 +7,15 @@ use core::fmt::Write;
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::Rgb565;
 
-use chimera_hal::{ButtonId, ButtonState, Controls, EncoderId, PART_BUTTONS};
+use chimera_hal::{Controls, EncoderId};
 
 use crate::params::EngineType;
 use crate::preset::POOL_SIZE;
 use crate::project::{PartId, Pool, SlotId};
-use crate::ui::chain::chain_def_for;
 use crate::ui::components;
 use crate::ui::draw;
 use crate::ui::fmt::FmtBuf;
+use crate::ui::nav::chain_def_for;
 use crate::ui::theme;
 
 /// Rows on screen.
@@ -25,6 +25,32 @@ pub const VISIBLE_ROWS: usize = 8;
 pub const INIT_TYPES: [EngineType; EngineType::ALL.len()] = EngineType::ALL;
 pub const TOTAL_ENTRIES: usize = POOL_SIZE + INIT_TYPES.len();
 
+/// The Sound rung's browser: its cursor and the first row shown. Only
+/// `input` moves it; it opens at the top.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct Browse {
+    cursor: u8,
+    scroll: u8,
+}
+
+const _: () = assert!(TOTAL_ENTRIES <= 256);
+
+impl Browse {
+    pub const fn cursor(self) -> usize {
+        self.cursor as usize
+    }
+
+    pub const fn scroll(self) -> usize {
+        self.scroll as usize
+    }
+
+    /// Any cursor and scroll, unchecked: tests only.
+    #[cfg(any(test, feature = "test-support"))]
+    pub const fn of(cursor: u8, scroll: u8) -> Self {
+        Browse { cursor, scroll }
+    }
+}
+
 /// The pool slot at list entry `entry`; `None` for the INIT rows.
 pub fn slot_at(entry: usize) -> Option<SlotId> {
     SlotId::new(u8::try_from(entry).ok()?)
@@ -32,50 +58,30 @@ pub fn slot_at(entry: usize) -> Option<SlotId> {
 
 pub const LIST_TOP: i32 = 44;
 pub const ROW_H: i32 = 26;
-pub const SCROLL_X: i32 = 236;
+pub const SCROLL_X: i32 = theme::SCROLL_X;
 pub const SCROLL_TOP: i32 = 40;
 pub const SCROLL_H: i32 = 208;
 const HINT_Y: i32 = 284;
 const INFO_Y: i32 = 304;
+/// The key and what it does here (Pre-flight 22).
+const HINTS: [(&str, &str); 3] = [("EDIT", "LOAD"), ("SEQ", "PART"), ("MIX-", "CLEAR")];
+const HINT_GAP: i32 = 4;
 
-/// What a frame of browser input asks for, besides moving the cursor.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BrowserAct {
-    /// EDIT: load the highlighted entry into the Part and close.
-    Load,
-    /// SEQ: save the Part's Sound into the highlighted slot; stay open.
-    Save,
-    /// Any B button, or MENU: close.
-    Cancel,
-}
-
-/// One frame of browser input: encoder A moves the cursor (clamped to the
-/// list, `scroll` following it on screen), then at most one button acts,
-/// EDIT first.
-pub fn handle(
-    controls: &impl Controls,
-    cursor: usize,
-    scroll: usize,
-) -> (usize, usize, Option<BrowserAct>) {
+/// Encoder A moves the cursor, clamped to the list; the scroll follows it
+/// on screen. EDIT's load, MIX+MINUS's clear and every key's way out are
+/// `UiState`'s.
+pub fn input(controls: &impl Controls, b: Browse) -> Browse {
     let visible = VISIBLE_ROWS.min(TOTAL_ENTRIES);
     let delta = i32::from(controls.encoder_delta(EncoderId::A));
-    let cursor = (cursor as i32 + delta).clamp(0, TOTAL_ENTRIES as i32 - 1) as usize;
-    let scroll = scroll.min(cursor).max((cursor + 1).saturating_sub(visible));
-    let pressed = |b| controls.button_state(b) == ButtonState::Pressed;
-    let act = if pressed(ButtonId::Edit) {
-        Some(BrowserAct::Load)
-    } else if pressed(ButtonId::Seq) {
-        Some(BrowserAct::Save)
-    } else if PART_BUTTONS
-        .iter()
-        .chain(&[ButtonId::Menu])
-        .any(|&b| pressed(b))
-    {
-        Some(BrowserAct::Cancel)
-    } else {
-        None
-    };
-    (cursor, scroll, act)
+    let cursor = (b.cursor as i32 + delta).clamp(0, TOTAL_ENTRIES as i32 - 1) as usize;
+    let scroll = (b.scroll as usize)
+        .min(cursor)
+        .max((cursor + 1).saturating_sub(visible));
+    // TOTAL_ENTRIES <= 256.
+    Browse {
+        cursor: cursor as u8,
+        scroll: scroll as u8,
+    }
 }
 
 /// Baseline of visible row `i`.
@@ -109,29 +115,28 @@ where
         SCROLL_TOP + (SCROLL_H - thumb_h) * scroll.min(max_scroll as usize) as i32 / max_scroll;
     draw::fill_rect(d, SCROLL_X, thumb_y, 2, thumb_h, theme::MID);
 
-    for (i, (key, what)) in [("EDIT", "LOAD"), ("SEQ", "SAVE"), ("B", "CANCEL")]
-        .iter()
-        .enumerate()
-    {
-        let x = theme::MARGIN_X + i as i32 * 76;
-        let w = draw::text_tracked(
-            d,
-            &theme::FONT_LABEL_BOLD,
-            key,
-            x,
-            HINT_Y,
-            theme::INK,
-            theme::LABEL_TRACKING,
-        );
+    // Spread across the line: the first at the margin, the last flush right.
+    let t = theme::LABEL_TRACKING;
+    let width = |(k, w): (&str, &str)| {
+        draw::text_width(&theme::FONT_LABEL_BOLD, k, t)
+            + HINT_GAP
+            + draw::text_width(&theme::FONT_LABEL, w, t)
+    };
+    let used: i32 = HINTS.iter().map(|&h| width(h)).sum();
+    let gap = (theme::VIZ_RIGHT - theme::MARGIN_X - used) / (HINTS.len() as i32 - 1);
+    let mut x = theme::MARGIN_X;
+    for &(key, what) in &HINTS {
+        let w = draw::text_tracked(d, &theme::FONT_LABEL_BOLD, key, x, HINT_Y, theme::INK, t);
         draw::text_tracked(
             d,
             &theme::FONT_LABEL,
             what,
-            x + w + 4,
+            x + w + HINT_GAP,
             HINT_Y,
             theme::MID,
-            theme::LABEL_TRACKING,
+            t,
         );
+        x += width((key, what)) + gap;
     }
     // Two strings: FmtBuf holds 32 bytes and one line would not fit.
     draw::text(

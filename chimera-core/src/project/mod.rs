@@ -15,19 +15,24 @@ mod template;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
 
-pub use codec::{ProjectCheck, ProjectDecoder, encode_project, project_crc};
-pub use guard::{Confirmed, NeedsConfirm, Pending, ProjectSource, Prompt, ReplaceGuard, Target};
+pub use codec::{ProjectCheck, ProjectDecoder, encode_new_project, encode_project, project_crc};
+pub use guard::{
+    Confirmed, DeleteTarget, NeedsConfirm, OverwriteTarget, Pending, ProjectSource, Prompt,
+    ReplaceGuard, Seen, Target, Witnessed,
+};
 pub use ids::{PartId, PartSet, SlotId};
 pub use marks::{
-    ActionGone, PartAction, PartActionKind, PartActions, PartStatus, ProjectStatus, part_actions,
-    part_status, project_status,
+    ActionGone, PartAction, PartActionKind, PartActions, PartStatus, ProjectStatus, StatusCache,
+    part_actions, part_status, project_status,
 };
 pub use note::{Differ, LINE_LEN, Line, ProjectNote, Subject};
-pub use parts::{Origin, Part, PartEdit, Performance, part_block, part_block_mut};
+pub use parts::{Origin, Part, PartEdit, PartRead, Performance, part_block, part_block_mut};
 pub use pool::Pool;
+pub(crate) use store::still_over;
 pub use store::{
-    ListOutcome, LoadOutcome, ProjectEntry, boot_project, delete_project, list_projects,
-    load_project, new_project_id, project_file, save_project,
+    CardOut, FreshFile, ListOutcome, LoadOutcome, MAX_LISTED, ProjectEntry, SaveTo, boot_project,
+    clear_project, delete_project, find_named, list_projects, load_project, new_project_id,
+    project_file, save_project, save_project_as,
 };
 pub use swap::{GateStep, LOAD_ACK_TIMEOUT_MS, LOAD_LINK, LoadGate, LoadLink, Settled, Swap};
 pub use template::TemplateCrc;
@@ -109,11 +114,23 @@ pub struct Project {
     meta: ProjectMeta,
     pool: Pool,
     perf: Performance,
+    /// Moves on every `&mut` path, so a status keyed on it is never stale.
+    rev: u32,
 }
 
-crate::in_place::field_list!(Project => Project { meta, pool, perf });
+crate::in_place::field_list!(Project => Project { meta, pool, perf, rev });
 
 impl Project {
+    /// Wrapping; any two reads with an edit between differ.
+    pub fn rev(&self) -> u32 {
+        self.rev
+    }
+
+    /// Every `&mut` path calls this first: nothing reads between it and the edit.
+    fn bump(&mut self) {
+        self.rev = self.rev.wrapping_add(1);
+    }
+
     pub fn meta(&self) -> &ProjectMeta {
         &self.meta
     }
@@ -130,15 +147,28 @@ impl Project {
         self.perf.part(p)
     }
 
+    /// A Part read as the pages read it; can't be written through.
+    pub fn read_part(&self, p: PartId) -> PartRead<'_> {
+        let x = self.part(p);
+        PartRead {
+            sound: &x.sound,
+            mix: &x.mix,
+            fx: &self.perf.fx,
+        }
+    }
+
     pub fn edit_part(&mut self, p: PartId) -> PartEdit<'_> {
+        self.bump();
         self.perf.edit(p)
     }
 
     pub fn edit_fx(&mut self) -> &mut FxParams {
+        self.bump();
         &mut self.perf.fx
     }
 
     pub fn set_name(&mut self, n: ProjectName) {
+        self.bump();
         self.meta.name = n;
     }
 
@@ -151,10 +181,12 @@ impl Project {
     }
 
     pub fn pool_store(&mut self, s: SlotId, sound: Sound) {
+        self.bump();
         self.pool.store(s, sound);
     }
 
     pub fn pool_clear(&mut self, s: SlotId) -> Result<(), InUse> {
+        self.bump();
         let users = self.users(s);
         if !users.is_empty() {
             return Err(InUse(users));
@@ -164,8 +196,17 @@ impl Project {
     }
 
     /// Stores a copy of p's sound in s and sets p's Origin fresh. Returns the
-    /// other users of s that now derive Stale(s).
-    pub fn save_part_to(&mut self, p: PartId, s: SlotId) -> PartSet {
+    /// other users of s that now derive Stale(s). Only a Part action
+    /// (`apply_part_action`) saves a Part (#257):
+    ///
+    /// ```compile_fail,E0624
+    /// use chimera_core::project::{PartId, Project, SlotId};
+    /// fn f(p: &mut Project) {
+    ///     let _ = p.save_part_to(PartId::ALL[0], SlotId::ALL[0]);
+    /// }
+    /// ```
+    pub(crate) fn save_part_to(&mut self, p: PartId, s: SlotId) -> PartSet {
+        self.bump();
         let others = self.users(s);
         let sound = self.part(p).sound.clone();
         let crc = sound_crc(&sound);
@@ -192,6 +233,7 @@ impl Project {
 
     /// Only through `replace_part` or a Part action.
     fn load_part(&mut self, src: PartSource) -> Result<(), ReplaceError> {
+        self.bump();
         let part = &mut self.perf.parts[src.part.index()];
         match src.from {
             PartFrom::Slot(s) => {

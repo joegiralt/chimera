@@ -1,4 +1,4 @@
-use crate::addr::{BlockRef, Blocks};
+use crate::addr::{BlockRead, BlockRef, Blocks};
 use crate::block::{Block, DiskCode, ParamId, ParamSpec, ValFmt, apply_code};
 use crate::dsp::filter::{FilterKind, FilterMode, KIND_NAMES, SVF_MODE_NAMES};
 use crate::dsp::modulator::{
@@ -835,7 +835,7 @@ impl ParamSnapshot {
 /// The one exhaustive dispatch from a block address to a Sound's values
 /// (spec §2). UI and modulation go through this; DSP reads fields. The FX
 /// and the mix settings belong to the Performance and Part, not the Sound.
-impl Blocks for ParamSnapshot {
+impl BlockRead for ParamSnapshot {
     fn block(&self, b: BlockRef) -> Option<&dyn Block> {
         Some(match b {
             BlockRef::Modal => &self.modal,
@@ -854,10 +854,13 @@ impl Blocks for ParamSnapshot {
             | BlockRef::Tape
             | BlockRef::Comp
             | BlockRef::Part
+            | BlockRef::PartMix(_)
             | BlockRef::Theme => return None,
         })
     }
+}
 
+impl Blocks for ParamSnapshot {
     fn block_mut(&mut self, b: BlockRef) -> Option<&mut dyn Block> {
         Some(match b {
             BlockRef::Modal => &mut self.modal,
@@ -876,6 +879,7 @@ impl Blocks for ParamSnapshot {
             | BlockRef::Tape
             | BlockRef::Comp
             | BlockRef::Part
+            | BlockRef::PartMix(_)
             | BlockRef::Theme => return None,
         })
     }

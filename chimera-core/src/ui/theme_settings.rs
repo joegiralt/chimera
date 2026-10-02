@@ -1,4 +1,5 @@
-//! System › Theme: backlight, panel gamma, accent and ground (ADR 0033).
+//! SETTINGS › PERSONALIZE › THEME: backlight, panel gamma, accent and
+//! ground (ADR 0033).
 //!
 //! The renderer keeps drawing the canonical palette (`theme::ACCENT`,
 //! `ACCENT_SOFT`, `BG`); the display shell swaps those three colours for the
@@ -328,7 +329,7 @@ impl DiskCode for Black {
     }
 }
 
-/// Everything System › Theme sets.
+/// Everything SETTINGS › PERSONALIZE › THEME sets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ThemeSettings {
     pub bright: Bright,

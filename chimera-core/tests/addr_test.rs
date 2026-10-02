@@ -1,6 +1,6 @@
 //! Semantic addresses (spec §2) and `ParamSnapshot::block(_mut)`.
 
-use chimera_core::addr::{BlockRef, Blocks, Op, OpOutOfRange, ParamAddr};
+use chimera_core::addr::{BlockRead, BlockRef, Blocks, Op, OpOutOfRange, ParamAddr};
 use chimera_core::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use chimera_core::dsp::modal::ModalParams;
 use chimera_core::dsp::modulator::EnvSlot;

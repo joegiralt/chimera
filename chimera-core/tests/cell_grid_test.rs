@@ -5,6 +5,7 @@ mod screen;
 
 use chimera_core::project::PartId;
 use chimera_core::ui::UiState;
+use chimera_core::ui::animation::UiTick;
 use chimera_core::ui::components::{self, Cell};
 use chimera_core::ui::fmt::{FmtBuf, fmt_val};
 use chimera_core::ui::page::ValFmt;
@@ -20,7 +21,12 @@ fn band(fb: &Fb, y0: i32, y1: i32) -> Vec<u16> {
 
 #[test]
 fn dirty_render_from_scratch_equals_full_render() {
-    for name in ["engine_algo", "algo_alg", "algo_level", "system"] {
+    for name in [
+        "engine_algo",
+        "algo_alg",
+        "algo_level",
+        "settings_personal_theme",
+    ] {
         assert!(render(name).px == render_dirty(name).px, "{name}");
     }
 }
@@ -42,7 +48,7 @@ fn a_turn_redraws_focus_and_cells_only() {
     let scope = scope_fixture();
     ui.render_dirty_with_scope(&mut fb, &PerfStats::zero(), &scope);
     feed(&mut ui, Input::turn(EncoderId::C, 3));
-    ui.update();
+    ui.update(UiTick::for_test());
     let flushed = ui.render_dirty_with_scope(&mut fb, &PerfStats::zero(), &scope);
     let bands: Vec<(u16, u16)> = flushed.into_iter().filter(|&(a, b)| a != b).collect();
     assert_eq!(bands, [(28, 118), (186, 266)]);
@@ -84,7 +90,7 @@ fn focus_band_shows_the_last_touched_slot() {
     settle(&mut ui);
     let mut fb = Fb::new();
     ui.render_with_scope(&mut fb, &PerfStats::zero(), &scope_fixture());
-    let slot = &ui.nav.active_block_def().params[2];
+    let slot = &ui.page_def().params[2];
     let v = ui.renderer.anim[2].current();
     let mut text = FmtBuf::new();
     fmt_val(&mut text, v, slot.format());
@@ -115,7 +121,7 @@ fn the_focus_value_animates_toward_its_target() {
     let mut ui = ui_for("engine_algo");
     let before = ui.renderer.anim[0].current();
     feed(&mut ui, Input::turn(EncoderId::A, 40));
-    ui.update();
+    ui.update(UiTick::for_test());
     let (now, target) = (ui.renderer.anim[0].current(), ui.renderer.anim[0].target());
     assert!(before < now && now < target, "{before} < {now} < {target}");
 }
@@ -172,14 +178,11 @@ fn live_output_is_flat_when_silent_and_scaled_to_the_band() {
     }
 }
 
-/// A page whose slots are all empty (System UPDATES) shows no focus band.
+/// A page whose slots are all empty (SYSTEM › OS UPGRADE) shows no focus band.
 #[test]
 fn an_all_empty_page_has_an_empty_focus_band() {
     let mut ui = UiState::new();
-    feed(&mut ui, Input::press(chimera_hal::ButtonId::Menu));
-    for _ in 0..2 {
-        feed(&mut ui, Input::press(chimera_hal::ButtonId::Plus)); // → UPDATES
-    }
+    to_leaf(&mut ui, &["SYSTEM", "OS UPGRADE"]);
     settle(&mut ui);
     let mut fb = Fb::new();
     ui.render_with_scope(&mut fb, &PerfStats::zero(), &scope_fixture());

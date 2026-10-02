@@ -176,10 +176,13 @@ mod tests {
         }
     }
 
-    impl Blocks for Order {
+    impl crate::addr::BlockRead for Order {
         fn block(&self, b: BlockRef) -> Option<&dyn Block> {
             (b == BlockRef::Filter).then_some(self as &dyn Block)
         }
+    }
+
+    impl Blocks for Order {
         fn block_mut(&mut self, b: BlockRef) -> Option<&mut dyn Block> {
             (b == BlockRef::Filter).then_some(self as &mut dyn Block)
         }

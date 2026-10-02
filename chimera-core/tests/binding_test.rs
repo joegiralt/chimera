@@ -6,7 +6,7 @@ use chimera_core::dsp::algo::params::AlgoOpParams;
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::ui::block_def::{BlockDef, SlotBinding, slot_addr};
 use chimera_core::ui::block_registry as reg;
-use chimera_core::ui::chain::chain_def_for;
+use chimera_core::ui::nav::chain_def_for;
 use chimera_core::ui::page::ValFmt;
 use chimera_core::ui::view::{SlotCtx, view};
 
@@ -89,27 +89,50 @@ fn block_def_ids_are_unique() {
 }
 
 /// Every chain the navigation can reach is in `ALL_CHAINS`, so the
-/// registry-wide checks cover it.
+/// registry-wide checks cover it: each engine's, the mixer's, and every
+/// SETTINGS leaf's, walked by `Location`.
 #[test]
 fn all_chains_holds_every_reachable_chain() {
-    use chimera_core::ui::chain::{ChainId, ChainNav};
-    let mut nav = ChainNav::new();
-    for id in [
-        ChainId::Part(0),
-        ChainId::Mixer(0),
-        ChainId::System,
-        ChainId::Demo,
-    ] {
-        nav.chain_id = id;
-        for engine in EngineType::ALL {
-            nav.engine = engine;
-            let chain = nav.active_chain();
-            assert!(
-                reg::ALL_CHAINS.iter().any(|c| core::ptr::eq(*c, chain)),
-                "{}",
-                chain.name
-            );
+    use chimera_core::project::PartId;
+    use chimera_core::ui::nav::{Location, MixPage, NavCtx, chain_def_for};
+    use chimera_core::ui::settings::{Kind, rows};
+    fn leaves(path: &mut Vec<u8>, out: &mut Vec<Location>) {
+        for (i, r) in rows(path).iter().enumerate() {
+            path.push(i as u8);
+            match r.kind {
+                Kind::Leaf(_) => out.push(Location::settings_at(path, 0)),
+                Kind::List(_) => leaves(path, out),
+                _ => {}
+            }
+            path.pop();
         }
+    }
+    let mut at = Vec::new();
+    for engine in EngineType::ALL {
+        at.push((
+            engine,
+            Location::pages(PartId::ALL[0], chain_def_for(engine).home()),
+        ));
+    }
+    at.push((
+        EngineType::Algo,
+        Location::mixer(PartId::ALL[0], MixPage::Sends),
+    ));
+    let mut ls = Vec::new();
+    leaves(&mut Vec::new(), &mut ls);
+    assert!(!ls.is_empty());
+    at.extend(ls.into_iter().map(|l| (EngineType::Algo, l)));
+    for (engine, l) in at {
+        let cx = NavCtx {
+            engines: [engine; 6],
+            dyn_rows: 0,
+        };
+        let (chain, _) = l.page(&cx).unwrap();
+        assert!(
+            reg::ALL_CHAINS.iter().any(|c| core::ptr::eq(*c, chain)),
+            "{}",
+            chain.name
+        );
     }
 }
 

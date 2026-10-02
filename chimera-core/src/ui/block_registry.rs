@@ -15,6 +15,10 @@ use crate::params::{DriveParams, EnvParams, FilterParams, FolderParams, OutParam
 use crate::part::PartParams;
 use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2, FxFlow, FxNode, ParamSlot, VizType};
 use crate::ui::page::{PageLayout, ValFmt};
+use crate::ui::settings::leaves::{
+    ABOUT_LEAF, AUDIO_LOAD_LEAF, CHANNELS_LEAF, DEMO_LEAVES, OUTPUTS_LEAF, THEME_LEAF, TUNING_LEAF,
+    UPDATES_LEAF,
+};
 use crate::ui::theme_settings::ThemeSettings;
 
 const EMPTY: ParamSlot = ParamSlot::EMPTY;
@@ -476,11 +480,9 @@ static MODAL_PLUCK_BLOCKS: [ChainBlock; 5] = [
     },
 ];
 
-pub static MODAL_PLUCK_CHAIN: ChainDef2 = ChainDef2 {
-    name: "Modal Pluck",
-    blocks: &MODAL_PLUCK_BLOCKS,
-    mod_sources: &PART_MOD_SOURCES,
-};
+/// Modal's home is RES (owner, 2026-10-01: ADR 0066).
+pub static MODAL_PLUCK_CHAIN: ChainDef2 =
+    ChainDef2::new("Modal Pluck", &MODAL_PLUCK_BLOCKS, &PART_MOD_SOURCES).with_home_def(&MODAL_1);
 
 /// WAVE is the OSC node's home; FINE's DETUNE and the five ENV stages sit
 /// right after their group (sub-pages are one level deep).
@@ -513,11 +515,7 @@ static ALGO_BLOCKS: [ChainBlock; 6] = [
     },
 ];
 
-pub static ALGO_CHAIN: ChainDef2 = ChainDef2 {
-    name: "Algo",
-    blocks: &ALGO_BLOCKS,
-    mod_sources: &PART_MOD_SOURCES,
-};
+pub static ALGO_CHAIN: ChainDef2 = ChainDef2::new("Algo", &ALGO_BLOCKS, &PART_MOD_SOURCES);
 
 // ---------------------------------------------------------------------------
 // Mixer channel strip
@@ -574,16 +572,14 @@ pub const MIXER_HOME: usize = 1;
 /// PART's node: remembered only from mixer to mixer (ADR 0057).
 pub const MIXER_PART: usize = 0;
 
-pub static MIXER_CHANNEL_CHAIN: ChainDef2 = ChainDef2 {
-    name: "Mixer",
-    blocks: MIXER_CHANNEL_BLOCKS,
-    mod_sources: &[],
-};
+/// The mixer's home is SENDS (ADR 0057).
+pub static MIXER_CHANNEL_CHAIN: ChainDef2 =
+    ChainDef2::new("Mixer", MIXER_CHANNEL_BLOCKS, &[]).with_home_def(&SENDS);
 const _: () = assert!(MIXER_CHANNEL_BLOCKS[MIXER_HOME].def.id == SENDS.id);
 const _: () = assert!(MIXER_CHANNEL_BLOCKS[MIXER_PART].def.id == PART.id);
 
 // ---------------------------------------------------------------------------
-// System chain
+// SETTINGS leaf pages (`ui::settings::leaves` chains them)
 // ---------------------------------------------------------------------------
 
 pub static SYS_TUNING: BlockDef = BlockDef {
@@ -633,8 +629,16 @@ pub static SYS_ABOUT: BlockDef = BlockDef {
     name: "About",
     short: "ABT",
     layout: PageLayout::BigViz,
-    viz: VizType::Logo,
-    params: [EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY],
+    viz: VizType::About,
+    // Read-only: `about_page` fills them.
+    params: [
+        ParamSlot::legacy("VERSION", ValFmt::Int(0)),
+        ParamSlot::legacy("BUILD", ValFmt::Int(0)),
+        ParamSlot::legacy("REV", ValFmt::Int(0)),
+        ParamSlot::legacy("CLOCK", ValFmt::Int(0)),
+        ParamSlot::legacy("RESET", ValFmt::Int(0)),
+        ParamSlot::legacy("CARD", ValFmt::Int(0)),
+    ],
 };
 
 pub static SYS_AUDIO: BlockDef = BlockDef {
@@ -653,21 +657,8 @@ pub static SYS_AUDIO: BlockDef = BlockDef {
     ],
 };
 
-static SYSTEM_BLOCKS: [ChainBlock; 4] = [
-    ChainBlock::page(&SYS_TUNING),
-    ChainBlock::page(&SYS_THEME),
-    ChainBlock::page(&SYS_UPDATES),
-    ChainBlock::with_subs(&SYS_ABOUT, &[&SYS_AUDIO]),
-];
-
-pub static SYSTEM_CHAIN: ChainDef2 = ChainDef2 {
-    name: "System",
-    blocks: &SYSTEM_BLOCKS,
-    mod_sources: &[],
-};
-
 // ---------------------------------------------------------------------------
-// Demo chain (UI component storyboard)
+// DEMO pages (UI component storyboard)
 // ---------------------------------------------------------------------------
 
 pub static DEMO_WAVES: BlockDef = BlockDef {
@@ -890,7 +881,8 @@ pub static DEMO_GLYPH_CUBE: BlockDef = BlockDef {
     ],
 };
 
-static DEMO_BLOCKS: [ChainBlock; 13] = [
+/// The DEMO pages, one SETTINGS leaf each (`leaves::DEMO_LEAVES`).
+pub static DEMO_BLOCKS: [ChainBlock; 13] = [
     ChainBlock::page(&DEMO_WAVES),
     ChainBlock::page(&DEMO_SHAPES),
     ChainBlock::page(&DEMO_MOTION),
@@ -906,17 +898,32 @@ static DEMO_BLOCKS: [ChainBlock; 13] = [
     ChainBlock::page(&DEMO_GLYPH_CUBE),
 ];
 
-pub static DEMO_CHAIN: ChainDef2 = ChainDef2 {
-    name: "Demo",
-    blocks: &DEMO_BLOCKS,
-    mod_sources: &[],
-};
-
-/// Every chain, for whole-registry checks (unique ids, the focus table).
-pub static ALL_CHAINS: [&ChainDef2; 5] = [
+/// The chains besides DEMO's leaves.
+const FIXED: [&ChainDef2; 10] = [
     &ALGO_CHAIN,
     &MODAL_PLUCK_CHAIN,
     &MIXER_CHANNEL_CHAIN,
-    &SYSTEM_CHAIN,
-    &DEMO_CHAIN,
+    CHANNELS_LEAF.chain(),
+    OUTPUTS_LEAF.chain(),
+    TUNING_LEAF.chain(),
+    THEME_LEAF.chain(),
+    UPDATES_LEAF.chain(),
+    ABOUT_LEAF.chain(),
+    AUDIO_LOAD_LEAF.chain(),
 ];
+
+/// Every chain, for whole-registry checks (unique ids, the focus table):
+/// `FIXED`, then DEMO's leaves.
+pub static ALL_CHAINS: [&ChainDef2; FIXED.len() + DEMO_LEAVES.len()] = {
+    let mut a = [FIXED[0]; FIXED.len() + DEMO_LEAVES.len()];
+    let mut i = 0;
+    while i < a.len() {
+        a[i] = if i < FIXED.len() {
+            FIXED[i]
+        } else {
+            DEMO_LEAVES[i - FIXED.len()].chain()
+        };
+        i += 1;
+    }
+    a
+};

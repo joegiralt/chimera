@@ -21,11 +21,43 @@ use crate::part::PartParams;
 use crate::preset::Sound;
 
 use super::{
-    Line, LoadLink, LoadOutcome, Origin, PartFrom, PartId, PartSource, Project, ProjectEntry,
-    ProjectFile, ProjectNote, ProjectSource, ProjectStatus, ReplaceGuard, SlotId, Subject,
-    TemplateCrc, delete_project, list_projects, load_project, new_project_id, part_status,
+    Confirmed, DeleteTarget, FreshFile, Line, LoadLink, LoadOutcome, Origin, OverwriteTarget,
+    PartFrom, PartId, PartSet, PartSource, Project, ProjectEntry, ProjectFile, ProjectNote,
+    ProjectSource, ProjectStatus, ReplaceGuard, SaveTo, SlotId, Subject, TemplateCrc,
+    clear_project, delete_project, list_projects, load_project, new_project_id, part_status,
     project_crc, project_file, project_status, save_project,
 };
+
+/// `Project::save_part_to`, which only a Part action reaches outside tests.
+pub fn save_part_to(p: &mut Project, part: PartId, s: SlotId) -> PartSet {
+    p.save_part_to(part, s)
+}
+
+/// Where a test saves `p` as `f`: SAVE when it is `p`'s own file, else a
+/// fresh file (refused if a pair is there).
+pub fn save_to(p: &Project, f: ProjectFile) -> SaveTo {
+    if p.meta().file() == Some(f) {
+        SaveTo::Own
+    } else {
+        SaveTo::Fresh(FreshFile::for_test(f))
+    }
+}
+
+/// DELETE answered on `f` as its card lists it now.
+pub fn confirm_delete_of<S: Store>(s: &mut S, f: ProjectFile) -> Confirmed<DeleteTarget> {
+    let all = listed(&mut Card::new(), s);
+    confirm_delete(all.iter().find(|e| e.file() == f).expect("listed"))
+}
+
+/// SAVE OVER or CLEAR answered on `e`, as the SETTINGS prompt answers it.
+pub fn confirm_overwrite(e: &ProjectEntry) -> Confirmed<OverwriteTarget> {
+    Confirmed::<OverwriteTarget>::unasked(e)
+}
+
+/// DELETE answered on `e`.
+pub fn confirm_delete(e: &ProjectEntry) -> Confirmed<DeleteTarget> {
+    Confirmed::<DeleteTarget>::unasked(e)
+}
 
 /// NEW with every slot filled: the factory Sounds and INIT, then edited
 /// and renamed copies of them. Parts from slots 0, 3 and 9 and from INIT;
@@ -399,9 +431,24 @@ fn at<S: Store>(s: &mut S, n: u32) -> ProjectFile {
     ProjectFile::new(pid(n), s.mount().expect("a card"))
 }
 
-fn save_at<S: Store>(card: &mut Card, s: &mut S, p: &mut Project, n: u32) -> ProjectNote {
+/// `p` saved as `P000000n` on the card in the slot: over its own file,
+/// over that file as listed (confirmed), or to it fresh.
+pub fn save_at<S: Store>(card: &mut Card, s: &mut S, p: &mut Project, n: u32) -> ProjectNote {
     let f = at(s, n);
-    save_project(card, s, p, f)
+    let to = if p.meta().file() == Some(f) {
+        SaveTo::Own
+    } else {
+        match listed(card, s).iter().find(|e| e.id == f.id()) {
+            Some(e) => SaveTo::Over(confirm_overwrite(e)),
+            None => SaveTo::Fresh(FreshFile::for_test(f)),
+        }
+    };
+    save_project(card, s, p, to).out
+}
+
+fn entry_of<S: Store>(card: &mut Card, s: &mut S, n: u32) -> ProjectEntry {
+    let found = listed(card, s).into_iter().find(|e| e.id == pid(n));
+    found.expect("listed")
 }
 
 /// Every entry `list_projects` gives, and its note.
@@ -432,6 +479,13 @@ fn load_listed<S: Store>(
         .map_or_else(|| s.mount().expect("a card"), |e| e.vol);
     let go = ReplaceGuard::check(q, t, ProjectSource::File { id, vol }).expect("no prompt");
     load_project(card, s, q, go, link)
+}
+
+/// Both sides of `id`'s pair cut short: listed with an error.
+pub fn damage<S: Store>(card: &mut Card, s: &mut S, id: ProjectId) {
+    for side in [Side::A, Side::B] {
+        put_side(card, s, id, side, b"junk");
+    }
 }
 
 /// Raw bytes as one side of `id`'s pair.
@@ -472,16 +526,19 @@ pub fn project_store_suite<S: Store>(make: &mut dyn FnMut() -> S) {
     first_save_makes_the_dirs(make);
     list_and_next_id(&mut make());
     delete_rules(&mut make());
+    confirmed_writes_refuse_a_moved_file(&mut make());
+    fresh_file_taken_since_is_refused(&mut make());
     missing_file(&mut make());
 }
 
 fn save_then_load_is_bit_identical<S: Store>(store: &mut S) {
     let mut card = Card::new();
     let (mut p, _) = full();
-    let file = new_project_id(&mut card, store).expect("an id");
+    let fresh = new_project_id(&mut card, store).out.expect("an id");
+    let file = fresh.file();
     let id = file.id();
     assert_eq!(file, at(store, 1));
-    saved(save_project(&mut card, store, &mut p, file));
+    saved(save_project(&mut card, store, &mut p, SaveTo::Fresh(fresh)).out);
     assert_eq!(p.meta().file(), Some(file));
     assert_eq!(p.meta().id(), Some(id));
     let (mut q, t) = Project::boxed();
@@ -505,7 +562,7 @@ fn first_save_makes_the_dirs<S: Store>(make: &mut dyn FnMut() -> S) {
             out.and_then(|o| o.result).expect("/CHIMERA");
         }
         assert_eq!(
-            new_project_id(&mut card, &mut s),
+            new_project_id(&mut card, &mut s).out.map(|f| f.file()),
             Ok(at(&mut s, 1)),
             "no PROJECTS"
         );
@@ -527,11 +584,19 @@ fn list_and_next_id<S: Store>(s: &mut S) {
         p
     };
     for (n, name) in [(1, "ONE"), (2, "TWO"), (5, "FIVE")] {
-        assert!(new_project_id(&mut card, s).expect("an id").id().get() <= n);
+        assert!(
+            new_project_id(&mut card, s)
+                .out
+                .expect("an id")
+                .file()
+                .id()
+                .get()
+                <= n
+        );
         saved(save_at(&mut card, s, &mut named(name), n));
     }
     let six = at(s, 6);
-    assert_eq!(new_project_id(&mut card, s), Ok(six));
+    assert_eq!(new_project_id(&mut card, s).out.map(|f| f.file()), Ok(six));
     // A second save under a new name: the newer side's name lists.
     saved(save_at(&mut card, s, &mut named("ONE AGAIN"), 1));
     // Headers this firmware refuses, alone or beside a readable side.
@@ -559,58 +624,131 @@ fn list_and_next_id<S: Store>(s: &mut S) {
     });
     out.and_then(|o| o.result).expect("a write");
 
-    let entry = |n: u32, name: Option<&str>, err| ProjectEntry {
+    let entry = |n: u32, name: Option<&str>, err, generation: Option<u32>| ProjectEntry {
         id: pid(n),
         vol,
         name: name.map(|n| ProjectName::new(n).expect("a name")),
         err,
+        generation: generation.map(Generation::new),
     };
     assert_eq!(
         listed(&mut card, s),
         [
-            entry(1, Some("ONE AGAIN"), None),
-            entry(2, Some("TWO"), Some(FileError::NeedsNewerFirmware)),
-            entry(5, Some("FIVE"), None),
-            entry(7, None, Some(FileError::NeedsNewerFirmware)),
-            entry(8, None, Some(FileError::BadMagic)),
-            entry(9, None, Some(FileError::WrongKind)),
+            entry(1, Some("ONE AGAIN"), None, Some(2)),
+            entry(2, Some("TWO"), Some(FileError::NeedsNewerFirmware), Some(1)),
+            entry(5, Some("FIVE"), None, Some(1)),
+            entry(7, None, Some(FileError::NeedsNewerFirmware), None),
+            entry(8, None, Some(FileError::BadMagic), None),
+            entry(9, None, Some(FileError::WrongKind), None),
         ]
     );
     let ten = at(s, 10);
-    assert_eq!(new_project_id(&mut card, s), Ok(ten));
+    assert_eq!(new_project_id(&mut card, s).out.map(|f| f.file()), Ok(ten));
 
     // The last id: the next is refused.
     saved(save_at(&mut card, s, &mut named("LAST"), ProjectId::MAX));
-    assert_eq!(new_project_id(&mut card, s), Err(ProjectNote::NoIds));
+    assert_eq!(
+        new_project_id(&mut card, s).out.map(|f| f.file()),
+        Err(ProjectNote::NoIds)
+    );
 }
 
 fn delete_rules<S: Store>(s: &mut S) {
     let mut card = Card::new();
-    let (at1, two) = (at(s, 1), at(s, 2));
     let (mut a, _) = Project::boxed();
     let (mut b, _) = Project::boxed();
     saved(save_at(&mut card, s, &mut a, 1));
     saved(save_at(&mut card, s, &mut b, 2));
     saved(save_at(&mut card, s, &mut b, 2));
+    let two = entry_of(&mut card, s, 2);
     assert_eq!(
-        delete_project(&mut card, s, &b, two),
+        delete_project(&mut card, s, &b, confirm_delete(&two)).out,
         Err(ProjectNote::IsLoaded)
     );
     assert_eq!(listed(&mut card, s).len(), 2, "nothing deleted");
-    assert_eq!(delete_project(&mut card, s, &b, at1), Ok(()));
+    let one = entry_of(&mut card, s, 1);
+    assert_eq!(
+        delete_project(&mut card, s, &b, confirm_delete(&one)).out,
+        Ok(())
+    );
     let left: Vec<_> = listed(&mut card, s).iter().map(|e| e.id).collect();
     assert_eq!(left, [pid(2)]);
     // A NEW project has no id: it guards nothing.
     let (fresh, _) = Project::boxed();
-    assert_eq!(delete_project(&mut card, s, &fresh, two), Ok(()));
-    assert!(listed(&mut card, s).is_empty());
-    let one = at(s, 1);
-    assert_eq!(new_project_id(&mut card, s), Ok(one));
     assert_eq!(
-        delete_project(&mut card, s, &fresh, two),
-        Ok(()),
-        "already gone"
+        delete_project(&mut card, s, &fresh, confirm_delete(&two)).out,
+        Ok(())
     );
+    assert!(listed(&mut card, s).is_empty());
+    let at1 = at(s, 1);
+    assert_eq!(new_project_id(&mut card, s).out.map(|f| f.file()), Ok(at1));
+    assert_eq!(
+        delete_project(&mut card, s, &fresh, confirm_delete(&two)).out,
+        Err(ProjectNote::FileChanged(Subject::File(pid(2)))),
+        "gone since listed"
+    );
+}
+
+/// A confirmation holds the generation listed: a resave since refuses an
+/// overwrite or delete with nothing written; a CLEAR writes NEW.
+fn confirmed_writes_refuse_a_moved_file<S: Store>(s: &mut S) {
+    let mut card = Card::new();
+    let (mut a, _) = full();
+    let (mut b, t) = Project::boxed();
+    b.set_name(ProjectName::new("B").expect("a name"));
+    saved(save_at(&mut card, s, &mut a, 1));
+    let e = entry_of(&mut card, s, 1);
+    let (over, del) = (confirm_overwrite(&e), confirm_delete(&e));
+    saved(save_at(&mut card, s, &mut a, 1));
+    let moved = ProjectNote::FileChanged(Subject::Name(a.meta().name()));
+    assert_eq!(
+        save_project(&mut card, s, &mut b, SaveTo::Over(over)).out,
+        moved
+    );
+    assert_eq!(b.meta().file(), None);
+    assert_eq!(delete_project(&mut card, s, &b, del).out, Err(moved));
+    let e = entry_of(&mut card, s, 1);
+    assert_eq!(e.name, Some(a.meta().name()), "nothing written");
+
+    saved(save_project(&mut card, s, &mut b, SaveTo::Over(confirm_overwrite(&e))).out);
+    assert_eq!(b.meta().file(), Some(e.file()));
+    assert_eq!(project_status(&b, t), ProjectStatus::Saved);
+    let link = LoadLink::new();
+    let (mut q, t) = Project::boxed();
+    let out = load_listed(&mut card, s, &mut q, t, pid(1), &link);
+    assert!(out.note.is_none(), "{:?}", out.note);
+    same(&b, &q);
+
+    let e = entry_of(&mut card, s, 1);
+    let (other, _) = Project::boxed();
+    assert_eq!(
+        clear_project(&mut card, s, &other, confirm_overwrite(&e)).out,
+        Ok(())
+    );
+    let (mut q, t) = full();
+    q.mark_saved_for_test();
+    let out = load_listed(&mut card, s, &mut q, t, pid(1), &link);
+    assert!(out.note.is_none(), "{:?}", out.note);
+    assert_eq!(project_crc(&q), t.get(), "NEW");
+    assert_eq!(project_status(&q, t), ProjectStatus::Pristine);
+}
+
+/// Two `new_project_id`s before a save name the same id: the second save
+/// finds the pair there and writes nothing.
+fn fresh_file_taken_since_is_refused<S: Store>(s: &mut S) {
+    let mut card = Card::new();
+    let first = new_project_id(&mut card, s).out.expect("an id");
+    let second = new_project_id(&mut card, s).out.expect("an id");
+    assert_eq!(first.file(), second.file());
+    let (mut a, _) = full();
+    saved(save_project(&mut card, s, &mut a, SaveTo::Fresh(first)).out);
+    let (mut b, _) = Project::boxed();
+    assert_eq!(
+        save_project(&mut card, s, &mut b, SaveTo::Fresh(second)).out,
+        ProjectNote::FileChanged(Subject::Name(a.meta().name()))
+    );
+    assert_eq!(b.meta().file(), None);
+    assert_eq!(entry_of(&mut card, s, 1).name, Some(a.meta().name()));
 }
 
 fn missing_file<S: Store>(s: &mut S) {

@@ -1,9 +1,9 @@
 //! Focus glyphs: each param's hand-assigned gauge, the focus band's
-//! dispatch, the UI clock and the Demo chain's glyph pages.
+//! dispatch, the UI clock and DEMO's glyph pages.
 
 mod screen;
 
-use chimera_core::addr::{BlockRef, Blocks, Op, ParamAddr};
+use chimera_core::addr::{BlockRead, BlockRef, Op, ParamAddr};
 use chimera_core::block::{ParamSpec, ValFmt};
 use chimera_core::dsp::algo::params::AlgoOpParams;
 use chimera_core::dsp::lfo::LfoParams;
@@ -13,6 +13,7 @@ use chimera_core::modulation::ModSource;
 use chimera_core::params::OutParams;
 use chimera_core::project::PartId;
 use chimera_core::ui::UiState;
+use chimera_core::ui::animation::UiTick;
 use chimera_core::ui::block_def::{BlockDef, slot_addr};
 use chimera_core::ui::block_registry as reg;
 use chimera_core::ui::glyph::{Braid, CompositeId, FocusGlyph, Gauge, Rings, anim_key};
@@ -344,8 +345,8 @@ fn anim_key_follows_the_clock_only_while_animating() {
 fn the_clock_ticks_once_a_frame() {
     let mut ui = UiState::new();
     let t = ui.clock().frame();
-    ui.update();
-    ui.update();
+    ui.update(UiTick::for_test());
+    ui.update(UiTick::for_test());
     assert_eq!(ui.clock().frame(), t.wrapping_add(2));
 }
 
@@ -365,40 +366,33 @@ fn an_arc_focus_band_does_not_redraw_on_the_clock() {
     render_dirty_ui(&mut ui);
     let before = ui.drawn_key(RegionKind::Focus);
     for _ in 0..5 {
-        ui.update();
+        ui.update(UiTick::for_test());
     }
     render_dirty_ui(&mut ui);
     assert_eq!(ui.drawn_key(RegionKind::Focus), before);
 }
 
 fn to_demo(ui: &mut UiState, def: &'static BlockDef) {
-    feed(ui, Input::chord(ButtonId::Mix, ButtonId::B6));
-    let node = ui
-        .nav
-        .active_chain()
-        .blocks
+    let node = reg::DEMO_BLOCKS
         .iter()
         .position(|b| core::ptr::eq(b.def, def))
-        .expect("on the Demo chain");
-    for _ in 0..node {
-        feed(ui, Input::press(ButtonId::Plus));
-    }
-    assert!(core::ptr::eq(ui.nav.active_block_def(), def));
+        .expect("a DEMO page");
+    screen::to_demo(ui, node);
+    assert!(core::ptr::eq(ui.page_def(), def));
 }
 
 #[test]
-fn only_the_matrix_demo_node_is_the_matrix() {
-    let mut ui = UiState::new();
-    feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::B6));
-    for n in 0..ui.nav.active_chain().len() {
-        assert_eq!(ui.nav.node, n);
-        let matrix = ui.nav.active_block_def().layout == PageLayout::Matrix;
+fn only_the_matrix_demo_page_is_the_matrix() {
+    for (n, b) in reg::DEMO_BLOCKS.iter().enumerate() {
+        let mut ui = UiState::new();
+        screen::to_demo(&mut ui, n);
+        assert!(core::ptr::eq(ui.page_def(), b.def), "node {n}");
+        let matrix = ui.page_def().layout == PageLayout::Matrix;
         assert_eq!(
-            ui.page() == PageKey::Legacy(PageId::DemoMatrix),
+            ui.page() == PageKey::Legacy(PageId::Demo(reg::DEMO_MATRIX.id)),
             matrix,
             "node {n}"
         );
-        feed(&mut ui, Input::press(ButtonId::Plus));
     }
 }
 
@@ -423,10 +417,7 @@ fn glyph_arc_page_drives_the_arc() {
     let pan_addr = ParamAddr::new(BlockRef::Out, OutParams::PAN);
     let ctx = SlotCtx::read(ui.params(), ui.selected_op());
     for (slot, addr) in [(0, reso), (1, pan_addr)] {
-        assert_eq!(
-            view(ui.nav.active_block_def(), slot, &ctx).addr(),
-            Some(addr)
-        );
+        assert_eq!(view(ui.page_def(), slot, &ctx).addr(), Some(addr));
         assert_eq!(addr.spec().unwrap().glyph, FocusGlyph::Arc);
     }
     let (vol, pan) = (ui.params().filter.resonance, ui.params().out.pan);
@@ -447,7 +438,7 @@ fn glyph_arc_page_drives_the_arc() {
     assert_eq!(ui.focused_slot(), 1);
     assert_ne!(ui.params().out.pan, pan);
     assert_ne!(focus_key(&mut ui), uni_key);
-    let def = ui.nav.active_block_def();
+    let def = ui.page_def();
     let ctx = SlotCtx::read(ui.params(), ui.selected_op());
     assert!(view(def, 1, &ctx).fmt().is_bipolar());
     assert!(!view(def, 0, &ctx).fmt().is_bipolar());
@@ -509,7 +500,7 @@ fn glyph_switch_page_flips_a_real_two_state_param() {
 
     // It reads as the LFO page shows it: FREE / RETRIG.
     let ctx = SlotCtx::read(ui.params(), ui.selected_op());
-    let v = view(ui.nav.active_block_def(), 0, &ctx);
+    let v = view(ui.page_def(), 0, &ctx);
     assert_eq!(v.addr(), Some(sync));
     assert_eq!(v.fmt(), ValFmt::Names(&["FREE", "RETRIG"]));
 
@@ -529,7 +520,7 @@ fn glyph_switch_page_flips_a_real_two_state_param() {
     feed(&mut ui, Input::turn(EncoderId::A, 1));
     assert_eq!(lfo_sync(&ui), 1.0);
     // Eased: one frame in, the knob is on its way.
-    ui.update();
+    ui.update(UiTick::for_test());
     let t = ui.renderer.anim[0].current();
     assert!(t > 0.0 && t < 1.0, "eased: {t}");
     settle(&mut ui);
@@ -559,8 +550,8 @@ fn glyph_level_page_drives_a_level_and_a_stepped_value() {
     assert_eq!(vol.spec().unwrap().glyph, FocusGlyph::LevelBar);
     assert_eq!(fdbk.spec().unwrap().glyph, FocusGlyph::LevelBar);
     let ctx = SlotCtx::read(ui.params(), ui.selected_op());
-    assert_eq!(view(ui.nav.active_block_def(), 0, &ctx).addr(), Some(vol));
-    assert_eq!(view(ui.nav.active_block_def(), 1, &ctx).addr(), Some(fdbk));
+    assert_eq!(view(ui.page_def(), 0, &ctx).addr(), Some(vol));
+    assert_eq!(view(ui.page_def(), 1, &ctx).addr(), Some(fdbk));
     let (x, tick_x) = (theme::LEVEL_X, theme::LEVEL_TICK_X);
 
     // a, low: lit at the bottom only.
@@ -574,7 +565,7 @@ fn glyph_level_page_drives_a_level_and_a_stepped_value() {
 
     // a, high: lit to the top; eased on the way.
     feed(&mut ui, Input::turn(EncoderId::A, 127));
-    ui.update();
+    ui.update(UiTick::for_test());
     let t = ui.renderer.anim[0].current();
     assert!(t > 0.0 && t < 1.0, "eased: {t}");
     settle(&mut ui);
@@ -625,8 +616,8 @@ fn glyph_crossfader_page_slides_left_centre_right() {
     assert_eq!(morph.spec().unwrap().glyph, FocusGlyph::Crossfader);
     assert_eq!(mix.spec().unwrap().glyph, FocusGlyph::Crossfader);
     let ctx = SlotCtx::read(ui.params(), ui.selected_op());
-    assert_eq!(view(ui.nav.active_block_def(), 0, &ctx).addr(), Some(morph));
-    assert_eq!(view(ui.nav.active_block_def(), 1, &ctx).addr(), Some(mix));
+    assert_eq!(view(ui.page_def(), 0, &ctx).addr(), Some(morph));
+    assert_eq!(view(ui.page_def(), 1, &ctx).addr(), Some(mix));
     assert!(!Gauge::Crossfader { value: 0.5 }.animates());
 
     let y = theme::ARC_CY - theme::XF_CAP_H / 2 + 2;
@@ -671,7 +662,7 @@ fn crossfader_ignores_modulation() {
     let first = cap(&render_ui(&ui));
     let mut moved = false;
     for _ in 0..40 {
-        ui.update();
+        ui.update(UiTick::for_test());
         moved |= (ui.renderer.anim[0].current() - ui.renderer.set[0].current()).abs() > 0.01;
         assert_eq!(cap(&render_ui(&ui)), first);
     }
@@ -736,7 +727,7 @@ fn glyph_braid_page_moves_only_inside_its_box() {
     let a = render_ui(&ui);
     assert_eq!(a.oob, 0);
     assert_eq!(arc_top(&a), theme::BG, "no arc");
-    ui.update();
+    ui.update(UiTick::for_test());
     let b = render_ui(&ui);
     let mut inside = 0;
     for y in 0..H as i32 {
@@ -759,7 +750,7 @@ fn braid_redraws_only_its_box_each_frame() {
     let perf = chimera_core::ui::perf::PerfStats::zero();
     ui.render_dirty_with_scope(&mut fb, &perf, &scope_fixture());
     for _ in 0..3 {
-        ui.update();
+        ui.update(UiTick::for_test());
         let flushed: Vec<_> = ui
             .render_dirty_with_scope(&mut fb, &perf, &scope_fixture())
             .into_iter()
@@ -785,7 +776,7 @@ fn braid_emphasises_the_focused_param() {
             let mut ui = braid_ui(e);
             // Same clock frame for every shot.
             while ui.clock().frame() < 200 {
-                ui.update();
+                ui.update(UiTick::for_test());
             }
             render_ui(&ui)
         })
@@ -859,7 +850,7 @@ fn status_stops_redrawing(mut ui: UiState) {
     let mut fb = Fb::new();
     let perf = chimera_core::ui::perf::PerfStats::zero();
     ui.render_dirty_with_scope(&mut fb, &perf, &scope_fixture());
-    ui.update();
+    ui.update(UiTick::for_test());
     let flushed: Vec<_> = ui
         .render_dirty_with_scope(&mut fb, &perf, &scope_fixture())
         .into_iter()
@@ -944,7 +935,7 @@ fn glyph_rings_page_moves_only_inside_its_box() {
     assert_eq!(arc_top(&a), theme::BG, "no arc");
     let mut inside = 0;
     for _ in 0..3 {
-        ui.update();
+        ui.update(UiTick::for_test());
     }
     let b = render_ui(&ui);
     for y in 0..H as i32 {
@@ -965,7 +956,7 @@ fn rings_redraw_only_their_box_each_frame() {
     let perf = chimera_core::ui::perf::PerfStats::zero();
     ui.render_dirty_with_scope(&mut fb, &perf, &scope_fixture());
     for _ in 0..3 {
-        ui.update();
+        ui.update(UiTick::for_test());
         let flushed: Vec<_> = ui
             .render_dirty_with_scope(&mut fb, &perf, &scope_fixture())
             .into_iter()
@@ -989,7 +980,7 @@ fn rings_emphasise_the_focused_param() {
         .map(|e| {
             let mut ui = rings_ui(e);
             while ui.clock().frame() < 200 {
-                ui.update();
+                ui.update(UiTick::for_test());
             }
             render_ui(&ui)
         })
@@ -1102,7 +1093,7 @@ fn glyph_cube_page_moves_only_inside_its_box() {
     assert_eq!(a.oob, 0);
     assert_eq!(arc_top(&a), theme::BG, "no arc");
     for _ in 0..3 {
-        ui.update();
+        ui.update(UiTick::for_test());
     }
     let b = render_ui(&ui);
     let mut inside = 0;
@@ -1124,7 +1115,7 @@ fn cube_redraws_only_its_box_each_frame() {
     let perf = chimera_core::ui::perf::PerfStats::zero();
     ui.render_dirty_with_scope(&mut fb, &perf, &scope_fixture());
     for _ in 0..3 {
-        ui.update();
+        ui.update(UiTick::for_test());
         let flushed: Vec<_> = ui
             .render_dirty_with_scope(&mut fb, &perf, &scope_fixture())
             .into_iter()
@@ -1145,7 +1136,7 @@ fn cube_emphasises_the_focused_param() {
         .map(|&e| {
             let mut ui = cube_ui(e);
             while ui.clock().frame() < 200 {
-                ui.update();
+                ui.update(UiTick::for_test());
             }
             render_ui(&ui)
         })
@@ -1225,7 +1216,7 @@ fn a_crossfader_redraws_when_only_its_set_value_moves() {
     feed(&mut ui, Input::press(ButtonId::B1));
     let ctx = SlotCtx::read(ui.params(), ui.selected_op());
     let slot = (0..6)
-        .find(|&i| slot_addr(ui.nav.active_block_def(), i, &ctx) == Some(morph))
+        .find(|&i| slot_addr(ui.page_def(), i, &ctx) == Some(morph))
         .expect("ALG holds MORPH");
     feed(&mut ui, Input::turn(SIX[slot], -127));
     feed(&mut ui, Input::turn(SIX[slot], 76));
@@ -1236,7 +1227,7 @@ fn a_crossfader_redraws_when_only_its_set_value_moves() {
     let perf = chimera_core::ui::perf::PerfStats::zero();
     let mut fb = Fb::new();
     for _ in 0..120 {
-        ui.update();
+        ui.update(UiTick::for_test());
         ui.render_dirty_with_scope(&mut fb, &perf, &scope_fixture());
     }
     assert_eq!(ui.renderer.anim[slot].current(), 1.0, "modulated, pinned");
@@ -1250,7 +1241,7 @@ fn a_crossfader_redraws_when_only_its_set_value_moves() {
     let before = boxed_rect(&fb, xf);
     feed(&mut ui, Input::turn(SIX[slot], 26));
     for _ in 0..120 {
-        ui.update();
+        ui.update(UiTick::for_test());
         ui.render_dirty_with_scope(&mut fb, &perf, &scope_fixture());
     }
     assert_eq!(ui.renderer.anim[slot].current(), 1.0, "still pinned");
