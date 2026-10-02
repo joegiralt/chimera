@@ -384,13 +384,15 @@ fn synth(board: Board) -> ! {
         // The snapshot point: every path through the last iteration flushed.
         #[cfg(feature = "usb-console")]
         if let Some(asked) = usb.service(ui, stats_r.as_mut(), bench_text, display.frame()) {
+            // As the menu's path: a THEME change in this visit is kept.
+            ui.sync_system_now(&mut sync, &mut card, store, &mut settings);
             dfu::enter(&marker, dfu::DfuFrom::Console(asked));
         }
         controls.snapshot();
         // Every frame, even idle: a held key must age.
         ui.handle_input(&controls);
         // SYSTEM synced first: a THEME change made in this visit is kept.
-        if let Some(yes) = ui.take_dfu(&mut sync, &mut card, store, &mut settings) {
+        if let Some(yes) = ui.take_dfu_synced(&mut sync, &mut card, store, &mut settings) {
             dfu::enter(&marker, dfu::DfuFrom::Menu(yes));
         }
         // Card work the keys asked for, under BUSY. A load settles before

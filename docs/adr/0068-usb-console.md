@@ -53,14 +53,16 @@ is `docs/superpowers/specs/2026-10-02-usb-console-design.md`.
   this build`. Only the shell's `service` makes the `DfuAsked` the
   console's way in needs, and only after that drain; a host that still
   misses the `OK` sees the port vanish and DF11 appear, which `to-dfu`
-  counts as success. The menu's yes syncs SYSTEM first, so a THEME change
-  made in the same visit is kept. Either way the firmware writes `DFU_MAGIC` to
+  counts as success. Both paths sync SYSTEM to the card first
+  (`sync_system_now`; the menu's through `take_dfu_synced`), so a THEME
+  change made in the same visit is kept. Either way the firmware writes `DFU_MAGIC` to
   RTC_BKP0R and calls `SCB::sys_reset()`. The stock bootloader runs and
   jumps to Chimera. At the top of `main`, before `boot()` touches a clock
   or peripheral, Chimera reads the register, always clears it and reads
-  the clear back (`Cleared` or `Stuck`), and asks the pure
-  `boot::after_reset(marker)`. Only `RomDfu` with `Cleared` jumps; a
-  `Stuck` marker boots the synth. `after_reset` returns `dfu::Checked`,
+  the clear back, and asks the pure `boot::after_reset(marker,
+  readback)`: only `DFU_MAGIC` that read back 0 jumps, and a stuck marker
+  boots the synth (a transient stuck may enter DFU on a later reset,
+  which is accepted). `after_reset` returns `dfu::Checked`,
   which `boot` takes and pairs with the owned RTC into the `dfu::Marker`
   that `dfu::enter` needs, so nothing writes the marker before the check
   ran. On the jump, it stops SysTick, disables and unpends every NVIC

@@ -14,9 +14,15 @@ pub enum BootAction {
     RomDfu,
 }
 
-/// The marker read after a reset. Only `DFU_MAGIC` enters the ROM loader.
-pub const fn after_reset(marker: u32) -> BootAction {
-    if marker == DFU_MAGIC {
+/// `marker`, read after a reset, and `readback`, the marker read again
+/// after the shell cleared it. Only `DFU_MAGIC` that cleared to 0 enters
+/// the ROM loader. A read-back that isn't 0 is stuck (DBP never set, or the
+/// write didn't land) and boots the synth, so a stuck marker can't trap the
+/// unit in DFU. A transient stuck leaves the magic in place, so a later
+/// clean reset may still enter DFU: accepted, as the ROM loader can't brick
+/// the unit and every boot tries the clear again.
+pub const fn after_reset(marker: u32, readback: u32) -> BootAction {
+    if marker == DFU_MAGIC && readback == 0 {
         BootAction::RomDfu
     } else {
         BootAction::Synth

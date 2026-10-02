@@ -30,13 +30,6 @@ impl Marker {
     }
 }
 
-/// BKP0R reads back 0.
-struct Cleared(());
-
-/// BKP0R would not clear (DBP never set, or the write did not land): the
-/// synth boots, so a stuck marker can't trap the unit in DFU.
-struct Stuck;
-
 /// Why `enter` may run: a proof, never a flag.
 #[cfg(not(feature = "sd-probe"))]
 pub enum DfuFrom {
@@ -47,21 +40,21 @@ pub enum DfuFrom {
     Console(crate::usb::DfuAsked),
 }
 
-/// DBP set and read back, then BKP0R cleared and read back.
-fn clear(pwr: &pac::PWR, rtc: &pac::RTC) -> Result<Cleared, Stuck> {
+/// DBP set and read back, then BKP0R cleared: what it reads back. Not 0 is
+/// stuck (DBP never set, or the write did not land), and
+/// `boot::after_reset` boots the synth on it. A transient stuck leaves the
+/// magic in place, so a later clean reset may enter DFU: accepted, the ROM
+/// loader can't brick the unit.
+fn clear(pwr: &pac::PWR, rtc: &pac::RTC) -> u32 {
     pwr.cr1.modify(|_, w| w.dbp().set_bit());
-    if !(0..DBP_TRIES).any(|_| pwr.cr1.read().dbp().bit_is_set()) {
-        return Err(Stuck);
-    }
+    // Without DBP the write is ignored and the read-back says so.
+    let _ = (0..DBP_TRIES).any(|_| pwr.cr1.read().dbp().bit_is_set());
     rtc.bkpr[0].write(|w| w.bkp().bits(0));
-    match rtc.bkpr[0].read().bits() {
-        0 => Ok(Cleared(())),
-        _ => Err(Stuck),
-    }
+    rtc.bkpr[0].read().bits()
 }
 
 /// The top of `main`, before `boot()` touches a clock or a peripheral:
-/// RTCAPBEN, read BKP0R, clear it, then jump on `RomDfu` if it cleared.
+/// RTCAPBEN, read BKP0R, clear it, then jump if `boot::after_reset` says so.
 /// The marker is cleared whatever it held, so the next reset always plays.
 pub fn after_reset(
     cp: &mut cortex_m::Peripherals,
@@ -74,14 +67,15 @@ pub fn after_reset(
     let _ = rcc.apb4enr.read();
     cortex_m::asm::dsb();
     let m = rtc.bkpr[0].read().bits();
-    match (boot::after_reset(m), clear(pwr, rtc)) {
-        (BootAction::RomDfu, Ok(c)) => jump(cp, c),
-        (BootAction::Synth, _) | (BootAction::RomDfu, Err(Stuck)) => Checked(()),
+    match boot::after_reset(m, clear(pwr, rtc)) {
+        BootAction::RomDfu => jump(cp),
+        BootAction::Synth => Checked(()),
     }
 }
 
-/// Into the ROM loader, never back. `Cleared`: the next reset plays.
-fn jump(cp: &mut cortex_m::Peripherals, _: Cleared) -> ! {
+/// Into the ROM loader, never back. The marker read back clear, so the
+/// next reset plays.
+fn jump(cp: &mut cortex_m::Peripherals) -> ! {
     // The stock bootloader's `HAL_SuspendTick` leaves it counting.
     cp.SYST.disable_interrupt();
     cp.SYST.disable_counter();

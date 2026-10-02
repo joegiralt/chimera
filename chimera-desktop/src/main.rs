@@ -140,7 +140,7 @@ fn main() {
         // UI framework handles navigation + encoder -> param binding
         ui.handle_input(&controls);
         if ui
-            .take_dfu(&mut sync, &mut card, &mut store, &mut settings)
+            .take_dfu_synced(&mut sync, &mut card, &mut store, &mut settings)
             .is_some()
         {
             eprintln!("dfu: not in this build");

@@ -35,7 +35,7 @@ impl Sys {
     }
 
     fn take(&mut self, ui: &mut UiState) -> Option<Said<RomDfu>> {
-        ui.take_dfu(&mut self.sync, &mut self.card, &mut self.s, &mut self.set)
+        ui.take_dfu_synced(&mut self.sync, &mut self.card, &mut self.s, &mut self.set)
     }
 }
 

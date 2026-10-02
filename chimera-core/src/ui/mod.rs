@@ -306,10 +306,26 @@ impl UiState {
         }
     }
 
-    /// The DFU prompt's yes, once, with SYSTEM synced first: the restart
-    /// leaves SETTINGS without the exit sync, so a THEME change made in
-    /// this visit would be lost.
-    pub fn take_dfu<S: Store>(
+    /// Before a restart: SYSTEM synced to the card now, as leaving SETTINGS
+    /// would. A restart never leaves SETTINGS, so a THEME change made in
+    /// this visit would otherwise be lost. Writes the card.
+    pub fn sync_system_now<S: Store>(
+        &mut self,
+        sync: &mut SystemSync,
+        card: &mut Card,
+        store: &mut S,
+        s: &mut SystemSettings,
+    ) {
+        s.theme = self.theme;
+        // As if SETTINGS were left: `left_system` keeps the untouched mark.
+        let _ = sync.left_system(false, s);
+        let _ = sync.on_exit(card, store, s, self.project.meta().file());
+        self.card = *card;
+    }
+
+    /// The DFU prompt's yes, once, after `sync_system_now`: the menu's
+    /// path to DFU can't skip the card write.
+    pub fn take_dfu_synced<S: Store>(
         &mut self,
         sync: &mut SystemSync,
         card: &mut Card,
@@ -317,11 +333,7 @@ impl UiState {
         s: &mut SystemSettings,
     ) -> Option<Said<RomDfu>> {
         let yes = self.dfu.take()?;
-        s.theme = self.theme;
-        // As if SETTINGS were left: `left_system` keeps the untouched mark.
-        let _ = sync.left_system(false, s);
-        let _ = sync.on_exit(card, store, s, self.project.meta().file());
-        self.card = *card;
+        self.sync_system_now(sync, card, store, s);
         Some(yes)
     }
 
