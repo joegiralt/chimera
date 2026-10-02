@@ -330,10 +330,6 @@ impl Witnessed for DeleteTarget {
 
 impl Confirmed<OverwriteTarget> {
     /// SAVE OVER or CLEAR answered on the listed `e`.
-    #[cfg_attr(
-        not(any(test, feature = "test-support")),
-        expect(dead_code, reason = "the SETTINGS prompts answer with it next")
-    )]
     pub(crate) fn answered(e: &ProjectEntry) -> Self {
         Confirmed {
             target: OverwriteTarget { file: e.file() },

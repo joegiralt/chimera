@@ -107,10 +107,36 @@ pub enum SaveTo {
     Over(Confirmed<OverwriteTarget>),
 }
 
+/// A card operation's result, and what its mount found (`None` when it
+/// failed or nothing mounted): the caller drops what was another card's.
+#[must_use]
+#[derive(Debug, PartialEq)]
+pub struct CardOut<T> {
+    pub out: T,
+    pub event: Option<CardEvent>,
+}
+
+impl<T> CardOut<T> {
+    fn none(out: T) -> Self {
+        CardOut { out, event: None }
+    }
+}
+
+/// The event of a `Card::run`, and its result flattened.
+fn split<R, E>(run: Result<Outcome<R, E>, E>) -> (Result<R, E>, Option<CardEvent>) {
+    match run {
+        Ok(o) => (o.result, Some(o.event)),
+        Err(e) => (Err(e), None),
+    }
+}
+
 /// A new file on the card in the slot: the highest id there + 1; 1 with
 /// no `PROJECTS` directory.
-pub fn new_project_id<S: Store>(card: &mut Card, store: &mut S) -> Result<FreshFile, ProjectNote> {
-    let out = card.run(store, |s, r| {
+pub fn new_project_id<S: Store>(
+    card: &mut Card,
+    store: &mut S,
+) -> CardOut<Result<FreshFile, ProjectNote>> {
+    let run = card.run(store, |s, r| {
         let vol = r.volume();
         let mut top = 0;
         match s.list(r.volume(), Dir::Projects, &mut |f, _| {
@@ -122,12 +148,14 @@ pub fn new_project_id<S: Store>(card: &mut Card, store: &mut S) -> Result<FreshF
             Err(e) => Err(e),
         }
     });
-    match out.and_then(|o| o.result) {
+    let (result, event) = split(run);
+    let out = match result {
         Ok((top, vol)) => ProjectId::new(top + 1)
             .map(|id| FreshFile(ProjectFile::new(id, vol)))
             .ok_or(ProjectNote::NoIds),
         Err(e) => Err(card_note(e, None)),
-    }
+    };
+    CardOut { out, event }
 }
 
 /// The Parts saved `Edited` from a slot.
@@ -191,8 +219,8 @@ fn write_project<S: Store>(
     name: ProjectName,
     subject: Subject,
     body: &mut dyn FnMut(&mut RecordWriter<'_>) -> Result<(), StoreError>,
-) -> Result<(), ProjectNote> {
-    let out = run_on(card, store, file.vol(), |s, r| {
+) -> CardOut<Result<(), ProjectNote>> {
+    let run = run_on(card, store, file.vol(), |s, r| {
         if let Err(moved) = still(s, r.volume(), file.id(), e)? {
             return Ok(Err(moved));
         }
@@ -208,13 +236,15 @@ fn write_project<S: Store>(
         )
         .map(Ok)
     });
-    match out.and_then(|o| o.result) {
+    let (result, event) = split(run);
+    let out = match result {
         Ok(Ok(Ok(_))) => Ok(()),
         Ok(Ok(Err(moved))) => Err(ProjectNote::FileChanged(moved)),
         Ok(Err(now)) => Err(changed(now, subject)),
         Err(SaveError::Store(err)) => Err(card_note(err, Some(subject))),
         Err(SaveError::File(err)) => Err(ProjectNote::File { err, subject }),
-    }
+    };
+    CardOut { out, event }
 }
 
 /// Streams `p` to its pair, on that file's card only: another card is
@@ -226,11 +256,11 @@ pub fn save_project<S: Store>(
     store: &mut S,
     p: &mut Project,
     to: SaveTo,
-) -> ProjectNote {
+) -> CardOut<ProjectNote> {
     let (file, e) = match to {
         SaveTo::Own => match p.meta.file {
             Some(f) => (f, Expect::Own),
-            None => return ProjectNote::NoFile,
+            None => return CardOut::none(ProjectNote::NoFile),
         },
         SaveTo::Fresh(f) => (f.0, Expect::Absent),
         SaveTo::Over(c) => (c.target().file(), Expect::Newest(c.witness())),
@@ -245,7 +275,7 @@ pub fn save_project<S: Store>(
         Subject::Name(name),
         &mut |w| encode_project(live, w),
     );
-    match out {
+    let note = match out.out {
         Ok(()) => {
             p.bump();
             p.meta.file = Some(file);
@@ -253,6 +283,10 @@ pub fn save_project<S: Store>(
             ProjectNote::Saved(differ(p))
         }
         Err(n) => n,
+    };
+    CardOut {
+        out: note,
+        event: out.event,
     }
 }
 
@@ -266,10 +300,10 @@ pub fn clear_project<S: Store>(
     store: &mut S,
     loaded: &Project,
     c: Confirmed<OverwriteTarget>,
-) -> Result<(), ProjectNote> {
+) -> CardOut<Result<(), ProjectNote>> {
     let file = c.target().file();
     if loaded.meta().file() == Some(file) {
-        return Err(ProjectNote::ClearLoaded);
+        return CardOut::none(Err(ProjectNote::ClearLoaded));
     }
     write_project(
         card,
@@ -586,22 +620,24 @@ pub fn delete_project<S: Store>(
     store: &mut S,
     loaded: &Project,
     c: Confirmed<DeleteTarget>,
-) -> Result<(), ProjectNote> {
+) -> CardOut<Result<(), ProjectNote>> {
     let file = c.target().file();
     if loaded.meta().file() == Some(file) {
-        return Err(ProjectNote::IsLoaded);
+        return CardOut::none(Err(ProjectNote::IsLoaded));
     }
-    let out = run_on(card, store, file.vol(), |s, r| {
+    let run = run_on(card, store, file.vol(), |s, r| {
         if let Err(moved) = still(s, r.volume(), file.id(), Expect::Newest(c.witness()))? {
             return Ok(Err(moved));
         }
         delete_ab(s, r, project_file(file.id()), &mut ProjectCheck::new()).map(Ok)
     });
     let subject = Subject::File(file.id());
-    match out.and_then(|o| o.result) {
+    let (result, event) = split(run);
+    let out = match result {
         Ok(Ok(Ok(()))) => Ok(()),
         Ok(Ok(Err(moved))) => Err(ProjectNote::FileChanged(moved)),
         Ok(Err(now)) => Err(changed(now, subject)),
         Err(e) => Err(card_note(e, Some(subject))),
-    }
+    };
+    CardOut { out, event }
 }

@@ -186,3 +186,46 @@ pub fn rows(path: &[u8]) -> &'static [Row] {
         _ => &[],
     }
 }
+
+/// The PROJECT list's place at the top, and SAVE PROJECT AS's row in it,
+/// found at compile time.
+pub const SAVE_AS_AT: (u8, u8) = {
+    let mut i = 0;
+    loop {
+        assert!(i < TOP.len(), "no SAVE PROJECT AS under the top");
+        if let List(rs) = TOP[i].kind {
+            let mut j = 0;
+            while j < rs.len() {
+                if matches!(rs[j].kind, Kind::Act(Act::SaveProjectAs)) {
+                    break;
+                }
+                j += 1;
+            }
+            if j < rs.len() {
+                break (i as u8, j as u8);
+            }
+        }
+        i += 1;
+    }
+};
+
+/// The path to Screen `s`'s row, and its depth.
+pub fn path_of(s: Screen) -> ([u8; 4], usize) {
+    fn find(rows: &'static [Row], s: Screen, path: &mut [u8; 4], d: usize) -> Option<usize> {
+        if d == path.len() {
+            return None;
+        }
+        rows.iter().enumerate().find_map(|(i, r)| {
+            path[d] = i as u8;
+            match r.kind {
+                Kind::Screen(t) if t == s => Some(d + 1),
+                List(rs) => find(rs, s, path, d + 1),
+                _ => None,
+            }
+        })
+    }
+    let mut path = [0; 4];
+    let depth = find(rows(&[]), s, &mut path, 0).unwrap_or(0);
+    path[depth..].fill(0);
+    (path, depth)
+}

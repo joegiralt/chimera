@@ -443,7 +443,7 @@ pub fn save_at<S: Store>(card: &mut Card, s: &mut S, p: &mut Project, n: u32) ->
             None => SaveTo::Fresh(FreshFile::for_test(f)),
         }
     };
-    save_project(card, s, p, to)
+    save_project(card, s, p, to).out
 }
 
 fn entry_of<S: Store>(card: &mut Card, s: &mut S, n: u32) -> ProjectEntry {
@@ -479,6 +479,13 @@ fn load_listed<S: Store>(
         .map_or_else(|| s.mount().expect("a card"), |e| e.vol);
     let go = ReplaceGuard::check(q, t, ProjectSource::File { id, vol }).expect("no prompt");
     load_project(card, s, q, go, link)
+}
+
+/// Both sides of `id`'s pair cut short: listed with an error.
+pub fn damage<S: Store>(card: &mut Card, s: &mut S, id: ProjectId) {
+    for side in [Side::A, Side::B] {
+        put_side(card, s, id, side, b"junk");
+    }
 }
 
 /// Raw bytes as one side of `id`'s pair.
@@ -527,11 +534,11 @@ pub fn project_store_suite<S: Store>(make: &mut dyn FnMut() -> S) {
 fn save_then_load_is_bit_identical<S: Store>(store: &mut S) {
     let mut card = Card::new();
     let (mut p, _) = full();
-    let fresh = new_project_id(&mut card, store).expect("an id");
+    let fresh = new_project_id(&mut card, store).out.expect("an id");
     let file = fresh.file();
     let id = file.id();
     assert_eq!(file, at(store, 1));
-    saved(save_project(&mut card, store, &mut p, SaveTo::Fresh(fresh)));
+    saved(save_project(&mut card, store, &mut p, SaveTo::Fresh(fresh)).out);
     assert_eq!(p.meta().file(), Some(file));
     assert_eq!(p.meta().id(), Some(id));
     let (mut q, t) = Project::boxed();
@@ -555,7 +562,7 @@ fn first_save_makes_the_dirs<S: Store>(make: &mut dyn FnMut() -> S) {
             out.and_then(|o| o.result).expect("/CHIMERA");
         }
         assert_eq!(
-            new_project_id(&mut card, &mut s).map(|f| f.file()),
+            new_project_id(&mut card, &mut s).out.map(|f| f.file()),
             Ok(at(&mut s, 1)),
             "no PROJECTS"
         );
@@ -579,6 +586,7 @@ fn list_and_next_id<S: Store>(s: &mut S) {
     for (n, name) in [(1, "ONE"), (2, "TWO"), (5, "FIVE")] {
         assert!(
             new_project_id(&mut card, s)
+                .out
                 .expect("an id")
                 .file()
                 .id()
@@ -588,7 +596,7 @@ fn list_and_next_id<S: Store>(s: &mut S) {
         saved(save_at(&mut card, s, &mut named(name), n));
     }
     let six = at(s, 6);
-    assert_eq!(new_project_id(&mut card, s).map(|f| f.file()), Ok(six));
+    assert_eq!(new_project_id(&mut card, s).out.map(|f| f.file()), Ok(six));
     // A second save under a new name: the newer side's name lists.
     saved(save_at(&mut card, s, &mut named("ONE AGAIN"), 1));
     // Headers this firmware refuses, alone or beside a readable side.
@@ -635,12 +643,12 @@ fn list_and_next_id<S: Store>(s: &mut S) {
         ]
     );
     let ten = at(s, 10);
-    assert_eq!(new_project_id(&mut card, s).map(|f| f.file()), Ok(ten));
+    assert_eq!(new_project_id(&mut card, s).out.map(|f| f.file()), Ok(ten));
 
     // The last id: the next is refused.
     saved(save_at(&mut card, s, &mut named("LAST"), ProjectId::MAX));
     assert_eq!(
-        new_project_id(&mut card, s).map(|f| f.file()),
+        new_project_id(&mut card, s).out.map(|f| f.file()),
         Err(ProjectNote::NoIds)
     );
 }
@@ -654,13 +662,13 @@ fn delete_rules<S: Store>(s: &mut S) {
     saved(save_at(&mut card, s, &mut b, 2));
     let two = entry_of(&mut card, s, 2);
     assert_eq!(
-        delete_project(&mut card, s, &b, confirm_delete(&two)),
+        delete_project(&mut card, s, &b, confirm_delete(&two)).out,
         Err(ProjectNote::IsLoaded)
     );
     assert_eq!(listed(&mut card, s).len(), 2, "nothing deleted");
     let one = entry_of(&mut card, s, 1);
     assert_eq!(
-        delete_project(&mut card, s, &b, confirm_delete(&one)),
+        delete_project(&mut card, s, &b, confirm_delete(&one)).out,
         Ok(())
     );
     let left: Vec<_> = listed(&mut card, s).iter().map(|e| e.id).collect();
@@ -668,14 +676,14 @@ fn delete_rules<S: Store>(s: &mut S) {
     // A NEW project has no id: it guards nothing.
     let (fresh, _) = Project::boxed();
     assert_eq!(
-        delete_project(&mut card, s, &fresh, confirm_delete(&two)),
+        delete_project(&mut card, s, &fresh, confirm_delete(&two)).out,
         Ok(())
     );
     assert!(listed(&mut card, s).is_empty());
     let at1 = at(s, 1);
-    assert_eq!(new_project_id(&mut card, s).map(|f| f.file()), Ok(at1));
+    assert_eq!(new_project_id(&mut card, s).out.map(|f| f.file()), Ok(at1));
     assert_eq!(
-        delete_project(&mut card, s, &fresh, confirm_delete(&two)),
+        delete_project(&mut card, s, &fresh, confirm_delete(&two)).out,
         Err(ProjectNote::FileChanged(Subject::File(pid(2)))),
         "gone since listed"
     );
@@ -694,20 +702,15 @@ fn confirmed_writes_refuse_a_moved_file<S: Store>(s: &mut S) {
     saved(save_at(&mut card, s, &mut a, 1));
     let moved = ProjectNote::FileChanged(Subject::Name(a.meta().name()));
     assert_eq!(
-        save_project(&mut card, s, &mut b, SaveTo::Over(over)),
+        save_project(&mut card, s, &mut b, SaveTo::Over(over)).out,
         moved
     );
     assert_eq!(b.meta().file(), None);
-    assert_eq!(delete_project(&mut card, s, &b, del), Err(moved));
+    assert_eq!(delete_project(&mut card, s, &b, del).out, Err(moved));
     let e = entry_of(&mut card, s, 1);
     assert_eq!(e.name, Some(a.meta().name()), "nothing written");
 
-    saved(save_project(
-        &mut card,
-        s,
-        &mut b,
-        SaveTo::Over(confirm_overwrite(&e)),
-    ));
+    saved(save_project(&mut card, s, &mut b, SaveTo::Over(confirm_overwrite(&e))).out);
     assert_eq!(b.meta().file(), Some(e.file()));
     assert_eq!(project_status(&b, t), ProjectStatus::Saved);
     let link = LoadLink::new();
@@ -719,7 +722,7 @@ fn confirmed_writes_refuse_a_moved_file<S: Store>(s: &mut S) {
     let e = entry_of(&mut card, s, 1);
     let (other, _) = Project::boxed();
     assert_eq!(
-        clear_project(&mut card, s, &other, confirm_overwrite(&e)),
+        clear_project(&mut card, s, &other, confirm_overwrite(&e)).out,
         Ok(())
     );
     let (mut q, t) = full();
@@ -734,14 +737,14 @@ fn confirmed_writes_refuse_a_moved_file<S: Store>(s: &mut S) {
 /// finds the pair there and writes nothing.
 fn fresh_file_taken_since_is_refused<S: Store>(s: &mut S) {
     let mut card = Card::new();
-    let first = new_project_id(&mut card, s).expect("an id");
-    let second = new_project_id(&mut card, s).expect("an id");
+    let first = new_project_id(&mut card, s).out.expect("an id");
+    let second = new_project_id(&mut card, s).out.expect("an id");
     assert_eq!(first.file(), second.file());
     let (mut a, _) = full();
-    saved(save_project(&mut card, s, &mut a, SaveTo::Fresh(first)));
+    saved(save_project(&mut card, s, &mut a, SaveTo::Fresh(first)).out);
     let (mut b, _) = Project::boxed();
     assert_eq!(
-        save_project(&mut card, s, &mut b, SaveTo::Fresh(second)),
+        save_project(&mut card, s, &mut b, SaveTo::Fresh(second)).out,
         ProjectNote::FileChanged(Subject::Name(a.meta().name()))
     );
     assert_eq!(b.meta().file(), None);

@@ -31,7 +31,7 @@ pub mod viz;
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 
-use crate::storage::{Card, Exit, SystemSettings, SystemSync};
+use crate::storage::{Card, CardEvent, Exit, SystemSettings, SystemSync};
 use chimera_hal::store::Store;
 use chimera_hal::{
     ALL_BUTTONS, ALL_ENCODERS, ButtonId, ButtonState, Controls, EncoderId, PART_BUTTONS,
@@ -48,9 +48,9 @@ use crate::params::{EngineType, ParamSnapshot};
 use crate::perf::load::AudioStats;
 use crate::preset::POOL_SIZE;
 use crate::project::{
-    self, Confirmed, DeleteTarget, Line, LoadLink, PartEdit, PartFrom, PartId, PartSource, Project,
-    ProjectFile, ProjectNote, ProjectSource, ProjectStatus, ReplaceGuard, SaveTo, StatusCache,
-    Swap, TemplateCrc, part_block_mut,
+    self, CardOut, Confirmed, DeleteTarget, Line, LoadLink, PartEdit, PartFrom, PartId, PartSource,
+    Project, ProjectFile, ProjectNote, ProjectSource, ProjectStatus, ReplaceGuard, SaveTo,
+    StatusCache, Swap, TemplateCrc, part_block_mut,
 };
 use crate::scope::SCOPE_LEN;
 use crate::storage::ProjectId;
@@ -64,9 +64,11 @@ use nav::{Browse, ListAt, Location, NavCtx, NavKey, Recall, Step, chain_def_for}
 use page::{PageKey, PageLayout};
 use perf::PerfStats;
 use renderer::Renderer;
+use settings::job::{CardCx, Job, Then};
+use settings::listing::{Listing, LoadRow, Pick, refusal};
 use settings::naming::Naming;
 use settings::prompt::{self, Answer};
-use settings::{Answered, Ask, Done, Modal, ModalStep, NamingFor};
+use settings::{Act, Answered, Ask, Done, Modal, ModalStep, NamingFor, SaveAs, Screen};
 use theme_settings::ThemeSettings;
 use view::{SlotCtx, View};
 
@@ -191,6 +193,10 @@ pub struct UiState {
     clock: animation::UiClock,
     /// A prompt or NAMING: while open it takes every key but B*n*.
     modal: Option<Modal>,
+    /// The card's projects, as LOAD and MANAGE show them.
+    listing: Listing,
+    /// Card work for `card_work`, at most one a frame.
+    job: Option<Job>,
 }
 
 crate::in_place::field_list!(UiState => UiState {
@@ -215,6 +221,8 @@ crate::in_place::field_list!(UiState => UiState {
     status,
     clock,
     modal,
+    listing,
+    job,
 });
 
 impl Default for UiState {
@@ -271,6 +279,8 @@ impl UiState {
             addr_of_mut!((*p).status).write(StatusCache::new());
             addr_of_mut!((*p).clock).write(animation::UiClock::new());
             addr_of_mut!((*p).modal).write(None);
+            addr_of_mut!((*p).listing).write(Listing::new());
+            addr_of_mut!((*p).job).write(None);
             let ui = slot.assume_init_mut();
             ui.load_matrix(PartId::ALL[0]);
             ui
@@ -387,7 +397,7 @@ impl UiState {
     /// # let mut card = Card::new();
     /// # let (mut sync, mut set, _) = SystemSync::boot(&mut card, &mut s);
     /// let mut ui = chimera_core::ui::UiState::new();
-    /// let to = chimera_core::project::new_project_id(&mut card, &mut s).unwrap().file();
+    /// let to = chimera_core::project::new_project_id(&mut card, &mut s).out.unwrap().file();
     /// ui.save_project(&mut card, &mut s, &mut sync, &mut set, to);
     /// ```
     pub fn save_project<S: Store>(
@@ -397,12 +407,26 @@ impl UiState {
         sync: &mut SystemSync,
         settings: &mut SystemSettings,
         to: SaveTo,
-    ) {
+    ) -> Option<CardEvent> {
+        let CardOut { out, event } = self.save(card, store, sync, settings, to);
+        self.show_note(out);
+        event
+    }
+
+    /// `save_project` without the toast.
+    fn save<S: Store>(
+        &mut self,
+        card: &mut Card,
+        store: &mut S,
+        sync: &mut SystemSync,
+        settings: &mut SystemSettings,
+        to: SaveTo,
+    ) -> CardOut<ProjectNote> {
         let n = project::save_project(card, store, &mut self.project, to);
-        if let (ProjectNote::Saved(_), Some(f)) = (n, self.project.meta().file()) {
+        if let (ProjectNote::Saved(_), Some(f)) = (n.out, self.project.meta().file()) {
             self.remember(card, store, sync, settings, f);
         }
-        self.show_note(n);
+        n
     }
 
     /// Replaces the project as `go` confirmed. A file that loads becomes
@@ -425,19 +449,38 @@ impl UiState {
         link: &LoadLink,
         publish: impl FnOnce(Swap, &Project) -> R,
     ) -> Option<R> {
+        let mut cx = CardCx {
+            card,
+            store,
+            sync,
+            settings,
+        };
+        self.load_with(&mut cx, go, link, publish).0
+    }
+
+    /// `load_project`, and what its mount found.
+    fn load_with<S: Store, R>(
+        &mut self,
+        cx: &mut CardCx<'_, S>,
+        go: Confirmed<ProjectSource>,
+        link: &LoadLink,
+        publish: impl FnOnce(Swap, &Project) -> R,
+    ) -> (Option<R>, Option<CardEvent>) {
         let was = self.active_engine();
-        let out = project::load_project(card, store, &mut self.project, go, link);
+        let out = project::load_project(cx.card, cx.store, &mut self.project, go, link);
         if let Some(n) = out.note {
             self.show_note(n);
         }
-        let swap = out.swap?;
+        let Some(swap) = out.swap else {
+            return (None, out.event);
+        };
         let published = publish(swap, &self.project);
         self.project_replaced(was);
         // Only a file load sets it: NEW, loaded or fallen back to, has none.
         if let Some(f) = self.project.meta().file() {
-            self.remember(card, store, sync, settings, f);
+            self.remember(cx.card, cx.store, cx.sync, cx.settings, f);
         }
-        Some(published)
+        (Some(published), out.event)
     }
 
     /// Deletes the confirmed file (`project::delete_project`); a refusal or a card
@@ -451,9 +494,10 @@ impl UiState {
         sync: &mut SystemSync,
         settings: &mut SystemSettings,
         c: Confirmed<DeleteTarget>,
-    ) {
+    ) -> Option<CardEvent> {
         let file = c.target().file();
-        match project::delete_project(card, store, &self.project, c) {
+        let CardOut { out, event } = project::delete_project(card, store, &self.project, c);
+        match out {
             // A failed write: the next save, load or SETTINGS exit retries
             // SYSTEM; until then a boot falls back to NEW and says why.
             Ok(()) => {
@@ -463,6 +507,7 @@ impl UiState {
             }
             Err(n) => self.show_note(n),
         }
+        event
     }
 
     /// `f` becomes its card's last project in SYSTEM; a card SYSTEM was
@@ -493,7 +538,33 @@ impl UiState {
     }
 
     fn cx(&self) -> NavCtx {
-        nav_cx(&self.project)
+        let mut cx = nav_cx(&self.project);
+        cx.dyn_rows = self.screen().map_or(0, |s| self.screen_rows(s)) as u8;
+        cx
+    }
+
+    /// The Screen on show, if any.
+    fn screen(&self) -> Option<Screen> {
+        self.loc.settings().and_then(|s| s.screen())
+    }
+
+    /// A Screen's rows, from the listing.
+    fn screen_rows(&self, s: Screen) -> usize {
+        match s {
+            Screen::LoadProject => self.listing.load_rows(),
+            Screen::ManageProjects => self.listing.len(),
+            Screen::SaveToProj => 0,
+        }
+    }
+
+    /// The card's projects as last listed.
+    pub fn listing(&self) -> &Listing {
+        &self.listing
+    }
+
+    /// LOAD PROJECT's row `i` as drawn.
+    pub fn load_row(&self, i: usize) -> Option<LoadRow> {
+        self.listing.load_row(i, self.project.meta().file())
     }
 
     /// The page shown: its def, `NO_PAGE` on lists, Screens and the Sound
@@ -512,7 +583,10 @@ impl UiState {
                 Some(f) if f.path() == s.path() => self.list_first as usize,
                 _ => 0,
             };
-            let len = settings::rows(s.path()).len();
+            let len = match s.screen() {
+                Some(sc) => self.screen_rows(sc),
+                None => settings::rows(s.path()).len(),
+            };
             self.list_first = settings::view::first_visible(s.row() as usize, len, prev) as u8;
         }
         if let Some(p) = to.part() {
@@ -810,7 +884,7 @@ impl UiState {
         self.bands().map(|b| b.crumbs())
     }
 
-    fn bands(&self) -> Option<settings::view::Bands> {
+    fn bands(&self) -> Option<settings::view::Bands<'_>> {
         use settings::view::BandsModal;
         self.loc.settings().map(|at| settings::view::Bands {
             at,
@@ -820,12 +894,10 @@ impl UiState {
             status: self.project_status(),
             modal: self.modal.as_ref().map(|m| match m {
                 Modal::Prompt(_) => BandsModal::Prompt,
-                Modal::Naming(f, n) => BandsModal::Naming {
-                    naming: *n,
-                    title: f.title(),
-                    crumb: f.crumb(),
-                },
+                Modal::Naming(f, n) => BandsModal::Naming { naming: n, of: f },
             }),
+            listing: &self.listing,
+            loaded: self.project.meta().file(),
         })
     }
 
@@ -837,19 +909,11 @@ impl UiState {
         }
     }
 
-    #[cfg_attr(
-        not(any(test, feature = "test-support")),
-        expect(dead_code, reason = "Tasks 11–13 open prompts")
-    )]
     fn ask(&mut self, a: Ask) {
         self.open(Modal::Prompt(a));
     }
 
     /// NAMING takes a list's band, so it opens on one: `at`.
-    #[cfg_attr(
-        not(any(test, feature = "test-support")),
-        expect(dead_code, reason = "Tasks 11–13 open NAMING")
-    )]
     fn name(&mut self, at: ListAt, f: NamingFor, start: &str) {
         self.go(at.location());
         self.open(Modal::Naming(f, Naming::new(start)));
@@ -864,6 +928,14 @@ impl UiState {
     fn closed(&mut self) {
         self.region_set.prev_screen = None;
         self.browser_dirty |= self.loc.browse().is_some();
+    }
+
+    /// The open prompt's question and reason.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn prompt_words_for_test(&self) -> Option<(Line, Line)> {
+        self.prompt()
+            .map(|a| a.with_view(|v| (Line::new(v.question), Line::new(v.reason))))
     }
 
     /// A replace from `src` that asks opens its prompt; whether it did.
@@ -899,8 +971,8 @@ impl UiState {
                 self.browser_dirty |= self.loc.browse().is_some() && key(&m) != was;
                 self.modal = Some(m);
             }
-            ModalStep::Empty(m) => {
-                self.modal = Some(m);
+            ModalStep::Refused(f, n) => {
+                self.modal = Some(Modal::Naming(f, n));
                 self.toast.show(busy::Toast {
                     text: Line::new("NAME IS EMPTY"),
                     ms: busy::Toast::ERROR_MS,
@@ -930,11 +1002,114 @@ impl UiState {
                 })
             }
             Done::Answered(Answered::ReplacePart(_, Answer::Pick(R::Cancel) | Answer::Cancel)) => {}
+            Done::Answered(Answered::LoadProject(p, a)) => {
+                use prompt::LoadAnswer as L;
+                match a {
+                    Answer::Pick(L::LoadAnyway) => self.queue(Job::Load(p.anyway(&self.project))),
+                    Answer::Pick(L::SaveThenLoad) => self.save_then_load(p),
+                    Answer::Pick(L::Cancel) | Answer::Cancel => {}
+                }
+            }
+            Done::Answered(Answered::NameExists(save, entry, a)) => {
+                use prompt::NameExistsAnswer as N;
+                let to = match a {
+                    Answer::Pick(N::KeepBoth) => SaveTo::Fresh(save.fresh),
+                    Answer::Pick(N::Overwrite) => {
+                        SaveTo::Over(Confirmed::<project::OverwriteTarget>::answered(&entry))
+                    }
+                    Answer::Cancel => return,
+                };
+                self.project.set_name(save.name);
+                self.queue(Job::Save(to, save.then));
+            }
+            Done::Answered(Answered::CardChanged(a)) => {
+                if a == Answer::Pick(prompt::CardChangedAnswer::SaveAs) {
+                    self.save_as(None);
+                }
+            }
             Done::Named(NamingFor::RenameLoaded, name) => self.project.set_name(name),
             Done::Named(NamingFor::RenamePart(part), name) => {
                 self.project.edit_part(part).sound.name = name
             }
+            Done::Named(NamingFor::SaveAs(fresh, then), name) => match self.listing.named(&name) {
+                Some(entry) => self.ask(Ask::NameExists {
+                    save: SaveAs { fresh, name, then },
+                    entry,
+                    choice: prompt::Choice::new(),
+                }),
+                None => {
+                    self.project.set_name(name);
+                    self.queue(Job::Save(SaveTo::Fresh(fresh), then));
+                }
+            },
             Done::Cancelled => {}
+        }
+    }
+
+    /// Card work for `card_work`: one a frame, the first asked.
+    fn queue(&mut self, j: Job) {
+        if self.job.is_none() {
+            self.job = Some(j);
+        }
+    }
+
+    /// SAVE PROJECT AS, inside the load `then` if any. NAMING opens on the
+    /// list shown, or on SAVE PROJECT AS's.
+    fn save_as(&mut self, then: Then) {
+        self.queue(Job::Fresh(then));
+    }
+
+    /// SAVE THEN LOAD: a quick save, or NAMING for NEW, then the load.
+    fn save_then_load(&mut self, p: project::Pending<ProjectSource>) {
+        match self.project.meta().file() {
+            Some(_) => self.queue(Job::QuickSave(Some(p))),
+            None => self.save_as(Some(p)),
+        }
+    }
+
+    /// MENU hold: SAVE over the project's own file; NEW goes to SAVE AS.
+    fn quick_save(&mut self) {
+        match self.project.meta().file() {
+            Some(_) => self.queue(Job::QuickSave(None)),
+            None => {
+                self.go(Location::settings_at(
+                    &[settings::SAVE_AS_AT.0],
+                    settings::SAVE_AS_AT.1,
+                ));
+                self.save_as(None);
+            }
+        }
+    }
+
+    /// SEQ on LOAD PROJECT's row `row`: through the guard, or its prompt.
+    fn run_load(&mut self, row: u8) {
+        let (src, to) = match self.listing.load_pick(row as usize) {
+            Some(Pick::Entry(e)) => {
+                if let Some(n) = refusal(&e) {
+                    return self.show_note(n);
+                }
+                (
+                    ProjectSource::File {
+                        id: e.id,
+                        vol: e.vol,
+                    },
+                    e.name,
+                )
+            }
+            Some(Pick::CreateNew) => (ProjectSource::New, None),
+            Some(Pick::Inert) | None => return,
+        };
+        match ReplaceGuard::check(&self.project, self.template, src) {
+            Ok(c) => self.queue(Job::Load(c)),
+            Err(n) => {
+                let current = self.project.meta().name();
+                self.ask(Ask::LoadProject {
+                    pending: n.into_pending(),
+                    to,
+                    current,
+                    choice: prompt::Choice::new(),
+                })
+            }
         }
     }
 
@@ -958,15 +1133,27 @@ impl UiState {
             // Dropped: a pending replace with it.
             self.closed();
         }
+        if presses.menu == Some(Press::Hold) {
+            self.quick_save();
+        }
         let keys = self.nav_keys(controls, presses);
         for k in keys.into_iter().flatten() {
+            if self.job.is_some() || self.modal.is_some() {
+                break;
+            }
             if let (Some((p, b)), NavKey::Edit) = (self.loc.browse(), k) {
                 self.load_sound(p, b);
                 continue;
             }
             let cx = self.cx();
+            let at = self.loc.settings();
             match self.loc.step(k, &cx, &mut self.recall) {
                 Step::Go(to) => self.go(to),
+                Step::Act(Act::SaveProjectAs) => self.save_as(None),
+                Step::Screen(Screen::LoadProject) => self.queue(Job::List(Screen::LoadProject)),
+                Step::Run if self.screen() == Some(Screen::LoadProject) => {
+                    self.run_load(at.map_or(0, |s| s.row()))
+                }
                 Step::Act(_) | Step::Screen(_) | Step::Run => self.toast.show(busy::Toast {
                     text: Line::new(NOT_YET),
                     ms: busy::Toast::ERROR_MS,

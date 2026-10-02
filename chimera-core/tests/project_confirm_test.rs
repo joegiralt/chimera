@@ -39,9 +39,9 @@ fn saved(n: ProjectNote) {
 
 /// `p` saved to a new file; its id.
 fn save_new(card: &mut Card, s: &mut MemStore, p: &mut Project) -> ProjectId {
-    let f = new_project_id(card, s).unwrap();
+    let f = new_project_id(card, s).out.unwrap();
     let id = f.file().id();
-    saved(save_project(card, s, p, SaveTo::Fresh(f)));
+    saved(save_project(card, s, p, SaveTo::Fresh(f)).out);
     id
 }
 
@@ -78,9 +78,9 @@ fn confirmed_delete_after_resave_is_refused() {
     let (mut a, _) = full();
     let id = save_new(&mut card, &mut s, &mut a);
     let c = confirm_delete(&entry(&mut card, &mut s, id));
-    saved(save_project(&mut card, &mut s, &mut a, SaveTo::Own));
+    saved(save_project(&mut card, &mut s, &mut a, SaveTo::Own).out);
     let (other, _) = Project::boxed();
-    let got = delete_project(&mut card, &mut s, &other, c);
+    let got = delete_project(&mut card, &mut s, &other, c).out;
     assert_eq!(
         got,
         Err(ProjectNote::FileChanged(Subject::Name(name("FULL"))))
@@ -95,11 +95,11 @@ fn confirmed_delete_after_resave_is_refused() {
     let e = entry(&mut card, &mut s, id);
     let stale = confirm_delete(&e);
     assert_eq!(
-        delete_project(&mut card, &mut s, &other, confirm_delete(&e)),
+        delete_project(&mut card, &mut s, &other, confirm_delete(&e)).out,
         Ok(())
     );
     assert_eq!(
-        delete_project(&mut card, &mut s, &other, stale),
+        delete_project(&mut card, &mut s, &other, stale).out,
         Err(ProjectNote::FileChanged(Subject::File(id)))
     );
 }
@@ -112,7 +112,7 @@ fn confirmed_delete_of_the_loaded_file_is_refused() {
     let id = save_new(&mut card, &mut s, &mut a);
     let c = confirm_delete(&entry(&mut card, &mut s, id));
     assert_eq!(
-        delete_project(&mut card, &mut s, &a, c),
+        delete_project(&mut card, &mut s, &a, c).out,
         Err(ProjectNote::IsLoaded)
     );
     assert_eq!(listed(&mut card, &mut s).len(), 1);
@@ -126,11 +126,11 @@ fn confirmed_overwrite_after_resave_is_refused() {
     let id = save_new(&mut card, &mut s, &mut a);
     let c = confirm_overwrite(&entry(&mut card, &mut s, id));
     a.edit_fx().delay.mix = 0.8;
-    saved(save_project(&mut card, &mut s, &mut a, SaveTo::Own));
+    saved(save_project(&mut card, &mut s, &mut a, SaveTo::Own).out);
     let (mut b, t) = Project::boxed();
     b.set_name(name("B"));
     assert_eq!(
-        save_project(&mut card, &mut s, &mut b, SaveTo::Over(c)),
+        save_project(&mut card, &mut s, &mut b, SaveTo::Over(c)).out,
         ProjectNote::FileChanged(Subject::Name(name("FULL")))
     );
     assert_eq!(b.meta().file(), None);
@@ -148,12 +148,15 @@ fn overwrite_saves_over_and_becomes_that_file() {
     let e = entry(&mut card, &mut s, id);
     let (mut b, t) = Project::boxed();
     b.set_name(name("B"));
-    saved(save_project(
-        &mut card,
-        &mut s,
-        &mut b,
-        SaveTo::Over(confirm_overwrite(&e)),
-    ));
+    saved(
+        save_project(
+            &mut card,
+            &mut s,
+            &mut b,
+            SaveTo::Over(confirm_overwrite(&e)),
+        )
+        .out,
+    );
     assert_eq!(b.meta().file(), Some(e.file()));
     assert_eq!(project_status(&b, t), ProjectStatus::Saved);
     assert_eq!(entry(&mut card, &mut s, id).name, Some(name("B")));
@@ -163,7 +166,7 @@ fn overwrite_saves_over_and_becomes_that_file() {
     // Over the project's own file: a SAVE.
     b.edit_fx().reverb.mix = 0.2;
     let own = confirm_overwrite(&entry(&mut card, &mut s, id));
-    saved(save_project(&mut card, &mut s, &mut b, SaveTo::Over(own)));
+    saved(save_project(&mut card, &mut s, &mut b, SaveTo::Over(own)).out);
     assert_eq!(project_status(&b, t), ProjectStatus::Saved);
 }
 
@@ -174,7 +177,7 @@ fn clear_of_the_loaded_file_is_refused() {
     let (mut a, _) = full();
     let id = save_new(&mut card, &mut s, &mut a);
     let c = confirm_overwrite(&entry(&mut card, &mut s, id));
-    let got = clear_project(&mut card, &mut s, &a, c);
+    let got = clear_project(&mut card, &mut s, &a, c).out;
     assert_eq!(got, Err(ProjectNote::ClearLoaded));
     assert_eq!(
         got.unwrap_err().line().as_str(),
@@ -197,7 +200,7 @@ fn a_file_made_again_at_the_same_id_refuses_a_stale_confirmation() {
     let (stale_del, stale_over) = (confirm_delete(&e), confirm_overwrite(&e));
     let (other, _) = Project::boxed();
     assert_eq!(
-        delete_project(&mut card, &mut s, &other, confirm_delete(&e)),
+        delete_project(&mut card, &mut s, &other, confirm_delete(&e)).out,
         Ok(())
     );
     let (mut bar, _) = Project::boxed();
@@ -206,12 +209,12 @@ fn a_file_made_again_at_the_same_id_refuses_a_stale_confirmation() {
     assert_eq!(entry(&mut card, &mut s, id).generation, e.generation);
     let moved = ProjectNote::FileChanged(Subject::Name(name("BAR")));
     assert_eq!(
-        delete_project(&mut card, &mut s, &other, stale_del),
+        delete_project(&mut card, &mut s, &other, stale_del).out,
         Err(moved)
     );
     let (mut c, _) = Project::boxed();
     assert_eq!(
-        save_project(&mut card, &mut s, &mut c, SaveTo::Over(stale_over)),
+        save_project(&mut card, &mut s, &mut c, SaveTo::Over(stale_over)).out,
         moved
     );
     assert_eq!(entry(&mut card, &mut s, id).name, Some(name("BAR")));
@@ -229,7 +232,7 @@ fn clear_other_makes_it_new() {
     let e = entry(&mut card, &mut s, one);
     let stale = confirm_overwrite(&e);
     assert_eq!(
-        clear_project(&mut card, &mut s, &b, confirm_overwrite(&e)),
+        clear_project(&mut card, &mut s, &b, confirm_overwrite(&e)).out,
         Ok(())
     );
     assert_eq!(
@@ -241,7 +244,7 @@ fn clear_other_makes_it_new() {
     assert_eq!(project_status(&q, t), ProjectStatus::Pristine);
     assert_eq!(q.meta().name(), name("NEW PROJECT"));
     assert_eq!(
-        clear_project(&mut card, &mut s, &b, stale),
+        clear_project(&mut card, &mut s, &b, stale).out,
         Err(ProjectNote::FileChanged(Subject::Name(name("NEW PROJECT"))))
     );
     let (r, _) = load(&mut card, &mut s, two);
@@ -253,7 +256,7 @@ fn save_own_without_a_file_is_no_file() {
     let mut s = MemStore::new(1);
     let mut card = Card::new();
     let (mut p, t) = Project::boxed();
-    let n = save_project(&mut card, &mut s, &mut p, SaveTo::Own);
+    let n = save_project(&mut card, &mut s, &mut p, SaveTo::Own).out;
     assert_eq!(n, ProjectNote::NoFile);
     assert_eq!(n.line().as_str(), "NOT SAVED YET");
     assert_eq!(p.meta().file(), None);

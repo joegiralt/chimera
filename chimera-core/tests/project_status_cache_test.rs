@@ -74,10 +74,10 @@ fn every_mutation_bumps_the_revision() {
     });
 
     let (mut card, mut store) = (Card::new(), MemStore::new(1));
-    let fresh = new_project_id(&mut card, &mut store).unwrap();
+    let fresh = new_project_id(&mut card, &mut store).out.unwrap();
     let f = fresh.file();
     bumps!(p, "save_project", {
-        let _ = save_project(&mut card, &mut store, &mut p, SaveTo::Fresh(fresh));
+        let _ = save_project(&mut card, &mut store, &mut p, SaveTo::Fresh(fresh)).out;
     });
     bumps!(p, "boot_project", {
         let _ = boot_project(&mut card, &mut store, Some(f.id()), &mut p);
@@ -138,7 +138,7 @@ fn ui_status_follows_edits_and_saves() {
     assert_eq!(ui.project_status(), ProjectStatus::Modified);
     let (mut card, mut store) = (Card::new(), MemStore::new(1));
     let (mut sync, mut set, _) = chimera_core::storage::SystemSync::boot(&mut card, &mut store);
-    let f = new_project_id(&mut card, &mut store).unwrap();
+    let f = new_project_id(&mut card, &mut store).out.unwrap();
     ui.save_project(&mut card, &mut store, &mut sync, &mut set, SaveTo::Fresh(f));
     ui.update();
     assert_eq!(ui.project_status(), ProjectStatus::Saved);

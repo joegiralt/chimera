@@ -344,7 +344,10 @@ fn every_prompt_fits() {
             slot,
         });
     }
-    check(NameExists { slot, name });
+    check(NameExists {
+        id: ProjectId::new(ProjectId::MAX).unwrap(),
+        name,
+    });
     check(Delete { name });
     check(Clear { name });
     check(SaveOver { name });

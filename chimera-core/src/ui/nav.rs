@@ -129,6 +129,14 @@ impl SettingsAt {
         (self.at == At::List && !matches!(self.kind(), Some(Kind::Leaf(_)))).then_some(ListAt(self))
     }
 
+    /// The Screen this place shows, its rows built at run time.
+    pub fn screen(&self) -> Option<Screen> {
+        match self.kind()? {
+            Kind::Screen(s) => Some(s),
+            _ => None,
+        }
+    }
+
     pub fn at_leaf(&self) -> Option<&'static ChainDef2> {
         match self.kind()? {
             Kind::Leaf(c) => Some(c),
@@ -458,6 +466,17 @@ impl Location {
             }
             .landed(),
         ))
+    }
+
+    /// In SETTINGS, the bar kept on a list of `rows` rows.
+    pub fn with_row_within(self, rows: u8) -> Location {
+        match self.0 {
+            Loc::Settings(s) => Location(Loc::Settings(SettingsAt {
+                row: s.row.min(rows.saturating_sub(1)),
+                ..s
+            })),
+            l => Location(l),
+        }
     }
 
     pub fn step(self, k: NavKey, cx: &NavCtx, r: &mut Recall) -> Step {

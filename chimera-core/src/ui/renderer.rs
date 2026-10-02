@@ -40,9 +40,9 @@ pub struct Frame<'a> {
     pub map: Option<(&'static ChainDef2, PageAt)>,
     pub layout: Layout,
     /// SETTINGS' breadcrumb, list and footer.
-    pub settings: Option<Bands>,
+    pub settings: Option<Bands<'a>>,
     /// A prompt over the screen.
-    pub prompt: Option<&'a Ask>,
+    pub(crate) prompt: Option<&'a Ask>,
     pub def: &'static BlockDef,
     pub perf: &'a PerfStats,
     pub matrix: &'a MatrixState,

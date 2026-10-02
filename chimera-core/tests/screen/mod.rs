@@ -169,6 +169,22 @@ impl Input {
             ..Self::default()
         }
     }
+    /// `b` released inside this frame, at `ms`: the release a stalled
+    /// frame latched.
+    pub fn released_at(b: ButtonId, ms: u32) -> Self {
+        Self {
+            at_ms: ms,
+            edges: vec![(
+                b,
+                Edges {
+                    down: false,
+                    pressed_at: None,
+                    released_at: Some(Ms(ms)),
+                },
+            )],
+            ..Self::default()
+        }
+    }
     /// This frame with `b` held down too.
     pub fn and_held(mut self, b: ButtonId) -> Self {
         self.buttons.push((b, ButtonState::Held));

@@ -419,7 +419,7 @@ mod tests {
             let (mut sync, mut set, _) = SystemSync::boot(&mut card, &mut store);
             let mut ui = Box::new(UiState::new());
             *ui.project_mut() = *full().0;
-            let file = new_project_id(&mut card, &mut store).unwrap();
+            let file = new_project_id(&mut card, &mut store).out.unwrap();
             ui.save_project(
                 &mut card,
                 &mut store,

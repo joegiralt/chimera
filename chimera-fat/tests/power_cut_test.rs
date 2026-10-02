@@ -455,7 +455,7 @@ fn clear_project_on(s: &mut Probed<CutDisk>) -> Result<(), ProjectNote> {
     let out = list_projects(&mut card, s, &mut |e| listed = Some(e));
     assert_eq!(out.note, None);
     let c = confirm_overwrite(&listed.expect("listed"));
-    clear_project(&mut card, s, &Project::boxed().0, c)
+    clear_project(&mut card, s, &Project::boxed().0, c).out
 }
 
 fn load_project_in_place(slot: &Slot) -> Result<Box<Project>, InPlaceError> {

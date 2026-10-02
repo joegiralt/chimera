@@ -8,10 +8,12 @@ use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::Rgb565;
 use u8g2_fonts::FontRenderer;
 
+use super::NamingFor;
+use super::listing::Listing;
 use super::naming::{Naming, draw_naming};
-use super::tree::{Kind, PART, ROOT, Row, row_at, rows};
+use super::tree::{Kind, PART, ROOT, Row, Screen, row_at, rows};
 use crate::name::ProjectName;
-use crate::project::{PartId, ProjectStatus};
+use crate::project::{PartId, ProjectFile, ProjectStatus};
 use crate::ui::draw;
 use crate::ui::fmt::FmtBuf;
 use crate::ui::nav::SettingsAt;
@@ -233,73 +235,87 @@ pub fn draw_list<D: DrawTarget<Color = Rgb565>>(
     bar: usize,
     first: usize,
 ) {
-    for (i, r) in rows.iter().enumerate().skip(first).take(VISIBLE_ROWS) {
+    draw_rows(d, rows.len(), bar, first, |i, f| f(rows[i]));
+}
+
+/// `len` rows, each lent by `row` to the draw, from `first`.
+pub fn draw_rows<D: DrawTarget<Color = Rgb565>>(
+    d: &mut D,
+    len: usize,
+    bar: usize,
+    first: usize,
+    mut row: impl FnMut(usize, &mut dyn FnMut(ListRow<'_>)),
+) {
+    for i in (first..len).take(VISIBLE_ROWS) {
         let y = LIST_TOP + (i - first) as i32 * ROW_H;
-        let on = i == bar;
-        if on {
-            draw::round_rect(
-                d,
-                BAR_X,
-                y,
-                BAR_RIGHT - BAR_X,
-                BAR_H,
-                BAR_R,
-                theme::ACCENT_SOFT,
-            );
-            draw::fill_rect(d, TICK_X, y + 4, 2, BAR_H - 8, theme::ACCENT);
-        }
-        let live = r.look == RowLook::Normal;
-        let (label, side) = match (live, on) {
-            (true, true) => (theme::ACCENT, theme::ACCENT),
-            (true, false) => (theme::INK, theme::MID),
-            (false, true) => (theme::MID, theme::MID),
-            (false, false) => (theme::BAR_REST, theme::BAR_REST),
-        };
-        let base = y + ROW_BASELINE;
-        draw::text(
-            d,
-            &theme::FONT_VALUE,
-            r.label,
-            theme::LIST_TEXT_X,
-            base,
-            label,
-        );
-        let note = match r.look {
-            RowLook::Later => Some("LATER"),
-            _ => r.note,
-        };
-        let right = |d: &mut D, s: &str, c| {
-            draw::text_right(
-                d,
-                &theme::FONT_LABEL,
-                s,
-                theme::LIST_RIGHT,
-                base - 1,
-                c,
-                theme::LABEL_TRACKING,
-            )
-        };
-        match note {
-            Some(n) => right(d, n, side),
-            None if r.opens => right(
-                d,
-                "›",
-                if on && live {
-                    theme::ACCENT
-                } else {
-                    theme::BAR_REST
-                },
-            ),
-            None => {}
-        }
+        row(i, &mut |r| draw_row(d, &r, y, i == bar));
     }
-    if rows.len() > VISIBLE_ROWS {
+    if len > VISIBLE_ROWS {
         let h = VISIBLE_ROWS as i32 * ROW_H - 4;
         draw::fill_rect(d, theme::SCROLL_X, LIST_TOP, 2, h, theme::FAINT);
-        let thumb = (h * VISIBLE_ROWS as i32 / rows.len() as i32).max(8);
-        let max_first = rows.len() - VISIBLE_ROWS;
+        let thumb = (h * VISIBLE_ROWS as i32 / len as i32).max(8);
+        let max_first = len - VISIBLE_ROWS;
         let y = LIST_TOP + (h - thumb) * first.min(max_first) as i32 / max_first as i32;
         draw::fill_rect(d, theme::SCROLL_X, y, 2, thumb, theme::MID);
+    }
+}
+
+fn draw_row<D: DrawTarget<Color = Rgb565>>(d: &mut D, r: &ListRow<'_>, y: i32, on: bool) {
+    if on {
+        draw::round_rect(
+            d,
+            BAR_X,
+            y,
+            BAR_RIGHT - BAR_X,
+            BAR_H,
+            BAR_R,
+            theme::ACCENT_SOFT,
+        );
+        draw::fill_rect(d, TICK_X, y + 4, 2, BAR_H - 8, theme::ACCENT);
+    }
+    let live = r.look == RowLook::Normal;
+    let (label, side) = match (live, on) {
+        (true, true) => (theme::ACCENT, theme::ACCENT),
+        (true, false) => (theme::INK, theme::MID),
+        (false, true) => (theme::MID, theme::MID),
+        (false, false) => (theme::BAR_REST, theme::BAR_REST),
+    };
+    let base = y + ROW_BASELINE;
+    draw::text(
+        d,
+        &theme::FONT_VALUE,
+        r.label,
+        theme::LIST_TEXT_X,
+        base,
+        label,
+    );
+    let note = match r.look {
+        RowLook::Later => Some("LATER"),
+        _ => r.note,
+    };
+    let right = |d: &mut D, s: &str, c| {
+        draw::text_right(
+            d,
+            &theme::FONT_LABEL,
+            s,
+            theme::LIST_RIGHT,
+            base - 1,
+            c,
+            theme::LABEL_TRACKING,
+        )
+    };
+    match note {
+        Some(n) => right(d, n, side),
+        None if r.opens => right(
+            d,
+            "›",
+            if on && live {
+                theme::ACCENT
+            } else {
+                theme::BAR_REST
+            },
+        ),
+        None => {}
     }
 }
 
@@ -377,6 +393,8 @@ pub enum LegendFor {
     Naming,
     ManageList,
     ManageCommands,
+    /// LOAD PROJECT's rows.
+    Load,
 }
 
 impl LegendFor {
@@ -405,6 +423,7 @@ pub fn legend(on: LegendFor, at_top: bool) -> &'static str {
         (L::Naming, _) => "SEQ SAVE · MENU CANCEL",
         (L::ManageList, _) => "EDIT COMMANDS · MENU BACK",
         (L::ManageCommands, _) => "SEQ RUN · MENU LIST",
+        (L::Load, _) => "SEQ LOAD · MENU BACK",
     }
 }
 
@@ -412,8 +431,8 @@ pub fn legend(on: LegendFor, at_top: bool) -> &'static str {
 const MAX_ROWS: usize = 16;
 
 /// What SETTINGS' bands draw from in one frame.
-#[derive(Clone, Copy, Debug)]
-pub struct Bands {
+#[derive(Clone, Copy)]
+pub struct Bands<'a> {
     pub at: SettingsAt,
     /// The Part the PART crumb names.
     pub active: PartId,
@@ -421,23 +440,26 @@ pub struct Bands {
     pub first: usize,
     pub name: ProjectName,
     pub status: ProjectStatus,
-    pub modal: Option<BandsModal>,
+    pub(crate) modal: Option<BandsModal<'a>>,
+    /// A Screen's rows.
+    pub listing: &'a Listing,
+    /// What `● LOADED` marks.
+    pub loaded: Option<ProjectFile>,
 }
 
 /// What is over SETTINGS' bands.
-#[derive(Clone, Copy, Debug)]
-pub enum BandsModal {
+#[derive(Clone, Copy)]
+pub(crate) enum BandsModal<'a> {
     /// The list beneath is blank; the legend is the prompt's.
     Prompt,
-    /// In the list's place, under `title`; `crumb` ends the breadcrumb.
+    /// In the list's place, under its title; its crumb ends the breadcrumb.
     Naming {
-        naming: Naming,
-        title: &'static str,
-        crumb: &'static str,
+        naming: &'a Naming,
+        of: &'a NamingFor,
     },
 }
 
-impl Bands {
+impl Bands<'_> {
     /// The list's rows; none on a leaf.
     fn rows(&self) -> &'static [Row] {
         rows(self.at.path())
@@ -451,6 +473,9 @@ impl Bands {
         }
         if self.at.at_leaf().is_some() {
             return legend(LegendFor::Leaf, false);
+        }
+        if self.at.screen() == Some(Screen::LoadProject) {
+            return legend(LegendFor::Load, false);
         }
         let on = self
             .rows()
@@ -470,7 +495,7 @@ impl Bands {
 
     fn naming_crumb(&self) -> &'static str {
         match self.modal {
-            Some(BandsModal::Naming { crumb, .. }) => crumb,
+            Some(BandsModal::Naming { of, .. }) => of.crumb(),
             _ => "",
         }
     }
@@ -478,8 +503,8 @@ impl Bands {
     /// As drawn: NAMING's crumb ends it.
     pub fn crumbs(&self) -> Crumbs {
         let mut c = Crumbs::of(self.at.path(), self.active);
-        if let Some(BandsModal::Naming { crumb, .. }) = self.modal {
-            c.push(Crumb::Name(crumb));
+        if let Some(BandsModal::Naming { of, .. }) = self.modal {
+            c.push(Crumb::Name(of.crumb()));
         }
         c
     }
@@ -489,16 +514,20 @@ impl Bands {
         let (tag, text, title, cursor) = match &self.modal {
             None => (0, "", "", 0),
             Some(BandsModal::Prompt) => (1, "", "", 0),
-            Some(BandsModal::Naming { naming, title, .. }) => {
-                (2, naming.text(), *title, naming.cursor())
+            Some(BandsModal::Naming { naming, of }) => {
+                (2, naming.text(), of.title(), naming.cursor())
             }
         };
+        let rev = self.listing.revision().to_le_bytes();
+        let loaded = self.loaded.map_or(0, |f| f.id().get()).to_le_bytes();
         settings_key(&[
             self.at.path(),
             &list,
             text.as_bytes(),
             title.as_bytes(),
             &[tag, cursor, text.len() as u8],
+            &rev,
+            &loaded,
         ])
     }
 
@@ -527,10 +556,29 @@ impl Bands {
     pub fn draw_list<D: DrawTarget<Color = Rgb565>>(&self, d: &mut D) {
         match &self.modal {
             Some(BandsModal::Prompt) => return,
-            Some(BandsModal::Naming { naming, title, .. }) => {
-                return draw_naming(d, naming, title);
+            Some(BandsModal::Naming { naming, of }) => {
+                return draw_naming(d, naming, of.title());
             }
             None => {}
+        }
+        if self.at.screen() == Some(Screen::LoadProject) {
+            let (l, loaded) = (self.listing, self.loaded);
+            return draw_rows(
+                d,
+                l.load_rows(),
+                self.at.row() as usize,
+                self.first,
+                |i, f| {
+                    if let Some(r) = l.load_row(i, loaded) {
+                        f(ListRow {
+                            label: r.label.as_str(),
+                            opens: false,
+                            note: r.note,
+                            look: r.look,
+                        })
+                    }
+                },
+            );
         }
         let rows = self.rows();
         debug_assert!(rows.len() <= MAX_ROWS);

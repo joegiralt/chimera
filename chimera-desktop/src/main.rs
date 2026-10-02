@@ -5,18 +5,19 @@ mod display;
 mod midi;
 mod store;
 
-use chimera_core::project::LOAD_LINK;
+use chimera_core::project::{LOAD_ACK_TIMEOUT_MS, LOAD_LINK};
 use chimera_core::scope::scope_buffer;
 use chimera_core::storage::{Card, SystemSettings, SystemSync};
 use chimera_core::ui::UiState;
-use chimera_core::ui::busy::{ToastStep, draw_toast};
+use chimera_core::ui::busy::{ToastStep, draw_busy, draw_toast};
 use chimera_core::ui::perf::PerfTracker;
+use chimera_core::ui::settings::CardCx;
 use chimera_hal::store::Store;
 use chimera_hal::{ChimeraDisplay, MidiChannel, MidiNote, Ms, Velocity};
 use controls::DesktopControls;
 use display::DesktopDisplay;
 use std::path::PathBuf;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use store::DirStore;
 
 /// The card: `CHIMERA_CARD`, or `chimera-card` made on first run. A
@@ -121,6 +122,23 @@ fn main() {
 
         // UI framework handles navigation + encoder -> param binding
         ui.handle_input(&controls);
+        // Card work the keys asked for, under BUSY; a load publishes
+        // once the audio acks, or the timeout passes.
+        if ui.card_pending() {
+            let (y0, y1) = draw_busy(&mut display);
+            display.flush_region(y0, y1);
+        }
+        let cx = CardCx {
+            card: &mut card,
+            store: &mut store,
+            sync: &mut sync,
+            settings: &mut settings,
+        };
+        ui.card_work(cx, &LOAD_LINK, |swap, p| {
+            let deadline = Instant::now() + Duration::from_millis(LOAD_ACK_TIMEOUT_MS.into());
+            let _ = swap.settle(&LOAD_LINK, || Instant::now() < deadline);
+            audio.update(p.perf(), LOAD_LINK.epoch());
+        });
         // Leaving SETTINGS syncs SYSTEM; a toast says how it went.
         ui.sync_system(&mut sync, &mut card, &mut store, &mut settings);
         display.set_theme(&ui.theme());

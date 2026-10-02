@@ -163,8 +163,9 @@ fn ui_state_fits_the_ui_reserve() {
         "UiState without its Project = {rest} B, reserve {} B",
         hw::UI_RESERVE
     );
+    // 4 KB, not 2: SETTINGS' project listing (`MAX_LISTED` entries).
     assert!(
-        rest <= 2 * 1024,
+        rest <= 4 * 1024,
         "UiState grew to {rest} B besides its Project"
     );
 }

@@ -293,7 +293,7 @@ mod tests {
         p.pool_store(SlotId::ALL[20], Sound::init(EngineType::Modal));
         p.edit_fx().reverb.mix = 0.6;
         p.set_name(ProjectName::new("RELAUNCH").unwrap());
-        let file = new_project_id(&mut card, &mut store).unwrap();
+        let file = new_project_id(&mut card, &mut store).out.unwrap();
         ui.save_project(
             &mut card,
             &mut store,

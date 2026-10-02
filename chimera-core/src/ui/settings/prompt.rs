@@ -13,6 +13,7 @@ use u8g2_fonts::FontRenderer;
 
 use crate::name::ProjectName;
 use crate::project::{Line, PartId, PartSet, SlotId};
+use crate::storage::ProjectId;
 use crate::ui::components::upper;
 use crate::ui::draw;
 use crate::ui::hold::{Press, Presses};
@@ -265,8 +266,9 @@ impl Prompt for AlsoUses {
     }
 }
 
+/// `id`, the project file already so named: its slot on the card.
 pub struct NameExists {
-    pub slot: SlotId,
+    pub id: ProjectId,
     pub name: ProjectName,
 }
 
@@ -276,8 +278,8 @@ impl Prompt for NameExists {
         let _ = q.write_str("NAME EXISTS");
         let _ = write!(
             r,
-            "{} IS NAMED {}",
-            Slot(self.slot),
+            "SLOT {:02} IS NAMED {}",
+            self.id.get(),
             name(self.name).as_str()
         );
     }

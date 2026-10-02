@@ -43,7 +43,7 @@ fn last_on_card(s: &mut impl Store) -> Option<ProjectId> {
 /// `p` saved as `P000000n`, outside any UI.
 fn put_project(s: &mut impl Store, p: &mut Project, n: u32) {
     let f = at(s, n);
-    let note = save_project(&mut Card::new(), s, p, save_to(p, f));
+    let note = save_project(&mut Card::new(), s, p, save_to(p, f)).out;
     assert!(matches!(note, ProjectNote::Saved(_)), "{note:?}");
 }
 
