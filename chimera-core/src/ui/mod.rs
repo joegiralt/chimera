@@ -1051,8 +1051,18 @@ impl UiState {
     }
 
     fn bands(&self) -> Option<settings::view::Bands<'_>> {
+        self.loc.settings().map(|at| self.bands_at(at))
+    }
+
+    /// SETTINGS' breadcrumb at `at`, as drawn there: an open NAMING's
+    /// crumb ends it.
+    pub fn crumbs_at(&self, at: SettingsAt) -> settings::view::Crumbs {
+        self.bands_at(at).crumbs()
+    }
+
+    fn bands_at(&self, at: SettingsAt) -> settings::view::Bands<'_> {
         use settings::view::BandsModal;
-        self.loc.settings().map(|at| settings::view::Bands {
+        settings::view::Bands {
             at,
             active: self.active_part,
             first: self.list_first as usize,
@@ -1066,7 +1076,7 @@ impl UiState {
             loaded: self.project.meta().file(),
             part: (at.path().first() == Some(&PART_ROW))
                 .then(|| PartBand::of(&self.project, self.active_part)),
-        })
+        }
     }
 
     /// NAMING, if it is open.
@@ -1724,18 +1734,22 @@ impl UiState {
     /// name, ` / A` or ` / B` on an ENV page), short when the line is full;
     /// `None` where no header is drawn: SETTINGS and the Sound rung.
     pub fn page_name(&self) -> Option<FmtBuf> {
-        match self.loc.rung() {
-            Rung::Pages(..) | Rung::Mixer(..) | Rung::Fx(..) => Some(
-                renderer::page_header(
-                    self.head(),
-                    self.page_def(),
-                    &self.ctx(),
-                    self.project.perf().parts(),
-                )
-                .name,
-            ),
-            Rung::Sound(_) | Rung::Settings(_) => None,
-        }
+        matches!(
+            self.loc.rung(),
+            Rung::Pages(..) | Rung::Mixer(..) | Rung::Fx(..)
+        )
+        .then(|| self.page_title())
+    }
+
+    /// `page_name` where a header is drawn: Pages, Mixer and FX.
+    pub fn page_title(&self) -> FmtBuf {
+        renderer::page_header(
+            self.head(),
+            self.page_def(),
+            &self.ctx(),
+            self.project.perf().parts(),
+        )
+        .name
     }
 
     /// What one frame draws from.

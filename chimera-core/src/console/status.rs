@@ -34,10 +34,8 @@ pub fn write_status(ui: &UiState, w: &mut impl Write) -> fmt::Result {
 
 /// `Location` in ASCII, ` > ` between levels; SETTINGS' breadcrumb in full.
 fn write_at(ui: &UiState, w: &mut impl Write) -> fmt::Result {
-    let name = ui.page_name();
-    let name = name.as_ref().map_or("", |n| n.as_str());
     match ui.location().rung() {
-        Rung::Pages(p, _) => write!(w, "PART {} > {name}", p.index() + 1),
+        Rung::Pages(p, _) => write!(w, "PART {} > {}", p.index() + 1, ui.page_title().as_str()),
         Rung::Mixer(p, m) => {
             let page = match m {
                 MixPage::Part => "PART",
@@ -45,13 +43,10 @@ fn write_at(ui: &UiState, w: &mut impl Write) -> fmt::Result {
             };
             write!(w, "MIXER {} > {page}", p.index() + 1)
         }
-        Rung::Fx(..) => write!(w, "FX > {name}"),
+        Rung::Fx(..) => write!(w, "FX > {}", ui.page_title().as_str()),
         Rung::Sound(p) => write!(w, "SOUND {}", p.index() + 1),
-        Rung::Settings(_) => {
-            let Some(crumbs) = ui.crumbs() else {
-                return Ok(());
-            };
-            for (i, c) in crumbs.parts().iter().enumerate() {
+        Rung::Settings(at) => {
+            for (i, c) in ui.crumbs_at(at).parts().iter().enumerate() {
                 if i > 0 {
                     w.write_str(" > ")?;
                 }

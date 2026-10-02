@@ -32,6 +32,9 @@ use crate::ui::theme;
 use crate::ui::view::{self, EnvKind, SlotCtx, View};
 use crate::ui::viz;
 
+/// Every Part, as the project holds them.
+pub type Parts = [crate::preset::Part; crate::hw::MAX_PARTS];
+
 /// Everything one frame draws from, besides the renderer's own animation.
 pub struct Frame<'a> {
     /// Whose page this is, for the header and its OUT warning.
@@ -56,7 +59,7 @@ pub struct Frame<'a> {
     /// The live output is above silence (header dot).
     pub sounding: bool,
     /// Every Part (Mixer overview) and the one being edited.
-    pub parts: &'a [crate::preset::Part; crate::hw::MAX_PARTS],
+    pub parts: &'a Parts,
     pub active_part: PartId,
     /// The last MIX+PLUS outcome, shown in the focus band in place of the
     /// value readout (issue #21).
@@ -623,7 +626,7 @@ pub fn page_header(
     head: Head,
     def: &BlockDef,
     ctx: &SlotCtx,
-    parts: &[crate::preset::Part; crate::hw::MAX_PARTS],
+    parts: &Parts,
 ) -> components::HeaderText {
     let suffix = ["", " / A", " / B"][title_type(def, &ctx.envs) as usize % 3];
     components::header_text(head, def, ctx.model, suffix, out_of(head, parts))
@@ -634,7 +637,7 @@ pub fn header_out(f: &Frame) -> DacPair {
     out_of(f.head, f.parts)
 }
 
-fn out_of(head: Head, parts: &[crate::preset::Part; crate::hw::MAX_PARTS]) -> DacPair {
+fn out_of(head: Head, parts: &Parts) -> DacPair {
     match head {
         Head::Sound(p) | Head::Mix(p) => parts[p.index()].mix.output,
         Head::Settings => DacPair::P1,
