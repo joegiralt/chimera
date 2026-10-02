@@ -48,6 +48,9 @@ use crate::mod_path::{LABEL_LEN, RegistryError};
 use crate::modulation::{CUTOFF, CUTOFF_LABEL, MAX_MOD_SOURCES, ModSource, ModState};
 use crate::name::ProjectName;
 use crate::orbit::RingIdx;
+use crate::orbit::chords::ScaleKind;
+use crate::orbit::runner::{OrbitShared, OrbitView};
+use crate::orbit::scene::Tempo;
 use crate::params::{EngineType, ParamSnapshot};
 use crate::perf::load::AudioStats;
 use crate::preset::POOL_SIZE;
@@ -65,8 +68,8 @@ use components::Head;
 use hold::{HoldGates, Press};
 use mod_grid::MatrixState;
 use nav::{
-    Browse, Column, ListAt, Location, NavCtx, NavKey, OrbitCx, OrbitKey, Recall, SettingsAt, Step,
-    chain_def_for,
+    Browse, Column, ListAt, Location, NavCtx, NavKey, OrbitAct, OrbitCx, OrbitKey, Recall,
+    SettingsAt, Step, chain_def_for,
 };
 use page::{PageKey, PageLayout};
 use perf::PerfStats;
@@ -210,6 +213,8 @@ pub struct UiState {
     job: Option<Job>,
     /// The card as `sync_system` last saw it, for ABOUT.
     card: Card,
+    /// ORBIT's transport and the runner's last view.
+    orbit: orbit::OrbitUi,
 }
 
 crate::in_place::field_list!(UiState => UiState {
@@ -237,6 +242,7 @@ crate::in_place::field_list!(UiState => UiState {
     listing,
     job,
     card,
+    orbit,
 });
 
 impl Default for UiState {
@@ -272,7 +278,7 @@ impl UiState {
                 part: PartId::ALL[0],
                 theme: &theme,
             };
-            renderer.snap_to_current(page_values(page, def, &read, Op::A));
+            renderer.snap_to_current(page_values(page, def, &read, &SlotCtx::read(&read, Op::A)));
             addr_of_mut!((*p).loc).write(loc);
             addr_of_mut!((*p).recall).write(Recall::new());
             addr_of_mut!((*p).gates).write(HoldGates::new());
@@ -296,6 +302,7 @@ impl UiState {
             addr_of_mut!((*p).listing).write(Listing::new());
             addr_of_mut!((*p).job).write(None);
             addr_of_mut!((*p).card).write(Card::new());
+            addr_of_mut!((*p).orbit).write(orbit::OrbitUi::new());
             let ui = slot.assume_init_mut();
             ui.load_matrix(PartId::ALL[0]);
             ui
@@ -705,12 +712,17 @@ impl UiState {
         self.sel_op
     }
 
-    /// What the edited Part's page slots resolve against.
+    /// What the edited Part's page slots resolve against, on the ORBIT
+    /// ring the location selects.
     fn ctx(&self) -> SlotCtx {
-        SlotCtx::read(
+        let ctx = SlotCtx::read(
             &self.project.part(self.active_part).sound.params,
             self.sel_op,
-        )
+        );
+        match self.loc.orbit() {
+            Some(o) => ctx.on_ring(o.ring()),
+            None => ctx,
+        }
     }
 
     /// Recompute the page identity and jump the display to its values.
@@ -724,9 +736,8 @@ impl UiState {
     /// the mod matrix the selected route's amount in slot e.
     fn display_values(&self) -> [f32; 6] {
         let def = self.page_def();
-        let (page, sel_op) = (self.page, self.sel_op);
-        let mut values = page_values(page, def, &self.read(self.active_part), sel_op);
         let ctx = self.ctx();
+        let mut values = page_values(self.page, def, &self.read(self.active_part), &ctx);
         for (i, value) in values.iter_mut().enumerate() {
             if let View::Route { source, .. } = view::view(def, i, &ctx) {
                 *value = renderer::amount_value(
@@ -1435,18 +1446,59 @@ impl UiState {
         Some(c.row(e.map(|e| Whose::of(&e, self.project.meta().file()))))
     }
 
-    /// ORBIT's frame: its keys, stepped as `OrbitKey`s. Its encoders wait
-    /// for its cells; its acts are a no-op until the transport is in.
+    /// ORBIT's frame: its keys, stepped as `OrbitKey`s, then its encoders
+    /// on the page's param cells. B6 plays and stops; the other acts wait
+    /// for Task 8.
     fn orbit_input(&mut self, c: &impl Controls, p: hold::Presses) {
         for k in self.orbit_keys(c, p).into_iter().flatten() {
             if self.job.is_some() || self.modal.is_some() {
-                break;
+                return;
             }
             let cx = self.cx();
-            if let Step::Go(to) = self.loc.step_orbit(k, &cx, &mut self.recall) {
-                self.go(to);
+            match self.loc.step_orbit(k, &cx, &mut self.recall) {
+                Step::Go(to) => self.go(to),
+                Step::Orbit(OrbitAct::PlayStop) => self.orbit.play_stop(),
+                _ => {}
             }
         }
+        let def = self.page_def();
+        for (i, &enc) in ALL_ENCODERS.iter().enumerate() {
+            let delta = c.encoder_delta(enc);
+            if delta == 0 {
+                continue;
+            }
+            let Some(a) = view::view(def, i, &self.ctx()).addr() else {
+                continue;
+            };
+            self.focus.touch(def.id, i);
+            let blocks = &mut UiBlocks {
+                project: &mut self.project,
+                part: self.active_part,
+                theme: &mut self.theme,
+            };
+            if let Some(b) = blocks.block_mut(a.block) {
+                b.nudge(a.param, delta);
+            }
+        }
+    }
+
+    /// ORBIT's settings for the audio thread, into a slot of its triple
+    /// buffer, in the same publish as the Parts.
+    pub fn publish_orbit(&self, out: &mut OrbitShared) {
+        self.orbit.publish(self.project.orbit(), out);
+    }
+
+    /// The runner's latest view, each loop before `handle_input`: kept for
+    /// the pages, its drift absorbed into the project once a loop.
+    pub fn set_orbit_view(&mut self, v: &OrbitView) {
+        if self.orbit.see(v) {
+            self.project.orbit_mut().absorb(v);
+        }
+    }
+
+    /// ORBIT's transport and what the pages draw of it.
+    pub fn orbit(&self) -> &orbit::OrbitUi {
+        &self.orbit
     }
 
     /// Process one frame of input: navigation + encoder deltas.
@@ -2136,16 +2188,20 @@ struct UiRead<'a> {
     theme: &'a ThemeSettings,
 }
 
-/// Part `part`'s block `b`, or the theme: what both views read.
+/// Part `part`'s block `b`, the theme, or ORBIT's: what both views read.
 fn read_block<'a>(
     project: &'a Project,
     part: PartId,
     theme: &'a ThemeSettings,
     b: BlockRef,
 ) -> Option<&'a dyn Block> {
+    let song = project.orbit();
     match b {
         BlockRef::Theme => Some(theme),
         BlockRef::PartMix(p) => Some(project.read_part(p).mix),
+        BlockRef::OrbitChords => Some(&song.live.chords),
+        BlockRef::OrbitRing(r) => Some(&song.live.rings[r.get() as usize]),
+        BlockRef::Tempo => Some(Tempo::of(&song.bpm)),
         _ => project.read_part(part).block(b),
     }
 }
@@ -2161,6 +2217,11 @@ impl Blocks for UiBlocks<'_> {
         match b {
             BlockRef::Theme => Some(self.theme),
             BlockRef::PartMix(p) => Some(self.project.edit_part(p).mix),
+            BlockRef::OrbitChords => Some(&mut self.project.orbit_mut().live.chords),
+            BlockRef::OrbitRing(r) => {
+                Some(&mut self.project.orbit_mut().live.rings[r.get() as usize])
+            }
+            BlockRef::Tempo => Some(Tempo::of_mut(&mut self.project.orbit_mut().bpm)),
             _ => {
                 let PartEdit { sound, mix, fx } = self.project.edit_part(self.part);
                 part_block_mut(sound, mix, fx, b)
@@ -2177,18 +2238,22 @@ impl BlockRead for UiRead<'_> {
 
 /// Display values for `page`: Part pages through slot bindings, legacy pages
 /// through `PageId`.
-fn page_values(page: PageKey, def: &BlockDef, params: &impl BlockRead, sel_op: Op) -> [f32; 6] {
+fn page_values(page: PageKey, def: &BlockDef, params: &impl BlockRead, ctx: &SlotCtx) -> [f32; 6] {
     match page {
-        PageKey::Part { .. } => part_page::read_values(def, params, sel_op),
+        PageKey::Part { .. } => part_page::values_under(def, params, ctx),
         PageKey::Legacy(p) => p.read_values(params),
     }
 }
 
 fn nav_cx(project: &Project) -> NavCtx {
+    let live = &project.orbit().live;
     NavCtx {
         engines: PartId::ALL.map(|p| project.part(p).sound.engine()),
         dyn_rows: 0,
-        orbit: OrbitCx::NONE,
+        orbit: OrbitCx {
+            targets: live.rings.map(|r| r.target.part()),
+            custom: live.chords.scale == ScaleKind::Custom,
+        },
     }
 }
 

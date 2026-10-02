@@ -182,7 +182,11 @@ pub fn part_block<'a>(
         BlockRef::Tape => Some(&fx.tape),
         BlockRef::Comp => Some(&fx.comp),
         BlockRef::Part => Some(mix),
-        BlockRef::Theme | BlockRef::PartMix(_) => None,
+        BlockRef::Theme
+        | BlockRef::PartMix(_)
+        | BlockRef::OrbitChords
+        | BlockRef::OrbitRing(_)
+        | BlockRef::Tempo => None,
         BlockRef::Modal
         | BlockRef::Algo
         | BlockRef::AlgoOp(_)
@@ -210,7 +214,11 @@ pub fn part_block_mut<'a>(
         BlockRef::Tape => Some(&mut fx.tape),
         BlockRef::Comp => Some(&mut fx.comp),
         BlockRef::Part => Some(mix),
-        BlockRef::Theme | BlockRef::PartMix(_) => None,
+        BlockRef::Theme
+        | BlockRef::PartMix(_)
+        | BlockRef::OrbitChords
+        | BlockRef::OrbitRing(_)
+        | BlockRef::Tempo => None,
         BlockRef::Modal
         | BlockRef::Algo
         | BlockRef::AlgoOp(_)

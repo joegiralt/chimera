@@ -39,6 +39,9 @@ fn every_part_slot_resolves_to_a_spec() {
                 SlotBinding::Legacy { .. } => {
                     panic!("{} slot {i}: Part pages must not be Legacy", def.name)
                 }
+                SlotBinding::SelectedRing(_) | SlotBinding::Orbit(_) => {
+                    panic!("{} slot {i}: an ORBIT cell on a Part page", def.name)
+                }
             }
         }
     }

@@ -855,7 +855,10 @@ impl BlockRead for ParamSnapshot {
             | BlockRef::Comp
             | BlockRef::Part
             | BlockRef::PartMix(_)
-            | BlockRef::Theme => return None,
+            | BlockRef::Theme
+            | BlockRef::OrbitChords
+            | BlockRef::OrbitRing(_)
+            | BlockRef::Tempo => return None,
         })
     }
 }
@@ -880,7 +883,10 @@ impl Blocks for ParamSnapshot {
             | BlockRef::Comp
             | BlockRef::Part
             | BlockRef::PartMix(_)
-            | BlockRef::Theme => return None,
+            | BlockRef::Theme
+            | BlockRef::OrbitChords
+            | BlockRef::OrbitRing(_)
+            | BlockRef::Tempo => return None,
         })
     }
 }

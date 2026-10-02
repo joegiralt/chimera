@@ -6,6 +6,7 @@ use core::ptr::addr_of_mut;
 
 use crate::factory::{FACTORY_LEN, factory_sound};
 use crate::in_place::uninit_at;
+use crate::orbit::scene::OrbitSong;
 use crate::params::EngineType;
 use crate::preset::Sound;
 
@@ -34,11 +35,13 @@ impl Project {
     pub fn init_in_place(slot: &mut MaybeUninit<Project>) -> TemplateCrc {
         let p = slot.as_mut_ptr();
         // SAFETY: `p` is valid and unaliased; `meta`, `pool` (in place),
-        // `perf` and `rev` are each written once before `assume_init_mut`.
+        // `perf`, `orbit` and `rev` are each written once before
+        // `assume_init_mut`.
         let project = unsafe {
             addr_of_mut!((*p).meta).write(ProjectMeta::new_project());
             Pool::init_in_place(uninit_at(addr_of_mut!((*p).pool)));
             addr_of_mut!((*p).perf).write(Performance::new());
+            addr_of_mut!((*p).orbit).write(OrbitSong::NEW);
             addr_of_mut!((*p).rev).write(0);
             slot.assume_init_mut()
         };
@@ -61,6 +64,7 @@ impl Project {
         self.bump();
         self.meta = ProjectMeta::new_project();
         self.perf.reset();
+        self.orbit = OrbitSong::NEW;
         self.fill_new_pool();
     }
 

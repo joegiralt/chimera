@@ -12,6 +12,7 @@ use crate::dsp::modulator::{
     EnvForm, EnvSlot, EnvSpeed, EnvType, Func, FuncMode, LfoForm, LfoSlot, LfoType, pick,
 };
 use crate::modulation::{ModSource, VCA};
+use crate::orbit::RingIdx;
 use crate::params::{EnvParams, FilterParams, OutParams};
 use crate::preset::Sound;
 use crate::ui::block_def::{BlockDef, SlotBinding};
@@ -53,6 +54,8 @@ pub struct SlotCtx {
     pub lfos: [LfoKind; 3],
     /// MODEL: which cells MDL2 shows.
     pub model: ResonatorMode,
+    /// The ORBIT ring the location selects: what `SelectedRing` edits.
+    pub ring: RingIdx,
 }
 
 impl SlotCtx {
@@ -77,7 +80,13 @@ impl SlotCtx {
                 }
             }),
             model: ResonatorMode::from_u8(get(BlockRef::Modal, ModalParams::MODE) as u8),
+            ring: RingIdx::ALL[0],
         }
+    }
+
+    /// This context on ORBIT ring `ring`.
+    pub fn on_ring(self, ring: RingIdx) -> Self {
+        Self { ring, ..self }
     }
 }
 
@@ -165,7 +174,8 @@ pub fn view(def: &BlockDef, i: usize, ctx: &SlotCtx) -> View {
         return View::Empty;
     };
     match slot.binding {
-        SlotBinding::Empty => View::Empty,
+        // ORBIT's pages draw and turn their own cells.
+        SlotBinding::Empty | SlotBinding::Orbit(_) => View::Empty,
         SlotBinding::SelectOp => View::SelectOp,
         SlotBinding::Legacy { label, fmt } => View::Legacy { label, fmt },
         // SPD: a type-B slot's SPEED and HOLD read TYPE B (spec § UI).
@@ -179,6 +189,11 @@ pub fn view(def: &BlockDef, i: usize, ctx: &SlotCtx) -> View {
         SlotBinding::Param(addr) => param(addr, slot.label(), slot.format()),
         SlotBinding::SelectedOp(id) => param(
             ParamAddr::new(BlockRef::AlgoOp(ctx.sel_op), id),
+            slot.label(),
+            slot.format(),
+        ),
+        SlotBinding::SelectedRing(id) => param(
+            ParamAddr::new(BlockRef::OrbitRing(ctx.ring), id),
             slot.label(),
             slot.format(),
         ),

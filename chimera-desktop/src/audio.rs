@@ -10,7 +10,7 @@ use chimera_core::instrument::{AudioShared, DacBlocks, DacOut, Instrument};
 use chimera_core::note_queue::{
     NoteDrain, NoteEvent, NoteKind, NoteProducer, NoteSources, SourceId,
 };
-use chimera_core::orbit::runner::{OrbitRunner, OrbitView};
+use chimera_core::orbit::runner::{OrbitRunner, OrbitShared, OrbitView};
 use chimera_core::preset::Performance;
 use chimera_core::project::{LOAD_LINK, LoadGate, LoadLink};
 use chimera_core::scope::{ScopeFrame, ScopeWriter};
@@ -126,11 +126,15 @@ impl DesktopAudio {
         }
     }
 
-    /// Push the Performance, tagged with the load `epoch`, to the audio
-    /// thread through the triple buffer, and report any mixdown frames
-    /// clamped since the last call.
-    pub fn update(&mut self, perf: &Performance, epoch: u32) {
-        self.shared_audio.publish(|b| b.update_from(perf, epoch));
+    /// Push the Performance, tagged with the load `epoch`, and ORBIT's
+    /// settings (`orbit` writes every field) to the audio thread through the
+    /// triple buffer, and report any mixdown frames clamped since the last
+    /// call.
+    pub fn update(&mut self, perf: &Performance, epoch: u32, orbit: impl FnOnce(&mut OrbitShared)) {
+        self.shared_audio.publish(|b| {
+            b.update_from(perf, epoch);
+            orbit(&mut b.orbit);
+        });
         let clamped = self.shared.clamped.swap(0, Ordering::Relaxed);
         if let Some(n) = self.clamp_log.note(clamped, Instant::now()) {
             eprintln!("speakers: {n} frames of the pairs' sum clamped at full scale");

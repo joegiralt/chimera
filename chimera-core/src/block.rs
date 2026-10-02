@@ -27,6 +27,8 @@ pub enum ValFmt {
     Route,
     /// A slider shown in its unit (spec § 1's laws).
     Law(crate::dsp::modulator::law::Law),
+    /// ORBIT's tempo, whole BPM over `Bpm::MIN..=Bpm::MAX`.
+    Bpm,
 }
 
 impl ValFmt {
@@ -40,6 +42,8 @@ impl ValFmt {
             // Discrete: shift-encoder jumps to 0 or max
             ValFmt::Int(_) | ValFmt::OneBased(_) | ValFmt::Names(_) => &[0.0, 1.0],
             ValFmt::Signed(_) => &[0.0, 0.5, 1.0],
+            // MIN, 120, MAX.
+            ValFmt::Bpm => &[0.0, 1.0 / 3.0, 1.0],
         }
     }
 

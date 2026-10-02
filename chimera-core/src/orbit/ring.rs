@@ -40,6 +40,8 @@ pub enum Range {
 }
 
 impl Range {
+    pub const ALL: [Range; 4] = [Range::Zero, Range::One, Range::Two, Range::Three];
+
     pub const fn octaves(self) -> u8 {
         self as u8
     }
@@ -52,12 +54,20 @@ pub enum SnapTo {
     Chord,
 }
 
+impl SnapTo {
+    pub const ALL: [SnapTo; 2] = [SnapTo::Scale, SnapTo::Chord];
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum NoteMode {
     /// One note per step.
     Step,
     /// The pool, walked on every hit.
     Pool,
+}
+
+impl NoteMode {
+    pub const ALL: [NoteMode; 2] = [NoteMode::Step, NoteMode::Pool];
 }
 
 /// What the rings play against at this moment of the loop.

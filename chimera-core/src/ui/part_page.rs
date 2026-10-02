@@ -9,9 +9,13 @@ use crate::ui::view::{SlotCtx, View, view};
 /// Normalized (0..1) display values of the six slots (a route view reads 0:
 /// the UI overlays its amount).
 pub fn read_values(def: &BlockDef, params: &impl BlockRead, sel_op: Op) -> [f32; 6] {
-    let ctx = SlotCtx::read(params, sel_op);
-    core::array::from_fn(|i| match view(def, i, &ctx) {
-        View::SelectOp => sel_op.index() as f32 / (Op::ALL.len() - 1) as f32,
+    values_under(def, params, &SlotCtx::read(params, sel_op))
+}
+
+/// `read_values` under `ctx`: an ORBIT page's ring is the location's.
+pub fn values_under(def: &BlockDef, params: &impl BlockRead, ctx: &SlotCtx) -> [f32; 6] {
+    core::array::from_fn(|i| match view(def, i, ctx) {
+        View::SelectOp => ctx.sel_op.index() as f32 / (Op::ALL.len() - 1) as f32,
         v => v
             .addr()
             .and_then(|a| Some(params.block(a.block)?.normalized(a.param)))

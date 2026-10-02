@@ -77,6 +77,10 @@ pub enum Walk {
     PingPong,
 }
 
+impl Walk {
+    pub const ALL: [Walk; 4] = [Walk::Up, Walk::Down, Walk::Random, Walk::PingPong];
+}
+
 /// Where the walk plays next. Reset at Start and at a scene switch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct WalkState {

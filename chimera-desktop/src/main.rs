@@ -57,7 +57,7 @@ fn main() {
     let mut display = DesktopDisplay::new();
     let mut controls = DesktopControls::new();
     let (scope_w, mut scope_r) = Box::leak(Box::new(scope_buffer())).split();
-    let (orbit_w, _orbit_r) = Box::leak(Box::new(orbit_buffer())).split();
+    let (orbit_w, mut orbit_r) = Box::leak(Box::new(orbit_buffer())).split();
     let mut audio = audio::DesktopAudio::new(scope_w, orbit_w);
 
     let mut ui = UiState::new();
@@ -127,6 +127,8 @@ fn main() {
             }
         }
 
+        // ORBIT's latest view: the pages draw it, the drift is absorbed.
+        ui.set_orbit_view(orbit_r.read());
         // UI framework handles navigation + encoder -> param binding
         ui.handle_input(&controls);
         // Card work the keys asked for, under BUSY; a load publishes
@@ -141,10 +143,11 @@ fn main() {
             sync: &mut sync,
             settings: &mut settings,
         };
+        let orbit = *ui.orbit();
         ui.card_work(cx, &LOAD_LINK, |swap, p| {
             let deadline = Instant::now() + Duration::from_millis(LOAD_ACK_TIMEOUT_MS.into());
             let _ = swap.settle(&LOAD_LINK, || Instant::now() < deadline);
-            audio.update(p.perf(), LOAD_LINK.epoch());
+            audio.update(p.perf(), LOAD_LINK.epoch(), |o| orbit.publish(p.orbit(), o));
         });
         // Leaving SETTINGS syncs SYSTEM; a toast says how it went.
         ui.sync_system(&mut sync, &mut card, &mut store, &mut settings);
@@ -153,8 +156,10 @@ fn main() {
             ui.update(t);
         }
 
-        // Push every Part and the FX to the audio thread.
-        audio.update(ui.project().perf(), LOAD_LINK.epoch());
+        // Push every Part, the FX and ORBIT to the audio thread.
+        audio.update(ui.project().perf(), LOAD_LINK.epoch(), |o| {
+            ui.publish_orbit(o)
+        });
 
         ui.render_with_scope(&mut display, &perf.stats, scope_r.read());
         let now = Instant::now();

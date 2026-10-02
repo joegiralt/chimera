@@ -49,6 +49,10 @@ pub struct RingView {
     pub hits: HitMask,
     pub pool: Pool,
     pub notes: [Note; MAX_STEPS as usize],
+    /// The revs these hits and notes were played under: `absorb` keeps
+    /// an edit the runner hasn't seen yet.
+    pub rhythm_rev: u8,
+    pub notes_rev: u8,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -84,13 +88,16 @@ impl OrbitView {
             seg: 0,
             chord: harmony(&scene.chords, 0).chord,
             rings: core::array::from_fn(|i| {
-                let r = &scene.rings[i].ring;
+                let s = &scene.rings[i];
+                let r = &s.ring;
                 RingView {
                     step: step_at(pos.phase, r.fill().steps()),
                     fired: 0,
                     hits: r.hits_mask(),
                     pool: r.pool,
                     notes: r.notes,
+                    rhythm_rev: s.rhythm_rev,
+                    notes_rev: s.notes_rev,
                 }
             }),
         }
@@ -297,8 +304,9 @@ impl OrbitRunner {
         v.cued = self.cue_pending;
         v.seg = self.state.seg();
         v.chord = self.state.harmony(&self.working).chord;
-        for (r, f) in v.rings.iter_mut().zip(self.fired) {
+        for ((r, f), (rhythm, notes)) in v.rings.iter_mut().zip(self.fired).zip(self.revs) {
             r.fired = f;
+            (r.rhythm_rev, r.notes_rev) = (rhythm, notes);
         }
         v
     }

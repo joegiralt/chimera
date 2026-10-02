@@ -122,8 +122,7 @@ impl AudioShared {
             parts,
             fx,
             epoch: e,
-            // The UI publishes ORBIT's settings in place (Task 7); until
-            // then each slot keeps its default.
+            // `UiState::publish_orbit` writes it, in the same publish.
             orbit: _,
         } = self;
         for (d, p) in parts.iter_mut().zip(perf.parts()) {

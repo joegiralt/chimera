@@ -94,6 +94,12 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Part", "OUT", NONE),
     ("Theme", "GAMMA", NONE),
     ("Theme", "ACCENT", NONE),
+    ("OrbitChords", "KEY", NONE),
+    ("OrbitChords", "SCALE", NONE),
+    ("OrbitRing", "MUTE", SWITCH),
+    ("OrbitRing", "SNAP", NONE),
+    ("OrbitRing", "MODE", NONE),
+    ("OrbitRing", "WALK", NONE),
 ];
 
 /// Named choices that keep the ARC: their names are numbers on a scale,
@@ -104,6 +110,8 @@ const NAMED_ARC: &[(&str, &str)] = &[
     ("Comp", "RATIO"),
     ("Theme", "BRIGHT"),
     ("Theme", "BLACK"),
+    // 0 to 3 extra octaves.
+    ("OrbitRing", "RANGE"),
 ];
 
 /// Two-value choices that are two peers, not on and off: a toggle would
@@ -117,6 +125,10 @@ const TWO_PEERS: &[(&str, &str)] = &[
     ("Part", "MODE"),
     // CUT and GLIDE: two ways to steal; GLIDE could read as "glide on".
     ("Pitch", "STEAL"),
+    // SCALE and CHORD: two sets to snap to.
+    ("OrbitRing", "SNAP"),
+    // STEP and POOL: two ways to pick a note.
+    ("OrbitRing", "MODE"),
 ];
 
 /// Every LEVEL BAR param is a unipolar level, 0 to max.

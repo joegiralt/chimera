@@ -137,18 +137,21 @@ fn instrument_fits_d2() {
 /// its meta and the slots' generations.
 #[test]
 fn axi_counts_the_project() {
+    use chimera_core::orbit::scene::OrbitSong;
     use chimera_core::preset::{POOL_SIZE, Performance, Sound};
     use chimera_core::project::Project;
-    let (project, perf, slots) = (
+    let (project, perf, slots, orbit) = (
         size_of::<Project>(),
         size_of::<Performance>(),
         POOL_SIZE * size_of::<Option<Sound>>(),
+        size_of::<OrbitSong>(),
     );
-    eprintln!("Project = {project} B: Performance {perf} B, slots {slots} B");
+    eprintln!("Project = {project} B: Performance {perf} B, slots {slots} B, ORBIT {orbit} B");
+    let parts = perf + slots + orbit;
     assert!(
-        project - (perf + slots) <= 128,
+        project - parts <= 128,
         "Project = {project} B, {} B over its parts",
-        project - (perf + slots)
+        project - parts
     );
 }
 

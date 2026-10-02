@@ -18,6 +18,7 @@ use chimera_core::hw::{CPU_HZ_REV_V, DAC_PAIRS, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
 use chimera_core::modulation::{ModSource, VCA};
 use chimera_core::note_queue::{NoteEvent, NoteKind};
+use chimera_core::orbit::RingIdx;
 use chimera_core::params::{DriveParams, EngineType, FilterParams, FolderParams, OutParams};
 use chimera_core::part::PartParams;
 use chimera_core::preset::{Performance, Sound};
@@ -264,8 +265,18 @@ impl Param {
     }
 }
 
-/// Theme is the UI's (`ThemeSettings`): it never reaches the audio.
-pub const NOT_AUDIO: [BlockRef; 1] = [BlockRef::Theme];
+/// Theme is the UI's (`ThemeSettings`): it never reaches the audio. ORBIT's
+/// blocks reach it only through a running ORBIT, so `orbit_param_sweep`
+/// sweeps them there.
+pub const NOT_AUDIO: [BlockRef; 7] = [
+    BlockRef::Theme,
+    BlockRef::OrbitChords,
+    BlockRef::OrbitRing(RingIdx::ALL[0]),
+    BlockRef::OrbitRing(RingIdx::ALL[1]),
+    BlockRef::OrbitRing(RingIdx::ALL[2]),
+    BlockRef::OrbitRing(RingIdx::ALL[3]),
+    BlockRef::OrbitRing(RingIdx::ALL[4]),
+];
 
 /// Every parameter of every block instance in `BlockRef::ALL`, less the
 /// UI's own; `one_instance`: the first operator, ENV and LFO only.
