@@ -236,7 +236,7 @@ impl<R: Target> Pending<R> {
 impl<R: Target> Pending<R> {
     /// REPLACE / LOAD ANYWAY, answered: the target as it is now is what's
     /// confirmed. Only a prompt's confirming pill holds a `Said` (#258).
-    pub fn confirm(self, p: &Project, _: Said) -> Confirmed<R> {
+    pub fn confirm(self, p: &Project, _: Said<R>) -> Confirmed<R> {
         Confirmed::now(self.0, p)
     }
 
@@ -281,6 +281,16 @@ impl ReplaceGuard {
 /// use chimera_core::project::{Confirmed, OverwriteTarget, ProjectEntry};
 /// fn forge(e: &ProjectEntry) -> Confirmed<OverwriteTarget> {
 ///     Confirmed::<OverwriteTarget>::answered(e)
+/// }
+/// ```
+///
+/// and a DELETE's yes is no overwrite's:
+///
+/// ```compile_fail,E0308
+/// use chimera_core::project::{Confirmed, DeleteTarget, OverwriteTarget, ProjectEntry};
+/// use chimera_core::ui::settings::replace::said::Said;
+/// fn forge(e: &ProjectEntry, yes: Said<DeleteTarget>) -> Confirmed<OverwriteTarget> {
+///     Confirmed::<OverwriteTarget>::answered(e, yes)
 /// }
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -346,7 +356,7 @@ macro_rules! answered {
         $(impl Confirmed<$t> {
             #[doc = concat!($what, " answered on the listed `e`: only a prompt's")]
             /// confirming pill holds a `Said`.
-            pub fn answered(e: &ProjectEntry, _: Said) -> Self {
+            pub fn answered(e: &ProjectEntry, _: Said<$t>) -> Self {
                 Self::listed(e)
             }
 

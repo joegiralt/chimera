@@ -5,7 +5,7 @@
 //!
 //! ```compile_fail,E0423
 //! use chimera_core::ui::settings::replace::said::Said;
-//! let _ = Said(());
+//! let _: Said<chimera_core::project::DeleteTarget> = Said(core::marker::PhantomData);
 //! ```
 //!
 //! ```compile_fail,E0451
@@ -22,7 +22,8 @@ pub mod said;
 use chimera_hal::Controls;
 
 use crate::project::{
-    Confirmed, NeedsConfirm, PartSource, Pending, Project, ProjectSource, Target, TemplateCrc,
+    Confirmed, DeleteTarget, NeedsConfirm, OverwriteTarget, PartSource, Pending, Project,
+    ProjectSource, Target, TemplateCrc, Witnessed,
 };
 use crate::ui::hold::Presses;
 
@@ -32,8 +33,9 @@ use super::prompt::{
 };
 use said::Said;
 
-/// A prompt with a pill that commits what it asked about.
+/// A prompt with a pill that commits what it asked about, a `Confirms`.
 pub trait Commits: Answers {
+    type Confirms: Witnessed;
     const CONFIRM: Self;
 }
 
@@ -43,21 +45,22 @@ pub trait Guarded: Commits {
 }
 
 macro_rules! commits {
-    ($($a:ident => $v:ident),+ $(,)?) => {
+    ($($a:ident => $v:ident, $t:ty);+ $(;)?) => {
         $(impl Commits for $a {
+            type Confirms = $t;
             const CONFIRM: Self = $a::$v;
         })+
     };
 }
 
 commits!(
-    ReplaceAnswer => Replace,
-    ReloadAnswer => Reload,
-    LoadAnswer => LoadAnyway,
-    DeleteAnswer => Delete,
-    ClearAnswer => Clear,
-    SaveOverAnswer => SaveOver,
-    NameExistsAnswer => Overwrite,
+    ReplaceAnswer => Replace, PartSource;
+    ReloadAnswer => Reload, PartSource;
+    LoadAnswer => LoadAnyway, ProjectSource;
+    DeleteAnswer => Delete, DeleteTarget;
+    ClearAnswer => Clear, OverwriteTarget;
+    SaveOverAnswer => SaveOver, OverwriteTarget;
+    NameExistsAnswer => Overwrite, OverwriteTarget;
 );
 
 impl Guarded for ReplaceAnswer {
@@ -73,7 +76,7 @@ impl Guarded for LoadAnswer {
 }
 
 /// The yes in `a`, if SEQ took the confirming pill.
-pub fn said<A: Commits>(a: Answer<A>) -> Option<Said> {
+pub fn said<A: Commits>(a: Answer<A>) -> Option<Said<A::Confirms>> {
     (a.picked() == Some(A::CONFIRM)).then(Said::new)
 }
 
@@ -100,7 +103,7 @@ pub enum Reply<R: Target, A> {
     Cancel,
 }
 
-impl<R: Target, A: Guarded> Asked<R, A> {
+impl<R: Target, A: Guarded<Confirms = R>> Asked<R, A> {
     pub fn new(n: NeedsConfirm<R>) -> Self {
         Asked {
             pending: n.into_pending(),

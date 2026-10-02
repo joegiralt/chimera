@@ -305,7 +305,7 @@ pub fn save_project_as<S: Store>(
 
 /// Whether a save over `c` would pass `write_project`'s checks, writing
 /// nothing: CLEAR of the loaded file asks before NEW replaces RAM.
-pub fn still_over<S: Store>(
+pub(crate) fn still_over<S: Store>(
     card: &mut Card,
     store: &mut S,
     c: &Confirmed<OverwriteTarget>,

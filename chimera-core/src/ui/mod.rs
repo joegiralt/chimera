@@ -868,7 +868,7 @@ impl UiState {
 
     /// SAVE PART FIRST: the save `save` picks, then the replace it was
     /// asked for. With none, the prompt stays.
-    fn save_first<A: Guarded>(
+    fn save_first<A: Guarded<Confirms = PartSource>>(
         &mut self,
         ask: Asked<PartSource, A>,
         save: fn(&Offer) -> Option<project::PartAction>,
