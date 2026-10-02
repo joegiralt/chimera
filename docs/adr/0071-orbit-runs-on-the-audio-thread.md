@@ -1,4 +1,4 @@
-# 0069. ORBIT runs on the audio thread, block-accurate
+# 0071. ORBIT runs on the audio thread, block-accurate
 
 - **Status:** Proposed (accepted at the ORBIT plan's ship flash)
 - **Deciders:** owner (ORBIT design spec, 2026-09-30), firmware
@@ -49,7 +49,7 @@ the player is holding.
   while `run` stays true. Rejected.
 
 ## Consequences
-- The runner is 616 B in the audio thread's state, the view 288 B.
+- The runner stays under 1 KB (a const assert); the view is a few hundred bytes.
 - A knob edit lands within a block, a rhythm or note edit replaces the drift
   of that ring only, and a scene switch waits for the loop.
 - The UI must bump a rev when it replaces a ring's rhythm or notes.

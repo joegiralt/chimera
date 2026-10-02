@@ -2,6 +2,7 @@
 //! transport and the working copy of the playing scene, and each block
 //! turns them into note events for the `Instrument` (spec § 4).
 
+use super::chords::harmony;
 use super::clock::{Bpm, InternalClock, Position, step_at};
 use super::engine::{OrbitKind, OrbitState, Span, block};
 use super::euclid::HitMask;
@@ -63,9 +64,42 @@ pub struct OrbitView {
     pub rings: [RingView; RINGS],
 }
 
+/// Beats in a bar (4/4, spec § 6.2) and the shift taking a phase to a beat.
+const BEATS_PER_BAR: u32 = 4;
+const BEAT_SHIFT: u32 = 32 - BEATS_PER_BAR.trailing_zeros();
+
+impl OrbitView {
+    /// The view of `scene` stopped at `pos`.
+    fn of(scene: &Scene, pos: Position) -> OrbitView {
+        OrbitView {
+            running: false,
+            bpm: Bpm::DEFAULT,
+            pos,
+            beats: pos
+                .bar
+                .wrapping_mul(BEATS_PER_BAR)
+                .wrapping_add(pos.phase.get() >> BEAT_SHIFT),
+            loops: 0,
+            cued: false,
+            seg: 0,
+            chord: harmony(&scene.chords, 0).chord,
+            rings: core::array::from_fn(|i| {
+                let r = &scene.rings[i].ring;
+                RingView {
+                    step: step_at(pos.phase, r.fill().steps()),
+                    fired: 0,
+                    hits: r.hits_mask(),
+                    pool: r.pool,
+                    notes: r.notes,
+                }
+            }),
+        }
+    }
+}
+
 impl Default for OrbitView {
     fn default() -> Self {
-        OrbitRunner::new(crate::hw::SAMPLE_RATE).view()
+        OrbitView::of(&Scene::init(), Position::ZERO)
     }
 }
 
@@ -80,11 +114,6 @@ pub fn orbit_buffer() -> TripleBuffer<OrbitView> {
 
 /// A ring's revs as last copied from the settings.
 type Revs = (u8, u8);
-
-const FALLBACK_RATE: NonZeroU32 = match NonZeroU32::new(crate::hw::SAMPLE_RATE) {
-    Some(n) => n,
-    None => panic!(),
-};
 
 pub struct OrbitRunner {
     clock: InternalClock,
@@ -113,8 +142,7 @@ fn revs_of(s: &Scene) -> [Revs; RINGS] {
 }
 
 impl OrbitRunner {
-    pub fn new(sample_rate: u32) -> Self {
-        let sample_rate = NonZeroU32::new(sample_rate).unwrap_or(FALLBACK_RATE);
+    pub fn new(sample_rate: NonZeroU32) -> Self {
         let working = Scene::init();
         OrbitRunner {
             clock: InternalClock::start(0, Bpm::DEFAULT, sample_rate),
@@ -262,26 +290,16 @@ impl OrbitRunner {
     }
 
     pub fn view(&self) -> OrbitView {
-        let pos = self.edge;
-        OrbitView {
-            running: self.transport,
-            bpm: self.clock.bpm(),
-            pos,
-            beats: pos.bar.wrapping_mul(4).wrapping_add(pos.phase.get() >> 30),
-            loops: self.loops,
-            cued: self.cue_pending,
-            seg: self.state.seg(),
-            chord: self.state.harmony(&self.working).chord,
-            rings: core::array::from_fn(|i| {
-                let r = &self.working.rings[i].ring;
-                RingView {
-                    step: step_at(pos.phase, r.fill().steps()),
-                    fired: self.fired[i],
-                    hits: r.hits_mask(),
-                    pool: r.pool,
-                    notes: r.notes,
-                }
-            }),
+        let mut v = OrbitView::of(&self.working, self.edge);
+        v.running = self.transport;
+        v.bpm = self.clock.bpm();
+        v.loops = self.loops;
+        v.cued = self.cue_pending;
+        v.seg = self.state.seg();
+        v.chord = self.state.harmony(&self.working).chord;
+        for (r, f) in v.rings.iter_mut().zip(self.fired) {
+            r.fired = f;
         }
+        v
     }
 }

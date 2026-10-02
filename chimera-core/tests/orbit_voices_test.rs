@@ -3,7 +3,8 @@
 
 mod common;
 
-use chimera_core::hw::{CPU_HZ_REV_V, SampleBudget};
+use chimera_core::dsp::fx_bus::FxBus;
+use chimera_core::hw::SampleBudget;
 use chimera_core::instrument::NoteOrigin;
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::orbit::RingIdx;
@@ -17,10 +18,18 @@ fn ring(i: u8) -> NoteOrigin {
     NoteOrigin::Orbit(RingIdx::new(i).unwrap())
 }
 
-/// Twice the chip's budget: all eight voices fit under `master-tape`, whose
-/// FX bus costs more, so the tests see the pool's size, not the budget's.
+/// The budget a voice share of `voice_share` gives, the FX bus's own cost
+/// folded in (`instrument_test.rs`), so the pool's eight voices fit with or
+/// without `master-tape`.
+const fn budget_for(voice_share: u32) -> SampleBudget {
+    SampleBudget::for_cpu(((FxBus::COST.0 + voice_share) as u64 * 480_000).div_ceil(7) as u32)
+}
+
+/// Room for eight voices of the Parts' default Sounds.
+const VOICE_SHARE: u32 = 7_000;
+
 fn rig() -> InstRig {
-    InstRig::with_budget(SampleBudget::for_cpu(2 * CPU_HZ_REV_V))
+    InstRig::with_budget(budget_for(VOICE_SHARE))
 }
 
 fn ev(note: u8, on: bool) -> NoteEvent {

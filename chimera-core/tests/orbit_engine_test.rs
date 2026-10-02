@@ -612,3 +612,15 @@ fn init_scene_is_the_design_choice() {
     }
     let _ = RingIdx::ALL;
 }
+
+/// A load killed the voices: `forget` leaves `stop` nothing to release.
+#[test]
+fn forget_leaves_stop_no_offs() {
+    let mut rig = Rig::new(full([1; RINGS], C_MAJOR), 120);
+    rig.block(None);
+    assert!(rig.log.iter().any(|r| is_on(&r.ev)), "notes are pending");
+    let mut held = rig.st;
+    assert!(!held.stop().is_empty(), "control: stop releases them");
+    rig.st.forget();
+    assert!(rig.st.stop().is_empty());
+}

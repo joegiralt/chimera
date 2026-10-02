@@ -185,7 +185,9 @@ impl Engine {
             fx: Box::new(FxBus::new()),
             dac: DacBlocks::new(),
             gate: LoadGate::new(),
-            runner: Box::new(OrbitRunner::new(sample_rate)),
+            runner: Box::new(OrbitRunner::new(
+                core::num::NonZeroU32::new(sample_rate).expect("sample rate"),
+            )),
             view,
         }
     }

@@ -4,7 +4,7 @@
 mod common;
 
 use chimera_core::dsp::fx_bus::FxBus;
-use chimera_core::hw::{BLOCK_SIZE, CPU_HZ_REV_V, SampleBudget};
+use chimera_core::hw::{CPU_HZ_REV_V, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::orbit::euclid::{Fill, Steps};
@@ -41,7 +41,7 @@ impl Rig {
             shared,
             gate: LoadGate::new(),
             link: LoadLink::new(),
-            runner: Box::new(OrbitRunner::new(SR)),
+            runner: Box::new(OrbitRunner::new(core::num::NonZeroU32::new(SR).unwrap())),
         }
     }
 
@@ -251,5 +251,4 @@ fn a_project_load_stops_orbit_cleanly() {
     r.play(true);
     r.run(3);
     assert!(r.view().running);
-    let _ = BLOCK_SIZE;
 }
