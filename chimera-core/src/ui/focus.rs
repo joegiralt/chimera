@@ -4,9 +4,32 @@
 //! chains (FILTER) keeps one focus, and the operator selection does not
 //! reset it.
 
-/// One entry per `BlockDef::id` (test-checked); glyph demo pages take
-/// 70–77, ORBIT's 78 and up.
-pub const MAX_PAGES: usize = 96;
+/// One entry per `BlockDef::id`: the largest id on any chain, plus one.
+pub const MAX_PAGES: usize = {
+    let chains = &crate::ui::block_registry::ALL_CHAINS;
+    let mut max = 0;
+    let mut c = 0;
+    while c < chains.len() {
+        let blocks = chains[c].blocks;
+        let mut b = 0;
+        while b < blocks.len() {
+            if blocks[b].def.id > max {
+                max = blocks[b].def.id;
+            }
+            let subs = blocks[b].sub_pages;
+            let mut s = 0;
+            while s < subs.len() {
+                if subs[s].id > max {
+                    max = subs[s].id;
+                }
+                s += 1;
+            }
+            b += 1;
+        }
+        c += 1;
+    }
+    max as usize + 1
+};
 
 #[derive(Clone, Copy, Debug)]
 pub struct FocusMemory {

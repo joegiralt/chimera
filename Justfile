@@ -78,6 +78,7 @@ test-fat-tools:
 clippy:
     cargo clippy -p chimera-core -p chimera-hal -p chimera-desktop -p chimera-waves -p chimera-fat -p chimera-theory --features chimera-hal/testkit --all-targets -- -D warnings
     cargo clippy -p chimera-core --features master-tape --all-targets -- -D warnings
+    cargo clippy -p chimera-core --no-default-features --all-targets -- -D warnings
     cargo clippy -p chimera-desktop --no-default-features --all-targets -- -D warnings
     cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf -- -D warnings
     cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features -- -D warnings

@@ -305,3 +305,22 @@ fn mix_b_is_only_a_mute() {
         assert_eq!(ui.location(), at);
     }
 }
+
+/// MIX + PLUS and MIX + MINUS are no ORBIT key: they stay free, as on the
+/// ladder.
+#[cfg(feature = "orbit")]
+#[test]
+fn mix_plus_and_minus_are_no_orbit_key() {
+    use chimera_core::ui::UiState;
+    use chimera_core::ui::nav::OrbitKey;
+    let mut ui = Box::new(UiState::new());
+    screen::hold(&mut ui, ButtonId::Seq);
+    assert!(ui.location().orbit().is_some());
+    for b in [ButtonId::Plus, ButtonId::Minus] {
+        let keys = ui.orbit_frame_for_test(&Input::chord(ButtonId::Mix, b));
+        assert_eq!(keys, [None; 11], "MIX + {b:?}");
+        ui.orbit_frame_for_test(&Input::release(b));
+    }
+    let keys = ui.orbit_frame_for_test(&Input::press(ButtonId::Plus));
+    assert_eq!(keys[0], Some(OrbitKey::Plus));
+}

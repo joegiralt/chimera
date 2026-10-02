@@ -309,6 +309,12 @@ const CUSTOM_PAGE: PageAt = match ORBIT_CHAIN.page(CHRD_NODE, 1) {
     None => panic!("CHRD has no CUSTOM"),
 };
 
+/// RING's first sub-page, checked at compile time.
+const RING_PAGE: PageAt = match ORBIT_CHAIN.page(RING_NODE, 0) {
+    Some(p) => p,
+    None => panic!("no RING"),
+};
+
 /// A place in ORBIT: one of `ORBIT_CHAIN`'s pages, and the ring it edits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct OrbitAt {
@@ -354,15 +360,12 @@ impl OrbitAt {
         match k {
             OrbitKey::Ring(ring) => {
                 // On RING the sub-page shown stays; elsewhere the last one.
-                let s = if self.on(RING_NODE) {
-                    sub
+                let page = if self.on(RING_NODE) {
+                    self.page
                 } else {
-                    r.ring_sub as usize
+                    r.ring_page
                 };
-                let at = ORBIT_CHAIN
-                    .page(RING_NODE, s)
-                    .or(ORBIT_CHAIN.page(RING_NODE, 0));
-                at.map_or(Step::Stay, |page| go(OrbitAt { page, ring }))
+                go(OrbitAt { page, ring })
             }
             OrbitKey::Cross(ring) => {
                 let p = cx.orbit.targets[ring.get() as usize];
@@ -378,7 +381,8 @@ impl OrbitAt {
                 page(ORBIT_CHAIN.page(RING_NODE, (sub + 1) % n))
             }
             OrbitKey::Edit if self.on(CHRD_NODE) && cx.orbit.custom => {
-                page(ORBIT_CHAIN.page(CHRD_NODE, 1 - sub.min(1)))
+                // CHRD ↔ CUSTOM.
+                page(ORBIT_CHAIN.page(CHRD_NODE, if sub == 0 { 1 } else { 0 }))
             }
             OrbitKey::Edit => Step::Stay,
             OrbitKey::MenuTap => Step::Go(r.resolve(r.orbit_from, cx)),
@@ -486,7 +490,7 @@ pub struct Recall {
     /// Where SEQ hold entered ORBIT from.
     orbit_from: Outside,
     /// RING's sub-page last shown: B1–B5 reopen it.
-    ring_sub: u8,
+    ring_page: PageAt,
 }
 
 impl Default for Recall {
@@ -503,7 +507,7 @@ impl Recall {
             settings_from: Outside(PLACEHOLDER),
             orbit: OrbitAt::HOME,
             orbit_from: Outside(PLACEHOLDER),
-            ring_sub: 0,
+            ring_page: RING_PAGE,
         }
     }
 
@@ -527,7 +531,7 @@ impl Recall {
             Loc::Fx(_, at) => self.mix = MixAt::Fx(at),
             Loc::Orbit(o) => {
                 if o.on(RING_NODE) {
-                    self.ring_sub = o.page.sub();
+                    self.ring_page = o.page;
                 }
                 if to.orbit().is_none() {
                     self.orbit = o;

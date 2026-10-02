@@ -1066,10 +1066,11 @@ impl UiState {
         if !mix && pressed(ButtonId::B6) {
             push(OrbitKey::PlayStop);
         }
-        if pressed(ButtonId::Minus) {
+        // MIX + PLUS and MIX + MINUS stay free, as on the ladder.
+        if !mix && pressed(ButtonId::Minus) {
             push(OrbitKey::Minus);
         }
-        if pressed(ButtonId::Plus) {
+        if !mix && pressed(ButtonId::Plus) {
             push(OrbitKey::Plus);
         }
         if p.seq == Some(Press::Tap) {
@@ -1087,6 +1088,13 @@ impl UiState {
     pub fn orbit_frame_for_test(&mut self, c: &impl Controls) -> [Option<OrbitKey>; 11] {
         let p = self.gates.step(c);
         self.orbit_keys(c, p)
+    }
+
+    /// Go straight to `to`, as a key would.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn go_for_test(&mut self, to: Location) {
+        self.go(to)
     }
 
     /// Whether a prompt is open.

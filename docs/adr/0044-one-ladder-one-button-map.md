@@ -81,7 +81,7 @@ Amended 2026-10-01 (owner: ADR 0066): `Loc` loses `Projects`, `Project`, `System
 `Orbit`, and gains `Settings(SettingsAt)`. `Orbit`, with `Recall`'s `orbit`
 and `from`, returns with the ORBIT plan. `Recall` gains `settings_from`,
 an `Outside` that by type can never hold SETTINGS. `Orbit(OrbitAt)`
-returns with `Recall.{orbit, orbit_from, ring_sub}`, and `Outside` refuses
+returns with `Recall.{orbit, orbit_from, ring_page}`, and `Outside` refuses
 `Orbit` as well, so `settings_from` and `orbit_from` are both sound-side by
 type (amended 2026-10-02, owner: Q1, Q2). As built (`ui::nav`):
 
@@ -103,7 +103,7 @@ pub struct Recall {
     settings_from: Outside,            // where MENU at the top returns
     orbit: OrbitAt,                    // the ORBIT page last left (amended 2026-10-02)
     orbit_from: Outside,               // where SEQ hold entered from (amended 2026-10-02)
-    ring_sub: u8,                      // RING's sub-page last shown (amended 2026-10-02)
+    ring_page: PageAt,                 // RING's sub-page last shown (amended 2026-10-02)
 }
 enum MixAt { Sends, Fx(PageAt) }       // never PART (ADR 0057)
 ```

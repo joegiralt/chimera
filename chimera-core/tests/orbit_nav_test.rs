@@ -244,6 +244,7 @@ fn edit_cycles_only_inside() {
     assert_eq!(ring.page().node() as usize, RING_NODE);
     assert_eq!(ring.ring(), R[2]);
     let subs = ORBIT_CHAIN.blocks[RING_NODE].sub_page_count().max(1);
+    assert!(subs > 1, "RING has sub-pages to cycle");
     let mut shown = vec![ring.page()];
     for _ in 0..subs {
         okey(&mut l, OrbitKey::Edit, &plain, &mut r);
@@ -274,11 +275,16 @@ fn edit_cycles_only_inside() {
 #[test]
 fn ring_tap_reopens_the_ring_sub_page_last_shown() {
     let cx = cx();
+    let subs = ORBIT_CHAIN.blocks[RING_NODE].sub_page_count();
+    assert!(subs > 1, "RING has sub-pages to remember");
     let mut r = Recall::new();
     let mut l = orbit(OrbitAt::HOME);
     okey(&mut l, OrbitKey::Ring(R[0]), &cx, &mut r);
+    let first = l.orbit().unwrap().page();
+    assert_eq!(first.sub(), 0, "a first visit opens RING's first sub-page");
     okey(&mut l, OrbitKey::Edit, &cx, &mut r);
     let sub = l.orbit().unwrap().page();
+    assert_ne!(sub, first);
     // Another ring keeps the sub-page.
     okey(&mut l, OrbitKey::Ring(R[3]), &cx, &mut r);
     assert_eq!(l.orbit().unwrap().page(), sub);
@@ -549,5 +555,25 @@ mod quick_save {
         r.feed(Input::release(ButtonId::Menu).at(chimera_core::ui::hold::HOLD_MS + 33));
         assert_eq!(r.ui.location(), at);
         assert_eq!(generation(&mut r.s, f), saved);
+    }
+}
+
+/// Every ORBIT page draws on screen, inside 240×320.
+#[test]
+fn every_orbit_page_renders() {
+    use chimera_core::ui::UiState;
+    use screen::{Fb, settle};
+    let mut ui = Box::new(UiState::new());
+    for o in every_orbit_place().into_iter().filter(|o| o.ring() == R[0]) {
+        ui.go_for_test(orbit(o));
+        settle(&mut ui);
+        let mut fb = Fb::new();
+        ui.render_with_scope(
+            &mut fb,
+            &chimera_core::ui::perf::PerfStats::zero(),
+            &screen::scope_fixture(),
+        );
+        assert_eq!(fb.oob, 0, "{o:?} drew off screen");
+        assert!(fb.drawn > 0, "{o:?} drew nothing");
     }
 }
